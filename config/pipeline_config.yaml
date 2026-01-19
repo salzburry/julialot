@@ -1,0 +1,145 @@
+# ============================================================================
+# ATTRITION COHORT PIPELINE CONFIGURATION
+# ============================================================================
+# This YAML file configures the MM attrition cohort build pipeline.
+# Edit values below or set corresponding environment variables.
+#
+# Usage:
+#   Rscript R/run_pipeline.R --config=config/pipeline_config.yaml
+
+env: "dev"
+
+# ============================================================================
+# DATABASE CONNECTION
+# ============================================================================
+db:
+  # Option 1: DSN-based (recommended for Domino)
+  # dsn: "DATABRICKS_DSN_NAME"
+
+  # Option 2: DSN-less connection
+  # host: "adb-xxxxxxxxxxxxx.xx.azuredatabricks.net"
+  # http_path: "/sql/1.0/warehouses/xxxxxxxxxxxxxxxx"
+  # driver: "Databricks"
+  # port: 443
+  # auth_mech: 3
+  # uid: "token"
+  # pwd: "${DATABRICKS_TOKEN}"  # Use environment variable
+
+  timeout: 120
+
+  # Schema configuration
+  # catalog: "main"  # For Unity Catalog (optional)
+  cdm_schema: "optum_cdm_2025q2"
+  work_schema: "gsk_mm_lot_work"
+  ref_schema: "gsk_mm_lot_ref"
+
+# ============================================================================
+# OPTUM CLINFORMATICS TABLE NAMES
+# ============================================================================
+tables:
+  # Source CDM tables
+  tbl_member_elig: "member_continuous_enrollment"
+  tbl_medical: "medical"
+  tbl_med_diag: "medical_diagnosis"
+  tbl_rx: "rx"
+
+  # Reference/code list tables (loaded from spec tabs)
+  cl_mm_dx: "cl_mm_dx"
+  cl_diagnostic_proc: "cl_diagnostic_proc"
+  cl_mm_therapy: "cl_mm_therapy"
+  cl_preg: "cl_pregnancy"
+  cl_clintrial: "cl_clintrial"
+  cl_other_malig: "cl_other_malignancies"
+
+# ============================================================================
+# STUDY PARAMETERS
+# Per DataPrep/StudyPop spec dated 19 Jan 2026
+# ============================================================================
+study:
+  # Study periods
+  study_start: "2015-07-01"
+  study_end: "2025-06-30"
+  id_start: "2016-01-01"
+  id_end: "2025-06-30"
+
+  # Enrollment parameters
+  baseline_days: 183        # 6 months
+  gap_days: 30              # Allowable enrollment gap (<=30 days)
+
+  # Diagnosis windows for outpatient claims
+  dx_window_30: 30
+  dx_window_60: 60
+  dx_window_90: 90
+  primary_window: 90        # Primary window for analysis
+
+  # Therapy assumptions
+  med_days_supply_assumption: 28  # Default days supply for medical claims
+
+# ============================================================================
+# INCLUSION/EXCLUSION CRITERIA
+# Toggle each criterion on/off
+# ============================================================================
+criteria:
+  # C0: Base MM diagnosis (always required)
+  c0_mm_diagnosis:
+    enabled: true
+    modifiable: false
+
+  # C1: Qualifying diagnosis (1 inpatient OR 2 outpatient within window)
+  c1_mm_dx_strict:
+    enabled: true
+    outpatient_count: 2
+    window_days: 90
+
+  # C2: Age requirement
+  c2_age:
+    enabled: true
+    min_age: 18
+
+  # C3: MM therapy in follow-up (inclusion)
+  c3_therapy_fu:
+    enabled: true
+
+  # C4: No MM therapy in baseline (exclusion - ensures newly diagnosed)
+  c4_therapy_bl:
+    enabled: true
+
+  # C5: Baseline continuous enrollment
+  c5_ce_baseline:
+    enabled: true
+    months: 6
+
+  # C6: Follow-up enrollment
+  c6_ce_followup:
+    enabled: true
+    days: 1
+
+  # C7: Other cancer exclusion (DISABLED by default per protocol)
+  c7_other_cancer:
+    enabled: false
+
+  # C8: Pregnancy exclusion (DISABLED by default per protocol)
+  c8_pregnancy:
+    enabled: false
+
+  # C9: Clinical trial exclusion (DISABLED by default per protocol)
+  c9_clinical_trial:
+    enabled: false
+
+# ============================================================================
+# PIPELINE SETTINGS
+# ============================================================================
+pipeline:
+  checkpoint_dir: "/mnt/artifacts/checkpoints"
+  optimize_tables: true     # Run OPTIMIZE/ZORDER on Delta tables
+  max_retries: 4            # Max connection/query retries
+  base_retry_delay: 2       # Base delay for exponential backoff (seconds)
+  log_level: "INFO"         # DEBUG, INFO, WARN, ERROR
+
+# ============================================================================
+# OUTPUT SETTINGS
+# ============================================================================
+output:
+  results_dir: "/mnt/results"
+  export_format: "csv"
+  generate_attrition_table: true
