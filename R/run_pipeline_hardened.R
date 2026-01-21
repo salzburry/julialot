@@ -20,7 +20,9 @@
 #   Rscript R/run_pipeline_hardened.R
 #
 # Environment variables:
-#   DATABRICKS_DSN / DATABRICKS_HOST / DATABRICKS_TOKEN
+#   DATABRICKS_PWD        - Databricks password/token (required)
+#   DATABRICKS_DSN        - ODBC DSN name (default: "RWDE")
+#   DOMINO_USER_NAME      - Used for personal schema (optional)
 #   OPTUM_CDM_SCHEMA, PROJECT_WORK_SCHEMA, PROJECT_REF_SCHEMA
 
 library(DBI)
@@ -31,10 +33,11 @@ library(glue)
 # DEFAULT CONFIGURATION
 # ============================================================
 default_cfg <- list(
-  # Schemas
-  cdm_schema  = "optum_cdm_2025q2",
-  ref_schema  = "gsk_mm_lot_ref",
-  work_schema = "gsk_mm_lot_work",
+  # Schemas (following Optum CDM / Domino naming convention)
+  # cdm_schema maps to dbname in 001_setup.R pattern
+  cdm_schema  = "clnprw_optum",
+  ref_schema  = Sys.getenv("DOMINO_USER_NAME", unset = "gsk_mm_lot_ref"),
+  work_schema = Sys.getenv("DOMINO_USER_NAME", unset = "gsk_mm_lot_work"),
 
   # Source tables (Optum Clinformatics Data Mart v9.0)
   tbl_member_elig = "member_continuous_enrollment",
@@ -135,17 +138,17 @@ prompt_user_options <- function() {
 # CONFIGURATION (merged from defaults and environment)
 # ============================================================
 cfg <- list(
-  # Connection (prefer DSN if Domino provides it)
-  dsn       = Sys.getenv("DATABRICKS_DSN", unset = ""),
-  host      = Sys.getenv("DATABRICKS_HOST", unset = ""),
-  http_path = Sys.getenv("DATABRICKS_HTTP_PATH", unset = ""),
-  token     = Sys.getenv("DATABRICKS_TOKEN", unset = ""),
+  # Connection (Domino ODBC pattern: DSN + password)
+  dsn = Sys.getenv("DATABRICKS_DSN", unset = "RWDE"),
+  pwd = Sys.getenv("DATABRICKS_PWD", unset = ""),
 
-  # Schemas
+  # Schemas (following Optum CDM naming convention)
+  # dbname equivalent from setup.R: "clnprw_optum"
+  # personal_schema equivalent: Sys.getenv("DOMINO_USER_NAME")
   catalog    = Sys.getenv("DATABRICKS_CATALOG", unset = ""),
-  cdm_schema = Sys.getenv("OPTUM_CDM_SCHEMA", unset = "optum_cdm_2025q2"),
-  ref_schema = Sys.getenv("PROJECT_REF_SCHEMA", unset = "gsk_mm_lot_ref"),
-  work_schema = Sys.getenv("PROJECT_WORK_SCHEMA", unset = "gsk_mm_lot_work"),
+  cdm_schema = Sys.getenv("OPTUM_CDM_SCHEMA", unset = "clnprw_optum"),
+  ref_schema = Sys.getenv("PROJECT_REF_SCHEMA", unset = Sys.getenv("DOMINO_USER_NAME", unset = "gsk_mm_lot_ref")),
+  work_schema = Sys.getenv("PROJECT_WORK_SCHEMA", unset = Sys.getenv("DOMINO_USER_NAME", unset = "gsk_mm_lot_work")),
 
   # Source tables (Optum Clinformatics)
   tbl_member_elig = "member_continuous_enrollment",
@@ -207,24 +210,23 @@ log_msg <- function(...) {
 
 # ============================================================
 # CONNECTION WITH RETRY (returns value, not just TRUE)
+# Follows Domino ODBC pattern: DSN + password
 # ============================================================
 
 connect_databricks <- function() {
-  if (nzchar(cfg$dsn)) {
-    DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, timeout = 120)
-  } else {
-    DBI::dbConnect(
-      odbc::odbc(),
-      Driver   = "Databricks",
-      Host     = cfg$host,
-      Port     = 443,
-      HTTPPath = cfg$http_path,
-      UID      = "token",
-      PWD      = cfg$token,
-      AuthMech = 3,
-      timeout  = 120
-    )
+  # Validate password is set
+
+  if (!nzchar(cfg$pwd)) {
+    stop("DATABRICKS_PWD environment variable is not set. Please set it before running the pipeline.")
   }
+
+  # Connect using Domino ODBC pattern (matches 001_setup.R)
+  DBI::dbConnect(
+    odbc::odbc(),
+    dsn = cfg$dsn,
+    pwd = cfg$pwd,
+    timeout = 120
+  )
 }
 
 db_ping <- function(con) {
