@@ -40,10 +40,11 @@ default_cfg <- list(
   work_schema = Sys.getenv("DOMINO_USER_NAME", unset = "gsk_mm_lot_work"),
 
   # Source tables (Optum Clinformatics Data Mart v9.0)
-  tbl_member_elig = "member_continuous_enrollment",
+  tbl_member_elig = "member_cont_enrollment",
   tbl_medical     = "medical",
-  tbl_med_diag    = "medical_diagnosis",
+  tbl_med_diag    = "med_diagnosis",
   tbl_rx          = "rx",
+  tbl_dod         = "dod",
 
   # Quarterly table pattern (Optum tables are partitioned as t_<table>_YYYYqQ)
   # Set to TRUE if your tables are quarterly-partitioned (e.g., t_medical_2017q1)
@@ -127,11 +128,6 @@ prompt_user_options <- function() {
       if (nzchar(trimws(val))) user_cfg$gap_days <- as.integer(trimws(val))
     }
 
-    # Always ask about local-only mode (common permission issue)
-    cat("\nRun in LOCAL-ONLY mode? (Uses TEMPORARY VIEWs, no persistent tables created)\n")
-    cat("Use this if you get 'INSUFFICIENT_PERMISSIONS' or 'TABLE_NOT_FOUND' errors. [Y/n]: ")
-    response <- readline()
-    user_cfg$local_only <- !tolower(trimws(response)) %in% c("n", "no")
   }
 
   cat("\nUsing configuration:\n")
@@ -167,10 +163,11 @@ cfg <- list(
   work_schema = Sys.getenv("PROJECT_WORK_SCHEMA", unset = Sys.getenv("DOMINO_USER_NAME", unset = "gsk_mm_lot_work")),
 
   # Source tables (Optum Clinformatics)
-  tbl_member_elig = "member_continuous_enrollment",
+  tbl_member_elig = "member_cont_enrollment",
   tbl_medical     = "medical",
-  tbl_med_diag    = "medical_diagnosis",
+  tbl_med_diag    = "med_diagnosis",
   tbl_rx          = "rx",
+  tbl_dod         = "dod",
 
   # Quarterly table pattern (Optum tables are partitioned as t_<table>_YYYYqQ)
   # Set to TRUE if your tables are quarterly-partitioned (e.g., t_medical_2017q1)
@@ -233,6 +230,7 @@ work <- function(tbl) full_name(cfg$work_schema, tbl)
 
 log_msg <- function(...) {
   cat(sprintf("[%s] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S")), ..., "\n")
+  flush.console()  # Ensure output is shown immediately
 }
 
 # ============================================================
@@ -552,9 +550,36 @@ convert_refs_for_local <- function(sql, work_schema, ref_schema = NULL) {
 # STEP RUNNER (fixed: uses con_env for reconnection)
 # ============================================================
 
-run_step <- function(log_table, step_name, sql, qc_sql = NULL) {
+print_phase_header <- function(phase_name) {
+  cat("\n")
+  cat(strrep("=", 60), "\n")
+  cat("  PHASE: ", phase_name, "\n")
+  cat(strrep("=", 60), "\n")
+  flush.console()
+}
+
+run_step <- function(log_table, step_name, sql, qc_sql = NULL, description = NULL, step_num = NULL, total_steps = NULL, source_tables = NULL) {
   started_at <- Sys.time()
-  log_msg("STEP START: ", step_name)
+
+  # Show progress header with step number
+  progress_prefix <- if (!is.null(step_num) && !is.null(total_steps)) {
+    sprintf("[Step %d/%d] ", step_num, total_steps)
+  } else {
+    ""
+  }
+
+  step_desc <- if (!is.null(description)) description else step_name
+  cat("\n")
+  cat(strrep("-", 60), "\n")
+  log_msg(progress_prefix, step_desc)
+
+  # Show which source tables will be accessed (helps user know what's happening)
+  if (!is.null(source_tables) && length(source_tables) > 0) {
+    log_msg("  >> Reading from: ", paste(source_tables, collapse = ", "))
+  }
+
+  cat(strrep("-", 60), "\n")
+  flush.console()
 
   # LOCAL-ONLY MODE: Convert SQL to use temporary views instead of tables
   if (isTRUE(cfg$local_only)) {
@@ -588,14 +613,22 @@ run_step <- function(log_table, step_name, sql, qc_sql = NULL) {
       qc <- DBI::dbGetQuery(con_env$con, qc_sql)
       qc_metric <- colnames(qc)[1]
       qc_value <- as.character(qc[[1]][1])
-      log_msg("  QC ", qc_metric, " = ", qc_value)
+      # Format count with commas for readability
+      formatted_value <- tryCatch(
+        format(as.numeric(qc_value), big.mark = ","),
+        error = function(e) qc_value
+      )
+      log_msg("  >> Result: ", qc_metric, " = ", formatted_value)
+      flush.console()
     }
 
     ended_at <- Sys.time()
+    duration_secs <- round(as.numeric(difftime(ended_at, started_at, units = "secs")), 1)
     write_log_row(con_env$con, log_table, step_name, "SUCCESS", started_at, ended_at,
                   qc_metric = qc_metric, qc_value = qc_value)
 
-    log_msg("STEP END: ", step_name, " (", round(as.numeric(difftime(ended_at, started_at, units = "secs")), 1), "s)")
+    log_msg("  >> Completed in ", duration_secs, "s")
+    flush.console()
 
   }, error = function(e) {
     ended_at <- Sys.time()
@@ -664,6 +697,7 @@ build_steps <- function() {
     # ----------------------------------------------------------
     list(
       name = "01_mm_dx_codes",
+      description = "Loading MM diagnosis codes (ICD-9/ICD-10)",
       sql = glue("
         CREATE OR REPLACE TABLE {work('mm_dx_codes')} AS
         SELECT
@@ -677,6 +711,7 @@ build_steps <- function() {
 
     list(
       name = "02_diag_proc_codes",
+      description = "Loading diagnostic procedure codes",
       sql = glue("
         CREATE OR REPLACE TABLE {work('diag_proc_codes')} AS
         SELECT DISTINCT upper(regexp_replace(proc_cd, '\\\\.', '')) AS proc_cd
@@ -688,6 +723,7 @@ build_steps <- function() {
 
     list(
       name = "03_mm_therapy_codes",
+      description = "Loading MM therapy codes (HCPCS/NDC)",
       sql = glue("
         CREATE OR REPLACE TABLE {work('mm_therapy_codes')} AS
         SELECT upper(code_type) AS code_type, upper(regexp_replace(code, '\\\\.', '')) AS code
@@ -699,6 +735,7 @@ build_steps <- function() {
 
     list(
       name = "04_preg_codes",
+      description = "Loading pregnancy exclusion codes",
       sql = glue("
         CREATE OR REPLACE TABLE {work('preg_codes')} AS
         SELECT upper(code_type) AS code_type, upper(regexp_replace(code, '\\\\.', '')) AS code
@@ -710,6 +747,7 @@ build_steps <- function() {
 
     list(
       name = "05_clintrial_codes",
+      description = "Loading clinical trial exclusion codes",
       sql = glue("
         CREATE OR REPLACE TABLE {work('clintrial_codes')} AS
         SELECT upper(code_type) AS code_type, upper(regexp_replace(code, '\\\\.', '')) AS code
@@ -721,6 +759,7 @@ build_steps <- function() {
 
     list(
       name = "06_other_malig_codes",
+      description = "Loading other malignancy exclusion codes",
       sql = glue("
         CREATE OR REPLACE TABLE {work('other_malig_codes')} AS
         SELECT
@@ -741,9 +780,14 @@ build_steps <- function() {
     # ----------------------------------------------------------
     list(
       name = "07_med_claim_header",
+      description = "Extracting medical claim headers from CDM (study period)",
+      source_tables = c("medical"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('med_claim_header')} AS
-        SELECT PATID, CLMID, max(CONF_ID) AS CONF_ID
+        SELECT PATID, CLMID,
+               max(CONF_ID) AS CONF_ID,
+               max(POS) AS POS,
+               max(TOS_CD) AS TOS_CD
         FROM {cdm_src(cfg$tbl_medical)}
         WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         GROUP BY PATID, CLMID
@@ -754,6 +798,8 @@ build_steps <- function() {
     # All MM dx events in study period (for baseline lookback)
     list(
       name = "08a_mm_dx_events_all",
+      description = "Identifying MM diagnosis events (full study period)",
+      source_tables = c("med_diagnosis"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('mm_dx_events_all')} AS
         SELECT /*+ BROADCAST(c) */
@@ -763,8 +809,15 @@ build_steps <- function() {
           upper(regexp_replace(d.DIAG, '\\\\.', '')) AS diag,
           CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
           h.CONF_ID,
-          CASE WHEN h.CONF_ID IS NOT NULL THEN 1 ELSE 0 END AS inpatient_flg,
-          CASE WHEN h.CONF_ID IS NULL THEN 1 ELSE 0 END AS outpatient_flg
+          -- Inpatient per Optum business rules: CONF_ID not null, OR POS in (21,51,61), OR TOS_CD indicates facility inpatient
+          CASE WHEN h.CONF_ID IS NOT NULL
+                 OR CAST(h.POS AS STRING) IN ('21', '51', '61')
+                 OR upper(h.TOS_CD) IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF')
+               THEN 1 ELSE 0 END AS inpatient_flg,
+          CASE WHEN h.CONF_ID IS NULL
+                AND (CAST(h.POS AS STRING) NOT IN ('21', '51', '61') OR h.POS IS NULL)
+                AND (upper(h.TOS_CD) NOT IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF') OR h.TOS_CD IS NULL)
+               THEN 1 ELSE 0 END AS outpatient_flg
         FROM {cdm_src(cfg$tbl_med_diag)} d
         INNER JOIN {work('med_claim_header')} h
           ON d.PATID = h.PATID AND d.CLMID = h.CLMID
@@ -779,6 +832,7 @@ build_steps <- function() {
     # MM dx events in ID period only (for index date qualification)
     list(
       name = "08b_mm_dx_events_id",
+      description = "Filtering MM events to identification period",
       sql = glue("
         CREATE OR REPLACE TABLE {work('mm_dx_events_id')} AS
         SELECT * FROM {work('mm_dx_events_all')}
@@ -792,6 +846,7 @@ build_steps <- function() {
     # ----------------------------------------------------------
     list(
       name = "09_mm_inpatient_index",
+      description = "Finding patients with inpatient MM diagnosis",
       sql = glue("
         CREATE OR REPLACE TABLE {work('mm_inpatient_index')} AS
         SELECT PATID, 1 AS inpt1, min(svc_dt) AS idx_inpt
@@ -804,6 +859,7 @@ build_steps <- function() {
 
     list(
       name = "10_mm_outpatient_pairs",
+      description = "Building outpatient diagnosis date pairs",
       sql = glue("
         CREATE OR REPLACE TABLE {work('mm_outpatient_pairs')} AS
         WITH distinct_dates AS (
@@ -826,6 +882,7 @@ build_steps <- function() {
 
     list(
       name = "11_mm_outpatient_index",
+      description = "Identifying 2+ outpatient dx within 30/60/90 days",
       sql = glue("
         CREATE OR REPLACE TABLE {work('mm_outpatient_index')} AS
         SELECT
@@ -844,6 +901,7 @@ build_steps <- function() {
 
     list(
       name = "12_mm_qualifying",
+      description = "CRITERION: MM qualifying (1+ IP or 2+ OP in 90d)",
       sql = glue("
         CREATE OR REPLACE TABLE {work('mm_qualifying')} AS
         WITH combined AS (
@@ -895,6 +953,8 @@ build_steps <- function() {
     # ----------------------------------------------------------
     list(
       name = "13_enrollment_spans",
+      description = "Building enrollment spans (30-day gap allowed)",
+      source_tables = c("member_cont_enrollment"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('enrollment_spans')} AS
         WITH base AS (
@@ -933,6 +993,8 @@ build_steps <- function() {
     # ----------------------------------------------------------
     list(
       name = "13b_enrollment_spans_strict",
+      description = "Building strict enrollment spans (no gaps)",
+      source_tables = c("member_cont_enrollment"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('enrollment_spans_strict')} AS
         WITH base AS (
@@ -971,6 +1033,7 @@ build_steps <- function() {
     # ----------------------------------------------------------
     list(
       name = "14_ce_flags",
+      description = "CRITERION: Continuous enrollment (baseline + follow-up)",
       sql = glue("
         CREATE OR REPLACE TABLE {work('ce_flags')} AS
         WITH idx AS (
@@ -1027,6 +1090,8 @@ build_steps <- function() {
     # ----------------------------------------------------------
     list(
       name = "15_member_demo",
+      description = "Extracting patient demographics (age/gender)",
+      source_tables = c("member_cont_enrollment"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('member_demo')} AS
         WITH ranked AS (
@@ -1048,38 +1113,37 @@ build_steps <- function() {
     # ----------------------------------------------------------
     list(
       name = "15b_death_dt",
+      description = "Deriving death dates (month-level -> 15th)",
+      source_tables = c("dod"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('death_dt')} AS
         WITH raw_death AS (
           SELECT
             PATID,
-            -- Optum death fields: DEATH_YR (yyyy), DEATH_MO (mm), DEATH_DY (dd)
-            -- If day is missing (NULL or 0), use 15; if month is missing, use July (7)
-            cast(DEATH_YR as int) AS death_yr,
-            cast(DEATH_MO as int) AS death_mo,
-            cast(DEATH_DY as int) AS death_dy
-          FROM {cdm_src(cfg$tbl_member_elig)}
-          WHERE DEATH_YR IS NOT NULL AND cast(DEATH_YR as int) > 0
+            -- Optum DOD table: YMDOD is varchar(6) in YYYYMM format
+            -- Extract year and month from YMDOD
+            cast(SUBSTR(YMDOD, 1, 4) as int) AS death_yr,
+            cast(SUBSTR(YMDOD, 5, 2) as int) AS death_mo
+          FROM {cdm_src(cfg$tbl_dod)}
+          WHERE YMDOD IS NOT NULL AND LENGTH(TRIM(YMDOD)) >= 4
         ),
         -- Take most recent non-null death record per patient
         ranked AS (
           SELECT *,
-                 row_number() OVER (PARTITION BY PATID ORDER BY death_yr DESC, death_mo DESC NULLS LAST, death_dy DESC NULLS LAST) AS rn
+                 row_number() OVER (PARTITION BY PATID ORDER BY death_yr DESC, death_mo DESC NULLS LAST) AS rn
           FROM raw_death
         ),
         best AS (
-          SELECT PATID, death_yr, death_mo, death_dy FROM ranked WHERE rn = 1
+          SELECT PATID, death_yr, death_mo FROM ranked WHERE rn = 1
         )
         SELECT
           PATID,
-          -- Per StudyPop: generalize to 15th if only month-level, July 15 if only year-level
+          -- Per StudyPop: generalize to 15th for month-level data, July 15 if only year-level
           CASE
             WHEN death_mo IS NULL OR death_mo = 0 THEN
               make_date(death_yr, 7, 15)  -- Year-level only -> July 15
-            WHEN death_dy IS NULL OR death_dy = 0 THEN
-              make_date(death_yr, death_mo, 15)  -- Month-level only -> 15th
             ELSE
-              make_date(death_yr, death_mo, death_dy)  -- Full date available
+              make_date(death_yr, death_mo, 15)  -- Month-level -> 15th (DOD table has no day)
           END AS DEATH_DT
         FROM best
       "),
@@ -1092,6 +1156,8 @@ build_steps <- function() {
     # ----------------------------------------------------------
     list(
       name = "16_claim_nondiagnostic",
+      description = "Identifying non-diagnostic claims",
+      source_tables = c("medical"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('claim_nondiagnostic')} AS
         WITH lines AS (
@@ -1123,6 +1189,7 @@ build_steps <- function() {
     # FIXED: Use mm_dx_events_all for baseline lookback (not just ID period)
     list(
       name = "17_mm_baseline_nondx_flag",
+      description = "Checking for MM dx on non-diagnostic claims (baseline)",
       sql = glue("
         CREATE OR REPLACE TABLE {work('mm_baseline_nondx_flag')} AS
         SELECT
@@ -1144,6 +1211,8 @@ build_steps <- function() {
     # ----------------------------------------------------------
     list(
       name = "18_therapy_events",
+      description = "Identifying MM therapy events (medical + Rx)",
+      source_tables = c("medical", "rx"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('therapy_events')} AS
         -- Medical therapy via PROC_CD
@@ -1171,6 +1240,7 @@ build_steps <- function() {
 
     list(
       name = "19_therapy_flags",
+      description = "CRITERION: MM therapy in baseline/follow-up",
       sql = glue("
         CREATE OR REPLACE TABLE {work('therapy_flags')} AS
         SELECT
@@ -1193,6 +1263,8 @@ build_steps <- function() {
     # ----------------------------------------------------------
     list(
       name = "20_pregnancy_flag",
+      description = "EXCLUSION: Pregnancy flag",
+      source_tables = c("med_diagnosis", "medical"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('pregnancy_flag')} AS
         WITH dx AS (
@@ -1228,6 +1300,8 @@ build_steps <- function() {
 
     list(
       name = "21_clintrial_flag",
+      description = "EXCLUSION: Clinical trial flag",
+      source_tables = c("med_diagnosis", "medical"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('clintrial_flag')} AS
         WITH dx AS (
@@ -1265,6 +1339,8 @@ build_steps <- function() {
 
     list(
       name = "22_other_malig_flag",
+      description = "EXCLUSION: Other malignancy flag",
+      source_tables = c("med_diagnosis"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('other_malig_flag')} AS
         WITH dx AS (
@@ -1319,6 +1395,7 @@ build_steps <- function() {
     # ----------------------------------------------------------
     list(
       name = "23_ELIG_COH_ALLFLAGS",
+      description = "Assembling cohort with all flags",
       sql = glue("
         CREATE OR REPLACE TABLE {work('ELIG_COH_ALLFLAGS')} AS
         SELECT
@@ -1407,6 +1484,7 @@ build_steps <- function() {
 
     list(
       name = "24_ELIG_COH_FINAL",
+      description = "FINAL COHORT: Apply all inclusion criteria",
       sql = glue("
         CREATE OR REPLACE TABLE {work('ELIG_COH_FINAL')} AS
         SELECT *
@@ -1479,11 +1557,19 @@ main <- function() {
 
   # Build and run steps
   steps <- build_steps()
-  log_msg("Running ", length(steps), " pipeline steps...")
+  total_steps <- length(steps)
 
-  for (s in steps) {
+  cat("\n")
+  cat("============================================================\n")
+  cat("  STARTING PIPELINE: ", total_steps, " steps to process\n")
+  cat("============================================================\n")
+
+  for (i in seq_along(steps)) {
+    s <- steps[[i]]
     with_retry(function() {
-      run_step(log_table, s$name, s$sql, qc_sql = s$qc)
+      run_step(log_table, s$name, s$sql, qc_sql = s$qc,
+               description = s$description, step_num = i, total_steps = total_steps,
+               source_tables = s$source_tables)
     })
   }
 
