@@ -5,12 +5,13 @@
 # ============================================================
 #
 # Key features:
-# - Automatic reconnect with exponential backoff
+# - Automatic reconnect with exponential backoff (fixed scope)
 # - DB-side run log (audit trail)
 # - Ping before each heavy step (handles stale ODBC sessions)
 # - Idempotent steps (CREATE OR REPLACE)
 # - QC counts after each step
 # - Independent flags per IE criterion (per StudyPop spec)
+# - Split MM dx events: study period (baseline) vs ID period (qualification)
 #
 # Usage:
 #   Rscript R/run_pipeline_hardened.R
@@ -32,7 +33,7 @@ default_cfg <- list(
   ref_schema  = "gsk_mm_lot_ref",
   work_schema = "gsk_mm_lot_work",
 
- # Source tables (Optum Clinformatics Data Mart v9.0)
+  # Source tables (Optum Clinformatics Data Mart v9.0)
   tbl_member_elig = "member_continuous_enrollment",
   tbl_medical     = "medical",
   tbl_med_diag    = "medical_diagnosis",
@@ -51,22 +52,25 @@ default_cfg <- list(
 )
 
 # ============================================================
-# CLI PROMPT FOR USER INPUT
+# CLI PROMPT FOR USER INPUT (no global mutation)
 # ============================================================
 prompt_user_options <- function() {
+  # Work on local copy, not global
+  user_cfg <- default_cfg
+
   cat("\n")
   cat("============================================================\n")
   cat("  MM LOT ATTRITION COHORT PIPELINE\n")
   cat("============================================================\n")
   cat("\nDefault Configuration:\n")
-  cat("  CDM Schema:       ", default_cfg$cdm_schema, "\n")
-  cat("  Reference Schema: ", default_cfg$ref_schema, "\n")
-  cat("  Work Schema:      ", default_cfg$work_schema, "\n")
-  cat("  Study Period:     ", default_cfg$study_start, " to ", default_cfg$study_end, "\n")
-  cat("  ID Period:        ", default_cfg$id_start, " to ", default_cfg$id_end, "\n")
-  cat("  Baseline Days:    ", default_cfg$baseline_days, "\n")
-  cat("  Gap Days:         ", default_cfg$gap_days, "\n")
-  cat("  DX Windows:       ", default_cfg$dx_window_30, "/", default_cfg$dx_window_60, "/", default_cfg$dx_window_90, " days\n")
+  cat("  CDM Schema:       ", user_cfg$cdm_schema, "\n")
+  cat("  Reference Schema: ", user_cfg$ref_schema, "\n")
+  cat("  Work Schema:      ", user_cfg$work_schema, "\n")
+  cat("  Study Period:     ", user_cfg$study_start, " to ", user_cfg$study_end, "\n")
+  cat("  ID Period:        ", user_cfg$id_start, " to ", user_cfg$id_end, "\n")
+  cat("  Baseline Days:    ", user_cfg$baseline_days, "\n")
+  cat("  Gap Days:         ", user_cfg$gap_days, "\n")
+  cat("  DX Windows:       ", user_cfg$dx_window_30, "/", user_cfg$dx_window_60, "/", user_cfg$dx_window_90, " days\n")
   cat("\n")
 
   if (interactive()) {
@@ -75,51 +79,60 @@ prompt_user_options <- function() {
     if (tolower(trimws(response)) %in% c("n", "no")) {
       cat("\nCustomize options (press Enter to keep default):\n")
 
-      cat("  CDM Schema [", default_cfg$cdm_schema, "]: ", sep = "")
+      cat("  CDM Schema [", user_cfg$cdm_schema, "]: ", sep = "")
       val <- readline()
-      if (nzchar(trimws(val))) default_cfg$cdm_schema <<- trimws(val)
+      if (nzchar(trimws(val))) user_cfg$cdm_schema <- trimws(val)
 
-      cat("  Reference Schema [", default_cfg$ref_schema, "]: ", sep = "")
+      cat("  Reference Schema [", user_cfg$ref_schema, "]: ", sep = "")
       val <- readline()
-      if (nzchar(trimws(val))) default_cfg$ref_schema <<- trimws(val)
+      if (nzchar(trimws(val))) user_cfg$ref_schema <- trimws(val)
 
-      cat("  Work Schema [", default_cfg$work_schema, "]: ", sep = "")
+      cat("  Work Schema [", user_cfg$work_schema, "]: ", sep = "")
       val <- readline()
-      if (nzchar(trimws(val))) default_cfg$work_schema <<- trimws(val)
+      if (nzchar(trimws(val))) user_cfg$work_schema <- trimws(val)
 
-      cat("  Study Start Date [", default_cfg$study_start, "]: ", sep = "")
+      cat("  Study Start Date [", user_cfg$study_start, "]: ", sep = "")
       val <- readline()
-      if (nzchar(trimws(val))) default_cfg$study_start <<- trimws(val)
+      if (nzchar(trimws(val))) user_cfg$study_start <- trimws(val)
 
-      cat("  Study End Date [", default_cfg$study_end, "]: ", sep = "")
+      cat("  Study End Date [", user_cfg$study_end, "]: ", sep = "")
       val <- readline()
-      if (nzchar(trimws(val))) default_cfg$study_end <<- trimws(val)
+      if (nzchar(trimws(val))) user_cfg$study_end <- trimws(val)
 
-      cat("  Baseline Days [", default_cfg$baseline_days, "]: ", sep = "")
+      cat("  ID Start Date [", user_cfg$id_start, "]: ", sep = "")
       val <- readline()
-      if (nzchar(trimws(val))) default_cfg$baseline_days <<- as.integer(trimws(val))
+      if (nzchar(trimws(val))) user_cfg$id_start <- trimws(val)
 
-      cat("  Gap Days [", default_cfg$gap_days, "]: ", sep = "")
+      cat("  ID End Date [", user_cfg$id_end, "]: ", sep = "")
       val <- readline()
-      if (nzchar(trimws(val))) default_cfg$gap_days <<- as.integer(trimws(val))
+      if (nzchar(trimws(val))) user_cfg$id_end <- trimws(val)
+
+      cat("  Baseline Days [", user_cfg$baseline_days, "]: ", sep = "")
+      val <- readline()
+      if (nzchar(trimws(val))) user_cfg$baseline_days <- as.integer(trimws(val))
+
+      cat("  Gap Days [", user_cfg$gap_days, "]: ", sep = "")
+      val <- readline()
+      if (nzchar(trimws(val))) user_cfg$gap_days <- as.integer(trimws(val))
     }
   }
 
   cat("\nUsing configuration:\n")
-  cat("  CDM Schema:       ", default_cfg$cdm_schema, "\n")
-  cat("  Reference Schema: ", default_cfg$ref_schema, "\n")
-  cat("  Work Schema:      ", default_cfg$work_schema, "\n")
-  cat("  Study Period:     ", default_cfg$study_start, " to ", default_cfg$study_end, "\n")
+  cat("  CDM Schema:       ", user_cfg$cdm_schema, "\n")
+  cat("  Reference Schema: ", user_cfg$ref_schema, "\n")
+  cat("  Work Schema:      ", user_cfg$work_schema, "\n")
+  cat("  Study Period:     ", user_cfg$study_start, " to ", user_cfg$study_end, "\n")
+  cat("  ID Period:        ", user_cfg$id_start, " to ", user_cfg$id_end, "\n")
   cat("============================================================\n\n")
 
-  return(default_cfg)
+  return(user_cfg)
 }
 
 # ============================================================
 # CONFIGURATION (merged from defaults and environment)
 # ============================================================
 cfg <- list(
- # Connection (prefer DSN if Domino provides it)
+  # Connection (prefer DSN if Domino provides it)
   dsn       = Sys.getenv("DATABRICKS_DSN", unset = ""),
   host      = Sys.getenv("DATABRICKS_HOST", unset = ""),
   http_path = Sys.getenv("DATABRICKS_HTTP_PATH", unset = ""),
@@ -164,6 +177,12 @@ cfg <- list(
 run_id <- Sys.getenv("DOMINO_RUN_ID", unset = format(Sys.time(), "%Y%m%d%H%M%S"))
 
 # ============================================================
+# CONNECTION ENVIRONMENT (fixes scope bug for reconnection)
+# ============================================================
+con_env <- new.env()
+con_env$con <- NULL
+
+# ============================================================
 # HELPER FUNCTIONS
 # ============================================================
 
@@ -184,7 +203,7 @@ log_msg <- function(...) {
 }
 
 # ============================================================
-# CONNECTION WITH RETRY
+# CONNECTION WITH RETRY (returns value, not just TRUE)
 # ============================================================
 
 connect_databricks <- function() {
@@ -212,11 +231,12 @@ db_ping <- function(con) {
   }, error = function(e) FALSE)
 }
 
+# Fixed: with_retry now returns fn() result, not just TRUE
 with_retry <- function(fn, max_retries = cfg$max_retries, base_sleep = cfg$base_sleep) {
   attempt <- 1
   repeat {
-    result <- tryCatch({ fn(); TRUE }, error = function(e) e)
-    if (isTRUE(result)) return(invisible(TRUE))
+    result <- tryCatch(fn(), error = function(e) e)
+    if (!inherits(result, "error")) return(result)
 
     if (attempt >= max_retries) stop(result)
 
@@ -233,7 +253,7 @@ sql_exec <- function(con, sql) {
 }
 
 # ============================================================
-# DB-SIDE RUN LOG
+# DB-SIDE RUN LOG (fixed TIMESTAMP literal)
 # ============================================================
 
 ensure_schema <- function(con) {
@@ -264,6 +284,7 @@ ensure_run_log <- function(con) {
   log_table
 }
 
+# Fixed: TIMESTAMP literal syntax for Databricks
 write_log_row <- function(con, log_table, step_name, status, started_at, ended_at,
                           qc_metric = NA, qc_value = NA, error_message = NA) {
   duration <- as.numeric(difftime(ended_at, started_at, units = "secs"))
@@ -274,8 +295,8 @@ write_log_row <- function(con, log_table, step_name, status, started_at, ended_a
       '{esc(run_id)}',
       '{esc(step_name)}',
       '{esc(status)}',
-      TIMESTAMP('{format(started_at, '%Y-%m-%d %H:%M:%S')}'),
-      TIMESTAMP('{format(ended_at, '%Y-%m-%d %H:%M:%S')}'),
+      TIMESTAMP '{format(started_at, '%Y-%m-%d %H:%M:%S')}',
+      TIMESTAMP '{format(ended_at, '%Y-%m-%d %H:%M:%S')}',
       {duration},
       {if (is.na(qc_metric)) 'NULL' else paste0(\"'\", esc(qc_metric), \"'\")},
       {if (is.na(qc_value)) 'NULL' else paste0(\"'\", esc(qc_value), \"'\")},
@@ -285,43 +306,48 @@ write_log_row <- function(con, log_table, step_name, status, started_at, ended_a
 }
 
 # ============================================================
-# STEP RUNNER
+# STEP RUNNER (fixed: uses con_env for reconnection)
 # ============================================================
 
-run_step <- function(con, log_table, step_name, sql, qc_sql = NULL) {
+run_step <- function(log_table, step_name, sql, qc_sql = NULL) {
   started_at <- Sys.time()
   log_msg("STEP START: ", step_name)
 
   tryCatch({
     # Ping before heavy work (handles stale ODBC sessions)
-    if (!db_ping(con)) {
+    if (!db_ping(con_env$con)) {
       log_msg("Connection stale, reconnecting...")
-      con <<- connect_databricks()
+      try(DBI::dbDisconnect(con_env$con), silent = TRUE)
+      con_env$con <- connect_databricks()
     }
 
     # Execute main SQL
-    sql_exec(con, sql)
+    sql_exec(con_env$con, sql)
 
     # Run QC query if provided (must return small result)
     qc_metric <- NA
     qc_value <- NA
     if (!is.null(qc_sql)) {
-      qc <- DBI::dbGetQuery(con, qc_sql)
+      qc <- DBI::dbGetQuery(con_env$con, qc_sql)
       qc_metric <- colnames(qc)[1]
       qc_value <- as.character(qc[[1]][1])
       log_msg("  QC ", qc_metric, " = ", qc_value)
     }
 
     ended_at <- Sys.time()
-    write_log_row(con, log_table, step_name, "SUCCESS", started_at, ended_at,
+    write_log_row(con_env$con, log_table, step_name, "SUCCESS", started_at, ended_at,
                   qc_metric = qc_metric, qc_value = qc_value)
 
     log_msg("STEP END: ", step_name, " (", round(as.numeric(difftime(ended_at, started_at, units = "secs")), 1), "s)")
 
   }, error = function(e) {
     ended_at <- Sys.time()
-    write_log_row(con, log_table, step_name, "FAIL", started_at, ended_at,
-                  error_message = conditionMessage(e))
+    # Try to log failure (may fail if connection is bad)
+    tryCatch(
+      write_log_row(con_env$con, log_table, step_name, "FAIL", started_at, ended_at,
+                    error_message = conditionMessage(e)),
+      error = function(e2) log_msg("Could not write failure log: ", conditionMessage(e2))
+    )
     log_msg("STEP FAILED: ", step_name, " - ", conditionMessage(e))
     stop(e)
   })
@@ -331,6 +357,9 @@ run_step <- function(con, log_table, step_name, sql, qc_sql = NULL) {
 # PIPELINE STEPS
 # Each step is idempotent (CREATE OR REPLACE)
 # Each criterion is an independent flag per StudyPop spec
+# Fixed: Split MM dx events for baseline (study period) vs qualification (ID period)
+# Fixed: Added FU_DAYS_CE, CE_3mosf
+# Fixed: Non-diagnostic claim NULL PROC_CD edge case
 # ============================================================
 
 build_steps <- function() {
@@ -411,7 +440,9 @@ build_steps <- function() {
 
     # ----------------------------------------------------------
     # PHASE 2: BUILD MM DIAGNOSIS EVENTS
-    # Filter early by ID period (per DataPrep spec)
+    # FIXED: Build two tables:
+    #   - mm_dx_events_all: full study period (for baseline flags)
+    #   - mm_dx_events_id:  ID period only (for index qualification)
     # ----------------------------------------------------------
     list(
       name = "07_med_claim_header",
@@ -425,10 +456,11 @@ build_steps <- function() {
       qc = glue("SELECT count(*) AS n_claims FROM {work('med_claim_header')}")
     ),
 
+    # All MM dx events in study period (for baseline lookback)
     list(
-      name = "08_mm_dx_events",
+      name = "08a_mm_dx_events_all",
       sql = glue("
-        CREATE OR REPLACE TABLE {work('mm_dx_events')} AS
+        CREATE OR REPLACE TABLE {work('mm_dx_events_all')} AS
         SELECT /*+ BROADCAST(c) */
           d.PATID,
           d.CLMID,
@@ -444,22 +476,31 @@ build_steps <- function() {
         INNER JOIN {work('mm_dx_codes')} c
           ON upper(regexp_replace(d.DIAG, '\\\\.', '')) = c.dx
           AND (CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END) = c.icd_family
-        WHERE cast(d.FST_DT as date) BETWEEN date('{cfg$id_start}') AND date('{cfg$id_end}')
+        WHERE cast(d.FST_DT as date) BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
       "),
-      qc = glue("SELECT count(DISTINCT PATID) AS n_patients FROM {work('mm_dx_events')}")
+      qc = glue("SELECT count(DISTINCT PATID) AS n_patients FROM {work('mm_dx_events_all')}")
+    ),
+
+    # MM dx events in ID period only (for index date qualification)
+    list(
+      name = "08b_mm_dx_events_id",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('mm_dx_events_id')} AS
+        SELECT * FROM {work('mm_dx_events_all')}
+        WHERE svc_dt BETWEEN date('{cfg$id_start}') AND date('{cfg$id_end}')
+      "),
+      qc = glue("SELECT count(DISTINCT PATID) AS n_patients FROM {work('mm_dx_events_id')}")
     ),
 
     # ----------------------------------------------------------
-    # PHASE 3: INDEX DATE DERIVATION
-    # Build inpatient + outpatient separately, UNION, then aggregate
-    # (Avoids FULL OUTER JOIN on large populations)
+    # PHASE 3: INDEX DATE DERIVATION (uses ID period events only)
     # ----------------------------------------------------------
     list(
       name = "09_mm_inpatient_index",
       sql = glue("
         CREATE OR REPLACE TABLE {work('mm_inpatient_index')} AS
         SELECT PATID, 1 AS inpt1, min(svc_dt) AS idx_inpt
-        FROM {work('mm_dx_events')}
+        FROM {work('mm_dx_events_id')}
         WHERE inpatient_flg = 1
         GROUP BY PATID
       "),
@@ -472,7 +513,7 @@ build_steps <- function() {
         CREATE OR REPLACE TABLE {work('mm_outpatient_pairs')} AS
         WITH distinct_dates AS (
           SELECT DISTINCT PATID, svc_dt
-          FROM {work('mm_dx_events')}
+          FROM {work('mm_dx_events_id')}
           WHERE outpatient_flg = 1
         ),
         with_next AS (
@@ -553,7 +594,7 @@ build_steps <- function() {
     ),
 
     # ----------------------------------------------------------
-    # PHASE 4: ENROLLMENT SPANS WITH GAP LOGIC (build once, reuse)
+    # PHASE 4: ENROLLMENT SPANS WITH GAP LOGIC
     # Per DataPrep: allowable gaps <= 30 days
     # ----------------------------------------------------------
     list(
@@ -590,7 +631,8 @@ build_steps <- function() {
     ),
 
     # ----------------------------------------------------------
-    # PHASE 5: CE FLAGS (baseline 6 months, follow-up 1 day)
+    # PHASE 5: CE FLAGS (baseline 6 months, follow-up, 3-month sensitivity)
+    # FIXED: Added CE_3mosf and FU_DAYS_CE per spec
     # ----------------------------------------------------------
     list(
       name = "14_ce_flags",
@@ -608,7 +650,10 @@ build_steps <- function() {
                  CASE WHEN s.cov_start <= i.baseline_start AND s.cov_end >= i.baseline_end
                       THEN 1 ELSE 0 END AS covers_baseline,
                  CASE WHEN s.cov_start <= i.index_date AND s.cov_end >= i.index_date
-                      THEN 1 ELSE 0 END AS covers_index
+                      THEN 1 ELSE 0 END AS covers_index,
+                 -- 3-month (91 days) follow-up sensitivity flag
+                 CASE WHEN s.cov_start <= i.index_date AND s.cov_end >= date_add(i.index_date, 91)
+                      THEN 1 ELSE 0 END AS covers_3mos
           FROM idx i
           LEFT JOIN {work('enrollment_spans')} s ON i.PATID = s.PATID
         )
@@ -616,6 +661,7 @@ build_steps <- function() {
           PATID, index_date, baseline_start, baseline_end,
           max(covers_baseline) AS CE_b,
           max(covers_index) AS CE_f,
+          max(covers_3mos) AS CE_3mosf,
           max(CASE WHEN covers_index = 1 THEN cov_end END) AS ENDDATE_CE
         FROM joined
         GROUP BY PATID, index_date, baseline_start, baseline_end
@@ -643,9 +689,8 @@ build_steps <- function() {
     ),
 
     # ----------------------------------------------------------
-    # PHASE 7: NON-DIAGNOSTIC CLAIM FLAG (build once, reuse)
-    # Per DataPrep: claim is non-diagnostic if MM dx present AND
-    # at least one service line is NOT a diagnostic procedure
+    # PHASE 7: NON-DIAGNOSTIC CLAIM FLAG
+    # FIXED: Handle NULL PROC_CD properly (only count explicit non-diagnostic lines)
     # ----------------------------------------------------------
     list(
       name = "16_claim_nondiagnostic",
@@ -659,11 +704,17 @@ build_steps <- function() {
         marked AS (
           SELECT /*+ BROADCAST(d) */
             l.PATID, l.CLMID,
-            CASE WHEN d.proc_cd IS NOT NULL THEN 1 ELSE 0 END AS is_diag_line
+            -- FIXED: Only mark as diagnostic if we have a proc_cd AND it's in diagnostic list
+            CASE
+              WHEN l.proc_cd IS NULL THEN NULL  -- Unknown, don't count
+              WHEN d.proc_cd IS NOT NULL THEN 1 -- Is diagnostic procedure
+              ELSE 0                            -- Has proc_cd but not diagnostic
+            END AS is_diag_line
           FROM lines l
           LEFT JOIN {work('diag_proc_codes')} d ON l.proc_cd = d.proc_cd
         )
         SELECT PATID, CLMID,
+               -- FIXED: Only count as non-diagnostic if we have explicit 0 (not NULL)
                max(CASE WHEN is_diag_line = 0 THEN 1 ELSE 0 END) AS has_nondiag_line
         FROM marked
         GROUP BY PATID, CLMID
@@ -671,6 +722,7 @@ build_steps <- function() {
       qc = glue("SELECT sum(has_nondiag_line) AS n_nondiag_claims FROM {work('claim_nondiagnostic')}")
     ),
 
+    # FIXED: Use mm_dx_events_all for baseline lookback (not just ID period)
     list(
       name = "17_mm_baseline_nondx_flag",
       sql = glue("
@@ -682,7 +734,7 @@ build_steps <- function() {
                     AND n.has_nondiag_line = 1
                THEN 1 ELSE 0 END) AS MM_BASELINE_NONDX
         FROM {work('mm_qualifying')} q
-        LEFT JOIN {work('mm_dx_events')} e ON q.PATID = e.PATID
+        LEFT JOIN {work('mm_dx_events_all')} e ON q.PATID = e.PATID
         LEFT JOIN {work('claim_nondiagnostic')} n ON e.PATID = n.PATID AND e.CLMID = n.CLMID
         GROUP BY q.PATID
       "),
@@ -861,6 +913,7 @@ build_steps <- function() {
 
     # ----------------------------------------------------------
     # PHASE 10: FINAL ASSEMBLY - ELIG_COH with all flags
+    # FIXED: Added FU_DAYS_CE, CE_3mosf per spec
     # ----------------------------------------------------------
     list(
       name = "23_ELIG_COH_ALLFLAGS",
@@ -886,9 +939,14 @@ build_steps <- function() {
           ce.baseline_end,
           coalesce(ce.CE_b, 0) AS CE_b,
           coalesce(ce.CE_f, 0) AS CE_f,
+          coalesce(ce.CE_3mosf, 0) AS CE_3mosf,
           ce.ENDDATE_CE,
-          date('{cfg$study_end}') AS ENDDATE,
+          -- FIXED: ENDDATE is min of study_end and coverage end
+          least(date('{cfg$study_end}'), coalesce(ce.ENDDATE_CE, date('{cfg$study_end}'))) AS ENDDATE,
+          -- FU_DAYS uses study end
           datediff(date('{cfg$study_end}'), q.index_date) + 1 AS FU_DAYS,
+          -- FIXED: FU_DAYS_CE uses the coverage-aware end date
+          datediff(least(date('{cfg$study_end}'), coalesce(ce.ENDDATE_CE, date('{cfg$study_end}'))), q.index_date) + 1 AS FU_DAYS_CE,
 
           -- Therapy flags
           coalesce(th.MM_THERAPY_BASELINE, 0) AS MM_bl_agents,
@@ -933,14 +991,14 @@ build_steps <- function() {
 }
 
 # ============================================================
-# MAIN EXECUTION
+# MAIN EXECUTION (fixed: uses con_env for connection)
 # ============================================================
 
 main <- function() {
   # Prompt user for options at start
   user_cfg <- prompt_user_options()
 
-  # Update cfg with user selections
+  # Update cfg with user selections (env vars take precedence)
   cfg$cdm_schema <<- Sys.getenv("OPTUM_CDM_SCHEMA", unset = user_cfg$cdm_schema)
   cfg$ref_schema <<- Sys.getenv("PROJECT_REF_SCHEMA", unset = user_cfg$ref_schema)
   cfg$work_schema <<- Sys.getenv("PROJECT_WORK_SCHEMA", unset = user_cfg$work_schema)
@@ -955,20 +1013,20 @@ main <- function() {
   log_msg("ATTRITION COHORT PIPELINE - run_id: ", run_id)
   log_msg("=" , strrep("=", 59))
 
-  # Connect with retry
-  con <- NULL
-  with_retry(function() {
-    con <<- connect_databricks()
+  # Connect with retry (now returns connection properly)
+  con_env$con <- with_retry(function() {
+    conn <- connect_databricks()
     log_msg("Connected to Databricks")
+    conn
   })
 
   on.exit({
-    if (!is.null(con)) try(DBI::dbDisconnect(con), silent = TRUE)
+    if (!is.null(con_env$con)) try(DBI::dbDisconnect(con_env$con), silent = TRUE)
   }, add = TRUE)
 
   # Ensure schema and run log table exist
-  ensure_schema(con)
-  log_table <- ensure_run_log(con)
+  ensure_schema(con_env$con)
+  log_table <- ensure_run_log(con_env$con)
   log_msg("Run log table: ", log_table)
 
   # Build and run steps
@@ -977,7 +1035,7 @@ main <- function() {
 
   for (s in steps) {
     with_retry(function() {
-      run_step(con, log_table, s$name, s$sql, qc_sql = s$qc)
+      run_step(log_table, s$name, s$sql, qc_sql = s$qc)
     })
   }
 
@@ -985,7 +1043,7 @@ main <- function() {
   log_msg("=" , strrep("=", 59))
   log_msg("PIPELINE COMPLETE")
 
-  final_counts <- DBI::dbGetQuery(con, glue("
+  final_counts <- DBI::dbGetQuery(con_env$con, glue("
     SELECT
       (SELECT count(*) FROM {work('mm_qualifying')}) AS qualifying,
       (SELECT count(*) FROM {work('ELIG_COH_ALLFLAGS')}) AS all_flags,
