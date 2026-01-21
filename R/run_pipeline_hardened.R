@@ -127,11 +127,6 @@ prompt_user_options <- function() {
       if (nzchar(trimws(val))) user_cfg$gap_days <- as.integer(trimws(val))
     }
 
-    # Always ask about local-only mode (common permission issue)
-    cat("\nRun in LOCAL-ONLY mode? (Uses TEMPORARY VIEWs, no persistent tables created)\n")
-    cat("Use this if you get 'INSUFFICIENT_PERMISSIONS' or 'TABLE_NOT_FOUND' errors. [Y/n]: ")
-    response <- readline()
-    user_cfg$local_only <- !tolower(trimws(response)) %in% c("n", "no")
   }
 
   cat("\nUsing configuration:\n")
