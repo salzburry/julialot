@@ -38,7 +38,7 @@ db:
 # ============================================================================
 tables:
   # Source CDM tables
-  tbl_member_elig: "member_continuous_enrollment"
+  tbl_member_elig: "member_cont_enrollment"
   tbl_medical: "medical"
   tbl_med_diag: "medical_diagnosis"
   tbl_rx: "rx"

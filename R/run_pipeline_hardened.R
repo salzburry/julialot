@@ -40,7 +40,7 @@ default_cfg <- list(
   work_schema = Sys.getenv("DOMINO_USER_NAME", unset = "gsk_mm_lot_work"),
 
   # Source tables (Optum Clinformatics Data Mart v9.0)
-  tbl_member_elig = "member_continuous_enrollment",
+  tbl_member_elig = "member_cont_enrollment",
   tbl_medical     = "medical",
   tbl_med_diag    = "med_diagnosis",
   tbl_rx          = "rx",
@@ -162,7 +162,7 @@ cfg <- list(
   work_schema = Sys.getenv("PROJECT_WORK_SCHEMA", unset = Sys.getenv("DOMINO_USER_NAME", unset = "gsk_mm_lot_work")),
 
   # Source tables (Optum Clinformatics)
-  tbl_member_elig = "member_continuous_enrollment",
+  tbl_member_elig = "member_cont_enrollment",
   tbl_medical     = "medical",
   tbl_med_diag    = "med_diagnosis",
   tbl_rx          = "rx",
@@ -942,7 +942,7 @@ build_steps <- function() {
     list(
       name = "13_enrollment_spans",
       description = "Building enrollment spans (30-day gap allowed)",
-      source_tables = c("member_continuous_enrollment"),
+      source_tables = c("member_cont_enrollment"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('enrollment_spans')} AS
         WITH base AS (
@@ -982,7 +982,7 @@ build_steps <- function() {
     list(
       name = "13b_enrollment_spans_strict",
       description = "Building strict enrollment spans (no gaps)",
-      source_tables = c("member_continuous_enrollment"),
+      source_tables = c("member_cont_enrollment"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('enrollment_spans_strict')} AS
         WITH base AS (
@@ -1079,7 +1079,7 @@ build_steps <- function() {
     list(
       name = "15_member_demo",
       description = "Extracting patient demographics (age/gender)",
-      source_tables = c("member_continuous_enrollment"),
+      source_tables = c("member_cont_enrollment"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('member_demo')} AS
         WITH ranked AS (
@@ -1102,7 +1102,7 @@ build_steps <- function() {
     list(
       name = "15b_death_dt",
       description = "Deriving death dates (month-level -> 15th)",
-      source_tables = c("member_continuous_enrollment"),
+      source_tables = c("member_cont_enrollment"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('death_dt')} AS
         WITH raw_death AS (
