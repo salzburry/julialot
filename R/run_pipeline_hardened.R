@@ -784,7 +784,10 @@ build_steps <- function() {
       source_tables = c("medical"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('med_claim_header')} AS
-        SELECT PATID, CLMID, max(CONF_ID) AS CONF_ID
+        SELECT PATID, CLMID,
+               max(CONF_ID) AS CONF_ID,
+               max(POS) AS POS,
+               max(TOS_CD) AS TOS_CD
         FROM {cdm_src(cfg$tbl_medical)}
         WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         GROUP BY PATID, CLMID
@@ -806,8 +809,15 @@ build_steps <- function() {
           upper(regexp_replace(d.DIAG, '\\\\.', '')) AS diag,
           CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
           h.CONF_ID,
-          CASE WHEN h.CONF_ID IS NOT NULL THEN 1 ELSE 0 END AS inpatient_flg,
-          CASE WHEN h.CONF_ID IS NULL THEN 1 ELSE 0 END AS outpatient_flg
+          -- Inpatient per Optum business rules: CONF_ID not null, OR POS in (21,51,61), OR TOS_CD indicates facility inpatient
+          CASE WHEN h.CONF_ID IS NOT NULL
+                 OR CAST(h.POS AS STRING) IN ('21', '51', '61')
+                 OR upper(h.TOS_CD) IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF')
+               THEN 1 ELSE 0 END AS inpatient_flg,
+          CASE WHEN h.CONF_ID IS NULL
+                AND (CAST(h.POS AS STRING) NOT IN ('21', '51', '61') OR h.POS IS NULL)
+                AND (upper(h.TOS_CD) NOT IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF') OR h.TOS_CD IS NULL)
+               THEN 1 ELSE 0 END AS outpatient_flg
         FROM {cdm_src(cfg$tbl_med_diag)} d
         INNER JOIN {work('med_claim_header')} h
           ON d.PATID = h.PATID AND d.CLMID = h.CLMID
