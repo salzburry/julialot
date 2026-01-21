@@ -237,66 +237,31 @@ log_msg <- function(...) {
 
 # ============================================================
 # QUARTERLY TABLE HELPERS
-# Optum data is partitioned into quarterly tables: t_<table>_YYYYqQ
-# e.g., t_medical_2017q1, t_medical_2017q2, etc.
+# Optum data is stored in cumulative quarterly tables: t_<table>_YYYYqQ
+# Each table contains ALL data up to that quarter (not just that quarter)
+# e.g., t_medical_2025q2 contains all medical data through June 2025
 # ============================================================
 
-# Generate list of quarters between two dates
-generate_quarters <- function(start_date, end_date) {
-  start <- as.Date(start_date)
-  end <- as.Date(end_date)
-
-  start_year <- as.integer(format(start, "%Y"))
-  start_quarter <- ceiling(as.integer(format(start, "%m")) / 3)
-  end_year <- as.integer(format(end, "%Y"))
-  end_quarter <- ceiling(as.integer(format(end, "%m")) / 3)
-
-  quarters <- c()
-  year <- start_year
-  quarter <- start_quarter
-
-  while (year < end_year || (year == end_year && quarter <= end_quarter)) {
-    quarters <- c(quarters, sprintf("%dq%d", year, quarter))
-    quarter <- quarter + 1
-    if (quarter > 4) {
-      quarter <- 1
-      year <- year + 1
-    }
-  }
-
-  quarters
+# Get the quarter suffix for a given date (returns "YYYYqQ" format)
+get_quarter_suffix <- function(end_date) {
+  dt <- as.Date(end_date)
+  year <- as.integer(format(dt, "%Y"))
+  quarter <- ceiling(as.integer(format(dt, "%m")) / 3)
+  sprintf("%dq%d", year, quarter)
 }
 
-# Generate UNION ALL query across quarterly tables
-# Returns a subquery that can be used in place of a single table
-quarterly_union <- function(base_table, start_date, end_date, schema = cfg$cdm_schema) {
-  quarters <- generate_quarters(start_date, end_date)
-
-  # Build table names with t_ prefix
-  table_names <- sapply(quarters, function(q) {
-    tbl_name <- paste0("t_", base_table, "_", q)
-    full_name(schema, tbl_name)
-  })
-
-  # Create UNION ALL across all tables, wrapping each in SELECT * FROM
-  # to handle potential schema differences
-  union_parts <- sapply(table_names, function(t) {
-    sprintf("SELECT * FROM %s", t)
-  })
-
-  # Return as a subquery
-  paste0("(\n", paste(union_parts, collapse = "\nUNION ALL\n"), "\n)")
+# Get the quarterly table name for a base table
+# e.g., "medical" with end_date "2025-06-30" -> "t_medical_2025q2"
+get_quarterly_table <- function(base_table, end_date = cfg$study_end) {
+  quarter_suffix <- get_quarter_suffix(end_date)
+  paste0("t_", base_table, "_", quarter_suffix)
 }
 
 # Get qualified name for quarterly table source
-# This handles both the quarterly union and falls back to single table
-cdm_quarterly <- function(base_table, start_date = cfg$study_start, end_date = cfg$study_end) {
-  if (isTRUE(cfg$use_quarterly_tables)) {
-    quarterly_union(base_table, start_date, end_date, cfg$cdm_schema)
-  } else {
-    # Fall back to single table
-    full_name(cfg$cdm_schema, base_table)
-  }
+# Uses the cumulative quarterly table that covers the study end date
+cdm_quarterly <- function(base_table, end_date = cfg$study_end) {
+  tbl_name <- get_quarterly_table(base_table, end_date)
+  full_name(cfg$cdm_schema, tbl_name)
 }
 
 # Wrapper to get CDM table - uses quarterly if enabled, single table otherwise
@@ -1490,7 +1455,7 @@ main <- function() {
     log_msg("MODE: LOCAL-ONLY (using TEMPORARY VIEWs)")
   }
   if (isTRUE(cfg$use_quarterly_tables)) {
-    log_msg("TABLES: Using QUARTERLY partitioned tables (t_<table>_YYYYqQ)")
+    log_msg("TABLES: Using quarterly tables (t_<table>_", get_quarter_suffix(cfg$study_end), ")")
   } else {
     log_msg("TABLES: Using single consolidated tables")
   }
