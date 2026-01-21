@@ -24,7 +24,99 @@ library(odbc)
 library(glue)
 
 # ============================================================
-# CONFIGURATION
+# DEFAULT CONFIGURATION
+# ============================================================
+default_cfg <- list(
+  # Schemas
+  cdm_schema  = "optum_cdm_2025q2",
+  ref_schema  = "gsk_mm_lot_ref",
+  work_schema = "gsk_mm_lot_work",
+
+ # Source tables (Optum Clinformatics Data Mart v9.0)
+  tbl_member_elig = "member_continuous_enrollment",
+  tbl_medical     = "medical",
+  tbl_med_diag    = "medical_diagnosis",
+  tbl_rx          = "rx",
+
+  # Study parameters (per DataPrep spec dated 19 Jan 2026)
+  study_start    = "2015-07-01",
+  study_end      = "2025-06-30",
+  id_start       = "2016-01-01",
+  id_end         = "2025-06-30",
+  baseline_days  = 183,
+  gap_days       = 30,
+  dx_window_30   = 30,
+  dx_window_60   = 60,
+  dx_window_90   = 90
+)
+
+# ============================================================
+# CLI PROMPT FOR USER INPUT
+# ============================================================
+prompt_user_options <- function() {
+  cat("\n")
+  cat("============================================================\n")
+  cat("  MM LOT ATTRITION COHORT PIPELINE\n")
+  cat("============================================================\n")
+  cat("\nDefault Configuration:\n")
+  cat("  CDM Schema:       ", default_cfg$cdm_schema, "\n")
+  cat("  Reference Schema: ", default_cfg$ref_schema, "\n")
+  cat("  Work Schema:      ", default_cfg$work_schema, "\n")
+  cat("  Study Period:     ", default_cfg$study_start, " to ", default_cfg$study_end, "\n")
+  cat("  ID Period:        ", default_cfg$id_start, " to ", default_cfg$id_end, "\n")
+  cat("  Baseline Days:    ", default_cfg$baseline_days, "\n")
+  cat("  Gap Days:         ", default_cfg$gap_days, "\n")
+  cat("  DX Windows:       ", default_cfg$dx_window_30, "/", default_cfg$dx_window_60, "/", default_cfg$dx_window_90, " days\n")
+  cat("\n")
+
+  if (interactive()) {
+    cat("Run with default options? [Y/n]: ")
+    response <- readline()
+    if (tolower(trimws(response)) %in% c("n", "no")) {
+      cat("\nCustomize options (press Enter to keep default):\n")
+
+      cat("  CDM Schema [", default_cfg$cdm_schema, "]: ", sep = "")
+      val <- readline()
+      if (nzchar(trimws(val))) default_cfg$cdm_schema <<- trimws(val)
+
+      cat("  Reference Schema [", default_cfg$ref_schema, "]: ", sep = "")
+      val <- readline()
+      if (nzchar(trimws(val))) default_cfg$ref_schema <<- trimws(val)
+
+      cat("  Work Schema [", default_cfg$work_schema, "]: ", sep = "")
+      val <- readline()
+      if (nzchar(trimws(val))) default_cfg$work_schema <<- trimws(val)
+
+      cat("  Study Start Date [", default_cfg$study_start, "]: ", sep = "")
+      val <- readline()
+      if (nzchar(trimws(val))) default_cfg$study_start <<- trimws(val)
+
+      cat("  Study End Date [", default_cfg$study_end, "]: ", sep = "")
+      val <- readline()
+      if (nzchar(trimws(val))) default_cfg$study_end <<- trimws(val)
+
+      cat("  Baseline Days [", default_cfg$baseline_days, "]: ", sep = "")
+      val <- readline()
+      if (nzchar(trimws(val))) default_cfg$baseline_days <<- as.integer(trimws(val))
+
+      cat("  Gap Days [", default_cfg$gap_days, "]: ", sep = "")
+      val <- readline()
+      if (nzchar(trimws(val))) default_cfg$gap_days <<- as.integer(trimws(val))
+    }
+  }
+
+  cat("\nUsing configuration:\n")
+  cat("  CDM Schema:       ", default_cfg$cdm_schema, "\n")
+  cat("  Reference Schema: ", default_cfg$ref_schema, "\n")
+  cat("  Work Schema:      ", default_cfg$work_schema, "\n")
+  cat("  Study Period:     ", default_cfg$study_start, " to ", default_cfg$study_end, "\n")
+  cat("============================================================\n\n")
+
+  return(default_cfg)
+}
+
+# ============================================================
+# CONFIGURATION (merged from defaults and environment)
 # ============================================================
 cfg <- list(
  # Connection (prefer DSN if Domino provides it)
@@ -845,6 +937,20 @@ build_steps <- function() {
 # ============================================================
 
 main <- function() {
+  # Prompt user for options at start
+  user_cfg <- prompt_user_options()
+
+  # Update cfg with user selections
+  cfg$cdm_schema <<- Sys.getenv("OPTUM_CDM_SCHEMA", unset = user_cfg$cdm_schema)
+  cfg$ref_schema <<- Sys.getenv("PROJECT_REF_SCHEMA", unset = user_cfg$ref_schema)
+  cfg$work_schema <<- Sys.getenv("PROJECT_WORK_SCHEMA", unset = user_cfg$work_schema)
+  cfg$study_start <<- user_cfg$study_start
+  cfg$study_end <<- user_cfg$study_end
+  cfg$id_start <<- user_cfg$id_start
+  cfg$id_end <<- user_cfg$id_end
+  cfg$baseline_days <<- user_cfg$baseline_days
+  cfg$gap_days <<- user_cfg$gap_days
+
   log_msg("=" , strrep("=", 59))
   log_msg("ATTRITION COHORT PIPELINE - run_id: ", run_id)
   log_msg("=" , strrep("=", 59))
