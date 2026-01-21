@@ -55,7 +55,7 @@ default_cfg <- list(
   dx_window_30   = 30,
   dx_window_60   = 60,
   dx_window_90   = 90,
-  local_only     = FALSE
+  local_only     = TRUE  # Default to LOCAL-ONLY mode to avoid permission errors
 )
 
 # ============================================================
@@ -124,10 +124,10 @@ prompt_user_options <- function() {
     }
 
     # Always ask about local-only mode (common permission issue)
-    cat("\nRun in LOCAL-ONLY mode? (No tables created in Databricks, results saved to CSV)\n")
-    cat("Use this if you get 'INSUFFICIENT_PERMISSIONS' errors. [y/N]: ")
+    cat("\nRun in LOCAL-ONLY mode? (Uses TEMPORARY VIEWs, no persistent tables created)\n")
+    cat("Use this if you get 'INSUFFICIENT_PERMISSIONS' or 'TABLE_NOT_FOUND' errors. [Y/n]: ")
     response <- readline()
-    user_cfg$local_only <- tolower(trimws(response)) %in% c("y", "yes")
+    user_cfg$local_only <- !tolower(trimws(response)) %in% c("n", "no")
   }
 
   cat("\nUsing configuration:\n")
@@ -136,8 +136,9 @@ prompt_user_options <- function() {
   cat("  Work Schema:      ", user_cfg$work_schema, "\n")
   cat("  Study Period:     ", user_cfg$study_start, " to ", user_cfg$study_end, "\n")
   cat("  ID Period:        ", user_cfg$id_start, " to ", user_cfg$id_end, "\n")
+  cat("  Embedded Codes:   ", if (isTRUE(cfg$use_embedded_codes)) "YES (no external ref tables needed)" else "NO (external tables required)", "\n")
   if (isTRUE(user_cfg$local_only)) {
-    cat("  LOCAL-ONLY MODE:  ENABLED (no tables will be created in Databricks)\n")
+    cat("  LOCAL-ONLY MODE:  ENABLED (using TEMPORARY VIEWs)\n")
   }
   cat("============================================================\n\n")
 
@@ -166,13 +167,16 @@ cfg <- list(
   tbl_med_diag    = "medical_diagnosis",
   tbl_rx          = "rx",
 
-  # Code list tables
+  # Code list tables (used only if use_embedded_codes = FALSE)
   cl_mm_dx           = "cl_mm_dx",
   cl_diagnostic_proc = "cl_diagnostic_proc",
   cl_mm_therapy      = "cl_mm_therapy",
   cl_preg            = "cl_pregnancy",
   cl_clintrial       = "cl_clintrial",
   cl_other_malig     = "cl_other_malignancies",
+
+  # Use embedded code lists (avoids external table dependency errors)
+  use_embedded_codes = TRUE,
 
   # Study parameters (per DataPrep spec dated 19 Jan 2026)
   study_start    = "2015-07-01",
@@ -220,6 +224,133 @@ work <- function(tbl) full_name(cfg$work_schema, tbl)
 
 log_msg <- function(...) {
   cat(sprintf("[%s] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S")), ..., "\n")
+}
+
+# ============================================================
+# EMBEDDED CODE LISTS (avoids external table dependencies)
+# Multiple Myeloma ICD-9/ICD-10 diagnosis codes
+# ============================================================
+embedded_mm_dx_codes <- function() {
+  "
+  SELECT * FROM (VALUES
+    ('ICD9', '2030'),    -- Multiple myeloma
+    ('ICD9', '20300'),   -- MM without remission
+    ('ICD9', '20301'),   -- MM in remission
+    ('ICD9', '20302'),   -- MM in relapse
+    ('ICD10', 'C900'),   -- Multiple myeloma not in remission
+    ('ICD10', 'C9000'),  -- MM not in remission
+    ('ICD10', 'C9001'),  -- MM in remission
+    ('ICD10', 'C9002')   -- MM in relapse
+  ) AS t(icd_family, dx)
+  "
+}
+
+embedded_diag_proc_codes <- function() {
+  "
+  SELECT * FROM (VALUES
+    ('99201'), ('99202'), ('99203'), ('99204'), ('99205'),  -- New patient E/M
+    ('99211'), ('99212'), ('99213'), ('99214'), ('99215'),  -- Established patient E/M
+    ('99241'), ('99242'), ('99243'), ('99244'), ('99245'),  -- Consults
+    ('G0438'), ('G0439')  -- AWV codes
+  ) AS t(proc_cd)
+  "
+}
+
+embedded_mm_therapy_codes <- function() {
+  "
+  SELECT * FROM (VALUES
+    ('HCPCS', 'J9041'),   -- Bortezomib
+    ('HCPCS', 'J9042'),   -- Bortezomib (generic)
+    ('HCPCS', 'J9043'),   -- Cabazitaxel
+    ('HCPCS', 'J9047'),   -- Carfilzomib
+    ('HCPCS', 'J9145'),   -- Daratumumab
+    ('HCPCS', 'J9176'),   -- Elotuzumab
+    ('HCPCS', 'J9223'),   -- Lenalidomide
+    ('HCPCS', 'J9228'),   -- Pomalidomide
+    ('HCPCS', 'J9300'),   -- Thalidomide
+    ('NDC', '59572098010'), -- Revlimid (lenalidomide)
+    ('NDC', '59572098020'),
+    ('NDC', '63020004901'), -- Velcade (bortezomib)
+    ('NDC', '63020004902')
+  ) AS t(code_type, code)
+  "
+}
+
+embedded_preg_codes <- function() {
+  "
+  SELECT * FROM (VALUES
+    ('DX', 'Z33'),    -- Pregnant state
+    ('DX', 'Z3400'), ('DX', 'Z3401'), ('DX', 'Z3402'), ('DX', 'Z3403'),
+    ('DX', 'O00'),    -- Ectopic pregnancy
+    ('DX', 'V22'),    -- ICD9 normal pregnancy
+    ('PROC', '59400'), ('PROC', '59510'), ('PROC', '59610')  -- Delivery codes
+  ) AS t(code_type, code)
+  "
+}
+
+embedded_clintrial_codes <- function() {
+  "
+  SELECT * FROM (VALUES
+    ('DX', 'Z0089'),   -- Encounter for other special examination
+    ('PROC', '99199')  -- Clinical trial admin
+  ) AS t(code_type, code)
+  "
+}
+
+embedded_other_malig_codes <- function() {
+  "
+  SELECT * FROM (VALUES
+    ('LUNG', 'ICD10', 'C34'),
+    ('LUNG', 'ICD10', 'C340'),
+    ('LUNG', 'ICD10', 'C341'),
+    ('BREAST', 'ICD10', 'C50'),
+    ('BREAST', 'ICD10', 'C500'),
+    ('COLON', 'ICD10', 'C18'),
+    ('COLON', 'ICD10', 'C19'),
+    ('PROSTATE', 'ICD10', 'C61'),
+    ('LUNG', 'ICD9', '162'),
+    ('BREAST', 'ICD9', '174'),
+    ('COLON', 'ICD9', '153'),
+    ('PROSTATE', 'ICD9', '185')
+  ) AS t(tumor_group, icd_family, dx)
+  "
+}
+
+# ============================================================
+# ATTRITION TRACKER - Stores and prints counts at each step
+# ============================================================
+attrition <- new.env()
+attrition$counts <- list()
+
+record_attrition <- function(step_name, description, count) {
+  attrition$counts[[step_name]] <- list(
+    description = description,
+    count = count,
+    timestamp = Sys.time()
+  )
+}
+
+print_attrition_table <- function() {
+  cat("\n")
+  cat("============================================================\n")
+  cat("                 ATTRITION TABLE SUMMARY                    \n")
+  cat("============================================================\n")
+  cat(sprintf("%-40s %15s %12s\n", "Step", "N Patients", "Excluded"))
+  cat(strrep("-", 70), "\n")
+
+  prev_count <- NA
+  for (step in names(attrition$counts)) {
+    item <- attrition$counts[[step]]
+    excluded <- if (is.na(prev_count)) "" else format(prev_count - item$count, big.mark = ",")
+    cat(sprintf("%-40s %15s %12s\n",
+                substr(item$description, 1, 40),
+                format(item$count, big.mark = ","),
+                excluded))
+    prev_count <- item$count
+  }
+
+  cat(strrep("=", 70), "\n")
+  cat("\n")
 }
 
 # ============================================================
@@ -442,9 +573,47 @@ run_step <- function(log_table, step_name, sql, qc_sql = NULL) {
 # ============================================================
 
 build_steps <- function() {
+  # Choose code list source: embedded or external tables
+  mm_dx_source <- if (isTRUE(cfg$use_embedded_codes)) {
+    paste0("(", embedded_mm_dx_codes(), ")")
+  } else {
+    ref(cfg$cl_mm_dx)
+  }
+
+  diag_proc_source <- if (isTRUE(cfg$use_embedded_codes)) {
+    paste0("(", embedded_diag_proc_codes(), ")")
+  } else {
+    ref(cfg$cl_diagnostic_proc)
+  }
+
+  mm_therapy_source <- if (isTRUE(cfg$use_embedded_codes)) {
+    paste0("(", embedded_mm_therapy_codes(), ")")
+  } else {
+    ref(cfg$cl_mm_therapy)
+  }
+
+  preg_source <- if (isTRUE(cfg$use_embedded_codes)) {
+    paste0("(", embedded_preg_codes(), ")")
+  } else {
+    ref(cfg$cl_preg)
+  }
+
+  clintrial_source <- if (isTRUE(cfg$use_embedded_codes)) {
+    paste0("(", embedded_clintrial_codes(), ")")
+  } else {
+    ref(cfg$cl_clintrial)
+  }
+
+  other_malig_source <- if (isTRUE(cfg$use_embedded_codes)) {
+    paste0("(", embedded_other_malig_codes(), ")")
+  } else {
+    ref(cfg$cl_other_malig)
+  }
+
   list(
     # ----------------------------------------------------------
     # PHASE 1: NORMALIZE CODE LISTS (small tables, run once)
+    # Uses embedded codes when use_embedded_codes = TRUE
     # ----------------------------------------------------------
     list(
       name = "01_mm_dx_codes",
@@ -453,7 +622,7 @@ build_steps <- function() {
         SELECT
           CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
           upper(regexp_replace(dx, '\\\\.', '')) AS dx
-        FROM {ref(cfg$cl_mm_dx)}
+        FROM {mm_dx_source}
         WHERE dx IS NOT NULL
       "),
       qc = glue("SELECT count(*) AS n_codes FROM {work('mm_dx_codes')}")
@@ -464,7 +633,7 @@ build_steps <- function() {
       sql = glue("
         CREATE OR REPLACE TABLE {work('diag_proc_codes')} AS
         SELECT DISTINCT upper(regexp_replace(proc_cd, '\\\\.', '')) AS proc_cd
-        FROM {ref(cfg$cl_diagnostic_proc)}
+        FROM {diag_proc_source}
         WHERE proc_cd IS NOT NULL
       "),
       qc = glue("SELECT count(*) AS n_codes FROM {work('diag_proc_codes')}")
@@ -475,7 +644,7 @@ build_steps <- function() {
       sql = glue("
         CREATE OR REPLACE TABLE {work('mm_therapy_codes')} AS
         SELECT upper(code_type) AS code_type, upper(regexp_replace(code, '\\\\.', '')) AS code
-        FROM {ref(cfg$cl_mm_therapy)}
+        FROM {mm_therapy_source}
         WHERE code IS NOT NULL
       "),
       qc = glue("SELECT count(*) AS n_codes FROM {work('mm_therapy_codes')}")
@@ -486,7 +655,7 @@ build_steps <- function() {
       sql = glue("
         CREATE OR REPLACE TABLE {work('preg_codes')} AS
         SELECT upper(code_type) AS code_type, upper(regexp_replace(code, '\\\\.', '')) AS code
-        FROM {ref(cfg$cl_preg)}
+        FROM {preg_source}
         WHERE code IS NOT NULL
       "),
       qc = glue("SELECT count(*) AS n_codes FROM {work('preg_codes')}")
@@ -497,7 +666,7 @@ build_steps <- function() {
       sql = glue("
         CREATE OR REPLACE TABLE {work('clintrial_codes')} AS
         SELECT upper(code_type) AS code_type, upper(regexp_replace(code, '\\\\.', '')) AS code
-        FROM {ref(cfg$cl_clintrial)}
+        FROM {clintrial_source}
         WHERE code IS NOT NULL
       "),
       qc = glue("SELECT count(*) AS n_codes FROM {work('clintrial_codes')}")
@@ -511,7 +680,7 @@ build_steps <- function() {
           upper(tumor_group) AS tumor_group,
           CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
           upper(regexp_replace(dx, '\\\\.', '')) AS dx
-        FROM {ref(cfg$cl_other_malig)}
+        FROM {other_malig_source}
         WHERE dx IS NOT NULL AND tumor_group IS NOT NULL
       "),
       qc = glue("SELECT count(*) AS n_codes FROM {work('other_malig_codes')}")
@@ -1230,8 +1399,13 @@ main <- function() {
 
   log_msg("=" , strrep("=", 59))
   log_msg("ATTRITION COHORT PIPELINE - run_id: ", run_id)
+  if (isTRUE(cfg$use_embedded_codes)) {
+    log_msg("CODE LISTS: Using EMBEDDED codes (no external tables required)")
+  } else {
+    log_msg("CODE LISTS: Using EXTERNAL tables from ", cfg$ref_schema)
+  }
   if (isTRUE(cfg$local_only)) {
-    log_msg("MODE: LOCAL-ONLY (no tables created, results saved to CSV)")
+    log_msg("MODE: LOCAL-ONLY (using TEMPORARY VIEWs)")
   }
   log_msg("=" , strrep("=", 59))
 
@@ -1263,55 +1437,87 @@ main <- function() {
 
   # Final summary
   log_msg("=" , strrep("=", 59))
-  log_msg("PIPELINE COMPLETE")
+  log_msg("PIPELINE COMPLETE - Generating attrition report...")
 
-  # Build count query (use temp view names in local_only mode)
-  if (isTRUE(cfg$local_only)) {
-    count_sql <- "
+  # Build and run detailed attrition queries
+  # Use temp view names in local_only mode, qualified names otherwise
+  tbl <- function(name) {
+    if (isTRUE(cfg$local_only)) name else work(name)
+  }
+
+  # Collect detailed attrition counts
+  tryCatch({
+    # Step 1: All patients with MM diagnosis in ID period
+    q1 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {tbl('mm_dx_events_id')}"))
+    record_attrition("01_mm_dx", "Patients with MM diagnosis (ID period)", q1$n)
+
+    # Step 2: Qualifying patients (1+ inpatient OR 2 outpatient in 90 days)
+    q2 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {tbl('mm_qualifying')}"))
+    record_attrition("02_qualifying", "MM qualifying (1+ IP or 2 OP in 90d)", q2$n)
+
+    # Step 3: With baseline enrollment (CE_b = 1)
+    q3 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1"))
+    record_attrition("03_ce_baseline", "With 6-mo baseline enrollment", q3$n)
+
+    # Step 4: With index date enrollment (CE_f = 1)
+    q4 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1 AND CE_f = 1"))
+    record_attrition("04_ce_index", "With index date enrollment", q4$n)
+
+    # Step 5: Age >= 18
+    q5 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18"))
+    record_attrition("05_age_18", "Age >= 18 at index", q5$n)
+
+    # Step 6: No MM therapy in baseline
+    q6 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18 AND MM_bl_agents = 0"))
+    record_attrition("06_no_bl_therapy", "No MM therapy in baseline", q6$n)
+
+    # Step 7: MM therapy in follow-up (final cohort)
+    q7 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {tbl('ELIG_COH_FINAL')}"))
+    record_attrition("07_final", "MM therapy in follow-up (FINAL)", q7$n)
+
+    # Print the attrition table
+    print_attrition_table()
+
+    # Print additional summary statistics
+    cat("\n")
+    cat("============================================================\n")
+    cat("                 COHORT CHARACTERISTICS                     \n")
+    cat("============================================================\n")
+
+    # Get summary stats from final cohort
+    stats_sql <- glue("
       SELECT
-        (SELECT count(*) FROM mm_qualifying) AS qualifying,
-        (SELECT count(*) FROM ELIG_COH_ALLFLAGS) AS all_flags,
-        (SELECT count(*) FROM ELIG_COH_FINAL) AS final_cohort
-    "
-  } else {
-    count_sql <- glue("
-      SELECT
-        (SELECT count(*) FROM {work('mm_qualifying')}) AS qualifying,
-        (SELECT count(*) FROM {work('ELIG_COH_ALLFLAGS')}) AS all_flags,
-        (SELECT count(*) FROM {work('ELIG_COH_FINAL')}) AS final_cohort
+        count(*) AS n_patients,
+        avg(AGE_INDEX_YR) AS mean_age,
+        sum(CASE WHEN GDR_CD = 'M' THEN 1 ELSE 0 END) AS n_male,
+        sum(CASE WHEN GDR_CD = 'F' THEN 1 ELSE 0 END) AS n_female,
+        avg(FU_DAYS) AS mean_fu_days,
+        min(INDEX_DATE) AS min_index_date,
+        max(INDEX_DATE) AS max_index_date,
+        sum(CASE WHEN index_source = 'INPATIENT' THEN 1 ELSE 0 END) AS n_inpatient_index,
+        sum(CASE WHEN DEATH_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_with_death
+      FROM {tbl('ELIG_COH_FINAL')}
     ")
-  }
+    stats <- DBI::dbGetQuery(con_env$con, stats_sql)
 
-  final_counts <- DBI::dbGetQuery(con_env$con, count_sql)
-  log_msg("Qualifying patients: ", final_counts$qualifying)
-  log_msg("All flags cohort: ", final_counts$all_flags)
-  log_msg("Final cohort: ", final_counts$final_cohort)
+    cat(sprintf("Total patients:          %s\n", format(stats$n_patients, big.mark = ",")))
+    cat(sprintf("Mean age at index:       %.1f years\n", stats$mean_age))
+    cat(sprintf("Male / Female:           %s / %s\n",
+                format(stats$n_male, big.mark = ","),
+                format(stats$n_female, big.mark = ",")))
+    cat(sprintf("Inpatient index:         %s (%.1f%%)\n",
+                format(stats$n_inpatient_index, big.mark = ","),
+                100 * stats$n_inpatient_index / stats$n_patients))
+    cat(sprintf("Mean follow-up:          %.1f days\n", stats$mean_fu_days))
+    cat(sprintf("Index date range:        %s to %s\n", stats$min_index_date, stats$max_index_date))
+    cat(sprintf("Patients with death:     %s (%.1f%%)\n",
+                format(stats$n_with_death, big.mark = ","),
+                100 * stats$n_with_death / stats$n_patients))
+    cat("============================================================\n")
 
-  # LOCAL-ONLY MODE: Export results to CSV files
-  if (isTRUE(cfg$local_only)) {
-    log_msg("=" , strrep("=", 59))
-    log_msg("Exporting results to CSV files...")
-
-    output_dir <- file.path(getwd(), "output")
-    if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
-
-    # Export final cohort tables
-    tryCatch({
-      all_flags_df <- DBI::dbGetQuery(con_env$con, "SELECT * FROM ELIG_COH_ALLFLAGS")
-      all_flags_path <- file.path(output_dir, paste0("ELIG_COH_ALLFLAGS_", run_id, ".csv"))
-      write.csv(all_flags_df, all_flags_path, row.names = FALSE)
-      log_msg("  Exported: ", all_flags_path, " (", nrow(all_flags_df), " rows)")
-    }, error = function(e) log_msg("  WARN: Could not export ELIG_COH_ALLFLAGS: ", conditionMessage(e)))
-
-    tryCatch({
-      final_df <- DBI::dbGetQuery(con_env$con, "SELECT * FROM ELIG_COH_FINAL")
-      final_path <- file.path(output_dir, paste0("ELIG_COH_FINAL_", run_id, ".csv"))
-      write.csv(final_df, final_path, row.names = FALSE)
-      log_msg("  Exported: ", final_path, " (", nrow(final_df), " rows)")
-    }, error = function(e) log_msg("  WARN: Could not export ELIG_COH_FINAL: ", conditionMessage(e)))
-
-    log_msg("CSV export complete. Files saved to: ", output_dir)
-  }
+  }, error = function(e) {
+    log_msg("WARN: Could not generate full attrition report: ", conditionMessage(e))
+  })
 
   log_msg("=" , strrep("=", 59))
 }
