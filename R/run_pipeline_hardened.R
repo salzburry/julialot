@@ -44,6 +44,7 @@ default_cfg <- list(
   tbl_medical     = "medical",
   tbl_med_diag    = "med_diagnosis",
   tbl_rx          = "rx",
+  tbl_dod         = "dod",
 
   # Quarterly table pattern (Optum tables are partitioned as t_<table>_YYYYqQ)
   # Set to TRUE if your tables are quarterly-partitioned (e.g., t_medical_2017q1)
@@ -166,6 +167,7 @@ cfg <- list(
   tbl_medical     = "medical",
   tbl_med_diag    = "med_diagnosis",
   tbl_rx          = "rx",
+  tbl_dod         = "dod",
 
   # Quarterly table pattern (Optum tables are partitioned as t_<table>_YYYYqQ)
   # Set to TRUE if your tables are quarterly-partitioned (e.g., t_medical_2017q1)
@@ -1102,39 +1104,36 @@ build_steps <- function() {
     list(
       name = "15b_death_dt",
       description = "Deriving death dates (month-level -> 15th)",
-      source_tables = c("member_cont_enrollment"),
+      source_tables = c("dod"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('death_dt')} AS
         WITH raw_death AS (
           SELECT
             PATID,
-            -- Optum death fields: DEATH_YR (yyyy), DEATH_MO (mm), DEATH_DY (dd)
-            -- If day is missing (NULL or 0), use 15; if month is missing, use July (7)
-            cast(DEATH_YR as int) AS death_yr,
-            cast(DEATH_MO as int) AS death_mo,
-            cast(DEATH_DY as int) AS death_dy
-          FROM {cdm_src(cfg$tbl_member_elig)}
-          WHERE DEATH_YR IS NOT NULL AND cast(DEATH_YR as int) > 0
+            -- Optum DOD table: YMDOD is varchar(6) in YYYYMM format
+            -- Extract year and month from YMDOD
+            cast(SUBSTR(YMDOD, 1, 4) as int) AS death_yr,
+            cast(SUBSTR(YMDOD, 5, 2) as int) AS death_mo
+          FROM {cdm_src(cfg$tbl_dod)}
+          WHERE YMDOD IS NOT NULL AND LENGTH(TRIM(YMDOD)) >= 4
         ),
         -- Take most recent non-null death record per patient
         ranked AS (
           SELECT *,
-                 row_number() OVER (PARTITION BY PATID ORDER BY death_yr DESC, death_mo DESC NULLS LAST, death_dy DESC NULLS LAST) AS rn
+                 row_number() OVER (PARTITION BY PATID ORDER BY death_yr DESC, death_mo DESC NULLS LAST) AS rn
           FROM raw_death
         ),
         best AS (
-          SELECT PATID, death_yr, death_mo, death_dy FROM ranked WHERE rn = 1
+          SELECT PATID, death_yr, death_mo FROM ranked WHERE rn = 1
         )
         SELECT
           PATID,
-          -- Per StudyPop: generalize to 15th if only month-level, July 15 if only year-level
+          -- Per StudyPop: generalize to 15th for month-level data, July 15 if only year-level
           CASE
             WHEN death_mo IS NULL OR death_mo = 0 THEN
               make_date(death_yr, 7, 15)  -- Year-level only -> July 15
-            WHEN death_dy IS NULL OR death_dy = 0 THEN
-              make_date(death_yr, death_mo, 15)  -- Month-level only -> 15th
             ELSE
-              make_date(death_yr, death_mo, death_dy)  -- Full date available
+              make_date(death_yr, death_mo, 15)  -- Month-level -> 15th (DOD table has no day)
           END AS DEATH_DT
         FROM best
       "),
