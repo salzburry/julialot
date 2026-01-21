@@ -54,7 +54,8 @@ default_cfg <- list(
   gap_days       = 30,
   dx_window_30   = 30,
   dx_window_60   = 60,
-  dx_window_90   = 90
+  dx_window_90   = 90,
+  local_only     = FALSE
 )
 
 # ============================================================
@@ -121,6 +122,12 @@ prompt_user_options <- function() {
       val <- readline()
       if (nzchar(trimws(val))) user_cfg$gap_days <- as.integer(trimws(val))
     }
+
+    # Always ask about local-only mode (common permission issue)
+    cat("\nRun in LOCAL-ONLY mode? (No tables created in Databricks, results saved to CSV)\n")
+    cat("Use this if you get 'INSUFFICIENT_PERMISSIONS' errors. [y/N]: ")
+    response <- readline()
+    user_cfg$local_only <- tolower(trimws(response)) %in% c("y", "yes")
   }
 
   cat("\nUsing configuration:\n")
@@ -129,6 +136,9 @@ prompt_user_options <- function() {
   cat("  Work Schema:      ", user_cfg$work_schema, "\n")
   cat("  Study Period:     ", user_cfg$study_start, " to ", user_cfg$study_end, "\n")
   cat("  ID Period:        ", user_cfg$id_start, " to ", user_cfg$id_end, "\n")
+  if (isTRUE(user_cfg$local_only)) {
+    cat("  LOCAL-ONLY MODE:  ENABLED (no tables will be created in Databricks)\n")
+  }
   cat("============================================================\n\n")
 
   return(user_cfg)
@@ -177,7 +187,11 @@ cfg <- list(
 
   # Pipeline controls
   max_retries = 4,
-  base_sleep  = 5
+  base_sleep  = 5,
+
+  # Local-only mode: skip schema/table creation, process in-memory, save to CSV
+  # Use this when you don't have CREATE permissions on the Databricks catalog
+  local_only = as.logical(Sys.getenv("LOCAL_ONLY_MODE", unset = "FALSE"))
 )
 
 run_id <- Sys.getenv("DOMINO_RUN_ID", unset = format(Sys.time(), "%Y%m%d%H%M%S"))
@@ -262,6 +276,10 @@ sql_exec <- function(con, sql) {
 # ============================================================
 
 ensure_schema <- function(con) {
+  if (isTRUE(cfg$local_only)) {
+    log_msg("LOCAL-ONLY mode: skipping schema creation")
+    return(invisible(NULL))
+  }
   schema_path <- if (nzchar(cfg$catalog)) {
     paste0(cfg$catalog, ".", cfg$work_schema)
   } else {
@@ -271,6 +289,10 @@ ensure_schema <- function(con) {
 }
 
 ensure_run_log <- function(con) {
+  if (isTRUE(cfg$local_only)) {
+    log_msg("LOCAL-ONLY mode: skipping run log table creation")
+    return(NULL)  # Return NULL to indicate no DB logging
+  }
   log_table <- work("pipeline_run_log")
   sql_exec(con, glue("
     CREATE TABLE IF NOT EXISTS {log_table} (
@@ -292,6 +314,9 @@ ensure_run_log <- function(con) {
 # Fixed: TIMESTAMP literal syntax for Databricks
 write_log_row <- function(con, log_table, step_name, status, started_at, ended_at,
                           qc_metric = NA, qc_value = NA, error_message = NA) {
+  # Skip DB logging in local_only mode
+  if (is.null(log_table)) return(invisible(NULL))
+
   duration <- as.numeric(difftime(ended_at, started_at, units = "secs"))
   esc <- function(x) gsub("'", "''", as.character(x))
 
@@ -311,12 +336,56 @@ write_log_row <- function(con, log_table, step_name, status, started_at, ended_a
 }
 
 # ============================================================
+# LOCAL-ONLY MODE SQL CONVERSION
+# Converts CREATE TABLE to TEMPORARY VIEW (no schema required)
+# ============================================================
+
+convert_sql_for_local <- function(sql) {
+  # Convert CREATE OR REPLACE TABLE schema.name to TEMPORARY VIEW name
+  # Pattern: CREATE OR REPLACE TABLE <catalog.>schema.tablename AS
+  sql <- gsub(
+    "CREATE\\s+OR\\s+REPLACE\\s+TABLE\\s+([a-zA-Z0-9_]+\\.)?([a-zA-Z0-9_]+)\\.([a-zA-Z0-9_]+)\\s+AS",
+    "CREATE OR REPLACE TEMPORARY VIEW \\3 AS",
+    sql, ignore.case = TRUE
+  )
+  # Also handle 2-part names: schema.tablename
+  sql <- gsub(
+    "CREATE\\s+OR\\s+REPLACE\\s+TABLE\\s+([a-zA-Z0-9_]+)\\.([a-zA-Z0-9_]+)\\s+AS",
+    "CREATE OR REPLACE TEMPORARY VIEW \\2 AS",
+    sql, ignore.case = TRUE
+  )
+  sql
+}
+
+convert_refs_for_local <- function(sql, work_schema, ref_schema = NULL) {
+  # Convert schema.tablename references to just tablename for temp views
+  # Work schema tables -> temp views
+  if (nzchar(work_schema)) {
+    # Handle catalog.schema.table pattern
+    sql <- gsub(
+      paste0("([a-zA-Z0-9_]+\\.)?", work_schema, "\\.([a-zA-Z0-9_]+)"),
+      "\\2", sql, ignore.case = TRUE
+    )
+  }
+  sql
+}
+
+# ============================================================
 # STEP RUNNER (fixed: uses con_env for reconnection)
 # ============================================================
 
 run_step <- function(log_table, step_name, sql, qc_sql = NULL) {
   started_at <- Sys.time()
   log_msg("STEP START: ", step_name)
+
+  # LOCAL-ONLY MODE: Convert SQL to use temporary views instead of tables
+  if (isTRUE(cfg$local_only)) {
+    sql <- convert_sql_for_local(sql)
+    sql <- convert_refs_for_local(sql, cfg$work_schema)
+    if (!is.null(qc_sql)) {
+      qc_sql <- convert_refs_for_local(qc_sql, cfg$work_schema)
+    }
+  }
 
   tryCatch({
     # Ping before heavy work (handles stale ODBC sessions)
@@ -1155,9 +1224,15 @@ main <- function() {
   cfg$id_end <<- user_cfg$id_end
   cfg$baseline_days <<- user_cfg$baseline_days
   cfg$gap_days <<- user_cfg$gap_days
+  # LOCAL-ONLY mode: env var takes precedence, then user input
+  cfg$local_only <<- as.logical(Sys.getenv("LOCAL_ONLY_MODE", unset = "FALSE")) ||
+                      isTRUE(user_cfg$local_only)
 
   log_msg("=" , strrep("=", 59))
   log_msg("ATTRITION COHORT PIPELINE - run_id: ", run_id)
+  if (isTRUE(cfg$local_only)) {
+    log_msg("MODE: LOCAL-ONLY (no tables created, results saved to CSV)")
+  }
   log_msg("=" , strrep("=", 59))
 
   # Connect with retry (now returns connection properly)
@@ -1190,15 +1265,54 @@ main <- function() {
   log_msg("=" , strrep("=", 59))
   log_msg("PIPELINE COMPLETE")
 
-  final_counts <- DBI::dbGetQuery(con_env$con, glue("
-    SELECT
-      (SELECT count(*) FROM {work('mm_qualifying')}) AS qualifying,
-      (SELECT count(*) FROM {work('ELIG_COH_ALLFLAGS')}) AS all_flags,
-      (SELECT count(*) FROM {work('ELIG_COH_FINAL')}) AS final_cohort
-  "))
+  # Build count query (use temp view names in local_only mode)
+  if (isTRUE(cfg$local_only)) {
+    count_sql <- "
+      SELECT
+        (SELECT count(*) FROM mm_qualifying) AS qualifying,
+        (SELECT count(*) FROM ELIG_COH_ALLFLAGS) AS all_flags,
+        (SELECT count(*) FROM ELIG_COH_FINAL) AS final_cohort
+    "
+  } else {
+    count_sql <- glue("
+      SELECT
+        (SELECT count(*) FROM {work('mm_qualifying')}) AS qualifying,
+        (SELECT count(*) FROM {work('ELIG_COH_ALLFLAGS')}) AS all_flags,
+        (SELECT count(*) FROM {work('ELIG_COH_FINAL')}) AS final_cohort
+    ")
+  }
+
+  final_counts <- DBI::dbGetQuery(con_env$con, count_sql)
   log_msg("Qualifying patients: ", final_counts$qualifying)
   log_msg("All flags cohort: ", final_counts$all_flags)
   log_msg("Final cohort: ", final_counts$final_cohort)
+
+  # LOCAL-ONLY MODE: Export results to CSV files
+  if (isTRUE(cfg$local_only)) {
+    log_msg("=" , strrep("=", 59))
+    log_msg("Exporting results to CSV files...")
+
+    output_dir <- file.path(getwd(), "output")
+    if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+
+    # Export final cohort tables
+    tryCatch({
+      all_flags_df <- DBI::dbGetQuery(con_env$con, "SELECT * FROM ELIG_COH_ALLFLAGS")
+      all_flags_path <- file.path(output_dir, paste0("ELIG_COH_ALLFLAGS_", run_id, ".csv"))
+      write.csv(all_flags_df, all_flags_path, row.names = FALSE)
+      log_msg("  Exported: ", all_flags_path, " (", nrow(all_flags_df), " rows)")
+    }, error = function(e) log_msg("  WARN: Could not export ELIG_COH_ALLFLAGS: ", conditionMessage(e)))
+
+    tryCatch({
+      final_df <- DBI::dbGetQuery(con_env$con, "SELECT * FROM ELIG_COH_FINAL")
+      final_path <- file.path(output_dir, paste0("ELIG_COH_FINAL_", run_id, ".csv"))
+      write.csv(final_df, final_path, row.names = FALSE)
+      log_msg("  Exported: ", final_path, " (", nrow(final_df), " rows)")
+    }, error = function(e) log_msg("  WARN: Could not export ELIG_COH_FINAL: ", conditionMessage(e)))
+
+    log_msg("CSV export complete. Files saved to: ", output_dir)
+  }
+
   log_msg("=" , strrep("=", 59))
 }
 
