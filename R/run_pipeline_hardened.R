@@ -1,0 +1,899 @@
+#!/usr/bin/env Rscript
+# ============================================================
+# GSK MM LOT - Domino (R) -> ODBC -> Databricks Pipeline
+# Pipeline-hardened runner with DB-side logging
+# ============================================================
+#
+# Key features:
+# - Automatic reconnect with exponential backoff
+# - DB-side run log (audit trail)
+# - Ping before each heavy step (handles stale ODBC sessions)
+# - Idempotent steps (CREATE OR REPLACE)
+# - QC counts after each step
+# - Independent flags per IE criterion (per StudyPop spec)
+#
+# Usage:
+#   Rscript R/run_pipeline_hardened.R
+#
+# Environment variables:
+#   DATABRICKS_DSN / DATABRICKS_HOST / DATABRICKS_TOKEN
+#   OPTUM_CDM_SCHEMA, PROJECT_WORK_SCHEMA, PROJECT_REF_SCHEMA
+
+library(DBI)
+library(odbc)
+library(glue)
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+cfg <- list(
+ # Connection (prefer DSN if Domino provides it)
+  dsn       = Sys.getenv("DATABRICKS_DSN", unset = ""),
+  host      = Sys.getenv("DATABRICKS_HOST", unset = ""),
+  http_path = Sys.getenv("DATABRICKS_HTTP_PATH", unset = ""),
+  token     = Sys.getenv("DATABRICKS_TOKEN", unset = ""),
+
+  # Schemas
+  catalog    = Sys.getenv("DATABRICKS_CATALOG", unset = ""),
+  cdm_schema = Sys.getenv("OPTUM_CDM_SCHEMA", unset = "optum_cdm_2025q2"),
+  ref_schema = Sys.getenv("PROJECT_REF_SCHEMA", unset = "gsk_mm_lot_ref"),
+  work_schema = Sys.getenv("PROJECT_WORK_SCHEMA", unset = "gsk_mm_lot_work"),
+
+  # Source tables (Optum Clinformatics)
+  tbl_member_elig = "member_continuous_enrollment",
+  tbl_medical     = "medical",
+  tbl_med_diag    = "medical_diagnosis",
+  tbl_rx          = "rx",
+
+  # Code list tables
+  cl_mm_dx           = "cl_mm_dx",
+  cl_diagnostic_proc = "cl_diagnostic_proc",
+  cl_mm_therapy      = "cl_mm_therapy",
+  cl_preg            = "cl_pregnancy",
+  cl_clintrial       = "cl_clintrial",
+  cl_other_malig     = "cl_other_malignancies",
+
+  # Study parameters (per DataPrep spec dated 19 Jan 2026)
+  study_start    = "2015-07-01",
+  study_end      = "2025-06-30",
+  id_start       = "2016-01-01",
+  id_end         = "2025-06-30",
+  baseline_days  = 183,
+  gap_days       = 30,
+  dx_window_30   = 30,
+  dx_window_60   = 60,
+  dx_window_90   = 90,
+
+  # Pipeline controls
+  max_retries = 4,
+  base_sleep  = 5
+)
+
+run_id <- Sys.getenv("DOMINO_RUN_ID", unset = format(Sys.time(), "%Y%m%d%H%M%S"))
+
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
+
+full_name <- function(schema, object) {
+  if (nzchar(cfg$catalog)) {
+    paste0(cfg$catalog, ".", schema, ".", object)
+  } else {
+    paste0(schema, ".", object)
+  }
+}
+
+cdm <- function(tbl) full_name(cfg$cdm_schema, tbl)
+ref <- function(tbl) full_name(cfg$ref_schema, tbl)
+work <- function(tbl) full_name(cfg$work_schema, tbl)
+
+log_msg <- function(...) {
+  cat(sprintf("[%s] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S")), ..., "\n")
+}
+
+# ============================================================
+# CONNECTION WITH RETRY
+# ============================================================
+
+connect_databricks <- function() {
+  if (nzchar(cfg$dsn)) {
+    DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, timeout = 120)
+  } else {
+    DBI::dbConnect(
+      odbc::odbc(),
+      Driver   = "Databricks",
+      Host     = cfg$host,
+      Port     = 443,
+      HTTPPath = cfg$http_path,
+      UID      = "token",
+      PWD      = cfg$token,
+      AuthMech = 3,
+      timeout  = 120
+    )
+  }
+}
+
+db_ping <- function(con) {
+  tryCatch({
+    DBI::dbGetQuery(con, "SELECT 1 AS ok")
+    TRUE
+  }, error = function(e) FALSE)
+}
+
+with_retry <- function(fn, max_retries = cfg$max_retries, base_sleep = cfg$base_sleep) {
+  attempt <- 1
+  repeat {
+    result <- tryCatch({ fn(); TRUE }, error = function(e) e)
+    if (isTRUE(result)) return(invisible(TRUE))
+
+    if (attempt >= max_retries) stop(result)
+
+    sleep_s <- base_sleep * (2^(attempt - 1))
+    log_msg("Retryable failure: ", conditionMessage(result))
+    log_msg("Retrying in ", sleep_s, "s (attempt ", attempt + 1, "/", max_retries, ")")
+    Sys.sleep(sleep_s)
+    attempt <- attempt + 1
+  }
+}
+
+sql_exec <- function(con, sql) {
+  DBI::dbExecute(con, sql)
+}
+
+# ============================================================
+# DB-SIDE RUN LOG
+# ============================================================
+
+ensure_schema <- function(con) {
+  schema_path <- if (nzchar(cfg$catalog)) {
+    paste0(cfg$catalog, ".", cfg$work_schema)
+  } else {
+    cfg$work_schema
+  }
+  sql_exec(con, glue("CREATE SCHEMA IF NOT EXISTS {schema_path}"))
+}
+
+ensure_run_log <- function(con) {
+  log_table <- work("pipeline_run_log")
+  sql_exec(con, glue("
+    CREATE TABLE IF NOT EXISTS {log_table} (
+      run_id STRING,
+      step_name STRING,
+      status STRING,
+      started_at TIMESTAMP,
+      ended_at TIMESTAMP,
+      duration_sec DOUBLE,
+      qc_metric STRING,
+      qc_value STRING,
+      error_message STRING
+    )
+    USING DELTA
+  "))
+  log_table
+}
+
+write_log_row <- function(con, log_table, step_name, status, started_at, ended_at,
+                          qc_metric = NA, qc_value = NA, error_message = NA) {
+  duration <- as.numeric(difftime(ended_at, started_at, units = "secs"))
+  esc <- function(x) gsub("'", "''", as.character(x))
+
+  sql_exec(con, glue("
+    INSERT INTO {log_table} VALUES (
+      '{esc(run_id)}',
+      '{esc(step_name)}',
+      '{esc(status)}',
+      TIMESTAMP('{format(started_at, '%Y-%m-%d %H:%M:%S')}'),
+      TIMESTAMP('{format(ended_at, '%Y-%m-%d %H:%M:%S')}'),
+      {duration},
+      {if (is.na(qc_metric)) 'NULL' else paste0(\"'\", esc(qc_metric), \"'\")},
+      {if (is.na(qc_value)) 'NULL' else paste0(\"'\", esc(qc_value), \"'\")},
+      {if (is.na(error_message)) 'NULL' else paste0(\"'\", esc(error_message), \"'\")}
+    )
+  "))
+}
+
+# ============================================================
+# STEP RUNNER
+# ============================================================
+
+run_step <- function(con, log_table, step_name, sql, qc_sql = NULL) {
+  started_at <- Sys.time()
+  log_msg("STEP START: ", step_name)
+
+  tryCatch({
+    # Ping before heavy work (handles stale ODBC sessions)
+    if (!db_ping(con)) {
+      log_msg("Connection stale, reconnecting...")
+      con <<- connect_databricks()
+    }
+
+    # Execute main SQL
+    sql_exec(con, sql)
+
+    # Run QC query if provided (must return small result)
+    qc_metric <- NA
+    qc_value <- NA
+    if (!is.null(qc_sql)) {
+      qc <- DBI::dbGetQuery(con, qc_sql)
+      qc_metric <- colnames(qc)[1]
+      qc_value <- as.character(qc[[1]][1])
+      log_msg("  QC ", qc_metric, " = ", qc_value)
+    }
+
+    ended_at <- Sys.time()
+    write_log_row(con, log_table, step_name, "SUCCESS", started_at, ended_at,
+                  qc_metric = qc_metric, qc_value = qc_value)
+
+    log_msg("STEP END: ", step_name, " (", round(as.numeric(difftime(ended_at, started_at, units = "secs")), 1), "s)")
+
+  }, error = function(e) {
+    ended_at <- Sys.time()
+    write_log_row(con, log_table, step_name, "FAIL", started_at, ended_at,
+                  error_message = conditionMessage(e))
+    log_msg("STEP FAILED: ", step_name, " - ", conditionMessage(e))
+    stop(e)
+  })
+}
+
+# ============================================================
+# PIPELINE STEPS
+# Each step is idempotent (CREATE OR REPLACE)
+# Each criterion is an independent flag per StudyPop spec
+# ============================================================
+
+build_steps <- function() {
+  list(
+    # ----------------------------------------------------------
+    # PHASE 1: NORMALIZE CODE LISTS (small tables, run once)
+    # ----------------------------------------------------------
+    list(
+      name = "01_mm_dx_codes",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('mm_dx_codes')} AS
+        SELECT
+          CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
+          upper(regexp_replace(dx, '\\\\.', '')) AS dx
+        FROM {ref(cfg$cl_mm_dx)}
+        WHERE dx IS NOT NULL
+      "),
+      qc = glue("SELECT count(*) AS n_codes FROM {work('mm_dx_codes')}")
+    ),
+
+    list(
+      name = "02_diag_proc_codes",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('diag_proc_codes')} AS
+        SELECT DISTINCT upper(regexp_replace(proc_cd, '\\\\.', '')) AS proc_cd
+        FROM {ref(cfg$cl_diagnostic_proc)}
+        WHERE proc_cd IS NOT NULL
+      "),
+      qc = glue("SELECT count(*) AS n_codes FROM {work('diag_proc_codes')}")
+    ),
+
+    list(
+      name = "03_mm_therapy_codes",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('mm_therapy_codes')} AS
+        SELECT upper(code_type) AS code_type, upper(regexp_replace(code, '\\\\.', '')) AS code
+        FROM {ref(cfg$cl_mm_therapy)}
+        WHERE code IS NOT NULL
+      "),
+      qc = glue("SELECT count(*) AS n_codes FROM {work('mm_therapy_codes')}")
+    ),
+
+    list(
+      name = "04_preg_codes",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('preg_codes')} AS
+        SELECT upper(code_type) AS code_type, upper(regexp_replace(code, '\\\\.', '')) AS code
+        FROM {ref(cfg$cl_preg)}
+        WHERE code IS NOT NULL
+      "),
+      qc = glue("SELECT count(*) AS n_codes FROM {work('preg_codes')}")
+    ),
+
+    list(
+      name = "05_clintrial_codes",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('clintrial_codes')} AS
+        SELECT upper(code_type) AS code_type, upper(regexp_replace(code, '\\\\.', '')) AS code
+        FROM {ref(cfg$cl_clintrial)}
+        WHERE code IS NOT NULL
+      "),
+      qc = glue("SELECT count(*) AS n_codes FROM {work('clintrial_codes')}")
+    ),
+
+    list(
+      name = "06_other_malig_codes",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('other_malig_codes')} AS
+        SELECT
+          upper(tumor_group) AS tumor_group,
+          CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
+          upper(regexp_replace(dx, '\\\\.', '')) AS dx
+        FROM {ref(cfg$cl_other_malig)}
+        WHERE dx IS NOT NULL AND tumor_group IS NOT NULL
+      "),
+      qc = glue("SELECT count(*) AS n_codes FROM {work('other_malig_codes')}")
+    ),
+
+    # ----------------------------------------------------------
+    # PHASE 2: BUILD MM DIAGNOSIS EVENTS
+    # Filter early by ID period (per DataPrep spec)
+    # ----------------------------------------------------------
+    list(
+      name = "07_med_claim_header",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('med_claim_header')} AS
+        SELECT PATID, CLMID, max(CONF_ID) AS CONF_ID
+        FROM {cdm(cfg$tbl_medical)}
+        WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
+        GROUP BY PATID, CLMID
+      "),
+      qc = glue("SELECT count(*) AS n_claims FROM {work('med_claim_header')}")
+    ),
+
+    list(
+      name = "08_mm_dx_events",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('mm_dx_events')} AS
+        SELECT /*+ BROADCAST(c) */
+          d.PATID,
+          d.CLMID,
+          cast(d.FST_DT as date) AS svc_dt,
+          upper(regexp_replace(d.DIAG, '\\\\.', '')) AS diag,
+          CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
+          h.CONF_ID,
+          CASE WHEN h.CONF_ID IS NOT NULL THEN 1 ELSE 0 END AS inpatient_flg,
+          CASE WHEN h.CONF_ID IS NULL THEN 1 ELSE 0 END AS outpatient_flg
+        FROM {cdm(cfg$tbl_med_diag)} d
+        INNER JOIN {work('med_claim_header')} h
+          ON d.PATID = h.PATID AND d.CLMID = h.CLMID
+        INNER JOIN {work('mm_dx_codes')} c
+          ON upper(regexp_replace(d.DIAG, '\\\\.', '')) = c.dx
+          AND (CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END) = c.icd_family
+        WHERE cast(d.FST_DT as date) BETWEEN date('{cfg$id_start}') AND date('{cfg$id_end}')
+      "),
+      qc = glue("SELECT count(DISTINCT PATID) AS n_patients FROM {work('mm_dx_events')}")
+    ),
+
+    # ----------------------------------------------------------
+    # PHASE 3: INDEX DATE DERIVATION
+    # Build inpatient + outpatient separately, UNION, then aggregate
+    # (Avoids FULL OUTER JOIN on large populations)
+    # ----------------------------------------------------------
+    list(
+      name = "09_mm_inpatient_index",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('mm_inpatient_index')} AS
+        SELECT PATID, 1 AS inpt1, min(svc_dt) AS idx_inpt
+        FROM {work('mm_dx_events')}
+        WHERE inpatient_flg = 1
+        GROUP BY PATID
+      "),
+      qc = glue("SELECT count(*) AS n_inpt_patients FROM {work('mm_inpatient_index')}")
+    ),
+
+    list(
+      name = "10_mm_outpatient_pairs",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('mm_outpatient_pairs')} AS
+        WITH distinct_dates AS (
+          SELECT DISTINCT PATID, svc_dt
+          FROM {work('mm_dx_events')}
+          WHERE outpatient_flg = 1
+        ),
+        with_next AS (
+          SELECT PATID, svc_dt,
+                 lead(svc_dt) OVER (PARTITION BY PATID ORDER BY svc_dt) AS next_dt
+          FROM distinct_dates
+        )
+        SELECT PATID, svc_dt AS first_dt, next_dt,
+               datediff(next_dt, svc_dt) AS diff_days
+        FROM with_next
+        WHERE next_dt IS NOT NULL
+      "),
+      qc = glue("SELECT count(*) AS n_pairs FROM {work('mm_outpatient_pairs')}")
+    ),
+
+    list(
+      name = "11_mm_outpatient_index",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('mm_outpatient_index')} AS
+        SELECT
+          PATID,
+          max(CASE WHEN diff_days <= {cfg$dx_window_90} THEN 1 ELSE 0 END) AS outpt2_90,
+          max(CASE WHEN diff_days <= {cfg$dx_window_60} THEN 1 ELSE 0 END) AS outpt2_60,
+          max(CASE WHEN diff_days <= {cfg$dx_window_30} THEN 1 ELSE 0 END) AS outpt2_30,
+          min(CASE WHEN diff_days <= {cfg$dx_window_90} THEN first_dt END) AS idx_outpt_90,
+          min(CASE WHEN diff_days <= {cfg$dx_window_60} THEN first_dt END) AS idx_outpt_60,
+          min(CASE WHEN diff_days <= {cfg$dx_window_30} THEN first_dt END) AS idx_outpt_30
+        FROM {work('mm_outpatient_pairs')}
+        GROUP BY PATID
+      "),
+      qc = glue("SELECT count(*) AS n_outpt_patients FROM {work('mm_outpatient_index')}")
+    ),
+
+    list(
+      name = "12_mm_qualifying",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('mm_qualifying')} AS
+        WITH combined AS (
+          SELECT PATID, inpt1, 0 AS outpt2_90, 0 AS outpt2_60, 0 AS outpt2_30,
+                 idx_inpt, NULL AS idx_outpt_90, NULL AS idx_outpt_60, NULL AS idx_outpt_30
+          FROM {work('mm_inpatient_index')}
+          UNION ALL
+          SELECT PATID, 0 AS inpt1, outpt2_90, outpt2_60, outpt2_30,
+                 NULL AS idx_inpt, idx_outpt_90, idx_outpt_60, idx_outpt_30
+          FROM {work('mm_outpatient_index')}
+        ),
+        agg AS (
+          SELECT
+            PATID,
+            max(inpt1) AS inpt1,
+            max(outpt2_90) AS outpt2_90,
+            max(outpt2_60) AS outpt2_60,
+            max(outpt2_30) AS outpt2_30,
+            min(idx_inpt) AS idx_inpt,
+            min(idx_outpt_90) AS idx_outpt_90,
+            min(idx_outpt_60) AS idx_outpt_60,
+            min(idx_outpt_30) AS idx_outpt_30
+          FROM combined
+          GROUP BY PATID
+        )
+        SELECT
+          PATID, inpt1, outpt2_90, outpt2_60, outpt2_30,
+          idx_inpt, idx_outpt_90, idx_outpt_60, idx_outpt_30,
+          -- Index date: earliest of inpatient or qualifying outpatient (90-day primary)
+          CASE
+            WHEN inpt1 = 1 AND idx_outpt_90 IS NULL THEN idx_inpt
+            WHEN inpt1 = 0 AND idx_outpt_90 IS NOT NULL THEN idx_outpt_90
+            WHEN inpt1 = 1 AND idx_outpt_90 IS NOT NULL THEN least(idx_inpt, idx_outpt_90)
+          END AS index_date,
+          CASE
+            WHEN inpt1 = 1 AND (idx_outpt_90 IS NULL OR idx_inpt <= idx_outpt_90) THEN 'INPATIENT'
+            WHEN idx_outpt_90 IS NOT NULL THEN 'OUTPATIENT_2IN90'
+          END AS index_source
+        FROM agg
+        WHERE inpt1 = 1 OR outpt2_90 = 1
+      "),
+      qc = glue("SELECT count(*) AS n_qualifying FROM {work('mm_qualifying')}")
+    ),
+
+    # ----------------------------------------------------------
+    # PHASE 4: ENROLLMENT SPANS WITH GAP LOGIC (build once, reuse)
+    # Per DataPrep: allowable gaps <= 30 days
+    # ----------------------------------------------------------
+    list(
+      name = "13_enrollment_spans",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('enrollment_spans')} AS
+        WITH base AS (
+          SELECT PATID, cast(ELIGEFF as date) AS elig_eff, cast(ELIGEND as date) AS elig_end
+          FROM {cdm(cfg$tbl_member_elig)}
+          WHERE ELIGEFF IS NOT NULL AND ELIGEND IS NOT NULL
+        ),
+        ordered AS (
+          SELECT *, lag(elig_end) OVER (PARTITION BY PATID ORDER BY elig_eff, elig_end) AS prev_end
+          FROM base
+        ),
+        flagged AS (
+          SELECT *,
+            CASE WHEN prev_end IS NULL THEN 1
+                 WHEN elig_eff <= date_add(prev_end, {cfg$gap_days}) THEN 0
+                 ELSE 1 END AS new_grp
+          FROM ordered
+        ),
+        grouped AS (
+          SELECT *,
+            sum(new_grp) OVER (PARTITION BY PATID ORDER BY elig_eff, elig_end
+                               ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS grp_id
+          FROM flagged
+        )
+        SELECT PATID, grp_id, min(elig_eff) AS cov_start, max(elig_end) AS cov_end
+        FROM grouped
+        GROUP BY PATID, grp_id
+      "),
+      qc = glue("SELECT count(DISTINCT PATID) AS n_patients FROM {work('enrollment_spans')}")
+    ),
+
+    # ----------------------------------------------------------
+    # PHASE 5: CE FLAGS (baseline 6 months, follow-up 1 day)
+    # ----------------------------------------------------------
+    list(
+      name = "14_ce_flags",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('ce_flags')} AS
+        WITH idx AS (
+          SELECT PATID, index_date,
+                 date_sub(index_date, {cfg$baseline_days}) AS baseline_start,
+                 date_sub(index_date, 1) AS baseline_end
+          FROM {work('mm_qualifying')}
+        ),
+        joined AS (
+          SELECT i.PATID, i.index_date, i.baseline_start, i.baseline_end,
+                 s.cov_start, s.cov_end,
+                 CASE WHEN s.cov_start <= i.baseline_start AND s.cov_end >= i.baseline_end
+                      THEN 1 ELSE 0 END AS covers_baseline,
+                 CASE WHEN s.cov_start <= i.index_date AND s.cov_end >= i.index_date
+                      THEN 1 ELSE 0 END AS covers_index
+          FROM idx i
+          LEFT JOIN {work('enrollment_spans')} s ON i.PATID = s.PATID
+        )
+        SELECT
+          PATID, index_date, baseline_start, baseline_end,
+          max(covers_baseline) AS CE_b,
+          max(covers_index) AS CE_f,
+          max(CASE WHEN covers_index = 1 THEN cov_end END) AS ENDDATE_CE
+        FROM joined
+        GROUP BY PATID, index_date, baseline_start, baseline_end
+      "),
+      qc = glue("SELECT sum(CE_b) AS n_with_baseline_ce FROM {work('ce_flags')}")
+    ),
+
+    # ----------------------------------------------------------
+    # PHASE 6: DEMOGRAPHICS
+    # ----------------------------------------------------------
+    list(
+      name = "15_member_demo",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('member_demo')} AS
+        WITH ranked AS (
+          SELECT PATID, GDR_CD, cast(YRDOB as int) AS YRDOB,
+                 row_number() OVER (PARTITION BY PATID
+                   ORDER BY CASE WHEN upper(GDR_CD) NOT IN ('U','') THEN 0 ELSE 1 END,
+                            cast(ELIGEND as date) DESC) AS rn
+          FROM {cdm(cfg$tbl_member_elig)}
+        )
+        SELECT PATID, GDR_CD, YRDOB FROM ranked WHERE rn = 1
+      "),
+      qc = glue("SELECT count(*) AS n_patients FROM {work('member_demo')}")
+    ),
+
+    # ----------------------------------------------------------
+    # PHASE 7: NON-DIAGNOSTIC CLAIM FLAG (build once, reuse)
+    # Per DataPrep: claim is non-diagnostic if MM dx present AND
+    # at least one service line is NOT a diagnostic procedure
+    # ----------------------------------------------------------
+    list(
+      name = "16_claim_nondiagnostic",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('claim_nondiagnostic')} AS
+        WITH lines AS (
+          SELECT PATID, CLMID, upper(regexp_replace(PROC_CD, '\\\\.', '')) AS proc_cd
+          FROM {cdm(cfg$tbl_medical)}
+          WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
+        ),
+        marked AS (
+          SELECT /*+ BROADCAST(d) */
+            l.PATID, l.CLMID,
+            CASE WHEN d.proc_cd IS NOT NULL THEN 1 ELSE 0 END AS is_diag_line
+          FROM lines l
+          LEFT JOIN {work('diag_proc_codes')} d ON l.proc_cd = d.proc_cd
+        )
+        SELECT PATID, CLMID,
+               max(CASE WHEN is_diag_line = 0 THEN 1 ELSE 0 END) AS has_nondiag_line
+        FROM marked
+        GROUP BY PATID, CLMID
+      "),
+      qc = glue("SELECT sum(has_nondiag_line) AS n_nondiag_claims FROM {work('claim_nondiagnostic')}")
+    ),
+
+    list(
+      name = "17_mm_baseline_nondx_flag",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('mm_baseline_nondx_flag')} AS
+        SELECT
+          q.PATID,
+          max(CASE WHEN e.svc_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
+                                     AND date_sub(q.index_date, 1)
+                    AND n.has_nondiag_line = 1
+               THEN 1 ELSE 0 END) AS MM_BASELINE_NONDX
+        FROM {work('mm_qualifying')} q
+        LEFT JOIN {work('mm_dx_events')} e ON q.PATID = e.PATID
+        LEFT JOIN {work('claim_nondiagnostic')} n ON e.PATID = n.PATID AND e.CLMID = n.CLMID
+        GROUP BY q.PATID
+      "),
+      qc = glue("SELECT sum(MM_BASELINE_NONDX) AS n_with_baseline_nondx FROM {work('mm_baseline_nondx_flag')}")
+    ),
+
+    # ----------------------------------------------------------
+    # PHASE 8: THERAPY EVENTS AND FLAGS
+    # ----------------------------------------------------------
+    list(
+      name = "18_therapy_events",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('therapy_events')} AS
+        -- Medical therapy via PROC_CD
+        SELECT /*+ BROADCAST(c) */
+          m.PATID, cast(m.FST_DT as date) AS event_dt, 'MEDICAL' AS source
+        FROM {cdm(cfg$tbl_medical)} m
+        INNER JOIN {work('mm_therapy_codes')} c
+          ON c.code_type IN ('HCPCS','CPT','PROC')
+          AND upper(regexp_replace(m.PROC_CD, '\\\\.', '')) = c.code
+        WHERE m.FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
+
+        UNION ALL
+
+        -- RX therapy via NDC
+        SELECT /*+ BROADCAST(c) */
+          r.PATID, cast(r.FILL_DT as date) AS event_dt, 'RX' AS source
+        FROM {cdm(cfg$tbl_rx)} r
+        INNER JOIN {work('mm_therapy_codes')} c
+          ON c.code_type = 'NDC'
+          AND upper(regexp_replace(r.NDC, '\\\\.', '')) = c.code
+        WHERE r.FILL_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
+      "),
+      qc = glue("SELECT count(*) AS n_therapy_events FROM {work('therapy_events')}")
+    ),
+
+    list(
+      name = "19_therapy_flags",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('therapy_flags')} AS
+        SELECT
+          q.PATID,
+          max(CASE WHEN t.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
+                                       AND date_sub(q.index_date, 1)
+               THEN 1 ELSE 0 END) AS MM_THERAPY_BASELINE,
+          max(CASE WHEN t.event_dt >= q.index_date AND t.event_dt <= date('{cfg$study_end}')
+               THEN 1 ELSE 0 END) AS MM_THERAPY_FOLLOWUP
+        FROM {work('mm_qualifying')} q
+        LEFT JOIN {work('therapy_events')} t ON q.PATID = t.PATID
+        GROUP BY q.PATID
+      "),
+      qc = glue("SELECT sum(MM_THERAPY_FOLLOWUP) AS n_with_fu_therapy FROM {work('therapy_flags')}")
+    ),
+
+    # ----------------------------------------------------------
+    # PHASE 9: EXCLUSION FLAGS (pregnancy, clinical trial, other cancer)
+    # Each is an independent flag per StudyPop spec
+    # ----------------------------------------------------------
+    list(
+      name = "20_pregnancy_flag",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('pregnancy_flag')} AS
+        WITH dx AS (
+          SELECT PATID, cast(FST_DT as date) AS event_dt, 'DX' AS code_type,
+                 upper(regexp_replace(DIAG, '\\\\.', '')) AS code
+          FROM {cdm(cfg$tbl_med_diag)}
+          WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
+        ),
+        proc AS (
+          SELECT PATID, cast(FST_DT as date) AS event_dt, 'PROC' AS code_type,
+                 upper(regexp_replace(PROC_CD, '\\\\.', '')) AS code
+          FROM {cdm(cfg$tbl_medical)}
+          WHERE PROC_CD IS NOT NULL
+            AND FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
+        ),
+        events AS (SELECT * FROM dx UNION ALL SELECT * FROM proc),
+        matched AS (
+          SELECT /*+ BROADCAST(p) */ e.PATID, e.event_dt
+          FROM events e
+          INNER JOIN {work('preg_codes')} p ON e.code_type = p.code_type AND e.code = p.code
+        )
+        SELECT
+          q.PATID,
+          max(CASE WHEN m.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
+                                       AND date('{cfg$study_end}')
+               THEN 1 ELSE 0 END) AS PREGNANT_FLAG
+        FROM {work('mm_qualifying')} q
+        LEFT JOIN matched m ON q.PATID = m.PATID
+        GROUP BY q.PATID
+      "),
+      qc = glue("SELECT sum(PREGNANT_FLAG) AS n_pregnant FROM {work('pregnancy_flag')}")
+    ),
+
+    list(
+      name = "21_clintrial_flag",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('clintrial_flag')} AS
+        WITH dx AS (
+          SELECT PATID, cast(FST_DT as date) AS event_dt, 'DX' AS code_type,
+                 upper(regexp_replace(DIAG, '\\\\.', '')) AS code
+          FROM {cdm(cfg$tbl_med_diag)}
+          WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
+        ),
+        proc AS (
+          SELECT PATID, cast(FST_DT as date) AS event_dt, 'PROC' AS code_type,
+                 upper(regexp_replace(PROC_CD, '\\\\.', '')) AS code
+          FROM {cdm(cfg$tbl_medical)}
+          WHERE PROC_CD IS NOT NULL
+            AND FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
+        ),
+        events AS (SELECT * FROM dx UNION ALL SELECT * FROM proc),
+        matched AS (
+          SELECT /*+ BROADCAST(c) */ e.PATID, e.event_dt
+          FROM events e
+          INNER JOIN {work('clintrial_codes')} c ON e.code_type = c.code_type AND e.code = c.code
+        )
+        SELECT
+          q.PATID,
+          max(CASE WHEN m.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
+                                       AND date_sub(q.index_date, 1)
+               THEN 1 ELSE 0 END) AS CLINTRIAL_BASELINE,
+          max(CASE WHEN m.event_dt >= q.index_date AND m.event_dt <= date('{cfg$study_end}')
+               THEN 1 ELSE 0 END) AS CLINTRIAL_FOLLOWUP
+        FROM {work('mm_qualifying')} q
+        LEFT JOIN matched m ON q.PATID = m.PATID
+        GROUP BY q.PATID
+      "),
+      qc = glue("SELECT sum(CLINTRIAL_BASELINE) + sum(CLINTRIAL_FOLLOWUP) AS n_clintrial FROM {work('clintrial_flag')}")
+    ),
+
+    list(
+      name = "22_other_malig_flag",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('other_malig_flag')} AS
+        WITH dx AS (
+          SELECT d.PATID, d.CLMID, cast(d.FST_DT as date) AS event_dt,
+                 upper(regexp_replace(d.DIAG, '\\\\.', '')) AS dx,
+                 CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family
+          FROM {cdm(cfg$tbl_med_diag)} d
+          WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
+        ),
+        dx_mapped AS (
+          SELECT /*+ BROADCAST(o) */ dx.PATID, dx.CLMID, dx.event_dt, o.tumor_group
+          FROM dx
+          INNER JOIN {work('other_malig_codes')} o ON dx.dx = o.dx AND dx.icd_family = o.icd_family
+        ),
+        dx_nondx AS (
+          SELECT m.PATID, m.tumor_group, m.event_dt
+          FROM dx_mapped m
+          INNER JOIN {work('claim_nondiagnostic')} n ON m.PATID = n.PATID AND m.CLMID = n.CLMID
+          WHERE n.has_nondiag_line = 1
+        ),
+        distinct_dates AS (SELECT DISTINCT PATID, tumor_group, event_dt FROM dx_nondx),
+        with_next AS (
+          SELECT PATID, tumor_group, event_dt,
+                 lead(event_dt) OVER (PARTITION BY PATID, tumor_group ORDER BY event_dt) AS next_dt
+          FROM distinct_dates
+        ),
+        pairs AS (
+          SELECT PATID, tumor_group, event_dt AS first_dt, next_dt,
+                 datediff(next_dt, event_dt) AS diff_days
+          FROM with_next WHERE next_dt IS NOT NULL
+        )
+        SELECT
+          q.PATID,
+          max(CASE WHEN p.diff_days <= 30
+                    AND p.first_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
+                                       AND date_sub(q.index_date, 1)
+               THEN 1 ELSE 0 END) AS OTHER_MALIGN_FLAG
+        FROM {work('mm_qualifying')} q
+        LEFT JOIN pairs p ON q.PATID = p.PATID
+        GROUP BY q.PATID
+      "),
+      qc = glue("SELECT sum(OTHER_MALIGN_FLAG) AS n_other_malig FROM {work('other_malig_flag')}")
+    ),
+
+    # ----------------------------------------------------------
+    # PHASE 10: FINAL ASSEMBLY - ELIG_COH with all flags
+    # ----------------------------------------------------------
+    list(
+      name = "23_ELIG_COH_ALLFLAGS",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('ELIG_COH_ALLFLAGS')} AS
+        SELECT
+          q.PATID,
+          q.index_date AS INDEX_DATE,
+          year(q.index_date) AS INDEX_YR,
+          d.GDR_CD,
+          d.YRDOB,
+          (year(q.index_date) - d.YRDOB) AS AGE_INDEX_YR,
+
+          -- Diagnosis qualification flags
+          q.inpt1,
+          q.outpt2_30,
+          q.outpt2_60,
+          q.outpt2_90,
+          q.index_source,
+
+          -- Enrollment
+          ce.baseline_start,
+          ce.baseline_end,
+          coalesce(ce.CE_b, 0) AS CE_b,
+          coalesce(ce.CE_f, 0) AS CE_f,
+          ce.ENDDATE_CE,
+          date('{cfg$study_end}') AS ENDDATE,
+          datediff(date('{cfg$study_end}'), q.index_date) + 1 AS FU_DAYS,
+
+          -- Therapy flags
+          coalesce(th.MM_THERAPY_BASELINE, 0) AS MM_bl_agents,
+          coalesce(th.MM_THERAPY_FOLLOWUP, 0) AS MM_FU_agents,
+
+          -- Smoldering/baseline MM flag
+          coalesce(mm_bl.MM_BASELINE_NONDX, 0) AS MM_baseline_diag,
+
+          -- Exclusion flags (independent per StudyPop spec)
+          coalesce(om.OTHER_MALIGN_FLAG, 0) AS OTHER_MALIGN_FLAG,
+          coalesce(preg.PREGNANT_FLAG, 0) AS PREGNANT_FLAG,
+          coalesce(ct.CLINTRIAL_BASELINE, 0) AS CLINTRIAL_BASELINE,
+          coalesce(ct.CLINTRIAL_FOLLOWUP, 0) AS CLINTRIAL_FOLLOWUP
+
+        FROM {work('mm_qualifying')} q
+        LEFT JOIN {work('ce_flags')} ce ON q.PATID = ce.PATID
+        LEFT JOIN {work('member_demo')} d ON q.PATID = d.PATID
+        LEFT JOIN {work('mm_baseline_nondx_flag')} mm_bl ON q.PATID = mm_bl.PATID
+        LEFT JOIN {work('therapy_flags')} th ON q.PATID = th.PATID
+        LEFT JOIN {work('pregnancy_flag')} preg ON q.PATID = preg.PATID
+        LEFT JOIN {work('clintrial_flag')} ct ON q.PATID = ct.PATID
+        LEFT JOIN {work('other_malig_flag')} om ON q.PATID = om.PATID
+      "),
+      qc = glue("SELECT count(*) AS n_total, count(DISTINCT PATID) AS n_patients FROM {work('ELIG_COH_ALLFLAGS')}")
+    ),
+
+    list(
+      name = "24_ELIG_COH_FINAL",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('ELIG_COH_FINAL')} AS
+        SELECT *
+        FROM {work('ELIG_COH_ALLFLAGS')}
+        WHERE AGE_INDEX_YR >= 18
+          AND CE_b = 1
+          AND CE_f = 1
+          AND MM_bl_agents = 0
+          AND MM_FU_agents = 1
+      "),
+      qc = glue("SELECT count(*) AS n_final_cohort FROM {work('ELIG_COH_FINAL')}")
+    )
+  )
+}
+
+# ============================================================
+# MAIN EXECUTION
+# ============================================================
+
+main <- function() {
+  log_msg("=" , strrep("=", 59))
+  log_msg("ATTRITION COHORT PIPELINE - run_id: ", run_id)
+  log_msg("=" , strrep("=", 59))
+
+  # Connect with retry
+  con <- NULL
+  with_retry(function() {
+    con <<- connect_databricks()
+    log_msg("Connected to Databricks")
+  })
+
+  on.exit({
+    if (!is.null(con)) try(DBI::dbDisconnect(con), silent = TRUE)
+  }, add = TRUE)
+
+  # Ensure schema and run log table exist
+  ensure_schema(con)
+  log_table <- ensure_run_log(con)
+  log_msg("Run log table: ", log_table)
+
+  # Build and run steps
+  steps <- build_steps()
+  log_msg("Running ", length(steps), " pipeline steps...")
+
+  for (s in steps) {
+    with_retry(function() {
+      run_step(con, log_table, s$name, s$sql, qc_sql = s$qc)
+    })
+  }
+
+  # Final summary
+  log_msg("=" , strrep("=", 59))
+  log_msg("PIPELINE COMPLETE")
+
+  final_counts <- DBI::dbGetQuery(con, glue("
+    SELECT
+      (SELECT count(*) FROM {work('mm_qualifying')}) AS qualifying,
+      (SELECT count(*) FROM {work('ELIG_COH_ALLFLAGS')}) AS all_flags,
+      (SELECT count(*) FROM {work('ELIG_COH_FINAL')}) AS final_cohort
+  "))
+  log_msg("Qualifying patients: ", final_counts$qualifying)
+  log_msg("All flags cohort: ", final_counts$all_flags)
+  log_msg("Final cohort: ", final_counts$final_cohort)
+  log_msg("=" , strrep("=", 59))
+}
+
+# Run if executed as script
+if (!interactive()) {
+  main()
+} else {
+  log_msg("Source loaded. Call main() to run pipeline.")
+}
