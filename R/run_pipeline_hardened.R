@@ -45,6 +45,10 @@ default_cfg <- list(
   tbl_med_diag    = "medical_diagnosis",
   tbl_rx          = "rx",
 
+  # Quarterly table pattern (Optum tables are partitioned as t_<table>_YYYYqQ)
+  # Set to TRUE if your tables are quarterly-partitioned (e.g., t_medical_2017q1)
+  use_quarterly_tables = TRUE,
+
   # Study parameters (per DataPrep spec dated 19 Jan 2026)
   study_start    = "2015-07-01",
   study_end      = "2025-06-30",
@@ -137,6 +141,7 @@ prompt_user_options <- function() {
   cat("  Study Period:     ", user_cfg$study_start, " to ", user_cfg$study_end, "\n")
   cat("  ID Period:        ", user_cfg$id_start, " to ", user_cfg$id_end, "\n")
   cat("  Embedded Codes:   ", if (isTRUE(cfg$use_embedded_codes)) "YES (no external ref tables needed)" else "NO (external tables required)", "\n")
+  cat("  Quarterly Tables: ", if (isTRUE(cfg$use_quarterly_tables)) "YES (t_<table>_YYYYqQ pattern)" else "NO (single tables)", "\n")
   if (isTRUE(user_cfg$local_only)) {
     cat("  LOCAL-ONLY MODE:  ENABLED (using TEMPORARY VIEWs)\n")
   }
@@ -166,6 +171,10 @@ cfg <- list(
   tbl_medical     = "medical",
   tbl_med_diag    = "medical_diagnosis",
   tbl_rx          = "rx",
+
+  # Quarterly table pattern (Optum tables are partitioned as t_<table>_YYYYqQ)
+  # Set to TRUE if your tables are quarterly-partitioned (e.g., t_medical_2017q1)
+  use_quarterly_tables = as.logical(Sys.getenv("USE_QUARTERLY_TABLES", unset = "TRUE")),
 
   # Code list tables (used only if use_embedded_codes = FALSE)
   cl_mm_dx           = "cl_mm_dx",
@@ -224,6 +233,79 @@ work <- function(tbl) full_name(cfg$work_schema, tbl)
 
 log_msg <- function(...) {
   cat(sprintf("[%s] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S")), ..., "\n")
+}
+
+# ============================================================
+# QUARTERLY TABLE HELPERS
+# Optum data is partitioned into quarterly tables: t_<table>_YYYYqQ
+# e.g., t_medical_2017q1, t_medical_2017q2, etc.
+# ============================================================
+
+# Generate list of quarters between two dates
+generate_quarters <- function(start_date, end_date) {
+  start <- as.Date(start_date)
+  end <- as.Date(end_date)
+
+  start_year <- as.integer(format(start, "%Y"))
+  start_quarter <- ceiling(as.integer(format(start, "%m")) / 3)
+  end_year <- as.integer(format(end, "%Y"))
+  end_quarter <- ceiling(as.integer(format(end, "%m")) / 3)
+
+  quarters <- c()
+  year <- start_year
+  quarter <- start_quarter
+
+  while (year < end_year || (year == end_year && quarter <= end_quarter)) {
+    quarters <- c(quarters, sprintf("%dq%d", year, quarter))
+    quarter <- quarter + 1
+    if (quarter > 4) {
+      quarter <- 1
+      year <- year + 1
+    }
+  }
+
+  quarters
+}
+
+# Generate UNION ALL query across quarterly tables
+# Returns a subquery that can be used in place of a single table
+quarterly_union <- function(base_table, start_date, end_date, schema = cfg$cdm_schema) {
+  quarters <- generate_quarters(start_date, end_date)
+
+  # Build table names with t_ prefix
+  table_names <- sapply(quarters, function(q) {
+    tbl_name <- paste0("t_", base_table, "_", q)
+    full_name(schema, tbl_name)
+  })
+
+  # Create UNION ALL across all tables, wrapping each in SELECT * FROM
+  # to handle potential schema differences
+  union_parts <- sapply(table_names, function(t) {
+    sprintf("SELECT * FROM %s", t)
+  })
+
+  # Return as a subquery
+  paste0("(\n", paste(union_parts, collapse = "\nUNION ALL\n"), "\n)")
+}
+
+# Get qualified name for quarterly table source
+# This handles both the quarterly union and falls back to single table
+cdm_quarterly <- function(base_table, start_date = cfg$study_start, end_date = cfg$study_end) {
+  if (isTRUE(cfg$use_quarterly_tables)) {
+    quarterly_union(base_table, start_date, end_date, cfg$cdm_schema)
+  } else {
+    # Fall back to single table
+    full_name(cfg$cdm_schema, base_table)
+  }
+}
+
+# Wrapper to get CDM table - uses quarterly if enabled, single table otherwise
+cdm_src <- function(tbl_name) {
+  if (isTRUE(cfg$use_quarterly_tables)) {
+    cdm_quarterly(tbl_name)
+  } else {
+    cdm(tbl_name)
+  }
 }
 
 # ============================================================
@@ -697,7 +779,7 @@ build_steps <- function() {
       sql = glue("
         CREATE OR REPLACE TABLE {work('med_claim_header')} AS
         SELECT PATID, CLMID, max(CONF_ID) AS CONF_ID
-        FROM {cdm(cfg$tbl_medical)}
+        FROM {cdm_src(cfg$tbl_medical)}
         WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         GROUP BY PATID, CLMID
       "),
@@ -718,7 +800,7 @@ build_steps <- function() {
           h.CONF_ID,
           CASE WHEN h.CONF_ID IS NOT NULL THEN 1 ELSE 0 END AS inpatient_flg,
           CASE WHEN h.CONF_ID IS NULL THEN 1 ELSE 0 END AS outpatient_flg
-        FROM {cdm(cfg$tbl_med_diag)} d
+        FROM {cdm_src(cfg$tbl_med_diag)} d
         INNER JOIN {work('med_claim_header')} h
           ON d.PATID = h.PATID AND d.CLMID = h.CLMID
         INNER JOIN {work('mm_dx_codes')} c
@@ -852,7 +934,7 @@ build_steps <- function() {
         CREATE OR REPLACE TABLE {work('enrollment_spans')} AS
         WITH base AS (
           SELECT PATID, cast(ELIGEFF as date) AS elig_eff, cast(ELIGEND as date) AS elig_end
-          FROM {cdm(cfg$tbl_member_elig)}
+          FROM {cdm_src(cfg$tbl_member_elig)}
           WHERE ELIGEFF IS NOT NULL AND ELIGEND IS NOT NULL
         ),
         ordered AS (
@@ -890,7 +972,7 @@ build_steps <- function() {
         CREATE OR REPLACE TABLE {work('enrollment_spans_strict')} AS
         WITH base AS (
           SELECT PATID, cast(ELIGEFF as date) AS elig_eff, cast(ELIGEND as date) AS elig_end
-          FROM {cdm(cfg$tbl_member_elig)}
+          FROM {cdm_src(cfg$tbl_member_elig)}
           WHERE ELIGEFF IS NOT NULL AND ELIGEND IS NOT NULL
         ),
         ordered AS (
@@ -987,7 +1069,7 @@ build_steps <- function() {
                  row_number() OVER (PARTITION BY PATID
                    ORDER BY CASE WHEN upper(GDR_CD) NOT IN ('U','') THEN 0 ELSE 1 END,
                             cast(ELIGEND as date) DESC) AS rn
-          FROM {cdm(cfg$tbl_member_elig)}
+          FROM {cdm_src(cfg$tbl_member_elig)}
         )
         SELECT PATID, GDR_CD, YRDOB FROM ranked WHERE rn = 1
       "),
@@ -1011,7 +1093,7 @@ build_steps <- function() {
             cast(DEATH_YR as int) AS death_yr,
             cast(DEATH_MO as int) AS death_mo,
             cast(DEATH_DY as int) AS death_dy
-          FROM {cdm(cfg$tbl_member_elig)}
+          FROM {cdm_src(cfg$tbl_member_elig)}
           WHERE DEATH_YR IS NOT NULL AND cast(DEATH_YR as int) > 0
         ),
         -- Take most recent non-null death record per patient
@@ -1049,7 +1131,7 @@ build_steps <- function() {
         CREATE OR REPLACE TABLE {work('claim_nondiagnostic')} AS
         WITH lines AS (
           SELECT PATID, CLMID, upper(regexp_replace(PROC_CD, '\\\\.', '')) AS proc_cd
-          FROM {cdm(cfg$tbl_medical)}
+          FROM {cdm_src(cfg$tbl_medical)}
           WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
         marked AS (
@@ -1102,7 +1184,7 @@ build_steps <- function() {
         -- Medical therapy via PROC_CD
         SELECT /*+ BROADCAST(c) */
           m.PATID, cast(m.FST_DT as date) AS event_dt, 'MEDICAL' AS source
-        FROM {cdm(cfg$tbl_medical)} m
+        FROM {cdm_src(cfg$tbl_medical)} m
         INNER JOIN {work('mm_therapy_codes')} c
           ON c.code_type IN ('HCPCS','CPT','PROC')
           AND upper(regexp_replace(m.PROC_CD, '\\\\.', '')) = c.code
@@ -1113,7 +1195,7 @@ build_steps <- function() {
         -- RX therapy via NDC
         SELECT /*+ BROADCAST(c) */
           r.PATID, cast(r.FILL_DT as date) AS event_dt, 'RX' AS source
-        FROM {cdm(cfg$tbl_rx)} r
+        FROM {cdm_src(cfg$tbl_rx)} r
         INNER JOIN {work('mm_therapy_codes')} c
           ON c.code_type = 'NDC'
           AND upper(regexp_replace(r.NDC, '\\\\.', '')) = c.code
@@ -1151,13 +1233,13 @@ build_steps <- function() {
         WITH dx AS (
           SELECT PATID, cast(FST_DT as date) AS event_dt, 'DX' AS code_type,
                  upper(regexp_replace(DIAG, '\\\\.', '')) AS code
-          FROM {cdm(cfg$tbl_med_diag)}
+          FROM {cdm_src(cfg$tbl_med_diag)}
           WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
         proc AS (
           SELECT PATID, cast(FST_DT as date) AS event_dt, 'PROC' AS code_type,
                  upper(regexp_replace(PROC_CD, '\\\\.', '')) AS code
-          FROM {cdm(cfg$tbl_medical)}
+          FROM {cdm_src(cfg$tbl_medical)}
           WHERE PROC_CD IS NOT NULL
             AND FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
@@ -1186,13 +1268,13 @@ build_steps <- function() {
         WITH dx AS (
           SELECT PATID, cast(FST_DT as date) AS event_dt, 'DX' AS code_type,
                  upper(regexp_replace(DIAG, '\\\\.', '')) AS code
-          FROM {cdm(cfg$tbl_med_diag)}
+          FROM {cdm_src(cfg$tbl_med_diag)}
           WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
         proc AS (
           SELECT PATID, cast(FST_DT as date) AS event_dt, 'PROC' AS code_type,
                  upper(regexp_replace(PROC_CD, '\\\\.', '')) AS code
-          FROM {cdm(cfg$tbl_medical)}
+          FROM {cdm_src(cfg$tbl_medical)}
           WHERE PROC_CD IS NOT NULL
             AND FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
@@ -1224,7 +1306,7 @@ build_steps <- function() {
           SELECT d.PATID, d.CLMID, cast(d.FST_DT as date) AS event_dt,
                  upper(regexp_replace(d.DIAG, '\\\\.', '')) AS dx,
                  CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family
-          FROM {cdm(cfg$tbl_med_diag)} d
+          FROM {cdm_src(cfg$tbl_med_diag)} d
           WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
         dx_mapped AS (
@@ -1406,6 +1488,11 @@ main <- function() {
   }
   if (isTRUE(cfg$local_only)) {
     log_msg("MODE: LOCAL-ONLY (using TEMPORARY VIEWs)")
+  }
+  if (isTRUE(cfg$use_quarterly_tables)) {
+    log_msg("TABLES: Using QUARTERLY partitioned tables (t_<table>_YYYYqQ)")
+  } else {
+    log_msg("TABLES: Using single consolidated tables")
   }
   log_msg("=" , strrep("=", 59))
 
