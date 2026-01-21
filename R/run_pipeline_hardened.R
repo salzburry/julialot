@@ -5,13 +5,16 @@
 # ============================================================
 #
 # Key features:
-# - Automatic reconnect with exponential backoff (fixed scope)
+# - Automatic reconnect with exponential backoff (with_retry wrapper)
 # - DB-side run log (audit trail)
 # - Ping before each heavy step (handles stale ODBC sessions)
 # - Idempotent steps (CREATE OR REPLACE)
 # - QC counts after each step
 # - Independent flags per IE criterion (per StudyPop spec)
 # - Split MM dx events: study period (baseline) vs ID period (qualification)
+# - Strict no-gap enrollment for CE_3mosf (per StudyPop spec)
+# - Death_dt derivation with month-level generalization to 15th
+# - ENDDATE/FU_DAYS properly account for Death_dt per StudyPop spec
 #
 # Usage:
 #   Rscript R/run_pipeline_hardened.R
@@ -316,9 +319,14 @@ run_step <- function(log_table, step_name, sql, qc_sql = NULL) {
   tryCatch({
     # Ping before heavy work (handles stale ODBC sessions)
     if (!db_ping(con_env$con)) {
-      log_msg("Connection stale, reconnecting...")
+      log_msg("Connection stale, reconnecting with retry...")
       try(DBI::dbDisconnect(con_env$con), silent = TRUE)
-      con_env$con <- connect_databricks()
+      # FIXED: Use with_retry for reconnection (handles transient network failures)
+      con_env$con <- with_retry(function() {
+        conn <- connect_databricks()
+        log_msg("Reconnected to Databricks")
+        conn
+      })
     }
 
     # Execute main SQL
@@ -596,6 +604,7 @@ build_steps <- function() {
     # ----------------------------------------------------------
     # PHASE 4: ENROLLMENT SPANS WITH GAP LOGIC
     # Per DataPrep: allowable gaps <= 30 days
+    # FIXED: gap_days + 1 because ELIGEND is inclusive (last day of coverage)
     # ----------------------------------------------------------
     list(
       name = "13_enrollment_spans",
@@ -612,8 +621,9 @@ build_steps <- function() {
         ),
         flagged AS (
           SELECT *,
+            -- FIXED: +1 because ELIGEND is inclusive (day after prev_end is first uncovered day)
             CASE WHEN prev_end IS NULL THEN 1
-                 WHEN elig_eff <= date_add(prev_end, {cfg$gap_days}) THEN 0
+                 WHEN elig_eff <= date_add(prev_end, {cfg$gap_days} + 1) THEN 0
                  ELSE 1 END AS new_grp
           FROM ordered
         ),
@@ -631,8 +641,46 @@ build_steps <- function() {
     ),
 
     # ----------------------------------------------------------
+    # PHASE 4b: STRICT ENROLLMENT SPANS (NO GAPS)
+    # Per StudyPop spec: CE_3mosf requires NO allowable gaps
+    # ----------------------------------------------------------
+    list(
+      name = "13b_enrollment_spans_strict",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('enrollment_spans_strict')} AS
+        WITH base AS (
+          SELECT PATID, cast(ELIGEFF as date) AS elig_eff, cast(ELIGEND as date) AS elig_end
+          FROM {cdm(cfg$tbl_member_elig)}
+          WHERE ELIGEFF IS NOT NULL AND ELIGEND IS NOT NULL
+        ),
+        ordered AS (
+          SELECT *, lag(elig_end) OVER (PARTITION BY PATID ORDER BY elig_eff, elig_end) AS prev_end
+          FROM base
+        ),
+        flagged AS (
+          SELECT *,
+            -- NO allowable gaps: new group if elig_eff > prev_end + 1 (i.e., any gap)
+            CASE WHEN prev_end IS NULL THEN 1
+                 WHEN elig_eff <= date_add(prev_end, 1) THEN 0
+                 ELSE 1 END AS new_grp
+          FROM ordered
+        ),
+        grouped AS (
+          SELECT *,
+            sum(new_grp) OVER (PARTITION BY PATID ORDER BY elig_eff, elig_end
+                               ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS grp_id
+          FROM flagged
+        )
+        SELECT PATID, grp_id, min(elig_eff) AS cov_start, max(elig_end) AS cov_end
+        FROM grouped
+        GROUP BY PATID, grp_id
+      "),
+      qc = glue("SELECT count(DISTINCT PATID) AS n_patients FROM {work('enrollment_spans_strict')}")
+    ),
+
+    # ----------------------------------------------------------
     # PHASE 5: CE FLAGS (baseline 6 months, follow-up, 3-month sensitivity)
-    # FIXED: Added CE_3mosf and FU_DAYS_CE per spec
+    # FIXED: Added CE_3mosf using STRICT enrollment spans (no gaps allowed)
     # ----------------------------------------------------------
     list(
       name = "14_ce_flags",
@@ -644,27 +692,45 @@ build_steps <- function() {
                  date_sub(index_date, 1) AS baseline_end
           FROM {work('mm_qualifying')}
         ),
-        joined AS (
+        -- CE_b and CE_f use standard enrollment spans (with allowable gaps)
+        joined_std AS (
           SELECT i.PATID, i.index_date, i.baseline_start, i.baseline_end,
                  s.cov_start, s.cov_end,
                  CASE WHEN s.cov_start <= i.baseline_start AND s.cov_end >= i.baseline_end
                       THEN 1 ELSE 0 END AS covers_baseline,
                  CASE WHEN s.cov_start <= i.index_date AND s.cov_end >= i.index_date
-                      THEN 1 ELSE 0 END AS covers_index,
-                 -- 3-month (91 days) follow-up sensitivity flag
-                 CASE WHEN s.cov_start <= i.index_date AND s.cov_end >= date_add(i.index_date, 91)
-                      THEN 1 ELSE 0 END AS covers_3mos
+                      THEN 1 ELSE 0 END AS covers_index
           FROM idx i
           LEFT JOIN {work('enrollment_spans')} s ON i.PATID = s.PATID
+        ),
+        std_agg AS (
+          SELECT PATID, index_date, baseline_start, baseline_end,
+                 max(covers_baseline) AS CE_b,
+                 max(covers_index) AS CE_f,
+                 max(CASE WHEN covers_index = 1 THEN cov_end END) AS ENDDATE_CE
+          FROM joined_std
+          GROUP BY PATID, index_date, baseline_start, baseline_end
+        ),
+        -- CE_3mosf uses STRICT enrollment spans (NO allowable gaps per spec)
+        joined_strict AS (
+          SELECT i.PATID,
+                 -- 3-month (91 days) follow-up sensitivity flag with NO gaps allowed
+                 CASE WHEN ss.cov_start <= i.index_date AND ss.cov_end >= date_add(i.index_date, 91)
+                      THEN 1 ELSE 0 END AS covers_3mos_strict
+          FROM idx i
+          LEFT JOIN {work('enrollment_spans_strict')} ss ON i.PATID = ss.PATID
+        ),
+        strict_agg AS (
+          SELECT PATID, max(covers_3mos_strict) AS CE_3mosf
+          FROM joined_strict
+          GROUP BY PATID
         )
         SELECT
-          PATID, index_date, baseline_start, baseline_end,
-          max(covers_baseline) AS CE_b,
-          max(covers_index) AS CE_f,
-          max(covers_3mos) AS CE_3mosf,
-          max(CASE WHEN covers_index = 1 THEN cov_end END) AS ENDDATE_CE
-        FROM joined
-        GROUP BY PATID, index_date, baseline_start, baseline_end
+          a.PATID, a.index_date, a.baseline_start, a.baseline_end,
+          a.CE_b, a.CE_f, a.ENDDATE_CE,
+          coalesce(s.CE_3mosf, 0) AS CE_3mosf
+        FROM std_agg a
+        LEFT JOIN strict_agg s ON a.PATID = s.PATID
       "),
       qc = glue("SELECT sum(CE_b) AS n_with_baseline_ce FROM {work('ce_flags')}")
     ),
@@ -686,6 +752,51 @@ build_steps <- function() {
         SELECT PATID, GDR_CD, YRDOB FROM ranked WHERE rn = 1
       "),
       qc = glue("SELECT count(*) AS n_patients FROM {work('member_demo')}")
+    ),
+
+    # ----------------------------------------------------------
+    # PHASE 6b: DEATH DATE DERIVATION
+    # Per StudyPop spec: When death date is only available at month-level
+    # granularity, the date is generalized to the middle of the month (15th)
+    # ----------------------------------------------------------
+    list(
+      name = "15b_death_dt",
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('death_dt')} AS
+        WITH raw_death AS (
+          SELECT
+            PATID,
+            -- Optum death fields: DEATH_YR (yyyy), DEATH_MO (mm), DEATH_DY (dd)
+            -- If day is missing (NULL or 0), use 15; if month is missing, use July (7)
+            cast(DEATH_YR as int) AS death_yr,
+            cast(DEATH_MO as int) AS death_mo,
+            cast(DEATH_DY as int) AS death_dy
+          FROM {cdm(cfg$tbl_member_elig)}
+          WHERE DEATH_YR IS NOT NULL AND cast(DEATH_YR as int) > 0
+        ),
+        -- Take most recent non-null death record per patient
+        ranked AS (
+          SELECT *,
+                 row_number() OVER (PARTITION BY PATID ORDER BY death_yr DESC, death_mo DESC NULLS LAST, death_dy DESC NULLS LAST) AS rn
+          FROM raw_death
+        ),
+        best AS (
+          SELECT PATID, death_yr, death_mo, death_dy FROM ranked WHERE rn = 1
+        )
+        SELECT
+          PATID,
+          -- Per StudyPop: generalize to 15th if only month-level, July 15 if only year-level
+          CASE
+            WHEN death_mo IS NULL OR death_mo = 0 THEN
+              make_date(death_yr, 7, 15)  -- Year-level only -> July 15
+            WHEN death_dy IS NULL OR death_dy = 0 THEN
+              make_date(death_yr, death_mo, 15)  -- Month-level only -> 15th
+            ELSE
+              make_date(death_yr, death_mo, death_dy)  -- Full date available
+          END AS DEATH_DT
+        FROM best
+      "),
+      qc = glue("SELECT count(*) AS n_with_death_dt FROM {work('death_dt')}")
     ),
 
     # ----------------------------------------------------------
@@ -913,7 +1024,11 @@ build_steps <- function() {
 
     # ----------------------------------------------------------
     # PHASE 10: FINAL ASSEMBLY - ELIG_COH with all flags
-    # FIXED: Added FU_DAYS_CE, CE_3mosf per spec
+    # FIXED: Added Death_dt, proper ENDDATE/FU_DAYS per StudyPop spec:
+    #   - ENDDATE = min(Death_dt, study_end)
+    #   - ENDDATE_CE = min(Death_dt, disenrollment, study_end)
+    #   - FU_DAYS = datediff(ENDDATE, index_date) + 1
+    #   - FU_DAYS_CE = datediff(ENDDATE_CE, index_date) + 1
     # ----------------------------------------------------------
     list(
       name = "23_ELIG_COH_ALLFLAGS",
@@ -940,13 +1055,42 @@ build_steps <- function() {
           coalesce(ce.CE_b, 0) AS CE_b,
           coalesce(ce.CE_f, 0) AS CE_f,
           coalesce(ce.CE_3mosf, 0) AS CE_3mosf,
-          ce.ENDDATE_CE,
-          -- FIXED: ENDDATE is min of study_end and coverage end
-          least(date('{cfg$study_end}'), coalesce(ce.ENDDATE_CE, date('{cfg$study_end}'))) AS ENDDATE,
-          -- FU_DAYS uses study end
-          datediff(date('{cfg$study_end}'), q.index_date) + 1 AS FU_DAYS,
-          -- FIXED: FU_DAYS_CE uses the coverage-aware end date
-          datediff(least(date('{cfg$study_end}'), coalesce(ce.ENDDATE_CE, date('{cfg$study_end}'))), q.index_date) + 1 AS FU_DAYS_CE,
+
+          -- Death date (per StudyPop: generalized to 15th if month-level only)
+          death.DEATH_DT,
+
+          -- Per StudyPop spec:
+          -- ENDDATE = min(Death_dt, study_end)
+          least(
+            date('{cfg$study_end}'),
+            coalesce(death.DEATH_DT, date('{cfg$study_end}'))
+          ) AS ENDDATE,
+
+          -- ENDDATE_CE = min(Death_dt, disenrollment_date, study_end)
+          least(
+            date('{cfg$study_end}'),
+            coalesce(death.DEATH_DT, date('{cfg$study_end}')),
+            coalesce(ce.ENDDATE_CE, date('{cfg$study_end}'))
+          ) AS ENDDATE_CE,
+
+          -- FU_DAYS = datediff(ENDDATE, index_date) + 1
+          datediff(
+            least(
+              date('{cfg$study_end}'),
+              coalesce(death.DEATH_DT, date('{cfg$study_end}'))
+            ),
+            q.index_date
+          ) + 1 AS FU_DAYS,
+
+          -- FU_DAYS_CE = datediff(ENDDATE_CE, index_date) + 1
+          datediff(
+            least(
+              date('{cfg$study_end}'),
+              coalesce(death.DEATH_DT, date('{cfg$study_end}')),
+              coalesce(ce.ENDDATE_CE, date('{cfg$study_end}'))
+            ),
+            q.index_date
+          ) + 1 AS FU_DAYS_CE,
 
           -- Therapy flags
           coalesce(th.MM_THERAPY_BASELINE, 0) AS MM_bl_agents,
@@ -964,6 +1108,7 @@ build_steps <- function() {
         FROM {work('mm_qualifying')} q
         LEFT JOIN {work('ce_flags')} ce ON q.PATID = ce.PATID
         LEFT JOIN {work('member_demo')} d ON q.PATID = d.PATID
+        LEFT JOIN {work('death_dt')} death ON q.PATID = death.PATID
         LEFT JOIN {work('mm_baseline_nondx_flag')} mm_bl ON q.PATID = mm_bl.PATID
         LEFT JOIN {work('therapy_flags')} th ON q.PATID = th.PATID
         LEFT JOIN {work('pregnancy_flag')} preg ON q.PATID = preg.PATID
