@@ -158,6 +158,142 @@ prompt_user_options <- function() {
 }
 
 # ============================================================
+# INTERACTIVE IE CRITERIA SELECTION
+# ============================================================
+# Prompts user for each inclusion/exclusion criterion before running
+# Returns a list of criteria settings to apply in Step 24
+
+prompt_ie_criteria <- function() {
+  criteria <- list(
+    # Inclusion criteria (defaults)
+    apply_age = TRUE,
+    min_age = 18,
+    apply_ce_baseline = TRUE,
+    apply_ce_followup = TRUE,
+    apply_no_baseline_therapy = TRUE,
+    apply_followup_therapy = TRUE,
+    outpatient_window = 90,  # 30, 60, or 90 days
+
+    # Exclusion criteria (defaults)
+    apply_pregnancy_excl = TRUE,
+    apply_clintrial_excl = TRUE,
+    apply_other_malig_excl = TRUE,
+    apply_baseline_nondx_excl = FALSE
+  )
+
+  if (!interactive()) {
+    cat("Non-interactive mode: using default IE criteria\n")
+    return(criteria)
+  }
+
+  cat("\n")
+  cat("============================================================\n")
+  cat("  INCLUSION / EXCLUSION CRITERIA SELECTION\n")
+  cat("============================================================\n")
+  cat("\nFor each criterion, enter Y (apply), N (skip), or a new value.\n")
+  cat("Press Enter to keep the default shown in brackets.\n\n")
+
+  # Helper function for Y/N prompts
+  ask_yn <- function(prompt, default) {
+    default_str <- if (default) "Y" else "N"
+    cat(prompt, " [", default_str, "]: ", sep = "")
+    response <- tolower(trimws(readline()))
+    if (response == "") return(default)
+    return(response %in% c("y", "yes", "1", "true"))
+  }
+
+  # Helper function for numeric prompts
+  ask_num <- function(prompt, default) {
+    cat(prompt, " [", default, "]: ", sep = "")
+    response <- trimws(readline())
+    if (response == "") return(default)
+    return(as.integer(response))
+  }
+
+  # Helper function for choice prompts
+  ask_choice <- function(prompt, choices, default) {
+    cat(prompt, " [", default, "]: ", sep = "")
+    response <- trimws(readline())
+    if (response == "") return(default)
+    val <- as.integer(response)
+    if (val %in% choices) return(val)
+    cat("  Invalid choice, using default: ", default, "\n")
+    return(default)
+  }
+
+  cat("--- INCLUSION CRITERIA ---\n\n")
+
+  # 1. Age criterion
+  criteria$apply_age <- ask_yn("Apply Age >= 18 criterion?", criteria$apply_age)
+  if (criteria$apply_age) {
+    criteria$min_age <- ask_num("  Minimum age", criteria$min_age)
+  }
+
+  # 2. Outpatient confirmation window (30/60/90 days)
+  cat("\nOutpatient MM Diagnosis Confirmation Window:\n")
+  cat("  Requires 2 outpatient claims within X days for non-inpatient patients\n")
+  cat("  Options: 30, 60, or 90 days\n")
+  criteria$outpatient_window <- ask_choice("Select window (30/60/90)", c(30, 60, 90), criteria$outpatient_window)
+
+  # 3. Continuous enrollment - baseline
+  cat("\n")
+  criteria$apply_ce_baseline <- ask_yn("Apply 6-month baseline enrollment (CE_b=1)?", criteria$apply_ce_baseline)
+
+  # 4. Continuous enrollment - follow-up
+  criteria$apply_ce_followup <- ask_yn("Apply 1+ day follow-up enrollment (CE_f=1)?", criteria$apply_ce_followup)
+
+  # 5. No baseline therapy
+  criteria$apply_no_baseline_therapy <- ask_yn("Apply no MM therapy in baseline (MM_bl_agents=0)?", criteria$apply_no_baseline_therapy)
+
+  # 6. Follow-up therapy required
+  criteria$apply_followup_therapy <- ask_yn("Apply MM therapy in follow-up required (MM_FU_agents=1)?", criteria$apply_followup_therapy)
+
+  cat("\n--- EXCLUSION CRITERIA ---\n\n")
+
+  # 7. Pregnancy exclusion
+  criteria$apply_pregnancy_excl <- ask_yn("Exclude patients with pregnancy claims?", criteria$apply_pregnancy_excl)
+
+  # 8. Clinical trial exclusion
+  criteria$apply_clintrial_excl <- ask_yn("Exclude patients in clinical trials?", criteria$apply_clintrial_excl)
+
+  # 9. Other malignancy exclusion
+  criteria$apply_other_malig_excl <- ask_yn("Exclude patients with other malignancies?", criteria$apply_other_malig_excl)
+
+  # 10. Baseline non-diagnostic claim exclusion (smoldering MM)
+  criteria$apply_baseline_nondx_excl <- ask_yn("Exclude patients with baseline non-dx MM claims (smoldering)?", criteria$apply_baseline_nondx_excl)
+
+  # Show summary and confirm
+  cat("\n")
+  cat("============================================================\n")
+  cat("  CRITERIA SUMMARY\n")
+  cat("============================================================\n")
+  cat("\nINCLUSION CRITERIA:\n")
+  cat("  [", if(criteria$apply_age) "X" else " ", "] Age >= ", criteria$min_age, "\n", sep = "")
+  cat("  [", if(criteria$apply_ce_baseline) "X" else " ", "] 6-month baseline enrollment (CE_b=1)\n", sep = "")
+  cat("  [", if(criteria$apply_ce_followup) "X" else " ", "] 1+ day follow-up enrollment (CE_f=1)\n", sep = "")
+  cat("  [", if(criteria$apply_no_baseline_therapy) "X" else " ", "] No MM therapy in baseline\n", sep = "")
+  cat("  [", if(criteria$apply_followup_therapy) "X" else " ", "] MM therapy in follow-up required\n", sep = "")
+  cat("  [X] Outpatient confirmation window: ", criteria$outpatient_window, " days\n", sep = "")
+
+  cat("\nEXCLUSION CRITERIA:\n")
+  cat("  [", if(criteria$apply_pregnancy_excl) "X" else " ", "] Pregnancy\n", sep = "")
+  cat("  [", if(criteria$apply_clintrial_excl) "X" else " ", "] Clinical trial participation\n", sep = "")
+  cat("  [", if(criteria$apply_other_malig_excl) "X" else " ", "] Other malignancies\n", sep = "")
+  cat("  [", if(criteria$apply_baseline_nondx_excl) "X" else " ", "] Baseline non-diagnostic MM claims\n", sep = "")
+
+  cat("\n============================================================\n")
+  cat("Proceed with these criteria? [Y/n]: ")
+  response <- tolower(trimws(readline()))
+  if (response %in% c("n", "no")) {
+    cat("\nRestarting criteria selection...\n")
+    return(prompt_ie_criteria())  # Recursive call to restart
+  }
+
+  cat("\nCriteria confirmed. Proceeding with pipeline...\n\n")
+  return(criteria)
+}
+
+# ============================================================
 # CONFIGURATION (merged from defaults and environment)
 # ============================================================
 cfg <- list(
@@ -229,8 +365,16 @@ cfg <- list(
   final_table_name = Sys.getenv("FINAL_TABLE_NAME", unset = "ELIG_COH_FINAL"),
 
   # ============================================================
-  # INCLUSION CRITERIA TOGGLES (set FALSE to skip in final filter)
+  # INCLUSION/EXCLUSION CRITERIA (defaults - overridden by interactive prompt)
   # ============================================================
+  # These are default values; when running interactively, prompt_ie_criteria()
+  # will ask the user for each criterion and update cfg accordingly.
+
+  # Outpatient confirmation window: 30, 60, or 90 days
+  # Affects which flag is used: outpt2_30, outpt2_60, or outpt2_90
+  outpatient_window = as.integer(Sys.getenv("OUTPATIENT_WINDOW", unset = "90")),
+
+  # Inclusion criteria toggles
   apply_age_incl          = as.logical(Sys.getenv("APPLY_AGE_INCL", unset = "TRUE")),
   min_age                 = as.integer(Sys.getenv("MIN_AGE", unset = "18")),
 
@@ -1014,7 +1158,7 @@ build_steps <- function() {
 
     list(
       name = "12_mm_qualifying",
-      description = "CRITERION: MM qualifying (1+ IP or 2+ OP in 90d)",
+      description = glue("CRITERION: MM qualifying (1+ IP or 2+ OP in {cfg$outpatient_window}d)"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('mm_qualifying')} AS
         WITH combined AS (
@@ -1043,18 +1187,18 @@ build_steps <- function() {
         SELECT
           PATID, inpt1, outpt2_90, outpt2_60, outpt2_30,
           idx_inpt, idx_outpt_90, idx_outpt_60, idx_outpt_30,
-          -- Index date: earliest of inpatient or qualifying outpatient (90-day primary)
+          -- Index date: earliest of inpatient or qualifying outpatient (configurable window)
           CASE
-            WHEN inpt1 = 1 AND idx_outpt_90 IS NULL THEN idx_inpt
-            WHEN inpt1 = 0 AND idx_outpt_90 IS NOT NULL THEN idx_outpt_90
-            WHEN inpt1 = 1 AND idx_outpt_90 IS NOT NULL THEN least(idx_inpt, idx_outpt_90)
+            WHEN inpt1 = 1 AND idx_outpt_{cfg$outpatient_window} IS NULL THEN idx_inpt
+            WHEN inpt1 = 0 AND idx_outpt_{cfg$outpatient_window} IS NOT NULL THEN idx_outpt_{cfg$outpatient_window}
+            WHEN inpt1 = 1 AND idx_outpt_{cfg$outpatient_window} IS NOT NULL THEN least(idx_inpt, idx_outpt_{cfg$outpatient_window})
           END AS index_date,
           CASE
-            WHEN inpt1 = 1 AND (idx_outpt_90 IS NULL OR idx_inpt <= idx_outpt_90) THEN 'INPATIENT'
-            WHEN idx_outpt_90 IS NOT NULL THEN 'OUTPATIENT_2IN90'
+            WHEN inpt1 = 1 AND (idx_outpt_{cfg$outpatient_window} IS NULL OR idx_inpt <= idx_outpt_{cfg$outpatient_window}) THEN 'INPATIENT'
+            WHEN idx_outpt_{cfg$outpatient_window} IS NOT NULL THEN 'OUTPATIENT_2IN{cfg$outpatient_window}'
           END AS index_source
         FROM agg
-        WHERE inpt1 = 1 OR outpt2_90 = 1
+        WHERE inpt1 = 1 OR outpt2_{cfg$outpatient_window} = 1
       "),
       qc = glue("SELECT count(*) AS n_qualifying FROM {work('mm_qualifying')}")
     ),
@@ -1700,6 +1844,24 @@ main <- function() {
   cfg$baseline_days <<- user_cfg$baseline_days
   cfg$gap_days <<- user_cfg$gap_days
 
+  # ============================================================
+  # PROMPT FOR INCLUSION/EXCLUSION CRITERIA
+  # ============================================================
+  ie_criteria <- prompt_ie_criteria()
+
+  # Update cfg with user-selected criteria
+  cfg$outpatient_window <<- ie_criteria$outpatient_window
+  cfg$apply_age_incl <<- ie_criteria$apply_age
+  cfg$min_age <<- ie_criteria$min_age
+  cfg$apply_ce_b_incl <<- ie_criteria$apply_ce_baseline
+  cfg$apply_ce_f_incl <<- ie_criteria$apply_ce_followup
+  cfg$apply_no_bl_agents_incl <<- ie_criteria$apply_no_baseline_therapy
+  cfg$apply_fu_agents_incl <<- ie_criteria$apply_followup_therapy
+  cfg$apply_pregnancy_excl <<- ie_criteria$apply_pregnancy_excl
+  cfg$apply_clintrial_excl <<- ie_criteria$apply_clintrial_excl
+  cfg$apply_other_malig_excl <<- ie_criteria$apply_other_malig_excl
+  cfg$apply_baseline_nondx_excl <<- ie_criteria$apply_baseline_nondx_excl
+
   log_msg("=", SEP_59)
   log_msg("ATTRITION COHORT PIPELINE - run_id: ", run_id)
   if (isTRUE(cfg$use_embedded_codes)) {
@@ -1716,52 +1878,9 @@ main <- function() {
     log_msg("TABLES: Using single consolidated tables")
   }
 
-  # Log run mode
-  log_msg("RUN MODE: ", cfg$run_mode)
-  if (cfg$run_mode == "FILTER_ONLY") {
-    log_msg("  -> Skipping base build; applying criteria from ELIG_COH_ALLFLAGS only")
-  } else if (cfg$run_mode == "BASE_ONLY") {
-    log_msg("  -> Building flags only; skipping final filter step")
-  }
+  # Log criteria settings (already shown in prompt, but log for audit trail)
+  log_msg("OUTPATIENT WINDOW: ", cfg$outpatient_window, " days")
   log_msg("OUTPUT TABLE: ", cfg$final_table_name)
-
-  # Log inclusion criteria settings
-  incl_applied <- c()
-  incl_skipped <- c()
-  if (isTRUE(cfg$apply_age_incl)) {
-    incl_applied <- c(incl_applied, paste0("Age>=", cfg$min_age))
-  } else {
-    incl_skipped <- c(incl_skipped, "Age")
-  }
-  if (isTRUE(cfg$apply_ce_b_incl)) incl_applied <- c(incl_applied, "CE_baseline") else incl_skipped <- c(incl_skipped, "CE_baseline")
-  if (isTRUE(cfg$apply_ce_f_incl)) incl_applied <- c(incl_applied, "CE_followup") else incl_skipped <- c(incl_skipped, "CE_followup")
-  if (isTRUE(cfg$apply_no_bl_agents_incl)) incl_applied <- c(incl_applied, "NoBaselineAgents") else incl_skipped <- c(incl_skipped, "NoBaselineAgents")
-  if (isTRUE(cfg$apply_fu_agents_incl)) incl_applied <- c(incl_applied, "FU_Agents") else incl_skipped <- c(incl_skipped, "FU_Agents")
-
-  if (length(incl_applied) > 0) {
-    log_msg("INCLUSIONS APPLIED: ", paste(incl_applied, collapse = ", "))
-  }
-  if (length(incl_skipped) > 0) {
-    log_msg("INCLUSIONS SKIPPED: ", paste(incl_skipped, collapse = ", "))
-  }
-
-  # Log exclusion settings
-  excl_applied <- c()
-  excl_skipped <- c()
-  if (isTRUE(cfg$apply_pregnancy_excl)) excl_applied <- c(excl_applied, "Pregnancy") else excl_skipped <- c(excl_skipped, "Pregnancy")
-  if (isTRUE(cfg$apply_clintrial_excl)) excl_applied <- c(excl_applied, "ClinicalTrial") else excl_skipped <- c(excl_skipped, "ClinicalTrial")
-  if (isTRUE(cfg$apply_other_malig_excl)) excl_applied <- c(excl_applied, "OtherMalignancy") else excl_skipped <- c(excl_skipped, "OtherMalignancy")
-  if (isTRUE(cfg$apply_baseline_nondx_excl)) excl_applied <- c(excl_applied, "BaselineNonDxClaim") else excl_skipped <- c(excl_skipped, "BaselineNonDxClaim")
-  if (length(excl_applied) > 0) {
-    log_msg("EXCLUSIONS APPLIED: ", paste(excl_applied, collapse = ", "))
-  }
-  if (length(excl_skipped) > 0) {
-    log_msg("EXCLUSIONS SKIPPED: ", paste(excl_skipped, collapse = ", "))
-  }
-
-  if (isTRUE(cfg$create_criteria_view)) {
-    log_msg("DYNAMIC VIEW: ELIG_COH_DYNAMIC will be created (toggle via SQL UPDATE)")
-  }
   log_msg("=", SEP_59)
 
   # Connect with retry (now returns connection properly)
