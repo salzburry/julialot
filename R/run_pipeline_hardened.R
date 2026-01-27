@@ -84,6 +84,11 @@ prompt_user_options <- function() {
   # Work on local copy, not global
   user_cfg <- default_cfg
 
+  # Resolve schemas from environment (no prompting for schemas)
+  user_cfg$cdm_schema  <- Sys.getenv("OPTUM_CDM_SCHEMA", unset = user_cfg$cdm_schema)
+  user_cfg$ref_schema  <- Sys.getenv("PROJECT_REF_SCHEMA", unset = user_cfg$ref_schema)
+  user_cfg$work_schema <- Sys.getenv("PROJECT_WORK_SCHEMA", unset = user_cfg$work_schema)
+
   cat("\n")
   cat("============================================================\n")
   cat("  MM LOT ATTRITION COHORT PIPELINE\n")
@@ -104,18 +109,6 @@ prompt_user_options <- function() {
     response <- readline()
     if (tolower(trimws(response)) %in% c("n", "no")) {
       cat("\nCustomize options (press Enter to keep default):\n")
-
-      cat("  CDM Schema [", user_cfg$cdm_schema, "]: ", sep = "")
-      val <- readline()
-      if (nzchar(trimws(val))) user_cfg$cdm_schema <- trimws(val)
-
-      cat("  Reference Schema [", user_cfg$ref_schema, "]: ", sep = "")
-      val <- readline()
-      if (nzchar(trimws(val))) user_cfg$ref_schema <- trimws(val)
-
-      cat("  Work Schema [", user_cfg$work_schema, "]: ", sep = "")
-      val <- readline()
-      if (nzchar(trimws(val))) user_cfg$work_schema <- trimws(val)
 
       cat("  Study Start Date [", user_cfg$study_start, "]: ", sep = "")
       val <- readline()
@@ -141,7 +134,6 @@ prompt_user_options <- function() {
       val <- readline()
       if (nzchar(trimws(val))) user_cfg$gap_days <- as.integer(trimws(val))
     }
-
   }
 
   cat("\nUsing configuration:\n")
@@ -1333,7 +1325,7 @@ build_steps <- function() {
     # ----------------------------------------------------------
     list(
       name = "14_ce_flags",
-      description = "CRITERION: Continuous enrollment (baseline + follow-up)",
+      description = "CRITERION: Continuous enrollment (baseline + follow-up day 1)",
       sql = glue("
         CREATE OR REPLACE TABLE {work('ce_flags')} AS
         WITH idx AS (
@@ -1343,20 +1335,21 @@ build_steps <- function() {
           FROM {work('mm_qualifying')}
         ),
         -- CE_b and CE_f use standard enrollment spans (with allowable gaps)
+        -- CE_f checks coverage at index_date + 1 (follow-up starts day after index)
         joined_std AS (
           SELECT i.PATID, i.index_date, i.baseline_start, i.baseline_end,
                  s.cov_start, s.cov_end,
                  CASE WHEN s.cov_start <= i.baseline_start AND s.cov_end >= i.baseline_end
                       THEN 1 ELSE 0 END AS covers_baseline,
-                 CASE WHEN s.cov_start <= i.index_date AND s.cov_end >= i.index_date
-                      THEN 1 ELSE 0 END AS covers_index
+                 CASE WHEN s.cov_start <= date_add(i.index_date, 1) AND s.cov_end >= date_add(i.index_date, 1)
+                      THEN 1 ELSE 0 END AS covers_followup_day1
           FROM idx i
           LEFT JOIN {work('enrollment_spans')} s ON i.PATID = s.PATID
         )
         SELECT PATID, index_date, baseline_start, baseline_end,
                max(covers_baseline) AS CE_b,
-               max(covers_index) AS CE_f,
-               max(CASE WHEN covers_index = 1 THEN cov_end END) AS ENDDATE_CE
+               max(covers_followup_day1) AS CE_f,
+               max(CASE WHEN covers_followup_day1 = 1 THEN cov_end END) AS ENDDATE_CE
         FROM joined_std
         GROUP BY PATID, index_date, baseline_start, baseline_end
       "),
@@ -1576,7 +1569,7 @@ build_steps <- function() {
           max(CASE WHEN t.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
                                        AND date_sub(q.index_date, 1)
                THEN 1 ELSE 0 END) AS MM_THERAPY_BASELINE,
-          max(CASE WHEN t.event_dt >= q.index_date AND t.event_dt <= date('{cfg$study_end}')
+          max(CASE WHEN t.event_dt >= date_add(q.index_date, 1) AND t.event_dt <= date('{cfg$study_end}')
                THEN 1 ELSE 0 END) AS MM_THERAPY_FOLLOWUP
         FROM {work('mm_qualifying')} q
         LEFT JOIN {work('therapy_events')} t ON q.PATID = t.PATID
@@ -1656,7 +1649,7 @@ build_steps <- function() {
           max(CASE WHEN m.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
                                        AND date_sub(q.index_date, 1)
                THEN 1 ELSE 0 END) AS CLINTRIAL_BASELINE,
-          max(CASE WHEN m.event_dt >= q.index_date AND m.event_dt <= date('{cfg$study_end}')
+          max(CASE WHEN m.event_dt >= date_add(q.index_date, 1) AND m.event_dt <= date('{cfg$study_end}')
                THEN 1 ELSE 0 END) AS CLINTRIAL_FOLLOWUP
         FROM {work('mm_qualifying')} q
         LEFT JOIN matched m ON q.PATID = m.PATID
@@ -1722,8 +1715,8 @@ build_steps <- function() {
     # FIXED: Added Death_dt, proper ENDDATE/FU_DAYS per StudyPop spec:
     #   - ENDDATE = min(Death_dt, study_end)
     #   - ENDDATE_CE = min(Death_dt, disenrollment, study_end)
-    #   - FU_DAYS = datediff(ENDDATE, index_date) + 1
-    #   - FU_DAYS_CE = datediff(ENDDATE_CE, index_date) + 1
+    #   - FU_DAYS = datediff(ENDDATE, index_date + 1) + 1  (follow-up starts day after index)
+    #   - FU_DAYS_CE = datediff(ENDDATE_CE, index_date + 1) + 1
     # ----------------------------------------------------------
     list(
       name = "23_ELIG_COH_ALLFLAGS",
@@ -1796,8 +1789,8 @@ build_steps <- function() {
           b.DEATH_DT,
           least(date('{cfg$study_end}'), coalesce(b.DEATH_DT, date('{cfg$study_end}'))) AS ENDDATE,
           least(date('{cfg$study_end}'), coalesce(b.DEATH_DT, date('{cfg$study_end}')), coalesce(b.ENDDATE_CE, date('{cfg$study_end}'))) AS ENDDATE_CE,
-          datediff(least(date('{cfg$study_end}'), coalesce(b.DEATH_DT, date('{cfg$study_end}'))), b.index_date) + 1 AS FU_DAYS,
-          datediff(least(date('{cfg$study_end}'), coalesce(b.DEATH_DT, date('{cfg$study_end}')), coalesce(b.ENDDATE_CE, date('{cfg$study_end}'))), b.index_date) + 1 AS FU_DAYS_CE,
+          datediff(least(date('{cfg$study_end}'), coalesce(b.DEATH_DT, date('{cfg$study_end}'))), date_add(b.index_date, 1)) + 1 AS FU_DAYS,
+          datediff(least(date('{cfg$study_end}'), coalesce(b.DEATH_DT, date('{cfg$study_end}')), coalesce(b.ENDDATE_CE, date('{cfg$study_end}'))), date_add(b.index_date, 1)) + 1 AS FU_DAYS_CE,
           coalesce(b.MM_THERAPY_BASELINE, 0) AS MM_bl_agents,
           coalesce(b.MM_THERAPY_FOLLOWUP, 0) AS MM_FU_agents,
           coalesce(b.MM_BASELINE_NONDX, 0) AS MM_baseline_diag,
