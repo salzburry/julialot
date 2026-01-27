@@ -99,7 +99,7 @@ prompt_user_options <- function() {
   cat("  DX Windows:       ", user_cfg$dx_window_30, "/", user_cfg$dx_window_60, "/", user_cfg$dx_window_90, " days\n")
   cat("\n")
 
-  if (interactive()) {
+  if (should_prompt()) {
     cat("Run with default options? [Y/n]: ")
     response <- readline()
     if (tolower(trimws(response)) %in% c("n", "no")) {
@@ -181,8 +181,9 @@ prompt_ie_criteria <- function() {
     apply_baseline_nondx_excl = FALSE
   )
 
-  if (!interactive()) {
+  if (!should_prompt()) {
     cat("Non-interactive mode: using default IE criteria\n")
+    cat("  (Set PROMPT_USER=TRUE to enable interactive prompts under Rscript)\n")
     return(criteria)
   }
 
@@ -415,6 +416,29 @@ SEP_60 <- strrep("=", 60)
 SEP_70 <- strrep("=", 70)
 DASH_60 <- strrep("-", 60)
 DASH_70 <- strrep("-", 70)
+
+# ============================================================
+# PROMPTING CONTROL
+# ============================================================
+# By default, Rscript runs with interactive() == FALSE, so prompts won't show.
+# Use PROMPT_USER=TRUE env var to force prompting even under Rscript.
+
+should_prompt <- function() {
+  isTRUE(as.logical(Sys.getenv("PROMPT_USER", unset = "FALSE"))) || interactive()
+}
+
+# ============================================================
+# VALIDATION HELPERS
+# ============================================================
+
+# Force outpatient window to valid values (30/60/90) per IE spec
+validate_outpatient_window <- function(x, default = 90L) {
+  x <- suppressWarnings(as.integer(x))
+  if (is.na(x) || !(x %in% c(30L, 60L, 90L))) return(default)
+  x
+}
+# Convert R logical to SQL boolean literal
+bool_sql <- function(x) if (isTRUE(x)) "true" else "false"
 
 full_name <- function(schema, object) {
   if (nzchar(cfg$catalog)) {
@@ -1354,19 +1378,24 @@ build_steps <- function() {
     # Per StudyPop spec: When death date is only available at month-level
     # granularity, the date is generalized to the middle of the month (15th)
     # ----------------------------------------------------------
+    # FIXED: Store death_yr and death_mo only (DEATH_DT computed in Step 23 with index_date)
+    # Per IE spec: Year-only death uses July 15 UNLESS index_date > July 15, then Dec 31
     list(
-      name = "15b_death_dt",
-      description = "Deriving death dates (month-level -> 15th)",
+      name = "15b_death_ym",
+      description = "Extracting death year/month (DEATH_DT computed later with index_date)",
       source_tables = c("dod"),
       sql = glue("
-        CREATE OR REPLACE TABLE {work('death_dt')} AS
+        CREATE OR REPLACE TABLE {work('death_ym')} AS
         WITH raw_death AS (
           SELECT
             PATID,
             -- Optum DOD table: YMDOD is varchar(6) in YYYYMM format
             -- Extract year and month from YMDOD
             cast(SUBSTR(YMDOD, 1, 4) as int) AS death_yr,
-            cast(SUBSTR(YMDOD, 5, 2) as int) AS death_mo
+            CASE
+              WHEN LENGTH(TRIM(YMDOD)) >= 6 THEN cast(SUBSTR(YMDOD, 5, 2) as int)
+              ELSE NULL
+            END AS death_mo
           FROM {cdm_src(cfg$tbl_dod)}
           WHERE YMDOD IS NOT NULL AND LENGTH(TRIM(YMDOD)) >= 4
         ),
@@ -1375,22 +1404,15 @@ build_steps <- function() {
           SELECT *,
                  row_number() OVER (PARTITION BY PATID ORDER BY death_yr DESC, death_mo DESC NULLS LAST) AS rn
           FROM raw_death
-        ),
-        best AS (
-          SELECT PATID, death_yr, death_mo FROM ranked WHERE rn = 1
         )
         SELECT
           PATID,
-          -- Per StudyPop: generalize to 15th for month-level data, July 15 if only year-level
-          CASE
-            WHEN death_mo IS NULL OR death_mo = 0 THEN
-              make_date(death_yr, 7, 15)  -- Year-level only -> July 15
-            ELSE
-              make_date(death_yr, death_mo, 15)  -- Month-level -> 15th (DOD table has no day)
-          END AS DEATH_DT
-        FROM best
+          death_yr,
+          NULLIF(death_mo, 0) AS death_mo  -- Treat 0 as NULL
+        FROM ranked
+        WHERE rn = 1
       "),
-      qc = glue("SELECT count(*) AS n_with_death_dt FROM {work('death_dt')}")
+      qc = glue("SELECT count(*) AS n_with_death_info FROM {work('death_ym')}")
     ),
 
     # ----------------------------------------------------------
@@ -1662,86 +1684,145 @@ build_steps <- function() {
       description = "Assembling cohort with all flags",
       sql = glue("
         CREATE OR REPLACE TABLE {work('ELIG_COH_ALLFLAGS')} AS
+        WITH base AS (
+          SELECT
+            q.PATID,
+            q.index_date,
+            d.GDR_CD,
+            d.YRDOB,
+            dy.death_yr,
+            dy.death_mo,
+            ce.baseline_start,
+            ce.baseline_end,
+            ce.CE_b,
+            ce.CE_f,
+            ce.ENDDATE_CE,
+            th.MM_THERAPY_BASELINE,
+            th.MM_THERAPY_FOLLOWUP,
+            mm_bl.MM_BASELINE_NONDX,
+            om.OTHER_MALIGN_FLAG,
+            preg.PREGNANT_FLAG,
+            ct.CLINTRIAL_BASELINE,
+            ct.CLINTRIAL_FOLLOWUP,
+            q.inpt1, q.outpt2_30, q.outpt2_60, q.outpt2_90, q.index_source,
+            -- Compute DEATH_DT for CE_3mosf calculation
+            CASE
+              WHEN dy.death_yr IS NULL THEN NULL
+              WHEN dy.death_mo IS NOT NULL THEN make_date(dy.death_yr, dy.death_mo, 15)
+              ELSE
+                CASE
+                  WHEN year(q.index_date) = dy.death_yr AND q.index_date > make_date(dy.death_yr, 7, 15)
+                  THEN make_date(dy.death_yr, 12, 31)
+                  ELSE make_date(dy.death_yr, 7, 15)
+                END
+            END AS death_dt_computed
+          FROM {work('mm_qualifying')} q
+          LEFT JOIN {work('ce_flags')} ce ON q.PATID = ce.PATID
+          LEFT JOIN {work('member_demo')} d ON q.PATID = d.PATID
+          LEFT JOIN {work('death_ym')} dy ON q.PATID = dy.PATID
+          LEFT JOIN {work('mm_baseline_nondx_flag')} mm_bl ON q.PATID = mm_bl.PATID
+          LEFT JOIN {work('therapy_flags')} th ON q.PATID = th.PATID
+          LEFT JOIN {work('pregnancy_flag')} preg ON q.PATID = preg.PATID
+          LEFT JOIN {work('clintrial_flag')} ct ON q.PATID = ct.PATID
+          LEFT JOIN {work('other_malig_flag')} om ON q.PATID = om.PATID
+        ),
+        -- FIXED: Compute CE_3mosf with death-aware logic (no gaps, ends at min of 91 days/death/study_end)
+        ce3mos_calc AS (
+          SELECT
+            b.PATID,
+            b.index_date,
+            -- Required end for 3-month CE: min(index + 91, death_dt, study_end)
+            least(
+              date_add(b.index_date, 91),
+              date('{cfg$study_end}'),
+              coalesce(b.death_dt_computed, date('{cfg$study_end}'))
+            ) AS required_3mos_end,
+            ss.cov_start,
+            ss.cov_end
+          FROM base b
+          LEFT JOIN {work('enrollment_spans_strict')} ss ON b.PATID = ss.PATID
+        ),
+        ce3mos_flag AS (
+          SELECT
+            PATID,
+            -- CE_3mosf = 1 if any strict span covers from index_date to required_3mos_end
+            max(CASE WHEN cov_start <= index_date AND cov_end >= required_3mos_end THEN 1 ELSE 0 END) AS CE_3mosf
+          FROM ce3mos_calc
+          GROUP BY PATID
+        )
         SELECT
-          q.PATID,
-          q.index_date AS INDEX_DATE,
-          year(q.index_date) AS INDEX_YR,
-          d.GDR_CD,
-          d.YRDOB,
-          (year(q.index_date) - d.YRDOB) AS AGE_INDEX_YR,
+          b.PATID,
+          b.index_date AS INDEX_DATE,
+          year(b.index_date) AS INDEX_YR,
+          b.GDR_CD,
+          b.YRDOB,
+          (year(b.index_date) - b.YRDOB) AS AGE_INDEX_YR,
 
           -- Diagnosis qualification flags
-          q.inpt1,
-          q.outpt2_30,
-          q.outpt2_60,
-          q.outpt2_90,
-          q.index_source,
+          b.inpt1,
+          b.outpt2_30,
+          b.outpt2_60,
+          b.outpt2_90,
+          b.index_source,
 
           -- Enrollment
-          ce.baseline_start,
-          ce.baseline_end,
-          coalesce(ce.CE_b, 0) AS CE_b,
-          coalesce(ce.CE_f, 0) AS CE_f,
-          coalesce(ce.CE_3mosf, 0) AS CE_3mosf,
+          b.baseline_start,
+          b.baseline_end,
+          coalesce(b.CE_b, 0) AS CE_b,
+          coalesce(b.CE_f, 0) AS CE_f,
+          coalesce(c3.CE_3mosf, 0) AS CE_3mosf,
 
-          -- Death date (per StudyPop: generalized to 15th if month-level only)
-          death.DEATH_DT,
+          -- Death date (already computed in base CTE with Dec 31 rule)
+          b.death_dt_computed AS DEATH_DT,
 
           -- Per StudyPop spec:
           -- ENDDATE = min(Death_dt, study_end)
           least(
             date('{cfg$study_end}'),
-            coalesce(death.DEATH_DT, date('{cfg$study_end}'))
+            coalesce(b.death_dt_computed, date('{cfg$study_end}'))
           ) AS ENDDATE,
 
           -- ENDDATE_CE = min(Death_dt, disenrollment_date, study_end)
           least(
             date('{cfg$study_end}'),
-            coalesce(death.DEATH_DT, date('{cfg$study_end}')),
-            coalesce(ce.ENDDATE_CE, date('{cfg$study_end}'))
+            coalesce(b.death_dt_computed, date('{cfg$study_end}')),
+            coalesce(b.ENDDATE_CE, date('{cfg$study_end}'))
           ) AS ENDDATE_CE,
 
           -- FU_DAYS = datediff(ENDDATE, index_date) + 1
           datediff(
             least(
               date('{cfg$study_end}'),
-              coalesce(death.DEATH_DT, date('{cfg$study_end}'))
+              coalesce(b.death_dt_computed, date('{cfg$study_end}'))
             ),
-            q.index_date
+            b.index_date
           ) + 1 AS FU_DAYS,
 
           -- FU_DAYS_CE = datediff(ENDDATE_CE, index_date) + 1
           datediff(
             least(
               date('{cfg$study_end}'),
-              coalesce(death.DEATH_DT, date('{cfg$study_end}')),
-              coalesce(ce.ENDDATE_CE, date('{cfg$study_end}'))
+              coalesce(b.death_dt_computed, date('{cfg$study_end}')),
+              coalesce(b.ENDDATE_CE, date('{cfg$study_end}'))
             ),
-            q.index_date
+            b.index_date
           ) + 1 AS FU_DAYS_CE,
 
           -- Therapy flags
-          coalesce(th.MM_THERAPY_BASELINE, 0) AS MM_bl_agents,
-          coalesce(th.MM_THERAPY_FOLLOWUP, 0) AS MM_FU_agents,
+          coalesce(b.MM_THERAPY_BASELINE, 0) AS MM_bl_agents,
+          coalesce(b.MM_THERAPY_FOLLOWUP, 0) AS MM_FU_agents,
 
           -- Smoldering/baseline MM flag
-          coalesce(mm_bl.MM_BASELINE_NONDX, 0) AS MM_baseline_diag,
+          coalesce(b.MM_BASELINE_NONDX, 0) AS MM_baseline_diag,
 
           -- Exclusion flags (independent per StudyPop spec)
-          coalesce(om.OTHER_MALIGN_FLAG, 0) AS OTHER_MALIGN_FLAG,
-          coalesce(preg.PREGNANT_FLAG, 0) AS PREGNANT_FLAG,
-          coalesce(ct.CLINTRIAL_BASELINE, 0) AS CLINTRIAL_BASELINE,
-          coalesce(ct.CLINTRIAL_FOLLOWUP, 0) AS CLINTRIAL_FOLLOWUP
+          coalesce(b.OTHER_MALIGN_FLAG, 0) AS OTHER_MALIGN_FLAG,
+          coalesce(b.PREGNANT_FLAG, 0) AS PREGNANT_FLAG,
+          coalesce(b.CLINTRIAL_BASELINE, 0) AS CLINTRIAL_BASELINE,
+          coalesce(b.CLINTRIAL_FOLLOWUP, 0) AS CLINTRIAL_FOLLOWUP
 
-        FROM {work('mm_qualifying')} q
-        LEFT JOIN {work('ce_flags')} ce ON q.PATID = ce.PATID
-        LEFT JOIN {work('member_demo')} d ON q.PATID = d.PATID
-        LEFT JOIN {work('death_dt')} death ON q.PATID = death.PATID
-        LEFT JOIN {work('mm_baseline_nondx_flag')} mm_bl ON q.PATID = mm_bl.PATID
-        LEFT JOIN {work('therapy_flags')} th ON q.PATID = th.PATID
-        LEFT JOIN {work('pregnancy_flag')} preg ON q.PATID = preg.PATID
-        LEFT JOIN {work('clintrial_flag')} ct ON q.PATID = ct.PATID
-        LEFT JOIN {work('other_malig_flag')} om ON q.PATID = om.PATID
+        FROM base b
+        LEFT JOIN ce3mos_flag c3 ON b.PATID = c3.PATID
       "),
       qc = glue("SELECT count(*) AS n_total, count(DISTINCT PATID) AS n_patients FROM {work('ELIG_COH_ALLFLAGS')}")
     ),
@@ -1760,15 +1841,16 @@ build_steps <- function() {
     ),
 
     # ----------------------------------------------------------
-    # STEP 25: CONFIG-DRIVEN VIEW (Option 2 - toggle without rerun)
+    # STEP 25a-c: CONFIG-DRIVEN VIEW (Option 2 - toggle without rerun)
     # ----------------------------------------------------------
+    # FIXED: Split into 3 separate steps to avoid multi-statement execution issues
     # Creates a config table + VIEW so criteria can be toggled via SQL UPDATE
     # without re-running the pipeline at all. Set CREATE_CRITERIA_VIEW=FALSE to skip.
+
     if (isTRUE(cfg$create_criteria_view)) list(
-      name = "25_IE_CRITERIA_VIEW",
-      description = "Create config table + dynamic VIEW for interactive criteria toggling",
+      name = "25a_ie_criteria_config_table",
+      description = "Create IE criteria config table",
       sql = glue("
-        -- Create config table if not exists
         CREATE TABLE IF NOT EXISTS {work('ie_criteria_config')} (
           config_name STRING,
           apply_age BOOLEAN,
@@ -1782,29 +1864,41 @@ build_steps <- function() {
           apply_other_malig_excl BOOLEAN,
           apply_baseline_nondx_excl BOOLEAN,
           updated_at TIMESTAMP
-        ) USING DELTA;
+        ) USING DELTA
+      "),
+      qc = glue("SELECT 'ie_criteria_config table created' AS status")
+    ) else NULL,
 
-        -- Upsert current config (MERGE for idempotency)
+    if (isTRUE(cfg$create_criteria_view)) list(
+      name = "25b_ie_criteria_config_upsert",
+      description = "Upsert current IE criteria configuration",
+      sql = glue("
         MERGE INTO {work('ie_criteria_config')} t
         USING (SELECT
           'ACTIVE' AS config_name,
-          {tolower(cfg$apply_age_incl)} AS apply_age,
+          {bool_sql(cfg$apply_age_incl)} AS apply_age,
           {cfg$min_age} AS min_age,
-          {tolower(cfg$apply_ce_b_incl)} AS apply_ce_b,
-          {tolower(cfg$apply_ce_f_incl)} AS apply_ce_f,
-          {tolower(cfg$apply_no_bl_agents_incl)} AS apply_no_bl_agents,
-          {tolower(cfg$apply_fu_agents_incl)} AS apply_fu_agents,
-          {tolower(cfg$apply_pregnancy_excl)} AS apply_pregnancy_excl,
-          {tolower(cfg$apply_clintrial_excl)} AS apply_clintrial_excl,
-          {tolower(cfg$apply_other_malig_excl)} AS apply_other_malig_excl,
-          {tolower(cfg$apply_baseline_nondx_excl)} AS apply_baseline_nondx_excl,
+          {bool_sql(cfg$apply_ce_b_incl)} AS apply_ce_b,
+          {bool_sql(cfg$apply_ce_f_incl)} AS apply_ce_f,
+          {bool_sql(cfg$apply_no_bl_agents_incl)} AS apply_no_bl_agents,
+          {bool_sql(cfg$apply_fu_agents_incl)} AS apply_fu_agents,
+          {bool_sql(cfg$apply_pregnancy_excl)} AS apply_pregnancy_excl,
+          {bool_sql(cfg$apply_clintrial_excl)} AS apply_clintrial_excl,
+          {bool_sql(cfg$apply_other_malig_excl)} AS apply_other_malig_excl,
+          {bool_sql(cfg$apply_baseline_nondx_excl)} AS apply_baseline_nondx_excl,
           current_timestamp() AS updated_at
         ) s
         ON t.config_name = s.config_name
         WHEN MATCHED THEN UPDATE SET *
-        WHEN NOT MATCHED THEN INSERT *;
+        WHEN NOT MATCHED THEN INSERT *
+      "),
+      qc = glue("SELECT * FROM {work('ie_criteria_config')} WHERE config_name = 'ACTIVE'")
+    ) else NULL,
 
-        -- Create dynamic VIEW that reads from config table
+    if (isTRUE(cfg$create_criteria_view)) list(
+      name = "25c_elig_coh_dynamic_view",
+      description = "Create dynamic VIEW for interactive criteria toggling",
+      sql = glue("
         CREATE OR REPLACE VIEW {work('ELIG_COH_DYNAMIC')} AS
         WITH c AS (SELECT * FROM {work('ie_criteria_config')} WHERE config_name = 'ACTIVE')
         SELECT a.*
@@ -1849,8 +1943,8 @@ main <- function() {
   # ============================================================
   ie_criteria <- prompt_ie_criteria()
 
-  # Update cfg with user-selected criteria
-  cfg$outpatient_window <<- ie_criteria$outpatient_window
+  # Update cfg with user-selected criteria (validate outpatient window)
+  cfg$outpatient_window <<- validate_outpatient_window(ie_criteria$outpatient_window)
   cfg$apply_age_incl <<- ie_criteria$apply_age
   cfg$min_age <<- ie_criteria$min_age
   cfg$apply_ce_b_incl <<- ie_criteria$apply_ce_baseline
@@ -1915,18 +2009,18 @@ main <- function() {
 
   if (cfg$run_mode == "FILTER_ONLY") {
     log_msg("RUN_MODE=FILTER_ONLY: Skipping base build; applying criteria only.")
-    # Find steps that start with "24_" or "25_" (the filter/view steps)
-    filter_step_indices <- grep("^(24_|25_)", sapply(steps, function(s) s$name))
+    # Find steps that start with "24" or "25" (the filter/view steps)
+    filter_step_indices <- grep("^2[45]", sapply(steps, function(s) s$name))
     if (length(filter_step_indices) == 0) {
-      stop("FILTER_ONLY mode requested but no filter steps (24_*, 25_*) found!")
+      stop("FILTER_ONLY mode requested but no filter steps (24_*, 25*) found!")
     }
     steps <- steps[filter_step_indices]
     log_msg("  Running ", length(steps), " filter step(s) from ", original_step_count, " total")
 
   } else if (cfg$run_mode == "BASE_ONLY") {
     log_msg("RUN_MODE=BASE_ONLY: Building flags only; skipping final filter.")
-    # Exclude steps that start with "24_" or "25_"
-    base_step_indices <- grep("^(24_|25_)", sapply(steps, function(s) s$name), invert = TRUE)
+    # Exclude steps that start with "24" or "25"
+    base_step_indices <- grep("^2[45]", sapply(steps, function(s) s$name), invert = TRUE)
     steps <- steps[base_step_indices]
     log_msg("  Running ", length(steps), " base step(s), skipping filter steps")
 
@@ -2087,7 +2181,7 @@ main <- function() {
         count(DISTINCT d.PATID) AS n_dod_matched,
         ROUND(100.0 * count(DISTINCT d.PATID) / count(DISTINCT q.PATID), 2) AS pct_matched
       FROM {work_tbl('mm_qualifying')} q
-      LEFT JOIN {work_tbl('death_dt')} d ON q.PATID = d.PATID
+      LEFT JOIN {work_tbl('death_ym')} d ON q.PATID = d.PATID
     ")
     dod_qc <- DBI::dbGetQuery(con_env$con, dod_qc_sql)
 
