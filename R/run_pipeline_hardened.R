@@ -217,12 +217,40 @@ cfg <- list(
   # Use this when you don't have CREATE permissions on the Databricks catalog
   local_only = as.logical(Sys.getenv("LOCAL_ONLY_MODE", unset = "FALSE")),
 
-  # Exclusion flag application (set TRUE to apply in final cohort filter)
+  # ============================================================
+  # RUN MODE CONTROL
+  # ============================================================
+  # FULL        = Run all steps (default)
+  # BASE_ONLY   = Build flags only (Steps 1-23), skip final filter
+  # FILTER_ONLY = Skip base build, apply criteria from ELIG_COH_ALLFLAGS only (Step 24+)
+  run_mode = toupper(Sys.getenv("RUN_MODE", unset = "FULL")),
+
+  # Output table naming (allows multiple cohort versions)
+  final_table_name = Sys.getenv("FINAL_TABLE_NAME", unset = "ELIG_COH_FINAL"),
+
+  # ============================================================
+  # INCLUSION CRITERIA TOGGLES (set FALSE to skip in final filter)
+  # ============================================================
+  apply_age_incl          = as.logical(Sys.getenv("APPLY_AGE_INCL", unset = "TRUE")),
+  min_age                 = as.integer(Sys.getenv("MIN_AGE", unset = "18")),
+
+  apply_ce_b_incl         = as.logical(Sys.getenv("APPLY_CE_B_INCL", unset = "TRUE")),
+  apply_ce_f_incl         = as.logical(Sys.getenv("APPLY_CE_F_INCL", unset = "TRUE")),
+
+  apply_no_bl_agents_incl = as.logical(Sys.getenv("APPLY_NO_BL_AGENTS_INCL", unset = "TRUE")),
+  apply_fu_agents_incl    = as.logical(Sys.getenv("APPLY_FU_AGENTS_INCL", unset = "TRUE")),
+
+  # ============================================================
+  # EXCLUSION CRITERIA TOGGLES (set TRUE to apply in final filter)
+  # ============================================================
   # These are computed as independent flags; set to TRUE to apply as exclusions
   apply_pregnancy_excl     = as.logical(Sys.getenv("APPLY_PREGNANCY_EXCL", unset = "TRUE")),
   apply_clintrial_excl     = as.logical(Sys.getenv("APPLY_CLINTRIAL_EXCL", unset = "TRUE")),
   apply_other_malig_excl   = as.logical(Sys.getenv("APPLY_OTHER_MALIG_EXCL", unset = "TRUE")),
-  apply_baseline_nondx_excl = as.logical(Sys.getenv("APPLY_BASELINE_NONDX_EXCL", unset = "FALSE"))  # Smoldering flag
+  apply_baseline_nondx_excl = as.logical(Sys.getenv("APPLY_BASELINE_NONDX_EXCL", unset = "FALSE")),  # Smoldering flag
+
+  # Create config-driven VIEW for interactive toggling (Option 2)
+  create_criteria_view = as.logical(Sys.getenv("CREATE_CRITERIA_VIEW", unset = "TRUE"))
 )
 
 run_id <- Sys.getenv("DOMINO_RUN_ID", unset = format(Sys.time(), "%Y%m%d%H%M%S"))
@@ -704,22 +732,47 @@ build_steps <- function() {
   clintrial_source <- get_code_source(embedded_clintrial_codes, cfg$cl_clintrial)
   other_malig_source <- get_code_source(embedded_other_malig_codes, cfg$cl_other_malig)
 
-  # FIXED: Build exclusion WHERE clauses BEFORE the list()
-  # Previously this block was inside list(), causing it to insert a string element
-  excl_clauses <- c()
+  # ============================================================
+  # BUILD COMBINED CRITERIA SQL (inclusions + exclusions)
+  # ============================================================
+  # This implements the "build flags once, apply criteria later" pattern
+  # per the IE specification: each criterion is an independent flag,
+
+  # merged forward, and can be toggled without rebuilding Steps 1-23.
+  criteria_clauses <- c()
+
+  # --- INCLUSION TOGGLES ---
+  if (isTRUE(cfg$apply_age_incl)) {
+    criteria_clauses <- c(criteria_clauses, glue("AND AGE_INDEX_YR >= {cfg$min_age}"))
+  }
+  if (isTRUE(cfg$apply_ce_b_incl)) {
+    criteria_clauses <- c(criteria_clauses, "AND CE_b = 1")
+  }
+  if (isTRUE(cfg$apply_ce_f_incl)) {
+    criteria_clauses <- c(criteria_clauses, "AND CE_f = 1")
+  }
+  if (isTRUE(cfg$apply_no_bl_agents_incl)) {
+    criteria_clauses <- c(criteria_clauses, "AND MM_bl_agents = 0")
+  }
+  if (isTRUE(cfg$apply_fu_agents_incl)) {
+    criteria_clauses <- c(criteria_clauses, "AND MM_FU_agents = 1")
+  }
+
+  # --- EXCLUSION TOGGLES ---
   if (isTRUE(cfg$apply_pregnancy_excl)) {
-    excl_clauses <- c(excl_clauses, "AND PREGNANT_FLAG = 0")
+    criteria_clauses <- c(criteria_clauses, "AND PREGNANT_FLAG = 0")
   }
   if (isTRUE(cfg$apply_clintrial_excl)) {
-    excl_clauses <- c(excl_clauses, "AND CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0")
+    criteria_clauses <- c(criteria_clauses, "AND CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0")
   }
   if (isTRUE(cfg$apply_other_malig_excl)) {
-    excl_clauses <- c(excl_clauses, "AND OTHER_MALIGN_FLAG = 0")
+    criteria_clauses <- c(criteria_clauses, "AND OTHER_MALIGN_FLAG = 0")
   }
   if (isTRUE(cfg$apply_baseline_nondx_excl)) {
-    excl_clauses <- c(excl_clauses, "AND MM_baseline_diag = 0")
+    criteria_clauses <- c(criteria_clauses, "AND MM_baseline_diag = 0")
   }
-  exclusion_sql <- paste(excl_clauses, collapse = "\n          ")
+
+  criteria_sql <- paste(criteria_clauses, collapse = "\n          ")
 
   list(
     # ----------------------------------------------------------
@@ -1551,20 +1604,80 @@ build_steps <- function() {
 
     list(
       name = "24_ELIG_COH_FINAL",
-      description = "FINAL COHORT: Apply all inclusion/exclusion criteria",
+      description = glue("FINAL COHORT ({cfg$final_table_name}): Apply configurable inclusion/exclusion criteria"),
       sql = glue("
-        CREATE OR REPLACE TABLE {work('ELIG_COH_FINAL')} AS
+        CREATE OR REPLACE TABLE {work(cfg$final_table_name)} AS
         SELECT *
         FROM {work('ELIG_COH_ALLFLAGS')}
-        WHERE AGE_INDEX_YR >= 18
-          AND CE_b = 1
-          AND CE_f = 1
-          AND MM_bl_agents = 0
-          AND MM_FU_agents = 1
-          {exclusion_sql}
+        WHERE 1=1
+          {criteria_sql}
       "),
-      qc = glue("SELECT count(*) AS n_final_cohort FROM {work('ELIG_COH_FINAL')}")
-    )
+      qc = glue("SELECT count(*) AS n_final_cohort FROM {work(cfg$final_table_name)}")
+    ),
+
+    # ----------------------------------------------------------
+    # STEP 25: CONFIG-DRIVEN VIEW (Option 2 - toggle without rerun)
+    # ----------------------------------------------------------
+    # Creates a config table + VIEW so criteria can be toggled via SQL UPDATE
+    # without re-running the pipeline at all. Set CREATE_CRITERIA_VIEW=FALSE to skip.
+    if (isTRUE(cfg$create_criteria_view)) list(
+      name = "25_IE_CRITERIA_VIEW",
+      description = "Create config table + dynamic VIEW for interactive criteria toggling",
+      sql = glue("
+        -- Create config table if not exists
+        CREATE TABLE IF NOT EXISTS {work('ie_criteria_config')} (
+          config_name STRING,
+          apply_age BOOLEAN,
+          min_age INT,
+          apply_ce_b BOOLEAN,
+          apply_ce_f BOOLEAN,
+          apply_no_bl_agents BOOLEAN,
+          apply_fu_agents BOOLEAN,
+          apply_pregnancy_excl BOOLEAN,
+          apply_clintrial_excl BOOLEAN,
+          apply_other_malig_excl BOOLEAN,
+          apply_baseline_nondx_excl BOOLEAN,
+          updated_at TIMESTAMP
+        ) USING DELTA;
+
+        -- Upsert current config (MERGE for idempotency)
+        MERGE INTO {work('ie_criteria_config')} t
+        USING (SELECT
+          'ACTIVE' AS config_name,
+          {tolower(cfg$apply_age_incl)} AS apply_age,
+          {cfg$min_age} AS min_age,
+          {tolower(cfg$apply_ce_b_incl)} AS apply_ce_b,
+          {tolower(cfg$apply_ce_f_incl)} AS apply_ce_f,
+          {tolower(cfg$apply_no_bl_agents_incl)} AS apply_no_bl_agents,
+          {tolower(cfg$apply_fu_agents_incl)} AS apply_fu_agents,
+          {tolower(cfg$apply_pregnancy_excl)} AS apply_pregnancy_excl,
+          {tolower(cfg$apply_clintrial_excl)} AS apply_clintrial_excl,
+          {tolower(cfg$apply_other_malig_excl)} AS apply_other_malig_excl,
+          {tolower(cfg$apply_baseline_nondx_excl)} AS apply_baseline_nondx_excl,
+          current_timestamp() AS updated_at
+        ) s
+        ON t.config_name = s.config_name
+        WHEN MATCHED THEN UPDATE SET *
+        WHEN NOT MATCHED THEN INSERT *;
+
+        -- Create dynamic VIEW that reads from config table
+        CREATE OR REPLACE VIEW {work('ELIG_COH_DYNAMIC')} AS
+        WITH c AS (SELECT * FROM {work('ie_criteria_config')} WHERE config_name = 'ACTIVE')
+        SELECT a.*
+        FROM {work('ELIG_COH_ALLFLAGS')} a
+        CROSS JOIN c
+        WHERE (c.apply_age = false OR a.AGE_INDEX_YR >= c.min_age)
+          AND (c.apply_ce_b = false OR a.CE_b = 1)
+          AND (c.apply_ce_f = false OR a.CE_f = 1)
+          AND (c.apply_no_bl_agents = false OR a.MM_bl_agents = 0)
+          AND (c.apply_fu_agents = false OR a.MM_FU_agents = 1)
+          AND (c.apply_pregnancy_excl = false OR a.PREGNANT_FLAG = 0)
+          AND (c.apply_clintrial_excl = false OR (a.CLINTRIAL_BASELINE = 0 AND a.CLINTRIAL_FOLLOWUP = 0))
+          AND (c.apply_other_malig_excl = false OR a.OTHER_MALIGN_FLAG = 0)
+          AND (c.apply_baseline_nondx_excl = false OR a.MM_baseline_diag = 0)
+      "),
+      qc = glue("SELECT count(*) AS n_dynamic_cohort FROM {work('ELIG_COH_DYNAMIC')}")
+    ) else NULL
   )
 }
 
@@ -1602,16 +1715,52 @@ main <- function() {
   } else {
     log_msg("TABLES: Using single consolidated tables")
   }
+
+  # Log run mode
+  log_msg("RUN MODE: ", cfg$run_mode)
+  if (cfg$run_mode == "FILTER_ONLY") {
+    log_msg("  -> Skipping base build; applying criteria from ELIG_COH_ALLFLAGS only")
+  } else if (cfg$run_mode == "BASE_ONLY") {
+    log_msg("  -> Building flags only; skipping final filter step")
+  }
+  log_msg("OUTPUT TABLE: ", cfg$final_table_name)
+
+  # Log inclusion criteria settings
+  incl_applied <- c()
+  incl_skipped <- c()
+  if (isTRUE(cfg$apply_age_incl)) {
+    incl_applied <- c(incl_applied, paste0("Age>=", cfg$min_age))
+  } else {
+    incl_skipped <- c(incl_skipped, "Age")
+  }
+  if (isTRUE(cfg$apply_ce_b_incl)) incl_applied <- c(incl_applied, "CE_baseline") else incl_skipped <- c(incl_skipped, "CE_baseline")
+  if (isTRUE(cfg$apply_ce_f_incl)) incl_applied <- c(incl_applied, "CE_followup") else incl_skipped <- c(incl_skipped, "CE_followup")
+  if (isTRUE(cfg$apply_no_bl_agents_incl)) incl_applied <- c(incl_applied, "NoBaselineAgents") else incl_skipped <- c(incl_skipped, "NoBaselineAgents")
+  if (isTRUE(cfg$apply_fu_agents_incl)) incl_applied <- c(incl_applied, "FU_Agents") else incl_skipped <- c(incl_skipped, "FU_Agents")
+
+  if (length(incl_applied) > 0) {
+    log_msg("INCLUSIONS APPLIED: ", paste(incl_applied, collapse = ", "))
+  }
+  if (length(incl_skipped) > 0) {
+    log_msg("INCLUSIONS SKIPPED: ", paste(incl_skipped, collapse = ", "))
+  }
+
   # Log exclusion settings
   excl_applied <- c()
-  if (isTRUE(cfg$apply_pregnancy_excl)) excl_applied <- c(excl_applied, "Pregnancy")
-  if (isTRUE(cfg$apply_clintrial_excl)) excl_applied <- c(excl_applied, "ClinicalTrial")
-  if (isTRUE(cfg$apply_other_malig_excl)) excl_applied <- c(excl_applied, "OtherMalignancy")
-  if (isTRUE(cfg$apply_baseline_nondx_excl)) excl_applied <- c(excl_applied, "BaselineNonDxClaim")
+  excl_skipped <- c()
+  if (isTRUE(cfg$apply_pregnancy_excl)) excl_applied <- c(excl_applied, "Pregnancy") else excl_skipped <- c(excl_skipped, "Pregnancy")
+  if (isTRUE(cfg$apply_clintrial_excl)) excl_applied <- c(excl_applied, "ClinicalTrial") else excl_skipped <- c(excl_skipped, "ClinicalTrial")
+  if (isTRUE(cfg$apply_other_malig_excl)) excl_applied <- c(excl_applied, "OtherMalignancy") else excl_skipped <- c(excl_skipped, "OtherMalignancy")
+  if (isTRUE(cfg$apply_baseline_nondx_excl)) excl_applied <- c(excl_applied, "BaselineNonDxClaim") else excl_skipped <- c(excl_skipped, "BaselineNonDxClaim")
   if (length(excl_applied) > 0) {
     log_msg("EXCLUSIONS APPLIED: ", paste(excl_applied, collapse = ", "))
-  } else {
-    log_msg("EXCLUSIONS: None applied (flags computed but not filtered)")
+  }
+  if (length(excl_skipped) > 0) {
+    log_msg("EXCLUSIONS SKIPPED: ", paste(excl_skipped, collapse = ", "))
+  }
+
+  if (isTRUE(cfg$create_criteria_view)) {
+    log_msg("DYNAMIC VIEW: ELIG_COH_DYNAMIC will be created (toggle via SQL UPDATE)")
   }
   log_msg("=", SEP_59)
 
@@ -1633,11 +1782,48 @@ main <- function() {
 
   # Build and run steps
   steps <- build_steps()
+
+  # Remove NULL steps (e.g., Step 25 if create_criteria_view = FALSE)
+  steps <- Filter(Negate(is.null), steps)
+
+  # ============================================================
+  # RUN MODE: Filter steps based on cfg$run_mode
+  # ============================================================
+  # FULL        = Run all steps (default)
+  # BASE_ONLY   = Build flags only (Steps 1-23), skip final filter
+  # FILTER_ONLY = Skip base build, apply criteria from ELIG_COH_ALLFLAGS only (Step 24+)
+  original_step_count <- length(steps)
+
+  if (cfg$run_mode == "FILTER_ONLY") {
+    log_msg("RUN_MODE=FILTER_ONLY: Skipping base build; applying criteria only.")
+    # Find steps that start with "24_" or "25_" (the filter/view steps)
+    filter_step_indices <- grep("^(24_|25_)", sapply(steps, function(s) s$name))
+    if (length(filter_step_indices) == 0) {
+      stop("FILTER_ONLY mode requested but no filter steps (24_*, 25_*) found!")
+    }
+    steps <- steps[filter_step_indices]
+    log_msg("  Running ", length(steps), " filter step(s) from ", original_step_count, " total")
+
+  } else if (cfg$run_mode == "BASE_ONLY") {
+    log_msg("RUN_MODE=BASE_ONLY: Building flags only; skipping final filter.")
+    # Exclude steps that start with "24_" or "25_"
+    base_step_indices <- grep("^(24_|25_)", sapply(steps, function(s) s$name), invert = TRUE)
+    steps <- steps[base_step_indices]
+    log_msg("  Running ", length(steps), " base step(s), skipping filter steps")
+
+  } else if (cfg$run_mode != "FULL") {
+    log_msg("WARNING: Unknown RUN_MODE '", cfg$run_mode, "', defaulting to FULL")
+  }
+
   total_steps <- length(steps)
 
   cat("\n")
   cat(SEP_60, "\n")
-  cat("  STARTING PIPELINE: ", total_steps, " steps to process\n")
+  cat("  STARTING PIPELINE: ", total_steps, " steps to process")
+  if (cfg$run_mode != "FULL") {
+    cat(" (", cfg$run_mode, " mode)")
+  }
+  cat("\n")
   cat(SEP_60, "\n")
 
   for (i in seq_along(steps)) {
