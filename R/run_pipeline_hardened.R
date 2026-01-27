@@ -21,8 +21,10 @@
 # - ENDDATE/FU_DAYS properly account for Death_dt per StudyPop spec
 #
 # Optum Business Rules compliance:
-# - Inpatient: Uses T_CONFINEMENT validation (Approach 2) with POS/TOS fallback
-# - Strict CE: Uses member_enrollment (raw), not member_cont_enrollment (pre-rolled)
+# - Inpatient: Uses T_CONFINEMENT validation (STRICT Approach 2, NO POS/TOS fallback)
+# - Confinement: Requires BOTH ADMIT_DATE and DISCH_DATE
+# - Enrollment: Uses prebuilt member_cont_enrollment for standard spans (<30 day gaps)
+# - Strict CE: Uses member_enrollment (raw) for CE_3mosf (no-gap sensitivity)
 # - Non-diagnostic claims: Claim-level logic (has diagnostic line = diagnostic)
 # - DOD: Uses YMDOD field, includes joinability QC validation
 # - Exclusion flags: Configurable application (pregnancy, clinical trial, etc.)
@@ -196,8 +198,9 @@ cfg <- list(
   cl_clintrial       = "cl_clintrial",
   cl_other_malig     = "cl_other_malignancies",
 
-  # Use embedded code lists (avoids external table dependency errors)
-  use_embedded_codes = TRUE,
+  # Use prebuilt code list tables from reference schema (per Optum Business Rules recommendation)
+  # Set to TRUE to use embedded codes if external tables are not available
+  use_embedded_codes = FALSE,
 
   # Study parameters (per DataPrep spec dated 19 Jan 2026)
   study_start    = "2015-07-01",
@@ -705,10 +708,28 @@ build_steps <- function() {
   clintrial_source <- get_code_source(embedded_clintrial_codes, cfg$cl_clintrial)
   other_malig_source <- get_code_source(embedded_other_malig_codes, cfg$cl_other_malig)
 
+  # FIXED: Build exclusion WHERE clauses BEFORE the list()
+  # Previously this block was inside list(), causing it to insert a string element
+  excl_clauses <- c()
+  if (isTRUE(cfg$apply_pregnancy_excl)) {
+    excl_clauses <- c(excl_clauses, "AND PREGNANT_FLAG = 0")
+  }
+  if (isTRUE(cfg$apply_clintrial_excl)) {
+    excl_clauses <- c(excl_clauses, "AND CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0")
+  }
+  if (isTRUE(cfg$apply_other_malig_excl)) {
+    excl_clauses <- c(excl_clauses, "AND OTHER_MALIGN_FLAG = 0")
+  }
+  if (isTRUE(cfg$apply_baseline_nondx_excl)) {
+    excl_clauses <- c(excl_clauses, "AND MM_baseline_diag = 0")
+  }
+  exclusion_sql <- paste(excl_clauses, collapse = "\n          ")
+
   list(
     # ----------------------------------------------------------
     # PHASE 1: NORMALIZE CODE LISTS (small tables, run once)
-    # Uses embedded codes when use_embedded_codes = TRUE
+    # Default: Uses prebuilt reference tables (use_embedded_codes = FALSE)
+    # Set use_embedded_codes = TRUE to use embedded codes if ref tables unavailable
     # ----------------------------------------------------------
     list(
       name = "01_mm_dx_codes",
@@ -815,6 +836,7 @@ build_steps <- function() {
     # Business rules: "inpatient should be restricted to cases where
     # CONF_ID is not NULL from the T_CONFINEMENT table"
     # This validates that CONF_ID corresponds to an actual confinement
+    # Per Approach 2: confinement should have associated admission AND discharge dates
     # ----------------------------------------------------------
     list(
       name = "07b_confinement",
@@ -828,13 +850,16 @@ build_steps <- function() {
         FROM {cdm_src(cfg$tbl_confinement)}
         WHERE CONF_ID IS NOT NULL
           AND ADMIT_DATE IS NOT NULL
+          AND DISCH_DATE IS NOT NULL
       "),
       qc = glue("SELECT count(*) AS n_confinements FROM {work('confinement')}")
     ),
 
     # All MM dx events in study period (for baseline lookback)
-    # FIXED: Per Optum Business Rules Approach 2 - inpatient requires CONF_ID to exist
-    # in the T_CONFINEMENT table (not just be non-null on the claim header)
+    # Per Optum Business Rules STRICT Approach 2:
+    # - Inpatient: ONLY when CONF_ID exists in T_CONFINEMENT (validated via cf.CONF_ID IS NOT NULL)
+    # - Outpatient: All other records (where cf.CONF_ID IS NULL)
+    # - NO POS/TOS fallback per Approach 2 specification
     list(
       name = "08a_mm_dx_events_all",
       description = "Identifying MM diagnosis events (full study period)",
@@ -848,21 +873,12 @@ build_steps <- function() {
           upper(regexp_replace(d.DIAG, '\\\\.', '')) AS diag,
           CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
           h.CONF_ID,
-          -- Per Optum Business Rules Approach 2: inpatient requires CONF_ID to exist
-          -- in T_CONFINEMENT (validated via cf.CONF_ID IS NOT NULL), or conservative
-          -- fallback to POS/TOS_CD when CONF_ID is null
-          CASE WHEN cf.CONF_ID IS NOT NULL THEN 1  -- Primary: validated confinement
-               WHEN h.CONF_ID IS NULL
-                    AND (CAST(h.POS AS STRING) IN ('21', '51', '61')
-                         OR upper(h.TOS_CD) IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF'))
-                    THEN 1  -- Fallback: POS/TOS indicates inpatient but no CONF_ID
-               ELSE 0 END AS inpatient_flg,
-          -- Outpatient: no validated confinement AND (no inpatient indicators OR indicators missing)
-          CASE WHEN cf.CONF_ID IS NULL
-                AND (CAST(h.POS AS STRING) NOT IN ('21', '51', '61') OR h.POS IS NULL)
-                AND (upper(h.TOS_CD) NOT IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF') OR h.TOS_CD IS NULL)
-               THEN 1 ELSE 0 END AS outpatient_flg,
-          -- Additional flag for QC: has validated confinement (Optum Approach 2 compliant)
+          -- Per Optum Business Rules STRICT Approach 2:
+          -- Inpatient ONLY when CONF_ID is validated in T_CONFINEMENT
+          CASE WHEN cf.CONF_ID IS NOT NULL THEN 1 ELSE 0 END AS inpatient_flg,
+          -- Outpatient: all records where CONF_ID is NOT validated in T_CONFINEMENT
+          CASE WHEN cf.CONF_ID IS NULL THEN 1 ELSE 0 END AS outpatient_flg,
+          -- QC flag: same as inpatient_flg under strict Approach 2
           CASE WHEN cf.CONF_ID IS NOT NULL THEN 1 ELSE 0 END AS conf_validated
         FROM {cdm_src(cfg$tbl_med_diag)} d
         INNER JOIN {work('med_claim_header')} h
@@ -995,53 +1011,34 @@ build_steps <- function() {
     ),
 
     # ----------------------------------------------------------
-    # PHASE 4: ENROLLMENT SPANS WITH GAP LOGIC
-    # Per DataPrep: allowable gaps <= 30 days
-    # FIXED: gap_days + 1 because ELIGEND is inclusive (last day of coverage)
+    # PHASE 4: ENROLLMENT SPANS (using prebuilt member_cont_enrollment)
+    # Per Optum Business Rules: member_cont_enrollment is a rollup of member_enrollment
+    # representing continuous enrollment spans with <30 day gaps already absorbed.
+    # Using the prebuilt datasource directly avoids drift from Optum's rollup logic.
     # ----------------------------------------------------------
     list(
       name = "13_enrollment_spans",
-      description = "Building enrollment spans (30-day gap allowed)",
+      description = "Using prebuilt enrollment spans (member_cont_enrollment)",
       source_tables = c("member_cont_enrollment"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('enrollment_spans')} AS
-        WITH base AS (
-          SELECT PATID, cast(ELIGEFF as date) AS elig_eff, cast(ELIGEND as date) AS elig_end
-          FROM {cdm_src(cfg$tbl_member_elig)}
-          WHERE ELIGEFF IS NOT NULL AND ELIGEND IS NOT NULL
-        ),
-        ordered AS (
-          SELECT *, lag(elig_end) OVER (PARTITION BY PATID ORDER BY elig_eff, elig_end) AS prev_end
-          FROM base
-        ),
-        flagged AS (
-          SELECT *,
-            -- FIXED: +1 because ELIGEND is inclusive (day after prev_end is first uncovered day)
-            CASE WHEN prev_end IS NULL THEN 1
-                 WHEN elig_eff <= date_add(prev_end, {cfg$gap_days} + 1) THEN 0
-                 ELSE 1 END AS new_grp
-          FROM ordered
-        ),
-        grouped AS (
-          SELECT *,
-            sum(new_grp) OVER (PARTITION BY PATID ORDER BY elig_eff, elig_end
-                               ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS grp_id
-          FROM flagged
-        )
-        SELECT PATID, grp_id, min(elig_eff) AS cov_start, max(elig_end) AS cov_end
-        FROM grouped
-        GROUP BY PATID, grp_id
+        SELECT
+          PATID,
+          ROW_NUMBER() OVER (PARTITION BY PATID ORDER BY ELIGEFF) AS grp_id,
+          cast(ELIGEFF as date) AS cov_start,
+          cast(ELIGEND as date) AS cov_end
+        FROM {cdm_src(cfg$tbl_member_elig)}
+        WHERE ELIGEFF IS NOT NULL AND ELIGEND IS NOT NULL
       "),
       qc = glue("SELECT count(DISTINCT PATID) AS n_patients FROM {work('enrollment_spans')}")
     ),
 
     # ----------------------------------------------------------
-    # PHASE 4b: STRICT ENROLLMENT SPANS (NO GAPS)
+    # PHASE 4b: STRICT ENROLLMENT SPANS (NO GAPS) - for CE_3mosf sensitivity
     # Per StudyPop spec: CE_3mosf requires NO allowable gaps
-    # FIXED: Use member_enrollment (raw eligibility records), NOT member_cont_enrollment
-    # Per Optum Business Rules: member_cont_enrollment is already a rollup with gaps
-    # <30 days absorbed, so we cannot detect short gaps from it.
-    # member_enrollment preserves the original eligibility records.
+    # This step uses member_enrollment (raw eligibility records) since
+    # the prebuilt member_cont_enrollment already absorbs <30 day gaps
+    # and cannot be used to detect true enrollment gaps.
     # ----------------------------------------------------------
     list(
       name = "13b_enrollment_spans_strict",
@@ -1556,24 +1553,6 @@ build_steps <- function() {
       qc = glue("SELECT count(*) AS n_total, count(DISTINCT PATID) AS n_patients FROM {work('ELIG_COH_ALLFLAGS')}")
     ),
 
-    # Build exclusion WHERE clauses based on configuration
-    # FIXED: Apply exclusion flags if configured (not just compute them)
-    {
-      excl_clauses <- c()
-      if (isTRUE(cfg$apply_pregnancy_excl)) {
-        excl_clauses <- c(excl_clauses, "AND PREGNANT_FLAG = 0")
-      }
-      if (isTRUE(cfg$apply_clintrial_excl)) {
-        excl_clauses <- c(excl_clauses, "AND CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0")
-      }
-      if (isTRUE(cfg$apply_other_malig_excl)) {
-        excl_clauses <- c(excl_clauses, "AND OTHER_MALIGN_FLAG = 0")
-      }
-      if (isTRUE(cfg$apply_baseline_nondx_excl)) {
-        excl_clauses <- c(excl_clauses, "AND MM_baseline_diag = 0")
-      }
-      exclusion_sql <- paste(excl_clauses, collapse = "\n          ")
-    },
     list(
       name = "24_ELIG_COH_FINAL",
       description = "FINAL COHORT: Apply all inclusion/exclusion criteria",
