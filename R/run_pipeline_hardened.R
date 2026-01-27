@@ -150,8 +150,8 @@ prompt_user_options <- function() {
   cat("  Work Schema:      ", user_cfg$work_schema, "\n")
   cat("  Study Period:     ", user_cfg$study_start, " to ", user_cfg$study_end, "\n")
   cat("  ID Period:        ", user_cfg$id_start, " to ", user_cfg$id_end, "\n")
-  cat("  Embedded Codes:   ", if (isTRUE(cfg$use_embedded_codes)) "YES (no external ref tables needed)" else "NO (external tables required)", "\n")
-  cat("  Quarterly Tables: ", if (isTRUE(cfg$use_quarterly_tables)) "YES (t_<table>_YYYYqQ pattern)" else "NO (single tables)", "\n")
+  cat("  Embedded Codes:   ", if (isTRUE(as.logical(Sys.getenv("USE_EMBEDDED_CODES", unset = "TRUE")))) "YES (no external ref tables needed)" else "NO (external tables required)", "\n")
+  cat("  Quarterly Tables: ", if (isTRUE(user_cfg$use_quarterly_tables)) "YES (t_<table>_YYYYqQ pattern)" else "NO (single tables)", "\n")
   cat("============================================================\n\n")
 
   return(user_cfg)
@@ -1490,8 +1490,17 @@ build_steps <- function() {
           q.PATID,
           CASE
             WHEN b.death_yr IS NULL THEN NULL
-            WHEN b.death_mo IS NOT NULL THEN make_date(b.death_yr, b.death_mo, 15)
+            WHEN b.death_mo IS NOT NULL THEN
+              -- Month-level: use 15th unless index_date > 15th in same month, then use month-end
+              CASE
+                WHEN year(q.index_date) = b.death_yr
+                 AND month(q.index_date) = b.death_mo
+                 AND q.index_date > make_date(b.death_yr, b.death_mo, 15)
+                THEN last_day(make_date(b.death_yr, b.death_mo, 1))
+                ELSE make_date(b.death_yr, b.death_mo, 15)
+              END
             ELSE
+              -- Year-only: use July 15 unless index_date > July 15 in same year, then Dec 31
               CASE
                 WHEN year(q.index_date) = b.death_yr
                  AND q.index_date > make_date(b.death_yr, 7, 15)
@@ -1750,9 +1759,12 @@ build_steps <- function() {
         )
         SELECT
           q.PATID,
+          -- Require BOTH first_dt AND next_dt within baseline period
           max(CASE WHEN p.diff_days <= 30
                     AND p.first_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
                                        AND date_sub(q.index_date, 1)
+                    AND p.next_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
+                                      AND date_sub(q.index_date, 1)
                THEN 1 ELSE 0 END) AS OTHER_MALIGN_FLAG
         FROM {work('mm_qualifying')} q
         LEFT JOIN pairs p ON q.PATID = p.PATID
@@ -2203,12 +2215,17 @@ main <- function() {
     cat(DASH_60, "\n")
 
     dod_qc_sql <- glue("
+      WITH dod_ids AS (
+        SELECT DISTINCT PATID
+        FROM {cdm_src(cfg$tbl_dod)}
+        WHERE YMDOD IS NOT NULL AND LENGTH(TRIM(YMDOD)) >= 4
+      )
       SELECT
         count(DISTINCT q.PATID) AS n_qualifying,
         count(DISTINCT d.PATID) AS n_dod_matched,
-        ROUND(100.0 * count(DISTINCT d.PATID) / count(DISTINCT q.PATID), 2) AS pct_matched
+        ROUND(100.0 * count(DISTINCT d.PATID) / NULLIF(count(DISTINCT q.PATID), 0), 2) AS pct_matched
       FROM {work_tbl('mm_qualifying')} q
-      LEFT JOIN {work_tbl('death_dt')} d ON q.PATID = d.PATID
+      LEFT JOIN dod_ids d ON q.PATID = d.PATID
     ")
     dod_qc <- DBI::dbGetQuery(con_env$con, dod_qc_sql)
 
@@ -2239,20 +2256,22 @@ main <- function() {
 
     conf_qc_sql <- glue("
       SELECT
-        sum(inpatient_flg) AS n_inpatient_events,
+        count(*) AS n_mm_dx_events,
+        sum(CASE WHEN CONF_ID IS NOT NULL THEN 1 ELSE 0 END) AS n_with_conf_id,
         sum(conf_validated) AS n_conf_validated,
-        sum(CASE WHEN inpatient_flg = 1 AND conf_validated = 0 THEN 1 ELSE 0 END) AS n_inpt_no_conf,
-        ROUND(100.0 * sum(conf_validated) / NULLIF(sum(inpatient_flg), 0), 2) AS pct_conf_validated
+        sum(CASE WHEN CONF_ID IS NOT NULL AND conf_validated = 0 THEN 1 ELSE 0 END) AS n_conf_id_not_validated,
+        ROUND(100.0 * sum(conf_validated) / NULLIF(sum(CASE WHEN CONF_ID IS NOT NULL THEN 1 ELSE 0 END), 0), 2) AS pct_validated_among_confid
       FROM {work_tbl('mm_dx_events_all')}
     ")
     conf_qc <- DBI::dbGetQuery(con_env$con, conf_qc_sql)
 
-    cat(sprintf("Inpatient dx events:     %s\n", format(conf_qc$n_inpatient_events, big.mark = ",")))
-    cat(sprintf("Confinement validated:   %s (%.2f%%)\n",
+    cat(sprintf("MM dx events (total):    %s\n", format(conf_qc$n_mm_dx_events, big.mark = ",")))
+    cat(sprintf("Events with CONF_ID:     %s\n", format(conf_qc$n_with_conf_id, big.mark = ",")))
+    cat(sprintf("Confinement validated:   %s (%.2f%% of CONF_ID)\n",
                 format(conf_qc$n_conf_validated, big.mark = ","),
-                ifelse(is.na(conf_qc$pct_conf_validated), 0, conf_qc$pct_conf_validated)))
-    cat(sprintf("Inpatient w/o conf:      %s (POS/TOS fallback)\n",
-                format(conf_qc$n_inpt_no_conf, big.mark = ",")))
+                ifelse(is.na(conf_qc$pct_validated_among_confid), 0, conf_qc$pct_validated_among_confid)))
+    cat(sprintf("CONF_ID not validated:   %s\n",
+                format(conf_qc$n_conf_id_not_validated, big.mark = ",")))
     cat(DASH_60, "\n")
 
   }, error = function(e) {
