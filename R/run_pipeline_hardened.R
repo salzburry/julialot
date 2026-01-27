@@ -2208,7 +2208,7 @@ main <- function() {
         count(DISTINCT d.PATID) AS n_dod_matched,
         ROUND(100.0 * count(DISTINCT d.PATID) / count(DISTINCT q.PATID), 2) AS pct_matched
       FROM {work_tbl('mm_qualifying')} q
-      LEFT JOIN {work_tbl('death_ym')} d ON q.PATID = d.PATID
+      LEFT JOIN {work_tbl('death_dt')} d ON q.PATID = d.PATID
     ")
     dod_qc <- DBI::dbGetQuery(con_env$con, dod_qc_sql)
 
