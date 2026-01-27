@@ -360,10 +360,6 @@ cfg <- list(
   max_retries = 4,
   base_sleep  = 5,
 
-  # Local-only mode: skip schema/table creation, process in-memory, save to CSV
-  # Use this when you don't have CREATE permissions on the Databricks catalog
-  local_only = as.logical(Sys.getenv("LOCAL_ONLY_MODE", unset = "FALSE")),
-
   # ============================================================
   # RUN MODE CONTROL
   # ============================================================
@@ -462,10 +458,8 @@ cdm <- function(tbl) full_name(cfg$cdm_schema, tbl)
 ref <- function(tbl) full_name(cfg$ref_schema, tbl)
 work <- function(tbl) full_name(cfg$work_schema, tbl)
 
-# Helper to get table name (temp view in local mode, qualified otherwise)
-work_tbl <- function(name) {
-  if (isTRUE(cfg$local_only)) name else work(name)
-}
+# Alias for work() - used in reporting/QC queries
+work_tbl <- function(name) work(name)
 
 log_msg <- function(...) {
   cat(sprintf("[%s] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S")), ..., "\n")
@@ -751,24 +745,7 @@ sql_exec <- function(con, sql) {
 # DB-SIDE RUN LOG (fixed TIMESTAMP literal)
 # ============================================================
 
-ensure_schema <- function(con) {
-  if (isTRUE(cfg$local_only)) {
-    log_msg("LOCAL-ONLY mode: skipping schema creation")
-    return(invisible(NULL))
-  }
-  schema_path <- if (nzchar(cfg$catalog)) {
-    paste0(cfg$catalog, ".", cfg$work_schema)
-  } else {
-    cfg$work_schema
-  }
-  sql_exec(con, glue("CREATE SCHEMA IF NOT EXISTS {schema_path}"))
-}
-
 ensure_run_log <- function(con) {
-  if (isTRUE(cfg$local_only)) {
-    log_msg("LOCAL-ONLY mode: skipping run log table creation")
-    return(NULL)  # Return NULL to indicate no DB logging
-  }
   log_table <- work("pipeline_run_log")
   sql_exec(con, glue("
     CREATE TABLE IF NOT EXISTS {log_table} (
@@ -790,7 +767,7 @@ ensure_run_log <- function(con) {
 # Fixed: TIMESTAMP literal syntax for Databricks
 write_log_row <- function(con, log_table, step_name, status, started_at, ended_at,
                           qc_metric = NA, qc_value = NA, error_message = NA) {
-  # Skip DB logging in local_only mode
+  # Skip DB logging if log_table is NULL
   if (is.null(log_table)) return(invisible(NULL))
 
   duration <- as.numeric(difftime(ended_at, started_at, units = "secs"))
@@ -809,41 +786,6 @@ write_log_row <- function(con, log_table, step_name, status, started_at, ended_a
       {if (is.na(error_message)) 'NULL' else paste0(\"'\", esc(error_message), \"'\")}
     )
   "))
-}
-
-# ============================================================
-# LOCAL-ONLY MODE SQL CONVERSION
-# Converts CREATE TABLE to TEMPORARY VIEW (no schema required)
-# ============================================================
-
-convert_sql_for_local <- function(sql) {
-  # Convert CREATE OR REPLACE TABLE schema.name to TEMPORARY VIEW name
-  # Pattern: CREATE OR REPLACE TABLE <catalog.>schema.tablename AS
-  sql <- gsub(
-    "CREATE\\s+OR\\s+REPLACE\\s+TABLE\\s+([a-zA-Z0-9_]+\\.)?([a-zA-Z0-9_]+)\\.([a-zA-Z0-9_]+)\\s+AS",
-    "CREATE OR REPLACE TEMPORARY VIEW \\3 AS",
-    sql, ignore.case = TRUE
-  )
-  # Also handle 2-part names: schema.tablename
-  sql <- gsub(
-    "CREATE\\s+OR\\s+REPLACE\\s+TABLE\\s+([a-zA-Z0-9_]+)\\.([a-zA-Z0-9_]+)\\s+AS",
-    "CREATE OR REPLACE TEMPORARY VIEW \\2 AS",
-    sql, ignore.case = TRUE
-  )
-  sql
-}
-
-convert_refs_for_local <- function(sql, work_schema, ref_schema = NULL) {
-  # Convert schema.tablename references to just tablename for temp views
-  # Work schema tables -> temp views
-  if (nzchar(work_schema)) {
-    # Handle catalog.schema.table pattern
-    sql <- gsub(
-      paste0("([a-zA-Z0-9_]+\\.)?", work_schema, "\\.([a-zA-Z0-9_]+)"),
-      "\\2", sql, ignore.case = TRUE
-    )
-  }
-  sql
 }
 
 # ============================================================
@@ -880,15 +822,6 @@ run_step <- function(log_table, step_name, sql, qc_sql = NULL, description = NUL
 
   cat(DASH_60, "\n")
   flush.console()
-
-  # LOCAL-ONLY MODE: Convert SQL to use temporary views instead of tables
-  if (isTRUE(cfg$local_only)) {
-    sql <- convert_sql_for_local(sql)
-    sql <- convert_refs_for_local(sql, cfg$work_schema)
-    if (!is.null(qc_sql)) {
-      qc_sql <- convert_refs_for_local(qc_sql, cfg$work_schema)
-    }
-  }
 
   tryCatch({
     # Ping before heavy work (handles stale ODBC sessions)
@@ -1485,31 +1418,42 @@ build_steps <- function() {
           SELECT PATID, death_yr, NULLIF(death_mo, 0) AS death_mo
           FROM ranked
           WHERE rn = 1
+        ),
+        calc AS (
+          SELECT
+            q.PATID,
+            q.index_date,
+            CASE
+              WHEN b.death_yr IS NULL THEN NULL
+              WHEN b.death_mo IS NOT NULL THEN
+                -- Month-level: use 15th unless index_date > 15th in same month, then use month-end
+                CASE
+                  WHEN year(q.index_date) = b.death_yr
+                   AND month(q.index_date) = b.death_mo
+                   AND q.index_date > make_date(b.death_yr, b.death_mo, 15)
+                  THEN last_day(make_date(b.death_yr, b.death_mo, 1))
+                  ELSE make_date(b.death_yr, b.death_mo, 15)
+                END
+              ELSE
+                -- Year-only: use July 15 unless index_date > July 15 in same year, then Dec 31
+                CASE
+                  WHEN year(q.index_date) = b.death_yr
+                   AND q.index_date > make_date(b.death_yr, 7, 15)
+                  THEN make_date(b.death_yr, 12, 31)
+                  ELSE make_date(b.death_yr, 7, 15)
+                END
+            END AS death_raw
+          FROM {work('mm_qualifying')} q
+          LEFT JOIN best b ON q.PATID = b.PATID
         )
+        -- Final clamp: ensure DEATH_DT >= index_date (prevents negative FU_DAYS from data issues)
         SELECT
-          q.PATID,
+          PATID,
           CASE
-            WHEN b.death_yr IS NULL THEN NULL
-            WHEN b.death_mo IS NOT NULL THEN
-              -- Month-level: use 15th unless index_date > 15th in same month, then use month-end
-              CASE
-                WHEN year(q.index_date) = b.death_yr
-                 AND month(q.index_date) = b.death_mo
-                 AND q.index_date > make_date(b.death_yr, b.death_mo, 15)
-                THEN last_day(make_date(b.death_yr, b.death_mo, 1))
-                ELSE make_date(b.death_yr, b.death_mo, 15)
-              END
-            ELSE
-              -- Year-only: use July 15 unless index_date > July 15 in same year, then Dec 31
-              CASE
-                WHEN year(q.index_date) = b.death_yr
-                 AND q.index_date > make_date(b.death_yr, 7, 15)
-                THEN make_date(b.death_yr, 12, 31)
-                ELSE make_date(b.death_yr, 7, 15)
-              END
+            WHEN death_raw IS NOT NULL AND death_raw < index_date THEN index_date
+            ELSE death_raw
           END AS DEATH_DT
-        FROM {work('mm_qualifying')} q
-        LEFT JOIN best b ON q.PATID = b.PATID
+        FROM calc
       "),
       qc = glue("SELECT count(*) AS n_with_death_dt FROM {work('death_dt')} WHERE DEATH_DT IS NOT NULL")
     ),
@@ -2002,9 +1946,6 @@ main <- function() {
     log_msg("CODE LISTS: Using EMBEDDED codes (no external tables required)")
   } else {
     log_msg("CODE LISTS: Using EXTERNAL tables from ", cfg$ref_schema)
-  }
-  if (isTRUE(cfg$local_only)) {
-    log_msg("MODE: LOCAL-ONLY (using TEMPORARY VIEWs)")
   }
   if (isTRUE(cfg$use_quarterly_tables)) {
     log_msg("TABLES: Using quarterly tables (t_<table>_", get_quarter_suffix(cfg$study_end), ")")
