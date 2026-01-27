@@ -838,11 +838,13 @@ run_step <- function(log_table, step_name, sql, qc_sql = NULL, description = NUL
       qc <- DBI::dbGetQuery(con_env$con, qc_sql)
       qc_metric <- colnames(qc)[1]
       qc_value <- as.character(qc[[1]][1])
-      # Format count with commas for readability
-      formatted_value <- tryCatch(
-        format(as.numeric(qc_value), big.mark = ","),
-        error = function(e) qc_value
-      )
+      # Format count with commas for readability (only if numeric)
+      numeric_val <- suppressWarnings(as.numeric(qc_value))
+      formatted_value <- if (!is.na(numeric_val)) {
+        format(numeric_val, big.mark = ",")
+      } else {
+        qc_value
+      }
       log_msg("  >> Result: ", qc_metric, " = ", formatted_value)
       flush.console()
     }
