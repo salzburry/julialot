@@ -1360,7 +1360,7 @@ build_steps <- function() {
         CREATE OR REPLACE TABLE {work('ce_flags')} AS
         WITH idx AS (
           SELECT PATID, index_date,
-                 date_sub(index_date, {cfg$baseline_days}) AS baseline_start,
+                 date_sub(index_date, {cfg$baseline_days - 1}) AS baseline_start,
                  index_date AS baseline_end
           FROM {work('mm_qualifying')}
         ),
@@ -1372,14 +1372,14 @@ build_steps <- function() {
                  CASE WHEN s.cov_start <= i.baseline_start AND s.cov_end >= i.baseline_end
                       THEN 1 ELSE 0 END AS covers_baseline,
                  CASE WHEN s.cov_start <= i.index_date AND s.cov_end >= i.index_date
-                      THEN 1 ELSE 0 END AS covers_followup_day1
+                      THEN 1 ELSE 0 END AS covers_index_day
           FROM idx i
           LEFT JOIN {work('enrollment_spans')} s ON i.PATID = s.PATID
         )
         SELECT PATID, index_date, baseline_start, baseline_end,
                max(covers_baseline) AS CE_b,
-               max(covers_followup_day1) AS CE_f,
-               max(CASE WHEN covers_followup_day1 = 1 THEN cov_end END) AS ENDDATE_CE
+               max(covers_index_day) AS CE_f,
+               max(CASE WHEN covers_index_day = 1 THEN cov_end END) AS ENDDATE_CE
         FROM joined_std
         GROUP BY PATID, index_date, baseline_start, baseline_end
       "),
@@ -1546,7 +1546,7 @@ build_steps <- function() {
         SELECT
           q.PATID,
           -- Baseline includes index_date per IE spec
-          max(CASE WHEN e.svc_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
+          max(CASE WHEN e.svc_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days - 1})
                                      AND q.index_date
                     AND n.is_nondiagnostic_claim = 1
                THEN 1 ELSE 0 END) AS MM_BASELINE_NONDX
@@ -1598,7 +1598,7 @@ build_steps <- function() {
         SELECT
           q.PATID,
           -- Baseline includes index_date per IE spec
-          max(CASE WHEN t.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
+          max(CASE WHEN t.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days - 1})
                                        AND q.index_date
                THEN 1 ELSE 0 END) AS MM_THERAPY_BASELINE,
           -- Followup starts after index_date per IE spec
@@ -1680,7 +1680,7 @@ build_steps <- function() {
         SELECT
           q.PATID,
           -- Baseline includes index_date per IE spec
-          max(CASE WHEN m.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
+          max(CASE WHEN m.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days - 1})
                                        AND q.index_date
                THEN 1 ELSE 0 END) AS CLINTRIAL_BASELINE,
           -- Followup starts after index_date per IE spec
@@ -1733,9 +1733,9 @@ build_steps <- function() {
           q.PATID,
           -- Require BOTH first_dt AND next_dt within baseline period (includes index_date per IE spec)
           max(CASE WHEN p.diff_days <= 30
-                    AND p.first_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
+                    AND p.first_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days - 1})
                                        AND q.index_date
-                    AND p.next_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
+                    AND p.next_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days - 1})
                                       AND q.index_date
                THEN 1 ELSE 0 END) AS OTHER_MALIGN_FLAG
         FROM {work('mm_qualifying')} q
