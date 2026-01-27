@@ -323,7 +323,7 @@ cfg <- list(
   # Set to TRUE if your tables are quarterly-partitioned (e.g., t_medical_2017q1)
   use_quarterly_tables = as.logical(Sys.getenv("USE_QUARTERLY_TABLES", unset = "TRUE")),
 
-  # Code list tables (used only if use_embedded_codes = FALSE)
+  # Code list tables (used only if use_embedded_codes = FALSE and no CSV files)
   cl_mm_dx           = "cl_mm_dx",
   cl_diagnostic_proc = "cl_diagnostic_proc",
   cl_mm_therapy      = "cl_mm_therapy",
@@ -331,9 +331,19 @@ cfg <- list(
   cl_clintrial       = "cl_clintrial",
   cl_other_malig     = "cl_other_malignancies",
 
-  # Use prebuilt code list tables from reference schema (per Optum Business Rules recommendation)
-  # Set to TRUE to use embedded codes if external tables are not available
-  use_embedded_codes = FALSE,
+  # ============================================================
+  # CODE LIST SOURCE PRIORITY (checked in order):
+  # 1. CSV files from codelist_dir (if directory exists and file found)
+  # 2. Embedded codes (if use_embedded_codes = TRUE)
+  # 3. External tables from ref_schema (fallback)
+  # ============================================================
+  # Directory containing CSV code list files
+  # Expected files: mm_dx.csv, diagnostic_proc.csv, mm_therapy.csv,
+  #                 pregnancy.csv, clintrial.csv, other_malig.csv
+  codelist_dir = Sys.getenv("CODELIST_DIR", unset = "/mnt/artifacts/codelist"),
+
+  # Use embedded codes as fallback if CSV not found (set FALSE to require CSV/external tables)
+  use_embedded_codes = as.logical(Sys.getenv("USE_EMBEDDED_CODES", unset = "TRUE")),
 
   # Study parameters (per DataPrep spec dated 19 Jan 2026)
   study_start    = "2015-07-01",
@@ -462,14 +472,65 @@ log_msg <- function(...) {
   flush.console()  # Ensure output is shown immediately
 }
 
-# Helper to choose between embedded and external code sources
-# FIXED: Added alias 'src' for Databricks SQL compatibility (subqueries require alias)
-get_code_source <- function(embedded_fn, external_ref) {
-  if (isTRUE(cfg$use_embedded_codes)) {
-    paste0("(", embedded_fn(), ") src")
-  } else {
-    ref(external_ref)
+# ============================================================
+# CODE LIST LOADING (CSV -> Embedded -> External tables)
+# ============================================================
+
+# Load a code list from CSV file and convert to SQL VALUES clause
+# Returns NULL if file doesn't exist
+load_codelist_csv <- function(csv_name, col_spec) {
+ csv_path <- file.path(cfg$codelist_dir, csv_name)
+  if (!file.exists(csv_path)) {
+    return(NULL)
   }
+
+  tryCatch({
+    df <- read.csv(csv_path, stringsAsFactors = FALSE, colClasses = "character")
+    if (nrow(df) == 0) {
+      log_msg("WARNING: Empty CSV file: ", csv_path)
+      return(NULL)
+    }
+
+    # Build VALUES clause from dataframe
+    # col_spec is a vector of column names in the CSV that map to the VALUES columns
+    rows <- apply(df[, col_spec, drop = FALSE], 1, function(row) {
+      vals <- sapply(row, function(v) {
+        if (is.na(v) || v == "") "NULL" else paste0("'", gsub("'", "''", v), "'")
+      })
+      paste0("(", paste(vals, collapse = ", "), ")")
+    })
+
+    col_names <- paste(col_spec, collapse = ", ")
+    sql <- paste0("SELECT * FROM (VALUES\n    ", paste(rows, collapse = ",\n    "), "\n  ) AS t(", col_names, ")")
+    log_msg("Loaded codelist from CSV: ", csv_path, " (", nrow(df), " rows)")
+    return(sql)
+  }, error = function(e) {
+    log_msg("WARNING: Failed to load CSV ", csv_path, ": ", e$message)
+    return(NULL)
+  })
+}
+
+# Get code source with priority: CSV > Embedded > External table
+# csv_name: filename in codelist_dir (e.g., "mm_dx.csv")
+# col_spec: column names expected in CSV
+# embedded_fn: function returning embedded SQL
+# external_ref: table name in ref_schema
+get_code_source <- function(embedded_fn, external_ref, csv_name = NULL, col_spec = NULL) {
+  # Priority 1: Try CSV file if csv_name provided
+  if (!is.null(csv_name) && !is.null(col_spec) && dir.exists(cfg$codelist_dir)) {
+    csv_sql <- load_codelist_csv(csv_name, col_spec)
+    if (!is.null(csv_sql)) {
+      return(paste0("(", csv_sql, ") src"))
+    }
+  }
+
+  # Priority 2: Use embedded codes if enabled
+  if (isTRUE(cfg$use_embedded_codes)) {
+    return(paste0("(", embedded_fn(), ") src"))
+  }
+
+  # Priority 3: Fall back to external table
+  ref(external_ref)
 }
 
 # ============================================================
@@ -892,13 +953,42 @@ run_step <- function(log_table, step_name, sql, qc_sql = NULL, description = NUL
 # ============================================================
 
 build_steps <- function() {
-  # Choose code list sources: embedded or external tables (using helper)
-  mm_dx_source <- get_code_source(embedded_mm_dx_codes, cfg$cl_mm_dx)
-  diag_proc_source <- get_code_source(embedded_diag_proc_codes, cfg$cl_diagnostic_proc)
-  mm_therapy_source <- get_code_source(embedded_mm_therapy_codes, cfg$cl_mm_therapy)
-  preg_source <- get_code_source(embedded_preg_codes, cfg$cl_preg)
-  clintrial_source <- get_code_source(embedded_clintrial_codes, cfg$cl_clintrial)
-  other_malig_source <- get_code_source(embedded_other_malig_codes, cfg$cl_other_malig)
+  # ============================================================
+  # CODE LIST SOURCES (Priority: CSV files > Embedded > External tables)
+  # CSV files expected in: cfg$codelist_dir (default: /mnt/artifacts/codelist)
+  # ============================================================
+  # CSV format requirements:
+  #   mm_dx.csv:         icd_family, dx
+  #   diagnostic_proc.csv: proc_cd
+  #   mm_therapy.csv:    code_type, code
+  #   pregnancy.csv:     code_type, code
+  #   clintrial.csv:     code_type, code
+  #   other_malig.csv:   tumor_group, icd_family, dx
+
+  mm_dx_source <- get_code_source(
+    embedded_mm_dx_codes, cfg$cl_mm_dx,
+    csv_name = "mm_dx.csv", col_spec = c("icd_family", "dx")
+  )
+  diag_proc_source <- get_code_source(
+    embedded_diag_proc_codes, cfg$cl_diagnostic_proc,
+    csv_name = "diagnostic_proc.csv", col_spec = c("proc_cd")
+  )
+  mm_therapy_source <- get_code_source(
+    embedded_mm_therapy_codes, cfg$cl_mm_therapy,
+    csv_name = "mm_therapy.csv", col_spec = c("code_type", "code")
+  )
+  preg_source <- get_code_source(
+    embedded_preg_codes, cfg$cl_preg,
+    csv_name = "pregnancy.csv", col_spec = c("code_type", "code")
+  )
+  clintrial_source <- get_code_source(
+    embedded_clintrial_codes, cfg$cl_clintrial,
+    csv_name = "clintrial.csv", col_spec = c("code_type", "code")
+  )
+  other_malig_source <- get_code_source(
+    embedded_other_malig_codes, cfg$cl_other_malig,
+    csv_name = "other_malig.csv", col_spec = c("tumor_group", "icd_family", "dx")
+  )
 
   # ============================================================
   # BUILD COMBINED CRITERIA SQL (inclusions + exclusions)
