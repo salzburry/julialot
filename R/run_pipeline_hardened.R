@@ -216,6 +216,13 @@ con_env$con <- NULL
 # HELPER FUNCTIONS
 # ============================================================
 
+# Pre-computed separator strings (avoid repeated strrep() calls)
+SEP_59 <- strrep("=", 59)
+SEP_60 <- strrep("=", 60)
+SEP_70 <- strrep("=", 70)
+DASH_60 <- strrep("-", 60)
+DASH_70 <- strrep("-", 70)
+
 full_name <- function(schema, object) {
   if (nzchar(cfg$catalog)) {
     paste0(cfg$catalog, ".", schema, ".", object)
@@ -228,9 +235,23 @@ cdm <- function(tbl) full_name(cfg$cdm_schema, tbl)
 ref <- function(tbl) full_name(cfg$ref_schema, tbl)
 work <- function(tbl) full_name(cfg$work_schema, tbl)
 
+# Helper to get table name (temp view in local mode, qualified otherwise)
+work_tbl <- function(name) {
+  if (isTRUE(cfg$local_only)) name else work(name)
+}
+
 log_msg <- function(...) {
   cat(sprintf("[%s] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S")), ..., "\n")
   flush.console()  # Ensure output is shown immediately
+}
+
+# Helper to choose between embedded and external code sources
+get_code_source <- function(embedded_fn, external_ref) {
+  if (isTRUE(cfg$use_embedded_codes)) {
+    paste0("(", embedded_fn(), ")")
+  } else {
+    ref(external_ref)
+  }
 }
 
 # ============================================================
@@ -377,11 +398,11 @@ record_attrition <- function(step_name, description, count) {
 
 print_attrition_table <- function() {
   cat("\n")
-  cat("============================================================\n")
+  cat(SEP_60, "\n")
   cat("                 ATTRITION TABLE SUMMARY                    \n")
-  cat("============================================================\n")
+  cat(SEP_60, "\n")
   cat(sprintf("%-40s %15s %12s\n", "Step", "N Patients", "Excluded"))
-  cat(strrep("-", 70), "\n")
+  cat(DASH_70, "\n")
 
   prev_count <- NA
   for (step in names(attrition$counts)) {
@@ -394,7 +415,7 @@ print_attrition_table <- function() {
     prev_count <- item$count
   }
 
-  cat(strrep("=", 70), "\n")
+  cat(SEP_70, "\n")
   cat("\n")
 }
 
@@ -552,9 +573,9 @@ convert_refs_for_local <- function(sql, work_schema, ref_schema = NULL) {
 
 print_phase_header <- function(phase_name) {
   cat("\n")
-  cat(strrep("=", 60), "\n")
+  cat(SEP_60, "\n")
   cat("  PHASE: ", phase_name, "\n")
-  cat(strrep("=", 60), "\n")
+  cat(SEP_60, "\n")
   flush.console()
 }
 
@@ -570,7 +591,7 @@ run_step <- function(log_table, step_name, sql, qc_sql = NULL, description = NUL
 
   step_desc <- if (!is.null(description)) description else step_name
   cat("\n")
-  cat(strrep("-", 60), "\n")
+  cat(DASH_60, "\n")
   log_msg(progress_prefix, step_desc)
 
   # Show which source tables will be accessed (helps user know what's happening)
@@ -578,7 +599,7 @@ run_step <- function(log_table, step_name, sql, qc_sql = NULL, description = NUL
     log_msg("  >> Reading from: ", paste(source_tables, collapse = ", "))
   }
 
-  cat(strrep("-", 60), "\n")
+  cat(DASH_60, "\n")
   flush.console()
 
   # LOCAL-ONLY MODE: Convert SQL to use temporary views instead of tables
@@ -653,42 +674,13 @@ run_step <- function(log_table, step_name, sql, qc_sql = NULL, description = NUL
 # ============================================================
 
 build_steps <- function() {
-  # Choose code list source: embedded or external tables
-  mm_dx_source <- if (isTRUE(cfg$use_embedded_codes)) {
-    paste0("(", embedded_mm_dx_codes(), ")")
-  } else {
-    ref(cfg$cl_mm_dx)
-  }
-
-  diag_proc_source <- if (isTRUE(cfg$use_embedded_codes)) {
-    paste0("(", embedded_diag_proc_codes(), ")")
-  } else {
-    ref(cfg$cl_diagnostic_proc)
-  }
-
-  mm_therapy_source <- if (isTRUE(cfg$use_embedded_codes)) {
-    paste0("(", embedded_mm_therapy_codes(), ")")
-  } else {
-    ref(cfg$cl_mm_therapy)
-  }
-
-  preg_source <- if (isTRUE(cfg$use_embedded_codes)) {
-    paste0("(", embedded_preg_codes(), ")")
-  } else {
-    ref(cfg$cl_preg)
-  }
-
-  clintrial_source <- if (isTRUE(cfg$use_embedded_codes)) {
-    paste0("(", embedded_clintrial_codes(), ")")
-  } else {
-    ref(cfg$cl_clintrial)
-  }
-
-  other_malig_source <- if (isTRUE(cfg$use_embedded_codes)) {
-    paste0("(", embedded_other_malig_codes(), ")")
-  } else {
-    ref(cfg$cl_other_malig)
-  }
+  # Choose code list sources: embedded or external tables (using helper)
+  mm_dx_source <- get_code_source(embedded_mm_dx_codes, cfg$cl_mm_dx)
+  diag_proc_source <- get_code_source(embedded_diag_proc_codes, cfg$cl_diagnostic_proc)
+  mm_therapy_source <- get_code_source(embedded_mm_therapy_codes, cfg$cl_mm_therapy)
+  preg_source <- get_code_source(embedded_preg_codes, cfg$cl_preg)
+  clintrial_source <- get_code_source(embedded_clintrial_codes, cfg$cl_clintrial)
+  other_malig_source <- get_code_source(embedded_other_malig_codes, cfg$cl_other_malig)
 
   list(
     # ----------------------------------------------------------
@@ -1522,7 +1514,7 @@ main <- function() {
   cfg$local_only <<- as.logical(Sys.getenv("LOCAL_ONLY_MODE", unset = "FALSE")) ||
                       isTRUE(user_cfg$local_only)
 
-  log_msg("=" , strrep("=", 59))
+  log_msg("=", SEP_59)
   log_msg("ATTRITION COHORT PIPELINE - run_id: ", run_id)
   if (isTRUE(cfg$use_embedded_codes)) {
     log_msg("CODE LISTS: Using EMBEDDED codes (no external tables required)")
@@ -1537,7 +1529,7 @@ main <- function() {
   } else {
     log_msg("TABLES: Using single consolidated tables")
   }
-  log_msg("=" , strrep("=", 59))
+  log_msg("=", SEP_59)
 
   # Connect with retry (now returns connection properly)
   con_env$con <- with_retry(function() {
@@ -1560,9 +1552,9 @@ main <- function() {
   total_steps <- length(steps)
 
   cat("\n")
-  cat("============================================================\n")
+  cat(SEP_60, "\n")
   cat("  STARTING PIPELINE: ", total_steps, " steps to process\n")
-  cat("============================================================\n")
+  cat(SEP_60, "\n")
 
   for (i in seq_along(steps)) {
     s <- steps[[i]]
@@ -1574,43 +1566,37 @@ main <- function() {
   }
 
   # Final summary
-  log_msg("=" , strrep("=", 59))
+  log_msg("=", SEP_59)
   log_msg("PIPELINE COMPLETE - Generating attrition report...")
 
-  # Build and run detailed attrition queries
-  # Use temp view names in local_only mode, qualified names otherwise
-  tbl <- function(name) {
-    if (isTRUE(cfg$local_only)) name else work(name)
-  }
-
-  # Collect detailed attrition counts
+  # Collect detailed attrition counts (uses work_tbl helper for local/remote mode)
   tryCatch({
     # Step 1: All patients with MM diagnosis in ID period
-    q1 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {tbl('mm_dx_events_id')}"))
+    q1 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('mm_dx_events_id')}"))
     record_attrition("01_mm_dx", "Patients with MM diagnosis (ID period)", q1$n)
 
     # Step 2: Qualifying patients (1+ inpatient OR 2 outpatient in 90 days)
-    q2 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {tbl('mm_qualifying')}"))
+    q2 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {work_tbl('mm_qualifying')}"))
     record_attrition("02_qualifying", "MM qualifying (1+ IP or 2 OP in 90d)", q2$n)
 
     # Step 3: With baseline enrollment (CE_b = 1)
-    q3 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1"))
+    q3 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1"))
     record_attrition("03_ce_baseline", "With 6-mo baseline enrollment", q3$n)
 
     # Step 4: With index date enrollment (CE_f = 1)
-    q4 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1 AND CE_f = 1"))
+    q4 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1 AND CE_f = 1"))
     record_attrition("04_ce_index", "With index date enrollment", q4$n)
 
     # Step 5: Age >= 18
-    q5 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18"))
+    q5 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18"))
     record_attrition("05_age_18", "Age >= 18 at index", q5$n)
 
     # Step 6: No MM therapy in baseline
-    q6 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18 AND MM_bl_agents = 0"))
+    q6 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18 AND MM_bl_agents = 0"))
     record_attrition("06_no_bl_therapy", "No MM therapy in baseline", q6$n)
 
     # Step 7: MM therapy in follow-up (final cohort)
-    q7 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {tbl('ELIG_COH_FINAL')}"))
+    q7 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {work_tbl('ELIG_COH_FINAL')}"))
     record_attrition("07_final", "MM therapy in follow-up (FINAL)", q7$n)
 
     # Print the attrition table
@@ -1618,9 +1604,9 @@ main <- function() {
 
     # Print additional summary statistics
     cat("\n")
-    cat("============================================================\n")
+    cat(SEP_60, "\n")
     cat("                 COHORT CHARACTERISTICS                     \n")
-    cat("============================================================\n")
+    cat(SEP_60, "\n")
 
     # Get summary stats from final cohort
     stats_sql <- glue("
@@ -1634,7 +1620,7 @@ main <- function() {
         max(INDEX_DATE) AS max_index_date,
         sum(CASE WHEN index_source = 'INPATIENT' THEN 1 ELSE 0 END) AS n_inpatient_index,
         sum(CASE WHEN DEATH_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_with_death
-      FROM {tbl('ELIG_COH_FINAL')}
+      FROM {work_tbl('ELIG_COH_FINAL')}
     ")
     stats <- DBI::dbGetQuery(con_env$con, stats_sql)
 
@@ -1651,13 +1637,13 @@ main <- function() {
     cat(sprintf("Patients with death:     %s (%.1f%%)\n",
                 format(stats$n_with_death, big.mark = ","),
                 100 * stats$n_with_death / stats$n_patients))
-    cat("============================================================\n")
+    cat(SEP_60, "\n")
 
   }, error = function(e) {
     log_msg("WARN: Could not generate full attrition report: ", conditionMessage(e))
   })
 
-  log_msg("=" , strrep("=", 59))
+  log_msg("=", SEP_59)
 }
 
 # Run if executed as script
