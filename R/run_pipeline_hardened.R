@@ -1456,19 +1456,18 @@ build_steps <- function() {
     # Per StudyPop spec: When death date is only available at month-level
     # granularity, the date is generalized to the middle of the month (15th)
     # ----------------------------------------------------------
-    # FIXED: Store death_yr and death_mo only (DEATH_DT computed in Step 23 with index_date)
+    # FIXED: Compute DEATH_DT directly with Dec 31 rule by joining to mm_qualifying
     # Per IE spec: Year-only death uses July 15 UNLESS index_date > July 15, then Dec 31
+    # This prevents DEATH_DT < INDEX_DATE which would cause negative FU_DAYS
     list(
-      name = "15b_death_ym",
-      description = "Extracting death year/month (DEATH_DT computed later with index_date)",
+      name = "15b_death_dt",
+      description = "Deriving death dates (month->15th, year-only uses July15/Dec31 rule)",
       source_tables = c("dod"),
       sql = glue("
-        CREATE OR REPLACE TABLE {work('death_ym')} AS
+        CREATE OR REPLACE TABLE {work('death_dt')} AS
         WITH raw_death AS (
           SELECT
             PATID,
-            -- Optum DOD table: YMDOD is varchar(6) in YYYYMM format
-            -- Extract year and month from YMDOD
             cast(SUBSTR(YMDOD, 1, 4) as int) AS death_yr,
             CASE
               WHEN LENGTH(TRIM(YMDOD)) >= 6 THEN cast(SUBSTR(YMDOD, 5, 2) as int)
@@ -1477,20 +1476,33 @@ build_steps <- function() {
           FROM {cdm_src(cfg$tbl_dod)}
           WHERE YMDOD IS NOT NULL AND LENGTH(TRIM(YMDOD)) >= 4
         ),
-        -- Take most recent non-null death record per patient
         ranked AS (
           SELECT *,
                  row_number() OVER (PARTITION BY PATID ORDER BY death_yr DESC, death_mo DESC NULLS LAST) AS rn
           FROM raw_death
+        ),
+        best AS (
+          SELECT PATID, death_yr, NULLIF(death_mo, 0) AS death_mo
+          FROM ranked
+          WHERE rn = 1
         )
         SELECT
-          PATID,
-          death_yr,
-          NULLIF(death_mo, 0) AS death_mo  -- Treat 0 as NULL
-        FROM ranked
-        WHERE rn = 1
+          q.PATID,
+          CASE
+            WHEN b.death_yr IS NULL THEN NULL
+            WHEN b.death_mo IS NOT NULL THEN make_date(b.death_yr, b.death_mo, 15)
+            ELSE
+              CASE
+                WHEN year(q.index_date) = b.death_yr
+                 AND q.index_date > make_date(b.death_yr, 7, 15)
+                THEN make_date(b.death_yr, 12, 31)
+                ELSE make_date(b.death_yr, 7, 15)
+              END
+          END AS DEATH_DT
+        FROM {work('mm_qualifying')} q
+        LEFT JOIN best b ON q.PATID = b.PATID
       "),
-      qc = glue("SELECT count(*) AS n_with_death_info FROM {work('death_ym')}")
+      qc = glue("SELECT count(*) AS n_with_death_dt FROM {work('death_dt')} WHERE DEATH_DT IS NOT NULL")
     ),
 
     # ----------------------------------------------------------
@@ -1768,8 +1780,7 @@ build_steps <- function() {
             q.index_date,
             d.GDR_CD,
             d.YRDOB,
-            dy.death_yr,
-            dy.death_mo,
+            death.DEATH_DT,
             ce.baseline_start,
             ce.baseline_end,
             ce.CE_b,
@@ -1782,38 +1793,26 @@ build_steps <- function() {
             preg.PREGNANT_FLAG,
             ct.CLINTRIAL_BASELINE,
             ct.CLINTRIAL_FOLLOWUP,
-            q.inpt1, q.outpt2_30, q.outpt2_60, q.outpt2_90, q.index_source,
-            -- Compute DEATH_DT for CE_3mosf calculation
-            CASE
-              WHEN dy.death_yr IS NULL THEN NULL
-              WHEN dy.death_mo IS NOT NULL THEN make_date(dy.death_yr, dy.death_mo, 15)
-              ELSE
-                CASE
-                  WHEN year(q.index_date) = dy.death_yr AND q.index_date > make_date(dy.death_yr, 7, 15)
-                  THEN make_date(dy.death_yr, 12, 31)
-                  ELSE make_date(dy.death_yr, 7, 15)
-                END
-            END AS death_dt_computed
+            q.inpt1, q.outpt2_30, q.outpt2_60, q.outpt2_90, q.index_source
           FROM {work('mm_qualifying')} q
           LEFT JOIN {work('ce_flags')} ce ON q.PATID = ce.PATID
           LEFT JOIN {work('member_demo')} d ON q.PATID = d.PATID
-          LEFT JOIN {work('death_ym')} dy ON q.PATID = dy.PATID
+          LEFT JOIN {work('death_dt')} death ON q.PATID = death.PATID
           LEFT JOIN {work('mm_baseline_nondx_flag')} mm_bl ON q.PATID = mm_bl.PATID
           LEFT JOIN {work('therapy_flags')} th ON q.PATID = th.PATID
           LEFT JOIN {work('pregnancy_flag')} preg ON q.PATID = preg.PATID
           LEFT JOIN {work('clintrial_flag')} ct ON q.PATID = ct.PATID
           LEFT JOIN {work('other_malig_flag')} om ON q.PATID = om.PATID
         ),
-        -- FIXED: Compute CE_3mosf with death-aware logic (no gaps, ends at min of 91 days/death/study_end)
+        -- CE_3mosf with death-aware logic (no gaps, ends at min of 91 days/death/study_end)
         ce3mos_calc AS (
           SELECT
             b.PATID,
             b.index_date,
-            -- Required end for 3-month CE: min(index + 91, death_dt, study_end)
             least(
               date_add(b.index_date, 91),
               date('{cfg$study_end}'),
-              coalesce(b.death_dt_computed, date('{cfg$study_end}'))
+              coalesce(b.DEATH_DT, date('{cfg$study_end}'))
             ) AS required_3mos_end,
             ss.cov_start,
             ss.cov_end
@@ -1821,9 +1820,7 @@ build_steps <- function() {
           LEFT JOIN {work('enrollment_spans_strict')} ss ON b.PATID = ss.PATID
         ),
         ce3mos_flag AS (
-          SELECT
-            PATID,
-            -- CE_3mosf = 1 if any strict span covers from index_date to required_3mos_end
+          SELECT PATID,
             max(CASE WHEN cov_start <= index_date AND cov_end >= required_3mos_end THEN 1 ELSE 0 END) AS CE_3mosf
           FROM ce3mos_calc
           GROUP BY PATID
@@ -1835,70 +1832,23 @@ build_steps <- function() {
           b.GDR_CD,
           b.YRDOB,
           (year(b.index_date) - b.YRDOB) AS AGE_INDEX_YR,
-
-          -- Diagnosis qualification flags
-          b.inpt1,
-          b.outpt2_30,
-          b.outpt2_60,
-          b.outpt2_90,
-          b.index_source,
-
-          -- Enrollment
-          b.baseline_start,
-          b.baseline_end,
+          b.inpt1, b.outpt2_30, b.outpt2_60, b.outpt2_90, b.index_source,
+          b.baseline_start, b.baseline_end,
           coalesce(b.CE_b, 0) AS CE_b,
           coalesce(b.CE_f, 0) AS CE_f,
           coalesce(c3.CE_3mosf, 0) AS CE_3mosf,
-
-          -- Death date (already computed in base CTE with Dec 31 rule)
-          b.death_dt_computed AS DEATH_DT,
-
-          -- Per StudyPop spec:
-          -- ENDDATE = min(Death_dt, study_end)
-          least(
-            date('{cfg$study_end}'),
-            coalesce(b.death_dt_computed, date('{cfg$study_end}'))
-          ) AS ENDDATE,
-
-          -- ENDDATE_CE = min(Death_dt, disenrollment_date, study_end)
-          least(
-            date('{cfg$study_end}'),
-            coalesce(b.death_dt_computed, date('{cfg$study_end}')),
-            coalesce(b.ENDDATE_CE, date('{cfg$study_end}'))
-          ) AS ENDDATE_CE,
-
-          -- FU_DAYS = datediff(ENDDATE, index_date) + 1
-          datediff(
-            least(
-              date('{cfg$study_end}'),
-              coalesce(b.death_dt_computed, date('{cfg$study_end}'))
-            ),
-            b.index_date
-          ) + 1 AS FU_DAYS,
-
-          -- FU_DAYS_CE = datediff(ENDDATE_CE, index_date) + 1
-          datediff(
-            least(
-              date('{cfg$study_end}'),
-              coalesce(b.death_dt_computed, date('{cfg$study_end}')),
-              coalesce(b.ENDDATE_CE, date('{cfg$study_end}'))
-            ),
-            b.index_date
-          ) + 1 AS FU_DAYS_CE,
-
-          -- Therapy flags
+          b.DEATH_DT,
+          least(date('{cfg$study_end}'), coalesce(b.DEATH_DT, date('{cfg$study_end}'))) AS ENDDATE,
+          least(date('{cfg$study_end}'), coalesce(b.DEATH_DT, date('{cfg$study_end}')), coalesce(b.ENDDATE_CE, date('{cfg$study_end}'))) AS ENDDATE_CE,
+          datediff(least(date('{cfg$study_end}'), coalesce(b.DEATH_DT, date('{cfg$study_end}'))), b.index_date) + 1 AS FU_DAYS,
+          datediff(least(date('{cfg$study_end}'), coalesce(b.DEATH_DT, date('{cfg$study_end}')), coalesce(b.ENDDATE_CE, date('{cfg$study_end}'))), b.index_date) + 1 AS FU_DAYS_CE,
           coalesce(b.MM_THERAPY_BASELINE, 0) AS MM_bl_agents,
           coalesce(b.MM_THERAPY_FOLLOWUP, 0) AS MM_FU_agents,
-
-          -- Smoldering/baseline MM flag
           coalesce(b.MM_BASELINE_NONDX, 0) AS MM_baseline_diag,
-
-          -- Exclusion flags (independent per StudyPop spec)
           coalesce(b.OTHER_MALIGN_FLAG, 0) AS OTHER_MALIGN_FLAG,
           coalesce(b.PREGNANT_FLAG, 0) AS PREGNANT_FLAG,
           coalesce(b.CLINTRIAL_BASELINE, 0) AS CLINTRIAL_BASELINE,
           coalesce(b.CLINTRIAL_FOLLOWUP, 0) AS CLINTRIAL_FOLLOWUP
-
         FROM base b
         LEFT JOIN ce3mos_flag c3 ON b.PATID = c3.PATID
       "),
@@ -2066,8 +2016,7 @@ main <- function() {
     if (!is.null(con_env$con)) try(DBI::dbDisconnect(con_env$con), silent = TRUE)
   }, add = TRUE)
 
-  # Ensure schema and run log table exist
-  ensure_schema(con_env$con)
+  # Ensure run log table exists (schema created lazily by SQL statements)
   log_table <- ensure_run_log(con_env$con)
   log_msg("Run log table: ", log_table)
 
