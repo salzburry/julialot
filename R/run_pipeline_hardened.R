@@ -1243,24 +1243,51 @@ build_steps <- function() {
     ),
 
     # ----------------------------------------------------------
-    # PHASE 4: ENROLLMENT SPANS (using prebuilt member_cont_enrollment)
-    # Per Optum Business Rules: member_cont_enrollment is a rollup of member_enrollment
-    # representing continuous enrollment spans with <30 day gaps already absorbed.
-    # Using the prebuilt datasource directly avoids drift from Optum's rollup logic.
+    # PHASE 4: ENROLLMENT SPANS (using member_enrollment with 30-day gap logic)
+    # Per IE spec: Build continuous enrollment spans from raw member_enrollment
+    # allowing gaps <= 30 days to be absorbed into continuous spans.
+    # This replaces using prebuilt member_cont_enrollment to ensure consistent
+    # gap handling logic across baseline and followup periods.
     # ----------------------------------------------------------
     list(
       name = "13_enrollment_spans",
-      description = "Using prebuilt enrollment spans (member_cont_enrollment)",
-      source_tables = c("member_cont_enrollment"),
+      description = "Building enrollment spans with 30-day gap logic from member_enrollment",
+      source_tables = c("member_enrollment"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('enrollment_spans')} AS
-        SELECT
-          PATID,
-          ROW_NUMBER() OVER (PARTITION BY PATID ORDER BY ELIGEFF) AS grp_id,
-          cast(ELIGEFF as date) AS cov_start,
-          cast(ELIGEND as date) AS cov_end
-        FROM {cdm_src(cfg$tbl_member_elig)}
-        WHERE ELIGEFF IS NOT NULL AND ELIGEND IS NOT NULL
+        WITH base AS (
+          -- Use member_enrollment (raw) with 30-day gap allowance
+          SELECT PATID, cast(ELIGEFF as date) AS elig_eff, cast(ELIGEND as date) AS elig_end
+          FROM {cdm_src(cfg$tbl_member_enrollment)}
+          WHERE ELIGEFF IS NOT NULL AND ELIGEND IS NOT NULL
+        ),
+        ordered AS (
+          SELECT *,
+            -- Use max(elig_end) seen so far to handle overlapping/nested segments
+            max(elig_end) OVER (
+              PARTITION BY PATID
+              ORDER BY elig_eff, elig_end
+              ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+            ) AS max_end_so_far
+          FROM base
+        ),
+        flagged AS (
+          SELECT *,
+            -- Allow gaps <= {cfg$gap_days} days: new group if elig_eff > max_end_so_far + gap_days + 1
+            CASE WHEN max_end_so_far IS NULL THEN 1
+                 WHEN elig_eff <= date_add(max_end_so_far, {cfg$gap_days} + 1) THEN 0
+                 ELSE 1 END AS new_grp
+          FROM ordered
+        ),
+        grouped AS (
+          SELECT *,
+            sum(new_grp) OVER (PARTITION BY PATID ORDER BY elig_eff, elig_end
+                               ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS grp_id
+          FROM flagged
+        )
+        SELECT PATID, grp_id, min(elig_eff) AS cov_start, max(elig_end) AS cov_end
+        FROM grouped
+        GROUP BY PATID, grp_id
       "),
       qc = glue("SELECT count(DISTINCT PATID) AS n_patients FROM {work('enrollment_spans')}")
     ),
@@ -1322,26 +1349,27 @@ build_steps <- function() {
     # PHASE 5: CE FLAGS (baseline 6 months, follow-up)
     # NOTE: CE_3mosf is computed in Step 23 with death-awareness per IE spec
     # (requires enrollment through min(index+91, death_dt, study_end), no gaps)
+    # Per IE spec: Baseline includes index_date, CE_f followup starts at index_date
     # ----------------------------------------------------------
     list(
       name = "14_ce_flags",
-      description = "CRITERION: Continuous enrollment (baseline + follow-up day 1)",
+      description = "CRITERION: Continuous enrollment (baseline includes index, follow-up from index)",
       sql = glue("
         CREATE OR REPLACE TABLE {work('ce_flags')} AS
         WITH idx AS (
           SELECT PATID, index_date,
                  date_sub(index_date, {cfg$baseline_days}) AS baseline_start,
-                 date_sub(index_date, 1) AS baseline_end
+                 index_date AS baseline_end
           FROM {work('mm_qualifying')}
         ),
-        -- CE_b and CE_f use standard enrollment spans (with allowable gaps)
-        -- CE_f checks coverage at index_date + 1 (follow-up starts day after index)
+        -- CE_b and CE_f use standard enrollment spans (with 30-day allowable gaps)
+        -- Baseline includes index_date; CE_f checks coverage starting at index_date
         joined_std AS (
           SELECT i.PATID, i.index_date, i.baseline_start, i.baseline_end,
                  s.cov_start, s.cov_end,
                  CASE WHEN s.cov_start <= i.baseline_start AND s.cov_end >= i.baseline_end
                       THEN 1 ELSE 0 END AS covers_baseline,
-                 CASE WHEN s.cov_start <= date_add(i.index_date, 1) AND s.cov_end >= date_add(i.index_date, 1)
+                 CASE WHEN s.cov_start <= i.index_date AND s.cov_end >= i.index_date
                       THEN 1 ELSE 0 END AS covers_followup_day1
           FROM idx i
           LEFT JOIN {work('enrollment_spans')} s ON i.PATID = s.PATID
@@ -1510,13 +1538,14 @@ build_steps <- function() {
     # FIXED: Use is_nondiagnostic_claim (claim-level flag, not line-level)
     list(
       name = "17_mm_baseline_nondx_flag",
-      description = "Checking for MM dx on non-diagnostic claims (baseline)",
+      description = "Checking for MM dx on non-diagnostic claims (baseline includes index_date)",
       sql = glue("
         CREATE OR REPLACE TABLE {work('mm_baseline_nondx_flag')} AS
         SELECT
           q.PATID,
+          -- Baseline includes index_date per IE spec
           max(CASE WHEN e.svc_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
-                                     AND date_sub(q.index_date, 1)
+                                     AND q.index_date
                     AND n.is_nondiagnostic_claim = 1
                THEN 1 ELSE 0 END) AS MM_BASELINE_NONDX
         FROM {work('mm_qualifying')} q
@@ -1566,9 +1595,11 @@ build_steps <- function() {
         CREATE OR REPLACE TABLE {work('therapy_flags')} AS
         SELECT
           q.PATID,
+          -- Baseline includes index_date per IE spec
           max(CASE WHEN t.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
-                                       AND date_sub(q.index_date, 1)
+                                       AND q.index_date
                THEN 1 ELSE 0 END) AS MM_THERAPY_BASELINE,
+          -- Followup starts after index_date per IE spec
           max(CASE WHEN t.event_dt >= date_add(q.index_date, 1) AND t.event_dt <= date('{cfg$study_end}')
                THEN 1 ELSE 0 END) AS MM_THERAPY_FOLLOWUP
         FROM {work('mm_qualifying')} q
@@ -1646,9 +1677,11 @@ build_steps <- function() {
         )
         SELECT
           q.PATID,
+          -- Baseline includes index_date per IE spec
           max(CASE WHEN m.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
-                                       AND date_sub(q.index_date, 1)
+                                       AND q.index_date
                THEN 1 ELSE 0 END) AS CLINTRIAL_BASELINE,
+          -- Followup starts after index_date per IE spec
           max(CASE WHEN m.event_dt >= date_add(q.index_date, 1) AND m.event_dt <= date('{cfg$study_end}')
                THEN 1 ELSE 0 END) AS CLINTRIAL_FOLLOWUP
         FROM {work('mm_qualifying')} q
@@ -1696,12 +1729,12 @@ build_steps <- function() {
         )
         SELECT
           q.PATID,
-          -- Require BOTH first_dt AND next_dt within baseline period
+          -- Require BOTH first_dt AND next_dt within baseline period (includes index_date per IE spec)
           max(CASE WHEN p.diff_days <= 30
                     AND p.first_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
-                                       AND date_sub(q.index_date, 1)
+                                       AND q.index_date
                     AND p.next_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
-                                      AND date_sub(q.index_date, 1)
+                                      AND q.index_date
                THEN 1 ELSE 0 END) AS OTHER_MALIGN_FLAG
         FROM {work('mm_qualifying')} q
         LEFT JOIN pairs p ON q.PATID = p.PATID
