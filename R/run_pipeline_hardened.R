@@ -1256,28 +1256,37 @@ build_steps <- function() {
     # This step uses member_enrollment (raw eligibility records) since
     # the prebuilt member_cont_enrollment already absorbs <30 day gaps
     # and cannot be used to detect true enrollment gaps.
+    # FIXED: Handle overlapping/nested segments by using max(elig_end) over window
+    # instead of lag() which fails when a short segment follows a long one.
     # ----------------------------------------------------------
     list(
       name = "13b_enrollment_spans_strict",
-      description = "Building strict enrollment spans (no gaps, from raw enrollment)",
+      description = "Building strict enrollment spans (no gaps, handles overlaps)",
       source_tables = c("member_enrollment"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('enrollment_spans_strict')} AS
         WITH base AS (
-          -- FIXED: Use member_enrollment (raw) to detect ALL gaps
+          -- Use member_enrollment (raw) to detect ALL gaps
           SELECT PATID, cast(ELIGEFF as date) AS elig_eff, cast(ELIGEND as date) AS elig_end
           FROM {cdm_src(cfg$tbl_member_enrollment)}
           WHERE ELIGEFF IS NOT NULL AND ELIGEND IS NOT NULL
         ),
         ordered AS (
-          SELECT *, lag(elig_end) OVER (PARTITION BY PATID ORDER BY elig_eff, elig_end) AS prev_end
+          SELECT *,
+            -- FIXED: Use max(elig_end) seen so far, not just previous row
+            -- This handles overlapping/nested segments correctly
+            max(elig_end) OVER (
+              PARTITION BY PATID
+              ORDER BY elig_eff, elig_end
+              ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+            ) AS max_end_so_far
           FROM base
         ),
         flagged AS (
           SELECT *,
-            -- NO allowable gaps: new group if elig_eff > prev_end + 1 (i.e., any gap at all)
-            CASE WHEN prev_end IS NULL THEN 1
-                 WHEN elig_eff <= date_add(prev_end, 1) THEN 0
+            -- NO allowable gaps: new group if elig_eff > max_end_so_far + 1
+            CASE WHEN max_end_so_far IS NULL THEN 1
+                 WHEN elig_eff <= date_add(max_end_so_far, 1) THEN 0
                  ELSE 1 END AS new_grp
           FROM ordered
         ),
@@ -2100,9 +2109,9 @@ main <- function() {
       record_attrition(sprintf("%02d_no_bl_nondx", step_num), "Excl: Baseline non-dx claim", q_nondx$n)
     }
 
-    # Final cohort (after all exclusions)
-    q_final <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {work_tbl('ELIG_COH_FINAL')}"))
-    record_attrition("99_final", "FINAL COHORT", q_final$n)
+    # Final cohort (after all exclusions) - uses configurable final_table_name
+    q_final <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {work_tbl(cfg$final_table_name)}"))
+    record_attrition("99_final", glue("FINAL COHORT ({cfg$final_table_name})"), q_final$n)
 
     # Print the attrition table
     print_attrition_table()
@@ -2113,7 +2122,7 @@ main <- function() {
     cat("                 COHORT CHARACTERISTICS                     \n")
     cat(SEP_60, "\n")
 
-    # Get summary stats from final cohort
+    # Get summary stats from final cohort (uses configurable final_table_name)
     stats_sql <- glue("
       SELECT
         count(*) AS n_patients,
@@ -2125,7 +2134,7 @@ main <- function() {
         max(INDEX_DATE) AS max_index_date,
         sum(CASE WHEN index_source = 'INPATIENT' THEN 1 ELSE 0 END) AS n_inpatient_index,
         sum(CASE WHEN DEATH_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_with_death
-      FROM {work_tbl('ELIG_COH_FINAL')}
+      FROM {work_tbl(cfg$final_table_name)}
     ")
     stats <- DBI::dbGetQuery(con_env$con, stats_sql)
 
