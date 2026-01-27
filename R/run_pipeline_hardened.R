@@ -1295,8 +1295,9 @@ build_steps <- function() {
     ),
 
     # ----------------------------------------------------------
-    # PHASE 5: CE FLAGS (baseline 6 months, follow-up, 3-month sensitivity)
-    # FIXED: Added CE_3mosf using STRICT enrollment spans (no gaps allowed)
+    # PHASE 5: CE FLAGS (baseline 6 months, follow-up)
+    # NOTE: CE_3mosf is computed in Step 23 with death-awareness per IE spec
+    # (requires enrollment through min(index+91, death_dt, study_end), no gaps)
     # ----------------------------------------------------------
     list(
       name = "14_ce_flags",
@@ -1319,35 +1320,13 @@ build_steps <- function() {
                       THEN 1 ELSE 0 END AS covers_index
           FROM idx i
           LEFT JOIN {work('enrollment_spans')} s ON i.PATID = s.PATID
-        ),
-        std_agg AS (
-          SELECT PATID, index_date, baseline_start, baseline_end,
-                 max(covers_baseline) AS CE_b,
-                 max(covers_index) AS CE_f,
-                 max(CASE WHEN covers_index = 1 THEN cov_end END) AS ENDDATE_CE
-          FROM joined_std
-          GROUP BY PATID, index_date, baseline_start, baseline_end
-        ),
-        -- CE_3mosf uses STRICT enrollment spans (NO allowable gaps per spec)
-        joined_strict AS (
-          SELECT i.PATID,
-                 -- 3-month (91 days) follow-up sensitivity flag with NO gaps allowed
-                 CASE WHEN ss.cov_start <= i.index_date AND ss.cov_end >= date_add(i.index_date, 91)
-                      THEN 1 ELSE 0 END AS covers_3mos_strict
-          FROM idx i
-          LEFT JOIN {work('enrollment_spans_strict')} ss ON i.PATID = ss.PATID
-        ),
-        strict_agg AS (
-          SELECT PATID, max(covers_3mos_strict) AS CE_3mosf
-          FROM joined_strict
-          GROUP BY PATID
         )
-        SELECT
-          a.PATID, a.index_date, a.baseline_start, a.baseline_end,
-          a.CE_b, a.CE_f, a.ENDDATE_CE,
-          coalesce(s.CE_3mosf, 0) AS CE_3mosf
-        FROM std_agg a
-        LEFT JOIN strict_agg s ON a.PATID = s.PATID
+        SELECT PATID, index_date, baseline_start, baseline_end,
+               max(covers_baseline) AS CE_b,
+               max(covers_index) AS CE_f,
+               max(CASE WHEN covers_index = 1 THEN cov_end END) AS ENDDATE_CE
+        FROM joined_std
+        GROUP BY PATID, index_date, baseline_start, baseline_end
       "),
       qc = glue("SELECT sum(CE_b) AS n_with_baseline_ce FROM {work('ce_flags')}")
     ),
@@ -1417,15 +1396,15 @@ build_steps <- function() {
 
     # ----------------------------------------------------------
     # PHASE 7: NON-DIAGNOSTIC CLAIM FLAG
-    # FIXED: Claim-level logic (not line-level):
-    #   - has_diag_line = 1 → claim is DIAGNOSTIC (even if also has non-diag lines)
-    #   - else if has_nondiag_line = 1 → claim is NON-DIAGNOSTIC
-    #   - else (NULL-only claims) → UNKNOWN
-    # Per study spec: "non-diagnostic claim" means NO diagnostic procedures present
+    # FIXED per IE spec: A "non-diagnostic MM claim" is a claim where:
+    #   - MM diagnosis is present AND
+    #   - There is at least one service line that is NOT a diagnostic code
+    # Example: claim with diagnostic testing + medication/care mgmt → non-diagnostic
+    # This indicates active MM treatment, not just diagnostic workup
     # ----------------------------------------------------------
     list(
       name = "16_claim_nondiagnostic",
-      description = "Identifying non-diagnostic claims (claim-level)",
+      description = "Identifying non-diagnostic claims per IE spec (has ANY non-diag line)",
       source_tables = c("medical"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('claim_nondiagnostic')} AS
@@ -1447,7 +1426,7 @@ build_steps <- function() {
         ),
         claim_agg AS (
           SELECT PATID, CLMID,
-                 -- FIXED: Claim-level classification
+                 -- Claim-level classification
                  max(CASE WHEN is_diag_line = 1 THEN 1 ELSE 0 END) AS has_diag_line,
                  max(CASE WHEN is_diag_line = 0 THEN 1 ELSE 0 END) AS has_nondiag_line,
                  -- All lines NULL (unknown)
@@ -1459,11 +1438,11 @@ build_steps <- function() {
                has_diag_line,
                has_nondiag_line,
                all_null_lines,
-               -- FIXED: Claim is non-diagnostic only if NO diagnostic lines AND has explicit non-diag
+               -- FIXED per IE spec: Non-diagnostic = has ANY non-diagnostic line
+               -- (even if it also has diagnostic lines - e.g., testing + treatment)
                CASE
-                 WHEN has_diag_line = 1 THEN 0              -- Has diagnostic line -> NOT non-diagnostic
-                 WHEN has_nondiag_line = 1 THEN 1           -- No diag, but has non-diag -> NON-DIAGNOSTIC
-                 ELSE 0                                     -- All NULL -> treat as unknown (not non-diag)
+                 WHEN has_nondiag_line = 1 THEN 1  -- Has non-diag line -> NON-DIAGNOSTIC
+                 ELSE 0                            -- Only diag lines or all NULL -> not non-diag
                END AS is_nondiagnostic_claim
         FROM claim_agg
       "),
