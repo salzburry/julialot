@@ -74,8 +74,7 @@ default_cfg <- list(
   gap_days       = 30,
   dx_window_30   = 30,
   dx_window_60   = 60,
-  dx_window_90   = 90,
-  local_only     = FALSE  # Set FALSE by default; use TRUE only when lacking CREATE permissions
+  dx_window_90   = 90
 )
 
 # ============================================================
@@ -153,9 +152,6 @@ prompt_user_options <- function() {
   cat("  ID Period:        ", user_cfg$id_start, " to ", user_cfg$id_end, "\n")
   cat("  Embedded Codes:   ", if (isTRUE(cfg$use_embedded_codes)) "YES (no external ref tables needed)" else "NO (external tables required)", "\n")
   cat("  Quarterly Tables: ", if (isTRUE(cfg$use_quarterly_tables)) "YES (t_<table>_YYYYqQ pattern)" else "NO (single tables)", "\n")
-  if (isTRUE(user_cfg$local_only)) {
-    cat("  LOCAL-ONLY MODE:  ENABLED (using TEMPORARY VIEWs)\n")
-  }
   cat("============================================================\n\n")
 
   return(user_cfg)
@@ -1590,9 +1586,6 @@ main <- function() {
   cfg$id_end <<- user_cfg$id_end
   cfg$baseline_days <<- user_cfg$baseline_days
   cfg$gap_days <<- user_cfg$gap_days
-  # LOCAL-ONLY mode: env var takes precedence, then user input
-  cfg$local_only <<- as.logical(Sys.getenv("LOCAL_ONLY_MODE", unset = "FALSE")) ||
-                      isTRUE(user_cfg$local_only)
 
   log_msg("=", SEP_59)
   log_msg("ATTRITION COHORT PIPELINE - run_id: ", run_id)
