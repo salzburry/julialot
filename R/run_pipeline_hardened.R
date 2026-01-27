@@ -4,6 +4,10 @@
 # Pipeline-hardened runner with DB-side logging
 # ============================================================
 #
+# Validated against:
+# - Optum CDM Data Dictionary v9.0 (18-08-2025)
+# - Optum Business Rules document (30_08_2022)
+#
 # Key features:
 # - Automatic reconnect with exponential backoff (with_retry wrapper)
 # - DB-side run log (audit trail)
@@ -15,6 +19,13 @@
 # - Strict no-gap enrollment for CE_3mosf (per StudyPop spec)
 # - Death_dt derivation with month-level generalization to 15th
 # - ENDDATE/FU_DAYS properly account for Death_dt per StudyPop spec
+#
+# Optum Business Rules compliance:
+# - Inpatient: Uses T_CONFINEMENT validation (Approach 2) with POS/TOS fallback
+# - Strict CE: Uses member_enrollment (raw), not member_cont_enrollment (pre-rolled)
+# - Non-diagnostic claims: Claim-level logic (has diagnostic line = diagnostic)
+# - DOD: Uses YMDOD field, includes joinability QC validation
+# - Exclusion flags: Configurable application (pregnancy, clinical trial, etc.)
 #
 # Usage:
 #   Rscript R/run_pipeline_hardened.R
@@ -40,11 +51,13 @@ default_cfg <- list(
   work_schema = Sys.getenv("DOMINO_USER_NAME", unset = "gsk_mm_lot_work"),
 
   # Source tables (Optum Clinformatics Data Mart v9.0)
-  tbl_member_elig = "member_cont_enrollment",
-  tbl_medical     = "medical",
-  tbl_med_diag    = "med_diagnosis",
-  tbl_rx          = "rx",
-  tbl_dod         = "dod",
+  tbl_member_elig       = "member_cont_enrollment",
+  tbl_member_enrollment = "member_enrollment",      # Raw enrollment (not pre-rolled)
+  tbl_medical           = "medical",
+  tbl_med_diag          = "med_diagnosis",
+  tbl_rx                = "rx",
+  tbl_dod               = "dod",
+  tbl_confinement       = "confinement",            # Per Optum business rules Approach 2
 
   # Quarterly table pattern (Optum tables are partitioned as t_<table>_YYYYqQ)
   # Set to TRUE if your tables are quarterly-partitioned (e.g., t_medical_2017q1)
@@ -60,7 +73,7 @@ default_cfg <- list(
   dx_window_30   = 30,
   dx_window_60   = 60,
   dx_window_90   = 90,
-  local_only     = TRUE  # Default to LOCAL-ONLY mode to avoid permission errors
+  local_only     = FALSE  # Set FALSE by default; use TRUE only when lacking CREATE permissions
 )
 
 # ============================================================
@@ -163,11 +176,13 @@ cfg <- list(
   work_schema = Sys.getenv("PROJECT_WORK_SCHEMA", unset = Sys.getenv("DOMINO_USER_NAME", unset = "gsk_mm_lot_work")),
 
   # Source tables (Optum Clinformatics)
-  tbl_member_elig = "member_cont_enrollment",
-  tbl_medical     = "medical",
-  tbl_med_diag    = "med_diagnosis",
-  tbl_rx          = "rx",
-  tbl_dod         = "dod",
+  tbl_member_elig       = "member_cont_enrollment",
+  tbl_member_enrollment = "member_enrollment",      # Raw enrollment (not pre-rolled)
+  tbl_medical           = "medical",
+  tbl_med_diag          = "med_diagnosis",
+  tbl_rx                = "rx",
+  tbl_dod               = "dod",
+  tbl_confinement       = "confinement",            # Per Optum business rules Approach 2
 
   # Quarterly table pattern (Optum tables are partitioned as t_<table>_YYYYqQ)
   # Set to TRUE if your tables are quarterly-partitioned (e.g., t_medical_2017q1)
@@ -201,7 +216,14 @@ cfg <- list(
 
   # Local-only mode: skip schema/table creation, process in-memory, save to CSV
   # Use this when you don't have CREATE permissions on the Databricks catalog
-  local_only = as.logical(Sys.getenv("LOCAL_ONLY_MODE", unset = "FALSE"))
+  local_only = as.logical(Sys.getenv("LOCAL_ONLY_MODE", unset = "FALSE")),
+
+  # Exclusion flag application (set TRUE to apply in final cohort filter)
+  # These are computed as independent flags; set to TRUE to apply as exclusions
+  apply_pregnancy_excl     = as.logical(Sys.getenv("APPLY_PREGNANCY_EXCL", unset = "TRUE")),
+  apply_clintrial_excl     = as.logical(Sys.getenv("APPLY_CLINTRIAL_EXCL", unset = "TRUE")),
+  apply_other_malig_excl   = as.logical(Sys.getenv("APPLY_OTHER_MALIG_EXCL", unset = "TRUE")),
+  apply_baseline_nondx_excl = as.logical(Sys.getenv("APPLY_BASELINE_NONDX_EXCL", unset = "FALSE"))  # Smoldering flag
 )
 
 run_id <- Sys.getenv("DOMINO_RUN_ID", unset = format(Sys.time(), "%Y%m%d%H%M%S"))
@@ -246,9 +268,10 @@ log_msg <- function(...) {
 }
 
 # Helper to choose between embedded and external code sources
+# FIXED: Added alias 'src' for Databricks SQL compatibility (subqueries require alias)
 get_code_source <- function(embedded_fn, external_ref) {
   if (isTRUE(cfg$use_embedded_codes)) {
-    paste0("(", embedded_fn(), ")")
+    paste0("(", embedded_fn(), ") src")
   } else {
     ref(external_ref)
   }
@@ -771,7 +794,7 @@ build_steps <- function() {
     #   - mm_dx_events_id:  ID period only (for index qualification)
     # ----------------------------------------------------------
     list(
-      name = "07_med_claim_header",
+      name = "07a_med_claim_header",
       description = "Extracting medical claim headers from CDM (study period)",
       source_tables = c("medical"),
       sql = glue("
@@ -787,11 +810,35 @@ build_steps <- function() {
       qc = glue("SELECT count(*) AS n_claims FROM {work('med_claim_header')}")
     ),
 
+    # ----------------------------------------------------------
+    # CONFINEMENT TABLE EXTRACT (per Optum Business Rules Approach 2)
+    # Business rules: "inpatient should be restricted to cases where
+    # CONF_ID is not NULL from the T_CONFINEMENT table"
+    # This validates that CONF_ID corresponds to an actual confinement
+    # ----------------------------------------------------------
+    list(
+      name = "07b_confinement",
+      description = "Extracting confinement records (Optum Approach 2)",
+      source_tables = c("confinement"),
+      sql = glue("
+        CREATE OR REPLACE TABLE {work('confinement')} AS
+        SELECT DISTINCT PATID, CONF_ID,
+               cast(ADMIT_DATE as date) AS ADMIT_DATE,
+               cast(DISCH_DATE as date) AS DISCH_DATE
+        FROM {cdm_src(cfg$tbl_confinement)}
+        WHERE CONF_ID IS NOT NULL
+          AND ADMIT_DATE IS NOT NULL
+      "),
+      qc = glue("SELECT count(*) AS n_confinements FROM {work('confinement')}")
+    ),
+
     # All MM dx events in study period (for baseline lookback)
+    # FIXED: Per Optum Business Rules Approach 2 - inpatient requires CONF_ID to exist
+    # in the T_CONFINEMENT table (not just be non-null on the claim header)
     list(
       name = "08a_mm_dx_events_all",
       description = "Identifying MM diagnosis events (full study period)",
-      source_tables = c("med_diagnosis"),
+      source_tables = c("med_diagnosis", "confinement"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('mm_dx_events_all')} AS
         SELECT /*+ BROADCAST(c) */
@@ -801,21 +848,30 @@ build_steps <- function() {
           upper(regexp_replace(d.DIAG, '\\\\.', '')) AS diag,
           CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
           h.CONF_ID,
-          -- Inpatient per Optum business rules: CONF_ID not null, OR POS in (21,51,61), OR TOS_CD indicates facility inpatient
-          CASE WHEN h.CONF_ID IS NOT NULL
-                 OR CAST(h.POS AS STRING) IN ('21', '51', '61')
-                 OR upper(h.TOS_CD) IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF')
-               THEN 1 ELSE 0 END AS inpatient_flg,
-          CASE WHEN h.CONF_ID IS NULL
+          -- Per Optum Business Rules Approach 2: inpatient requires CONF_ID to exist
+          -- in T_CONFINEMENT (validated via cf.CONF_ID IS NOT NULL), or conservative
+          -- fallback to POS/TOS_CD when CONF_ID is null
+          CASE WHEN cf.CONF_ID IS NOT NULL THEN 1  -- Primary: validated confinement
+               WHEN h.CONF_ID IS NULL
+                    AND (CAST(h.POS AS STRING) IN ('21', '51', '61')
+                         OR upper(h.TOS_CD) IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF'))
+                    THEN 1  -- Fallback: POS/TOS indicates inpatient but no CONF_ID
+               ELSE 0 END AS inpatient_flg,
+          -- Outpatient: no validated confinement AND (no inpatient indicators OR indicators missing)
+          CASE WHEN cf.CONF_ID IS NULL
                 AND (CAST(h.POS AS STRING) NOT IN ('21', '51', '61') OR h.POS IS NULL)
                 AND (upper(h.TOS_CD) NOT IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF') OR h.TOS_CD IS NULL)
-               THEN 1 ELSE 0 END AS outpatient_flg
+               THEN 1 ELSE 0 END AS outpatient_flg,
+          -- Additional flag for QC: has validated confinement (Optum Approach 2 compliant)
+          CASE WHEN cf.CONF_ID IS NOT NULL THEN 1 ELSE 0 END AS conf_validated
         FROM {cdm_src(cfg$tbl_med_diag)} d
         INNER JOIN {work('med_claim_header')} h
           ON d.PATID = h.PATID AND d.CLMID = h.CLMID
         INNER JOIN {work('mm_dx_codes')} c
           ON upper(regexp_replace(d.DIAG, '\\\\.', '')) = c.dx
           AND (CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END) = c.icd_family
+        LEFT JOIN {work('confinement')} cf
+          ON h.PATID = cf.PATID AND h.CONF_ID = cf.CONF_ID
         WHERE cast(d.FST_DT as date) BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
       "),
       qc = glue("SELECT count(DISTINCT PATID) AS n_patients FROM {work('mm_dx_events_all')}")
@@ -982,16 +1038,21 @@ build_steps <- function() {
     # ----------------------------------------------------------
     # PHASE 4b: STRICT ENROLLMENT SPANS (NO GAPS)
     # Per StudyPop spec: CE_3mosf requires NO allowable gaps
+    # FIXED: Use member_enrollment (raw eligibility records), NOT member_cont_enrollment
+    # Per Optum Business Rules: member_cont_enrollment is already a rollup with gaps
+    # <30 days absorbed, so we cannot detect short gaps from it.
+    # member_enrollment preserves the original eligibility records.
     # ----------------------------------------------------------
     list(
       name = "13b_enrollment_spans_strict",
-      description = "Building strict enrollment spans (no gaps)",
-      source_tables = c("member_cont_enrollment"),
+      description = "Building strict enrollment spans (no gaps, from raw enrollment)",
+      source_tables = c("member_enrollment"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('enrollment_spans_strict')} AS
         WITH base AS (
+          -- FIXED: Use member_enrollment (raw) to detect ALL gaps
           SELECT PATID, cast(ELIGEFF as date) AS elig_eff, cast(ELIGEND as date) AS elig_end
-          FROM {cdm_src(cfg$tbl_member_elig)}
+          FROM {cdm_src(cfg$tbl_member_enrollment)}
           WHERE ELIGEFF IS NOT NULL AND ELIGEND IS NOT NULL
         ),
         ordered AS (
@@ -1000,7 +1061,7 @@ build_steps <- function() {
         ),
         flagged AS (
           SELECT *,
-            -- NO allowable gaps: new group if elig_eff > prev_end + 1 (i.e., any gap)
+            -- NO allowable gaps: new group if elig_eff > prev_end + 1 (i.e., any gap at all)
             CASE WHEN prev_end IS NULL THEN 1
                  WHEN elig_eff <= date_add(prev_end, 1) THEN 0
                  ELSE 1 END AS new_grp
@@ -1144,11 +1205,15 @@ build_steps <- function() {
 
     # ----------------------------------------------------------
     # PHASE 7: NON-DIAGNOSTIC CLAIM FLAG
-    # FIXED: Handle NULL PROC_CD properly (only count explicit non-diagnostic lines)
+    # FIXED: Claim-level logic (not line-level):
+    #   - has_diag_line = 1 → claim is DIAGNOSTIC (even if also has non-diag lines)
+    #   - else if has_nondiag_line = 1 → claim is NON-DIAGNOSTIC
+    #   - else (NULL-only claims) → UNKNOWN
+    # Per study spec: "non-diagnostic claim" means NO diagnostic procedures present
     # ----------------------------------------------------------
     list(
       name = "16_claim_nondiagnostic",
-      description = "Identifying non-diagnostic claims",
+      description = "Identifying non-diagnostic claims (claim-level)",
       source_tables = c("medical"),
       sql = glue("
         CREATE OR REPLACE TABLE {work('claim_nondiagnostic')} AS
@@ -1160,25 +1225,41 @@ build_steps <- function() {
         marked AS (
           SELECT /*+ BROADCAST(d) */
             l.PATID, l.CLMID,
-            -- FIXED: Only mark as diagnostic if we have a proc_cd AND it's in diagnostic list
             CASE
-              WHEN l.proc_cd IS NULL THEN NULL  -- Unknown, don't count
+              WHEN l.proc_cd IS NULL THEN NULL  -- Unknown, don't count either way
               WHEN d.proc_cd IS NOT NULL THEN 1 -- Is diagnostic procedure
-              ELSE 0                            -- Has proc_cd but not diagnostic
+              ELSE 0                            -- Has proc_cd but not in diagnostic list
             END AS is_diag_line
           FROM lines l
           LEFT JOIN {work('diag_proc_codes')} d ON l.proc_cd = d.proc_cd
+        ),
+        claim_agg AS (
+          SELECT PATID, CLMID,
+                 -- FIXED: Claim-level classification
+                 max(CASE WHEN is_diag_line = 1 THEN 1 ELSE 0 END) AS has_diag_line,
+                 max(CASE WHEN is_diag_line = 0 THEN 1 ELSE 0 END) AS has_nondiag_line,
+                 -- All lines NULL (unknown)
+                 CASE WHEN max(is_diag_line) IS NULL THEN 1 ELSE 0 END AS all_null_lines
+          FROM marked
+          GROUP BY PATID, CLMID
         )
         SELECT PATID, CLMID,
-               -- FIXED: Only count as non-diagnostic if we have explicit 0 (not NULL)
-               max(CASE WHEN is_diag_line = 0 THEN 1 ELSE 0 END) AS has_nondiag_line
-        FROM marked
-        GROUP BY PATID, CLMID
+               has_diag_line,
+               has_nondiag_line,
+               all_null_lines,
+               -- FIXED: Claim is non-diagnostic only if NO diagnostic lines AND has explicit non-diag
+               CASE
+                 WHEN has_diag_line = 1 THEN 0              -- Has diagnostic line -> NOT non-diagnostic
+                 WHEN has_nondiag_line = 1 THEN 1           -- No diag, but has non-diag -> NON-DIAGNOSTIC
+                 ELSE 0                                     -- All NULL -> treat as unknown (not non-diag)
+               END AS is_nondiagnostic_claim
+        FROM claim_agg
       "),
-      qc = glue("SELECT sum(has_nondiag_line) AS n_nondiag_claims FROM {work('claim_nondiagnostic')}")
+      qc = glue("SELECT sum(is_nondiagnostic_claim) AS n_nondiag_claims FROM {work('claim_nondiagnostic')}")
     ),
 
     # FIXED: Use mm_dx_events_all for baseline lookback (not just ID period)
+    # FIXED: Use is_nondiagnostic_claim (claim-level flag, not line-level)
     list(
       name = "17_mm_baseline_nondx_flag",
       description = "Checking for MM dx on non-diagnostic claims (baseline)",
@@ -1188,7 +1269,7 @@ build_steps <- function() {
           q.PATID,
           max(CASE WHEN e.svc_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
                                      AND date_sub(q.index_date, 1)
-                    AND n.has_nondiag_line = 1
+                    AND n.is_nondiagnostic_claim = 1
                THEN 1 ELSE 0 END) AS MM_BASELINE_NONDX
         FROM {work('mm_qualifying')} q
         LEFT JOIN {work('mm_dx_events_all')} e ON q.PATID = e.PATID
@@ -1348,10 +1429,11 @@ build_steps <- function() {
           INNER JOIN {work('other_malig_codes')} o ON dx.dx = o.dx AND dx.icd_family = o.icd_family
         ),
         dx_nondx AS (
+          -- FIXED: Use is_nondiagnostic_claim (claim-level flag)
           SELECT m.PATID, m.tumor_group, m.event_dt
           FROM dx_mapped m
           INNER JOIN {work('claim_nondiagnostic')} n ON m.PATID = n.PATID AND m.CLMID = n.CLMID
-          WHERE n.has_nondiag_line = 1
+          WHERE n.is_nondiagnostic_claim = 1
         ),
         distinct_dates AS (SELECT DISTINCT PATID, tumor_group, event_dt FROM dx_nondx),
         with_next AS (
@@ -1474,9 +1556,27 @@ build_steps <- function() {
       qc = glue("SELECT count(*) AS n_total, count(DISTINCT PATID) AS n_patients FROM {work('ELIG_COH_ALLFLAGS')}")
     ),
 
+    # Build exclusion WHERE clauses based on configuration
+    # FIXED: Apply exclusion flags if configured (not just compute them)
+    {
+      excl_clauses <- c()
+      if (isTRUE(cfg$apply_pregnancy_excl)) {
+        excl_clauses <- c(excl_clauses, "AND PREGNANT_FLAG = 0")
+      }
+      if (isTRUE(cfg$apply_clintrial_excl)) {
+        excl_clauses <- c(excl_clauses, "AND CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0")
+      }
+      if (isTRUE(cfg$apply_other_malig_excl)) {
+        excl_clauses <- c(excl_clauses, "AND OTHER_MALIGN_FLAG = 0")
+      }
+      if (isTRUE(cfg$apply_baseline_nondx_excl)) {
+        excl_clauses <- c(excl_clauses, "AND MM_baseline_diag = 0")
+      }
+      exclusion_sql <- paste(excl_clauses, collapse = "\n          ")
+    },
     list(
       name = "24_ELIG_COH_FINAL",
-      description = "FINAL COHORT: Apply all inclusion criteria",
+      description = "FINAL COHORT: Apply all inclusion/exclusion criteria",
       sql = glue("
         CREATE OR REPLACE TABLE {work('ELIG_COH_FINAL')} AS
         SELECT *
@@ -1486,6 +1586,7 @@ build_steps <- function() {
           AND CE_f = 1
           AND MM_bl_agents = 0
           AND MM_FU_agents = 1
+          {exclusion_sql}
       "),
       qc = glue("SELECT count(*) AS n_final_cohort FROM {work('ELIG_COH_FINAL')}")
     )
@@ -1528,6 +1629,17 @@ main <- function() {
     log_msg("TABLES: Using quarterly tables (t_<table>_", get_quarter_suffix(cfg$study_end), ")")
   } else {
     log_msg("TABLES: Using single consolidated tables")
+  }
+  # Log exclusion settings
+  excl_applied <- c()
+  if (isTRUE(cfg$apply_pregnancy_excl)) excl_applied <- c(excl_applied, "Pregnancy")
+  if (isTRUE(cfg$apply_clintrial_excl)) excl_applied <- c(excl_applied, "ClinicalTrial")
+  if (isTRUE(cfg$apply_other_malig_excl)) excl_applied <- c(excl_applied, "OtherMalignancy")
+  if (isTRUE(cfg$apply_baseline_nondx_excl)) excl_applied <- c(excl_applied, "BaselineNonDxClaim")
+  if (length(excl_applied) > 0) {
+    log_msg("EXCLUSIONS APPLIED: ", paste(excl_applied, collapse = ", "))
+  } else {
+    log_msg("EXCLUSIONS: None applied (flags computed but not filtered)")
   }
   log_msg("=", SEP_59)
 
@@ -1595,9 +1707,52 @@ main <- function() {
     q6 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18 AND MM_bl_agents = 0"))
     record_attrition("06_no_bl_therapy", "No MM therapy in baseline", q6$n)
 
-    # Step 7: MM therapy in follow-up (final cohort)
-    q7 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {work_tbl('ELIG_COH_FINAL')}"))
-    record_attrition("07_final", "MM therapy in follow-up (FINAL)", q7$n)
+    # Step 7: MM therapy in follow-up
+    q7 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18 AND MM_bl_agents = 0 AND MM_FU_agents = 1"))
+    record_attrition("07_fu_therapy", "MM therapy in follow-up", q7$n)
+
+    # Conditional exclusion steps based on what's applied
+    step_num <- 8
+    if (isTRUE(cfg$apply_pregnancy_excl)) {
+      q_preg <- DBI::dbGetQuery(con_env$con, glue("
+        SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')}
+        WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18
+          AND MM_bl_agents = 0 AND MM_FU_agents = 1 AND PREGNANT_FLAG = 0
+      "))
+      record_attrition(sprintf("%02d_no_pregnancy", step_num), "Excl: Pregnancy", q_preg$n)
+      step_num <- step_num + 1
+    }
+    if (isTRUE(cfg$apply_clintrial_excl)) {
+      q_ct <- DBI::dbGetQuery(con_env$con, glue("
+        SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')}
+        WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18
+          AND MM_bl_agents = 0 AND MM_FU_agents = 1
+          AND CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0
+      "))
+      record_attrition(sprintf("%02d_no_clintrial", step_num), "Excl: Clinical trial", q_ct$n)
+      step_num <- step_num + 1
+    }
+    if (isTRUE(cfg$apply_other_malig_excl)) {
+      q_om <- DBI::dbGetQuery(con_env$con, glue("
+        SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')}
+        WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18
+          AND MM_bl_agents = 0 AND MM_FU_agents = 1 AND OTHER_MALIGN_FLAG = 0
+      "))
+      record_attrition(sprintf("%02d_no_other_malig", step_num), "Excl: Other malignancy", q_om$n)
+      step_num <- step_num + 1
+    }
+    if (isTRUE(cfg$apply_baseline_nondx_excl)) {
+      q_nondx <- DBI::dbGetQuery(con_env$con, glue("
+        SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')}
+        WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18
+          AND MM_bl_agents = 0 AND MM_FU_agents = 1 AND MM_baseline_diag = 0
+      "))
+      record_attrition(sprintf("%02d_no_bl_nondx", step_num), "Excl: Baseline non-dx claim", q_nondx$n)
+    }
+
+    # Final cohort (after all exclusions)
+    q_final <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {work_tbl('ELIG_COH_FINAL')}"))
+    record_attrition("99_final", "FINAL COHORT", q_final$n)
 
     # Print the attrition table
     print_attrition_table()
@@ -1638,6 +1793,69 @@ main <- function() {
                 format(stats$n_with_death, big.mark = ","),
                 100 * stats$n_with_death / stats$n_patients))
     cat(SEP_60, "\n")
+
+    # ----------------------------------------------------------
+    # DOD JOINABILITY VALIDATION (per Optum Business Rules warning)
+    # Optum warns that DOD/SES may be encrypted differently
+    # This QC validates that PATID keys match
+    # ----------------------------------------------------------
+    cat("\n")
+    cat(DASH_60, "\n")
+    cat("  DOD JOINABILITY VALIDATION\n")
+    cat(DASH_60, "\n")
+
+    dod_qc_sql <- glue("
+      SELECT
+        count(DISTINCT q.PATID) AS n_qualifying,
+        count(DISTINCT d.PATID) AS n_dod_matched,
+        ROUND(100.0 * count(DISTINCT d.PATID) / count(DISTINCT q.PATID), 2) AS pct_matched
+      FROM {work_tbl('mm_qualifying')} q
+      LEFT JOIN {work_tbl('death_dt')} d ON q.PATID = d.PATID
+    ")
+    dod_qc <- DBI::dbGetQuery(con_env$con, dod_qc_sql)
+
+    cat(sprintf("Qualifying patients:     %s\n", format(dod_qc$n_qualifying, big.mark = ",")))
+    cat(sprintf("DOD matches:             %s (%.2f%%)\n",
+                format(dod_qc$n_dod_matched, big.mark = ","),
+                dod_qc$pct_matched))
+
+    if (dod_qc$pct_matched < 1) {
+      cat("WARNING: DOD join rate is < 1%. This may indicate:\n")
+      cat("  - PATID encryption mismatch between tables\n")
+      cat("  - DOD table may require different linkage key\n")
+      cat("  - Verify DOD table structure in your environment\n")
+    } else if (dod_qc$pct_matched < 10) {
+      cat("NOTE: Low DOD join rate may be expected for MM cohort.\n")
+    } else {
+      cat("DOD join rate looks reasonable for validation.\n")
+    }
+    cat(DASH_60, "\n")
+
+    # ----------------------------------------------------------
+    # CONFINEMENT VALIDATION (Optum Approach 2 compliance)
+    # ----------------------------------------------------------
+    cat("\n")
+    cat(DASH_60, "\n")
+    cat("  INPATIENT CLASSIFICATION VALIDATION (Optum Approach 2)\n")
+    cat(DASH_60, "\n")
+
+    conf_qc_sql <- glue("
+      SELECT
+        sum(inpatient_flg) AS n_inpatient_events,
+        sum(conf_validated) AS n_conf_validated,
+        sum(CASE WHEN inpatient_flg = 1 AND conf_validated = 0 THEN 1 ELSE 0 END) AS n_inpt_no_conf,
+        ROUND(100.0 * sum(conf_validated) / NULLIF(sum(inpatient_flg), 0), 2) AS pct_conf_validated
+      FROM {work_tbl('mm_dx_events_all')}
+    ")
+    conf_qc <- DBI::dbGetQuery(con_env$con, conf_qc_sql)
+
+    cat(sprintf("Inpatient dx events:     %s\n", format(conf_qc$n_inpatient_events, big.mark = ",")))
+    cat(sprintf("Confinement validated:   %s (%.2f%%)\n",
+                format(conf_qc$n_conf_validated, big.mark = ","),
+                ifelse(is.na(conf_qc$pct_conf_validated), 0, conf_qc$pct_conf_validated)))
+    cat(sprintf("Inpatient w/o conf:      %s (POS/TOS fallback)\n",
+                format(conf_qc$n_inpt_no_conf, big.mark = ",")))
+    cat(DASH_60, "\n")
 
   }, error = function(e) {
     log_msg("WARN: Could not generate full attrition report: ", conditionMessage(e))
