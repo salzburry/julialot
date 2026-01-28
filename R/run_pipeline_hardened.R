@@ -332,7 +332,7 @@ cfg <- list(
   # Directory containing CSV code list files
   # Expected files: mm_dx.csv, diagnostic_proc.csv, mm_therapy.csv,
   #                 pregnancy.csv, clintrial.csv, other_malig.csv
-  codelist_dir = Sys.getenv("CODELIST_DIR", unset = "/mnt/artifacts/codelist"),
+  codelist_dir = Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelists"),
 
   # Use embedded codes as fallback if CSV not found (set FALSE to require CSV/external tables)
   use_embedded_codes = as.logical(Sys.getenv("USE_EMBEDDED_CODES", unset = "TRUE")),
