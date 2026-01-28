@@ -470,8 +470,10 @@ log_msg <- function(...) {
 # Load a code list from CSV file and convert to SQL VALUES clause
 # Returns NULL if file doesn't exist
 load_codelist_csv <- function(csv_name, col_spec) {
- csv_path <- file.path(cfg$codelist_dir, csv_name)
+  csv_path <- file.path(cfg$codelist_dir, csv_name)
+  log_msg("  Looking for CSV: ", csv_path)
   if (!file.exists(csv_path)) {
+    log_msg("  CSV not found: ", csv_path)
     return(NULL)
   }
 
@@ -507,20 +509,29 @@ load_codelist_csv <- function(csv_name, col_spec) {
 # embedded_fn: function returning embedded SQL
 # external_ref: table name in ref_schema
 get_code_source <- function(embedded_fn, external_ref, csv_name = NULL, col_spec = NULL) {
+  log_msg("Loading codelist: ", csv_name, " (dir: ", cfg$codelist_dir, ")")
+
   # Priority 1: Try CSV file if csv_name provided
-  if (!is.null(csv_name) && !is.null(col_spec) && dir.exists(cfg$codelist_dir)) {
-    csv_sql <- load_codelist_csv(csv_name, col_spec)
-    if (!is.null(csv_sql)) {
-      return(paste0("(", csv_sql, ") src"))
+  if (!is.null(csv_name) && !is.null(col_spec)) {
+    if (!dir.exists(cfg$codelist_dir)) {
+      log_msg("  Codelist directory not found: ", cfg$codelist_dir)
+    } else {
+      csv_sql <- load_codelist_csv(csv_name, col_spec)
+      if (!is.null(csv_sql)) {
+        log_msg("  Using CSV source")
+        return(paste0("(", csv_sql, ") src"))
+      }
     }
   }
 
   # Priority 2: Use embedded codes if enabled
   if (isTRUE(cfg$use_embedded_codes)) {
+    log_msg("  Using embedded codes")
     return(paste0("(", embedded_fn(), ") src"))
   }
 
   # Priority 3: Fall back to external table
+  log_msg("  Using external table: ", ref(external_ref))
   ref(external_ref)
 }
 
