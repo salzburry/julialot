@@ -1844,22 +1844,6 @@ build_steps <- function() {
     ),
 
     # ----------------------------------------------------------
-    # STEP 24b: PERSIST FINAL COHORT TO PERSONAL SCHEMA
-    # ----------------------------------------------------------
-    # Uses lazy table approach to save final cohort as permanent table
-    # in user's personal schema. Set PERSIST_TO_SCHEMA=FALSE to skip.
-
-    if (isTRUE(cfg$persist_to_schema) && nzchar(cfg$personal_schema)) list(
-      name = "24b_persist_final_cohort",
-      description = glue("Persist final cohort to {cfg$catalog}.{cfg$personal_schema}.{cfg$final_table_name}"),
-      sql = glue("
-        CREATE OR REPLACE TABLE {cfg$catalog}.{cfg$personal_schema}.{cfg$final_table_name} AS
-        SELECT * FROM {work(cfg$final_table_name)}
-      "),
-      qc = glue("SELECT count(*) AS n_persisted FROM {cfg$catalog}.{cfg$personal_schema}.{cfg$final_table_name}")
-    ) else NULL,
-
-    # ----------------------------------------------------------
     # STEP 25a-c: CONFIG-DRIVEN VIEW (Option 2 - toggle without rerun)
     # ----------------------------------------------------------
     # FIXED: Split into 3 separate steps to avoid multi-statement execution issues
@@ -2253,6 +2237,34 @@ main <- function() {
   }, error = function(e) {
     log_msg("WARN: Could not generate full attrition report: ", conditionMessage(e))
   })
+
+  # ----------------------------------------------------------
+  # PERSIST FINAL COHORT TO PERSONAL SCHEMA
+  # ----------------------------------------------------------
+  # Uses same pattern as copyToPersonalSchema helper function
+  # Saves final cohort as permanent table in user's personal schema
+  if (isTRUE(cfg$persist_to_schema) && nzchar(cfg$personal_schema)) {
+    tryCatch({
+      target_table <- glue("{cfg$catalog}.{cfg$personal_schema}.{cfg$final_table_name}")
+      log_msg("Persisting final cohort to: ", target_table)
+
+      # Use lazy table approach (same as createInPersonalSchema)
+      persist_sql <- glue("
+        CREATE OR REPLACE TABLE {target_table} AS
+        SELECT * FROM {work(cfg$final_table_name)}
+      ")
+      DBI::dbExecute(con_env$con, persist_sql)
+
+      # Verify row count
+      verify_sql <- glue("SELECT count(*) AS n FROM {target_table}")
+      n_persisted <- DBI::dbGetQuery(con_env$con, verify_sql)$n
+      log_msg("Persisted ", format(n_persisted, big.mark = ","), " rows to ", target_table)
+
+    }, error = function(e) {
+      log_msg("WARN: Could not persist to personal schema: ", conditionMessage(e))
+      log_msg("  Final cohort is still available as temp view: ", work(cfg$final_table_name))
+    })
+  }
 
   log_msg("=", SEP_59)
 }
