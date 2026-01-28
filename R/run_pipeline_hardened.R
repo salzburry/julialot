@@ -914,7 +914,7 @@ build_steps <- function() {
   criteria_clauses <- c()
 
   # --- INCLUSION TOGGLES ---
-  if (isTRUE(cfg$apply_age_incl)) {
+  if (isTRUE(cfg$apply_age_incl) && !is.na(cfg$min_age)) {
     criteria_clauses <- c(criteria_clauses, glue("AND AGE_INDEX_YR >= {cfg$min_age}"))
   }
   if (isTRUE(cfg$apply_ce_b_incl)) {
