@@ -393,7 +393,11 @@ cfg <- list(
   apply_baseline_nondx_excl = as.logical(Sys.getenv("APPLY_BASELINE_NONDX_EXCL", unset = "FALSE")),  # Smoldering flag
 
   # Create config-driven VIEW for interactive toggling (Option 2)
-  create_criteria_view = as.logical(Sys.getenv("CREATE_CRITERIA_VIEW", unset = "FALSE"))
+  create_criteria_view = as.logical(Sys.getenv("CREATE_CRITERIA_VIEW", unset = "FALSE")),
+
+  # Persist final cohort to personal schema (uses lazy table approach)
+  persist_to_schema = as.logical(Sys.getenv("PERSIST_TO_SCHEMA", unset = "TRUE")),
+  personal_schema = Sys.getenv("DOMINO_USER_NAME", unset = Sys.getenv("DOMINO_STARTING_USERNAME", unset = ""))
 )
 
 run_id <- Sys.getenv("DOMINO_RUN_ID", unset = format(Sys.time(), "%Y%m%d%H%M%S"))
@@ -1838,6 +1842,22 @@ build_steps <- function() {
       "),
       qc = glue("SELECT count(*) AS n_final_cohort FROM {work(cfg$final_table_name)}")
     ),
+
+    # ----------------------------------------------------------
+    # STEP 24b: PERSIST FINAL COHORT TO PERSONAL SCHEMA
+    # ----------------------------------------------------------
+    # Uses lazy table approach to save final cohort as permanent table
+    # in user's personal schema. Set PERSIST_TO_SCHEMA=FALSE to skip.
+
+    if (isTRUE(cfg$persist_to_schema) && nzchar(cfg$personal_schema)) list(
+      name = "24b_persist_final_cohort",
+      description = glue("Persist final cohort to {cfg$catalog}.{cfg$personal_schema}.{cfg$final_table_name}"),
+      sql = glue("
+        CREATE OR REPLACE TABLE {cfg$catalog}.{cfg$personal_schema}.{cfg$final_table_name} AS
+        SELECT * FROM {work(cfg$final_table_name)}
+      "),
+      qc = glue("SELECT count(*) AS n_persisted FROM {cfg$catalog}.{cfg$personal_schema}.{cfg$final_table_name}")
+    ) else NULL,
 
     # ----------------------------------------------------------
     # STEP 25a-c: CONFIG-DRIVEN VIEW (Option 2 - toggle without rerun)
