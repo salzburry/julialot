@@ -1021,7 +1021,13 @@ build_steps <- function() {
       description = "Loading pregnancy exclusion codes",
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('preg_codes')} AS
-        SELECT upper(code_type) AS code_type, upper(regexp_replace(code, '\\\\.', '')) AS code
+        SELECT
+          CASE
+            WHEN upper(code_type) LIKE '%DX%' OR upper(code_type) LIKE '%DIAG%' THEN 'DX'
+            WHEN upper(code_type) LIKE '%PROC%' OR upper(code_type) IN ('HCPCS','CPT') THEN 'PROC'
+            ELSE upper(code_type)
+          END AS code_type,
+          upper(regexp_replace(code, '\\\\.', '')) AS code
         FROM {preg_source}
         WHERE code IS NOT NULL
       "),
@@ -1033,7 +1039,13 @@ build_steps <- function() {
       description = "Loading clinical trial exclusion codes",
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('clintrial_codes')} AS
-        SELECT upper(code_type) AS code_type, upper(regexp_replace(code, '\\\\.', '')) AS code
+        SELECT
+          CASE
+            WHEN upper(code_type) LIKE '%DX%' OR upper(code_type) LIKE '%DIAG%' THEN 'DX'
+            WHEN upper(code_type) LIKE '%PROC%' OR upper(code_type) IN ('HCPCS','CPT') THEN 'PROC'
+            ELSE upper(code_type)
+          END AS code_type,
+          upper(regexp_replace(code, '\\\\.', '')) AS code
         FROM {clintrial_source}
         WHERE code IS NOT NULL
       "),
