@@ -297,7 +297,7 @@ cfg <- list(
   # Schemas (following Optum CDM naming convention)
   # dbname equivalent from setup.R: "clnprw_optum"
   # personal_schema equivalent: Sys.getenv("DOMINO_USER_NAME")
-  catalog    = Sys.getenv("DATABRICKS_CATALOG", unset = ""),
+  catalog    = Sys.getenv("DATABRICKS_CATALOG", unset = "hive_metastore"),
   cdm_schema = Sys.getenv("OPTUM_CDM_SCHEMA", unset = "clnprw_optum"),
   ref_schema = Sys.getenv("PROJECT_REF_SCHEMA", unset = Sys.getenv("DOMINO_USER_NAME", unset = "gsk_mm_lot_ref")),
   work_schema = Sys.getenv("PROJECT_WORK_SCHEMA", unset = Sys.getenv("DOMINO_USER_NAME", unset = "gsk_mm_lot_work")),
