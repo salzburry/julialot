@@ -740,7 +740,7 @@ sql_exec <- function(con, sql) {
 ensure_run_log <- function(con) {
   log_table <- work("pipeline_run_log")
   sql_exec(con, glue("
-    CREATE TABLE IF NOT EXISTS {log_table} (
+    CREATE TABLE {log_table} (
       run_id STRING,
       step_name STRING,
       status STRING,
