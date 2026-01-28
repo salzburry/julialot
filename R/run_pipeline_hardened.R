@@ -1023,7 +1023,8 @@ build_steps <- function() {
         CREATE OR REPLACE TEMPORARY VIEW {work('preg_codes')} AS
         SELECT
           CASE
-            WHEN upper(code_type) LIKE '%DX%' OR upper(code_type) LIKE '%DIAG%' THEN 'DX'
+            WHEN upper(code_type) LIKE '%DX%' OR upper(code_type) LIKE '%DIAG%'
+              OR upper(code_type) IN ('ICD9','ICD10','ICD-9','ICD-10') THEN 'DX'
             WHEN upper(code_type) LIKE '%PROC%' OR upper(code_type) IN ('HCPCS','CPT') THEN 'PROC'
             ELSE upper(code_type)
           END AS code_type,
@@ -1041,7 +1042,8 @@ build_steps <- function() {
         CREATE OR REPLACE TEMPORARY VIEW {work('clintrial_codes')} AS
         SELECT
           CASE
-            WHEN upper(code_type) LIKE '%DX%' OR upper(code_type) LIKE '%DIAG%' THEN 'DX'
+            WHEN upper(code_type) LIKE '%DX%' OR upper(code_type) LIKE '%DIAG%'
+              OR upper(code_type) IN ('ICD9','ICD10','ICD-9','ICD-10') THEN 'DX'
             WHEN upper(code_type) LIKE '%PROC%' OR upper(code_type) IN ('HCPCS','CPT') THEN 'PROC'
             ELSE upper(code_type)
           END AS code_type,
