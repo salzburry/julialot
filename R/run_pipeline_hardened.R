@@ -469,13 +469,19 @@ log_msg <- function(...) {
 
 # Load a code list from CSV file and convert to SQL VALUES clause
 # Returns NULL if file doesn't exist
-load_codelist_csv <- function(csv_name, col_spec) {
+# col_spec: output column names for SQL VALUES clause
+# csv_cols: (optional) actual column names in CSV to read, in same order as col_spec
+#           If NULL, defaults to col_spec (assumes CSV columns match output names)
+load_codelist_csv <- function(csv_name, col_spec, csv_cols = NULL) {
   csv_path <- file.path(cfg$codelist_dir, csv_name)
   log_msg("  Looking for CSV: ", csv_path)
   if (!file.exists(csv_path)) {
     log_msg("  CSV not found: ", csv_path)
     return(NULL)
   }
+
+  # Default: CSV column names match output column names
+  if (is.null(csv_cols)) csv_cols <- col_spec
 
   tryCatch({
     df <- read.csv(csv_path, stringsAsFactors = FALSE, colClasses = "character")
@@ -484,15 +490,18 @@ load_codelist_csv <- function(csv_name, col_spec) {
       return(NULL)
     }
 
+    # Read CSV columns in the order specified by csv_cols
+    df_selected <- df[, csv_cols, drop = FALSE]
+
     # Build VALUES clause from dataframe
-    # col_spec is a vector of column names in the CSV that map to the VALUES columns
-    rows <- apply(df[, col_spec, drop = FALSE], 1, function(row) {
+    rows <- apply(df_selected, 1, function(row) {
       vals <- sapply(row, function(v) {
-        if (is.na(v) || v == "") "NULL" else paste0("'", gsub("'", "''", v), "'")
+        if (is.na(v) || v == "") "NULL" else paste0("'", gsub("'", "''", trimws(v)), "'")
       })
       paste0("(", paste(vals, collapse = ", "), ")")
     })
 
+    # Use col_spec (output names) for the VALUES column aliases
     col_names <- paste(col_spec, collapse = ", ")
     sql <- paste0("SELECT * FROM (VALUES\n    ", paste(rows, collapse = ",\n    "), "\n  ) AS t(", col_names, ")")
     log_msg("Loaded codelist from CSV: ", csv_path, " (", nrow(df), " rows)")
@@ -508,7 +517,7 @@ load_codelist_csv <- function(csv_name, col_spec) {
 # col_spec: column names expected in CSV
 # embedded_fn: function returning embedded SQL
 # external_ref: table name in ref_schema
-get_code_source <- function(embedded_fn, external_ref, csv_name = NULL, col_spec = NULL) {
+get_code_source <- function(embedded_fn, external_ref, csv_name = NULL, col_spec = NULL, csv_cols = NULL) {
   log_msg("Loading codelist: ", csv_name, " (dir: ", cfg$codelist_dir, ")")
 
   # Priority 1: Try CSV file if csv_name provided
@@ -516,7 +525,7 @@ get_code_source <- function(embedded_fn, external_ref, csv_name = NULL, col_spec
     if (!dir.exists(cfg$codelist_dir)) {
       log_msg("  Codelist directory not found: ", cfg$codelist_dir)
     } else {
-      csv_sql <- load_codelist_csv(csv_name, col_spec)
+      csv_sql <- load_codelist_csv(csv_name, col_spec, csv_cols)
       if (!is.null(csv_sql)) {
         log_msg("  Using CSV source")
         return(paste0("(", csv_sql, ") src"))
@@ -886,17 +895,18 @@ build_steps <- function() {
   # CODE LIST SOURCES (Priority: CSV files > Embedded > External tables)
   # CSV files expected in: cfg$codelist_dir (default: /mnt/artifacts/codelist)
   # ============================================================
-  # CSV format requirements:
-  #   mm_dx.csv:         icd_family, dx
+  # CSV format requirements (actual CSV column names):
+  #   mm_dx.csv:          dx (=ICD family), icd_family (=code) [swapped in CSV]
   #   diagnostic_proc.csv: proc_cd
-  #   mm_therapy.csv:    code_type, code
-  #   pregnancy.csv:     code_type, code
-  #   clintrial.csv:     code_type, code
-  #   other_malig.csv:   tumor_group, icd_family, dx
+  #   mm_therapy.csv:     code_type, code
+  #   pregnancy.csv:      code_type, code
+  #   clintrial.csv:      code_type, code
+  #   other_malig.csv:    tumor_group (=code), icd_family, dx (=description)
 
   mm_dx_source <- get_code_source(
     embedded_mm_dx_codes, cfg$cl_mm_dx,
-    csv_name = "mm_dx.csv", col_spec = c("icd_family", "dx")
+    csv_name = "mm_dx.csv", col_spec = c("icd_family", "dx"),
+    csv_cols = c("dx", "icd_family")  # CSV columns are swapped: dx has family, icd_family has code
   )
   diag_proc_source <- get_code_source(
     embedded_diag_proc_codes, cfg$cl_diagnostic_proc,
@@ -916,7 +926,8 @@ build_steps <- function() {
   )
   other_malig_source <- get_code_source(
     embedded_other_malig_codes, cfg$cl_other_malig,
-    csv_name = "other_malig.csv", col_spec = c("tumor_group", "icd_family", "dx")
+    csv_name = "other_malig.csv", col_spec = c("tumor_group", "icd_family", "dx"),
+    csv_cols = c("dx", "icd_family", "tumor_group")  # CSV: dx=description→tumor_group, tumor_group=code→dx
   )
 
   # ============================================================
@@ -973,7 +984,7 @@ build_steps <- function() {
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('mm_dx_codes')} AS
         SELECT
-          CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
+          CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD-9 DX') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
           upper(regexp_replace(dx, '\\\\.', '')) AS dx
         FROM {mm_dx_source}
         WHERE dx IS NOT NULL
@@ -1036,7 +1047,7 @@ build_steps <- function() {
         CREATE OR REPLACE TEMPORARY VIEW {work('other_malig_codes')} AS
         SELECT
           upper(tumor_group) AS tumor_group,
-          CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
+          CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD-9 DX') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
           upper(regexp_replace(dx, '\\\\.', '')) AS dx
         FROM {other_malig_source}
         WHERE dx IS NOT NULL AND tumor_group IS NOT NULL
@@ -1107,7 +1118,7 @@ build_steps <- function() {
           d.CLMID,
           cast(d.FST_DT as date) AS svc_dt,
           upper(regexp_replace(d.DIAG, '\\\\.', '')) AS diag,
-          CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
+          CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9','ICD-9 DX') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
           h.CONF_ID,
           -- Per Optum Business Rules STRICT Approach 2:
           -- Inpatient ONLY when CONF_ID is validated in T_CONFINEMENT
@@ -1121,7 +1132,7 @@ build_steps <- function() {
           ON d.PATID = h.PATID AND d.CLMID = h.CLMID
         INNER JOIN {work('mm_dx_codes')} c
           ON upper(regexp_replace(d.DIAG, '\\\\.', '')) = c.dx
-          AND (CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END) = c.icd_family
+          AND (CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9','ICD-9 DX') THEN 'ICD9' ELSE 'ICD10' END) = c.icd_family
         LEFT JOIN {work('confinement')} cf
           ON h.PATID = cf.PATID AND h.CONF_ID = cf.CONF_ID
         WHERE cast(d.FST_DT as date) BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
@@ -1704,7 +1715,7 @@ build_steps <- function() {
         WITH dx AS (
           SELECT d.PATID, d.CLMID, cast(d.FST_DT as date) AS event_dt,
                  upper(regexp_replace(d.DIAG, '\\\\.', '')) AS dx,
-                 CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family
+                 CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9','ICD-9 DX') THEN 'ICD9' ELSE 'ICD10' END AS icd_family
           FROM {cdm_src(cfg$tbl_med_diag)} d
           WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
