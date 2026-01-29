@@ -2118,40 +2118,46 @@ main <- function() {
     record_attrition("07_fu_therapy", "MM therapy in follow-up", q7$n)
 
     # Conditional exclusion steps based on what's applied
+    # Build cumulative criteria so each step includes all previous exclusions
     step_num <- 8
+    cumulative_excl_criteria <- ""
+
     if (isTRUE(cfg$apply_pregnancy_excl)) {
+      cumulative_excl_criteria <- paste0(cumulative_excl_criteria, " AND PREGNANT_FLAG = 0")
       q_preg <- DBI::dbGetQuery(con_env$con, glue("
         SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')}
         WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18
-          AND MM_bl_agents = 0 AND MM_FU_agents = 1 AND PREGNANT_FLAG = 0
+          AND MM_bl_agents = 0 AND MM_FU_agents = 1{cumulative_excl_criteria}
       "))
       record_attrition(sprintf("%02d_no_pregnancy", step_num), "Excl: Pregnancy", q_preg$n)
       step_num <- step_num + 1
     }
     if (isTRUE(cfg$apply_clintrial_excl)) {
+      cumulative_excl_criteria <- paste0(cumulative_excl_criteria, " AND CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0")
       q_ct <- DBI::dbGetQuery(con_env$con, glue("
         SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')}
         WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18
-          AND MM_bl_agents = 0 AND MM_FU_agents = 1
-          AND CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0
+          AND MM_bl_agents = 0 AND MM_FU_agents = 1{cumulative_excl_criteria}
       "))
       record_attrition(sprintf("%02d_no_clintrial", step_num), "Excl: Clinical trial", q_ct$n)
       step_num <- step_num + 1
     }
     if (isTRUE(cfg$apply_other_malig_excl)) {
+      cumulative_excl_criteria <- paste0(cumulative_excl_criteria, " AND OTHER_MALIGN_FLAG = 0")
       q_om <- DBI::dbGetQuery(con_env$con, glue("
         SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')}
         WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18
-          AND MM_bl_agents = 0 AND MM_FU_agents = 1 AND OTHER_MALIGN_FLAG = 0
+          AND MM_bl_agents = 0 AND MM_FU_agents = 1{cumulative_excl_criteria}
       "))
       record_attrition(sprintf("%02d_no_other_malig", step_num), "Excl: Other malignancy", q_om$n)
       step_num <- step_num + 1
     }
     if (isTRUE(cfg$apply_baseline_nondx_excl)) {
+      cumulative_excl_criteria <- paste0(cumulative_excl_criteria, " AND MM_baseline_diag = 0")
       q_nondx <- DBI::dbGetQuery(con_env$con, glue("
         SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')}
         WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18
-          AND MM_bl_agents = 0 AND MM_FU_agents = 1 AND MM_baseline_diag = 0
+          AND MM_bl_agents = 0 AND MM_FU_agents = 1{cumulative_excl_criteria}
       "))
       record_attrition(sprintf("%02d_no_bl_nondx", step_num), "Excl: Baseline non-dx claim", q_nondx$n)
     }
