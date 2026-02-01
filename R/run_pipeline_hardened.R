@@ -174,9 +174,24 @@ prompt_ie_criteria <- function() {
   )
  
   if (!should_prompt()) {
-    cat("Non-interactive mode: using default IE criteria\n")
+    cat("Non-interactive mode: using IE criteria from environment variables / config\n")
     cat("  (Set PROMPT_USER=TRUE to enable interactive prompts under Rscript)\n")
-    return(criteria)
+    # FIXED: Return cfg values (from env vars) instead of hard-coded defaults
+    return(list(
+      # Inclusion criteria - use cfg values (from env vars)
+      apply_age = cfg$apply_age_incl,
+      min_age = cfg$min_age,
+      apply_ce_baseline = cfg$apply_ce_b_incl,
+      apply_ce_followup = cfg$apply_ce_f_incl,
+      apply_no_baseline_therapy = cfg$apply_no_bl_agents_incl,
+      apply_followup_therapy = cfg$apply_fu_agents_incl,
+      outpatient_window = cfg$outpatient_window,
+      # Exclusion criteria - use cfg values (from env vars)
+      apply_pregnancy_excl = cfg$apply_pregnancy_excl,
+      apply_clintrial_excl = cfg$apply_clintrial_excl,
+      apply_other_malig_excl = cfg$apply_other_malig_excl,
+      apply_baseline_nondx_excl = cfg$apply_baseline_nondx_excl
+    ))
   }
  
   cat("\n")
@@ -1342,11 +1357,12 @@ build_steps <- function() {
     # PHASE 5: CE FLAGS (baseline 6 months, follow-up)
     # NOTE: CE_3mosf is computed in Step 23 with death-awareness per IE spec
     # (requires enrollment through min(index+91, death_dt, study_end), no gaps)
-    # Per IE spec: Baseline includes index_date, CE_f followup starts at index_date
+    # Per IE spec: Baseline includes index_date, CE_f requires 1+ day follow-up enrollment
+    # FIXED: CE_f now checks cov_end >= index_date + 1 (not just index_date) to ensure 1+ day follow-up
     # ----------------------------------------------------------
     list(
       name = "14_ce_flags",
-      description = "CRITERION: Continuous enrollment (baseline includes index, follow-up from index)",
+      description = "CRITERION: Continuous enrollment (baseline includes index, 1+ day follow-up)",
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('ce_flags')} AS
         WITH idx AS (
@@ -1356,21 +1372,22 @@ build_steps <- function() {
           FROM {work('mm_qualifying')}
         ),
         -- CE_b and CE_f use standard enrollment spans (with 30-day allowable gaps)
-        -- Baseline includes index_date; CE_f checks coverage starting at index_date
+        -- Baseline includes index_date; CE_f requires enrollment through at least index_date + 1
         joined_std AS (
           SELECT i.PATID, i.index_date, i.baseline_start, i.baseline_end,
                  s.cov_start, s.cov_end,
                  CASE WHEN s.cov_start <= i.baseline_start AND s.cov_end >= i.baseline_end
                       THEN 1 ELSE 0 END AS covers_baseline,
-                 CASE WHEN s.cov_start <= i.index_date AND s.cov_end >= i.index_date
-                      THEN 1 ELSE 0 END AS covers_index_day
+                 -- FIXED: CE_f requires 1+ day follow-up (cov_end >= index_date + 1)
+                 CASE WHEN s.cov_start <= i.index_date AND s.cov_end >= date_add(i.index_date, 1)
+                      THEN 1 ELSE 0 END AS has_1day_followup
           FROM idx i
           LEFT JOIN {work('enrollment_spans')} s ON i.PATID = s.PATID
         )
         SELECT PATID, index_date, baseline_start, baseline_end,
                max(covers_baseline) AS CE_b,
-               max(covers_index_day) AS CE_f,
-               max(CASE WHEN covers_index_day = 1 THEN cov_end END) AS ENDDATE_CE
+               max(has_1day_followup) AS CE_f,
+               max(CASE WHEN has_1day_followup = 1 THEN cov_end END) AS ENDDATE_CE
         FROM joined_std
         GROUP BY PATID, index_date, baseline_start, baseline_end
       "),
