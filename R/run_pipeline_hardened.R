@@ -1097,12 +1097,13 @@ build_steps <- function() {
    
     # All MM dx events in study period (for baseline lookback)
     # Per Optum Business Rules STRICT Approach 2:
-    # - Inpatient: ONLY when CONF_ID exists in T_CONFINEMENT (validated via cf.CONF_ID IS NOT NULL)
-    # - Outpatient: All other records (where cf.CONF_ID IS NULL)
-    # - NO POS/TOS fallback per Approach 2 specification
+    # FIXED: Inpatient identification using EITHER Approach 1 OR Approach 2
+    # - Approach 1: POS (Place of Service) indicates inpatient (21, 51, 61) OR TOS_CD = '1'
+    # - Approach 2: CONF_ID is validated in T_CONFINEMENT
+    # Patient qualifies as inpatient if EITHER approach identifies them as inpatient
     list(
       name = "08a_mm_dx_events_all",
-      description = "Identifying MM diagnosis events (full study period)",
+      description = "Identifying MM diagnosis events (full study period, Approach 1+2 inpatient)",
       source_tables = c("med_diagnosis", "confinement"),
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('mm_dx_events_all')} AS
@@ -1113,13 +1114,23 @@ build_steps <- function() {
           upper(regexp_replace(d.DIAG, '\\\\.', '')) AS diag,
           CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
           h.CONF_ID,
-          -- Per Optum Business Rules STRICT Approach 2:
-          -- Inpatient ONLY when CONF_ID is validated in T_CONFINEMENT
-          CASE WHEN cf.CONF_ID IS NOT NULL THEN 1 ELSE 0 END AS inpatient_flg,
-          -- Outpatient: all records where CONF_ID is NOT validated in T_CONFINEMENT
-          CASE WHEN cf.CONF_ID IS NULL THEN 1 ELSE 0 END AS outpatient_flg,
-          -- QC flag: same as inpatient_flg under strict Approach 2
-          CASE WHEN cf.CONF_ID IS NOT NULL THEN 1 ELSE 0 END AS conf_validated
+          h.POS,
+          h.TOS_CD,
+          -- FIXED: Inpatient = Approach 1 (POS/TOS) OR Approach 2 (CONF_ID validated)
+          -- Approach 1: POS 21=Inpatient Hospital, 51=Inpatient Psych, 61=Inpatient Rehab; TOS_CD='1'=Inpatient
+          -- Approach 2: CONF_ID exists in T_CONFINEMENT with valid dates
+          CASE WHEN h.POS IN ('21', '51', '61')
+                 OR h.TOS_CD = '1'
+                 OR cf.CONF_ID IS NOT NULL
+               THEN 1 ELSE 0 END AS inpatient_flg,
+          -- Outpatient: NOT identified as inpatient by either approach
+          CASE WHEN NOT (h.POS IN ('21', '51', '61')
+                      OR h.TOS_CD = '1'
+                      OR cf.CONF_ID IS NOT NULL)
+               THEN 1 ELSE 0 END AS outpatient_flg,
+          -- QC flags for each approach
+          CASE WHEN cf.CONF_ID IS NOT NULL THEN 1 ELSE 0 END AS conf_validated,
+          CASE WHEN h.POS IN ('21', '51', '61') OR h.TOS_CD = '1' THEN 1 ELSE 0 END AS pos_tos_inpatient
         FROM {cdm_src(cfg$tbl_med_diag)} d
         INNER JOIN {work('med_claim_header')} h
           ON d.PATID = h.PATID AND d.CLMID = h.CLMID
@@ -1130,7 +1141,7 @@ build_steps <- function() {
           ON h.PATID = cf.PATID AND h.CONF_ID = cf.CONF_ID
         WHERE cast(d.FST_DT as date) BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
       "),
-      qc = glue("SELECT count(DISTINCT PATID) AS n_patients FROM {work('mm_dx_events_all')}")
+      qc = glue("SELECT count(DISTINCT PATID) AS n_patients, sum(inpatient_flg) AS n_inpatient_events, sum(conf_validated) AS n_via_conf, sum(pos_tos_inpatient) AS n_via_pos_tos FROM {work('mm_dx_events_all')}")
     ),
    
     # MM dx events in ID period only (for index date qualification)
@@ -2261,31 +2272,35 @@ main <- function() {
     cat(DASH_60, "\n")
    
     # ----------------------------------------------------------
-    # CONFINEMENT VALIDATION (Optum Approach 2 compliance)
+    # INPATIENT VALIDATION (Approach 1 + Approach 2)
     # ----------------------------------------------------------
     cat("\n")
     cat(DASH_60, "\n")
-    cat("  INPATIENT CLASSIFICATION VALIDATION (Optum Approach 2)\n")
+    cat("  INPATIENT CLASSIFICATION VALIDATION (Approach 1 + 2)\n")
     cat(DASH_60, "\n")
-   
+
     conf_qc_sql <- glue("
       SELECT
         count(*) AS n_mm_dx_events,
-        sum(CASE WHEN CONF_ID IS NOT NULL THEN 1 ELSE 0 END) AS n_with_conf_id,
-        sum(conf_validated) AS n_conf_validated,
-        sum(CASE WHEN CONF_ID IS NOT NULL AND conf_validated = 0 THEN 1 ELSE 0 END) AS n_conf_id_not_validated,
-        ROUND(100.0 * sum(conf_validated) / NULLIF(sum(CASE WHEN CONF_ID IS NOT NULL THEN 1 ELSE 0 END), 0), 2) AS pct_validated_among_confid
+        sum(inpatient_flg) AS n_inpatient_total,
+        sum(pos_tos_inpatient) AS n_via_pos_tos,
+        sum(conf_validated) AS n_via_conf,
+        sum(CASE WHEN pos_tos_inpatient = 1 AND conf_validated = 1 THEN 1 ELSE 0 END) AS n_both_approaches,
+        sum(CASE WHEN pos_tos_inpatient = 1 AND conf_validated = 0 THEN 1 ELSE 0 END) AS n_pos_tos_only,
+        sum(CASE WHEN pos_tos_inpatient = 0 AND conf_validated = 1 THEN 1 ELSE 0 END) AS n_conf_only
       FROM {work_tbl('mm_dx_events_all')}
     ")
     conf_qc <- DBI::dbGetQuery(con_env$con, conf_qc_sql)
-   
+
     cat(sprintf("MM dx events (total):    %s\n", format(conf_qc$n_mm_dx_events, big.mark = ",")))
-    cat(sprintf("Events with CONF_ID:     %s\n", format(conf_qc$n_with_conf_id, big.mark = ",")))
-    cat(sprintf("Confinement validated:   %s (%.2f%% of CONF_ID)\n",
-                format(conf_qc$n_conf_validated, big.mark = ","),
-                ifelse(is.na(conf_qc$pct_validated_among_confid), 0, conf_qc$pct_validated_among_confid)))
-    cat(sprintf("CONF_ID not validated:   %s\n",
-                format(conf_qc$n_conf_id_not_validated, big.mark = ",")))
+    cat(sprintf("Inpatient (combined):    %s (%.1f%%)\n",
+                format(conf_qc$n_inpatient_total, big.mark = ","),
+                100 * conf_qc$n_inpatient_total / conf_qc$n_mm_dx_events))
+    cat(sprintf("  Via POS/TOS (Appr 1):  %s\n", format(conf_qc$n_via_pos_tos, big.mark = ",")))
+    cat(sprintf("  Via CONF_ID (Appr 2):  %s\n", format(conf_qc$n_via_conf, big.mark = ",")))
+    cat(sprintf("  Both approaches:       %s\n", format(conf_qc$n_both_approaches, big.mark = ",")))
+    cat(sprintf("  POS/TOS only:          %s\n", format(conf_qc$n_pos_tos_only, big.mark = ",")))
+    cat(sprintf("  CONF_ID only:          %s\n", format(conf_qc$n_conf_only, big.mark = ",")))
     cat(DASH_60, "\n")
    
   }, error = function(e) {
