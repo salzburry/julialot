@@ -517,7 +517,9 @@ materialize_to_personal_schema <- function(con, view_name, replace = TRUE) {
   }
 
   remote_table <- tolower(view_name)
-  full_table_name <- paste0(cfg$catalog, ".", cfg$personal_schema, ".", remote_table)
+  # Use schema.table format (no catalog prefix) to match GSK helper pattern
+  # This uses whatever catalog is set in the Spark session context
+  full_table_name <- paste0(cfg$personal_schema, ".", remote_table)
 
   log_msg("  >> Materializing ", view_name, " to ", full_table_name, "...")
 
