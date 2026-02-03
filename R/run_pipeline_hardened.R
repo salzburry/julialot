@@ -41,6 +41,10 @@
 library(DBI)
 library(odbc)
 library(glue)
+library(dbplyr)  # Required for tbl() and sql_render() used by GSK helpers
+
+# Source GSK helper functions for personal schema operations
+source("/mnt/code/R/helperScripts/databases/personalSchemaFunctions.R")
  
 # ============================================================
 # DEFAULT CONFIGURATION
@@ -494,22 +498,13 @@ work_tbl <- function(name) {
 
 # ============================================================
 # MATERIALIZATION HELPERS (for checkpoint tables)
+# Uses GSK createInPersonalSchema helper from personalSchemaFunctions.R
 # ============================================================
 # Track which tables have been materialized to personal schema
 materialized_tables <- new.env()
 
-# Get the table reference - either temp view or materialized personal schema table
-get_table_ref <- function(name) {
-  if (exists(name, envir = materialized_tables)) {
-    # Return personal schema table reference
-    return(get(name, envir = materialized_tables))
-  }
-  # Return temp view name
-  return(name)
-}
-
-# Materialize a temp view to personal schema using CREATE TABLE AS
-# Based on GSK helper: createInPersonalSchema
+# Materialize a temp view to personal schema using GSK helper
+# This breaks Spark lazy evaluation chain for better performance
 materialize_to_personal_schema <- function(con, view_name, replace = TRUE) {
   if (!nzchar(cfg$personal_schema)) {
     log_msg("WARN: personal_schema not set, skipping materialization of ", view_name)
@@ -517,33 +512,16 @@ materialize_to_personal_schema <- function(con, view_name, replace = TRUE) {
   }
 
   remote_table <- tolower(view_name)
-  # Use schema.table format (no catalog prefix) to match GSK helper pattern
-  # This uses whatever catalog is set in the Spark session context
   full_table_name <- paste0(cfg$personal_schema, ".", remote_table)
 
   log_msg("  >> Materializing ", view_name, " to ", full_table_name, "...")
 
-  # Check if table exists
-  table_exists <- tryCatch({
-    DBI::dbGetQuery(con, glue("SELECT 1 FROM {full_table_name} LIMIT 1"))
-    TRUE
-  }, error = function(e) FALSE)
-
-  if (table_exists && !replace) {
-    log_msg("  >> Table already exists, skipping (replace=FALSE)")
-    assign(view_name, full_table_name, envir = materialized_tables)
-    return(TRUE)
-  }
-
-  # Create or replace table
-  sql <- if (replace && table_exists) {
-    glue("CREATE OR REPLACE TABLE {full_table_name} AS SELECT * FROM {view_name}")
-  } else {
-    glue("CREATE TABLE {full_table_name} AS SELECT * FROM {view_name}")
-  }
-
   tryCatch({
-    DBI::dbExecute(con, sql)
+    # Create pointer to the temp view
+    pointer <- tbl(con, view_name)
+
+    # Use GSK helper to create table in personal schema
+    createInPersonalSchema(pointer, remote_table, replace = replace)
 
     # Create a view alias so subsequent steps using the temp view name
     # will read from the materialized table (avoids recomputation)
