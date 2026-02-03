@@ -521,6 +521,9 @@ materialize_to_personal_schema <- function(con, view_name, replace = TRUE) {
     # Create pointer to the temp view
     pointer <- tbl(con, view_name)
 
+    # GSK helper expects 'con' in global environment
+    assign("con", con, envir = .GlobalEnv)
+
     # Use GSK helper to create table in personal schema
     createInPersonalSchema(pointer, remote_table, replace = replace)
 
