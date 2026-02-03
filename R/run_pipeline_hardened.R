@@ -1229,16 +1229,15 @@ build_steps <- function() {
     # PHASE 3: INDEX DATE DERIVATION (uses ID period events only)
     # ----------------------------------------------------------
     list(
-      name = "09_mm_inpatient_index",
-      description = "Finding patients with inpatient MM diagnosis",
+      name = "09_mm_inpatient_potential",
+      description = "Finding ALL potential inpatient MM index dates (not just earliest)",
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('mm_inpatient_index')} AS
-        SELECT PATID, 1 AS inpt1, min(svc_dt) AS idx_inpt
+        CREATE OR REPLACE TEMPORARY VIEW {work('mm_inpatient_potential')} AS
+        SELECT DISTINCT PATID, svc_dt AS potential_index, 'INPATIENT' AS index_source
         FROM {work('mm_dx_events_id')}
         WHERE inpatient_flg = 1
-        GROUP BY PATID
       "),
-      qc = glue("SELECT count(*) AS n_inpt_patients FROM {work('mm_inpatient_index')}")
+      qc = glue("SELECT count(*) AS n_potential_inpt FROM {work('mm_inpatient_potential')}")
     ),
    
     list(
@@ -1265,69 +1264,58 @@ build_steps <- function() {
     ),
    
     list(
-      name = "11_mm_outpatient_index",
-      description = "Identifying 2+ outpatient dx within 30/60/90 days",
+      name = "11_mm_outpatient_potential",
+      description = "Finding ALL potential outpatient MM index dates (2+ OP in window, not just earliest)",
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('mm_outpatient_index')} AS
-        SELECT
+        CREATE OR REPLACE TEMPORARY VIEW {work('mm_outpatient_potential')} AS
+        -- Each qualifying pair's first_dt is a potential index date
+        -- Keep track of which windows (30/60/90) each date qualifies for
+        SELECT DISTINCT
           PATID,
-          max(CASE WHEN diff_days <= {cfg$dx_window_90} THEN 1 ELSE 0 END) AS outpt2_90,
-          max(CASE WHEN diff_days <= {cfg$dx_window_60} THEN 1 ELSE 0 END) AS outpt2_60,
-          max(CASE WHEN diff_days <= {cfg$dx_window_30} THEN 1 ELSE 0 END) AS outpt2_30,
-          min(CASE WHEN diff_days <= {cfg$dx_window_90} THEN first_dt END) AS idx_outpt_90,
-          min(CASE WHEN diff_days <= {cfg$dx_window_60} THEN first_dt END) AS idx_outpt_60,
-          min(CASE WHEN diff_days <= {cfg$dx_window_30} THEN first_dt END) AS idx_outpt_30
+          first_dt AS potential_index,
+          'OUTPATIENT' AS index_source,
+          CASE WHEN diff_days <= {cfg$dx_window_90} THEN 1 ELSE 0 END AS qualifies_90,
+          CASE WHEN diff_days <= {cfg$dx_window_60} THEN 1 ELSE 0 END AS qualifies_60,
+          CASE WHEN diff_days <= {cfg$dx_window_30} THEN 1 ELSE 0 END AS qualifies_30
         FROM {work('mm_outpatient_pairs')}
-        GROUP BY PATID
+        WHERE diff_days <= {cfg$dx_window_90}
       "),
-      qc = glue("SELECT count(*) AS n_outpt_patients FROM {work('mm_outpatient_index')}")
+      qc = glue("SELECT count(*) AS n_potential_outpt FROM {work('mm_outpatient_potential')}")
     ),
    
     list(
       name = "12_mm_qualifying",
-      description = glue("CRITERION: MM qualifying (1+ IP or 2+ OP in {cfg$outpatient_window}d)"),
+      description = glue("Combining ALL potential index dates (IP or OP in {cfg$outpatient_window}d) - keeps all, not just earliest"),
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('mm_qualifying')} AS
-        WITH combined AS (
-          SELECT PATID, inpt1, 0 AS outpt2_90, 0 AS outpt2_60, 0 AS outpt2_30,
-                 idx_inpt, NULL AS idx_outpt_90, NULL AS idx_outpt_60, NULL AS idx_outpt_30
-          FROM {work('mm_inpatient_index')}
+        -- Union all potential index dates from both inpatient and outpatient sources
+        -- Each row represents one PATID + index_date combination
+        -- NOTE: Now has multiple rows per patient (one per potential index date)
+        WITH all_potential AS (
+          -- Inpatient potential index dates
+          SELECT PATID, potential_index, 1 AS inpt_qual, 0 AS outpt_qual
+          FROM {work('mm_inpatient_potential')}
           UNION ALL
-          SELECT PATID, 0 AS inpt1, outpt2_90, outpt2_60, outpt2_30,
-                 NULL AS idx_inpt, idx_outpt_90, idx_outpt_60, idx_outpt_30
-          FROM {work('mm_outpatient_index')}
-        ),
-        agg AS (
-          SELECT
-            PATID,
-            max(inpt1) AS inpt1,
-            max(outpt2_90) AS outpt2_90,
-            max(outpt2_60) AS outpt2_60,
-            max(outpt2_30) AS outpt2_30,
-            min(idx_inpt) AS idx_inpt,
-            min(idx_outpt_90) AS idx_outpt_90,
-            min(idx_outpt_60) AS idx_outpt_60,
-            min(idx_outpt_30) AS idx_outpt_30
-          FROM combined
-          GROUP BY PATID
+          -- Outpatient potential index dates (filtered by configured window)
+          SELECT PATID, potential_index, 0 AS inpt_qual,
+                 CASE WHEN qualifies_{cfg$outpatient_window} = 1 THEN 1 ELSE 0 END AS outpt_qual
+          FROM {work('mm_outpatient_potential')}
+          WHERE qualifies_{cfg$outpatient_window} = 1
         )
+        -- Aggregate per PATID + potential_index to handle dates that qualify via both paths
         SELECT
-          PATID, inpt1, outpt2_90, outpt2_60, outpt2_30,
-          idx_inpt, idx_outpt_90, idx_outpt_60, idx_outpt_30,
-          -- Index date: earliest of inpatient or qualifying outpatient (configurable window)
+          PATID,
+          potential_index AS index_date,
+          max(inpt_qual) AS inpt_qual,
+          max(outpt_qual) AS outpt_qual,
           CASE
-            WHEN inpt1 = 1 AND idx_outpt_{cfg$outpatient_window} IS NULL THEN idx_inpt
-            WHEN inpt1 = 0 AND idx_outpt_{cfg$outpatient_window} IS NOT NULL THEN idx_outpt_{cfg$outpatient_window}
-            WHEN inpt1 = 1 AND idx_outpt_{cfg$outpatient_window} IS NOT NULL THEN least(idx_inpt, idx_outpt_{cfg$outpatient_window})
-          END AS index_date,
-          CASE
-            WHEN inpt1 = 1 AND (idx_outpt_{cfg$outpatient_window} IS NULL OR idx_inpt <= idx_outpt_{cfg$outpatient_window}) THEN 'INPATIENT'
-            WHEN idx_outpt_{cfg$outpatient_window} IS NOT NULL THEN 'OUTPATIENT_2IN{cfg$outpatient_window}'
+            WHEN max(inpt_qual) = 1 THEN 'INPATIENT'
+            ELSE 'OUTPATIENT_2IN{cfg$outpatient_window}'
           END AS index_source
-        FROM agg
-        WHERE inpt1 = 1 OR outpt2_{cfg$outpatient_window} = 1
+        FROM all_potential
+        GROUP BY PATID, potential_index
       "),
-      qc = glue("SELECT count(*) AS n_qualifying FROM {work('mm_qualifying')}")
+      qc = glue("SELECT count(*) AS n_potential_index, count(DISTINCT PATID) AS n_patients FROM {work('mm_qualifying')}")
     ),
    
     # ----------------------------------------------------------
@@ -1558,8 +1546,10 @@ build_steps <- function() {
           LEFT JOIN best b ON q.PATID = b.PATID
         )
         -- Final clamp: ensure DEATH_DT >= index_date (prevents negative FU_DAYS from data issues)
+        -- NOTE: Output includes index_date since death can be relative to each potential index
         SELECT
           PATID,
+          index_date,
           CASE
             WHEN death_raw IS NOT NULL AND death_raw < index_date THEN index_date
             ELSE death_raw
@@ -1633,6 +1623,7 @@ build_steps <- function() {
         CREATE OR REPLACE TEMPORARY VIEW {work('mm_baseline_nondx_flag')} AS
         SELECT
           q.PATID,
+          q.index_date,
           -- Baseline includes index_date per IE spec
           max(CASE WHEN e.svc_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days - 1})
                                      AND q.index_date
@@ -1641,7 +1632,7 @@ build_steps <- function() {
         FROM {work('mm_qualifying')} q
         LEFT JOIN {work('mm_dx_events_all')} e ON q.PATID = e.PATID
         LEFT JOIN {work('claim_nondiagnostic')} n ON e.PATID = n.PATID AND e.CLMID = n.CLMID
-        GROUP BY q.PATID
+        GROUP BY q.PATID, q.index_date
       "),
       qc = glue("SELECT sum(MM_BASELINE_NONDX) AS n_with_baseline_nondx FROM {work('mm_baseline_nondx_flag')}")
     ),
@@ -1690,6 +1681,7 @@ build_steps <- function() {
         CREATE OR REPLACE TEMPORARY VIEW {work('therapy_flags')} AS
         SELECT
           q.PATID,
+          q.index_date,
           -- Baseline includes index_date per IE spec
           max(CASE WHEN t.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days - 1})
                                        AND q.index_date
@@ -1700,9 +1692,9 @@ build_steps <- function() {
                     AND t.event_dt <= least(date('{cfg$study_end}'), coalesce(d.DEATH_DT, date('{cfg$study_end}')))
                THEN 1 ELSE 0 END) AS MM_THERAPY_FOLLOWUP
         FROM {work('mm_qualifying')} q
-        LEFT JOIN {work('death_dt')} d ON q.PATID = d.PATID
+        LEFT JOIN {work('death_dt')} d ON q.PATID = d.PATID AND q.index_date = d.index_date
         LEFT JOIN {work('therapy_events')} t ON q.PATID = t.PATID
-        GROUP BY q.PATID
+        GROUP BY q.PATID, q.index_date
       "),
       qc = glue("SELECT sum(MM_THERAPY_FOLLOWUP) AS n_with_fu_therapy FROM {work('therapy_flags')}")
     ),
@@ -1740,13 +1732,14 @@ build_steps <- function() {
         )
         SELECT
           q.PATID,
+          q.index_date,
           -- FIXED: Use baseline_days - 1 for baseline start (baseline includes index_date per IE spec)
           max(CASE WHEN m.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days - 1})
                                        AND date('{cfg$study_end}')
                THEN 1 ELSE 0 END) AS PREGNANT_FLAG
         FROM {work('mm_qualifying')} q
         LEFT JOIN matched m ON q.PATID = m.PATID
-        GROUP BY q.PATID
+        GROUP BY q.PATID, q.index_date
       "),
       qc = glue("SELECT sum(PREGNANT_FLAG) AS n_pregnant FROM {work('pregnancy_flag')}")
     ),
@@ -1778,6 +1771,7 @@ build_steps <- function() {
         )
         SELECT
           q.PATID,
+          q.index_date,
           -- Baseline includes index_date per IE spec
           max(CASE WHEN m.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days - 1})
                                        AND q.index_date
@@ -1787,7 +1781,7 @@ build_steps <- function() {
                THEN 1 ELSE 0 END) AS CLINTRIAL_FOLLOWUP
         FROM {work('mm_qualifying')} q
         LEFT JOIN matched m ON q.PATID = m.PATID
-        GROUP BY q.PATID
+        GROUP BY q.PATID, q.index_date
       "),
       qc = glue("SELECT sum(CLINTRIAL_BASELINE) + sum(CLINTRIAL_FOLLOWUP) AS n_clintrial FROM {work('clintrial_flag')}")
     ),
@@ -1830,6 +1824,7 @@ build_steps <- function() {
         )
         SELECT
           q.PATID,
+          q.index_date,
           -- Require BOTH first_dt AND next_dt within baseline period (includes index_date per IE spec)
           max(CASE WHEN p.diff_days <= 30
                     AND p.first_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days - 1})
@@ -1839,7 +1834,7 @@ build_steps <- function() {
                THEN 1 ELSE 0 END) AS OTHER_MALIGN_FLAG
         FROM {work('mm_qualifying')} q
         LEFT JOIN pairs p ON q.PATID = p.PATID
-        GROUP BY q.PATID
+        GROUP BY q.PATID, q.index_date
       "),
       qc = glue("SELECT sum(OTHER_MALIGN_FLAG) AS n_other_malig FROM {work('other_malig_flag')}")
     ),
@@ -1876,16 +1871,16 @@ build_steps <- function() {
             preg.PREGNANT_FLAG,
             ct.CLINTRIAL_BASELINE,
             ct.CLINTRIAL_FOLLOWUP,
-            q.inpt1, q.outpt2_30, q.outpt2_60, q.outpt2_90, q.index_source
+            q.inpt_qual, q.outpt_qual, q.index_source
           FROM {work('mm_qualifying')} q
-          LEFT JOIN {work('ce_flags')} ce ON q.PATID = ce.PATID
+          LEFT JOIN {work('ce_flags')} ce ON q.PATID = ce.PATID AND q.index_date = ce.index_date
           LEFT JOIN {work('member_demo')} d ON q.PATID = d.PATID
-          LEFT JOIN {work('death_dt')} death ON q.PATID = death.PATID
-          LEFT JOIN {work('mm_baseline_nondx_flag')} mm_bl ON q.PATID = mm_bl.PATID
-          LEFT JOIN {work('therapy_flags')} th ON q.PATID = th.PATID
-          LEFT JOIN {work('pregnancy_flag')} preg ON q.PATID = preg.PATID
-          LEFT JOIN {work('clintrial_flag')} ct ON q.PATID = ct.PATID
-          LEFT JOIN {work('other_malig_flag')} om ON q.PATID = om.PATID
+          LEFT JOIN {work('death_dt')} death ON q.PATID = death.PATID AND q.index_date = death.index_date
+          LEFT JOIN {work('mm_baseline_nondx_flag')} mm_bl ON q.PATID = mm_bl.PATID AND q.index_date = mm_bl.index_date
+          LEFT JOIN {work('therapy_flags')} th ON q.PATID = th.PATID AND q.index_date = th.index_date
+          LEFT JOIN {work('pregnancy_flag')} preg ON q.PATID = preg.PATID AND q.index_date = preg.index_date
+          LEFT JOIN {work('clintrial_flag')} ct ON q.PATID = ct.PATID AND q.index_date = ct.index_date
+          LEFT JOIN {work('other_malig_flag')} om ON q.PATID = om.PATID AND q.index_date = om.index_date
         ),
         -- CE_3mosf with death-aware logic (no gaps, ends at min of 91 days/death/study_end)
         ce3mos_calc AS (
@@ -1903,10 +1898,10 @@ build_steps <- function() {
           LEFT JOIN {work('enrollment_spans_strict')} ss ON b.PATID = ss.PATID
         ),
         ce3mos_flag AS (
-          SELECT PATID,
+          SELECT PATID, index_date,
             max(CASE WHEN cov_start <= index_date AND cov_end >= required_3mos_end THEN 1 ELSE 0 END) AS CE_3mosf
           FROM ce3mos_calc
-          GROUP BY PATID
+          GROUP BY PATID, index_date
         )
         SELECT
           b.PATID,
@@ -1915,7 +1910,7 @@ build_steps <- function() {
           b.GDR_CD,
           b.YRDOB,
           (year(b.index_date) - b.YRDOB) AS AGE_INDEX_YR,
-          b.inpt1, b.outpt2_30, b.outpt2_60, b.outpt2_90, b.index_source,
+          b.inpt_qual, b.outpt_qual, b.index_source,
           b.baseline_start, b.baseline_end,
           coalesce(b.CE_b, 0) AS CE_b,
           coalesce(b.CE_f, 0) AS CE_f,
@@ -1933,20 +1928,31 @@ build_steps <- function() {
           coalesce(b.CLINTRIAL_BASELINE, 0) AS CLINTRIAL_BASELINE,
           coalesce(b.CLINTRIAL_FOLLOWUP, 0) AS CLINTRIAL_FOLLOWUP
         FROM base b
-        LEFT JOIN ce3mos_flag c3 ON b.PATID = c3.PATID
+        LEFT JOIN ce3mos_flag c3 ON b.PATID = c3.PATID AND b.index_date = c3.index_date
       "),
       qc = glue("SELECT count(*) AS n_total, count(DISTINCT PATID) AS n_patients FROM {work('ELIG_COH_ALLFLAGS')}")
     ),
    
     list(
       name = "24_ELIG_COH_FINAL",
-      description = glue("FINAL COHORT ({cfg$final_table_name}): Apply configurable inclusion/exclusion criteria"),
+      description = glue("FINAL COHORT ({cfg$final_table_name}): Apply IE criteria then select EARLIEST qualifying index_date per patient"),
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work(cfg$final_table_name)} AS
-        SELECT *
-        FROM {work('ELIG_COH_ALLFLAGS')}
-        WHERE 1=1
-          {criteria_sql}
+        -- First apply IE criteria, then select the EARLIEST qualifying index_date per patient
+        -- This ensures that if a patient's earliest potential index_date fails IE criteria,
+        -- a later index_date that passes can still be selected
+        WITH filtered AS (
+          SELECT *
+          FROM {work('ELIG_COH_ALLFLAGS')}
+          WHERE 1=1
+            {criteria_sql}
+        ),
+        ranked AS (
+          SELECT *,
+                 row_number() OVER (PARTITION BY PATID ORDER BY INDEX_DATE) AS rn
+          FROM filtered
+        )
+        SELECT * FROM ranked WHERE rn = 1
       "),
       qc = glue("SELECT count(*) AS n_final_cohort FROM {work(cfg$final_table_name)}")
     ),
