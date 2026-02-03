@@ -267,8 +267,9 @@ prompt_ie_criteria <- function() {
   # 9. Other malignancy exclusion
   criteria$apply_other_malig_excl <- ask_yn("Exclude patients with other malignancies?", criteria$apply_other_malig_excl)
  
-  # 10. Baseline non-diagnostic claim exclusion (smoldering MM)
-  criteria$apply_baseline_nondx_excl <- ask_yn("Exclude patients with baseline non-dx MM claims (smoldering)?", criteria$apply_baseline_nondx_excl)
+  # NOTE: Baseline non-diagnostic claim exclusion is hardcoded to FALSE
+  # (diagnostic code list is incomplete, causes 81% false exclusion rate)
+  criteria$apply_baseline_nondx_excl <- FALSE
  
   # Show summary and confirm
   cat("\n")
@@ -287,7 +288,6 @@ prompt_ie_criteria <- function() {
   cat("  [", if(criteria$apply_pregnancy_excl) "X" else " ", "] Pregnancy\n", sep = "")
   cat("  [", if(criteria$apply_clintrial_excl) "X" else " ", "] Clinical trial participation\n", sep = "")
   cat("  [", if(criteria$apply_other_malig_excl) "X" else " ", "] Other malignancies\n", sep = "")
-  cat("  [", if(criteria$apply_baseline_nondx_excl) "X" else " ", "] Baseline non-diagnostic MM claims\n", sep = "")
  
   cat("\n============================================================\n")
   cat("Proceed with these criteria? [Y/n]: ")
@@ -420,7 +420,9 @@ cfg <- list(
   # Set TRUE to materialize key intermediate tables to personal schema
   # This breaks Spark lazy evaluation and dramatically speeds up the pipeline
   # Checkpoint tables: mm_dx_events_all, mm_qualifying, claim_nondiagnostic, ELIG_COH_ALLFLAGS
-  materialize_checkpoints = as.logical(Sys.getenv("MATERIALIZE_CHECKPOINTS", unset = "TRUE"))
+  # HARDCODED: Always materialize checkpoints to personal schema for performance
+  # This breaks Spark lazy evaluation and dramatically speeds up the pipeline
+  materialize_checkpoints = TRUE
 )
 
 # Steps to materialize to personal schema (breaks lazy eval chain)
