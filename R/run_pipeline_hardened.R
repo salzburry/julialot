@@ -412,8 +412,19 @@ cfg <- list(
  
   # Persist final cohort to personal schema (uses lazy table approach)
   persist_to_schema = as.logical(Sys.getenv("PERSIST_TO_SCHEMA", unset = "TRUE")),
-  personal_schema = Sys.getenv("DOMINO_USER_NAME", unset = Sys.getenv("DOMINO_STARTING_USERNAME", unset = ""))
+  personal_schema = Sys.getenv("DOMINO_USER_NAME", unset = Sys.getenv("DOMINO_STARTING_USERNAME", unset = "")),
+
+  # ============================================================
+  # PERFORMANCE: MATERIALIZE CHECKPOINTS
+  # ============================================================
+  # Set TRUE to materialize key intermediate tables to personal schema
+  # This breaks Spark lazy evaluation and dramatically speeds up the pipeline
+  # Checkpoint tables: mm_dx_events_all, mm_qualifying, claim_nondiagnostic, ELIG_COH_ALLFLAGS
+  materialize_checkpoints = as.logical(Sys.getenv("MATERIALIZE_CHECKPOINTS", unset = "TRUE"))
 )
+
+# Steps to materialize to personal schema (breaks lazy eval chain)
+CHECKPOINT_STEPS <- c("mm_dx_events_all", "mm_qualifying", "claim_nondiagnostic", "ELIG_COH_ALLFLAGS")
  
 run_id <- Sys.getenv("DOMINO_RUN_ID", unset = format(Sys.time(), "%Y%m%d%H%M%S"))
  
@@ -470,8 +481,80 @@ ref <- function(tbl) full_name(cfg$ref_schema, tbl)
 # Use temp views for work tables - no schema needed
 work <- function(tbl) tbl
  
-# Alias for work() - used in reporting/QC queries
-work_tbl <- function(name) work(name)
+# Alias for work() - checks if table has been materialized to personal schema
+# Used in reporting/QC queries that run AFTER potential materialization
+work_tbl <- function(name) {
+  if (exists(name, envir = materialized_tables)) {
+    return(get(name, envir = materialized_tables))
+  }
+  return(name)
+}
+
+# ============================================================
+# MATERIALIZATION HELPERS (for checkpoint tables)
+# ============================================================
+# Track which tables have been materialized to personal schema
+materialized_tables <- new.env()
+
+# Get the table reference - either temp view or materialized personal schema table
+get_table_ref <- function(name) {
+  if (exists(name, envir = materialized_tables)) {
+    # Return personal schema table reference
+    return(get(name, envir = materialized_tables))
+  }
+  # Return temp view name
+  return(name)
+}
+
+# Materialize a temp view to personal schema using CREATE TABLE AS
+# Based on GSK helper: createInPersonalSchema
+materialize_to_personal_schema <- function(con, view_name, replace = TRUE) {
+  if (!nzchar(cfg$personal_schema)) {
+    log_msg("WARN: personal_schema not set, skipping materialization of ", view_name)
+    return(FALSE)
+  }
+
+  remote_table <- tolower(view_name)
+  full_table_name <- paste0(cfg$catalog, ".", cfg$personal_schema, ".", remote_table)
+
+  log_msg("  >> Materializing ", view_name, " to ", full_table_name, "...")
+
+  # Check if table exists
+  table_exists <- tryCatch({
+    DBI::dbGetQuery(con, glue("SELECT 1 FROM {full_table_name} LIMIT 1"))
+    TRUE
+  }, error = function(e) FALSE)
+
+  if (table_exists && !replace) {
+    log_msg("  >> Table already exists, skipping (replace=FALSE)")
+    assign(view_name, full_table_name, envir = materialized_tables)
+    return(TRUE)
+  }
+
+  # Create or replace table
+  sql <- if (replace && table_exists) {
+    glue("CREATE OR REPLACE TABLE {full_table_name} AS SELECT * FROM {view_name}")
+  } else {
+    glue("CREATE TABLE {full_table_name} AS SELECT * FROM {view_name}")
+  }
+
+  tryCatch({
+    DBI::dbExecute(con, sql)
+
+    # Create a view alias so subsequent steps using the temp view name
+    # will read from the materialized table (avoids recomputation)
+    alias_sql <- glue("CREATE OR REPLACE TEMPORARY VIEW {view_name} AS SELECT * FROM {full_table_name}")
+    DBI::dbExecute(con, alias_sql)
+
+    # Track that this table is now materialized
+    assign(view_name, full_table_name, envir = materialized_tables)
+    log_msg("  >> Materialized successfully (view alias created)")
+    TRUE
+  }, error = function(e) {
+    log_msg("  >> WARN: Materialization failed: ", conditionMessage(e))
+    FALSE
+  })
+}
  
 log_msg <- function(...) {
   cat(sprintf("[%s] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S")), ..., "\n")
@@ -2100,6 +2183,15 @@ main <- function() {
                description = s$description, step_num = i, total_steps = total_steps,
                source_tables = s$source_tables)
     })
+
+    # Materialize checkpoint tables to personal schema (breaks lazy eval chain)
+    if (isTRUE(cfg$materialize_checkpoints) && nzchar(cfg$personal_schema)) {
+      # Extract table name from step name (e.g., "08a_mm_dx_events_all" -> "mm_dx_events_all")
+      table_name <- sub("^[0-9]+[a-z]?_", "", s$name)
+      if (table_name %in% CHECKPOINT_STEPS) {
+        materialize_to_personal_schema(con_env$con, table_name, replace = TRUE)
+      }
+    }
   }
  
   # Final summary
