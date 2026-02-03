@@ -2197,27 +2197,29 @@ main <- function() {
     record_attrition("01_mm_dx", "Patients with MM diagnosis (ID period)", q1$n)
    
     # Step 2: Qualifying patients (1+ inpatient OR 2 outpatient in 90 days)
-    q2 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {work_tbl('mm_qualifying')}"))
+    # NOTE: Now mm_qualifying has multiple rows per patient, so count DISTINCT
+    q2 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('mm_qualifying')}"))
     record_attrition("02_qualifying", "MM qualifying (1+ IP or 2 OP in 90d)", q2$n)
-   
+
     # Step 3: With baseline enrollment (CE_b = 1)
-    q3 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1"))
+    # NOTE: ELIG_COH_ALLFLAGS has multiple rows per patient, so count DISTINCT
+    q3 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1"))
     record_attrition("03_ce_baseline", "With 6-mo baseline enrollment", q3$n)
-   
+
     # Step 4: With index date enrollment (CE_f = 1)
-    q4 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1 AND CE_f = 1"))
+    q4 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1 AND CE_f = 1"))
     record_attrition("04_ce_index", "With index date enrollment", q4$n)
-   
+
     # Step 5: Age >= 18
-    q5 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18"))
+    q5 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18"))
     record_attrition("05_age_18", "Age >= 18 at index", q5$n)
-   
+
     # Step 6: No MM therapy in baseline
-    q6 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18 AND MM_bl_agents = 0"))
+    q6 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18 AND MM_bl_agents = 0"))
     record_attrition("06_no_bl_therapy", "No MM therapy in baseline", q6$n)
-   
+
     # Step 7: MM therapy in follow-up
-    q7 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18 AND MM_bl_agents = 0 AND MM_FU_agents = 1"))
+    q7 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18 AND MM_bl_agents = 0 AND MM_FU_agents = 1"))
     record_attrition("07_fu_therapy", "MM therapy in follow-up", q7$n)
    
     # Conditional exclusion steps based on what's applied
@@ -2228,7 +2230,7 @@ main <- function() {
     if (isTRUE(cfg$apply_pregnancy_excl)) {
       excl_clauses <- c(excl_clauses, "PREGNANT_FLAG = 0")
       q_preg <- DBI::dbGetQuery(con_env$con, glue("
-        SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')}
+        SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')}
         WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18
           AND MM_bl_agents = 0 AND MM_FU_agents = 1
           AND {paste(excl_clauses, collapse = ' AND ')}
@@ -2239,7 +2241,7 @@ main <- function() {
     if (isTRUE(cfg$apply_clintrial_excl)) {
       excl_clauses <- c(excl_clauses, "CLINTRIAL_BASELINE = 0", "CLINTRIAL_FOLLOWUP = 0")
       q_ct <- DBI::dbGetQuery(con_env$con, glue("
-        SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')}
+        SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')}
         WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18
           AND MM_bl_agents = 0 AND MM_FU_agents = 1
           AND {paste(excl_clauses, collapse = ' AND ')}
@@ -2250,7 +2252,7 @@ main <- function() {
     if (isTRUE(cfg$apply_other_malig_excl)) {
       excl_clauses <- c(excl_clauses, "OTHER_MALIGN_FLAG = 0")
       q_om <- DBI::dbGetQuery(con_env$con, glue("
-        SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')}
+        SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')}
         WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18
           AND MM_bl_agents = 0 AND MM_FU_agents = 1
           AND {paste(excl_clauses, collapse = ' AND ')}
@@ -2261,7 +2263,7 @@ main <- function() {
     if (isTRUE(cfg$apply_baseline_nondx_excl)) {
       excl_clauses <- c(excl_clauses, "MM_baseline_diag = 0")
       q_nondx <- DBI::dbGetQuery(con_env$con, glue("
-        SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')}
+        SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')}
         WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18
           AND MM_bl_agents = 0 AND MM_FU_agents = 1
           AND {paste(excl_clauses, collapse = ' AND ')}
