@@ -41,7 +41,8 @@
 library(DBI)
 library(odbc)
 library(glue)
-library(dbplyr)  # Required for tbl() and sql_render() used by GSK helpers
+library(dplyr)   # Required for tbl() function
+library(dbplyr)  # Required for sql_render() used by GSK helpers
 
 # Source GSK helper functions for personal schema operations
 source("/mnt/code/R/helperScripts/databases/personalSchemaFunctions.R")
