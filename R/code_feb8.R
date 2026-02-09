@@ -1787,11 +1787,11 @@ build_steps <- function() {
     # ----------------------------------------------------------
     # Per IE spec: "1 of medical claim with a diagnosis, procedure, or revenue code
     # indicating pregnancy or childbirth during the baseline or follow-up period"
-    # FIXED: Added revenue code (REV_CD) support per spec requirement
+    # FIXED: Added revenue code (RVNU_CD) support per spec requirement
     # NOTE: Pregnancy check spans baseline + follow-up per attrition table Step 9
     list(
       name = "20_pregnancy_flag",
-      description = "EXCLUSION: Pregnancy flag (DX + PROC + REV_CD, baseline + follow-up)",
+      description = "EXCLUSION: Pregnancy flag (DX + PROC + RVNU_CD, baseline + follow-up)",
       source_tables = c("med_diagnosis", "medical"),
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('pregnancy_flag')} AS
@@ -1808,12 +1808,12 @@ build_steps <- function() {
           WHERE PROC_CD IS NOT NULL
             AND FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
-        -- ADDED: Revenue code stream per IE spec (pregnancy requires DX, PROC, or REV_CD)
+        -- ADDED: Revenue code stream per IE spec (pregnancy requires DX, PROC, or RVNU_CD)
         rev AS (
           SELECT PATID, cast(FST_DT as date) AS event_dt, 'REV' AS code_type,
-                 upper(TRIM(REV_CD)) AS code
+                 upper(TRIM(RVNU_CD)) AS code
           FROM {cdm_src(cfg$tbl_medical)}
-          WHERE REV_CD IS NOT NULL AND TRIM(REV_CD) != ''
+          WHERE RVNU_CD IS NOT NULL AND TRIM(RVNU_CD) != ''
             AND FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
         events AS (SELECT * FROM dx UNION ALL SELECT * FROM proc UNION ALL SELECT * FROM rev),
@@ -1840,10 +1840,10 @@ build_steps <- function() {
    
     # Per IE spec: "Evidence of clinical trial participation during each of the
     # baseline and follow-up periods. See tab CL CLNTRIAL."
-    # FIXED: Added revenue code (REV_CD) support for consistency with CL CLNTRIAL tab
+    # FIXED: Added revenue code (RVNU_CD) support for consistency with CL CLNTRIAL tab
     list(
       name = "21_clintrial_flag",
-      description = "EXCLUSION: Clinical trial flag (DX + PROC + REV_CD, baseline + follow-up)",
+      description = "EXCLUSION: Clinical trial flag (DX + PROC + RVNU_CD, baseline + follow-up)",
       source_tables = c("med_diagnosis", "medical"),
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('clintrial_flag')} AS
@@ -1863,9 +1863,9 @@ build_steps <- function() {
         -- ADDED: Revenue code stream for consistency with CL CLNTRIAL tab
         rev AS (
           SELECT PATID, cast(FST_DT as date) AS event_dt, 'REV' AS code_type,
-                 upper(TRIM(REV_CD)) AS code
+                 upper(TRIM(RVNU_CD)) AS code
           FROM {cdm_src(cfg$tbl_medical)}
-          WHERE REV_CD IS NOT NULL AND TRIM(REV_CD) != ''
+          WHERE RVNU_CD IS NOT NULL AND TRIM(RVNU_CD) != ''
             AND FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
         events AS (SELECT * FROM dx UNION ALL SELECT * FROM proc UNION ALL SELECT * FROM rev),
