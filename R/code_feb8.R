@@ -407,9 +407,9 @@ cfg <- list(
   # EXCLUSION CRITERIA TOGGLES (set TRUE to apply in final filter)
   # ============================================================
   # These are computed as independent flags; set to TRUE to apply as exclusions
-  apply_pregnancy_excl     = as.logical(Sys.getenv("APPLY_PREGNANCY_EXCL", unset = "TRUE")),
-  apply_clintrial_excl     = as.logical(Sys.getenv("APPLY_CLINTRIAL_EXCL", unset = "TRUE")),
-  apply_other_malig_excl   = as.logical(Sys.getenv("APPLY_OTHER_MALIG_EXCL", unset = "TRUE")),
+  apply_pregnancy_excl     = as.logical(Sys.getenv("APPLY_PREGNANCY_EXCL", unset = "FALSE")),
+  apply_clintrial_excl     = as.logical(Sys.getenv("APPLY_CLINTRIAL_EXCL", unset = "FALSE")),
+  apply_other_malig_excl   = as.logical(Sys.getenv("APPLY_OTHER_MALIG_EXCL", unset = "FALSE")),
   apply_baseline_nondx_excl = as.logical(Sys.getenv("APPLY_BASELINE_NONDX_EXCL", unset = "FALSE")),  # Smoldering flag
  
   # Create config-driven VIEW for interactive toggling (Option 2)
@@ -1293,12 +1293,13 @@ build_steps <- function() {
         -- NOTE: Now has multiple rows per patient (one per potential index date)
         WITH all_potential AS (
           -- Inpatient potential index dates
-          SELECT PATID, potential_index, 1 AS inpt_qual, 0 AS outpt_qual
+          SELECT PATID, potential_index, 1 AS inpt_qual, 0 AS outpt_qual, 0 AS outpt2_30, 0 AS outpt2_60
           FROM {work('mm_inpatient_potential')}
           UNION ALL
           -- Outpatient potential index dates (filtered by configured window)
           SELECT PATID, potential_index, 0 AS inpt_qual,
-                 CASE WHEN qualifies_{cfg$outpatient_window} = 1 THEN 1 ELSE 0 END AS outpt_qual
+                 CASE WHEN qualifies_{cfg$outpatient_window} = 1 THEN 1 ELSE 0 END AS outpt_qual,
+                 qualifies_30 AS outpt2_30, qualifies_60 AS outpt2_60
           FROM {work('mm_outpatient_potential')}
           WHERE qualifies_{cfg$outpatient_window} = 1
         )
@@ -1308,6 +1309,8 @@ build_steps <- function() {
           potential_index AS index_date,
           max(inpt_qual) AS inpt_qual,
           max(outpt_qual) AS outpt_qual,
+          max(outpt2_30) AS outpt2_30,
+          max(outpt2_60) AS outpt2_60,
           CASE
             WHEN max(inpt_qual) = 1 THEN 'INPATIENT'
             ELSE 'OUTPATIENT_2IN{cfg$outpatient_window}'
@@ -1430,24 +1433,24 @@ build_steps <- function() {
     # ----------------------------------------------------------
     list(
       name = "14_ce_flags",
-      description = "CRITERION: Continuous enrollment (baseline includes index, 1+ day follow-up)",
+      description = "CRITERION: Continuous enrollment (baseline before index, follow-up from index)",
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('ce_flags')} AS
         WITH idx AS (
           SELECT PATID, index_date,
-                 date_sub(index_date, {cfg$baseline_days - 1}) AS baseline_start,
-                 index_date AS baseline_end
+                 date_sub(index_date, {cfg$baseline_days}) AS baseline_start,
+                 date_sub(index_date, 1) AS baseline_end
           FROM {work('mm_qualifying')}
         ),
         -- CE_b and CE_f use standard enrollment spans (with 30-day allowable gaps)
-        -- Baseline includes index_date; CE_f requires enrollment through at least index_date + 1
+        -- Baseline excludes index_date; CE_f requires enrollment on index_date (follow-up starts on index)
         joined_std AS (
           SELECT i.PATID, i.index_date, i.baseline_start, i.baseline_end,
                  s.cov_start, s.cov_end,
                  CASE WHEN s.cov_start <= i.baseline_start AND s.cov_end >= i.baseline_end
                       THEN 1 ELSE 0 END AS covers_baseline,
-                 -- FIXED: CE_f requires 1+ day follow-up (cov_end >= index_date + 1)
-                 CASE WHEN s.cov_start <= i.index_date AND s.cov_end >= date_add(i.index_date, 1)
+                 -- FIXED: CE_f requires enrollment on index_date (follow-up starts on index)
+                 CASE WHEN s.cov_start <= i.index_date AND s.cov_end >= i.index_date
                       THEN 1 ELSE 0 END AS has_1day_followup
           FROM idx i
           LEFT JOIN {work('enrollment_spans')} s ON i.PATID = s.PATID
@@ -1624,9 +1627,9 @@ build_steps <- function() {
         SELECT
           q.PATID,
           q.index_date,
-          -- Baseline includes index_date per IE spec
-          max(CASE WHEN e.svc_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days - 1})
-                                     AND q.index_date
+          -- Baseline excludes index_date per IE spec (baseline = before index)
+          max(CASE WHEN e.svc_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
+                                     AND date_sub(q.index_date, 1)
                     AND n.is_nondiagnostic_claim = 1
                THEN 1 ELSE 0 END) AS MM_BASELINE_NONDX
         FROM {work('mm_qualifying')} q
@@ -1680,13 +1683,13 @@ build_steps <- function() {
         SELECT
           q.PATID,
           q.index_date,
-          -- Baseline includes index_date per IE spec
-          max(CASE WHEN t.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days - 1})
-                                       AND q.index_date
+          -- Baseline excludes index_date per IE spec (baseline = before index)
+          max(CASE WHEN t.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
+                                       AND date_sub(q.index_date, 1)
                THEN 1 ELSE 0 END) AS MM_THERAPY_BASELINE,
           -- Followup starts after index_date per IE spec
           -- FIXED: Bound by death_dt to prevent counting therapy after death
-          max(CASE WHEN t.event_dt >= date_add(q.index_date, 1)
+          max(CASE WHEN t.event_dt >= q.index_date
                     AND t.event_dt <= least(date('{cfg$study_end}'), coalesce(d.DEATH_DT, date('{cfg$study_end}')))
                THEN 1 ELSE 0 END) AS MM_THERAPY_FOLLOWUP
         FROM {work('mm_qualifying')} q
@@ -1731,8 +1734,8 @@ build_steps <- function() {
         SELECT
           q.PATID,
           q.index_date,
-          -- FIXED: Use baseline_days - 1 for baseline start (baseline includes index_date per IE spec)
-          max(CASE WHEN m.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days - 1})
+          -- Baseline starts at index_date - baseline_days per spec (baseline excludes index_date)
+          max(CASE WHEN m.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
                                        AND date('{cfg$study_end}')
                THEN 1 ELSE 0 END) AS PREGNANT_FLAG
         FROM {work('mm_qualifying')} q
@@ -1770,12 +1773,12 @@ build_steps <- function() {
         SELECT
           q.PATID,
           q.index_date,
-          -- Baseline includes index_date per IE spec
-          max(CASE WHEN m.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days - 1})
-                                       AND q.index_date
+          -- Baseline excludes index_date per IE spec (baseline = before index)
+          max(CASE WHEN m.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
+                                       AND date_sub(q.index_date, 1)
                THEN 1 ELSE 0 END) AS CLINTRIAL_BASELINE,
           -- Followup starts after index_date per IE spec
-          max(CASE WHEN m.event_dt >= date_add(q.index_date, 1) AND m.event_dt <= date('{cfg$study_end}')
+          max(CASE WHEN m.event_dt >= q.index_date AND m.event_dt <= date('{cfg$study_end}')
                THEN 1 ELSE 0 END) AS CLINTRIAL_FOLLOWUP
         FROM {work('mm_qualifying')} q
         LEFT JOIN matched m ON q.PATID = m.PATID
@@ -1823,12 +1826,10 @@ build_steps <- function() {
         SELECT
           q.PATID,
           q.index_date,
-          -- Require BOTH first_dt AND next_dt within baseline period (includes index_date per IE spec)
+          -- Per spec: only the FIRST of the 2 codes is required to occur inside the baseline period
           max(CASE WHEN p.diff_days <= 30
-                    AND p.first_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days - 1})
-                                       AND q.index_date
-                    AND p.next_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days - 1})
-                                      AND q.index_date
+                    AND p.first_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
+                                       AND date_sub(q.index_date, 1)
                THEN 1 ELSE 0 END) AS OTHER_MALIGN_FLAG
         FROM {work('mm_qualifying')} q
         LEFT JOIN pairs p ON q.PATID = p.PATID
@@ -1869,7 +1870,7 @@ build_steps <- function() {
             preg.PREGNANT_FLAG,
             ct.CLINTRIAL_BASELINE,
             ct.CLINTRIAL_FOLLOWUP,
-            q.inpt_qual, q.outpt_qual, q.index_source
+            q.inpt_qual, q.outpt_qual, q.outpt2_30, q.outpt2_60, q.index_source
           FROM {work('mm_qualifying')} q
           LEFT JOIN {work('ce_flags')} ce ON q.PATID = ce.PATID AND q.index_date = ce.index_date
           LEFT JOIN {work('member_demo')} d ON q.PATID = d.PATID
@@ -1880,13 +1881,13 @@ build_steps <- function() {
           LEFT JOIN {work('clintrial_flag')} ct ON q.PATID = ct.PATID AND q.index_date = ct.index_date
           LEFT JOIN {work('other_malig_flag')} om ON q.PATID = om.PATID AND q.index_date = om.index_date
         ),
-        -- CE_3mosf with death-aware logic (no gaps, ends at min of 91 days/death/study_end)
+        -- CE_3mosf with death-aware logic (no gaps, ends at min of 90 days/death/study_end)
         ce3mos_calc AS (
           SELECT
             b.PATID,
             b.index_date,
             least(
-              date_add(b.index_date, 91),
+              date_add(b.index_date, 90),
               date('{cfg$study_end}'),
               coalesce(b.DEATH_DT, date('{cfg$study_end}'))
             ) AS required_3mos_end,
@@ -1908,7 +1909,7 @@ build_steps <- function() {
           b.GDR_CD,
           b.YRDOB,
           (year(b.index_date) - b.YRDOB) AS AGE_INDEX_YR,
-          b.inpt_qual, b.outpt_qual, b.index_source,
+          b.inpt_qual, b.outpt_qual, b.outpt2_30, b.outpt2_60, b.index_source,
           b.baseline_start, b.baseline_end,
           coalesce(b.CE_b, 0) AS CE_b,
           coalesce(b.CE_f, 0) AS CE_f,
