@@ -1997,7 +1997,7 @@ build_steps <- function() {
             preg.PREGNANT_FLAG,
             ct.CLINTRIAL_BASELINE,
             ct.CLINTRIAL_FOLLOWUP,
-            q.inpt_qual, q.outpt_qual, q.outpt2_30, q.outpt2_60, q.index_source
+            q.inpt_qual, q.outpt_qual, q.outpt2_30, q.outpt2_60, q.outpt2_90, q.index_source
           FROM {work('mm_qualifying')} q
           LEFT JOIN {work('ce_flags')} ce ON q.PATID = ce.PATID AND q.index_date = ce.index_date
           LEFT JOIN {work('member_demo')} d ON q.PATID = d.PATID
