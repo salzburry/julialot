@@ -1189,6 +1189,23 @@ build_steps <- function() {
     ),
    
     # ----------------------------------------------------------
+    # SCHEMA PROBE: Validate RVNU_CD column exists on medical table
+    # Per Optum CDM v9.0, the revenue code field is RVNU_CD (facility claims only).
+    # This check fails early with a clear message if the column is missing,
+    # rather than erroring deep in the pregnancy/clinical trial steps.
+    # ----------------------------------------------------------
+    list(
+      name = "06c_validate_rvnu_cd",
+      description = "Validating RVNU_CD column exists on medical table",
+      source_tables = c("medical"),
+      sql = glue("
+        CREATE OR REPLACE TEMPORARY VIEW {work('rvnu_cd_check')} AS
+        SELECT RVNU_CD FROM {cdm_src(cfg$tbl_medical)} LIMIT 1
+      "),
+      qc = glue("SELECT 'RVNU_CD column validated on medical table' AS status")
+    ),
+
+    # ----------------------------------------------------------
     # PHASE 2: BUILD MM DIAGNOSIS EVENTS
     # FIXED: Build two tables:
     #   - mm_dx_events_all: full study period (for baseline flags)
@@ -1363,35 +1380,39 @@ build_steps <- function() {
    
     list(
       name = "12_mm_qualifying",
-      description = glue("Combining ALL potential index dates (IP or OP in {cfg$outpatient_window}d) - keeps all, not just earliest"),
+      description = "Combining ALL potential index dates (IP or OP within 90d max window) - keeps all, not just earliest",
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('mm_qualifying')} AS
-        -- Union all potential index dates from both inpatient and outpatient sources
-        -- Each row represents one PATID + index_date combination
-        -- NOTE: Now has multiple rows per patient (one per potential index date)
+        -- Option B: Always build with MAX window (90 days) so all candidates are preserved.
+        -- The configured outpatient window ({cfg$outpatient_window}d) is applied later in Step 24
+        -- via the outpt_qual flag, NOT here. This ensures that if a patient's earliest
+        -- 90d-qualified date fails IE criteria, a later date can still be selected.
+        -- Flags outpt2_30, outpt2_60, outpt2_90 are carried forward for attrition reporting.
         WITH all_potential AS (
-          -- Inpatient potential index dates
-          SELECT PATID, potential_index, 1 AS inpt_qual, 0 AS outpt_qual, 0 AS outpt2_30, 0 AS outpt2_60
+          -- Inpatient potential index dates (always qualify regardless of window)
+          SELECT PATID, potential_index, 1 AS inpt_qual, 0 AS outpt2_30, 0 AS outpt2_60, 0 AS outpt2_90
           FROM {work('mm_inpatient_potential')}
           UNION ALL
-          -- Outpatient potential index dates (filtered by configured window)
+          -- Outpatient potential index dates (include ALL that qualify within 90d)
           SELECT PATID, potential_index, 0 AS inpt_qual,
-                 CASE WHEN qualifies_{cfg$outpatient_window} = 1 THEN 1 ELSE 0 END AS outpt_qual,
-                 qualifies_30 AS outpt2_30, qualifies_60 AS outpt2_60
+                 qualifies_30 AS outpt2_30, qualifies_60 AS outpt2_60, qualifies_90 AS outpt2_90
           FROM {work('mm_outpatient_potential')}
-          WHERE qualifies_{cfg$outpatient_window} = 1
         )
         -- Aggregate per PATID + potential_index to handle dates that qualify via both paths
         SELECT
           PATID,
           potential_index AS index_date,
           max(inpt_qual) AS inpt_qual,
-          max(outpt_qual) AS outpt_qual,
+          -- outpt_qual reflects the CONFIGURED window (used in Step 24 criteria filter)
+          max(CASE WHEN inpt_qual = 1 THEN 0
+                   ELSE outpt2_{cfg$outpatient_window} END) AS outpt_qual,
           max(outpt2_30) AS outpt2_30,
           max(outpt2_60) AS outpt2_60,
+          max(outpt2_90) AS outpt2_90,
           CASE
             WHEN max(inpt_qual) = 1 THEN 'INPATIENT'
-            ELSE 'OUTPATIENT_2IN{cfg$outpatient_window}'
+            WHEN max(outpt2_{cfg$outpatient_window}) = 1 THEN 'OUTPATIENT_2IN{cfg$outpatient_window}'
+            ELSE 'OUTPATIENT_2IN90'
           END AS index_source
         FROM all_potential
         GROUP BY PATID, potential_index
@@ -2016,7 +2037,7 @@ build_steps <- function() {
           b.GDR_CD,
           b.YRDOB,
           (year(b.index_date) - b.YRDOB) AS AGE_INDEX_YR,
-          b.inpt_qual, b.outpt_qual, b.outpt2_30, b.outpt2_60, b.index_source,
+          b.inpt_qual, b.outpt_qual, b.outpt2_30, b.outpt2_60, b.outpt2_90, b.index_source,
           b.baseline_start, b.baseline_end,
           coalesce(b.CE_b, 0) AS CE_b,
           coalesce(b.CE_f, 0) AS CE_f,
@@ -2051,6 +2072,8 @@ build_steps <- function() {
           SELECT *
           FROM {work('ELIG_COH_ALLFLAGS')}
           WHERE 1=1
+            -- Step 1: Index date must qualify via IP (strict) or OP in configured window
+            AND (inpt_qual = 1 OR outpt2_{cfg$outpatient_window} = 1)
             {criteria_sql}
         ),
         ranked AS (
@@ -2143,7 +2166,8 @@ build_steps <- function() {
         SELECT a.*
         FROM {work('ELIG_COH_ALLFLAGS')} a
         CROSS JOIN c
-        WHERE (c.apply_age = false OR a.AGE_INDEX_YR >= c.min_age)
+        WHERE (a.inpt_qual = 1 OR a.outpt2_{cfg$outpatient_window} = 1)
+          AND (c.apply_age = false OR a.AGE_INDEX_YR >= c.min_age)
           AND (c.apply_ce_b = false OR a.CE_b = 1)
           AND (c.apply_ce_f = false OR a.CE_f = 1)
           AND (c.apply_no_bl_agents = false OR a.MM_bl_agents = 0)
@@ -2322,10 +2346,11 @@ main <- function() {
 
     # Step 1: Qualifying - 30/60/90 day cohorts
     # Per spec: 1+ IP (strict) OR 2 OP (broad) within window
+    # All three counts are now accurate since mm_qualifying always builds with 90d max window
     q1_30 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE inpt_qual = 1 OR outpt2_30 = 1"))
     q1_60 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE inpt_qual = 1 OR outpt2_60 = 1"))
-    q1_90 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('mm_qualifying')}"))
-    record_attrition("01_step1_qualifying", glue("Step 1: Qualifying (30d:{format(q1_30$n, big.mark=',')} / 60d:{format(q1_60$n, big.mark=',')} / 90d:{format(q1_90$n, big.mark=',')})"), q1_90$n)
+    q1_90 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE inpt_qual = 1 OR outpt2_90 = 1"))
+    record_attrition("01_step1_qualifying", glue("Step 1: Qualifying (30d:{format(q1_30$n, big.mark=',')} / 60d:{format(q1_60$n, big.mark=',')} / 90d:{format(q1_90$n, big.mark=',')}) [using {cfg$outpatient_window}d window]"), q1_90$n)
 
     # Step 2: Age >= 18 at index year
     q2 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE AGE_INDEX_YR >= 18"))
