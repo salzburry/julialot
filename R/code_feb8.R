@@ -1716,30 +1716,29 @@ build_steps <- function() {
       qc = glue("SELECT sum(is_nondiagnostic_claim) AS n_nondiag_claims FROM {work('claim_nondiagnostic')}")
     ),
    
-    # FIXED: Use mm_dx_events_all for baseline lookback (not just ID period)
-    # FIXED: Use is_nondiagnostic_claim (claim-level flag, not line-level)
+    # Per ATTRITION TABLE Step 7: >=1 medical claim for MM (203.0x/C90.0x) in baseline
+    # NOTE: Attrition table does NOT require non-diagnostic; IE criteria PDF row 14 does.
+    # Following attrition table as the authoritative source.
     list(
       name = "17_mm_baseline_nondx_flag",
-      description = "Checking for STRICT MM dx (203.0x/C90.0x) on non-diagnostic claims in baseline",
+      description = "Checking for any STRICT MM dx (203.0x/C90.0x) claim in baseline period",
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('mm_baseline_nondx_flag')} AS
         SELECT
           q.PATID,
           q.index_date,
-          -- Per IE spec: >=1 non-diagnostic claim for MM (203.0x/C90.0x) in baseline
+          -- Per attrition table Step 7: >=1 MM claim (203.0x/C90.0x) in baseline
           -- Baseline excludes index_date (baseline = before index)
           -- mm_dx_strict_flg ensures only STRICT codes are counted
           max(CASE WHEN e.svc_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
                                      AND date_sub(q.index_date, 1)
-                    AND n.is_nondiagnostic_claim = 1
                     AND e.mm_dx_strict_flg = 1
                THEN 1 ELSE 0 END) AS MM_BASELINE_NONDX
         FROM {work('mm_qualifying')} q
         LEFT JOIN {work('mm_dx_events_all')} e ON q.PATID = e.PATID
-        LEFT JOIN {work('claim_nondiagnostic')} n ON e.PATID = n.PATID AND e.CLMID = n.CLMID
         GROUP BY q.PATID, q.index_date
       "),
-      qc = glue("SELECT sum(MM_BASELINE_NONDX) AS n_with_baseline_nondx FROM {work('mm_baseline_nondx_flag')}")
+      qc = glue("SELECT sum(MM_BASELINE_NONDX) AS n_with_baseline_mm FROM {work('mm_baseline_nondx_flag')}")
     ),
    
     # ----------------------------------------------------------
