@@ -1932,14 +1932,9 @@ build_steps <- function() {
           FROM dx
           INNER JOIN {work('other_malig_codes')} o ON dx.dx = o.dx AND dx.icd_family = o.icd_family
         ),
-        dx_nondx AS (
-          -- FIXED: Use is_nondiagnostic_claim (claim-level flag)
-          SELECT m.PATID, m.tumor_group, m.event_dt
-          FROM dx_mapped m
-          INNER JOIN {work('claim_nondiagnostic')} n ON m.PATID = n.PATID AND m.CLMID = n.CLMID
-          WHERE n.is_nondiagnostic_claim = 1
-        ),
-        distinct_dates AS (SELECT DISTINCT PATID, tumor_group, event_dt FROM dx_nondx),
+        -- Per attrition table Step 8: "Evidence of another cancer in the baseline period"
+        -- Attrition table does NOT require non-diagnostic claims for other cancer
+        distinct_dates AS (SELECT DISTINCT PATID, tumor_group, event_dt FROM dx_mapped),
         with_next AS (
           SELECT PATID, tumor_group, event_dt,
                  lead(event_dt) OVER (PARTITION BY PATID, tumor_group ORDER BY event_dt) AS next_dt
@@ -2346,10 +2341,12 @@ main <- function() {
     # Step 1: Qualifying - 30/60/90 day cohorts
     # Per spec: 1+ IP (strict) OR 2 OP (broad) within window
     # All three counts are now accurate since mm_qualifying always builds with 90d max window
+    # Main count reflects the CONFIGURED window, not always 90d
     q1_30 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE inpt_qual = 1 OR outpt2_30 = 1"))
     q1_60 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE inpt_qual = 1 OR outpt2_60 = 1"))
     q1_90 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE inpt_qual = 1 OR outpt2_90 = 1"))
-    record_attrition("01_step1_qualifying", glue("Step 1: Qualifying (30d:{format(q1_30$n, big.mark=',')} / 60d:{format(q1_60$n, big.mark=',')} / 90d:{format(q1_90$n, big.mark=',')}) [using {cfg$outpatient_window}d window]"), q1_90$n)
+    q1_main <- switch(as.character(cfg$outpatient_window), "30" = q1_30$n, "60" = q1_60$n, q1_90$n)
+    record_attrition("01_step1_qualifying", glue("Step 1: Qualifying (30d:{format(q1_30$n, big.mark=',')} / 60d:{format(q1_60$n, big.mark=',')} / 90d:{format(q1_90$n, big.mark=',')}) [using {cfg$outpatient_window}d window]"), q1_main)
 
     # Step 2: Age >= 18 at index year
     q2 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE AGE_INDEX_YR >= 18"))
