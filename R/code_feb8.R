@@ -1826,10 +1826,12 @@ build_steps <- function() {
           q.PATID,
           q.index_date,
           -- Per attrition table: pregnancy during baseline or follow-up period
+          -- FIXED: Follow-up ends at min(death_dt, study_end) per ENDDATE definition
           max(CASE WHEN m.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
-                                       AND date('{cfg$study_end}')
+                                       AND least(date('{cfg$study_end}'), coalesce(d.DEATH_DT, date('{cfg$study_end}')))
                THEN 1 ELSE 0 END) AS PREGNANT_FLAG
         FROM {work('mm_qualifying')} q
+        LEFT JOIN {work('death_dt')} d ON q.PATID = d.PATID AND q.index_date = d.index_date
         LEFT JOIN matched m ON q.PATID = m.PATID
         GROUP BY q.PATID, q.index_date
       "),
@@ -1880,9 +1882,12 @@ build_steps <- function() {
                                        AND date_sub(q.index_date, 1)
                THEN 1 ELSE 0 END) AS CLINTRIAL_BASELINE,
           -- Followup starts on index_date per IE spec
-          max(CASE WHEN m.event_dt >= q.index_date AND m.event_dt <= date('{cfg$study_end}')
+          -- FIXED: Follow-up ends at min(death_dt, study_end) per ENDDATE definition
+          max(CASE WHEN m.event_dt >= q.index_date
+                    AND m.event_dt <= least(date('{cfg$study_end}'), coalesce(d.DEATH_DT, date('{cfg$study_end}')))
                THEN 1 ELSE 0 END) AS CLINTRIAL_FOLLOWUP
         FROM {work('mm_qualifying')} q
+        LEFT JOIN {work('death_dt')} d ON q.PATID = d.PATID AND q.index_date = d.index_date
         LEFT JOIN matched m ON q.PATID = m.PATID
         GROUP BY q.PATID, q.index_date
       "),
