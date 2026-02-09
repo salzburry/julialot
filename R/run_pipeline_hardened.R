@@ -297,7 +297,7 @@ cfg <- list(
   # Schemas (following Optum CDM naming convention)
   # dbname equivalent from setup.R: "clnprw_optum"
   # personal_schema equivalent: Sys.getenv("DOMINO_USER_NAME")
-  catalog    = Sys.getenv("DATABRICKS_CATALOG", unset = ""),
+  catalog    = Sys.getenv("DATABRICKS_CATALOG", unset = "hive_metastore"),
   cdm_schema = Sys.getenv("OPTUM_CDM_SCHEMA", unset = "clnprw_optum"),
   ref_schema = Sys.getenv("PROJECT_REF_SCHEMA", unset = Sys.getenv("DOMINO_USER_NAME", unset = "gsk_mm_lot_ref")),
   work_schema = Sys.getenv("PROJECT_WORK_SCHEMA", unset = Sys.getenv("DOMINO_USER_NAME", unset = "gsk_mm_lot_work")),
@@ -332,7 +332,7 @@ cfg <- list(
   # Directory containing CSV code list files
   # Expected files: mm_dx.csv, diagnostic_proc.csv, mm_therapy.csv,
   #                 pregnancy.csv, clintrial.csv, other_malig.csv
-  codelist_dir = Sys.getenv("CODELIST_DIR", unset = "/mnt/artifacts/codelist"),
+  codelist_dir = Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist"),
 
   # Use embedded codes as fallback if CSV not found (set FALSE to require CSV/external tables)
   use_embedded_codes = as.logical(Sys.getenv("USE_EMBEDDED_CODES", unset = "TRUE")),
@@ -393,7 +393,11 @@ cfg <- list(
   apply_baseline_nondx_excl = as.logical(Sys.getenv("APPLY_BASELINE_NONDX_EXCL", unset = "FALSE")),  # Smoldering flag
 
   # Create config-driven VIEW for interactive toggling (Option 2)
-  create_criteria_view = as.logical(Sys.getenv("CREATE_CRITERIA_VIEW", unset = "TRUE"))
+  create_criteria_view = as.logical(Sys.getenv("CREATE_CRITERIA_VIEW", unset = "FALSE")),
+
+  # Persist final cohort to personal schema (uses lazy table approach)
+  persist_to_schema = as.logical(Sys.getenv("PERSIST_TO_SCHEMA", unset = "TRUE")),
+  personal_schema = Sys.getenv("DOMINO_USER_NAME", unset = Sys.getenv("DOMINO_STARTING_USERNAME", unset = ""))
 )
 
 run_id <- Sys.getenv("DOMINO_RUN_ID", unset = format(Sys.time(), "%Y%m%d%H%M%S"))
@@ -448,7 +452,8 @@ full_name <- function(schema, object) {
 
 cdm <- function(tbl) full_name(cfg$cdm_schema, tbl)
 ref <- function(tbl) full_name(cfg$ref_schema, tbl)
-work <- function(tbl) full_name(cfg$work_schema, tbl)
+# Use temp views for work tables - no schema needed
+work <- function(tbl) tbl
 
 # Alias for work() - used in reporting/QC queries
 work_tbl <- function(name) work(name)
@@ -464,11 +469,19 @@ log_msg <- function(...) {
 
 # Load a code list from CSV file and convert to SQL VALUES clause
 # Returns NULL if file doesn't exist
-load_codelist_csv <- function(csv_name, col_spec) {
- csv_path <- file.path(cfg$codelist_dir, csv_name)
+# col_spec: output column names for SQL VALUES clause
+# csv_cols: (optional) actual column names in CSV to read, in same order as col_spec
+#           If NULL, defaults to col_spec (assumes CSV columns match output names)
+load_codelist_csv <- function(csv_name, col_spec, csv_cols = NULL) {
+  csv_path <- file.path(cfg$codelist_dir, csv_name)
+  log_msg("  Looking for CSV: ", csv_path)
   if (!file.exists(csv_path)) {
+    log_msg("  CSV not found: ", csv_path)
     return(NULL)
   }
+
+  # Default: CSV column names match output column names
+  if (is.null(csv_cols)) csv_cols <- col_spec
 
   tryCatch({
     df <- read.csv(csv_path, stringsAsFactors = FALSE, colClasses = "character")
@@ -477,15 +490,18 @@ load_codelist_csv <- function(csv_name, col_spec) {
       return(NULL)
     }
 
+    # Read CSV columns in the order specified by csv_cols
+    df_selected <- df[, csv_cols, drop = FALSE]
+
     # Build VALUES clause from dataframe
-    # col_spec is a vector of column names in the CSV that map to the VALUES columns
-    rows <- apply(df[, col_spec, drop = FALSE], 1, function(row) {
+    rows <- apply(df_selected, 1, function(row) {
       vals <- sapply(row, function(v) {
-        if (is.na(v) || v == "") "NULL" else paste0("'", gsub("'", "''", v), "'")
+        if (is.na(v) || v == "") "NULL" else paste0("'", gsub("'", "''", trimws(v)), "'")
       })
       paste0("(", paste(vals, collapse = ", "), ")")
     })
 
+    # Use col_spec (output names) for the VALUES column aliases
     col_names <- paste(col_spec, collapse = ", ")
     sql <- paste0("SELECT * FROM (VALUES\n    ", paste(rows, collapse = ",\n    "), "\n  ) AS t(", col_names, ")")
     log_msg("Loaded codelist from CSV: ", csv_path, " (", nrow(df), " rows)")
@@ -501,21 +517,30 @@ load_codelist_csv <- function(csv_name, col_spec) {
 # col_spec: column names expected in CSV
 # embedded_fn: function returning embedded SQL
 # external_ref: table name in ref_schema
-get_code_source <- function(embedded_fn, external_ref, csv_name = NULL, col_spec = NULL) {
+get_code_source <- function(embedded_fn, external_ref, csv_name = NULL, col_spec = NULL, csv_cols = NULL) {
+  log_msg("Loading codelist: ", csv_name, " (dir: ", cfg$codelist_dir, ")")
+
   # Priority 1: Try CSV file if csv_name provided
-  if (!is.null(csv_name) && !is.null(col_spec) && dir.exists(cfg$codelist_dir)) {
-    csv_sql <- load_codelist_csv(csv_name, col_spec)
-    if (!is.null(csv_sql)) {
-      return(paste0("(", csv_sql, ") src"))
+  if (!is.null(csv_name) && !is.null(col_spec)) {
+    if (!dir.exists(cfg$codelist_dir)) {
+      log_msg("  Codelist directory not found: ", cfg$codelist_dir)
+    } else {
+      csv_sql <- load_codelist_csv(csv_name, col_spec, csv_cols)
+      if (!is.null(csv_sql)) {
+        log_msg("  Using CSV source")
+        return(paste0("(", csv_sql, ") src"))
+      }
     }
   }
 
   # Priority 2: Use embedded codes if enabled
   if (isTRUE(cfg$use_embedded_codes)) {
+    log_msg("  Using embedded codes")
     return(paste0("(", embedded_fn(), ") src"))
   }
 
   # Priority 3: Fall back to external table
+  log_msg("  Using external table: ", ref(external_ref))
   ref(external_ref)
 }
 
@@ -738,22 +763,8 @@ sql_exec <- function(con, sql) {
 # ============================================================
 
 ensure_run_log <- function(con) {
-  log_table <- work("pipeline_run_log")
-  sql_exec(con, glue("
-    CREATE TABLE IF NOT EXISTS {log_table} (
-      run_id STRING,
-      step_name STRING,
-      status STRING,
-      started_at TIMESTAMP,
-      ended_at TIMESTAMP,
-      duration_sec DOUBLE,
-      qc_metric STRING,
-      qc_value STRING,
-      error_message STRING
-    )
-    USING DELTA
-  "))
-  log_table
+  # Skip DB logging - return NULL so write_log_row() no-ops
+  NULL
 }
 
 # Fixed: TIMESTAMP literal syntax for Databricks
@@ -884,17 +895,18 @@ build_steps <- function() {
   # CODE LIST SOURCES (Priority: CSV files > Embedded > External tables)
   # CSV files expected in: cfg$codelist_dir (default: /mnt/artifacts/codelist)
   # ============================================================
-  # CSV format requirements:
-  #   mm_dx.csv:         icd_family, dx
+  # CSV format requirements (actual CSV column names):
+  #   mm_dx.csv:          dx (=ICD family), icd_family (=code) [swapped in CSV]
   #   diagnostic_proc.csv: proc_cd
-  #   mm_therapy.csv:    code_type, code
-  #   pregnancy.csv:     code_type, code
-  #   clintrial.csv:     code_type, code
-  #   other_malig.csv:   tumor_group, icd_family, dx
+  #   mm_therapy.csv:     code_type, code
+  #   pregnancy.csv:      code_type, code
+  #   clintrial.csv:      code_type, code
+  #   other_malig.csv:    tumor_group (=code), icd_family, dx (=description)
 
   mm_dx_source <- get_code_source(
     embedded_mm_dx_codes, cfg$cl_mm_dx,
-    csv_name = "mm_dx.csv", col_spec = c("icd_family", "dx")
+    csv_name = "mm_dx.csv", col_spec = c("icd_family", "dx"),
+    csv_cols = c("dx", "icd_family")  # CSV columns are swapped: dx has family, icd_family has code
   )
   diag_proc_source <- get_code_source(
     embedded_diag_proc_codes, cfg$cl_diagnostic_proc,
@@ -914,7 +926,8 @@ build_steps <- function() {
   )
   other_malig_source <- get_code_source(
     embedded_other_malig_codes, cfg$cl_other_malig,
-    csv_name = "other_malig.csv", col_spec = c("tumor_group", "icd_family", "dx")
+    csv_name = "other_malig.csv", col_spec = c("tumor_group", "icd_family", "dx"),
+    csv_cols = c("dx", "icd_family", "tumor_group")  # CSV: dx=description→tumor_group, tumor_group=code→dx
   )
 
   # ============================================================
@@ -927,7 +940,7 @@ build_steps <- function() {
   criteria_clauses <- c()
 
   # --- INCLUSION TOGGLES ---
-  if (isTRUE(cfg$apply_age_incl)) {
+  if (isTRUE(cfg$apply_age_incl) && !is.na(cfg$min_age)) {
     criteria_clauses <- c(criteria_clauses, glue("AND AGE_INDEX_YR >= {cfg$min_age}"))
   }
   if (isTRUE(cfg$apply_ce_b_incl)) {
@@ -969,9 +982,9 @@ build_steps <- function() {
       name = "01_mm_dx_codes",
       description = "Loading MM diagnosis codes (ICD-9/ICD-10)",
       sql = glue("
-        CREATE OR REPLACE TABLE {work('mm_dx_codes')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('mm_dx_codes')} AS
         SELECT
-          CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
+          CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD-9 DX') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
           upper(regexp_replace(dx, '\\\\.', '')) AS dx
         FROM {mm_dx_source}
         WHERE dx IS NOT NULL
@@ -983,7 +996,7 @@ build_steps <- function() {
       name = "02_diag_proc_codes",
       description = "Loading diagnostic procedure codes",
       sql = glue("
-        CREATE OR REPLACE TABLE {work('diag_proc_codes')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('diag_proc_codes')} AS
         SELECT DISTINCT upper(regexp_replace(proc_cd, '\\\\.', '')) AS proc_cd
         FROM {diag_proc_source}
         WHERE proc_cd IS NOT NULL
@@ -995,7 +1008,7 @@ build_steps <- function() {
       name = "03_mm_therapy_codes",
       description = "Loading MM therapy codes (HCPCS/NDC)",
       sql = glue("
-        CREATE OR REPLACE TABLE {work('mm_therapy_codes')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('mm_therapy_codes')} AS
         SELECT upper(code_type) AS code_type, upper(regexp_replace(code, '\\\\.', '')) AS code
         FROM {mm_therapy_source}
         WHERE code IS NOT NULL
@@ -1007,8 +1020,15 @@ build_steps <- function() {
       name = "04_preg_codes",
       description = "Loading pregnancy exclusion codes",
       sql = glue("
-        CREATE OR REPLACE TABLE {work('preg_codes')} AS
-        SELECT upper(code_type) AS code_type, upper(regexp_replace(code, '\\\\.', '')) AS code
+        CREATE OR REPLACE TEMPORARY VIEW {work('preg_codes')} AS
+        SELECT
+          CASE
+            WHEN upper(code_type) LIKE '%DX%' OR upper(code_type) LIKE '%DIAG%'
+              OR upper(code_type) IN ('ICD9','ICD10','ICD-9','ICD-10') THEN 'DX'
+            WHEN upper(code_type) LIKE '%PROC%' OR upper(code_type) IN ('HCPCS','CPT') THEN 'PROC'
+            ELSE upper(code_type)
+          END AS code_type,
+          upper(regexp_replace(code, '\\\\.', '')) AS code
         FROM {preg_source}
         WHERE code IS NOT NULL
       "),
@@ -1019,8 +1039,15 @@ build_steps <- function() {
       name = "05_clintrial_codes",
       description = "Loading clinical trial exclusion codes",
       sql = glue("
-        CREATE OR REPLACE TABLE {work('clintrial_codes')} AS
-        SELECT upper(code_type) AS code_type, upper(regexp_replace(code, '\\\\.', '')) AS code
+        CREATE OR REPLACE TEMPORARY VIEW {work('clintrial_codes')} AS
+        SELECT
+          CASE
+            WHEN upper(code_type) LIKE '%DX%' OR upper(code_type) LIKE '%DIAG%'
+              OR upper(code_type) IN ('ICD9','ICD10','ICD-9','ICD-10') THEN 'DX'
+            WHEN upper(code_type) LIKE '%PROC%' OR upper(code_type) IN ('HCPCS','CPT') THEN 'PROC'
+            ELSE upper(code_type)
+          END AS code_type,
+          upper(regexp_replace(code, '\\\\.', '')) AS code
         FROM {clintrial_source}
         WHERE code IS NOT NULL
       "),
@@ -1031,10 +1058,10 @@ build_steps <- function() {
       name = "06_other_malig_codes",
       description = "Loading other malignancy exclusion codes",
       sql = glue("
-        CREATE OR REPLACE TABLE {work('other_malig_codes')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('other_malig_codes')} AS
         SELECT
           upper(tumor_group) AS tumor_group,
-          CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
+          CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD-9 DX') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
           upper(regexp_replace(dx, '\\\\.', '')) AS dx
         FROM {other_malig_source}
         WHERE dx IS NOT NULL AND tumor_group IS NOT NULL
@@ -1053,7 +1080,7 @@ build_steps <- function() {
       description = "Extracting medical claim headers from CDM (study period)",
       source_tables = c("medical"),
       sql = glue("
-        CREATE OR REPLACE TABLE {work('med_claim_header')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('med_claim_header')} AS
         SELECT PATID, CLMID,
                max(CONF_ID) AS CONF_ID,
                max(POS) AS POS,
@@ -1077,7 +1104,7 @@ build_steps <- function() {
       description = "Extracting confinement records (Optum Approach 2)",
       source_tables = c("confinement"),
       sql = glue("
-        CREATE OR REPLACE TABLE {work('confinement')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('confinement')} AS
         SELECT DISTINCT PATID, CONF_ID,
                cast(ADMIT_DATE as date) AS ADMIT_DATE,
                cast(DISCH_DATE as date) AS DISCH_DATE
@@ -1099,13 +1126,13 @@ build_steps <- function() {
       description = "Identifying MM diagnosis events (full study period)",
       source_tables = c("med_diagnosis", "confinement"),
       sql = glue("
-        CREATE OR REPLACE TABLE {work('mm_dx_events_all')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('mm_dx_events_all')} AS
         SELECT /*+ BROADCAST(c) */
           d.PATID,
           d.CLMID,
           cast(d.FST_DT as date) AS svc_dt,
           upper(regexp_replace(d.DIAG, '\\\\.', '')) AS diag,
-          CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
+          CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9','ICD-9 DX') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
           h.CONF_ID,
           -- Per Optum Business Rules STRICT Approach 2:
           -- Inpatient ONLY when CONF_ID is validated in T_CONFINEMENT
@@ -1119,7 +1146,7 @@ build_steps <- function() {
           ON d.PATID = h.PATID AND d.CLMID = h.CLMID
         INNER JOIN {work('mm_dx_codes')} c
           ON upper(regexp_replace(d.DIAG, '\\\\.', '')) = c.dx
-          AND (CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END) = c.icd_family
+          AND (CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9','ICD-9 DX') THEN 'ICD9' ELSE 'ICD10' END) = c.icd_family
         LEFT JOIN {work('confinement')} cf
           ON h.PATID = cf.PATID AND h.CONF_ID = cf.CONF_ID
         WHERE cast(d.FST_DT as date) BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
@@ -1132,7 +1159,7 @@ build_steps <- function() {
       name = "08b_mm_dx_events_id",
       description = "Filtering MM events to identification period",
       sql = glue("
-        CREATE OR REPLACE TABLE {work('mm_dx_events_id')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('mm_dx_events_id')} AS
         SELECT * FROM {work('mm_dx_events_all')}
         WHERE svc_dt BETWEEN date('{cfg$id_start}') AND date('{cfg$id_end}')
       "),
@@ -1146,7 +1173,7 @@ build_steps <- function() {
       name = "09_mm_inpatient_index",
       description = "Finding patients with inpatient MM diagnosis",
       sql = glue("
-        CREATE OR REPLACE TABLE {work('mm_inpatient_index')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('mm_inpatient_index')} AS
         SELECT PATID, 1 AS inpt1, min(svc_dt) AS idx_inpt
         FROM {work('mm_dx_events_id')}
         WHERE inpatient_flg = 1
@@ -1159,7 +1186,7 @@ build_steps <- function() {
       name = "10_mm_outpatient_pairs",
       description = "Building outpatient diagnosis date pairs",
       sql = glue("
-        CREATE OR REPLACE TABLE {work('mm_outpatient_pairs')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('mm_outpatient_pairs')} AS
         WITH distinct_dates AS (
           SELECT DISTINCT PATID, svc_dt
           FROM {work('mm_dx_events_id')}
@@ -1182,7 +1209,7 @@ build_steps <- function() {
       name = "11_mm_outpatient_index",
       description = "Identifying 2+ outpatient dx within 30/60/90 days",
       sql = glue("
-        CREATE OR REPLACE TABLE {work('mm_outpatient_index')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('mm_outpatient_index')} AS
         SELECT
           PATID,
           max(CASE WHEN diff_days <= {cfg$dx_window_90} THEN 1 ELSE 0 END) AS outpt2_90,
@@ -1201,7 +1228,7 @@ build_steps <- function() {
       name = "12_mm_qualifying",
       description = glue("CRITERION: MM qualifying (1+ IP or 2+ OP in {cfg$outpatient_window}d)"),
       sql = glue("
-        CREATE OR REPLACE TABLE {work('mm_qualifying')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('mm_qualifying')} AS
         WITH combined AS (
           SELECT PATID, inpt1, 0 AS outpt2_90, 0 AS outpt2_60, 0 AS outpt2_30,
                  idx_inpt, NULL AS idx_outpt_90, NULL AS idx_outpt_60, NULL AS idx_outpt_30
@@ -1256,7 +1283,7 @@ build_steps <- function() {
       description = "Building enrollment spans with 30-day gap logic from member_enrollment",
       source_tables = c("member_enrollment"),
       sql = glue("
-        CREATE OR REPLACE TABLE {work('enrollment_spans')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('enrollment_spans')} AS
         WITH base AS (
           -- Use member_enrollment (raw) with 30-day gap allowance
           SELECT PATID, cast(ELIGEFF as date) AS elig_eff, cast(ELIGEND as date) AS elig_end
@@ -1308,7 +1335,7 @@ build_steps <- function() {
       description = "Building strict enrollment spans (no gaps, handles overlaps)",
       source_tables = c("member_enrollment"),
       sql = glue("
-        CREATE OR REPLACE TABLE {work('enrollment_spans_strict')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('enrollment_spans_strict')} AS
         WITH base AS (
           -- Use member_enrollment (raw) to detect ALL gaps
           SELECT PATID, cast(ELIGEFF as date) AS elig_eff, cast(ELIGEND as date) AS elig_end
@@ -1357,10 +1384,10 @@ build_steps <- function() {
       name = "14_ce_flags",
       description = "CRITERION: Continuous enrollment (baseline includes index, follow-up from index)",
       sql = glue("
-        CREATE OR REPLACE TABLE {work('ce_flags')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('ce_flags')} AS
         WITH idx AS (
           SELECT PATID, index_date,
-                 date_sub(index_date, {cfg$baseline_days}) AS baseline_start,
+                 date_sub(index_date, {cfg$baseline_days - 1}) AS baseline_start,
                  index_date AS baseline_end
           FROM {work('mm_qualifying')}
         ),
@@ -1372,14 +1399,14 @@ build_steps <- function() {
                  CASE WHEN s.cov_start <= i.baseline_start AND s.cov_end >= i.baseline_end
                       THEN 1 ELSE 0 END AS covers_baseline,
                  CASE WHEN s.cov_start <= i.index_date AND s.cov_end >= i.index_date
-                      THEN 1 ELSE 0 END AS covers_followup_day1
+                      THEN 1 ELSE 0 END AS covers_index_day
           FROM idx i
           LEFT JOIN {work('enrollment_spans')} s ON i.PATID = s.PATID
         )
         SELECT PATID, index_date, baseline_start, baseline_end,
                max(covers_baseline) AS CE_b,
-               max(covers_followup_day1) AS CE_f,
-               max(CASE WHEN covers_followup_day1 = 1 THEN cov_end END) AS ENDDATE_CE
+               max(covers_index_day) AS CE_f,
+               max(CASE WHEN covers_index_day = 1 THEN cov_end END) AS ENDDATE_CE
         FROM joined_std
         GROUP BY PATID, index_date, baseline_start, baseline_end
       "),
@@ -1394,7 +1421,7 @@ build_steps <- function() {
       description = "Extracting patient demographics (age/gender)",
       source_tables = c("member_cont_enrollment"),
       sql = glue("
-        CREATE OR REPLACE TABLE {work('member_demo')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('member_demo')} AS
         WITH ranked AS (
           SELECT PATID, GDR_CD, cast(YRDOB as int) AS YRDOB,
                  row_number() OVER (PARTITION BY PATID
@@ -1420,7 +1447,7 @@ build_steps <- function() {
       description = "Deriving death dates (month->15th, year-only uses July15/Dec31 rule)",
       source_tables = c("dod"),
       sql = glue("
-        CREATE OR REPLACE TABLE {work('death_dt')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('death_dt')} AS
         WITH raw_death AS (
           SELECT
             PATID,
@@ -1494,7 +1521,7 @@ build_steps <- function() {
       description = "Identifying non-diagnostic claims per IE spec (has ANY non-diag line)",
       source_tables = c("medical"),
       sql = glue("
-        CREATE OR REPLACE TABLE {work('claim_nondiagnostic')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('claim_nondiagnostic')} AS
         WITH lines AS (
           SELECT PATID, CLMID, upper(regexp_replace(PROC_CD, '\\\\.', '')) AS proc_cd
           FROM {cdm_src(cfg$tbl_medical)}
@@ -1542,11 +1569,11 @@ build_steps <- function() {
       name = "17_mm_baseline_nondx_flag",
       description = "Checking for MM dx on non-diagnostic claims (baseline includes index_date)",
       sql = glue("
-        CREATE OR REPLACE TABLE {work('mm_baseline_nondx_flag')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('mm_baseline_nondx_flag')} AS
         SELECT
           q.PATID,
           -- Baseline includes index_date per IE spec
-          max(CASE WHEN e.svc_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
+          max(CASE WHEN e.svc_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days - 1})
                                      AND q.index_date
                     AND n.is_nondiagnostic_claim = 1
                THEN 1 ELSE 0 END) AS MM_BASELINE_NONDX
@@ -1566,7 +1593,7 @@ build_steps <- function() {
       description = "Identifying MM therapy events (medical + Rx)",
       source_tables = c("medical", "rx"),
       sql = glue("
-        CREATE OR REPLACE TABLE {work('therapy_events')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('therapy_events')} AS
         -- Medical therapy via PROC_CD
         SELECT /*+ BROADCAST(c) */
           m.PATID, cast(m.FST_DT as date) AS event_dt, 'MEDICAL' AS source
@@ -1594,11 +1621,11 @@ build_steps <- function() {
       name = "19_therapy_flags",
       description = "CRITERION: MM therapy in baseline/follow-up",
       sql = glue("
-        CREATE OR REPLACE TABLE {work('therapy_flags')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('therapy_flags')} AS
         SELECT
           q.PATID,
           -- Baseline includes index_date per IE spec
-          max(CASE WHEN t.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
+          max(CASE WHEN t.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days - 1})
                                        AND q.index_date
                THEN 1 ELSE 0 END) AS MM_THERAPY_BASELINE,
           -- Followup starts after index_date per IE spec
@@ -1620,7 +1647,7 @@ build_steps <- function() {
       description = "EXCLUSION: Pregnancy flag",
       source_tables = c("med_diagnosis", "medical"),
       sql = glue("
-        CREATE OR REPLACE TABLE {work('pregnancy_flag')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('pregnancy_flag')} AS
         WITH dx AS (
           SELECT PATID, cast(FST_DT as date) AS event_dt, 'DX' AS code_type,
                  upper(regexp_replace(DIAG, '\\\\.', '')) AS code
@@ -1657,7 +1684,7 @@ build_steps <- function() {
       description = "EXCLUSION: Clinical trial flag",
       source_tables = c("med_diagnosis", "medical"),
       sql = glue("
-        CREATE OR REPLACE TABLE {work('clintrial_flag')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('clintrial_flag')} AS
         WITH dx AS (
           SELECT PATID, cast(FST_DT as date) AS event_dt, 'DX' AS code_type,
                  upper(regexp_replace(DIAG, '\\\\.', '')) AS code
@@ -1680,7 +1707,7 @@ build_steps <- function() {
         SELECT
           q.PATID,
           -- Baseline includes index_date per IE spec
-          max(CASE WHEN m.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
+          max(CASE WHEN m.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days - 1})
                                        AND q.index_date
                THEN 1 ELSE 0 END) AS CLINTRIAL_BASELINE,
           -- Followup starts after index_date per IE spec
@@ -1698,11 +1725,11 @@ build_steps <- function() {
       description = "EXCLUSION: Other malignancy flag",
       source_tables = c("med_diagnosis"),
       sql = glue("
-        CREATE OR REPLACE TABLE {work('other_malig_flag')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('other_malig_flag')} AS
         WITH dx AS (
           SELECT d.PATID, d.CLMID, cast(d.FST_DT as date) AS event_dt,
                  upper(regexp_replace(d.DIAG, '\\\\.', '')) AS dx,
-                 CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family
+                 CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9','ICD-9 DX') THEN 'ICD9' ELSE 'ICD10' END AS icd_family
           FROM {cdm_src(cfg$tbl_med_diag)} d
           WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
@@ -1733,9 +1760,9 @@ build_steps <- function() {
           q.PATID,
           -- Require BOTH first_dt AND next_dt within baseline period (includes index_date per IE spec)
           max(CASE WHEN p.diff_days <= 30
-                    AND p.first_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
+                    AND p.first_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days - 1})
                                        AND q.index_date
-                    AND p.next_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
+                    AND p.next_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days - 1})
                                       AND q.index_date
                THEN 1 ELSE 0 END) AS OTHER_MALIGN_FLAG
         FROM {work('mm_qualifying')} q
@@ -1757,7 +1784,7 @@ build_steps <- function() {
       name = "23_ELIG_COH_ALLFLAGS",
       description = "Assembling cohort with all flags",
       sql = glue("
-        CREATE OR REPLACE TABLE {work('ELIG_COH_ALLFLAGS')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('ELIG_COH_ALLFLAGS')} AS
         WITH base AS (
           SELECT
             q.PATID,
@@ -1843,7 +1870,7 @@ build_steps <- function() {
       name = "24_ELIG_COH_FINAL",
       description = glue("FINAL COHORT ({cfg$final_table_name}): Apply configurable inclusion/exclusion criteria"),
       sql = glue("
-        CREATE OR REPLACE TABLE {work(cfg$final_table_name)} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work(cfg$final_table_name)} AS
         SELECT *
         FROM {work('ELIG_COH_ALLFLAGS')}
         WHERE 1=1
@@ -2091,40 +2118,46 @@ main <- function() {
     record_attrition("07_fu_therapy", "MM therapy in follow-up", q7$n)
 
     # Conditional exclusion steps based on what's applied
+    # Build cumulative criteria so each step includes all previous exclusions
     step_num <- 8
+    cumulative_excl_criteria <- ""
+
     if (isTRUE(cfg$apply_pregnancy_excl)) {
+      cumulative_excl_criteria <- paste0(cumulative_excl_criteria, " AND PREGNANT_FLAG = 0")
       q_preg <- DBI::dbGetQuery(con_env$con, glue("
         SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')}
         WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18
-          AND MM_bl_agents = 0 AND MM_FU_agents = 1 AND PREGNANT_FLAG = 0
+          AND MM_bl_agents = 0 AND MM_FU_agents = 1{cumulative_excl_criteria}
       "))
       record_attrition(sprintf("%02d_no_pregnancy", step_num), "Excl: Pregnancy", q_preg$n)
       step_num <- step_num + 1
     }
     if (isTRUE(cfg$apply_clintrial_excl)) {
+      cumulative_excl_criteria <- paste0(cumulative_excl_criteria, " AND CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0")
       q_ct <- DBI::dbGetQuery(con_env$con, glue("
         SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')}
         WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18
-          AND MM_bl_agents = 0 AND MM_FU_agents = 1
-          AND CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0
+          AND MM_bl_agents = 0 AND MM_FU_agents = 1{cumulative_excl_criteria}
       "))
       record_attrition(sprintf("%02d_no_clintrial", step_num), "Excl: Clinical trial", q_ct$n)
       step_num <- step_num + 1
     }
     if (isTRUE(cfg$apply_other_malig_excl)) {
+      cumulative_excl_criteria <- paste0(cumulative_excl_criteria, " AND OTHER_MALIGN_FLAG = 0")
       q_om <- DBI::dbGetQuery(con_env$con, glue("
         SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')}
         WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18
-          AND MM_bl_agents = 0 AND MM_FU_agents = 1 AND OTHER_MALIGN_FLAG = 0
+          AND MM_bl_agents = 0 AND MM_FU_agents = 1{cumulative_excl_criteria}
       "))
       record_attrition(sprintf("%02d_no_other_malig", step_num), "Excl: Other malignancy", q_om$n)
       step_num <- step_num + 1
     }
     if (isTRUE(cfg$apply_baseline_nondx_excl)) {
+      cumulative_excl_criteria <- paste0(cumulative_excl_criteria, " AND MM_baseline_diag = 0")
       q_nondx <- DBI::dbGetQuery(con_env$con, glue("
         SELECT count(*) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')}
         WHERE CE_b = 1 AND CE_f = 1 AND AGE_INDEX_YR >= 18
-          AND MM_bl_agents = 0 AND MM_FU_agents = 1 AND MM_baseline_diag = 0
+          AND MM_bl_agents = 0 AND MM_FU_agents = 1{cumulative_excl_criteria}
       "))
       record_attrition(sprintf("%02d_no_bl_nondx", step_num), "Excl: Baseline non-dx claim", q_nondx$n)
     }
@@ -2246,6 +2279,34 @@ main <- function() {
   }, error = function(e) {
     log_msg("WARN: Could not generate full attrition report: ", conditionMessage(e))
   })
+
+  # ----------------------------------------------------------
+  # PERSIST FINAL COHORT TO PERSONAL SCHEMA
+  # ----------------------------------------------------------
+  # Uses same pattern as copyToPersonalSchema helper function
+  # Saves final cohort as permanent table in user's personal schema
+  if (isTRUE(cfg$persist_to_schema) && nzchar(cfg$personal_schema)) {
+    tryCatch({
+      target_table <- glue("{cfg$catalog}.{cfg$personal_schema}.{cfg$final_table_name}")
+      log_msg("Persisting final cohort to: ", target_table)
+
+      # Use lazy table approach (same as createInPersonalSchema)
+      persist_sql <- glue("
+        CREATE OR REPLACE TABLE {target_table} AS
+        SELECT * FROM {work(cfg$final_table_name)}
+      ")
+      DBI::dbExecute(con_env$con, persist_sql)
+
+      # Verify row count
+      verify_sql <- glue("SELECT count(*) AS n FROM {target_table}")
+      n_persisted <- DBI::dbGetQuery(con_env$con, verify_sql)$n
+      log_msg("Persisted ", format(n_persisted, big.mark = ","), " rows to ", target_table)
+
+    }, error = function(e) {
+      log_msg("WARN: Could not persist to personal schema: ", conditionMessage(e))
+      log_msg("  Final cohort is still available as temp view: ", work(cfg$final_table_name))
+    })
+  }
 
   log_msg("=", SEP_59)
 }
