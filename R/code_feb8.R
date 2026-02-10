@@ -1932,7 +1932,7 @@ build_steps <- function() {
           FROM dx
           INNER JOIN {work('other_malig_codes')} o ON dx.dx = o.dx AND dx.icd_family = o.icd_family
         ),
-        -- Per attrition table Step 8: "Evidence of another cancer in the baseline period"
+        -- Per attrition table Step 8: Evidence of another cancer in the baseline period
         -- Attrition table does NOT require non-diagnostic claims for other cancer
         distinct_dates AS (SELECT DISTINCT PATID, tumor_group, event_dt FROM dx_mapped),
         with_next AS (
