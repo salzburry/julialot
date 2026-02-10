@@ -1189,6 +1189,23 @@ build_steps <- function() {
     ),
    
     # ----------------------------------------------------------
+    # SCHEMA PROBE: Validate RVNU_CD column exists on medical table
+    # Per Optum CDM v9.0, the revenue code field is RVNU_CD (facility claims only).
+    # This check fails early with a clear message if the column is missing,
+    # rather than erroring deep in the pregnancy/clinical trial steps.
+    # ----------------------------------------------------------
+    list(
+      name = "06c_validate_rvnu_cd",
+      description = "Validating RVNU_CD column exists on medical table",
+      source_tables = c("medical"),
+      sql = glue("
+        CREATE OR REPLACE TEMPORARY VIEW {work('rvnu_cd_check')} AS
+        SELECT RVNU_CD FROM {cdm_src(cfg$tbl_medical)} LIMIT 1
+      "),
+      qc = glue("SELECT 'RVNU_CD column validated on medical table' AS status")
+    ),
+
+    # ----------------------------------------------------------
     # PHASE 2: BUILD MM DIAGNOSIS EVENTS
     # FIXED: Build two tables:
     #   - mm_dx_events_all: full study period (for baseline flags)
@@ -1363,35 +1380,39 @@ build_steps <- function() {
    
     list(
       name = "12_mm_qualifying",
-      description = glue("Combining ALL potential index dates (IP or OP in {cfg$outpatient_window}d) - keeps all, not just earliest"),
+      description = "Combining ALL potential index dates (IP or OP within 90d max window) - keeps all, not just earliest",
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('mm_qualifying')} AS
-        -- Union all potential index dates from both inpatient and outpatient sources
-        -- Each row represents one PATID + index_date combination
-        -- NOTE: Now has multiple rows per patient (one per potential index date)
+        -- Option B: Always build with MAX window (90 days) so all candidates are preserved.
+        -- The configured outpatient window ({cfg$outpatient_window}d) is applied later in Step 24
+        -- via the outpt_qual flag, NOT here. This ensures that if a patient's earliest
+        -- 90d-qualified date fails IE criteria, a later date can still be selected.
+        -- Flags outpt2_30, outpt2_60, outpt2_90 are carried forward for attrition reporting.
         WITH all_potential AS (
-          -- Inpatient potential index dates
-          SELECT PATID, potential_index, 1 AS inpt_qual, 0 AS outpt_qual, 0 AS outpt2_30, 0 AS outpt2_60
+          -- Inpatient potential index dates (always qualify regardless of window)
+          SELECT PATID, potential_index, 1 AS inpt_qual, 0 AS outpt2_30, 0 AS outpt2_60, 0 AS outpt2_90
           FROM {work('mm_inpatient_potential')}
           UNION ALL
-          -- Outpatient potential index dates (filtered by configured window)
+          -- Outpatient potential index dates (include ALL that qualify within 90d)
           SELECT PATID, potential_index, 0 AS inpt_qual,
-                 CASE WHEN qualifies_{cfg$outpatient_window} = 1 THEN 1 ELSE 0 END AS outpt_qual,
-                 qualifies_30 AS outpt2_30, qualifies_60 AS outpt2_60
+                 qualifies_30 AS outpt2_30, qualifies_60 AS outpt2_60, qualifies_90 AS outpt2_90
           FROM {work('mm_outpatient_potential')}
-          WHERE qualifies_{cfg$outpatient_window} = 1
         )
         -- Aggregate per PATID + potential_index to handle dates that qualify via both paths
         SELECT
           PATID,
           potential_index AS index_date,
           max(inpt_qual) AS inpt_qual,
-          max(outpt_qual) AS outpt_qual,
+          -- outpt_qual reflects the CONFIGURED window (used in Step 24 criteria filter)
+          max(CASE WHEN inpt_qual = 1 THEN 0
+                   ELSE outpt2_{cfg$outpatient_window} END) AS outpt_qual,
           max(outpt2_30) AS outpt2_30,
           max(outpt2_60) AS outpt2_60,
+          max(outpt2_90) AS outpt2_90,
           CASE
             WHEN max(inpt_qual) = 1 THEN 'INPATIENT'
-            ELSE 'OUTPATIENT_2IN{cfg$outpatient_window}'
+            WHEN max(outpt2_{cfg$outpatient_window}) = 1 THEN 'OUTPATIENT_2IN{cfg$outpatient_window}'
+            ELSE 'OUTPATIENT_2IN90'
           END AS index_source
         FROM all_potential
         GROUP BY PATID, potential_index
@@ -1695,30 +1716,29 @@ build_steps <- function() {
       qc = glue("SELECT sum(is_nondiagnostic_claim) AS n_nondiag_claims FROM {work('claim_nondiagnostic')}")
     ),
    
-    # FIXED: Use mm_dx_events_all for baseline lookback (not just ID period)
-    # FIXED: Use is_nondiagnostic_claim (claim-level flag, not line-level)
+    # Per ATTRITION TABLE Step 7: >=1 medical claim for MM (203.0x/C90.0x) in baseline
+    # NOTE: Attrition table does NOT require non-diagnostic; IE criteria PDF row 14 does.
+    # Following attrition table as the authoritative source.
     list(
       name = "17_mm_baseline_nondx_flag",
-      description = "Checking for STRICT MM dx (203.0x/C90.0x) on non-diagnostic claims in baseline",
+      description = "Checking for any STRICT MM dx (203.0x/C90.0x) claim in baseline period",
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('mm_baseline_nondx_flag')} AS
         SELECT
           q.PATID,
           q.index_date,
-          -- Per IE spec: >=1 non-diagnostic claim for MM (203.0x/C90.0x) in baseline
+          -- Per attrition table Step 7: >=1 MM claim (203.0x/C90.0x) in baseline
           -- Baseline excludes index_date (baseline = before index)
           -- mm_dx_strict_flg ensures only STRICT codes are counted
           max(CASE WHEN e.svc_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
                                      AND date_sub(q.index_date, 1)
-                    AND n.is_nondiagnostic_claim = 1
                     AND e.mm_dx_strict_flg = 1
                THEN 1 ELSE 0 END) AS MM_BASELINE_NONDX
         FROM {work('mm_qualifying')} q
         LEFT JOIN {work('mm_dx_events_all')} e ON q.PATID = e.PATID
-        LEFT JOIN {work('claim_nondiagnostic')} n ON e.PATID = n.PATID AND e.CLMID = n.CLMID
         GROUP BY q.PATID, q.index_date
       "),
-      qc = glue("SELECT sum(MM_BASELINE_NONDX) AS n_with_baseline_nondx FROM {work('mm_baseline_nondx_flag')}")
+      qc = glue("SELECT sum(MM_BASELINE_NONDX) AS n_with_baseline_mm FROM {work('mm_baseline_nondx_flag')}")
     ),
    
     # ----------------------------------------------------------
@@ -1787,11 +1807,11 @@ build_steps <- function() {
     # ----------------------------------------------------------
     # Per IE spec: "1 of medical claim with a diagnosis, procedure, or revenue code
     # indicating pregnancy or childbirth during the baseline or follow-up period"
-    # FIXED: Added revenue code (REV_CD) support per spec requirement
+    # FIXED: Added revenue code (RVNU_CD) support per spec requirement
     # NOTE: Pregnancy check spans baseline + follow-up per attrition table Step 9
     list(
       name = "20_pregnancy_flag",
-      description = "EXCLUSION: Pregnancy flag (DX + PROC + REV_CD, baseline + follow-up)",
+      description = "EXCLUSION: Pregnancy flag (DX + PROC + RVNU_CD, baseline + follow-up)",
       source_tables = c("med_diagnosis", "medical"),
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('pregnancy_flag')} AS
@@ -1808,12 +1828,12 @@ build_steps <- function() {
           WHERE PROC_CD IS NOT NULL
             AND FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
-        -- ADDED: Revenue code stream per IE spec (pregnancy requires DX, PROC, or REV_CD)
+        -- ADDED: Revenue code stream per IE spec (pregnancy requires DX, PROC, or RVNU_CD)
         rev AS (
           SELECT PATID, cast(FST_DT as date) AS event_dt, 'REV' AS code_type,
-                 upper(TRIM(REV_CD)) AS code
+                 upper(TRIM(RVNU_CD)) AS code
           FROM {cdm_src(cfg$tbl_medical)}
-          WHERE REV_CD IS NOT NULL AND TRIM(REV_CD) != ''
+          WHERE RVNU_CD IS NOT NULL AND TRIM(RVNU_CD) != ''
             AND FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
         events AS (SELECT * FROM dx UNION ALL SELECT * FROM proc UNION ALL SELECT * FROM rev),
@@ -1826,10 +1846,12 @@ build_steps <- function() {
           q.PATID,
           q.index_date,
           -- Per attrition table: pregnancy during baseline or follow-up period
+          -- FIXED: Follow-up ends at min(death_dt, study_end) per ENDDATE definition
           max(CASE WHEN m.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
-                                       AND date('{cfg$study_end}')
+                                       AND least(date('{cfg$study_end}'), coalesce(d.DEATH_DT, date('{cfg$study_end}')))
                THEN 1 ELSE 0 END) AS PREGNANT_FLAG
         FROM {work('mm_qualifying')} q
+        LEFT JOIN {work('death_dt')} d ON q.PATID = d.PATID AND q.index_date = d.index_date
         LEFT JOIN matched m ON q.PATID = m.PATID
         GROUP BY q.PATID, q.index_date
       "),
@@ -1838,10 +1860,10 @@ build_steps <- function() {
    
     # Per IE spec: "Evidence of clinical trial participation during each of the
     # baseline and follow-up periods. See tab CL CLNTRIAL."
-    # FIXED: Added revenue code (REV_CD) support for consistency with CL CLNTRIAL tab
+    # FIXED: Added revenue code (RVNU_CD) support for consistency with CL CLNTRIAL tab
     list(
       name = "21_clintrial_flag",
-      description = "EXCLUSION: Clinical trial flag (DX + PROC + REV_CD, baseline + follow-up)",
+      description = "EXCLUSION: Clinical trial flag (DX + PROC + RVNU_CD, baseline + follow-up)",
       source_tables = c("med_diagnosis", "medical"),
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('clintrial_flag')} AS
@@ -1861,9 +1883,9 @@ build_steps <- function() {
         -- ADDED: Revenue code stream for consistency with CL CLNTRIAL tab
         rev AS (
           SELECT PATID, cast(FST_DT as date) AS event_dt, 'REV' AS code_type,
-                 upper(TRIM(REV_CD)) AS code
+                 upper(TRIM(RVNU_CD)) AS code
           FROM {cdm_src(cfg$tbl_medical)}
-          WHERE REV_CD IS NOT NULL AND TRIM(REV_CD) != ''
+          WHERE RVNU_CD IS NOT NULL AND TRIM(RVNU_CD) != ''
             AND FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
         events AS (SELECT * FROM dx UNION ALL SELECT * FROM proc UNION ALL SELECT * FROM rev),
@@ -1880,9 +1902,12 @@ build_steps <- function() {
                                        AND date_sub(q.index_date, 1)
                THEN 1 ELSE 0 END) AS CLINTRIAL_BASELINE,
           -- Followup starts on index_date per IE spec
-          max(CASE WHEN m.event_dt >= q.index_date AND m.event_dt <= date('{cfg$study_end}')
+          -- FIXED: Follow-up ends at min(death_dt, study_end) per ENDDATE definition
+          max(CASE WHEN m.event_dt >= q.index_date
+                    AND m.event_dt <= least(date('{cfg$study_end}'), coalesce(d.DEATH_DT, date('{cfg$study_end}')))
                THEN 1 ELSE 0 END) AS CLINTRIAL_FOLLOWUP
         FROM {work('mm_qualifying')} q
+        LEFT JOIN {work('death_dt')} d ON q.PATID = d.PATID AND q.index_date = d.index_date
         LEFT JOIN matched m ON q.PATID = m.PATID
         GROUP BY q.PATID, q.index_date
       "),
@@ -1907,14 +1932,9 @@ build_steps <- function() {
           FROM dx
           INNER JOIN {work('other_malig_codes')} o ON dx.dx = o.dx AND dx.icd_family = o.icd_family
         ),
-        dx_nondx AS (
-          -- FIXED: Use is_nondiagnostic_claim (claim-level flag)
-          SELECT m.PATID, m.tumor_group, m.event_dt
-          FROM dx_mapped m
-          INNER JOIN {work('claim_nondiagnostic')} n ON m.PATID = n.PATID AND m.CLMID = n.CLMID
-          WHERE n.is_nondiagnostic_claim = 1
-        ),
-        distinct_dates AS (SELECT DISTINCT PATID, tumor_group, event_dt FROM dx_nondx),
+        -- Per attrition table Step 8: "Evidence of another cancer in the baseline period"
+        -- Attrition table does NOT require non-diagnostic claims for other cancer
+        distinct_dates AS (SELECT DISTINCT PATID, tumor_group, event_dt FROM dx_mapped),
         with_next AS (
           SELECT PATID, tumor_group, event_dt,
                  lead(event_dt) OVER (PARTITION BY PATID, tumor_group ORDER BY event_dt) AS next_dt
@@ -1972,7 +1992,7 @@ build_steps <- function() {
             preg.PREGNANT_FLAG,
             ct.CLINTRIAL_BASELINE,
             ct.CLINTRIAL_FOLLOWUP,
-            q.inpt_qual, q.outpt_qual, q.outpt2_30, q.outpt2_60, q.index_source
+            q.inpt_qual, q.outpt_qual, q.outpt2_30, q.outpt2_60, q.outpt2_90, q.index_source
           FROM {work('mm_qualifying')} q
           LEFT JOIN {work('ce_flags')} ce ON q.PATID = ce.PATID AND q.index_date = ce.index_date
           LEFT JOIN {work('member_demo')} d ON q.PATID = d.PATID
@@ -2011,7 +2031,7 @@ build_steps <- function() {
           b.GDR_CD,
           b.YRDOB,
           (year(b.index_date) - b.YRDOB) AS AGE_INDEX_YR,
-          b.inpt_qual, b.outpt_qual, b.outpt2_30, b.outpt2_60, b.index_source,
+          b.inpt_qual, b.outpt_qual, b.outpt2_30, b.outpt2_60, b.outpt2_90, b.index_source,
           b.baseline_start, b.baseline_end,
           coalesce(b.CE_b, 0) AS CE_b,
           coalesce(b.CE_f, 0) AS CE_f,
@@ -2046,6 +2066,8 @@ build_steps <- function() {
           SELECT *
           FROM {work('ELIG_COH_ALLFLAGS')}
           WHERE 1=1
+            -- Step 1: Index date must qualify via IP (strict) or OP in configured window
+            AND (inpt_qual = 1 OR outpt2_{cfg$outpatient_window} = 1)
             {criteria_sql}
         ),
         ranked AS (
@@ -2138,7 +2160,8 @@ build_steps <- function() {
         SELECT a.*
         FROM {work('ELIG_COH_ALLFLAGS')} a
         CROSS JOIN c
-        WHERE (c.apply_age = false OR a.AGE_INDEX_YR >= c.min_age)
+        WHERE (a.inpt_qual = 1 OR a.outpt2_{cfg$outpatient_window} = 1)
+          AND (c.apply_age = false OR a.AGE_INDEX_YR >= c.min_age)
           AND (c.apply_ce_b = false OR a.CE_b = 1)
           AND (c.apply_ce_f = false OR a.CE_f = 1)
           AND (c.apply_no_bl_agents = false OR a.MM_bl_agents = 0)
@@ -2317,10 +2340,13 @@ main <- function() {
 
     # Step 1: Qualifying - 30/60/90 day cohorts
     # Per spec: 1+ IP (strict) OR 2 OP (broad) within window
+    # All three counts are now accurate since mm_qualifying always builds with 90d max window
+    # Main count reflects the CONFIGURED window, not always 90d
     q1_30 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE inpt_qual = 1 OR outpt2_30 = 1"))
     q1_60 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE inpt_qual = 1 OR outpt2_60 = 1"))
-    q1_90 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('mm_qualifying')}"))
-    record_attrition("01_step1_qualifying", glue("Step 1: Qualifying (30d:{format(q1_30$n, big.mark=',')} / 60d:{format(q1_60$n, big.mark=',')} / 90d:{format(q1_90$n, big.mark=',')})"), q1_90$n)
+    q1_90 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE inpt_qual = 1 OR outpt2_90 = 1"))
+    q1_main <- switch(as.character(cfg$outpatient_window), "30" = q1_30$n, "60" = q1_60$n, q1_90$n)
+    record_attrition("01_step1_qualifying", glue("Step 1: Qualifying (30d:{format(q1_30$n, big.mark=',')} / 60d:{format(q1_60$n, big.mark=',')} / 90d:{format(q1_90$n, big.mark=',')}) [using {cfg$outpatient_window}d window]"), q1_main)
 
     # Step 2: Age >= 18 at index year
     q2 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE AGE_INDEX_YR >= 18"))
