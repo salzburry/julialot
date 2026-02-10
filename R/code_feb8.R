@@ -1264,7 +1264,7 @@ build_steps <- function() {
    
     # All MM dx events in study period (for baseline lookback)
     # Inpatient identification using EITHER Approach 1 OR Approach 2
-    # - Approach 1: POS (Place of Service) indicates inpatient (21, 51, 61) OR TOS_CD = '1'
+    # - Approach 1: POS IN (21, 51, 61) OR TOS_CD IN (FAC_IP.ACUTE, FAC_IP.REHSNF, PROF.INPVIS, FAC_IP.SNF)
     # - Approach 2: CONF_ID is validated in T_CONFINEMENT
     # Patient qualifies as inpatient if EITHER approach identifies them as inpatient
     list(
@@ -1283,15 +1283,15 @@ build_steps <- function() {
           h.POS,
           h.TOS_CD,
           -- FIXED: Inpatient = Approach 1 (POS/TOS) OR Approach 2 (CONF_ID validated)
-          -- Approach 1: POS 21=Inpatient Hospital, 51=Inpatient Psych, 61=Inpatient Rehab; TOS_CD='1'=Inpatient
+          -- Approach 1: POS 21/51/61; TOS_CD IN (FAC_IP.ACUTE, FAC_IP.REHSNF, PROF.INPVIS, FAC_IP.SNF)
           -- Approach 2: CONF_ID exists in T_CONFINEMENT with valid dates
           CASE WHEN h.POS IN ('21', '51', '61')
-                 OR h.TOS_CD = '1'
+                 OR h.TOS_CD IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF')
                  OR cf.CONF_ID IS NOT NULL
                THEN 1 ELSE 0 END AS inpatient_flg,
           -- Outpatient: NOT identified as inpatient by either approach
           CASE WHEN NOT (h.POS IN ('21', '51', '61')
-                      OR h.TOS_CD = '1'
+                      OR h.TOS_CD IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF')
                       OR cf.CONF_ID IS NOT NULL)
                THEN 1 ELSE 0 END AS outpatient_flg,
           -- STRICT MM dx flag: 203.0x / C90.0x only (for inpatient qualifying + baseline evidence)
@@ -1303,7 +1303,7 @@ build_steps <- function() {
                THEN 1 ELSE 0 END AS mm_dx_strict_flg,
           -- QC flags for each approach
           CASE WHEN cf.CONF_ID IS NOT NULL THEN 1 ELSE 0 END AS conf_validated,
-          CASE WHEN h.POS IN ('21', '51', '61') OR h.TOS_CD = '1' THEN 1 ELSE 0 END AS pos_tos_inpatient
+          CASE WHEN h.POS IN ('21', '51', '61') OR h.TOS_CD IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF') THEN 1 ELSE 0 END AS pos_tos_inpatient
         FROM {cdm_src(cfg$tbl_med_diag)} d
         INNER JOIN {work('med_claim_header')} h
           ON d.PATID = h.PATID AND d.CLMID = h.CLMID
