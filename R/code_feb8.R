@@ -813,34 +813,44 @@ embedded_other_malig_codes <- function() {
 attrition <- new.env()
 attrition$counts <- list()
  
-record_attrition <- function(step_name, description, count) {
+record_attrition <- function(step_name, description, n_30, n_60, n_90) {
   attrition$counts[[step_name]] <- list(
     description = description,
-    count = count,
+    n_30 = n_30,
+    n_60 = n_60,
+    n_90 = n_90,
     timestamp = Sys.time()
   )
 }
  
 print_attrition_table <- function() {
   cat("\n")
-  cat(SEP_60, "\n")
-  cat("                 ATTRITION TABLE SUMMARY                    \n")
-  cat(SEP_60, "\n")
-  cat(sprintf("%-40s %15s %12s\n", "Step", "N Patients", "Excluded"))
-  cat(DASH_70, "\n")
- 
-  prev_count <- NA
+  cat(strrep("=", 110), "\n")
+  cat("                              ATTRITION TABLE SUMMARY (30d / 60d / 90d)\n")
+  cat(strrep("=", 110), "\n")
+  cat(sprintf("%-40s %12s %12s %12s %12s %12s %12s\n",
+              "Step", "N (30d)", "Excl (30d)", "N (60d)", "Excl (60d)", "N (90d)", "Excl (90d)"))
+  cat(strrep("-", 110), "\n")
+
+  prev_30 <- NA
+  prev_60 <- NA
+  prev_90 <- NA
   for (step in names(attrition$counts)) {
     item <- attrition$counts[[step]]
-    excluded <- if (is.na(prev_count)) "" else format(prev_count - item$count, big.mark = ",")
-    cat(sprintf("%-40s %15s %12s\n",
+    excl_30 <- if (is.na(prev_30)) "" else format(prev_30 - item$n_30, big.mark = ",")
+    excl_60 <- if (is.na(prev_60)) "" else format(prev_60 - item$n_60, big.mark = ",")
+    excl_90 <- if (is.na(prev_90)) "" else format(prev_90 - item$n_90, big.mark = ",")
+    cat(sprintf("%-40s %12s %12s %12s %12s %12s %12s\n",
                 substr(item$description, 1, 40),
-                format(item$count, big.mark = ","),
-                excluded))
-    prev_count <- item$count
+                format(item$n_30, big.mark = ","), excl_30,
+                format(item$n_60, big.mark = ","), excl_60,
+                format(item$n_90, big.mark = ","), excl_90))
+    prev_30 <- item$n_30
+    prev_60 <- item$n_60
+    prev_90 <- item$n_90
   }
- 
-  cat(SEP_70, "\n")
+
+  cat(strrep("=", 110), "\n")
   cat("\n")
 }
  
@@ -1932,7 +1942,7 @@ build_steps <- function() {
           FROM dx
           INNER JOIN {work('other_malig_codes')} o ON dx.dx = o.dx AND dx.icd_family = o.icd_family
         ),
-        -- Per attrition table Step 8: "Evidence of another cancer in the baseline period"
+        -- Per attrition table Step 8: Evidence of another cancer in the baseline period
         -- Attrition table does NOT require non-diagnostic claims for other cancer
         distinct_dates AS (SELECT DISTINCT PATID, tumor_group, event_dt FROM dx_mapped),
         with_next AS (
@@ -2335,70 +2345,116 @@ main <- function() {
     # ----------------------------------------------------------
 
     # Step 0: Base cohort - all patients with >=1 MM dx in ID period (BROAD codes)
+    # Same count for all 3 windows (pre-qualifying)
     q0 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('mm_dx_events_id')}"))
-    record_attrition("00_step0_base", "Step 0: >=1 MM dx (ID period)", q0$n)
+    record_attrition("00_step0_base", "Step 0: >=1 MM dx (ID period)", q0$n, q0$n, q0$n)
 
     # Step 1: Qualifying - 30/60/90 day cohorts
     # Per spec: 1+ IP (strict) OR 2 OP (broad) within window
-    # All three counts are now accurate since mm_qualifying always builds with 90d max window
-    # Main count reflects the CONFIGURED window, not always 90d
     q1_30 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE inpt_qual = 1 OR outpt2_30 = 1"))
     q1_60 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE inpt_qual = 1 OR outpt2_60 = 1"))
     q1_90 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE inpt_qual = 1 OR outpt2_90 = 1"))
-    q1_main <- switch(as.character(cfg$outpatient_window), "30" = q1_30$n, "60" = q1_60$n, q1_90$n)
-    record_attrition("01_step1_qualifying", glue("Step 1: Qualifying (30d:{format(q1_30$n, big.mark=',')} / 60d:{format(q1_60$n, big.mark=',')} / 90d:{format(q1_90$n, big.mark=',')}) [using {cfg$outpatient_window}d window]"), q1_main)
+    record_attrition("01_step1_qualifying", "Step 1: Qualifying dx", q1_30$n, q1_60$n, q1_90$n)
+
+    # Qualifying filters for each window
+    qual_30 <- "(inpt_qual = 1 OR outpt2_30 = 1)"
+    qual_60 <- "(inpt_qual = 1 OR outpt2_60 = 1)"
+    qual_90 <- "(inpt_qual = 1 OR outpt2_90 = 1)"
+
+    # Helper: run a count query for all 3 windows
+    count_3w <- function(where_30, where_60, where_90) {
+      tbl <- work_tbl('ELIG_COH_ALLFLAGS')
+      n30 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {tbl} WHERE {where_30}"))$n
+      n60 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {tbl} WHERE {where_60}"))$n
+      n90 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {tbl} WHERE {where_90}"))$n
+      list(n_30 = n30, n_60 = n60, n_90 = n90)
+    }
 
     # Step 2: Age >= 18 at index year
-    q2 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE AGE_INDEX_YR >= 18"))
-    record_attrition("02_step2_age", "Step 2: Age >= 18 at index year", q2$n)
+    s2 <- count_3w(
+      glue("{qual_30} AND AGE_INDEX_YR >= 18"),
+      glue("{qual_60} AND AGE_INDEX_YR >= 18"),
+      glue("{qual_90} AND AGE_INDEX_YR >= 18"))
+    record_attrition("02_step2_age", "Step 2: Age >= 18 at index year", s2$n_30, s2$n_60, s2$n_90)
 
     # Step 3: Evidence of FU therapy (MM_FU_agents = 1)
-    q3 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE AGE_INDEX_YR >= 18 AND MM_FU_agents = 1"))
-    record_attrition("03_step3_fu_therapy", "Step 3: FU therapy required", q3$n)
+    s3 <- count_3w(
+      glue("{qual_30} AND AGE_INDEX_YR >= 18 AND MM_FU_agents = 1"),
+      glue("{qual_60} AND AGE_INDEX_YR >= 18 AND MM_FU_agents = 1"),
+      glue("{qual_90} AND AGE_INDEX_YR >= 18 AND MM_FU_agents = 1"))
+    record_attrition("03_step3_fu_therapy", "Step 3: FU therapy required", s3$n_30, s3$n_60, s3$n_90)
 
     # Step 4: No baseline therapy (MM_bl_agents = 0) - EXCLUSION
-    q4 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0"))
-    record_attrition("04_step4_no_bl_therapy", "Step 4: No baseline therapy (excl)", q4$n)
+    s4 <- count_3w(
+      glue("{qual_30} AND AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0"),
+      glue("{qual_60} AND AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0"),
+      glue("{qual_90} AND AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0"))
+    record_attrition("04_step4_no_bl_therapy", "Step 4: No baseline therapy (excl)", s4$n_30, s4$n_60, s4$n_90)
 
     # Step 5: CE_b - 6-month baseline enrollment
-    q5 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0 AND CE_b = 1"))
-    record_attrition("05_step5_ce_baseline", "Step 5: 6-mo baseline enrollment", q5$n)
+    s5 <- count_3w(
+      glue("{qual_30} AND AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0 AND CE_b = 1"),
+      glue("{qual_60} AND AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0 AND CE_b = 1"),
+      glue("{qual_90} AND AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0 AND CE_b = 1"))
+    record_attrition("05_step5_ce_baseline", "Step 5: 6-mo baseline enrollment", s5$n_30, s5$n_60, s5$n_90)
 
     # Step 6: CE_f - 1+ day follow-up enrollment
-    q6 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0 AND CE_b = 1 AND CE_f = 1"))
-    record_attrition("06_step6_ce_followup", "Step 6: 1+ day FU enrollment", q6$n)
+    s6 <- count_3w(
+      glue("{qual_30} AND AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0 AND CE_b = 1 AND CE_f = 1"),
+      glue("{qual_60} AND AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0 AND CE_b = 1 AND CE_f = 1"),
+      glue("{qual_90} AND AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0 AND CE_b = 1 AND CE_f = 1"))
+    record_attrition("06_step6_ce_followup", "Step 6: 1+ day FU enrollment", s6$n_30, s6$n_60, s6$n_90)
 
     # Step 7: Baseline MM evidence (exclusion) - always report even if not applied
-    q7 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0 AND CE_b = 1 AND CE_f = 1 AND MM_baseline_diag = 0"))
+    base7 <- "AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0 AND CE_b = 1 AND CE_f = 1 AND MM_baseline_diag = 0"
+    s7 <- count_3w(
+      glue("{qual_30} AND {base7}"),
+      glue("{qual_60} AND {base7}"),
+      glue("{qual_90} AND {base7}"))
     excl_suffix <- if (isTRUE(cfg$apply_baseline_nondx_excl)) "" else " [not applied]"
-    record_attrition("07_step7_bl_mm_evidence", paste0("Step 7: BL MM evidence (excl)", excl_suffix), q7$n)
+    record_attrition("07_step7_bl_mm_evidence", paste0("Step 7: BL MM evidence (excl)", excl_suffix), s7$n_30, s7$n_60, s7$n_90)
 
     # Cumulative base for steps 8-10 (depends on whether Step 7 is applied)
-    base_where <- "AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0 AND CE_b = 1 AND CE_f = 1"
+    base_cond <- "AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0 AND CE_b = 1 AND CE_f = 1"
     if (isTRUE(cfg$apply_baseline_nondx_excl)) {
-      base_where <- paste0(base_where, " AND MM_baseline_diag = 0")
+      base_cond <- paste0(base_cond, " AND MM_baseline_diag = 0")
     }
 
     # Step 8: Other cancer (exclusion) - always report
-    q8 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE {base_where} AND OTHER_MALIGN_FLAG = 0"))
+    s8 <- count_3w(
+      glue("{qual_30} AND {base_cond} AND OTHER_MALIGN_FLAG = 0"),
+      glue("{qual_60} AND {base_cond} AND OTHER_MALIGN_FLAG = 0"),
+      glue("{qual_90} AND {base_cond} AND OTHER_MALIGN_FLAG = 0"))
     excl_suffix8 <- if (isTRUE(cfg$apply_other_malig_excl)) "" else " [not applied]"
-    record_attrition("08_step8_other_cancer", paste0("Step 8: Other cancer (excl)", excl_suffix8), q8$n)
+    record_attrition("08_step8_other_cancer", paste0("Step 8: Other cancer (excl)", excl_suffix8), s8$n_30, s8$n_60, s8$n_90)
 
     # Step 9: Pregnancy (exclusion) - always report
-    preg_where <- paste0(base_where, if (isTRUE(cfg$apply_other_malig_excl)) " AND OTHER_MALIGN_FLAG = 0" else "")
-    q9 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE {preg_where} AND PREGNANT_FLAG = 0"))
+    preg_cond <- base_cond
+    if (isTRUE(cfg$apply_other_malig_excl)) {
+      preg_cond <- paste0(preg_cond, " AND OTHER_MALIGN_FLAG = 0")
+    }
+    s9 <- count_3w(
+      glue("{qual_30} AND {preg_cond} AND PREGNANT_FLAG = 0"),
+      glue("{qual_60} AND {preg_cond} AND PREGNANT_FLAG = 0"),
+      glue("{qual_90} AND {preg_cond} AND PREGNANT_FLAG = 0"))
     excl_suffix9 <- if (isTRUE(cfg$apply_pregnancy_excl)) "" else " [not applied]"
-    record_attrition("09_step9_pregnancy", paste0("Step 9: Pregnancy (excl)", excl_suffix9), q9$n)
+    record_attrition("09_step9_pregnancy", paste0("Step 9: Pregnancy (excl)", excl_suffix9), s9$n_30, s9$n_60, s9$n_90)
 
     # Step 10: Clinical trial (exclusion) - always report
-    ct_where <- paste0(preg_where, if (isTRUE(cfg$apply_pregnancy_excl)) " AND PREGNANT_FLAG = 0" else "")
-    q10 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE {ct_where} AND CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0"))
+    ct_cond <- preg_cond
+    if (isTRUE(cfg$apply_pregnancy_excl)) {
+      ct_cond <- paste0(ct_cond, " AND PREGNANT_FLAG = 0")
+    }
+    s10 <- count_3w(
+      glue("{qual_30} AND {ct_cond} AND CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0"),
+      glue("{qual_60} AND {ct_cond} AND CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0"),
+      glue("{qual_90} AND {ct_cond} AND CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0"))
     excl_suffix10 <- if (isTRUE(cfg$apply_clintrial_excl)) "" else " [not applied]"
-    record_attrition("10_step10_clintrial", paste0("Step 10: Clinical trial (excl)", excl_suffix10), q10$n)
+    record_attrition("10_step10_clintrial", paste0("Step 10: Clinical trial (excl)", excl_suffix10), s10$n_30, s10$n_60, s10$n_90)
 
     # Final cohort (after applied criteria + earliest index per patient)
     q_final <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {work_tbl(cfg$final_table_name)}"))
-    record_attrition("99_final", glue("FINAL COHORT ({cfg$final_table_name})"), q_final$n)
+    record_attrition("99_final", glue("FINAL COHORT ({cfg$final_table_name})"), q_final$n, q_final$n, q_final$n)
 
     # Print the attrition table
     print_attrition_table()
