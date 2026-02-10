@@ -2348,33 +2348,36 @@ main <- function() {
     q1_main <- switch(as.character(cfg$outpatient_window), "30" = q1_30$n, "60" = q1_60$n, q1_90$n)
     record_attrition("01_step1_qualifying", glue("Step 1: Qualifying (30d:{format(q1_30$n, big.mark=',')} / 60d:{format(q1_60$n, big.mark=',')} / 90d:{format(q1_90$n, big.mark=',')}) [using {cfg$outpatient_window}d window]"), q1_main)
 
+    # Qualifying filter used by Steps 2-10 to ensure counts are cumulative from Step 1
+    qual_filter <- glue("(inpt_qual = 1 OR outpt2_{cfg$outpatient_window} = 1)")
+
     # Step 2: Age >= 18 at index year
-    q2 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE AGE_INDEX_YR >= 18"))
+    q2 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE {qual_filter} AND AGE_INDEX_YR >= 18"))
     record_attrition("02_step2_age", "Step 2: Age >= 18 at index year", q2$n)
 
     # Step 3: Evidence of FU therapy (MM_FU_agents = 1)
-    q3 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE AGE_INDEX_YR >= 18 AND MM_FU_agents = 1"))
+    q3 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE {qual_filter} AND AGE_INDEX_YR >= 18 AND MM_FU_agents = 1"))
     record_attrition("03_step3_fu_therapy", "Step 3: FU therapy required", q3$n)
 
     # Step 4: No baseline therapy (MM_bl_agents = 0) - EXCLUSION
-    q4 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0"))
+    q4 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE {qual_filter} AND AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0"))
     record_attrition("04_step4_no_bl_therapy", "Step 4: No baseline therapy (excl)", q4$n)
 
     # Step 5: CE_b - 6-month baseline enrollment
-    q5 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0 AND CE_b = 1"))
+    q5 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE {qual_filter} AND AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0 AND CE_b = 1"))
     record_attrition("05_step5_ce_baseline", "Step 5: 6-mo baseline enrollment", q5$n)
 
     # Step 6: CE_f - 1+ day follow-up enrollment
-    q6 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0 AND CE_b = 1 AND CE_f = 1"))
+    q6 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE {qual_filter} AND AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0 AND CE_b = 1 AND CE_f = 1"))
     record_attrition("06_step6_ce_followup", "Step 6: 1+ day FU enrollment", q6$n)
 
     # Step 7: Baseline MM evidence (exclusion) - always report even if not applied
-    q7 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0 AND CE_b = 1 AND CE_f = 1 AND MM_baseline_diag = 0"))
+    q7 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {work_tbl('ELIG_COH_ALLFLAGS')} WHERE {qual_filter} AND AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0 AND CE_b = 1 AND CE_f = 1 AND MM_baseline_diag = 0"))
     excl_suffix <- if (isTRUE(cfg$apply_baseline_nondx_excl)) "" else " [not applied]"
     record_attrition("07_step7_bl_mm_evidence", paste0("Step 7: BL MM evidence (excl)", excl_suffix), q7$n)
 
     # Cumulative base for steps 8-10 (depends on whether Step 7 is applied)
-    base_where <- "AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0 AND CE_b = 1 AND CE_f = 1"
+    base_where <- glue("{qual_filter} AND AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0 AND CE_b = 1 AND CE_f = 1")
     if (isTRUE(cfg$apply_baseline_nondx_excl)) {
       base_where <- paste0(base_where, " AND MM_baseline_diag = 0")
     }
