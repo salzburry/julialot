@@ -2606,6 +2606,62 @@ main <- function() {
     cat(sprintf("  CONF_ID only:          %s\n", format(cohort_conf$n_conf_only, big.mark = ",")))
     cat(DASH_60, "\n")
 
+    # ----------------------------------------------------------
+    # PATIENT-LEVEL INPATIENT APPROACH OVERLAP (Step 0 base)
+    # Shows how many PATIENTS have inpatient events via each approach
+    # ----------------------------------------------------------
+    cat("\n")
+    cat(DASH_60, "\n")
+    cat("  PATIENT-LEVEL INPATIENT APPROACH OVERLAP (Step 0 base)\n")
+    cat(DASH_60, "\n")
+
+    pat_overlap_sql <- glue("
+      WITH patient_flags AS (
+        SELECT
+          PATID,
+          max(pos_tos_inpatient) AS has_pos_tos,
+          max(conf_validated) AS has_conf,
+          max(inpatient_flg) AS has_any_inpatient
+        FROM {work_tbl('mm_dx_events_all')}
+        GROUP BY PATID
+      )
+      SELECT
+        count(*) AS n_total_patients,
+        sum(has_any_inpatient) AS n_inpatient_any,
+        sum(has_pos_tos) AS n_via_pos_tos,
+        sum(has_conf) AS n_via_conf,
+        sum(CASE WHEN has_pos_tos = 1 AND has_conf = 1 THEN 1 ELSE 0 END) AS n_both,
+        sum(CASE WHEN has_pos_tos = 1 AND has_conf = 0 THEN 1 ELSE 0 END) AS n_pos_tos_only,
+        sum(CASE WHEN has_pos_tos = 0 AND has_conf = 1 THEN 1 ELSE 0 END) AS n_conf_only,
+        sum(CASE WHEN has_any_inpatient = 0 THEN 1 ELSE 0 END) AS n_outpatient_only
+      FROM patient_flags
+    ")
+    pat_overlap <- DBI::dbGetQuery(con_env$con, pat_overlap_sql)
+
+    cat(sprintf("Total patients (Step 0): %s\n", format(pat_overlap$n_total_patients, big.mark = ",")))
+    cat(sprintf("Any inpatient event:     %s (%.1f%%)\n",
+                format(pat_overlap$n_inpatient_any, big.mark = ","),
+                100 * pat_overlap$n_inpatient_any / pat_overlap$n_total_patients))
+    cat(sprintf("  Via POS/TOS (Appr 1):  %s (%.1f%%)\n",
+                format(pat_overlap$n_via_pos_tos, big.mark = ","),
+                100 * pat_overlap$n_via_pos_tos / pat_overlap$n_total_patients))
+    cat(sprintf("  Via CONF_ID (Appr 2):  %s (%.1f%%)\n",
+                format(pat_overlap$n_via_conf, big.mark = ","),
+                100 * pat_overlap$n_via_conf / pat_overlap$n_total_patients))
+    cat(sprintf("  Both approaches:       %s (%.1f%%)\n",
+                format(pat_overlap$n_both, big.mark = ","),
+                100 * pat_overlap$n_both / pat_overlap$n_total_patients))
+    cat(sprintf("  POS/TOS only:          %s (%.1f%%)\n",
+                format(pat_overlap$n_pos_tos_only, big.mark = ","),
+                100 * pat_overlap$n_pos_tos_only / pat_overlap$n_total_patients))
+    cat(sprintf("  CONF_ID only:          %s (%.1f%%)\n",
+                format(pat_overlap$n_conf_only, big.mark = ","),
+                100 * pat_overlap$n_conf_only / pat_overlap$n_total_patients))
+    cat(sprintf("Outpatient only:         %s (%.1f%%)\n",
+                format(pat_overlap$n_outpatient_only, big.mark = ","),
+                100 * pat_overlap$n_outpatient_only / pat_overlap$n_total_patients))
+    cat(DASH_60, "\n")
+
   }, error = function(e) {
     log_msg("WARN: Could not generate full attrition report: ", conditionMessage(e))
   })
