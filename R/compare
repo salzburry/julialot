@@ -1,0 +1,17 @@
+Approach: We implement both Approach 1 and Approach 2 in combination (OR logic) per Optum CDM business rules guidance:
+
+Approach 1 (POS/TOS): Inpatient if POS IN (21, 51, 61) OR TOS_CD IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF')
+Approach 2 (CONF_ID): Inpatient if CONF_ID is NOT NULL and validated against T_CONFINEMENT table with both ADMIT_DATE and DISCH_DATE present
+Non-inpatient: All records not meeting either approach above
+A claim is classified as inpatient if either approach identifies it as inpatient. This maximizes capture of true inpatient encounters.
+
+Rationale: Using both approaches together provides the most comprehensive inpatient identification. From our validation on the 2025q2 data:
+
+7,700,614 total MM dx events
+873,383 inpatient (11.3%) via combined approach
+815,973 via POS/TOS (Approach 1)
+741,642 via CONF_ID (Approach 2)
+684,232 identified by both approaches
+131,741 identified by POS/TOS only
+57,410 identified by CONF_ID only
+Using only one approach would miss 6-15% of inpatient records. Note: TOS_CD is largely NULL in our data extract, so POS and CONF_ID are the primary drivers.
