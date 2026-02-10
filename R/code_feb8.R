@@ -2569,7 +2569,43 @@ main <- function() {
     cat(sprintf("  POS/TOS only:          %s\n", format(conf_qc$n_pos_tos_only, big.mark = ",")))
     cat(sprintf("  CONF_ID only:          %s\n", format(conf_qc$n_conf_only, big.mark = ",")))
     cat(DASH_60, "\n")
-   
+
+    # ----------------------------------------------------------
+    # INPATIENT VALIDATION (scoped to qualifying cohort only)
+    # ----------------------------------------------------------
+    cat("\n")
+    cat(DASH_60, "\n")
+    cat("  INPATIENT CLASSIFICATION (Qualifying Cohort, 90d)\n")
+    cat(DASH_60, "\n")
+
+    cohort_conf_sql <- glue("
+      SELECT
+        count(*) AS n_mm_dx_events,
+        sum(inpatient_flg) AS n_inpatient_total,
+        sum(pos_tos_inpatient) AS n_via_pos_tos,
+        sum(conf_validated) AS n_via_conf,
+        sum(CASE WHEN pos_tos_inpatient = 1 AND conf_validated = 1 THEN 1 ELSE 0 END) AS n_both_approaches,
+        sum(CASE WHEN pos_tos_inpatient = 1 AND conf_validated = 0 THEN 1 ELSE 0 END) AS n_pos_tos_only,
+        sum(CASE WHEN pos_tos_inpatient = 0 AND conf_validated = 1 THEN 1 ELSE 0 END) AS n_conf_only
+      FROM {work_tbl('mm_dx_events_all')} e
+      WHERE e.PATID IN (
+        SELECT DISTINCT PATID FROM {work_tbl('ELIG_COH_ALLFLAGS')}
+        WHERE inpt_qual = 1 OR outpt2_90 = 1
+      )
+    ")
+    cohort_conf <- DBI::dbGetQuery(con_env$con, cohort_conf_sql)
+
+    cat(sprintf("MM dx events (cohort):   %s\n", format(cohort_conf$n_mm_dx_events, big.mark = ",")))
+    cat(sprintf("Inpatient (combined):    %s (%.1f%%)\n",
+                format(cohort_conf$n_inpatient_total, big.mark = ","),
+                100 * cohort_conf$n_inpatient_total / cohort_conf$n_mm_dx_events))
+    cat(sprintf("  Via POS/TOS (Appr 1):  %s\n", format(cohort_conf$n_via_pos_tos, big.mark = ",")))
+    cat(sprintf("  Via CONF_ID (Appr 2):  %s\n", format(cohort_conf$n_via_conf, big.mark = ",")))
+    cat(sprintf("  Both approaches:       %s\n", format(cohort_conf$n_both_approaches, big.mark = ",")))
+    cat(sprintf("  POS/TOS only:          %s\n", format(cohort_conf$n_pos_tos_only, big.mark = ",")))
+    cat(sprintf("  CONF_ID only:          %s\n", format(cohort_conf$n_conf_only, big.mark = ",")))
+    cat(DASH_60, "\n")
+
   }, error = function(e) {
     log_msg("WARN: Could not generate full attrition report: ", conditionMessage(e))
   })
