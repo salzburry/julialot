@@ -414,6 +414,16 @@ cfg <- list(
  
   # Create config-driven VIEW for interactive toggling (Option 2)
   create_criteria_view = as.logical(Sys.getenv("CREATE_CRITERIA_VIEW", unset = "FALSE")),
+
+  # ============================================================
+  # DYNAMIC IE CRITERIA ORDERING (interactive only)
+  # ============================================================
+  # When TRUE, after building all flags (Steps 1-23), the pipeline enters
+  # an interactive loop where the user selects IE criteria one at a time
+  # in any order, sees patient counts after each criterion, and can stop
+  # at any point to finalize the cohort.
+  # Requires interactive mode (PROMPT_USER=TRUE or interactive()).
+  dynamic_ie_order = as.logical(Sys.getenv("DYNAMIC_IE_ORDER", unset = "FALSE")),
  
   # Persist final cohort to personal schema (uses lazy table approach)
   persist_to_schema = as.logical(Sys.getenv("PERSIST_TO_SCHEMA", unset = "TRUE")),
@@ -854,6 +864,276 @@ print_attrition_table <- function() {
   cat("\n")
 }
  
+# ============================================================
+# DYNAMIC IE CRITERIA FILTER
+# Interactive loop: user picks criteria in any order, can stop early
+# Requires ELIG_COH_ALLFLAGS to be built (Steps 1-23)
+# ============================================================
+
+run_dynamic_ie_filter <- function() {
+  con <- con_env$con
+
+  # Define all IE criteria (Steps 1-10) with their SQL conditions
+  # Step 1 has window-specific SQL; all others are window-independent
+  all_criteria <- list(
+    list(step_id = 1,
+         label = "Qualifying dx (IP strict OR 2 OP in 30/60/90d window)",
+         type = "Inclusion",
+         sql_30 = "(inpt_qual = 1 OR outpt2_30 = 1)",
+         sql_60 = "(inpt_qual = 1 OR outpt2_60 = 1)",
+         sql_90 = "(inpt_qual = 1 OR outpt2_90 = 1)"),
+    list(step_id = 2,
+         label = "Age >= 18 at index year",
+         type = "Inclusion",
+         sql = "AGE_INDEX_YR >= 18"),
+    list(step_id = 3,
+         label = "FU therapy required (MM_FU_agents = 1)",
+         type = "Inclusion",
+         sql = "MM_FU_agents = 1"),
+    list(step_id = 4,
+         label = "No baseline therapy (MM_bl_agents = 0)",
+         type = "Exclusion",
+         sql = "MM_bl_agents = 0"),
+    list(step_id = 5,
+         label = "6-month baseline enrollment (CE_b = 1)",
+         type = "Inclusion",
+         sql = "CE_b = 1"),
+    list(step_id = 6,
+         label = "1+ day follow-up enrollment (CE_f = 1)",
+         type = "Inclusion",
+         sql = "CE_f = 1"),
+    list(step_id = 7,
+         label = "No baseline MM dx evidence (MM_baseline_diag = 0)",
+         type = "Exclusion",
+         sql = "MM_baseline_diag = 0"),
+    list(step_id = 8,
+         label = "No other cancer in baseline (OTHER_MALIGN_FLAG = 0)",
+         type = "Exclusion",
+         sql = "OTHER_MALIGN_FLAG = 0"),
+    list(step_id = 9,
+         label = "No pregnancy (PREGNANT_FLAG = 0)",
+         type = "Exclusion",
+         sql = "PREGNANT_FLAG = 0"),
+    list(step_id = 10,
+         label = "No clinical trial (CLINTRIAL = 0)",
+         type = "Exclusion",
+         sql = "CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0")
+  )
+
+  tbl_name <- work_tbl('ELIG_COH_ALLFLAGS')
+
+  # Cumulative SQL clauses per window (diverge only when Step 1 is applied)
+  clauses_30 <- c()
+  clauses_60 <- c()
+  clauses_90 <- c()
+
+  # Track applied criteria in user-chosen order
+  applied_criteria <- list()
+  remaining_criteria <- all_criteria
+
+  # Helper: build WHERE clause from a vector of conditions
+  build_where <- function(clauses) {
+    if (length(clauses) == 0) return("1=1")
+    paste(clauses, collapse = " AND ")
+  }
+
+  # Helper: count distinct patients for all 3 windows
+  get_counts <- function(c30, c60, c90) {
+    n30 <- DBI::dbGetQuery(con, glue("SELECT count(DISTINCT PATID) AS n FROM {tbl_name} WHERE {build_where(c30)}"))$n
+    n60 <- DBI::dbGetQuery(con, glue("SELECT count(DISTINCT PATID) AS n FROM {tbl_name} WHERE {build_where(c60)}"))$n
+    n90 <- DBI::dbGetQuery(con, glue("SELECT count(DISTINCT PATID) AS n FROM {tbl_name} WHERE {build_where(c90)}"))$n
+    list(n_30 = n30, n_60 = n60, n_90 = n90)
+  }
+
+  # Step 0: Base cohort (all patients in ELIG_COH_ALLFLAGS, no filters)
+  current <- get_counts(clauses_30, clauses_60, clauses_90)
+
+  cat("\n")
+  cat(strrep("=", 90), "\n")
+  cat("  DYNAMIC IE CRITERIA SELECTION\n")
+  cat("  Select criteria in any order. Enter 0 to finalize cohort at current state.\n")
+  cat(strrep("=", 90), "\n")
+  cat(sprintf("\nStep 0 (Base Cohort): %s patients with >= 1 MM dx\n",
+              format(current$n_30, big.mark = ",")))
+  cat(sprintf("  30-day: %-12s | 60-day: %-12s | 90-day: %-12s\n\n",
+              format(current$n_30, big.mark = ","),
+              format(current$n_60, big.mark = ","),
+              format(current$n_90, big.mark = ",")))
+
+  # Record Step 0 in attrition tracker
+  record_attrition("dyn_00_base", "Step 0: Base cohort (>= 1 MM dx)",
+                   current$n_30, current$n_60, current$n_90)
+
+  apply_counter <- 0
+
+  # ---- Interactive loop ----
+  repeat {
+    if (length(remaining_criteria) == 0) {
+      cat("\nAll criteria have been applied.\n")
+      break
+    }
+
+    # Display current counts
+    cat(strrep("-", 90), "\n")
+    cat(sprintf("Current patients:  30-day: %-12s | 60-day: %-12s | 90-day: %-12s\n",
+                format(current$n_30, big.mark = ","),
+                format(current$n_60, big.mark = ","),
+                format(current$n_90, big.mark = ",")))
+    cat(strrep("-", 90), "\n")
+
+    # Display remaining criteria
+    cat("\nAVAILABLE CRITERIA:\n\n")
+    for (crit in remaining_criteria) {
+      cat(sprintf("  [%2d] %-55s (%s)\n", crit$step_id, crit$label, crit$type))
+    }
+    cat(sprintf("\n  [ 0] FINALIZE COHORT (stop here, use current counts as final)\n"))
+    cat(strrep("-", 90), "\n")
+
+    # Get user choice
+    cat("\nEnter criterion number to apply next (0 to finalize): ")
+    response <- trimws(readline())
+    choice <- suppressWarnings(as.integer(response))
+
+    if (is.na(choice)) {
+      cat("Invalid input. Please enter a number from the list above.\n")
+      next
+    }
+
+    if (choice == 0) {
+      cat("\nFinalizing cohort with current criteria...\n")
+      break
+    }
+
+    # Find chosen criterion in remaining list
+    match_idx <- which(sapply(remaining_criteria, function(c) c$step_id) == choice)
+    if (length(match_idx) == 0) {
+      cat(sprintf("Criterion %d is not available. Please choose from the list above.\n", choice))
+      next
+    }
+
+    chosen <- remaining_criteria[[match_idx]]
+    apply_counter <- apply_counter + 1
+
+    # Add SQL clauses (Step 1 has window-specific SQL)
+    if (chosen$step_id == 1) {
+      clauses_30 <- c(clauses_30, chosen$sql_30)
+      clauses_60 <- c(clauses_60, chosen$sql_60)
+      clauses_90 <- c(clauses_90, chosen$sql_90)
+    } else {
+      clauses_30 <- c(clauses_30, chosen$sql)
+      clauses_60 <- c(clauses_60, chosen$sql)
+      clauses_90 <- c(clauses_90, chosen$sql)
+    }
+
+    # Count patients with new cumulative criteria
+    prev <- current
+    current <- get_counts(clauses_30, clauses_60, clauses_90)
+
+    # Display results
+    cat(sprintf("\n>> Applied Step %d: %s\n", chosen$step_id, chosen$label))
+    cat(sprintf("   30-day: %s -> %s  (excluded: %s)\n",
+                format(prev$n_30, big.mark = ","),
+                format(current$n_30, big.mark = ","),
+                format(prev$n_30 - current$n_30, big.mark = ",")))
+    cat(sprintf("   60-day: %s -> %s  (excluded: %s)\n",
+                format(prev$n_60, big.mark = ","),
+                format(current$n_60, big.mark = ","),
+                format(prev$n_60 - current$n_60, big.mark = ",")))
+    cat(sprintf("   90-day: %s -> %s  (excluded: %s)\n\n",
+                format(prev$n_90, big.mark = ","),
+                format(current$n_90, big.mark = ","),
+                format(prev$n_90 - current$n_90, big.mark = ",")))
+
+    # Record in attrition tracker
+    record_attrition(
+      sprintf("dyn_%02d_step%d", apply_counter, chosen$step_id),
+      sprintf("Applied %d: Step %d - %s", apply_counter, chosen$step_id, chosen$label),
+      current$n_30, current$n_60, current$n_90
+    )
+
+    # Move from remaining to applied
+    applied_criteria <- c(applied_criteria, list(chosen))
+    remaining_criteria <- remaining_criteria[-match_idx]
+  }
+
+  # ---- Create final cohort view ----
+  cat("\n")
+  cat(strrep("=", 90), "\n")
+  cat("  CREATING FINAL COHORT\n")
+  cat(strrep("=", 90), "\n")
+
+  # Build final WHERE for configured outpatient window
+  final_where <- switch(as.character(cfg$outpatient_window),
+    "30" = build_where(clauses_30),
+    "60" = build_where(clauses_60),
+    build_where(clauses_90)  # default to 90
+  )
+
+  # Create final cohort view (earliest qualifying index per patient)
+  final_sql <- glue("
+    CREATE OR REPLACE TEMPORARY VIEW {work(cfg$final_table_name)} AS
+    WITH filtered AS (
+      SELECT * FROM {tbl_name}
+      WHERE {final_where}
+    ),
+    ranked AS (
+      SELECT *, row_number() OVER (PARTITION BY PATID ORDER BY INDEX_DATE) AS rn
+      FROM filtered
+    )
+    SELECT * FROM ranked WHERE rn = 1
+  ")
+
+  DBI::dbExecute(con, final_sql)
+
+  final_count <- DBI::dbGetQuery(con, glue(
+    "SELECT count(*) AS n FROM {work(cfg$final_table_name)}"
+  ))$n
+  record_attrition("dyn_99_final",
+                   glue("FINAL ({cfg$final_table_name}, earliest index, {cfg$outpatient_window}d)"),
+                   final_count, final_count, final_count)
+
+  cat(sprintf("\nFinal cohort (%s): %s patients (earliest index per patient, %dd window)\n",
+              cfg$final_table_name,
+              format(final_count, big.mark = ","),
+              cfg$outpatient_window))
+
+  # ---- Print attrition summary ----
+  print_attrition_table()
+
+  # ---- Show criteria application order summary ----
+  cat("\nCriteria applied in order:\n")
+  for (i in seq_along(applied_criteria)) {
+    crit <- applied_criteria[[i]]
+    cat(sprintf("  %d. Step %d: %s (%s)\n", i, crit$step_id, crit$label, crit$type))
+  }
+  if (length(remaining_criteria) > 0) {
+    cat("\nCriteria NOT applied (user finalized early):\n")
+    for (crit in remaining_criteria) {
+      cat(sprintf("  - Step %d: %s (%s)\n", crit$step_id, crit$label, crit$type))
+    }
+  }
+  cat("\n")
+
+  # ---- Persist to personal schema if configured ----
+  if (isTRUE(cfg$persist_to_schema) && nzchar(cfg$personal_schema)) {
+    log_msg("Persisting final cohort to personal schema...")
+    tryCatch({
+      persist_sql <- glue("
+        CREATE OR REPLACE TABLE {cfg$catalog}.{cfg$personal_schema}.{cfg$final_table_name} AS
+        SELECT * FROM {work(cfg$final_table_name)}
+      ")
+      DBI::dbExecute(con, persist_sql)
+      n_persisted <- DBI::dbGetQuery(con, glue(
+        "SELECT count(*) AS n FROM {cfg$catalog}.{cfg$personal_schema}.{cfg$final_table_name}"
+      ))$n
+      log_msg("Persisted final cohort to ", cfg$catalog, ".", cfg$personal_schema, ".",
+              cfg$final_table_name, " (", format(n_persisted, big.mark = ","), " rows)")
+    }, error = function(e) {
+      log_msg("WARN: Failed to persist final cohort: ", conditionMessage(e))
+    })
+  }
+}
+
 # ============================================================
 # CONNECTION WITH RETRY (returns value, not just TRUE)
 # Follows Domino ODBC pattern: DSN + password
@@ -2208,20 +2488,29 @@ main <- function() {
   # ============================================================
   # PROMPT FOR INCLUSION/EXCLUSION CRITERIA
   # ============================================================
-  ie_criteria <- prompt_ie_criteria()
+  if (isTRUE(cfg$dynamic_ie_order) && should_prompt()) {
+    log_msg("DYNAMIC IE MODE: Criteria will be selected interactively after base steps")
+    log_msg("Skipping upfront IE criteria prompt (all criteria available in dynamic loop)")
+    ie_criteria <- NULL
+  } else {
+    ie_criteria <- prompt_ie_criteria()
+  }
  
   # Update cfg with user-selected criteria (validate outpatient window)
-  cfg$outpatient_window <<- validate_outpatient_window(ie_criteria$outpatient_window)
-  cfg$apply_age_incl <<- ie_criteria$apply_age
-  cfg$min_age <<- ie_criteria$min_age
-  cfg$apply_ce_b_incl <<- ie_criteria$apply_ce_baseline
-  cfg$apply_ce_f_incl <<- ie_criteria$apply_ce_followup
-  cfg$apply_no_bl_agents_incl <<- ie_criteria$apply_no_baseline_therapy
-  cfg$apply_fu_agents_incl <<- ie_criteria$apply_followup_therapy
-  cfg$apply_pregnancy_excl <<- ie_criteria$apply_pregnancy_excl
-  cfg$apply_clintrial_excl <<- ie_criteria$apply_clintrial_excl
-  cfg$apply_other_malig_excl <<- ie_criteria$apply_other_malig_excl
-  cfg$apply_baseline_nondx_excl <<- ie_criteria$apply_baseline_nondx_excl
+  # Skip when dynamic mode is on (criteria selected interactively later)
+  if (!is.null(ie_criteria)) {
+    cfg$outpatient_window <<- validate_outpatient_window(ie_criteria$outpatient_window)
+    cfg$apply_age_incl <<- ie_criteria$apply_age
+    cfg$min_age <<- ie_criteria$min_age
+    cfg$apply_ce_b_incl <<- ie_criteria$apply_ce_baseline
+    cfg$apply_ce_f_incl <<- ie_criteria$apply_ce_followup
+    cfg$apply_no_bl_agents_incl <<- ie_criteria$apply_no_baseline_therapy
+    cfg$apply_fu_agents_incl <<- ie_criteria$apply_followup_therapy
+    cfg$apply_pregnancy_excl <<- ie_criteria$apply_pregnancy_excl
+    cfg$apply_clintrial_excl <<- ie_criteria$apply_clintrial_excl
+    cfg$apply_other_malig_excl <<- ie_criteria$apply_other_malig_excl
+    cfg$apply_baseline_nondx_excl <<- ie_criteria$apply_baseline_nondx_excl
+  }
  
   log_msg("=", SEP_59)
   log_msg("ATTRITION COHORT PIPELINE - run_id: ", run_id)
@@ -2291,6 +2580,20 @@ main <- function() {
     log_msg("WARNING: Unknown RUN_MODE '", cfg$run_mode, "', defaulting to FULL")
   }
  
+
+  # DYNAMIC IE MODE: Exclude final filter steps (criteria applied interactively after base build)
+  if (isTRUE(cfg$dynamic_ie_order) && should_prompt()) {
+    if (cfg$run_mode == "FILTER_ONLY") {
+      log_msg("WARN: DYNAMIC_IE_ORDER is not compatible with FILTER_ONLY mode. Ignoring dynamic mode.")
+      cfg$dynamic_ie_order <<- FALSE
+    } else {
+      filter_indices <- grep("^2[45]", sapply(steps, function(s) s$name))
+      if (length(filter_indices) > 0) {
+        steps <- steps[-filter_indices]
+      }
+      log_msg("DYNAMIC IE MODE: Will apply criteria interactively after base steps complete")
+    }
+  }
   total_steps <- length(steps)
  
   cat("\n")
@@ -2320,6 +2623,19 @@ main <- function() {
     }
   }
  
+  # ============================================================
+  # DYNAMIC IE MODE: Interactive criterion-by-criterion filtering
+  # ============================================================
+  if (isTRUE(cfg$dynamic_ie_order) && should_prompt()) {
+    log_msg("=", SEP_59)
+    log_msg("BASE STEPS COMPLETE - Entering dynamic IE criteria selection...")
+    run_dynamic_ie_filter()
+    log_msg("=", SEP_59)
+    log_msg("DYNAMIC IE PIPELINE COMPLETE")
+    log_msg("=", SEP_59)
+    return(invisible(NULL))
+  }
+
   # Final summary
   log_msg("=", SEP_59)
   log_msg("PIPELINE COMPLETE - Generating attrition report...")
