@@ -2675,4 +2675,3 @@ if (!interactive()) {
 } else {
   log_msg("Source loaded. Call main() to run pipeline.")
 }
-Sent from Gmail Mobile
