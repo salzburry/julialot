@@ -1088,9 +1088,25 @@ run_dynamic_ie_filter <- function() {
   final_count <- DBI::dbGetQuery(con, glue(
     "SELECT count(*) AS n FROM {work(cfg$final_table_name)}"
   ))$n
+  # Compute per-window final counts (earliest index per patient) for attrition table
+  # Each window may yield a different patient count because qualifying criteria differ
+  final_count_per_window <- function(window_clauses) {
+    w <- build_where(window_clauses)
+    DBI::dbGetQuery(con, glue("
+      SELECT count(*) AS n FROM (
+        SELECT PATID, row_number() OVER (PARTITION BY PATID ORDER BY INDEX_DATE) AS rn
+        FROM {tbl_name}
+        WHERE {w}
+      ) WHERE rn = 1
+    "))$n
+  }
+  final_30 <- final_count_per_window(clauses_30)
+  final_60 <- final_count_per_window(clauses_60)
+  final_90 <- final_count_per_window(clauses_90)
+
   record_attrition("dyn_99_final",
                    glue("FINAL ({cfg$final_table_name}, earliest index, {cfg$outpatient_window}d)"),
-                   final_count, final_count, final_count)
+                   final_30, final_60, final_90)
  
   cat(sprintf("\nFinal cohort (%s): %s patients (earliest index per patient, %dd window)\n",
               cfg$final_table_name,
