@@ -2379,22 +2379,25 @@ main <- function() {
     # ----------------------------------------------------------
 
     # Cumulative condition -- grows as each applied step adds its filter
-    cum_cond <- "AGE_INDEX_YR >= 18"
+    cum_cond <- ""
 
-    # Step 2: Age >= 18 (always applied)
-    s2 <- count_3w(
-      glue("{qual_30} AND {cum_cond}"),
-      glue("{qual_60} AND {cum_cond}"),
-      glue("{qual_90} AND {cum_cond}"))
-    record_attrition("02_step2_age", "Step 2: Age >= 18 at index year", s2$n_30, s2$n_60, s2$n_90)
+    # Step 2: Age >= min_age (conditional on apply_age_incl)
+    if (isTRUE(cfg$apply_age_incl)) {
+      cum_cond <- paste0(cum_cond, " AND AGE_INDEX_YR >= ", cfg$min_age)
+      s2 <- count_3w(
+        glue("{qual_30}{cum_cond}"),
+        glue("{qual_60}{cum_cond}"),
+        glue("{qual_90}{cum_cond}"))
+      record_attrition("02_step2_age", glue("Step 2: Age >= {cfg$min_age} at index year"), s2$n_30, s2$n_60, s2$n_90)
+    }
 
     # Step 3: FU therapy required (conditional on apply_fu_agents_incl)
     if (isTRUE(cfg$apply_fu_agents_incl)) {
       cum_cond <- paste0(cum_cond, " AND MM_FU_agents = 1")
       s3 <- count_3w(
-        glue("{qual_30} AND {cum_cond}"),
-        glue("{qual_60} AND {cum_cond}"),
-        glue("{qual_90} AND {cum_cond}"))
+        glue("{qual_30}{cum_cond}"),
+        glue("{qual_60}{cum_cond}"),
+        glue("{qual_90}{cum_cond}"))
       record_attrition("03_step3_fu_therapy", "Step 3: FU therapy required", s3$n_30, s3$n_60, s3$n_90)
     }
 
@@ -2402,9 +2405,9 @@ main <- function() {
     if (isTRUE(cfg$apply_no_bl_agents_incl)) {
       cum_cond <- paste0(cum_cond, " AND MM_bl_agents = 0")
       s4 <- count_3w(
-        glue("{qual_30} AND {cum_cond}"),
-        glue("{qual_60} AND {cum_cond}"),
-        glue("{qual_90} AND {cum_cond}"))
+        glue("{qual_30}{cum_cond}"),
+        glue("{qual_60}{cum_cond}"),
+        glue("{qual_90}{cum_cond}"))
       record_attrition("04_step4_no_bl_therapy", "Step 4: No baseline therapy (excl)", s4$n_30, s4$n_60, s4$n_90)
     }
 
@@ -2412,9 +2415,9 @@ main <- function() {
     if (isTRUE(cfg$apply_ce_b_incl)) {
       cum_cond <- paste0(cum_cond, " AND CE_b = 1")
       s5 <- count_3w(
-        glue("{qual_30} AND {cum_cond}"),
-        glue("{qual_60} AND {cum_cond}"),
-        glue("{qual_90} AND {cum_cond}"))
+        glue("{qual_30}{cum_cond}"),
+        glue("{qual_60}{cum_cond}"),
+        glue("{qual_90}{cum_cond}"))
       record_attrition("05_step5_ce_baseline", "Step 5: 6-mo baseline enrollment", s5$n_30, s5$n_60, s5$n_90)
     }
 
@@ -2422,9 +2425,9 @@ main <- function() {
     if (isTRUE(cfg$apply_ce_f_incl)) {
       cum_cond <- paste0(cum_cond, " AND CE_f = 1")
       s6 <- count_3w(
-        glue("{qual_30} AND {cum_cond}"),
-        glue("{qual_60} AND {cum_cond}"),
-        glue("{qual_90} AND {cum_cond}"))
+        glue("{qual_30}{cum_cond}"),
+        glue("{qual_60}{cum_cond}"),
+        glue("{qual_90}{cum_cond}"))
       record_attrition("06_step6_ce_followup", "Step 6: 1+ day FU enrollment", s6$n_30, s6$n_60, s6$n_90)
     }
 
@@ -2432,9 +2435,9 @@ main <- function() {
     if (isTRUE(cfg$apply_baseline_nondx_excl)) {
       cum_cond <- paste0(cum_cond, " AND MM_baseline_diag = 0")
       s7 <- count_3w(
-        glue("{qual_30} AND {cum_cond}"),
-        glue("{qual_60} AND {cum_cond}"),
-        glue("{qual_90} AND {cum_cond}"))
+        glue("{qual_30}{cum_cond}"),
+        glue("{qual_60}{cum_cond}"),
+        glue("{qual_90}{cum_cond}"))
       record_attrition("07_step7_bl_mm_evidence", "Step 7: BL MM evidence (excl)", s7$n_30, s7$n_60, s7$n_90)
     }
 
@@ -2442,9 +2445,9 @@ main <- function() {
     if (isTRUE(cfg$apply_other_malig_excl)) {
       cum_cond <- paste0(cum_cond, " AND OTHER_MALIGN_FLAG = 0")
       s8 <- count_3w(
-        glue("{qual_30} AND {cum_cond}"),
-        glue("{qual_60} AND {cum_cond}"),
-        glue("{qual_90} AND {cum_cond}"))
+        glue("{qual_30}{cum_cond}"),
+        glue("{qual_60}{cum_cond}"),
+        glue("{qual_90}{cum_cond}"))
       record_attrition("08_step8_other_cancer", "Step 8: Other cancer (excl)", s8$n_30, s8$n_60, s8$n_90)
     }
 
@@ -2452,9 +2455,9 @@ main <- function() {
     if (isTRUE(cfg$apply_pregnancy_excl)) {
       cum_cond <- paste0(cum_cond, " AND PREGNANT_FLAG = 0")
       s9 <- count_3w(
-        glue("{qual_30} AND {cum_cond}"),
-        glue("{qual_60} AND {cum_cond}"),
-        glue("{qual_90} AND {cum_cond}"))
+        glue("{qual_30}{cum_cond}"),
+        glue("{qual_60}{cum_cond}"),
+        glue("{qual_90}{cum_cond}"))
       record_attrition("09_step9_pregnancy", "Step 9: Pregnancy (excl)", s9$n_30, s9$n_60, s9$n_90)
     }
 
@@ -2462,9 +2465,9 @@ main <- function() {
     if (isTRUE(cfg$apply_clintrial_excl)) {
       cum_cond <- paste0(cum_cond, " AND CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0")
       s10 <- count_3w(
-        glue("{qual_30} AND {cum_cond}"),
-        glue("{qual_60} AND {cum_cond}"),
-        glue("{qual_90} AND {cum_cond}"))
+        glue("{qual_30}{cum_cond}"),
+        glue("{qual_60}{cum_cond}"),
+        glue("{qual_90}{cum_cond}"))
       record_attrition("10_step10_clintrial", "Step 10: Clinical trial (excl)", s10$n_30, s10$n_60, s10$n_90)
     }
    
