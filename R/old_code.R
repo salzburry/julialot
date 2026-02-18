@@ -175,7 +175,7 @@ prompt_ie_criteria <- function() {
     apply_pregnancy_excl = TRUE,
     apply_clintrial_excl = TRUE,
     apply_other_malig_excl = TRUE,
-    apply_baseline_nondx_excl = FALSE
+    apply_baseline_nondx_excl = TRUE
   )
  
   if (!should_prompt()) {
@@ -272,9 +272,8 @@ prompt_ie_criteria <- function() {
   # 9. Other malignancy exclusion
   criteria$apply_other_malig_excl <- ask_yn("Exclude patients with other malignancies?", criteria$apply_other_malig_excl)
  
-  # NOTE: Baseline non-diagnostic claim exclusion is hardcoded to FALSE
-  # (diagnostic code list is incomplete, causes 81% false exclusion rate)
-  criteria$apply_baseline_nondx_excl <- FALSE
+  # 10. Baseline MM evidence exclusion (Step 7)
+  criteria$apply_baseline_nondx_excl <- ask_yn("Exclude patients with baseline MM dx evidence (Step 7)?", criteria$apply_baseline_nondx_excl)
  
   # Show summary and confirm
   cat("\n")
@@ -293,6 +292,7 @@ prompt_ie_criteria <- function() {
   cat("  [", if(criteria$apply_pregnancy_excl) "X" else " ", "] Pregnancy\n", sep = "")
   cat("  [", if(criteria$apply_clintrial_excl) "X" else " ", "] Clinical trial participation\n", sep = "")
   cat("  [", if(criteria$apply_other_malig_excl) "X" else " ", "] Other malignancies\n", sep = "")
+  cat("  [", if(criteria$apply_baseline_nondx_excl) "X" else " ", "] Baseline MM dx evidence\n", sep = "")
  
   cat("\n============================================================\n")
   cat("Proceed with these criteria? [Y/n]: ")
