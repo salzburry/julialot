@@ -2414,11 +2414,11 @@ main <- function() {
     excl_suffix <- if (isTRUE(cfg$apply_baseline_nondx_excl)) "" else " [not applied]"
     record_attrition("07_step7_bl_mm_evidence", paste0("Step 7: BL MM evidence (excl)", excl_suffix), s7$n_30, s7$n_60, s7$n_90)
    
-    # Cumulative base for steps 8-10 (depends on whether Step 7 is applied)
-    base_cond <- "AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0 AND CE_b = 1 AND CE_f = 1"
-    if (isTRUE(cfg$apply_baseline_nondx_excl)) {
-      base_cond <- paste0(base_cond, " AND MM_baseline_diag = 0")
-    }
+    # Cumulative base for steps 8-10: always includes Step 7 (MM_baseline_diag)
+    # so that the attrition table is truly sequential per protocol order.
+    # The apply_baseline_nondx_excl toggle only affects the final cohort filter
+    # (Step 24), not the attrition table counts.
+    base_cond <- "AGE_INDEX_YR >= 18 AND MM_FU_agents = 1 AND MM_bl_agents = 0 AND CE_b = 1 AND CE_f = 1 AND MM_baseline_diag = 0"
    
     # Step 8: Other cancer (exclusion) - always report
     s8 <- count_3w(
