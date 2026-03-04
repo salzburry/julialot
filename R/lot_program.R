@@ -1563,7 +1563,7 @@ main <- function() {
     WITH sct_codes AS (
       SELECT /*+ BROADCAST */ * FROM sct_codelist
     ),
-    -- Medical PROC_CD
+    -- Medical PROC_CD (contains CPT/HCPCS per Optum business rules)
     med_proc AS (
       SELECT m.PATID, cast(m.FST_DT AS date) AS DATE_SERVICE,
              s.SCT_TYPE, s.CL_CODE AS CODE
@@ -1575,7 +1575,7 @@ main <- function() {
       WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT
     ),
-    -- Medical BILL_PROC_CD
+    -- Medical BILL_PROC_CD (also CPT/HCPCS per Optum business rules)
     med_bill AS (
       SELECT m.PATID, cast(m.FST_DT AS date) AS DATE_SERVICE,
              s.SCT_TYPE, s.CL_CODE AS CODE
@@ -1588,13 +1588,18 @@ main <- function() {
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT
     ),
     -- MED_PROCEDURE PROC
+    -- NOTE: Per Optum business rules, MED_PROCEDURE.PROC typically contains
+    -- ICD-9/ICD-10 procedure codes, not CPT/HCPCS. Matching HCPCS SCT codes
+    -- here is a safety net (consistent with MMA_MED extraction) but may not
+    -- produce matches. If ICD-10-PCS SCT codes are needed (e.g. 30233G1 for
+    -- autologous SCT), add them to the SCT codelist with CL_CODE_TYPE='ICD'.
     medproc AS (
       SELECT mp.PATID, cast(mp.FST_DT AS date) AS DATE_SERVICE,
              s.SCT_TYPE, s.CL_CODE AS CODE
       FROM {cdm_src(cfg$tbl_med_proc)} mp
       INNER JOIN lot_patient_input p ON mp.PATID = p.PATID
       INNER JOIN sct_codes s
-        ON s.CL_CODE_TYPE = 'HCPCS'
+        ON s.CL_CODE_TYPE IN ('HCPCS', 'ICD')
        AND upper(regexp_replace(coalesce(cast(mp.PROC as string),''), '[^A-Za-z0-9]', '')) = s.CL_CODE
       WHERE cast(mp.FST_DT AS date) >= p.INDEX_DATE
         AND cast(mp.FST_DT AS date) <= p.OBS_END_DT
@@ -1615,9 +1620,20 @@ main <- function() {
     GROUP BY SCT_TYPE
     ORDER BY SCT_TYPE")
 
-  # S13: AUTO SCT date processing
+  # S13: AUTO SCT date processing (per sct.pdf)
+  #
   # Step 1: Group AUTO claims into 14-day windows (claims within 14 days of
-  #         window start are in same window). Select earliest date per window.
+  #         window start are in same window). Per spec, select the LAST (max)
+  #         date in each window, NOT the first -- first claims are workup
+  #         activity, last claim is the actual transplant.
+  #
+  # Tandem boundary adjustment: when a 14-day window overlaps the 180-day
+  # tandem boundary (from the previous finalized TX date), select the date
+  # closest to the boundary rather than the window max. This ensures accurate
+  # tandem determination. Computed as min |date - boundary| over all dates
+  # in the window. (See sct.pdf example: TX_AUTO1=09MAY2018, 180-day mark
+  # ~05NOV2018, window 06NOV-20NOV picks 07NOV instead of 20NOV.)
+  #
   # Step 2: Apply 60-day minimum gap between events (merge if < 60 days apart).
   # Result: finalized TX dates for AUTO SCT per patient.
   run_step(con, "S13_tx_auto_dates", glue("
@@ -1633,62 +1649,160 @@ main <- function() {
       FROM auto_dates
       GROUP BY PATID
     ),
-    -- Step 1: Group into 14-day windows, pick earliest date per window
-    windowed AS (
+    -- Phase 1 + 2 combined: 14-day windowing with tandem-aware date selection
+    -- + 60-day gap merging in a single pass.
+    --
+    -- State tracks:
+    --   tx_dates: finalized TX dates array
+    --   cur_start: start of current 14-day window (first date in window)
+    --   cur_max_dt: last (max) date in current window (default selection)
+    --   cur_boundary_dt: date in window closest to tandem boundary
+    --   cur_boundary_dist: abs distance of cur_boundary_dt to tandem boundary
+    --   last_tx_dt: last finalized TX date (for tandem boundary + 60-day gap)
+    processed AS (
       SELECT PATID,
         aggregate(
           dates_arr,
           named_struct(
-            'windows', cast(array() as array<date>),
-            'cur_start', cast(null as date)
-          ),
-          (s, x) -> CASE
-            WHEN s.cur_start IS NULL THEN
-              named_struct('windows', s.windows, 'cur_start', x)
-            WHEN datediff(x, s.cur_start) <= {cfg$sct_auto_window_days} THEN
-              s
-            ELSE
-              named_struct(
-                'windows', array_append(s.windows, s.cur_start),
-                'cur_start', x
-              )
-          END,
-          s -> CASE
-            WHEN s.cur_start IS NULL THEN s.windows
-            ELSE array_append(s.windows, s.cur_start)
-          END
-        ) AS window_dates
-      FROM grouped
-    ),
-    -- Step 2: Apply 60-day minimum gap (merge events < 60 days apart)
-    gap_merged AS (
-      SELECT PATID,
-        aggregate(
-          window_dates,
-          named_struct(
             'tx_dates', cast(array() as array<date>),
-            'last_dt', cast(null as date)
+            'cur_start', cast(null as date),
+            'cur_max_dt', cast(null as date),
+            'cur_boundary_dt', cast(null as date),
+            'cur_boundary_dist', cast(null as int),
+            'last_tx_dt', cast(null as date)
           ),
           (s, x) -> CASE
-            WHEN s.last_dt IS NULL THEN
+            -- First claim ever: start first window
+            WHEN s.cur_start IS NULL THEN
               named_struct(
-                'tx_dates', array_append(s.tx_dates, x),
-                'last_dt', x
+                'tx_dates', s.tx_dates,
+                'cur_start', x,
+                'cur_max_dt', x,
+                'cur_boundary_dt', cast(null as date),
+                'cur_boundary_dist', cast(null as int),
+                'last_tx_dt', s.last_tx_dt
               )
-            WHEN datediff(x, s.last_dt) >= {cfg$sct_auto_gap_days} THEN
+            -- Within 14-day window: update max + tandem boundary tracking
+            WHEN datediff(x, s.cur_start) <= {cfg$sct_auto_window_days} THEN
               named_struct(
-                'tx_dates', array_append(s.tx_dates, x),
-                'last_dt', x
+                'tx_dates', s.tx_dates,
+                'cur_start', s.cur_start,
+                'cur_max_dt', x,  -- x >= cur_max_dt since sorted
+                -- Track date closest to tandem boundary, BUT only when date is
+                -- within window_days of the boundary (i.e., window overlaps or
+                -- is adjacent to the 180-day mark). When far from boundary,
+                -- cur_boundary_dt stays NULL so coalesce() falls back to max.
+                'cur_boundary_dt', CASE
+                  WHEN s.last_tx_dt IS NULL THEN NULL
+                  WHEN abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                       <= {cfg$sct_auto_window_days}
+                   AND (s.cur_boundary_dist IS NULL
+                        OR abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                           < s.cur_boundary_dist)
+                    THEN x
+                  WHEN s.cur_boundary_dt IS NOT NULL THEN s.cur_boundary_dt
+                  ELSE NULL
+                END,
+                'cur_boundary_dist', CASE
+                  WHEN s.last_tx_dt IS NULL THEN NULL
+                  WHEN abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                       <= {cfg$sct_auto_window_days}
+                   AND (s.cur_boundary_dist IS NULL
+                        OR abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                           < s.cur_boundary_dist)
+                    THEN abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                  WHEN s.cur_boundary_dist IS NOT NULL THEN s.cur_boundary_dist
+                  ELSE NULL
+                END,
+                'last_tx_dt', s.last_tx_dt
               )
-            ELSE s
+            -- Beyond 14-day window: finalize current window, start new
+            ELSE
+              -- Select date: use boundary-closest if tandem boundary active, else max
+              -- Then apply 60-day gap: only keep if >= 60 days from last_tx_dt
+              CASE
+                WHEN s.last_tx_dt IS NOT NULL
+                 AND datediff(
+                       coalesce(s.cur_boundary_dt, s.cur_max_dt),
+                       s.last_tx_dt
+                     ) < {cfg$sct_auto_gap_days}
+                THEN
+                  -- Too close to last TX: discard window, start new
+                  named_struct(
+                    'tx_dates', s.tx_dates,
+                    'cur_start', x,
+                    'cur_max_dt', x,
+                    -- Only init boundary tracking if x is near the boundary
+                    'cur_boundary_dt', CASE
+                      WHEN s.last_tx_dt IS NOT NULL
+                       AND abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                           <= {cfg$sct_auto_window_days}
+                      THEN x
+                      ELSE NULL
+                    END,
+                    'cur_boundary_dist', CASE
+                      WHEN s.last_tx_dt IS NOT NULL
+                       AND abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                           <= {cfg$sct_auto_window_days}
+                      THEN abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                      ELSE NULL
+                    END,
+                    'last_tx_dt', s.last_tx_dt
+                  )
+                ELSE
+                  -- Valid TX: finalize and start new window
+                  named_struct(
+                    'tx_dates', array_append(
+                      s.tx_dates,
+                      coalesce(s.cur_boundary_dt, s.cur_max_dt)
+                    ),
+                    'cur_start', x,
+                    'cur_max_dt', x,
+                    -- Init boundary tracking relative to newly finalized TX
+                    'cur_boundary_dt', CASE
+                      WHEN abs(datediff(
+                             x,
+                             date_add(coalesce(s.cur_boundary_dt, s.cur_max_dt), {cfg$sct_tandem_days} - 1)
+                           )) <= {cfg$sct_auto_window_days}
+                      THEN x
+                      ELSE NULL
+                    END,
+                    'cur_boundary_dist', CASE
+                      WHEN abs(datediff(
+                             x,
+                             date_add(coalesce(s.cur_boundary_dt, s.cur_max_dt), {cfg$sct_tandem_days} - 1)
+                           )) <= {cfg$sct_auto_window_days}
+                      THEN abs(datediff(
+                             x,
+                             date_add(coalesce(s.cur_boundary_dt, s.cur_max_dt), {cfg$sct_tandem_days} - 1)
+                           ))
+                      ELSE NULL
+                    END,
+                    'last_tx_dt', coalesce(s.cur_boundary_dt, s.cur_max_dt)
+                  )
+                END
           END,
-          s -> s.tx_dates
+          -- Finalize: flush last open window
+          s -> CASE
+            WHEN s.cur_start IS NULL THEN s.tx_dates
+            -- Apply 60-day gap check for last window
+            WHEN s.last_tx_dt IS NOT NULL
+             AND datediff(
+                   coalesce(s.cur_boundary_dt, s.cur_max_dt),
+                   s.last_tx_dt
+                 ) < {cfg$sct_auto_gap_days}
+            THEN s.tx_dates
+            ELSE array_append(
+              s.tx_dates,
+              coalesce(s.cur_boundary_dt, s.cur_max_dt)
+            )
+          END
         ) AS tx_dates
-      FROM windowed
+      FROM grouped
     ),
     exploded AS (
       SELECT PATID, posexplode(tx_dates) AS (pos, TX_DT)
-      FROM gap_merged
+      FROM processed
     )
     SELECT PATID, pos + 1 AS TX_SEQ, TX_DT
     FROM exploded
@@ -1794,7 +1908,7 @@ main <- function() {
         -- Tandem: two AUTO SCTs within 180 days, no ALLO between
         CASE
           WHEN ap.AUTO_DT_2 IS NOT NULL
-           AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}
+           AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) + 1 <= {cfg$sct_tandem_days}
            AND coalesce(ab.n_allo_between, 0) = 0
           THEN 1 ELSE 0
         END AS LOT1_SCT_AUTO_TAND_FLG,
@@ -1802,7 +1916,7 @@ main <- function() {
         CASE
           WHEN ap.AUTO_DT_1 IS NOT NULL
            AND NOT (ap.AUTO_DT_2 IS NOT NULL
-                    AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}
+                    AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) + 1 <= {cfg$sct_tandem_days}
                     AND coalesce(ab.n_allo_between, 0) = 0)
           THEN 1 ELSE 0
         END AS LOT1_SCT_AUTO_SING_FLG,
@@ -1810,7 +1924,7 @@ main <- function() {
         -- Tandem -> 3rd AUTO ends LOT1; Single -> 2nd AUTO ends LOT1
         CASE
           WHEN ap.AUTO_DT_2 IS NOT NULL
-           AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}
+           AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) + 1 <= {cfg$sct_tandem_days}
            AND coalesce(ab.n_allo_between, 0) = 0
           THEN ap.AUTO_DT_3
           WHEN ap.AUTO_DT_1 IS NOT NULL
