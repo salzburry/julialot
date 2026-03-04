@@ -48,9 +48,10 @@ lot_cfg <- list(
                                unset = Sys.getenv("DOMINO_STARTING_USERNAME", unset = "")),
 
   # Source tables (Optum Clinformatics)
-  tbl_medical  = "medical",
-  tbl_med_diag = "med_diagnosis",
-  tbl_rx       = "rx",
+  tbl_medical   = "medical",
+  tbl_med_diag  = "med_diagnosis",
+  tbl_med_proc  = "med_procedure",
+  tbl_rx        = "rx",
 
   # Quarterly table pattern
 
@@ -583,8 +584,8 @@ build_lot_steps <- function() {
     # ----------------------------------------------------------
     list(
       name = "L05_mma_med_raw",
-      description = "Extracting raw MM medication claims (medical + pharmacy)",
-      source_tables = c("medical", "rx"),
+      description = "Extracting raw MM medication claims (medical + med_procedure + pharmacy)",
+      source_tables = c("medical", "med_procedure", "rx"),
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW mma_med_raw AS
         -- Medical claims: match HCPCS J-codes via PROC_CD (primary procedure)
@@ -626,11 +627,34 @@ build_lot_steps <- function() {
           WHERE m.FST_DT IS NOT NULL
             AND m.BILL_PROC_CD IS NOT NULL
         ),
-        -- Combine both medical code sources (dedup below)
+        -- Medical claims: also check MED_PROCEDURE table (PROC field)
+        -- Per Optum business rules: PROC from T_MED_PROCEDURE can hold
+        -- HCPCS codes (up to 25 procedure codes per claim)
+        medical_claims_medproc AS (
+          SELECT /*+ BROADCAST(c) */
+            mp.PATID,
+            cast(mp.FST_DT AS date) AS DATE_SERVICE,
+            {cfg$medical_day_supply} AS DAY_SUPPLY,
+            'medical' AS CLAIM_TYPE,
+            'HCPCS' AS CODE_TYPE,
+            upper(regexp_replace(mp.PROC, '\\\\.', '')) AS CODE,
+            c.CL_MEDICATION_FULL,
+            c.CL_MED_CLASS,
+            c.CL_MED_ABBR
+          FROM {lot_cdm_src(cfg$tbl_med_proc)} mp
+          INNER JOIN mma_codelist c
+            ON c.CL_CODE_TYPE = 'HCPCS'
+            AND upper(regexp_replace(mp.PROC, '\\\\.', '')) = c.CL_CODE
+          WHERE mp.FST_DT IS NOT NULL
+            AND mp.PROC IS NOT NULL
+        ),
+        -- Combine all medical code sources (UNION dedup across sources)
         medical_claims AS (
           SELECT * FROM medical_claims_proc
           UNION
           SELECT * FROM medical_claims_bill
+          UNION
+          SELECT * FROM medical_claims_medproc
         ),
         -- Pharmacy claims (NDC -> MMA codelist)
         -- Per Optum CDM v9.0, DAYS_SUP = days supply on RX table
