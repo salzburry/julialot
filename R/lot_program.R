@@ -310,15 +310,24 @@ run_step <- function(con, name, sql, qc = NULL) {
 # DESCRIPTIVES + FIGURES
 # ============================================================
 # Generates summary tables + ggplot2 figures for QC and reporting.
-# Figures saved to cfg$output_dir as PNG + interactive HTML.
-# If ggplot2 is not available, figures are skipped gracefully.
-# If plotly/htmlwidgets are available, interactive HTML versions are also saved.
+# Figures saved to cfg$output_dir as PNG.
+# A single combined interactive HTML dashboard is generated at the end.
 
 has_ggplot2 <- requireNamespace("ggplot2", quietly = TRUE)
 has_plotly  <- requireNamespace("plotly", quietly = TRUE) &&
                requireNamespace("htmlwidgets", quietly = TRUE)
+has_dt      <- requireNamespace("DT", quietly = TRUE)
 if (has_ggplot2) {
   suppressPackageStartupMessages(library(ggplot2))
+}
+
+# ---- Dashboard collector: accumulates widgets for the combined HTML ----
+dashboard_items <- list()
+
+add_to_dashboard <- function(widget, section, title, type = "figure") {
+  dashboard_items[[length(dashboard_items) + 1]] <<- list(
+    widget = widget, section = section, title = title, type = type
+  )
 }
 
 # ---- Shared visual theme and palette ----
@@ -362,7 +371,7 @@ theme_lot <- function(base_size = 13) {
     )
 }
 
-save_plot <- function(p, filename, width = 10, height = 6) {
+save_plot <- function(p, filename, width = 10, height = 6, section = "", title = "") {
   if (!has_ggplot2) return(invisible(NULL))
   dir.create(cfg$output_dir, showWarnings = FALSE, recursive = TRUE)
   out_path <- file.path(cfg$output_dir, filename)
@@ -372,47 +381,150 @@ save_plot <- function(p, filename, width = 10, height = 6) {
   }, error = function(e) {
     log_msg("  WARNING: Could not save figure ", filename, ": ", e$message)
   })
-  # Save interactive HTML version
+  # Collect interactive version for dashboard
   if (has_plotly) {
     tryCatch({
-      html_name <- sub("\\.png$", ".html", filename)
-      html_path <- file.path(cfg$output_dir, html_name)
-      pp <- plotly::ggplotly(p, tooltip = "all") |>
+      pp <- plotly::ggplotly(p, tooltip = "text") |>
         plotly::layout(
           hoverlabel = list(bgcolor = "white", font = list(size = 12)),
-          margin = list(t = 60)
+          margin = list(t = 60, b = 60)
         ) |>
         plotly::config(displayModeBar = TRUE, displaylogo = FALSE,
                        modeBarButtonsToRemove = list("lasso2d", "select2d"))
-      htmlwidgets::saveWidget(pp, html_path, selfcontained = TRUE)
-      log_msg("  Interactive figure saved: ", html_path)
+      add_to_dashboard(pp, section, title, type = "figure")
     }, error = function(e) {
-      log_msg("  WARNING: Could not save interactive figure: ", e$message)
+      log_msg("  WARNING: Could not create interactive figure for dashboard: ", e$message)
     })
   }
 }
 
-# Helper to save an interactive data table as HTML
-save_table <- function(df, filename, caption = "") {
-  if (!requireNamespace("DT", quietly = TRUE) ||
-      !requireNamespace("htmlwidgets", quietly = TRUE)) return(invisible(NULL))
-  dir.create(cfg$output_dir, showWarnings = FALSE, recursive = TRUE)
-  out_path <- file.path(cfg$output_dir, filename)
+# Collect a data table for the dashboard
+save_table <- function(df, section, title) {
+  if (!has_dt || !has_plotly) return(invisible(NULL))
   tryCatch({
     # Convert integer64 columns for display
     for (col in names(df)) {
       if (inherits(df[[col]], "integer64")) df[[col]] <- as.numeric(df[[col]])
     }
-    dt <- DT::datatable(df, caption = caption, rownames = FALSE,
-                         options = list(pageLength = 25, scrollX = TRUE,
-                                        dom = "Bfrtip",
-                                        buttons = list("csv", "excel")),
-                         extensions = "Buttons",
+    dt <- DT::datatable(df, rownames = FALSE,
+                         options = list(pageLength = 15, scrollX = TRUE,
+                                        dom = "ftip"),
                          class = "display compact stripe hover")
-    htmlwidgets::saveWidget(dt, out_path, selfcontained = TRUE)
-    log_msg("  Interactive table saved: ", out_path)
+    add_to_dashboard(dt, section, title, type = "table")
   }, error = function(e) {
-    log_msg("  WARNING: Could not save interactive table: ", e$message)
+    log_msg("  WARNING: Could not create table for dashboard: ", e$message)
+  })
+}
+
+# Build and save the single combined HTML dashboard
+build_dashboard <- function() {
+  if (!has_plotly || length(dashboard_items) == 0) {
+    log_msg("  Skipping dashboard (plotly not available or no items collected).")
+    return(invisible(NULL))
+  }
+
+  dir.create(cfg$output_dir, showWarnings = FALSE, recursive = TRUE)
+  dash_path  <- file.path(cfg$output_dir, "lot_dashboard.html")
+  parts_dir  <- file.path(cfg$output_dir, ".dashboard_parts")
+  dir.create(parts_dir, showWarnings = FALSE, recursive = TRUE)
+
+  tryCatch({
+    tab_buttons <- list()
+    tab_panels  <- list()
+
+    for (idx in seq_along(dashboard_items)) {
+      item   <- dashboard_items[[idx]]
+      tab_id <- paste0("tab", idx)
+
+      # Save each widget as a self-contained HTML fragment
+      part_file <- file.path(parts_dir, paste0("part_", idx, ".html"))
+      htmlwidgets::saveWidget(item$widget, part_file, selfcontained = TRUE)
+
+      # Use iframe embedding — reliable, no CSS/JS conflicts
+      active_class <- if (idx == 1) "active" else ""
+      section_tag  <- paste0('<span class="section-tag">', item$section, '</span> ')
+      tab_buttons[[idx]] <- sprintf(
+        '<button class="tab-btn %s" onclick="showTab(\'%s\', this)" data-section="%s">%s%s</button>',
+        active_class, tab_id, item$section, section_tag, item$title
+      )
+
+      iframe_height <- if (item$type == "table") "600" else "550"
+      tab_panels[[idx]] <- sprintf(
+        '<div id="%s" class="tab-content" style="display:%s"><iframe src=".dashboard_parts/part_%d.html" style="width:100%%;height:%spx;border:none;" onload="this.style.height=this.contentWindow.document.body.scrollHeight+40+\'px\'"></iframe></div>',
+        tab_id, if (idx == 1) "block" else "none", idx, iframe_height
+      )
+    }
+
+    html_doc <- paste0('<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LOT Part 2 - Interactive Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #f5f6fa; color: #2d3436;
+  }
+  .header {
+    background: linear-gradient(135deg, #2E86AB 0%, #1a5276 100%);
+    color: white; padding: 28px 32px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  }
+  .header h1 { font-size: 26px; font-weight: 700; margin-bottom: 6px; }
+  .header p  { font-size: 14px; opacity: 0.85; }
+  .tab-bar {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    padding: 14px 32px; background: white;
+    border-bottom: 1px solid #dfe6e9;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    position: sticky; top: 0; z-index: 100;
+  }
+  .tab-btn {
+    padding: 8px 14px; border: 1px solid #dfe6e9; border-radius: 6px;
+    background: #f5f6fa; color: #636e72; cursor: pointer;
+    font-size: 12.5px; font-weight: 500; transition: all 0.15s;
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+  .tab-btn:hover { background: #dfe6e9; color: #2d3436; }
+  .tab-btn.active { background: #2E86AB; color: white; border-color: #2E86AB; }
+  .tab-btn.active .section-tag { background: rgba(255,255,255,0.25); color: white; }
+  .section-tag {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    background: #dfe6e9; color: #636e72; padding: 2px 6px;
+    border-radius: 3px; letter-spacing: 0.5px;
+  }
+  .tab-content { padding: 16px 32px; }
+  .tab-content iframe { border: none; width: 100%; min-height: 500px; }
+</style>
+<script>
+function showTab(tabId, btn) {
+  document.querySelectorAll(".tab-content").forEach(function(el) { el.style.display = "none"; });
+  document.querySelectorAll(".tab-btn").forEach(function(el) { el.classList.remove("active"); });
+  document.getElementById(tabId).style.display = "block";
+  btn.classList.add("active");
+  window.dispatchEvent(new Event("resize"));
+}
+</script>
+</head>
+<body>
+<div class="header">
+  <h1>LOT Part 2 &mdash; Interactive Dashboard</h1>
+  <p>MMA_MED &bull; MAP &bull; LOT1_BASE descriptive summary &nbsp;|&nbsp; Generated ', format(Sys.time(), "%Y-%m-%d %H:%M"), '</p>
+</div>
+<div class="tab-bar">
+', paste(tab_buttons, collapse = "\n"), '
+</div>
+', paste(tab_panels, collapse = "\n"), '
+</body>
+</html>')
+
+    writeLines(html_doc, dash_path)
+    log_msg("  Dashboard saved: ", dash_path)
+
+  }, error = function(e) {
+    log_msg("  WARNING: Could not build dashboard: ", conditionMessage(e))
   })
 }
 
@@ -500,9 +612,10 @@ print_descriptives <- function(con) {
              x = NULL, y = "Distinct Patients", fill = "Drug Class") +
         theme_lot() +
         theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10))
-      save_plot(p1, "fig01_mma_patients_by_med.png")
-      save_table(med_dist, "tab01_mma_med_summary.html",
-                 caption = "MMA_MED: Claims by Medication and Drug Class")
+      save_plot(p1, "fig01_mma_patients_by_med.png",
+               section = "MMA_MED", title = "Fig 1: Patients by Medication")
+      save_table(med_dist, section = "MMA_MED",
+                 title = "Table: MMA Claims by Medication")
     }
 
     # Figure 2: Pharmacy vs Medical claims stacked bar
@@ -525,7 +638,8 @@ print_descriptives <- function(con) {
              x = NULL, y = "Claim Count", fill = "Claim Type") +
         theme_lot() +
         theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10))
-      save_plot(p2, "fig02_mma_claims_by_type.png")
+      save_plot(p2, "fig02_mma_claims_by_type.png",
+               section = "MMA_MED", title = "Fig 2: Claims by Type")
     }
 
     # Day supply distribution
@@ -678,7 +792,8 @@ print_descriptives <- function(con) {
                subtitle = paste0(format(sum(map_bins$n), big.mark = ","), " medication-available periods, 30-day bins"),
                x = "MAP Length (days)", y = "Number of MAPs") +
           theme_lot()
-        save_plot(p3, "fig03_map_length_distribution.png")
+        save_plot(p3, "fig03_map_length_distribution.png",
+                 section = "MAP", title = "Fig 3: MAP Length Distribution")
       }
     }
   }, error = function(e) {
@@ -707,9 +822,10 @@ print_descriptives <- function(con) {
              x = NULL, y = "Distinct Patients", fill = "Drug Class") +
         theme_lot() +
         theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10))
-      save_plot(p4, "fig04_map_patients_by_med.png")
-      save_table(map_by_med, "tab02_map_by_med.html",
-                 caption = "MAP: Summary by Medication and Drug Class")
+      save_plot(p4, "fig04_map_patients_by_med.png",
+               section = "MAP", title = "Fig 4: MAP Patients by Medication")
+      save_table(map_by_med, section = "MAP",
+                 title = "Table: MAP Summary by Medication")
     }
   }, error = function(e) {
     log_msg("WARN: fig04 MAP patients by med failed: ", conditionMessage(e))
@@ -817,9 +933,10 @@ print_descriptives <- function(con) {
              x = NULL, y = "Number of Patients") +
         theme_lot() +
         theme(legend.position = "none")
-      save_plot(p5, "fig05_lot1_top_regimens.png", width = 12, height = 7)
-      save_table(regimens, "tab03_lot1_regimens.html",
-                 caption = "LOT1: Top 25 Induction Regimens")
+      save_plot(p5, "fig05_lot1_top_regimens.png", width = 12, height = 7,
+               section = "LOT1", title = "Fig 5: Top 15 Induction Regimens")
+      save_table(regimens, section = "LOT1",
+                 title = "Table: Top 25 Induction Regimens")
     }
 
     # Figure 6: LOT1 base length distribution (SQL-binned to avoid OOM)
@@ -854,7 +971,8 @@ print_descriptives <- function(con) {
                                  " patients, 30-day bins"),
                x = "LOT1 BASE Length (days)", y = "Number of Patients") +
           theme_lot()
-        save_plot(p6, "fig06_lot1_base_length.png")
+        save_plot(p6, "fig06_lot1_base_length.png",
+                 section = "LOT1", title = "Fig 6: LOT1 Length Distribution")
       }
     }
 
@@ -884,9 +1002,10 @@ print_descriptives <- function(con) {
              x = NULL, y = "Number of Patients") +
         theme_lot() +
         theme(legend.position = "none")
-      save_plot(p7, "fig07_lot1_end_reasons.png", width = 8, height = 6)
-      save_table(end_reasons, "tab04_lot1_end_reasons.html",
-                 caption = "LOT1 BASE End Reasons")
+      save_plot(p7, "fig07_lot1_end_reasons.png", width = 8, height = 6,
+               section = "LOT1", title = "Fig 7: LOT1 End Reasons")
+      save_table(end_reasons, section = "LOT1",
+                 title = "Table: LOT1 End Reasons")
     }
 
     # Figure 8: Induction med count distribution
@@ -913,7 +1032,8 @@ print_descriptives <- function(con) {
                subtitle = "How many distinct medications each patient received in induction",
                x = "Number of Induction Meds", y = "Patients") +
           theme_lot()
-        save_plot(p8, "fig08_lot1_med_count.png", width = 8, height = 6)
+        save_plot(p8, "fig08_lot1_med_count.png", width = 8, height = 6,
+                 section = "LOT1", title = "Fig 8: Induction Med Count")
       }
     }
 
@@ -1025,6 +1145,9 @@ print_descriptives <- function(con) {
   }, error = function(e) {
     log_msg("WARN: SCT descriptives failed: ", conditionMessage(e))
   })
+
+  # Build combined interactive dashboard
+  build_dashboard()
 }
 
 # ============================================================
