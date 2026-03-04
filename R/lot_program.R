@@ -445,23 +445,30 @@ print_descriptives <- function(con) {
   # --------------------------------------------------------
   # 2. MAP Summary
   # --------------------------------------------------------
-  tryCatch({
-    cat("\n", DASH, "\n")
-    cat("  5B. MAP_MED (Medication Available Periods) Summary\n")
-    cat(DASH, "\n")
+  cat("\n", DASH, "\n")
+  cat("  5B. MAP_MED (Medication Available Periods) Summary\n")
+  cat(DASH, "\n")
 
-    map_stats <- db_q(con, "
-      SELECT
-        count(*)               AS n_maps,
-        count(DISTINCT PATID)  AS n_patients,
-        count(DISTINCT MAP_MED_TYPE) AS n_meds,
-        avg(datediff(MAP_END_DT, MAP_START_DT) + 1) AS avg_map_length,
-        percentile_approx(datediff(MAP_END_DT, MAP_START_DT) + 1, 0.5) AS median_map_length,
-        min(datediff(MAP_END_DT, MAP_START_DT) + 1) AS min_map_length,
-        max(datediff(MAP_END_DT, MAP_START_DT) + 1) AS max_map_length,
-        sum(MAP_DISCON_FLG) AS n_discon
+  # Use a subquery for MAP length to avoid percentile_approx on expression
+  map_stats <- tryCatch(db_q(con, "
+    SELECT
+      count(*)               AS n_maps,
+      count(DISTINCT PATID)  AS n_patients,
+      count(DISTINCT MAP_MED_TYPE) AS n_meds,
+      avg(map_length)        AS avg_map_length,
+      percentile_approx(map_length, 0.5) AS median_map_length,
+      min(map_length)        AS min_map_length,
+      max(map_length)        AS max_map_length,
+      sum(CAST(MAP_DISCON_FLG AS INT)) AS n_discon
+    FROM (
+      SELECT *, datediff(MAP_END_DT, MAP_START_DT) + 1 AS map_length
       FROM map_stacked
-    ")
+    )
+  "), error = function(e) {
+    log_msg("WARN: MAP stats query failed: ", conditionMessage(e))
+    data.frame()
+  })
+  if (nrow(map_stats) > 0) {
     cat(sprintf("  Total MAPs:                  %s\n", format(map_stats$n_maps, big.mark = ",")))
     cat(sprintf("  Distinct patients:           %s\n", format(map_stats$n_patients, big.mark = ",")))
     cat(sprintf("  Distinct medications:        %s\n", format(map_stats$n_meds, big.mark = ",")))
@@ -472,14 +479,19 @@ print_descriptives <- function(con) {
     cat(sprintf("  MAPs with discontinuation:   %s (%.1f%%)\n",
                 format(map_stats$n_discon, big.mark = ","),
                 100 * map_stats$n_discon / max(map_stats$n_maps, 1)))
+  }
 
-    # MAPs per patient distribution
-    maps_per_pt <- db_q(con, "
-      SELECT n_maps, count(*) AS n_patients
-      FROM (SELECT PATID, count(*) AS n_maps FROM map_stacked GROUP BY PATID)
-      GROUP BY n_maps
-      ORDER BY n_maps
-    ")
+  # MAPs per patient distribution
+  maps_per_pt <- tryCatch(db_q(con, "
+    SELECT n_maps, count(*) AS n_patients
+    FROM (SELECT PATID, count(*) AS n_maps FROM map_stacked GROUP BY PATID)
+    GROUP BY n_maps
+    ORDER BY n_maps
+  "), error = function(e) {
+    log_msg("WARN: MAPs per patient query failed: ", conditionMessage(e))
+    data.frame()
+  })
+  if (nrow(maps_per_pt) > 0) {
     cat("\n  MAPs per patient distribution:\n")
     cat(sprintf("  %-8s %10s\n", "# MAPs", "Patients"))
     cat(strrep("-", 22), "\n")
@@ -488,21 +500,26 @@ print_descriptives <- function(con) {
       cat(sprintf("  %-8d %10s\n", r$n_maps, format(r$n_patients, big.mark = ",")))
     }
     if (nrow(maps_per_pt) > 15) cat("  ... (truncated)\n")
+  }
 
-    # MAP by medication
-    map_by_med <- db_q(con, "
-      SELECT
-        MAP_MED_TYPE AS med,
-        MAP_MED_CLASS AS class,
-        count(*) AS n_maps,
-        count(DISTINCT PATID) AS n_patients,
-        avg(datediff(MAP_END_DT, MAP_START_DT) + 1) AS avg_map_days,
-        sum(MAP_DISCON_FLG) AS n_discon,
-        sum(CASE WHEN MAP_RX_RUNOUT_DT IS NOT NULL AND MAP_MED_RUNOUT_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_both_types
-      FROM map_stacked
-      GROUP BY MAP_MED_TYPE, MAP_MED_CLASS
-      ORDER BY count(DISTINCT PATID) DESC
-    ")
+  # MAP by medication
+  map_by_med <- tryCatch(db_q(con, "
+    SELECT
+      MAP_MED_TYPE AS med,
+      MAP_MED_CLASS AS class,
+      count(*) AS n_maps,
+      count(DISTINCT PATID) AS n_patients,
+      avg(datediff(MAP_END_DT, MAP_START_DT) + 1) AS avg_map_days,
+      sum(CAST(MAP_DISCON_FLG AS INT)) AS n_discon,
+      sum(CASE WHEN MAP_RX_RUNOUT_DT IS NOT NULL AND MAP_MED_RUNOUT_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_both_types
+    FROM map_stacked
+    GROUP BY MAP_MED_TYPE, MAP_MED_CLASS
+    ORDER BY count(DISTINCT PATID) DESC
+  "), error = function(e) {
+    log_msg("WARN: MAP by med query failed: ", conditionMessage(e))
+    data.frame()
+  })
+  if (nrow(map_by_med) > 0) {
     cat("\n")
     cat(sprintf("  %-8s %-12s %6s %8s %10s %7s %9s\n",
                 "Med", "Class", "MAPs", "Patients", "Avg Days", "Discon", "Both Src"))
@@ -517,14 +534,18 @@ print_descriptives <- function(con) {
                   format(r$n_discon, big.mark = ","),
                   format(r$n_both_types, big.mark = ",")))
     }
+  }
 
-    # Figure 3: MAP length distribution (histogram via SQL-binned counts to avoid OOM)
+  # Figure 3: MAP length distribution (histogram via SQL-binned counts to avoid OOM)
+  tryCatch({
     if (has_ggplot2) {
       map_bins <- db_q(con, "
-        SELECT floor((datediff(MAP_END_DT, MAP_START_DT) + 1) / 30) * 30 AS bin_start,
-               count(*) AS n
-        FROM map_stacked
-        GROUP BY floor((datediff(MAP_END_DT, MAP_START_DT) + 1) / 30) * 30
+        SELECT bin_start, count(*) AS n
+        FROM (
+          SELECT floor((datediff(MAP_END_DT, MAP_START_DT) + 1) / 30) * 30 AS bin_start
+          FROM map_stacked
+        )
+        GROUP BY bin_start
         ORDER BY bin_start
       ")
       if (nrow(map_bins) > 0) {
@@ -537,8 +558,12 @@ print_descriptives <- function(con) {
         save_plot(p3, "fig03_map_length_distribution.png")
       }
     }
+  }, error = function(e) {
+    log_msg("WARN: fig03 MAP length distribution failed: ", conditionMessage(e))
+  })
 
-    # Figure 4: MAP count by medication (bar)
+  # Figure 4: MAP count by medication (bar)
+  tryCatch({
     if (has_ggplot2 && nrow(map_by_med) > 0) {
       p4 <- ggplot(map_by_med, aes(x = reorder(med, -n_patients), y = n_patients, fill = class)) +
         geom_bar(stat = "identity") +
@@ -548,9 +573,8 @@ print_descriptives <- function(con) {
         theme(axis.text.x = element_text(angle = 45, hjust = 1))
       save_plot(p4, "fig04_map_patients_by_med.png")
     }
-
   }, error = function(e) {
-    log_msg("WARN: MAP descriptives failed: ", conditionMessage(e))
+    log_msg("WARN: fig04 MAP patients by med failed: ", conditionMessage(e))
   })
 
   # --------------------------------------------------------
