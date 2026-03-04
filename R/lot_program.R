@@ -6,18 +6,20 @@
 #   5A. MMA_MED    - MM-approved + steroid medication claims pull
 #   5B. MAP_MED    - Medication Available Period algorithm (pushout/runout)
 #   6.  LOT1_BASE  - LOT1 induction regimen identification
+#   7.  SCT        - Stem Cell Transplant detection (AUTO/ALLO/CART)
 #
 # Key references (provided by user):
 #   - mma med.pdf
 #   - map med.pdf        (pushout/runout logic + Figure 3 example)
 #   - lot1base.pdf
+#   - sct.pdf            (SCT detection: AUTO/ALLO/CART)
 #   - tab 40.pdf         (CL_MMA_ROLLUP)
 #   - tab 41 sample.pdf  (CL_MMA_CODELIST)
 #   - optum data dict.pdf (field validation)
 #   - optum business rules.pdf (join/filter logic guidance)
 #
 # Input:  ELIG_COH_FINAL (output of Part 1 attrition pipeline, new_code.R)
-# Output: MAP_STACKED, LOT1_BASE (+ optional LOT1_BASE_END convenience view)
+# Output: MAP_STACKED, LOT1_BASE, LOT1_SCT, LOT1_BASE_END
 #
 # IMPORTANT - MAP algorithm corrections vs prior versions:
 #   1. Medical claims: NO pushout (per map med.pdf page 5: "Pushout is
@@ -76,6 +78,12 @@ cfg <- list(
   cl_mma_rollup_tbl    = Sys.getenv("CL_MMA_ROLLUP_TBL", unset = "cl_mma_rollup"),
   cl_mma_codelist_tbl  = Sys.getenv("CL_MMA_CODELIST_TBL", unset = "cl_mma_codelist"),
   permissible_subs_tbl = Sys.getenv("PERMISSIBLE_SUBS_TBL", unset = "permissible_subs"),
+  cl_sct_codelist_tbl  = Sys.getenv("CL_SCT_CODELIST_TBL", unset = "cl_sct_codelist"),
+
+  # SCT parameters (per sct.pdf spec section 7)
+  sct_auto_window_days = as.integer(Sys.getenv("SCT_AUTO_WINDOW_DAYS", unset = "14")),
+  sct_auto_gap_days    = as.integer(Sys.getenv("SCT_AUTO_GAP_DAYS", unset = "60")),
+  sct_tandem_days      = as.integer(Sys.getenv("SCT_TANDEM_DAYS", unset = "180")),
 
   # Persist outputs
   persist_to_schema = as.logical(Sys.getenv("PERSIST_TO_SCHEMA", unset = "TRUE")),
@@ -247,6 +255,28 @@ embedded_permissible_subs <- function() {
     ('BORT', 'IXAZ'),
     ('IXAZ', 'BORT')
   ) AS t(original_med, substitute_med)
+  "
+}
+
+# ------------------------------------------------------------
+# Embedded SCT codelist (Tab 47 - SCT procedure codes)
+# AUTO = autologous, ALLO = allogeneic, CART = CAR-T
+# ------------------------------------------------------------
+embedded_sct_codelist <- function() {
+  "
+  SELECT * FROM (VALUES
+    ('HCPCS', '38241',  'AUTO'),
+    ('HCPCS', '38240',  'ALLO'),
+    ('HCPCS', 'S2150',  'ALLO'),
+    ('HCPCS', 'Q2042',  'CART'),
+    ('HCPCS', 'Q2054',  'CART'),
+    ('HCPCS', 'Q2055',  'CART'),
+    ('HCPCS', 'Q2056',  'CART')
+  ) AS t(
+    CL_CODE_TYPE,
+    CL_CODE,
+    SCT_TYPE
+  )
   "
 }
 
@@ -639,7 +669,11 @@ print_descriptives <- function(con) {
              x = NULL, y = "Number of Patients") +
         scale_fill_manual(values = c("DISCONTINUATION" = "#E15759",
                                      "MED_ADD" = "#F28E2B",
-                                     "CENSORED" = "#76B7B2")) +
+                                     "CENSORED" = "#76B7B2",
+                                     "SCT_AUTO" = "#B07AA1",
+                                     "SCT_ALLO" = "#9C755F",
+                                     "SCT_CART" = "#FF9DA7",
+                                     "SCT" = "#BAB0AC")) +
         theme_minimal(base_size = 12) +
         theme(legend.position = "none")
       save_plot(p7, "fig07_lot1_end_reasons.png", width = 8, height = 6)
@@ -681,6 +715,85 @@ print_descriptives <- function(con) {
       cat(sprintf("  %-20s %10s %7.1f%%\n",
                   r$MED_CLASS, format(r$n_patients, big.mark = ","),
                   100 * r$n_patients / max(total_lot1, 1)))
+    }
+
+    # --------------------------------------------------------
+    # 4. SCT Summary
+    # --------------------------------------------------------
+    cat("\n", DASH, "\n")
+    cat("  7. SCT (Stem Cell Transplant) Summary\n")
+    cat(DASH, "\n")
+
+    sct_raw_stats <- tryCatch(db_q(con, "
+      SELECT SCT_TYPE, count(*) AS n_claims, count(DISTINCT PATID) AS n_patients
+      FROM sct_claims_raw
+      GROUP BY SCT_TYPE
+      ORDER BY SCT_TYPE
+    "), error = function(e) data.frame())
+    if (nrow(sct_raw_stats) > 0) {
+      cat("  Raw SCT claims by type:\n")
+      cat(sprintf("  %-8s %10s %10s\n", "Type", "Claims", "Patients"))
+      cat(strrep("-", 32), "\n")
+      for (i in seq_len(nrow(sct_raw_stats))) {
+        r <- sct_raw_stats[i, ]
+        cat(sprintf("  %-8s %10s %10s\n",
+                    r$SCT_TYPE, format(r$n_claims, big.mark = ","),
+                    format(r$n_patients, big.mark = ",")))
+      }
+    } else {
+      cat("  No SCT claims found.\n")
+    }
+
+    sct_lot1_stats <- tryCatch(db_q(con, "
+      SELECT
+        count(*) AS n_patients,
+        sum(CASE WHEN LOT1_TX_AUTO_DT_1 IS NOT NULL THEN 1 ELSE 0 END) AS n_with_auto,
+        sum(CASE WHEN FIRST_ALLO_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_with_allo,
+        sum(CASE WHEN FIRST_CART_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_with_cart,
+        sum(LOT1_SCT_AUTO_TAND_FLG) AS n_tandem,
+        sum(LOT1_SCT_AUTO_SING_FLG) AS n_single_auto,
+        sum(CASE WHEN LOT1_TX_ENDDATE IS NOT NULL THEN 1 ELSE 0 END) AS n_sct_end
+      FROM lot1_sct
+    "), error = function(e) data.frame())
+    if (nrow(sct_lot1_stats) > 0) {
+      cat(sprintf("\n  LOT1 SCT Summary (of %s LOT1 patients):\n",
+                  format(sct_lot1_stats$n_patients, big.mark = ",")))
+      cat(sprintf("    With AUTO SCT:      %s (%.1f%%)\n",
+                  format(sct_lot1_stats$n_with_auto, big.mark = ","),
+                  100 * sct_lot1_stats$n_with_auto / max(sct_lot1_stats$n_patients, 1)))
+      cat(sprintf("      Tandem AUTO:      %s\n", format(sct_lot1_stats$n_tandem, big.mark = ",")))
+      cat(sprintf("      Single AUTO:      %s\n", format(sct_lot1_stats$n_single_auto, big.mark = ",")))
+      cat(sprintf("    With ALLO SCT:      %s (%.1f%%)\n",
+                  format(sct_lot1_stats$n_with_allo, big.mark = ","),
+                  100 * sct_lot1_stats$n_with_allo / max(sct_lot1_stats$n_patients, 1)))
+      cat(sprintf("    With CAR-T:         %s (%.1f%%)\n",
+                  format(sct_lot1_stats$n_with_cart, big.mark = ","),
+                  100 * sct_lot1_stats$n_with_cart / max(sct_lot1_stats$n_patients, 1)))
+      cat(sprintf("    SCT ending LOT1:    %s (%.1f%%)\n",
+                  format(sct_lot1_stats$n_sct_end, big.mark = ","),
+                  100 * sct_lot1_stats$n_sct_end / max(sct_lot1_stats$n_patients, 1)))
+    }
+
+    # SCT end reason breakdown
+    sct_end_reasons <- tryCatch(db_q(con, "
+      SELECT
+        CASE LOT1_TX_ENDDATE_REASON
+          WHEN 1 THEN 'AUTO' WHEN 2 THEN 'ALLO' WHEN 3 THEN 'CART' ELSE 'NONE'
+        END AS SCT_END_TYPE,
+        count(*) AS n
+      FROM lot1_sct
+      WHERE LOT1_TX_ENDDATE IS NOT NULL
+      GROUP BY LOT1_TX_ENDDATE_REASON
+      ORDER BY LOT1_TX_ENDDATE_REASON
+    "), error = function(e) data.frame())
+    if (nrow(sct_end_reasons) > 0) {
+      cat("\n  SCT End Reason (within patients whose LOT1 ends due to SCT):\n")
+      cat(sprintf("  %-8s %10s\n", "Type", "N"))
+      cat(strrep("-", 20), "\n")
+      for (i in seq_len(nrow(sct_end_reasons))) {
+        r <- sct_end_reasons[i, ]
+        cat(sprintf("  %-8s %10s\n", r$SCT_END_TYPE, format(r$n, big.mark = ",")))
+      }
     }
 
     cat("\n", SEP, "\n")
@@ -734,6 +847,13 @@ main <- function() {
     external_tbl = cfg$permissible_subs_tbl,
     csv_name = "permissible_subs.csv",
     col_spec = c("original_med", "substitute_med")
+  )
+
+  sct_src <- get_code_source(
+    embedded_fn = embedded_sct_codelist,
+    external_tbl = cfg$cl_sct_codelist_tbl,
+    csv_name = "cl_sct_codelist.csv",
+    col_spec = c("CL_CODE_TYPE", "CL_CODE", "SCT_TYPE")
   )
 
   run_step(con, "S00_mma_rollup", glue("
@@ -1414,60 +1534,399 @@ main <- function() {
       sum(case when LOT1_BASE_1ST_ADD_MED_DT is not null then 1 else 0 end) as n_with_add_med
     FROM lot1_base")
 
-  # LOT1_BASE_END convenience view
-  # NOTE: End reasons are PRELIMINARY until SCT + maintenance rules are implemented.
-  # Current end reasons: MED_ADD, DISCONTINUATION, CENSORED.
-  # Missing (requires spec sections 7-9): SCT, CONDITIONING, MAINTENANCE_START.
-  run_step(con, "S11_lot1_base_end", "
+  # ----------------------------------------------------------
+  # STEP 7 (SCT): Stem Cell Transplant detection
+  # Per sct.pdf spec section 7:
+  #   - AUTO: 14-day window grouping + 60-day gap + 180-day tandem
+  #   - ALLO/CART: simple sequential dates
+  #   - ALLO/CART immediately end LOT1
+  #   - Single AUTO allowed; tandem pair allowed; excess AUTO ends LOT1
+  #
+  # NOTE: Maintenance (mono/dual) specs not yet provided.
+  # ----------------------------------------------------------
+
+  # S11: Register SCT codelist
+  run_step(con, "S11_sct_codelist", glue("
+    CREATE OR REPLACE TEMPORARY VIEW sct_codelist AS
+    SELECT
+      upper(trim(CL_CODE_TYPE)) AS CL_CODE_TYPE,
+      upper(regexp_replace(trim(CL_CODE), '[^A-Za-z0-9]', '')) AS CL_CODE,
+      upper(trim(SCT_TYPE)) AS SCT_TYPE
+    FROM {sct_src}
+    WHERE CL_CODE IS NOT NULL AND trim(CL_CODE) <> ''
+      AND SCT_TYPE IS NOT NULL AND trim(SCT_TYPE) <> ''
+  "), qc = "SELECT SCT_TYPE, count(*) AS n_codes FROM sct_codelist GROUP BY SCT_TYPE ORDER BY SCT_TYPE")
+
+  # S12: Extract raw SCT claims from MEDICAL + MED_PROCEDURE
+  run_step(con, "S12_sct_claims_raw", glue("
+    CREATE OR REPLACE TEMPORARY VIEW sct_claims_raw AS
+    WITH sct_codes AS (
+      SELECT /*+ BROADCAST */ * FROM sct_codelist
+    ),
+    -- Medical PROC_CD
+    med_proc AS (
+      SELECT m.PATID, cast(m.FST_DT AS date) AS DATE_SERVICE,
+             s.SCT_TYPE, s.CL_CODE AS CODE
+      FROM {cdm_src(cfg$tbl_medical)} m
+      INNER JOIN lot_patient_input p ON m.PATID = p.PATID
+      INNER JOIN sct_codes s
+        ON s.CL_CODE_TYPE = 'HCPCS'
+       AND upper(regexp_replace(coalesce(cast(m.PROC_CD as string),''), '[^A-Za-z0-9]', '')) = s.CL_CODE
+      WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
+        AND cast(m.FST_DT AS date) <= p.OBS_END_DT
+    ),
+    -- Medical BILL_PROC_CD
+    med_bill AS (
+      SELECT m.PATID, cast(m.FST_DT AS date) AS DATE_SERVICE,
+             s.SCT_TYPE, s.CL_CODE AS CODE
+      FROM {cdm_src(cfg$tbl_medical)} m
+      INNER JOIN lot_patient_input p ON m.PATID = p.PATID
+      INNER JOIN sct_codes s
+        ON s.CL_CODE_TYPE = 'HCPCS'
+       AND upper(regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''), '[^A-Za-z0-9]', '')) = s.CL_CODE
+      WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
+        AND cast(m.FST_DT AS date) <= p.OBS_END_DT
+    ),
+    -- MED_PROCEDURE PROC
+    medproc AS (
+      SELECT mp.PATID, cast(mp.FST_DT AS date) AS DATE_SERVICE,
+             s.SCT_TYPE, s.CL_CODE AS CODE
+      FROM {cdm_src(cfg$tbl_med_proc)} mp
+      INNER JOIN lot_patient_input p ON mp.PATID = p.PATID
+      INNER JOIN sct_codes s
+        ON s.CL_CODE_TYPE = 'HCPCS'
+       AND upper(regexp_replace(coalesce(cast(mp.PROC as string),''), '[^A-Za-z0-9]', '')) = s.CL_CODE
+      WHERE cast(mp.FST_DT AS date) >= p.INDEX_DATE
+        AND cast(mp.FST_DT AS date) <= p.OBS_END_DT
+    ),
+    combined AS (
+      SELECT * FROM med_proc
+      UNION ALL SELECT * FROM med_bill
+      UNION ALL SELECT * FROM medproc
+    )
+    -- Deduplicate: one record per (PATID, DATE_SERVICE, SCT_TYPE)
+    SELECT PATID, DATE_SERVICE, SCT_TYPE, min(CODE) AS CODE
+    FROM combined
+    GROUP BY PATID, DATE_SERVICE, SCT_TYPE
+  "), qc = "
+    SELECT SCT_TYPE, count(*) AS n_claims, count(DISTINCT PATID) AS n_patients,
+           min(DATE_SERVICE) AS min_date, max(DATE_SERVICE) AS max_date
+    FROM sct_claims_raw
+    GROUP BY SCT_TYPE
+    ORDER BY SCT_TYPE")
+
+  # S13: AUTO SCT date processing
+  # Step 1: Group AUTO claims into 14-day windows (claims within 14 days of
+  #         window start are in same window). Select earliest date per window.
+  # Step 2: Apply 60-day minimum gap between events (merge if < 60 days apart).
+  # Result: finalized TX dates for AUTO SCT per patient.
+  run_step(con, "S13_tx_auto_dates", glue("
+    CREATE OR REPLACE TEMPORARY VIEW tx_auto_dates AS
+    WITH auto_dates AS (
+      SELECT DISTINCT PATID, DATE_SERVICE AS dt
+      FROM sct_claims_raw
+      WHERE SCT_TYPE = 'AUTO'
+    ),
+    grouped AS (
+      SELECT PATID,
+             sort_array(collect_list(dt)) AS dates_arr
+      FROM auto_dates
+      GROUP BY PATID
+    ),
+    -- Step 1: Group into 14-day windows, pick earliest date per window
+    windowed AS (
+      SELECT PATID,
+        aggregate(
+          dates_arr,
+          named_struct(
+            'windows', cast(array() as array<date>),
+            'cur_start', cast(null as date)
+          ),
+          (s, x) -> CASE
+            WHEN s.cur_start IS NULL THEN
+              named_struct('windows', s.windows, 'cur_start', x)
+            WHEN datediff(x, s.cur_start) <= {cfg$sct_auto_window_days} THEN
+              s
+            ELSE
+              named_struct(
+                'windows', array_append(s.windows, s.cur_start),
+                'cur_start', x
+              )
+          END,
+          s -> CASE
+            WHEN s.cur_start IS NULL THEN s.windows
+            ELSE array_append(s.windows, s.cur_start)
+          END
+        ) AS window_dates
+      FROM grouped
+    ),
+    -- Step 2: Apply 60-day minimum gap (merge events < 60 days apart)
+    gap_merged AS (
+      SELECT PATID,
+        aggregate(
+          window_dates,
+          named_struct(
+            'tx_dates', cast(array() as array<date>),
+            'last_dt', cast(null as date)
+          ),
+          (s, x) -> CASE
+            WHEN s.last_dt IS NULL THEN
+              named_struct(
+                'tx_dates', array_append(s.tx_dates, x),
+                'last_dt', x
+              )
+            WHEN datediff(x, s.last_dt) >= {cfg$sct_auto_gap_days} THEN
+              named_struct(
+                'tx_dates', array_append(s.tx_dates, x),
+                'last_dt', x
+              )
+            ELSE s
+          END,
+          s -> s.tx_dates
+        ) AS tx_dates
+      FROM windowed
+    ),
+    exploded AS (
+      SELECT PATID, posexplode(tx_dates) AS (pos, TX_DT)
+      FROM gap_merged
+    )
+    SELECT PATID, pos + 1 AS TX_SEQ, TX_DT
+    FROM exploded
+  "), qc = "
+    SELECT count(*) AS n_auto_tx_events, count(DISTINCT PATID) AS n_patients,
+           min(TX_SEQ) AS min_seq, max(TX_SEQ) AS max_seq
+    FROM tx_auto_dates")
+
+  # S14: ALLO and CART sequential dates (simple ordering)
+  run_step(con, "S14_tx_allo_cart_dates", "
+    CREATE OR REPLACE TEMPORARY VIEW tx_allo_cart_dates AS
+    WITH allo_dates AS (
+      SELECT DISTINCT PATID, DATE_SERVICE AS dt
+      FROM sct_claims_raw
+      WHERE SCT_TYPE = 'ALLO'
+    ),
+    cart_dates AS (
+      SELECT DISTINCT PATID, DATE_SERVICE AS dt
+      FROM sct_claims_raw
+      WHERE SCT_TYPE = 'CART'
+    ),
+    allo_seq AS (
+      SELECT PATID, 'ALLO' AS SCT_TYPE, dt AS TX_DT,
+             row_number() OVER (PARTITION BY PATID ORDER BY dt) AS TX_SEQ
+      FROM allo_dates
+    ),
+    cart_seq AS (
+      SELECT PATID, 'CART' AS SCT_TYPE, dt AS TX_DT,
+             row_number() OVER (PARTITION BY PATID ORDER BY dt) AS TX_SEQ
+      FROM cart_dates
+    )
+    SELECT * FROM allo_seq
+    UNION ALL
+    SELECT * FROM cart_seq
+  ", qc = "
+    SELECT SCT_TYPE, count(*) AS n_events, count(DISTINCT PATID) AS n_patients
+    FROM tx_allo_cart_dates
+    GROUP BY SCT_TYPE
+    ORDER BY SCT_TYPE")
+
+  # S15: LOT1 SCT variables
+  # Derives: LOT1_TX_AUTO_DT_1/2, TAND_FLG, SING_FLG,
+  #          LOT1_TX_ENDDATE, LOT1_TX_ENDDATE_REASON, LOT1_1ST_SCT_DT
+  run_step(con, "S15_lot1_sct", glue("
+    CREATE OR REPLACE TEMPORARY VIEW lot1_sct AS
+    WITH lot1 AS (
+      SELECT PATID, LOT1_START_DT, OBS_END_DT FROM lot1_base
+    ),
+    -- AUTO dates within LOT1 observation window
+    auto_in_lot1 AS (
+      SELECT a.PATID, a.TX_DT,
+             row_number() OVER (PARTITION BY a.PATID ORDER BY a.TX_DT) AS LOT1_SEQ
+      FROM tx_auto_dates a
+      INNER JOIN lot1 l ON a.PATID = l.PATID
+      WHERE a.TX_DT >= l.LOT1_START_DT
+        AND a.TX_DT <= l.OBS_END_DT
+    ),
+    auto_pivot AS (
+      SELECT PATID,
+        max(CASE WHEN LOT1_SEQ = 1 THEN TX_DT END) AS AUTO_DT_1,
+        max(CASE WHEN LOT1_SEQ = 2 THEN TX_DT END) AS AUTO_DT_2,
+        max(CASE WHEN LOT1_SEQ = 3 THEN TX_DT END) AS AUTO_DT_3
+      FROM auto_in_lot1
+      GROUP BY PATID
+    ),
+    -- First ALLO date within LOT1
+    first_allo AS (
+      SELECT ac.PATID, min(ac.TX_DT) AS ALLO_DT
+      FROM tx_allo_cart_dates ac
+      INNER JOIN lot1 l ON ac.PATID = l.PATID
+      WHERE ac.SCT_TYPE = 'ALLO'
+        AND ac.TX_DT >= l.LOT1_START_DT
+        AND ac.TX_DT <= l.OBS_END_DT
+      GROUP BY ac.PATID
+    ),
+    -- First CART date within LOT1
+    first_cart AS (
+      SELECT ac.PATID, min(ac.TX_DT) AS CART_DT
+      FROM tx_allo_cart_dates ac
+      INNER JOIN lot1 l ON ac.PATID = l.PATID
+      WHERE ac.SCT_TYPE = 'CART'
+        AND ac.TX_DT >= l.LOT1_START_DT
+        AND ac.TX_DT <= l.OBS_END_DT
+      GROUP BY ac.PATID
+    ),
+    -- Check for ALLO between AUTO_DT_1 and AUTO_DT_2 (tandem disqualifier)
+    allo_between AS (
+      SELECT ap.PATID,
+        sum(CASE WHEN ac.TX_DT > ap.AUTO_DT_1 AND ac.TX_DT < ap.AUTO_DT_2
+                 THEN 1 ELSE 0 END) AS n_allo_between
+      FROM auto_pivot ap
+      LEFT JOIN tx_allo_cart_dates ac
+        ON ap.PATID = ac.PATID AND ac.SCT_TYPE = 'ALLO'
+      WHERE ap.AUTO_DT_2 IS NOT NULL
+      GROUP BY ap.PATID
+    ),
+    -- Derive tandem flag and LOT-ending AUTO date
+    sct_derived AS (
+      SELECT
+        l.PATID,
+        ap.AUTO_DT_1 AS LOT1_TX_AUTO_DT_1,
+        ap.AUTO_DT_2 AS LOT1_TX_AUTO_DT_2,
+        -- Tandem: two AUTO SCTs within 180 days, no ALLO between
+        CASE
+          WHEN ap.AUTO_DT_2 IS NOT NULL
+           AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}
+           AND coalesce(ab.n_allo_between, 0) = 0
+          THEN 1 ELSE 0
+        END AS LOT1_SCT_AUTO_TAND_FLG,
+        -- Single AUTO: has first AUTO but not a valid tandem
+        CASE
+          WHEN ap.AUTO_DT_1 IS NOT NULL
+           AND NOT (ap.AUTO_DT_2 IS NOT NULL
+                    AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}
+                    AND coalesce(ab.n_allo_between, 0) = 0)
+          THEN 1 ELSE 0
+        END AS LOT1_SCT_AUTO_SING_FLG,
+        -- LOT-ending AUTO: excess AUTO beyond what's allowed
+        -- Tandem -> 3rd AUTO ends LOT1; Single -> 2nd AUTO ends LOT1
+        CASE
+          WHEN ap.AUTO_DT_2 IS NOT NULL
+           AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}
+           AND coalesce(ab.n_allo_between, 0) = 0
+          THEN ap.AUTO_DT_3
+          WHEN ap.AUTO_DT_1 IS NOT NULL
+          THEN ap.AUTO_DT_2
+          ELSE NULL
+        END AS ENDING_AUTO_DT,
+        fa.ALLO_DT AS FIRST_ALLO_DT,
+        fc.CART_DT AS FIRST_CART_DT
+      FROM lot1 l
+      LEFT JOIN auto_pivot ap ON l.PATID = ap.PATID
+      LEFT JOIN allo_between ab ON l.PATID = ab.PATID
+      LEFT JOIN first_allo fa ON l.PATID = fa.PATID
+      LEFT JOIN first_cart fc ON l.PATID = fc.PATID
+    )
+    SELECT
+      sd.*,
+      -- LOT1_TX_ENDDATE: earliest LOT-ending SCT event - 1 day
+      CASE
+        WHEN coalesce(sd.ENDING_AUTO_DT, sd.FIRST_ALLO_DT, sd.FIRST_CART_DT) IS NOT NULL
+        THEN date_sub(
+          least(
+            coalesce(sd.ENDING_AUTO_DT, cast('9999-12-31' as date)),
+            coalesce(sd.FIRST_ALLO_DT,  cast('9999-12-31' as date)),
+            coalesce(sd.FIRST_CART_DT,   cast('9999-12-31' as date))
+          ), 1)
+        ELSE NULL
+      END AS LOT1_TX_ENDDATE,
+      -- LOT1_TX_ENDDATE_REASON: 1=AUTO, 2=ALLO, 3=CART (whichever is earliest)
+      CASE
+        WHEN coalesce(sd.ENDING_AUTO_DT, sd.FIRST_ALLO_DT, sd.FIRST_CART_DT) IS NULL THEN NULL
+        WHEN coalesce(sd.ENDING_AUTO_DT, cast('9999-12-31' as date))
+             <= coalesce(sd.FIRST_ALLO_DT, cast('9999-12-31' as date))
+         AND coalesce(sd.ENDING_AUTO_DT, cast('9999-12-31' as date))
+             <= coalesce(sd.FIRST_CART_DT, cast('9999-12-31' as date))
+        THEN 1
+        WHEN coalesce(sd.FIRST_ALLO_DT, cast('9999-12-31' as date))
+             <= coalesce(sd.FIRST_CART_DT, cast('9999-12-31' as date))
+        THEN 2
+        ELSE 3
+      END AS LOT1_TX_ENDDATE_REASON,
+      -- LOT1_1ST_SCT_DT: first SCT of any type during LOT1
+      CASE
+        WHEN coalesce(sd.LOT1_TX_AUTO_DT_1, sd.FIRST_ALLO_DT, sd.FIRST_CART_DT) IS NOT NULL
+        THEN least(
+          coalesce(sd.LOT1_TX_AUTO_DT_1, cast('9999-12-31' as date)),
+          coalesce(sd.FIRST_ALLO_DT,     cast('9999-12-31' as date)),
+          coalesce(sd.FIRST_CART_DT,      cast('9999-12-31' as date))
+        )
+        ELSE NULL
+      END AS LOT1_1ST_SCT_DT
+    FROM sct_derived sd
+  "), qc = "
+    SELECT
+      count(*) AS n_patients,
+      sum(CASE WHEN LOT1_TX_AUTO_DT_1 IS NOT NULL THEN 1 ELSE 0 END) AS n_with_auto,
+      sum(CASE WHEN FIRST_ALLO_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_with_allo,
+      sum(CASE WHEN FIRST_CART_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_with_cart,
+      sum(LOT1_SCT_AUTO_TAND_FLG) AS n_tandem,
+      sum(LOT1_SCT_AUTO_SING_FLG) AS n_single_auto,
+      sum(CASE WHEN LOT1_TX_ENDDATE IS NOT NULL THEN 1 ELSE 0 END) AS n_with_sct_end
+    FROM lot1_sct")
+
+  # S16: LOT1_BASE_END - Final end reason incorporating SCT
+  # End reason priority: SCT > MED_ADD > DISCONTINUATION > CENSORED
+  # SCT takes highest priority because it definitively ends the LOT.
+  run_step(con, "S16_lot1_base_end", "
     CREATE OR REPLACE TEMPORARY VIEW lot1_base_end AS
     SELECT
       lb.*,
-      -- End reason priority: MED_ADD (at or before discon) > DISCONTINUATION > CENSORED
-      -- NOTE: uses <= so that if add-med date == discon date, MED_ADD takes priority
-      -- (a new med arriving on the same day as discontinuation is clinically a regimen change)
+      sct.LOT1_TX_AUTO_DT_1,
+      sct.LOT1_TX_AUTO_DT_2,
+      sct.LOT1_SCT_AUTO_TAND_FLG,
+      sct.LOT1_SCT_AUTO_SING_FLG,
+      sct.LOT1_TX_ENDDATE,
+      sct.LOT1_TX_ENDDATE_REASON,
+      sct.LOT1_1ST_SCT_DT,
+      sct.FIRST_ALLO_DT,
+      sct.FIRST_CART_DT,
+      -- End reason: SCT > MED_ADD (at or before discon) > DISCONTINUATION > CENSORED
       CASE
+        WHEN sct.LOT1_TX_ENDDATE IS NOT NULL
+         AND (lb.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR sct.LOT1_TX_ENDDATE <= lb.LOT1_BASE_1ST_ADD_MED_DT)
+         AND (lb.LOT1_BASE_DISCON_DT IS NULL OR sct.LOT1_TX_ENDDATE <= lb.LOT1_BASE_DISCON_DT)
+        THEN CASE sct.LOT1_TX_ENDDATE_REASON
+               WHEN 1 THEN 'SCT_AUTO'
+               WHEN 2 THEN 'SCT_ALLO'
+               WHEN 3 THEN 'SCT_CART'
+               ELSE 'SCT'
+             END
         WHEN lb.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
-          AND (lb.LOT1_BASE_DISCON_DT IS NULL OR lb.LOT1_BASE_1ST_ADD_MED_DT <= lb.LOT1_BASE_DISCON_DT)
-          THEN 'MED_ADD'
+         AND (lb.LOT1_BASE_DISCON_DT IS NULL OR lb.LOT1_BASE_1ST_ADD_MED_DT <= lb.LOT1_BASE_DISCON_DT)
+        THEN 'MED_ADD'
         WHEN lb.LOT1_BASE_DISCON_DT IS NOT NULL THEN 'DISCONTINUATION'
         ELSE 'CENSORED'
       END AS LOT1_BASE_END_REASON,
       CASE
+        WHEN sct.LOT1_TX_ENDDATE IS NOT NULL
+         AND (lb.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR sct.LOT1_TX_ENDDATE <= lb.LOT1_BASE_1ST_ADD_MED_DT)
+         AND (lb.LOT1_BASE_DISCON_DT IS NULL OR sct.LOT1_TX_ENDDATE <= lb.LOT1_BASE_DISCON_DT)
+        THEN sct.LOT1_TX_ENDDATE
         WHEN lb.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
-          AND (lb.LOT1_BASE_DISCON_DT IS NULL OR lb.LOT1_BASE_1ST_ADD_MED_DT <= lb.LOT1_BASE_DISCON_DT)
-          THEN lb.LOT1_BASE_1ST_ADD_MED_DT
+         AND (lb.LOT1_BASE_DISCON_DT IS NULL OR lb.LOT1_BASE_1ST_ADD_MED_DT <= lb.LOT1_BASE_DISCON_DT)
+        THEN lb.LOT1_BASE_1ST_ADD_MED_DT
         WHEN lb.LOT1_BASE_DISCON_DT IS NOT NULL THEN lb.LOT1_BASE_DISCON_DT
         ELSE lb.OBS_END_DT
       END AS LOT1_BASE_END_DT
     FROM lot1_base lb
+    LEFT JOIN lot1_sct sct ON lb.PATID = sct.PATID
   ", qc = "
     SELECT LOT1_BASE_END_REASON, count(*) AS n
     FROM lot1_base_end
     GROUP BY LOT1_BASE_END_REASON
     ORDER BY LOT1_BASE_END_REASON")
 
-  # ----------------------------------------------------------
-  # STEP 6: SCT + Maintenance (PLACEHOLDERS)
-  # Per spec navigation: sections 7 (SCT), 8 (MONOMAINT_MED),
-  # 9 (DUALMAINT_MED) exist but full spec pages were not provided.
-  #
-  # WARNING: LOT1_BASE_END_REASON is INCOMPLETE without these.
-  # Current end reasons: MED_ADD, DISCONTINUATION, CENSORED.
-  # Missing: SCT, CONDITIONING, MAINTENANCE_START.
-  #
-  # Known risk: if a patient starts a maintenance-eligible med
-  # (MONOMAINTENANCE=1 in rollup) after induction window but
-  # before LOT1_BASE_DISCON_DT, current code may misclassify
-  # it as "MED_ADD" when it should be "MAINTENANCE_START".
-  #
-  # TODO: Implement when spec sections 7-9 are available:
-  #   S12_sct_events: identify HSCT from HCPCS codes (38240, 38241, etc.)
-  #   S13_monomaint: single-drug maintenance (MONOMAINTENANCE=1 in rollup)
-  #   S14_dualmaint: two-drug maintenance (DUALMAINTENANCEWITH in rollup)
-  #   Then update LOT1_BASE_END_REASON to incorporate these events.
-  # ----------------------------------------------------------
-  log_msg("NOTE: SCT + maintenance steps are placeholders (spec sections 7-9 not yet provided).")
-  log_msg("      LOT1_BASE_END_REASON is preliminary; will need SCT/maintenance integration.")
+  log_msg("NOTE: Maintenance (mono/dual) specs not yet provided; LOT1_BASE_END_REASON")
+  log_msg("      does not yet include MAINTENANCE_START. Will need integration when available.")
 
   # ----------------------------------------------------------
   # NDC Format QC (Fix #5 from review)
@@ -1485,7 +1944,7 @@ main <- function() {
     log_msg("  NDC length distribution in codelist:")
     print(ndc_qc_codelist)
 
-    -- Restrict to cohort PATIDs + date window to avoid full RX scan
+    # Restrict to cohort PATIDs + date window to avoid full RX scan
     ndc_qc_rx <- db_q(con, glue("
       SELECT length(upper(regexp_replace(coalesce(cast(r.NDC as string),''), '[^A-Za-z0-9]', ''))) AS ndc_len,
              count(*) AS n
@@ -1593,6 +2052,26 @@ main <- function() {
     ")
     print(flag_check)
 
+    # F) SCT consistency
+    log_msg("  [F] SCT validation:")
+    sct_check <- db_q(con, "
+      SELECT
+        sum(CASE WHEN LOT1_TX_ENDDATE IS NOT NULL AND LOT1_TX_ENDDATE > lb.OBS_END_DT THEN 1 ELSE 0 END)
+          AS n_sct_end_past_obs,
+        sum(CASE WHEN LOT1_SCT_AUTO_TAND_FLG = 1 AND LOT1_SCT_AUTO_SING_FLG = 1 THEN 1 ELSE 0 END)
+          AS n_both_tandem_and_single,
+        sum(CASE WHEN LOT1_TX_AUTO_DT_1 IS NOT NULL AND LOT1_TX_AUTO_DT_1 < lb.LOT1_START_DT THEN 1 ELSE 0 END)
+          AS n_auto_before_lot1
+      FROM lot1_sct sct
+      INNER JOIN lot1_base lb ON sct.PATID = lb.PATID
+    ")
+    log_msg("    SCT end date past OBS_END_DT: ", sct_check$n_sct_end_past_obs,
+            if (sct_check$n_sct_end_past_obs > 0) " ** INVESTIGATE **" else " (OK)")
+    log_msg("    Both tandem AND single flag: ", sct_check$n_both_tandem_and_single,
+            if (sct_check$n_both_tandem_and_single > 0) " ** BUG **" else " (OK)")
+    log_msg("    AUTO DT_1 before LOT1_START: ", sct_check$n_auto_before_lot1,
+            if (sct_check$n_auto_before_lot1 > 0) " ** INVESTIGATE **" else " (OK)")
+
     log_msg("Validation QC suite complete.")
   }, error = function(e) {
     log_msg("WARNING: Validation QC suite failed: ", e$message)
@@ -1608,17 +2087,22 @@ main <- function() {
   # Persist outputs
   # ----------------------------------------------------------
   if (isTRUE(cfg$persist_to_schema)) {
-    run_step(con, "S12_persist_map_stacked", glue("
+    run_step(con, "S17_persist_map_stacked", glue("
       CREATE OR REPLACE TABLE {wrk('MAP_STACKED')} AS
       SELECT * FROM map_stacked
     "), qc = glue("SELECT count(*) AS n_rows FROM {wrk('MAP_STACKED')}"))
 
-    run_step(con, "S13_persist_lot1_base", glue("
+    run_step(con, "S18_persist_lot1_base", glue("
       CREATE OR REPLACE TABLE {wrk('LOT1_BASE')} AS
       SELECT * FROM lot1_base
     "), qc = glue("SELECT count(*) AS n_rows FROM {wrk('LOT1_BASE')}"))
 
-    run_step(con, "S14_persist_lot1_base_end", glue("
+    run_step(con, "S19_persist_lot1_sct", glue("
+      CREATE OR REPLACE TABLE {wrk('LOT1_SCT')} AS
+      SELECT * FROM lot1_sct
+    "), qc = glue("SELECT count(*) AS n_rows FROM {wrk('LOT1_SCT')}"))
+
+    run_step(con, "S20_persist_lot1_base_end", glue("
       CREATE OR REPLACE TABLE {wrk('LOT1_BASE_END')} AS
       SELECT * FROM lot1_base_end
     "), qc = glue("SELECT count(*) AS n_rows FROM {wrk('LOT1_BASE_END')}"))
@@ -1628,9 +2112,9 @@ main <- function() {
 
   log_msg(SEP)
   log_msg("LOT Part 2 complete.")
-  log_msg("Temporary views: mma_med_processed, map_stacked, lot1_base, lot1_base_end")
+  log_msg("Temporary views: mma_med_processed, map_stacked, lot1_base, lot1_sct, lot1_base_end")
   if (isTRUE(cfg$persist_to_schema)) {
-    log_msg("Persisted tables in work schema: MAP_STACKED, LOT1_BASE, LOT1_BASE_END")
+    log_msg("Persisted tables in work schema: MAP_STACKED, LOT1_BASE, LOT1_SCT, LOT1_BASE_END")
   }
   if (has_ggplot2) {
     log_msg("Figures saved to: ", cfg$output_dir)
