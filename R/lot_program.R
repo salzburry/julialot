@@ -310,12 +310,53 @@ run_step <- function(con, name, sql, qc = NULL) {
 # DESCRIPTIVES + FIGURES
 # ============================================================
 # Generates summary tables + ggplot2 figures for QC and reporting.
-# Figures saved to cfg$output_dir as PNG.
+# Figures saved to cfg$output_dir as PNG + interactive HTML.
 # If ggplot2 is not available, figures are skipped gracefully.
+# If plotly/htmlwidgets are available, interactive HTML versions are also saved.
 
 has_ggplot2 <- requireNamespace("ggplot2", quietly = TRUE)
+has_plotly  <- requireNamespace("plotly", quietly = TRUE) &&
+               requireNamespace("htmlwidgets", quietly = TRUE)
 if (has_ggplot2) {
   suppressPackageStartupMessages(library(ggplot2))
+}
+
+# ---- Shared visual theme and palette ----
+lot_palette <- c(
+  "#2E86AB", "#A23B72", "#F18F01", "#C73E1D", "#3B1F2B",
+  "#44BBA4", "#E94F37", "#393E41", "#8D5A97", "#5FAD56",
+  "#F2D0A4", "#3F88C5", "#D72638", "#140F2D", "#F49D37"
+)
+lot_class_palette <- c(
+  "IMID"       = "#2E86AB",
+  "PI"         = "#A23B72",
+  "ALKYLATOR"  = "#F18F01",
+  "ANTI_CD38"  = "#C73E1D",
+  "STEROID"    = "#44BBA4",
+  "ANTI_BCMA"  = "#8D5A97",
+  "SERD"       = "#3F88C5",
+  "OTHER"      = "#393E41",
+  "HDAC"       = "#5FAD56",
+  "XPO1"       = "#E94F37",
+  "BCL2"       = "#D72638",
+  "MCL1"       = "#F49D37"
+)
+
+theme_lot <- function(base_size = 13) {
+  theme_minimal(base_size = base_size) %+replace%
+    theme(
+      plot.title       = element_text(face = "bold", size = base_size + 2, margin = margin(b = 10)),
+      plot.subtitle    = element_text(color = "grey40", size = base_size, margin = margin(b = 12)),
+      plot.caption     = element_text(color = "grey50", size = base_size - 3, hjust = 0),
+      panel.grid.major = element_line(color = "grey90", linewidth = 0.3),
+      panel.grid.minor = element_blank(),
+      axis.title       = element_text(face = "bold", size = base_size - 1),
+      axis.text        = element_text(size = base_size - 2),
+      legend.position  = "top",
+      legend.title     = element_text(face = "bold", size = base_size - 1),
+      legend.text      = element_text(size = base_size - 2),
+      plot.margin      = margin(15, 15, 15, 15)
+    )
 }
 
 save_plot <- function(p, filename, width = 10, height = 6) {
@@ -323,10 +364,52 @@ save_plot <- function(p, filename, width = 10, height = 6) {
   dir.create(cfg$output_dir, showWarnings = FALSE, recursive = TRUE)
   out_path <- file.path(cfg$output_dir, filename)
   tryCatch({
-    ggsave(out_path, plot = p, width = width, height = height, dpi = 150)
+    ggsave(out_path, plot = p, width = width, height = height, dpi = 150, bg = "white")
     log_msg("  Figure saved: ", out_path)
   }, error = function(e) {
     log_msg("  WARNING: Could not save figure ", filename, ": ", e$message)
+  })
+  # Save interactive HTML version
+  if (has_plotly) {
+    tryCatch({
+      html_name <- sub("\\.png$", ".html", filename)
+      html_path <- file.path(cfg$output_dir, html_name)
+      pp <- plotly::ggplotly(p, tooltip = "all") |>
+        plotly::layout(
+          hoverlabel = list(bgcolor = "white", font = list(size = 12)),
+          margin = list(t = 60)
+        ) |>
+        plotly::config(displayModeBar = TRUE, displaylogo = FALSE,
+                       modeBarButtonsToRemove = list("lasso2d", "select2d"))
+      htmlwidgets::saveWidget(pp, html_path, selfcontained = TRUE)
+      log_msg("  Interactive figure saved: ", html_path)
+    }, error = function(e) {
+      log_msg("  WARNING: Could not save interactive figure: ", e$message)
+    })
+  }
+}
+
+# Helper to save an interactive data table as HTML
+save_table <- function(df, filename, caption = "") {
+  if (!requireNamespace("DT", quietly = TRUE) ||
+      !requireNamespace("htmlwidgets", quietly = TRUE)) return(invisible(NULL))
+  dir.create(cfg$output_dir, showWarnings = FALSE, recursive = TRUE)
+  out_path <- file.path(cfg$output_dir, filename)
+  tryCatch({
+    # Convert integer64 columns for display
+    for (col in names(df)) {
+      if (inherits(df[[col]], "integer64")) df[[col]] <- as.numeric(df[[col]])
+    }
+    dt <- DT::datatable(df, caption = caption, rownames = FALSE,
+                         options = list(pageLength = 25, scrollX = TRUE,
+                                        dom = "Bfrtip",
+                                        buttons = list("csv", "excel")),
+                         extensions = "Buttons",
+                         class = "display compact stripe hover")
+    htmlwidgets::saveWidget(dt, out_path, selfcontained = TRUE)
+    log_msg("  Interactive table saved: ", out_path)
+  }, error = function(e) {
+    log_msg("  WARNING: Could not save interactive table: ", e$message)
   })
 }
 
@@ -390,34 +473,55 @@ print_descriptives <- function(con) {
                   format(r$n_med, big.mark = ",")))
     }
 
-    # Figure 1: Claims by medication (bar chart)
+    # Figure 1: Patients by medication (bar chart)
     if (has_ggplot2 && nrow(med_dist) > 0) {
       med_dist$n_patients <- as.numeric(med_dist$n_patients)
       med_dist$n_claims   <- as.numeric(med_dist$n_claims)
       med_dist$n_rx       <- as.numeric(med_dist$n_rx)
       med_dist$n_med      <- as.numeric(med_dist$n_med)
-      p1 <- ggplot(med_dist, aes(x = reorder(MED_ABBR, -n_patients), y = n_patients, fill = MED_CLASS)) +
-        geom_bar(stat = "identity") +
+      p1 <- ggplot(med_dist,
+                    aes(x = reorder(MED_ABBR, -n_patients), y = n_patients,
+                        fill = MED_CLASS, text = paste0(
+                          "Med: ", MED_ABBR, "\nClass: ", MED_CLASS,
+                          "\nPatients: ", format(n_patients, big.mark = ","),
+                          "\nClaims: ", format(n_claims, big.mark = ",")))) +
+        geom_bar(stat = "identity", width = 0.75) +
+        geom_text(aes(label = format(n_patients, big.mark = ",")),
+                  vjust = -0.4, size = 3, color = "grey30") +
+        scale_fill_manual(values = lot_class_palette) +
+        scale_y_continuous(labels = scales::comma_format(), expand = expansion(mult = c(0, 0.12))) +
         labs(title = "MMA_MED: Patients by Medication",
-             x = "Medication", y = "Distinct Patients", fill = "Drug Class") +
-        theme_minimal(base_size = 12) +
-        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+             subtitle = paste0("N = ", format(sum(med_dist$n_patients), big.mark = ","),
+                               " patient-medication combinations across ",
+                               nrow(med_dist), " medications"),
+             x = NULL, y = "Distinct Patients", fill = "Drug Class") +
+        theme_lot() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10))
       save_plot(p1, "fig01_mma_patients_by_med.png")
+      save_table(med_dist, "tab01_mma_med_summary.html",
+                 caption = "MMA_MED: Claims by Medication and Drug Class")
     }
 
     # Figure 2: Pharmacy vs Medical claims stacked bar
     if (has_ggplot2 && nrow(med_dist) > 0) {
       claim_long <- rbind(
-        data.frame(MED_ABBR = med_dist$MED_ABBR, CLAIM_TYPE = "Pharmacy", N = as.numeric(med_dist$n_rx)),
-        data.frame(MED_ABBR = med_dist$MED_ABBR, CLAIM_TYPE = "Medical",  N = as.numeric(med_dist$n_med))
+        data.frame(MED_ABBR = med_dist$MED_ABBR, MED_CLASS = med_dist$MED_CLASS,
+                   CLAIM_TYPE = "Pharmacy", N = as.numeric(med_dist$n_rx)),
+        data.frame(MED_ABBR = med_dist$MED_ABBR, MED_CLASS = med_dist$MED_CLASS,
+                   CLAIM_TYPE = "Medical",  N = as.numeric(med_dist$n_med))
       )
-      p2 <- ggplot(claim_long, aes(x = reorder(MED_ABBR, -N), y = N, fill = CLAIM_TYPE)) +
-        geom_bar(stat = "identity", position = "stack") +
+      p2 <- ggplot(claim_long,
+                    aes(x = reorder(MED_ABBR, -N), y = N, fill = CLAIM_TYPE,
+                        text = paste0("Med: ", MED_ABBR, "\nType: ", CLAIM_TYPE,
+                                      "\nClaims: ", format(N, big.mark = ",")))) +
+        geom_bar(stat = "identity", position = "stack", width = 0.75) +
+        scale_fill_manual(values = c("Pharmacy" = "#2E86AB", "Medical" = "#C73E1D")) +
+        scale_y_continuous(labels = scales::comma_format(), expand = expansion(mult = c(0, 0.08))) +
         labs(title = "MMA_MED: Claims by Type and Medication",
-             x = "Medication", y = "Claim Count", fill = "Claim Type") +
-        scale_fill_manual(values = c("Pharmacy" = "#4E79A7", "Medical" = "#E15759")) +
-        theme_minimal(base_size = 12) +
-        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+             subtitle = "Pharmacy (NDC-based) vs Medical (procedure/NDC) claim sources",
+             x = NULL, y = "Claim Count", fill = "Claim Type") +
+        theme_lot() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10))
       save_plot(p2, "fig02_mma_claims_by_type.png")
     }
 
@@ -540,7 +644,7 @@ print_descriptives <- function(con) {
     }
   }
 
-  # Figure 3: MAP length distribution (histogram via SQL-binned counts to avoid OOM)
+  # Figure 3: MAP length distribution (histogram via SQL-binned counts)
   tryCatch({
     if (has_ggplot2) {
       map_bins <- db_q(con, "
@@ -555,12 +659,22 @@ print_descriptives <- function(con) {
       if (nrow(map_bins) > 0) {
         map_bins$bin_start <- as.numeric(map_bins$bin_start)
         map_bins$n         <- as.numeric(map_bins$n)
-        p3 <- ggplot(map_bins, aes(x = bin_start, y = n)) +
-          geom_bar(stat = "identity", width = 28, fill = "#4E79A7", alpha = 0.8) +
+        median_map <- if (nrow(map_stats) > 0) as.numeric(map_stats$median_map_length) else NA
+        p3 <- ggplot(map_bins, aes(x = bin_start, y = n,
+                                    text = paste0("Days: ", bin_start, "-", bin_start + 29,
+                                                  "\nMAPs: ", format(n, big.mark = ",")))) +
+          geom_bar(stat = "identity", width = 28, fill = "#2E86AB", alpha = 0.85) +
+          { if (!is.na(median_map)) geom_vline(xintercept = median_map,
+                     linetype = "dashed", color = "#C73E1D", linewidth = 0.8) } +
+          { if (!is.na(median_map)) annotate("text", x = median_map + 25, y = Inf, vjust = 2, hjust = 0,
+                   label = paste0("Median: ", round(median_map), " days"),
+                   color = "#C73E1D", fontface = "bold", size = 3.8) } +
+          scale_x_continuous(breaks = seq(0, max(map_bins$bin_start, na.rm = TRUE), by = 90)) +
+          scale_y_continuous(labels = scales::comma_format(), expand = expansion(mult = c(0, 0.1))) +
           labs(title = "MAP Length Distribution",
-               x = "MAP Length (days, 30-day bins)", y = "Count") +
-          theme_minimal(base_size = 12) +
-          scale_x_continuous(breaks = seq(0, max(map_bins$bin_start, na.rm = TRUE), by = 90))
+               subtitle = paste0(format(sum(map_bins$n), big.mark = ","), " medication-available periods, 30-day bins"),
+               x = "MAP Length (days)", y = "Number of MAPs") +
+          theme_lot()
         save_plot(p3, "fig03_map_length_distribution.png")
       }
     }
@@ -573,13 +687,26 @@ print_descriptives <- function(con) {
     if (has_ggplot2 && nrow(map_by_med) > 0) {
       map_by_med$n_patients <- as.numeric(map_by_med$n_patients)
       map_by_med$n_maps     <- as.numeric(map_by_med$n_maps)
-      p4 <- ggplot(map_by_med, aes(x = reorder(med, -n_patients), y = n_patients, fill = class)) +
-        geom_bar(stat = "identity") +
+      map_by_med$n_discon   <- as.numeric(map_by_med$n_discon)
+      p4 <- ggplot(map_by_med,
+                    aes(x = reorder(med, -n_patients), y = n_patients, fill = class,
+                        text = paste0("Med: ", med, "\nClass: ", class,
+                                      "\nPatients: ", format(n_patients, big.mark = ","),
+                                      "\nMAPs: ", format(n_maps, big.mark = ","),
+                                      "\nAvg Days: ", round(avg_map_days, 1)))) +
+        geom_bar(stat = "identity", width = 0.75) +
+        geom_text(aes(label = format(n_patients, big.mark = ",")),
+                  vjust = -0.4, size = 3, color = "grey30") +
+        scale_fill_manual(values = lot_class_palette) +
+        scale_y_continuous(labels = scales::comma_format(), expand = expansion(mult = c(0, 0.12))) +
         labs(title = "MAP: Patients by Medication",
-             x = "Medication", y = "Distinct Patients", fill = "Drug Class") +
-        theme_minimal(base_size = 12) +
-        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+             subtitle = "Medication-available periods across all drug classes",
+             x = NULL, y = "Distinct Patients", fill = "Drug Class") +
+        theme_lot() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10))
       save_plot(p4, "fig04_map_patients_by_med.png")
+      save_table(map_by_med, "tab02_map_by_med.html",
+                 caption = "MAP: Summary by Medication and Drug Class")
     }
   }, error = function(e) {
     log_msg("WARN: fig04 MAP patients by med failed: ", conditionMessage(e))
@@ -669,14 +796,27 @@ print_descriptives <- function(con) {
     if (has_ggplot2 && nrow(regimens) > 0) {
       regimens$n_patients <- as.numeric(regimens$n_patients)
       top15 <- head(regimens, 15)
+      top15$pct <- 100 * top15$n_patients / as.numeric(max(total_lot1, 1))
       top15$regimen <- factor(top15$regimen, levels = rev(top15$regimen))
-      p5 <- ggplot(top15, aes(x = regimen, y = n_patients)) +
-        geom_bar(stat = "identity", fill = "#59A14F") +
+      p5 <- ggplot(top15, aes(x = regimen, y = n_patients,
+                               text = paste0("Regimen: ", regimen,
+                                             "\nPatients: ", format(n_patients, big.mark = ","),
+                                             "\n% of LOT1: ", round(pct, 1), "%",
+                                             "\nAvg Length: ", round(avg_length, 0), " days"))) +
+        geom_bar(stat = "identity", fill = "#44BBA4", width = 0.7) +
+        geom_text(aes(label = paste0(format(n_patients, big.mark = ","),
+                                     " (", round(pct, 1), "%)")),
+                  hjust = -0.05, size = 3.2, color = "grey30") +
         coord_flip() +
+        scale_y_continuous(labels = scales::comma_format(), expand = expansion(mult = c(0, 0.2))) +
         labs(title = "LOT1: Top 15 Induction Regimens",
+             subtitle = paste0("Out of ", format(as.numeric(total_lot1), big.mark = ","), " LOT1 patients"),
              x = NULL, y = "Number of Patients") +
-        theme_minimal(base_size = 12)
+        theme_lot() +
+        theme(legend.position = "none")
       save_plot(p5, "fig05_lot1_top_regimens.png", width = 12, height = 7)
+      save_table(regimens, "tab03_lot1_regimens.html",
+                 caption = "LOT1: Top 25 Induction Regimens")
     }
 
     # Figure 6: LOT1 base length distribution (SQL-binned to avoid OOM)
@@ -694,44 +834,56 @@ print_descriptives <- function(con) {
         lot1_bins$bin_start  <- as.numeric(lot1_bins$bin_start)
         lot1_bins$n          <- as.numeric(lot1_bins$n)
         lot1_bins$median_val <- as.numeric(lot1_bins$median_val)
-        median_len <- lot1_bins$median_val[1]  # same for all rows
-        p6 <- ggplot(lot1_bins, aes(x = bin_start, y = n)) +
-          geom_bar(stat = "identity", width = 28, fill = "#59A14F", alpha = 0.8) +
-          labs(title = "LOT1 BASE Length Distribution",
-               x = "LOT1 BASE Length (days, 30-day bins)", y = "Count") +
-          theme_minimal(base_size = 12) +
+        median_len <- lot1_bins$median_val[1]
+        p6 <- ggplot(lot1_bins, aes(x = bin_start, y = n,
+                                     text = paste0("Days: ", bin_start, "-", bin_start + 29,
+                                                   "\nPatients: ", format(n, big.mark = ",")))) +
+          geom_bar(stat = "identity", width = 28, fill = "#44BBA4", alpha = 0.85) +
           geom_vline(xintercept = median_len,
-                     linetype = "dashed", color = "red", linewidth = 1) +
-          annotate("text", x = median_len + 20, y = Inf, vjust = 2, hjust = 0,
-                   label = paste0("Median: ", round(median_len)),
-                   color = "red", size = 4)
+                     linetype = "dashed", color = "#C73E1D", linewidth = 0.8) +
+          annotate("text", x = median_len + 25, y = Inf, vjust = 2, hjust = 0,
+                   label = paste0("Median: ", round(median_len), " days"),
+                   color = "#C73E1D", fontface = "bold", size = 3.8) +
+          scale_x_continuous(breaks = seq(0, max(lot1_bins$bin_start, na.rm = TRUE), by = 180)) +
+          scale_y_continuous(labels = scales::comma_format(), expand = expansion(mult = c(0, 0.1))) +
+          labs(title = "LOT1 BASE Length Distribution",
+               subtitle = paste0(format(sum(lot1_bins$n), big.mark = ","),
+                                 " patients, 30-day bins"),
+               x = "LOT1 BASE Length (days)", y = "Number of Patients") +
+          theme_lot()
         save_plot(p6, "fig06_lot1_base_length.png")
       }
     }
 
-    # Figure 7: LOT1 end reason pie / bar
+    # Figure 7: LOT1 end reason bar chart
     if (has_ggplot2 && nrow(end_reasons) > 0) {
       end_reasons$n <- as.numeric(end_reasons$n)
       end_reasons$pct <- 100 * end_reasons$n / sum(end_reasons$n)
-      end_reasons$label <- paste0(end_reasons$LOT1_BASE_END_REASON, "\n",
-                                  format(end_reasons$n, big.mark = ","),
-                                  " (", round(end_reasons$pct, 1), "%)")
-      p7 <- ggplot(end_reasons, aes(x = reorder(LOT1_BASE_END_REASON, -n), y = n, fill = LOT1_BASE_END_REASON)) +
-        geom_bar(stat = "identity") +
+      end_reason_colors <- c(
+        "DISCONTINUATION" = "#C73E1D", "MED_ADD" = "#F18F01",
+        "CENSORED" = "#2E86AB", "SCT_AUTO" = "#A23B72",
+        "SCT_ALLO" = "#8D5A97", "SCT_CART" = "#3F88C5", "SCT" = "#393E41"
+      )
+      p7 <- ggplot(end_reasons,
+                    aes(x = reorder(LOT1_BASE_END_REASON, -n), y = n,
+                        fill = LOT1_BASE_END_REASON,
+                        text = paste0("Reason: ", LOT1_BASE_END_REASON,
+                                      "\nPatients: ", format(n, big.mark = ","),
+                                      "\n%: ", round(pct, 1), "%",
+                                      "\nAvg LOT1 Length: ", round(avg_length, 0), " days"))) +
+        geom_bar(stat = "identity", width = 0.7) +
         geom_text(aes(label = paste0(format(n, big.mark = ","), "\n(", round(pct, 1), "%)")),
-                  vjust = -0.3, size = 3.5) +
+                  vjust = -0.3, size = 3.5, color = "grey20") +
+        scale_fill_manual(values = end_reason_colors) +
+        scale_y_continuous(labels = scales::comma_format(), expand = expansion(mult = c(0, 0.15))) +
         labs(title = "LOT1 BASE End Reasons",
+             subtitle = paste0("How LOT1 ended for ", format(sum(end_reasons$n), big.mark = ","), " patients"),
              x = NULL, y = "Number of Patients") +
-        scale_fill_manual(values = c("DISCONTINUATION" = "#E15759",
-                                     "MED_ADD" = "#F28E2B",
-                                     "CENSORED" = "#76B7B2",
-                                     "SCT_AUTO" = "#B07AA1",
-                                     "SCT_ALLO" = "#9C755F",
-                                     "SCT_CART" = "#FF9DA7",
-                                     "SCT" = "#BAB0AC")) +
-        theme_minimal(base_size = 12) +
+        theme_lot() +
         theme(legend.position = "none")
       save_plot(p7, "fig07_lot1_end_reasons.png", width = 8, height = 6)
+      save_table(end_reasons, "tab04_lot1_end_reasons.html",
+                 caption = "LOT1 BASE End Reasons")
     }
 
     # Figure 8: Induction med count distribution
@@ -744,14 +896,20 @@ print_descriptives <- function(con) {
       ")
       if (nrow(med_cnt) > 0) {
         med_cnt$n   <- as.numeric(med_cnt$n)
+        med_cnt$LOT1_MED_CNT <- as.numeric(med_cnt$LOT1_MED_CNT)
         med_cnt$pct <- 100 * med_cnt$n / sum(med_cnt$n)
-        p8 <- ggplot(med_cnt, aes(x = factor(LOT1_MED_CNT), y = n)) +
-          geom_bar(stat = "identity", fill = "#4E79A7") +
+        p8 <- ggplot(med_cnt, aes(x = factor(LOT1_MED_CNT), y = n,
+                                   text = paste0("Meds: ", LOT1_MED_CNT,
+                                                 "\nPatients: ", format(n, big.mark = ","),
+                                                 "\n%: ", round(pct, 1), "%"))) +
+          geom_bar(stat = "identity", fill = "#2E86AB", width = 0.65) +
           geom_text(aes(label = paste0(format(n, big.mark = ","), "\n(", round(pct, 1), "%)")),
-                    vjust = -0.3, size = 3.5) +
+                    vjust = -0.3, size = 3.5, color = "grey20") +
+          scale_y_continuous(labels = scales::comma_format(), expand = expansion(mult = c(0, 0.15))) +
           labs(title = "LOT1: Number of Induction Medications per Patient",
+               subtitle = "How many distinct medications each patient received in induction",
                x = "Number of Induction Meds", y = "Patients") +
-          theme_minimal(base_size = 12)
+          theme_lot()
         save_plot(p8, "fig08_lot1_med_count.png", width = 8, height = 6)
       }
     }
