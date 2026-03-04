@@ -174,6 +174,10 @@ load_codelist_csv <- function(csv_name, col_spec) {
       stop(glue("CSV {csv_name} missing columns: {paste(missing, collapse=', ')}"))
     }
     df <- df[, col_spec, drop = FALSE]
+    if (nrow(df) == 0) {
+      log_msg("WARNING: CSV ", csv_path, " has no data rows, skipping")
+      return(NULL)
+    }
     esc <- function(x) {
       if (is.na(x) || is.null(x) || x == "") return("NULL")
       x <- gsub("'", "''", as.character(x))
@@ -332,10 +336,10 @@ print_descriptives <- function(con) {
   cat("        PART 2 DESCRIPTIVE SUMMARY                    \n")
   cat(SEP, "\n")
 
+  # --------------------------------------------------------
+  # 1. MMA_MED Summary
+  # --------------------------------------------------------
   tryCatch({
-    # --------------------------------------------------------
-    # 1. MMA_MED Summary
-    # --------------------------------------------------------
     cat("\n", DASH, "\n")
     cat("  5A. MMA_MED (Medication Claims) Summary\n")
     cat(DASH, "\n")
@@ -434,9 +438,14 @@ print_descriptives <- function(con) {
                   r$CLAIM_TYPE, r$min_ds, r$p25_ds, r$median_ds, r$p75_ds, r$max_ds, r$mean_ds))
     }
 
-    # --------------------------------------------------------
-    # 2. MAP Summary
-    # --------------------------------------------------------
+  }, error = function(e) {
+    log_msg("WARN: MMA_MED descriptives failed: ", conditionMessage(e))
+  })
+
+  # --------------------------------------------------------
+  # 2. MAP Summary
+  # --------------------------------------------------------
+  tryCatch({
     cat("\n", DASH, "\n")
     cat("  5B. MAP_MED (Medication Available Periods) Summary\n")
     cat(DASH, "\n")
@@ -540,9 +549,14 @@ print_descriptives <- function(con) {
       save_plot(p4, "fig04_map_patients_by_med.png")
     }
 
-    # --------------------------------------------------------
-    # 3. LOT1 Summary
-    # --------------------------------------------------------
+  }, error = function(e) {
+    log_msg("WARN: MAP descriptives failed: ", conditionMessage(e))
+  })
+
+  # --------------------------------------------------------
+  # 3. LOT1 Summary
+  # --------------------------------------------------------
+  tryCatch({
     cat("\n", DASH, "\n")
     cat("  6. LOT1_BASE Summary\n")
     cat(DASH, "\n")
@@ -721,9 +735,14 @@ print_descriptives <- function(con) {
                   100 * r$n_patients / max(total_lot1, 1)))
     }
 
-    # --------------------------------------------------------
-    # 4. SCT Summary
-    # --------------------------------------------------------
+  }, error = function(e) {
+    log_msg("WARN: LOT1 descriptives failed: ", conditionMessage(e))
+  })
+
+  # --------------------------------------------------------
+  # 4. SCT Summary
+  # --------------------------------------------------------
+  tryCatch({
     cat("\n", DASH, "\n")
     cat("  7. SCT (Stem Cell Transplant) Summary\n")
     cat(DASH, "\n")
@@ -805,7 +824,7 @@ print_descriptives <- function(con) {
     cat(SEP, "\n")
 
   }, error = function(e) {
-    log_msg("WARN: Could not generate descriptive summary: ", conditionMessage(e))
+    log_msg("WARN: SCT descriptives failed: ", conditionMessage(e))
   })
 }
 
