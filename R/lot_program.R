@@ -81,7 +81,9 @@ cfg <- list(
   cl_sct_codelist_tbl  = Sys.getenv("CL_SCT_CODELIST_TBL", unset = "cl_sct_codelist"),
 
   # SCT parameters (per sct.pdf spec section 7)
-  sct_auto_window_days = as.integer(Sys.getenv("SCT_AUTO_WINDOW_DAYS", unset = "14")),
+  # Per sct.pdf: window is earliest_date through earliest_date + 13 (14-day span)
+  # datediff(x, cur_start) <= 13 means days 0..13 inclusive = 14-day window
+  sct_auto_window_days = as.integer(Sys.getenv("SCT_AUTO_WINDOW_DAYS", unset = "13")),
   sct_auto_gap_days    = as.integer(Sys.getenv("SCT_AUTO_GAP_DAYS", unset = "60")),
   sct_tandem_days      = as.integer(Sys.getenv("SCT_TANDEM_DAYS", unset = "180")),
 
@@ -261,6 +263,8 @@ embedded_permissible_subs <- function() {
 # ------------------------------------------------------------
 # Embedded SCT codelist (Tab 47 - SCT procedure codes)
 # AUTO = autologous, ALLO = allogeneic, CART = CAR-T
+# Note: CPT 38241 = autologous (AUTO), CPT 38240 = allogeneic (ALLO)
+# per AMA CPT definitions. This is correct despite appearing reversed.
 # ------------------------------------------------------------
 embedded_sct_codelist <- function() {
   "
@@ -1012,6 +1016,7 @@ main <- function() {
         cast(m.FST_DT AS date) AS DATE_SERVICE,
         {cfg$medical_day_supply} AS DAY_SUPPLY,
         'medical' AS CLAIM_TYPE,
+        'med_proc_cd' AS CLAIM_SOURCE,
         c.CL_CODE AS CODE,
         c.CL_CODE_TYPE AS CODE_TYPE,
         c.CL_MED_ABBR AS MED_ABBR,
@@ -1031,6 +1036,7 @@ main <- function() {
         cast(m.FST_DT AS date) AS DATE_SERVICE,
         {cfg$medical_day_supply} AS DAY_SUPPLY,
         'medical' AS CLAIM_TYPE,
+        'med_bill_proc' AS CLAIM_SOURCE,
         c.CL_CODE AS CODE,
         c.CL_CODE_TYPE AS CODE_TYPE,
         c.CL_MED_ABBR AS MED_ABBR,
@@ -1050,6 +1056,7 @@ main <- function() {
         cast(m.FST_DT AS date) AS DATE_SERVICE,
         {cfg$medical_day_supply} AS DAY_SUPPLY,
         'medical' AS CLAIM_TYPE,
+        'med_ndc' AS CLAIM_SOURCE,
         c.CL_CODE AS CODE,
         c.CL_CODE_TYPE AS CODE_TYPE,
         c.CL_MED_ABBR AS MED_ABBR,
@@ -1058,18 +1065,23 @@ main <- function() {
       INNER JOIN lot_patient_input p ON m.PATID = p.PATID
       INNER JOIN codelist c
         ON c.CL_CODE_TYPE = 'NDC'
-       AND upper(regexp_replace(coalesce(cast(m.NDC as string),''), '[^A-Za-z0-9]', '')) = c.CL_CODE
+       -- Normalize both sides to NDC11 (lpad stripped value to 11 digits with zeros)
+       AND lpad(regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', ''), 11, '0')
+         = lpad(regexp_replace(c.CL_CODE, '[^0-9]', ''), 11, '0')
       WHERE cast(m.NDC as string) IS NOT NULL AND trim(cast(m.NDC as string)) <> ''
         AND cast(m.FST_DT AS date) >= p.INDEX_DATE
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT
     ),
     -- 4) med_procedure table (additional HCPCS procedure codes)
+    -- NOTE: MED_PROCEDURE.PROC contains ICD codes per Optum data dict.
+    -- Matching HCPCS here is a safety net; expect ~0 matches from this source.
     medproc AS (
       SELECT
         mp.PATID,
         cast(mp.FST_DT AS date) AS DATE_SERVICE,
         {cfg$medical_day_supply} AS DAY_SUPPLY,
         'medical' AS CLAIM_TYPE,
+        'med_procedure' AS CLAIM_SOURCE,
         c.CL_CODE AS CODE,
         c.CL_CODE_TYPE AS CODE_TYPE,
         c.CL_MED_ABBR AS MED_ABBR,
@@ -1089,6 +1101,7 @@ main <- function() {
         cast(r.FILL_DT AS date) AS DATE_SERVICE,
         cast(r.DAYS_SUP AS int) AS DAY_SUPPLY,
         'pharmacy' AS CLAIM_TYPE,
+        'rx_ndc' AS CLAIM_SOURCE,
         c.CL_CODE AS CODE,
         c.CL_CODE_TYPE AS CODE_TYPE,
         c.CL_MED_ABBR AS MED_ABBR,
@@ -1097,7 +1110,9 @@ main <- function() {
       INNER JOIN lot_patient_input p ON r.PATID = p.PATID
       INNER JOIN codelist c
         ON c.CL_CODE_TYPE = 'NDC'
-       AND upper(regexp_replace(coalesce(cast(r.NDC as string),''), '[^A-Za-z0-9]', '')) = c.CL_CODE
+       -- Normalize both sides to NDC11 (lpad stripped value to 11 digits with zeros)
+       AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', ''), 11, '0')
+         = lpad(regexp_replace(c.CL_CODE, '[^0-9]', ''), 11, '0')
       WHERE cast(r.FILL_DT AS date) >= p.INDEX_DATE
         AND cast(r.FILL_DT AS date) <= p.OBS_END_DT
     )
@@ -1112,7 +1127,13 @@ main <- function() {
       count(DISTINCT PATID) AS n_patients,
       count(DISTINCT MED_ABBR) AS n_meds,
       sum(case when CLAIM_TYPE='pharmacy' then 1 else 0 end) AS n_pharmacy_rows,
-      sum(case when CLAIM_TYPE='medical' then 1 else 0 end) AS n_medical_rows
+      sum(case when CLAIM_TYPE='medical' then 1 else 0 end) AS n_medical_rows,
+      -- Source contribution audit (Item 9B: confirms each source path is active)
+      sum(case when CLAIM_SOURCE='med_proc_cd' then 1 else 0 end) AS n_from_proc_cd,
+      sum(case when CLAIM_SOURCE='med_bill_proc' then 1 else 0 end) AS n_from_bill_proc,
+      sum(case when CLAIM_SOURCE='med_ndc' then 1 else 0 end) AS n_from_med_ndc,
+      sum(case when CLAIM_SOURCE='med_procedure' then 1 else 0 end) AS n_from_med_procedure,
+      sum(case when CLAIM_SOURCE='rx_ndc' then 1 else 0 end) AS n_from_rx_ndc
     FROM mma_med_raw")
 
   # Enrich + dedup (mma med.pdf spec)
@@ -1566,7 +1587,7 @@ main <- function() {
     -- Medical PROC_CD (contains CPT/HCPCS per Optum business rules)
     med_proc AS (
       SELECT m.PATID, cast(m.FST_DT AS date) AS DATE_SERVICE,
-             s.SCT_TYPE, s.CL_CODE AS CODE
+             s.SCT_TYPE, s.CL_CODE AS CODE, 'med_proc_cd' AS SRC
       FROM {cdm_src(cfg$tbl_medical)} m
       INNER JOIN lot_patient_input p ON m.PATID = p.PATID
       INNER JOIN sct_codes s
@@ -1578,7 +1599,7 @@ main <- function() {
     -- Medical BILL_PROC_CD (also CPT/HCPCS per Optum business rules)
     med_bill AS (
       SELECT m.PATID, cast(m.FST_DT AS date) AS DATE_SERVICE,
-             s.SCT_TYPE, s.CL_CODE AS CODE
+             s.SCT_TYPE, s.CL_CODE AS CODE, 'med_bill_proc' AS SRC
       FROM {cdm_src(cfg$tbl_medical)} m
       INNER JOIN lot_patient_input p ON m.PATID = p.PATID
       INNER JOIN sct_codes s
@@ -1595,7 +1616,7 @@ main <- function() {
     -- autologous SCT), add them to the SCT codelist with CL_CODE_TYPE='ICD'.
     medproc AS (
       SELECT mp.PATID, cast(mp.FST_DT AS date) AS DATE_SERVICE,
-             s.SCT_TYPE, s.CL_CODE AS CODE
+             s.SCT_TYPE, s.CL_CODE AS CODE, 'med_procedure' AS SRC
       FROM {cdm_src(cfg$tbl_med_proc)} mp
       INNER JOIN lot_patient_input p ON mp.PATID = p.PATID
       INNER JOIN sct_codes s
@@ -1619,6 +1640,9 @@ main <- function() {
     FROM sct_claims_raw
     GROUP BY SCT_TYPE
     ORDER BY SCT_TYPE")
+
+  # NOTE: SCT CTEs include SRC column for debug traceability (dropped during dedup).
+  # To audit source contributions, query the combined CTE directly before dedup.
 
   # S13: AUTO SCT date processing (per sct.pdf)
   #
