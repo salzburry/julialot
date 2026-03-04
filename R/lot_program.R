@@ -328,18 +328,21 @@ lot_palette <- c(
   "#F2D0A4", "#3F88C5", "#D72638", "#140F2D", "#F49D37"
 )
 lot_class_palette <- c(
-  "IMID"       = "#2E86AB",
-  "PI"         = "#A23B72",
-  "ALKYLATOR"  = "#F18F01",
-  "ANTI_CD38"  = "#C73E1D",
+  "IMMUNOMOD"  = "#2E86AB",
+  "PROTINHIB"  = "#A23B72",
+  "MUSTARD"    = "#F18F01",
+  "ACD38"      = "#C73E1D",
   "STEROID"    = "#44BBA4",
-  "ANTI_BCMA"  = "#8D5A97",
-  "SERD"       = "#3F88C5",
-  "OTHER"      = "#393E41",
-  "HDAC"       = "#5FAD56",
-  "XPO1"       = "#E94F37",
-  "BCL2"       = "#D72638",
-  "MCL1"       = "#F49D37"
+  "ABCMA"      = "#8D5A97",
+  "ASLAMF7"    = "#3F88C5",
+  "MELP"       = "#3B1F2B",
+  "TOPOINHIB"  = "#E94F37",
+  "HIST"       = "#5FAD56",
+  "NUCLEAR"    = "#F49D37",
+  "BLC21"      = "#D72638",
+  "ATCELL"     = "#F2D0A4",
+  "UNV"        = "#140F2D",
+  "PLAT"       = "#393E41"
 )
 
 theme_lot <- function(base_size = 13) {
@@ -488,7 +491,7 @@ print_descriptives <- function(con) {
         geom_bar(stat = "identity", width = 0.75) +
         geom_text(aes(label = format(n_patients, big.mark = ",")),
                   vjust = -0.4, size = 3, color = "grey30") +
-        scale_fill_manual(values = lot_class_palette) +
+        scale_fill_manual(values = lot_class_palette, na.value = "grey50") +
         scale_y_continuous(labels = scales::comma_format(), expand = expansion(mult = c(0, 0.12))) +
         labs(title = "MMA_MED: Patients by Medication",
              subtitle = paste0("N = ", format(sum(med_dist$n_patients), big.mark = ","),
@@ -697,7 +700,7 @@ print_descriptives <- function(con) {
         geom_bar(stat = "identity", width = 0.75) +
         geom_text(aes(label = format(n_patients, big.mark = ",")),
                   vjust = -0.4, size = 3, color = "grey30") +
-        scale_fill_manual(values = lot_class_palette) +
+        scale_fill_manual(values = lot_class_palette, na.value = "grey50") +
         scale_y_continuous(labels = scales::comma_format(), expand = expansion(mult = c(0, 0.12))) +
         labs(title = "MAP: Patients by Medication",
              subtitle = "Medication-available periods across all drug classes",
