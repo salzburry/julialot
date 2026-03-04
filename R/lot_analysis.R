@@ -587,8 +587,9 @@ build_lot_steps <- function() {
       source_tables = c("medical", "rx"),
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW mma_med_raw AS
-        -- Medical claims (HCPCS/CPT -> MMA codelist)
-        WITH medical_claims AS (
+        -- Medical claims: match HCPCS J-codes via PROC_CD (primary procedure)
+        -- Per Optum CDM v9.0, PROC_CD holds CPT/HCPCS codes
+        WITH medical_claims_proc AS (
           SELECT /*+ BROADCAST(c) */
             m.PATID,
             cast(m.FST_DT AS date) AS DATE_SERVICE,
@@ -605,12 +606,39 @@ build_lot_steps <- function() {
             AND upper(regexp_replace(m.PROC_CD, '\\\\.', '')) = c.CL_CODE
           WHERE m.FST_DT IS NOT NULL
         ),
+        -- Medical claims: also check BILL_PROC_CD (billing procedure code)
+        -- Some J-codes may appear here instead of PROC_CD
+        medical_claims_bill AS (
+          SELECT /*+ BROADCAST(c) */
+            m.PATID,
+            cast(m.FST_DT AS date) AS DATE_SERVICE,
+            {cfg$medical_day_supply} AS DAY_SUPPLY,
+            'medical' AS CLAIM_TYPE,
+            'HCPCS' AS CODE_TYPE,
+            upper(regexp_replace(m.BILL_PROC_CD, '\\\\.', '')) AS CODE,
+            c.CL_MEDICATION_FULL,
+            c.CL_MED_CLASS,
+            c.CL_MED_ABBR
+          FROM {lot_cdm_src(cfg$tbl_medical)} m
+          INNER JOIN mma_codelist c
+            ON c.CL_CODE_TYPE = 'HCPCS'
+            AND upper(regexp_replace(m.BILL_PROC_CD, '\\\\.', '')) = c.CL_CODE
+          WHERE m.FST_DT IS NOT NULL
+            AND m.BILL_PROC_CD IS NOT NULL
+        ),
+        -- Combine both medical code sources (dedup below)
+        medical_claims AS (
+          SELECT * FROM medical_claims_proc
+          UNION
+          SELECT * FROM medical_claims_bill
+        ),
         -- Pharmacy claims (NDC -> MMA codelist)
+        -- Per Optum CDM v9.0, DAYS_SUP = days supply on RX table
         pharmacy_claims AS (
           SELECT /*+ BROADCAST(c) */
             r.PATID,
             cast(r.FILL_DT AS date) AS DATE_SERVICE,
-            cast(r.DAYS_SUPLY AS int) AS DAY_SUPPLY,
+            cast(r.DAYS_SUP AS int) AS DAY_SUPPLY,
             'pharmacy' AS CLAIM_TYPE,
             'NDC' AS CODE_TYPE,
             upper(regexp_replace(r.NDC, '\\\\.', '')) AS CODE,
