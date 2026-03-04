@@ -475,19 +475,22 @@ print_descriptives <- function(con) {
                   format(r$n_both_types, big.mark = ",")))
     }
 
-    # Figure 3: MAP length distribution (histogram)
+    # Figure 3: MAP length distribution (histogram via SQL-binned counts to avoid OOM)
     if (has_ggplot2) {
-      map_lengths <- db_q(con, "
-        SELECT datediff(MAP_END_DT, MAP_START_DT) + 1 AS map_length
+      map_bins <- db_q(con, "
+        SELECT floor((datediff(MAP_END_DT, MAP_START_DT) + 1) / 30) * 30 AS bin_start,
+               count(*) AS n
         FROM map_stacked
+        GROUP BY floor((datediff(MAP_END_DT, MAP_START_DT) + 1) / 30) * 30
+        ORDER BY bin_start
       ")
-      if (nrow(map_lengths) > 0) {
-        p3 <- ggplot(map_lengths, aes(x = map_length)) +
-          geom_histogram(binwidth = 30, fill = "#4E79A7", color = "white", alpha = 0.8) +
+      if (nrow(map_bins) > 0) {
+        p3 <- ggplot(map_bins, aes(x = bin_start, y = n)) +
+          geom_bar(stat = "identity", width = 28, fill = "#4E79A7", alpha = 0.8) +
           labs(title = "MAP Length Distribution",
-               x = "MAP Length (days)", y = "Count") +
+               x = "MAP Length (days, 30-day bins)", y = "Count") +
           theme_minimal(base_size = 12) +
-          scale_x_continuous(breaks = seq(0, max(map_lengths$map_length, na.rm = TRUE), by = 90))
+          scale_x_continuous(breaks = seq(0, max(map_bins$bin_start, na.rm = TRUE), by = 90))
         save_plot(p3, "fig03_map_length_distribution.png")
       }
     }
@@ -595,21 +598,28 @@ print_descriptives <- function(con) {
       save_plot(p5, "fig05_lot1_top_regimens.png", width = 12, height = 7)
     }
 
-    # Figure 6: LOT1 base length distribution
+    # Figure 6: LOT1 base length distribution (SQL-binned to avoid OOM)
     if (has_ggplot2) {
-      lot1_lengths <- db_q(con, "SELECT LOT1_BASE_LENGTH FROM lot1_base WHERE LOT1_BASE_LENGTH IS NOT NULL")
-      if (nrow(lot1_lengths) > 0) {
-        p6 <- ggplot(lot1_lengths, aes(x = LOT1_BASE_LENGTH)) +
-          geom_histogram(binwidth = 30, fill = "#59A14F", color = "white", alpha = 0.8) +
+      lot1_bins <- db_q(con, "
+        SELECT floor(LOT1_BASE_LENGTH / 30) * 30 AS bin_start,
+               count(*) AS n,
+               percentile_approx(LOT1_BASE_LENGTH, 0.5) AS median_val
+        FROM lot1_base
+        WHERE LOT1_BASE_LENGTH IS NOT NULL
+        GROUP BY floor(LOT1_BASE_LENGTH / 30) * 30
+        ORDER BY bin_start
+      ")
+      if (nrow(lot1_bins) > 0) {
+        median_len <- lot1_bins$median_val[1]  # same for all rows
+        p6 <- ggplot(lot1_bins, aes(x = bin_start, y = n)) +
+          geom_bar(stat = "identity", width = 28, fill = "#59A14F", alpha = 0.8) +
           labs(title = "LOT1 BASE Length Distribution",
-               x = "LOT1 BASE Length (days)", y = "Count") +
+               x = "LOT1 BASE Length (days, 30-day bins)", y = "Count") +
           theme_minimal(base_size = 12) +
-          geom_vline(xintercept = median(lot1_lengths$LOT1_BASE_LENGTH, na.rm = TRUE),
-                     linetype = "dashed", color = "red", size = 1) +
-          annotate("text",
-                   x = median(lot1_lengths$LOT1_BASE_LENGTH, na.rm = TRUE) + 20,
-                   y = Inf, vjust = 2, hjust = 0,
-                   label = paste0("Median: ", round(median(lot1_lengths$LOT1_BASE_LENGTH, na.rm = TRUE))),
+          geom_vline(xintercept = median_len,
+                     linetype = "dashed", color = "red", linewidth = 1) +
+          annotate("text", x = median_len + 20, y = Inf, vjust = 2, hjust = 0,
+                   label = paste0("Median: ", round(median_len)),
                    color = "red", size = 4)
         save_plot(p6, "fig06_lot1_base_length.png")
       }
@@ -776,6 +786,45 @@ main <- function() {
     WHERE original_med IS NOT NULL AND substitute_med IS NOT NULL
   "), qc = "SELECT count(*) AS n_rows, count(DISTINCT original_med) AS n_orig_meds FROM permissible_subs")
 
+  # ----------------------------------------------------------
+  # Codelist <-> Rollup consistency QC
+  # ----------------------------------------------------------
+  log_msg("Checking codelist <-> rollup consistency...")
+  tryCatch({
+    # Codelist meds not in rollup (will be missing class/flag info)
+    orphan_meds <- db_q(con, "
+      SELECT c.CL_MED_ABBR, count(*) AS n_codes
+      FROM mma_codelist c
+      LEFT JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR
+      WHERE r.CL_MED_ABBR IS NULL
+      GROUP BY c.CL_MED_ABBR
+      ORDER BY n_codes DESC
+    ")
+    if (nrow(orphan_meds) > 0) {
+      log_msg("  WARNING: Codelist meds NOT in rollup (will have NULL class/flags):")
+      print(orphan_meds)
+    } else {
+      log_msg("  OK: All codelist meds found in rollup.")
+    }
+
+    # MED_ABBR mapping to >1 class (min() will hide this)
+    multi_class <- db_q(con, "
+      SELECT CL_MED_ABBR, count(DISTINCT CL_MED_CLASS) AS n_classes,
+             concat_ws(', ', collect_set(CL_MED_CLASS)) AS classes
+      FROM mma_codelist
+      GROUP BY CL_MED_ABBR
+      HAVING count(DISTINCT CL_MED_CLASS) > 1
+    ")
+    if (nrow(multi_class) > 0) {
+      log_msg("  WARNING: MED_ABBR maps to multiple classes (min() will pick one):")
+      print(multi_class)
+    } else {
+      log_msg("  OK: Each MED_ABBR maps to exactly one class.")
+    }
+  }, error = function(e) {
+    log_msg("  WARNING: Codelist consistency QC failed: ", e$message)
+  })
+
   # Fetch med/class lists for dynamic flag generation
   meds <- db_q(con, "SELECT DISTINCT CL_MED_ABBR FROM mma_rollup ORDER BY CL_MED_ABBR")$CL_MED_ABBR
   classes <- db_q(con, "SELECT DISTINCT CL_MED_CLASS FROM mma_rollup ORDER BY CL_MED_CLASS")$CL_MED_CLASS
@@ -785,11 +834,13 @@ main <- function() {
   log_msg("Rollup classes: ", paste(classes, collapse = ", "))
 
   # Dynamic flag expressions
+  # Sanitize both med abbreviations and class names for safe SQL column names
+  sanitize_col <- function(x) gsub("[^A-Za-z0-9]+", "_", toupper(x))
   med_flag_exprs <- paste0(
-    vapply(meds, function(m) glue("max(case when im.MED_ABBR = '{m}' then 1 else 0 end) as LOT1_MED_{m}"), character(1)),
+    vapply(meds, function(m) glue("max(case when im.MED_ABBR = '{m}' then 1 else 0 end) as LOT1_MED_{sanitize_col(m)}"), character(1)),
     collapse = ",\n      "
   )
-  sanitize_class <- function(x) gsub("[^A-Za-z0-9]+", "_", toupper(x))
+  sanitize_class <- sanitize_col  # alias for backward compatibility
   class_flag_exprs <- paste0(
     vapply(classes, function(cl) glue("max(case when im.MED_CLASS = '{cl}' then 1 else 0 end) as LOT1_CLASS_{sanitize_class(cl)}"), character(1)),
     collapse = ",\n      "
@@ -849,7 +900,7 @@ main <- function() {
       INNER JOIN lot_patient_input p ON m.PATID = p.PATID
       INNER JOIN codelist c
         ON c.CL_CODE_TYPE = 'HCPCS'
-       AND upper(regexp_replace(coalesce(m.PROC_CD,''), '[^A-Za-z0-9]', '')) = c.CL_CODE
+       AND upper(regexp_replace(coalesce(cast(m.PROC_CD as string),''), '[^A-Za-z0-9]', '')) = c.CL_CODE
       WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT
     ),
@@ -868,7 +919,7 @@ main <- function() {
       INNER JOIN lot_patient_input p ON m.PATID = p.PATID
       INNER JOIN codelist c
         ON c.CL_CODE_TYPE = 'HCPCS'
-       AND upper(regexp_replace(coalesce(m.BILL_PROC_CD,''), '[^A-Za-z0-9]', '')) = c.CL_CODE
+       AND upper(regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''), '[^A-Za-z0-9]', '')) = c.CL_CODE
       WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT
     ),
@@ -887,8 +938,8 @@ main <- function() {
       INNER JOIN lot_patient_input p ON m.PATID = p.PATID
       INNER JOIN codelist c
         ON c.CL_CODE_TYPE = 'NDC'
-       AND upper(regexp_replace(coalesce(m.NDC,''), '[^A-Za-z0-9]', '')) = c.CL_CODE
-      WHERE m.NDC IS NOT NULL AND trim(m.NDC) <> ''
+       AND upper(regexp_replace(coalesce(cast(m.NDC as string),''), '[^A-Za-z0-9]', '')) = c.CL_CODE
+      WHERE cast(m.NDC as string) IS NOT NULL AND trim(cast(m.NDC as string)) <> ''
         AND cast(m.FST_DT AS date) >= p.INDEX_DATE
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT
     ),
@@ -907,7 +958,7 @@ main <- function() {
       INNER JOIN lot_patient_input p ON mp.PATID = p.PATID
       INNER JOIN codelist c
         ON c.CL_CODE_TYPE = 'HCPCS'
-       AND upper(regexp_replace(coalesce(mp.PROC,''), '[^A-Za-z0-9]', '')) = c.CL_CODE
+       AND upper(regexp_replace(coalesce(cast(mp.PROC as string),''), '[^A-Za-z0-9]', '')) = c.CL_CODE
       WHERE cast(mp.FST_DT AS date) >= p.INDEX_DATE
         AND cast(mp.FST_DT AS date) <= p.OBS_END_DT
     ),
@@ -926,7 +977,7 @@ main <- function() {
       INNER JOIN lot_patient_input p ON r.PATID = p.PATID
       INNER JOIN codelist c
         ON c.CL_CODE_TYPE = 'NDC'
-       AND upper(regexp_replace(coalesce(r.NDC,''), '[^A-Za-z0-9]', '')) = c.CL_CODE
+       AND upper(regexp_replace(coalesce(cast(r.NDC as string),''), '[^A-Za-z0-9]', '')) = c.CL_CODE
       WHERE cast(r.FILL_DT AS date) >= p.INDEX_DATE
         AND cast(r.FILL_DT AS date) <= p.OBS_END_DT
     )
@@ -1254,6 +1305,11 @@ main <- function() {
       INNER JOIN permissible_subs ps
         ON im.MED_ABBR = ps.original_med
     ),
+    -- DECISION: Steroid MAPs are included in base_meds (per spec: induction includes
+    -- all meds in the window including steroids). This means steroid MAPs can extend
+    -- LOT1_BASE_DISCON_DT. If stakeholders prefer to exclude steroids from the
+    -- discontinuation computation (common analytic tweak), filter base_meds above
+    -- to exclude steroid MED_CLASS, but keep steroid flags in LOT1_BASE_MEDS.
     discon_raw AS (
       SELECT
         ms.PATID,
@@ -1306,7 +1362,7 @@ main <- function() {
           WHEN d.LOT1_BASE_DISCON_DT IS NOT NULL THEN datediff(d.LOT1_BASE_DISCON_DT, ms.LOT1_START_DT) + 1
           ELSE datediff(p.OBS_END_DT, ms.LOT1_START_DT) + 1
         END AS LOT1_BASE_LENGTH,
-        {paste0('ms.', paste(c(paste0('LOT1_MED_', meds), paste0('LOT1_CLASS_', vapply(classes, sanitize_class, character(1)))), collapse = ', ms.'))}
+        {paste0('ms.', paste(c(paste0('LOT1_MED_', vapply(meds, sanitize_col, character(1))), paste0('LOT1_CLASS_', vapply(classes, sanitize_class, character(1)))), collapse = ', ms.'))}
       FROM lot_patient_input p
       INNER JOIN med_summary ms ON p.PATID = ms.PATID
       LEFT JOIN discon d ON p.PATID = d.PATID
@@ -1366,16 +1422,19 @@ main <- function() {
     CREATE OR REPLACE TEMPORARY VIEW lot1_base_end AS
     SELECT
       lb.*,
+      -- End reason priority: MED_ADD (at or before discon) > DISCONTINUATION > CENSORED
+      -- NOTE: uses <= so that if add-med date == discon date, MED_ADD takes priority
+      -- (a new med arriving on the same day as discontinuation is clinically a regimen change)
       CASE
         WHEN lb.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
-          AND (lb.LOT1_BASE_DISCON_DT IS NULL OR lb.LOT1_BASE_1ST_ADD_MED_DT < lb.LOT1_BASE_DISCON_DT)
+          AND (lb.LOT1_BASE_DISCON_DT IS NULL OR lb.LOT1_BASE_1ST_ADD_MED_DT <= lb.LOT1_BASE_DISCON_DT)
           THEN 'MED_ADD'
         WHEN lb.LOT1_BASE_DISCON_DT IS NOT NULL THEN 'DISCONTINUATION'
         ELSE 'CENSORED'
       END AS LOT1_BASE_END_REASON,
       CASE
         WHEN lb.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
-          AND (lb.LOT1_BASE_DISCON_DT IS NULL OR lb.LOT1_BASE_1ST_ADD_MED_DT < lb.LOT1_BASE_DISCON_DT)
+          AND (lb.LOT1_BASE_DISCON_DT IS NULL OR lb.LOT1_BASE_1ST_ADD_MED_DT <= lb.LOT1_BASE_DISCON_DT)
           THEN lb.LOT1_BASE_1ST_ADD_MED_DT
         WHEN lb.LOT1_BASE_DISCON_DT IS NOT NULL THEN lb.LOT1_BASE_DISCON_DT
         ELSE lb.OBS_END_DT
@@ -1426,12 +1485,16 @@ main <- function() {
     log_msg("  NDC length distribution in codelist:")
     print(ndc_qc_codelist)
 
+    -- Restrict to cohort PATIDs + date window to avoid full RX scan
     ndc_qc_rx <- db_q(con, glue("
-      SELECT length(upper(regexp_replace(coalesce(NDC,''), '[^A-Za-z0-9]', ''))) AS ndc_len,
+      SELECT length(upper(regexp_replace(coalesce(cast(r.NDC as string),''), '[^A-Za-z0-9]', ''))) AS ndc_len,
              count(*) AS n
-      FROM {cdm_src(cfg$tbl_rx)}
-      WHERE NDC IS NOT NULL AND trim(NDC) <> ''
-      GROUP BY length(upper(regexp_replace(coalesce(NDC,''), '[^A-Za-z0-9]', '')))
+      FROM {cdm_src(cfg$tbl_rx)} r
+      INNER JOIN lot_patient_input p ON r.PATID = p.PATID
+      WHERE cast(r.NDC as string) IS NOT NULL AND trim(cast(r.NDC as string)) <> ''
+        AND cast(r.FILL_DT AS date) >= p.INDEX_DATE
+        AND cast(r.FILL_DT AS date) <= p.OBS_END_DT
+      GROUP BY length(upper(regexp_replace(coalesce(cast(r.NDC as string),''), '[^A-Za-z0-9]', '')))
       ORDER BY ndc_len
     "))
     log_msg("  NDC length distribution in RX claims:")
