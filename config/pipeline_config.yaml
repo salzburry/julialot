@@ -143,3 +143,28 @@ output:
   results_dir: "/mnt/results"
   export_format: "csv"
   generate_attrition_table: true
+
+# ============================================================================
+# PART 2: LOT (LINES OF THERAPY) ANALYSIS SETTINGS
+# ============================================================================
+lot_analysis:
+  # Input: Part 1 final cohort table name
+  input_cohort_table: "ELIG_COH_FINAL"
+
+  # Induction regimen window: medications started within this many days
+  # of LOT1_START_DT are considered part of the induction regimen (per spec)
+  induction_window: 60
+
+  # MAP gap threshold (days): gap >= this value between coverage end and
+  # next claim starts a new Medication Available Period
+  map_gap_days: 90
+
+  # Medical claims default day supply (per spec: hardcode to 28)
+  medical_day_supply: 28
+
+  # LOT discontinuation minimum follow-up: if ENDDATE - DISCON_DT < this,
+  # set discontinuation date to NULL (insufficient follow-up to confirm)
+  lot_discon_gap: 90
+
+  # Persist LOT output tables to work schema
+  persist_lot_tables: true
