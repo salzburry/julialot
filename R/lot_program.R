@@ -392,6 +392,10 @@ print_descriptives <- function(con) {
 
     # Figure 1: Claims by medication (bar chart)
     if (has_ggplot2 && nrow(med_dist) > 0) {
+      med_dist$n_patients <- as.numeric(med_dist$n_patients)
+      med_dist$n_claims   <- as.numeric(med_dist$n_claims)
+      med_dist$n_rx       <- as.numeric(med_dist$n_rx)
+      med_dist$n_med      <- as.numeric(med_dist$n_med)
       p1 <- ggplot(med_dist, aes(x = reorder(MED_ABBR, -n_patients), y = n_patients, fill = MED_CLASS)) +
         geom_bar(stat = "identity") +
         labs(title = "MMA_MED: Patients by Medication",
@@ -404,8 +408,8 @@ print_descriptives <- function(con) {
     # Figure 2: Pharmacy vs Medical claims stacked bar
     if (has_ggplot2 && nrow(med_dist) > 0) {
       claim_long <- rbind(
-        data.frame(MED_ABBR = med_dist$MED_ABBR, CLAIM_TYPE = "Pharmacy", N = med_dist$n_rx),
-        data.frame(MED_ABBR = med_dist$MED_ABBR, CLAIM_TYPE = "Medical",  N = med_dist$n_med)
+        data.frame(MED_ABBR = med_dist$MED_ABBR, CLAIM_TYPE = "Pharmacy", N = as.numeric(med_dist$n_rx)),
+        data.frame(MED_ABBR = med_dist$MED_ABBR, CLAIM_TYPE = "Medical",  N = as.numeric(med_dist$n_med))
       )
       p2 <- ggplot(claim_long, aes(x = reorder(MED_ABBR, -N), y = N, fill = CLAIM_TYPE)) +
         geom_bar(stat = "identity", position = "stack") +
@@ -497,7 +501,7 @@ print_descriptives <- function(con) {
     cat(strrep("-", 22), "\n")
     for (i in seq_len(min(nrow(maps_per_pt), 15))) {
       r <- maps_per_pt[i, ]
-      cat(sprintf("  %-8d %10s\n", r$n_maps, format(r$n_patients, big.mark = ",")))
+      cat(sprintf("  %-8s %10s\n", format(as.integer(r$n_maps)), format(r$n_patients, big.mark = ",")))
     }
     if (nrow(maps_per_pt) > 15) cat("  ... (truncated)\n")
   }
@@ -549,6 +553,8 @@ print_descriptives <- function(con) {
         ORDER BY bin_start
       ")
       if (nrow(map_bins) > 0) {
+        map_bins$bin_start <- as.numeric(map_bins$bin_start)
+        map_bins$n         <- as.numeric(map_bins$n)
         p3 <- ggplot(map_bins, aes(x = bin_start, y = n)) +
           geom_bar(stat = "identity", width = 28, fill = "#4E79A7", alpha = 0.8) +
           labs(title = "MAP Length Distribution",
@@ -565,6 +571,8 @@ print_descriptives <- function(con) {
   # Figure 4: MAP count by medication (bar)
   tryCatch({
     if (has_ggplot2 && nrow(map_by_med) > 0) {
+      map_by_med$n_patients <- as.numeric(map_by_med$n_patients)
+      map_by_med$n_maps     <- as.numeric(map_by_med$n_maps)
       p4 <- ggplot(map_by_med, aes(x = reorder(med, -n_patients), y = n_patients, fill = class)) +
         geom_bar(stat = "identity") +
         labs(title = "MAP: Patients by Medication",
@@ -659,6 +667,7 @@ print_descriptives <- function(con) {
 
     # Figure 5: LOT1 induction regimen frequency (top 15 horizontal bar)
     if (has_ggplot2 && nrow(regimens) > 0) {
+      regimens$n_patients <- as.numeric(regimens$n_patients)
       top15 <- head(regimens, 15)
       top15$regimen <- factor(top15$regimen, levels = rev(top15$regimen))
       p5 <- ggplot(top15, aes(x = regimen, y = n_patients)) +
@@ -682,6 +691,9 @@ print_descriptives <- function(con) {
         ORDER BY bin_start
       ")
       if (nrow(lot1_bins) > 0) {
+        lot1_bins$bin_start  <- as.numeric(lot1_bins$bin_start)
+        lot1_bins$n          <- as.numeric(lot1_bins$n)
+        lot1_bins$median_val <- as.numeric(lot1_bins$median_val)
         median_len <- lot1_bins$median_val[1]  # same for all rows
         p6 <- ggplot(lot1_bins, aes(x = bin_start, y = n)) +
           geom_bar(stat = "identity", width = 28, fill = "#59A14F", alpha = 0.8) +
@@ -699,6 +711,7 @@ print_descriptives <- function(con) {
 
     # Figure 7: LOT1 end reason pie / bar
     if (has_ggplot2 && nrow(end_reasons) > 0) {
+      end_reasons$n <- as.numeric(end_reasons$n)
       end_reasons$pct <- 100 * end_reasons$n / sum(end_reasons$n)
       end_reasons$label <- paste0(end_reasons$LOT1_BASE_END_REASON, "\n",
                                   format(end_reasons$n, big.mark = ","),
@@ -730,6 +743,7 @@ print_descriptives <- function(con) {
         ORDER BY LOT1_MED_CNT
       ")
       if (nrow(med_cnt) > 0) {
+        med_cnt$n   <- as.numeric(med_cnt$n)
         med_cnt$pct <- 100 * med_cnt$n / sum(med_cnt$n)
         p8 <- ggplot(med_cnt, aes(x = factor(LOT1_MED_CNT), y = n)) +
           geom_bar(stat = "identity", fill = "#4E79A7") +
@@ -2247,7 +2261,7 @@ main <- function() {
     lot1_check <- db_q(con, "
       SELECT
         count(*) AS n_lot1,
-        sum(case when LOT1_BASE_END_DT > OBS_END_DT then 1 else 0 end) AS n_end_past_obs
+        sum(case when lb.LOT1_BASE_END_DT > p.OBS_END_DT then 1 else 0 end) AS n_end_past_obs
       FROM lot1_base_end lb
       INNER JOIN lot_patient_input p ON lb.PATID = p.PATID
     ")
