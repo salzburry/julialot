@@ -732,15 +732,27 @@ main <- function() {
       lower(trim(CL_MEDICATION_FULL)) AS CL_MEDICATION_FULL,
       upper(trim(CL_MED_CLASS))       AS CL_MED_CLASS,
       upper(trim(CL_MED_ABBR))        AS CL_MED_ABBR,
-      cast(MONOMAINTENANCE AS int)    AS MONOMAINTENANCE,
+      -- Tab 40 fields can be 'YES', 'YES mainly...', 1, 0, or NULL.
+      -- Robust parsing: treat 'YES%' or '1' as 1, everything else as 0.
+      CASE WHEN upper(trim(cast(MONOMAINTENANCE AS string))) LIKE 'YES%'
+            OR  trim(cast(MONOMAINTENANCE AS string)) = '1'
+           THEN 1 ELSE 0 END AS MONOMAINTENANCE,
       CASE
-        WHEN DUALMAINTENANCEWITH IS NULL THEN NULL
-        ELSE upper(trim(DUALMAINTENANCEWITH))
-      END                            AS DUALMAINTENANCEWITH,
-      cast(CONDITIONING AS int)       AS CONDITIONING,
-      cast(USED_FOR_OTHER_CANCERS AS int) AS USED_FOR_OTHER_CANCERS
+        WHEN DUALMAINTENANCEWITH IS NULL
+          OR upper(trim(cast(DUALMAINTENANCEWITH AS string))) IN ('', 'NULL', 'NONE', 'NA', 'N/A')
+          THEN NULL
+        ELSE upper(trim(cast(DUALMAINTENANCEWITH AS string)))
+      END AS DUALMAINTENANCEWITH,
+      CASE WHEN upper(trim(cast(CONDITIONING AS string))) LIKE 'YES%'
+            OR  trim(cast(CONDITIONING AS string)) = '1'
+           THEN 1 ELSE 0 END AS CONDITIONING,
+      CASE WHEN upper(trim(cast(USED_FOR_OTHER_CANCERS AS string))) LIKE 'YES%'
+            OR  trim(cast(USED_FOR_OTHER_CANCERS AS string)) = '1'
+           THEN 1 ELSE 0 END AS USED_FOR_OTHER_CANCERS
     FROM {rollup_src}
-  "), qc = "SELECT count(*) AS n_rows, count(DISTINCT CL_MED_ABBR) AS n_meds FROM mma_rollup")
+  "), qc = "SELECT count(*) AS n_rows, count(DISTINCT CL_MED_ABBR) AS n_meds,
+            sum(MONOMAINTENANCE) AS n_monomaint, sum(CONDITIONING) AS n_conditioning,
+            sum(USED_FOR_OTHER_CANCERS) AS n_other_cancer FROM mma_rollup")
 
   run_step(con, "S01_mma_codelist", glue("
     CREATE OR REPLACE TEMPORARY VIEW mma_codelist AS
@@ -786,6 +798,11 @@ main <- function() {
   # ----------------------------------------------------------
   # STEP 1: Load Part 1 cohort
   # ----------------------------------------------------------
+  # OBS_END_DT = observable follow-up end = min(study_end, death, disenrollment)
+  # This is ENDDATE_CE from Part 1, NOT ENDDATE (which ignores disenrollment).
+  # Using ENDDATE would create fake follow-up after disenrollment, causing:
+  #   - false "confirmed" discontinuations (appear to have 90 days post-runout)
+  #   - detecting add-meds/claims during unobservable periods
   run_step(con, "S03_patient_input", glue("
     CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS
     SELECT
@@ -793,6 +810,9 @@ main <- function() {
       cast(INDEX_DATE AS date) AS INDEX_DATE,
       cast(ENDDATE AS date)    AS ENDDATE,
       cast(ENDDATE_CE AS date) AS ENDDATE_CE,
+      -- OBS_END_DT: canonical observation end for all LOT/MAP logic
+      -- Prefers ENDDATE_CE (accounts for disenrollment); falls back to ENDDATE
+      coalesce(cast(ENDDATE_CE AS date), cast(ENDDATE AS date)) AS OBS_END_DT,
       cast(DEATH_DT AS date)   AS DEATH_DT,
       GDR_CD,
       YRDOB,
@@ -800,7 +820,10 @@ main <- function() {
       FU_DAYS,
       FU_DAYS_CE
     FROM {wrk(cfg$input_cohort_table)}
-  "), qc = "SELECT count(*) AS n_patients, min(INDEX_DATE) AS min_index, max(ENDDATE) AS max_enddate FROM lot_patient_input")
+  "), qc = "
+    SELECT count(*) AS n_patients, min(INDEX_DATE) AS min_index, max(OBS_END_DT) AS max_obs_end,
+           sum(case when ENDDATE_CE < ENDDATE then 1 else 0 end) AS n_disenrolled_before_enddate
+    FROM lot_patient_input")
 
   # ----------------------------------------------------------
   # STEP 2 (5A): MMA_MED - Raw extraction
@@ -828,7 +851,7 @@ main <- function() {
         ON c.CL_CODE_TYPE = 'HCPCS'
        AND upper(regexp_replace(coalesce(m.PROC_CD,''), '[^A-Za-z0-9]', '')) = c.CL_CODE
       WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
-        AND cast(m.FST_DT AS date) <= p.ENDDATE
+        AND cast(m.FST_DT AS date) <= p.OBS_END_DT
     ),
     -- 2) Medical claims - BILL_PROC_CD (HCPCS)
     med_bill_proc_cd AS (
@@ -847,7 +870,7 @@ main <- function() {
         ON c.CL_CODE_TYPE = 'HCPCS'
        AND upper(regexp_replace(coalesce(m.BILL_PROC_CD,''), '[^A-Za-z0-9]', '')) = c.CL_CODE
       WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
-        AND cast(m.FST_DT AS date) <= p.ENDDATE
+        AND cast(m.FST_DT AS date) <= p.OBS_END_DT
     ),
     -- 3) Medical claims - NDC field (NDC-coded drug administrations on medical)
     med_ndc AS (
@@ -867,7 +890,7 @@ main <- function() {
        AND upper(regexp_replace(coalesce(m.NDC,''), '[^A-Za-z0-9]', '')) = c.CL_CODE
       WHERE m.NDC IS NOT NULL AND trim(m.NDC) <> ''
         AND cast(m.FST_DT AS date) >= p.INDEX_DATE
-        AND cast(m.FST_DT AS date) <= p.ENDDATE
+        AND cast(m.FST_DT AS date) <= p.OBS_END_DT
     ),
     -- 4) med_procedure table (additional HCPCS procedure codes)
     medproc AS (
@@ -886,7 +909,7 @@ main <- function() {
         ON c.CL_CODE_TYPE = 'HCPCS'
        AND upper(regexp_replace(coalesce(mp.PROC,''), '[^A-Za-z0-9]', '')) = c.CL_CODE
       WHERE cast(mp.FST_DT AS date) >= p.INDEX_DATE
-        AND cast(mp.FST_DT AS date) <= p.ENDDATE
+        AND cast(mp.FST_DT AS date) <= p.OBS_END_DT
     ),
     -- 5) Pharmacy (rx) claims (NDC)
     rx_claims AS (
@@ -905,7 +928,7 @@ main <- function() {
         ON c.CL_CODE_TYPE = 'NDC'
        AND upper(regexp_replace(coalesce(r.NDC,''), '[^A-Za-z0-9]', '')) = c.CL_CODE
       WHERE cast(r.FILL_DT AS date) >= p.INDEX_DATE
-        AND cast(r.FILL_DT AS date) <= p.ENDDATE
+        AND cast(r.FILL_DT AS date) <= p.OBS_END_DT
     )
     SELECT * FROM med_proc_cd
     UNION ALL SELECT * FROM med_bill_proc_cd
@@ -954,11 +977,12 @@ main <- function() {
         DATE_SERVICE,
         CLAIM_TYPE,
         max(DAY_SUPPLY) AS DAY_SUPPLY,
-        first(CODE) AS CODE,
-        first(CODE_TYPE) AS CODE_TYPE,
-        first(MED_CLASS) AS MED_CLASS,
-        first(MED_COND) AS MED_COND,
-        first(MED_OTHER_CANCER) AS MED_OTHER_CANCER
+        -- Deterministic dedup: min() for reproducibility across runs
+        min(CODE) AS CODE,
+        min(CODE_TYPE) AS CODE_TYPE,
+        min(MED_CLASS) AS MED_CLASS,
+        min(MED_COND) AS MED_COND,
+        min(MED_OTHER_CANCER) AS MED_OTHER_CANCER
       FROM filtered
       GROUP BY PATID, MED_ABBR, DATE_SERVICE, CLAIM_TYPE
     )
@@ -1013,8 +1037,12 @@ main <- function() {
       SELECT
         PATID,
         MED_ABBR,
-        first(MED_CLASS) AS MED_CLASS,
-        -- Sort: by date, then pharmacy before medical on same date (type_ord=0 for rx)
+        min(MED_CLASS) AS MED_CLASS,  -- deterministic; should be 1:1 with MED_ABBR via rollup
+        -- Sort: by date, then pharmacy before medical on same date (type_ord=0 for rx).
+        -- Design choice: pharmacy processed first on same-day ties. This is safe because:
+        --   rx pushout only depends on rx_runout (not med_runout),
+        --   and medical never has pushout, so order on same day doesn't distort either.
+        -- Spec doesn't mandate tie-break order; this choice is documented and deterministic.
         sort_array(collect_list(named_struct(
           'dt', dt,
           'type_ord', case when claim_type='pharmacy' then 0 else 1 end,
@@ -1094,10 +1122,16 @@ main <- function() {
                     ELSE s.rx_runout
                   END,
                   -- MEDICAL RUNOUT UPDATE
-                  -- Per map med.pdf page 5: "Pushout is not implemented" for medical
-                  -- Always simple: DATE_SERVICE + DAY_SUPPLY - 1
+                  -- Per map med.pdf page 5: "Pushout is not implemented" for medical.
+                  -- Always: DATE_SERVICE + DAY_SUPPLY - 1.
+                  -- greatest() is a safety belt: if a same-day or out-of-order claim
+                  -- produces an earlier runout, we keep the existing later one.
                   'med_runout', CASE
-                    WHEN x.type='medical' THEN date_add(x.dt, x.ds - 1)
+                    WHEN x.type='medical' THEN
+                      CASE
+                        WHEN s.med_runout IS NULL THEN date_add(x.dt, x.ds - 1)
+                        ELSE greatest(s.med_runout, date_add(x.dt, x.ds - 1))
+                      END
                     ELSE s.med_runout
                   END,
                   'maps', s.maps
@@ -1155,7 +1189,7 @@ main <- function() {
           AND datediff(w.NEXT_MAP_START_DT, w.MAP_END_DT) >= {cfg$map_discon_gap_days}
           THEN 1
         WHEN w.NEXT_MAP_START_DT IS NULL
-          AND datediff(p.ENDDATE, w.MAP_END_DT) >= {cfg$map_discon_gap_days}
+          AND datediff(p.OBS_END_DT, w.MAP_END_DT) >= {cfg$map_discon_gap_days}
           THEN 1
         ELSE 0
       END AS MAP_DISCON_FLG
@@ -1236,7 +1270,7 @@ main <- function() {
       SELECT
         p.PATID,
         CASE
-          WHEN d.RAW_DISCON_DT IS NOT NULL AND datediff(p.ENDDATE, d.RAW_DISCON_DT) >= {cfg$lot_discon_gap_days}
+          WHEN d.RAW_DISCON_DT IS NOT NULL AND datediff(p.OBS_END_DT, d.RAW_DISCON_DT) >= {cfg$lot_discon_gap_days}
             THEN d.RAW_DISCON_DT
           ELSE NULL
         END AS LOT1_BASE_DISCON_DT
@@ -1246,7 +1280,7 @@ main <- function() {
     med_summary AS (
       SELECT
         im.PATID,
-        first(im.LOT1_START_DT) AS LOT1_START_DT,
+        min(im.LOT1_START_DT) AS LOT1_START_DT,  -- same for all rows per PATID; min for determinism
         count(DISTINCT im.MED_ABBR) AS LOT1_MED_CNT,
         concat_ws(' ', sort_array(collect_set(im.MED_ABBR))) AS LOT1_BASE_MEDS,
         {med_flag_exprs},
@@ -1259,6 +1293,7 @@ main <- function() {
         p.PATID,
         p.INDEX_DATE,
         p.ENDDATE,
+        p.OBS_END_DT,
         p.DEATH_DT,
         p.GDR_CD,
         p.YRDOB,
@@ -1269,7 +1304,7 @@ main <- function() {
         d.LOT1_BASE_DISCON_DT,
         CASE
           WHEN d.LOT1_BASE_DISCON_DT IS NOT NULL THEN datediff(d.LOT1_BASE_DISCON_DT, ms.LOT1_START_DT) + 1
-          ELSE datediff(p.ENDDATE, ms.LOT1_START_DT) + 1
+          ELSE datediff(p.OBS_END_DT, ms.LOT1_START_DT) + 1
         END AS LOT1_BASE_LENGTH,
         {paste0('ms.', paste(c(paste0('LOT1_MED_', meds), paste0('LOT1_CLASS_', vapply(classes, sanitize_class, character(1)))), collapse = ', ms.'))}
       FROM lot_patient_input p
@@ -1287,7 +1322,8 @@ main <- function() {
         ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
       WHERE bm.MED_ABBR IS NULL
         AND ms.MAP_START_DT >= bc.LOT1_START_DT
-        AND ms.MAP_START_DT <= coalesce(bc.LOT1_BASE_DISCON_DT, bc.ENDDATE)
+        AND ms.MAP_START_DT <= coalesce(bc.LOT1_BASE_DISCON_DT, bc.OBS_END_DT)
+        -- NOTE: Steroids excluded as add-meds per clinical convention; confirm with spec owner
         AND ms.MAP_MED_CLASS <> 'STEROID'
     ),
     first_add_dt AS (
@@ -1299,6 +1335,7 @@ main <- function() {
       SELECT
         c.PATID,
         date_sub(d.ADD_START_DT, 1) AS LOT1_BASE_1ST_ADD_MED_DT,
+        -- Spec says "random" for same-day ties; we use min() for determinism (deliberate deviation)
         min(c.MAP_MED_TYPE) AS LOT1_BASE_1ST_ADD_MED
       FROM first_add_candidates c
       INNER JOIN first_add_dt d
@@ -1322,6 +1359,9 @@ main <- function() {
     FROM lot1_base")
 
   # LOT1_BASE_END convenience view
+  # NOTE: End reasons are PRELIMINARY until SCT + maintenance rules are implemented.
+  # Current end reasons: MED_ADD, DISCONTINUATION, CENSORED.
+  # Missing (requires spec sections 7-9): SCT, CONDITIONING, MAINTENANCE_START.
   run_step(con, "S11_lot1_base_end", "
     CREATE OR REPLACE TEMPORARY VIEW lot1_base_end AS
     SELECT
@@ -1338,7 +1378,7 @@ main <- function() {
           AND (lb.LOT1_BASE_DISCON_DT IS NULL OR lb.LOT1_BASE_1ST_ADD_MED_DT < lb.LOT1_BASE_DISCON_DT)
           THEN lb.LOT1_BASE_1ST_ADD_MED_DT
         WHEN lb.LOT1_BASE_DISCON_DT IS NOT NULL THEN lb.LOT1_BASE_DISCON_DT
-        ELSE lb.ENDDATE
+        ELSE lb.OBS_END_DT
       END AS LOT1_BASE_END_DT
     FROM lot1_base lb
   ", qc = "
@@ -1346,6 +1386,154 @@ main <- function() {
     FROM lot1_base_end
     GROUP BY LOT1_BASE_END_REASON
     ORDER BY LOT1_BASE_END_REASON")
+
+  # ----------------------------------------------------------
+  # STEP 6: SCT + Maintenance (PLACEHOLDERS)
+  # Per spec navigation: sections 7 (SCT), 8 (MONOMAINT_MED),
+  # 9 (DUALMAINT_MED) exist but full spec pages were not provided.
+  #
+  # WARNING: LOT1_BASE_END_REASON is INCOMPLETE without these.
+  # Current end reasons: MED_ADD, DISCONTINUATION, CENSORED.
+  # Missing: SCT, CONDITIONING, MAINTENANCE_START.
+  #
+  # Known risk: if a patient starts a maintenance-eligible med
+  # (MONOMAINTENANCE=1 in rollup) after induction window but
+  # before LOT1_BASE_DISCON_DT, current code may misclassify
+  # it as "MED_ADD" when it should be "MAINTENANCE_START".
+  #
+  # TODO: Implement when spec sections 7-9 are available:
+  #   S12_sct_events: identify HSCT from HCPCS codes (38240, 38241, etc.)
+  #   S13_monomaint: single-drug maintenance (MONOMAINTENANCE=1 in rollup)
+  #   S14_dualmaint: two-drug maintenance (DUALMAINTENANCEWITH in rollup)
+  #   Then update LOT1_BASE_END_REASON to incorporate these events.
+  # ----------------------------------------------------------
+  log_msg("NOTE: SCT + maintenance steps are placeholders (spec sections 7-9 not yet provided).")
+  log_msg("      LOT1_BASE_END_REASON is preliminary; will need SCT/maintenance integration.")
+
+  # ----------------------------------------------------------
+  # NDC Format QC (Fix #5 from review)
+  # Validates NDC length match between codelist and claims
+  # ----------------------------------------------------------
+  log_msg("Running NDC format QC...")
+  tryCatch({
+    ndc_qc_codelist <- db_q(con, "
+      SELECT length(CL_CODE) AS ndc_len, count(*) AS n
+      FROM mma_codelist
+      WHERE CL_CODE_TYPE = 'NDC'
+      GROUP BY length(CL_CODE)
+      ORDER BY length(CL_CODE)
+    ")
+    log_msg("  NDC length distribution in codelist:")
+    print(ndc_qc_codelist)
+
+    ndc_qc_rx <- db_q(con, glue("
+      SELECT length(upper(regexp_replace(coalesce(NDC,''), '[^A-Za-z0-9]', ''))) AS ndc_len,
+             count(*) AS n
+      FROM {cdm_src(cfg$tbl_rx)}
+      WHERE NDC IS NOT NULL AND trim(NDC) <> ''
+      GROUP BY length(upper(regexp_replace(coalesce(NDC,''), '[^A-Za-z0-9]', '')))
+      ORDER BY ndc_len
+    "))
+    log_msg("  NDC length distribution in RX claims:")
+    print(ndc_qc_rx)
+
+    # Check for mismatches
+    codelist_lens <- ndc_qc_codelist$ndc_len
+    rx_lens <- ndc_qc_rx$ndc_len
+    if (length(intersect(codelist_lens, rx_lens)) == 0 && length(codelist_lens) > 0 && length(rx_lens) > 0) {
+      log_msg("  WARNING: NDC lengths in codelist and RX table DO NOT OVERLAP!")
+      log_msg("  This may cause silent misses in pharmacy claim matching.")
+      log_msg("  Codelist lengths: ", paste(codelist_lens, collapse = ", "))
+      log_msg("  RX table lengths: ", paste(rx_lens, collapse = ", "))
+    }
+  }, error = function(e) {
+    log_msg("  WARNING: NDC QC failed: ", e$message)
+  })
+
+  # ----------------------------------------------------------
+  # Validation QC Suite (Fix #10 from review)
+  # Must-run validations for MAP + LOT correctness
+  # ----------------------------------------------------------
+  log_msg("Running validation QC suite...")
+  tryCatch({
+    # A) MMA_MED coverage by source
+    log_msg("  [A] MMA_MED extraction coverage:")
+    coverage <- db_q(con, "
+      SELECT CODE_TYPE, CLAIM_TYPE, count(*) AS n_claims, count(DISTINCT PATID) AS n_patients, count(DISTINCT MED_ABBR) AS n_meds
+      FROM mma_med_processed
+      GROUP BY CODE_TYPE, CLAIM_TYPE
+      ORDER BY CODE_TYPE, CLAIM_TYPE
+    ")
+    print(coverage)
+
+    # B) MAP correctness spot checks
+    log_msg("  [B] MAP algorithm spot checks:")
+    # Check no MAP has end < start
+    bad_maps <- db_q(con, "SELECT count(*) AS n_bad FROM map_stacked WHERE MAP_END_DT < MAP_START_DT")$n_bad
+    log_msg("    MAPs with END < START: ", bad_maps, if (bad_maps > 0) " ** INVESTIGATE **" else " (OK)")
+
+    # Check MAP_END_DT = max(rx_runout, med_runout)
+    runout_check <- db_q(con, "
+      SELECT count(*) AS n_mismatch
+      FROM map_stacked
+      WHERE MAP_END_DT <> greatest(
+        coalesce(MAP_RX_RUNOUT_DT, cast('1900-01-01' as date)),
+        coalesce(MAP_MED_RUNOUT_DT, cast('1900-01-01' as date))
+      )
+      AND MAP_END_DT IS NOT NULL
+    ")$n_mismatch
+    log_msg("    MAPs where END_DT != max(rx_runout, med_runout): ", runout_check,
+            if (runout_check > 0) " ** INVESTIGATE **" else " (OK)")
+
+    # MAPs with both rx and med sources (mixed claim type coverage)
+    both_src <- db_q(con, "
+      SELECT count(*) AS n_maps_both_sources
+      FROM map_stacked
+      WHERE MAP_RX_RUNOUT_DT IS NOT NULL AND MAP_MED_RUNOUT_DT IS NOT NULL
+    ")$n_maps_both_sources
+    log_msg("    MAPs with both pharmacy + medical sources: ", format(both_src, big.mark = ","))
+
+    # C) ENDDATE_CE vs ENDDATE sensitivity
+    log_msg("  [C] OBS_END_DT (ENDDATE_CE) sensitivity:")
+    ce_sens <- db_q(con, "
+      SELECT
+        sum(case when ENDDATE_CE < ENDDATE then 1 else 0 end) AS n_disenrolled_early,
+        count(*) AS n_total,
+        avg(case when ENDDATE_CE < ENDDATE then datediff(ENDDATE, ENDDATE_CE) else 0 end) AS avg_gap_days
+      FROM lot_patient_input
+    ")
+    log_msg("    Patients disenrolled before study ENDDATE: ",
+            format(ce_sens$n_disenrolled_early, big.mark = ","),
+            " / ", format(ce_sens$n_total, big.mark = ","),
+            " (", round(100 * ce_sens$n_disenrolled_early / max(ce_sens$n_total, 1), 1), "%)")
+    log_msg("    Avg gap (ENDDATE - ENDDATE_CE): ", round(ce_sens$avg_gap_days, 1), " days")
+
+    # D) LOT1 completeness
+    log_msg("  [D] LOT1 completeness:")
+    lot1_check <- db_q(con, "
+      SELECT
+        count(*) AS n_lot1,
+        sum(case when LOT1_BASE_END_DT > OBS_END_DT then 1 else 0 end) AS n_end_past_obs
+      FROM lot1_base_end lb
+      INNER JOIN lot_patient_input p ON lb.PATID = p.PATID
+    ")
+    log_msg("    LOT1 patients: ", format(lot1_check$n_lot1, big.mark = ","))
+    log_msg("    LOT1_BASE_END_DT > OBS_END_DT: ", lot1_check$n_end_past_obs,
+            if (lot1_check$n_end_past_obs > 0) " ** INVESTIGATE **" else " (OK)")
+
+    # E) Rollup flag sanity
+    log_msg("  [E] Rollup flag validation:")
+    flag_check <- db_q(con, "
+      SELECT CL_MED_ABBR, CL_MED_CLASS, MONOMAINTENANCE, CONDITIONING, USED_FOR_OTHER_CANCERS
+      FROM mma_rollup
+      ORDER BY CL_MED_CLASS, CL_MED_ABBR
+    ")
+    print(flag_check)
+
+    log_msg("Validation QC suite complete.")
+  }, error = function(e) {
+    log_msg("WARNING: Validation QC suite failed: ", e$message)
+  })
 
   # ----------------------------------------------------------
   # Descriptives + Figures
