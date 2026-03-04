@@ -931,6 +931,37 @@ main <- function() {
       log_msg("  OK: All codelist meds found in rollup.")
     }
 
+    # Reverse check: rollup meds with ZERO codes in codelist (therapy would be
+    # completely undetectable — silent drop of an entire medication)
+    uncoded_meds <- db_q(con, "
+      SELECT r.CL_MED_ABBR, r.CL_MED_CLASS
+      FROM mma_rollup r
+      LEFT JOIN mma_codelist c ON r.CL_MED_ABBR = c.CL_MED_ABBR
+      WHERE c.CL_MED_ABBR IS NULL
+      ORDER BY r.CL_MED_CLASS, r.CL_MED_ABBR
+    ")
+    if (nrow(uncoded_meds) > 0) {
+      log_msg("  WARNING: Rollup meds with ZERO codes in codelist (will never be extracted!):")
+      print(uncoded_meds)
+    } else {
+      log_msg("  OK: All rollup meds have at least one code in codelist.")
+    }
+
+    # Validate CL_CODE_TYPE values are exactly the expected set
+    code_types <- db_q(con, "
+      SELECT CL_CODE_TYPE, count(*) AS n_codes
+      FROM mma_codelist
+      GROUP BY CL_CODE_TYPE
+      ORDER BY CL_CODE_TYPE
+    ")
+    log_msg("  Code type distribution in codelist:")
+    print(code_types)
+    unexpected_types <- setdiff(code_types$CL_CODE_TYPE, c("NDC", "HCPCS", "ICD"))
+    if (length(unexpected_types) > 0) {
+      log_msg("  WARNING: Unexpected CL_CODE_TYPE values: ", paste(unexpected_types, collapse = ", "))
+      log_msg("  These codes will NOT be matched by the extraction logic!")
+    }
+
     # MED_ABBR mapping to >1 class (min() will hide this)
     multi_class <- db_q(con, "
       SELECT CL_MED_ABBR, count(DISTINCT CL_MED_CLASS) AS n_classes,
