@@ -174,6 +174,10 @@ load_codelist_csv <- function(csv_name, col_spec) {
       stop(glue("CSV {csv_name} missing columns: {paste(missing, collapse=', ')}"))
     }
     df <- df[, col_spec, drop = FALSE]
+    if (nrow(df) == 0) {
+      log_msg("WARNING: CSV ", csv_path, " has no data rows, skipping")
+      return(NULL)
+    }
     esc <- function(x) {
       if (is.na(x) || is.null(x) || x == "") return("NULL")
       x <- gsub("'", "''", as.character(x))
