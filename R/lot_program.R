@@ -434,28 +434,14 @@ build_dashboard <- function() {
   dash_path <- file.path(cfg$output_dir, "lot_dashboard.html")
 
   tryCatch({
-    tab_buttons <- list()
-    tab_panels  <- list()
-    sections    <- unique(sapply(dashboard_items, `[[`, "section"))
+    tab_buttons   <- list()
+    tab_panels    <- list()
+    plotly_specs  <- list()   # JSON specs for plotly figures
+    sections      <- unique(sapply(dashboard_items, `[[`, "section"))
 
     for (idx in seq_along(dashboard_items)) {
       item   <- dashboard_items[[idx]]
       tab_id <- paste0("tab", idx)
-
-      # Render widget/card to self-contained HTML string
-      if (item$type == "html_card") {
-        widget_html <- item$html
-      } else {
-        # Save widget to a temp file as self-contained, then read it back
-        tmp_file <- tempfile(fileext = ".html")
-        htmlwidgets::saveWidget(item$widget, tmp_file, selfcontained = TRUE)
-        widget_html <- paste(readLines(tmp_file, warn = FALSE), collapse = "\n")
-        unlink(tmp_file)
-      }
-
-      # Base64-encode the content for a data URI iframe
-      # This avoids all escaping issues and keeps CSS/JS isolation
-      encoded <- base64enc::base64encode(charToRaw(widget_html))
 
       active_class <- if (idx == 1) "active" else ""
       section_tag  <- paste0('<span class="section-tag">', item$section, '</span> ')
@@ -464,11 +450,44 @@ build_dashboard <- function() {
         active_class, tab_id, item$section, section_tag, item$title
       )
 
-      iframe_height <- if (item$type == "table") "600" else if (item$type == "html_card") "500" else "550"
-      tab_panels[[idx]] <- sprintf(
-        '<div id="%s" class="tab-content" style="display:%s"><iframe src="data:text/html;base64,%s" style="width:100%%;height:%spx;border:none;" sandbox="allow-scripts allow-same-origin" onload="resizeIframe(this)"></iframe></div>',
-        tab_id, if (idx == 1) "block" else "none", encoded, iframe_height
-      )
+      if (item$type == "figure") {
+        # Plotly figures: extract JSON spec, render client-side with shared plotly.js
+        # This avoids pandoc dependency, data URI size limits, and saves ~3MB per figure
+        plotly_json <- tryCatch({
+          jsonlite::toJSON(item$widget$x, auto_unbox = TRUE, force = TRUE, null = "null")
+        }, error = function(e) NULL)
+
+        if (!is.null(plotly_json)) {
+          div_id <- paste0("plotly_", idx)
+          plotly_specs[[div_id]] <- as.character(plotly_json)
+          tab_panels[[idx]] <- sprintf(
+            '<div id="%s" class="tab-content" style="display:%s"><div id="%s" style="width:100%%;min-height:500px;"></div></div>',
+            tab_id, if (idx == 1) "block" else "none", div_id
+          )
+        } else {
+          # Fallback: empty panel with error message
+          tab_panels[[idx]] <- sprintf(
+            '<div id="%s" class="tab-content" style="display:%s"><p style="color:#C73E1D;padding:20px;">Figure could not be rendered.</p></div>',
+            tab_id, if (idx == 1) "block" else "none"
+          )
+        }
+      } else {
+        # Tables and HTML cards: base64 data URI iframes (these work fine)
+        if (item$type == "html_card") {
+          widget_html <- item$html
+        } else {
+          tmp_file <- tempfile(fileext = ".html")
+          htmlwidgets::saveWidget(item$widget, tmp_file, selfcontained = TRUE)
+          widget_html <- paste(readLines(tmp_file, warn = FALSE), collapse = "\n")
+          unlink(tmp_file)
+        }
+        encoded <- base64enc::base64encode(charToRaw(widget_html))
+        iframe_height <- if (item$type == "table") "600" else "500"
+        tab_panels[[idx]] <- sprintf(
+          '<div id="%s" class="tab-content" style="display:%s"><iframe src="data:text/html;base64,%s" style="width:100%%;height:%spx;border:none;" sandbox="allow-scripts allow-same-origin" onload="resizeIframe(this)"></iframe></div>',
+          tab_id, if (idx == 1) "block" else "none", encoded, iframe_height
+        )
+      }
     }
 
     # Build section filter buttons
@@ -480,12 +499,20 @@ build_dashboard <- function() {
       ), collapse = "\n")
     )
 
+    # Build plotly specs as a single JSON object keyed by div id
+    plotly_specs_json <- paste0("var PLOTLY_SPECS = {\n",
+      paste(sapply(names(plotly_specs), function(div_id) {
+        sprintf('  "%s": %s', div_id, plotly_specs[[div_id]])
+      }), collapse = ",\n"),
+    "\n};")
+
     html_doc <- paste0('<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LOT Part 2 - Interactive Dashboard</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -538,11 +565,24 @@ build_dashboard <- function() {
   .tab-content { padding: 16px 32px; }
   .tab-content iframe { border: none; width: 100%; min-height: 500px; }
 </style>
+</head>
+<body>
+<div class="header">
+  <h1>LOT Part 2 &mdash; Interactive Dashboard</h1>
+  <p>MMA_MED &bull; MAP &bull; LOT1_BASE &bull; SCT descriptive summary &nbsp;|&nbsp; Generated ', format(Sys.time(), "%Y-%m-%d %H:%M"), '</p>
+</div>
+<div class="nav-bar">
+<div class="filter-bar">
+', section_filters, '
+</div>
+<div class="tab-bar">
+', paste(tab_buttons, collapse = "\n"), '
+</div>
+</div>
+', paste(tab_panels, collapse = "\n"), '
 <script>
 function resizeIframe(iframe) {
-  try {
-    iframe.style.height = iframe.contentWindow.document.body.scrollHeight + 40 + "px";
-  } catch(e) {}
+  try { iframe.style.height = iframe.contentWindow.document.body.scrollHeight + 40 + "px"; } catch(e) {}
   setTimeout(function() {
     try { iframe.style.height = iframe.contentWindow.document.body.scrollHeight + 40 + "px"; } catch(e) {}
   }, 800);
@@ -550,12 +590,32 @@ function resizeIframe(iframe) {
     try { iframe.style.height = iframe.contentWindow.document.body.scrollHeight + 40 + "px"; } catch(e) {}
   }, 2000);
 }
+// Track which plotly divs have been rendered
+var renderedPlots = {};
+function renderPlotlyIfVisible(divId) {
+  if (renderedPlots[divId]) {
+    Plotly.Plots.resize(divId);
+    return;
+  }
+  var el = document.getElementById(divId);
+  if (!el || el.offsetParent === null) return;
+  var spec = PLOTLY_SPECS[divId];
+  if (spec) {
+    Plotly.newPlot(divId, spec.data || [], spec.layout || {}, spec.config || {displayModeBar:true,displaylogo:false});
+    renderedPlots[divId] = true;
+  }
+}
 function showTab(tabId, btn) {
   document.querySelectorAll(".tab-content").forEach(function(el) { el.style.display = "none"; });
   document.querySelectorAll(".tab-btn").forEach(function(el) { el.classList.remove("active"); });
   document.getElementById(tabId).style.display = "block";
   btn.classList.add("active");
-  window.dispatchEvent(new Event("resize"));
+  // Render/resize plotly if this tab has one
+  var plotDiv = document.querySelector("#" + tabId + " [id^=plotly_]");
+  if (plotDiv) {
+    setTimeout(function() { renderPlotlyIfVisible(plotDiv.id); }, 100);
+  }
+  // Resize iframes
   var iframe = document.querySelector("#" + tabId + " iframe");
   if (iframe) { setTimeout(function() { resizeIframe(iframe); }, 300); }
 }
@@ -575,22 +635,14 @@ function filterSection(section, btn) {
     if (firstVisible) firstVisible.click();
   }
 }
+// Plotly figure specs — all figures share one copy of plotly.js
+', plotly_specs_json, '
+// Render the first visible plotly chart on load
+document.addEventListener("DOMContentLoaded", function() {
+  var firstPlot = document.querySelector(".tab-content[style*=block] [id^=plotly_]");
+  if (firstPlot) { setTimeout(function() { renderPlotlyIfVisible(firstPlot.id); }, 200); }
+});
 </script>
-</head>
-<body>
-<div class="header">
-  <h1>LOT Part 2 &mdash; Interactive Dashboard</h1>
-  <p>MMA_MED &bull; MAP &bull; LOT1_BASE &bull; SCT descriptive summary &nbsp;|&nbsp; Generated ', format(Sys.time(), "%Y-%m-%d %H:%M"), '</p>
-</div>
-<div class="nav-bar">
-<div class="filter-bar">
-', section_filters, '
-</div>
-<div class="tab-bar">
-', paste(tab_buttons, collapse = "\n"), '
-</div>
-</div>
-', paste(tab_panels, collapse = "\n"), '
 </body>
 </html>')
 
