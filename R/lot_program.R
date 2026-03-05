@@ -311,22 +311,374 @@ run_step <- function(con, name, sql, qc = NULL) {
 # ============================================================
 # Generates summary tables + ggplot2 figures for QC and reporting.
 # Figures saved to cfg$output_dir as PNG.
-# If ggplot2 is not available, figures are skipped gracefully.
+# A single combined interactive HTML dashboard is generated at the end.
 
 has_ggplot2 <- requireNamespace("ggplot2", quietly = TRUE)
+has_plotly  <- requireNamespace("plotly", quietly = TRUE) &&
+               requireNamespace("htmlwidgets", quietly = TRUE)
+has_dt      <- requireNamespace("DT", quietly = TRUE)
 if (has_ggplot2) {
   suppressPackageStartupMessages(library(ggplot2))
 }
 
-save_plot <- function(p, filename, width = 10, height = 6) {
+# ---- Dashboard collector: accumulates widgets for the combined HTML ----
+dashboard_items <- list()
+
+add_to_dashboard <- function(widget, section, title, type = "figure") {
+  dashboard_items[[length(dashboard_items) + 1]] <<- list(
+    widget = widget, section = section, title = title, type = type
+  )
+}
+
+# ---- Shared visual theme and palette ----
+lot_palette <- c(
+  "#2E86AB", "#A23B72", "#F18F01", "#C73E1D", "#3B1F2B",
+  "#44BBA4", "#E94F37", "#393E41", "#8D5A97", "#5FAD56",
+  "#F2D0A4", "#3F88C5", "#D72638", "#140F2D", "#F49D37"
+)
+lot_class_palette <- c(
+  "IMMUNOMOD"  = "#2E86AB",
+  "PROTINHIB"  = "#A23B72",
+  "MUSTARD"    = "#F18F01",
+  "ACD38"      = "#C73E1D",
+  "STEROID"    = "#44BBA4",
+  "ABCMA"      = "#8D5A97",
+  "ASLAMF7"    = "#3F88C5",
+  "MELP"       = "#3B1F2B",
+  "TOPOINHIB"  = "#E94F37",
+  "HIST"       = "#5FAD56",
+  "NUCLEAR"    = "#F49D37",
+  "BLC21"      = "#D72638",
+  "ATCELL"     = "#F2D0A4",
+  "UNV"        = "#140F2D",
+  "PLAT"       = "#393E41"
+)
+
+theme_lot <- function(base_size = 13) {
+  theme_minimal(base_size = base_size) %+replace%
+    theme(
+      plot.title       = element_text(face = "bold", size = base_size + 2, margin = margin(b = 10)),
+      plot.subtitle    = element_text(color = "grey40", size = base_size, margin = margin(b = 12)),
+      plot.caption     = element_text(color = "grey50", size = base_size - 3, hjust = 0),
+      panel.grid.major = element_line(color = "grey90", linewidth = 0.3),
+      panel.grid.minor = element_blank(),
+      axis.title       = element_text(face = "bold", size = base_size - 1),
+      axis.text        = element_text(size = base_size - 2),
+      legend.position  = "top",
+      legend.title     = element_text(face = "bold", size = base_size - 1),
+      legend.text      = element_text(size = base_size - 2),
+      plot.margin      = margin(15, 15, 15, 15)
+    )
+}
+
+save_plot <- function(p, filename, width = 10, height = 6, section = "", title = "") {
   if (!has_ggplot2) return(invisible(NULL))
   dir.create(cfg$output_dir, showWarnings = FALSE, recursive = TRUE)
   out_path <- file.path(cfg$output_dir, filename)
   tryCatch({
-    ggsave(out_path, plot = p, width = width, height = height, dpi = 150)
+    ggsave(out_path, plot = p, width = width, height = height, dpi = 150, bg = "white")
     log_msg("  Figure saved: ", out_path)
   }, error = function(e) {
     log_msg("  WARNING: Could not save figure ", filename, ": ", e$message)
+  })
+  # Collect interactive version for dashboard
+  if (has_plotly) {
+    tryCatch({
+      pp <- plotly::ggplotly(p, tooltip = "text") |>
+        plotly::layout(
+          hoverlabel = list(bgcolor = "white", font = list(size = 12)),
+          margin = list(t = 60, b = 60)
+        ) |>
+        plotly::config(displayModeBar = TRUE, displaylogo = FALSE,
+                       modeBarButtonsToRemove = list("lasso2d", "select2d"))
+      add_to_dashboard(pp, section, title, type = "figure")
+    }, error = function(e) {
+      log_msg("  WARNING: Could not create interactive figure for dashboard: ", e$message)
+    })
+  }
+}
+
+# Collect a data table for the dashboard (DT does NOT require plotly)
+save_table <- function(df, section, title) {
+  if (!has_dt || !requireNamespace("htmlwidgets", quietly = TRUE)) return(invisible(NULL))
+  tryCatch({
+    # Convert integer64 columns for display
+    for (col in names(df)) {
+      if (inherits(df[[col]], "integer64")) df[[col]] <- as.numeric(df[[col]])
+    }
+    dt <- DT::datatable(df, rownames = FALSE,
+                         options = list(pageLength = 15, scrollX = TRUE,
+                                        dom = "ftip"),
+                         class = "display compact stripe hover")
+    add_to_dashboard(dt, section, title, type = "table")
+  }, error = function(e) {
+    log_msg("  WARNING: Could not create table for dashboard: ", e$message)
+  })
+}
+
+# Add a raw HTML card to the dashboard (for overview/QC — no htmlwidget needed)
+add_html_card <- function(html_content, section, title) {
+  dashboard_items[[length(dashboard_items) + 1]] <<- list(
+    html = html_content, section = section, title = title, type = "html_card"
+  )
+}
+
+# Build and save the single combined HTML dashboard
+build_dashboard <- function() {
+  if (length(dashboard_items) == 0) {
+    log_msg("  Skipping dashboard (no items collected).")
+    return(invisible(NULL))
+  }
+
+  dir.create(cfg$output_dir, showWarnings = FALSE, recursive = TRUE)
+  dash_path <- file.path(cfg$output_dir, "lot_dashboard.html")
+
+  tryCatch({
+    tab_buttons   <- list()
+    tab_panels    <- list()
+    plotly_specs  <- list()   # JSON specs for plotly figures
+    sections      <- unique(sapply(dashboard_items, `[[`, "section"))
+
+    for (idx in seq_along(dashboard_items)) {
+      item   <- dashboard_items[[idx]]
+      tab_id <- paste0("tab", idx)
+
+      active_class <- if (idx == 1) "active" else ""
+      section_tag  <- paste0('<span class="section-tag">', item$section, '</span> ')
+      tab_buttons[[idx]] <- sprintf(
+        '<button class="tab-btn %s" onclick="showTab(\'%s\', this)" data-section="%s">%s%s</button>',
+        active_class, tab_id, item$section, section_tag, item$title
+      )
+
+      if (item$type == "figure") {
+        # Plotly figures: extract JSON spec, render client-side with shared plotly.js
+        # This avoids pandoc dependency, data URI size limits, and saves ~3MB per figure
+        plotly_json <- tryCatch({
+          jsonlite::toJSON(item$widget$x, auto_unbox = TRUE, force = TRUE, null = "null")
+        }, error = function(e) NULL)
+
+        if (!is.null(plotly_json)) {
+          div_id <- paste0("plotly_", idx)
+          plotly_specs[[div_id]] <- as.character(plotly_json)
+          tab_panels[[idx]] <- sprintf(
+            '<div id="%s" class="tab-content" style="display:%s"><div id="%s" style="width:100%%;min-height:500px;"></div></div>',
+            tab_id, if (idx == 1) "block" else "none", div_id
+          )
+        } else {
+          # Fallback: empty panel with error message
+          tab_panels[[idx]] <- sprintf(
+            '<div id="%s" class="tab-content" style="display:%s"><p style="color:#C73E1D;padding:20px;">Figure could not be rendered.</p></div>',
+            tab_id, if (idx == 1) "block" else "none"
+          )
+        }
+      } else {
+        # Tables and HTML cards: base64 data URI iframes (these work fine)
+        if (item$type == "html_card") {
+          widget_html <- item$html
+        } else {
+          tmp_file <- tempfile(fileext = ".html")
+          htmlwidgets::saveWidget(item$widget, tmp_file, selfcontained = TRUE)
+          widget_html <- paste(readLines(tmp_file, warn = FALSE), collapse = "\n")
+          unlink(tmp_file)
+        }
+        encoded <- base64enc::base64encode(charToRaw(widget_html))
+        iframe_height <- if (item$type == "table") "600" else "500"
+        tab_panels[[idx]] <- sprintf(
+          '<div id="%s" class="tab-content" style="display:%s"><iframe src="data:text/html;base64,%s" style="width:100%%;height:%spx;border:none;" sandbox="allow-scripts allow-same-origin" onload="resizeIframe(this)"></iframe></div>',
+          tab_id, if (idx == 1) "block" else "none", encoded, iframe_height
+        )
+      }
+    }
+
+    # Build section filter buttons
+    section_filters <- paste0(
+      '<button class="filter-btn active" onclick="filterSection(\'ALL\', this)">All</button>\n',
+      paste(sprintf(
+        '<button class="filter-btn" onclick="filterSection(\'%s\', this)">%s</button>',
+        sections, sections
+      ), collapse = "\n")
+    )
+
+    # Build plotly specs as a single JSON object keyed by div id
+    plotly_specs_json <- paste0("var PLOTLY_SPECS = {\n",
+      paste(sapply(names(plotly_specs), function(div_id) {
+        sprintf('  "%s": %s', div_id, plotly_specs[[div_id]])
+      }), collapse = ",\n"),
+    "\n};")
+
+    # Bundle plotly.js from the installed R package (no CDN / no internet needed)
+    plotly_js_code <- ""
+    if (length(plotly_specs) > 0) {
+      plotly_js_files <- list.files(
+        system.file("htmlwidgets/lib", package = "plotly"),
+        pattern = "plotly[^/]*\\.min\\.js$",
+        recursive = TRUE, full.names = TRUE
+      )
+      if (length(plotly_js_files) == 0) {
+        # Fallback: try non-minified
+        plotly_js_files <- list.files(
+          system.file("htmlwidgets/lib", package = "plotly"),
+          pattern = "plotly[^/]*\\.js$",
+          recursive = TRUE, full.names = TRUE
+        )
+      }
+      if (length(plotly_js_files) > 0) {
+        plotly_js_code <- paste(readLines(plotly_js_files[1], warn = FALSE), collapse = "\n")
+        log_msg("  Bundled plotly.js from: ", plotly_js_files[1],
+                " (", round(file.size(plotly_js_files[1]) / 1e6, 1), " MB)")
+      } else {
+        log_msg("  WARNING: Could not find plotly.js in installed package. Figures may not render.")
+      }
+    }
+    plotly_script_tag <- if (nchar(plotly_js_code) > 0) {
+      paste0("<script>", plotly_js_code, "</script>")
+    } else ""
+
+    html_doc <- paste0('<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LOT Part 2 - Interactive Dashboard</title>
+', plotly_script_tag, '
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #f5f6fa; color: #2d3436;
+  }
+  .header {
+    background: linear-gradient(135deg, #2E86AB 0%, #1a5276 100%);
+    color: white; padding: 28px 32px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  }
+  .header h1 { font-size: 26px; font-weight: 700; margin-bottom: 6px; }
+  .header p  { font-size: 14px; opacity: 0.85; }
+  .nav-bar {
+    position: sticky; top: 0; z-index: 100;
+    background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .filter-bar {
+    display: flex; flex-wrap: wrap; gap: 4px; padding: 10px 32px;
+    border-bottom: 1px solid #eee; background: #fafafa;
+  }
+  .filter-btn {
+    padding: 5px 14px; border: 1px solid #dfe6e9; border-radius: 20px;
+    background: white; color: #636e72; cursor: pointer;
+    font-size: 12px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.5px; transition: all 0.15s;
+  }
+  .filter-btn:hover { background: #dfe6e9; }
+  .filter-btn.active { background: #1a5276; color: white; border-color: #1a5276; }
+  .tab-bar {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    padding: 10px 32px;
+    border-bottom: 1px solid #dfe6e9;
+  }
+  .tab-btn {
+    padding: 8px 14px; border: 1px solid #dfe6e9; border-radius: 6px;
+    background: #f5f6fa; color: #636e72; cursor: pointer;
+    font-size: 12.5px; font-weight: 500; transition: all 0.15s;
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+  .tab-btn:hover { background: #dfe6e9; color: #2d3436; }
+  .tab-btn.active { background: #2E86AB; color: white; border-color: #2E86AB; }
+  .tab-btn.active .section-tag { background: rgba(255,255,255,0.25); color: white; }
+  .tab-btn.hidden { display: none; }
+  .section-tag {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    background: #dfe6e9; color: #636e72; padding: 2px 6px;
+    border-radius: 3px; letter-spacing: 0.5px;
+  }
+  .tab-content { padding: 16px 32px; }
+  .tab-content iframe { border: none; width: 100%; min-height: 500px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>LOT Part 2 &mdash; Interactive Dashboard</h1>
+  <p>MMA_MED &bull; MAP &bull; LOT1_BASE &bull; SCT descriptive summary &nbsp;|&nbsp; Generated ', format(Sys.time(), "%Y-%m-%d %H:%M"), '</p>
+</div>
+<div class="nav-bar">
+<div class="filter-bar">
+', section_filters, '
+</div>
+<div class="tab-bar">
+', paste(tab_buttons, collapse = "\n"), '
+</div>
+</div>
+', paste(tab_panels, collapse = "\n"), '
+<script>
+function resizeIframe(iframe) {
+  try { iframe.style.height = iframe.contentWindow.document.body.scrollHeight + 40 + "px"; } catch(e) {}
+  setTimeout(function() {
+    try { iframe.style.height = iframe.contentWindow.document.body.scrollHeight + 40 + "px"; } catch(e) {}
+  }, 800);
+  setTimeout(function() {
+    try { iframe.style.height = iframe.contentWindow.document.body.scrollHeight + 40 + "px"; } catch(e) {}
+  }, 2000);
+}
+// Track which plotly divs have been rendered
+var renderedPlots = {};
+function renderPlotlyIfVisible(divId) {
+  if (renderedPlots[divId]) {
+    Plotly.Plots.resize(divId);
+    return;
+  }
+  var el = document.getElementById(divId);
+  if (!el || el.offsetParent === null) return;
+  var spec = PLOTLY_SPECS[divId];
+  if (spec) {
+    Plotly.newPlot(divId, spec.data || [], spec.layout || {}, spec.config || {displayModeBar:true,displaylogo:false});
+    renderedPlots[divId] = true;
+  }
+}
+function showTab(tabId, btn) {
+  document.querySelectorAll(".tab-content").forEach(function(el) { el.style.display = "none"; });
+  document.querySelectorAll(".tab-btn").forEach(function(el) { el.classList.remove("active"); });
+  document.getElementById(tabId).style.display = "block";
+  btn.classList.add("active");
+  // Render/resize plotly if this tab has one
+  var plotDiv = document.querySelector("#" + tabId + " [id^=plotly_]");
+  if (plotDiv) {
+    setTimeout(function() { renderPlotlyIfVisible(plotDiv.id); }, 100);
+  }
+  // Resize iframes
+  var iframe = document.querySelector("#" + tabId + " iframe");
+  if (iframe) { setTimeout(function() { resizeIframe(iframe); }, 300); }
+}
+function filterSection(section, btn) {
+  document.querySelectorAll(".filter-btn").forEach(function(el) { el.classList.remove("active"); });
+  btn.classList.add("active");
+  document.querySelectorAll(".tab-btn").forEach(function(el) {
+    if (section === "ALL" || el.getAttribute("data-section") === section) {
+      el.classList.remove("hidden");
+    } else {
+      el.classList.add("hidden");
+    }
+  });
+  var activeTab = document.querySelector(".tab-btn.active");
+  if (activeTab && activeTab.classList.contains("hidden")) {
+    var firstVisible = document.querySelector(".tab-btn:not(.hidden)");
+    if (firstVisible) firstVisible.click();
+  }
+}
+// Plotly figure specs — all figures share one copy of plotly.js
+', plotly_specs_json, '
+// Render the first visible plotly chart on load
+document.addEventListener("DOMContentLoaded", function() {
+  var firstPlot = document.querySelector(".tab-content[style*=block] [id^=plotly_]");
+  if (firstPlot) { setTimeout(function() { renderPlotlyIfVisible(firstPlot.id); }, 200); }
+});
+</script>
+</body>
+</html>')
+
+    writeLines(html_doc, dash_path)
+    log_msg("  Dashboard saved: ", dash_path)
+
+  }, error = function(e) {
+    log_msg("  WARNING: Could not build dashboard: ", conditionMessage(e))
   })
 }
 
@@ -335,6 +687,199 @@ print_descriptives <- function(con) {
   cat(SEP, "\n")
   cat("        PART 2 DESCRIPTIVE SUMMARY                    \n")
   cat(SEP, "\n")
+
+  # --------------------------------------------------------
+  # 0a. Overview tab — run metadata + dynamic counts (FIRST tab)
+  # --------------------------------------------------------
+  tryCatch({
+    # Dynamic run counts
+    cohort_n   <- tryCatch(as.numeric(db_q(con, "SELECT count(DISTINCT PATID) AS n FROM lot_patient_input")$n), error = function(e) NA)
+    mma_n      <- tryCatch(as.numeric(db_q(con, "SELECT count(*) AS n FROM mma_med_processed")$n), error = function(e) NA)
+    mma_pat_n  <- tryCatch(as.numeric(db_q(con, "SELECT count(DISTINCT PATID) AS n FROM mma_med_processed")$n), error = function(e) NA)
+    map_n      <- tryCatch(as.numeric(db_q(con, "SELECT count(*) AS n FROM map_stacked")$n), error = function(e) NA)
+    map_pat_n  <- tryCatch(as.numeric(db_q(con, "SELECT count(DISTINCT PATID) AS n FROM map_stacked")$n), error = function(e) NA)
+    lot1_n     <- tryCatch(as.numeric(db_q(con, "SELECT count(*) AS n FROM lot1_base")$n), error = function(e) NA)
+    sct_n      <- tryCatch(as.numeric(db_q(con, "SELECT sum(CASE WHEN LOT1_TX_ENDDATE IS NOT NULL THEN 1 ELSE 0 END) AS n FROM lot1_sct")$n), error = function(e) NA)
+    censored_n <- tryCatch({
+      r <- db_q(con, "
+        SELECT sum(case when ENDDATE_CE < ENDDATE then 1 else 0 end) AS n_cens,
+               count(*) AS n_total
+        FROM lot_patient_input
+      ")
+      list(n = as.numeric(r$n_cens), pct = round(100 * as.numeric(r$n_cens) / max(as.numeric(r$n_total), 1), 1))
+    }, error = function(e) list(n = NA, pct = NA))
+
+    fmt <- function(x) if (is.na(x)) "N/A" else format(x, big.mark = ",")
+
+    overview_html <- paste0('<!DOCTYPE html><html><head>
+<meta charset="UTF-8">
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: #fff; padding: 24px; color: #2d3436; }
+  h2 { font-size: 20px; color: #1a5276; margin-bottom: 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; margin-bottom: 24px; }
+  .card { background: #f5f6fa; border-radius: 8px; padding: 16px; border: 1px solid #dfe6e9; }
+  .card h3 { font-size: 11px; color: #636e72; text-transform: uppercase;
+             letter-spacing: 0.5px; margin-bottom: 6px; }
+  .card .val { font-size: 24px; font-weight: 700; color: #2d3436; }
+  .card .sub { font-size: 12px; color: #636e72; margin-top: 4px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 12px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 13px; }
+  th { background: #f5f6fa; font-weight: 600; color: #636e72; text-transform: uppercase;
+       letter-spacing: 0.5px; font-size: 11px; }
+</style></head><body>
+<h2>Run Overview</h2>
+<div class="grid">
+  <div class="card"><h3>Run ID</h3><div class="val" style="font-size:16px;word-break:break-all;">', run_id, '</div>
+    <div class="sub">Generated: ', format(Sys.time(), "%Y-%m-%d %H:%M:%S"), '</div></div>
+  <div class="card"><h3>Cohort Patients</h3><div class="val">', fmt(cohort_n), '</div></div>
+  <div class="card"><h3>MMA Claims</h3><div class="val">', fmt(mma_n), '</div>
+    <div class="sub">', fmt(mma_pat_n), ' patients</div></div>
+  <div class="card"><h3>MAPs</h3><div class="val">', fmt(map_n), '</div>
+    <div class="sub">', fmt(map_pat_n), ' patients</div></div>
+  <div class="card"><h3>LOT1 Patients</h3><div class="val">', fmt(lot1_n), '</div></div>
+  <div class="card"><h3>SCT Events</h3><div class="val">', fmt(sct_n), '</div></div>
+  <div class="card"><h3>Censored (OBS_END)</h3><div class="val">',
+    if (!is.na(censored_n$pct)) paste0(censored_n$pct, "%") else "N/A", '</div>
+    <div class="sub">', fmt(censored_n$n), ' patients</div></div>
+</div>
+<h2>Configuration</h2>
+<table>
+<tr><th>Parameter</th><th>Value</th></tr>
+<tr><td>CDM Schema</td><td>', cfg$cdm_schema, '</td></tr>
+<tr><td>Work Schema</td><td>', cfg$work_schema, '</td></tr>
+<tr><td>Input Cohort Table</td><td>', cfg$input_cohort_table, '</td></tr>
+<tr><td>Induction Window</td><td>', cfg$induction_window_days, ' days</td></tr>
+<tr><td>MAP Discontinuation Gap</td><td>', cfg$map_discon_gap_days, ' days</td></tr>
+<tr><td>Medical Day Supply</td><td>', cfg$medical_day_supply, ' days</td></tr>
+<tr><td>LOT Discontinuation Gap</td><td>', cfg$lot_discon_gap_days, ' days</td></tr>
+</table>
+</body></html>')
+    add_html_card(overview_html, section = "OVERVIEW", title = "Run Overview")
+  }, error = function(e) {
+    log_msg("  WARNING: Overview tab generation failed: ", conditionMessage(e))
+  })
+
+  # --------------------------------------------------------
+  # 0b. QC Summary tab — pass/fail validation checks (SECOND tab)
+  # --------------------------------------------------------
+  tryCatch({
+    qc_rows <- list()
+    add_qc <- function(check, value, status) {
+      qc_rows[[length(qc_rows) + 1]] <<- sprintf(
+        '<tr><td>%s</td><td>%s</td><td class="%s">%s</td></tr>',
+        check, value,
+        if (status == "PASS") "pass" else if (status == "WARN") "warn" else "fail",
+        status
+      )
+    }
+
+    orphan_n <- tryCatch({
+      as.numeric(db_q(con, "
+        SELECT count(DISTINCT c.CL_MED_ABBR) AS n
+        FROM mma_codelist c LEFT JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR
+        WHERE r.CL_MED_ABBR IS NULL
+      ")$n)
+    }, error = function(e) NA)
+    if (!is.na(orphan_n)) add_qc("Codelist meds not in rollup", orphan_n,
+                                  if (orphan_n == 0) "PASS" else "WARN")
+
+    uncoded_n <- tryCatch({
+      as.numeric(db_q(con, "
+        SELECT count(DISTINCT r.CL_MED_ABBR) AS n
+        FROM mma_rollup r LEFT JOIN mma_codelist c ON r.CL_MED_ABBR = c.CL_MED_ABBR
+        WHERE c.CL_MED_ABBR IS NULL
+      ")$n)
+    }, error = function(e) NA)
+    if (!is.na(uncoded_n)) add_qc("Rollup meds with zero codes", uncoded_n,
+                                   if (uncoded_n == 0) "PASS" else "WARN")
+
+    multi_n <- tryCatch({
+      as.numeric(db_q(con, "
+        SELECT count(*) AS n FROM (
+          SELECT CL_MED_ABBR FROM mma_codelist
+          GROUP BY CL_MED_ABBR HAVING count(DISTINCT CL_MED_CLASS) > 1
+        )
+      ")$n)
+    }, error = function(e) NA)
+    if (!is.na(multi_n)) add_qc("MED_ABBR mapped to multiple classes", multi_n,
+                                 if (multi_n == 0) "PASS" else "WARN")
+
+    bad_maps <- tryCatch({
+      as.numeric(db_q(con, "SELECT count(*) AS n FROM map_stacked WHERE MAP_END_DT < MAP_START_DT")$n)
+    }, error = function(e) NA)
+    if (!is.na(bad_maps)) add_qc("MAPs with END_DT < START_DT", bad_maps,
+                                  if (bad_maps == 0) "PASS" else "FAIL")
+
+    runout_mm <- tryCatch({
+      as.numeric(db_q(con, "
+        SELECT count(*) AS n FROM map_stacked
+        WHERE MAP_END_DT <> greatest(
+          coalesce(MAP_RX_RUNOUT_DT, cast('1900-01-01' as date)),
+          coalesce(MAP_MED_RUNOUT_DT, cast('1900-01-01' as date)))
+        AND MAP_END_DT IS NOT NULL
+      ")$n)
+    }, error = function(e) NA)
+    if (!is.na(runout_mm)) add_qc("MAPs where END != max(runouts)", runout_mm,
+                                   if (runout_mm == 0) "PASS" else "WARN")
+
+    lot1_past <- tryCatch({
+      as.numeric(db_q(con, "
+        SELECT sum(case when lb.LOT1_BASE_END_DT > p.OBS_END_DT then 1 else 0 end) AS n
+        FROM lot1_base_end lb INNER JOIN lot_patient_input p ON lb.PATID = p.PATID
+      ")$n)
+    }, error = function(e) NA)
+    if (!is.na(lot1_past)) add_qc("LOT1 END_DT past OBS_END_DT", lot1_past,
+                                   if (lot1_past == 0) "PASS" else "WARN")
+
+    sct_both <- tryCatch({
+      as.numeric(db_q(con, "
+        SELECT sum(CASE WHEN LOT1_SCT_AUTO_TAND_FLG = 1 AND LOT1_SCT_AUTO_SING_FLG = 1 THEN 1 ELSE 0 END) AS n
+        FROM lot1_sct
+      ")$n)
+    }, error = function(e) NA)
+    if (!is.na(sct_both)) add_qc("SCT: both tandem AND single flag", sct_both,
+                                  if (sct_both == 0) "PASS" else "FAIL")
+
+    sct_past <- tryCatch({
+      as.numeric(db_q(con, "
+        SELECT sum(CASE WHEN sct.LOT1_TX_ENDDATE IS NOT NULL
+                    AND sct.LOT1_TX_ENDDATE > lb.OBS_END_DT THEN 1 ELSE 0 END) AS n
+        FROM lot1_sct sct INNER JOIN lot1_base lb ON sct.PATID = lb.PATID
+      ")$n)
+    }, error = function(e) NA)
+    if (!is.na(sct_past)) add_qc("SCT end date past OBS_END_DT", sct_past,
+                                  if (sct_past == 0) "PASS" else "WARN")
+
+    n_pass <- sum(sapply(qc_rows, function(r) grepl('class="pass"', r)))
+    n_total <- length(qc_rows)
+
+    qc_html <- paste0('<!DOCTYPE html><html><head>
+<meta charset="UTF-8">
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: #fff; padding: 24px; color: #2d3436; }
+  h2 { font-size: 20px; color: #1a5276; margin-bottom: 8px; }
+  .summary { font-size: 14px; color: #636e72; margin-bottom: 16px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid #eee; font-size: 13px; }
+  th { background: #f5f6fa; font-weight: 600; color: #636e72; text-transform: uppercase;
+       letter-spacing: 0.5px; font-size: 11px; }
+  .pass { color: #00b894; font-weight: 700; }
+  .warn { color: #fdcb6e; font-weight: 700; }
+  .fail { color: #d63031; font-weight: 700; }
+</style></head><body>
+<h2>QC Validation Summary</h2>
+<p class="summary">', n_pass, ' / ', n_total, ' checks passed</p>
+<table>
+<tr><th>Check</th><th>Value</th><th>Status</th></tr>
+', paste(qc_rows, collapse = "\n"), '
+</table>
+</body></html>')
+    add_html_card(qc_html, section = "QC", title = "QC Summary")
+  }, error = function(e) {
+    log_msg("  WARNING: QC summary tab generation failed: ", conditionMessage(e))
+  })
 
   # --------------------------------------------------------
   # 1. MMA_MED Summary
@@ -390,35 +935,62 @@ print_descriptives <- function(con) {
                   format(r$n_med, big.mark = ",")))
     }
 
-    # Figure 1: Claims by medication (bar chart)
+    # Figure 1: Patients by medication (bar chart)
     if (has_ggplot2 && nrow(med_dist) > 0) {
       med_dist$n_patients <- as.numeric(med_dist$n_patients)
       med_dist$n_claims   <- as.numeric(med_dist$n_claims)
       med_dist$n_rx       <- as.numeric(med_dist$n_rx)
       med_dist$n_med      <- as.numeric(med_dist$n_med)
-      p1 <- ggplot(med_dist, aes(x = reorder(MED_ABBR, -n_patients), y = n_patients, fill = MED_CLASS)) +
-        geom_bar(stat = "identity") +
+      p1 <- ggplot(med_dist,
+                    aes(x = reorder(MED_ABBR, -n_patients), y = n_patients,
+                        fill = MED_CLASS, text = paste0(
+                          "Med: ", MED_ABBR, "\nClass: ", MED_CLASS,
+                          "\nPatients: ", format(n_patients, big.mark = ","),
+                          "\nClaims: ", format(n_claims, big.mark = ",")))) +
+        geom_bar(stat = "identity", width = 0.75) +
+        geom_text(aes(label = format(n_patients, big.mark = ",")),
+                  vjust = -0.4, size = 3, color = "grey30") +
+        scale_fill_manual(values = lot_class_palette, na.value = "grey50") +
+        scale_y_continuous(labels = scales::comma_format(), expand = expansion(mult = c(0, 0.12))) +
         labs(title = "MMA_MED: Patients by Medication",
-             x = "Medication", y = "Distinct Patients", fill = "Drug Class") +
-        theme_minimal(base_size = 12) +
-        theme(axis.text.x = element_text(angle = 45, hjust = 1))
-      save_plot(p1, "fig01_mma_patients_by_med.png")
+             subtitle = paste0("N = ", format(sum(med_dist$n_patients), big.mark = ","),
+                               " patient-medication combinations across ",
+                               nrow(med_dist), " medications"),
+             x = NULL, y = "Distinct Patients", fill = "Drug Class") +
+        theme_lot() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10))
+      save_plot(p1, "fig01_mma_patients_by_med.png",
+               section = "MMA_MED", title = "Fig 1: Patients by Medication")
+      save_table(med_dist, section = "MMA_MED",
+                 title = "Table: MMA Claims by Medication")
     }
 
     # Figure 2: Pharmacy vs Medical claims stacked bar
     if (has_ggplot2 && nrow(med_dist) > 0) {
       claim_long <- rbind(
-        data.frame(MED_ABBR = med_dist$MED_ABBR, CLAIM_TYPE = "Pharmacy", N = as.numeric(med_dist$n_rx)),
-        data.frame(MED_ABBR = med_dist$MED_ABBR, CLAIM_TYPE = "Medical",  N = as.numeric(med_dist$n_med))
+        data.frame(MED_ABBR = med_dist$MED_ABBR, MED_CLASS = med_dist$MED_CLASS,
+                   CLAIM_TYPE = "Pharmacy", N = as.numeric(med_dist$n_rx)),
+        data.frame(MED_ABBR = med_dist$MED_ABBR, MED_CLASS = med_dist$MED_CLASS,
+                   CLAIM_TYPE = "Medical",  N = as.numeric(med_dist$n_med))
       )
-      p2 <- ggplot(claim_long, aes(x = reorder(MED_ABBR, -N), y = N, fill = CLAIM_TYPE)) +
-        geom_bar(stat = "identity", position = "stack") +
+      # Compute total claims per med for correct ordering
+      total_by_med <- tapply(claim_long$N, claim_long$MED_ABBR, sum)
+      claim_long$MED_ABBR <- factor(claim_long$MED_ABBR,
+                                     levels = names(sort(total_by_med, decreasing = TRUE)))
+      p2 <- ggplot(claim_long,
+                    aes(x = MED_ABBR, y = N, fill = CLAIM_TYPE,
+                        text = paste0("Med: ", MED_ABBR, "\nType: ", CLAIM_TYPE,
+                                      "\nClaims: ", format(N, big.mark = ",")))) +
+        geom_bar(stat = "identity", position = "stack", width = 0.75) +
+        scale_fill_manual(values = c("Pharmacy" = "#2E86AB", "Medical" = "#C73E1D")) +
+        scale_y_continuous(labels = scales::comma_format(), expand = expansion(mult = c(0, 0.08))) +
         labs(title = "MMA_MED: Claims by Type and Medication",
-             x = "Medication", y = "Claim Count", fill = "Claim Type") +
-        scale_fill_manual(values = c("Pharmacy" = "#4E79A7", "Medical" = "#E15759")) +
-        theme_minimal(base_size = 12) +
-        theme(axis.text.x = element_text(angle = 45, hjust = 1))
-      save_plot(p2, "fig02_mma_claims_by_type.png")
+             subtitle = "Pharmacy (NDC-based) vs Medical (procedure/NDC) claim sources",
+             x = NULL, y = "Claim Count", fill = "Claim Type") +
+        theme_lot() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10))
+      save_plot(p2, "fig02_mma_claims_by_type.png",
+               section = "MMA_MED", title = "Fig 2: Claims by Type")
     }
 
     # Day supply distribution
@@ -540,7 +1112,7 @@ print_descriptives <- function(con) {
     }
   }
 
-  # Figure 3: MAP length distribution (histogram via SQL-binned counts to avoid OOM)
+  # Figure 3: MAP length distribution (histogram via SQL-binned counts)
   tryCatch({
     if (has_ggplot2) {
       map_bins <- db_q(con, "
@@ -555,13 +1127,24 @@ print_descriptives <- function(con) {
       if (nrow(map_bins) > 0) {
         map_bins$bin_start <- as.numeric(map_bins$bin_start)
         map_bins$n         <- as.numeric(map_bins$n)
-        p3 <- ggplot(map_bins, aes(x = bin_start, y = n)) +
-          geom_bar(stat = "identity", width = 28, fill = "#4E79A7", alpha = 0.8) +
+        median_map <- if (nrow(map_stats) > 0) as.numeric(map_stats$median_map_length) else NA
+        p3 <- ggplot(map_bins, aes(x = bin_start, y = n,
+                                    text = paste0("Days: ", bin_start, "-", bin_start + 29,
+                                                  "\nMAPs: ", format(n, big.mark = ",")))) +
+          geom_bar(stat = "identity", width = 28, fill = "#2E86AB", alpha = 0.85) +
+          { if (!is.na(median_map)) geom_vline(xintercept = median_map,
+                     linetype = "dashed", color = "#C73E1D", linewidth = 0.8) } +
+          { if (!is.na(median_map)) annotate("text", x = median_map + 25, y = Inf, vjust = 2, hjust = 0,
+                   label = paste0("Median: ", round(median_map), " days"),
+                   color = "#C73E1D", fontface = "bold", size = 3.8) } +
+          scale_x_continuous(breaks = seq(0, max(map_bins$bin_start, na.rm = TRUE), by = 90)) +
+          scale_y_continuous(labels = scales::comma_format(), expand = expansion(mult = c(0, 0.1))) +
           labs(title = "MAP Length Distribution",
-               x = "MAP Length (days, 30-day bins)", y = "Count") +
-          theme_minimal(base_size = 12) +
-          scale_x_continuous(breaks = seq(0, max(map_bins$bin_start, na.rm = TRUE), by = 90))
-        save_plot(p3, "fig03_map_length_distribution.png")
+               subtitle = paste0(format(sum(map_bins$n), big.mark = ","), " medication-available periods, 30-day bins"),
+               x = "MAP Length (days)", y = "Number of MAPs") +
+          theme_lot()
+        save_plot(p3, "fig03_map_length_distribution.png",
+                 section = "MAP", title = "Fig 3: MAP Length Distribution")
       }
     }
   }, error = function(e) {
@@ -573,13 +1156,27 @@ print_descriptives <- function(con) {
     if (has_ggplot2 && nrow(map_by_med) > 0) {
       map_by_med$n_patients <- as.numeric(map_by_med$n_patients)
       map_by_med$n_maps     <- as.numeric(map_by_med$n_maps)
-      p4 <- ggplot(map_by_med, aes(x = reorder(med, -n_patients), y = n_patients, fill = class)) +
-        geom_bar(stat = "identity") +
+      map_by_med$n_discon   <- as.numeric(map_by_med$n_discon)
+      p4 <- ggplot(map_by_med,
+                    aes(x = reorder(med, -n_patients), y = n_patients, fill = class,
+                        text = paste0("Med: ", med, "\nClass: ", class,
+                                      "\nPatients: ", format(n_patients, big.mark = ","),
+                                      "\nMAPs: ", format(n_maps, big.mark = ","),
+                                      "\nAvg Days: ", round(avg_map_days, 1)))) +
+        geom_bar(stat = "identity", width = 0.75) +
+        geom_text(aes(label = format(n_patients, big.mark = ",")),
+                  vjust = -0.4, size = 3, color = "grey30") +
+        scale_fill_manual(values = lot_class_palette, na.value = "grey50") +
+        scale_y_continuous(labels = scales::comma_format(), expand = expansion(mult = c(0, 0.12))) +
         labs(title = "MAP: Patients by Medication",
-             x = "Medication", y = "Distinct Patients", fill = "Drug Class") +
-        theme_minimal(base_size = 12) +
-        theme(axis.text.x = element_text(angle = 45, hjust = 1))
-      save_plot(p4, "fig04_map_patients_by_med.png")
+             subtitle = "Medication-available periods across all drug classes",
+             x = NULL, y = "Distinct Patients", fill = "Drug Class") +
+        theme_lot() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10))
+      save_plot(p4, "fig04_map_patients_by_med.png",
+               section = "MAP", title = "Fig 4: MAP Patients by Medication")
+      save_table(map_by_med, section = "MAP",
+                 title = "Table: MAP Summary by Medication")
     }
   }, error = function(e) {
     log_msg("WARN: fig04 MAP patients by med failed: ", conditionMessage(e))
@@ -669,69 +1266,100 @@ print_descriptives <- function(con) {
     if (has_ggplot2 && nrow(regimens) > 0) {
       regimens$n_patients <- as.numeric(regimens$n_patients)
       top15 <- head(regimens, 15)
+      top15$pct <- 100 * top15$n_patients / as.numeric(max(total_lot1, 1))
       top15$regimen <- factor(top15$regimen, levels = rev(top15$regimen))
-      p5 <- ggplot(top15, aes(x = regimen, y = n_patients)) +
-        geom_bar(stat = "identity", fill = "#59A14F") +
+      p5 <- ggplot(top15, aes(x = regimen, y = n_patients,
+                               text = paste0("Regimen: ", regimen,
+                                             "\nPatients: ", format(n_patients, big.mark = ","),
+                                             "\n% of LOT1: ", round(pct, 1), "%",
+                                             "\nAvg Length: ", round(avg_length, 0), " days"))) +
+        geom_bar(stat = "identity", fill = "#44BBA4", width = 0.7) +
+        geom_text(aes(label = paste0(format(n_patients, big.mark = ","),
+                                     " (", round(pct, 1), "%)")),
+                  hjust = -0.05, size = 3.2, color = "grey30") +
         coord_flip() +
+        scale_y_continuous(labels = scales::comma_format(), expand = expansion(mult = c(0, 0.2))) +
         labs(title = "LOT1: Top 15 Induction Regimens",
+             subtitle = paste0("Out of ", format(as.numeric(total_lot1), big.mark = ","), " LOT1 patients"),
              x = NULL, y = "Number of Patients") +
-        theme_minimal(base_size = 12)
-      save_plot(p5, "fig05_lot1_top_regimens.png", width = 12, height = 7)
+        theme_lot() +
+        theme(legend.position = "none")
+      save_plot(p5, "fig05_lot1_top_regimens.png", width = 12, height = 7,
+               section = "LOT1", title = "Fig 5: Top 15 Induction Regimens")
+      save_table(regimens, section = "LOT1",
+                 title = "Table: Top 25 Induction Regimens")
     }
 
     # Figure 6: LOT1 base length distribution (SQL-binned to avoid OOM)
     if (has_ggplot2) {
       lot1_bins <- db_q(con, "
         SELECT floor(LOT1_BASE_LENGTH / 30) * 30 AS bin_start,
-               count(*) AS n,
-               percentile_approx(LOT1_BASE_LENGTH, 0.5) AS median_val
+               count(*) AS n
         FROM lot1_base
         WHERE LOT1_BASE_LENGTH IS NOT NULL
         GROUP BY floor(LOT1_BASE_LENGTH / 30) * 30
         ORDER BY bin_start
       ")
+      lot1_median <- db_q(con, "
+        SELECT percentile_approx(LOT1_BASE_LENGTH, 0.5) AS median_len
+        FROM lot1_base
+        WHERE LOT1_BASE_LENGTH IS NOT NULL
+      ")
       if (nrow(lot1_bins) > 0) {
         lot1_bins$bin_start  <- as.numeric(lot1_bins$bin_start)
         lot1_bins$n          <- as.numeric(lot1_bins$n)
-        lot1_bins$median_val <- as.numeric(lot1_bins$median_val)
-        median_len <- lot1_bins$median_val[1]  # same for all rows
-        p6 <- ggplot(lot1_bins, aes(x = bin_start, y = n)) +
-          geom_bar(stat = "identity", width = 28, fill = "#59A14F", alpha = 0.8) +
+        median_len <- if (nrow(lot1_median) > 0) as.numeric(lot1_median$median_len) else NA
+        p6 <- ggplot(lot1_bins, aes(x = bin_start, y = n,
+                                     text = paste0("Days: ", bin_start, "-", bin_start + 29,
+                                                   "\nPatients: ", format(n, big.mark = ",")))) +
+          geom_bar(stat = "identity", width = 28, fill = "#44BBA4", alpha = 0.85) +
+          { if (!is.na(median_len)) geom_vline(xintercept = median_len,
+                     linetype = "dashed", color = "#C73E1D", linewidth = 0.8) } +
+          { if (!is.na(median_len)) annotate("text", x = median_len + 25, y = Inf, vjust = 2, hjust = 0,
+                   label = paste0("Median: ", round(median_len), " days"),
+                   color = "#C73E1D", fontface = "bold", size = 3.8) } +
+          scale_x_continuous(breaks = seq(0, max(lot1_bins$bin_start, na.rm = TRUE), by = 180)) +
+          scale_y_continuous(labels = scales::comma_format(), expand = expansion(mult = c(0, 0.1))) +
           labs(title = "LOT1 BASE Length Distribution",
-               x = "LOT1 BASE Length (days, 30-day bins)", y = "Count") +
-          theme_minimal(base_size = 12) +
-          geom_vline(xintercept = median_len,
-                     linetype = "dashed", color = "red", linewidth = 1) +
-          annotate("text", x = median_len + 20, y = Inf, vjust = 2, hjust = 0,
-                   label = paste0("Median: ", round(median_len)),
-                   color = "red", size = 4)
-        save_plot(p6, "fig06_lot1_base_length.png")
+               subtitle = paste0(format(sum(lot1_bins$n), big.mark = ","),
+                                 " patients, 30-day bins"),
+               x = "LOT1 BASE Length (days)", y = "Number of Patients") +
+          theme_lot()
+        save_plot(p6, "fig06_lot1_base_length.png",
+                 section = "LOT1", title = "Fig 6: LOT1 Length Distribution")
       }
     }
 
-    # Figure 7: LOT1 end reason pie / bar
+    # Figure 7: LOT1 end reason bar chart
     if (has_ggplot2 && nrow(end_reasons) > 0) {
       end_reasons$n <- as.numeric(end_reasons$n)
       end_reasons$pct <- 100 * end_reasons$n / sum(end_reasons$n)
-      end_reasons$label <- paste0(end_reasons$LOT1_BASE_END_REASON, "\n",
-                                  format(end_reasons$n, big.mark = ","),
-                                  " (", round(end_reasons$pct, 1), "%)")
-      p7 <- ggplot(end_reasons, aes(x = reorder(LOT1_BASE_END_REASON, -n), y = n, fill = LOT1_BASE_END_REASON)) +
-        geom_bar(stat = "identity") +
+      end_reason_colors <- c(
+        "DISCONTINUATION" = "#C73E1D", "MED_ADD" = "#F18F01",
+        "CENSORED" = "#2E86AB", "SCT_AUTO" = "#A23B72",
+        "SCT_ALLO" = "#8D5A97", "SCT_CART" = "#3F88C5", "SCT" = "#393E41"
+      )
+      p7 <- ggplot(end_reasons,
+                    aes(x = reorder(LOT1_BASE_END_REASON, -n), y = n,
+                        fill = LOT1_BASE_END_REASON,
+                        text = paste0("Reason: ", LOT1_BASE_END_REASON,
+                                      "\nPatients: ", format(n, big.mark = ","),
+                                      "\n%: ", round(pct, 1), "%",
+                                      "\nAvg LOT1 Length: ", round(avg_length, 0), " days"))) +
+        geom_bar(stat = "identity", width = 0.7) +
         geom_text(aes(label = paste0(format(n, big.mark = ","), "\n(", round(pct, 1), "%)")),
-                  vjust = -0.3, size = 3.5) +
+                  vjust = -0.3, size = 3.5, color = "grey20") +
+        scale_fill_manual(values = end_reason_colors) +
+        scale_y_continuous(labels = scales::comma_format(), expand = expansion(mult = c(0, 0.15))) +
         labs(title = "LOT1 BASE End Reasons",
+             subtitle = paste0("How LOT1 ended for ", format(sum(end_reasons$n), big.mark = ","), " patients"),
              x = NULL, y = "Number of Patients") +
-        scale_fill_manual(values = c("DISCONTINUATION" = "#E15759",
-                                     "MED_ADD" = "#F28E2B",
-                                     "CENSORED" = "#76B7B2",
-                                     "SCT_AUTO" = "#B07AA1",
-                                     "SCT_ALLO" = "#9C755F",
-                                     "SCT_CART" = "#FF9DA7",
-                                     "SCT" = "#BAB0AC")) +
-        theme_minimal(base_size = 12) +
+        theme_lot() +
         theme(legend.position = "none")
-      save_plot(p7, "fig07_lot1_end_reasons.png", width = 8, height = 6)
+      save_plot(p7, "fig07_lot1_end_reasons.png", width = 8, height = 6,
+               section = "LOT1", title = "Fig 7: LOT1 End Reasons")
+      save_table(end_reasons, section = "LOT1",
+                 title = "Table: LOT1 End Reasons")
     }
 
     # Figure 8: Induction med count distribution
@@ -744,15 +1372,22 @@ print_descriptives <- function(con) {
       ")
       if (nrow(med_cnt) > 0) {
         med_cnt$n   <- as.numeric(med_cnt$n)
+        med_cnt$LOT1_MED_CNT <- as.numeric(med_cnt$LOT1_MED_CNT)
         med_cnt$pct <- 100 * med_cnt$n / sum(med_cnt$n)
-        p8 <- ggplot(med_cnt, aes(x = factor(LOT1_MED_CNT), y = n)) +
-          geom_bar(stat = "identity", fill = "#4E79A7") +
+        p8 <- ggplot(med_cnt, aes(x = factor(LOT1_MED_CNT), y = n,
+                                   text = paste0("Meds: ", LOT1_MED_CNT,
+                                                 "\nPatients: ", format(n, big.mark = ","),
+                                                 "\n%: ", round(pct, 1), "%"))) +
+          geom_bar(stat = "identity", fill = "#2E86AB", width = 0.65) +
           geom_text(aes(label = paste0(format(n, big.mark = ","), "\n(", round(pct, 1), "%)")),
-                    vjust = -0.3, size = 3.5) +
+                    vjust = -0.3, size = 3.5, color = "grey20") +
+          scale_y_continuous(labels = scales::comma_format(), expand = expansion(mult = c(0, 0.15))) +
           labs(title = "LOT1: Number of Induction Medications per Patient",
+               subtitle = "How many distinct medications each patient received in induction",
                x = "Number of Induction Meds", y = "Patients") +
-          theme_minimal(base_size = 12)
-        save_plot(p8, "fig08_lot1_med_count.png", width = 8, height = 6)
+          theme_lot()
+        save_plot(p8, "fig08_lot1_med_count.png", width = 8, height = 6,
+                 section = "LOT1", title = "Fig 8: Induction Med Count")
       }
     }
 
@@ -864,6 +1499,195 @@ print_descriptives <- function(con) {
   }, error = function(e) {
     log_msg("WARN: SCT descriptives failed: ", conditionMessage(e))
   })
+
+  # --------------------------------------------------------
+  # 5. Patient journey timelines — sample of interesting patients
+  # --------------------------------------------------------
+  tryCatch({
+    if (has_plotly) {
+      # Find interesting patients: those with med restarts (MAP_CNT >= 2),
+      # add-meds, or SCT events. Sample up to 20.
+      journey_pats <- db_q(con, "
+        WITH interesting AS (
+          -- Patients with same-med restarts
+          SELECT DISTINCT PATID, 'restart' AS reason
+          FROM map_stacked WHERE MAP_CNT >= 2
+          UNION
+          -- Patients with add-med
+          SELECT DISTINCT PATID, 'add_med'
+          FROM lot1_base WHERE LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
+          UNION
+          -- Patients with SCT
+          SELECT DISTINCT PATID, 'sct'
+          FROM lot1_sct WHERE LOT1_TX_ENDDATE IS NOT NULL
+        )
+        SELECT PATID, concat_ws(',', collect_set(reason)) AS reasons
+        FROM interesting
+        GROUP BY PATID
+        ORDER BY length(concat_ws(',', collect_set(reason))) DESC
+        LIMIT 20
+      ")
+
+      if (nrow(journey_pats) > 0) {
+        pat_ids_sql <- paste0("('", paste(journey_pats$PATID, collapse = "','"), "')")
+
+        # Get MAP segments for these patients
+        journey_maps <- db_q(con, glue("
+          SELECT m.PATID, m.MAP_MED_TYPE AS MED, m.MAP_MED_CLASS AS CLASS,
+                 m.MAP_START_DT, m.MAP_END_DT, m.MAP_CNT,
+                 m.MAP_DISCON_FLG,
+                 datediff(m.MAP_END_DT, m.MAP_START_DT) + 1 AS MAP_DAYS
+          FROM map_stacked m
+          WHERE m.PATID IN {pat_ids_sql}
+          ORDER BY m.PATID, m.MAP_MED_TYPE, m.MAP_START_DT
+        "))
+
+        # Get LOT1 milestones
+        journey_milestones <- db_q(con, glue("
+          SELECT lb.PATID,
+                 lb.LOT1_START_DT,
+                 lb.LOT1_BASE_1ST_ADD_MED_DT,
+                 lbe.LOT1_BASE_END_DT,
+                 lbe.LOT1_BASE_END_REASON,
+                 sct.LOT1_TX_ENDDATE AS SCT_DT
+          FROM lot1_base lb
+          LEFT JOIN lot1_base_end lbe ON lb.PATID = lbe.PATID
+          LEFT JOIN lot1_sct sct ON lb.PATID = sct.PATID
+          WHERE lb.PATID IN {pat_ids_sql}
+        "))
+
+        if (nrow(journey_maps) > 0) {
+          # Convert types
+          journey_maps$MAP_START_DT <- as.Date(journey_maps$MAP_START_DT)
+          journey_maps$MAP_END_DT   <- as.Date(journey_maps$MAP_END_DT)
+          journey_maps$MAP_CNT      <- as.numeric(journey_maps$MAP_CNT)
+          journey_maps$MAP_DAYS     <- as.numeric(journey_maps$MAP_DAYS)
+
+          # Render one plotly timeline per patient, collect them
+          # Use first 10 patients max for dashboard size
+          show_pats <- unique(journey_maps$PATID)[1:min(10, length(unique(journey_maps$PATID)))]
+
+          for (pid in show_pats) {
+            pat_maps <- journey_maps[journey_maps$PATID == pid, ]
+            pat_ms   <- journey_milestones[journey_milestones$PATID == pid, ]
+            reasons  <- if (pid %in% journey_pats$PATID) {
+              journey_pats$reasons[journey_pats$PATID == pid]
+            } else ""
+
+            # Build plotly shapes for Gantt bars
+            # Y-axis: medication names, X-axis: dates
+            meds <- sort(unique(pat_maps$MED))
+            med_y <- setNames(seq_along(meds), meds)
+
+            shapes <- list()
+            annotations <- list()
+            hover_texts <- list()
+
+            for (j in seq_len(nrow(pat_maps))) {
+              row <- pat_maps[j, ]
+              y_pos <- med_y[row$MED]
+              color <- if (row$CLASS %in% names(lot_class_palette)) lot_class_palette[row$CLASS] else "#636e72"
+              # Make restart segments slightly different shade
+              alpha_val <- if (row$MAP_CNT > 1) 0.6 else 0.85
+
+              shapes[[length(shapes) + 1]] <- list(
+                type = "rect",
+                x0 = as.character(row$MAP_START_DT),
+                x1 = as.character(row$MAP_END_DT),
+                y0 = y_pos - 0.35,
+                y1 = y_pos + 0.35,
+                fillcolor = color,
+                opacity = alpha_val,
+                line = list(color = color, width = 1),
+                layer = "below"
+              )
+            }
+
+            # Milestone vertical lines
+            vlines <- list()
+            if (nrow(pat_ms) > 0) {
+              ms <- pat_ms[1, ]
+              add_vline <- function(dt, label, color) {
+                if (!is.na(dt) && !is.null(dt)) {
+                  vlines[[length(vlines) + 1]] <<- list(
+                    type = "line", x0 = as.character(dt), x1 = as.character(dt),
+                    y0 = 0.3, y1 = length(meds) + 0.7,
+                    line = list(color = color, width = 2, dash = "dash"),
+                    layer = "above"
+                  )
+                  annotations[[length(annotations) + 1]] <<- list(
+                    x = as.character(dt), y = length(meds) + 0.6,
+                    text = label, showarrow = FALSE,
+                    font = list(size = 10, color = color),
+                    xanchor = "left", textangle = -30
+                  )
+                }
+              }
+              add_vline(as.Date(ms$LOT1_START_DT), "LOT1 Start", "#2E86AB")
+              add_vline(as.Date(ms$LOT1_BASE_1ST_ADD_MED_DT), "Add Med", "#F18F01")
+              add_vline(as.Date(ms$LOT1_BASE_END_DT), paste0("LOT1 End (", ms$LOT1_BASE_END_REASON, ")"), "#C73E1D")
+              add_vline(as.Date(ms$SCT_DT), "SCT", "#8D5A97")
+            }
+
+            all_shapes <- c(shapes, vlines)
+
+            # Create invisible scatter for hover
+            hover_df <- data.frame(
+              x = pat_maps$MAP_START_DT + (pat_maps$MAP_END_DT - pat_maps$MAP_START_DT) / 2,
+              y = med_y[pat_maps$MED],
+              text = paste0(
+                "Med: ", pat_maps$MED,
+                "\nClass: ", pat_maps$CLASS,
+                "\nStart: ", pat_maps$MAP_START_DT,
+                "\nEnd: ", pat_maps$MAP_END_DT,
+                "\nDays: ", pat_maps$MAP_DAYS,
+                "\nMAP #", pat_maps$MAP_CNT,
+                if (any(pat_maps$MAP_DISCON_FLG == 1)) paste0("\nDiscon: Yes") else ""
+              ),
+              stringsAsFactors = FALSE
+            )
+
+            # Anonymized patient label
+            pat_label <- paste0("Patient ", which(show_pats == pid))
+            pp <- plotly::plot_ly(hover_df, x = ~x, y = ~y, text = ~text,
+                                  type = "scatter", mode = "markers",
+                                  marker = list(size = 1, opacity = 0),
+                                  hoverinfo = "text") |>
+              plotly::layout(
+                title = list(text = paste0(pat_label, " — Medication Journey"),
+                             font = list(size = 14)),
+                xaxis = list(title = "", type = "date",
+                             gridcolor = "#eee"),
+                yaxis = list(title = "", tickmode = "array",
+                             tickvals = seq_along(meds),
+                             ticktext = meds,
+                             range = c(0.3, length(meds) + 0.8),
+                             gridcolor = "#eee"),
+                shapes = all_shapes,
+                annotations = annotations,
+                showlegend = FALSE,
+                margin = list(l = 100, t = 50, b = 40, r = 30),
+                plot_bgcolor = "#fafafa",
+                paper_bgcolor = "white"
+              ) |>
+              plotly::config(displayModeBar = TRUE, displaylogo = FALSE,
+                             modeBarButtonsToRemove = list("lasso2d", "select2d"))
+
+            add_to_dashboard(pp, section = "JOURNEY",
+                             title = paste0(pat_label, " (", reasons, ")"))
+          }
+          log_msg("  Patient journey timelines added: ", length(show_pats), " patients")
+        }
+      } else {
+        log_msg("  No interesting patients found for journey timelines.")
+      }
+    }
+  }, error = function(e) {
+    log_msg("WARN: Patient journey timelines failed: ", conditionMessage(e))
+  })
+
+  # Build combined interactive dashboard
+  build_dashboard()
 }
 
 # ============================================================
@@ -2332,6 +3156,81 @@ main <- function() {
       CREATE OR REPLACE TABLE {wrk('LOT1_BASE_END')} AS
       SELECT * FROM lot1_base_end
     "), qc = glue("SELECT count(*) AS n_rows FROM {wrk('LOT1_BASE_END')}"))
+
+    # Persist MMA_MED_PROCESSED — foundation exposure table for QA/traceability
+    run_step(con, "S21_persist_mma_med_processed", glue("
+      CREATE OR REPLACE TABLE {wrk('MMA_MED_PROCESSED')} AS
+      SELECT * FROM mma_med_processed
+    "), qc = glue("SELECT count(*) AS n_rows FROM {wrk('MMA_MED_PROCESSED')}"))
+
+    # Persist run metadata — parameters + key counts for rerun comparison
+    tryCatch({
+      cohort_n <- as.numeric(db_q(con, "SELECT count(DISTINCT PATID) AS n FROM lot_patient_input")$n)
+      mma_n    <- as.numeric(db_q(con, "SELECT count(*) AS n FROM mma_med_processed")$n)
+      map_n    <- as.numeric(db_q(con, "SELECT count(*) AS n FROM map_stacked")$n)
+      lot1_n   <- as.numeric(db_q(con, "SELECT count(*) AS n FROM lot1_base")$n)
+
+      run_step(con, "S22_persist_run_metadata", glue("
+        CREATE OR REPLACE TABLE {wrk('LOT_RUN_METADATA')} AS
+        SELECT
+          '{run_id}' AS RUN_ID,
+          current_timestamp() AS RUN_TIMESTAMP,
+          '{cfg$cdm_schema}' AS CDM_SCHEMA,
+          '{cfg$work_schema}' AS WORK_SCHEMA,
+          '{cfg$input_cohort_table}' AS INPUT_COHORT_TABLE,
+          {cfg$induction_window_days} AS INDUCTION_WINDOW_DAYS,
+          {cfg$map_discon_gap_days} AS MAP_DISCON_GAP_DAYS,
+          {cfg$medical_day_supply} AS MEDICAL_DAY_SUPPLY,
+          {cfg$lot_discon_gap_days} AS LOT_DISCON_GAP_DAYS,
+          {cohort_n} AS N_COHORT_PATIENTS,
+          {mma_n} AS N_MMA_CLAIMS,
+          {map_n} AS N_MAPS,
+          {lot1_n} AS N_LOT1_PATIENTS
+      "))
+    }, error = function(e) {
+      log_msg("  WARNING: Run metadata persist failed: ", conditionMessage(e))
+    })
+
+    # Persist QC summary — one row per check for governance
+    tryCatch({
+      qc_checks <- list()
+      add_persist_qc <- function(name, val) {
+        status <- if (is.na(val)) "ERROR" else if (val == 0) "PASS" else "WARN"
+        qc_checks[[length(qc_checks) + 1]] <<- glue(
+          "SELECT '{name}' AS CHECK_NAME, {if (is.na(val)) 'NULL' else val} AS CHECK_VALUE, '{status}' AS CHECK_STATUS, '{run_id}' AS RUN_ID"
+        )
+      }
+
+      orphan_n <- tryCatch(as.numeric(db_q(con, "
+        SELECT count(DISTINCT c.CL_MED_ABBR) AS n
+        FROM mma_codelist c LEFT JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR
+        WHERE r.CL_MED_ABBR IS NULL")$n), error = function(e) NA)
+      add_persist_qc("CODELIST_ORPHAN_MEDS", orphan_n)
+
+      bad_maps <- tryCatch(as.numeric(db_q(con, "SELECT count(*) AS n FROM map_stacked WHERE MAP_END_DT < MAP_START_DT")$n), error = function(e) NA)
+      add_persist_qc("MAP_END_BEFORE_START", bad_maps)
+
+      lot1_past <- tryCatch(as.numeric(db_q(con, "
+        SELECT sum(case when lb.LOT1_BASE_END_DT > p.OBS_END_DT then 1 else 0 end) AS n
+        FROM lot1_base_end lb INNER JOIN lot_patient_input p ON lb.PATID = p.PATID")$n), error = function(e) NA)
+      add_persist_qc("LOT1_END_PAST_OBS", lot1_past)
+
+      sct_both <- tryCatch(as.numeric(db_q(con, "
+        SELECT sum(CASE WHEN LOT1_SCT_AUTO_TAND_FLG = 1 AND LOT1_SCT_AUTO_SING_FLG = 1 THEN 1 ELSE 0 END) AS n
+        FROM lot1_sct")$n), error = function(e) NA)
+      add_persist_qc("SCT_TANDEM_AND_SINGLE", sct_both)
+
+      if (length(qc_checks) > 0) {
+        qc_union <- paste(qc_checks, collapse = "\n        UNION ALL\n        ")
+        run_step(con, "S23_persist_qc_summary", glue("
+          CREATE OR REPLACE TABLE {wrk('LOT_QC_SUMMARY')} AS
+          {qc_union}
+        "))
+      }
+    }, error = function(e) {
+      log_msg("  WARNING: QC summary persist failed: ", conditionMessage(e))
+    })
+
   } else {
     log_msg("Persist disabled (PERSIST_TO_SCHEMA=FALSE).")
   }
@@ -2340,7 +3239,7 @@ main <- function() {
   log_msg("LOT Part 2 complete.")
   log_msg("Temporary views: mma_med_processed, map_stacked, lot1_base, lot1_sct, lot1_base_end")
   if (isTRUE(cfg$persist_to_schema)) {
-    log_msg("Persisted tables in work schema: MAP_STACKED, LOT1_BASE, LOT1_SCT, LOT1_BASE_END")
+    log_msg("Persisted tables in work schema: MAP_STACKED, LOT1_BASE, LOT1_SCT, LOT1_BASE_END, MMA_MED_PROCESSED, LOT_RUN_METADATA, LOT_QC_SUMMARY")
   }
   if (has_ggplot2) {
     log_msg("Figures saved to: ", cfg$output_dir)
