@@ -1647,7 +1647,7 @@ print_descriptives <- function(con) {
                 "\nEnd: ", pat_maps$MAP_END_DT,
                 "\nDays: ", pat_maps$MAP_DAYS,
                 "\nMAP #", pat_maps$MAP_CNT,
-                if (any(pat_maps$MAP_DISCON_FLG == 1)) paste0("\nDiscon: Yes") else ""
+                ifelse(pat_maps$MAP_DISCON_FLG == 1, "\nDiscon: Yes", "")
               ),
               stringsAsFactors = FALSE
             )
@@ -1700,7 +1700,7 @@ print_descriptives <- function(con) {
         SELECT
           a.PATID, a.MAP_MED_TYPE AS MED, a.MAP_MED_CLASS AS CLASS,
           a.MAP_CNT,
-          datediff(a.MAP_START_DT, b.MAP_END_DT) AS gap_days
+          datediff(a.MAP_START_DT, b.MAP_END_DT) - 1 AS gap_days
         FROM map_stacked a
         INNER JOIN map_stacked b
           ON a.PATID = b.PATID
@@ -1735,29 +1735,27 @@ print_descriptives <- function(con) {
   })
 
   # --------------------------------------------------------
-  # 7. Regimen-state timeline (contiguous regimen segments)
+  # 7. True regimen-state timeline (contiguous regimen segments)
+  #    Derives change-point intervals where the active med set is constant.
+  #    Y-axis: regimen labels (e.g., "BORT+LENA"), X-axis: date range.
+  #    Gaps between segments are visible as whitespace.
   # --------------------------------------------------------
   tryCatch({
     if (has_plotly) {
-      # Build regimen segments: contiguous intervals where active med set is constant
-      # Sample patients who have regimen changes
+      # Select patients with interesting regimen transitions:
+      # add-med events, restarts, or multiple distinct regimens
       regimen_pats <- db_q(con, "
-        WITH pat_regimens AS (
-          SELECT PATID,
-                 concat_ws('+', sort_array(collect_set(MAP_MED_TYPE))) AS active_meds,
-                 min(MAP_START_DT) AS seg_start,
-                 max(MAP_END_DT) AS seg_end
-          FROM map_stacked
-          GROUP BY PATID
-        ),
-        multi_regimen AS (
-          SELECT DISTINCT m1.PATID
-          FROM map_stacked m1
-          INNER JOIN map_stacked m2 ON m1.PATID = m2.PATID
-            AND m1.MAP_MED_TYPE <> m2.MAP_MED_TYPE
-          WHERE m1.MAP_CNT >= 2 OR m2.MAP_CNT >= 2
+        WITH change_patients AS (
+          SELECT PATID FROM lot1_base WHERE LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
+          UNION
+          SELECT PATID FROM map_stacked WHERE MAP_CNT >= 2
+          UNION
+          SELECT PATID FROM (
+            SELECT PATID, count(DISTINCT MAP_MED_TYPE) AS n_meds
+            FROM map_stacked GROUP BY PATID HAVING count(DISTINCT MAP_MED_TYPE) >= 2
+          )
         )
-        SELECT PATID FROM multi_regimen LIMIT 6
+        SELECT DISTINCT PATID FROM change_patients LIMIT 8
       ")
 
       if (nrow(regimen_pats) > 0) {
@@ -1766,8 +1764,7 @@ print_descriptives <- function(con) {
         # Get all MAPs for these patients
         reg_maps <- db_q(con, glue("
           SELECT PATID, MAP_MED_TYPE AS MED, MAP_MED_CLASS AS CLASS,
-                 MAP_START_DT, MAP_END_DT, MAP_CNT,
-                 datediff(MAP_END_DT, MAP_START_DT) + 1 AS MAP_DAYS
+                 MAP_START_DT, MAP_END_DT, MAP_CNT
           FROM map_stacked
           WHERE PATID IN {rp_ids_sql}
           ORDER BY PATID, MAP_START_DT, MAP_MED_TYPE
@@ -1793,90 +1790,133 @@ print_descriptives <- function(con) {
             pat_m <- reg_maps[reg_maps$PATID == pid, ]
             pat_info <- reg_ms[reg_ms$PATID == pid, ]
 
-            # Build Gantt-style bars with MED on y-axis
-            meds <- sort(unique(pat_m$MED))
-            med_y <- setNames(seq_along(meds), meds)
+            # --- Derive regimen segments from MAP change points ---
+            # Collect all boundary dates (MAP starts and MAP ends + 1 day)
+            boundary_dates <- sort(unique(c(pat_m$MAP_START_DT, pat_m$MAP_END_DT + 1)))
+
+            segments <- list()
+            for (k in seq_len(length(boundary_dates) - 1)) {
+              seg_start <- boundary_dates[k]
+              seg_end   <- boundary_dates[k + 1] - 1  # inclusive end
+
+              # Which MAPs are active during this segment?
+              active <- pat_m[pat_m$MAP_START_DT <= seg_start & pat_m$MAP_END_DT >= seg_end, ]
+              if (nrow(active) > 0) {
+                active_meds <- paste(sort(unique(active$MED)), collapse = "+")
+                segments[[length(segments) + 1]] <- data.frame(
+                  start = seg_start, end = seg_end,
+                  regimen = active_meds,
+                  n_meds = length(unique(active$MED)),
+                  stringsAsFactors = FALSE
+                )
+              }
+              # If no MAPs active, this is a gap — no segment added, shows as whitespace
+            }
+
+            if (length(segments) == 0) next
+            seg_df <- do.call(rbind, segments)
+
+            # Merge consecutive segments with the same regimen
+            merged <- list(seg_df[1, ])
+            for (k in seq_len(nrow(seg_df))[-1]) {
+              prev <- merged[[length(merged)]]
+              curr <- seg_df[k, ]
+              if (curr$regimen == prev$regimen && curr$start <= prev$end + 1) {
+                # Extend previous segment
+                merged[[length(merged)]]$end <- max(prev$end, curr$end)
+              } else {
+                merged[[length(merged) + 1]] <- curr
+              }
+            }
+            seg_df <- do.call(rbind, merged)
+            seg_df$days <- as.numeric(seg_df$end - seg_df$start) + 1
+
+            # Assign y-positions: unique regimens
+            reg_labels <- unique(seg_df$regimen)
+            reg_y <- setNames(seq_along(reg_labels), reg_labels)
+
+            # Color palette for regimens (cycle through a set)
+            reg_colors <- c("#2E86AB", "#44BBA4", "#F18F01", "#C73E1D", "#A23B72",
+                           "#3F88C5", "#8D5A97", "#636e72", "#E8A87C", "#41B3A3")
 
             shapes <- list()
-            annotations <- list()
-
-            for (j in seq_len(nrow(pat_m))) {
-              row <- pat_m[j, ]
-              y_pos <- med_y[row$MED]
-              color <- if (row$CLASS %in% names(lot_class_palette)) lot_class_palette[row$CLASS] else "#636e72"
-              border_col <- if (as.numeric(row$MAP_CNT) > 1) "#C73E1D" else color
+            for (j in seq_len(nrow(seg_df))) {
+              row <- seg_df[j, ]
+              y_pos <- reg_y[row$regimen]
+              color <- reg_colors[((y_pos - 1) %% length(reg_colors)) + 1]
 
               shapes[[length(shapes) + 1]] <- list(
                 type = "rect",
-                x0 = as.character(row$MAP_START_DT), x1 = as.character(row$MAP_END_DT),
+                x0 = as.character(row$start), x1 = as.character(row$end),
                 y0 = y_pos - 0.35, y1 = y_pos + 0.35,
                 fillcolor = color, opacity = 0.85,
-                line = list(color = border_col, width = if (as.numeric(row$MAP_CNT) > 1) 2 else 1),
+                line = list(color = color, width = 1),
                 layer = "below"
               )
             }
 
-            # Milestone lines
+            # Milestone vertical lines
             vlines <- list()
+            annotations <- list()
             if (nrow(pat_info) > 0) {
               ms <- pat_info[1, ]
-              add_vline2 <- function(dt, label, color) {
+              add_vline3 <- function(dt, label, color) {
                 if (!is.na(dt) && !is.null(dt)) {
                   vlines[[length(vlines) + 1]] <<- list(
                     type = "line", x0 = as.character(dt), x1 = as.character(dt),
-                    y0 = 0.3, y1 = length(meds) + 0.7,
+                    y0 = 0.3, y1 = length(reg_labels) + 0.7,
                     line = list(color = color, width = 2, dash = "dash"), layer = "above"
                   )
                   annotations[[length(annotations) + 1]] <<- list(
-                    x = as.character(dt), y = length(meds) + 0.6,
+                    x = as.character(dt), y = length(reg_labels) + 0.6,
                     text = label, showarrow = FALSE,
                     font = list(size = 10, color = color),
                     xanchor = "left", textangle = -30
                   )
                 }
               }
-              add_vline2(as.Date(ms$LOT1_START_DT), "LOT1 Start", "#2E86AB")
-              add_vline2(as.Date(ms$LOT1_BASE_1ST_ADD_MED_DT), "Add Med", "#F18F01")
-              add_vline2(as.Date(ms$LOT1_BASE_END_DT),
+              add_vline3(as.Date(ms$LOT1_START_DT), "LOT1 Start", "#2E86AB")
+              add_vline3(as.Date(ms$LOT1_BASE_1ST_ADD_MED_DT), "Add Med", "#F18F01")
+              add_vline3(as.Date(ms$LOT1_BASE_END_DT),
                          paste0("LOT1 End (", ms$LOT1_BASE_END_REASON, ")"), "#C73E1D")
             }
 
-            hover_df2 <- data.frame(
-              x = pat_m$MAP_START_DT + (pat_m$MAP_END_DT - pat_m$MAP_START_DT) / 2,
-              y = med_y[pat_m$MED],
-              text = paste0("Med: ", pat_m$MED, "\nClass: ", pat_m$CLASS,
-                           "\nStart: ", pat_m$MAP_START_DT, "\nEnd: ", pat_m$MAP_END_DT,
-                           "\nDays: ", as.numeric(pat_m$MAP_DAYS),
-                           "\nMAP #", as.numeric(pat_m$MAP_CNT),
-                           ifelse(as.numeric(pat_m$MAP_CNT) > 1, " (RESTART)", "")),
+            # Hover trace
+            hover_df3 <- data.frame(
+              x = seg_df$start + (seg_df$end - seg_df$start) / 2,
+              y = reg_y[seg_df$regimen],
+              text = paste0("Regimen: ", seg_df$regimen,
+                           "\nStart: ", seg_df$start, "\nEnd: ", seg_df$end,
+                           "\nDays: ", seg_df$days,
+                           "\nMeds: ", seg_df$n_meds),
               stringsAsFactors = FALSE
             )
 
             pat_idx <- which(show_reg_pats == pid)
             regimen_label <- if (nrow(pat_info) > 0) pat_info$LOT1_BASE_MEDS[1] else "?"
-            pp2 <- plotly::plot_ly(hover_df2, x = ~x, y = ~y, text = ~text,
+            pp2 <- plotly::plot_ly(hover_df3, x = ~x, y = ~y, text = ~text,
                                     type = "scatter", mode = "markers",
                                     marker = list(size = 1, opacity = 0),
                                     hoverinfo = "text") |>
               plotly::layout(
                 title = list(
-                  text = paste0("Regimen Timeline ", pat_idx, " [", regimen_label, "]"),
+                  text = paste0("Regimen State ", pat_idx, " [", regimen_label, "]"),
                   font = list(size = 14)),
                 xaxis = list(title = "", type = "date", gridcolor = "#eee"),
                 yaxis = list(title = "", tickmode = "array",
-                             tickvals = seq_along(meds), ticktext = meds,
-                             range = c(0.3, length(meds) + 0.8), gridcolor = "#eee"),
+                             tickvals = seq_along(reg_labels), ticktext = reg_labels,
+                             range = c(0.3, length(reg_labels) + 0.8), gridcolor = "#eee"),
                 shapes = c(shapes, vlines),
                 annotations = annotations,
                 showlegend = FALSE,
-                margin = list(l = 100, t = 50, b = 40, r = 30),
+                margin = list(l = 140, t = 50, b = 40, r = 30),
                 plot_bgcolor = "#fafafa", paper_bgcolor = "white"
               ) |>
               plotly::config(displayModeBar = TRUE, displaylogo = FALSE,
                              modeBarButtonsToRemove = list("lasso2d", "select2d"))
 
             add_to_dashboard(pp2, section = "JOURNEY",
-                             title = paste0("Regimen ", pat_idx, ": ", regimen_label))
+                             title = paste0("Regimen State ", pat_idx, ": ", regimen_label))
           }
           log_msg("  Regimen-state timelines added: ", length(show_reg_pats), " patients")
         }
@@ -2006,9 +2046,9 @@ print_descriptives <- function(con) {
   .info-card .val { font-size: 18px; font-weight: 700; color: #2d3436; }
 </style></head><body>
 <div class="zero-state">
-  <h2>No SCT Events Detected</h2>
+  <h2>No LOT-Ending SCT Events</h2>
   <p>No stem cell transplant events ended LOT1 in this run.</p>
-  <p>This may be expected if the cohort does not include transplant-eligible patients.</p>
+  <p>Raw SCT claims may still exist but did not meet LOT-ending criteria. This may be expected if the cohort does not include transplant-eligible patients.</p>
   <div class="info-grid">
     <div class="info-card"><h4>SCT Codes Loaded</h4><div class="val">',
         if (!is.na(sct_codes_n)) format(sct_codes_n, big.mark = ",") else "N/A",
@@ -3613,8 +3653,23 @@ main <- function() {
       map_n    <- as.numeric(db_q(con, "SELECT count(*) AS n FROM map_stacked")$n)
       lot1_n   <- as.numeric(db_q(con, "SELECT count(*) AS n FROM lot1_base")$n)
 
-      run_step(con, "S22_persist_run_metadata", glue("
-        CREATE OR REPLACE TABLE {wrk('LOT_RUN_METADATA')} AS
+      # Create metadata table if not exists, then append this run
+      run_step(con, "S22a_create_metadata_table", glue("
+        CREATE TABLE IF NOT EXISTS {wrk('LOT_RUN_METADATA')} (
+          RUN_ID STRING, RUN_TIMESTAMP TIMESTAMP,
+          CDM_SCHEMA STRING, WORK_SCHEMA STRING, INPUT_COHORT_TABLE STRING,
+          INDUCTION_WINDOW_DAYS INT, MAP_DISCON_GAP_DAYS INT,
+          MEDICAL_DAY_SUPPLY INT, LOT_DISCON_GAP_DAYS INT,
+          N_COHORT_PATIENTS BIGINT, N_MMA_CLAIMS BIGINT,
+          N_MAPS BIGINT, N_LOT1_PATIENTS BIGINT
+        )
+      "))
+      # Delete any prior row for this exact run_id (idempotent re-runs)
+      run_step(con, "S22b_dedup_metadata", glue("
+        DELETE FROM {wrk('LOT_RUN_METADATA')} WHERE RUN_ID = '{run_id}'
+      "))
+      run_step(con, "S22c_insert_run_metadata", glue("
+        INSERT INTO {wrk('LOT_RUN_METADATA')}
         SELECT
           '{run_id}' AS RUN_ID,
           current_timestamp() AS RUN_TIMESTAMP,
@@ -3665,8 +3720,17 @@ main <- function() {
 
       if (length(qc_checks) > 0) {
         qc_union <- paste(qc_checks, collapse = "\n        UNION ALL\n        ")
-        run_step(con, "S23_persist_qc_summary", glue("
-          CREATE OR REPLACE TABLE {wrk('LOT_QC_SUMMARY')} AS
+        # Create QC table if not exists, then append this run's checks
+        run_step(con, "S23a_create_qc_table", glue("
+          CREATE TABLE IF NOT EXISTS {wrk('LOT_QC_SUMMARY')} (
+            CHECK_NAME STRING, CHECK_VALUE BIGINT, CHECK_STATUS STRING, RUN_ID STRING
+          )
+        "))
+        run_step(con, "S23b_dedup_qc", glue("
+          DELETE FROM {wrk('LOT_QC_SUMMARY')} WHERE RUN_ID = '{run_id}'
+        "))
+        run_step(con, "S23c_insert_qc_summary", glue("
+          INSERT INTO {wrk('LOT_QC_SUMMARY')}
           {qc_union}
         "))
       }
