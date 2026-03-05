@@ -398,9 +398,9 @@ save_plot <- function(p, filename, width = 10, height = 6, section = "", title =
   }
 }
 
-# Collect a data table for the dashboard
+# Collect a data table for the dashboard (DT does NOT require plotly)
 save_table <- function(df, section, title) {
-  if (!has_dt || !has_plotly) return(invisible(NULL))
+  if (!has_dt || !requireNamespace("htmlwidgets", quietly = TRUE)) return(invisible(NULL))
   tryCatch({
     # Convert integer64 columns for display
     for (col in names(df)) {
@@ -416,31 +416,46 @@ save_table <- function(df, section, title) {
   })
 }
 
+# Add a raw HTML card to the dashboard (for overview/QC — no htmlwidget needed)
+add_html_card <- function(html_content, section, title) {
+  dashboard_items[[length(dashboard_items) + 1]] <<- list(
+    html = html_content, section = section, title = title, type = "html_card"
+  )
+}
+
 # Build and save the single combined HTML dashboard
 build_dashboard <- function() {
-  if (!has_plotly || length(dashboard_items) == 0) {
-    log_msg("  Skipping dashboard (plotly not available or no items collected).")
+  if (length(dashboard_items) == 0) {
+    log_msg("  Skipping dashboard (no items collected).")
     return(invisible(NULL))
   }
 
   dir.create(cfg$output_dir, showWarnings = FALSE, recursive = TRUE)
   dash_path  <- file.path(cfg$output_dir, "lot_dashboard.html")
   parts_dir  <- file.path(cfg$output_dir, ".dashboard_parts")
+  lib_dir    <- file.path(parts_dir, "lib")
   dir.create(parts_dir, showWarnings = FALSE, recursive = TRUE)
 
   tryCatch({
     tab_buttons <- list()
     tab_panels  <- list()
+    sections    <- unique(sapply(dashboard_items, `[[`, "section"))
 
     for (idx in seq_along(dashboard_items)) {
       item   <- dashboard_items[[idx]]
       tab_id <- paste0("tab", idx)
 
-      # Save each widget as a self-contained HTML fragment
-      part_file <- file.path(parts_dir, paste0("part_", idx, ".html"))
-      htmlwidgets::saveWidget(item$widget, part_file, selfcontained = TRUE)
+      if (item$type == "html_card") {
+        # Raw HTML card — write directly as a standalone HTML file
+        part_file <- file.path(parts_dir, paste0("part_", idx, ".html"))
+        writeLines(item$html, part_file)
+      } else {
+        # htmlwidget — save with shared lib directory for size efficiency
+        part_file <- file.path(parts_dir, paste0("part_", idx, ".html"))
+        htmlwidgets::saveWidget(item$widget, part_file,
+                                selfcontained = FALSE, libdir = lib_dir)
+      }
 
-      # Use iframe embedding — reliable, no CSS/JS conflicts
       active_class <- if (idx == 1) "active" else ""
       section_tag  <- paste0('<span class="section-tag">', item$section, '</span> ')
       tab_buttons[[idx]] <- sprintf(
@@ -450,10 +465,19 @@ build_dashboard <- function() {
 
       iframe_height <- if (item$type == "table") "600" else "550"
       tab_panels[[idx]] <- sprintf(
-        '<div id="%s" class="tab-content" style="display:%s"><iframe src=".dashboard_parts/part_%d.html" style="width:100%%;height:%spx;border:none;" onload="this.style.height=this.contentWindow.document.body.scrollHeight+40+\'px\'"></iframe></div>',
+        '<div id="%s" class="tab-content" style="display:%s"><iframe src=".dashboard_parts/part_%d.html" style="width:100%%;height:%spx;border:none;" onload="resizeIframe(this)"></iframe></div>',
         tab_id, if (idx == 1) "block" else "none", idx, iframe_height
       )
     }
+
+    # Build section filter buttons
+    section_filters <- paste0(
+      '<button class="filter-btn active" onclick="filterSection(\'ALL\', this)">All</button>\n',
+      paste(sprintf(
+        '<button class="filter-btn" onclick="filterSection(\'%s\', this)">%s</button>',
+        sections, sections
+      ), collapse = "\n")
+    )
 
     html_doc <- paste0('<!DOCTYPE html>
 <html lang="en">
@@ -474,12 +498,26 @@ build_dashboard <- function() {
   }
   .header h1 { font-size: 26px; font-weight: 700; margin-bottom: 6px; }
   .header p  { font-size: 14px; opacity: 0.85; }
+  .nav-bar {
+    position: sticky; top: 0; z-index: 100;
+    background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .filter-bar {
+    display: flex; gap: 4px; padding: 10px 32px;
+    border-bottom: 1px solid #eee; background: #fafafa;
+  }
+  .filter-btn {
+    padding: 5px 14px; border: 1px solid #dfe6e9; border-radius: 20px;
+    background: white; color: #636e72; cursor: pointer;
+    font-size: 12px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.5px; transition: all 0.15s;
+  }
+  .filter-btn:hover { background: #dfe6e9; }
+  .filter-btn.active { background: #1a5276; color: white; border-color: #1a5276; }
   .tab-bar {
     display: flex; flex-wrap: wrap; gap: 6px;
-    padding: 14px 32px; background: white;
+    padding: 10px 32px;
     border-bottom: 1px solid #dfe6e9;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-    position: sticky; top: 0; z-index: 100;
   }
   .tab-btn {
     padding: 8px 14px; border: 1px solid #dfe6e9; border-radius: 6px;
@@ -490,6 +528,7 @@ build_dashboard <- function() {
   .tab-btn:hover { background: #dfe6e9; color: #2d3436; }
   .tab-btn.active { background: #2E86AB; color: white; border-color: #2E86AB; }
   .tab-btn.active .section-tag { background: rgba(255,255,255,0.25); color: white; }
+  .tab-btn.hidden { display: none; }
   .section-tag {
     font-size: 10px; font-weight: 700; text-transform: uppercase;
     background: #dfe6e9; color: #636e72; padding: 2px 6px;
@@ -499,22 +538,59 @@ build_dashboard <- function() {
   .tab-content iframe { border: none; width: 100%; min-height: 500px; }
 </style>
 <script>
+function resizeIframe(iframe) {
+  try {
+    iframe.style.height = iframe.contentWindow.document.body.scrollHeight + 40 + "px";
+  } catch(e) {}
+  // Delayed resize for plotly rendering
+  setTimeout(function() {
+    try { iframe.style.height = iframe.contentWindow.document.body.scrollHeight + 40 + "px"; } catch(e) {}
+  }, 800);
+  setTimeout(function() {
+    try { iframe.style.height = iframe.contentWindow.document.body.scrollHeight + 40 + "px"; } catch(e) {}
+  }, 2000);
+}
 function showTab(tabId, btn) {
   document.querySelectorAll(".tab-content").forEach(function(el) { el.style.display = "none"; });
   document.querySelectorAll(".tab-btn").forEach(function(el) { el.classList.remove("active"); });
   document.getElementById(tabId).style.display = "block";
   btn.classList.add("active");
   window.dispatchEvent(new Event("resize"));
+  // Re-trigger iframe resize for the newly visible tab
+  var iframe = document.querySelector("#" + tabId + " iframe");
+  if (iframe) { setTimeout(function() { resizeIframe(iframe); }, 300); }
+}
+function filterSection(section, btn) {
+  document.querySelectorAll(".filter-btn").forEach(function(el) { el.classList.remove("active"); });
+  btn.classList.add("active");
+  document.querySelectorAll(".tab-btn").forEach(function(el) {
+    if (section === "ALL" || el.getAttribute("data-section") === section) {
+      el.classList.remove("hidden");
+    } else {
+      el.classList.add("hidden");
+    }
+  });
+  // If active tab is now hidden, click first visible tab
+  var activeTab = document.querySelector(".tab-btn.active");
+  if (activeTab && activeTab.classList.contains("hidden")) {
+    var firstVisible = document.querySelector(".tab-btn:not(.hidden)");
+    if (firstVisible) firstVisible.click();
+  }
 }
 </script>
 </head>
 <body>
 <div class="header">
   <h1>LOT Part 2 &mdash; Interactive Dashboard</h1>
-  <p>MMA_MED &bull; MAP &bull; LOT1_BASE descriptive summary &nbsp;|&nbsp; Generated ', format(Sys.time(), "%Y-%m-%d %H:%M"), '</p>
+  <p>MMA_MED &bull; MAP &bull; LOT1_BASE &bull; SCT descriptive summary &nbsp;|&nbsp; Generated ', format(Sys.time(), "%Y-%m-%d %H:%M"), '</p>
+</div>
+<div class="nav-bar">
+<div class="filter-bar">
+', section_filters, '
 </div>
 <div class="tab-bar">
 ', paste(tab_buttons, collapse = "\n"), '
+</div>
 </div>
 ', paste(tab_panels, collapse = "\n"), '
 </body>
@@ -626,8 +702,12 @@ print_descriptives <- function(con) {
         data.frame(MED_ABBR = med_dist$MED_ABBR, MED_CLASS = med_dist$MED_CLASS,
                    CLAIM_TYPE = "Medical",  N = as.numeric(med_dist$n_med))
       )
+      # Compute total claims per med for correct ordering
+      total_by_med <- tapply(claim_long$N, claim_long$MED_ABBR, sum)
+      claim_long$MED_ABBR <- factor(claim_long$MED_ABBR,
+                                     levels = names(sort(total_by_med, decreasing = TRUE)))
       p2 <- ggplot(claim_long,
-                    aes(x = reorder(MED_ABBR, -N), y = N, fill = CLAIM_TYPE,
+                    aes(x = MED_ABBR, y = N, fill = CLAIM_TYPE,
                         text = paste0("Med: ", MED_ABBR, "\nType: ", CLAIM_TYPE,
                                       "\nClaims: ", format(N, big.mark = ",")))) +
         geom_bar(stat = "identity", position = "stack", width = 0.75) +
@@ -943,27 +1023,30 @@ print_descriptives <- function(con) {
     if (has_ggplot2) {
       lot1_bins <- db_q(con, "
         SELECT floor(LOT1_BASE_LENGTH / 30) * 30 AS bin_start,
-               count(*) AS n,
-               percentile_approx(LOT1_BASE_LENGTH, 0.5) AS median_val
+               count(*) AS n
         FROM lot1_base
         WHERE LOT1_BASE_LENGTH IS NOT NULL
         GROUP BY floor(LOT1_BASE_LENGTH / 30) * 30
         ORDER BY bin_start
       ")
+      lot1_median <- db_q(con, "
+        SELECT percentile_approx(LOT1_BASE_LENGTH, 0.5) AS median_len
+        FROM lot1_base
+        WHERE LOT1_BASE_LENGTH IS NOT NULL
+      ")
       if (nrow(lot1_bins) > 0) {
         lot1_bins$bin_start  <- as.numeric(lot1_bins$bin_start)
         lot1_bins$n          <- as.numeric(lot1_bins$n)
-        lot1_bins$median_val <- as.numeric(lot1_bins$median_val)
-        median_len <- lot1_bins$median_val[1]
+        median_len <- if (nrow(lot1_median) > 0) as.numeric(lot1_median$median_len) else NA
         p6 <- ggplot(lot1_bins, aes(x = bin_start, y = n,
                                      text = paste0("Days: ", bin_start, "-", bin_start + 29,
                                                    "\nPatients: ", format(n, big.mark = ",")))) +
           geom_bar(stat = "identity", width = 28, fill = "#44BBA4", alpha = 0.85) +
-          geom_vline(xintercept = median_len,
-                     linetype = "dashed", color = "#C73E1D", linewidth = 0.8) +
-          annotate("text", x = median_len + 25, y = Inf, vjust = 2, hjust = 0,
+          { if (!is.na(median_len)) geom_vline(xintercept = median_len,
+                     linetype = "dashed", color = "#C73E1D", linewidth = 0.8) } +
+          { if (!is.na(median_len)) annotate("text", x = median_len + 25, y = Inf, vjust = 2, hjust = 0,
                    label = paste0("Median: ", round(median_len), " days"),
-                   color = "#C73E1D", fontface = "bold", size = 3.8) +
+                   color = "#C73E1D", fontface = "bold", size = 3.8) } +
           scale_x_continuous(breaks = seq(0, max(lot1_bins$bin_start, na.rm = TRUE), by = 180)) +
           scale_y_continuous(labels = scales::comma_format(), expand = expansion(mult = c(0, 0.1))) +
           labs(title = "LOT1 BASE Length Distribution",
@@ -1144,6 +1227,201 @@ print_descriptives <- function(con) {
 
   }, error = function(e) {
     log_msg("WARN: SCT descriptives failed: ", conditionMessage(e))
+  })
+
+  # --------------------------------------------------------
+  # 5. Overview tab — run metadata
+  # --------------------------------------------------------
+  tryCatch({
+    overview_html <- paste0('<!DOCTYPE html><html><head>
+<meta charset="UTF-8">
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: #fff; padding: 24px; color: #2d3436; }
+  h2 { font-size: 20px; color: #1a5276; margin-bottom: 16px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+  .card { background: #f5f6fa; border-radius: 8px; padding: 16px; border: 1px solid #dfe6e9; }
+  .card h3 { font-size: 13px; color: #636e72; text-transform: uppercase;
+             letter-spacing: 0.5px; margin-bottom: 8px; }
+  .card .val { font-size: 22px; font-weight: 700; color: #2d3436; }
+  .card .sub { font-size: 12px; color: #636e72; margin-top: 4px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 12px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 13px; }
+  th { background: #f5f6fa; font-weight: 600; color: #636e72; text-transform: uppercase;
+       letter-spacing: 0.5px; font-size: 11px; }
+</style></head><body>
+<h2>Run Overview</h2>
+<div class="grid">
+  <div class="card"><h3>Run ID</h3><div class="val">', run_id, '</div>
+    <div class="sub">Generated: ', format(Sys.time(), "%Y-%m-%d %H:%M:%S"), '</div></div>
+  <div class="card"><h3>CDM Schema</h3><div class="val">', cfg$cdm_schema, '</div>
+    <div class="sub">Work: ', cfg$work_schema, '</div></div>
+  <div class="card"><h3>Input Cohort</h3><div class="val">', cfg$input_cohort_table, '</div></div>
+  <div class="card"><h3>Induction Window</h3><div class="val">', cfg$induction_window_days, ' days</div></div>
+</div>
+<h2>Key Parameters</h2>
+<table>
+<tr><th>Parameter</th><th>Value</th></tr>
+<tr><td>MAP Discontinuation Gap</td><td>', cfg$map_discon_gap_days, ' days</td></tr>
+<tr><td>Medical Day Supply</td><td>', cfg$medical_day_supply, ' days</td></tr>
+<tr><td>LOT Discontinuation Gap</td><td>', cfg$lot_discon_gap_days, ' days</td></tr>
+<tr><td>Induction Window</td><td>', cfg$induction_window_days, ' days</td></tr>
+</table>
+</body></html>')
+    add_html_card(overview_html, section = "OVERVIEW", title = "Run Overview")
+  }, error = function(e) {
+    log_msg("  WARNING: Overview tab generation failed: ", conditionMessage(e))
+  })
+
+  # --------------------------------------------------------
+  # 6. QC Summary tab — pass/fail validation checks
+  # --------------------------------------------------------
+  tryCatch({
+    qc_rows <- list()
+    add_qc <- function(check, value, status) {
+      qc_rows[[length(qc_rows) + 1]] <<- sprintf(
+        '<tr><td>%s</td><td>%s</td><td class="%s">%s</td></tr>',
+        check, value,
+        if (status == "PASS") "pass" else if (status == "WARN") "warn" else "fail",
+        status
+      )
+    }
+
+    # Codelist orphans
+    orphan_n <- tryCatch({
+      r <- db_q(con, "
+        SELECT count(DISTINCT c.CL_MED_ABBR) AS n
+        FROM mma_codelist c
+        LEFT JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR
+        WHERE r.CL_MED_ABBR IS NULL
+      ")
+      as.numeric(r$n)
+    }, error = function(e) NA)
+    if (!is.na(orphan_n)) {
+      add_qc("Codelist meds not in rollup", orphan_n,
+             if (orphan_n == 0) "PASS" else "WARN")
+    }
+
+    # Uncoded rollup meds
+    uncoded_n <- tryCatch({
+      r <- db_q(con, "
+        SELECT count(DISTINCT r.CL_MED_ABBR) AS n
+        FROM mma_rollup r
+        LEFT JOIN mma_codelist c ON r.CL_MED_ABBR = c.CL_MED_ABBR
+        WHERE c.CL_MED_ABBR IS NULL
+      ")
+      as.numeric(r$n)
+    }, error = function(e) NA)
+    if (!is.na(uncoded_n)) {
+      add_qc("Rollup meds with zero codes", uncoded_n,
+             if (uncoded_n == 0) "PASS" else "WARN")
+    }
+
+    # Multi-class meds
+    multi_n <- tryCatch({
+      r <- db_q(con, "
+        SELECT count(*) AS n FROM (
+          SELECT CL_MED_ABBR FROM mma_codelist
+          GROUP BY CL_MED_ABBR HAVING count(DISTINCT CL_MED_CLASS) > 1
+        )
+      ")
+      as.numeric(r$n)
+    }, error = function(e) NA)
+    if (!is.na(multi_n)) {
+      add_qc("MED_ABBR mapped to multiple classes", multi_n,
+             if (multi_n == 0) "PASS" else "WARN")
+    }
+
+    # MAP END < START
+    bad_maps <- tryCatch({
+      as.numeric(db_q(con, "SELECT count(*) AS n FROM map_stacked WHERE MAP_END_DT < MAP_START_DT")$n)
+    }, error = function(e) NA)
+    if (!is.na(bad_maps)) {
+      add_qc("MAPs with END_DT < START_DT", bad_maps,
+             if (bad_maps == 0) "PASS" else "FAIL")
+    }
+
+    # MAP END != max(runouts)
+    runout_mm <- tryCatch({
+      as.numeric(db_q(con, "
+        SELECT count(*) AS n FROM map_stacked
+        WHERE MAP_END_DT <> greatest(
+          coalesce(MAP_RX_RUNOUT_DT, cast('1900-01-01' as date)),
+          coalesce(MAP_MED_RUNOUT_DT, cast('1900-01-01' as date)))
+        AND MAP_END_DT IS NOT NULL
+      ")$n)
+    }, error = function(e) NA)
+    if (!is.na(runout_mm)) {
+      add_qc("MAPs where END != max(runouts)", runout_mm,
+             if (runout_mm == 0) "PASS" else "WARN")
+    }
+
+    # LOT1 END > OBS_END
+    lot1_past <- tryCatch({
+      as.numeric(db_q(con, "
+        SELECT sum(case when lb.LOT1_BASE_END_DT > p.OBS_END_DT then 1 else 0 end) AS n
+        FROM lot1_base_end lb
+        INNER JOIN lot_patient_input p ON lb.PATID = p.PATID
+      ")$n)
+    }, error = function(e) NA)
+    if (!is.na(lot1_past)) {
+      add_qc("LOT1 END_DT past OBS_END_DT", lot1_past,
+             if (lot1_past == 0) "PASS" else "WARN")
+    }
+
+    # SCT tandem + single both true
+    sct_both <- tryCatch({
+      as.numeric(db_q(con, "
+        SELECT sum(CASE WHEN LOT1_SCT_AUTO_TAND_FLG = 1 AND LOT1_SCT_AUTO_SING_FLG = 1 THEN 1 ELSE 0 END) AS n
+        FROM lot1_sct
+      ")$n)
+    }, error = function(e) NA)
+    if (!is.na(sct_both)) {
+      add_qc("SCT: both tandem AND single flag", sct_both,
+             if (sct_both == 0) "PASS" else "FAIL")
+    }
+
+    # SCT end > OBS_END
+    sct_past <- tryCatch({
+      as.numeric(db_q(con, "
+        SELECT sum(CASE WHEN sct.LOT1_TX_ENDDATE IS NOT NULL
+                    AND sct.LOT1_TX_ENDDATE > lb.OBS_END_DT THEN 1 ELSE 0 END) AS n
+        FROM lot1_sct sct INNER JOIN lot1_base lb ON sct.PATID = lb.PATID
+      ")$n)
+    }, error = function(e) NA)
+    if (!is.na(sct_past)) {
+      add_qc("SCT end date past OBS_END_DT", sct_past,
+             if (sct_past == 0) "PASS" else "WARN")
+    }
+
+    n_pass <- sum(sapply(qc_rows, function(r) grepl('class="pass"', r)))
+    n_total <- length(qc_rows)
+
+    qc_html <- paste0('<!DOCTYPE html><html><head>
+<meta charset="UTF-8">
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: #fff; padding: 24px; color: #2d3436; }
+  h2 { font-size: 20px; color: #1a5276; margin-bottom: 8px; }
+  .summary { font-size: 14px; color: #636e72; margin-bottom: 16px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid #eee; font-size: 13px; }
+  th { background: #f5f6fa; font-weight: 600; color: #636e72; text-transform: uppercase;
+       letter-spacing: 0.5px; font-size: 11px; }
+  .pass { color: #00b894; font-weight: 700; }
+  .warn { color: #fdcb6e; font-weight: 700; }
+  .fail { color: #d63031; font-weight: 700; }
+</style></head><body>
+<h2>QC Validation Summary</h2>
+<p class="summary">', n_pass, ' / ', n_total, ' checks passed</p>
+<table>
+<tr><th>Check</th><th>Value</th><th>Status</th></tr>
+', paste(qc_rows, collapse = "\n"), '
+</table>
+</body></html>')
+    add_html_card(qc_html, section = "QC", title = "QC Summary")
+  }, error = function(e) {
+    log_msg("  WARNING: QC summary tab generation failed: ", conditionMessage(e))
   })
 
   # Build combined interactive dashboard
