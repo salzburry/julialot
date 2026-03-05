@@ -611,6 +611,199 @@ print_descriptives <- function(con) {
   cat(SEP, "\n")
 
   # --------------------------------------------------------
+  # 0a. Overview tab — run metadata + dynamic counts (FIRST tab)
+  # --------------------------------------------------------
+  tryCatch({
+    # Dynamic run counts
+    cohort_n   <- tryCatch(as.numeric(db_q(con, "SELECT count(DISTINCT PATID) AS n FROM lot_patient_input")$n), error = function(e) NA)
+    mma_n      <- tryCatch(as.numeric(db_q(con, "SELECT count(*) AS n FROM mma_med_processed")$n), error = function(e) NA)
+    mma_pat_n  <- tryCatch(as.numeric(db_q(con, "SELECT count(DISTINCT PATID) AS n FROM mma_med_processed")$n), error = function(e) NA)
+    map_n      <- tryCatch(as.numeric(db_q(con, "SELECT count(*) AS n FROM map_stacked")$n), error = function(e) NA)
+    map_pat_n  <- tryCatch(as.numeric(db_q(con, "SELECT count(DISTINCT PATID) AS n FROM map_stacked")$n), error = function(e) NA)
+    lot1_n     <- tryCatch(as.numeric(db_q(con, "SELECT count(*) AS n FROM lot1_base")$n), error = function(e) NA)
+    sct_n      <- tryCatch(as.numeric(db_q(con, "SELECT sum(CASE WHEN LOT1_TX_ENDDATE IS NOT NULL THEN 1 ELSE 0 END) AS n FROM lot1_sct")$n), error = function(e) NA)
+    censored_n <- tryCatch({
+      r <- db_q(con, "
+        SELECT sum(case when ENDDATE_CE < ENDDATE then 1 else 0 end) AS n_cens,
+               count(*) AS n_total
+        FROM lot_patient_input
+      ")
+      list(n = as.numeric(r$n_cens), pct = round(100 * as.numeric(r$n_cens) / max(as.numeric(r$n_total), 1), 1))
+    }, error = function(e) list(n = NA, pct = NA))
+
+    fmt <- function(x) if (is.na(x)) "N/A" else format(x, big.mark = ",")
+
+    overview_html <- paste0('<!DOCTYPE html><html><head>
+<meta charset="UTF-8">
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: #fff; padding: 24px; color: #2d3436; }
+  h2 { font-size: 20px; color: #1a5276; margin-bottom: 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; margin-bottom: 24px; }
+  .card { background: #f5f6fa; border-radius: 8px; padding: 16px; border: 1px solid #dfe6e9; }
+  .card h3 { font-size: 11px; color: #636e72; text-transform: uppercase;
+             letter-spacing: 0.5px; margin-bottom: 6px; }
+  .card .val { font-size: 24px; font-weight: 700; color: #2d3436; }
+  .card .sub { font-size: 12px; color: #636e72; margin-top: 4px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 12px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 13px; }
+  th { background: #f5f6fa; font-weight: 600; color: #636e72; text-transform: uppercase;
+       letter-spacing: 0.5px; font-size: 11px; }
+</style></head><body>
+<h2>Run Overview</h2>
+<div class="grid">
+  <div class="card"><h3>Run ID</h3><div class="val" style="font-size:16px;word-break:break-all;">', run_id, '</div>
+    <div class="sub">Generated: ', format(Sys.time(), "%Y-%m-%d %H:%M:%S"), '</div></div>
+  <div class="card"><h3>Cohort Patients</h3><div class="val">', fmt(cohort_n), '</div></div>
+  <div class="card"><h3>MMA Claims</h3><div class="val">', fmt(mma_n), '</div>
+    <div class="sub">', fmt(mma_pat_n), ' patients</div></div>
+  <div class="card"><h3>MAPs</h3><div class="val">', fmt(map_n), '</div>
+    <div class="sub">', fmt(map_pat_n), ' patients</div></div>
+  <div class="card"><h3>LOT1 Patients</h3><div class="val">', fmt(lot1_n), '</div></div>
+  <div class="card"><h3>SCT Events</h3><div class="val">', fmt(sct_n), '</div></div>
+  <div class="card"><h3>Censored (OBS_END)</h3><div class="val">',
+    if (!is.na(censored_n$pct)) paste0(censored_n$pct, "%") else "N/A", '</div>
+    <div class="sub">', fmt(censored_n$n), ' patients</div></div>
+</div>
+<h2>Configuration</h2>
+<table>
+<tr><th>Parameter</th><th>Value</th></tr>
+<tr><td>CDM Schema</td><td>', cfg$cdm_schema, '</td></tr>
+<tr><td>Work Schema</td><td>', cfg$work_schema, '</td></tr>
+<tr><td>Input Cohort Table</td><td>', cfg$input_cohort_table, '</td></tr>
+<tr><td>Induction Window</td><td>', cfg$induction_window_days, ' days</td></tr>
+<tr><td>MAP Discontinuation Gap</td><td>', cfg$map_discon_gap_days, ' days</td></tr>
+<tr><td>Medical Day Supply</td><td>', cfg$medical_day_supply, ' days</td></tr>
+<tr><td>LOT Discontinuation Gap</td><td>', cfg$lot_discon_gap_days, ' days</td></tr>
+</table>
+</body></html>')
+    add_html_card(overview_html, section = "OVERVIEW", title = "Run Overview")
+  }, error = function(e) {
+    log_msg("  WARNING: Overview tab generation failed: ", conditionMessage(e))
+  })
+
+  # --------------------------------------------------------
+  # 0b. QC Summary tab — pass/fail validation checks (SECOND tab)
+  # --------------------------------------------------------
+  tryCatch({
+    qc_rows <- list()
+    add_qc <- function(check, value, status) {
+      qc_rows[[length(qc_rows) + 1]] <<- sprintf(
+        '<tr><td>%s</td><td>%s</td><td class="%s">%s</td></tr>',
+        check, value,
+        if (status == "PASS") "pass" else if (status == "WARN") "warn" else "fail",
+        status
+      )
+    }
+
+    orphan_n <- tryCatch({
+      as.numeric(db_q(con, "
+        SELECT count(DISTINCT c.CL_MED_ABBR) AS n
+        FROM mma_codelist c LEFT JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR
+        WHERE r.CL_MED_ABBR IS NULL
+      ")$n)
+    }, error = function(e) NA)
+    if (!is.na(orphan_n)) add_qc("Codelist meds not in rollup", orphan_n,
+                                  if (orphan_n == 0) "PASS" else "WARN")
+
+    uncoded_n <- tryCatch({
+      as.numeric(db_q(con, "
+        SELECT count(DISTINCT r.CL_MED_ABBR) AS n
+        FROM mma_rollup r LEFT JOIN mma_codelist c ON r.CL_MED_ABBR = c.CL_MED_ABBR
+        WHERE c.CL_MED_ABBR IS NULL
+      ")$n)
+    }, error = function(e) NA)
+    if (!is.na(uncoded_n)) add_qc("Rollup meds with zero codes", uncoded_n,
+                                   if (uncoded_n == 0) "PASS" else "WARN")
+
+    multi_n <- tryCatch({
+      as.numeric(db_q(con, "
+        SELECT count(*) AS n FROM (
+          SELECT CL_MED_ABBR FROM mma_codelist
+          GROUP BY CL_MED_ABBR HAVING count(DISTINCT CL_MED_CLASS) > 1
+        )
+      ")$n)
+    }, error = function(e) NA)
+    if (!is.na(multi_n)) add_qc("MED_ABBR mapped to multiple classes", multi_n,
+                                 if (multi_n == 0) "PASS" else "WARN")
+
+    bad_maps <- tryCatch({
+      as.numeric(db_q(con, "SELECT count(*) AS n FROM map_stacked WHERE MAP_END_DT < MAP_START_DT")$n)
+    }, error = function(e) NA)
+    if (!is.na(bad_maps)) add_qc("MAPs with END_DT < START_DT", bad_maps,
+                                  if (bad_maps == 0) "PASS" else "FAIL")
+
+    runout_mm <- tryCatch({
+      as.numeric(db_q(con, "
+        SELECT count(*) AS n FROM map_stacked
+        WHERE MAP_END_DT <> greatest(
+          coalesce(MAP_RX_RUNOUT_DT, cast('1900-01-01' as date)),
+          coalesce(MAP_MED_RUNOUT_DT, cast('1900-01-01' as date)))
+        AND MAP_END_DT IS NOT NULL
+      ")$n)
+    }, error = function(e) NA)
+    if (!is.na(runout_mm)) add_qc("MAPs where END != max(runouts)", runout_mm,
+                                   if (runout_mm == 0) "PASS" else "WARN")
+
+    lot1_past <- tryCatch({
+      as.numeric(db_q(con, "
+        SELECT sum(case when lb.LOT1_BASE_END_DT > p.OBS_END_DT then 1 else 0 end) AS n
+        FROM lot1_base_end lb INNER JOIN lot_patient_input p ON lb.PATID = p.PATID
+      ")$n)
+    }, error = function(e) NA)
+    if (!is.na(lot1_past)) add_qc("LOT1 END_DT past OBS_END_DT", lot1_past,
+                                   if (lot1_past == 0) "PASS" else "WARN")
+
+    sct_both <- tryCatch({
+      as.numeric(db_q(con, "
+        SELECT sum(CASE WHEN LOT1_SCT_AUTO_TAND_FLG = 1 AND LOT1_SCT_AUTO_SING_FLG = 1 THEN 1 ELSE 0 END) AS n
+        FROM lot1_sct
+      ")$n)
+    }, error = function(e) NA)
+    if (!is.na(sct_both)) add_qc("SCT: both tandem AND single flag", sct_both,
+                                  if (sct_both == 0) "PASS" else "FAIL")
+
+    sct_past <- tryCatch({
+      as.numeric(db_q(con, "
+        SELECT sum(CASE WHEN sct.LOT1_TX_ENDDATE IS NOT NULL
+                    AND sct.LOT1_TX_ENDDATE > lb.OBS_END_DT THEN 1 ELSE 0 END) AS n
+        FROM lot1_sct sct INNER JOIN lot1_base lb ON sct.PATID = lb.PATID
+      ")$n)
+    }, error = function(e) NA)
+    if (!is.na(sct_past)) add_qc("SCT end date past OBS_END_DT", sct_past,
+                                  if (sct_past == 0) "PASS" else "WARN")
+
+    n_pass <- sum(sapply(qc_rows, function(r) grepl('class="pass"', r)))
+    n_total <- length(qc_rows)
+
+    qc_html <- paste0('<!DOCTYPE html><html><head>
+<meta charset="UTF-8">
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: #fff; padding: 24px; color: #2d3436; }
+  h2 { font-size: 20px; color: #1a5276; margin-bottom: 8px; }
+  .summary { font-size: 14px; color: #636e72; margin-bottom: 16px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid #eee; font-size: 13px; }
+  th { background: #f5f6fa; font-weight: 600; color: #636e72; text-transform: uppercase;
+       letter-spacing: 0.5px; font-size: 11px; }
+  .pass { color: #00b894; font-weight: 700; }
+  .warn { color: #fdcb6e; font-weight: 700; }
+  .fail { color: #d63031; font-weight: 700; }
+</style></head><body>
+<h2>QC Validation Summary</h2>
+<p class="summary">', n_pass, ' / ', n_total, ' checks passed</p>
+<table>
+<tr><th>Check</th><th>Value</th><th>Status</th></tr>
+', paste(qc_rows, collapse = "\n"), '
+</table>
+</body></html>')
+    add_html_card(qc_html, section = "QC", title = "QC Summary")
+  }, error = function(e) {
+    log_msg("  WARNING: QC summary tab generation failed: ", conditionMessage(e))
+  })
+
+  # --------------------------------------------------------
   # 1. MMA_MED Summary
   # --------------------------------------------------------
   tryCatch({
@@ -1230,198 +1423,189 @@ print_descriptives <- function(con) {
   })
 
   # --------------------------------------------------------
-  # 5. Overview tab — run metadata
+  # 5. Patient journey timelines — sample of interesting patients
   # --------------------------------------------------------
   tryCatch({
-    overview_html <- paste0('<!DOCTYPE html><html><head>
-<meta charset="UTF-8">
-<style>
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-         background: #fff; padding: 24px; color: #2d3436; }
-  h2 { font-size: 20px; color: #1a5276; margin-bottom: 16px; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
-  .card { background: #f5f6fa; border-radius: 8px; padding: 16px; border: 1px solid #dfe6e9; }
-  .card h3 { font-size: 13px; color: #636e72; text-transform: uppercase;
-             letter-spacing: 0.5px; margin-bottom: 8px; }
-  .card .val { font-size: 22px; font-weight: 700; color: #2d3436; }
-  .card .sub { font-size: 12px; color: #636e72; margin-top: 4px; }
-  table { border-collapse: collapse; width: 100%; margin-top: 12px; }
-  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 13px; }
-  th { background: #f5f6fa; font-weight: 600; color: #636e72; text-transform: uppercase;
-       letter-spacing: 0.5px; font-size: 11px; }
-</style></head><body>
-<h2>Run Overview</h2>
-<div class="grid">
-  <div class="card"><h3>Run ID</h3><div class="val">', run_id, '</div>
-    <div class="sub">Generated: ', format(Sys.time(), "%Y-%m-%d %H:%M:%S"), '</div></div>
-  <div class="card"><h3>CDM Schema</h3><div class="val">', cfg$cdm_schema, '</div>
-    <div class="sub">Work: ', cfg$work_schema, '</div></div>
-  <div class="card"><h3>Input Cohort</h3><div class="val">', cfg$input_cohort_table, '</div></div>
-  <div class="card"><h3>Induction Window</h3><div class="val">', cfg$induction_window_days, ' days</div></div>
-</div>
-<h2>Key Parameters</h2>
-<table>
-<tr><th>Parameter</th><th>Value</th></tr>
-<tr><td>MAP Discontinuation Gap</td><td>', cfg$map_discon_gap_days, ' days</td></tr>
-<tr><td>Medical Day Supply</td><td>', cfg$medical_day_supply, ' days</td></tr>
-<tr><td>LOT Discontinuation Gap</td><td>', cfg$lot_discon_gap_days, ' days</td></tr>
-<tr><td>Induction Window</td><td>', cfg$induction_window_days, ' days</td></tr>
-</table>
-</body></html>')
-    add_html_card(overview_html, section = "OVERVIEW", title = "Run Overview")
-  }, error = function(e) {
-    log_msg("  WARNING: Overview tab generation failed: ", conditionMessage(e))
-  })
-
-  # --------------------------------------------------------
-  # 6. QC Summary tab — pass/fail validation checks
-  # --------------------------------------------------------
-  tryCatch({
-    qc_rows <- list()
-    add_qc <- function(check, value, status) {
-      qc_rows[[length(qc_rows) + 1]] <<- sprintf(
-        '<tr><td>%s</td><td>%s</td><td class="%s">%s</td></tr>',
-        check, value,
-        if (status == "PASS") "pass" else if (status == "WARN") "warn" else "fail",
-        status
-      )
-    }
-
-    # Codelist orphans
-    orphan_n <- tryCatch({
-      r <- db_q(con, "
-        SELECT count(DISTINCT c.CL_MED_ABBR) AS n
-        FROM mma_codelist c
-        LEFT JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR
-        WHERE r.CL_MED_ABBR IS NULL
-      ")
-      as.numeric(r$n)
-    }, error = function(e) NA)
-    if (!is.na(orphan_n)) {
-      add_qc("Codelist meds not in rollup", orphan_n,
-             if (orphan_n == 0) "PASS" else "WARN")
-    }
-
-    # Uncoded rollup meds
-    uncoded_n <- tryCatch({
-      r <- db_q(con, "
-        SELECT count(DISTINCT r.CL_MED_ABBR) AS n
-        FROM mma_rollup r
-        LEFT JOIN mma_codelist c ON r.CL_MED_ABBR = c.CL_MED_ABBR
-        WHERE c.CL_MED_ABBR IS NULL
-      ")
-      as.numeric(r$n)
-    }, error = function(e) NA)
-    if (!is.na(uncoded_n)) {
-      add_qc("Rollup meds with zero codes", uncoded_n,
-             if (uncoded_n == 0) "PASS" else "WARN")
-    }
-
-    # Multi-class meds
-    multi_n <- tryCatch({
-      r <- db_q(con, "
-        SELECT count(*) AS n FROM (
-          SELECT CL_MED_ABBR FROM mma_codelist
-          GROUP BY CL_MED_ABBR HAVING count(DISTINCT CL_MED_CLASS) > 1
+    if (has_plotly) {
+      # Find interesting patients: those with med restarts (MAP_CNT >= 2),
+      # add-meds, or SCT events. Sample up to 20.
+      journey_pats <- db_q(con, "
+        WITH interesting AS (
+          -- Patients with same-med restarts
+          SELECT DISTINCT PATID, 'restart' AS reason
+          FROM map_stacked WHERE MAP_CNT >= 2
+          UNION
+          -- Patients with add-med
+          SELECT DISTINCT PATID, 'add_med'
+          FROM lot1_base WHERE LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
+          UNION
+          -- Patients with SCT
+          SELECT DISTINCT PATID, 'sct'
+          FROM lot1_sct WHERE LOT1_TX_ENDDATE IS NOT NULL
         )
+        SELECT PATID, concat_ws(',', collect_set(reason)) AS reasons
+        FROM interesting
+        GROUP BY PATID
+        ORDER BY length(concat_ws(',', collect_set(reason))) DESC
+        LIMIT 20
       ")
-      as.numeric(r$n)
-    }, error = function(e) NA)
-    if (!is.na(multi_n)) {
-      add_qc("MED_ABBR mapped to multiple classes", multi_n,
-             if (multi_n == 0) "PASS" else "WARN")
+
+      if (nrow(journey_pats) > 0) {
+        pat_ids_sql <- paste0("('", paste(journey_pats$PATID, collapse = "','"), "')")
+
+        # Get MAP segments for these patients
+        journey_maps <- db_q(con, glue("
+          SELECT m.PATID, m.MAP_MED_TYPE AS MED, m.MAP_MED_CLASS AS CLASS,
+                 m.MAP_START_DT, m.MAP_END_DT, m.MAP_CNT,
+                 m.MAP_DISCON_FLG,
+                 datediff(m.MAP_END_DT, m.MAP_START_DT) + 1 AS MAP_DAYS
+          FROM map_stacked m
+          WHERE m.PATID IN {pat_ids_sql}
+          ORDER BY m.PATID, m.MAP_MED_TYPE, m.MAP_START_DT
+        "))
+
+        # Get LOT1 milestones
+        journey_milestones <- db_q(con, glue("
+          SELECT lb.PATID,
+                 lb.LOT1_START_DT,
+                 lb.LOT1_BASE_1ST_ADD_MED_DT,
+                 lbe.LOT1_BASE_END_DT,
+                 lbe.LOT1_BASE_END_REASON,
+                 sct.LOT1_TX_ENDDATE AS SCT_DT
+          FROM lot1_base lb
+          LEFT JOIN lot1_base_end lbe ON lb.PATID = lbe.PATID
+          LEFT JOIN lot1_sct sct ON lb.PATID = sct.PATID
+          WHERE lb.PATID IN {pat_ids_sql}
+        "))
+
+        if (nrow(journey_maps) > 0) {
+          # Convert types
+          journey_maps$MAP_START_DT <- as.Date(journey_maps$MAP_START_DT)
+          journey_maps$MAP_END_DT   <- as.Date(journey_maps$MAP_END_DT)
+          journey_maps$MAP_CNT      <- as.numeric(journey_maps$MAP_CNT)
+          journey_maps$MAP_DAYS     <- as.numeric(journey_maps$MAP_DAYS)
+
+          # Render one plotly timeline per patient, collect them
+          # Use first 10 patients max for dashboard size
+          show_pats <- unique(journey_maps$PATID)[1:min(10, length(unique(journey_maps$PATID)))]
+
+          for (pid in show_pats) {
+            pat_maps <- journey_maps[journey_maps$PATID == pid, ]
+            pat_ms   <- journey_milestones[journey_milestones$PATID == pid, ]
+            reasons  <- if (pid %in% journey_pats$PATID) {
+              journey_pats$reasons[journey_pats$PATID == pid]
+            } else ""
+
+            # Build plotly shapes for Gantt bars
+            # Y-axis: medication names, X-axis: dates
+            meds <- sort(unique(pat_maps$MED))
+            med_y <- setNames(seq_along(meds), meds)
+
+            shapes <- list()
+            annotations <- list()
+            hover_texts <- list()
+
+            for (j in seq_len(nrow(pat_maps))) {
+              row <- pat_maps[j, ]
+              y_pos <- med_y[row$MED]
+              color <- if (row$CLASS %in% names(lot_class_palette)) lot_class_palette[row$CLASS] else "#636e72"
+              # Make restart segments slightly different shade
+              alpha_val <- if (row$MAP_CNT > 1) 0.6 else 0.85
+
+              shapes[[length(shapes) + 1]] <- list(
+                type = "rect",
+                x0 = as.character(row$MAP_START_DT),
+                x1 = as.character(row$MAP_END_DT),
+                y0 = y_pos - 0.35,
+                y1 = y_pos + 0.35,
+                fillcolor = color,
+                opacity = alpha_val,
+                line = list(color = color, width = 1),
+                layer = "below"
+              )
+            }
+
+            # Milestone vertical lines
+            vlines <- list()
+            if (nrow(pat_ms) > 0) {
+              ms <- pat_ms[1, ]
+              add_vline <- function(dt, label, color) {
+                if (!is.na(dt) && !is.null(dt)) {
+                  vlines[[length(vlines) + 1]] <<- list(
+                    type = "line", x0 = as.character(dt), x1 = as.character(dt),
+                    y0 = 0.3, y1 = length(meds) + 0.7,
+                    line = list(color = color, width = 2, dash = "dash"),
+                    layer = "above"
+                  )
+                  annotations[[length(annotations) + 1]] <<- list(
+                    x = as.character(dt), y = length(meds) + 0.6,
+                    text = label, showarrow = FALSE,
+                    font = list(size = 10, color = color),
+                    xanchor = "left", textangle = -30
+                  )
+                }
+              }
+              add_vline(as.Date(ms$LOT1_START_DT), "LOT1 Start", "#2E86AB")
+              add_vline(as.Date(ms$LOT1_BASE_1ST_ADD_MED_DT), "Add Med", "#F18F01")
+              add_vline(as.Date(ms$LOT1_BASE_END_DT), paste0("LOT1 End (", ms$LOT1_BASE_END_REASON, ")"), "#C73E1D")
+              add_vline(as.Date(ms$SCT_DT), "SCT", "#8D5A97")
+            }
+
+            all_shapes <- c(shapes, vlines)
+
+            # Create invisible scatter for hover
+            hover_df <- data.frame(
+              x = pat_maps$MAP_START_DT + (pat_maps$MAP_END_DT - pat_maps$MAP_START_DT) / 2,
+              y = med_y[pat_maps$MED],
+              text = paste0(
+                "Med: ", pat_maps$MED,
+                "\nClass: ", pat_maps$CLASS,
+                "\nStart: ", pat_maps$MAP_START_DT,
+                "\nEnd: ", pat_maps$MAP_END_DT,
+                "\nDays: ", pat_maps$MAP_DAYS,
+                "\nMAP #", pat_maps$MAP_CNT,
+                if (any(pat_maps$MAP_DISCON_FLG == 1)) paste0("\nDiscon: Yes") else ""
+              ),
+              stringsAsFactors = FALSE
+            )
+
+            # Anonymized patient label
+            pat_label <- paste0("Patient ", which(show_pats == pid))
+            pp <- plotly::plot_ly(hover_df, x = ~x, y = ~y, text = ~text,
+                                  type = "scatter", mode = "markers",
+                                  marker = list(size = 1, opacity = 0),
+                                  hoverinfo = "text") |>
+              plotly::layout(
+                title = list(text = paste0(pat_label, " — Medication Journey"),
+                             font = list(size = 14)),
+                xaxis = list(title = "", type = "date",
+                             gridcolor = "#eee"),
+                yaxis = list(title = "", tickmode = "array",
+                             tickvals = seq_along(meds),
+                             ticktext = meds,
+                             range = c(0.3, length(meds) + 0.8),
+                             gridcolor = "#eee"),
+                shapes = all_shapes,
+                annotations = annotations,
+                showlegend = FALSE,
+                margin = list(l = 100, t = 50, b = 40, r = 30),
+                plot_bgcolor = "#fafafa",
+                paper_bgcolor = "white"
+              ) |>
+              plotly::config(displayModeBar = TRUE, displaylogo = FALSE,
+                             modeBarButtonsToRemove = list("lasso2d", "select2d"))
+
+            add_to_dashboard(pp, section = "JOURNEY",
+                             title = paste0(pat_label, " (", reasons, ")"))
+          }
+          log_msg("  Patient journey timelines added: ", length(show_pats), " patients")
+        }
+      } else {
+        log_msg("  No interesting patients found for journey timelines.")
+      }
     }
-
-    # MAP END < START
-    bad_maps <- tryCatch({
-      as.numeric(db_q(con, "SELECT count(*) AS n FROM map_stacked WHERE MAP_END_DT < MAP_START_DT")$n)
-    }, error = function(e) NA)
-    if (!is.na(bad_maps)) {
-      add_qc("MAPs with END_DT < START_DT", bad_maps,
-             if (bad_maps == 0) "PASS" else "FAIL")
-    }
-
-    # MAP END != max(runouts)
-    runout_mm <- tryCatch({
-      as.numeric(db_q(con, "
-        SELECT count(*) AS n FROM map_stacked
-        WHERE MAP_END_DT <> greatest(
-          coalesce(MAP_RX_RUNOUT_DT, cast('1900-01-01' as date)),
-          coalesce(MAP_MED_RUNOUT_DT, cast('1900-01-01' as date)))
-        AND MAP_END_DT IS NOT NULL
-      ")$n)
-    }, error = function(e) NA)
-    if (!is.na(runout_mm)) {
-      add_qc("MAPs where END != max(runouts)", runout_mm,
-             if (runout_mm == 0) "PASS" else "WARN")
-    }
-
-    # LOT1 END > OBS_END
-    lot1_past <- tryCatch({
-      as.numeric(db_q(con, "
-        SELECT sum(case when lb.LOT1_BASE_END_DT > p.OBS_END_DT then 1 else 0 end) AS n
-        FROM lot1_base_end lb
-        INNER JOIN lot_patient_input p ON lb.PATID = p.PATID
-      ")$n)
-    }, error = function(e) NA)
-    if (!is.na(lot1_past)) {
-      add_qc("LOT1 END_DT past OBS_END_DT", lot1_past,
-             if (lot1_past == 0) "PASS" else "WARN")
-    }
-
-    # SCT tandem + single both true
-    sct_both <- tryCatch({
-      as.numeric(db_q(con, "
-        SELECT sum(CASE WHEN LOT1_SCT_AUTO_TAND_FLG = 1 AND LOT1_SCT_AUTO_SING_FLG = 1 THEN 1 ELSE 0 END) AS n
-        FROM lot1_sct
-      ")$n)
-    }, error = function(e) NA)
-    if (!is.na(sct_both)) {
-      add_qc("SCT: both tandem AND single flag", sct_both,
-             if (sct_both == 0) "PASS" else "FAIL")
-    }
-
-    # SCT end > OBS_END
-    sct_past <- tryCatch({
-      as.numeric(db_q(con, "
-        SELECT sum(CASE WHEN sct.LOT1_TX_ENDDATE IS NOT NULL
-                    AND sct.LOT1_TX_ENDDATE > lb.OBS_END_DT THEN 1 ELSE 0 END) AS n
-        FROM lot1_sct sct INNER JOIN lot1_base lb ON sct.PATID = lb.PATID
-      ")$n)
-    }, error = function(e) NA)
-    if (!is.na(sct_past)) {
-      add_qc("SCT end date past OBS_END_DT", sct_past,
-             if (sct_past == 0) "PASS" else "WARN")
-    }
-
-    n_pass <- sum(sapply(qc_rows, function(r) grepl('class="pass"', r)))
-    n_total <- length(qc_rows)
-
-    qc_html <- paste0('<!DOCTYPE html><html><head>
-<meta charset="UTF-8">
-<style>
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-         background: #fff; padding: 24px; color: #2d3436; }
-  h2 { font-size: 20px; color: #1a5276; margin-bottom: 8px; }
-  .summary { font-size: 14px; color: #636e72; margin-bottom: 16px; }
-  table { border-collapse: collapse; width: 100%; }
-  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid #eee; font-size: 13px; }
-  th { background: #f5f6fa; font-weight: 600; color: #636e72; text-transform: uppercase;
-       letter-spacing: 0.5px; font-size: 11px; }
-  .pass { color: #00b894; font-weight: 700; }
-  .warn { color: #fdcb6e; font-weight: 700; }
-  .fail { color: #d63031; font-weight: 700; }
-</style></head><body>
-<h2>QC Validation Summary</h2>
-<p class="summary">', n_pass, ' / ', n_total, ' checks passed</p>
-<table>
-<tr><th>Check</th><th>Value</th><th>Status</th></tr>
-', paste(qc_rows, collapse = "\n"), '
-</table>
-</body></html>')
-    add_html_card(qc_html, section = "QC", title = "QC Summary")
   }, error = function(e) {
-    log_msg("  WARNING: QC summary tab generation failed: ", conditionMessage(e))
+    log_msg("WARN: Patient journey timelines failed: ", conditionMessage(e))
   })
 
   # Build combined interactive dashboard
@@ -2894,6 +3078,81 @@ main <- function() {
       CREATE OR REPLACE TABLE {wrk('LOT1_BASE_END')} AS
       SELECT * FROM lot1_base_end
     "), qc = glue("SELECT count(*) AS n_rows FROM {wrk('LOT1_BASE_END')}"))
+
+    # Persist MMA_MED_PROCESSED — foundation exposure table for QA/traceability
+    run_step(con, "S21_persist_mma_med_processed", glue("
+      CREATE OR REPLACE TABLE {wrk('MMA_MED_PROCESSED')} AS
+      SELECT * FROM mma_med_processed
+    "), qc = glue("SELECT count(*) AS n_rows FROM {wrk('MMA_MED_PROCESSED')}"))
+
+    # Persist run metadata — parameters + key counts for rerun comparison
+    tryCatch({
+      cohort_n <- as.numeric(db_q(con, "SELECT count(DISTINCT PATID) AS n FROM lot_patient_input")$n)
+      mma_n    <- as.numeric(db_q(con, "SELECT count(*) AS n FROM mma_med_processed")$n)
+      map_n    <- as.numeric(db_q(con, "SELECT count(*) AS n FROM map_stacked")$n)
+      lot1_n   <- as.numeric(db_q(con, "SELECT count(*) AS n FROM lot1_base")$n)
+
+      run_step(con, "S22_persist_run_metadata", glue("
+        CREATE OR REPLACE TABLE {wrk('LOT_RUN_METADATA')} AS
+        SELECT
+          '{run_id}' AS RUN_ID,
+          current_timestamp() AS RUN_TIMESTAMP,
+          '{cfg$cdm_schema}' AS CDM_SCHEMA,
+          '{cfg$work_schema}' AS WORK_SCHEMA,
+          '{cfg$input_cohort_table}' AS INPUT_COHORT_TABLE,
+          {cfg$induction_window_days} AS INDUCTION_WINDOW_DAYS,
+          {cfg$map_discon_gap_days} AS MAP_DISCON_GAP_DAYS,
+          {cfg$medical_day_supply} AS MEDICAL_DAY_SUPPLY,
+          {cfg$lot_discon_gap_days} AS LOT_DISCON_GAP_DAYS,
+          {cohort_n} AS N_COHORT_PATIENTS,
+          {mma_n} AS N_MMA_CLAIMS,
+          {map_n} AS N_MAPS,
+          {lot1_n} AS N_LOT1_PATIENTS
+      "))
+    }, error = function(e) {
+      log_msg("  WARNING: Run metadata persist failed: ", conditionMessage(e))
+    })
+
+    # Persist QC summary — one row per check for governance
+    tryCatch({
+      qc_checks <- list()
+      add_persist_qc <- function(name, val) {
+        status <- if (is.na(val)) "ERROR" else if (val == 0) "PASS" else "WARN"
+        qc_checks[[length(qc_checks) + 1]] <<- glue(
+          "SELECT '{name}' AS CHECK_NAME, {if (is.na(val)) 'NULL' else val} AS CHECK_VALUE, '{status}' AS CHECK_STATUS, '{run_id}' AS RUN_ID"
+        )
+      }
+
+      orphan_n <- tryCatch(as.numeric(db_q(con, "
+        SELECT count(DISTINCT c.CL_MED_ABBR) AS n
+        FROM mma_codelist c LEFT JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR
+        WHERE r.CL_MED_ABBR IS NULL")$n), error = function(e) NA)
+      add_persist_qc("CODELIST_ORPHAN_MEDS", orphan_n)
+
+      bad_maps <- tryCatch(as.numeric(db_q(con, "SELECT count(*) AS n FROM map_stacked WHERE MAP_END_DT < MAP_START_DT")$n), error = function(e) NA)
+      add_persist_qc("MAP_END_BEFORE_START", bad_maps)
+
+      lot1_past <- tryCatch(as.numeric(db_q(con, "
+        SELECT sum(case when lb.LOT1_BASE_END_DT > p.OBS_END_DT then 1 else 0 end) AS n
+        FROM lot1_base_end lb INNER JOIN lot_patient_input p ON lb.PATID = p.PATID")$n), error = function(e) NA)
+      add_persist_qc("LOT1_END_PAST_OBS", lot1_past)
+
+      sct_both <- tryCatch(as.numeric(db_q(con, "
+        SELECT sum(CASE WHEN LOT1_SCT_AUTO_TAND_FLG = 1 AND LOT1_SCT_AUTO_SING_FLG = 1 THEN 1 ELSE 0 END) AS n
+        FROM lot1_sct")$n), error = function(e) NA)
+      add_persist_qc("SCT_TANDEM_AND_SINGLE", sct_both)
+
+      if (length(qc_checks) > 0) {
+        qc_union <- paste(qc_checks, collapse = "\n        UNION ALL\n        ")
+        run_step(con, "S23_persist_qc_summary", glue("
+          CREATE OR REPLACE TABLE {wrk('LOT_QC_SUMMARY')} AS
+          {qc_union}
+        "))
+      }
+    }, error = function(e) {
+      log_msg("  WARNING: QC summary persist failed: ", conditionMessage(e))
+    })
+
   } else {
     log_msg("Persist disabled (PERSIST_TO_SCHEMA=FALSE).")
   }
@@ -2902,7 +3161,7 @@ main <- function() {
   log_msg("LOT Part 2 complete.")
   log_msg("Temporary views: mma_med_processed, map_stacked, lot1_base, lot1_sct, lot1_base_end")
   if (isTRUE(cfg$persist_to_schema)) {
-    log_msg("Persisted tables in work schema: MAP_STACKED, LOT1_BASE, LOT1_SCT, LOT1_BASE_END")
+    log_msg("Persisted tables in work schema: MAP_STACKED, LOT1_BASE, LOT1_SCT, LOT1_BASE_END, MMA_MED_PROCESSED, LOT_RUN_METADATA, LOT_QC_SUMMARY")
   }
   if (has_ggplot2) {
     log_msg("Figures saved to: ", cfg$output_dir)
