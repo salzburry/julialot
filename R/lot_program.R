@@ -1581,6 +1581,7 @@ print_descriptives <- function(con) {
 
           for (pid in show_pats) {
             pat_maps <- journey_maps[journey_maps$PATID == pid, ]
+            if (nrow(pat_maps) == 0) next
             pat_ms   <- journey_milestones[journey_milestones$PATID == pid, ]
             reasons  <- if (pid %in% journey_pats$PATID) {
               journey_pats$reasons[journey_pats$PATID == pid]
@@ -1654,7 +1655,11 @@ print_descriptives <- function(con) {
                 "\nEnd: ", pat_maps$MAP_END_DT,
                 "\nDays: ", pat_maps$MAP_DAYS,
                 "\nMAP #", pat_maps$MAP_CNT,
-                ifelse(pat_maps$MAP_DISCON_FLG == 1, "\nDiscon: Yes", "")
+                {
+                  discon_flg <- pat_maps$MAP_DISCON_FLG
+                  if (is.null(discon_flg)) discon_flg <- rep(0L, nrow(pat_maps))
+                  ifelse(discon_flg == 1, "\nDiscon: Yes", "")
+                }
               ),
               stringsAsFactors = FALSE
             )
