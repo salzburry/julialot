@@ -506,13 +506,41 @@ build_dashboard <- function() {
       }), collapse = ",\n"),
     "\n};")
 
+    # Bundle plotly.js from the installed R package (no CDN / no internet needed)
+    plotly_js_code <- ""
+    if (length(plotly_specs) > 0) {
+      plotly_js_files <- list.files(
+        system.file("htmlwidgets/lib", package = "plotly"),
+        pattern = "plotly[^/]*\\.min\\.js$",
+        recursive = TRUE, full.names = TRUE
+      )
+      if (length(plotly_js_files) == 0) {
+        # Fallback: try non-minified
+        plotly_js_files <- list.files(
+          system.file("htmlwidgets/lib", package = "plotly"),
+          pattern = "plotly[^/]*\\.js$",
+          recursive = TRUE, full.names = TRUE
+        )
+      }
+      if (length(plotly_js_files) > 0) {
+        plotly_js_code <- paste(readLines(plotly_js_files[1], warn = FALSE), collapse = "\n")
+        log_msg("  Bundled plotly.js from: ", plotly_js_files[1],
+                " (", round(file.size(plotly_js_files[1]) / 1e6, 1), " MB)")
+      } else {
+        log_msg("  WARNING: Could not find plotly.js in installed package. Figures may not render.")
+      }
+    }
+    plotly_script_tag <- if (nchar(plotly_js_code) > 0) {
+      paste0("<script>", plotly_js_code, "</script>")
+    } else ""
+
     html_doc <- paste0('<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LOT Part 2 - Interactive Dashboard</title>
-<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+', plotly_script_tag, '
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
