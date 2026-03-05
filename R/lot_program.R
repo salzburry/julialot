@@ -2327,7 +2327,7 @@ main <- function() {
     ")
     log_msg("  Code type distribution in codelist:")
     print(code_types)
-    unexpected_types <- setdiff(code_types$CL_CODE_TYPE, c("NDC", "HCPCS", "NOC", "ICD"))
+    unexpected_types <- setdiff(code_types$CL_CODE_TYPE, c("NDC", "HCPCS", "ICD"))
     if (length(unexpected_types) > 0) {
       log_msg("  WARNING: Unexpected CL_CODE_TYPE values: ", paste(unexpected_types, collapse = ", "))
       log_msg("  These codes will NOT be matched by the extraction logic!")
@@ -2411,7 +2411,7 @@ main <- function() {
     WITH codelist AS (
       SELECT /*+ BROADCAST */ * FROM mma_codelist
     ),
-    -- 1) Medical claims - PROC_CD (HCPCS or NOC)
+    -- 1) Medical claims - PROC_CD (HCPCS)
     med_proc_cd AS (
       SELECT
         m.PATID,
@@ -2426,12 +2426,12 @@ main <- function() {
       FROM {cdm_src(cfg$tbl_medical)} m
       INNER JOIN lot_patient_input p ON m.PATID = p.PATID
       INNER JOIN codelist c
-        ON c.CL_CODE_TYPE IN ('HCPCS', 'NOC')
+        ON c.CL_CODE_TYPE = 'HCPCS'
        AND upper(regexp_replace(coalesce(cast(m.PROC_CD as string),''), '[^A-Za-z0-9]', '')) = c.CL_CODE
       WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT
     ),
-    -- 2) Medical claims - BILL_PROC_CD (HCPCS or NOC)
+    -- 2) Medical claims - BILL_PROC_CD (HCPCS)
     med_bill_proc_cd AS (
       SELECT
         m.PATID,
@@ -2446,7 +2446,7 @@ main <- function() {
       FROM {cdm_src(cfg$tbl_medical)} m
       INNER JOIN lot_patient_input p ON m.PATID = p.PATID
       INNER JOIN codelist c
-        ON c.CL_CODE_TYPE IN ('HCPCS', 'NOC')
+        ON c.CL_CODE_TYPE = 'HCPCS'
        AND upper(regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''), '[^A-Za-z0-9]', '')) = c.CL_CODE
       WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT
@@ -2474,9 +2474,9 @@ main <- function() {
         AND cast(m.FST_DT AS date) >= p.INDEX_DATE
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT
     ),
-    -- 4) med_procedure table (additional HCPCS/NOC procedure codes)
+    -- 4) med_procedure table (additional HCPCS procedure codes)
     -- NOTE: MED_PROCEDURE.PROC contains ICD codes per Optum data dict.
-    -- Matching HCPCS/NOC here is a safety net; expect ~0 matches from this source.
+    -- Matching HCPCS here is a safety net; expect ~0 matches from this source.
     medproc AS (
       SELECT
         mp.PATID,
@@ -2491,7 +2491,7 @@ main <- function() {
       FROM {cdm_src(cfg$tbl_med_proc)} mp
       INNER JOIN lot_patient_input p ON mp.PATID = p.PATID
       INNER JOIN codelist c
-        ON c.CL_CODE_TYPE IN ('HCPCS', 'NOC')
+        ON c.CL_CODE_TYPE = 'HCPCS'
        AND upper(regexp_replace(coalesce(cast(mp.PROC as string),''), '[^A-Za-z0-9]', '')) = c.CL_CODE
       WHERE cast(mp.FST_DT AS date) >= p.INDEX_DATE
         AND cast(mp.FST_DT AS date) <= p.OBS_END_DT
