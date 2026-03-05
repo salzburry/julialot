@@ -1175,6 +1175,7 @@ print_descriptives <- function(con) {
         theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10))
       save_plot(p4, "fig04_map_patients_by_med.png",
                section = "MAP", title = "Fig 4: MAP Patients by Medication")
+      map_by_med$avg_map_days <- round(as.numeric(map_by_med$avg_map_days), 1)
       save_table(map_by_med, section = "MAP",
                  title = "Table: MAP Summary by Medication")
     }
@@ -1286,6 +1287,8 @@ print_descriptives <- function(con) {
         theme(legend.position = "none")
       save_plot(p5, "fig05_lot1_top_regimens.png", width = 12, height = 7,
                section = "LOT1", title = "Fig 5: Top 15 Induction Regimens")
+      regimens$avg_length <- round(as.numeric(regimens$avg_length), 1)
+      regimens$avg_meds   <- round(as.numeric(regimens$avg_meds), 1)
       save_table(regimens, section = "LOT1",
                  title = "Table: Top 25 Induction Regimens")
     }
@@ -1358,6 +1361,8 @@ print_descriptives <- function(con) {
         theme(legend.position = "none")
       save_plot(p7, "fig07_lot1_end_reasons.png", width = 8, height = 6,
                section = "LOT1", title = "Fig 7: LOT1 End Reasons")
+      end_reasons$avg_length <- round(as.numeric(end_reasons$avg_length), 1)
+      end_reasons$pct        <- round(end_reasons$pct, 1)
       save_table(end_reasons, section = "LOT1",
                  title = "Table: LOT1 End Reasons")
     }
