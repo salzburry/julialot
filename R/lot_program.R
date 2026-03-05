@@ -431,10 +431,7 @@ build_dashboard <- function() {
   }
 
   dir.create(cfg$output_dir, showWarnings = FALSE, recursive = TRUE)
-  dash_path  <- file.path(cfg$output_dir, "lot_dashboard.html")
-  parts_dir  <- file.path(cfg$output_dir, ".dashboard_parts")
-  lib_dir    <- file.path(parts_dir, "lib")
-  dir.create(parts_dir, showWarnings = FALSE, recursive = TRUE)
+  dash_path <- file.path(cfg$output_dir, "lot_dashboard.html")
 
   tryCatch({
     tab_buttons <- list()
@@ -445,16 +442,20 @@ build_dashboard <- function() {
       item   <- dashboard_items[[idx]]
       tab_id <- paste0("tab", idx)
 
+      # Render widget/card to self-contained HTML string
       if (item$type == "html_card") {
-        # Raw HTML card — write directly as a standalone HTML file
-        part_file <- file.path(parts_dir, paste0("part_", idx, ".html"))
-        writeLines(item$html, part_file)
+        widget_html <- item$html
       } else {
-        # htmlwidget — save with shared lib directory for size efficiency
-        part_file <- file.path(parts_dir, paste0("part_", idx, ".html"))
-        htmlwidgets::saveWidget(item$widget, part_file,
-                                selfcontained = FALSE, libdir = lib_dir)
+        # Save widget to a temp file as self-contained, then read it back
+        tmp_file <- tempfile(fileext = ".html")
+        htmlwidgets::saveWidget(item$widget, tmp_file, selfcontained = TRUE)
+        widget_html <- paste(readLines(tmp_file, warn = FALSE), collapse = "\n")
+        unlink(tmp_file)
       }
+
+      # Base64-encode the content for a data URI iframe
+      # This avoids all escaping issues and keeps CSS/JS isolation
+      encoded <- base64enc::base64encode(charToRaw(widget_html))
 
       active_class <- if (idx == 1) "active" else ""
       section_tag  <- paste0('<span class="section-tag">', item$section, '</span> ')
@@ -463,10 +464,10 @@ build_dashboard <- function() {
         active_class, tab_id, item$section, section_tag, item$title
       )
 
-      iframe_height <- if (item$type == "table") "600" else "550"
+      iframe_height <- if (item$type == "table") "600" else if (item$type == "html_card") "500" else "550"
       tab_panels[[idx]] <- sprintf(
-        '<div id="%s" class="tab-content" style="display:%s"><iframe src=".dashboard_parts/part_%d.html" style="width:100%%;height:%spx;border:none;" onload="resizeIframe(this)"></iframe></div>',
-        tab_id, if (idx == 1) "block" else "none", idx, iframe_height
+        '<div id="%s" class="tab-content" style="display:%s"><iframe src="data:text/html;base64,%s" style="width:100%%;height:%spx;border:none;" sandbox="allow-scripts allow-same-origin" onload="resizeIframe(this)"></iframe></div>',
+        tab_id, if (idx == 1) "block" else "none", encoded, iframe_height
       )
     }
 
@@ -503,7 +504,7 @@ build_dashboard <- function() {
     background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
   }
   .filter-bar {
-    display: flex; gap: 4px; padding: 10px 32px;
+    display: flex; flex-wrap: wrap; gap: 4px; padding: 10px 32px;
     border-bottom: 1px solid #eee; background: #fafafa;
   }
   .filter-btn {
@@ -542,7 +543,6 @@ function resizeIframe(iframe) {
   try {
     iframe.style.height = iframe.contentWindow.document.body.scrollHeight + 40 + "px";
   } catch(e) {}
-  // Delayed resize for plotly rendering
   setTimeout(function() {
     try { iframe.style.height = iframe.contentWindow.document.body.scrollHeight + 40 + "px"; } catch(e) {}
   }, 800);
@@ -556,7 +556,6 @@ function showTab(tabId, btn) {
   document.getElementById(tabId).style.display = "block";
   btn.classList.add("active");
   window.dispatchEvent(new Event("resize"));
-  // Re-trigger iframe resize for the newly visible tab
   var iframe = document.querySelector("#" + tabId + " iframe");
   if (iframe) { setTimeout(function() { resizeIframe(iframe); }, 300); }
 }
@@ -570,7 +569,6 @@ function filterSection(section, btn) {
       el.classList.add("hidden");
     }
   });
-  // If active tab is now hidden, click first visible tab
   var activeTab = document.querySelector(".tab-btn.active");
   if (activeTab && activeTab.classList.contains("hidden")) {
     var firstVisible = document.querySelector(".tab-btn:not(.hidden)");
