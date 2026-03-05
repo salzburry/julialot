@@ -597,7 +597,7 @@ build_dashboard <- function() {
 <body>
 <div class="header">
   <h1>LOT Part 2 &mdash; Interactive Dashboard</h1>
-  <p>MMA_MED &bull; MAP &bull; LOT1_BASE &bull; SCT descriptive summary &nbsp;|&nbsp; Generated ', format(Sys.time(), "%Y-%m-%d %H:%M"), '</p>
+  <p>MMA_MED &bull; MAP &bull; LOT1_BASE &bull; SCT &bull; Patient Journey &nbsp;|&nbsp; Generated ', format(Sys.time(), "%Y-%m-%d %H:%M"), '</p>
 </div>
 <div class="nav-bar">
 <div class="filter-bar">
@@ -1175,6 +1175,7 @@ print_descriptives <- function(con) {
         theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10))
       save_plot(p4, "fig04_map_patients_by_med.png",
                section = "MAP", title = "Fig 4: MAP Patients by Medication")
+      map_by_med$avg_map_days <- round(as.numeric(map_by_med$avg_map_days), 1)
       save_table(map_by_med, section = "MAP",
                  title = "Table: MAP Summary by Medication")
     }
@@ -1286,6 +1287,8 @@ print_descriptives <- function(con) {
         theme(legend.position = "none")
       save_plot(p5, "fig05_lot1_top_regimens.png", width = 12, height = 7,
                section = "LOT1", title = "Fig 5: Top 15 Induction Regimens")
+      regimens$avg_length <- round(as.numeric(regimens$avg_length), 1)
+      regimens$avg_meds   <- round(as.numeric(regimens$avg_meds), 1)
       save_table(regimens, section = "LOT1",
                  title = "Table: Top 25 Induction Regimens")
     }
@@ -1358,6 +1361,8 @@ print_descriptives <- function(con) {
         theme(legend.position = "none")
       save_plot(p7, "fig07_lot1_end_reasons.png", width = 8, height = 6,
                section = "LOT1", title = "Fig 7: LOT1 End Reasons")
+      end_reasons$avg_length <- round(as.numeric(end_reasons$avg_length), 1)
+      end_reasons$pct        <- round(end_reasons$pct, 1)
       save_table(end_reasons, section = "LOT1",
                  title = "Table: LOT1 End Reasons")
     }
@@ -1642,7 +1647,7 @@ print_descriptives <- function(con) {
                 "\nEnd: ", pat_maps$MAP_END_DT,
                 "\nDays: ", pat_maps$MAP_DAYS,
                 "\nMAP #", pat_maps$MAP_CNT,
-                if (any(pat_maps$MAP_DISCON_FLG == 1)) paste0("\nDiscon: Yes") else ""
+                ifelse(pat_maps$MAP_DISCON_FLG == 1, "\nDiscon: Yes", "")
               ),
               stringsAsFactors = FALSE
             )
@@ -1684,6 +1689,484 @@ print_descriptives <- function(con) {
     }
   }, error = function(e) {
     log_msg("WARN: Patient journey timelines failed: ", conditionMessage(e))
+  })
+
+  # --------------------------------------------------------
+  # 6. Restart / Gap Summary Table
+  # --------------------------------------------------------
+  tryCatch({
+    restart_summary <- db_q(con, "
+      WITH gaps AS (
+        SELECT
+          a.PATID, a.MAP_MED_TYPE AS MED, a.MAP_MED_CLASS AS CLASS,
+          a.MAP_CNT,
+          datediff(a.MAP_START_DT, b.MAP_END_DT) - 1 AS gap_days
+        FROM map_stacked a
+        INNER JOIN map_stacked b
+          ON a.PATID = b.PATID
+          AND a.MAP_MED_TYPE = b.MAP_MED_TYPE
+          AND a.MAP_CNT = b.MAP_CNT + 1
+      )
+      SELECT
+        MED, CLASS,
+        count(DISTINCT PATID) AS n_patients_with_restart,
+        count(*) AS n_restarts,
+        round(avg(gap_days), 1) AS avg_gap_days,
+        percentile_approx(gap_days, 0.25) AS p25_gap,
+        percentile_approx(gap_days, 0.5) AS median_gap,
+        percentile_approx(gap_days, 0.75) AS p75_gap,
+        max(gap_days) AS max_gap
+      FROM gaps
+      GROUP BY MED, CLASS
+      ORDER BY count(DISTINCT PATID) DESC
+    ")
+    if (nrow(restart_summary) > 0) {
+      for (col in c("avg_gap_days", "p25_gap", "median_gap", "p75_gap", "max_gap")) {
+        restart_summary[[col]] <- as.numeric(restart_summary[[col]])
+      }
+      restart_summary$n_patients_with_restart <- as.numeric(restart_summary$n_patients_with_restart)
+      restart_summary$n_restarts <- as.numeric(restart_summary$n_restarts)
+      save_table(restart_summary, section = "JOURNEY",
+                 title = "Table: Restart/Gap Summary by Medication")
+      log_msg("  Restart/gap summary table added.")
+    }
+  }, error = function(e) {
+    log_msg("WARN: Restart/gap summary failed: ", conditionMessage(e))
+  })
+
+  # --------------------------------------------------------
+  # 7. True regimen-state timeline (contiguous regimen segments)
+  #    Derives change-point intervals where the active med set is constant.
+  #    Y-axis: regimen labels (e.g., "BORT+LENA"), X-axis: date range.
+  #    Gaps between segments are visible as whitespace.
+  # --------------------------------------------------------
+  tryCatch({
+    if (has_plotly) {
+      # Select patients with interesting regimen transitions:
+      # add-med events, restarts, or multiple distinct regimens
+      regimen_pats <- db_q(con, "
+        WITH change_patients AS (
+          SELECT PATID FROM lot1_base WHERE LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
+          UNION
+          SELECT PATID FROM map_stacked WHERE MAP_CNT >= 2
+          UNION
+          SELECT PATID FROM (
+            SELECT PATID, count(DISTINCT MAP_MED_TYPE) AS n_meds
+            FROM map_stacked GROUP BY PATID HAVING count(DISTINCT MAP_MED_TYPE) >= 2
+          )
+        )
+        SELECT DISTINCT PATID FROM change_patients LIMIT 8
+      ")
+
+      if (nrow(regimen_pats) > 0) {
+        rp_ids_sql <- paste0("('", paste(regimen_pats$PATID, collapse = "','"), "')")
+
+        # Get all MAPs for these patients
+        reg_maps <- db_q(con, glue("
+          SELECT PATID, MAP_MED_TYPE AS MED, MAP_MED_CLASS AS CLASS,
+                 MAP_START_DT, MAP_END_DT, MAP_CNT
+          FROM map_stacked
+          WHERE PATID IN {rp_ids_sql}
+          ORDER BY PATID, MAP_START_DT, MAP_MED_TYPE
+        "))
+
+        # Get milestones
+        reg_ms <- db_q(con, glue("
+          SELECT lb.PATID, lb.LOT1_START_DT,
+                 lb.LOT1_BASE_1ST_ADD_MED_DT, lb.LOT1_BASE_MEDS,
+                 lbe.LOT1_BASE_END_DT, lbe.LOT1_BASE_END_REASON
+          FROM lot1_base lb
+          LEFT JOIN lot1_base_end lbe ON lb.PATID = lbe.PATID
+          WHERE lb.PATID IN {rp_ids_sql}
+        "))
+
+        if (nrow(reg_maps) > 0) {
+          reg_maps$MAP_START_DT <- as.Date(reg_maps$MAP_START_DT)
+          reg_maps$MAP_END_DT   <- as.Date(reg_maps$MAP_END_DT)
+
+          show_reg_pats <- unique(reg_maps$PATID)[1:min(6, length(unique(reg_maps$PATID)))]
+
+          for (pid in show_reg_pats) {
+            pat_m <- reg_maps[reg_maps$PATID == pid, ]
+            pat_info <- reg_ms[reg_ms$PATID == pid, ]
+
+            # --- Derive regimen segments from MAP change points ---
+            # Collect all boundary dates (MAP starts and MAP ends + 1 day)
+            boundary_dates <- sort(unique(c(pat_m$MAP_START_DT, pat_m$MAP_END_DT + 1)))
+
+            segments <- list()
+            for (k in seq_len(length(boundary_dates) - 1)) {
+              seg_start <- boundary_dates[k]
+              seg_end   <- boundary_dates[k + 1] - 1  # inclusive end
+
+              # Which MAPs are active during this segment?
+              active <- pat_m[pat_m$MAP_START_DT <= seg_start & pat_m$MAP_END_DT >= seg_end, ]
+              if (nrow(active) > 0) {
+                active_meds <- paste(sort(unique(active$MED)), collapse = "+")
+                segments[[length(segments) + 1]] <- data.frame(
+                  start = seg_start, end = seg_end,
+                  regimen = active_meds,
+                  n_meds = length(unique(active$MED)),
+                  stringsAsFactors = FALSE
+                )
+              }
+              # If no MAPs active, this is a gap — no segment added, shows as whitespace
+            }
+
+            if (length(segments) == 0) next
+            seg_df <- do.call(rbind, segments)
+
+            # Merge consecutive segments with the same regimen
+            merged <- list(seg_df[1, ])
+            for (k in seq_len(nrow(seg_df))[-1]) {
+              prev <- merged[[length(merged)]]
+              curr <- seg_df[k, ]
+              if (curr$regimen == prev$regimen && curr$start <= prev$end + 1) {
+                # Extend previous segment
+                merged[[length(merged)]]$end <- max(prev$end, curr$end)
+              } else {
+                merged[[length(merged) + 1]] <- curr
+              }
+            }
+            seg_df <- do.call(rbind, merged)
+            seg_df$days <- as.numeric(seg_df$end - seg_df$start) + 1
+
+            # Assign y-positions: unique regimens
+            reg_labels <- unique(seg_df$regimen)
+            reg_y <- setNames(seq_along(reg_labels), reg_labels)
+
+            # Color palette for regimens (cycle through a set)
+            reg_colors <- c("#2E86AB", "#44BBA4", "#F18F01", "#C73E1D", "#A23B72",
+                           "#3F88C5", "#8D5A97", "#636e72", "#E8A87C", "#41B3A3")
+
+            shapes <- list()
+            for (j in seq_len(nrow(seg_df))) {
+              row <- seg_df[j, ]
+              y_pos <- reg_y[row$regimen]
+              color <- reg_colors[((y_pos - 1) %% length(reg_colors)) + 1]
+
+              shapes[[length(shapes) + 1]] <- list(
+                type = "rect",
+                x0 = as.character(row$start), x1 = as.character(row$end),
+                y0 = y_pos - 0.35, y1 = y_pos + 0.35,
+                fillcolor = color, opacity = 0.85,
+                line = list(color = color, width = 1),
+                layer = "below"
+              )
+            }
+
+            # Milestone vertical lines
+            vlines <- list()
+            annotations <- list()
+            if (nrow(pat_info) > 0) {
+              ms <- pat_info[1, ]
+              add_vline3 <- function(dt, label, color) {
+                if (!is.na(dt) && !is.null(dt)) {
+                  vlines[[length(vlines) + 1]] <<- list(
+                    type = "line", x0 = as.character(dt), x1 = as.character(dt),
+                    y0 = 0.3, y1 = length(reg_labels) + 0.7,
+                    line = list(color = color, width = 2, dash = "dash"), layer = "above"
+                  )
+                  annotations[[length(annotations) + 1]] <<- list(
+                    x = as.character(dt), y = length(reg_labels) + 0.6,
+                    text = label, showarrow = FALSE,
+                    font = list(size = 10, color = color),
+                    xanchor = "left", textangle = -30
+                  )
+                }
+              }
+              add_vline3(as.Date(ms$LOT1_START_DT), "LOT1 Start", "#2E86AB")
+              add_vline3(as.Date(ms$LOT1_BASE_1ST_ADD_MED_DT), "Add Med", "#F18F01")
+              add_vline3(as.Date(ms$LOT1_BASE_END_DT),
+                         paste0("LOT1 End (", ms$LOT1_BASE_END_REASON, ")"), "#C73E1D")
+            }
+
+            # Hover trace
+            hover_df3 <- data.frame(
+              x = seg_df$start + (seg_df$end - seg_df$start) / 2,
+              y = reg_y[seg_df$regimen],
+              text = paste0("Regimen: ", seg_df$regimen,
+                           "\nStart: ", seg_df$start, "\nEnd: ", seg_df$end,
+                           "\nDays: ", seg_df$days,
+                           "\nMeds: ", seg_df$n_meds),
+              stringsAsFactors = FALSE
+            )
+
+            pat_idx <- which(show_reg_pats == pid)
+            regimen_label <- if (nrow(pat_info) > 0) pat_info$LOT1_BASE_MEDS[1] else "?"
+            pp2 <- plotly::plot_ly(hover_df3, x = ~x, y = ~y, text = ~text,
+                                    type = "scatter", mode = "markers",
+                                    marker = list(size = 1, opacity = 0),
+                                    hoverinfo = "text") |>
+              plotly::layout(
+                title = list(
+                  text = paste0("Regimen State ", pat_idx, " [", regimen_label, "]"),
+                  font = list(size = 14)),
+                xaxis = list(title = "", type = "date", gridcolor = "#eee"),
+                yaxis = list(title = "", tickmode = "array",
+                             tickvals = seq_along(reg_labels), ticktext = reg_labels,
+                             range = c(0.3, length(reg_labels) + 0.8), gridcolor = "#eee"),
+                shapes = c(shapes, vlines),
+                annotations = annotations,
+                showlegend = FALSE,
+                margin = list(l = 140, t = 50, b = 40, r = 30),
+                plot_bgcolor = "#fafafa", paper_bgcolor = "white"
+              ) |>
+              plotly::config(displayModeBar = TRUE, displaylogo = FALSE,
+                             modeBarButtonsToRemove = list("lasso2d", "select2d"))
+
+            add_to_dashboard(pp2, section = "JOURNEY",
+                             title = paste0("Regimen State ", pat_idx, ": ", regimen_label))
+          }
+          log_msg("  Regimen-state timelines added: ", length(show_reg_pats), " patients")
+        }
+      }
+    }
+  }, error = function(e) {
+    log_msg("WARN: Regimen-state timelines failed: ", conditionMessage(e))
+  })
+
+  # --------------------------------------------------------
+  # 8. Improved distribution views — zoomed to p95
+  # --------------------------------------------------------
+  tryCatch({
+    if (has_ggplot2) {
+      # MAP length zoomed
+      map_p95 <- tryCatch(
+        as.numeric(db_q(con, "SELECT percentile_approx(datediff(MAP_END_DT, MAP_START_DT) + 1, 0.95) AS p95 FROM map_stacked")$p95),
+        error = function(e) NA)
+      if (!is.na(map_p95)) {
+        map_bins_z <- db_q(con, glue("
+          SELECT floor((datediff(MAP_END_DT, MAP_START_DT) + 1) / 30) * 30 AS bin_start,
+                 count(*) AS n
+          FROM map_stacked
+          WHERE datediff(MAP_END_DT, MAP_START_DT) + 1 <= {round(map_p95 * 1.1)}
+          GROUP BY floor((datediff(MAP_END_DT, MAP_START_DT) + 1) / 30) * 30
+          ORDER BY bin_start
+        "))
+        if (nrow(map_bins_z) > 0) {
+          map_bins_z$bin_start <- as.numeric(map_bins_z$bin_start)
+          map_bins_z$n <- as.numeric(map_bins_z$n)
+          map_median_z <- tryCatch(
+            as.numeric(db_q(con, "SELECT percentile_approx(datediff(MAP_END_DT, MAP_START_DT) + 1, 0.5) AS m FROM map_stacked")$m),
+            error = function(e) NA)
+          pz1 <- ggplot(map_bins_z, aes(x = bin_start, y = n,
+                        text = paste0("Days: ", bin_start, "-", bin_start + 29,
+                                      "\nMAPs: ", format(n, big.mark = ",")))) +
+            geom_bar(stat = "identity", width = 28, fill = "#2E86AB", alpha = 0.85) +
+            { if (!is.na(map_median_z)) geom_vline(xintercept = map_median_z,
+                       linetype = "dashed", color = "#C73E1D", linewidth = 0.8) } +
+            { if (!is.na(map_median_z)) annotate("text", x = map_median_z + 15, y = Inf, vjust = 2, hjust = 0,
+                     label = paste0("Median: ", round(map_median_z), "d"),
+                     color = "#C73E1D", fontface = "bold", size = 3.8) } +
+            scale_x_continuous(breaks = seq(0, max(map_bins_z$bin_start, na.rm = TRUE), by = 90)) +
+            scale_y_continuous(labels = scales::comma_format(), expand = expansion(mult = c(0, 0.1))) +
+            labs(title = "MAP Length Distribution (Zoomed to P95)",
+                 subtitle = paste0("Clipped at ", round(map_p95), " days (95th percentile); ",
+                                   format(sum(map_bins_z$n), big.mark = ","), " MAPs shown"),
+                 x = "MAP Length (days)", y = "Number of MAPs") +
+            theme_lot()
+          save_plot(pz1, "fig03b_map_length_zoomed.png",
+                   section = "MAP", title = "Fig 3b: MAP Length (Zoomed)")
+        }
+      }
+
+      # LOT1 length zoomed
+      lot1_p95 <- tryCatch(
+        as.numeric(db_q(con, "SELECT percentile_approx(LOT1_BASE_LENGTH, 0.95) AS p95 FROM lot1_base WHERE LOT1_BASE_LENGTH IS NOT NULL")$p95),
+        error = function(e) NA)
+      if (!is.na(lot1_p95)) {
+        lot1_bins_z <- db_q(con, glue("
+          SELECT floor(LOT1_BASE_LENGTH / 30) * 30 AS bin_start,
+                 count(*) AS n
+          FROM lot1_base
+          WHERE LOT1_BASE_LENGTH IS NOT NULL AND LOT1_BASE_LENGTH <= {round(lot1_p95 * 1.1)}
+          GROUP BY floor(LOT1_BASE_LENGTH / 30) * 30
+          ORDER BY bin_start
+        "))
+        if (nrow(lot1_bins_z) > 0) {
+          lot1_bins_z$bin_start <- as.numeric(lot1_bins_z$bin_start)
+          lot1_bins_z$n <- as.numeric(lot1_bins_z$n)
+          lot1_median_z <- tryCatch(
+            as.numeric(db_q(con, "SELECT percentile_approx(LOT1_BASE_LENGTH, 0.5) AS m FROM lot1_base WHERE LOT1_BASE_LENGTH IS NOT NULL")$m),
+            error = function(e) NA)
+          pz2 <- ggplot(lot1_bins_z, aes(x = bin_start, y = n,
+                        text = paste0("Days: ", bin_start, "-", bin_start + 29,
+                                      "\nPatients: ", format(n, big.mark = ",")))) +
+            geom_bar(stat = "identity", width = 28, fill = "#44BBA4", alpha = 0.85) +
+            { if (!is.na(lot1_median_z)) geom_vline(xintercept = lot1_median_z,
+                       linetype = "dashed", color = "#C73E1D", linewidth = 0.8) } +
+            { if (!is.na(lot1_median_z)) annotate("text", x = lot1_median_z + 15, y = Inf, vjust = 2, hjust = 0,
+                     label = paste0("Median: ", round(lot1_median_z), "d"),
+                     color = "#C73E1D", fontface = "bold", size = 3.8) } +
+            scale_x_continuous(breaks = seq(0, max(lot1_bins_z$bin_start, na.rm = TRUE), by = 90)) +
+            scale_y_continuous(labels = scales::comma_format(), expand = expansion(mult = c(0, 0.1))) +
+            labs(title = "LOT1 Length Distribution (Zoomed to P95)",
+                 subtitle = paste0("Clipped at ", round(lot1_p95), " days (95th percentile); ",
+                                   format(sum(lot1_bins_z$n), big.mark = ","), " patients shown"),
+                 x = "LOT1 Length (days)", y = "Number of Patients") +
+            theme_lot()
+          save_plot(pz2, "fig06b_lot1_length_zoomed.png",
+                   section = "LOT1", title = "Fig 6b: LOT1 Length (Zoomed)")
+        }
+      }
+    }
+  }, error = function(e) {
+    log_msg("WARN: Zoomed distribution views failed: ", conditionMessage(e))
+  })
+
+  # --------------------------------------------------------
+  # 9. SCT zero-state card (when no SCT events detected)
+  # --------------------------------------------------------
+  tryCatch({
+    sct_event_n <- tryCatch(
+      as.numeric(db_q(con, "SELECT sum(CASE WHEN LOT1_TX_ENDDATE IS NOT NULL THEN 1 ELSE 0 END) AS n FROM lot1_sct")$n),
+      error = function(e) 0)
+    sct_codes_n <- tryCatch(
+      as.numeric(db_q(con, "SELECT count(*) AS n FROM sct_codelist")$n),
+      error = function(e) NA)
+    sct_raw_n <- tryCatch(
+      as.numeric(db_q(con, "SELECT count(*) AS n FROM sct_claims_raw")$n),
+      error = function(e) 0)
+
+    if (sct_event_n == 0) {
+      sct_html <- paste0('<!DOCTYPE html><html><head><meta charset="UTF-8">
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: #fff; padding: 32px; color: #2d3436; }
+  .zero-state { text-align: center; padding: 60px 24px; }
+  .zero-state h2 { font-size: 22px; color: #636e72; margin-bottom: 12px; }
+  .zero-state p  { font-size: 14px; color: #b2bec3; margin-bottom: 8px; }
+  .info-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+               gap: 12px; max-width: 600px; margin: 24px auto 0; }
+  .info-card { background: #f5f6fa; border-radius: 8px; padding: 14px;
+               border: 1px solid #dfe6e9; text-align: left; }
+  .info-card h4 { font-size: 11px; color: #636e72; text-transform: uppercase;
+                  letter-spacing: 0.5px; margin-bottom: 4px; }
+  .info-card .val { font-size: 18px; font-weight: 700; color: #2d3436; }
+</style></head><body>
+<div class="zero-state">
+  <h2>No LOT-Ending SCT Events</h2>
+  <p>No stem cell transplant events ended LOT1 in this run.</p>
+  <p>Raw SCT claims may still exist but did not meet LOT-ending criteria. This may be expected if the cohort does not include transplant-eligible patients.</p>
+  <div class="info-grid">
+    <div class="info-card"><h4>SCT Codes Loaded</h4><div class="val">',
+        if (!is.na(sct_codes_n)) format(sct_codes_n, big.mark = ",") else "N/A",
+        '</div></div>
+    <div class="info-card"><h4>Raw SCT Claims Found</h4><div class="val">',
+        format(sct_raw_n, big.mark = ","),
+        '</div></div>
+    <div class="info-card"><h4>SCT Ending LOT1</h4><div class="val">0</div></div>
+  </div>
+</div></body></html>')
+      add_html_card(sct_html, section = "SCT", title = "SCT Summary")
+      log_msg("  SCT zero-state card added.")
+    }
+  }, error = function(e) {
+    log_msg("WARN: SCT zero-state card failed: ", conditionMessage(e))
+  })
+
+  # --------------------------------------------------------
+  # 10. Sankey / alluvial flow: Regimen -> Med Count -> End Reason
+  # --------------------------------------------------------
+  tryCatch({
+    if (has_plotly) {
+      flow_data <- db_q(con, "
+        SELECT
+          CASE
+            WHEN LOT1_BASE_MEDS IN ('BORT LENA', 'BORT', 'LENA', 'BORT DARA LENA',
+                                     'BORT CYCL', 'DARA LENA', 'BORT DARA',
+                                     'CARF LENA', 'BORT CYCL DARA LENA', 'DARA')
+            THEN LOT1_BASE_MEDS
+            ELSE 'OTHER'
+          END AS regimen,
+          CAST(LOT1_MED_CNT AS STRING) AS med_count,
+          lbe.LOT1_BASE_END_REASON AS end_reason,
+          count(*) AS n
+        FROM lot1_base lb
+        INNER JOIN lot1_base_end lbe ON lb.PATID = lbe.PATID
+        GROUP BY 1, 2, 3
+        ORDER BY n DESC
+      ")
+
+      if (nrow(flow_data) > 0) {
+        flow_data$n <- as.numeric(flow_data$n)
+
+        # Build Sankey node/link structure
+        regimens_u <- sort(unique(flow_data$regimen))
+        medcnts_u  <- sort(unique(flow_data$med_count))
+        reasons_u  <- sort(unique(flow_data$end_reason))
+
+        # Node labels: regimen nodes, then med_count nodes, then end_reason nodes
+        node_labels <- c(regimens_u,
+                        paste0(medcnts_u, " med(s)"),
+                        reasons_u)
+
+        n_reg <- length(regimens_u)
+        n_mc  <- length(medcnts_u)
+
+        reg_idx <- setNames(seq_along(regimens_u) - 1, regimens_u)
+        mc_idx  <- setNames(seq_along(medcnts_u) - 1 + n_reg, medcnts_u)
+        er_idx  <- setNames(seq_along(reasons_u) - 1 + n_reg + n_mc, reasons_u)
+
+        # Links: regimen -> med_count
+        link1 <- aggregate(n ~ regimen + med_count, data = flow_data, FUN = sum)
+        # Links: med_count -> end_reason
+        link2 <- aggregate(n ~ med_count + end_reason, data = flow_data, FUN = sum)
+
+        sources <- c(reg_idx[link1$regimen], mc_idx[link2$med_count])
+        targets <- c(mc_idx[link1$med_count], er_idx[link2$end_reason])
+        values  <- c(link1$n, link2$n)
+
+        # Color nodes by type
+        reg_colors <- rep("#2E86AB", n_reg)
+        mc_colors  <- rep("#44BBA4", n_mc)
+        er_colors  <- sapply(reasons_u, function(r) {
+          switch(r, DISCONTINUATION = "#C73E1D", MED_ADD = "#F18F01",
+                 CENSORED = "#2E86AB", SCT_AUTO = "#A23B72",
+                 SCT_ALLO = "#8D5A97", SCT_CART = "#3F88C5", "#636e72")
+        })
+        node_colors <- c(reg_colors, mc_colors, er_colors)
+
+        # Link colors — semi-transparent version of source node
+        hex_to_rgba <- function(hex, alpha = 0.3) {
+          r <- strtoi(substr(hex, 2, 3), 16)
+          g <- strtoi(substr(hex, 4, 5), 16)
+          b <- strtoi(substr(hex, 6, 7), 16)
+          sprintf("rgba(%d,%d,%d,%.1f)", r, g, b, alpha)
+        }
+        link_colors <- sapply(sources + 1, function(i) hex_to_rgba(node_colors[i]))
+
+        ps <- plotly::plot_ly(
+          type = "sankey",
+          orientation = "h",
+          node = list(
+            pad = 15, thickness = 20,
+            line = list(color = "black", width = 0.5),
+            label = node_labels,
+            color = node_colors
+          ),
+          link = list(
+            source = as.integer(sources),
+            target = as.integer(targets),
+            value = as.numeric(values),
+            color = link_colors
+          )
+        ) |>
+          plotly::layout(
+            title = list(text = "Patient Flow: Regimen → Med Count → End Reason",
+                         font = list(size = 16)),
+            font = list(size = 11),
+            margin = list(l = 20, r = 20, t = 50, b = 30)
+          ) |>
+          plotly::config(displayModeBar = TRUE, displaylogo = FALSE)
+
+        add_to_dashboard(ps, section = "LOT1", title = "Fig 9: Patient Flow (Sankey)")
+        log_msg("  Sankey flow chart added.")
+      }
+    }
+  }, error = function(e) {
+    log_msg("WARN: Sankey flow chart failed: ", conditionMessage(e))
   })
 
   # Build combined interactive dashboard
@@ -3170,8 +3653,23 @@ main <- function() {
       map_n    <- as.numeric(db_q(con, "SELECT count(*) AS n FROM map_stacked")$n)
       lot1_n   <- as.numeric(db_q(con, "SELECT count(*) AS n FROM lot1_base")$n)
 
-      run_step(con, "S22_persist_run_metadata", glue("
-        CREATE OR REPLACE TABLE {wrk('LOT_RUN_METADATA')} AS
+      # Create metadata table if not exists, then append this run
+      run_step(con, "S22a_create_metadata_table", glue("
+        CREATE TABLE IF NOT EXISTS {wrk('LOT_RUN_METADATA')} (
+          RUN_ID STRING, RUN_TIMESTAMP TIMESTAMP,
+          CDM_SCHEMA STRING, WORK_SCHEMA STRING, INPUT_COHORT_TABLE STRING,
+          INDUCTION_WINDOW_DAYS INT, MAP_DISCON_GAP_DAYS INT,
+          MEDICAL_DAY_SUPPLY INT, LOT_DISCON_GAP_DAYS INT,
+          N_COHORT_PATIENTS BIGINT, N_MMA_CLAIMS BIGINT,
+          N_MAPS BIGINT, N_LOT1_PATIENTS BIGINT
+        )
+      "))
+      # Delete any prior row for this exact run_id (idempotent re-runs)
+      run_step(con, "S22b_dedup_metadata", glue("
+        DELETE FROM {wrk('LOT_RUN_METADATA')} WHERE RUN_ID = '{run_id}'
+      "))
+      run_step(con, "S22c_insert_run_metadata", glue("
+        INSERT INTO {wrk('LOT_RUN_METADATA')}
         SELECT
           '{run_id}' AS RUN_ID,
           current_timestamp() AS RUN_TIMESTAMP,
@@ -3222,8 +3720,17 @@ main <- function() {
 
       if (length(qc_checks) > 0) {
         qc_union <- paste(qc_checks, collapse = "\n        UNION ALL\n        ")
-        run_step(con, "S23_persist_qc_summary", glue("
-          CREATE OR REPLACE TABLE {wrk('LOT_QC_SUMMARY')} AS
+        # Create QC table if not exists, then append this run's checks
+        run_step(con, "S23a_create_qc_table", glue("
+          CREATE TABLE IF NOT EXISTS {wrk('LOT_QC_SUMMARY')} (
+            CHECK_NAME STRING, CHECK_VALUE BIGINT, CHECK_STATUS STRING, RUN_ID STRING
+          )
+        "))
+        run_step(con, "S23b_dedup_qc", glue("
+          DELETE FROM {wrk('LOT_QC_SUMMARY')} WHERE RUN_ID = '{run_id}'
+        "))
+        run_step(con, "S23c_insert_qc_summary", glue("
+          INSERT INTO {wrk('LOT_QC_SUMMARY')}
           {qc_union}
         "))
       }
