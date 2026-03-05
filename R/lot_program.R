@@ -317,6 +317,8 @@ has_ggplot2 <- requireNamespace("ggplot2", quietly = TRUE)
 has_plotly  <- requireNamespace("plotly", quietly = TRUE) &&
                requireNamespace("htmlwidgets", quietly = TRUE)
 has_dt      <- requireNamespace("DT", quietly = TRUE)
+has_jsonlite  <- requireNamespace("jsonlite", quietly = TRUE)
+has_base64enc <- requireNamespace("base64enc", quietly = TRUE)
 if (has_ggplot2) {
   suppressPackageStartupMessages(library(ggplot2))
 }
@@ -427,6 +429,10 @@ add_html_card <- function(html_content, section, title) {
 build_dashboard <- function() {
   if (length(dashboard_items) == 0) {
     log_msg("  Skipping dashboard (no items collected).")
+    return(invisible(NULL))
+  }
+  if (!has_jsonlite || !has_base64enc) {
+    log_msg("  Skipping dashboard (jsonlite or base64enc not available).")
     return(invisible(NULL))
   }
 
@@ -738,7 +744,8 @@ print_descriptives <- function(con) {
   <div class="card"><h3>MAPs</h3><div class="val">', fmt(map_n), '</div>
     <div class="sub">', fmt(map_pat_n), ' patients</div></div>
   <div class="card"><h3>LOT1 Patients</h3><div class="val">', fmt(lot1_n), '</div></div>
-  <div class="card"><h3>SCT Events</h3><div class="val">', fmt(sct_n), '</div></div>
+  <div class="card"><h3>LOT-Ending SCT</h3><div class="val">', fmt(sct_n), '</div>
+    <div class="sub">Patients with SCT ending LOT1</div></div>
   <div class="card"><h3>Censored (OBS_END)</h3><div class="val">',
     if (!is.na(censored_n$pct)) paste0(censored_n$pct, "%") else "N/A", '</div>
     <div class="sub">', fmt(censored_n$n), ' patients</div></div>
@@ -1554,7 +1561,7 @@ print_descriptives <- function(con) {
                  lb.LOT1_BASE_1ST_ADD_MED_DT,
                  lbe.LOT1_BASE_END_DT,
                  lbe.LOT1_BASE_END_REASON,
-                 sct.LOT1_TX_ENDDATE AS SCT_DT
+                 sct.LOT1_1ST_SCT_DT AS SCT_DT
           FROM lot1_base lb
           LEFT JOIN lot1_base_end lbe ON lb.PATID = lbe.PATID
           LEFT JOIN lot1_sct sct ON lb.PATID = sct.PATID
@@ -2320,7 +2327,7 @@ main <- function() {
     ")
     log_msg("  Code type distribution in codelist:")
     print(code_types)
-    unexpected_types <- setdiff(code_types$CL_CODE_TYPE, c("NDC", "HCPCS", "ICD"))
+    unexpected_types <- setdiff(code_types$CL_CODE_TYPE, c("NDC", "HCPCS", "NOC", "ICD"))
     if (length(unexpected_types) > 0) {
       log_msg("  WARNING: Unexpected CL_CODE_TYPE values: ", paste(unexpected_types, collapse = ", "))
       log_msg("  These codes will NOT be matched by the extraction logic!")
@@ -2404,7 +2411,7 @@ main <- function() {
     WITH codelist AS (
       SELECT /*+ BROADCAST */ * FROM mma_codelist
     ),
-    -- 1) Medical claims - PROC_CD (HCPCS)
+    -- 1) Medical claims - PROC_CD (HCPCS or NOC)
     med_proc_cd AS (
       SELECT
         m.PATID,
@@ -2419,12 +2426,12 @@ main <- function() {
       FROM {cdm_src(cfg$tbl_medical)} m
       INNER JOIN lot_patient_input p ON m.PATID = p.PATID
       INNER JOIN codelist c
-        ON c.CL_CODE_TYPE = 'HCPCS'
+        ON c.CL_CODE_TYPE IN ('HCPCS', 'NOC')
        AND upper(regexp_replace(coalesce(cast(m.PROC_CD as string),''), '[^A-Za-z0-9]', '')) = c.CL_CODE
       WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT
     ),
-    -- 2) Medical claims - BILL_PROC_CD (HCPCS)
+    -- 2) Medical claims - BILL_PROC_CD (HCPCS or NOC)
     med_bill_proc_cd AS (
       SELECT
         m.PATID,
@@ -2439,7 +2446,7 @@ main <- function() {
       FROM {cdm_src(cfg$tbl_medical)} m
       INNER JOIN lot_patient_input p ON m.PATID = p.PATID
       INNER JOIN codelist c
-        ON c.CL_CODE_TYPE = 'HCPCS'
+        ON c.CL_CODE_TYPE IN ('HCPCS', 'NOC')
        AND upper(regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''), '[^A-Za-z0-9]', '')) = c.CL_CODE
       WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT
@@ -2467,9 +2474,9 @@ main <- function() {
         AND cast(m.FST_DT AS date) >= p.INDEX_DATE
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT
     ),
-    -- 4) med_procedure table (additional HCPCS procedure codes)
+    -- 4) med_procedure table (additional HCPCS/NOC procedure codes)
     -- NOTE: MED_PROCEDURE.PROC contains ICD codes per Optum data dict.
-    -- Matching HCPCS here is a safety net; expect ~0 matches from this source.
+    -- Matching HCPCS/NOC here is a safety net; expect ~0 matches from this source.
     medproc AS (
       SELECT
         mp.PATID,
@@ -2484,7 +2491,7 @@ main <- function() {
       FROM {cdm_src(cfg$tbl_med_proc)} mp
       INNER JOIN lot_patient_input p ON mp.PATID = p.PATID
       INNER JOIN codelist c
-        ON c.CL_CODE_TYPE = 'HCPCS'
+        ON c.CL_CODE_TYPE IN ('HCPCS', 'NOC')
        AND upper(regexp_replace(coalesce(cast(mp.PROC as string),''), '[^A-Za-z0-9]', '')) = c.CL_CODE
       WHERE cast(mp.FST_DT AS date) >= p.INDEX_DATE
         AND cast(mp.FST_DT AS date) <= p.OBS_END_DT
@@ -3271,13 +3278,26 @@ main <- function() {
       SELECT PATID, LOT1_START_DT, OBS_END_DT FROM lot1_base
     ),
     -- AUTO dates within LOT1 observation window
+    -- Censored at earliest ALLO/CART: ALLO and CART immediately end LOT1,
+    -- so AUTO events after an ALLO/CART are not relevant to LOT1.
+    earliest_non_auto AS (
+      SELECT ac.PATID, min(ac.TX_DT) AS FIRST_NON_AUTO_DT
+      FROM tx_allo_cart_dates ac
+      INNER JOIN lot1 l ON ac.PATID = l.PATID
+      WHERE ac.SCT_TYPE IN ('ALLO', 'CART')
+        AND ac.TX_DT >= l.LOT1_START_DT
+        AND ac.TX_DT <= l.OBS_END_DT
+      GROUP BY ac.PATID
+    ),
     auto_in_lot1 AS (
       SELECT a.PATID, a.TX_DT,
              row_number() OVER (PARTITION BY a.PATID ORDER BY a.TX_DT) AS LOT1_SEQ
       FROM tx_auto_dates a
       INNER JOIN lot1 l ON a.PATID = l.PATID
+      LEFT JOIN earliest_non_auto ena ON a.PATID = ena.PATID
       WHERE a.TX_DT >= l.LOT1_START_DT
         AND a.TX_DT <= l.OBS_END_DT
+        AND (ena.FIRST_NON_AUTO_DT IS NULL OR a.TX_DT < ena.FIRST_NON_AUTO_DT)
     ),
     auto_pivot AS (
       SELECT PATID,
@@ -3307,10 +3327,11 @@ main <- function() {
         AND ac.TX_DT <= l.OBS_END_DT
       GROUP BY ac.PATID
     ),
-    -- Check for ALLO between AUTO_DT_1 and AUTO_DT_2 (tandem disqualifier)
+    -- Check for ALLO between AUTO_DT_1 and AUTO_DT_2 (inclusive, per spec)
+    -- Spec: tandem disqualified if ALLO exists such that AUTO_DT_1 <= ALLO <= AUTO_DT_2
     allo_between AS (
       SELECT ap.PATID,
-        sum(CASE WHEN ac.TX_DT > ap.AUTO_DT_1 AND ac.TX_DT < ap.AUTO_DT_2
+        sum(CASE WHEN ac.TX_DT >= ap.AUTO_DT_1 AND ac.TX_DT <= ap.AUTO_DT_2
                  THEN 1 ELSE 0 END) AS n_allo_between
       FROM auto_pivot ap
       LEFT JOIN tx_allo_cart_dates ac
