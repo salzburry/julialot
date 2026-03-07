@@ -2181,6 +2181,245 @@ print_descriptives <- function(con) {
     log_msg("WARN: Sankey flow chart failed: ", conditionMessage(e))
   })
 
+  # --------------------------------------------------------
+  # 11. CYCLO Monotherapy Deep-Dive
+  # Patients whose LOT1 induction regimen is CYCLO only.
+  # Shows: (1) 3 possible diagnosis dates under 30/60/90-day OP windows,
+  #        (2) subsequent MM treatments post-CYCLO initiation,
+  #        (3) SCT timing.
+  # --------------------------------------------------------
+  tryCatch({
+    # Identify CYCLO monotherapy patients
+    cyclo_pats <- db_q(con, "
+      SELECT lb.PATID, lb.INDEX_DATE, lb.LOT1_START_DT,
+             lb.LOT1_BASE_DISCON_DT, lb.LOT1_BASE_LENGTH, lb.LOT1_MED_CNT,
+             lb.OBS_END_DT, lb.DEATH_DT, lb.GDR_CD, lb.AGE_INDEX_YR
+      FROM lot1_base lb
+      WHERE lb.LOT1_BASE_MEDS = 'CYCLO'
+        AND lb.LOT1_MED_CNT = 1
+    ")
+    n_cyclo <- nrow(cyclo_pats)
+    log_msg("  CYCLO monotherapy patients: ", n_cyclo)
+
+    if (n_cyclo > 0) {
+      pat_ids_sql <- paste0("('", paste(cyclo_pats$PATID, collapse = "','"), "')")
+
+      # --- (1) Three possible diagnosis dates (30/60/90-day OP windows) ---
+      # ELIG_COH_ALLFLAGS was checkpointed to personal schema by Part 1.
+      # It has ALL potential index dates per patient with outpt2_30/60/90 flags.
+      allflags_tbl <- tryCatch({
+        # Try work schema first (where Part 2 tables live)
+        tbl_name <- wrk("ELIG_COH_ALLFLAGS")
+        test <- db_q(con, glue("SELECT 1 FROM {tbl_name} LIMIT 1"))
+        tbl_name
+      }, error = function(e) NULL)
+
+      if (!is.null(allflags_tbl)) {
+        dx_dates <- db_q(con, glue("
+          WITH cyclo_ids AS (
+            SELECT PATID FROM lot1_base WHERE LOT1_BASE_MEDS = 'CYCLO' AND LOT1_MED_CNT = 1
+          ),
+          window_dates AS (
+            SELECT
+              af.PATID,
+              min(CASE WHEN af.inpt_qual = 1 OR af.outpt2_30 = 1
+                       THEN af.INDEX_DATE END) AS INDEX_DATE_30,
+              min(CASE WHEN af.inpt_qual = 1 OR af.outpt2_60 = 1
+                       THEN af.INDEX_DATE END) AS INDEX_DATE_60,
+              min(CASE WHEN af.inpt_qual = 1 OR af.outpt2_90 = 1
+                       THEN af.INDEX_DATE END) AS INDEX_DATE_90
+            FROM {allflags_tbl} af
+            INNER JOIN cyclo_ids c ON af.PATID = c.PATID
+            GROUP BY af.PATID
+          )
+          SELECT
+            w.*,
+            datediff(w.INDEX_DATE_60, w.INDEX_DATE_30) AS DIFF_60v30,
+            datediff(w.INDEX_DATE_90, w.INDEX_DATE_30) AS DIFF_90v30
+          FROM window_dates w
+          ORDER BY w.PATID
+        "))
+
+        if (nrow(dx_dates) > 0) {
+          # Summary stats
+          n_same_all   <- sum(!is.na(dx_dates$INDEX_DATE_30) & !is.na(dx_dates$INDEX_DATE_90) &
+                              dx_dates$INDEX_DATE_30 == dx_dates$INDEX_DATE_90, na.rm = TRUE)
+          n_diff_30v90 <- sum(!is.na(dx_dates$DIFF_90v30) & dx_dates$DIFF_90v30 != 0, na.rm = TRUE)
+          n_only_90    <- sum(is.na(dx_dates$INDEX_DATE_30) & !is.na(dx_dates$INDEX_DATE_90), na.rm = TRUE)
+          n_only_60    <- sum(is.na(dx_dates$INDEX_DATE_30) & !is.na(dx_dates$INDEX_DATE_60), na.rm = TRUE)
+
+          dx_summary_html <- paste0(
+            '<div style="font-family:monospace; padding:12px; background:#f8f9fa; border-radius:8px;">',
+            '<h3 style="margin-top:0;">CYCLO Monotherapy: Diagnosis Date Sensitivity</h3>',
+            '<p>Patients with LOT1 induction = CYCLO only (N=', n_cyclo, ')</p>',
+            '<table style="border-collapse:collapse; width:100%;">',
+            '<tr style="background:#e9ecef;"><th style="padding:6px; text-align:left;">Metric</th><th style="padding:6px; text-align:right;">N</th></tr>',
+            '<tr><td style="padding:4px;">Same INDEX_DATE under all windows</td><td style="padding:4px; text-align:right;">', n_same_all, '</td></tr>',
+            '<tr><td style="padding:4px;">Different date: 30d vs 90d window</td><td style="padding:4px; text-align:right;">', n_diff_30v90, '</td></tr>',
+            '<tr><td style="padding:4px;">Qualify under 90d but NOT 30d</td><td style="padding:4px; text-align:right;">', n_only_90, '</td></tr>',
+            '<tr><td style="padding:4px;">Qualify under 60d but NOT 30d</td><td style="padding:4px; text-align:right;">', n_only_60, '</td></tr>',
+            '</table>')
+
+          if (any(!is.na(dx_dates$DIFF_90v30) & dx_dates$DIFF_90v30 != 0)) {
+            shifted <- dx_dates[!is.na(dx_dates$DIFF_90v30) & dx_dates$DIFF_90v30 != 0, ]
+            avg_shift <- mean(as.numeric(shifted$DIFF_90v30), na.rm = TRUE)
+            med_shift <- median(as.numeric(shifted$DIFF_90v30), na.rm = TRUE)
+            dx_summary_html <- paste0(dx_summary_html,
+              '<p style="margin-top:8px;">Among those with different dates (90d vs 30d):<br>',
+              'Mean shift: ', round(avg_shift, 1), ' days earlier | ',
+              'Median shift: ', round(med_shift, 0), ' days earlier</p>')
+          }
+          dx_summary_html <- paste0(dx_summary_html, '</div>')
+          add_html_card(dx_summary_html, section = "CYCLO",
+                        title = "Diagnosis Date Sensitivity (30/60/90-day windows)")
+
+          # Patient-level detail table
+          save_table(dx_dates, section = "CYCLO",
+                     title = "CYCLO Patients: Diagnosis Dates by Window")
+          log_msg("  CYCLO diagnosis date sensitivity analysis added.")
+        }
+      } else {
+        log_msg("  WARN: ELIG_COH_ALLFLAGS not found; skipping diagnosis date sensitivity.")
+        add_html_card(paste0(
+          '<div style="padding:12px; background:#fff3cd; border-radius:8px;">',
+          '<h3>CYCLO Monotherapy: Diagnosis Date Sensitivity</h3>',
+          '<p>ELIG_COH_ALLFLAGS table not available. Re-run Part 1 with ',
+          '<code>materialize_checkpoints = TRUE</code> to enable this analysis.</p></div>'),
+          section = "CYCLO", title = "Diagnosis Dates (unavailable)")
+      }
+
+      # --- (2) Subsequent MM treatments post-CYCLO initiation ---
+      post_cyclo_tx <- db_q(con, glue("
+        SELECT
+          ms.PATID,
+          ms.MAP_MED_TYPE AS MED,
+          ms.MAP_MED_CLASS AS CLASS,
+          ms.MAP_START_DT,
+          ms.MAP_END_DT,
+          datediff(ms.MAP_END_DT, ms.MAP_START_DT) + 1 AS MAP_DAYS,
+          lb.LOT1_START_DT,
+          datediff(ms.MAP_START_DT, lb.LOT1_START_DT) AS DAYS_FROM_LOT1_START,
+          ms.MAP_CNT
+        FROM map_stacked ms
+        INNER JOIN lot1_base lb
+          ON ms.PATID = lb.PATID
+        WHERE lb.LOT1_BASE_MEDS = 'CYCLO' AND lb.LOT1_MED_CNT = 1
+          AND ms.MAP_MED_TYPE <> 'CYCLO'
+          AND ms.MAP_START_DT >= lb.LOT1_START_DT
+        ORDER BY ms.PATID, ms.MAP_START_DT
+      "))
+
+      if (nrow(post_cyclo_tx) > 0) {
+        # Summary: which meds follow CYCLO, and when
+        post_tx_summary <- db_q(con, glue("
+          WITH post AS (
+            SELECT
+              ms.PATID, ms.MAP_MED_TYPE AS MED, ms.MAP_MED_CLASS AS CLASS,
+              datediff(ms.MAP_START_DT, lb.LOT1_START_DT) AS DAYS_FROM_LOT1
+            FROM map_stacked ms
+            INNER JOIN lot1_base lb ON ms.PATID = lb.PATID
+            WHERE lb.LOT1_BASE_MEDS = 'CYCLO' AND lb.LOT1_MED_CNT = 1
+              AND ms.MAP_MED_TYPE <> 'CYCLO'
+              AND ms.MAP_START_DT >= lb.LOT1_START_DT
+          )
+          SELECT MED, CLASS,
+                 count(DISTINCT PATID) AS n_patients,
+                 count(*) AS n_maps,
+                 avg(DAYS_FROM_LOT1) AS avg_days_from_lot1,
+                 min(DAYS_FROM_LOT1) AS min_days,
+                 percentile_approx(DAYS_FROM_LOT1, 0.5) AS median_days,
+                 max(DAYS_FROM_LOT1) AS max_days
+          FROM post
+          GROUP BY MED, CLASS
+          ORDER BY count(DISTINCT PATID) DESC
+        "))
+
+        save_table(post_tx_summary, section = "CYCLO",
+                   title = "Subsequent Treatments After CYCLO (by medication)")
+        save_table(post_cyclo_tx, section = "CYCLO",
+                   title = "CYCLO Patients: All Subsequent Treatment MAPs (detail)")
+        log_msg("  CYCLO subsequent treatments: ", nrow(post_tx_summary), " distinct meds found.")
+      } else {
+        log_msg("  No subsequent (non-CYCLO) treatments found for CYCLO monotherapy patients.")
+      }
+
+      # --- (3) SCT timing for CYCLO patients ---
+      cyclo_sct <- db_q(con, glue("
+        SELECT
+          sct.PATID,
+          lb.LOT1_START_DT,
+          lb.INDEX_DATE,
+          sct.LOT1_TX_AUTO_DT_1,
+          sct.LOT1_TX_AUTO_DT_2,
+          sct.FIRST_ALLO_DT,
+          sct.FIRST_CART_DT,
+          sct.LOT1_1ST_SCT_DT,
+          sct.LOT1_TX_ENDDATE,
+          sct.LOT1_TX_ENDDATE_REASON,
+          sct.LOT1_SCT_AUTO_TAND_FLG,
+          sct.LOT1_SCT_AUTO_SING_FLG,
+          CASE
+            WHEN sct.LOT1_1ST_SCT_DT IS NOT NULL
+              THEN datediff(sct.LOT1_1ST_SCT_DT, lb.LOT1_START_DT)
+          END AS DAYS_LOT1_TO_SCT,
+          CASE
+            WHEN sct.LOT1_1ST_SCT_DT IS NOT NULL
+              THEN datediff(sct.LOT1_1ST_SCT_DT, lb.INDEX_DATE)
+          END AS DAYS_DX_TO_SCT
+        FROM lot1_sct sct
+        INNER JOIN lot1_base lb ON sct.PATID = lb.PATID
+        WHERE lb.LOT1_BASE_MEDS = 'CYCLO' AND lb.LOT1_MED_CNT = 1
+          AND sct.LOT1_1ST_SCT_DT IS NOT NULL
+        ORDER BY sct.PATID
+      "))
+
+      n_with_sct <- nrow(cyclo_sct)
+      log_msg("  CYCLO patients with SCT: ", n_with_sct, " / ", n_cyclo)
+
+      sct_html <- paste0(
+        '<div style="font-family:monospace; padding:12px; background:#f8f9fa; border-radius:8px;">',
+        '<h3 style="margin-top:0;">CYCLO Monotherapy: SCT Timing</h3>',
+        '<p>N = ', n_cyclo, ' CYCLO monotherapy patients; ',
+        n_with_sct, ' (', round(100 * n_with_sct / n_cyclo, 1), '%) had SCT</p>')
+
+      if (n_with_sct > 0) {
+        avg_days_lot1_sct <- mean(as.numeric(cyclo_sct$DAYS_LOT1_TO_SCT), na.rm = TRUE)
+        med_days_lot1_sct <- median(as.numeric(cyclo_sct$DAYS_LOT1_TO_SCT), na.rm = TRUE)
+        avg_days_dx_sct   <- mean(as.numeric(cyclo_sct$DAYS_DX_TO_SCT), na.rm = TRUE)
+        med_days_dx_sct   <- median(as.numeric(cyclo_sct$DAYS_DX_TO_SCT), na.rm = TRUE)
+
+        n_auto  <- sum(!is.na(cyclo_sct$LOT1_TX_AUTO_DT_1))
+        n_allo  <- sum(!is.na(cyclo_sct$FIRST_ALLO_DT))
+        n_cart  <- sum(!is.na(cyclo_sct$FIRST_CART_DT))
+        n_tand  <- sum(cyclo_sct$LOT1_SCT_AUTO_TAND_FLG == 1, na.rm = TRUE)
+
+        sct_html <- paste0(sct_html,
+          '<table style="border-collapse:collapse; width:100%; margin-top:8px;">',
+          '<tr style="background:#e9ecef;"><th style="padding:6px; text-align:left;">Metric</th><th style="padding:6px; text-align:right;">Value</th></tr>',
+          '<tr><td style="padding:4px;">AUTO SCT</td><td style="padding:4px; text-align:right;">', n_auto, '</td></tr>',
+          '<tr><td style="padding:4px;">ALLO SCT</td><td style="padding:4px; text-align:right;">', n_allo, '</td></tr>',
+          '<tr><td style="padding:4px;">CART</td><td style="padding:4px; text-align:right;">', n_cart, '</td></tr>',
+          '<tr><td style="padding:4px;">Tandem AUTO</td><td style="padding:4px; text-align:right;">', n_tand, '</td></tr>',
+          '<tr style="background:#e9ecef;"><td colspan="2" style="padding:6px;"><b>Days from LOT1 start to 1st SCT</b></td></tr>',
+          '<tr><td style="padding:4px;">Mean</td><td style="padding:4px; text-align:right;">', round(avg_days_lot1_sct, 1), '</td></tr>',
+          '<tr><td style="padding:4px;">Median</td><td style="padding:4px; text-align:right;">', round(med_days_lot1_sct, 0), '</td></tr>',
+          '<tr style="background:#e9ecef;"><td colspan="2" style="padding:6px;"><b>Days from Diagnosis to 1st SCT</b></td></tr>',
+          '<tr><td style="padding:4px;">Mean</td><td style="padding:4px; text-align:right;">', round(avg_days_dx_sct, 1), '</td></tr>',
+          '<tr><td style="padding:4px;">Median</td><td style="padding:4px; text-align:right;">', round(med_days_dx_sct, 0), '</td></tr>',
+          '</table>')
+
+        save_table(cyclo_sct, section = "CYCLO",
+                   title = "CYCLO Patients with SCT (detail)")
+      }
+      sct_html <- paste0(sct_html, '</div>')
+      add_html_card(sct_html, section = "CYCLO", title = "SCT Timing Summary")
+    } else {
+      log_msg("  No CYCLO monotherapy patients found in LOT1.")
+    }
+  }, error = function(e) {
+    log_msg("WARN: CYCLO monotherapy analysis failed: ", conditionMessage(e))
+  })
+
   # Build combined interactive dashboard
   build_dashboard()
 }
