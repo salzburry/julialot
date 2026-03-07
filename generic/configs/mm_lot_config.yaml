@@ -1,0 +1,188 @@
+# ============================================================================
+# Multiple Myeloma (MM) — Generic LOT Configuration
+# ============================================================================
+# This config replicates the existing MM LOT algorithm (R/lot_program.R)
+# using the generic framework. It serves as both a reference implementation
+# and a migration path from the bespoke MM code.
+# ============================================================================
+
+disease:
+  name: "Multiple Myeloma"
+  abbreviation: "MM"
+  icd10_codes: ["C90.0", "C90.00", "C90.01", "C90.02"]
+  description: "LOT analysis for newly-diagnosed MM patients on Optum claims"
+
+# ============================================================================
+# ALGORITHM PARAMETERS
+# ============================================================================
+parameters:
+  # Induction window: drugs started within this window of LOT start
+  # are considered part of the induction regimen
+  induction_window_days: 60
+
+  # MAP gap: gap >= this value between coverage end and next claim
+  # starts a new Medication Available Period
+  map_gap_days: 90
+
+  # Medical claims default day supply (no days_supply field in medical)
+  medical_day_supply: 28
+
+  # LOT discontinuation gap: if OBS_END - DISCON_DT < this,
+  # insufficient follow-up to confirm discontinuation
+  lot_discon_gap_days: 90
+
+  # Maximum LOT lines to compute
+  max_lot_lines: 10
+
+  # Drug classes excluded from LOT start determination
+  # (steroids alone don't start a line in MM)
+  excluded_classes_from_lot_start:
+    - "STEROID"
+
+# ============================================================================
+# CLAIMS DATA MAPPING (Optum Clinformatics)
+# ============================================================================
+claims_mapping:
+  patient_id_field: "PATID"
+
+  # Medical claims table (HCPCS/J-code drugs + procedures)
+  medical_table: "hive_metastore.clnprw_optum.t_medical_2025q2"
+  medical_date_field: "FST_DT"
+  medical_code_fields:
+    - "PROC_CD"
+
+  # Pharmacy claims table (NDC drugs)
+  rx_table: "hive_metastore.clnprw_optum.t_rx_2025q2"
+  rx_date_field: "FILL_DT"
+  rx_code_field: "NDC"
+  rx_days_supply_field: "DAYS_SUP"
+
+  # Procedure table (for SCT detection)
+  med_procedure_table: "hive_metastore.clnprw_optum.t_med_procedure_2025q2"
+
+# ============================================================================
+# MEDICATION ROLLUP (Tab 40 equivalent)
+# ============================================================================
+medications:
+  rollup:
+    - medication: "bortezomib"
+      class: "PROTINHIB"
+      abbreviation: "BORT"
+      monomaintenance: false
+
+    - medication: "carfilzomib"
+      class: "PROTINHIB"
+      abbreviation: "CARF"
+      monomaintenance: false
+
+    - medication: "ixazomib"
+      class: "PROTINHIB"
+      abbreviation: "IXAZ"
+      monomaintenance: true
+
+    - medication: "lenalidomide"
+      class: "IMMUNOMOD"
+      abbreviation: "LENA"
+      monomaintenance: true
+      dualmaintenance_with: "BORT"
+
+    - medication: "pomalidomide"
+      class: "IMMUNOMOD"
+      abbreviation: "POMA"
+      monomaintenance: true
+
+    - medication: "daratumumab"
+      class: "ACD38"
+      abbreviation: "DARA"
+      monomaintenance: false
+
+    - medication: "dexamethasone"
+      class: "STEROID"
+      abbreviation: "DEXA"
+      monomaintenance: false
+
+    - medication: "prednisone"
+      class: "STEROID"
+      abbreviation: "PRED"
+      monomaintenance: false
+
+  # Inline codelist (Tab 41 equivalent — subset shown)
+  # In production, use codelist_table for the full list
+  codelist:
+    - code_type: "HCPCS"
+      code: "J9041"
+      medication: "bortezomib"
+      class: "PROTINHIB"
+      abbreviation: "BORT"
+
+    - code_type: "HCPCS"
+      code: "J9047"
+      medication: "carfilzomib"
+      class: "PROTINHIB"
+      abbreviation: "CARF"
+
+    - code_type: "NDC"
+      code: "00409170001"
+      medication: "bortezomib"
+      class: "PROTINHIB"
+      abbreviation: "BORT"
+
+    - code_type: "NDC"
+      code: "76075010101"
+      medication: "carfilzomib"
+      class: "PROTINHIB"
+      abbreviation: "CARF"
+
+    - code_type: "NDC"
+      code: "59572050121"
+      medication: "lenalidomide"
+      class: "IMMUNOMOD"
+      abbreviation: "LENA"
+
+    - code_type: "NDC"
+      code: "00054413025"
+      medication: "prednisone"
+      class: "STEROID"
+      abbreviation: "PRED"
+
+  # Permissible substitutions (drugs that can replace each other within a regimen)
+  permissible_substitutions:
+    - original: "DARA"
+      substitute: "DARA"
+    - original: "BORT"
+      substitute: "IXAZ"
+    - original: "IXAZ"
+      substitute: "BORT"
+
+# ============================================================================
+# LINE-ENDING PROCEDURES (SCT for MM)
+# ============================================================================
+procedures:
+  codelist:
+    - code_type: "HCPCS"
+      code: "38241"
+      procedure_type: "SCT_AUTO"
+
+    - code_type: "HCPCS"
+      code: "38240"
+      procedure_type: "SCT_ALLO"
+
+    - code_type: "HCPCS"
+      code: "S2150"
+      procedure_type: "SCT_ALLO"
+
+    - code_type: "HCPCS"
+      code: "Q2042"
+      procedure_type: "SCT_CART"
+
+    - code_type: "HCPCS"
+      code: "Q2054"
+      procedure_type: "SCT_CART"
+
+    - code_type: "HCPCS"
+      code: "Q2055"
+      procedure_type: "SCT_CART"
+
+    - code_type: "HCPCS"
+      code: "Q2056"
+      procedure_type: "SCT_CART"
