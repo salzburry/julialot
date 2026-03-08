@@ -2182,11 +2182,12 @@ print_descriptives <- function(con) {
   })
 
   # --------------------------------------------------------
-  # 11. CYCLO Monotherapy Deep-Dive
+  # 11. CYCLO Monotherapy Deep-Dive (separate output files)
   # Patients whose LOT1 induction regimen is CYCLO only.
-  # Shows: (1) 3 possible diagnosis dates under 30/60/90-day OP windows,
-  #        (2) subsequent MM treatments post-CYCLO initiation,
-  #        (3) SCT timing.
+  # Writes to {output_dir}/cyclo_mono/ as standalone CSVs.
+  # (1) 3 possible diagnosis dates under 30/60/90-day OP windows,
+  # (2) subsequent MM treatments post-CYCLO initiation,
+  # (3) SCT timing.
   # --------------------------------------------------------
   tryCatch({
     # Identify CYCLO monotherapy patients
@@ -2202,13 +2203,17 @@ print_descriptives <- function(con) {
     log_msg("  CYCLO monotherapy patients: ", n_cyclo)
 
     if (n_cyclo > 0) {
+      cyclo_dir <- file.path(cfg$output_dir, "cyclo_mono")
+      dir.create(cyclo_dir, showWarnings = FALSE, recursive = TRUE)
+
+      # Write patient roster
+      write.csv(cyclo_pats, file.path(cyclo_dir, "cyclo_mono_patients.csv"), row.names = FALSE)
+      log_msg("  Wrote: cyclo_mono_patients.csv (N=", n_cyclo, ")")
+
       pat_ids_sql <- paste0("('", paste(cyclo_pats$PATID, collapse = "','"), "')")
 
       # --- (1) Three possible diagnosis dates (30/60/90-day OP windows) ---
-      # ELIG_COH_ALLFLAGS was checkpointed to personal schema by Part 1.
-      # It has ALL potential index dates per patient with outpt2_30/60/90 flags.
       allflags_tbl <- tryCatch({
-        # Try work schema first (where Part 2 tables live)
         tbl_name <- wrk("ELIG_COH_ALLFLAGS")
         test <- db_q(con, glue("SELECT 1 FROM {tbl_name} LIMIT 1"))
         tbl_name
@@ -2241,6 +2246,10 @@ print_descriptives <- function(con) {
         "))
 
         if (nrow(dx_dates) > 0) {
+          # Merge with LOT1 start for context
+          dx_merged <- merge(dx_dates, cyclo_pats[, c("PATID", "LOT1_START_DT")], by = "PATID")
+          write.csv(dx_merged, file.path(cyclo_dir, "cyclo_mono_dx_dates.csv"), row.names = FALSE)
+
           # Summary stats
           n_same_all   <- sum(!is.na(dx_dates$INDEX_DATE_30) & !is.na(dx_dates$INDEX_DATE_90) &
                               dx_dates$INDEX_DATE_30 == dx_dates$INDEX_DATE_90, na.rm = TRUE)
@@ -2248,44 +2257,30 @@ print_descriptives <- function(con) {
           n_only_90    <- sum(is.na(dx_dates$INDEX_DATE_30) & !is.na(dx_dates$INDEX_DATE_90), na.rm = TRUE)
           n_only_60    <- sum(is.na(dx_dates$INDEX_DATE_30) & !is.na(dx_dates$INDEX_DATE_60), na.rm = TRUE)
 
-          dx_summary_html <- paste0(
-            '<div style="font-family:monospace; padding:12px; background:#f8f9fa; border-radius:8px;">',
-            '<h3 style="margin-top:0;">CYCLO Monotherapy: Diagnosis Date Sensitivity</h3>',
-            '<p>Patients with LOT1 induction = CYCLO only (N=', n_cyclo, ')</p>',
-            '<table style="border-collapse:collapse; width:100%;">',
-            '<tr style="background:#e9ecef;"><th style="padding:6px; text-align:left;">Metric</th><th style="padding:6px; text-align:right;">N</th></tr>',
-            '<tr><td style="padding:4px;">Same INDEX_DATE under all windows</td><td style="padding:4px; text-align:right;">', n_same_all, '</td></tr>',
-            '<tr><td style="padding:4px;">Different date: 30d vs 90d window</td><td style="padding:4px; text-align:right;">', n_diff_30v90, '</td></tr>',
-            '<tr><td style="padding:4px;">Qualify under 90d but NOT 30d</td><td style="padding:4px; text-align:right;">', n_only_90, '</td></tr>',
-            '<tr><td style="padding:4px;">Qualify under 60d but NOT 30d</td><td style="padding:4px; text-align:right;">', n_only_60, '</td></tr>',
-            '</table>')
-
+          dx_summary <- data.frame(
+            Metric = c("Total CYCLO mono patients",
+                        "Same INDEX_DATE under all windows",
+                        "Different date: 30d vs 90d window",
+                        "Qualify under 90d but NOT 30d",
+                        "Qualify under 60d but NOT 30d"),
+            N = c(n_cyclo, n_same_all, n_diff_30v90, n_only_90, n_only_60),
+            stringsAsFactors = FALSE
+          )
           if (any(!is.na(dx_dates$DIFF_90v30) & dx_dates$DIFF_90v30 != 0)) {
             shifted <- dx_dates[!is.na(dx_dates$DIFF_90v30) & dx_dates$DIFF_90v30 != 0, ]
-            avg_shift <- mean(as.numeric(shifted$DIFF_90v30), na.rm = TRUE)
-            med_shift <- median(as.numeric(shifted$DIFF_90v30), na.rm = TRUE)
-            dx_summary_html <- paste0(dx_summary_html,
-              '<p style="margin-top:8px;">Among those with different dates (90d vs 30d):<br>',
-              'Mean shift: ', round(avg_shift, 1), ' days earlier | ',
-              'Median shift: ', round(med_shift, 0), ' days earlier</p>')
+            dx_summary <- rbind(dx_summary, data.frame(
+              Metric = c("Mean shift 90d vs 30d (days)",
+                          "Median shift 90d vs 30d (days)"),
+              N = c(round(mean(as.numeric(shifted$DIFF_90v30), na.rm = TRUE), 1),
+                    round(median(as.numeric(shifted$DIFF_90v30), na.rm = TRUE), 0)),
+              stringsAsFactors = FALSE
+            ))
           }
-          dx_summary_html <- paste0(dx_summary_html, '</div>')
-          add_html_card(dx_summary_html, section = "CYCLO",
-                        title = "Diagnosis Date Sensitivity (30/60/90-day windows)")
-
-          # Patient-level detail table
-          save_table(dx_dates, section = "CYCLO",
-                     title = "CYCLO Patients: Diagnosis Dates by Window")
-          log_msg("  CYCLO diagnosis date sensitivity analysis added.")
+          write.csv(dx_summary, file.path(cyclo_dir, "cyclo_mono_dx_summary.csv"), row.names = FALSE)
+          log_msg("  Wrote: cyclo_mono_dx_dates.csv, cyclo_mono_dx_summary.csv")
         }
       } else {
         log_msg("  WARN: ELIG_COH_ALLFLAGS not found; skipping diagnosis date sensitivity.")
-        add_html_card(paste0(
-          '<div style="padding:12px; background:#fff3cd; border-radius:8px;">',
-          '<h3>CYCLO Monotherapy: Diagnosis Date Sensitivity</h3>',
-          '<p>ELIG_COH_ALLFLAGS table not available. Re-run Part 1 with ',
-          '<code>materialize_checkpoints = TRUE</code> to enable this analysis.</p></div>'),
-          section = "CYCLO", title = "Diagnosis Dates (unavailable)")
       }
 
       # --- (2) Subsequent MM treatments post-CYCLO initiation ---
@@ -2310,7 +2305,8 @@ print_descriptives <- function(con) {
       "))
 
       if (nrow(post_cyclo_tx) > 0) {
-        # Summary: which meds follow CYCLO, and when
+        write.csv(post_cyclo_tx, file.path(cyclo_dir, "cyclo_mono_subsequent_tx_detail.csv"), row.names = FALSE)
+
         post_tx_summary <- db_q(con, glue("
           WITH post AS (
             SELECT
@@ -2333,12 +2329,8 @@ print_descriptives <- function(con) {
           GROUP BY MED, CLASS
           ORDER BY count(DISTINCT PATID) DESC
         "))
-
-        save_table(post_tx_summary, section = "CYCLO",
-                   title = "Subsequent Treatments After CYCLO (by medication)")
-        save_table(post_cyclo_tx, section = "CYCLO",
-                   title = "CYCLO Patients: All Subsequent Treatment MAPs (detail)")
-        log_msg("  CYCLO subsequent treatments: ", nrow(post_tx_summary), " distinct meds found.")
+        write.csv(post_tx_summary, file.path(cyclo_dir, "cyclo_mono_subsequent_tx_summary.csv"), row.names = FALSE)
+        log_msg("  Wrote: cyclo_mono_subsequent_tx_detail.csv, cyclo_mono_subsequent_tx_summary.csv")
       } else {
         log_msg("  No subsequent (non-CYCLO) treatments found for CYCLO monotherapy patients.")
       }
@@ -2369,50 +2361,43 @@ print_descriptives <- function(con) {
         FROM lot1_sct sct
         INNER JOIN lot1_base lb ON sct.PATID = lb.PATID
         WHERE lb.LOT1_BASE_MEDS = 'CYCLO' AND lb.LOT1_MED_CNT = 1
-          AND sct.LOT1_1ST_SCT_DT IS NOT NULL
         ORDER BY sct.PATID
       "))
 
-      n_with_sct <- nrow(cyclo_sct)
+      n_with_sct <- sum(!is.na(cyclo_sct$LOT1_1ST_SCT_DT))
       log_msg("  CYCLO patients with SCT: ", n_with_sct, " / ", n_cyclo)
 
-      sct_html <- paste0(
-        '<div style="font-family:monospace; padding:12px; background:#f8f9fa; border-radius:8px;">',
-        '<h3 style="margin-top:0;">CYCLO Monotherapy: SCT Timing</h3>',
-        '<p>N = ', n_cyclo, ' CYCLO monotherapy patients; ',
-        n_with_sct, ' (', round(100 * n_with_sct / n_cyclo, 1), '%) had SCT</p>')
+      write.csv(cyclo_sct, file.path(cyclo_dir, "cyclo_mono_sct_detail.csv"), row.names = FALSE)
 
+      # SCT summary
+      sct_summary <- data.frame(
+        Metric = c("Total CYCLO mono patients", "With any SCT", "Pct with SCT"),
+        Value = c(n_cyclo, n_with_sct, paste0(round(100 * n_with_sct / n_cyclo, 1), "%")),
+        stringsAsFactors = FALSE
+      )
       if (n_with_sct > 0) {
-        avg_days_lot1_sct <- mean(as.numeric(cyclo_sct$DAYS_LOT1_TO_SCT), na.rm = TRUE)
-        med_days_lot1_sct <- median(as.numeric(cyclo_sct$DAYS_LOT1_TO_SCT), na.rm = TRUE)
-        avg_days_dx_sct   <- mean(as.numeric(cyclo_sct$DAYS_DX_TO_SCT), na.rm = TRUE)
-        med_days_dx_sct   <- median(as.numeric(cyclo_sct$DAYS_DX_TO_SCT), na.rm = TRUE)
-
-        n_auto  <- sum(!is.na(cyclo_sct$LOT1_TX_AUTO_DT_1))
-        n_allo  <- sum(!is.na(cyclo_sct$FIRST_ALLO_DT))
-        n_cart  <- sum(!is.na(cyclo_sct$FIRST_CART_DT))
-        n_tand  <- sum(cyclo_sct$LOT1_SCT_AUTO_TAND_FLG == 1, na.rm = TRUE)
-
-        sct_html <- paste0(sct_html,
-          '<table style="border-collapse:collapse; width:100%; margin-top:8px;">',
-          '<tr style="background:#e9ecef;"><th style="padding:6px; text-align:left;">Metric</th><th style="padding:6px; text-align:right;">Value</th></tr>',
-          '<tr><td style="padding:4px;">AUTO SCT</td><td style="padding:4px; text-align:right;">', n_auto, '</td></tr>',
-          '<tr><td style="padding:4px;">ALLO SCT</td><td style="padding:4px; text-align:right;">', n_allo, '</td></tr>',
-          '<tr><td style="padding:4px;">CART</td><td style="padding:4px; text-align:right;">', n_cart, '</td></tr>',
-          '<tr><td style="padding:4px;">Tandem AUTO</td><td style="padding:4px; text-align:right;">', n_tand, '</td></tr>',
-          '<tr style="background:#e9ecef;"><td colspan="2" style="padding:6px;"><b>Days from LOT1 start to 1st SCT</b></td></tr>',
-          '<tr><td style="padding:4px;">Mean</td><td style="padding:4px; text-align:right;">', round(avg_days_lot1_sct, 1), '</td></tr>',
-          '<tr><td style="padding:4px;">Median</td><td style="padding:4px; text-align:right;">', round(med_days_lot1_sct, 0), '</td></tr>',
-          '<tr style="background:#e9ecef;"><td colspan="2" style="padding:6px;"><b>Days from Diagnosis to 1st SCT</b></td></tr>',
-          '<tr><td style="padding:4px;">Mean</td><td style="padding:4px; text-align:right;">', round(avg_days_dx_sct, 1), '</td></tr>',
-          '<tr><td style="padding:4px;">Median</td><td style="padding:4px; text-align:right;">', round(med_days_dx_sct, 0), '</td></tr>',
-          '</table>')
-
-        save_table(cyclo_sct, section = "CYCLO",
-                   title = "CYCLO Patients with SCT (detail)")
+        sct_with <- cyclo_sct[!is.na(cyclo_sct$LOT1_1ST_SCT_DT), ]
+        n_auto <- sum(!is.na(sct_with$LOT1_TX_AUTO_DT_1))
+        n_allo <- sum(!is.na(sct_with$FIRST_ALLO_DT))
+        n_cart <- sum(!is.na(sct_with$FIRST_CART_DT))
+        n_tand <- sum(sct_with$LOT1_SCT_AUTO_TAND_FLG == 1, na.rm = TRUE)
+        sct_summary <- rbind(sct_summary, data.frame(
+          Metric = c("AUTO SCT", "ALLO SCT", "CART", "Tandem AUTO",
+                      "Mean days LOT1 start -> 1st SCT",
+                      "Median days LOT1 start -> 1st SCT",
+                      "Mean days Dx -> 1st SCT",
+                      "Median days Dx -> 1st SCT"),
+          Value = c(n_auto, n_allo, n_cart, n_tand,
+                    round(mean(as.numeric(sct_with$DAYS_LOT1_TO_SCT), na.rm = TRUE), 1),
+                    round(median(as.numeric(sct_with$DAYS_LOT1_TO_SCT), na.rm = TRUE), 0),
+                    round(mean(as.numeric(sct_with$DAYS_DX_TO_SCT), na.rm = TRUE), 1),
+                    round(median(as.numeric(sct_with$DAYS_DX_TO_SCT), na.rm = TRUE), 0)),
+          stringsAsFactors = FALSE
+        ))
       }
-      sct_html <- paste0(sct_html, '</div>')
-      add_html_card(sct_html, section = "CYCLO", title = "SCT Timing Summary")
+      write.csv(sct_summary, file.path(cyclo_dir, "cyclo_mono_sct_summary.csv"), row.names = FALSE)
+      log_msg("  Wrote: cyclo_mono_sct_detail.csv, cyclo_mono_sct_summary.csv")
+      log_msg("  CYCLO monotherapy output directory: ", cyclo_dir)
     } else {
       log_msg("  No CYCLO monotherapy patients found in LOT1.")
     }
