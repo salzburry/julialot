@@ -62,6 +62,7 @@ default_cfg <- list(
   tbl_member_enrollment = "member_enrollment",      # Raw enrollment (not pre-rolled)
   tbl_medical           = "medical",
   tbl_med_diag          = "med_diagnosis",
+  tbl_med_proc          = "med_procedure",
   tbl_rx                = "rx",
   tbl_dod               = "dod",
   tbl_confinement       = "confinement",            # Per Optum business rules Approach 2
@@ -327,6 +328,7 @@ cfg <- list(
   tbl_member_enrollment = "member_enrollment",      # Raw enrollment (not pre-rolled)
   tbl_medical           = "medical",
   tbl_med_diag          = "med_diagnosis",
+  tbl_med_proc          = "med_procedure",
   tbl_rx                = "rx",
   tbl_dod               = "dod",
   tbl_confinement       = "confinement",            # Per Optum business rules Approach 2
@@ -732,36 +734,36 @@ embedded_preg_codes <- function() {
   "
   SELECT * FROM (VALUES
     -- ICD-10 Pregnancy DX codes (O-chapter)
-    ('DX', 'Z33'),     -- Pregnant state incidental
-    ('DX', 'Z3400'), ('DX', 'Z3401'), ('DX', 'Z3402'), ('DX', 'Z3403'),  -- Supervision of pregnancy
-    ('DX', 'Z3A'),     -- Weeks of gestation
-    ('DX', 'O00'),     -- Ectopic pregnancy
-    ('DX', 'O03'),     -- Spontaneous abortion
-    ('DX', 'O04'),     -- Complications following abortion
-    ('DX', 'O09'),     -- Supervision of high-risk pregnancy
-    ('DX', 'O10'),     -- Pre-existing hypertension complicating pregnancy
-    ('DX', 'O24'),     -- Diabetes mellitus in pregnancy
-    ('DX', 'O26'),     -- Maternal care for other conditions
-    ('DX', 'O30'),     -- Multiple gestation
-    ('DX', 'O60'),     -- Preterm labor
-    ('DX', 'O68'),     -- Labor complicated by fetal stress
-    ('DX', 'O70'),     -- Perineal laceration during delivery
-    ('DX', 'O80'),     -- Encounter for full-term uncomplicated delivery
-    ('DX', 'O82'),     -- Encounter for cesarean delivery
+    ('ICD10DIAG', 'Z33'),     -- Pregnant state incidental
+    ('ICD10DIAG', 'Z3400'), ('ICD10DIAG', 'Z3401'), ('ICD10DIAG', 'Z3402'), ('ICD10DIAG', 'Z3403'),  -- Supervision of pregnancy
+    ('ICD10DIAG', 'Z3A'),     -- Weeks of gestation
+    ('ICD10DIAG', 'O00'),     -- Ectopic pregnancy
+    ('ICD10DIAG', 'O03'),     -- Spontaneous abortion
+    ('ICD10DIAG', 'O04'),     -- Complications following abortion
+    ('ICD10DIAG', 'O09'),     -- Supervision of high-risk pregnancy
+    ('ICD10DIAG', 'O10'),     -- Pre-existing hypertension complicating pregnancy
+    ('ICD10DIAG', 'O24'),     -- Diabetes mellitus in pregnancy
+    ('ICD10DIAG', 'O26'),     -- Maternal care for other conditions
+    ('ICD10DIAG', 'O30'),     -- Multiple gestation
+    ('ICD10DIAG', 'O60'),     -- Preterm labor
+    ('ICD10DIAG', 'O68'),     -- Labor complicated by fetal stress
+    ('ICD10DIAG', 'O70'),     -- Perineal laceration during delivery
+    ('ICD10DIAG', 'O80'),     -- Encounter for full-term uncomplicated delivery
+    ('ICD10DIAG', 'O82'),     -- Encounter for cesarean delivery
     -- ICD-9 Pregnancy DX codes
-    ('DX', 'V22'),     -- Normal pregnancy supervision
-    ('DX', 'V23'),     -- High-risk pregnancy supervision
-    ('DX', 'V27'),     -- Outcome of delivery
-    ('DX', '630'),     -- Hydatidiform mole
-    ('DX', '631'),     -- Other abnormal product of conception
-    ('DX', '632'),     -- Missed abortion
-    ('DX', '640'),     -- Hemorrhage in early pregnancy
-    ('DX', '650'),     -- Normal delivery
-    ('DX', '660'),     -- Obstructed labor
-    ('DX', '669'),     -- Other complications of labor
-    -- Delivery procedure codes
-    ('PROC', '59400'), ('PROC', '59510'), ('PROC', '59610'),  -- Vaginal/cesarean delivery
-    ('PROC', '59409'), ('PROC', '59514'), ('PROC', '59612'),  -- Additional delivery codes
+    ('ICD9DIAG', 'V22'),     -- Normal pregnancy supervision
+    ('ICD9DIAG', 'V23'),     -- High-risk pregnancy supervision
+    ('ICD9DIAG', 'V27'),     -- Outcome of delivery
+    ('ICD9DIAG', '630'),     -- Hydatidiform mole
+    ('ICD9DIAG', '631'),     -- Other abnormal product of conception
+    ('ICD9DIAG', '632'),     -- Missed abortion
+    ('ICD9DIAG', '640'),     -- Hemorrhage in early pregnancy
+    ('ICD9DIAG', '650'),     -- Normal delivery
+    ('ICD9DIAG', '660'),     -- Obstructed labor
+    ('ICD9DIAG', '669'),     -- Other complications of labor
+    -- Delivery procedure codes (HCPCS/CPT)
+    ('HCPCS', '59400'), ('HCPCS', '59510'), ('HCPCS', '59610'),  -- Vaginal/cesarean delivery
+    ('HCPCS', '59409'), ('HCPCS', '59514'), ('HCPCS', '59612'),  -- Additional delivery codes
     -- Revenue codes indicating obstetric/delivery services
     ('REV', '0720'),   -- Labor room/delivery
     ('REV', '0721'),   -- Labor room
@@ -780,9 +782,9 @@ embedded_clintrial_codes <- function() {
   # Added revenue code 0762 (investigational services) for completeness
   "
   SELECT * FROM (VALUES
-    ('DX', 'Z006'),    -- Encounter for examination for normal comparison/control in clinical research
-    ('DX', 'V707'),    -- ICD-9 Examination of participant in clinical trial
-    ('PROC', '99199'), -- Unlisted special service/procedure (clinical trial admin)
+    ('ICD10DIAG', 'Z006'),    -- Encounter for examination for normal comparison/control in clinical research
+    ('ICD9DIAG', 'V707'),    -- ICD-9 Examination of participant in clinical trial
+    ('HCPCS', '99199'), -- Unlisted special service/procedure (clinical trial admin)
     ('REV', '0762')    -- Investigational services revenue code
   ) AS t(code_type, code)
   "
@@ -1217,7 +1219,8 @@ build_steps <- function() {
       description = "Loading pregnancy exclusion codes",
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('preg_codes')} AS
-        SELECT upper(code_type) AS code_type, upper(regexp_replace(code, '\\\\.', '')) AS code
+        SELECT upper(trim(code_type)) AS code_type,
+               upper(regexp_replace(code, '\\\\.', '')) AS code
         FROM {preg_source}
         WHERE code IS NOT NULL
       "),
@@ -1229,7 +1232,8 @@ build_steps <- function() {
       description = "Loading clinical trial exclusion codes",
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('clintrial_codes')} AS
-        SELECT upper(code_type) AS code_type, upper(regexp_replace(code, '\\\\.', '')) AS code
+        SELECT upper(trim(code_type)) AS code_type,
+               upper(regexp_replace(code, '\\\\.', '')) AS code
         FROM {clintrial_source}
         WHERE code IS NOT NULL
       "),
@@ -1818,7 +1822,7 @@ build_steps <- function() {
           m.PATID, cast(m.FST_DT as date) AS event_dt, 'MEDICAL' AS source
         FROM {cdm_src(cfg$tbl_medical)} m
         INNER JOIN {work('mm_therapy_codes')} c
-          ON c.code_type IN ('HCPCS','CPT','PROC')
+          ON c.code_type IN ('HCPCS','CPT')
           AND upper(regexp_replace(m.PROC_CD, '\\\\.', '')) = c.code
         WHERE m.FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         UNION ALL
@@ -1875,23 +1879,31 @@ build_steps <- function() {
     list(
       name = "20_pregnancy_flag",
       description = "EXCLUSION: Pregnancy flag (DX + PROC + RVNU_CD, baseline + follow-up)",
-      source_tables = c("med_diagnosis", "medical"),
+      source_tables = c("med_diagnosis", "medical", "med_procedure"),
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('pregnancy_flag')} AS
         WITH dx AS (
-          SELECT PATID, cast(FST_DT as date) AS event_dt, 'DX' AS code_type,
+          SELECT PATID, cast(FST_DT as date) AS event_dt,
+                 CASE WHEN upper(ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9DIAG' ELSE 'ICD10DIAG' END AS code_type,
                  upper(regexp_replace(DIAG, '\\\\.', '')) AS code
           FROM {cdm_src(cfg$tbl_med_diag)}
           WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
-        proc AS (
-          SELECT PATID, cast(FST_DT as date) AS event_dt, 'PROC' AS code_type,
+        hcpcs_proc AS (
+          SELECT PATID, cast(FST_DT as date) AS event_dt, 'HCPCS' AS code_type,
                  upper(regexp_replace(PROC_CD, '\\\\.', '')) AS code
           FROM {cdm_src(cfg$tbl_medical)}
           WHERE PROC_CD IS NOT NULL
             AND FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
-        -- ADDED: Revenue code stream per IE spec (pregnancy requires DX, PROC, or RVNU_CD)
+        icd_proc AS (
+          SELECT PATID, cast(FST_DT as date) AS event_dt,
+                 CASE WHEN upper(ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9PROC' ELSE 'ICD10PROC' END AS code_type,
+                 upper(regexp_replace(PROC, '\\\\.', '')) AS code
+          FROM {cdm_src(cfg$tbl_med_proc)}
+          WHERE PROC IS NOT NULL
+            AND FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
+        ),
         rev AS (
           SELECT PATID, cast(FST_DT as date) AS event_dt, 'REV' AS code_type,
                  upper(TRIM(RVNU_CD)) AS code
@@ -1899,7 +1911,7 @@ build_steps <- function() {
           WHERE RVNU_CD IS NOT NULL AND TRIM(RVNU_CD) != ''
             AND FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
-        events AS (SELECT * FROM dx UNION ALL SELECT * FROM proc UNION ALL SELECT * FROM rev),
+        events AS (SELECT * FROM dx UNION ALL SELECT * FROM hcpcs_proc UNION ALL SELECT * FROM icd_proc UNION ALL SELECT * FROM rev),
         matched AS (
           SELECT /*+ BROADCAST(p) */ e.PATID, e.event_dt
           FROM events e
@@ -1927,23 +1939,31 @@ build_steps <- function() {
     list(
       name = "21_clintrial_flag",
       description = "EXCLUSION: Clinical trial flag (DX + PROC + RVNU_CD, baseline + follow-up)",
-      source_tables = c("med_diagnosis", "medical"),
+      source_tables = c("med_diagnosis", "medical", "med_procedure"),
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('clintrial_flag')} AS
         WITH dx AS (
-          SELECT PATID, cast(FST_DT as date) AS event_dt, 'DX' AS code_type,
+          SELECT PATID, cast(FST_DT as date) AS event_dt,
+                 CASE WHEN upper(ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9DIAG' ELSE 'ICD10DIAG' END AS code_type,
                  upper(regexp_replace(DIAG, '\\\\.', '')) AS code
           FROM {cdm_src(cfg$tbl_med_diag)}
           WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
-        proc AS (
-          SELECT PATID, cast(FST_DT as date) AS event_dt, 'PROC' AS code_type,
+        hcpcs_proc AS (
+          SELECT PATID, cast(FST_DT as date) AS event_dt, 'HCPCS' AS code_type,
                  upper(regexp_replace(PROC_CD, '\\\\.', '')) AS code
           FROM {cdm_src(cfg$tbl_medical)}
           WHERE PROC_CD IS NOT NULL
             AND FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
-        -- ADDED: Revenue code stream for consistency with CL CLNTRIAL tab
+        icd_proc AS (
+          SELECT PATID, cast(FST_DT as date) AS event_dt,
+                 CASE WHEN upper(ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9PROC' ELSE 'ICD10PROC' END AS code_type,
+                 upper(regexp_replace(PROC, '\\\\.', '')) AS code
+          FROM {cdm_src(cfg$tbl_med_proc)}
+          WHERE PROC IS NOT NULL
+            AND FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
+        ),
         rev AS (
           SELECT PATID, cast(FST_DT as date) AS event_dt, 'REV' AS code_type,
                  upper(TRIM(RVNU_CD)) AS code
@@ -1951,7 +1971,7 @@ build_steps <- function() {
           WHERE RVNU_CD IS NOT NULL AND TRIM(RVNU_CD) != ''
             AND FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
-        events AS (SELECT * FROM dx UNION ALL SELECT * FROM proc UNION ALL SELECT * FROM rev),
+        events AS (SELECT * FROM dx UNION ALL SELECT * FROM hcpcs_proc UNION ALL SELECT * FROM icd_proc UNION ALL SELECT * FROM rev),
         matched AS (
           SELECT /*+ BROADCAST(c) */ e.PATID, e.event_dt
           FROM events e

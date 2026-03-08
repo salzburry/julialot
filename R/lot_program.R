@@ -57,6 +57,7 @@ cfg <- list(
   # Clinformatics CDM base tables (validated against optum data dict.pdf)
   tbl_medical  = "medical",
   tbl_med_proc = "med_procedure",
+  tbl_med_diag = "med_diagnosis",
   tbl_rx       = "rx",
 
   # Use cumulative quarterly tables (t_<table>_YYYYqQ) like Part 1
@@ -3292,16 +3293,38 @@ main <- function() {
   # ----------------------------------------------------------
 
   # S11: Register SCT codelist
+  # Normalize CL_CODE_TYPE to canonical values:
+  #   ICD10PROC / ICD10PCS            → 'ICD10PROC' (matches med_procedure.PROC with ICD_FLAG=10)
+  #   ICD9PROC                        → 'ICD9PROC'  (matches med_procedure.PROC with ICD_FLAG=9)
+  #   ICD10DIAG / ICD10DX             → 'ICD10DIAG' (matches med_diagnosis.DIAG with ICD_FLAG=10)
+  #   ICD9DIAG / ICD9DX               → 'ICD9DIAG'  (matches med_diagnosis.DIAG with ICD_FLAG=9)
+  #   HCPCS                           → 'HCPCS'     (matches medical.PROC_CD)
+  # Normalize SCT_TYPE: Allogenic→ALLO, Autologous→AUTO, CAR-T→CART
   run_step(con, "S11_sct_codelist", glue("
     CREATE OR REPLACE TEMPORARY VIEW sct_codelist AS
     SELECT
-      upper(trim(CL_CODE_TYPE)) AS CL_CODE_TYPE,
+      CASE
+        WHEN upper(trim(CL_CODE_TYPE)) IN ('ICD10PROC', 'ICD10PCS') THEN 'ICD10PROC'
+        WHEN upper(trim(CL_CODE_TYPE)) = 'ICD9PROC' THEN 'ICD9PROC'
+        WHEN upper(trim(CL_CODE_TYPE)) LIKE '%PROC%'
+          OR upper(trim(CL_CODE_TYPE)) = 'ICD' THEN 'ICD10PROC'
+        WHEN upper(trim(CL_CODE_TYPE)) IN ('ICD10DIAG', 'ICD10DX', 'DIAG10')
+          OR upper(trim(CL_CODE_TYPE)) LIKE 'ICD%10%DIAG%' THEN 'ICD10DIAG'
+        WHEN upper(trim(CL_CODE_TYPE)) IN ('ICD9DIAG', 'ICD9DX', 'ICD9', 'DIAG9')
+          OR upper(trim(CL_CODE_TYPE)) LIKE 'ICD%9%DIAG%' THEN 'ICD9DIAG'
+        ELSE upper(trim(CL_CODE_TYPE))
+      END AS CL_CODE_TYPE,
       upper(regexp_replace(trim(CL_CODE), '[^A-Za-z0-9]', '')) AS CL_CODE,
-      upper(trim(SCT_TYPE)) AS SCT_TYPE
+      CASE
+        WHEN upper(trim(SCT_TYPE)) LIKE 'ALLO%' THEN 'ALLO'
+        WHEN upper(trim(SCT_TYPE)) LIKE 'AUTO%' THEN 'AUTO'
+        WHEN upper(trim(SCT_TYPE)) IN ('CAR-T', 'CART', 'CAR_T') THEN 'CART'
+        ELSE upper(trim(SCT_TYPE))
+      END AS SCT_TYPE
     FROM {sct_src}
     WHERE CL_CODE IS NOT NULL AND trim(CL_CODE) <> ''
       AND SCT_TYPE IS NOT NULL AND trim(SCT_TYPE) <> ''
-  "), qc = "SELECT SCT_TYPE, count(*) AS n_codes FROM sct_codelist GROUP BY SCT_TYPE ORDER BY SCT_TYPE")
+  "), qc = "SELECT SCT_TYPE, CL_CODE_TYPE, count(*) AS n_codes FROM sct_codelist GROUP BY SCT_TYPE, CL_CODE_TYPE ORDER BY SCT_TYPE, CL_CODE_TYPE")
 
   # S12: Extract raw SCT claims from MEDICAL + MED_PROCEDURE
   run_step(con, "S12_sct_claims_raw", glue("
@@ -3333,27 +3356,44 @@ main <- function() {
       WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT
     ),
-    -- MED_PROCEDURE PROC
-    -- NOTE: Per Optum business rules, MED_PROCEDURE.PROC typically contains
-    -- ICD-9/ICD-10 procedure codes, not CPT/HCPCS. Matching HCPCS SCT codes
-    -- here is a safety net (consistent with MMA_MED extraction) but may not
-    -- produce matches. If ICD-10-PCS SCT codes are needed (e.g. 30233G1 for
-    -- autologous SCT), add them to the SCT codelist with CL_CODE_TYPE='ICD'.
+    -- MED_PROCEDURE PROC (ICD-9/ICD-10 procedure codes + HCPCS safety net)
     medproc AS (
       SELECT mp.PATID, cast(mp.FST_DT AS date) AS DATE_SERVICE,
              s.SCT_TYPE, s.CL_CODE AS CODE, 'med_procedure' AS SRC
       FROM {cdm_src(cfg$tbl_med_proc)} mp
       INNER JOIN lot_patient_input p ON mp.PATID = p.PATID
       INNER JOIN sct_codes s
-        ON s.CL_CODE_TYPE IN ('HCPCS', 'ICD')
+        ON (  (s.CL_CODE_TYPE = 'ICD10PROC'
+               AND upper(mp.ICD_FLAG) NOT IN ('9', 'ICD9', 'ICD-9'))
+           OR (s.CL_CODE_TYPE = 'ICD9PROC'
+               AND upper(mp.ICD_FLAG) IN ('9', 'ICD9', 'ICD-9'))
+           OR s.CL_CODE_TYPE = 'HCPCS'
+           )
        AND upper(regexp_replace(coalesce(cast(mp.PROC as string),''), '[^A-Za-z0-9]', '')) = s.CL_CODE
       WHERE cast(mp.FST_DT AS date) >= p.INDEX_DATE
         AND cast(mp.FST_DT AS date) <= p.OBS_END_DT
+    ),
+    -- MED_DIAGNOSIS DIAG (ICD-10/ICD-9 diagnosis codes)
+    med_diag AS (
+      SELECT d.PATID, cast(d.FST_DT AS date) AS DATE_SERVICE,
+             s.SCT_TYPE, s.CL_CODE AS CODE, 'med_diagnosis' AS SRC
+      FROM {cdm_src(cfg$tbl_med_diag)} d
+      INNER JOIN lot_patient_input p ON d.PATID = p.PATID
+      INNER JOIN sct_codes s
+        ON (  (s.CL_CODE_TYPE = 'ICD10DIAG'
+               AND upper(d.ICD_FLAG) NOT IN ('9', 'ICD9', 'ICD-9'))
+           OR (s.CL_CODE_TYPE = 'ICD9DIAG'
+               AND upper(d.ICD_FLAG) IN ('9', 'ICD9', 'ICD-9'))
+           )
+       AND upper(regexp_replace(coalesce(cast(d.DIAG as string),''), '[^A-Za-z0-9]', '')) = s.CL_CODE
+      WHERE cast(d.FST_DT AS date) >= p.INDEX_DATE
+        AND cast(d.FST_DT AS date) <= p.OBS_END_DT
     ),
     combined AS (
       SELECT * FROM med_proc
       UNION ALL SELECT * FROM med_bill
       UNION ALL SELECT * FROM medproc
+      UNION ALL SELECT * FROM med_diag
     )
     -- Deduplicate: one record per (PATID, DATE_SERVICE, SCT_TYPE)
     SELECT PATID, DATE_SERVICE, SCT_TYPE, min(CODE) AS CODE
