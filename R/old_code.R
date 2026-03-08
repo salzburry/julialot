@@ -825,33 +825,86 @@ record_attrition <- function(step_name, description, n_30, n_60, n_90) {
  
 print_attrition_table <- function() {
   cat("\n")
-  cat(strrep("=", 110), "\n")
+  cat(strrep("=", 140), "\n")
   cat("                              ATTRITION TABLE SUMMARY (30d / 60d / 90d)\n")
-  cat(strrep("=", 110), "\n")
-  cat(sprintf("%-40s %12s %12s %12s %12s %12s %12s\n",
-              "Step", "N (30d)", "Excl (30d)", "N (60d)", "Excl (60d)", "N (90d)", "Excl (90d)"))
-  cat(strrep("-", 110), "\n")
- 
+  cat(strrep("=", 140), "\n")
+  cat(sprintf("%-40s %18s %12s %18s %12s %18s %12s\n",
+              "Step", "N (%) 30d", "Excl (30d)", "N (%) 60d", "Excl (60d)", "N (%) 90d", "Excl (90d)"))
+  cat(strrep("-", 140), "\n")
+
+  # Get the Step 0 base counts for percentage denominators
+  steps <- names(attrition$counts)
+  base_30 <- if (length(steps) > 0) attrition$counts[[steps[1]]]$n_30 else NA
+  base_60 <- if (length(steps) > 0) attrition$counts[[steps[1]]]$n_60 else NA
+  base_90 <- if (length(steps) > 0) attrition$counts[[steps[1]]]$n_90 else NA
+
   prev_30 <- NA
   prev_60 <- NA
   prev_90 <- NA
-  for (step in names(attrition$counts)) {
+  for (step in steps) {
     item <- attrition$counts[[step]]
     excl_30 <- if (is.na(prev_30)) "" else format(prev_30 - item$n_30, big.mark = ",")
     excl_60 <- if (is.na(prev_60)) "" else format(prev_60 - item$n_60, big.mark = ",")
     excl_90 <- if (is.na(prev_90)) "" else format(prev_90 - item$n_90, big.mark = ",")
-    cat(sprintf("%-40s %12s %12s %12s %12s %12s %12s\n",
+    # Compute percentages relative to Step 0 base count
+    pct_30 <- if (!is.na(base_30) && base_30 > 0) sprintf("%.1f%%", 100 * item$n_30 / base_30) else ""
+    pct_60 <- if (!is.na(base_60) && base_60 > 0) sprintf("%.1f%%", 100 * item$n_60 / base_60) else ""
+    pct_90 <- if (!is.na(base_90) && base_90 > 0) sprintf("%.1f%%", 100 * item$n_90 / base_90) else ""
+    n_pct_30 <- paste0(format(item$n_30, big.mark = ","), " (", pct_30, ")")
+    n_pct_60 <- paste0(format(item$n_60, big.mark = ","), " (", pct_60, ")")
+    n_pct_90 <- paste0(format(item$n_90, big.mark = ","), " (", pct_90, ")")
+    cat(sprintf("%-40s %18s %12s %18s %12s %18s %12s\n",
                 substr(item$description, 1, 40),
-                format(item$n_30, big.mark = ","), excl_30,
-                format(item$n_60, big.mark = ","), excl_60,
-                format(item$n_90, big.mark = ","), excl_90))
+                n_pct_30, excl_30,
+                n_pct_60, excl_60,
+                n_pct_90, excl_90))
     prev_30 <- item$n_30
     prev_60 <- item$n_60
     prev_90 <- item$n_90
   }
- 
-  cat(strrep("=", 110), "\n")
+
+  cat(strrep("=", 140), "\n")
   cat("\n")
+}
+
+# Export attrition table as a CSV file with N and % columns
+export_attrition_csv <- function(output_path = NULL) {
+  if (is.null(output_path)) {
+    output_dir <- Sys.getenv("OUTPUT_DIR", unset = "/mnt/results")
+    dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+    output_path <- file.path(output_dir, "attrition_table.csv")
+  }
+
+  steps <- names(attrition$counts)
+  if (length(steps) == 0) {
+    log_msg("WARN: No attrition data to export")
+    return(invisible(NULL))
+  }
+
+  # Base counts for percentage calculation (Step 0)
+  base_30 <- attrition$counts[[steps[1]]]$n_30
+  base_60 <- attrition$counts[[steps[1]]]$n_60
+  base_90 <- attrition$counts[[steps[1]]]$n_90
+
+  rows <- lapply(steps, function(step) {
+    item <- attrition$counts[[step]]
+    data.frame(
+      Step = item$description,
+      N_30d = item$n_30,
+      Pct_30d = if (base_30 > 0) round(100 * item$n_30 / base_30, 1) else NA,
+      N_60d = item$n_60,
+      Pct_60d = if (base_60 > 0) round(100 * item$n_60 / base_60, 1) else NA,
+      N_90d = item$n_90,
+      Pct_90d = if (base_90 > 0) round(100 * item$n_90 / base_90, 1) else NA,
+      stringsAsFactors = FALSE
+    )
+  })
+
+  df <- do.call(rbind, rows)
+  dir.create(dirname(output_path), showWarnings = FALSE, recursive = TRUE)
+  write.csv(df, output_path, row.names = FALSE)
+  log_msg("Attrition table exported to: ", output_path)
+  invisible(df)
 }
  
 # ============================================================
@@ -2477,7 +2530,10 @@ main <- function() {
    
     # Print the attrition table
     print_attrition_table()
-   
+
+    # Export attrition table as CSV with N and % columns
+    export_attrition_csv()
+
     # Print additional summary statistics
     cat("\n")
     cat(SEP_60, "\n")
