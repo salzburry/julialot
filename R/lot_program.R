@@ -3292,16 +3292,28 @@ main <- function() {
   # ----------------------------------------------------------
 
   # S11: Register SCT codelist
+  # Normalize CL_CODE_TYPE: PROC/ICD10PCS → ICD (matches med_procedure path)
+  # Normalize SCT_TYPE: Allogenic→ALLO, Autologous→AUTO, CAR-T/CART→CART
   run_step(con, "S11_sct_codelist", glue("
     CREATE OR REPLACE TEMPORARY VIEW sct_codelist AS
     SELECT
-      upper(trim(CL_CODE_TYPE)) AS CL_CODE_TYPE,
+      CASE upper(trim(CL_CODE_TYPE))
+        WHEN 'PROC' THEN 'ICD'
+        WHEN 'ICD10PCS' THEN 'ICD'
+        WHEN 'ICD10' THEN 'ICD'
+        ELSE upper(trim(CL_CODE_TYPE))
+      END AS CL_CODE_TYPE,
       upper(regexp_replace(trim(CL_CODE), '[^A-Za-z0-9]', '')) AS CL_CODE,
-      upper(trim(SCT_TYPE)) AS SCT_TYPE
+      CASE
+        WHEN upper(trim(SCT_TYPE)) LIKE 'ALLO%' THEN 'ALLO'
+        WHEN upper(trim(SCT_TYPE)) LIKE 'AUTO%' THEN 'AUTO'
+        WHEN upper(trim(SCT_TYPE)) IN ('CAR-T', 'CART', 'CAR_T') THEN 'CART'
+        ELSE upper(trim(SCT_TYPE))
+      END AS SCT_TYPE
     FROM {sct_src}
     WHERE CL_CODE IS NOT NULL AND trim(CL_CODE) <> ''
       AND SCT_TYPE IS NOT NULL AND trim(SCT_TYPE) <> ''
-  "), qc = "SELECT SCT_TYPE, count(*) AS n_codes FROM sct_codelist GROUP BY SCT_TYPE ORDER BY SCT_TYPE")
+  "), qc = "SELECT SCT_TYPE, CL_CODE_TYPE, count(*) AS n_codes FROM sct_codelist GROUP BY SCT_TYPE, CL_CODE_TYPE ORDER BY SCT_TYPE, CL_CODE_TYPE")
 
   # S12: Extract raw SCT claims from MEDICAL + MED_PROCEDURE
   run_step(con, "S12_sct_claims_raw", glue("
