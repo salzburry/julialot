@@ -3294,10 +3294,9 @@ main <- function() {
 
   # S11: Register SCT codelist
   # Normalize CL_CODE_TYPE to canonical values:
-  #   'ICD 10 PROC' / PROC / ICD10PCS → 'ICD'     (matches med_procedure.PROC)
-  #   'ICD 10 DIAG' / ICD10DX         → 'DIAG10'  (matches med_diagnosis.DIAG)
-  #   'ICD 9 DIAG'  / ICD9DX          → 'DIAG9'   (matches med_diagnosis.DIAG)
-  #   HCPCS                           → 'HCPCS'   (matches medical.PROC_CD)
+  #   PROC / ICD10PCS        → 'ICD'   (matches med_procedure.PROC)
+  #   DIAG                   → 'DIAG'  (matches med_diagnosis.DIAG, any ICD version)
+  #   HCPCS                  → 'HCPCS' (matches medical.PROC_CD / BILL_PROC_CD)
   # Normalize SCT_TYPE: Allogenic→ALLO, Autologous→AUTO, CAR-T→CART
   run_step(con, "S11_sct_codelist", glue("
     CREATE OR REPLACE TEMPORARY VIEW sct_codelist AS
@@ -3305,10 +3304,8 @@ main <- function() {
       CASE
         WHEN upper(trim(CL_CODE_TYPE)) LIKE '%PROC%'
           OR upper(trim(CL_CODE_TYPE)) IN ('ICD10PCS', 'ICD') THEN 'ICD'
-        WHEN upper(trim(CL_CODE_TYPE)) LIKE 'ICD%10%DIAG%'
-          OR upper(trim(CL_CODE_TYPE)) IN ('ICD10DX', 'ICD10DIAG', 'DIAG10') THEN 'DIAG10'
-        WHEN upper(trim(CL_CODE_TYPE)) LIKE 'ICD%9%DIAG%'
-          OR upper(trim(CL_CODE_TYPE)) IN ('ICD9', 'ICD9DX', 'ICD9DIAG', 'DIAG9') THEN 'DIAG9'
+        WHEN upper(trim(CL_CODE_TYPE)) LIKE '%DIAG%'
+          OR upper(trim(CL_CODE_TYPE)) IN ('DX', 'DIAGNOSIS') THEN 'DIAG'
         ELSE upper(trim(CL_CODE_TYPE))
       END AS CL_CODE_TYPE,
       upper(regexp_replace(trim(CL_CODE), '[^A-Za-z0-9]', '')) AS CL_CODE,
@@ -3365,18 +3362,14 @@ main <- function() {
       WHERE cast(mp.FST_DT AS date) >= p.INDEX_DATE
         AND cast(mp.FST_DT AS date) <= p.OBS_END_DT
     ),
-    -- MED_DIAGNOSIS DIAG (ICD-10/ICD-9 diagnosis codes)
+    -- MED_DIAGNOSIS DIAG (diagnosis codes: T86.xx, Z48.290, etc.)
     med_diag AS (
       SELECT d.PATID, cast(d.FST_DT AS date) AS DATE_SERVICE,
              s.SCT_TYPE, s.CL_CODE AS CODE, 'med_diagnosis' AS SRC
       FROM {cdm_src(cfg$tbl_med_diag)} d
       INNER JOIN lot_patient_input p ON d.PATID = p.PATID
       INNER JOIN sct_codes s
-        ON (  (s.CL_CODE_TYPE = 'DIAG10'
-               AND upper(d.ICD_FLAG) NOT IN ('9', 'ICD9', 'ICD-9'))
-           OR (s.CL_CODE_TYPE = 'DIAG9'
-               AND upper(d.ICD_FLAG) IN ('9', 'ICD9', 'ICD-9'))
-           )
+        ON s.CL_CODE_TYPE = 'DIAG'
        AND upper(regexp_replace(coalesce(cast(d.DIAG as string),''), '[^A-Za-z0-9]', '')) = s.CL_CODE
       WHERE cast(d.FST_DT AS date) >= p.INDEX_DATE
         AND cast(d.FST_DT AS date) <= p.OBS_END_DT
