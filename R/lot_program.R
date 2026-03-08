@@ -3294,21 +3294,24 @@ main <- function() {
 
   # S11: Register SCT codelist
   # Normalize CL_CODE_TYPE to canonical values:
-  #   'ICD 10 PROC' / PROC / ICD10PCS → 'ICD'     (matches med_procedure.PROC)
-  #   'ICD 10 DIAG' / ICD10DX         → 'DIAG10'  (matches med_diagnosis.DIAG)
-  #   'ICD 9 DIAG'  / ICD9DX          → 'DIAG9'   (matches med_diagnosis.DIAG)
-  #   HCPCS                           → 'HCPCS'   (matches medical.PROC_CD)
+  #   ICD10PROC / ICD10PCS            → 'ICD10PROC' (matches med_procedure.PROC with ICD_FLAG=10)
+  #   ICD9PROC                        → 'ICD9PROC'  (matches med_procedure.PROC with ICD_FLAG=9)
+  #   ICD10DIAG / ICD10DX             → 'ICD10DIAG' (matches med_diagnosis.DIAG with ICD_FLAG=10)
+  #   ICD9DIAG / ICD9DX               → 'ICD9DIAG'  (matches med_diagnosis.DIAG with ICD_FLAG=9)
+  #   HCPCS                           → 'HCPCS'     (matches medical.PROC_CD)
   # Normalize SCT_TYPE: Allogenic→ALLO, Autologous→AUTO, CAR-T→CART
   run_step(con, "S11_sct_codelist", glue("
     CREATE OR REPLACE TEMPORARY VIEW sct_codelist AS
     SELECT
       CASE
+        WHEN upper(trim(CL_CODE_TYPE)) IN ('ICD10PROC', 'ICD10PCS') THEN 'ICD10PROC'
+        WHEN upper(trim(CL_CODE_TYPE)) = 'ICD9PROC' THEN 'ICD9PROC'
         WHEN upper(trim(CL_CODE_TYPE)) LIKE '%PROC%'
-          OR upper(trim(CL_CODE_TYPE)) IN ('ICD10PCS', 'ICD') THEN 'ICD'
-        WHEN upper(trim(CL_CODE_TYPE)) LIKE 'ICD%10%DIAG%'
-          OR upper(trim(CL_CODE_TYPE)) IN ('ICD10DX', 'ICD10DIAG', 'DIAG10') THEN 'DIAG10'
-        WHEN upper(trim(CL_CODE_TYPE)) LIKE 'ICD%9%DIAG%'
-          OR upper(trim(CL_CODE_TYPE)) IN ('ICD9', 'ICD9DX', 'ICD9DIAG', 'DIAG9') THEN 'DIAG9'
+          OR upper(trim(CL_CODE_TYPE)) = 'ICD' THEN 'ICD10PROC'
+        WHEN upper(trim(CL_CODE_TYPE)) IN ('ICD10DIAG', 'ICD10DX', 'DIAG10')
+          OR upper(trim(CL_CODE_TYPE)) LIKE 'ICD%10%DIAG%' THEN 'ICD10DIAG'
+        WHEN upper(trim(CL_CODE_TYPE)) IN ('ICD9DIAG', 'ICD9DX', 'ICD9', 'DIAG9')
+          OR upper(trim(CL_CODE_TYPE)) LIKE 'ICD%9%DIAG%' THEN 'ICD9DIAG'
         ELSE upper(trim(CL_CODE_TYPE))
       END AS CL_CODE_TYPE,
       upper(regexp_replace(trim(CL_CODE), '[^A-Za-z0-9]', '')) AS CL_CODE,
@@ -3360,7 +3363,12 @@ main <- function() {
       FROM {cdm_src(cfg$tbl_med_proc)} mp
       INNER JOIN lot_patient_input p ON mp.PATID = p.PATID
       INNER JOIN sct_codes s
-        ON s.CL_CODE_TYPE IN ('HCPCS', 'ICD')
+        ON (  (s.CL_CODE_TYPE = 'ICD10PROC'
+               AND upper(mp.ICD_FLAG) NOT IN ('9', 'ICD9', 'ICD-9'))
+           OR (s.CL_CODE_TYPE = 'ICD9PROC'
+               AND upper(mp.ICD_FLAG) IN ('9', 'ICD9', 'ICD-9'))
+           OR s.CL_CODE_TYPE = 'HCPCS'
+           )
        AND upper(regexp_replace(coalesce(cast(mp.PROC as string),''), '[^A-Za-z0-9]', '')) = s.CL_CODE
       WHERE cast(mp.FST_DT AS date) >= p.INDEX_DATE
         AND cast(mp.FST_DT AS date) <= p.OBS_END_DT
@@ -3372,9 +3380,9 @@ main <- function() {
       FROM {cdm_src(cfg$tbl_med_diag)} d
       INNER JOIN lot_patient_input p ON d.PATID = p.PATID
       INNER JOIN sct_codes s
-        ON (  (s.CL_CODE_TYPE = 'DIAG10'
+        ON (  (s.CL_CODE_TYPE = 'ICD10DIAG'
                AND upper(d.ICD_FLAG) NOT IN ('9', 'ICD9', 'ICD-9'))
-           OR (s.CL_CODE_TYPE = 'DIAG9'
+           OR (s.CL_CODE_TYPE = 'ICD9DIAG'
                AND upper(d.ICD_FLAG) IN ('9', 'ICD9', 'ICD-9'))
            )
        AND upper(regexp_replace(coalesce(cast(d.DIAG as string),''), '[^A-Za-z0-9]', '')) = s.CL_CODE
