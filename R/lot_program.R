@@ -2186,7 +2186,7 @@ print_descriptives <- function(con) {
   # Writes to {output_dir}/cyclo_mono/ as standalone CSVs.
   #
   # Two cohort definitions produced:
-  #   STRICT:           LOT1_BASE_MEDS = 'CYCLO', LOT1_MED_CNT = 1
+  #   STRICT:           LOT1_BASE_MEDS = 'CYCL', LOT1_MED_CNT = 1
   #   STEROID-TOLERANT: only non-steroid induction med is CYCLO
   #                     (allows CYCLO + DEXA/PRED etc.)
   #
@@ -2203,7 +2203,7 @@ print_descriptives <- function(con) {
              lb.OBS_END_DT, lb.DEATH_DT, lb.GDR_CD, lb.AGE_INDEX_YR,
              'STRICT' AS COHORT_DEF
       FROM lot1_base lb
-      WHERE lb.LOT1_BASE_MEDS = 'CYCLO'
+      WHERE lb.LOT1_BASE_MEDS = 'CYCL'
         AND lb.LOT1_MED_CNT = 1
     ")
 
@@ -2224,7 +2224,7 @@ print_descriptives <- function(con) {
         SELECT
           PATID,
           count(DISTINCT CASE WHEN MED_CLASS <> 'STEROID' THEN MED_ABBR END) AS N_NONSTEROID,
-          max(CASE WHEN MED_CLASS <> 'STEROID' AND MED_ABBR = 'CYCLO' THEN 1 ELSE 0 END) AS HAS_CYCLO
+          max(CASE WHEN MED_CLASS <> 'STEROID' AND MED_ABBR = 'CYCL' THEN 1 ELSE 0 END) AS HAS_CYCLO
         FROM induction_meds
         GROUP BY PATID
       )
@@ -2353,7 +2353,7 @@ print_descriptives <- function(con) {
         INNER JOIN lot1_base lb
           ON ms.PATID = lb.PATID
         WHERE lb.PATID IN {pat_ids_sql}
-          AND ms.MAP_MED_TYPE <> 'CYCLO'
+          AND ms.MAP_MED_TYPE <> 'CYCL'
           AND ms.MAP_MED_CLASS <> 'STEROID'
           AND ms.MAP_START_DT > lb.LOT1_START_DT
         ORDER BY ms.PATID, ms.MAP_START_DT
@@ -2371,7 +2371,7 @@ print_descriptives <- function(con) {
             FROM map_stacked ms
             INNER JOIN lot1_base lb ON ms.PATID = lb.PATID
             WHERE lb.PATID IN {pat_ids_sql}
-              AND ms.MAP_MED_TYPE <> 'CYCLO'
+              AND ms.MAP_MED_TYPE <> 'CYCL'
               AND ms.MAP_MED_CLASS <> 'STEROID'
               AND ms.MAP_START_DT > lb.LOT1_START_DT
             GROUP BY ms.PATID, ms.MAP_MED_TYPE, ms.MAP_MED_CLASS, lb.LOT1_START_DT
