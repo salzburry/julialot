@@ -140,14 +140,28 @@ cdm_src <- function(base_tbl) {
   }
 }
 
+
 with_retry <- function(fn, max_retries = cfg$max_retries, base_sleep = cfg$base_sleep) {
+  # Patterns indicating permanent SQL/semantic errors that should NOT be retried
+  permanent_error_patterns <- c(
+    "AnalysisException", "AMBIGUOUS_REFERENCE", "AMBIGUOUS REFERENCE",
+    "ParseException", "Syntax error", "TABLE_OR_VIEW_NOT_FOUND",
+    "UNRESOLVED_COLUMN", "cannot resolve"
+  )
   attempt <- 1
   repeat {
     out <- tryCatch(fn(), error = function(e) e)
     if (!inherits(out, "error")) return(out)
-    if (attempt >= max_retries) stop(out)
+    msg <- conditionMessage(out)
+    is_permanent <- any(vapply(permanent_error_patterns, function(p) grepl(p, msg, ignore.case = TRUE), logical(1)))
+    if (is_permanent || attempt >= max_retries) {
+      if (is_permanent && attempt < max_retries) {
+        log_msg("Permanent error (not retrying): ", msg)
+      }
+      stop(out)
+    }
     sleep_s <- base_sleep * (2^(attempt - 1))
-    log_msg("Retryable failure: ", conditionMessage(out))
+    log_msg("Retryable failure: ", msg)
     log_msg("Retrying in ", sleep_s, "s (attempt ", attempt + 1, "/", max_retries, ")")
     Sys.sleep(sleep_s)
     attempt <- attempt + 1
@@ -1647,7 +1661,7 @@ print_descriptives <- function(con) {
 
             # Create invisible scatter for hover
             hover_df <- data.frame(
-              x = pat_maps$MAP_START_DT + (pat_maps$MAP_END_DT - pat_maps$MAP_START_DT) / 2,
+              x = pat_maps$MAP_START_DT + as.integer((pat_maps$MAP_END_DT - pat_maps$MAP_START_DT) / 2),
               y = med_y[pat_maps$MED],
               text = paste0(
                 "Med: ", pat_maps$MED,
@@ -1896,7 +1910,7 @@ print_descriptives <- function(con) {
 
             # Hover trace
             hover_df3 <- data.frame(
-              x = seg_df$start + (seg_df$end - seg_df$start) / 2,
+              x = seg_df$start + as.integer((seg_df$end - seg_df$start) / 2),
               y = reg_y[seg_df$regimen],
               text = paste0("Regimen: ", seg_df$regimen,
                            "\nStart: ", seg_df$start, "\nEnd: ", seg_df$end,
@@ -2264,13 +2278,13 @@ print_descriptives <- function(con) {
       flow_data <- db_q(con, "
         SELECT
           CASE
-            WHEN LOT1_BASE_MEDS IN ('BORT LENA', 'BORT', 'LENA', 'BORT DARA LENA',
+            WHEN lb.LOT1_BASE_MEDS IN ('BORT LENA', 'BORT', 'LENA', 'BORT DARA LENA',
                                      'BORT CYCL', 'DARA LENA', 'BORT DARA',
                                      'CARF LENA', 'BORT CYCL DARA LENA', 'DARA')
-            THEN LOT1_BASE_MEDS
+            THEN lb.LOT1_BASE_MEDS
             ELSE 'OTHER'
           END AS regimen,
-          CAST(LOT1_MED_CNT AS STRING) AS med_count,
+          CAST(lb.LOT1_MED_CNT AS STRING) AS med_count,
           lbe.LOT1_BASE_END_REASON AS end_reason,
           count(*) AS n
         FROM lot1_base lb
@@ -2913,6 +2927,7 @@ main <- function() {
       SELECT /*+ BROADCAST */ * FROM mma_codelist
     ),
     -- 1) Medical claims - PROC_CD (HCPCS)
+    -- Day supply hardcoded to {cfg$medical_day_supply} per spec (5A.MMA_MED row 15)
     med_proc_cd AS (
       SELECT
         m.PATID,
@@ -2975,28 +2990,11 @@ main <- function() {
         AND cast(m.FST_DT AS date) >= p.INDEX_DATE
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT
     ),
-    -- 4) med_procedure table (additional HCPCS procedure codes)
-    -- NOTE: MED_PROCEDURE.PROC contains ICD codes per Optum data dict.
-    -- Matching HCPCS here is a safety net; expect ~0 matches from this source.
-    medproc AS (
-      SELECT
-        mp.PATID,
-        cast(mp.FST_DT AS date) AS DATE_SERVICE,
-        {cfg$medical_day_supply} AS DAY_SUPPLY,
-        'medical' AS CLAIM_TYPE,
-        'med_procedure' AS CLAIM_SOURCE,
-        c.CL_CODE AS CODE,
-        c.CL_CODE_TYPE AS CODE_TYPE,
-        c.CL_MED_ABBR AS MED_ABBR,
-        c.CL_MED_CLASS AS MED_CLASS
-      FROM {cdm_src(cfg$tbl_med_proc)} mp
-      INNER JOIN lot_patient_input p ON mp.PATID = p.PATID
-      INNER JOIN codelist c
-        ON c.CL_CODE_TYPE = 'HCPCS'
-       AND upper(regexp_replace(coalesce(cast(mp.PROC as string),''), '[^A-Za-z0-9]', '')) = c.CL_CODE
-      WHERE cast(mp.FST_DT AS date) >= p.INDEX_DATE
-        AND cast(mp.FST_DT AS date) <= p.OBS_END_DT
-    ),
+    -- 4) med_procedure table: REMOVED — Optum med_procedure.PROC contains ICD
+    -- procedure codes, not HCPCS/NDC drug codes. The MMA codelist only has HCPCS
+    -- and NDC codes for medication identification, so matching against ICD procedure
+    -- codes is not meaningful. SCT extraction (S12) correctly matches ICD procedure
+    -- codes from this table using the SCT codelist.
     -- 5) Pharmacy (rx) claims (NDC)
     rx_claims AS (
       SELECT
@@ -3022,7 +3020,6 @@ main <- function() {
     SELECT * FROM med_proc_cd
     UNION ALL SELECT * FROM med_bill_proc_cd
     UNION ALL SELECT * FROM med_ndc
-    UNION ALL SELECT * FROM medproc
     UNION ALL SELECT * FROM rx_claims
   "), qc = "
     SELECT
@@ -3035,7 +3032,6 @@ main <- function() {
       sum(case when CLAIM_SOURCE='med_proc_cd' then 1 else 0 end) AS n_from_proc_cd,
       sum(case when CLAIM_SOURCE='med_bill_proc' then 1 else 0 end) AS n_from_bill_proc,
       sum(case when CLAIM_SOURCE='med_ndc' then 1 else 0 end) AS n_from_med_ndc,
-      sum(case when CLAIM_SOURCE='med_procedure' then 1 else 0 end) AS n_from_med_procedure,
       sum(case when CLAIM_SOURCE='rx_ndc' then 1 else 0 end) AS n_from_rx_ndc
     FROM mma_med_raw")
 
@@ -3281,10 +3277,10 @@ main <- function() {
       w.MED_CLASS AS MAP_MED_CLASS,
       CASE
         WHEN w.NEXT_MAP_START_DT IS NOT NULL
-          AND datediff(w.NEXT_MAP_START_DT, w.MAP_END_DT) > {cfg$map_discon_gap_days}
+          AND datediff(w.NEXT_MAP_START_DT, w.MAP_END_DT) >= {cfg$map_discon_gap_days}
           THEN 1
         WHEN w.NEXT_MAP_START_DT IS NULL
-          AND datediff(p.OBS_END_DT, w.MAP_END_DT) > {cfg$map_discon_gap_days}
+          AND datediff(p.OBS_END_DT, w.MAP_END_DT) >= {cfg$map_discon_gap_days}
           THEN 1
         ELSE 0
       END AS MAP_DISCON_FLG
@@ -3370,7 +3366,7 @@ main <- function() {
       SELECT
         p.PATID,
         CASE
-          WHEN d.RAW_DISCON_DT IS NOT NULL AND datediff(p.OBS_END_DT, d.RAW_DISCON_DT) > {cfg$lot_discon_gap_days}
+          WHEN d.RAW_DISCON_DT IS NOT NULL AND datediff(p.OBS_END_DT, d.RAW_DISCON_DT) >= {cfg$lot_discon_gap_days}
             THEN d.RAW_DISCON_DT
           ELSE NULL
         END AS LOT1_BASE_DISCON_DT
@@ -3419,8 +3415,6 @@ main <- function() {
       WHERE bm.MED_ABBR IS NULL
         AND ms.MAP_START_DT >= bc.LOT1_START_DT
         AND ms.MAP_START_DT <= coalesce(bc.LOT1_BASE_DISCON_DT, bc.OBS_END_DT)
-        -- NOTE: Steroids excluded as add-meds per clinical convention; confirm with spec owner
-        AND ms.MAP_MED_CLASS <> 'STEROID'
     ),
     first_add_dt AS (
       SELECT PATID, min(MAP_START_DT) AS ADD_START_DT
@@ -3498,6 +3492,8 @@ main <- function() {
           OR upper(trim(CL_CODE_TYPE)) LIKE 'ICD%10%DIAG%' THEN 'ICD10DIAG'
         WHEN upper(trim(CL_CODE_TYPE)) IN ('ICD9DIAG', 'ICD9DX', 'ICD9', 'DIAG9')
           OR upper(trim(CL_CODE_TYPE)) LIKE 'ICD%9%DIAG%' THEN 'ICD9DIAG'
+        WHEN upper(trim(CL_CODE_TYPE)) IN ('DIAG', 'DX', 'DIAGNOSIS') THEN 'ICD10DIAG'
+        WHEN upper(trim(CL_CODE_TYPE)) IN ('CPT', 'CPT4') THEN 'HCPCS'
         ELSE upper(trim(CL_CODE_TYPE))
       END AS CL_CODE_TYPE,
       upper(regexp_replace(trim(CL_CODE), '[^A-Za-z0-9]', '')) AS CL_CODE,
@@ -3505,6 +3501,9 @@ main <- function() {
         WHEN upper(trim(SCT_TYPE)) LIKE 'ALLO%' THEN 'ALLO'
         WHEN upper(trim(SCT_TYPE)) LIKE 'AUTO%' THEN 'AUTO'
         WHEN upper(trim(SCT_TYPE)) IN ('CAR-T', 'CART', 'CAR_T') THEN 'CART'
+        WHEN upper(trim(SCT_TYPE)) IN ('UNKNOWN', 'UNK', 'OTHER', 'SCT', 'HSCT',
+                                        'HCT', 'STEM CELL', 'TRANSPLANT', 'BMT')
+          THEN 'UNKNOWN'
         ELSE upper(trim(SCT_TYPE))
       END AS SCT_TYPE
     FROM {sct_src}
