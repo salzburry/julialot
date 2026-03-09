@@ -146,7 +146,8 @@ with_retry <- function(fn, max_retries = cfg$max_retries, base_sleep = cfg$base_
   permanent_error_patterns <- c(
     "AnalysisException", "AMBIGUOUS_REFERENCE", "AMBIGUOUS REFERENCE",
     "ParseException", "Syntax error", "TABLE_OR_VIEW_NOT_FOUND",
-    "UNRESOLVED_COLUMN", "cannot resolve"
+    "UNRESOLVED_COLUMN", "cannot resolve",
+    "not supported", "UNSUPPORTED_FEATURE", "not allowed"
   )
   attempt <- 1
   repeat {
@@ -320,8 +321,8 @@ run_step <- function(con, name, sql, qc = NULL, cache = FALSE) {
   # Caching forces Spark to evaluate once and store the result in memory/disk.
   if (isTRUE(cache)) {
     # Extract the view/table name from CREATE ... VIEW/TABLE <name> AS
-    obj_name <- regmatches(sql, regexpr("(?i)(?:VIEW|TABLE)\\s+([a-zA-Z0-9_.]+)", sql))
-    obj_name <- sub("(?i)^(?:VIEW|TABLE)\\s+", "", obj_name)
+    obj_name <- regmatches(sql, regexpr("(?i)(?:VIEW|TABLE)\\s+([a-zA-Z0-9_.]+)", sql, perl = TRUE))
+    obj_name <- sub("(?i)^(?:VIEW|TABLE)\\s+", "", obj_name, perl = TRUE)
     if (nzchar(obj_name)) {
       log_msg("  Caching (materializing) ", obj_name, "...")
       t_cache <- proc.time()
