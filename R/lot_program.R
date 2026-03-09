@@ -106,6 +106,7 @@ run_id <- Sys.getenv("DOMINO_RUN_ID", unset = format(Sys.time(), "%Y%m%d%H%M%S")
 # ============================================================
 SEP   <- strrep("=", 70)
 DASH  <- strrep("-", 70)
+cache_disabled <- FALSE  # Set TRUE on first CACHE TABLE failure (SQL warehouse)
 
 log_msg <- function(...) {
   cat(sprintf("[%s] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S")), ..., "\n")
@@ -319,7 +320,7 @@ run_step <- function(con, name, sql, qc = NULL, cache = FALSE) {
   # Without this, QC queries on views re-execute the entire upstream DAG,
   # and later steps that reference these views re-compute everything again.
   # Caching forces Spark to evaluate once and store the result in memory/disk.
-  if (isTRUE(cache)) {
+  if (isTRUE(cache) && !isTRUE(cache_disabled)) {
     # Extract the view/table name from CREATE ... VIEW/TABLE <name> AS
     obj_name <- regmatches(sql, regexpr("(?i)(?:VIEW|TABLE)\\s+([a-zA-Z0-9_.]+)", sql, perl = TRUE))
     obj_name <- sub("(?i)^(?:VIEW|TABLE)\\s+", "", obj_name, perl = TRUE)
@@ -332,8 +333,9 @@ run_step <- function(con, name, sql, qc = NULL, cache = FALSE) {
         log_msg("  Cached in ", round(cache_elapsed, 1), "s")
       }, error = function(e) {
         # CACHE TABLE is not supported on Databricks SQL warehouses.
-        # Log a warning and continue — the view is still usable, just not cached.
-        log_msg("  Warning: CACHE TABLE not supported (SQL warehouse?). Skipping cache for ", obj_name)
+        # Disable all further cache attempts for this session.
+        cache_disabled <<- TRUE
+        log_msg("  CACHE TABLE not supported (SQL warehouse). Disabling caching for remaining steps.")
       })
     }
   }
