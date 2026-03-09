@@ -11,7 +11,7 @@
 # setwd("/path/to/julialot")
 
 # Source the main file
-source("R/attrition_cohort.R")
+source("R/new_code.R")
 
 # ==============================================================================
 # EXAMPLE 1: Generate Sample Data for Testing
