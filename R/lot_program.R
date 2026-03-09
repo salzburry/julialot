@@ -149,14 +149,10 @@ with_retry <- function(fn, max_retries = cfg$max_retries, base_sleep = cfg$base_
     "UNRESOLVED_COLUMN", "cannot resolve"
   )
   attempt <- 1
-  t_total <- proc.time()
   repeat {
-    t_attempt <- proc.time()
     out <- tryCatch(fn(), error = function(e) e)
-    attempt_elapsed <- (proc.time() - t_attempt)[["elapsed"]]
     if (!inherits(out, "error")) return(out)
     msg <- conditionMessage(out)
-    log_msg("  Attempt ", attempt, " failed after ", round(attempt_elapsed, 1), "s: ", msg)
     is_permanent <- any(vapply(permanent_error_patterns, function(p) grepl(p, msg, ignore.case = TRUE), logical(1)))
     if (is_permanent || attempt >= max_retries) {
       if (is_permanent && attempt < max_retries) {
@@ -165,6 +161,7 @@ with_retry <- function(fn, max_retries = cfg$max_retries, base_sleep = cfg$base_
       stop(out)
     }
     sleep_s <- base_sleep * (2^(attempt - 1))
+    log_msg("Retryable failure: ", msg)
     log_msg("Retrying in ", sleep_s, "s (attempt ", attempt + 1, "/", max_retries, ")")
     Sys.sleep(sleep_s)
     attempt <- attempt + 1
@@ -215,16 +212,9 @@ load_codelist_csv <- function(csv_name, col_spec) {
 get_code_source <- function(embedded_fn, external_tbl, csv_name = NULL, col_spec = NULL) {
   if (!is.null(csv_name) && !is.null(col_spec) && dir.exists(cfg$codelist_dir)) {
     csv_sql <- load_codelist_csv(csv_name, col_spec)
-    if (!is.null(csv_sql)) {
-      log_msg("  Source for ", csv_name, ": CSV")
-      return(paste0("(", csv_sql, ") src"))
-    }
+    if (!is.null(csv_sql)) return(paste0("(", csv_sql, ") src"))
   }
-  if (isTRUE(cfg$use_embedded_codes)) {
-    log_msg("  Source for ", deparse(substitute(embedded_fn)), ": embedded")
-    return(paste0("(", embedded_fn(), ") src"))
-  }
-  log_msg("  Source for ", external_tbl, ": external table [", ref(external_tbl), "]")
+  if (isTRUE(cfg$use_embedded_codes)) return(paste0("(", embedded_fn(), ") src"))
   ref(external_tbl)
 }
 
@@ -323,16 +313,11 @@ run_step <- function(con, name, sql, qc = NULL) {
   t0 <- proc.time()
   db_exec(con, sql)
   elapsed <- (proc.time() - t0)[["elapsed"]]
-  log_msg("  SQL completed in ", round(elapsed, 1), "s")
+  log_msg("  Completed in ", round(elapsed, 1), "s")
   if (!is.null(qc) && nzchar(qc)) {
-    t1 <- proc.time()
     out <- db_q(con, qc)
-    qc_elapsed <- (proc.time() - t1)[["elapsed"]]
-    log_msg("  QC completed in ", round(qc_elapsed, 1), "s")
     print(out)
   }
-  total <- (proc.time() - t0)[["elapsed"]]
-  log_msg("  Step ", name, " total: ", round(total, 1), "s")
   invisible(TRUE)
 }
 
