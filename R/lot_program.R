@@ -106,7 +106,6 @@ run_id <- Sys.getenv("DOMINO_RUN_ID", unset = format(Sys.time(), "%Y%m%d%H%M%S")
 # ============================================================
 SEP   <- strrep("=", 70)
 DASH  <- strrep("-", 70)
-cache_disabled <- FALSE  # Set TRUE on first CACHE TABLE failure (SQL warehouse)
 
 log_msg <- function(...) {
   cat(sprintf("[%s] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S")), ..., "\n")
@@ -308,7 +307,7 @@ embedded_sct_codelist <- function() {
 # ============================================================
 # PIPELINE STEP RUNNER
 # ============================================================
-run_step <- function(con, name, sql, qc = NULL, cache = FALSE) {
+run_step <- function(con, name, sql, qc = NULL) {
   log_msg(SEP)
   log_msg("STEP ", name)
   log_msg(SEP)
@@ -316,29 +315,6 @@ run_step <- function(con, name, sql, qc = NULL, cache = FALSE) {
   db_exec(con, sql)
   elapsed <- (proc.time() - t0)[["elapsed"]]
   log_msg("  Completed in ", round(elapsed, 1), "s")
-  # Materialize (CACHE TABLE) to break lazy-view dependency chains.
-  # Without this, QC queries on views re-execute the entire upstream DAG,
-  # and later steps that reference these views re-compute everything again.
-  # Caching forces Spark to evaluate once and store the result in memory/disk.
-  if (isTRUE(cache) && !isTRUE(cache_disabled)) {
-    # Extract the view/table name from CREATE ... VIEW/TABLE <name> AS
-    obj_name <- regmatches(sql, regexpr("(?i)(?:VIEW|TABLE)\\s+([a-zA-Z0-9_.]+)", sql, perl = TRUE))
-    obj_name <- sub("(?i)^(?:VIEW|TABLE)\\s+", "", obj_name, perl = TRUE)
-    if (nzchar(obj_name)) {
-      log_msg("  Caching (materializing) ", obj_name, "...")
-      t_cache <- proc.time()
-      tryCatch({
-        db_exec(con, paste("CACHE TABLE", obj_name))
-        cache_elapsed <- (proc.time() - t_cache)[["elapsed"]]
-        log_msg("  Cached in ", round(cache_elapsed, 1), "s")
-      }, error = function(e) {
-        # CACHE TABLE is not supported on Databricks SQL warehouses.
-        # Disable all further cache attempts for this session.
-        cache_disabled <<- TRUE
-        log_msg("  CACHE TABLE not supported (SQL warehouse). Disabling caching for remaining steps.")
-      })
-    }
-  }
   if (!is.null(qc) && nzchar(qc)) {
     t1 <- proc.time()
     out <- db_q(con, qc)
@@ -3057,7 +3033,7 @@ main <- function() {
       sum(case when CLAIM_SOURCE='med_bill_proc' then 1 else 0 end) AS n_from_bill_proc,
       sum(case when CLAIM_SOURCE='med_ndc' then 1 else 0 end) AS n_from_med_ndc,
       sum(case when CLAIM_SOURCE='rx_ndc' then 1 else 0 end) AS n_from_rx_ndc
-    FROM mma_med_raw", cache = TRUE)
+    FROM mma_med_raw")
 
   # Enrich + dedup (mma med.pdf spec)
   run_step(con, "S05_mma_med_processed", glue("
@@ -3109,14 +3085,12 @@ main <- function() {
       sum(case when CLAIM_TYPE='medical' then 1 else 0 end) AS n_medical_rows,
       min(DAY_SUPPLY) AS min_day_supply,
       max(DAY_SUPPLY) AS max_day_supply
-    FROM mma_med_processed", cache = TRUE)
+    FROM mma_med_processed")
 
   # Sanity check
   bad_ds <- db_q(con, "SELECT count(*) AS n_bad FROM mma_med_processed WHERE CLAIM_TYPE='pharmacy' AND (DAY_SUPPLY IS NULL OR DAY_SUPPLY < 1)")$n_bad
   if (bad_ds > 0) stop(glue("Post-filter: found {bad_ds} pharmacy rows with invalid DAY_SUPPLY."))
 
-  # Free mma_med_raw cache — no longer needed now that mma_med_processed is cached
-  tryCatch(db_exec(con, "UNCACHE TABLE IF EXISTS mma_med_raw"), error = function(e) NULL)
 
   # ----------------------------------------------------------
   # STEP 3 (5B): MAP_MED - Medication Available Period algorithm
@@ -3321,7 +3295,7 @@ main <- function() {
       count(DISTINCT MED_ABBR) AS n_meds,
       avg(datediff(MAP_END_DT, MAP_START_DT) + 1) AS avg_map_len_days,
       sum(MAP_DISCON_FLG) AS n_discontinuations
-    FROM map_med", cache = TRUE)
+    FROM map_med")
 
   # ----------------------------------------------------------
   # STEP 4: MAP_STACKED
@@ -3486,7 +3460,7 @@ main <- function() {
       avg(LOT1_BASE_LENGTH) AS avg_base_length,
       sum(case when LOT1_BASE_DISCON_DT is not null then 1 else 0 end) as n_with_discon_dt,
       sum(case when LOT1_BASE_1ST_ADD_MED_DT is not null then 1 else 0 end) as n_with_add_med
-    FROM lot1_base", cache = TRUE)
+    FROM lot1_base")
 
   # ----------------------------------------------------------
   # STEP 7 (SCT): Stem Cell Transplant detection
@@ -3616,7 +3590,7 @@ main <- function() {
            min(DATE_SERVICE) AS min_date, max(DATE_SERVICE) AS max_date
     FROM sct_claims_raw
     GROUP BY SCT_TYPE
-    ORDER BY SCT_TYPE", cache = TRUE)
+    ORDER BY SCT_TYPE")
 
   # NOTE: SCT CTEs include SRC column for debug traceability (dropped during dedup).
   # To audit source contributions, query the combined CTE directly before dedup.
@@ -4000,7 +3974,7 @@ main <- function() {
       sum(LOT1_SCT_AUTO_TAND_FLG) AS n_tandem,
       sum(LOT1_SCT_AUTO_SING_FLG) AS n_single_auto,
       sum(CASE WHEN LOT1_TX_ENDDATE IS NOT NULL THEN 1 ELSE 0 END) AS n_with_sct_end
-    FROM lot1_sct", cache = TRUE)
+    FROM lot1_sct")
 
   # S16: LOT1_BASE_END - Final end reason incorporating SCT
   # End reason priority: SCT > MED_ADD > DISCONTINUATION > CENSORED
@@ -4052,7 +4026,7 @@ main <- function() {
     SELECT LOT1_BASE_END_REASON, count(*) AS n
     FROM lot1_base_end
     GROUP BY LOT1_BASE_END_REASON
-    ORDER BY LOT1_BASE_END_REASON", cache = TRUE)
+    ORDER BY LOT1_BASE_END_REASON")
 
   log_msg("NOTE: Maintenance (mono/dual) specs not yet provided; LOT1_BASE_END_REASON")
   log_msg("      does not yet include MAINTENANCE_START. Will need integration when available.")
