@@ -313,7 +313,7 @@ run_step <- function(con, name, sql, qc = NULL, cache = FALSE) {
   t0 <- proc.time()
   db_exec(con, sql)
   elapsed <- (proc.time() - t0)[["elapsed"]]
-  log_msg("  SQL completed in ", round(elapsed, 1), "s")
+  log_msg("  Completed in ", round(elapsed, 1), "s")
   # Materialize (CACHE TABLE) to break lazy-view dependency chains.
   # Without this, QC queries on views re-execute the entire upstream DAG,
   # and later steps that reference these views re-compute everything again.
@@ -331,14 +331,12 @@ run_step <- function(con, name, sql, qc = NULL, cache = FALSE) {
     }
   }
   if (!is.null(qc) && nzchar(qc)) {
-    log_msg("  Running QC query...")
     t1 <- proc.time()
     out <- db_q(con, qc)
     qc_elapsed <- (proc.time() - t1)[["elapsed"]]
     log_msg("  QC completed in ", round(qc_elapsed, 1), "s")
     print(out)
   }
-  log_msg("  Step ", name, " done.")
   invisible(TRUE)
 }
 
@@ -2738,7 +2736,6 @@ main <- function() {
   # ----------------------------------------------------------
   # STEP 0: Register code lists as TEMP views
   # ----------------------------------------------------------
-  log_msg("Resolving code list sources...")
   rollup_src <- get_code_source(
     embedded_fn = embedded_mma_rollup,
     external_tbl = cfg$cl_mma_rollup_tbl,
@@ -2746,32 +2743,24 @@ main <- function() {
     col_spec = c("CL_MEDICATION_FULL", "CL_MED_CLASS", "CL_MED_ABBR",
                  "MONOMAINTENANCE", "DUALMAINTENANCEWITH", "CONDITIONING", "USED_FOR_OTHER_CANCERS")
   )
-  log_msg("  rollup_src: ", substr(rollup_src, 1, 80))
-
   codelist_src <- get_code_source(
     embedded_fn = embedded_mma_codelist,
     external_tbl = cfg$cl_mma_codelist_tbl,
     csv_name = "cl_mma_codelist.csv",
     col_spec = c("CL_CODE_TYPE", "CL_CODE", "CL_MEDICATION_FULL", "CL_MED_CLASS", "CL_MED_ABBR")
   )
-  log_msg("  codelist_src: ", substr(codelist_src, 1, 80))
-
   subs_src <- get_code_source(
     embedded_fn = embedded_permissible_subs,
     external_tbl = cfg$permissible_subs_tbl,
     csv_name = "permissible_subs.csv",
     col_spec = c("original_med", "substitute_med")
   )
-  log_msg("  subs_src: ", substr(subs_src, 1, 80))
-
   sct_src <- get_code_source(
     embedded_fn = embedded_sct_codelist,
     external_tbl = cfg$cl_sct_codelist_tbl,
     csv_name = "cl_sct_codelist.csv",
     col_spec = c("CL_CODE_TYPE", "CL_CODE", "SCT_TYPE")
   )
-  log_msg("  sct_src: ", substr(sct_src, 1, 80))
-
   run_step(con, "S00_mma_rollup", glue("
     CREATE OR REPLACE TEMPORARY VIEW mma_rollup AS
     SELECT
