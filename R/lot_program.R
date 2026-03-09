@@ -2074,6 +2074,183 @@ print_descriptives <- function(con) {
 </div></body></html>')
       add_html_card(sct_html, section = "SCT", title = "SCT Summary")
       log_msg("  SCT zero-state card added.")
+    } else {
+      # ------- SCT data exists — build populated SCT tab -------
+      log_msg("  Building SCT dashboard section (", sct_event_n, " LOT-ending events)...")
+
+      # Query SCT summary stats
+      sct_stats <- tryCatch(db_q(con, "
+        SELECT
+          count(*) AS n_patients,
+          sum(CASE WHEN LOT1_TX_AUTO_DT_1 IS NOT NULL THEN 1 ELSE 0 END) AS n_with_auto,
+          sum(CASE WHEN FIRST_ALLO_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_with_allo,
+          sum(CASE WHEN FIRST_CART_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_with_cart,
+          sum(LOT1_SCT_AUTO_TAND_FLG) AS n_tandem,
+          sum(LOT1_SCT_AUTO_SING_FLG) AS n_single_auto,
+          sum(CASE WHEN LOT1_TX_ENDDATE IS NOT NULL THEN 1 ELSE 0 END) AS n_sct_end
+        FROM lot1_sct
+      "), error = function(e) data.frame())
+
+      # Query raw claims by type
+      sct_raw_by_type <- tryCatch(db_q(con, "
+        SELECT SCT_TYPE, count(*) AS n_claims, count(DISTINCT PATID) AS n_patients
+        FROM sct_claims_raw
+        GROUP BY SCT_TYPE
+        ORDER BY SCT_TYPE
+      "), error = function(e) data.frame())
+
+      # Query end reasons
+      sct_end_reasons <- tryCatch(db_q(con, "
+        SELECT
+          CASE LOT1_TX_ENDDATE_REASON
+            WHEN 1 THEN 'AUTO' WHEN 2 THEN 'ALLO' WHEN 3 THEN 'CART' ELSE 'OTHER'
+          END AS SCT_END_TYPE,
+          count(*) AS n
+        FROM lot1_sct
+        WHERE LOT1_TX_ENDDATE IS NOT NULL
+        GROUP BY LOT1_TX_ENDDATE_REASON
+        ORDER BY LOT1_TX_ENDDATE_REASON
+      "), error = function(e) data.frame())
+
+      # Build SCT summary HTML card
+      sfmt <- function(x) if (is.null(x) || is.na(x)) "0" else format(as.numeric(x), big.mark = ",")
+      spct <- function(x, total) if (is.null(x) || is.na(x) || is.null(total) || is.na(total) || total == 0) "0.0" else sprintf("%.1f", 100 * as.numeric(x) / as.numeric(total))
+
+      n_pat <- if (nrow(sct_stats) > 0) as.numeric(sct_stats$n_patients) else 0
+
+      # Build raw claims rows for the table
+      raw_rows <- ""
+      if (nrow(sct_raw_by_type) > 0) {
+        for (i in seq_len(nrow(sct_raw_by_type))) {
+          r <- sct_raw_by_type[i, ]
+          raw_rows <- paste0(raw_rows, '<tr><td>', r$SCT_TYPE, '</td><td>',
+                             format(as.numeric(r$n_claims), big.mark = ","), '</td><td>',
+                             format(as.numeric(r$n_patients), big.mark = ","), '</td></tr>')
+        }
+      }
+
+      # Build end reason rows
+      end_rows <- ""
+      if (nrow(sct_end_reasons) > 0) {
+        for (i in seq_len(nrow(sct_end_reasons))) {
+          r <- sct_end_reasons[i, ]
+          end_rows <- paste0(end_rows, '<tr><td>', r$SCT_END_TYPE, '</td><td>',
+                             format(as.numeric(r$n), big.mark = ","), '</td></tr>')
+        }
+      }
+
+      sct_summary_html <- paste0('<!DOCTYPE html><html><head><meta charset="UTF-8">
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: #fff; padding: 24px; color: #2d3436; }
+  h2 { font-size: 20px; color: #1a5276; margin-bottom: 16px; }
+  h3.section { font-size: 16px; color: #2d3436; margin: 24px 0 12px; border-bottom: 2px solid #dfe6e9; padding-bottom: 6px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; margin-bottom: 24px; }
+  .card { background: #f5f6fa; border-radius: 8px; padding: 16px; border: 1px solid #dfe6e9; }
+  .card h4 { font-size: 11px; color: #636e72; text-transform: uppercase;
+             letter-spacing: 0.5px; margin-bottom: 6px; }
+  .card .val { font-size: 24px; font-weight: 700; color: #2d3436; }
+  .card .sub { font-size: 12px; color: #636e72; margin-top: 4px; }
+  .card.highlight { background: #A23B72; border-color: #A23B72; }
+  .card.highlight h4, .card.highlight .val, .card.highlight .sub { color: #fff; }
+  table { border-collapse: collapse; width: 100%; margin-top: 8px; margin-bottom: 16px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 13px; }
+  th { background: #f5f6fa; font-weight: 600; color: #636e72; text-transform: uppercase;
+       letter-spacing: 0.5px; font-size: 11px; }
+</style></head><body>
+<h2>Stem Cell Transplant (SCT) Summary</h2>
+<div class="grid">
+  <div class="card highlight"><h4>LOT-Ending SCT</h4><div class="val">', sfmt(sct_event_n), '</div>
+    <div class="sub">Patients with SCT ending LOT1</div></div>
+  <div class="card"><h4>LOT1 Patients</h4><div class="val">', sfmt(n_pat), '</div></div>
+  <div class="card"><h4>With AUTO SCT</h4><div class="val">',
+        if (nrow(sct_stats) > 0) sfmt(sct_stats$n_with_auto) else "0", '</div>
+    <div class="sub">', if (nrow(sct_stats) > 0) spct(sct_stats$n_with_auto, n_pat) else "0.0", '% of LOT1</div></div>
+  <div class="card"><h4>Tandem AUTO</h4><div class="val">',
+        if (nrow(sct_stats) > 0) sfmt(sct_stats$n_tandem) else "0", '</div></div>
+  <div class="card"><h4>Single AUTO</h4><div class="val">',
+        if (nrow(sct_stats) > 0) sfmt(sct_stats$n_single_auto) else "0", '</div></div>
+  <div class="card"><h4>With ALLO SCT</h4><div class="val">',
+        if (nrow(sct_stats) > 0) sfmt(sct_stats$n_with_allo) else "0", '</div>
+    <div class="sub">', if (nrow(sct_stats) > 0) spct(sct_stats$n_with_allo, n_pat) else "0.0", '% of LOT1</div></div>
+  <div class="card"><h4>With CAR-T</h4><div class="val">',
+        if (nrow(sct_stats) > 0) sfmt(sct_stats$n_with_cart) else "0", '</div>
+    <div class="sub">', if (nrow(sct_stats) > 0) spct(sct_stats$n_with_cart, n_pat) else "0.0", '% of LOT1</div></div>
+  <div class="card"><h4>Raw SCT Claims</h4><div class="val">', sfmt(sct_raw_n), '</div></div>
+  <div class="card"><h4>SCT Codes Loaded</h4><div class="val">',
+        if (!is.na(sct_codes_n)) format(sct_codes_n, big.mark = ",") else "N/A", '</div></div>
+</div>
+
+<h3 class="section">SCT End Reason Breakdown</h3>
+<p style="font-size:13px;color:#636e72;">Which SCT type ended LOT1 for each patient (priority: earliest event)</p>
+<table>
+<tr><th>SCT Type</th><th>Patients</th></tr>
+', end_rows, '
+</table>
+
+<h3 class="section">Raw SCT Claims by Type</h3>
+<p style="font-size:13px;color:#636e72;">All SCT procedure claims found in the cohort (before LOT-ending logic)</p>
+<table>
+<tr><th>SCT Type</th><th>Claims</th><th>Patients</th></tr>
+', raw_rows, '
+</table>
+</body></html>')
+      add_html_card(sct_summary_html, section = "SCT", title = "SCT Summary")
+
+      # SCT end reason bar chart (if ggplot2 available and data exists)
+      if (has_ggplot2 && nrow(sct_end_reasons) > 0) {
+        sct_end_reasons$n <- as.numeric(sct_end_reasons$n)
+        sct_end_reasons$pct <- 100 * sct_end_reasons$n / sum(sct_end_reasons$n)
+        sct_type_colors <- c("AUTO" = "#A23B72", "ALLO" = "#8D5A97",
+                             "CART" = "#3F88C5", "OTHER" = "#636e72")
+        p_sct <- ggplot(sct_end_reasons,
+                         aes(x = reorder(SCT_END_TYPE, -n), y = n,
+                             fill = SCT_END_TYPE,
+                             text = paste0("Type: ", SCT_END_TYPE,
+                                           "\nPatients: ", format(n, big.mark = ","),
+                                           "\n%: ", round(pct, 1), "%"))) +
+          geom_bar(stat = "identity", width = 0.65) +
+          geom_text(aes(label = paste0(format(n, big.mark = ","), "\n(", round(pct, 1), "%)")),
+                    vjust = -0.3, size = 3.8, color = "grey20") +
+          scale_fill_manual(values = sct_type_colors) +
+          scale_y_continuous(labels = scales::comma_format(), expand = expansion(mult = c(0, 0.2))) +
+          labs(title = "LOT1 SCT End Reasons by Type",
+               subtitle = paste0(format(sum(sct_end_reasons$n), big.mark = ","),
+                                 " patients with SCT ending LOT1"),
+               x = NULL, y = "Number of Patients") +
+          theme_lot() +
+          theme(legend.position = "none")
+        save_plot(p_sct, "fig_sct_end_reasons.png", width = 7, height = 5,
+                 section = "SCT", title = "Fig: SCT End Reasons")
+      }
+
+      # SCT details table: patient-level SCT data
+      sct_detail <- tryCatch(db_q(con, "
+        SELECT
+          CASE LOT1_TX_ENDDATE_REASON
+            WHEN 1 THEN 'AUTO' WHEN 2 THEN 'ALLO' WHEN 3 THEN 'CART' ELSE 'NONE'
+          END AS END_REASON,
+          LOT1_SCT_AUTO_TAND_FLG AS TANDEM,
+          LOT1_SCT_AUTO_SING_FLG AS SINGLE_AUTO,
+          LOT1_TX_AUTO_DT_1 AS AUTO_DT_1,
+          LOT1_TX_AUTO_DT_2 AS AUTO_DT_2,
+          FIRST_ALLO_DT,
+          FIRST_CART_DT,
+          LOT1_TX_ENDDATE AS SCT_END_DT,
+          LOT1_1ST_SCT_DT AS FIRST_SCT_DT
+        FROM lot1_sct
+        WHERE LOT1_TX_ENDDATE IS NOT NULL
+           OR LOT1_TX_AUTO_DT_1 IS NOT NULL
+           OR FIRST_ALLO_DT IS NOT NULL
+           OR FIRST_CART_DT IS NOT NULL
+        ORDER BY LOT1_TX_ENDDATE_REASON, LOT1_TX_ENDDATE
+      "), error = function(e) data.frame())
+      if (nrow(sct_detail) > 0) {
+        save_table(sct_detail, section = "SCT",
+                   title = "Table: SCT Patient Details")
+      }
+
+      log_msg("  SCT dashboard section built with ", sct_event_n, " LOT-ending events.")
     }
   }, error = function(e) {
     log_msg("WARN: SCT zero-state card failed: ", conditionMessage(e))
@@ -2520,7 +2697,7 @@ main <- function() {
   log_msg("  Input Cohort:      ", cfg$input_cohort_table)
   log_msg("  Induction Window:  ", cfg$induction_window_days, " days")
   log_msg("  MAP Discon Gap:    ", cfg$map_discon_gap_days, " days")
-  log_msg("  Medical Day Supply:", cfg$medical_day_supply, " days")
+  log_msg("  Medical Day Supply: ", cfg$medical_day_supply, " days")
   log_msg("  LOT Discon Gap:    ", cfg$lot_discon_gap_days, " days")
 
   # ----------------------------------------------------------
@@ -3104,10 +3281,10 @@ main <- function() {
       w.MED_CLASS AS MAP_MED_CLASS,
       CASE
         WHEN w.NEXT_MAP_START_DT IS NOT NULL
-          AND datediff(w.NEXT_MAP_START_DT, w.MAP_END_DT) >= {cfg$map_discon_gap_days}
+          AND datediff(w.NEXT_MAP_START_DT, w.MAP_END_DT) > {cfg$map_discon_gap_days}
           THEN 1
         WHEN w.NEXT_MAP_START_DT IS NULL
-          AND datediff(p.OBS_END_DT, w.MAP_END_DT) >= {cfg$map_discon_gap_days}
+          AND datediff(p.OBS_END_DT, w.MAP_END_DT) > {cfg$map_discon_gap_days}
           THEN 1
         ELSE 0
       END AS MAP_DISCON_FLG
@@ -3193,7 +3370,7 @@ main <- function() {
       SELECT
         p.PATID,
         CASE
-          WHEN d.RAW_DISCON_DT IS NOT NULL AND datediff(p.OBS_END_DT, d.RAW_DISCON_DT) >= {cfg$lot_discon_gap_days}
+          WHEN d.RAW_DISCON_DT IS NOT NULL AND datediff(p.OBS_END_DT, d.RAW_DISCON_DT) > {cfg$lot_discon_gap_days}
             THEN d.RAW_DISCON_DT
           ELSE NULL
         END AS LOT1_BASE_DISCON_DT
@@ -3225,10 +3402,6 @@ main <- function() {
         ms.LOT1_MED_CNT,
         ms.LOT1_BASE_MEDS,
         d.LOT1_BASE_DISCON_DT,
-        CASE
-          WHEN d.LOT1_BASE_DISCON_DT IS NOT NULL THEN datediff(d.LOT1_BASE_DISCON_DT, ms.LOT1_START_DT) + 1
-          ELSE datediff(p.OBS_END_DT, ms.LOT1_START_DT) + 1
-        END AS LOT1_BASE_LENGTH,
         {paste0('ms.', paste(c(paste0('LOT1_MED_', vapply(meds, sanitize_col, character(1))), paste0('LOT1_CLASS_', vapply(classes, sanitize_class, character(1)))), collapse = ', ms.'))}
       FROM lot_patient_input p
       INNER JOIN med_summary ms ON p.PATID = ms.PATID
@@ -3266,7 +3439,20 @@ main <- function() {
       GROUP BY c.PATID, d.ADD_START_DT
     )
     SELECT
-      bc.*,
+      bc.PATID, bc.INDEX_DATE, bc.ENDDATE, bc.OBS_END_DT, bc.DEATH_DT,
+      bc.GDR_CD, bc.YRDOB, bc.AGE_INDEX_YR,
+      bc.LOT1_START_DT, bc.LOT1_MED_CNT, bc.LOT1_BASE_MEDS,
+      bc.LOT1_BASE_DISCON_DT,
+      -- Recompute LOT1_BASE_LENGTH accounting for MED_ADD end reason
+      CASE
+        WHEN fa.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
+         AND (bc.LOT1_BASE_DISCON_DT IS NULL OR fa.LOT1_BASE_1ST_ADD_MED_DT <= bc.LOT1_BASE_DISCON_DT)
+        THEN datediff(fa.LOT1_BASE_1ST_ADD_MED_DT, bc.LOT1_START_DT) + 1
+        WHEN bc.LOT1_BASE_DISCON_DT IS NOT NULL
+        THEN datediff(bc.LOT1_BASE_DISCON_DT, bc.LOT1_START_DT) + 1
+        ELSE datediff(bc.OBS_END_DT, bc.LOT1_START_DT) + 1
+      END AS LOT1_BASE_LENGTH,
+      {paste0('bc.', paste(c(paste0('LOT1_MED_', vapply(meds, sanitize_col, character(1))), paste0('LOT1_CLASS_', vapply(classes, sanitize_class, character(1)))), collapse = ', bc.'))},
       fa.LOT1_BASE_1ST_ADD_MED_DT,
       fa.LOT1_BASE_1ST_ADD_MED
     FROM base_core bc
@@ -3364,7 +3550,7 @@ main <- function() {
       INNER JOIN lot_patient_input p ON mp.PATID = p.PATID
       INNER JOIN sct_codes s
         ON (  (s.CL_CODE_TYPE = 'ICD10PROC'
-               AND upper(mp.ICD_FLAG) NOT IN ('9', 'ICD9', 'ICD-9'))
+               AND coalesce(upper(mp.ICD_FLAG), '') NOT IN ('9', 'ICD9', 'ICD-9'))
            OR (s.CL_CODE_TYPE = 'ICD9PROC'
                AND upper(mp.ICD_FLAG) IN ('9', 'ICD9', 'ICD-9'))
            OR s.CL_CODE_TYPE = 'HCPCS'
@@ -3381,7 +3567,7 @@ main <- function() {
       INNER JOIN lot_patient_input p ON d.PATID = p.PATID
       INNER JOIN sct_codes s
         ON (  (s.CL_CODE_TYPE = 'ICD10DIAG'
-               AND upper(d.ICD_FLAG) NOT IN ('9', 'ICD9', 'ICD-9'))
+               AND coalesce(upper(d.ICD_FLAG), '') NOT IN ('9', 'ICD9', 'ICD-9'))
            OR (s.CL_CODE_TYPE = 'ICD9DIAG'
                AND upper(d.ICD_FLAG) IN ('9', 'ICD9', 'ICD-9'))
            )
