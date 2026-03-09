@@ -73,20 +73,6 @@ cfg <- list(
   lot_discon_gap_days   = as.integer(Sys.getenv("LOT_DISCON_GAP_DAYS", unset = "90")),
   medical_day_supply    = as.integer(Sys.getenv("MEDICAL_DAY_SUPPLY", unset = "28")),
 
-  # Per-medication-class medical day supply overrides.
-  # Injectable drugs have different dosing schedules — using a flat default
-  # for all medications overstates/understates MAP durations. These overrides
-  # allow per-class assumptions (days) to replace the global medical_day_supply.
-  # Key = MED_CLASS from mma_rollup, Value = day supply assumption.
-  medical_day_supply_overrides = list(
-    PROTINHIB  = 21,  # Proteasome inhibitors (e.g., bortezomib): weekly/biweekly in 21-day cycles
-    IMMUNOMOD  = 28,  # IMiDs (lenalidomide, pomalidomide): 21 days on / 7 off = 28-day cycle
-    MABS       = 28,  # Monoclonal antibodies (daratumumab, elotuzumab): monthly after ramp-up
-    ACD38      = 28,  # Anti-CD38 (daratumumab, isatuximab): 28-day cycle maintenance
-    ALKYLATOR  = 28,  # Alkylating agents (cyclophosphamide, melphalan): 28-day cycles
-    MUSTAND    = 28   # Nitrogen mustards: 28-day cycles
-  ),
-
   # Code list sourcing (priority: CSV > embedded > ref_schema table)
   codelist_dir         = Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist"),
   use_embedded_codes   = as.logical(Sys.getenv("USE_EMBEDDED_CODES", unset = "FALSE")),
@@ -154,18 +140,6 @@ cdm_src <- function(base_tbl) {
   }
 }
 
-# Generate SQL CASE expression for per-class medical day supply
-# Returns SQL like: CASE WHEN c.CL_MED_CLASS = 'PROTINHIB' THEN 21 ... ELSE 28 END
-medical_day_supply_sql <- function(class_col = "c.CL_MED_CLASS") {
-  overrides <- cfg$medical_day_supply_overrides
-  if (is.null(overrides) || length(overrides) == 0) {
-    return(as.character(cfg$medical_day_supply))
-  }
-  whens <- vapply(names(overrides), function(cls) {
-    sprintf("WHEN %s = '%s' THEN %d", class_col, cls, as.integer(overrides[[cls]]))
-  }, character(1))
-  paste0("CASE ", paste(whens, collapse = " "), " ELSE ", cfg$medical_day_supply, " END")
-}
 
 with_retry <- function(fn, max_retries = cfg$max_retries, base_sleep = cfg$base_sleep) {
   # Patterns indicating permanent SQL/semantic errors that should NOT be retried
@@ -2953,12 +2927,12 @@ main <- function() {
       SELECT /*+ BROADCAST */ * FROM mma_codelist
     ),
     -- 1) Medical claims - PROC_CD (HCPCS)
-    -- Day supply uses per-class overrides when configured (e.g., PROTINHIB=21)
+    -- Day supply hardcoded to {cfg$medical_day_supply} per spec (5A.MMA_MED row 15)
     med_proc_cd AS (
       SELECT
         m.PATID,
         cast(m.FST_DT AS date) AS DATE_SERVICE,
-        {medical_day_supply_sql()} AS DAY_SUPPLY,
+        {cfg$medical_day_supply} AS DAY_SUPPLY,
         'medical' AS CLAIM_TYPE,
         'med_proc_cd' AS CLAIM_SOURCE,
         c.CL_CODE AS CODE,
@@ -2978,7 +2952,7 @@ main <- function() {
       SELECT
         m.PATID,
         cast(m.FST_DT AS date) AS DATE_SERVICE,
-        {medical_day_supply_sql()} AS DAY_SUPPLY,
+        {cfg$medical_day_supply} AS DAY_SUPPLY,
         'medical' AS CLAIM_TYPE,
         'med_bill_proc' AS CLAIM_SOURCE,
         c.CL_CODE AS CODE,
@@ -2998,7 +2972,7 @@ main <- function() {
       SELECT
         m.PATID,
         cast(m.FST_DT AS date) AS DATE_SERVICE,
-        {medical_day_supply_sql()} AS DAY_SUPPLY,
+        {cfg$medical_day_supply} AS DAY_SUPPLY,
         'medical' AS CLAIM_TYPE,
         'med_ndc' AS CLAIM_SOURCE,
         c.CL_CODE AS CODE,
@@ -3303,10 +3277,10 @@ main <- function() {
       w.MED_CLASS AS MAP_MED_CLASS,
       CASE
         WHEN w.NEXT_MAP_START_DT IS NOT NULL
-          AND datediff(w.NEXT_MAP_START_DT, w.MAP_END_DT) > {cfg$map_discon_gap_days}
+          AND datediff(w.NEXT_MAP_START_DT, w.MAP_END_DT) >= {cfg$map_discon_gap_days}
           THEN 1
         WHEN w.NEXT_MAP_START_DT IS NULL
-          AND datediff(p.OBS_END_DT, w.MAP_END_DT) > {cfg$map_discon_gap_days}
+          AND datediff(p.OBS_END_DT, w.MAP_END_DT) >= {cfg$map_discon_gap_days}
           THEN 1
         ELSE 0
       END AS MAP_DISCON_FLG
@@ -3392,7 +3366,7 @@ main <- function() {
       SELECT
         p.PATID,
         CASE
-          WHEN d.RAW_DISCON_DT IS NOT NULL AND datediff(p.OBS_END_DT, d.RAW_DISCON_DT) > {cfg$lot_discon_gap_days}
+          WHEN d.RAW_DISCON_DT IS NOT NULL AND datediff(p.OBS_END_DT, d.RAW_DISCON_DT) >= {cfg$lot_discon_gap_days}
             THEN d.RAW_DISCON_DT
           ELSE NULL
         END AS LOT1_BASE_DISCON_DT
@@ -3441,8 +3415,6 @@ main <- function() {
       WHERE bm.MED_ABBR IS NULL
         AND ms.MAP_START_DT >= bc.LOT1_START_DT
         AND ms.MAP_START_DT <= coalesce(bc.LOT1_BASE_DISCON_DT, bc.OBS_END_DT)
-        -- NOTE: Steroids excluded as add-meds per clinical convention; confirm with spec owner
-        AND ms.MAP_MED_CLASS <> 'STEROID'
     ),
     first_add_dt AS (
       SELECT PATID, min(MAP_START_DT) AS ADD_START_DT
