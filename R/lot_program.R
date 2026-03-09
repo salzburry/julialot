@@ -325,9 +325,15 @@ run_step <- function(con, name, sql, qc = NULL, cache = FALSE) {
     if (nzchar(obj_name)) {
       log_msg("  Caching (materializing) ", obj_name, "...")
       t_cache <- proc.time()
-      db_exec(con, paste("CACHE TABLE", obj_name))
-      cache_elapsed <- (proc.time() - t_cache)[["elapsed"]]
-      log_msg("  Cached in ", round(cache_elapsed, 1), "s")
+      tryCatch({
+        db_exec(con, paste("CACHE TABLE", obj_name))
+        cache_elapsed <- (proc.time() - t_cache)[["elapsed"]]
+        log_msg("  Cached in ", round(cache_elapsed, 1), "s")
+      }, error = function(e) {
+        # CACHE TABLE is not supported on Databricks SQL warehouses.
+        # Log a warning and continue — the view is still usable, just not cached.
+        log_msg("  Warning: CACHE TABLE not supported (SQL warehouse?). Skipping cache for ", obj_name)
+      })
     }
   }
   if (!is.null(qc) && nzchar(qc)) {
