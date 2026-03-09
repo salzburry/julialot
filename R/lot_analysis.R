@@ -293,7 +293,7 @@ build_mma_codelist_sql <- function() {
     ('NDC',   '42367052025',   'bortezomib',   'PROTINHIB', 'BORT'),
     ('NDC',   '42367052125',   'bortezomib',   'PROTINHIB', 'BORT'),
     ('NDC',   '60505622800',   'bortezomib',   'PROTINHIB', 'BORT'),
-    ('NDC',   '63459034804',   'bortezomib',   'PROTINHIB', 'BORT'),
+    -- NDC 63459034804 removed: it is Bendeka (bendamustine), not bortezomib
     ('NDC',   '63459039008',   'bortezomib',   'PROTINHIB', 'BORT'),
     ('NDC',   '63459039120',   'bortezomib',   'PROTINHIB', 'BORT'),
     ('NDC',   '63459039502',   'bortezomib',   'PROTINHIB', 'BORT'),
@@ -453,13 +453,15 @@ build_mma_codelist_sql <- function() {
     ('NDC',   '63323010365',   'cisplatin',    'PLAT',      'CISP'),
 
     -- ===== PANOBINOSTAT (Farydak) =====
-    ('HCPCS', 'J9295',         'panobinostat', 'HIST',      'PANO'),
+    -- Note: Panobinostat is oral; no product-specific HCPCS J-code.
+    -- J9295 is necitumumab (not panobinostat) and was removed.
     ('NDC',   '00078064615',   'panobinostat', 'HIST',      'PANO'),
     ('NDC',   '00078064715',   'panobinostat', 'HIST',      'PANO'),
     ('NDC',   '00078064815',   'panobinostat', 'HIST',      'PANO'),
 
     -- ===== SELINEXOR (Xpovio) =====
-    ('HCPCS', 'J9176',         'selinexor',    'NUCLEAR',   'SELI'),
+    -- Note: Selinexor is oral; no product-specific HCPCS J-code.
+    -- J9176 is elotuzumab (not selinexor) and was removed.
     ('NDC',   '73607000101',   'selinexor',    'NUCLEAR',   'SELI'),
     ('NDC',   '73607000201',   'selinexor',    'NUCLEAR',   'SELI'),
 
@@ -873,13 +875,14 @@ build_lot_steps <- function() {
           m.*,
           m.MED_ABBR AS MAP_MED_TYPE,
           m.MED_CLASS AS MAP_MED_CLASS,
-          -- MAP_DISCON_FLG: 1 if gap >= 90 days to next MAP or end of observation
+          -- MAP_DISCON_FLG: 1 if gap > 90 days to next MAP or end of observation
+          -- (gap is measured from day after MAP_END_DT, so use > not >=)
           CASE
             WHEN nxt.next_map_start IS NOT NULL
-              AND datediff(nxt.next_map_start, m.MAP_END_DT) >= {cfg$map_gap_days}
+              AND datediff(nxt.next_map_start, m.MAP_END_DT) > {cfg$map_gap_days}
               THEN 1
             WHEN nxt.next_map_start IS NULL
-              AND datediff(p.ENDDATE, m.MAP_END_DT) >= {cfg$map_gap_days}
+              AND datediff(p.ENDDATE, m.MAP_END_DT) > {cfg$map_gap_days}
               THEN 1
             ELSE 0
           END AS MAP_DISCON_FLG
@@ -1115,14 +1118,14 @@ build_lot_steps <- function() {
           -- Discontinuation date (NULL if insufficient follow-up)
           CASE
             WHEN d.raw_discon_dt IS NOT NULL
-              AND datediff(p.ENDDATE, d.raw_discon_dt) >= {cfg$lot_discon_gap}
+              AND datediff(p.ENDDATE, d.raw_discon_dt) > {cfg$lot_discon_gap}
               THEN d.raw_discon_dt
             ELSE NULL
           END AS LOT1_BASE_DISCON_DT,
           -- LOT1 base length
           CASE
             WHEN d.raw_discon_dt IS NOT NULL
-              AND datediff(p.ENDDATE, d.raw_discon_dt) >= {cfg$lot_discon_gap}
+              AND datediff(p.ENDDATE, d.raw_discon_dt) > {cfg$lot_discon_gap}
               THEN datediff(d.raw_discon_dt, ms.LOT1_START_DT) + 1
             ELSE datediff(p.ENDDATE, ms.LOT1_START_DT) + 1
           END AS LOT1_BASE_LENGTH,

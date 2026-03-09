@@ -713,13 +713,9 @@ embedded_mm_therapy_codes <- function() {
   SELECT * FROM (VALUES
     ('HCPCS', 'J9041'),   -- Bortezomib
     ('HCPCS', 'J9042'),   -- Bortezomib (generic)
-    ('HCPCS', 'J9043'),   -- Cabazitaxel
     ('HCPCS', 'J9047'),   -- Carfilzomib
     ('HCPCS', 'J9145'),   -- Daratumumab
     ('HCPCS', 'J9176'),   -- Elotuzumab
-    ('HCPCS', 'J9223'),   -- Lenalidomide
-    ('HCPCS', 'J9228'),   -- Pomalidomide
-    ('HCPCS', 'J9300'),   -- Thalidomide
     ('NDC', '59572098010'), -- Revlimid (lenalidomide)
     ('NDC', '59572098020'),
     ('NDC', '63020004901'), -- Velcade (bortezomib)
@@ -2403,7 +2399,7 @@ main <- function() {
   tryCatch({
     # ----------------------------------------------------------
     # ATTRITION TABLE: Steps 0-10 with 30/60/90-day cohort breakdown
-    # Order matches attritiom.pdf exactly:
+    # Order matches attrition.pdf exactly:
     #   Step 0: Base (>=1 MM dx)
     #   Step 1: Qualifying (IP strict OR 2 OP broad in 30/60/90d)
     #   Step 2: Age >= 18

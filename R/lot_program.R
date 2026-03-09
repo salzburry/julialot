@@ -2697,7 +2697,7 @@ main <- function() {
   log_msg("  Input Cohort:      ", cfg$input_cohort_table)
   log_msg("  Induction Window:  ", cfg$induction_window_days, " days")
   log_msg("  MAP Discon Gap:    ", cfg$map_discon_gap_days, " days")
-  log_msg("  Medical Day Supply:", cfg$medical_day_supply, " days")
+  log_msg("  Medical Day Supply: ", cfg$medical_day_supply, " days")
   log_msg("  LOT Discon Gap:    ", cfg$lot_discon_gap_days, " days")
 
   # ----------------------------------------------------------
@@ -3281,10 +3281,10 @@ main <- function() {
       w.MED_CLASS AS MAP_MED_CLASS,
       CASE
         WHEN w.NEXT_MAP_START_DT IS NOT NULL
-          AND datediff(w.NEXT_MAP_START_DT, w.MAP_END_DT) >= {cfg$map_discon_gap_days}
+          AND datediff(w.NEXT_MAP_START_DT, w.MAP_END_DT) > {cfg$map_discon_gap_days}
           THEN 1
         WHEN w.NEXT_MAP_START_DT IS NULL
-          AND datediff(p.OBS_END_DT, w.MAP_END_DT) >= {cfg$map_discon_gap_days}
+          AND datediff(p.OBS_END_DT, w.MAP_END_DT) > {cfg$map_discon_gap_days}
           THEN 1
         ELSE 0
       END AS MAP_DISCON_FLG
@@ -3370,7 +3370,7 @@ main <- function() {
       SELECT
         p.PATID,
         CASE
-          WHEN d.RAW_DISCON_DT IS NOT NULL AND datediff(p.OBS_END_DT, d.RAW_DISCON_DT) >= {cfg$lot_discon_gap_days}
+          WHEN d.RAW_DISCON_DT IS NOT NULL AND datediff(p.OBS_END_DT, d.RAW_DISCON_DT) > {cfg$lot_discon_gap_days}
             THEN d.RAW_DISCON_DT
           ELSE NULL
         END AS LOT1_BASE_DISCON_DT
@@ -3402,10 +3402,6 @@ main <- function() {
         ms.LOT1_MED_CNT,
         ms.LOT1_BASE_MEDS,
         d.LOT1_BASE_DISCON_DT,
-        CASE
-          WHEN d.LOT1_BASE_DISCON_DT IS NOT NULL THEN datediff(d.LOT1_BASE_DISCON_DT, ms.LOT1_START_DT) + 1
-          ELSE datediff(p.OBS_END_DT, ms.LOT1_START_DT) + 1
-        END AS LOT1_BASE_LENGTH,
         {paste0('ms.', paste(c(paste0('LOT1_MED_', vapply(meds, sanitize_col, character(1))), paste0('LOT1_CLASS_', vapply(classes, sanitize_class, character(1)))), collapse = ', ms.'))}
       FROM lot_patient_input p
       INNER JOIN med_summary ms ON p.PATID = ms.PATID
@@ -3443,7 +3439,20 @@ main <- function() {
       GROUP BY c.PATID, d.ADD_START_DT
     )
     SELECT
-      bc.*,
+      bc.PATID, bc.INDEX_DATE, bc.ENDDATE, bc.OBS_END_DT, bc.DEATH_DT,
+      bc.GDR_CD, bc.YRDOB, bc.AGE_INDEX_YR,
+      bc.LOT1_START_DT, bc.LOT1_MED_CNT, bc.LOT1_BASE_MEDS,
+      bc.LOT1_BASE_DISCON_DT,
+      -- Recompute LOT1_BASE_LENGTH accounting for MED_ADD end reason
+      CASE
+        WHEN fa.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
+         AND (bc.LOT1_BASE_DISCON_DT IS NULL OR fa.LOT1_BASE_1ST_ADD_MED_DT <= bc.LOT1_BASE_DISCON_DT)
+        THEN datediff(fa.LOT1_BASE_1ST_ADD_MED_DT, bc.LOT1_START_DT) + 1
+        WHEN bc.LOT1_BASE_DISCON_DT IS NOT NULL
+        THEN datediff(bc.LOT1_BASE_DISCON_DT, bc.LOT1_START_DT) + 1
+        ELSE datediff(bc.OBS_END_DT, bc.LOT1_START_DT) + 1
+      END AS LOT1_BASE_LENGTH,
+      {paste0('bc.', paste(c(paste0('LOT1_MED_', vapply(meds, sanitize_col, character(1))), paste0('LOT1_CLASS_', vapply(classes, sanitize_class, character(1)))), collapse = ', bc.'))},
       fa.LOT1_BASE_1ST_ADD_MED_DT,
       fa.LOT1_BASE_1ST_ADD_MED
     FROM base_core bc
@@ -3541,7 +3550,7 @@ main <- function() {
       INNER JOIN lot_patient_input p ON mp.PATID = p.PATID
       INNER JOIN sct_codes s
         ON (  (s.CL_CODE_TYPE = 'ICD10PROC'
-               AND upper(mp.ICD_FLAG) NOT IN ('9', 'ICD9', 'ICD-9'))
+               AND coalesce(upper(mp.ICD_FLAG), '') NOT IN ('9', 'ICD9', 'ICD-9'))
            OR (s.CL_CODE_TYPE = 'ICD9PROC'
                AND upper(mp.ICD_FLAG) IN ('9', 'ICD9', 'ICD-9'))
            OR s.CL_CODE_TYPE = 'HCPCS'
@@ -3558,7 +3567,7 @@ main <- function() {
       INNER JOIN lot_patient_input p ON d.PATID = p.PATID
       INNER JOIN sct_codes s
         ON (  (s.CL_CODE_TYPE = 'ICD10DIAG'
-               AND upper(d.ICD_FLAG) NOT IN ('9', 'ICD9', 'ICD-9'))
+               AND coalesce(upper(d.ICD_FLAG), '') NOT IN ('9', 'ICD9', 'ICD-9'))
            OR (s.CL_CODE_TYPE = 'ICD9DIAG'
                AND upper(d.ICD_FLAG) IN ('9', 'ICD9', 'ICD-9'))
            )
