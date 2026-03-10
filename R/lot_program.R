@@ -479,7 +479,13 @@ build_dashboard <- function() {
         # Plotly figures: extract JSON spec, render client-side with shared plotly.js
         # This avoids pandoc dependency, data URI size limits, and saves ~3MB per figure
         plotly_json <- tryCatch({
-          jsonlite::toJSON(item$widget$x, auto_unbox = TRUE, force = TRUE, null = "null")
+          # plotly_build() resolves lazy attrs/visdat into $x$data and merges
+          # layoutAttrs into $x$layout.  Without this, raw plot_ly() objects
+          # (e.g. Sankey) have no $x$data, and ggplotly layout tweaks added
+          # via plotly::layout() sit in $x$layoutAttrs instead of $x$layout,
+          # producing blank figures in the dashboard.
+          built <- plotly::plotly_build(item$widget)
+          jsonlite::toJSON(built$x, auto_unbox = TRUE, force = TRUE, null = "null")
         }, error = function(e) NULL)
 
         if (!is.null(plotly_json)) {
