@@ -2494,8 +2494,8 @@ print_descriptives <- function(con) {
               datediff(lb.LOT1_START_DT, w.DX_DT_30) AS DAYS_DX30_TO_CYCLO,
               datediff(lb.LOT1_START_DT, w.DX_DT_60) AS DAYS_DX60_TO_CYCLO,
               datediff(lb.LOT1_START_DT, w.DX_DT_90) AS DAYS_DX90_TO_CYCLO,
-              datediff(w.DX_DT_60, w.DX_DT_30) AS DIFF_60v30,
-              datediff(w.DX_DT_90, w.DX_DT_30) AS DIFF_90v30
+              datediff(w.DX_DT_30, w.DX_DT_60) AS DIFF_60v30,
+              datediff(w.DX_DT_30, w.DX_DT_90) AS DIFF_90v30
             FROM window_dates w
             INNER JOIN lot1_base lb ON w.PATID = lb.PATID
           )
