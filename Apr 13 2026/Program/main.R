@@ -53,7 +53,11 @@ main <- function() {
 
   log_msg("=", SEP_59)
   log_msg("ATTRITION COHORT PIPELINE - run_id: ", run_id)
-  log_msg("CODE LISTS: Server-side tables from ", cfg$ref_schema)
+  if (isTRUE(cfg$use_csv_codelists)) {
+    log_msg("CODE LISTS: CSV files from ", cfg$codelist_dir)
+  } else {
+    log_msg("CODE LISTS: Server-side tables from ", cfg$ref_schema)
+  }
   if (isTRUE(cfg$use_quarterly_tables)) {
     log_msg("TABLES: Using quarterly tables (t_<table>_", get_quarter_suffix(cfg$study_end), ")")
   } else {

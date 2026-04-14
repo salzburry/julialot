@@ -64,6 +64,10 @@ load_csv_codelists <- function(conn, cfg) {
   if (!isTRUE(cfg$use_csv_codelists)) return(invisible(NULL))
 
   csv_map <- cfg$codelist_csv_map
+  # The 5 cohort-critical codelists — pipeline cannot proceed without these
+  required <- c(cfg$cl_mm_dx, cfg$cl_mm_therapy, cfg$cl_preg,
+                cfg$cl_clintrial, cfg$cl_other_malig)
+
   log_msg("Loading code lists from CSV: ", cfg$codelist_dir)
 
   for (tbl_name in names(csv_map)) {
@@ -79,6 +83,10 @@ load_csv_codelists <- function(conn, cfg) {
       n <- DBI::dbGetQuery(conn$con, glue("SELECT count(*) AS n FROM {tbl_name}"))
       log_msg("  >> ", tbl_name, " <- ", csv_file, " (", format(n$n, big.mark = ","), " rows)")
     }, error = function(e) {
+      if (tbl_name %in% required) {
+        log_msg("  ERROR: Required codelist ", csv_file, " failed: ", conditionMessage(e))
+        stop("Cannot proceed without required codelist: ", tbl_name, call. = FALSE)
+      }
       log_msg("  WARN: Could not load ", csv_file, ": ", conditionMessage(e))
     })
   }
