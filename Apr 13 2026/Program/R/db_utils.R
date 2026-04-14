@@ -64,16 +64,10 @@ load_csv_codelists <- function(conn, cfg) {
   if (!isTRUE(cfg$use_csv_codelists)) return(invisible(NULL))
 
   csv_map <- cfg$codelist_csv_map
-  cl_keys <- c(cfg$cl_mm_dx, cfg$cl_mm_therapy, cfg$cl_preg,
-               cfg$cl_clintrial, cfg$cl_other_malig)
-
   log_msg("Loading code lists from CSV: ", cfg$codelist_dir)
-  for (tbl_name in cl_keys) {
+
+  for (tbl_name in names(csv_map)) {
     csv_file <- csv_map[[tbl_name]]
-    if (is.null(csv_file)) {
-      log_msg("  WARN: No CSV mapping for '", tbl_name, "', skipping")
-      next
-    }
     csv_path <- file.path(cfg$codelist_dir, csv_file)
     sql <- glue("
       CREATE OR REPLACE TEMPORARY VIEW {tbl_name}
@@ -85,11 +79,10 @@ load_csv_codelists <- function(conn, cfg) {
       n <- DBI::dbGetQuery(conn$con, glue("SELECT count(*) AS n FROM {tbl_name}"))
       log_msg("  >> ", tbl_name, " <- ", csv_file, " (", format(n$n, big.mark = ","), " rows)")
     }, error = function(e) {
-      log_msg("  ERROR loading ", csv_file, ": ", conditionMessage(e))
-      stop(e)
+      log_msg("  WARN: Could not load ", csv_file, ": ", conditionMessage(e))
     })
   }
-  log_msg("Code lists loaded successfully")
+  log_msg("Code lists loaded")
 }
 
 # ---- Databricks connection ----

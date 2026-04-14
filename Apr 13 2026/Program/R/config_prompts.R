@@ -50,25 +50,38 @@ cfg_defaults <- list(
   tbl_confinement       = "confinement",
   use_quarterly_tables  = as.logical(Sys.getenv("USE_QUARTERLY_TABLES", unset = "TRUE")),
 
-  # ---- Code-list reference tables (server-side, authoritative) ----
+  # ---- Code-list table names ----
+  # Used by cohort attrition pipeline
   cl_mm_dx           = "cl_mm_dx",
   cl_mm_therapy      = "cl_mm_therapy",
   cl_preg            = "cl_pregnancy",
   cl_clintrial       = "cl_clintrial",
   cl_other_malig     = "cl_other_malignancies",
+  # Used by downstream LOT analysis
+  cl_mma_codelist    = "cl_mma_codelist",
+  cl_mma_rollup      = "cl_mma_rollup",
+  cl_sct_codelist    = "cl_sct_codelist",
+  cl_diagnostic_proc = "cl_diagnostic_proc",
+  cl_permissible_subs = "cl_permissible_subs",
 
-  # ---- Code-list CSVs (on server filesystem, not in a DB schema) ----
-  # The code-list files live at /mnt/code/codelist/ as CSVs.
-  # When use_csv_codelists = TRUE, they are loaded into Spark temp views
+  # ---- Code-list CSVs (on server filesystem at /mnt/code/codelist/) ----
+  # When use_csv_codelists = TRUE, all CSVs are loaded into Spark temp views
   # via load_csv_codelists() before the pipeline runs.
   use_csv_codelists = as.logical(Sys.getenv("USE_CSV_CODELISTS", unset = "TRUE")),
   codelist_dir      = Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist"),
-  codelist_csv_map    = list(
+  codelist_csv_map  = list(
+    # Cohort pipeline codelists
     cl_mm_dx              = "mm_dx.csv",
     cl_mm_therapy         = "mm_therapy.csv",
     cl_pregnancy          = "pregnancy.csv",
     cl_clintrial          = "clintrial.csv",
-    cl_other_malignancies = "other_malig.csv"
+    cl_other_malignancies = "other_malig.csv",
+    # LOT analysis codelists
+    cl_mma_codelist       = "cl_mma_codelist.csv",
+    cl_mma_rollup         = "cl_mma_rollup.csv",
+    cl_sct_codelist       = "cl_sct_codelist.csv",
+    cl_diagnostic_proc    = "diagnostic_proc.csv",
+    cl_permissible_subs   = "permissible_subs.csv"
   ),
 
   # ---- Study parameters ----

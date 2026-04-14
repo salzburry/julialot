@@ -44,7 +44,7 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('mm_dx_codes')} AS
         SELECT
-          CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
+          CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
           upper(regexp_replace(dx, '\\\\.', '')) AS dx
         FROM {mm_dx_source}
         WHERE dx IS NOT NULL
@@ -97,7 +97,7 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
         CREATE OR REPLACE TEMPORARY VIEW {work('other_malig_codes')} AS
         SELECT
           upper(tumor_group) AS tumor_group,
-          CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
+          CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
           upper(regexp_replace(dx, '\\\\.', '')) AS dx
         FROM {other_malig_source}
         WHERE dx IS NOT NULL AND tumor_group IS NOT NULL
