@@ -56,10 +56,10 @@ make_naming_helpers <- function(cfg, mat_tables = new.env()) {
 }
 
 # ---- Load code-list CSVs into Spark temp views ----
-# Code-list files live on the server filesystem (/mnt/code/codelist/) as CSVs,
-# not as tables in a DB schema. This function reads each CSV and creates a
-# Spark temporary view with the same name used by cfg$cl_* keys.
-# Uses Spark SQL's built-in CSV data source — no R-side data transfer needed.
+# Code-list files live on the server filesystem (/mnt/code/codelist/) as CSVs.
+# R can read these directly, but Spark executors cannot access the driver's
+# local filesystem. So we read each CSV in R and push it to Spark as a temp
+# view via a SQL VALUES clause.
 load_csv_codelists <- function(conn, cfg) {
   if (!isTRUE(cfg$use_csv_codelists)) return(invisible(NULL))
 
@@ -73,15 +73,36 @@ load_csv_codelists <- function(conn, cfg) {
   for (tbl_name in names(csv_map)) {
     csv_file <- csv_map[[tbl_name]]
     csv_path <- file.path(cfg$codelist_dir, csv_file)
-    sql <- glue("
-      CREATE OR REPLACE TEMPORARY VIEW {tbl_name}
-      USING csv
-      OPTIONS (path '{csv_path}', header 'true', inferSchema 'true')
-    ")
     tryCatch({
+      # Read CSV in R (driver-local filesystem access)
+      df <- read.csv(csv_path, stringsAsFactors = FALSE, colClasses = "character")
+      df[] <- lapply(df, trimws)
+      n <- nrow(df)
+      cols <- names(df)
+      col_list <- paste(cols, collapse = ", ")
+
+      if (n == 0) {
+        sel <- paste(paste0("CAST(NULL AS STRING) AS ", cols), collapse = ", ")
+        sql <- glue("CREATE OR REPLACE TEMPORARY VIEW {tbl_name} AS SELECT {sel} WHERE 1=0")
+      } else {
+        # Build VALUES rows from R data frame
+        value_rows <- vapply(seq_len(n), function(i) {
+          vals <- vapply(cols, function(c) {
+            v <- df[[c]][i]
+            if (is.na(v) || v == "") "NULL"
+            else paste0("'", gsub("'", "''", v), "'")
+          }, character(1))
+          paste0("(", paste(vals, collapse = ","), ")")
+        }, character(1))
+        values_sql <- paste(value_rows, collapse = ",\n        ")
+        sql <- glue("CREATE OR REPLACE TEMPORARY VIEW {tbl_name} AS
+          SELECT {col_list} FROM VALUES
+          {values_sql}
+          AS t({col_list})")
+      }
+
       DBI::dbExecute(conn$con, sql)
-      n <- DBI::dbGetQuery(conn$con, glue("SELECT count(*) AS n FROM {tbl_name}"))
-      log_msg("  >> ", tbl_name, " <- ", csv_file, " (", format(n$n, big.mark = ","), " rows)")
+      log_msg("  >> ", tbl_name, " <- ", csv_file, " (", format(n, big.mark = ","), " rows)")
     }, error = function(e) {
       if (tbl_name %in% required) {
         log_msg("  ERROR: Required codelist ", csv_file, " failed: ", conditionMessage(e))
