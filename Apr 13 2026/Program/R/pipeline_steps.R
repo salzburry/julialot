@@ -850,10 +850,11 @@ build_steps <- function(cfg, mat_tables) {
             WHEN ip.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
                                  AND date_sub(q.index_date, 1)
             THEN 1
-            -- Path B: 2 outpatient claims within 30d, first in baseline
+            -- Path B: 2 outpatient claims within 30d, BOTH in baseline
             WHEN op.diff_days <= 30
               AND op.first_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
                                   AND date_sub(q.index_date, 1)
+              AND op.next_dt  <= date_sub(q.index_date, 1)
             THEN 1
             ELSE 0
           END) AS OTHER_MALIGN_FLAG

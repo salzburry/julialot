@@ -183,28 +183,24 @@ prompt_user_options <- function(base_cfg = cfg_defaults) {
 # Prompt for IE criteria selection
 # Returns a list of criteria flags to apply
 prompt_ie_criteria <- function(base_cfg = cfg_defaults) {
+  # Seed interactive defaults from base_cfg so env-var overrides are
+  # honoured consistently in both interactive and batch paths.
   criteria <- list(
-    apply_age = TRUE, min_age = 18L,
-    apply_ce_baseline = TRUE, apply_ce_followup = TRUE,
-    apply_no_baseline_therapy = TRUE, apply_followup_therapy = TRUE,
-    outpatient_window = 90L,
-    # Exclusion flags default FALSE (stakeholder decision: working cohort = Step 6)
-    apply_pregnancy_excl = FALSE, apply_clintrial_excl = FALSE,
-    apply_other_malig_excl = FALSE, apply_baseline_mm_excl = FALSE
+    apply_age = base_cfg$apply_age_incl, min_age = base_cfg$min_age,
+    apply_ce_baseline = base_cfg$apply_ce_b_incl,
+    apply_ce_followup = base_cfg$apply_ce_f_incl,
+    apply_no_baseline_therapy = base_cfg$apply_no_bl_agents_incl,
+    apply_followup_therapy = base_cfg$apply_fu_agents_incl,
+    outpatient_window = base_cfg$outpatient_window,
+    apply_pregnancy_excl = base_cfg$apply_pregnancy_excl,
+    apply_clintrial_excl = base_cfg$apply_clintrial_excl,
+    apply_other_malig_excl = base_cfg$apply_other_malig_excl,
+    apply_baseline_mm_excl = base_cfg$apply_baseline_mm_excl
   )
 
   if (!should_prompt()) {
     cat("Non-interactive mode: using IE criteria from environment variables / config\n")
-    return(list(
-      apply_age = base_cfg$apply_age_incl, min_age = base_cfg$min_age,
-      apply_ce_baseline = base_cfg$apply_ce_b_incl, apply_ce_followup = base_cfg$apply_ce_f_incl,
-      apply_no_baseline_therapy = base_cfg$apply_no_bl_agents_incl,
-      apply_followup_therapy = base_cfg$apply_fu_agents_incl,
-      outpatient_window = base_cfg$outpatient_window,
-      apply_pregnancy_excl = base_cfg$apply_pregnancy_excl,
-      apply_clintrial_excl = base_cfg$apply_clintrial_excl,
-      apply_other_malig_excl = base_cfg$apply_other_malig_excl,
-      apply_baseline_mm_excl = base_cfg$apply_baseline_mm_excl
+    return(criteria
     ))
   }
 

@@ -88,12 +88,19 @@ materialize_to_personal_schema <- function(con, view_name, cfg, mat_tables, repl
     log_msg("WARN: personal_schema not set, skipping materialization of ", view_name)
     return(FALSE)
   }
-  remote_table    <- tolower(view_name)
-  full_table_name <- paste0(cfg$personal_schema, ".", remote_table)
+  remote_table <- tolower(view_name)
+  # Use same catalog-aware naming as full_name() / persistence step
+  full_table_name <- if (nzchar(cfg$catalog)) {
+    paste0(cfg$catalog, ".", cfg$personal_schema, ".", remote_table)
+  } else {
+    paste0(cfg$personal_schema, ".", remote_table)
+  }
   log_msg("  >> Materializing ", view_name, " to ", full_table_name, "...")
 
   tryCatch({
     pointer <- tbl(con, view_name)
+    # NOTE: createInPersonalSchema (GSK helper) requires a global `con` variable.
+    # This is the one unavoidable global write in the module.
     assign("con", con, envir = .GlobalEnv)
     createInPersonalSchema(pointer, remote_table, replace = replace)
 
