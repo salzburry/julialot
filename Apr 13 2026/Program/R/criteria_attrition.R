@@ -88,21 +88,23 @@ build_criteria_sql <- function(catalog, cfg) {
 # print/export accept a rows list; no module-level state.
 
 print_attrition_table <- function(rows) {
+  sep <- strrep("=", 84)
+  dash <- strrep("-", 84)
   cat("\n")
-  cat(SEP_70, "\n")
+  cat(sep, "\n")
   cat("  ATTRITION TABLE\n")
-  cat(SEP_70, "\n")
-  cat(sprintf("%-30s %12s %12s %12s\n", "Step", "30-day", "60-day", "90-day"))
-  cat(DASH_70, "\n")
+  cat(sep, "\n")
+  cat(sprintf("%-45s %12s %12s %12s\n", "Step", "30-day", "60-day", "90-day"))
+  cat(dash, "\n")
 
   for (row in rows) {
-    cat(sprintf("%-30s %12s %12s %12s\n",
-                substr(row$description, 1, 30),
+    cat(sprintf("%-45s %12s %12s %12s\n",
+                substr(row$description, 1, 45),
                 format(row$n_30, big.mark = ","),
                 format(row$n_60, big.mark = ","),
                 format(row$n_90, big.mark = ",")))
   }
-  cat(SEP_70, "\n")
+  cat(sep, "\n")
 }
 
 export_attrition_csv <- function(rows) {
