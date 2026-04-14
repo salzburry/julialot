@@ -115,7 +115,6 @@ main <- function() {
     print_cohort_characteristics(cfg, conn, h$work_tbl)
     print_dod_validation(cfg, conn, h$cdm_src, h$work_tbl)
     print_inpatient_validation(conn, h$work_tbl)
-    inspect_pipeline(conn, cfg, h$work_tbl)
   }, error = function(e) {
     log_msg("WARN: Could not generate full attrition report: ", conditionMessage(e))
   })
