@@ -176,10 +176,13 @@ prompt_ie_criteria <- function() {
     outpatient_window = 90,  # 30, 60, or 90 days
    
     # Exclusion criteria (defaults)
-    apply_pregnancy_excl = TRUE,
-    apply_clintrial_excl = TRUE,
-    apply_other_malig_excl = TRUE,
-    apply_baseline_mm_excl = TRUE
+    # STAKEHOLDER DECISION: All exclusion flags default FALSE so the working
+    # cohort stays at the Step 6 level (~21k patients). Flags are still
+    # computed in ELIG_COH_ALLFLAGS for ad-hoc analysis; set TRUE to apply.
+    apply_pregnancy_excl = FALSE,
+    apply_clintrial_excl = FALSE,
+    apply_other_malig_excl = FALSE,
+    apply_baseline_mm_excl = FALSE
   )
  
   if (!should_prompt()) {
@@ -413,18 +416,16 @@ cfg <- list(
   # ============================================================
   # These are computed as independent flags; set to TRUE to apply as exclusions
   #
-  # STAKEHOLDER DECISION (2026-04-14): Pregnancy, clinical trial, and other
-  # malignancy exclusions are intentionally kept FALSE so the working cohort
-  # remains at approximately 21,000 patients (the Step 6 count in the attrition
-  # chart). The attrition chart shows what happens when they ARE applied
-  # (Steps 8-10 drop the cohort to ~8,100), but the current analysis cohort
-  # deliberately stops before those exclusions. The interactive defaults (TRUE)
-  # differ from these env-var defaults (FALSE) -- interactive runs prompt the
-  # user, while batch runs use these FALSE defaults by design.
+  # STAKEHOLDER DECISION (2026-04-14): All exclusion criteria (Steps 7-10)
+  # default FALSE so the working cohort stays at the Step 6 level (~21k
+  # patients). The flags are still computed in ELIG_COH_ALLFLAGS and available
+  # for ad-hoc analysis. Set any to TRUE (via env var or interactive prompt)
+  # to apply the exclusion and see the cohort drop as shown in the attrition
+  # chart. Interactive and batch defaults are now aligned to FALSE.
   apply_pregnancy_excl     = as.logical(Sys.getenv("APPLY_PREGNANCY_EXCL", unset = "FALSE")),
   apply_clintrial_excl     = as.logical(Sys.getenv("APPLY_CLINTRIAL_EXCL", unset = "FALSE")),
   apply_other_malig_excl   = as.logical(Sys.getenv("APPLY_OTHER_MALIG_EXCL", unset = "FALSE")),
-  apply_baseline_mm_excl = as.logical(Sys.getenv("APPLY_BASELINE_MM_EXCL", unset = "TRUE")),
+  apply_baseline_mm_excl = as.logical(Sys.getenv("APPLY_BASELINE_MM_EXCL", unset = "FALSE")),
  
   # Create config-driven VIEW for interactive toggling (Option 2)
   create_criteria_view = as.logical(Sys.getenv("CREATE_CRITERIA_VIEW", unset = "FALSE")),
