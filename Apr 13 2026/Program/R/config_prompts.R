@@ -61,7 +61,6 @@ cfg_defaults <- list(
   cl_mma_codelist    = "cl_mma_codelist",
   cl_mma_rollup      = "cl_mma_rollup",
   cl_sct_codelist    = "cl_sct_codelist",
-  cl_diagnostic_proc = "cl_diagnostic_proc",
   cl_permissible_subs = "cl_permissible_subs",
 
   # ---- Code-list CSVs (on server filesystem at /mnt/code/codelist/) ----
@@ -80,7 +79,6 @@ cfg_defaults <- list(
     cl_mma_codelist       = "cl_mma_codelist.csv",
     cl_mma_rollup         = "cl_mma_rollup.csv",
     cl_sct_codelist       = "cl_sct_codelist.csv",
-    cl_diagnostic_proc    = "diagnostic_proc.csv",
     cl_permissible_subs   = "permissible_subs.csv"
   ),
 
