@@ -12,62 +12,60 @@
 #   - interactive prompt defaults (via config_prompts.R)
 #
 # Fields:
-#   step_id         : attrition chart step number
-#   label           : human-readable label for attrition table
 #   attrition_id    : sort key for attrition table output
+#   label           : human-readable label for attrition table
 #   filter_sql      : SQL WHERE fragment (applied cumulatively)
 #   cfg_key         : name in cfg that toggles this criterion
-#   type            : "Inclusion" or "Exclusion"
 #
 # Step 1 is special (window-specific qualifying) and handled outside
 # the catalog because it uses different SQL per 30/60/90d window.
 
 build_criteria_catalog <- function(cfg) {
   list(
-    list(step_id = 2,  attrition_id = "02_step2_age",
+    list(attrition_id = "02_step2_age",
          label = glue("Step 2: Age >= {cfg$min_age} at index year"),
          filter_sql = glue("AND AGE_INDEX_YR >= {cfg$min_age}"),
-         cfg_key = "apply_age_incl", type = "Inclusion"),
+         cfg_key = "apply_age_incl"),
 
-    list(step_id = 3,  attrition_id = "03_step3_ce_baseline",
+    list(attrition_id = "03_step3_ce_baseline",
          label = "Step 3: 6-mo baseline enrollment",
          filter_sql = "AND CE_b = 1",
-         cfg_key = "apply_ce_b_incl", type = "Inclusion"),
+         cfg_key = "apply_ce_b_incl"),
 
-    list(step_id = 4,  attrition_id = "04_step4_ce_followup",
+    list(attrition_id = "04_step4_ce_followup",
          label = "Step 4: 1+ day FU enrollment",
          filter_sql = "AND CE_f = 1",
-         cfg_key = "apply_ce_f_incl", type = "Inclusion"),
+         cfg_key = "apply_ce_f_incl"),
 
-    list(step_id = 5,  attrition_id = "05_step5_no_bl_therapy",
+    list(attrition_id = "05_step5_no_bl_therapy",
          label = "Step 5: No baseline therapy (excl)",
          filter_sql = "AND MM_bl_agents = 0",
-         cfg_key = "apply_no_bl_agents_incl", type = "Exclusion"),
+         cfg_key = "apply_no_bl_agents_incl"),
 
-    list(step_id = 6,  attrition_id = "06_step6_fu_therapy",
+    list(attrition_id = "06_step6_fu_therapy",
          label = "Step 6: FU therapy required",
          filter_sql = "AND MM_FU_agents = 1",
-         cfg_key = "apply_fu_agents_incl", type = "Inclusion"),
+         cfg_key = "apply_fu_agents_incl"),
 
-    list(step_id = 7,  attrition_id = "07_step7_bl_mm_evidence",
+    list(attrition_id = "07_step7_bl_mm_evidence",
          label = "Step 7: BL MM evidence (excl)",
          filter_sql = "AND MM_baseline_diag = 0",
-         cfg_key = "apply_baseline_mm_excl", type = "Exclusion"),
+         cfg_key = "apply_baseline_mm_excl"),
 
-    list(step_id = 8,  attrition_id = "08_step8_other_cancer",
+    list(attrition_id = "08_step8_other_cancer",
          label = "Step 8: Other cancer (excl)",
          filter_sql = "AND OTHER_MALIGN_FLAG = 0",
-         cfg_key = "apply_other_malig_excl", type = "Exclusion"),
+         cfg_key = "apply_other_malig_excl"),
 
-    list(step_id = 9,  attrition_id = "09_step9_pregnancy",
+    list(attrition_id = "09_step9_pregnancy",
          label = "Step 9: Pregnancy (excl)",
          filter_sql = "AND PREGNANT_FLAG = 0",
-         cfg_key = "apply_pregnancy_excl", type = "Exclusion"),
+         cfg_key = "apply_pregnancy_excl"),
 
-    list(step_id = 10, attrition_id = "10_step10_clintrial",
+    list(attrition_id = "10_step10_clintrial",
          label = "Step 10: Clinical trial (excl)",
          filter_sql = "AND CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0",
-         cfg_key = "apply_clintrial_excl", type = "Exclusion")
+         cfg_key = "apply_clintrial_excl")
   )
 }
 
