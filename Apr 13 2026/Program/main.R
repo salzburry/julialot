@@ -76,6 +76,9 @@ main <- function() {
     on.exit({ if (!is.null(conn$con)) try(DBI::dbDisconnect(conn$con), silent = TRUE) }, add = TRUE)
   }
 
+  # ---- 2b. Load code-list CSVs into Spark temp views ----
+  load_csv_codelists(conn, cfg)
+
   # ---- 3. Build & run pipeline steps ----
   mat_tables <- new.env()
   steps <- build_steps(cfg, mat_tables)

@@ -55,6 +55,36 @@ make_naming_helpers <- function(cfg, mat_tables = new.env()) {
        work_tbl = work_tbl, cdm_src = cdm_src, cdm_quarterly = cdm_quarterly)
 }
 
+# ---- Load code-list CSVs into Spark temp views ----
+# Code-list files live on the server filesystem (/mnt/code/codelist/) as CSVs,
+# not as tables in a DB schema. This function reads each CSV and creates a
+# Spark temporary view with the same name used by cfg$cl_* keys.
+# Uses Spark SQL's built-in CSV data source — no R-side data transfer needed.
+load_csv_codelists <- function(conn, cfg) {
+  if (!isTRUE(cfg$use_csv_codelists)) return(invisible(NULL))
+
+  csv_map <- cfg$codelist_csv_map
+  log_msg("Loading code lists from CSV: ", cfg$codelist_dir)
+
+  for (tbl_name in names(csv_map)) {
+    csv_file <- csv_map[[tbl_name]]
+    csv_path <- file.path(cfg$codelist_dir, csv_file)
+    sql <- glue("
+      CREATE OR REPLACE TEMPORARY VIEW {tbl_name}
+      USING csv
+      OPTIONS (path '{csv_path}', header 'true', inferSchema 'true')
+    ")
+    tryCatch({
+      DBI::dbExecute(conn$con, sql)
+      n <- DBI::dbGetQuery(conn$con, glue("SELECT count(*) AS n FROM {tbl_name}"))
+      log_msg("  >> ", tbl_name, " <- ", csv_file, " (", format(n$n, big.mark = ","), " rows)")
+    }, error = function(e) {
+      log_msg("  WARN: Could not load ", csv_file, ": ", conditionMessage(e))
+    })
+  }
+  log_msg("Code lists loaded")
+}
+
 # ---- Databricks connection ----
 connect_databricks <- function(cfg) {
   if (!nzchar(cfg$pwd)) {
