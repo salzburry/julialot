@@ -70,7 +70,11 @@ main <- function() {
     log_msg("Connected to Databricks")
     c
   }, max_retries = cfg$max_retries, base_sleep = cfg$base_sleep)
-  on.exit({ if (!is.null(conn$con)) try(DBI::dbDisconnect(conn$con), silent = TRUE) }, add = TRUE)
+  # In batch mode, disconnect on exit. In interactive mode, keep connection
+  # alive so the user can run inspect_pipeline() and ad-hoc queries.
+  if (!interactive()) {
+    on.exit({ if (!is.null(conn$con)) try(DBI::dbDisconnect(conn$con), silent = TRUE) }, add = TRUE)
+  }
 
   # ---- 3. Build & run pipeline steps ----
   mat_tables <- new.env()
@@ -111,12 +115,16 @@ main <- function() {
     print_cohort_characteristics(cfg, conn, h$work_tbl)
     print_dod_validation(cfg, conn, h$cdm_src, h$work_tbl)
     print_inpatient_validation(conn, h$work_tbl)
-    inspect_pipeline(conn, h$work_tbl)
+    inspect_pipeline(conn, cfg, h$work_tbl)
   }, error = function(e) {
     log_msg("WARN: Could not generate full attrition report: ", conditionMessage(e))
   })
 
   log_msg("=", SEP_59)
+
+  # Return context for interactive debugging (invisible in batch mode)
+  invisible(list(cfg = cfg, conn = conn, mat_tables = mat_tables,
+                 h = make_naming_helpers(cfg, mat_tables)))
 }
 
 # ---- Entry point ----
@@ -124,5 +132,5 @@ if (!interactive()) {
   main()
 } else {
   log_msg("Source loaded. Call main() to run pipeline.")
-  log_msg("After running main(), call inspect_pipeline(conn, h$work_tbl) for view diagnostics.")
+  log_msg("After main(), use: ctx <- main(); inspect_pipeline(ctx$conn, ctx$cfg, ctx$h$work_tbl)")
 }
