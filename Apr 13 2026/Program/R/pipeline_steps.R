@@ -9,12 +9,23 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
   full_name <- h$full_name; cdm <- h$cdm; ref <- h$ref
   work <- h$work; work_tbl <- h$work_tbl; cdm_src <- h$cdm_src
 
-  # ---- Code-list sources (server-side reference tables) ----
-  mm_dx_source       <- ref(cfg$cl_mm_dx)
-  mm_therapy_source  <- ref(cfg$cl_mm_therapy)
-  preg_source        <- ref(cfg$cl_preg)
-  clintrial_source   <- ref(cfg$cl_clintrial)
-  other_malig_source <- ref(cfg$cl_other_malig)
+  # ---- Code-list sources ----
+  # When use_local_codelists is TRUE, CSVs have already been loaded into
+  # temp views by load_local_codelists() — reference the view names directly.
+  # Otherwise, reference server-side tables via ref().
+  if (isTRUE(cfg$use_local_codelists)) {
+    mm_dx_source       <- cfg$cl_mm_dx
+    mm_therapy_source  <- cfg$cl_mm_therapy
+    preg_source        <- cfg$cl_preg
+    clintrial_source   <- cfg$cl_clintrial
+    other_malig_source <- cfg$cl_other_malig
+  } else {
+    mm_dx_source       <- ref(cfg$cl_mm_dx)
+    mm_therapy_source  <- ref(cfg$cl_mm_therapy)
+    preg_source        <- ref(cfg$cl_preg)
+    clintrial_source   <- ref(cfg$cl_clintrial)
+    other_malig_source <- ref(cfg$cl_other_malig)
+  }
 
   # ============================================================
   # BUILD COMBINED CRITERIA SQL (from unified criteria catalog)

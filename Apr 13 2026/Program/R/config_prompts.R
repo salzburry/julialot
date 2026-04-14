@@ -57,6 +57,19 @@ cfg_defaults <- list(
   cl_clintrial       = "cl_clintrial",
   cl_other_malig     = "cl_other_malignancies",
 
+  # ---- Local code-list CSVs (used when server-side tables are unavailable) ----
+  # Set use_local_codelists = TRUE to load from CSV files at codelist_dir.
+  # Each entry in codelist_csv_map maps a cfg$cl_* value to its CSV filename.
+  use_local_codelists = as.logical(Sys.getenv("USE_LOCAL_CODELISTS", unset = "TRUE")),
+  codelist_dir        = Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist"),
+  codelist_csv_map    = list(
+    cl_mm_dx              = "mm_dx.csv",
+    cl_mm_therapy         = "mm_therapy.csv",
+    cl_pregnancy          = "pregnancy.csv",
+    cl_clintrial          = "clintrial.csv",
+    cl_other_malignancies = "other_malig.csv"
+  ),
+
   # ---- Study parameters ----
   study_start   = "2015-07-01",
   study_end     = "2025-06-30",
