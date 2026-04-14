@@ -9,12 +9,15 @@
 #   Interactive — R console, prompts for study parameters + IE criteria
 #   Override: set PROMPT_USER=TRUE to force prompts, FALSE to suppress
 #
+# Runtime state (cfg, connection, materialized tables) is created
+# in main() and passed through function arguments — no mutable globals.
+#
 # Module layout:
-#   R/config_prompts.R       — cfg defaults, env-var loading, prompts
-#   R/db_utils.R             — connection, retry, naming, materialization
-#   R/codelists.R            — server-side code-list loading, quarterly tables
+#   R/config_prompts.R       — cfg_defaults template, env-var loading, prompts
+#   R/db_utils.R             — make_naming_helpers(), connection, retry, step runner
+#   R/codelists.R            — quarterly table helpers
 #   R/criteria_attrition.R   — criteria catalog, filter builder, attrition
-#   R/pipeline_steps.R       — build_steps(), run_step()
+#   R/pipeline_steps.R       — build_steps(cfg, mat_tables)
 # ============================================================
 
 library(DBI)
@@ -44,9 +47,9 @@ source(file.path(source_dir, "pipeline_steps.R"))
 # ============================================================
 main <- function() {
   # ---- 1. Prompts & config ----
-  user_cfg    <- prompt_user_options()
-  ie_criteria <- prompt_ie_criteria()
-  finalize_cfg(user_cfg, ie_criteria)
+  user_cfg    <- prompt_user_options(cfg_defaults)
+  ie_criteria <- prompt_ie_criteria(cfg_defaults)
+  cfg         <- finalize_cfg(cfg_defaults, user_cfg, ie_criteria)
 
   log_msg("=", SEP_59)
   log_msg("ATTRITION COHORT PIPELINE - run_id: ", run_id)
@@ -61,15 +64,17 @@ main <- function() {
   log_msg("=", SEP_59)
 
   # ---- 2. Connect ----
-  con_env$con <- with_retry(function() {
-    conn <- connect_databricks()
+  conn <- new.env()
+  conn$con <- with_retry(function() {
+    c <- connect_databricks(cfg)
     log_msg("Connected to Databricks")
-    conn
-  })
-  on.exit({ if (!is.null(con_env$con)) try(DBI::dbDisconnect(con_env$con), silent = TRUE) }, add = TRUE)
+    c
+  }, max_retries = cfg$max_retries, base_sleep = cfg$base_sleep)
+  on.exit({ if (!is.null(conn$con)) try(DBI::dbDisconnect(conn$con), silent = TRUE) }, add = TRUE)
 
   # ---- 3. Build & run pipeline steps ----
-  steps <- build_steps()
+  mat_tables <- new.env()
+  steps <- build_steps(cfg, mat_tables)
   steps <- Filter(Negate(is.null), steps)
   total_steps <- length(steps)
 
@@ -80,17 +85,17 @@ main <- function() {
   for (i in seq_along(steps)) {
     s <- steps[[i]]
     with_retry(function() {
-      run_step(s$name, s$sql, qc_sql = s$qc,
+      run_step(s$name, s$sql, conn = conn, cfg = cfg, qc_sql = s$qc,
                description = s$description,
                step_num = i, total_steps = total_steps,
                source_tables = s$source_tables)
-    })
+    }, max_retries = cfg$max_retries, base_sleep = cfg$base_sleep)
 
     # Materialize checkpoints for Spark performance
     if (isTRUE(cfg$materialize_checkpoints)) {
       table_name <- sub("^\\d+[a-z]?_", "", s$name)
       if (table_name %in% CHECKPOINT_STEPS) {
-        materialize_to_personal_schema(con_env$con, table_name, replace = TRUE)
+        materialize_to_personal_schema(conn$con, table_name, cfg, mat_tables, replace = TRUE)
       }
     }
   }
@@ -100,11 +105,12 @@ main <- function() {
   log_msg("PIPELINE COMPLETE - Generating attrition report...")
 
   tryCatch({
-    catalog <- build_criteria_catalog()
-    run_attrition_report(catalog)
-    print_cohort_characteristics()
-    print_dod_validation()
-    print_inpatient_validation()
+    h <- make_naming_helpers(cfg, mat_tables)
+    catalog <- build_criteria_catalog(cfg)
+    run_attrition_report(catalog, cfg, conn, h$work_tbl)
+    print_cohort_characteristics(cfg, conn, h$work_tbl)
+    print_dod_validation(cfg, conn, h$cdm_src, h$work_tbl)
+    print_inpatient_validation(conn, h$work_tbl)
   }, error = function(e) {
     log_msg("WARN: Could not generate full attrition report: ", conditionMessage(e))
   })

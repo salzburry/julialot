@@ -1,9 +1,10 @@
 # ============================================================
-# codelists.R — Server-side code list loading + quarterly tables
+# codelists.R — Quarterly table helpers
 # ============================================================
-# Runtime source of truth: server-side reference tables in ref_schema.
-# Embedded R code lists have been removed — if a reference table is
-# missing, the pipeline fails loudly rather than silently falling back.
+# Pure functions for Optum CDM quarterly table naming.
+# cdm_src() and cdm_quarterly() live in make_naming_helpers()
+# (db_utils.R) since they close over cfg.
+# get_code_source() was a trivial ref() wrapper — inlined at call sites.
 
 # ---- Quarterly table helpers (Optum CDM t_<table>_YYYYqQ pattern) ----
 get_quarter_suffix <- function(date_str) {
@@ -13,21 +14,4 @@ get_quarter_suffix <- function(date_str) {
 
 get_quarterly_table <- function(base_table, date_str) {
   paste0("t_", base_table, "_", get_quarter_suffix(date_str))
-}
-
-cdm_quarterly <- function(base_table) {
-  cdm(get_quarterly_table(base_table, cfg$study_end))
-}
-
-# Resolve table name: quarterly if enabled, else standard CDM
-cdm_src <- function(base_table) {
-  if (isTRUE(cfg$use_quarterly_tables)) cdm_quarterly(base_table)
-  else cdm(base_table)
-}
-
-# ---- Code-list loading ----
-# Single-source loader: server-side reference tables only.
-# Returns the fully-qualified table name for use in SQL FROM clauses.
-get_code_source <- function(external_ref) {
-  ref(external_ref)
 }
