@@ -179,7 +179,7 @@ prompt_ie_criteria <- function() {
     apply_pregnancy_excl = TRUE,
     apply_clintrial_excl = TRUE,
     apply_other_malig_excl = TRUE,
-    apply_baseline_nondx_excl = FALSE
+    apply_baseline_mm_excl = TRUE
   )
  
   if (!should_prompt()) {
@@ -199,7 +199,7 @@ prompt_ie_criteria <- function() {
       apply_pregnancy_excl = cfg$apply_pregnancy_excl,
       apply_clintrial_excl = cfg$apply_clintrial_excl,
       apply_other_malig_excl = cfg$apply_other_malig_excl,
-      apply_baseline_nondx_excl = cfg$apply_baseline_nondx_excl
+      apply_baseline_mm_excl = cfg$apply_baseline_mm_excl
     ))
   }
  
@@ -276,9 +276,8 @@ prompt_ie_criteria <- function() {
   # 9. Other malignancy exclusion
   criteria$apply_other_malig_excl <- ask_yn("Exclude patients with other malignancies?", criteria$apply_other_malig_excl)
  
-  # NOTE: Baseline non-diagnostic claim exclusion is hardcoded to FALSE
-  # (diagnostic code list is incomplete, causes 81% false exclusion rate)
-  criteria$apply_baseline_nondx_excl <- FALSE
+  # 10. Baseline MM evidence exclusion (Step 7 in attrition chart)
+  criteria$apply_baseline_mm_excl <- ask_yn("Exclude patients with MM dx (203.0x/C90.0x) in baseline?", criteria$apply_baseline_mm_excl)
  
   # Show summary and confirm
   cat("\n")
@@ -297,7 +296,8 @@ prompt_ie_criteria <- function() {
   cat("  [", if(criteria$apply_pregnancy_excl) "X" else " ", "] Pregnancy\n", sep = "")
   cat("  [", if(criteria$apply_clintrial_excl) "X" else " ", "] Clinical trial participation\n", sep = "")
   cat("  [", if(criteria$apply_other_malig_excl) "X" else " ", "] Other malignancies\n", sep = "")
- 
+  cat("  [", if(criteria$apply_baseline_mm_excl) "X" else " ", "] Baseline MM evidence (Step 7)\n", sep = "")
+
   cat("\n============================================================\n")
   cat("Proceed with these criteria? [Y/n]: ")
   response <- tolower(trimws(readline()))
@@ -412,10 +412,19 @@ cfg <- list(
   # EXCLUSION CRITERIA TOGGLES (set TRUE to apply in final filter)
   # ============================================================
   # These are computed as independent flags; set to TRUE to apply as exclusions
+  #
+  # STAKEHOLDER DECISION (2026-04-14): Pregnancy, clinical trial, and other
+  # malignancy exclusions are intentionally kept FALSE so the working cohort
+  # remains at approximately 21,000 patients (the Step 6 count in the attrition
+  # chart). The attrition chart shows what happens when they ARE applied
+  # (Steps 8-10 drop the cohort to ~8,100), but the current analysis cohort
+  # deliberately stops before those exclusions. The interactive defaults (TRUE)
+  # differ from these env-var defaults (FALSE) -- interactive runs prompt the
+  # user, while batch runs use these FALSE defaults by design.
   apply_pregnancy_excl     = as.logical(Sys.getenv("APPLY_PREGNANCY_EXCL", unset = "FALSE")),
   apply_clintrial_excl     = as.logical(Sys.getenv("APPLY_CLINTRIAL_EXCL", unset = "FALSE")),
   apply_other_malig_excl   = as.logical(Sys.getenv("APPLY_OTHER_MALIG_EXCL", unset = "FALSE")),
-  apply_baseline_nondx_excl = as.logical(Sys.getenv("APPLY_BASELINE_NONDX_EXCL", unset = "FALSE")),  # Smoldering flag
+  apply_baseline_mm_excl = as.logical(Sys.getenv("APPLY_BASELINE_MM_EXCL", unset = "TRUE")),
  
   # Create config-driven VIEW for interactive toggling (Option 2)
   create_criteria_view = as.logical(Sys.getenv("CREATE_CRITERIA_VIEW", unset = "FALSE")),
@@ -439,14 +448,14 @@ cfg <- list(
   # ============================================================
   # Set TRUE to materialize key intermediate tables to personal schema
   # This breaks Spark lazy evaluation and dramatically speeds up the pipeline
-  # Checkpoint tables: mm_dx_events_all, mm_qualifying, claim_nondiagnostic, ELIG_COH_ALLFLAGS
+  # Checkpoint tables: mm_dx_events_all, mm_qualifying, ELIG_COH_ALLFLAGS
   # HARDCODED: Always materialize checkpoints to personal schema for performance
   # This breaks Spark lazy evaluation and dramatically speeds up the pipeline
   materialize_checkpoints = TRUE
 )
- 
+
 # Steps to materialize to personal schema (breaks lazy eval chain)
-CHECKPOINT_STEPS <- c("mm_dx_events_all", "mm_qualifying", "claim_nondiagnostic", "ELIG_COH_ALLFLAGS")
+CHECKPOINT_STEPS <- c("mm_dx_events_all", "mm_qualifying", "ELIG_COH_ALLFLAGS")
  
 run_id <- Sys.getenv("DOMINO_RUN_ID", unset = format(Sys.time(), "%Y%m%d%H%M%S"))
  
@@ -941,21 +950,21 @@ run_dynamic_ie_filter <- function() {
          type = "Inclusion",
          sql = "AGE_INDEX_YR >= 18"),
     list(step_id = 3,
-         label = "FU therapy required (MM_FU_agents = 1)",
-         type = "Inclusion",
-         sql = "MM_FU_agents = 1"),
-    list(step_id = 4,
-         label = "No baseline therapy (MM_bl_agents = 0)",
-         type = "Exclusion",
-         sql = "MM_bl_agents = 0"),
-    list(step_id = 5,
          label = "6-month baseline enrollment (CE_b = 1)",
          type = "Inclusion",
          sql = "CE_b = 1"),
-    list(step_id = 6,
+    list(step_id = 4,
          label = "1+ day follow-up enrollment (CE_f = 1)",
          type = "Inclusion",
          sql = "CE_f = 1"),
+    list(step_id = 5,
+         label = "No baseline therapy (MM_bl_agents = 0)",
+         type = "Exclusion",
+         sql = "MM_bl_agents = 0"),
+    list(step_id = 6,
+         label = "FU therapy required (MM_FU_agents = 1)",
+         type = "Inclusion",
+         sql = "MM_FU_agents = 1"),
     list(step_id = 7,
          label = "No baseline MM dx evidence (MM_baseline_diag = 0)",
          type = "Exclusion",
@@ -999,27 +1008,60 @@ run_dynamic_ie_filter <- function() {
     list(n_30 = n30, n_60 = n60, n_90 = n90)
   }
  
-  # Step 0: Base cohort (all patients in ELIG_COH_ALLFLAGS, no filters)
+  # Step 0: Base cohort (all patients in ELIG_COH_ALLFLAGS)
+  # NOTE: ELIG_COH_ALLFLAGS is built from mm_qualifying which already contains
+  # patients who passed the 90-day qualifying logic. Step 0 here is the
+  # 90-day-qualified population, not the raw >=1 MM dx base.
   current <- get_counts(clauses_30, clauses_60, clauses_90)
- 
+
   cat("\n")
   cat(strrep("=", 90), "\n")
   cat("  DYNAMIC IE CRITERIA SELECTION\n")
   cat("  Select criteria in any order. Enter 0 to finalize cohort at current state.\n")
   cat(strrep("=", 90), "\n")
-  cat(sprintf("\nStep 0 (Base Cohort): %s patients with >= 1 MM dx\n",
+  cat(sprintf("\nStep 0 (Base Cohort): %s patients qualifying with MM dx (90d max window)\n",
               format(current$n_30, big.mark = ",")))
   cat(sprintf("  30-day: %-12s | 60-day: %-12s | 90-day: %-12s\n\n",
               format(current$n_30, big.mark = ","),
               format(current$n_60, big.mark = ","),
               format(current$n_90, big.mark = ",")))
- 
+
   # Record Step 0 in attrition tracker
-  record_attrition("dyn_00_base", "Step 0: Base cohort (>= 1 MM dx)",
+  record_attrition("dyn_00_base", "Step 0: Qualifying MM dx (90d max window)",
                    current$n_30, current$n_60, current$n_90)
- 
-  apply_counter <- 0
- 
+
+  # ---- Pre-apply Step 1 (window-specific qualifying dx) ----
+  # Step 1 is mandatory because it drives the 30/60/90 cohort split.
+  # Without it, all three windows would show the same 90d-qualified count.
+  step1 <- all_criteria[[1]]  # step_id = 1
+  clauses_30 <- c(clauses_30, step1$sql_30)
+  clauses_60 <- c(clauses_60, step1$sql_60)
+  clauses_90 <- c(clauses_90, step1$sql_90)
+  prev <- current
+  current <- get_counts(clauses_30, clauses_60, clauses_90)
+
+  cat(sprintf(">> Step 1 (mandatory): %s\n", step1$label))
+  cat(sprintf("   30-day: %s -> %s  (excluded: %s)\n",
+              format(prev$n_30, big.mark = ","),
+              format(current$n_30, big.mark = ","),
+              format(prev$n_30 - current$n_30, big.mark = ",")))
+  cat(sprintf("   60-day: %s -> %s  (excluded: %s)\n",
+              format(prev$n_60, big.mark = ","),
+              format(current$n_60, big.mark = ","),
+              format(prev$n_60 - current$n_60, big.mark = ",")))
+  cat(sprintf("   90-day: %s -> %s  (excluded: %s)\n\n",
+              format(prev$n_90, big.mark = ","),
+              format(current$n_90, big.mark = ","),
+              format(prev$n_90 - current$n_90, big.mark = ",")))
+
+  record_attrition("dyn_01_step1", sprintf("Step 1: %s", step1$label),
+                   current$n_30, current$n_60, current$n_90)
+
+  # Remove Step 1 from remaining criteria (already applied)
+  applied_criteria <- list(step1)
+  remaining_criteria <- all_criteria[-1]
+  apply_counter <- 1
+
   # ---- Interactive loop ----
   repeat {
     if (length(remaining_criteria) == 0) {
@@ -1459,7 +1501,7 @@ build_steps <- function() {
   if (isTRUE(cfg$apply_other_malig_excl)) {
     criteria_clauses <- c(criteria_clauses, "AND OTHER_MALIGN_FLAG = 0")
   }
-  if (isTRUE(cfg$apply_baseline_nondx_excl)) {
+  if (isTRUE(cfg$apply_baseline_mm_excl)) {
     criteria_clauses <- c(criteria_clauses, "AND MM_baseline_diag = 0")
   }
  
@@ -2024,68 +2066,20 @@ build_steps <- function() {
     ),
    
     # ----------------------------------------------------------
-    # PHASE 7: NON-DIAGNOSTIC CLAIM FLAG
-    # FIXED per IE spec: A "non-diagnostic MM claim" is a claim where:
-    #   - MM diagnosis is present AND
-    #   - There is at least one service line that is NOT a diagnostic code
-    # Example: claim with diagnostic testing + medication/care mgmt → non-diagnostic
-    # This indicates active MM treatment, not just diagnostic workup
+    # PHASE 7: BASELINE MM EVIDENCE FLAG
+    # Step 16 (claim_nondiagnostic view) was removed -- it was orphaned and
+    # not referenced by any downstream step. The attrition table Step 7
+    # requires only >=1 MM dx (strict) in baseline, not non-diagnostic claims.
     # ----------------------------------------------------------
-    list(
-      name = "16_claim_nondiagnostic",
-      description = "Identifying non-diagnostic claims per IE spec (has ANY non-diag line)",
-      source_tables = c("medical"),
-      sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('claim_nondiagnostic')} AS
-        WITH lines AS (
-          SELECT PATID, CLMID, upper(regexp_replace(PROC_CD, '\\\\.', '')) AS proc_cd
-          FROM {cdm_src(cfg$tbl_medical)}
-          WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
-        ),
-        marked AS (
-          SELECT /*+ BROADCAST(d) */
-            l.PATID, l.CLMID,
-            CASE
-              WHEN l.proc_cd IS NULL THEN NULL  -- Unknown, don't count either way
-              WHEN d.proc_cd IS NOT NULL THEN 1 -- Is diagnostic procedure
-              ELSE 0                            -- Has proc_cd but not in diagnostic list
-            END AS is_diag_line
-          FROM lines l
-          LEFT JOIN {work('diag_proc_codes')} d ON l.proc_cd = d.proc_cd
-        ),
-        claim_agg AS (
-          SELECT PATID, CLMID,
-                 -- Claim-level classification
-                 max(CASE WHEN is_diag_line = 1 THEN 1 ELSE 0 END) AS has_diag_line,
-                 max(CASE WHEN is_diag_line = 0 THEN 1 ELSE 0 END) AS has_nondiag_line,
-                 -- All lines NULL (unknown)
-                 CASE WHEN max(is_diag_line) IS NULL THEN 1 ELSE 0 END AS all_null_lines
-          FROM marked
-          GROUP BY PATID, CLMID
-        )
-        SELECT PATID, CLMID,
-               has_diag_line,
-               has_nondiag_line,
-               all_null_lines,
-               -- FIXED per IE spec: Non-diagnostic = has ANY non-diagnostic line
-               -- (even if it also has diagnostic lines - e.g., testing + treatment)
-               CASE
-                 WHEN has_nondiag_line = 1 THEN 1  -- Has non-diag line -> NON-DIAGNOSTIC
-                 ELSE 0                            -- Only diag lines or all NULL -> not non-diag
-               END AS is_nondiagnostic_claim
-        FROM claim_agg
-      "),
-      qc = glue("SELECT sum(is_nondiagnostic_claim) AS n_nondiag_claims FROM {work('claim_nondiagnostic')}")
-    ),
-   
+
     # Per ATTRITION TABLE Step 7: >=1 medical claim for MM (203.0x/C90.0x) in baseline
     # NOTE: Attrition table does NOT require non-diagnostic; IE criteria PDF row 14 does.
     # Following attrition table as the authoritative source.
     list(
-      name = "17_mm_baseline_nondx_flag",
+      name = "17_mm_baseline_evidence_flag",
       description = "Checking for any STRICT MM dx (203.0x/C90.0x) claim in baseline period",
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('mm_baseline_nondx_flag')} AS
+        CREATE OR REPLACE TEMPORARY VIEW {work('mm_baseline_evidence_flag')} AS
         SELECT
           q.PATID,
           q.index_date,
@@ -2095,12 +2089,12 @@ build_steps <- function() {
           max(CASE WHEN e.svc_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
                                      AND date_sub(q.index_date, 1)
                     AND e.mm_dx_strict_flg = 1
-               THEN 1 ELSE 0 END) AS MM_BASELINE_NONDX
+               THEN 1 ELSE 0 END) AS MM_BASELINE_EVIDENCE
         FROM {work('mm_qualifying')} q
         LEFT JOIN {work('mm_dx_events_all')} e ON q.PATID = e.PATID
         GROUP BY q.PATID, q.index_date
       "),
-      qc = glue("SELECT sum(MM_BASELINE_NONDX) AS n_with_baseline_mm FROM {work('mm_baseline_nondx_flag')}")
+      qc = glue("SELECT sum(MM_BASELINE_EVIDENCE) AS n_with_baseline_mm FROM {work('mm_baseline_evidence_flag')}")
     ),
    
     # ----------------------------------------------------------
@@ -2294,8 +2288,8 @@ build_steps <- function() {
    
     list(
       name = "22_other_malig_flag",
-      description = "EXCLUSION: Other malignancy flag",
-      source_tables = c("med_diagnosis"),
+      description = "EXCLUSION: Other malignancy flag (>=1 IP or >=2 OP within 30d per spec)",
+      source_tables = c("med_diagnosis", "medical", "confinement"),
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('other_malig_flag')} AS
         WITH dx AS (
@@ -2310,15 +2304,37 @@ build_steps <- function() {
           FROM dx
           INNER JOIN {work('other_malig_codes')} o ON dx.dx = o.dx AND dx.icd_family = o.icd_family
         ),
-        -- Per attrition table Step 8: Evidence of another cancer in the baseline period
-        -- Attrition table does NOT require non-diagnostic claims for other cancer
-        distinct_dates AS (SELECT DISTINCT PATID, tumor_group, event_dt FROM dx_mapped),
+        -- Classify inpatient vs outpatient using same Approach 1+2 as MM qualifying
+        dx_with_setting AS (
+          SELECT dm.PATID, dm.CLMID, dm.event_dt, dm.tumor_group,
+                 CASE WHEN h.POS IN ('21', '51', '61')
+                        OR h.TOS_CD IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF')
+                        OR cf.CONF_ID IS NOT NULL
+                      THEN 1 ELSE 0 END AS inpatient_flg
+          FROM dx_mapped dm
+          INNER JOIN {work('med_claim_header')} h
+            ON dm.PATID = h.PATID AND dm.CLMID = h.CLMID
+          LEFT JOIN {work('confinement')} cf
+            ON h.PATID = cf.PATID AND h.CONF_ID = cf.CONF_ID
+        ),
+        -- Path A: >=1 inpatient claim for a tumor group in baseline
+        inpatient_flag AS (
+          SELECT DISTINCT PATID, tumor_group, event_dt
+          FROM dx_with_setting
+          WHERE inpatient_flg = 1
+        ),
+        -- Path B: >=2 outpatient claims on separate days within 30 days
+        outpatient_dates AS (
+          SELECT DISTINCT PATID, tumor_group, event_dt
+          FROM dx_with_setting
+          WHERE inpatient_flg = 0
+        ),
         with_next AS (
           SELECT PATID, tumor_group, event_dt,
                  lead(event_dt) OVER (PARTITION BY PATID, tumor_group ORDER BY event_dt) AS next_dt
-          FROM distinct_dates
+          FROM outpatient_dates
         ),
-        pairs AS (
+        outpatient_pairs AS (
           SELECT PATID, tumor_group, event_dt AS first_dt, next_dt,
                  datediff(next_dt, event_dt) AS diff_days
           FROM with_next WHERE next_dt IS NOT NULL
@@ -2326,13 +2342,22 @@ build_steps <- function() {
         SELECT
           q.PATID,
           q.index_date,
-          -- Per spec: only the FIRST of the 2 codes is required to occur inside the baseline period
-          max(CASE WHEN p.diff_days <= 30
-                    AND p.first_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
-                                       AND date_sub(q.index_date, 1)
-               THEN 1 ELSE 0 END) AS OTHER_MALIGN_FLAG
+          -- Per spec: >=1 inpatient OR >=2 outpatient within 30d, same tumor group, in baseline
+          max(CASE
+            -- Path A: single inpatient claim in baseline
+            WHEN ip.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
+                                 AND date_sub(q.index_date, 1)
+            THEN 1
+            -- Path B: 2 outpatient claims within 30d, first in baseline
+            WHEN op.diff_days <= 30
+              AND op.first_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
+                                  AND date_sub(q.index_date, 1)
+            THEN 1
+            ELSE 0
+          END) AS OTHER_MALIGN_FLAG
         FROM {work('mm_qualifying')} q
-        LEFT JOIN pairs p ON q.PATID = p.PATID
+        LEFT JOIN inpatient_flag ip ON q.PATID = ip.PATID
+        LEFT JOIN outpatient_pairs op ON q.PATID = op.PATID
         GROUP BY q.PATID, q.index_date
       "),
       qc = glue("SELECT sum(OTHER_MALIGN_FLAG) AS n_other_malig FROM {work('other_malig_flag')}")
@@ -2365,7 +2390,7 @@ build_steps <- function() {
             ce.ENDDATE_CE,
             th.MM_THERAPY_BASELINE,
             th.MM_THERAPY_FOLLOWUP,
-            mm_bl.MM_BASELINE_NONDX,
+            mm_bl.MM_BASELINE_EVIDENCE,
             om.OTHER_MALIGN_FLAG,
             preg.PREGNANT_FLAG,
             ct.CLINTRIAL_BASELINE,
@@ -2375,7 +2400,7 @@ build_steps <- function() {
           LEFT JOIN {work('ce_flags')} ce ON q.PATID = ce.PATID AND q.index_date = ce.index_date
           LEFT JOIN {work('member_demo')} d ON q.PATID = d.PATID
           LEFT JOIN {work('death_dt')} death ON q.PATID = death.PATID AND q.index_date = death.index_date
-          LEFT JOIN {work('mm_baseline_nondx_flag')} mm_bl ON q.PATID = mm_bl.PATID AND q.index_date = mm_bl.index_date
+          LEFT JOIN {work('mm_baseline_evidence_flag')} mm_bl ON q.PATID = mm_bl.PATID AND q.index_date = mm_bl.index_date
           LEFT JOIN {work('therapy_flags')} th ON q.PATID = th.PATID AND q.index_date = th.index_date
           LEFT JOIN {work('pregnancy_flag')} preg ON q.PATID = preg.PATID AND q.index_date = preg.index_date
           LEFT JOIN {work('clintrial_flag')} ct ON q.PATID = ct.PATID AND q.index_date = ct.index_date
@@ -2421,7 +2446,7 @@ build_steps <- function() {
           datediff(least(date('{cfg$study_end}'), coalesce(b.DEATH_DT, date('{cfg$study_end}')), coalesce(b.ENDDATE_CE, date('{cfg$study_end}'))), date_add(b.index_date, 1)) + 1 AS FU_DAYS_CE,
           coalesce(b.MM_THERAPY_BASELINE, 0) AS MM_bl_agents,
           coalesce(b.MM_THERAPY_FOLLOWUP, 0) AS MM_FU_agents,
-          coalesce(b.MM_BASELINE_NONDX, 0) AS MM_baseline_diag,
+          coalesce(b.MM_BASELINE_EVIDENCE, 0) AS MM_baseline_diag,
           coalesce(b.OTHER_MALIGN_FLAG, 0) AS OTHER_MALIGN_FLAG,
           coalesce(b.PREGNANT_FLAG, 0) AS PREGNANT_FLAG,
           coalesce(b.CLINTRIAL_BASELINE, 0) AS CLINTRIAL_BASELINE,
@@ -2496,7 +2521,7 @@ build_steps <- function() {
           apply_pregnancy_excl BOOLEAN,
           apply_clintrial_excl BOOLEAN,
           apply_other_malig_excl BOOLEAN,
-          apply_baseline_nondx_excl BOOLEAN,
+          apply_baseline_mm_excl BOOLEAN,
           updated_at TIMESTAMP
         ) USING DELTA
       "),
@@ -2519,7 +2544,7 @@ build_steps <- function() {
           {bool_sql(cfg$apply_pregnancy_excl)} AS apply_pregnancy_excl,
           {bool_sql(cfg$apply_clintrial_excl)} AS apply_clintrial_excl,
           {bool_sql(cfg$apply_other_malig_excl)} AS apply_other_malig_excl,
-          {bool_sql(cfg$apply_baseline_nondx_excl)} AS apply_baseline_nondx_excl,
+          {bool_sql(cfg$apply_baseline_mm_excl)} AS apply_baseline_mm_excl,
           current_timestamp() AS updated_at
         ) s
         ON t.config_name = s.config_name
@@ -2547,7 +2572,7 @@ build_steps <- function() {
           AND (c.apply_pregnancy_excl = false OR a.PREGNANT_FLAG = 0)
           AND (c.apply_clintrial_excl = false OR (a.CLINTRIAL_BASELINE = 0 AND a.CLINTRIAL_FOLLOWUP = 0))
           AND (c.apply_other_malig_excl = false OR a.OTHER_MALIGN_FLAG = 0)
-          AND (c.apply_baseline_nondx_excl = false OR a.MM_baseline_diag = 0)
+          AND (c.apply_baseline_mm_excl = false OR a.MM_baseline_diag = 0)
       "),
       qc = glue("SELECT count(*) AS n_dynamic_cohort FROM {work('ELIG_COH_DYNAMIC')}")
     ) else NULL
@@ -2597,7 +2622,7 @@ main <- function() {
     cfg$apply_pregnancy_excl <<- ie_criteria$apply_pregnancy_excl
     cfg$apply_clintrial_excl <<- ie_criteria$apply_clintrial_excl
     cfg$apply_other_malig_excl <<- ie_criteria$apply_other_malig_excl
-    cfg$apply_baseline_nondx_excl <<- ie_criteria$apply_baseline_nondx_excl
+    cfg$apply_baseline_mm_excl <<- ie_criteria$apply_baseline_mm_excl
   }
  
   log_msg("=", SEP_59)
@@ -2734,14 +2759,14 @@ main <- function() {
   tryCatch({
     # ----------------------------------------------------------
     # ATTRITION TABLE: Steps 0-10 with 30/60/90-day cohort breakdown
-    # Order matches attrition.pdf exactly:
+    # Order matches attritiom apr 14.pdf exactly:
     #   Step 0: Base (>=1 MM dx)
     #   Step 1: Qualifying (IP strict OR 2 OP broad in 30/60/90d)
     #   Step 2: Age >= 18
-    #   Step 3: FU therapy required
-    #   Step 4: No baseline therapy (exclusion)
-    #   Step 5: CE_b (6-mo baseline enrollment)
-    #   Step 6: CE_f (1+ day follow-up enrollment)
+    #   Step 3: CE_b (6-mo baseline enrollment)
+    #   Step 4: CE_f (1+ day follow-up enrollment)
+    #   Step 5: No baseline therapy (exclusion)
+    #   Step 6: FU therapy required
     #   Step 7: Baseline MM evidence (exclusion)
     #   Step 8: Other cancer (exclusion)
     #   Step 9: Pregnancy (exclusion)
@@ -2795,48 +2820,48 @@ main <- function() {
       record_attrition("02_step2_age", glue("Step 2: Age >= {cfg$min_age} at index year"), s2$n_30, s2$n_60, s2$n_90)
     }
 
-    # Step 3: FU therapy required (conditional on apply_fu_agents_incl)
-    if (isTRUE(cfg$apply_fu_agents_incl)) {
-      cum_cond <- paste0(cum_cond, " AND MM_FU_agents = 1")
+    # Step 3: CE_b - 6-month baseline enrollment (conditional on apply_ce_b_incl)
+    if (isTRUE(cfg$apply_ce_b_incl)) {
+      cum_cond <- paste0(cum_cond, " AND CE_b = 1")
       s3 <- count_3w(
         glue("{qual_30}{cum_cond}"),
         glue("{qual_60}{cum_cond}"),
         glue("{qual_90}{cum_cond}"))
-      record_attrition("03_step3_fu_therapy", "Step 3: FU therapy required", s3$n_30, s3$n_60, s3$n_90)
+      record_attrition("03_step3_ce_baseline", "Step 3: 6-mo baseline enrollment", s3$n_30, s3$n_60, s3$n_90)
     }
 
-    # Step 4: No baseline therapy (conditional on apply_no_bl_agents_incl)
-    if (isTRUE(cfg$apply_no_bl_agents_incl)) {
-      cum_cond <- paste0(cum_cond, " AND MM_bl_agents = 0")
+    # Step 4: CE_f - 1+ day follow-up enrollment (conditional on apply_ce_f_incl)
+    if (isTRUE(cfg$apply_ce_f_incl)) {
+      cum_cond <- paste0(cum_cond, " AND CE_f = 1")
       s4 <- count_3w(
         glue("{qual_30}{cum_cond}"),
         glue("{qual_60}{cum_cond}"),
         glue("{qual_90}{cum_cond}"))
-      record_attrition("04_step4_no_bl_therapy", "Step 4: No baseline therapy (excl)", s4$n_30, s4$n_60, s4$n_90)
+      record_attrition("04_step4_ce_followup", "Step 4: 1+ day FU enrollment", s4$n_30, s4$n_60, s4$n_90)
     }
 
-    # Step 5: CE_b - 6-month baseline enrollment (conditional on apply_ce_b_incl)
-    if (isTRUE(cfg$apply_ce_b_incl)) {
-      cum_cond <- paste0(cum_cond, " AND CE_b = 1")
+    # Step 5: No baseline therapy (conditional on apply_no_bl_agents_incl)
+    if (isTRUE(cfg$apply_no_bl_agents_incl)) {
+      cum_cond <- paste0(cum_cond, " AND MM_bl_agents = 0")
       s5 <- count_3w(
         glue("{qual_30}{cum_cond}"),
         glue("{qual_60}{cum_cond}"),
         glue("{qual_90}{cum_cond}"))
-      record_attrition("05_step5_ce_baseline", "Step 5: 6-mo baseline enrollment", s5$n_30, s5$n_60, s5$n_90)
+      record_attrition("05_step5_no_bl_therapy", "Step 5: No baseline therapy (excl)", s5$n_30, s5$n_60, s5$n_90)
     }
 
-    # Step 6: CE_f - 1+ day follow-up enrollment (conditional on apply_ce_f_incl)
-    if (isTRUE(cfg$apply_ce_f_incl)) {
-      cum_cond <- paste0(cum_cond, " AND CE_f = 1")
+    # Step 6: FU therapy required (conditional on apply_fu_agents_incl)
+    if (isTRUE(cfg$apply_fu_agents_incl)) {
+      cum_cond <- paste0(cum_cond, " AND MM_FU_agents = 1")
       s6 <- count_3w(
         glue("{qual_30}{cum_cond}"),
         glue("{qual_60}{cum_cond}"),
         glue("{qual_90}{cum_cond}"))
-      record_attrition("06_step6_ce_followup", "Step 6: 1+ day FU enrollment", s6$n_30, s6$n_60, s6$n_90)
+      record_attrition("06_step6_fu_therapy", "Step 6: FU therapy required", s6$n_30, s6$n_60, s6$n_90)
     }
 
-    # Step 7: Baseline MM evidence exclusion (conditional on apply_baseline_nondx_excl)
-    if (isTRUE(cfg$apply_baseline_nondx_excl)) {
+    # Step 7: Baseline MM evidence exclusion (conditional on apply_baseline_mm_excl)
+    if (isTRUE(cfg$apply_baseline_mm_excl)) {
       cum_cond <- paste0(cum_cond, " AND MM_baseline_diag = 0")
       s7 <- count_3w(
         glue("{qual_30}{cum_cond}"),
@@ -2876,8 +2901,14 @@ main <- function() {
     }
    
     # Final cohort (after applied criteria + earliest index per patient)
-    q_final <- DBI::dbGetQuery(con_env$con, glue("SELECT count(*) AS n FROM {work_tbl(cfg$final_table_name)}"))
-    record_attrition("99_final", glue("FINAL COHORT ({cfg$final_table_name})"), q_final$n, q_final$n, q_final$n)
+    # Compute per-window final counts so 30/60/90d columns reflect actual differences
+    # (matches the dynamic path approach at final_count_per_window)
+    final_counts <- count_3w(
+      glue("{qual_30}{cum_cond}"),
+      glue("{qual_60}{cum_cond}"),
+      glue("{qual_90}{cum_cond}"))
+    record_attrition("99_final", glue("FINAL COHORT ({cfg$final_table_name})"),
+                     final_counts$n_30, final_counts$n_60, final_counts$n_90)
    
     # Print the attrition table
     print_attrition_table()
