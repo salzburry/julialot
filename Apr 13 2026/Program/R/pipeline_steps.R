@@ -22,7 +22,7 @@ build_steps <- function(cfg, mat_tables) {
   catalog      <- build_criteria_catalog(cfg)
   criteria_sql <- build_criteria_sql(catalog, cfg)
  
-  list(
+  phase_codelists <- function() list(
     # ----------------------------------------------------------
     # PHASE 1: NORMALIZE CODE LISTS (small tables, run once)
     # Source: server-side reference tables in cfg$ref_schema
@@ -109,8 +109,10 @@ build_steps <- function(cfg, mat_tables) {
         SELECT RVNU_CD FROM {cdm_src(cfg$tbl_medical)} LIMIT 1
       "),
       qc = glue("SELECT 'RVNU_CD column validated on medical table' AS status")
-    ),
-   
+    )
+  )
+
+  phase_dx_events <- function() list(
     # ----------------------------------------------------------
     # PHASE 2: BUILD MM DIAGNOSIS EVENTS
     # FIXED: Build two tables:
@@ -223,8 +225,10 @@ build_steps <- function(cfg, mat_tables) {
         WHERE svc_dt BETWEEN date('{cfg$id_start}') AND date('{cfg$id_end}')
       "),
       qc = glue("SELECT count(DISTINCT PATID) AS n_patients FROM {work('mm_dx_events_id')}")
-    ),
-   
+    )
+  )
+
+  phase_index_date <- function() list(
     # ----------------------------------------------------------
     # PHASE 3: INDEX DATE DERIVATION (uses ID period events only)
     # ----------------------------------------------------------
@@ -324,8 +328,10 @@ build_steps <- function(cfg, mat_tables) {
         GROUP BY PATID, potential_index
       "),
       qc = glue("SELECT count(*) AS n_potential_index, count(DISTINCT PATID) AS n_patients FROM {work('mm_qualifying')}")
-    ),
-   
+    )
+  )
+
+  phase_enrollment <- function() list(
     # ----------------------------------------------------------
     # PHASE 4: ENROLLMENT SPANS (using member_enrollment with 30-day gap logic)
     # Per IE spec: Build continuous enrollment spans from raw member_enrollment
@@ -468,8 +474,10 @@ build_steps <- function(cfg, mat_tables) {
         GROUP BY PATID, index_date, baseline_start, baseline_end
       "),
       qc = glue("SELECT sum(CE_b) AS n_with_baseline_ce FROM {work('ce_flags')}")
-    ),
-   
+    )
+  )
+
+  phase_demographics <- function() list(
     # ----------------------------------------------------------
     # PHASE 6: DEMOGRAPHICS
     # ----------------------------------------------------------
@@ -565,8 +573,10 @@ build_steps <- function(cfg, mat_tables) {
         FROM calc
       "),
       qc = glue("SELECT count(*) AS n_with_death_dt FROM {work('death_dt')} WHERE DEATH_DT IS NOT NULL")
-    ),
-   
+    )
+  )
+
+  phase_clinical_flags <- function() list(
     # ----------------------------------------------------------
     # PHASE 7: BASELINE MM EVIDENCE FLAG
     # Step 16 (claim_nondiagnostic view) was removed -- it was orphaned and
@@ -657,8 +667,10 @@ build_steps <- function(cfg, mat_tables) {
         GROUP BY q.PATID, q.index_date
       "),
       qc = glue("SELECT sum(MM_THERAPY_FOLLOWUP) AS n_with_fu_therapy FROM {work('therapy_flags')}")
-    ),
-   
+    )
+  )
+
+  phase_exclusions <- function() list(
     # ----------------------------------------------------------
     # PHASE 9: EXCLUSION FLAGS (pregnancy, clinical trial, other cancer)
     # Each is an independent flag per StudyPop spec
@@ -864,8 +876,10 @@ build_steps <- function(cfg, mat_tables) {
         GROUP BY q.PATID, q.index_date
       "),
       qc = glue("SELECT sum(OTHER_MALIGN_FLAG) AS n_other_malig FROM {work('other_malig_flag')}")
-    ),
-   
+    )
+  )
+
+  phase_assembly <- function() list(
     # ----------------------------------------------------------
     # PHASE 10: FINAL ASSEMBLY - ELIG_COH with all flags
     # FIXED: Added Death_dt, proper ENDDATE/FU_DAYS per StudyPop spec:
@@ -1004,5 +1018,17 @@ build_steps <- function(cfg, mat_tables) {
         qc = glue("SELECT count(*) AS n_persisted FROM {persist_tbl}")
       )
     } else NULL
+  )
+
+  # ---- Assemble all phases ----
+  c(
+    phase_codelists(),
+    phase_dx_events(),
+    phase_index_date(),
+    phase_enrollment(),
+    phase_demographics(),
+    phase_clinical_flags(),
+    phase_exclusions(),
+    phase_assembly()
   )
 }

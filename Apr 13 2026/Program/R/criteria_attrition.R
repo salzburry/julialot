@@ -276,3 +276,59 @@ print_inpatient_validation <- function(conn, work_tbl_fn) {
   cat(sprintf("  CONF_ID only:          %s\n", format(qc$n_conf_only, big.mark = ",")))
   cat(DASH_60, "\n")
 }
+
+# ============================================================
+# PIPELINE INSPECTOR — Post-run diagnostic
+# ============================================================
+# Queries every intermediate view and prints row/patient counts.
+# Useful for debugging: run the pipeline, then call inspect_pipeline()
+# to see where patients are gained or lost.
+
+inspect_pipeline <- function(conn, work_tbl_fn) {
+  views <- c(
+    # Phase 1: code lists
+    "mm_dx_codes", "mm_therapy_codes", "preg_codes", "clintrial_codes", "other_malig_codes",
+    # Phase 2: dx events
+    "med_claim_header", "confinement", "mm_dx_events_all", "mm_dx_events_id",
+    # Phase 3: index date
+    "mm_inpatient_potential", "mm_outpatient_pairs", "mm_outpatient_potential", "mm_qualifying",
+    # Phase 4+5: enrollment + CE
+    "enrollment_spans", "enrollment_spans_strict", "ce_flags",
+    # Phase 6: demographics + death
+    "member_demo", "death_dt",
+    # Phase 7+8: clinical flags
+    "mm_baseline_evidence_flag", "therapy_events", "therapy_flags",
+    # Phase 9: exclusions
+    "pregnancy_flag", "clintrial_flag", "other_malig_flag",
+    # Phase 10: assembly
+    "ELIG_COH_ALLFLAGS"
+  )
+
+  sep <- strrep("=", 70)
+  dash <- strrep("-", 70)
+  cat("\n", sep, "\n", sep = "")
+  cat("  PIPELINE VIEW INSPECTOR\n")
+  cat(sep, "\n")
+  cat(sprintf("%-35s %14s %14s\n", "View", "Rows", "Patients"))
+  cat(dash, "\n")
+
+  for (v in views) {
+    tbl <- work_tbl_fn(v)
+    tryCatch({
+      res <- DBI::dbGetQuery(conn$con, glue(
+        "SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients FROM {tbl}"))
+      cat(sprintf("%-35s %14s %14s\n", v,
+                  format(res$n_rows, big.mark = ","),
+                  format(res$n_patients, big.mark = ",")))
+    }, error = function(e) {
+      # Code-list views lack PATID — fall back to row count only
+      tryCatch({
+        res <- DBI::dbGetQuery(conn$con, glue("SELECT count(*) AS n_rows FROM {tbl}"))
+        cat(sprintf("%-35s %14s %14s\n", v, format(res$n_rows, big.mark = ","), "-"))
+      }, error = function(e2) {
+        cat(sprintf("%-35s %14s %14s\n", v, "(missing)", "-"))
+      })
+    })
+  }
+  cat(sep, "\n")
+}
