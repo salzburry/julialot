@@ -284,7 +284,7 @@ print_inpatient_validation <- function(conn, work_tbl_fn) {
 # Useful for debugging: run the pipeline, then call inspect_pipeline()
 # to see where patients are gained or lost.
 
-inspect_pipeline <- function(conn, work_tbl_fn) {
+inspect_pipeline <- function(conn, cfg, work_tbl_fn) {
   views <- c(
     # Phase 1: code lists
     "mm_dx_codes", "mm_therapy_codes", "preg_codes", "clintrial_codes", "other_malig_codes",
@@ -300,8 +300,9 @@ inspect_pipeline <- function(conn, work_tbl_fn) {
     "mm_baseline_evidence_flag", "therapy_events", "therapy_flags",
     # Phase 9: exclusions
     "pregnancy_flag", "clintrial_flag", "other_malig_flag",
-    # Phase 10: assembly
-    "ELIG_COH_ALLFLAGS"
+    # Phase 10: assembly + final cohort
+    "ELIG_COH_ALLFLAGS",
+    cfg$final_table_name
   )
 
   sep <- strrep("=", 70)

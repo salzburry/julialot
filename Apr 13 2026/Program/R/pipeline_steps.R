@@ -1,7 +1,7 @@
 # ============================================================
 # pipeline_steps.R -- SQL pipeline step definitions
 # ============================================================
-build_steps <- function(cfg, mat_tables) {
+build_steps <- function(cfg, mat_tables, phases = NULL) {
   # ---- Unpack naming helpers into local scope ----
   # These shadow the old globals so that ~114 glue interpolations
   # ({cdm(...)}, {ref(...)}, {work(...)}, etc.) require zero changes.
@@ -1020,15 +1020,20 @@ build_steps <- function(cfg, mat_tables) {
     } else NULL
   )
 
-  # ---- Assemble all phases ----
-  c(
-    phase_codelists(),
-    phase_dx_events(),
-    phase_index_date(),
-    phase_enrollment(),
-    phase_demographics(),
-    phase_clinical_flags(),
-    phase_exclusions(),
-    phase_assembly()
+  # ---- Assemble phases ----
+  # Named list allows filtering by phase for interactive debugging:
+  #   build_steps(cfg, mat_tables, phases = c("codelists", "dx_events"))
+  all_phases <- list(
+    codelists      = phase_codelists,
+    dx_events      = phase_dx_events,
+    index_date     = phase_index_date,
+    enrollment     = phase_enrollment,
+    demographics   = phase_demographics,
+    clinical_flags = phase_clinical_flags,
+    exclusions     = phase_exclusions,
+    assembly       = phase_assembly
   )
+
+  selected <- if (is.null(phases)) all_phases else all_phases[phases]
+  do.call(c, lapply(selected, function(fn) fn()))
 }
