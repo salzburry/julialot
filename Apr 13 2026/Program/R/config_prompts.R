@@ -19,8 +19,6 @@ validate_outpatient_window <- function(x, default = 90L) {
   x
 }
 
-bool_sql <- function(x) if (isTRUE(x)) "true" else "false"
-
 # ============================================================
 # CONFIGURATION DEFAULTS (template — never mutated after load)
 # ============================================================
