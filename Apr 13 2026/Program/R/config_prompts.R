@@ -200,8 +200,7 @@ prompt_ie_criteria <- function(base_cfg = cfg_defaults) {
 
   if (!should_prompt()) {
     cat("Non-interactive mode: using IE criteria from environment variables / config\n")
-    return(criteria
-    ))
+    return(criteria)
   }
 
   # ---- Prompt helpers ----
@@ -229,7 +228,7 @@ prompt_ie_criteria <- function(base_cfg = cfg_defaults) {
   cat("============================================================\n")
   cat("  INCLUSION / EXCLUSION CRITERIA SELECTION\n")
   cat("============================================================\n")
-  cat("\nFor each criterion, enter Y/N or a new value. Enter = keep default.\n\n")
+  cat("\nFor each criterion, enter Y/N or a new value. Press Enter to keep default.\n\n")
 
   cat("--- INCLUSION CRITERIA ---\n\n")
   criteria$apply_age <- ask_yn("Apply Age >= 18 criterion?", criteria$apply_age)
