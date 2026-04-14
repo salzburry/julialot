@@ -57,11 +57,12 @@ cfg_defaults <- list(
   cl_clintrial       = "cl_clintrial",
   cl_other_malig     = "cl_other_malignancies",
 
-  # ---- Local code-list CSVs (used when server-side tables are unavailable) ----
-  # Set use_local_codelists = TRUE to load from CSV files at codelist_dir.
-  # Each entry in codelist_csv_map maps a cfg$cl_* value to its CSV filename.
-  use_local_codelists = as.logical(Sys.getenv("USE_LOCAL_CODELISTS", unset = "TRUE")),
-  codelist_dir        = Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist"),
+  # ---- Code-list CSVs (on server filesystem, not in a DB schema) ----
+  # The code-list files live at /mnt/code/codelist/ as CSVs.
+  # When use_csv_codelists = TRUE, they are loaded into Spark temp views
+  # via load_csv_codelists() before the pipeline runs.
+  use_csv_codelists = as.logical(Sys.getenv("USE_CSV_CODELISTS", unset = "TRUE")),
+  codelist_dir      = Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist"),
   codelist_csv_map    = list(
     cl_mm_dx              = "mm_dx.csv",
     cl_mm_therapy         = "mm_therapy.csv",

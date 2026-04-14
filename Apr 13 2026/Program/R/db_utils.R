@@ -56,12 +56,12 @@ make_naming_helpers <- function(cfg, mat_tables = new.env()) {
 }
 
 # ---- Load code-list CSVs into Spark temp views ----
-# When server-side reference tables are unavailable (e.g., local dev, CSV-only
-# environments), this function reads each CSV from cfg$codelist_dir and creates
-# a Spark temporary view with the same name used by cfg$cl_* keys.
+# Code-list files live on the server filesystem (/mnt/code/codelist/) as CSVs,
+# not as tables in a DB schema. This function reads each CSV and creates a
+# Spark temporary view with the same name used by cfg$cl_* keys.
 # Uses Spark SQL's built-in CSV data source — no R-side data transfer needed.
-load_local_codelists <- function(conn, cfg) {
-  if (!isTRUE(cfg$use_local_codelists)) return(invisible(NULL))
+load_csv_codelists <- function(conn, cfg) {
+  if (!isTRUE(cfg$use_csv_codelists)) return(invisible(NULL))
 
   csv_map <- cfg$codelist_csv_map
   cl_keys <- c(cfg$cl_mm_dx, cfg$cl_mm_therapy, cfg$cl_preg,
