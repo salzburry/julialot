@@ -3,8 +3,13 @@
 # ============================================================
 
 # ---- Prompting control ----
+# Static mode: non-interactive Rscript uses env-var/config defaults (no prompts)
+# Interactive mode: prompts by default
+# Override: set PROMPT_USER=TRUE to force prompts, or FALSE to suppress them
 should_prompt <- function() {
-  isTRUE(as.logical(Sys.getenv("PROMPT_USER", unset = "TRUE"))) || interactive()
+  env_val <- Sys.getenv("PROMPT_USER", unset = "")
+  if (nzchar(env_val)) return(isTRUE(as.logical(env_val)))
+  interactive()
 }
 
 # ---- Validation helpers ----
@@ -17,9 +22,11 @@ validate_outpatient_window <- function(x, default = 90L) {
 bool_sql <- function(x) if (isTRUE(x)) "true" else "false"
 
 # ============================================================
-# CONFIGURATION (single canonical source of truth)
+# CONFIGURATION DEFAULTS (template — never mutated after load)
 # ============================================================
-cfg <- list(
+# The finalized cfg is produced by finalize_cfg() and returned
+# as a local value; this template is the seed.
+cfg_defaults <- list(
   # ---- Databricks / ODBC ----
   dsn         = Sys.getenv("DATABRICKS_DSN", unset = "RWDE"),
   pwd         = Sys.getenv("DATABRICKS_PWD", unset = ""),
@@ -60,6 +67,11 @@ cfg <- list(
   baseline_days = 183L,
   gap_days      = 30L,
 
+  # ---- Diagnosis window thresholds (fixed per protocol) ----
+  dx_window_30 = 30,
+  dx_window_60 = 60,
+  dx_window_90 = 90,
+
   # ---- Output ----
   final_table_name = Sys.getenv("FINAL_TABLE_NAME", unset = "ELIG_COH_FINAL"),
   outpatient_window = as.integer(Sys.getenv("OUTPATIENT_WINDOW", unset = "90")),
@@ -74,7 +86,6 @@ cfg <- list(
 
   # ---- Exclusion criteria (defaults for static/batch mode) ----
   # STAKEHOLDER DECISION (2026-04-14): All exclusion flags default FALSE so
-
   # the working cohort stays at the Step 6 level (~21k patients). Flags are
   # computed in ELIG_COH_ALLFLAGS for ad-hoc analysis; set TRUE to apply.
   apply_pregnancy_excl   = as.logical(Sys.getenv("APPLY_PREGNANCY_EXCL",   unset = "FALSE")),
@@ -97,19 +108,19 @@ run_id <- Sys.getenv("DOMINO_RUN_ID", unset = format(Sys.time(), "%Y%m%d%H%M%S")
 # ============================================================
 
 # Prompt for study parameters (dates, schemas, windows)
-# Reads initial values from cfg (the canonical source)
-prompt_user_options <- function() {
+# Reads initial values from base_cfg (the defaults template)
+prompt_user_options <- function(base_cfg = cfg_defaults) {
   user_cfg <- list(
-    cdm_schema  = cfg$cdm_schema,
-    ref_schema  = cfg$ref_schema,
-    work_schema = cfg$work_schema,
-    study_start = cfg$study_start,
-    study_end   = cfg$study_end,
-    id_start    = cfg$id_start,
-    id_end      = cfg$id_end,
-    baseline_days = cfg$baseline_days,
-    gap_days      = cfg$gap_days,
-    use_quarterly_tables = cfg$use_quarterly_tables
+    cdm_schema  = base_cfg$cdm_schema,
+    ref_schema  = base_cfg$ref_schema,
+    work_schema = base_cfg$work_schema,
+    study_start = base_cfg$study_start,
+    study_end   = base_cfg$study_end,
+    id_start    = base_cfg$id_start,
+    id_end      = base_cfg$id_end,
+    baseline_days = base_cfg$baseline_days,
+    gap_days      = base_cfg$gap_days,
+    use_quarterly_tables = base_cfg$use_quarterly_tables
   )
 
   # Resolve schemas from environment
@@ -171,7 +182,7 @@ prompt_user_options <- function() {
 
 # Prompt for IE criteria selection
 # Returns a list of criteria flags to apply
-prompt_ie_criteria <- function() {
+prompt_ie_criteria <- function(base_cfg = cfg_defaults) {
   criteria <- list(
     apply_age = TRUE, min_age = 18L,
     apply_ce_baseline = TRUE, apply_ce_followup = TRUE,
@@ -185,15 +196,15 @@ prompt_ie_criteria <- function() {
   if (!should_prompt()) {
     cat("Non-interactive mode: using IE criteria from environment variables / config\n")
     return(list(
-      apply_age = cfg$apply_age_incl, min_age = cfg$min_age,
-      apply_ce_baseline = cfg$apply_ce_b_incl, apply_ce_followup = cfg$apply_ce_f_incl,
-      apply_no_baseline_therapy = cfg$apply_no_bl_agents_incl,
-      apply_followup_therapy = cfg$apply_fu_agents_incl,
-      outpatient_window = cfg$outpatient_window,
-      apply_pregnancy_excl = cfg$apply_pregnancy_excl,
-      apply_clintrial_excl = cfg$apply_clintrial_excl,
-      apply_other_malig_excl = cfg$apply_other_malig_excl,
-      apply_baseline_mm_excl = cfg$apply_baseline_mm_excl
+      apply_age = base_cfg$apply_age_incl, min_age = base_cfg$min_age,
+      apply_ce_baseline = base_cfg$apply_ce_b_incl, apply_ce_followup = base_cfg$apply_ce_f_incl,
+      apply_no_baseline_therapy = base_cfg$apply_no_bl_agents_incl,
+      apply_followup_therapy = base_cfg$apply_fu_agents_incl,
+      outpatient_window = base_cfg$outpatient_window,
+      apply_pregnancy_excl = base_cfg$apply_pregnancy_excl,
+      apply_clintrial_excl = base_cfg$apply_clintrial_excl,
+      apply_other_malig_excl = base_cfg$apply_other_malig_excl,
+      apply_baseline_mm_excl = base_cfg$apply_baseline_mm_excl
     ))
   }
 
@@ -269,7 +280,7 @@ prompt_ie_criteria <- function() {
   response <- tolower(trimws(readline()))
   if (response %in% c("n", "no")) {
     cat("\nRestarting criteria selection...\n")
-    return(prompt_ie_criteria())
+    return(prompt_ie_criteria(base_cfg))
   }
 
   cat("\nCriteria confirmed. Proceeding with pipeline...\n\n")
@@ -277,27 +288,30 @@ prompt_ie_criteria <- function() {
 }
 
 # ---- Apply user selections to cfg ----
-# Call after prompts; updates cfg in place (one-time mutation at startup)
-finalize_cfg <- function(user_cfg, ie_criteria) {
-  cfg$cdm_schema  <<- Sys.getenv("OPTUM_CDM_SCHEMA",    unset = user_cfg$cdm_schema)
-  cfg$ref_schema  <<- Sys.getenv("PROJECT_REF_SCHEMA",  unset = user_cfg$ref_schema)
-  cfg$work_schema <<- Sys.getenv("PROJECT_WORK_SCHEMA", unset = user_cfg$work_schema)
-  cfg$study_start <<- user_cfg$study_start
-  cfg$study_end   <<- user_cfg$study_end
-  cfg$id_start    <<- user_cfg$id_start
-  cfg$id_end      <<- user_cfg$id_end
-  cfg$baseline_days <<- user_cfg$baseline_days
-  cfg$gap_days      <<- user_cfg$gap_days
+# Merges base defaults with user/IE overrides and returns a new list.
+# No global mutation — the caller holds the finalized cfg as a local.
+finalize_cfg <- function(base_cfg, user_cfg, ie_criteria) {
+  out <- base_cfg
+  out$cdm_schema  <- Sys.getenv("OPTUM_CDM_SCHEMA",    unset = user_cfg$cdm_schema)
+  out$ref_schema  <- Sys.getenv("PROJECT_REF_SCHEMA",  unset = user_cfg$ref_schema)
+  out$work_schema <- Sys.getenv("PROJECT_WORK_SCHEMA", unset = user_cfg$work_schema)
+  out$study_start <- user_cfg$study_start
+  out$study_end   <- user_cfg$study_end
+  out$id_start    <- user_cfg$id_start
+  out$id_end      <- user_cfg$id_end
+  out$baseline_days <- user_cfg$baseline_days
+  out$gap_days      <- user_cfg$gap_days
 
-  cfg$outpatient_window      <<- validate_outpatient_window(ie_criteria$outpatient_window)
-  cfg$apply_age_incl         <<- ie_criteria$apply_age
-  cfg$min_age                <<- ie_criteria$min_age
-  cfg$apply_ce_b_incl        <<- ie_criteria$apply_ce_baseline
-  cfg$apply_ce_f_incl        <<- ie_criteria$apply_ce_followup
-  cfg$apply_no_bl_agents_incl <<- ie_criteria$apply_no_baseline_therapy
-  cfg$apply_fu_agents_incl   <<- ie_criteria$apply_followup_therapy
-  cfg$apply_pregnancy_excl   <<- ie_criteria$apply_pregnancy_excl
-  cfg$apply_clintrial_excl   <<- ie_criteria$apply_clintrial_excl
-  cfg$apply_other_malig_excl <<- ie_criteria$apply_other_malig_excl
-  cfg$apply_baseline_mm_excl <<- ie_criteria$apply_baseline_mm_excl
+  out$outpatient_window      <- validate_outpatient_window(ie_criteria$outpatient_window)
+  out$apply_age_incl         <- ie_criteria$apply_age
+  out$min_age                <- ie_criteria$min_age
+  out$apply_ce_b_incl        <- ie_criteria$apply_ce_baseline
+  out$apply_ce_f_incl        <- ie_criteria$apply_ce_followup
+  out$apply_no_bl_agents_incl <- ie_criteria$apply_no_baseline_therapy
+  out$apply_fu_agents_incl   <- ie_criteria$apply_followup_therapy
+  out$apply_pregnancy_excl   <- ie_criteria$apply_pregnancy_excl
+  out$apply_clintrial_excl   <- ie_criteria$apply_clintrial_excl
+  out$apply_other_malig_excl <- ie_criteria$apply_other_malig_excl
+  out$apply_baseline_mm_excl <- ie_criteria$apply_baseline_mm_excl
+  out
 }

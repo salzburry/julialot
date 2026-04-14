@@ -2,6 +2,8 @@
 # criteria_attrition.R — Unified criteria catalog, filter builder,
 #                         attrition tracker, QC reporting
 # ============================================================
+# No module-level mutable state. All runtime state (connection,
+# naming helpers) is passed through function arguments.
 
 # ---- Canonical Criteria Catalog ----
 # Single source of truth for all IE criteria. Drives:
@@ -20,10 +22,10 @@
 # Step 1 is special (window-specific qualifying) and handled outside
 # the catalog because it uses different SQL per 30/60/90d window.
 
-build_criteria_catalog <- function() {
+build_criteria_catalog <- function(cfg) {
   list(
     list(step_id = 2,  attrition_id = "02_step2_age",
-         label = "Step 2: Age >= 18 at index year",
+         label = glue("Step 2: Age >= {cfg$min_age} at index year"),
          filter_sql = glue("AND AGE_INDEX_YR >= {cfg$min_age}"),
          cfg_key = "apply_age_incl", type = "Inclusion"),
 
@@ -70,8 +72,7 @@ build_criteria_catalog <- function() {
 }
 
 # ---- Build combined criteria SQL for Step 24 final filter ----
-# Reads from cfg to decide which criteria are enabled.
-build_criteria_sql <- function(catalog) {
+build_criteria_sql <- function(catalog, cfg) {
   clauses <- c()
   for (cr in catalog) {
     if (isTRUE(cfg[[cr$cfg_key]])) {
@@ -82,19 +83,11 @@ build_criteria_sql <- function(catalog) {
 }
 
 # ============================================================
-# ATTRITION TRACKER
+# ATTRITION REPORTING
 # ============================================================
-attrition <- new.env()
-attrition$rows <- list()
+# print/export accept a rows list; no module-level state.
 
-record_attrition <- function(step_id, description, n_30, n_60, n_90) {
-  attrition$rows[[length(attrition$rows) + 1]] <- list(
-    step_id = step_id, description = description,
-    n_30 = n_30, n_60 = n_60, n_90 = n_90
-  )
-}
-
-print_attrition_table <- function() {
+print_attrition_table <- function(rows) {
   cat("\n")
   cat(SEP_70, "\n")
   cat("  ATTRITION TABLE\n")
@@ -102,7 +95,7 @@ print_attrition_table <- function() {
   cat(sprintf("%-30s %12s %12s %12s\n", "Step", "30-day", "60-day", "90-day"))
   cat(DASH_70, "\n")
 
-  for (row in attrition$rows) {
+  for (row in rows) {
     cat(sprintf("%-30s %12s %12s %12s\n",
                 substr(row$description, 1, 30),
                 format(row$n_30, big.mark = ","),
@@ -112,10 +105,10 @@ print_attrition_table <- function() {
   cat(SEP_70, "\n")
 }
 
-export_attrition_csv <- function() {
-  if (length(attrition$rows) == 0) return(invisible(NULL))
+export_attrition_csv <- function(rows) {
+  if (length(rows) == 0) return(invisible(NULL))
 
-  df <- do.call(rbind, lapply(attrition$rows, function(r) {
+  df <- do.call(rbind, lapply(rows, function(r) {
     data.frame(step = r$step_id, description = r$description,
                n_30 = r$n_30, n_60 = r$n_60, n_90 = r$n_90,
                stringsAsFactors = FALSE)
@@ -133,14 +126,17 @@ export_attrition_csv <- function() {
 # ============================================================
 # DATA-DRIVEN ATTRITION COUNTING
 # ============================================================
-# Replaces 10 nearly-identical if/count/record blocks with a loop
-# over the criteria catalog.
+# Builds attrition rows locally and returns them. No global state.
 
-run_attrition_report <- function(catalog) {
-  # Reset tracker for interactive reruns
-  attrition$rows <- list()
+run_attrition_report <- function(catalog, cfg, conn, work_tbl_fn) {
+  rows <- list()
+  record <- function(step_id, description, n_30, n_60, n_90) {
+    rows[[length(rows) + 1]] <<- list(
+      step_id = step_id, description = description,
+      n_30 = n_30, n_60 = n_60, n_90 = n_90)
+  }
 
-  tbl <- work_tbl("ELIG_COH_ALLFLAGS")
+  tbl <- work_tbl_fn("ELIG_COH_ALLFLAGS")
   qual_30 <- "(inpt_qual = 1 OR outpt2_30 = 1)"
   qual_60 <- "(inpt_qual = 1 OR outpt2_60 = 1)"
   qual_90 <- "(inpt_qual = 1 OR outpt2_90 = 1)"
@@ -154,20 +150,20 @@ run_attrition_report <- function(catalog) {
         count(DISTINCT CASE WHEN {w90} THEN PATID END) AS n_90
       FROM {from_tbl}
     ")
-    row <- DBI::dbGetQuery(con_env$con, sql)
+    row <- DBI::dbGetQuery(conn$con, sql)
     list(n_30 = row$n_30, n_60 = row$n_60, n_90 = row$n_90)
   }
 
   # Step 0: Base cohort — all patients with >= 1 MM dx (any position)
-  # Must count from mm_dx_events_all (raw events), NOT ELIG_COH_ALLFLAGS
-  # which is already filtered through mm_qualifying (Step 1)
-  base_tbl <- work_tbl("mm_dx_events_all")
+  # Counts from mm_dx_events_id (identification-period events), not
+  # mm_dx_events_all (full study period) which includes baseline lookback
+  base_tbl <- work_tbl_fn("mm_dx_events_id")
   s0 <- count_3w("1=1", "1=1", "1=1", from_tbl = base_tbl)
-  record_attrition("00_step0_base", "Step 0: >= 1 MM dx (any position)", s0$n_30, s0$n_60, s0$n_90)
+  record("00_step0_base", "Step 0: >= 1 MM dx (any position)", s0$n_30, s0$n_60, s0$n_90)
 
   # Step 1: Qualifying (IP strict OR 2 OP broad in window)
   s1 <- count_3w(qual_30, qual_60, qual_90)
-  record_attrition("01_step1_qualifying", "Step 1: Qualifying MM dx (IP/OP)", s1$n_30, s1$n_60, s1$n_90)
+  record("01_step1_qualifying", "Step 1: Qualifying MM dx (IP/OP)", s1$n_30, s1$n_60, s1$n_90)
 
   # Steps 2-10: Data-driven from catalog
   cum_cond <- ""
@@ -178,7 +174,7 @@ run_attrition_report <- function(catalog) {
         glue("{qual_30}{cum_cond}"),
         glue("{qual_60}{cum_cond}"),
         glue("{qual_90}{cum_cond}"))
-      record_attrition(cr$attrition_id, cr$label, counts$n_30, counts$n_60, counts$n_90)
+      record(cr$attrition_id, cr$label, counts$n_30, counts$n_60, counts$n_90)
     }
   }
 
@@ -187,18 +183,19 @@ run_attrition_report <- function(catalog) {
     glue("{qual_30}{cum_cond}"),
     glue("{qual_60}{cum_cond}"),
     glue("{qual_90}{cum_cond}"))
-  record_attrition("99_final", glue("FINAL COHORT ({cfg$final_table_name})"),
+  record("99_final", glue("FINAL COHORT ({cfg$final_table_name})"),
                    final$n_30, final$n_60, final$n_90)
 
-  print_attrition_table()
-  export_attrition_csv()
+  print_attrition_table(rows)
+  export_attrition_csv(rows)
+  invisible(rows)
 }
 
 # ============================================================
 # QC REPORTING
 # ============================================================
 
-print_cohort_characteristics <- function() {
+print_cohort_characteristics <- function(cfg, conn, work_tbl_fn) {
   stats_sql <- glue("
     SELECT
       count(*)                AS n_patients,
@@ -210,9 +207,9 @@ print_cohort_characteristics <- function() {
       max(INDEX_DATE)         AS max_index_date,
       sum(CASE WHEN index_source = 'INPATIENT' THEN 1 ELSE 0 END) AS n_inpatient_index,
       sum(CASE WHEN DEATH_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_with_death
-    FROM {work_tbl(cfg$final_table_name)}
+    FROM {work_tbl_fn(cfg$final_table_name)}
   ")
-  stats <- DBI::dbGetQuery(con_env$con, stats_sql)
+  stats <- DBI::dbGetQuery(conn$con, stats_sql)
 
   cat("\n", SEP_60, "\n")
   cat("                 COHORT CHARACTERISTICS\n")
@@ -232,17 +229,17 @@ print_cohort_characteristics <- function() {
   cat(SEP_60, "\n")
 }
 
-print_dod_validation <- function() {
+print_dod_validation <- function(cfg, conn, cdm_src_fn, work_tbl_fn) {
   cat("\n", DASH_60, "\n  DOD JOINABILITY VALIDATION\n", DASH_60, "\n", sep = "")
-  dod_qc <- DBI::dbGetQuery(con_env$con, glue("
+  dod_qc <- DBI::dbGetQuery(conn$con, glue("
     WITH dod_ids AS (
-      SELECT DISTINCT PATID FROM {cdm_src(cfg$tbl_dod)}
+      SELECT DISTINCT PATID FROM {cdm_src_fn(cfg$tbl_dod)}
       WHERE YMDOD IS NOT NULL AND LENGTH(TRIM(YMDOD)) >= 4
     )
     SELECT count(DISTINCT q.PATID) AS n_qualifying,
            count(DISTINCT d.PATID) AS n_dod_matched,
            ROUND(100.0 * count(DISTINCT d.PATID) / NULLIF(count(DISTINCT q.PATID), 0), 2) AS pct_matched
-    FROM {work_tbl('mm_qualifying')} q
+    FROM {work_tbl_fn('mm_qualifying')} q
     LEFT JOIN dod_ids d ON q.PATID = d.PATID
   "))
   cat(sprintf("Qualifying patients:     %s\n", format(dod_qc$n_qualifying, big.mark = ",")))
@@ -257,9 +254,9 @@ print_dod_validation <- function() {
   cat(DASH_60, "\n")
 }
 
-print_inpatient_validation <- function() {
+print_inpatient_validation <- function(conn, work_tbl_fn) {
   cat("\n", DASH_60, "\n  INPATIENT CLASSIFICATION VALIDATION (Approach 1 + 2)\n", DASH_60, "\n", sep = "")
-  qc <- DBI::dbGetQuery(con_env$con, glue("
+  qc <- DBI::dbGetQuery(conn$con, glue("
     SELECT count(*) AS n_mm_dx_events,
            sum(inpatient_flg)  AS n_inpatient_total,
            sum(pos_tos_inpatient) AS n_via_pos_tos,
@@ -267,7 +264,7 @@ print_inpatient_validation <- function() {
            sum(CASE WHEN pos_tos_inpatient=1 AND conf_validated=1 THEN 1 ELSE 0 END) AS n_both,
            sum(CASE WHEN pos_tos_inpatient=1 AND conf_validated=0 THEN 1 ELSE 0 END) AS n_pos_tos_only,
            sum(CASE WHEN pos_tos_inpatient=0 AND conf_validated=1 THEN 1 ELSE 0 END) AS n_conf_only
-    FROM {work_tbl('mm_dx_events_all')}
+    FROM {work_tbl_fn('mm_dx_events_all')}
   "))
   cat(sprintf("MM dx events (total):    %s\n", format(qc$n_mm_dx_events, big.mark = ",")))
   cat(sprintf("Inpatient (combined):    %s (%.1f%%)\n", format(qc$n_inpatient_total, big.mark = ","),

@@ -1,12 +1,11 @@
 # ============================================================
 # db_utils.R — Connection, retry, naming, materialization
 # ============================================================
+# No module-level mutable state. All runtime state (connection,
+# materialized table mappings) is created in main() and passed
+# through function arguments.
 
-# ---- Connection environment ----
-con_env <- new.env()
-con_env$con <- NULL
-
-# ---- Separators (pre-computed) ----
+# ---- Separators (pre-computed constants) ----
 SEP_59  <- strrep("=", 59)
 SEP_60  <- strrep("=", 60)
 SEP_70  <- strrep("=", 70)
@@ -19,31 +18,45 @@ log_msg <- function(...) {
   flush.console()
 }
 
-# ---- Naming helpers ----
-full_name <- function(schema, object) {
-  if (nzchar(cfg$catalog)) {
-    paste0(cfg$catalog, ".", schema, ".", object)
-  } else {
-    paste0(schema, ".", object)
+# ============================================================
+# NAMING HELPERS — closure factory
+# ============================================================
+# Returns a list of naming functions that close over cfg and
+# mat_tables. Callers unpack into locals so that the ~114 glue
+# interpolations ({cdm(...)}, {work_tbl(...)}, etc.) in
+# pipeline_steps.R require zero changes.
+#
+# mat_tables is an R environment (reference semantics) so that
+# materialize_to_personal_schema() writes are visible to work_tbl().
+make_naming_helpers <- function(cfg, mat_tables = new.env()) {
+  full_name <- function(schema, object) {
+    if (nzchar(cfg$catalog)) paste0(cfg$catalog, ".", schema, ".", object)
+    else paste0(schema, ".", object)
   }
-}
+  cdm  <- function(tbl) full_name(cfg$cdm_schema, tbl)
+  ref  <- function(tbl) full_name(cfg$ref_schema, tbl)
+  work <- function(tbl) tbl
 
-cdm  <- function(tbl) full_name(cfg$cdm_schema, tbl)
-ref  <- function(tbl) full_name(cfg$ref_schema, tbl)
-work <- function(tbl) tbl                     # temp views, no schema
-
-# ---- Materialization tracking ----
-materialized_tables <- new.env()
-
-work_tbl <- function(name) {
-  if (exists(name, envir = materialized_tables)) {
-    return(get(name, envir = materialized_tables))
+  work_tbl <- function(name) {
+    if (exists(name, envir = mat_tables)) return(get(name, envir = mat_tables))
+    name
   }
-  name
+
+  # Quarterly table resolution (from codelists.R logic)
+  cdm_quarterly <- function(base_table) {
+    cdm(get_quarterly_table(base_table, cfg$study_end))
+  }
+  cdm_src <- function(base_table) {
+    if (isTRUE(cfg$use_quarterly_tables)) cdm_quarterly(base_table)
+    else cdm(base_table)
+  }
+
+  list(full_name = full_name, cdm = cdm, ref = ref, work = work,
+       work_tbl = work_tbl, cdm_src = cdm_src, cdm_quarterly = cdm_quarterly)
 }
 
 # ---- Databricks connection ----
-connect_databricks <- function() {
+connect_databricks <- function(cfg) {
   if (!nzchar(cfg$pwd)) {
     stop("DATABRICKS_PWD environment variable is not set.")
   }
@@ -55,7 +68,7 @@ db_ping <- function(con) {
            error = function(e) FALSE)
 }
 
-with_retry <- function(fn, max_retries = cfg$max_retries, base_sleep = cfg$base_sleep) {
+with_retry <- function(fn, max_retries = 3L, base_sleep = 5) {
   attempt <- 1
   repeat {
     result <- tryCatch(fn(), error = function(e) e)
@@ -70,12 +83,12 @@ with_retry <- function(fn, max_retries = cfg$max_retries, base_sleep = cfg$base_
 }
 
 # ---- Materialization to personal schema (GSK helper) ----
-materialize_to_personal_schema <- function(con, view_name, replace = TRUE) {
+materialize_to_personal_schema <- function(con, view_name, cfg, mat_tables, replace = TRUE) {
   if (!nzchar(cfg$personal_schema)) {
     log_msg("WARN: personal_schema not set, skipping materialization of ", view_name)
     return(FALSE)
   }
-  remote_table   <- tolower(view_name)
+  remote_table    <- tolower(view_name)
   full_table_name <- paste0(cfg$personal_schema, ".", remote_table)
   log_msg("  >> Materializing ", view_name, " to ", full_table_name, "...")
 
@@ -87,7 +100,7 @@ materialize_to_personal_schema <- function(con, view_name, replace = TRUE) {
     alias_sql <- glue("CREATE OR REPLACE TEMPORARY VIEW {view_name} AS SELECT * FROM {full_table_name}")
     DBI::dbExecute(con, alias_sql)
 
-    assign(view_name, full_table_name, envir = materialized_tables)
+    assign(view_name, full_table_name, envir = mat_tables)
     log_msg("  >> Materialized successfully (view alias created)")
     TRUE
   }, error = function(e) {
@@ -97,7 +110,8 @@ materialize_to_personal_schema <- function(con, view_name, replace = TRUE) {
 }
 
 # ---- Step runner ----
-run_step <- function(step_name, sql, qc_sql = NULL, description = NULL,
+# conn is a mutable environment with conn$con (reference semantics for reconnect)
+run_step <- function(step_name, sql, conn, cfg, qc_sql = NULL, description = NULL,
                      step_num = NULL, total_steps = NULL, source_tables = NULL) {
   started_at <- Sys.time()
 
@@ -117,20 +131,20 @@ run_step <- function(step_name, sql, qc_sql = NULL, description = NULL,
 
   tryCatch({
     # Reconnect if stale
-    if (!db_ping(con_env$con)) {
+    if (!db_ping(conn$con)) {
       log_msg("Connection stale, reconnecting with retry...")
-      try(DBI::dbDisconnect(con_env$con), silent = TRUE)
-      con_env$con <- with_retry(function() {
-        conn <- connect_databricks()
+      try(DBI::dbDisconnect(conn$con), silent = TRUE)
+      conn$con <- with_retry(function() {
+        c <- connect_databricks(cfg)
         log_msg("Reconnected to Databricks")
-        conn
-      })
+        c
+      }, max_retries = cfg$max_retries, base_sleep = cfg$base_sleep)
     }
 
-    DBI::dbExecute(con_env$con, sql)
+    DBI::dbExecute(conn$con, sql)
 
     if (!is.null(qc_sql)) {
-      qc <- DBI::dbGetQuery(con_env$con, qc_sql)
+      qc <- DBI::dbGetQuery(conn$con, qc_sql)
       qc_metric <- colnames(qc)[1]
       qc_value  <- as.character(qc[[1]][1])
       numeric_val <- suppressWarnings(as.numeric(qc_value))

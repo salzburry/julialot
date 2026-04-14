@@ -1,21 +1,26 @@
 # ============================================================
 # pipeline_steps.R -- SQL pipeline step definitions
 # ============================================================
-build_steps <- function() {
+build_steps <- function(cfg, mat_tables) {
+  # ---- Unpack naming helpers into local scope ----
+  # These shadow the old globals so that ~114 glue interpolations
+  # ({cdm(...)}, {ref(...)}, {work(...)}, etc.) require zero changes.
+  h <- make_naming_helpers(cfg, mat_tables)
+  full_name <- h$full_name; cdm <- h$cdm; ref <- h$ref
+  work <- h$work; work_tbl <- h$work_tbl; cdm_src <- h$cdm_src
+
   # ---- Code-list sources (server-side reference tables) ----
-  mm_dx_source       <- get_code_source(cfg$cl_mm_dx)
-  mm_therapy_source  <- get_code_source(cfg$cl_mm_therapy)
-  preg_source        <- get_code_source(cfg$cl_preg)
-  clintrial_source   <- get_code_source(cfg$cl_clintrial)
-  other_malig_source <- get_code_source(cfg$cl_other_malig)
- 
+  mm_dx_source       <- ref(cfg$cl_mm_dx)
+  mm_therapy_source  <- ref(cfg$cl_mm_therapy)
+  preg_source        <- ref(cfg$cl_preg)
+  clintrial_source   <- ref(cfg$cl_clintrial)
+  other_malig_source <- ref(cfg$cl_other_malig)
+
   # ============================================================
   # BUILD COMBINED CRITERIA SQL (from unified criteria catalog)
   # ============================================================
-  # Uses the canonical criteria catalog from criteria_attrition.R.
-  # Each criterion is an independent flag toggled via cfg.
-  catalog      <- build_criteria_catalog()
-  criteria_sql <- build_criteria_sql(catalog)
+  catalog      <- build_criteria_catalog(cfg)
+  criteria_sql <- build_criteria_sql(catalog, cfg)
  
   list(
     # ----------------------------------------------------------
