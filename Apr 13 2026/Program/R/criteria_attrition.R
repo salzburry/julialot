@@ -137,20 +137,32 @@ export_attrition_csv <- function() {
 # over the criteria catalog.
 
 run_attrition_report <- function(catalog) {
+  # Reset tracker for interactive reruns
+  attrition$rows <- list()
+
   tbl <- work_tbl("ELIG_COH_ALLFLAGS")
   qual_30 <- "(inpt_qual = 1 OR outpt2_30 = 1)"
   qual_60 <- "(inpt_qual = 1 OR outpt2_60 = 1)"
   qual_90 <- "(inpt_qual = 1 OR outpt2_90 = 1)"
 
-  count_3w <- function(w30, w60, w90) {
-    n30 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {tbl} WHERE {w30}"))$n
-    n60 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {tbl} WHERE {w60}"))$n
-    n90 <- DBI::dbGetQuery(con_env$con, glue("SELECT count(DISTINCT PATID) AS n FROM {tbl} WHERE {w90}"))$n
-    list(n_30 = n30, n_60 = n60, n_90 = n90)
+  # Single query returns all three window counts at once
+  count_3w <- function(w30, w60, w90, from_tbl = tbl) {
+    sql <- glue("
+      SELECT
+        count(DISTINCT CASE WHEN {w30} THEN PATID END) AS n_30,
+        count(DISTINCT CASE WHEN {w60} THEN PATID END) AS n_60,
+        count(DISTINCT CASE WHEN {w90} THEN PATID END) AS n_90
+      FROM {from_tbl}
+    ")
+    row <- DBI::dbGetQuery(con_env$con, sql)
+    list(n_30 = row$n_30, n_60 = row$n_60, n_90 = row$n_90)
   }
 
-  # Step 0: Base cohort (all patients with >= 1 MM dx)
-  s0 <- count_3w("1=1", "1=1", "1=1")
+  # Step 0: Base cohort — all patients with >= 1 MM dx (any position)
+  # Must count from mm_dx_events_all (raw events), NOT ELIG_COH_ALLFLAGS
+  # which is already filtered through mm_qualifying (Step 1)
+  base_tbl <- work_tbl("mm_dx_events_all")
+  s0 <- count_3w("1=1", "1=1", "1=1", from_tbl = base_tbl)
   record_attrition("00_step0_base", "Step 0: >= 1 MM dx (any position)", s0$n_30, s0$n_60, s0$n_90)
 
   # Step 1: Qualifying (IP strict OR 2 OP broad in window)
