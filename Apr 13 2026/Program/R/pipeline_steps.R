@@ -986,14 +986,17 @@ build_steps <- function() {
     # Uses lazy table approach to save final cohort as permanent table
     # in user's personal schema. Set PERSIST_TO_SCHEMA=FALSE to skip.
    
-    if (isTRUE(cfg$persist_to_schema) && nzchar(cfg$personal_schema)) list(
-      name = "24b_persist_final_cohort",
-      description = glue("Persist final cohort to {cfg$catalog}.{cfg$personal_schema}.{cfg$final_table_name}"),
-      sql = glue("
-        CREATE OR REPLACE TABLE {cfg$catalog}.{cfg$personal_schema}.{cfg$final_table_name} AS
-        SELECT * FROM {work(cfg$final_table_name)}
-      "),
-      qc = glue("SELECT count(*) AS n_persisted FROM {cfg$catalog}.{cfg$personal_schema}.{cfg$final_table_name}")
-    ) else NULL
+    if (isTRUE(cfg$persist_to_schema) && nzchar(cfg$personal_schema)) {
+      persist_tbl <- full_name(cfg$personal_schema, cfg$final_table_name)
+      list(
+        name = "24b_persist_final_cohort",
+        description = glue("Persist final cohort to {persist_tbl}"),
+        sql = glue("
+          CREATE OR REPLACE TABLE {persist_tbl} AS
+          SELECT * FROM {work(cfg$final_table_name)}
+        "),
+        qc = glue("SELECT count(*) AS n_persisted FROM {persist_tbl}")
+      )
+    } else NULL
   )
 }
