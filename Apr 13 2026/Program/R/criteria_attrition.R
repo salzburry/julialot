@@ -23,7 +23,7 @@
 build_criteria_catalog <- function() {
   list(
     list(step_id = 2,  attrition_id = "02_step2_age",
-         label = "Step 2: Age >= 18 at index year",
+         label = glue("Step 2: Age >= {cfg$min_age} at index year"),
          filter_sql = glue("AND AGE_INDEX_YR >= {cfg$min_age}"),
          cfg_key = "apply_age_incl", type = "Inclusion"),
 
@@ -159,9 +159,9 @@ run_attrition_report <- function(catalog) {
   }
 
   # Step 0: Base cohort — all patients with >= 1 MM dx (any position)
-  # Must count from mm_dx_events_all (raw events), NOT ELIG_COH_ALLFLAGS
-  # which is already filtered through mm_qualifying (Step 1)
-  base_tbl <- work_tbl("mm_dx_events_all")
+  # Counts from mm_dx_events_id (identification-period events), not
+  # mm_dx_events_all (full study period) which includes baseline lookback
+  base_tbl <- work_tbl("mm_dx_events_id")
   s0 <- count_3w("1=1", "1=1", "1=1", from_tbl = base_tbl)
   record_attrition("00_step0_base", "Step 0: >= 1 MM dx (any position)", s0$n_30, s0$n_60, s0$n_90)
 

@@ -3,8 +3,13 @@
 # ============================================================
 
 # ---- Prompting control ----
+# Static mode: non-interactive Rscript uses env-var/config defaults (no prompts)
+# Interactive mode: prompts by default
+# Override: set PROMPT_USER=TRUE to force prompts, or FALSE to suppress them
 should_prompt <- function() {
-  isTRUE(as.logical(Sys.getenv("PROMPT_USER", unset = "TRUE"))) || interactive()
+  env_val <- Sys.getenv("PROMPT_USER", unset = "")
+  if (nzchar(env_val)) return(isTRUE(as.logical(env_val)))
+  interactive()
 }
 
 # ---- Validation helpers ----

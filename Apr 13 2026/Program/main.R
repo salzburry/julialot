@@ -5,8 +5,9 @@
 # Optum CDM -> Databricks/Spark -> ELIG_COH_FINAL
 #
 # Supported run modes:
-#   Static  — non-interactive, uses env-var / config defaults
-#   Interactive — prompts for study parameters + IE criteria
+#   Static  — non-interactive (Rscript), uses env-var / config defaults
+#   Interactive — R console, prompts for study parameters + IE criteria
+#   Override: set PROMPT_USER=TRUE to force prompts, FALSE to suppress
 #
 # Module layout:
 #   R/config_prompts.R       — cfg defaults, env-var loading, prompts
@@ -29,7 +30,9 @@ tryCatch(
 )
 
 # ---- Source modules (order matters) ----
-source_dir <- file.path(dirname(sys.frame(1)$ofile %||% "."), "R")
+# Resolve script directory without relying on %||% (not available before modules load)
+.ofile <- tryCatch(sys.frame(1)$ofile, error = function(e) NULL)
+source_dir <- file.path(dirname(if (!is.null(.ofile)) .ofile else "."), "R")
 source(file.path(source_dir, "config_prompts.R"))
 source(file.path(source_dir, "db_utils.R"))
 source(file.path(source_dir, "codelists.R"))
