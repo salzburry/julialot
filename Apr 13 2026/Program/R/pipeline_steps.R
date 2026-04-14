@@ -1034,6 +1034,23 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
     assembly       = phase_assembly
   )
 
-  selected <- if (is.null(phases)) all_phases else all_phases[phases]
+  if (is.null(phases)) {
+    selected <- all_phases
+  } else {
+    bad <- setdiff(phases, names(all_phases))
+    if (length(bad) > 0) {
+      stop("Unknown phase(s): ", paste(bad, collapse = ", "),
+           ". Valid phases: ", paste(names(all_phases), collapse = ", "))
+    }
+    # Warn about missing prerequisites (phases depend on earlier phases)
+    phase_order <- names(all_phases)
+    last_idx <- max(match(phases, phase_order))
+    missing <- setdiff(phase_order[seq_len(last_idx)], phases)
+    if (length(missing) > 0) {
+      log_msg("WARN: Skipped prerequisite phase(s): ", paste(missing, collapse = ", "),
+              ". Views from those phases must already exist.")
+    }
+    selected <- all_phases[phases]
+  }
   do.call(c, lapply(selected, function(fn) fn()))
 }
