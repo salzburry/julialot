@@ -14,6 +14,9 @@
 # ============================================================
 
 print_descriptives <- function(con) {
+  # Reset dashboard collector so reruns in the same R session start clean
+  dashboard_items <<- list()
+
   cat("\n")
   cat(SEP, "\n")
   cat("        PART 2 DESCRIPTIVE SUMMARY                    \n")

@@ -77,8 +77,8 @@ save_plot <- function(p, filename, width = 10, height = 6, section = "", title =
   }, error = function(e) {
     log_msg("  WARNING: Could not save figure ", filename, ": ", e$message)
   })
-  # Collect interactive version for dashboard
-  if (has_plotly) {
+  # Collect interactive version for dashboard (skip if dashboard disabled)
+  if (isTRUE(cfg$build_dashboard) && has_plotly) {
     tryCatch({
       pp <- plotly::ggplotly(p, tooltip = "text") |>
         plotly::layout(
@@ -96,6 +96,7 @@ save_plot <- function(p, filename, width = 10, height = 6, section = "", title =
 
 # Collect a data table for the dashboard (DT does NOT require plotly)
 save_table <- function(df, section, title) {
+  if (!isTRUE(cfg$build_dashboard)) return(invisible(NULL))
   if (!has_dt || !requireNamespace("htmlwidgets", quietly = TRUE)) return(invisible(NULL))
   tryCatch({
     # Convert integer64 columns for display
@@ -114,6 +115,7 @@ save_table <- function(df, section, title) {
 
 # Add a raw HTML card to the dashboard (for overview/QC — no htmlwidget needed)
 add_html_card <- function(html_content, section, title) {
+  if (!isTRUE(cfg$build_dashboard)) return(invisible(NULL))
   dashboard_items[[length(dashboard_items) + 1]] <<- list(
     html = html_content, section = section, title = title, type = "html_card"
   )

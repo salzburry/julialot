@@ -35,12 +35,16 @@
 # ============================================================
 # MODULE SOURCING
 # ============================================================
-source("R/config_lot.R")
-source("R/db_utils_lot.R")
-source("R/codelists_lot.R")
-source("R/dashboard_lot.R")
-source("R/descriptives_lot.R")
-source("R/cyclo_appendix_lot.R")
+# Resolve script directory so sourcing works from any working directory
+# (matches main.R pattern: Rscript path/to/lot_program.R works from repo root)
+.ofile <- tryCatch(sys.frame(1)$ofile, error = function(e) NULL)
+source_dir <- file.path(dirname(if (!is.null(.ofile)) .ofile else "."), "R")
+source(file.path(source_dir, "config_lot.R"))
+source(file.path(source_dir, "db_utils_lot.R"))
+source(file.path(source_dir, "codelists_lot.R"))
+source(file.path(source_dir, "dashboard_lot.R"))
+source(file.path(source_dir, "descriptives_lot.R"))
+source(file.path(source_dir, "cyclo_appendix_lot.R"))
 
 # ============================================================
 # MAIN
