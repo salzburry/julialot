@@ -1355,6 +1355,18 @@ main <- function() {
     FROM lot1_sct")
 
   # ----------------------------------------------------------
+  # Cache heavy upstream views before maintenance detection.
+  # map_stacked, lot1_base, and lot1_sct are all TEMPORARY VIEWs
+  # that reference deep CTE chains back to CDM tables. Without
+  # caching, Spark re-evaluates the full chain every time S16a
+  # and S16 reference them — causing massive redundant I/O.
+  # ----------------------------------------------------------
+  log_msg("Caching intermediate views for S16a/S16 performance...")
+  run_step(con, "S16_cache_map_stacked",  "CACHE TABLE map_stacked")
+  run_step(con, "S16_cache_lot1_base",    "CACHE TABLE lot1_base")
+  run_step(con, "S16_cache_lot1_sct",     "CACHE TABLE lot1_sct")
+
+  # ----------------------------------------------------------
   # C3 fix: Maintenance regimen detection
   # Per protocol Section 5.1.1:
   #   "A maintenance regimen is a period of 120 days or longer during which
