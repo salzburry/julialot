@@ -359,4 +359,212 @@ Key consistency benefits:
 
 ---
 
+## 10. Second-Pass Review — Additional Findings
+
+A second independent code-structure review was performed and validated against
+the actual source. Below are the **new findings** not already covered in Sections
+1–9, along with corrections to inaccuracies in that second review.
+
+### Corrections to Second Review
+
+| Claim | Actual | Note |
+|-------|--------|------|
+| File is 4,608 lines | **4,856 lines** | Verified via `wc -l` |
+| `main()` spans lines 2720–4608 | **2720–4856** | `main()` includes persist + metadata |
+| Extract pipeline SQL to `R/pipeline_steps_lot.R` | **Not recommended** | Pipeline SQL uses `glue()` with cfg interpolation — splitting across files adds complexity without reducing line count. Keeping sequential SQL in `main()` preserves top-to-bottom readability. |
+
+### 10A. Global Mutable State — `<<-` Operator (8 instances)
+
+**Severity:** Medium
+**New finding not in original report.**
+
+The `<<-` (superassignment) operator is used in 8 locations to mutate
+parent-scope variables:
+
+| Line | Variable | Context |
+|------|----------|---------|
+| 354 | `dashboard_items` | `add_to_dashboard()` — accumulates plotly widgets |
+| 447 | `dashboard_items` | `add_html_card()` — accumulates HTML cards |
+| 806 | `qc_rows` | `print_descriptives()` — QC summary HTML builder |
+| 1657 | `vlines` | `print_descriptives()` — plotly vertical lines (MAP) |
+| 1663 | `annotations` | `print_descriptives()` — plotly annotations (MAP) |
+| 1909 | `vlines` | `print_descriptives()` — plotly vertical lines (LOT1) |
+| 1914 | `annotations` | `print_descriptives()` — plotly annotations (LOT1) |
+| 4792 | `qc_checks` | `main()` — QC persist accumulator |
+
+**Impact:** These are all append-to-list mutations in local scope, not true
+global pollution. They work correctly. However, the pattern makes:
+- debugging harder (state depends on call order)
+- testing harder (can't unit-test individual sections independently)
+- parallelization impossible (if ever desired)
+
+**Recommendation:** Convert to explicit return/accumulate pattern:
+
+```r
+# Instead of:
+dashboard_items[[length(dashboard_items) + 1]] <<- list(...)
+
+# Use:
+add_to_dashboard <- function(collector, widget, section, title, type) {
+  collector[[length(collector) + 1]] <- list(...)
+  collector
+}
+```
+
+This applies primarily to the dashboard/reporting layer. The 2 plotly
+instances (vlines, annotations) and 1 QC persist instance are more contained
+and lower priority.
+
+### 10B. Config Flag Gating for Optional Reporting
+
+**Severity:** Medium
+**New recommendation not in original report.**
+
+Currently `print_descriptives(con)` is always called by `main()` at line 4712.
+There is no way to run the pipeline without generating all figures and the
+dashboard.
+
+**Recommendation:** Add config flags:
+
+```r
+# In cfg:
+generate_descriptives = as.logical(Sys.getenv("GENERATE_DESCRIPTIVES", unset = "TRUE")),
+build_dashboard       = as.logical(Sys.getenv("BUILD_DASHBOARD", unset = "TRUE")),
+run_cyclo_deepdive    = as.logical(Sys.getenv("RUN_CYCLO_DEEPDIVE", unset = "TRUE")),
+
+# In main():
+if (isTRUE(cfg$generate_descriptives)) {
+  print_descriptives(con)
+}
+```
+
+**Benefits:**
+- Faster pipeline-only runs during development/debugging
+- Reduces failure surface when reporting packages aren't available
+- CYCLO deep-dive can be skipped independently (saves 321 lines of SQL + I/O)
+
+### 10C. CYCLO Deep-Dive as Separate Optional Module
+
+**Severity:** Medium
+**Extends Section 7 recommendation.**
+
+The CYCLO monotherapy deep-dive (lines 2395–2715, 321 lines) is a specialized
+cohort-specific analysis that:
+- writes standalone CSVs (not to the main schema)
+- runs dx-date sensitivity analysis
+- analyzes post-CYCLO treatment patterns
+- is specific to cyclophosphamide monotherapy patients only
+
+This is an analytic appendix, not core LOT derivation. It should be:
+1. Gated by `cfg$run_cyclo_deepdive` (see 10B above)
+2. Extracted to `R/cyclo_appendix_lot.R` if modularized (see Section 7)
+3. Callable independently for ad-hoc analysis
+
+### 10D. Table-Driven Persist Blocks
+
+**Severity:** Low
+**New recommendation not in original report.**
+
+The S17–S21 persist steps (lines 4717–4742) follow an identical pattern:
+
+```r
+run_step(con, "S17_persist_map_stacked", glue("
+  CREATE OR REPLACE TABLE {wrk('MAP_STACKED')} AS
+  SELECT * FROM map_stacked
+"), qc = glue("SELECT count(*) AS n_rows FROM {wrk('MAP_STACKED')}"))
+```
+
+This is repeated 5 times with only the table name changing.
+
+**Recommendation:** Replace with a data-driven loop:
+
+```r
+persist_tables <- c(
+  "MAP_STACKED"       = "map_stacked",
+  "LOT1_BASE"         = "lot1_base",
+  "LOT1_SCT"          = "lot1_sct",
+  "LOT1_BASE_END"     = "lot1_base_end",
+  "MMA_MED_PROCESSED" = "mma_med_processed"
+)
+
+for (i in seq_along(persist_tables)) {
+  tgt <- names(persist_tables)[i]
+  src <- persist_tables[i]
+  run_step(con, glue("S{16 + i}_persist_{tolower(tgt)}"), glue("
+    CREATE OR REPLACE TABLE {wrk(tgt)} AS SELECT * FROM {src}
+  "), qc = glue("SELECT count(*) AS n_rows FROM {wrk(tgt)}"))
+}
+```
+
+**Saves:** ~25 lines, eliminates copy-paste drift risk.
+
+### 10E. Phase Builder Functions for main()
+
+**Severity:** Low (optional enhancement)
+**Alternative view to Section 7.**
+
+While keeping pipeline SQL in `main()` is recommended (see Section 7), the
+agent review suggests wrapping logical phase groups into named builder
+functions within the same file:
+
+```r
+# Still in lot_program.R, but organized as:
+run_codelist_phase     <- function(con) { ... }  # S00–S02 + validation
+run_mma_phase          <- function(con) { ... }  # S03–S05
+run_map_phase          <- function(con) { ... }  # S06–S07
+run_lot1_base_phase    <- function(con) { ... }  # S08–S10
+run_sct_phase          <- function(con) { ... }  # S11–S15
+run_maintenance_phase  <- function(con) { ... }  # S16a
+run_final_end_phase    <- function(con) { ... }  # S16
+run_persist_phase      <- function(con) { ... }  # S17–S23
+```
+
+**Trade-off:** This adds call-stack depth but enables:
+- rerunning individual phases during debugging
+- clearer git diffs (changes scoped to a single function)
+- potential future parallel execution of independent phases
+
+This is a lower-priority enhancement. The current sequential `run_step()` chain
+in `main()` is readable and correct.
+
+---
+
+## 11. Consolidated Recommendation Summary
+
+### Combined priority list (both reviews)
+
+| Priority | Change | Source | Risk | Effort |
+|----------|--------|--------|------|--------|
+| **P0** | Remove embedded codelist fallbacks → CSV-only | Sec 6 | Low | 1 hour |
+| **P1** | Add config flags for descriptives/dashboard/CYCLO | Sec 10B | Low | 30 min |
+| **P2** | Extract config + helpers into `R/config_lot.R` and `R/db_utils_lot.R` | Sec 7 | Low | 2 hours |
+| **P3** | Extract descriptives + dashboard into `R/descriptives_lot.R` | Sec 7 | Medium | 3 hours |
+| **P4** | Extract CYCLO deep-dive to `R/cyclo_appendix_lot.R` | Sec 10C | Low | 1 hour |
+| **P5** | Factor duplicated SQL patterns | Sec 5 | Low | 2 hours |
+| **P6** | Table-driven persist blocks | Sec 10D | Low | 30 min |
+| **P7** | Convert `<<-` to explicit return pattern | Sec 10A | Low | 2 hours |
+| **P8** | Phase builder functions in main() | Sec 10E | Low | 3 hours |
+| **P9** | Extract codelists module + validation consolidation | Sec 7 | Low | 1 hour |
+
+### What both reviews agree on
+
+1. The file is too large and mixes too many responsibilities
+2. Embedded codelist fallbacks must be removed (CSV-only)
+3. Descriptive/dashboard layer should be separated from core pipeline
+4. No dead code exists — all 26 functions are called
+5. The core pipeline SQL should stay readable and sequential
+6. The modularization should follow the `new_code.R` R/ subfolder pattern
+7. The tryCatch wrapping pattern is deliberate and should not be consolidated
+
+### Where the reviews differ
+
+| Topic | Report (Sec 1–9) | Second Review | Resolution |
+|-------|-------------------|---------------|------------|
+| Pipeline SQL location | Keep in `main()` | Extract to `R/pipeline_steps_lot.R` | **Keep in main()** — glue/cfg interpolation makes cross-file splitting impractical |
+| `ref()` helper | Remove (CSV-only) | Remove (CSV-only) | Agree — remove with CSV-only migration |
+| main() decomposition | Keep as-is | Phase builder functions | **Optional P8** — lower priority, useful for debug but adds complexity |
+| Dashboard state | Not flagged | Convert `<<-` pattern | **Valid new finding** — 8 instances, medium priority |
+
+---
+
 *End of report. No code was modified. All recommendations are for future implementation.*
