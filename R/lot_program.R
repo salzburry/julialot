@@ -4100,7 +4100,24 @@ main <- function() {
       WHERE IS_MAINT = 0
       GROUP BY PATID
     ),
-    -- Compute maintenance period start: day after all non-maint coverage ends
+    -- Per spec (lotbaseendapr14): LOT1_BASEMAINT_START is the first
+    -- maintenance-medication MAP_START_DT after pre-maintenance discontinuation.
+    -- Use greatest(MAP_START_DT, day-after-non-maint-end) so that:
+    --   - Continuous MAPs from induction: start = day after non-maint ends (per scenarios)
+    --   - Gap/restart MAPs: start = actual MAP_START_DT of the restart
+    first_maint_after_nonmaint AS (
+      SELECT
+        tm.PATID,
+        min(
+          greatest(tm.MAP_START_DT, date_add(lnm.LAST_NON_MAINT_END_DT, 1))
+        ) AS FIRST_MAINT_MAP_DT
+      FROM tagged_maps tm
+      INNER JOIN last_non_maint lnm ON tm.PATID = lnm.PATID
+      WHERE tm.IS_MAINT = 1
+        AND tm.MAP_END_DT >= date_add(lnm.LAST_NON_MAINT_END_DT, 1)
+      GROUP BY tm.PATID
+    ),
+    -- Compute maintenance period start per spec
     maint_bounds AS (
       SELECT
         lb.PATID,
@@ -4108,13 +4125,9 @@ main <- function() {
         lb.OBS_END_DT,
         lb.DEATH_DT,
         lb.ENDDATE,
-        CASE
-          WHEN lnm.LAST_NON_MAINT_END_DT IS NOT NULL
-          THEN date_add(lnm.LAST_NON_MAINT_END_DT, 1)
-          ELSE lb.LOT1_START_DT
-        END AS MAINT_START_DT
+        fma.FIRST_MAINT_MAP_DT AS MAINT_START_DT
       FROM lot1_base lb
-      LEFT JOIN last_non_maint lnm ON lb.PATID = lnm.PATID
+      INNER JOIN first_maint_after_nonmaint fma ON lb.PATID = fma.PATID
     ),
     -- Detect SCT events that would interrupt maintenance (any SCT after MAINT_START_DT)
     maint_interrupt_sct AS (
@@ -4190,9 +4203,9 @@ main <- function() {
       GROUP BY mb.PATID, mb.MAINT_START_DT, mb.OBS_END_DT, mb.DEATH_DT, mb.ENDDATE,
                isct.EARLIEST_SCT_AFTER_MAINT, inm.EARLIEST_NONMAINT_ADD_DT
     ),
-    -- Apply duration threshold (120 standard, 30 post-SCT per protocol)
-    -- Per protocol: maintenance is evaluated "after a single autologous SCT
-    -- or after the second SCT of a tandem autologous SCT."
+    -- Apply duration threshold (120 standard, 30 post-SCT per spec)
+    -- Per spec: maintenance is evaluated after a single autologous SCT
+    -- or after the second SCT of a tandem autologous SCT.
     -- Lower bound must use AUTO_DT_2 for tandem, not LOT1_1ST_SCT_DT.
     maint_qualified AS (
       SELECT
