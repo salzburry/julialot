@@ -4036,57 +4036,9 @@ main <- function() {
   run_step(con, "S16a_lot1_maintenance", glue("
     CREATE OR REPLACE TEMPORARY VIEW lot1_maintenance AS
     WITH
-    -- Identify maintenance-eligible induction meds per patient
-    maint_eligible AS (
-      -- Mono-maintenance: drug has MONOMAINTENANCE=1 AND was in induction
-      SELECT DISTINCT im.PATID, im.MED_ABBR
-      FROM lot1_induction_meds im
-      INNER JOIN mma_rollup ru ON im.MED_ABBR = ru.CL_MED_ABBR
-      WHERE ru.MONOMAINTENANCE = 1
-      UNION
-      -- Dual-maintenance: drug has DUALMAINTENANCEWITH AND partner is in induction
-      SELECT DISTINCT im.PATID, im.MED_ABBR
-      FROM lot1_induction_meds im
-      INNER JOIN mma_rollup ru ON im.MED_ABBR = ru.CL_MED_ABBR
-      INNER JOIN lot1_induction_meds im2
-        ON im.PATID = im2.PATID
-        AND im.MED_ABBR <> im2.MED_ABBR
-        AND array_contains(
-          transform(split(coalesce(ru.DUALMAINTENANCEWITH, ''), ','), v -> upper(trim(v))),
-          im2.MED_ABBR)
-      UNION
-      -- Reverse dual: this drug is named as a dual partner by another induction drug
-      SELECT DISTINCT im.PATID, im.MED_ABBR
-      FROM lot1_induction_meds im
-      INNER JOIN lot1_induction_meds im2
-        ON im.PATID = im2.PATID AND im.MED_ABBR <> im2.MED_ABBR
-      INNER JOIN mma_rollup ru2 ON im2.MED_ABBR = ru2.CL_MED_ABBR
-      WHERE array_contains(
-        transform(split(coalesce(ru2.DUALMAINTENANCEWITH, ''), ','), v -> upper(trim(v))),
-        im.MED_ABBR)
-    ),
-    -- Enumerate valid maintenance regimens per patient as sorted key strings.
-    -- Mono: single drug name where MONOMAINTENANCE=1 and drug was in induction.
-    -- Dual: sorted pair string where one drug lists the other via DUALMAINTENANCEWITH.
-    valid_maint_regimens AS (
-      SELECT DISTINCT im.PATID, im.MED_ABBR AS REGIMEN_KEY
-      FROM lot1_induction_meds im
-      INNER JOIN mma_rollup ru ON im.MED_ABBR = ru.CL_MED_ABBR
-      WHERE ru.MONOMAINTENANCE = 1
-      UNION
-      SELECT DISTINCT
-        im.PATID,
-        concat_ws(' ', sort_array(array(im.MED_ABBR, im2.MED_ABBR))) AS REGIMEN_KEY
-      FROM lot1_induction_meds im
-      INNER JOIN mma_rollup ru ON im.MED_ABBR = ru.CL_MED_ABBR
-      INNER JOIN lot1_induction_meds im2
-        ON im.PATID = im2.PATID
-        AND im.MED_ABBR <> im2.MED_ABBR
-        AND array_contains(
-          transform(split(coalesce(ru.DUALMAINTENANCEWITH, ''), ','), v -> upper(trim(v))),
-          im2.MED_ABBR)
-    ),
-    -- base_meds: initial regimen drugs + permissible substitutions
+    -- base_meds: initial regimen drugs + permissible substitutions.
+    -- Defined first so that maintenance eligibility and regimen checks include
+    -- permitted substitutes (e.g., BORT -> IXAZ per lot1baseapr14).
     base_meds AS (
       SELECT PATID, MED_ABBR
       FROM lot1_induction_meds
@@ -4095,6 +4047,59 @@ main <- function() {
       FROM lot1_induction_meds im
       INNER JOIN permissible_subs ps
         ON im.MED_ABBR = ps.original_med
+    ),
+    -- Identify maintenance-eligible base_meds drugs per patient.
+    -- Uses base_meds (not lot1_induction_meds) so that permissible substitutes
+    -- like IXAZ (for BORT) are recognized as maintenance-eligible.
+    maint_eligible AS (
+      -- Mono-maintenance: drug has MONOMAINTENANCE=1 AND is in base_meds
+      SELECT DISTINCT bm.PATID, bm.MED_ABBR
+      FROM base_meds bm
+      INNER JOIN mma_rollup ru ON bm.MED_ABBR = ru.CL_MED_ABBR
+      WHERE ru.MONOMAINTENANCE = 1
+      UNION
+      -- Dual-maintenance: drug has DUALMAINTENANCEWITH AND partner is in base_meds
+      SELECT DISTINCT bm.PATID, bm.MED_ABBR
+      FROM base_meds bm
+      INNER JOIN mma_rollup ru ON bm.MED_ABBR = ru.CL_MED_ABBR
+      INNER JOIN base_meds bm2
+        ON bm.PATID = bm2.PATID
+        AND bm.MED_ABBR <> bm2.MED_ABBR
+        AND array_contains(
+          transform(split(coalesce(ru.DUALMAINTENANCEWITH, ''), ','), v -> upper(trim(v))),
+          bm2.MED_ABBR)
+      UNION
+      -- Reverse dual: this drug is named as a dual partner by another base_meds drug
+      SELECT DISTINCT bm.PATID, bm.MED_ABBR
+      FROM base_meds bm
+      INNER JOIN base_meds bm2
+        ON bm.PATID = bm2.PATID AND bm.MED_ABBR <> bm2.MED_ABBR
+      INNER JOIN mma_rollup ru2 ON bm2.MED_ABBR = ru2.CL_MED_ABBR
+      WHERE array_contains(
+        transform(split(coalesce(ru2.DUALMAINTENANCEWITH, ''), ','), v -> upper(trim(v))),
+        bm.MED_ABBR)
+    ),
+    -- Enumerate valid maintenance regimens per patient as sorted key strings.
+    -- Mono: single drug where MONOMAINTENANCE=1 and drug is in base_meds.
+    -- Dual: sorted pair where one drug lists the other via DUALMAINTENANCEWITH.
+    -- Uses base_meds so permissible substitutes can form valid regimens.
+    valid_maint_regimens AS (
+      SELECT DISTINCT bm.PATID, bm.MED_ABBR AS REGIMEN_KEY
+      FROM base_meds bm
+      INNER JOIN mma_rollup ru ON bm.MED_ABBR = ru.CL_MED_ABBR
+      WHERE ru.MONOMAINTENANCE = 1
+      UNION
+      SELECT DISTINCT
+        bm.PATID,
+        concat_ws(' ', sort_array(array(bm.MED_ABBR, bm2.MED_ABBR))) AS REGIMEN_KEY
+      FROM base_meds bm
+      INNER JOIN mma_rollup ru ON bm.MED_ABBR = ru.CL_MED_ABBR
+      INNER JOIN base_meds bm2
+        ON bm.PATID = bm2.PATID
+        AND bm.MED_ABBR <> bm2.MED_ABBR
+        AND array_contains(
+          transform(split(coalesce(ru.DUALMAINTENANCEWITH, ''), ','), v -> upper(trim(v))),
+          bm2.MED_ABBR)
     ),
     -- Tag initial-regimen (base_meds) MAPs as maintenance-eligible or not.
     -- Per spec: maintenance starts when non-maintenance drugs from the INITIAL
