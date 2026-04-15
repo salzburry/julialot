@@ -4093,28 +4093,52 @@ main <- function() {
       WHERE ms.MAP_MED_CLASS <> 'STEROID'
         AND ms.MAP_START_DT >= l1.LOT1_START_DT
     ),
-    -- Find when all non-maintenance initial-regimen drug coverage ends per patient
-    last_non_maint AS (
-      SELECT PATID, max(MAP_END_DT) AS LAST_NON_MAINT_END_DT
+    -- Per-drug coverage: last MAP end for each base_meds drug per patient
+    drug_coverage AS (
+      SELECT PATID, MAP_MED_TYPE, IS_MAINT, max(MAP_END_DT) AS DRUG_LAST_END
       FROM tagged_maps
-      WHERE IS_MAINT = 0
+      GROUP BY PATID, MAP_MED_TYPE, IS_MAINT
+    ),
+    -- Valid transition points: a drug drops off and ALL remaining drugs are
+    -- maint-eligible. Handles both:
+    --   Pattern A (mtx scenarios #1/#2): non-maint drug drops, maint drugs continue
+    --   Pattern B (mtx scenarios #3/#4): one maint drug drops, remaining maint drugs continue
+    transition_candidates AS (
+      SELECT dc.PATID, dc.DRUG_LAST_END AS DROP_DT
+      FROM drug_coverage dc
+      WHERE NOT EXISTS (
+        SELECT 1 FROM drug_coverage d2
+        WHERE d2.PATID = dc.PATID
+          AND d2.DRUG_LAST_END > dc.DRUG_LAST_END
+          AND d2.IS_MAINT = 0
+      )
+      AND EXISTS (
+        SELECT 1 FROM drug_coverage d2
+        WHERE d2.PATID = dc.PATID
+          AND d2.DRUG_LAST_END > dc.DRUG_LAST_END
+          AND d2.IS_MAINT = 1
+      )
+    ),
+    earliest_transition AS (
+      SELECT PATID, min(DROP_DT) AS TRANSITION_DT
+      FROM transition_candidates
       GROUP BY PATID
     ),
     -- Per spec (lotbaseendapr14): LOT1_BASEMAINT_START is the first
-    -- maintenance-medication MAP_START_DT after pre-maintenance discontinuation.
-    -- Use greatest(MAP_START_DT, day-after-non-maint-end) so that:
-    --   - Continuous MAPs from induction: start = day after non-maint ends (per scenarios)
+    -- maintenance-medication MAP_START_DT after pre-maintenance transition.
+    -- Use greatest(MAP_START_DT, TRANSITION_DT+1) so that:
+    --   - Continuous MAPs from induction: start = day after transition (per mtx scenarios)
     --   - Gap/restart MAPs: start = actual MAP_START_DT of the restart
-    first_maint_after_nonmaint AS (
+    first_maint_after_transition AS (
       SELECT
         tm.PATID,
         min(
-          greatest(tm.MAP_START_DT, date_add(lnm.LAST_NON_MAINT_END_DT, 1))
+          greatest(tm.MAP_START_DT, date_add(et.TRANSITION_DT, 1))
         ) AS FIRST_MAINT_MAP_DT
       FROM tagged_maps tm
-      INNER JOIN last_non_maint lnm ON tm.PATID = lnm.PATID
+      INNER JOIN earliest_transition et ON tm.PATID = et.PATID
       WHERE tm.IS_MAINT = 1
-        AND tm.MAP_END_DT >= date_add(lnm.LAST_NON_MAINT_END_DT, 1)
+        AND tm.MAP_END_DT >= date_add(et.TRANSITION_DT, 1)
       GROUP BY tm.PATID
     ),
     -- Compute maintenance period start per spec
@@ -4127,7 +4151,7 @@ main <- function() {
         lb.ENDDATE,
         fma.FIRST_MAINT_MAP_DT AS MAINT_START_DT
       FROM lot1_base lb
-      INNER JOIN first_maint_after_nonmaint fma ON lb.PATID = fma.PATID
+      INNER JOIN first_maint_after_transition fma ON lb.PATID = fma.PATID
     ),
     -- Detect SCT events that would interrupt maintenance (any SCT after MAINT_START_DT)
     maint_interrupt_sct AS (
