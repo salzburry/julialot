@@ -1742,6 +1742,7 @@ main <- function() {
   #   > DISCONTINUATION > DEATH > DISENROLLMENT > STUDY_END
   # C4 fix: Rule 4 — planned SCT not followed by maintenance within 180 days ends LOT1.
   # H3 fix: Split former CENSORED into DEATH, DISENROLLMENT, STUDY_END per Rules 5-7.
+  # CART consolidation: MED_ADD within cart_consolidation_days of CART is suppressed.
   run_step(con, "S16_lot1_base_end", glue("
     CREATE OR REPLACE TEMPORARY VIEW lot1_base_end AS
     WITH end_candidates AS (
@@ -1789,7 +1790,16 @@ main <- function() {
                  ELSE sct.LOT1_TX_AUTO_DT_1
                END
           ELSE NULL
-        END AS SCT_NO_MAINT_END_DT
+        END AS SCT_NO_MAINT_END_DT,
+        -- CAR-T consolidation: new agents within {cfg$cart_consolidation_days} days of CART
+        -- are consolidation therapy, not LOT-ending MED_ADD (per sensitivity email)
+        CASE
+          WHEN sct.FIRST_CART_DT IS NOT NULL
+           AND lb.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
+           AND datediff(lb.LOT1_BASE_1ST_ADD_MED_DT, sct.FIRST_CART_DT) BETWEEN 0 AND {cfg$cart_consolidation_days}
+          THEN 1
+          ELSE 0
+        END AS CART_CONSOL_FLG
       FROM lot1_base lb
       LEFT JOIN lot1_sct sct ON lb.PATID = sct.PATID
       LEFT JOIN lot1_maintenance m ON lb.PATID = m.PATID
@@ -1801,7 +1811,7 @@ main <- function() {
       CASE
         -- Rule 3: Unplanned/excess SCT (ALLO, CART, or excess AUTO)
         WHEN ec.LOT1_TX_ENDDATE IS NOT NULL
-         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.CART_CONSOL_FLG = 1 OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT)
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_DISCON_DT)
         THEN CASE ec.LOT1_TX_ENDDATE_REASON
                WHEN 1 THEN 'SCT_AUTO'
@@ -1811,11 +1821,12 @@ main <- function() {
              END
         -- Rule 4: Planned SCT not followed by maintenance within 180 days
         WHEN ec.LOT1_SCT_NO_MAINT_FLG = 1
-         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.CART_CONSOL_FLG = 1 OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_1ST_ADD_MED_DT)
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_DISCON_DT)
         THEN 'SCT_NO_MAINT'
-        -- MED_ADD: new non-base drug added
+        -- MED_ADD: new non-base drug added (suppressed if CART consolidation)
         WHEN ec.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
+         AND ec.CART_CONSOL_FLG = 0
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASE_1ST_ADD_MED_DT <= ec.LOT1_BASE_DISCON_DT)
         THEN 'MED_ADD'
         -- Rule 8: Maintenance period ends (if patient had maintenance)
@@ -1833,14 +1844,15 @@ main <- function() {
       -- Corresponding end date
       CASE
         WHEN ec.LOT1_TX_ENDDATE IS NOT NULL
-         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.CART_CONSOL_FLG = 1 OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT)
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_DISCON_DT)
         THEN ec.LOT1_TX_ENDDATE
         WHEN ec.LOT1_SCT_NO_MAINT_FLG = 1
-         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.CART_CONSOL_FLG = 1 OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_1ST_ADD_MED_DT)
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_DISCON_DT)
         THEN ec.SCT_NO_MAINT_END_DT
         WHEN ec.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
+         AND ec.CART_CONSOL_FLG = 0
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASE_1ST_ADD_MED_DT <= ec.LOT1_BASE_DISCON_DT)
         THEN ec.LOT1_BASE_1ST_ADD_MED_DT
         WHEN ec.LOT1_BASEMAINT_END IS NOT NULL
@@ -1855,20 +1867,21 @@ main <- function() {
       CASE
         WHEN ec.LOT1_BASE_DISCON_DT IS NOT NULL
          AND (ec.LOT1_TX_ENDDATE IS NULL OR ec.LOT1_BASE_DISCON_DT < ec.LOT1_TX_ENDDATE)
-         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.LOT1_BASE_DISCON_DT <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.CART_CONSOL_FLG = 1 OR ec.LOT1_BASE_DISCON_DT <= ec.LOT1_BASE_1ST_ADD_MED_DT)
          AND (ec.LOT1_SCT_NO_MAINT_FLG = 0 OR ec.LOT1_BASE_DISCON_DT <= ec.SCT_NO_MAINT_END_DT)
         THEN datediff(ec.LOT1_BASE_DISCON_DT, ec.LOT1_START_DT) + 1
         ELSE datediff(
           CASE
             WHEN ec.LOT1_TX_ENDDATE IS NOT NULL
-             AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+             AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.CART_CONSOL_FLG = 1 OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT)
              AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_DISCON_DT)
             THEN ec.LOT1_TX_ENDDATE
             WHEN ec.LOT1_SCT_NO_MAINT_FLG = 1
-             AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+             AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.CART_CONSOL_FLG = 1 OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_1ST_ADD_MED_DT)
              AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_DISCON_DT)
             THEN ec.SCT_NO_MAINT_END_DT
             WHEN ec.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
+             AND ec.CART_CONSOL_FLG = 0
              AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASE_1ST_ADD_MED_DT <= ec.LOT1_BASE_DISCON_DT)
             THEN ec.LOT1_BASE_1ST_ADD_MED_DT
             WHEN ec.LOT1_BASEMAINT_END IS NOT NULL
@@ -1882,7 +1895,8 @@ main <- function() {
       END AS LOT1_BASE_LENGTH
     FROM end_candidates ec
   "), qc = "
-    SELECT LOT1_BASE_END_REASON, count(*) AS n
+    SELECT LOT1_BASE_END_REASON, count(*) AS n,
+           sum(CART_CONSOL_FLG) AS n_cart_consol
     FROM lot1_base_end
     GROUP BY LOT1_BASE_END_REASON
     ORDER BY LOT1_BASE_END_REASON")
