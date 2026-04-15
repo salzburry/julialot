@@ -1355,16 +1355,29 @@ main <- function() {
     FROM lot1_sct")
 
   # ----------------------------------------------------------
-  # Cache heavy upstream views before maintenance detection.
+  # Materialize heavy upstream views before maintenance detection.
   # map_stacked, lot1_base, and lot1_sct are all TEMPORARY VIEWs
   # that reference deep CTE chains back to CDM tables. Without
-  # caching, Spark re-evaluates the full chain every time S16a
-  # and S16 reference them — causing massive redundant I/O.
+  # materializing, Spark re-evaluates the full chain every time
+  # S16a and S16 reference them — causing massive redundant I/O.
+  # Write to work schema tables, then repoint the views at them.
+  # (CACHE TABLE is not supported on SQL warehouses.)
   # ----------------------------------------------------------
-  log_msg("Caching intermediate views for S16a/S16 performance...")
-  run_step(con, "S16_cache_map_stacked",  "CACHE TABLE map_stacked")
-  run_step(con, "S16_cache_lot1_base",    "CACHE TABLE lot1_base")
-  run_step(con, "S16_cache_lot1_sct",     "CACHE TABLE lot1_sct")
+  log_msg("Materializing intermediate views for S16a/S16 performance...")
+  for (mv in list(
+    list(name = "MAP_STACKED", view = "map_stacked"),
+    list(name = "LOT1_BASE",   view = "lot1_base"),
+    list(name = "LOT1_SCT",    view = "lot1_sct")
+  )) {
+    run_step(con, paste0("S16_materialize_", tolower(mv$name)), glue("
+      CREATE OR REPLACE TABLE {wrk(mv$name)} AS
+      SELECT * FROM {mv$view}
+    "), qc = glue("SELECT count(*) AS n_rows FROM {wrk(mv$name)}"))
+    db_exec(con, glue("
+      CREATE OR REPLACE TEMPORARY VIEW {mv$view} AS
+      SELECT * FROM {wrk(mv$name)}
+    "))
+  }
 
   # ----------------------------------------------------------
   # C3 fix: Maintenance regimen detection
@@ -2078,10 +2091,9 @@ main <- function() {
   # Persist outputs
   # ----------------------------------------------------------
   if (isTRUE(cfg$persist_to_schema)) {
+    # MAP_STACKED, LOT1_BASE, LOT1_SCT already materialized before S16a.
+    # Only persist the remaining outputs here.
     persist_tables <- list(
-      list(step = "S17", name = "MAP_STACKED",       view = "map_stacked"),
-      list(step = "S18", name = "LOT1_BASE",         view = "lot1_base"),
-      list(step = "S19", name = "LOT1_SCT",          view = "lot1_sct"),
       list(step = "S20", name = "LOT1_BASE_END",     view = "lot1_base_end"),
       list(step = "S21", name = "MMA_MED_PROCESSED", view = "mma_med_processed")
     )
