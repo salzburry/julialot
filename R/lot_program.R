@@ -4065,6 +4065,27 @@ main <- function() {
         transform(split(coalesce(ru2.DUALMAINTENANCEWITH, ''), ','), v -> upper(trim(v))),
         im.MED_ABBR)
     ),
+    -- Enumerate valid maintenance regimens per patient as sorted key strings.
+    -- Mono: single drug name where MONOMAINTENANCE=1 and drug was in induction.
+    -- Dual: sorted pair string where one drug lists the other via DUALMAINTENANCEWITH.
+    valid_maint_regimens AS (
+      SELECT DISTINCT im.PATID, im.MED_ABBR AS REGIMEN_KEY
+      FROM lot1_induction_meds im
+      INNER JOIN mma_rollup ru ON im.MED_ABBR = ru.CL_MED_ABBR
+      WHERE ru.MONOMAINTENANCE = 1
+      UNION
+      SELECT DISTINCT
+        im.PATID,
+        concat_ws(' ', sort_array(array(im.MED_ABBR, im2.MED_ABBR))) AS REGIMEN_KEY
+      FROM lot1_induction_meds im
+      INNER JOIN mma_rollup ru ON im.MED_ABBR = ru.CL_MED_ABBR
+      INNER JOIN lot1_induction_meds im2
+        ON im.PATID = im2.PATID
+        AND im.MED_ABBR <> im2.MED_ABBR
+        AND array_contains(
+          transform(split(coalesce(ru.DUALMAINTENANCEWITH, ''), ','), v -> upper(trim(v))),
+          im2.MED_ABBR)
+    ),
     -- base_meds: initial regimen drugs + permissible substitutions
     base_meds AS (
       SELECT PATID, MED_ABBR
@@ -4099,30 +4120,41 @@ main <- function() {
       FROM tagged_maps
       GROUP BY PATID, MAP_MED_TYPE, IS_MAINT
     ),
-    -- Valid transition points: a drug drops off and ALL remaining drugs are
-    -- maint-eligible. Handles both:
-    --   Pattern A (mtx scenarios #1/#2): non-maint drug drops, maint drugs continue
-    --   Pattern B (mtx scenarios #3/#4): one maint drug drops, remaining maint drugs continue
-    transition_candidates AS (
-      SELECT dc.PATID, dc.DRUG_LAST_END AS DROP_DT
+    -- Regimen-level transition detection: collect remaining drugs after each
+    -- potential drop point, then validate that the remaining set forms a valid
+    -- mono or dual maintenance regimen (not just individually eligible drugs).
+    -- Handles all mtx scenarios: #1 BORT mono, #2 BORT+LENA dual,
+    -- #3 LENA mono (all maint-eligible), #4 LENA+DARA dual (all maint-eligible).
+    transition_regimen AS (
+      SELECT
+        dc.PATID,
+        dc.DRUG_LAST_END AS DROP_DT,
+        concat_ws(' ', sort_array(collect_set(d2.MAP_MED_TYPE))) AS REMAINING_KEY
       FROM drug_coverage dc
-      WHERE NOT EXISTS (
-        SELECT 1 FROM drug_coverage d2
-        WHERE d2.PATID = dc.PATID
-          AND d2.DRUG_LAST_END > dc.DRUG_LAST_END
-          AND d2.IS_MAINT = 0
-      )
-      AND EXISTS (
-        SELECT 1 FROM drug_coverage d2
-        WHERE d2.PATID = dc.PATID
-          AND d2.DRUG_LAST_END > dc.DRUG_LAST_END
-          AND d2.IS_MAINT = 1
-      )
+      INNER JOIN drug_coverage d2
+        ON dc.PATID = d2.PATID
+        AND d2.DRUG_LAST_END > dc.DRUG_LAST_END
+      GROUP BY dc.PATID, dc.DRUG_LAST_END
+    ),
+    -- Keep only transitions where remaining drugs form a valid regimen
+    valid_transitions AS (
+      SELECT tr.PATID, tr.DROP_DT, tr.REMAINING_KEY
+      FROM transition_regimen tr
+      INNER JOIN valid_maint_regimens vmr
+        ON tr.PATID = vmr.PATID AND tr.REMAINING_KEY = vmr.REGIMEN_KEY
     ),
     earliest_transition AS (
       SELECT PATID, min(DROP_DT) AS TRANSITION_DT
-      FROM transition_candidates
+      FROM valid_transitions
       GROUP BY PATID
+    ),
+    -- Identify the specific drugs in the chosen maintenance regimen
+    maint_regimen_drugs AS (
+      SELECT DISTINCT vt.PATID, drug AS MED_ABBR
+      FROM valid_transitions vt
+      INNER JOIN earliest_transition et
+        ON vt.PATID = et.PATID AND vt.DROP_DT = et.TRANSITION_DT
+      LATERAL VIEW explode(split(vt.REMAINING_KEY, ' ')) t AS drug
     ),
     -- Per spec (lotbaseendapr14): LOT1_BASEMAINT_START is the first
     -- maintenance-medication MAP_START_DT after pre-maintenance transition.
@@ -4137,8 +4169,9 @@ main <- function() {
         ) AS FIRST_MAINT_MAP_DT
       FROM tagged_maps tm
       INNER JOIN earliest_transition et ON tm.PATID = et.PATID
-      WHERE tm.IS_MAINT = 1
-        AND tm.MAP_END_DT >= date_add(et.TRANSITION_DT, 1)
+      INNER JOIN maint_regimen_drugs mrd
+        ON tm.PATID = mrd.PATID AND tm.MAP_MED_TYPE = mrd.MED_ABBR
+      WHERE tm.MAP_END_DT >= date_add(et.TRANSITION_DT, 1)
       GROUP BY tm.PATID
     ),
     -- Compute maintenance period start per spec
@@ -4178,11 +4211,12 @@ main <- function() {
           coalesce(sct.FIRST_CART_DT,      cast('9999-12-31' as date))
         ) < cast('9999-12-31' as date)
     ),
-    -- Detect non-maintenance drug additions that would interrupt maintenance.
-    -- Per spec: 'the addition of any non-maintenance MM therapy automatically
-    -- causes the maintenance regimen to end.'
-    -- Looks at ALL non-steroid MAPs (not just base_meds) starting after MAINT_START_DT
-    -- where the drug is NOT maintenance-eligible for this patient.
+    -- Detect drug additions that would interrupt the active maintenance regimen.
+    -- Per spec: the addition of any non-maintenance MM therapy automatically
+    -- causes the maintenance regimen to end. This includes drugs that are
+    -- maintenance-eligible but not part of the ACTIVE regimen (e.g., LENA
+    -- restarting during BORT mono-maintenance ends the BORT maintenance).
+    -- Checks against maint_regimen_drugs (the actual regimen), not maint_eligible.
     maint_interrupt_nonmaint AS (
       SELECT
         mb.PATID,
@@ -4192,13 +4226,14 @@ main <- function() {
         ON mb.PATID = ms.PATID
         AND ms.MAP_MED_CLASS <> 'STEROID'
         AND ms.MAP_START_DT > mb.MAINT_START_DT
-      LEFT JOIN maint_eligible me
-        ON ms.PATID = me.PATID AND ms.MAP_MED_TYPE = me.MED_ABBR
-      WHERE me.MED_ABBR IS NULL  -- drug is NOT maintenance-eligible
+      LEFT JOIN maint_regimen_drugs mrd
+        ON ms.PATID = mrd.PATID AND ms.MAP_MED_TYPE = mrd.MED_ABBR
+      WHERE mrd.MED_ABBR IS NULL  -- drug is NOT in the active maintenance regimen
       GROUP BY mb.PATID
     ),
     -- Find maintenance drug coverage extending past maint start,
-    -- truncated by any interrupting event (SCT or non-maint drug addition)
+    -- truncated by any interrupting event (SCT or non-maint drug addition).
+    -- Filters to maint_regimen_drugs (the actual regimen) instead of all IS_MAINT=1 drugs.
     maint_coverage AS (
       SELECT
         mb.PATID,
@@ -4220,8 +4255,9 @@ main <- function() {
       FROM maint_bounds mb
       INNER JOIN tagged_maps tm
         ON mb.PATID = tm.PATID
-        AND tm.IS_MAINT = 1
         AND tm.MAP_END_DT >= mb.MAINT_START_DT
+      INNER JOIN maint_regimen_drugs mrd
+        ON tm.PATID = mrd.PATID AND tm.MAP_MED_TYPE = mrd.MED_ABBR
       LEFT JOIN maint_interrupt_sct isct ON mb.PATID = isct.PATID
       LEFT JOIN maint_interrupt_nonmaint inm ON mb.PATID = inm.PATID
       GROUP BY mb.PATID, mb.MAINT_START_DT, mb.OBS_END_DT, mb.DEATH_DT, mb.ENDDATE,
