@@ -8,9 +8,9 @@
 # CYCLO deep-dive extracted to cyclo_appendix_lot.R.
 # Dashboard build extracted to dashboard_lot.R.
 # Requires: cfg, run_id, log_msg, db_q, SEP, DASH,
-#   lot_palette, lot_class_palette, theme_lot, save_plot,
-#   save_table, add_html_card, add_to_dashboard, has_ggplot2,
-#   has_plotly, has_dt (from other modules)
+#   lot_class_palette, theme_lot, save_plot, save_table,
+#   add_html_card, add_to_dashboard, dashboard_items,
+#   has_ggplot2, has_plotly, has_dt (from other modules)
 # ============================================================
 
 print_descriptives <- function(con) {
