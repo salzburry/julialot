@@ -35,10 +35,26 @@
 # ============================================================
 # MODULE SOURCING
 # ============================================================
-# Resolve script directory so sourcing works from any working directory
-# (matches main.R pattern: Rscript path/to/lot_program.R works from repo root)
-.ofile <- tryCatch(sys.frame(1)$ofile, error = function(e) NULL)
-source_dir <- file.path(dirname(if (!is.null(.ofile)) .ofile else "."), "R")
+# Resolve script directory robustly for all invocation modes:
+#   Rscript lot_program.R        -> commandArgs --file=
+#   source("lot_program.R")      -> sys.frame()$ofile
+#   interactive line-by-line      -> falls back to getwd()
+.script_dir <- local({
+  # 1. Rscript --file=<path>
+  args <- commandArgs(trailingOnly = FALSE)
+  file_arg <- grep("^--file=", args, value = TRUE)
+  if (length(file_arg) > 0) {
+    return(dirname(normalizePath(sub("^--file=", "", file_arg[1]))))
+  }
+  # 2. source() from R console — walk call stack for $ofile
+  for (i in seq_len(sys.nframe())) {
+    ofile <- tryCatch(sys.frame(i)$ofile, error = function(e) NULL)
+    if (!is.null(ofile)) return(dirname(normalizePath(ofile)))
+  }
+  # 3. Fallback: working directory (user must be in Program/)
+  getwd()
+})
+source_dir <- file.path(.script_dir, "R")
 source(file.path(source_dir, "config_lot.R"))
 source(file.path(source_dir, "db_utils_lot.R"))
 source(file.path(source_dir, "codelists_lot.R"))
@@ -234,9 +250,8 @@ main <- function() {
     vapply(meds, function(m) glue("max(case when im.MED_ABBR = '{m}' then 1 else 0 end) as LOT1_MED_{sanitize_col(m)}"), character(1)),
     collapse = ",\n      "
   )
-  sanitize_class <- sanitize_col  # alias for backward compatibility
   class_flag_exprs <- paste0(
-    vapply(classes, function(cl) glue("max(case when im.MED_CLASS = '{cl}' then 1 else 0 end) as LOT1_CLASS_{sanitize_class(cl)}"), character(1)),
+    vapply(classes, function(cl) glue("max(case when im.MED_CLASS = '{cl}' then 1 else 0 end) as LOT1_CLASS_{sanitize_col(cl)}"), character(1)),
     collapse = ",\n      "
   )
 
@@ -759,7 +774,7 @@ main <- function() {
         ms.LOT1_MED_CNT,
         ms.LOT1_BASE_MEDS,
         d.LOT1_BASE_DISCON_DT,
-        {paste0('ms.', paste(c(paste0('LOT1_MED_', vapply(meds, sanitize_col, character(1))), paste0('LOT1_CLASS_', vapply(classes, sanitize_class, character(1)))), collapse = ', ms.'))}
+        {paste0('ms.', paste(c(paste0('LOT1_MED_', vapply(meds, sanitize_col, character(1))), paste0('LOT1_CLASS_', vapply(classes, sanitize_col, character(1)))), collapse = ', ms.'))}
       FROM lot_patient_input p
       INNER JOIN med_summary ms ON p.PATID = ms.PATID
       LEFT JOIN discon d ON p.PATID = d.PATID
@@ -801,7 +816,7 @@ main <- function() {
       bc.LOT1_BASE_DISCON_DT,
       -- M1 fix: LOT1_BASE_LENGTH moved to S16 where LOT1_BASE_END_DT is finalized.
       -- This aligns with the spec's 2-way formula using the derived end date.
-      {paste0('bc.', paste(c(paste0('LOT1_MED_', vapply(meds, sanitize_col, character(1))), paste0('LOT1_CLASS_', vapply(classes, sanitize_class, character(1)))), collapse = ', bc.'))},
+      {paste0('bc.', paste(c(paste0('LOT1_MED_', vapply(meds, sanitize_col, character(1))), paste0('LOT1_CLASS_', vapply(classes, sanitize_col, character(1)))), collapse = ', bc.'))},
       fa.LOT1_BASE_1ST_ADD_MED_DT,
       fa.LOT1_BASE_1ST_ADD_MED
     FROM base_core bc
@@ -2094,49 +2109,40 @@ main <- function() {
 
     # Persist QC summary — one row per check for governance
     tryCatch({
-      qc_checks <- list()
-      add_persist_qc <- function(name, val) {
+      # Table-driven QC checks: name -> SQL that returns a single count
+      qc_defs <- list(
+        list(name = "CODELIST_ORPHAN_MEDS", sql = "
+          SELECT count(DISTINCT c.CL_MED_ABBR) AS n
+          FROM mma_codelist c LEFT JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR
+          WHERE r.CL_MED_ABBR IS NULL"),
+        list(name = "MAP_END_BEFORE_START", sql = "
+          SELECT count(*) AS n FROM map_stacked WHERE MAP_END_DT < MAP_START_DT"),
+        list(name = "LOT1_END_PAST_OBS", sql = "
+          SELECT sum(case when lb.LOT1_BASE_END_DT > p.OBS_END_DT then 1 else 0 end) AS n
+          FROM lot1_base_end lb INNER JOIN lot_patient_input p ON lb.PATID = p.PATID"),
+        list(name = "SCT_TANDEM_AND_SINGLE", sql = "
+          SELECT sum(CASE WHEN LOT1_SCT_AUTO_TAND_FLG = 1 AND LOT1_SCT_AUTO_SING_FLG = 1 THEN 1 ELSE 0 END) AS n
+          FROM lot1_sct")
+      )
+      qc_rows <- vapply(qc_defs, function(qd) {
+        val <- tryCatch(as.numeric(db_q(con, qd$sql)$n), error = function(e) NA)
         status <- if (is.na(val)) "ERROR" else if (val == 0) "PASS" else "WARN"
-        qc_checks[[length(qc_checks) + 1]] <<- glue(
-          "SELECT '{name}' AS CHECK_NAME, {if (is.na(val)) 'NULL' else val} AS CHECK_VALUE, '{status}' AS CHECK_STATUS, '{run_id}' AS RUN_ID"
+        glue("SELECT '{qd$name}' AS CHECK_NAME, {if (is.na(val)) 'NULL' else val} AS CHECK_VALUE, '{status}' AS CHECK_STATUS, '{run_id}' AS RUN_ID")
+      }, character(1))
+
+      qc_union <- paste(qc_rows, collapse = "\n        UNION ALL\n        ")
+      run_step(con, "S23a_create_qc_table", glue("
+        CREATE TABLE IF NOT EXISTS {wrk('LOT_QC_SUMMARY')} (
+          CHECK_NAME STRING, CHECK_VALUE BIGINT, CHECK_STATUS STRING, RUN_ID STRING
         )
-      }
-
-      orphan_n <- tryCatch(as.numeric(db_q(con, "
-        SELECT count(DISTINCT c.CL_MED_ABBR) AS n
-        FROM mma_codelist c LEFT JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR
-        WHERE r.CL_MED_ABBR IS NULL")$n), error = function(e) NA)
-      add_persist_qc("CODELIST_ORPHAN_MEDS", orphan_n)
-
-      bad_maps <- tryCatch(as.numeric(db_q(con, "SELECT count(*) AS n FROM map_stacked WHERE MAP_END_DT < MAP_START_DT")$n), error = function(e) NA)
-      add_persist_qc("MAP_END_BEFORE_START", bad_maps)
-
-      lot1_past <- tryCatch(as.numeric(db_q(con, "
-        SELECT sum(case when lb.LOT1_BASE_END_DT > p.OBS_END_DT then 1 else 0 end) AS n
-        FROM lot1_base_end lb INNER JOIN lot_patient_input p ON lb.PATID = p.PATID")$n), error = function(e) NA)
-      add_persist_qc("LOT1_END_PAST_OBS", lot1_past)
-
-      sct_both <- tryCatch(as.numeric(db_q(con, "
-        SELECT sum(CASE WHEN LOT1_SCT_AUTO_TAND_FLG = 1 AND LOT1_SCT_AUTO_SING_FLG = 1 THEN 1 ELSE 0 END) AS n
-        FROM lot1_sct")$n), error = function(e) NA)
-      add_persist_qc("SCT_TANDEM_AND_SINGLE", sct_both)
-
-      if (length(qc_checks) > 0) {
-        qc_union <- paste(qc_checks, collapse = "\n        UNION ALL\n        ")
-        # Create QC table if not exists, then append this run's checks
-        run_step(con, "S23a_create_qc_table", glue("
-          CREATE TABLE IF NOT EXISTS {wrk('LOT_QC_SUMMARY')} (
-            CHECK_NAME STRING, CHECK_VALUE BIGINT, CHECK_STATUS STRING, RUN_ID STRING
-          )
-        "))
-        run_step(con, "S23b_dedup_qc", glue("
-          DELETE FROM {wrk('LOT_QC_SUMMARY')} WHERE RUN_ID = '{run_id}'
-        "))
-        run_step(con, "S23c_insert_qc_summary", glue("
-          INSERT INTO {wrk('LOT_QC_SUMMARY')}
-          {qc_union}
-        "))
-      }
+      "))
+      run_step(con, "S23b_dedup_qc", glue("
+        DELETE FROM {wrk('LOT_QC_SUMMARY')} WHERE RUN_ID = '{run_id}'
+      "))
+      run_step(con, "S23c_insert_qc_summary", glue("
+        INSERT INTO {wrk('LOT_QC_SUMMARY')}
+        {qc_union}
+      "))
     }, error = function(e) {
       log_msg("  WARNING: QC summary persist failed: ", conditionMessage(e))
     })

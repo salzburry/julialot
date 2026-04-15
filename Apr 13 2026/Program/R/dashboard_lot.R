@@ -27,11 +27,6 @@ add_to_dashboard <- function(widget, section, title, type = "figure") {
 }
 
 # ---- Shared visual theme and palette ----
-lot_palette <- c(
-  "#2E86AB", "#A23B72", "#F18F01", "#C73E1D", "#3B1F2B",
-  "#44BBA4", "#E94F37", "#393E41", "#8D5A97", "#5FAD56",
-  "#F2D0A4", "#3F88C5", "#D72638", "#140F2D", "#F49D37"
-)
 lot_class_palette <- c(
   "IMMUNOMOD"  = "#2E86AB",
   "PROTINHIB"  = "#A23B72",
