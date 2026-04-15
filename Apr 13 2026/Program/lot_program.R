@@ -4191,13 +4191,19 @@ main <- function() {
                isct.EARLIEST_SCT_AFTER_MAINT, inm.EARLIEST_NONMAINT_ADD_DT
     ),
     -- Apply duration threshold (120 standard, 30 post-SCT per protocol)
+    -- Per protocol: maintenance is evaluated "after a single autologous SCT
+    -- or after the second SCT of a tandem autologous SCT."
+    -- Lower bound must use AUTO_DT_2 for tandem, not LOT1_1ST_SCT_DT.
     maint_qualified AS (
       SELECT
         mc.*,
         datediff(mc.MAINT_END_DT, mc.MAINT_START_DT) + 1 AS MAINT_DURATION,
         CASE
           WHEN sct.LOT1_1ST_SCT_DT IS NOT NULL
-           AND mc.MAINT_START_DT >= sct.LOT1_1ST_SCT_DT
+           AND mc.MAINT_START_DT >= CASE WHEN sct.LOT1_SCT_AUTO_TAND_FLG = 1
+                                         THEN sct.LOT1_TX_AUTO_DT_2
+                                         ELSE coalesce(sct.LOT1_TX_AUTO_DT_1, sct.LOT1_1ST_SCT_DT)
+                                    END
            AND mc.MAINT_START_DT <= date_add(
                  CASE WHEN sct.LOT1_SCT_AUTO_TAND_FLG = 1
                       THEN sct.LOT1_TX_AUTO_DT_2
@@ -4207,16 +4213,27 @@ main <- function() {
           ELSE {cfg$maint_min_days}
         END AS MIN_MAINT_DAYS,
         -- Short follow-up exception: per protocol, if follow-up ends before
-        -- 30 post-SCT days can be observed, available days still count.
+        -- 30 post-SCT days can be observed AND follow-up end was the actual
+        -- reason maintenance was truncated (not SCT or non-maint drug addition),
+        -- available days still count.
         CASE
           WHEN sct.LOT1_1ST_SCT_DT IS NOT NULL
-           AND mc.MAINT_START_DT >= sct.LOT1_1ST_SCT_DT
+           AND mc.MAINT_START_DT >= CASE WHEN sct.LOT1_SCT_AUTO_TAND_FLG = 1
+                                         THEN sct.LOT1_TX_AUTO_DT_2
+                                         ELSE coalesce(sct.LOT1_TX_AUTO_DT_1, sct.LOT1_1ST_SCT_DT)
+                                    END
            AND mc.MAINT_START_DT <= date_add(
                  CASE WHEN sct.LOT1_SCT_AUTO_TAND_FLG = 1
                       THEN sct.LOT1_TX_AUTO_DT_2
                       ELSE coalesce(sct.LOT1_TX_AUTO_DT_1, sct.LOT1_1ST_SCT_DT)
                  END, {cfg$maint_sct_window_days})
            AND mc.OBS_END_DT < date_add(mc.MAINT_START_DT, {cfg$maint_post_sct_min_days})
+           -- Ensure follow-up end was actually the constraining factor,
+           -- not an SCT or non-maint drug addition
+           AND (mc.EARLIEST_SCT_AFTER_MAINT IS NULL
+                OR date_sub(mc.EARLIEST_SCT_AFTER_MAINT, 1) >= mc.OBS_END_DT)
+           AND (mc.EARLIEST_NONMAINT_ADD_DT IS NULL
+                OR date_sub(mc.EARLIEST_NONMAINT_ADD_DT, 1) >= mc.OBS_END_DT)
           THEN 1 ELSE 0
         END AS SHORT_FOLLOWUP_FLG,
         sct.LOT1_1ST_SCT_DT,
