@@ -4201,7 +4201,7 @@ main <- function() {
       FROM lot1_base lb
       INNER JOIN first_maint_after_transition fma ON lb.PATID = fma.PATID
     ),
-    -- Detect SCT events that would interrupt maintenance (any SCT after MAINT_START_DT)
+    -- Detect SCT events that would interrupt maintenance (any SCT on or after MAINT_START_DT)
     maint_interrupt_sct AS (
       SELECT
         mb.PATID,
@@ -4218,7 +4218,7 @@ main <- function() {
           coalesce(sct.LOT1_TX_AUTO_DT_2, cast('9999-12-31' as date)),
           coalesce(sct.FIRST_ALLO_DT,     cast('9999-12-31' as date)),
           coalesce(sct.FIRST_CART_DT,      cast('9999-12-31' as date))
-        ) > mb.MAINT_START_DT
+        ) >= mb.MAINT_START_DT
         AND least(
           coalesce(sct.LOT1_TX_AUTO_DT_1, cast('9999-12-31' as date)),
           coalesce(sct.LOT1_TX_AUTO_DT_2, cast('9999-12-31' as date)),
@@ -4240,7 +4240,7 @@ main <- function() {
       INNER JOIN map_stacked ms
         ON mb.PATID = ms.PATID
         AND ms.MAP_MED_CLASS <> 'STEROID'
-        AND ms.MAP_START_DT > mb.MAINT_START_DT
+        AND ms.MAP_START_DT >= mb.MAINT_START_DT
       LEFT JOIN maint_regimen_drugs mrd
         ON ms.PATID = mrd.PATID AND ms.MAP_MED_TYPE = mrd.MED_ABBR
       WHERE mrd.MED_ABBR IS NULL  -- drug is NOT in the active maintenance regimen
