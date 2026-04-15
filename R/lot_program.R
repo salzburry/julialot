@@ -3471,7 +3471,7 @@ main <- function() {
       SELECT
         c.PATID,
         date_sub(d.ADD_START_DT, 1) AS LOT1_BASE_1ST_ADD_MED_DT,
-        -- Spec says "random" for same-day ties; we use min() for determinism (deliberate deviation)
+        -- Spec says 'random' for same-day ties; we use min() for determinism (deliberate deviation)
         min(c.MAP_MED_TYPE) AS LOT1_BASE_1ST_ADD_MED
       FROM first_add_candidates c
       INNER JOIN first_add_dt d
@@ -3958,7 +3958,17 @@ main <- function() {
           ELSE NULL
         END AS ENDING_AUTO_DT,
         fa.ALLO_DT AS FIRST_ALLO_DT,
-        fc.CART_DT AS FIRST_CART_DT
+        fc.CART_DT AS FIRST_CART_DT,
+        -- LOT1_TX_AUTO_FLG: binary flag for any valid autologous HSCT (per spec)
+        CASE WHEN ap.AUTO_DT_1 IS NOT NULL THEN 1 ELSE 0 END AS LOT1_TX_AUTO_FLG,
+        -- LOT1_TX_AUTO_MAX_DT: date of 2nd tandem AUTO if tandem, else single AUTO date (per spec)
+        CASE
+          WHEN ap.AUTO_DT_2 IS NOT NULL
+           AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}
+           AND coalesce(ab.n_allo_between, 0) = 0
+          THEN ap.AUTO_DT_2
+          ELSE ap.AUTO_DT_1
+        END AS LOT1_TX_AUTO_MAX_DT
       FROM lot1 l
       LEFT JOIN auto_pivot ap ON l.PATID = ap.PATID
       LEFT JOIN allo_between ab ON l.PATID = ab.PATID
@@ -4055,19 +4065,35 @@ main <- function() {
         transform(split(coalesce(ru2.DUALMAINTENANCEWITH, ''), ','), v -> upper(trim(v))),
         im.MED_ABBR)
     ),
-    -- Tag all non-steroid LOT1 MAPs as maintenance-eligible or not
+    -- base_meds: initial regimen drugs + permissible substitutions
+    base_meds AS (
+      SELECT PATID, MED_ABBR
+      FROM lot1_induction_meds
+      UNION
+      SELECT im.PATID, ps.substitute_med AS MED_ABBR
+      FROM lot1_induction_meds im
+      INNER JOIN permissible_subs ps
+        ON im.MED_ABBR = ps.original_med
+    ),
+    -- Tag initial-regimen (base_meds) MAPs as maintenance-eligible or not.
+    -- Per spec: maintenance starts when non-maintenance drugs from the INITIAL
+    -- regimen are discontinued, leaving only valid maintenance therapies.
+    -- Only base_meds drugs are considered (not later non-maint drugs, which would
+    -- incorrectly delay MAINT_START_DT).
     tagged_maps AS (
       SELECT
         ms.PATID, ms.MAP_MED_TYPE, ms.MAP_START_DT, ms.MAP_END_DT,
         CASE WHEN me.MED_ABBR IS NOT NULL THEN 1 ELSE 0 END AS IS_MAINT
       FROM map_stacked ms
       INNER JOIN lot1_start l1 ON ms.PATID = l1.PATID
+      INNER JOIN base_meds bm
+        ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
       LEFT JOIN maint_eligible me
         ON ms.PATID = me.PATID AND ms.MAP_MED_TYPE = me.MED_ABBR
       WHERE ms.MAP_MED_CLASS <> 'STEROID'
         AND ms.MAP_START_DT >= l1.LOT1_START_DT
     ),
-    -- Find when all non-maintenance drug coverage ends per patient
+    -- Find when all non-maintenance initial-regimen drug coverage ends per patient
     last_non_maint AS (
       SELECT PATID, max(MAP_END_DT) AS LAST_NON_MAINT_END_DT
       FROM tagged_maps
@@ -4090,7 +4116,52 @@ main <- function() {
       FROM lot1_base lb
       LEFT JOIN last_non_maint lnm ON lb.PATID = lnm.PATID
     ),
-    -- Find maintenance drug coverage extending past maint start
+    -- Detect SCT events that would interrupt maintenance (any SCT after MAINT_START_DT)
+    maint_interrupt_sct AS (
+      SELECT
+        mb.PATID,
+        least(
+          coalesce(sct.LOT1_TX_AUTO_DT_1, cast('9999-12-31' as date)),
+          coalesce(sct.LOT1_TX_AUTO_DT_2, cast('9999-12-31' as date)),
+          coalesce(sct.FIRST_ALLO_DT,     cast('9999-12-31' as date)),
+          coalesce(sct.FIRST_CART_DT,      cast('9999-12-31' as date))
+        ) AS EARLIEST_SCT_AFTER_MAINT
+      FROM maint_bounds mb
+      INNER JOIN lot1_sct sct ON mb.PATID = sct.PATID
+      WHERE least(
+          coalesce(sct.LOT1_TX_AUTO_DT_1, cast('9999-12-31' as date)),
+          coalesce(sct.LOT1_TX_AUTO_DT_2, cast('9999-12-31' as date)),
+          coalesce(sct.FIRST_ALLO_DT,     cast('9999-12-31' as date)),
+          coalesce(sct.FIRST_CART_DT,      cast('9999-12-31' as date))
+        ) > mb.MAINT_START_DT
+        AND least(
+          coalesce(sct.LOT1_TX_AUTO_DT_1, cast('9999-12-31' as date)),
+          coalesce(sct.LOT1_TX_AUTO_DT_2, cast('9999-12-31' as date)),
+          coalesce(sct.FIRST_ALLO_DT,     cast('9999-12-31' as date)),
+          coalesce(sct.FIRST_CART_DT,      cast('9999-12-31' as date))
+        ) < cast('9999-12-31' as date)
+    ),
+    -- Detect non-maintenance drug additions that would interrupt maintenance.
+    -- Per spec: 'the addition of any non-maintenance MM therapy automatically
+    -- causes the maintenance regimen to end.'
+    -- Looks at ALL non-steroid MAPs (not just base_meds) starting after MAINT_START_DT
+    -- where the drug is NOT maintenance-eligible for this patient.
+    maint_interrupt_nonmaint AS (
+      SELECT
+        mb.PATID,
+        min(ms.MAP_START_DT) AS EARLIEST_NONMAINT_ADD_DT
+      FROM maint_bounds mb
+      INNER JOIN map_stacked ms
+        ON mb.PATID = ms.PATID
+        AND ms.MAP_MED_CLASS <> 'STEROID'
+        AND ms.MAP_START_DT > mb.MAINT_START_DT
+      LEFT JOIN maint_eligible me
+        ON ms.PATID = me.PATID AND ms.MAP_MED_TYPE = me.MED_ABBR
+      WHERE me.MED_ABBR IS NULL  -- drug is NOT maintenance-eligible
+      GROUP BY mb.PATID
+    ),
+    -- Find maintenance drug coverage extending past maint start,
+    -- truncated by any interrupting event (SCT or non-maint drug addition)
     maint_coverage AS (
       SELECT
         mb.PATID,
@@ -4098,16 +4169,26 @@ main <- function() {
         mb.OBS_END_DT,
         mb.DEATH_DT,
         mb.ENDDATE,
-        least(max(tm.MAP_END_DT), mb.OBS_END_DT) AS MAINT_END_DT,
+        least(
+          max(tm.MAP_END_DT),
+          mb.OBS_END_DT,
+          coalesce(date_sub(isct.EARLIEST_SCT_AFTER_MAINT, 1), cast('9999-12-31' as date)),
+          coalesce(date_sub(inm.EARLIEST_NONMAINT_ADD_DT, 1), cast('9999-12-31' as date))
+        ) AS MAINT_END_DT,
         max(tm.MAP_END_DT) AS MAINT_RAW_END_DT,
         count(DISTINCT tm.MAP_MED_TYPE) AS N_MAINT_DRUGS,
-        concat_ws(' ', sort_array(collect_set(tm.MAP_MED_TYPE))) AS MAINT_DRUGS
+        concat_ws(' ', sort_array(collect_set(tm.MAP_MED_TYPE))) AS MAINT_DRUGS,
+        isct.EARLIEST_SCT_AFTER_MAINT,
+        inm.EARLIEST_NONMAINT_ADD_DT
       FROM maint_bounds mb
       INNER JOIN tagged_maps tm
         ON mb.PATID = tm.PATID
         AND tm.IS_MAINT = 1
         AND tm.MAP_END_DT >= mb.MAINT_START_DT
-      GROUP BY mb.PATID, mb.MAINT_START_DT, mb.OBS_END_DT, mb.DEATH_DT, mb.ENDDATE
+      LEFT JOIN maint_interrupt_sct isct ON mb.PATID = isct.PATID
+      LEFT JOIN maint_interrupt_nonmaint inm ON mb.PATID = inm.PATID
+      GROUP BY mb.PATID, mb.MAINT_START_DT, mb.OBS_END_DT, mb.DEATH_DT, mb.ENDDATE,
+               isct.EARLIEST_SCT_AFTER_MAINT, inm.EARLIEST_NONMAINT_ADD_DT
     ),
     -- Apply duration threshold (120 standard, 30 post-SCT per protocol)
     maint_qualified AS (
@@ -4116,6 +4197,7 @@ main <- function() {
         datediff(mc.MAINT_END_DT, mc.MAINT_START_DT) + 1 AS MAINT_DURATION,
         CASE
           WHEN sct.LOT1_1ST_SCT_DT IS NOT NULL
+           AND mc.MAINT_START_DT >= sct.LOT1_1ST_SCT_DT
            AND mc.MAINT_START_DT <= date_add(
                  CASE WHEN sct.LOT1_SCT_AUTO_TAND_FLG = 1
                       THEN sct.LOT1_TX_AUTO_DT_2
@@ -4124,6 +4206,19 @@ main <- function() {
           THEN {cfg$maint_post_sct_min_days}
           ELSE {cfg$maint_min_days}
         END AS MIN_MAINT_DAYS,
+        -- Short follow-up exception: per protocol, if follow-up ends before
+        -- 30 post-SCT days can be observed, available days still count.
+        CASE
+          WHEN sct.LOT1_1ST_SCT_DT IS NOT NULL
+           AND mc.MAINT_START_DT >= sct.LOT1_1ST_SCT_DT
+           AND mc.MAINT_START_DT <= date_add(
+                 CASE WHEN sct.LOT1_SCT_AUTO_TAND_FLG = 1
+                      THEN sct.LOT1_TX_AUTO_DT_2
+                      ELSE coalesce(sct.LOT1_TX_AUTO_DT_1, sct.LOT1_1ST_SCT_DT)
+                 END, {cfg$maint_sct_window_days})
+           AND mc.OBS_END_DT < date_add(mc.MAINT_START_DT, {cfg$maint_post_sct_min_days})
+          THEN 1 ELSE 0
+        END AS SHORT_FOLLOWUP_FLG,
         sct.LOT1_1ST_SCT_DT,
         sct.LOT1_TX_AUTO_DT_1,
         sct.LOT1_TX_AUTO_DT_2,
@@ -4138,7 +4233,14 @@ main <- function() {
       MAINT_DRUGS AS LOT1_BASEMAINT_TYP,
       MAINT_END_DT AS LOT1_BASEMAINT_END,
       N_MAINT_DRUGS,
+      -- End reason priority: SCT > NON_MAINT_ADD > DEATH > DISENROLLMENT > STUDY_END > DISCONTINUATION
       CASE
+        WHEN EARLIEST_SCT_AFTER_MAINT IS NOT NULL
+         AND date_sub(EARLIEST_SCT_AFTER_MAINT, 1) <= MAINT_END_DT
+        THEN 'SCT'
+        WHEN EARLIEST_NONMAINT_ADD_DT IS NOT NULL
+         AND date_sub(EARLIEST_NONMAINT_ADD_DT, 1) <= MAINT_END_DT
+        THEN 'NON_MAINT_ADD'
         WHEN DEATH_DT IS NOT NULL AND DEATH_DT <= MAINT_END_DT THEN 'DEATH'
         WHEN OBS_END_DT < ENDDATE AND OBS_END_DT <= MAINT_END_DT THEN 'DISENROLLMENT'
         WHEN MAINT_RAW_END_DT >= OBS_END_DT THEN 'STUDY_END'
@@ -4152,9 +4254,14 @@ main <- function() {
       CASE WHEN array_contains(split(MAINT_DRUGS, ' '), 'LENA') THEN 1 ELSE 0 END AS LOT1_BASEMAINT_MED_LENA,
       CASE WHEN array_contains(split(MAINT_DRUGS, ' '), 'THAL') THEN 1 ELSE 0 END AS LOT1_BASEMAINT_MED_THAL,
       -- For Rule 4: is maintenance within 180 days of SCT?
+      -- Fix #4a: require MAINT_START_DT >= SCT reference date (not just <=180 after)
       CASE
         WHEN LOT1_1ST_SCT_DT IS NOT NULL
          AND LOT1_TX_AUTO_DT_1 IS NOT NULL
+         AND MAINT_START_DT >= CASE WHEN LOT1_SCT_AUTO_TAND_FLG = 1
+                                    THEN LOT1_TX_AUTO_DT_2
+                                    ELSE LOT1_TX_AUTO_DT_1
+                               END
          AND MAINT_START_DT <= date_add(
                CASE WHEN LOT1_SCT_AUTO_TAND_FLG = 1
                     THEN LOT1_TX_AUTO_DT_2
@@ -4165,6 +4272,7 @@ main <- function() {
       END AS MAINT_FOLLOWS_SCT_FLG
     FROM maint_qualified
     WHERE MAINT_DURATION >= MIN_MAINT_DAYS
+       OR SHORT_FOLLOWUP_FLG = 1
   "), qc = "
     SELECT
       count(*) AS n_with_maintenance,
