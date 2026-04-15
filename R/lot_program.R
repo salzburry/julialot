@@ -73,6 +73,11 @@ cfg <- list(
   lot_discon_gap_days   = as.integer(Sys.getenv("LOT_DISCON_GAP_DAYS", unset = "90")),
   medical_day_supply    = as.integer(Sys.getenv("MEDICAL_DAY_SUPPLY", unset = "28")),
 
+  # Maintenance parameters (per protocol Section 5.1.1)
+  maint_min_days         = as.integer(Sys.getenv("MAINT_MIN_DAYS", unset = "120")),
+  maint_post_sct_min_days = as.integer(Sys.getenv("MAINT_POST_SCT_MIN_DAYS", unset = "30")),
+  maint_sct_window_days  = as.integer(Sys.getenv("MAINT_SCT_WINDOW_DAYS", unset = "180")),
+
   # Code list sourcing (priority: CSV > embedded > ref_schema table)
   codelist_dir         = Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist"),
   use_embedded_codes   = as.logical(Sys.getenv("USE_EMBEDDED_CODES", unset = "FALSE")),
@@ -1234,7 +1239,7 @@ print_descriptives <- function(con) {
         max(LOT1_BASE_LENGTH) AS max_lot1_length,
         sum(case when LOT1_BASE_DISCON_DT is not null then 1 else 0 end) AS n_discon,
         sum(case when LOT1_BASE_1ST_ADD_MED_DT is not null then 1 else 0 end) AS n_add_med
-      FROM lot1_base
+      FROM lot1_base_end
     ")
     cat(sprintf("  Total LOT1 patients:         %s\n", format(lot1_stats$n_patients, big.mark = ",")))
     cat(sprintf("  Avg days index->LOT1:        %.1f\n", lot1_stats$avg_days_to_lot1))
@@ -1278,7 +1283,7 @@ print_descriptives <- function(con) {
         count(*) AS n_patients,
         avg(LOT1_BASE_LENGTH) AS avg_length,
         avg(LOT1_MED_CNT) AS avg_meds
-      FROM lot1_base
+      FROM lot1_base_end
       GROUP BY LOT1_BASE_MEDS
       ORDER BY count(*) DESC
       LIMIT 25
@@ -1330,14 +1335,14 @@ print_descriptives <- function(con) {
       lot1_bins <- db_q(con, "
         SELECT floor(LOT1_BASE_LENGTH / 30) * 30 AS bin_start,
                count(*) AS n
-        FROM lot1_base
+        FROM lot1_base_end
         WHERE LOT1_BASE_LENGTH IS NOT NULL
         GROUP BY floor(LOT1_BASE_LENGTH / 30) * 30
         ORDER BY bin_start
       ")
       lot1_median <- db_q(con, "
         SELECT percentile_approx(LOT1_BASE_LENGTH, 0.5) AS median_len
-        FROM lot1_base
+        FROM lot1_base_end
         WHERE LOT1_BASE_LENGTH IS NOT NULL
       ")
       if (nrow(lot1_bins) > 0) {
@@ -1371,8 +1376,10 @@ print_descriptives <- function(con) {
       end_reasons$pct <- 100 * end_reasons$n / sum(end_reasons$n)
       end_reason_colors <- c(
         "DISCONTINUATION" = "#C73E1D", "MED_ADD" = "#F18F01",
-        "CENSORED" = "#2E86AB", "SCT_AUTO" = "#A23B72",
-        "SCT_ALLO" = "#8D5A97", "SCT_CART" = "#3F88C5", "SCT" = "#393E41"
+        "DEATH" = "#2E86AB", "DISENROLLMENT" = "#5DA9C8",
+        "STUDY_END" = "#8DC4DB", "SCT_AUTO" = "#A23B72",
+        "SCT_ALLO" = "#8D5A97", "SCT_CART" = "#3F88C5", "SCT" = "#393E41",
+        "SCT_NO_MAINT" = "#B47EB3", "MAINTENANCE_END" = "#44AF69"
       )
       p7 <- ggplot(end_reasons,
                     aes(x = reorder(LOT1_BASE_END_REASON, -n), y = n,
@@ -2010,13 +2017,13 @@ print_descriptives <- function(con) {
 
       # LOT1 length zoomed
       lot1_p95 <- tryCatch(
-        as.numeric(db_q(con, "SELECT percentile_approx(LOT1_BASE_LENGTH, 0.95) AS p95 FROM lot1_base WHERE LOT1_BASE_LENGTH IS NOT NULL")$p95),
+        as.numeric(db_q(con, "SELECT percentile_approx(LOT1_BASE_LENGTH, 0.95) AS p95 FROM lot1_base_end WHERE LOT1_BASE_LENGTH IS NOT NULL")$p95),
         error = function(e) NA)
       if (!is.na(lot1_p95)) {
         lot1_bins_z <- db_q(con, glue("
           SELECT floor(LOT1_BASE_LENGTH / 30) * 30 AS bin_start,
                  count(*) AS n
-          FROM lot1_base
+          FROM lot1_base_end
           WHERE LOT1_BASE_LENGTH IS NOT NULL AND LOT1_BASE_LENGTH <= {round(lot1_p95 * 1.1)}
           GROUP BY floor(LOT1_BASE_LENGTH / 30) * 30
           ORDER BY bin_start
@@ -2025,7 +2032,7 @@ print_descriptives <- function(con) {
           lot1_bins_z$bin_start <- as.numeric(lot1_bins_z$bin_start)
           lot1_bins_z$n <- as.numeric(lot1_bins_z$n)
           lot1_median_z <- tryCatch(
-            as.numeric(db_q(con, "SELECT percentile_approx(LOT1_BASE_LENGTH, 0.5) AS m FROM lot1_base WHERE LOT1_BASE_LENGTH IS NOT NULL")$m),
+            as.numeric(db_q(con, "SELECT percentile_approx(LOT1_BASE_LENGTH, 0.5) AS m FROM lot1_base_end WHERE LOT1_BASE_LENGTH IS NOT NULL")$m),
             error = function(e) NA)
           pz2 <- ggplot(lot1_bins_z, aes(x = bin_start, y = n,
                         text = paste0("Days: ", bin_start, "-", bin_start + 29,
@@ -2337,8 +2344,10 @@ print_descriptives <- function(con) {
         mc_colors  <- rep("#44BBA4", n_mc)
         er_colors  <- sapply(reasons_u, function(r) {
           switch(r, DISCONTINUATION = "#C73E1D", MED_ADD = "#F18F01",
-                 CENSORED = "#2E86AB", SCT_AUTO = "#A23B72",
-                 SCT_ALLO = "#8D5A97", SCT_CART = "#3F88C5", "#636e72")
+                 DEATH = "#2E86AB", DISENROLLMENT = "#5DA9C8",
+                 STUDY_END = "#8DC4DB", SCT_AUTO = "#A23B72",
+                 SCT_ALLO = "#8D5A97", SCT_CART = "#3F88C5",
+                 SCT_NO_MAINT = "#B47EB3", MAINTENANCE_END = "#44AF69", "#636e72")
         })
         node_colors <- c(reg_colors, mc_colors, er_colors)
 
@@ -2404,7 +2413,7 @@ print_descriptives <- function(con) {
              lb.LOT1_BASE_DISCON_DT, lb.LOT1_BASE_LENGTH, lb.LOT1_MED_CNT,
              lb.OBS_END_DT, lb.DEATH_DT, lb.GDR_CD, lb.AGE_INDEX_YR,
              'STRICT' AS COHORT_DEF
-      FROM lot1_base lb
+      FROM lot1_base_end lb
       WHERE lb.LOT1_BASE_MEDS = 'CYCL'
         AND lb.LOT1_MED_CNT = 1
     ")
@@ -2434,7 +2443,7 @@ print_descriptives <- function(con) {
              lb.LOT1_BASE_DISCON_DT, lb.LOT1_BASE_LENGTH, lb.LOT1_MED_CNT,
              lb.OBS_END_DT, lb.DEATH_DT, lb.GDR_CD, lb.AGE_INDEX_YR,
              'STEROID_TOLERANT' AS COHORT_DEF
-      FROM lot1_base lb
+      FROM lot1_base_end lb
       INNER JOIN non_steroid_summary ns ON lb.PATID = ns.PATID
       WHERE ns.N_NONSTEROID = 1
         AND ns.HAS_CYCLO = 1
@@ -2872,6 +2881,28 @@ main <- function() {
     log_msg("  WARNING: Codelist consistency QC failed: ", e$message)
   })
 
+  # ----------------------------------------------------------
+  # H4 fix: Codelist minimum-coverage validation (fail-loud)
+  # Ensures the loaded codelists meet minimum thresholds so the
+  # pipeline never silently runs on incomplete fallback data.
+  # ----------------------------------------------------------
+  min_rollup_meds <- 20L    # Tab 40 has 28 unique MED_ABBR; 20 is conservative floor
+
+  min_codelist_codes <- 50L # Tab 41 has hundreds of codes; 50 is conservative floor
+  n_rollup <- db_q(con, "SELECT count(DISTINCT CL_MED_ABBR) AS n FROM mma_rollup")$n
+  n_codelist <- db_q(con, "SELECT count(*) AS n FROM mma_codelist")$n
+  if (n_rollup < min_rollup_meds) {
+    stop(glue("CODELIST VALIDATION FAILED: mma_rollup has {n_rollup} unique medications ",
+              "(minimum required: {min_rollup_meds}). Check codelist CSV files or ",
+              "embedded fallback. Pipeline cannot proceed with incomplete medication coverage."))
+  }
+  if (n_codelist < min_codelist_codes) {
+    stop(glue("CODELIST VALIDATION FAILED: mma_codelist has {n_codelist} code entries ",
+              "(minimum required: {min_codelist_codes}). Check codelist CSV files or ",
+              "embedded fallback. Pipeline cannot proceed with incomplete code mappings."))
+  }
+  log_msg("Codelist validation passed: rollup has ", n_rollup, " meds, codelist has ", n_codelist, " codes.")
+
   # Fetch med/class lists for dynamic flag generation
   meds <- db_q(con, "SELECT DISTINCT CL_MED_ABBR FROM mma_rollup ORDER BY CL_MED_ABBR")$CL_MED_ABBR
   classes <- db_q(con, "SELECT DISTINCT CL_MED_CLASS FROM mma_rollup ORDER BY CL_MED_CLASS")$CL_MED_CLASS
@@ -3061,9 +3092,17 @@ main <- function() {
         ON r.MED_ABBR = ru.CL_MED_ABBR
     ),
     filtered AS (
-      SELECT *
+      -- C2 fix: Per spec (mmamedapr14) and protocol (Section 5.1.1), pharmacy claims
+      -- with missing or anomalous DAY_SUPPLY should be imputed to 28, not dropped.
+      SELECT
+        PATID, CODE, CODE_TYPE, CLAIM_TYPE, DATE_SERVICE,
+        CASE
+          WHEN CLAIM_TYPE = 'pharmacy' AND (DAY_SUPPLY IS NULL OR DAY_SUPPLY < 1)
+          THEN 28
+          ELSE DAY_SUPPLY
+        END AS DAY_SUPPLY,
+        MED_ABBR, MED_CLASS, MED_COND, MED_OTHER_CANCER
       FROM enriched
-      WHERE NOT (CLAIM_TYPE = 'pharmacy' AND (DAY_SUPPLY IS NULL OR DAY_SUPPLY < 1))
     ),
     dedup AS (
       -- Dedup per spec: within (PATID, MED_ABBR, DATE_SERVICE, CLAIM_TYPE)
@@ -3093,9 +3132,9 @@ main <- function() {
       max(DAY_SUPPLY) AS max_day_supply
     FROM mma_med_processed")
 
-  # Sanity check
+  # Sanity check: after imputation, no pharmacy rows should have invalid DAY_SUPPLY
   bad_ds <- db_q(con, "SELECT count(*) AS n_bad FROM mma_med_processed WHERE CLAIM_TYPE='pharmacy' AND (DAY_SUPPLY IS NULL OR DAY_SUPPLY < 1)")$n_bad
-  if (bad_ds > 0) stop(glue("Post-filter: found {bad_ds} pharmacy rows with invalid DAY_SUPPLY."))
+  if (bad_ds > 0) stop(glue("Post-imputation: found {bad_ds} pharmacy rows with invalid DAY_SUPPLY — imputation logic failed."))
 
 
   # ----------------------------------------------------------
@@ -3220,7 +3259,7 @@ main <- function() {
                     ELSE s.rx_runout
                   END,
                   -- MEDICAL RUNOUT UPDATE
-                  -- Per map med.pdf page 5: "Pushout is not implemented" for medical.
+                  -- Per map med.pdf page 5: Pushout is not implemented for medical.
                   -- Always: DATE_SERVICE + DAY_SUPPLY - 1.
                   -- greatest() is a safety belt: if a same-day or out-of-order claim
                   -- produces an earlier runout, we keep the existing later one.
@@ -3336,6 +3375,7 @@ main <- function() {
       ON ms.PATID = l1.PATID
     WHERE ms.MAP_START_DT >= l1.LOT1_START_DT
       AND ms.MAP_START_DT <= date_add(l1.LOT1_START_DT, {cfg$induction_window_days - 1})
+      AND ms.MAP_MED_CLASS <> 'STEROID'  -- H1 fix: exclude steroids per protocol Section 5.1.1
   "), qc = "
     SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients, avg(cnt) AS avg_induction_meds
     FROM (SELECT PATID, count(DISTINCT MED_ABBR) AS cnt FROM lot1_induction_meds GROUP BY PATID)")
@@ -3352,11 +3392,9 @@ main <- function() {
       INNER JOIN permissible_subs ps
         ON im.MED_ABBR = ps.original_med
     ),
-    -- DECISION: Steroid MAPs are included in base_meds (per spec: induction includes
-    -- all meds in the window including steroids). This means steroid MAPs can extend
-    -- LOT1_BASE_DISCON_DT. If stakeholders prefer to exclude steroids from the
-    -- discontinuation computation (common analytic tweak), filter base_meds above
-    -- to exclude steroid MED_CLASS, but keep steroid flags in LOT1_BASE_MEDS.
+    -- H1 fix: Steroids are now excluded from base_meds (via lot1_induction_meds filter)
+    -- per protocol Section 5.1.1: corticosteroids are not oncology agents and should
+    -- not drive regimen membership, discontinuation, or add-med logic.
     discon_raw AS (
       SELECT
         ms.PATID,
@@ -3420,6 +3458,7 @@ main <- function() {
       LEFT JOIN base_meds bm
         ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
       WHERE bm.MED_ABBR IS NULL
+        AND ms.MAP_MED_CLASS <> 'STEROID'  -- H1 fix: steroids cannot trigger add-med
         AND ms.MAP_START_DT >= bc.LOT1_START_DT
         AND ms.MAP_START_DT <= coalesce(bc.LOT1_BASE_DISCON_DT, bc.OBS_END_DT)
     ),
@@ -3444,15 +3483,8 @@ main <- function() {
       bc.GDR_CD, bc.YRDOB, bc.AGE_INDEX_YR,
       bc.LOT1_START_DT, bc.LOT1_MED_CNT, bc.LOT1_BASE_MEDS,
       bc.LOT1_BASE_DISCON_DT,
-      -- Recompute LOT1_BASE_LENGTH accounting for MED_ADD end reason
-      CASE
-        WHEN fa.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
-         AND (bc.LOT1_BASE_DISCON_DT IS NULL OR fa.LOT1_BASE_1ST_ADD_MED_DT <= bc.LOT1_BASE_DISCON_DT)
-        THEN datediff(fa.LOT1_BASE_1ST_ADD_MED_DT, bc.LOT1_START_DT) + 1
-        WHEN bc.LOT1_BASE_DISCON_DT IS NOT NULL
-        THEN datediff(bc.LOT1_BASE_DISCON_DT, bc.LOT1_START_DT) + 1
-        ELSE datediff(bc.OBS_END_DT, bc.LOT1_START_DT) + 1
-      END AS LOT1_BASE_LENGTH,
+      -- M1 fix: LOT1_BASE_LENGTH moved to S16 where LOT1_BASE_END_DT is finalized.
+      -- This aligns with the spec's 2-way formula using the derived end date.
       {paste0('bc.', paste(c(paste0('LOT1_MED_', vapply(meds, sanitize_col, character(1))), paste0('LOT1_CLASS_', vapply(classes, sanitize_class, character(1)))), collapse = ', bc.'))},
       fa.LOT1_BASE_1ST_ADD_MED_DT,
       fa.LOT1_BASE_1ST_ADD_MED
@@ -3463,7 +3495,6 @@ main <- function() {
     SELECT
       count(*) AS n_patients,
       avg(LOT1_MED_CNT) AS avg_induction_meds,
-      avg(LOT1_BASE_LENGTH) AS avg_base_length,
       sum(case when LOT1_BASE_DISCON_DT is not null then 1 else 0 end) as n_with_discon_dt,
       sum(case when LOT1_BASE_1ST_ADD_MED_DT is not null then 1 else 0 end) as n_with_add_med
     FROM lot1_base")
@@ -3476,7 +3507,7 @@ main <- function() {
   #   - ALLO/CART immediately end LOT1
   #   - Single AUTO allowed; tandem pair allowed; excess AUTO ends LOT1
   #
-  # NOTE: Maintenance (mono/dual) specs not yet provided.
+  # NOTE: Maintenance detection is now in S16a_lot1_maintenance.
   # ----------------------------------------------------------
 
   # S11: Register SCT codelist
@@ -3903,7 +3934,7 @@ main <- function() {
         -- Tandem: two AUTO SCTs within 180 days, no ALLO between
         CASE
           WHEN ap.AUTO_DT_2 IS NOT NULL
-           AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) + 1 <= {cfg$sct_tandem_days}
+           AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}  -- H2 fix: no +1, per protocol >= 60 AND <= 180
            AND coalesce(ab.n_allo_between, 0) = 0
           THEN 1 ELSE 0
         END AS LOT1_SCT_AUTO_TAND_FLG,
@@ -3911,7 +3942,7 @@ main <- function() {
         CASE
           WHEN ap.AUTO_DT_1 IS NOT NULL
            AND NOT (ap.AUTO_DT_2 IS NOT NULL
-                    AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) + 1 <= {cfg$sct_tandem_days}
+                    AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}  -- H2 fix: no +1, per protocol >= 60 AND <= 180
                     AND coalesce(ab.n_allo_between, 0) = 0)
           THEN 1 ELSE 0
         END AS LOT1_SCT_AUTO_SING_FLG,
@@ -3919,7 +3950,7 @@ main <- function() {
         -- Tandem -> 3rd AUTO ends LOT1; Single -> 2nd AUTO ends LOT1
         CASE
           WHEN ap.AUTO_DT_2 IS NOT NULL
-           AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) + 1 <= {cfg$sct_tandem_days}
+           AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}  -- H2 fix: no +1, per protocol >= 60 AND <= 180
            AND coalesce(ab.n_allo_between, 0) = 0
           THEN ap.AUTO_DT_3
           WHEN ap.AUTO_DT_1 IS NOT NULL
@@ -3982,60 +4013,316 @@ main <- function() {
       sum(CASE WHEN LOT1_TX_ENDDATE IS NOT NULL THEN 1 ELSE 0 END) AS n_with_sct_end
     FROM lot1_sct")
 
-  # S16: LOT1_BASE_END - Final end reason incorporating SCT
-  # End reason priority: SCT > MED_ADD > DISCONTINUATION > CENSORED
-  # SCT takes highest priority because it definitively ends the LOT.
-  run_step(con, "S16_lot1_base_end", "
-    CREATE OR REPLACE TEMPORARY VIEW lot1_base_end AS
+  # ----------------------------------------------------------
+  # C3 fix: Maintenance regimen detection
+  # Per protocol Section 5.1.1:
+  #   "A maintenance regimen is a period of 120 days or longer during which
+  #    only a valid maintenance therapy is available."
+  # Post-SCT: 30-day minimum within 180 days of SCT.
+  # Valid mono: LENA, BORT, DARA, IXAZ, THAL (MONOMAINTENANCE=1 in rollup)
+  # Valid dual: BORT/LENA, CARF/LENA, DARA/LENA (DUALMAINTENANCEWITH in rollup)
+  # Maintenance drugs must have been part of the LOT's initial regimen.
+  # ----------------------------------------------------------
+  run_step(con, "S16a_lot1_maintenance", glue("
+    CREATE OR REPLACE TEMPORARY VIEW lot1_maintenance AS
+    WITH
+    -- Identify maintenance-eligible induction meds per patient
+    maint_eligible AS (
+      -- Mono-maintenance: drug has MONOMAINTENANCE=1 AND was in induction
+      SELECT DISTINCT im.PATID, im.MED_ABBR
+      FROM lot1_induction_meds im
+      INNER JOIN mma_rollup ru ON im.MED_ABBR = ru.CL_MED_ABBR
+      WHERE ru.MONOMAINTENANCE = 1
+      UNION
+      -- Dual-maintenance: drug has DUALMAINTENANCEWITH AND partner is in induction
+      SELECT DISTINCT im.PATID, im.MED_ABBR
+      FROM lot1_induction_meds im
+      INNER JOIN mma_rollup ru ON im.MED_ABBR = ru.CL_MED_ABBR
+      INNER JOIN lot1_induction_meds im2
+        ON im.PATID = im2.PATID
+        AND im.MED_ABBR <> im2.MED_ABBR
+        AND array_contains(
+          transform(split(coalesce(ru.DUALMAINTENANCEWITH, ''), ','), v -> upper(trim(v))),
+          im2.MED_ABBR)
+      UNION
+      -- Reverse dual: this drug is named as a dual partner by another induction drug
+      SELECT DISTINCT im.PATID, im.MED_ABBR
+      FROM lot1_induction_meds im
+      INNER JOIN lot1_induction_meds im2
+        ON im.PATID = im2.PATID AND im.MED_ABBR <> im2.MED_ABBR
+      INNER JOIN mma_rollup ru2 ON im2.MED_ABBR = ru2.CL_MED_ABBR
+      WHERE array_contains(
+        transform(split(coalesce(ru2.DUALMAINTENANCEWITH, ''), ','), v -> upper(trim(v))),
+        im.MED_ABBR)
+    ),
+    -- Tag all non-steroid LOT1 MAPs as maintenance-eligible or not
+    tagged_maps AS (
+      SELECT
+        ms.PATID, ms.MAP_MED_TYPE, ms.MAP_START_DT, ms.MAP_END_DT,
+        CASE WHEN me.MED_ABBR IS NOT NULL THEN 1 ELSE 0 END AS IS_MAINT
+      FROM map_stacked ms
+      INNER JOIN lot1_start l1 ON ms.PATID = l1.PATID
+      LEFT JOIN maint_eligible me
+        ON ms.PATID = me.PATID AND ms.MAP_MED_TYPE = me.MED_ABBR
+      WHERE ms.MAP_MED_CLASS <> 'STEROID'
+        AND ms.MAP_START_DT >= l1.LOT1_START_DT
+    ),
+    -- Find when all non-maintenance drug coverage ends per patient
+    last_non_maint AS (
+      SELECT PATID, max(MAP_END_DT) AS LAST_NON_MAINT_END_DT
+      FROM tagged_maps
+      WHERE IS_MAINT = 0
+      GROUP BY PATID
+    ),
+    -- Compute maintenance period start: day after all non-maint coverage ends
+    maint_bounds AS (
+      SELECT
+        lb.PATID,
+        lb.LOT1_START_DT,
+        lb.OBS_END_DT,
+        lb.DEATH_DT,
+        lb.ENDDATE,
+        CASE
+          WHEN lnm.LAST_NON_MAINT_END_DT IS NOT NULL
+          THEN date_add(lnm.LAST_NON_MAINT_END_DT, 1)
+          ELSE lb.LOT1_START_DT
+        END AS MAINT_START_DT
+      FROM lot1_base lb
+      LEFT JOIN last_non_maint lnm ON lb.PATID = lnm.PATID
+    ),
+    -- Find maintenance drug coverage extending past maint start
+    maint_coverage AS (
+      SELECT
+        mb.PATID,
+        mb.MAINT_START_DT,
+        mb.OBS_END_DT,
+        mb.DEATH_DT,
+        mb.ENDDATE,
+        least(max(tm.MAP_END_DT), mb.OBS_END_DT) AS MAINT_END_DT,
+        max(tm.MAP_END_DT) AS MAINT_RAW_END_DT,
+        count(DISTINCT tm.MAP_MED_TYPE) AS N_MAINT_DRUGS,
+        concat_ws(' ', sort_array(collect_set(tm.MAP_MED_TYPE))) AS MAINT_DRUGS
+      FROM maint_bounds mb
+      INNER JOIN tagged_maps tm
+        ON mb.PATID = tm.PATID
+        AND tm.IS_MAINT = 1
+        AND tm.MAP_END_DT >= mb.MAINT_START_DT
+      GROUP BY mb.PATID, mb.MAINT_START_DT, mb.OBS_END_DT, mb.DEATH_DT, mb.ENDDATE
+    ),
+    -- Apply duration threshold (120 standard, 30 post-SCT per protocol)
+    maint_qualified AS (
+      SELECT
+        mc.*,
+        datediff(mc.MAINT_END_DT, mc.MAINT_START_DT) + 1 AS MAINT_DURATION,
+        CASE
+          WHEN sct.LOT1_1ST_SCT_DT IS NOT NULL
+           AND mc.MAINT_START_DT <= date_add(
+                 CASE WHEN sct.LOT1_SCT_AUTO_TAND_FLG = 1
+                      THEN sct.LOT1_TX_AUTO_DT_2
+                      ELSE coalesce(sct.LOT1_TX_AUTO_DT_1, sct.LOT1_1ST_SCT_DT)
+                 END, {cfg$maint_sct_window_days})
+          THEN {cfg$maint_post_sct_min_days}
+          ELSE {cfg$maint_min_days}
+        END AS MIN_MAINT_DAYS,
+        sct.LOT1_1ST_SCT_DT,
+        sct.LOT1_TX_AUTO_DT_1,
+        sct.LOT1_TX_AUTO_DT_2,
+        sct.LOT1_SCT_AUTO_TAND_FLG,
+        sct.LOT1_SCT_AUTO_SING_FLG
+      FROM maint_coverage mc
+      LEFT JOIN lot1_sct sct ON mc.PATID = sct.PATID
+    )
     SELECT
-      lb.*,
-      sct.LOT1_TX_AUTO_DT_1,
-      sct.LOT1_TX_AUTO_DT_2,
-      sct.LOT1_SCT_AUTO_TAND_FLG,
-      sct.LOT1_SCT_AUTO_SING_FLG,
-      sct.LOT1_TX_ENDDATE,
-      sct.LOT1_TX_ENDDATE_REASON,
-      sct.LOT1_1ST_SCT_DT,
-      sct.FIRST_ALLO_DT,
-      sct.FIRST_CART_DT,
-      -- End reason: SCT > MED_ADD (at or before discon) > DISCONTINUATION > CENSORED
+      PATID,
+      MAINT_START_DT AS LOT1_BASEMAINT_START,
+      MAINT_DRUGS AS LOT1_BASEMAINT_TYP,
+      MAINT_END_DT AS LOT1_BASEMAINT_END,
+      N_MAINT_DRUGS,
       CASE
-        WHEN sct.LOT1_TX_ENDDATE IS NOT NULL
-         AND (lb.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR sct.LOT1_TX_ENDDATE <= lb.LOT1_BASE_1ST_ADD_MED_DT)
-         AND (lb.LOT1_BASE_DISCON_DT IS NULL OR sct.LOT1_TX_ENDDATE <= lb.LOT1_BASE_DISCON_DT)
-        THEN CASE sct.LOT1_TX_ENDDATE_REASON
+        WHEN DEATH_DT IS NOT NULL AND DEATH_DT <= MAINT_END_DT THEN 'DEATH'
+        WHEN OBS_END_DT < ENDDATE AND OBS_END_DT <= MAINT_END_DT THEN 'DISENROLLMENT'
+        WHEN MAINT_RAW_END_DT >= OBS_END_DT THEN 'STUDY_END'
+        ELSE 'DISCONTINUATION'
+      END AS LOT1_BASEMAINT_END_REASON,
+      -- Per-medication maintenance flags (spec: BORT, CARF, DARA, IXAZ, LENA, THAL)
+      CASE WHEN array_contains(split(MAINT_DRUGS, ' '), 'BORT') THEN 1 ELSE 0 END AS LOT1_BASEMAINT_MED_BORT,
+      CASE WHEN array_contains(split(MAINT_DRUGS, ' '), 'CARF') THEN 1 ELSE 0 END AS LOT1_BASEMAINT_MED_CARF,
+      CASE WHEN array_contains(split(MAINT_DRUGS, ' '), 'DARA') THEN 1 ELSE 0 END AS LOT1_BASEMAINT_MED_DARA,
+      CASE WHEN array_contains(split(MAINT_DRUGS, ' '), 'IXAZ') THEN 1 ELSE 0 END AS LOT1_BASEMAINT_MED_IXAZ,
+      CASE WHEN array_contains(split(MAINT_DRUGS, ' '), 'LENA') THEN 1 ELSE 0 END AS LOT1_BASEMAINT_MED_LENA,
+      CASE WHEN array_contains(split(MAINT_DRUGS, ' '), 'THAL') THEN 1 ELSE 0 END AS LOT1_BASEMAINT_MED_THAL,
+      -- For Rule 4: is maintenance within 180 days of SCT?
+      CASE
+        WHEN LOT1_1ST_SCT_DT IS NOT NULL
+         AND LOT1_TX_AUTO_DT_1 IS NOT NULL
+         AND MAINT_START_DT <= date_add(
+               CASE WHEN LOT1_SCT_AUTO_TAND_FLG = 1
+                    THEN LOT1_TX_AUTO_DT_2
+                    ELSE LOT1_TX_AUTO_DT_1
+               END, {cfg$maint_sct_window_days})
+        THEN 1
+        ELSE 0
+      END AS MAINT_FOLLOWS_SCT_FLG
+    FROM maint_qualified
+    WHERE MAINT_DURATION >= MIN_MAINT_DAYS
+  "), qc = "
+    SELECT
+      count(*) AS n_with_maintenance,
+      avg(datediff(LOT1_BASEMAINT_END, LOT1_BASEMAINT_START) + 1) AS avg_maint_duration,
+      sum(LOT1_BASEMAINT_MED_LENA) AS n_lena_maint,
+      sum(LOT1_BASEMAINT_MED_BORT) AS n_bort_maint,
+      sum(MAINT_FOLLOWS_SCT_FLG) AS n_maint_post_sct
+    FROM lot1_maintenance")
+
+  # S16: LOT1_BASE_END - Final end reason incorporating SCT + maintenance
+  # End reason priority: SCT > SCT_NO_MAINT (Rule 4) > MED_ADD > MAINTENANCE_END (Rule 8)
+  #   > DISCONTINUATION > DEATH > DISENROLLMENT > STUDY_END
+  # C4 fix: Rule 4 — planned SCT not followed by maintenance within 180 days ends LOT1.
+  # H3 fix: Split former CENSORED into DEATH, DISENROLLMENT, STUDY_END per Rules 5-7.
+  run_step(con, "S16_lot1_base_end", glue("
+    CREATE OR REPLACE TEMPORARY VIEW lot1_base_end AS
+    WITH end_candidates AS (
+      SELECT
+        lb.*,
+        sct.LOT1_TX_AUTO_DT_1,
+        sct.LOT1_TX_AUTO_DT_2,
+        sct.LOT1_SCT_AUTO_TAND_FLG,
+        sct.LOT1_SCT_AUTO_SING_FLG,
+        sct.LOT1_TX_ENDDATE,
+        sct.LOT1_TX_ENDDATE_REASON,
+        sct.LOT1_1ST_SCT_DT,
+        sct.FIRST_ALLO_DT,
+        sct.FIRST_CART_DT,
+        -- Maintenance columns (C3 fix)
+        m.LOT1_BASEMAINT_START,
+        m.LOT1_BASEMAINT_TYP,
+        m.LOT1_BASEMAINT_END,
+        m.LOT1_BASEMAINT_END_REASON,
+        m.LOT1_BASEMAINT_MED_BORT,
+        m.LOT1_BASEMAINT_MED_CARF,
+        m.LOT1_BASEMAINT_MED_DARA,
+        m.LOT1_BASEMAINT_MED_IXAZ,
+        m.LOT1_BASEMAINT_MED_LENA,
+        m.LOT1_BASEMAINT_MED_THAL,
+        -- C4 fix (Rule 4): planned AUTO SCT not followed by maintenance within 180 days
+        CASE
+          WHEN sct.LOT1_TX_AUTO_DT_1 IS NOT NULL
+           AND sct.LOT1_TX_ENDDATE IS NULL
+           AND sct.FIRST_ALLO_DT IS NULL
+           AND sct.FIRST_CART_DT IS NULL
+           AND (m.MAINT_FOLLOWS_SCT_FLG IS NULL OR m.MAINT_FOLLOWS_SCT_FLG = 0)
+          THEN 1
+          ELSE 0
+        END AS LOT1_SCT_NO_MAINT_FLG,
+        -- The SCT date for Rule 4 end
+        CASE
+          WHEN sct.LOT1_TX_AUTO_DT_1 IS NOT NULL
+           AND sct.LOT1_TX_ENDDATE IS NULL
+           AND sct.FIRST_ALLO_DT IS NULL
+           AND sct.FIRST_CART_DT IS NULL
+           AND (m.MAINT_FOLLOWS_SCT_FLG IS NULL OR m.MAINT_FOLLOWS_SCT_FLG = 0)
+          THEN CASE
+                 WHEN sct.LOT1_SCT_AUTO_TAND_FLG = 1 THEN sct.LOT1_TX_AUTO_DT_2
+                 ELSE sct.LOT1_TX_AUTO_DT_1
+               END
+          ELSE NULL
+        END AS SCT_NO_MAINT_END_DT
+      FROM lot1_base lb
+      LEFT JOIN lot1_sct sct ON lb.PATID = sct.PATID
+      LEFT JOIN lot1_maintenance m ON lb.PATID = m.PATID
+    )
+    SELECT
+      ec.*,
+      -- End reason priority: SCT > SCT_NO_MAINT > MED_ADD > MAINTENANCE_END
+      --   > DISCONTINUATION > DEATH > DISENROLLMENT > STUDY_END
+      CASE
+        -- Rule 3: Unplanned/excess SCT (ALLO, CART, or excess AUTO)
+        WHEN ec.LOT1_TX_ENDDATE IS NOT NULL
+         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+         AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_DISCON_DT)
+        THEN CASE ec.LOT1_TX_ENDDATE_REASON
                WHEN 1 THEN 'SCT_AUTO'
                WHEN 2 THEN 'SCT_ALLO'
                WHEN 3 THEN 'SCT_CART'
                ELSE 'SCT'
              END
-        WHEN lb.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
-         AND (lb.LOT1_BASE_DISCON_DT IS NULL OR lb.LOT1_BASE_1ST_ADD_MED_DT <= lb.LOT1_BASE_DISCON_DT)
+        -- Rule 4: Planned SCT not followed by maintenance within 180 days
+        WHEN ec.LOT1_SCT_NO_MAINT_FLG = 1
+         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+         AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_DISCON_DT)
+        THEN 'SCT_NO_MAINT'
+        -- MED_ADD: new non-base drug added
+        WHEN ec.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
+         AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASE_1ST_ADD_MED_DT <= ec.LOT1_BASE_DISCON_DT)
         THEN 'MED_ADD'
-        WHEN lb.LOT1_BASE_DISCON_DT IS NOT NULL THEN 'DISCONTINUATION'
-        ELSE 'CENSORED'
+        -- Rule 8: Maintenance period ends (if patient had maintenance)
+        WHEN ec.LOT1_BASEMAINT_END IS NOT NULL
+         AND ec.LOT1_BASEMAINT_END_REASON IS NOT NULL
+         AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASEMAINT_END <= ec.LOT1_BASE_DISCON_DT)
+        THEN 'MAINTENANCE_END'
+        -- Rule 2: Discontinuation of all agents
+        WHEN ec.LOT1_BASE_DISCON_DT IS NOT NULL THEN 'DISCONTINUATION'
+        -- Rules 5-7: Censoring events
+        WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT THEN 'DEATH'
+        WHEN ec.OBS_END_DT < ec.ENDDATE THEN 'DISENROLLMENT'
+        ELSE 'STUDY_END'
       END AS LOT1_BASE_END_REASON,
+      -- Corresponding end date
       CASE
-        WHEN sct.LOT1_TX_ENDDATE IS NOT NULL
-         AND (lb.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR sct.LOT1_TX_ENDDATE <= lb.LOT1_BASE_1ST_ADD_MED_DT)
-         AND (lb.LOT1_BASE_DISCON_DT IS NULL OR sct.LOT1_TX_ENDDATE <= lb.LOT1_BASE_DISCON_DT)
-        THEN sct.LOT1_TX_ENDDATE
-        WHEN lb.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
-         AND (lb.LOT1_BASE_DISCON_DT IS NULL OR lb.LOT1_BASE_1ST_ADD_MED_DT <= lb.LOT1_BASE_DISCON_DT)
-        THEN lb.LOT1_BASE_1ST_ADD_MED_DT
-        WHEN lb.LOT1_BASE_DISCON_DT IS NOT NULL THEN lb.LOT1_BASE_DISCON_DT
-        ELSE lb.OBS_END_DT
-      END AS LOT1_BASE_END_DT
-    FROM lot1_base lb
-    LEFT JOIN lot1_sct sct ON lb.PATID = sct.PATID
-  ", qc = "
+        WHEN ec.LOT1_TX_ENDDATE IS NOT NULL
+         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+         AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_DISCON_DT)
+        THEN ec.LOT1_TX_ENDDATE
+        WHEN ec.LOT1_SCT_NO_MAINT_FLG = 1
+         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+         AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_DISCON_DT)
+        THEN ec.SCT_NO_MAINT_END_DT
+        WHEN ec.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
+         AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASE_1ST_ADD_MED_DT <= ec.LOT1_BASE_DISCON_DT)
+        THEN ec.LOT1_BASE_1ST_ADD_MED_DT
+        WHEN ec.LOT1_BASEMAINT_END IS NOT NULL
+         AND ec.LOT1_BASEMAINT_END_REASON IS NOT NULL
+         AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASEMAINT_END <= ec.LOT1_BASE_DISCON_DT)
+        THEN ec.LOT1_BASEMAINT_END
+        WHEN ec.LOT1_BASE_DISCON_DT IS NOT NULL THEN ec.LOT1_BASE_DISCON_DT
+        WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT THEN ec.DEATH_DT
+        ELSE ec.OBS_END_DT
+      END AS LOT1_BASE_END_DT,
+      -- M1 fix: 2-way LOT1_BASE_LENGTH per spec
+      CASE
+        WHEN ec.LOT1_BASE_DISCON_DT IS NOT NULL
+         AND (ec.LOT1_TX_ENDDATE IS NULL OR ec.LOT1_BASE_DISCON_DT < ec.LOT1_TX_ENDDATE)
+         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.LOT1_BASE_DISCON_DT <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+         AND (ec.LOT1_SCT_NO_MAINT_FLG = 0 OR ec.LOT1_BASE_DISCON_DT <= ec.SCT_NO_MAINT_END_DT)
+        THEN datediff(ec.LOT1_BASE_DISCON_DT, ec.LOT1_START_DT) + 1
+        ELSE datediff(
+          CASE
+            WHEN ec.LOT1_TX_ENDDATE IS NOT NULL
+             AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+             AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_DISCON_DT)
+            THEN ec.LOT1_TX_ENDDATE
+            WHEN ec.LOT1_SCT_NO_MAINT_FLG = 1
+             AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+             AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_DISCON_DT)
+            THEN ec.SCT_NO_MAINT_END_DT
+            WHEN ec.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
+             AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASE_1ST_ADD_MED_DT <= ec.LOT1_BASE_DISCON_DT)
+            THEN ec.LOT1_BASE_1ST_ADD_MED_DT
+            WHEN ec.LOT1_BASEMAINT_END IS NOT NULL
+             AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASEMAINT_END <= ec.LOT1_BASE_DISCON_DT)
+            THEN ec.LOT1_BASEMAINT_END
+            WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT THEN ec.DEATH_DT
+            ELSE ec.OBS_END_DT
+          END,
+          ec.LOT1_START_DT
+        ) + 1
+      END AS LOT1_BASE_LENGTH
+    FROM end_candidates ec
+  "), qc = "
     SELECT LOT1_BASE_END_REASON, count(*) AS n
     FROM lot1_base_end
     GROUP BY LOT1_BASE_END_REASON
     ORDER BY LOT1_BASE_END_REASON")
-
-  log_msg("NOTE: Maintenance (mono/dual) specs not yet provided; LOT1_BASE_END_REASON")
-  log_msg("      does not yet include MAINTENANCE_START. Will need integration when available.")
 
   # ----------------------------------------------------------
   # NDC Format QC (Fix #5 from review)
