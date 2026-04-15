@@ -1793,10 +1793,12 @@ main <- function() {
         END AS SCT_NO_MAINT_END_DT,
         -- CAR-T consolidation: new agents within {cfg$cart_consolidation_days} days of CART
         -- are consolidation therapy, not LOT-ending MED_ADD (per sensitivity email)
+        -- Note: LOT1_BASE_1ST_ADD_MED_DT is date_sub(ADD_START_DT, 1), so add 1 back
+        -- to compare the actual add-med start date against FIRST_CART_DT
         CASE
           WHEN sct.FIRST_CART_DT IS NOT NULL
            AND lb.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
-           AND datediff(lb.LOT1_BASE_1ST_ADD_MED_DT, sct.FIRST_CART_DT) BETWEEN 0 AND {cfg$cart_consolidation_days}
+           AND datediff(date_add(lb.LOT1_BASE_1ST_ADD_MED_DT, 1), sct.FIRST_CART_DT) BETWEEN 0 AND {cfg$cart_consolidation_days}
           THEN 1
           ELSE 0
         END AS CART_CONSOL_FLG
