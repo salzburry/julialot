@@ -333,3 +333,116 @@ The main issue from the Apr 15 meeting is **not minor dashboard cleanup**. It is
 
 *This document is for internal review only. No code changes have been made.*
 *Generated: April 15, 2026*
+
+---
+
+## ADDENDUM: Additional Corrections From Third-Pass Validation
+
+The following 4 items were identified during a third-pass review and have been validated against the source code and meeting transcript. They correct or extend the main issues above.
+
+### A1. `contains_mtx_reg` anchor definition is too narrow in the main report — CORRECTED
+
+**Severity:** High (affects implementation correctness)
+
+The main report (Issue 2) stated the flag requires "at least one non-maintenance drug also in induction." This is **too strict**.
+
+**Transcript evidence (Julia, verbatim):**
+- "the anchor could be a valid maintenance medication, actually"
+- "if someone had Dara Len Bortezomib, those are 3 valid maintenance medications. So you don't know what the anchor agent is in that. Like if Dara fell away, you could have Bort and Len left alone."
+- "you just need to have some 2nd or 3rd or 4th qualifying agent to sort of anchor your regimen"
+
+**Correct definition:**
+- `contains_mtx_reg = 1` when the LOT1 induction regimen contains a valid maintenance-approved mono or dual subset PLUS at least one additional induction agent **outside that chosen subset** to serve as the anchor
+- The anchor agent may itself be maintenance-eligible in another context
+- Example: DARA + LEN + BORT — all 3 are maintenance-eligible, but:
+  - DARA anchors the BORT/LENA dual subset
+  - BORT or LENA anchors the DARA mono subset
+  - DARA or BORT anchors the LENA mono subset
+  - So `contains_mtx_reg = 1` for this regimen
+
+**Why this matters for implementation:**
+A rule requiring a strictly non-maintenance anchor would incorrectly miss many valid regimens where all drugs happen to be maintenance-eligible in some context. The existing `valid_maint_regimens` CTE (lines 1442-1458) already computes valid mono/dual subsets per patient — the flag just needs to check whether at least one additional induction drug exists outside any of those subsets.
+
+### A2. Dashboard/report layer must be updated — not just `lot_program.R`
+
+**Severity:** Medium (operational correctness)
+
+The main report focused on `lot_program.R` changes but did not explicitly call out downstream reporting cleanup.
+
+**Confirmed hardcoded references to removed categories in `descriptives_lot.R`:**
+- Line 680: `"SCT_NO_MAINT" = "#B47EB3", "MAINTENANCE_END" = "#44AF69"` — end-reason bar chart color map
+- Line 1648: `SCT_NO_MAINT = "#B47EB3", MAINTENANCE_END = "#44AF69"` — Sankey diagram color map
+
+**What needs to change:**
+- Remove `SCT_NO_MAINT` and `MAINTENANCE_END` from both color maps
+- Add `CART_INIT` to the color map (if Issue 5 CART_INIT end reason is implemented)
+- Update any text labels, captions, or legend entries that describe maintenance as a formal end-reason path
+- Verify no other hardcoded end-reason references exist in the reporting layer
+
+### A3. `SCT_NO_MAINT` reclassification to `SCT_AUTO` requires explicit new routing — cannot just delete the branch
+
+**Severity:** High (deleting without rerouting produces wrong results)
+
+The main report (Issue 3) says to "remove the SCT_NO_MAINT branch" and reclassify to `SCT_AUTO`. However, simply deleting lines 1850-1853 will NOT produce `SCT_AUTO`.
+
+**Why deletion alone fails:**
+- `SCT_AUTO` comes from the Rule 3 branch (lines 1839-1848) which requires `ec.LOT1_TX_ENDDATE IS NOT NULL`
+- SCT_NO_MAINT patients are defined by `LOT1_TX_ENDDATE IS NULL` (line 1799: `sct.LOT1_TX_ENDDATE IS NULL`)
+- These are planned autologous SCTs that did not trigger the LOT-ending SCT pathway
+- If the SCT_NO_MAINT branch is deleted, these patients fall through to `MED_ADD`, `DISCONTINUATION`, or censoring — NOT to `SCT_AUTO`
+
+**What needs to change:**
+- The fix must explicitly route planned-AUTO-without-maintenance cases into `SCT_AUTO` (or whatever the agreed target bucket is)
+- Use `SCT_NO_MAINT_END_DT` (or its successor date field) as the end date for these reclassified patients
+- One approach: modify the Rule 3 branch (lines 1839-1848) to also catch `LOT1_SCT_NO_MAINT_FLG = 1` cases, OR add a separate branch that maps them to `SCT_AUTO` with the planned AUTO date
+
+### A4. Maintenance config parameters and QC outputs become dead/misleading under flag-only approach
+
+**Severity:** Low-Medium (cleanup item)
+
+Once maintenance is no longer a LOT-defining construct, several config parameters and QC summaries lose their meaning.
+
+**Config parameters that become dead (`config_lot.R` lines 46-48):**
+- `maint_min_days = 120` — minimum maintenance period duration (not needed for flag-only)
+- `maint_post_sct_min_days = 30` — minimum post-SCT maintenance duration (not needed)
+- `maint_sct_window_days = 180` — SCT-to-maintenance window (not needed for flag-only)
+
+**QC outputs that become misleading (`lot_program.R` lines 1757-1762):**
+- `n_with_maintenance` — count of patients with formal maintenance period
+- `avg_maint_duration` — average maintenance period duration
+- `n_maint_post_sct` — maintenance following SCT
+
+**What needs to change:**
+- Remove or retire maintenance-period config parameters if no longer used by any logic
+- Remove maintenance-period QC summaries that are no longer meaningful
+- Replace with QC for the new `contains_mtx_reg` flag (e.g., `n_with_valid_maint_regimen`, distribution of maintenance-eligible regimen types)
+- Note: if the `valid_maint_regimens` CTE is repurposed for `contains_mtx_reg`, some of the underlying maintenance detection logic may still be needed — just not the duration-based filtering (`MAINT_DURATION >= MIN_MAINT_DAYS` at line 1754)
+
+---
+
+## REVISED COMPLETE ACTION ITEMS — PRIORITY ORDER
+
+### Before Apr 23 Meeting (with Vicky):
+| Priority | Action | Issue Ref |
+|----------|--------|-----------|
+| P0 | Remove maintenance-period logic from LOT1 end-reason derivation | Issue 1 |
+| P1 | Add `contains_mtx_reg` flag with correct anchor definition (agent outside chosen subset, may itself be maintenance-eligible) | Issue 2 + A1 |
+| P2 | Remove `MAINTENANCE_END` end reason — patients fall to DISCONTINUATION or censoring | Issue 4 |
+| P3 | Reclassify `SCT_NO_MAINT` to `SCT_AUTO` with **explicit routing**, not just branch deletion | Issue 3 + A3 |
+| P4 | Fix CAR-T 45-day directionality + add CART_INIT end reason | Issue 5 |
+| P5 | Verify runtime `cl_mma_rollup.csv` matches signed-off combinations | Issue 6 |
+| P6 | Update `descriptives_lot.R` color maps and Sankey to remove old categories | A2 |
+| P7 | Refresh dashboard and share updated link with Julia | Issue 9 |
+
+### Next Sprint (Post-Apr 23):
+| Priority | Action | Issue Ref |
+|----------|--------|-----------|
+| P8 | Retire dead maintenance config params + QC outputs, add `contains_mtx_reg` QC | A4 |
+| P9 | Start LOT2-5 spec (30-day window, CAR-T/SCT start triggers) | Issue 8 |
+| P10 | Add BEND / DARA+POMA QC outputs when Peter provides full list | Issue 7 |
+| P11 | Share CYCLO patient CSVs via Domino project | Issue 7 |
+
+---
+
+*Addendum validated against source code and meeting transcript. All 4 points confirmed accurate.*
+*Generated: April 15, 2026*
