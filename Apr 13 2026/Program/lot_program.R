@@ -4156,23 +4156,33 @@ main <- function() {
         ON vt.PATID = et.PATID AND vt.DROP_DT = et.TRANSITION_DT
       LATERAL VIEW explode(split(vt.REMAINING_KEY, ' ')) t AS drug
     ),
-    -- Per spec (lotbaseendapr14): LOT1_BASEMAINT_START is the first
-    -- maintenance-medication MAP_START_DT after pre-maintenance transition.
+    -- Per-drug: earliest MAP start for each regimen drug after transition.
     -- Use greatest(MAP_START_DT, TRANSITION_DT+1) so that:
     --   - Continuous MAPs from induction: start = day after transition (per mtx scenarios)
     --   - Gap/restart MAPs: start = actual MAP_START_DT of the restart
-    first_maint_after_transition AS (
+    first_maint_per_drug AS (
       SELECT
         tm.PATID,
+        tm.MAP_MED_TYPE,
         min(
           greatest(tm.MAP_START_DT, date_add(et.TRANSITION_DT, 1))
-        ) AS FIRST_MAINT_MAP_DT
+        ) AS DRUG_FIRST_MAINT_DT
       FROM tagged_maps tm
       INNER JOIN earliest_transition et ON tm.PATID = et.PATID
       INNER JOIN maint_regimen_drugs mrd
         ON tm.PATID = mrd.PATID AND tm.MAP_MED_TYPE = mrd.MED_ABBR
       WHERE tm.MAP_END_DT >= date_add(et.TRANSITION_DT, 1)
-      GROUP BY tm.PATID
+      GROUP BY tm.PATID, tm.MAP_MED_TYPE
+    ),
+    -- Regimen-level: for dual maintenance, start when ALL drugs are available
+    -- together. Use max across per-drug starts so a dual regimen waits for
+    -- the later drug. For mono, max = the single drug start (no change).
+    first_maint_after_transition AS (
+      SELECT
+        PATID,
+        max(DRUG_FIRST_MAINT_DT) AS FIRST_MAINT_MAP_DT
+      FROM first_maint_per_drug
+      GROUP BY PATID
     ),
     -- Compute maintenance period start per spec
     maint_bounds AS (
@@ -4231,9 +4241,34 @@ main <- function() {
       WHERE mrd.MED_ABBR IS NULL  -- drug is NOT in the active maintenance regimen
       GROUP BY mb.PATID
     ),
-    -- Find maintenance drug coverage extending past maint start,
-    -- truncated by any interrupting event (SCT or non-maint drug addition).
-    -- Filters to maint_regimen_drugs (the actual regimen) instead of all IS_MAINT=1 drugs.
+    -- Per-drug last coverage date within the maintenance period.
+    maint_per_drug_end AS (
+      SELECT
+        mb.PATID,
+        tm.MAP_MED_TYPE,
+        max(tm.MAP_END_DT) AS DRUG_LAST_END
+      FROM maint_bounds mb
+      INNER JOIN tagged_maps tm
+        ON mb.PATID = tm.PATID
+        AND tm.MAP_END_DT >= mb.MAINT_START_DT
+      INNER JOIN maint_regimen_drugs mrd
+        ON tm.PATID = mrd.PATID AND tm.MAP_MED_TYPE = mrd.MED_ABBR
+      GROUP BY mb.PATID, tm.MAP_MED_TYPE
+    ),
+    -- Regimen-level raw coverage end: for dual, use min of per-drug ends
+    -- (regimen ends when the first component drug drops). For mono, min = the
+    -- single drug end. This ensures the coverage window reflects the period
+    -- during which the full selected regimen is truly in force.
+    maint_regimen_end AS (
+      SELECT
+        PATID,
+        min(DRUG_LAST_END) AS REGIMEN_RAW_END_DT,
+        count(DISTINCT MAP_MED_TYPE) AS N_MAINT_DRUGS,
+        concat_ws(' ', sort_array(collect_set(MAP_MED_TYPE))) AS MAINT_DRUGS
+      FROM maint_per_drug_end
+      GROUP BY PATID
+    ),
+    -- Combine regimen-level coverage with interrupt events.
     maint_coverage AS (
       SELECT
         mb.PATID,
@@ -4242,26 +4277,20 @@ main <- function() {
         mb.DEATH_DT,
         mb.ENDDATE,
         least(
-          max(tm.MAP_END_DT),
+          mre.REGIMEN_RAW_END_DT,
           mb.OBS_END_DT,
           coalesce(date_sub(isct.EARLIEST_SCT_AFTER_MAINT, 1), cast('9999-12-31' as date)),
           coalesce(date_sub(inm.EARLIEST_NONMAINT_ADD_DT, 1), cast('9999-12-31' as date))
         ) AS MAINT_END_DT,
-        max(tm.MAP_END_DT) AS MAINT_RAW_END_DT,
-        count(DISTINCT tm.MAP_MED_TYPE) AS N_MAINT_DRUGS,
-        concat_ws(' ', sort_array(collect_set(tm.MAP_MED_TYPE))) AS MAINT_DRUGS,
+        mre.REGIMEN_RAW_END_DT AS MAINT_RAW_END_DT,
+        mre.N_MAINT_DRUGS,
+        mre.MAINT_DRUGS,
         isct.EARLIEST_SCT_AFTER_MAINT,
         inm.EARLIEST_NONMAINT_ADD_DT
       FROM maint_bounds mb
-      INNER JOIN tagged_maps tm
-        ON mb.PATID = tm.PATID
-        AND tm.MAP_END_DT >= mb.MAINT_START_DT
-      INNER JOIN maint_regimen_drugs mrd
-        ON tm.PATID = mrd.PATID AND tm.MAP_MED_TYPE = mrd.MED_ABBR
+      INNER JOIN maint_regimen_end mre ON mb.PATID = mre.PATID
       LEFT JOIN maint_interrupt_sct isct ON mb.PATID = isct.PATID
       LEFT JOIN maint_interrupt_nonmaint inm ON mb.PATID = inm.PATID
-      GROUP BY mb.PATID, mb.MAINT_START_DT, mb.OBS_END_DT, mb.DEATH_DT, mb.ENDDATE,
-               isct.EARLIEST_SCT_AFTER_MAINT, inm.EARLIEST_NONMAINT_ADD_DT
     ),
     -- Apply duration threshold (120 standard, 30 post-SCT per spec)
     -- Per spec: maintenance is evaluated after a single autologous SCT
