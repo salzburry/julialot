@@ -1,13 +1,13 @@
-# LOT Program Review — Issues & Action Items
-## Based on Apr 15, 2026 Meeting Minutes, LOT Output (Apr 14), and Code Review
+# LOT Program Review — Issues & Action Items (Combined & Validated)
+## Based on Apr 15, 2026 Meeting Minutes, Apr 14 LOT Output, Protocol v6, and Code Review
 
 **Date:** April 15, 2026
-**Reviewed by:** Code review agent
+**Review type:** Static review only. No code changes made.
 **Files reviewed:**
 - `Apr 13 2026/meeting minutes apt 15` (meeting transcript)
 - `Apr 13 2026/lot output apr 14.pdf` (current run output)
 - `Apr 13 2026/Protocol/Lot protocol Apr 13.pdf` (protocol v6)
-- `Apr 13 2026/Program/lot_program.R` and all R/ modules
+- `Apr 13 2026/Program/lot_program.R` and all `R/` modules
 - `Apr 13 2026/Program Spec and Scenarios/*.pdf` (all spec tabs)
 - `Apr 13 2026/Attrition/attritiom apr 14.pdf`
 - `Apr 13 2026/codelist.pdf`
@@ -15,200 +15,294 @@
 
 ---
 
-## CRITICAL ISSUES (Must Fix Before Next Meeting — Apr 23)
+## Executive Summary
 
-### ISSUE 1: MAINTENANCE_END Reason Must Be Reclassified to DISCONTINUATION
-- **Source:** Meeting transcript — Julia stated that patients ending LOT1 on a valid maintenance regimen should just be classified as "discontinued" since maintenance is not being defined for this study.
-- **Current code:** `lot_program.R` line 1863 — `THEN 'MAINTENANCE_END'` is a standalone end reason category in the CASE logic (Rule 8).
-- **What needs to change:** Replace `'MAINTENANCE_END'` with `'DISCONTINUATION'` at line 1863, or remove the MAINTENANCE_END branch entirely and let these patients fall through to the DISCONTINUATION case at line 1865.
-- **Impact:** Affects the LOT1_BASE_END_REASON distribution in the dashboard and all downstream reporting. The end-reason bar chart and table will change.
-- **Priority:** HIGH — Julia specifically flagged this as needing cleanup before the Apr 23 meeting with Vicky.
+The Apr 15 meeting introduces one major **study-level change** that is NOT yet reflected in the current LOT code:
 
-### ISSUE 2: SCT_NO_MAINT Category Needs Reclassification
-- **Source:** Meeting transcript — Julia said "those also need to probably get reclassified" and mentioned they should become either "new agent introduced" or "3rd or unplanned autologous happening."
-- **Current code:** `lot_program.R` lines 1850-1853 — `THEN 'SCT_NO_MAINT'` is its own end reason. The flag is set at lines 1797-1805 when a patient has an autologous SCT but no maintenance follows within 180 days and no other SCT/ALLO/CART events exist.
-- **What needs to change:** Since maintenance is being removed as a defining concept, the SCT_NO_MAINT logic needs revisiting. These patients had a planned autologous SCT — without the maintenance requirement, they should likely be classified as `'SCT_AUTO'` (continuation of LOT1 with autologous SCT). The distinction between "SCT with maintenance" and "SCT without maintenance" becomes moot if maintenance is not being defined.
-- **Impact:** The SCT_NO_MAINT row in the end-reason distribution will be redistributed. This also affects the LOT1_BASE_END_DT calculation at lines 1877-1880.
-- **Priority:** HIGH — Directly linked to Issue 1 (maintenance decision).
+- The team decided **not to define a maintenance period / maintenance LOT for this study**.
+- Instead, they want a **flag only** (`contains_mtx_reg`) indicating whether the LOT1 induction regimen contains a valid maintenance-approved regimen with an anchor agent.
 
-### ISSUE 3: MED_ADD Near CAR-T Should Be Reclassified as CART_INIT
-- **Source:** Meeting transcript — Julia stated: "if someone has a new medication added, but then within 45 days of that new agent, they're starting CAR-T, their reason for LOT1 end shouldn't be a medication add. It actually should be initiation of CAR-T therapy."
-- **Current code:** `lot_program.R` lines 1819-1829 — `CART_CONSOL_FLG` is set when MED_ADD is within 45 days of CART (`cart_consolidation_days = 45` in config_lot.R line 59). When CART_CONSOL_FLG=1, MED_ADD is suppressed at line 1856.
-- **Gap:** The code suppresses MED_ADD correctly but does NOT create a new end reason `'CART_INIT'` or `'INITIATION_OF_CART'`. When CART_CONSOL_FLG=1, the MED_ADD branch is skipped and the patient falls through to the next applicable reason (MAINTENANCE_END, DISCONTINUATION, DEATH, etc.), which is incorrect.
-- **What needs to change:** Add a new CASE branch between SCT_NO_MAINT and MED_ADD (around line 1854) that catches `CART_CONSOL_FLG = 1` and assigns `'CART_INIT'` as the end reason with `FIRST_CART_DT` as the end date.
-- **Note:** Julia also said "that's kind of getting into defining LOT2" so this may be deferred, but the logic gap should be documented and flagged.
-- **Priority:** HIGH — Logic gap produces incorrect end reasons for affected patients.
+The current code still implements full maintenance-period derivation and still uses that logic to drive:
+- `MAINTENANCE_END` as an end reason
+- `SCT_NO_MAINT` as an end reason (Rule 4)
+- `LOT1_BASEMAINT_*` variables (start, end, type, per-drug flags)
+- Rule 4 / Rule 8 end-reason behavior in `LOT1_BASE_END_REASON`
+
+The Apr 14 output still reflects the older maintenance-driven logic. **The main work is not dashboard polish — it is a substantive realignment of LOT1 end-reason logic and final outputs to the Apr 15 meeting decision.**
 
 ---
 
-## HIGH PRIORITY ISSUES (Fix This Sprint)
+## CRITICAL ISSUES
 
-### ISSUE 4: New Maintenance Regimen Flag Missing from Final Dataset
-- **Source:** Meeting transcript — Julia described a new flag needed in the final dataset: "I added this flag, the very last row, for the maintenance... if someone has any combination of these things, but they have to have an anchor agent included."
-- **Current code:** `lot_program.R` lines 1442-1458 — The CTE `valid_maint_regimens` already computes which patients have valid mono or dual maintenance regimens as part of their induction. However, this information is NOT surfaced as a column in the final `lot1_base_end` output.
-- **What needs to change:** Add a binary flag (e.g., `LOT1_HAS_VALID_MAINT_REGIMEN`) to the `lot1_maintenance` view output (around line 1710) and propagate it through to `lot1_base_end`. The flag should be 1 if the patient's LOT1 induction regimen contains at least one valid maintenance regimen (mono or dual), 0 otherwise.
-- **Definition per meeting:** A valid maintenance regimen requires:
-  - A non-maintenance medication (anchor agent) linked with a maintenance medication
-  - When the non-maintenance medication falls away, the maintenance medication remains
-  - For regimens like DARA+LEN+BORT (3 valid maintenance drugs), you need a qualifying anchor agent to know when maintenance starts
-- **Protocol reference:** Protocol v6 Section 5.1.1 — maintenance regimen definition; also described in the spec Tab 40 (last row added by Julia).
-- **Priority:** HIGH — Julia specifically asked for sign-off on this flag.
+### ISSUE 1: Remove maintenance-period logic from LOT1 end derivation — study now wants flag-only approach
 
-### ISSUE 5: Top 15/25 Induction Regimen Table Not Refreshed
-- **Source:** Meeting transcript — Julia noted "this table didn't get updated for some reason" referring to the induction regimen counts. She said one table still had "whole numbers" while another was updated.
-- **Current code:** `R/descriptives_lot.R` lines 577-628 — The Top 25 regimen query pulls from `lot1_base_end` and the Figure 5 (Top 15 bar chart) includes both counts and percentages.
-- **Issues found in code:**
-  1. The saved table (`save_table` at line 627) does NOT include a percentage column — only `regimen`, `n_patients`, `avg_length`, `avg_meds`. The percentage is calculated on-the-fly for the chart but not persisted.
-  2. The dashboard may be showing a cached/stale version if not refreshed after the latest run.
-- **What needs to change:**
-  1. Add a `pct` column to the saved regimen table: `regimens$pct <- round(100 * regimens$n_patients / total_lot1, 1)` before the `save_table()` call.
-  2. Ensure the dashboard link is refreshed and shared with Julia before the Apr 23 meeting.
-- **Priority:** HIGH — Julia specifically asked for an updated dashboard before her Vicky meeting.
+**Severity:** Critical
+**Source:** Meeting transcript + updated spec (`lotbaseendapr14.pdf` tab, field `contains_mtx_reg`)
 
-### ISSUE 6: Dual Maintenance Combinations — Codelist Verification Needed
-- **Source:** Meeting transcript — Discussion about adding Lenalidomide (LENA) to dual maintenance columns with Daratumumab (DARA), and confirming Thalidomide (THAL) as mono maintenance. Onker added LENA to the spec and Julia confirmed alignment.
-- **Current code:** `lot_program.R` lines 1410-1436 — The maintenance logic correctly reads `MONOMAINTENANCE` and `DUALMAINTENANCEWITH` columns from the `mma_rollup` CSV. The code supports flexible combinations.
-- **What needs to be verified in `cl_mma_rollup.csv`:**
-  1. DARA row: `DUALMAINTENANCEWITH` should include `'LENA'`
-  2. LENA row: `DUALMAINTENANCEWITH` should include `'DARA, BORT, CARF'` (all valid dual partners)
-  3. THAL row: `MONOMAINTENANCE` should be `1`
-  4. CARF row: `DUALMAINTENANCEWITH` should include `'LENA'`
-  5. BORT row: `DUALMAINTENANCEWITH` should include `'LENA'`
-- **Cross-reference:** Protocol v6 Section 5.1.1 lists valid maintenance therapies:
-  - Mono: LENA, BORT, DARA, IXAZ, THAL
-  - Dual: BORT/LENA, CARF/LENA, DARA/LENA
-- **Priority:** HIGH — Incorrect codelist = incorrect maintenance detection. Julia signed off on the additions during the meeting.
+**The Apr 15 meeting explicitly changes the study approach:**
 
----
+Julia stated (verbatim from transcript):
+- "we're just going to add a flag for the inclusion of if a regimen is included, if a valid maintenance regimen is included in part of the induction medication"
+- "I took out all of the maintenance language from our protocol, and I moved it to the limitations section"
+- "we're not going to define it for this study"
+- "we're not trying to define the time and length of maintenance because it's quite messy"
 
-## MEDIUM PRIORITY ISSUES (Plan for Next Iteration)
+This is NOT a simple rename from MAINTENANCE_END to DISCONTINUATION. It is a structural change: the entire maintenance-period engine should stop driving LOT1 end-reason logic.
 
-### ISSUE 7: LOT2-5 Implementation — Not Yet Started
-- **Source:** Meeting transcript — Julia confirmed LOT2-5 spec will be based on the LOT1 spec with key differences. She offered to start the LOT2-5 spec or have Onker do it after finishing LOT1 cleanup.
-- **Current code:** Zero LOT2-5 logic exists. The program only builds LOT1_BASE, LOT1_SCT, LOT1_MAINTENANCE, and LOT1_BASE_END. No LOT2, LOT3, LOT4, LOT5 views/tables.
-- **Key differences from LOT1 per meeting and protocol:**
-  1. **Induction window:** 30 days (vs. 60 days for LOT1) — `config_lot.R` line 40 currently hardcodes 60
-  2. **LOT start triggers:** LOT2+ can start with CAR-T event, allogeneic SCT, or autologous SCT (in addition to new agent)
-  3. **Iterative structure:** Each subsequent LOT's start depends on the previous LOT's end, requiring a loop or recursive CTE
-- **Protocol reference:** Protocol v6 Section 5.1.1 — "Second-line and later LOTs (LOT2-LOT5)"
-- **Action items:**
-  1. Julia to share old LOT2-5 spec from Optum (noted in meeting — she couldn't find it during the call)
-  2. Onker to finish LOT1 cleanup by end of week
-  3. Start LOT2-5 spec next week
-- **Priority:** MEDIUM — Blocked on LOT1 cleanup; Julia noted "LOT1 won't really make sense until you have your other LOTs."
+**Current code still does the opposite:**
+- `lot_program.R:1392-1763` (S16a) — Builds full maintenance detection: `LOT1_BASEMAINT_START`, `LOT1_BASEMAINT_END`, `LOT1_BASEMAINT_END_REASON`, per-drug flags, `MAINT_FOLLOWS_SCT_FLG`
+- `lot_program.R:1765-1916` (S16) — Gives maintenance formal priority in `LOT1_BASE_END_REASON` (Rule 8), `LOT1_BASE_END_DT`, and `LOT1_BASE_LENGTH`
 
-### ISSUE 8: Bendamustine (BEND) — Not Approved in 1st Line
-- **Source:** Meeting transcript — Peter (medical consultant) flagged that Bendamustine is not approved in 1st line and found it odd that some patients had it.
-- **Current code:** No special handling for Bendamustine. If BEND is in the codelist, it's treated like any other MM therapy.
-- **What needs to change:** Add an informational flag or report patients with Bendamustine in LOT1 induction. This is a data quality/clinical review item, not necessarily a code fix.
-- **Suggested approach:** Add to descriptives — flag patients with BEND in LOT1_BASE_MEDS and report count. May also want to cross-check with LOT2+ once implemented (BEND is expected in later lines).
-- **Priority:** MEDIUM — Awaiting a more comprehensive list from Peter before deep-diving into patient examples.
+**What needs to change:**
+- Retire maintenance-period outputs as LOT-ending constructs
+- Stop using `LOT1_BASEMAINT_END`, `LOT1_BASEMAINT_END_REASON`, `MAINT_FOLLOWS_SCT_FLG` in the `LOT1_BASE_END_REASON` CASE logic (lines 1860-1863, 1885-1888, 1914-1916)
+- The underlying maintenance-detection CTEs (`valid_maint_regimens`, `maint_eligible`, etc.) can be repurposed for computing the new `contains_mtx_reg` flag, but should NOT feed into end-reason determination
+- Patients currently classified as `MAINTENANCE_END` should fall through to `DISCONTINUATION` or applicable censoring reason
 
-### ISSUE 9: Daratumumab + Pomalidomide — Typically 2nd Line Combination
-- **Source:** Meeting transcript — Peter flagged that Daratumumab + Pomalidomide (DARA+POM) is typically a 2nd-line combination.
-- **Current code:** No reference to Pomalidomide (POMA/POM) found in lot_program.R. If it's in the codelist, it gets included without any line-specific restrictions.
-- **What needs to change:** Similar to BEND — flag patients with DARA+POM in LOT1 as potentially unusual 1st-line use. No code change needed now; this is a clinical review flag.
-- **Priority:** MEDIUM — Part of the broader patient-example review Peter will provide.
+### ISSUE 2: Add the new final dataset flag `contains_mtx_reg`
 
-### ISSUE 10: Cyclophosphamide Monotherapy — Patient Examples & Transplant Follow-up
-- **Source:** Meeting transcript — Discussion about cyclophosphamide (CYCLO) monotherapy patients and their subsequent transplant status. Onker prepared CSV files with patient details and transplant dates.
-- **Current code:** `R/cyclo_appendix_lot.R` — A dedicated deep-dive module (321 lines) already exists for CYCLO monotherapy analysis, including dx-date sensitivity and post-CYCLO treatment patterns.
-- **Status:** PARTIALLY ADDRESSED — The CYCLO deep-dive module exists and produces CSVs. Onker has the patient-level files ready to share.
-- **Action items:**
-  1. Share CYCLO patient CSVs with Julia (via Domino project, not email, due to patient IDs)
-  2. Julia to review and potentially cross-reference with Peter's other drug flags
-  3. Peter also flagged another drug (not captured clearly in transcript — possibly JVM?) for similar review
-- **Priority:** MEDIUM — Patient examples are informational, not blocking LOT1 logic.
+**Severity:** Critical
+**Source:** Meeting transcript + updated spec (`lotbaseendapr14.pdf`, last row added by Julia)
+
+The updated spec explicitly asks for a new flag: `contains_mtx_reg`. The meeting transcript confirms this in plain language — add a flag if LOT1 induction contains a valid maintenance regimen with an anchor agent.
+
+**Definition per meeting and protocol:**
+- A valid maintenance regimen requires a non-maintenance medication (anchor agent) linked with a maintenance medication
+- When the non-maintenance medication falls away, the maintenance medication remains — that defines the theoretical maintenance start
+- For regimens with multiple valid maintenance drugs (e.g., DARA+LEN+BORT, which are all 3 valid maintenance), you need a qualifying anchor agent to distinguish what would be the maintenance regimen
+- The flag is NOT about whether maintenance actually occurred — it's about whether the induction regimen *contains* a valid maintenance combination
+
+**Valid maintenance therapies (per protocol v6 Section 5.1.1 and Tab 40):**
+- Mono: LENA, BORT, DARA, IXAZ, THAL
+- Dual: BORT/LENA, CARF/LENA, DARA/LENA
+
+**Current code:**
+- No `contains_mtx_reg` output exists anywhere in `lot_program.R`
+- The CTE `valid_maint_regimens` (lines 1442-1458) already computes which patients have valid mono or dual maintenance regimens, but this is NOT surfaced as a column in the final output
+
+**What needs to change:**
+- Derive `contains_mtx_reg` from the existing `valid_maint_regimens` CTE logic
+- The flag should be 1 if the LOT1 induction regimen contains at least one valid maintenance regimen (mono or dual) AND has an anchor agent (at least one non-maintenance drug also in the induction), 0 otherwise
+- Add to the final `lot1_base_end` persisted output
 
 ---
 
-## LOW PRIORITY / INFORMATIONAL ISSUES
+### ISSUE 3: `SCT_NO_MAINT` should no longer be a separate LOT1 end reason
 
-### ISSUE 11: Attrition Table — Review of Patient Counts
-- **Source:** `Apr 13 2026/Attrition/attritiom apr 14.pdf` (reviewed via PNG)
-- **Attrition flow (90-day cohort):**
-  | Step | Description | N | % |
-  |------|-------------|---|---|
-  | Starting Population | >= 1 medical claim for MM | 94,951 | 100.0% |
-  | Inclusion 1 | >= 1 IP or >= 2 OP claims within 90 days | 70,866 | 74.6% |
-  | Inclusion 2 | Age >= 18 in index year | 70,842 | 74.6% |
-  | Inclusion 3 | >= 6 months CE baseline | 62,846 | 66.2% |
-  | Inclusion 4 | >= 1 day CE follow-up | 62,843 | 66.2% |
-  | Exclusion 5 | No MM therapy in baseline | 53,081 | 55.9% |
-  | Inclusion 6 | Evidence of MM therapy in follow-up | 21,512 | 22.7% |
-- **Observations:**
-  1. The 30-day and 60-day cohort columns are also present (sensitivity analyses per protocol Section 4.2.1)
-  2. Counts appear consistent across cohort definitions
-  3. No anomalies detected in the attrition flow
-- **Priority:** LOW — Informational only. Attrition looks reasonable.
+**Severity:** High
+**Source:** Meeting transcript
 
-### ISSUE 12: Embedded Codelist Fallbacks — Already Flagged in Optimization Report
-- **Source:** `lot_program_optimization_report.md` Section 6
-- **Current status:** The modularized code (`lot_program.R` + `R/*.R`) has already removed embedded codelist fallbacks and uses CSV-only loading (config_lot.R line 50-51).
-- **Priority:** LOW — Already resolved in current codebase.
+**Current code:**
+- `lot_program.R:1797-1818` — Builds `LOT1_SCT_NO_MAINT_FLG` and `SCT_NO_MAINT_END_DT`
+- `lot_program.R:1850-1853` — Sets `LOT1_BASE_END_REASON = 'SCT_NO_MAINT'`
 
-### ISSUE 13: Protocol v6 Finalization
-- **Source:** Meeting transcript — Julia confirmed protocol v6 is finalized. She asked Vicky to read it once more but said "there shouldn't be any more changes."
-- **Action:** Ensure all code parameters align with protocol v6 definitions. Key parameters verified:
-  - Induction window: 60 days (LOT1) ✓ (config_lot.R line 40)
-  - Maintenance minimum: 120 days ✓ (config_lot.R line 46)
-  - Post-SCT maintenance minimum: 30 days ✓ (config_lot.R line 47)
-  - SCT maintenance window: 180 days ✓ (config_lot.R line 48)
-  - Tandem SCT: 60-180 days apart ✓ (config_lot.R lines 55-56)
-  - CART consolidation: 45 days ✓ (config_lot.R line 59)
-  - Medical day supply assumed: 28 days ✓ (config_lot.R line 43)
-  - MAP discontinuation gap: 90 days ✓ (config_lot.R line 42)
-- **Priority:** LOW — Protocol is aligned with code parameters.
+**Meeting discussion (Julia, verbatim):**
+- "SCT no maintenance — I think those also need to probably get reclassified"
+- "those are all autologous transplant people"
+- "they're probably all going to be SCT auto this time"
 
-### ISSUE 14: Spec Comments — Onker's Additions Signed Off
-- **Source:** Meeting transcript — Julia reviewed Onker's comments on the spec tabs (particularly Tab 40 for maintenance drugs). Julia signed off on:
-  1. Adding LENA to DARA dual maintenance column
-  2. Adding THAL as mono maintenance
-  3. Updated statement language in spec comments
-- **Action:** Ensure these spec changes are reflected in `cl_mma_rollup.csv` (see Issue 6).
-- **Priority:** LOW — Sign-offs obtained; just needs codelist verification.
+**Why this must change:**
+Once maintenance is no longer formally defined for the study, the distinction between "SCT with maintenance" and "SCT without maintenance" becomes meaningless. Rule 4 (planned SCT not followed by maintenance within 180 days) was predicated on maintenance being a defined concept.
+
+**What needs to change:**
+- Remove `SCT_NO_MAINT` from the end-reason CASE logic (lines 1850-1853)
+- Reclassify these patients using the remaining SCT logic — most likely `SCT_AUTO` since they had a planned autologous SCT
+- Remove or simplify `LOT1_SCT_NO_MAINT_FLG` and `SCT_NO_MAINT_END_DT` (lines 1797-1818)
 
 ---
 
-## LOT OUTPUT (APR 14) — OBSERVATIONS
+### ISSUE 4: `MAINTENANCE_END` should no longer be a separate LOT1 end reason
 
-The LOT output PDF could not be rendered directly (poppler-utils not installed), but based on meeting discussion and code review:
+**Severity:** High
+**Source:** Meeting transcript
 
-### Dashboard Items Discussed:
-1. **End-reason distribution** — Julia reviewed this during the meeting and flagged MAINTENANCE_END and SCT_NO_MAINT as needing reclassification (Issues 1 & 2)
-2. **Top 15 induction regimens** — One table not updated (Issue 5). Julia noted the numbers seemed correct when she recalculated manually by summing individual medication counts
-3. **SCT descriptives** — Julia confirmed these were fixed ("I have fixed it up")
-4. **Maintenance descriptives** — Need updating after maintenance decision change
+This is a direct consequence of Issue 1. The current code at lines 1860-1863 sets:
+```
+THEN 'MAINTENANCE_END'
+```
 
-### Numbers Referenced in Meeting:
-- BORT induction: ~4,934 patients
-- Multiple regimen combinations adding up to ~14,000 patients on BORT-containing regimens
-- Total LOT1 patients with certain medication combos: ~440,000 claims (combined)
-- These numbers were deemed consistent with expectations after manual verification
+**Meeting discussion (Julia):**
+- "if those people are not having another medication added, I think that we would just say that they're discontinued"
+
+**What needs to change:**
+- Remove the `MAINTENANCE_END` branch from the end-reason CASE logic (line 1863)
+- These patients should fall through to `DISCONTINUATION` (line 1865) or applicable censoring reasons (DEATH, DISENROLLMENT, STUDY_END)
+- Also remove the corresponding end-date branch (lines 1885-1888) and length branch (lines 1914-1916)
+
+### ISSUE 5: CAR-T 45-day reclassification — directionality mismatch in code vs. meeting
+
+**Severity:** High
+**Source:** Meeting transcript + code review
+
+**Meeting requirement (Julia, verbatim):**
+- "if someone has a new medication added, but then within 45 days of that new agent, they're starting CAR-T, their reason for LOT1 end shouldn't be a medication add. It actually should be initiation of CAR-T therapy."
+
+This describes: **MED_ADD happens first → CAR-T within 45 days after**
+
+**Current code (lot_program.R lines 1823-1829):**
+```sql
+CASE
+  WHEN sct.FIRST_CART_DT IS NOT NULL
+   AND lb.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
+   AND datediff(date_add(lb.LOT1_BASE_1ST_ADD_MED_DT, 1), sct.FIRST_CART_DT)
+       BETWEEN 0 AND {cfg$cart_consolidation_days}
+  THEN 1
+  ELSE 0
+END AS CART_CONSOL_FLG
+```
+
+`datediff(A, B)` in Databricks = A - B. So this expression is:
+- `(ADD_MED_DT + 1) - CART_DT BETWEEN 0 AND 45`
+- True when ADD_MED_DT is 0-45 days **AFTER** CART_DT
+
+This captures: **CAR-T happens first → MED_ADD within 45 days after** (the opposite direction).
+
+**Two distinct issues:**
+
+1. **Direction mismatch:** The code handles CART→MED_ADD (new med after CART is consolidation therapy). The meeting describes MED_ADD→CART (new med before CART should be reclassified as CART initiation). These are different scenarios.
+
+2. **Missing end reason:** Even when CART_CONSOL_FLG=1, the code only *suppresses* MED_ADD (line 1856: `AND ec.CART_CONSOL_FLG = 0`). It does NOT create a positive `CART_INIT` end reason. The patient falls through to other reasons instead.
+
+**What needs to change:**
+- Add logic for the meeting's direction: if MED_ADD date is before FIRST_CART_DT and `datediff(FIRST_CART_DT, ADD_MED_DT) BETWEEN 0 AND 45`, flag it
+- Add a new end reason `CART_INIT` (or similar) in the CASE logic with FIRST_CART_DT as the end date
+- Clarify with Julia whether BOTH directions should be handled, or only the meeting's direction
+- **Note:** Julia acknowledged "that's kind of getting into defining LOT2" so this may be partially deferred, but the logic gap should be fixed
 
 ---
 
-## ACTION ITEMS SUMMARY
+## MEDIUM PRIORITY ISSUES
+
+### ISSUE 6: Runtime rollup CSV must match Apr 15-approved maintenance combinations
+
+**Severity:** Medium
+**Source:** Meeting transcript (Tab 40 sign-off discussion)
+
+The code is now CSV-only (`config_lot.R` line 50-51), so maintenance-approved combinations depend entirely on the runtime CSV content.
+
+**Combinations confirmed/signed-off during the meeting:**
+- DARA: `DUALMAINTENANCEWITH` should include `LENA` (Julia confirmed: "Dara and Len... that's a good idea")
+- LENA: `DUALMAINTENANCEWITH` should include `BORT, CARF, DARA`
+- THAL: `MONOMAINTENANCE` should be `1` (Julia confirmed: "just a valid mono maintenance... added as part of this study")
+- BORT: `DUALMAINTENANCEWITH` should include `LENA`
+- CARF: `DUALMAINTENANCEWITH` should include `LENA`
+
+**What needs to change:**
+- Before the next run, verify that the server-side `cl_mma_rollup.csv` loaded by the program matches these signed-off values
+- Cross-check against `clmmarollupapr14.pdf` spec which shows the expected values
+
+### ISSUE 7: Add targeted QC outputs for clinically unexpected first-line regimens
+
+**Severity:** Medium
+**Source:** Meeting transcript (Peter's feedback)
+
+Drugs flagged for follow-up review:
+- **BEND (Bendamustine):** Peter said it's not approved in 1st line. Some patients have it in the output. Real-world data makes it possible but unusual.
+- **DARA + POMA (Pomalidomide):** Peter said this is typically a 2nd-line combination. Present in the Apr 14 output.
+- **Cyclophosphamide followed by transplant:** Already has a dedicated deep-dive module (`R/cyclo_appendix_lot.R`), patient CSVs prepared.
+
+**Current code:** No targeted QC extracts exist for BEND or DARA+POMA. The CYCLO appendix exists.
+
+**What needs to change:**
+- Add focused QC exports / patient-level review tables for BEND and DARA+POMA combinations in LOT1
+- Julia said to wait for a more comprehensive list from Peter before deep-diving: "I'll wait till we get a more extensive list"
+- Share CYCLO patient CSVs with Julia via Domino project (not email, due to patient IDs)
+
+### ISSUE 8: LOT2-5 Implementation — Not Yet Started
+
+**Severity:** Medium (blocked on LOT1 cleanup)
+**Source:** Meeting transcript
+
+**Key differences from LOT1 per meeting and protocol v6:**
+1. **Induction window:** 30 days (vs. 60 days for LOT1) — `config_lot.R` line 40 currently hardcodes 60
+2. **LOT start triggers:** LOT2+ can start with CAR-T event, allogeneic SCT, or autologous SCT (in addition to new agent)
+3. **Iterative structure:** Each subsequent LOT's start depends on the previous LOT's end
+
+**Meeting outcome:**
+- Julia offered to start the LOT2-5 spec or have Onker do it after LOT1 cleanup
+- Onker to finish LOT1 cleanup by end of week, then start LOT2 spec
+- Julia to share old LOT2-5 spec from Optum for reference
+- Julia noted: "LOT1 won't really make sense until you have your other LOTs, like if you can see a full patient journey"
+
+**Current code:** Zero LOT2-5 logic exists. The program only builds LOT1.
+
+---
+
+## LOW PRIORITY / INFORMATIONAL
+
+### ISSUE 9: Top 15/25 Induction Regimen Table
+
+**Severity:** Low — NOT a confirmed code bug
+**Source:** Meeting transcript
+
+The meeting initially questioned whether the regimen table was stale, but then the discussion concluded the numbers were correct:
+- Julia: "I thought, when I saw the numbers initially, 5000, it kind of triggered a bit"
+- Onker: "I think it is kind of similar. It's just the... induction regimen"
+- Julia: "they are the correct number"
+
+Julia confirmed the **figures are accurate** but requested a dashboard refresh: "I'll refresh it. I'll send it to you."
+
+**Minor code note:** The saved table in `R/descriptives_lot.R` (line 627) does not include a percentage column in the exported data, though the console output and chart both show percentages. Adding `pct` to the saved table would be a small improvement.
+
+### ISSUE 10: Attrition Table — No Issues Found
+
+**Source:** `Apr 13 2026/Attrition/attritiom apr 14.pdf`
+
+Attrition flow (90-day cohort):
+| Step | Description | N | % |
+|------|-------------|---|---|
+| Starting Population | >= 1 medical claim for MM | 94,951 | 100.0% |
+| Inclusion 1 | >= 1 IP or >= 2 OP claims within 90 days | 70,866 | 74.6% |
+| Inclusion 2 | Age >= 18 in index year | 70,842 | 74.6% |
+| Inclusion 3 | >= 6 months CE baseline | 62,846 | 66.2% |
+| Inclusion 4 | >= 1 day CE follow-up | 62,843 | 66.2% |
+| Exclusion 5 | No MM therapy in baseline | 53,081 | 55.9% |
+| Inclusion 6 | Evidence of MM therapy in follow-up | 21,512 | 22.7% |
+
+Counts are consistent across 30-day, 60-day, and 90-day cohort definitions. No anomalies detected.
+
+### ISSUE 11: Protocol v6 — Parameters Aligned
+
+Julia confirmed protocol v6 is finalized ("shouldn't be any more changes"). Code parameters verified against protocol:
+- Induction window: 60 days (LOT1) — `config_lot.R` line 40 ✓
+- Maintenance minimum: 120 days — `config_lot.R` line 46 ✓
+- Post-SCT maintenance minimum: 30 days — `config_lot.R` line 47 ✓
+- SCT maintenance window: 180 days — `config_lot.R` line 48 ✓
+- Tandem SCT: 60-180 days apart — `config_lot.R` lines 55-56 ✓
+- CART consolidation: 45 days — `config_lot.R` line 59 ✓
+- Medical day supply assumed: 28 days — `config_lot.R` line 43 ✓
+- MAP discontinuation gap: 90 days — `config_lot.R` line 42 ✓
+
+### ISSUE 12: Spec Comments — Signed Off
+
+Julia reviewed Onker's comments on spec tabs during the meeting:
+- Adding LENA to DARA dual maintenance column: signed off ✓
+- Adding THAL as mono maintenance: signed off ✓
+- Updated statement language in spec comments: signed off ✓
+- Julia closed comments with her signature and date ✓
+
+---
+
+## ACTION ITEMS — PRIORITY ORDER
 
 ### Before Apr 23 Meeting (with Vicky):
-| # | Action | Owner | Issue Ref |
-|---|--------|-------|-----------|
-| 1 | Reclassify MAINTENANCE_END to DISCONTINUATION | Dev | Issue 1 |
-| 2 | Reclassify SCT_NO_MAINT (likely to SCT_AUTO) | Dev | Issue 2 |
-| 3 | Fix CART_CONSOL gap — add CART_INIT end reason | Dev | Issue 3 |
-| 4 | Add LOT1_HAS_VALID_MAINT_REGIMEN flag | Dev | Issue 4 |
-| 5 | Add pct column to Top 25 regimen saved table | Dev | Issue 5 |
-| 6 | Verify cl_mma_rollup.csv dual maintenance entries | Dev | Issue 6 |
-| 7 | Refresh dashboard and share updated link with Julia | Dev | Issue 5 |
+| Priority | Action | Issue Ref |
+|----------|--------|-----------|
+| P0 | Remove maintenance-period logic from LOT1 end-reason derivation | Issue 1 |
+| P1 | Add `contains_mtx_reg` flag to final dataset | Issue 2 |
+| P2 | Remove `MAINTENANCE_END` end reason (reclassify to DISCONTINUATION) | Issue 4 |
+| P3 | Remove `SCT_NO_MAINT` end reason (reclassify to SCT_AUTO) | Issue 3 |
+| P4 | Fix CAR-T 45-day directionality + add CART_INIT end reason | Issue 5 |
+| P5 | Verify runtime `cl_mma_rollup.csv` matches signed-off combinations | Issue 6 |
+| P6 | Refresh dashboard and share updated link with Julia | Issue 9 |
 
 ### Next Sprint (Post-Apr 23):
-| # | Action | Owner | Issue Ref |
-|---|--------|-------|-----------|
-| 8 | Start LOT2-5 spec (copy LOT1 anchor version, update window to 30 days) | Dev/Julia | Issue 7 |
-| 9 | Add BEND/DARA+POM flags to descriptives when patient list from Peter arrives | Dev | Issues 8, 9 |
-| 10 | Share CYCLO patient CSVs via Domino project | Dev | Issue 10 |
-| 11 | Julia to send old LOT2-5 spec from Optum | Julia | Issue 7 |
-| 12 | Julia to reshare protocol v6 link | Julia | Issue 13 |
+| Priority | Action | Issue Ref |
+|----------|--------|-----------|
+| P7 | Start LOT2-5 spec (30-day window, CAR-T/SCT start triggers) | Issue 8 |
+| P8 | Add BEND / DARA+POMA QC outputs when Peter provides full list | Issue 7 |
+| P9 | Share CYCLO patient CSVs via Domino project | Issue 7 |
+| P10 | Julia to send old LOT2-5 spec from Optum | Issue 8 |
 
 ---
 
@@ -216,17 +310,24 @@ The LOT output PDF could not be rendered directly (poppler-utils not installed),
 
 | Component | File | Lines |
 |-----------|------|-------|
-| LOT1 end reason CASE logic | `lot_program.R` | 1836-1870 |
-| LOT1 end date CASE logic | `lot_program.R` | 1872-1892 |
-| SCT_NO_MAINT flag | `lot_program.R` | 1797-1818 |
-| CART_CONSOL_FLG | `lot_program.R` | 1819-1829 |
-| Maintenance detection (S16a) | `lot_program.R` | 1392-1763 |
-| Maintenance output columns | `lot_program.R` | 1710-1753 |
-| valid_maint_regimens CTE | `lot_program.R` | 1442-1458 |
-| Top 25 regimen table | `R/descriptives_lot.R` | 577-628 |
+| Maintenance detection (S16a) — repurpose for flag | `lot_program.R` | 1392-1763 |
+| valid_maint_regimens CTE — basis for `contains_mtx_reg` | `lot_program.R` | 1442-1458 |
+| Maintenance output columns — stop using for end reasons | `lot_program.R` | 1710-1753 |
+| LOT1 end reason CASE logic — remove Rules 4 & 8 | `lot_program.R` | 1836-1870 |
+| LOT1 end date CASE logic — remove maint/SCT_NO_MAINT branches | `lot_program.R` | 1872-1892 |
+| LOT1 base length CASE logic — remove maint branches | `lot_program.R` | 1893-1922 |
+| SCT_NO_MAINT flag — remove or simplify | `lot_program.R` | 1797-1818 |
+| CART_CONSOL_FLG — fix directionality | `lot_program.R` | 1819-1829 |
+| MED_ADD suppression — add CART_INIT path | `lot_program.R` | 1854-1858 |
+| Top 25 regimen table / Figure 5 | `R/descriptives_lot.R` | 577-628 |
 | Configuration parameters | `R/config_lot.R` | 15-75 |
 | CYCLO deep-dive | `R/cyclo_appendix_lot.R` | (full file) |
-| End reason distribution print | `R/descriptives_lot.R` | 555-575 |
+
+---
+
+## BOTTOM LINE
+
+The main issue from the Apr 15 meeting is **not minor dashboard cleanup**. It is a **study-definition change**: stop defining maintenance as a formal LOT-ending construct and replace it with a flag-only concept (`contains_mtx_reg`). The Apr 14 LOT output still reflects the older maintenance-driven logic, so it should be treated as **out of date relative to the Apr 15 meeting decision**.
 
 ---
 
