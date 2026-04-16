@@ -1755,19 +1755,69 @@ main <- function() {
        OR SHORT_FOLLOWUP_FLG = 1
   "), qc = "
     SELECT
-      count(*) AS n_with_maintenance,
-      avg(datediff(LOT1_BASEMAINT_END, LOT1_BASEMAINT_START) + 1) AS avg_maint_duration,
+      count(*) AS n_maint_eligible,
       sum(LOT1_BASEMAINT_MED_LENA) AS n_lena_maint,
-      sum(LOT1_BASEMAINT_MED_BORT) AS n_bort_maint,
-      sum(MAINT_FOLLOWS_SCT_FLG) AS n_maint_post_sct
+      sum(LOT1_BASEMAINT_MED_BORT) AS n_bort_maint
     FROM lot1_maintenance")
 
-  # S16: LOT1_BASE_END - Final end reason incorporating SCT + maintenance
-  # End reason priority: SCT > SCT_NO_MAINT (Rule 4) > MED_ADD > MAINTENANCE_END (Rule 8)
+  # S16b: contains_mtx_reg — Flag-only maintenance concept (Apr 15 meeting)
+  # Does the LOT1 induction regimen contain a valid maintenance-approved subset
+  # (mono or dual) PLUS an anchor agent (any additional induction drug outside
+  # that subset)? The anchor may itself be maintenance-eligible in another context.
+  run_step(con, "S16b_lot1_contains_mtx_reg", glue("
+    CREATE OR REPLACE TEMPORARY VIEW lot1_contains_mtx_reg AS
+    WITH base_meds AS (
+      SELECT PATID, MED_ABBR
+      FROM lot1_induction_meds
+      UNION
+      SELECT im.PATID, ps.substitute_med AS MED_ABBR
+      FROM lot1_induction_meds im
+      INNER JOIN permissible_subs ps
+        ON im.MED_ABBR = ps.original_med
+    ),
+    valid_maint_regimens AS (
+      -- Mono maintenance: drug has MONOMAINTENANCE=1 and is in base_meds
+      SELECT DISTINCT bm.PATID, bm.MED_ABBR AS REGIMEN_KEY
+      FROM base_meds bm
+      INNER JOIN mma_rollup ru ON bm.MED_ABBR = ru.CL_MED_ABBR
+      WHERE ru.MONOMAINTENANCE = 1
+      UNION
+      -- Dual maintenance: drug lists partner via DUALMAINTENANCEWITH
+      SELECT DISTINCT
+        bm.PATID,
+        concat_ws(' ', sort_array(array(bm.MED_ABBR, bm2.MED_ABBR))) AS REGIMEN_KEY
+      FROM base_meds bm
+      INNER JOIN mma_rollup ru ON bm.MED_ABBR = ru.CL_MED_ABBR
+      INNER JOIN base_meds bm2
+        ON bm.PATID = bm2.PATID
+        AND bm.MED_ABBR <> bm2.MED_ABBR
+        AND array_contains(
+          transform(split(coalesce(ru.DUALMAINTENANCEWITH, ''), ','), v -> upper(trim(v))),
+          bm2.MED_ABBR)
+    ),
+    -- Anchor check: at least one induction drug outside the maintenance subset
+    anchored AS (
+      SELECT DISTINCT vmr.PATID
+      FROM valid_maint_regimens vmr
+      INNER JOIN lot1_induction_meds im ON vmr.PATID = im.PATID
+      WHERE NOT array_contains(split(vmr.REGIMEN_KEY, ' '), im.MED_ABBR)
+    )
+    SELECT DISTINCT
+      p.PATID,
+      CASE WHEN a.PATID IS NOT NULL THEN 1 ELSE 0 END AS contains_mtx_reg
+    FROM (SELECT DISTINCT PATID FROM lot1_induction_meds) p
+    LEFT JOIN anchored a ON p.PATID = a.PATID
+  "), qc = "
+    SELECT contains_mtx_reg, count(*) AS n
+    FROM lot1_contains_mtx_reg
+    GROUP BY contains_mtx_reg")
+
+  # S16: LOT1_BASE_END - Final end reason incorporating SCT + CAR-T initiation
+  # End reason priority: SCT (Rule 3) > SCT_AUTO/planned (Rule 4) > CART_INIT > MED_ADD
   #   > DISCONTINUATION > DEATH > DISENROLLMENT > STUDY_END
-  # C4 fix: Rule 4 — planned SCT not followed by maintenance within 180 days ends LOT1.
+  # Apr 15 meeting: MAINTENANCE_END removed; SCT_NO_MAINT reclassified to SCT_AUTO.
+  # CART_INIT: MED_ADD followed by CART within cart_consolidation_days → reclassified.
   # H3 fix: Split former CENSORED into DEATH, DISENROLLMENT, STUDY_END per Rules 5-7.
-  # CART consolidation: MED_ADD within cart_consolidation_days of CART is suppressed.
   run_step(con, "S16_lot1_base_end", glue("
     CREATE OR REPLACE TEMPORARY VIEW lot1_base_end AS
     WITH end_candidates AS (
@@ -1782,7 +1832,7 @@ main <- function() {
         sct.LOT1_1ST_SCT_DT,
         sct.FIRST_ALLO_DT,
         sct.FIRST_CART_DT,
-        -- Maintenance columns (C3 fix)
+        -- Maintenance columns (kept for reference, no longer drive end-reason per Apr 15 meeting)
         m.LOT1_BASEMAINT_START,
         m.LOT1_BASEMAINT_TYP,
         m.LOT1_BASEMAINT_END,
@@ -1793,7 +1843,9 @@ main <- function() {
         m.LOT1_BASEMAINT_MED_IXAZ,
         m.LOT1_BASEMAINT_MED_LENA,
         m.LOT1_BASEMAINT_MED_THAL,
-        -- C4 fix (Rule 4): planned AUTO SCT not followed by maintenance within 180 days
+        -- contains_mtx_reg flag (Apr 15 meeting: flag-only maintenance concept)
+        COALESCE(cmr.contains_mtx_reg, 0) AS contains_mtx_reg,
+        -- C4 fix (Rule 4): planned AUTO SCT — reclassified to SCT_AUTO (was SCT_NO_MAINT)
         CASE
           WHEN sct.LOT1_TX_AUTO_DT_1 IS NOT NULL
            AND sct.LOT1_TX_ENDDATE IS NULL
@@ -1816,29 +1868,33 @@ main <- function() {
                END
           ELSE NULL
         END AS SCT_NO_MAINT_END_DT,
-        -- CAR-T consolidation: new agents within {cfg$cart_consolidation_days} days of CART
-        -- are consolidation therapy, not LOT-ending MED_ADD (per sensitivity email)
+        -- CART_INIT: MED_ADD followed by CART within {cfg$cart_consolidation_days} days
+        -- Apr 15 meeting (Julia): "if someone has a new medication added, but then within
+        -- 45 days of that new agent, they're starting CAR-T, their reason for LOT1 end
+        -- shouldn't be a medication add. It actually should be initiation of CAR-T therapy."
+        -- datediff(A, B) = A - B in Databricks; CART_DT - ADD_START_DT BETWEEN 0 AND 45
         -- Note: LOT1_BASE_1ST_ADD_MED_DT is date_sub(ADD_START_DT, 1), so add 1 back
-        -- to compare the actual add-med start date against FIRST_CART_DT
         CASE
           WHEN sct.FIRST_CART_DT IS NOT NULL
            AND lb.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
-           AND datediff(date_add(lb.LOT1_BASE_1ST_ADD_MED_DT, 1), sct.FIRST_CART_DT) BETWEEN 0 AND {cfg$cart_consolidation_days}
+           AND datediff(sct.FIRST_CART_DT, date_add(lb.LOT1_BASE_1ST_ADD_MED_DT, 1)) BETWEEN 0 AND {cfg$cart_consolidation_days}
           THEN 1
           ELSE 0
-        END AS CART_CONSOL_FLG
+        END AS CART_INIT_FLG
       FROM lot1_base lb
       LEFT JOIN lot1_sct sct ON lb.PATID = sct.PATID
       LEFT JOIN lot1_maintenance m ON lb.PATID = m.PATID
+      LEFT JOIN lot1_contains_mtx_reg cmr ON lb.PATID = cmr.PATID
     )
     SELECT
       ec.*,
-      -- End reason priority: SCT > SCT_NO_MAINT > MED_ADD > MAINTENANCE_END
+      -- End reason priority: SCT > SCT_AUTO(planned) > CART_INIT > MED_ADD
       --   > DISCONTINUATION > DEATH > DISENROLLMENT > STUDY_END
+      -- Apr 15 meeting: MAINTENANCE_END removed; SCT_NO_MAINT reclassified to SCT_AUTO
       CASE
         -- Rule 3: Unplanned/excess SCT (ALLO, CART, or excess AUTO)
         WHEN ec.LOT1_TX_ENDDATE IS NOT NULL
-         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.CART_CONSOL_FLG = 1 OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.CART_INIT_FLG = 1 OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT)
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_DISCON_DT)
         THEN CASE ec.LOT1_TX_ENDDATE_REASON
                WHEN 1 THEN 'SCT_AUTO'
@@ -1846,46 +1902,44 @@ main <- function() {
                WHEN 3 THEN 'SCT_CART'
                ELSE 'SCT'
              END
-        -- Rule 4: Planned SCT not followed by maintenance within 180 days
+        -- Rule 4: Planned AUTO SCT (reclassified from SCT_NO_MAINT to SCT_AUTO per Apr 15)
         WHEN ec.LOT1_SCT_NO_MAINT_FLG = 1
-         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.CART_CONSOL_FLG = 1 OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.CART_INIT_FLG = 1 OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_1ST_ADD_MED_DT)
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_DISCON_DT)
-        THEN 'SCT_NO_MAINT'
-        -- MED_ADD: new non-base drug added (suppressed if CART consolidation)
+        THEN 'SCT_AUTO'
+        -- CART_INIT: MED_ADD followed by CART within 45 days (Apr 15 meeting)
+        WHEN ec.CART_INIT_FLG = 1
+         AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.FIRST_CART_DT <= ec.LOT1_BASE_DISCON_DT)
+        THEN 'CART_INIT'
+        -- MED_ADD: new non-base drug added (not followed by CART within 45 days)
         WHEN ec.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
-         AND ec.CART_CONSOL_FLG = 0
+         AND ec.CART_INIT_FLG = 0
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASE_1ST_ADD_MED_DT <= ec.LOT1_BASE_DISCON_DT)
         THEN 'MED_ADD'
-        -- Rule 8: Maintenance period ends (if patient had maintenance)
-        WHEN ec.LOT1_BASEMAINT_END IS NOT NULL
-         AND ec.LOT1_BASEMAINT_END_REASON IS NOT NULL
-         AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASEMAINT_END <= ec.LOT1_BASE_DISCON_DT)
-        THEN 'MAINTENANCE_END'
-        -- Rule 2: Discontinuation of all agents
+        -- Rule 2: Discontinuation of all agents (now also catches former MAINTENANCE_END patients)
         WHEN ec.LOT1_BASE_DISCON_DT IS NOT NULL THEN 'DISCONTINUATION'
         -- Rules 5-7: Censoring events
         WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT THEN 'DEATH'
         WHEN ec.OBS_END_DT < ec.ENDDATE THEN 'DISENROLLMENT'
         ELSE 'STUDY_END'
       END AS LOT1_BASE_END_REASON,
-      -- Corresponding end date
+      -- Corresponding end date (mirrors end-reason priority)
       CASE
         WHEN ec.LOT1_TX_ENDDATE IS NOT NULL
-         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.CART_CONSOL_FLG = 1 OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.CART_INIT_FLG = 1 OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT)
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_DISCON_DT)
         THEN ec.LOT1_TX_ENDDATE
         WHEN ec.LOT1_SCT_NO_MAINT_FLG = 1
-         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.CART_CONSOL_FLG = 1 OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.CART_INIT_FLG = 1 OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_1ST_ADD_MED_DT)
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_DISCON_DT)
         THEN ec.SCT_NO_MAINT_END_DT
+        WHEN ec.CART_INIT_FLG = 1
+         AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.FIRST_CART_DT <= ec.LOT1_BASE_DISCON_DT)
+        THEN ec.FIRST_CART_DT
         WHEN ec.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
-         AND ec.CART_CONSOL_FLG = 0
+         AND ec.CART_INIT_FLG = 0
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASE_1ST_ADD_MED_DT <= ec.LOT1_BASE_DISCON_DT)
         THEN ec.LOT1_BASE_1ST_ADD_MED_DT
-        WHEN ec.LOT1_BASEMAINT_END IS NOT NULL
-         AND ec.LOT1_BASEMAINT_END_REASON IS NOT NULL
-         AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASEMAINT_END <= ec.LOT1_BASE_DISCON_DT)
-        THEN ec.LOT1_BASEMAINT_END
         WHEN ec.LOT1_BASE_DISCON_DT IS NOT NULL THEN ec.LOT1_BASE_DISCON_DT
         WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT THEN ec.DEATH_DT
         ELSE ec.OBS_END_DT
@@ -1894,26 +1948,27 @@ main <- function() {
       CASE
         WHEN ec.LOT1_BASE_DISCON_DT IS NOT NULL
          AND (ec.LOT1_TX_ENDDATE IS NULL OR ec.LOT1_BASE_DISCON_DT < ec.LOT1_TX_ENDDATE)
-         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.CART_CONSOL_FLG = 1 OR ec.LOT1_BASE_DISCON_DT <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+         AND ((ec.CART_INIT_FLG = 1 AND ec.LOT1_BASE_DISCON_DT <= ec.FIRST_CART_DT)
+              OR (ec.CART_INIT_FLG = 0 AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.LOT1_BASE_DISCON_DT <= ec.LOT1_BASE_1ST_ADD_MED_DT)))
          AND (ec.LOT1_SCT_NO_MAINT_FLG = 0 OR ec.LOT1_BASE_DISCON_DT <= ec.SCT_NO_MAINT_END_DT)
         THEN datediff(ec.LOT1_BASE_DISCON_DT, ec.LOT1_START_DT) + 1
         ELSE datediff(
           CASE
             WHEN ec.LOT1_TX_ENDDATE IS NOT NULL
-             AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.CART_CONSOL_FLG = 1 OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+             AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.CART_INIT_FLG = 1 OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT)
              AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_DISCON_DT)
             THEN ec.LOT1_TX_ENDDATE
             WHEN ec.LOT1_SCT_NO_MAINT_FLG = 1
-             AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.CART_CONSOL_FLG = 1 OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+             AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.CART_INIT_FLG = 1 OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_1ST_ADD_MED_DT)
              AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.SCT_NO_MAINT_END_DT <= ec.LOT1_BASE_DISCON_DT)
             THEN ec.SCT_NO_MAINT_END_DT
+            WHEN ec.CART_INIT_FLG = 1
+             AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.FIRST_CART_DT <= ec.LOT1_BASE_DISCON_DT)
+            THEN ec.FIRST_CART_DT
             WHEN ec.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
-             AND ec.CART_CONSOL_FLG = 0
+             AND ec.CART_INIT_FLG = 0
              AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASE_1ST_ADD_MED_DT <= ec.LOT1_BASE_DISCON_DT)
             THEN ec.LOT1_BASE_1ST_ADD_MED_DT
-            WHEN ec.LOT1_BASEMAINT_END IS NOT NULL
-             AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASEMAINT_END <= ec.LOT1_BASE_DISCON_DT)
-            THEN ec.LOT1_BASEMAINT_END
             WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT THEN ec.DEATH_DT
             ELSE ec.OBS_END_DT
           END,
@@ -1923,7 +1978,8 @@ main <- function() {
     FROM end_candidates ec
   "), qc = "
     SELECT LOT1_BASE_END_REASON, count(*) AS n,
-           sum(CART_CONSOL_FLG) AS n_cart_consol
+           sum(CART_INIT_FLG) AS n_cart_init,
+           sum(contains_mtx_reg) AS n_contains_mtx_reg
     FROM lot1_base_end
     GROUP BY LOT1_BASE_END_REASON
     ORDER BY LOT1_BASE_END_REASON")

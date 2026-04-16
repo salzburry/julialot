@@ -677,7 +677,7 @@ print_descriptives <- function(con) {
         "DEATH" = "#2E86AB", "DISENROLLMENT" = "#5DA9C8",
         "STUDY_END" = "#8DC4DB", "SCT_AUTO" = "#A23B72",
         "SCT_ALLO" = "#8D5A97", "SCT_CART" = "#3F88C5", "SCT" = "#393E41",
-        "SCT_NO_MAINT" = "#B47EB3", "MAINTENANCE_END" = "#44AF69"
+        "CART_INIT" = "#44AF69"
       )
       p7 <- ggplot(end_reasons,
                     aes(x = reorder(LOT1_BASE_END_REASON, -n), y = n,
@@ -1645,7 +1645,7 @@ print_descriptives <- function(con) {
                  DEATH = "#2E86AB", DISENROLLMENT = "#5DA9C8",
                  STUDY_END = "#8DC4DB", SCT_AUTO = "#A23B72",
                  SCT_ALLO = "#8D5A97", SCT_CART = "#3F88C5",
-                 SCT_NO_MAINT = "#B47EB3", MAINTENANCE_END = "#44AF69", "#636e72")
+                 CART_INIT = "#44AF69", "#636e72")
         })
         node_colors <- c(reg_colors, mc_colors, er_colors)
 
