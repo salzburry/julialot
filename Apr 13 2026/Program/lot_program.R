@@ -1766,34 +1766,29 @@ main <- function() {
   # that subset)? The anchor may itself be maintenance-eligible in another context.
   run_step(con, "S16b_lot1_contains_mtx_reg", glue("
     CREATE OR REPLACE TEMPORARY VIEW lot1_contains_mtx_reg AS
-    WITH base_meds AS (
-      SELECT PATID, MED_ABBR
-      FROM lot1_induction_meds
-      UNION
-      SELECT im.PATID, ps.substitute_med AS MED_ABBR
-      FROM lot1_induction_meds im
-      INNER JOIN permissible_subs ps
-        ON im.MED_ABBR = ps.original_med
-    ),
+    WITH
+    -- Valid maintenance regimens from actual induction drugs only (NOT substitution-
+    -- expanded base_meds). Permissible subs can create phantom regimen members whose
+    -- original drug then falsely anchors a single-agent induction.
     valid_maint_regimens AS (
-      -- Mono maintenance: drug has MONOMAINTENANCE=1 and is in base_meds
-      SELECT DISTINCT bm.PATID, bm.MED_ABBR AS REGIMEN_KEY
-      FROM base_meds bm
-      INNER JOIN mma_rollup ru ON bm.MED_ABBR = ru.CL_MED_ABBR
+      -- Mono maintenance: drug has MONOMAINTENANCE=1 and is an actual induction drug
+      SELECT DISTINCT im.PATID, im.MED_ABBR AS REGIMEN_KEY
+      FROM lot1_induction_meds im
+      INNER JOIN mma_rollup ru ON im.MED_ABBR = ru.CL_MED_ABBR
       WHERE ru.MONOMAINTENANCE = 1
       UNION
-      -- Dual maintenance: drug lists partner via DUALMAINTENANCEWITH
+      -- Dual maintenance: drug lists partner via DUALMAINTENANCEWITH, both in induction
       SELECT DISTINCT
-        bm.PATID,
-        concat_ws(' ', sort_array(array(bm.MED_ABBR, bm2.MED_ABBR))) AS REGIMEN_KEY
-      FROM base_meds bm
-      INNER JOIN mma_rollup ru ON bm.MED_ABBR = ru.CL_MED_ABBR
-      INNER JOIN base_meds bm2
-        ON bm.PATID = bm2.PATID
-        AND bm.MED_ABBR <> bm2.MED_ABBR
+        im.PATID,
+        concat_ws(' ', sort_array(array(im.MED_ABBR, im2.MED_ABBR))) AS REGIMEN_KEY
+      FROM lot1_induction_meds im
+      INNER JOIN mma_rollup ru ON im.MED_ABBR = ru.CL_MED_ABBR
+      INNER JOIN lot1_induction_meds im2
+        ON im.PATID = im2.PATID
+        AND im.MED_ABBR <> im2.MED_ABBR
         AND array_contains(
           transform(split(coalesce(ru.DUALMAINTENANCEWITH, ''), ','), v -> upper(trim(v))),
-          bm2.MED_ABBR)
+          im2.MED_ABBR)
     ),
     -- Anchor check: at least one induction drug outside the maintenance subset
     anchored AS (
@@ -1893,8 +1888,14 @@ main <- function() {
       -- Apr 15 meeting: MAINTENANCE_END removed; SCT_NO_MAINT reclassified to SCT_AUTO
       CASE
         -- Rule 3: Unplanned/excess SCT (ALLO, CART, or excess AUTO)
+        -- When CART_INIT_FLG=1 and the SCT IS the CART (reason=3), skip this branch
+        -- so CART_INIT can handle it. Otherwise CART events always route to SCT_CART
+        -- before CART_INIT is ever reached.
         WHEN ec.LOT1_TX_ENDDATE IS NOT NULL
-         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.CART_INIT_FLG = 1 OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+         AND NOT (ec.CART_INIT_FLG = 1 AND ec.LOT1_TX_ENDDATE_REASON = 3)
+         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL
+              OR (ec.CART_INIT_FLG = 1 AND ec.LOT1_TX_ENDDATE <= ec.FIRST_CART_DT)
+              OR (ec.CART_INIT_FLG = 0 AND ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT))
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_DISCON_DT)
         THEN CASE ec.LOT1_TX_ENDDATE_REASON
                WHEN 1 THEN 'SCT_AUTO'
@@ -1926,7 +1927,10 @@ main <- function() {
       -- Corresponding end date (mirrors end-reason priority)
       CASE
         WHEN ec.LOT1_TX_ENDDATE IS NOT NULL
-         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.CART_INIT_FLG = 1 OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+         AND NOT (ec.CART_INIT_FLG = 1 AND ec.LOT1_TX_ENDDATE_REASON = 3)
+         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL
+              OR (ec.CART_INIT_FLG = 1 AND ec.LOT1_TX_ENDDATE <= ec.FIRST_CART_DT)
+              OR (ec.CART_INIT_FLG = 0 AND ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT))
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_DISCON_DT)
         THEN ec.LOT1_TX_ENDDATE
         WHEN ec.LOT1_SCT_NO_MAINT_FLG = 1
@@ -1955,7 +1959,10 @@ main <- function() {
         ELSE datediff(
           CASE
             WHEN ec.LOT1_TX_ENDDATE IS NOT NULL
-             AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.CART_INIT_FLG = 1 OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT)
+             AND NOT (ec.CART_INIT_FLG = 1 AND ec.LOT1_TX_ENDDATE_REASON = 3)
+             AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL
+                  OR (ec.CART_INIT_FLG = 1 AND ec.LOT1_TX_ENDDATE <= ec.FIRST_CART_DT)
+                  OR (ec.CART_INIT_FLG = 0 AND ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT))
              AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_DISCON_DT)
             THEN ec.LOT1_TX_ENDDATE
             WHEN ec.LOT1_SCT_NO_MAINT_FLG = 1
