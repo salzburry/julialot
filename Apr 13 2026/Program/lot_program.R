@@ -1864,9 +1864,9 @@ main <- function() {
           ELSE NULL
         END AS SCT_NO_MAINT_END_DT,
         -- CART_INIT: MED_ADD followed by CART within {cfg$cart_consolidation_days} days
-        -- Apr 15 meeting (Julia): "if someone has a new medication added, but then within
-        -- 45 days of that new agent, they're starting CAR-T, their reason for LOT1 end
-        -- shouldn't be a medication add. It actually should be initiation of CAR-T therapy."
+        -- Apr 15 meeting (Julia): if someone has a new medication added, but then within
+        -- 45 days of that new agent, they start CAR-T, the reason for LOT1 end should
+        -- be initiation of CAR-T therapy, not a medication add.
         -- datediff(A, B) = A - B in Databricks; CART_DT - ADD_START_DT BETWEEN 0 AND 45
         -- Note: LOT1_BASE_1ST_ADD_MED_DT is date_sub(ADD_START_DT, 1), so add 1 back
         CASE
