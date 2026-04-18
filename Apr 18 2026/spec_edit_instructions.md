@@ -4,6 +4,8 @@
 
 **Goal:** Apply the 8 confirmed edits (5 core + 3 clarifications) so the spec matches the Apr 15 2026 meeting decisions.
 
+**Key framing (per Apr 15 meeting):** The study does NOT abandon maintenance as a clinical concept. What changed is that the LOT is now modelled as **one single continuous regimen** — no separate "induction phase → maintenance phase" split with their own dates or end reasons. Maintenance-type drugs are captured via the `contains_mtx_reg` flag on that single regimen. Rules 4 and 8 (which ended a LOT based on a separate maintenance phase) are therefore no longer applicable.
+
 **How to use this file:** Each step gives (a) the file/tab/row to open, (b) the exact "BEFORE" text to locate, (c) the exact "AFTER" text to paste in. Follow the steps in order — Steps 1–5 must be done; Steps 6–8 are recommended clarifications.
 
 **Important correction (from the validated review):** The `CART_INIT` end date aligns to `FIRST_CART_DT - 1 day`, NOT the day before the added agent. All wording below reflects this.
@@ -136,7 +138,7 @@ If the row currently lists allowed values informally or narratively, replace wit
 
 **INSERT** (first sentence of the Definition column, before any existing text):
 
-> **`contains_mtx_reg` is a flag-only variable. It does NOT create a maintenance start date, maintenance end date, or any LOT-ending event. It only records whether the LOT1 induction regimen contains a valid mono- or dual-maintenance subset together with at least one additional non-steroid induction drug acting as an anchor.**
+> **Under this study, LOT1 is treated as a single continuous regimen — we do NOT split it into a separate induction period and a separate maintenance period with their own start/end dates or end reasons. Maintenance as a clinical concept still applies (patients do receive maintenance-type drugs), but it is captured ONLY via the `contains_mtx_reg` flag on the single LOT1 regimen: it records whether that regimen contains a valid mono- or dual-maintenance subset together with at least one additional non-steroid induction drug acting as an anchor. The flag does not create a separate maintenance start date, maintenance end date, or LOT-ending event.**
 
 ### 5b. Keep the existing background explanation
 

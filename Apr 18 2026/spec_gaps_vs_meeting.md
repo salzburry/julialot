@@ -9,6 +9,8 @@
 
 **Overall verdict (both reviews agree):** The spec is **partially** updated. The Apr 15 decisions were added in some places (new `contains_mtx_reg` flag, CAR-T 45-day consolidation row, DARA/LENA dual in the rollup), but the LOT1 end-reason section still carries older maintenance-based language that contradicts the meeting decisions.
 
+**Key framing (important — per Apr 15 meeting):** The study does NOT abandon maintenance as a clinical concept. What changed is that the LOT is now modelled as **one single continuous regimen** — no separate "induction period → maintenance period" split with their own dates or end reasons. Maintenance-type drugs are still captured, but via the `contains_mtx_reg` flag on the single LOT1 regimen. Rules 4 and 8 (which ended a LOT based on a separate maintenance phase) are therefore no longer applicable in this study.
+
 ---
 
 ## Section 1 — What both reviews agree IS already updated
@@ -146,7 +148,7 @@ This can be misread as an algorithm that derives a maintenance start date.
 
 **Required edit:** Keep the anchor explanation as background, but add a clear framing sentence at the top of the row:
 
-> "`contains_mtx_reg` is a flag-only variable. It does NOT create a maintenance start date, maintenance end date, or any LOT-ending event. It simply records whether the LOT1 induction regimen (non-steroid agents) contains a valid mono- or dual-maintenance subset with at least one additional induction drug acting as an anchor."
+> "Under this study, LOT1 is treated as a single continuous regimen — we do NOT split it into a separate induction period and a separate maintenance period with their own start/end dates or end reasons. Maintenance as a clinical concept still applies (patients do receive maintenance-type drugs), but it is captured ONLY via the `contains_mtx_reg` flag on the single LOT1 regimen: it records whether that regimen contains a valid mono- or dual-maintenance subset with at least one additional non-steroid induction drug acting as an anchor. The flag does not create a separate maintenance start date, maintenance end date, or LOT-ending event."
 
 Then retain the existing "imperative to include another agent" paragraph as clarification.
 

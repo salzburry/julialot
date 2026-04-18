@@ -9,6 +9,8 @@
 
 **Scope:** Static review only. No code changes made.
 
+**Key framing (per Apr 15 meeting):** The study does NOT abandon maintenance as a clinical concept. What changed is that LOT1 is modelled as **one single continuous regimen** — no separate "induction phase → maintenance phase" split. Maintenance-type drugs are captured via the `contains_mtx_reg` flag on the single regimen. Rules 4 and 8 (LOT ending based on a separate maintenance phase) are therefore no longer applicable, and the former `MAINTENANCE_END` / `SCT_NO_MAINT` buckets need to be remapped.
+
 ---
 
 ## Summary Table
