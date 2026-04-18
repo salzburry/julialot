@@ -9,6 +9,14 @@
 
 **Overall verdict (both reviews agree):** The spec is **partially** updated. The Apr 15 decisions were added in some places (new `contains_mtx_reg` flag, CAR-T 45-day consolidation row, DARA/LENA dual in the rollup), but the LOT1 end-reason section still carries older maintenance-based language that contradicts the meeting decisions.
 
+**Key framing (important — per Apr 15 meeting, LOT1):** The study does NOT derive a separate standalone maintenance period or maintenance regimen. Instead, it records whether LOT1 contains a valid maintenance-approved subset using `contains_mtx_reg`. The flag still requires identifying a valid maintenance subset with an anchor agent, but that is for **flagging presence only**, not for creating one official maintenance interval. Consequently, the old maintenance-based LOT-ending rules (Rule 4, Rule 8) no longer apply in this study.
+
+**Direct transcript support:**
+- "we're adding a flag, but we're not going to define it for this study"
+- "we're not trying to define the time and length of maintenance"
+- "we're just trying to see if there's a valid maintenance regimen contained within the lot one induction regimen"
+- for the old maintenance-end bucket: "if those people are not having another medication added … we would just say that they're discontinued"
+
 ---
 
 ## Section 1 — What both reviews agree IS already updated
@@ -146,7 +154,7 @@ This can be misread as an algorithm that derives a maintenance start date.
 
 **Required edit:** Keep the anchor explanation as background, but add a clear framing sentence at the top of the row:
 
-> "`contains_mtx_reg` is a flag-only variable. It does NOT create a maintenance start date, maintenance end date, or any LOT-ending event. It simply records whether the LOT1 induction regimen (non-steroid agents) contains a valid mono- or dual-maintenance subset with at least one additional induction drug acting as an anchor."
+> "The study does not derive a separate standalone maintenance period or maintenance regimen. This flag records whether LOT1 contains a valid maintenance-approved subset (mono or dual) together with at least one additional non-steroid induction drug acting as an anchor. Identifying a valid subset + anchor is required for flagging presence only — it does NOT create a maintenance start date, maintenance end date, or LOT-ending event."
 
 Then retain the existing "imperative to include another agent" paragraph as clarification.
 
