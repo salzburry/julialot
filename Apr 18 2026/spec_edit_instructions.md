@@ -4,7 +4,7 @@
 
 **Goal:** Apply the 8 confirmed edits (5 core + 3 clarifications) so the spec matches the Apr 15 2026 meeting decisions.
 
-**Key framing (per Apr 15 meeting):** The study does NOT abandon maintenance as a clinical concept. What changed is that the LOT is now modelled as **one single continuous regimen** — no separate "induction phase → maintenance phase" split with their own dates or end reasons. Maintenance-type drugs are captured via the `contains_mtx_reg` flag on that single regimen. Rules 4 and 8 (which ended a LOT based on a separate maintenance phase) are therefore no longer applicable.
+**Key framing (per Apr 15 meeting, LOT1):** The study does NOT derive a separate standalone maintenance period or maintenance regimen. Instead, it records whether LOT1 contains a valid maintenance-approved subset using `contains_mtx_reg`. The flag still requires identifying a valid maintenance subset with an anchor agent — but that is for **flagging presence only**, not for creating one official maintenance interval. Consequently, the old maintenance-based LOT-ending rules (Rule 4 "SCTs not followed by maintenance within 180 days" and Rule 8 "End of maintenance regimen") no longer apply, and the former `MAINTENANCE_END` end-reason bucket is removed (patients who would have landed there now fall through to `DISCONTINUATION` unless a higher-priority event applies).
 
 **How to use this file:** Each step gives (a) the file/tab/row to open, (b) the exact "BEFORE" text to locate, (c) the exact "AFTER" text to paste in. Follow the steps in order — Steps 1–5 must be done; Steps 6–8 are recommended clarifications.
 
@@ -138,7 +138,7 @@ If the row currently lists allowed values informally or narratively, replace wit
 
 **INSERT** (first sentence of the Definition column, before any existing text):
 
-> **Under this study, LOT1 is treated as a single continuous regimen — we do NOT split it into a separate induction period and a separate maintenance period with their own start/end dates or end reasons. Maintenance as a clinical concept still applies (patients do receive maintenance-type drugs), but it is captured ONLY via the `contains_mtx_reg` flag on the single LOT1 regimen: it records whether that regimen contains a valid mono- or dual-maintenance subset together with at least one additional non-steroid induction drug acting as an anchor. The flag does not create a separate maintenance start date, maintenance end date, or LOT-ending event.**
+> **The study does not derive a separate standalone maintenance period or maintenance regimen. Instead, this flag records whether LOT1 contains a valid maintenance-approved subset (mono or dual, from the approved list) together with at least one additional non-steroid induction drug acting as an anchor. Identifying a valid subset + anchor is required for flagging presence only — it does NOT create a maintenance start date, maintenance end date, or LOT-ending event.**
 
 ### 5b. Keep the existing background explanation
 

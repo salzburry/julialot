@@ -9,7 +9,7 @@
 
 **Scope:** Static review only. No code changes made.
 
-**Key framing (per Apr 15 meeting):** The study does NOT abandon maintenance as a clinical concept. What changed is that LOT1 is modelled as **one single continuous regimen** — no separate "induction phase → maintenance phase" split. Maintenance-type drugs are captured via the `contains_mtx_reg` flag on the single regimen. Rules 4 and 8 (LOT ending based on a separate maintenance phase) are therefore no longer applicable, and the former `MAINTENANCE_END` / `SCT_NO_MAINT` buckets need to be remapped.
+**Key framing (per Apr 15 meeting, LOT1):** The study does not derive a separate standalone maintenance period or maintenance regimen. Instead, it records whether LOT1 contains a valid maintenance-approved subset using `contains_mtx_reg`. The flag still requires identifying a valid subset with an anchor agent, but that is for flagging presence only — not for creating one official maintenance interval. Consequently, the old maintenance-based LOT-ending rules (Rule 4, Rule 8) no longer apply, and the former `MAINTENANCE_END` / `SCT_NO_MAINT` buckets need to be remapped.
 
 ---
 
