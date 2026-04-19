@@ -1,12 +1,12 @@
 # Spec Cell Replacements — Apr 18 2026
 
-For each cell below: open the file + tab, find the row by variable name, replace the named column with the text in the code block.
+For each cell below: open the file + tab, find the row by variable name, replace the named column with the text in the code block. **8 cells total — paste once per cell.**
 
 **Renumbering:** Rule 1 = substitutions, Rule 2 = discontinuation, Rule 3 = SCT / CAR-T events, Rule 4 = death (was 5), Rule 5 = disenrollment (was 6), Rule 6 = study end (was 7). Old maintenance Rules 4 and 8 are removed. Propagate this renumbering to the protocol, other spec tabs, and `lot_program.R` comments. Alternative: keep old numbering with gaps at 4 and 8 — pick one before applying.
 
 ---
 
-## Replacement 1
+## Cell 1
 
 **File:** `lot1baseendapr18.xlsx` · **Tab:** `10. LOT1_BASE_END` · **Row:** `LOT1_END_REASON_TEMP` · **Column:** `Definition`
 
@@ -30,7 +30,7 @@ Rules 2, 3, 4, 5, and 6 are the ending events. Maintenance is NOT treated as a s
 
 ---
 
-## Replacement 2
+## Cell 2
 
 **File:** `lot1baseendapr18.xlsx` · **Tab:** `10. LOT1_BASE_END` · **Row:** `LOT1_BASE_END_DT` · **Column:** `Definition`
 
@@ -44,7 +44,7 @@ For CAR-T transitions — including the CART_INIT case — LOT1_BASE_END_DT is t
 
 ---
 
-## Replacement 3
+## Cell 3
 
 **File:** `lot1baseendapr18.xlsx` · **Tab:** `10. LOT1_BASE_END` · **Row:** `LOT1_BASE_END_REASON` · **Column:** `Values`
 
@@ -56,7 +56,7 @@ The study does NOT use MAINTENANCE_END or SCT_NO_MAINT as final values.
 
 ---
 
-## Replacement 4
+## Cell 4
 
 **File:** `lot1baseendapr18.xlsx` · **Tab:** `10. LOT1_BASE_END` · **Row:** `LOT1_BASE_END_REASON` · **Column:** `Definition`
 
@@ -70,12 +70,12 @@ CART_INIT applies when a CAR-T infusion (FIRST_CART_DT) occurs within 45 days of
 
 Patients who would previously have ended LOT1 via end of maintenance regimen now map to DISCONTINUATION unless a higher-priority event applies first.
 
-Patients who would previously have been bucketed as SCT_NO_MAINT must be classified under the final non-maintenance LOT-ending rules above; SCT_NO_MAINT is not a final value in this study.
+Patients who would previously have been bucketed as SCT_NO_MAINT must be classified under the final non-maintenance LOT-ending rules above based on the earliest applicable event; SCT_NO_MAINT is not a final value in this study.
 ```
 
 ---
 
-## Replacement 5
+## Cell 5
 
 **File:** `lot1baseendapr18.xlsx` · **Tab:** `10. LOT1_BASE_END` · **Row:** `LOT1_BASE_LENGTH` · **Column:** `Definition`
 
@@ -85,7 +85,7 @@ LOT1 base period duration in days. Computed as LOT1_BASE_END_DT - LOT1_START_DT 
 
 ---
 
-## Replacement 6
+## Cell 6
 
 **File:** `lot1baseendapr18.xlsx` · **Tab:** `10. LOT1_BASE_END` · **Row:** `contains_mtx_reg` · **Column:** `Definition`
 
@@ -106,7 +106,7 @@ The anchor concept exists only to support this descriptive flag. It is NOT used 
 
 ---
 
-## Replacement 7
+## Cell 7
 
 **File:** `lot1baseapr18.xlsx` · **Tab:** `6. LOT1_BASE` · **Row:** `LOT1_MED_[MED]` · **Column:** `Additional Notes`
 
@@ -122,11 +122,11 @@ Replace with:
 Once the induction regimen medications are identified, the induction regimen period is defined as the time period beginning with the earliest MMA medication claim and continuing until a valid medication add is introduced (see list of permissible substitutions in LOT1_BASE_MEDS), all induction regimen medications discontinue, censoring occurs, or HSCT occurs.
 ```
 
-(Difference: removed "or maintenance begins".)
+(Only difference: "or maintenance begins" removed.)
 
 ---
 
-## Replacement 8
+## Cell 8
 
 **File:** `Mtx_scenarios.xlsx` · **Tab:** (single tab) · **Cell:** page 1, cell A1 (top banner above existing content)
 
@@ -135,28 +135,6 @@ REFERENCE ONLY - updated per Apr 15 2026 meeting.
 
 These maintenance scenarios are retained as background examples and do NOT define an operational maintenance period for this study. The current study uses contains_mtx_reg as a descriptive flag only and does not use maintenance to create a LOT-ending event. For the active definition, see the contains_mtx_reg row in lot1baseendapr18.xlsx, tab 10. LOT1_BASE_END.
 ```
-
----
-
-## Replacement A
-
-**File:** `lot1baseendapr18.xlsx` · **Tab:** `10. LOT1_BASE_END` · **Row:** `LOT1_BASE_END_REASON` · **Column:** `Additional Notes`
-
-```
-SCT_NO_MAINT is not a final end-reason value in this study. Cases previously classified as SCT_NO_MAINT must be recategorized under the final non-maintenance LOT-ending rules based on the earliest applicable event.
-```
-
----
-
-## Replacement B — RESOLVED: `FIRST_CART_DT − 1` (spec wins)
-
-**File:** `lot1baseendapr18.xlsx` · **Tab:** `10. LOT1_BASE_END` · **Row:** `LOT1_BASE_END_DT` · **Column:** `Additional Notes`
-
-```
-CART_INIT end date: When LOT1_BASE_END_REASON = CART_INIT, LOT1_BASE_END_DT is the day before FIRST_CART_DT. The CAR-T LOT begins on FIRST_CART_DT.
-```
-
-**Code alignment required:** update all CART_INIT end-date derivations and dependent `LOT1_BASE_LENGTH` logic in `lot_program.R` — not only the 1940-1942 branch (there is a parallel branch in the `LOT1_BASE_LENGTH` CASE around 1972-1974 and potentially other `CART_INIT` date comparisons that need review).
 
 ---
 
@@ -172,7 +150,7 @@ CART_INIT end date: When LOT1_BASE_END_REASON = CART_INIT, LOT1_BASE_END_DT is t
 | 6 | `lot1baseendapr18.xlsx` | `10. LOT1_BASE_END` | `contains_mtx_reg` | Definition |
 | 7 | `lot1baseapr18.xlsx` | `6. LOT1_BASE` | `LOT1_MED_[MED]` | Additional Notes |
 | 8 | `Mtx_scenarios.xlsx` | (single tab) | page 1, A1 | top banner |
-| A | `lot1baseendapr18.xlsx` | `10. LOT1_BASE_END` | `LOT1_BASE_END_REASON` | Additional Notes |
-| B | `lot1baseendapr18.xlsx` | `10. LOT1_BASE_END` | `LOT1_BASE_END_DT` | Additional Notes |
 
-Apply all 10. Only open item: the code alignment flagged under Replacement B (to be handled later, not in this pass).
+Paste once per cell.
+
+**Code follow-up (separate pass, not part of this spec update):** `lot_program.R` — update all `CART_INIT` end-date derivations and dependent `LOT1_BASE_LENGTH` logic so the end date equals `FIRST_CART_DT - 1`, not `FIRST_CART_DT` (both the 1940-1942 branch and the parallel branch in the `LOT1_BASE_LENGTH` CASE around 1972-1974).
