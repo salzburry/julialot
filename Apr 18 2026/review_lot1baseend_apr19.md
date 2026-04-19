@@ -30,9 +30,9 @@
 
 ## Gaps to close before deleting the old file
 
-### Gap 1. Downstream rule-number references still use the old scheme
+### Gap 1. Downstream rule-number references still use the old scheme — **verified INSIDE the Apr 19 file itself**
 
-**Authoritative numbering (per Apr 19 file, confirmed):**
+**Authoritative numbering (per Apr 19 file top-level rules, confirmed):**
 
 | Rule | Covers |
 |---:|---|
@@ -43,17 +43,21 @@
 | Rule 5 | End of study period |
 | — (Note) | Permissible substitutions — exception, not an ending event |
 
-The Apr 19 file applies this consistently inside its own cells (`LOT1_END_DT_TEMP`, `LOT1_END_REASON_TEMP`, `LOT1_BASE_END_DT`, `LOT1_BASE_END_REASON`).
+The **top-of-page rules narrative** in `LOT1_END_DT_TEMP` and `LOT1_END_REASON_TEMP` has been renumbered correctly. **But several other rows in the same workbook still quote OLD rule numbers**:
 
-`spec_edit_instructions.md` has now been updated to match this numbering.
+| Location (line no. in extracted text from `lot1baseendupdatedapr19.pdf`) | Current (stale) text | What it should say |
+|---|---|---|
+| `:2191` — `LOT1_BASE_1ST_ADD_MED_DT` row | *"Per **Rule 1**: permissible substitutions (biologic reference product with biosimilars) 'do not advance the LOT.'"* | "Per the permissible-substitutions Note in `LOT1_END_REASON_TEMP`" — substitutions are no longer Rule 1 in the new scheme |
+| `:1082` — `FIRST_ALLO_DT` row | *"**Rule 3**: 'Any allogeneic SCTs are considered a new LOT…'"* | "**Rule 2** (SCT / CAR-T events): …" |
+| `:2360` — `ALLO_ALWAYS_ENDS_LOT` row | *"**Rule 3**: 'Any allogeneic SCTs are considered a new LOT…'"* | "**Rule 2** (SCT / CAR-T events): …" |
 
-**What still needs a sweep:**
+**Also check outside this file:**
+- Protocol Section 5.1.1 — if it uses rule numbers, align to the new 1–5 scheme.
+- `lot_program.R` comments — references like `# Rule 3: Unplanned SCT`, `# Rule 4: Planned AUTO SCT` are stale. (Most of these get deleted when the SCT_NO_MAINT logic is removed per the code review, but any surviving references need the new numbers.)
 
-- **`ALLO_ALWAYS_ENDS_LOT` row** (same workbook, same tab) — the extract still shows it quoting *"Rule 3: 'Any allogeneic SCTs are considered a new LOT …'"*. Under the new numbering, ALLO lives under **Rule 2** (SCT / CAR-T events), not Rule 3. Update the quoted rule number.
-- **Protocol Section 5.1.1** — if it uses rule numbers anywhere, align to the new 1–5 scheme.
-- **`lot_program.R` comments** — references like `# Rule 3: Unplanned SCT`, `# Rule 4: Planned AUTO SCT` are stale. (Most of these get deleted anyway when the SCT_NO_MAINT logic is removed per the code review, but any surviving references need the new numbers.)
+**Action:** In the same workbook, update the three stale references above and any others like them. Sweep the protocol and code comments for the same treatment.
 
-**Action:** sweep the workbook + protocol + code comments for any "Rule 3/4/5/6/7/8" reference and align with the new 1–5 scheme.
+`spec_edit_instructions.md` already uses the new numbering, so it does not need further edits for this gap.
 
 ---
 
@@ -72,6 +76,22 @@ The study does NOT use MAINTENANCE_END or SCT_NO_MAINT as final values.
 **Impact:** A QC reader has no authoritative list of the allowed string values. They have to infer the values from the priority order narrative in the Definition column. This was a specific cleanup the team agreed to make.
 
 **Action:** Paste the Cell 3 text into the `Values` column of `LOT1_BASE_END_REASON`.
+
+---
+
+### Gap 3. `contains_mtx_reg` still mixes new flag-only framing with the old operational paragraph
+
+**Spec (Cell 6):** rewrites the cell around the flag-only framing and lists mono / dual agents, keeping the background paragraph but prepending "Background clarification (for interpreting the flag only — not an operational derivation):" so it's clearly labelled.
+
+**Apr 19 file:** has the new flag-only lead-in, but the old operational paragraph *"Definition of a maintenance period: The LOT's initial regimen transitions into a maintenance regimen, such that non-maintenance medications present during the initial regimen are discontinued …"* still appears unlabelled. Verified occurrences in the extract:
+- `:2734` (inside the `contains_mtx_reg` row) — "Definition of a maintenance period" text
+- `:3130` / `:3162` — same text appears again, with "regimen transitions into a maintenance regimen" wording
+
+**Impact:** A reader sees the "flag only" sentence at the top AND the operational-derivation wording right below with no labelling to signal which is authoritative. Consistent with the Cell 6 wording in `spec_edit_instructions.md`, add the label:
+
+> _Background clarification (for interpreting the flag only — not an operational derivation):_
+
+…immediately before the "Definition of a maintenance period…" paragraph, so the mixed framing is resolved.
 
 ---
 
@@ -103,11 +123,18 @@ Worth confirming these two are also handled before closing the spec pass.
 
 ## Recommendation
 
-**You can delete the old `lot1baseendapr18.pdf` after closing Gap 2 (populate the Values column) and doing the downstream rule-number sweep in Gap 1.** The maintenance-removal changes, CART_INIT convention, priority order, and `contains_mtx_reg` reframing are all correctly captured in `lot1baseendupdatedapr19.pdf`.
+**Do NOT delete the old `lot1baseendapr18.pdf` yet.** The Apr 19 file is directionally correct but not yet fully aligned. Three concrete items remain:
 
-Zero-risk path:
-1. Populate the `Values` column on `LOT1_BASE_END_REASON` with the allowed-values text (Cell 3).
-2. Sweep the workbook for any remaining "Rule 3" / "Rule 4" / "Rules 1–8" / "Rules 2–8" references and align them with the new 1–5 numbering (confirmed fix on the `ALLO_ALWAYS_ENDS_LOT` row, which still says "Rule 3").
-3. Then the old `lot1baseendapr18.pdf` is safe to delete.
+1. **Gap 1 — rule-number sweep.** Three stale references inside the Apr 19 workbook itself (at extract lines `:1082`, `:2191`, `:2360`). Update them to the new 1–5 scheme. Also sweep protocol Section 5.1.1 and `lot_program.R` comments.
+2. **Gap 2 — populate `Values` column.** The allowed-values enumeration (Cell 3) is missing. Paste it in.
+3. **Gap 3 — label the old operational paragraph inside `contains_mtx_reg`.** Prepend "Background clarification (for interpreting the flag only — not an operational derivation):" so the mixed framing is resolved.
+
+Once those three are done, the old `lot1baseendapr18.pdf` is safe to delete.
+
+---
+
+## Note on workspace / branch mismatch
+
+If `spec_edit_instructions.md` and `review_lot1baseend_apr19.md` are not visible in your local clone, it's because they live on branch `claude/review-meeting-minutes-BWAJF`, not `main`. Switch branches (`git checkout claude/review-meeting-minutes-BWAJF`) or pull that branch to see them. The Apr 19 PDF itself was pulled from `main` into this branch for the review.
 
 *End of review.*
