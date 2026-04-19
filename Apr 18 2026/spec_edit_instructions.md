@@ -2,7 +2,7 @@
 
 For each cell below: open the file + tab, find the row by variable name, replace the named column with the text in the code block.
 
-**Renumbering:** Rule 1 = substitutions, Rule 2 = discontinuation, Rule 3 = SCT/CAR-T, Rule 4 = death (was 5), Rule 5 = disenrollment (was 6), Rule 6 = study end (was 7). Old maintenance Rules 4 and 8 are removed. Propagate this renumbering to the protocol, other spec tabs, and `lot_program.R` comments. Alternative: keep old numbering with gaps at 4 and 8 — pick one before applying.
+**Renumbering:** Rule 1 = substitutions, Rule 2 = discontinuation, Rule 3 = SCT / CAR-T events, Rule 4 = death (was 5), Rule 5 = disenrollment (was 6), Rule 6 = study end (was 7). Old maintenance Rules 4 and 8 are removed. Propagate this renumbering to the protocol, other spec tabs, and `lot_program.R` comments. Alternative: keep old numbering with gaps at 4 and 8 — pick one before applying.
 
 ---
 
@@ -145,10 +145,8 @@ These maintenance scenarios are retained as background examples and do NOT defin
 **File:** `lot1baseendapr18.xlsx` · **Tab:** `10. LOT1_BASE_END` · **Row:** `LOT1_BASE_END_REASON` · **Column:** `Additional Notes`
 
 ```
-SCT_NO_MAINT is not a final end-reason value in this study. Cases previously classified as SCT_NO_MAINT must be recategorized under the final non-maintenance LOT-ending rules, including SCT_AUTO or SCT_ALLO as applicable.
+SCT_NO_MAINT is not a final end-reason value in this study. Cases previously classified as SCT_NO_MAINT must be recategorized under the final non-maintenance LOT-ending rules based on the earliest applicable event.
 ```
-
-**Open question for Julia:** (a) relabel every former SCT_NO_MAINT patient as `SCT_AUTO` (matches current code), OR (b) route each by actual next event — `SCT_AUTO` only if a 3rd/unplanned AUTO follows, else `MED_ADD` / `CART_INIT` / `DISCONTINUATION` / censoring (matches Rule 3).
 
 ---
 
@@ -160,7 +158,7 @@ SCT_NO_MAINT is not a final end-reason value in this study. Cases previously cla
 CART_INIT end date: When LOT1_BASE_END_REASON = CART_INIT, LOT1_BASE_END_DT is the day before FIRST_CART_DT. The CAR-T LOT begins on FIRST_CART_DT.
 ```
 
-**Code change required:** `lot_program.R:1940-1942` currently sets `ec.FIRST_CART_DT`; change to `date_sub(ec.FIRST_CART_DT, 1)` to align with the spec.
+**Code alignment required:** update all CART_INIT end-date derivations and dependent `LOT1_BASE_LENGTH` logic in `lot_program.R` — not only the 1940-1942 branch (there is a parallel branch in the `LOT1_BASE_LENGTH` CASE around 1972-1974 and potentially other `CART_INIT` date comparisons that need review).
 
 ---
 
@@ -179,4 +177,4 @@ CART_INIT end date: When LOT1_BASE_END_REASON = CART_INIT, LOT1_BASE_END_DT is t
 | A | `lot1baseendapr18.xlsx` | `10. LOT1_BASE_END` | `LOT1_BASE_END_REASON` | Additional Notes |
 | B | `lot1baseendapr18.xlsx` | `10. LOT1_BASE_END` | `LOT1_BASE_END_DT` | Additional Notes |
 
-Apply all 10. Open items: the single policy question in A, the steroid-anchor clarification in 6, and the code change flagged under B.
+Apply all 10. Open items: the steroid-anchor clarification in Replacement 6, and the code alignment flagged under Replacement B.
