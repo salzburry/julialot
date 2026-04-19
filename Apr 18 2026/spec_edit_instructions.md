@@ -90,21 +90,19 @@ LOT1 base period duration in days. Computed as LOT1_BASE_END_DT - LOT1_START_DT 
 **File:** `lot1baseendapr18.xlsx` · **Tab:** `10. LOT1_BASE_END` · **Row:** `contains_mtx_reg` · **Column:** `Definition`
 
 ```
-contains_mtx_reg is a flag-only variable. The study does NOT derive a separate standalone maintenance period or maintenance regimen. This flag records whether LOT1 contains a valid maintenance-approved subset; it does NOT create a maintenance start date, maintenance end date, or LOT-ending event.
+contains_mtx_reg is a descriptive flag. The study does NOT derive a separate standalone maintenance period or maintenance regimen. This flag records whether LOT1 contains a valid maintenance-approved subset; it does NOT create a maintenance start date, maintenance end date, or LOT-ending event.
 
 Set contains_mtx_reg = 1 when BOTH of the following are true for the LOT1 induction regimen:
   (a) The induction regimen contains at least one valid mono-maintenance agent OR a valid dual-maintenance combination (see lists below); AND
-  (b) At least one additional MM oncology agent outside that qualifying maintenance subset is present, acting as an anchor.
+  (b) At least one additional agent — of any class in CL_MMA_ROLLUP, including corticosteroids (e.g., dexamethasone, prednisone) — is present outside that qualifying maintenance subset, acting as an anchor.
 
 Otherwise contains_mtx_reg = 0.
 
 Valid mono-maintenance agents: lenalidomide, bortezomib, daratumumab, ixazomib, thalidomide.
 Valid dual-maintenance combinations: bortezomib/lenalidomide, carfilzomib/lenalidomide, daratumumab/lenalidomide.
 
-The anchor concept exists only to support this flag. It is NOT used to derive a separate maintenance period or a maintenance-based LOT end.
+The anchor concept exists only to support this descriptive flag. It is NOT used to derive a separate maintenance period or a maintenance-based LOT end. Any additional drug in the induction regimen — oncology or supportive (including steroids) — satisfies the anchor requirement, so the flag identifies the full set of LOT1 patients whose induction contains a maintenance-approved subset alongside any further therapy.
 ```
-
-**Pending clarification for Julia:** should anchor agents be restricted to non-steroid MM oncology agents? (Code currently excludes steroids; not explicitly discussed in Apr 15 meeting.) If yes, append to clause (b): *"Corticosteroids do not qualify as anchor agents."*
 
 ---
 
@@ -177,4 +175,4 @@ CART_INIT end date: When LOT1_BASE_END_REASON = CART_INIT, LOT1_BASE_END_DT is t
 | A | `lot1baseendapr18.xlsx` | `10. LOT1_BASE_END` | `LOT1_BASE_END_REASON` | Additional Notes |
 | B | `lot1baseendapr18.xlsx` | `10. LOT1_BASE_END` | `LOT1_BASE_END_DT` | Additional Notes |
 
-Apply all 10. Open items: the steroid-anchor clarification in Replacement 6, and the code alignment flagged under Replacement B.
+Apply all 10. Only open item: the code alignment flagged under Replacement B (to be handled later, not in this pass).
