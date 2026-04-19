@@ -206,15 +206,19 @@ These two replacement texts depend on decisions Julia has not made yet. Apply th
 **Variable / row:** `LOT1_BASE_END_REASON`
 **Column:** `Additional Notes`
 
+**Context (for reviewers — not part of the cell text):**
+
+`SCT_NO_MAINT` is NOT an SCT type. The SCT types are AUTO, ALLO, and CAR-T. `SCT_NO_MAINT` was a **legacy LOT1 end-reason value** produced by the pre-Apr 15 spec under old Rule 4 ("SCTs not followed by maintenance within 180 days"): a planned single or tandem AUTO that was not followed by a valid maintenance regimen within 180 days ended LOT1 on the AUTO date and was labelled `SCT_NO_MAINT`. Rule 4 has been removed; planned single/tandem AUTO is now a continuation of the line and does not by itself end LOT1. The patients who used to land in `SCT_NO_MAINT` therefore need to be re-routed into the remaining end reasons — which is what Julia needs to decide.
+
 **Placeholder text to use until Julia answers:**
 
 ```
-SCT_NO_MAINT remap: Planned single or tandem autologous SCT without maintenance does not create a separate end-reason category in this study. These cases must be classified under the final non-maintenance LOT-ending rules listed in the Definition column. Specific sub-case mapping pending Julia's confirmation.
+Legacy bucket remap — per Apr 15 2026 meeting decision: SCT_NO_MAINT is not a final LOT1_BASE_END_REASON value in this study. Under the removed old Rule 4, a planned single or tandem autologous SCT followed by no valid maintenance within 180 days would have ended LOT1 with end reason SCT_NO_MAINT. Under the current rules, planned single or tandem AUTO is continuation of the line (Rule 3) and does not by itself end LOT1. Patients previously bucketed as SCT_NO_MAINT must therefore be classified under the final non-maintenance LOT-ending rules listed in the Definition column. Specific sub-case mapping pending Julia's confirmation.
 ```
 
 **Question to send Julia:**
 
-> "For the former SCT_NO_MAINT cohort, do you want to (a) relabel all of them as SCT_AUTO, or (b) route them by the actual earliest downstream event (DISCONTINUATION / MED_ADD / CART_INIT / SCT_AUTO / SCT_ALLO)?"
+> "For the patients who used to be labelled SCT_NO_MAINT under the old spec — all of whom had a planned single or tandem AUTO SCT — do you want to (a) relabel all of them as SCT_AUTO, or (b) route them by the actual earliest downstream event (DISCONTINUATION / MED_ADD / CART_INIT / SCT_AUTO if an unplanned/excess AUTO follows / SCT_ALLO if ALLO follows)?"
 
 ---
 
