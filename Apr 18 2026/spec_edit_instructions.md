@@ -24,7 +24,8 @@
 
 **File:** `lot1baseendapr18.pdf` (Excel: `lot1baseendapr18.xlsx`)
 **Tab:** `10. LOT1_BASE_END`
-**Cell:** Page 1, top narrative cell (the long free-form cell that lists Rules 1–8 — there is only one such cell on page 1 above the variable table)
+**Variable / row:** `LOT1_END_REASON_TEMP` (Label: "Temporary LOT1 base period end reason")
+**Column:** `Definition`
 
 **Replace the entire cell contents with:**
 
@@ -35,7 +36,7 @@ The LOT will continue until the earliest of any of the following:
 
 (Rule 2) Discontinuation of all agents in the regimen, with or without switch to a new agent. The LOT end date is the run-out date, defined as the last date that any MM medication in that LOT is considered to be available. If the current LOT is immediately interrupted by a new agent, the LOT end date is the day before the first administration / dispense date of the new agent.
 
-(Rule 3) Unplanned SCTs: if an autologous SCT occurs > 180 days following a previous autologous SCT, the LOT will end the day before the latter SCT. Any allogeneic SCTs are considered a new LOT and the current LOT will end the day before the allogeneic SCT.
+(Rule 3) Unplanned SCTs: if an autologous SCT occurs > 180 days following a previous autologous SCT, the LOT will end the day before the latter SCT. Any allogeneic SCTs are considered a new LOT and the current LOT will end the day before the allogeneic SCT. CAR-T cellular therapy infusions are classified as their own LOT; the preceding LOT transition for CAR-T is defined in the LOT1_TX_ENDDATE_REASON and LOT1_BASE_END_DT rows.
 
 (Rule 4) Death.
 
@@ -92,12 +93,12 @@ The study does NOT use MAINTENANCE_END or SCT_NO_MAINT as final values.
 **Replace the entire cell contents with:**
 
 ```
-Final LOT1 base period end reason. Derived from priority evaluation of the LOT-ending events listed in the Rules narrative on page 1.
+Final LOT1 base period end reason. Derived by selecting the earliest end date across the LOT-ending events listed in the LOT1_END_REASON_TEMP rules narrative (Rules 2, 3, 4, 5, 6).
 
-Priority order (earliest-matching rule wins):
+Priority order below applies when more than one end-reason resolves on the same earliest end date:
 SCT_ALLO  >  SCT_CART  >  SCT_AUTO  >  CART_INIT  >  MED_ADD  >  DISCONTINUATION  >  DEATH  >  DISENROLLMENT  >  STUDY_END
 
-CART_INIT applies when LOT1_BASE_1ST_ADD_MED_DT is not missing AND a CAR-T infusion (FIRST_CART_DT) occurs within 45 days of that added agent. In that case the end reason is CART_INIT (not MED_ADD). The LOT1_BASE_END_DT convention for CART_INIT is set in the LOT1_BASE_END_DT row and must be applied consistently with lot_program.R.
+CART_INIT applies when a CAR-T infusion (FIRST_CART_DT) occurs within 45 days of the start date of the first added agent. In that case the end reason is CART_INIT (not MED_ADD). The LOT1_BASE_END_DT convention for CART_INIT is set in the LOT1_BASE_END_DT row and must be applied consistently with lot_program.R.
 
 Patients who would previously have ended LOT1 via end of maintenance regimen now map to DISCONTINUATION unless a higher-priority event applies first.
 
@@ -229,6 +230,13 @@ CART_INIT end date: When LOT1_BASE_END_REASON = CART_INIT, LOT1_BASE_END_DT foll
 **Question to send Julia:**
 
 > "For CART_INIT, should LOT1_BASE_END_DT = FIRST_CART_DT (matches current code at lot_program.R:1940-1942) or FIRST_CART_DT - 1 (matches the general CAR-T-as-new-LOT convention stated in the LOT1_TX_ENDDATE_REASON row)?"
+
+**Once Julia decides, align ALL of the following so they tell the same story:**
+
+1. `lot1baseendapr18.xlsx` tab `10. LOT1_BASE_END` — row `LOT1_BASE_END_DT` (Definition column, and the CART_INIT sentence).
+2. `lot1baseendapr18.xlsx` tab `10. LOT1_BASE_END` — row `LOT1_TX_ENDDATE_REASON` (the general "preceding LOT ends the day before the CAR-T infusion date" wording lives here and is the main source of the current spec tension).
+3. `lot1baseendapr18.xlsx` tab `10. LOT1_BASE_END` — row `CART_45D_CONSOLIDATION` — review wording for consistency with whichever convention Julia picks.
+4. `lot_program.R:1940-1942` — the `THEN ec.FIRST_CART_DT` branch of the CART_INIT end-date CASE statement.
 
 ---
 
