@@ -4,6 +4,20 @@
 
 **Note on cell references:** The Apr 18 spec workbook is set up as a tabbed Excel-style document with columns like Variable, Label, Values, Definition, Code Lists Group, Additional Notes, Date Modified, QC Reviewed. The replacements below identify each cell by tab + variable name + column header. (Excel column letters depend on the workbook layout — locate by header.)
 
+**Renumbering convention used below:** Old Rules 4 and 8 (maintenance-based) are removed per the Apr 15 2026 meeting. The remaining rules are renumbered consecutively so there are no gaps:
+
+| New rule | What it covers | Was previously |
+|---:|---|---|
+| Rule 1 | Permissible substitutions (not an ending event) | Rule 1 (unchanged) |
+| Rule 2 | Discontinuation of all agents | Rule 2 (unchanged) |
+| Rule 3 | Unplanned SCTs (incl. ALLO) | Rule 3 (unchanged) |
+| Rule 4 | Death | **was Rule 5** |
+| Rule 5 | Health plan disenrollment | **was Rule 6** |
+| Rule 6 | End of the study period | **was Rule 7** |
+| — | (maintenance — removed) | was Rules 4 and 8 |
+
+**This same renumbering must be propagated everywhere later** — protocol Section 5.1.1, any tab in the spec workbook that says "Rules 1-8" or "Rules 2-8", code comments in `lot_program.R`, downstream documents. For now this file uses the new numbering throughout.
+
 ---
 
 ## Replacement 1
@@ -23,13 +37,13 @@ The LOT will continue until the earliest of any of the following:
 
 (Rule 3) Unplanned SCTs: if an autologous SCT occurs > 180 days following a previous autologous SCT, the LOT will end the day before the latter SCT. Any allogeneic SCTs are considered a new LOT and the current LOT will end the day before the allogeneic SCT.
 
-(Rule 5) Death.
+(Rule 4) Death.
 
-(Rule 6) Health plan disenrollment.
+(Rule 5) Health plan disenrollment.
 
-(Rule 7) End of the study period.
+(Rule 6) End of the study period.
 
-Rules 2, 3, 5, 6, and 7 are the ending events. Maintenance is NOT treated as a separate LOT-ending construct in this study (former Rules 4 and 8 removed per Apr 15 2026 meeting decision).
+Rules 2, 3, 4, 5, and 6 are the ending events. Maintenance is NOT treated as a separate LOT-ending construct in this study (former maintenance-based rules removed per Apr 15 2026 meeting decision; rules renumbered consecutively).
 ```
 
 ---
@@ -44,7 +58,7 @@ Rules 2, 3, 5, 6, and 7 are the ending events. Maintenance is NOT treated as a s
 **Replace the entire cell contents with:**
 
 ```
-LOT1_BASE_END_DT is the earliest applicable LOT-ending date derived from: discontinuation of all agents (Rule 2), new qualifying medication addition (Rule 2), qualifying SCT or CAR-T events (Rule 3), death (Rule 5), health plan disenrollment (Rule 6), or end of study period (Rule 7). Rule 1 defines permissible substitutions that do NOT end the LOT. Maintenance is NOT an independent LOT-ending event in this study.
+LOT1_BASE_END_DT is the earliest applicable LOT-ending date derived from: discontinuation of all agents (Rule 2), new qualifying medication addition (Rule 2), qualifying SCT or CAR-T events (Rule 3), death (Rule 4), health plan disenrollment (Rule 5), or end of study period (Rule 6). Rule 1 defines permissible substitutions that do NOT end the LOT. Maintenance is NOT an independent LOT-ending event in this study.
 
 If the current LOT is immediately interrupted by a new qualifying medication, the LOT end date is the day before the first administration or dispense date of that new medication.
 ```
@@ -102,7 +116,7 @@ Patients who would previously have been bucketed as SCT_NO_MAINT (planned single
 **Replace the entire cell contents with:**
 
 ```
-LOT1 base period duration in days. Computed as LOT1_BASE_END_DT - LOT1_START_DT + 1. The LOT start date is defined per Section 5.1.1 of the protocol ("LOT1 begins on the date of the first fill for an MM therapy following a patient's index date"). The LOT end date is the priority-based end date defined in the LOT1_BASE_END_DT row (earliest of Rules 2, 3, 5, 6, 7 — Rule 1 is permissible substitutions and does not end the LOT; former Rules 4 and 8 maintenance-based endings are removed per Apr 15 2026 meeting decision).
+LOT1 base period duration in days. Computed as LOT1_BASE_END_DT - LOT1_START_DT + 1. The LOT start date is defined per Section 5.1.1 of the protocol ("LOT1 begins on the date of the first fill for an MM therapy following a patient's index date"). The LOT end date is the priority-based end date defined in the LOT1_BASE_END_DT row (earliest of Rules 2, 3, 4, 5, 6 — Rule 1 is permissible substitutions and does not end the LOT; former maintenance-based rules are removed per Apr 15 2026 meeting decision and the remaining rules are renumbered consecutively).
 ```
 
 ---
