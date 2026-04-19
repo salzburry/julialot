@@ -36,7 +36,7 @@ The LOT will continue until the earliest of any of the following:
 
 (Rule 2) Discontinuation of all agents in the regimen, with or without switch to a new agent. The LOT end date is the run-out date, defined as the last date that any MM medication in that LOT is considered to be available. If the current LOT is immediately interrupted by a new agent, the LOT end date is the day before the first administration / dispense date of the new agent.
 
-(Rule 3) Unplanned SCTs: if an autologous SCT occurs > 180 days following a previous autologous SCT, the LOT will end the day before the latter SCT. Any allogeneic SCTs are considered a new LOT and the current LOT will end the day before the allogeneic SCT. CAR-T cellular therapy infusions are classified as their own LOT; the preceding LOT transition for CAR-T is defined in the LOT1_TX_ENDDATE_REASON and LOT1_BASE_END_DT rows.
+(Rule 3) SCT / CAR-T events: if an autologous SCT occurs > 180 days following a previous autologous SCT, the LOT will end the day before the latter SCT. Any allogeneic SCTs are considered a new LOT and the current LOT will end the day before the allogeneic SCT. CAR-T cellular therapy infusions are classified as their own LOT; the preceding LOT transition for CAR-T is defined in the LOT1_TX_ENDDATE_REASON and LOT1_BASE_END_DT rows.
 
 (Rule 4) Death.
 
@@ -117,7 +117,7 @@ Patients who would previously have been bucketed as SCT_NO_MAINT (planned single
 **Replace the entire cell contents with:**
 
 ```
-LOT1 base period duration in days. Computed as LOT1_BASE_END_DT - LOT1_START_DT + 1. The LOT start date is defined per Section 5.1.1 of the protocol ("LOT1 begins on the date of the first fill for an MM therapy following a patient's index date"). The LOT end date is the priority-based end date defined in the LOT1_BASE_END_DT row (earliest of Rules 2, 3, 4, 5, 6 — Rule 1 is permissible substitutions and does not end the LOT; former maintenance-based rules are removed per Apr 15 2026 meeting decision and the remaining rules are renumbered consecutively).
+LOT1 base period duration in days. Computed as LOT1_BASE_END_DT - LOT1_START_DT + 1. The LOT start date is defined per Section 5.1.1 of the protocol ("LOT1 begins on the date of the first fill for an MM therapy following a patient's index date"). The LOT end date is the priority-based end date defined in the LOT1_BASE_END_DT row.
 ```
 
 ---
@@ -136,7 +136,7 @@ contains_mtx_reg is a flag-only variable. The study does NOT derive a separate s
 
 Set contains_mtx_reg = 1 when BOTH of the following are true for the LOT1 induction regimen:
   (a) The induction regimen contains at least one valid mono-maintenance agent OR a valid dual-maintenance combination (see lists below); AND
-  (b) At least one additional non-steroid MM oncology agent outside that qualifying maintenance subset is present, acting as an anchor.
+  (b) At least one additional MM oncology agent outside that qualifying maintenance subset is present, acting as an anchor.
 
 Otherwise contains_mtx_reg = 0.
 
@@ -144,6 +144,8 @@ Valid mono-maintenance agents: lenalidomide, bortezomib, daratumumab, ixazomib, 
 Valid dual-maintenance combinations: bortezomib/lenalidomide, carfilzomib/lenalidomide, daratumumab/lenalidomide.
 
 The anchor concept exists only to support this flag. It is NOT used to derive a separate maintenance period or a maintenance-based LOT end.
+
+Implementation note (code-aligned clarification — pending Julia's signoff for the spec): The current code at lot_program.R:1475 excludes corticosteroids (CL_MED_CLASS = 'STEROID') from anchor eligibility, consistent with the protocol's treatment of steroids as non-oncology supportive care. This was not explicitly discussed in the Apr 15 2026 meeting; confirm with Julia before finalising the spec wording.
 
 Background clarification (for interpreting the flag only — not an operational derivation): A maintenance regimen would conceptually be a period during which the LOT's initial regimen transitions into a state where only valid maintenance medications remain after the non-maintenance medications drop off. This study does not compute that transition.
 ```
@@ -244,7 +246,7 @@ CART_INIT end date: When LOT1_BASE_END_REASON = CART_INIT, LOT1_BASE_END_DT foll
 
 | # | File | Tab | Variable / row | Column |
 |---|---|---|---|---|
-| 1 | `lot1baseendapr18.xlsx` | `10. LOT1_BASE_END` | (page 1 narrative cell, no variable) | full cell |
+| 1 | `lot1baseendapr18.xlsx` | `10. LOT1_BASE_END` | `LOT1_END_REASON_TEMP` | Definition |
 | 2 | `lot1baseendapr18.xlsx` | `10. LOT1_BASE_END` | `LOT1_BASE_END_DT` | Definition |
 | 3 | `lot1baseendapr18.xlsx` | `10. LOT1_BASE_END` | `LOT1_BASE_END_REASON` | Values |
 | 4 | `lot1baseendapr18.xlsx` | `10. LOT1_BASE_END` | `LOT1_BASE_END_REASON` | Definition |
@@ -256,3 +258,13 @@ CART_INIT end date: When LOT1_BASE_END_REASON = CART_INIT, LOT1_BASE_END_DT foll
 | B | `lot1baseendapr18.xlsx` | `10. LOT1_BASE_END` | `LOT1_BASE_END_DT` | Additional Notes — placeholder until Julia decides |
 
 Apply Replacements 1–8 now. Use placeholders A and B until Julia answers the two questions.
+
+---
+
+## Process note on the renumbering
+
+The renumbering convention in this file (Rule 1, 2, 3, with old Rule 5/6/7 renumbered to 4=Death, 5=Disenrollment, 6=Study end; old maintenance Rules 4 and 8 gone) is internally coherent **only if it is propagated everywhere else that references rule numbers** — protocol Section 5.1.1, any other tab in the spec workbook, code comments in `lot_program.R`, and any downstream documents.
+
+**If that propagation is likely to lag or be partial**, the lower-risk alternative is to keep the old numbering (Rules 1, 2, 3, 5, 6, 7 — with gaps at 4 and 8) and simply delete the maintenance rules in place. The replacement text in this file would need its rule numbers reverted if that path is chosen.
+
+Pick one convention before applying Replacements 1, 2, and 5.
