@@ -62,6 +62,8 @@ Rules 2, 3, 4, 5, and 6 are the ending events. Maintenance is NOT treated as a s
 LOT1_BASE_END_DT is the earliest applicable LOT-ending date derived from: discontinuation of all agents (Rule 2), new qualifying medication addition (Rule 2), qualifying SCT or CAR-T events (Rule 3), death (Rule 4), health plan disenrollment (Rule 5), or end of study period (Rule 6). Rule 1 defines permissible substitutions that do NOT end the LOT. Maintenance is NOT an independent LOT-ending event in this study.
 
 If the current LOT is immediately interrupted by a new qualifying medication, the LOT end date is the day before the first administration or dispense date of that new medication.
+
+For CAR-T transitions — including the CART_INIT case (new agent added, followed by CAR-T within 45 days) — LOT1_BASE_END_DT is the day before FIRST_CART_DT. The CAR-T LOT begins on FIRST_CART_DT.
 ```
 
 ---
@@ -98,7 +100,7 @@ Final LOT1 base period end reason. Derived by selecting the earliest end date ac
 Priority order below applies when more than one end-reason resolves on the same earliest end date:
 SCT_ALLO  >  SCT_CART  >  SCT_AUTO  >  CART_INIT  >  MED_ADD  >  DISCONTINUATION  >  DEATH  >  DISENROLLMENT  >  STUDY_END
 
-CART_INIT applies when a CAR-T infusion (FIRST_CART_DT) occurs within 45 days of the start date of the first added agent. In that case the end reason is CART_INIT (not MED_ADD). The LOT1_BASE_END_DT convention for CART_INIT is set in the LOT1_BASE_END_DT row and must be applied consistently across the study specification and implementation.
+CART_INIT applies when a CAR-T infusion (FIRST_CART_DT) occurs within 45 days of the start date of the first added agent. In that case the end reason is CART_INIT (not MED_ADD), and LOT1_BASE_END_DT is the day before FIRST_CART_DT (consistent with the study's CAR-T transition convention — the preceding LOT ends the day before the CAR-T infusion; the CAR-T LOT begins on FIRST_CART_DT).
 
 Patients who would previously have ended LOT1 via end of maintenance regimen now map to DISCONTINUATION unless a higher-priority event applies first.
 
@@ -195,7 +197,7 @@ These maintenance scenarios are retained as background examples and do NOT defin
 
 ---
 
-# Two cells you should NOT finalise yet — wait for Julia
+# Additional cells — one resolved, one paste-ready with a small open policy question
 
 These two replacement texts depend on decisions Julia has not made yet. Apply the placeholder text below for now; replace once she answers.
 
@@ -210,41 +212,44 @@ These two replacement texts depend on decisions Julia has not made yet. Apply th
 
 `SCT_NO_MAINT` is NOT an SCT type. The SCT types are AUTO, ALLO, and CAR-T. `SCT_NO_MAINT` was a **legacy LOT1 end-reason value** produced by the pre-Apr 15 spec under old Rule 4 ("SCTs not followed by maintenance within 180 days"): a planned single or tandem AUTO that was not followed by a valid maintenance regimen within 180 days ended LOT1 on the AUTO date and was labelled `SCT_NO_MAINT`. Rule 4 has been removed; planned single/tandem AUTO is now a continuation of the line and does not by itself end LOT1. The patients who used to land in `SCT_NO_MAINT` therefore need to be re-routed into the remaining end reasons — which is what Julia needs to decide.
 
-**Placeholder text to use until Julia answers:**
+**Placeholder text to use (spec-ready now, per user guidance):**
 
 ```
-Legacy bucket remap — per Apr 15 2026 meeting decision: SCT_NO_MAINT is not a final LOT1_BASE_END_REASON value in this study. Under the removed old Rule 4, a planned single or tandem autologous SCT followed by no valid maintenance within 180 days would have ended LOT1 with end reason SCT_NO_MAINT. Under the current rules, planned single or tandem AUTO is continuation of the line (Rule 3) and does not by itself end LOT1. Patients previously bucketed as SCT_NO_MAINT must therefore be classified under the final non-maintenance LOT-ending rules listed in the Definition column. Specific sub-case mapping pending Julia's confirmation.
+SCT_NO_MAINT is not a final end-reason value in this study. Cases previously classified as SCT_NO_MAINT must be recategorized under the final non-maintenance LOT-ending rules, including SCT_AUTO or SCT_ALLO as applicable.
 ```
+
+**One remaining policy choice for Julia to confirm:**
+
+Whether **every** former `SCT_NO_MAINT` patient collapses directly into `SCT_AUTO` (simpler — matches current code at `lot_program.R:1906-1910`), OR whether each patient is routed by their actual next event (`MED_ADD` / `CART_INIT` / `DISCONTINUATION` / `DEATH` / `DISENROLLMENT` / `STUDY_END`, with `SCT_AUTO` or `SCT_ALLO` only if a 3rd/unplanned SCT follows — consistent with Rule 3 "single/tandem AUTO is continuation of the line").
 
 **Question to send Julia:**
 
-> "For the patients who used to be labelled SCT_NO_MAINT under the old spec — all of whom had a planned single or tandem AUTO SCT — do you want to (a) relabel all of them as SCT_AUTO, or (b) route them by the actual earliest downstream event (DISCONTINUATION / MED_ADD / CART_INIT / SCT_AUTO if an unplanned/excess AUTO follows / SCT_ALLO if ALLO follows)?"
+> "For the patients previously labelled SCT_NO_MAINT (planned single or tandem AUTO, no subsequent maintenance), do you want to (a) relabel all of them as SCT_AUTO, or (b) route them by their actual next event (SCT_AUTO only if a 3rd/unplanned AUTO follows, else MED_ADD / CART_INIT / DISCONTINUATION / censoring)?"
 
 ---
 
-## Pending Replacement B — `CART_INIT` end date
+## Replacement B — `CART_INIT` end date (RESOLVED: spec wins — `FIRST_CART_DT − 1`)
+
+**Decision:** Follow the spec convention, not the current code. When `LOT1_BASE_END_REASON = CART_INIT`, the preceding LOT (LOT1) ends the day BEFORE the CAR-T infusion. CAR-T itself starts the new CAR-T LOT on `FIRST_CART_DT`.
 
 **File:** `lot1baseendapr18.pdf`
 **Tab:** `10. LOT1_BASE_END`
 **Variable / row:** `LOT1_BASE_END_DT`
 **Column:** `Additional Notes`
 
-**Placeholder text to use until Julia answers:**
+**Paste-ready text (spec-aligned; code must be updated to match later):**
 
 ```
-CART_INIT end date: When LOT1_BASE_END_REASON = CART_INIT, LOT1_BASE_END_DT follows the study's chosen CAR-T transition convention and must be applied consistently across lot1baseendapr18, the protocol, and lot_program.R. Convention pending Julia's confirmation.
+CART_INIT end date: When LOT1_BASE_END_REASON = CART_INIT, LOT1_BASE_END_DT is the day before FIRST_CART_DT. This follows the study's CAR-T transition convention that the preceding LOT ends the day before the CAR-T infusion date and must be applied consistently across lot1baseendapr18, the protocol, and lot_program.R.
 ```
 
-**Question to send Julia:**
+**Follow-on alignment required (because the spec and current code diverge here):**
 
-> "For CART_INIT, should LOT1_BASE_END_DT = FIRST_CART_DT (matches current code at lot_program.R:1940-1942) or FIRST_CART_DT - 1 (matches the general CAR-T-as-new-LOT convention stated in the LOT1_TX_ENDDATE_REASON row)?"
-
-**Once Julia decides, align ALL of the following so they tell the same story:**
-
-1. `lot1baseendapr18.xlsx` tab `10. LOT1_BASE_END` — row `LOT1_BASE_END_DT` (Definition column, and the CART_INIT sentence).
-2. `lot1baseendapr18.xlsx` tab `10. LOT1_BASE_END` — row `LOT1_TX_ENDDATE_REASON` (the general "preceding LOT ends the day before the CAR-T infusion date" wording lives here and is the main source of the current spec tension).
-3. `lot1baseendapr18.xlsx` tab `10. LOT1_BASE_END` — row `CART_45D_CONSOLIDATION` — review wording for consistency with whichever convention Julia picks.
-4. `lot_program.R:1940-1942` — the `THEN ec.FIRST_CART_DT` branch of the CART_INIT end-date CASE statement.
+1. `lot1baseendapr18.xlsx` tab `10. LOT1_BASE_END` — row `LOT1_BASE_END_DT` (Definition column): ensure the CART_INIT sentence matches `FIRST_CART_DT − 1`.
+2. `lot1baseendapr18.xlsx` tab `10. LOT1_BASE_END` — row `LOT1_TX_ENDDATE_REASON`: already states the general convention ("preceding LOT ends the day before the CAR-T infusion date") — confirm no contradictory language remains.
+3. `lot1baseendapr18.xlsx` tab `10. LOT1_BASE_END` — row `CART_45D_CONSOLIDATION`: review wording for consistency with `FIRST_CART_DT − 1`.
+4. **Code change required:** `lot_program.R:1940-1942` currently sets `LOT1_BASE_END_DT = ec.FIRST_CART_DT` in the `CART_INIT_FLG = 1` branch. This must change to `date_sub(ec.FIRST_CART_DT, 1)` (or equivalent) to align with the spec decision.
+5. Protocol Section 5.1.1 (if it references CAR-T transitions anywhere): confirm consistency.
 
 ---
 
@@ -260,10 +265,10 @@ CART_INIT end date: When LOT1_BASE_END_REASON = CART_INIT, LOT1_BASE_END_DT foll
 | 6 | `lot1baseendapr18.xlsx` | `10. LOT1_BASE_END` | `contains_mtx_reg` | Definition |
 | 7 | `lot1baseapr18.xlsx` | `6. LOT1_BASE` | `LOT1_MED_[MED]` | Additional Notes |
 | 8 | `Mtx_scenarios.xlsx` | (single tab) | (page 1 cell A1) | full cell — banner |
-| A | `lot1baseendapr18.xlsx` | `10. LOT1_BASE_END` | `LOT1_BASE_END_REASON` | Additional Notes — placeholder until Julia decides |
-| B | `lot1baseendapr18.xlsx` | `10. LOT1_BASE_END` | `LOT1_BASE_END_DT` | Additional Notes — placeholder until Julia decides |
+| A | `lot1baseendapr18.xlsx` | `10. LOT1_BASE_END` | `LOT1_BASE_END_REASON` | Additional Notes — paste-ready now; one policy question still open for Julia (all-SCT_AUTO vs route-by-next-event) |
+| B | `lot1baseendapr18.xlsx` | `10. LOT1_BASE_END` | `LOT1_BASE_END_DT` | Additional Notes — **RESOLVED: `FIRST_CART_DT − 1`** (spec wins; code needs update) |
 
-Apply Replacements 1–8 now. Use placeholders A and B until Julia answers the two questions.
+Apply Replacements 1–8, A, and B now. Julia still needs to confirm the single policy question in Replacement A (whole-cohort vs per-event routing), but the spec cell is paste-ready either way.
 
 ---
 
