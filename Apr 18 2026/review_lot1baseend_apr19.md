@@ -30,19 +30,30 @@
 
 ## Gaps to close before deleting the old file
 
-### Gap 1. Different renumbering scheme
+### Gap 1. Downstream rule-number references still use the old scheme
 
-**What the Apr 19 file does:** Numbered list in both `LOT1_END_DT_TEMP` and `LOT1_END_REASON_TEMP` starts at (1) Discontinuation, (2) SCT / CAR-T events, (3) Death, (4) Health plan disenrollment, (5) End of study period. Permissible substitutions are moved out of the numbered list into a trailing "Note" ("Substitution … is an exception, not an ending event").
+**Authoritative numbering (per Apr 19 file, confirmed):**
 
-**What our `spec_edit_instructions.md` specified:** (Rule 1) Permissible substitutions, (Rule 2) Discontinuation, (Rule 3) SCT / CAR-T events, (Rule 4) Death, (Rule 5) Disenrollment, (Rule 6) Study end.
+| Rule | Covers |
+|---:|---|
+| Rule 1 | Discontinuation of all agents |
+| Rule 2 | SCT / CAR-T events (unplanned AUTO, ALLO, CAR-T) |
+| Rule 3 | Death |
+| Rule 4 | Health plan disenrollment |
+| Rule 5 | End of study period |
+| — (Note) | Permissible substitutions — exception, not an ending event |
 
-**Impact:** Both are internally consistent. The Apr 19 scheme is actually tighter — numbered list = ending events only, substitutions as a Note — which is arguably cleaner. However:
+The Apr 19 file applies this consistently inside its own cells (`LOT1_END_DT_TEMP`, `LOT1_END_REASON_TEMP`, `LOT1_BASE_END_DT`, `LOT1_BASE_END_REASON`).
 
-- **Downstream references must match.** The Apr 19 cell for `LOT1_BASE_END_REASON` Definition says it is "Derived by selecting the earliest end date across the LOT-ending events listed in the LOT1_END_REASON_TEMP rules narrative" — no rule numbers — so this is resilient.
-- **But** the existing `ALLO_ALWAYS_ENDS_LOT` row still says **"Rule 3: 'Any allogeneic SCTs are considered a new LOT…'"** (per prior extract of the same workbook). In the new Apr 19 numbering, allogeneic SCT is now Rule 2 (SCT / CAR-T events), not Rule 3. This row still references the OLD rule number.
-- Similarly, any protocol Section 5.1.1 reference and any `lot_program.R` code comment that says "Rule 3" for SCT needs to be checked.
+`spec_edit_instructions.md` has now been updated to match this numbering.
 
-**Action:** Pick a renumbering convention and stick with it. Either (a) update the other rows and downstream references to the new 1–5 numbering, OR (b) revert to the original 1–7/1–8 numbering. Do not leave a mix.
+**What still needs a sweep:**
+
+- **`ALLO_ALWAYS_ENDS_LOT` row** (same workbook, same tab) — the extract still shows it quoting *"Rule 3: 'Any allogeneic SCTs are considered a new LOT …'"*. Under the new numbering, ALLO lives under **Rule 2** (SCT / CAR-T events), not Rule 3. Update the quoted rule number.
+- **Protocol Section 5.1.1** — if it uses rule numbers anywhere, align to the new 1–5 scheme.
+- **`lot_program.R` comments** — references like `# Rule 3: Unplanned SCT`, `# Rule 4: Planned AUTO SCT` are stale. (Most of these get deleted anyway when the SCT_NO_MAINT logic is removed per the code review, but any surviving references need the new numbers.)
+
+**Action:** sweep the workbook + protocol + code comments for any "Rule 3/4/5/6/7/8" reference and align with the new 1–5 scheme.
 
 ---
 
@@ -92,11 +103,11 @@ Worth confirming these two are also handled before closing the spec pass.
 
 ## Recommendation
 
-**You can delete the old `lot1baseendapr18.pdf` after closing Gap 2 (populate the Values column) and deciding on Gap 1 (renumbering consistency).** The maintenance-removal changes, CART_INIT convention, priority order, and `contains_mtx_reg` reframing are all correctly captured in `lot1baseendupdatedapr19.pdf`.
+**You can delete the old `lot1baseendapr18.pdf` after closing Gap 2 (populate the Values column) and doing the downstream rule-number sweep in Gap 1.** The maintenance-removal changes, CART_INIT convention, priority order, and `contains_mtx_reg` reframing are all correctly captured in `lot1baseendupdatedapr19.pdf`.
 
-If you want a zero-risk path:
+Zero-risk path:
 1. Populate the `Values` column on `LOT1_BASE_END_REASON` with the allowed-values text (Cell 3).
-2. Sweep the workbook for any remaining "Rule 3" / "Rule 4" / "Rules 1–8" / "Rules 2–8" references and align them with the new 1–5 numbering (especially the `ALLO_ALWAYS_ENDS_LOT` row, which still says "Rule 3").
+2. Sweep the workbook for any remaining "Rule 3" / "Rule 4" / "Rules 1–8" / "Rules 2–8" references and align them with the new 1–5 numbering (confirmed fix on the `ALLO_ALWAYS_ENDS_LOT` row, which still says "Rule 3").
 3. Then the old `lot1baseendapr18.pdf` is safe to delete.
 
 *End of review.*

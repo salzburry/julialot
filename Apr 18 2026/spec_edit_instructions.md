@@ -2,7 +2,7 @@
 
 For each cell below: open the file + tab, find the row by variable name, replace the named column with the text in the code block. **8 cells total — paste once per cell.**
 
-**Renumbering:** Rule 1 = substitutions, Rule 2 = discontinuation, Rule 3 = SCT / CAR-T events, Rule 4 = death (was 5), Rule 5 = disenrollment (was 6), Rule 6 = study end (was 7). Old maintenance Rules 4 and 8 are removed. Propagate this renumbering to the protocol, other spec tabs, and `lot_program.R` comments. Alternative: keep old numbering with gaps at 4 and 8 — pick one before applying.
+**Renumbering (authoritative per `lot1baseendupdatedapr19.pdf`):** Rule 1 = Discontinuation, Rule 2 = SCT / CAR-T events, Rule 3 = Death, Rule 4 = Health plan disenrollment, Rule 5 = End of study period. Permissible substitutions are NOT numbered — they appear as a trailing Note ("this is an exception, not an ending event"). Old maintenance Rules 4 and 8 are removed. Propagate this numbering to the protocol, other spec tabs (especially `ALLO_ALWAYS_ENDS_LOT`, which still says "Rule 3"), and `lot_program.R` comments.
 
 ---
 
@@ -13,19 +13,19 @@ For each cell below: open the file + tab, find the row by variable name, replace
 ```
 The LOT will continue until the earliest of any of the following:
 
-(Rule 1) Permissible substitutions: Substitution of a biologic reference product with any of its biosimilars, or between biosimilars of the same reference product, does not advance the LOT (Rule 1 is an exception, not an ending event).
+(1) Discontinuation of all agents in the regimen, with or without switch to a new agent. The LOT end date is the run-out date, defined as the last date that any MM medication in that LOT is considered to be available. If the current LOT is immediately interrupted by a new agent, the LOT end date is the day before the first administration / dispense date of the new agent.
 
-(Rule 2) Discontinuation of all agents in the regimen, with or without switch to a new agent. The LOT end date is the run-out date, defined as the last date that any MM medication in that LOT is considered to be available. If the current LOT is immediately interrupted by a new agent, the LOT end date is the day before the first administration / dispense date of the new agent.
+(2) SCT / CAR-T events: if an autologous SCT occurs > 180 days following a previous autologous SCT, the LOT will end the day before the latter SCT. Any allogeneic SCTs are considered a new LOT and the current LOT will end the day before the allogeneic SCT. CAR-T cellular therapy infusions are classified as their own LOT; the preceding LOT transition for CAR-T is defined in the LOT1_TX_ENDDATE_REASON and LOT1_BASE_END_DT rows.
 
-(Rule 3) SCT / CAR-T events: if an autologous SCT occurs > 180 days following a previous autologous SCT, the LOT will end the day before the latter SCT. Any allogeneic SCTs are considered a new LOT and the current LOT will end the day before the allogeneic SCT. CAR-T cellular therapy infusions are classified as their own LOT; the preceding LOT transition for CAR-T is defined in the LOT1_TX_ENDDATE_REASON and LOT1_BASE_END_DT rows.
+(3) Death.
 
-(Rule 4) Death.
+(4) Health plan disenrollment.
 
-(Rule 5) Health plan disenrollment.
+(5) End of the study period.
 
-(Rule 6) End of the study period.
+Note: Substitution of a biologic reference product with any of its biosimilars, or between biosimilars of the same reference product, does not advance the LOT (this is an exception, not an ending event).
 
-Rules 2, 3, 4, 5, and 6 are the ending events. Maintenance is NOT treated as a separate LOT-ending construct in this study.
+Maintenance is NOT treated as a separate LOT-ending construct in this study.
 ```
 
 ---
@@ -35,7 +35,7 @@ Rules 2, 3, 4, 5, and 6 are the ending events. Maintenance is NOT treated as a s
 **File:** `lot1baseendapr18.xlsx` · **Tab:** `10. LOT1_BASE_END` · **Row:** `LOT1_BASE_END_DT` · **Column:** `Definition`
 
 ```
-LOT1_BASE_END_DT is the earliest applicable LOT-ending date derived from: discontinuation of all agents (Rule 2), new qualifying medication addition (Rule 2), qualifying SCT or CAR-T events (Rule 3), death (Rule 4), health plan disenrollment (Rule 5), or end of study period (Rule 6). Rule 1 defines permissible substitutions that do NOT end the LOT. Maintenance is NOT an independent LOT-ending event in this study.
+LOT1_BASE_END_DT is the earliest applicable LOT-ending date derived from: discontinuation of all agents (Rule 1), new qualifying medication addition (Rule 1), qualifying SCT or CAR-T events (Rule 2), death (Rule 3), health plan disenrollment (Rule 4), or end of study period (Rule 5). Permissible substitutions do NOT end the LOT (Note on the LOT1_END_REASON_TEMP rules). Maintenance is NOT an independent LOT-ending event in this study.
 
 If the current LOT is immediately interrupted by a new qualifying medication, the LOT end date is the day before the first administration or dispense date of that new medication.
 
@@ -61,7 +61,7 @@ The study does NOT use MAINTENANCE_END or SCT_NO_MAINT as final values.
 **File:** `lot1baseendapr18.xlsx` · **Tab:** `10. LOT1_BASE_END` · **Row:** `LOT1_BASE_END_REASON` · **Column:** `Definition`
 
 ```
-Final LOT1 base period end reason. Derived by selecting the earliest end date across the LOT-ending events listed in the LOT1_END_REASON_TEMP rules narrative (Rules 2, 3, 4, 5, 6).
+Final LOT1 base period end reason. Derived by selecting the earliest end date across the LOT-ending events listed in the LOT1_END_REASON_TEMP rules narrative (Rules 1, 2, 3, 4, 5).
 
 Priority order below applies when more than one end-reason resolves on the same earliest end date:
 SCT_ALLO  >  SCT_CART  >  SCT_AUTO  >  CART_INIT  >  MED_ADD  >  DISCONTINUATION  >  DEATH  >  DISENROLLMENT  >  STUDY_END
