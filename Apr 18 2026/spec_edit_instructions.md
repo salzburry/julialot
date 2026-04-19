@@ -131,7 +131,7 @@ Once the induction regimen medications are identified, the induction regimen per
 **File:** `Mtx_scenarios.xlsx` · **Tab:** (single tab) · **Cell:** page 1, cell A1 (top banner above existing content)
 
 ```
-REFERENCE ONLY — updated per Apr 15 2026 meeting.
+REFERENCE ONLY - updated per Apr 15 2026 meeting.
 
 These maintenance scenarios are retained as background examples and do NOT define an operational maintenance period for this study. The current study uses contains_mtx_reg as a descriptive flag only and does not use maintenance to create a LOT-ending event. For the active definition, see the contains_mtx_reg row in lot1baseendapr18.xlsx, tab 10. LOT1_BASE_END.
 ```
