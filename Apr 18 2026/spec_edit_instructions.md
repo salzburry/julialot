@@ -98,7 +98,7 @@ Final LOT1 base period end reason. Derived by selecting the earliest end date ac
 Priority order below applies when more than one end-reason resolves on the same earliest end date:
 SCT_ALLO  >  SCT_CART  >  SCT_AUTO  >  CART_INIT  >  MED_ADD  >  DISCONTINUATION  >  DEATH  >  DISENROLLMENT  >  STUDY_END
 
-CART_INIT applies when a CAR-T infusion (FIRST_CART_DT) occurs within 45 days of the start date of the first added agent. In that case the end reason is CART_INIT (not MED_ADD). The LOT1_BASE_END_DT convention for CART_INIT is set in the LOT1_BASE_END_DT row and must be applied consistently with lot_program.R.
+CART_INIT applies when a CAR-T infusion (FIRST_CART_DT) occurs within 45 days of the start date of the first added agent. In that case the end reason is CART_INIT (not MED_ADD). The LOT1_BASE_END_DT convention for CART_INIT is set in the LOT1_BASE_END_DT row and must be applied consistently across the study specification and implementation.
 
 Patients who would previously have ended LOT1 via end of maintenance regimen now map to DISCONTINUATION unless a higher-priority event applies first.
 
@@ -145,10 +145,12 @@ Valid dual-maintenance combinations: bortezomib/lenalidomide, carfilzomib/lenali
 
 The anchor concept exists only to support this flag. It is NOT used to derive a separate maintenance period or a maintenance-based LOT end.
 
-Implementation note (code-aligned clarification — pending Julia's signoff for the spec): The current code at lot_program.R:1475 excludes corticosteroids (CL_MED_CLASS = 'STEROID') from anchor eligibility, consistent with the protocol's treatment of steroids as non-oncology supportive care. This was not explicitly discussed in the Apr 15 2026 meeting; confirm with Julia before finalising the spec wording.
-
 Background clarification (for interpreting the flag only — not an operational derivation): A maintenance regimen would conceptually be a period during which the LOT's initial regimen transitions into a state where only valid maintenance medications remain after the non-maintenance medications drop off. This study does not compute that transition.
 ```
+
+**Pending clarification to confirm with Julia before finalising this cell:**
+
+The current implementation excludes corticosteroids (any drug with `CL_MED_CLASS = 'STEROID'`) from anchor eligibility, consistent with the protocol's treatment of steroids as non-oncology supportive care. This was not explicitly discussed in the Apr 15 2026 meeting. If Julia confirms, add a sentence inside the (b) clause of the cell above, e.g.: *"Anchor agents must be non-steroid MM oncology agents; corticosteroids do not qualify."*
 
 ---
 
