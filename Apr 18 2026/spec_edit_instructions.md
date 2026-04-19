@@ -94,14 +94,14 @@ contains_mtx_reg is a descriptive flag. The study does NOT derive a separate sta
 
 Set contains_mtx_reg = 1 when BOTH of the following are true for the LOT1 induction regimen:
   (a) The induction regimen contains at least one valid mono-maintenance agent OR a valid dual-maintenance combination (see lists below); AND
-  (b) At least one additional agent — of any class in CL_MMA_ROLLUP, including corticosteroids (e.g., dexamethasone, prednisone) — is present outside that qualifying maintenance subset, acting as an anchor.
+  (b) At least one additional agent is present outside that qualifying maintenance subset, acting as an anchor.
 
 Otherwise contains_mtx_reg = 0.
 
 Valid mono-maintenance agents: lenalidomide, bortezomib, daratumumab, ixazomib, thalidomide.
 Valid dual-maintenance combinations: bortezomib/lenalidomide, carfilzomib/lenalidomide, daratumumab/lenalidomide.
 
-The anchor concept exists only to support this descriptive flag. It is NOT used to derive a separate maintenance period or a maintenance-based LOT end. Any additional drug in the induction regimen — oncology or supportive (including steroids) — satisfies the anchor requirement, so the flag identifies the full set of LOT1 patients whose induction contains a maintenance-approved subset alongside any further therapy.
+The anchor concept exists only to support this descriptive flag. It is NOT used to derive a separate maintenance period or a maintenance-based LOT end.
 ```
 
 ---
