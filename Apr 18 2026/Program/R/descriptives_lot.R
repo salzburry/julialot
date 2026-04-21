@@ -704,6 +704,97 @@ print_descriptives <- function(con) {
                  title = "Table: LOT1 End Reasons")
     }
 
+    # --------------------------------------------------------
+    # contains_mtx_reg flag (Apr 19 spec: descriptive, flag-only)
+    # --------------------------------------------------------
+    # Summary count + cross-tab against LOT1_BASE_END_REASON so reviewers can
+    # see how the anchor-maintenance subgroup distributes across end categories.
+    mtx_summary <- tryCatch(db_q(con, "
+      SELECT contains_mtx_reg, count(*) AS n_patients
+      FROM lot1_base_end
+      GROUP BY contains_mtx_reg
+      ORDER BY contains_mtx_reg DESC
+    "), error = function(e) data.frame())
+
+    if (nrow(mtx_summary) > 0) {
+      mtx_summary$n_patients <- as.numeric(mtx_summary$n_patients)
+      mtx_total <- sum(mtx_summary$n_patients)
+      n_with_flag <- sum(mtx_summary$n_patients[mtx_summary$contains_mtx_reg == 1])
+      pct_with_flag <- if (mtx_total > 0) 100 * n_with_flag / mtx_total else 0
+
+      cat("\n  LOT1 contains_mtx_reg (valid maintenance regimen + anchor agent in induction):\n")
+      cat(sprintf("  %-25s %10s %8s\n", "contains_mtx_reg", "N", "%"))
+      cat(strrep("-", 45), "\n")
+      for (i in seq_len(nrow(mtx_summary))) {
+        r <- mtx_summary[i, ]
+        cat(sprintf("  %-25s %10s %7.1f%%\n",
+                    if (r$contains_mtx_reg == 1) "1 (has anchored maint reg)" else "0",
+                    format(r$n_patients, big.mark = ","),
+                    100 * r$n_patients / max(mtx_total, 1)))
+      }
+
+      mtx_summary$pct <- round(100 * mtx_summary$n_patients / max(mtx_total, 1), 1)
+      save_table(mtx_summary, section = "LOT1",
+                 title = "Table: LOT1 contains_mtx_reg Distribution")
+
+      mtx_by_end <- tryCatch(db_q(con, "
+        SELECT LOT1_BASE_END_REASON,
+               sum(CASE WHEN contains_mtx_reg = 1 THEN 1 ELSE 0 END) AS n_with_flag,
+               count(*) AS n_total
+        FROM lot1_base_end
+        GROUP BY LOT1_BASE_END_REASON
+        ORDER BY count(*) DESC
+      "), error = function(e) data.frame())
+
+      if (nrow(mtx_by_end) > 0) {
+        mtx_by_end$n_with_flag <- as.numeric(mtx_by_end$n_with_flag)
+        mtx_by_end$n_total     <- as.numeric(mtx_by_end$n_total)
+        mtx_by_end$pct_with_flag <- round(
+          100 * mtx_by_end$n_with_flag / pmax(mtx_by_end$n_total, 1), 1)
+
+        cat("\n  contains_mtx_reg by LOT1 end reason:\n")
+        cat(sprintf("  %-20s %10s %10s %8s\n", "End Reason", "Total", "w/ flag", "%"))
+        cat(strrep("-", 52), "\n")
+        for (i in seq_len(nrow(mtx_by_end))) {
+          r <- mtx_by_end[i, ]
+          cat(sprintf("  %-20s %10s %10s %7.1f%%\n",
+                      r$LOT1_BASE_END_REASON,
+                      format(r$n_total, big.mark = ","),
+                      format(r$n_with_flag, big.mark = ","),
+                      r$pct_with_flag))
+        }
+
+        save_table(mtx_by_end, section = "LOT1",
+                   title = "Table: contains_mtx_reg by LOT1 End Reason")
+
+        if (has_ggplot2 && n_with_flag > 0) {
+          mtx_by_end$LOT1_BASE_END_REASON <- factor(
+            mtx_by_end$LOT1_BASE_END_REASON,
+            levels = mtx_by_end$LOT1_BASE_END_REASON[order(-mtx_by_end$n_total)])
+          p_mtx <- ggplot(mtx_by_end,
+                          aes(x = LOT1_BASE_END_REASON, y = pct_with_flag,
+                              text = paste0("End: ", LOT1_BASE_END_REASON,
+                                            "\nTotal: ", format(n_total, big.mark = ","),
+                                            "\nWith flag: ", format(n_with_flag, big.mark = ","),
+                                            "\n%: ", pct_with_flag, "%"))) +
+            geom_bar(stat = "identity", fill = "#2E86AB", width = 0.65) +
+            geom_text(aes(label = paste0(pct_with_flag, "%")),
+                      vjust = -0.3, size = 3.5, color = "grey20") +
+            scale_y_continuous(labels = function(x) paste0(x, "%"),
+                               expand = expansion(mult = c(0, 0.15))) +
+            labs(title = paste0("LOT1 contains_mtx_reg = 1 by End Reason (overall ",
+                                round(pct_with_flag, 1), "% of ", format(mtx_total, big.mark = ","),
+                                " patients)"),
+                 subtitle = "% of patients in each end-reason bucket whose induction contains an anchored maintenance regimen",
+                 x = "LOT1 End Reason", y = "% with contains_mtx_reg = 1") +
+            theme_lot() +
+            theme(axis.text.x = element_text(angle = 30, hjust = 1))
+          save_plot(p_mtx, "fig07b_lot1_contains_mtx_reg.png", width = 9, height = 6,
+                   section = "LOT1", title = "Fig 7b: contains_mtx_reg by End Reason")
+        }
+      }
+    }
+
     # Figure 8: Induction med count distribution
     if (has_ggplot2) {
       med_cnt <- db_q(con, "
