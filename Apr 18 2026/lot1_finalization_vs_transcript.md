@@ -52,6 +52,20 @@ Everything else — CART_INIT reclassification, SCT_NO_MAINT reclassification, r
 
 **Status:** ✅ Removed. Former SCT_NO_MAINT patients now fall to `SCT_AUTO` (via the ordinary Rule 2 unplanned-AUTO path), `DISCONTINUATION`, `MED_ADD`, `CART_INIT`, or censoring, driven by their actual earliest end event — which matches Julia's intent.
 
+**Important nuance for the Vicki review:** Julia's quick final summary in the meeting was *"probably all going to be SCT auto this time"*, but that's a simplification of what she said a minute earlier: *"Either they're having a new agent probably introduced **or** they're having a 3rd or unplanned autologous happening"*. The code matches the fuller version, not the simplification.
+
+Per the spec (and per `lot_program.R:1286-1294`), `LOT1_TX_ENDDATE` is set only by **LOT-ending** SCT events — `ENDING_AUTO_DT` is the 3rd AUTO after a tandem pair, or the 2nd AUTO after a single. A clean single/tandem AUTO with no excess is **not** LOT-ending; the transplant is part of LOT1.
+
+So former SCT_NO_MAINT patients now split across categories based on what actually ended their LOT1:
+
+| Former SCT_NO_MAINT subgroup | Now classified as | Why |
+|---|---|---|
+| Single/tandem AUTO + later new med | `MED_ADD` (or `CART_INIT` if CAR-T within 45 days) | Transplant wasn't LOT-ending; the med add is |
+| Single/tandem AUTO + 3rd/excess AUTO | `SCT_AUTO` (Rule 2 excess) | `ENDING_AUTO_DT` set; `LOT1_TX_ENDDATE_REASON = 1` |
+| Single/tandem AUTO, no follow-up | `DISCONTINUATION` / `DEATH` / `DISENROLLMENT` / `STUDY_END` | LOT continued past the transplant; ended by another cause |
+
+`SCT_AUTO` will still be the majority of the SCT-end bar (AUTO > ALLO > CART in MM), but not every former SCT_NO_MAINT patient ends up there. Worth mentioning to Vicki so the bar chart comparison against the old run doesn't look surprising.
+
 ### 4. CART_INIT rule — if CAR-T starts within 45 days of a new agent, end reason is CART_INIT not MED_ADD
 **From transcript (Julia):**
 > "if someone has a new medication added, but then it, like, within 45 days of that new agent, their starting car T, that their medic, their reason for law one end shouldn't be a medication ad. It actually should be initiation of Cart T therapy"
