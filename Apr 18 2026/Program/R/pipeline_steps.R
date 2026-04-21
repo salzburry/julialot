@@ -873,11 +873,14 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
             WHEN ip.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
                                  AND date_sub(q.index_date, 1)
             THEN 1
-            -- Path B: 2 outpatient claims within 30d, BOTH in baseline
+            -- Path B: 2 outpatient claims within 30d, first in baseline
+            -- Per StudyPop MM_baseline_other: "Only the first of the 2 codes
+            -- is required to occur inside the baseline period." The confirming
+            -- second claim may fall after index, as long as the pair is
+            -- within 30 days of each other.
             WHEN op.diff_days <= 30
               AND op.first_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
                                   AND date_sub(q.index_date, 1)
-              AND op.next_dt  <= date_sub(q.index_date, 1)
             THEN 1
             ELSE 0
           END) AS OTHER_MALIGN_FLAG
