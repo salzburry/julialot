@@ -6,15 +6,17 @@
 
 ---
 
-## TL;DR — reviewer's findings are all valid
+## TL;DR — all 7 findings are supportable; R2 and R3 are source-of-truth conflicts
 
-All 7 reviewer findings are supported by the code and — where applicable — by the StudyPop spec text. My earlier review caught 4 of the 7 (and called 3 of those at the correct severity). **I missed or under-called 3 findings**, all in the attrition pipeline:
+All 7 reviewer findings are supported by the code. R1, R4, R5, R6, R7 are unambiguous drift. **R2 and R3 are best framed as StudyPop-vs-attrition-table source conflicts**: the code made a deliberate choice of one source (the attrition table) over the other (StudyPop), and the `pipeline_steps.R:599-600` comment explicitly records that choice. They are real mismatches to `studypopapr18.pdf` either way, but framing them as conflicts — not as accidental omissions — reflects what the code author actually did and what the study team now needs to arbitrate.
+
+My earlier review caught 4 of the 7 cleanly; **I missed or under-called 3 findings**, all in the attrition pipeline:
 
 | # | Reviewer finding | My prior call | Correct call |
 |---|---|---|---|
 | R1 | Default run stops at Step 6 | A1 — Medium | **High** (upgrade) |
-| R2 | Baseline MM drops non-diagnostic rule | not flagged | **High** (new) |
-| R3 | Other-cancer outpatient stricter than spec | called MATCH | **High** (new drift) |
+| R2 | Baseline MM drops StudyPop non-diagnostic rule | not flagged | **High** — source-of-truth conflict (new) |
+| R3 | Other-cancer OP stricter than StudyPop sheet | called MATCH | **High** — source-of-truth conflict (new) |
 | R4 | Legacy maintenance outputs still exported | covered by Apr 19 review | Medium (no change) |
 | R5 | SCT_NO_MAINT still drives end routing | covered by Apr 19 review | High (no change) |
 | R6 | CART_INIT uses infusion date | covered by Apr 19 review | High (no change) |
@@ -60,11 +62,11 @@ WITH filtered AS (
 
 ---
 
-### R2 — Baseline MM exclusion drops the StudyPop non-diagnostic rule
+### R2 — Baseline MM exclusion uses the attrition-table definition, not StudyPop's non-diagnostic rule
 
 **Reviewer severity:** P1 / High
 **My prior call:** not flagged
-**Verdict:** **Valid. New finding. High.**
+**Verdict:** **Valid. New finding. High. Best framed as StudyPop-vs-attrition source conflict** — the code's own comment records this as a deliberate choice, not an oversight.
 
 **Spec evidence — `studypopapr18.pdf` p2, row `MM_baseline_diag`:**
 > "Evidence of any MM here is defined use ≥1 **non-diagnostic** medical claim for MM (ICD-9-CM=203.0x or ICD-10-CM code=C90.0x) during the baseline period. This flag is used to help better identify smoldering patients."
@@ -72,12 +74,13 @@ WITH filtered AS (
 Optum non-diagnostic definition on the same page:
 > "a claim where one of the multiple myeloma diagnosis codes is present, but there is at least one service line on the claim that doesn't equal a diagnostic code … If the resulting facility claim had a diagnosis code for multiple myeloma and only one service line on the claim and that service line indicated a laboratory test, then we can't be certain that this is a true multiple myeloma diagnosis … Alternatively, if the claim had … two service lines: the first line for testing and the second line a HCPCS code for medication or a CPT code for physician care management then we will accept that claim as a 'non-diagnostic claim'."
 
-**Code evidence — `pipeline_steps.R:593-615`:**
+**Code evidence — `pipeline_steps.R:593-615`** (author's own comment preserved verbatim — this is the point):
 ```r
 # Step 16 (claim_nondiagnostic view) was removed -- it was orphaned and
 # not referenced by any downstream step. The attrition table Step 7
 # requires only >=1 MM dx (strict) in baseline, not non-diagnostic claims.
 # ...
+# Per ATTRITION TABLE Step 7: >=1 medical claim for MM (203.0x/C90.0x) in baseline
 # NOTE: Attrition table does NOT require non-diagnostic; IE criteria PDF row 14 does.
 # Following attrition table as the authoritative source.
 ...
@@ -87,19 +90,19 @@ max(CASE WHEN e.svc_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
          THEN 1 ELSE 0 END) AS MM_BASELINE_EVIDENCE
 ```
 
-The code **counts any strict MM dx in baseline**, with no service-line / non-diagnostic filter. The comment explicitly acknowledges the StudyPop/IE-criteria conflict and makes a deliberate choice of the attrition table over StudyPop.
+The code counts **any strict MM dx in baseline**, with no service-line / non-diagnostic filter. The comment at `:599-600` records the conflict explicitly and names the attrition table as the chosen authority. This is a deliberate engineering decision, not a miss — the open question is whether "attrition table over StudyPop" is the right precedence.
 
-**Impact:** broadens the exclusion materially. A baseline claim that the StudyPop spec would treat as "just a diagnostic test for MM" (so the patient is not yet a confirmed MM case → not a smoldering-patient exclusion) is counted as baseline MM evidence under the current code. Cohort composition shifts whenever diagnostic-only baseline claims are present. Also: by default this flag is OFF (R1), so the effect is latent until someone sets `apply_baseline_mm_excl = TRUE`.
+**Impact if StudyPop is the governing source:** the exclusion is materially broader than intended. A baseline claim the StudyPop sheet would treat as "just a diagnostic test for MM" (service-line-level signal that the patient is not yet confirmed MM → *wanted* as a smoldering-patient include) is counted as baseline MM evidence under the current code. Cohort composition shifts whenever diagnostic-only baseline claims are present. Also: by default this flag is OFF (R1), so the effect is latent until someone sets `apply_baseline_mm_excl = TRUE`.
 
-**Ask:** study-team decision on which source (StudyPop sheet vs attrition table) is authoritative. If StudyPop wins, the removed `claim_nondiagnostic` view needs to come back.
+**Ask:** study-team confirmation on which source (StudyPop sheet vs attrition table) is authoritative. If StudyPop wins, the removed `claim_nondiagnostic` view needs to come back. If the attrition table wins, the in-code comment should be promoted into the StudyPop sheet itself so downstream readers stop treating it as drift.
 
 ---
 
-### R3 — Other-cancer outpatient logic is stricter than the StudyPop rule
+### R3 — Other-cancer outpatient logic is stricter than the StudyPop sheet
 
 **Reviewer severity:** P1 / High
-**My prior call:** A9 / Match — wrong
-**Verdict:** **Valid. New finding. High.**
+**My prior call:** A9 / Match — I did not check the "only the first" clause.
+**Verdict:** **Valid. New finding. High. Stricter than StudyPop; best framed as a source-of-truth conflict until the study team confirms StudyPop overrides attrition.** The code has no in-line comment on this one (unlike R2), so it reads more like accidental strictness than a recorded decision — worth flagging as such.
 
 **Spec evidence — `studypopapr18.pdf` p2, row `MM_baseline_other`:**
 > "Patients with either ≥1 inpatient or ≥2 outpatient ICD-9-CM or ICD-10-CM codes on separate days, within 30 days, for the same primary tumor type and/or metastatic cancer. **Only the first of the 2 codes is required to occur inside the baseline period.**"
@@ -116,7 +119,9 @@ THEN 1
 
 The code requires BOTH `first_dt` and `next_dt` to be `≤ day before index`. The StudyPop spec says only `first_dt` needs to be in baseline; the confirming `next_dt` can fall shortly after index.
 
-**Impact:** patients whose first OP cancer claim is in baseline and whose confirming second OP claim falls just after index are **kept** in the cohort under the current code, whereas the spec would exclude them. My prior review's Part A labelled this finding as MATCH; that was wrong — I did not cross-check the "only the first" clause in the StudyPop sheet.
+**Impact if StudyPop is the governing source:** patients whose first OP cancer claim is in baseline and whose confirming second OP claim falls just after index are **kept** in the cohort under the current code, whereas the StudyPop spec would exclude them. My prior review's Part A labelled this a MATCH; that was a miss — I did not cross-check the "only the first" clause in the StudyPop sheet.
+
+**Ask:** same source-precedence decision as R2. If StudyPop wins, the fix is to drop the `op.next_dt <= date_sub(index_date, 1)` condition and keep the 30-day within-pair window.
 
 ---
 
@@ -209,8 +214,8 @@ The code author acknowledges the deviation in the comment: spec expects a random
 | ID | Severity | Area | Location | One-line fix direction |
 |---|---|---|---|---|
 | A1 (upgrade) | **High** | Attrition defaults | `config_prompts.R:111-117` | Flip the 4 `apply_*_excl` defaults to `TRUE` (or add a hard banner on Part 1 start when any are FALSE) |
-| A9a (new) | **High** | Baseline MM evidence | `pipeline_steps.R:593-615` | Restore non-diagnostic filter per StudyPop row `MM_baseline_diag`, OR get explicit written sign-off that attrition table supersedes StudyPop |
-| A9b (new) | **High** | Other-cancer OP | `pipeline_steps.R:876-880` | Drop the `op.next_dt <= date_sub(index_date, 1)` condition; require only `op.first_dt` in baseline (and keep the 30-day within-pair window) |
+| A9a (new) | **High** | Baseline MM evidence — StudyPop-vs-attrition conflict | `pipeline_steps.R:593-615` (see comment `:599-600`) | Either restore the non-diagnostic filter per StudyPop row `MM_baseline_diag`, or get explicit written sign-off from the study team that the attrition table supersedes StudyPop for this row and update the StudyPop sheet accordingly |
+| A9b (new) | **High** | Other-cancer OP — stricter than StudyPop | `pipeline_steps.R:876-880` | Either drop the `op.next_dt <= date_sub(index_date, 1)` condition (keep the 30-day within-pair window) per StudyPop's "only the first" rule, or get written confirmation the stricter interpretation is intentional |
 | C5a (new) | Low | First-add tie-break | `lot_program.R:805-806` | Replace `min()` with either a spec-aligned fixed-seed random pick, or document a deterministic tie-break ordering in the spec |
 
 Already-tracked items (Apr 19 review): R4 (legacy maintenance), R5 (SCT_NO_MAINT), R6 (CART_INIT date) — no change.
@@ -222,11 +227,45 @@ Already-tracked items (Apr 19 review): R4 (legacy maintenance), R5 (SCT_NO_MAINT
 Being explicit so the corrections are auditable:
 
 1. **Severity miscall on A1.** I wrote this up as Medium and framed it as a stakeholder policy choice. The reviewer is right that — regardless of the 2026-04-14 decision — the functional effect is a cohort-definition default mismatch with the spec and should be High.
-2. **Missed R2 entirely.** I did not cross-check `MM_baseline_diag` against the StudyPop row and accepted the in-code comment's choice of the attrition table without independently verifying. The code comment at `pipeline_steps.R:599-600` was effectively a self-flag that I should have surfaced.
-3. **Wrongly called R3 a MATCH.** I did not notice the "**Only the first** of the 2 codes is required to occur inside the baseline period" clause on the StudyPop sheet. The code's both-dates-pre-index logic is a real drift.
+2. **Missed R2 entirely.** I did not cross-check `MM_baseline_diag` against the StudyPop row and accepted the in-code comment's choice of the attrition table without independently verifying. The code comment at `pipeline_steps.R:599-600` was effectively a self-flag that I should have surfaced — though, per the reviewer's framing point, R2 is better called a source-of-truth conflict than a drift.
+3. **Called R3 a MATCH.** I did not notice the "**Only the first** of the 2 codes is required to occur inside the baseline period" clause on the StudyPop sheet. The code's both-dates-pre-index logic is stricter than the StudyPop rule.
 4. **Soft-pedalled R7.** At C5 I described the tie-break as "documented as deliberate" and didn't flag it as drift. It is drift — the code comment says so explicitly.
 
 No code was changed. No specs were changed. This file documents the validation only.
+
+---
+
+## Residual risk to inspect next (not a formal finding)
+
+**Part 1 therapy capture may be narrower than Part 2 medication capture.**
+
+`pipeline_steps.R:631-648` (attrition's `therapy_events`, drives `MM_bl_agents` / `MM_FU_agents`) pulls from **2 sources**:
+- `medical.PROC_CD` joined against `mm_therapy_codes` where `code_type IN ('HCPCS','CPT')`
+- `rx.NDC` joined against `mm_therapy_codes` where `code_type = 'NDC'`
+
+`lot_program.R:292-387` (Part 2's `mma_med_raw`) pulls from **4 sources**:
+- `medical.PROC_CD` (HCPCS)
+- `medical.BILL_PROC_CD` (HCPCS)
+- `medical.NDC` (NDC on medical side)
+- `rx.NDC`
+
+So Part 1 misses two sources that Part 2 considers: **`medical.BILL_PROC_CD`** and **`medical.NDC`**. A therapy event billed only under `BILL_PROC_CD`, or administered as an NDC on a medical claim, will be seen by Part 2 medication extraction but not by the attrition's therapy flags. That is a potential undercapture of MM-therapy evidence in the attrition pipeline — patients could be excluded under "no FU therapy" (Step 6) or retained under "no baseline therapy" (Step 5) incorrectly.
+
+Not raised as a formal finding yet — needs spec check on whether the therapy codelist actually contains codes that would land in `BILL_PROC_CD` vs only `PROC_CD`, and whether any MM therapies are plausibly billed via `medical.NDC`. But it is the next place I would look.
+
+---
+
+## Housekeeping — file layout on this branch
+
+All review artifacts are under `Apr 18 2026/` on branch `claude/review-r-code-optimization-ksBNf`. If you're reading via a local checkout, these files exist only after pulling that branch:
+
+- `code_alignment_review.md` *(pre-existing — Apr 19 end-spec)*
+- `program_review_vs_apr19_spec.md` *(pre-existing — Apr 19 end-spec)*
+- `r_code_optimization_review.md` *(added: LOT-flow perf/observability)*
+- `code_vs_spec_review_apr18.md` *(added: consolidated Apr 18 specs vs code)*
+- `reviewer_findings_validation.md` *(this file)*
+
+If the reviewer is pointing to a different filename that's expected locally, say which one and I'll rename to match.
 
 ---
 
