@@ -18,7 +18,7 @@
 #   - optum data dict.pdf (field validation)
 #   - optum business rules.pdf (join/filter logic guidance)
 #
-# Input:  ELIG_COH_FINAL (output of Part 1 attrition pipeline, new_code.R)
+# Input:  ELIG_COH_FINAL (output of the Part 1 attrition pipeline; see main.R)
 # Output: MAP_STACKED, LOT1_BASE, LOT1_SCT, LOT1_BASE_END
 #
 # IMPORTANT - MAP algorithm corrections vs prior versions:
@@ -841,7 +841,8 @@ main <- function() {
   #   - ALLO/CART immediately end LOT1
   #   - Single AUTO allowed; tandem pair allowed; excess AUTO ends LOT1
   #
-  # NOTE: Maintenance detection is now in S16a_lot1_maintenance.
+  # NOTE: Apr 19 spec makes maintenance a descriptive flag only (contains_mtx_reg,
+  # derived in S16b). There is no standalone maintenance-period view anymore.
   # ----------------------------------------------------------
 
   # S11: Register SCT codelist
@@ -1358,15 +1359,18 @@ main <- function() {
     FROM lot1_sct")
 
   # ----------------------------------------------------------
-  # Materialize heavy upstream views before maintenance detection.
-  # map_stacked, lot1_base, and lot1_sct are all TEMPORARY VIEWs
-  # that reference deep CTE chains back to CDM tables. Without
-  # materializing, Spark re-evaluates the full chain every time
-  # S16a and S16 reference them — causing massive redundant I/O.
+  # Materialize heavy upstream views before final assembly + reporting.
+  # map_stacked, lot1_base, and lot1_sct are TEMPORARY VIEWs with deep
+  # CTE chains back to CDM tables. S16 itself only references each
+  # once, so the pay-off is downstream: descriptives reads map_stacked
+  # ~17x, lot1_sct ~11x, and lot1_base several times; MAP validation
+  # QC and run-metadata counts touch them again. Materializing once
+  # here lets every downstream query hit a physical work-schema table
+  # instead of re-evaluating the CTE chain.
   # Write to work schema tables, then repoint the views at them.
   # (CACHE TABLE is not supported on SQL warehouses.)
   # ----------------------------------------------------------
-  log_msg("Materializing intermediate views for S16a/S16 performance...")
+  log_msg("Materializing intermediate views for downstream reporting/QC...")
   for (mv in list(
     list(name = "MAP_STACKED", view = "map_stacked"),
     list(name = "LOT1_BASE",   view = "lot1_base"),
@@ -1381,387 +1385,6 @@ main <- function() {
       SELECT * FROM {wrk(mv$name)}
     "))
   }
-
-  # ----------------------------------------------------------
-  # C3 fix: Maintenance regimen detection
-  # Per protocol Section 5.1.1:
-  #   "A maintenance regimen is a period of 120 days or longer during which
-  #    only a valid maintenance therapy is available."
-  # Post-SCT: 30-day minimum within 180 days of SCT.
-  # Valid mono: LENA, BORT, DARA, IXAZ, THAL (MONOMAINTENANCE=1 in rollup)
-  # Valid dual: BORT/LENA, CARF/LENA, DARA/LENA (DUALMAINTENANCEWITH in rollup)
-  # Maintenance drugs must have been part of the LOT's initial regimen.
-  # ----------------------------------------------------------
-  run_step(con, "S16a_lot1_maintenance", glue("
-    CREATE OR REPLACE TEMPORARY VIEW lot1_maintenance AS
-    WITH
-    -- base_meds: initial regimen drugs + permissible substitutions.
-    -- Defined first so that maintenance eligibility and regimen checks include
-    -- permitted substitutes (e.g., BORT -> IXAZ per lot1baseapr14).
-    base_meds AS (
-      SELECT PATID, MED_ABBR
-      FROM lot1_induction_meds
-      UNION
-      SELECT im.PATID, ps.substitute_med AS MED_ABBR
-      FROM lot1_induction_meds im
-      INNER JOIN permissible_subs ps
-        ON im.MED_ABBR = ps.original_med
-    ),
-    -- Identify maintenance-eligible base_meds drugs per patient.
-    -- Uses base_meds (not lot1_induction_meds) so that permissible substitutes
-    -- like IXAZ (for BORT) are recognized as maintenance-eligible.
-    maint_eligible AS (
-      -- Mono-maintenance: drug has MONOMAINTENANCE=1 AND is in base_meds
-      SELECT DISTINCT bm.PATID, bm.MED_ABBR
-      FROM base_meds bm
-      INNER JOIN mma_rollup ru ON bm.MED_ABBR = ru.CL_MED_ABBR
-      WHERE ru.MONOMAINTENANCE = 1
-      UNION
-      -- Dual-maintenance: drug has DUALMAINTENANCEWITH AND partner is in base_meds
-      SELECT DISTINCT bm.PATID, bm.MED_ABBR
-      FROM base_meds bm
-      INNER JOIN mma_rollup ru ON bm.MED_ABBR = ru.CL_MED_ABBR
-      INNER JOIN base_meds bm2
-        ON bm.PATID = bm2.PATID
-        AND bm.MED_ABBR <> bm2.MED_ABBR
-        AND array_contains(
-          transform(split(coalesce(ru.DUALMAINTENANCEWITH, ''), ','), v -> upper(trim(v))),
-          bm2.MED_ABBR)
-      UNION
-      -- Reverse dual: this drug is named as a dual partner by another base_meds drug
-      SELECT DISTINCT bm.PATID, bm.MED_ABBR
-      FROM base_meds bm
-      INNER JOIN base_meds bm2
-        ON bm.PATID = bm2.PATID AND bm.MED_ABBR <> bm2.MED_ABBR
-      INNER JOIN mma_rollup ru2 ON bm2.MED_ABBR = ru2.CL_MED_ABBR
-      WHERE array_contains(
-        transform(split(coalesce(ru2.DUALMAINTENANCEWITH, ''), ','), v -> upper(trim(v))),
-        bm.MED_ABBR)
-    ),
-    -- Enumerate valid maintenance regimens per patient as sorted key strings.
-    -- Mono: single drug where MONOMAINTENANCE=1 and drug is in base_meds.
-    -- Dual: sorted pair where one drug lists the other via DUALMAINTENANCEWITH.
-    -- Uses base_meds so permissible substitutes can form valid regimens.
-    valid_maint_regimens AS (
-      SELECT DISTINCT bm.PATID, bm.MED_ABBR AS REGIMEN_KEY
-      FROM base_meds bm
-      INNER JOIN mma_rollup ru ON bm.MED_ABBR = ru.CL_MED_ABBR
-      WHERE ru.MONOMAINTENANCE = 1
-      UNION
-      SELECT DISTINCT
-        bm.PATID,
-        concat_ws(' ', sort_array(array(bm.MED_ABBR, bm2.MED_ABBR))) AS REGIMEN_KEY
-      FROM base_meds bm
-      INNER JOIN mma_rollup ru ON bm.MED_ABBR = ru.CL_MED_ABBR
-      INNER JOIN base_meds bm2
-        ON bm.PATID = bm2.PATID
-        AND bm.MED_ABBR <> bm2.MED_ABBR
-        AND array_contains(
-          transform(split(coalesce(ru.DUALMAINTENANCEWITH, ''), ','), v -> upper(trim(v))),
-          bm2.MED_ABBR)
-    ),
-    -- Tag initial-regimen (base_meds) MAPs as maintenance-eligible or not.
-    -- Per spec: maintenance starts when non-maintenance drugs from the INITIAL
-    -- regimen are discontinued, leaving only valid maintenance therapies.
-    -- Only base_meds drugs are considered (not later non-maint drugs, which would
-    -- incorrectly delay MAINT_START_DT).
-    tagged_maps AS (
-      SELECT
-        ms.PATID, ms.MAP_MED_TYPE, ms.MAP_START_DT, ms.MAP_END_DT,
-        CASE WHEN me.MED_ABBR IS NOT NULL THEN 1 ELSE 0 END AS IS_MAINT
-      FROM map_stacked ms
-      INNER JOIN lot1_start l1 ON ms.PATID = l1.PATID
-      INNER JOIN base_meds bm
-        ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
-      LEFT JOIN maint_eligible me
-        ON ms.PATID = me.PATID AND ms.MAP_MED_TYPE = me.MED_ABBR
-      WHERE ms.MAP_MED_CLASS <> 'STEROID'
-        AND ms.MAP_START_DT >= l1.LOT1_START_DT
-    ),
-    -- Per-drug coverage: last MAP end for each base_meds drug per patient
-    drug_coverage AS (
-      SELECT PATID, MAP_MED_TYPE, IS_MAINT, max(MAP_END_DT) AS DRUG_LAST_END
-      FROM tagged_maps
-      GROUP BY PATID, MAP_MED_TYPE, IS_MAINT
-    ),
-    -- Regimen-level transition detection: collect remaining drugs after each
-    -- potential drop point, then validate that the remaining set forms a valid
-    -- mono or dual maintenance regimen (not just individually eligible drugs).
-    -- Handles all mtx scenarios: #1 BORT mono, #2 BORT+LENA dual,
-    -- #3 LENA mono (all maint-eligible), #4 LENA+DARA dual (all maint-eligible).
-    transition_regimen AS (
-      SELECT
-        dc.PATID,
-        dc.DRUG_LAST_END AS DROP_DT,
-        concat_ws(' ', sort_array(collect_set(d2.MAP_MED_TYPE))) AS REMAINING_KEY
-      FROM drug_coverage dc
-      INNER JOIN drug_coverage d2
-        ON dc.PATID = d2.PATID
-        AND d2.DRUG_LAST_END > dc.DRUG_LAST_END
-      GROUP BY dc.PATID, dc.DRUG_LAST_END
-    ),
-    -- Keep only transitions where remaining drugs form a valid regimen
-    valid_transitions AS (
-      SELECT tr.PATID, tr.DROP_DT, tr.REMAINING_KEY
-      FROM transition_regimen tr
-      INNER JOIN valid_maint_regimens vmr
-        ON tr.PATID = vmr.PATID AND tr.REMAINING_KEY = vmr.REGIMEN_KEY
-    ),
-    earliest_transition AS (
-      SELECT PATID, min(DROP_DT) AS TRANSITION_DT
-      FROM valid_transitions
-      GROUP BY PATID
-    ),
-    -- Identify the specific drugs in the chosen maintenance regimen
-    maint_regimen_drugs AS (
-      SELECT DISTINCT vt.PATID, drug AS MED_ABBR
-      FROM valid_transitions vt
-      INNER JOIN earliest_transition et
-        ON vt.PATID = et.PATID AND vt.DROP_DT = et.TRANSITION_DT
-      LATERAL VIEW explode(split(vt.REMAINING_KEY, ' ')) t AS drug
-    ),
-    -- Per-drug: earliest MAP start for each regimen drug after transition.
-    -- Use greatest(MAP_START_DT, TRANSITION_DT+1) so that:
-    --   - Continuous MAPs from induction: start = day after transition (per mtx scenarios)
-    --   - Gap/restart MAPs: start = actual MAP_START_DT of the restart
-    first_maint_per_drug AS (
-      SELECT
-        tm.PATID,
-        tm.MAP_MED_TYPE,
-        min(
-          greatest(tm.MAP_START_DT, date_add(et.TRANSITION_DT, 1))
-        ) AS DRUG_FIRST_MAINT_DT
-      FROM tagged_maps tm
-      INNER JOIN earliest_transition et ON tm.PATID = et.PATID
-      INNER JOIN maint_regimen_drugs mrd
-        ON tm.PATID = mrd.PATID AND tm.MAP_MED_TYPE = mrd.MED_ABBR
-      WHERE tm.MAP_END_DT >= date_add(et.TRANSITION_DT, 1)
-      GROUP BY tm.PATID, tm.MAP_MED_TYPE
-    ),
-    -- Regimen-level: for dual maintenance, start when ALL drugs are available
-    -- together. Use max across per-drug starts so a dual regimen waits for
-    -- the later drug. For mono, max = the single drug start (no change).
-    first_maint_after_transition AS (
-      SELECT
-        PATID,
-        max(DRUG_FIRST_MAINT_DT) AS FIRST_MAINT_MAP_DT
-      FROM first_maint_per_drug
-      GROUP BY PATID
-    ),
-    -- Compute maintenance period start per spec
-    maint_bounds AS (
-      SELECT
-        lb.PATID,
-        lb.LOT1_START_DT,
-        lb.OBS_END_DT,
-        lb.DEATH_DT,
-        lb.ENDDATE,
-        fma.FIRST_MAINT_MAP_DT AS MAINT_START_DT
-      FROM lot1_base lb
-      INNER JOIN first_maint_after_transition fma ON lb.PATID = fma.PATID
-    ),
-    -- Detect SCT events that would interrupt maintenance (any SCT on or after MAINT_START_DT)
-    maint_interrupt_sct AS (
-      SELECT
-        mb.PATID,
-        least(
-          coalesce(sct.LOT1_TX_AUTO_DT_1, cast('9999-12-31' as date)),
-          coalesce(sct.LOT1_TX_AUTO_DT_2, cast('9999-12-31' as date)),
-          coalesce(sct.FIRST_ALLO_DT,     cast('9999-12-31' as date)),
-          coalesce(sct.FIRST_CART_DT,      cast('9999-12-31' as date))
-        ) AS EARLIEST_SCT_AFTER_MAINT
-      FROM maint_bounds mb
-      INNER JOIN lot1_sct sct ON mb.PATID = sct.PATID
-      WHERE least(
-          coalesce(sct.LOT1_TX_AUTO_DT_1, cast('9999-12-31' as date)),
-          coalesce(sct.LOT1_TX_AUTO_DT_2, cast('9999-12-31' as date)),
-          coalesce(sct.FIRST_ALLO_DT,     cast('9999-12-31' as date)),
-          coalesce(sct.FIRST_CART_DT,      cast('9999-12-31' as date))
-        ) >= mb.MAINT_START_DT
-        AND least(
-          coalesce(sct.LOT1_TX_AUTO_DT_1, cast('9999-12-31' as date)),
-          coalesce(sct.LOT1_TX_AUTO_DT_2, cast('9999-12-31' as date)),
-          coalesce(sct.FIRST_ALLO_DT,     cast('9999-12-31' as date)),
-          coalesce(sct.FIRST_CART_DT,      cast('9999-12-31' as date))
-        ) < cast('9999-12-31' as date)
-    ),
-    -- Detect drug additions that would interrupt the active maintenance regimen.
-    -- Per spec: the addition of any non-maintenance MM therapy automatically
-    -- causes the maintenance regimen to end. This includes drugs that are
-    -- maintenance-eligible but not part of the ACTIVE regimen (e.g., LENA
-    -- restarting during BORT mono-maintenance ends the BORT maintenance).
-    -- Checks against maint_regimen_drugs (the actual regimen), not maint_eligible.
-    maint_interrupt_nonmaint AS (
-      SELECT
-        mb.PATID,
-        min(ms.MAP_START_DT) AS EARLIEST_NONMAINT_ADD_DT
-      FROM maint_bounds mb
-      INNER JOIN map_stacked ms
-        ON mb.PATID = ms.PATID
-        AND ms.MAP_MED_CLASS <> 'STEROID'
-        AND ms.MAP_START_DT >= mb.MAINT_START_DT
-      LEFT JOIN maint_regimen_drugs mrd
-        ON ms.PATID = mrd.PATID AND ms.MAP_MED_TYPE = mrd.MED_ABBR
-      WHERE mrd.MED_ABBR IS NULL  -- drug is NOT in the active maintenance regimen
-      GROUP BY mb.PATID
-    ),
-    -- Per-drug last coverage date within the maintenance period.
-    maint_per_drug_end AS (
-      SELECT
-        mb.PATID,
-        tm.MAP_MED_TYPE,
-        max(tm.MAP_END_DT) AS DRUG_LAST_END
-      FROM maint_bounds mb
-      INNER JOIN tagged_maps tm
-        ON mb.PATID = tm.PATID
-        AND tm.MAP_END_DT >= mb.MAINT_START_DT
-      INNER JOIN maint_regimen_drugs mrd
-        ON tm.PATID = mrd.PATID AND tm.MAP_MED_TYPE = mrd.MED_ABBR
-      GROUP BY mb.PATID, tm.MAP_MED_TYPE
-    ),
-    -- Regimen-level raw coverage end: for dual, use min of per-drug ends
-    -- (regimen ends when the first component drug drops). For mono, min = the
-    -- single drug end. This ensures the coverage window reflects the period
-    -- during which the full selected regimen is truly in force.
-    maint_regimen_end AS (
-      SELECT
-        PATID,
-        min(DRUG_LAST_END) AS REGIMEN_RAW_END_DT,
-        count(DISTINCT MAP_MED_TYPE) AS N_MAINT_DRUGS,
-        concat_ws(' ', sort_array(collect_set(MAP_MED_TYPE))) AS MAINT_DRUGS
-      FROM maint_per_drug_end
-      GROUP BY PATID
-    ),
-    -- Combine regimen-level coverage with interrupt events.
-    maint_coverage AS (
-      SELECT
-        mb.PATID,
-        mb.MAINT_START_DT,
-        mb.OBS_END_DT,
-        mb.DEATH_DT,
-        mb.ENDDATE,
-        least(
-          mre.REGIMEN_RAW_END_DT,
-          mb.OBS_END_DT,
-          coalesce(date_sub(isct.EARLIEST_SCT_AFTER_MAINT, 1), cast('9999-12-31' as date)),
-          coalesce(date_sub(inm.EARLIEST_NONMAINT_ADD_DT, 1), cast('9999-12-31' as date))
-        ) AS MAINT_END_DT,
-        mre.REGIMEN_RAW_END_DT AS MAINT_RAW_END_DT,
-        mre.N_MAINT_DRUGS,
-        mre.MAINT_DRUGS,
-        isct.EARLIEST_SCT_AFTER_MAINT,
-        inm.EARLIEST_NONMAINT_ADD_DT
-      FROM maint_bounds mb
-      INNER JOIN maint_regimen_end mre ON mb.PATID = mre.PATID
-      LEFT JOIN maint_interrupt_sct isct ON mb.PATID = isct.PATID
-      LEFT JOIN maint_interrupt_nonmaint inm ON mb.PATID = inm.PATID
-    ),
-    -- Apply duration threshold (120 standard, 30 post-SCT per spec)
-    -- Per spec: maintenance is evaluated after a single autologous SCT
-    -- or after the second SCT of a tandem autologous SCT.
-    -- Lower bound must use AUTO_DT_2 for tandem, not LOT1_1ST_SCT_DT.
-    maint_qualified AS (
-      SELECT
-        mc.*,
-        datediff(mc.MAINT_END_DT, mc.MAINT_START_DT) + 1 AS MAINT_DURATION,
-        CASE
-          WHEN sct.LOT1_1ST_SCT_DT IS NOT NULL
-           AND mc.MAINT_START_DT >= CASE WHEN sct.LOT1_SCT_AUTO_TAND_FLG = 1
-                                         THEN sct.LOT1_TX_AUTO_DT_2
-                                         ELSE coalesce(sct.LOT1_TX_AUTO_DT_1, sct.LOT1_1ST_SCT_DT)
-                                    END
-           AND mc.MAINT_START_DT <= date_add(
-                 CASE WHEN sct.LOT1_SCT_AUTO_TAND_FLG = 1
-                      THEN sct.LOT1_TX_AUTO_DT_2
-                      ELSE coalesce(sct.LOT1_TX_AUTO_DT_1, sct.LOT1_1ST_SCT_DT)
-                 END, {cfg$maint_sct_window_days})
-          THEN {cfg$maint_post_sct_min_days}
-          ELSE {cfg$maint_min_days}
-        END AS MIN_MAINT_DAYS,
-        -- Short follow-up exception: per protocol, if follow-up ends before
-        -- 30 post-SCT days can be observed AND follow-up end was the actual
-        -- reason maintenance was truncated (not SCT or non-maint drug addition),
-        -- available days still count.
-        CASE
-          WHEN sct.LOT1_1ST_SCT_DT IS NOT NULL
-           AND mc.MAINT_START_DT >= CASE WHEN sct.LOT1_SCT_AUTO_TAND_FLG = 1
-                                         THEN sct.LOT1_TX_AUTO_DT_2
-                                         ELSE coalesce(sct.LOT1_TX_AUTO_DT_1, sct.LOT1_1ST_SCT_DT)
-                                    END
-           AND mc.MAINT_START_DT <= date_add(
-                 CASE WHEN sct.LOT1_SCT_AUTO_TAND_FLG = 1
-                      THEN sct.LOT1_TX_AUTO_DT_2
-                      ELSE coalesce(sct.LOT1_TX_AUTO_DT_1, sct.LOT1_1ST_SCT_DT)
-                 END, {cfg$maint_sct_window_days})
-           AND mc.OBS_END_DT < date_add(mc.MAINT_START_DT, {cfg$maint_post_sct_min_days})
-           -- Ensure follow-up end was actually the constraining factor,
-           -- not an SCT or non-maint drug addition
-           AND (mc.EARLIEST_SCT_AFTER_MAINT IS NULL
-                OR date_sub(mc.EARLIEST_SCT_AFTER_MAINT, 1) >= mc.OBS_END_DT)
-           AND (mc.EARLIEST_NONMAINT_ADD_DT IS NULL
-                OR date_sub(mc.EARLIEST_NONMAINT_ADD_DT, 1) >= mc.OBS_END_DT)
-          THEN 1 ELSE 0
-        END AS SHORT_FOLLOWUP_FLG,
-        sct.LOT1_1ST_SCT_DT,
-        sct.LOT1_TX_AUTO_DT_1,
-        sct.LOT1_TX_AUTO_DT_2,
-        sct.LOT1_SCT_AUTO_TAND_FLG,
-        sct.LOT1_SCT_AUTO_SING_FLG
-      FROM maint_coverage mc
-      LEFT JOIN lot1_sct sct ON mc.PATID = sct.PATID
-    )
-    SELECT
-      PATID,
-      MAINT_START_DT AS LOT1_BASEMAINT_START,
-      MAINT_DRUGS AS LOT1_BASEMAINT_TYP,
-      MAINT_END_DT AS LOT1_BASEMAINT_END,
-      N_MAINT_DRUGS,
-      -- End reason priority: SCT > NON_MAINT_ADD > DEATH > DISENROLLMENT > STUDY_END > DISCONTINUATION
-      CASE
-        WHEN EARLIEST_SCT_AFTER_MAINT IS NOT NULL
-         AND date_sub(EARLIEST_SCT_AFTER_MAINT, 1) <= MAINT_END_DT
-        THEN 'SCT'
-        WHEN EARLIEST_NONMAINT_ADD_DT IS NOT NULL
-         AND date_sub(EARLIEST_NONMAINT_ADD_DT, 1) <= MAINT_END_DT
-        THEN 'NON_MAINT_ADD'
-        WHEN DEATH_DT IS NOT NULL AND DEATH_DT <= MAINT_END_DT THEN 'DEATH'
-        WHEN OBS_END_DT < ENDDATE AND OBS_END_DT <= MAINT_END_DT THEN 'DISENROLLMENT'
-        WHEN MAINT_RAW_END_DT >= OBS_END_DT THEN 'STUDY_END'
-        ELSE 'DISCONTINUATION'
-      END AS LOT1_BASEMAINT_END_REASON,
-      -- Per-medication maintenance flags (spec: BORT, CARF, DARA, IXAZ, LENA, THAL)
-      CASE WHEN array_contains(split(MAINT_DRUGS, ' '), 'BORT') THEN 1 ELSE 0 END AS LOT1_BASEMAINT_MED_BORT,
-      CASE WHEN array_contains(split(MAINT_DRUGS, ' '), 'CARF') THEN 1 ELSE 0 END AS LOT1_BASEMAINT_MED_CARF,
-      CASE WHEN array_contains(split(MAINT_DRUGS, ' '), 'DARA') THEN 1 ELSE 0 END AS LOT1_BASEMAINT_MED_DARA,
-      CASE WHEN array_contains(split(MAINT_DRUGS, ' '), 'IXAZ') THEN 1 ELSE 0 END AS LOT1_BASEMAINT_MED_IXAZ,
-      CASE WHEN array_contains(split(MAINT_DRUGS, ' '), 'LENA') THEN 1 ELSE 0 END AS LOT1_BASEMAINT_MED_LENA,
-      CASE WHEN array_contains(split(MAINT_DRUGS, ' '), 'THAL') THEN 1 ELSE 0 END AS LOT1_BASEMAINT_MED_THAL,
-      -- For Rule 4: is maintenance within 180 days of SCT?
-      -- Fix #4a: require MAINT_START_DT >= SCT reference date (not just <=180 after)
-      CASE
-        WHEN LOT1_1ST_SCT_DT IS NOT NULL
-         AND LOT1_TX_AUTO_DT_1 IS NOT NULL
-         AND MAINT_START_DT >= CASE WHEN LOT1_SCT_AUTO_TAND_FLG = 1
-                                    THEN LOT1_TX_AUTO_DT_2
-                                    ELSE LOT1_TX_AUTO_DT_1
-                               END
-         AND MAINT_START_DT <= date_add(
-               CASE WHEN LOT1_SCT_AUTO_TAND_FLG = 1
-                    THEN LOT1_TX_AUTO_DT_2
-                    ELSE LOT1_TX_AUTO_DT_1
-               END, {cfg$maint_sct_window_days})
-        THEN 1
-        ELSE 0
-      END AS MAINT_FOLLOWS_SCT_FLG
-    FROM maint_qualified
-    WHERE MAINT_DURATION >= MIN_MAINT_DAYS
-       OR SHORT_FOLLOWUP_FLG = 1
-  "), qc = "
-    SELECT
-      count(*) AS n_maint_eligible,
-      sum(LOT1_BASEMAINT_MED_LENA) AS n_lena_maint,
-      sum(LOT1_BASEMAINT_MED_BORT) AS n_bort_maint
-    FROM lot1_maintenance")
 
   # S16b: contains_mtx_reg — Flag-only maintenance concept (Apr 15 meeting)
   # Does the LOT1 induction regimen contain a valid maintenance-approved subset
@@ -1834,22 +1457,6 @@ main <- function() {
         sct.LOT1_1ST_SCT_DT,
         sct.FIRST_ALLO_DT,
         sct.FIRST_CART_DT,
-        -- Maintenance columns (carried through for historical reference only).
-        -- Apr 19 spec makes maintenance a descriptive flag (contains_mtx_reg)
-        -- and removes the standalone maintenance period from the final output.
-        -- Pending study-team decision on whether to drop the S16a subsystem
-        -- and these passthrough columns entirely; no end-reason logic depends
-        -- on them anymore.
-        m.LOT1_BASEMAINT_START,
-        m.LOT1_BASEMAINT_TYP,
-        m.LOT1_BASEMAINT_END,
-        m.LOT1_BASEMAINT_END_REASON,
-        m.LOT1_BASEMAINT_MED_BORT,
-        m.LOT1_BASEMAINT_MED_CARF,
-        m.LOT1_BASEMAINT_MED_DARA,
-        m.LOT1_BASEMAINT_MED_IXAZ,
-        m.LOT1_BASEMAINT_MED_LENA,
-        m.LOT1_BASEMAINT_MED_THAL,
         -- contains_mtx_reg flag (Apr 19 spec: descriptive, flag-only; does not
         -- drive end-reason routing or create a standalone maintenance period)
         COALESCE(cmr.contains_mtx_reg, 0) AS contains_mtx_reg,
@@ -1868,7 +1475,6 @@ main <- function() {
         END AS CART_INIT_FLG
       FROM lot1_base lb
       LEFT JOIN lot1_sct sct ON lb.PATID = sct.PATID
-      LEFT JOIN lot1_maintenance m ON lb.PATID = m.PATID
       LEFT JOIN lot1_contains_mtx_reg cmr ON lb.PATID = cmr.PATID
     )
     SELECT
@@ -2142,7 +1748,7 @@ main <- function() {
   # Persist outputs
   # ----------------------------------------------------------
   if (isTRUE(cfg$persist_to_schema)) {
-    # MAP_STACKED, LOT1_BASE, LOT1_SCT already materialized before S16a.
+    # MAP_STACKED, LOT1_BASE, LOT1_SCT already materialized before S16.
     # Only persist the remaining outputs here.
     persist_tables <- list(
       list(step = "S20", name = "LOT1_BASE_END",     view = "lot1_base_end"),

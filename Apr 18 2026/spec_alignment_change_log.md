@@ -1,5 +1,13 @@
 # Spec alignment change log — 2026-04-21
 
+> **Update (second pass, same day):** Following reviewer confirmation that
+> `non-diagnostic` was intentionally removed from the baseline-MM rule after
+> discussion (so R2 is a spec-document issue, not a code issue), the remaining
+> formal finding — the `LOT1_BASEMAINT_*` output surface + dead S16a subsystem —
+> has now been applied. See the new section "Second pass: R4 applied" at the
+> bottom. R2 is no longer pending; only the Part 1 therapy-capture residual
+> risk remains (still not a formal finding).
+
 **Scope:** code updates in `Apr 18 2026/Program/` to bring the pipeline in sync with the Apr 18 specs and Apr 14 attrition table (plus the already-adopted Apr 19 LOT1 end-spec). Triggered by findings in `reviewer_findings_validation.md`. Review-only documents in `Apr 18 2026/` were left unchanged.
 
 **Files changed:**
@@ -99,4 +107,70 @@ The attrition pipeline's `therapy_events` step pulls from `medical.PROC_CD` + `r
 
 ---
 
-*No review documents were modified by this pass. This file is the only new documentation artifact.*
+*No review documents were modified by the first pass. This file is the only new documentation artifact from that pass.*
+
+---
+
+## Second pass: R4 applied (maintenance output surface removal)
+
+Trigger: reviewer's updated report (2026-04-21) confirmed the baseline-MM `non-diagnostic` clarification (R2 is a doc issue, not code) and kept only one formal finding open — the `LOT1_BASEMAINT_*` output columns at `lot_program.R:1837` being inconsistent with the Apr 19 flag-only maintenance rule.
+
+**Applied — removed the entire maintenance-period machinery since nothing consumes it after R5:**
+
+1. **`lot_program.R` — S16 `end_candidates` CTE.** Dropped the 10 `LOT1_BASEMAINT_*` passthrough columns (`LOT1_BASEMAINT_START`, `_TYP`, `_END`, `_END_REASON`, `_MED_BORT`, `_MED_CARF`, `_MED_DARA`, `_MED_IXAZ`, `_MED_LENA`, `_MED_THAL`) and the `LEFT JOIN lot1_maintenance m ON lb.PATID = m.PATID`. `end_candidates` now joins only `lot1_sct` and `lot1_contains_mtx_reg`, with `contains_mtx_reg` being the sole maintenance concept in the final output.
+
+2. **`lot_program.R` — S16a subsystem.** Deleted the entire `run_step(con, "S16a_lot1_maintenance", ...)` block (381 lines including the C3-fix comment header and the `qc` clause). Dead code after R5 removed `SCT_NO_MAINT` routing and step 1 above removed the passthrough consumers. No other module references `lot1_maintenance` or `MAINT_FOLLOWS_SCT_FLG`.
+
+3. **`lot_program.R` — comments refreshed.**
+   - Line ~844 SCT section comment: replaced "Maintenance detection is now in S16a_lot1_maintenance" with a note that Apr 19 makes maintenance a descriptive flag only (`contains_mtx_reg` from S16b).
+   - Materialize-checkpoint header: changed "before maintenance detection" / "S16a and S16" / "for S16a/S16 performance" → "before S16 final assembly" / "S16" / "for S16 performance".
+   - Persist section: "already materialized before S16a" → "already materialized before S16".
+
+4. **`R/config_lot.R` — removed 3 dead config parameters:** `maint_min_days`, `maint_post_sct_min_days`, `maint_sct_window_days`, along with the 4-line comment block above them that referenced the Apr 15 maintenance decision.
+
+**Structural verification:**
+- Whole-file `grep` for `lot1_maintenance|LOT1_BASEMAINT|MAINT_FOLLOWS_SCT_FLG|maint_min_days|maint_post_sct_min_days|maint_sct_window_days|S16a` under `Apr 18 2026/Program/` now returns zero matches.
+- `CASE`/`END` balance: before 2nd pass 78/76 → after 61/59. Same delta (2) as before, consistent with removing 17 balanced CASE/END pairs in S16a.
+- Paren balance unchanged at -11 (pre-existing).
+- `lot_program.R` dropped from 2244 lines to 1865 lines (−379 lines).
+- No other module referenced the removed names; `descriptives_lot.R`, `dashboard_lot.R`, `cyclo_appendix_lot.R`, and `pipeline_steps.R` are untouched.
+
+**Downstream impact:**
+- Final `lot1_base_end` dataset: 10 fewer columns. Any downstream consumer expecting `LOT1_BASEMAINT_*` will need to switch to `contains_mtx_reg` (already present).
+- `config_lot.R`: 3 fewer knobs. If any env (`MAINT_MIN_DAYS` etc.) was set in a runtime config, it now has no effect — that's intentional.
+- Materialization of `MAP_STACKED` / `LOT1_BASE` / `LOT1_SCT` is retained because S16 still references them; only the purpose comment changed.
+
+**Still outstanding (not formal findings):**
+- Residual risk: Part 1 therapy capture (`pipeline_steps.R:631`) narrower than Part 2 (`lot_program.R:292-387`). Reviewer agreed this should not be escalated until confirmed against the `mm_therapy_codes` codelist and data practice.
+
+**Documentation note (out of scope for code):** `Program Spec and Scenarios/studypopapr18.pdf` page 2 still contains the outdated "non-diagnostic" wording for `MM_baseline_diag`. The spec document should be updated to match the agreed rule — no code change needed.
+
+*End of second pass.*
+
+---
+
+## Third pass: archive cleanup + materialization comment
+
+Trigger: follow-up reviewer report flagged `Program/Old Code/new_code.R` as a dead duplicate inside the active `Program/` tree (P3), plus stale cross-references, plus a materialization-rationale comment that was still written as if S16a were live.
+
+**Applied:**
+
+1. **Deleted `Apr 18 2026/Program/Old Code/new_code.R`** (140KB, 4012 lines — pre-modularization monolith). Not sourced by any active entrypoint (`main.R` / `lot_program.R`). Preserved in git history; removed from the working tree. Empty parent `Old Code/` folder cleaned up.
+
+2. **Cleaned 2 stale references to `new_code.R`:**
+   - `lot_program.R:21` header comment — rewritten from *"(output of Part 1 attrition pipeline, new_code.R)"* to *"(output of the Part 1 attrition pipeline; see main.R)"*.
+   - `R/codelists_lot.R:5` header comment — rewritten from *"Follows the same pattern as new_code.R's R/db_utils.R"* to an inline "Loader policy" statement (the policy was the useful part; the pointer to the deleted file wasn't).
+
+3. **Updated the pre-S16 materialization comment** to reflect the post-S16a rationale. Before, the comment justified materialization in terms of "S16a and S16" re-referencing the views. Now S16 references each view only once; the real beneficiaries are `descriptives_lot.R` (~17 references to `map_stacked`, ~11 to `lot1_sct`, several to `lot1_base`), the MAP validation QC, and the run-metadata counts. Comment rewritten to say so; materialization loop itself unchanged (still useful, just for different reasons).
+
+**Verification:**
+- Repo-wide grep for `new_code|S16a_lot1_maintenance|LOT1_BASEMAINT|lot1_maintenance|MAINT_FOLLOWS_SCT_FLG` under `Apr 18 2026/Program/` returns zero matches.
+- `Program/` tree now contains only the active modules (`R/`, `lot_program.R`, `main.R`). No archive subfolder under `Program/`.
+- `lot_program.R`: 1867 lines (+2 from the materialization comment rewrite, otherwise unchanged from second pass).
+
+**Outstanding (unchanged from second pass):**
+- Part 1 therapy capture residual risk (`pipeline_steps.R:631` — only `medical.PROC_CD` + `rx.NDC`, vs Part 2's 4 sources). Still held until spec/data confirmation.
+
+**Documentation note:** `Program Spec and Scenarios/studypopapr18.pdf` page 2 still contains outdated "non-diagnostic" wording for `MM_baseline_diag`. Spec doc should be updated; no code change.
+
+*End of third pass.*

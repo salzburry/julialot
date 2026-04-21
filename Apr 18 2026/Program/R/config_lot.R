@@ -42,14 +42,6 @@ cfg <- list(
   lot_discon_gap_days   = as.integer(Sys.getenv("LOT_DISCON_GAP_DAYS", unset = "90")),
   medical_day_supply    = as.integer(Sys.getenv("MEDICAL_DAY_SUPPLY", unset = "28")),
 
-  # Maintenance parameters (per protocol Section 5.1.1)
-  # Apr 15 meeting: maintenance is flag-only (contains_mtx_reg), no longer a LOT-ending
-  # construct. These params are retained for the underlying lot1_maintenance view which
-  # still computes maintenance-eligible periods used by SCT routing logic.
-  maint_min_days         = as.integer(Sys.getenv("MAINT_MIN_DAYS", unset = "120")),
-  maint_post_sct_min_days = as.integer(Sys.getenv("MAINT_POST_SCT_MIN_DAYS", unset = "30")),
-  maint_sct_window_days  = as.integer(Sys.getenv("MAINT_SCT_WINDOW_DAYS", unset = "180")),
-
   # Code list sourcing — CSV-only (no embedded fallbacks)
   codelist_dir = Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist"),
 
