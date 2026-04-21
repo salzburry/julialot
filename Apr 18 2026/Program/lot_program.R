@@ -18,7 +18,7 @@
 #   - optum data dict.pdf (field validation)
 #   - optum business rules.pdf (join/filter logic guidance)
 #
-# Input:  ELIG_COH_FINAL (output of Part 1 attrition pipeline, new_code.R)
+# Input:  ELIG_COH_FINAL (output of the Part 1 attrition pipeline; see main.R)
 # Output: MAP_STACKED, LOT1_BASE, LOT1_SCT, LOT1_BASE_END
 #
 # IMPORTANT - MAP algorithm corrections vs prior versions:
@@ -1359,15 +1359,18 @@ main <- function() {
     FROM lot1_sct")
 
   # ----------------------------------------------------------
-  # Materialize heavy upstream views before S16 final assembly.
-  # map_stacked, lot1_base, and lot1_sct are all TEMPORARY VIEWs
-  # that reference deep CTE chains back to CDM tables. Without
-  # materializing, Spark re-evaluates the full chain every time
-  # S16 references them — causing massive redundant I/O.
+  # Materialize heavy upstream views before final assembly + reporting.
+  # map_stacked, lot1_base, and lot1_sct are TEMPORARY VIEWs with deep
+  # CTE chains back to CDM tables. S16 itself only references each
+  # once, so the pay-off is downstream: descriptives reads map_stacked
+  # ~17x, lot1_sct ~11x, and lot1_base several times; MAP validation
+  # QC and run-metadata counts touch them again. Materializing once
+  # here lets every downstream query hit a physical work-schema table
+  # instead of re-evaluating the CTE chain.
   # Write to work schema tables, then repoint the views at them.
   # (CACHE TABLE is not supported on SQL warehouses.)
   # ----------------------------------------------------------
-  log_msg("Materializing intermediate views for S16 performance...")
+  log_msg("Materializing intermediate views for downstream reporting/QC...")
   for (mv in list(
     list(name = "MAP_STACKED", view = "map_stacked"),
     list(name = "LOT1_BASE",   view = "lot1_base"),

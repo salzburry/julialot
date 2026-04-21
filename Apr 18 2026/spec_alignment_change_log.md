@@ -146,3 +146,31 @@ Trigger: reviewer's updated report (2026-04-21) confirmed the baseline-MM `non-d
 **Documentation note (out of scope for code):** `Program Spec and Scenarios/studypopapr18.pdf` page 2 still contains the outdated "non-diagnostic" wording for `MM_baseline_diag`. The spec document should be updated to match the agreed rule — no code change needed.
 
 *End of second pass.*
+
+---
+
+## Third pass: archive cleanup + materialization comment
+
+Trigger: follow-up reviewer report flagged `Program/Old Code/new_code.R` as a dead duplicate inside the active `Program/` tree (P3), plus stale cross-references, plus a materialization-rationale comment that was still written as if S16a were live.
+
+**Applied:**
+
+1. **Deleted `Apr 18 2026/Program/Old Code/new_code.R`** (140KB, 4012 lines — pre-modularization monolith). Not sourced by any active entrypoint (`main.R` / `lot_program.R`). Preserved in git history; removed from the working tree. Empty parent `Old Code/` folder cleaned up.
+
+2. **Cleaned 2 stale references to `new_code.R`:**
+   - `lot_program.R:21` header comment — rewritten from *"(output of Part 1 attrition pipeline, new_code.R)"* to *"(output of the Part 1 attrition pipeline; see main.R)"*.
+   - `R/codelists_lot.R:5` header comment — rewritten from *"Follows the same pattern as new_code.R's R/db_utils.R"* to an inline "Loader policy" statement (the policy was the useful part; the pointer to the deleted file wasn't).
+
+3. **Updated the pre-S16 materialization comment** to reflect the post-S16a rationale. Before, the comment justified materialization in terms of "S16a and S16" re-referencing the views. Now S16 references each view only once; the real beneficiaries are `descriptives_lot.R` (~17 references to `map_stacked`, ~11 to `lot1_sct`, several to `lot1_base`), the MAP validation QC, and the run-metadata counts. Comment rewritten to say so; materialization loop itself unchanged (still useful, just for different reasons).
+
+**Verification:**
+- Repo-wide grep for `new_code|S16a_lot1_maintenance|LOT1_BASEMAINT|lot1_maintenance|MAINT_FOLLOWS_SCT_FLG` under `Apr 18 2026/Program/` returns zero matches.
+- `Program/` tree now contains only the active modules (`R/`, `lot_program.R`, `main.R`). No archive subfolder under `Program/`.
+- `lot_program.R`: 1867 lines (+2 from the materialization comment rewrite, otherwise unchanged from second pass).
+
+**Outstanding (unchanged from second pass):**
+- Part 1 therapy capture residual risk (`pipeline_steps.R:631` — only `medical.PROC_CD` + `rx.NDC`, vs Part 2's 4 sources). Still held until spec/data confirmation.
+
+**Documentation note:** `Program Spec and Scenarios/studypopapr18.pdf` page 2 still contains outdated "non-diagnostic" wording for `MM_baseline_diag`. Spec doc should be updated; no code change.
+
+*End of third pass.*

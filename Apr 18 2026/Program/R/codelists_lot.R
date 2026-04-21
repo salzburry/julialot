@@ -2,8 +2,8 @@
 # codelists_lot.R — CSV-only codelist loading (no embedded fallbacks)
 # ============================================================
 # Extracted from lot_program.R during modularization.
-# Follows the same pattern as new_code.R's R/db_utils.R:
-#   Priority 1: CSV from codelist_dir (REQUIRED — fail if missing)
+# Loader policy:
+#   Priority 1: CSV from codelist_dir (REQUIRED — fail if missing).
 #   No embedded fallback. No ref schema fallback.
 # Requires: cfg (from config_lot.R), log_msg (from db_utils_lot.R)
 # ============================================================
