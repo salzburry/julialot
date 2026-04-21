@@ -108,13 +108,17 @@ cfg_defaults <- list(
   apply_fu_agents_incl    = TRUE,
 
   # ---- Exclusion criteria (defaults for static/batch mode) ----
-  # STAKEHOLDER DECISION (2026-04-14): All exclusion flags default FALSE so
-  # the working cohort stays at the Step 6 level (~21k patients). Flags are
-  # computed in ELIG_COH_ALLFLAGS for ad-hoc analysis; set TRUE to apply.
-  apply_pregnancy_excl   = as.logical(Sys.getenv("APPLY_PREGNANCY_EXCL",   unset = "FALSE")),
-  apply_clintrial_excl   = as.logical(Sys.getenv("APPLY_CLINTRIAL_EXCL",   unset = "FALSE")),
-  apply_other_malig_excl = as.logical(Sys.getenv("APPLY_OTHER_MALIG_EXCL", unset = "FALSE")),
-  apply_baseline_mm_excl = as.logical(Sys.getenv("APPLY_BASELINE_MM_EXCL", unset = "FALSE")),
+  # Defaults now TRUE so a default ELIG_COH_FINAL build produces the Step 10
+  # attrition/spec cohort rather than the Step 6 working cohort. Flags are
+  # still computed in ELIG_COH_ALLFLAGS for ad-hoc sensitivity analyses; set
+  # the corresponding env var to "FALSE" to drop an exclusion at runtime.
+  # Prior default (2026-04-14 stakeholder decision): all FALSE — kept the
+  # working cohort at Step 6 (~21k patients) for ad-hoc work. Superseded by
+  # spec-alignment pass 2026-04-21.
+  apply_pregnancy_excl   = as.logical(Sys.getenv("APPLY_PREGNANCY_EXCL",   unset = "TRUE")),
+  apply_clintrial_excl   = as.logical(Sys.getenv("APPLY_CLINTRIAL_EXCL",   unset = "TRUE")),
+  apply_other_malig_excl = as.logical(Sys.getenv("APPLY_OTHER_MALIG_EXCL", unset = "TRUE")),
+  apply_baseline_mm_excl = as.logical(Sys.getenv("APPLY_BASELINE_MM_EXCL", unset = "TRUE")),
 
   # ---- Performance ----
   persist_to_schema       = as.logical(Sys.getenv("PERSIST_TO_SCHEMA", unset = "TRUE")),
