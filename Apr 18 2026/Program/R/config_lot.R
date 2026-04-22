@@ -57,7 +57,7 @@ cfg <- list(
   persist_to_schema = as.logical(Sys.getenv("PERSIST_TO_SCHEMA", unset = "TRUE")),
 
   # Output directory for figures
-  output_dir = Sys.getenv("OUTPUT_DIR", unset = "/mnt/results"),
+  output_dir = Sys.getenv("OUTPUT_DIR", unset = "/mnt/artifacts/results"),
 
   # Retry controls
   max_retries = 4,
