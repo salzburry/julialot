@@ -41,10 +41,18 @@ cdm_src <- function(base_tbl) {
 }
 
 with_retry <- function(fn, max_retries = cfg$max_retries, base_sleep = cfg$base_sleep) {
+  # Permanent (non-retryable) error patterns. Mix of Databricks/Spark
+  # internal class names (e.g. AnalysisException, TABLE_OR_VIEW_NOT_FOUND)
+  # and user-visible ODBC messages (e.g. "Table or view not found") —
+  # both forms appear depending on how the driver surfaces the error.
+  # The space-separated forms were added after observing the ATTRITION
+  # tab's missing-table probe eat 35s of retry backoff because only the
+  # underscore form was listed.
   permanent_error_patterns <- c(
     "AnalysisException", "AMBIGUOUS_REFERENCE", "AMBIGUOUS REFERENCE",
-    "ParseException", "Syntax error", "TABLE_OR_VIEW_NOT_FOUND",
-    "UNRESOLVED_COLUMN", "cannot resolve",
+    "ParseException", "Syntax error",
+    "TABLE_OR_VIEW_NOT_FOUND", "Table or view not found",
+    "UNRESOLVED_COLUMN", "Unresolved column", "cannot resolve",
     "not supported", "UNSUPPORTED_FEATURE", "not allowed"
   )
   attempt <- 1
