@@ -1188,7 +1188,7 @@ print_descriptives <- function(con) {
             FROM map_stacked GROUP BY PATID HAVING count(DISTINCT MAP_MED_TYPE) >= 2
           )
         )
-        SELECT DISTINCT PATID FROM change_patients LIMIT 8
+        SELECT DISTINCT PATID FROM change_patients ORDER BY PATID LIMIT 8
       ")
 
       if (nrow(regimen_pats) > 0) {
@@ -1230,7 +1230,22 @@ print_descriptives <- function(con) {
             # Guard: if all MAP dates were NA (sort(unique(...)) drops NAs by
             # default) we'd otherwise call seq_len(-1) below and crash the
             # whole regimen-timeline section for every remaining patient.
-            if (length(boundary_dates) < 2) next
+            if (length(boundary_dates) < 2) {
+              # Diagnostic: the upstream warehouse dates are expected to be
+              # non-null (S06 coalesces runouts), so hitting this guard points
+              # to an R-side date-coercion edge case — e.g., the ODBC driver
+              # returning DATE as character in a format as.Date() doesn't
+              # parse. Log enough detail to root-cause next time instead of
+              # silently skipping.
+              log_msg("  INFO: skipping regimen-state timeline for PATID=", pid,
+                      " (n_maps=", nrow(pat_m),
+                      ", start_class=", paste(class(pat_m$MAP_START_DT), collapse = "/"),
+                      ", end_class=",   paste(class(pat_m$MAP_END_DT),   collapse = "/"),
+                      ", n_na_start=",  sum(is.na(pat_m$MAP_START_DT)),
+                      ", n_na_end=",    sum(is.na(pat_m$MAP_END_DT)),
+                      ")")
+              next
+            }
 
             segments <- list()
             for (k in seq_len(length(boundary_dates) - 1)) {
