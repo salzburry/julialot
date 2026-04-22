@@ -13,6 +13,13 @@
 #   has_ggplot2, has_plotly, has_dt (from other modules)
 # ============================================================
 
+# Shorthand for the many scalar count-queries below.
+# Returns numeric, or NA if the query fails. Assumes the scalar is in column `n`
+# (matching the SELECT ... AS n convention used throughout this file).
+safe_count <- function(con, sql) {
+  tryCatch(as.numeric(db_q(con, sql)$n), error = function(e) NA)
+}
+
 print_descriptives <- function(con) {
   # Reset dashboard collector so reruns in the same R session start clean
   dashboard_items <<- list()
@@ -27,13 +34,13 @@ print_descriptives <- function(con) {
   # --------------------------------------------------------
   tryCatch({
     # Dynamic run counts
-    cohort_n   <- tryCatch(as.numeric(db_q(con, "SELECT count(DISTINCT PATID) AS n FROM lot_patient_input")$n), error = function(e) NA)
-    mma_n      <- tryCatch(as.numeric(db_q(con, "SELECT count(*) AS n FROM mma_med_processed")$n), error = function(e) NA)
-    mma_pat_n  <- tryCatch(as.numeric(db_q(con, "SELECT count(DISTINCT PATID) AS n FROM mma_med_processed")$n), error = function(e) NA)
-    map_n      <- tryCatch(as.numeric(db_q(con, "SELECT count(*) AS n FROM map_stacked")$n), error = function(e) NA)
-    map_pat_n  <- tryCatch(as.numeric(db_q(con, "SELECT count(DISTINCT PATID) AS n FROM map_stacked")$n), error = function(e) NA)
-    lot1_n     <- tryCatch(as.numeric(db_q(con, "SELECT count(*) AS n FROM lot1_base")$n), error = function(e) NA)
-    sct_n      <- tryCatch(as.numeric(db_q(con, "SELECT sum(CASE WHEN LOT1_TX_ENDDATE IS NOT NULL THEN 1 ELSE 0 END) AS n FROM lot1_sct")$n), error = function(e) NA)
+    cohort_n   <- safe_count(con, "SELECT count(DISTINCT PATID) AS n FROM lot_patient_input")
+    mma_n      <- safe_count(con, "SELECT count(*) AS n FROM mma_med_processed")
+    mma_pat_n  <- safe_count(con, "SELECT count(DISTINCT PATID) AS n FROM mma_med_processed")
+    map_n      <- safe_count(con, "SELECT count(*) AS n FROM map_stacked")
+    map_pat_n  <- safe_count(con, "SELECT count(DISTINCT PATID) AS n FROM map_stacked")
+    lot1_n     <- safe_count(con, "SELECT count(*) AS n FROM lot1_base")
+    sct_n      <- safe_count(con, "SELECT sum(CASE WHEN LOT1_TX_ENDDATE IS NOT NULL THEN 1 ELSE 0 END) AS n FROM lot1_sct")
     censored_n <- tryCatch({
       r <- db_q(con, "
         SELECT sum(case when ENDDATE_CE < ENDDATE then 1 else 0 end) AS n_cens,
@@ -109,80 +116,94 @@ print_descriptives <- function(con) {
       )
     }
 
-    orphan_n <- tryCatch({
-      as.numeric(db_q(con, "
-        SELECT count(DISTINCT c.CL_MED_ABBR) AS n
-        FROM mma_codelist c LEFT JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR
-        WHERE r.CL_MED_ABBR IS NULL
-      ")$n)
-    }, error = function(e) NA)
+    orphan_n <- safe_count(con, "
+      SELECT count(DISTINCT c.CL_MED_ABBR) AS n
+      FROM mma_codelist c LEFT JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR
+      WHERE r.CL_MED_ABBR IS NULL
+    ")
     if (!is.na(orphan_n)) add_qc("Codelist meds not in rollup", orphan_n,
                                   if (orphan_n == 0) "PASS" else "WARN")
 
-    uncoded_n <- tryCatch({
-      as.numeric(db_q(con, "
-        SELECT count(DISTINCT r.CL_MED_ABBR) AS n
-        FROM mma_rollup r LEFT JOIN mma_codelist c ON r.CL_MED_ABBR = c.CL_MED_ABBR
-        WHERE c.CL_MED_ABBR IS NULL
-      ")$n)
-    }, error = function(e) NA)
+    uncoded_n <- safe_count(con, "
+      SELECT count(DISTINCT r.CL_MED_ABBR) AS n
+      FROM mma_rollup r LEFT JOIN mma_codelist c ON r.CL_MED_ABBR = c.CL_MED_ABBR
+      WHERE c.CL_MED_ABBR IS NULL
+    ")
     if (!is.na(uncoded_n)) add_qc("Rollup meds with zero codes", uncoded_n,
                                    if (uncoded_n == 0) "PASS" else "WARN")
 
-    multi_n <- tryCatch({
-      as.numeric(db_q(con, "
-        SELECT count(*) AS n FROM (
-          SELECT CL_MED_ABBR FROM mma_codelist
-          GROUP BY CL_MED_ABBR HAVING count(DISTINCT CL_MED_CLASS) > 1
-        )
-      ")$n)
-    }, error = function(e) NA)
+    multi_n <- safe_count(con, "
+      SELECT count(*) AS n FROM (
+        SELECT CL_MED_ABBR FROM mma_codelist
+        GROUP BY CL_MED_ABBR HAVING count(DISTINCT CL_MED_CLASS) > 1
+      )
+    ")
     if (!is.na(multi_n)) add_qc("MED_ABBR mapped to multiple classes", multi_n,
                                  if (multi_n == 0) "PASS" else "WARN")
 
-    bad_maps <- tryCatch({
-      as.numeric(db_q(con, "SELECT count(*) AS n FROM map_stacked WHERE MAP_END_DT < MAP_START_DT")$n)
-    }, error = function(e) NA)
+    bad_maps <- safe_count(con,
+      "SELECT count(*) AS n FROM map_stacked WHERE MAP_END_DT < MAP_START_DT")
     if (!is.na(bad_maps)) add_qc("MAPs with END_DT < START_DT", bad_maps,
                                   if (bad_maps == 0) "PASS" else "FAIL")
 
-    runout_mm <- tryCatch({
-      as.numeric(db_q(con, "
-        SELECT count(*) AS n FROM map_stacked
-        WHERE MAP_END_DT <> greatest(
-          coalesce(MAP_RX_RUNOUT_DT, cast('1900-01-01' as date)),
-          coalesce(MAP_MED_RUNOUT_DT, cast('1900-01-01' as date)))
-        AND MAP_END_DT IS NOT NULL
-      ")$n)
-    }, error = function(e) NA)
+    # --- Upstream invariants (should always be 0) ---
+    # If any of these fail, the journey/regimen-state guards in the JOURNEY
+    # section will skip patients at render time. Surfacing the invariants here
+    # catches the drift at the top of the dashboard instead.
+    null_map_dates <- safe_count(con, "
+      SELECT count(*) AS n FROM map_stacked
+      WHERE MAP_START_DT IS NULL OR MAP_END_DT IS NULL
+    ")
+    if (!is.na(null_map_dates)) add_qc("MAPs with NULL start or end date", null_map_dates,
+                                        if (null_map_dates == 0) "PASS" else "FAIL")
+
+    orphan_lot1 <- safe_count(con, "
+      SELECT count(DISTINCT lb.PATID) AS n
+      FROM lot1_base lb
+      LEFT JOIN map_stacked m ON lb.PATID = m.PATID
+      WHERE m.PATID IS NULL
+    ")
+    if (!is.na(orphan_lot1)) add_qc("lot1_base patients with no MAPs", orphan_lot1,
+                                     if (orphan_lot1 == 0) "PASS" else "FAIL")
+
+    orphan_sct <- safe_count(con, "
+      SELECT count(DISTINCT sct.PATID) AS n
+      FROM lot1_sct sct
+      LEFT JOIN lot1_base lb ON sct.PATID = lb.PATID
+      WHERE lb.PATID IS NULL
+    ")
+    if (!is.na(orphan_sct)) add_qc("lot1_sct patients not in lot1_base", orphan_sct,
+                                    if (orphan_sct == 0) "PASS" else "FAIL")
+
+    runout_mm <- safe_count(con, "
+      SELECT count(*) AS n FROM map_stacked
+      WHERE MAP_END_DT <> greatest(
+        coalesce(MAP_RX_RUNOUT_DT, cast('1900-01-01' as date)),
+        coalesce(MAP_MED_RUNOUT_DT, cast('1900-01-01' as date)))
+      AND MAP_END_DT IS NOT NULL
+    ")
     if (!is.na(runout_mm)) add_qc("MAPs where END != max(runouts)", runout_mm,
                                    if (runout_mm == 0) "PASS" else "WARN")
 
-    lot1_past <- tryCatch({
-      as.numeric(db_q(con, "
-        SELECT sum(case when lb.LOT1_BASE_END_DT > p.OBS_END_DT then 1 else 0 end) AS n
-        FROM lot1_base_end lb INNER JOIN lot_patient_input p ON lb.PATID = p.PATID
-      ")$n)
-    }, error = function(e) NA)
+    lot1_past <- safe_count(con, "
+      SELECT sum(case when lb.LOT1_BASE_END_DT > p.OBS_END_DT then 1 else 0 end) AS n
+      FROM lot1_base_end lb INNER JOIN lot_patient_input p ON lb.PATID = p.PATID
+    ")
     if (!is.na(lot1_past)) add_qc("LOT1 END_DT past OBS_END_DT", lot1_past,
                                    if (lot1_past == 0) "PASS" else "WARN")
 
-    sct_both <- tryCatch({
-      as.numeric(db_q(con, "
-        SELECT sum(CASE WHEN LOT1_SCT_AUTO_TAND_FLG = 1 AND LOT1_SCT_AUTO_SING_FLG = 1 THEN 1 ELSE 0 END) AS n
-        FROM lot1_sct
-      ")$n)
-    }, error = function(e) NA)
+    sct_both <- safe_count(con, "
+      SELECT sum(CASE WHEN LOT1_SCT_AUTO_TAND_FLG = 1 AND LOT1_SCT_AUTO_SING_FLG = 1 THEN 1 ELSE 0 END) AS n
+      FROM lot1_sct
+    ")
     if (!is.na(sct_both)) add_qc("SCT: both tandem AND single flag", sct_both,
                                   if (sct_both == 0) "PASS" else "FAIL")
 
-    sct_past <- tryCatch({
-      as.numeric(db_q(con, "
-        SELECT sum(CASE WHEN sct.LOT1_TX_ENDDATE IS NOT NULL
-                    AND sct.LOT1_TX_ENDDATE > lb.OBS_END_DT THEN 1 ELSE 0 END) AS n
-        FROM lot1_sct sct INNER JOIN lot1_base lb ON sct.PATID = lb.PATID
-      ")$n)
-    }, error = function(e) NA)
+    sct_past <- safe_count(con, "
+      SELECT sum(CASE WHEN sct.LOT1_TX_ENDDATE IS NOT NULL
+                  AND sct.LOT1_TX_ENDDATE > lb.OBS_END_DT THEN 1 ELSE 0 END) AS n
+      FROM lot1_sct sct INNER JOIN lot1_base lb ON sct.PATID = lb.PATID
+    ")
     if (!is.na(sct_past)) add_qc("SCT end date past OBS_END_DT", sct_past,
                                   if (sct_past == 0) "PASS" else "WARN")
 
@@ -214,6 +235,103 @@ print_descriptives <- function(con) {
     add_html_card(qc_html, section = "QC", title = "QC Summary")
   }, error = function(e) {
     log_msg("  WARNING: QC summary tab generation failed: ", conditionMessage(e))
+  })
+
+  # --------------------------------------------------------
+  # 0c. Attrition tab — cohort flow from Part 1 (THIRD tab)
+  # Reads the attrition_report table written by Part 1's main.R (via
+  # persist_attrition_table in criteria_attrition.R). If that table
+  # doesn't exist (Part 2 run standalone, or Part 1 skipped persist),
+  # we emit a placeholder card instead of failing.
+  # --------------------------------------------------------
+  tryCatch({
+    attrition_tbl <- if (nzchar(cfg$catalog)) {
+      paste0(cfg$catalog, ".", cfg$work_schema, ".attrition_report")
+    } else {
+      paste0(cfg$work_schema, ".attrition_report")
+    }
+
+    attrition_df <- tryCatch(
+      db_q(con, glue("
+        SELECT row_order, step_id, description, n_30, n_60, n_90
+        FROM {attrition_tbl}
+        ORDER BY row_order
+      ")),
+      error = function(e) NULL
+    )
+
+    if (is.null(attrition_df) || nrow(attrition_df) == 0) {
+      att_missing <- paste0('<!DOCTYPE html><html><head>
+<meta charset="UTF-8">
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: #fff; padding: 24px; color: #2d3436; }
+  h2 { font-size: 20px; color: #1a5276; margin-bottom: 12px; }
+  p { font-size: 14px; color: #636e72; line-height: 1.5; max-width: 680px; }
+  code { background: #f5f6fa; padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+</style></head><body>
+<h2>Attrition Report Not Available</h2>
+<p>The LOT dashboard reads the cohort-attrition counts from <code>',
+        attrition_tbl, '</code>, which is written by the Part 1 pipeline
+(<code>main.R</code> &rarr; <code>persist_attrition_table()</code>).</p>
+<p>Run Part 1 against the same <code>PROJECT_WORK_SCHEMA</code> to populate the
+attrition table, then rebuild the LOT dashboard to see it here.</p>
+</body></html>')
+      add_html_card(att_missing, section = "ATTRITION",
+                    title = "Attrition Report (Not Found)")
+      log_msg("  INFO: ", attrition_tbl, " not found; attrition tab shows placeholder")
+    } else {
+      # Coerce counts and pick the primary column from the configured window.
+      attrition_df$n_30 <- as.numeric(attrition_df$n_30)
+      attrition_df$n_60 <- as.numeric(attrition_df$n_60)
+      attrition_df$n_90 <- as.numeric(attrition_df$n_90)
+      w <- cfg$outpatient_window
+      primary_col <- paste0("n_", w)
+      if (!primary_col %in% names(attrition_df)) primary_col <- "n_90"
+      attrition_df$n_primary <- attrition_df[[primary_col]]
+
+      cat("\n", DASH, "\n")
+      cat("  Attrition cohort flow (", w, "-day OP window):\n", sep = "")
+      cat(DASH, "\n")
+      cat(sprintf("  %-50s %12s\n", "Step", paste0(w, "-day")))
+      cat(strrep("-", 65), "\n")
+      for (i in seq_len(nrow(attrition_df))) {
+        cat(sprintf("  %-50s %12s\n",
+                    substr(attrition_df$description[i], 1, 50),
+                    format(attrition_df$n_primary[i], big.mark = ",")))
+      }
+
+      save_table(attrition_df[, c("step_id", "description", "n_30", "n_60", "n_90")],
+                 section = "ATTRITION",
+                 title = paste0("Table: Cohort Attrition (all windows)"))
+
+      if (has_ggplot2 && nrow(attrition_df) > 0) {
+        # Preserve the pipeline order by factoring descriptions.
+        attrition_df$description <- factor(
+          attrition_df$description,
+          levels = rev(attrition_df$description))
+        p_att <- ggplot(attrition_df,
+                        aes(x = description, y = n_primary,
+                            text = paste0("Step: ", description,
+                                          "\nN: ", format(n_primary, big.mark = ",")))) +
+          geom_bar(stat = "identity", fill = "#2E86AB", width = 0.7) +
+          geom_text(aes(label = format(n_primary, big.mark = ",")),
+                    hjust = -0.1, size = 3.3, color = "grey20") +
+          scale_y_continuous(labels = scales::comma_format(),
+                             expand = expansion(mult = c(0, 0.2))) +
+          coord_flip() +
+          labs(title = paste0("Cohort Attrition — ", w, "-day OP Window"),
+               subtitle = "Cumulative patient count applied in Part 1 (main.R)",
+               x = NULL, y = "Patients remaining") +
+          theme_lot()
+        save_plot(p_att, "fig00_attrition.png", width = 10, height = 6,
+                 section = "ATTRITION", title = "Fig: Cohort Attrition Waterfall")
+      }
+      log_msg("  Attrition section added (", nrow(attrition_df), " steps, ",
+              w, "-day window)")
+    }
+  }, error = function(e) {
+    log_msg("WARN: Attrition section failed: ", conditionMessage(e))
   })
 
   # --------------------------------------------------------
@@ -960,22 +1078,22 @@ print_descriptives <- function(con) {
           FROM lot1_sct WHERE LOT1_TX_ENDDATE IS NOT NULL
         )
         SELECT CAST(PATID AS STRING) AS PATID,
-               concat_ws(',', collect_set(reason)) AS reasons
+               concat_ws(',', sort_array(collect_set(reason))) AS reasons
         FROM interesting
         GROUP BY PATID
         -- Secondary sort on PATID so ties on reason-count are broken
         -- deterministically; otherwise the LIMIT 20 sample drifts across
-        -- runs and makes QC screenshots non-reproducible.
-        ORDER BY length(concat_ws(',', collect_set(reason))) DESC,
+        -- runs and makes QC screenshots non-reproducible. sort_array
+        -- around collect_set stabilizes the order of reason labels
+        -- within the title string too.
+        ORDER BY length(concat_ws(',', sort_array(collect_set(reason)))) DESC,
                  CAST(PATID AS STRING) ASC
         LIMIT 20
       ")
 
       if (nrow(journey_pats) > 0) {
-        # Force PATID to character before interpolation — some ODBC drivers
-        # return PATID as numeric, and paste()'s default formatting on tiny
-        # or large numerics breaks the string match against the DB column.
-        journey_pats$PATID <- as.character(journey_pats$PATID)
+        # PATID is CAST AS STRING in the query above, so the driver delivers
+        # it as R character — no extra coercion needed here.
         pat_ids_sql <- paste0("('", paste(journey_pats$PATID, collapse = "','"), "')")
 
         # Get MAP segments for these patients
@@ -1005,15 +1123,11 @@ print_descriptives <- function(con) {
         "))
 
         if (nrow(journey_maps) > 0) {
-          # Convert types
-          journey_maps$PATID        <- as.character(journey_maps$PATID)
+          # PATID is already character (CAST AS STRING in SQL); coerce dates.
           journey_maps$MAP_START_DT <- as.Date(journey_maps$MAP_START_DT)
           journey_maps$MAP_END_DT   <- as.Date(journey_maps$MAP_END_DT)
           journey_maps$MAP_CNT      <- as.numeric(journey_maps$MAP_CNT)
           journey_maps$MAP_DAYS     <- as.numeric(journey_maps$MAP_DAYS)
-          if (nrow(journey_milestones) > 0) {
-            journey_milestones$PATID <- as.character(journey_milestones$PATID)
-          }
 
           # Render one plotly timeline per patient, collect them.
           # Use first 10 patients max for dashboard size.
@@ -1243,10 +1357,8 @@ print_descriptives <- function(con) {
       ")
 
       if (nrow(regimen_pats) > 0) {
-        # Force PATID to character before interpolation (driver-side type
-        # coercion has been observed to return PATID as tiny/large float,
-        # which then won't match the DB column as a quoted string).
-        regimen_pats$PATID <- as.character(regimen_pats$PATID)
+        # PATID is CAST AS STRING in the query above — driver delivers as
+        # R character, no extra coercion needed.
         rp_ids_sql <- paste0("('", paste(regimen_pats$PATID, collapse = "','"), "')")
 
         # Get all MAPs for these patients
@@ -1271,12 +1383,9 @@ print_descriptives <- function(con) {
         "))
 
         if (nrow(reg_maps) > 0) {
-          reg_maps$PATID        <- as.character(reg_maps$PATID)
+          # PATID is already character (CAST AS STRING in SQL); coerce dates.
           reg_maps$MAP_START_DT <- as.Date(reg_maps$MAP_START_DT)
           reg_maps$MAP_END_DT   <- as.Date(reg_maps$MAP_END_DT)
-          if (nrow(reg_ms) > 0) {
-            reg_ms$PATID <- as.character(reg_ms$PATID)
-          }
 
           show_reg_pats <- unique(reg_maps$PATID)[1:min(6, length(unique(reg_maps$PATID)))]
           n_regstate_added <- 0L
