@@ -28,7 +28,11 @@ cfg_defaults <- list(
   # ---- Databricks / ODBC ----
   dsn         = Sys.getenv("DATABRICKS_DSN", unset = "RWDE"),
   pwd         = Sys.getenv("DATABRICKS_PWD", unset = ""),
-  catalog     = Sys.getenv("DATABRICKS_CATALOG", unset = ""),
+  # Databricks catalog: default matches config_lot.R (Part 2) so that an
+  # unset DATABRICKS_CATALOG env var resolves to the same qualified table
+  # path in both pipelines. Set empty string explicitly to fall back to
+  # the session's default catalog.
+  catalog     = Sys.getenv("DATABRICKS_CATALOG", unset = "hive_metastore"),
   max_retries = as.integer(Sys.getenv("MAX_RETRIES", unset = "3")),
   base_sleep  = as.numeric(Sys.getenv("BASE_SLEEP_SECS", unset = "5")),
 

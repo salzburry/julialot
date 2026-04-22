@@ -42,6 +42,12 @@ cfg <- list(
   lot_discon_gap_days   = as.integer(Sys.getenv("LOT_DISCON_GAP_DAYS", unset = "90")),
   medical_day_supply    = as.integer(Sys.getenv("MEDICAL_DAY_SUPPLY", unset = "28")),
 
+  # Outpatient-confirmation window for the attrition report rendering
+  # (descriptives_lot.R ATTRITION tab picks the primary n_{30/60/90} column
+  # by this value). Must match Part 1's OUTPATIENT_WINDOW to show Part 2's
+  # built cohort. Read from the same env var so one override covers both.
+  outpatient_window = as.integer(Sys.getenv("OUTPATIENT_WINDOW", unset = "90")),
+
   # Code list sourcing — CSV-only (no embedded fallbacks)
   codelist_dir = Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist"),
 

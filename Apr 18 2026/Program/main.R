@@ -120,9 +120,14 @@ main <- function() {
     catalog <- build_criteria_catalog(cfg)
     attrition_rows <- run_attrition_report(catalog, cfg, conn, h$work_tbl)
     # Persist to work schema so Part 2's LOT dashboard can render the
-    # attrition chart. Best-effort: failure here logs a WARN but does not
-    # abort the attrition report.
-    persist_attrition_table(attrition_rows, cfg, conn)
+    # attrition chart. Honors PERSIST_TO_SCHEMA=FALSE the same way Step 24b
+    # does; best-effort otherwise (failure logs WARN, does not abort the
+    # attrition report).
+    if (isTRUE(cfg$persist_to_schema)) {
+      persist_attrition_table(attrition_rows, cfg, conn)
+    } else {
+      log_msg("PERSIST_TO_SCHEMA=FALSE; skipping attrition_report warehouse persist")
+    }
     print_cohort_characteristics(cfg, conn, h$work_tbl)
     print_dod_validation(cfg, conn, h$cdm_src, h$work_tbl)
     print_inpatient_validation(conn, h$work_tbl)

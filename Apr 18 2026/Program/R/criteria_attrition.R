@@ -125,9 +125,11 @@ export_attrition_csv <- function(rows) {
 
 # Persist attrition rows to a Spark work-schema table so Part 2's LOT
 # descriptives dashboard can read it. Overwrites on each run (CREATE OR
-# REPLACE). The qualified table name matches the pattern Part 2 uses
-# (catalog.work_schema.table), so Part 2's wrk("attrition_report") resolves
-# to the same object if PROJECT_WORK_SCHEMA is set consistently.
+# REPLACE). Each persisted row carries the Part 1 run_id, the cohort
+# table name (cfg$final_table_name), and a build timestamp — Part 2
+# surfaces these so the dashboard viewer can tell which Part 1 run the
+# attrition chart came from and whether it matches the cohort the LOT
+# pipeline is consuming.
 persist_attrition_table <- function(rows, cfg, conn) {
   if (length(rows) == 0) {
     log_msg("WARN: no attrition rows to persist")
@@ -150,9 +152,18 @@ persist_attrition_table <- function(rows, cfg, conn) {
   }
   sql_str <- function(x) paste0("'", gsub("'", "''", as.character(x)), "'")
 
+  # Run-scoped metadata written on every row. run_id comes from the
+  # module-level run_id assigned in config_prompts.R.
+  run_id_val   <- sql_str(get0("run_id", ifnotfound = ""))
+  cohort_val   <- sql_str(cfg$final_table_name %||% "")
+  created_val  <- sql_str(format(Sys.time(), "%Y-%m-%d %H:%M:%S"))
+
   value_rows <- vapply(seq_along(rows), function(i) {
     r <- rows[[i]]
     paste0("(", i, ", ",
+           run_id_val, ", ",
+           cohort_val, ", ",
+           created_val, ", ",
            sql_str(r$step_id), ", ",
            sql_str(r$description), ", ",
            sql_int(r$n_30), ", ",
@@ -166,18 +177,23 @@ persist_attrition_table <- function(rows, cfg, conn) {
     CREATE OR REPLACE TABLE {tbl_name} AS
     SELECT * FROM VALUES
       {values_sql}
-    AS t(row_order, step_id, description, n_30, n_60, n_90)
+    AS t(row_order, run_id, final_table_name, created_at,
+         step_id, description, n_30, n_60, n_90)
   ")
 
   tryCatch({
     DBI::dbExecute(conn$con, sql)
     log_msg("Attrition table persisted to: ", tbl_name,
-            " (", length(rows), " rows)")
+            " (", length(rows), " rows, run_id=", get0("run_id", ifnotfound = "?"),
+            ", cohort=", cfg$final_table_name %||% "?", ")")
   }, error = function(e) {
     log_msg("WARN: Could not persist attrition table to ", tbl_name,
             ": ", conditionMessage(e))
   })
 }
+
+# Simple null-coalesce operator used above.
+`%||%` <- function(a, b) if (is.null(a) || !nzchar(as.character(a))) b else a
 
 # ============================================================
 # DATA-DRIVEN ATTRITION COUNTING
