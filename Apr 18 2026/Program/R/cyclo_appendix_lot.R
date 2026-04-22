@@ -24,9 +24,16 @@ run_cyclo_deepdive <- function(con) {
   # (3) SCT timing relative to CYCLO start AND all 3 dx dates
   # --------------------------------------------------------
   tryCatch({
+    # CAST PATID AS STRING in every query below — some ODBC drivers return
+    # the CDM PATID (BIGINT) as R numeric, which corrupts IDs into
+    # subnormal floats (~1e-313) and breaks both IN-list builds and
+    # roster CSVs. Forcing stringification at the warehouse is the only
+    # robust fix; doing it at R side after the fact is too late.
+
     # --- Cohort A: Strict CYCLO monotherapy (no steroids) ---
     cyclo_strict <- db_q(con, "
-      SELECT lb.PATID, lb.INDEX_DATE, lb.LOT1_START_DT, lb.LOT1_BASE_MEDS,
+      SELECT CAST(lb.PATID AS STRING) AS PATID,
+             lb.INDEX_DATE, lb.LOT1_START_DT, lb.LOT1_BASE_MEDS,
              lb.LOT1_BASE_DISCON_DT, lb.LOT1_BASE_LENGTH, lb.LOT1_MED_CNT,
              lb.OBS_END_DT, lb.DEATH_DT, lb.GDR_CD, lb.AGE_INDEX_YR,
              'STRICT' AS COHORT_DEF
@@ -56,7 +63,8 @@ run_cyclo_deepdive <- function(con) {
         FROM induction_meds
         GROUP BY PATID
       )
-      SELECT lb.PATID, lb.INDEX_DATE, lb.LOT1_START_DT, lb.LOT1_BASE_MEDS,
+      SELECT CAST(lb.PATID AS STRING) AS PATID,
+             lb.INDEX_DATE, lb.LOT1_START_DT, lb.LOT1_BASE_MEDS,
              lb.LOT1_BASE_DISCON_DT, lb.LOT1_BASE_LENGTH, lb.LOT1_MED_CNT,
              lb.OBS_END_DT, lb.DEATH_DT, lb.GDR_CD, lb.AGE_INDEX_YR,
              'STEROID_TOLERANT' AS COHORT_DEF
@@ -102,7 +110,7 @@ run_cyclo_deepdive <- function(con) {
         dx_dates <- db_q(con, glue("
           WITH window_dates AS (
             SELECT
-              af.PATID,
+              CAST(af.PATID AS STRING) AS PATID,
               min(CASE WHEN af.inpt_qual = 1 OR af.outpt2_30 = 1
                        THEN af.INDEX_DATE END) AS DX_DT_30,
               min(CASE WHEN af.inpt_qual = 1 OR af.outpt2_60 = 1
@@ -110,8 +118,8 @@ run_cyclo_deepdive <- function(con) {
               min(CASE WHEN af.inpt_qual = 1 OR af.outpt2_90 = 1
                        THEN af.INDEX_DATE END) AS DX_DT_90
             FROM {allflags_tbl} af
-            WHERE af.PATID IN {pat_ids_sql}
-            GROUP BY af.PATID
+            WHERE CAST(af.PATID AS STRING) IN {pat_ids_sql}
+            GROUP BY CAST(af.PATID AS STRING)
           ),
           with_lot1 AS (
             SELECT
@@ -126,7 +134,7 @@ run_cyclo_deepdive <- function(con) {
               datediff(w.DX_DT_30, w.DX_DT_60) AS DIFF_60v30,
               datediff(w.DX_DT_30, w.DX_DT_90) AS DIFF_90v30
             FROM window_dates w
-            INNER JOIN lot1_base lb ON w.PATID = lb.PATID
+            INNER JOIN lot1_base lb ON w.PATID = CAST(lb.PATID AS STRING)
           )
           SELECT * FROM with_lot1 ORDER BY PATID
         "))
@@ -171,7 +179,7 @@ run_cyclo_deepdive <- function(con) {
       # Excludes both CYCLO itself and steroids (non-anti-MM supportive)
       post_cyclo_tx <- db_q(con, glue("
         SELECT
-          ms.PATID,
+          CAST(ms.PATID AS STRING) AS PATID,
           ms.MAP_MED_TYPE AS MED,
           ms.MAP_MED_CLASS AS CLASS,
           ms.MAP_START_DT,
@@ -183,7 +191,7 @@ run_cyclo_deepdive <- function(con) {
         FROM map_stacked ms
         INNER JOIN lot1_base lb
           ON ms.PATID = lb.PATID
-        WHERE lb.PATID IN {pat_ids_sql}
+        WHERE CAST(lb.PATID AS STRING) IN {pat_ids_sql}
           AND ms.MAP_MED_TYPE <> 'CYCL'
           AND ms.MAP_MED_CLASS <> 'STEROID'
           AND ms.MAP_START_DT > lb.LOT1_START_DT
@@ -196,12 +204,13 @@ run_cyclo_deepdive <- function(con) {
         post_tx_summary <- db_q(con, glue("
           WITH post AS (
             SELECT
-              ms.PATID, ms.MAP_MED_TYPE AS MED, ms.MAP_MED_CLASS AS CLASS,
+              CAST(ms.PATID AS STRING) AS PATID,
+              ms.MAP_MED_TYPE AS MED, ms.MAP_MED_CLASS AS CLASS,
               min(ms.MAP_START_DT) AS FIRST_TX_START_DT,
               datediff(min(ms.MAP_START_DT), lb.LOT1_START_DT) AS DAYS_FROM_CYCLO
             FROM map_stacked ms
             INNER JOIN lot1_base lb ON ms.PATID = lb.PATID
-            WHERE lb.PATID IN {pat_ids_sql}
+            WHERE CAST(lb.PATID AS STRING) IN {pat_ids_sql}
               AND ms.MAP_MED_TYPE <> 'CYCL'
               AND ms.MAP_MED_CLASS <> 'STEROID'
               AND ms.MAP_START_DT > lb.LOT1_START_DT
@@ -232,14 +241,14 @@ run_cyclo_deepdive <- function(con) {
       if (!is.null(allflags_tbl)) {
         sct_dx_join <- glue("
           LEFT JOIN (
-            SELECT PATID,
+            SELECT CAST(PATID AS STRING) AS PATID,
               min(CASE WHEN inpt_qual = 1 OR outpt2_30 = 1 THEN INDEX_DATE END) AS DX_DT_30,
               min(CASE WHEN inpt_qual = 1 OR outpt2_60 = 1 THEN INDEX_DATE END) AS DX_DT_60,
               min(CASE WHEN inpt_qual = 1 OR outpt2_90 = 1 THEN INDEX_DATE END) AS DX_DT_90
             FROM {allflags_tbl}
-            WHERE PATID IN {pat_ids_sql}
-            GROUP BY PATID
-          ) dx ON sct.PATID = dx.PATID")
+            WHERE CAST(PATID AS STRING) IN {pat_ids_sql}
+            GROUP BY CAST(PATID AS STRING)
+          ) dx ON CAST(sct.PATID AS STRING) = dx.PATID")
         sct_dx_cols <- ",
           dx.DX_DT_30, dx.DX_DT_60, dx.DX_DT_90,
           CASE WHEN sct.LOT1_1ST_SCT_DT IS NOT NULL
@@ -252,7 +261,7 @@ run_cyclo_deepdive <- function(con) {
 
       cyclo_sct <- db_q(con, glue("
         SELECT
-          sct.PATID,
+          CAST(sct.PATID AS STRING) AS PATID,
           lb.LOT1_START_DT AS CYCLO_START_DT,
           sct.LOT1_TX_AUTO_DT_1,
           sct.LOT1_TX_AUTO_DT_2,
@@ -270,7 +279,7 @@ run_cyclo_deepdive <- function(con) {
         FROM lot1_sct sct
         INNER JOIN lot1_base lb ON sct.PATID = lb.PATID
         {sct_dx_join}
-        WHERE lb.PATID IN {pat_ids_sql}
+        WHERE CAST(lb.PATID AS STRING) IN {pat_ids_sql}
         ORDER BY sct.PATID
       "))
 

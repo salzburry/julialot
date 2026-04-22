@@ -963,7 +963,11 @@ print_descriptives <- function(con) {
                concat_ws(',', collect_set(reason)) AS reasons
         FROM interesting
         GROUP BY PATID
-        ORDER BY length(concat_ws(',', collect_set(reason))) DESC
+        -- Secondary sort on PATID so ties on reason-count are broken
+        -- deterministically; otherwise the LIMIT 20 sample drifts across
+        -- runs and makes QC screenshots non-reproducible.
+        ORDER BY length(concat_ws(',', collect_set(reason))) DESC,
+                 CAST(PATID AS STRING) ASC
         LIMIT 20
       ")
 
@@ -1017,7 +1021,12 @@ print_descriptives <- function(con) {
           n_journey_added <- 0L
 
           for (pid in show_pats) {
-            added_this_pid <- tryCatch({
+            # IIFE so return(FALSE) exits only the per-patient function,
+            # not print_descriptives. R's tryCatch({...}) runs `expr` in
+            # the parent frame, so a bare return() inside the body would
+            # otherwise exit the whole descriptives function.
+            added_this_pid <- tryCatch(
+              (function() {
               pat_maps <- journey_maps[journey_maps$PATID == pid, ]
               if (nrow(pat_maps) == 0) {
                 log_msg("  INFO: skipping patient journey for PATID=", pid,
@@ -1145,11 +1154,12 @@ print_descriptives <- function(con) {
             add_to_dashboard(pp, section = "JOURNEY",
                              title = paste0(pat_label, " (", reasons, ")"))
             TRUE
-            }, error = function(e) {
-              log_msg("  INFO: skipping patient journey for PATID=", pid,
-                      " (error: ", conditionMessage(e), ")")
-              FALSE
-            })
+              })(),
+              error = function(e) {
+                log_msg("  INFO: skipping patient journey for PATID=", pid,
+                        " (error: ", conditionMessage(e), ")")
+                FALSE
+              })
             if (isTRUE(added_this_pid)) n_journey_added <- n_journey_added + 1L
           }
           log_msg("  Patient journey timelines added: ", n_journey_added,
@@ -1272,6 +1282,9 @@ print_descriptives <- function(con) {
           n_regstate_added <- 0L
 
           for (pid in show_reg_pats) {
+            # IIFE wrapper — see comment on patient-journey loop above.
+            added_this_pid <- tryCatch(
+              (function() {
             pat_m <- reg_maps[reg_maps$PATID == pid, ]
             pat_info <- reg_ms[reg_ms$PATID == pid, ]
 
@@ -1296,7 +1309,7 @@ print_descriptives <- function(con) {
                       ", n_na_start=",  sum(is.na(pat_m$MAP_START_DT)),
                       ", n_na_end=",    sum(is.na(pat_m$MAP_END_DT)),
                       ")")
-              next
+              return(FALSE)
             }
 
             segments <- list()
@@ -1318,7 +1331,9 @@ print_descriptives <- function(con) {
               # If no MAPs active, this is a gap — no segment added, shows as whitespace
             }
 
-            if (length(segments) == 0) next
+            # `next` would error here because we're inside the IIFE (function),
+            # not the for-loop body directly. Use return(FALSE) instead.
+            if (length(segments) == 0) return(FALSE)
             seg_df <- do.call(rbind, segments)
 
             # Merge consecutive segments with the same regimen
@@ -1422,7 +1437,14 @@ print_descriptives <- function(con) {
 
             add_to_dashboard(pp2, section = "JOURNEY",
                              title = paste0("Regimen State ", pat_idx, ": ", regimen_label))
-            n_regstate_added <- n_regstate_added + 1L
+            TRUE
+              })(),
+              error = function(e) {
+                log_msg("  INFO: skipping regimen-state timeline for PATID=", pid,
+                        " (error: ", conditionMessage(e), ")")
+                FALSE
+              })
+            if (isTRUE(added_this_pid)) n_regstate_added <- n_regstate_added + 1L
           }
           log_msg("  Regimen-state timelines added: ", n_regstate_added,
                   " of ", length(show_reg_pats), " attempted")
