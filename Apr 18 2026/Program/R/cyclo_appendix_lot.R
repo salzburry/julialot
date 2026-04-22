@@ -86,6 +86,9 @@ run_cyclo_deepdive <- function(con) {
       log_msg("  Wrote: cyclo_mono_patients_strict.csv (N=", n_strict,
               "), cyclo_mono_patients_steroid_tolerant.csv (N=", n_steroid, ")")
 
+      # Force PATID to character — some ODBC drivers return CDM PATID as
+      # numeric, which breaks the string IN-list below.
+      cyclo_pats$PATID <- as.character(cyclo_pats$PATID)
       pat_ids_sql <- paste0("('", paste(cyclo_pats$PATID, collapse = "','"), "')")
 
       # --- (1) Three possible diagnosis dates (30/60/90-day OP windows) ---

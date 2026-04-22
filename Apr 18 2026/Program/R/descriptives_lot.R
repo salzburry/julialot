@@ -940,6 +940,11 @@ print_descriptives <- function(con) {
     if (has_plotly) {
       # Find interesting patients: those with med restarts (MAP_CNT >= 2),
       # add-meds, or SCT events. Sample up to 20.
+      # CAST PATID AS STRING everywhere it's SELECTed — some ODBC drivers
+      # return the CDM PATID column (stored as BIGINT) as an R numeric,
+      # which silently corrupts large IDs (lost precision) or small ones
+      # (they come back as subnormal floats ~1e-313 after byte misinterpretation).
+      # Forcing stringification at the warehouse keeps the driver honest.
       journey_pats <- db_q(con, "
         WITH interesting AS (
           -- Patients with same-med restarts
@@ -954,7 +959,8 @@ print_descriptives <- function(con) {
           SELECT DISTINCT PATID, 'sct'
           FROM lot1_sct WHERE LOT1_TX_ENDDATE IS NOT NULL
         )
-        SELECT PATID, concat_ws(',', collect_set(reason)) AS reasons
+        SELECT CAST(PATID AS STRING) AS PATID,
+               concat_ws(',', collect_set(reason)) AS reasons
         FROM interesting
         GROUP BY PATID
         ORDER BY length(concat_ws(',', collect_set(reason))) DESC
@@ -962,22 +968,27 @@ print_descriptives <- function(con) {
       ")
 
       if (nrow(journey_pats) > 0) {
+        # Force PATID to character before interpolation — some ODBC drivers
+        # return PATID as numeric, and paste()'s default formatting on tiny
+        # or large numerics breaks the string match against the DB column.
+        journey_pats$PATID <- as.character(journey_pats$PATID)
         pat_ids_sql <- paste0("('", paste(journey_pats$PATID, collapse = "','"), "')")
 
         # Get MAP segments for these patients
         journey_maps <- db_q(con, glue("
-          SELECT m.PATID, m.MAP_MED_TYPE AS MED, m.MAP_MED_CLASS AS CLASS,
+          SELECT CAST(m.PATID AS STRING) AS PATID,
+                 m.MAP_MED_TYPE AS MED, m.MAP_MED_CLASS AS CLASS,
                  m.MAP_START_DT, m.MAP_END_DT, m.MAP_CNT,
                  m.MAP_DISCON_FLG,
                  datediff(m.MAP_END_DT, m.MAP_START_DT) + 1 AS MAP_DAYS
           FROM map_stacked m
-          WHERE m.PATID IN {pat_ids_sql}
+          WHERE CAST(m.PATID AS STRING) IN {pat_ids_sql}
           ORDER BY m.PATID, m.MAP_MED_TYPE, m.MAP_START_DT
         "))
 
         # Get LOT1 milestones
         journey_milestones <- db_q(con, glue("
-          SELECT lb.PATID,
+          SELECT CAST(lb.PATID AS STRING) AS PATID,
                  lb.LOT1_START_DT,
                  lb.LOT1_BASE_1ST_ADD_MED_DT,
                  lbe.LOT1_BASE_END_DT,
@@ -986,24 +997,44 @@ print_descriptives <- function(con) {
           FROM lot1_base lb
           LEFT JOIN lot1_base_end lbe ON lb.PATID = lbe.PATID
           LEFT JOIN lot1_sct sct ON lb.PATID = sct.PATID
-          WHERE lb.PATID IN {pat_ids_sql}
+          WHERE CAST(lb.PATID AS STRING) IN {pat_ids_sql}
         "))
 
         if (nrow(journey_maps) > 0) {
           # Convert types
+          journey_maps$PATID        <- as.character(journey_maps$PATID)
           journey_maps$MAP_START_DT <- as.Date(journey_maps$MAP_START_DT)
           journey_maps$MAP_END_DT   <- as.Date(journey_maps$MAP_END_DT)
           journey_maps$MAP_CNT      <- as.numeric(journey_maps$MAP_CNT)
           journey_maps$MAP_DAYS     <- as.numeric(journey_maps$MAP_DAYS)
+          if (nrow(journey_milestones) > 0) {
+            journey_milestones$PATID <- as.character(journey_milestones$PATID)
+          }
 
-          # Render one plotly timeline per patient, collect them
-          # Use first 10 patients max for dashboard size
+          # Render one plotly timeline per patient, collect them.
+          # Use first 10 patients max for dashboard size.
           show_pats <- unique(journey_maps$PATID)[1:min(10, length(unique(journey_maps$PATID)))]
+          n_journey_added <- 0L
 
           for (pid in show_pats) {
-            pat_maps <- journey_maps[journey_maps$PATID == pid, ]
-            if (nrow(pat_maps) == 0) next
-            pat_ms   <- journey_milestones[journey_milestones$PATID == pid, ]
+            added_this_pid <- tryCatch({
+              pat_maps <- journey_maps[journey_maps$PATID == pid, ]
+              if (nrow(pat_maps) == 0) {
+                log_msg("  INFO: skipping patient journey for PATID=", pid,
+                        " (no MAPs after PATID filter — likely driver-side type coercion)")
+                return(FALSE)
+              }
+
+              # Guard: skip a patient whose MAP dates all coerced to NA.
+              if (all(is.na(pat_maps$MAP_START_DT)) || all(is.na(pat_maps$MAP_END_DT))) {
+                log_msg("  INFO: skipping patient journey for PATID=", pid,
+                        " (n_maps=", nrow(pat_maps),
+                        ", n_na_start=", sum(is.na(pat_maps$MAP_START_DT)),
+                        ", n_na_end=",   sum(is.na(pat_maps$MAP_END_DT)), ")")
+                return(FALSE)
+              }
+
+              pat_ms   <- journey_milestones[journey_milestones$PATID == pid, ]
             reasons  <- if (pid %in% journey_pats$PATID) {
               journey_pats$reasons[journey_pats$PATID == pid]
             } else ""
@@ -1113,8 +1144,16 @@ print_descriptives <- function(con) {
 
             add_to_dashboard(pp, section = "JOURNEY",
                              title = paste0(pat_label, " (", reasons, ")"))
+            TRUE
+            }, error = function(e) {
+              log_msg("  INFO: skipping patient journey for PATID=", pid,
+                      " (error: ", conditionMessage(e), ")")
+              FALSE
+            })
+            if (isTRUE(added_this_pid)) n_journey_added <- n_journey_added + 1L
           }
-          log_msg("  Patient journey timelines added: ", length(show_pats), " patients")
+          log_msg("  Patient journey timelines added: ", n_journey_added,
+                  " of ", length(show_pats), " attempted")
         }
       } else {
         log_msg("  No interesting patients found for journey timelines.")
@@ -1177,6 +1216,7 @@ print_descriptives <- function(con) {
     if (has_plotly) {
       # Select patients with interesting regimen transitions:
       # add-med events, restarts, or multiple distinct regimens
+      # CAST PATID AS STRING — see note on journey_pats query above.
       regimen_pats <- db_q(con, "
         WITH change_patients AS (
           SELECT PATID FROM lot1_base WHERE LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
@@ -1188,36 +1228,48 @@ print_descriptives <- function(con) {
             FROM map_stacked GROUP BY PATID HAVING count(DISTINCT MAP_MED_TYPE) >= 2
           )
         )
-        SELECT DISTINCT PATID FROM change_patients ORDER BY PATID LIMIT 8
+        SELECT DISTINCT CAST(PATID AS STRING) AS PATID FROM change_patients
+        ORDER BY PATID LIMIT 8
       ")
 
       if (nrow(regimen_pats) > 0) {
+        # Force PATID to character before interpolation (driver-side type
+        # coercion has been observed to return PATID as tiny/large float,
+        # which then won't match the DB column as a quoted string).
+        regimen_pats$PATID <- as.character(regimen_pats$PATID)
         rp_ids_sql <- paste0("('", paste(regimen_pats$PATID, collapse = "','"), "')")
 
         # Get all MAPs for these patients
         reg_maps <- db_q(con, glue("
-          SELECT PATID, MAP_MED_TYPE AS MED, MAP_MED_CLASS AS CLASS,
+          SELECT CAST(PATID AS STRING) AS PATID,
+                 MAP_MED_TYPE AS MED, MAP_MED_CLASS AS CLASS,
                  MAP_START_DT, MAP_END_DT, MAP_CNT
           FROM map_stacked
-          WHERE PATID IN {rp_ids_sql}
+          WHERE CAST(PATID AS STRING) IN {rp_ids_sql}
           ORDER BY PATID, MAP_START_DT, MAP_MED_TYPE
         "))
 
         # Get milestones
         reg_ms <- db_q(con, glue("
-          SELECT lb.PATID, lb.LOT1_START_DT,
+          SELECT CAST(lb.PATID AS STRING) AS PATID,
+                 lb.LOT1_START_DT,
                  lb.LOT1_BASE_1ST_ADD_MED_DT, lb.LOT1_BASE_MEDS,
                  lbe.LOT1_BASE_END_DT, lbe.LOT1_BASE_END_REASON
           FROM lot1_base lb
           LEFT JOIN lot1_base_end lbe ON lb.PATID = lbe.PATID
-          WHERE lb.PATID IN {rp_ids_sql}
+          WHERE CAST(lb.PATID AS STRING) IN {rp_ids_sql}
         "))
 
         if (nrow(reg_maps) > 0) {
+          reg_maps$PATID        <- as.character(reg_maps$PATID)
           reg_maps$MAP_START_DT <- as.Date(reg_maps$MAP_START_DT)
           reg_maps$MAP_END_DT   <- as.Date(reg_maps$MAP_END_DT)
+          if (nrow(reg_ms) > 0) {
+            reg_ms$PATID <- as.character(reg_ms$PATID)
+          }
 
           show_reg_pats <- unique(reg_maps$PATID)[1:min(6, length(unique(reg_maps$PATID)))]
+          n_regstate_added <- 0L
 
           for (pid in show_reg_pats) {
             pat_m <- reg_maps[reg_maps$PATID == pid, ]
@@ -1370,8 +1422,10 @@ print_descriptives <- function(con) {
 
             add_to_dashboard(pp2, section = "JOURNEY",
                              title = paste0("Regimen State ", pat_idx, ": ", regimen_label))
+            n_regstate_added <- n_regstate_added + 1L
           }
-          log_msg("  Regimen-state timelines added: ", length(show_reg_pats), " patients")
+          log_msg("  Regimen-state timelines added: ", n_regstate_added,
+                  " of ", length(show_reg_pats), " attempted")
         }
       }
     }
