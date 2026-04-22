@@ -1227,6 +1227,11 @@ print_descriptives <- function(con) {
             # Collect all boundary dates (MAP starts and MAP ends + 1 day)
             boundary_dates <- sort(unique(c(pat_m$MAP_START_DT, pat_m$MAP_END_DT + 1)))
 
+            # Guard: if all MAP dates were NA (sort(unique(...)) drops NAs by
+            # default) we'd otherwise call seq_len(-1) below and crash the
+            # whole regimen-timeline section for every remaining patient.
+            if (length(boundary_dates) < 2) next
+
             segments <- list()
             for (k in seq_len(length(boundary_dates) - 1)) {
               seg_start <- boundary_dates[k]
