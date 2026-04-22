@@ -13,6 +13,11 @@
 #   has_ggplot2, has_plotly, has_dt (from other modules)
 # ============================================================
 
+# Null-coalesce operator used by the ATTRITION section (and any other
+# optional-config lookups that want a default on empty/NULL). Defined
+# locally since Part 2 does not source criteria_attrition.R.
+`%||%` <- function(a, b) if (is.null(a) || !nzchar(as.character(a))) b else a
+
 # Shorthand for the many scalar count-queries below.
 # Returns numeric, or NA if the query fails. Assumes the scalar is in column `n`
 # (matching the SELECT ... AS n convention used throughout this file).
@@ -251,9 +256,15 @@ print_descriptives <- function(con) {
       paste0(cfg$work_schema, ".attrition_report")
     }
 
+    # Local fallback for outpatient_window — belt-and-suspenders in case
+    # config_lot.R drifts from config_prompts.R.
+    w <- tryCatch(as.integer(cfg$outpatient_window), error = function(e) NA_integer_)
+    if (is.na(w) || !(w %in% c(30L, 60L, 90L))) w <- 90L
+
     attrition_df <- tryCatch(
       db_q(con, glue("
-        SELECT row_order, step_id, description, n_30, n_60, n_90
+        SELECT row_order, run_id, final_table_name, created_at,
+               step_id, description, n_30, n_60, n_90
         FROM {attrition_tbl}
         ORDER BY row_order
       ")),
@@ -281,17 +292,27 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
                     title = "Attrition Report (Not Found)")
       log_msg("  INFO: ", attrition_tbl, " not found; attrition tab shows placeholder")
     } else {
-      # Coerce counts and pick the primary column from the configured window.
+      # Coerce counts.
       attrition_df$n_30 <- as.numeric(attrition_df$n_30)
       attrition_df$n_60 <- as.numeric(attrition_df$n_60)
       attrition_df$n_90 <- as.numeric(attrition_df$n_90)
-      w <- cfg$outpatient_window
       primary_col <- paste0("n_", w)
-      if (!primary_col %in% names(attrition_df)) primary_col <- "n_90"
       attrition_df$n_primary <- attrition_df[[primary_col]]
+
+      # Pull metadata from the first row (all rows carry the same run tag).
+      part1_run_id   <- attrition_df$run_id[1]
+      part1_cohort   <- attrition_df$final_table_name[1]
+      part1_built_at <- attrition_df$created_at[1]
+      part2_cohort   <- cfg$input_cohort_table %||% ""
+      cohort_match   <- isTRUE(tolower(part1_cohort) == tolower(part2_cohort))
 
       cat("\n", DASH, "\n")
       cat("  Attrition cohort flow (", w, "-day OP window):\n", sep = "")
+      cat("    Part 1 run_id: ", part1_run_id, "\n", sep = "")
+      cat("    Part 1 cohort: ", part1_cohort,
+          if (!cohort_match) paste0("  !! differs from Part 2 input (", part2_cohort, ")") else "",
+          "\n", sep = "")
+      cat("    Part 1 built:  ", part1_built_at, "\n", sep = "")
       cat(DASH, "\n")
       cat(sprintf("  %-50s %12s\n", "Step", paste0(w, "-day")))
       cat(strrep("-", 65), "\n")
@@ -300,35 +321,46 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
                     substr(attrition_df$description[i], 1, 50),
                     format(attrition_df$n_primary[i], big.mark = ",")))
       }
+      if (!cohort_match) {
+        log_msg("  WARN: attrition_report cohort (", part1_cohort,
+                ") does not match Part 2 input (", part2_cohort,
+                ") — the ATTRITION tab may show stale data from a prior Part 1 run")
+      }
 
       save_table(attrition_df[, c("step_id", "description", "n_30", "n_60", "n_90")],
                  section = "ATTRITION",
-                 title = paste0("Table: Cohort Attrition (all windows)"))
+                 title = "Table: Cohort Attrition (all windows)")
 
       if (has_ggplot2 && nrow(attrition_df) > 0) {
         # Preserve the pipeline order by factoring descriptions.
         attrition_df$description <- factor(
           attrition_df$description,
           levels = rev(attrition_df$description))
+        chart_subtitle <- paste0(
+          "Part 1 run ", part1_run_id, " • cohort ", part1_cohort,
+          " • built ", part1_built_at,
+          if (!cohort_match) "  ⚠ cohort mismatch with Part 2 input" else "")
         p_att <- ggplot(attrition_df,
                         aes(x = description, y = n_primary,
                             text = paste0("Step: ", description,
                                           "\nN: ", format(n_primary, big.mark = ",")))) +
-          geom_bar(stat = "identity", fill = "#2E86AB", width = 0.7) +
+          geom_bar(stat = "identity",
+                   fill = if (cohort_match) "#2E86AB" else "#C73E1D",
+                   width = 0.7) +
           geom_text(aes(label = format(n_primary, big.mark = ",")),
                     hjust = -0.1, size = 3.3, color = "grey20") +
           scale_y_continuous(labels = scales::comma_format(),
                              expand = expansion(mult = c(0, 0.2))) +
           coord_flip() +
           labs(title = paste0("Cohort Attrition — ", w, "-day OP Window"),
-               subtitle = "Cumulative patient count applied in Part 1 (main.R)",
+               subtitle = chart_subtitle,
                x = NULL, y = "Patients remaining") +
           theme_lot()
         save_plot(p_att, "fig00_attrition.png", width = 10, height = 6,
                  section = "ATTRITION", title = "Fig: Cohort Attrition Waterfall")
       }
       log_msg("  Attrition section added (", nrow(attrition_df), " steps, ",
-              w, "-day window)")
+              w, "-day window, cohort_match=", cohort_match, ")")
     }
   }, error = function(e) {
     log_msg("WARN: Attrition section failed: ", conditionMessage(e))
