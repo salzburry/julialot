@@ -118,7 +118,11 @@ main <- function() {
   tryCatch({
     h <- make_naming_helpers(cfg, mat_tables)
     catalog <- build_criteria_catalog(cfg)
-    run_attrition_report(catalog, cfg, conn, h$work_tbl)
+    attrition_rows <- run_attrition_report(catalog, cfg, conn, h$work_tbl)
+    # Persist to work schema so Part 2's LOT dashboard can render the
+    # attrition chart. Best-effort: failure here logs a WARN but does not
+    # abort the attrition report.
+    persist_attrition_table(attrition_rows, cfg, conn)
     print_cohort_characteristics(cfg, conn, h$work_tbl)
     print_dod_validation(cfg, conn, h$cdm_src, h$work_tbl)
     print_inpatient_validation(conn, h$work_tbl)

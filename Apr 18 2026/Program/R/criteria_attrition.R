@@ -123,6 +123,62 @@ export_attrition_csv <- function(rows) {
   })
 }
 
+# Persist attrition rows to a Spark work-schema table so Part 2's LOT
+# descriptives dashboard can read it. Overwrites on each run (CREATE OR
+# REPLACE). The qualified table name matches the pattern Part 2 uses
+# (catalog.work_schema.table), so Part 2's wrk("attrition_report") resolves
+# to the same object if PROJECT_WORK_SCHEMA is set consistently.
+persist_attrition_table <- function(rows, cfg, conn) {
+  if (length(rows) == 0) {
+    log_msg("WARN: no attrition rows to persist")
+    return(invisible(NULL))
+  }
+  if (!nzchar(cfg$work_schema)) {
+    log_msg("WARN: cfg$work_schema not set; skipping attrition table persist")
+    return(invisible(NULL))
+  }
+
+  tbl_name <- if (nzchar(cfg$catalog)) {
+    paste0(cfg$catalog, ".", cfg$work_schema, ".attrition_report")
+  } else {
+    paste0(cfg$work_schema, ".attrition_report")
+  }
+
+  sql_int <- function(x) {
+    if (is.null(x) || is.na(x)) "NULL"
+    else format(as.integer(x), scientific = FALSE, trim = TRUE)
+  }
+  sql_str <- function(x) paste0("'", gsub("'", "''", as.character(x)), "'")
+
+  value_rows <- vapply(seq_along(rows), function(i) {
+    r <- rows[[i]]
+    paste0("(", i, ", ",
+           sql_str(r$step_id), ", ",
+           sql_str(r$description), ", ",
+           sql_int(r$n_30), ", ",
+           sql_int(r$n_60), ", ",
+           sql_int(r$n_90), ")")
+  }, character(1))
+
+  values_sql <- paste(value_rows, collapse = ",\n      ")
+
+  sql <- glue("
+    CREATE OR REPLACE TABLE {tbl_name} AS
+    SELECT * FROM VALUES
+      {values_sql}
+    AS t(row_order, step_id, description, n_30, n_60, n_90)
+  ")
+
+  tryCatch({
+    DBI::dbExecute(conn$con, sql)
+    log_msg("Attrition table persisted to: ", tbl_name,
+            " (", length(rows), " rows)")
+  }, error = function(e) {
+    log_msg("WARN: Could not persist attrition table to ", tbl_name,
+            ": ", conditionMessage(e))
+  })
+}
+
 # ============================================================
 # DATA-DRIVEN ATTRITION COUNTING
 # ============================================================

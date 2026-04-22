@@ -238,6 +238,103 @@ print_descriptives <- function(con) {
   })
 
   # --------------------------------------------------------
+  # 0c. Attrition tab — cohort flow from Part 1 (THIRD tab)
+  # Reads the attrition_report table written by Part 1's main.R (via
+  # persist_attrition_table in criteria_attrition.R). If that table
+  # doesn't exist (Part 2 run standalone, or Part 1 skipped persist),
+  # we emit a placeholder card instead of failing.
+  # --------------------------------------------------------
+  tryCatch({
+    attrition_tbl <- if (nzchar(cfg$catalog)) {
+      paste0(cfg$catalog, ".", cfg$work_schema, ".attrition_report")
+    } else {
+      paste0(cfg$work_schema, ".attrition_report")
+    }
+
+    attrition_df <- tryCatch(
+      db_q(con, glue("
+        SELECT row_order, step_id, description, n_30, n_60, n_90
+        FROM {attrition_tbl}
+        ORDER BY row_order
+      ")),
+      error = function(e) NULL
+    )
+
+    if (is.null(attrition_df) || nrow(attrition_df) == 0) {
+      att_missing <- paste0('<!DOCTYPE html><html><head>
+<meta charset="UTF-8">
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: #fff; padding: 24px; color: #2d3436; }
+  h2 { font-size: 20px; color: #1a5276; margin-bottom: 12px; }
+  p { font-size: 14px; color: #636e72; line-height: 1.5; max-width: 680px; }
+  code { background: #f5f6fa; padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+</style></head><body>
+<h2>Attrition Report Not Available</h2>
+<p>The LOT dashboard reads the cohort-attrition counts from <code>',
+        attrition_tbl, '</code>, which is written by the Part 1 pipeline
+(<code>main.R</code> &rarr; <code>persist_attrition_table()</code>).</p>
+<p>Run Part 1 against the same <code>PROJECT_WORK_SCHEMA</code> to populate the
+attrition table, then rebuild the LOT dashboard to see it here.</p>
+</body></html>')
+      add_html_card(att_missing, section = "ATTRITION",
+                    title = "Attrition Report (Not Found)")
+      log_msg("  INFO: ", attrition_tbl, " not found; attrition tab shows placeholder")
+    } else {
+      # Coerce counts and pick the primary column from the configured window.
+      attrition_df$n_30 <- as.numeric(attrition_df$n_30)
+      attrition_df$n_60 <- as.numeric(attrition_df$n_60)
+      attrition_df$n_90 <- as.numeric(attrition_df$n_90)
+      w <- cfg$outpatient_window
+      primary_col <- paste0("n_", w)
+      if (!primary_col %in% names(attrition_df)) primary_col <- "n_90"
+      attrition_df$n_primary <- attrition_df[[primary_col]]
+
+      cat("\n", DASH, "\n")
+      cat("  Attrition cohort flow (", w, "-day OP window):\n", sep = "")
+      cat(DASH, "\n")
+      cat(sprintf("  %-50s %12s\n", "Step", paste0(w, "-day")))
+      cat(strrep("-", 65), "\n")
+      for (i in seq_len(nrow(attrition_df))) {
+        cat(sprintf("  %-50s %12s\n",
+                    substr(attrition_df$description[i], 1, 50),
+                    format(attrition_df$n_primary[i], big.mark = ",")))
+      }
+
+      save_table(attrition_df[, c("step_id", "description", "n_30", "n_60", "n_90")],
+                 section = "ATTRITION",
+                 title = paste0("Table: Cohort Attrition (all windows)"))
+
+      if (has_ggplot2 && nrow(attrition_df) > 0) {
+        # Preserve the pipeline order by factoring descriptions.
+        attrition_df$description <- factor(
+          attrition_df$description,
+          levels = rev(attrition_df$description))
+        p_att <- ggplot(attrition_df,
+                        aes(x = description, y = n_primary,
+                            text = paste0("Step: ", description,
+                                          "\nN: ", format(n_primary, big.mark = ",")))) +
+          geom_bar(stat = "identity", fill = "#2E86AB", width = 0.7) +
+          geom_text(aes(label = format(n_primary, big.mark = ",")),
+                    hjust = -0.1, size = 3.3, color = "grey20") +
+          scale_y_continuous(labels = scales::comma_format(),
+                             expand = expansion(mult = c(0, 0.2))) +
+          coord_flip() +
+          labs(title = paste0("Cohort Attrition — ", w, "-day OP Window"),
+               subtitle = "Cumulative patient count applied in Part 1 (main.R)",
+               x = NULL, y = "Patients remaining") +
+          theme_lot()
+        save_plot(p_att, "fig00_attrition.png", width = 10, height = 6,
+                 section = "ATTRITION", title = "Fig: Cohort Attrition Waterfall")
+      }
+      log_msg("  Attrition section added (", nrow(attrition_df), " steps, ",
+              w, "-day window)")
+    }
+  }, error = function(e) {
+    log_msg("WARN: Attrition section failed: ", conditionMessage(e))
+  })
+
+  # --------------------------------------------------------
   # 1. MMA_MED Summary
   # --------------------------------------------------------
   tryCatch({
