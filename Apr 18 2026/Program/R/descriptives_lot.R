@@ -981,13 +981,15 @@ print_descriptives <- function(con) {
           FROM lot1_sct WHERE LOT1_TX_ENDDATE IS NOT NULL
         )
         SELECT CAST(PATID AS STRING) AS PATID,
-               concat_ws(',', collect_set(reason)) AS reasons
+               concat_ws(',', sort_array(collect_set(reason))) AS reasons
         FROM interesting
         GROUP BY PATID
         -- Secondary sort on PATID so ties on reason-count are broken
         -- deterministically; otherwise the LIMIT 20 sample drifts across
-        -- runs and makes QC screenshots non-reproducible.
-        ORDER BY length(concat_ws(',', collect_set(reason))) DESC,
+        -- runs and makes QC screenshots non-reproducible. sort_array
+        -- around collect_set stabilizes the order of reason labels
+        -- within the title string too.
+        ORDER BY length(concat_ws(',', sort_array(collect_set(reason)))) DESC,
                  CAST(PATID AS STRING) ASC
         LIMIT 20
       ")
