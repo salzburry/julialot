@@ -89,7 +89,8 @@ build_cfg_lot <- function(yaml_path = "configs/study.yaml",
     censor_at_disenrollment = as.logical(yaml_cfg$censor_at_disenrollment),
 
     outpatient_window = as.integer(yaml_cfg$outpatient_window),
-    codelist_dir      = yaml_cfg$codelist_dir
+    codelist_dir      = yaml_cfg$codelist_dir,
+    codelist_csv_map  = yaml_cfg$codelist_csv_map
   )
   cfg <- utils::modifyList(.cfg_lot_infrastructure, legacy, keep.null = FALSE)
   list(cfg = cfg, resolution = res)

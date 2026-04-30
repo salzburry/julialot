@@ -33,9 +33,23 @@ tryCatch(
 )
 
 # ---- Source modules (order matters) ----
-# Resolve script directory without relying on %||% (not available before modules load)
-.ofile <- tryCatch(sys.frame(1)$ofile, error = function(e) NULL)
-source_dir <- file.path(dirname(if (!is.null(.ofile)) .ofile else "."), "R")
+# Resolve script directory robustly for all invocation modes:
+#   Rscript main.R              -> commandArgs --file=
+#   source("main.R")            -> sys.frame()$ofile
+#   interactive line-by-line    -> falls back to getwd()
+.script_dir <- local({
+  args <- commandArgs(trailingOnly = FALSE)
+  file_arg <- grep("^--file=", args, value = TRUE)
+  if (length(file_arg) > 0) {
+    return(dirname(normalizePath(sub("^--file=", "", file_arg[1]))))
+  }
+  for (i in seq_len(sys.nframe())) {
+    ofile <- tryCatch(sys.frame(i)$ofile, error = function(e) NULL)
+    if (!is.null(ofile)) return(dirname(normalizePath(ofile)))
+  }
+  getwd()
+})
+source_dir <- file.path(.script_dir, "R")
 source(file.path(source_dir, "config_prompts.R"))
 source(file.path(source_dir, "db_utils.R"))
 source(file.path(source_dir, "codelists.R"))
@@ -47,8 +61,7 @@ source(file.path(source_dir, "pipeline_steps.R"))
 # ============================================================
 main <- function() {
   # ---- 1. Resolve YAML-backed study config + write resolved dump ----
-  yaml_path  <- file.path(dirname(if (!is.null(.ofile)) .ofile else "."),
-                          "configs", "study.yaml")
+  yaml_path  <- file.path(.script_dir, "configs", "study.yaml")
   output_dir <- Sys.getenv("OUTPUT_DIR", unset = "/mnt/artifacts/results")
   resolved   <- build_cfg_defaults(
     yaml_path  = yaml_path,
