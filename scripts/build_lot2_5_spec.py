@@ -149,7 +149,8 @@ def build_lot2_5_base(wb):
          "Date",
          "LOTN_START_DT is the EARLIEST of any of the following competing triggers occurring after LOT_(N-1)_BASE_END_DT: "
          "(a) first MM oncology agent (non-steroid) administered/dispensed; "
-         "(b) first autologous SCT (AUTO) - including an unplanned AUTO (>180 days after a prior AUTO in LOT_(N-1)); "
+         "(b) first UNPLANNED autologous SCT (AUTO) - i.e., an AUTO occurring >180 days after a prior AUTO in LOT_(N-1). "
+         "Planned, single, or tandem AUTO SCTs (60-180 day intervals) are continuations of the same LOT and do NOT trigger a new LOT; "
          "(c) first allogeneic SCT (ALLO) - ALLO always starts a new LOT; "
          "(d) first CAR-T infusion - CAR-T is classified as its own LOT. "
          "When LOT_(N-1) ended due to SCT_ALLO / SCT_CART / SCT_AUTO unplanned / CART_INIT, LOTN_START_DT equals the SCT or CAR-T event date itself "
@@ -249,8 +250,9 @@ def build_lot2_5_base(wb):
          ""),
         ("FU_PD", "LOTN_CART_LOT_FLG", "Flag: LOT N is a CAR-T line",
          "0/1",
-         "Set 1 when LOTN_START_TYPE='CART'. Per protocol: CAR-T is its own LOT; oncology agents (incl. supportive, e.g., corticosteroids) "
-         "given within 45 days of CAR-T are CONSOLIDATED into the CAR-T LOT and not treated as new induction.",
+         "Set 1 when LOTN_START_TYPE='CART'. CAR-T is its own LOT; oncology agents (incl. supportive, e.g., corticosteroids) "
+         "given within 45 days of CAR-T are CONSOLIDATED into the CAR-T LOT and not treated as new induction. "
+         "PROVENANCE: 45-day consolidation per Apr 22 study-team decision (supersedes 30-day older protocol text); see Q11.",
          "CL_SCT_CODELIST (SCT_TYPE='CART')",
          "Within 45-day consolidation window, do NOT advance to LOT_(N+1). Use FIRST_CART_DT as LOTN_START_DT.",
          ""),
@@ -419,11 +421,16 @@ def build_sct_cart_start(wb):
          "30-day induction window from LOTN_START_DT.",
          "n/a (this is the start of LOT N, not the end of LOT_(N-1))",
          "Steroids alone do not start a LOT. Permissible biosimilar substitutes do not start a LOT."),
-        ("Death / disenrollment / study end",
+        ("Death / study end (PRIMARY)",
          "Never - these end follow-up; no LOT_(N+1).",
          "n/a", "n/a",
-         "DEATH / DISENROLLMENT / STUDY_END",
-         "LOT_(N-1) ends; no new LOT begins."),
+         "DEATH / STUDY_END",
+         "LOT_(N-1) ends; no new LOT begins. Disenrollment is NOT a primary end event."),
+        ("Health plan disenrollment (SENSITIVITY ONLY)",
+         "Never starts a new LOT. Sensitivity-only: when CENSOR_AT_DISENROLLMENT=TRUE, ELIGEND caps observation via ENDDATE_CE.",
+         "n/a", "n/a",
+         "DISENROLLMENT (sensitivity only; primary analysis ignores ELIGEND)",
+         "PRIMARY analysis does NOT use disenrollment to end any LOT. SENSITIVITY emits LOTN_BASE_END_DT_CE_SENS / LOTN_BASE_END_REASON_CE_SENS only when the sensitivity flag is on. See Q12."),
     ]
     write_rows(ws, 2, rows, col_widths=[26, 50, 28, 50, 36, 60])
     ws.row_dimensions[1].height = 30
