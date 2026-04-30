@@ -95,15 +95,25 @@ main <- function() {
 
   # ----------------------------------------------------------
   # STEP 0: Register code lists as TEMP views
+  # Filenames come from cfg$codelist_csv_map (loaded from configs/study.yaml).
+  # Fail loud if any of the four LOT codelists are not declared in the YAML.
   # ----------------------------------------------------------
-  rollup_src <- load_codelist_csv("cl_mma_rollup.csv",
+  .lot_csv_or_stop <- function(key) {
+    nm <- cfg$codelist_csv_map[[key]]
+    if (is.null(nm) || !nzchar(nm)) {
+      stop("configs/study.yaml is missing codelists.files.", key,
+           " — required for LOT pipeline.")
+    }
+    nm
+  }
+  rollup_src <- load_codelist_csv(.lot_csv_or_stop("cl_mma_rollup"),
     c("CL_MEDICATION_FULL", "CL_MED_CLASS", "CL_MED_ABBR",
       "MONOMAINTENANCE", "DUALMAINTENANCEWITH", "CONDITIONING", "USED_FOR_OTHER_CANCERS"))
-  codelist_src <- load_codelist_csv("cl_mma_codelist.csv",
+  codelist_src <- load_codelist_csv(.lot_csv_or_stop("cl_mma_codelist"),
     c("CL_CODE_TYPE", "CL_CODE", "CL_MEDICATION_FULL", "CL_MED_CLASS", "CL_MED_ABBR"))
-  subs_src <- load_codelist_csv("permissible_subs.csv",
+  subs_src <- load_codelist_csv(.lot_csv_or_stop("cl_permissible_subs"),
     c("original_med", "substitute_med"))
-  sct_src <- load_codelist_csv("cl_sct_codelist.csv",
+  sct_src <- load_codelist_csv(.lot_csv_or_stop("cl_sct_codelist"),
     c("CL_CODE_TYPE", "CL_CODE", "SCT_TYPE"))
   run_step(con, "S00_mma_rollup", glue("
     CREATE OR REPLACE TEMPORARY VIEW mma_rollup AS
