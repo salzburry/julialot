@@ -1,6 +1,6 @@
 """Build draft LOT2-5 spec workbook in chunks.
 
-Run with optional CHUNK env var: cover, qc, base, base_end, sct, scenarios, finalize, all
+Run with optional CHUNK env var: cover, qc, base, base_end, sct_cart, scenarios, open_q, all (default)
 """
 import os
 from pathlib import Path
@@ -213,11 +213,11 @@ def build_lot2_5_base(wb):
          "CL_SCT_CODELIST (SCT_TYPE='AUTO')",
          "Same logic as LOT1: 14-day windowing of T_MEDICAL procedure code dates; 60-day gap validation between distinct events.",
          ""),
-        ("FU_PD", "LOTN_TX_AUTO_SING_FL", "Flag: single valid AUTO SCT during LOT N",
+        ("FU_PD", "LOTN_TX_AUTO_SING_FLG", "Flag: single valid AUTO SCT during LOT N",
          "0/1",
          "Single AUTO not part of a valid tandem pair within LOT N.",
          "CL_SCT_CODELIST", "Inherits LOT1 SCT logic.", ""),
-        ("FU_PD", "LOTN_TX_AUTO_TAND_FL", "Flag: planned tandem AUTO SCT during LOT N",
+        ("FU_PD", "LOTN_TX_AUTO_TAND_FLG", "Flag: planned tandem AUTO SCT during LOT N",
          "0/1",
          "Two AUTO SCTs within LOT N that are >=60 and <=180 days apart (planned tandem).",
          "CL_SCT_CODELIST", "Use datediff(AUTO_DT_2, AUTO_DT_1) without +1 (per Apr 22 protocol resolution).", ""),
@@ -476,7 +476,7 @@ def build_scenarios(wb):
          "SENSITIVITY (CENSOR_AT_DISENROLLMENT=TRUE): LOT3_BASE_END_DT_CE_SENS = ELIGEND; LOT3_BASE_END_REASON_CE_SENS = DISENROLLMENT."),
         ("S7. Tandem AUTO during LOT2",
          "Two AUTO SCTs 90 days apart during LOT2.",
-         "Both are planned tandem; LOT2 continues. LOT2_TX_AUTO_TAND_FL = 1; LOT2_TX_AUTO_DT_1/DT_2 populated. "
+         "Both are planned tandem; LOT2 continues. LOT2_TX_AUTO_TAND_FLG = 1; LOT2_TX_AUTO_DT_1/DT_2 populated. "
          "LOT2 does not end on the second AUTO."),
         ("S8. Permissible biosimilar swap mid-LOT2",
          "Patient on DARA in LOT2 switches to a DARA biosimilar.",
