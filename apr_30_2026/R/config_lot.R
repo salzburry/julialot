@@ -59,6 +59,15 @@ cfg <- list(
   # CAR-T consolidation: new agents within this window of CART are consolidation, not MED_ADD
   cart_consolidation_days = as.integer(Sys.getenv("CART_CONSOLIDATION_DAYS", unset = "45")),
 
+  # Disenrollment censoring (sensitivity flag).
+  # FALSE (default, primary analysis): OBS_END_DT = ENDDATE = min(death, study_end).
+  #                                    Disenrolled patients keep contributing follow-up.
+  # TRUE  (sensitivity):               OBS_END_DT = coalesce(ENDDATE_CE, ENDDATE),
+  #                                    so disenrollment also caps observation.
+  # ENDDATE_CE is preserved as a column on lot_patient_input either way, so flipping
+  # this flag is the only change needed to run the sensitivity branch.
+  censor_at_disenrollment = as.logical(Sys.getenv("CENSOR_AT_DISENROLLMENT", unset = "FALSE")),
+
   # Persist outputs
   persist_to_schema = as.logical(Sys.getenv("PERSIST_TO_SCHEMA", unset = "TRUE")),
 

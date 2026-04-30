@@ -626,8 +626,6 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
     #   (2) BILL_PROC_CD (HCPCS/CPT) on medical      [source = MEDICAL_BILL_PROC_CD]
     #   (3) NDC on medical claims                     [source = MEDICAL_NDC]
     #   (4) NDC on Rx claims                          [source = RX]
-    # Previously only sources (1) and (4) were used, causing ~300 patients identified
-    # via BILL_PROC_CD or medical NDC in S04 to fail Step 6 and be dropped from cohort.
     list(
       name = "18_therapy_events",
       description = "Identifying MM therapy events (medical PROC_CD + BILL_PROC_CD + NDC, Rx NDC)",

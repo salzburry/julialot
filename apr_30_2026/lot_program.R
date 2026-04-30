@@ -259,10 +259,20 @@ main <- function() {
   # STEP 1: Load Part 1 cohort
   # ----------------------------------------------------------
   # OBS_END_DT = observation end for all LOT/MAP logic.
-  # Per study design: disenrollment is NOT a censoring criterion.
-  # Therefore OBS_END_DT = ENDDATE = min(death_dt, study_end).
-  # ENDDATE_CE (which includes disenrollment) is retained as a separate
-  # column for sensitivity analyses only — it does NOT drive LOT logic.
+  # Primary analysis (cfg$censor_at_disenrollment = FALSE):
+  #   OBS_END_DT = ENDDATE = min(death_dt, study_end).
+  #   Disenrollment is NOT a censoring criterion.
+  # Sensitivity analysis (cfg$censor_at_disenrollment = TRUE):
+  #   OBS_END_DT = coalesce(ENDDATE_CE, ENDDATE), so disenrollment also caps obs.
+  # ENDDATE_CE is preserved as a column either way for ad-hoc analyses.
+  obs_end_dt_expr <- if (isTRUE(cfg$censor_at_disenrollment)) {
+    "coalesce(cast(ENDDATE_CE AS date), cast(ENDDATE AS date))"
+  } else {
+    "cast(ENDDATE AS date)"
+  }
+  log_msg("  OBS_END_DT mode:    ",
+          if (isTRUE(cfg$censor_at_disenrollment)) "SENSITIVITY (ENDDATE_CE)"
+          else "PRIMARY (ENDDATE, disenrollment ignored)")
   run_step(con, "S03_patient_input", glue("
     CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS
     SELECT
@@ -270,10 +280,10 @@ main <- function() {
       cast(INDEX_DATE AS date) AS INDEX_DATE,
       cast(ENDDATE AS date)    AS ENDDATE,
       cast(ENDDATE_CE AS date) AS ENDDATE_CE,
-      -- OBS_END_DT = ENDDATE: disenrollment is not a censoring criterion.
+      -- OBS_END_DT picked by cfg$censor_at_disenrollment (logged above).
       -- All MAP gap checks, LOT discontinuation confirmation, SCT windows,
       -- and LOT end date logic use this value.
-      cast(ENDDATE AS date) AS OBS_END_DT,
+      {obs_end_dt_expr} AS OBS_END_DT,
       cast(DEATH_DT AS date)   AS DEATH_DT,
       GDR_CD,
       YRDOB,
@@ -315,7 +325,7 @@ main <- function() {
         ON c.CL_CODE_TYPE = 'HCPCS'
        AND upper(regexp_replace(coalesce(cast(m.PROC_CD as string),''), '[^A-Za-z0-9]', '')) = c.CL_CODE
       WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
-        AND cast(m.FST_DT AS date) <= p.ENDDATE  -- disenrollment not a censoring criterion
+        AND cast(m.FST_DT AS date) <= p.OBS_END_DT  -- ENDDATE primary; ENDDATE_CE under sensitivity flag
     ),
     -- 2) Medical claims - BILL_PROC_CD (HCPCS)
     med_bill_proc_cd AS (
@@ -335,7 +345,7 @@ main <- function() {
         ON c.CL_CODE_TYPE = 'HCPCS'
        AND upper(regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''), '[^A-Za-z0-9]', '')) = c.CL_CODE
       WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
-        AND cast(m.FST_DT AS date) <= p.ENDDATE  -- disenrollment not a censoring criterion
+        AND cast(m.FST_DT AS date) <= p.OBS_END_DT  -- ENDDATE primary; ENDDATE_CE under sensitivity flag
     ),
     -- 3) Medical claims - NDC field (NDC-coded drug administrations on medical)
     med_ndc AS (
@@ -358,7 +368,7 @@ main <- function() {
          = lpad(regexp_replace(c.CL_CODE, '[^0-9]', ''), 11, '0')
       WHERE cast(m.NDC as string) IS NOT NULL AND trim(cast(m.NDC as string)) <> ''
         AND cast(m.FST_DT AS date) >= p.INDEX_DATE
-        AND cast(m.FST_DT AS date) <= p.ENDDATE  -- disenrollment not a censoring criterion
+        AND cast(m.FST_DT AS date) <= p.OBS_END_DT  -- ENDDATE primary; ENDDATE_CE under sensitivity flag
     ),
     -- 4) med_procedure table: REMOVED — Optum med_procedure.PROC contains ICD
     -- procedure codes, not HCPCS/NDC drug codes. The MMA codelist only has HCPCS
@@ -385,7 +395,7 @@ main <- function() {
        AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', ''), 11, '0')
          = lpad(regexp_replace(c.CL_CODE, '[^0-9]', ''), 11, '0')
       WHERE cast(r.FILL_DT AS date) >= p.INDEX_DATE
-        AND cast(r.FILL_DT AS date) <= p.ENDDATE  -- disenrollment not a censoring criterion
+        AND cast(r.FILL_DT AS date) <= p.OBS_END_DT  -- ENDDATE primary; ENDDATE_CE under sensitivity flag
     )
     SELECT * FROM med_proc_cd
     UNION ALL SELECT * FROM med_bill_proc_cd
