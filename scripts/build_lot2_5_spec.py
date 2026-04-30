@@ -14,6 +14,24 @@ OUT = str(REPO_ROOT / "Apr 18 2026" / "Program Spec and Scenarios" / "lot2to5_sp
 HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
 SECTION_FILL = PatternFill("solid", fgColor="D9E1F2")
 NOTE_FILL = PatternFill("solid", fgColor="FFF2CC")
+EXAMPLE_FILL = PatternFill("solid", fgColor="E2EFDA")
+EXAMPLE_HEADER_FILL = PatternFill("solid", fgColor="70AD47")
+
+# Gantt color palette for timeline cells
+LOT_COLORS = {
+    "LOT1": "BDD7EE",       # light blue
+    "LOT2": "F4B084",       # peach
+    "LOT3": "C6E0B4",       # light green
+    "LOT4": "FFD966",       # light gold
+    "LOT5": "B4A7D6",       # lavender
+    "GAP":  "F2F2F2",       # light grey - between LOTs
+    "INDUCTION": "FFE699",  # induction window highlight
+    "EVENT_SCT_AUTO": "FF9900",
+    "EVENT_SCT_ALLO": "C00000",
+    "EVENT_CART":     "7030A0",
+    "EVENT_DEATH":    "404040",
+    "EVENT_MED_ADD":  "0070C0",
+}
 HEADER_FONT = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
 BOLD = Font(name="Calibri", size=11, bold=True)
 NORMAL = Font(name="Calibri", size=10)
@@ -34,6 +52,61 @@ def save(wb):
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     wb.save(OUT)
     print(f"Saved: {OUT}")
+
+
+def write_example_block(ws, start_row, title, narrative, var_table, ncols):
+    """Append a 'Worked Example' block below an existing variable table."""
+    # Title bar
+    cell = ws.cell(row=start_row, column=1, value=title)
+    cell.font = Font(name="Calibri", size=12, bold=True, color="FFFFFF")
+    cell.fill = EXAMPLE_HEADER_FILL
+    cell.alignment = WRAP
+    ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=ncols)
+    ws.row_dimensions[start_row].height = 22
+
+    # Narrative
+    nr = start_row + 1
+    ncell = ws.cell(row=nr, column=1, value=narrative)
+    ncell.font = NORMAL
+    ncell.fill = EXAMPLE_FILL
+    ncell.alignment = WRAP
+    ncell.border = BORDER
+    ws.merge_cells(start_row=nr, start_column=1, end_row=nr, end_column=ncols)
+    ws.row_dimensions[nr].height = 60
+
+    # Variable table header
+    hr = nr + 1
+    headers = ["Variable", "Value for this patient", "How it was derived"]
+    # Spread the 3 columns across ncols (1 + 1 + remainder merged)
+    ws.cell(row=hr, column=1, value=headers[0])
+    ws.cell(row=hr, column=2, value=headers[1])
+    ws.cell(row=hr, column=3, value=headers[2])
+    if ncols > 3:
+        ws.merge_cells(start_row=hr, start_column=3, end_row=hr, end_column=ncols)
+    for c in range(1, ncols + 1):
+        cell = ws.cell(row=hr, column=c)
+        cell.font = BOLD
+        cell.fill = SECTION_FILL
+        cell.alignment = WRAP
+        cell.border = BORDER
+
+    # Variable rows
+    for i, (var, val, deriv) in enumerate(var_table):
+        r = hr + 1 + i
+        ws.cell(row=r, column=1, value=var).font = BOLD
+        ws.cell(row=r, column=2, value=val)
+        ws.cell(row=r, column=3, value=deriv)
+        if ncols > 3:
+            ws.merge_cells(start_row=r, start_column=3, end_row=r, end_column=ncols)
+        for c in range(1, ncols + 1):
+            cell = ws.cell(row=r, column=c)
+            cell.alignment = WRAP
+            cell.fill = EXAMPLE_FILL
+            cell.border = BORDER
+            if c != 1:
+                cell.font = NORMAL
+
+    return hr + 1 + len(var_table)
 
 
 def style_header(ws, row, ncols):
@@ -86,6 +159,8 @@ def build_cover(wb):
         ("5.SCT_CART_LOT_START", "Rules for SCT/ALLO/CAR-T as LOT 2-5 starting events"),
         ("6.Scenarios", "Worked scenarios LOT2-LOT5"),
         ("7.Open_Questions", "Items needing Julia's review"),
+        ("8.Timelines", "Gantt-style patient journey examples (visual)"),
+        ("9.Decision_Flow", "Decision tree for when LOT(N+1) starts"),
         ("", ""),
         ("Key differences vs LOT1", ""),
         ("Induction window", "30 days (vs 60 days for LOT1)"),
@@ -260,6 +335,70 @@ def build_lot2_5_base(wb):
     write_rows(ws, 2, rows, col_widths=[10, 30, 32, 22, 70, 30, 60, 18])
     ws.row_dimensions[1].height = 36
 
+    # ----- Worked examples appendix -----
+    next_row = 2 + len(rows) + 2  # gap row
+    ncols = 8
+
+    # Example A: medication-triggered LOT2
+    ex_a_narrative = (
+        "Example A - LOT2 starts on a NEW MEDICATION (most common case).\n"
+        "Patient was on VRd (bortezomib + lenalidomide + dexamethasone) for LOT1. LOT1 ended on 2025-08-19 with reason MED_ADD because daratumumab "
+        "was added on 2025-08-20. The patient receives DARA on 2025-08-20 and lenalidomide refills appear within 30 days. No SCT or CAR-T occurs."
+    )
+    ex_a_table = [
+        ("LOT_NUM", "2", "Sequential index after LOT1."),
+        ("LOTN_START_DT", "2025-08-20", "Earliest competing trigger after LOT1_BASE_END_DT (2025-08-19) is the new MM agent DARA on 2025-08-20."),
+        ("LOTN_START_TYPE", "MED", "Trigger was a new medication (no SCT/CAR-T present)."),
+        ("INDUCTION_WINDOW_DAYS", "30", "LOT2 uses the 30-day induction window (vs 60 for LOT1)."),
+        ("LOTN_BASE_MEDS", "DARA, LENA", "Within [2025-08-20, 2025-09-18]: DARA (start) and LENA refills. DEXA excluded (steroid)."),
+        ("LOTN_MED_CNT", "2", "Two distinct non-steroid agents."),
+        ("LOTN_MED_DARA", "1", "DARA present in LOTN_BASE_MEDS."),
+        ("LOTN_MED_LENA", "1", "LENA present in LOTN_BASE_MEDS."),
+        ("LOTN_CLASS_ANTICD38", "1", "DARA is class ANTICD38."),
+        ("LOTN_CLASS_IMMUNOMOD", "1", "LENA is class IMMUNOMOD."),
+        ("contains_mtx_reg_LOTN", "1", "LENA is a valid mono-maintenance agent (a); DARA is the non-maintenance anchor (b)."),
+        ("LOTN_ALLO_LOT_FLG / LOTN_CART_LOT_FLG", "0 / 0", "No ALLO or CAR-T trigger."),
+    ]
+    next_row = write_example_block(ws, next_row, "WORKED EXAMPLE A - LOT2 starts on a new medication",
+                                   ex_a_narrative, ex_a_table, ncols) + 2
+
+    # Example B: ALLO-started LOT
+    ex_b_narrative = (
+        "Example B - LOT2 starts on an ALLOGENEIC SCT.\n"
+        "Patient on VRd in LOT1 receives an allogeneic SCT on 2025-09-15. Per protocol, ALLO is its own LOT with no other MM therapies. "
+        "LOT1 ends 2025-09-14 (day before ALLO). Next MM therapy after the ALLO date is daratumumab on 2025-12-10, which starts LOT3."
+    )
+    ex_b_table = [
+        ("LOT_NUM", "2", ""),
+        ("LOTN_START_DT", "2025-09-15", "ALLO_DT (always starts a new LOT)."),
+        ("LOTN_START_TYPE", "SCT_ALLO", ""),
+        ("LOTN_BASE_MEDS", "(empty)", "ALLO LOT contains NO MM therapies."),
+        ("LOTN_MED_CNT", "0", ""),
+        ("LOTN_ALLO_LOT_FLG", "1", "Trigger type is SCT_ALLO."),
+        ("LOTN_BASE_END_DT (draft)", "2025-09-15", "Draft Q2 assumption: single-day LOT (start = end = ALLO_DT). Next agent (DARA on 2025-12-10) opens LOT3."),
+        ("LOTN_BASE_END_REASON", "MED_ADD", "DARA on 2025-12-10 is the next event; LOT2 ends the day before LOT3 starts. (Pending Q2.)"),
+    ]
+    next_row = write_example_block(ws, next_row, "WORKED EXAMPLE B - LOT2 starts on an allogeneic SCT",
+                                   ex_b_narrative, ex_b_table, ncols) + 2
+
+    # Example C: unplanned AUTO triggers LOT2
+    ex_c_narrative = (
+        "Example C - LOT2 starts on an UNPLANNED autologous SCT.\n"
+        "Patient had a single AUTO during LOT1 on 2025-03-01. A second AUTO occurs on 2025-10-15 - 228 days later, which is >180 days, so it is unplanned. "
+        "The unplanned AUTO ends LOT1 (2025-10-14) and starts LOT2 on the AUTO date itself."
+    )
+    ex_c_table = [
+        ("LOT_NUM", "2", ""),
+        ("LOTN_START_DT", "2025-10-15", "Unplanned AUTO date (>180d after prior AUTO)."),
+        ("LOTN_START_TYPE", "SCT_AUTO", "Unplanned AUTO is a first-class LOT-start trigger. (Planned tandem 60-180d would NOT start a new LOT.)"),
+        ("INDUCTION_WINDOW_DAYS", "30", "LOT2 captures any post-AUTO agents within [2025-10-15, 2025-11-13]."),
+        ("LOTN_TX_AUTO_FLG", "1", "AUTO occurred during LOT2."),
+        ("LOTN_TX_AUTO_SING_FLG", "1", "Single AUTO during LOT2 (no second AUTO within tandem window)."),
+        ("LOTN_TX_AUTO_TAND_FLG", "0", ""),
+    ]
+    next_row = write_example_block(ws, next_row, "WORKED EXAMPLE C - LOT2 starts on an unplanned autologous SCT",
+                                   ex_c_narrative, ex_c_table, ncols) + 2
+
 
 def build_lot2_5_base_end(wb):
     name = "4.LOT2_5_BASE_END"
@@ -384,6 +523,64 @@ def build_lot2_5_base_end(wb):
     ]
     write_rows(ws, 2, rows, col_widths=[10, 30, 32, 30, 80, 30, 60, 18])
     ws.row_dimensions[1].height = 36
+
+    # ----- Worked examples appendix -----
+    next_row = 2 + len(rows) + 2
+    ncols = 8
+
+    # Example D: end-reason resolution (priority logic)
+    ex_d_narrative = (
+        "Example D - END-REASON RESOLUTION (priority logic).\n"
+        "LOT3 started 2025-11-01 with KRd. The patient has multiple competing end events:\n"
+        "  - Run-out date of induction agents (DISCONTINUATION candidate): 2026-04-15\n"
+        "  - First add med (POMA) on 2026-03-20 -> LOT3 would end 2026-03-19 (MED_ADD)\n"
+        "  - CAR-T infusion on 2026-04-02 (within 45 days of POMA)  -> CART_INIT applies\n"
+        "  - Death (YMDOD) on 2026-05-20\n"
+        "Apply priority: SCT_ALLO > SCT_CART > SCT_AUTO > CART_INIT > MED_ADD > DISCONTINUATION > DEATH > STUDY_END."
+    )
+    ex_d_table = [
+        ("LOTN_BASE_END_DT", "2026-04-01", "FIRST_CART_DT (2026-04-02) - 1. CART_INIT outranks MED_ADD because CAR-T occurred within 45d of the first add."),
+        ("LOTN_BASE_END_REASON", "CART_INIT", "Highest-priority qualifying reason among competing events."),
+        ("LOTN_BASE_LENGTH", "152", "2026-04-01 minus 2025-11-01 + 1 = 152 days."),
+        ("LOT_(N+1)_START_DT", "2026-04-02", "FIRST_CART_DT becomes LOT4 start; LOT4_START_TYPE = CART."),
+        ("LOTN_BASE_END_DT_CE_SENS", "2026-04-01", "Same as primary - no disenrollment cap binds earlier."),
+        ("LOTN_BASE_END_REASON_CE_SENS", "CART_INIT", ""),
+    ]
+    next_row = write_example_block(ws, next_row, "WORKED EXAMPLE D - End-reason priority with CART_INIT",
+                                   ex_d_narrative, ex_d_table, ncols) + 2
+
+    # Example E: discontinuation
+    ex_e_narrative = (
+        "Example E - DISCONTINUATION (regimen runs out, no new agent within gap).\n"
+        "LOT2 started 2025-08-20 with DARA + LENA. Last LENA fill (28-day supply) is 2026-01-10, MAP_END_DT = 2026-02-06. "
+        "Last DARA infusion MAP_END_DT = 2026-01-15. No new MM agent appears in the next 90 days. Patient is alive and enrolled."
+    )
+    ex_e_table = [
+        ("LOTN_BASE_DISCON_DT", "2026-02-06", "max(MAP_END_DT) across LOT2 induction agents (the later LENA run-out)."),
+        ("LOTN_BASE_END_DT", "2026-02-06", "DISCONTINUATION uses the run-out date itself."),
+        ("LOTN_BASE_END_REASON", "DISCONTINUATION", "All agents reached run-out and no new agent within 90-day gap."),
+        ("LOTN_BASE_LENGTH", "171", "2026-02-06 minus 2025-08-20 + 1."),
+        ("Next LOT?", "Only if a new MM agent eventually appears", "If no further therapy, study/death/sensitivity will eventually close follow-up."),
+    ]
+    next_row = write_example_block(ws, next_row, "WORKED EXAMPLE E - Discontinuation (run-out)",
+                                   ex_e_narrative, ex_e_table, ncols) + 2
+
+    # Example F: disenrollment - primary vs sensitivity
+    ex_f_narrative = (
+        "Example F - DISENROLLMENT: primary analysis vs sensitivity analysis.\n"
+        "LOT4 started 2026-01-05. Patient disenrolls (ELIGEND) on 2026-04-30 with no death and no further therapy. "
+        "study_end is 2026-12-31. This shows how the same patient produces different LOT4 closures under primary vs sensitivity."
+    )
+    ex_f_table = [
+        ("LOTN_BASE_END_DT (PRIMARY)", "2026-12-31", "Disenrollment is IGNORED in primary; earliest of {death, study_end} = study_end."),
+        ("LOTN_BASE_END_REASON (PRIMARY)", "STUDY_END", "Primary analysis cannot use DISENROLLMENT."),
+        ("LOTN_BASE_END_DT_CE_SENS (SENSITIVITY)", "2026-04-30", "ENDDATE_CE = min(YMDOD, ELIGEND, study_end) = ELIGEND."),
+        ("LOTN_BASE_END_REASON_CE_SENS (SENSITIVITY)", "DISENROLLMENT", "Spec requires labelling DISENROLLMENT (do NOT collapse to STUDY_END)."),
+        ("LOTN_BASE_LENGTH (PRIMARY)", "361", "2026-12-31 minus 2026-01-05 + 1."),
+        ("LOTN_BASE_LENGTH_CE_SENS", "116", "2026-04-30 minus 2026-01-05 + 1."),
+    ]
+    next_row = write_example_block(ws, next_row, "WORKED EXAMPLE F - Disenrollment primary vs sensitivity",
+                                   ex_f_narrative, ex_f_table, ncols) + 2
 
 
 def build_sct_cart_start(wb):
@@ -550,6 +747,286 @@ def build_open_questions(wb):
     ws.row_dimensions[1].height = 30
 
 
+def build_timelines(wb):
+    """Gantt-style patient timelines, drawn with colored cells.
+
+    Each scenario is one timeline. Day axis is 14-day buckets (a 'week' pair) for readability.
+    Cell colors indicate which LOT each bucket belongs to, with single-cell event markers
+    overlaid for SCTs / CAR-T / death.
+    """
+    name = "8.Timelines"
+    if name in wb.sheetnames:
+        del wb[name]
+    ws = wb.create_sheet(name)
+
+    # Title row
+    ws["A1"] = "Patient timelines (Gantt-style) - illustrating LOT2-5 transitions"
+    ws["A1"].font = Font(name="Calibri", size=14, bold=True, color="1F4E78")
+    ws.merge_cells("A1:R1")
+    ws.row_dimensions[1].height = 22
+
+    # Legend
+    ws["A2"] = "Legend:"
+    ws["A2"].font = BOLD
+    legend_items = [
+        ("LOT1", "LOT1"), ("LOT2", "LOT2"), ("LOT3", "LOT3"),
+        ("LOT4", "LOT4"), ("LOT5", "LOT5"), ("INDUCTION", "30d induction"),
+        ("EVENT_SCT_AUTO", "AUTO SCT"), ("EVENT_SCT_ALLO", "ALLO SCT"),
+        ("EVENT_CART", "CAR-T"), ("EVENT_DEATH", "Death"),
+        ("EVENT_MED_ADD", "Med add"),
+    ]
+    col = 2
+    for key, label in legend_items:
+        c = ws.cell(row=2, column=col, value=label)
+        c.fill = PatternFill("solid", fgColor=LOT_COLORS[key])
+        c.font = Font(name="Calibri", size=9, bold=True,
+                      color="FFFFFF" if key in ("EVENT_SCT_ALLO", "EVENT_CART", "EVENT_DEATH") else "000000")
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.border = BORDER
+        col += 1
+    ws.row_dimensions[2].height = 18
+
+    # Day axis: 0..560 days in 14-day buckets => 41 columns
+    BUCKET = 14
+    N_BUCKETS = 40
+    AXIS_START_COL = 4  # cols A,B,C reserved for labels; day axis starts at D
+
+    # Header row for axis (row 4)
+    axis_row = 4
+    ws.cell(row=axis_row, column=1, value="Scenario").font = BOLD
+    ws.cell(row=axis_row, column=2, value="Description").font = BOLD
+    ws.cell(row=axis_row, column=3, value="Day ->").font = BOLD
+    for i in range(N_BUCKETS):
+        day = i * BUCKET
+        c = ws.cell(row=axis_row, column=AXIS_START_COL + i, value=day if day % 56 == 0 else "")
+        c.font = Font(name="Calibri", size=8, bold=True)
+        c.fill = SECTION_FILL
+        c.border = BORDER
+        c.alignment = Alignment(horizontal="center")
+    for c in range(1, AXIS_START_COL + N_BUCKETS):
+        ws.cell(row=axis_row, column=c).fill = SECTION_FILL
+        ws.cell(row=axis_row, column=c).border = BORDER
+
+    # Scenarios as (label, description, segments)
+    # segments: list of dicts: {"start_day": d, "end_day": d, "kind": "LOT1"/"LOT2"/.../"INDUCTION"/"EVENT_*"}
+    scenarios = [
+        {
+            "label": "S1: LOT1 -> LOT2 by MED_ADD",
+            "desc": "VRd LOT1; DARA added day 200 -> LOT2 starts on DARA",
+            "segments": [
+                {"start_day": 0,   "end_day": 199, "kind": "LOT1"},
+                {"start_day": 0,   "end_day": 56,  "kind": "INDUCTION"},  # LOT1 60d induction (overlay)
+                {"start_day": 200, "end_day": 199, "kind": "EVENT_MED_ADD"},  # marker only
+                {"start_day": 200, "end_day": 540, "kind": "LOT2"},
+                {"start_day": 200, "end_day": 228, "kind": "INDUCTION"},  # LOT2 30d induction overlay
+            ],
+        },
+        {
+            "label": "S2: LOT1 -> LOT2 by unplanned AUTO",
+            "desc": "Single AUTO d100; second AUTO d320 (>180d) is unplanned -> LOT2 starts d320",
+            "segments": [
+                {"start_day": 0,   "end_day": 319, "kind": "LOT1"},
+                {"start_day": 100, "end_day": 100, "kind": "EVENT_SCT_AUTO"},
+                {"start_day": 320, "end_day": 320, "kind": "EVENT_SCT_AUTO"},
+                {"start_day": 320, "end_day": 540, "kind": "LOT2"},
+                {"start_day": 320, "end_day": 348, "kind": "INDUCTION"},
+            ],
+        },
+        {
+            "label": "S3: LOT1 -> LOT2 (ALLO LOT) -> LOT3",
+            "desc": "ALLO d250 = LOT2 (1-day LOT, no MM); next agent d340 starts LOT3",
+            "segments": [
+                {"start_day": 0,   "end_day": 249, "kind": "LOT1"},
+                {"start_day": 250, "end_day": 250, "kind": "EVENT_SCT_ALLO"},
+                {"start_day": 250, "end_day": 250, "kind": "LOT2"},  # singleton ALLO LOT
+                {"start_day": 340, "end_day": 540, "kind": "LOT3"},
+                {"start_day": 340, "end_day": 368, "kind": "INDUCTION"},
+            ],
+        },
+        {
+            "label": "S4: LOT1 -> LOT2 (CAR-T LOT)",
+            "desc": "CAR-T d220; agents within 45d are consolidated into LOT2",
+            "segments": [
+                {"start_day": 0,   "end_day": 219, "kind": "LOT1"},
+                {"start_day": 220, "end_day": 220, "kind": "EVENT_CART"},
+                {"start_day": 220, "end_day": 540, "kind": "LOT2"},
+                {"start_day": 220, "end_day": 264, "kind": "INDUCTION"},  # 45d consolidation window
+            ],
+        },
+        {
+            "label": "S5: LOT2 -> LOT3 by DISCONTINUATION + new agent",
+            "desc": "LOT2 runs out d260; new agent d460 -> LOT3",
+            "segments": [
+                {"start_day": 0,   "end_day": 199, "kind": "LOT1"},
+                {"start_day": 200, "end_day": 260, "kind": "LOT2"},
+                {"start_day": 200, "end_day": 228, "kind": "INDUCTION"},
+                {"start_day": 460, "end_day": 540, "kind": "LOT3"},
+                {"start_day": 460, "end_day": 488, "kind": "INDUCTION"},
+            ],
+        },
+        {
+            "label": "S6: LOT3 ends by DEATH",
+            "desc": "Death d420 closes LOT3; no LOT4",
+            "segments": [
+                {"start_day": 0,   "end_day": 199, "kind": "LOT1"},
+                {"start_day": 200, "end_day": 339, "kind": "LOT2"},
+                {"start_day": 340, "end_day": 419, "kind": "LOT3"},
+                {"start_day": 420, "end_day": 420, "kind": "EVENT_DEATH"},
+            ],
+        },
+        {
+            "label": "S7: Tandem AUTO during LOT2 (NO new LOT)",
+            "desc": "AUTO d250 then AUTO d340 (90d apart, planned tandem) - LOT2 continues",
+            "segments": [
+                {"start_day": 0,   "end_day": 199, "kind": "LOT1"},
+                {"start_day": 200, "end_day": 540, "kind": "LOT2"},
+                {"start_day": 200, "end_day": 228, "kind": "INDUCTION"},
+                {"start_day": 250, "end_day": 250, "kind": "EVENT_SCT_AUTO"},
+                {"start_day": 340, "end_day": 340, "kind": "EVENT_SCT_AUTO"},
+            ],
+        },
+    ]
+
+    row = axis_row + 1
+    for sc in scenarios:
+        # Label cells
+        a = ws.cell(row=row, column=1, value=sc["label"])
+        a.font = BOLD
+        a.alignment = WRAP
+        a.fill = SECTION_FILL
+        a.border = BORDER
+        b = ws.cell(row=row, column=2, value=sc["desc"])
+        b.font = NORMAL
+        b.alignment = WRAP
+        b.fill = SECTION_FILL
+        b.border = BORDER
+        ws.cell(row=row, column=3, value="").border = BORDER
+
+        # Initialize axis cells with thin border
+        for i in range(N_BUCKETS):
+            cell = ws.cell(row=row, column=AXIS_START_COL + i, value="")
+            cell.border = BORDER
+
+        # Paint segments in two passes: LOT/INDUCTION (background), then EVENTs (overlay)
+        bg_segments = [s for s in sc["segments"] if not s["kind"].startswith("EVENT_")]
+        ev_segments = [s for s in sc["segments"] if s["kind"].startswith("EVENT_")]
+
+        for seg in bg_segments:
+            start_b = seg["start_day"] // BUCKET
+            end_b = max(seg["start_day"] // BUCKET, seg["end_day"] // BUCKET)
+            for b_idx in range(start_b, min(end_b + 1, N_BUCKETS)):
+                c = ws.cell(row=row, column=AXIS_START_COL + b_idx)
+                # Don't overwrite INDUCTION on top of LOT - layer: LOT first, then INDUCTION uses pattern
+                if seg["kind"] == "INDUCTION" and c.fill.fgColor.rgb and c.fill.fgColor.rgb != "00000000":
+                    # leave LOT background; mark induction via a top border accent
+                    c.border = Border(left=THIN, right=THIN, bottom=THIN,
+                                      top=Side(style="medium", color=LOT_COLORS["INDUCTION"]))
+                else:
+                    c.fill = PatternFill("solid", fgColor=LOT_COLORS[seg["kind"]])
+
+        for ev in ev_segments:
+            b_idx = ev["start_day"] // BUCKET
+            if 0 <= b_idx < N_BUCKETS:
+                c = ws.cell(row=row, column=AXIS_START_COL + b_idx)
+                c.fill = PatternFill("solid", fgColor=LOT_COLORS[ev["kind"]])
+                marker = {
+                    "EVENT_SCT_AUTO": "A", "EVENT_SCT_ALLO": "X",
+                    "EVENT_CART": "C", "EVENT_DEATH": "+", "EVENT_MED_ADD": "M",
+                }[ev["kind"]]
+                c.value = marker
+                c.font = Font(name="Calibri", size=8, bold=True,
+                              color="FFFFFF" if ev["kind"] in ("EVENT_SCT_ALLO", "EVENT_CART", "EVENT_DEATH") else "000000")
+                c.alignment = Alignment(horizontal="center", vertical="center")
+
+        ws.row_dimensions[row].height = 30
+        row += 1
+
+    # Column widths
+    ws.column_dimensions["A"].width = 40
+    ws.column_dimensions["B"].width = 50
+    ws.column_dimensions["C"].width = 4
+    for i in range(N_BUCKETS):
+        ws.column_dimensions[get_column_letter(AXIS_START_COL + i)].width = 3.2
+
+    # Footnote
+    foot_row = row + 1
+    ws.cell(row=foot_row, column=1,
+            value="Each cell = ~14 days. Markers: M=Med add, A=AUTO SCT, X=ALLO SCT, C=CAR-T, +=Death. "
+                  "Yellow top edge = induction window overlay. Single-cell-only LOT = singleton ALLO LOT (Q2 draft assumption).").font = NORMAL
+    ws.cell(row=foot_row, column=1).alignment = WRAP
+    ws.merge_cells(start_row=foot_row, start_column=1, end_row=foot_row, end_column=AXIS_START_COL + N_BUCKETS - 1)
+
+
+def build_decision_flow(wb):
+    """Text-based decision tree explaining when LOT(N+1) starts."""
+    name = "9.Decision_Flow"
+    if name in wb.sheetnames:
+        del wb[name]
+    ws = wb.create_sheet(name)
+
+    ws["A1"] = "Decision flow: when does LOT(N+1) start?"
+    ws["A1"].font = Font(name="Calibri", size=14, bold=True, color="1F4E78")
+    ws.merge_cells("A1:E1")
+    ws.row_dimensions[1].height = 22
+
+    ws["A2"] = ("Read top-to-bottom. Each event evaluates AFTER LOT_N_BASE_END_DT. The earliest qualifying trigger "
+                "determines LOT_(N+1)_START_DT and LOTN+1_START_TYPE.")
+    ws["A2"].font = NORMAL
+    ws["A2"].alignment = WRAP
+    ws.merge_cells("A2:E2")
+    ws.row_dimensions[2].height = 36
+
+    headers = ["Step", "Question", "If YES", "If NO -> next step", "Notes"]
+    for j, h in enumerate(headers, 1):
+        c = ws.cell(row=4, column=j, value=h)
+    style_header(ws, 4, len(headers))
+
+    flow = [
+        ("1", "Is there an ALLO SCT after LOT_N ended?",
+         "LOT_(N+1) starts at ALLO_DT. LOTN+1_START_TYPE = SCT_ALLO. ALLO LOT contains NO MM therapies.",
+         "Step 2", "ALLO always wins ties on the same day."),
+        ("2", "Is there a CAR-T infusion after LOT_N ended?",
+         "LOT_(N+1) starts at FIRST_CART_DT. LOTN+1_START_TYPE = CART. Agents within 45d are consolidated (Apr 22 decision).",
+         "Step 3", "CAR-T outranks AUTO and MED on tie."),
+        ("3", "Is there an UNPLANNED AUTO SCT after LOT_N ended?\n(>180d after the prior AUTO in LOT_N, OR an isolated AUTO in a new line)",
+         "LOT_(N+1) starts at AUTO_DT. LOTN+1_START_TYPE = SCT_AUTO.",
+         "Step 4",
+         "Planned/single/tandem AUTO within 60-180d of a prior AUTO is a CONTINUATION - it does NOT start a new LOT."),
+        ("4", "Is there a new MM oncology agent (non-steroid, non-permissible-substitute) after LOT_N ended?",
+         "LOT_(N+1) starts at MAP_START_DT of that agent. LOTN+1_START_TYPE = MED.",
+         "Step 5", "Steroids alone do NOT start a LOT. Biosimilar substitutions do NOT start a LOT."),
+        ("5", "Has DEATH (YMDOD) or STUDY_END been reached?",
+         "Follow-up ends. No LOT_(N+1).",
+         "Step 6 (sensitivity)", "PRIMARY analysis closes here."),
+        ("6", "SENSITIVITY ONLY: is CENSOR_AT_DISENROLLMENT = TRUE and ELIGEND earliest?",
+         "Sensitivity output caps at ENDDATE_CE; LOTN_BASE_END_REASON_CE_SENS = DISENROLLMENT.",
+         "End", "Primary analysis ignores ELIGEND. See Q12."),
+    ]
+    for i, row in enumerate(flow):
+        r = 5 + i
+        for j, val in enumerate(row, 1):
+            c = ws.cell(row=r, column=j, value=val)
+            c.alignment = WRAP
+            c.font = NORMAL
+            c.border = BORDER
+            if j == 1:
+                c.font = BOLD
+                c.fill = SECTION_FILL
+        ws.row_dimensions[r].height = 60
+
+    for col, w in enumerate([8, 50, 50, 18, 50], 1):
+        ws.column_dimensions[get_column_letter(col)].width = w
+
+    # Tie-break note
+    note_row = 5 + len(flow) + 1
+    ws.cell(row=note_row, column=1,
+            value="Same-day tie-break priority (highest wins): SCT_ALLO > SCT_CART > SCT_AUTO (unplanned) > CART_INIT > MED_ADD > DISCONTINUATION > DEATH > STUDY_END (PRIMARY); DISENROLLMENT slots between DEATH and STUDY_END in SENSITIVITY only.").font = BOLD
+    ws.cell(row=note_row, column=1).alignment = WRAP
+    ws.cell(row=note_row, column=1).fill = NOTE_FILL
+    ws.merge_cells(start_row=note_row, start_column=1, end_row=note_row, end_column=5)
+    ws.row_dimensions[note_row].height = 50
+
+
 if __name__ == "__main__":
     chunk = os.environ.get("CHUNK", "all")
     wb = get_wb()
@@ -567,4 +1044,8 @@ if __name__ == "__main__":
         build_scenarios(wb)
     if chunk in ("open_q", "all"):
         build_open_questions(wb)
+    if chunk in ("timelines", "all"):
+        build_timelines(wb)
+    if chunk in ("decision_flow", "all"):
+        build_decision_flow(wb)
     save(wb)
