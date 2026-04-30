@@ -1881,6 +1881,7 @@ main <- function() {
   log_msg(SEP)
 
   invisible(TRUE)
+}
 
 if (sys.nframe() == 0) {
   main()
