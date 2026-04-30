@@ -124,6 +124,15 @@ cfg_defaults <- list(
   apply_other_malig_excl = as.logical(Sys.getenv("APPLY_OTHER_MALIG_EXCL", unset = "TRUE")),
   apply_baseline_mm_excl = as.logical(Sys.getenv("APPLY_BASELINE_MM_EXCL", unset = "TRUE")),
 
+  # ---- Disenrollment censoring (sensitivity flag) ----
+  # FALSE (primary): IE follow-up window is min(study_end, death). Disenrolled
+  #                  patients keep contributing follow-up — same as LOT primary.
+  # TRUE  (sensitivity): IE follow-up window also caps at last continuous-enrollment
+  #                  end (ENDDATE_CE), matching the LOT sensitivity branch.
+  # Read from the same env var as Part 2's config_lot.R so a single override flips
+  # both pipelines symmetrically and lot_patient_input ↔ lot1_base counts stay in sync.
+  censor_at_disenrollment = as.logical(Sys.getenv("CENSOR_AT_DISENROLLMENT", unset = "FALSE")),
+
   # ---- Performance ----
   persist_to_schema       = as.logical(Sys.getenv("PERSIST_TO_SCHEMA", unset = "TRUE")),
   personal_schema         = Sys.getenv("DOMINO_USER_NAME",

@@ -32,6 +32,27 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
   # ============================================================
   catalog      <- build_criteria_catalog(cfg)
   criteria_sql <- build_criteria_sql(catalog, cfg)
+
+  # ----------------------------------------------------------
+  # Follow-up cap — driven by cfg$censor_at_disenrollment.
+  # Used by therapy_flags (Step 19), pregnancy_flag (Step 20),
+  # clintrial_flag (Step 21) so the IE follow-up window matches
+  # whatever LOT's OBS_END_DT is using.
+  # PRIMARY:    least(study_end, death)             = ENDDATE
+  # SENSITIVITY: least(study_end, death, ENDDATE_CE) ≈ ENDDATE_CE
+  # All three steps already join death_dt as `d`. When the flag is on
+  # we additionally join ce_flags as `ce` to access ENDDATE_CE.
+  # ----------------------------------------------------------
+  fu_cap_expr <- if (isTRUE(cfg$censor_at_disenrollment)) {
+    glue("least(date('{cfg$study_end}'), coalesce(d.DEATH_DT, date('{cfg$study_end}')), coalesce(ce.ENDDATE_CE, date('{cfg$study_end}')))")
+  } else {
+    glue("least(date('{cfg$study_end}'), coalesce(d.DEATH_DT, date('{cfg$study_end}')))")
+  }
+  ce_join_for_fu_cap <- if (isTRUE(cfg$censor_at_disenrollment)) {
+    glue("LEFT JOIN {work('ce_flags')} ce ON q.PATID = ce.PATID AND q.index_date = ce.index_date")
+  } else {
+    ""
+  }
   phase_codelists <- function() list(
     # ----------------------------------------------------------
     # PHASE 1: NORMALIZE CODE LISTS (small tables, run once)
@@ -691,12 +712,13 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
                                        AND date_sub(q.index_date, 1)
                THEN 1 ELSE 0 END) AS MM_THERAPY_BASELINE,
           -- Followup starts on index_date per IE spec (>= index_date)
-          -- Bounded by death_dt to prevent counting therapy after death
+          -- Bounded by fu_cap_expr (death + optionally ENDDATE_CE under sensitivity flag)
           max(CASE WHEN t.event_dt >= q.index_date
-                    AND t.event_dt <= least(date('{cfg$study_end}'), coalesce(d.DEATH_DT, date('{cfg$study_end}')))
+                    AND t.event_dt <= {fu_cap_expr}
                THEN 1 ELSE 0 END) AS MM_THERAPY_FOLLOWUP
         FROM {work('mm_qualifying')} q
         LEFT JOIN {work('death_dt')} d ON q.PATID = d.PATID AND q.index_date = d.index_date
+        {ce_join_for_fu_cap}
         LEFT JOIN {work('therapy_events')} t ON q.PATID = t.PATID
         GROUP BY q.PATID, q.index_date
       "),
@@ -757,12 +779,13 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
           q.PATID,
           q.index_date,
           -- Per attrition table: pregnancy during baseline or follow-up period
-          -- FIXED: Follow-up ends at min(death_dt, study_end) per ENDDATE definition
+          -- Follow-up upper bound follows fu_cap_expr (sensitivity flag aware)
           max(CASE WHEN m.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
-                                       AND least(date('{cfg$study_end}'), coalesce(d.DEATH_DT, date('{cfg$study_end}')))
+                                       AND {fu_cap_expr}
                THEN 1 ELSE 0 END) AS PREGNANT_FLAG
         FROM {work('mm_qualifying')} q
         LEFT JOIN {work('death_dt')} d ON q.PATID = d.PATID AND q.index_date = d.index_date
+        {ce_join_for_fu_cap}
         LEFT JOIN matched m ON q.PATID = m.PATID
         GROUP BY q.PATID, q.index_date
       "),
@@ -821,12 +844,13 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
                                        AND date_sub(q.index_date, 1)
                THEN 1 ELSE 0 END) AS CLINTRIAL_BASELINE,
           -- Followup starts on index_date per IE spec
-          -- FIXED: Follow-up ends at min(death_dt, study_end) per ENDDATE definition
+          -- Follow-up upper bound follows fu_cap_expr (sensitivity flag aware)
           max(CASE WHEN m.event_dt >= q.index_date
-                    AND m.event_dt <= least(date('{cfg$study_end}'), coalesce(d.DEATH_DT, date('{cfg$study_end}')))
+                    AND m.event_dt <= {fu_cap_expr}
                THEN 1 ELSE 0 END) AS CLINTRIAL_FOLLOWUP
         FROM {work('mm_qualifying')} q
         LEFT JOIN {work('death_dt')} d ON q.PATID = d.PATID AND q.index_date = d.index_date
+        {ce_join_for_fu_cap}
         LEFT JOIN matched m ON q.PATID = m.PATID
         GROUP BY q.PATID, q.index_date
       "),

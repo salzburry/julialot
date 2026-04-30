@@ -54,7 +54,7 @@
   # 3. Fallback: working directory (user must be in Program/)
   getwd()
 })
-source_dir <- file.path(.script_dir, "R/cohortattrition/apr_22_2026/R")
+source_dir <- file.path(.script_dir, "R")
 source(file.path(source_dir, "config_lot.R"))
 source(file.path(source_dir, "db_utils_lot.R"))
 source(file.path(source_dir, "codelists_lot.R"))

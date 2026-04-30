@@ -35,7 +35,7 @@ tryCatch(
 # ---- Source modules (order matters) ----
 # Resolve script directory without relying on %||% (not available before modules load)
 .ofile <- tryCatch(sys.frame(1)$ofile, error = function(e) NULL)
-source_dir <- file.path(dirname(if (!is.null(.ofile)) .ofile else ""), "mnt/code/R/cohortattrition/apr_22_2026/R")
+source_dir <- file.path(dirname(if (!is.null(.ofile)) .ofile else "."), "R")
 source(file.path(source_dir, "config_prompts.R"))
 source(file.path(source_dir, "db_utils.R"))
 source(file.path(source_dir, "codelists.R"))
