@@ -2027,3 +2027,4 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
   if (isTRUE(cfg$build_dashboard)) {
     build_dashboard()
   }
+}
