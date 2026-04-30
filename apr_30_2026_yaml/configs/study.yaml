@@ -1,0 +1,59 @@
+# ============================================================
+# study.yaml — Methodology / study parameters (committed defaults)
+# ============================================================
+# Read by both Part 1 (main.R) and Part 2 (lot_program.R) via
+# R/load_study_config.R. Server runs MUST have this file present.
+#
+# Precedence (lowest to highest):
+#   hard-coded defaults  <  this file  <  environment variables
+#
+# Infrastructure / secret values (DATABRICKS_PWD, schemas, run id, etc.)
+# stay in env vars — see CLAUDE.md / deployment docs.
+# ============================================================
+
+study:
+  start: 2015-07-01
+  end:   2025-06-30
+  id_start: 2016-01-01
+  id_end:   2025-06-30
+  baseline_days: 183
+  gap_days: 30
+
+ie:
+  outpatient_window: 90
+  min_age: 18
+  apply_age_incl: true
+  apply_ce_b_incl: true
+  apply_ce_f_incl: true
+  apply_no_bl_agents_incl: true
+  apply_fu_agents_incl: true
+  apply_pregnancy_excl:   true
+  apply_clintrial_excl:   true
+  apply_other_malig_excl: true
+  apply_baseline_mm_excl: true
+
+lot:
+  induction_window_days: 60
+  map_discon_gap_days:   90
+  lot_discon_gap_days:   90
+  medical_day_supply:    28
+  cart_consolidation_days: 45
+  sct_auto_window_days:  13
+  sct_auto_gap_days:     60
+  sct_tandem_days:       180
+
+sensitivity:
+  censor_at_disenrollment: false
+
+codelists:
+  dir: /mnt/code/codelist
+  files:
+    cl_mm_dx:              mm_dx.csv
+    cl_mm_therapy:         cl_mma_codelist.csv
+    cl_mma_codelist:       cl_mma_codelist.csv
+    cl_mma_rollup:         cl_mma_rollup.csv
+    cl_sct_codelist:       cl_sct_codelist.csv
+    cl_permissible_subs:   permissible_subs.csv
+    cl_pregnancy:          pregnancy.csv
+    cl_clintrial:          clintrial.csv
+    cl_other_malignancies: other_malig.csv
