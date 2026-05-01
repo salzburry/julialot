@@ -337,9 +337,10 @@ def build_lot2_5_base(wb):
         ("LOTN_START_TYPE", "SCT_ALLO", ""),
         ("LOTN_BASE_MEDS", "(empty)", "ALLO LOT contains NO MM therapies."),
         ("LOTN_MED_CNT", "0", ""),
-        ("LOTN_ALLO_LOT_FLG", "1", "Trigger type is SCT_ALLO."),
-        ("LOTN_BASE_END_DT (draft)", "2025-09-15", "Draft Q2 assumption: single-day LOT (start = end = ALLO_DT). Next agent (DARA on 2025-12-10) opens LOT3."),
-        ("LOTN_BASE_END_REASON", "MED_ADD", "DARA on 2025-12-10 is the next event; LOT2 ends the day before LOT3 starts. (Pending Q2.)"),
+        ("LOTN_ALLO_LOT_FLG", "1", ""),
+        ("LOTN_BASE_END_DT", "PENDING Q2", "Q2 draft (single-day): 2025-09-15. Alternative (extend to next agent): 2025-12-09."),
+        ("LOTN_BASE_END_REASON", "PENDING Q2", "Q2 draft (single-day): SCT_ALLO. Alternative (extend to next agent): MED_ADD."),
+        ("LOT3_START_DT", "2025-12-10", "DARA - first MM agent after LOT2."),
     ]
     next_row = write_example_block(ws, next_row, "WORKED EXAMPLE B - LOT2 starts on an allogeneic SCT",
                                    ex_b_narrative, ex_b_table, ncols) + 2
@@ -837,38 +838,52 @@ def build_decision_flow(wb):
     ws.merge_cells("A1:E1")
     ws.row_dimensions[1].height = 22
 
-    ws["A2"] = ("Read top-to-bottom. Each event evaluates AFTER LOT_N_BASE_END_DT. The earliest qualifying trigger "
-                "determines LOT_(N+1)_START_DT and LOTN+1_START_TYPE.")
+    ws["A2"] = ("Date-driven, NOT type-driven. Step 1: collect candidate dates. Step 2: pick earliest. Step 3: tie-break by type only if multiple triggers fall on that same date.")
     ws["A2"].font = NORMAL
     ws["A2"].alignment = WRAP
     ws.merge_cells("A2:E2")
     ws.row_dimensions[2].height = 36
 
-    headers = ["Step", "Question", "If YES", "If NO -> next step", "Notes"]
+    headers = ["Step", "Action", "Detail", "Output", "Notes"]
     for j, h in enumerate(headers, 1):
         c = ws.cell(row=4, column=j, value=h)
     style_header(ws, 4, len(headers))
 
     flow = [
-        ("1", "Is there an ALLO SCT after LOT_N ended?",
-         "LOT_(N+1) starts at ALLO_DT. LOTN+1_START_TYPE = SCT_ALLO. ALLO LOT contains NO MM therapies.",
-         "Step 2", "ALLO always wins ties on the same day."),
-        ("2", "Is there a CAR-T infusion after LOT_N ended?",
-         "LOT_(N+1) starts at FIRST_CART_DT. LOTN+1_START_TYPE = CART. Agents within 45d are consolidated (Apr 22 decision).",
-         "Step 3", "CAR-T outranks AUTO and MED on tie."),
-        ("3", "Is there an UNPLANNED AUTO SCT after LOT_N ended?\n(>180d after the prior AUTO in LOT_N, OR an isolated AUTO in a new line)",
-         "LOT_(N+1) starts at AUTO_DT. LOTN+1_START_TYPE = SCT_AUTO.",
-         "Step 4",
-         "Planned/single/tandem AUTO within 60-180d of a prior AUTO is a CONTINUATION - it does NOT start a new LOT."),
-        ("4", "Is there a new MM oncology agent (non-steroid, non-permissible-substitute) after LOT_N ended?",
-         "LOT_(N+1) starts at MAP_START_DT of that agent. LOTN+1_START_TYPE = MED.",
-         "Step 5", "Steroids alone do NOT start a LOT. Biosimilar substitutions do NOT start a LOT."),
-        ("5", "Has DEATH (YMDOD) or STUDY_END been reached?",
-         "Follow-up ends. No LOT_(N+1).",
-         "Step 6 (sensitivity)", "PRIMARY analysis closes here."),
-        ("6", "SENSITIVITY ONLY: is CENSOR_AT_DISENROLLMENT = TRUE and ELIGEND earliest?",
-         "Sensitivity output caps at ENDDATE_CE; LOTN_BASE_END_REASON_CE_SENS = DISENROLLMENT.",
-         "End", "Primary analysis ignores ELIGEND. See Q12."),
+        ("1",
+         "Collect candidate trigger dates AFTER LOT_N_BASE_END_DT.",
+         "Compute, for each trigger type, the earliest qualifying date (if any):\n"
+         "  d_MED   = first non-steroid MM agent MAP_START_DT (excl. permissible biosimilar subs)\n"
+         "  d_ALLO  = first ALLO SCT date\n"
+         "  d_CART  = first CAR-T infusion date (FIRST_CART_DT)\n"
+         "  d_AUTO  = first UNPLANNED AUTO date (>180d after prior AUTO in LOT_N).",
+         "Up to 4 candidate dates",
+         "Planned/single/tandem AUTO (60-180d intervals) is a CONTINUATION and is NOT a candidate."),
+        ("2",
+         "Pick the earliest candidate date.",
+         "LOT_(N+1)_START_DT = min(d_MED, d_ALLO, d_CART, d_AUTO).",
+         "LOT_(N+1)_START_DT",
+         "An earlier MED beats a later ALLO/CART/AUTO."),
+        ("3",
+         "If exactly one candidate equals that earliest date, set its type.",
+         "LOTN+1_START_TYPE = the type of the unique earliest candidate.",
+         "LOTN+1_START_TYPE",
+         ""),
+        ("3a",
+         "Same-day tie-break (DRAFT, inherits LOT1 - confirm).",
+         "If multiple triggers share LOT_(N+1)_START_DT: SCT_ALLO > CART > SCT_AUTO > MED.",
+         "LOTN+1_START_TYPE",
+         "Tie-breaks ONLY on identical dates - never overrides date order."),
+        ("4",
+         "If no candidate dates exist, evaluate end-of-follow-up.",
+         "If DEATH (YMDOD) or STUDY_END is reached, no LOT_(N+1).",
+         "No LOT_(N+1)",
+         "PRIMARY analysis closes here. Disenrollment is NOT a primary closure."),
+        ("5 (SENSITIVITY)",
+         "If CENSOR_AT_DISENROLLMENT = TRUE, additionally cap observation at ELIGEND.",
+         "LOTN_BASE_END_DT_CE_SENS = min(LOTN_BASE_END_DT, ELIGEND); reason = DISENROLLMENT when ELIGEND binds.",
+         "Sensitivity outputs only",
+         "Does not affect LOT_(N+1) start. See Q12."),
     ]
     for i, row in enumerate(flow):
         r = 5 + i
