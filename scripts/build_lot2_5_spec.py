@@ -118,10 +118,25 @@ def style_header(ws, row, ncols):
         cell.border = BORDER
 
 
+def _safe(val):
+    """Guard against text values that Excel would interpret as a formula.
+
+    A leading =, +, -, or @ at the start of a string cell makes Excel parse it
+    as a formula. Reject these here so the bug surfaces at build time rather
+    than as a corrupt cell in the workbook.
+    """
+    if isinstance(val, str) and val[:1] in ("=", "+", "-", "@"):
+        raise ValueError(
+            f"Cell value would be parsed as Excel formula: {val[:60]!r}. "
+            "Reword to start with a letter (e.g. 'Flag is 1 when...')."
+        )
+    return val
+
+
 def write_rows(ws, start_row, rows, col_widths=None):
     for i, row in enumerate(rows):
         for j, val in enumerate(row):
-            cell = ws.cell(row=start_row + i, column=j + 1, value=val)
+            cell = ws.cell(row=start_row + i, column=j + 1, value=_safe(val))
             cell.alignment = WRAP
             cell.font = NORMAL
             cell.border = BORDER
@@ -286,16 +301,16 @@ def build_lot2_5_base(wb):
          "AUTO_DT_2 if tandem else AUTO_DT_1 else NULL.",
          "CL_SCT_CODELIST", "", ""),
         ("FU_PD", "contains_mtx_reg_LOTN", "LOT N regimen contains valid maintenance subset", "0/1",
-         "= 1 when LOT N induction has BOTH (a) >=1 valid mono-maintenance agent OR a valid dual combo, AND (b) a non-maintenance anchor. "
+         "Flag is 1 when LOT N induction has BOTH (a) >=1 valid mono-maintenance agent OR a valid dual combo, AND (b) a non-maintenance anchor. "
          "Mono: LENA, BORT, DARA, IXAZ, THAL. Dual: BORT+LENA, CARF+LENA, DARA+LENA.",
          "CL_MMA_ROLLUP",
          "Descriptive flag; no standalone maintenance LOT.", ""),
         ("FU_PD", "LOTN_ALLO_LOT_FLG", "LOT N is an ALLO SCT line", "0/1",
-         "= 1 when LOTN_START_TYPE = SCT_ALLO. ALLO LOT contains no MM therapies. "
+         "Flag is 1 when LOTN_START_TYPE = SCT_ALLO. ALLO LOT contains no MM therapies. "
          "Span: see Q2 (draft = single day).",
          "CL_SCT_CODELIST (ALLO)", "", ""),
         ("FU_PD", "LOTN_CART_LOT_FLG", "LOT N is a CAR-T line", "0/1",
-         "= 1 when LOTN_START_TYPE = CART. Agents within 45d of FIRST_CART_DT are consolidated into LOT N (Apr 22 decision; see Q11).",
+         "Flag is 1 when LOTN_START_TYPE = CART. Agents within 45d of FIRST_CART_DT are consolidated into LOT N (Apr 22 decision; see Q11).",
          "CL_SCT_CODELIST (CART)",
          "Do NOT advance to LOT_(N+1) for consolidated agents.", ""),
     ]
