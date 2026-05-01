@@ -311,18 +311,17 @@ def build_lot2_5_base(wb):
         "VRd in LOT1; DARA added 2025-08-20 (LOT1 ends 2025-08-19, MED_ADD). LENA refills present within 30d. No SCT/CAR-T."
     )
     ex_a_table = [
-        ("LOT_NUM", "2", "Sequential index after LOT1."),
-        ("LOTN_START_DT", "2025-08-20", "Earliest competing trigger after LOT1_BASE_END_DT (2025-08-19) is the new MM agent DARA on 2025-08-20."),
-        ("LOTN_START_TYPE", "MED", "Trigger was a new medication (no SCT/CAR-T present)."),
-        ("INDUCTION_WINDOW_DAYS", "30", "LOT2 uses the 30-day induction window (vs 60 for LOT1)."),
-        ("LOTN_BASE_MEDS", "DARA, LENA", "Within [2025-08-20, 2025-09-18]: DARA (start) and LENA refills. DEXA excluded (steroid)."),
-        ("LOTN_MED_CNT", "2", "Two distinct non-steroid agents."),
-        ("LOTN_MED_DARA", "1", "DARA present in LOTN_BASE_MEDS."),
-        ("LOTN_MED_LENA", "1", "LENA present in LOTN_BASE_MEDS."),
-        ("LOTN_CLASS_ANTICD38", "1", "DARA is class ANTICD38."),
-        ("LOTN_CLASS_IMMUNOMOD", "1", "LENA is class IMMUNOMOD."),
-        ("contains_mtx_reg_LOTN", "1", "LENA is a valid mono-maintenance agent (a); DARA is the non-maintenance anchor (b)."),
-        ("LOTN_ALLO_LOT_FLG / LOTN_CART_LOT_FLG", "0 / 0", "No ALLO or CAR-T trigger."),
+        ("LOT_NUM", "2", ""),
+        ("LOTN_START_DT", "2025-08-20", "Earliest trigger after LOT1_BASE_END_DT (2025-08-19) = DARA."),
+        ("LOTN_START_TYPE", "MED", ""),
+        ("LOTN_BASE_MEDS", "DARA, LENA", "Window [2025-08-20, 2025-09-18]. DEXA excluded (steroid)."),
+        ("LOTN_MED_CNT", "2", ""),
+        ("LOTN_MED_DARA", "1", ""),
+        ("LOTN_MED_LENA", "1", ""),
+        ("LOTN_CLASS_ANTICD38", "1", "DARA."),
+        ("LOTN_CLASS_IMMUNOMOD", "1", "LENA."),
+        ("contains_mtx_reg_LOTN", "0", "BOTH DARA and LENA are valid mono-maintenance agents - no non-maintenance anchor."),
+        ("LOTN_ALLO_LOT_FLG / LOTN_CART_LOT_FLG", "0 / 0", ""),
     ]
     next_row = write_example_block(ws, next_row, "WORKED EXAMPLE A - LOT2 starts on a new medication",
                                    ex_a_narrative, ex_a_table, ncols) + 2
@@ -856,7 +855,8 @@ def build_decision_flow(wb):
          "  d_MED   = first non-steroid MM agent MAP_START_DT (excl. permissible biosimilar subs)\n"
          "  d_ALLO  = first ALLO SCT date\n"
          "  d_CART  = first CAR-T infusion date (FIRST_CART_DT)\n"
-         "  d_AUTO  = first UNPLANNED AUTO date (>180d after prior AUTO in LOT_N).",
+         "  d_AUTO  = first UNPLANNED AUTO date (>180d after the most recent prior AUTO in the patient's history; "
+         "if no prior AUTO, AUTO is NOT a candidate).",
          "Up to 4 candidate dates",
          "Planned/single/tandem AUTO (60-180d intervals) is a CONTINUATION and is NOT a candidate."),
         ("2",
@@ -900,10 +900,12 @@ def build_decision_flow(wb):
     for col, w in enumerate([8, 50, 50, 18, 50], 1):
         ws.column_dimensions[get_column_letter(col)].width = w
 
-    # Tie-break note
+    # Footer note - clearly labelled as END-REASON priority (separate from start-trigger priority in Step 3a)
     note_row = 5 + len(flow) + 1
     ws.cell(row=note_row, column=1,
-            value="Same-day priority (DRAFT, inherits LOT1 - confirm): SCT_ALLO > SCT_CART > SCT_AUTO > CART_INIT > MED_ADD > DISCONTINUATION > DEATH > STUDY_END. Sensitivity adds DISENROLLMENT before STUDY_END.").font = BOLD
+            value="END-REASON same-day priority (separate from LOT-start tie-break in Step 3a; DRAFT, inherits LOT1 - confirm): "
+                  "SCT_ALLO > SCT_CART > SCT_AUTO > CART_INIT > MED_ADD > DISCONTINUATION > DEATH > STUDY_END. "
+                  "SENSITIVITY adds DISENROLLMENT before STUDY_END. See LOTN_BASE_END_REASON in tab 4.").font = BOLD
     ws.cell(row=note_row, column=1).alignment = WRAP
     ws.cell(row=note_row, column=1).fill = NOTE_FILL
     ws.merge_cells(start_row=note_row, start_column=1, end_row=note_row, end_column=5)
