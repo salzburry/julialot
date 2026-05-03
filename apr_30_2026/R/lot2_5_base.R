@@ -463,12 +463,18 @@ build_lot_n <- function(con, lot_num,
     -- For LOTs N>=2, an unplanned AUTO can itself BE the start (LOT_N_START_DT = AUTO_DT).
     -- LOT-internal AUTOs after the start are scoped here. End-LOT logic for excess
     -- AUTOs uses the same tandem rule as LOT1.
+    -- For end-LOT logic the SCT scans must IGNORE the start-date SCT itself
+    -- on ALLO- or CART-started LOTs. If we use TX_DT >= LOT_START_DT here,
+    -- earliest_non_auto / first_allo / first_cart all latch onto the start
+    -- event, hiding any later SCT that should end LOT_N. AUTO uses >=
+    -- because an SCT_AUTO-started LOT must capture its start AUTO as
+    -- AUTO_DT_1 (within-LOT, not an end trigger).
     earliest_non_auto AS (
       SELECT ac.PATID, min(ac.TX_DT) AS FIRST_NON_AUTO_DT
       FROM tx_allo_cart_dates ac
       INNER JOIN lb l ON ac.PATID = l.PATID
       WHERE ac.SCT_TYPE IN ('ALLO', 'CART')
-        AND ac.TX_DT >= l.LOT{lot_num}_START_DT
+        AND ac.TX_DT > l.LOT{lot_num}_START_DT
         AND ac.TX_DT <= l.OBS_END_DT
       GROUP BY ac.PATID
     ),
@@ -495,7 +501,7 @@ build_lot_n <- function(con, lot_num,
       FROM tx_allo_cart_dates ac
       INNER JOIN lb l ON ac.PATID = l.PATID
       WHERE ac.SCT_TYPE = 'ALLO'
-        AND ac.TX_DT >= l.LOT{lot_num}_START_DT
+        AND ac.TX_DT > l.LOT{lot_num}_START_DT
         AND ac.TX_DT <= l.OBS_END_DT
       GROUP BY ac.PATID
     ),
@@ -504,7 +510,7 @@ build_lot_n <- function(con, lot_num,
       FROM tx_allo_cart_dates ac
       INNER JOIN lb l ON ac.PATID = l.PATID
       WHERE ac.SCT_TYPE = 'CART'
-        AND ac.TX_DT >= l.LOT{lot_num}_START_DT
+        AND ac.TX_DT > l.LOT{lot_num}_START_DT
         AND ac.TX_DT <= l.OBS_END_DT
       GROUP BY ac.PATID
     ),
