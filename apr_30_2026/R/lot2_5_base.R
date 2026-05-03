@@ -101,25 +101,38 @@ init_lot_long_from_lot1 <- function(con, meds, classes) {
         ELSE lbe.LOT1_BASE_END_REASON
       END                                   AS LOT_BASE_END_REASON_CE_SENS,
       -- LOT-scoped AUTO/SCT fields, clamped to [LOT1_START_DT, LOT1_BASE_END_DT]
-      -- per workbook Q7 draft. lot1_sct collects through OBS_END_DT, so
-      -- post-filter to the LOT-end bound here.
+      -- per workbook Q7 draft. SING/TAND classification is RECOMPUTED from
+      -- the clamped in-LOT dates so a within-LOT DT_1 with an outside-LOT
+      -- DT_2 lands on SING.
       CASE WHEN sct.LOT1_TX_AUTO_DT_1 IS NOT NULL
             AND sct.LOT1_TX_AUTO_DT_1 <= lbe.LOT1_BASE_END_DT
            THEN 1 ELSE 0 END                      AS LOT_TX_AUTO_FLG,
-      CASE WHEN coalesce(sct.LOT1_SCT_AUTO_SING_FLG, 0) = 1
-            AND sct.LOT1_TX_AUTO_DT_1 IS NOT NULL
-            AND sct.LOT1_TX_AUTO_DT_1 <= lbe.LOT1_BASE_END_DT
-           THEN 1 ELSE 0 END                      AS LOT_TX_AUTO_SING_FLG,
-      CASE WHEN coalesce(sct.LOT1_SCT_AUTO_TAND_FLG, 0) = 1
-            AND sct.LOT1_TX_AUTO_DT_2 IS NOT NULL
+      CASE WHEN sct.LOT1_TX_AUTO_DT_2 IS NOT NULL
             AND sct.LOT1_TX_AUTO_DT_2 <= lbe.LOT1_BASE_END_DT
+            AND coalesce(sct.LOT1_SCT_AUTO_TAND_FLG, 0) = 1
            THEN 1 ELSE 0 END                      AS LOT_TX_AUTO_TAND_FLG,
+      CASE WHEN sct.LOT1_TX_AUTO_DT_1 IS NOT NULL
+            AND sct.LOT1_TX_AUTO_DT_1 <= lbe.LOT1_BASE_END_DT
+            AND NOT (
+              sct.LOT1_TX_AUTO_DT_2 IS NOT NULL
+              AND sct.LOT1_TX_AUTO_DT_2 <= lbe.LOT1_BASE_END_DT
+              AND coalesce(sct.LOT1_SCT_AUTO_TAND_FLG, 0) = 1
+            )
+           THEN 1 ELSE 0 END                      AS LOT_TX_AUTO_SING_FLG,
       CASE WHEN sct.LOT1_TX_AUTO_DT_1 <= lbe.LOT1_BASE_END_DT
            THEN sct.LOT1_TX_AUTO_DT_1 END         AS LOT_TX_AUTO_DT_1,
       CASE WHEN sct.LOT1_TX_AUTO_DT_2 <= lbe.LOT1_BASE_END_DT
            THEN sct.LOT1_TX_AUTO_DT_2 END         AS LOT_TX_AUTO_DT_2,
-      CASE WHEN sct.LOT1_TX_AUTO_MAX_DT <= lbe.LOT1_BASE_END_DT
-           THEN sct.LOT1_TX_AUTO_MAX_DT END       AS LOT_TX_AUTO_MAX_DT,
+      CASE
+        WHEN sct.LOT1_TX_AUTO_DT_2 IS NOT NULL
+         AND sct.LOT1_TX_AUTO_DT_2 <= lbe.LOT1_BASE_END_DT
+         AND coalesce(sct.LOT1_SCT_AUTO_TAND_FLG, 0) = 1
+          THEN sct.LOT1_TX_AUTO_DT_2
+        WHEN sct.LOT1_TX_AUTO_DT_1 IS NOT NULL
+         AND sct.LOT1_TX_AUTO_DT_1 <= lbe.LOT1_BASE_END_DT
+          THEN sct.LOT1_TX_AUTO_DT_1
+        ELSE NULL
+      END                                         AS LOT_TX_AUTO_MAX_DT,
       {med_select},
       {class_select}
     FROM lot1_base_end lbe
@@ -344,11 +357,12 @@ build_lot_n <- function(con, lot_num,
         ls.PATID,
         CASE
           -- CAR-T LOTs (Q3 draft): regimen ends at the last consolidation
-          -- MAP_END_DT, regardless of the 90-day discontinuation gap. This
-          -- caps the CAR-T LOT to its consolidation span so it does not
-          -- drift to death/study end.
+          -- MAP_END_DT, regardless of the 90-day discontinuation gap. MAP_END_DT
+          -- can extend past the last observed claim via days supply, so cap
+          -- at OBS_END_DT (= ENDDATE in primary) so the LOT cannot end after
+          -- death/study end.
           WHEN ls.LOT{lot_num}_START_TYPE = 'CART' AND d.RAW_DISCON_DT IS NOT NULL
-            THEN d.RAW_DISCON_DT
+            THEN least(d.RAW_DISCON_DT, ls.OBS_END_DT)
           WHEN d.RAW_DISCON_DT IS NOT NULL
            AND datediff(ls.OBS_END_DT, d.RAW_DISCON_DT) >= {lot_discon_gap_days}
             THEN d.RAW_DISCON_DT
@@ -762,26 +776,43 @@ build_lot_n <- function(con, lot_num,
         ELSE lbe.LOT{lot_num}_BASE_END_REASON
       END AS LOT_BASE_END_REASON_CE_SENS,
       -- LOT-scoped AUTO flags clamped to [LOT_START_DT, LOT_BASE_END_DT]
-      -- per workbook Q7 draft. lot{n}_sct collects AUTOs through OBS_END_DT,
-      -- so AUTOs after the LOT ended must be filtered out here to avoid
-      -- duplicating into both this LOT and a later SCT_AUTO-started LOT.
+      -- per workbook Q7 draft. lot{n}_sct collects through OBS_END_DT, so
+      -- AUTOs after the LOT ended are filtered here. SING/TAND classification
+      -- is RECOMPUTED from the clamped in-LOT dates so a within-LOT DT_1
+      -- with an outside-LOT DT_2 lands on SING (not on neither flag).
       CASE WHEN lbe.LOT{lot_num}_TX_AUTO_DT_1 IS NOT NULL
             AND lbe.LOT{lot_num}_TX_AUTO_DT_1 <= lbe.LOT{lot_num}_BASE_END_DT
            THEN 1 ELSE 0 END                          AS LOT_TX_AUTO_FLG,
-      CASE WHEN coalesce(lbe.LOT{lot_num}_SCT_AUTO_SING_FLG, 0) = 1
-            AND lbe.LOT{lot_num}_TX_AUTO_DT_1 IS NOT NULL
-            AND lbe.LOT{lot_num}_TX_AUTO_DT_1 <= lbe.LOT{lot_num}_BASE_END_DT
-           THEN 1 ELSE 0 END                          AS LOT_TX_AUTO_SING_FLG,
-      CASE WHEN coalesce(lbe.LOT{lot_num}_SCT_AUTO_TAND_FLG, 0) = 1
-            AND lbe.LOT{lot_num}_TX_AUTO_DT_2 IS NOT NULL
+      -- TAND only if both in-LOT, 60-180d apart, AND pre-clamp tandem rules
+      -- already qualified it (no ALLO between, etc., from lot{n}_sct).
+      CASE WHEN lbe.LOT{lot_num}_TX_AUTO_DT_2 IS NOT NULL
             AND lbe.LOT{lot_num}_TX_AUTO_DT_2 <= lbe.LOT{lot_num}_BASE_END_DT
+            AND coalesce(lbe.LOT{lot_num}_SCT_AUTO_TAND_FLG, 0) = 1
            THEN 1 ELSE 0 END                          AS LOT_TX_AUTO_TAND_FLG,
+      -- SING = has in-LOT DT_1, not classified as TAND.
+      CASE WHEN lbe.LOT{lot_num}_TX_AUTO_DT_1 IS NOT NULL
+            AND lbe.LOT{lot_num}_TX_AUTO_DT_1 <= lbe.LOT{lot_num}_BASE_END_DT
+            AND NOT (
+              lbe.LOT{lot_num}_TX_AUTO_DT_2 IS NOT NULL
+              AND lbe.LOT{lot_num}_TX_AUTO_DT_2 <= lbe.LOT{lot_num}_BASE_END_DT
+              AND coalesce(lbe.LOT{lot_num}_SCT_AUTO_TAND_FLG, 0) = 1
+            )
+           THEN 1 ELSE 0 END                          AS LOT_TX_AUTO_SING_FLG,
       CASE WHEN lbe.LOT{lot_num}_TX_AUTO_DT_1 <= lbe.LOT{lot_num}_BASE_END_DT
            THEN lbe.LOT{lot_num}_TX_AUTO_DT_1 END     AS LOT_TX_AUTO_DT_1,
       CASE WHEN lbe.LOT{lot_num}_TX_AUTO_DT_2 <= lbe.LOT{lot_num}_BASE_END_DT
            THEN lbe.LOT{lot_num}_TX_AUTO_DT_2 END     AS LOT_TX_AUTO_DT_2,
-      CASE WHEN lbe.LOT{lot_num}_TX_AUTO_MAX_DT <= lbe.LOT{lot_num}_BASE_END_DT
-           THEN lbe.LOT{lot_num}_TX_AUTO_MAX_DT END   AS LOT_TX_AUTO_MAX_DT,
+      -- MAX_DT: 2nd in-LOT AUTO if valid in-LOT tandem, else 1st in-LOT AUTO.
+      CASE
+        WHEN lbe.LOT{lot_num}_TX_AUTO_DT_2 IS NOT NULL
+         AND lbe.LOT{lot_num}_TX_AUTO_DT_2 <= lbe.LOT{lot_num}_BASE_END_DT
+         AND coalesce(lbe.LOT{lot_num}_SCT_AUTO_TAND_FLG, 0) = 1
+          THEN lbe.LOT{lot_num}_TX_AUTO_DT_2
+        WHEN lbe.LOT{lot_num}_TX_AUTO_DT_1 IS NOT NULL
+         AND lbe.LOT{lot_num}_TX_AUTO_DT_1 <= lbe.LOT{lot_num}_BASE_END_DT
+          THEN lbe.LOT{lot_num}_TX_AUTO_DT_1
+        ELSE NULL
+      END                                             AS LOT_TX_AUTO_MAX_DT,
       {med_insert},
       {class_insert}
     FROM lot{lot_num}_base_end lbe
