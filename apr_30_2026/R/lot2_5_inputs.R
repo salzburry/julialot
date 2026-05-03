@@ -310,5 +310,25 @@ prepare_lot_inputs <- function(con,
     ))
   }
 
+  # Materialize tx_auto_dates and tx_allo_cart_dates as work-schema TABLES.
+  # Both are temp views built from the heavy AUTO aggregate state-machine
+  # / SCT scan. Each LOT iteration in build_lot2_5 reads tx_auto_dates 2x
+  # and tx_allo_cart_dates 5x; without materialization Spark re-evaluates
+  # the aggregate every time, costing ~8 AUTO-aggregate runs and ~20 SCT
+  # scan runs across LOT2..LOT5. Materializing once collapses all
+  # downstream reads to cheap table scans.
+  for (mv in list(
+    list(name = "TX_AUTO_DATES",      view = "tx_auto_dates"),
+    list(name = "TX_ALLO_CART_DATES", view = "tx_allo_cart_dates")
+  )) {
+    run_step(con, paste0("P15_materialize_", tolower(mv$name)), glue("
+      CREATE OR REPLACE TABLE {wrk(mv$name)} AS SELECT * FROM {mv$view}
+    "), qc = glue("SELECT count(*) AS n_rows FROM {wrk(mv$name)}"))
+    db_exec(con, sprintf(
+      "CREATE OR REPLACE TEMPORARY VIEW %s AS SELECT * FROM %s",
+      mv$view, wrk(mv$name)
+    ))
+  }
+
   log_msg("Upstream views ready.")
 }

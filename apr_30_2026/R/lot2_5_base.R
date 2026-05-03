@@ -190,17 +190,18 @@ build_lot_n <- function(con, lot_num,
     -- Spec: a biosimilar of a prior-LOT drug does NOT trigger LOT_N.
     -- A same-drug restart (the original prior-LOT drug itself) DOES trigger;
     -- the prior LOT ended by run-out and a fresh fill is a new line.
-    prev_meds_expanded AS (
-      SELECT pe.PATID, ps.substitute_med AS MED_ABBR
+    -- Note: explicit JOIN avoids the implicit cross join + correlated
+    -- subquery pattern, which would fail under spark.sql.crossJoin.enabled=false.
+    prev_meds_array AS (
+      SELECT pe.PATID, m AS MED_ABBR
       FROM prev_end pe
-      INNER JOIN permissible_subs ps ON 1 = 1
-      WHERE ps.original_med IN (
-        SELECT m
-        FROM (SELECT pe2.PATID AS p2id, m FROM prev_end pe2
-              LATERAL VIEW explode(split(coalesce(pe2.PREV_BASE_MEDS, ''), ' ')) e AS m
-              WHERE m <> '') x
-        WHERE x.p2id = pe.PATID
-      )
+      LATERAL VIEW explode(split(coalesce(pe.PREV_BASE_MEDS, ''), ' ')) e AS m
+      WHERE m <> ''
+    ),
+    prev_meds_expanded AS (
+      SELECT pma.PATID, ps.substitute_med AS MED_ABBR
+      FROM prev_meds_array pma
+      INNER JOIN permissible_subs ps ON pma.MED_ABBR = ps.original_med
     ),
     -- d_MED: earliest non-steroid MM agent strictly after PREV_END_DT,
     -- excluding permissible biosimilar subs of prior-LOT drugs.
