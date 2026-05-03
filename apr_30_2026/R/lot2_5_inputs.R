@@ -280,7 +280,7 @@ prepare_lot_inputs <- function(con,
       SELECT PATID, posexplode(tx_dates) AS (pos, TX_DT) FROM processed
     )
     SELECT PATID, pos + 1 AS TX_SEQ, TX_DT FROM exploded
-  "), qc = "SELECT count(*) AS n_auto_tx_events FROM tx_auto_dates")
+  "), qc = NULL)  # QC deferred to P15 materialization to avoid double-evaluating the heavy AUTO aggregate.
 
   # tx_allo_cart_dates view (matches lot_program.R S14)
   run_step(con, "P14_tx_allo_cart_dates", "
@@ -300,7 +300,7 @@ prepare_lot_inputs <- function(con,
              row_number() OVER (PARTITION BY PATID ORDER BY dt) AS TX_SEQ FROM cart_dates
     )
     SELECT * FROM allo_seq UNION ALL SELECT * FROM cart_seq
-  ", qc = "SELECT SCT_TYPE, count(*) AS n FROM tx_allo_cart_dates GROUP BY SCT_TYPE")
+  ", qc = NULL)  # QC deferred to P15 materialization to avoid re-evaluating the SCT scan twice.
 
   # Rebind the persisted LOT1 outputs to the temp view names lot2_5_base.R uses.
   for (tbl in c("MAP_STACKED", "LOT1_BASE", "LOT1_SCT", "LOT1_BASE_END")) {
@@ -317,13 +317,23 @@ prepare_lot_inputs <- function(con,
   # the aggregate every time, costing ~8 AUTO-aggregate runs and ~20 SCT
   # scan runs across LOT2..LOT5. Materializing once collapses all
   # downstream reads to cheap table scans.
+  # P13 / P14 build temp views without QC; P15 materializes once and the
+  # QC runs against the cheap table scan, so the heavy aggregate / SCT scan
+  # evaluates only once total instead of twice.
   for (mv in list(
-    list(name = "TX_AUTO_DATES",      view = "tx_auto_dates"),
-    list(name = "TX_ALLO_CART_DATES", view = "tx_allo_cart_dates")
+    list(name = "TX_AUTO_DATES",
+         view = "tx_auto_dates",
+         qc   = glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients,
+                             min(TX_SEQ) AS min_seq, max(TX_SEQ) AS max_seq
+                      FROM {wrk('TX_AUTO_DATES')}")),
+    list(name = "TX_ALLO_CART_DATES",
+         view = "tx_allo_cart_dates",
+         qc   = glue("SELECT SCT_TYPE, count(*) AS n_rows, count(DISTINCT PATID) AS n_patients
+                      FROM {wrk('TX_ALLO_CART_DATES')} GROUP BY SCT_TYPE ORDER BY SCT_TYPE"))
   )) {
     run_step(con, paste0("P15_materialize_", tolower(mv$name)), glue("
       CREATE OR REPLACE TABLE {wrk(mv$name)} AS SELECT * FROM {mv$view}
-    "), qc = glue("SELECT count(*) AS n_rows FROM {wrk(mv$name)}"))
+    "), qc = mv$qc)
     db_exec(con, sprintf(
       "CREATE OR REPLACE TEMPORARY VIEW %s AS SELECT * FROM %s",
       mv$view, wrk(mv$name)
