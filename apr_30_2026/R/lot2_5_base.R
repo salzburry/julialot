@@ -100,10 +100,18 @@ init_lot_long_from_lot1 <- function(con, meds, classes) {
           THEN 'DISENROLLMENT'
         ELSE lbe.LOT1_BASE_END_REASON
       END                                   AS LOT_BASE_END_REASON_CE_SENS,
+      -- LOT-scoped AUTO/SCT fields (per spec). LOT1 source: lot1_sct.
+      coalesce(sct.LOT1_TX_AUTO_FLG, 0)        AS LOT_TX_AUTO_FLG,
+      coalesce(sct.LOT1_SCT_AUTO_SING_FLG, 0)  AS LOT_TX_AUTO_SING_FLG,
+      coalesce(sct.LOT1_SCT_AUTO_TAND_FLG, 0)  AS LOT_TX_AUTO_TAND_FLG,
+      sct.LOT1_TX_AUTO_DT_1                    AS LOT_TX_AUTO_DT_1,
+      sct.LOT1_TX_AUTO_DT_2                    AS LOT_TX_AUTO_DT_2,
+      sct.LOT1_TX_AUTO_MAX_DT                  AS LOT_TX_AUTO_MAX_DT,
       {med_select},
       {class_select}
     FROM lot1_base_end lbe
     INNER JOIN lot_patient_input p ON lbe.PATID = p.PATID
+    LEFT JOIN lot1_sct sct          ON lbe.PATID = sct.PATID
   "), qc = "SELECT count(*) AS n_lot1_rows FROM lot_long_v")
 
   # Materialize so iterative LOT N builders can self-join cheaply.
@@ -205,24 +213,26 @@ build_lot_n <- function(con, lot_num,
         AND ac.TX_DT <= pe.OBS_END_DT
       GROUP BY pe.PATID
     ),
-    -- d_AUTO (unplanned): earliest AUTO after PREV_END_DT that is >180d
-    -- after the most recent prior AUTO in the patient's history.
-    -- If no prior AUTO at all, AUTO is NOT a candidate (per spec Q draft).
-    prior_auto AS (
-      SELECT a.PATID, max(a.TX_DT) AS PRIOR_AUTO_DT
+    -- d_AUTO (unplanned): earliest AUTO after PREV_END_DT whose IMMEDIATELY
+    -- preceding AUTO (anywhere in the patient history) is >180d earlier.
+    -- Using lag() rather than max(TX_DT <= PREV_END_DT) so an intervening
+    -- AUTO between PREV_END_DT and the candidate is correctly used as the
+    -- comparison anchor (avoids misclassifying a tandem-of-an-intervening-AUTO
+    -- as unplanned-vs-an-old-AUTO). If no prior AUTO at all, AUTO is NOT a
+    -- candidate (per spec).
+    autos_with_prev AS (
+      SELECT a.PATID, a.TX_DT,
+             lag(a.TX_DT) OVER (PARTITION BY a.PATID ORDER BY a.TX_DT) AS PREV_AUTO_DT
       FROM tx_auto_dates a
-      INNER JOIN prev_end pe ON a.PATID = pe.PATID
-      WHERE a.TX_DT <= pe.PREV_END_DT
-      GROUP BY a.PATID
     ),
     auto_cand AS (
-      SELECT pe.PATID, min(a.TX_DT) AS d_AUTO
+      SELECT pe.PATID, min(awp.TX_DT) AS d_AUTO
       FROM prev_end pe
-      INNER JOIN tx_auto_dates a ON pe.PATID = a.PATID
-      INNER JOIN prior_auto pa   ON pe.PATID = pa.PATID
-      WHERE a.TX_DT > pe.PREV_END_DT
-        AND a.TX_DT <= pe.OBS_END_DT
-        AND datediff(a.TX_DT, pa.PRIOR_AUTO_DT) > {sct_tandem_days}
+      INNER JOIN autos_with_prev awp ON pe.PATID = awp.PATID
+      WHERE awp.TX_DT > pe.PREV_END_DT
+        AND awp.TX_DT <= pe.OBS_END_DT
+        AND awp.PREV_AUTO_DT IS NOT NULL
+        AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) > {sct_tandem_days}
       GROUP BY pe.PATID
     )
     SELECT
@@ -507,7 +517,15 @@ build_lot_n <- function(con, lot_num,
       END AS ENDING_AUTO_DT,
       fa.ALLO_DT AS FIRST_ALLO_DT,
       fc.CART_DT AS FIRST_CART_DT,
-      CASE WHEN ap.AUTO_DT_1 IS NOT NULL THEN 1 ELSE 0 END AS LOT{lot_num}_TX_AUTO_FLG
+      CASE WHEN ap.AUTO_DT_1 IS NOT NULL THEN 1 ELSE 0 END AS LOT{lot_num}_TX_AUTO_FLG,
+      -- LOTN_TX_AUTO_MAX_DT: 2nd tandem AUTO if valid tandem, else single AUTO date.
+      CASE
+        WHEN ap.AUTO_DT_2 IS NOT NULL
+         AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {sct_tandem_days}
+         AND coalesce(ab.n_allo_between, 0) = 0
+        THEN ap.AUTO_DT_2
+        ELSE ap.AUTO_DT_1
+      END AS LOT{lot_num}_TX_AUTO_MAX_DT
     FROM lb l
     LEFT JOIN auto_pivot   ap ON l.PATID = ap.PATID
     LEFT JOIN allo_between ab ON l.PATID = ab.PATID
@@ -573,6 +591,7 @@ build_lot_n <- function(con, lot_num,
         sct.LOT{lot_num}_SCT_AUTO_TAND_FLG, sct.LOT{lot_num}_SCT_AUTO_SING_FLG,
         sct.ENDING_AUTO_DT, sct.FIRST_ALLO_DT, sct.FIRST_CART_DT,
         sct.LOT{lot_num}_TX_AUTO_FLG,
+        sct.LOT{lot_num}_TX_AUTO_MAX_DT,
         coalesce(cmr.contains_mtx_reg, 0) AS contains_mtx_reg,
         -- LOT_TX_ENDDATE / REASON: earliest LOT-ending SCT event - 1 day.
         -- Suppress the SCT that started LOT_N from triggering its own end:
@@ -728,6 +747,12 @@ build_lot_n <- function(con, lot_num,
           THEN 'DISENROLLMENT'
         ELSE lbe.LOT{lot_num}_BASE_END_REASON
       END AS LOT_BASE_END_REASON_CE_SENS,
+      coalesce(lbe.LOT{lot_num}_TX_AUTO_FLG, 0)       AS LOT_TX_AUTO_FLG,
+      coalesce(lbe.LOT{lot_num}_SCT_AUTO_SING_FLG, 0) AS LOT_TX_AUTO_SING_FLG,
+      coalesce(lbe.LOT{lot_num}_SCT_AUTO_TAND_FLG, 0) AS LOT_TX_AUTO_TAND_FLG,
+      lbe.LOT{lot_num}_TX_AUTO_DT_1                   AS LOT_TX_AUTO_DT_1,
+      lbe.LOT{lot_num}_TX_AUTO_DT_2                   AS LOT_TX_AUTO_DT_2,
+      lbe.LOT{lot_num}_TX_AUTO_MAX_DT                 AS LOT_TX_AUTO_MAX_DT,
       {med_insert},
       {class_insert}
     FROM lot{lot_num}_base_end lbe

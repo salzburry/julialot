@@ -61,11 +61,18 @@ prepare_lot_inputs <- function(con,
     WHERE original_med IS NOT NULL AND substitute_med IS NOT NULL
   "), qc = "SELECT count(*) AS n_rows FROM permissible_subs")
 
-  # lot_patient_input view (matches lot_program.R S03)
-  obs_end_dt_expr <- if (isTRUE(cfg$censor_at_disenrollment)) {
-    "coalesce(cast(ENDDATE_CE AS date), cast(ENDDATE AS date))"
-  } else {
-    "cast(ENDDATE AS date)"
+  # lot_patient_input view: ALWAYS use ENDDATE for OBS_END_DT (primary semantics).
+  # The LOT2-5 spec says primary ignores disenrollment; the CE cap belongs to
+  # the *_CE_SENS columns only. lot2_5_base.R computes those columns
+  # unconditionally in the LOT_LONG INSERT, so we do not let
+  # cfg$censor_at_disenrollment leak into primary OBS_END_DT.
+  if (isTRUE(cfg$censor_at_disenrollment)) {
+    log_msg("NOTE: cfg$censor_at_disenrollment=TRUE is set, but the LOT2-5",
+            " builder forces OBS_END_DT = ENDDATE for primary analysis.",
+            " Sensitivity output appears in LOT_BASE_END_*_CE_SENS columns.")
+    log_msg("ASSUMPTION: persisted LOT1_BASE_END was built with",
+            " cfg$censor_at_disenrollment=FALSE. If LOT1 was run under",
+            " sensitivity, its row in LOT_LONG may already be CE-capped.")
   }
   run_step(con, "P03_patient_input", glue("
     CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS
@@ -74,7 +81,7 @@ prepare_lot_inputs <- function(con,
       cast(INDEX_DATE AS date)  AS INDEX_DATE,
       cast(ENDDATE AS date)     AS ENDDATE,
       cast(ENDDATE_CE AS date)  AS ENDDATE_CE,
-      {obs_end_dt_expr}         AS OBS_END_DT,
+      cast(ENDDATE AS date)     AS OBS_END_DT,
       cast(DEATH_DT AS date)    AS DEATH_DT,
       GDR_CD, YRDOB, AGE_INDEX_YR, FU_DAYS, FU_DAYS_CE
     FROM {wrk(cfg$input_cohort_table)}
