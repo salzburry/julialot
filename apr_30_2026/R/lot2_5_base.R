@@ -357,12 +357,15 @@ build_lot_n <- function(con, lot_num,
         ls.PATID,
         CASE
           -- CAR-T LOTs (Q3 draft): regimen ends at the last consolidation
-          -- MAP_END_DT, regardless of the 90-day discontinuation gap. MAP_END_DT
-          -- can extend past the last observed claim via days supply, so cap
-          -- at OBS_END_DT (= ENDDATE in primary) so the LOT cannot end after
-          -- death/study end.
-          WHEN ls.LOT{lot_num}_START_TYPE = 'CART' AND d.RAW_DISCON_DT IS NOT NULL
-            THEN least(d.RAW_DISCON_DT, ls.OBS_END_DT)
+          -- MAP_END_DT, regardless of the 90-day discontinuation gap.
+          -- Only set DISCON_DT when the consolidation runout is AT OR BEFORE
+          -- OBS_END_DT. If MAP_END_DT extends past death/study_end via
+          -- days-supply tail, leave DISCON_DT NULL so the end-reason CASE
+          -- routes to DEATH or STUDY_END (not DISCONTINUATION).
+          WHEN ls.LOT{lot_num}_START_TYPE = 'CART'
+           AND d.RAW_DISCON_DT IS NOT NULL
+           AND d.RAW_DISCON_DT <= ls.OBS_END_DT
+            THEN d.RAW_DISCON_DT
           WHEN d.RAW_DISCON_DT IS NOT NULL
            AND datediff(ls.OBS_END_DT, d.RAW_DISCON_DT) >= {lot_discon_gap_days}
             THEN d.RAW_DISCON_DT

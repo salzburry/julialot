@@ -64,6 +64,8 @@ through the day before the next qualifying agent.
 
 ## Open questions still pending sign-off
 
-The spec workbook lists open Q1..Q14. The defaults above reflect the
-**draft** answers in the spec; flipping `ALLO_LOT_SPAN` is the only one
-behaviorally significant under common patient histories.
+The spec workbook lists open Q1..Q15 (Q11 and Q12 resolved). The defaults
+above reflect the **draft** answers in the spec; flipping `ALLO_LOT_SPAN`
+is the only one behaviorally significant under common patient histories.
+Q15 specifically tracks the CAR-T LOT end reason (`SCT_CART` vs the
+current default `DISCONTINUATION`).
