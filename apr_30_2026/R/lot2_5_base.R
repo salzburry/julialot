@@ -100,13 +100,26 @@ init_lot_long_from_lot1 <- function(con, meds, classes) {
           THEN 'DISENROLLMENT'
         ELSE lbe.LOT1_BASE_END_REASON
       END                                   AS LOT_BASE_END_REASON_CE_SENS,
-      -- LOT-scoped AUTO/SCT fields (per spec). LOT1 source: lot1_sct.
-      coalesce(sct.LOT1_TX_AUTO_FLG, 0)        AS LOT_TX_AUTO_FLG,
-      coalesce(sct.LOT1_SCT_AUTO_SING_FLG, 0)  AS LOT_TX_AUTO_SING_FLG,
-      coalesce(sct.LOT1_SCT_AUTO_TAND_FLG, 0)  AS LOT_TX_AUTO_TAND_FLG,
-      sct.LOT1_TX_AUTO_DT_1                    AS LOT_TX_AUTO_DT_1,
-      sct.LOT1_TX_AUTO_DT_2                    AS LOT_TX_AUTO_DT_2,
-      sct.LOT1_TX_AUTO_MAX_DT                  AS LOT_TX_AUTO_MAX_DT,
+      -- LOT-scoped AUTO/SCT fields, clamped to [LOT1_START_DT, LOT1_BASE_END_DT]
+      -- per workbook Q7 draft. lot1_sct collects through OBS_END_DT, so
+      -- post-filter to the LOT-end bound here.
+      CASE WHEN sct.LOT1_TX_AUTO_DT_1 IS NOT NULL
+            AND sct.LOT1_TX_AUTO_DT_1 <= lbe.LOT1_BASE_END_DT
+           THEN 1 ELSE 0 END                      AS LOT_TX_AUTO_FLG,
+      CASE WHEN coalesce(sct.LOT1_SCT_AUTO_SING_FLG, 0) = 1
+            AND sct.LOT1_TX_AUTO_DT_1 IS NOT NULL
+            AND sct.LOT1_TX_AUTO_DT_1 <= lbe.LOT1_BASE_END_DT
+           THEN 1 ELSE 0 END                      AS LOT_TX_AUTO_SING_FLG,
+      CASE WHEN coalesce(sct.LOT1_SCT_AUTO_TAND_FLG, 0) = 1
+            AND sct.LOT1_TX_AUTO_DT_2 IS NOT NULL
+            AND sct.LOT1_TX_AUTO_DT_2 <= lbe.LOT1_BASE_END_DT
+           THEN 1 ELSE 0 END                      AS LOT_TX_AUTO_TAND_FLG,
+      CASE WHEN sct.LOT1_TX_AUTO_DT_1 <= lbe.LOT1_BASE_END_DT
+           THEN sct.LOT1_TX_AUTO_DT_1 END         AS LOT_TX_AUTO_DT_1,
+      CASE WHEN sct.LOT1_TX_AUTO_DT_2 <= lbe.LOT1_BASE_END_DT
+           THEN sct.LOT1_TX_AUTO_DT_2 END         AS LOT_TX_AUTO_DT_2,
+      CASE WHEN sct.LOT1_TX_AUTO_MAX_DT <= lbe.LOT1_BASE_END_DT
+           THEN sct.LOT1_TX_AUTO_MAX_DT END       AS LOT_TX_AUTO_MAX_DT,
       {med_select},
       {class_select}
     FROM lot1_base_end lbe
@@ -160,14 +173,11 @@ build_lot_n <- function(con, lot_num,
       WHERE ll.LOT_NUM = {prev}
         AND ll.LOT_BASE_END_DT IS NOT NULL
     ),
-    -- Prior LOT regimen drugs + their permissible substitutes:
-    -- a biosimilar of a prior-LOT drug does NOT trigger LOT_N.
+    -- Permissible biosimilar substitutes of prior-LOT drugs.
+    -- Spec: a biosimilar of a prior-LOT drug does NOT trigger LOT_N.
+    -- A same-drug restart (the original prior-LOT drug itself) DOES trigger;
+    -- the prior LOT ended by run-out and a fresh fill is a new line.
     prev_meds_expanded AS (
-      SELECT pe.PATID, m AS MED_ABBR
-      FROM prev_end pe
-      LATERAL VIEW explode(split(coalesce(pe.PREV_BASE_MEDS, ''), ' ')) e AS m
-      WHERE m <> ''
-      UNION
       SELECT pe.PATID, ps.substitute_med AS MED_ABBR
       FROM prev_end pe
       INNER JOIN permissible_subs ps ON 1 = 1
@@ -181,6 +191,7 @@ build_lot_n <- function(con, lot_num,
     ),
     -- d_MED: earliest non-steroid MM agent strictly after PREV_END_DT,
     -- excluding permissible biosimilar subs of prior-LOT drugs.
+    -- Same-drug restarts are allowed and DO trigger LOT_N.
     med_cand AS (
       SELECT pe.PATID, min(ms.MAP_START_DT) AS d_MED
       FROM prev_end pe
@@ -610,21 +621,24 @@ build_lot_n <- function(con, lot_num,
             ), 1)
           ELSE NULL
         END AS LOT_TX_ENDDATE,
+        -- Same-day SCT end priority (per workbook Q14 draft):
+        -- SCT_ALLO > SCT_CART > SCT_AUTO. ALLO wins ALLO==CART or
+        -- ALLO==AUTO ties; CART wins CART==AUTO; otherwise AUTO.
         CASE
           WHEN coalesce(
                  CASE WHEN sct.ENDING_AUTO_DT > lb.LOT{lot_num}_START_DT THEN sct.ENDING_AUTO_DT END,
                  CASE WHEN sct.FIRST_ALLO_DT  > lb.LOT{lot_num}_START_DT THEN sct.FIRST_ALLO_DT  END,
                  CASE WHEN sct.FIRST_CART_DT  > lb.LOT{lot_num}_START_DT THEN sct.FIRST_CART_DT  END
                ) IS NULL THEN NULL
-          WHEN coalesce(CASE WHEN sct.ENDING_AUTO_DT > lb.LOT{lot_num}_START_DT THEN sct.ENDING_AUTO_DT END, {.SENTINEL})
-               <= coalesce(CASE WHEN sct.FIRST_ALLO_DT > lb.LOT{lot_num}_START_DT THEN sct.FIRST_ALLO_DT END, {.SENTINEL})
-           AND coalesce(CASE WHEN sct.ENDING_AUTO_DT > lb.LOT{lot_num}_START_DT THEN sct.ENDING_AUTO_DT END, {.SENTINEL})
-               <= coalesce(CASE WHEN sct.FIRST_CART_DT > lb.LOT{lot_num}_START_DT THEN sct.FIRST_CART_DT END, {.SENTINEL})
-          THEN 1
           WHEN coalesce(CASE WHEN sct.FIRST_ALLO_DT > lb.LOT{lot_num}_START_DT THEN sct.FIRST_ALLO_DT END, {.SENTINEL})
-               <= coalesce(CASE WHEN sct.FIRST_CART_DT > lb.LOT{lot_num}_START_DT THEN sct.FIRST_CART_DT END, {.SENTINEL})
+               <= coalesce(CASE WHEN sct.FIRST_CART_DT  > lb.LOT{lot_num}_START_DT THEN sct.FIRST_CART_DT  END, {.SENTINEL})
+           AND coalesce(CASE WHEN sct.FIRST_ALLO_DT > lb.LOT{lot_num}_START_DT THEN sct.FIRST_ALLO_DT END, {.SENTINEL})
+               <= coalesce(CASE WHEN sct.ENDING_AUTO_DT > lb.LOT{lot_num}_START_DT THEN sct.ENDING_AUTO_DT END, {.SENTINEL})
           THEN 2
-          ELSE 3
+          WHEN coalesce(CASE WHEN sct.FIRST_CART_DT > lb.LOT{lot_num}_START_DT THEN sct.FIRST_CART_DT END, {.SENTINEL})
+               <= coalesce(CASE WHEN sct.ENDING_AUTO_DT > lb.LOT{lot_num}_START_DT THEN sct.ENDING_AUTO_DT END, {.SENTINEL})
+          THEN 3
+          ELSE 1
         END AS LOT_TX_ENDDATE_REASON,
         -- CART_INIT (inherited from LOT1): MED_ADD followed by CART within cart_consolidation_days.
         CASE
@@ -747,12 +761,27 @@ build_lot_n <- function(con, lot_num,
           THEN 'DISENROLLMENT'
         ELSE lbe.LOT{lot_num}_BASE_END_REASON
       END AS LOT_BASE_END_REASON_CE_SENS,
-      coalesce(lbe.LOT{lot_num}_TX_AUTO_FLG, 0)       AS LOT_TX_AUTO_FLG,
-      coalesce(lbe.LOT{lot_num}_SCT_AUTO_SING_FLG, 0) AS LOT_TX_AUTO_SING_FLG,
-      coalesce(lbe.LOT{lot_num}_SCT_AUTO_TAND_FLG, 0) AS LOT_TX_AUTO_TAND_FLG,
-      lbe.LOT{lot_num}_TX_AUTO_DT_1                   AS LOT_TX_AUTO_DT_1,
-      lbe.LOT{lot_num}_TX_AUTO_DT_2                   AS LOT_TX_AUTO_DT_2,
-      lbe.LOT{lot_num}_TX_AUTO_MAX_DT                 AS LOT_TX_AUTO_MAX_DT,
+      -- LOT-scoped AUTO flags clamped to [LOT_START_DT, LOT_BASE_END_DT]
+      -- per workbook Q7 draft. lot{n}_sct collects AUTOs through OBS_END_DT,
+      -- so AUTOs after the LOT ended must be filtered out here to avoid
+      -- duplicating into both this LOT and a later SCT_AUTO-started LOT.
+      CASE WHEN lbe.LOT{lot_num}_TX_AUTO_DT_1 IS NOT NULL
+            AND lbe.LOT{lot_num}_TX_AUTO_DT_1 <= lbe.LOT{lot_num}_BASE_END_DT
+           THEN 1 ELSE 0 END                          AS LOT_TX_AUTO_FLG,
+      CASE WHEN coalesce(lbe.LOT{lot_num}_SCT_AUTO_SING_FLG, 0) = 1
+            AND lbe.LOT{lot_num}_TX_AUTO_DT_1 IS NOT NULL
+            AND lbe.LOT{lot_num}_TX_AUTO_DT_1 <= lbe.LOT{lot_num}_BASE_END_DT
+           THEN 1 ELSE 0 END                          AS LOT_TX_AUTO_SING_FLG,
+      CASE WHEN coalesce(lbe.LOT{lot_num}_SCT_AUTO_TAND_FLG, 0) = 1
+            AND lbe.LOT{lot_num}_TX_AUTO_DT_2 IS NOT NULL
+            AND lbe.LOT{lot_num}_TX_AUTO_DT_2 <= lbe.LOT{lot_num}_BASE_END_DT
+           THEN 1 ELSE 0 END                          AS LOT_TX_AUTO_TAND_FLG,
+      CASE WHEN lbe.LOT{lot_num}_TX_AUTO_DT_1 <= lbe.LOT{lot_num}_BASE_END_DT
+           THEN lbe.LOT{lot_num}_TX_AUTO_DT_1 END     AS LOT_TX_AUTO_DT_1,
+      CASE WHEN lbe.LOT{lot_num}_TX_AUTO_DT_2 <= lbe.LOT{lot_num}_BASE_END_DT
+           THEN lbe.LOT{lot_num}_TX_AUTO_DT_2 END     AS LOT_TX_AUTO_DT_2,
+      CASE WHEN lbe.LOT{lot_num}_TX_AUTO_MAX_DT <= lbe.LOT{lot_num}_BASE_END_DT
+           THEN lbe.LOT{lot_num}_TX_AUTO_MAX_DT END   AS LOT_TX_AUTO_MAX_DT,
       {med_insert},
       {class_insert}
     FROM lot{lot_num}_base_end lbe
