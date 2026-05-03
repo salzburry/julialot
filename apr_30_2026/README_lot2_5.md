@@ -1,0 +1,64 @@
+# LOT 2-5 — How to run
+
+This directory ships an additional, **standalone** module that builds LOT2
+through LOT5 on top of the existing LOT1 outputs. It does not modify
+`lot_program.R` or any LOT1 code.
+
+## Files
+
+- `R/lot2_5_base.R` — module: `build_lot2_5(con, ...)` and helpers.
+- `lot2_5_program.R` — entry script.
+- Spec: `../Apr 18 2026/Program Spec and Scenarios/lot2to5_spec_DRAFT_apr30.xlsx`.
+
+## Order of operations
+
+1. Run `lot_program.R` first. This persists `MAP_STACKED`, `LOT1_BASE`,
+   `LOT1_SCT`, `LOT1_BASE_END`, `TX_AUTO_DATES`, `TX_ALLO_CART_DATES`,
+   `PERMISSIBLE_SUBS`, `MMA_ROLLUP`, `LOT_PATIENT_INPUT` to the work schema.
+2. Run `lot2_5_program.R`. It rebinds those work-schema tables to temp views
+   and produces `LOT_LONG` with one row per `(PATID, LOT_NUM)` for
+   `LOT_NUM = 1..max_lot`.
+
+```
+Rscript lot_program.R
+Rscript lot2_5_program.R
+```
+
+## Output: LOT_LONG
+
+Long-format table; one row per patient per LOT.
+
+| Column                          | Notes                                          |
+|---------------------------------|------------------------------------------------|
+| `PATID`, `LOT_NUM`              | 1..max_lot                                     |
+| `LOT_START_DT`, `LOT_START_TYPE`| `MED` / `SCT_AUTO` / `SCT_ALLO` / `CART`       |
+| `LOT_BASE_MEDS`, `LOT_MED_CNT`  | 30d induction window (LOT1 was 60d)            |
+| `LOT_BASE_DISCON_DT`            | run-out date if regimen ran out                |
+| `LOT_BASE_1ST_ADD_MED_DT/_MED`  | first non-induction agent during LOT           |
+| `LOT_BASE_END_DT/_REASON/_LENGTH`| primary analysis (disenrollment ignored)      |
+| `LOT_ALLO_LOT_FLG`, `LOT_CART_LOT_FLG` | start-type indicators                   |
+| `contains_mtx_reg`              | descriptive maintenance flag (LOT1 logic)      |
+| `LOT_BASE_END_DT_CE_SENS`       | sensitivity end date (capped at ENDDATE_CE)    |
+| `LOT_BASE_END_REASON_CE_SENS`   | `DISENROLLMENT` only when ELIGEND binds        |
+
+## Configuration overrides
+
+Environment variables (in addition to the LOT1 set):
+
+| Env var                       | Default         | Spec ref       |
+|-------------------------------|-----------------|----------------|
+| `INDUCTION_WINDOW_DAYS_LOT_N` | `30`            | Apr 22 meeting |
+| `CART_CONSOLIDATION_DAYS`     | `45`            | Apr 22 (Q11)   |
+| `SCT_TANDEM_DAYS`             | `180`           | inherited LOT1 |
+| `LOT_DISCON_GAP_DAYS`         | `90`            | inherited LOT1 |
+| `ALLO_LOT_SPAN`               | `single_day`    | Q2 (open)      |
+| `MAX_LOT`                     | `5`             | Q6 (open)      |
+
+`ALLO_LOT_SPAN=extend_to_next` switches the ALLO-singleton LOT to span
+through the day before the next qualifying agent.
+
+## Open questions still pending sign-off
+
+The spec workbook lists open Q1..Q14. The defaults above reflect the
+**draft** answers in the spec; flipping `ALLO_LOT_SPAN` is the only one
+behaviorally significant under common patient histories.
