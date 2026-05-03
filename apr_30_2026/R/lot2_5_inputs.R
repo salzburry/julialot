@@ -23,18 +23,33 @@ prepare_lot_inputs <- function(con,
                                sct_src) {
   log_msg("Preparing upstream views for LOT2-5 builder...")
 
-  # mma_rollup view (matches lot_program.R S00)
+  # mma_rollup view - verbatim port of lot_program.R S00 so YES/YES%/1/0/NULL
+  # values for MONOMAINTENANCE / CONDITIONING / USED_FOR_OTHER_CANCERS parse
+  # the same way; otherwise contains_mtx_reg breaks for LOT2-5.
   run_step(con, "P00_mma_rollup", glue("
     CREATE OR REPLACE TEMPORARY VIEW mma_rollup AS
     SELECT
-      upper(trim(CL_MED_ABBR))                       AS CL_MED_ABBR,
-      upper(trim(CL_MED_CLASS))                      AS CL_MED_CLASS,
-      cast(coalesce(MONOMAINTENANCE, 0) AS INT)      AS MONOMAINTENANCE,
-      upper(trim(coalesce(DUALMAINTENANCEWITH, ''))) AS DUALMAINTENANCEWITH,
-      cast(coalesce(USED_FOR_OTHER_CANCERS, 0) AS INT) AS USED_FOR_OTHER_CANCERS
+      lower(trim(CL_MEDICATION_FULL)) AS CL_MEDICATION_FULL,
+      upper(trim(CL_MED_CLASS))       AS CL_MED_CLASS,
+      upper(trim(CL_MED_ABBR))        AS CL_MED_ABBR,
+      CASE WHEN upper(trim(cast(MONOMAINTENANCE AS string))) LIKE 'YES%'
+            OR  trim(cast(MONOMAINTENANCE AS string)) = '1'
+           THEN 1 ELSE 0 END AS MONOMAINTENANCE,
+      CASE
+        WHEN DUALMAINTENANCEWITH IS NULL
+          OR upper(trim(cast(DUALMAINTENANCEWITH AS string))) IN ('', 'NULL', 'NONE', 'NA', 'N/A')
+          THEN NULL
+        ELSE upper(trim(cast(DUALMAINTENANCEWITH AS string)))
+      END AS DUALMAINTENANCEWITH,
+      CASE WHEN upper(trim(cast(CONDITIONING AS string))) LIKE 'YES%'
+            OR  trim(cast(CONDITIONING AS string)) = '1'
+           THEN 1 ELSE 0 END AS CONDITIONING,
+      CASE WHEN upper(trim(cast(USED_FOR_OTHER_CANCERS AS string))) LIKE 'YES%'
+            OR  trim(cast(USED_FOR_OTHER_CANCERS AS string)) = '1'
+           THEN 1 ELSE 0 END AS USED_FOR_OTHER_CANCERS
     FROM {rollup_src}
     WHERE CL_MED_ABBR IS NOT NULL AND trim(CL_MED_ABBR) <> ''
-  "), qc = "SELECT count(*) AS n_rows FROM mma_rollup")
+  "), qc = "SELECT count(*) AS n_rows, sum(MONOMAINTENANCE) AS n_monomaint FROM mma_rollup")
 
   # permissible_subs view
   run_step(con, "P02_permissible_subs", glue("

@@ -55,15 +55,15 @@ main <- function() {
   log_msg("  Work Schema:  ", cfg$work_schema)
   log_msg("  Input Cohort: ", cfg$input_cohort_table)
 
-  # Load CSV codelists (same loaders LOT1 uses).
+  # Load CSV codelists - pass character vectors of required columns
+  # (matches lot_program.R's calls; the loader does setdiff() on names).
   rollup_src <- load_codelist_csv("cl_mma_rollup.csv",
-                                  list(CL_MED_ABBR = "c", CL_MED_CLASS = "c",
-                                       MONOMAINTENANCE = "i", DUALMAINTENANCEWITH = "c",
-                                       USED_FOR_OTHER_CANCERS = "i"))
-  subs_src   <- load_codelist_csv("permissible_subs.csv",
-                                  list(original_med = "c", substitute_med = "c"))
-  sct_src    <- load_codelist_csv("cl_sct_codelist.csv",
-                                  list(CL_CODE = "c", CL_CODE_TYPE = "c", SCT_TYPE = "c"))
+    c("CL_MEDICATION_FULL", "CL_MED_CLASS", "CL_MED_ABBR",
+      "MONOMAINTENANCE", "DUALMAINTENANCEWITH", "CONDITIONING", "USED_FOR_OTHER_CANCERS"))
+  subs_src <- load_codelist_csv("permissible_subs.csv",
+    c("original_med", "substitute_med"))
+  sct_src <- load_codelist_csv("cl_sct_codelist.csv",
+    c("CL_CODE_TYPE", "CL_CODE", "SCT_TYPE"))
 
   # Rebuild session-scoped views the builder needs.
   prepare_lot_inputs(con, rollup_src = rollup_src, subs_src = subs_src, sct_src = sct_src)

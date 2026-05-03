@@ -322,6 +322,12 @@ build_lot_n <- function(con, lot_num,
       SELECT
         ls.PATID,
         CASE
+          -- CAR-T LOTs (Q3 draft): regimen ends at the last consolidation
+          -- MAP_END_DT, regardless of the 90-day discontinuation gap. This
+          -- caps the CAR-T LOT to its consolidation span so it does not
+          -- drift to death/study end.
+          WHEN ls.LOT{lot_num}_START_TYPE = 'CART' AND d.RAW_DISCON_DT IS NOT NULL
+            THEN d.RAW_DISCON_DT
           WHEN d.RAW_DISCON_DT IS NOT NULL
            AND datediff(ls.OBS_END_DT, d.RAW_DISCON_DT) >= {lot_discon_gap_days}
             THEN d.RAW_DISCON_DT
@@ -349,17 +355,21 @@ build_lot_n <- function(con, lot_num,
       LEFT JOIN discon d ON ls.PATID = d.PATID
       WHERE bm.MED_ABBR IS NULL
         AND ms.MAP_MED_CLASS <> 'STEROID'
-        -- Same window used by induction must apply to first-add gate, so
-        -- agents within the consolidation/induction window are NOT a new add.
-        AND ms.MAP_START_DT >  date_add(
-              ls.LOT{lot_num}_START_DT,
-              CASE WHEN ls.LOT{lot_num}_START_TYPE = 'CART'
-                   THEN {cart_consolidation_days - 1}
-                   ELSE {induction_window_days - 1} END)
+        -- Per-start-type lookback gate:
+        --   MED  / SCT_AUTO -> any agent after the 30-day induction window
+        --   CART             -> any agent after the 45-day consolidation window
+        --   SCT_ALLO (extend) -> any agent strictly after LOT_START_DT (no
+        --                       induction window for ALLO; the very next MM
+        --                       agent ends the ALLO LOT)
+        AND ms.MAP_START_DT > CASE
+              WHEN ls.LOT{lot_num}_START_TYPE = 'SCT_ALLO'
+                THEN ls.LOT{lot_num}_START_DT
+              WHEN ls.LOT{lot_num}_START_TYPE = 'CART'
+                THEN date_add(ls.LOT{lot_num}_START_DT, {cart_consolidation_days - 1})
+              ELSE date_add(ls.LOT{lot_num}_START_DT, {induction_window_days - 1})
+            END
         AND ms.MAP_START_DT <= coalesce(d.LOT{lot_num}_BASE_DISCON_DT, ls.OBS_END_DT)
         -- ALLO single_day LOTs end on the ALLO date itself, so add-med is moot.
-        -- ALLO extend_to_next LOTs need add-med detection so the LOT can end
-        -- the day before the next qualifying agent.
         AND NOT (ls.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND {if (allo_lot_span == 'single_day') 1L else 0L} = 1)
     ),
     first_add_pick AS (
