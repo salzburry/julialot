@@ -2,24 +2,26 @@
 # ============================================================
 # lot2_5_program.R - Standalone runner for LOT 2-5
 #
-# Builds LOT_LONG (one row per PATID x LOT_NUM, for LOT_NUM 1..5) using
-# the LOT 2-5 spec (lot2to5_spec_DRAFT_apr30.xlsx). Does NOT touch
+# Builds LOT_LONG (one row per PATID x LOT_NUM, for LOT_NUM 1..5) per
+# the LOT 2-5 spec (lot2to5_spec_DRAFT_apr30.xlsx). Does NOT modify
 # lot_program.R or any LOT1 module.
 #
-# Prerequisites:
-#   1. lot_program.R has been run on the same connection / work schema,
-#      so MAP_STACKED, LOT1_BASE, LOT1_SCT, LOT1_BASE_END are persisted
-#      and the upstream tx_auto_dates / tx_allo_cart_dates views exist
-#      OR can be reconstructed from the persisted SCT inputs.
-#   2. permissible_subs and mma_rollup are loaded by codelists_lot.R.
+# Prerequisites in the work schema (persisted by lot_program.R):
+#   MAP_STACKED, LOT1_BASE, LOT1_SCT, LOT1_BASE_END, ELIG_COH_FINAL
+#   (or whatever cfg$input_cohort_table points to).
+#
+# All session-scoped temp views needed by the builder (lot_patient_input,
+# sct_codelist, sct_claims_raw, tx_auto_dates, tx_allo_cart_dates,
+# mma_rollup, permissible_subs) are rebuilt here from CSV codelists +
+# the persisted CDM / cohort tables.
 #
 # Configuration overrides (env vars):
-#   INDUCTION_WINDOW_DAYS_LOT_N   default 30
-#   LOT_DISCON_GAP_DAYS           default 90
-#   CART_CONSOLIDATION_DAYS       default 45
-#   SCT_TANDEM_DAYS               default 180
-#   ALLO_LOT_SPAN                 default "single_day"  ("extend_to_next")
-#   MAX_LOT                       default 5
+#   INDUCTION_WINDOW_DAYS_LOT_N    default 30
+#   LOT_DISCON_GAP_DAYS            default 90
+#   CART_CONSOLIDATION_DAYS        default 45
+#   SCT_TANDEM_DAYS                default 180
+#   ALLO_LOT_SPAN                  default "single_day"  ("extend_to_next")
+#   MAX_LOT                        default 5
 # ============================================================
 
 .script_dir <- local({
@@ -39,6 +41,7 @@ source_dir <- file.path(.script_dir, "R")
 source(file.path(source_dir, "config_lot.R"))
 source(file.path(source_dir, "db_utils_lot.R"))
 source(file.path(source_dir, "codelists_lot.R"))
+source(file.path(source_dir, "lot2_5_inputs.R"))
 source(file.path(source_dir, "lot2_5_base.R"))
 
 main <- function() {
@@ -47,24 +50,23 @@ main <- function() {
   con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
-  # Re-bind persisted upstream tables to temp views the builder expects.
-  # lot_program.R materializes these; we just point views at them.
-  for (mv in list(
-    list(view = "lot_patient_input", tbl = "LOT_PATIENT_INPUT"),
-    list(view = "map_stacked",        tbl = "MAP_STACKED"),
-    list(view = "lot1_base",          tbl = "LOT1_BASE"),
-    list(view = "lot1_sct",           tbl = "LOT1_SCT"),
-    list(view = "lot1_base_end",      tbl = "LOT1_BASE_END"),
-    list(view = "tx_auto_dates",      tbl = "TX_AUTO_DATES"),
-    list(view = "tx_allo_cart_dates", tbl = "TX_ALLO_CART_DATES"),
-    list(view = "permissible_subs",   tbl = "PERMISSIBLE_SUBS"),
-    list(view = "mma_rollup",         tbl = "MMA_ROLLUP")
-  )) {
-    db_exec(con, sprintf(
-      "CREATE OR REPLACE TEMPORARY VIEW %s AS SELECT * FROM %s",
-      mv$view, wrk(mv$tbl)
-    ))
-  }
+  log_msg("Connected. Configuration:")
+  log_msg("  CDM Schema:   ", cfg$cdm_schema)
+  log_msg("  Work Schema:  ", cfg$work_schema)
+  log_msg("  Input Cohort: ", cfg$input_cohort_table)
+
+  # Load CSV codelists (same loaders LOT1 uses).
+  rollup_src <- load_codelist_csv("cl_mma_rollup.csv",
+                                  list(CL_MED_ABBR = "c", CL_MED_CLASS = "c",
+                                       MONOMAINTENANCE = "i", DUALMAINTENANCEWITH = "c",
+                                       USED_FOR_OTHER_CANCERS = "i"))
+  subs_src   <- load_codelist_csv("permissible_subs.csv",
+                                  list(original_med = "c", substitute_med = "c"))
+  sct_src    <- load_codelist_csv("cl_sct_codelist.csv",
+                                  list(CL_CODE = "c", CL_CODE_TYPE = "c", SCT_TYPE = "c"))
+
+  # Rebuild session-scoped views the builder needs.
+  prepare_lot_inputs(con, rollup_src = rollup_src, subs_src = subs_src, sct_src = sct_src)
 
   build_lot2_5(
     con,

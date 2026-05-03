@@ -6,18 +6,23 @@ through LOT5 on top of the existing LOT1 outputs. It does not modify
 
 ## Files
 
+- `R/lot2_5_inputs.R` — `prepare_lot_inputs(con, ...)`: rebuilds the
+  session-scoped views the builder needs (`lot_patient_input`, `mma_rollup`,
+  `permissible_subs`, `sct_codelist`, `sct_claims_raw`, `tx_auto_dates`,
+  `tx_allo_cart_dates`) from CSVs + persisted CDM/cohort tables.
 - `R/lot2_5_base.R` — module: `build_lot2_5(con, ...)` and helpers.
 - `lot2_5_program.R` — entry script.
 - Spec: `../Apr 18 2026/Program Spec and Scenarios/lot2to5_spec_DRAFT_apr30.xlsx`.
 
 ## Order of operations
 
-1. Run `lot_program.R` first. This persists `MAP_STACKED`, `LOT1_BASE`,
-   `LOT1_SCT`, `LOT1_BASE_END`, `TX_AUTO_DATES`, `TX_ALLO_CART_DATES`,
-   `PERMISSIBLE_SUBS`, `MMA_ROLLUP`, `LOT_PATIENT_INPUT` to the work schema.
-2. Run `lot2_5_program.R`. It rebinds those work-schema tables to temp views
-   and produces `LOT_LONG` with one row per `(PATID, LOT_NUM)` for
-   `LOT_NUM = 1..max_lot`.
+1. Run `lot_program.R` first. The work-schema tables it persists
+   (`MAP_STACKED`, `LOT1_BASE`, `LOT1_SCT`, `LOT1_BASE_END`,
+   `MMA_MED_PROCESSED`, plus `cfg$input_cohort_table`) are the only
+   inputs the runner depends on.
+2. Run `lot2_5_program.R`. It loads codelists from CSV, rebuilds the
+   session-scoped temp views, and produces `LOT_LONG` with one row per
+   `(PATID, LOT_NUM)` for `LOT_NUM = 1..max_lot`.
 
 ```
 Rscript lot_program.R

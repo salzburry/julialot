@@ -57,12 +57,20 @@
 # Initialize lot_long from lot1_base_end (no LOT1 rewrite)
 # ============================================================
 
-init_lot_long_from_lot1 <- function(con) {
-  # Project LOT1 outputs into the long-format schema. LOT1 numbering and
-  # column names match the LOT1 module; we just rename LOT1_* -> LOT_*.
-  # Sensitivity columns are computed here from the persisted LOT1 row
-  # plus ENDDATE_CE on lot_patient_input - LOT1 itself stays untouched.
-  run_step(con, "L25_init_lot_long", "
+init_lot_long_from_lot1 <- function(con, meds, classes) {
+  # Project LOT1 outputs into the long-format schema. LOT1 column names
+  # are renamed LOT1_<X> -> LOT_<X>; per-MED and per-CLASS dynamic flags
+  # become LOT_MED_<MED_ABBR> / LOT_CLASS_<CLASS>.
+  med_select <- paste(vapply(meds, function(m) {
+    sc <- .lot_sanitize_col(m)
+    sprintf("lbe.LOT1_MED_%s AS LOT_MED_%s", sc, sc)
+  }, character(1)), collapse = ",\n      ")
+  class_select <- paste(vapply(classes, function(cl) {
+    sc <- .lot_sanitize_col(cl)
+    sprintf("lbe.LOT1_CLASS_%s AS LOT_CLASS_%s", sc, sc)
+  }, character(1)), collapse = ",\n      ")
+
+  run_step(con, "L25_init_lot_long", glue("
     CREATE OR REPLACE TEMPORARY VIEW lot_long_v AS
     SELECT
       lbe.PATID,
@@ -91,10 +99,12 @@ init_lot_long_from_lot1 <- function(con) {
          AND p.ENDDATE_CE < p.ENDDATE
           THEN 'DISENROLLMENT'
         ELSE lbe.LOT1_BASE_END_REASON
-      END                                   AS LOT_BASE_END_REASON_CE_SENS
+      END                                   AS LOT_BASE_END_REASON_CE_SENS,
+      {med_select},
+      {class_select}
     FROM lot1_base_end lbe
     INNER JOIN lot_patient_input p ON lbe.PATID = p.PATID
-  ", qc = "SELECT count(*) AS n_lot1_rows FROM lot_long_v")
+  "), qc = "SELECT count(*) AS n_lot1_rows FROM lot_long_v")
 
   # Materialize so iterative LOT N builders can self-join cheaply.
   run_step(con, "L26_materialize_lot_long",
@@ -278,7 +288,13 @@ build_lot_n <- function(con, lot_num,
     FROM map_stacked ms
     INNER JOIN lot{lot_num}_start ls ON ms.PATID = ls.PATID
     WHERE ms.MAP_START_DT >= ls.LOT{lot_num}_START_DT
-      AND ms.MAP_START_DT <= date_add(ls.LOT{lot_num}_START_DT, {induction_window_days - 1})
+      -- CAR-T-started LOTs use the 45-day consolidation window (Apr 22; Q3).
+      -- All other start types use the 30-day induction window.
+      AND ms.MAP_START_DT <= date_add(
+            ls.LOT{lot_num}_START_DT,
+            CASE WHEN ls.LOT{lot_num}_START_TYPE = 'CART'
+                 THEN {cart_consolidation_days - 1}
+                 ELSE {induction_window_days - 1} END)
       AND ms.MAP_MED_CLASS <> 'STEROID'
       -- ALLO singleton LOTs contain no MM therapies; suppress regimen rows.
       AND ls.LOT{lot_num}_START_TYPE <> 'SCT_ALLO'
@@ -333,9 +349,18 @@ build_lot_n <- function(con, lot_num,
       LEFT JOIN discon d ON ls.PATID = d.PATID
       WHERE bm.MED_ABBR IS NULL
         AND ms.MAP_MED_CLASS <> 'STEROID'
-        AND ms.MAP_START_DT >  date_add(ls.LOT{lot_num}_START_DT, {induction_window_days - 1})
+        -- Same window used by induction must apply to first-add gate, so
+        -- agents within the consolidation/induction window are NOT a new add.
+        AND ms.MAP_START_DT >  date_add(
+              ls.LOT{lot_num}_START_DT,
+              CASE WHEN ls.LOT{lot_num}_START_TYPE = 'CART'
+                   THEN {cart_consolidation_days - 1}
+                   ELSE {induction_window_days - 1} END)
         AND ms.MAP_START_DT <= coalesce(d.LOT{lot_num}_BASE_DISCON_DT, ls.OBS_END_DT)
-        AND ls.LOT{lot_num}_START_TYPE <> 'SCT_ALLO'
+        -- ALLO single_day LOTs end on the ALLO date itself, so add-med is moot.
+        -- ALLO extend_to_next LOTs need add-med detection so the LOT can end
+        -- the day before the next qualifying agent.
+        AND NOT (ls.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND {if (allo_lot_span == 'single_day') 1L else 0L} = 1)
     ),
     first_add_pick AS (
       SELECT PATID, LOT{lot_num}_BASE_1ST_ADD_MED_DT, LOT{lot_num}_BASE_1ST_ADD_MED
@@ -361,7 +386,15 @@ build_lot_n <- function(con, lot_num,
       coalesce(ms.LOT{lot_num}_BASE_MEDS, '') AS LOT{lot_num}_BASE_MEDS,
       d.LOT{lot_num}_BASE_DISCON_DT,
       fa.LOT{lot_num}_BASE_1ST_ADD_MED_DT,
-      fa.LOT{lot_num}_BASE_1ST_ADD_MED
+      fa.LOT{lot_num}_BASE_1ST_ADD_MED,
+      -- Dynamic per-MED and per-CLASS flags (mirror LOT1). NULL -> 0 for
+      -- ALLO/CART singleton LOTs that have no induction rows.
+      {paste(vapply(meds, function(m) sprintf('coalesce(ms.LOT%d_MED_%s, 0) AS LOT%d_MED_%s',
+                                              lot_num, .lot_sanitize_col(m), lot_num, .lot_sanitize_col(m)),
+                    character(1)), collapse = ', ')},
+      {paste(vapply(classes, function(cl) sprintf('coalesce(ms.LOT%d_CLASS_%s, 0) AS LOT%d_CLASS_%s',
+                                                  lot_num, .lot_sanitize_col(cl), lot_num, .lot_sanitize_col(cl)),
+                    character(1)), collapse = ', ')}
     FROM lot{lot_num}_start ls
     LEFT JOIN med_summary    ms ON ls.PATID = ms.PATID
     LEFT JOIN discon         d  ON ls.PATID = d.PATID
@@ -516,13 +549,10 @@ build_lot_n <- function(con, lot_num,
   # ALLO singleton: end on ALLO_DT (Q2 draft = single_day) or extend to next agent.
   # CART singleton-ish: agents within cart_consolidation_days are part of LOT_N.
   # Otherwise: same end-reason logic as LOT1, with the same priority order.
-  allo_end_expr <- if (allo_lot_span == "single_day") {
-    "lb.LOT{lot_num}_START_DT"
-  } else {
-    # extend_to_next: end the day before the next qualifying agent (or OBS_END_DT)
-    "coalesce(date_sub(lb.LOT{lot_num}_BASE_1ST_ADD_MED_DT, 1), lb.OBS_END_DT)"
-  }
-  allo_end_expr <- glue(allo_end_expr)
+  # ALLO span Q2 - "single_day" hardcodes start = end = ALLO_DT with reason
+  # SCT_ALLO; "extend_to_next" lets the LOT extend until the next event with
+  # the natural end reason (MED_ADD / DISCONTINUATION / DEATH / STUDY_END).
+  allo_single_day <- (allo_lot_span == "single_day")
 
   run_step(con, paste0(pfx, "_lot", lot_num, "_base_end"), glue("
     CREATE OR REPLACE TEMPORARY VIEW lot{lot_num}_base_end AS
@@ -581,11 +611,15 @@ build_lot_n <- function(con, lot_num,
     )
     SELECT
       ec.*,
-      -- Branch on LOT_START_TYPE for ALLO singleton.
-      -- ALLO LOT span (Q2): single_day OR extend_to_next.
+      -- Special-case start types per Q2/Q3 drafts.
+      --   ALLO single_day: LOT spans only the ALLO date itself.
+      --   CAR-T with no consolidation agents: LOT spans only FIRST_CART_DT.
+      --   ALLO extend_to_next: fall through to the natural end-reason logic.
       CASE
-        WHEN ec.LOT{lot_num}_START_TYPE = 'SCT_ALLO'
+        WHEN ec.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND {if (allo_single_day) 1L else 0L} = 1
           THEN 'SCT_ALLO'
+        WHEN ec.LOT{lot_num}_START_TYPE = 'CART' AND ec.LOT{lot_num}_MED_CNT = 0
+          THEN 'SCT_CART'
         WHEN ec.LOT_TX_ENDDATE IS NOT NULL
          AND NOT (ec.CART_INIT_FLG = 1 AND ec.LOT_TX_ENDDATE_REASON = 3)
          AND (ec.LOT{lot_num}_BASE_1ST_ADD_MED_DT IS NULL
@@ -610,8 +644,10 @@ build_lot_n <- function(con, lot_num,
         ELSE 'STUDY_END'
       END AS LOT{lot_num}_BASE_END_REASON,
       CASE
-        WHEN ec.LOT{lot_num}_START_TYPE = 'SCT_ALLO'
-          THEN {allo_end_expr}
+        WHEN ec.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND {if (allo_single_day) 1L else 0L} = 1
+          THEN ec.LOT{lot_num}_START_DT
+        WHEN ec.LOT{lot_num}_START_TYPE = 'CART' AND ec.LOT{lot_num}_MED_CNT = 0
+          THEN ec.LOT{lot_num}_START_DT
         WHEN ec.LOT_TX_ENDDATE IS NOT NULL
          AND NOT (ec.CART_INIT_FLG = 1 AND ec.LOT_TX_ENDDATE_REASON = 3)
          AND (ec.LOT{lot_num}_BASE_1ST_ADD_MED_DT IS NULL
@@ -639,6 +675,15 @@ build_lot_n <- function(con, lot_num,
   # ---- Step N.7: append to lot_long ----
   # Sensitivity columns: cap LOT_BASE_END_DT_CE_SENS at ENDDATE_CE.
   # Reason flips to DISENROLLMENT only when ELIGEND is the binding cap.
+  med_insert <- paste(vapply(meds, function(m) {
+    sc <- .lot_sanitize_col(m)
+    sprintf("lbe.LOT%d_MED_%s AS LOT_MED_%s", lot_num, sc, sc)
+  }, character(1)), collapse = ",\n      ")
+  class_insert <- paste(vapply(classes, function(cl) {
+    sc <- .lot_sanitize_col(cl)
+    sprintf("lbe.LOT%d_CLASS_%s AS LOT_CLASS_%s", lot_num, sc, sc)
+  }, character(1)), collapse = ",\n      ")
+
   run_step(con, paste0(pfx, "_lot", lot_num, "_append_long"), glue("
     INSERT INTO {wrk('LOT_LONG')}
     SELECT
@@ -661,21 +706,20 @@ build_lot_n <- function(con, lot_num,
       CASE WHEN lbe.LOT{lot_num}_START_TYPE = 'SCT_ALLO' THEN 1 ELSE 0 END AS LOT_ALLO_LOT_FLG,
       CASE WHEN lbe.LOT{lot_num}_START_TYPE = 'CART'     THEN 1 ELSE 0 END AS LOT_CART_LOT_FLG,
       lbe.contains_mtx_reg,
-      -- Sensitivity (CENSOR_AT_DISENROLLMENT): cap end at ENDDATE_CE.
       CASE
         WHEN lbe.ENDDATE_CE IS NOT NULL AND lbe.LOT{lot_num}_BASE_END_DT > lbe.ENDDATE_CE
           THEN lbe.ENDDATE_CE
         ELSE lbe.LOT{lot_num}_BASE_END_DT
       END AS LOT_BASE_END_DT_CE_SENS,
-      -- Reason flips to DISENROLLMENT only when ELIGEND is the binding cap
-      -- (i.e., ENDDATE_CE < ENDDATE) AND ENDDATE_CE is the binding date.
       CASE
         WHEN lbe.ENDDATE_CE IS NOT NULL
          AND lbe.LOT{lot_num}_BASE_END_DT > lbe.ENDDATE_CE
          AND lbe.ENDDATE_CE < lbe.ENDDATE
           THEN 'DISENROLLMENT'
         ELSE lbe.LOT{lot_num}_BASE_END_REASON
-      END AS LOT_BASE_END_REASON_CE_SENS
+      END AS LOT_BASE_END_REASON_CE_SENS,
+      {med_insert},
+      {class_insert}
     FROM lot{lot_num}_base_end lbe
   "), qc = glue("SELECT count(*) AS n_appended FROM {wrk('LOT_LONG')} WHERE LOT_NUM = {lot_num}"))
 
@@ -704,10 +748,9 @@ build_lot2_5 <- function(con,
   log_msg("  sct_tandem_days         = ", sct_tandem_days)
   log_msg("  allo_lot_span           = ", allo_lot_span, " (Q2)")
 
-  init_lot_long_from_lot1(con)
-
   # Discover med + class universes from the rollup so dynamic flag columns
-  # match LOT1 output exactly. Excludes STEROID class.
+  # match LOT1 output exactly. STEROID class excluded - LOT1 uses the same
+  # filter, so persisted LOT1_MED_<DEXA>/<PRED> columns will not exist.
   meds <- db_q(con, "
     SELECT DISTINCT CL_MED_ABBR AS MED_ABBR
     FROM mma_rollup
@@ -721,6 +764,8 @@ build_lot2_5 <- function(con,
       AND CL_MED_CLASS IS NOT NULL
     ORDER BY CL_MED_CLASS
   ")$MED_CLASS
+
+  init_lot_long_from_lot1(con, meds = meds, classes = classes)
 
   for (n in 2:max_lot) {
     log_msg("--- LOT", n, " ---")
