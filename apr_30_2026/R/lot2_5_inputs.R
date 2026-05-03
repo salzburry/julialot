@@ -1,0 +1,292 @@
+#!/usr/bin/env Rscript
+# ============================================================
+# lot2_5_inputs.R - Rebuild upstream views needed by lot2_5_base.R
+#
+# lot_program.R only persists MAP_STACKED, LOT1_BASE, LOT1_SCT,
+# LOT1_BASE_END, MMA_MED_PROCESSED + the cohort input table. The temp
+# views lot_patient_input, sct_codelist, sct_claims_raw, tx_auto_dates,
+# and tx_allo_cart_dates are session-scoped and gone once that script
+# exits.
+#
+# This helper rebuilds those views in a fresh session by re-running the
+# same SQL patterns lot_program.R uses. No edits to lot_program.R.
+#
+# Codelists (mma_rollup, permissible_subs, sct_codelist) come via CSV
+# loaders in codelists_lot.R; the caller is expected to have sourced
+# that already and to provide the CSV-derived sources.
+# ============================================================
+
+# Copy of helpers loaded by codelists_lot.R; must be available in caller.
+prepare_lot_inputs <- function(con,
+                               rollup_src,
+                               subs_src,
+                               sct_src) {
+  log_msg("Preparing upstream views for LOT2-5 builder...")
+
+  # mma_rollup view (matches lot_program.R S00)
+  run_step(con, "P00_mma_rollup", glue("
+    CREATE OR REPLACE TEMPORARY VIEW mma_rollup AS
+    SELECT
+      upper(trim(CL_MED_ABBR))                       AS CL_MED_ABBR,
+      upper(trim(CL_MED_CLASS))                      AS CL_MED_CLASS,
+      cast(coalesce(MONOMAINTENANCE, 0) AS INT)      AS MONOMAINTENANCE,
+      upper(trim(coalesce(DUALMAINTENANCEWITH, ''))) AS DUALMAINTENANCEWITH,
+      cast(coalesce(USED_FOR_OTHER_CANCERS, 0) AS INT) AS USED_FOR_OTHER_CANCERS
+    FROM {rollup_src}
+    WHERE CL_MED_ABBR IS NOT NULL AND trim(CL_MED_ABBR) <> ''
+  "), qc = "SELECT count(*) AS n_rows FROM mma_rollup")
+
+  # permissible_subs view
+  run_step(con, "P02_permissible_subs", glue("
+    CREATE OR REPLACE TEMPORARY VIEW permissible_subs AS
+    SELECT
+      upper(trim(original_med))   AS original_med,
+      upper(trim(substitute_med)) AS substitute_med
+    FROM {subs_src}
+    WHERE original_med IS NOT NULL AND substitute_med IS NOT NULL
+  "), qc = "SELECT count(*) AS n_rows FROM permissible_subs")
+
+  # lot_patient_input view (matches lot_program.R S03)
+  obs_end_dt_expr <- if (isTRUE(cfg$censor_at_disenrollment)) {
+    "coalesce(cast(ENDDATE_CE AS date), cast(ENDDATE AS date))"
+  } else {
+    "cast(ENDDATE AS date)"
+  }
+  run_step(con, "P03_patient_input", glue("
+    CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS
+    SELECT
+      PATID,
+      cast(INDEX_DATE AS date)  AS INDEX_DATE,
+      cast(ENDDATE AS date)     AS ENDDATE,
+      cast(ENDDATE_CE AS date)  AS ENDDATE_CE,
+      {obs_end_dt_expr}         AS OBS_END_DT,
+      cast(DEATH_DT AS date)    AS DEATH_DT,
+      GDR_CD, YRDOB, AGE_INDEX_YR, FU_DAYS, FU_DAYS_CE
+    FROM {wrk(cfg$input_cohort_table)}
+  "), qc = "SELECT count(*) AS n_patients FROM lot_patient_input")
+
+  # sct_codelist view (matches lot_program.R S11)
+  run_step(con, "P11_sct_codelist", glue("
+    CREATE OR REPLACE TEMPORARY VIEW sct_codelist AS
+    SELECT
+      CASE
+        WHEN upper(trim(CL_CODE_TYPE)) IN ('ICD10PROC', 'ICD10PCS') THEN 'ICD10PROC'
+        WHEN upper(trim(CL_CODE_TYPE)) = 'ICD9PROC' THEN 'ICD9PROC'
+        WHEN upper(trim(CL_CODE_TYPE)) LIKE '%PROC%'
+          OR upper(trim(CL_CODE_TYPE)) = 'ICD' THEN 'ICD10PROC'
+        WHEN upper(trim(CL_CODE_TYPE)) IN ('ICD10DIAG', 'ICD10DX', 'DIAG10')
+          OR upper(trim(CL_CODE_TYPE)) LIKE 'ICD%10%DIAG%' THEN 'ICD10DIAG'
+        WHEN upper(trim(CL_CODE_TYPE)) IN ('ICD9DIAG', 'ICD9DX', 'ICD9', 'DIAG9')
+          OR upper(trim(CL_CODE_TYPE)) LIKE 'ICD%9%DIAG%' THEN 'ICD9DIAG'
+        WHEN upper(trim(CL_CODE_TYPE)) IN ('DIAG', 'DX', 'DIAGNOSIS') THEN 'ICD10DIAG'
+        WHEN upper(trim(CL_CODE_TYPE)) IN ('CPT', 'CPT4') THEN 'HCPCS'
+        ELSE upper(trim(CL_CODE_TYPE))
+      END AS CL_CODE_TYPE,
+      upper(regexp_replace(trim(CL_CODE), '[^A-Za-z0-9]', '')) AS CL_CODE,
+      CASE
+        WHEN upper(trim(SCT_TYPE)) LIKE 'ALLO%' THEN 'ALLO'
+        WHEN upper(trim(SCT_TYPE)) LIKE 'AUTO%' THEN 'AUTO'
+        WHEN upper(trim(SCT_TYPE)) IN ('CAR-T', 'CART', 'CAR_T') THEN 'CART'
+        ELSE upper(trim(SCT_TYPE))
+      END AS SCT_TYPE
+    FROM {sct_src}
+    WHERE CL_CODE IS NOT NULL AND trim(CL_CODE) <> ''
+      AND SCT_TYPE IS NOT NULL AND trim(SCT_TYPE) <> ''
+  "), qc = "SELECT count(*) AS n_rows FROM sct_codelist")
+
+  # sct_claims_raw view (matches lot_program.R S12)
+  run_step(con, "P12_sct_claims_raw", glue("
+    CREATE OR REPLACE TEMPORARY VIEW sct_claims_raw AS
+    WITH sct_codes AS (SELECT /*+ BROADCAST */ * FROM sct_codelist),
+    med_proc AS (
+      SELECT m.PATID, cast(m.FST_DT AS date) AS DATE_SERVICE,
+             s.SCT_TYPE, s.CL_CODE AS CODE
+      FROM {cdm_src(cfg$tbl_medical)} m
+      INNER JOIN lot_patient_input p ON m.PATID = p.PATID
+      INNER JOIN sct_codes s
+        ON s.CL_CODE_TYPE = 'HCPCS'
+       AND upper(regexp_replace(coalesce(cast(m.PROC_CD as string),''), '[^A-Za-z0-9]', '')) = s.CL_CODE
+      WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
+        AND cast(m.FST_DT AS date) <= p.OBS_END_DT
+    ),
+    med_bill AS (
+      SELECT m.PATID, cast(m.FST_DT AS date) AS DATE_SERVICE,
+             s.SCT_TYPE, s.CL_CODE AS CODE
+      FROM {cdm_src(cfg$tbl_medical)} m
+      INNER JOIN lot_patient_input p ON m.PATID = p.PATID
+      INNER JOIN sct_codes s
+        ON s.CL_CODE_TYPE = 'HCPCS'
+       AND upper(regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''), '[^A-Za-z0-9]', '')) = s.CL_CODE
+      WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
+        AND cast(m.FST_DT AS date) <= p.OBS_END_DT
+    ),
+    medproc AS (
+      SELECT mp.PATID, cast(mp.FST_DT AS date) AS DATE_SERVICE,
+             s.SCT_TYPE, s.CL_CODE AS CODE
+      FROM {cdm_src(cfg$tbl_med_proc)} mp
+      INNER JOIN lot_patient_input p ON mp.PATID = p.PATID
+      INNER JOIN sct_codes s
+        ON (  (s.CL_CODE_TYPE = 'ICD10PROC'
+               AND coalesce(upper(mp.ICD_FLAG), '') NOT IN ('9', 'ICD9', 'ICD-9'))
+           OR (s.CL_CODE_TYPE = 'ICD9PROC'
+               AND upper(mp.ICD_FLAG) IN ('9', 'ICD9', 'ICD-9'))
+           OR s.CL_CODE_TYPE = 'HCPCS')
+       AND upper(regexp_replace(coalesce(cast(mp.PROC as string),''), '[^A-Za-z0-9]', '')) = s.CL_CODE
+      WHERE cast(mp.FST_DT AS date) >= p.INDEX_DATE
+        AND cast(mp.FST_DT AS date) <= p.OBS_END_DT
+    ),
+    med_diag AS (
+      SELECT d.PATID, cast(d.FST_DT AS date) AS DATE_SERVICE,
+             s.SCT_TYPE, s.CL_CODE AS CODE
+      FROM {cdm_src(cfg$tbl_med_diag)} d
+      INNER JOIN lot_patient_input p ON d.PATID = p.PATID
+      INNER JOIN sct_codes s
+        ON (  (s.CL_CODE_TYPE = 'ICD10DIAG'
+               AND coalesce(upper(d.ICD_FLAG), '') NOT IN ('9', 'ICD9', 'ICD-9'))
+           OR (s.CL_CODE_TYPE = 'ICD9DIAG'
+               AND upper(d.ICD_FLAG) IN ('9', 'ICD9', 'ICD-9')))
+       AND upper(regexp_replace(coalesce(cast(d.DIAG as string),''), '[^A-Za-z0-9]', '')) = s.CL_CODE
+      WHERE cast(d.FST_DT AS date) >= p.INDEX_DATE
+        AND cast(d.FST_DT AS date) <= p.OBS_END_DT
+    ),
+    combined AS (
+      SELECT * FROM med_proc
+      UNION ALL SELECT * FROM med_bill
+      UNION ALL SELECT * FROM medproc
+      UNION ALL SELECT * FROM med_diag
+    )
+    SELECT PATID, DATE_SERVICE, SCT_TYPE, min(CODE) AS CODE
+    FROM combined
+    GROUP BY PATID, DATE_SERVICE, SCT_TYPE
+  "), qc = "SELECT SCT_TYPE, count(*) AS n_claims FROM sct_claims_raw GROUP BY SCT_TYPE")
+
+  # tx_auto_dates view (matches lot_program.R S13).
+  # Verbatim aggregate state-machine - if lot_program.R S13 is updated,
+  # update this block to match.
+  run_step(con, "P13_tx_auto_dates", glue("
+    CREATE OR REPLACE TEMPORARY VIEW tx_auto_dates AS
+    WITH auto_dates AS (
+      SELECT DISTINCT PATID, DATE_SERVICE AS dt
+      FROM sct_claims_raw WHERE SCT_TYPE = 'AUTO'
+    ),
+    grouped AS (
+      SELECT PATID, sort_array(collect_list(dt)) AS dates_arr
+      FROM auto_dates GROUP BY PATID
+    ),
+    processed AS (
+      SELECT PATID,
+        aggregate(
+          dates_arr,
+          named_struct(
+            'tx_dates', cast(array() as array<date>),
+            'cur_start', cast(null as date),
+            'cur_max_dt', cast(null as date),
+            'cur_boundary_dt', cast(null as date),
+            'cur_boundary_dist', cast(null as int),
+            'last_tx_dt', cast(null as date)
+          ),
+          (s, x) -> CASE
+            WHEN s.cur_start IS NULL THEN
+              named_struct('tx_dates', s.tx_dates, 'cur_start', x, 'cur_max_dt', x,
+                           'cur_boundary_dt', cast(null as date),
+                           'cur_boundary_dist', cast(null as int),
+                           'last_tx_dt', s.last_tx_dt)
+            WHEN datediff(x, s.cur_start) <= {cfg$sct_auto_window_days} THEN
+              named_struct('tx_dates', s.tx_dates, 'cur_start', s.cur_start, 'cur_max_dt', x,
+                           'cur_boundary_dt', CASE
+                             WHEN s.last_tx_dt IS NULL THEN NULL
+                             WHEN abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                                  <= {cfg$sct_auto_window_days}
+                              AND (s.cur_boundary_dist IS NULL
+                                   OR abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                                      < s.cur_boundary_dist)
+                               THEN x
+                             ELSE s.cur_boundary_dt
+                           END,
+                           'cur_boundary_dist', CASE
+                             WHEN s.last_tx_dt IS NULL THEN NULL
+                             WHEN abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                                  <= {cfg$sct_auto_window_days}
+                              AND (s.cur_boundary_dist IS NULL
+                                   OR abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                                      < s.cur_boundary_dist)
+                               THEN abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                             ELSE s.cur_boundary_dist
+                           END,
+                           'last_tx_dt', s.last_tx_dt)
+            ELSE
+              CASE
+                WHEN s.last_tx_dt IS NOT NULL
+                 AND datediff(coalesce(s.cur_boundary_dt, s.cur_max_dt), s.last_tx_dt) < {cfg$sct_auto_gap_days}
+                THEN named_struct('tx_dates', s.tx_dates, 'cur_start', x, 'cur_max_dt', x,
+                                  'cur_boundary_dt', CASE
+                                    WHEN abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                                         <= {cfg$sct_auto_window_days}
+                                    THEN x ELSE NULL END,
+                                  'cur_boundary_dist', CASE
+                                    WHEN abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                                         <= {cfg$sct_auto_window_days}
+                                    THEN abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                                    ELSE NULL END,
+                                  'last_tx_dt', s.last_tx_dt)
+                ELSE named_struct(
+                       'tx_dates', array_append(s.tx_dates, coalesce(s.cur_boundary_dt, s.cur_max_dt)),
+                       'cur_start', x, 'cur_max_dt', x,
+                       'cur_boundary_dt', CASE
+                         WHEN abs(datediff(x, date_add(coalesce(s.cur_boundary_dt, s.cur_max_dt), {cfg$sct_tandem_days} - 1)))
+                              <= {cfg$sct_auto_window_days}
+                         THEN x ELSE NULL END,
+                       'cur_boundary_dist', CASE
+                         WHEN abs(datediff(x, date_add(coalesce(s.cur_boundary_dt, s.cur_max_dt), {cfg$sct_tandem_days} - 1)))
+                              <= {cfg$sct_auto_window_days}
+                         THEN abs(datediff(x, date_add(coalesce(s.cur_boundary_dt, s.cur_max_dt), {cfg$sct_tandem_days} - 1)))
+                         ELSE NULL END,
+                       'last_tx_dt', coalesce(s.cur_boundary_dt, s.cur_max_dt))
+              END
+          END,
+          s -> CASE
+            WHEN s.cur_start IS NULL THEN s.tx_dates
+            WHEN s.last_tx_dt IS NOT NULL
+             AND datediff(coalesce(s.cur_boundary_dt, s.cur_max_dt), s.last_tx_dt) < {cfg$sct_auto_gap_days}
+            THEN s.tx_dates
+            ELSE array_append(s.tx_dates, coalesce(s.cur_boundary_dt, s.cur_max_dt))
+          END
+        ) AS tx_dates
+      FROM grouped
+    ),
+    exploded AS (
+      SELECT PATID, posexplode(tx_dates) AS (pos, TX_DT) FROM processed
+    )
+    SELECT PATID, pos + 1 AS TX_SEQ, TX_DT FROM exploded
+  "), qc = "SELECT count(*) AS n_auto_tx_events FROM tx_auto_dates")
+
+  # tx_allo_cart_dates view (matches lot_program.R S14)
+  run_step(con, "P14_tx_allo_cart_dates", "
+    CREATE OR REPLACE TEMPORARY VIEW tx_allo_cart_dates AS
+    WITH allo_dates AS (
+      SELECT DISTINCT PATID, DATE_SERVICE AS dt FROM sct_claims_raw WHERE SCT_TYPE = 'ALLO'
+    ),
+    cart_dates AS (
+      SELECT DISTINCT PATID, DATE_SERVICE AS dt FROM sct_claims_raw WHERE SCT_TYPE = 'CART'
+    ),
+    allo_seq AS (
+      SELECT PATID, 'ALLO' AS SCT_TYPE, dt AS TX_DT,
+             row_number() OVER (PARTITION BY PATID ORDER BY dt) AS TX_SEQ FROM allo_dates
+    ),
+    cart_seq AS (
+      SELECT PATID, 'CART' AS SCT_TYPE, dt AS TX_DT,
+             row_number() OVER (PARTITION BY PATID ORDER BY dt) AS TX_SEQ FROM cart_dates
+    )
+    SELECT * FROM allo_seq UNION ALL SELECT * FROM cart_seq
+  ", qc = "SELECT SCT_TYPE, count(*) AS n FROM tx_allo_cart_dates GROUP BY SCT_TYPE")
+
+  # Rebind the persisted LOT1 outputs to the temp view names lot2_5_base.R uses.
+  for (tbl in c("MAP_STACKED", "LOT1_BASE", "LOT1_SCT", "LOT1_BASE_END")) {
+    db_exec(con, sprintf(
+      "CREATE OR REPLACE TEMPORARY VIEW %s AS SELECT * FROM %s",
+      tolower(tbl), wrk(tbl)
+    ))
+  }
+
+  log_msg("Upstream views ready.")
+}
