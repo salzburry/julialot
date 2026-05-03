@@ -625,6 +625,10 @@ def build_open_questions(wb):
         ("Q14", "Same-day end-reason priority for LOT2-5 - inherits LOT1?",
          "Draft: SCT_ALLO > SCT_CART > SCT_AUTO > CART_INIT > MED_ADD > DISCONTINUATION > DEATH > STUDY_END (DISENROLLMENT in sensitivity). Confirm.",
          "Julia", "Open"),
+        ("Q15", "CAR-T LOT end reason when consolidation meds run out: SCT_CART or DISCONTINUATION?",
+         "Draft (current code): DISCONTINUATION - CAR-T LOT spans through last consolidation MAP_END_DT and routes by runout. "
+         "Alternative: force SCT_CART for any CAR-T-started LOT regardless of how the consolidation regimen ends.",
+         "Julia", "Open"),
     ]
     write_rows(ws, 2, rows, col_widths=[6, 50, 60, 20, 12])
     ws.row_dimensions[1].height = 30
