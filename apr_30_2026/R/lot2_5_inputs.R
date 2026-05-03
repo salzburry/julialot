@@ -180,7 +180,24 @@ prepare_lot_inputs <- function(con,
     SELECT PATID, DATE_SERVICE, SCT_TYPE, min(CODE) AS CODE
     FROM combined
     GROUP BY PATID, DATE_SERVICE, SCT_TYPE
-  "), qc = "SELECT SCT_TYPE, count(*) AS n_claims FROM sct_claims_raw GROUP BY SCT_TYPE")
+  "), qc = NULL)  # QC deferred to P12b materialization to avoid re-scanning raw CDM tables.
+
+  # Materialize sct_claims_raw: it is the upstream heavy CDM-scan view that
+  # feeds both TX_AUTO_DATES and TX_ALLO_CART_DATES. Without this, each of
+  # those materializations would re-run the raw CDM scan. Persisting once
+  # collapses both downstream materializations to cheap table reads.
+  run_step(con, "P12b_materialize_sct_claims_raw", glue("
+    CREATE OR REPLACE TABLE {wrk('SCT_CLAIMS_RAW')} AS SELECT * FROM sct_claims_raw
+  "), qc = glue("
+    SELECT SCT_TYPE, count(*) AS n_claims, count(DISTINCT PATID) AS n_patients,
+           min(DATE_SERVICE) AS min_date, max(DATE_SERVICE) AS max_date
+    FROM {wrk('SCT_CLAIMS_RAW')}
+    GROUP BY SCT_TYPE
+    ORDER BY SCT_TYPE"))
+  db_exec(con, sprintf(
+    "CREATE OR REPLACE TEMPORARY VIEW sct_claims_raw AS SELECT * FROM %s",
+    wrk("SCT_CLAIMS_RAW")
+  ))
 
   # tx_auto_dates view (matches lot_program.R S13).
   # Verbatim aggregate state-machine - if lot_program.R S13 is updated,
