@@ -67,8 +67,15 @@ through the day before the next qualifying agent.
 
 ## Open questions still pending sign-off
 
-The spec workbook lists open Q1..Q15 (Q11 and Q12 resolved). The defaults
-above reflect the **draft** answers in the spec; flipping `ALLO_LOT_SPAN`
-is the only one behaviorally significant under common patient histories.
-Q15 specifically tracks the CAR-T LOT end reason (`SCT_CART` vs the
-current default `DISCONTINUATION`).
+Resolved as of 13-May: Q1 (90-day LOT-level buffer — removed; the only
+90-day rule is the per-drug MAP-level `MAP_DISCON_GAP_DAYS`), Q2 (ALLO
+LOT spans a single day), Q9 (tandem AUTO uses `<= sct_tandem_days`
+upper bound only; `tx_auto_dates` already groups < 60 d events upstream),
+Q11 (CAR-T 45 d consolidation), Q12 (disenrollment in sensitivity only),
+Q14 (same-day priority `SCT_ALLO > SCT_CART > SCT_AUTO > MED`), Q15
+(CAR-T LOT runout = `DISCONTINUATION`), Q16 (AUTO trigger broadening
+LOT2-5 only).
+
+Still open and shipping with the draft defaults above: Q3, Q4, Q5, Q6,
+Q10, Q13 (mostly draft confirmations; none behaviorally significant
+under common histories), Q7, Q8 (Onkar — pipeline-output verifications).

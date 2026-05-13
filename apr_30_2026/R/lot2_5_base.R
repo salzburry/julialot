@@ -244,9 +244,10 @@ build_lot_n <- function(con, lot_num,
     --   (i) it falls inside the prior LOT's applicable window from PREV_START_DT
     --       (30d MED/AUTO-started, 1d ALLO-started, 45d CART-started), or
     --   (ii) the AUTO is on/before sct_tandem_days (180d) after the IMMEDIATELY
-    --        prior AUTO (planned tandem). Per Julia 13-May: implementation uses
-    --        ONLY the upper bound (matches LOT1). Protocol convention is
-    --        60-180 d but the < 60 d case is too rare/ambiguous to gate on.
+    --        prior AUTO (planned tandem). Upstream tx_auto_dates already merges
+    --        AUTO claims < 60 d apart into a single event (sct_auto_gap_days),
+    --        so by the time this CTE sees an AUTO, the < 60 d case has already
+    --        been handled - tandem classification only needs the 180d upper bound.
     -- The PREV_AUTO_DT IS NOT NULL guard from the prior rule is dropped:
     -- first-ever AUTOs CAN trigger a new LOT (LOT2-5 only; LOT1 retains the
     -- protocol convention that the first AUTO is part of induction).
@@ -269,11 +270,10 @@ build_lot_n <- function(con, lot_num,
                 WHEN 'CART'     THEN {cart_consolidation_days} - 1
                 ELSE                 {induction_window_days} - 1
               END)
-        -- (ii) not a planned tandem. Per Julia 13-May: implementation uses
-        -- ONLY the upper bound (<= sct_tandem_days). Protocol convention is
-        -- "60-180 days", but the < 60 d case is so rare (and ambiguous - usually
-        -- re-conditioning or salvage rather than a planned tandem) that the
-        -- code matches LOT1's existing <= 180 behaviour. The spec records this.
+        -- (ii) not a planned tandem. tx_auto_dates upstream already groups
+        -- AUTO claims < 60 d apart into a single event, so tandem classification
+        -- only needs the <= sct_tandem_days (180d) upper bound here (matches
+        -- LOT1; Q9 resolved 13-May).
         AND NOT (awp.PREV_AUTO_DT IS NOT NULL
                  AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {sct_tandem_days})
       GROUP BY pe.PATID
@@ -675,9 +675,23 @@ build_lot_n <- function(con, lot_num,
     -- DISCONTINUATION when a patient ran out and then started new therapy
     -- (or had an SCT) before dying. Without this gate, the post-runout
     -- therapy would be silently swallowed by the DEATH-ends-LOT branch.
-    post_runout_base_meds AS (
-      SELECT PATID, MED_ABBR FROM lot{lot_num}_induction_meds
-      UNION
+    --
+    -- The post_runout CTEs MIRROR the actual LOT_(N+1) start-candidate
+    -- logic (med_cand / auto_cand) so the guard fires exactly when LOT
+    -- (N+1) would actually have a valid start trigger:
+    --   - MED: any non-steroid MM agent NOT in the prior LOT's permissible
+    --     biosimilar substitutes. Same-drug restarts DO qualify, matching
+    --     med_cand (lot2_5_base.R::med_cand) which only excludes
+    --     prev_meds_expanded (substitutes), not the base meds themselves.
+    --   - AUTO: any AUTO outside LOT N's applicable window from
+    --     LOT_START_DT (30d MED/AUTO-started, 1d ALLO-started, 45d
+    --     CART-started) AND not within sct_tandem_days (180d) of the
+    --     immediately prior AUTO in patient history (planned tandem).
+    --     Mirrors auto_cand exactly with PREV_END_DT swapped for
+    --     LOT_BASE_DISCON_DT.
+    --   - ALLO/CART: any after runout (no window check; ALLO and CART
+    --     always trigger a new LOT).
+    post_runout_excluded_meds AS (
       SELECT im.PATID, ps.substitute_med AS MED_ABBR
       FROM lot{lot_num}_induction_meds im
       INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
@@ -686,27 +700,50 @@ build_lot_n <- function(con, lot_num,
       SELECT DISTINCT ms.PATID
       FROM map_stacked ms
       INNER JOIN lot{lot_num}_base lb ON ms.PATID = lb.PATID
-      LEFT JOIN post_runout_base_meds prbm
-        ON ms.PATID = prbm.PATID AND ms.MAP_MED_TYPE = prbm.MED_ABBR
+      LEFT JOIN post_runout_excluded_meds prem
+        ON ms.PATID = prem.PATID AND ms.MAP_MED_TYPE = prem.MED_ABBR
       WHERE lb.LOT{lot_num}_BASE_DISCON_DT IS NOT NULL
         AND ms.MAP_START_DT > lb.LOT{lot_num}_BASE_DISCON_DT
         AND ms.MAP_START_DT <= lb.OBS_END_DT
         AND ms.MAP_MED_CLASS <> 'STEROID'
-        AND prbm.MED_ABBR IS NULL
+        AND prem.MED_ABBR IS NULL
+    ),
+    post_runout_autos AS (
+      SELECT a.PATID, a.TX_DT,
+             lag(a.TX_DT) OVER (PARTITION BY a.PATID ORDER BY a.TX_DT) AS PREV_AUTO_DT
+      FROM tx_auto_dates a
+    ),
+    post_runout_auto AS (
+      SELECT DISTINCT lb.PATID
+      FROM lot{lot_num}_base lb
+      INNER JOIN post_runout_autos awp ON lb.PATID = awp.PATID
+      WHERE lb.LOT{lot_num}_BASE_DISCON_DT IS NOT NULL
+        AND awp.TX_DT > lb.LOT{lot_num}_BASE_DISCON_DT
+        AND awp.TX_DT <= lb.OBS_END_DT
+        AND awp.TX_DT > date_add(
+              lb.LOT{lot_num}_START_DT,
+              CASE lb.LOT{lot_num}_START_TYPE
+                WHEN 'SCT_ALLO' THEN 0
+                WHEN 'CART'     THEN {cart_consolidation_days} - 1
+                ELSE                 {induction_window_days} - 1
+              END)
+        AND NOT (awp.PREV_AUTO_DT IS NOT NULL
+                 AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {sct_tandem_days})
     ),
     post_runout_trigger AS (
       SELECT lb.PATID,
         CASE
           WHEN lb.LOT{lot_num}_BASE_DISCON_DT IS NULL THEN 0
           WHEN prm.PATID IS NOT NULL THEN 1
-          WHEN sct.FIRST_ALLO_DT  IS NOT NULL AND sct.FIRST_ALLO_DT  > lb.LOT{lot_num}_BASE_DISCON_DT THEN 1
-          WHEN sct.FIRST_CART_DT  IS NOT NULL AND sct.FIRST_CART_DT  > lb.LOT{lot_num}_BASE_DISCON_DT THEN 1
-          WHEN sct.ENDING_AUTO_DT IS NOT NULL AND sct.ENDING_AUTO_DT > lb.LOT{lot_num}_BASE_DISCON_DT THEN 1
+          WHEN sct.FIRST_ALLO_DT IS NOT NULL AND sct.FIRST_ALLO_DT > lb.LOT{lot_num}_BASE_DISCON_DT THEN 1
+          WHEN sct.FIRST_CART_DT IS NOT NULL AND sct.FIRST_CART_DT > lb.LOT{lot_num}_BASE_DISCON_DT THEN 1
+          WHEN pra.PATID IS NOT NULL THEN 1
           ELSE 0
         END AS POST_RUNOUT_TRIGGER_FLG
       FROM lot{lot_num}_base lb
       LEFT JOIN lot{lot_num}_sct sct ON lb.PATID = sct.PATID
       LEFT JOIN post_runout_med prm ON lb.PATID = prm.PATID
+      LEFT JOIN post_runout_auto pra ON lb.PATID = pra.PATID
     ),
     end_candidates AS (
       SELECT
