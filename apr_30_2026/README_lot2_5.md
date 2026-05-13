@@ -52,8 +52,8 @@ Environment variables (in addition to the LOT1 set):
 
 | Env var                       | Default         | Spec ref       |
 |-------------------------------|-----------------|----------------|
-| `INDUCTION_WINDOW_DAYS_LOT_N` | `30`            | Apr 22 meeting |
-| `CART_CONSOLIDATION_DAYS`     | `45`            | Apr 22 (Q11)   |
+| `INDUCTION_WINDOW_DAYS_LOT_N` | `30`            | study-team decision |
+| `CART_CONSOLIDATION_DAYS`     | `45`            | study-team decision |
 | `SCT_TANDEM_DAYS`             | `180`           | inherited LOT1 |
 | `ALLO_LOT_SPAN`               | `single_day`    | Q2 (resolved)  |
 | `MAX_LOT`                     | `5`             | Q6 (open)      |

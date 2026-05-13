@@ -76,7 +76,8 @@ main <- function() {
   log_msg("  CDM Schema:        ", cfg$cdm_schema)
   log_msg("  Work Schema:       ", cfg$work_schema)
   log_msg("  Input Cohort:      ", cfg$input_cohort_table)
-  log_msg("  Induction Window:  ", cfg$induction_window_days, " days")
+  log_msg("  Induction Window (LOT1):   ", cfg$induction_window_days, " days")
+  log_msg("  Induction Window (LOT2-5): ", cfg$lot_n_induction_window_days, " days")
   log_msg("  Discon Gap (per-drug, MAP-level): ", cfg$map_discon_gap_days, " days")
   log_msg("  Medical Day Supply: ", cfg$medical_day_supply, " days")
 
@@ -1883,8 +1884,8 @@ main <- function() {
         CREATE TABLE IF NOT EXISTS {wrk('LOT_RUN_METADATA')} (
           RUN_ID STRING, RUN_TIMESTAMP TIMESTAMP,
           CDM_SCHEMA STRING, WORK_SCHEMA STRING, INPUT_COHORT_TABLE STRING,
-          INDUCTION_WINDOW_DAYS INT, MAP_DISCON_GAP_DAYS INT,
-          MEDICAL_DAY_SUPPLY INT,
+          INDUCTION_WINDOW_DAYS INT, INDUCTION_WINDOW_DAYS_LOT_N INT,
+          MAP_DISCON_GAP_DAYS INT, MEDICAL_DAY_SUPPLY INT,
           N_COHORT_PATIENTS BIGINT, N_MMA_CLAIMS BIGINT,
           N_MAPS BIGINT, N_LOT1_PATIENTS BIGINT
         )
@@ -1902,6 +1903,7 @@ main <- function() {
           '{cfg$work_schema}' AS WORK_SCHEMA,
           '{cfg$input_cohort_table}' AS INPUT_COHORT_TABLE,
           {cfg$induction_window_days} AS INDUCTION_WINDOW_DAYS,
+          {cfg$lot_n_induction_window_days} AS INDUCTION_WINDOW_DAYS_LOT_N,
           {cfg$map_discon_gap_days} AS MAP_DISCON_GAP_DAYS,
           {cfg$medical_day_supply} AS MEDICAL_DAY_SUPPLY,
           {cohort_n} AS N_COHORT_PATIENTS,

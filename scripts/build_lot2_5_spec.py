@@ -183,7 +183,7 @@ def build_cover(wb):
         ("Maintenance", "contains_mtx_reg flag only; no standalone maintenance LOT (inherits LOT1 code). Q5."),
         ("Steroids", "Excluded from regimen."),
         ("Biosimilar subs", "Do not advance LOT."),
-        ("CAR-T consolidation", "45d (Apr 22 decision; Q11 resolved)."),
+        ("CAR-T consolidation", "45 days; study-team decision."),
         ("Disenrollment", "PRIMARY: ignored. SENSITIVITY: ENDDATE_CE cap, reason = DISENROLLMENT (Q12 resolved)."),
     ]
     for i, (k, v) in enumerate(meta, start=3):
