@@ -1879,7 +1879,7 @@ main <- function() {
       map_n    <- as.numeric(db_q(con, "SELECT count(*) AS n FROM map_stacked")$n)
       lot1_n   <- as.numeric(db_q(con, "SELECT count(*) AS n FROM lot1_base")$n)
 
-      # Create metadata table if not exists, then append this run
+      # Create metadata table if not exists (full current schema).
       run_step(con, "S22a_create_metadata_table", glue("
         CREATE TABLE IF NOT EXISTS {wrk('LOT_RUN_METADATA')} (
           RUN_ID STRING, RUN_TIMESTAMP TIMESTAMP,
@@ -1890,26 +1890,51 @@ main <- function() {
           N_MAPS BIGINT, N_LOT1_PATIENTS BIGINT
         )
       "))
+      # Schema evolution: older LOT_RUN_METADATA tables pre-date the
+      # INDUCTION_WINDOW_DAYS_LOT_N column. CREATE TABLE IF NOT EXISTS is a
+      # no-op when the table already exists, so we need an explicit ALTER.
+      # Swallow "column already exists" errors so the step is idempotent.
+      tryCatch({
+        db_exec(con, glue("
+          ALTER TABLE {wrk('LOT_RUN_METADATA')} ADD COLUMNS (INDUCTION_WINDOW_DAYS_LOT_N INT)
+        "))
+        log_msg("  Metadata schema evolution: added INDUCTION_WINDOW_DAYS_LOT_N")
+      }, error = function(e) {
+        msg <- conditionMessage(e)
+        if (!grepl("already exists|AlreadyExists|FIELD_ALREADY_EXISTS|DELTA_ADD_COLUMN_PARENT_NOT_STRUCT",
+                   msg, ignore.case = TRUE)) {
+          log_msg("  Metadata schema evolution warning: ", msg)
+        }
+      })
       # Delete any prior row for this exact run_id (idempotent re-runs)
       run_step(con, "S22b_dedup_metadata", glue("
         DELETE FROM {wrk('LOT_RUN_METADATA')} WHERE RUN_ID = '{run_id}'
       "))
+      # Explicit column list - robust against column ordering after ALTER
+      # TABLE on older schemas (new columns are appended, not inserted in
+      # the original position) and against extra legacy columns
+      # (e.g. LOT_DISCON_GAP_DAYS on tables created before its removal).
       run_step(con, "S22c_insert_run_metadata", glue("
-        INSERT INTO {wrk('LOT_RUN_METADATA')}
+        INSERT INTO {wrk('LOT_RUN_METADATA')} (
+          RUN_ID, RUN_TIMESTAMP, CDM_SCHEMA, WORK_SCHEMA, INPUT_COHORT_TABLE,
+          INDUCTION_WINDOW_DAYS, INDUCTION_WINDOW_DAYS_LOT_N,
+          MAP_DISCON_GAP_DAYS, MEDICAL_DAY_SUPPLY,
+          N_COHORT_PATIENTS, N_MMA_CLAIMS, N_MAPS, N_LOT1_PATIENTS
+        )
         SELECT
-          '{run_id}' AS RUN_ID,
-          current_timestamp() AS RUN_TIMESTAMP,
-          '{cfg$cdm_schema}' AS CDM_SCHEMA,
-          '{cfg$work_schema}' AS WORK_SCHEMA,
-          '{cfg$input_cohort_table}' AS INPUT_COHORT_TABLE,
-          {cfg$induction_window_days} AS INDUCTION_WINDOW_DAYS,
-          {cfg$lot_n_induction_window_days} AS INDUCTION_WINDOW_DAYS_LOT_N,
-          {cfg$map_discon_gap_days} AS MAP_DISCON_GAP_DAYS,
-          {cfg$medical_day_supply} AS MEDICAL_DAY_SUPPLY,
-          {cohort_n} AS N_COHORT_PATIENTS,
-          {mma_n} AS N_MMA_CLAIMS,
-          {map_n} AS N_MAPS,
-          {lot1_n} AS N_LOT1_PATIENTS
+          '{run_id}',
+          current_timestamp(),
+          '{cfg$cdm_schema}',
+          '{cfg$work_schema}',
+          '{cfg$input_cohort_table}',
+          {cfg$induction_window_days},
+          {cfg$lot_n_induction_window_days},
+          {cfg$map_discon_gap_days},
+          {cfg$medical_day_supply},
+          {cohort_n},
+          {mma_n},
+          {map_n},
+          {lot1_n}
       "))
     }, error = function(e) {
       log_msg("  WARNING: Run metadata persist failed: ", conditionMessage(e))
