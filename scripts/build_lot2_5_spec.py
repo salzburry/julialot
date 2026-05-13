@@ -617,16 +617,22 @@ def build_open_questions(wb):
 
     rows = [
         ("Q1", "90-day discontinuation gap - keep, or remove?",
-         "RESOLVED. Reply to Julia (06-May comments 2c + 4c): "
+         "RESOLVED + IMPLEMENTED. Reply to Julia (06-May comments 2c + 4c): "
          "Removing the LOT-level 90d confirmation gap from both LOT1 and LOT2-5 per your request. "
          "LOTN_BASE_DISCON_DT will always equal the last med date (max MAP_END_DT across induction agents) "
          "whenever a runout exists - no observation-time buffer. "
-         "To preserve the death signal you'd otherwise lose, end-reason priority is flipped so DEATH > DISCONTINUATION > STUDY_END "
-         "(was DISCONTINUATION > DEATH > STUDY_END). Effect: "
-         "(1) patients who run out and die get REASON = DEATH at death date with LOT length to death (no change); "
-         "(2) patients who run out and reach study end get REASON = DISCONTINUATION at runout (matches what you expected on the dashboard); "
-         "(3) the runout date is still recorded in LOTN_BASE_DISCON_DT for downstream use even when REASON = DEATH. "
-         "MAP-level discontinuation gap (map_discon_gap_days, per-drug) is UNCHANGED - still drives per-drug stop detection.",
+         "To preserve the death signal, end-reason priority is flipped so DEATH > DISCONTINUATION > STUDY_END "
+         "(was DISCONTINUATION > DEATH > STUDY_END). "
+         "Edge-case refinement (Q1.1): DEATH only preempts DISCONTINUATION when no LOT-(N+1)-qualifying trigger "
+         "exists in (DISCON_DT, OBS_END_DT]. If the patient ran out, started new therapy (or had an SCT), "
+         "and then died, the runout is the true LOT N end (REASON = DISCONTINUATION) and the new event "
+         "triggers LOT N+1 in the next iteration - prevents post-runout therapy from being silently swallowed by death. "
+         "Effect: "
+         "(1) runs out, dies, no post-runout therapy => REASON = DEATH at death date; "
+         "(2) runs out, starts new therapy, then dies => REASON = DISCONTINUATION at runout; new therapy starts LOT N+1; "
+         "(3) runs out, reaches study end => REASON = DISCONTINUATION at runout (matches dashboard expectation); "
+         "(4) runout date is still recorded in LOTN_BASE_DISCON_DT even when REASON = DEATH. "
+         "MAP-level discontinuation gap (map_discon_gap_days, per-drug) is UNCHANGED.",
          "Julia / Peter", "Resolved"),
         ("Q2", "ALLO LOT span: single day or until next agent?",
          "RESOLVED: single day, start = end = ALLO_DT. ALLO is a punctuation event between LOTs; the next MM agent starts the following LOT.",
@@ -884,7 +890,7 @@ def build_timelines(wb):
     foot_row = row + 1
     ws.cell(row=foot_row, column=1,
             value="Each cell = ~14 days. Markers: M=Med add, A=AUTO SCT, X=ALLO SCT, C=CAR-T, +=Death. "
-                  "Yellow top edge = induction window overlay. Single-cell-only LOT = singleton ALLO LOT (Q2 draft assumption).").font = NORMAL
+                  "Yellow top edge = induction window overlay. Single-cell-only LOT = singleton ALLO LOT (Q2 resolved: ALLO LOT spans a single day).").font = NORMAL
     ws.cell(row=foot_row, column=1).alignment = WRAP
     ws.merge_cells(start_row=foot_row, start_column=1, end_row=foot_row, end_column=AXIS_START_COL + N_BUCKETS - 1)
 
