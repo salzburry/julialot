@@ -626,11 +626,9 @@ def build_open_questions(wb):
          "Draft uses LOTN_TX_AUTO_*FLG; consider aligning to LOTN_SCT_AUTO_*FLG.",
          "Onkar / Julia", "Open"),
         ("Q14", "Same-day SCT/ALLO/CART/AUTO representation for LOT2-5.",
-         "Per Julia 06-May: 'all events should be equally represented.' Current code uses scalar priority "
-         "(SCT_ALLO > CART > SCT_AUTO > MED) and records one LOT_START_TYPE. "
-         "Action needed: run prevalence count of same-day collisions; then choose representation "
-         "(scalar+priority / scalar+per-event flags / composite label / multi-row).",
-         "Julia / Peter / Onkar", "Open"),
+         "RESOLVED: keep scalar priority (SCT_ALLO > CART > SCT_AUTO > MED) inherited from LOT1. "
+         "LOTN_START_TYPE records the highest-priority event on the start date.",
+         "Julia / Peter", "Resolved"),
         ("Q15", "CAR-T LOT end reason when consolidation meds run out: SCT_CART or DISCONTINUATION?",
          "Draft (current code): DISCONTINUATION - CAR-T LOT spans through last consolidation MAP_END_DT and routes by runout. "
          "Alternative: force SCT_CART for any CAR-T-started LOT regardless of how the consolidation regimen ends.",
