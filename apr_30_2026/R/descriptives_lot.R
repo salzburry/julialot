@@ -99,7 +99,7 @@ print_descriptives <- function(con) {
 <tr><td>Induction Window</td><td>', cfg$induction_window_days, ' days</td></tr>
 <tr><td>MAP Discontinuation Gap</td><td>', cfg$map_discon_gap_days, ' days</td></tr>
 <tr><td>Medical Day Supply</td><td>', cfg$medical_day_supply, ' days</td></tr>
-<tr><td>LOT Discontinuation Gap</td><td>', cfg$lot_discon_gap_days, ' days</td></tr>
+<tr><td>LOT Discontinuation Gap</td><td>REMOVED (Q1 06-May)</td></tr>
 </table>
 </body></html>')
     add_html_card(overview_html, section = "OVERVIEW", title = "Run Overview")

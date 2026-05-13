@@ -71,7 +71,6 @@ main <- function() {
   build_lot2_5(
     con,
     induction_window_days   = as.integer(Sys.getenv("INDUCTION_WINDOW_DAYS_LOT_N", unset = "30")),
-    lot_discon_gap_days     = cfg$lot_discon_gap_days,
     cart_consolidation_days = cfg$cart_consolidation_days,
     sct_tandem_days         = cfg$sct_tandem_days,
     allo_lot_span           = Sys.getenv("ALLO_LOT_SPAN", unset = "single_day"),

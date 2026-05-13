@@ -25,10 +25,10 @@
 #
 # Key parameters (defaults reflect Apr 22 study-team decisions):
 #   induction_window_days   = 30   (LOT1 uses 60)
-#   lot_discon_gap_days     = 90
+#   (lot_discon_gap_days removed per Q1 06-May; LOT-level 90d gate no longer applied)
 #   cart_consolidation_days = 45   (Apr 22; supersedes 30d protocol text)
 #   sct_tandem_days         = 180  (>180d AUTO is unplanned)
-#   allo_lot_span           = "single_day"  (Q2 draft) or "extend_to_next"
+#   allo_lot_span           = "single_day"  (Q2 resolved) - ALLO LOT spans only ALLO_DT
 #   max_lot                 = 5
 #
 # Spec cross-references:
@@ -160,7 +160,6 @@ init_lot_long_from_lot1 <- function(con, meds, classes) {
 #   4. LOT_N end date and reason: earliest qualifying event.
 build_lot_n <- function(con, lot_num,
                         induction_window_days,
-                        lot_discon_gap_days,
                         cart_consolidation_days,
                         sct_tandem_days,
                         allo_lot_span,
@@ -244,7 +243,10 @@ build_lot_n <- function(con, lot_num,
     -- Rule: AUTO starts a new LOT UNLESS
     --   (i) it falls inside the prior LOT's applicable window from PREV_START_DT
     --       (30d MED/AUTO-started, 1d ALLO-started, 45d CART-started), or
-    --   (ii) it is 60-180 days after the IMMEDIATELY prior AUTO (planned tandem).
+    --   (ii) the AUTO is on/before sct_tandem_days (180d) after the IMMEDIATELY
+    --        prior AUTO (planned tandem). Per Julia 13-May: implementation uses
+    --        ONLY the upper bound (matches LOT1). Protocol convention is
+    --        60-180 d but the < 60 d case is too rare/ambiguous to gate on.
     -- The PREV_AUTO_DT IS NOT NULL guard from the prior rule is dropped:
     -- first-ever AUTOs CAN trigger a new LOT (LOT2-5 only; LOT1 retains the
     -- protocol convention that the first AUTO is part of induction).
@@ -267,9 +269,12 @@ build_lot_n <- function(con, lot_num,
                 WHEN 'CART'     THEN {cart_consolidation_days} - 1
                 ELSE                 {induction_window_days} - 1
               END)
-        -- (ii) not a planned tandem (60-180 days after prior AUTO)
+        -- (ii) not a planned tandem. Per Julia 13-May: implementation uses
+        -- ONLY the upper bound (<= sct_tandem_days). Protocol convention is
+        -- "60-180 days", but the < 60 d case is so rare (and ambiguous - usually
+        -- re-conditioning or salvage rather than a planned tandem) that the
+        -- code matches LOT1's existing <= 180 behaviour. The spec records this.
         AND NOT (awp.PREV_AUTO_DT IS NOT NULL
-                 AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) >= 60
                  AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {sct_tandem_days})
       GROUP BY pe.PATID
     )
@@ -548,21 +553,21 @@ build_lot_n <- function(con, lot_num,
       -- falls outside the window, it is NOT in-LOT (the TX_AUTO_* fields and
       -- TAND/SING flags become NULL/0) and instead becomes the ENDING_AUTO_DT
       -- that closes LOT N. AUTO_DT_2 is in-LOT only when AUTO_DT_1 is in-LOT
-      -- AND AUTO_DT_2 is a valid tandem (60-180d after AUTO_DT_1).
+      -- AND AUTO_DT_2 is a valid tandem (<= sct_tandem_days after AUTO_DT_1).
       CASE WHEN ap.AUTO_DT_1 IS NOT NULL
             AND datediff(ap.AUTO_DT_1, l.LOT{lot_num}_START_DT) < l.LOT_WINDOW_DAYS
            THEN ap.AUTO_DT_1 END AS LOT{lot_num}_TX_AUTO_DT_1,
       CASE WHEN ap.AUTO_DT_1 IS NOT NULL
             AND datediff(ap.AUTO_DT_1, l.LOT{lot_num}_START_DT) < l.LOT_WINDOW_DAYS
             AND ap.AUTO_DT_2 IS NOT NULL
-            AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) BETWEEN 60 AND {sct_tandem_days}
+            AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {sct_tandem_days}
             AND coalesce(ab.n_allo_between, 0) = 0
            THEN ap.AUTO_DT_2 END AS LOT{lot_num}_TX_AUTO_DT_2,
       CASE
         WHEN ap.AUTO_DT_1 IS NOT NULL
          AND datediff(ap.AUTO_DT_1, l.LOT{lot_num}_START_DT) < l.LOT_WINDOW_DAYS
          AND ap.AUTO_DT_2 IS NOT NULL
-         AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) BETWEEN 60 AND {sct_tandem_days}
+         AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {sct_tandem_days}
          AND coalesce(ab.n_allo_between, 0) = 0
         THEN 1 ELSE 0
       END AS LOT{lot_num}_SCT_AUTO_TAND_FLG,
@@ -570,7 +575,7 @@ build_lot_n <- function(con, lot_num,
         WHEN ap.AUTO_DT_1 IS NOT NULL
          AND datediff(ap.AUTO_DT_1, l.LOT{lot_num}_START_DT) < l.LOT_WINDOW_DAYS
          AND NOT (ap.AUTO_DT_2 IS NOT NULL
-                  AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) BETWEEN 60 AND {sct_tandem_days}
+                  AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {sct_tandem_days}
                   AND coalesce(ab.n_allo_between, 0) = 0)
         THEN 1 ELSE 0
       END AS LOT{lot_num}_SCT_AUTO_SING_FLG,
@@ -581,7 +586,7 @@ build_lot_n <- function(con, lot_num,
           THEN ap.AUTO_DT_1
         -- Valid tandem in-LOT: AUTO_DT_3 ends LOT N
         WHEN ap.AUTO_DT_2 IS NOT NULL
-         AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) BETWEEN 60 AND {sct_tandem_days}
+         AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {sct_tandem_days}
          AND coalesce(ab.n_allo_between, 0) = 0
         THEN ap.AUTO_DT_3
         -- Single in-LOT AUTO: AUTO_DT_2 ends LOT N (when it exists and is non-tandem)
@@ -597,7 +602,7 @@ build_lot_n <- function(con, lot_num,
         WHEN ap.AUTO_DT_1 IS NOT NULL
          AND datediff(ap.AUTO_DT_1, l.LOT{lot_num}_START_DT) < l.LOT_WINDOW_DAYS
          AND ap.AUTO_DT_2 IS NOT NULL
-         AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) BETWEEN 60 AND {sct_tandem_days}
+         AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {sct_tandem_days}
          AND coalesce(ab.n_allo_between, 0) = 0
         THEN ap.AUTO_DT_2
         WHEN ap.AUTO_DT_1 IS NOT NULL
@@ -653,7 +658,7 @@ build_lot_n <- function(con, lot_num,
                  FROM lot{lot_num}_contains_mtx_reg GROUP BY contains_mtx_reg"))
 
   # ---- Step N.6: LOT_N base end ----
-  # ALLO singleton: end on ALLO_DT (Q2 draft = single_day) or extend to next agent.
+  # ALLO singleton: end on ALLO_DT (Q2 resolved: single_day).
   # CART singleton-ish: agents within cart_consolidation_days are part of LOT_N.
   # Otherwise: same end-reason logic as LOT1, with the same priority order.
   # ALLO span Q2 - "single_day" hardcodes start = end = ALLO_DT with reason
@@ -663,9 +668,50 @@ build_lot_n <- function(con, lot_num,
 
   run_step(con, paste0(pfx, "_lot", lot_num, "_base_end"), glue("
     CREATE OR REPLACE TEMPORARY VIEW lot{lot_num}_base_end AS
-    WITH end_candidates AS (
+    WITH
+    -- Q1.1 (post-review fix): identify whether any LOT_(N+1)-qualifying
+    -- trigger exists strictly after LOT_BASE_DISCON_DT and on/before
+    -- OBS_END_DT. This is used to prevent DEATH from preempting
+    -- DISCONTINUATION when a patient ran out and then started new therapy
+    -- (or had an SCT) before dying. Without this gate, the post-runout
+    -- therapy would be silently swallowed by the DEATH-ends-LOT branch.
+    post_runout_base_meds AS (
+      SELECT PATID, MED_ABBR FROM lot{lot_num}_induction_meds
+      UNION
+      SELECT im.PATID, ps.substitute_med AS MED_ABBR
+      FROM lot{lot_num}_induction_meds im
+      INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
+    ),
+    post_runout_med AS (
+      SELECT DISTINCT ms.PATID
+      FROM map_stacked ms
+      INNER JOIN lot{lot_num}_base lb ON ms.PATID = lb.PATID
+      LEFT JOIN post_runout_base_meds prbm
+        ON ms.PATID = prbm.PATID AND ms.MAP_MED_TYPE = prbm.MED_ABBR
+      WHERE lb.LOT{lot_num}_BASE_DISCON_DT IS NOT NULL
+        AND ms.MAP_START_DT > lb.LOT{lot_num}_BASE_DISCON_DT
+        AND ms.MAP_START_DT <= lb.OBS_END_DT
+        AND ms.MAP_MED_CLASS <> 'STEROID'
+        AND prbm.MED_ABBR IS NULL
+    ),
+    post_runout_trigger AS (
+      SELECT lb.PATID,
+        CASE
+          WHEN lb.LOT{lot_num}_BASE_DISCON_DT IS NULL THEN 0
+          WHEN prm.PATID IS NOT NULL THEN 1
+          WHEN sct.FIRST_ALLO_DT  IS NOT NULL AND sct.FIRST_ALLO_DT  > lb.LOT{lot_num}_BASE_DISCON_DT THEN 1
+          WHEN sct.FIRST_CART_DT  IS NOT NULL AND sct.FIRST_CART_DT  > lb.LOT{lot_num}_BASE_DISCON_DT THEN 1
+          WHEN sct.ENDING_AUTO_DT IS NOT NULL AND sct.ENDING_AUTO_DT > lb.LOT{lot_num}_BASE_DISCON_DT THEN 1
+          ELSE 0
+        END AS POST_RUNOUT_TRIGGER_FLG
+      FROM lot{lot_num}_base lb
+      LEFT JOIN lot{lot_num}_sct sct ON lb.PATID = sct.PATID
+      LEFT JOIN post_runout_med prm ON lb.PATID = prm.PATID
+    ),
+    end_candidates AS (
       SELECT
         lb.*,
+        coalesce(prt.POST_RUNOUT_TRIGGER_FLG, 0) AS POST_RUNOUT_TRIGGER_FLG,
         sct.LOT{lot_num}_TX_AUTO_DT_1, sct.LOT{lot_num}_TX_AUTO_DT_2,
         sct.LOT{lot_num}_SCT_AUTO_TAND_FLG, sct.LOT{lot_num}_SCT_AUTO_SING_FLG,
         sct.ENDING_AUTO_DT, sct.FIRST_ALLO_DT, sct.FIRST_CART_DT,
@@ -689,7 +735,7 @@ build_lot_n <- function(con, lot_num,
             ), 1)
           ELSE NULL
         END AS LOT_TX_ENDDATE,
-        -- Same-day SCT end priority (per workbook Q14 draft):
+        -- Same-day SCT end priority (Q14 resolved, inherits LOT1):
         -- SCT_ALLO > SCT_CART > SCT_AUTO. ALLO wins ALLO==CART or
         -- ALLO==AUTO ties; CART wins CART==AUTO; otherwise AUTO.
         CASE
@@ -719,10 +765,11 @@ build_lot_n <- function(con, lot_num,
       FROM lot{lot_num}_base lb
       LEFT JOIN lot{lot_num}_sct              sct ON lb.PATID = sct.PATID
       LEFT JOIN lot{lot_num}_contains_mtx_reg cmr ON lb.PATID = cmr.PATID
+      LEFT JOIN post_runout_trigger           prt ON lb.PATID = prt.PATID
     )
     SELECT
       ec.*,
-      -- Special-case start types per Q2/Q3 drafts.
+      -- Special-case start types (Q2 resolved single-day ALLO; Q3 draft for CAR-T-without-consolidation).
       --   ALLO single_day: LOT spans only the ALLO date itself.
       --   CAR-T with no consolidation agents: LOT spans only FIRST_CART_DT.
       --   ALLO extend_to_next: fall through to the natural end-reason logic.
@@ -753,7 +800,12 @@ build_lot_n <- function(con, lot_num,
         -- Q1 (06-May): DEATH now outranks DISCONTINUATION. Patients who run out
         -- and then die get REASON = DEATH; runout date is still recorded in
         -- LOT{lot_num}_BASE_DISCON_DT.
-        WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT THEN 'DEATH'
+        -- Q1.1: DEATH preempts DISCONTINUATION only when no qualifying
+        -- LOT-start trigger exists in (DISCON_DT, OBS_END_DT]. If the patient
+        -- ran out then started new therapy (or had an SCT) before dying,
+        -- the runout is the true LOT end and the new event triggers LOT N+1.
+        WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT
+         AND ec.POST_RUNOUT_TRIGGER_FLG = 0 THEN 'DEATH'
         WHEN ec.LOT{lot_num}_BASE_DISCON_DT IS NOT NULL THEN 'DISCONTINUATION'
         ELSE 'STUDY_END'
       END AS LOT{lot_num}_BASE_END_REASON,
@@ -776,7 +828,8 @@ build_lot_n <- function(con, lot_num,
          AND ec.CART_INIT_FLG = 0
          AND (ec.LOT{lot_num}_BASE_DISCON_DT IS NULL OR ec.LOT{lot_num}_BASE_1ST_ADD_MED_DT <= ec.LOT{lot_num}_BASE_DISCON_DT)
         THEN ec.LOT{lot_num}_BASE_1ST_ADD_MED_DT
-        WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT THEN ec.DEATH_DT
+        WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT
+         AND ec.POST_RUNOUT_TRIGGER_FLG = 0 THEN ec.DEATH_DT
         WHEN ec.LOT{lot_num}_BASE_DISCON_DT IS NOT NULL THEN ec.LOT{lot_num}_BASE_DISCON_DT
         ELSE ec.OBS_END_DT
       END AS LOT{lot_num}_BASE_END_DT
@@ -840,7 +893,7 @@ build_lot_n <- function(con, lot_num,
       CASE WHEN lbe.LOT{lot_num}_TX_AUTO_DT_1 IS NOT NULL
             AND lbe.LOT{lot_num}_TX_AUTO_DT_1 <= lbe.LOT{lot_num}_BASE_END_DT
            THEN 1 ELSE 0 END                          AS LOT_TX_AUTO_FLG,
-      -- TAND only if both in-LOT, 60-180d apart, AND pre-clamp tandem rules
+      -- TAND only if both in-LOT, AUTO_DT_2 within sct_tandem_days of AUTO_DT_1, AND pre-clamp tandem rules
       -- already qualified it (no ALLO between, etc., from lot{n}_sct).
       CASE WHEN lbe.LOT{lot_num}_TX_AUTO_DT_2 IS NOT NULL
             AND lbe.LOT{lot_num}_TX_AUTO_DT_2 <= lbe.LOT{lot_num}_BASE_END_DT
@@ -885,7 +938,6 @@ build_lot_n <- function(con, lot_num,
 
 build_lot2_5 <- function(con,
                         induction_window_days   = 30,
-                        lot_discon_gap_days     = 90,
                         cart_consolidation_days = 45,
                         sct_tandem_days         = 180,
                         allo_lot_span           = "single_day",
@@ -895,7 +947,6 @@ build_lot2_5 <- function(con,
 
   log_msg("Building LOT_LONG (LOT1..LOT", max_lot, ")")
   log_msg("  induction_window_days   = ", induction_window_days)
-  log_msg("  lot_discon_gap_days     = ", lot_discon_gap_days)
   log_msg("  cart_consolidation_days = ", cart_consolidation_days)
   log_msg("  sct_tandem_days         = ", sct_tandem_days)
   log_msg("  allo_lot_span           = ", allo_lot_span, " (Q2)")
@@ -928,7 +979,6 @@ build_lot2_5 <- function(con,
     }
     build_lot_n(con, lot_num = n,
                 induction_window_days   = induction_window_days,
-                lot_discon_gap_days     = lot_discon_gap_days,
                 cart_consolidation_days = cart_consolidation_days,
                 sct_tandem_days         = sct_tandem_days,
                 allo_lot_span           = allo_lot_span,

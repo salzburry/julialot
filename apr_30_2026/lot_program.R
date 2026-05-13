@@ -79,7 +79,7 @@ main <- function() {
   log_msg("  Induction Window:  ", cfg$induction_window_days, " days")
   log_msg("  MAP Discon Gap:    ", cfg$map_discon_gap_days, " days")
   log_msg("  Medical Day Supply: ", cfg$medical_day_supply, " days")
-  log_msg("  LOT Discon Gap:    ", cfg$lot_discon_gap_days, " days")
+  log_msg("  LOT Discon Gap:    REMOVED (Q1 06-May; cfg value ignored)")
 
   # ----------------------------------------------------------
   # STEP 0: Register code lists as TEMP views
@@ -1467,9 +1467,48 @@ main <- function() {
   # → LOT1 ends on FIRST_CART_DT - 1 (the day before CAR-T infusion).
   run_step(con, "S16_lot1_base_end", glue("
     CREATE OR REPLACE TEMPORARY VIEW lot1_base_end AS
-    WITH end_candidates AS (
+    WITH
+    -- Q1.1 (post-review fix): identify whether any LOT2-qualifying trigger
+    -- exists strictly after LOT1_BASE_DISCON_DT and on/before OBS_END_DT.
+    -- Prevents DEATH from preempting DISCONTINUATION when a patient ran out
+    -- and then started new therapy (or had an SCT) before dying.
+    post_runout_base_meds AS (
+      SELECT PATID, MED_ABBR FROM lot1_induction_meds
+      UNION
+      SELECT im.PATID, ps.substitute_med AS MED_ABBR
+      FROM lot1_induction_meds im
+      INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
+    ),
+    post_runout_med AS (
+      SELECT DISTINCT ms.PATID
+      FROM map_stacked ms
+      INNER JOIN lot1_base lb ON ms.PATID = lb.PATID
+      LEFT JOIN post_runout_base_meds prbm
+        ON ms.PATID = prbm.PATID AND ms.MAP_MED_TYPE = prbm.MED_ABBR
+      WHERE lb.LOT1_BASE_DISCON_DT IS NOT NULL
+        AND ms.MAP_START_DT > lb.LOT1_BASE_DISCON_DT
+        AND ms.MAP_START_DT <= lb.OBS_END_DT
+        AND ms.MAP_MED_CLASS <> 'STEROID'
+        AND prbm.MED_ABBR IS NULL
+    ),
+    post_runout_trigger AS (
+      SELECT lb.PATID,
+        CASE
+          WHEN lb.LOT1_BASE_DISCON_DT IS NULL THEN 0
+          WHEN prm.PATID IS NOT NULL THEN 1
+          WHEN sct.FIRST_ALLO_DT  IS NOT NULL AND sct.FIRST_ALLO_DT  > lb.LOT1_BASE_DISCON_DT THEN 1
+          WHEN sct.FIRST_CART_DT  IS NOT NULL AND sct.FIRST_CART_DT  > lb.LOT1_BASE_DISCON_DT THEN 1
+          WHEN sct.ENDING_AUTO_DT IS NOT NULL AND sct.ENDING_AUTO_DT > lb.LOT1_BASE_DISCON_DT THEN 1
+          ELSE 0
+        END AS POST_RUNOUT_TRIGGER_FLG
+      FROM lot1_base lb
+      LEFT JOIN lot1_sct sct ON lb.PATID = sct.PATID
+      LEFT JOIN post_runout_med prm ON lb.PATID = prm.PATID
+    ),
+    end_candidates AS (
       SELECT
         lb.*,
+        coalesce(prt.POST_RUNOUT_TRIGGER_FLG, 0) AS POST_RUNOUT_TRIGGER_FLG,
         sct.LOT1_TX_AUTO_DT_1,
         sct.LOT1_TX_AUTO_DT_2,
         sct.LOT1_SCT_AUTO_TAND_FLG,
@@ -1498,6 +1537,7 @@ main <- function() {
       FROM lot1_base lb
       LEFT JOIN lot1_sct sct ON lb.PATID = sct.PATID
       LEFT JOIN lot1_contains_mtx_reg cmr ON lb.PATID = cmr.PATID
+      LEFT JOIN post_runout_trigger   prt ON lb.PATID = prt.PATID
     )
     SELECT
       ec.*,
@@ -1544,10 +1584,13 @@ main <- function() {
          AND ec.CART_INIT_FLG = 0
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASE_1ST_ADD_MED_DT <= ec.LOT1_BASE_DISCON_DT)
         THEN 'MED_ADD'
-        -- Q1 (06-May): DEATH now outranks DISCONTINUATION. Patients who run out
-        -- and then die get REASON = DEATH; runout date is still recorded in
-        -- LOT1_BASE_DISCON_DT.
-        WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT THEN 'DEATH'
+        -- Q1 + Q1.1 (06-May review): DEATH outranks DISCONTINUATION, but only
+        -- when no qualifying LOT2-start trigger exists between runout and
+        -- death. If the patient ran out then started new therapy (or had an
+        -- SCT) before dying, the runout is the true LOT1 end and the new
+        -- event triggers LOT2.
+        WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT
+         AND ec.POST_RUNOUT_TRIGGER_FLG = 0 THEN 'DEATH'
         -- Rule 1: Discontinuation of all agents (also catches former MAINTENANCE_END patients)
         WHEN ec.LOT1_BASE_DISCON_DT IS NOT NULL THEN 'DISCONTINUATION'
         -- Study end (disenrollment not a censoring criterion per study design;
@@ -1571,7 +1614,8 @@ main <- function() {
          AND ec.CART_INIT_FLG = 0
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASE_1ST_ADD_MED_DT <= ec.LOT1_BASE_DISCON_DT)
         THEN ec.LOT1_BASE_1ST_ADD_MED_DT
-        WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT THEN ec.DEATH_DT
+        WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT
+         AND ec.POST_RUNOUT_TRIGGER_FLG = 0 THEN ec.DEATH_DT
         WHEN ec.LOT1_BASE_DISCON_DT IS NOT NULL THEN ec.LOT1_BASE_DISCON_DT
         ELSE ec.OBS_END_DT  -- OBS_END_DT = ENDDATE (disenrollment not a censoring criterion)
       END AS LOT1_BASE_END_DT,
@@ -1594,8 +1638,10 @@ main <- function() {
          AND ec.CART_INIT_FLG = 0
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASE_1ST_ADD_MED_DT <= ec.LOT1_BASE_DISCON_DT)
         THEN datediff(ec.LOT1_BASE_1ST_ADD_MED_DT, ec.LOT1_START_DT) + 1
-        -- Q1 priority flip: DEATH outranks DISCONTINUATION.
+        -- Q1 + Q1.1: DEATH outranks DISCONTINUATION, but only when no
+        -- post-runout LOT2-start trigger exists.
         WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT
+         AND ec.POST_RUNOUT_TRIGGER_FLG = 0
         THEN datediff(ec.DEATH_DT, ec.LOT1_START_DT) + 1
         WHEN ec.LOT1_BASE_DISCON_DT IS NOT NULL
         THEN datediff(ec.LOT1_BASE_DISCON_DT, ec.LOT1_START_DT) + 1

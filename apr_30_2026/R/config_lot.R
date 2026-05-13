@@ -39,6 +39,9 @@ cfg <- list(
   # Part 2 parameters
   induction_window_days = as.integer(Sys.getenv("INDUCTION_WINDOW_DAYS", unset = "60")),
   map_discon_gap_days   = as.integer(Sys.getenv("MAP_DISCON_GAP_DAYS", unset = "90")),
+  # DEPRECATED (Q1 06-May): LOT-level 90d discontinuation buffer removed.
+  # LOTN_BASE_DISCON_DT = last med date directly (cap at OBS_END_DT).
+  # Value retained for back-compat with descriptives output table only.
   lot_discon_gap_days   = as.integer(Sys.getenv("LOT_DISCON_GAP_DAYS", unset = "90")),
   medical_day_supply    = as.integer(Sys.getenv("MEDICAL_DAY_SUPPLY", unset = "28")),
 
