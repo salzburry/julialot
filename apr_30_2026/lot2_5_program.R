@@ -17,7 +17,6 @@
 #
 # Configuration overrides (env vars):
 #   INDUCTION_WINDOW_DAYS_LOT_N    default 30
-#   LOT_DISCON_GAP_DAYS            default 90
 #   CART_CONSOLIDATION_DAYS        default 45
 #   SCT_TANDEM_DAYS                default 180
 #   ALLO_LOT_SPAN                  default "single_day"  ("extend_to_next")

@@ -293,7 +293,7 @@ def build_lot2_5_base(wb):
          "AUTO not part of a valid tandem pair.",
          "CL_SCT_CODELIST", "", ""),
         ("FU_PD", "LOTN_TX_AUTO_TAND_FLG", "Planned tandem AUTO during LOT N", "0/1",
-         "Two AUTOs >=60 and <=180 days apart.",
+         "Two AUTOs within 180 days = planned tandem.",
          "CL_SCT_CODELIST",
          "Use datediff without +1.", ""),
         ("FU_PD", "LOTN_TX_AUTO_DT_1 / LOTN_TX_AUTO_DT_2",
@@ -434,8 +434,8 @@ def build_lot2_5_base_end(wb):
          "Any ALLO ends current LOT day before ALLO, and starts a new ALLO LOT.",
          "CL_SCT_CODELIST (ALLO)", "", ""),
         ("FU_PD", "AUTO_TANDEM_WINDOW", "Tandem AUTO window", "<= 180 days",
-         "Two AUTOs <= sct_tandem_days (180 days) apart = planned tandem (continuation, no new LOT). "
-         "Any other AUTO that falls outside LOT_(N-1)'s applicable window starts a new LOT.",
+         "Two AUTOs within 180 days = planned tandem (continuation, no new LOT). "
+         "Any other AUTO that falls outside LOT N's applicable window starts a new LOT.",
          "CL_SCT_CODELIST (AUTO)",
          "Per Julia 13-May: implementation uses ONLY the upper bound. The MM protocol convention is "
          "60-180 days, but the < 60 d case is too rare and ambiguous (usually re-conditioning / salvage "
@@ -455,8 +455,11 @@ def build_lot2_5_base_end(wb):
          "n/a",
          "Same-day / overlapping-event priority (revised per Julia 06-May to keep DEATH above DISCONTINUATION): "
          "SCT_ALLO > SCT_CART > SCT_AUTO > CART_INIT > MED_ADD > DEATH > DISCONTINUATION > STUDY_END. "
-         "DEATH moved above DISCONTINUATION so patients who run out and then die within the LOT keep REASON = DEATH "
-         "(the runout date is still recorded in LOTN_BASE_DISCON_DT).",
+         "DEATH outranks DISCONTINUATION so patients who run out then die keep REASON = DEATH "
+         "(the runout date is still recorded in LOTN_BASE_DISCON_DT). "
+         "EXCEPTION (Q1.1): if a patient runs out and then starts a new LOT trigger (new MM agent, "
+         "ALLO, CART, or qualifying AUTO) before death, DISCONTINUATION wins at the runout date "
+         "and the new trigger starts LOT N+1 - DEATH does not silently swallow post-runout therapy.",
          ""),
         ("FU_PD", "LOTN_BASE_END_DT_CE_SENS", "LOT N end date (SENSITIVITY)", "Date",
          "Same as LOTN_BASE_END_DT, additionally capped at ELIGEND. Emitted when CENSOR_AT_DISENROLLMENT = TRUE.",
@@ -545,9 +548,9 @@ def build_sct_cart_start(wb):
          "30d induction from AUTO_DT.", "SCT_AUTO",
          "First-ever AUTOs CAN trigger a new LOT (LOT2-5 only). LOT1 keeps protocol convention "
          "that the first AUTO is part of induction."),
-        ("New MM agent", "Always, when MAP_START_DT is strictly after LOT_(N-1)_BASE_END_DT (i.e., outside the prior LOT's span / induction window).",
+        ("New MM agent", "Always, when the agent appears after the prior LOT's end date.",
          "MAP_START_DT of new agent", "30d induction window.", "n/a",
-         "Steroids and biosimilar subs of LOT_(N-1) drugs do not start a LOT. Code: lot2_5_base.R::med_cand uses MAP_START_DT > PREV_END_DT - no gating on the prior LOT's end reason."),
+         "Starts a new LOT when a non-steroid, non-biosimilar MM agent appears after LOT_(N-1)_BASE_END_DT. The prior LOT's end reason does not matter."),
         ("Death / STUDY_END (PRIMARY)", "Never starts a LOT; ends follow-up.",
          "n/a", "n/a", "DEATH / STUDY_END",
          "Distinct from DISCONTINUATION. Per Q1 (06-May): runout cases now correctly show DISCONTINUATION "

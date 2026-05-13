@@ -1288,7 +1288,7 @@ main <- function() {
         -- Tandem: two AUTO SCTs within 180 days, no ALLO between
         CASE
           WHEN ap.AUTO_DT_2 IS NOT NULL
-           AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}  -- H2 fix: no +1, per protocol >= 60 AND <= 180
+           AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}  -- Tandem if AUTO_DT_2 is within sct_tandem_days (180d) of AUTO_DT_1; no +1 (Q9 resolved 13-May)
            AND coalesce(ab.n_allo_between, 0) = 0
           THEN 1 ELSE 0
         END AS LOT1_SCT_AUTO_TAND_FLG,
@@ -1296,7 +1296,7 @@ main <- function() {
         CASE
           WHEN ap.AUTO_DT_1 IS NOT NULL
            AND NOT (ap.AUTO_DT_2 IS NOT NULL
-                    AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}  -- H2 fix: no +1, per protocol >= 60 AND <= 180
+                    AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}  -- Tandem if AUTO_DT_2 is within sct_tandem_days (180d) of AUTO_DT_1; no +1 (Q9 resolved 13-May)
                     AND coalesce(ab.n_allo_between, 0) = 0)
           THEN 1 ELSE 0
         END AS LOT1_SCT_AUTO_SING_FLG,
@@ -1304,7 +1304,7 @@ main <- function() {
         -- Tandem -> 3rd AUTO ends LOT1; Single -> 2nd AUTO ends LOT1
         CASE
           WHEN ap.AUTO_DT_2 IS NOT NULL
-           AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}  -- H2 fix: no +1, per protocol >= 60 AND <= 180
+           AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}  -- Tandem if AUTO_DT_2 is within sct_tandem_days (180d) of AUTO_DT_1; no +1 (Q9 resolved 13-May)
            AND coalesce(ab.n_allo_between, 0) = 0
           THEN ap.AUTO_DT_3
           WHEN ap.AUTO_DT_1 IS NOT NULL
