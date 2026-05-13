@@ -303,13 +303,12 @@ def build_lot2_5_base(wb):
          "CL_SCT_CODELIST", "", ""),
         ("FU_PD", "contains_mtx_reg_LOTN", "LOT N regimen contains valid maintenance subset", "0/1",
          "Flag is 1 when LOT N induction has BOTH (a) >=1 valid mono-maintenance agent OR a valid dual combo, AND (b) an anchor agent. "
-         "Mono: LENA, BORT, DARA, IXAZ, THAL. Dual: BORT+LENA, CARF+LENA, DARA+LENA. "
-         "The anchor can itself be an approved agent; it does not need to be a non-maintenance agent.",
+         "Mono: LENA, BORT, DARA, IXAZ, THAL. Dual: BORT+LENA, CARF+LENA, DARA+LENA.",
          "CL_MMA_ROLLUP",
          "Descriptive flag; no standalone maintenance LOT.", ""),
         ("FU_PD", "LOTN_ALLO_LOT_FLG", "LOT N is an ALLO SCT line", "0/1",
          "Flag is 1 when LOTN_START_TYPE = SCT_ALLO. ALLO LOT contains no MM therapies. "
-         "ALLO LOT spans a single day: start = end = ALLO_DT.",
+         "Working rule (pending Julia confirmation): ALLO LOT spans a single day, start = end = ALLO_DT.",
          "CL_SCT_CODELIST (ALLO)", "", ""),
         ("FU_PD", "LOTN_CART_LOT_FLG", "LOT N is a CAR-T line", "0/1",
          "Flag is 1 when LOTN_START_TYPE = CART. Agents within 45 days of FIRST_CART_DT are consolidated into LOT N (study-team decision).",
@@ -337,7 +336,7 @@ def build_lot2_5_base(wb):
         ("LOTN_MED_LENA", "1", ""),
         ("LOTN_CLASS_ANTICD38", "1", "DARA."),
         ("LOTN_CLASS_IMMUNOMOD", "1", "LENA."),
-        ("contains_mtx_reg_LOTN", "1", "DARA + LENA is a valid dual maintenance regimen; the two agents anchor each other (anchor does not have to be non-maintenance)."),
+        ("contains_mtx_reg_LOTN", "1", "DARA + LENA is a valid dual maintenance regimen; the two agents anchor each other."),
         ("LOTN_ALLO_LOT_FLG / LOTN_CART_LOT_FLG", "0 / 0", ""),
     ]
     next_row = write_example_block(ws, next_row, "WORKED EXAMPLE A - LOT2 starts on a new medication",
@@ -397,7 +396,7 @@ def build_lot2_5_base_end(wb):
         ("FU_PD", "LOTN_END_DT_TEMP", "Temporary LOT N end date", "Date",
          "PRIMARY: earliest of (1) all-agent discontinuation (run-out date); (2) new qualifying MM agent (day before MAP_START_DT); "
          "(3) ALLO SCT (day before); (4) unplanned AUTO >180d after prior AUTO (day before); (5) CAR-T (day before FIRST_CART_DT); "
-         "(6) CART_INIT: when a CAR-T infusion occurs within 45 days of the first new agent that breaks LOT N, the LOT ends at that first new agent's day-before and reason = CART_INIT; "
+         "(6) CART_INIT: when CAR-T occurs within 45 days of the first new agent that breaks LOT N, the new agent is consolidated into CART_INIT and the LOT ends at FIRST_CART_DT - 1; "
          "(7) death (YMDOD); (8) study_end. "
          "Disenrollment is NOT a primary end event. "
          "SENSITIVITY: additionally cap at ENDDATE_CE when CENSOR_AT_DISENROLLMENT = TRUE.",
@@ -604,7 +603,7 @@ def build_open_questions(wb):
         ("Q1", "90-day discontinuation gap inherited from LOT1?",
          "Draft: yes.", "Julia / Peter", "Open"),
         ("Q2", "ALLO LOT span: single day or until next agent?",
-         "Draft: single day (start=end=ALLO_DT).", "Julia / Peter", "Open"),
+         "Working rule (used throughout draft, pending sign-off): single day, start = end = ALLO_DT.", "Julia / Peter", "Open"),
         ("Q3", "CAR-T LOT span when no consolidation agents in 45d?",
          "Draft: 1 day, else through last consolidation MAP_END_DT.", "Julia / Peter", "Open"),
         ("Q4", "CART_INIT in LOT1 -> LOT2 = CART. Next AUTO -> LOT3 with SCT_AUTO?",
