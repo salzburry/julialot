@@ -1456,9 +1456,11 @@ main <- function() {
   # S16: LOT1_BASE_END - Final end reason incorporating SCT + CAR-T initiation
   # Apr 19 spec numbering: Rule 1 = Discontinuation, Rule 2 = SCT / CAR-T,
   # Rule 3 = Death, Rule 4 = Disenrollment, Rule 5 = Study end.
-  # End reason priority (applied on ties of earliest end date):
+  # End reason priority (applied on ties of earliest end date; Q1 06-May:
+  # DEATH outranks DISCONTINUATION; Q1.1: DEATH only preempts DISCONTINUATION
+  # when no qualifying LOT2-start trigger exists between runout and death):
   #   SCT_ALLO > SCT_CART > SCT_AUTO (Rule 2 unplanned) > CART_INIT > MED_ADD
-  #   > DISCONTINUATION > DEATH > STUDY_END
+  #   > DEATH > DISCONTINUATION > STUDY_END
   # NOTE: Disenrollment is NOT a censoring criterion per study design.
   # Patients whose observable period ended at disenrollment are classified STUDY_END.
   # Apr 19 spec: MAINTENANCE_END and SCT_NO_MAINT removed as final values;
