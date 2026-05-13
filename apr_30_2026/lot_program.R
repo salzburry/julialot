@@ -753,8 +753,12 @@ main <- function() {
     discon AS (
       SELECT
         p.PATID,
+        -- Q1 (06-May): no LOT-level 90d confirmation buffer. LOT1_BASE_DISCON_DT
+        -- is the last med date (max MAP_END_DT across induction agents) whenever
+        -- a runout exists and falls on or before OBS_END_DT. Capping at OBS_END_DT
+        -- prevents days-supply tails past death/study_end from extending the LOT.
         CASE
-          WHEN d.RAW_DISCON_DT IS NOT NULL AND datediff(p.OBS_END_DT, d.RAW_DISCON_DT) >= {cfg$lot_discon_gap_days}
+          WHEN d.RAW_DISCON_DT IS NOT NULL AND d.RAW_DISCON_DT <= p.OBS_END_DT
             THEN d.RAW_DISCON_DT
           ELSE NULL
         END AS LOT1_BASE_DISCON_DT
@@ -1501,9 +1505,12 @@ main <- function() {
       --   Rule 1 = Discontinuation, Rule 2 = SCT / CAR-T events,
       --   Rule 3 = Death, Rule 4 = Disenrollment, Rule 5 = Study end.
       -- End reason is chosen from the earliest end date, with this priority
-      -- applied when two reasons share the same earliest date:
+      -- applied when two reasons share the same earliest date (Q1 06-May:
+      -- DEATH moved above DISCONTINUATION so patients who run out then die
+      -- keep REASON = DEATH; runout date is still recorded in
+      -- LOT1_BASE_DISCON_DT for downstream use):
       --   SCT_ALLO > SCT_CART > SCT_AUTO (Rule 2, unplanned) > CART_INIT
-      --   > MED_ADD > DISCONTINUATION > DEATH > STUDY_END
+      --   > MED_ADD > DEATH > DISCONTINUATION > STUDY_END
       -- NOTE: DISENROLLMENT removed — not a censoring criterion per study design.
       -- Apr 19 spec: MAINTENANCE_END and SCT_NO_MAINT removed; former
       -- cases route by earliest applicable event. CART_INIT ends LOT1 on
@@ -1537,12 +1544,14 @@ main <- function() {
          AND ec.CART_INIT_FLG = 0
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASE_1ST_ADD_MED_DT <= ec.LOT1_BASE_DISCON_DT)
         THEN 'MED_ADD'
+        -- Q1 (06-May): DEATH now outranks DISCONTINUATION. Patients who run out
+        -- and then die get REASON = DEATH; runout date is still recorded in
+        -- LOT1_BASE_DISCON_DT.
+        WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT THEN 'DEATH'
         -- Rule 1: Discontinuation of all agents (also catches former MAINTENANCE_END patients)
         WHEN ec.LOT1_BASE_DISCON_DT IS NOT NULL THEN 'DISCONTINUATION'
-        -- Rules 3-5: Censoring events (Death, Study end)
-        -- NOTE: OBS_END_DT = ENDDATE (disenrollment not a censoring criterion),
-        -- so DISENROLLMENT can never trigger. All remaining patients are DEATH or STUDY_END.
-        WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT THEN 'DEATH'
+        -- Study end (disenrollment not a censoring criterion per study design;
+        -- DISENROLLMENT therefore never triggers in the primary cascade).
         ELSE 'STUDY_END'
       END AS LOT1_BASE_END_REASON,
       -- Corresponding end date (mirrors end-reason priority).
@@ -1562,8 +1571,8 @@ main <- function() {
          AND ec.CART_INIT_FLG = 0
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASE_1ST_ADD_MED_DT <= ec.LOT1_BASE_DISCON_DT)
         THEN ec.LOT1_BASE_1ST_ADD_MED_DT
-        WHEN ec.LOT1_BASE_DISCON_DT IS NOT NULL THEN ec.LOT1_BASE_DISCON_DT
         WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT THEN ec.DEATH_DT
+        WHEN ec.LOT1_BASE_DISCON_DT IS NOT NULL THEN ec.LOT1_BASE_DISCON_DT
         ELSE ec.OBS_END_DT  -- OBS_END_DT = ENDDATE (disenrollment not a censoring criterion)
       END AS LOT1_BASE_END_DT,
       -- LOT1_BASE_LENGTH: 2-way per spec. DISCON tie-break against CART_INIT
