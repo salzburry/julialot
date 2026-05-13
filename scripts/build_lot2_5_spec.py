@@ -407,18 +407,24 @@ def build_lot2_5_base_end(wb):
          "SENSITIVITY: additionally cap at ENDDATE_CE when CENSOR_AT_DISENROLLMENT = TRUE.",
          "T_MEDICAL/T_RX, T_DOD, study_end; SENSITIVITY: T_MEMBER_CONT_ENROLLMENT (ELIGEND)",
          "Primary path inherits LOT1 logic; only induction window differs.", ""),
-        ("FU_PD", "LOTN_BASE_DISCON_DT", "LOT N run-out date", "Date",
-         "max(MAP_END_DT) across LOT N induction agents. Used as LOT end when reason = DISCONTINUATION.",
+        ("FU_PD", "LOTN_BASE_DISCON_DT", "LOT N run-out date (last med date)", "Date",
+         "max(MAP_END_DT) across LOT N induction agents - i.e., the last day of supply for any drug in the regimen. "
+         "Populated whenever a runout exists, INCLUDING when a higher-priority reason (DEATH, SCT, etc.) wins the LOT end. "
+         "Used as LOTN_BASE_END_DT only when LOTN_BASE_END_REASON = DISCONTINUATION.",
          "CL_MMA_CODELIST",
-         "T_MEDICAL: FST_DT + medical_day_supply - 1. T_RX: FILL_DT + DAYS_SUP - 1. Missing DAY_SUPPLY -> 28d default (do not delete claims).",
+         "T_MEDICAL: FST_DT + medical_day_supply - 1. T_RX: FILL_DT + DAYS_SUP - 1. Missing DAY_SUPPLY -> 28d default (do not delete claims). "
+         "No LOT-level 90d observation buffer (removed per Julia 06-May).",
          ""),
         ("FU_PD", "LOTN_BASE_1ST_ADD_MED_DT / LOTN_BASE_1ST_ADD_MED",
          "First non-induction agent during LOT N", "Date / MED_ABBR",
          "First non-steroid MM agent after the induction window with MAP_START_DT <= LOTN_BASE_DISCON_DT, not in LOTN_BASE_MEDS or its biosimilar.",
          "CL_MMA_CODELIST, permissible_subs",
          "Check permissible_subs before classifying as new add.", ""),
-        ("FU_PD", "LOT_DISCON_GAP_DAYS", "Discontinuation gap (days)", "90",
-         "Inherits LOT1.", "n/a", "", ""),
+        ("FU_PD", "LOT_DISCON_GAP_DAYS", "LOT-level discontinuation buffer (days)", "REMOVED",
+         "REMOVED per Julia 06-May ('we are not using the 90d gap rule'). "
+         "LOTN_BASE_DISCON_DT = last med date (max MAP_END_DT) whenever a runout exists; no observation-time buffer. "
+         "Per-drug discontinuation detection still uses MAP-level map_discon_gap_days (unchanged).",
+         "n/a", "Applies to both LOT1 and LOT2-5.", ""),
         ("FU_PD", "ALLO_ALWAYS_ENDS_LOT", "ALLO always ends current LOT", "TRUE",
          "Any ALLO ends current LOT day before ALLO, and starts a new ALLO LOT.",
          "CL_SCT_CODELIST (ALLO)", "", ""),
@@ -436,11 +442,13 @@ def build_lot2_5_base_end(wb):
          "Also: CART_INIT applies when a CAR-T infusion occurs within 45 days of the first new agent that breaks LOT N.",
          "n/a", "ALLO LOT spans a single day, start = end = ALLO_DT. CAR-T LOT spans through last consolidation MAP_END_DT.", ""),
         ("FU_PD", "LOTN_BASE_END_REASON", "Final LOT N end reason (PRIMARY)",
-         "SCT_ALLO / SCT_CART / SCT_AUTO / CART_INIT / MED_ADD / DISCONTINUATION / DEATH / STUDY_END",
+         "SCT_ALLO / SCT_CART / SCT_AUTO / CART_INIT / MED_ADD / DEATH / DISCONTINUATION / STUDY_END",
          "Reason corresponding to LOTN_BASE_END_DT. DISENROLLMENT only in sensitivity (see *_CE_SENS).",
          "n/a",
-         "DRAFT same-day priority (inherits LOT1 - confirm): SCT_ALLO > SCT_CART > SCT_AUTO > CART_INIT > MED_ADD > DISCONTINUATION > DEATH > STUDY_END. "
-         "CART_INIT logic inherits LOT1 (CAR-T within 45d of first add) - confirm applies to LOT2-5.",
+         "Same-day / overlapping-event priority (revised per Julia 06-May to keep DEATH above DISCONTINUATION): "
+         "SCT_ALLO > SCT_CART > SCT_AUTO > CART_INIT > MED_ADD > DEATH > DISCONTINUATION > STUDY_END. "
+         "DEATH moved above DISCONTINUATION so patients who run out and then die within the LOT keep REASON = DEATH "
+         "(the runout date is still recorded in LOTN_BASE_DISCON_DT).",
          ""),
         ("FU_PD", "LOTN_BASE_END_DT_CE_SENS", "LOT N end date (SENSITIVITY)", "Date",
          "Same as LOTN_BASE_END_DT, additionally capped at ELIGEND. Emitted when CENSOR_AT_DISENROLLMENT = TRUE.",
@@ -476,14 +484,14 @@ def build_lot2_5_base_end(wb):
     next_row = write_example_block(ws, next_row, "WORKED EXAMPLE D - End-reason priority with CART_INIT",
                                    ex_d_narrative, ex_d_table, ncols) + 2
 
-    # Example E: discontinuation
+    # Example E: discontinuation (90d LOT-level gap removed; runout itself ends the LOT)
     ex_e_narrative = (
-        "LOT2 starts 2025-08-20 (DARA+LENA). Last LENA MAP_END_DT 2026-02-06; last DARA 2026-01-15. No new agent in 90d."
+        "LOT2 starts 2025-08-20 (DARA+LENA). Last LENA MAP_END_DT 2026-02-06; last DARA 2026-01-15. No new agent, no death, study continues."
     )
     ex_e_table = [
-        ("LOTN_BASE_DISCON_DT", "2026-02-06", "max(MAP_END_DT) across LOT2 induction agents."),
-        ("LOTN_BASE_END_DT", "2026-02-06", "Run-out date itself when reason = DISCONTINUATION."),
-        ("LOTN_BASE_END_REASON", "DISCONTINUATION", "Run-out reached; no agent within 90d gap."),
+        ("LOTN_BASE_DISCON_DT", "2026-02-06", "max(MAP_END_DT) across LOT2 induction agents (last med date)."),
+        ("LOTN_BASE_END_DT", "2026-02-06", "Runout = LOT end (no LOT-level 90d buffer)."),
+        ("LOTN_BASE_END_REASON", "DISCONTINUATION", "Runout reached; no death or higher-priority event."),
         ("LOTN_BASE_LENGTH", "171", "2026-02-06 - 2025-08-20 + 1."),
     ]
     next_row = write_example_block(ws, next_row, "WORKED EXAMPLE E - Discontinuation (run-out)",
@@ -604,10 +612,17 @@ def build_open_questions(wb):
 
     rows = [
         ("Q1", "90-day discontinuation gap - keep, or remove?",
-         "Per Julia 06-May: we are NOT using the 90d gap rule. Run-out = LOT end with reason DISCONTINUATION. "
-         "Open scope question: does removal apply to LOT2-5 only, or to LOT1 as well (lot_program.R:757)? "
-         "Removing from LOT1 will shift the LOT1 end-reason distribution (some STUDY_END / DEATH cases become DISCONTINUATION).",
-         "Julia / Peter", "Open"),
+         "RESOLVED. Reply to Julia (06-May comments 2c + 4c): "
+         "Removing the LOT-level 90d confirmation gap from both LOT1 and LOT2-5 per your request. "
+         "LOTN_BASE_DISCON_DT will always equal the last med date (max MAP_END_DT across induction agents) "
+         "whenever a runout exists - no observation-time buffer. "
+         "To preserve the death signal you'd otherwise lose, end-reason priority is flipped so DEATH > DISCONTINUATION > STUDY_END "
+         "(was DISCONTINUATION > DEATH > STUDY_END). Effect: "
+         "(1) patients who run out and die get REASON = DEATH at death date with LOT length to death (no change); "
+         "(2) patients who run out and reach study end get REASON = DISCONTINUATION at runout (matches what you expected on the dashboard); "
+         "(3) the runout date is still recorded in LOTN_BASE_DISCON_DT for downstream use even when REASON = DEATH. "
+         "MAP-level discontinuation gap (map_discon_gap_days, per-drug) is UNCHANGED - still drives per-drug stop detection.",
+         "Julia / Peter", "Resolved"),
         ("Q2", "ALLO LOT span: single day or until next agent?",
          "RESOLVED: single day, start = end = ALLO_DT. ALLO is a punctuation event between LOTs; the next MM agent starts the following LOT.",
          "Julia / Peter", "Resolved"),
@@ -943,8 +958,9 @@ def build_decision_flow(wb):
     # Footer note - clearly labelled as END-REASON priority (separate from start-trigger priority in Step 3a)
     note_row = 5 + len(flow) + 1
     ws.cell(row=note_row, column=1,
-            value="END-REASON same-day priority (separate from LOT-start tie-break in Step 3a; DRAFT, inherits LOT1 - confirm): "
-                  "SCT_ALLO > SCT_CART > SCT_AUTO > CART_INIT > MED_ADD > DISCONTINUATION > DEATH > STUDY_END. "
+            value="END-REASON priority (separate from LOT-start tie-break in Step 3a; revised per Julia 06-May): "
+                  "SCT_ALLO > SCT_CART > SCT_AUTO > CART_INIT > MED_ADD > DEATH > DISCONTINUATION > STUDY_END. "
+                  "DEATH outranks DISCONTINUATION so patients who run out then die keep REASON = DEATH. "
                   "SENSITIVITY adds DISENROLLMENT before STUDY_END. See LOTN_BASE_END_REASON in tab 4.").font = BOLD
     ws.cell(row=note_row, column=1).alignment = WRAP
     ws.cell(row=note_row, column=1).fill = NOTE_FILL
