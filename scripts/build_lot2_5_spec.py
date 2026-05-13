@@ -414,9 +414,6 @@ def build_lot2_5_base_end(wb):
          "Check permissible_subs before classifying as new add.", ""),
         ("FU_PD", "LOT_DISCON_GAP_DAYS", "Discontinuation gap (days)", "90",
          "Inherits LOT1.", "n/a", "", ""),
-        ("FU_PD", "MEDICAL_DAY_SUPPLY", "Assumed medical days supply", "28",
-         "Default for missing/anomalous DAY_SUPPLY (medical and pharmacy).",
-         "n/a", "Use COALESCE; do NOT delete claims.", ""),
         ("FU_PD", "ALLO_ALWAYS_ENDS_LOT", "ALLO always ends current LOT", "TRUE",
          "Any ALLO ends current LOT day before ALLO, and starts a new ALLO LOT.",
          "CL_SCT_CODELIST (ALLO)", "", ""),
@@ -451,9 +448,6 @@ def build_lot2_5_base_end(wb):
         ("FU_PD", "LOTN_BASE_LENGTH", "LOT N duration (days)", "Integer",
          "If reason = DISCONTINUATION: LOTN_BASE_DISCON_DT - LOTN_START_DT + 1. Else: LOTN_BASE_END_DT - LOTN_START_DT + 1.",
          "n/a", "Confirm censored handling (LOT1 M1).", ""),
-        ("FU_PD", "PERMISSIBLE_SUBS_EFFECT", "Biosimilar substitution rule", "Do not advance LOT",
-         "Biosimilar swap within a reference product family does not end/advance the LOT. Regimen named by longest-duration drug.",
-         "permissible_subs", "", ""),
     ]
     write_rows(ws, 2, rows, col_widths=[10, 30, 32, 30, 80, 30, 60, 18])
     ws.row_dimensions[1].height = 36
