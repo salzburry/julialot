@@ -594,8 +594,11 @@ def build_open_questions(wb):
     style_header(ws, 1, len(headers))
 
     rows = [
-        ("Q1", "90-day discontinuation gap inherited from LOT1?",
-         "Draft: yes.", "Julia / Peter", "Open"),
+        ("Q1", "90-day discontinuation gap - keep, or remove?",
+         "Per Julia 06-May: we are NOT using the 90d gap rule. Run-out = LOT end with reason DISCONTINUATION. "
+         "Open scope question: does removal apply to LOT2-5 only, or to LOT1 as well (lot_program.R:757)? "
+         "Removing from LOT1 will shift the LOT1 end-reason distribution (some STUDY_END / DEATH cases become DISCONTINUATION).",
+         "Julia / Peter", "Open"),
         ("Q2", "ALLO LOT span: single day or until next agent?",
          "Working rule (used throughout draft, pending sign-off): single day, start = end = ALLO_DT.", "Julia / Peter", "Open"),
         ("Q3", "CAR-T LOT span when no consolidation agents in 45d?",
@@ -622,13 +625,25 @@ def build_open_questions(wb):
         ("Q13", "Flag prefix LOTN_TX_ vs LOTN_SCT_ - LOT1 uses LOT1_SCT_AUTO_*FLG.",
          "Draft uses LOTN_TX_AUTO_*FLG; consider aligning to LOTN_SCT_AUTO_*FLG.",
          "Onkar / Julia", "Open"),
-        ("Q14", "Same-day end-reason priority for LOT2-5 - inherits LOT1?",
-         "Draft: SCT_ALLO > SCT_CART > SCT_AUTO > CART_INIT > MED_ADD > DISCONTINUATION > DEATH > STUDY_END (DISENROLLMENT in sensitivity). Confirm.",
-         "Julia", "Open"),
+        ("Q14", "Same-day SCT/ALLO/CART/AUTO representation for LOT2-5.",
+         "Per Julia 06-May: 'all events should be equally represented.' Current code uses scalar priority "
+         "(SCT_ALLO > CART > SCT_AUTO > MED) and records one LOT_START_TYPE. "
+         "Action needed: run prevalence count of same-day collisions; then choose representation "
+         "(scalar+priority / scalar+per-event flags / composite label / multi-row).",
+         "Julia / Peter / Onkar", "Open"),
         ("Q15", "CAR-T LOT end reason when consolidation meds run out: SCT_CART or DISCONTINUATION?",
          "Draft (current code): DISCONTINUATION - CAR-T LOT spans through last consolidation MAP_END_DT and routes by runout. "
          "Alternative: force SCT_CART for any CAR-T-started LOT regardless of how the consolidation regimen ends.",
          "Julia", "Open"),
+        ("Q16", "AUTO trigger: 'always except induction/consolidation window'?",
+         "Per Julia 06-May (sct/cart tab): 'Would update to also be Always, as long as it's outside of the induction window.' "
+         "Today (lot2_5_base.R:259-260): AUTO triggers a new LOT only if there's a prior AUTO >180d earlier; "
+         "first-ever AUTOs are excluded. Proposed revised rule: 'AUTO starts a new LOT unless "
+         "(i) inside the prior LOT's applicable window (30d MED/AUTO, 45d CART), or "
+         "(ii) 60-180d after a prior AUTO (tandem).' "
+         "Confirm: (a) rule wording; (b) scope - LOT2-5 only or LOT1 as well "
+         "(LOT1 currently treats first AUTO as part of induction, lot_program.R:1300-1309).",
+         "Julia / Peter", "Open"),
     ]
     write_rows(ws, 2, rows, col_widths=[6, 50, 60, 20, 12])
     ws.row_dimensions[1].height = 30
