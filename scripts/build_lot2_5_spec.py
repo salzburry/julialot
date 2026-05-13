@@ -434,13 +434,14 @@ def build_lot2_5_base_end(wb):
          "Any ALLO ends current LOT day before ALLO, and starts a new ALLO LOT.",
          "CL_SCT_CODELIST (ALLO)", "", ""),
         ("FU_PD", "AUTO_TANDEM_WINDOW", "Tandem AUTO window", "<= 180 days",
-         "Two AUTOs within 180 days = planned tandem (continuation, no new LOT). "
+         "AUTO claims are first grouped into transplant events in tx_auto_dates "
+         "(14-day window grouping + 60-day event-separation rule). Among those derived AUTO events, "
+         "a second AUTO within 180 days of the first is treated as planned tandem (continuation, no new LOT). "
          "Any other AUTO that falls outside LOT N's applicable window starts a new LOT.",
          "CL_SCT_CODELIST (AUTO)",
-         "Per Julia 13-May: implementation uses ONLY the upper bound. The MM protocol convention is "
-         "60-180 days, but the < 60 d case is too rare and ambiguous (usually re-conditioning / salvage "
-         "rather than a planned tandem) to gate on. Matches LOT1's existing behaviour. "
-         "Use datediff without +1.", ""),
+         "Per Julia 13-May: tandem classification uses ONLY the upper bound. The < 60 d case is moot "
+         "because tx_auto_dates upstream already merges claims < 60 d apart into a single event. "
+         "Matches LOT1's existing behaviour. Use datediff without +1.", ""),
         ("FU_PD", "CART_CONSOLIDATION_DAYS", "CAR-T consolidation window", "45",
          "Agents within 45 days of FIRST_CART_DT are consolidated into the CAR-T LOT (study-team decision).",
          "CL_SCT_CODELIST (CART)",
@@ -553,11 +554,10 @@ def build_sct_cart_start(wb):
          "Starts a new LOT when a non-steroid, non-biosimilar MM agent appears after LOT_(N-1)_BASE_END_DT. The prior LOT's end reason does not matter."),
         ("Death / STUDY_END (PRIMARY)", "Never starts a LOT; ends follow-up.",
          "n/a", "n/a", "DEATH / STUDY_END",
-         "Distinct from DISCONTINUATION. Per Q1 (06-May): runout cases now correctly show DISCONTINUATION "
-         "on the dashboard - DEATH / STUDY_END no longer absorb runouts that previously hid behind the 90d buffer. "
-         "Per Q1.1: if a patient runs out, starts new therapy, then dies, the runout is the LOT N end "
-         "(REASON = DISCONTINUATION) and the new event triggers LOT N+1 - DEATH does not silently swallow post-runout therapy. "
-         "Disenrollment is NOT a primary end event."),
+         "Death and study end do not start a new LOT. If the patient runs out of regimen therapy, "
+         "the LOT ends as DISCONTINUATION. If the patient starts a new MM therapy after runout, "
+         "that therapy starts the next LOT. Death only becomes the end reason when no next-LOT "
+         "trigger occurs first. Disenrollment is NOT a primary end event."),
         ("Disenrollment (SENSITIVITY only)", "Never starts a LOT.",
          "n/a", "n/a", "DISENROLLMENT (sensitivity)",
          "Cap via ENDDATE_CE only when CENSOR_AT_DISENROLLMENT = TRUE."),
@@ -660,11 +660,14 @@ def build_open_questions(wb):
         ("Q8", "Confirm steroid filter applied (LOT1 H1).",
          "Required: MAP_MED_CLASS != 'STEROID' in induction + first-add CTEs.", "Onkar", "Open"),
         ("Q9", "Tandem AUTO window: just <=180 days, or >=60 AND <=180 (protocol)?",
-         "RESOLVED per Julia 13-May: keep implementation at <= sct_tandem_days (180) only. "
-         "Ignore the < 60 day case - rare and ambiguous (usually re-conditioning / salvage, "
-         "not a planned tandem). The MM protocol describes tandem as 60-180 days; this is noted "
-         "in the spec but not enforced in code. Matches existing LOT1 behaviour, keeping LOT1 and "
-         "LOT2-5 consistent. datediff is used without +1.",
+         "RESOLVED per Julia 13-May: tandem classification uses <= sct_tandem_days (180) only. "
+         "Context: AUTO claims are first grouped into transplant events in tx_auto_dates, "
+         "which already applies a 14-day window grouping and a 60-day event-separation rule "
+         "(cfg$sct_auto_gap_days). Claims less than 60 days apart get MERGED into a single AUTO "
+         "event upstream, so by the time tandem classification runs, two distinct AUTO events "
+         "are always >= 60 days apart. The tandem check then only needs the upper bound: "
+         "a second derived AUTO within 180 days of the first is a planned tandem. datediff "
+         "used without +1. Matches LOT1's existing behaviour.",
          "Julia / Peter", "Resolved"),
         ("Q10", "Output shape: long (one row per LOT) vs wide?",
          "Draft: long primary + wide pivot.", "Julia / Dominique", "Open"),
