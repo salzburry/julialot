@@ -696,7 +696,7 @@ def build_open_questions(wb):
          "or (ii) it is on/before sct_tandem_days (180d) after the immediately prior AUTO (planned tandem). "
          "Scope: LOT2-5 only. LOT1 retains the protocol convention that the first AUTO is part of induction "
          "(lot_program.R:1300-1309 unchanged). "
-         "Tandem range is <= 180 only (no lower bound) - see Q9 resolution. "
+         "Tandem classification checks only the 180-day upper bound after AUTO events have been grouped upstream (see Q9 resolution). "
          "Code implemented in lot2_5_base.R: auto_cand CTE and lot_n_sct ENDING_AUTO_DT now apply the window-by-type rule; "
          "prev_end CTE pulls PREV_START_DT and PREV_START_TYPE from lot_long for the window lookup.",
          "Julia / Peter", "Resolved"),
@@ -954,8 +954,8 @@ def build_decision_flow(wb):
          "First-ever AUTOs CAN trigger a new LOT (LOT2-5 only; LOT1 retains the protocol "
          "convention that the first AUTO is part of induction).",
          "Up to 4 candidate dates",
-         "Planned tandem (within sct_tandem_days = 180d of a prior AUTO) is a CONTINUATION and is NOT a candidate. "
-         "Per Q9 resolution: no <60d lower bound enforced (matches LOT1)."),
+         "AUTO events are already grouped upstream in tx_auto_dates (14-day window + 60-day event-separation rule). "
+         "Among derived AUTO events, a second AUTO within 180 days of the first is a planned tandem (CONTINUATION, not a candidate)."),
         ("2",
          "Pick the earliest candidate date.",
          "LOT_(N+1)_START_DT = min(d_MED, d_ALLO, d_CART, d_AUTO).",
