@@ -627,23 +627,28 @@ def build_open_questions(wb):
 
     rows = [
         ("Q1", "90-day discontinuation gap - keep, or remove?",
-         "RESOLVED + IMPLEMENTED. Reply to Julia (06-May comments 2c + 4c): "
-         "Removing the LOT-level 90d confirmation gap from both LOT1 and LOT2-5 per your request. "
-         "LOTN_BASE_DISCON_DT will always equal the last med date (max MAP_END_DT across induction agents) "
-         "whenever a runout exists - no observation-time buffer. "
-         "To preserve the death signal, end-reason priority is flipped so DEATH > DISCONTINUATION > STUDY_END "
+         "IMPLEMENTED; trade-off awaiting explicit confirmation from Julia. "
+         "Per Julia 06-May comments 2c + 4c: removed the LOT-level 90d confirmation gap from both LOT1 and LOT2-5. "
+         "LOTN_BASE_DISCON_DT now equals the last med date (max MAP_END_DT across induction agents) "
+         "whenever a runout exists and falls on/before OBS_END_DT - no observation-time buffer. "
+         "End-reason priority flipped to DEATH > DISCONTINUATION > STUDY_END to preserve the death signal "
          "(was DISCONTINUATION > DEATH > STUDY_END). "
          "Edge-case refinement (Q1.1): DEATH only preempts DISCONTINUATION when no LOT-(N+1)-qualifying trigger "
-         "exists in (DISCON_DT, OBS_END_DT]. If the patient ran out, started new therapy (or had an SCT), "
-         "and then died, the runout is the true LOT N end (REASON = DISCONTINUATION) and the new event "
-         "triggers LOT N+1 in the next iteration - prevents post-runout therapy from being silently swallowed by death. "
-         "Effect: "
+         "exists in (DISCON_DT, OBS_END_DT] - prevents post-runout therapy from being silently swallowed by death. "
+         "TRADE-OFF (not surfaced by the original spec row; flagging for explicit Julia confirmation): "
+         "Removing the buffer commits to a DISCONTINUATION label at the runout date for ALL patients with a runout, "
+         "including those observed for less than 90 days afterward. Such short-follow-up patients could in principle "
+         "have restarted therapy beyond their observation window; the prior buffer was the mechanism that left their "
+         "LOT label uncommitted (as STUDY_END) until 90 d of post-runout observation accumulated. Direction of bias: "
+         "may over-label DISCONTINUATION for late-enrolled / short-FU patients. Aligns with 'runout = DISCONTINUATION'; "
+         "diverges from 'wait until confirmed' semantics. MAP-level per-drug gap (map_discon_gap_days) is UNCHANGED. "
+         "Effect summary: "
          "(1) runs out, dies, no post-runout therapy => REASON = DEATH at death date; "
          "(2) runs out, starts new therapy, then dies => REASON = DISCONTINUATION at runout; new therapy starts LOT N+1; "
-         "(3) runs out, reaches study end => REASON = DISCONTINUATION at runout (matches dashboard expectation); "
-         "(4) runout date is still recorded in LOTN_BASE_DISCON_DT even when REASON = DEATH. "
-         "MAP-level discontinuation gap (map_discon_gap_days, per-drug) is UNCHANGED.",
-         "Julia / Peter", "Resolved"),
+         "(3) runs out, reaches study end with >=90d post-runout obs => REASON = DISCONTINUATION at runout (matches dashboard expectation); "
+         "(4) runs out, reaches study end with <90d post-runout obs => REASON = DISCONTINUATION at runout (was STUDY_END at obs end pre-fix); "
+         "(5) runout date is still recorded in LOTN_BASE_DISCON_DT even when REASON = DEATH.",
+         "Julia / Peter", "Pending confirmation"),
         ("Q2", "ALLO LOT span: single day or until next agent?",
          "RESOLVED: single day, start = end = ALLO_DT. ALLO is a punctuation event between LOTs; the next MM agent starts the following LOT.",
          "Julia / Peter", "Resolved"),
