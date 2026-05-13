@@ -251,7 +251,7 @@ def build_lot2_5_base(wb):
          "MED / SCT_AUTO / SCT_ALLO / CART",
          "Type of the earliest qualifying trigger.",
          "n/a",
-         "Same-day tie-break (DRAFT, inherits LOT1 - confirm): SCT_ALLO > CART > SCT_AUTO > MED.",
+         "Same-day tie-break (Q14 resolved, inherits LOT1): SCT_ALLO > CART > SCT_AUTO > MED.",
          ""),
         ("FU_PD", "INDUCTION_WINDOW_DAYS", "Induction window",
          "30",
@@ -363,22 +363,27 @@ def build_lot2_5_base(wb):
     next_row = write_example_block(ws, next_row, "WORKED EXAMPLE B - LOT2 starts on an allogeneic SCT",
                                    ex_b_narrative, ex_b_table, ncols) + 2
 
-    # Example C: AUTO triggers LOT2 (outside prior LOT window, outside tandem)
+    # Example C: AUTO triggers LOT3 from LOT2 (Q16: LOT2-5 only; LOT1 unchanged)
     ex_c_narrative = (
-        "VRd in LOT1 (60d induction). AUTO on 2025-10-15, no prior AUTO. LOT1 ends 2025-10-14 (AUTO is outside LOT1's 60d window). LOT2 starts on AUTO."
+        "LOT1 ends 2025-04-30 via DISCONTINUATION (VRd run-out, no SCT during LOT1). "
+        "LOT2 starts 2025-08-20 via MED_ADD (DARA + LENA, 30d induction window). "
+        "First-ever AUTO occurs 2025-12-10, well outside LOT2's 30d induction window "
+        "(2025-08-20 to 2025-09-18) and not 60-180d after any prior AUTO. "
+        "Per Q16 (LOT2-5 only), this first-ever AUTO triggers LOT3 starting on the AUTO date. "
+        "(LOT1 itself is unchanged - first AUTO in LOT1 would still be protocol-mandated induction.)"
     )
     ex_c_table = [
-        ("LOT_NUM", "2", ""),
-        ("LOTN_START_DT", "2025-10-15", "AUTO outside LOT1's applicable window and not a planned tandem."),
-        ("LOTN_START_TYPE", "SCT_AUTO", "AUTO is a first-class LOT-start trigger (LOT2-5). Planned tandem (60-180d after a prior AUTO) would NOT start a new LOT."),
-        ("LOTN_BASE_MEDS", "(empty)", "No MM therapies recorded in the [2025-10-15, 2025-11-13] post-AUTO induction window."),
+        ("LOT_NUM", "3", ""),
+        ("LOTN_START_DT", "2025-12-10", "AUTO outside LOT2's 30d window (LOT2 was MED-started) and not a planned tandem."),
+        ("LOTN_START_TYPE", "SCT_AUTO", "AUTO is a first-class LOT-start trigger for LOT2-5 (Q16). Planned tandem (60-180d after a prior AUTO) would NOT start a new LOT."),
+        ("LOTN_BASE_MEDS", "(empty)", "No MM therapies recorded in the [2025-12-10, 2026-01-08] post-AUTO induction window."),
         ("LOTN_MED_CNT", "0", "AUTO-only LOT; med count is 0."),
-        ("INDUCTION_WINDOW_DAYS", "30", "LOT2 captures any post-AUTO agents within [2025-10-15, 2025-11-13]."),
-        ("LOTN_TX_AUTO_FLG", "1", "AUTO occurred during LOT2."),
-        ("LOTN_TX_AUTO_SING_FLG", "1", "Single AUTO during LOT2 (no second AUTO within tandem window)."),
+        ("INDUCTION_WINDOW_DAYS", "30", "LOT3 captures any post-AUTO agents within [2025-12-10, 2026-01-08]."),
+        ("LOTN_TX_AUTO_FLG", "1", "AUTO occurred during LOT3."),
+        ("LOTN_TX_AUTO_SING_FLG", "1", "Single AUTO during LOT3 (no second AUTO within tandem window)."),
         ("LOTN_TX_AUTO_TAND_FLG", "0", ""),
     ]
-    next_row = write_example_block(ws, next_row, "WORKED EXAMPLE C - LOT2 starts on an unplanned autologous SCT",
+    next_row = write_example_block(ws, next_row, "WORKED EXAMPLE C - LOT3 starts on an AUTO (first-ever; LOT2 ended outside its induction window)",
                                    ex_c_narrative, ex_c_table, ncols) + 2
 
 
@@ -565,9 +570,9 @@ def build_scenarios(wb):
         ("S1. LOT1->LOT2 by MED_ADD",
          "VRd in LOT1; DARA added day 200.",
          "LOT1 ends d199. LOT2_START_DT=d200, TYPE=MED. Induction d200-d229."),
-        ("S2. LOT1->LOT2 by AUTO outside window",
-         "AUTO d320, outside LOT1's induction window and not 60-180d after a prior AUTO.",
-         "LOT1 ends d319. LOT2_START_DT=d320, TYPE=SCT_AUTO. (Planned tandem 60-180d after a prior AUTO would NOT trigger.)"),
+        ("S2. LOT2->LOT3 by AUTO outside window",
+         "LOT2 is MED-started (30d window). AUTO occurs d320 relative to LOT2 start, outside LOT2's window and not 60-180d after any prior AUTO.",
+         "LOT2 ends d319. LOT3_START_DT = d320, TYPE = SCT_AUTO. Q16 applies to LOT2-5 only; LOT1's first AUTO remains part of induction."),
         ("S3. LOT1->LOT2 (ALLO LOT)->LOT3",
          "ALLO during/after LOT1, then later DARA.",
          "LOT2: start = end = ALLO_DT, single-day ALLO LOT, no MM. Next agent starts LOT3."),
@@ -659,11 +664,13 @@ def build_open_questions(wb):
          "Alternative: force SCT_CART for any CAR-T-started LOT regardless of how the consolidation regimen ends.",
          "Julia", "Open"),
         ("Q16", "AUTO trigger: 'always except induction/consolidation window'?",
-         "RESOLVED: AUTO starts a new LOT (in LOT2-5) unless (i) it falls inside LOT_(N-1)'s applicable window "
+         "RESOLVED + IMPLEMENTED: AUTO starts a new LOT (in LOT2-5) unless (i) it falls inside LOT_(N-1)'s applicable window "
          "(30d for MED/AUTO-started LOTs, 1d for ALLO-started LOTs, 45d for CART-started LOTs) "
          "or (ii) it is 60-180 days after the immediately prior AUTO (planned tandem). "
          "Scope: LOT2-5 only. LOT1 retains the protocol convention that the first AUTO is part of induction "
-         "(lot_program.R:1300-1309 unchanged). Code change required in lot2_5_base.R::auto_cand (Bucket C).",
+         "(lot_program.R:1300-1309 unchanged). "
+         "Code implemented in lot2_5_base.R: auto_cand CTE and lot_n_sct ENDING_AUTO_DT now apply the window-by-type rule; "
+         "prev_end CTE pulls PREV_START_DT and PREV_START_TYPE from lot_long for the window lookup.",
          "Julia / Peter", "Resolved"),
     ]
     write_rows(ws, 2, rows, col_widths=[6, 50, 60, 20, 12])
@@ -745,13 +752,15 @@ def build_timelines(wb):
             ],
         },
         {
-            "label": "S2: LOT1 -> LOT2 by unplanned AUTO",
-            "desc": "Single AUTO d100; second AUTO d320 (>180d) is unplanned -> LOT2 starts d320",
+            "label": "S2: LOT2 -> LOT3 by AUTO outside window (Q16, LOT2-5 only)",
+            "desc": "LOT1 ends d199 by MED_ADD. LOT2 (MED-started, 30d window d200-d229). First-ever AUTO at d320 - outside LOT2's window and not a tandem -> LOT3 starts d320.",
             "segments": [
-                {"start_day": 0,   "end_day": 319, "kind": "LOT1"},
-                {"start_day": 100, "end_day": 100, "kind": "EVENT_SCT_AUTO"},
+                {"start_day": 0,   "end_day": 199, "kind": "LOT1"},
+                {"start_day": 0,   "end_day": 56,  "kind": "INDUCTION"},
+                {"start_day": 200, "end_day": 319, "kind": "LOT2"},
+                {"start_day": 200, "end_day": 228, "kind": "INDUCTION"},
                 {"start_day": 320, "end_day": 320, "kind": "EVENT_SCT_AUTO"},
-                {"start_day": 320, "end_day": 540, "kind": "LOT2"},
+                {"start_day": 320, "end_day": 540, "kind": "LOT3"},
                 {"start_day": 320, "end_day": 348, "kind": "INDUCTION"},
             ],
         },
@@ -910,10 +919,14 @@ def build_decision_flow(wb):
          "  d_MED   = first non-steroid MM agent MAP_START_DT (excl. permissible biosimilar subs)\n"
          "  d_ALLO  = first ALLO SCT date\n"
          "  d_CART  = first CAR-T infusion date (FIRST_CART_DT)\n"
-         "  d_AUTO  = first UNPLANNED AUTO date (>180d after the most recent prior AUTO in the patient's history; "
-         "if no prior AUTO, AUTO is NOT a candidate).",
+         "  d_AUTO  = first AUTO date (Q16, 06-May): triggers LOT_(N+1) unless "
+         "(i) it falls inside LOT_N's applicable window from LOT_N_START_DT "
+         "(30d for MED/AUTO-started LOTs, 1d for ALLO-started, 45d for CART-started) "
+         "or (ii) it is 60-180 days after the immediately prior AUTO (planned tandem). "
+         "First-ever AUTOs CAN trigger a new LOT (LOT2-5 only; LOT1 retains the protocol "
+         "convention that the first AUTO is part of induction).",
          "Up to 4 candidate dates",
-         "Planned/single/tandem AUTO (60-180d intervals) is a CONTINUATION and is NOT a candidate."),
+         "Planned tandem (60-180d after a prior AUTO) is a CONTINUATION and is NOT a candidate."),
         ("2",
          "Pick the earliest candidate date.",
          "LOT_(N+1)_START_DT = min(d_MED, d_ALLO, d_CART, d_AUTO).",
@@ -925,7 +938,7 @@ def build_decision_flow(wb):
          "LOTN+1_START_TYPE",
          ""),
         ("3a",
-         "Same-day tie-break (DRAFT, inherits LOT1 - confirm).",
+         "Same-day tie-break (Q14 resolved, inherits LOT1).",
          "If multiple triggers share LOT_(N+1)_START_DT: SCT_ALLO > CART > SCT_AUTO > MED.",
          "LOTN+1_START_TYPE",
          "Tie-breaks ONLY on identical dates - never overrides date order."),
