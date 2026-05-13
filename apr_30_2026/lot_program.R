@@ -77,9 +77,8 @@ main <- function() {
   log_msg("  Work Schema:       ", cfg$work_schema)
   log_msg("  Input Cohort:      ", cfg$input_cohort_table)
   log_msg("  Induction Window:  ", cfg$induction_window_days, " days")
-  log_msg("  MAP Discon Gap:    ", cfg$map_discon_gap_days, " days")
+  log_msg("  Discon Gap (per-drug, MAP-level): ", cfg$map_discon_gap_days, " days")
   log_msg("  Medical Day Supply: ", cfg$medical_day_supply, " days")
-  log_msg("  LOT Discon Gap:    REMOVED (Q1 06-May; cfg value ignored)")
 
   # ----------------------------------------------------------
   # STEP 0: Register code lists as TEMP views
@@ -1848,7 +1847,7 @@ main <- function() {
           RUN_ID STRING, RUN_TIMESTAMP TIMESTAMP,
           CDM_SCHEMA STRING, WORK_SCHEMA STRING, INPUT_COHORT_TABLE STRING,
           INDUCTION_WINDOW_DAYS INT, MAP_DISCON_GAP_DAYS INT,
-          MEDICAL_DAY_SUPPLY INT, LOT_DISCON_GAP_DAYS INT,
+          MEDICAL_DAY_SUPPLY INT,
           N_COHORT_PATIENTS BIGINT, N_MMA_CLAIMS BIGINT,
           N_MAPS BIGINT, N_LOT1_PATIENTS BIGINT
         )
@@ -1868,7 +1867,6 @@ main <- function() {
           {cfg$induction_window_days} AS INDUCTION_WINDOW_DAYS,
           {cfg$map_discon_gap_days} AS MAP_DISCON_GAP_DAYS,
           {cfg$medical_day_supply} AS MEDICAL_DAY_SUPPLY,
-          {cfg$lot_discon_gap_days} AS LOT_DISCON_GAP_DAYS,
           {cohort_n} AS N_COHORT_PATIENTS,
           {mma_n} AS N_MMA_CLAIMS,
           {map_n} AS N_MAPS,

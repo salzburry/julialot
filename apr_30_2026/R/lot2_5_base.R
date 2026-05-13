@@ -25,7 +25,7 @@
 #
 # Key parameters (defaults reflect Apr 22 study-team decisions):
 #   induction_window_days   = 30   (LOT1 uses 60)
-#   (lot_discon_gap_days removed per Q1 06-May; LOT-level 90d gate no longer applied)
+#   (no LOT-level discontinuation buffer; per-drug 90d rule lives in map_discon_gap_days)
 #   cart_consolidation_days = 45   (Apr 22; supersedes 30d protocol text)
 #   sct_tandem_days         = 180  (>180d AUTO is unplanned)
 #   allo_lot_span           = "single_day"  (Q2 resolved) - ALLO LOT spans only ALLO_DT

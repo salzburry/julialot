@@ -55,9 +55,12 @@ Environment variables (in addition to the LOT1 set):
 | `INDUCTION_WINDOW_DAYS_LOT_N` | `30`            | Apr 22 meeting |
 | `CART_CONSOLIDATION_DAYS`     | `45`            | Apr 22 (Q11)   |
 | `SCT_TANDEM_DAYS`             | `180`           | inherited LOT1 |
-| `LOT_DISCON_GAP_DAYS`         | `90`            | inherited LOT1 |
-| `ALLO_LOT_SPAN`               | `single_day`    | Q2 (open)      |
+| `ALLO_LOT_SPAN`               | `single_day`    | Q2 (resolved)  |
 | `MAX_LOT`                     | `5`             | Q6 (open)      |
+
+Note: there is only ONE 90-day discontinuation rule in the pipeline — the per-drug
+MAP-level `MAP_DISCON_GAP_DAYS` parameter. No additional LOT-level wait exists
+(Q1 06-May, confirmed Julia 13-May).
 
 `ALLO_LOT_SPAN=extend_to_next` switches the ALLO-singleton LOT to span
 through the day before the next qualifying agent.
