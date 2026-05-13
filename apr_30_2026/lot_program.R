@@ -1455,11 +1455,15 @@ main <- function() {
   # S16: LOT1_BASE_END - Final end reason incorporating SCT + CAR-T initiation
   # Apr 19 spec numbering: Rule 1 = Discontinuation, Rule 2 = SCT / CAR-T,
   # Rule 3 = Death, Rule 4 = Disenrollment, Rule 5 = Study end.
-  # End reason priority (applied on ties of earliest end date; Q1 06-May:
-  # DEATH outranks DISCONTINUATION; Q1.1: DEATH only preempts DISCONTINUATION
-  # when no qualifying LOT2-start trigger exists between runout and death):
+  # End reason priority. Note this is NOT only a tie-break on identical
+  # dates: after the Q1 06-May changes, DEATH can outrank an earlier
+  # DISCONTINUATION when there is no LOT2-qualifying trigger between
+  # runout and death (Q1.1 post-runout guard). The earlier branches
+  # (SCT, CART_INIT, MED_ADD) keep their own gating against DISCON_DT
+  # to fire only when their event sits at or before runout.
+  # Order:
   #   SCT_ALLO > SCT_CART > SCT_AUTO (Rule 2 unplanned) > CART_INIT > MED_ADD
-  #   > DEATH > DISCONTINUATION > STUDY_END
+  #   > DEATH (guarded by Q1.1) > DISCONTINUATION > STUDY_END
   # NOTE: Disenrollment is NOT a censoring criterion per study design.
   # Patients whose observable period ended at disenrollment are classified STUDY_END.
   # Apr 19 spec: MAINTENANCE_END and SCT_NO_MAINT removed as final values;
@@ -1473,9 +1477,19 @@ main <- function() {
     -- exists strictly after LOT1_BASE_DISCON_DT and on/before OBS_END_DT.
     -- Prevents DEATH from preempting DISCONTINUATION when a patient ran out
     -- and then started new therapy (or had an SCT) before dying.
-    post_runout_base_meds AS (
-      SELECT PATID, MED_ABBR FROM lot1_induction_meds
-      UNION
+    --
+    -- These CTEs MIRROR the actual LOT2 start-candidate logic from
+    -- lot2_5_base.R (med_cand / auto_cand) so the guard fires exactly when
+    -- LOT2 would actually have a valid start trigger:
+    --   - MED: any non-steroid MM agent NOT in LOT1's permissible biosimilar
+    --     substitutes. Same-drug restarts DO qualify.
+    --   - AUTO: any AUTO outside LOT1's 30-day "applicable window"
+    --     (LOT2-5 auto_cand uses 30d for any MED-started prior LOT,
+    --     regardless of LOT1's own 60d induction window) AND not within
+    --     sct_tandem_days (180d) of the immediately prior AUTO in patient
+    --     history (planned tandem).
+    --   - ALLO/CART: any after runout (no window check; always trigger).
+    post_runout_excluded_meds AS (
       SELECT im.PATID, ps.substitute_med AS MED_ABBR
       FROM lot1_induction_meds im
       INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
@@ -1484,27 +1498,47 @@ main <- function() {
       SELECT DISTINCT ms.PATID
       FROM map_stacked ms
       INNER JOIN lot1_base lb ON ms.PATID = lb.PATID
-      LEFT JOIN post_runout_base_meds prbm
-        ON ms.PATID = prbm.PATID AND ms.MAP_MED_TYPE = prbm.MED_ABBR
+      LEFT JOIN post_runout_excluded_meds prem
+        ON ms.PATID = prem.PATID AND ms.MAP_MED_TYPE = prem.MED_ABBR
       WHERE lb.LOT1_BASE_DISCON_DT IS NOT NULL
         AND ms.MAP_START_DT > lb.LOT1_BASE_DISCON_DT
         AND ms.MAP_START_DT <= lb.OBS_END_DT
         AND ms.MAP_MED_CLASS <> 'STEROID'
-        AND prbm.MED_ABBR IS NULL
+        AND prem.MED_ABBR IS NULL
+    ),
+    post_runout_autos AS (
+      SELECT a.PATID, a.TX_DT,
+             lag(a.TX_DT) OVER (PARTITION BY a.PATID ORDER BY a.TX_DT) AS PREV_AUTO_DT
+      FROM tx_auto_dates a
+    ),
+    post_runout_auto AS (
+      -- Uses 30d window (LOT2-5 convention for MED-started prior LOT) and
+      -- 180d tandem exclusion. LOT1's own 60d induction window is NOT used
+      -- here because the guard models what LOT2's auto_cand would see.
+      SELECT DISTINCT lb.PATID
+      FROM lot1_base lb
+      INNER JOIN post_runout_autos awp ON lb.PATID = awp.PATID
+      WHERE lb.LOT1_BASE_DISCON_DT IS NOT NULL
+        AND awp.TX_DT > lb.LOT1_BASE_DISCON_DT
+        AND awp.TX_DT <= lb.OBS_END_DT
+        AND awp.TX_DT > date_add(lb.LOT1_START_DT, 30 - 1)
+        AND NOT (awp.PREV_AUTO_DT IS NOT NULL
+                 AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {cfg$sct_tandem_days})
     ),
     post_runout_trigger AS (
       SELECT lb.PATID,
         CASE
           WHEN lb.LOT1_BASE_DISCON_DT IS NULL THEN 0
           WHEN prm.PATID IS NOT NULL THEN 1
-          WHEN sct.FIRST_ALLO_DT  IS NOT NULL AND sct.FIRST_ALLO_DT  > lb.LOT1_BASE_DISCON_DT THEN 1
-          WHEN sct.FIRST_CART_DT  IS NOT NULL AND sct.FIRST_CART_DT  > lb.LOT1_BASE_DISCON_DT THEN 1
-          WHEN sct.ENDING_AUTO_DT IS NOT NULL AND sct.ENDING_AUTO_DT > lb.LOT1_BASE_DISCON_DT THEN 1
+          WHEN sct.FIRST_ALLO_DT IS NOT NULL AND sct.FIRST_ALLO_DT > lb.LOT1_BASE_DISCON_DT THEN 1
+          WHEN sct.FIRST_CART_DT IS NOT NULL AND sct.FIRST_CART_DT > lb.LOT1_BASE_DISCON_DT THEN 1
+          WHEN pra.PATID IS NOT NULL THEN 1
           ELSE 0
         END AS POST_RUNOUT_TRIGGER_FLG
       FROM lot1_base lb
       LEFT JOIN lot1_sct sct ON lb.PATID = sct.PATID
       LEFT JOIN post_runout_med prm ON lb.PATID = prm.PATID
+      LEFT JOIN post_runout_auto pra ON lb.PATID = pra.PATID
     ),
     end_candidates AS (
       SELECT
@@ -1545,13 +1579,15 @@ main <- function() {
       -- Apr 19 spec numbering:
       --   Rule 1 = Discontinuation, Rule 2 = SCT / CAR-T events,
       --   Rule 3 = Death, Rule 4 = Disenrollment, Rule 5 = Study end.
-      -- End reason is chosen from the earliest end date, with this priority
-      -- applied when two reasons share the same earliest date (Q1 06-May:
-      -- DEATH moved above DISCONTINUATION so patients who run out then die
-      -- keep REASON = DEATH; runout date is still recorded in
-      -- LOT1_BASE_DISCON_DT for downstream use):
+      -- End reason priority. Not purely a tie-break on identical earliest
+      -- dates: DEATH can outrank an earlier DISCONTINUATION when there is
+      -- no LOT2-qualifying trigger sitting between runout and death (Q1.1
+      -- post-runout guard, 06-May). Earlier branches (SCT, CART_INIT,
+      -- MED_ADD) still gate themselves against DISCON_DT to fire only when
+      -- their event is at or before runout.
+      -- Order:
       --   SCT_ALLO > SCT_CART > SCT_AUTO (Rule 2, unplanned) > CART_INIT
-      --   > MED_ADD > DEATH > DISCONTINUATION > STUDY_END
+      --   > MED_ADD > DEATH (guarded by Q1.1) > DISCONTINUATION > STUDY_END
       -- NOTE: DISENROLLMENT removed — not a censoring criterion per study design.
       -- Apr 19 spec: MAINTENANCE_END and SCT_NO_MAINT removed; former
       -- cases route by earliest applicable event. CART_INIT ends LOT1 on
