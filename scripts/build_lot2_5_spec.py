@@ -534,7 +534,7 @@ def build_sct_cart_start(wb):
          "Disenrollment is NOT a primary end event."),
         ("Disenrollment (SENSITIVITY only)", "Never starts a LOT.",
          "n/a", "n/a", "DISENROLLMENT (sensitivity)",
-         "Cap via ENDDATE_CE only when CENSOR_AT_DISENROLLMENT = TRUE. Q12."),
+         "Cap via ENDDATE_CE only when CENSOR_AT_DISENROLLMENT = TRUE."),
     ]
     write_rows(ws, 2, rows, col_widths=[22, 40, 22, 38, 36, 40])
     ws.row_dimensions[1].height = 30
