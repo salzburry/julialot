@@ -241,7 +241,7 @@ def build_lot2_5_base(wb):
          "(c) first CAR-T infusion; "
          "(d) first AUTO SCT, EXCEPT (i) when it falls inside LOT_(N-1)'s applicable window "
          "(30d for MED/AUTO-started LOTs, 1d for ALLO-started LOTs, 45d for CART-started LOTs) "
-         "or (ii) when it is 60-180 days after the immediately prior AUTO (planned tandem - continuation, not a trigger). "
+         "or (ii) when it is on/before sct_tandem_days (180d) after the immediately prior AUTO (planned tandem - continuation, not a trigger). "
          "Permissible biosimilar substitutions do not trigger.",
          "CL_MMA_CODELIST, CL_SCT_CODELIST, CL_MMA_ROLLUP",
          "Source: T_MEDICAL (PROC_CD, BILL_PROC_CD, NDC), T_RX (NDC). Steroids excluded (MAP_MED_CLASS != 'STEROID'). "
@@ -368,14 +368,14 @@ def build_lot2_5_base(wb):
         "LOT1 ends 2025-04-30 via DISCONTINUATION (VRd run-out, no SCT during LOT1). "
         "LOT2 starts 2025-08-20 via MED_ADD (DARA + LENA, 30d induction window). "
         "First-ever AUTO occurs 2025-12-10, well outside LOT2's 30d induction window "
-        "(2025-08-20 to 2025-09-18) and not 60-180d after any prior AUTO. "
+        "(2025-08-20 to 2025-09-18) and not within sct_tandem_days (<=180d) of any prior AUTO. "
         "Per Q16 (LOT2-5 only), this first-ever AUTO triggers LOT3 starting on the AUTO date. "
         "(LOT1 itself is unchanged - first AUTO in LOT1 would still be protocol-mandated induction.)"
     )
     ex_c_table = [
         ("LOT_NUM", "3", ""),
         ("LOTN_START_DT", "2025-12-10", "AUTO outside LOT2's 30d window (LOT2 was MED-started) and not a planned tandem."),
-        ("LOTN_START_TYPE", "SCT_AUTO", "AUTO is a first-class LOT-start trigger for LOT2-5 (Q16). Planned tandem (60-180d after a prior AUTO) would NOT start a new LOT."),
+        ("LOTN_START_TYPE", "SCT_AUTO", "AUTO is a first-class LOT-start trigger for LOT2-5 (Q16). Planned tandem (within sct_tandem_days = 180d of a prior AUTO) would NOT start a new LOT."),
         ("LOTN_BASE_MEDS", "(empty)", "No MM therapies recorded in the [2025-12-10, 2026-01-08] post-AUTO induction window."),
         ("LOTN_MED_CNT", "0", "AUTO-only LOT; med count is 0."),
         ("INDUCTION_WINDOW_DAYS", "30", "LOT3 captures any post-AUTO agents within [2025-12-10, 2026-01-08]."),
@@ -404,7 +404,7 @@ def build_lot2_5_base_end(wb):
         ("FU_PD", "LOTN_END_DT_TEMP", "Temporary LOT N end date", "Date",
          "PRIMARY: earliest of (1) all-agent discontinuation (run-out date); (2) new qualifying MM agent (day before MAP_START_DT); "
          "(3) ALLO SCT (day before); (4) AUTO that triggers a new LOT (day before), per the LOTN_START_DT trigger rule "
-         "(any AUTO outside LOT N's applicable window and not 60-180d after a prior AUTO); "
+         "(any AUTO outside LOT N's applicable window and not within sct_tandem_days (<=180d) of a prior AUTO); "
          "(5) CAR-T (day before FIRST_CART_DT); "
          "(6) CART_INIT: when CAR-T occurs within 45 days of the first new agent that breaks LOT N, the new agent is consolidated into CART_INIT and the LOT ends at FIRST_CART_DT - 1; "
          "(7) death (YMDOD); (8) study_end. "
@@ -433,10 +433,13 @@ def build_lot2_5_base_end(wb):
         ("FU_PD", "ALLO_ALWAYS_ENDS_LOT", "ALLO always ends current LOT", "TRUE",
          "Any ALLO ends current LOT day before ALLO, and starts a new ALLO LOT.",
          "CL_SCT_CODELIST (ALLO)", "", ""),
-        ("FU_PD", "AUTO_TANDEM_WINDOW", "Tandem AUTO window", "60-180 days",
-         "Two AUTOs >=60 and <=180 days apart = planned tandem (continuation, no new LOT). "
+        ("FU_PD", "AUTO_TANDEM_WINDOW", "Tandem AUTO window", "<= 180 days",
+         "Two AUTOs <= sct_tandem_days (180 days) apart = planned tandem (continuation, no new LOT). "
          "Any other AUTO that falls outside LOT_(N-1)'s applicable window starts a new LOT.",
          "CL_SCT_CODELIST (AUTO)",
+         "Per Julia 13-May: implementation uses ONLY the upper bound. The MM protocol convention is "
+         "60-180 days, but the < 60 d case is too rare and ambiguous (usually re-conditioning / salvage "
+         "rather than a planned tandem) to gate on. Matches LOT1's existing behaviour. "
          "Use datediff without +1.", ""),
         ("FU_PD", "CART_CONSOLIDATION_DAYS", "CAR-T consolidation window", "45",
          "Agents within 45 days of FIRST_CART_DT are consolidated into the CAR-T LOT (study-team decision).",
@@ -537,7 +540,7 @@ def build_sct_cart_start(wb):
          "SCT_CART (or CART_INIT if CAR-T within 45 days of the first new agent that breaks LOT_(N-1))",
          "45-day consolidation window (study-team decision)."),
         ("AUTO SCT", "Always, UNLESS (i) within LOT_(N-1)'s applicable window "
-         "(30d MED/AUTO, 1d ALLO, 45d CART) or (ii) 60-180 days after a prior AUTO (planned tandem).",
+         "(30d MED/AUTO, 1d ALLO, 45d CART) or (ii) within sct_tandem_days (<=180d) of a prior AUTO (planned tandem).",
          "AUTO_DT",
          "30d induction from AUTO_DT.", "SCT_AUTO",
          "First-ever AUTOs CAN trigger a new LOT (LOT2-5 only). LOT1 keeps protocol convention "
@@ -575,7 +578,7 @@ def build_scenarios(wb):
          "VRd in LOT1; DARA added day 200.",
          "LOT1 ends d199. LOT2_START_DT=d200, TYPE=MED. Induction d200-d229."),
         ("S2. LOT2->LOT3 by AUTO outside window",
-         "LOT2 is MED-started (30d window). AUTO occurs d320 relative to LOT2 start, outside LOT2's window and not 60-180d after any prior AUTO.",
+         "LOT2 is MED-started (30d window). AUTO occurs d320 relative to LOT2 start, outside LOT2's window and not within sct_tandem_days (<=180d) of any prior AUTO.",
          "LOT2 ends d319. LOT3_START_DT = d320, TYPE = SCT_AUTO. Q16 applies to LOT2-5 only; LOT1's first AUTO remains part of induction."),
         ("S3. LOT1->LOT2 (ALLO LOT)->LOT3",
          "ALLO during/after LOT1, then later DARA.",
@@ -653,8 +656,13 @@ def build_open_questions(wb):
          "Draft: yes.", "Onkar", "Open"),
         ("Q8", "Confirm steroid filter applied (LOT1 H1).",
          "Required: MAP_MED_CLASS != 'STEROID' in induction + first-add CTEs.", "Onkar", "Open"),
-        ("Q9", "Confirm tandem off-by-one fix (LOT1 H2).",
-         "Required: drop +1 in datediff; window >=60 AND <=180.", "Onkar", "Open"),
+        ("Q9", "Tandem AUTO window: just <=180 days, or >=60 AND <=180 (protocol)?",
+         "RESOLVED per Julia 13-May: keep implementation at <= sct_tandem_days (180) only. "
+         "Ignore the < 60 day case - rare and ambiguous (usually re-conditioning / salvage, "
+         "not a planned tandem). The MM protocol describes tandem as 60-180 days; this is noted "
+         "in the spec but not enforced in code. Matches existing LOT1 behaviour, keeping LOT1 and "
+         "LOT2-5 consistent. datediff is used without +1.",
+         "Julia / Peter", "Resolved"),
         ("Q10", "Output shape: long (one row per LOT) vs wide?",
          "Draft: long primary + wide pivot.", "Julia / Dominique", "Open"),
         ("Q11", "CAR-T consolidation: 45 vs 30 days?",
@@ -676,9 +684,10 @@ def build_open_questions(wb):
         ("Q16", "AUTO trigger: 'always except induction/consolidation window'?",
          "RESOLVED + IMPLEMENTED: AUTO starts a new LOT (in LOT2-5) unless (i) it falls inside LOT_(N-1)'s applicable window "
          "(30d for MED/AUTO-started LOTs, 1d for ALLO-started LOTs, 45d for CART-started LOTs) "
-         "or (ii) it is 60-180 days after the immediately prior AUTO (planned tandem). "
+         "or (ii) it is on/before sct_tandem_days (180d) after the immediately prior AUTO (planned tandem). "
          "Scope: LOT2-5 only. LOT1 retains the protocol convention that the first AUTO is part of induction "
          "(lot_program.R:1300-1309 unchanged). "
+         "Tandem range is <= 180 only (no lower bound) - see Q9 resolution. "
          "Code implemented in lot2_5_base.R: auto_cand CTE and lot_n_sct ENDING_AUTO_DT now apply the window-by-type rule; "
          "prev_end CTE pulls PREV_START_DT and PREV_START_TYPE from lot_long for the window lookup.",
          "Julia / Peter", "Resolved"),
@@ -932,11 +941,12 @@ def build_decision_flow(wb):
          "  d_AUTO  = first AUTO date (Q16, 06-May): triggers LOT_(N+1) unless "
          "(i) it falls inside LOT_N's applicable window from LOT_N_START_DT "
          "(30d for MED/AUTO-started LOTs, 1d for ALLO-started, 45d for CART-started) "
-         "or (ii) it is 60-180 days after the immediately prior AUTO (planned tandem). "
+         "or (ii) it is on/before sct_tandem_days (180d) after the immediately prior AUTO (planned tandem). "
          "First-ever AUTOs CAN trigger a new LOT (LOT2-5 only; LOT1 retains the protocol "
          "convention that the first AUTO is part of induction).",
          "Up to 4 candidate dates",
-         "Planned tandem (60-180d after a prior AUTO) is a CONTINUATION and is NOT a candidate."),
+         "Planned tandem (within sct_tandem_days = 180d of a prior AUTO) is a CONTINUATION and is NOT a candidate. "
+         "Per Q9 resolution: no <60d lower bound enforced (matches LOT1)."),
         ("2",
          "Pick the earliest candidate date.",
          "LOT_(N+1)_START_DT = min(d_MED, d_ALLO, d_CART, d_AUTO).",

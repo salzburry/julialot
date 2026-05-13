@@ -243,7 +243,10 @@ build_lot_n <- function(con, lot_num,
     -- Rule: AUTO starts a new LOT UNLESS
     --   (i) it falls inside the prior LOT's applicable window from PREV_START_DT
     --       (30d MED/AUTO-started, 1d ALLO-started, 45d CART-started), or
-    --   (ii) it is 60-180 days after the IMMEDIATELY prior AUTO (planned tandem).
+    --   (ii) the AUTO is on/before sct_tandem_days (180d) after the IMMEDIATELY
+    --        prior AUTO (planned tandem). Per Julia 13-May: implementation uses
+    --        ONLY the upper bound (matches LOT1). Protocol convention is
+    --        60-180 d but the < 60 d case is too rare/ambiguous to gate on.
     -- The PREV_AUTO_DT IS NOT NULL guard from the prior rule is dropped:
     -- first-ever AUTOs CAN trigger a new LOT (LOT2-5 only; LOT1 retains the
     -- protocol convention that the first AUTO is part of induction).
@@ -266,9 +269,12 @@ build_lot_n <- function(con, lot_num,
                 WHEN 'CART'     THEN {cart_consolidation_days} - 1
                 ELSE                 {induction_window_days} - 1
               END)
-        -- (ii) not a planned tandem (60-180 days after prior AUTO)
+        -- (ii) not a planned tandem. Per Julia 13-May: implementation uses
+        -- ONLY the upper bound (<= sct_tandem_days). Protocol convention is
+        -- "60-180 days", but the < 60 d case is so rare (and ambiguous - usually
+        -- re-conditioning or salvage rather than a planned tandem) that the
+        -- code matches LOT1's existing <= 180 behaviour. The spec records this.
         AND NOT (awp.PREV_AUTO_DT IS NOT NULL
-                 AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) >= 60
                  AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {sct_tandem_days})
       GROUP BY pe.PATID
     )
@@ -547,21 +553,21 @@ build_lot_n <- function(con, lot_num,
       -- falls outside the window, it is NOT in-LOT (the TX_AUTO_* fields and
       -- TAND/SING flags become NULL/0) and instead becomes the ENDING_AUTO_DT
       -- that closes LOT N. AUTO_DT_2 is in-LOT only when AUTO_DT_1 is in-LOT
-      -- AND AUTO_DT_2 is a valid tandem (60-180d after AUTO_DT_1).
+      -- AND AUTO_DT_2 is a valid tandem (<= sct_tandem_days after AUTO_DT_1).
       CASE WHEN ap.AUTO_DT_1 IS NOT NULL
             AND datediff(ap.AUTO_DT_1, l.LOT{lot_num}_START_DT) < l.LOT_WINDOW_DAYS
            THEN ap.AUTO_DT_1 END AS LOT{lot_num}_TX_AUTO_DT_1,
       CASE WHEN ap.AUTO_DT_1 IS NOT NULL
             AND datediff(ap.AUTO_DT_1, l.LOT{lot_num}_START_DT) < l.LOT_WINDOW_DAYS
             AND ap.AUTO_DT_2 IS NOT NULL
-            AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) BETWEEN 60 AND {sct_tandem_days}
+            AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {sct_tandem_days}
             AND coalesce(ab.n_allo_between, 0) = 0
            THEN ap.AUTO_DT_2 END AS LOT{lot_num}_TX_AUTO_DT_2,
       CASE
         WHEN ap.AUTO_DT_1 IS NOT NULL
          AND datediff(ap.AUTO_DT_1, l.LOT{lot_num}_START_DT) < l.LOT_WINDOW_DAYS
          AND ap.AUTO_DT_2 IS NOT NULL
-         AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) BETWEEN 60 AND {sct_tandem_days}
+         AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {sct_tandem_days}
          AND coalesce(ab.n_allo_between, 0) = 0
         THEN 1 ELSE 0
       END AS LOT{lot_num}_SCT_AUTO_TAND_FLG,
@@ -569,7 +575,7 @@ build_lot_n <- function(con, lot_num,
         WHEN ap.AUTO_DT_1 IS NOT NULL
          AND datediff(ap.AUTO_DT_1, l.LOT{lot_num}_START_DT) < l.LOT_WINDOW_DAYS
          AND NOT (ap.AUTO_DT_2 IS NOT NULL
-                  AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) BETWEEN 60 AND {sct_tandem_days}
+                  AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {sct_tandem_days}
                   AND coalesce(ab.n_allo_between, 0) = 0)
         THEN 1 ELSE 0
       END AS LOT{lot_num}_SCT_AUTO_SING_FLG,
@@ -580,7 +586,7 @@ build_lot_n <- function(con, lot_num,
           THEN ap.AUTO_DT_1
         -- Valid tandem in-LOT: AUTO_DT_3 ends LOT N
         WHEN ap.AUTO_DT_2 IS NOT NULL
-         AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) BETWEEN 60 AND {sct_tandem_days}
+         AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {sct_tandem_days}
          AND coalesce(ab.n_allo_between, 0) = 0
         THEN ap.AUTO_DT_3
         -- Single in-LOT AUTO: AUTO_DT_2 ends LOT N (when it exists and is non-tandem)
@@ -596,7 +602,7 @@ build_lot_n <- function(con, lot_num,
         WHEN ap.AUTO_DT_1 IS NOT NULL
          AND datediff(ap.AUTO_DT_1, l.LOT{lot_num}_START_DT) < l.LOT_WINDOW_DAYS
          AND ap.AUTO_DT_2 IS NOT NULL
-         AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) BETWEEN 60 AND {sct_tandem_days}
+         AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {sct_tandem_days}
          AND coalesce(ab.n_allo_between, 0) = 0
         THEN ap.AUTO_DT_2
         WHEN ap.AUTO_DT_1 IS NOT NULL
@@ -887,7 +893,7 @@ build_lot_n <- function(con, lot_num,
       CASE WHEN lbe.LOT{lot_num}_TX_AUTO_DT_1 IS NOT NULL
             AND lbe.LOT{lot_num}_TX_AUTO_DT_1 <= lbe.LOT{lot_num}_BASE_END_DT
            THEN 1 ELSE 0 END                          AS LOT_TX_AUTO_FLG,
-      -- TAND only if both in-LOT, 60-180d apart, AND pre-clamp tandem rules
+      -- TAND only if both in-LOT, AUTO_DT_2 within sct_tandem_days of AUTO_DT_1, AND pre-clamp tandem rules
       -- already qualified it (no ALLO between, etc., from lot{n}_sct).
       CASE WHEN lbe.LOT{lot_num}_TX_AUTO_DT_2 IS NOT NULL
             AND lbe.LOT{lot_num}_TX_AUTO_DT_2 <= lbe.LOT{lot_num}_BASE_END_DT
