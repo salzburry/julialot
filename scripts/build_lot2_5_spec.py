@@ -678,9 +678,12 @@ def build_open_questions(wb):
          "LOTN_START_TYPE records the highest-priority event on the start date.",
          "Julia / Peter", "Resolved"),
         ("Q15", "CAR-T LOT end reason when consolidation meds run out: SCT_CART or DISCONTINUATION?",
-         "Draft (current code): DISCONTINUATION - CAR-T LOT spans through last consolidation MAP_END_DT and routes by runout. "
-         "Alternative: force SCT_CART for any CAR-T-started LOT regardless of how the consolidation regimen ends.",
-         "Julia", "Open"),
+         "RESOLVED per Onkar 13-May: DISCONTINUATION (current code). Rationale: SCT_CART describes "
+         "how the LOT STARTED, not how it ended. When the consolidation regimen runs out of supply, "
+         "the LOT ended because the meds stopped - that is DISCONTINUATION. The CAR-T LOT spans "
+         "through last consolidation MAP_END_DT and routes the end reason by runout exactly like "
+         "any other LOT.",
+         "Julia / Onkar", "Resolved"),
         ("Q16", "AUTO trigger: 'always except induction/consolidation window'?",
          "RESOLVED + IMPLEMENTED: AUTO starts a new LOT (in LOT2-5) unless (i) it falls inside LOT_(N-1)'s applicable window "
          "(30d for MED/AUTO-started LOTs, 1d for ALLO-started LOTs, 45d for CART-started LOTs) "
