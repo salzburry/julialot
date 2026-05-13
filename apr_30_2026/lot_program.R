@@ -1575,35 +1575,31 @@ main <- function() {
         WHEN ec.LOT1_BASE_DISCON_DT IS NOT NULL THEN ec.LOT1_BASE_DISCON_DT
         ELSE ec.OBS_END_DT  -- OBS_END_DT = ENDDATE (disenrollment not a censoring criterion)
       END AS LOT1_BASE_END_DT,
-      -- LOT1_BASE_LENGTH: 2-way per spec. DISCON tie-break against CART_INIT
-      -- uses FIRST_CART_DT - 1 (CART_INIT's spec end date).
+      -- LOT1_BASE_LENGTH: mirrors the LOT1_BASE_END_DT cascade exactly so that
+      -- length always equals (LOT1_BASE_END_DT - LOT1_START_DT + 1). Cascade
+      -- order matches the END_REASON priority including the Q1 06-May flip
+      -- (DEATH > DISCONTINUATION > STUDY_END).
       CASE
+        WHEN ec.LOT1_TX_ENDDATE IS NOT NULL
+         AND NOT (ec.CART_INIT_FLG = 1 AND ec.LOT1_TX_ENDDATE_REASON = 3)
+         AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL
+              OR (ec.CART_INIT_FLG = 1 AND ec.LOT1_TX_ENDDATE <= date_sub(ec.FIRST_CART_DT, 1))
+              OR (ec.CART_INIT_FLG = 0 AND ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT))
+         AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_DISCON_DT)
+        THEN datediff(ec.LOT1_TX_ENDDATE, ec.LOT1_START_DT) + 1
+        WHEN ec.CART_INIT_FLG = 1
+         AND (ec.LOT1_BASE_DISCON_DT IS NULL OR date_sub(ec.FIRST_CART_DT, 1) <= ec.LOT1_BASE_DISCON_DT)
+        THEN datediff(date_sub(ec.FIRST_CART_DT, 1), ec.LOT1_START_DT) + 1
+        WHEN ec.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
+         AND ec.CART_INIT_FLG = 0
+         AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASE_1ST_ADD_MED_DT <= ec.LOT1_BASE_DISCON_DT)
+        THEN datediff(ec.LOT1_BASE_1ST_ADD_MED_DT, ec.LOT1_START_DT) + 1
+        -- Q1 priority flip: DEATH outranks DISCONTINUATION.
+        WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT
+        THEN datediff(ec.DEATH_DT, ec.LOT1_START_DT) + 1
         WHEN ec.LOT1_BASE_DISCON_DT IS NOT NULL
-         AND (ec.LOT1_TX_ENDDATE IS NULL OR ec.LOT1_BASE_DISCON_DT < ec.LOT1_TX_ENDDATE)
-         AND ((ec.CART_INIT_FLG = 1 AND ec.LOT1_BASE_DISCON_DT <= date_sub(ec.FIRST_CART_DT, 1))
-              OR (ec.CART_INIT_FLG = 0 AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL OR ec.LOT1_BASE_DISCON_DT <= ec.LOT1_BASE_1ST_ADD_MED_DT)))
         THEN datediff(ec.LOT1_BASE_DISCON_DT, ec.LOT1_START_DT) + 1
-        ELSE datediff(
-          CASE
-            WHEN ec.LOT1_TX_ENDDATE IS NOT NULL
-             AND NOT (ec.CART_INIT_FLG = 1 AND ec.LOT1_TX_ENDDATE_REASON = 3)
-             AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL
-                  OR (ec.CART_INIT_FLG = 1 AND ec.LOT1_TX_ENDDATE <= date_sub(ec.FIRST_CART_DT, 1))
-                  OR (ec.CART_INIT_FLG = 0 AND ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT))
-             AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_DISCON_DT)
-            THEN ec.LOT1_TX_ENDDATE
-            WHEN ec.CART_INIT_FLG = 1
-             AND (ec.LOT1_BASE_DISCON_DT IS NULL OR date_sub(ec.FIRST_CART_DT, 1) <= ec.LOT1_BASE_DISCON_DT)
-            THEN date_sub(ec.FIRST_CART_DT, 1)
-            WHEN ec.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
-             AND ec.CART_INIT_FLG = 0
-             AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASE_1ST_ADD_MED_DT <= ec.LOT1_BASE_DISCON_DT)
-            THEN ec.LOT1_BASE_1ST_ADD_MED_DT
-            WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT THEN ec.DEATH_DT
-            ELSE ec.OBS_END_DT
-          END,
-          ec.LOT1_START_DT
-        ) + 1
+        ELSE datediff(ec.OBS_END_DT, ec.LOT1_START_DT) + 1
       END AS LOT1_BASE_LENGTH
     FROM end_candidates ec
   "), qc = "
