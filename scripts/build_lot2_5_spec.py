@@ -542,9 +542,9 @@ def build_sct_cart_start(wb):
          "30d induction from AUTO_DT.", "SCT_AUTO",
          "First-ever AUTOs CAN trigger a new LOT (LOT2-5 only). LOT1 keeps protocol convention "
          "that the first AUTO is part of induction."),
-        ("New MM agent", "After LOT_(N-1) ended by DISCONTINUATION or MED_ADD with no SCT/CAR-T.",
+        ("New MM agent", "Always, when MAP_START_DT is strictly after LOT_(N-1)_BASE_END_DT (i.e., outside the prior LOT's span / induction window).",
          "MAP_START_DT of new agent", "30d induction window.", "n/a",
-         "Steroids and biosimilar subs do not start a LOT."),
+         "Steroids and biosimilar subs of LOT_(N-1) drugs do not start a LOT. Code: lot2_5_base.R::med_cand uses MAP_START_DT > PREV_END_DT - no gating on the prior LOT's end reason."),
         ("Death / STUDY_END (PRIMARY)", "Never starts a LOT; ends follow-up.",
          "n/a", "n/a", "DEATH / STUDY_END",
          "Distinct from DISCONTINUATION. Per Q1 (06-May): runout cases now correctly show DISCONTINUATION "
