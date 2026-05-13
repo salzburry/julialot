@@ -72,7 +72,8 @@ Resolved as of 13-May: Q1 (90-day LOT-level buffer — removed; the only
 LOT spans a single day), Q9 (tandem AUTO uses `<= sct_tandem_days`
 upper bound only; `tx_auto_dates` already groups < 60 d events upstream),
 Q11 (CAR-T 45 d consolidation), Q12 (disenrollment in sensitivity only),
-Q14 (same-day priority `SCT_ALLO > SCT_CART > SCT_AUTO > MED`), Q15
+Q14 (same-day START priority `SCT_ALLO > CART > SCT_AUTO > MED` using
+the LOT_START_TYPE labels), Q15
 (CAR-T LOT runout = `DISCONTINUATION`), Q16 (AUTO trigger broadening
 LOT2-5 only).
 

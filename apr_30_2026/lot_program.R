@@ -1512,16 +1512,17 @@ main <- function() {
       FROM tx_auto_dates a
     ),
     post_runout_auto AS (
-      -- Uses 30d window (LOT2-5 convention for MED-started prior LOT) and
-      -- 180d tandem exclusion. LOT1's own 60d induction window is NOT used
-      -- here because the guard models what LOT2's auto_cand would see.
+      -- Mirrors LOT2-5 auto_cand: LOT1 is MED-started in lot_long, so the
+      -- "applicable window" from LOT2's perspective is cfg$lot_n_induction_window_days
+      -- (default 30d). LOT1's own 60d induction window is NOT used here because the
+      -- guard models what LOT2's auto_cand would see, not what LOT1 itself uses.
       SELECT DISTINCT lb.PATID
       FROM lot1_base lb
       INNER JOIN post_runout_autos awp ON lb.PATID = awp.PATID
       WHERE lb.LOT1_BASE_DISCON_DT IS NOT NULL
         AND awp.TX_DT > lb.LOT1_BASE_DISCON_DT
         AND awp.TX_DT <= lb.OBS_END_DT
-        AND awp.TX_DT > date_add(lb.LOT1_START_DT, 30 - 1)
+        AND awp.TX_DT > date_add(lb.LOT1_START_DT, {cfg$lot_n_induction_window_days} - 1)
         AND NOT (awp.PREV_AUTO_DT IS NOT NULL
                  AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {cfg$sct_tandem_days})
     ),
