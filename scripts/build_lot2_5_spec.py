@@ -547,6 +547,10 @@ def build_sct_cart_start(wb):
          "Steroids and biosimilar subs do not start a LOT."),
         ("Death / STUDY_END (PRIMARY)", "Never starts a LOT; ends follow-up.",
          "n/a", "n/a", "DEATH / STUDY_END",
+         "Distinct from DISCONTINUATION. Per Q1 (06-May): runout cases now correctly show DISCONTINUATION "
+         "on the dashboard - DEATH / STUDY_END no longer absorb runouts that previously hid behind the 90d buffer. "
+         "Per Q1.1: if a patient runs out, starts new therapy, then dies, the runout is the LOT N end "
+         "(REASON = DISCONTINUATION) and the new event triggers LOT N+1 - DEATH does not silently swallow post-runout therapy. "
          "Disenrollment is NOT a primary end event."),
         ("Disenrollment (SENSITIVITY only)", "Never starts a LOT.",
          "n/a", "n/a", "DISENROLLMENT (sensitivity)",
