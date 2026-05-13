@@ -418,18 +418,14 @@ def build_lot2_5_base_end(wb):
          "Used as LOTN_BASE_END_DT only when LOTN_BASE_END_REASON = DISCONTINUATION.",
          "CL_MMA_CODELIST",
          "T_MEDICAL: FST_DT + medical_day_supply - 1. T_RX: FILL_DT + DAYS_SUP - 1. Missing DAY_SUPPLY -> 28d default (do not delete claims). "
-         "No LOT-level 90d observation buffer (removed per Julia 06-May).",
+         "There is only ONE 90-day rule in the pipeline: the MAP-level per-drug rule (map_discon_gap_days). "
+         "It says a drug is discontinued if there is no refill within 90 days. There is no additional LOT-level wait on top of that.",
          ""),
         ("FU_PD", "LOTN_BASE_1ST_ADD_MED_DT / LOTN_BASE_1ST_ADD_MED",
          "First non-induction agent during LOT N", "Date / MED_ABBR",
          "First non-steroid MM agent after the induction window with MAP_START_DT <= LOTN_BASE_DISCON_DT, not in LOTN_BASE_MEDS or its biosimilar.",
          "CL_MMA_CODELIST, permissible_subs",
          "Check permissible_subs before classifying as new add.", ""),
-        ("FU_PD", "LOT_DISCON_GAP_DAYS", "LOT-level discontinuation buffer (days)", "REMOVED",
-         "REMOVED per Julia 06-May ('we are not using the 90d gap rule'). "
-         "LOTN_BASE_DISCON_DT = last med date (max MAP_END_DT) whenever a runout exists; no observation-time buffer. "
-         "Per-drug discontinuation detection still uses MAP-level map_discon_gap_days (unchanged).",
-         "n/a", "Applies to both LOT1 and LOT2-5.", ""),
         ("FU_PD", "ALLO_ALWAYS_ENDS_LOT", "ALLO always ends current LOT", "TRUE",
          "Any ALLO ends current LOT day before ALLO, and starts a new ALLO LOT.",
          "CL_SCT_CODELIST (ALLO)", "", ""),
@@ -496,13 +492,13 @@ def build_lot2_5_base_end(wb):
     next_row = write_example_block(ws, next_row, "WORKED EXAMPLE D - End-reason priority with CART_INIT",
                                    ex_d_narrative, ex_d_table, ncols) + 2
 
-    # Example E: discontinuation (90d LOT-level gap removed; runout itself ends the LOT)
+    # Example E: discontinuation - runout directly ends the LOT
     ex_e_narrative = (
         "LOT2 starts 2025-08-20 (DARA+LENA). Last LENA MAP_END_DT 2026-02-06; last DARA 2026-01-15. No new agent, no death, study continues."
     )
     ex_e_table = [
         ("LOTN_BASE_DISCON_DT", "2026-02-06", "max(MAP_END_DT) across LOT2 induction agents (last med date)."),
-        ("LOTN_BASE_END_DT", "2026-02-06", "Runout = LOT end (no LOT-level 90d buffer)."),
+        ("LOTN_BASE_END_DT", "2026-02-06", "Runout = LOT end. The only 90-day rule is the per-drug MAP-level one; there is no separate LOT-level wait."),
         ("LOTN_BASE_END_REASON", "DISCONTINUATION", "Runout reached; no death or higher-priority event."),
         ("LOTN_BASE_LENGTH", "171", "2026-02-06 - 2025-08-20 + 1."),
     ]
@@ -626,23 +622,20 @@ def build_open_questions(wb):
     style_header(ws, 1, len(headers))
 
     rows = [
-        ("Q1", "90-day discontinuation gap - keep, or remove?",
-         "RESOLVED + IMPLEMENTED. Reply to Julia (06-May comments 2c + 4c): "
-         "Removing the LOT-level 90d confirmation gap from both LOT1 and LOT2-5 per your request. "
-         "LOTN_BASE_DISCON_DT will always equal the last med date (max MAP_END_DT across induction agents) "
-         "whenever a runout exists - no observation-time buffer. "
-         "To preserve the death signal, end-reason priority is flipped so DEATH > DISCONTINUATION > STUDY_END "
-         "(was DISCONTINUATION > DEATH > STUDY_END). "
-         "Edge-case refinement (Q1.1): DEATH only preempts DISCONTINUATION when no LOT-(N+1)-qualifying trigger "
-         "exists in (DISCON_DT, OBS_END_DT]. If the patient ran out, started new therapy (or had an SCT), "
-         "and then died, the runout is the true LOT N end (REASON = DISCONTINUATION) and the new event "
-         "triggers LOT N+1 in the next iteration - prevents post-runout therapy from being silently swallowed by death. "
-         "Effect: "
-         "(1) runs out, dies, no post-runout therapy => REASON = DEATH at death date; "
-         "(2) runs out, starts new therapy, then dies => REASON = DISCONTINUATION at runout; new therapy starts LOT N+1; "
-         "(3) runs out, reaches study end => REASON = DISCONTINUATION at runout (matches dashboard expectation); "
-         "(4) runout date is still recorded in LOTN_BASE_DISCON_DT even when REASON = DEATH. "
-         "MAP-level discontinuation gap (map_discon_gap_days, per-drug) is UNCHANGED.",
+        ("Q1", "Is there a 90-day LOT-level discontinuation buffer?",
+         "RESOLVED: NO. There is only ONE 90-day rule in the pipeline - the MAP-level per-drug rule "
+         "(map_discon_gap_days). A drug is considered discontinued if no refill appears within 90 days. "
+         "There is NO additional LOT-level 90-day wait on top of that. Once all base meds run out, the LOT "
+         "ends at that runout date directly. "
+         "Confirmed by Julia 13-May: ship as-is with 'runout = DISCONTINUATION' semantics. Direction of "
+         "the labeling change is acknowledged: patients with < 90 d of post-runout observation are now "
+         "labeled DISCONTINUATION at the runout date rather than STUDY_END at obs end - aligns with the "
+         "intuitive reading of the data. "
+         "Two follow-up adjustments to keep the cascade correct: "
+         "(a) End-reason priority is DEATH > DISCONTINUATION > STUDY_END so patients who run out and then "
+         "die still get REASON = DEATH. "
+         "(b) Q1.1: DEATH preempts DISCONTINUATION only when no LOT-(N+1) trigger sits between runout and "
+         "death - protects post-runout therapy from being silently absorbed by death.",
          "Julia / Peter", "Resolved"),
         ("Q2", "ALLO LOT span: single day or until next agent?",
          "RESOLVED: single day, start = end = ALLO_DT. ALLO is a punctuation event between LOTs; the next MM agent starts the following LOT.",

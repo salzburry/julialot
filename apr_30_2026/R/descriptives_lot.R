@@ -97,9 +97,8 @@ print_descriptives <- function(con) {
 <tr><td>Work Schema</td><td>', cfg$work_schema, '</td></tr>
 <tr><td>Input Cohort Table</td><td>', cfg$input_cohort_table, '</td></tr>
 <tr><td>Induction Window</td><td>', cfg$induction_window_days, ' days</td></tr>
-<tr><td>MAP Discontinuation Gap</td><td>', cfg$map_discon_gap_days, ' days</td></tr>
+<tr><td>Discontinuation Gap (per-drug, MAP-level)</td><td>', cfg$map_discon_gap_days, ' days</td></tr>
 <tr><td>Medical Day Supply</td><td>', cfg$medical_day_supply, ' days</td></tr>
-<tr><td>LOT Discontinuation Gap</td><td>REMOVED (Q1 06-May)</td></tr>
 </table>
 </body></html>')
     add_html_card(overview_html, section = "OVERVIEW", title = "Run Overview")

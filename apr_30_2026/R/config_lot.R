@@ -37,12 +37,10 @@ cfg <- list(
   input_cohort_table = Sys.getenv("INPUT_COHORT_TABLE", unset = "ELIG_COH_FINAL"),
 
   # Part 2 parameters
+  # NOTE: There is only ONE 90-day discontinuation rule - the per-drug MAP-level one
+  # below. No additional LOT-level wait exists (Q1 06-May, confirmed Julia 13-May).
   induction_window_days = as.integer(Sys.getenv("INDUCTION_WINDOW_DAYS", unset = "60")),
   map_discon_gap_days   = as.integer(Sys.getenv("MAP_DISCON_GAP_DAYS", unset = "90")),
-  # DEPRECATED (Q1 06-May): LOT-level 90d discontinuation buffer removed.
-  # LOTN_BASE_DISCON_DT = last med date directly (cap at OBS_END_DT).
-  # Value retained for back-compat with descriptives output table only.
-  lot_discon_gap_days   = as.integer(Sys.getenv("LOT_DISCON_GAP_DAYS", unset = "90")),
   medical_day_supply    = as.integer(Sys.getenv("MEDICAL_DAY_SUPPLY", unset = "28")),
 
   # Outpatient-confirmation window for the attrition report rendering
