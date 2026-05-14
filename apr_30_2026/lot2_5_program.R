@@ -7,7 +7,7 @@
 # lot_program.R or any LOT1 module.
 #
 # Prerequisites in the work schema (persisted by lot_program.R):
-#   MAP_STACKED, LOT1_BASE, LOT1_SCT, LOT1_BASE_END, ELIG_COH_FINAL
+#   MAP_STACKED, LOT1_SCT, LOT1_BASE_END, ELIG_COH_FINAL
 #   (or whatever cfg$input_cohort_table points to).
 #
 # All session-scoped temp views needed by the builder (lot_patient_input,

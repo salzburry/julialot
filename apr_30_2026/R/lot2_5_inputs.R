@@ -2,11 +2,11 @@
 # ============================================================
 # lot2_5_inputs.R - Rebuild upstream views needed by lot2_5_base.R
 #
-# lot_program.R only persists MAP_STACKED, LOT1_BASE, LOT1_SCT,
-# LOT1_BASE_END, MMA_MED_PROCESSED + the cohort input table. The temp
-# views lot_patient_input, sct_codelist, sct_claims_raw, tx_auto_dates,
-# and tx_allo_cart_dates are session-scoped and gone once that script
-# exits.
+# lot_program.R persists several work-schema tables; LOT2-5 reads
+# MAP_STACKED, LOT1_SCT, LOT1_BASE_END + the cohort input table. The
+# temp views lot_patient_input, sct_codelist, sct_claims_raw,
+# tx_auto_dates, and tx_allo_cart_dates are session-scoped and gone
+# once that script exits.
 #
 # This helper rebuilds those views in a fresh session by re-running the
 # same SQL patterns lot_program.R uses. No edits to lot_program.R.
@@ -319,8 +319,10 @@ prepare_lot_inputs <- function(con,
     SELECT * FROM allo_seq UNION ALL SELECT * FROM cart_seq
   ", qc = NULL)  # QC deferred to P15 materialization to avoid re-evaluating the SCT scan twice.
 
-  # Rebind the persisted LOT1 outputs to the temp view names lot2_5_base.R uses.
-  for (tbl in c("MAP_STACKED", "LOT1_BASE", "LOT1_SCT", "LOT1_BASE_END")) {
+  # Rebind the persisted LOT1 outputs to the temp view names lot2_5_base.R
+  # uses. Only the tables actually referenced by lot2_5_base.R are rebound
+  # (LOT1_BASE is persisted by LOT1 but not consumed here).
+  for (tbl in c("MAP_STACKED", "LOT1_SCT", "LOT1_BASE_END")) {
     db_exec(con, sprintf(
       "CREATE OR REPLACE TEMPORARY VIEW %s AS SELECT * FROM %s",
       tolower(tbl), wrk(tbl)
