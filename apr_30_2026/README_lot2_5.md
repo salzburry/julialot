@@ -16,6 +16,35 @@ through LOT5 on top of the existing LOT1 outputs. It does not modify
 
 ## Order of operations
 
+There are two ways to run the full pipeline.
+
+### Option A — top-level orchestrator (recommended)
+
+`run_pipeline.R` runs all three stages (cohort attrition → LOT1 → LOT2-5)
+in sequence, skipping any stage whose output table already exists in
+the work schema:
+
+```
+Rscript run_pipeline.R
+```
+
+Skip flags:
+- `FORCE_RERUN=TRUE Rscript run_pipeline.R` — re-run every stage even
+  if outputs already exist.
+- `SKIP_COHORT=TRUE SKIP_LOT1=TRUE Rscript run_pipeline.R` — LOT2-5 only.
+- `SKIP_LOT2_5=TRUE Rscript run_pipeline.R` — cohort attrition + LOT1
+  only.
+
+After every stage the orchestrator verifies its primary output table
+(`ELIG_COH_FINAL`, `LOT1_BASE_END`, `LOT_LONG`) actually landed in the
+work schema. If a stage exits 0 but its output is missing — usually
+because `materialize_to_personal_schema()` warned but did not write —
+the orchestrator logs a `WARN:` and the next stage can still see it
+before the cryptic `TABLE_OR_VIEW_NOT_FOUND` error appears two steps
+later.
+
+### Option B — run each stage manually
+
 1. Run `lot_program.R` first. The work-schema tables it persists
    (`MAP_STACKED`, `LOT1_BASE`, `LOT1_SCT`, `LOT1_BASE_END`,
    `MMA_MED_PROCESSED`, plus `cfg$input_cohort_table`) are the only
