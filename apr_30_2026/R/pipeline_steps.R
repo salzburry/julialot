@@ -159,13 +159,21 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
       source_tables = c("medical"),
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('med_claim_header')} AS
-        SELECT PATID, CLMID,
+        -- Claim grain is (PATID, PAT_PLANID, CLMID, FST_DT, LOC_CD). CLMID alone is
+        -- not unique: it is a plan-assigned sequence number, so the same value can
+        -- legitimately repeat across plan changes, service dates, or service-line
+        -- locations. Grouping on only (PATID, CLMID) silently merges genuinely
+        -- distinct claims and corrupts the inpatient_flg (which is then driven by
+        -- max(POS) / max(TOS_CD) / max(CONF_ID) across the merged rows). This
+        -- 5-column key matches the GSK house convention used elsewhere (e.g.
+        -- vax_300081 R/02_codes/005_outcomes.Rmd).
+        SELECT PATID, PAT_PLANID, CLMID, FST_DT, LOC_CD,
                max(CONF_ID) AS CONF_ID,
-               max(POS) AS POS,
-               max(TOS_CD) AS TOS_CD
+               max(POS)     AS POS,
+               max(TOS_CD)  AS TOS_CD
         FROM {cdm_src(cfg$tbl_medical)}
         WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
-        GROUP BY PATID, CLMID
+        GROUP BY PATID, PAT_PLANID, CLMID, FST_DT, LOC_CD
       "),
       qc = glue("SELECT count(*) AS n_claims FROM {work('med_claim_header')}")
     ),
@@ -199,6 +207,8 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
     # - Approach 1: POS IN (21, 51, 61) OR TOS_CD IN (FAC_IP.ACUTE, FAC_IP.REHSNF, PROF.INPVIS, FAC_IP.SNF)
     # - Approach 2: CONF_ID is validated in T_CONFINEMENT
     # Patient qualifies as inpatient if EITHER approach identifies them as inpatient
+    # Join key matches the 5-column claim grain used by med_claim_header:
+    # (PATID, PAT_PLANID, CLMID, FST_DT, LOC_CD).
     list(
       name = "08a_mm_dx_events_all",
       description = "Identifying MM diagnosis events (full study period, Approach 1+2 inpatient)",
@@ -207,7 +217,9 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
         CREATE OR REPLACE TEMPORARY VIEW {work('mm_dx_events_all')} AS
         SELECT /*+ BROADCAST(c) */
           d.PATID,
+          d.PAT_PLANID,
           d.CLMID,
+          d.LOC_CD,
           cast(d.FST_DT as date) AS svc_dt,
           upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) AS diag,
           CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
@@ -238,7 +250,11 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
           CASE WHEN h.POS IN ('21', '51', '61') OR h.TOS_CD IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF') THEN 1 ELSE 0 END AS pos_tos_inpatient
         FROM {cdm_src(cfg$tbl_med_diag)} d
         INNER JOIN {work('med_claim_header')} h
-          ON d.PATID = h.PATID AND d.CLMID = h.CLMID
+          ON d.PATID      = h.PATID
+         AND d.PAT_PLANID = h.PAT_PLANID
+         AND d.CLMID      = h.CLMID
+         AND d.FST_DT     = h.FST_DT
+         AND d.LOC_CD     = h.LOC_CD
         INNER JOIN {work('mm_dx_codes')} c
           ON upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) = c.dx
           AND (CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END) = c.icd_family
@@ -857,14 +873,19 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('other_malig_flag')} AS
         WITH dx AS (
-          SELECT d.PATID, d.CLMID, cast(d.FST_DT as date) AS event_dt,
+          -- Carry the full 5-column claim key so dx_with_setting can join
+          -- med_claim_header on the same grain (see step 07a comment).
+          SELECT d.PATID, d.PAT_PLANID, d.CLMID, d.FST_DT, d.LOC_CD,
+                 cast(d.FST_DT as date) AS event_dt,
                  upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) AS dx,
                  CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family
           FROM {cdm_src(cfg$tbl_med_diag)} d
           WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
         dx_mapped AS (
-          SELECT /*+ BROADCAST(o) */ dx.PATID, dx.CLMID, dx.event_dt, o.tumor_group
+          SELECT /*+ BROADCAST(o) */
+                 dx.PATID, dx.PAT_PLANID, dx.CLMID, dx.FST_DT, dx.LOC_CD,
+                 dx.event_dt, o.tumor_group
           FROM dx
           INNER JOIN {work('other_malig_codes')} o ON dx.dx = o.dx AND dx.icd_family = o.icd_family
         ),
@@ -877,7 +898,11 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
                       THEN 1 ELSE 0 END AS inpatient_flg
           FROM dx_mapped dm
           INNER JOIN {work('med_claim_header')} h
-            ON dm.PATID = h.PATID AND dm.CLMID = h.CLMID
+            ON dm.PATID      = h.PATID
+           AND dm.PAT_PLANID = h.PAT_PLANID
+           AND dm.CLMID      = h.CLMID
+           AND dm.FST_DT     = h.FST_DT
+           AND dm.LOC_CD     = h.LOC_CD
           LEFT JOIN {work('confinement')} cf
             ON h.PATID = cf.PATID AND h.CONF_ID = cf.CONF_ID
         ),
