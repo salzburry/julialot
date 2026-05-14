@@ -21,8 +21,10 @@ There are two ways to run the full pipeline.
 ### Option A — top-level orchestrator (recommended)
 
 `run_pipeline.R` runs all three stages (cohort attrition → LOT1 → LOT2-5)
-in sequence, skipping any stage whose output table already exists in
-the work schema:
+in sequence, skipping any stage whose output table already exists. Each
+stage is probed at the schema it actually writes to: cohort attrition
+at `personal_schema.FINAL_TABLE_NAME` (from `DOMINO_USER_NAME` +
+`FINAL_TABLE_NAME`), LOT1/LOT2-5 at `PROJECT_WORK_SCHEMA.<table>`:
 
 ```
 Rscript run_pipeline.R
@@ -37,11 +39,19 @@ Skip flags:
 
 After every stage the orchestrator verifies its primary output table
 (`ELIG_COH_FINAL`, `LOT1_BASE_END`, `LOT_LONG`) actually landed in the
-work schema. If a stage exits 0 but its output is missing — usually
-because `materialize_to_personal_schema()` warned but did not write —
-the orchestrator logs a `WARN:` and the next stage can still see it
-before the cryptic `TABLE_OR_VIEW_NOT_FOUND` error appears two steps
-later.
+schema that stage writes to. If a stage exits 0 but its output is
+missing — usually because `materialize_to_personal_schema()` warned but
+did not write — the orchestrator **halts immediately with `stop()`**
+rather than continuing. This catches silent persistence failures at
+the offending stage instead of letting them cascade into a cryptic
+`TABLE_OR_VIEW_NOT_FOUND` two stages later.
+
+There is also a pre-flight check: if `FINAL_TABLE_NAME` (the table
+cohort attrition writes) and `INPUT_COHORT_TABLE` (the table LOT1
+reads) differ, the orchestrator stops before running anything. A
+schema divergence (`DOMINO_USER_NAME` vs `PROJECT_WORK_SCHEMA`) only
+warns, since some Domino setups bridge the two via grants/views;
+post-stage verification will still catch a real break.
 
 ### Option B — run each stage manually
 
