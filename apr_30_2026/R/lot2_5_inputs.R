@@ -131,17 +131,9 @@ prepare_lot_inputs <- function(con,
       WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT
     ),
-    med_bill AS (
-      SELECT m.PATID, cast(m.FST_DT AS date) AS DATE_SERVICE,
-             s.SCT_TYPE, s.CL_CODE AS CODE
-      FROM {cdm_src(cfg$tbl_medical)} m
-      INNER JOIN lot_patient_input p ON m.PATID = p.PATID
-      INNER JOIN sct_codes s
-        ON s.CL_CODE_TYPE = 'HCPCS'
-       AND upper(regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''), '[^A-Za-z0-9]', '')) = s.CL_CODE
-      WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
-        AND cast(m.FST_DT AS date) <= p.OBS_END_DT
-    ),
+    -- (med_bill BILL_PROC_CD branch removed per Warsha 14-May; we do not
+    -- use BILL_PROC_CD from the medical file. Same removal applied to
+    -- lot_program.R S04 / SCT scan and cohort attrition therapy events.)
     medproc AS (
       SELECT mp.PATID, cast(mp.FST_DT AS date) AS DATE_SERVICE,
              s.SCT_TYPE, s.CL_CODE AS CODE
@@ -173,7 +165,6 @@ prepare_lot_inputs <- function(con,
     ),
     combined AS (
       SELECT * FROM med_proc
-      UNION ALL SELECT * FROM med_bill
       UNION ALL SELECT * FROM medproc
       UNION ALL SELECT * FROM med_diag
     )
