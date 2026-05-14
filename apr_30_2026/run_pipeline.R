@@ -31,13 +31,18 @@
 #   SKIP_LOT1=TRUE        Skip Stage 2 (assumes LOT1_BASE_END is there)
 #   SKIP_LOT2_5=TRUE      Skip Stage 3
 #
-# Env vars affecting paths (read directly here AND by stage configs):
-#   DATABRICKS_PWD        Connection password (required)
-#   DATABRICKS_DSN        ODBC DSN (default RWDE; matches stage configs)
-#   PROJECT_WORK_SCHEMA   Where LOT1 / LOT2-5 persist
-#   DOMINO_USER_NAME      personal_schema; where cohort attrition persists
-#   FINAL_TABLE_NAME      Cohort output table (default ELIG_COH_FINAL)
-#   INPUT_COHORT_TABLE    LOT pipelines' cohort input (default ELIG_COH_FINAL)
+# Env vars affecting paths (read directly here AND by stage configs).
+# Every default here MUST match the corresponding fallback in config_lot.R
+# (LOT stages) and config_prompts.R (cohort attrition):
+#   DATABRICKS_PWD            Connection password (required)
+#   DATABRICKS_DSN            ODBC DSN (default RWDE)
+#   DATABRICKS_CATALOG        Catalog (default hive_metastore)
+#   PROJECT_WORK_SCHEMA       LOT work schema; falls back to DOMINO_USER_NAME,
+#                             then gsk_mm_lot_work
+#   DOMINO_USER_NAME          Cohort attrition personal_schema; falls back
+#                             to DOMINO_STARTING_USERNAME
+#   FINAL_TABLE_NAME          Cohort output table (default ELIG_COH_FINAL)
+#   INPUT_COHORT_TABLE        LOT pipelines' cohort input (default ELIG_COH_FINAL)
 #
 # Usage:
 #   Rscript run_pipeline.R
@@ -74,32 +79,41 @@ env_bool <- function(name, default = "FALSE") {
 }
 
 # ---- Read env vars directly so we know exactly what each stage will do ----
-# Cohort attrition (config_prompts.R) writes here:
-cohort_table  <- Sys.getenv("FINAL_TABLE_NAME",   unset = "ELIG_COH_FINAL")
-cohort_schema <- Sys.getenv("DOMINO_USER_NAME",   unset = "")
-# Some Domino setups set personal_schema = work_schema. config_prompts.R
-# falls back to PROJECT_WORK_SCHEMA when DOMINO_USER_NAME is unset.
+# IMPORTANT: every default below MUST match the corresponding fallback in
+# config_lot.R (LOT stages) and config_prompts.R (cohort attrition). If
+# they drift, the orchestrator's SHOW TABLES probe checks one location
+# and the stages write to another, silently corrupting skip detection
+# and post-stage verification.
+db_pwd <- Sys.getenv("DATABRICKS_PWD", unset = "")
+
+# Catalog: both configs default to hive_metastore (config_lot.R:21,
+# config_prompts.R:35). Match that here.
+catalog <- Sys.getenv("DATABRICKS_CATALOG", unset = "hive_metastore")
+
+# Cohort attrition (config_prompts.R:138-139) personal_schema fallback:
+#   DOMINO_USER_NAME -> DOMINO_STARTING_USERNAME -> ""
+cohort_schema <- Sys.getenv("DOMINO_USER_NAME", unset = "")
 if (!nzchar(cohort_schema)) {
-  cohort_schema <- Sys.getenv("PROJECT_WORK_SCHEMA", unset = "")
+  cohort_schema <- Sys.getenv("DOMINO_STARTING_USERNAME", unset = "")
 }
+cohort_table <- Sys.getenv("FINAL_TABLE_NAME", unset = "ELIG_COH_FINAL")
 
-# LOT1 (lot_program.R / config_lot.R) reads cohort from / writes to:
-lot_work_schema   <- Sys.getenv("PROJECT_WORK_SCHEMA", unset = "")
-lot_input_table   <- Sys.getenv("INPUT_COHORT_TABLE",  unset = "ELIG_COH_FINAL")
-db_pwd            <- Sys.getenv("DATABRICKS_PWD",      unset = "")
-
-# Optional: catalog (Unity Catalog). config_lot.R sets cfg$catalog from
-# the same env var.
-catalog <- Sys.getenv("DATABRICKS_CATALOG", unset = "")
+# LOT stages (config_lot.R:23-24) work_schema fallback:
+#   PROJECT_WORK_SCHEMA -> DOMINO_USER_NAME -> gsk_mm_lot_work
+lot_work_schema <- Sys.getenv("PROJECT_WORK_SCHEMA", unset = "")
+if (!nzchar(lot_work_schema)) {
+  lot_work_schema <- Sys.getenv("DOMINO_USER_NAME", unset = "gsk_mm_lot_work")
+}
+lot_input_table <- Sys.getenv("INPUT_COHORT_TABLE", unset = "ELIG_COH_FINAL")
 
 if (!nzchar(db_pwd)) {
   stop("DATABRICKS_PWD environment variable is not set.")
 }
 if (!nzchar(lot_work_schema)) {
-  stop("PROJECT_WORK_SCHEMA is empty - cannot probe LOT outputs.")
+  stop("Cannot resolve LOT work schema. Set PROJECT_WORK_SCHEMA or DOMINO_USER_NAME.")
 }
 if (!nzchar(cohort_schema)) {
-  stop("Cannot resolve cohort attrition output schema. Set DOMINO_USER_NAME or PROJECT_WORK_SCHEMA.")
+  stop("Cannot resolve cohort attrition output schema. Set DOMINO_USER_NAME or DOMINO_STARTING_USERNAME.")
 }
 
 # ---- Pre-flight consistency check ----
