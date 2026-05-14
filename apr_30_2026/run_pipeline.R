@@ -151,8 +151,7 @@ stages <- list(
   list(
     name          = "Cohort attrition",
     script        = "main.R",
-    input_schema  = NA_character_,           # nothing to pre-check
-    input_table   = NA_character_,
+    required_inputs = list(),                # nothing to pre-check
     output_schema = cohort_schema,
     output_table  = cohort_table,
     skip_env      = "SKIP_COHORT"
@@ -164,8 +163,9 @@ stages <- list(
     # attrition wrote to cohort_schema and no view bridges the two,
     # this probe is what catches it BEFORE LOT1 hits
     # TABLE_OR_VIEW_NOT_FOUND.
-    input_schema  = lot_work_schema,
-    input_table   = lot_input_table,
+    required_inputs = list(
+      list(schema = lot_work_schema, table = lot_input_table)
+    ),
     output_schema = lot_work_schema,
     output_table  = "LOT1_BASE_END",
     skip_env      = "SKIP_LOT1"
@@ -173,8 +173,16 @@ stages <- list(
   list(
     name          = "LOT2-5",
     script        = "lot2_5_program.R",
-    input_schema  = lot_work_schema,
-    input_table   = "LOT1_BASE_END",
+    # LOT2-5 needs BOTH:
+    #   - LOT1_BASE_END (rebuilt views and downstream joins), AND
+    #   - lot_input_table (lot2_5_inputs.R rebuilds lot_patient_input
+    #     from cfg$input_cohort_table -- the cohort table).
+    # Checking only LOT1_BASE_END would let SKIP_COHORT=TRUE SKIP_LOT1=TRUE
+    # pass the pre-check, then fail inside the LOT2-5 input rebuild.
+    required_inputs = list(
+      list(schema = lot_work_schema, table = "LOT1_BASE_END"),
+      list(schema = lot_work_schema, table = lot_input_table)
+    ),
     output_schema = lot_work_schema,
     output_table  = "LOT_LONG",
     skip_env      = "SKIP_LOT2_5"
@@ -193,11 +201,15 @@ log_msg("Force rerun:           ", force_rerun)
 sep_line()
 
 if (config_mismatch) {
-  log_msg("CONFIG MISMATCH (table): cohort attrition writes '", cohort_table,
+  log_msg("CONFIG WARNING (table): cohort attrition writes '", cohort_table,
           "' but LOT pipelines read INPUT_COHORT_TABLE='", lot_input_table, "'.")
-  log_msg("LOT1 will not find the cohort output. Set FINAL_TABLE_NAME and",
-          " INPUT_COHORT_TABLE to the same value, OR pre-create an alias.")
-  stop("Pipeline halted: cohort table name vs LOT input table name diverge.")
+  log_msg("Unless an alias/view bridges the two names, LOT1 will not find",
+          " the cohort table. Set FINAL_TABLE_NAME == INPUT_COHORT_TABLE,",
+          " OR pre-create an alias before re-running.")
+  # Not a hard stop: the per-stage input probe (below) is what actually
+  # halts the pipeline if no alias bridges FINAL_TABLE_NAME and
+  # INPUT_COHORT_TABLE. Hard-stopping here made the "pre-create an
+  # alias" remediation unreachable.
 }
 if (schema_mismatch) {
   log_msg("CONFIG WARNING (schema): cohort attrition persists to '",
@@ -230,27 +242,29 @@ for (stage in stages) {
     next
   }
 
-  # Pre-run input check: confirm the stage's required input table is
-  # visible at the schema the stage will look in. This catches the
-  # "schema_mismatch + no bridging view" case BEFORE the stage script
-  # bombs with TABLE_OR_VIEW_NOT_FOUND. A warned-and-continued
-  # schema_mismatch in pre-flight is harmless if a view bridges the
-  # two schemas; if not, this check halts the pipeline here.
-  if (!is.na(stage$input_schema) && !is.na(stage$input_table) &&
-      nzchar(stage$input_schema) && nzchar(stage$input_table)) {
-    has_input <- table_exists(probe_con, stage$input_schema, stage$input_table)
+  # Pre-run input check: confirm every required input table is visible
+  # at the schema the stage will look in. This catches the
+  # "schema_mismatch + no bridging view" case (and the analogous
+  # SKIP_COHORT=TRUE SKIP_LOT1=TRUE case where the cohort table is
+  # also missing) BEFORE the stage script bombs with
+  # TABLE_OR_VIEW_NOT_FOUND.
+  for (req in stage$required_inputs) {
+    if (is.null(req$schema) || is.null(req$table) ||
+        !nzchar(req$schema) || !nzchar(req$table)) next
+    has_input <- table_exists(probe_con, req$schema, req$table)
     if (!isTRUE(has_input)) {
       log_msg(sprintf("[%-20s] FAIL: required input '%s.%s' not visible from probe DSN",
-                      stage$name, stage$input_schema, stage$input_table))
-      log_msg("  Cohort attrition may have persisted to a different schema. Either:")
+                      stage$name, req$schema, req$table))
+      log_msg("  Cohort attrition may have persisted to a different schema or table. Either:")
       log_msg("    - set DOMINO_USER_NAME == PROJECT_WORK_SCHEMA so cohort lands in the LOT schema, OR")
-      log_msg("    - create a view/alias '", stage$input_schema, ".", stage$input_table,
+      log_msg("    - set FINAL_TABLE_NAME == INPUT_COHORT_TABLE, OR")
+      log_msg("    - create a view/alias '", req$schema, ".", req$table,
               "' that points at the cohort table.")
       results[[stage$name]] <- list(status = "MISSING_INPUT", elapsed_s = 0)
       sep_line()
       log_msg("Pipeline halted. Subsequent stages will not run.")
       stop(sprintf("Stage '%s' cannot start: required input '%s.%s' not found.",
-                   stage$name, stage$input_schema, stage$input_table))
+                   stage$name, req$schema, req$table))
     }
   }
 

@@ -54,20 +54,30 @@ rather than continuing. This catches silent persistence failures at
 the offending stage instead of letting them cascade into a cryptic
 `TABLE_OR_VIEW_NOT_FOUND` two stages later.
 
-Before each stage runs, the orchestrator also probes that the stage's
-**required input table** is visible at the schema the stage will read
-from. For LOT1 that is `<lot_work_schema>.<INPUT_COHORT_TABLE>`; for
-LOT2-5 it is `<lot_work_schema>.LOT1_BASE_END`. This is what catches
-the case where cohort attrition persisted to a different schema and no
-bridging view exists — the orchestrator stops with a clear message
-instead of letting LOT1 hit `TABLE_OR_VIEW_NOT_FOUND`.
+Before each stage runs, the orchestrator also probes that **every
+required input table** is visible at the schema the stage will read
+from:
 
-There is also a pre-flight check: if `FINAL_TABLE_NAME` (the table
-cohort attrition writes) and `INPUT_COHORT_TABLE` (the table LOT1
-reads) differ, the orchestrator stops before running anything. A
-schema divergence (`DOMINO_USER_NAME` vs `PROJECT_WORK_SCHEMA`) only
-warns at startup — the pre-run input check above is what halts the
-pipeline if no view actually bridges the two schemas.
+- LOT1 needs `<lot_work_schema>.<INPUT_COHORT_TABLE>`.
+- LOT2-5 needs **both** `<lot_work_schema>.LOT1_BASE_END` **and**
+  `<lot_work_schema>.<INPUT_COHORT_TABLE>` — `lot2_5_inputs.R`
+  rebuilds the `lot_patient_input` view from the cohort table, so a
+  LOT2-5-only run (`SKIP_COHORT=TRUE SKIP_LOT1=TRUE`) still requires
+  the cohort table to be visible at the LOT work schema.
+
+This is what catches the case where cohort attrition persisted to a
+different schema and no bridging view exists — the orchestrator stops
+with a clear message instead of letting LOT1 / LOT2-5 hit
+`TABLE_OR_VIEW_NOT_FOUND`.
+
+Two pre-flight checks at startup are warnings only (the per-stage
+input probe above is the source of truth for whether the pipeline
+proceeds):
+
+- Table-name divergence (`FINAL_TABLE_NAME` != `INPUT_COHORT_TABLE`):
+  warns; a bridging alias/view can still let LOT find the cohort.
+- Schema divergence (`DOMINO_USER_NAME` vs `PROJECT_WORK_SCHEMA`):
+  warns; a bridging view can still let LOT find the cohort.
 
 ### Option B — run each stage manually
 
