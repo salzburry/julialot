@@ -22,9 +22,17 @@ There are two ways to run the full pipeline.
 
 `run_pipeline.R` runs all three stages (cohort attrition → LOT1 → LOT2-5)
 in sequence, skipping any stage whose output table already exists. Each
-stage is probed at the schema it actually writes to: cohort attrition
-at `personal_schema.FINAL_TABLE_NAME` (from `DOMINO_USER_NAME` +
-`FINAL_TABLE_NAME`), LOT1/LOT2-5 at `PROJECT_WORK_SCHEMA.<table>`:
+stage is probed at the schema it actually writes to, using the same
+fallback chains as the stage configs:
+
+- Cohort attrition (`config_prompts.R`): `personal_schema` = `DOMINO_USER_NAME`
+  → `DOMINO_STARTING_USERNAME`. Table = `FINAL_TABLE_NAME`
+  (default `ELIG_COH_FINAL`).
+- LOT1 / LOT2-5 (`config_lot.R`): `work_schema` = `PROJECT_WORK_SCHEMA`
+  → `DOMINO_USER_NAME` → `gsk_mm_lot_work`.
+
+Defaults: `DATABRICKS_DSN=RWDE`, `DATABRICKS_CATALOG=hive_metastore` (both
+match the stage configs).
 
 ```
 Rscript run_pipeline.R
@@ -46,12 +54,20 @@ rather than continuing. This catches silent persistence failures at
 the offending stage instead of letting them cascade into a cryptic
 `TABLE_OR_VIEW_NOT_FOUND` two stages later.
 
+Before each stage runs, the orchestrator also probes that the stage's
+**required input table** is visible at the schema the stage will read
+from. For LOT1 that is `<lot_work_schema>.<INPUT_COHORT_TABLE>`; for
+LOT2-5 it is `<lot_work_schema>.LOT1_BASE_END`. This is what catches
+the case where cohort attrition persisted to a different schema and no
+bridging view exists — the orchestrator stops with a clear message
+instead of letting LOT1 hit `TABLE_OR_VIEW_NOT_FOUND`.
+
 There is also a pre-flight check: if `FINAL_TABLE_NAME` (the table
 cohort attrition writes) and `INPUT_COHORT_TABLE` (the table LOT1
 reads) differ, the orchestrator stops before running anything. A
 schema divergence (`DOMINO_USER_NAME` vs `PROJECT_WORK_SCHEMA`) only
-warns, since some Domino setups bridge the two via grants/views;
-post-stage verification will still catch a real break.
+warns at startup — the pre-run input check above is what halts the
+pipeline if no view actually bridges the two schemas.
 
 ### Option B — run each stage manually
 

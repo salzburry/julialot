@@ -151,6 +151,8 @@ stages <- list(
   list(
     name          = "Cohort attrition",
     script        = "main.R",
+    input_schema  = NA_character_,           # nothing to pre-check
+    input_table   = NA_character_,
     output_schema = cohort_schema,
     output_table  = cohort_table,
     skip_env      = "SKIP_COHORT"
@@ -158,6 +160,12 @@ stages <- list(
   list(
     name          = "LOT1",
     script        = "lot_program.R",
+    # LOT1 reads cohort from lot_work_schema.lot_input_table. If cohort
+    # attrition wrote to cohort_schema and no view bridges the two,
+    # this probe is what catches it BEFORE LOT1 hits
+    # TABLE_OR_VIEW_NOT_FOUND.
+    input_schema  = lot_work_schema,
+    input_table   = lot_input_table,
     output_schema = lot_work_schema,
     output_table  = "LOT1_BASE_END",
     skip_env      = "SKIP_LOT1"
@@ -165,6 +173,8 @@ stages <- list(
   list(
     name          = "LOT2-5",
     script        = "lot2_5_program.R",
+    input_schema  = lot_work_schema,
+    input_table   = "LOT1_BASE_END",
     output_schema = lot_work_schema,
     output_table  = "LOT_LONG",
     skip_env      = "SKIP_LOT2_5"
@@ -196,7 +206,9 @@ if (schema_mismatch) {
           " the cohort table. Set DOMINO_USER_NAME == PROJECT_WORK_SCHEMA",
           " (or pre-create a view) before re-running.")
   # Not a hard stop because some setups DO bridge via grants/views.
-  # If post-stage verification fails, that error will halt the pipeline.
+  # The pre-run input check inside the stage loop will catch a missing
+  # bridge BEFORE LOT1 runs (so the user sees a clear orchestrator
+  # message instead of a downstream TABLE_OR_VIEW_NOT_FOUND).
 }
 
 # ---- Stage execution loop ----
@@ -216,6 +228,30 @@ for (stage in stages) {
     log_msg(sprintf("[%-20s] SKIP (%s)", stage$name, reason))
     results[[stage$name]] <- list(status = "SKIPPED", elapsed_s = 0)
     next
+  }
+
+  # Pre-run input check: confirm the stage's required input table is
+  # visible at the schema the stage will look in. This catches the
+  # "schema_mismatch + no bridging view" case BEFORE the stage script
+  # bombs with TABLE_OR_VIEW_NOT_FOUND. A warned-and-continued
+  # schema_mismatch in pre-flight is harmless if a view bridges the
+  # two schemas; if not, this check halts the pipeline here.
+  if (!is.na(stage$input_schema) && !is.na(stage$input_table) &&
+      nzchar(stage$input_schema) && nzchar(stage$input_table)) {
+    has_input <- table_exists(probe_con, stage$input_schema, stage$input_table)
+    if (!isTRUE(has_input)) {
+      log_msg(sprintf("[%-20s] FAIL: required input '%s.%s' not visible from probe DSN",
+                      stage$name, stage$input_schema, stage$input_table))
+      log_msg("  Cohort attrition may have persisted to a different schema. Either:")
+      log_msg("    - set DOMINO_USER_NAME == PROJECT_WORK_SCHEMA so cohort lands in the LOT schema, OR")
+      log_msg("    - create a view/alias '", stage$input_schema, ".", stage$input_table,
+              "' that points at the cohort table.")
+      results[[stage$name]] <- list(status = "MISSING_INPUT", elapsed_s = 0)
+      sep_line()
+      log_msg("Pipeline halted. Subsequent stages will not run.")
+      stop(sprintf("Stage '%s' cannot start: required input '%s.%s' not found.",
+                   stage$name, stage$input_schema, stage$input_table))
+    }
   }
 
   log_msg(sprintf("[%-20s] RUN   -> %s", stage$name, stage$script))
