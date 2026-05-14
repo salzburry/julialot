@@ -1,0 +1,4 @@
+# Python bytecode caches (from running scripts/build_lot2_5_spec.py etc.)
+__pycache__/
+*.py[cod]
+*$py.class
