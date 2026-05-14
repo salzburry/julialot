@@ -59,11 +59,13 @@ required input table** is visible at the schema the stage will read
 from:
 
 - LOT1 needs `<lot_work_schema>.<INPUT_COHORT_TABLE>`.
-- LOT2-5 needs **both** `<lot_work_schema>.LOT1_BASE_END` **and**
-  `<lot_work_schema>.<INPUT_COHORT_TABLE>` — `lot2_5_inputs.R`
-  rebuilds the `lot_patient_input` view from the cohort table, so a
-  LOT2-5-only run (`SKIP_COHORT=TRUE SKIP_LOT1=TRUE`) still requires
-  the cohort table to be visible at the LOT work schema.
+- LOT2-5 needs every persisted LOT1 table that `lot2_5_inputs.R`
+  rebinds AS the temp views `lot2_5_base.R` reads — `MAP_STACKED`,
+  `LOT1_SCT`, `LOT1_BASE_END` — **plus** `<INPUT_COHORT_TABLE>` (used
+  to rebuild `lot_patient_input`). All four are probed at
+  `<lot_work_schema>`. A LOT2-5-only run
+  (`SKIP_COHORT=TRUE SKIP_LOT1=TRUE`) therefore needs every one of
+  them already present in the LOT work schema.
 
 This is what catches the case where cohort attrition persisted to a
 different schema and no bridging view exists — the orchestrator stops
@@ -81,10 +83,11 @@ proceeds):
 
 ### Option B — run each stage manually
 
-1. Run `lot_program.R` first. The work-schema tables it persists
-   (`MAP_STACKED`, `LOT1_BASE`, `LOT1_SCT`, `LOT1_BASE_END`,
-   `MMA_MED_PROCESSED`, plus `cfg$input_cohort_table`) are the only
-   inputs the runner depends on.
+1. Run `lot_program.R` first. LOT2-5 reads
+   `MAP_STACKED`, `LOT1_SCT`, and `LOT1_BASE_END` (all persisted by
+   LOT1), plus `cfg$input_cohort_table`. LOT1 also persists
+   `LOT1_BASE` and `MMA_MED_PROCESSED` for downstream descriptives,
+   but the LOT2-5 builder itself does not read them.
 2. Run `lot2_5_program.R`. It loads codelists from CSV, rebuilds the
    session-scoped temp views, and produces `LOT_LONG` with one row per
    `(PATID, LOT_NUM)` for `LOT_NUM = 1..max_lot`.

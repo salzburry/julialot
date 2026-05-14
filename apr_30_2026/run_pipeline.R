@@ -173,14 +173,21 @@ stages <- list(
   list(
     name          = "LOT2-5",
     script        = "lot2_5_program.R",
-    # LOT2-5 needs BOTH:
-    #   - LOT1_BASE_END (rebuilt views and downstream joins), AND
-    #   - lot_input_table (lot2_5_inputs.R rebuilds lot_patient_input
-    #     from cfg$input_cohort_table -- the cohort table).
+    # LOT2-5 needs every persisted LOT1 table that prepare_lot_inputs()
+    # rebinds AS the temp views lot2_5_base.R reads, PLUS the cohort
+    # table (lot2_5_inputs.R rebuilds lot_patient_input from it).
+    # Concretely lot2_5_base.R reads:
+    #   - map_stacked     (used at multiple FROMs)
+    #   - lot1_sct        (LEFT JOIN at the LOT1 row init)
+    #   - lot1_base_end   (FROM at the LOT1 row init)
+    # plus lot_patient_input <- cfg$input_cohort_table.
     # Checking only LOT1_BASE_END would let SKIP_COHORT=TRUE SKIP_LOT1=TRUE
-    # pass the pre-check, then fail inside the LOT2-5 input rebuild.
+    # pass the pre-check, then fail inside prepare_lot_inputs() if any of
+    # the LOT1 outputs is missing.
     required_inputs = list(
       list(schema = lot_work_schema, table = "LOT1_BASE_END"),
+      list(schema = lot_work_schema, table = "MAP_STACKED"),
+      list(schema = lot_work_schema, table = "LOT1_SCT"),
       list(schema = lot_work_schema, table = lot_input_table)
     ),
     output_schema = lot_work_schema,
