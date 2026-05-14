@@ -175,7 +175,12 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
         WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         GROUP BY PATID, PAT_PLANID, CLMID, FST_DT, LOC_CD
       "),
-      qc = glue("SELECT count(*) AS n_claims FROM {work('med_claim_header')}")
+      qc = glue("
+        SELECT count(*) AS n_claims,
+               sum(CASE WHEN PAT_PLANID IS NULL THEN 1 ELSE 0 END) AS n_null_pat_planid,
+               sum(CASE WHEN LOC_CD     IS NULL THEN 1 ELSE 0 END) AS n_null_loc_cd,
+               sum(CASE WHEN FST_DT     IS NULL THEN 1 ELSE 0 END) AS n_null_fst_dt
+        FROM {work('med_claim_header')}")
     ),
 
     # ----------------------------------------------------------
@@ -250,11 +255,15 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
           CASE WHEN h.POS IN ('21', '51', '61') OR h.TOS_CD IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF') THEN 1 ELSE 0 END AS pos_tos_inpatient
         FROM {cdm_src(cfg$tbl_med_diag)} d
         INNER JOIN {work('med_claim_header')} h
-          ON d.PATID      = h.PATID
-         AND d.PAT_PLANID = h.PAT_PLANID
-         AND d.CLMID      = h.CLMID
-         AND d.FST_DT     = h.FST_DT
-         AND d.LOC_CD     = h.LOC_CD
+          -- PAT_PLANID and LOC_CD can be NULL on some Optum claim lines; use
+          -- null-safe equality (Spark `<=>`) so a NULL on both sides matches
+          -- instead of silently dropping the diagnosis row. PATID / CLMID /
+          -- FST_DT should never be NULL on a valid claim, so plain `=` there.
+          ON d.PATID      =   h.PATID
+         AND d.CLMID      =   h.CLMID
+         AND d.FST_DT     =   h.FST_DT
+         AND d.PAT_PLANID <=> h.PAT_PLANID
+         AND d.LOC_CD     <=> h.LOC_CD
         INNER JOIN {work('mm_dx_codes')} c
           ON upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) = c.dx
           AND (CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END) = c.icd_family
@@ -898,11 +907,12 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
                       THEN 1 ELSE 0 END AS inpatient_flg
           FROM dx_mapped dm
           INNER JOIN {work('med_claim_header')} h
-            ON dm.PATID      = h.PATID
-           AND dm.PAT_PLANID = h.PAT_PLANID
-           AND dm.CLMID      = h.CLMID
-           AND dm.FST_DT     = h.FST_DT
-           AND dm.LOC_CD     = h.LOC_CD
+            -- Null-safe on PAT_PLANID / LOC_CD; see comment in step 08a.
+            ON dm.PATID      =   h.PATID
+           AND dm.CLMID      =   h.CLMID
+           AND dm.FST_DT     =   h.FST_DT
+           AND dm.PAT_PLANID <=> h.PAT_PLANID
+           AND dm.LOC_CD     <=> h.LOC_CD
           LEFT JOIN {work('confinement')} cf
             ON h.PATID = cf.PATID AND h.CONF_ID = cf.CONF_ID
         ),
