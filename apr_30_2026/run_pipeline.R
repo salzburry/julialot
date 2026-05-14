@@ -33,6 +33,7 @@
 #
 # Env vars affecting paths (read directly here AND by stage configs):
 #   DATABRICKS_PWD        Connection password (required)
+#   DATABRICKS_DSN        ODBC DSN (default RWDE; matches stage configs)
 #   PROJECT_WORK_SCHEMA   Where LOT1 / LOT2-5 persist
 #   DOMINO_USER_NAME      personal_schema; where cohort attrition persists
 #   FINAL_TABLE_NAME      Cohort output table (default ELIG_COH_FINAL)
@@ -112,7 +113,7 @@ schema_mismatch <- !identical(tolower(cohort_schema), tolower(lot_work_schema))
 library(DBI)
 library(odbc)
 
-dsn <- Sys.getenv("DSN", unset = "RWDE")
+dsn <- Sys.getenv("DATABRICKS_DSN", unset = "RWDE")
 probe_con <- DBI::dbConnect(odbc::odbc(), dsn = dsn, pwd = db_pwd, timeout = 30)
 on.exit(try(DBI::dbDisconnect(probe_con), silent = TRUE), add = TRUE)
 
