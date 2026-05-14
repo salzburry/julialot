@@ -157,12 +157,24 @@ materialize_to_personal_schema <- function(con, view_name, cfg, mat_tables, repl
   log_msg("  >> Materializing ", view_name, " to ", full_table_name, "...")
 
   tryCatch({
-    pointer <- tbl(con, view_name)
-    # NOTE: createInPersonalSchema (GSK helper) requires a global `con` variable.
-    # This is the one unavoidable global write in the module.
-    assign("con", con, envir = .GlobalEnv)
-    createInPersonalSchema(pointer, remote_table, replace = replace)
+    # Write directly via SQL using CREATE OR REPLACE TABLE (Delta Lake
+    # atomic write). Bypasses GSK's createInPersonalSchema helper because
+    # that helper's CTAS pattern hits a "Table or view already exists"
+    # error when a same-name temp view is present in the current Spark
+    # session - which is always the case here since the temp view we are
+    # materializing IS the source. CREATE OR REPLACE TABLE handles both
+    # first-time create and subsequent reruns atomically without that
+    # conflict.
+    write_sql <- if (isTRUE(replace)) {
+      glue("CREATE OR REPLACE TABLE {full_table_name} AS SELECT * FROM `{view_name}`")
+    } else {
+      glue("CREATE TABLE IF NOT EXISTS {full_table_name} AS SELECT * FROM `{view_name}`")
+    }
+    DBI::dbExecute(con, write_sql)
 
+    # Re-point the temp view at the persisted table so downstream
+    # queries that read `{view_name}` keep working (and use the
+    # persisted data instead of the upstream temp view).
     alias_sql <- glue("CREATE OR REPLACE TEMPORARY VIEW {view_name} AS SELECT * FROM {full_table_name}")
     DBI::dbExecute(con, alias_sql)
 

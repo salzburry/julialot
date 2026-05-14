@@ -244,7 +244,7 @@ def build_lot2_5_base(wb):
          "or (ii) when it is on/before sct_tandem_days (180d) after the immediately prior AUTO (planned tandem - continuation, not a trigger). "
          "Permissible biosimilar substitutions do not trigger.",
          "CL_MMA_CODELIST, CL_SCT_CODELIST, CL_MMA_ROLLUP",
-         "Source: T_MEDICAL (PROC_CD, BILL_PROC_CD, NDC), T_RX (NDC). Steroids excluded (MAP_MED_CLASS != 'STEROID'). "
+         "Source: T_MEDICAL (PROC_CD, NDC), T_RX (NDC). Steroids excluded (MAP_MED_CLASS != 'STEROID'). "
          "LOT2-5 only; LOT1 retains protocol convention that first AUTO is part of induction.",
          ""),
         ("FU_PD", "LOTN_START_TYPE", "Trigger that started LOT N",
