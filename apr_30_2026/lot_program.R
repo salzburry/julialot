@@ -298,10 +298,7 @@ main <- function() {
 
   # ----------------------------------------------------------
   # STEP 2 (5A): MMA_MED - Raw extraction
-  # Sources: medical (PROC_CD, NDC), rx (NDC)
-  # Note: BILL_PROC_CD removed per Warsha 14-May - we do not use BILL_PROC_CD
-  # from the medical file. Same change applied across LOT1 (here, SCT scan),
-  # LOT2-5 inputs, and cohort attrition.
+  # Sources: medical (PROC_CD, BILL_PROC_CD, NDC), rx (NDC)
   # Note: med_procedure excluded — contains ICD procedure codes only, not HCPCS/NDC drug codes
   # ----------------------------------------------------------
   run_step(con, "S04_mma_med_raw", glue("
@@ -330,7 +327,27 @@ main <- function() {
       WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT  -- ENDDATE primary; ENDDATE_CE under sensitivity flag
     ),
-    -- 2) Medical claims - NDC field (NDC-coded drug administrations on medical)
+    -- 2) Medical claims - BILL_PROC_CD (HCPCS)
+    med_bill_proc_cd AS (
+      SELECT
+        m.PATID,
+        cast(m.FST_DT AS date) AS DATE_SERVICE,
+        {cfg$medical_day_supply} AS DAY_SUPPLY,
+        'medical' AS CLAIM_TYPE,
+        'med_bill_proc' AS CLAIM_SOURCE,
+        c.CL_CODE AS CODE,
+        c.CL_CODE_TYPE AS CODE_TYPE,
+        c.CL_MED_ABBR AS MED_ABBR,
+        c.CL_MED_CLASS AS MED_CLASS
+      FROM {cdm_src(cfg$tbl_medical)} m
+      INNER JOIN lot_patient_input p ON m.PATID = p.PATID
+      INNER JOIN codelist c
+        ON c.CL_CODE_TYPE = 'HCPCS'
+       AND upper(regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''), '[^A-Za-z0-9]', '')) = c.CL_CODE
+      WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
+        AND cast(m.FST_DT AS date) <= p.OBS_END_DT  -- ENDDATE primary; ENDDATE_CE under sensitivity flag
+    ),
+    -- 3) Medical claims - NDC field (NDC-coded drug administrations on medical)
     med_ndc AS (
       SELECT
         m.PATID,
@@ -353,12 +370,12 @@ main <- function() {
         AND cast(m.FST_DT AS date) >= p.INDEX_DATE
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT  -- ENDDATE primary; ENDDATE_CE under sensitivity flag
     ),
-    -- 3) med_procedure table: REMOVED — Optum med_procedure.PROC contains ICD
+    -- 4) med_procedure table: REMOVED — Optum med_procedure.PROC contains ICD
     -- procedure codes, not HCPCS/NDC drug codes. The MMA codelist only has HCPCS
     -- and NDC codes for medication identification, so matching against ICD procedure
     -- codes is not meaningful. SCT extraction (S12) correctly matches ICD procedure
     -- codes from this table using the SCT codelist.
-    -- 4) Pharmacy (rx) claims (NDC)
+    -- 5) Pharmacy (rx) claims (NDC)
     rx_claims AS (
       SELECT
         r.PATID,
@@ -381,6 +398,7 @@ main <- function() {
         AND cast(r.FILL_DT AS date) <= p.OBS_END_DT  -- ENDDATE primary; ENDDATE_CE under sensitivity flag
     )
     SELECT * FROM med_proc_cd
+    UNION ALL SELECT * FROM med_bill_proc_cd
     UNION ALL SELECT * FROM med_ndc
     UNION ALL SELECT * FROM rx_claims
   "), qc = "
@@ -901,9 +919,18 @@ main <- function() {
       WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT
     ),
-    -- (Medical BILL_PROC_CD branch removed per Warsha 14-May; we do not
-    -- use BILL_PROC_CD from the medical file. Same removal applied to
-    -- LOT2-5 SCT inputs and cohort attrition therapy events.)
+    -- Medical BILL_PROC_CD (also CPT/HCPCS per Optum business rules)
+    med_bill AS (
+      SELECT m.PATID, cast(m.FST_DT AS date) AS DATE_SERVICE,
+             s.SCT_TYPE, s.CL_CODE AS CODE, 'med_bill_proc' AS SRC
+      FROM {cdm_src(cfg$tbl_medical)} m
+      INNER JOIN lot_patient_input p ON m.PATID = p.PATID
+      INNER JOIN sct_codes s
+        ON s.CL_CODE_TYPE = 'HCPCS'
+       AND upper(regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''), '[^A-Za-z0-9]', '')) = s.CL_CODE
+      WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
+        AND cast(m.FST_DT AS date) <= p.OBS_END_DT
+    ),
     -- MED_PROCEDURE PROC (ICD-9/ICD-10 procedure codes + HCPCS safety net)
     medproc AS (
       SELECT mp.PATID, cast(mp.FST_DT AS date) AS DATE_SERVICE,
@@ -939,6 +966,7 @@ main <- function() {
     ),
     combined AS (
       SELECT * FROM med_proc
+      UNION ALL SELECT * FROM med_bill
       UNION ALL SELECT * FROM medproc
       UNION ALL SELECT * FROM med_diag
     )
