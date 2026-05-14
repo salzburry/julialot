@@ -716,7 +716,14 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
             = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')
         WHERE r.FILL_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
       "),
-      qc = glue("SELECT count(*) AS n_therapy_events FROM {work('therapy_events')}")
+      qc = glue("
+        SELECT
+          count(*) AS n_therapy_events,
+          sum(CASE WHEN source = 'MEDICAL_PROC_CD'      THEN 1 ELSE 0 END) AS n_med_proc_cd,
+          sum(CASE WHEN source = 'MEDICAL_BILL_PROC_CD' THEN 1 ELSE 0 END) AS n_med_bill_proc_cd,
+          sum(CASE WHEN source = 'MEDICAL_NDC'          THEN 1 ELSE 0 END) AS n_med_ndc,
+          sum(CASE WHEN source = 'RX'                   THEN 1 ELSE 0 END) AS n_rx_ndc
+        FROM {work('therapy_events')}")
     ),
 
     # ----------------------------------------------------------
