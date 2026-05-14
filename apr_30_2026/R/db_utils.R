@@ -161,20 +161,15 @@ materialize_to_personal_schema <- function(con, view_name, cfg, mat_tables, repl
     # createInPersonalSchema(replace = TRUE) does not reliably drop a
     # pre-existing target, so the underlying CREATE TABLE fails with
     # "Table or view already exists" on re-runs. Doing the drop here
-    # makes the materialization idempotent across runs and across temp
-    # view / persisted table name collisions in the same Spark session.
+    # makes the materialization idempotent across runs.
+    # NOTE: Do NOT drop the temp view named {view_name} here - that
+    # view IS the source of this materialization, dropping it would
+    # leave createInPersonalSchema with nothing to read.
     if (isTRUE(replace)) {
       tryCatch({
         DBI::dbExecute(con, glue("DROP TABLE IF EXISTS {full_table_name}"))
       }, error = function(e) {
         log_msg("  >> Note: pre-drop warning (continuing): ", conditionMessage(e))
-      })
-      # Also drop any same-name temp view from the current session, in
-      # case CTAS resolution conflicts with it during create.
-      tryCatch({
-        DBI::dbExecute(con, glue("DROP VIEW IF EXISTS {remote_table}"))
-      }, error = function(e) {
-        # Some Spark configs error if there's no view; that's fine.
       })
     }
 
