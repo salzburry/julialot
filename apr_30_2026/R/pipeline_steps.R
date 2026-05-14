@@ -667,16 +667,14 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
     # ----------------------------------------------------------
     # PHASE 8: THERAPY EVENTS AND FLAGS
     # ----------------------------------------------------------
-    # NOTE: Step 18 uses 3 therapy sources (BILL_PROC_CD removed per
-    # Warsha confirmation — we do not use BILL_PROC_CD from the medical
-    # file in cohort attrition. LOT pipeline (S04) still scans all four;
-    # this divergence is intentional and limited to attrition).
-    #   (1) PROC_CD (HCPCS/CPT) on medical claims    [source = MEDICAL_PROC_CD]
-    #   (2) NDC on medical claims                     [source = MEDICAL_NDC]
-    #   (3) NDC on Rx claims                          [source = RX]
+    # Step 18 scans 4 therapy sources, matching the LOT pipeline (S04):
+    #   (1) PROC_CD (HCPCS/CPT) on medical claims      [source = MEDICAL_PROC_CD]
+    #   (2) BILL_PROC_CD (HCPCS) on medical claims     [source = MEDICAL_BILL_PROC_CD]
+    #   (3) NDC on medical claims                       [source = MEDICAL_NDC]
+    #   (4) NDC on Rx claims                            [source = RX]
     list(
       name = "18_therapy_events",
-      description = "Identifying MM therapy events (medical PROC_CD + NDC, Rx NDC)",
+      description = "Identifying MM therapy events (medical PROC_CD + BILL_PROC_CD + NDC, Rx NDC)",
       source_tables = c("medical", "rx"),
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('therapy_events')} AS
@@ -689,7 +687,16 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
           AND upper(regexp_replace(coalesce(cast(m.PROC_CD as string),''), '[^A-Za-z0-9]', '')) = c.code
         WHERE m.FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         UNION ALL
-        -- 2) Medical therapy via NDC
+        -- 2) Medical therapy via BILL_PROC_CD (HCPCS)
+        SELECT /*+ BROADCAST(c) */
+          m.PATID, cast(m.FST_DT as date) AS event_dt, 'MEDICAL_BILL_PROC_CD' AS source
+        FROM {cdm_src(cfg$tbl_medical)} m
+        INNER JOIN {work('mm_therapy_codes')} c
+          ON c.code_type = 'HCPCS'
+          AND upper(regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''), '[^A-Za-z0-9]', '')) = c.code
+        WHERE m.FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
+        UNION ALL
+        -- 3) Medical therapy via NDC
         SELECT /*+ BROADCAST(c) */
           m.PATID, cast(m.FST_DT as date) AS event_dt, 'MEDICAL_NDC' AS source
         FROM {cdm_src(cfg$tbl_medical)} m
@@ -699,7 +706,7 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
             = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')
         WHERE m.FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         UNION ALL
-        -- 3) Rx therapy via NDC
+        -- 4) Rx therapy via NDC
         SELECT /*+ BROADCAST(c) */
           r.PATID, cast(r.FILL_DT as date) AS event_dt, 'RX' AS source
         FROM {cdm_src(cfg$tbl_rx)} r
