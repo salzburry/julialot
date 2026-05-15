@@ -44,6 +44,15 @@
 # Normalize a MED_ABBR to a column-safe token (matches LOT1 convention).
 .lot_sanitize_col <- function(x) gsub("[^A-Za-z0-9]+", "_", toupper(x))
 
+# Staging table for the LOT_LONG build. The whole build (LOT1 init +
+# LOT2..N appends) writes here; build_lot2_5() only swaps the final
+# LOT_LONG into place AFTER every LOT appended successfully. This means a
+# mid-loop failure leaves a partial LOT_LONG_STAGE, NOT a partial
+# LOT_LONG -- so the orchestrator's "LOT_LONG already exists" skip can
+# never be fooled by an incomplete build, and a previous good LOT_LONG
+# (if any) is preserved until a complete rebuild replaces it.
+.LOT_LONG_STAGE <- "LOT_LONG_STAGE"
+
 # 9999-12-31 sentinel for SQL least() with NULLs.
 .SENTINEL <- "cast('9999-12-31' as date)"
 
@@ -141,10 +150,11 @@ init_lot_long_from_lot1 <- function(con, meds, classes) {
   "), qc = "SELECT count(*) AS n_lot1_rows FROM lot_long_v")
 
   # Materialize so iterative LOT N builders can self-join cheaply.
+  # Writes the STAGING table, not the final LOT_LONG (see .LOT_LONG_STAGE).
   run_step(con, "L26_materialize_lot_long",
-    glue("CREATE OR REPLACE TABLE {wrk('LOT_LONG')} AS SELECT * FROM lot_long_v"),
-    qc = glue("SELECT count(*) AS n_rows FROM {wrk('LOT_LONG')}"))
-  db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW lot_long AS SELECT * FROM {wrk('LOT_LONG')}"))
+    glue("CREATE OR REPLACE TABLE {wrk(.LOT_LONG_STAGE)} AS SELECT * FROM lot_long_v"),
+    qc = glue("SELECT count(*) AS n_rows FROM {wrk(.LOT_LONG_STAGE)}"))
+  db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW lot_long AS SELECT * FROM {wrk(.LOT_LONG_STAGE)}"))
 }
 
 # ============================================================
@@ -889,7 +899,7 @@ build_lot_n <- function(con, lot_num,
   }, character(1)), collapse = ",\n      ")
 
   run_step(con, paste0(pfx, "_lot", lot_num, "_append_long"), glue("
-    INSERT INTO {wrk('LOT_LONG')}
+    INSERT INTO {wrk(.LOT_LONG_STAGE)}
     SELECT
       lbe.PATID,
       cast({lot_num} as int)               AS LOT_NUM,
@@ -963,10 +973,10 @@ build_lot_n <- function(con, lot_num,
       {med_insert},
       {class_insert}
     FROM lot{lot_num}_base_end lbe
-  "), qc = glue("SELECT count(*) AS n_appended FROM {wrk('LOT_LONG')} WHERE LOT_NUM = {lot_num}"))
+  "), qc = glue("SELECT count(*) AS n_appended FROM {wrk(.LOT_LONG_STAGE)} WHERE LOT_NUM = {lot_num}"))
 
   # Refresh lot_long view to include the newly inserted rows.
-  db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW lot_long AS SELECT * FROM {wrk('LOT_LONG')}"))
+  db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW lot_long AS SELECT * FROM {wrk(.LOT_LONG_STAGE)}"))
 }
 
 # ============================================================
@@ -1015,7 +1025,7 @@ build_lot2_5 <- function(con,
 
   for (n in 2:max_lot) {
     log_msg("--- LOT", n, " ---")
-    nrows_before <- db_q(con, glue("SELECT count(*) AS n FROM {wrk('LOT_LONG')} WHERE LOT_NUM = {n - 1}"))$n
+    nrows_before <- db_q(con, glue("SELECT count(*) AS n FROM {wrk(.LOT_LONG_STAGE)} WHERE LOT_NUM = {n - 1}"))$n
     if (nrows_before == 0L) {
       log_msg("  No LOT", n - 1, " rows; nothing to roll forward. Stopping.")
       break
@@ -1028,7 +1038,20 @@ build_lot2_5 <- function(con,
                 meds = meds, classes = classes)
   }
 
-  # Final summary
+  # Atomic publish: the staging table is only now promoted to the final
+  # LOT_LONG. Every LOT (1..max_lot, or up to the natural break above)
+  # appended without error, so this is a COMPLETE build. If any append
+  # had failed, build_lot_n() would have stop()ped before reaching here,
+  # leaving LOT_LONG_STAGE partial and the prior LOT_LONG (if any)
+  # untouched -- so the orchestrator never mistakes a partial build for
+  # a finished one.
+  run_step(con, "L99_publish_lot_long",
+    glue("CREATE OR REPLACE TABLE {wrk('LOT_LONG')} AS SELECT * FROM {wrk(.LOT_LONG_STAGE)}"),
+    qc = glue("SELECT count(*) AS n_rows FROM {wrk('LOT_LONG')}"))
+  db_exec(con, glue("DROP TABLE IF EXISTS {wrk(.LOT_LONG_STAGE)}"))
+  db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW lot_long AS SELECT * FROM {wrk('LOT_LONG')}"))
+
+  # Final summary (reads the published LOT_LONG)
   summary <- db_q(con, glue("
     SELECT LOT_NUM, LOT_START_TYPE, LOT_BASE_END_REASON, count(*) AS n
     FROM {wrk('LOT_LONG')}

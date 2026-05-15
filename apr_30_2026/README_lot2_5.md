@@ -113,10 +113,15 @@ top regimens). It does not modify or overwrite `lot_dashboard.html`.
 Rscript lot_long_dashboard.R
 ```
 
-Prerequisite: `LOT_LONG` must already be built **with LOT2-5 rows**
-(the LOT2-5 stage completed, not just the LOT1 init). If `LOT_LONG`
-only has `LOT_NUM = 1`, the dashboard says so up front — drop the
-partial table and rerun the LOT2-5 stage first.
+Prerequisite: `LOT_LONG` must already be built. The LOT2-5 build is
+now **atomic**: every LOT writes a `LOT_LONG_STAGE` table and
+`build_lot2_5()` only promotes it to `LOT_LONG` after all LOTs append
+successfully. A mid-loop failure therefore leaves `LOT_LONG_STAGE`
+partial while `LOT_LONG` is either absent (first run — orchestrator
+correctly reports the stage failed) or still the previous complete
+build. So `LOT_LONG` should never again contain only `LOT_NUM = 1`
+from a half-finished run; if it ever does, the dashboard's OVERVIEW
+card flags it explicitly.
 
 ## Output: LOT_LONG
 
