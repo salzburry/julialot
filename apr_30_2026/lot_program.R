@@ -1484,7 +1484,7 @@ main <- function() {
     -- LOT2 would actually have a valid start trigger:
     --   - MED: any non-steroid MM agent NOT in LOT1's permissible biosimilar
     --     substitutes. Same-drug restarts DO qualify.
-    --   - AUTO: any AUTO outside LOT1's 30-day "applicable window"
+    --   - AUTO: any AUTO outside LOT1 30-day applicable window
     --     (LOT2-5 auto_cand uses 30d for any MED-started prior LOT,
     --     regardless of LOT1's own 60d induction window) AND not within
     --     sct_tandem_days (180d) of the immediately prior AUTO in patient
@@ -1514,7 +1514,7 @@ main <- function() {
     ),
     post_runout_auto AS (
       -- Mirrors LOT2-5 auto_cand: LOT1 is MED-started in lot_long, so the
-      -- "applicable window" from LOT2's perspective is cfg$lot_n_induction_window_days
+      -- applicable window from LOT2 perspective is cfg$lot_n_induction_window_days
       -- (default 30d). LOT1's own 60d induction window is NOT used here because the
       -- guard models what LOT2's auto_cand would see, not what LOT1 itself uses.
       SELECT DISTINCT lb.PATID

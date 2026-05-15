@@ -548,7 +548,7 @@ build_lot_n <- function(con, lot_num,
     )
     SELECT
       l.PATID,
-      -- Q16 (06-May): AUTO_DT_1 is "in LOT N" only if within the LOT's
+      -- Q16 (06-May): AUTO_DT_1 is in-LOT only if within the LOT
       -- applicable window from LOT_START_DT (LOT_WINDOW_DAYS). If AUTO_DT_1
       -- falls outside the window, it is NOT in-LOT (the TX_AUTO_* fields and
       -- TAND/SING flags become NULL/0) and instead becomes the ENDING_AUTO_DT
