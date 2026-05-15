@@ -201,10 +201,403 @@ main <- function() {
                title = "Top 10 regimens per LOT")
   }
 
+  # ---- Progression: how far each patient gets ----
+  prog <- db_q(con, glue("
+    SELECT max_lot, count(*) AS n_patients
+    FROM (SELECT PATID, max(LOT_NUM) AS max_lot FROM {lot_long} GROUP BY PATID)
+    GROUP BY max_lot
+    ORDER BY max_lot
+  "))
+  prog$max_lot     <- as.numeric(prog$max_lot)
+  prog$n_patients  <- as.numeric(prog$n_patients)
+  save_table(prog, section = "PROGRESSION",
+             title = "Patients by furthest LOT reached")
+  if (has_ggplot2 && nrow(prog) > 0) {
+    p_prog <- ggplot(prog, aes(x = factor(max_lot), y = n_patients)) +
+      geom_col(fill = "#3F88C5", width = 0.65) +
+      geom_text(aes(label = format(n_patients, big.mark = ",")),
+                vjust = -0.4, size = 4) +
+      labs(title = "How far patients progress (furthest LOT reached)",
+           x = "Highest LOT_NUM reached", y = "Patients") +
+      theme_lot()
+    save_plot(p_prog, "lotlong_progression.png", width = 9, height = 5,
+              section = "PROGRESSION", title = "Progression depth")
+  }
+
+  # ---- Gap between consecutive LOTs (LOT N end -> LOT N+1 start) ----
+  gaps <- db_q(con, glue("
+    SELECT a.LOT_NUM AS from_lot,
+           count(*)                                                       AS n,
+           round(avg(datediff(b.LOT_START_DT, a.LOT_BASE_END_DT)), 1)      AS mean_gap_days,
+           percentile_approx(datediff(b.LOT_START_DT, a.LOT_BASE_END_DT), 0.5)  AS median_gap_days,
+           percentile_approx(datediff(b.LOT_START_DT, a.LOT_BASE_END_DT), 0.25) AS p25_gap_days,
+           percentile_approx(datediff(b.LOT_START_DT, a.LOT_BASE_END_DT), 0.75) AS p75_gap_days
+    FROM {lot_long} a
+    JOIN {lot_long} b ON a.PATID = b.PATID AND b.LOT_NUM = a.LOT_NUM + 1
+    GROUP BY a.LOT_NUM
+    ORDER BY a.LOT_NUM
+  "))
+  for (col in names(gaps)) gaps[[col]] <- as.numeric(gaps[[col]])
+  if (nrow(gaps) > 0) {
+    gaps$transition <- paste0("LOT", gaps$from_lot, " -> LOT", gaps$from_lot + 1)
+    save_table(gaps[, c("transition", "n", "mean_gap_days",
+                        "median_gap_days", "p25_gap_days", "p75_gap_days")],
+               section = "GAPS", title = "Gap (days) between consecutive LOTs")
+    if (has_ggplot2) {
+      p_gap <- ggplot(gaps, aes(x = transition, y = median_gap_days)) +
+        geom_col(fill = "#F18F01", width = 0.6) +
+        geom_errorbar(aes(ymin = p25_gap_days, ymax = p75_gap_days),
+                      width = 0.2, color = "grey30") +
+        geom_text(aes(label = round(median_gap_days)), vjust = -0.5, size = 4) +
+        labs(title = "Median days between consecutive LOTs (IQR whiskers)",
+             x = "", y = "Days (LOT N end -> LOT N+1 start)") +
+        theme_lot()
+      save_plot(p_gap, "lotlong_gaps.png", width = 9, height = 5,
+                section = "GAPS", title = "Inter-LOT gap")
+    }
+  }
+
+  # ---- Start-type transitions (LOT N start type -> LOT N+1 start type) ----
+  trans <- db_q(con, glue("
+    SELECT a.LOT_NUM AS from_lot,
+           a.LOT_START_TYPE AS from_type,
+           b.LOT_START_TYPE AS to_type,
+           count(*) AS n
+    FROM {lot_long} a
+    JOIN {lot_long} b ON a.PATID = b.PATID AND b.LOT_NUM = a.LOT_NUM + 1
+    GROUP BY a.LOT_NUM, a.LOT_START_TYPE, b.LOT_START_TYPE
+    ORDER BY a.LOT_NUM, a.LOT_START_TYPE, b.LOT_START_TYPE
+  "))
+  trans$from_lot <- as.numeric(trans$from_lot)
+  trans$n        <- as.numeric(trans$n)
+  if (nrow(trans) > 0) {
+    trans$transition <- paste0("LOT", trans$from_lot, " -> LOT", trans$from_lot + 1)
+    save_table(trans[, c("transition", "from_type", "to_type", "n")],
+               section = "TRANSITIONS",
+               title = "Start-type transitions across LOTs")
+  }
+
+  # ---- Sankey flow diagrams ----
+  # Helper: build a plotly Sankey from parallel src/tgt label vectors.
+  make_sankey <- function(src_lab, tgt_lab, value, title, pal = NULL) {
+    if (!has_plotly || length(value) == 0) return(invisible(NULL))
+    nodes <- unique(c(src_lab, tgt_lab))
+    idx   <- setNames(seq_along(nodes) - 1L, nodes)
+    ncol  <- function(lbl) {
+      if (is.null(pal)) return("#2E86AB")
+      key <- sub("^.*?:\\s*", "", lbl)        # strip "L2: " style prefix
+      vapply(key, function(k)
+        if (k %in% names(pal)) pal[[k]] else "#9aa5ab",
+        character(1))
+    }
+    sk <- tryCatch(
+      plotly::plot_ly(
+        type = "sankey", orientation = "h",
+        arrangement = "snap",
+        node = list(
+          label = nodes, pad = 14, thickness = 16,
+          color = unname(ncol(nodes)),
+          line  = list(color = "white", width = 0.5)
+        ),
+        link = list(
+          source = unname(idx[src_lab]),
+          target = unname(idx[tgt_lab]),
+          value  = as.numeric(value),
+          color  = "rgba(46,134,171,0.30)"
+        )
+      ) |>
+        plotly::layout(
+          title = list(text = title, font = list(size = 15)),
+          font  = list(size = 11),
+          margin = list(l = 10, r = 10, t = 50, b = 10),
+          paper_bgcolor = "white"
+        ) |>
+        plotly::config(displayModeBar = TRUE, displaylogo = FALSE),
+      error = function(e) {
+        log_msg("  INFO: sankey '", title, "' skipped (",
+                conditionMessage(e), ")")
+        NULL
+      }
+    )
+    if (!is.null(sk)) add_to_dashboard(sk, section = "SANKEY", title = title)
+  }
+
+  type_pal <- c(MED = "#2E86AB", SCT_AUTO = "#A23B72",
+                SCT_ALLO = "#F18F01", CART = "#C73E1D")
+
+  # Sankey 1: start-type flow across LOTs (reuses `trans`).
+  if (nrow(trans) > 0) {
+    s1 <- trans[!is.na(trans$from_type) & !is.na(trans$to_type), ]
+    if (nrow(s1) > 0) {
+      make_sankey(
+        src_lab = paste0("L", s1$from_lot, ": ", s1$from_type),
+        tgt_lab = paste0("L", s1$from_lot + 1, ": ", s1$to_type),
+        value   = s1$n,
+        title   = "Start-type flow across LOTs",
+        pal     = type_pal)
+    }
+  }
+
+  # Sankey 2: LOT N end reason -> LOT N+1 start type (or terminal).
+  er_next <- db_q(con, glue("
+    SELECT a.LOT_NUM AS from_lot,
+           a.LOT_BASE_END_REASON AS end_reason,
+           b.LOT_START_TYPE AS next_type,
+           count(*) AS n
+    FROM {lot_long} a
+    LEFT JOIN {lot_long} b ON a.PATID = b.PATID AND b.LOT_NUM = a.LOT_NUM + 1
+    GROUP BY a.LOT_NUM, a.LOT_BASE_END_REASON, b.LOT_START_TYPE
+  "))
+  if (nrow(er_next) > 0) {
+    er_next$from_lot <- as.numeric(er_next$from_lot)
+    er_next$n        <- as.numeric(er_next$n)
+    src <- paste0("L", er_next$from_lot, " end: ", er_next$end_reason)
+    tgt <- ifelse(is.na(er_next$next_type),
+                  paste0("L", er_next$from_lot, " (no next LOT)"),
+                  paste0("L", er_next$from_lot + 1, " start: ", er_next$next_type))
+    make_sankey(src, tgt, er_next$n,
+                "LOT end reason → next LOT start type")
+  }
+
+  # Sankey 3: drop-off funnel (continue vs stop after each LOT).
+  cont <- db_q(con, glue("
+    SELECT a.LOT_NUM                    AS lot,
+           count(DISTINCT a.PATID)      AS n_here,
+           count(DISTINCT b.PATID)      AS n_continue
+    FROM {lot_long} a
+    LEFT JOIN {lot_long} b ON a.PATID = b.PATID AND b.LOT_NUM = a.LOT_NUM + 1
+    GROUP BY a.LOT_NUM
+    ORDER BY a.LOT_NUM
+  "))
+  if (nrow(cont) > 0) {
+    cont$lot        <- as.numeric(cont$lot)
+    cont$n_here     <- as.numeric(cont$n_here)
+    cont$n_continue <- as.numeric(cont$n_continue)
+    cont$n_stop     <- cont$n_here - cont$n_continue
+    src <- character(0); tgt <- character(0); val <- numeric(0)
+    for (i in seq_len(nrow(cont))) {
+      L <- cont$lot[i]
+      if (cont$n_continue[i] > 0) {
+        src <- c(src, paste0("LOT", L)); tgt <- c(tgt, paste0("LOT", L + 1))
+        val <- c(val, cont$n_continue[i])
+      }
+      if (cont$n_stop[i] > 0) {
+        src <- c(src, paste0("LOT", L))
+        tgt <- c(tgt, paste0("Stopped after LOT", L))
+        val <- c(val, cont$n_stop[i])
+      }
+    }
+    make_sankey(src, tgt, val, "Drop-off funnel (continue vs stop per LOT)")
+  }
+
+  # ---- MED count per LOT ----
+  mc <- db_q(con, glue("
+    SELECT LOT_NUM,
+           round(avg(LOT_MED_CNT), 2)              AS mean_med_cnt,
+           percentile_approx(LOT_MED_CNT, 0.5)     AS median_med_cnt,
+           max(LOT_MED_CNT)                        AS max_med_cnt
+    FROM {lot_long}
+    WHERE LOT_MED_CNT IS NOT NULL
+    GROUP BY LOT_NUM ORDER BY LOT_NUM
+  "))
+  for (col in names(mc)) mc[[col]] <- as.numeric(mc[[col]])
+  if (nrow(mc) > 0) {
+    save_table(mc, section = "MEDCOUNT", title = "Induction med count by LOT")
+    if (has_ggplot2) {
+      p_mc <- ggplot(mc, aes(x = factor(LOT_NUM), y = mean_med_cnt)) +
+        geom_col(fill = "#5FAD56", width = 0.6) +
+        geom_text(aes(label = round(mean_med_cnt, 2)), vjust = -0.4, size = 4) +
+        labs(title = "Mean induction-window med count by LOT",
+             x = "LOT_NUM", y = "Mean LOT_MED_CNT") +
+        theme_lot()
+      save_plot(p_mc, "lotlong_medcount.png", width = 9, height = 5,
+                section = "MEDCOUNT", title = "Med count by LOT")
+    }
+  }
+
+  # ---- contains_mtx_reg rate by LOT ----
+  mtx <- db_q(con, glue("
+    SELECT LOT_NUM,
+           count(*)                                            AS n,
+           sum(CASE WHEN contains_mtx_reg = 1 THEN 1 ELSE 0 END) AS n_mtx
+    FROM {lot_long}
+    GROUP BY LOT_NUM ORDER BY LOT_NUM
+  "))
+  if (nrow(mtx) > 0) {
+    mtx$n     <- as.numeric(mtx$n)
+    mtx$n_mtx <- as.numeric(mtx$n_mtx)
+    mtx$pct_mtx <- round(100 * mtx$n_mtx / pmax(mtx$n, 1), 1)
+    save_table(mtx, section = "MTX",
+               title = "contains_mtx_reg rate by LOT")
+    if (has_ggplot2) {
+      p_mtx <- ggplot(mtx, aes(x = factor(LOT_NUM), y = pct_mtx)) +
+        geom_col(fill = "#8D5A97", width = 0.6) +
+        geom_text(aes(label = paste0(pct_mtx, "%")), vjust = -0.4, size = 4) +
+        labs(title = "Maintenance-regimen (contains_mtx_reg) rate by LOT",
+             x = "LOT_NUM", y = "% of LOTs") +
+        theme_lot()
+      save_plot(p_mtx, "lotlong_mtx.png", width = 9, height = 5,
+                section = "MTX", title = "MTX regimen rate by LOT")
+    }
+  }
+
+  # ---- LOT starts over calendar time ----
+  trend <- db_q(con, glue("
+    SELECT year(LOT_START_DT) AS yr,
+           quarter(LOT_START_DT) AS qtr,
+           LOT_NUM,
+           count(*) AS n
+    FROM {lot_long}
+    WHERE LOT_START_DT IS NOT NULL
+    GROUP BY year(LOT_START_DT), quarter(LOT_START_DT), LOT_NUM
+    ORDER BY yr, qtr, LOT_NUM
+  "))
+  if (nrow(trend) > 0 && has_ggplot2) {
+    trend$yr  <- as.numeric(trend$yr)
+    trend$qtr <- as.numeric(trend$qtr)
+    trend$n   <- as.numeric(trend$n)
+    trend$period <- trend$yr + (trend$qtr - 1) / 4
+    p_tr <- ggplot(trend, aes(x = period, y = n,
+                              color = factor(LOT_NUM))) +
+      geom_line(linewidth = 1) + geom_point(size = 1.6) +
+      labs(title = "LOT starts over calendar time (by quarter)",
+           x = "Year", y = "LOT starts", color = "LOT_NUM") +
+      theme_lot()
+    save_plot(p_tr, "lotlong_trend.png", width = 11, height = 5,
+              section = "TREND", title = "LOT starts over time")
+  }
+
+  # ---- Patient journey examples (per-patient LOT timeline Gantt) ----
+  # Mirrors the LOT1 dashboard's JOURNEY section, but each row of the
+  # Gantt is a LOT (1..max) rather than a medication MAP. One bar per
+  # LOT spans LOT_START_DT -> LOT_BASE_END_DT, colored by start type.
+  if (has_plotly) {
+    lot_start_palette <- c(
+      "MED"      = "#2E86AB",
+      "SCT_AUTO" = "#A23B72",
+      "SCT_ALLO" = "#F18F01",
+      "CART"     = "#C73E1D"
+    )
+    # One row per patient: furthest LOT + that final LOT's end reason.
+    pat_pick <- db_q(con, glue("
+      WITH pm AS (SELECT PATID, max(LOT_NUM) AS max_lot
+                  FROM {lot_long} GROUP BY PATID)
+      SELECT pm.PATID, pm.max_lot, ll.LOT_BASE_END_REASON AS terminal_reason
+      FROM pm
+      JOIN {lot_long} ll ON ll.PATID = pm.PATID AND ll.LOT_NUM = pm.max_lot
+    "))
+    pat_pick$max_lot <- as.numeric(pat_pick$max_lot)
+
+    pick_ids <- character(0)
+    if (nrow(pat_pick) > 0) {
+      # Deepest progressors first, then ensure a spread of terminal reasons.
+      ord <- pat_pick[order(-pat_pick$max_lot), , drop = FALSE]
+      pick_ids <- head(ord$PATID, 6)
+      for (rs in unique(pat_pick$terminal_reason)) {
+        cand <- ord$PATID[ord$terminal_reason == rs]
+        cand <- setdiff(cand, pick_ids)
+        if (length(cand) > 0) pick_ids <- c(pick_ids, cand[1])
+      }
+      pick_ids <- unique(head(pick_ids, 12))
+    }
+
+    if (length(pick_ids) > 0) {
+      id_list <- paste(sprintf("'%s'", gsub("'", "''", pick_ids)),
+                       collapse = ", ")
+      jdf <- db_q(con, glue("
+        SELECT PATID, LOT_NUM, LOT_START_TYPE,
+               cast(LOT_START_DT   as date) AS LOT_START_DT,
+               cast(LOT_BASE_END_DT as date) AS LOT_BASE_END_DT,
+               LOT_BASE_END_REASON, LOT_BASE_LENGTH, LOT_BASE_MEDS
+        FROM {lot_long}
+        WHERE PATID IN ({id_list})
+        ORDER BY PATID, LOT_NUM
+      "))
+      jdf$LOT_NUM        <- as.numeric(jdf$LOT_NUM)
+      jdf$LOT_START_DT   <- as.Date(as.character(jdf$LOT_START_DT))
+      jdf$LOT_BASE_END_DT<- as.Date(as.character(jdf$LOT_BASE_END_DT))
+
+      k <- 0
+      for (pid in pick_ids) {
+        pr <- jdf[jdf$PATID == pid, , drop = FALSE]
+        pr <- pr[order(pr$LOT_NUM), , drop = FALSE]
+        if (nrow(pr) == 0) next
+        if (all(is.na(pr$LOT_START_DT)) || all(is.na(pr$LOT_BASE_END_DT))) next
+        k <- k + 1
+
+        added <- tryCatch({
+          shapes <- list()
+          for (j in seq_len(nrow(pr))) {
+            row   <- pr[j, ]
+            st    <- as.character(row$LOT_START_TYPE)
+            color <- if (!is.na(st) && st %in% names(lot_start_palette))
+              lot_start_palette[[st]] else "#636e72"
+            x0 <- if (is.na(row$LOT_START_DT)) NA else as.character(row$LOT_START_DT)
+            x1 <- if (is.na(row$LOT_BASE_END_DT)) x0 else
+              as.character(row$LOT_BASE_END_DT)
+            if (is.na(x0)) next
+            shapes[[length(shapes) + 1]] <- list(
+              type = "rect", x0 = x0, x1 = x1,
+              y0 = row$LOT_NUM - 0.32, y1 = row$LOT_NUM + 0.32,
+              fillcolor = color, opacity = 0.85,
+              line = list(color = color, width = 1), layer = "below"
+            )
+          }
+          mid_x <- pr$LOT_START_DT +
+            as.integer((pr$LOT_BASE_END_DT - pr$LOT_START_DT) / 2)
+          hover_df <- data.frame(
+            x = mid_x, y = pr$LOT_NUM,
+            text = paste0(
+              "LOT ", pr$LOT_NUM,
+              "\nStart type: ", pr$LOT_START_TYPE,
+              "\nStart: ", pr$LOT_START_DT,
+              "\nEnd: ",   pr$LOT_BASE_END_DT,
+              "\nEnd reason: ", pr$LOT_BASE_END_REASON,
+              "\nLength (d): ", pr$LOT_BASE_LENGTH,
+              "\nRegimen: ", pr$LOT_BASE_MEDS),
+            stringsAsFactors = FALSE
+          )
+          term <- pr$LOT_BASE_END_REASON[nrow(pr)]
+          pat_label <- paste0("Patient ", k)
+          pp <- plotly::plot_ly(hover_df, x = ~x, y = ~y, text = ~text,
+                                 type = "scatter", mode = "markers",
+                                 marker = list(size = 1, opacity = 0),
+                                 hoverinfo = "text") |>
+            plotly::layout(
+              title = list(text = paste0(pat_label, " — LOT Journey"),
+                           font = list(size = 14)),
+              xaxis = list(title = "", type = "date", gridcolor = "#eee"),
+              yaxis = list(title = "LOT_NUM", tickmode = "array",
+                           tickvals = sort(unique(pr$LOT_NUM)),
+                           ticktext = paste0("LOT", sort(unique(pr$LOT_NUM))),
+                           range = c(0.4, max(pr$LOT_NUM) + 0.7),
+                           gridcolor = "#eee"),
+              shapes = shapes, showlegend = FALSE,
+              margin = list(l = 80, t = 50, b = 40, r = 30),
+              plot_bgcolor = "#fafafa", paper_bgcolor = "white"
+            ) |>
+            plotly::config(displayModeBar = TRUE, displaylogo = FALSE)
+          add_to_dashboard(pp, section = "JOURNEY",
+                           title = paste0(pat_label, " (", nrow(pr),
+                                          " LOTs, ends ", term, ")"))
+          TRUE
+        }, error = function(e) {
+          log_msg("  INFO: skipping journey for a patient (",
+                  conditionMessage(e), ")")
+          FALSE
+        })
+        if (!isTRUE(added)) k <- k - 1
+      }
+      log_msg("  Patient journey examples added: ", k)
+    }
+  } else {
+    log_msg("  plotly not available - skipping JOURNEY section.")
+  }
+
   build_dashboard(
     out_name     = "lot_long_dashboard.html",
     header_title = "LOT 1-5 &mdash; Long-Format Dashboard",
-    header_sub   = "Funnel &bull; Start Type &bull; End Reason &bull; Length &bull; Regimens (by LOT_NUM)"
+    header_sub   = "Funnel &bull; Start/End &bull; Length &bull; Regimens &bull; Progression &bull; Gaps &bull; Transitions &bull; Sankey flows &bull; Med count &bull; MTX &bull; Trend &bull; Patient Journeys &nbsp;&mdash;&nbsp; pick a Category above"
   )
   log_msg("LOT1-5 dashboard written to ",
           file.path(cfg$output_dir, "lot_long_dashboard.html"))

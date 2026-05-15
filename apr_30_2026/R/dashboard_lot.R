@@ -136,7 +136,6 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
   dash_path <- file.path(cfg$output_dir, out_name)
 
   tryCatch({
-    tab_buttons   <- list()
     tab_panels    <- list()
     plotly_specs  <- list()   # JSON specs for plotly figures
     sections      <- unique(sapply(dashboard_items, `[[`, "section"))
@@ -144,13 +143,6 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
     for (idx in seq_along(dashboard_items)) {
       item   <- dashboard_items[[idx]]
       tab_id <- paste0("tab", idx)
-
-      active_class <- if (idx == 1) "active" else ""
-      section_tag  <- paste0('<span class="section-tag">', item$section, '</span> ')
-      tab_buttons[[idx]] <- sprintf(
-        '<button class="tab-btn %s" onclick="showTab(\'%s\', this)" data-section="%s">%s%s</button>',
-        active_class, tab_id, item$section, section_tag, item$title
-      )
 
       if (item$type == "figure") {
         # Plotly figures: extract JSON spec, render client-side with shared plotly.js
@@ -198,14 +190,20 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
       }
     }
 
-    # Build section filter buttons
-    section_filters <- paste0(
-      '<button class="filter-btn active" onclick="filterSection(\'ALL\', this)">All</button>\n',
-      paste(sprintf(
-        '<button class="filter-btn" onclick="filterSection(\'%s\', this)">%s</button>',
-        sections, sections
-      ), collapse = "\n")
-    )
+    # Category-grouped navigation model: [{section, items:[{id,title}]}].
+    # Rendered as two dropdowns (Category -> View) instead of a flat tab
+    # list, which scales when a dashboard has many figures.
+    nav_list <- lapply(sections, function(s) {
+      idxs <- which(vapply(dashboard_items,
+                           function(it) identical(it$section, s), logical(1)))
+      list(
+        section = s,
+        items = lapply(idxs, function(i)
+          list(id = paste0("tab", i), title = dashboard_items[[i]]$title))
+      )
+    })
+    nav_json <- paste0("var NAV = ",
+      jsonlite::toJSON(nav_list, auto_unbox = TRUE, force = TRUE), ";")
 
     # Build plotly specs as a single JSON object keyed by div id
     plotly_specs_json <- paste0("var PLOTLY_SPECS = {\n",
@@ -265,39 +263,25 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
   .nav-bar {
     position: sticky; top: 0; z-index: 100;
     background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px;
+    padding: 14px 32px; border-bottom: 1px solid #dfe6e9;
   }
-  .filter-bar {
-    display: flex; flex-wrap: wrap; gap: 4px; padding: 10px 32px;
-    border-bottom: 1px solid #eee; background: #fafafa;
+  .nav-group { display: flex; align-items: center; gap: 8px; }
+  .nav-group label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.6px; color: #636e72;
   }
-  .filter-btn {
-    padding: 5px 14px; border: 1px solid #dfe6e9; border-radius: 20px;
-    background: white; color: #636e72; cursor: pointer;
-    font-size: 12px; font-weight: 600; text-transform: uppercase;
-    letter-spacing: 0.5px; transition: all 0.15s;
+  .nav-bar select {
+    padding: 8px 30px 8px 12px; border: 1px solid #cdd6db;
+    border-radius: 6px; background: #f5f6fa; color: #2d3436;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    min-width: 200px; appearance: none;
+    background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%2710%27%20height%3D%276%27%3E%3Cpath%20d%3D%27M0%200l5%206%205-6z%27%20fill%3D%27%23636e72%27%2F%3E%3C%2Fsvg%3E");
+    background-repeat: no-repeat; background-position: right 12px center;
   }
-  .filter-btn:hover { background: #dfe6e9; }
-  .filter-btn.active { background: #1a5276; color: white; border-color: #1a5276; }
-  .tab-bar {
-    display: flex; flex-wrap: wrap; gap: 6px;
-    padding: 10px 32px;
-    border-bottom: 1px solid #dfe6e9;
-  }
-  .tab-btn {
-    padding: 8px 14px; border: 1px solid #dfe6e9; border-radius: 6px;
-    background: #f5f6fa; color: #636e72; cursor: pointer;
-    font-size: 12.5px; font-weight: 500; transition: all 0.15s;
-    display: inline-flex; align-items: center; gap: 4px;
-  }
-  .tab-btn:hover { background: #dfe6e9; color: #2d3436; }
-  .tab-btn.active { background: #2E86AB; color: white; border-color: #2E86AB; }
-  .tab-btn.active .section-tag { background: rgba(255,255,255,0.25); color: white; }
-  .tab-btn.hidden { display: none; }
-  .section-tag {
-    font-size: 10px; font-weight: 700; text-transform: uppercase;
-    background: #dfe6e9; color: #636e72; padding: 2px 6px;
-    border-radius: 3px; letter-spacing: 0.5px;
-  }
+  .nav-bar select:hover { border-color: #2E86AB; }
+  .nav-bar select:focus { outline: 2px solid #2E86AB33; border-color: #2E86AB; }
+  #catSelect { font-weight: 700; }
   .tab-content { padding: 16px 32px; }
   .tab-content iframe { border: none; width: 100%; min-height: 500px; }
 </style>
@@ -308,12 +292,14 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
   <p>', header_sub, ' &nbsp;|&nbsp; Generated ', format(Sys.time(), "%Y-%m-%d %H:%M"), '</p>
 </div>
 <div class="nav-bar">
-<div class="filter-bar">
-', section_filters, '
-</div>
-<div class="tab-bar">
-', paste(tab_buttons, collapse = "\n"), '
-</div>
+  <div class="nav-group">
+    <label for="catSelect">Category</label>
+    <select id="catSelect" onchange="onCatChange()"></select>
+  </div>
+  <div class="nav-group">
+    <label for="itemSelect">View</label>
+    <select id="itemSelect" onchange="onItemChange()"></select>
+  </div>
 </div>
 ', paste(tab_panels, collapse = "\n"), '
 <script>
@@ -341,43 +327,46 @@ function renderPlotlyIfVisible(divId) {
     renderedPlots[divId] = true;
   }
 }
-function showTab(tabId, btn) {
+function showItem(tabId) {
   document.querySelectorAll(".tab-content").forEach(function(el) { el.style.display = "none"; });
-  document.querySelectorAll(".tab-btn").forEach(function(el) { el.classList.remove("active"); });
-  document.getElementById(tabId).style.display = "block";
-  btn.classList.add("active");
-  // Render/resize plotly if this tab has one
-  var plotDiv = document.querySelector("#" + tabId + " [id^=plotly_]");
-  if (plotDiv) {
-    setTimeout(function() { renderPlotlyIfVisible(plotDiv.id); }, 100);
-  }
-  // Resize iframes
-  var iframe = document.querySelector("#" + tabId + " iframe");
+  var t = document.getElementById(tabId);
+  if (!t) return;
+  t.style.display = "block";
+  var plotDiv = t.querySelector("[id^=plotly_]");
+  if (plotDiv) { setTimeout(function() { renderPlotlyIfVisible(plotDiv.id); }, 100); }
+  var iframe = t.querySelector("iframe");
   if (iframe) { setTimeout(function() { resizeIframe(iframe); }, 300); }
 }
-function filterSection(section, btn) {
-  document.querySelectorAll(".filter-btn").forEach(function(el) { el.classList.remove("active"); });
-  btn.classList.add("active");
-  document.querySelectorAll(".tab-btn").forEach(function(el) {
-    if (section === "ALL" || el.getAttribute("data-section") === section) {
-      el.classList.remove("hidden");
-    } else {
-      el.classList.add("hidden");
-    }
-  });
-  var activeTab = document.querySelector(".tab-btn.active");
-  if (activeTab && activeTab.classList.contains("hidden")) {
-    var firstVisible = document.querySelector(".tab-btn:not(.hidden)");
-    if (firstVisible) firstVisible.click();
-  }
+function onItemChange() {
+  var sel = document.getElementById("itemSelect");
+  if (sel && sel.value) showItem(sel.value);
 }
+function onCatChange() {
+  var cat = +document.getElementById("catSelect").value;
+  var is  = document.getElementById("itemSelect");
+  is.innerHTML = "";
+  (NAV[cat] ? NAV[cat].items : []).forEach(function(it) {
+    var o = document.createElement("option");
+    o.value = it.id; o.text = it.title;
+    is.add(o);
+  });
+  onItemChange();
+}
+function buildNav() {
+  var cs = document.getElementById("catSelect");
+  NAV.forEach(function(g, i) {
+    var o = document.createElement("option");
+    o.value = i;
+    o.text = g.section + "  (" + g.items.length + ")";
+    cs.add(o);
+  });
+  onCatChange();
+}
+// Category-grouped nav model
+', nav_json, '
 // Plotly figure specs — all figures share one copy of plotly.js
 ', plotly_specs_json, '
-// Render the first visible plotly chart on load
-document.addEventListener("DOMContentLoaded", function() {
-  var firstPlot = document.querySelector(".tab-content[style*=block] [id^=plotly_]");
-  if (firstPlot) { setTimeout(function() { renderPlotlyIfVisible(firstPlot.id); }, 200); }
-});
+document.addEventListener("DOMContentLoaded", function() { buildNav(); });
 </script>
 </body>
 </html>')

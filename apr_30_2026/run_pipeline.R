@@ -47,7 +47,12 @@
 # Usage:
 #   Rscript run_pipeline.R
 #   FORCE_RERUN=TRUE Rscript run_pipeline.R
-#   SKIP_COHORT=TRUE SKIP_LOT1=TRUE Rscript run_pipeline.R   # LOT2-5 only
+#   SKIP_COHORT=TRUE SKIP_LOT1=TRUE Rscript run_pipeline.R   # LOT2-5 only,
+#       BUT only builds LOT2-5 if LOT_LONG does NOT already exist.
+#   # To REBUILD LOT2-5 when LOT_LONG already exists, add FORCE_RERUN
+#   # (the atomic LOT_LONG_STAGE publish keeps the old LOT_LONG until
+#   #  the full rebuild succeeds, so this is safer than DROP TABLE):
+#   SKIP_COHORT=TRUE SKIP_LOT1=TRUE FORCE_RERUN=TRUE Rscript run_pipeline.R
 # ============================================================
 
 # ---- Resolve script directory regardless of how invoked ----
