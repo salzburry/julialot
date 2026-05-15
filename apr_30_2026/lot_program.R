@@ -55,6 +55,13 @@
   getwd()
 })
 source_dir <- file.path(.script_dir, "R")
+# Apply pipeline_inputs.csv overrides BEFORE config_lot.R reads
+# Sys.getenv(), so a direct `Rscript lot_program.R` honours the same
+# single input file as the orchestrated run.
+if (file.exists(file.path(source_dir, "load_inputs.R"))) {
+  source(file.path(source_dir, "load_inputs.R"))
+  load_pipeline_inputs(c(.script_dir, dirname(.script_dir)))
+}
 source(file.path(source_dir, "config_lot.R"))
 source(file.path(source_dir, "db_utils_lot.R"))
 source(file.path(source_dir, "codelists_lot.R"))

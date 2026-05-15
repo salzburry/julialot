@@ -36,6 +36,13 @@ tryCatch(
 # Resolve script directory without relying on %||% (not available before modules load)
 .ofile <- tryCatch(sys.frame(1)$ofile, error = function(e) NULL)
 source_dir <- file.path(dirname(if (!is.null(.ofile)) .ofile else "."), "R")
+# Apply pipeline_inputs.csv overrides BEFORE config_prompts.R reads
+# Sys.getenv(), so a direct `Rscript main.R` honours the same single
+# input file as the orchestrated run.
+if (file.exists(file.path(source_dir, "load_inputs.R"))) {
+  source(file.path(source_dir, "load_inputs.R"))
+  load_pipeline_inputs(c(dirname(source_dir), dirname(dirname(source_dir))))
+}
 source(file.path(source_dir, "config_prompts.R"))
 source(file.path(source_dir, "db_utils.R"))
 source(file.path(source_dir, "codelists.R"))
