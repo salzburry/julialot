@@ -61,7 +61,8 @@ precedence over `FORCE_RERUN`, so the command above re-runs only
 LOT2-5.)
 
 After every stage the orchestrator verifies its primary output table
-(`ELIG_COH_FINAL`, `LOT1_BASE_END`, `LOT_LONG`) actually landed in the
+(`FINAL_TABLE_NAME` / cohort output, `LOT1_BASE_END`, `LOT_LONG`)
+actually landed in the
 schema that stage writes to. If a stage exits 0 but its output is
 missing — usually because `materialize_to_personal_schema()` warned but
 did not write — the orchestrator **halts immediately with `stop()`**
