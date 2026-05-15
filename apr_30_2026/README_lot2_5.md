@@ -154,11 +154,23 @@ overwrite `lot_dashboard.html`. Sections (all by `LOT_NUM`):
   (`LOT1_BASE_END` end-reason vs `LOT_LONG` LOT1). Missing tables are
   reported, never fatal.
 
-Navigation is a two-level dropdown — **Category** (section) then
-**View** (figure/table within it) — instead of a flat tab list, so
-it stays usable with this many sections. (The LOT1
-`lot_dashboard.html` gets the same dropdown nav, since both share
-`build_dashboard()`.)
+Navigation is a **collapsible left sidebar** (GSK-styled): categories
+as expandable groups, views as a clickable list, content in a main
+panel. Built-in:
+
+- **Search box** — filter views by title across all categories (`/`
+  focuses it; `Esc` clears).
+- **Keyboard nav** — `Left`/`Right` arrows step prev/next view, `F`
+  toggles fullscreen.
+- **Shareable links** — the URL hash tracks the current view, so a
+  specific chart can be bookmarked/shared and reopens there.
+- **Fullscreen** — expand any chart/table to the full window.
+
+The colour theme is a GSK-style palette defined as CSS variables in a
+`:root` block at the top of the generated HTML — these approximate the
+GSK brand; drop the exact brand hexes into `:root` to retune the
+whole dashboard centrally. The LOT1 `lot_dashboard.html` gets the same
+sidebar UI, since both share `build_dashboard()`.
 
 ```
 Rscript lot_long_dashboard.R
