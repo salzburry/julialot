@@ -1,0 +1,40 @@
+name,value,description
+# Edit the `value` column to change an input; blank = use default. Open in Excel or any editor.,,
+# DATABRICKS_PWD is intentionally NOT here - it stays in the environment / Domino secret store.,,
+# --- Connection & schema ---,,
+DATABRICKS_DSN,RWDE,ODBC DSN
+DATABRICKS_CATALOG,hive_metastore,Unity/Hive catalog
+PROJECT_WORK_SCHEMA,osk02156,Schema LOT1/LOT2-5 read & write
+DOMINO_USER_NAME,osk02156,Cohort attrition personal schema (fallback for work schema)
+OPTUM_CDM_SCHEMA,clnprw_optum,Optum CDM source schema
+FINAL_TABLE_NAME,ELIG_COH_FINAL,Cohort attrition output table
+INPUT_COHORT_TABLE,ELIG_COH_FINAL,Cohort table LOT pipelines read
+# --- Study window & paths ---,,
+STUDY_END,2025-06-30,Study end date (YYYY-MM-DD)
+USE_QUARTERLY_TABLES,TRUE,Use cumulative quarterly CDM tables
+CODELIST_DIR,/mnt/code/codelist,Directory holding cl_*.csv codelists
+OUTPUT_DIR,/mnt/artifacts/results,Where dashboards / figures are written
+# --- LOT parameters ---,,
+INDUCTION_WINDOW_DAYS,60,LOT1 induction window (days)
+INDUCTION_WINDOW_DAYS_LOT_N,30,LOT2-5 induction window (days)
+MAP_DISCON_GAP_DAYS,90,Per-drug MAP-level discontinuation gap (the only 90d rule)
+MEDICAL_DAY_SUPPLY,28,Imputed day supply for medical claims
+OUTPATIENT_WINDOW,90,Outpatient confirmation window (30/60/90)
+SCT_AUTO_WINDOW_DAYS,13,SCT AUTO window (days)
+SCT_AUTO_GAP_DAYS,60,SCT AUTO grouping gap (days)
+SCT_TANDEM_DAYS,180,Tandem AUTO upper bound (days)
+CART_CONSOLIDATION_DAYS,45,CAR-T consolidation window (days)
+ALLO_LOT_SPAN,single_day,ALLO LOT span: single_day or extend_to_next
+MAX_LOT,5,Highest LOT number to build
+CENSOR_AT_DISENROLLMENT,FALSE,Sensitivity: cap observation at disenrollment
+PERSIST_TO_SCHEMA,TRUE,Persist outputs to the work schema
+# --- Orchestrator (run_pipeline.R) ---,,
+FORCE_RERUN,FALSE,Re-run a stage even if its output already exists
+SKIP_COHORT,FALSE,Skip the cohort attrition stage
+SKIP_LOT1,FALSE,Skip the LOT1 stage
+SKIP_LOT2_5,FALSE,Skip the LOT2-5 stage
+# --- Reporting / dashboards ---,,
+GENERATE_DESCRIPTIVES,TRUE,Build LOT1 descriptives
+BUILD_DASHBOARD,TRUE,Build the HTML dashboard(s)
+RUN_CYCLO_DEEPDIVE,TRUE,Run the cyclophosphamide deep-dive
+DRILLDOWN_MAX_PATIENTS,8000,Max patients embedded in the LOT1-5 PATID drilldown

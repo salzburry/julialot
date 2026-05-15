@@ -37,6 +37,11 @@
 })
 
 source_dir <- file.path(.script_dir, "R")
+# Apply CSV input overrides BEFORE config_lot.R reads Sys.getenv().
+if (file.exists(file.path(source_dir, "load_inputs.R"))) {
+  source(file.path(source_dir, "load_inputs.R"))
+  load_pipeline_inputs(c(.script_dir, dirname(.script_dir)))
+}
 source(file.path(source_dir, "config_lot.R"))
 source(file.path(source_dir, "db_utils_lot.R"))
 source(file.path(source_dir, "codelists_lot.R"))

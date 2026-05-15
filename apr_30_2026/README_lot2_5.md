@@ -208,6 +208,33 @@ Long-format table; one row per patient per LOT.
 
 ## Configuration overrides
 
+### `pipeline_inputs.csv` (edit inputs in one place)
+
+Instead of juggling `Sys.setenv()` / shell exports, edit
+`apr_30_2026/pipeline_inputs.csv` (open it in Excel or any editor).
+Columns: `name,value,description`. Set the `value` you want; leave it
+blank to keep the default. `run_pipeline.R`, `lot2_5_program.R`, and
+`lot_long_dashboard.R` all load this file **before** reading any
+config, and a non-empty value overrides the environment — so this is
+your single "change / reset inputs" file.
+
+Notes:
+- `DATABRICKS_PWD` is intentionally **not** in the file and is never
+  read from it — the password stays in the environment / Domino
+  secret store.
+- Rows whose `name` is blank or starts with `#` are comment rows.
+- The orchestrator applies the file in the parent R process, so the
+  overrides propagate to every per-stage `Rscript` subprocess too.
+- Anything not listed can still be added as a new row — any env var
+  the pipeline reads works.
+
+The file ships pre-filled with the current defaults so it doubles as
+a documented reference. Example — rebuild only LOT2-5: set
+`SKIP_COHORT=TRUE`, `SKIP_LOT1=TRUE`, `FORCE_RERUN=TRUE` in the CSV,
+then `Rscript run_pipeline.R`.
+
+### Environment variables
+
 Environment variables (in addition to the LOT1 set):
 
 | Env var                       | Default         | Spec ref       |
