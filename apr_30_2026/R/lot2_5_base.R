@@ -991,62 +991,24 @@ build_lot2_5 <- function(con,
   # Discover med + class universes from the rollup so dynamic flag columns
   # match LOT1 output exactly. STEROID class excluded - LOT1 uses the same
   # filter, so persisted LOT1_MED_<DEXA>/<PRED> columns will not exist.
-
-  # Diagnostic: re-check mma_rollup right before we query it. If
-  # prepare_lot_inputs verified the columns but this build_lot2_5 query
-  # then fails with UNRESOLVED_COLUMN, something between the two
-  # invalidated the temp view. Logging state at the exact failure point.
-  diag_desc <- tryCatch(DBI::dbGetQuery(con, "DESCRIBE mma_rollup"),
-                        error = function(e) {
-                          log_msg("DEBUG: DESCRIBE mma_rollup failed at build_lot2_5 entry: ",
-                                  conditionMessage(e))
-                          NULL
-                        })
-  if (!is.null(diag_desc) && is.data.frame(diag_desc)) {
-    cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(diag_desc))
-    if (length(cn) > 0) {
-      log_msg("DEBUG: mma_rollup columns at build_lot2_5 entry: ",
-              paste(toupper(as.character(diag_desc[[cn[1]]])), collapse = ", "))
-    } else {
-      log_msg("DEBUG: DESCRIBE mma_rollup returned columns ",
-              paste(names(diag_desc), collapse = ", "), " (no col_name field)")
-    }
-  }
-  diag_cnt <- tryCatch(DBI::dbGetQuery(con, "SELECT count(*) AS n FROM mma_rollup"),
-                       error = function(e) {
-                         log_msg("DEBUG: SELECT count(*) FROM mma_rollup failed: ",
-                                 conditionMessage(e))
-                         NULL
-                       })
-  if (!is.null(diag_cnt)) {
-    log_msg("DEBUG: mma_rollup row count at build_lot2_5 entry: ", diag_cnt$n)
-  }
-  diag_sample <- tryCatch(
-    DBI::dbGetQuery(con, "SELECT CL_MED_ABBR FROM mma_rollup LIMIT 1"),
-    error = function(e) {
-      log_msg("DEBUG: SELECT CL_MED_ABBR FROM mma_rollup LIMIT 1 FAILED: ",
-              conditionMessage(e))
-      NULL
-    }
-  )
-  if (!is.null(diag_sample)) {
-    log_msg("DEBUG: 1-row CL_MED_ABBR probe OK: ",
-            paste(names(diag_sample), collapse = ", "),
-            " | first value: ", diag_sample[[1]][1])
-  }
-
+  #
+  # ORDER BY references the aliased name (MED_ABBR / MED_CLASS), NOT the
+  # underlying column. After SELECT DISTINCT col AS alias, the projection
+  # only carries `alias`; strict Spark/Databricks runtimes reject
+  # ORDER BY on the underlying name with UNRESOLVED_COLUMN. LOT1 (S00)
+  # avoids this because it does not alias.
   meds <- db_q(con, "
     SELECT DISTINCT CL_MED_ABBR AS MED_ABBR
     FROM mma_rollup
     WHERE upper(coalesce(CL_MED_CLASS, '')) <> 'STEROID'
-    ORDER BY CL_MED_ABBR
+    ORDER BY MED_ABBR
   ")$MED_ABBR
   classes <- db_q(con, "
     SELECT DISTINCT CL_MED_CLASS AS MED_CLASS
     FROM mma_rollup
     WHERE upper(coalesce(CL_MED_CLASS, '')) <> 'STEROID'
       AND CL_MED_CLASS IS NOT NULL
-    ORDER BY CL_MED_CLASS
+    ORDER BY MED_CLASS
   ")$MED_CLASS
 
   init_lot_long_from_lot1(con, meds = meds, classes = classes)
