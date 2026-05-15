@@ -69,6 +69,18 @@
   getwd()
 })
 
+# ---- Optional CSV-driven input overrides (before any env reads) ----
+# Edit apr_30_2026/pipeline_inputs.csv to change/reset inputs without
+# Sys.setenv juggling. Sys.setenv here propagates to the per-stage
+# Rscript subprocesses too. Not a "stage module" - just a tiny loader.
+local({
+  li <- file.path(.script_dir, "R", "load_inputs.R")
+  if (file.exists(li)) {
+    source(li)
+    load_pipeline_inputs(c(.script_dir, dirname(.script_dir)))
+  }
+})
+
 # ---- Minimal helpers (avoid sourcing stage modules into orchestrator) ----
 log_msg <- function(...) {
   cat(sprintf("[%s] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S")), ..., "\n", sep = "")

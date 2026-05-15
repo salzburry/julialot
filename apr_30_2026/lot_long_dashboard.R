@@ -30,6 +30,11 @@
 })
 
 source_dir <- file.path(.script_dir, "R")
+# Apply CSV input overrides BEFORE config_lot.R reads Sys.getenv().
+if (file.exists(file.path(source_dir, "load_inputs.R"))) {
+  source(file.path(source_dir, "load_inputs.R"))
+  load_pipeline_inputs(c(.script_dir, dirname(.script_dir)))
+}
 source(file.path(source_dir, "config_lot.R"))
 source(file.path(source_dir, "db_utils_lot.R"))
 source(file.path(source_dir, "dashboard_lot.R"))
@@ -509,23 +514,33 @@ main <- function() {
                        collapse = ", ")
       jdf <- db_q(con, glue("
         SELECT PATID, LOT_NUM, LOT_START_TYPE,
-               cast(LOT_START_DT   as date) AS LOT_START_DT,
-               cast(LOT_BASE_END_DT as date) AS LOT_BASE_END_DT,
+               cast(cast(LOT_START_DT    as date) as string) AS LOT_START_DT,
+               cast(cast(LOT_BASE_END_DT as date) as string) AS LOT_BASE_END_DT,
                LOT_BASE_END_REASON, LOT_BASE_LENGTH, LOT_BASE_MEDS
         FROM {lot_long}
         WHERE PATID IN ({id_list})
         ORDER BY PATID, LOT_NUM
       "))
-      jdf$LOT_NUM        <- as.numeric(jdf$LOT_NUM)
-      jdf$LOT_START_DT   <- as.Date(as.character(jdf$LOT_START_DT))
-      jdf$LOT_BASE_END_DT<- as.Date(as.character(jdf$LOT_BASE_END_DT))
+      # Dates come back as clean 'YYYY-MM-DD' strings (the double cast
+      # above removes ODBC driver type ambiguity that previously made
+      # as.Date() return all-NA -> every patient skipped -> 0 journeys).
+      jdf$LOT_NUM         <- as.numeric(jdf$LOT_NUM)
+      jdf$LOT_START_DT    <- as.Date(jdf$LOT_START_DT)
+      jdf$LOT_BASE_END_DT <- as.Date(jdf$LOT_BASE_END_DT)
+      # End date can legitimately be NULL (ongoing / some reasons);
+      # fall back to the start date so the LOT still draws as a thin bar.
+      eend <- jdf$LOT_BASE_END_DT
+      eend[is.na(eend)] <- jdf$LOT_START_DT[is.na(eend)]
+      jdf$LOT_BASE_END_DT <- eend
 
       k <- 0
       for (pid in pick_ids) {
         pr <- jdf[jdf$PATID == pid, , drop = FALSE]
         pr <- pr[order(pr$LOT_NUM), , drop = FALSE]
         if (nrow(pr) == 0) next
-        if (all(is.na(pr$LOT_START_DT)) || all(is.na(pr$LOT_BASE_END_DT))) next
+        # Only need a start date to place the patient; end falls back
+        # to start above, so do NOT skip on missing end.
+        if (all(is.na(pr$LOT_START_DT))) next
         k <- k + 1
 
         added <- tryCatch({
@@ -592,9 +607,35 @@ main <- function() {
         if (!isTRUE(added)) k <- k - 1
       }
       log_msg("  Patient journey examples added: ", k)
+      if (k == 0) {
+        add_html_card(paste0(
+          '<div style="font-family:system-ui;padding:14px">',
+          '<h3>No auto journey examples</h3>',
+          '<p style="color:#555">Could not build example journeys ',
+          '(no usable LOT start dates in the selected patients). ',
+          'Use the <b>Drilldown</b> category to inspect any specific ',
+          'PATID instead.</p></div>'),
+          section = "JOURNEY", title = "Patient Journeys (none)")
+      }
+    } else {
+      add_html_card(paste0(
+        '<div style="font-family:system-ui;padding:14px">',
+        '<h3>No patients to show</h3>',
+        '<p style="color:#555">LOT_LONG returned no patients for the ',
+        'journey selection. If LOT_LONG was just rebuilt, confirm it ',
+        'has rows (Debug/QC &rarr; Table inventory).</p></div>'),
+        section = "JOURNEY", title = "Patient Journeys (none)")
     }
   } else {
     log_msg("  plotly not available - skipping JOURNEY section.")
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:14px">',
+      '<h3>Patient Journeys unavailable</h3>',
+      '<p style="color:#555">The <code>plotly</code> R package is not ',
+      'installed, so the interactive journey charts were skipped. The ',
+      '<b>Drilldown</b> category still works (it renders client-side ',
+      'without plotly).</p></div>'),
+      section = "JOURNEY", title = "Patient Journeys (unavailable)")
   }
 
   # ---- DEBUG / QC: persisted work-schema tables ----

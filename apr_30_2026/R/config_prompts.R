@@ -104,12 +104,15 @@ cfg_defaults <- list(
   outpatient_window = as.integer(Sys.getenv("OUTPATIENT_WINDOW", unset = "90")),
 
   # ---- Inclusion criteria (defaults for static/batch mode) ----
-  apply_age_incl          = TRUE,
-  min_age                 = 18L,
-  apply_ce_b_incl         = TRUE,
-  apply_ce_f_incl         = TRUE,
-  apply_no_bl_agents_incl = TRUE,
-  apply_fu_agents_incl    = TRUE,
+  # Env-configurable (same pattern as the exclusion block below) so
+  # pipeline_inputs.csv can toggle them. Defaults preserve prior
+  # behaviour exactly (all TRUE, min age 18).
+  apply_age_incl          = as.logical(Sys.getenv("APPLY_AGE_INCL",          unset = "TRUE")),
+  min_age                 = as.integer(Sys.getenv("MIN_AGE",                 unset = "18")),
+  apply_ce_b_incl         = as.logical(Sys.getenv("APPLY_CE_B_INCL",         unset = "TRUE")),
+  apply_ce_f_incl         = as.logical(Sys.getenv("APPLY_CE_F_INCL",         unset = "TRUE")),
+  apply_no_bl_agents_incl = as.logical(Sys.getenv("APPLY_NO_BL_AGENTS_INCL", unset = "TRUE")),
+  apply_fu_agents_incl    = as.logical(Sys.getenv("APPLY_FU_AGENTS_INCL",    unset = "TRUE")),
 
   # ---- Exclusion criteria (defaults for static/batch mode) ----
   # Defaults now TRUE so a default ELIG_COH_FINAL build produces the Step 10

@@ -61,7 +61,8 @@ precedence over `FORCE_RERUN`, so the command above re-runs only
 LOT2-5.)
 
 After every stage the orchestrator verifies its primary output table
-(`ELIG_COH_FINAL`, `LOT1_BASE_END`, `LOT_LONG`) actually landed in the
+(`FINAL_TABLE_NAME` / cohort output, `LOT1_BASE_END`, `LOT_LONG`)
+actually landed in the
 schema that stage writes to. If a stage exits 0 but its output is
 missing — usually because `materialize_to_personal_schema()` warned but
 did not write — the orchestrator **halts immediately with `stop()`**
@@ -206,6 +207,42 @@ Long-format table; one row per patient per LOT.
 | `LOT_BASE_END_REASON_CE_SENS`   | `DISENROLLMENT` only when ELIGEND binds        |
 
 ## Configuration overrides
+
+### `pipeline_inputs.csv` (edit inputs in one place)
+
+Instead of juggling `Sys.setenv()` / shell exports, edit
+`apr_30_2026/pipeline_inputs.csv` (open it in Excel or any editor).
+Columns: `name,value,description`. Set the `value` you want; leave it
+blank to keep the default. `run_pipeline.R`, `lot2_5_program.R`, and
+`lot_long_dashboard.R` all load this file **before** reading any
+config, and a non-empty value overrides the environment — so this is
+your single "change / reset inputs" file.
+
+Notes:
+- `DATABRICKS_PWD` is intentionally **not** in the file and is never
+  read from it — the password stays in the environment / Domino
+  secret store.
+- Rows whose `name` is blank or starts with `#` are comment rows.
+- The orchestrator applies the file in the parent R process, so the
+  overrides propagate to every per-stage `Rscript` subprocess too.
+- Anything not listed can still be added as a new row — any env var
+  the pipeline reads works.
+
+The file ships pre-filled with the current defaults so it doubles as
+a documented reference. It includes the cohort **inclusion** criteria
+(`APPLY_AGE_INCL`, `MIN_AGE`, `APPLY_CE_B_INCL`, `APPLY_CE_F_INCL`,
+`APPLY_NO_BL_AGENTS_INCL`, `APPLY_FU_AGENTS_INCL`) **and exclusion**
+criteria (`APPLY_PREGNANCY_EXCL`, `APPLY_CLINTRIAL_EXCL`,
+`APPLY_OTHER_MALIG_EXCL`, `APPLY_BASELINE_MM_EXCL`) — set any to
+`FALSE` to drop that rule from the attrition build. (Inclusion
+criteria were previously hardcoded; they are now env/CSV-driven with
+the same defaults, so existing builds are unaffected.)
+
+Example — rebuild only LOT2-5: set `SKIP_COHORT=TRUE`,
+`SKIP_LOT1=TRUE`, `FORCE_RERUN=TRUE` in the CSV, then
+`Rscript run_pipeline.R`.
+
+### Environment variables
 
 Environment variables (in addition to the LOT1 set):
 

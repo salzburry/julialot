@@ -386,6 +386,9 @@ function resizeIframe(iframe) {
 }
 var renderedPlots = {};
 function renderPlotlyIfVisible(divId) {
+  // Fail gracefully if plotly.js was not bundled (R side already logs
+  // "figures may not render"); never throw a ReferenceError.
+  if (typeof Plotly === "undefined") return;
   if (renderedPlots[divId]) { Plotly.Plots.resize(divId); return; }
   var el = document.getElementById(divId);
   if (!el || el.offsetParent === null) return;
