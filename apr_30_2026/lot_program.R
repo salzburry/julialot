@@ -1898,21 +1898,32 @@ main <- function() {
         )
       "))
       # Schema evolution: older LOT_RUN_METADATA tables pre-date the
-      # INDUCTION_WINDOW_DAYS_LOT_N column. CREATE TABLE IF NOT EXISTS is a
-      # no-op when the table already exists, so we need an explicit ALTER.
-      # Swallow "column already exists" errors so the step is idempotent.
-      tryCatch({
-        db_exec(con, glue("
-          ALTER TABLE {wrk('LOT_RUN_METADATA')} ADD COLUMNS (INDUCTION_WINDOW_DAYS_LOT_N INT)
-        "))
-        log_msg("  Metadata schema evolution: added INDUCTION_WINDOW_DAYS_LOT_N")
-      }, error = function(e) {
-        msg <- conditionMessage(e)
-        if (!grepl("already exists|AlreadyExists|FIELD_ALREADY_EXISTS|DELTA_ADD_COLUMN_PARENT_NOT_STRUCT",
-                   msg, ignore.case = TRUE)) {
-          log_msg("  Metadata schema evolution warning: ", msg)
-        }
-      })
+      # INDUCTION_WINDOW_DAYS_LOT_N column. CREATE TABLE IF NOT EXISTS is
+      # a no-op when the table already exists. Check the column FIRST and
+      # only ALTER when it is genuinely missing -- otherwise a rerun
+      # raises FIELD_ALREADY_EXISTS which db_exec/with_retry logs as a
+      # noisy "Permanent error" stack BEFORE the catch can swallow it.
+      have_cols <- tryCatch({
+        d  <- db_q(con, glue("DESCRIBE {wrk('LOT_RUN_METADATA')}"))
+        cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
+        if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else character(0)
+      }, error = function(e) character(0))
+      if (!("INDUCTION_WINDOW_DAYS_LOT_N" %in% have_cols)) {
+        tryCatch({
+          db_exec(con, glue("
+            ALTER TABLE {wrk('LOT_RUN_METADATA')} ADD COLUMNS (INDUCTION_WINDOW_DAYS_LOT_N INT)
+          "))
+          log_msg("  Metadata schema evolution: added INDUCTION_WINDOW_DAYS_LOT_N")
+        }, error = function(e) {
+          msg <- conditionMessage(e)
+          if (!grepl("already exists|AlreadyExists|FIELD_ALREADY_EXISTS|DELTA_ADD_COLUMN_PARENT_NOT_STRUCT",
+                     msg, ignore.case = TRUE)) {
+            log_msg("  Metadata schema evolution warning: ", msg)
+          }
+        })
+      } else {
+        log_msg("  Metadata schema: INDUCTION_WINDOW_DAYS_LOT_N already present (no migration needed)")
+      }
       # Delete any prior row for this exact run_id (idempotent re-runs)
       run_step(con, "S22b_dedup_metadata", glue("
         DELETE FROM {wrk('LOT_RUN_METADATA')} WHERE RUN_ID = '{run_id}'
