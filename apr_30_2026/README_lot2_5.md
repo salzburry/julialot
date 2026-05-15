@@ -38,6 +38,20 @@ match the stage configs).
 Rscript run_pipeline.R
 ```
 
+**One Domino Job (pipeline + dashboard).** `run_all.R` is a thin
+wrapper: it runs `run_pipeline.R` and, only if that succeeds, runs
+`lot_long_dashboard.R`, with both sharing one combined
+`PIPELINE_LOG_FILE` artifact. Use it as the single Job command:
+
+```
+Rscript /mnt/code/.../apr_30_2026/run_all.R
+```
+
+Set `DATABRICKS_PWD` as a Domino env var / secret. Run-control env
+vars (`FORCE_RERUN`, `SKIP_*`) still work and win over the CSV. No
+other code changes are needed to run as a Job — the pipeline is
+already `Rscript`/headless-ready.
+
 Skip flags:
 - `FORCE_RERUN=TRUE Rscript run_pipeline.R` — re-run every stage even
   if outputs already exist.
