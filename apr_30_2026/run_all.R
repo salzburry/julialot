@@ -28,8 +28,21 @@ if (file.exists(file.path(.d, "R", "load_inputs.R"))) {
 if (!nzchar(Sys.getenv("PIPELINE_LOG_FILE"))) {
   od <- Sys.getenv("OUTPUT_DIR", unset = "/mnt/artifacts/results")
   try(dir.create(od, showWarnings = FALSE, recursive = TRUE), silent = TRUE)
-  Sys.setenv(PIPELINE_LOG_FILE = file.path(
-    od, paste0("pipeline_run_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".log")))
+  # Verify the dir is usable; if a bad/unwritable OUTPUT_DIR was set
+  # (e.g. a typo in pipeline_inputs.csv) fall back to tempdir() so the
+  # combined log is never silently lost. Logging never fails the Job.
+  probe <- tryCatch({
+    pf <- file.path(od, paste0(".logprobe_", Sys.getpid()))
+    file.create(pf); on.exit(unlink(pf), add = TRUE); file.exists(pf)
+  }, error = function(e) FALSE)
+  if (!dir.exists(od) || !isTRUE(probe)) {
+    cat(sprintf("[run_all] OUTPUT_DIR '%s' is not writable; logging to tempdir().\n", od))
+    od <- tempdir()
+  }
+  lf <- file.path(od, paste0("pipeline_run_",
+          format(Sys.time(), "%Y%m%d_%H%M%S"), ".log"))
+  Sys.setenv(PIPELINE_LOG_FILE = lf)
+  cat(sprintf("[run_all] combined run log -> %s\n", lf))
 }
 
 rc1 <- system2("Rscript", file.path(.d, "run_pipeline.R"),
