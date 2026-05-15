@@ -196,32 +196,68 @@ materialize_to_personal_schema <- function(con, view_name, cfg, mat_tables, repl
     paste0(cfg$personal_schema, ".", remote_table)
   }
 
-  write_sql <- if (isTRUE(replace)) {
-    glue("CREATE OR REPLACE TABLE {full_table_name} AS SELECT * FROM `{view_name}`")
-  } else {
-    glue("CREATE TABLE IF NOT EXISTS {full_table_name} AS SELECT * FROM `{view_name}`")
-  }
-  alias_sql <- glue("CREATE OR REPLACE TEMPORARY VIEW {view_name} AS SELECT * FROM {full_table_name}")
-
   max_attempts <- as.integer(Sys.getenv("MATERIALIZE_RETRIES", unset = "3"))
   if (is.na(max_attempts) || max_attempts < 1) max_attempts <- 3L
 
+  # replace = FALSE keeps the simple "create if absent" semantics
+  # (unchanged behaviour; this is not the failing path).
+  if (!isTRUE(replace)) {
+    return(tryCatch({
+      DBI::dbExecute(con, glue(
+        "CREATE TABLE IF NOT EXISTS {full_table_name} AS SELECT * FROM `{view_name}`"))
+      DBI::dbExecute(con, glue(
+        "CREATE OR REPLACE TEMPORARY VIEW {view_name} AS SELECT * FROM {full_table_name}"))
+      assign(view_name, full_table_name, envir = mat_tables)
+      log_msg("  >> Materialized ", view_name, " (create-if-absent)")
+      TRUE
+    }, error = function(e) {
+      log_msg("  >> WARN: Materialization of ", view_name,
+              " failed (create-if-absent): ", conditionMessage(e))
+      FALSE
+    }))
+  }
+
+  # Staging / atomic-publish (structural fix for DELTA_METADATA_CHANGED):
+  # the heavy SELECT lands in a BRAND-NEW staging table (no existing
+  # table metadata -> minimal Delta OCC surface for the long write),
+  # then a fast CREATE OR REPLACE from that already-materialized
+  # staging table swaps it into the final name in seconds (tiny OCC
+  # window). This is the same pattern used for LOT_LONG. The 5-column
+  # claim grain / null-safe joins are deliberately left unchanged.
   for (attempt in seq_len(max_attempts)) {
     t0 <- Sys.time()
-    log_msg("  >> Materializing ", view_name, " to ", full_table_name,
-            " (attempt ", attempt, "/", max_attempts, ", started ",
-            format(t0, "%H:%M:%S"), ") ...")
+    stg <- paste0(full_table_name, "__stg_",
+                  format(t0, "%Y%m%d%H%M%S"), "_", Sys.getpid(),
+                  "_a", attempt)
+    log_msg("  >> Materializing ", view_name, " -> ", full_table_name,
+            " via staging (attempt ", attempt, "/", max_attempts,
+            ", started ", format(t0, "%H:%M:%S"), ") ...")
     res <- tryCatch({
-      DBI::dbExecute(con, write_sql)
-      DBI::dbExecute(con, alias_sql)
+      try(DBI::dbExecute(con, glue("DROP TABLE IF EXISTS {stg}")), silent = TRUE)
+      # Heavy write to a NEW table (no replace-in-place => not exposed
+      # to the concurrent-metadata failure during the long scan).
+      DBI::dbExecute(con, glue(
+        "CREATE TABLE {stg} AS SELECT * FROM `{view_name}`"))
+      el_stg <- round(as.numeric(difftime(Sys.time(), t0, units = "secs")), 1)
+      log_msg("  >> Staged ", view_name, " in ", el_stg,
+              " s; publishing to ", full_table_name, " ...")
+      # Fast swap: source is a materialized table, seconds not minutes.
+      DBI::dbExecute(con, glue(
+        "CREATE OR REPLACE TABLE {full_table_name} AS SELECT * FROM {stg}"))
+      DBI::dbExecute(con, glue(
+        "CREATE OR REPLACE TEMPORARY VIEW {view_name} AS SELECT * FROM {full_table_name}"))
+      try(DBI::dbExecute(con, glue("DROP TABLE IF EXISTS {stg}")), silent = TRUE)
       assign(view_name, full_table_name, envir = mat_tables)
       el <- round(as.numeric(difftime(Sys.time(), t0, units = "secs")), 1)
       log_msg("  >> Materialized ", view_name, " OK in ", el,
-              " s (view alias re-pointed)")
+              " s (staged + published, view alias re-pointed)")
       TRUE
     }, error = function(e) e)
 
     if (isTRUE(res)) return(TRUE)
+
+    # Best-effort: never leak the staging table.
+    try(DBI::dbExecute(con, glue("DROP TABLE IF EXISTS {stg}")), silent = TRUE)
 
     msg <- conditionMessage(res)
     el  <- round(as.numeric(difftime(Sys.time(), t0, units = "secs")), 1)

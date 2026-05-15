@@ -68,12 +68,20 @@ per-stage subprocesses append to the **same** file — `tail -f` it to
 track a long run, or grab it as a Domino job artifact. Override the
 path with `PIPELINE_LOG_FILE`.
 
-**Materialization retries.** `CREATE OR REPLACE TABLE` of a large
-source can hit a transient Delta `MetadataChangedException`/
-`CONCURRENT_*` if the target is touched concurrently. The materializer
-now retries (default 3, env `MATERIALIZE_RETRIES`) with backoff,
-logging each attempt + elapsed; permanent errors fail fast without
-wasting a re-scan.
+**Materialization (staging publish).** A long `CREATE OR REPLACE
+TABLE` of an existing Delta table can hit a transient
+`MetadataChangedException`/`CONCURRENT_*` because the long write
+window overlaps a concurrent metadata change (another run,
+auto-optimize). `materialize_to_personal_schema()` now writes the
+heavy `SELECT` into a **brand-new staging table** (no replace-in-place
+during the long scan → minimal Delta OCC surface), then does a fast
+`CREATE OR REPLACE` from that materialized staging table to publish
+the final name in seconds, and drops the staging table. Same
+atomic-publish pattern as `LOT_LONG`. On top of that it still retries
+transient Delta errors (default 3, env `MATERIALIZE_RETRIES`) with
+backoff and logs each attempt + elapsed; permanent errors fail fast.
+The 5-column claim grain / null-safe joins are intentionally left
+unchanged — the structural fix is the staging publish, not the join.
 
 After every stage the orchestrator verifies its primary output table
 (`FINAL_TABLE_NAME` / cohort output, `LOT1_BASE_END`, `LOT_LONG`)
