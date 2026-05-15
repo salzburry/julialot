@@ -4,8 +4,8 @@ name,value,description
 # --- Connection & schema ---,,
 DATABRICKS_DSN,RWDE,ODBC DSN
 DATABRICKS_CATALOG,hive_metastore,Unity/Hive catalog
-PROJECT_WORK_SCHEMA,osk02156,Schema LOT1/LOT2-5 read & write
-DOMINO_USER_NAME,osk02156,Cohort attrition personal schema (fallback for work schema)
+PROJECT_WORK_SCHEMA,,Schema LOT1/LOT2-5 read & write (blank = use env / DOMINO_USER_NAME fallback)
+DOMINO_USER_NAME,,Personal schema; blank = Domino-injected value is used
 OPTUM_CDM_SCHEMA,clnprw_optum,Optum CDM source schema
 FINAL_TABLE_NAME,ELIG_COH_FINAL,Cohort attrition output table
 INPUT_COHORT_TABLE,ELIG_COH_FINAL,Cohort table LOT pipelines read
@@ -40,11 +40,11 @@ APPLY_PREGNANCY_EXCL,TRUE,Exclude patients with pregnancy claims
 APPLY_CLINTRIAL_EXCL,TRUE,Exclude patients in clinical trials
 APPLY_OTHER_MALIG_EXCL,TRUE,Exclude patients with other malignancies
 APPLY_BASELINE_MM_EXCL,TRUE,Exclude patients with MM dx (203.0x/C90.0x) in baseline
-# --- Orchestrator (run_pipeline.R) ---,,
-FORCE_RERUN,FALSE,Re-run a stage even if its output already exists
-SKIP_COHORT,FALSE,Skip the cohort attrition stage
-SKIP_LOT1,FALSE,Skip the LOT1 stage
-SKIP_LOT2_5,FALSE,Skip the LOT2-5 stage
+# --- Orchestrator (run_pipeline.R): leave BLANK; set per-run on the command line ---,,
+FORCE_RERUN,,Blank = default FALSE. Set TRUE here only for a persistent override
+SKIP_COHORT,,Blank = default FALSE. Prefer the inline command for one-off skips
+SKIP_LOT1,,Blank = default FALSE. Prefer the inline command for one-off skips
+SKIP_LOT2_5,,Blank = default FALSE. Prefer the inline command for one-off skips
 # --- Reporting / dashboards ---,,
 GENERATE_DESCRIPTIVES,TRUE,Build LOT1 descriptives
 BUILD_DASHBOARD,TRUE,Build the HTML dashboard(s)

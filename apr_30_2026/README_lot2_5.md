@@ -216,21 +216,39 @@ Long-format table; one row per patient per LOT.
 
 ### `pipeline_inputs.csv` (edit inputs in one place)
 
-Instead of juggling `Sys.setenv()` / shell exports, edit
-`apr_30_2026/pipeline_inputs.csv` (open it in Excel or any editor).
-Columns: `name,value,description`. Set the `value` you want; leave it
-blank to keep the default. `run_pipeline.R`, `lot2_5_program.R`, and
-`lot_long_dashboard.R` all load this file **before** reading any
-config, and a non-empty value overrides the environment — so this is
-your single "change / reset inputs" file.
+An editable defaults file: edit `apr_30_2026/pipeline_inputs.csv`
+(open it in Excel or any editor) instead of memorising every env var.
+Columns: `name,value,description`. All five entry points
+(`run_pipeline.R`, `main.R`, `lot_program.R`, `lot2_5_program.R`,
+`lot_long_dashboard.R`) load it **before** reading any config.
+
+**Precedence: the environment always wins.** A CSV value is applied
+only when that variable is currently unset/empty. So an inline
+command still works exactly as documented and is *not* clobbered by
+the file:
+
+```
+SKIP_COHORT=TRUE SKIP_LOT1=TRUE FORCE_RERUN=TRUE Rscript run_pipeline.R
+```
+
+Use the CSV to set durable defaults (LOT params, IE criteria, paths);
+use the inline command (or a shell export / `Sys.setenv`) for one-off
+run control. Both compose correctly because env beats CSV.
 
 Notes:
 - `DATABRICKS_PWD` is intentionally **not** in the file and is never
   read from it — the password stays in the environment / Domino
   secret store.
+- The shipped CSV leaves environment-specific and run-control rows
+  **blank** on purpose: `PROJECT_WORK_SCHEMA`, `DOMINO_USER_NAME`
+  (so the code's `DOMINO_USER_NAME` fallback / Domino-injected value
+  governs) and `FORCE_RERUN` / `SKIP_*` (so the inline command is the
+  natural way to control a run). Fill them in only if you want a
+  persistent machine-specific default.
 - Rows whose `name` is blank or starts with `#` are comment rows.
 - The orchestrator applies the file in the parent R process, so the
-  overrides propagate to every per-stage `Rscript` subprocess too.
+  filled defaults propagate to every per-stage `Rscript` subprocess
+  too.
 - Anything not listed can still be added as a new row — any env var
   the pipeline reads works.
 
@@ -244,9 +262,11 @@ criteria (`APPLY_PREGNANCY_EXCL`, `APPLY_CLINTRIAL_EXCL`,
 criteria were previously hardcoded; they are now env/CSV-driven with
 the same defaults, so existing builds are unaffected.)
 
-Example — rebuild only LOT2-5: set `SKIP_COHORT=TRUE`,
-`SKIP_LOT1=TRUE`, `FORCE_RERUN=TRUE` in the CSV, then
-`Rscript run_pipeline.R`.
+Example — rebuild only LOT2-5 (run control stays inline, env wins):
+
+```
+SKIP_COHORT=TRUE SKIP_LOT1=TRUE FORCE_RERUN=TRUE Rscript run_pipeline.R
+```
 
 ### Environment variables
 
