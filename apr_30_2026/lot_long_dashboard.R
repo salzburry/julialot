@@ -608,19 +608,31 @@ main <- function() {
     x <- gsub("<", "&lt;",  x, fixed = TRUE)
     gsub(">", "&gt;", x, fixed = TRUE)
   }
-  debug_tables <- c("ELIG_COH_FINAL", "MMA_MED_PROCESSED", "MAP_STACKED",
-                    "LOT1_BASE", "LOT1_SCT", "LOT1_BASE_END", "LOT_LONG",
-                    "LOT_RUN_METADATA", "LOT_QC_SUMMARY")
-  inv_rows <- lapply(debug_tables, function(tb) {
+  # Cohort input is configurable (INPUT_COHORT_TABLE); probe the table
+  # the pipeline actually uses, not a hardcoded default, else a
+  # non-default run shows it falsely "missing".
+  debug_tables <- list(
+    list(tb = cfg$input_cohort_table,
+         label = paste0(cfg$input_cohort_table, " (cohort input)")),
+    list(tb = "MMA_MED_PROCESSED", label = "MMA_MED_PROCESSED"),
+    list(tb = "MAP_STACKED",       label = "MAP_STACKED"),
+    list(tb = "LOT1_BASE",         label = "LOT1_BASE"),
+    list(tb = "LOT1_SCT",          label = "LOT1_SCT"),
+    list(tb = "LOT1_BASE_END",     label = "LOT1_BASE_END"),
+    list(tb = "LOT_LONG",          label = "LOT_LONG"),
+    list(tb = "LOT_RUN_METADATA",  label = "LOT_RUN_METADATA"),
+    list(tb = "LOT_QC_SUMMARY",    label = "LOT_QC_SUMMARY")
+  )
+  inv_rows <- lapply(debug_tables, function(ent) {
     res <- tryCatch(
-      db_q(con, glue("SELECT count(*) AS n FROM {wrk(tb)}")),
+      db_q(con, glue("SELECT count(*) AS n FROM {wrk(ent$tb)}")),
       error = function(e) NULL)
     if (is.null(res)) {
       sprintf('<tr><td>%s</td><td style="color:#b00">missing / unreadable</td></tr>',
-              tb)
+              esc_html(ent$label))
     } else {
       sprintf('<tr><td>%s</td><td>%s rows</td></tr>',
-              tb, format(as.numeric(res$n[1]), big.mark = ","))
+              esc_html(ent$label), format(as.numeric(res$n[1]), big.mark = ","))
     }
   })
   inv_html <- paste0(
@@ -721,7 +733,16 @@ main <- function() {
     # Prevent any "</script>" inside data from closing the script tag.
     pj_json <- gsub("</", "<\\/", as.character(pj_json), fixed = TRUE)
 
-    opts <- paste(sprintf('<option value="%s">', keep_ids), collapse = "")
+    # HTML-attribute-escape PATIDs before inlining (cheap hardening even
+    # though clinical IDs are usually clean).
+    esc_attr <- function(x) {
+      x <- gsub("&", "&amp;",  as.character(x), fixed = TRUE)
+      x <- gsub("<", "&lt;",   x, fixed = TRUE)
+      x <- gsub(">", "&gt;",   x, fixed = TRUE)
+      gsub('"', "&quot;", x, fixed = TRUE)
+    }
+    opts <- paste(sprintf('<option value="%s">', esc_attr(keep_ids)),
+                  collapse = "")
     note <- if (truncated) paste0(
       '<p style="color:#b06000;font-size:12px">Showing first ',
       format(max_pat, big.mark = ","), ' of ',
@@ -810,7 +831,8 @@ document.getElementById("pjIn").addEventListener("keydown",function(e){if(e.key=
 var first=Object.keys(PJ)[0]; if(first){document.getElementById("pjIn").value=first;pjDraw(first);}
 </script>')
     add_html_card(drill_html, section = "DRILLDOWN",
-                  title = "Patient drilldown (search any PATID)")
+                  title = if (truncated) "Patient drilldown (embedded sample)"
+                          else "Patient drilldown (any PATID)")
     log_msg("  Drilldown card: ", length(keep_ids), " patients embedded",
             if (truncated) paste0(" (capped from ", length(all_ids), ")") else "")
   } else {
