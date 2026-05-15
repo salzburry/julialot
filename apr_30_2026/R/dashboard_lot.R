@@ -464,11 +464,23 @@ function applySearch(q) {
     if (q && any) grp.classList.remove("collapsed");
   });
 }
+// Currently navigable views in DOM order: when a search filter is
+// active, only the visible (non-hidden) items; otherwise all of them.
+// Collapsed-but-not-hidden groups are still included (openView expands
+// the target group), so collapse is purely cosmetic for prev/next.
+function visibleIds() {
+  var out = [];
+  document.querySelectorAll(".grp:not(.hidden) .nav-item:not(.hidden)")
+    .forEach(function(a){ out.push(a.getAttribute("data-id")); });
+  return out.length ? out : FLAT.map(function(f){ return f.id; });
+}
 function step(delta) {
-  if (!FLAT.length) return;
-  var i = FLAT.map(function(f){ return f.id; }).indexOf(curId);
-  i = (i + delta + FLAT.length) % FLAT.length;
-  openView(FLAT[i].id);
+  var ids = visibleIds();
+  if (!ids.length) return;
+  var i = ids.indexOf(curId);
+  if (i === -1) i = (delta > 0 ? -1 : 0);  // current filtered out -> jump to an edge
+  i = (i + delta + ids.length) % ids.length;
+  openView(ids[i]);
   var el = document.querySelector(".nav-item.active");
   if (el) el.scrollIntoView({block:"nearest"});
 }
