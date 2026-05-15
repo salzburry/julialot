@@ -13,9 +13,38 @@ DASH_60 <- strrep("-", 60)
 DASH_70 <- strrep("-", 70)
 
 # ---- Logging ----
+# Resolve a single run log file (memoized). Honour PIPELINE_LOG_FILE if
+# set (the orchestrator points all stages at one file); else write a
+# timestamped file under OUTPUT_DIR (falls back to tempdir()).
+.resolve_log_file <- function() {
+  lf <- getOption("pipeline_log_file", default = NULL)
+  if (!is.null(lf)) return(lf)
+  envf <- Sys.getenv("PIPELINE_LOG_FILE", unset = "")
+  if (nzchar(envf)) {
+    lf <- envf
+  } else {
+    base_dir <- Sys.getenv("OUTPUT_DIR", unset = "")
+    if (!nzchar(base_dir)) base_dir <- "/mnt/artifacts/results"
+    ok <- tryCatch({ dir.create(base_dir, showWarnings = FALSE, recursive = TRUE); dir.exists(base_dir) },
+                   error = function(e) FALSE)
+    if (!isTRUE(ok)) base_dir <- tempdir()
+    lf <- file.path(base_dir, paste0("pipeline_run_",
+            format(Sys.time(), "%Y%m%d_%H%M%S"), ".log"))
+  }
+  options(pipeline_log_file = lf)
+  cat(sprintf("[%s] [log] run log -> %s\n",
+              format(Sys.time(), "%Y-%m-%d %H:%M:%S"), lf))
+  lf
+}
+
 log_msg <- function(...) {
-  cat(sprintf("[%s] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S")), ..., "\n")
+  prefix <- sprintf("[%s] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"))
+  cat(prefix, ..., "\n")
   flush.console()
+  try({
+    lf <- .resolve_log_file()
+    cat(prefix, ..., "\n", file = lf, append = TRUE)
+  }, silent = TRUE)
 }
 
 # ============================================================
@@ -142,49 +171,81 @@ with_retry <- function(fn, max_retries = 3L, base_sleep = 5) {
 }
 
 # ---- Materialization to personal schema (GSK helper) ----
+# Transient Delta/Spark errors worth retrying. CREATE OR REPLACE TABLE
+# on a large source can take many minutes; if the target Delta table is
+# touched concurrently (auto-optimize, another session, an overlapping
+# run) the commit throws MetadataChangedException / a CONCURRENT_*
+# error. These are transient - a fresh attempt usually succeeds.
+.mat_transient_patterns <- c(
+  "DELTA_METADATA_CHANGED", "MetadataChangedException",
+  "ConcurrentModificationException", "ConcurrentAppend",
+  "ConcurrentDeleteRead", "ConcurrentDeleteDelete",
+  "ConcurrentTransaction", "CONCURRENT_", "concurrent update",
+  "DELTA_CONCURRENT", "could not be committed"
+)
+
 materialize_to_personal_schema <- function(con, view_name, cfg, mat_tables, replace = TRUE) {
   if (!nzchar(cfg$personal_schema)) {
     log_msg("WARN: personal_schema not set, skipping materialization of ", view_name)
     return(FALSE)
   }
   remote_table <- tolower(view_name)
-  # Use same catalog-aware naming as full_name() / persistence step
   full_table_name <- if (nzchar(cfg$catalog)) {
     paste0(cfg$catalog, ".", cfg$personal_schema, ".", remote_table)
   } else {
     paste0(cfg$personal_schema, ".", remote_table)
   }
-  log_msg("  >> Materializing ", view_name, " to ", full_table_name, "...")
 
-  tryCatch({
-    # Write directly via SQL using CREATE OR REPLACE TABLE (Delta Lake
-    # atomic write). Bypasses GSK's createInPersonalSchema helper because
-    # that helper's CTAS pattern hits a "Table or view already exists"
-    # error when a same-name temp view is present in the current Spark
-    # session - which is always the case here since the temp view we are
-    # materializing IS the source. CREATE OR REPLACE TABLE handles both
-    # first-time create and subsequent reruns atomically without that
-    # conflict.
-    write_sql <- if (isTRUE(replace)) {
-      glue("CREATE OR REPLACE TABLE {full_table_name} AS SELECT * FROM `{view_name}`")
-    } else {
-      glue("CREATE TABLE IF NOT EXISTS {full_table_name} AS SELECT * FROM `{view_name}`")
+  write_sql <- if (isTRUE(replace)) {
+    glue("CREATE OR REPLACE TABLE {full_table_name} AS SELECT * FROM `{view_name}`")
+  } else {
+    glue("CREATE TABLE IF NOT EXISTS {full_table_name} AS SELECT * FROM `{view_name}`")
+  }
+  alias_sql <- glue("CREATE OR REPLACE TEMPORARY VIEW {view_name} AS SELECT * FROM {full_table_name}")
+
+  max_attempts <- as.integer(Sys.getenv("MATERIALIZE_RETRIES", unset = "3"))
+  if (is.na(max_attempts) || max_attempts < 1) max_attempts <- 3L
+
+  for (attempt in seq_len(max_attempts)) {
+    t0 <- Sys.time()
+    log_msg("  >> Materializing ", view_name, " to ", full_table_name,
+            " (attempt ", attempt, "/", max_attempts, ", started ",
+            format(t0, "%H:%M:%S"), ") ...")
+    res <- tryCatch({
+      DBI::dbExecute(con, write_sql)
+      DBI::dbExecute(con, alias_sql)
+      assign(view_name, full_table_name, envir = mat_tables)
+      el <- round(as.numeric(difftime(Sys.time(), t0, units = "secs")), 1)
+      log_msg("  >> Materialized ", view_name, " OK in ", el,
+              " s (view alias re-pointed)")
+      TRUE
+    }, error = function(e) e)
+
+    if (isTRUE(res)) return(TRUE)
+
+    msg <- conditionMessage(res)
+    el  <- round(as.numeric(difftime(Sys.time(), t0, units = "secs")), 1)
+    transient <- any(vapply(.mat_transient_patterns,
+                            function(p) grepl(p, msg, ignore.case = TRUE),
+                            logical(1)))
+    if (!transient) {
+      log_msg("  >> WARN: Materialization of ", view_name,
+              " failed after ", el, " s (permanent, not retrying): ", msg)
+      return(FALSE)
     }
-    DBI::dbExecute(con, write_sql)
-
-    # Re-point the temp view at the persisted table so downstream
-    # queries that read `{view_name}` keep working (and use the
-    # persisted data instead of the upstream temp view).
-    alias_sql <- glue("CREATE OR REPLACE TEMPORARY VIEW {view_name} AS SELECT * FROM {full_table_name}")
-    DBI::dbExecute(con, alias_sql)
-
-    assign(view_name, full_table_name, envir = mat_tables)
-    log_msg("  >> Materialized successfully (view alias created)")
-    TRUE
-  }, error = function(e) {
-    log_msg("  >> WARN: Materialization failed: ", conditionMessage(e))
-    FALSE
-  })
+    if (attempt >= max_attempts) {
+      log_msg("  >> WARN: Materialization of ", view_name,
+              " still failing after ", attempt, " attempt(s) (", el,
+              " s): transient Delta concurrency error. Last: ", msg)
+      return(FALSE)
+    }
+    wait_s <- 15 * (2 ^ (attempt - 1))   # 15s, 30s, 60s ...
+    log_msg("  >> Transient Delta concurrency error after ", el,
+            " s (attempt ", attempt, "/", max_attempts,
+            "). Retrying in ", wait_s, " s. Detail: ", msg)
+    Sys.sleep(wait_s)
+  }
+  FALSE
 }
 
 # ---- Step runner ----

@@ -82,12 +82,46 @@ local({
 })
 
 # ---- Minimal helpers (avoid sourcing stage modules into orchestrator) ----
-log_msg <- function(...) {
-  cat(sprintf("[%s] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S")), ..., "\n", sep = "")
-  flush.console()
+# Resolve ONE run log file and export it as PIPELINE_LOG_FILE so every
+# per-stage Rscript subprocess (which inherits this env) appends to the
+# SAME combined log - one file to tail/track for the whole pipeline.
+.resolve_log_file <- function() {
+  lf <- getOption("pipeline_log_file", default = NULL)
+  if (!is.null(lf)) return(lf)
+  envf <- Sys.getenv("PIPELINE_LOG_FILE", unset = "")
+  if (nzchar(envf)) {
+    lf <- envf
+  } else {
+    base_dir <- Sys.getenv("OUTPUT_DIR", unset = "")
+    if (!nzchar(base_dir)) base_dir <- "/mnt/artifacts/results"
+    ok <- tryCatch({ dir.create(base_dir, showWarnings = FALSE, recursive = TRUE); dir.exists(base_dir) },
+                   error = function(e) FALSE)
+    if (!isTRUE(ok)) base_dir <- tempdir()
+    lf <- file.path(base_dir, paste0("pipeline_run_",
+            format(Sys.time(), "%Y%m%d_%H%M%S"), ".log"))
+    Sys.setenv(PIPELINE_LOG_FILE = lf)   # share with stage subprocesses
+  }
+  options(pipeline_log_file = lf)
+  cat(sprintf("[%s] [log] combined run log -> %s\n",
+              format(Sys.time(), "%Y-%m-%d %H:%M:%S"), lf))
+  lf
 }
 
-sep_line <- function() cat(strrep("=", 70), "\n", sep = "")
+log_msg <- function(...) {
+  prefix <- sprintf("[%s] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"))
+  cat(prefix, ..., "\n", sep = "")
+  flush.console()
+  try({
+    lf <- .resolve_log_file()
+    cat(prefix, ..., "\n", sep = "", file = lf, append = TRUE)
+  }, silent = TRUE)
+}
+
+sep_line <- function() {
+  cat(strrep("=", 70), "\n", sep = "")
+  try(cat(strrep("=", 70), "\n", sep = "",
+          file = .resolve_log_file(), append = TRUE), silent = TRUE)
+}
 
 env_bool <- function(name, default = "FALSE") {
   val <- Sys.getenv(name, unset = default)
