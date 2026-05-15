@@ -141,6 +141,18 @@ overwrite `lot_dashboard.html`. Sections (all by `LOT_NUM`):
   `LOT_START_DT -> LOT_BASE_END_DT`, colored by start type, with
   hover showing reason/length/regimen). A spread of example patients
   is auto-selected (deepest progressors + one per terminal reason).
+- **Drilldown** — type/paste **any** `PATID` (native autocomplete
+  over every patient) and the card renders that patient's LOT
+  timeline client-side. For targeted debugging, not just the
+  auto-picked examples. Embeds up to `DRILLDOWN_MAX_PATIENTS`
+  patients (default 8000; raise via env var).
+- **Debug/QC** — reads the persisted work-schema tables (NOT temp
+  views, so no LOT1-session dependency): table inventory with row
+  counts (`ELIG_COH_FINAL`, `MMA_MED_PROCESSED`, `MAP_STACKED`,
+  `LOT1_BASE`, `LOT1_SCT`, `LOT1_BASE_END`, `LOT_LONG`),
+  `LOT_RUN_METADATA`, `LOT_QC_SUMMARY`, and a LOT1 cross-check
+  (`LOT1_BASE_END` end-reason vs `LOT_LONG` LOT1). Missing tables are
+  reported, never fatal.
 
 Navigation is a two-level dropdown — **Category** (section) then
 **View** (figure/table within it) — instead of a flat tab list, so
