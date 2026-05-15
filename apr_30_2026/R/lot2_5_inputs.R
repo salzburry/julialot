@@ -51,6 +51,38 @@ prepare_lot_inputs <- function(con,
     WHERE CL_MED_ABBR IS NOT NULL AND trim(CL_MED_ABBR) <> ''
   "), qc = "SELECT count(*) AS n_rows, sum(MONOMAINTENANCE) AS n_monomaint FROM mma_rollup")
 
+  # Diagnostic + guard: confirm mma_rollup actually has the columns the
+  # builder will reference. If the CSV had wrong/extra columns and the
+  # view definition above silently picked the wrong field, the next
+  # step in lot2_5_base.R fails with an opaque UNRESOLVED_COLUMN error
+  # from Databricks. Surface it here with a clear message instead.
+  rollup_cols <- tryCatch(
+    DBI::dbGetQuery(con, "DESCRIBE mma_rollup"),
+    error = function(e) {
+      log_msg("  WARN: DESCRIBE mma_rollup failed: ", conditionMessage(e))
+      NULL
+    }
+  )
+  if (!is.null(rollup_cols) && is.data.frame(rollup_cols)) {
+    col_name_col <- intersect(c("col_name", "COL_NAME", "name", "NAME"),
+                              names(rollup_cols))
+    if (length(col_name_col) > 0) {
+      have <- toupper(as.character(rollup_cols[[col_name_col[1]]]))
+      log_msg("  mma_rollup columns (DESCRIBE): ", paste(have, collapse = ", "))
+      need <- c("CL_MED_ABBR", "CL_MED_CLASS", "CL_MEDICATION_FULL",
+                "MONOMAINTENANCE", "DUALMAINTENANCEWITH",
+                "CONDITIONING", "USED_FOR_OTHER_CANCERS")
+      missing <- setdiff(need, have)
+      if (length(missing) > 0) {
+        stop("mma_rollup is missing required columns: ",
+             paste(missing, collapse = ", "),
+             ". Check that cl_mma_rollup.csv has CL_MED_ABBR, CL_MED_CLASS, etc. ",
+             "and that the codelist directory is correct (cfg$codelist_dir = '",
+             cfg$codelist_dir, "').")
+      }
+    }
+  }
+
   # permissible_subs view
   run_step(con, "P02_permissible_subs", glue("
     CREATE OR REPLACE TEMPORARY VIEW permissible_subs AS

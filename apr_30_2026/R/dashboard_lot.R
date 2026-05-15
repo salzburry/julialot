@@ -117,7 +117,12 @@ add_html_card <- function(html_content, section, title) {
 }
 
 # Build and save the single combined HTML dashboard
-build_dashboard <- function() {
+# out_name / header_title / header_sub default to the LOT1 (lot_program.R)
+# dashboard so existing callers are unaffected. The LOT1-5 dashboard
+# (lot_long_dashboard.R) passes its own values to write a separate file.
+build_dashboard <- function(out_name     = "lot_dashboard.html",
+                            header_title = "LOT Part 2 &mdash; Interactive Dashboard",
+                            header_sub   = "MMA_MED &bull; MAP &bull; LOT1_BASE &bull; SCT &bull; Patient Journey") {
   if (length(dashboard_items) == 0) {
     log_msg("  Skipping dashboard (no items collected).")
     return(invisible(NULL))
@@ -128,7 +133,7 @@ build_dashboard <- function() {
   }
 
   dir.create(cfg$output_dir, showWarnings = FALSE, recursive = TRUE)
-  dash_path <- file.path(cfg$output_dir, "lot_dashboard.html")
+  dash_path <- file.path(cfg$output_dir, out_name)
 
   tryCatch({
     tab_buttons   <- list()
@@ -299,8 +304,8 @@ build_dashboard <- function() {
 </head>
 <body>
 <div class="header">
-  <h1>LOT Part 2 &mdash; Interactive Dashboard</h1>
-  <p>MMA_MED &bull; MAP &bull; LOT1_BASE &bull; SCT &bull; Patient Journey &nbsp;|&nbsp; Generated ', format(Sys.time(), "%Y-%m-%d %H:%M"), '</p>
+  <h1>', header_title, '</h1>
+  <p>', header_sub, ' &nbsp;|&nbsp; Generated ', format(Sys.time(), "%Y-%m-%d %H:%M"), '</p>
 </div>
 <div class="nav-bar">
 <div class="filter-bar">

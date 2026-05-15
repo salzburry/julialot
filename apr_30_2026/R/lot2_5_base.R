@@ -44,6 +44,15 @@
 # Normalize a MED_ABBR to a column-safe token (matches LOT1 convention).
 .lot_sanitize_col <- function(x) gsub("[^A-Za-z0-9]+", "_", toupper(x))
 
+# Staging table for the LOT_LONG build. The whole build (LOT1 init +
+# LOT2..N appends) writes here; build_lot2_5() only swaps the final
+# LOT_LONG into place AFTER every LOT appended successfully. This means a
+# mid-loop failure leaves a partial LOT_LONG_STAGE, NOT a partial
+# LOT_LONG -- so the orchestrator's "LOT_LONG already exists" skip can
+# never be fooled by an incomplete build, and a previous good LOT_LONG
+# (if any) is preserved until a complete rebuild replaces it.
+.LOT_LONG_STAGE <- "LOT_LONG_STAGE"
+
 # 9999-12-31 sentinel for SQL least() with NULLs.
 .SENTINEL <- "cast('9999-12-31' as date)"
 
@@ -141,10 +150,11 @@ init_lot_long_from_lot1 <- function(con, meds, classes) {
   "), qc = "SELECT count(*) AS n_lot1_rows FROM lot_long_v")
 
   # Materialize so iterative LOT N builders can self-join cheaply.
+  # Writes the STAGING table, not the final LOT_LONG (see .LOT_LONG_STAGE).
   run_step(con, "L26_materialize_lot_long",
-    glue("CREATE OR REPLACE TABLE {wrk('LOT_LONG')} AS SELECT * FROM lot_long_v"),
-    qc = glue("SELECT count(*) AS n_rows FROM {wrk('LOT_LONG')}"))
-  db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW lot_long AS SELECT * FROM {wrk('LOT_LONG')}"))
+    glue("CREATE OR REPLACE TABLE {wrk(.LOT_LONG_STAGE)} AS SELECT * FROM lot_long_v"),
+    qc = glue("SELECT count(*) AS n_rows FROM {wrk(.LOT_LONG_STAGE)}"))
+  db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW lot_long AS SELECT * FROM {wrk(.LOT_LONG_STAGE)}"))
 }
 
 # ============================================================
@@ -548,7 +558,7 @@ build_lot_n <- function(con, lot_num,
     )
     SELECT
       l.PATID,
-      -- Q16 (06-May): AUTO_DT_1 is "in LOT N" only if within the LOT's
+      -- Q16 (06-May): AUTO_DT_1 is in-LOT only if within the LOT
       -- applicable window from LOT_START_DT (LOT_WINDOW_DAYS). If AUTO_DT_1
       -- falls outside the window, it is NOT in-LOT (the TX_AUTO_* fields and
       -- TAND/SING flags become NULL/0) and instead becomes the ENDING_AUTO_DT
@@ -889,7 +899,7 @@ build_lot_n <- function(con, lot_num,
   }, character(1)), collapse = ",\n      ")
 
   run_step(con, paste0(pfx, "_lot", lot_num, "_append_long"), glue("
-    INSERT INTO {wrk('LOT_LONG')}
+    INSERT INTO {wrk(.LOT_LONG_STAGE)}
     SELECT
       lbe.PATID,
       cast({lot_num} as int)               AS LOT_NUM,
@@ -923,7 +933,7 @@ build_lot_n <- function(con, lot_num,
         ELSE lbe.LOT{lot_num}_BASE_END_REASON
       END AS LOT_BASE_END_REASON_CE_SENS,
       -- LOT-scoped AUTO flags clamped to [LOT_START_DT, LOT_BASE_END_DT]
-      -- per workbook Q7 draft. lot{n}_sct collects through OBS_END_DT, so
+      -- per workbook Q7 draft. lotN_sct collects through OBS_END_DT, so
       -- AUTOs after the LOT ended are filtered here. SING/TAND classification
       -- is RECOMPUTED from the clamped in-LOT dates so a within-LOT DT_1
       -- with an outside-LOT DT_2 lands on SING (not on neither flag).
@@ -931,7 +941,7 @@ build_lot_n <- function(con, lot_num,
             AND lbe.LOT{lot_num}_TX_AUTO_DT_1 <= lbe.LOT{lot_num}_BASE_END_DT
            THEN 1 ELSE 0 END                          AS LOT_TX_AUTO_FLG,
       -- TAND only if both in-LOT, AUTO_DT_2 within sct_tandem_days of AUTO_DT_1, AND pre-clamp tandem rules
-      -- already qualified it (no ALLO between, etc., from lot{n}_sct).
+      -- already qualified it (no ALLO between, etc., from lotN_sct).
       CASE WHEN lbe.LOT{lot_num}_TX_AUTO_DT_2 IS NOT NULL
             AND lbe.LOT{lot_num}_TX_AUTO_DT_2 <= lbe.LOT{lot_num}_BASE_END_DT
             AND coalesce(lbe.LOT{lot_num}_SCT_AUTO_TAND_FLG, 0) = 1
@@ -963,10 +973,10 @@ build_lot_n <- function(con, lot_num,
       {med_insert},
       {class_insert}
     FROM lot{lot_num}_base_end lbe
-  "), qc = glue("SELECT count(*) AS n_appended FROM {wrk('LOT_LONG')} WHERE LOT_NUM = {lot_num}"))
+  "), qc = glue("SELECT count(*) AS n_appended FROM {wrk(.LOT_LONG_STAGE)} WHERE LOT_NUM = {lot_num}"))
 
   # Refresh lot_long view to include the newly inserted rows.
-  db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW lot_long AS SELECT * FROM {wrk('LOT_LONG')}"))
+  db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW lot_long AS SELECT * FROM {wrk(.LOT_LONG_STAGE)}"))
 }
 
 # ============================================================
@@ -991,25 +1001,31 @@ build_lot2_5 <- function(con,
   # Discover med + class universes from the rollup so dynamic flag columns
   # match LOT1 output exactly. STEROID class excluded - LOT1 uses the same
   # filter, so persisted LOT1_MED_<DEXA>/<PRED> columns will not exist.
+  #
+  # ORDER BY references the aliased name (MED_ABBR / MED_CLASS), NOT the
+  # underlying column. After SELECT DISTINCT col AS alias, the projection
+  # only carries `alias`; strict Spark/Databricks runtimes reject
+  # ORDER BY on the underlying name with UNRESOLVED_COLUMN. LOT1 (S00)
+  # avoids this because it does not alias.
   meds <- db_q(con, "
     SELECT DISTINCT CL_MED_ABBR AS MED_ABBR
     FROM mma_rollup
     WHERE upper(coalesce(CL_MED_CLASS, '')) <> 'STEROID'
-    ORDER BY CL_MED_ABBR
+    ORDER BY MED_ABBR
   ")$MED_ABBR
   classes <- db_q(con, "
     SELECT DISTINCT CL_MED_CLASS AS MED_CLASS
     FROM mma_rollup
     WHERE upper(coalesce(CL_MED_CLASS, '')) <> 'STEROID'
       AND CL_MED_CLASS IS NOT NULL
-    ORDER BY CL_MED_CLASS
+    ORDER BY MED_CLASS
   ")$MED_CLASS
 
   init_lot_long_from_lot1(con, meds = meds, classes = classes)
 
   for (n in 2:max_lot) {
     log_msg("--- LOT", n, " ---")
-    nrows_before <- db_q(con, glue("SELECT count(*) AS n FROM {wrk('LOT_LONG')} WHERE LOT_NUM = {n - 1}"))$n
+    nrows_before <- db_q(con, glue("SELECT count(*) AS n FROM {wrk(.LOT_LONG_STAGE)} WHERE LOT_NUM = {n - 1}"))$n
     if (nrows_before == 0L) {
       log_msg("  No LOT", n - 1, " rows; nothing to roll forward. Stopping.")
       break
@@ -1022,7 +1038,20 @@ build_lot2_5 <- function(con,
                 meds = meds, classes = classes)
   }
 
-  # Final summary
+  # Atomic publish: the staging table is only now promoted to the final
+  # LOT_LONG. Every LOT (1..max_lot, or up to the natural break above)
+  # appended without error, so this is a COMPLETE build. If any append
+  # had failed, build_lot_n() would have stop()ped before reaching here,
+  # leaving LOT_LONG_STAGE partial and the prior LOT_LONG (if any)
+  # untouched -- so the orchestrator never mistakes a partial build for
+  # a finished one.
+  run_step(con, "L99_publish_lot_long",
+    glue("CREATE OR REPLACE TABLE {wrk('LOT_LONG')} AS SELECT * FROM {wrk(.LOT_LONG_STAGE)}"),
+    qc = glue("SELECT count(*) AS n_rows FROM {wrk('LOT_LONG')}"))
+  db_exec(con, glue("DROP TABLE IF EXISTS {wrk(.LOT_LONG_STAGE)}"))
+  db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW lot_long AS SELECT * FROM {wrk('LOT_LONG')}"))
+
+  # Final summary (reads the published LOT_LONG)
   summary <- db_q(con, glue("
     SELECT LOT_NUM, LOT_START_TYPE, LOT_BASE_END_REASON, count(*) AS n
     FROM {wrk('LOT_LONG')}
