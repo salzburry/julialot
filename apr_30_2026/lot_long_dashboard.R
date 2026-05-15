@@ -277,6 +277,196 @@ main <- function() {
                title = "Start-type transitions across LOTs")
   }
 
+  # ---- Sankey flow diagrams ----
+  # Helper: build a plotly Sankey from parallel src/tgt label vectors.
+  make_sankey <- function(src_lab, tgt_lab, value, title, pal = NULL) {
+    if (!has_plotly || length(value) == 0) return(invisible(NULL))
+    nodes <- unique(c(src_lab, tgt_lab))
+    idx   <- setNames(seq_along(nodes) - 1L, nodes)
+    ncol  <- function(lbl) {
+      if (is.null(pal)) return("#2E86AB")
+      key <- sub("^.*?:\\s*", "", lbl)        # strip "L2: " style prefix
+      vapply(key, function(k)
+        if (k %in% names(pal)) pal[[k]] else "#9aa5ab",
+        character(1))
+    }
+    sk <- tryCatch(
+      plotly::plot_ly(
+        type = "sankey", orientation = "h",
+        arrangement = "snap",
+        node = list(
+          label = nodes, pad = 14, thickness = 16,
+          color = unname(ncol(nodes)),
+          line  = list(color = "white", width = 0.5)
+        ),
+        link = list(
+          source = unname(idx[src_lab]),
+          target = unname(idx[tgt_lab]),
+          value  = as.numeric(value),
+          color  = "rgba(46,134,171,0.30)"
+        )
+      ) |>
+        plotly::layout(
+          title = list(text = title, font = list(size = 15)),
+          font  = list(size = 11),
+          margin = list(l = 10, r = 10, t = 50, b = 10),
+          paper_bgcolor = "white"
+        ) |>
+        plotly::config(displayModeBar = TRUE, displaylogo = FALSE),
+      error = function(e) {
+        log_msg("  INFO: sankey '", title, "' skipped (",
+                conditionMessage(e), ")")
+        NULL
+      }
+    )
+    if (!is.null(sk)) add_to_dashboard(sk, section = "SANKEY", title = title)
+  }
+
+  type_pal <- c(MED = "#2E86AB", SCT_AUTO = "#A23B72",
+                SCT_ALLO = "#F18F01", CART = "#C73E1D")
+
+  # Sankey 1: start-type flow across LOTs (reuses `trans`).
+  if (nrow(trans) > 0) {
+    s1 <- trans[!is.na(trans$from_type) & !is.na(trans$to_type), ]
+    if (nrow(s1) > 0) {
+      make_sankey(
+        src_lab = paste0("L", s1$from_lot, ": ", s1$from_type),
+        tgt_lab = paste0("L", s1$from_lot + 1, ": ", s1$to_type),
+        value   = s1$n,
+        title   = "Start-type flow across LOTs",
+        pal     = type_pal)
+    }
+  }
+
+  # Sankey 2: LOT N end reason -> LOT N+1 start type (or terminal).
+  er_next <- db_q(con, glue("
+    SELECT a.LOT_NUM AS from_lot,
+           a.LOT_BASE_END_REASON AS end_reason,
+           b.LOT_START_TYPE AS next_type,
+           count(*) AS n
+    FROM {lot_long} a
+    LEFT JOIN {lot_long} b ON a.PATID = b.PATID AND b.LOT_NUM = a.LOT_NUM + 1
+    GROUP BY a.LOT_NUM, a.LOT_BASE_END_REASON, b.LOT_START_TYPE
+  "))
+  if (nrow(er_next) > 0) {
+    er_next$from_lot <- as.numeric(er_next$from_lot)
+    er_next$n        <- as.numeric(er_next$n)
+    src <- paste0("L", er_next$from_lot, " end: ", er_next$end_reason)
+    tgt <- ifelse(is.na(er_next$next_type),
+                  paste0("L", er_next$from_lot, " (no next LOT)"),
+                  paste0("L", er_next$from_lot + 1, " start: ", er_next$next_type))
+    make_sankey(src, tgt, er_next$n,
+                "LOT end reason → next LOT start type")
+  }
+
+  # Sankey 3: drop-off funnel (continue vs stop after each LOT).
+  cont <- db_q(con, glue("
+    SELECT a.LOT_NUM                    AS lot,
+           count(DISTINCT a.PATID)      AS n_here,
+           count(DISTINCT b.PATID)      AS n_continue
+    FROM {lot_long} a
+    LEFT JOIN {lot_long} b ON a.PATID = b.PATID AND b.LOT_NUM = a.LOT_NUM + 1
+    GROUP BY a.LOT_NUM
+    ORDER BY a.LOT_NUM
+  "))
+  if (nrow(cont) > 0) {
+    cont$lot        <- as.numeric(cont$lot)
+    cont$n_here     <- as.numeric(cont$n_here)
+    cont$n_continue <- as.numeric(cont$n_continue)
+    cont$n_stop     <- cont$n_here - cont$n_continue
+    src <- character(0); tgt <- character(0); val <- numeric(0)
+    for (i in seq_len(nrow(cont))) {
+      L <- cont$lot[i]
+      if (cont$n_continue[i] > 0) {
+        src <- c(src, paste0("LOT", L)); tgt <- c(tgt, paste0("LOT", L + 1))
+        val <- c(val, cont$n_continue[i])
+      }
+      if (cont$n_stop[i] > 0) {
+        src <- c(src, paste0("LOT", L))
+        tgt <- c(tgt, paste0("Stopped after LOT", L))
+        val <- c(val, cont$n_stop[i])
+      }
+    }
+    make_sankey(src, tgt, val, "Drop-off funnel (continue vs stop per LOT)")
+  }
+
+  # ---- MED count per LOT ----
+  mc <- db_q(con, glue("
+    SELECT LOT_NUM,
+           round(avg(LOT_MED_CNT), 2)              AS mean_med_cnt,
+           percentile_approx(LOT_MED_CNT, 0.5)     AS median_med_cnt,
+           max(LOT_MED_CNT)                        AS max_med_cnt
+    FROM {lot_long}
+    WHERE LOT_MED_CNT IS NOT NULL
+    GROUP BY LOT_NUM ORDER BY LOT_NUM
+  "))
+  for (col in names(mc)) mc[[col]] <- as.numeric(mc[[col]])
+  if (nrow(mc) > 0) {
+    save_table(mc, section = "MEDCOUNT", title = "Induction med count by LOT")
+    if (has_ggplot2) {
+      p_mc <- ggplot(mc, aes(x = factor(LOT_NUM), y = mean_med_cnt)) +
+        geom_col(fill = "#5FAD56", width = 0.6) +
+        geom_text(aes(label = round(mean_med_cnt, 2)), vjust = -0.4, size = 4) +
+        labs(title = "Mean induction-window med count by LOT",
+             x = "LOT_NUM", y = "Mean LOT_MED_CNT") +
+        theme_lot()
+      save_plot(p_mc, "lotlong_medcount.png", width = 9, height = 5,
+                section = "MEDCOUNT", title = "Med count by LOT")
+    }
+  }
+
+  # ---- contains_mtx_reg rate by LOT ----
+  mtx <- db_q(con, glue("
+    SELECT LOT_NUM,
+           count(*)                                            AS n,
+           sum(CASE WHEN contains_mtx_reg = 1 THEN 1 ELSE 0 END) AS n_mtx
+    FROM {lot_long}
+    GROUP BY LOT_NUM ORDER BY LOT_NUM
+  "))
+  if (nrow(mtx) > 0) {
+    mtx$n     <- as.numeric(mtx$n)
+    mtx$n_mtx <- as.numeric(mtx$n_mtx)
+    mtx$pct_mtx <- round(100 * mtx$n_mtx / pmax(mtx$n, 1), 1)
+    save_table(mtx, section = "MTX",
+               title = "contains_mtx_reg rate by LOT")
+    if (has_ggplot2) {
+      p_mtx <- ggplot(mtx, aes(x = factor(LOT_NUM), y = pct_mtx)) +
+        geom_col(fill = "#8D5A97", width = 0.6) +
+        geom_text(aes(label = paste0(pct_mtx, "%")), vjust = -0.4, size = 4) +
+        labs(title = "Maintenance-regimen (contains_mtx_reg) rate by LOT",
+             x = "LOT_NUM", y = "% of LOTs") +
+        theme_lot()
+      save_plot(p_mtx, "lotlong_mtx.png", width = 9, height = 5,
+                section = "MTX", title = "MTX regimen rate by LOT")
+    }
+  }
+
+  # ---- LOT starts over calendar time ----
+  trend <- db_q(con, glue("
+    SELECT year(LOT_START_DT) AS yr,
+           quarter(LOT_START_DT) AS qtr,
+           LOT_NUM,
+           count(*) AS n
+    FROM {lot_long}
+    WHERE LOT_START_DT IS NOT NULL
+    GROUP BY year(LOT_START_DT), quarter(LOT_START_DT), LOT_NUM
+    ORDER BY yr, qtr, LOT_NUM
+  "))
+  if (nrow(trend) > 0 && has_ggplot2) {
+    trend$yr  <- as.numeric(trend$yr)
+    trend$qtr <- as.numeric(trend$qtr)
+    trend$n   <- as.numeric(trend$n)
+    trend$period <- trend$yr + (trend$qtr - 1) / 4
+    p_tr <- ggplot(trend, aes(x = period, y = n,
+                              color = factor(LOT_NUM))) +
+      geom_line(linewidth = 1) + geom_point(size = 1.6) +
+      labs(title = "LOT starts over calendar time (by quarter)",
+           x = "Year", y = "LOT starts", color = "LOT_NUM") +
+      theme_lot()
+    save_plot(p_tr, "lotlong_trend.png", width = 11, height = 5,
+              section = "TREND", title = "LOT starts over time")
+  }
+
   # ---- Patient journey examples (per-patient LOT timeline Gantt) ----
   # Mirrors the LOT1 dashboard's JOURNEY section, but each row of the
   # Gantt is a LOT (1..max) rather than a medication MAP. One bar per
@@ -407,7 +597,7 @@ main <- function() {
   build_dashboard(
     out_name     = "lot_long_dashboard.html",
     header_title = "LOT 1-5 &mdash; Long-Format Dashboard",
-    header_sub   = "Funnel &bull; Start Type &bull; End Reason &bull; Length &bull; Regimens &bull; Progression &bull; Gaps &bull; Transitions &bull; Patient Journeys"
+    header_sub   = "Funnel &bull; Start/End &bull; Length &bull; Regimens &bull; Progression &bull; Gaps &bull; Transitions &bull; Sankey flows &bull; Med count &bull; MTX &bull; Trend &bull; Patient Journeys &nbsp;&mdash;&nbsp; pick a Category above"
   )
   log_msg("LOT1-5 dashboard written to ",
           file.path(cfg$output_dir, "lot_long_dashboard.html"))

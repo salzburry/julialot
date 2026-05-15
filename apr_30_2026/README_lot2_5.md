@@ -130,11 +130,23 @@ overwrite `lot_dashboard.html`. Sections (all by `LOT_NUM`):
 - **Progression** — how far patients get (furthest LOT reached)
 - **Gaps** — days between consecutive LOTs (median + IQR)
 - **Transitions** — start-type N -> start-type N+1
+- **Sankey** — three interactive flow diagrams: start-type flow
+  across LOTs; LOT end reason -> next LOT start type (or terminal);
+  drop-off funnel (continue vs stop per LOT)
+- **Med count** — mean/median `LOT_MED_CNT` per LOT
+- **MTX** — `contains_mtx_reg` rate per LOT
+- **Trend** — LOT starts over calendar time, by quarter and LOT_NUM
 - **Patient Journeys** — per-patient LOT timeline Gantts (like the
   LOT1 dashboard's Patient Journey, but each bar is a LOT spanning
   `LOT_START_DT -> LOT_BASE_END_DT`, colored by start type, with
   hover showing reason/length/regimen). A spread of example patients
   is auto-selected (deepest progressors + one per terminal reason).
+
+Navigation is a two-level dropdown — **Category** (section) then
+**View** (figure/table within it) — instead of a flat tab list, so
+it stays usable with this many sections. (The LOT1
+`lot_dashboard.html` gets the same dropdown nav, since both share
+`build_dashboard()`.)
 
 ```
 Rscript lot_long_dashboard.R
