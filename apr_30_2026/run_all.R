@@ -31,9 +31,17 @@ if (!nzchar(Sys.getenv("PIPELINE_LOG_FILE"))) {
   # Verify the dir is usable; if a bad/unwritable OUTPUT_DIR was set
   # (e.g. a typo in pipeline_inputs.csv) fall back to tempdir() so the
   # combined log is never silently lost. Logging never fails the Job.
+  # NOTE: no on.exit() here - this is top-level script scope, not a
+  # function, so on.exit() would error, get caught, and force the
+  # tempdir() fallback even for a perfectly good OUTPUT_DIR. Do
+  # explicit create + check + cleanup instead (also leaves no
+  # .logprobe file behind).
   probe <- tryCatch({
     pf <- file.path(od, paste0(".logprobe_", Sys.getpid()))
-    file.create(pf); on.exit(unlink(pf), add = TRUE); file.exists(pf)
+    ok <- isTRUE(file.create(pf))
+    ex <- file.exists(pf)
+    if (ex) unlink(pf)
+    ok && ex
   }, error = function(e) FALSE)
   if (!dir.exists(od) || !isTRUE(probe)) {
     cat(sprintf("[run_all] OUTPUT_DIR '%s' is not writable; logging to tempdir().\n", od))
