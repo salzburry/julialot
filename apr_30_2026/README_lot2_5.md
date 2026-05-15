@@ -113,6 +113,12 @@ Rscript lot_program.R
 Rscript lot2_5_program.R
 ```
 
+All entry points — `run_pipeline.R`, `main.R`, `lot_program.R`,
+`lot2_5_program.R`, and `lot_long_dashboard.R` — load
+`pipeline_inputs.csv` before reading any config, so the CSV is
+honoured identically whether you use the orchestrator or run a stage
+directly.
+
 ## LOT 1-5 dashboard
 
 `lot_program.R`'s dashboard (`lot_dashboard.html`) is LOT1-only — its
