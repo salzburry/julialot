@@ -26,6 +26,27 @@
 # Sys.getenv() at evaluation time.
 # ============================================================
 
+# Coerce a date string to YYYY-MM-DD. Accepts ISO (pass-through) plus
+# the common Excel reformats (DD-MM-YYYY, DD/MM/YYYY, MM/DD/YYYY,
+# YYYY/MM/DD). Returns the input unchanged if nothing parses to a
+# plausible (year >= 1900) date, so a downstream config error still
+# surfaces clearly rather than being silently wrong.
+.normalize_iso_date <- function(v, nm = "") {
+  if (grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", v)) return(v)
+  for (fmt in c("%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d", "%m-%d-%Y")) {
+    d <- tryCatch(as.Date(v, format = fmt), error = function(e) NA)
+    if (!is.na(d) && as.integer(format(d, "%Y")) >= 1900) {
+      iso <- format(d, "%Y-%m-%d")
+      message("[load_inputs] normalized ", nm, " '", v, "' -> ", iso,
+              " (Excel likely reformatted the date)")
+      return(iso)
+    }
+  }
+  message("[load_inputs] WARN: could not normalize ", nm, " '", v,
+          "' to YYYY-MM-DD; passing through.")
+  v
+}
+
 load_pipeline_inputs <- function(dirs, filename = "pipeline_inputs.csv") {
   for (d in dirs) {
     f <- file.path(d, filename)
@@ -56,6 +77,15 @@ load_pipeline_inputs <- function(dirs, filename = "pipeline_inputs.csv") {
         next
       }
       if (is.na(vl) || trimws(as.character(vl)) == "") next
+      vl <- trimws(as.character(vl))
+      # Excel (esp. non-US locale) silently rewrites ISO dates, e.g.
+      # STUDY_END 2025-06-30 -> 30-06-2025, which then mis-parses into
+      # the wrong quarterly table. Normalize known date keys back to
+      # YYYY-MM-DD here so the CSV survives an Excel round-trip.
+      if (toupper(nm) %in% c("STUDY_END", "STUDY_START",
+                             "ID_START", "ID_END")) {
+        vl <- .normalize_iso_date(vl, nm)
+      }
       # Environment wins: only fill when the variable is unset/empty.
       if (nzchar(Sys.getenv(nm, unset = ""))) { n_kept_env <- n_kept_env + 1L; next }
       do.call(Sys.setenv, setNames(list(as.character(vl)), nm))

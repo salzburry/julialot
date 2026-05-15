@@ -9,8 +9,8 @@ DOMINO_USER_NAME,,Personal schema; blank = Domino-injected value is used
 OPTUM_CDM_SCHEMA,clnprw_optum,Optum CDM source schema
 FINAL_TABLE_NAME,ELIG_COH_FINAL,Cohort attrition output table
 INPUT_COHORT_TABLE,ELIG_COH_FINAL,Cohort table LOT pipelines read
-# --- Study window & paths ---,,
-STUDY_END,2025-06-30,Study end date (YYYY-MM-DD)
+# --- Study window & paths --- (dates auto-normalized to YYYY-MM-DD even if Excel reformats them),,
+STUDY_END,2025-06-30,Study end date YYYY-MM-DD (Excel may rewrite this; the loader fixes it back)
 USE_QUARTERLY_TABLES,TRUE,Use cumulative quarterly CDM tables
 CODELIST_DIR,/mnt/code/codelist,Directory holding cl_*.csv codelists
 OUTPUT_DIR,/mnt/artifacts/results,Where dashboards / figures are written

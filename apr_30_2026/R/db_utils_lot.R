@@ -8,9 +8,38 @@
 SEP   <- strrep("=", 70)
 DASH  <- strrep("-", 70)
 
+# Resolve a single run log file (memoized). Honour PIPELINE_LOG_FILE if
+# set (orchestrator shares one file across stages); else timestamped
+# file under OUTPUT_DIR (falls back to tempdir()).
+.resolve_log_file <- function() {
+  lf <- getOption("pipeline_log_file", default = NULL)
+  if (!is.null(lf)) return(lf)
+  envf <- Sys.getenv("PIPELINE_LOG_FILE", unset = "")
+  if (nzchar(envf)) {
+    lf <- envf
+  } else {
+    base_dir <- Sys.getenv("OUTPUT_DIR", unset = "")
+    if (!nzchar(base_dir)) base_dir <- "/mnt/artifacts/results"
+    ok <- tryCatch({ dir.create(base_dir, showWarnings = FALSE, recursive = TRUE); dir.exists(base_dir) },
+                   error = function(e) FALSE)
+    if (!isTRUE(ok)) base_dir <- tempdir()
+    lf <- file.path(base_dir, paste0("pipeline_run_",
+            format(Sys.time(), "%Y%m%d_%H%M%S"), ".log"))
+  }
+  options(pipeline_log_file = lf)
+  cat(sprintf("[%s] [log] run log -> %s\n",
+              format(Sys.time(), "%Y-%m-%d %H:%M:%S"), lf))
+  lf
+}
+
 log_msg <- function(...) {
-  cat(sprintf("[%s] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S")), ..., "\n")
+  prefix <- sprintf("[%s] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"))
+  cat(prefix, ..., "\n")
   flush.console()
+  try({
+    lf <- .resolve_log_file()
+    cat(prefix, ..., "\n", file = lf, append = TRUE)
+  }, silent = TRUE)
 }
 
 stop_if_blank <- function(x, msg) {
@@ -25,10 +54,26 @@ cdm <- function(tbl) full_name(cfg$cdm_schema, tbl)
 wrk <- function(tbl) full_name(cfg$work_schema, tbl)
 
 get_quarter_suffix <- function(end_date) {
-  dt <- as.Date(end_date)
-  year <- as.integer(format(dt, "%Y"))
-  qtr  <- ceiling(as.integer(format(dt, "%m")) / 3)
-  sprintf("%dq%d", year, qtr)
+  v  <- trimws(as.character(end_date))
+  dt <- suppressWarnings(as.Date(v))                       # ISO first
+  yr <- if (!is.na(dt)) as.integer(format(dt, "%Y")) else NA_integer_
+  # as.Date("30-06-2025") does NOT return NA - it yields year 0030.
+  # Treat an implausible year as a parse failure and retry the common
+  # non-ISO (Excel) layouts so a reformatted STUDY_END still works.
+  if (is.na(dt) || is.na(yr) || yr < 1900) {
+    for (fmt in c("%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d", "%m-%d-%Y")) {
+      d2 <- tryCatch(as.Date(v, format = fmt), error = function(e) NA)
+      if (!is.na(d2) && as.integer(format(d2, "%Y")) >= 1900) { dt <- d2; break }
+    }
+    yr <- if (!is.na(dt)) as.integer(format(dt, "%Y")) else NA_integer_
+  }
+  if (is.na(dt) || is.na(yr) || yr < 1900) {
+    stop("get_quarter_suffix: cannot parse STUDY_END=\"", end_date,
+         "\". Use YYYY-MM-DD. (Excel may have reformatted it in ",
+         "pipeline_inputs.csv - re-enter it as 2025-06-30.)")
+  }
+  qtr <- ceiling(as.integer(format(dt, "%m")) / 3)
+  sprintf("%dq%d", yr, qtr)
 }
 
 cdm_src <- function(base_tbl) {

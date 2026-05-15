@@ -60,6 +60,29 @@ mid-loop you are left with no `LOT_LONG` at all. (`SKIP_*` still take
 precedence over `FORCE_RERUN`, so the command above re-runs only
 LOT2-5.)
 
+**Run log.** Every run also tees its console output to one combined
+log file. The orchestrator picks a timestamped path under `OUTPUT_DIR`
+(default `/mnt/artifacts/results/pipeline_run_<ts>.log`), prints
+`[log] combined run log -> <path>` at startup, and exports it so all
+per-stage subprocesses append to the **same** file — `tail -f` it to
+track a long run, or grab it as a Domino job artifact. Override the
+path with `PIPELINE_LOG_FILE`.
+
+**Materialization (staging publish).** A long `CREATE OR REPLACE
+TABLE` of an existing Delta table can hit a transient
+`MetadataChangedException`/`CONCURRENT_*` because the long write
+window overlaps a concurrent metadata change (another run,
+auto-optimize). `materialize_to_personal_schema()` now writes the
+heavy `SELECT` into a **brand-new staging table** (no replace-in-place
+during the long scan → minimal Delta OCC surface), then does a fast
+`CREATE OR REPLACE` from that materialized staging table to publish
+the final name in seconds, and drops the staging table. Same
+atomic-publish pattern as `LOT_LONG`. On top of that it still retries
+transient Delta errors (default 3, env `MATERIALIZE_RETRIES`) with
+backoff and logs each attempt + elapsed; permanent errors fail fast.
+The 5-column claim grain / null-safe joins are intentionally left
+unchanged — the structural fix is the staging publish, not the join.
+
 After every stage the orchestrator verifies its primary output table
 (`FINAL_TABLE_NAME` / cohort output, `LOT1_BASE_END`, `LOT_LONG`)
 actually landed in the
