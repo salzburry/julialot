@@ -97,6 +97,27 @@ Rscript lot_program.R
 Rscript lot2_5_program.R
 ```
 
+## LOT 1-5 dashboard
+
+`lot_program.R`'s dashboard (`lot_dashboard.html`) is LOT1-only — its
+`descriptives_lot.R` has a `LOT1` section but no LOT2-5 sections, and
+`lot2_5_program.R` does not build a dashboard at all.
+
+`lot_long_dashboard.R` is a **standalone** entry script that reads
+`work_schema.LOT_LONG` and writes a **separate** interactive HTML
+(`lot_long_dashboard.html` in `cfg$output_dir`) with every view broken
+down by `LOT_NUM` (patient funnel, start type, end reason, length,
+top regimens). It does not modify or overwrite `lot_dashboard.html`.
+
+```
+Rscript lot_long_dashboard.R
+```
+
+Prerequisite: `LOT_LONG` must already be built **with LOT2-5 rows**
+(the LOT2-5 stage completed, not just the LOT1 init). If `LOT_LONG`
+only has `LOT_NUM = 1`, the dashboard says so up front — drop the
+partial table and rerun the LOT2-5 stage first.
+
 ## Output: LOT_LONG
 
 Long-format table; one row per patient per LOT.
