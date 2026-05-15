@@ -923,7 +923,7 @@ build_lot_n <- function(con, lot_num,
         ELSE lbe.LOT{lot_num}_BASE_END_REASON
       END AS LOT_BASE_END_REASON_CE_SENS,
       -- LOT-scoped AUTO flags clamped to [LOT_START_DT, LOT_BASE_END_DT]
-      -- per workbook Q7 draft. lot{n}_sct collects through OBS_END_DT, so
+      -- per workbook Q7 draft. lotN_sct collects through OBS_END_DT, so
       -- AUTOs after the LOT ended are filtered here. SING/TAND classification
       -- is RECOMPUTED from the clamped in-LOT dates so a within-LOT DT_1
       -- with an outside-LOT DT_2 lands on SING (not on neither flag).
@@ -931,7 +931,7 @@ build_lot_n <- function(con, lot_num,
             AND lbe.LOT{lot_num}_TX_AUTO_DT_1 <= lbe.LOT{lot_num}_BASE_END_DT
            THEN 1 ELSE 0 END                          AS LOT_TX_AUTO_FLG,
       -- TAND only if both in-LOT, AUTO_DT_2 within sct_tandem_days of AUTO_DT_1, AND pre-clamp tandem rules
-      -- already qualified it (no ALLO between, etc., from lot{n}_sct).
+      -- already qualified it (no ALLO between, etc., from lotN_sct).
       CASE WHEN lbe.LOT{lot_num}_TX_AUTO_DT_2 IS NOT NULL
             AND lbe.LOT{lot_num}_TX_AUTO_DT_2 <= lbe.LOT{lot_num}_BASE_END_DT
             AND coalesce(lbe.LOT{lot_num}_SCT_AUTO_TAND_FLG, 0) = 1
