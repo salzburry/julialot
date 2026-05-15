@@ -133,11 +133,31 @@ on.exit(try(DBI::dbDisconnect(probe_con), silent = TRUE), add = TRUE)
 
 table_exists <- function(con, schema, table) {
   full_qual <- if (nzchar(catalog)) sprintf("%s.%s", catalog, schema) else schema
-  q <- sprintf("SHOW TABLES IN %s LIKE '%s'", full_qual, tolower(table))
-  tryCatch(
-    nrow(DBI::dbGetQuery(con, q)) > 0,
-    error = function(e) FALSE
-  )
+  # Probe by listing every table in the schema, then matching case-
+  # insensitively in R. Avoids two Databricks footguns:
+  #   1) SHOW TABLES ... LIKE 'foo_bar': `_` can be treated as a single-char
+  #      SQL-LIKE wildcard depending on runtime, so an exact-name pattern is
+  #      not reliable.
+  #   2) Hive metastore case-sensitivity: persisted names are usually
+  #      lowercased server-side, but the caller may pass uppercase
+  #      (FINAL_TABLE_NAME default is 'ELIG_COH_FINAL').
+  # Connection-level errors are intentionally re-thrown (no silent FALSE)
+  # so a dropped connection cannot be mistaken for "table missing".
+  q <- sprintf("SHOW TABLES IN %s", full_qual)
+  res <- DBI::dbGetQuery(con, q)
+  if (is.null(res) || !is.data.frame(res) || nrow(res) == 0) return(FALSE)
+  # Databricks returns columns named database / tableName / isTemporary; be
+  # defensive about driver-specific casing.
+  name_col <- intersect(c("tableName", "TABLENAME", "table_name", "TABLE_NAME"),
+                        names(res))
+  if (length(name_col) == 0) {
+    guess <- grep("table", names(res), ignore.case = TRUE, value = TRUE)
+    if (length(guess) == 0) return(FALSE)
+    name_col <- guess[1]
+  } else {
+    name_col <- name_col[1]
+  }
+  tolower(table) %in% tolower(as.character(res[[name_col]]))
 }
 
 # ---- Stage definitions ----
