@@ -17,9 +17,10 @@ load_codelist_csv <- function(csv_name, col_spec) {
     stop(glue("CODELIST ERROR: required CSV file not found: {csv_path}"))
   }
   df <- read.csv(csv_path, stringsAsFactors = FALSE, na.strings = c("", "NA", "NaN"))
+  log_msg("  CSV columns in ", csv_name, ": ", paste(names(df), collapse = ", "))
   missing <- setdiff(col_spec, names(df))
   if (length(missing) > 0) {
-    stop(glue("CODELIST ERROR: CSV {csv_name} missing required columns: {paste(missing, collapse=', ')}"))
+    stop(glue("CODELIST ERROR: CSV {csv_name} missing required columns: {paste(missing, collapse=', ')}. Found: {paste(names(df), collapse=', ')}"))
   }
   df <- df[, col_spec, drop = FALSE]
   if (nrow(df) == 0) {
