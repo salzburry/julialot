@@ -229,9 +229,18 @@ Notes:
   the pipeline reads works.
 
 The file ships pre-filled with the current defaults so it doubles as
-a documented reference. Example — rebuild only LOT2-5: set
-`SKIP_COHORT=TRUE`, `SKIP_LOT1=TRUE`, `FORCE_RERUN=TRUE` in the CSV,
-then `Rscript run_pipeline.R`.
+a documented reference. It includes the cohort **inclusion** criteria
+(`APPLY_AGE_INCL`, `MIN_AGE`, `APPLY_CE_B_INCL`, `APPLY_CE_F_INCL`,
+`APPLY_NO_BL_AGENTS_INCL`, `APPLY_FU_AGENTS_INCL`) **and exclusion**
+criteria (`APPLY_PREGNANCY_EXCL`, `APPLY_CLINTRIAL_EXCL`,
+`APPLY_OTHER_MALIG_EXCL`, `APPLY_BASELINE_MM_EXCL`) — set any to
+`FALSE` to drop that rule from the attrition build. (Inclusion
+criteria were previously hardcoded; they are now env/CSV-driven with
+the same defaults, so existing builds are unaffected.)
+
+Example — rebuild only LOT2-5: set `SKIP_COHORT=TRUE`,
+`SKIP_LOT1=TRUE`, `FORCE_RERUN=TRUE` in the CSV, then
+`Rscript run_pipeline.R`.
 
 ### Environment variables
 
