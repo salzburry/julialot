@@ -123,31 +123,37 @@ if (!nzchar(cohort_schema)) {
 config_mismatch <- !identical(tolower(cohort_table), tolower(lot_input_table))
 schema_mismatch <- !identical(tolower(cohort_schema), tolower(lot_work_schema))
 
-# ---- Connection (single probe, used only for SHOW TABLES) ----
+# ---- Connection (one fresh connection per probe call) ----
+# We deliberately do NOT hold a long-lived connection here. On Domino, the
+# parent R session's ODBC state can invalidate a top-level handle between
+# when we open it and when we first use it (symptom: "external pointer is
+# not valid"). The previous version masked this by wrapping every probe in
+# tryCatch(... error = FALSE), which made the false-negative
+# indistinguishable from "table missing". Opening per-call is ~1-2 s
+# extra per probe (9 probes per full run), trivial vs. the cost of a wrong
+# decision.
 library(DBI)
 library(odbc)
 
 dsn <- Sys.getenv("DATABRICKS_DSN", unset = "RWDE")
-probe_con <- DBI::dbConnect(odbc::odbc(), dsn = dsn, pwd = db_pwd, timeout = 30)
-on.exit(try(DBI::dbDisconnect(probe_con), silent = TRUE), add = TRUE)
 
-table_exists <- function(con, schema, table) {
+table_exists <- function(schema, table) {
   full_qual <- if (nzchar(catalog)) sprintf("%s.%s", catalog, schema) else schema
-  # Probe by listing every table in the schema, then matching case-
-  # insensitively in R. Avoids two Databricks footguns:
+  con <- DBI::dbConnect(odbc::odbc(), dsn = dsn, pwd = db_pwd, timeout = 30)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+  # SHOW TABLES IN <schema> with no LIKE: returns every table in the schema.
+  # We then match in R, case-insensitively, to avoid Databricks footguns:
   #   1) SHOW TABLES ... LIKE 'foo_bar': `_` can be treated as a single-char
-  #      SQL-LIKE wildcard depending on runtime, so an exact-name pattern is
-  #      not reliable.
+  #      SQL-LIKE wildcard depending on runtime, so an exact-name pattern
+  #      is not reliable.
   #   2) Hive metastore case-sensitivity: persisted names are usually
   #      lowercased server-side, but the caller may pass uppercase
   #      (FINAL_TABLE_NAME default is 'ELIG_COH_FINAL').
-  # Connection-level errors are intentionally re-thrown (no silent FALSE)
-  # so a dropped connection cannot be mistaken for "table missing".
+  # Connection-level errors are intentionally re-thrown so a dropped
+  # connection cannot be mistaken for "table missing".
   q <- sprintf("SHOW TABLES IN %s", full_qual)
   res <- DBI::dbGetQuery(con, q)
   if (is.null(res) || !is.data.frame(res) || nrow(res) == 0) return(FALSE)
-  # Databricks returns columns named database / tableName / isTemporary; be
-  # defensive about driver-specific casing.
   name_col <- intersect(c("tableName", "TABLENAME", "table_name", "TABLE_NAME"),
                         names(res))
   if (length(name_col) == 0) {
@@ -256,7 +262,7 @@ results <- list()
 for (stage in stages) {
   user_skip <- env_bool(stage$skip_env)
 
-  already_done <- table_exists(probe_con, stage$output_schema, stage$output_table)
+  already_done <- table_exists(stage$output_schema, stage$output_table)
 
   should_skip <- isTRUE(user_skip) || (already_done && !isTRUE(force_rerun))
 
@@ -278,7 +284,7 @@ for (stage in stages) {
   for (req in stage$required_inputs) {
     if (is.null(req$schema) || is.null(req$table) ||
         !nzchar(req$schema) || !nzchar(req$table)) next
-    has_input <- table_exists(probe_con, req$schema, req$table)
+    has_input <- table_exists(req$schema, req$table)
     if (!isTRUE(has_input)) {
       log_msg(sprintf("[%-20s] FAIL: required input '%s.%s' not visible from probe DSN",
                       stage$name, req$schema, req$table))
@@ -320,7 +326,7 @@ for (stage in stages) {
   # output table. FAILS FAST with stop() rather than warning and
   # continuing, so a silent persistence bug halts the pipeline at the
   # offending stage instead of cascading into TABLE_OR_VIEW_NOT_FOUND.
-  produced <- table_exists(probe_con, stage$output_schema, stage$output_table)
+  produced <- table_exists(stage$output_schema, stage$output_table)
   if (!isTRUE(produced)) {
     log_msg(sprintf("[%-20s] FAIL: exit 0 but expected output '%s.%s' not found",
                     stage$name, stage$output_schema, stage$output_table))
