@@ -696,7 +696,9 @@ main <- function() {
   # native PATID autocomplete + a pure-DOM Gantt rendered client-side.
   # No plotly inside the sandboxed iframe (it would need its own 3 MB
   # copy); a lightweight CSS/JS timeline is plenty for debugging.
-  max_pat <- as.integer(Sys.getenv("DRILLDOWN_MAX_PATIENTS", unset = "8000"))
+  max_pat <- suppressWarnings(as.integer(
+    Sys.getenv("DRILLDOWN_MAX_PATIENTS", unset = "8000")))
+  if (is.na(max_pat) || max_pat < 1) max_pat <- 8000L
   dd <- tryCatch(db_q(con, glue("
     SELECT PATID, LOT_NUM, LOT_START_TYPE,
            cast(cast(LOT_START_DT    as date) as string) AS sd,
