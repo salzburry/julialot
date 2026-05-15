@@ -161,14 +161,14 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
           div_id <- paste0("plotly_", idx)
           plotly_specs[[div_id]] <- as.character(plotly_json)
           tab_panels[[idx]] <- sprintf(
-            '<div id="%s" class="tab-content" style="display:%s"><div id="%s" style="width:100%%;min-height:500px;"></div></div>',
-            tab_id, if (idx == 1) "block" else "none", div_id
+            '<div id="%s" class="tab-content"><div id="%s" style="width:100%%;min-height:500px;"></div></div>',
+            tab_id, div_id
           )
         } else {
           # Fallback: empty panel with error message
           tab_panels[[idx]] <- sprintf(
-            '<div id="%s" class="tab-content" style="display:%s"><p style="color:#C73E1D;padding:20px;">Figure could not be rendered.</p></div>',
-            tab_id, if (idx == 1) "block" else "none"
+            '<div id="%s" class="tab-content"><p style="color:#C73E1D;padding:20px;">Figure could not be rendered.</p></div>',
+            tab_id
           )
         }
       } else {
@@ -184,8 +184,8 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
         encoded <- base64enc::base64encode(charToRaw(widget_html))
         iframe_height <- if (item$type == "table") "600" else "500"
         tab_panels[[idx]] <- sprintf(
-          '<div id="%s" class="tab-content" style="display:%s"><iframe src="data:text/html;base64,%s" style="width:100%%;height:%spx;border:none;" sandbox="allow-scripts allow-same-origin" onload="resizeIframe(this)"></iframe></div>',
-          tab_id, if (idx == 1) "block" else "none", encoded, iframe_height
+          '<div id="%s" class="tab-content"><iframe src="data:text/html;base64,%s" style="width:100%%;height:%spx;border:none;" sandbox="allow-scripts allow-same-origin" onload="resizeIframe(this)"></iframe></div>',
+          tab_id, encoded, iframe_height
         )
       }
     }
@@ -245,63 +245,135 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LOT Part 2 - Interactive Dashboard</title>
+<title>', header_title, '</title>
 ', plotly_script_tag, '
 <style>
+  /* GSK-style palette. These approximate the GSK brand; drop exact
+     brand hexes into :root to retune everything centrally. */
+  :root{
+    --gsk-orange:#F36633; --gsk-orange-d:#D24E1F; --gsk-orange-l:#FFE6DC;
+    --gsk-sidebar:#20232E; --gsk-sidebar-2:#2B3040; --gsk-sidebar-h:#39405440;
+    --bg:#F4F5F7; --card:#FFFFFF; --text:#2A2A33; --muted:#6B7280;
+    --border:#E5E7EB; --accent:#0E7C7B;
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  html,body { height: 100%; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    background: #f5f6fa; color: #2d3436;
+    background: var(--bg); color: var(--text); display: flex;
   }
-  .header {
-    background: linear-gradient(135deg, #2E86AB 0%, #1a5276 100%);
-    color: white; padding: 28px 32px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  /* ---- Sidebar ---- */
+  .sidebar {
+    width: 280px; min-width: 280px; height: 100vh; overflow-y: auto;
+    background: var(--gsk-sidebar); color: #E8EAF0;
+    position: sticky; top: 0; display: flex; flex-direction: column;
   }
-  .header h1 { font-size: 26px; font-weight: 700; margin-bottom: 6px; }
-  .header p  { font-size: 14px; opacity: 0.85; }
-  .nav-bar {
-    position: sticky; top: 0; z-index: 100;
-    background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px;
-    padding: 14px 32px; border-bottom: 1px solid #dfe6e9;
+  .sb-brand {
+    padding: 20px 18px 16px; border-bottom: 1px solid #ffffff14;
+    background: linear-gradient(135deg, var(--gsk-orange) 0%, var(--gsk-orange-d) 100%);
+    color: #fff;
   }
-  .nav-group { display: flex; align-items: center; gap: 8px; }
-  .nav-group label {
-    font-size: 11px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.6px; color: #636e72;
+  .sb-brand h1 { font-size: 17px; font-weight: 800; line-height: 1.25; }
+  .sb-brand p  { font-size: 11px; opacity: 0.92; margin-top: 5px; }
+  .sb-search { padding: 12px 14px; }
+  .sb-search input {
+    width: 100%; padding: 9px 12px; border: 0; border-radius: 7px;
+    background: var(--gsk-sidebar-2); color: #fff; font-size: 13px;
   }
-  .nav-bar select {
-    padding: 8px 30px 8px 12px; border: 1px solid #cdd6db;
-    border-radius: 6px; background: #f5f6fa; color: #2d3436;
-    font-size: 13px; font-weight: 600; cursor: pointer;
-    min-width: 200px; appearance: none;
-    background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%2710%27%20height%3D%276%27%3E%3Cpath%20d%3D%27M0%200l5%206%205-6z%27%20fill%3D%27%23636e72%27%2F%3E%3C%2Fsvg%3E");
-    background-repeat: no-repeat; background-position: right 12px center;
+  .sb-search input::placeholder { color: #9aa1b3; }
+  .sb-search input:focus { outline: 2px solid var(--gsk-orange); }
+  .sb-nav { flex: 1; padding: 4px 8px 24px; }
+  .grp-h {
+    display: flex; align-items: center; gap: 8px; cursor: pointer;
+    padding: 9px 10px; margin-top: 4px; border-radius: 6px;
+    font-size: 11px; font-weight: 800; letter-spacing: 0.7px;
+    text-transform: uppercase; color: #aab0c2; user-select: none;
   }
-  .nav-bar select:hover { border-color: #2E86AB; }
-  .nav-bar select:focus { outline: 2px solid #2E86AB33; border-color: #2E86AB; }
-  #catSelect { font-weight: 700; }
-  .tab-content { padding: 16px 32px; }
-  .tab-content iframe { border: none; width: 100%; min-height: 500px; }
+  .grp-h:hover { background: var(--gsk-sidebar-h); color: #fff; }
+  .grp-h .caret { transition: transform 0.15s; font-size: 10px; }
+  .grp.collapsed .caret { transform: rotate(-90deg); }
+  .grp.collapsed .grp-items { display: none; }
+  .grp-count {
+    margin-left: auto; font-size: 10px; background: #ffffff1f;
+    padding: 1px 7px; border-radius: 10px; font-weight: 700;
+  }
+  .grp-items { padding: 2px 0 6px; }
+  .nav-item {
+    display: block; padding: 7px 12px 7px 28px; font-size: 12.5px;
+    color: #c7cbd8; cursor: pointer; border-radius: 6px;
+    border-left: 3px solid transparent; transition: all 0.12s;
+  }
+  .nav-item:hover { background: var(--gsk-sidebar-h); color: #fff; }
+  .nav-item.active {
+    background: #ffffff10; color: #fff; font-weight: 700;
+    border-left-color: var(--gsk-orange);
+  }
+  .nav-item.hidden, .grp.hidden { display: none; }
+  /* ---- Main ---- */
+  .main { flex: 1; min-width: 0; height: 100vh; overflow-y: auto; }
+  .topbar {
+    position: sticky; top: 0; z-index: 50; background: var(--card);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px; padding: 14px 26px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+  .crumb { font-size: 13px; color: var(--muted); }
+  .crumb b { color: var(--text); }
+  .topbar .spacer { flex: 1; }
+  .icon-btn {
+    border: 1px solid var(--border); background: var(--card);
+    color: var(--muted); border-radius: 7px; padding: 7px 12px;
+    font-size: 12px; font-weight: 700; cursor: pointer;
+  }
+  .icon-btn:hover { border-color: var(--gsk-orange); color: var(--gsk-orange-d); }
+  .content { padding: 22px 26px 60px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    overflow: hidden;
+  }
+  .tab-content { display: none; animation: fade 0.18s ease; }
+  .tab-content.show { display: block; }
+  @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
+  .tab-content iframe { border: none; width: 100%; min-height: 500px; display: block; }
+  [id^=plotly_] { padding: 10px; }
+  .main.fs .topbar { position: fixed; left: 0; right: 0; }
+  .main.fs { position: fixed; inset: 0; z-index: 9999; background: var(--bg); }
+  .main.fs .content { padding-top: 70px; }
+  .sb-foot { padding: 14px; font-size: 10.5px; color: #7a8095; }
+  @media (max-width: 820px) {
+    body { flex-direction: column; }
+    .sidebar { width: 100%; min-width: 0; height: auto; position: static; }
+    .main { height: auto; }
+  }
 </style>
 </head>
 <body>
-<div class="header">
-  <h1>', header_title, '</h1>
-  <p>', header_sub, ' &nbsp;|&nbsp; Generated ', format(Sys.time(), "%Y-%m-%d %H:%M"), '</p>
-</div>
-<div class="nav-bar">
-  <div class="nav-group">
-    <label for="catSelect">Category</label>
-    <select id="catSelect" onchange="onCatChange()"></select>
+<aside class="sidebar">
+  <div class="sb-brand">
+    <h1>', header_title, '</h1>
+    <p>', header_sub, '</p>
   </div>
-  <div class="nav-group">
-    <label for="itemSelect">View</label>
-    <select id="itemSelect" onchange="onItemChange()"></select>
+  <div class="sb-search">
+    <input id="navSearch" type="text" placeholder="Search views    ( / )" autocomplete="off">
   </div>
-</div>
+  <nav class="sb-nav" id="sbNav"></nav>
+  <div class="sb-foot">Generated ', format(Sys.time(), "%Y-%m-%d %H:%M"), '</div>
+</aside>
+<div class="main" id="main">
+  <div class="topbar">
+    <div class="crumb"><b id="cbCat">--</b> &nbsp;/&nbsp; <span id="cbView">--</span></div>
+    <div class="spacer"></div>
+    <button class="icon-btn" id="prevBtn" title="Previous (Left arrow)">&#8592; Prev</button>
+    <button class="icon-btn" id="nextBtn" title="Next (Right arrow)">Next &#8594;</button>
+    <button class="icon-btn" id="fsBtn" title="Toggle fullscreen (F)">&#9974; Fullscreen</button>
+  </div>
+  <div class="content">
+    <div class="card">
 ', paste(tab_panels, collapse = "\n"), '
+    </div>
+  </div>
+</div>
 <script>
 function resizeIframe(iframe) {
   try { iframe.style.height = iframe.contentWindow.document.body.scrollHeight + 40 + "px"; } catch(e) {}
@@ -312,13 +384,9 @@ function resizeIframe(iframe) {
     try { iframe.style.height = iframe.contentWindow.document.body.scrollHeight + 40 + "px"; } catch(e) {}
   }, 2000);
 }
-// Track which plotly divs have been rendered
 var renderedPlots = {};
 function renderPlotlyIfVisible(divId) {
-  if (renderedPlots[divId]) {
-    Plotly.Plots.resize(divId);
-    return;
-  }
+  if (renderedPlots[divId]) { Plotly.Plots.resize(divId); return; }
   var el = document.getElementById(divId);
   if (!el || el.offsetParent === null) return;
   var spec = PLOTLY_SPECS[divId];
@@ -327,46 +395,124 @@ function renderPlotlyIfVisible(divId) {
     renderedPlots[divId] = true;
   }
 }
-function showItem(tabId) {
-  document.querySelectorAll(".tab-content").forEach(function(el) { el.style.display = "none"; });
-  var t = document.getElementById(tabId);
-  if (!t) return;
-  t.style.display = "block";
-  var plotDiv = t.querySelector("[id^=plotly_]");
-  if (plotDiv) { setTimeout(function() { renderPlotlyIfVisible(plotDiv.id); }, 100); }
-  var iframe = t.querySelector("iframe");
-  if (iframe) { setTimeout(function() { resizeIframe(iframe); }, 300); }
+// Flat ordered list of all views for prev/next + search + hash.
+// Populated in buildFlat() AFTER `var NAV` is assigned (NAV is defined
+// near the end of this script, so it must not be read at parse time).
+var FLAT = [];
+function buildFlat() {
+  FLAT = [];
+  NAV.forEach(function(g){ g.items.forEach(function(it){
+    FLAT.push({ id: it.id, title: it.title, section: g.section });
+  }); });
 }
-function onItemChange() {
-  var sel = document.getElementById("itemSelect");
-  if (sel && sel.value) showItem(sel.value);
-}
-function onCatChange() {
-  var cat = +document.getElementById("catSelect").value;
-  var is  = document.getElementById("itemSelect");
-  is.innerHTML = "";
-  (NAV[cat] ? NAV[cat].items : []).forEach(function(it) {
-    var o = document.createElement("option");
-    o.value = it.id; o.text = it.title;
-    is.add(o);
+var curId = null;
+function openView(id, push) {
+  var rec = FLAT.filter(function(f){ return f.id === id; })[0];
+  if (!rec) return;
+  curId = id;
+  document.querySelectorAll(".tab-content").forEach(function(el){ el.classList.remove("show"); });
+  var t = document.getElementById(id);
+  if (t) t.classList.add("show");
+  document.querySelectorAll(".nav-item").forEach(function(el){
+    el.classList.toggle("active", el.getAttribute("data-id") === id);
   });
-  onItemChange();
+  document.getElementById("cbCat").textContent  = rec.section;
+  document.getElementById("cbView").textContent = rec.title;
+  var plotDiv = t ? t.querySelector("[id^=plotly_]") : null;
+  if (plotDiv) setTimeout(function(){ renderPlotlyIfVisible(plotDiv.id); }, 80);
+  var iframe = t ? t.querySelector("iframe") : null;
+  if (iframe) setTimeout(function(){ resizeIframe(iframe); }, 250);
+  var act = document.querySelector(".nav-item.active");
+  if (act) { var grp = act.closest(".grp"); if (grp) grp.classList.remove("collapsed"); }
+  if (push !== false) { try { history.replaceState(null,"","#"+id); } catch(e){} }
 }
 function buildNav() {
-  var cs = document.getElementById("catSelect");
-  NAV.forEach(function(g, i) {
-    var o = document.createElement("option");
-    o.value = i;
-    o.text = g.section + "  (" + g.items.length + ")";
-    cs.add(o);
+  var nav = document.getElementById("sbNav");
+  NAV.forEach(function(g, gi){
+    var grp = document.createElement("div");
+    grp.className = "grp" + (gi === 0 ? "" : " collapsed");
+    var h = document.createElement("div");
+    h.className = "grp-h";
+    h.innerHTML = "<span class=\\"caret\\">&#9660;</span><span>" + g.section +
+      "</span><span class=\\"grp-count\\">" + g.items.length + "</span>";
+    h.addEventListener("click", function(){ grp.classList.toggle("collapsed"); });
+    grp.appendChild(h);
+    var box = document.createElement("div");
+    box.className = "grp-items";
+    g.items.forEach(function(it){
+      var a = document.createElement("div");
+      a.className = "nav-item"; a.setAttribute("data-id", it.id);
+      a.setAttribute("data-t", (g.section + " " + it.title).toLowerCase());
+      a.textContent = it.title;
+      a.addEventListener("click", function(){ openView(it.id); });
+      box.appendChild(a);
+    });
+    grp.appendChild(box);
+    nav.appendChild(grp);
   });
-  onCatChange();
 }
+function applySearch(q) {
+  q = (q || "").trim().toLowerCase();
+  document.querySelectorAll(".grp").forEach(function(grp){
+    var any = false;
+    grp.querySelectorAll(".nav-item").forEach(function(a){
+      var hit = !q || a.getAttribute("data-t").indexOf(q) !== -1;
+      a.classList.toggle("hidden", !hit);
+      if (hit) any = true;
+    });
+    grp.classList.toggle("hidden", !any);
+    if (q && any) grp.classList.remove("collapsed");
+  });
+}
+function step(delta) {
+  if (!FLAT.length) return;
+  var i = FLAT.map(function(f){ return f.id; }).indexOf(curId);
+  i = (i + delta + FLAT.length) % FLAT.length;
+  openView(FLAT[i].id);
+  var el = document.querySelector(".nav-item.active");
+  if (el) el.scrollIntoView({block:"nearest"});
+}
+function toggleFs() {
+  var m = document.getElementById("main");
+  m.classList.toggle("fs");
+  if (curId) {
+    var t = document.getElementById(curId);
+    var p = t ? t.querySelector("[id^=plotly_]") : null;
+    if (p && window.Plotly) setTimeout(function(){ Plotly.Plots.resize(p.id); }, 120);
+    var f = t ? t.querySelector("iframe") : null;
+    if (f) setTimeout(function(){ resizeIframe(f); }, 200);
+  }
+}
+document.addEventListener("DOMContentLoaded", function(){
+  buildFlat();
+  buildNav();
+  document.getElementById("prevBtn").addEventListener("click", function(){ step(-1); });
+  document.getElementById("nextBtn").addEventListener("click", function(){ step(1); });
+  document.getElementById("fsBtn").addEventListener("click", toggleFs);
+  var sb = document.getElementById("navSearch");
+  sb.addEventListener("input", function(){ applySearch(sb.value); });
+  document.addEventListener("keydown", function(e){
+    var typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+    if (e.key === "/" && !typing) { e.preventDefault(); sb.focus(); return; }
+    if (typing) { if (e.key === "Escape") { sb.value=""; applySearch(""); sb.blur(); } return; }
+    if (e.key === "ArrowRight") step(1);
+    else if (e.key === "ArrowLeft") step(-1);
+    else if (e.key === "f" || e.key === "F") toggleFs();
+    else if (e.key === "Escape" && document.getElementById("main").classList.contains("fs")) toggleFs();
+  });
+  window.addEventListener("hashchange", function(){
+    var h = location.hash.replace("#","");
+    if (h && h !== curId) openView(h, false);
+  });
+  var h0 = location.hash.replace("#","");
+  var start = (h0 && FLAT.filter(function(f){return f.id===h0;}).length) ? h0
+              : (FLAT[0] ? FLAT[0].id : null);
+  if (start) openView(start, false);
+});
 // Category-grouped nav model
 ', nav_json, '
 // Plotly figure specs — all figures share one copy of plotly.js
 ', plotly_specs_json, '
-document.addEventListener("DOMContentLoaded", function() { buildNav(); });
 </script>
 </body>
 </html>')

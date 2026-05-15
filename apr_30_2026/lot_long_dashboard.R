@@ -93,8 +93,11 @@ main <- function() {
     '</b></p>',
     if (max_lot_present <= 1)
       paste0('<p style="color:#b00;font-weight:600">Only LOT_NUM = 1 is ',
-             'present in LOT_LONG. Rebuild LOT_LONG (drop it, rerun the ',
-             'LOT2-5 stage) to populate LOT2-5.</p>') else "",
+             'present in LOT_LONG. Rebuild with: ',
+             '<code>SKIP_COHORT=TRUE SKIP_LOT1=TRUE FORCE_RERUN=TRUE ',
+             'Rscript run_pipeline.R</code> (atomic publish keeps the ',
+             'old LOT_LONG until the full rebuild succeeds, so no ',
+             'manual DROP is needed).</p>') else "",
     '</div>'
   )
   add_html_card(overview_html, section = "OVERVIEW", title = "LOT_LONG Overview")
@@ -594,10 +597,230 @@ main <- function() {
     log_msg("  plotly not available - skipping JOURNEY section.")
   }
 
+  # ---- DEBUG / QC: persisted work-schema tables ----
+  # Reads the tables lot_program.R / LOT2-5 persist (NOT temp views), so
+  # this stays a single robust script with no dependency on the LOT1
+  # pipeline session. Every probe is defensive: a missing table is
+  # reported, never fatal.
+  esc_html <- function(x) {
+    x <- as.character(x)
+    x <- gsub("&", "&amp;", x, fixed = TRUE)
+    x <- gsub("<", "&lt;",  x, fixed = TRUE)
+    gsub(">", "&gt;", x, fixed = TRUE)
+  }
+  debug_tables <- c("ELIG_COH_FINAL", "MMA_MED_PROCESSED", "MAP_STACKED",
+                    "LOT1_BASE", "LOT1_SCT", "LOT1_BASE_END", "LOT_LONG",
+                    "LOT_RUN_METADATA", "LOT_QC_SUMMARY")
+  inv_rows <- lapply(debug_tables, function(tb) {
+    res <- tryCatch(
+      db_q(con, glue("SELECT count(*) AS n FROM {wrk(tb)}")),
+      error = function(e) NULL)
+    if (is.null(res)) {
+      sprintf('<tr><td>%s</td><td style="color:#b00">missing / unreadable</td></tr>',
+              tb)
+    } else {
+      sprintf('<tr><td>%s</td><td>%s rows</td></tr>',
+              tb, format(as.numeric(res$n[1]), big.mark = ","))
+    }
+  })
+  inv_html <- paste0(
+    '<div style="font-family:system-ui;padding:8px 4px">',
+    '<h3 style="margin:0 0 8px">Persisted work-schema tables (',
+    esc_html(cfg$work_schema), ')</h3>',
+    '<table style="border-collapse:collapse;font-size:13px" border="1" ',
+    'cellpadding="6"><tr style="background:#f0f3f5"><th>Table</th>',
+    '<th>Status</th></tr>', paste(unlist(inv_rows), collapse = ""),
+    '</table></div>'
+  )
+  add_html_card(inv_html, section = "DEBUG", title = "Table inventory")
+
+  # LOT_RUN_METADATA / LOT_QC_SUMMARY as tables (if present).
+  for (qt in list(
+        list(tb = "LOT_RUN_METADATA", title = "Run metadata"),
+        list(tb = "LOT_QC_SUMMARY",   title = "QC summary"))) {
+    df <- tryCatch(db_q(con, glue("SELECT * FROM {wrk(qt$tb)}")),
+                   error = function(e) NULL)
+    if (!is.null(df) && is.data.frame(df) && nrow(df) > 0) {
+      for (col in names(df)) {
+        if (inherits(df[[col]], "integer64")) df[[col]] <- as.numeric(df[[col]])
+      }
+      save_table(df, section = "DEBUG", title = qt$title)
+    } else {
+      add_html_card(
+        paste0('<p style="font-family:system-ui;color:#b00">',
+               wrk(qt$tb), ' not available.</p>'),
+        section = "DEBUG", title = qt$title)
+    }
+  }
+
+  # Cross-check: LOT1_BASE_END end-reason distribution vs LOT_LONG LOT1.
+  lbe_chk <- tryCatch(db_q(con, glue("
+    SELECT LOT1_BASE_END_REASON AS end_reason, count(*) AS n_lot1_base_end
+    FROM {wrk('LOT1_BASE_END')}
+    GROUP BY LOT1_BASE_END_REASON ORDER BY LOT1_BASE_END_REASON
+  ")), error = function(e) NULL)
+  if (!is.null(lbe_chk) && nrow(lbe_chk) > 0) {
+    lbe_chk$n_lot1_base_end <- as.numeric(lbe_chk$n_lot1_base_end)
+    ll1 <- tryCatch(db_q(con, glue("
+      SELECT LOT_BASE_END_REASON AS end_reason, count(*) AS n_lot_long_lot1
+      FROM {lot_long} WHERE LOT_NUM = 1
+      GROUP BY LOT_BASE_END_REASON
+    ")), error = function(e) NULL)
+    if (!is.null(ll1) && nrow(ll1) > 0) {
+      ll1$n_lot_long_lot1 <- as.numeric(ll1$n_lot_long_lot1)
+      cmp <- merge(lbe_chk, ll1, by = "end_reason", all = TRUE)
+      cmp[is.na(cmp)] <- 0
+      cmp$delta <- cmp$n_lot_long_lot1 - cmp$n_lot1_base_end
+      save_table(cmp, section = "DEBUG",
+                 title = "LOT1 cross-check: LOT1_BASE_END vs LOT_LONG LOT1")
+    } else {
+      save_table(lbe_chk, section = "DEBUG",
+                 title = "LOT1_BASE_END end-reason distribution")
+    }
+  }
+
+  # ---- PATID drilldown (search ANY patient's LOT journey) ----
+  # Self-contained html_card: embeds compact per-patient LOT data +
+  # native PATID autocomplete + a pure-DOM Gantt rendered client-side.
+  # No plotly inside the sandboxed iframe (it would need its own 3 MB
+  # copy); a lightweight CSS/JS timeline is plenty for debugging.
+  max_pat <- as.integer(Sys.getenv("DRILLDOWN_MAX_PATIENTS", unset = "8000"))
+  dd <- tryCatch(db_q(con, glue("
+    SELECT PATID, LOT_NUM, LOT_START_TYPE,
+           cast(cast(LOT_START_DT    as date) as string) AS sd,
+           cast(cast(LOT_BASE_END_DT as date) as string) AS ed,
+           LOT_BASE_END_REASON AS rsn,
+           LOT_BASE_LENGTH     AS len,
+           LOT_BASE_MEDS       AS meds
+    FROM {lot_long}
+    ORDER BY PATID, LOT_NUM
+  ")), error = function(e) NULL)
+
+  if (!is.null(dd) && is.data.frame(dd) && nrow(dd) > 0) {
+    dd$LOT_NUM <- as.integer(dd$LOT_NUM)
+    dd$len     <- suppressWarnings(as.numeric(dd$len))
+    all_ids    <- unique(dd$PATID)
+    truncated  <- length(all_ids) > max_pat
+    keep_ids   <- head(all_ids, max_pat)
+    dd <- dd[dd$PATID %in% keep_ids, , drop = FALSE]
+
+    by_pat <- split(dd, dd$PATID)
+    pj <- lapply(by_pat, function(d) {
+      d <- d[order(d$LOT_NUM), , drop = FALSE]
+      lapply(seq_len(nrow(d)), function(i) list(
+        lot  = d$LOT_NUM[i],
+        st   = ifelse(is.na(d$LOT_START_TYPE[i]), "", d$LOT_START_TYPE[i]),
+        sd   = ifelse(is.na(d$sd[i]), "", d$sd[i]),
+        ed   = ifelse(is.na(d$ed[i]), "", d$ed[i]),
+        rsn  = ifelse(is.na(d$rsn[i]), "", d$rsn[i]),
+        len  = ifelse(is.na(d$len[i]), 0, d$len[i]),
+        meds = ifelse(is.na(d$meds[i]), "", d$meds[i])
+      ))
+    })
+    pj_json <- jsonlite::toJSON(pj, auto_unbox = TRUE, force = TRUE)
+    # Prevent any "</script>" inside data from closing the script tag.
+    pj_json <- gsub("</", "<\\/", as.character(pj_json), fixed = TRUE)
+
+    opts <- paste(sprintf('<option value="%s">', keep_ids), collapse = "")
+    note <- if (truncated) paste0(
+      '<p style="color:#b06000;font-size:12px">Showing first ',
+      format(max_pat, big.mark = ","), ' of ',
+      format(length(all_ids), big.mark = ","),
+      ' patients (set DRILLDOWN_MAX_PATIENTS to raise).</p>') else ""
+
+    drill_html <- paste0('
+<div style="font-family:system-ui;padding:10px 6px">
+  <h3 style="margin:0 0 6px">Patient drilldown</h3>
+  <p style="color:#555;font-size:13px;margin:0 0 10px">Type or paste a
+     PATID, then Enter / Show. Each bar is one LOT.</p>
+  ', note, '
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+    <input id="pjIn" list="pjList" placeholder="PATID"
+           style="padding:8px 12px;border:1px solid #cdd6db;border-radius:6px;
+                  font-size:13px;min-width:240px">
+    <datalist id="pjList">', opts, '</datalist>
+    <button id="pjBtn" style="padding:8px 16px;border:0;border-radius:6px;
+            background:#2E86AB;color:#fff;font-weight:600;cursor:pointer">
+      Show</button>
+  </div>
+  <div id="pjMeta" style="font-size:13px;margin-bottom:8px;color:#2d3436"></div>
+  <div id="pjChart" style="position:relative"></div>
+  <div id="pjLegend" style="margin-top:14px;font-size:12px;color:#555"></div>
+</div>
+<script>
+var PJ = ', pj_json, ';
+var PAL = {MED:"#2E86AB",SCT_AUTO:"#A23B72",SCT_ALLO:"#F18F01",CART:"#C73E1D"};
+function pjEsc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+function pjDraw(pid){
+  var meta=document.getElementById("pjMeta");
+  var chart=document.getElementById("pjChart");
+  var leg=document.getElementById("pjLegend");
+  chart.innerHTML="";leg.innerHTML="";
+  var rows=PJ[pid];
+  if(!rows){meta.innerHTML="<span style=\\"color:#b00\\">PATID "+pjEsc(pid)+" not found.</span>";return;}
+  var t0=null,t1=null;
+  rows.forEach(function(r){
+    if(r.sd){var a=Date.parse(r.sd);if(!isNaN(a)&&(t0===null||a<t0))t0=a;}
+    var e=r.ed?Date.parse(r.ed):(r.sd?Date.parse(r.sd):NaN);
+    if(!isNaN(e)&&(t1===null||e>t1))t1=e;
+  });
+  if(t0===null){meta.innerHTML="No usable dates for PATID "+pjEsc(pid)+".";return;}
+  if(t1===null||t1<=t0)t1=t0+86400000;
+  var span=t1-t0, maxlot=0;
+  rows.forEach(function(r){if(r.lot>maxlot)maxlot=r.lot;});
+  var term=rows.length?rows[rows.length-1].rsn:"";
+  meta.innerHTML="<b>"+pjEsc(pid)+"</b> &nbsp; LOTs: "+rows.length+
+    " &nbsp; max LOT_NUM: "+maxlot+" &nbsp; ends: <b>"+pjEsc(term)+"</b>";
+  var rowH=34, H=maxlot*rowH+10;
+  chart.style.height=H+"px";
+  chart.style.borderLeft="1px solid #ccc";
+  chart.style.background="#fafafa";
+  rows.forEach(function(r){
+    if(!r.sd)return;
+    var a=Date.parse(r.sd), b=r.ed?Date.parse(r.ed):a;
+    if(isNaN(a))return; if(isNaN(b)||b<a)b=a;
+    var x=((a-t0)/span)*100, w=Math.max(((b-a)/span)*100,0.6);
+    var y=(r.lot-1)*rowH+4;
+    var c=PAL[r.st]||"#636e72";
+    var bar=document.createElement("div");
+    bar.style.cssText="position:absolute;left:"+x+"%;top:"+y+
+      "px;width:"+w+"%;height:"+(rowH-10)+"px;background:"+c+
+      ";border-radius:3px;opacity:.88;cursor:default";
+    bar.title="LOT "+r.lot+"  ["+r.st+"]\\nStart: "+r.sd+"\\nEnd: "+r.ed+
+      "\\nReason: "+r.rsn+"\\nLength(d): "+r.len+"\\nRegimen: "+r.meds;
+    var lab=document.createElement("div");
+    lab.style.cssText="position:absolute;left:4px;top:"+(y+2)+
+      "px;font-size:11px;font-weight:600;color:#333";
+    lab.textContent="LOT"+r.lot;
+    chart.appendChild(bar);chart.appendChild(lab);
+  });
+  var lg="";Object.keys(PAL).forEach(function(k){
+    lg+="<span style=\\"display:inline-block;margin-right:14px\\">"+
+        "<span style=\\"display:inline-block;width:12px;height:12px;"+
+        "background:"+PAL[k]+";border-radius:2px;vertical-align:middle;"+
+        "margin-right:4px\\"></span>"+k+"</span>";});
+  leg.innerHTML=lg+"<br><span style=\\"color:#888\\">Timeline: "+
+    new Date(t0).toISOString().slice(0,10)+" \\u2192 "+
+    new Date(t1).toISOString().slice(0,10)+"</span>";
+}
+function pjGo(){var v=document.getElementById("pjIn").value.trim();if(v)pjDraw(v);}
+document.getElementById("pjBtn").addEventListener("click",pjGo);
+document.getElementById("pjIn").addEventListener("change",pjGo);
+document.getElementById("pjIn").addEventListener("keydown",function(e){if(e.key==="Enter")pjGo();});
+var first=Object.keys(PJ)[0]; if(first){document.getElementById("pjIn").value=first;pjDraw(first);}
+</script>')
+    add_html_card(drill_html, section = "DRILLDOWN",
+                  title = "Patient drilldown (search any PATID)")
+    log_msg("  Drilldown card: ", length(keep_ids), " patients embedded",
+            if (truncated) paste0(" (capped from ", length(all_ids), ")") else "")
+  } else {
+    log_msg("  Drilldown: no LOT_LONG rows - section skipped.")
+  }
+
   build_dashboard(
     out_name     = "lot_long_dashboard.html",
     header_title = "LOT 1-5 &mdash; Long-Format Dashboard",
-    header_sub   = "Funnel &bull; Start/End &bull; Length &bull; Regimens &bull; Progression &bull; Gaps &bull; Transitions &bull; Sankey flows &bull; Med count &bull; MTX &bull; Trend &bull; Patient Journeys &nbsp;&mdash;&nbsp; pick a Category above"
+    header_sub   = "Funnel &bull; Start/End &bull; Length &bull; Regimens &bull; Progression &bull; Gaps &bull; Transitions &bull; Sankey flows &bull; Med count &bull; MTX &bull; Trend &bull; Patient Journeys &bull; Debug/QC &nbsp;&mdash;&nbsp; pick a Category above"
   )
   log_msg("LOT1-5 dashboard written to ",
           file.path(cfg$output_dir, "lot_long_dashboard.html"))
