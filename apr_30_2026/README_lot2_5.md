@@ -45,6 +45,21 @@ Skip flags:
 - `SKIP_LOT2_5=TRUE Rscript run_pipeline.R` — cohort attrition + LOT1
   only.
 
+Rebuilding `LOT_LONG` (e.g. after a code change): prefer
+`FORCE_RERUN=TRUE` over manually dropping the table —
+
+```
+SKIP_COHORT=TRUE SKIP_LOT1=TRUE FORCE_RERUN=TRUE Rscript run_pipeline.R
+```
+
+Because the LOT2-5 build is atomic (writes `LOT_LONG_STAGE`, swaps to
+`LOT_LONG` only on full success), `FORCE_RERUN` keeps the existing
+`LOT_LONG` intact until a complete rebuild lands. A manual
+`DROP TABLE LOT_LONG` is strictly riskier: if the rebuild then fails
+mid-loop you are left with no `LOT_LONG` at all. (`SKIP_*` still take
+precedence over `FORCE_RERUN`, so the command above re-runs only
+LOT2-5.)
+
 After every stage the orchestrator verifies its primary output table
 (`ELIG_COH_FINAL`, `LOT1_BASE_END`, `LOT_LONG`) actually landed in the
 schema that stage writes to. If a stage exits 0 but its output is
