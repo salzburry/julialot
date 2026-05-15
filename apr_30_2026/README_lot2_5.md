@@ -120,9 +120,21 @@ Rscript lot2_5_program.R
 
 `lot_long_dashboard.R` is a **standalone** entry script that reads
 `work_schema.LOT_LONG` and writes a **separate** interactive HTML
-(`lot_long_dashboard.html` in `cfg$output_dir`) with every view broken
-down by `LOT_NUM` (patient funnel, start type, end reason, length,
-top regimens). It does not modify or overwrite `lot_dashboard.html`.
+(`lot_long_dashboard.html` in `cfg$output_dir`). It does not modify or
+overwrite `lot_dashboard.html`. Sections (all by `LOT_NUM`):
+
+- **Overview / Funnel** — patients per LOT + retention table
+- **Start Type / End Reason** — composition per LOT
+- **Length** — median + IQR per LOT
+- **Regimens** — top 10 per LOT
+- **Progression** — how far patients get (furthest LOT reached)
+- **Gaps** — days between consecutive LOTs (median + IQR)
+- **Transitions** — start-type N -> start-type N+1
+- **Patient Journeys** — per-patient LOT timeline Gantts (like the
+  LOT1 dashboard's Patient Journey, but each bar is a LOT spanning
+  `LOT_START_DT -> LOT_BASE_END_DT`, colored by start type, with
+  hover showing reason/length/regimen). A spread of example patients
+  is auto-selected (deepest progressors + one per terminal reason).
 
 ```
 Rscript lot_long_dashboard.R
