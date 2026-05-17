@@ -1,12 +1,5 @@
-# ============================================================
-# codelists_lot.R — CSV-only codelist loading (no embedded fallbacks)
-# ============================================================
-# Extracted from lot_program.R during modularization.
-# Loader policy:
-#   Priority 1: CSV from codelist_dir (REQUIRED — fail if missing).
-#   No embedded fallback. No ref schema fallback.
-# Requires: cfg (from config_lot.R), log_msg (from db_utils_lot.R)
-# ============================================================
+# CSV-only codelist loading. The CSV in cfg$codelist_dir is required;
+# there is no embedded or ref-schema fallback.
 
 load_codelist_csv <- function(csv_name, col_spec) {
   if (!dir.exists(cfg$codelist_dir)) {

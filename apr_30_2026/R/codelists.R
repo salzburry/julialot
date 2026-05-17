@@ -1,12 +1,7 @@
-# ============================================================
-# codelists.R — Quarterly table helpers
-# ============================================================
-# Pure functions for Optum CDM quarterly table naming.
-# cdm_src() and cdm_quarterly() live in make_naming_helpers()
-# (db_utils.R) since they close over cfg.
-# get_code_source() was a trivial ref() wrapper — inlined at call sites.
+# Quarterly table-name helpers for the Optum CDM (t_<table>_YYYYqQ).
+# cdm_src()/cdm_quarterly() live in make_naming_helpers() (db_utils.R)
+# because they close over cfg.
 
-# ---- Quarterly table helpers (Optum CDM t_<table>_YYYYqQ pattern) ----
 get_quarter_suffix <- function(date_str) {
   d <- as.Date(date_str)
   paste0(format(d, "%Y"), "q", ceiling(as.integer(format(d, "%m")) / 3))

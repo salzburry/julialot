@@ -1,7 +1,5 @@
 #!/usr/bin/env Rscript
-# ============================================================
-# lot_long_dashboard.R - Standalone LOT1-5 dashboard
-# ============================================================
+# Standalone LOT1-5 dashboard.
 # Reads work_schema.LOT_LONG (one row per PATID x LOT_NUM) and writes a
 # SEPARATE interactive HTML (lot_long_dashboard.html) that breaks every
 # view down by LOT_NUM 1..max. This does NOT touch the LOT1 dashboard
@@ -14,7 +12,6 @@
 # (i.e. lot2_5_program.R / the LOT2-5 stage completed, not just the
 # LOT1 init). If LOT_LONG only has LOT_NUM = 1, every view will show
 # only LOT1 - rebuild LOT_LONG first.
-# ============================================================
 
 .script_dir <- local({
   args <- commandArgs(trailingOnly = FALSE)

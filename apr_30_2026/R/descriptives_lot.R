@@ -1,17 +1,8 @@
-# ============================================================
-# descriptives_lot.R — Descriptive summary and reporting
-# ============================================================
-# Extracted from lot_program.R during modularization.
-# Contains: print_descriptives() — generates summary tables,
-#   ggplot2 figures, HTML cards, patient journey timelines,
-#   Sankey flow chart, and zoomed distributions.
-# CYCLO deep-dive extracted to cyclo_appendix_lot.R.
-# Dashboard build extracted to dashboard_lot.R.
-# Requires: cfg, run_id, log_msg, db_q, SEP, DASH,
-#   lot_class_palette, theme_lot, save_plot, save_table,
-#   add_html_card, add_to_dashboard, dashboard_items,
-#   has_ggplot2, has_plotly, has_dt (from other modules)
-# ============================================================
+# Descriptive summary and reporting: print_descriptives() generates
+# summary tables, ggplot2 figures, HTML cards, patient-journey
+# timelines, a Sankey flow chart, and zoomed distributions. The CYCLO
+# deep-dive lives in cyclo_appendix_lot.R; the dashboard build in
+# dashboard_lot.R.
 
 # Null-coalesce operator used by the ATTRITION section (and any other
 # optional-config lookups that want a default on empty/NULL). Defined
@@ -34,9 +25,7 @@ print_descriptives <- function(con) {
   cat("        PART 2 DESCRIPTIVE SUMMARY                    \n")
   cat(SEP, "\n")
 
-  # --------------------------------------------------------
-  # 0a. Overview tab — run metadata + dynamic counts (FIRST tab)
-  # --------------------------------------------------------
+  # 0a. Overview tab - run metadata + dynamic counts (FIRST tab)
   tryCatch({
     # Dynamic run counts
     cohort_n   <- safe_count(con, "SELECT count(DISTINCT PATID) AS n FROM lot_patient_input")
@@ -107,9 +96,7 @@ print_descriptives <- function(con) {
     log_msg("  WARNING: Overview tab generation failed: ", conditionMessage(e))
   })
 
-  # --------------------------------------------------------
-  # 0b. QC Summary tab — pass/fail validation checks (SECOND tab)
-  # --------------------------------------------------------
+  # 0b. QC Summary tab - pass/fail validation checks (SECOND tab)
   tryCatch({
     qc_rows <- list()
     add_qc <- function(check, value, status) {
@@ -242,13 +229,11 @@ print_descriptives <- function(con) {
     log_msg("  WARNING: QC summary tab generation failed: ", conditionMessage(e))
   })
 
-  # --------------------------------------------------------
-  # 0c. Attrition tab — cohort flow from Part 1 (THIRD tab)
+  # 0c. Attrition tab - cohort flow from Part 1 (THIRD tab)
   # Reads the attrition_report table written by Part 1's main.R (via
   # persist_attrition_table in criteria_attrition.R). If that table
   # doesn't exist (Part 2 run standalone, or Part 1 skipped persist),
   # we emit a placeholder card instead of failing.
-  # --------------------------------------------------------
   tryCatch({
     attrition_tbl <- if (nzchar(cfg$catalog)) {
       paste0(cfg$catalog, ".", cfg$work_schema, ".attrition_report")
@@ -256,7 +241,7 @@ print_descriptives <- function(con) {
       paste0(cfg$work_schema, ".attrition_report")
     }
 
-    # Local fallback for outpatient_window — belt-and-suspenders in case
+    # Local fallback for outpatient_window - belt-and-suspenders in case
     # config_lot.R drifts from config_prompts.R.
     w <- tryCatch(as.integer(cfg$outpatient_window), error = function(e) NA_integer_)
     if (is.na(w) || !(w %in% c(30L, 60L, 90L))) w <- 90L
@@ -366,9 +351,7 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
     log_msg("WARN: Attrition section failed: ", conditionMessage(e))
   })
 
-  # --------------------------------------------------------
   # 1. MMA_MED Summary
-  # --------------------------------------------------------
   tryCatch({
     cat("\n", DASH, "\n")
     cat("  5A. MMA_MED (Medication Claims) Summary\n")
@@ -503,9 +486,7 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
     log_msg("WARN: MMA_MED descriptives failed: ", conditionMessage(e))
   })
 
-  # --------------------------------------------------------
   # 2. MAP Summary
-  # --------------------------------------------------------
   cat("\n", DASH, "\n")
   cat("  5B. MAP_MED (Medication Available Periods) Summary\n")
   cat(DASH, "\n")
@@ -668,9 +649,7 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
     log_msg("WARN: fig04 MAP patients by med failed: ", conditionMessage(e))
   })
 
-  # --------------------------------------------------------
   # 3. LOT1 Summary
-  # --------------------------------------------------------
   tryCatch({
     cat("\n", DASH, "\n")
     cat("  6. LOT1_BASE Summary\n")
@@ -854,9 +833,7 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
                  title = "Table: LOT1 End Reasons")
     }
 
-    # --------------------------------------------------------
     # contains_mtx_reg flag (Apr 19 spec: descriptive, flag-only)
-    # --------------------------------------------------------
     # Summary count + cross-tab against LOT1_BASE_END_REASON so reviewers can
     # see how the anchor-maintenance subgroup distributes across end categories.
     mtx_summary <- tryCatch(db_q(con, "
@@ -995,9 +972,7 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
     log_msg("WARN: LOT1 descriptives failed: ", conditionMessage(e))
   })
 
-  # --------------------------------------------------------
   # 4. SCT Summary
-  # --------------------------------------------------------
   tryCatch({
     cat("\n", DASH, "\n")
     cat("  7. SCT (Stem Cell Transplant) Summary\n")
@@ -1083,14 +1058,12 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
     log_msg("WARN: SCT descriptives failed: ", conditionMessage(e))
   })
 
-  # --------------------------------------------------------
-  # 5. Patient journey timelines — sample of interesting patients
-  # --------------------------------------------------------
+  # 5. Patient journey timelines - sample of interesting patients
   tryCatch({
     if (has_plotly) {
       # Find interesting patients: those with med restarts (MAP_CNT >= 2),
       # add-meds, or SCT events. Sample up to 20.
-      # CAST PATID AS STRING everywhere it's SELECTed — some ODBC drivers
+      # CAST PATID AS STRING everywhere it's SELECTed - some ODBC drivers
       # return the CDM PATID column (stored as BIGINT) as an R numeric,
       # which silently corrupts large IDs (lost precision) or small ones
       # (they come back as subnormal floats ~1e-313 after byte misinterpretation).
@@ -1125,7 +1098,7 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
 
       if (nrow(journey_pats) > 0) {
         # PATID is CAST AS STRING in the query above, so the driver delivers
-        # it as R character — no extra coercion needed here.
+        # it as R character - no extra coercion needed here.
         pat_ids_sql <- paste0("('", paste(journey_pats$PATID, collapse = "','"), "')")
 
         # Get MAP segments for these patients
@@ -1319,9 +1292,7 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
     log_msg("WARN: Patient journey timelines failed: ", conditionMessage(e))
   })
 
-  # --------------------------------------------------------
   # 6. Restart / Gap Summary Table
-  # --------------------------------------------------------
   tryCatch({
     restart_summary <- db_q(con, "
       WITH gaps AS (
@@ -1362,17 +1333,15 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
     log_msg("WARN: Restart/gap summary failed: ", conditionMessage(e))
   })
 
-  # --------------------------------------------------------
   # 7. True regimen-state timeline (contiguous regimen segments)
   #    Derives change-point intervals where the active med set is constant.
   #    Y-axis: regimen labels (e.g., "BORT+LENA"), X-axis: date range.
   #    Gaps between segments are visible as whitespace.
-  # --------------------------------------------------------
   tryCatch({
     if (has_plotly) {
       # Select patients with interesting regimen transitions:
       # add-med events, restarts, or multiple distinct regimens
-      # CAST PATID AS STRING — see note on journey_pats query above.
+      # CAST PATID AS STRING - see note on journey_pats query above.
       regimen_pats <- db_q(con, "
         WITH change_patients AS (
           SELECT PATID FROM lot1_base WHERE LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
@@ -1389,7 +1358,7 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
       ")
 
       if (nrow(regimen_pats) > 0) {
-        # PATID is CAST AS STRING in the query above — driver delivers as
+        # PATID is CAST AS STRING in the query above - driver delivers as
         # R character, no extra coercion needed.
         rp_ids_sql <- paste0("('", paste(regimen_pats$PATID, collapse = "','"), "')")
 
@@ -1423,7 +1392,7 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
           n_regstate_added <- 0L
 
           for (pid in show_reg_pats) {
-            # IIFE wrapper — see comment on patient-journey loop above.
+            # IIFE wrapper - see comment on patient-journey loop above.
             added_this_pid <- tryCatch(
               (function() {
             pat_m <- reg_maps[reg_maps$PATID == pid, ]
@@ -1439,7 +1408,7 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
             if (length(boundary_dates) < 2) {
               # Diagnostic: the upstream warehouse dates are expected to be
               # non-null (S06 coalesces runouts), so hitting this guard points
-              # to an R-side date-coercion edge case — e.g., the ODBC driver
+              # to an R-side date-coercion edge case - e.g., the ODBC driver
               # returning DATE as character in a format as.Date() doesn't
               # parse. Log enough detail to root-cause next time instead of
               # silently skipping.
@@ -1469,7 +1438,7 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
                   stringsAsFactors = FALSE
                 )
               }
-              # If no MAPs active, this is a gap — no segment added, shows as whitespace
+              # If no MAPs active, this is a gap - no segment added, shows as whitespace
             }
 
             # `next` would error here because we're inside the IIFE (function),
@@ -1596,9 +1565,7 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
     log_msg("WARN: Regimen-state timelines failed: ", conditionMessage(e))
   })
 
-  # --------------------------------------------------------
-  # 8. Improved distribution views — zoomed to p95
-  # --------------------------------------------------------
+  # 8. Improved distribution views - zoomed to p95
   tryCatch({
     if (has_ggplot2) {
       # MAP length zoomed
@@ -1685,9 +1652,7 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
     log_msg("WARN: Zoomed distribution views failed: ", conditionMessage(e))
   })
 
-  # --------------------------------------------------------
   # 9. SCT zero-state card (when no SCT events detected)
-  # --------------------------------------------------------
   tryCatch({
     sct_event_n <- tryCatch(
       as.numeric(db_q(con, "SELECT sum(CASE WHEN LOT1_TX_ENDDATE IS NOT NULL THEN 1 ELSE 0 END) AS n FROM lot1_sct")$n),
@@ -1732,7 +1697,7 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
       add_html_card(sct_html, section = "SCT", title = "SCT Summary")
       log_msg("  SCT zero-state card added.")
     } else {
-      # ------- SCT data exists — build populated SCT tab -------
+      # ------- SCT data exists - build populated SCT tab -------
       log_msg("  Building SCT dashboard section (", sct_event_n, " LOT-ending events)...")
 
       # Query SCT summary stats
@@ -1913,9 +1878,7 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
     log_msg("WARN: SCT zero-state card failed: ", conditionMessage(e))
   })
 
-  # --------------------------------------------------------
   # 10. Sankey / alluvial flow: Regimen -> Med Count -> End Reason
-  # --------------------------------------------------------
   tryCatch({
     if (has_plotly) {
       flow_data <- db_q(con, "
@@ -1977,7 +1940,7 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
         })
         node_colors <- c(reg_colors, mc_colors, er_colors)
 
-        # Link colors — semi-transparent version of source node
+        # Link colors - semi-transparent version of source node
         hex_to_rgba <- function(hex, alpha = 0.3) {
           r <- strtoi(substr(hex, 2, 3), 16)
           g <- strtoi(substr(hex, 4, 5), 16)

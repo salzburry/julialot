@@ -1,22 +1,15 @@
 #!/usr/bin/env Rscript
-# ============================================================
-# lot2_5_inputs.R - Rebuild upstream views needed by lot2_5_base.R
+# Rebuild the upstream views lot2_5_base.R needs. lot_program.R
+# persists MAP_STACKED, LOT1_SCT, LOT1_BASE_END + the cohort input
+# table, but the temp views lot_patient_input, sct_codelist,
+# sct_claims_raw, tx_auto_dates, tx_allo_cart_dates are session-scoped
+# and gone once that script exits. This rebuilds them in a fresh
+# session using the same SQL lot_program.R uses, with no edits to it.
 #
-# lot_program.R persists several work-schema tables; LOT2-5 reads
-# MAP_STACKED, LOT1_SCT, LOT1_BASE_END + the cohort input table. The
-# temp views lot_patient_input, sct_codelist, sct_claims_raw,
-# tx_auto_dates, and tx_allo_cart_dates are session-scoped and gone
-# once that script exits.
-#
-# This helper rebuilds those views in a fresh session by re-running the
-# same SQL patterns lot_program.R uses. No edits to lot_program.R.
-#
-# Codelists (mma_rollup, permissible_subs, sct_codelist) come via CSV
-# loaders in codelists_lot.R; the caller is expected to have sourced
-# that already and to provide the CSV-derived sources.
-# ============================================================
+# Codelists (mma_rollup, permissible_subs, sct_codelist) come via the
+# CSV loaders in codelists_lot.R; the caller must have sourced that and
+# pass the CSV-derived sources.
 
-# Copy of helpers loaded by codelists_lot.R; must be available in caller.
 prepare_lot_inputs <- function(con,
                                rollup_src,
                                subs_src,

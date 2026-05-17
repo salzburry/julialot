@@ -1,30 +1,21 @@
-# ============================================================
-# load_inputs.R — optional CSV-driven input defaults
-# ============================================================
-# Lets you change/reset pipeline inputs by editing one file
-# (pipeline_inputs.csv) instead of juggling Sys.setenv() calls or
-# shell exports. The CSV has columns: name,value,description.
+# Optional CSV-driven input defaults: edit pipeline_inputs.csv
+# (columns name,value,description) instead of juggling Sys.setenv() or
+# shell exports.
 #
-# Precedence: THE ENVIRONMENT ALWAYS WINS. A CSV value is applied only
-# when that variable is currently UNSET/empty in the environment, so
-# the CSV behaves as an editable defaults file and never silently
-# overrides a shell export, a Domino-injected value, or an inline
-# command like:
-#   SKIP_COHORT=TRUE FORCE_RERUN=TRUE Rscript run_pipeline.R
+# The environment always wins. A CSV value is applied only when that
+# variable is unset/empty, so the CSV is an editable defaults file and
+# never overrides a shell export, a Domino-injected value, or an inline
+# `SKIP_COHORT=TRUE FORCE_RERUN=TRUE Rscript run_pipeline.R`.
 #
 # Rules:
-#   - Variable already set in the env (non-empty) -> CSV row ignored.
-#   - Variable unset + non-empty CSV `value`      -> Sys.setenv applied.
-#   - Blank CSV `value`                           -> skipped (use the
-#     code's own default / fallback chain).
-#   - Rows whose `name` is blank or starts with '#' are comment rows.
-#   - DATABRICKS_PWD is NEVER taken from the file — secrets stay in
-#     the environment / Domino secret store.
+#   - Variable already set (non-empty)  -> CSV row ignored.
+#   - Variable unset + non-empty value  -> Sys.setenv applied.
+#   - Blank value                       -> skipped (code default wins).
+#   - name blank or starting with '#'   -> comment row.
+#   - DATABRICKS_PWD is never read from the file (secrets stay in env).
 #
-# Must be called BEFORE config_lot.R / config_prompts.R are sourced
-# and before run_pipeline.R reads env vars, since those read
-# Sys.getenv() at evaluation time.
-# ============================================================
+# Must be sourced before config_lot.R, config_prompts.R, or
+# run_pipeline.R read Sys.getenv().
 
 # Coerce a date string to YYYY-MM-DD. Accepts ISO (pass-through) plus
 # the common Excel reformats (DD-MM-YYYY, DD/MM/YYYY, MM/DD/YYYY,

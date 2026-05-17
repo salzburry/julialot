@@ -1,5 +1,4 @@
 #!/usr/bin/env Rscript
-# ============================================================
 # GSK MM LOT - Part 2: Lines of Therapy (LOT) Analysis
 #
 # Implements Part 2 specifications (based on provided PDFs):
@@ -30,11 +29,7 @@
 #   3. The simplified "sum pharmacy day supply" approach is incorrect when
 #      pharmacy expires mid-MAP (kept alive by medical) and later resets.
 #      The aggregate() state machine handles this correctly.
-# ============================================================
 
-# ============================================================
-# MODULE SOURCING
-# ============================================================
 # Resolve script directory robustly for all invocation modes:
 #   Rscript lot_program.R        -> commandArgs --file=
 #   source("lot_program.R")      -> sys.frame()$ofile
@@ -46,7 +41,7 @@
   if (length(file_arg) > 0) {
     return(dirname(normalizePath(sub("^--file=", "", file_arg[1]))))
   }
-  # 2. source() from R console — walk call stack for $ofile
+  # 2. source() from R console - walk call stack for $ofile
   for (i in seq_len(sys.nframe())) {
     ofile <- tryCatch(sys.frame(i)$ofile, error = function(e) NULL)
     if (!is.null(ofile)) return(dirname(normalizePath(ofile)))
@@ -69,9 +64,6 @@ source(file.path(source_dir, "dashboard_lot.R"))
 source(file.path(source_dir, "descriptives_lot.R"))
 source(file.path(source_dir, "cyclo_appendix_lot.R"))
 
-# ============================================================
-# MAIN
-# ============================================================
 main <- function() {
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
 
@@ -88,9 +80,7 @@ main <- function() {
   log_msg("  Discon Gap (per-drug, MAP-level): ", cfg$map_discon_gap_days, " days")
   log_msg("  Medical Day Supply: ", cfg$medical_day_supply, " days")
 
-  # ----------------------------------------------------------
   # STEP 0: Register code lists as TEMP views
-  # ----------------------------------------------------------
   rollup_src <- load_codelist_csv("cl_mma_rollup.csv",
     c("CL_MEDICATION_FULL", "CL_MED_CLASS", "CL_MED_ABBR",
       "MONOMAINTENANCE", "DUALMAINTENANCEWITH", "CONDITIONING", "USED_FOR_OTHER_CANCERS"))
@@ -150,9 +140,7 @@ main <- function() {
     WHERE original_med IS NOT NULL AND substitute_med IS NOT NULL
   "), qc = "SELECT count(*) AS n_rows, count(DISTINCT original_med) AS n_orig_meds FROM permissible_subs")
 
-  # ----------------------------------------------------------
   # Codelist <-> Rollup consistency QC
-  # ----------------------------------------------------------
   log_msg("Checking codelist <-> rollup consistency...")
   tryCatch({
     # Codelist meds not in rollup (will be missing class/flag info)
@@ -172,7 +160,7 @@ main <- function() {
     }
 
     # Reverse check: rollup meds with ZERO codes in codelist (therapy would be
-    # completely undetectable — silent drop of an entire medication)
+    # completely undetectable - silent drop of an entire medication)
     uncoded_meds <- db_q(con, "
       SELECT r.CL_MED_ABBR, r.CL_MED_CLASS
       FROM mma_rollup r
@@ -220,11 +208,9 @@ main <- function() {
     log_msg("  WARNING: Codelist consistency QC failed: ", e$message)
   })
 
-  # ----------------------------------------------------------
   # H4 fix: Codelist minimum-coverage validation (fail-loud)
   # Ensures the loaded codelists meet minimum thresholds so the
   # pipeline never silently runs on incomplete fallback data.
-  # ----------------------------------------------------------
   min_rollup_meds <- 20L    # Tab 40 has 28 unique MED_ABBR; 20 is conservative floor
 
   min_codelist_codes <- 50L # Tab 41 has hundreds of codes; 50 is conservative floor
@@ -262,9 +248,7 @@ main <- function() {
     collapse = ",\n      "
   )
 
-  # ----------------------------------------------------------
   # STEP 1: Load Part 1 cohort
-  # ----------------------------------------------------------
   # OBS_END_DT = observation end for all LOT/MAP logic.
   # Primary analysis (cfg$censor_at_disenrollment = FALSE):
   #   OBS_END_DT = ENDDATE = min(death_dt, study_end).
@@ -303,11 +287,9 @@ main <- function() {
            sum(case when ENDDATE_CE < ENDDATE then 1 else 0 end) AS n_disenrolled_before_enddate
     FROM lot_patient_input")
 
-  # ----------------------------------------------------------
   # STEP 2 (5A): MMA_MED - Raw extraction
   # Sources: medical (PROC_CD, BILL_PROC_CD, NDC), rx (NDC)
-  # Note: med_procedure excluded — contains ICD procedure codes only, not HCPCS/NDC drug codes
-  # ----------------------------------------------------------
+  # Note: med_procedure excluded - contains ICD procedure codes only, not HCPCS/NDC drug codes
   run_step(con, "S04_mma_med_raw", glue("
     CREATE OR REPLACE TEMPORARY VIEW mma_med_raw AS
     WITH codelist AS (
@@ -487,7 +469,6 @@ main <- function() {
   if (bad_ds > 0) stop(glue("Post-imputation: found {bad_ds} pharmacy rows with invalid DAY_SUPPLY — imputation logic failed."))
 
 
-  # ----------------------------------------------------------
   # STEP 3 (5B): MAP_MED - Medication Available Period algorithm
   #
   # CORRECTED per map med.pdf (page 5):
@@ -504,7 +485,6 @@ main <- function() {
   # Medical: ALWAYS DATE_SERVICE + DAY_SUPPLY - 1 (no pushout ever)
   #
   # MAP boundary: new MAP when DATE_SERVICE > max(rx_runout, med_runout)
-  # ----------------------------------------------------------
   map_struct_type <- "array<struct<MAP_CNT:int,MAP_START_DT:date,MAP_RX_RUNOUT_DT:date,MAP_MED_RUNOUT_DT:date,MAP_END_DT:date>>"
   min_date <- "cast('1900-01-01' as date)"
 
@@ -692,17 +672,13 @@ main <- function() {
       sum(MAP_DISCON_FLG) AS n_discontinuations
     FROM map_med")
 
-  # ----------------------------------------------------------
   # STEP 4: MAP_STACKED
-  # ----------------------------------------------------------
   run_step(con, "S07_map_stacked", "
     CREATE OR REPLACE TEMPORARY VIEW map_stacked AS
     SELECT * FROM map_med
   ", qc = "SELECT count(*) AS n_rows FROM map_stacked")
 
-  # ----------------------------------------------------------
   # STEP 5 (6): LOT1_BASE
-  # ----------------------------------------------------------
   run_step(con, "S08_lot1_start", "
     CREATE OR REPLACE TEMPORARY VIEW lot1_start AS
     SELECT
@@ -857,7 +833,6 @@ main <- function() {
     FROM lot1_base")
 
 
-  # ----------------------------------------------------------
   # STEP 7 (SCT): Stem Cell Transplant detection
   # Per sct.pdf spec section 7:
   #   - AUTO: 14-day window grouping + 60-day gap + 180-day tandem
@@ -867,16 +842,15 @@ main <- function() {
   #
   # NOTE: Apr 19 spec makes maintenance a descriptive flag only (contains_mtx_reg,
   # derived in S16b). There is no standalone maintenance-period view anymore.
-  # ----------------------------------------------------------
 
   # S11: Register SCT codelist
   # Normalize CL_CODE_TYPE to canonical values:
-  #   ICD10PROC / ICD10PCS            → 'ICD10PROC' (matches med_procedure.PROC with ICD_FLAG=10)
-  #   ICD9PROC                        → 'ICD9PROC'  (matches med_procedure.PROC with ICD_FLAG=9)
-  #   ICD10DIAG / ICD10DX             → 'ICD10DIAG' (matches med_diagnosis.DIAG with ICD_FLAG=10)
-  #   ICD9DIAG / ICD9DX               → 'ICD9DIAG'  (matches med_diagnosis.DIAG with ICD_FLAG=9)
-  #   HCPCS                           → 'HCPCS'     (matches medical.PROC_CD)
-  # Normalize SCT_TYPE: Allogenic→ALLO, Autologous→AUTO, CAR-T→CART
+  #   ICD10PROC / ICD10PCS            -> 'ICD10PROC' (matches med_procedure.PROC with ICD_FLAG=10)
+  #   ICD9PROC                        -> 'ICD9PROC'  (matches med_procedure.PROC with ICD_FLAG=9)
+  #   ICD10DIAG / ICD10DX             -> 'ICD10DIAG' (matches med_diagnosis.DIAG with ICD_FLAG=10)
+  #   ICD9DIAG / ICD9DX               -> 'ICD9DIAG'  (matches med_diagnosis.DIAG with ICD_FLAG=9)
+  #   HCPCS                           -> 'HCPCS'     (matches medical.PROC_CD)
+  # Normalize SCT_TYPE: Allogenic->ALLO, Autologous->AUTO, CAR-T->CART
   run_step(con, "S11_sct_codelist", glue("
     CREATE OR REPLACE TEMPORARY VIEW sct_codelist AS
     SELECT
@@ -1384,7 +1358,6 @@ main <- function() {
       sum(CASE WHEN LOT1_TX_ENDDATE IS NOT NULL THEN 1 ELSE 0 END) AS n_with_sct_end
     FROM lot1_sct")
 
-  # ----------------------------------------------------------
   # Materialize heavy upstream views before final assembly + reporting.
   # map_stacked, lot1_base, and lot1_sct are TEMPORARY VIEWs with deep
   # CTE chains back to CDM tables. S16 itself only references each
@@ -1395,7 +1368,6 @@ main <- function() {
   # instead of re-evaluating the CTE chain.
   # Write to work schema tables, then repoint the views at them.
   # (CACHE TABLE is not supported on SQL warehouses.)
-  # ----------------------------------------------------------
   log_msg("Materializing intermediate views for downstream reporting/QC...")
   for (mv in list(
     list(name = "MAP_STACKED", view = "map_stacked"),
@@ -1413,7 +1385,7 @@ main <- function() {
   }
 
 
-  # S16b: contains_mtx_reg — Flag-only maintenance concept (Apr 15 meeting)
+  # S16b: contains_mtx_reg - Flag-only maintenance concept (Apr 15 meeting)
   # Does the LOT1 induction regimen contain a valid maintenance-approved subset
   # (mono or dual) PLUS an anchor agent (any additional induction drug outside
   # that subset)? The anchor may itself be maintenance-eligible in another context.
@@ -1477,7 +1449,7 @@ main <- function() {
   # Apr 19 spec: MAINTENANCE_END and SCT_NO_MAINT removed as final values;
   # former cases route by earliest applicable event.
   # CART_INIT: MED_ADD followed by CART within cart_consolidation_days
-  # → LOT1 ends on FIRST_CART_DT - 1 (the day before CAR-T infusion).
+  # -> LOT1 ends on FIRST_CART_DT - 1 (the day before CAR-T infusion).
   run_step(con, "S16_lot1_base_end", glue("
     CREATE OR REPLACE TEMPORARY VIEW lot1_base_end AS
     WITH
@@ -1703,10 +1675,8 @@ main <- function() {
     ORDER BY LOT1_BASE_END_REASON")
 
 
-  # ----------------------------------------------------------
   # NDC Format QC (Fix #5 from review)
   # Validates NDC length match between codelist and claims
-  # ----------------------------------------------------------
   log_msg("Running NDC format QC...")
   tryCatch({
     ndc_qc_codelist <- db_q(con, "
@@ -1747,10 +1717,8 @@ main <- function() {
     log_msg("  WARNING: NDC QC failed: ", e$message)
   })
 
-  # ----------------------------------------------------------
   # Validation QC Suite (Fix #10 from review)
   # Must-run validations for MAP + LOT correctness
-  # ----------------------------------------------------------
   log_msg("Running validation QC suite...")
   tryCatch({
     # A) MMA_MED coverage by source
@@ -1852,9 +1820,7 @@ main <- function() {
     log_msg("WARNING: Validation QC suite failed: ", e$message)
   })
 
-  # ----------------------------------------------------------
   # Descriptives + Figures
-  # ----------------------------------------------------------
   if (isTRUE(cfg$generate_descriptives)) {
     log_msg("Generating descriptive summary and figures...")
     print_descriptives(con)
@@ -1862,9 +1828,7 @@ main <- function() {
     log_msg("Descriptives generation disabled (GENERATE_DESCRIPTIVES=FALSE).")
   }
 
-  # ----------------------------------------------------------
   # Persist outputs
-  # ----------------------------------------------------------
   if (isTRUE(cfg$persist_to_schema)) {
     # MAP_STACKED, LOT1_BASE, LOT1_SCT already materialized before S16.
     # Only persist the remaining outputs here.
@@ -1879,7 +1843,7 @@ main <- function() {
       "), qc = glue("SELECT count(*) AS n_rows FROM {wrk(pt$name)}"))
     }
 
-    # Persist run metadata — parameters + key counts for rerun comparison
+    # Persist run metadata - parameters + key counts for rerun comparison
     tryCatch({
       cohort_n <- as.numeric(db_q(con, "SELECT count(DISTINCT PATID) AS n FROM lot_patient_input")$n)
       mma_n    <- as.numeric(db_q(con, "SELECT count(*) AS n FROM mma_med_processed")$n)
@@ -1958,7 +1922,7 @@ main <- function() {
       log_msg("  WARNING: Run metadata persist failed: ", conditionMessage(e))
     })
 
-    # Persist QC summary — one row per check for governance
+    # Persist QC summary - one row per check for governance
     tryCatch({
       # Table-driven QC checks: name -> SQL that returns a single count
       qc_defs <- list(

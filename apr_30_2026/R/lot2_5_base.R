@@ -1,21 +1,19 @@
 #!/usr/bin/env Rscript
-# ============================================================
-# lot2_5_base.R - LOT 2 through LOT 5 base period builder
+# LOT 2 through LOT 5 base-period builder. Implements the LOT 2-5 spec
+# (lot2to5_spec_DRAFT_apr30.xlsx) as a standalone module; does not
+# modify any LOT1 module.
 #
-# Implements the LOT 2-5 spec (lot2to5_spec_DRAFT_apr30.xlsx).
-# Standalone module: does NOT modify lot_program.R or any LOT1 module.
+# Assumes lot_program.R already produced these views/tables in the same
+# connection / work schema:
+#   - lot_patient_input    patient cohort + OBS_END_DT, ENDDATE_CE, etc.
+#   - map_stacked          medication-available periods per agent
+#   - permissible_subs     biosimilar substitution table
+#   - mma_rollup           MED_ABBR -> maintenance flags
+#   - tx_auto_dates        per-patient AUTO SCT dates, post-grouping
+#   - tx_allo_cart_dates   per-patient ALLO/CART dates
+#   - lot1_base_end        LOT1 row with LOT1_BASE_END_DT, REASON, etc.
 #
-# Assumes lot_program.R has already produced these views/tables in the
-# same connection / work schema:
-#   - lot_patient_input    (patient cohort + OBS_END_DT, ENDDATE_CE, etc.)
-#   - map_stacked          (medication-available periods per agent)
-#   - permissible_subs     (biosimilar substitution table)
-#   - mma_rollup           (MED_ABBR -> maintenance flags)
-#   - tx_auto_dates        (per-patient AUTO SCT dates, post-grouping)
-#   - tx_allo_cart_dates   (per-patient ALLO/CART dates)
-#   - lot1_base_end        (LOT1 row with LOT1_BASE_END_DT, REASON, etc.)
-#
-# Produces a long-format table lot_long with one row per (PATID, LOT_NUM):
+# Produces lot_long, one row per (PATID, LOT_NUM):
 #   PATID, LOT_NUM, LOT_START_DT, LOT_START_TYPE,
 #   LOT_BASE_MEDS, LOT_MED_CNT, LOT_BASE_DISCON_DT,
 #   LOT_BASE_1ST_ADD_MED_DT, LOT_BASE_1ST_ADD_MED,
@@ -25,21 +23,17 @@
 #
 # Key parameters (defaults reflect Apr 22 study-team decisions):
 #   induction_window_days   = 30   (LOT1 uses 60)
-#   (no LOT-level discontinuation buffer; per-drug 90d rule lives in map_discon_gap_days)
+#     no LOT-level discontinuation buffer; per-drug 90d rule lives in
+#     map_discon_gap_days
 #   cart_consolidation_days = 45   (Apr 22; supersedes 30d protocol text)
 #   sct_tandem_days         = 180  (>180d AUTO is unplanned)
-#   allo_lot_span           = "single_day"  (Q2 resolved) - ALLO LOT spans only ALLO_DT
+#   allo_lot_span           = "single_day" (Q2): ALLO LOT spans only ALLO_DT
 #   max_lot                 = 5
 #
-# Spec cross-references:
-#   - 3.LOT2_5_BASE   tab in spec workbook
-#   - 4.LOT2_5_BASE_END
-#   - 9.Decision_Flow (date-driven; tie-break only on identical dates)
-# ============================================================
+# Spec tabs: 3.LOT2_5_BASE, 4.LOT2_5_BASE_END, 9.Decision_Flow
+# (date-driven; tie-break only on identical dates).
 
-# ============================================================
-# Helpers
-# ============================================================
+# ---- Helpers ----
 
 # Normalize a MED_ABBR to a column-safe token (matches LOT1 convention).
 .lot_sanitize_col <- function(x) gsub("[^A-Za-z0-9]+", "_", toupper(x))
@@ -62,9 +56,7 @@
   sprintf("least(%s)", paste(parts, collapse = ", "))
 }
 
-# ============================================================
-# Initialize lot_long from lot1_base_end (no LOT1 rewrite)
-# ============================================================
+# ---- Initialize lot_long from lot1_base_end (no LOT1 rewrite) ----
 
 init_lot_long_from_lot1 <- function(con, meds, classes) {
   # Project LOT1 outputs into the long-format schema. LOT1 column names
@@ -157,9 +149,7 @@ init_lot_long_from_lot1 <- function(con, meds, classes) {
   db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW lot_long AS SELECT * FROM {wrk(.LOT_LONG_STAGE)}"))
 }
 
-# ============================================================
-# Build a single LOT_N (N >= 2)
-# ============================================================
+# ---- Build a single LOT_N (N >= 2) ----
 # Strategy (per Decision_Flow tab):
 #   1. For each patient, compute candidate trigger DATES after LOT_(N-1) end:
 #        d_MED, d_ALLO, d_CART, d_AUTO (unplanned only)
@@ -979,9 +969,7 @@ build_lot_n <- function(con, lot_num,
   db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW lot_long AS SELECT * FROM {wrk(.LOT_LONG_STAGE)}"))
 }
 
-# ============================================================
-# Top-level driver
-# ============================================================
+# ---- Top-level driver ----
 
 build_lot2_5 <- function(con,
                         induction_window_days   = 30,

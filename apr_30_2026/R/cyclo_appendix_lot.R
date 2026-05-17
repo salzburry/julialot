@@ -1,30 +1,17 @@
-# ============================================================
-# cyclo_appendix_lot.R — CYCLO monotherapy deep-dive (optional appendix)
-# ============================================================
-# Extracted from print_descriptives() during modularization.
-# This is a specialized cohort-specific analysis for cyclophosphamide
-# monotherapy patients. It writes standalone CSVs and is not part
-# of the core LOT derivation.
-# Requires: cfg, run_id, log_msg, db_q, wrk (from other modules)
-# ============================================================
+# CYCLO monotherapy deep-dive (optional appendix). A cohort-specific
+# analysis for cyclophosphamide-monotherapy patients; writes standalone
+# CSVs and is not part of the core LOT derivation.
 
 run_cyclo_deepdive <- function(con) {
-  # --------------------------------------------------------
-  # 11. CYCLO Monotherapy Deep-Dive (separate output files)
-  # Writes to {output_dir}/cyclo_mono/ as standalone CSVs.
-  #
-  # Two cohort definitions produced:
-  #   STRICT:           LOT1_BASE_MEDS = 'CYCL', LOT1_MED_CNT = 1
-  #   STEROID-TOLERANT: only non-steroid induction med is CYCLO
+  # Writes {output_dir}/cyclo_mono/ CSVs for two cohort definitions:
+  #   STRICT            LOT1_BASE_MEDS = 'CYCL', LOT1_MED_CNT = 1
+  #   STEROID-TOLERANT  only non-steroid induction med is CYCLO
   #                     (allows CYCLO + DEXA/PRED etc.)
-  #
-  # Outputs:
-  # (1) 3 possible diagnosis dates under 30/60/90-day OP windows
-  # (2) subsequent non-CYCLO non-steroid MM treatments
-  # (3) SCT timing relative to CYCLO start AND all 3 dx dates
-  # --------------------------------------------------------
+  # Outputs: (1) dx dates under 30/60/90-day OP windows,
+  #          (2) subsequent non-CYCLO non-steroid MM treatments,
+  #          (3) SCT timing vs CYCLO start and all 3 dx dates.
   tryCatch({
-    # CAST PATID AS STRING in every query below — some ODBC drivers return
+    # CAST PATID AS STRING in every query below - some ODBC drivers return
     # the CDM PATID (BIGINT) as R numeric, which corrupts IDs into
     # subnormal floats (~1e-313) and breaks both IN-list builds and
     # roster CSVs. Forcing stringification at the warehouse is the only
@@ -94,7 +81,7 @@ run_cyclo_deepdive <- function(con) {
       log_msg("  Wrote: cyclo_mono_patients_strict.csv (N=", n_strict,
               "), cyclo_mono_patients_steroid_tolerant.csv (N=", n_steroid, ")")
 
-      # PATID is CAST AS STRING in the cohort queries above — driver delivers
+      # PATID is CAST AS STRING in the cohort queries above - driver delivers
       # as R character, no extra coercion needed.
       pat_ids_sql <- paste0("('", paste(cyclo_pats$PATID, collapse = "','"), "')")
 

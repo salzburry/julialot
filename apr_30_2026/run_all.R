@@ -1,16 +1,12 @@
 #!/usr/bin/env Rscript
-# ============================================================
-# run_all.R - one Domino Job: full pipeline, then LOT1-5 dashboard
-# ============================================================
-# Runs run_pipeline.R, and only if it succeeds (exit 0) runs
-# lot_long_dashboard.R. BOTH failures fail the Job (non-zero exit).
-# pipeline_inputs.csv is loaded here first so the combined log lands
-# in the same OUTPUT_DIR the stages write to.
+# One Domino Job: full pipeline, then the LOT1-5 dashboard. Runs
+# run_pipeline.R and, only if it exits 0, runs lot_long_dashboard.R.
+# Either failure fails the Job. pipeline_inputs.csv is loaded first so
+# the combined log lands in the OUTPUT_DIR the stages write to.
 #
 #   Domino Job command:  Rscript /mnt/code/.../run_all.R
-#   (set DATABRICKS_PWD as a Domino env var / secret; run-control
-#    env vars like FORCE_RERUN / SKIP_* still work and win over the CSV)
-# ============================================================
+#   Set DATABRICKS_PWD as a Domino env var/secret. Run-control env
+#   vars (FORCE_RERUN, SKIP_*) still work and win over the CSV.
 
 .d <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)

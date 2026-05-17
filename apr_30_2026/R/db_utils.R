@@ -1,9 +1,6 @@
-# ============================================================
-# db_utils.R — Connection, retry, naming, materialization
-# ============================================================
-# No module-level mutable state. All runtime state (connection,
-# materialized table mappings) is created in main() and passed
-# through function arguments.
+# Connection, retry, naming, and materialization helpers. No
+# module-level mutable state - runtime state is created in main() and
+# passed by argument.
 
 # ---- Separators (pre-computed constants) ----
 SEP_59  <- strrep("=", 59)
@@ -47,16 +44,12 @@ log_msg <- function(...) {
   }, silent = TRUE)
 }
 
-# ============================================================
-# NAMING HELPERS — closure factory
-# ============================================================
-# Returns a list of naming functions that close over cfg and
-# mat_tables. Callers unpack into locals so that the ~114 glue
-# interpolations ({cdm(...)}, {work_tbl(...)}, etc.) in
-# pipeline_steps.R require zero changes.
-#
-# mat_tables is an R environment (reference semantics) so that
-# materialize_to_personal_schema() writes are visible to work_tbl().
+# ---- Naming helpers (closure factory) ----
+# Returns naming functions that close over cfg and mat_tables. Callers
+# unpack them into locals so the ~114 glue interpolations in
+# pipeline_steps.R need no changes. mat_tables is an environment
+# (reference semantics) so materialize_to_personal_schema() writes are
+# visible to work_tbl().
 make_naming_helpers <- function(cfg, mat_tables = new.env()) {
   full_name <- function(schema, object) {
     if (nzchar(cfg$catalog)) paste0(cfg$catalog, ".", schema, ".", object)
@@ -93,7 +86,7 @@ load_csv_codelists <- function(conn, cfg) {
   if (!isTRUE(cfg$use_csv_codelists)) return(invisible(NULL))
 
   csv_map <- cfg$codelist_csv_map
-  # The 5 cohort-critical codelists — pipeline cannot proceed without these
+  # The 5 cohort-critical codelists - pipeline cannot proceed without these
   required <- c(cfg$cl_mm_dx, cfg$cl_mm_therapy, cfg$cl_preg,
                 cfg$cl_clintrial, cfg$cl_other_malig)
 
