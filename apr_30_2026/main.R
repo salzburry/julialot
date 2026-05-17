@@ -89,19 +89,27 @@ main <- function() {
 
   for (i in seq_along(steps)) {
     s <- steps[[i]]
+    table_name <- sub("^\\d+[a-z]?_", "", s$name)
+    is_ckpt <- isTRUE(cfg$materialize_checkpoints) &&
+               table_name %in% CHECKPOINT_STEPS
+
+    # Checkpoint steps defer QC: the view is materialized right after,
+    # so QC scans the persisted table instead of forcing the heavy view
+    # to compute once for QC and again for materialization.
     with_retry(function() {
-      run_step(s$name, s$sql, conn = conn, cfg = cfg, qc_sql = s$qc,
+      run_step(s$name, s$sql, conn = conn, cfg = cfg,
+               qc_sql = if (is_ckpt) NULL else s$qc,
                description = s$description,
                step_num = i, total_steps = total_steps,
                source_tables = s$source_tables)
     }, max_retries = cfg$max_retries, base_sleep = cfg$base_sleep)
 
-    # Materialize checkpoints for Spark performance
-    if (isTRUE(cfg$materialize_checkpoints)) {
-      table_name <- sub("^\\d+[a-z]?_", "", s$name)
-      if (table_name %in% CHECKPOINT_STEPS) {
-        materialize_to_personal_schema(conn$con, table_name, cfg, mat_tables, replace = TRUE)
-      }
+    if (is_ckpt) {
+      materialize_to_personal_schema(conn$con, table_name, cfg, mat_tables, replace = TRUE)
+      # The temp view was repointed to the materialized table, so this
+      # QC is a cheap scan - the heavy view computes once, not twice.
+      with_retry(function() run_qc(conn$con, s$qc),
+                 max_retries = cfg$max_retries, base_sleep = cfg$base_sleep)
     }
   }
 
