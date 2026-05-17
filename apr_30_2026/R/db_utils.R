@@ -277,6 +277,21 @@ materialize_to_personal_schema <- function(con, view_name, cfg, mat_tables, repl
   FALSE
 }
 
+# Run a step's QC query and log the headline metric. Separate from
+# run_step() so checkpoint steps can defer QC until AFTER the view is
+# materialized: the QC then scans the cheap persisted table instead of
+# recomputing the heavy view a second time. Same SQL, same result.
+run_qc <- function(con, qc_sql) {
+  if (is.null(qc_sql)) return(invisible(NULL))
+  qc <- DBI::dbGetQuery(con, qc_sql)
+  qc_metric <- colnames(qc)[1]
+  qc_value  <- as.character(qc[[1]][1])
+  numeric_val <- suppressWarnings(as.numeric(qc_value))
+  formatted   <- if (!is.na(numeric_val)) format(numeric_val, big.mark = ",") else qc_value
+  log_msg("  >> Result: ", qc_metric, " = ", formatted)
+  flush.console()
+}
+
 # ---- Step runner ----
 # conn is a mutable environment with conn$con (reference semantics for reconnect)
 run_step <- function(step_name, sql, conn, cfg, qc_sql = NULL, description = NULL,
@@ -311,15 +326,7 @@ run_step <- function(step_name, sql, conn, cfg, qc_sql = NULL, description = NUL
 
     DBI::dbExecute(conn$con, sql)
 
-    if (!is.null(qc_sql)) {
-      qc <- DBI::dbGetQuery(conn$con, qc_sql)
-      qc_metric <- colnames(qc)[1]
-      qc_value  <- as.character(qc[[1]][1])
-      numeric_val <- suppressWarnings(as.numeric(qc_value))
-      formatted   <- if (!is.na(numeric_val)) format(numeric_val, big.mark = ",") else qc_value
-      log_msg("  >> Result: ", qc_metric, " = ", formatted)
-      flush.console()
-    }
+    run_qc(conn$con, qc_sql)
 
     ended_at <- Sys.time()
     log_msg("  >> Completed in ", round(as.numeric(difftime(ended_at, started_at, units = "secs")), 1), "s")
