@@ -105,9 +105,21 @@ main <- function() {
     }, max_retries = cfg$max_retries, base_sleep = cfg$base_sleep)
 
     if (is_ckpt) {
-      materialize_to_personal_schema(conn$con, table_name, cfg, mat_tables, replace = TRUE)
-      # The temp view was repointed to the materialized table, so this
-      # QC is a cheap scan - the heavy view computes once, not twice.
+      ok <- materialize_to_personal_schema(conn$con, table_name, cfg,
+                                           mat_tables, replace = TRUE)
+      # A genuine materialization failure is fatal: downstream steps
+      # would silently recompute the heavy view and a missing checkpoint
+      # could go unnoticed. personal_schema being unset is NOT a failure
+      # - the function skips by design and the pipeline runs (slower)
+      # off the temp views, exactly as the original did.
+      if (nzchar(cfg$personal_schema) && !isTRUE(ok)) {
+        stop("Checkpoint '", table_name, "' failed to materialize to ",
+             "personal schema '", cfg$personal_schema, "'. See the WARN ",
+             "above for the cause. Aborting so the failure is not masked.")
+      }
+      # personal_schema set + ok: the view was repointed, so this QC is
+      # a cheap scan. personal_schema unset: QC runs against the temp
+      # view (the heavy path), same as the original pipeline.
       with_retry(function() run_qc(conn$con, s$qc),
                  max_retries = cfg$max_retries, base_sleep = cfg$base_sleep)
     }
