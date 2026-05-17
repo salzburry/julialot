@@ -1,11 +1,8 @@
-# ============================================================
-# criteria_attrition.R — Unified criteria catalog, filter builder,
-#                         attrition tracker, QC reporting
-# ============================================================
-# No module-level mutable state. All runtime state (connection,
-# naming helpers) is passed through function arguments.
+# Unified criteria catalog, filter builder, attrition tracker, and QC
+# reporting. No module-level mutable state - runtime state is passed by
+# argument.
 
-# ---- Canonical Criteria Catalog ----
+# ---- Canonical criteria catalog ----
 # Single source of truth for all IE criteria. Drives:
 #   - final filter SQL in build_steps() (Step 24)
 #   - cumulative attrition counting in main()
@@ -80,10 +77,7 @@ build_criteria_sql <- function(catalog, cfg) {
   paste(clauses, collapse = "\n          ")
 }
 
-# ============================================================
-# ATTRITION REPORTING
-# ============================================================
-# print/export accept a rows list; no module-level state.
+# ---- Attrition reporting ----
 
 print_attrition_table <- function(rows) {
   sep <- strrep("=", 84)
@@ -126,7 +120,7 @@ export_attrition_csv <- function(rows) {
 # Persist attrition rows to a Spark work-schema table so Part 2's LOT
 # descriptives dashboard can read it. Overwrites on each run (CREATE OR
 # REPLACE). Each persisted row carries the Part 1 run_id, the cohort
-# table name (cfg$final_table_name), and a build timestamp — Part 2
+# table name (cfg$final_table_name), and a build timestamp - Part 2
 # surfaces these so the dashboard viewer can tell which Part 1 run the
 # attrition chart came from and whether it matches the cohort the LOT
 # pipeline is consuming.
@@ -195,10 +189,7 @@ persist_attrition_table <- function(rows, cfg, conn) {
 # Simple null-coalesce operator used above.
 `%||%` <- function(a, b) if (is.null(a) || !nzchar(as.character(a))) b else a
 
-# ============================================================
-# DATA-DRIVEN ATTRITION COUNTING
-# ============================================================
-# Builds attrition rows locally and returns them. No global state.
+# ---- Data-driven attrition counting ----
 
 run_attrition_report <- function(catalog, cfg, conn, work_tbl_fn) {
   rows <- list()
@@ -226,7 +217,7 @@ run_attrition_report <- function(catalog, cfg, conn, work_tbl_fn) {
     list(n_30 = row$n_30, n_60 = row$n_60, n_90 = row$n_90)
   }
 
-  # Step 0: Base cohort — all patients with >= 1 MM dx (any position)
+  # Step 0: Base cohort - all patients with >= 1 MM dx (any position)
   # Counts from mm_dx_events_id (identification-period events), not
   # mm_dx_events_all (full study period) which includes baseline lookback
   base_tbl <- work_tbl_fn("mm_dx_events_id")
@@ -263,9 +254,7 @@ run_attrition_report <- function(catalog, cfg, conn, work_tbl_fn) {
   invisible(rows)
 }
 
-# ============================================================
-# QC REPORTING
-# ============================================================
+# ---- QC reporting ----
 
 print_cohort_characteristics <- function(cfg, conn, work_tbl_fn) {
   stats_sql <- glue("
@@ -349,12 +338,9 @@ print_inpatient_validation <- function(conn, work_tbl_fn) {
   cat(DASH_60, "\n")
 }
 
-# ============================================================
-# PIPELINE INSPECTOR — Post-run diagnostic
-# ============================================================
-# Queries every intermediate view and prints row/patient counts.
-# Useful for debugging: run the pipeline, then call inspect_pipeline()
-# to see where patients are gained or lost.
+# ---- Pipeline inspector (post-run diagnostic) ----
+# Queries every intermediate view and prints row/patient counts so you
+# can see where patients are gained or lost.
 
 inspect_pipeline <- function(conn, cfg, work_tbl_fn) {
   views <- c(
@@ -394,7 +380,7 @@ inspect_pipeline <- function(conn, cfg, work_tbl_fn) {
                   format(res$n_rows, big.mark = ","),
                   format(res$n_patients, big.mark = ",")))
     }, error = function(e) {
-      # Code-list views lack PATID — fall back to row count only
+      # Code-list views lack PATID - fall back to row count only
       tryCatch({
         res <- DBI::dbGetQuery(conn$con, glue("SELECT count(*) AS n_rows FROM {tbl}"))
         cat(sprintf("%-35s %14s %14s\n", v, format(res$n_rows, big.mark = ","), "-"))

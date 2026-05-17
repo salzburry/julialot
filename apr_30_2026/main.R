@@ -1,24 +1,14 @@
 #!/usr/bin/env Rscript
-# ============================================================
-# GSK MM LOT — Cohort Attrition Pipeline (Modular)
-# ============================================================
-# Optum CDM -> Databricks/Spark -> ELIG_COH_FINAL
+# GSK MM LOT - cohort attrition pipeline. Optum CDM -> Databricks/Spark
+# -> ELIG_COH_FINAL.
 #
-# Supported run modes:
-#   Static  — non-interactive (Rscript), uses env-var / config defaults
-#   Interactive — R console, prompts for study parameters + IE criteria
-#   Override: set PROMPT_USER=TRUE to force prompts, FALSE to suppress
+# Run modes:
+#   Static       non-interactive (Rscript); env-var / config defaults.
+#   Interactive  R console; prompts for study parameters + IE criteria.
+#   PROMPT_USER=TRUE/FALSE forces/suppresses prompts.
 #
-# Runtime state (cfg, connection, materialized tables) is created
-# in main() and passed through function arguments — no mutable globals.
-#
-# Module layout:
-#   R/config_prompts.R       — cfg_defaults template, env-var loading, prompts
-#   R/db_utils.R             — make_naming_helpers(), connection, retry, step runner
-#   R/codelists.R            — quarterly table helpers
-#   R/criteria_attrition.R   — criteria catalog, filter builder, attrition
-#   R/pipeline_steps.R       — build_steps(cfg, mat_tables)
-# ============================================================
+# All runtime state (cfg, connection, materialized tables) is created in
+# main() and passed by argument - no mutable globals.
 
 library(DBI)
 library(odbc)
@@ -49,9 +39,6 @@ source(file.path(source_dir, "codelists.R"))
 source(file.path(source_dir, "criteria_attrition.R"))
 source(file.path(source_dir, "pipeline_steps.R"))
 
-# ============================================================
-# MAIN
-# ============================================================
 main <- function() {
   # ---- 1. Prompts & config ----
   user_cfg    <- prompt_user_options(cfg_defaults)

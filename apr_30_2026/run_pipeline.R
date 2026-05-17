@@ -1,59 +1,45 @@
 #!/usr/bin/env Rscript
-# ============================================================
-# run_pipeline.R - Top-level orchestrator (Option 3)
-# ============================================================
-# Runs the full MM LOT pipeline end-to-end:
+# Top-level orchestrator. Runs the full MM LOT pipeline end-to-end:
 #
-#   Stage 1: Cohort attrition       (main.R)            -> personal_schema.final_table_name
-#   Stage 2: LOT1                    (lot_program.R)     -> work_schema.LOT1_BASE_END
-#   Stage 3: LOT2-5                  (lot2_5_program.R)  -> work_schema.LOT_LONG
+#   Stage 1  Cohort attrition  main.R            -> personal_schema.<final_table>
+#   Stage 2  LOT1              lot_program.R     -> work_schema.LOT1_BASE_END
+#   Stage 3  LOT2-5            lot2_5_program.R  -> work_schema.LOT_LONG
 #
-# Each stage runs in its own Rscript subprocess so the existing entry
-# scripts work unchanged. Between stages, this orchestrator probes the
-# schema each stage actually writes to (NOT a single schema) and skips
-# any stage whose primary output table already exists.
+# Each stage runs in its own Rscript subprocess so the entry scripts
+# work unchanged. Between stages the orchestrator probes the schema each
+# stage actually writes to and skips any stage whose output table
+# already exists. If a stage exits 0 but its output table is missing
+# afterward, the pipeline stop()s rather than cascading into a
+# downstream TABLE_OR_VIEW_NOT_FOUND.
 #
-# Post-stage verification: if a stage exits 0 but its expected output
-# table is NOT in the schema afterward, the orchestrator FAILS the
-# pipeline with stop() rather than warning and continuing. The whole
-# point of this check is to catch "exit 0 but persistence silently
-# failed" before the next stage hits TABLE_OR_VIEW_NOT_FOUND.
+# Foot-gun guarded at startup: cohort attrition writes FINAL_TABLE_NAME
+# (config_prompts.R) while LOT stages read INPUT_COHORT_TABLE
+# (config_lot.R). Both default to ELIG_COH_FINAL; if overridden to
+# diverge, LOT1 won't find the cohort and the orchestrator warns loudly.
 #
-# Pre-flight consistency check: cohort attrition uses FINAL_TABLE_NAME
-# (config_prompts.R) while LOT pipelines use INPUT_COHORT_TABLE
-# (config_lot.R). Defaults are both "ELIG_COH_FINAL" so they normally
-# match. If they diverge (override env vars), LOT1 will not find the
-# cohort attrition output. The orchestrator warns loudly at startup.
+# Run-control env vars:
+#   FORCE_RERUN=TRUE   re-run every stage even if outputs exist
+#   SKIP_COHORT=TRUE   skip Stage 1
+#   SKIP_LOT1=TRUE     skip Stage 2
+#   SKIP_LOT2_5=TRUE   skip Stage 3
 #
-# Env-var controls:
-#   FORCE_RERUN=TRUE      Re-run every stage even if outputs already exist
-#   SKIP_COHORT=TRUE      Skip Stage 1 (assumes cohort output is there)
-#   SKIP_LOT1=TRUE        Skip Stage 2 (assumes LOT1_BASE_END is there)
-#   SKIP_LOT2_5=TRUE      Skip Stage 3
-#
-# Env vars affecting paths (read directly here AND by stage configs).
-# Every default here MUST match the corresponding fallback in config_lot.R
-# (LOT stages) and config_prompts.R (cohort attrition):
-#   DATABRICKS_PWD            Connection password (required)
-#   DATABRICKS_DSN            ODBC DSN (default RWDE)
-#   DATABRICKS_CATALOG        Catalog (default hive_metastore)
-#   PROJECT_WORK_SCHEMA       LOT work schema; falls back to DOMINO_USER_NAME,
-#                             then gsk_mm_lot_work
-#   DOMINO_USER_NAME          Cohort attrition personal_schema; falls back
-#                             to DOMINO_STARTING_USERNAME
-#   FINAL_TABLE_NAME          Cohort output table (default ELIG_COH_FINAL)
-#   INPUT_COHORT_TABLE        LOT pipelines' cohort input (default ELIG_COH_FINAL)
+# Path env vars (read here AND by the stage configs; every default
+# below MUST match the fallback in config_lot.R / config_prompts.R):
+#   DATABRICKS_PWD       connection password (required)
+#   DATABRICKS_DSN       ODBC DSN (default RWDE)
+#   DATABRICKS_CATALOG   catalog (default hive_metastore)
+#   PROJECT_WORK_SCHEMA  LOT work schema; -> DOMINO_USER_NAME -> gsk_mm_lot_work
+#   DOMINO_USER_NAME     cohort personal_schema; -> DOMINO_STARTING_USERNAME
+#   FINAL_TABLE_NAME     cohort output table (default ELIG_COH_FINAL)
+#   INPUT_COHORT_TABLE   LOT cohort input (default ELIG_COH_FINAL)
 #
 # Usage:
 #   Rscript run_pipeline.R
 #   FORCE_RERUN=TRUE Rscript run_pipeline.R
 #   SKIP_COHORT=TRUE SKIP_LOT1=TRUE Rscript run_pipeline.R   # LOT2-5 only,
-#       BUT only builds LOT2-5 if LOT_LONG does NOT already exist.
-#   # To REBUILD LOT2-5 when LOT_LONG already exists, add FORCE_RERUN
-#   # (the atomic LOT_LONG_STAGE publish keeps the old LOT_LONG until
-#   #  the full rebuild succeeds, so this is safer than DROP TABLE):
-#   SKIP_COHORT=TRUE SKIP_LOT1=TRUE FORCE_RERUN=TRUE Rscript run_pipeline.R
-# ============================================================
+#     builds LOT2-5 only if LOT_LONG does not already exist; add
+#     FORCE_RERUN to rebuild (the atomic LOT_LONG_STAGE publish keeps
+#     the old LOT_LONG until a full rebuild succeeds).
 
 # ---- Resolve script directory regardless of how invoked ----
 .script_dir <- local({

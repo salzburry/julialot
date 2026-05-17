@@ -1,6 +1,4 @@
-# ============================================================
-# pipeline_steps.R -- SQL pipeline step definitions
-# ============================================================
+# SQL pipeline step definitions.
 build_steps <- function(cfg, mat_tables, phases = NULL) {
   # ---- Unpack naming helpers into local scope ----
   # These shadow the old globals so that ~114 glue interpolations
@@ -11,7 +9,7 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
 
   # ---- Code-list sources ----
   # When use_csv_codelists is TRUE, CSVs have already been loaded into
-  # temp views by load_csv_codelists() — reference the view names directly.
+  # temp views by load_csv_codelists() - reference the view names directly.
   # Otherwise, reference server-side tables via ref().
   if (isTRUE(cfg$use_csv_codelists)) {
     mm_dx_source       <- cfg$cl_mm_dx
@@ -27,22 +25,18 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
     other_malig_source <- ref(cfg$cl_other_malig)
   }
 
-  # ============================================================
   # BUILD COMBINED CRITERIA SQL (from unified criteria catalog)
-  # ============================================================
   catalog      <- build_criteria_catalog(cfg)
   criteria_sql <- build_criteria_sql(catalog, cfg)
 
-  # ----------------------------------------------------------
-  # Follow-up cap — driven by cfg$censor_at_disenrollment.
+  # Follow-up cap - driven by cfg$censor_at_disenrollment.
   # Used by therapy_flags (Step 19), pregnancy_flag (Step 20),
   # clintrial_flag (Step 21) so the IE follow-up window matches
   # whatever LOT's OBS_END_DT is using.
   # PRIMARY:    least(study_end, death)             = ENDDATE
-  # SENSITIVITY: least(study_end, death, ENDDATE_CE) ≈ ENDDATE_CE
+  # SENSITIVITY: least(study_end, death, ENDDATE_CE) ~ ENDDATE_CE
   # All three steps already join death_dt as `d`. When the flag is on
   # we additionally join ce_flags as `ce` to access ENDDATE_CE.
-  # ----------------------------------------------------------
   fu_cap_expr <- if (isTRUE(cfg$censor_at_disenrollment)) {
     glue("least(date('{cfg$study_end}'), coalesce(d.DEATH_DT, date('{cfg$study_end}')), coalesce(ce.ENDDATE_CE, date('{cfg$study_end}')))")
   } else {
@@ -54,10 +48,8 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
     ""
   }
   phase_codelists <- function() list(
-    # ----------------------------------------------------------
     # PHASE 1: NORMALIZE CODE LISTS (small tables, run once)
     # Source: server-side reference tables in cfg$ref_schema
-    # ----------------------------------------------------------
     list(
       name = "01_mm_dx_codes",
       description = "Loading MM diagnosis codes (ICD-9/ICD-10)",
@@ -129,12 +121,10 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
       qc = glue("SELECT count(*) AS n_codes FROM {work('other_malig_codes')}")
     ),
 
-    # ----------------------------------------------------------
     # SCHEMA PROBE: Validate RVNU_CD column exists on medical table
     # Per Optum CDM v9.0, the revenue code field is RVNU_CD (facility claims only).
     # This check fails early with a clear message if the column is missing,
     # rather than erroring deep in the pregnancy/clinical trial steps.
-    # ----------------------------------------------------------
     list(
       name = "06c_validate_rvnu_cd",
       description = "Validating RVNU_CD column exists on medical table",
@@ -147,12 +137,10 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
     )
   )
   phase_dx_events <- function() list(
-    # ----------------------------------------------------------
     # PHASE 2: BUILD MM DIAGNOSIS EVENTS
     # FIXED: Build two tables:
     #   - mm_dx_events_all: full study period (for baseline flags)
     #   - mm_dx_events_id:  ID period only (for index qualification)
-    # ----------------------------------------------------------
     list(
       name = "07a_med_claim_header",
       description = "Extracting medical claim headers from CDM (study period)",
@@ -183,13 +171,11 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
         FROM {work('med_claim_header')}")
     ),
 
-    # ----------------------------------------------------------
     # CONFINEMENT TABLE EXTRACT (per Optum Business Rules Approach 2)
     # Business rules: "inpatient should be restricted to cases where
     # CONF_ID is not NULL from the T_CONFINEMENT table"
     # This validates that CONF_ID corresponds to an actual confinement
     # Per Approach 2: confinement should have associated admission AND discharge dates
-    # ----------------------------------------------------------
     list(
       name = "07b_confinement",
       description = "Extracting confinement records (Optum Approach 2)",
@@ -287,9 +273,7 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
     )
   )
   phase_index_date <- function() list(
-    # ----------------------------------------------------------
     # PHASE 3: INDEX DATE DERIVATION (uses ID period events only)
-    # ----------------------------------------------------------
     list(
       name = "09_mm_inpatient_potential",
       description = "Finding ALL potential inpatient MM index dates (STRICT 203.0x/C90.0x only per spec)",
@@ -389,13 +373,11 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
     )
   )
   phase_enrollment <- function() list(
-    # ----------------------------------------------------------
     # PHASE 4: ENROLLMENT SPANS (using member_enrollment with 30-day gap logic)
     # Per IE spec: Build continuous enrollment spans from raw member_enrollment
     # allowing gaps <= 30 days to be absorbed into continuous spans.
     # This replaces using prebuilt member_cont_enrollment to ensure consistent
     # gap handling logic across baseline and followup periods.
-    # ----------------------------------------------------------
     list(
       name = "13_enrollment_spans",
       description = "Building enrollment spans with 30-day gap logic from member_enrollment",
@@ -439,7 +421,6 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
       qc = glue("SELECT count(DISTINCT PATID) AS n_patients FROM {work('enrollment_spans')}")
     ),
 
-    # ----------------------------------------------------------
     # PHASE 4b: STRICT ENROLLMENT SPANS (NO GAPS) - for CE_3mosf sensitivity
     # Per StudyPop spec: CE_3mosf requires NO allowable gaps
     # This step uses member_enrollment (raw eligibility records) since
@@ -447,7 +428,6 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
     # and cannot be used to detect true enrollment gaps.
     # FIXED: Handle overlapping/nested segments by using max(elig_end) over window
     # instead of lag() which fails when a short segment follows a long one.
-    # ----------------------------------------------------------
     list(
       name = "13b_enrollment_spans_strict",
       description = "Building strict enrollment spans (no gaps, handles overlaps)",
@@ -492,13 +472,11 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
       qc = glue("SELECT count(DISTINCT PATID) AS n_patients FROM {work('enrollment_spans_strict')}")
     ),
 
-    # ----------------------------------------------------------
     # PHASE 5: CE FLAGS (baseline 6 months, follow-up)
     # NOTE: CE_3mosf is computed in Step 23 with death-awareness per IE spec
     # (requires enrollment through min(index+91, death_dt, study_end), no gaps)
     # Per IE spec: Baseline ends at index_date - 1; CE_f checks enrollment on index_date
     # CE_f = 1 when cov_start <= index_date AND cov_end >= index_date (follow-up starts on index)
-    # ----------------------------------------------------------
     list(
       name = "14_ce_flags",
       description = "CRITERION: Continuous enrollment (baseline before index, follow-up from index)",
@@ -534,9 +512,7 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
     )
   )
   phase_demographics <- function() list(
-    # ----------------------------------------------------------
     # PHASE 6: DEMOGRAPHICS
-    # ----------------------------------------------------------
     list(
       name = "15_member_demo",
       description = "Extracting patient demographics (age/gender)",
@@ -555,11 +531,9 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
       qc = glue("SELECT count(*) AS n_patients FROM {work('member_demo')}")
     ),
 
-    # ----------------------------------------------------------
     # PHASE 6b: DEATH DATE DERIVATION
     # Per StudyPop spec: When death date is only available at month-level
     # granularity, the date is generalized to the middle of the month (15th)
-    # ----------------------------------------------------------
     # FIXED: Compute DEATH_DT directly with Dec 31 rule by joining to mm_qualifying
     # Per IE spec: Year-only death uses July 15 UNLESS index_date > July 15, then Dec 31
     # This prevents DEATH_DT < INDEX_DATE which would cause negative FU_DAYS
@@ -632,12 +606,10 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
     )
   )
   phase_clinical_flags <- function() list(
-    # ----------------------------------------------------------
     # PHASE 7: BASELINE MM EVIDENCE FLAG
     # Step 16 (claim_nondiagnostic view) was removed -- it was orphaned and
     # not referenced by any downstream step. The attrition table Step 7
     # requires only >=1 MM dx (strict) in baseline, not non-diagnostic claims.
-    # ----------------------------------------------------------
 
     # Per ATTRITION TABLE Step 7: >=1 medical claim for MM (203.0x/C90.0x) in baseline
     # NOTE: Attrition table does NOT require non-diagnostic; IE criteria PDF row 14 does.
@@ -664,9 +636,7 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
       qc = glue("SELECT sum(MM_BASELINE_EVIDENCE) AS n_with_baseline_mm FROM {work('mm_baseline_evidence_flag')}")
     ),
 
-    # ----------------------------------------------------------
     # PHASE 8: THERAPY EVENTS AND FLAGS
-    # ----------------------------------------------------------
     # Step 18 scans 4 therapy sources, matching the LOT pipeline (S04):
     #   (1) PROC_CD (HCPCS/CPT) on medical claims      [source = MEDICAL_PROC_CD]
     #   (2) BILL_PROC_CD (HCPCS) on medical claims     [source = MEDICAL_BILL_PROC_CD]
@@ -726,11 +696,9 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
         FROM {work('therapy_events')}")
     ),
 
-    # ----------------------------------------------------------
     # FIXED: Join death_dt to therapy_flags so follow-up therapy is bounded by death date
     # This prevents counting therapy after death (data quality issue) and ensures
     # that patients who die are not incorrectly included due to post-death claims
-    # ----------------------------------------------------------
     list(
       name = "19_therapy_flags",
       description = "CRITERION: MM therapy in baseline/follow-up (death-aware)",
@@ -758,10 +726,8 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
     )
   )
   phase_exclusions <- function() list(
-    # ----------------------------------------------------------
     # PHASE 9: EXCLUSION FLAGS (pregnancy, clinical trial, other cancer)
     # Each is an independent flag per StudyPop spec
-    # ----------------------------------------------------------
     # Per IE spec: "1 of medical claim with a diagnosis, procedure, or revenue code
     # indicating pregnancy or childbirth during the baseline or follow-up period"
     # FIXED: Added revenue code (RVNU_CD) support per spec requirement
@@ -981,14 +947,12 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
     )
   )
   phase_assembly <- function() list(
-    # ----------------------------------------------------------
     # PHASE 10: FINAL ASSEMBLY - ELIG_COH with all flags
     # FIXED: Added Death_dt, proper ENDDATE/FU_DAYS per StudyPop spec:
     #   - ENDDATE = min(Death_dt, study_end)
     #   - ENDDATE_CE = min(Death_dt, disenrollment, study_end)
     #   - FU_DAYS = datediff(ENDDATE, index_date + 1) + 1  (follow-up starts day after index)
     #   - FU_DAYS_CE = datediff(ENDDATE_CE, index_date + 1) + 1
-    # ----------------------------------------------------------
     list(
       name = "23_ELIG_COH_ALLFLAGS",
       description = "Assembling cohort with all flags",
@@ -1101,9 +1065,7 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
       qc = glue("SELECT count(*) AS n_final_cohort FROM {work(cfg$final_table_name)}")
     ),
 
-    # ----------------------------------------------------------
     # STEP 24b: PERSIST FINAL COHORT TO PERSONAL SCHEMA
-    # ----------------------------------------------------------
     # Uses lazy table approach to save final cohort as permanent table
     # in user's personal schema. Set PERSIST_TO_SCHEMA=FALSE to skip.
 

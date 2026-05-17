@@ -1,11 +1,6 @@
-# ============================================================
-# dashboard_lot.R — Visualization helpers + dashboard builder
-# ============================================================
-# Extracted from lot_program.R during modularization.
-# Contains: package checks, palettes, theme, save helpers,
-#           dashboard collector, and build_dashboard() HTML generator.
-# Requires: cfg (from config_lot.R), log_msg (from db_utils_lot.R)
-# ============================================================
+# Visualization helpers and the combined-HTML dashboard builder:
+# package checks, palette, theme, save helpers, the dashboard
+# collector, and build_dashboard().
 
 has_ggplot2 <- requireNamespace("ggplot2", quietly = TRUE)
 has_plotly  <- requireNamespace("plotly", quietly = TRUE) &&
@@ -108,7 +103,7 @@ save_table <- function(df, section, title) {
   })
 }
 
-# Add a raw HTML card to the dashboard (for overview/QC — no htmlwidget needed)
+# Add a raw HTML card to the dashboard (for overview/QC - no htmlwidget needed)
 add_html_card <- function(html_content, section, title) {
   if (!isTRUE(cfg$build_dashboard)) return(invisible(NULL))
   dashboard_items[[length(dashboard_items) + 1]] <<- list(

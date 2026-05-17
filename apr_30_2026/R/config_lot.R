@@ -1,9 +1,5 @@
-# ============================================================
-# config_lot.R — Configuration for LOT Part 2 pipeline
-# ============================================================
-# Extracted from lot_program.R during modularization.
-# All parameters use Sys.getenv() with sensible defaults.
-# ============================================================
+# Configuration for the LOT Part 2 pipeline. All parameters read from
+# Sys.getenv() with defaults.
 
 suppressPackageStartupMessages({
   library(DBI)
@@ -50,7 +46,7 @@ cfg <- list(
   # built cohort. Read from the same env var so one override covers both.
   outpatient_window = as.integer(Sys.getenv("OUTPATIENT_WINDOW", unset = "90")),
 
-  # Code list sourcing — CSV-only (no embedded fallbacks)
+  # Code list sourcing - CSV-only (no embedded fallbacks)
   codelist_dir = Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist"),
 
   # SCT parameters (per sct.pdf spec section 7)

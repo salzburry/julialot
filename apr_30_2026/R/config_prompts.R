@@ -1,6 +1,4 @@
-# ============================================================
-# config_prompts.R — Configuration defaults, env-var loading, prompts
-# ============================================================
+# Configuration defaults, env-var loading, and interactive prompts.
 
 # ---- Prompting control ----
 # Static mode: non-interactive Rscript uses env-var/config defaults (no prompts)
@@ -19,11 +17,8 @@ validate_outpatient_window <- function(x, default = 90L) {
   x
 }
 
-# ============================================================
-# CONFIGURATION DEFAULTS (template — never mutated after load)
-# ============================================================
-# The finalized cfg is produced by finalize_cfg() and returned
-# as a local value; this template is the seed.
+# ---- Configuration defaults ----
+# Template seed only; finalize_cfg() returns the live cfg as a local.
 cfg_defaults <- list(
   # ---- Databricks / ODBC ----
   dsn         = Sys.getenv("DATABRICKS_DSN", unset = "RWDE"),
@@ -119,7 +114,7 @@ cfg_defaults <- list(
   # attrition/spec cohort rather than the Step 6 working cohort. Flags are
   # still computed in ELIG_COH_ALLFLAGS for ad-hoc sensitivity analyses; set
   # the corresponding env var to "FALSE" to drop an exclusion at runtime.
-  # Prior default (2026-04-14 stakeholder decision): all FALSE — kept the
+  # Prior default (2026-04-14 stakeholder decision): all FALSE - kept the
   # working cohort at Step 6 (~21k patients) for ad-hoc work. Superseded by
   # spec-alignment pass 2026-04-21.
   apply_pregnancy_excl   = as.logical(Sys.getenv("APPLY_PREGNANCY_EXCL",   unset = "TRUE")),
@@ -129,7 +124,7 @@ cfg_defaults <- list(
 
   # ---- Disenrollment censoring (sensitivity flag) ----
   # FALSE (primary): IE follow-up window is min(study_end, death). Disenrolled
-  #                  patients keep contributing follow-up — same as LOT primary.
+  #                  patients keep contributing follow-up - same as LOT primary.
   # TRUE  (sensitivity): IE follow-up window also caps at last continuous-enrollment
   #                  end (ENDDATE_CE), matching the LOT sensitivity branch.
   # Read from the same env var as Part 2's config_lot.R so a single override flips
@@ -146,12 +141,9 @@ cfg_defaults <- list(
 CHECKPOINT_STEPS <- c("mm_dx_events_all", "mm_qualifying", "ELIG_COH_ALLFLAGS")
 run_id <- Sys.getenv("DOMINO_RUN_ID", unset = format(Sys.time(), "%Y%m%d%H%M%S"))
 
-# ============================================================
-# INTERACTIVE PROMPTS
-# ============================================================
+# ---- Interactive prompts ----
 
-# Prompt for study parameters (dates, schemas, windows)
-# Reads initial values from base_cfg (the defaults template)
+# Prompt for study parameters (dates, schemas, windows), seeded from base_cfg.
 prompt_user_options <- function(base_cfg = cfg_defaults) {
   user_cfg <- list(
     cdm_schema  = base_cfg$cdm_schema,
@@ -327,7 +319,7 @@ prompt_ie_criteria <- function(base_cfg = cfg_defaults) {
 
 # ---- Apply user selections to cfg ----
 # Merges base defaults with user/IE overrides and returns a new list.
-# No global mutation — the caller holds the finalized cfg as a local.
+# No global mutation - the caller holds the finalized cfg as a local.
 finalize_cfg <- function(base_cfg, user_cfg, ie_criteria) {
   out <- base_cfg
   out$cdm_schema  <- Sys.getenv("OPTUM_CDM_SCHEMA",    unset = user_cfg$cdm_schema)

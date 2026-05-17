@@ -1,27 +1,23 @@
 #!/usr/bin/env Rscript
-# ============================================================
-# lot2_5_program.R - Standalone runner for LOT 2-5
-#
-# Builds LOT_LONG (one row per PATID x LOT_NUM, for LOT_NUM 1..5) per
-# the LOT 2-5 spec (lot2to5_spec_DRAFT_apr30.xlsx). Does NOT modify
-# lot_program.R or any LOT1 module.
+# Standalone runner for LOT 2-5. Builds LOT_LONG (one row per
+# PATID x LOT_NUM, LOT_NUM 1..5) per the LOT 2-5 spec
+# (lot2to5_spec_DRAFT_apr30.xlsx). Does not modify any LOT1 module.
 #
 # Prerequisites in the work schema (persisted by lot_program.R):
-#   MAP_STACKED, LOT1_SCT, LOT1_BASE_END, ELIG_COH_FINAL
-#   (or whatever cfg$input_cohort_table points to).
+#   MAP_STACKED, LOT1_SCT, LOT1_BASE_END, and cfg$input_cohort_table
+#   (default ELIG_COH_FINAL).
 #
-# All session-scoped temp views needed by the builder (lot_patient_input,
+# Session-scoped temp views the builder needs (lot_patient_input,
 # sct_codelist, sct_claims_raw, tx_auto_dates, tx_allo_cart_dates,
-# mma_rollup, permissible_subs) are rebuilt here from CSV codelists +
-# the persisted CDM / cohort tables.
+# mma_rollup, permissible_subs) are rebuilt here from the CSV codelists
+# and the persisted CDM/cohort tables.
 #
-# Configuration overrides (env vars):
-#   INDUCTION_WINDOW_DAYS_LOT_N    default 30
-#   CART_CONSOLIDATION_DAYS        default 45
-#   SCT_TANDEM_DAYS                default 180
-#   ALLO_LOT_SPAN                  default "single_day"  ("extend_to_next")
-#   MAX_LOT                        default 5
-# ============================================================
+# Env-var overrides:
+#   INDUCTION_WINDOW_DAYS_LOT_N  default 30
+#   CART_CONSOLIDATION_DAYS      default 45
+#   SCT_TANDEM_DAYS              default 180
+#   ALLO_LOT_SPAN                default "single_day" ("extend_to_next")
+#   MAX_LOT                      default 5
 
 .script_dir <- local({
   args <- commandArgs(trailingOnly = FALSE)
