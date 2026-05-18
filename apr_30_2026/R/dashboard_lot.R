@@ -243,11 +243,12 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
 <title>', header_title, '</title>
 ', plotly_script_tag, '
 <style>
-  /* GSK-style palette. These approximate the GSK brand; drop exact
+  /* GSK-style palette: orange + white (not orange + dark). Drop exact
      brand hexes into :root to retune everything centrally. */
   :root{
     --gsk-orange:#F36633; --gsk-orange-d:#D24E1F; --gsk-orange-l:#FFE6DC;
-    --gsk-sidebar:#20232E; --gsk-sidebar-2:#2B3040; --gsk-sidebar-h:#39405440;
+    --gsk-sidebar:#FFFFFF; --gsk-sidebar-2:#FFF3EE; --gsk-sidebar-h:#F366331A;
+    --gsk-sidebar-tx:#33343D; --gsk-sidebar-mut:#7A7F8C; --gsk-sidebar-bd:#EADFD9;
     --bg:#F4F5F7; --card:#FFFFFF; --text:#2A2A33; --muted:#6B7280;
     --border:#E5E7EB; --accent:#0E7C7B;
   }
@@ -257,50 +258,53 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     background: var(--bg); color: var(--text); display: flex;
   }
-  /* ---- Sidebar ---- */
+  /* ---- Sidebar (GSK orange + white) ---- */
   .sidebar {
     width: 280px; min-width: 280px; height: 100vh; overflow-y: auto;
-    background: var(--gsk-sidebar); color: #E8EAF0;
+    background: var(--gsk-sidebar); color: var(--gsk-sidebar-tx);
+    border-right: 1px solid var(--gsk-sidebar-bd);
     position: sticky; top: 0; display: flex; flex-direction: column;
   }
   .sb-brand {
-    padding: 20px 18px 16px; border-bottom: 1px solid #ffffff14;
+    padding: 20px 18px 16px;
     background: linear-gradient(135deg, var(--gsk-orange) 0%, var(--gsk-orange-d) 100%);
     color: #fff;
   }
   .sb-brand h1 { font-size: 17px; font-weight: 800; line-height: 1.25; }
-  .sb-brand p  { font-size: 11px; opacity: 0.92; margin-top: 5px; }
+  .sb-brand p  { font-size: 11px; opacity: 0.95; margin-top: 5px; }
   .sb-search { padding: 12px 14px; }
   .sb-search input {
-    width: 100%; padding: 9px 12px; border: 0; border-radius: 7px;
-    background: var(--gsk-sidebar-2); color: #fff; font-size: 13px;
+    width: 100%; padding: 9px 12px; border: 1px solid var(--gsk-sidebar-bd);
+    border-radius: 7px; background: var(--gsk-sidebar-2);
+    color: var(--gsk-sidebar-tx); font-size: 13px;
   }
-  .sb-search input::placeholder { color: #9aa1b3; }
+  .sb-search input::placeholder { color: var(--gsk-sidebar-mut); }
   .sb-search input:focus { outline: 2px solid var(--gsk-orange); }
   .sb-nav { flex: 1; padding: 4px 8px 24px; }
   .grp-h {
     display: flex; align-items: center; gap: 8px; cursor: pointer;
     padding: 9px 10px; margin-top: 4px; border-radius: 6px;
     font-size: 11px; font-weight: 800; letter-spacing: 0.7px;
-    text-transform: uppercase; color: #aab0c2; user-select: none;
+    text-transform: uppercase; color: var(--gsk-sidebar-mut); user-select: none;
   }
-  .grp-h:hover { background: var(--gsk-sidebar-h); color: #fff; }
+  .grp-h:hover { background: var(--gsk-sidebar-h); color: var(--gsk-orange-d); }
   .grp-h .caret { transition: transform 0.15s; font-size: 10px; }
   .grp.collapsed .caret { transform: rotate(-90deg); }
   .grp.collapsed .grp-items { display: none; }
   .grp-count {
-    margin-left: auto; font-size: 10px; background: #ffffff1f;
+    margin-left: auto; font-size: 10px;
+    background: var(--gsk-orange-l); color: var(--gsk-orange-d);
     padding: 1px 7px; border-radius: 10px; font-weight: 700;
   }
   .grp-items { padding: 2px 0 6px; }
   .nav-item {
     display: block; padding: 7px 12px 7px 28px; font-size: 12.5px;
-    color: #c7cbd8; cursor: pointer; border-radius: 6px;
+    color: var(--gsk-sidebar-tx); cursor: pointer; border-radius: 6px;
     border-left: 3px solid transparent; transition: all 0.12s;
   }
-  .nav-item:hover { background: var(--gsk-sidebar-h); color: #fff; }
+  .nav-item:hover { background: var(--gsk-sidebar-h); color: var(--gsk-orange-d); }
   .nav-item.active {
-    background: #ffffff10; color: #fff; font-weight: 700;
+    background: var(--gsk-orange-l); color: var(--gsk-orange-d); font-weight: 700;
     border-left-color: var(--gsk-orange);
   }
   .nav-item.hidden, .grp.hidden { display: none; }
@@ -335,7 +339,7 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
   .main.fs .topbar { position: fixed; left: 0; right: 0; }
   .main.fs { position: fixed; inset: 0; z-index: 9999; background: var(--bg); }
   .main.fs .content { padding-top: 70px; }
-  .sb-foot { padding: 14px; font-size: 10.5px; color: #7a8095; }
+  .sb-foot { padding: 14px; font-size: 10.5px; color: var(--gsk-sidebar-mut); }
   @media (max-width: 820px) {
     body { flex-direction: column; }
     .sidebar { width: 100%; min-width: 0; height: auto; position: static; }

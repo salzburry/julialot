@@ -484,10 +484,15 @@ main <- function() {
       "CART"     = "#C73E1D"
     )
     # One row per patient: furthest LOT + that final LOT's end reason.
+    # PATID is CAST AS STRING at the warehouse: some ODBC drivers return
+    # the BIGINT PATID to R as a numeric/scientific double, which then
+    # never matches back in the `WHERE PATID IN (...)` list below (the
+    # join inside SQL still uses the raw column, so it is unaffected).
     pat_pick <- db_q(con, glue("
       WITH pm AS (SELECT PATID, max(LOT_NUM) AS max_lot
                   FROM {lot_long} GROUP BY PATID)
-      SELECT pm.PATID, pm.max_lot, ll.LOT_BASE_END_REASON AS terminal_reason
+      SELECT cast(pm.PATID as string) AS PATID, pm.max_lot,
+             ll.LOT_BASE_END_REASON AS terminal_reason
       FROM pm
       JOIN {lot_long} ll ON ll.PATID = pm.PATID AND ll.LOT_NUM = pm.max_lot
     "))
@@ -510,17 +515,18 @@ main <- function() {
       id_list <- paste(sprintf("'%s'", gsub("'", "''", pick_ids)),
                        collapse = ", ")
       jdf <- db_q(con, glue("
-        SELECT PATID, LOT_NUM, LOT_START_TYPE,
+        SELECT cast(PATID as string) AS PATID, LOT_NUM, LOT_START_TYPE,
                cast(cast(LOT_START_DT    as date) as string) AS LOT_START_DT,
                cast(cast(LOT_BASE_END_DT as date) as string) AS LOT_BASE_END_DT,
                LOT_BASE_END_REASON, LOT_BASE_LENGTH, LOT_BASE_MEDS
         FROM {lot_long}
-        WHERE PATID IN ({id_list})
+        WHERE cast(PATID as string) IN ({id_list})
         ORDER BY PATID, LOT_NUM
       "))
-      # Dates come back as clean 'YYYY-MM-DD' strings (the double cast
-      # above removes ODBC driver type ambiguity that previously made
-      # as.Date() return all-NA -> every patient skipped -> 0 journeys).
+      # PATID and dates are stringified at the warehouse so the IN-list
+      # matches and as.Date() parses. Without the PATID cast, a BIGINT
+      # PATID surfaced in R as a numeric never matched here and every
+      # patient was skipped -> "no usable LOT start dates" / 0 journeys.
       jdf$LOT_NUM         <- as.numeric(jdf$LOT_NUM)
       jdf$LOT_START_DT    <- as.Date(jdf$LOT_START_DT)
       jdf$LOT_BASE_END_DT <- as.Date(jdf$LOT_BASE_END_DT)
