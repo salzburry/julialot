@@ -536,9 +536,10 @@ def build_sct_cart_start(wb):
         ("New MM agent",
          "Any qualifying MM drug starting after LOT_(N-1) ends (MAP_START_DT > LOT_(N-1)_BASE_END_DT), "
          "unless a higher-priority SCT/CAR-T shares that date.",
-         "MAP_START_DT of new agent", "30d induction window.", "n/a",
-         "Any non-steroid, non-biosimilar MM drug after LOT_(N-1) ends starts a LOT, whatever the prior "
-         "LOT's end reason. Same-day priority: SCT_ALLO > CART > SCT_AUTO > MED."),
+         "MAP_START_DT of new agent", "30d induction window.",
+         "MED_ADD or DISCONTINUATION - set by LOT_(N-1)'s own end logic; this trigger does not override it.",
+         "Any non-steroid, non-biosimilar MM drug after LOT_(N-1) ends starts a LOT. "
+         "Same-day priority: SCT_ALLO > CART > SCT_AUTO > MED."),
         ("Death / STUDY_END (PRIMARY)", "Never starts a LOT; ends follow-up.",
          "n/a", "n/a", "DEATH / STUDY_END",
          "Death and study end never start a LOT. Run-out -> DISCONTINUATION. A new drug after run-out "
