@@ -21,7 +21,11 @@ add_to_dashboard <- function(widget, section, title, type = "figure") {
   )
 }
 
-# ---- Shared visual theme and palette ----
+# ---- Shared visual theme and palettes ----
+# One source of truth for both dashboards. Same category -> same colour
+# everywhere; tune here to retune every chart in both. Chosen to read
+# on a white background (no near-black fills) and to keep the SCT family
+# consistent between "start type" and "end reason".
 lot_class_palette <- c(
   "IMMUNOMOD"  = "#2E86AB",
   "PROTINHIB"  = "#A23B72",
@@ -30,14 +34,38 @@ lot_class_palette <- c(
   "STEROID"    = "#44BBA4",
   "ABCMA"      = "#8D5A97",
   "ASLAMF7"    = "#3F88C5",
-  "MELP"       = "#3B1F2B",
+  "MELP"       = "#B5651D",
   "TOPOINHIB"  = "#E94F37",
   "HIST"       = "#5FAD56",
   "NUCLEAR"    = "#F49D37",
   "BLC21"      = "#D72638",
   "ATCELL"     = "#F2D0A4",
-  "UNV"        = "#140F2D",
-  "PLAT"       = "#393E41"
+  "UNV"        = "#7B6D8D",
+  "PLAT"       = "#6E8898"
+)
+
+# LOT start type (used by LOT1-5 charts + the journey Gantt).
+lot_start_palette <- c(
+  "MED"       = "#2E86AB",
+  "SCT_AUTO"  = "#A23B72",
+  "SCT_ALLO"  = "#8D5A97",
+  "SCT_CART"  = "#3F88C5",
+  "CART"      = "#3F88C5",
+  "CART_INIT" = "#44AF69"
+)
+
+# LOT end reason (SCT_* / CART_INIT colours match lot_start_palette).
+lot_reason_palette <- c(
+  "MED_ADD"         = "#F18F01",
+  "DISCONTINUATION" = "#C73E1D",
+  "DEATH"           = "#5C6670",
+  "STUDY_END"       = "#9AA0A6",
+  "DISENROLLMENT"   = "#B0879F",
+  "SCT_AUTO"        = "#A23B72",
+  "SCT_ALLO"        = "#8D5A97",
+  "SCT_CART"        = "#3F88C5",
+  "SCT"             = "#8D5A97",
+  "CART_INIT"       = "#44AF69"
 )
 
 theme_lot <- function(base_size = 13) {

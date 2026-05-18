@@ -801,13 +801,9 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
     if (has_ggplot2 && nrow(end_reasons) > 0) {
       end_reasons$n <- as.numeric(end_reasons$n)
       end_reasons$pct <- 100 * end_reasons$n / sum(end_reasons$n)
-      end_reason_colors <- c(
-        "DISCONTINUATION" = "#C73E1D", "MED_ADD" = "#F18F01",
-        "DEATH" = "#2E86AB", "DISENROLLMENT" = "#5DA9C8",
-        "STUDY_END" = "#8DC4DB", "SCT_AUTO" = "#A23B72",
-        "SCT_ALLO" = "#8D5A97", "SCT_CART" = "#3F88C5", "SCT" = "#393E41",
-        "CART_INIT" = "#44AF69"
-      )
+      # Shared palette (dashboard_lot.R) so the LOT1 and LOT1-5
+      # dashboards colour end reasons identically.
+      end_reason_colors <- lot_reason_palette
       p7 <- ggplot(end_reasons,
                     aes(x = reorder(LOT1_BASE_END_REASON, -n), y = n,
                         fill = LOT1_BASE_END_REASON,
@@ -1823,8 +1819,10 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
       if (has_ggplot2 && nrow(sct_end_reasons) > 0) {
         sct_end_reasons$n <- as.numeric(sct_end_reasons$n)
         sct_end_reasons$pct <- 100 * sct_end_reasons$n / sum(sct_end_reasons$n)
-        sct_type_colors <- c("AUTO" = "#A23B72", "ALLO" = "#8D5A97",
-                             "CART" = "#3F88C5", "OTHER" = "#636e72")
+        sct_type_colors <- c("AUTO"  = lot_start_palette[["SCT_AUTO"]],
+                             "ALLO"  = lot_start_palette[["SCT_ALLO"]],
+                             "CART"  = lot_start_palette[["SCT_CART"]],
+                             "OTHER" = "#636E72")
         p_sct <- ggplot(sct_end_reasons,
                          aes(x = reorder(SCT_END_TYPE, -n), y = n,
                              fill = SCT_END_TYPE,

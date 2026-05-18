@@ -129,6 +129,7 @@ main <- function() {
   if (has_ggplot2 && nrow(st) > 0) {
     p_st <- ggplot(st, aes(x = factor(LOT_NUM), y = n, fill = LOT_START_TYPE)) +
       geom_col(position = "fill", width = 0.7) +
+      scale_fill_manual(values = lot_start_palette, na.value = "grey60") +
       scale_y_continuous(labels = function(x) paste0(x * 100, "%")) +
       labs(title = "LOT start type composition by LOT_NUM",
            x = "LOT_NUM", y = "Share of LOTs", fill = "Start type") +
@@ -149,6 +150,7 @@ main <- function() {
   if (has_ggplot2 && nrow(er) > 0) {
     p_er <- ggplot(er, aes(x = factor(LOT_NUM), y = n, fill = LOT_BASE_END_REASON)) +
       geom_col(position = "fill", width = 0.7) +
+      scale_fill_manual(values = lot_reason_palette, na.value = "grey60") +
       scale_y_continuous(labels = function(x) paste0(x * 100, "%")) +
       labs(title = "LOT end reason composition by LOT_NUM",
            x = "LOT_NUM", y = "Share of LOTs", fill = "End reason") +
@@ -477,12 +479,8 @@ main <- function() {
   # Gantt is a LOT (1..max) rather than a medication MAP. One bar per
   # LOT spans LOT_START_DT -> LOT_BASE_END_DT, colored by start type.
   if (has_plotly) {
-    lot_start_palette <- c(
-      "MED"      = "#2E86AB",
-      "SCT_AUTO" = "#A23B72",
-      "SCT_ALLO" = "#F18F01",
-      "CART"     = "#C73E1D"
-    )
+    # lot_start_palette / lot_reason_palette come from dashboard_lot.R
+    # (shared so the same category is the same colour in both dashboards).
     # One row per patient: furthest LOT + that final LOT's end reason.
     # PATID is CAST AS STRING at the warehouse: some ODBC drivers return
     # the BIGINT PATID to R as a numeric/scientific double, which then
