@@ -229,94 +229,85 @@ def build_lot2_5_base(wb):
     rows = [
         # Indexing variables
         ("FU_PD", "LOT_NUM", "Line of therapy number", "2, 3, 4, 5",
-         "Sequential index of the line of therapy after LOT1. LOT2 starts after LOT1 ends; LOT3 after LOT2; etc., up to LOT5.",
+         "LOT number after LOT1, up to LOT5. Each LOT starts after the previous one ends.",
          "n/a",
-         "Derived sequentially. LOT_(N+1)_START_DT must be > LOT_N_BASE_END_DT.",
+         "LOT_(N+1)_START_DT must be > LOT_N_BASE_END_DT.",
          ""),
         ("FU_PD", "LOTN_START_DT", "LOT N start date (N in 2..5)",
          "Date",
-         "Earliest of, after LOT_(N-1)_BASE_END_DT: "
-         "(a) first non-steroid MM oncology agent; "
-         "(b) first ALLO SCT; "
-         "(c) first CAR-T infusion; "
-         "(d) first AUTO SCT, EXCEPT (i) when it falls inside LOT_(N-1)'s applicable window "
-         "(30d for MED/AUTO-started LOTs, 1d for ALLO-started LOTs, 45d for CART-started LOTs) "
-         "or (ii) when it is on/before sct_tandem_days (180d) after the immediately prior AUTO (planned tandem - continuation, not a trigger). "
-         "Permissible biosimilar substitutions do not trigger.",
+         "First of these after LOT_(N-1) ends: (a) a new non-steroid MM drug; (b) an ALLO SCT; "
+         "(c) a CAR-T infusion; (d) an AUTO SCT - but an AUTO does NOT start a LOT if it is inside "
+         "LOT_(N-1)'s window (30d MED/AUTO, 1d ALLO, 45d CART) or is a planned tandem "
+         "(<=180d after the prior AUTO). Biosimilar swaps never trigger.",
          "CL_MMA_CODELIST, CL_SCT_CODELIST, CL_MMA_ROLLUP",
-         "Source: T_MEDICAL (PROC_CD, BILL_PROC_CD, NDC), T_RX (NDC). Steroids excluded (MAP_MED_CLASS != 'STEROID'). "
-         "LOT2-5 only; LOT1 retains protocol convention that first AUTO is part of induction.",
+         "From T_MEDICAL / T_RX. Steroids excluded. LOT2-5 only; in LOT1 the first AUTO is induction.",
          ""),
         ("FU_PD", "LOTN_START_TYPE", "Trigger that started LOT N",
          "MED / SCT_AUTO / SCT_ALLO / CART",
-         "Type of the earliest qualifying trigger.",
+         "Type of the trigger.",
          "n/a",
-         "Same-day tie-break (Q14 resolved, inherits LOT1): SCT_ALLO > CART > SCT_AUTO > MED.",
+         "Same-day tie-break: SCT_ALLO > CART > SCT_AUTO > MED.",
          ""),
         ("FU_PD", "INDUCTION_WINDOW_DAYS", "Induction window",
          "30",
-         "Window for identifying LOT N regimen. (LOT1 uses 60.) "
-         "If the patient is right-censored before the end of the 30-day window, the window closes at the censor date.",
+         "Window for picking up the LOT N regimen (LOT1 uses 60). Closes early if the patient is censored first.",
          "n/a",
-         "MAP_START_DT in [LOTN_START_DT, min(LOTN_START_DT + 29, OBS_END_DT)] = induction.",
+         "Induction = MAP_START_DT in [LOTN_START_DT, min(LOTN_START_DT + 29, OBS_END_DT)].",
          ""),
         ("FU_PD", "LOTN_BASE_MEDS", "LOT N induction medications",
          "Comma list of MED_ABBR",
-         "Non-steroid MM oncology agents within the 30-day induction window. Permissible biosimilar substitutions do not advance the regimen.",
+         "Non-steroid MM drugs in the 30-day induction window. Biosimilar swaps do not change the regimen.",
          "CL_MMA_CODELIST, CL_MMA_ROLLUP",
-         "Filter MAP_MED_CLASS != 'STEROID'.",
+         "Exclude steroids (MAP_MED_CLASS != 'STEROID').",
          ""),
         ("FU_PD", "LOTN_MED_CNT", "Distinct induction agents",
          "Integer",
-         "Count of distinct MED_ABBR in LOTN_BASE_MEDS.",
+         "Number of distinct drugs in LOTN_BASE_MEDS.",
          "n/a", "", ""),
         ("FU_PD", "LOTN_MED_[MED]", "Per-medication induction flags",
          "0 / 1",
-         "One flag column per non-steroid MED_ABBR in CL_MMA_ROLLUP (e.g. LOTN_MED_BORT, LOTN_MED_LENA, LOTN_MED_DARA, ...). "
-         "= 1 if that medication is in LOTN_BASE_MEDS.",
+         "One flag per non-steroid drug (e.g. LOTN_MED_BORT, LOTN_MED_DARA). 1 if the drug is in LOTN_BASE_MEDS.",
          "CL_MMA_ROLLUP",
-         "Mirror LOT1 dynamic flag generation; steroid abbreviations excluded.",
+         "Same dynamic flags as LOT1; steroids excluded.",
          ""),
         ("FU_PD", "LOTN_CLASS_[CLASS]", "Per-class induction flags",
          "0 / 1",
-         "One flag column per non-steroid MED_CLASS in CL_MMA_ROLLUP (e.g. LOTN_CLASS_PROTINHIB, LOTN_CLASS_IMMUNOMOD, ...). "
-         "= 1 if any LOTN_BASE_MEDS agent has that class.",
+         "One flag per non-steroid class (e.g. LOTN_CLASS_IMMUNOMOD). 1 if any LOTN_BASE_MEDS drug is in that class.",
          "CL_MMA_ROLLUP",
-         "Mirror LOT1 dynamic class flag generation.",
+         "Same as LOT1.",
          ""),
-        # SCT-as-start-of-LOT inheritance flags (TODO: confirm prefix LOTN_TX_ vs LOTN_SCT_ - LOT1 uses LOT1_SCT_AUTO_*FLG)
+        # SCT-as-start-of-LOT inheritance flags
         ("FU_PD", "LOTN_TX_AUTO_FLG", "Any valid AUTO SCT during LOT N", "0/1",
-         "Patient had >=1 valid AUTO during LOT N.",
+         "1 if the patient had >=1 valid AUTO during LOT N.",
          "CL_SCT_CODELIST (AUTO)",
-         "Inherit LOT1 SCT logic: 14-day windowing, 60-day gap validation.", ""),
+         "Same SCT logic as LOT1.", ""),
         ("FU_PD", "LOTN_TX_AUTO_SING_FLG", "Single (non-tandem) AUTO during LOT N", "0/1",
-         "AUTO not part of a valid tandem pair.",
+         "1 if the AUTO is not part of a tandem pair.",
          "CL_SCT_CODELIST", "", ""),
         ("FU_PD", "LOTN_TX_AUTO_TAND_FLG", "Planned tandem AUTO during LOT N", "0/1",
-         "Two AUTOs within 180 days = planned tandem.",
+         "1 if two AUTOs are <=180 days apart.",
          "CL_SCT_CODELIST",
-         "Use datediff without +1.", ""),
+         "datediff, no +1.", ""),
         ("FU_PD", "LOTN_TX_AUTO_DT_1 / LOTN_TX_AUTO_DT_2",
          "First / second valid AUTO date in LOT N", "Date / Date",
-         "DT_2 populated only if planned tandem.",
+         "DT_2 only set for a planned tandem.",
          "CL_SCT_CODELIST", "", ""),
         ("FU_PD", "LOTN_TX_AUTO_MAX_DT", "Latest valid AUTO in LOT N", "Date",
-         "AUTO_DT_2 if tandem else AUTO_DT_1 else NULL.",
+         "AUTO_DT_2 if tandem, else AUTO_DT_1, else NULL.",
          "CL_SCT_CODELIST", "", ""),
         ("FU_PD", "contains_mtx_reg_LOTN", "LOT N regimen contains valid maintenance subset", "0/1",
-         "Flag is 1 when LOT N induction has BOTH (a) >=1 valid mono-maintenance agent OR a valid dual combo, AND (b) an anchor agent. "
+         "1 when induction has BOTH (a) a mono-maintenance drug or a valid dual combo, AND (b) an anchor drug. "
          "Mono: LENA, BORT, DARA, IXAZ, THAL. Dual: BORT+LENA, CARF+LENA, DARA+LENA.",
          "CL_MMA_ROLLUP",
-         "Descriptive flag; no standalone maintenance LOT.", ""),
+         "Descriptive only; no separate maintenance LOT.", ""),
         ("FU_PD", "LOTN_ALLO_LOT_FLG", "LOT N is an ALLO SCT line", "0/1",
-         "Flag is 1 when LOTN_START_TYPE = SCT_ALLO. ALLO LOT contains no MM therapies "
-         "and spans a single day: start = end = ALLO_DT. ALLO is treated as a punctuation event "
-         "between LOTs; the next MM agent starts the following LOT.",
+         "1 when START_TYPE = SCT_ALLO. An ALLO LOT has no MM drugs and lasts one day "
+         "(start = end = ALLO_DT). The next MM drug starts the following LOT.",
          "CL_SCT_CODELIST (ALLO)", "", ""),
         ("FU_PD", "LOTN_CART_LOT_FLG", "LOT N is a CAR-T line", "0/1",
-         "Flag is 1 when LOTN_START_TYPE = CART. Agents within 45 days of FIRST_CART_DT are consolidated into LOT N (study-team decision).",
+         "1 when START_TYPE = CART. Drugs within 45 days of FIRST_CART_DT belong to this LOT.",
          "CL_SCT_CODELIST (CART)",
-         "Do NOT advance to LOT_(N+1) for consolidated agents.", ""),
+         "Consolidated drugs do not start LOT_(N+1).", ""),
     ]
     write_rows(ws, 2, rows, col_widths=[10, 30, 32, 22, 70, 30, 60, 18])
     ws.row_dimensions[1].height = 36
@@ -327,11 +318,11 @@ def build_lot2_5_base(wb):
 
     # Example A: medication-triggered LOT2
     ex_a_narrative = (
-        "VRd in LOT1; DARA added 2025-08-20 (LOT1 ends 2025-08-19, MED_ADD). LENA refills present within 30d. No SCT/CAR-T."
+        "VRd in LOT1; DARA added 2025-08-20 (LOT1 ends 2025-08-19). LENA refills within 30d. No SCT/CAR-T."
     )
     ex_a_table = [
         ("LOT_NUM", "2", ""),
-        ("LOTN_START_DT", "2025-08-20", "Earliest trigger after LOT1_BASE_END_DT (2025-08-19) = DARA."),
+        ("LOTN_START_DT", "2025-08-20", "First trigger after LOT1 ends = DARA."),
         ("LOTN_START_TYPE", "MED", ""),
         ("LOTN_BASE_MEDS", "DARA, LENA", "Window [2025-08-20, 2025-09-18]. DEXA excluded (steroid)."),
         ("LOTN_MED_CNT", "2", ""),
@@ -339,51 +330,48 @@ def build_lot2_5_base(wb):
         ("LOTN_MED_LENA", "1", ""),
         ("LOTN_CLASS_ANTICD38", "1", "DARA."),
         ("LOTN_CLASS_IMMUNOMOD", "1", "LENA."),
-        ("contains_mtx_reg_LOTN", "1", "DARA + LENA is a valid dual maintenance regimen; the two agents anchor each other."),
+        ("contains_mtx_reg_LOTN", "1", "DARA+LENA is a valid maintenance pair."),
         ("LOTN_ALLO_LOT_FLG / LOTN_CART_LOT_FLG", "0 / 0", ""),
     ]
-    next_row = write_example_block(ws, next_row, "WORKED EXAMPLE A - LOT2 starts on a new medication",
+    next_row = write_example_block(ws, next_row, "WORKED EXAMPLE A - LOT2 starts on a new drug",
                                    ex_a_narrative, ex_a_table, ncols) + 2
 
     # Example B: ALLO-started LOT
     ex_b_narrative = (
-        "VRd in LOT1; ALLO on 2025-09-15 (LOT1 ends 2025-09-14). Next MM therapy DARA on 2025-12-10 starts LOT3."
+        "VRd in LOT1; ALLO on 2025-09-15 (LOT1 ends 2025-09-14). DARA on 2025-12-10 starts LOT3."
     )
     ex_b_table = [
         ("LOT_NUM", "2", ""),
-        ("LOTN_START_DT", "2025-09-15", "ALLO_DT (always starts a new LOT)."),
+        ("LOTN_START_DT", "2025-09-15", "ALLO always starts a new LOT."),
         ("LOTN_START_TYPE", "SCT_ALLO", ""),
-        ("LOTN_BASE_MEDS", "(empty)", "ALLO LOT contains NO MM therapies."),
+        ("LOTN_BASE_MEDS", "(empty)", "ALLO LOT has no MM drugs."),
         ("LOTN_MED_CNT", "0", ""),
         ("LOTN_ALLO_LOT_FLG", "1", ""),
-        ("LOTN_BASE_END_DT", "2025-09-15", "ALLO LOT spans a single day, so end = ALLO_DT."),
+        ("LOTN_BASE_END_DT", "2025-09-15", "ALLO LOT = 1 day."),
         ("LOTN_BASE_END_REASON", "SCT_ALLO", ""),
-        ("LOT3_START_DT", "2025-12-10", "DARA - first MM agent after LOT2."),
+        ("LOT3_START_DT", "2025-12-10", "First MM drug after LOT2."),
     ]
     next_row = write_example_block(ws, next_row, "WORKED EXAMPLE B - LOT2 starts on an allogeneic SCT",
                                    ex_b_narrative, ex_b_table, ncols) + 2
 
-    # Example C: AUTO triggers LOT3 from LOT2 (Q16: LOT2-5 only; LOT1 unchanged)
+    # Example C: AUTO triggers LOT3 (LOT2-5 only)
     ex_c_narrative = (
-        "LOT1 ends 2025-04-30 via DISCONTINUATION (VRd run-out, no SCT during LOT1). "
-        "LOT2 starts 2025-08-20 via MED_ADD (DARA + LENA, 30d induction window). "
-        "First-ever AUTO occurs 2025-12-10, well outside LOT2's 30d induction window "
-        "(2025-08-20 to 2025-09-18) and not within sct_tandem_days (<=180d) of any prior AUTO. "
-        "Per Q16 (LOT2-5 only), this first-ever AUTO triggers LOT3 starting on the AUTO date. "
-        "(LOT1 itself is unchanged - first AUTO in LOT1 would still be protocol-mandated induction.)"
+        "LOT1 ends 2025-04-30 (DISCONTINUATION). LOT2 is MED-started 2025-08-20 (DARA+LENA). "
+        "A first-ever AUTO on 2025-12-10 is outside LOT2's 30d window and not a tandem, so it "
+        "starts LOT3. (LOT2-5 only; in LOT1 the first AUTO would still be induction.)"
     )
     ex_c_table = [
         ("LOT_NUM", "3", ""),
-        ("LOTN_START_DT", "2025-12-10", "AUTO outside LOT2's 30d window (LOT2 was MED-started) and not a planned tandem."),
-        ("LOTN_START_TYPE", "SCT_AUTO", "AUTO is a first-class LOT-start trigger for LOT2-5 (Q16). Planned tandem (within sct_tandem_days = 180d of a prior AUTO) would NOT start a new LOT."),
-        ("LOTN_BASE_MEDS", "(empty)", "No MM therapies recorded in the [2025-12-10, 2026-01-08] post-AUTO induction window."),
-        ("LOTN_MED_CNT", "0", "AUTO-only LOT; med count is 0."),
-        ("INDUCTION_WINDOW_DAYS", "30", "LOT3 captures any post-AUTO agents within [2025-12-10, 2026-01-08]."),
-        ("LOTN_TX_AUTO_FLG", "1", "AUTO occurred during LOT3."),
-        ("LOTN_TX_AUTO_SING_FLG", "1", "Single AUTO during LOT3 (no second AUTO within tandem window)."),
+        ("LOTN_START_DT", "2025-12-10", "AUTO outside LOT2's 30d window, not a tandem."),
+        ("LOTN_START_TYPE", "SCT_AUTO", "A first-ever AUTO can start a LOT (LOT2-5 only)."),
+        ("LOTN_BASE_MEDS", "(empty)", "No MM drugs in the post-AUTO window [2025-12-10, 2026-01-08]."),
+        ("LOTN_MED_CNT", "0", "AUTO-only LOT."),
+        ("INDUCTION_WINDOW_DAYS", "30", "Post-AUTO window [2025-12-10, 2026-01-08]."),
+        ("LOTN_TX_AUTO_FLG", "1", "AUTO during LOT3."),
+        ("LOTN_TX_AUTO_SING_FLG", "1", "Single AUTO (no tandem)."),
         ("LOTN_TX_AUTO_TAND_FLG", "0", ""),
     ]
-    next_row = write_example_block(ws, next_row, "WORKED EXAMPLE C - LOT3 starts on an AUTO (first-ever; LOT2 ended outside its induction window)",
+    next_row = write_example_block(ws, next_row, "WORKED EXAMPLE C - LOT3 starts on a first-ever AUTO",
                                    ex_c_narrative, ex_c_table, ncols) + 2
 
 
@@ -402,83 +390,71 @@ def build_lot2_5_base_end(wb):
 
     rows = [
         ("FU_PD", "LOTN_END_DT_TEMP", "Temporary LOT N end date", "Date",
-         "PRIMARY: earliest of (1) all-agent discontinuation (run-out date); (2) new qualifying MM agent (day before MAP_START_DT); "
-         "(3) ALLO SCT (day before); (4) AUTO that triggers a new LOT (day before), per the LOTN_START_DT trigger rule "
-         "(any AUTO outside LOT N's applicable window and not within sct_tandem_days (<=180d) of a prior AUTO); "
+         "PRIMARY: the earliest of (1) run-out (all drugs gone); (2) a new MM drug (day before its start); "
+         "(3) ALLO SCT (day before); (4) an AUTO that starts a new LOT (day before); "
          "(5) CAR-T (day before FIRST_CART_DT); "
-         "(6) CART_INIT: when CAR-T occurs within 45 days of the first new agent that breaks LOT N, the new agent is consolidated into CART_INIT and the LOT ends at FIRST_CART_DT - 1; "
-         "(7) death (YMDOD); (8) study_end. "
-         "Disenrollment is NOT a primary end event. "
-         "SENSITIVITY: additionally cap at ENDDATE_CE when CENSOR_AT_DISENROLLMENT = TRUE.",
+         "(6) CART_INIT - CAR-T within 45 days of the first drug that breaks LOT N (LOT ends FIRST_CART_DT - 1); "
+         "(7) death; (8) study end. Disenrollment is not a primary end. "
+         "SENSITIVITY: also cap at ENDDATE_CE when CENSOR_AT_DISENROLLMENT = TRUE.",
          "T_MEDICAL/T_RX, T_DOD, study_end; SENSITIVITY: T_MEMBER_CONT_ENROLLMENT (ELIGEND)",
-         "Primary path inherits LOT1 logic; only induction window differs.", ""),
+         "Same as LOT1 except the induction window.", ""),
         ("FU_PD", "LOTN_BASE_DISCON_DT", "LOT N run-out date (last med date)", "Date",
-         "max(MAP_END_DT) across LOT N induction agents - i.e., the last day of supply for any drug in the regimen. "
-         "Populated whenever a runout exists, INCLUDING when a higher-priority reason (DEATH, SCT, etc.) wins the LOT end. "
-         "Used as LOTN_BASE_END_DT only when LOTN_BASE_END_REASON = DISCONTINUATION.",
+         "Last day of supply across LOT N drugs (max MAP_END_DT). Always set when a run-out exists, "
+         "even if a higher-priority reason (death, SCT) ends the LOT. Used as the end date only when reason = DISCONTINUATION.",
          "CL_MMA_CODELIST",
-         "T_MEDICAL: FST_DT + medical_day_supply - 1. T_RX: FILL_DT + DAYS_SUP - 1. Missing DAY_SUPPLY -> 28d default (do not delete claims). "
-         "There is only ONE 90-day rule in the pipeline: the MAP-level per-drug rule (map_discon_gap_days). "
-         "It says a drug is discontinued if there is no refill within 90 days. There is no additional LOT-level wait on top of that.",
+         "T_MEDICAL: FST_DT + medical_day_supply - 1. T_RX: FILL_DT + DAYS_SUP - 1. "
+         "Missing DAY_SUPPLY -> 28d (keep claims). Only one 90-day rule exists: the per-drug MAP rule "
+         "(no refill in 90d = discontinued). No extra LOT-level wait.",
          ""),
         ("FU_PD", "LOTN_BASE_1ST_ADD_MED_DT / LOTN_BASE_1ST_ADD_MED",
          "First non-induction agent during LOT N", "Date / MED_ABBR",
-         "First non-steroid MM agent after the induction window with MAP_START_DT <= LOTN_BASE_DISCON_DT, not in LOTN_BASE_MEDS or its biosimilar.",
+         "First non-steroid MM drug after the induction window, on/before run-out, not in LOTN_BASE_MEDS or a biosimilar of it.",
          "CL_MMA_CODELIST, permissible_subs",
-         "Audit / debug output column (emitted to LOT_LONG), not a primary analysis variable. "
-         "Check permissible_subs before classifying as a new add.", ""),
+         "Audit/debug output (in LOT_LONG), not a primary variable. Check permissible_subs first.", ""),
         ("FU_PD", "ALLO_ALWAYS_ENDS_LOT", "ALLO always ends current LOT", "TRUE",
-         "Any ALLO ends current LOT day before ALLO, and starts a new ALLO LOT.",
+         "Any ALLO ends the current LOT the day before, and starts a new ALLO LOT.",
          "CL_SCT_CODELIST (ALLO)", "", ""),
         ("FU_PD", "AUTO_TANDEM_WINDOW", "Tandem AUTO window",
          "< 60d: same event; 60-180d: tandem; > 180d: new LOT",
-         "AUTO claims are first grouped into discrete transplant events in tx_auto_dates. "
-         "Two AUTO claims/events LESS THAN 60 days apart are treated as the SAME AUTO event - "
-         "the near-duplicate is not a separate AUTO event, so it forms no tandem pairing and is "
-         "not a separate trigger (the retained single AUTO event is still evaluated by the normal trigger rule). "
-         "Among distinct AUTO events: a second AUTO 60-180 days after the first is a planned tandem "
-         "(continuation, same LOT, no new trigger); an AUTO more than 180 days after the prior AUTO is "
-         "unplanned and starts a new LOT if it also falls outside LOT N's applicable window.",
+         "AUTOs are grouped into events first. Two AUTOs <60 days apart = ONE event (the close one is "
+         "not a separate event, so no tandem and no separate trigger). Two distinct AUTOs 60-180 days "
+         "apart = planned tandem (same LOT). An AUTO >180 days after the prior one starts a new LOT if "
+         "it is also outside LOT N's window.",
          "CL_SCT_CODELIST (AUTO)",
-         "Per Julia 13-May: the < 60 d merge is handled upstream in tx_auto_dates "
-         "(sct_auto_gap_days = 60), so tandem classification only needs the <= 180 d "
-         "(sct_tandem_days) upper bound. Matches LOT1's existing behaviour. Use datediff without +1.", ""),
+         "The <60d merge happens upstream (tx_auto_dates, sct_auto_gap_days=60), so tandem only needs "
+         "the <=180d bound. datediff, no +1.", ""),
         ("FU_PD", "CART_CONSOLIDATION_DAYS", "CAR-T consolidation window", "45",
-         "Agents within 45 days of FIRST_CART_DT are consolidated into the CAR-T LOT (study-team decision).",
+         "Drugs within 45 days of FIRST_CART_DT belong to the CAR-T LOT.",
          "CL_SCT_CODELIST (CART)",
-         "Do NOT advance to LOT_(N+1) for consolidated agents.", ""),
+         "Consolidated drugs do not start LOT_(N+1).", ""),
         ("FU_PD", "LOTN_BASE_END_DT", "Final LOT N end date (PRIMARY)", "Date",
-         "Earliest qualifying end event from LOTN_END_DT_TEMP. "
-         "Also: CART_INIT applies when a CAR-T infusion occurs within 45 days of the first new agent that breaks LOT N.",
+         "Earliest qualifying end from LOTN_END_DT_TEMP. CART_INIT applies if CAR-T is within 45 days "
+         "of the first drug that breaks LOT N.",
          "n/a",
-         "ALLO LOT spans a single day, start = end = ALLO_DT. CAR-T LOT spans through last "
-         "consolidation MAP_END_DT. Under CART_INIT the pre-CAR-T bridge agent only marks the "
-         "CART_INIT transition (LOT N ends at FIRST_CART_DT - 1); it does NOT create a separate "
-         "non-CAR-T LOT and is NOT carried into the CAR-T LOT regimen (CAR-T induction meds use "
-         "MAP_START_DT >= FIRST_CART_DT).", ""),
+         "ALLO LOT = 1 day (start = end = ALLO_DT). CAR-T LOT runs to the last consolidation drug's end. "
+         "Under CART_INIT the pre-CAR-T bridge drug only marks the switch (LOT N ends FIRST_CART_DT - 1); "
+         "it does not make its own LOT and is not in the CAR-T regimen (CAR-T meds start on/after FIRST_CART_DT).", ""),
         ("FU_PD", "LOTN_BASE_END_REASON", "Final LOT N end reason (PRIMARY)",
          "SCT_ALLO / SCT_CART / SCT_AUTO / CART_INIT / MED_ADD / DEATH / DISCONTINUATION / STUDY_END",
-         "Reason corresponding to LOTN_BASE_END_DT. DISENROLLMENT only in sensitivity (see *_CE_SENS).",
+         "Reason for LOTN_BASE_END_DT. DISENROLLMENT only in sensitivity (see *_CE_SENS).",
          "n/a",
-         "Same-day / overlapping-event priority (revised per Julia 06-May to keep DEATH above DISCONTINUATION): "
-         "SCT_ALLO > SCT_CART > SCT_AUTO > CART_INIT > MED_ADD > DEATH > DISCONTINUATION > STUDY_END. "
-         "DEATH outranks DISCONTINUATION so patients who run out then die keep REASON = DEATH "
-         "(the runout date is still recorded in LOTN_BASE_DISCON_DT). "
-         "EXCEPTION (Q1.1): if a patient runs out and then starts a new LOT trigger (new MM agent, "
-         "ALLO, CART, or qualifying AUTO) before death, DISCONTINUATION wins at the runout date "
-         "and the new trigger starts LOT N+1 - DEATH does not silently swallow post-runout therapy.",
+         "Priority when events overlap: SCT_ALLO > SCT_CART > SCT_AUTO > CART_INIT > MED_ADD > DEATH > "
+         "DISCONTINUATION > STUDY_END. DEATH beats DISCONTINUATION, so run-out-then-death keeps DEATH "
+         "(run-out date still in LOTN_BASE_DISCON_DT). Exception: if a new LOT trigger (new drug, ALLO, "
+         "CART, qualifying AUTO) happens after run-out but before death, DISCONTINUATION wins at the "
+         "run-out date and the trigger starts LOT N+1.",
          ""),
         ("FU_PD", "LOTN_BASE_END_DT_CE_SENS", "LOT N end date (SENSITIVITY)", "Date",
-         "Same as LOTN_BASE_END_DT, additionally capped at ELIGEND. Emitted when CENSOR_AT_DISENROLLMENT = TRUE.",
-         "T_MEMBER_CONT_ENROLLMENT", "Primary LOTN_BASE_END_DT untouched.", ""),
+         "Same as LOTN_BASE_END_DT but capped at ELIGEND. Emitted when CENSOR_AT_DISENROLLMENT = TRUE.",
+         "T_MEMBER_CONT_ENROLLMENT", "Primary end date unchanged.", ""),
         ("FU_PD", "LOTN_BASE_END_REASON_CE_SENS", "LOT N end reason (SENSITIVITY)",
          "(primary set) + DISENROLLMENT",
          "Same as primary, plus DISENROLLMENT when ELIGEND binds.",
          "n/a",
-         "REQUIRED: emit DISENROLLMENT (do NOT collapse to STUDY_END). Diverges from current LOT1 behaviour.",
+         "Emit DISENROLLMENT (do not collapse to STUDY_END). Differs from LOT1.",
          ""),
         ("FU_PD", "LOTN_BASE_LENGTH", "LOT N duration (days)", "Integer",
-         "If reason = DISCONTINUATION: LOTN_BASE_DISCON_DT - LOTN_START_DT + 1. Else: LOTN_BASE_END_DT - LOTN_START_DT + 1.",
+         "DISCONTINUATION: DISCON_DT - START_DT + 1. Else: END_DT - START_DT + 1.",
          "n/a", "Confirm censored handling (LOT1 M1).", ""),
     ]
     write_rows(ws, 2, rows, col_widths=[10, 30, 32, 30, 80, 30, 60, 18])
@@ -507,9 +483,9 @@ def build_lot2_5_base_end(wb):
         "LOT2 starts 2025-08-20 (DARA+LENA). Last LENA MAP_END_DT 2026-02-06; last DARA 2026-01-15. No new agent, no death, study continues."
     )
     ex_e_table = [
-        ("LOTN_BASE_DISCON_DT", "2026-02-06", "max(MAP_END_DT) across LOT2 induction agents (last med date)."),
-        ("LOTN_BASE_END_DT", "2026-02-06", "Runout = LOT end. The only 90-day rule is the per-drug MAP-level one; there is no separate LOT-level wait."),
-        ("LOTN_BASE_END_REASON", "DISCONTINUATION", "Runout reached; no death or higher-priority event."),
+        ("LOTN_BASE_DISCON_DT", "2026-02-06", "Last med date (max MAP_END_DT) across LOT2 drugs."),
+        ("LOTN_BASE_END_DT", "2026-02-06", "Run-out = LOT end. Only the per-drug 90d rule applies; no LOT-level wait."),
+        ("LOTN_BASE_END_REASON", "DISCONTINUATION", "Run-out reached; nothing higher-priority."),
         ("LOTN_BASE_LENGTH", "171", "2026-02-06 - 2025-08-20 + 1."),
     ]
     next_row = write_example_block(ws, next_row, "WORKED EXAMPLE E - Discontinuation (run-out)",
@@ -543,36 +519,31 @@ def build_sct_cart_start(wb):
 
     rows = [
         ("ALLO SCT", "Always.", "ALLO_DT",
-         "No MM therapies in this LOT.", "SCT_ALLO",
-         "ALLO LOT spans a single day: start = end = ALLO_DT."),
+         "No MM drugs in this LOT.", "SCT_ALLO",
+         "ALLO LOT = 1 day: start = end = ALLO_DT."),
         ("CAR-T", "Always.", "FIRST_CART_DT",
-         "Agents within 45 days of FIRST_CART_DT are consolidated into this LOT.",
-         "SCT_CART (or CART_INIT if CAR-T within 45 days of the first new agent that breaks LOT_(N-1))",
-         "45-day consolidation window (study-team decision). When CART_INIT applies, the pre-CAR-T "
-         "bridge agent only identifies the transition into the CAR-T LOT; it does NOT create a "
-         "separate non-CAR-T LOT (do not advance to LOT_(N+1) for consolidated agents)."),
-        ("AUTO SCT", "Always, UNLESS (i) within LOT_(N-1)'s applicable window "
-         "(30d MED/AUTO, 1d ALLO, 45d CART) or (ii) within sct_tandem_days (<=180d) of a prior AUTO (planned tandem).",
+         "Drugs within 45 days of FIRST_CART_DT belong to this LOT.",
+         "SCT_CART (or CART_INIT if CAR-T within 45 days of the first drug that breaks LOT_(N-1))",
+         "45-day window. Under CART_INIT the pre-CAR-T bridge drug only marks the switch; it does not "
+         "make its own LOT (consolidated drugs do not start LOT_(N+1))."),
+        ("AUTO SCT",
+         "Always, unless (i) inside LOT_(N-1)'s window (30d MED/AUTO, 1d ALLO, 45d CART) or "
+         "(ii) <=180d after a prior AUTO (planned tandem).",
          "AUTO_DT",
          "30d induction from AUTO_DT.", "SCT_AUTO",
-         "First-ever AUTOs CAN trigger a new LOT (LOT2-5 only). LOT1 keeps protocol convention "
-         "that the first AUTO is part of induction. AUTO claims < 60 days apart are merged into a "
-         "single AUTO event upstream (tx_auto_dates, sct_auto_gap_days = 60) and never count as a "
-         "separate trigger or as a tandem."),
+         "A first-ever AUTO can start a LOT (LOT2-5 only; in LOT1 the first AUTO is induction). "
+         "AUTOs <60 days apart are merged into one event upstream and never count as a separate trigger or tandem."),
         ("New MM agent",
-         "Always, when the agent appears strictly after LOT_(N-1)_BASE_END_DT (the prior LOT has "
-         "ended; for medication-driven transitions the agent must also fall outside the prior LOT's "
-         "induction/consolidation window) and no higher-priority SCT/CAR-T event shares that start date.",
+         "Any qualifying MM drug starting after LOT_(N-1) ends (MAP_START_DT > LOT_(N-1)_BASE_END_DT), "
+         "unless a higher-priority SCT/CAR-T shares that date.",
          "MAP_START_DT of new agent", "30d induction window.", "n/a",
-         "Starts a new LOT when a non-steroid, non-biosimilar MM agent appears after "
-         "LOT_(N-1)_BASE_END_DT, regardless of the prior LOT's end reason. Same-day start priority "
-         "still applies: SCT_ALLO > CART > SCT_AUTO > MED."),
+         "Any non-steroid, non-biosimilar MM drug after LOT_(N-1) ends starts a LOT, whatever the prior "
+         "LOT's end reason. Same-day priority: SCT_ALLO > CART > SCT_AUTO > MED."),
         ("Death / STUDY_END (PRIMARY)", "Never starts a LOT; ends follow-up.",
          "n/a", "n/a", "DEATH / STUDY_END",
-         "Death and study end do not start a new LOT. If the patient runs out of regimen therapy, "
-         "the LOT ends as DISCONTINUATION. If the patient starts a new MM therapy after runout, "
-         "that therapy starts the next LOT. Death only becomes the end reason when no next-LOT "
-         "trigger occurs first. Disenrollment is NOT a primary end event."),
+         "Death and study end never start a LOT. Run-out -> DISCONTINUATION. A new drug after run-out "
+         "starts the next LOT. Death is the end reason only if no next-LOT trigger comes first. "
+         "Disenrollment is not a primary end."),
         ("Disenrollment (SENSITIVITY only)", "Never starts a LOT.",
          "n/a", "n/a", "DISENROLLMENT (sensitivity)",
          "Cap via ENDDATE_CE only when CENSOR_AT_DISENROLLMENT = TRUE."),
@@ -594,22 +565,22 @@ def build_scenarios(wb):
     rows = [
         ("S1. LOT1->LOT2 by MED_ADD",
          "VRd in LOT1; DARA added day 200.",
-         "LOT1 ends d199. LOT2_START_DT=d200, TYPE=MED. Induction d200-d229."),
+         "LOT1 ends d199. LOT2 starts d200, TYPE=MED. Induction d200-d229."),
         ("S2. LOT2->LOT3 by AUTO outside window",
-         "LOT2 is MED-started (30d window). AUTO occurs d320 relative to LOT2 start, outside LOT2's window and not within sct_tandem_days (<=180d) of any prior AUTO.",
-         "LOT2 ends d319. LOT3_START_DT = d320, TYPE = SCT_AUTO. Q16 applies to LOT2-5 only; LOT1's first AUTO remains part of induction."),
+         "LOT2 MED-started (30d window). AUTO at d320 - outside LOT2's window, not within 180d of a prior AUTO.",
+         "LOT2 ends d319. LOT3 starts d320, TYPE=SCT_AUTO. LOT2-5 only; LOT1's first AUTO stays induction."),
         ("S3. LOT1->LOT2 (ALLO LOT)->LOT3",
          "ALLO during/after LOT1, then later DARA.",
-         "LOT2: start = end = ALLO_DT, single-day ALLO LOT, no MM. Next agent starts LOT3."),
+         "LOT2: start = end = ALLO_DT (1-day ALLO LOT, no MM). Next drug starts LOT3."),
         ("S4. LOT1->LOT2 (CAR-T LOT)",
          "CAR-T infusion.",
-         "LOT2_START_DT=FIRST_CART_DT, TYPE=CART. Agents within 45d consolidated."),
+         "LOT2 starts FIRST_CART_DT, TYPE=CART. Drugs within 45d belong to it."),
         ("S5. LOT2->LOT3 by DISCONTINUATION",
-         "Run-out, then new agent 200d later.",
-         "LOT2 ends DISCONTINUATION. LOT3_START_DT = first new agent."),
+         "Run-out, then new drug 200d later.",
+         "LOT2 ends DISCONTINUATION. LOT3 starts on the new drug."),
         ("S6. LOT3 ends by DEATH",
          "Death during LOT3.",
-         "LOT3_BASE_END_DT=YMDOD, reason=DEATH. No LOT4."),
+         "LOT3 ends at death (YMDOD), reason=DEATH. No LOT4."),
         ("S6b. Disenrollment (primary vs sensitivity)",
          "ELIGEND during LOT3, no death, study_end later.",
          "PRIMARY: reason=STUDY_END at study_end. SENSITIVITY: *_CE_SENS at ELIGEND, reason=DISENROLLMENT."),
@@ -617,19 +588,18 @@ def build_scenarios(wb):
          "Two AUTOs 90d apart.",
          "Planned tandem; LOT2 continues. AUTO_TAND_FLG=1."),
         ("S7b. AUTO claims < 60 days apart",
-         "Two AUTO claims/events 40 days apart during LOT2.",
-         "Merged into a single AUTO event upstream (tx_auto_dates, sct_auto_gap_days=60). "
-         "The near-duplicate is not a separate AUTO event: no tandem (AUTO_TAND_FLG=0) and not a "
-         "separate trigger; the retained single event is still evaluated by the normal AUTO trigger rule."),
+         "Two AUTOs 40 days apart in LOT2.",
+         "Merged into one AUTO event upstream. No tandem (AUTO_TAND_FLG=0) and not a separate "
+         "trigger; the single event is still evaluated normally."),
         ("S8. Biosimilar swap in LOT2",
          "DARA -> DARA biosimilar.",
          "LOT does not advance."),
         ("S9. ALLO LOT span",
          "ALLO with no follow-on therapy.",
-         "Single-day ALLO LOT: start = end = ALLO_DT."),
+         "1-day ALLO LOT: start = end = ALLO_DT."),
         ("S10. CART_INIT carryover",
-         "CAR-T within 45 days of the first new drug add that breaks LOT1.",
-         "LOT1 ends with CART_INIT (LOT1 spec). LOT2_START_TYPE = CART."),
+         "CAR-T within 45 days of the first new drug that breaks LOT1.",
+         "LOT1 ends with CART_INIT. LOT2 TYPE=CART."),
     ]
     write_rows(ws, 2, rows, col_widths=[36, 50, 70])
     ws.row_dimensions[1].height = 30
