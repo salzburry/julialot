@@ -138,7 +138,7 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
   )
   phase_dx_events <- function() list(
     # PHASE 2: BUILD MM DIAGNOSIS EVENTS
-    # FIXED: Build two tables:
+    # Build two tables:
     #   - mm_dx_events_all: full study period (for baseline flags)
     #   - mm_dx_events_id:  ID period only (for index qualification)
     list(
@@ -426,8 +426,8 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
     # This step uses member_enrollment (raw eligibility records) since
     # the prebuilt member_cont_enrollment already absorbs <30 day gaps
     # and cannot be used to detect true enrollment gaps.
-    # FIXED: Handle overlapping/nested segments by using max(elig_end) over window
-    # instead of lag() which fails when a short segment follows a long one.
+    # Handle overlapping/nested segments with max(elig_end) over the
+    # window, not lag(), which fails when a short segment follows a long one.
     list(
       name = "13b_enrollment_spans_strict",
       description = "Building strict enrollment spans (no gaps, handles overlaps)",
@@ -534,7 +534,7 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
     # PHASE 6b: DEATH DATE DERIVATION
     # Per StudyPop spec: When death date is only available at month-level
     # granularity, the date is generalized to the middle of the month (15th)
-    # FIXED: Compute DEATH_DT directly with Dec 31 rule by joining to mm_qualifying
+    # Compute DEATH_DT directly with the Dec 31 rule by joining to mm_qualifying
     # Per IE spec: Year-only death uses July 15 UNLESS index_date > July 15, then Dec 31
     # This prevents DEATH_DT < INDEX_DATE which would cause negative FU_DAYS
     list(
@@ -696,7 +696,7 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
         FROM {work('therapy_events')}")
     ),
 
-    # FIXED: Join death_dt to therapy_flags so follow-up therapy is bounded by death date
+    # Join death_dt to therapy_flags so follow-up therapy is bounded by death date
     # This prevents counting therapy after death (data quality issue) and ensures
     # that patients who die are not incorrectly included due to post-death claims
     list(
@@ -730,7 +730,7 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
     # Each is an independent flag per StudyPop spec
     # Per IE spec: "1 of medical claim with a diagnosis, procedure, or revenue code
     # indicating pregnancy or childbirth during the baseline or follow-up period"
-    # FIXED: Added revenue code (RVNU_CD) support per spec requirement
+    # Revenue code (RVNU_CD) support per spec requirement
     # NOTE: Pregnancy check spans baseline + follow-up per attrition table Step 9
     list(
       name = "20_pregnancy_flag",
@@ -792,7 +792,7 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
 
     # Per IE spec: "Evidence of clinical trial participation during each of the
     # baseline and follow-up periods. See tab CL CLNTRIAL."
-    # FIXED: Added revenue code (RVNU_CD) support for consistency with CL CLNTRIAL tab
+    # Revenue code (RVNU_CD) support for consistency with the CL CLNTRIAL tab
     list(
       name = "21_clintrial_flag",
       description = "EXCLUSION: Clinical trial flag (DX + PROC + RVNU_CD, baseline + follow-up)",
@@ -948,7 +948,7 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
   )
   phase_assembly <- function() list(
     # PHASE 10: FINAL ASSEMBLY - ELIG_COH with all flags
-    # FIXED: Added Death_dt, proper ENDDATE/FU_DAYS per StudyPop spec:
+    # Death_dt + proper ENDDATE/FU_DAYS per StudyPop spec:
     #   - ENDDATE = min(Death_dt, study_end)
     #   - ENDDATE_CE = min(Death_dt, disenrollment, study_end)
     #   - FU_DAYS = datediff(ENDDATE, index_date + 1) + 1  (follow-up starts day after index)
