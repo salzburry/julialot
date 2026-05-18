@@ -425,19 +425,23 @@ def build_lot2_5_base_end(wb):
          "First non-induction agent during LOT N", "Date / MED_ABBR",
          "First non-steroid MM agent after the induction window with MAP_START_DT <= LOTN_BASE_DISCON_DT, not in LOTN_BASE_MEDS or its biosimilar.",
          "CL_MMA_CODELIST, permissible_subs",
-         "Check permissible_subs before classifying as new add.", ""),
+         "Audit / debug output column (emitted to LOT_LONG), not a primary analysis variable. "
+         "Check permissible_subs before classifying as a new add.", ""),
         ("FU_PD", "ALLO_ALWAYS_ENDS_LOT", "ALLO always ends current LOT", "TRUE",
          "Any ALLO ends current LOT day before ALLO, and starts a new ALLO LOT.",
          "CL_SCT_CODELIST (ALLO)", "", ""),
-        ("FU_PD", "AUTO_TANDEM_WINDOW", "Tandem AUTO window", "<= 180 days",
-         "AUTO claims are first grouped into transplant events in tx_auto_dates "
-         "(14-day window grouping + 60-day event-separation rule). Among those derived AUTO events, "
-         "a second AUTO within 180 days of the first is treated as planned tandem (continuation, no new LOT). "
-         "Any other AUTO that falls outside LOT N's applicable window starts a new LOT.",
+        ("FU_PD", "AUTO_TANDEM_WINDOW", "Tandem AUTO window",
+         "< 60d: same event; 60-180d: tandem; > 180d: new LOT",
+         "AUTO claims are first grouped into discrete transplant events in tx_auto_dates. "
+         "Two AUTO claims/events LESS THAN 60 days apart are treated as the SAME AUTO event - "
+         "they do not create a tandem flag and do not trigger a new LOT. "
+         "Among distinct AUTO events: a second AUTO 60-180 days after the first is a planned tandem "
+         "(continuation, same LOT, no new trigger); an AUTO more than 180 days after the prior AUTO is "
+         "unplanned and starts a new LOT if it also falls outside LOT N's applicable window.",
          "CL_SCT_CODELIST (AUTO)",
-         "Per Julia 13-May: tandem classification uses ONLY the upper bound. The < 60 d case is moot "
-         "because tx_auto_dates upstream already merges claims < 60 d apart into a single event. "
-         "Matches LOT1's existing behaviour. Use datediff without +1.", ""),
+         "Per Julia 13-May: the < 60 d merge is handled upstream in tx_auto_dates "
+         "(sct_auto_gap_days = 60), so tandem classification only needs the <= 180 d "
+         "(sct_tandem_days) upper bound. Matches LOT1's existing behaviour. Use datediff without +1.", ""),
         ("FU_PD", "CART_CONSOLIDATION_DAYS", "CAR-T consolidation window", "45",
          "Agents within 45 days of FIRST_CART_DT are consolidated into the CAR-T LOT (study-team decision).",
          "CL_SCT_CODELIST (CART)",
@@ -445,7 +449,10 @@ def build_lot2_5_base_end(wb):
         ("FU_PD", "LOTN_BASE_END_DT", "Final LOT N end date (PRIMARY)", "Date",
          "Earliest qualifying end event from LOTN_END_DT_TEMP. "
          "Also: CART_INIT applies when a CAR-T infusion occurs within 45 days of the first new agent that breaks LOT N.",
-         "n/a", "ALLO LOT spans a single day, start = end = ALLO_DT. CAR-T LOT spans through last consolidation MAP_END_DT.", ""),
+         "n/a",
+         "ALLO LOT spans a single day, start = end = ALLO_DT. CAR-T LOT spans through last "
+         "consolidation MAP_END_DT. Under CART_INIT the pre-CAR-T bridge agent is consolidated into "
+         "the CAR-T LOT and does not create a separate non-CAR-T LOT.", ""),
         ("FU_PD", "LOTN_BASE_END_REASON", "Final LOT N end reason (PRIMARY)",
          "SCT_ALLO / SCT_CART / SCT_AUTO / CART_INIT / MED_ADD / DEATH / DISCONTINUATION / STUDY_END",
          "Reason corresponding to LOTN_BASE_END_DT. DISENROLLMENT only in sensitivity (see *_CE_SENS).",
@@ -538,16 +545,24 @@ def build_sct_cart_start(wb):
         ("CAR-T", "Always.", "FIRST_CART_DT",
          "Agents within 45 days of FIRST_CART_DT are consolidated into this LOT.",
          "SCT_CART (or CART_INIT if CAR-T within 45 days of the first new agent that breaks LOT_(N-1))",
-         "45-day consolidation window (study-team decision)."),
+         "45-day consolidation window (study-team decision). When CART_INIT applies, the pre-CAR-T "
+         "bridge agent only identifies the transition into the CAR-T LOT; it does NOT create a "
+         "separate non-CAR-T LOT (do not advance to LOT_(N+1) for consolidated agents)."),
         ("AUTO SCT", "Always, UNLESS (i) within LOT_(N-1)'s applicable window "
          "(30d MED/AUTO, 1d ALLO, 45d CART) or (ii) within sct_tandem_days (<=180d) of a prior AUTO (planned tandem).",
          "AUTO_DT",
          "30d induction from AUTO_DT.", "SCT_AUTO",
          "First-ever AUTOs CAN trigger a new LOT (LOT2-5 only). LOT1 keeps protocol convention "
-         "that the first AUTO is part of induction."),
-        ("New MM agent", "Always, when the agent appears after the prior LOT's end date.",
+         "that the first AUTO is part of induction. AUTO claims < 60 days apart are merged into a "
+         "single AUTO event upstream (tx_auto_dates, sct_auto_gap_days = 60) and never count as a "
+         "separate trigger or as a tandem."),
+        ("New MM agent",
+         "Always, when the agent appears after LOT_(N-1)_BASE_END_DT (i.e. after the prior LOT's "
+         "applicable induction/consolidation window) and no higher-priority SCT/CAR-T event shares that start date.",
          "MAP_START_DT of new agent", "30d induction window.", "n/a",
-         "Starts a new LOT when a non-steroid, non-biosimilar MM agent appears after LOT_(N-1)_BASE_END_DT. The prior LOT's end reason does not matter."),
+         "Starts a new LOT when a non-steroid, non-biosimilar MM agent appears after "
+         "LOT_(N-1)_BASE_END_DT, regardless of the prior LOT's end reason. Same-day start priority "
+         "still applies: SCT_ALLO > CART > SCT_AUTO > MED."),
         ("Death / STUDY_END (PRIMARY)", "Never starts a LOT; ends follow-up.",
          "n/a", "n/a", "DEATH / STUDY_END",
          "Death and study end do not start a new LOT. If the patient runs out of regimen therapy, "
@@ -597,6 +612,10 @@ def build_scenarios(wb):
         ("S7. Tandem AUTO in LOT2",
          "Two AUTOs 90d apart.",
          "Planned tandem; LOT2 continues. AUTO_TAND_FLG=1."),
+        ("S7b. AUTO claims < 60 days apart",
+         "Two AUTO claims/events 40 days apart during LOT2.",
+         "Merged into a single AUTO event upstream (tx_auto_dates, sct_auto_gap_days=60). "
+         "Not a tandem (AUTO_TAND_FLG=0) and not a new LOT trigger."),
         ("S8. Biosimilar swap in LOT2",
          "DARA -> DARA biosimilar.",
          "LOT does not advance."),
