@@ -553,7 +553,7 @@ document.addEventListener("DOMContentLoaded", function(){
 });
 // Category-grouped nav model
 ', nav_json, '
-// Plotly figure specs — all figures share one copy of plotly.js
+// Plotly figure specs - all figures share one copy of plotly.js
 ', plotly_specs_json, '
 </script>
 </body>
