@@ -1,0 +1,331 @@
+#!/usr/bin/env Rscript
+# Standalone LOT1 study-team questions (forwarded MM LOT1 feedback).
+#
+#   Rscript lot1_studyteam_qs.R
+#
+# Answers, against the LOT1 (first-line MM) cohort:
+#   Q1  Patients whose 1L regimen contains POMA (pomalidomide):
+#       (a) how many have another cancer (+ best-effort type / Kaposi)
+#       (b) payer source / Medicare Advantage (best-effort introspection)
+#       (c) clinical-trial participation (the study team's "IE criteria 10")
+#   Q2  Top 25 1L regimens by calendar year.
+#   Q3  Whether the dashboard's auto patient-journey examples are the
+#       6-9-meds-at-1L-induction patients from the Sankey (LOT1 Fig 9).
+#
+# Reads only persisted work-schema tables (LOT_LONG, ELIG_COH_ALLFLAGS)
+# and the raw CDM; it builds nothing and is safe to run any time.
+#
+# Three honest limits, surfaced in the output rather than hidden:
+#  - "Another cancer" (#8) and "clinical trial" (#10) are *exclusion*
+#    criteria, so the 1L regimen (LOT_LONG) only exists for patients who
+#    survived them. POMA-at-1L is therefore identifiable for delivered
+#    patients; for patients excluded on those criteria the 1L regimen
+#    cannot be reconstructed here (needs a pipeline re-run + codelists).
+#    That blind spot is quantified, not papered over.
+#  - Payer/plan is never projected by the pipeline; member_enrollment is
+#    introspected at runtime and candidate plan columns are dumped for an
+#    analyst to map Medicare Advantage (no guessed column names).
+#  - Cancer *type* is not in the persisted flags; it is a guarded
+#    best-effort raw-diagnosis scan with the same introspection approach.
+
+.script_dir <- local({
+  args <- commandArgs(trailingOnly = FALSE)
+  file_arg <- grep("^--file=", args, value = TRUE)
+  if (length(file_arg) > 0) {
+    return(dirname(normalizePath(sub("^--file=", "", file_arg[1]))))
+  }
+  for (i in seq_len(sys.nframe())) {
+    ofile <- tryCatch(sys.frame(i)$ofile, error = function(e) NULL)
+    if (!is.null(ofile)) return(dirname(normalizePath(ofile)))
+  }
+  getwd()
+})
+
+source_dir <- file.path(.script_dir, "R")
+if (file.exists(file.path(source_dir, "load_inputs.R"))) {
+  source(file.path(source_dir, "load_inputs.R"))
+  load_pipeline_inputs(c(.script_dir, dirname(.script_dir)))
+}
+source(file.path(source_dir, "config_lot.R"))
+source(file.path(source_dir, "db_utils_lot.R"))
+
+POMA_TOKEN  <- Sys.getenv("POMA_MED_ABBR", unset = "POMA")
+MED_CNT_LO  <- 6L
+MED_CNT_HI  <- 9L
+
+main <- function() {
+  stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
+
+  con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+
+  out_dir <- cfg$output_dir
+  if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  stamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
+
+  num <- function(x) suppressWarnings(as.numeric(x))
+  readable <- function(tbl) isTRUE(tryCatch(
+    nrow(db_q(con, glue("SELECT 1 FROM {tbl} LIMIT 1"))) >= 0,
+    error = function(e) FALSE))
+
+  write_out <- function(df, tag) {
+    if (is.null(df) || nrow(df) == 0) {
+      log_msg("  (", tag, ": no rows)")
+      return(invisible())
+    }
+    f <- file.path(out_dir, paste0("lot1_studyteam_qs_", tag, "_", stamp, ".csv"))
+    write.csv(df, f, row.names = FALSE)
+    log_msg("  wrote ", tag, " -> ", f, " (", nrow(df), " rows)")
+  }
+
+  # DESCRIBE-based column discovery so we never hard-code a source schema.
+  describe_cols <- function(tbl) {
+    d <- tryCatch(db_q(con, glue("DESCRIBE TABLE {tbl}")), error = function(e) NULL)
+    if (is.null(d) || !"col_name" %in% names(d)) return(character(0))
+    cn <- trimws(as.character(d$col_name))
+    cn <- cn[nzchar(cn) & !startsWith(cn, "#")]
+    unique(cn)
+  }
+
+  lot_long <- wrk("LOT_LONG")
+  allflags <- wrk("ELIG_COH_ALLFLAGS")
+
+  log_msg("LOT1 study-team questions - reading ", lot_long)
+  if (!readable(lot_long)) {
+    stop("Cannot read ", lot_long,
+         ". Build the LOT1 stage (lot_program.R) first.")
+  }
+  have_flags <- readable(allflags)
+  if (!have_flags) {
+    log_msg("WARNING: ", allflags, " not readable. It is a pipeline ",
+            "checkpoint - ensure the cohort pipeline materialized it to the ",
+            "work/personal schema. Q1a/Q1c flag breakdowns will be skipped.")
+  }
+
+  # ---- POMA-at-1L base set (delivered cohort) -------------------------
+  poma <- db_q(con, glue("
+    SELECT cast(PATID as string)               AS PATID,
+           LOT_BASE_MEDS,
+           cast(LOT_MED_CNT as int)            AS LOT_MED_CNT,
+           cast(cast(LOT_START_DT as date) as string) AS LOT_START_DT,
+           LOT_BASE_END_REASON
+    FROM {lot_long}
+    WHERE LOT_NUM = 1
+      AND LOT_BASE_MEDS IS NOT NULL
+      AND array_contains(split(LOT_BASE_MEDS, ' '), '{POMA_TOKEN}')
+  "))
+  n_poma <- length(unique(poma$PATID))
+  n_lot1 <- num(db_q(con, glue(
+    "SELECT count(DISTINCT PATID) n FROM {lot_long} WHERE LOT_NUM = 1"))$n)
+  log_msg(sprintf("POMA-at-1L (token '%s'): %d patients of %d LOT1 (%.1f%%)",
+                  POMA_TOKEN, n_poma, n_lot1,
+                  if (isTRUE(n_lot1 > 0)) 100 * n_poma / n_lot1 else NA_real_))
+  write_out(poma, "q1_poma_1l_patients")
+  if (n_poma == 0) {
+    log_msg("No POMA-at-1L patients found. If the regimen token differs, ",
+            "set POMA_MED_ABBR. Stopping after writing an empty result.")
+    return(invisible())
+  }
+  poma_ids <- paste(sprintf("'%s'", unique(poma$PATID)), collapse = ",")
+
+  # ---- Q1a / Q1c : pre-exclusion flags for the POMA-at-1L patients ----
+  if (have_flags) {
+    flg <- db_q(con, glue("
+      SELECT
+        count(DISTINCT a.PATID)                                          AS n_poma_in_allflags,
+        count(DISTINCT CASE WHEN a.OTHER_MALIGN_FLAG = 1 THEN a.PATID END) AS n_other_malig,
+        count(DISTINCT CASE WHEN a.CLINTRIAL_BASELINE = 1 THEN a.PATID END) AS n_clintrial_baseline,
+        count(DISTINCT CASE WHEN a.CLINTRIAL_FOLLOWUP = 1 THEN a.PATID END) AS n_clintrial_followup,
+        count(DISTINCT CASE WHEN a.CLINTRIAL_BASELINE = 1
+                              OR a.CLINTRIAL_FOLLOWUP = 1 THEN a.PATID END) AS n_clintrial_any
+      FROM {allflags} a
+      WHERE cast(a.PATID as string) IN ({poma_ids})
+    "))
+    write_out(flg, "q1ac_poma_flags")
+    log_msg(sprintf(
+      "  Q1a other-cancer flag: %s POMA-1L patients | Q1c clinical-trial: %s (BL %s / FU %s)",
+      flg$n_other_malig[1], flg$n_clintrial_any[1],
+      flg$n_clintrial_baseline[1], flg$n_clintrial_followup[1]))
+
+    # Blind-spot quantification: how many ALLFLAGS patients carry each
+    # exclusion flag at all, and how many of those ever reach LOT_LONG
+    # (excluded patients have no 1L regimen -> not POMA-classifiable here).
+    blind <- db_q(con, glue("
+      WITH lot1 AS (SELECT DISTINCT cast(PATID as string) PATID
+                    FROM {lot_long} WHERE LOT_NUM = 1)
+      SELECT
+        count(DISTINCT a.PATID) AS allflags_total,
+        count(DISTINCT CASE WHEN a.OTHER_MALIGN_FLAG = 1 THEN a.PATID END)  AS allflags_other_malig,
+        count(DISTINCT CASE WHEN a.OTHER_MALIGN_FLAG = 1 AND l.PATID IS NOT NULL
+                            THEN a.PATID END)                               AS other_malig_with_lot1,
+        count(DISTINCT CASE WHEN (a.CLINTRIAL_BASELINE = 1
+                               OR a.CLINTRIAL_FOLLOWUP = 1) THEN a.PATID END) AS allflags_clintrial,
+        count(DISTINCT CASE WHEN (a.CLINTRIAL_BASELINE = 1
+                               OR a.CLINTRIAL_FOLLOWUP = 1) AND l.PATID IS NOT NULL
+                            THEN a.PATID END)                               AS clintrial_with_lot1
+      FROM {allflags} a
+      LEFT JOIN lot1 l ON l.PATID = cast(a.PATID as string)
+    "))
+    write_out(blind, "q1ac_exclusion_blindspot")
+    log_msg("  Blind spot - of cohort-wide flagged patients, how many have a ",
+            "1L regimen at all (POMA-classifiable): other-cancer ",
+            blind$other_malig_with_lot1[1], "/", blind$allflags_other_malig[1],
+            ", clinical-trial ", blind$clintrial_with_lot1[1], "/",
+            blind$allflags_clintrial[1],
+            " - the remainder were excluded and cannot be POMA-classified here.")
+  }
+
+  # ---- Q1a detail : best-effort cancer-type / Kaposi scan -------------
+  # Cancer *type* is not in the persisted flags. Introspect the raw Optum
+  # diagnosis table and scan ICD-10 malignancy codes (C46* = Kaposi) for
+  # the POMA-at-1L patients. Guarded: a schema mismatch downgrades to a
+  # clearly logged follow-up rather than a hard failure.
+  dx_tbl <- cdm("med_diagnosis")
+  dx_done <- FALSE
+  tryCatch({
+    if (readable(dx_tbl)) {
+      cols  <- describe_cols(dx_tbl)
+      pid_c <- cols[grepl("^PATID$|PAT_ID", cols, ignore.case = TRUE)][1]
+      code_c <- cols[grepl("DIAG|ICD|DX", cols, ignore.case = TRUE) &
+                       !grepl("DT|DATE|FLG|FLAG|TYPE|POS", cols, ignore.case = TRUE)][1]
+      if (!is.na(pid_c) && !is.na(code_c)) {
+        kap <- db_q(con, glue("
+          SELECT upper(regexp_replace(trim(d.{code_c}), '[^A-Za-z0-9]', '')) AS dx_code,
+                 count(DISTINCT cast(d.{pid_c} as string)) AS n_patients
+          FROM {dx_tbl} d
+          WHERE cast(d.{pid_c} as string) IN ({poma_ids})
+            AND upper(regexp_replace(trim(d.{code_c}), '[^A-Za-z0-9]', '')) RLIKE '^C[0-9]'
+          GROUP BY 1 ORDER BY n_patients DESC
+        "))
+        if (nrow(kap) > 0) {
+          kap$is_kaposi <- grepl("^C46", kap$dx_code)
+          write_out(kap, "q1a_cancer_type_scan")
+          nk <- sum(num(kap$n_patients[kap$is_kaposi]))
+          log_msg("  Q1a cancer-type scan: ", nrow(kap),
+                  " distinct ICD-10 C-codes among POMA-1L patients; ",
+                  "Kaposi (C46*) patients: ", ifelse(is.finite(nk), nk, 0))
+          dx_done <- TRUE
+        }
+      }
+    }
+  }, error = function(e)
+    log_msg("  Q1a cancer-type scan errored (", conditionMessage(e), ")"))
+  if (!dx_done) {
+    log_msg("  Q1a cancer-type detail UNAVAILABLE from accessible sources. ",
+            "Follow-up: re-run the other_malig step (it carries tumor_group), ",
+            "or supply the raw diagnosis table/columns to scan ICD-10 C46* (Kaposi).")
+  }
+
+  # ---- Q1b : payer / Medicare Advantage (best-effort introspection) ---
+  enr_tbl <- cdm("member_enrollment")
+  enr_done <- FALSE
+  tryCatch({
+    if (readable(enr_tbl)) {
+      cols  <- describe_cols(enr_tbl)
+      pid_c <- cols[grepl("^PATID$|PAT_ID", cols, ignore.case = TRUE)][1]
+      plan_cols <- cols[grepl("PRODUCT|PLAN|PAYER|PAY_TYPE|PAYTYPE|BUS|LOB|MEDICARE|MEDADV|INS|PROD",
+                              cols, ignore.case = TRUE)]
+      log_msg("  Q1b member_enrollment plan-like columns: ",
+              if (length(plan_cols)) paste(plan_cols, collapse = ", ") else "(none matched)")
+      if (!is.na(pid_c) && length(plan_cols) > 0) {
+        parts <- lapply(plan_cols, function(cc) db_q(con, glue("
+          SELECT '{cc}' AS source_column,
+                 cast(e.{cc} as string)                 AS value,
+                 count(DISTINCT cast(e.{pid_c} as string)) AS n_patients
+          FROM {enr_tbl} e
+          WHERE cast(e.{pid_c} as string) IN ({poma_ids})
+          GROUP BY 2 ORDER BY n_patients DESC
+        ")))
+        payer <- do.call(rbind, parts)
+        write_out(payer, "q1b_enrollment_plan_values")
+        log_msg("  Q1b: distinct plan/product values for POMA-1L patients ",
+                "written. Map Medicare Advantage from these (no MA column is ",
+                "projected by the pipeline; this is the source-level evidence).")
+        enr_done <- TRUE
+      }
+    }
+  }, error = function(e)
+    log_msg("  Q1b enrollment introspection errored (", conditionMessage(e), ")"))
+  if (!enr_done) {
+    log_msg("  Q1b payer/Medicare-Advantage UNAVAILABLE: member_enrollment not ",
+            "readable or no plan-like columns. Out-of-pipeline data step needed.")
+  }
+
+  # ---- Q2 : top 25 1L regimens by calendar year ----------------------
+  q2 <- db_q(con, glue("
+    SELECT yr, regimen, n, rn FROM (
+      SELECT year(LOT_START_DT)                              AS yr,
+             LOT_BASE_MEDS                                   AS regimen,
+             count(*)                                        AS n,
+             row_number() OVER (PARTITION BY year(LOT_START_DT)
+                                ORDER BY count(*) DESC, LOT_BASE_MEDS) AS rn
+      FROM {lot_long}
+      WHERE LOT_NUM = 1
+        AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
+        AND LOT_START_DT IS NOT NULL
+      GROUP BY year(LOT_START_DT), LOT_BASE_MEDS
+    ) WHERE rn <= 25
+    ORDER BY yr, rn
+  "))
+  write_out(q2, "q2_top25_regimens_by_year")
+  log_msg("  Q2: top-25 1L regimens across ",
+          length(unique(q2$yr)), " calendar years.")
+
+  # ---- Q3 : journey examples vs 6-9-meds-at-1L-induction -------------
+  # Faithfully replays the dashboard's auto journey-example selection
+  # (lot_long_dashboard.R): deepest progressors first, then one extra per
+  # unique terminal reason, capped at 12. Then measures overlap with the
+  # 6-9-induction-meds set the Sankey (Fig 9) highlights.
+  pat_pick <- db_q(con, glue("
+    WITH pm AS (SELECT PATID, max(LOT_NUM) AS max_lot
+                FROM {lot_long} GROUP BY PATID)
+    SELECT cast(pm.PATID as string) AS PATID, pm.max_lot,
+           ll.LOT_BASE_END_REASON  AS terminal_reason
+    FROM pm
+    JOIN {lot_long} ll ON ll.PATID = pm.PATID AND ll.LOT_NUM = pm.max_lot
+  "))
+  pat_pick$max_lot <- num(pat_pick$max_lot)
+  pat_pick <- pat_pick[order(-pat_pick$max_lot), , drop = FALSE]
+  picked <- head(unique(pat_pick$PATID), 6)
+  for (r in unique(pat_pick$terminal_reason)) {
+    if (length(picked) >= 12) break
+    cand <- pat_pick$PATID[pat_pick$terminal_reason %in% r & !pat_pick$PATID %in% picked]
+    if (length(cand) > 0) picked <- c(picked, cand[1])
+  }
+  picked <- unique(picked)[seq_len(min(12, length(unique(picked))))]
+
+  pick_ids <- paste(sprintf("'%s'", picked), collapse = ",")
+  picked_cnt <- db_q(con, glue("
+    SELECT cast(PATID as string) AS PATID, cast(LOT_MED_CNT as int) AS LOT_MED_CNT
+    FROM {lot_long}
+    WHERE LOT_NUM = 1 AND cast(PATID as string) IN ({pick_ids})
+  "))
+  pmc <- num(picked_cnt$LOT_MED_CNT)
+  in_band <- sum(pmc >= MED_CNT_LO & pmc <= MED_CNT_HI, na.rm = TRUE)
+
+  band <- db_q(con, glue("
+    SELECT
+      count(DISTINCT PATID)                                              AS lot1_patients,
+      count(DISTINCT CASE WHEN LOT_MED_CNT BETWEEN {MED_CNT_LO} AND {MED_CNT_HI}
+                          THEN PATID END)                                AS lot1_6to9_meds
+    FROM {lot_long} WHERE LOT_NUM = 1
+  "))
+  dist <- db_q(con, glue("
+    SELECT cast(LOT_MED_CNT as int) AS lot1_med_cnt, count(DISTINCT PATID) AS n_patients
+    FROM {lot_long} WHERE LOT_NUM = 1 GROUP BY 1 ORDER BY 1
+  "))
+  write_out(picked_cnt, "q3_journey_examples")
+  write_out(dist,       "q3_lot1_med_count_distribution")
+  log_msg(sprintf(
+    "  Q3: %d auto journey examples; %d have 6-9 meds at 1L induction. ",
+    length(picked), in_band),
+    "Cohort-wide, ", band$lot1_6to9_meds[1], "/", band$lot1_patients[1],
+    " LOT1 patients have 6-9 induction meds. NOTE: journey examples are ",
+    "chosen by progression depth + terminal-reason diversity, NOT by ",
+    "induction med count - so they are a different set; any overlap is ",
+    "incidental and quantified above.")
+
+  log_msg("LOT1 study-team questions complete. CSVs in ", out_dir)
+}
+
+if (!interactive()) main()
