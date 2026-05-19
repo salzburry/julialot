@@ -583,7 +583,7 @@ main <- function() {
                                  marker = list(size = 1, opacity = 0),
                                  hoverinfo = "text") |>
             plotly::layout(
-              title = list(text = paste0(pat_label, " — LOT Journey"),
+              title = list(text = paste0(pat_label, " - LOT Journey"),
                            font = list(size = 14)),
               xaxis = list(title = "", type = "date", gridcolor = "#eee"),
               yaxis = list(title = "LOT_NUM", tickmode = "array",
