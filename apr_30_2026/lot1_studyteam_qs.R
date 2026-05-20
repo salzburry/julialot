@@ -125,15 +125,17 @@ main <- function() {
                   POMA_TOKEN, n_poma, n_lot1,
                   if (isTRUE(n_lot1 > 0)) 100 * n_poma / n_lot1 else NA_real_))
   write_out(poma, "q1_poma_1l_patients")
-  if (n_poma == 0) {
+  have_poma <- n_poma > 0
+  if (!have_poma) {
     log_msg("No POMA-at-1L patients found. If the regimen token differs, ",
-            "set POMA_MED_ABBR. Stopping after writing an empty result.")
-    return(invisible())
+            "set POMA_MED_ABBR. Skipping POMA-specific Q1 sections; Q2 and ",
+            "Q3 are POMA-independent and still run.")
   }
-  poma_ids <- paste(sprintf("'%s'", unique(poma$PATID)), collapse = ",")
+  poma_ids <- if (have_poma)
+    paste(sprintf("'%s'", unique(poma$PATID)), collapse = ",") else "''"
 
   # ---- Q1a / Q1c : pre-exclusion flags for the POMA-at-1L patients ----
-  if (have_flags) {
+  if (have_poma && have_flags) {
     flg <- db_q(con, glue("
       SELECT
         count(DISTINCT a.PATID)                                          AS n_poma_in_allflags,
@@ -191,7 +193,7 @@ main <- function() {
   dx_tbl <- cdm_src(cfg$tbl_med_diag)
   dx_done <- FALSE
   tryCatch({
-    if (readable(dx_tbl)) {
+    if (have_poma && readable(dx_tbl)) {
       cols  <- describe_cols(dx_tbl)
       pid_c <- cols[grepl("^PATID$|PAT_ID", cols, ignore.case = TRUE)][1]
       code_c <- cols[grepl("DIAG|ICD|DX", cols, ignore.case = TRUE) &
@@ -235,7 +237,7 @@ main <- function() {
   enr_tbl <- cdm_src("member_enrollment")
   enr_done <- FALSE
   tryCatch({
-    if (readable(enr_tbl)) {
+    if (have_poma && readable(enr_tbl)) {
       cols  <- describe_cols(enr_tbl)
       pid_c <- cols[grepl("^PATID$|PAT_ID", cols, ignore.case = TRUE)][1]
       plan_cols <- cols[grepl("PRODUCT|PLAN|PAYER|PAY_TYPE|PAYTYPE|BUS|LOB|MEDICARE|MEDADV|INS|PROD",
