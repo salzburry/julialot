@@ -134,28 +134,51 @@ main <- function() {
   poma_ids <- if (have_poma)
     paste(sprintf("'%s'", unique(poma$PATID)), collapse = ",") else "''"
 
+  final_tbl <- wrk(cfg$input_cohort_table)
+  have_final <- readable(final_tbl)
+  if (!have_final) {
+    log_msg("WARNING: ", final_tbl, " not readable. ELIG_COH_FINAL holds the ",
+            "selected INDEX_DATE per patient; without it the flag join can pick ",
+            "a different candidate index date than the one behind LOT1. ",
+            "Q1a/Q1c index-aligned flag breakdowns will be skipped.")
+  }
+
   # ---- Q1a / Q1c : pre-exclusion flags for the POMA-at-1L patients ----
-  if (have_poma && have_flags) {
+  # ELIG_COH_ALLFLAGS has one row per *candidate* index_date per patient;
+  # joining by PATID alone can read flags from a candidate that did NOT
+  # produce the LOT1 record. Use ELIG_COH_FINAL (one row per patient with
+  # the selected INDEX_DATE) to align the join to the correct candidate.
+  if (have_poma && have_flags && have_final) {
     flg <- db_q(con, glue("
+      WITH f AS (
+        SELECT cast(PATID as string) AS PATID, INDEX_DATE
+        FROM {final_tbl}
+        WHERE cast(PATID as string) IN ({poma_ids})
+      )
       SELECT
-        count(DISTINCT a.PATID)                                          AS n_poma_in_allflags,
-        count(DISTINCT CASE WHEN a.OTHER_MALIGN_FLAG = 1 THEN a.PATID END) AS n_other_malig,
-        count(DISTINCT CASE WHEN a.CLINTRIAL_BASELINE = 1 THEN a.PATID END) AS n_clintrial_baseline,
-        count(DISTINCT CASE WHEN a.CLINTRIAL_FOLLOWUP = 1 THEN a.PATID END) AS n_clintrial_followup,
+        count(DISTINCT a.PATID)                                            AS n_poma_in_allflags,
+        count(DISTINCT CASE WHEN a.OTHER_MALIGN_FLAG = 1 THEN a.PATID END)   AS n_other_malig,
+        count(DISTINCT CASE WHEN a.CLINTRIAL_BASELINE = 1 THEN a.PATID END)  AS n_clintrial_baseline,
+        count(DISTINCT CASE WHEN a.CLINTRIAL_FOLLOWUP = 1 THEN a.PATID END)  AS n_clintrial_followup,
         count(DISTINCT CASE WHEN a.CLINTRIAL_BASELINE = 1
-                              OR a.CLINTRIAL_FOLLOWUP = 1 THEN a.PATID END) AS n_clintrial_any
+                              OR a.CLINTRIAL_FOLLOWUP  = 1 THEN a.PATID END) AS n_clintrial_any
       FROM {allflags} a
-      WHERE cast(a.PATID as string) IN ({poma_ids})
+      JOIN f ON cast(a.PATID as string) = f.PATID
+            AND a.INDEX_DATE             = f.INDEX_DATE
     "))
     write_out(flg, "q1ac_poma_flags")
     log_msg(sprintf(
-      "  Q1a other-cancer flag: %s POMA-1L patients | Q1c clinical-trial: %s (BL %s / FU %s)",
+      "  Q1a other-cancer flag: %s POMA-1L patients | Q1c clinical-trial: %s (BL %s / FU %s) - aligned to selected INDEX_DATE.",
       flg$n_other_malig[1], flg$n_clintrial_any[1],
       flg$n_clintrial_baseline[1], flg$n_clintrial_followup[1]))
+  }
 
-    # Blind-spot quantification: how many ALLFLAGS patients carry each
-    # exclusion flag at all, and how many of those ever reach LOT_LONG
-    # (excluded patients have no 1L regimen -> not POMA-classifiable here).
+  # Blind-spot quantification: how many ALLFLAGS patients carry each
+  # exclusion flag at ANY candidate index date, and how many of those
+  # ever reach LOT_LONG (excluded patients have no 1L regimen -> not
+  # POMA-classifiable here). Patient-level distinct counts so the
+  # multi-candidate ALLFLAGS structure is collapsed correctly.
+  if (have_flags) {
     blind <- db_q(con, glue("
       WITH lot1 AS (SELECT DISTINCT cast(PATID as string) PATID
                     FROM {lot_long} WHERE LOT_NUM = 1)
@@ -173,8 +196,8 @@ main <- function() {
       LEFT JOIN lot1 l ON l.PATID = cast(a.PATID as string)
     "))
     write_out(blind, "q1ac_exclusion_blindspot")
-    log_msg("  Blind spot - of cohort-wide flagged patients, how many have a ",
-            "1L regimen at all (POMA-classifiable): other-cancer ",
+    log_msg("  Blind spot - of patients ever flagged at any candidate index ",
+            "date, how many have a 1L regimen (POMA-classifiable): other-cancer ",
             blind$other_malig_with_lot1[1], "/", blind$allflags_other_malig[1],
             ", clinical-trial ", blind$clintrial_with_lot1[1], "/",
             blind$allflags_clintrial[1],
@@ -225,10 +248,14 @@ main <- function() {
   }, error = function(e)
     log_msg("  Q1a raw C-code scan errored (", conditionMessage(e), ")"))
   if (!dx_done) {
-    log_msg("  Q1a raw C-code scan UNAVAILABLE from accessible sources. ",
-            "Follow-up: re-run the other_malig step for the authoritative ",
-            "tumor-group breakdown, or supply the diagnosis table/columns ",
-            "to scan ICD-10 C46* (Kaposi) directly.")
+    if (!have_poma) {
+      log_msg("  Q1a raw C-code scan SKIPPED - no POMA-at-1L patients.")
+    } else {
+      log_msg("  Q1a raw C-code scan UNAVAILABLE from accessible sources. ",
+              "Follow-up: re-run the other_malig step for the authoritative ",
+              "tumor-group breakdown, or supply the diagnosis table/columns ",
+              "to scan ICD-10 C46* (Kaposi) directly.")
+    }
   }
 
   # ---- Q1b : payer / Medicare Advantage (best-effort introspection) ---
@@ -264,8 +291,12 @@ main <- function() {
   }, error = function(e)
     log_msg("  Q1b enrollment introspection errored (", conditionMessage(e), ")"))
   if (!enr_done) {
-    log_msg("  Q1b payer/Medicare-Advantage UNAVAILABLE: member_enrollment not ",
-            "readable or no plan-like columns. Out-of-pipeline data step needed.")
+    if (!have_poma) {
+      log_msg("  Q1b payer/Medicare-Advantage SKIPPED - no POMA-at-1L patients.")
+    } else {
+      log_msg("  Q1b payer/Medicare-Advantage UNAVAILABLE: member_enrollment not ",
+              "readable or no plan-like columns. Out-of-pipeline data step needed.")
+    }
   }
 
   # ---- Q2 : top 25 1L regimens by calendar year ----------------------
