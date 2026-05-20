@@ -474,10 +474,11 @@ main <- function() {
               section = "TREND", title = "LOT starts over time")
   }
 
-  # ---- Patient journey examples (per-patient LOT timeline Gantt) ----
-  # Mirrors the LOT1 dashboard's JOURNEY section, but each row of the
-  # Gantt is a LOT (1..max) rather than a medication MAP. One bar per
-  # LOT spans LOT_START_DT -> LOT_BASE_END_DT, colored by start type.
+  # ---- Patient medication journey examples ---------------------------
+  # Per-patient chart with one row per medication (MAP_MED_TYPE); bars
+  # are the MAP segments coloured by class, vertical dashed lines mark
+  # each LOT_NUM start and the final LOT end. Same selection logic the
+  # LOT1 dashboard uses for its journey section, generalised to LOT1-5.
   if (has_plotly) {
     # lot_start_palette / lot_reason_palette come from dashboard_lot.R
     # (shared so the same category is the same colour in both dashboards).
@@ -534,96 +535,12 @@ main <- function() {
       eend[is.na(eend)] <- jdf$LOT_START_DT[is.na(eend)]
       jdf$LOT_BASE_END_DT <- eend
 
-      k <- 0
-      for (pid in pick_ids) {
-        pr <- jdf[jdf$PATID == pid, , drop = FALSE]
-        pr <- pr[order(pr$LOT_NUM), , drop = FALSE]
-        if (nrow(pr) == 0) next
-        # Only need a start date to place the patient; end falls back
-        # to start above, so do NOT skip on missing end.
-        if (all(is.na(pr$LOT_START_DT))) next
-        k <- k + 1
-
-        added <- tryCatch({
-          shapes <- list()
-          for (j in seq_len(nrow(pr))) {
-            row   <- pr[j, ]
-            st    <- as.character(row$LOT_START_TYPE)
-            color <- if (!is.na(st) && st %in% names(lot_start_palette))
-              lot_start_palette[[st]] else "#636e72"
-            x0 <- if (is.na(row$LOT_START_DT)) NA else as.character(row$LOT_START_DT)
-            x1 <- if (is.na(row$LOT_BASE_END_DT)) x0 else
-              as.character(row$LOT_BASE_END_DT)
-            if (is.na(x0)) next
-            shapes[[length(shapes) + 1]] <- list(
-              type = "rect", x0 = x0, x1 = x1,
-              y0 = row$LOT_NUM - 0.32, y1 = row$LOT_NUM + 0.32,
-              fillcolor = color, opacity = 0.85,
-              line = list(color = color, width = 1), layer = "below"
-            )
-          }
-          mid_x <- pr$LOT_START_DT +
-            as.integer((pr$LOT_BASE_END_DT - pr$LOT_START_DT) / 2)
-          hover_df <- data.frame(
-            x = mid_x, y = pr$LOT_NUM,
-            text = paste0(
-              "LOT ", pr$LOT_NUM,
-              "\nStart type: ", pr$LOT_START_TYPE,
-              "\nStart: ", pr$LOT_START_DT,
-              "\nEnd: ",   pr$LOT_BASE_END_DT,
-              "\nEnd reason: ", pr$LOT_BASE_END_REASON,
-              "\nLength (d): ", pr$LOT_BASE_LENGTH,
-              "\nRegimen: ", pr$LOT_BASE_MEDS),
-            stringsAsFactors = FALSE
-          )
-          term <- pr$LOT_BASE_END_REASON[nrow(pr)]
-          pat_label <- paste0("Patient ", k)
-          pp <- plotly::plot_ly(hover_df, x = ~x, y = ~y, text = ~text,
-                                 type = "scatter", mode = "markers",
-                                 marker = list(size = 1, opacity = 0),
-                                 hoverinfo = "text") |>
-            plotly::layout(
-              title = list(text = paste0(pat_label, " - LOT Journey"),
-                           font = list(size = 14)),
-              xaxis = list(title = "", type = "date", gridcolor = "#eee"),
-              yaxis = list(title = "LOT_NUM", tickmode = "array",
-                           tickvals = sort(unique(pr$LOT_NUM)),
-                           ticktext = paste0("LOT", sort(unique(pr$LOT_NUM))),
-                           range = c(0.4, max(pr$LOT_NUM) + 0.7),
-                           gridcolor = "#eee"),
-              shapes = shapes, showlegend = FALSE,
-              margin = list(l = 80, t = 50, b = 40, r = 30),
-              plot_bgcolor = "#fafafa", paper_bgcolor = "white"
-            ) |>
-            plotly::config(displayModeBar = TRUE, displaylogo = FALSE)
-          add_to_dashboard(pp, section = "JOURNEY",
-                           title = paste0(pat_label, " (", nrow(pr),
-                                          " LOTs, ends ", term, ")"))
-          TRUE
-        }, error = function(e) {
-          log_msg("  INFO: skipping journey for a patient (",
-                  conditionMessage(e), ")")
-          FALSE
-        })
-        if (!isTRUE(added)) k <- k - 1
-      }
-      log_msg("  Patient journey examples added: ", k)
-      if (k == 0) {
-        add_html_card(paste0(
-          '<div style="font-family:system-ui;padding:14px">',
-          '<h3>No auto journey examples</h3>',
-          '<p style="color:#555">Could not build example journeys ',
-          '(no usable LOT start dates in the selected patients). ',
-          'Use the <b>Drilldown</b> category to inspect any specific ',
-          'PATID instead.</p></div>'),
-          section = "JOURNEY", title = "Patient Journeys (none)")
-      }
-
-      # ---- MED JOURNEY: per-medication Gantt across LOT1-5 -------------
-      # Mirrors the LOT1 dashboard's medication-level journeys but extends
-      # milestone vlines across every LOT_NUM boundary (start of each line
-      # + final end), so a 5-line patient gets LOT1..LOT5 markers. Reads
-      # the persisted MAP_STACKED (work-schema table from lot_program.R).
+      # ---- MED JOURNEY: per-medication patient journey (LOT1-5) ---------
+      # Mirrors the LOT1 dashboard's medication-level journey chart. The
+      # milestone vlines extend across every LOT_NUM boundary (start of
+      # each line + final end), so a 5-line patient sees LOT1..LOT5
+      # markers. Reads the persisted MAP_STACKED work-schema table that
+      # lot_program.R materializes.
       map_tbl <- wrk("MAP_STACKED")
       mdf <- tryCatch(db_q(con, glue("
         SELECT cast(PATID as string) AS PATID,
@@ -771,32 +688,19 @@ main <- function() {
       add_html_card(paste0(
         '<div style="font-family:system-ui;padding:14px">',
         '<h3>No patients to show</h3>',
-        '<p style="color:#555">LOT_LONG returned no patients for the ',
-        'journey selection. If LOT_LONG was just rebuilt, confirm it ',
-        'has rows (Debug/QC &rarr; Table inventory).</p></div>'),
-        section = "JOURNEY", title = "Patient Journeys (none)")
-      add_html_card(paste0(
-        '<div style="font-family:system-ui;padding:14px">',
-        '<h3>No patients to show</h3>',
-        '<p style="color:#555">No selected patients - medication ',
-        'journeys cannot be drawn until LOT_LONG has rows.</p></div>'),
+        '<p style="color:#555">LOT_LONG returned no patients. If it was ',
+        'just rebuilt, confirm rows exist (Debug/QC &rarr; Table ',
+        'inventory).</p></div>'),
         section = "MED JOURNEY", title = "Med Journeys (none)")
     }
   } else {
-    log_msg("  plotly not available - skipping JOURNEY / MED JOURNEY.")
-    add_html_card(paste0(
-      '<div style="font-family:system-ui;padding:14px">',
-      '<h3>Patient Journeys unavailable</h3>',
-      '<p style="color:#555">The <code>plotly</code> R package is not ',
-      'installed, so the interactive journey charts were skipped. The ',
-      '<b>Drilldown</b> category still works (it renders client-side ',
-      'without plotly).</p></div>'),
-      section = "JOURNEY", title = "Patient Journeys (unavailable)")
+    log_msg("  plotly not available - skipping MED JOURNEY.")
     add_html_card(paste0(
       '<div style="font-family:system-ui;padding:14px">',
       '<h3>Med Journeys unavailable</h3>',
-      '<p style="color:#555">Requires <code>plotly</code>; install it ',
-      'and rerun the dashboard.</p></div>'),
+      '<p style="color:#555">The <code>plotly</code> R package is not ',
+      'installed, so the journey chart was skipped. The <b>Drilldown</b> ',
+      'category still works (renders client-side without plotly).</p></div>'),
       section = "MED JOURNEY", title = "Med Journeys (unavailable)")
   }
 
@@ -1048,7 +952,7 @@ var first=Object.keys(PJ)[0]; if(first){document.getElementById("pjIn").value=fi
   build_dashboard(
     out_name     = "lot_long_dashboard.html",
     header_title = "LOT 1-5 &mdash; Long-Format Dashboard",
-    header_sub   = "Funnel &bull; Start/End &bull; Length &bull; Regimens &bull; Progression &bull; Gaps &bull; Transitions &bull; Sankey flows &bull; Med count &bull; MTX &bull; Trend &bull; Patient Journeys &bull; Med Journeys &bull; Debug/QC &nbsp;&mdash;&nbsp; pick a Category above"
+    header_sub   = "Funnel &bull; Start/End &bull; Length &bull; Regimens &bull; Progression &bull; Gaps &bull; Transitions &bull; Sankey flows &bull; Med count &bull; MTX &bull; Trend &bull; Med Journeys &bull; Debug/QC &nbsp;&mdash;&nbsp; pick a Category above"
   )
   log_msg("LOT1-5 dashboard written to ",
           file.path(cfg$output_dir, "lot_long_dashboard.html"))
