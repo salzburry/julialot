@@ -329,8 +329,9 @@ main <- function() {
     if (!is.null(sk)) add_to_dashboard(sk, section = "SANKEY", title = title)
   }
 
-  type_pal <- c(MED = "#2E86AB", SCT_AUTO = "#A23B72",
-                SCT_ALLO = "#F18F01", CART = "#C73E1D")
+  # Shared palette from dashboard_lot.R so SCT_ALLO / CART_* colours
+  # stay consistent across charts (Sankey, drilldown, MED journey).
+  type_pal <- lot_start_palette
 
   # Sankey 1: start-type flow across LOTs (reuses `trans`).
   if (nrow(trans) > 0) {
@@ -842,6 +843,10 @@ main <- function() {
     pj_json <- jsonlite::toJSON(pj, auto_unbox = TRUE, force = TRUE)
     # Prevent any "</script>" inside data from closing the script tag.
     pj_json <- gsub("</", "<\\/", as.character(pj_json), fixed = TRUE)
+    # Embed the shared start-type palette so the drilldown bar colours
+    # match Sankey / MED journey (single source of truth in dashboard_lot.R).
+    pal_json <- as.character(jsonlite::toJSON(
+      as.list(lot_start_palette), auto_unbox = TRUE))
 
     # HTML-attribute-escape PATIDs before inlining (cheap hardening even
     # though clinical IDs are usually clean).
@@ -880,7 +885,7 @@ main <- function() {
 </div>
 <script>
 var PJ = ', pj_json, ';
-var PAL = {MED:"#2E86AB",SCT_AUTO:"#A23B72",SCT_ALLO:"#F18F01",CART:"#C73E1D"};
+var PAL = ', pal_json, ';
 function pjEsc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
 function pjDraw(pid){
   var meta=document.getElementById("pjMeta");
