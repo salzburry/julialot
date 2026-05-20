@@ -25,8 +25,12 @@
 #  - Payer/plan is never projected by the pipeline; member_enrollment is
 #    introspected at runtime and candidate plan columns are dumped for an
 #    analyst to map Medicare Advantage (no guessed column names).
-#  - Cancer *type* is not in the persisted flags; it is a guarded
-#    best-effort raw-diagnosis scan with the same introspection approach.
+#  - Cancer *type* is not in the persisted flags; this is a guarded raw
+#    ICD-10 C-code scan (C90* excluded) - NOT the cohort's other_malig
+#    criterion, which uses the tumor-group codelist + a 1-inpatient or
+#    2-outpatient confirmation rule. Re-run that step for an authoritative
+#    breakdown. CDM tables go through cdm_src() so the quarterly vintage
+#    matches the rest of the pipeline (USE_QUARTERLY_TABLES).
 
 .script_dir <- local({
   args <- commandArgs(trailingOnly = FALSE)
@@ -175,12 +179,16 @@ main <- function() {
             " - the remainder were excluded and cannot be POMA-classified here.")
   }
 
-  # ---- Q1a detail : best-effort cancer-type / Kaposi scan -------------
-  # Cancer *type* is not in the persisted flags. Introspect the raw Optum
-  # diagnosis table and scan ICD-10 malignancy codes (C46* = Kaposi) for
-  # the POMA-at-1L patients. Guarded: a schema mismatch downgrades to a
-  # clearly logged follow-up rather than a hard failure.
-  dx_tbl <- cdm("med_diagnosis")
+  # ---- Q1a detail : best-effort RAW cancer-code scan ------------------
+  # NOT equivalent to the cohort's other_malig criterion, which uses the
+  # other_malig_codes tumor-group codelist + an inpatient-or-2-outpatient
+  # confirmation rule (pipeline_steps.R). This is a raw ICD-10 C* scan
+  # against the same quarterly diagnosis table the pipeline reads (via
+  # cdm_src() so USE_QUARTERLY_TABLES is honored), excluding C90* (MM /
+  # plasma-cell) so the output is not trivially dominated by the index
+  # disease. Useful for the Kaposi (C46*) hypothesis check; for an
+  # authoritative tumor-group breakdown re-run the other_malig step.
+  dx_tbl <- cdm_src(cfg$tbl_med_diag)
   dx_done <- FALSE
   tryCatch({
     if (readable(dx_tbl)) {
@@ -195,29 +203,36 @@ main <- function() {
           FROM {dx_tbl} d
           WHERE cast(d.{pid_c} as string) IN ({poma_ids})
             AND upper(regexp_replace(trim(d.{code_c}), '[^A-Za-z0-9]', '')) RLIKE '^C[0-9]'
+            AND upper(regexp_replace(trim(d.{code_c}), '[^A-Za-z0-9]', '')) NOT RLIKE '^C90'
           GROUP BY 1 ORDER BY n_patients DESC
         "))
         if (nrow(kap) > 0) {
           kap$is_kaposi <- grepl("^C46", kap$dx_code)
-          write_out(kap, "q1a_cancer_type_scan")
+          write_out(kap, "q1a_raw_nonmm_ccode_scan")
           nk <- sum(num(kap$n_patients[kap$is_kaposi]))
-          log_msg("  Q1a cancer-type scan: ", nrow(kap),
-                  " distinct ICD-10 C-codes among POMA-1L patients; ",
-                  "Kaposi (C46*) patients: ", ifelse(is.finite(nk), nk, 0))
+          log_msg("  Q1a raw non-MM C-code scan: ", nrow(kap),
+                  " distinct ICD-10 codes among POMA-1L patients (C90* excluded); ",
+                  "Kaposi (C46*) patients: ", ifelse(is.finite(nk), nk, 0),
+                  ". NOTE: raw scan only - NOT the cohort's other_malig criterion ",
+                  "(which requires the other_malig_codes tumor-group codelist + ",
+                  "inpatient-or-2-outpatient confirmation).")
           dx_done <- TRUE
         }
       }
     }
   }, error = function(e)
-    log_msg("  Q1a cancer-type scan errored (", conditionMessage(e), ")"))
+    log_msg("  Q1a raw C-code scan errored (", conditionMessage(e), ")"))
   if (!dx_done) {
-    log_msg("  Q1a cancer-type detail UNAVAILABLE from accessible sources. ",
-            "Follow-up: re-run the other_malig step (it carries tumor_group), ",
-            "or supply the raw diagnosis table/columns to scan ICD-10 C46* (Kaposi).")
+    log_msg("  Q1a raw C-code scan UNAVAILABLE from accessible sources. ",
+            "Follow-up: re-run the other_malig step for the authoritative ",
+            "tumor-group breakdown, or supply the diagnosis table/columns ",
+            "to scan ICD-10 C46* (Kaposi) directly.")
   }
 
   # ---- Q1b : payer / Medicare Advantage (best-effort introspection) ---
-  enr_tbl <- cdm("member_enrollment")
+  # cdm_src() so USE_QUARTERLY_TABLES is honored (same vintage the pipeline
+  # reads); falls back to the unsuffixed table when quarterly is off.
+  enr_tbl <- cdm_src("member_enrollment")
   enr_done <- FALSE
   tryCatch({
     if (readable(enr_tbl)) {
