@@ -357,15 +357,19 @@ build_sct_cart_sequence <- function(con, lot_long) {
   # real procedures:
   #   (a) LOT_START_TYPE - SCT/CART that STARTS a new LOT
   #       (event date = LOT_START_DT).
-  #   (b) LOT_BASE_END_REASON - SCT/CART that ENDED a multi-day LOT
-  #       (the LOT was cut short by the procedure). Per
-  #       lot2_5_base.R:758-774 the LOT end date is the procedure date
-  #       minus 1, so the true event date is LOT_BASE_END_DT + 1.
-  #       Restricted to LOT_BASE_END_DT > LOT_START_DT to avoid
-  #       fabricating next-day SCTs for single-day LOTs (ALLO single
-  #       day and no-consolidation CAR-T set LOT_BASE_END_DT =
-  #       LOT_START_DT, lot2_5_base.R:814-817; the real procedure is
-  #       already captured by (a) on LOT_START_DT).
+  #   (b) LOT_BASE_END_REASON - SCT/CART that ENDED a LOT (cut short
+  #       by the procedure). Per lot2_5_base.R:758-774 the LOT end
+  #       date is the procedure date minus 1, so the true event date
+  #       is LOT_BASE_END_DT + 1. Two specific same-row patterns are
+  #       excluded because the LOT-start branch already captured them:
+  #         - LOT_START_TYPE='SCT_ALLO' & LOT_BASE_END_REASON='SCT_ALLO'
+  #           (ALLO single-day, lot2_5_base.R:814-815)
+  #         - LOT_START_TYPE='CART'    & LOT_BASE_END_REASON='SCT_CART'
+  #           (CAR-T no-consolidation, lot2_5_base.R:816-817)
+  #       A MED-started LOT cut short by an SCT/CART on LOT_START_DT+1
+  #       legitimately has LOT_BASE_END_DT = LOT_START_DT and IS kept,
+  #       since the procedure is a real terminal event that the
+  #       LOT-start branch does not see.
   #   (c) LOT_TX_AUTO_DT_1 / LOT_TX_AUTO_DT_2 - in-LOT AUTO events
   #       inside a non-SCT line of therapy.
   # After fetch, the CAR-T family ({CART, CART_INIT, SCT_CART}) is
@@ -391,7 +395,10 @@ build_sct_cart_sequence <- function(con, lot_long) {
     WHERE LOT_BASE_END_REASON IN ('SCT_AUTO','SCT_ALLO','SCT_CART',
                                     'CART_INIT')
       AND LOT_BASE_END_DT IS NOT NULL
-      AND LOT_BASE_END_DT > LOT_START_DT
+      AND NOT (LOT_START_TYPE = 'SCT_ALLO'
+               AND LOT_BASE_END_REASON = 'SCT_ALLO')
+      AND NOT (LOT_START_TYPE = 'CART'
+               AND LOT_BASE_END_REASON = 'SCT_CART')
     UNION ALL
     SELECT cast(PATID as string)                    AS PATID,
            LOT_NUM,
@@ -434,7 +441,10 @@ build_sct_cart_sequence <- function(con, lot_long) {
       WHERE LOT_BASE_END_REASON IN ('SCT_AUTO','SCT_ALLO','SCT_CART',
                                       'CART_INIT')
         AND LOT_BASE_END_DT IS NOT NULL
-        AND LOT_BASE_END_DT > LOT_START_DT
+        AND NOT (LOT_START_TYPE = 'SCT_ALLO'
+                 AND LOT_BASE_END_REASON = 'SCT_ALLO')
+        AND NOT (LOT_START_TYPE = 'CART'
+                 AND LOT_BASE_END_REASON = 'SCT_CART')
     "))
   })
 
