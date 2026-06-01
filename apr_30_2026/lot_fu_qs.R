@@ -475,12 +475,14 @@ build_sct_cart_sequence <- function(con, lot_long) {
   # types across the branches: 'CART' from LOT_START_TYPE, 'CART_INIT'
   # from a multi-day LOT cut short by that CAR-T (LOT_BASE_END_REASON),
   # and 'SCT_CART' for the no-consolidation single-day CAR-T case
-  # (already excluded from the LOT-end branch by the LOT_BASE_END_DT >
-  # LOT_START_DT guard). Without this normalisation the (PATID, date,
-  # type) dedup would treat CART and CART_INIT as different events on
-  # the same date and double-count CAR-Ts that end LOT_N and start
-  # LOT_N+1. AUTO and ALLO already share labels across branches so no
-  # mapping is needed for them.
+  # (already excluded from the LOT-end branch by the same-row +
+  # same-day guard on LOT_START_TYPE='CART' &
+  # LOT_BASE_END_REASON='SCT_CART' & LOT_BASE_END_DT = LOT_START_DT).
+  # Without this normalisation the (PATID, date, type) dedup would
+  # treat CART and CART_INIT as different events on the same date
+  # and double-count CAR-Ts that end LOT_N and start LOT_N+1. AUTO
+  # and ALLO already share labels across branches so no mapping is
+  # needed for them.
   cart_family <- c("CART", "CART_INIT", "SCT_CART")
   evt$event_type[evt$event_type %in% cart_family] <- "CART"
 
