@@ -357,17 +357,21 @@ build_sct_cart_sequence <- function(con, lot_long) {
   # real procedures:
   #   (a) LOT_START_TYPE - SCT/CART that STARTS a new LOT
   #       (event date = LOT_START_DT).
-  #   (b) LOT_BASE_END_REASON - SCT/CART that ENDED a LOT (the LOT was
-  #       cut short by the procedure). Per lot2_5_base.R:758-774 the
-  #       LOT end date is the procedure date minus 1, so the true
-  #       event date is LOT_BASE_END_DT + 1. Without this branch a
-  #       terminal SCT (e.g. CART_INIT ending LOT5 with no LOT6) is
-  #       invisible to the sequence.
+  #   (b) LOT_BASE_END_REASON - SCT/CART that ENDED a multi-day LOT
+  #       (the LOT was cut short by the procedure). Per
+  #       lot2_5_base.R:758-774 the LOT end date is the procedure date
+  #       minus 1, so the true event date is LOT_BASE_END_DT + 1.
+  #       Restricted to LOT_BASE_END_DT > LOT_START_DT to avoid
+  #       fabricating next-day SCTs for single-day LOTs (ALLO single
+  #       day and no-consolidation CAR-T set LOT_BASE_END_DT =
+  #       LOT_START_DT, lot2_5_base.R:814-817; the real procedure is
+  #       already captured by (a) on LOT_START_DT).
   #   (c) LOT_TX_AUTO_DT_1 / LOT_TX_AUTO_DT_2 - in-LOT AUTO events
   #       inside a non-SCT line of therapy.
-  # Dedup on (PATID, event_dt, event_type) handles the legitimate
-  # overlap where the same procedure both ENDS LOT_N and STARTS
-  # LOT_N+1 on the same date.
+  # After fetch, the CAR-T family ({CART, CART_INIT, SCT_CART}) is
+  # normalised to a single 'CART' label BEFORE deduping, so the same
+  # physical CAR-T that ends LOT_N as CART_INIT and starts LOT_N+1 as
+  # CART collapses to one event on its date.
   union_sql <- glue("
     SELECT cast(PATID as string)                    AS PATID,
            LOT_NUM,
@@ -387,6 +391,7 @@ build_sct_cart_sequence <- function(con, lot_long) {
     WHERE LOT_BASE_END_REASON IN ('SCT_AUTO','SCT_ALLO','SCT_CART',
                                     'CART_INIT')
       AND LOT_BASE_END_DT IS NOT NULL
+      AND LOT_BASE_END_DT > LOT_START_DT
     UNION ALL
     SELECT cast(PATID as string)                    AS PATID,
            LOT_NUM,
@@ -429,6 +434,7 @@ build_sct_cart_sequence <- function(con, lot_long) {
       WHERE LOT_BASE_END_REASON IN ('SCT_AUTO','SCT_ALLO','SCT_CART',
                                       'CART_INIT')
         AND LOT_BASE_END_DT IS NOT NULL
+        AND LOT_BASE_END_DT > LOT_START_DT
     "))
   })
 
@@ -445,8 +451,21 @@ build_sct_cart_sequence <- function(con, lot_long) {
   evt$LOT_NUM <- as.integer(evt$LOT_NUM)
   evt$event_dt_d <- as.Date(evt$event_dt)
   evt <- evt[!is.na(evt$event_dt_d), , drop = FALSE]
-  # Same physical event can surface twice if the LOT-start IS the AUTO
-  # and LOT_TX_AUTO_DT_1 captured it too. Dedup on patient + date + type.
+
+  # Normalise the CAR-T family to a single canonical "CART" label
+  # BEFORE deduping. The same physical CAR-T can surface as different
+  # types across the branches: 'CART' from LOT_START_TYPE, 'CART_INIT'
+  # from a multi-day LOT cut short by that CAR-T (LOT_BASE_END_REASON),
+  # and 'SCT_CART' for the no-consolidation single-day CAR-T case
+  # (already excluded from the LOT-end branch by the LOT_BASE_END_DT >
+  # LOT_START_DT guard). Without this normalisation the (PATID, date,
+  # type) dedup would treat CART and CART_INIT as different events on
+  # the same date and double-count CAR-Ts that end LOT_N and start
+  # LOT_N+1. AUTO and ALLO already share labels across branches so no
+  # mapping is needed for them.
+  cart_family <- c("CART", "CART_INIT", "SCT_CART")
+  evt$event_type[evt$event_type %in% cart_family] <- "CART"
+
   evt <- evt[!duplicated(evt[, c("PATID", "event_dt_d", "event_type")]), ,
              drop = FALSE]
   evt <- evt[order(evt$PATID, evt$event_dt_d, evt$LOT_NUM), , drop = FALSE]
