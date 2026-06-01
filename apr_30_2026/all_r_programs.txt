@@ -7562,13 +7562,14 @@ FILE: apr_30_2026/lot_fu_qs.R
 #      approval table (REGIMEN_APPROVALS_CSV); schema TBD with
 #      clinical because approval status varies by LOT and calendar
 #      year.
-#   5. Sequential SCT/CART events analysis (Julia Q II) - event-based:
-#      LOT_START_TYPE in {SCT_AUTO/SCT_ALLO/SCT_CART/CART/CART_INIT}
-#      UNIONed with in-LOT AUTO events from LOT_TX_AUTO_DT_1 and
-#      LOT_TX_AUTO_DT_2, deduped, ordered by date. A pure
-#      LOT_START_TYPE scan would mis-sequence patients with an AUTO
-#      inside (say) LOT1 followed later by a CART line, showing them
-#      as just "CART".
+#   5. Sequential SCT/CART events analysis (Julia Q II) - event-based,
+#      unioning all three places SCT/CART events live in LOT_LONG:
+#        (a) LOT_START_TYPE - SCT/CART starting a new LOT;
+#        (b) LOT_BASE_END_REASON - SCT/CART ending a LOT (event date
+#            = LOT_BASE_END_DT + 1 per lot2_5_base.R's end-date rule),
+#            so terminal SCTs with no next LOT are still captured;
+#        (c) LOT_TX_AUTO_DT_1 / LOT_TX_AUTO_DT_2 - in-LOT AUTOs.
+#      Deduped on (PATID, event_dt, event_type) and ordered by date.
 #
 # Reads only the persisted work-schema LOT_LONG; builds nothing; safe
 # to run any time after the cohort+LOT pipeline has completed.
@@ -7890,16 +7891,22 @@ build_sct_cart_sequence <- function(con, lot_long) {
   section <- "SCT_CART_SEQ"
   log_msg("Sequential SCT/CART events (event-based, includes in-LOT AUTOs)")
 
-  # SCT/CART events live in TWO places in LOT_LONG and we must union
-  # both, else in-LOT AUTOs are silently dropped:
-  #   (a) LOT_START_TYPE in {SCT_AUTO, SCT_ALLO, SCT_CART, CART,
-  #       CART_INIT} - the SCT is the LOT-start event itself.
-  #   (b) LOT_TX_AUTO_DT_1 / LOT_TX_AUTO_DT_2 - in-LOT AUTO events
-  #       inside a non-SCT line of therapy (per lot2_5_base.R). A
-  #       LOT_START_TYPE-only scan would miss these and mis-sequence
-  #       any patient who had AUTO inside LOT1 then later CART.
-  # Falls back to LOT_START_TYPE only if the in-LOT AUTO columns are
-  # not in this LOT_LONG (older builds), with a clear log message.
+  # SCT/CART events live in THREE places in LOT_LONG; a complete event
+  # union must cover all of them, otherwise sequences silently drop
+  # real procedures:
+  #   (a) LOT_START_TYPE - SCT/CART that STARTS a new LOT
+  #       (event date = LOT_START_DT).
+  #   (b) LOT_BASE_END_REASON - SCT/CART that ENDED a LOT (the LOT was
+  #       cut short by the procedure). Per lot2_5_base.R:758-774 the
+  #       LOT end date is the procedure date minus 1, so the true
+  #       event date is LOT_BASE_END_DT + 1. Without this branch a
+  #       terminal SCT (e.g. CART_INIT ending LOT5 with no LOT6) is
+  #       invisible to the sequence.
+  #   (c) LOT_TX_AUTO_DT_1 / LOT_TX_AUTO_DT_2 - in-LOT AUTO events
+  #       inside a non-SCT line of therapy.
+  # Dedup on (PATID, event_dt, event_type) handles the legitimate
+  # overlap where the same procedure both ENDS LOT_N and STARTS
+  # LOT_N+1 on the same date.
   union_sql <- glue("
     SELECT cast(PATID as string)                    AS PATID,
            LOT_NUM,
@@ -7909,6 +7916,16 @@ build_sct_cart_sequence <- function(con, lot_long) {
     FROM {lot_long}
     WHERE LOT_START_TYPE IN ('SCT_AUTO','SCT_ALLO','SCT_CART',
                               'CART','CART_INIT')
+    UNION ALL
+    SELECT cast(PATID as string)                    AS PATID,
+           LOT_NUM,
+           cast(cast(date_add(LOT_BASE_END_DT, 1) as date) as string) AS event_dt,
+           LOT_BASE_END_REASON                      AS event_type,
+           'lot_end'                                AS event_source
+    FROM {lot_long}
+    WHERE LOT_BASE_END_REASON IN ('SCT_AUTO','SCT_ALLO','SCT_CART',
+                                    'CART_INIT')
+      AND LOT_BASE_END_DT IS NOT NULL
     UNION ALL
     SELECT cast(PATID as string)                    AS PATID,
            LOT_NUM,
@@ -7930,8 +7947,8 @@ build_sct_cart_sequence <- function(con, lot_long) {
     log_msg("  SCT/CART event union failed (",
             conditionMessage(e),
             ") - in-LOT AUTO columns may be missing; falling back to ",
-            "LOT_START_TYPE only. Sequences may undercount in-LOT AUTO ",
-            "events.")
+            "LOT_START_TYPE + LOT_BASE_END_REASON only. Sequences may ",
+            "still undercount in-LOT AUTO events.")
     db_q(con, glue("
       SELECT cast(PATID as string)                    AS PATID,
              LOT_NUM,
@@ -7941,6 +7958,16 @@ build_sct_cart_sequence <- function(con, lot_long) {
       FROM {lot_long}
       WHERE LOT_START_TYPE IN ('SCT_AUTO','SCT_ALLO','SCT_CART',
                                 'CART','CART_INIT')
+      UNION ALL
+      SELECT cast(PATID as string)                    AS PATID,
+             LOT_NUM,
+             cast(cast(date_add(LOT_BASE_END_DT, 1) as date) as string) AS event_dt,
+             LOT_BASE_END_REASON                      AS event_type,
+             'lot_end'                                AS event_source
+      FROM {lot_long}
+      WHERE LOT_BASE_END_REASON IN ('SCT_AUTO','SCT_ALLO','SCT_CART',
+                                      'CART_INIT')
+        AND LOT_BASE_END_DT IS NOT NULL
     "))
   })
 
@@ -7989,9 +8016,13 @@ build_sct_cart_sequence <- function(con, lot_long) {
   add_html_card(paste0(
     '<div style="font-family:system-ui;padding:14px">',
     '<h3>Sequential SCT/CART events summary</h3>',
-    '<p style="color:#555;font-size:13px">Event-based, combining ',
-    'LOT-start SCT/CART types and in-LOT AUTO events ',
-    '(<code>LOT_TX_AUTO_DT_1</code> / <code>LOT_TX_AUTO_DT_2</code>).</p>',
+    '<p style="color:#555;font-size:13px">Event-based union of ',
+    'LOT-start SCT/CART types (<code>LOT_START_TYPE</code>), ',
+    'LOT-ending SCT/CART procedures ',
+    '(<code>LOT_BASE_END_REASON</code>, event date = ',
+    '<code>LOT_BASE_END_DT + 1</code>), and in-LOT AUTO events ',
+    '(<code>LOT_TX_AUTO_DT_1</code> / <code>LOT_TX_AUTO_DT_2</code>), ',
+    'deduped on (PATID, event date, event type).</p>',
     '<table style="border-collapse:collapse;font-size:13px" ',
     'border="1" cellpadding="6">',
     '<tr style="background:#f0f3f5"><th>Metric</th><th>n patients</th></tr>',
