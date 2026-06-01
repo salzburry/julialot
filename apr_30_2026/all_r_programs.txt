@@ -7352,11 +7352,14 @@ main <- function() {
 
   # ---- Q4 : anti-BCMA / Blenrep (belantamab) availability ------------
   # Epi follow-up. Belantamab mafodotin (Blenrep, HCPCS J9037) is a
-  # late-line anti-BCMA agent withdrawn from the US market in late 2022,
-  # so counts are expected to be low and concentrated in later lines -
-  # this scans ALL lines, not just 1L. MAP_STACKED is the per-medication
-  # exposure table (cohort-scoped); the belantamab token is detected
-  # from the data (class like BCMA, abbr starting BEL) rather than
+  # late-line anti-BCMA agent withdrawn from the US market during the
+  # study window (Nov 2022) and reapproved by FDA after study end
+  # (Oct 2025) for RRMM after >=2 prior lines - so within STUDY_END
+  # 2025-06-30 counts are expected to be low and concentrated in
+  # later lines. This scans ALL lines, not just 1L. MAP_STACKED is
+  # the per-medication exposure table (cohort-scoped); the belantamab
+  # token is detected from the data (class like BCMA, abbr starting
+  # BEL) rather than
   # hard-coded, so a codelist abbreviation change does not break it.
   map_tbl <- wrk("MAP_STACKED")
   if (!readable(map_tbl)) {
@@ -7542,18 +7545,30 @@ FILE: apr_30_2026/lot_fu_qs.R
 # Builds a SEPARATE single self-contained HTML dashboard
 # (lot_fu_qs_dashboard.html) from the persisted LOT_LONG with:
 #
-#   1. Focused LOT1->LOT2 sankey (Julia Q I.1)
-#      Top-N LOT1 regimens, then - among only those patients - the
-#      top-N LOT2 regimens they progressed to. Remainder targets get
+#   1. Focused LOT1->LOT2 sankey (Julia Q I.1). Top-N LOT1 regimens,
+#      then - among only those patients - the top-N LOT2 regimens they
+#      progressed to. The "(no LOT2)" bucket is shown separately and
+#      does NOT consume a top-N slot. Remainder real regimens are
 #      bucketed as "Other" so the total stays consistent.
 #   2. Same focused pattern for LOT2->LOT3, LOT3->LOT4, LOT4->LOT5
 #      (Julia Q I.2).
-#   3. Regimen-category sankey placeholder (Julia Q I.3, pending the
-#      MM Treatment Table for Protocol xlsx; reads
-#      REGIMEN_CATEGORIES_CSV env var when ready).
-#   4. Sequential SCT/CART events analysis (Julia Q II) - per-patient
-#      sequence string, patient-count table, sankey of consecutive
-#      type transitions.
+#   3. Regimen-category sankeys (Julia Q I.3). Wired - when
+#      REGIMEN_CATEGORIES_CSV points to a regimen->category mapping it
+#      is loaded and LOT1->LOT5 sankeys are rendered with regimen
+#      strings collapsed to category labels. Until the MM Treatment
+#      Table for Protocol xlsx is finalised the section renders a
+#      clear placeholder explaining the expected CSV schema.
+#   4. Approval-status sankeys (Julia Q I.4) - placeholder pending an
+#      approval table (REGIMEN_APPROVALS_CSV); schema TBD with
+#      clinical because approval status varies by LOT and calendar
+#      year.
+#   5. Sequential SCT/CART events analysis (Julia Q II) - event-based:
+#      LOT_START_TYPE in {SCT_AUTO/SCT_ALLO/SCT_CART/CART/CART_INIT}
+#      UNIONed with in-LOT AUTO events from LOT_TX_AUTO_DT_1 and
+#      LOT_TX_AUTO_DT_2, deduped, ordered by date. A pure
+#      LOT_START_TYPE scan would mis-sequence patients with an AUTO
+#      inside (say) LOT1 followed later by a CART line, showing them
+#      as just "CART".
 #
 # Reads only the persisted work-schema LOT_LONG; builds nothing; safe
 # to run any time after the cohort+LOT pipeline has completed.
@@ -7655,18 +7670,26 @@ build_focused_pair <- function(con, lot_long, n_from, n_to) {
   top_from <- head(src_counts$reg_from, TOP_N)
 
   sub <- pairs[pairs$reg_from %in% top_from, , drop = FALSE]
+  no_lot_label <- paste0("(no LOT", n_to, ")")
   sub$reg_to_label <- ifelse(is.na(sub$reg_to) | sub$reg_to == "",
-                              paste0("(no LOT", n_to, ")"),
+                              no_lot_label,
                               as.character(sub$reg_to))
 
+  # Rank only the real LOTn_to regimens for the top-N; the "(no LOTn)"
+  # bucket is always shown separately so it does not consume a top-N
+  # slot (otherwise non-progression can edge a real regimen off the
+  # ranking and the chart no longer reads as "top 10 LOT2 regimens").
   tgt_counts <- aggregate(PATID ~ reg_to_label, data = sub,
                           FUN = function(x) length(unique(x)))
   names(tgt_counts)[2] <- "n_patients"
   tgt_counts <- tgt_counts[order(-tgt_counts$n_patients), , drop = FALSE]
-  top_to <- head(tgt_counts$reg_to_label, TOP_N)
+  tgt_real <- tgt_counts[tgt_counts$reg_to_label != no_lot_label,
+                          , drop = FALSE]
+  top_to <- head(tgt_real$reg_to_label, TOP_N)
 
-  sub$tgt_node <- ifelse(sub$reg_to_label %in% top_to,
-                          sub$reg_to_label, "Other")
+  sub$tgt_node <- ifelse(sub$reg_to_label %in% top_to, sub$reg_to_label,
+                  ifelse(sub$reg_to_label == no_lot_label, no_lot_label,
+                  "Other"))
 
   links <- aggregate(PATID ~ reg_from + tgt_node, data = sub,
                      FUN = function(x) length(unique(x)))
@@ -7694,76 +7717,262 @@ build_focused_pair <- function(con, lot_long, n_from, n_to) {
                             " transition counts"))
 }
 
-build_category_placeholder <- function() {
+esc_html <- function(s) {
+  s <- gsub("&", "&amp;", as.character(s), fixed = TRUE)
+  s <- gsub("<", "&lt;",  s, fixed = TRUE)
+  gsub(">", "&gt;", s, fixed = TRUE)
+}
+
+load_category_lookup <- function() {
+  cat_csv <- Sys.getenv("REGIMEN_CATEGORIES_CSV", unset = "")
+  if (!nzchar(cat_csv) || !file.exists(cat_csv)) return(NULL)
+  df <- tryCatch(read.csv(cat_csv, stringsAsFactors = FALSE,
+                          check.names = FALSE),
+                 error = function(e) NULL)
+  if (is.null(df) || nrow(df) == 0)
+    return(structure(list(), bad = TRUE, path = cat_csv))
+  ncols <- tolower(names(df))
+  reg_i <- which(ncols %in% c("regimen", "lot_base_meds", "med", "meds",
+                              "treatment", "regimen_name"))[1]
+  cat_i <- which(ncols %in% c("category", "regimen_category",
+                              "treatment_category", "class"))[1]
+  if (is.na(reg_i) || is.na(cat_i))
+    return(structure(list(), bad = TRUE, path = cat_csv,
+                     cols = paste(names(df), collapse = ", ")))
+  list(
+    path   = cat_csv,
+    lookup = setNames(trimws(as.character(df[[cat_i]])),
+                      trimws(as.character(df[[reg_i]])))
+  )
+}
+
+build_category_pair <- function(con, lot_long, n_from, n_to, lookup) {
+  section <- "BY_CATEGORY"
+  pairs <- db_q(con, glue("
+    WITH a AS (
+      SELECT cast(PATID as string) AS PATID,
+             trim(LOT_BASE_MEDS)   AS reg_from
+      FROM {lot_long}
+      WHERE LOT_NUM = {n_from}
+        AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
+    ),
+    b AS (
+      SELECT cast(PATID as string) AS PATID,
+             trim(LOT_BASE_MEDS)   AS reg_to
+      FROM {lot_long}
+      WHERE LOT_NUM = {n_to}
+        AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
+    )
+    SELECT a.PATID, a.reg_from, b.reg_to
+    FROM a LEFT JOIN b ON a.PATID = b.PATID
+  "))
+  if (nrow(pairs) == 0) return(invisible())
+
+  uncat        <- "(uncategorised)"
+  no_lot_label <- paste0("(no LOT", n_to, ")")
+  pairs$cat_from <- ifelse(pairs$reg_from %in% names(lookup),
+                            unname(lookup[pairs$reg_from]), uncat)
+  pairs$cat_to <- ifelse(is.na(pairs$reg_to) | pairs$reg_to == "",
+                          no_lot_label,
+                  ifelse(pairs$reg_to %in% names(lookup),
+                          unname(lookup[pairs$reg_to]), uncat))
+
+  links <- aggregate(PATID ~ cat_from + cat_to, data = pairs,
+                     FUN = function(x) length(unique(x)))
+  names(links)[3] <- "n_patients"
+  links <- links[order(-links$n_patients), , drop = FALSE]
+
+  src_lab <- paste0("L", n_from, ": ", links$cat_from)
+  tgt_lab <- paste0("L", n_to, ": ", links$cat_to)
+  fu_sankey(src_lab, tgt_lab, links$n_patients,
+            section = section,
+            title   = paste0("LOT", n_from, " -> LOT", n_to,
+                             " by regimen category"))
+
+  tbl_df <- links
+  names(tbl_df) <- c(paste0("LOT", n_from, "_category"),
+                     paste0("LOT", n_to, "_category"),
+                     "n_patients")
+  save_table(tbl_df, section = section,
+             title = paste0("LOT", n_from, " -> LOT", n_to,
+                            " category-transition counts"))
+}
+
+build_category_sankeys <- function(con, lot_long) {
   section <- "BY_CATEGORY"
   cat_csv <- Sys.getenv("REGIMEN_CATEGORIES_CSV", unset = "")
-  if (nzchar(cat_csv) && file.exists(cat_csv)) {
-    esc <- function(s) gsub("<", "&lt;",
-                            gsub("&", "&amp;", as.character(s), fixed = TRUE),
-                            fixed = TRUE)
-    add_html_card(paste0(
-      '<div style="font-family:system-ui;padding:14px">',
-      '<h3>Regimen categories (mapping found, not yet wired)</h3>',
-      '<p style="color:#555">Categories CSV at <code>',
-      esc(cat_csv), '</code>. ',
-      'Wire-up pending Julia confirming the exact mapping schema ',
-      '(expected columns: <code>regimen</code>, <code>category</code>). ',
-      'Once confirmed this section will render LOT1-&gt;5 sankeys ',
-      'with regimen strings collapsed to category labels.</p></div>'),
-      section = section, title = "Regimen categories (mapping pending)")
-  } else {
+
+  if (!nzchar(cat_csv) || !file.exists(cat_csv)) {
     add_html_card(paste0(
       '<div style="font-family:system-ui;padding:14px">',
       '<h3>Regimen-category sankeys (placeholder)</h3>',
       '<p style="color:#555">Per Julia: pending the ',
-      '<em>MM Treatment Table for Protocol.xlsx</em> ',
-      '(final version forthcoming). Once the categorisation is ',
-      'available, save it as a 2-column CSV ',
-      '(<code>regimen, category</code>) and set ',
-      '<code>REGIMEN_CATEGORIES_CSV</code> to its path before ',
-      'rerunning this script. Sankeys grouped by category will then ',
-      'appear here.</p></div>'),
+      '<em>MM Treatment Table for Protocol.xlsx</em> (final version ',
+      'forthcoming). Save it as a 2-column CSV with headers ',
+      '<code>regimen</code> and <code>category</code> (other accepted ',
+      'pairs: <code>lot_base_meds</code> / ',
+      '<code>regimen_category</code>), then set ',
+      '<code>REGIMEN_CATEGORIES_CSV</code> to its path and rerun. ',
+      'LOT1-&gt;LOT5 category sankeys will then appear here ',
+      'automatically.</p></div>'),
       section = section, title = "Regimen categories (pending xlsx)")
+    return(invisible())
   }
+
+  cat_data <- load_category_lookup()
+  if (is.null(cat_data) || isTRUE(attr(cat_data, "bad"))) {
+    found_cols <- if (!is.null(attr(cat_data, "cols")))
+      attr(cat_data, "cols") else "(none)"
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:14px">',
+      '<h3>Regimen-category CSV could not be parsed</h3>',
+      '<p style="color:#555">Found <code>',
+      esc_html(cat_csv), '</code> but could not locate a ',
+      '<code>regimen</code>/<code>category</code> column pair. ',
+      'Columns seen: <code>', esc_html(found_cols), '</code>. ',
+      'Expected one header from <code>regimen</code> / ',
+      '<code>lot_base_meds</code> / <code>med</code> / <code>meds</code> ',
+      'and one from <code>category</code> / ',
+      '<code>regimen_category</code> / <code>treatment_category</code>.',
+      '</p></div>'),
+      section = section, title = "Regimen categories (bad CSV)")
+    return(invisible())
+  }
+
+  log_msg("Regimen categories: loaded ",
+          length(cat_data$lookup), " mappings from ", cat_data$path)
+  add_html_card(paste0(
+    '<div style="font-family:system-ui;padding:14px">',
+    '<h3>Regimen-category sankeys</h3>',
+    '<p style="color:#555;font-size:13px">Mapping loaded from <code>',
+    esc_html(cat_data$path), '</code> (',
+    format(length(cat_data$lookup), big.mark = ","),
+    ' regimen-&gt;category rows). Regimens not in the mapping appear ',
+    'as <code>(uncategorised)</code>.</p></div>'),
+    section = section, title = "Categories source")
+
+  for (n in 1:4) build_category_pair(con, lot_long, n, n + 1L,
+                                      cat_data$lookup)
+}
+
+build_approval_status <- function(con, lot_long) {
+  section <- "BY_APPROVAL"
+  appr_csv <- Sys.getenv("REGIMEN_APPROVALS_CSV", unset = "")
+  if (!nzchar(appr_csv) || !file.exists(appr_csv)) {
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:14px">',
+      '<h3>Approval-status sankeys (placeholder)</h3>',
+      '<p style="color:#555">Julia Q I.4 - whether the drug was ',
+      'FDA-approved for the LOT it appears in. Approval status varies ',
+      'by line of therapy AND by calendar year (the study window is ',
+      'long and approvals change over time), so this needs an external ',
+      'approval table. Save it as a CSV with columns ',
+      '<code>med_abbr</code>, <code>lot_num</code> (or ranges), and ',
+      '<code>effective_date</code> (or <code>start_date</code> / ',
+      '<code>end_date</code>), then set ',
+      '<code>REGIMEN_APPROVALS_CSV</code> to its path. The full ',
+      'approval schema is pending Julia / clinical input.</p></div>'),
+      section = section, title = "Approval status (pending schema)")
+    return(invisible())
+  }
+  add_html_card(paste0(
+    '<div style="font-family:system-ui;padding:14px">',
+    '<h3>Approval-status CSV detected</h3>',
+    '<p style="color:#555">Found <code>', esc_html(appr_csv),
+    '</code> but the approval-table schema has not been agreed ',
+    'with clinical yet. Once the columns are confirmed this section ',
+    'will tag every LOT regimen as approved / off-label / pending and ',
+    'render approval-status sankeys per LOT.</p></div>'),
+    section = section, title = "Approval status (schema TBD)")
 }
 
 build_sct_cart_sequence <- function(con, lot_long) {
   section <- "SCT_CART_SEQ"
-  log_msg("Sequential SCT/CART events")
+  log_msg("Sequential SCT/CART events (event-based, includes in-LOT AUTOs)")
 
-  evt <- db_q(con, glue("
-    SELECT cast(PATID as string) AS PATID,
+  # SCT/CART events live in TWO places in LOT_LONG and we must union
+  # both, else in-LOT AUTOs are silently dropped:
+  #   (a) LOT_START_TYPE in {SCT_AUTO, SCT_ALLO, SCT_CART, CART,
+  #       CART_INIT} - the SCT is the LOT-start event itself.
+  #   (b) LOT_TX_AUTO_DT_1 / LOT_TX_AUTO_DT_2 - in-LOT AUTO events
+  #       inside a non-SCT line of therapy (per lot2_5_base.R). A
+  #       LOT_START_TYPE-only scan would miss these and mis-sequence
+  #       any patient who had AUTO inside LOT1 then later CART.
+  # Falls back to LOT_START_TYPE only if the in-LOT AUTO columns are
+  # not in this LOT_LONG (older builds), with a clear log message.
+  union_sql <- glue("
+    SELECT cast(PATID as string)                    AS PATID,
            LOT_NUM,
-           LOT_START_TYPE,
-           cast(cast(LOT_START_DT as date) as string) AS LOT_START_DT
+           cast(cast(LOT_START_DT as date) as string) AS event_dt,
+           LOT_START_TYPE                           AS event_type,
+           'lot_start'                              AS event_source
     FROM {lot_long}
     WHERE LOT_START_TYPE IN ('SCT_AUTO','SCT_ALLO','SCT_CART',
                               'CART','CART_INIT')
-    ORDER BY PATID, LOT_NUM
-  "))
+    UNION ALL
+    SELECT cast(PATID as string)                    AS PATID,
+           LOT_NUM,
+           cast(cast(LOT_TX_AUTO_DT_1 as date) as string) AS event_dt,
+           'SCT_AUTO'                               AS event_type,
+           'in_lot_dt1'                             AS event_source
+    FROM {lot_long}
+    WHERE LOT_TX_AUTO_DT_1 IS NOT NULL
+    UNION ALL
+    SELECT cast(PATID as string)                    AS PATID,
+           LOT_NUM,
+           cast(cast(LOT_TX_AUTO_DT_2 as date) as string) AS event_dt,
+           'SCT_AUTO'                               AS event_type,
+           'in_lot_dt2'                             AS event_source
+    FROM {lot_long}
+    WHERE LOT_TX_AUTO_DT_2 IS NOT NULL
+  ")
+  evt <- tryCatch(db_q(con, union_sql), error = function(e) {
+    log_msg("  SCT/CART event union failed (",
+            conditionMessage(e),
+            ") - in-LOT AUTO columns may be missing; falling back to ",
+            "LOT_START_TYPE only. Sequences may undercount in-LOT AUTO ",
+            "events.")
+    db_q(con, glue("
+      SELECT cast(PATID as string)                    AS PATID,
+             LOT_NUM,
+             cast(cast(LOT_START_DT as date) as string) AS event_dt,
+             LOT_START_TYPE                           AS event_type,
+             'lot_start'                              AS event_source
+      FROM {lot_long}
+      WHERE LOT_START_TYPE IN ('SCT_AUTO','SCT_ALLO','SCT_CART',
+                                'CART','CART_INIT')
+    "))
+  })
 
-  if (nrow(evt) == 0) {
+  if (is.null(evt) || nrow(evt) == 0) {
     add_html_card(paste0(
       '<div style="font-family:system-ui;padding:14px">',
       '<h3>Sequential SCT/CART events</h3>',
-      '<p style="color:#555">No LOT_LONG rows have ',
-      'LOT_START_TYPE in the SCT/CART set.</p></div>'),
+      '<p style="color:#555">No SCT/CART events found in LOT_LONG.',
+      '</p></div>'),
       section = section, title = "Sequential SCT/CART (none)")
     return(invisible())
   }
 
   evt$LOT_NUM <- as.integer(evt$LOT_NUM)
-  evt <- evt[order(evt$PATID, evt$LOT_NUM), , drop = FALSE]
+  evt$event_dt_d <- as.Date(evt$event_dt)
+  evt <- evt[!is.na(evt$event_dt_d), , drop = FALSE]
+  # Same physical event can surface twice if the LOT-start IS the AUTO
+  # and LOT_TX_AUTO_DT_1 captured it too. Dedup on patient + date + type.
+  evt <- evt[!duplicated(evt[, c("PATID", "event_dt_d", "event_type")]), ,
+             drop = FALSE]
+  evt <- evt[order(evt$PATID, evt$event_dt_d, evt$LOT_NUM), , drop = FALSE]
 
   by_pat <- split(evt, evt$PATID)
   pat_seq <- data.frame(
     PATID    = names(by_pat),
     n_events = vapply(by_pat, nrow, integer(1)),
     sequence = vapply(by_pat,
-                      function(d) paste(d$LOT_START_TYPE, collapse = " -> "),
+                      function(d) paste(d$event_type, collapse = " -> "),
                       character(1)),
-    lots     = vapply(by_pat,
-                      function(d) paste0("L", d$LOT_NUM, collapse = "/"),
+    timeline = vapply(by_pat,
+                      function(d) paste0(d$event_type, "@L", d$LOT_NUM,
+                                          collapse = " -> "),
                       character(1)),
     stringsAsFactors = FALSE
   )
@@ -7780,6 +7989,9 @@ build_sct_cart_sequence <- function(con, lot_long) {
   add_html_card(paste0(
     '<div style="font-family:system-ui;padding:14px">',
     '<h3>Sequential SCT/CART events summary</h3>',
+    '<p style="color:#555;font-size:13px">Event-based, combining ',
+    'LOT-start SCT/CART types and in-LOT AUTO events ',
+    '(<code>LOT_TX_AUTO_DT_1</code> / <code>LOT_TX_AUTO_DT_2</code>).</p>',
     '<table style="border-collapse:collapse;font-size:13px" ',
     'border="1" cellpadding="6">',
     '<tr style="background:#f0f3f5"><th>Metric</th><th>n patients</th></tr>',
@@ -7797,8 +8009,8 @@ build_sct_cart_sequence <- function(con, lot_long) {
 
   pairs <- do.call(rbind, lapply(by_pat, function(d) {
     if (nrow(d) < 2) return(NULL)
-    data.frame(from  = d$LOT_START_TYPE[-nrow(d)],
-               to    = d$LOT_START_TYPE[-1],
+    data.frame(from  = d$event_type[-nrow(d)],
+               to    = d$event_type[-1],
                PATID = d$PATID[-1],
                stringsAsFactors = FALSE)
   }))
@@ -7813,7 +8025,7 @@ build_sct_cart_sequence <- function(con, lot_long) {
     tgt_lab <- paste0("To: ",   link_counts$to)
     fu_sankey(src_lab, tgt_lab, link_counts$n_patients,
               section = section,
-              title   = "Consecutive SCT/CART transitions")
+              title   = "Consecutive SCT/CART transitions (event-based)")
 
     save_table(link_counts, section = section,
                title = "Consecutive SCT/CART transition counts")
@@ -7841,7 +8053,8 @@ main <- function() {
   dashboard_items <<- list()
 
   for (n in 1:4) build_focused_pair(con, lot_long, n, n + 1L)
-  build_category_placeholder()
+  build_category_sankeys(con, lot_long)
+  build_approval_status(con, lot_long)
   build_sct_cart_sequence(con, lot_long)
 
   build_dashboard(
@@ -7849,7 +8062,7 @@ main <- function() {
     header_title = "MM LOT &mdash; Focused Follow-up Q&apos;s",
     header_sub   = paste0("LOT1&rarr;2 &bull; LOT2&rarr;3 &bull; ",
                           "LOT3&rarr;4 &bull; LOT4&rarr;5 &bull; ",
-                          "By category (pending) &bull; ",
+                          "By category &bull; By approval &bull; ",
                           "SCT/CART sequence &nbsp;&mdash;&nbsp; ",
                           "pick a Category above")
   )

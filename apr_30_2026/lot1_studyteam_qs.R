@@ -378,11 +378,14 @@ main <- function() {
 
   # ---- Q4 : anti-BCMA / Blenrep (belantamab) availability ------------
   # Epi follow-up. Belantamab mafodotin (Blenrep, HCPCS J9037) is a
-  # late-line anti-BCMA agent withdrawn from the US market in late 2022,
-  # so counts are expected to be low and concentrated in later lines -
-  # this scans ALL lines, not just 1L. MAP_STACKED is the per-medication
-  # exposure table (cohort-scoped); the belantamab token is detected
-  # from the data (class like BCMA, abbr starting BEL) rather than
+  # late-line anti-BCMA agent withdrawn from the US market during the
+  # study window (Nov 2022) and reapproved by FDA after study end
+  # (Oct 2025) for RRMM after >=2 prior lines - so within STUDY_END
+  # 2025-06-30 counts are expected to be low and concentrated in
+  # later lines. This scans ALL lines, not just 1L. MAP_STACKED is
+  # the per-medication exposure table (cohort-scoped); the belantamab
+  # token is detected from the data (class like BCMA, abbr starting
+  # BEL) rather than
   # hard-coded, so a codelist abbreviation change does not break it.
   map_tbl <- wrk("MAP_STACKED")
   if (!readable(map_tbl)) {
