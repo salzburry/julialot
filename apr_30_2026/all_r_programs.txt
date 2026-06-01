@@ -6985,9 +6985,12 @@ FILE: apr_30_2026/lot1_studyteam_qs.R
 #   Q2  Top 25 1L regimens by calendar year.
 #   Q3  Whether the dashboard's auto patient-journey examples are the
 #       6-9-meds-at-1L-induction patients from the Sankey (LOT1 Fig 9).
+#   Q4  anti-BCMA / Blenrep (belantamab) availability - all lines, not
+#       just 1L (epi follow-up: how many Blenrep-treated patients exist).
 #
-# Reads only persisted work-schema tables (LOT_LONG, ELIG_COH_ALLFLAGS)
-# and the raw CDM; it builds nothing and is safe to run any time.
+# Reads only persisted work-schema tables (LOT_LONG, ELIG_COH_ALLFLAGS,
+# ELIG_COH_FINAL, MAP_STACKED) and the raw CDM; it builds nothing and is
+# safe to run any time.
 #
 # Three honest limits, surfaced in the output rather than hidden:
 #  - "Another cancer" (#8) and "clinical trial" (#10) are *exclusion*
@@ -7347,6 +7350,89 @@ main <- function() {
     "induction med count - so they are a different set; any overlap is ",
     "incidental and quantified above.")
 
+  # ---- Q4 : anti-BCMA / Blenrep (belantamab) availability ------------
+  # Epi follow-up. Belantamab mafodotin (Blenrep, HCPCS J9037) is a
+  # late-line anti-BCMA agent withdrawn from the US market in late 2022,
+  # so counts are expected to be low and concentrated in later lines -
+  # this scans ALL lines, not just 1L. MAP_STACKED is the per-medication
+  # exposure table (cohort-scoped); the belantamab token is detected
+  # from the data (class like BCMA, abbr starting BEL) rather than
+  # hard-coded, so a codelist abbreviation change does not break it.
+  map_tbl <- wrk("MAP_STACKED")
+  if (!readable(map_tbl)) {
+    log_msg("  Q4: ", map_tbl, " not readable - anti-BCMA / Blenrep ",
+            "availability skipped (rebuild via lot_program.R).")
+  } else {
+    bcma <- db_q(con, glue("
+      SELECT MAP_MED_TYPE  AS med_abbr,
+             MAP_MED_CLASS AS med_class,
+             count(DISTINCT PATID)             AS n_patients,
+             count(*)                          AS n_segments,
+             cast(min(MAP_START_DT) as string) AS first_use,
+             cast(max(MAP_START_DT) as string) AS last_use
+      FROM {map_tbl}
+      WHERE upper(MAP_MED_CLASS) LIKE '%BCMA%'
+         OR upper(MAP_MED_TYPE)  LIKE 'BEL%'
+      GROUP BY MAP_MED_TYPE, MAP_MED_CLASS
+      ORDER BY n_patients DESC
+    "))
+    write_out(bcma, "q4_antibcma_inventory")
+
+    bela_tokens <- if (nrow(bcma) > 0)
+      unique(bcma$med_abbr[grepl("^BEL", toupper(bcma$med_abbr))]) else
+      character(0)
+
+    if (length(bela_tokens) == 0) {
+      log_msg("  Q4: no belantamab (Blenrep) exposure found in ", map_tbl,
+              "; anti-BCMA agents present: ",
+              if (nrow(bcma) > 0) paste(bcma$med_abbr, collapse = ", ")
+              else "(none)",
+              ". A zero count is itself the answer for epi - Blenrep is ",
+              "absent from this cohort.")
+    } else {
+      tok_in <- paste(sprintf("'%s'", bela_tokens), collapse = ", ")
+      n_bela <- num(db_q(con, glue("
+        SELECT count(DISTINCT PATID) AS n
+        FROM {map_tbl} WHERE MAP_MED_TYPE IN ({tok_in})"))$n)
+
+      by_year <- db_q(con, glue("
+        SELECT year(MAP_START_DT)      AS yr,
+               count(DISTINCT PATID)   AS n_patients,
+               count(*)                AS n_segments
+        FROM {map_tbl} WHERE MAP_MED_TYPE IN ({tok_in})
+        GROUP BY year(MAP_START_DT) ORDER BY yr
+      "))
+      write_out(by_year, "q4_blenrep_by_year")
+
+      reg_preds <- paste(sprintf(
+        "array_contains(split(LOT_BASE_MEDS, ' '), '%s')", bela_tokens),
+        collapse = " OR ")
+      by_lot <- db_q(con, glue("
+        SELECT LOT_NUM, count(DISTINCT PATID) AS n_patients
+        FROM {lot_long}
+        WHERE LOT_BASE_MEDS IS NOT NULL AND ({reg_preds})
+        GROUP BY LOT_NUM ORDER BY LOT_NUM
+      "))
+      write_out(by_lot, "q4_blenrep_by_lot")
+
+      log_msg(sprintf(
+        "  Q4: Blenrep (token%s %s) - %s distinct patients with belantamab exposure (all lines, cohort-scoped).",
+        if (length(bela_tokens) > 1) "s" else "",
+        paste(bela_tokens, collapse = "/"), n_bela))
+      if (nrow(by_lot) > 0) {
+        log_msg("  Q4: Blenrep appears in a 1L-5L regimen for these line ",
+                "counts - ",
+                paste(sprintf("LOT%s:%s", by_lot$LOT_NUM, by_lot$n_patients),
+                      collapse = ", "),
+                " (LOT_BASE_MEDS match; a patient may give a J9037 claim ",
+                "without it joining a LOT regimen).")
+      } else {
+        log_msg("  Q4: belantamab exposure exists in MAP_STACKED but does ",
+                "not surface in any LOT_BASE_MEDS regimen string.")
+      }
+    }
+  }
+
   log_msg("LOT1 study-team questions complete. CSVs in ", out_dir)
 }
 
@@ -7442,6 +7528,336 @@ main <- function() {
 if (!interactive()) {
   main()
 }
+
+
+================================================================================
+FILE: apr_30_2026/lot_fu_qs.R
+================================================================================
+
+#!/usr/bin/env Rscript
+# Focused MM LOT follow-up sankeys (Julia, "MM LOT FU Q's").
+#
+#   Rscript lot_fu_qs.R
+#
+# Builds a SEPARATE single self-contained HTML dashboard
+# (lot_fu_qs_dashboard.html) from the persisted LOT_LONG with:
+#
+#   1. Focused LOT1->LOT2 sankey (Julia Q I.1)
+#      Top-N LOT1 regimens, then - among only those patients - the
+#      top-N LOT2 regimens they progressed to. Remainder targets get
+#      bucketed as "Other" so the total stays consistent.
+#   2. Same focused pattern for LOT2->LOT3, LOT3->LOT4, LOT4->LOT5
+#      (Julia Q I.2).
+#   3. Regimen-category sankey placeholder (Julia Q I.3, pending the
+#      MM Treatment Table for Protocol xlsx; reads
+#      REGIMEN_CATEGORIES_CSV env var when ready).
+#   4. Sequential SCT/CART events analysis (Julia Q II) - per-patient
+#      sequence string, patient-count table, sankey of consecutive
+#      type transitions.
+#
+# Reads only the persisted work-schema LOT_LONG; builds nothing; safe
+# to run any time after the cohort+LOT pipeline has completed.
+
+.script_dir <- local({
+  args <- commandArgs(trailingOnly = FALSE)
+  file_arg <- grep("^--file=", args, value = TRUE)
+  if (length(file_arg) > 0) {
+    return(dirname(normalizePath(sub("^--file=", "", file_arg[1]))))
+  }
+  for (i in seq_len(sys.nframe())) {
+    ofile <- tryCatch(sys.frame(i)$ofile, error = function(e) NULL)
+    if (!is.null(ofile)) return(dirname(normalizePath(ofile)))
+  }
+  getwd()
+})
+
+source_dir <- file.path(.script_dir, "R")
+if (file.exists(file.path(source_dir, "load_inputs.R"))) {
+  source(file.path(source_dir, "load_inputs.R"))
+  load_pipeline_inputs(c(.script_dir, dirname(.script_dir)))
+}
+source(file.path(source_dir, "config_lot.R"))
+source(file.path(source_dir, "db_utils_lot.R"))
+source(file.path(source_dir, "dashboard_lot.R"))
+
+TOP_N <- as.integer(Sys.getenv("FOCUSED_SANKEY_TOP_N", unset = "10"))
+if (is.na(TOP_N) || TOP_N < 1) TOP_N <- 10L
+
+# Local sankey helper - mirrors lot_long_dashboard.R's make_sankey but
+# accepts the dashboard section/title rather than hard-coding "SANKEY".
+fu_sankey <- function(src_lab, tgt_lab, value, section, title) {
+  if (!has_plotly || length(value) == 0) return(invisible())
+  nodes <- unique(c(src_lab, tgt_lab))
+  idx   <- setNames(seq_along(nodes) - 1L, nodes)
+  sk <- tryCatch(
+    plotly::plot_ly(
+      type = "sankey", orientation = "h", arrangement = "snap",
+      node = list(label = nodes, pad = 14, thickness = 16,
+                  color = "#2E86AB",
+                  line  = list(color = "white", width = 0.5)),
+      link = list(source = unname(idx[src_lab]),
+                  target = unname(idx[tgt_lab]),
+                  value  = as.numeric(value),
+                  color  = "rgba(46,134,171,0.30)")
+    ) |>
+      plotly::layout(title = list(text = title, font = list(size = 15)),
+                     font  = list(size = 11),
+                     margin = list(l = 10, r = 10, t = 50, b = 10),
+                     paper_bgcolor = "white") |>
+      plotly::config(displayModeBar = TRUE, displaylogo = FALSE),
+    error = function(e) {
+      log_msg("  INFO: sankey '", title, "' skipped (",
+              conditionMessage(e), ")")
+      NULL
+    })
+  if (!is.null(sk)) add_to_dashboard(sk, section = section, title = title)
+}
+
+build_focused_pair <- function(con, lot_long, n_from, n_to) {
+  section <- paste0("LOT", n_from, "_TO_LOT", n_to)
+  log_msg("Focused pair: LOT", n_from, " -> LOT", n_to)
+
+  pairs <- db_q(con, glue("
+    WITH a AS (
+      SELECT cast(PATID as string) AS PATID,
+             trim(LOT_BASE_MEDS)   AS reg_from
+      FROM {lot_long}
+      WHERE LOT_NUM = {n_from}
+        AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
+    ),
+    b AS (
+      SELECT cast(PATID as string) AS PATID,
+             trim(LOT_BASE_MEDS)   AS reg_to
+      FROM {lot_long}
+      WHERE LOT_NUM = {n_to}
+        AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
+    )
+    SELECT a.PATID, a.reg_from, b.reg_to
+    FROM a LEFT JOIN b ON a.PATID = b.PATID
+  "))
+
+  if (nrow(pairs) == 0) {
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:14px">',
+      '<h3>LOT', n_from, ' -> LOT', n_to, '</h3>',
+      '<p style="color:#555">No patients with a LOT', n_from,
+      ' regimen.</p></div>'),
+      section = section,
+      title = paste0("LOT", n_from, " -> LOT", n_to, " (no data)"))
+    return(invisible())
+  }
+
+  # Distinct-patient counts for source regimens; take top-N.
+  src_counts <- aggregate(PATID ~ reg_from, data = pairs,
+                          FUN = function(x) length(unique(x)))
+  names(src_counts)[2] <- "n_patients"
+  src_counts <- src_counts[order(-src_counts$n_patients), , drop = FALSE]
+  top_from <- head(src_counts$reg_from, TOP_N)
+
+  sub <- pairs[pairs$reg_from %in% top_from, , drop = FALSE]
+  sub$reg_to_label <- ifelse(is.na(sub$reg_to) | sub$reg_to == "",
+                              paste0("(no LOT", n_to, ")"),
+                              as.character(sub$reg_to))
+
+  tgt_counts <- aggregate(PATID ~ reg_to_label, data = sub,
+                          FUN = function(x) length(unique(x)))
+  names(tgt_counts)[2] <- "n_patients"
+  tgt_counts <- tgt_counts[order(-tgt_counts$n_patients), , drop = FALSE]
+  top_to <- head(tgt_counts$reg_to_label, TOP_N)
+
+  sub$tgt_node <- ifelse(sub$reg_to_label %in% top_to,
+                          sub$reg_to_label, "Other")
+
+  links <- aggregate(PATID ~ reg_from + tgt_node, data = sub,
+                     FUN = function(x) length(unique(x)))
+  names(links)[3] <- "n_patients"
+  links <- links[order(-links$n_patients), , drop = FALSE]
+
+  # Prefix labels with the LOT number so the sankey reads clearly when
+  # the same regimen appears as both a source and a target.
+  src_lab <- paste0("L", n_from, ": ", links$reg_from)
+  tgt_lab <- paste0("L", n_to, ": ", links$tgt_node)
+
+  fu_sankey(src_lab, tgt_lab, links$n_patients,
+            section = section,
+            title   = paste0("LOT", n_from, " -> LOT", n_to,
+                             " (focused: top ", TOP_N,
+                             " sources, top ", TOP_N,
+                             " targets, remainder = Other)"))
+
+  tbl_df <- links
+  names(tbl_df) <- c(paste0("LOT", n_from, "_regimen"),
+                     paste0("LOT", n_to, "_regimen"),
+                     "n_patients")
+  save_table(tbl_df, section = section,
+             title = paste0("LOT", n_from, " -> LOT", n_to,
+                            " transition counts"))
+}
+
+build_category_placeholder <- function() {
+  section <- "BY_CATEGORY"
+  cat_csv <- Sys.getenv("REGIMEN_CATEGORIES_CSV", unset = "")
+  if (nzchar(cat_csv) && file.exists(cat_csv)) {
+    esc <- function(s) gsub("<", "&lt;",
+                            gsub("&", "&amp;", as.character(s), fixed = TRUE),
+                            fixed = TRUE)
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:14px">',
+      '<h3>Regimen categories (mapping found, not yet wired)</h3>',
+      '<p style="color:#555">Categories CSV at <code>',
+      esc(cat_csv), '</code>. ',
+      'Wire-up pending Julia confirming the exact mapping schema ',
+      '(expected columns: <code>regimen</code>, <code>category</code>). ',
+      'Once confirmed this section will render LOT1-&gt;5 sankeys ',
+      'with regimen strings collapsed to category labels.</p></div>'),
+      section = section, title = "Regimen categories (mapping pending)")
+  } else {
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:14px">',
+      '<h3>Regimen-category sankeys (placeholder)</h3>',
+      '<p style="color:#555">Per Julia: pending the ',
+      '<em>MM Treatment Table for Protocol.xlsx</em> ',
+      '(final version forthcoming). Once the categorisation is ',
+      'available, save it as a 2-column CSV ',
+      '(<code>regimen, category</code>) and set ',
+      '<code>REGIMEN_CATEGORIES_CSV</code> to its path before ',
+      'rerunning this script. Sankeys grouped by category will then ',
+      'appear here.</p></div>'),
+      section = section, title = "Regimen categories (pending xlsx)")
+  }
+}
+
+build_sct_cart_sequence <- function(con, lot_long) {
+  section <- "SCT_CART_SEQ"
+  log_msg("Sequential SCT/CART events")
+
+  evt <- db_q(con, glue("
+    SELECT cast(PATID as string) AS PATID,
+           LOT_NUM,
+           LOT_START_TYPE,
+           cast(cast(LOT_START_DT as date) as string) AS LOT_START_DT
+    FROM {lot_long}
+    WHERE LOT_START_TYPE IN ('SCT_AUTO','SCT_ALLO','SCT_CART',
+                              'CART','CART_INIT')
+    ORDER BY PATID, LOT_NUM
+  "))
+
+  if (nrow(evt) == 0) {
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:14px">',
+      '<h3>Sequential SCT/CART events</h3>',
+      '<p style="color:#555">No LOT_LONG rows have ',
+      'LOT_START_TYPE in the SCT/CART set.</p></div>'),
+      section = section, title = "Sequential SCT/CART (none)")
+    return(invisible())
+  }
+
+  evt$LOT_NUM <- as.integer(evt$LOT_NUM)
+  evt <- evt[order(evt$PATID, evt$LOT_NUM), , drop = FALSE]
+
+  by_pat <- split(evt, evt$PATID)
+  pat_seq <- data.frame(
+    PATID    = names(by_pat),
+    n_events = vapply(by_pat, nrow, integer(1)),
+    sequence = vapply(by_pat,
+                      function(d) paste(d$LOT_START_TYPE, collapse = " -> "),
+                      character(1)),
+    lots     = vapply(by_pat,
+                      function(d) paste0("L", d$LOT_NUM, collapse = "/"),
+                      character(1)),
+    stringsAsFactors = FALSE
+  )
+
+  total_pat   <- nrow(pat_seq)
+  multi_pat   <- sum(pat_seq$n_events >= 2)
+  triple_plus <- sum(pat_seq$n_events >= 3)
+
+  pat_count <- aggregate(PATID ~ sequence,
+                          data = pat_seq, FUN = length)
+  names(pat_count)[2] <- "n_patients"
+  pat_count <- pat_count[order(-pat_count$n_patients), , drop = FALSE]
+
+  add_html_card(paste0(
+    '<div style="font-family:system-ui;padding:14px">',
+    '<h3>Sequential SCT/CART events summary</h3>',
+    '<table style="border-collapse:collapse;font-size:13px" ',
+    'border="1" cellpadding="6">',
+    '<tr style="background:#f0f3f5"><th>Metric</th><th>n patients</th></tr>',
+    '<tr><td>Patients with any SCT/CART event</td><td>',
+    format(total_pat, big.mark = ","), '</td></tr>',
+    '<tr><td>Patients with &ge;2 SCT/CART events (sequential)</td><td>',
+    format(multi_pat, big.mark = ","), '</td></tr>',
+    '<tr><td>Patients with &ge;3 SCT/CART events</td><td>',
+    format(triple_plus, big.mark = ","), '</td></tr>',
+    '</table></div>'),
+    section = section, title = "Summary counts")
+
+  save_table(pat_count, section = section,
+             title = "Patient counts by SCT/CART event sequence")
+
+  pairs <- do.call(rbind, lapply(by_pat, function(d) {
+    if (nrow(d) < 2) return(NULL)
+    data.frame(from  = d$LOT_START_TYPE[-nrow(d)],
+               to    = d$LOT_START_TYPE[-1],
+               PATID = d$PATID[-1],
+               stringsAsFactors = FALSE)
+  }))
+
+  if (!is.null(pairs) && nrow(pairs) > 0) {
+    link_counts <- aggregate(PATID ~ from + to, data = pairs,
+                              FUN = function(x) length(unique(x)))
+    names(link_counts)[3] <- "n_patients"
+    link_counts <- link_counts[order(-link_counts$n_patients), , drop = FALSE]
+
+    src_lab <- paste0("From: ", link_counts$from)
+    tgt_lab <- paste0("To: ",   link_counts$to)
+    fu_sankey(src_lab, tgt_lab, link_counts$n_patients,
+              section = section,
+              title   = "Consecutive SCT/CART transitions")
+
+    save_table(link_counts, section = section,
+               title = "Consecutive SCT/CART transition counts")
+  }
+}
+
+main <- function() {
+  stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
+  cfg$build_dashboard <<- TRUE
+
+  con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn,
+                        pwd = cfg$pwd, timeout = 120)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+
+  lot_long <- wrk("LOT_LONG")
+  log_msg("LOT FU Qs - reading ", lot_long)
+
+  if (!isTRUE(tryCatch(
+        nrow(db_q(con, glue("SELECT 1 FROM {lot_long} LIMIT 1"))) >= 0,
+        error = function(e) FALSE))) {
+    stop("Cannot read ", lot_long,
+         ". Build LOT_LONG (run_pipeline.R / LOT2-5 stage) first.")
+  }
+
+  dashboard_items <<- list()
+
+  for (n in 1:4) build_focused_pair(con, lot_long, n, n + 1L)
+  build_category_placeholder()
+  build_sct_cart_sequence(con, lot_long)
+
+  build_dashboard(
+    out_name     = "lot_fu_qs_dashboard.html",
+    header_title = "MM LOT &mdash; Focused Follow-up Q&apos;s",
+    header_sub   = paste0("LOT1&rarr;2 &bull; LOT2&rarr;3 &bull; ",
+                          "LOT3&rarr;4 &bull; LOT4&rarr;5 &bull; ",
+                          "By category (pending) &bull; ",
+                          "SCT/CART sequence &nbsp;&mdash;&nbsp; ",
+                          "pick a Category above")
+  )
+  log_msg("LOT FU Qs dashboard written to ",
+          file.path(cfg$output_dir, "lot_fu_qs_dashboard.html"))
+}
+
+if (!interactive()) main()
 
 
 ================================================================================

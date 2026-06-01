@@ -11,9 +11,12 @@
 #   Q2  Top 25 1L regimens by calendar year.
 #   Q3  Whether the dashboard's auto patient-journey examples are the
 #       6-9-meds-at-1L-induction patients from the Sankey (LOT1 Fig 9).
+#   Q4  anti-BCMA / Blenrep (belantamab) availability - all lines, not
+#       just 1L (epi follow-up: how many Blenrep-treated patients exist).
 #
-# Reads only persisted work-schema tables (LOT_LONG, ELIG_COH_ALLFLAGS)
-# and the raw CDM; it builds nothing and is safe to run any time.
+# Reads only persisted work-schema tables (LOT_LONG, ELIG_COH_ALLFLAGS,
+# ELIG_COH_FINAL, MAP_STACKED) and the raw CDM; it builds nothing and is
+# safe to run any time.
 #
 # Three honest limits, surfaced in the output rather than hidden:
 #  - "Another cancer" (#8) and "clinical trial" (#10) are *exclusion*
@@ -372,6 +375,89 @@ main <- function() {
     "chosen by progression depth + terminal-reason diversity, NOT by ",
     "induction med count - so they are a different set; any overlap is ",
     "incidental and quantified above.")
+
+  # ---- Q4 : anti-BCMA / Blenrep (belantamab) availability ------------
+  # Epi follow-up. Belantamab mafodotin (Blenrep, HCPCS J9037) is a
+  # late-line anti-BCMA agent withdrawn from the US market in late 2022,
+  # so counts are expected to be low and concentrated in later lines -
+  # this scans ALL lines, not just 1L. MAP_STACKED is the per-medication
+  # exposure table (cohort-scoped); the belantamab token is detected
+  # from the data (class like BCMA, abbr starting BEL) rather than
+  # hard-coded, so a codelist abbreviation change does not break it.
+  map_tbl <- wrk("MAP_STACKED")
+  if (!readable(map_tbl)) {
+    log_msg("  Q4: ", map_tbl, " not readable - anti-BCMA / Blenrep ",
+            "availability skipped (rebuild via lot_program.R).")
+  } else {
+    bcma <- db_q(con, glue("
+      SELECT MAP_MED_TYPE  AS med_abbr,
+             MAP_MED_CLASS AS med_class,
+             count(DISTINCT PATID)             AS n_patients,
+             count(*)                          AS n_segments,
+             cast(min(MAP_START_DT) as string) AS first_use,
+             cast(max(MAP_START_DT) as string) AS last_use
+      FROM {map_tbl}
+      WHERE upper(MAP_MED_CLASS) LIKE '%BCMA%'
+         OR upper(MAP_MED_TYPE)  LIKE 'BEL%'
+      GROUP BY MAP_MED_TYPE, MAP_MED_CLASS
+      ORDER BY n_patients DESC
+    "))
+    write_out(bcma, "q4_antibcma_inventory")
+
+    bela_tokens <- if (nrow(bcma) > 0)
+      unique(bcma$med_abbr[grepl("^BEL", toupper(bcma$med_abbr))]) else
+      character(0)
+
+    if (length(bela_tokens) == 0) {
+      log_msg("  Q4: no belantamab (Blenrep) exposure found in ", map_tbl,
+              "; anti-BCMA agents present: ",
+              if (nrow(bcma) > 0) paste(bcma$med_abbr, collapse = ", ")
+              else "(none)",
+              ". A zero count is itself the answer for epi - Blenrep is ",
+              "absent from this cohort.")
+    } else {
+      tok_in <- paste(sprintf("'%s'", bela_tokens), collapse = ", ")
+      n_bela <- num(db_q(con, glue("
+        SELECT count(DISTINCT PATID) AS n
+        FROM {map_tbl} WHERE MAP_MED_TYPE IN ({tok_in})"))$n)
+
+      by_year <- db_q(con, glue("
+        SELECT year(MAP_START_DT)      AS yr,
+               count(DISTINCT PATID)   AS n_patients,
+               count(*)                AS n_segments
+        FROM {map_tbl} WHERE MAP_MED_TYPE IN ({tok_in})
+        GROUP BY year(MAP_START_DT) ORDER BY yr
+      "))
+      write_out(by_year, "q4_blenrep_by_year")
+
+      reg_preds <- paste(sprintf(
+        "array_contains(split(LOT_BASE_MEDS, ' '), '%s')", bela_tokens),
+        collapse = " OR ")
+      by_lot <- db_q(con, glue("
+        SELECT LOT_NUM, count(DISTINCT PATID) AS n_patients
+        FROM {lot_long}
+        WHERE LOT_BASE_MEDS IS NOT NULL AND ({reg_preds})
+        GROUP BY LOT_NUM ORDER BY LOT_NUM
+      "))
+      write_out(by_lot, "q4_blenrep_by_lot")
+
+      log_msg(sprintf(
+        "  Q4: Blenrep (token%s %s) - %s distinct patients with belantamab exposure (all lines, cohort-scoped).",
+        if (length(bela_tokens) > 1) "s" else "",
+        paste(bela_tokens, collapse = "/"), n_bela))
+      if (nrow(by_lot) > 0) {
+        log_msg("  Q4: Blenrep appears in a 1L-5L regimen for these line ",
+                "counts - ",
+                paste(sprintf("LOT%s:%s", by_lot$LOT_NUM, by_lot$n_patients),
+                      collapse = ", "),
+                " (LOT_BASE_MEDS match; a patient may give a J9037 claim ",
+                "without it joining a LOT regimen).")
+      } else {
+        log_msg("  Q4: belantamab exposure exists in MAP_STACKED but does ",
+                "not surface in any LOT_BASE_MEDS regimen string.")
+      }
+    }
+  }
 
   log_msg("LOT1 study-team questions complete. CSVs in ", out_dir)
 }
