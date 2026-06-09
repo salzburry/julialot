@@ -35,11 +35,31 @@ That's it. No env-var sprawl. Defaults are inlined.
 | CE ≥ 6 mo pre-MM-dx | same |
 | CE ≥ 3 mo post-LOT1 FU | **strict** (no-gap) spans |
 
+## Files
+
+| File | What |
+|---|---|
+| `run.R` | The only entry point. |
+| `mm_treatment_table.csv` | Regimen → category mapping from Julia's June 5 PDF. |
+| `steroid_codes.csv` | **Placeholder** for steroid HCPCS + NDC codes. Drop additions here when Julia ships her list. |
+| `README.md` | This file. |
+
+## Ashley cohort criteria (all applied inline in `run.R`)
+
+| Criterion | How |
+|---|---|
+| 1L treatment ≥ 2017-01-01 | `LOT_LONG.LOT_START_DT` at `LOT_NUM = 1` |
+| No belantamab anywhere | `LOT_BASE_MEDS` at any LOT_NUM **or** `MAP_STACKED.MAP_MED_TYPE` = `BELA` |
+| CE ≥ 12 mo pre-LOT1 | gap-allowing spans (≤ 30 d) from `member_enrollment` |
+| CE ≥ 6 mo pre-MM-dx | same |
+| CE ≥ 3 mo post-LOT1 FU | **strict** (no-gap), **death-aware** — a patient who dies before day 90 is retained if their strict span covers `[LOT1, DEATH_DT]` (`DEATH_DT` read from persisted `LOT1_BASE`) |
+| No other-malignancy in `[LOT1-365, LOT1-1]` | ≥ 1 inpatient OR ≥ 2 outpatient within 30 d, same tumor group; codelist from `$CODELIST_DIR/other_malig.csv` |
+| No pregnancy event in same window | DX / HCPCS / ICD-PROC / REV match against `$CODELIST_DIR/pregnancy.csv` |
+| No prior MM oncology therapy in same window | rx NDC + medical HCPCS against `$CODELIST_DIR/cl_mma_codelist.csv` |
+
 ## Honest scope (what this *does not* do)
 
-- **Other-malig / pregnancy / no-baseline-MM-therapy** exclusions are inherited from the parent pipeline's 183-day-pre-MM-dx window (`baseline_days = 183` in `config_prompts.R`). Recomputing them against the 12-mo-pre-LOT1 window belongs in a pipeline edit, not in this helper.
-- **Death-aware** semantics for the 3-mo FU. Would need death-dt access that the persisted output doesn't surface.
-- **Steroid inclusion** in LOT regimens. That's a codelist + pipeline change in `julia_pipeline/`; this script can't fake it.
+- **Steroid inclusion in `LOT_BASE_MEDS`**. That's a pipeline-level change owned by `julia_pipeline/` (the variant copy that already has the structural-vs-membership steroid filters set correctly). This script reads whatever `LOT_LONG` the parent pipeline produced. `steroid_codes.csv` is a *placeholder* for collecting the HCPCS + NDC list while waiting for Julia's full set; the cohort card reports how many codes are loaded but does not filter on steroid exposure (that's not an IE criterion — it's a regimen-membership change).
 
 ## What was retired
 
