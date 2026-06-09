@@ -139,6 +139,24 @@ main <- function() {
         FROM {map_tbl}
         WHERE upper(MAP_MED_TYPE) = upper('{BELA_TOKEN}')") else ""
 
+  # Optional: if the Ashley-window baseline recalc has been
+  # materialised (lot_baseline_recalc.R produces BASELINE_FLAGS_LOT1),
+  # join it to additionally exclude patients with other-malig /
+  # pregnancy / MM-baseline-therapy events in [LOT1-365, LOT1-1].
+  # MUST be resolved before the glue() below or it errors with
+  # "object 'bl_join' not found".
+  bl_tbl  <- wrk(Sys.getenv("BASELINE_FLAGS_VIEW", unset = "BASELINE_FLAGS_LOT1"))
+  bl_ok   <- isTRUE(tryCatch(
+    nrow(db_q(con, glue("SELECT 1 FROM {bl_tbl} LIMIT 1"))) >= 0,
+    error = function(e) FALSE))
+  bl_join <- if (bl_ok) glue(
+    "JOIN {bl_tbl} bl ON bl.PATID = c.PATID AND bl.ANY_BASELINE_EXCL_LOT1 = 0")
+    else ""
+  if (bl_ok) log_msg("  Including baseline recalc exclusions from ", bl_tbl)
+  else log_msg("  ", bl_tbl, " not present - baseline exclusions stay on the pipeline's ",
+               "183-day pre-MM-dx window. Run lot_baseline_recalc.R to apply the ",
+               "12-month-pre-LOT1 recalc.")
+
   ie_sql <- glue("
     CREATE OR REPLACE VIEW {view_name} AS
     WITH
@@ -174,6 +192,16 @@ main <- function() {
     enr_spans AS (
       SELECT PATID, min(elig_eff) AS cov_start, max(elig_end) AS cov_end
       FROM enr_grouped GROUP BY PATID, grp_id
+    ),
+    -- Strict (no-gap) spans: each raw eligibility row is its own
+    -- span. The spec's CE_3mosf criterion is explicitly strict / no
+    -- gap (parent pipeline_steps.R:424). The pre-LOT1 and pre-MM-dx
+    -- CE windows above use the gap-allowing enr_spans
+    -- (~30-day-gap-tolerant), but the 3-mo post-LOT1 FU uses
+    -- enr_spans_strict.
+    enr_spans_strict AS (
+      SELECT PATID, elig_eff AS cov_start, elig_end AS cov_end
+      FROM enr_base
     ),
     lot1 AS (
       SELECT cast(PATID as string) AS PATID, LOT_START_DT AS LOT1_DT
@@ -232,7 +260,7 @@ main <- function() {
       -- always built so analysts can join to it.
       SELECT DISTINCT c.PATID
       FROM candidates c
-      JOIN enr_spans s ON s.PATID = c.PATID
+      JOIN enr_spans_strict s ON s.PATID = c.PATID
       WHERE s.cov_start <= c.w3_start AND s.cov_end >= c.w3_end
     )
     SELECT c.PATID
@@ -242,22 +270,6 @@ main <- function() {
     {if (APPLY_FU_EXCL) 'JOIN ce_post_3mo_fu pf ON pf.PATID = c.PATID' else ''}
     {bl_join}
   ")
-  # Optional: if the Ashley-window baseline recalc has been
-  # materialised (lot_baseline_recalc.R produces BASELINE_FLAGS_LOT1),
-  # join it to additionally exclude patients with other-malig /
-  # pregnancy / MM-baseline-therapy events in [LOT1-365, LOT1-1] - the
-  # full Ashley spec rather than the pipeline's 183-day pre-MM-dx window.
-  bl_tbl  <- wrk(Sys.getenv("BASELINE_FLAGS_VIEW", unset = "BASELINE_FLAGS_LOT1"))
-  bl_ok   <- isTRUE(tryCatch(
-    nrow(db_q(con, glue("SELECT 1 FROM {bl_tbl} LIMIT 1"))) >= 0,
-    error = function(e) FALSE))
-  bl_join <- if (bl_ok) glue(
-    "JOIN {bl_tbl} bl ON bl.PATID = c.PATID AND bl.ANY_BASELINE_EXCL_LOT1 = 0")
-    else ""
-  if (bl_ok) log_msg("  Including baseline recalc exclusions from ", bl_tbl)
-  else log_msg("  ", bl_tbl, " not present - baseline exclusions stay on the pipeline's ",
-               "183-day pre-MM-dx window. Run lot_baseline_recalc.R to apply the ",
-               "12-month-pre-LOT1 recalc.")
   log_msg("Building IE cohort view ", view_name)
   db_exec(con, ie_sql)
 
@@ -299,6 +311,16 @@ main <- function() {
       SELECT PATID, min(elig_eff) AS cov_start, max(elig_end) AS cov_end
       FROM enr_grouped GROUP BY PATID, grp_id
     ),
+    -- Strict (no-gap) spans: each raw eligibility row is its own
+    -- span. The spec's CE_3mosf criterion is explicitly strict / no
+    -- gap (parent pipeline_steps.R:424). The pre-LOT1 and pre-MM-dx
+    -- CE windows above use the gap-allowing enr_spans
+    -- (~30-day-gap-tolerant), but the 3-mo post-LOT1 FU uses
+    -- enr_spans_strict.
+    enr_spans_strict AS (
+      SELECT PATID, elig_eff AS cov_start, elig_end AS cov_end
+      FROM enr_base
+    ),
     lot1 AS (
       SELECT cast(PATID as string) AS PATID, LOT_START_DT AS LOT1_DT
       FROM {lot_long}
@@ -338,9 +360,10 @@ main <- function() {
     ),
     n_with_3mo_fu AS (
       -- Flag-only count (always reported, not always an exclusion).
+      -- Uses STRICT spans to match spec CE_3mosf (no-gap).
       SELECT count(DISTINCT l.PATID) AS n
       FROM lot1 l
-      JOIN enr_spans s ON s.PATID = l.PATID
+      JOIN enr_spans_strict s ON s.PATID = l.PATID
       WHERE l.LOT1_DT >= cast('{ELIG_1L_FROM}' as date)
         AND s.cov_start <= l.LOT1_DT
         AND s.cov_end   >= date_add(l.LOT1_DT, {POST_LOT_DAYS - 1L})

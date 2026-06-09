@@ -10,9 +10,14 @@
 #                              for ANY tumor group in cl_other_malig.
 #   PREGNANT_FLAG_LOT1        1 if >=1 pregnancy event (DX / HCPCS /
 #                              ICD-PROC / RVNU_CD) in same window.
-#   MM_BL_THERAPY_FLAG_LOT1   1 if >=1 MM oncology therapy (rx, medical
-#                              procedure, or med_diagnosis hit on the
-#                              MMA codelist) in same window.
+#   MM_BL_THERAPY_FLAG_LOT1   1 if >=1 MM ONCOLOGY THERAPY event
+#                              (rx NDC OR medical-claim HCPCS) matches
+#                              the MMA codelist in same window. Note:
+#                              MM diagnosis events (203.0x / C90.0x)
+#                              are NOT used - Julia's IE row is about
+#                              prior treatment exposure, not prior
+#                              diagnosis. Matches pipeline_steps.R
+#                              MM_THERAPY_BASELINE step (line 703).
 #   ANY_BASELINE_EXCL_LOT1    OR of the three flags.
 #
 # The pipeline currently computes these against the 183-day window
@@ -187,8 +192,14 @@ main <- function() {
 
   log_msg("Building ", view_name,
           " (window = [LOT1 - ", BSL_DAYS, ", LOT1 - 1])")
+  # CREATE OR REPLACE TABLE (not VIEW): the codelists below are
+  # SESSION temp views, and a persistent VIEW that references temp
+  # views is unusable across sessions (Spark / Databricks errors with
+  # CANNOT_READ_FROM_LOCAL_TEMP_VIEW). Materialising as a TABLE
+  # captures the row data at build time so lot_ie_cohort.R can read
+  # it in a separate Rscript session.
   sql <- glue("
-    CREATE OR REPLACE VIEW {view_name} AS
+    CREATE OR REPLACE TABLE {view_name} AS
     WITH lot1 AS (
       SELECT cast(PATID as string) AS PATID,
              cast(LOT_START_DT as date) AS LOT1_DT,
@@ -320,22 +331,37 @@ main <- function() {
       LEFT JOIN preg_evts p ON p.PATID = l1.PATID
       GROUP BY l1.PATID
     ),
-    -- MM-baseline-therapy / MM-baseline-evidence: any STRICT MM
-    -- diagnosis (203.0x ICD-9 OR C90.0x ICD-10) inside the window.
-    -- Inlined here because mm_dx_events_all is a TEMP view, not
-    -- persisted (pipeline_steps.R:208), so it cannot be read from
-    -- this fresh session.
-    mm_strict_dx AS (
-      SELECT PATID, event_dt FROM dx
-      WHERE (icd_family = 'ICD9'  AND code RLIKE '^2030')
-         OR (icd_family = 'ICD10' AND code RLIKE '^C900')
+    -- MM-baseline-therapy: any MM ONCOLOGY THERAPY event in window
+    -- (rx NDC OR medical-claim HCPCS that maps to the MMA codelist).
+    -- This is Julia's IE criterion ("Evidence of an MM oncology
+    -- therapy during the 12-month 1L baseline period"), NOT a prior
+    -- MM diagnosis check - those are different IE rows. Mirrors
+    -- pipeline_steps.R's MM_THERAPY_BASELINE step (line 703) which
+    -- scans MMA therapy events against the codelist, then
+    -- criteria_attrition.R filters MM_bl_agents = 0.
+    mm_therapy_evts AS (
+      SELECT cast(r.PATID as string) AS PATID,
+             cast(r.FILL_DT as date) AS event_dt
+      FROM {cdm_src(cfg$tbl_rx)} r
+      WHERE r.NDC IS NOT NULL AND r.FILL_DT IS NOT NULL
+        AND EXISTS (SELECT 1 FROM _bl_mm_therapy_codes c
+                    WHERE upper(c.code_type) IN ('NDC','')
+                      AND c.code = upper(regexp_replace(r.NDC, '[^A-Za-z0-9]', '')))
+      UNION ALL
+      SELECT cast(m.PATID as string) AS PATID,
+             cast(m.FST_DT as date) AS event_dt
+      FROM {medical} m
+      WHERE m.PROC_CD IS NOT NULL AND m.FST_DT IS NOT NULL
+        AND EXISTS (SELECT 1 FROM _bl_mm_therapy_codes c
+                    WHERE upper(c.code_type) IN ('HCPCS','')
+                      AND c.code = upper(regexp_replace(m.PROC_CD, '[^A-Za-z0-9]', '')))
     ),
     mm_hit AS (
       SELECT l1.PATID,
              max(CASE WHEN m.event_dt BETWEEN l1.w_start AND l1.w_end
                        THEN 1 ELSE 0 END) AS f
       FROM lot1 l1
-      LEFT JOIN mm_strict_dx m ON m.PATID = l1.PATID
+      LEFT JOIN mm_therapy_evts m ON m.PATID = l1.PATID
       GROUP BY l1.PATID
     )
     SELECT l1.PATID,

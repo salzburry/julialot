@@ -515,7 +515,14 @@ load_acronym_map <- function() {
 }
 
 load_category_lookup <- function() {
-  cat_path <- Sys.getenv("REGIMEN_CATEGORIES_CSV", unset = "")
+  # Default to the committed Julia June-5 treatment-table CSV, located
+  # next to this script. Env var overrides for an analyst-supplied
+  # mapping. Without this default, an analyst running the dashboard
+  # normally still saw the "pending CSV" card despite the table being
+  # in the repo.
+  default_csv <- file.path(.script_dir, "mm_treatment_table.csv")
+  cat_path <- Sys.getenv("REGIMEN_CATEGORIES_CSV",
+                          unset = if (file.exists(default_csv)) default_csv else "")
   if (!nzchar(cat_path) || !file.exists(cat_path)) return(NULL)
   ext <- tolower(tools::file_ext(cat_path))
   df <- tryCatch({
