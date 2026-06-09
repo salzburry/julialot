@@ -80,11 +80,14 @@ BELA_TOKEN       <- Sys.getenv("BELANTAMAB_MED_ABBR", unset = "BELA")
 IE_COHORT_VIEW   <- Sys.getenv("IE_COHORT_VIEW", unset = "IE_COHORT_PATIDS")
 CE_PRE_LOT_DAYS  <- as.integer(Sys.getenv("CE_PRE_LOT1_DAYS",  unset = "365"))
 CE_PRE_MM_DAYS   <- as.integer(Sys.getenv("CE_PRE_MM_DX_DAYS", unset = "183"))
+CE_POST_LOT_DAYS <- as.integer(Sys.getenv("CE_POST_LOT1_DAYS", unset = "90"))
 CE_GAP_DAYS      <- as.integer(Sys.getenv("CE_GAP_DAYS",       unset = "30"))
+APPLY_FU_EXCL    <- isTRUE(as.logical(Sys.getenv("APPLY_3MO_FU_EXCL",
+                                                  unset = "FALSE")))
 ENR_TBL_NAME     <- Sys.getenv("MEMBER_ENROLLMENT_TBL",
                                 unset = "member_enrollment")
-if (anyNA(c(CE_PRE_LOT_DAYS, CE_PRE_MM_DAYS, CE_GAP_DAYS)))
-  stop("CE_PRE_LOT1_DAYS / CE_PRE_MM_DX_DAYS / CE_GAP_DAYS must be integers.")
+if (anyNA(c(CE_PRE_LOT_DAYS, CE_PRE_MM_DAYS, CE_POST_LOT_DAYS, CE_GAP_DAYS)))
+  stop("CE_PRE_LOT1_DAYS / CE_PRE_MM_DX_DAYS / CE_POST_LOT1_DAYS / CE_GAP_DAYS must be integers.")
 # Set TRUE once the cohort is built so the cohort-definition card can
 # report whether the CE windows were actually applied.
 .CE_ENFORCED <- FALSE
@@ -203,6 +206,12 @@ build_ashley_cohort <- function(con, lot_long, map_tbl, final_tbl,
       SELECT PATID, min(elig_eff) AS cov_start, max(elig_end) AS cov_end
       FROM enr_grouped GROUP BY PATID, grp_id
     )")
+    fu_clause <- if (APPLY_FU_EXCL) glue("
+      AND EXISTS (SELECT 1 FROM enr_spans s
+                  WHERE s.PATID = l.PATID
+                    AND s.cov_start <= l.LOT1_DT
+                    AND s.cov_end   >= date_add(l.LOT1_DT, {CE_POST_LOT_DAYS - 1L}))")
+      else ""
     ce_join <- glue("
       AND EXISTS (SELECT 1 FROM enr_spans s
                   WHERE s.PATID = l.PATID
@@ -212,7 +221,7 @@ build_ashley_cohort <- function(con, lot_long, map_tbl, final_tbl,
                   JOIN mm_dx m ON m.PATID = l.PATID
                   WHERE s.PATID = l.PATID
                     AND s.cov_start <= date_sub(m.MM_DX_DT, {CE_PRE_MM_DAYS})
-                    AND s.cov_end   >= date_sub(m.MM_DX_DT, 1))")
+                    AND s.cov_end   >= date_sub(m.MM_DX_DT, 1)){fu_clause}")
     .CE_ENFORCED <<- TRUE
   } else {
     enr_ctes <- ""
@@ -893,7 +902,15 @@ build_cohort_def_card <- function(con, lot_long, final_tbl, n_ash) {
       '<li>CE &ge; ', CE_PRE_LOT_DAYS, ' days before 1L treatment ',
       'start (gap &le; ', CE_GAP_DAYS, ' d).</li>',
       '<li>CE &ge; ', CE_PRE_MM_DAYS, ' days before MM diagnosis ',
-      'date (gap &le; ', CE_GAP_DAYS, ' d).</li></ul>')
+      'date (gap &le; ', CE_GAP_DAYS, ' d).</li>',
+      '<li>CE &ge; ', CE_POST_LOT_DAYS, ' days <b>post-LOT1 ',
+      'follow-up</b> ',
+      if (APPLY_FU_EXCL)
+        paste0('<b>applied as exclusion</b> (',
+               'APPLY_3MO_FU_EXCL=TRUE).')
+      else
+        '<b>checked but not excluded</b> (spec retains patients with limited FU; set <code>APPLY_3MO_FU_EXCL=TRUE</code> to switch to a hard exclusion).',
+      '</li></ul>')
     else paste0(
       '<p style="color:#b06000;font-size:13px;margin-top:10px">',
       '<b>CE windows NOT applied</b> - member_enrollment not readable ',
@@ -903,22 +920,22 @@ build_cohort_def_card <- function(con, lot_long, final_tbl, n_ash) {
     '<p style="color:#b06000;font-size:13px;margin-top:10px">',
     '<b>Remaining limitations (not silently dropped):</b></p>',
     '<ul style="color:#b06000;font-size:13px;margin-top:0">',
-    '<li>CE &ge; <b>3 months follow-up</b> after 1L index - not ',
-    'enforced; needs an enrollment-end-date check not currently ',
-    'surfaced.</li>',
     '<li>Adult age &ge; 18 at MM-dx calendar year - applied upstream ',
     'in the base cohort but not re-checked here.</li>',
-    '<li><b>Baseline-window mismatch</b>: the Ashley cohort starts ',
-    'from the delivered <code>ELIG_COH_FINAL</code>, so the ',
+    '<li><b>Baseline-window recalc</b>: the Ashley cohort starts ',
+    'from the delivered <code>ELIG_COH_FINAL</code>, whose ',
     'other-malignancy / pregnancy / no-baseline-MM-therapy ',
     'exclusions were applied against the pipeline\'s baseline window ',
     '(<code>baseline_days = 183</code>, anchored to MM-dx ',
     '<code>INDEX_DATE</code>), NOT Julia\'s "12 months before 1L ',
-    'treatment start" window. A patient excluded under the existing ',
-    'rules might be eligible under the Ashley rules, and vice versa. ',
-    'True Ashley parity requires a pipeline rerun with ',
-    'baseline_days=365 anchored to LOT1 start, then re-applying the ',
-    'baseline-window exclusions against that.</li>',
+    'treatment start" window. To apply the Ashley window run ',
+    '<code>lot_baseline_recalc.R</code> first - it materialises ',
+    '<code>BASELINE_FLAGS_LOT1</code> and <code>lot_ie_cohort.R</code> ',
+    'automatically joins to it (excludes patients with ',
+    '<code>ANY_BASELINE_EXCL_LOT1 = 1</code>) when the view exists. ',
+    'IP-vs-OP setting derivation in the helper uses POS/TOS_CD only ',
+    '(no confinement); slight under-detection of pure-confinement IP ',
+    'claims relative to the pipeline.</li>',
     '</ul>',
     '<p style="color:#555;font-size:13px">',
     'Note: <code>ELIG_COH_FINAL.INDEX_DATE</code> is the MM diagnosis ',

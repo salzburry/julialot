@@ -1,6 +1,23 @@
 #!/usr/bin/env Rscript
 # Focused MM LOT follow-up sankeys (Julia, "MM LOT FU Q's").
 #
+# ============================== SUPERSEDED ==============================
+# This is the May-22 response to Julia's first MM LOT FU Q's email.
+# Julia's June 5 follow-up changed two of the rules behind it:
+#   (a) journey/sankey examples must NOT show non-progressors -
+#       lot_fu_qs.R intentionally keeps the "(no LOTn)" retention
+#       bucket via LEFT JOIN, whereas julia_jun08_qs.R drops it via
+#       INNER JOIN (lines ~436-454 here vs ~441-475 there);
+#   (b) regimen-category source: lot_fu_qs.R reads CSV only;
+#       julia_jun08_qs.R also accepts .xlsx via readxl + provides
+#       the BUILTIN_ACRONYMS / steroid-strip / acronym-expansion
+#       four-tier match.
+# For Julia's current MM LOT analysis use apr_30_2026/julia_jun08_qs.R.
+# This script is retained for the retention/dropout view ("how many
+# patients stop after LOT_N") which is the legitimate use case for
+# the (no LOTn) bucket and is NOT replicated in julia_jun08_qs.R.
+# ========================================================================
+#
 #   Rscript lot_fu_qs.R
 #
 # Builds a SEPARATE single self-contained HTML dashboard
