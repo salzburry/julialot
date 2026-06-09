@@ -62,11 +62,14 @@ ELIG_1L_FROM     <- Sys.getenv("ELIGIBLE_1L_FROM",    unset = "2017-01-01")
 BELA_TOKEN       <- Sys.getenv("BELANTAMAB_MED_ABBR", unset = "BELA")
 PRE_LOT_DAYS     <- as.integer(Sys.getenv("CE_PRE_LOT1_DAYS",  unset = "365"))
 PRE_MM_DAYS      <- as.integer(Sys.getenv("CE_PRE_MM_DX_DAYS", unset = "183"))
+POST_LOT_DAYS    <- as.integer(Sys.getenv("CE_POST_LOT1_DAYS", unset = "90"))
 GAP_DAYS         <- as.integer(Sys.getenv("CE_GAP_DAYS",       unset = "30"))
+APPLY_FU_EXCL    <- isTRUE(as.logical(Sys.getenv("APPLY_3MO_FU_EXCL",
+                                                  unset = "FALSE")))
 ENR_TBL_NAME     <- Sys.getenv("MEMBER_ENROLLMENT_TBL",
                                 unset = "member_enrollment")
-if (anyNA(c(PRE_LOT_DAYS, PRE_MM_DAYS, GAP_DAYS)))
-  stop("CE_PRE_LOT1_DAYS / CE_PRE_MM_DX_DAYS / CE_GAP_DAYS must be integers.")
+if (anyNA(c(PRE_LOT_DAYS, PRE_MM_DAYS, POST_LOT_DAYS, GAP_DAYS)))
+  stop("CE_PRE_LOT1_DAYS / CE_PRE_MM_DX_DAYS / CE_POST_LOT1_DAYS / CE_GAP_DAYS must be integers.")
 
 # -------- Steroid Q2 placeholder ------------------------------------
 # Julia June 5 PDF, item 2: HCPCS codes she listed (OCR-confirmed).
@@ -196,7 +199,9 @@ main <- function() {
              date_sub(l.LOT1_DT, {PRE_LOT_DAYS}) AS w1_start,
              date_sub(l.LOT1_DT, 1)              AS w1_end,
              date_sub(m.MM_DX_DT, {PRE_MM_DAYS}) AS w2_start,
-             date_sub(m.MM_DX_DT, 1)             AS w2_end
+             date_sub(m.MM_DX_DT, 1)             AS w2_end,
+             l.LOT1_DT                            AS w3_start,
+             date_add(l.LOT1_DT, {POST_LOT_DAYS - 1L}) AS w3_end
       FROM lot1 l
       JOIN mm_dx m ON l.PATID = m.PATID
       LEFT JOIN bela x ON x.PATID = l.PATID
@@ -214,11 +219,27 @@ main <- function() {
       FROM candidates c
       JOIN enr_spans s ON s.PATID = c.PATID
       WHERE s.cov_start <= c.w2_start AND s.cov_end >= c.w2_end
+    ),
+    ce_post_3mo_fu AS (
+      -- Continuous enrolment span covering [LOT1_DT, LOT1_DT + POST-1].
+      -- The spec text reads: "Patients with gaps in enrolment of <=30
+      -- days are considered to be continuously enrolled. <3 months
+      -- after the index date. these patients are retained and have a
+      -- limited follow-up period." The natural reading is RETAIN with
+      -- limited FU, not exclude. We therefore expose this as a flag
+      -- table and only apply it as an exclusion when
+      -- APPLY_3MO_FU_EXCL=TRUE (default FALSE). The view below is
+      -- always built so analysts can join to it.
+      SELECT DISTINCT c.PATID
+      FROM candidates c
+      JOIN enr_spans s ON s.PATID = c.PATID
+      WHERE s.cov_start <= c.w3_start AND s.cov_end >= c.w3_end
     )
     SELECT c.PATID
     FROM candidates c
     JOIN ce_pre_lot1  pl ON pl.PATID = c.PATID
     JOIN ce_pre_mm_dx pm ON pm.PATID = c.PATID
+    {if (APPLY_FU_EXCL) 'JOIN ce_post_3mo_fu pf ON pf.PATID = c.PATID' else ''}
   ")
   log_msg("Building IE cohort view ", view_name)
   db_exec(con, ie_sql)
@@ -298,11 +319,21 @@ main <- function() {
         AND s.cov_start <= date_sub(l.LOT1_DT, {PRE_LOT_DAYS})
         AND s.cov_end   >= date_sub(l.LOT1_DT, 1)
     ),
+    n_with_3mo_fu AS (
+      -- Flag-only count (always reported, not always an exclusion).
+      SELECT count(DISTINCT l.PATID) AS n
+      FROM lot1 l
+      JOIN enr_spans s ON s.PATID = l.PATID
+      WHERE l.LOT1_DT >= cast('{ELIG_1L_FROM}' as date)
+        AND s.cov_start <= l.LOT1_DT
+        AND s.cov_end   >= date_add(l.LOT1_DT, {POST_LOT_DAYS - 1L})
+    ),
     n_final AS (SELECT count(DISTINCT PATID) AS n FROM {view_name})
     SELECT (SELECT n FROM n_total)        AS n_lot1_total,
            (SELECT n FROM n_dt_pass)      AS n_1l_from_2017,
            (SELECT n FROM n_no_bela)      AS n_no_belantamab,
            (SELECT n FROM n_with_ce_lot1) AS n_with_ce_pre_lot1,
+           (SELECT n FROM n_with_3mo_fu)  AS n_with_3mo_fu,
            (SELECT n FROM n_final)        AS n_ie_cohort
   "))
   num <- function(x) suppressWarnings(as.numeric(x))
@@ -316,9 +347,15 @@ main <- function() {
   log_msg(sprintf("  + CE >= %s d pre-LOT1 (gap<=%s d)  : %s",
                   PRE_LOT_DAYS, GAP_DAYS,
                   format(num(attr_df$n_with_ce_pre_lot1[1]), big.mark = ",")))
-  log_msg(sprintf("  + CE >= %s d pre-MM-dx (gap<=%s d) : %s  <- IE cohort",
+  log_msg(sprintf("  + CE >= %s d pre-MM-dx (gap<=%s d) : %s%s",
                   PRE_MM_DAYS, GAP_DAYS,
-                  format(num(attr_df$n_ie_cohort[1]),        big.mark = ",")))
+                  format(num(attr_df$n_ie_cohort[1]),        big.mark = ","),
+                  if (!APPLY_FU_EXCL) "  <- IE cohort" else ""))
+  log_msg(sprintf("  CE >= %s d post-LOT1 FU (gap<=%s d): %s patients flagged%s",
+                  POST_LOT_DAYS, GAP_DAYS,
+                  format(num(attr_df$n_with_3mo_fu[1]),      big.mark = ","),
+                  if (APPLY_FU_EXCL) "  <- IE cohort (exclusion applied)"
+                  else "  (flag only; spec says retained with limited FU)"))
 
   # ---- Q2 steroid Q2 placeholder / report ---------------------------
   ndcs <- read_steroid_ndcs()
