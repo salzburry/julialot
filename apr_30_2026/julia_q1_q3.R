@@ -158,8 +158,26 @@ augment_lot_long <- function(con, lot_long, rx_tbl, medical_tbl, n_codes) {
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {LOT_LONG_AUG} AS
     WITH lot AS (
-      SELECT cast(PATID as string) AS PATID, LOT_NUM,
-             LOT_START_DT, LOT_BASE_END_DT, LOT_BASE_MEDS
+      -- Mirror parent induction windows so steroid attribution matches
+      -- non-steroid LOT_BASE_MEDS membership:
+      --   LOT1                 -> 60-day  (lot_program.R: S09 induction)
+      --   LOT2-5 CART-started  -> 45-day  (R/lot2_5_base.R cart_consolidation_days)
+      --   LOT2-5 otherwise     -> 30-day  (R/lot2_5_base.R induction_window_days)
+      -- Capped at LOT_BASE_END_DT so we never extend past the parent.
+      SELECT cast(PATID as string) AS PATID, LOT_NUM, LOT_START_TYPE,
+             LOT_START_DT, LOT_BASE_END_DT, LOT_BASE_MEDS,
+             CASE
+               WHEN LOT_BASE_END_DT IS NULL
+                 THEN date_add(LOT_START_DT,
+                        CASE WHEN LOT_NUM = 1             THEN 60 - 1
+                             WHEN LOT_START_TYPE = 'CART' THEN 45 - 1
+                             ELSE                              30 - 1 END)
+               ELSE least(LOT_BASE_END_DT,
+                          date_add(LOT_START_DT,
+                            CASE WHEN LOT_NUM = 1             THEN 60 - 1
+                                 WHEN LOT_START_TYPE = 'CART' THEN 45 - 1
+                                 ELSE                              30 - 1 END))
+             END AS LOT_INDUCTION_END_DT
       FROM {lot_long}
     ),
     lot_pats AS (SELECT DISTINCT PATID FROM lot),
@@ -229,7 +247,7 @@ augment_lot_long <- function(con, lot_long, rx_tbl, medical_tbl, n_codes) {
       FROM lot l
       JOIN ster_all s ON s.PATID = l.PATID
                      AND s.dt BETWEEN l.LOT_START_DT
-                                  AND coalesce(l.LOT_BASE_END_DT, l.LOT_START_DT)
+                                  AND l.LOT_INDUCTION_END_DT
       GROUP BY l.PATID, l.LOT_NUM
     )
     SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_BASE_END_DT,
@@ -276,8 +294,12 @@ build_steroid_prevalence <- function(con) {
     '<code>PRED</code>) are appended to <code>LOT_BASE_MEDS</code> ',
     'when the patient had a matching <code>rx.NDC</code>, ',
     '<code>medical.PROC_CD</code>, <code>medical.BILL_PROC_CD</code> ',
-    'or <code>medical.NDC</code> claim between the LOT start and ',
-    'end dates. Membership only - LOT boundaries (start dates, ',
+    'or <code>medical.NDC</code> claim inside the parent ',
+    '<b>induction window</b> (LOT1: 60d, LOT2-5: 30d, CART-started ',
+    'LOT2-5: 45d), capped at <code>LOT_BASE_END_DT</code>. This ',
+    'mirrors how the parent picks non-steroid <code>LOT_BASE_MEDS</code> ',
+    'so the steroid token plays by the same rules. Membership only - ',
+    'LOT boundaries (start dates, ',
     'counts, end reasons) are unchanged from <code>LOT_LONG</code>. ',
     'Steroid codes are loaded from ',
     '<code>julia_q1_q3_steroid_codes.csv</code>.</p></div>'),
