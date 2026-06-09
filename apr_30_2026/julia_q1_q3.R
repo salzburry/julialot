@@ -158,8 +158,26 @@ augment_lot_long <- function(con, lot_long, rx_tbl, medical_tbl, n_codes) {
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {LOT_LONG_AUG} AS
     WITH lot AS (
-      SELECT cast(PATID as string) AS PATID, LOT_NUM,
-             LOT_START_DT, LOT_BASE_END_DT, LOT_BASE_MEDS
+      -- Mirror parent induction windows so steroid attribution matches
+      -- non-steroid LOT_BASE_MEDS membership:
+      --   LOT1                 -> 60-day  (lot_program.R: S09 induction)
+      --   LOT2-5 CART-started  -> 45-day  (R/lot2_5_base.R cart_consolidation_days)
+      --   LOT2-5 otherwise     -> 30-day  (R/lot2_5_base.R induction_window_days)
+      -- Capped at LOT_BASE_END_DT so we never extend past the parent.
+      SELECT cast(PATID as string) AS PATID, LOT_NUM, LOT_START_TYPE,
+             LOT_START_DT, LOT_BASE_END_DT, LOT_BASE_MEDS,
+             CASE
+               WHEN LOT_BASE_END_DT IS NULL
+                 THEN date_add(LOT_START_DT,
+                        CASE WHEN LOT_NUM = 1             THEN 60 - 1
+                             WHEN LOT_START_TYPE = 'CART' THEN 45 - 1
+                             ELSE                              30 - 1 END)
+               ELSE least(LOT_BASE_END_DT,
+                          date_add(LOT_START_DT,
+                            CASE WHEN LOT_NUM = 1             THEN 60 - 1
+                                 WHEN LOT_START_TYPE = 'CART' THEN 45 - 1
+                                 ELSE                              30 - 1 END))
+             END AS LOT_INDUCTION_END_DT
       FROM {lot_long}
     ),
     lot_pats AS (SELECT DISTINCT PATID FROM lot),
@@ -229,7 +247,7 @@ augment_lot_long <- function(con, lot_long, rx_tbl, medical_tbl, n_codes) {
       FROM lot l
       JOIN ster_all s ON s.PATID = l.PATID
                      AND s.dt BETWEEN l.LOT_START_DT
-                                  AND coalesce(l.LOT_BASE_END_DT, l.LOT_START_DT)
+                                  AND l.LOT_INDUCTION_END_DT
       GROUP BY l.PATID, l.LOT_NUM
     )
     SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_BASE_END_DT,
@@ -276,8 +294,12 @@ build_steroid_prevalence <- function(con) {
     '<code>PRED</code>) are appended to <code>LOT_BASE_MEDS</code> ',
     'when the patient had a matching <code>rx.NDC</code>, ',
     '<code>medical.PROC_CD</code>, <code>medical.BILL_PROC_CD</code> ',
-    'or <code>medical.NDC</code> claim between the LOT start and ',
-    'end dates. Membership only - LOT boundaries (start dates, ',
+    'or <code>medical.NDC</code> claim inside the parent ',
+    '<b>induction window</b> (LOT1: 60d, LOT2-5: 30d, CART-started ',
+    'LOT2-5: 45d), capped at <code>LOT_BASE_END_DT</code>. This ',
+    'mirrors how the parent picks non-steroid <code>LOT_BASE_MEDS</code> ',
+    'so the steroid token plays by the same rules. Membership only - ',
+    'LOT boundaries (start dates, ',
     'counts, end reasons) are unchanged from <code>LOT_LONG</code>. ',
     'Steroid codes are loaded from ',
     '<code>julia_q1_q3_steroid_codes.csv</code>.</p></div>'),
@@ -395,10 +417,6 @@ build_category_pair <- function(con, n_from, n_to, lookups) {
              title = paste0("LOT", n_from, " -> LOT", n_to, " category counts"))
 }
 
-# Line-aware: regimens like 'CARF CYCL' map to different categories
-# depending on whether they are 1L NDMM or 2L+ R/RMM. The CSV tags the
-# category with '(1L NDMM)' or '(2L+ R/RMM)' so we split into two
-# lookups keyed by normalised regimen string.
 # QC: how many LOT regimens fell into '(uncategorised)' per LOT_NUM.
 # Pulls distinct PATID + LOT_NUM rows, applies the same line-aware
 # lookup logic, and reports match rate. Surfaces mapping gaps that
@@ -424,12 +442,18 @@ build_category_coverage <- function(con, lookups) {
   agg <- aggregate(PATID ~ LOT_NUM, data = rows,
                    FUN = function(x) length(unique(x)))
   names(agg)[2] <- "n_patients"
-  unc <- aggregate(PATID ~ LOT_NUM,
-                   data = rows[rows$cat == "(uncategorised)", , drop = FALSE],
-                   FUN = function(x) length(unique(x)))
-  names(unc)[2] <- "n_uncategorised"
-  out <- merge(agg, unc, by = "LOT_NUM", all.x = TRUE)
-  out$n_uncategorised[is.na(out$n_uncategorised)] <- 0L
+
+  un_rows <- rows[rows$cat == "(uncategorised)", , drop = FALSE]
+  if (nrow(un_rows) > 0) {
+    unc <- aggregate(PATID ~ LOT_NUM, data = un_rows,
+                     FUN = function(x) length(unique(x)))
+    names(unc)[2] <- "n_uncategorised"
+    out <- merge(agg, unc, by = "LOT_NUM", all.x = TRUE)
+    out$n_uncategorised[is.na(out$n_uncategorised)] <- 0L
+  } else {
+    out <- agg
+    out$n_uncategorised <- 0L
+  }
   out$pct_uncategorised <- ifelse(out$n_patients > 0,
                                    round(100 * out$n_uncategorised /
                                          out$n_patients, 1), 0)
@@ -437,10 +461,9 @@ build_category_coverage <- function(con, lookups) {
              title = "Category mapping coverage per LOT_NUM")
 
   # Top 10 unmapped regimen strings so Julia can extend the CSV.
-  un <- rows[rows$cat == "(uncategorised)", c("PATID","LOT_NUM","reg"),
-             drop = FALSE]
-  if (nrow(un) > 0) {
-    top <- aggregate(PATID ~ reg + LOT_NUM, data = un,
+  if (nrow(un_rows) > 0) {
+    top <- aggregate(PATID ~ reg + LOT_NUM,
+                     data = un_rows[, c("PATID","LOT_NUM","reg")],
                      FUN = function(x) length(unique(x)))
     names(top)[3] <- "n_patients"
     top <- top[order(-top$n_patients), , drop = FALSE]
@@ -449,6 +472,10 @@ build_category_coverage <- function(con, lookups) {
   }
 }
 
+# Line-aware: regimens like 'CARF CYCL' map to different categories
+# depending on whether they are 1L NDMM or 2L+ R/RMM. The CSV tags the
+# category with '(1L NDMM)' or '(2L+ R/RMM)' so we split into two
+# lookups keyed by normalised regimen string.
 load_categories <- function() {
   if (!file.exists(CAT_CSV_PATH))
     return(list(lookup_1L = character(0), lookup_2L = character(0)))
