@@ -240,7 +240,24 @@ main <- function() {
     JOIN ce_pre_lot1  pl ON pl.PATID = c.PATID
     JOIN ce_pre_mm_dx pm ON pm.PATID = c.PATID
     {if (APPLY_FU_EXCL) 'JOIN ce_post_3mo_fu pf ON pf.PATID = c.PATID' else ''}
+    {bl_join}
   ")
+  # Optional: if the Ashley-window baseline recalc has been
+  # materialised (lot_baseline_recalc.R produces BASELINE_FLAGS_LOT1),
+  # join it to additionally exclude patients with other-malig /
+  # pregnancy / MM-baseline-therapy events in [LOT1-365, LOT1-1] - the
+  # full Ashley spec rather than the pipeline's 183-day pre-MM-dx window.
+  bl_tbl  <- wrk(Sys.getenv("BASELINE_FLAGS_VIEW", unset = "BASELINE_FLAGS_LOT1"))
+  bl_ok   <- isTRUE(tryCatch(
+    nrow(db_q(con, glue("SELECT 1 FROM {bl_tbl} LIMIT 1"))) >= 0,
+    error = function(e) FALSE))
+  bl_join <- if (bl_ok) glue(
+    "JOIN {bl_tbl} bl ON bl.PATID = c.PATID AND bl.ANY_BASELINE_EXCL_LOT1 = 0")
+    else ""
+  if (bl_ok) log_msg("  Including baseline recalc exclusions from ", bl_tbl)
+  else log_msg("  ", bl_tbl, " not present - baseline exclusions stay on the pipeline's ",
+               "183-day pre-MM-dx window. Run lot_baseline_recalc.R to apply the ",
+               "12-month-pre-LOT1 recalc.")
   log_msg("Building IE cohort view ", view_name)
   db_exec(con, ie_sql)
 
