@@ -234,8 +234,10 @@ augment_lot_long <- function(con, lot_long, rx_tbl, medical_tbl, n_codes) {
     )
     SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_BASE_END_DT,
            CASE WHEN lt.toks IS NOT NULL
-                THEN concat_ws(' ', sort_array(array_distinct(
-                       array_union(split(l.LOT_BASE_MEDS, ' '), lt.toks))))
+                THEN concat_ws(' ', array_sort(array_distinct(filter(
+                       array_union(split(coalesce(l.LOT_BASE_MEDS,''),' '),
+                                   lt.toks),
+                       x -> x is not null and length(x) > 0))))
                 ELSE l.LOT_BASE_MEDS END AS LOT_BASE_MEDS_AUG
     FROM lot l
     LEFT JOIN lot_tokens lt ON lt.PATID = l.PATID
@@ -272,8 +274,9 @@ build_steroid_prevalence <- function(con) {
     '<h3>Steroid token attached to LOT_BASE_MEDS (Q2)</h3>',
     '<p style="color:#555;font-size:13px">Tokens (<code>DEXA</code>, ',
     '<code>PRED</code>) are appended to <code>LOT_BASE_MEDS</code> ',
-    'when the patient had a matching <code>rx.NDC</code> or ',
-    '<code>medical.PROC_CD</code> claim between the LOT start and ',
+    'when the patient had a matching <code>rx.NDC</code>, ',
+    '<code>medical.PROC_CD</code>, <code>medical.BILL_PROC_CD</code> ',
+    'or <code>medical.NDC</code> claim between the LOT start and ',
     'end dates. Membership only - LOT boundaries (start dates, ',
     'counts, end reasons) are unchanged from <code>LOT_LONG</code>. ',
     'Steroid codes are loaded from ',
@@ -396,6 +399,56 @@ build_category_pair <- function(con, n_from, n_to, lookups) {
 # depending on whether they are 1L NDMM or 2L+ R/RMM. The CSV tags the
 # category with '(1L NDMM)' or '(2L+ R/RMM)' so we split into two
 # lookups keyed by normalised regimen string.
+# QC: how many LOT regimens fell into '(uncategorised)' per LOT_NUM.
+# Pulls distinct PATID + LOT_NUM rows, applies the same line-aware
+# lookup logic, and reports match rate. Surfaces mapping gaps that
+# would otherwise be invisible in the Sankeys.
+build_category_coverage <- function(con, lookups) {
+  rows <- db_q(con, glue("
+    SELECT cast(PATID as string) AS PATID, LOT_NUM,
+           LOT_BASE_MEDS_AUG AS reg
+    FROM {LOT_LONG_AUG}
+    WHERE LOT_BASE_MEDS_AUG IS NOT NULL
+      AND trim(LOT_BASE_MEDS_AUG) <> ''
+      AND LOT_NUM BETWEEN 1 AND 5
+  "))
+  if (nrow(rows) == 0) return(invisible())
+  cat_of <- function(r, lk) {
+    k <- norm_key_no_steroid(r)
+    if (k %in% names(lk)) unname(lk[k]) else "(uncategorised)"
+  }
+  rows$cat <- vapply(seq_len(nrow(rows)), function(i) {
+    lk <- if (rows$LOT_NUM[i] == 1L) lookups$lookup_1L else lookups$lookup_2L
+    cat_of(rows$reg[i], lk)
+  }, character(1))
+  agg <- aggregate(PATID ~ LOT_NUM, data = rows,
+                   FUN = function(x) length(unique(x)))
+  names(agg)[2] <- "n_patients"
+  unc <- aggregate(PATID ~ LOT_NUM,
+                   data = rows[rows$cat == "(uncategorised)", , drop = FALSE],
+                   FUN = function(x) length(unique(x)))
+  names(unc)[2] <- "n_uncategorised"
+  out <- merge(agg, unc, by = "LOT_NUM", all.x = TRUE)
+  out$n_uncategorised[is.na(out$n_uncategorised)] <- 0L
+  out$pct_uncategorised <- ifelse(out$n_patients > 0,
+                                   round(100 * out$n_uncategorised /
+                                         out$n_patients, 1), 0)
+  save_table(out, section = "BY_CATEGORY",
+             title = "Category mapping coverage per LOT_NUM")
+
+  # Top 10 unmapped regimen strings so Julia can extend the CSV.
+  un <- rows[rows$cat == "(uncategorised)", c("PATID","LOT_NUM","reg"),
+             drop = FALSE]
+  if (nrow(un) > 0) {
+    top <- aggregate(PATID ~ reg + LOT_NUM, data = un,
+                     FUN = function(x) length(unique(x)))
+    names(top)[3] <- "n_patients"
+    top <- top[order(-top$n_patients), , drop = FALSE]
+    save_table(head(top, 10), section = "BY_CATEGORY",
+               title = "Top 10 unmapped regimens (extend the CSV)")
+  }
+}
+
 load_categories <- function() {
   if (!file.exists(CAT_CSV_PATH))
     return(list(lookup_1L = character(0), lookup_2L = character(0)))
@@ -487,6 +540,7 @@ main <- function() {
   build_steroid_prevalence(con)
   for (n in 1:4) build_focused_pair(con, n, n + 1L)
   for (n in 1:4) build_category_pair(con, n, n + 1L, lookups)
+  build_category_coverage(con, lookups)
 
   build_dashboard(
     out_name     = "julia_q1_q3_dashboard.html",
