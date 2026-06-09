@@ -38,14 +38,21 @@ options(julia_q1_q3.no_autorun  = TRUE)
 options(julia_q1_q3.script_dir  = .parent_dir)
 source(file.path(.parent_dir, "julia_q1_q3.R"))
 
+# Q4 needs load_codelist_csv() to materialise the MMA codelist as a
+# VALUES fragment - the parent uses the same loader for S01 / step 03.
+# julia_q1_q3.R does not source codelists_lot.R itself.
+source(file.path(.parent_dir, "R", "codelists_lot.R"))
+
 # Q4-only constants. Distinct view names so this script can run
 # concurrently with julia_q1_q3.R without clobbering its temp views.
-Q4_LOT_LONG_FILT  <- "_jjq4_lot_long_ashley"
-Q4_ENROLL_SPANS   <- "_jjq4_enroll_spans"
-Q4_LOT1_STARTS    <- "_jjq4_lot1_starts"
-Q4_FLAGS_ALL      <- "_jjq4_flags_all"   # per-PATID filter flags (for attrition)
-Q4_ASHLEY_PATIDS  <- "_jjq4_ashley_patids"
-Q4_PRE_LOT1_DAYS  <- 365L  # Julia June 5: 12-mo CE/baseline before 1L index date
+Q4_LOT_LONG_FILT      <- "_jjq4_lot_long_ashley"
+Q4_ENROLL_SPANS       <- "_jjq4_enroll_spans"
+Q4_LOT1_STARTS        <- "_jjq4_lot1_starts"
+Q4_MMA_CODELIST       <- "_jjq4_mma_codelist"
+Q4_THERAPY_PRE_LOT1   <- "_jjq4_therapy_pre_lot1"
+Q4_FLAGS_ALL          <- "_jjq4_flags_all"   # per-PATID filter flags (for attrition)
+Q4_ASHLEY_PATIDS      <- "_jjq4_ashley_patids"
+Q4_PRE_LOT1_DAYS      <- 365L  # Julia June 5: 12-mo CE/baseline before 1L index date
 
 # Steroid MED_ABBR values to exclude from the "MM oncology therapy"
 # pre-LOT1 check. Same tokens as julia_q1_q3.R::STEROID_TOKENS so the
@@ -122,6 +129,98 @@ build_lot1_starts_q4 <- function(con, lot_long) {
   "))
 }
 
+# MMA codelist as a Q4-side VALUES fragment. Same CSV (cl_mma_codelist.csv)
+# and same column normalisation as parent S01 / pipeline_steps.R step 03,
+# but materialised inside this script so the prior-MM-Tx scan does not
+# depend on the parent having left mma_codelist alive in the session.
+# Steroid MED_ABBR rows are dropped here, once, so every downstream query
+# inherits the steroid exclusion without having to repeat it.
+build_q4_mma_codelist <- function() {
+  codelist_src <- load_codelist_csv(
+    "cl_mma_codelist.csv",
+    c("CL_CODE_TYPE", "CL_CODE", "CL_MEDICATION_FULL", "CL_MED_CLASS", "CL_MED_ABBR"))
+  ster_in <- paste0("'", Q4_STEROID_ABBRS, "'", collapse = ",")
+  glue("
+    CREATE OR REPLACE TEMPORARY VIEW {Q4_MMA_CODELIST} AS
+    SELECT upper(trim(CL_CODE_TYPE)) AS code_type,
+           upper(regexp_replace(trim(CL_CODE), '[^A-Za-z0-9]', '')) AS code,
+           upper(trim(CL_MED_ABBR))  AS med_abbr
+    FROM {codelist_src}
+    WHERE CL_CODE      IS NOT NULL AND trim(CL_CODE)      <> ''
+      AND CL_CODE_TYPE IS NOT NULL AND trim(CL_CODE_TYPE) <> ''
+      AND upper(coalesce(CL_MED_ABBR, '')) NOT IN ({ster_in})
+  ")
+}
+
+# Distinct PATIDs with any MM oncology therapy claim in
+# [LOT1_START - Q4_PRE_LOT1_DAYS, LOT1_START - 1]. Mirrors the parent's
+# pipeline_steps.R:646-696 therapy_events four-source pattern
+# (medical PROC_CD, medical BILL_PROC_CD, medical NDC, rx NDC) with
+# NDC11 normalisation, but with a per-PATID date window driven off
+# LOT1_START_DT instead of [study_start, study_end].
+#
+# This raw-claim scan is necessary because the parent's persisted
+# MMA_MED_PROCESSED is built with `FST_DT >= INDEX_DATE` (MM-dx anchor)
+# on every source branch (lot_program.R:316,336,359,386). It therefore
+# cannot see any claims before the MM diagnosis, and would miss MM
+# therapy occurring in the [LOT1_START - 365, INDEX_DATE - 1] portion
+# of the 12-month 1L baseline that Julia's June 5 spec requires.
+build_q4_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl) {
+  db_exec(con, glue("
+    CREATE OR REPLACE TEMPORARY VIEW {Q4_THERAPY_PRE_LOT1} AS
+    WITH med_proc AS (
+      SELECT /*+ BROADCAST(c) */ cast(m.PATID as string) AS PATID
+      FROM {medical_tbl} m
+      INNER JOIN {Q4_LOT1_STARTS} l1 ON cast(m.PATID as string) = l1.PATID
+      INNER JOIN {Q4_MMA_CODELIST} c
+        ON c.code_type IN ('HCPCS','CPT')
+       AND upper(regexp_replace(coalesce(cast(m.PROC_CD as string),''), '[^A-Za-z0-9]', '')) = c.code
+      WHERE cast(m.FST_DT as date)
+              BETWEEN date_sub(l1.LOT1_START_DT, {Q4_PRE_LOT1_DAYS})
+                  AND date_sub(l1.LOT1_START_DT, 1)
+    ),
+    med_bill AS (
+      SELECT /*+ BROADCAST(c) */ cast(m.PATID as string) AS PATID
+      FROM {medical_tbl} m
+      INNER JOIN {Q4_LOT1_STARTS} l1 ON cast(m.PATID as string) = l1.PATID
+      INNER JOIN {Q4_MMA_CODELIST} c
+        ON c.code_type = 'HCPCS'
+       AND upper(regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''), '[^A-Za-z0-9]', '')) = c.code
+      WHERE cast(m.FST_DT as date)
+              BETWEEN date_sub(l1.LOT1_START_DT, {Q4_PRE_LOT1_DAYS})
+                  AND date_sub(l1.LOT1_START_DT, 1)
+    ),
+    med_ndc AS (
+      SELECT /*+ BROADCAST(c) */ cast(m.PATID as string) AS PATID
+      FROM {medical_tbl} m
+      INNER JOIN {Q4_LOT1_STARTS} l1 ON cast(m.PATID as string) = l1.PATID
+      INNER JOIN {Q4_MMA_CODELIST} c
+        ON c.code_type = 'NDC'
+       AND lpad(regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', ''), 11, '0')
+         = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')
+      WHERE cast(m.FST_DT as date)
+              BETWEEN date_sub(l1.LOT1_START_DT, {Q4_PRE_LOT1_DAYS})
+                  AND date_sub(l1.LOT1_START_DT, 1)
+    ),
+    rx_ndc AS (
+      SELECT /*+ BROADCAST(c) */ cast(r.PATID as string) AS PATID
+      FROM {rx_tbl} r
+      INNER JOIN {Q4_LOT1_STARTS} l1 ON cast(r.PATID as string) = l1.PATID
+      INNER JOIN {Q4_MMA_CODELIST} c
+        ON c.code_type = 'NDC'
+       AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', ''), 11, '0')
+         = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')
+      WHERE cast(r.FILL_DT as date)
+              BETWEEN date_sub(l1.LOT1_START_DT, {Q4_PRE_LOT1_DAYS})
+                  AND date_sub(l1.LOT1_START_DT, 1)
+    )
+    SELECT DISTINCT PATID FROM med_proc
+    UNION SELECT DISTINCT PATID FROM med_bill
+    UNION SELECT DISTINCT PATID FROM med_ndc
+    UNION SELECT DISTINCT PATID FROM rx_ndc
+  "))
+}
+
 # Per-PATID flag table for the three Q4 filters layered on top of
 # ELIG_COH_FINAL. Rows are restricted to (ELIG_COH_FINAL INNER JOIN
 # LOT1) - i.e. patients in the parent cohort who actually have a 1L
@@ -133,42 +232,32 @@ build_lot1_starts_q4 <- function(con, lot_long) {
 #                      semantics as parent CE_b/CE_f via Q4_ENROLL_SPANS)
 #
 #   NO_BELANTAMAB    : zero MAP_STACKED rows for the PATID where
-#                      MAP_MED_CLASS LIKE '%BCMA%' OR
-#                      MAP_MED_TYPE  LIKE 'BEL%'   (Julia June 5:
-#                      "Received belantamab (i.e., an ADC) in any LOT"
-#                      exclusion; data-driven detection, same pattern
-#                      as lot1_studyteam_qs.R:395-407 so a future codelist
-#                      change to the belantamab abbr/class does not
-#                      silently break the filter).
+#                      MAP_MED_TYPE LIKE 'BEL%'. Narrower than the
+#                      lot1_studyteam_qs.R inventory predicate (which
+#                      adds MAP_MED_CLASS LIKE '%BCMA%' to also catch
+#                      bispecifics and CAR-T for descriptive counting):
+#                      Julia's exclusion is belantamab specifically,
+#                      so we drop the class match. Because MAP_STACKED
+#                      only contains agents on the parent's MMA
+#                      codelist, BEL* within MAP_STACKED reliably means
+#                      belantamab (other BEL-prefixed drugs are not MM
+#                      agents and so are not in MAP_STACKED).
 #
-#   NO_PRIOR_MM_TX   : zero MMA_MED_PROCESSED rows for the PATID with
-#                      DATE_SERVICE in [LOT1_START - Q4_PRE_LOT1_DAYS,
-#                      LOT1_START - 1] AND MED_ABBR NOT IN steroid set.
-#                      (Julia June 5: "Evidence of treatment with
-#                      another MM oncology therapy during the 12-month
-#                      1L baseline period". Re-anchored from the parent's
-#                      MM_bl_agents which uses 6-mo before MM_dx index.
-#                      Steroids are excluded because they are supportive
-#                      care - same exclusion as parent LOT derivation.)
-build_q4_flags <- function(con, elig_coh_final, map_stacked, mma_proc,
-                           q2_ok_belantamab, q2_ok_mma) {
+#   NO_PRIOR_MM_TX   : zero PATID rows in Q4_THERAPY_PRE_LOT1 (the
+#                      raw-claim four-source scan over the full pre-
+#                      LOT1 window; see build_q4_therapy_pre_lot1 for
+#                      why we cannot reuse MMA_MED_PROCESSED here).
+build_q4_flags <- function(con, elig_coh_final, map_stacked,
+                           q2_ok_belantamab, q2_ok_priortx) {
   bela_expr <- if (q2_ok_belantamab) glue("
         SELECT DISTINCT cast(PATID as string) AS PATID
         FROM {map_stacked}
-        WHERE upper(MAP_MED_CLASS) LIKE '%BCMA%'
-           OR upper(MAP_MED_TYPE)  LIKE 'BEL%'
+        WHERE upper(MAP_MED_TYPE) LIKE 'BEL%'
   ") else "SELECT cast(NULL as string) AS PATID WHERE 1 = 0"
 
-  ster_in <- paste0("'", Q4_STEROID_ABBRS, "'", collapse = ",")
-  mm_tx_expr <- if (q2_ok_mma) glue("
-        SELECT DISTINCT cast(m.PATID as string) AS PATID, l1.LOT1_START_DT
-        FROM {mma_proc} m
-        INNER JOIN {Q4_LOT1_STARTS} l1
-                ON cast(m.PATID as string) = l1.PATID
-        WHERE upper(coalesce(m.MED_ABBR, '')) NOT IN ({ster_in})
-          AND m.DATE_SERVICE BETWEEN date_sub(l1.LOT1_START_DT, {Q4_PRE_LOT1_DAYS})
-                                AND date_sub(l1.LOT1_START_DT, 1)
-  ") else "SELECT cast(NULL as string) AS PATID, cast(NULL as date) AS LOT1_START_DT WHERE 1 = 0"
+  prior_tx_expr <- if (q2_ok_priortx) glue("
+        SELECT DISTINCT PATID FROM {Q4_THERAPY_PRE_LOT1}
+  ") else "SELECT cast(NULL as string) AS PATID WHERE 1 = 0"
 
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {Q4_FLAGS_ALL} AS
@@ -190,10 +279,10 @@ build_q4_flags <- function(con, elig_coh_final, map_stacked, mma_proc,
       GROUP BY ec_l1.PATID
     ),
     bela AS ({bela_expr}),
-    prior_tx AS ({mm_tx_expr})
+    prior_tx AS ({prior_tx_expr})
     SELECT ec_l1.PATID,
            ce.CE_pre_lot1_12mo,
-           CASE WHEN bela.PATID    IS NULL THEN 1 ELSE 0 END AS NO_BELANTAMAB,
+           CASE WHEN bela.PATID     IS NULL THEN 1 ELSE 0 END AS NO_BELANTAMAB,
            CASE WHEN prior_tx.PATID IS NULL THEN 1 ELSE 0 END AS NO_PRIOR_MM_TX
     FROM ec_l1
     LEFT JOIN ce       ON ec_l1.PATID = ce.PATID
@@ -274,12 +363,18 @@ build_q4_overview_card <- function(counts, n_ster_codes, n_cat_rules,
     'in any LOT</b>, and <b>no MM oncology therapy in the 12-mo 1L ',
     'baseline</b>. CE-pre-LOT1 uses the parent&apos;s <code>gap_days = ',
     Q4_GAP_DAYS, '</code> allowance. Belantamab detection scans ',
-    '<code>MAP_STACKED</code> for <code>BCMA</code> class or <code>BEL</code> ',
-    'abbr - data-driven, same pattern as <code>lot1_studyteam_qs.R</code>. ',
-    'MM-therapy pre-LOT1 scans <code>MMA_MED_PROCESSED.DATE_SERVICE</code> ',
-    'within <code>[LOT1_START - 365, LOT1_START - 1]</code>, excluding ',
-    'steroid <code>MED_ABBR</code> values (DEX/DEXA/PRED/...) since the ',
-    'spec wording targets MM oncology therapy, not supportive care.</p>',
+    '<code>MAP_STACKED</code> for <code>MAP_MED_TYPE LIKE &apos;BEL%&apos;</code> ',
+    '- narrower than the <code>lot1_studyteam_qs.R</code> inventory ',
+    'predicate (no <code>%BCMA%</code> class match) so bispecifics and ',
+    'CAR-T are not over-excluded. MM-therapy pre-LOT1 scans raw ',
+    '<code>medical</code> (PROC_CD / BILL_PROC_CD / NDC) and <code>rx</code> ',
+    '(NDC) joined to the MMA codelist for the full ',
+    '<code>[LOT1_START - 365, LOT1_START - 1]</code> window per patient ',
+    '- not <code>MMA_MED_PROCESSED</code>, which the parent bounds at ',
+    '<code>FST_DT &gt;= INDEX_DATE</code> and so cannot see pre-MM-dx ',
+    'claims. Steroid <code>MED_ABBR</code> values (DEX/DEXA/PRED/...) ',
+    'are dropped from the codelist before the scan since the spec wording ',
+    'targets MM oncology therapy, not supportive care.</p>',
     '<table style="font-size:13px;border-collapse:collapse;margin-top:8px">',
     '<tr style="background:#eef"><th style="text-align:left;padding:6px 12px">Filter step</th>',
     '<th style="text-align:right;padding:6px 12px">n patients</th>',
@@ -315,7 +410,6 @@ main_q4 <- function() {
   lot_long       <- wrk("LOT_LONG")
   elig_coh_final <- wrk(Q4_FINAL_TABLE_NAME)
   map_stacked    <- wrk("MAP_STACKED")
-  mma_proc       <- wrk("MMA_MED_PROCESSED")
   rx_tbl         <- cdm_src(cfg$tbl_rx)
   medical_tbl    <- cdm_src(cfg$tbl_medical)
 
@@ -325,17 +419,21 @@ main_q4 <- function() {
   if (!ok(lot_long))       stop("Cannot read ", lot_long)
   if (!ok(elig_coh_final)) stop("Cannot read ", elig_coh_final,
                                 " - Ashley cohort needs parent ELIG_COH_FINAL.")
-  q2_ok <- ok(rx_tbl) && ok(medical_tbl)
-  if (!q2_ok) {
+  raw_ok <- ok(rx_tbl) && ok(medical_tbl)
+  if (!raw_ok) {
     log_msg("  WARN: rx or medical unreadable; Q2 steroid augmentation ",
-            "skipped. Q1+Q3 still run.")
+            "AND Q4 MM-Tx pre-LOT1 scan skipped.")
   }
-  # Belantamab + MM-tx-pre-LOT1 filters need the parent work tables. If
-  # either is unreadable we log loudly, skip the corresponding filter,
+  q2_ok <- raw_ok   # Q2 steroid augmentation still needs raw rx/medical
+  # Belantamab + MM-tx-pre-LOT1 filters. Belantamab needs MAP_STACKED;
+  # MM-tx-pre-LOT1 needs raw medical + rx (NOT MMA_MED_PROCESSED, which
+  # is parent-bounded to `FST_DT >= INDEX_DATE` and therefore cannot see
+  # the pre-MM-dx part of the 12-mo pre-LOT1 baseline). If a required
+  # input is unreadable we log loudly, skip the corresponding filter,
   # and surface that in an OVERVIEW note. Q4 still runs with the filters
   # it can apply rather than aborting - degraded but auditable.
-  bela_ok <- ok(map_stacked)
-  mma_ok  <- ok(mma_proc)
+  bela_ok    <- ok(map_stacked)
+  priortx_ok <- raw_ok
   overview_notes <- character(0)
   if (!bela_ok) {
     log_msg("  WARN: ", map_stacked, " unreadable; belantamab exclusion ",
@@ -345,13 +443,12 @@ main_q4 <- function() {
              map_stacked, "</code> unreadable. Rebuild via ",
              "<code>lot_program.R</code>."))
   }
-  if (!mma_ok) {
-    log_msg("  WARN: ", mma_proc, " unreadable; MM-tx-pre-LOT1 exclusion ",
-            "skipped.")
+  if (!priortx_ok) {
+    log_msg("  WARN: rx or medical unreadable; MM-tx pre-LOT1 ",
+            "exclusion skipped.")
     overview_notes <- c(overview_notes,
-      paste0("MM oncology Tx pre-LOT1 exclusion <b>skipped</b> - <code>",
-             mma_proc, "</code> unreadable. Rebuild via ",
-             "<code>lot_program.R</code>."))
+      paste0("MM oncology Tx pre-LOT1 exclusion <b>skipped</b> - raw ",
+             "<code>medical</code>/<code>rx</code> unreadable."))
   }
 
   log_msg("Building enrollment spans (gap_days=", Q4_GAP_DAYS, ")")
@@ -360,10 +457,18 @@ main_q4 <- function() {
   log_msg("Pulling LOT1 starts from ", lot_long)
   build_lot1_starts_q4(con, lot_long)
 
+  if (priortx_ok) {
+    log_msg("Loading MMA codelist (steroid abbrs excluded) -> ", Q4_MMA_CODELIST)
+    db_exec(con, build_q4_mma_codelist())
+    log_msg("Scanning raw medical + rx for MM Tx in [LOT1-",
+            Q4_PRE_LOT1_DAYS, ", LOT1-1] -> ", Q4_THERAPY_PRE_LOT1)
+    build_q4_therapy_pre_lot1(con, medical_tbl, rx_tbl)
+  }
+
   log_msg("Applying Ashley filters: ELIG_COH_FINAL + 12-mo CE pre-LOT1 + ",
           "no belantamab + no MM oncology Tx in 12-mo pre-LOT1")
-  build_q4_flags(con, elig_coh_final, map_stacked, mma_proc,
-                 q2_ok_belantamab = bela_ok, q2_ok_mma = mma_ok)
+  build_q4_flags(con, elig_coh_final, map_stacked,
+                 q2_ok_belantamab = bela_ok, q2_ok_priortx = priortx_ok)
 
   log_msg("Building filtered LOT_LONG -> ", Q4_LOT_LONG_FILT)
   build_lot_long_filtered(con, lot_long)

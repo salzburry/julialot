@@ -61,27 +61,52 @@ patient passes if at least one merged span covers
 ### No belantamab in any LOT
 Data-driven detection on the parent's persisted `MAP_STACKED`:
 ```sql
-upper(MAP_MED_CLASS) LIKE '%BCMA%'
-   OR upper(MAP_MED_TYPE)  LIKE 'BEL%'
+upper(MAP_MED_TYPE) LIKE 'BEL%'
 ```
-Same pattern as `lot1_studyteam_qs.R:395-407` so a future codelist
-change to the belantamab abbreviation or class label is picked up
-automatically. The exclusion drops PATIDs with **any** matching
-`MAP_STACKED` segment regardless of LOT number (matches "in any LOT").
+Narrower than the inventory predicate in `lot1_studyteam_qs.R:395-407`
+(which also matches `MAP_MED_CLASS LIKE '%BCMA%'` for counting all
+BCMA-directed agents). Julia's exclusion is belantamab specifically,
+so the class match is dropped to avoid over-excluding BCMA bispecifics
+(teclistamab / elranatamab) and BCMA CAR-T (ide-cel / cilta-cel).
 
-At study lockup belantamab was the only ADC in use for MM; the
-detection above also matches future BCMA agents if they are labelled
-similarly. If a non-belantamab ADC is added later, extend the
-predicate (or move to a CSV-backed code list).
+Because `MAP_STACKED` only contains agents on the parent's MMA
+codelist, `BEL%` within `MAP_STACKED` reliably means belantamab: any
+other BEL-prefixed drug is not on the MM codelist and therefore not
+in `MAP_STACKED`. The exclusion drops PATIDs with **any** matching
+segment regardless of LOT number (matches "in any LOT").
+
+At study lockup belantamab was the only ADC in use for MM. If a
+non-belantamab ADC is added to the codelist later, prefer matching
+on its specific `MED_ABBR` value (or move to a CSV-backed list).
 
 ### No MM oncology therapy in 12-mo pre-LOT1
-Scans the parent's persisted `MMA_MED_PROCESSED` for any
-`DATE_SERVICE` in `[LOT1_START - 365, LOT1_START - 1]`, excluding
-steroid `MED_ABBR` values (DEX / DEXA / DEXAMETHASONE / PRED /
-PREDNISONE - same tokens as `julia_q1_q3.R::STEROID_TOKENS`).
-Steroids are supportive care; the spec wording targets MM oncology
-therapy specifically, mirroring the parent's LOT-derivation steroid
-exclusion.
+Scans the **raw** `medical` (`PROC_CD` / `BILL_PROC_CD` / `NDC`) and
+`rx` (`NDC`) tables joined to a Q4-side MMA codelist built from
+`cl_mma_codelist.csv` (the same CSV the parent uses for `mma_codelist`
+in `S01` / `mm_therapy_codes` in `pipeline_steps.R:67-81`). The
+codelist view drops steroid `MED_ABBR` values (DEX / DEXA /
+DEXAMETHASONE / PRED / PREDNISONE - same tokens as
+`julia_q1_q3.R::STEROID_TOKENS`) before any join, so every downstream
+scan inherits the steroid exclusion. NDC11 normalisation
+(`lpad(...,11,'0')`) is identical to the parent join logic in
+`pipeline_steps.R:646-696` and `lot_program.R:300-388`.
+
+**Why not `MMA_MED_PROCESSED`:** the parent's persisted MMA table is
+bounded at `FST_DT >= p.INDEX_DATE` on every source branch
+(`lot_program.R:316`, `:336`, `:359`, `:386`), where `INDEX_DATE` is
+the MM-diagnosis qualifying date. That means it cannot see any claim
+in the `[LOT1_START - 365, INDEX_DATE - 1]` portion of the 12-month
+1L baseline. For an NDMM patient whose LOT1 starts shortly after
+MM-dx (the typical case), `INDEX_DATE ~= LOT1_START`, so the visible
+window collapses to days/weeks of the intended 12-month one. The Q4
+raw-claim scan covers the full window by joining `LOT1_START_DT` per
+PATID and bounding the date range there:
+
+```sql
+WHERE cast(m.FST_DT as date)
+        BETWEEN date_sub(l1.LOT1_START_DT, 365)
+            AND date_sub(l1.LOT1_START_DT, 1)
+```
 
 ## Running it
 
@@ -108,17 +133,26 @@ identically here.
 
 The script reads (does not write) these persisted parent tables:
 
-- `LOT_LONG`             - LOT derivation per patient
-- `ELIG_COH_FINAL`       - parent IE-filtered cohort
-- `MAP_STACKED`          - per-medication exposure (belantamab filter)
-- `MMA_MED_PROCESSED`    - per-claim MM agent table (MM-Tx-pre-LOT1 filter)
+- `LOT_LONG`        - LOT derivation per patient
+- `ELIG_COH_FINAL`  - parent IE-filtered cohort
+- `MAP_STACKED`     - per-medication exposure (belantamab filter)
 
-Plus the raw `member_enrollment` table for the CE span rebuild.
+Plus these raw tables for CE / MM-Tx-pre-LOT1 / Q2 steroid scans:
 
-If `MAP_STACKED` or `MMA_MED_PROCESSED` is unreadable, the
-corresponding Q4 filter is **skipped** and a warning is surfaced both
-in stdout and as a note in the OVERVIEW card. The script still
-produces a dashboard with the filters that did apply.
+- `member_enrollment` (CE span rebuild)
+- `medical`           (MM-Tx pre-LOT1 four-source scan and Q2 steroids)
+- `rx`                (MM-Tx pre-LOT1 four-source scan and Q2 steroids)
+
+And the MMA codelist CSV at `cfg$codelist_dir/cl_mma_codelist.csv`
+(loaded via `load_codelist_csv()` from `R/codelists_lot.R`, same
+loader the parent uses).
+
+If `MAP_STACKED` is unreadable the belantamab filter is **skipped**.
+If raw `medical` or `rx` is unreadable the MM-Tx-pre-LOT1 filter is
+**skipped** (and Q2 steroid augmentation also degrades to no-op).
+Each skip is logged to stdout and surfaced as a note in the OVERVIEW
+card; the script still produces a dashboard with the filters that
+did apply.
 
 ## Output
 
