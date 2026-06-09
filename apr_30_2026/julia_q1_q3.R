@@ -594,4 +594,4 @@ main <- function() {
   log_msg("Wrote ", file.path(cfg$output_dir, "julia_q1_q3_dashboard.html"))
 }
 
-if (!interactive()) main()
+if (!interactive() && !isTRUE(getOption("julia_q1_q3.no_autorun"))) main()
