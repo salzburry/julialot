@@ -38,13 +38,22 @@
 #     under-detection of IP claims (claims with confinement records
 #     but no POS / TOS hit). Document and accept; if material, run
 #     the helper inside a pipeline session where `confinement` exists.
-#   - MM-baseline-therapy uses the persisted mm_dx_events_all table
-#     (one of the checkpoint tables your pipeline already materialises).
-#     If the codelist behind it has changed since the cohort was built,
-#     rerun the cohort first.
+#   - MM-baseline-therapy is rebuilt INLINE here (mm_dx_events_all is
+#     a temp view per pipeline_steps.R:208, NOT persisted, so reading
+#     it across sessions would fail). The inline CTE replicates the
+#     STRICT MM-dx detection from pipeline_steps.R:204-258 (any
+#     med_diagnosis row whose normalised code starts with 2030
+#     [ICD-9] or C900 [ICD-10]).
 #   - Cancer dx must NOT be an MM code (203.0x / C90.0x). The
 #     cl_other_malig codelist already encodes this exclusion in the
 #     pipeline. We rely on the same codelist here.
+#   - The IP/OP setting derivation pre-aggregates the `medical` table
+#     to claim grain (matches pipeline step 07a's
+#     `max(POS), max(TOS_CD)` GROUP BY on the 5-column claim key).
+#     Without this pre-aggregation a multi-line claim Cartesian-
+#     explodes the dx-event rows and the outpatient-pair logic
+#     fabricates false 30-day pairs from duplicates of the same
+#     physical claim.
 
 .script_dir <- local({
   args <- commandArgs(trailingOnly = FALSE)
@@ -158,9 +167,8 @@ main <- function() {
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
   lot_long  <- wrk("LOT_LONG")
-  mm_dx_tbl <- wrk("mm_dx_events_all")            # checkpoint, persisted
   med_diag  <- cdm_src(cfg$tbl_med_diag)           # raw CDM
-  medical   <- cdm_src(Sys.getenv("MEDICAL_TBL",  unset = "medical"))
+  medical   <- cdm_src(cfg$tbl_medical)
   med_proc  <- cdm_src(cfg$tbl_med_proc)
   view_name <- wrk(VIEW_BASE)
 
@@ -168,11 +176,6 @@ main <- function() {
     nrow(db_q(con, glue("SELECT 1 FROM {tbl} LIMIT 1"))) >= 0,
     error = function(e) FALSE))
   if (!ok(lot_long)) stop("Cannot read ", lot_long, ". Run the pipeline first.")
-  if (!ok(mm_dx_tbl)) {
-    log_msg("WARN: ", mm_dx_tbl, " not persisted - MM-baseline-therapy ",
-            "flag will be NULL. Re-run the cohort pipeline so it ",
-            "materialises this checkpoint.")
-  }
 
   # ---- Load codelists into temp views ---------------------------------
   log_msg("Loading codelists from ", CL_DIR)
@@ -181,21 +184,6 @@ main <- function() {
   n_mm    <- csv_to_view(con, CL_MM_THERAPY, "_bl_mm_therapy_codes")
   log_msg(sprintf("  codes loaded: other-malig=%d, pregnancy=%d, mm-therapy=%d",
                   n_other, n_preg, n_mm))
-
-  # ---- The big view: one CTE chain that scans raw CDM ONCE -----------
-  # All three flags share the same `events` skeleton (dx + procs + rev
-  # codes + rx) so we avoid scanning the rx / medical tables multiple
-  # times. Each flag's CASE WHEN handles its own codelist join.
-  mm_dx_join <- if (ok(mm_dx_tbl)) glue("
-    LEFT JOIN (
-      SELECT DISTINCT cast(PATID as string) AS PATID,
-             cast(svc_dt as date) AS event_dt,
-             mm_dx_strict_flg
-      FROM {mm_dx_tbl}
-    ) mmdx ON mmdx.PATID = l1.PATID
-          AND mmdx.event_dt BETWEEN l1.w_start AND l1.w_end
-          AND mmdx.mm_dx_strict_flg = 1")
-    else "LEFT JOIN (SELECT NULL AS PATID, NULL AS event_dt, NULL AS mm_dx_strict_flg) mmdx ON 1=0"
 
   log_msg("Building ", view_name,
           " (window = [LOT1 - ", BSL_DAYS, ", LOT1 - 1])")
@@ -245,8 +233,21 @@ main <- function() {
       WHERE m.RVNU_CD IS NOT NULL AND TRIM(m.RVNU_CD) <> ''
         AND m.FST_DT IS NOT NULL
     ),
+    -- Pre-aggregate medical to CLAIM grain (matches pipeline step 07a:
+    -- pipeline_steps.R:145-167) so multi-line claims do not Cartesian-
+    -- explode the dx join below.
+    mch AS (
+      SELECT cast(PATID as string) AS PATID,
+             PAT_PLANID, CLMID, FST_DT, LOC_CD,
+             max(POS)    AS POS,
+             max(TOS_CD) AS TOS_CD
+      FROM {medical}
+      WHERE FST_DT IS NOT NULL
+      GROUP BY PATID, PAT_PLANID, CLMID, FST_DT, LOC_CD
+    ),
     -- IP/OP setting derived inline from POS + TOS_CD only (the
-    -- pipeline also uses a `confinement` temp view; not rebuilt here).
+    -- pipeline also uses a `confinement` temp view; not rebuilt here -
+    -- caveat documented in the header).
     dx_settings AS (
       SELECT d.*,
              CASE WHEN m.POS IN ('21','51','61')
@@ -254,10 +255,10 @@ main <- function() {
                                     'PROF.INPVIS','FAC_IP.SNF')
                   THEN 1 ELSE 0 END AS inpatient_flg
       FROM dx d
-      LEFT JOIN {medical} m
-        ON d.PATID = cast(m.PATID as string)
-       AND d.CLMID      =   m.CLMID
-       AND d.FST_DT     =   m.FST_DT
+      LEFT JOIN mch m
+        ON d.PATID       =   m.PATID
+       AND d.CLMID       =   m.CLMID
+       AND d.FST_DT      =   m.FST_DT
        AND d.PAT_PLANID <=> m.PAT_PLANID
        AND d.LOC_CD     <=> m.LOC_CD
     ),
@@ -319,16 +320,22 @@ main <- function() {
       LEFT JOIN preg_evts p ON p.PATID = l1.PATID
       GROUP BY l1.PATID
     ),
-    -- MM-baseline-therapy: any MM-rx claim is matched via the
-    -- persisted mm_dx_events_all (which already encodes the codelist
-    -- match for MM diagnoses); here we use the STRICT flag exactly
-    -- as the pipeline's mm_baseline_evidence_flag does, just with a
-    -- different window anchor.
+    -- MM-baseline-therapy / MM-baseline-evidence: any STRICT MM
+    -- diagnosis (203.0x ICD-9 OR C90.0x ICD-10) inside the window.
+    -- Inlined here because mm_dx_events_all is a TEMP view, not
+    -- persisted (pipeline_steps.R:208), so it cannot be read from
+    -- this fresh session.
+    mm_strict_dx AS (
+      SELECT PATID, event_dt FROM dx
+      WHERE (icd_family = 'ICD9'  AND code RLIKE '^2030')
+         OR (icd_family = 'ICD10' AND code RLIKE '^C900')
+    ),
     mm_hit AS (
       SELECT l1.PATID,
-             max(CASE WHEN mmdx.event_dt IS NOT NULL THEN 1 ELSE 0 END) AS f
+             max(CASE WHEN m.event_dt BETWEEN l1.w_start AND l1.w_end
+                       THEN 1 ELSE 0 END) AS f
       FROM lot1 l1
-      {mm_dx_join}
+      LEFT JOIN mm_strict_dx m ON m.PATID = l1.PATID
       GROUP BY l1.PATID
     )
     SELECT l1.PATID,
