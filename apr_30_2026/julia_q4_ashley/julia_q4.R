@@ -1,7 +1,14 @@
 #!/usr/bin/env Rscript
 # Julia June-5 Q4: same Q1/Q2/Q3 dashboards, but on Ashley's planned
-# study cohort (= ELIG_COH_FINAL + the 12-mo CE pre-LOT1 check Julia
-# confirmed on the June 5 PDF, which is not in the parent pipeline).
+# study cohort. Q4 layers three June-5 IE post-filters on top of the
+# parent ELIG_COH_FINAL:
+#
+#   1. 12-mo CE before LOT1_START_DT     (parent CE_b is 6-mo before MM-dx)
+#   2. No belantamab in any LOT          (no parent equivalent)
+#   3. No MM oncology Tx in 12-mo
+#      pre-LOT1 baseline                 (parent's MM_BASELINE_EVIDENCE is
+#                                         6-mo before MM-dx; re-anchored
+#                                         and re-derived from raw claims)
 #
 #   Rscript apr_30_2026/julia_q4_ashley/julia_q4.R
 #
@@ -10,7 +17,8 @@
 # Reuses julia_q1_q3.R verbatim - all Q1/Q2/Q3 builders, steroid CSV,
 # category CSV, coverage QC. The Q4 script just (a) computes Ashley's
 # cohort, (b) writes a filtered LOT_LONG temp view, then (c) calls
-# the Q1-Q3 helpers against that view.
+# the Q1-Q3 helpers against that view. See README.md for the per-
+# filter SQL pattern, required parent inputs, and known gaps.
 #
 # Why this lives in its own folder: cohort change vs Q1-Q3, so a
 # user can compare {dashboard A on full cohort} vs {dashboard B on
