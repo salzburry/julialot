@@ -7334,6 +7334,53 @@ build_journeys <- function(con, lot_long, map_tbl, cohort_def) {
 }
 
 # ---- Q1 + Q4: category sankeys per cohort ---------------------------
+# Regimen-acronym -> drug-token map. Built-in defaults cover only
+# combos whose drug tokens are confirmed in the pipeline spec
+# (BORT / LENA / DARA per scripts/build_lot2_5_spec.py); for the
+# rest (KRd, IRd, DKd, etc.) provide a CSV at REGIMEN_ACRONYM_CSV
+# with columns acronym, drugs. Drugs are space/comma/slash separated
+# MED_ABBR tokens (e.g. "CARF LENA"). Steroid tokens in the drugs
+# list are stripped at expansion since LOT_BASE_MEDS is steroid-free.
+BUILTIN_ACRONYMS <- list(
+  "VRD" = c("BORT", "LENA"),
+  "VR"  = c("BORT", "LENA"),
+  "VD"  = c("BORT"),
+  "RD"  = c("LENA"),
+  "DRD" = c("DARA", "LENA"),
+  "DVD" = c("DARA", "BORT")
+)
+
+load_acronym_map <- function() {
+  m <- BUILTIN_ACRONYMS
+  user_path <- Sys.getenv("REGIMEN_ACRONYM_CSV", unset = "")
+  if (!nzchar(user_path) || !file.exists(user_path)) return(m)
+  df <- tryCatch(read.csv(user_path, stringsAsFactors = FALSE,
+                          check.names = FALSE),
+                 error = function(e) NULL)
+  if (is.null(df) || nrow(df) == 0) return(m)
+  ncols <- tolower(names(df))
+  ac_i  <- which(ncols %in% c("acronym", "regimen", "shorthand",
+                              "code"))[1]
+  dr_i  <- which(ncols %in% c("drugs", "tokens", "med_abbrs",
+                              "expansion"))[1]
+  if (is.na(ac_i) || is.na(dr_i)) {
+    log_msg("  REGIMEN_ACRONYM_CSV missing acronym/drugs columns; ",
+            "ignored. Found: ", paste(names(df), collapse = ", "))
+    return(m)
+  }
+  for (i in seq_len(nrow(df))) {
+    ac <- toupper(trimws(as.character(df[[ac_i]])[i]))
+    if (!nzchar(ac)) next
+    raw <- toupper(as.character(df[[dr_i]])[i])
+    drugs <- strsplit(raw, "[[:space:]/+,\\-]+", perl = TRUE)[[1]]
+    drugs <- drugs[nzchar(drugs) &
+                    !drugs %in% c("DEX", "DEXA", "DEXAMETHASONE",
+                                   "PRED", "PREDNISONE")]
+    if (length(drugs) > 0) m[[ac]] <- drugs
+  }
+  m
+}
+
 load_category_lookup <- function() {
   cat_path <- Sys.getenv("REGIMEN_CATEGORIES_CSV", unset = "")
   if (!nzchar(cat_path) || !file.exists(cat_path)) return(NULL)
@@ -7364,11 +7411,14 @@ load_category_lookup <- function() {
     return(structure(list(), bad = TRUE, path = cat_path,
                      cols = paste(names(df), collapse = ", ")))
 
-  # Tokenise on whitespace / slashes / plus / minus / comma so xlsx
-  # rows like "VRd", "K/R/d", "K+R+d", "Bort, Lena, Dexa" all
-  # normalise to the same sorted uppercase token vector. Steroid
-  # tokens (DEX/DEXA/PRED) are stripped because current
-  # LOT_BASE_MEDS excludes steroids (lot_program.R:688 / lot2_5_base.R)
+  # Tokeniser splits on whitespace / "/" / "+" / "," / "-" so xlsx
+  # rows like "Bort, Lena, Dexa" or "BORT/LENA/DEXA" normalise to
+  # the same sorted uppercase token vector after steroid stripping.
+  # NOTE: shorthand regimen acronyms ("VRd", "KRd") are SINGLE
+  # tokens after this step (VRD, KRD); the multi-drug expansion is
+  # handled separately by categorise_regimen() against the acronym
+  # map, not by the tokeniser. Steroids (DEX/DEXA/PRED) are stripped
+  # because current LOT_BASE_MEDS excludes them (lot_program.R:688)
   # until Julia's Q2 update lands.
   STEROID_TOKENS <- c("DEX", "DEXA", "DEXAMETHASONE",
                        "PRED", "PREDNISONE")
@@ -7386,9 +7436,11 @@ load_category_lookup <- function() {
 
   reg_raw <- trimws(as.character(df[[reg_i]]))
   cat_raw <- trimws(as.character(df[[cat_i]]))
+  acronyms <- load_acronym_map()
   list(path           = cat_path,
        norm_regimen   = norm_regimen,
        norm_key       = norm_key,
+       acronyms       = acronyms,
        lookup         = setNames(cat_raw, reg_raw),
        lookup_norm    = setNames(cat_raw,
                                   vapply(reg_raw, function(r) norm_key(r, FALSE),
@@ -7397,12 +7449,18 @@ load_category_lookup <- function() {
                                   vapply(reg_raw, norm_key, character(1))))
 }
 
-# Match LOT_BASE_MEDS to a category. Tries (in order):
+# Match LOT_BASE_MEDS or an xlsx regimen cell to a category. Tries
+# (in order):
 #   1. verbatim string match
 #   2. normalised match (strip whitespace/slashes/+/-, uppercase, sort)
-#   3. normalised + steroid-stripped match (since current LOT
-#      regimens are steroid-free)
-# Returns NA when no level matches; the caller surfaces as
+#   3. normalised + steroid-stripped match (current LOT regimens
+#      are steroid-free)
+#   4. acronym expansion (VRd -> BORT LENA, etc.) using
+#      BUILTIN_ACRONYMS + any user CSV from REGIMEN_ACRONYM_CSV.
+#      Built-in coverage is intentionally small (V/R/D combos using
+#      BORT/LENA/DARA, the tokens confirmed in the pipeline spec);
+#      KRd / IRd / DKd / etc. need the user CSV.
+# Returns NA when no tier matches; the caller surfaces as
 # "(uncategorised)".
 categorise_regimen <- function(reg, cat_data) {
   if (is.na(reg) || !nzchar(trimws(as.character(reg))))
@@ -7415,6 +7473,20 @@ categorise_regimen <- function(reg, cat_data) {
   k_strip <- cat_data$norm_key(reg, TRUE)
   if (nzchar(k_strip) && k_strip %in% names(cat_data$lookup_nosterd))
     return(unname(cat_data$lookup_nosterd[k_strip]))
+
+  # Acronym expansion: collapse whitespace/separators and lookup as
+  # a single uppercase key. If matched, treat the expanded drugs as
+  # a normalised regimen and try the lookup again.
+  single <- gsub("[[:space:]/+,\\-]+", "", toupper(as.character(reg)),
+                  perl = TRUE)
+  if (nzchar(single) && single %in% names(cat_data$acronyms)) {
+    drugs <- cat_data$acronyms[[single]]
+    k <- paste(sort(unique(drugs)), collapse = " ")
+    if (k %in% names(cat_data$lookup_nosterd))
+      return(unname(cat_data$lookup_nosterd[k]))
+    if (k %in% names(cat_data$lookup_norm))
+      return(unname(cat_data$lookup_norm[k]))
+  }
   NA_character_
 }
 
@@ -7481,16 +7553,26 @@ build_category_for_cohort <- function(con, lot_long, cohort_def, cat_data) {
       esc_html(cohort_def$label), '</h3>',
       '<p style="color:#555">Per Julia Q1: pending the ',
       '<em>MM Treatment Table for Protocol.xlsx</em>. Point ',
-      '<code>REGIMEN_CATEGORIES_CSV</code> at the file (the env var ',
-      'name kept for compatibility; <code>.xlsx</code> is also ',
-      'accepted via <code>readxl</code>). Expected headers: one of ',
-      '<code>regimen</code> / <code>lot_base_meds</code> / ',
-      '<code>med</code> / <code>treatment</code>, plus one of ',
-      '<code>category</code> / <code>regimen_category</code> / ',
-      '<code>treatment_category</code>. Match falls back to a ',
-      'steroid-stripped lookup (DEX/DEXA/PRED tokens removed) since ',
-      'current <code>LOT_BASE_MEDS</code> excludes steroids until ',
-      'Julia\'s Q2 LOT-rule update lands.</p></div>'),
+      '<code>REGIMEN_CATEGORIES_CSV</code> at the file ',
+      '(<code>.xlsx</code> is accepted via <code>readxl</code>). ',
+      'Expected headers: one of <code>regimen</code> / ',
+      '<code>lot_base_meds</code> / <code>med</code> / ',
+      '<code>treatment</code>, plus one of <code>category</code> / ',
+      '<code>regimen_category</code> / <code>treatment_category</code>.',
+      '</p>',
+      '<p style="color:#555">Matching tiers: verbatim &rarr; ',
+      'normalised (split on whitespace / "/" / "+" / "-" / ",", ',
+      'uppercase, sort) &rarr; steroid-stripped (DEX/DEXA/PRED ',
+      'removed - current <code>LOT_BASE_MEDS</code> excludes ',
+      'steroids until Julia\'s Q2 lands) &rarr; <b>acronym ',
+      'expansion</b>. Built-in acronyms cover V/R/D combos using ',
+      'BORT / LENA / DARA only (the tokens confirmed in the ',
+      'pipeline spec); add a CSV at ',
+      '<code>REGIMEN_ACRONYM_CSV</code> with columns ',
+      '<code>acronym, drugs</code> to extend (e.g. ',
+      '<code>KRd, CARF LENA</code>). Acronym-only xlsx rows ',
+      'without a matching expansion will still fall to ',
+      '<code>(uncategorised)</code>.</p></div>'),
       section = section,
       title = paste0("Categories (", cohort_def$label, ", pending)"))
     return(invisible())
@@ -7637,8 +7719,12 @@ build_cohort_def_card <- function(con, lot_long, final_tbl, n_ash) {
     '</td><td>',
     '1L treatment start (<code>LOT_LONG.LOT_START_DT</code> at ',
     '<code>LOT_NUM=1</code>) &ge; ', esc_html(ELIGIBLE_1L_FROM),
-    '; <code>', esc_html(BELA_TOKEN), '</code> token NOT in ',
-    '<code>LOT_BASE_MEDS</code> at <b>any</b> LOT_NUM.',
+    '; no <code>', esc_html(BELA_TOKEN), '</code> exposure anywhere ',
+    '— excluded if the token appears in <code>LOT_BASE_MEDS</code> ',
+    'at <b>any</b> LOT_NUM <i>or</i> in ',
+    '<code>MAP_STACKED.MAP_MED_TYPE</code> (true any-exposure, ',
+    'covers belantamab claims that did not surface inside a base ',
+    'regimen string).',
     '</td></tr>',
     '</table>',
     '<p style="color:#b06000;font-size:13px;margin-top:10px">',
