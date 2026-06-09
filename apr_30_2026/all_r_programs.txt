@@ -6993,16 +6993,21 @@ FILE: apr_30_2026/julia_jun08_qs.R
 #       the HCPCS / NDC codes Julia provided in a scoping card so
 #       they can be folded into the codelist when Julia confirms
 #       the updated LOT rules. No regenerated LOT tables yet.
-#   Q3  Patient journeys filtered to multi-LOT patients only
-#       (max LOT_NUM >= 2). Mirrors the LOT1-5 dashboard's MED
-#       JOURNEY style.
-#   Q4  Ashley's planned study cohort - best-effort filter from
-#       persisted columns. Criteria enforceable now: INDEX_DATE on
-#       or after 2017-01-01, no belantamab in 1L. Criteria that
-#       need new pipeline derivation (flagged in the Cohort
-#       Definition card, not silently dropped): >=6 months CE
-#       before MM diagnosis date (current pipeline only verifies
-#       the >=12 months CE before INDEX_DATE).
+#   Q3  Patient journeys AND focused/category sankeys all filtered
+#       so non-progressors (no subsequent LOT) drop out: journey
+#       examples require max LOT_NUM >= 2, sankeys INNER-JOIN
+#       LOTn and LOTn+1 so the (no LOTn) bucket is gone entirely.
+#   Q4  Ashley's planned study cohort - best-effort filter using
+#       LOT_LONG (NOT ELIG_COH_FINAL.INDEX_DATE, which is the
+#       MM-dx qualifying date per pipeline_steps.R:356, not the
+#       1L treatment start). Enforced here: LOT1 LOT_START_DT
+#       >= 2017-01-01 (lot_program.R:686) and no belantamab token
+#       in LOT_BASE_MEDS at ANY LOT_NUM. NOT enforced (surfaced as
+#       explicit limitations in the cohort-def card, not silently
+#       dropped): CE >= 12 months before 1L start (pipeline default
+#       baseline_days = 183, ~6 months - config_prompts.R:89),
+#       CE >= 6 months before MM diagnosis date, CE >= 3 months
+#       follow-up, and re-check of adult age at MM-dx.
 #
 # Reads only persisted work-schema tables (LOT_LONG, ELIG_COH_FINAL,
 # MAP_STACKED) plus an optional REGIMEN_CATEGORIES_CSV. Builds
@@ -7071,27 +7076,38 @@ fu_sankey <- function(src_lab, tgt_lab, value, section, title) {
 
 # Builds the Ashley-cohort PATID vector by applying the criteria we
 # CAN enforce from persisted columns. Returns a character vector of
-# PATIDs; an empty vector means no patient survives the filter (the
-# caller logs and degrades gracefully).
+# PATIDs; an empty vector means no patient survives the filter.
+#
+# Verified pipeline semantics (per pipeline_steps.R:356 + lot_program.R:686):
+#   - ELIG_COH_FINAL.INDEX_DATE = MM diagnosis qualifying date, NOT
+#     the 1L treatment start. Julia's "eligible 1L treatment on/after
+#     2017-01-01" therefore filters LOT_LONG.LOT_START_DT at
+#     LOT_NUM=1, NOT ELIG_COH_FINAL.INDEX_DATE.
+#   - Belantamab exclusion applies to ANY LOT, not just 1L (Julia's
+#     PDF says "belantamab in any LOT excluded").
 build_ashley_cohort <- function(con, lot_long, final_tbl) {
   log_msg("Building Ashley's planned study cohort filter")
   ash <- tryCatch(db_q(con, glue("
-    WITH base AS (
-      SELECT cast(PATID as string) AS PATID, INDEX_DATE
-      FROM {final_tbl}
-      WHERE INDEX_DATE >= cast('{ELIGIBLE_1L_FROM}' as date)
+    WITH lot1 AS (
+      SELECT cast(PATID as string) AS PATID, LOT_START_DT AS LOT1_DT
+      FROM {lot_long}
+      WHERE LOT_NUM = 1 AND LOT_START_DT IS NOT NULL
     ),
-    bela1l AS (
+    bela_any AS (
       SELECT DISTINCT cast(PATID as string) AS PATID
       FROM {lot_long}
-      WHERE LOT_NUM = 1
-        AND LOT_BASE_MEDS IS NOT NULL
+      WHERE LOT_BASE_MEDS IS NOT NULL
         AND array_contains(split(LOT_BASE_MEDS, ' '), '{BELA_TOKEN}')
+    ),
+    base AS (
+      SELECT cast(PATID as string) AS PATID FROM {final_tbl}
     )
-    SELECT b.PATID, b.INDEX_DATE
-    FROM base b
-    LEFT JOIN bela1l x ON b.PATID = x.PATID
-    WHERE x.PATID IS NULL
+    SELECT l.PATID
+    FROM lot1 l
+    JOIN base b ON b.PATID = l.PATID
+    LEFT JOIN bela_any x ON x.PATID = l.PATID
+    WHERE l.LOT1_DT >= cast('{ELIGIBLE_1L_FROM}' as date)
+      AND x.PATID IS NULL
   ")), error = function(e) {
     log_msg("  Ashley cohort build failed: ", conditionMessage(e))
     NULL
@@ -7285,30 +7301,75 @@ build_journeys <- function(con, lot_long, map_tbl, cohort_def) {
 
 # ---- Q1 + Q4: category sankeys per cohort ---------------------------
 load_category_lookup <- function() {
-  cat_csv <- Sys.getenv("REGIMEN_CATEGORIES_CSV", unset = "")
-  if (!nzchar(cat_csv) || !file.exists(cat_csv)) return(NULL)
-  df <- tryCatch(read.csv(cat_csv, stringsAsFactors = FALSE,
-                          check.names = FALSE),
-                 error = function(e) NULL)
+  cat_path <- Sys.getenv("REGIMEN_CATEGORIES_CSV", unset = "")
+  if (!nzchar(cat_path) || !file.exists(cat_path)) return(NULL)
+  ext <- tolower(tools::file_ext(cat_path))
+  df <- tryCatch({
+    if (ext %in% c("xlsx", "xls")) {
+      if (!requireNamespace("readxl", quietly = TRUE)) {
+        log_msg("  readxl not installed - cannot read ", cat_path,
+                "; convert to CSV or install readxl.")
+        return(structure(list(), bad = TRUE, path = cat_path,
+                          cols = "(xlsx, readxl unavailable)"))
+      }
+      as.data.frame(readxl::read_excel(cat_path), check.names = FALSE)
+    } else {
+      read.csv(cat_path, stringsAsFactors = FALSE, check.names = FALSE)
+    }
+  }, error = function(e) {
+    log_msg("  category file read failed: ", conditionMessage(e)); NULL
+  })
   if (is.null(df) || nrow(df) == 0)
-    return(structure(list(), bad = TRUE, path = cat_csv))
+    return(structure(list(), bad = TRUE, path = cat_path))
   ncols <- tolower(names(df))
   reg_i <- which(ncols %in% c("regimen", "lot_base_meds", "med", "meds",
                               "treatment", "regimen_name"))[1]
   cat_i <- which(ncols %in% c("category", "regimen_category",
                               "treatment_category", "class"))[1]
   if (is.na(reg_i) || is.na(cat_i))
-    return(structure(list(), bad = TRUE, path = cat_csv,
+    return(structure(list(), bad = TRUE, path = cat_path,
                      cols = paste(names(df), collapse = ", ")))
-  list(path = cat_csv,
-       lookup = setNames(trimws(as.character(df[[cat_i]])),
-                         trimws(as.character(df[[reg_i]]))))
+
+  # Steroid-strip variant. Current LOT_BASE_MEDS excludes steroids
+  # (lot_program.R:688 / lot2_5_base.R), so an xlsx row like
+  # "BORT LENA DEXA" would never exact-match LOT_LONG. Build a second
+  # lookup keyed on the regimen with DEX/DEXA/PRED stripped, so the
+  # caller falls back to that when the verbatim match fails. This is
+  # a stopgap until Julia's Q2 (steroid inclusion) lands as a
+  # pipeline change.
+  strip_steroids <- function(s) {
+    tokens <- strsplit(toupper(trimws(s)), "\\s+")[[1]]
+    tokens <- tokens[!tokens %in% c("DEX", "DEXA", "DEXAMETHASONE",
+                                     "PRED", "PREDNISONE")]
+    paste(sort(tokens), collapse = " ")
+  }
+  reg_raw <- trimws(as.character(df[[reg_i]]))
+  cat_raw <- trimws(as.character(df[[cat_i]]))
+  list(path           = cat_path,
+       lookup         = setNames(cat_raw, reg_raw),
+       lookup_nosterd = setNames(cat_raw, vapply(reg_raw, strip_steroids,
+                                                  character(1))))
 }
 
-build_category_pair <- function(con, lot_long, n_from, n_to, lookup,
+# Match LOT_BASE_MEDS to a category, trying verbatim first then
+# steroid-stripped (since current LOT regimens are steroid-free).
+categorise_regimen <- function(reg, cat_data) {
+  if (is.na(reg) || reg == "") return(NA_character_)
+  if (reg %in% names(cat_data$lookup))
+    return(unname(cat_data$lookup[reg]))
+  key <- paste(sort(strsplit(toupper(trimws(reg)), "\\s+")[[1]]),
+               collapse = " ")
+  if (key %in% names(cat_data$lookup_nosterd))
+    return(unname(cat_data$lookup_nosterd[key]))
+  NA_character_
+}
+
+build_category_pair <- function(con, lot_long, n_from, n_to, cat_data,
                                  cohort_def) {
   section <- paste0("BY_CATEGORY_", cohort_def$section_suffix)
   filt <- cohort_filter_sql(cohort_def)
+  # INNER JOIN, not LEFT - Julia's Q3 says no non-progressor patients
+  # in the Sankey view, so the (no LOTn) bucket is dropped at source.
   pairs <- db_q(con, glue("
     WITH a AS (
       SELECT cast(PATID as string) AS PATID, trim(LOT_BASE_MEDS) AS reg_from
@@ -7323,18 +7384,17 @@ build_category_pair <- function(con, lot_long, n_from, n_to, lookup,
         AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''{filt}
     )
     SELECT a.PATID, a.reg_from, b.reg_to
-    FROM a LEFT JOIN b ON a.PATID = b.PATID
+    FROM a JOIN b ON a.PATID = b.PATID
   "))
   if (nrow(pairs) == 0) return(invisible())
 
-  uncat        <- "(uncategorised)"
-  no_lot_label <- paste0("(no LOT", n_to, ")")
-  pairs$cat_from <- ifelse(pairs$reg_from %in% names(lookup),
-                            unname(lookup[pairs$reg_from]), uncat)
-  pairs$cat_to <- ifelse(is.na(pairs$reg_to) | pairs$reg_to == "",
-                          no_lot_label,
-                  ifelse(pairs$reg_to %in% names(lookup),
-                          unname(lookup[pairs$reg_to]), uncat))
+  uncat <- "(uncategorised)"
+  pairs$cat_from <- vapply(pairs$reg_from, function(r) {
+    v <- categorise_regimen(r, cat_data); if (is.na(v)) uncat else v
+  }, character(1))
+  pairs$cat_to <- vapply(pairs$reg_to, function(r) {
+    v <- categorise_regimen(r, cat_data); if (is.na(v)) uncat else v
+  }, character(1))
 
   links <- aggregate(PATID ~ cat_from + cat_to, data = pairs,
                      FUN = function(x) length(unique(x)))
@@ -7366,12 +7426,17 @@ build_category_for_cohort <- function(con, lot_long, cohort_def, cat_data) {
       '<h3>Regimen-category sankeys (pending CSV) - ',
       esc_html(cohort_def$label), '</h3>',
       '<p style="color:#555">Per Julia Q1: pending the ',
-      '<em>MM Treatment Table for Protocol.xlsx</em>. Save it as a ',
-      'CSV with columns <code>regimen</code> + <code>category</code> ',
-      '(or <code>lot_base_meds</code> / <code>regimen_category</code>), ',
-      'then set <code>REGIMEN_CATEGORIES_CSV</code> and rerun. ',
-      'LOT1-&gt;5 category sankeys for this cohort will then appear ',
-      'here.</p></div>'),
+      '<em>MM Treatment Table for Protocol.xlsx</em>. Point ',
+      '<code>REGIMEN_CATEGORIES_CSV</code> at the file (the env var ',
+      'name kept for compatibility; <code>.xlsx</code> is also ',
+      'accepted via <code>readxl</code>). Expected headers: one of ',
+      '<code>regimen</code> / <code>lot_base_meds</code> / ',
+      '<code>med</code> / <code>treatment</code>, plus one of ',
+      '<code>category</code> / <code>regimen_category</code> / ',
+      '<code>treatment_category</code>. Match falls back to a ',
+      'steroid-stripped lookup (DEX/DEXA/PRED tokens removed) since ',
+      'current <code>LOT_BASE_MEDS</code> excludes steroids until ',
+      'Julia\'s Q2 LOT-rule update lands.</p></div>'),
       section = section,
       title = paste0("Categories (", cohort_def$label, ", pending)"))
     return(invisible())
@@ -7390,10 +7455,13 @@ build_category_for_cohort <- function(con, lot_long, cohort_def, cat_data) {
     return(invisible())
   }
   for (n in 1:4) build_category_pair(con, lot_long, n, n + 1L,
-                                      cat_data$lookup, cohort_def)
+                                      cat_data, cohort_def)
 }
 
 # ---- Q3 helper: focused LOTn->LOTn+1 sankeys per cohort -------------
+# Julia Q3 applies here too: the sankey must NOT showcase patients
+# with no subsequent LOT, so we INNER-JOIN LOTn and LOTn+1 and drop
+# the (no LOTn) bucket entirely.
 build_focused_pair <- function(con, lot_long, n_from, n_to, cohort_def) {
   section <- paste0("LOT", n_from, "_TO_LOT", n_to, "_",
                     cohort_def$section_suffix)
@@ -7412,7 +7480,7 @@ build_focused_pair <- function(con, lot_long, n_from, n_to, cohort_def) {
         AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''{filt}
     )
     SELECT a.PATID, a.reg_from, b.reg_to
-    FROM a LEFT JOIN b ON a.PATID = b.PATID
+    FROM a JOIN b ON a.PATID = b.PATID
   "))
   if (nrow(pairs) == 0) return(invisible())
 
@@ -7423,20 +7491,12 @@ build_focused_pair <- function(con, lot_long, n_from, n_to, cohort_def) {
   top_from <- head(src_counts$reg_from, TOP_N)
 
   sub <- pairs[pairs$reg_from %in% top_from, , drop = FALSE]
-  no_lot_label <- paste0("(no LOT", n_to, ")")
-  sub$reg_to_label <- ifelse(is.na(sub$reg_to) | sub$reg_to == "",
-                              no_lot_label,
-                              as.character(sub$reg_to))
-  tgt_counts <- aggregate(PATID ~ reg_to_label, data = sub,
+  tgt_counts <- aggregate(PATID ~ reg_to, data = sub,
                           FUN = function(x) length(unique(x)))
   names(tgt_counts)[2] <- "n_patients"
   tgt_counts <- tgt_counts[order(-tgt_counts$n_patients), , drop = FALSE]
-  tgt_real <- tgt_counts[tgt_counts$reg_to_label != no_lot_label,
-                          , drop = FALSE]
-  top_to <- head(tgt_real$reg_to_label, TOP_N)
-  sub$tgt_node <- ifelse(sub$reg_to_label %in% top_to, sub$reg_to_label,
-                  ifelse(sub$reg_to_label == no_lot_label, no_lot_label,
-                  "Other"))
+  top_to <- head(tgt_counts$reg_to, TOP_N)
+  sub$tgt_node <- ifelse(sub$reg_to %in% top_to, sub$reg_to, "Other")
 
   links <- aggregate(PATID ~ reg_from + tgt_node, data = sub,
                      FUN = function(x) length(unique(x)))
@@ -7522,20 +7582,37 @@ build_cohort_def_card <- function(con, lot_long, final_tbl, ash_ids) {
     format(n_ash, big.mark = ","),
     if (!is.na(ach_pct)) paste0(' (', ach_pct, '% of whole)') else '',
     '</td><td>',
-    'INDEX_DATE &ge; ', esc_html(ELIGIBLE_1L_FROM), '; ',
-    'no <code>', esc_html(BELA_TOKEN), '</code> token in LOT1 regimen.',
+    '1L treatment start (<code>LOT_LONG.LOT_START_DT</code> at ',
+    '<code>LOT_NUM=1</code>) &ge; ', esc_html(ELIGIBLE_1L_FROM),
+    '; <code>', esc_html(BELA_TOKEN), '</code> token NOT in ',
+    '<code>LOT_BASE_MEDS</code> at <b>any</b> LOT_NUM.',
     '</td></tr>',
     '</table>',
     '<p style="color:#b06000;font-size:13px;margin-top:10px">',
-    '<b>Limitation flag (not silently dropped):</b> Julia’s Ashley ',
-    'criterion of <i>&ge;6 months continuous enrolment before MM ',
-    'diagnosis</i> is NOT yet enforceable from persisted columns ',
-    '(current pipeline verifies CE &ge; 12 months before INDEX_DATE, ',
-    'and uses MM-dx in the qualifying step but does not surface ',
-    'a separate "CE before MM-dx" column on the final table). If ',
-    'this criterion materially shrinks the cohort, we need a new ',
-    'derivation step. Same for the implicit &ge;18 at MM-dx ',
-    'criterion - verified upstream but not re-checked here.',
+    '<b>Limitations (not silently dropped) — Julia\'s criteria that ',
+    'are NOT yet enforced here:</b>',
+    '</p>',
+    '<ul style="color:#b06000;font-size:13px;margin-top:0">',
+    '<li>CE &ge; <b>12 months</b> before 1L treatment start. The ',
+    'current pipeline default <code>baseline_days = 183</code> ',
+    '(config_prompts.R:89) is ~6 months, not 12; for true Ashley ',
+    'parity the pipeline would have to be rerun with ',
+    '<code>BASELINE_DAYS=365</code> (or equivalent) and a new CE ',
+    'check materialised.</li>',
+    '<li>CE &ge; <b>6 months before MM diagnosis date</b>. Not ',
+    'derivable from persisted columns; needs a join from the first ',
+    'qualifying MM-dx date back to member_enrollment.</li>',
+    '<li>CE &ge; <b>3 months follow-up</b> after 1L index. Same - ',
+    'needs an enrollment-end-date check not currently surfaced.</li>',
+    '<li>Adult age &ge; 18 at MM-dx calendar year - applied upstream ',
+    'in the base cohort but not re-checked here.</li>',
+    '</ul>',
+    '<p style="color:#555;font-size:13px">',
+    'Note: <code>ELIG_COH_FINAL.INDEX_DATE</code> is the MM diagnosis ',
+    'qualifying date (<code>pipeline_steps.R:356</code>), NOT the 1L ',
+    'treatment start, so Julia\'s 2017-01-01 cutoff is correctly ',
+    'applied against <code>LOT1.LOT_START_DT</code> ',
+    '(<code>lot_program.R:686</code>) instead.',
     '</p></div>'),
     section = "COHORT_DEF",
     title = "Cohort definitions + Ashley criterion limits")
