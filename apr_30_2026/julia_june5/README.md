@@ -52,7 +52,7 @@ That's it. No env-var sprawl. Defaults are inlined.
 | No belantamab anywhere | `LOT_BASE_MEDS` at any LOT_NUM **or** `MAP_STACKED.MAP_MED_TYPE` = `BELA` |
 | CE ≥ 12 mo pre-LOT1 | gap-allowing spans (≤ 30 d) from `member_enrollment` |
 | CE ≥ 6 mo pre-MM-dx | same |
-| CE ≥ 3 mo post-LOT1 FU | **strict** (no-gap), **death-aware** — a patient who dies before day 90 is retained if their strict span covers `[LOT1, DEATH_DT]` (`DEATH_DT` read from persisted `LOT1_BASE`) |
+| 3-mo post-LOT1 FU | **Flag, not an exclusion** — recorded as `FU_STATUS` ∈ {`full_3mo`, `censored_death`, `limited_fu`}. Per spec, patients without full 3-mo FU are *retained with limited follow-up that ends at the censored date of death*. `DEATH_DT` is read from persisted `LOT1_BASE` (`lot_program.R:815`). Downstream queries can split on `FU_STATUS` for sensitivity analyses. |
 | No other-malignancy in `[LOT1-365, LOT1-1]` | ≥ 1 inpatient OR ≥ 2 outpatient within 30 d, same tumor group; codelist from `$CODELIST_DIR/other_malig.csv` |
 | No pregnancy event in same window | DX / HCPCS / ICD-PROC / REV match against `$CODELIST_DIR/pregnancy.csv` |
 | No prior MM oncology therapy in same window | rx NDC + medical HCPCS against `$CODELIST_DIR/cl_mma_codelist.csv` |

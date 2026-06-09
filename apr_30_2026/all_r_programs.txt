@@ -7399,7 +7399,32 @@ build_cohort <- function(con, lot_long, final_tbl, map_tbl, enr_tbl,
       WHERE e.event_dt BETWEEN date_sub(l1.LOT1_DT, {PRE_LOT_DAYS})
                            AND date_sub(l1.LOT1_DT, 1)
     )
-    SELECT l.PATID, l.LOT1_DT, m.MM_DX_DT, d.DEATH_DT
+    SELECT l.PATID, l.LOT1_DT, m.MM_DX_DT, d.DEATH_DT,
+           -- 3-mo post-LOT1 follow-up status. Per spec, FU is NOT an
+           -- exclusion - patients without 3 months FU are retained
+           -- with limited follow-up that ends at the censored date of
+           -- death. Recorded here as a flag so downstream analyses
+           -- can split / censor / report without re-deriving:
+           --   'full_3mo'       - strict span covers [LOT1, LOT1+89]
+           --   'censored_death' - died before day 90 AND strict span
+           --                      covers [LOT1, DEATH_DT]
+           --   'limited_fu'     - neither (disenrolled before day 90,
+           --                      no death, or gap inside the window)
+           CASE
+             WHEN EXISTS (SELECT 1 FROM spans_strict s
+                          WHERE s.PATID = l.PATID
+                            AND s.cov_s <= l.LOT1_DT
+                            AND s.cov_e >= date_add(l.LOT1_DT, {POST_LOT_DAYS - 1L}))
+               THEN 'full_3mo'
+             WHEN d.DEATH_DT IS NOT NULL
+              AND d.DEATH_DT <= date_add(l.LOT1_DT, {POST_LOT_DAYS - 1L})
+              AND EXISTS (SELECT 1 FROM spans_strict s
+                          WHERE s.PATID = l.PATID
+                            AND s.cov_s <= l.LOT1_DT
+                            AND s.cov_e >= d.DEATH_DT)
+               THEN 'censored_death'
+             ELSE 'limited_fu'
+           END AS FU_STATUS
     FROM lot1 l
     JOIN mm_dx m ON m.PATID = l.PATID
     LEFT JOIN death d ON d.PATID = l.PATID
@@ -7420,36 +7445,33 @@ build_cohort <- function(con, lot_long, final_tbl, map_tbl, enr_tbl,
                   WHERE s.PATID = l.PATID
                     AND s.cov_s <= date_sub(m.MM_DX_DT, {PRE_MM_DAYS})
                     AND s.cov_e >= date_sub(m.MM_DX_DT, 1))
-      -- Death-aware 3-mo FU: a strict span must cover [LOT1, end] where
-      -- end = LOT1+89 unless the patient died sooner (then end = DEATH_DT
-      -- and we don't require coverage after death).
-      AND EXISTS (
-        SELECT 1 FROM spans_strict s
-        WHERE s.PATID = l.PATID
-          AND s.cov_s <= l.LOT1_DT
-          AND s.cov_e >= CASE
-            WHEN d.DEATH_DT IS NOT NULL
-              AND d.DEATH_DT <= date_add(l.LOT1_DT, {POST_LOT_DAYS - 1L})
-            THEN d.DEATH_DT
-            ELSE date_add(l.LOT1_DT, {POST_LOT_DAYS - 1L})
-          END
-      )
+      -- NOTE: 3-mo post-LOT1 FU is NOT an exclusion. Per spec, patients
+      -- without 3 months FU are retained with limited follow-up that
+      -- ends at the censored date of death. Recorded as FU_STATUS in
+      -- the SELECT above; downstream queries can filter on it as
+      -- needed (e.g. WHERE FU_STATUS = 'full_3mo' for a sensitivity
+      -- analysis, or WHERE FU_STATUS <> 'limited_fu' for the
+      -- death-aware retain-all view).
   ")
   db_exec(con, sql)
 }
 
-# Attrition counts. Each step duplicates the SQL for that step's
-# subquery against the delivered LOT1 population. Kept simple: total
-# LOT1 vs final cohort - the cohort card lists all criteria with
-# their thresholds so the reader can see exactly what was applied.
-# A fuller per-step accounting would re-run the full CTE chain six
-# times; not worth the cost when the cohort table already has the
-# final answer.
+# Cohort summary - total LOT1, final cohort size, and the three FU
+# buckets so the card can show the retain-with-limited-FU split.
+# The full per-step attrition would require re-running the whole CTE
+# chain seven times; not worth the cost when the cohort table already
+# has the final answer.
 cohort_attrition <- function(con, lot_long) {
   db_q(con, glue("
     SELECT (SELECT count(DISTINCT PATID) FROM {lot_long}
             WHERE LOT_NUM = 1 AND LOT_START_DT IS NOT NULL) AS n_lot1,
-           (SELECT count(DISTINCT PATID) FROM {wrk(COHORT_TABLE)}) AS n_final"))
+           (SELECT count(DISTINCT PATID) FROM {wrk(COHORT_TABLE)}) AS n_final,
+           (SELECT count(DISTINCT PATID) FROM {wrk(COHORT_TABLE)}
+            WHERE FU_STATUS = 'full_3mo')        AS n_full,
+           (SELECT count(DISTINCT PATID) FROM {wrk(COHORT_TABLE)}
+            WHERE FU_STATUS = 'censored_death')  AS n_death,
+           (SELECT count(DISTINCT PATID) FROM {wrk(COHORT_TABLE)}
+            WHERE FU_STATUS = 'limited_fu')      AS n_limited"))
 }
 
 # Original full-step attrition retained but defunct; superseded by the
@@ -7555,9 +7577,10 @@ build_cohort_card <- function(att, cl_counts) {
     '<code>', BELA_TOKEN, '</code>)</li>',
     '<li>CE &ge; ', PRE_LOT_DAYS, ' d pre-LOT1 (gap &le; ', GAP_DAYS, ' d)</li>',
     '<li>CE &ge; ', PRE_MM_DAYS, ' d pre-MM-dx (gap &le; ', GAP_DAYS, ' d)</li>',
-    '<li>CE &ge; ', POST_LOT_DAYS, ' d post-LOT1 FU (STRICT, no gap), ',
-    'death-aware: a patient who dies before day ', POST_LOT_DAYS,
-    ' is retained as long as their strict span covers [LOT1, DEATH_DT].</li>',
+    '<li>3-mo post-LOT1 FU recorded as <code>FU_STATUS</code> ',
+    '(<b>not</b> an exclusion - per spec, patients without full FU ',
+    'are retained with limited follow-up that ends at the censored ',
+    'date of death).</li>',
     '<li>No other-malignancy event in [LOT1-', PRE_LOT_DAYS, ', LOT1-1] ',
     '(&ge; 1 IP OR &ge; 2 OP within ', OP_PAIR_DAYS, ' d, same tumor group; ',
     cl_counts$om, ' codes loaded)</li>',
@@ -7577,6 +7600,17 @@ build_cohort_card <- function(att, cl_counts) {
     sprintf('<tr><td>%s</td><td><b>%s</b></td></tr>',
             format(num(att$n_lot1[1]),  big.mark = ","),
             format(num(att$n_final[1]), big.mark = ",")),
+    '</table>',
+    '<p style="color:#555;font-size:13px;margin-top:6px"><b>Follow-up split</b> ',
+    '(no patients excluded - retain-with-limited-FU per spec):</p>',
+    '<table border="1" cellpadding="6" style="border-collapse:collapse;font-size:13px;margin-bottom:10px">',
+    '<tr style="background:#f0f3f5"><th>FU_STATUS</th><th>n patients</th><th>What it means</th></tr>',
+    sprintf('<tr><td><code>full_3mo</code></td><td>%s</td><td>strict span covers [LOT1, LOT1 + %s d]</td></tr>',
+            format(num(att$n_full[1]),    big.mark = ","), POST_LOT_DAYS - 1L),
+    sprintf('<tr><td><code>censored_death</code></td><td>%s</td><td>died before day %s; strict span covers [LOT1, DEATH_DT]</td></tr>',
+            format(num(att$n_death[1]),   big.mark = ","), POST_LOT_DAYS),
+    sprintf('<tr><td><code>limited_fu</code></td><td>%s</td><td>disenrolled before day %s without death (retained, censor at last enrolment)</td></tr>',
+            format(num(att$n_limited[1]), big.mark = ","), POST_LOT_DAYS),
     '</table>',
     '<p style="color:#1a7a3a;font-size:13px;margin-top:10px"><b>Criteria applied:</b></p>',
     criteria,
