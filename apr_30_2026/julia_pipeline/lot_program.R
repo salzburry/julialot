@@ -685,12 +685,12 @@ main <- function() {
       ms.PATID,
       min(ms.MAP_START_DT) AS LOT1_START_DT
     FROM map_stacked ms
-    -- Julia June 5 variant: steroids ARE included in LOT regimens
-    -- (Q2), so the original WHERE MAP_MED_CLASS <> 'STEROID' filter
-    -- is removed. Belantamab is NOT an eligible 1L treatment per
-    -- her IE criteria ("other than belantamab"), so excluded here
-    -- from being the LOT1 start trigger.
-    WHERE upper(ms.MAP_MED_TYPE) <> 'BELA'
+    -- STRUCTURAL: a steroid must not define the LOT1 start date, so the
+    -- steroid filter is kept here (identical to the parent pipeline).
+    -- Belantamab handling lives in the IE cohort selection
+    -- (lot_ie_cohort.R excludes belantamab exposure anywhere), NOT in
+    -- the LOT builder - so no BELA filter here either.
+    WHERE ms.MAP_MED_CLASS <> 'STEROID'
     GROUP BY ms.PATID
   ", qc = "SELECT count(*) AS n_patients_with_lot1, min(LOT1_START_DT) AS min_lot1_start, max(LOT1_START_DT) AS max_lot1_start FROM lot1_start")
 
@@ -706,8 +706,11 @@ main <- function() {
       ON ms.PATID = l1.PATID
     WHERE ms.MAP_START_DT >= l1.LOT1_START_DT
       AND ms.MAP_START_DT <= date_add(l1.LOT1_START_DT, {cfg$induction_window_days - 1})
-      -- Julia June 5 Q2: steroids included in LOT regimens, so the
-      -- original AND MAP_MED_CLASS <> 'STEROID' filter is removed.
+      -- Julia June 5 Q2: steroids INCLUDED in the LOT1 regimen here
+      -- (induction-window membership), so the original
+      -- AND MAP_MED_CLASS <> 'STEROID' filter is removed at THIS site
+      -- only. Structural sites keep it (steroids change LOT_BASE_MEDS,
+      -- not LOT boundaries).
   "), qc = "
     SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients, avg(cnt) AS avg_induction_meds
     FROM (SELECT PATID, count(DISTINCT MED_ABBR) AS cnt FROM lot1_induction_meds GROUP BY PATID)")
@@ -794,7 +797,7 @@ main <- function() {
       LEFT JOIN base_meds bm
         ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
       WHERE bm.MED_ABBR IS NULL
-        AND 1 = 1 -- Julia June 5 Q2: steroids included in LOT regimens
+        AND ms.MAP_MED_CLASS <> 'STEROID'  -- structural: a steroid must not trigger add-med (boundary unchanged)
         AND ms.MAP_START_DT >= bc.LOT1_START_DT
         AND ms.MAP_START_DT <= coalesce(bc.LOT1_BASE_DISCON_DT, bc.OBS_END_DT)
     ),
@@ -1489,7 +1492,7 @@ main <- function() {
       WHERE lb.LOT1_BASE_DISCON_DT IS NOT NULL
         AND ms.MAP_START_DT > lb.LOT1_BASE_DISCON_DT
         AND ms.MAP_START_DT <= lb.OBS_END_DT
-        AND 1 = 1 -- Julia June 5 Q2: steroids included in LOT regimens
+        AND ms.MAP_MED_CLASS <> 'STEROID'  -- structural: a steroid must not trigger a post-runout LOT (boundary unchanged)
         AND prem.MED_ABBR IS NULL
     ),
     post_runout_autos AS (

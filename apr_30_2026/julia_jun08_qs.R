@@ -23,25 +23,25 @@
 #       so non-progressors (no subsequent LOT) drop out: journey
 #       examples require max LOT_NUM >= 2, sankeys INNER-JOIN
 #       LOTn and LOTn+1 so the (no LOTn) bucket is gone entirely.
-#   Q4  Ashley's planned study cohort - best-effort filter using
-#       LOT_LONG (NOT ELIG_COH_FINAL.INDEX_DATE, which is the
-#       MM-dx qualifying date per pipeline_steps.R:356, not the
-#       1L treatment start). Materialised as a session-scoped temp
-#       view (ASHLEY_VIEW) so downstream queries INNER JOIN to it
-#       instead of carrying a giant IN-list literal - safe at
-#       cohort sizes of any scale. Enforced: LOT1 LOT_START_DT
-#       >= 2017-01-01 (lot_program.R:686); no belantamab token in
-#       LOT_BASE_MEDS at ANY LOT_NUM; and no MAP_STACKED row with
-#       MAP_MED_TYPE = BELA (true "any exposure", not just base
-#       regimen). NOT enforced - surfaced as explicit limitations
-#       in the cohort-def card, not silently dropped: CE >= 12
-#       months before 1L start (pipeline default baseline_days =
-#       183 - config_prompts.R:89), CE >= 6 months before MM dx,
-#       CE >= 3 months follow-up, re-check of age >= 18 at MM dx,
-#       and the baseline-window mismatch (other-malig / pregnancy /
-#       no-baseline-MM-therapy exclusions inherited from the
-#       delivered cohort were applied against the pipeline window,
-#       not Julia's 12-mo-pre-1L window).
+#   Q4  Ashley's planned study cohort - materialised as a
+#       session-scoped temp view (ASHLEY_VIEW) so downstream queries
+#       INNER JOIN to it (no giant IN-list literal). If the
+#       authoritative IE_COHORT_PATIDS view from lot_ie_cohort.R is
+#       present it is reused verbatim; otherwise the full criteria
+#       are built inline. Enforced: LOT1 LOT_START_DT >= 2017-01-01
+#       (NOT ELIG_COH_FINAL.INDEX_DATE, the MM-dx qualifying date per
+#       pipeline_steps.R:356); no belantamab in LOT_BASE_MEDS at ANY
+#       LOT_NUM nor in MAP_STACKED.MAP_MED_TYPE (true any-exposure);
+#       and - when member_enrollment is readable - CE >= 365 d before
+#       1L start AND CE >= 183 d before MM-dx date (gaps <= 30 d,
+#       same span logic as pipeline_steps.R:386). If enrollment is
+#       NOT readable the CE windows are skipped and the cohort card
+#       says so. Still NOT enforced (flagged in the card, not
+#       silently dropped): CE >= 3 months follow-up, re-check of
+#       age >= 18 at MM-dx, and the baseline-window mismatch
+#       (other-malig / pregnancy / no-baseline-MM-therapy exclusions
+#       inherited from the delivered cohort were applied against the
+#       pipeline window, not Julia's 12-mo-pre-1L window).
 #
 # Reads only persisted work-schema tables (LOT_LONG, ELIG_COH_FINAL,
 # MAP_STACKED) plus an optional REGIMEN_CATEGORIES_CSV. Builds
@@ -73,6 +73,21 @@ TOP_N <- as.integer(Sys.getenv("FOCUSED_SANKEY_TOP_N", unset = "10"))
 if (is.na(TOP_N) || TOP_N < 1) TOP_N <- 10L
 ELIGIBLE_1L_FROM <- Sys.getenv("ELIGIBLE_1L_FROM", unset = "2017-01-01")
 BELA_TOKEN       <- Sys.getenv("BELANTAMAB_MED_ABBR", unset = "BELA")
+# Continuous-enrolment thresholds for the Ashley cohort (match
+# lot_ie_cohort.R defaults). When member_enrollment is readable these
+# ARE enforced inline; otherwise the cohort degrades to LOT1-date +
+# belantamab only, with a clear note in the cohort card.
+IE_COHORT_VIEW   <- Sys.getenv("IE_COHORT_VIEW", unset = "IE_COHORT_PATIDS")
+CE_PRE_LOT_DAYS  <- as.integer(Sys.getenv("CE_PRE_LOT1_DAYS",  unset = "365"))
+CE_PRE_MM_DAYS   <- as.integer(Sys.getenv("CE_PRE_MM_DX_DAYS", unset = "183"))
+CE_GAP_DAYS      <- as.integer(Sys.getenv("CE_GAP_DAYS",       unset = "30"))
+ENR_TBL_NAME     <- Sys.getenv("MEMBER_ENROLLMENT_TBL",
+                                unset = "member_enrollment")
+if (anyNA(c(CE_PRE_LOT_DAYS, CE_PRE_MM_DAYS, CE_GAP_DAYS)))
+  stop("CE_PRE_LOT1_DAYS / CE_PRE_MM_DX_DAYS / CE_GAP_DAYS must be integers.")
+# Set TRUE once the cohort is built so the cohort-definition card can
+# report whether the CE windows were actually applied.
+.CE_ENFORCED <- FALSE
 
 esc_html <- function(s) {
   s <- gsub("&", "&amp;", as.character(s), fixed = TRUE)
@@ -124,14 +139,90 @@ fu_sankey <- function(src_lab, tgt_lab, value, section, title) {
 ASHLEY_VIEW <- "ashley_cohort"
 
 build_ashley_cohort <- function(con, lot_long, map_tbl, final_tbl,
-                                 have_map) {
+                                 enr_tbl, have_map, have_enr) {
   log_msg("Building Ashley's planned study cohort (temp view)")
+
+  # Prefer the authoritative IE cohort from lot_ie_cohort.R if it has
+  # already been materialised - that view enforces the full criteria
+  # (1L date, belantamab-anywhere, CE >=12mo pre-LOT1, CE >=6mo
+  # pre-MM-dx). The dashboard then exactly matches the standalone IE
+  # cohort.
+  ie_tbl <- wrk(IE_COHORT_VIEW)
+  ie_ok <- isTRUE(tryCatch(
+    nrow(db_q(con, glue("SELECT 1 FROM {ie_tbl} LIMIT 1"))) >= 0,
+    error = function(e) FALSE))
+  if (ie_ok) {
+    log_msg("  Using existing ", ie_tbl, " (full IE criteria).")
+    db_exec(con, glue(
+      "CREATE OR REPLACE TEMPORARY VIEW {ASHLEY_VIEW} AS ",
+      "SELECT DISTINCT cast(PATID as string) AS PATID FROM {ie_tbl}"))
+    .CE_ENFORCED <<- TRUE
+    return(as.integer(db_q(con, glue(
+      "SELECT count(DISTINCT PATID) AS n FROM {ASHLEY_VIEW}"))$n))
+  }
+
   bela_map_branch <- if (have_map) glue("
         UNION ALL
         SELECT DISTINCT cast(PATID as string) AS PATID
         FROM {map_tbl}
         WHERE upper(MAP_MED_TYPE) = upper('{BELA_TOKEN}')")
     else ""
+
+  # CE-window CTEs - inlined only when member_enrollment is readable.
+  # Mirrors the gap-allowing enrollment-span build in
+  # lot_ie_cohort.R / pipeline_steps.R:386-419.
+  if (have_enr) {
+    enr_ctes <- glue(",
+    enr_base AS (
+      SELECT cast(PATID as string) AS PATID,
+             cast(ELIGEFF as date) AS elig_eff,
+             cast(ELIGEND as date) AS elig_end
+      FROM {enr_tbl}
+      WHERE ELIGEFF IS NOT NULL AND ELIGEND IS NOT NULL
+    ),
+    enr_ordered AS (
+      SELECT PATID, elig_eff, elig_end,
+        max(elig_end) OVER (PARTITION BY PATID ORDER BY elig_eff, elig_end
+          ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS max_end_so_far
+      FROM enr_base
+    ),
+    enr_flagged AS (
+      SELECT PATID, elig_eff, elig_end,
+        CASE WHEN max_end_so_far IS NULL THEN 1
+             WHEN elig_eff <= date_add(max_end_so_far, {CE_GAP_DAYS} + 1) THEN 0
+             ELSE 1 END AS new_grp
+      FROM enr_ordered
+    ),
+    enr_grouped AS (
+      SELECT PATID, elig_eff, elig_end,
+        sum(new_grp) OVER (PARTITION BY PATID ORDER BY elig_eff, elig_end
+          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS grp_id
+      FROM enr_flagged
+    ),
+    enr_spans AS (
+      SELECT PATID, min(elig_eff) AS cov_start, max(elig_end) AS cov_end
+      FROM enr_grouped GROUP BY PATID, grp_id
+    )")
+    ce_join <- glue("
+      AND EXISTS (SELECT 1 FROM enr_spans s
+                  WHERE s.PATID = l.PATID
+                    AND s.cov_start <= date_sub(l.LOT1_DT, {CE_PRE_LOT_DAYS})
+                    AND s.cov_end   >= date_sub(l.LOT1_DT, 1))
+      AND EXISTS (SELECT 1 FROM enr_spans s
+                  JOIN mm_dx m ON m.PATID = l.PATID
+                  WHERE s.PATID = l.PATID
+                    AND s.cov_start <= date_sub(m.MM_DX_DT, {CE_PRE_MM_DAYS})
+                    AND s.cov_end   >= date_sub(m.MM_DX_DT, 1))")
+    .CE_ENFORCED <<- TRUE
+  } else {
+    enr_ctes <- ""
+    ce_join  <- ""
+    log_msg("  member_enrollment not readable - CE windows NOT applied; ",
+            "Ashley cohort = 1L-date + belantamab only. Run ",
+            "lot_ie_cohort.R or check MEMBER_ENROLLMENT_TBL for the ",
+            "full criteria.")
+  }
+
   sql <- glue("
     CREATE OR REPLACE TEMPORARY VIEW {ASHLEY_VIEW} AS
     WITH lot1 AS (
@@ -142,6 +233,11 @@ build_ashley_cohort <- function(con, lot_long, map_tbl, final_tbl,
     base AS (
       SELECT DISTINCT cast(PATID as string) AS PATID FROM {final_tbl}
     ),
+    mm_dx AS (
+      SELECT cast(PATID as string) AS PATID,
+             cast(INDEX_DATE as date) AS MM_DX_DT
+      FROM {final_tbl}
+    ),
     bela_any AS (
       SELECT DISTINCT PATID FROM (
         SELECT cast(PATID as string) AS PATID
@@ -150,13 +246,14 @@ build_ashley_cohort <- function(con, lot_long, map_tbl, final_tbl,
           AND array_contains(split(LOT_BASE_MEDS, ' '), '{BELA_TOKEN}')
         {bela_map_branch}
       )
-    )
+    ){enr_ctes}
     SELECT l.PATID
     FROM lot1 l
     JOIN base b ON b.PATID = l.PATID
     LEFT JOIN bela_any x ON x.PATID = l.PATID
     WHERE l.LOT1_DT >= cast('{ELIGIBLE_1L_FROM}' as date)
       AND x.PATID IS NULL
+      {ce_join}
   ")
   ok <- tryCatch({ db_exec(con, sql); TRUE },
                  error = function(e) {
@@ -169,6 +266,7 @@ build_ashley_cohort <- function(con, lot_long, map_tbl, final_tbl,
       "CREATE OR REPLACE TEMPORARY VIEW {ASHLEY_VIEW} AS ",
       "SELECT cast('' as string) AS PATID WHERE 1 = 0")),
       error = function(e) NULL)
+    .CE_ENFORCED <<- FALSE
     return(0L)
   }
   as.integer(db_q(con, glue(
@@ -787,22 +885,27 @@ build_cohort_def_card <- function(con, lot_long, final_tbl, n_ash) {
     'regimen string).',
     '</td></tr>',
     '</table>',
+    if (isTRUE(.CE_ENFORCED)) paste0(
+      '<p style="color:#1a7a3a;font-size:13px;margin-top:10px">',
+      '<b>Enforced here</b> (member_enrollment readable, or reused ',
+      'from <code>', esc_html(IE_COHORT_VIEW), '</code>):</p>',
+      '<ul style="color:#1a7a3a;font-size:13px;margin-top:0">',
+      '<li>CE &ge; ', CE_PRE_LOT_DAYS, ' days before 1L treatment ',
+      'start (gap &le; ', CE_GAP_DAYS, ' d).</li>',
+      '<li>CE &ge; ', CE_PRE_MM_DAYS, ' days before MM diagnosis ',
+      'date (gap &le; ', CE_GAP_DAYS, ' d).</li></ul>')
+    else paste0(
+      '<p style="color:#b06000;font-size:13px;margin-top:10px">',
+      '<b>CE windows NOT applied</b> - member_enrollment not readable ',
+      'and no <code>', esc_html(IE_COHORT_VIEW), '</code> view found. ',
+      'Run <code>lot_ie_cohort.R</code> first (it materialises that ',
+      'view) or set <code>MEMBER_ENROLLMENT_TBL</code>, then rerun.</p>'),
     '<p style="color:#b06000;font-size:13px;margin-top:10px">',
-    '<b>Limitations (not silently dropped) — Julia\'s criteria that ',
-    'are NOT yet enforced here:</b>',
-    '</p>',
+    '<b>Remaining limitations (not silently dropped):</b></p>',
     '<ul style="color:#b06000;font-size:13px;margin-top:0">',
-    '<li>CE &ge; <b>12 months</b> before 1L treatment start. The ',
-    'current pipeline default <code>baseline_days = 183</code> ',
-    '(config_prompts.R:89) is ~6 months, not 12; for true Ashley ',
-    'parity the pipeline would have to be rerun with ',
-    '<code>BASELINE_DAYS=365</code> (or equivalent) and a new CE ',
-    'check materialised.</li>',
-    '<li>CE &ge; <b>6 months before MM diagnosis date</b>. Not ',
-    'derivable from persisted columns; needs a join from the first ',
-    'qualifying MM-dx date back to member_enrollment.</li>',
-    '<li>CE &ge; <b>3 months follow-up</b> after 1L index. Same - ',
-    'needs an enrollment-end-date check not currently surfaced.</li>',
+    '<li>CE &ge; <b>3 months follow-up</b> after 1L index - not ',
+    'enforced; needs an enrollment-end-date check not currently ',
+    'surfaced.</li>',
     '<li>Adult age &ge; 18 at MM-dx calendar year - applied upstream ',
     'in the base cohort but not re-checked here.</li>',
     '<li><b>Baseline-window mismatch</b>: the Ashley cohort starts ',
@@ -839,6 +942,7 @@ main <- function() {
   lot_long  <- wrk("LOT_LONG")
   map_tbl   <- wrk("MAP_STACKED")
   final_tbl <- wrk(cfg$input_cohort_table)
+  enr_tbl   <- cdm_src(ENR_TBL_NAME)
 
   ok <- function(tbl) isTRUE(tryCatch(
     nrow(db_q(con, glue("SELECT 1 FROM {tbl} LIMIT 1"))) >= 0,
@@ -850,9 +954,12 @@ main <- function() {
 
   dashboard_items <<- list()
 
-  n_ash <- build_ashley_cohort(con, lot_long, map_tbl, final_tbl,
-                                 have_map = ok(map_tbl))
-  log_msg("Ashley cohort size (best-effort): ", n_ash)
+  n_ash <- build_ashley_cohort(con, lot_long, map_tbl, final_tbl, enr_tbl,
+                                 have_map = ok(map_tbl),
+                                 have_enr = ok(enr_tbl))
+  log_msg("Ashley cohort size: ", n_ash,
+          if (isTRUE(.CE_ENFORCED)) " (full IE criteria incl. CE windows)"
+          else " (CE windows NOT applied - see cohort card)")
 
   cohorts <- list(
     list(label = "whole cohort",         section_suffix = "ALL",

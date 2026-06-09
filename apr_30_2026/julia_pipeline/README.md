@@ -10,50 +10,68 @@ EXCEPT for the changes documented below.
 
 ## Changes vs the parent pipeline
 
-### Q2 — steroids included in LOT regimens
+### Q2 — steroids included in LOT regimens (membership only, not boundaries)
 
-Six `AND MAP_MED_CLASS <> 'STEROID'` filters have been neutralised
-(commented + replaced with `1 = 1`) so steroid agents can now contribute
-to `LOT_BASE_MEDS`, induction-medication counts, add-med detection,
-and post-runout add-med logic:
+Only the **two regimen-membership** steroid filters are removed, so
+steroids appear inside `LOT_BASE_MEDS` / induction-med counts WITHOUT
+changing LOT start dates, LOT counts, or end reasons. The four
+**structural** steroid filters are deliberately kept (a steroid must
+never start a line, trigger an add-med, or trigger a post-runout/
+post-discon line) so the LOT boundaries are identical to the parent.
 
-| File | Original line | Stage |
-|---|---|---|
-| `lot_program.R` | 688 | LOT1 start trigger |
-| `lot_program.R` | 704 | LOT1 induction-meds window |
-| `lot_program.R` | 797 | LOT1 add-med (post-induction) |
-| `lot_program.R` | 1492 | LOT1 post-runout autos |
-| `R/lot2_5_base.R` | 218, 408, 708 | LOT2-5 induction / add-med / post-discon |
-| `R/lot2_5_base.R` | 351 | LOT2-5 base-meds window |
+| File | Site | Stage | Steroid filter |
+|---|---|---|---|
+| `lot_program.R` | `lot1_start` | LOT1 start trigger | **KEPT** (structural) |
+| `lot_program.R` | `lot1_induction_meds` | LOT1 regimen membership | **REMOVED** |
+| `lot_program.R` | add-med | LOT1 add-med trigger | **KEPT** (structural) |
+| `lot_program.R` | post-runout | LOT1 post-runout | **KEPT** (structural) |
+| `R/lot2_5_base.R` | `med_cand` | LOT2-5 start trigger | **KEPT** (structural) |
+| `R/lot2_5_base.R` | `induction_meds` | LOT2-5 regimen membership | **REMOVED** |
+| `R/lot2_5_base.R` | `first_add_candidates` | LOT2-5 add-med | **KEPT** (structural) |
+| `R/lot2_5_base.R` | post-discon | LOT2-5 post-discon | **KEPT** (structural) |
 
-**Important**: removing the filter only takes effect if the codelist
-(`$CODELIST_DIR/cl_mma_codelist.csv`) has steroid entries with
-`CL_MED_CLASS = 'STEROID'`. Julia is preparing the steroid HCPCS +
-NDC list; until that lands in the codelist file, no steroid rows will
-surface from `map_stacked` and the LOT regimens stay identical to the
-parent pipeline output. The pipeline change is ready the moment the
-codelist is updated.
+So the behavioural diff vs parent is exactly the **2 membership sites**.
 
-### IE — belantamab excluded from being the LOT1 start trigger
+**OPEN QUESTION for Julia**: this is the conservative reading of
+*"include steroids in the LoT"* — steroids show in the regimen but do
+not move line boundaries. If she actually wants steroids to also be
+able to *start / break* a line (the broad reading), the four
+structural filters can be removed too — a 5-minute change. Flagged
+because it materially changes LOT start dates and counts.
 
-`lot_program.R:688` (`lot1_start` view) now filters
-`upper(MAP_MED_TYPE) <> 'BELA'` so a patient whose earliest non-steroid
-medication is belantamab is **not** assigned belantamab as their 1L
-treatment, matching Julia's IE criterion *"eligible 1L treatment for
-MM (other than belantamab)"*.
+**Important**: even the membership change only has effect once the
+codelist (`$CODELIST_DIR/cl_mma_codelist.csv`) has steroid entries
+with `CL_MED_CLASS = 'STEROID'`. Julia is preparing the steroid
+HCPCS + NDC list; until that lands, no steroid rows surface from
+`map_stacked` and the LOT regimens are identical to the parent. The
+pipeline change is ready the moment the codelist is updated.
 
-### What is NOT yet baked into this copy
+### Spec — `LOT_BASE_LENGTH_CE_SENS` emitted natively
 
-- **CE window change to 12 months before 1L start**. The parent
-  pipeline anchors its 183-day baseline window to MM-dx `INDEX_DATE`.
-  Moving the anchor to `LOT1_START_DT` and lengthening to 365 days is
-  a deeper refactor (touches `pipeline_steps.R` Phase 4 logic at
-  ~line 376-440). The standalone helper
-  `apr_30_2026/lot_ie_cohort.R` still applies this as a post-filter
-  view on top of either pipeline.
-- **`LOT_BASE_LENGTH_CE_SENS` spec column**. The helper
-  `apr_30_2026/lot_ce_sens_length.R` adds it as a view on top of
-  `LOT_LONG`.
+`R/lot2_5_base.R` now emits the spec column `LOTN_BASE_LENGTH_CE_SENS`
+(`scripts/build_lot2_5_spec.py:504`) directly in both the LOT1
+projection and the LOT2-5 INSERT, so the variant's `LOT_LONG` carries
+it without the wrapper view. The standalone `lot_ce_sens_length.R`
+remains for adding the column to the **parent** pipeline's `LOT_LONG`.
+
+### Belantamab — handled by the IE cohort, NOT the LOT builder
+
+The LOT builder copy does **not** filter belantamab (it is identical
+to the parent on that point). Julia's IE criterion *"eligible 1L
+treatment for MM (other than belantamab)"* plus *"received an ADC
+(belantamab) in any LOT → exclude"* is **cohort selection**, applied
+downstream by `apr_30_2026/lot_ie_cohort.R` (which excludes belantamab
+exposure anywhere, in `LOT_BASE_MEDS` or `MAP_STACKED`). Keeping all
+belantamab logic in one place avoids the earlier inconsistency where
+the pipeline only excluded it from the LOT1 start trigger.
+
+### What is NOT baked into this copy (served by helpers)
+
+- **CE windows** (≥12 mo before 1L start, ≥6 mo before MM-dx). Applied
+  by `apr_30_2026/lot_ie_cohort.R` as a post-filter view on top of
+  either pipeline; also enforced inline by `julia_jun08_qs.R` when
+  `member_enrollment` is readable. Moving the parent's baseline-window
+  anchor itself would be a deeper `pipeline_steps.R` refactor.
 
 ## How to run
 
