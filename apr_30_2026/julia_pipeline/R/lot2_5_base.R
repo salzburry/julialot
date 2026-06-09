@@ -101,6 +101,25 @@ init_lot_long_from_lot1 <- function(con, meds, classes) {
           THEN 'DISENROLLMENT'
         ELSE lbe.LOT1_BASE_END_REASON
       END                                   AS LOT_BASE_END_REASON_CE_SENS,
+      -- Spec column LOTN_BASE_LENGTH_CE_SENS (build_lot2_5_spec.py:504).
+      -- Same shape as the LOT2-5 branch so the INSERT INTO column order
+      -- matches: DISCONTINUATION anchors on the discon date, all other
+      -- reasons on the end date, each clamped to ENDDATE_CE.
+      CASE
+        WHEN lbe.LOT1_BASE_END_REASON = 'DISCONTINUATION'
+          THEN datediff(
+                 CASE WHEN p.ENDDATE_CE IS NOT NULL
+                       AND lbe.LOT1_BASE_DISCON_DT > p.ENDDATE_CE
+                      THEN p.ENDDATE_CE
+                      ELSE lbe.LOT1_BASE_DISCON_DT END,
+                 lbe.LOT1_START_DT) + 1
+        ELSE datediff(
+                 CASE WHEN p.ENDDATE_CE IS NOT NULL
+                       AND lbe.LOT1_BASE_END_DT > p.ENDDATE_CE
+                      THEN p.ENDDATE_CE
+                      ELSE lbe.LOT1_BASE_END_DT END,
+                 lbe.LOT1_START_DT) + 1
+      END                                   AS LOT_BASE_LENGTH_CE_SENS,
       -- LOT-scoped AUTO/SCT fields, clamped to [LOT1_START_DT, LOT1_BASE_END_DT]
       -- per workbook Q7 draft. SING/TAND classification is RECOMPUTED from
       -- the clamped in-LOT dates so a within-LOT DT_1 with an outside-LOT
@@ -215,7 +234,7 @@ build_lot_n <- function(con, lot_num,
         ON pe.PATID = pme.PATID AND ms.MAP_MED_TYPE = pme.MED_ABBR
       WHERE ms.MAP_START_DT > pe.PREV_END_DT
         AND ms.MAP_START_DT <= pe.OBS_END_DT
-        AND 1 = 1 -- Julia June 5 Q2: steroids included in LOT regimens
+        AND ms.MAP_MED_CLASS <> 'STEROID'  -- structural: a steroid must not start a new LOT (boundary unchanged)
         AND pme.MED_ABBR IS NULL
       GROUP BY pe.PATID
     ),
@@ -348,7 +367,12 @@ build_lot_n <- function(con, lot_num,
             CASE WHEN ls.LOT{lot_num}_START_TYPE = 'CART'
                  THEN {cart_consolidation_days - 1}
                  ELSE {induction_window_days - 1} END)
-      AND 1 = 1 -- Julia June 5 Q2: steroids included in LOT regimens
+      -- Julia June 5 Q2: steroids INCLUDED in the LOT regimen here
+      -- (induction-window membership), so the original
+      -- AND MAP_MED_CLASS <> 'STEROID' filter is removed at THIS site
+      -- only. The structural sites (LOT start, add-med, post-discon)
+      -- keep the steroid filter so steroids change what shows inside
+      -- LOT_BASE_MEDS, not the LOT boundaries.
       -- ALLO singleton LOTs contain no MM therapies; suppress regimen rows.
       AND ls.LOT{lot_num}_START_TYPE <> 'SCT_ALLO'
   "), qc = glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_pats
@@ -405,7 +429,7 @@ build_lot_n <- function(con, lot_num,
         ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
       LEFT JOIN discon d ON ls.PATID = d.PATID
       WHERE bm.MED_ABBR IS NULL
-        AND 1 = 1 -- Julia June 5 Q2: steroids included in LOT regimens
+        AND ms.MAP_MED_CLASS <> 'STEROID'  -- structural: a steroid must not trigger add-med (boundary unchanged)
         -- Per-start-type lookback gate:
         --   MED  / SCT_AUTO -> any agent after the 30-day induction window
         --   CART             -> any agent after the 45-day consolidation window
@@ -705,7 +729,7 @@ build_lot_n <- function(con, lot_num,
       WHERE lb.LOT{lot_num}_BASE_DISCON_DT IS NOT NULL
         AND ms.MAP_START_DT > lb.LOT{lot_num}_BASE_DISCON_DT
         AND ms.MAP_START_DT <= lb.OBS_END_DT
-        AND 1 = 1 -- Julia June 5 Q2: steroids included in LOT regimens
+        AND ms.MAP_MED_CLASS <> 'STEROID'  -- structural: a steroid must not trigger a post-discon LOT (boundary unchanged)
         AND prem.MED_ABBR IS NULL
     ),
     post_runout_autos AS (
@@ -922,6 +946,27 @@ build_lot_n <- function(con, lot_num,
           THEN 'DISENROLLMENT'
         ELSE lbe.LOT{lot_num}_BASE_END_REASON
       END AS LOT_BASE_END_REASON_CE_SENS,
+      -- Spec column LOTN_BASE_LENGTH_CE_SENS (build_lot2_5_spec.py:504):
+      -- the cohort-end-clamped LOT length. Mirrors LOT_BASE_LENGTH
+      -- exactly (DISCONTINUATION anchors on the discon date, all other
+      -- reasons on the end date), but each anchor is first clamped to
+      -- ENDDATE_CE. Emitted natively here (not via the wrapper view) so
+      -- the Julia variant's LOT_LONG carries the spec column directly.
+      CASE
+        WHEN lbe.LOT{lot_num}_BASE_END_REASON = 'DISCONTINUATION'
+          THEN datediff(
+                 CASE WHEN lbe.ENDDATE_CE IS NOT NULL
+                       AND lbe.LOT{lot_num}_BASE_DISCON_DT > lbe.ENDDATE_CE
+                      THEN lbe.ENDDATE_CE
+                      ELSE lbe.LOT{lot_num}_BASE_DISCON_DT END,
+                 lbe.LOT{lot_num}_START_DT) + 1
+        ELSE datediff(
+                 CASE WHEN lbe.ENDDATE_CE IS NOT NULL
+                       AND lbe.LOT{lot_num}_BASE_END_DT > lbe.ENDDATE_CE
+                      THEN lbe.ENDDATE_CE
+                      ELSE lbe.LOT{lot_num}_BASE_END_DT END,
+                 lbe.LOT{lot_num}_START_DT) + 1
+      END                                  AS LOT_BASE_LENGTH_CE_SENS,
       -- LOT-scoped AUTO flags clamped to [LOT_START_DT, LOT_BASE_END_DT]
       -- per workbook Q7 draft. lotN_sct collects through OBS_END_DT, so
       -- AUTOs after the LOT ended are filtered here. SING/TAND classification
