@@ -12,9 +12,11 @@
 # Q1: Category Sankeys per LOT pair.
 # Q2: Steroid tokens (DEXA / PRED) appended to LOT_BASE_MEDS when the
 #     patient had a matching rx.NDC, medical.PROC_CD, medical.BILL_PROC_CD
-#     or medical.NDC claim between LOT_START_DT and LOT_BASE_END_DT
-#     (same 4-source pattern as the parent in pipeline_steps.R).
-#     Membership only; LOT boundaries unchanged.
+#     or medical.NDC claim inside the parent induction window (LOT1
+#     cfg$induction_window_days, CART-started LOT2-5 cfg$cart_consolidation_days,
+#     else cfg$lot_n_induction_window_days; SCT_ALLO suppressed), capped at
+#     LOT_BASE_END_DT (same 4-source pattern as the parent in
+#     pipeline_steps.R). Membership only; LOT boundaries unchanged.
 # Q3: Non-progressors dropped (INNER JOIN LOTn -> LOTn+1).
 #
 # Reuses parent pipeline helpers - R/dashboard_lot.R (build_dashboard,
@@ -145,6 +147,11 @@ load_steroid_codes <- function(con) {
 # Materialised as a session temp view so the downstream Sankey queries
 # can JOIN to it without re-scanning rx + medical each time.
 augment_lot_long <- function(con, lot_long, rx_tbl, medical_tbl, n_codes) {
+  # Pull induction-window sizes from cfg so this dashboard tracks the
+  # parent pipeline when those env vars are overridden from defaults.
+  iw_lot1 <- as.integer(cfg$induction_window_days)         # default 60
+  iw_lotn <- as.integer(cfg$lot_n_induction_window_days)   # default 30
+  iw_cart <- as.integer(cfg$cart_consolidation_days)       # default 45
   if (n_codes == 0) {
     # No codes -> view = LOT_LONG passthrough with the same column name.
     db_exec(con, glue("
@@ -159,24 +166,28 @@ augment_lot_long <- function(con, lot_long, rx_tbl, medical_tbl, n_codes) {
     CREATE OR REPLACE TEMPORARY VIEW {LOT_LONG_AUG} AS
     WITH lot AS (
       -- Mirror parent induction windows so steroid attribution matches
-      -- non-steroid LOT_BASE_MEDS membership:
-      --   LOT1                 -> 60-day  (lot_program.R: S09 induction)
-      --   LOT2-5 CART-started  -> 45-day  (R/lot2_5_base.R cart_consolidation_days)
-      --   LOT2-5 otherwise     -> 30-day  (R/lot2_5_base.R induction_window_days)
+      -- non-steroid LOT_BASE_MEDS membership. Window sizes come from
+      -- cfg so any override on the parent run carries through:
+      --   LOT1                 -> {iw_lot1} d (cfg$induction_window_days)
+      --   LOT2-5 CART-started  -> {iw_cart} d (cfg$cart_consolidation_days)
+      --   LOT2-5 SCT_ALLO      -> NULL    (parent suppresses regimen rows
+      --                                    for ALLO singletons; lot2_5_base.R:353)
+      --   LOT2-5 otherwise     -> {iw_lotn} d (cfg$lot_n_induction_window_days)
       -- Capped at LOT_BASE_END_DT so we never extend past the parent.
       SELECT cast(PATID as string) AS PATID, LOT_NUM, LOT_START_TYPE,
              LOT_START_DT, LOT_BASE_END_DT, LOT_BASE_MEDS,
              CASE
+               WHEN LOT_START_TYPE = 'SCT_ALLO' THEN cast(NULL as date)
                WHEN LOT_BASE_END_DT IS NULL
                  THEN date_add(LOT_START_DT,
-                        CASE WHEN LOT_NUM = 1             THEN 60 - 1
-                             WHEN LOT_START_TYPE = 'CART' THEN 45 - 1
-                             ELSE                              30 - 1 END)
+                        CASE WHEN LOT_NUM = 1             THEN {iw_lot1} - 1
+                             WHEN LOT_START_TYPE = 'CART' THEN {iw_cart} - 1
+                             ELSE                              {iw_lotn} - 1 END)
                ELSE least(LOT_BASE_END_DT,
                           date_add(LOT_START_DT,
-                            CASE WHEN LOT_NUM = 1             THEN 60 - 1
-                                 WHEN LOT_START_TYPE = 'CART' THEN 45 - 1
-                                 ELSE                              30 - 1 END))
+                            CASE WHEN LOT_NUM = 1             THEN {iw_lot1} - 1
+                                 WHEN LOT_START_TYPE = 'CART' THEN {iw_cart} - 1
+                                 ELSE                              {iw_lotn} - 1 END))
              END AS LOT_INDUCTION_END_DT
       FROM {lot_long}
     ),
@@ -512,8 +523,10 @@ build_overview_card <- function(n_ster_codes, n_cat_rules) {
     '<li><b>Q1</b>: regimen-category Sankeys per LOT pair (',
     n_cat_rules, ' regimen rules loaded).</li>',
     '<li><b>Q2</b>: steroid tokens appended to <code>LOT_BASE_MEDS</code> ',
-    'inside the LOT window (', n_ster_codes, ' codes loaded; ',
-    'LOT boundaries unchanged).</li>',
+    'inside the parent induction window, capped at ',
+    '<code>LOT_BASE_END_DT</code>; <code>SCT_ALLO</code>-started LOTs ',
+    'suppressed to mirror the parent (',
+    n_ster_codes, ' codes loaded; LOT boundaries unchanged).</li>',
     '<li><b>Q3</b>: non-progressors dropped (inner-join LOTn &rarr; LOTn+1).</li>',
     '</ul></div>'),
     section = "OVERVIEW", title = "What this dashboard shows")
