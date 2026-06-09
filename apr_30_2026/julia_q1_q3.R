@@ -395,10 +395,6 @@ build_category_pair <- function(con, n_from, n_to, lookups) {
              title = paste0("LOT", n_from, " -> LOT", n_to, " category counts"))
 }
 
-# Line-aware: regimens like 'CARF CYCL' map to different categories
-# depending on whether they are 1L NDMM or 2L+ R/RMM. The CSV tags the
-# category with '(1L NDMM)' or '(2L+ R/RMM)' so we split into two
-# lookups keyed by normalised regimen string.
 # QC: how many LOT regimens fell into '(uncategorised)' per LOT_NUM.
 # Pulls distinct PATID + LOT_NUM rows, applies the same line-aware
 # lookup logic, and reports match rate. Surfaces mapping gaps that
@@ -424,12 +420,18 @@ build_category_coverage <- function(con, lookups) {
   agg <- aggregate(PATID ~ LOT_NUM, data = rows,
                    FUN = function(x) length(unique(x)))
   names(agg)[2] <- "n_patients"
-  unc <- aggregate(PATID ~ LOT_NUM,
-                   data = rows[rows$cat == "(uncategorised)", , drop = FALSE],
-                   FUN = function(x) length(unique(x)))
-  names(unc)[2] <- "n_uncategorised"
-  out <- merge(agg, unc, by = "LOT_NUM", all.x = TRUE)
-  out$n_uncategorised[is.na(out$n_uncategorised)] <- 0L
+
+  un_rows <- rows[rows$cat == "(uncategorised)", , drop = FALSE]
+  if (nrow(un_rows) > 0) {
+    unc <- aggregate(PATID ~ LOT_NUM, data = un_rows,
+                     FUN = function(x) length(unique(x)))
+    names(unc)[2] <- "n_uncategorised"
+    out <- merge(agg, unc, by = "LOT_NUM", all.x = TRUE)
+    out$n_uncategorised[is.na(out$n_uncategorised)] <- 0L
+  } else {
+    out <- agg
+    out$n_uncategorised <- 0L
+  }
   out$pct_uncategorised <- ifelse(out$n_patients > 0,
                                    round(100 * out$n_uncategorised /
                                          out$n_patients, 1), 0)
@@ -437,10 +439,9 @@ build_category_coverage <- function(con, lookups) {
              title = "Category mapping coverage per LOT_NUM")
 
   # Top 10 unmapped regimen strings so Julia can extend the CSV.
-  un <- rows[rows$cat == "(uncategorised)", c("PATID","LOT_NUM","reg"),
-             drop = FALSE]
-  if (nrow(un) > 0) {
-    top <- aggregate(PATID ~ reg + LOT_NUM, data = un,
+  if (nrow(un_rows) > 0) {
+    top <- aggregate(PATID ~ reg + LOT_NUM,
+                     data = un_rows[, c("PATID","LOT_NUM","reg")],
                      FUN = function(x) length(unique(x)))
     names(top)[3] <- "n_patients"
     top <- top[order(-top$n_patients), , drop = FALSE]
@@ -449,6 +450,10 @@ build_category_coverage <- function(con, lookups) {
   }
 }
 
+# Line-aware: regimens like 'CARF CYCL' map to different categories
+# depending on whether they are 1L NDMM or 2L+ R/RMM. The CSV tags the
+# category with '(1L NDMM)' or '(2L+ R/RMM)' so we split into two
+# lookups keyed by normalised regimen string.
 load_categories <- function() {
   if (!file.exists(CAT_CSV_PATH))
     return(list(lookup_1L = character(0), lookup_2L = character(0)))
