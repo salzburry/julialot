@@ -7437,16 +7437,46 @@ load_category_lookup <- function() {
   reg_raw <- trimws(as.character(df[[reg_i]]))
   cat_raw <- trimws(as.character(df[[cat_i]]))
   acronyms <- load_acronym_map()
+
+  # Build lookup_norm / lookup_nosterd by iterating rows so we can
+  # ALSO add expanded-drug-token keys for acronym rows. Without this,
+  # a category row like "VRd -> PI+IMID" only produces a key "VRD",
+  # so a LOT_BASE_MEDS of "BORT LENA" still hits (uncategorised) -
+  # the acronym tier in categorise_regimen() only fires when the
+  # INCOMING regimen is the acronym, which never happens for
+  # LOT_BASE_MEDS (always drug-token form). Adding the expanded key
+  # at lookup-build time fixes the direction.
+  acronym_collapse <- function(s)
+    gsub("[[:space:]/+,\\-]+", "", toupper(as.character(s)),
+         perl = TRUE)
+
+  add_pair <- function(map, key, val) {
+    if (!nzchar(key) || key %in% names(map)) return(map)
+    map[[key]] <- val
+    map
+  }
+  lookup_norm    <- list()
+  lookup_nosterd <- list()
+  for (i in seq_along(reg_raw)) {
+    reg <- reg_raw[i]; cat <- cat_raw[i]
+    lookup_norm    <- add_pair(lookup_norm,    norm_key(reg, FALSE), cat)
+    lookup_nosterd <- add_pair(lookup_nosterd, norm_key(reg, TRUE),  cat)
+    single <- acronym_collapse(reg)
+    if (nzchar(single) && single %in% names(acronyms)) {
+      drugs <- acronyms[[single]]
+      drugs <- drugs[!drugs %in% STEROID_TOKENS]
+      k     <- paste(sort(unique(drugs)), collapse = " ")
+      lookup_norm    <- add_pair(lookup_norm,    k, cat)
+      lookup_nosterd <- add_pair(lookup_nosterd, k, cat)
+    }
+  }
   list(path           = cat_path,
        norm_regimen   = norm_regimen,
        norm_key       = norm_key,
        acronyms       = acronyms,
        lookup         = setNames(cat_raw, reg_raw),
-       lookup_norm    = setNames(cat_raw,
-                                  vapply(reg_raw, function(r) norm_key(r, FALSE),
-                                         character(1))),
-       lookup_nosterd = setNames(cat_raw,
-                                  vapply(reg_raw, norm_key, character(1))))
+       lookup_norm    = unlist(lookup_norm),
+       lookup_nosterd = unlist(lookup_nosterd))
 }
 
 # Match LOT_BASE_MEDS or an xlsx regimen cell to a category. Tries
@@ -7565,13 +7595,17 @@ build_category_for_cohort <- function(con, lot_long, cohort_def, cat_data) {
       'uppercase, sort) &rarr; steroid-stripped (DEX/DEXA/PRED ',
       'removed - current <code>LOT_BASE_MEDS</code> excludes ',
       'steroids until Julia\'s Q2 lands) &rarr; <b>acronym ',
-      'expansion</b>. Built-in acronyms cover V/R/D combos using ',
+      'expansion</b>. When the xlsx side has an acronym row ',
+      '(e.g. <code>VRd</code>), the lookup also gets the ',
+      'expanded-drug-token key (<code>BORT LENA</code>), so a ',
+      'LOT regimen of <code>BORT LENA</code> matches that ',
+      'category. Built-in acronyms cover V/R/D combos using ',
       'BORT / LENA / DARA only (the tokens confirmed in the ',
       'pipeline spec); add a CSV at ',
       '<code>REGIMEN_ACRONYM_CSV</code> with columns ',
       '<code>acronym, drugs</code> to extend (e.g. ',
-      '<code>KRd, CARF LENA</code>). Acronym-only xlsx rows ',
-      'without a matching expansion will still fall to ',
+      '<code>KRd, CARF LENA</code>). Acronym xlsx rows whose ',
+      'acronym is not in the map will still fall to ',
       '<code>(uncategorised)</code>.</p></div>'),
       section = section,
       title = paste0("Categories (", cohort_def$label, ", pending)"))
