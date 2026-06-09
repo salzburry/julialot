@@ -11,9 +11,10 @@
 #
 # Q1: Category Sankeys per LOT pair.
 # Q2: Steroid tokens (DEXA / PRED) appended to LOT_BASE_MEDS when the
-#     patient had a matching rx (NDC) or medical (PROC_CD) claim
-#     between LOT_START_DT and LOT_BASE_END_DT. Membership only; LOT
-#     boundaries unchanged.
+#     patient had a matching rx.NDC, medical.PROC_CD, medical.BILL_PROC_CD
+#     or medical.NDC claim between LOT_START_DT and LOT_BASE_END_DT
+#     (same 4-source pattern as the parent in pipeline_steps.R).
+#     Membership only; LOT boundaries unchanged.
 # Q3: Non-progressors dropped (INNER JOIN LOTn -> LOTn+1).
 #
 # Reuses parent pipeline helpers - R/dashboard_lot.R (build_dashboard,
@@ -162,6 +163,47 @@ augment_lot_long <- function(con, lot_long, rx_tbl, medical_tbl, n_codes) {
       FROM {lot_long}
     ),
     lot_pats AS (SELECT DISTINCT PATID FROM lot),
+    -- Source 1: medical.PROC_CD (HCPCS / CPT) - mirrors pipeline_steps.R:651
+    ster_med_proc AS (
+      SELECT cast(m.PATID as string) AS PATID,
+             cast(m.FST_DT as date) AS dt,
+             sc.mapped_to AS token
+      FROM {medical_tbl} m
+      JOIN {STEROID_VIEW} sc
+        ON sc.code_type IN ('HCPCS','CPT')
+       AND sc.code = upper(regexp_replace(coalesce(cast(m.PROC_CD as string),''), '[^A-Za-z0-9]', ''))
+      WHERE m.PROC_CD IS NOT NULL AND m.FST_DT IS NOT NULL
+        AND EXISTS (SELECT 1 FROM lot_pats lp
+                    WHERE lp.PATID = cast(m.PATID as string))
+    ),
+    -- Source 2: medical.BILL_PROC_CD (HCPCS only)
+    ster_med_bill AS (
+      SELECT cast(m.PATID as string) AS PATID,
+             cast(m.FST_DT as date) AS dt,
+             sc.mapped_to AS token
+      FROM {medical_tbl} m
+      JOIN {STEROID_VIEW} sc
+        ON sc.code_type = 'HCPCS'
+       AND sc.code = upper(regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''), '[^A-Za-z0-9]', ''))
+      WHERE m.BILL_PROC_CD IS NOT NULL AND m.FST_DT IS NOT NULL
+        AND EXISTS (SELECT 1 FROM lot_pats lp
+                    WHERE lp.PATID = cast(m.PATID as string))
+    ),
+    -- Source 3: medical.NDC (11-digit zero-padded compare, same as parent)
+    ster_med_ndc AS (
+      SELECT cast(m.PATID as string) AS PATID,
+             cast(m.FST_DT as date) AS dt,
+             sc.mapped_to AS token
+      FROM {medical_tbl} m
+      JOIN {STEROID_VIEW} sc
+        ON sc.code_type = 'NDC'
+       AND lpad(regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', ''), 11, '0')
+         = lpad(regexp_replace(sc.code, '[^0-9]', ''), 11, '0')
+      WHERE m.NDC IS NOT NULL AND m.FST_DT IS NOT NULL
+        AND EXISTS (SELECT 1 FROM lot_pats lp
+                    WHERE lp.PATID = cast(m.PATID as string))
+    ),
+    -- Source 4: rx.NDC (same NDC normalisation)
     ster_rx AS (
       SELECT cast(r.PATID as string) AS PATID,
              cast(r.FILL_DT as date) AS dt,
@@ -169,24 +211,18 @@ augment_lot_long <- function(con, lot_long, rx_tbl, medical_tbl, n_codes) {
       FROM {rx_tbl} r
       JOIN {STEROID_VIEW} sc
         ON sc.code_type = 'NDC'
-       AND sc.code = upper(regexp_replace(r.NDC, '[^A-Za-z0-9]', ''))
+       AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', ''), 11, '0')
+         = lpad(regexp_replace(sc.code, '[^0-9]', ''), 11, '0')
       WHERE r.NDC IS NOT NULL AND r.FILL_DT IS NOT NULL
         AND EXISTS (SELECT 1 FROM lot_pats lp
                     WHERE lp.PATID = cast(r.PATID as string))
     ),
-    ster_med AS (
-      SELECT cast(m.PATID as string) AS PATID,
-             cast(m.FST_DT as date) AS dt,
-             sc.mapped_to AS token
-      FROM {medical_tbl} m
-      JOIN {STEROID_VIEW} sc
-        ON sc.code_type = 'HCPCS'
-       AND sc.code = upper(regexp_replace(m.PROC_CD, '[^A-Za-z0-9]', ''))
-      WHERE m.PROC_CD IS NOT NULL AND m.FST_DT IS NOT NULL
-        AND EXISTS (SELECT 1 FROM lot_pats lp
-                    WHERE lp.PATID = cast(m.PATID as string))
+    ster_all AS (
+      SELECT * FROM ster_med_proc
+      UNION ALL SELECT * FROM ster_med_bill
+      UNION ALL SELECT * FROM ster_med_ndc
+      UNION ALL SELECT * FROM ster_rx
     ),
-    ster_all AS (SELECT * FROM ster_rx UNION ALL SELECT * FROM ster_med),
     lot_tokens AS (
       SELECT l.PATID, l.LOT_NUM,
              sort_array(collect_set(s.token)) AS toks
@@ -303,8 +339,13 @@ build_focused_pair <- function(con, n_from, n_to) {
 }
 
 # Q1+Q3: focused LOT-pair Sankey by CATEGORY (Julia's mapping).
-build_category_pair <- function(con, n_from, n_to, lookup) {
+# Line-aware: LOT_NUM=1 uses the 1L NDMM lookup, LOT_NUM>=2 uses the
+# 2L+ R/RMM lookup. Same regimen string can resolve to different
+# categories depending on which line it is being read at.
+build_category_pair <- function(con, n_from, n_to, lookups) {
   section <- "BY_CATEGORY"
+  lk_from <- if (n_from == 1L) lookups$lookup_1L else lookups$lookup_2L
+  lk_to   <- if (n_to   == 1L) lookups$lookup_1L else lookups$lookup_2L
   pairs <- db_q(con, glue("
     WITH a AS (
       SELECT cast(PATID as string) AS PATID, LOT_BASE_MEDS_AUG AS reg
@@ -325,12 +366,12 @@ build_category_pair <- function(con, n_from, n_to, lookup) {
   "))
   if (nrow(pairs) == 0) return(invisible())
 
-  cat_of <- function(r) {
+  cat_of <- function(r, lk) {
     k <- norm_key_no_steroid(r)
-    if (k %in% names(lookup)) unname(lookup[k]) else "(uncategorised)"
+    if (k %in% names(lk)) unname(lk[k]) else "(uncategorised)"
   }
-  pairs$cat_from <- vapply(pairs$reg_from, cat_of, character(1))
-  pairs$cat_to   <- vapply(pairs$reg_to,   cat_of, character(1))
+  pairs$cat_from <- vapply(pairs$reg_from, cat_of, character(1), lk = lk_from)
+  pairs$cat_to   <- vapply(pairs$reg_to,   cat_of, character(1), lk = lk_to)
 
   links <- aggregate(PATID ~ cat_from + cat_to, data = pairs,
                      FUN = function(x) length(unique(x)))
@@ -351,17 +392,33 @@ build_category_pair <- function(con, n_from, n_to, lookup) {
              title = paste0("LOT", n_from, " -> LOT", n_to, " category counts"))
 }
 
+# Line-aware: regimens like 'CARF CYCL' map to different categories
+# depending on whether they are 1L NDMM or 2L+ R/RMM. The CSV tags the
+# category with '(1L NDMM)' or '(2L+ R/RMM)' so we split into two
+# lookups keyed by normalised regimen string.
 load_categories <- function() {
-  if (!file.exists(CAT_CSV_PATH)) return(NULL)
+  if (!file.exists(CAT_CSV_PATH))
+    return(list(lookup_1L = character(0), lookup_2L = character(0)))
   df <- tryCatch(read.csv(CAT_CSV_PATH, stringsAsFactors = FALSE),
                  error = function(e) NULL)
-  if (is.null(df) || nrow(df) == 0) return(NULL)
+  if (is.null(df) || nrow(df) == 0)
+    return(list(lookup_1L = character(0), lookup_2L = character(0)))
   nm <- tolower(names(df))
   reg_i <- which(nm %in% c("regimen","lot_base_meds","med","meds"))[1]
   cat_i <- which(nm %in% c("category","regimen_category","treatment_category"))[1]
-  if (is.na(reg_i) || is.na(cat_i)) return(NULL)
-  setNames(trimws(df[[cat_i]]),
-           vapply(df[[reg_i]], norm_key_no_steroid, character(1)))
+  if (is.na(reg_i) || is.na(cat_i))
+    return(list(lookup_1L = character(0), lookup_2L = character(0)))
+  cats <- trimws(df[[cat_i]])
+  keys <- vapply(df[[reg_i]], norm_key_no_steroid, character(1))
+  is_1L <- grepl("1L",  cats, ignore.case = TRUE)
+  is_2L <- grepl("2L\\+|2L|R/RMM|RRMM", cats, ignore.case = TRUE)
+  # If neither tag, fall back to 1L so unmarked rows still match.
+  no_tag <- !is_1L & !is_2L
+  is_1L <- is_1L | no_tag
+  list(
+    lookup_1L = setNames(cats[is_1L], keys[is_1L]),
+    lookup_2L = setNames(cats[is_2L], keys[is_2L])
+  )
 }
 
 build_overview_card <- function(n_ster_codes, n_cat_rules) {
@@ -397,31 +454,39 @@ main <- function() {
   ok <- function(t) isTRUE(tryCatch(
     nrow(db_q(con, glue("SELECT 1 FROM {t} LIMIT 1"))) >= 0,
     error = function(e) FALSE))
-  if (!ok(lot_long))   stop("Cannot read ", lot_long)
-  if (!ok(rx_tbl))     stop("Cannot read ", rx_tbl,    " - Q2 needs raw rx.")
-  if (!ok(medical_tbl)) stop("Cannot read ", medical_tbl, " - Q2 needs raw medical.")
+  if (!ok(lot_long)) stop("Cannot read ", lot_long)
+  q2_ok <- ok(rx_tbl) && ok(medical_tbl)
+  if (!q2_ok) {
+    log_msg("  WARN: rx or medical unreadable; Q2 steroid augmentation ",
+            "skipped. Q1+Q3 will run on un-augmented LOT_LONG.")
+  }
 
-  log_msg("Loading steroid codes from ", STER_CSV_PATH)
-  n_ster <- load_steroid_codes(con)
-  log_msg("  ", n_ster, " codes loaded")
+  if (q2_ok) {
+    log_msg("Loading steroid codes from ", STER_CSV_PATH)
+    n_ster <- load_steroid_codes(con)
+    log_msg("  ", n_ster, " codes loaded")
+  } else {
+    n_ster <- 0L
+  }
 
   log_msg("Augmenting LOT_LONG with steroid tokens -> ", wrk(LOT_LONG_AUG))
   augment_lot_long(con, lot_long, rx_tbl, medical_tbl, n_ster)
 
   log_msg("Loading categories from ", CAT_CSV_PATH)
-  lookup <- load_categories()
-  if (is.null(lookup)) {
+  lookups <- load_categories()
+  n_rules <- length(lookups$lookup_1L) + length(lookups$lookup_2L)
+  if (n_rules == 0) {
     log_msg("  WARN: no category mapping loaded; Q1 section will say uncategorised.")
-    lookup <- character(0)
   } else {
-    log_msg("  ", length(lookup), " regimen->category rules loaded")
+    log_msg("  ", length(lookups$lookup_1L), " 1L rules, ",
+            length(lookups$lookup_2L), " 2L+ rules loaded")
   }
 
   dashboard_items <<- list()
-  build_overview_card(n_ster, length(lookup))
+  build_overview_card(n_ster, n_rules)
   build_steroid_prevalence(con)
   for (n in 1:4) build_focused_pair(con, n, n + 1L)
-  for (n in 1:4) build_category_pair(con, n, n + 1L, lookup)
+  for (n in 1:4) build_category_pair(con, n, n + 1L, lookups)
 
   build_dashboard(
     out_name     = "julia_q1_q3_dashboard.html",
