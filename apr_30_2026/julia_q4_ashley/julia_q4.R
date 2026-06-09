@@ -29,12 +29,13 @@
 })
 .parent_dir <- dirname(.script_dir)
 
-# Source julia_q1_q3.R WITHOUT triggering its auto-main(). That gives
-# us every Q1/Q2/Q3 helper plus parent helpers (cfg, db_q, db_exec,
-# wrk, cdm_src, glue, log_msg, make_sankey, augment_lot_long,
-# build_focused_pair, build_category_pair, build_category_coverage,
-# build_steroid_prevalence, load_categories, load_steroid_codes, ...).
-options(julia_q1_q3.no_autorun = TRUE)
+# Source julia_q1_q3.R WITHOUT triggering its auto-main() and WITHOUT
+# letting its .script_dir auto-resolution latch on to commandArgs()
+# "--file=julia_q4.R" (which would point its R/ helper sources at the
+# wrong folder). The override option below tells julia_q1_q3.R where
+# to find its R/ helpers, CSV inputs, and pipeline_inputs.csv.
+options(julia_q1_q3.no_autorun  = TRUE)
+options(julia_q1_q3.script_dir  = .parent_dir)
 source(file.path(.parent_dir, "julia_q1_q3.R"))
 
 # Q4-only constants. Distinct view names so this script can run
@@ -45,7 +46,20 @@ Q4_LOT1_STARTS    <- "_jjq4_lot1_starts"
 Q4_ASHLEY_PATIDS  <- "_jjq4_ashley_patids"
 Q4_PRE_LOT1_DAYS  <- 365L  # Julia June 5: 12-mo CE before 1L index date
 
-# Build enrollment_spans (with cfg$gap_days allowance) directly from
+# Cohort-pipeline knobs that julia_q1_q3.R's config_lot.R does NOT
+# define (the cohort pipeline uses config_prompts.R instead). Defaults
+# mirror config_prompts.R:43,90,98 verbatim, with env-var overrides
+# matching the same env-var names so a user who already exports
+# TBL_MEMBER_ENROLLMENT / GAP_DAYS / FINAL_TABLE_NAME for the parent
+# cohort run picks up the same values here.
+Q4_TBL_MEMBER_ENROLLMENT <- Sys.getenv("TBL_MEMBER_ENROLLMENT",
+                                       unset = "member_enrollment")
+Q4_GAP_DAYS              <- as.integer(Sys.getenv("GAP_DAYS",
+                                                  unset = "30"))
+Q4_FINAL_TABLE_NAME      <- Sys.getenv("FINAL_TABLE_NAME",
+                                       unset = "ELIG_COH_FINAL")
+
+# Build enrollment_spans (with Q4_GAP_DAYS allowance) directly from
 # member_enrollment - the parent's temp view isn't persisted, so we
 # rebuild it inside this script. SQL mirrors pipeline_steps.R:382-421
 # verbatim so the gap semantics stay identical to CE_b/CE_f.
@@ -56,7 +70,7 @@ build_enrollment_spans_q4 <- function(con) {
       SELECT PATID,
              cast(ELIGEFF as date) AS elig_eff,
              cast(ELIGEND as date) AS elig_end
-      FROM {cdm_src(cfg$tbl_member_enrollment)}
+      FROM {cdm_src(Q4_TBL_MEMBER_ENROLLMENT)}
       WHERE ELIGEFF IS NOT NULL AND ELIGEND IS NOT NULL
     ),
     ordered AS (
@@ -71,7 +85,7 @@ build_enrollment_spans_q4 <- function(con) {
     flagged AS (
       SELECT *,
         CASE WHEN max_end_so_far IS NULL THEN 1
-             WHEN elig_eff <= date_add(max_end_so_far, {cfg$gap_days} + 1) THEN 0
+             WHEN elig_eff <= date_add(max_end_so_far, {Q4_GAP_DAYS} + 1) THEN 0
              ELSE 1 END AS new_grp
       FROM ordered
     ),
@@ -174,7 +188,7 @@ build_q4_overview_card <- function(counts, n_ster_codes, n_cat_rules) {
     'parent already enforces 6-mo CE before MM dx via <code>CE_b</code>; ',
     'this script adds the second window (anchor: <code>LOT1_START_DT</code> ',
     'from <code>LOT_LONG</code>) using the parent&apos;s ',
-    '<code>cfg$gap_days = ', cfg$gap_days, '</code> gap allowance.</p>',
+    '<code>gap_days = ', Q4_GAP_DAYS, '</code> gap allowance.</p>',
     '<table style="font-size:13px;border-collapse:collapse;margin-top:8px">',
     '<tr style="background:#eef"><th style="text-align:left;padding:6px 12px">Filter step</th>',
     '<th style="text-align:right;padding:6px 12px">n patients</th>',
@@ -212,7 +226,7 @@ main_q4 <- function() {
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
   lot_long       <- wrk("LOT_LONG")
-  elig_coh_final <- wrk(cfg$final_table_name)
+  elig_coh_final <- wrk(Q4_FINAL_TABLE_NAME)
   rx_tbl         <- cdm_src(cfg$tbl_rx)
   medical_tbl    <- cdm_src(cfg$tbl_medical)
 
@@ -228,7 +242,7 @@ main_q4 <- function() {
             "skipped. Q1+Q3 still run.")
   }
 
-  log_msg("Building enrollment spans (gap_days=", cfg$gap_days, ")")
+  log_msg("Building enrollment spans (gap_days=", Q4_GAP_DAYS, ")")
   build_enrollment_spans_q4(con)
 
   log_msg("Pulling LOT1 starts from ", lot_long)
