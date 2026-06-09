@@ -25,6 +25,8 @@
 # Parent pipeline files are NOT edited.
 
 .script_dir <- local({
+  override <- getOption("julia_q1_q3.script_dir", NULL)
+  if (!is.null(override)) return(override)
   args <- commandArgs(trailingOnly = FALSE)
   fa <- grep("^--file=", args, value = TRUE)
   if (length(fa) > 0)
