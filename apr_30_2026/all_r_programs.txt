@@ -6969,102 +6969,78 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
 
 
 ================================================================================
-FILE: apr_30_2026/julia_jun08_qs.R
+FILE: apr_30_2026/julia_june5/run.R
 ================================================================================
 
 #!/usr/bin/env Rscript
-# Julia June-08-2026 follow-up Qs (file: June 08 2026/julia questions june 5.pdf).
+# Julia June-5 MM LOT follow-up: clean restart.
 #
-#   Rscript julia_jun08_qs.R
+#   Rscript apr_30_2026/julia_june5/run.R
 #
-# Builds a SEPARATE single self-contained HTML dashboard
-# (julia_jun08_qs_dashboard.html) and runs every focused analysis
-# TWICE - once on the whole delivered cohort and once on Ashley's
-# planned study cohort - so Julia can compare side by side.
+# ONE entry point. Reads parent pipeline's persisted outputs only
+# (apr_30_2026/ pipeline; not edited, not touched), builds Ashley's
+# planned-study cohort with the full IE criteria inline, and writes a
+# single self-contained HTML dashboard.
 #
-#   Q1  Regimen-category sankeys: wired the same way as lot_fu_qs.R
-#       (REGIMEN_CATEGORIES_CSV env var). The MM Treatment Table for
-#       Protocol xlsx is not in June 08 2026/ yet; once Julia drops
-#       it (or a CSV with regimen,category columns) set the env var
-#       and the category sankeys turn on for both cohorts.
-#   Q2  Steroid inclusion is a PIPELINE-LEVEL change (LOT regimens
-#       are built with WHERE MAP_MED_CLASS <> 'STEROID' in
-#       lot_program.R:679 / lot2_5_base.R). This script documents
-#       the HCPCS / NDC codes Julia provided in a scoping card so
-#       they can be folded into the codelist when Julia confirms
-#       the updated LOT rules. No regenerated LOT tables yet.
-#   Q3  Patient journeys AND focused/category sankeys all filtered
-#       so non-progressors (no subsequent LOT) drop out: journey
-#       examples require max LOT_NUM >= 2, sankeys INNER-JOIN
-#       LOTn and LOTn+1 so the (no LOTn) bucket is gone entirely.
-#   Q4  Ashley's planned study cohort - materialised as a
-#       session-scoped temp view (ASHLEY_VIEW) so downstream queries
-#       INNER JOIN to it (no giant IN-list literal). If the
-#       authoritative IE_COHORT_PATIDS view from lot_ie_cohort.R is
-#       present it is reused verbatim; otherwise the full criteria
-#       are built inline. Enforced: LOT1 LOT_START_DT >= 2017-01-01
-#       (NOT ELIG_COH_FINAL.INDEX_DATE, the MM-dx qualifying date per
-#       pipeline_steps.R:356); no belantamab in LOT_BASE_MEDS at ANY
-#       LOT_NUM nor in MAP_STACKED.MAP_MED_TYPE (true any-exposure);
-#       and - when member_enrollment is readable - CE >= 365 d before
-#       1L start AND CE >= 183 d before MM-dx date (gaps <= 30 d,
-#       same span logic as pipeline_steps.R:386). If enrollment is
-#       NOT readable the CE windows are skipped and the cohort card
-#       says so. Still NOT enforced (flagged in the card, not
-#       silently dropped): CE >= 3 months follow-up, re-check of
-#       age >= 18 at MM-dx, and the baseline-window mismatch
-#       (other-malig / pregnancy / no-baseline-MM-therapy exclusions
-#       inherited from the delivered cohort were applied against the
-#       pipeline window, not Julia's 12-mo-pre-1L window).
+# Persistent objects written (work schema):
+#   {work}.julia_june5_cohort       - Ashley cohort PATIDs + dates
+# HTML output (cfg$output_dir):
+#   julia_june5_dashboard.html
 #
-# Reads only persisted work-schema tables (LOT_LONG, ELIG_COH_FINAL,
-# MAP_STACKED) plus an optional REGIMEN_CATEGORIES_CSV. Builds
-# nothing in the warehouse; safe to run any time after the pipeline.
+# In scope (what Julia's June 5 PDF actually asks):
+#   - Ashley cohort: 1L >= 2017-01-01, no belantamab anywhere,
+#     CE >= 12mo pre-LOT1 (gap-allowing 30d), CE >= 6mo pre-MM-dx
+#     (gap-allowing 30d), CE >= 3mo FU post-LOT1 (STRICT no-gap).
+#   - Focused LOT-pair Sankeys (LOT1->2 ... LOT4->5), inner-join so
+#     non-progressors are dropped (Q3).
+#   - Category Sankeys driven by mm_treatment_table.csv (Q1).
+#   - Sequential SCT/CART event analysis (Q II).
+#   - Cohort definition card with attrition counts at every step.
+#
+# Out of scope (deliberately, to keep this honest):
+#   - Steroid inclusion in LOT regimens: codelist change in the
+#     pipeline; not faked here.
+#   - Baseline-window recalc of other-malig / pregnancy /
+#     no-baseline-MM-therapy against 12-mo-pre-LOT1: belongs in a
+#     pipeline edit, not a standalone helper - the pipeline's
+#     existing 183-day-pre-MM-dx exclusions inherit through
+#     ELIG_COH_FINAL.
+#   - Death-aware semantics on the 3-mo FU (would need death-dt
+#     access not surfaced in persisted output).
 
 .script_dir <- local({
   args <- commandArgs(trailingOnly = FALSE)
-  file_arg <- grep("^--file=", args, value = TRUE)
-  if (length(file_arg) > 0) {
-    return(dirname(normalizePath(sub("^--file=", "", file_arg[1]))))
-  }
+  fa <- grep("^--file=", args, value = TRUE)
+  if (length(fa) > 0)
+    return(dirname(normalizePath(sub("^--file=", "", fa[1]))))
   for (i in seq_len(sys.nframe())) {
-    ofile <- tryCatch(sys.frame(i)$ofile, error = function(e) NULL)
-    if (!is.null(ofile)) return(dirname(normalizePath(ofile)))
+    o <- tryCatch(sys.frame(i)$ofile, error = function(e) NULL)
+    if (!is.null(o)) return(dirname(normalizePath(o)))
   }
   getwd()
 })
 
-source_dir <- file.path(.script_dir, "R")
-if (file.exists(file.path(source_dir, "load_inputs.R"))) {
-  source(file.path(source_dir, "load_inputs.R"))
-  load_pipeline_inputs(c(.script_dir, dirname(.script_dir)))
+# parent pipeline R/ helpers (script_dir is julia_june5; parent is apr_30_2026)
+parent_R <- file.path(dirname(.script_dir), "R")
+if (file.exists(file.path(parent_R, "load_inputs.R"))) {
+  source(file.path(parent_R, "load_inputs.R"))
+  load_pipeline_inputs(c(dirname(.script_dir), dirname(dirname(.script_dir))))
 }
-source(file.path(source_dir, "config_lot.R"))
-source(file.path(source_dir, "db_utils_lot.R"))
-source(file.path(source_dir, "dashboard_lot.R"))
+source(file.path(parent_R, "config_lot.R"))
+source(file.path(parent_R, "db_utils_lot.R"))
+source(file.path(parent_R, "dashboard_lot.R"))
 
-TOP_N <- as.integer(Sys.getenv("FOCUSED_SANKEY_TOP_N", unset = "10"))
-if (is.na(TOP_N) || TOP_N < 1) TOP_N <- 10L
-ELIGIBLE_1L_FROM <- Sys.getenv("ELIGIBLE_1L_FROM", unset = "2017-01-01")
-BELA_TOKEN       <- Sys.getenv("BELANTAMAB_MED_ABBR", unset = "BELA")
-# Continuous-enrolment thresholds for the Ashley cohort (match
-# lot_ie_cohort.R defaults). When member_enrollment is readable these
-# ARE enforced inline; otherwise the cohort degrades to LOT1-date +
-# belantamab only, with a clear note in the cohort card.
-IE_COHORT_VIEW   <- Sys.getenv("IE_COHORT_VIEW", unset = "IE_COHORT_PATIDS")
-CE_PRE_LOT_DAYS  <- as.integer(Sys.getenv("CE_PRE_LOT1_DAYS",  unset = "365"))
-CE_PRE_MM_DAYS   <- as.integer(Sys.getenv("CE_PRE_MM_DX_DAYS", unset = "183"))
-CE_POST_LOT_DAYS <- as.integer(Sys.getenv("CE_POST_LOT1_DAYS", unset = "90"))
-CE_GAP_DAYS      <- as.integer(Sys.getenv("CE_GAP_DAYS",       unset = "30"))
-APPLY_FU_EXCL    <- isTRUE(as.logical(Sys.getenv("APPLY_3MO_FU_EXCL",
-                                                  unset = "FALSE")))
-ENR_TBL_NAME     <- Sys.getenv("MEMBER_ENROLLMENT_TBL",
-                                unset = "member_enrollment")
-if (anyNA(c(CE_PRE_LOT_DAYS, CE_PRE_MM_DAYS, CE_POST_LOT_DAYS, CE_GAP_DAYS)))
-  stop("CE_PRE_LOT1_DAYS / CE_PRE_MM_DX_DAYS / CE_POST_LOT1_DAYS / CE_GAP_DAYS must be integers.")
-# Set TRUE once the cohort is built so the cohort-definition card can
-# report whether the CE windows were actually applied.
-.CE_ENFORCED <- FALSE
+# Compact constants (no env-var sprawl).
+TOP_N            <- 10L
+ELIGIBLE_1L_FROM <- "2017-01-01"
+BELA_TOKEN       <- "BELA"
+GAP_DAYS         <- 30L
+PRE_LOT_DAYS     <- 365L
+PRE_MM_DAYS      <- 183L
+POST_LOT_DAYS    <- 90L
+COHORT_TABLE     <- "julia_june5_cohort"
+CAT_CSV_PATH     <- file.path(.script_dir, "mm_treatment_table.csv")
+STEROID_TOKENS   <- c("DEX","DEXA","DEXAMETHASONE","PRED","PREDNISONE")
 
 esc_html <- function(s) {
   s <- gsub("&", "&amp;", as.character(s), fixed = TRUE)
@@ -7072,19 +7048,31 @@ esc_html <- function(s) {
   gsub(">", "&gt;", s, fixed = TRUE)
 }
 
-fu_sankey <- function(src_lab, tgt_lab, value, section, title) {
-  if (!has_plotly || length(value) == 0) return(invisible())
-  nodes <- unique(c(src_lab, tgt_lab))
+# Normalise a regimen string to a sorted, steroid-stripped, uppercase
+# space-joined token vector. Matches the convention LOT_BASE_MEDS uses
+# (concat_ws(' ', sort_array(collect_set(MED_ABBR)))).
+norm_key <- function(s) {
+  if (is.na(s) || !nzchar(trimws(as.character(s)))) return("")
+  t <- strsplit(toupper(as.character(s)), "[[:space:]/+,\\-]+", perl = TRUE)[[1]]
+  t <- t[nzchar(t) & !t %in% STEROID_TOKENS]
+  paste(sort(unique(t)), collapse = " ")
+}
+
+# Plotly sankey wrapper (mirrors lot_long_dashboard.R's make_sankey
+# but parameterises the section).
+fu_sankey <- function(src, tgt, val, section, title) {
+  if (!has_plotly || length(val) == 0) return(invisible())
+  nodes <- unique(c(src, tgt))
   idx   <- setNames(seq_along(nodes) - 1L, nodes)
   sk <- tryCatch(
     plotly::plot_ly(
       type = "sankey", orientation = "h", arrangement = "snap",
       node = list(label = nodes, pad = 14, thickness = 16,
                   color = "#2E86AB",
-                  line  = list(color = "white", width = 0.5)),
-      link = list(source = unname(idx[src_lab]),
-                  target = unname(idx[tgt_lab]),
-                  value  = as.numeric(value),
+                  line = list(color = "white", width = 0.5)),
+      link = list(source = unname(idx[src]),
+                  target = unname(idx[tgt]),
+                  value  = as.numeric(val),
                   color  = "rgba(46,134,171,0.30)")
     ) |>
       plotly::layout(title = list(text = title, font = list(size = 15)),
@@ -7100,671 +7088,247 @@ fu_sankey <- function(src_lab, tgt_lab, value, section, title) {
   if (!is.null(sk)) add_to_dashboard(sk, section = section, title = title)
 }
 
-# Materialises the Ashley-cohort PATID set as a session-scoped temp
-# view so downstream queries can INNER JOIN to it instead of carrying
-# a giant SQL IN (...) literal. Returns the size of the cohort (for
-# the cohort-def card); 0 means no patient survived the filter.
-#
-# Verified pipeline semantics (pipeline_steps.R:356 + lot_program.R:686):
-#   - ELIG_COH_FINAL.INDEX_DATE = MM diagnosis qualifying date, NOT
-#     1L treatment start. Julia's "eligible 1L treatment on/after
-#     2017-01-01" therefore filters LOT_LONG.LOT_START_DT at LOT_NUM=1.
-#   - Belantamab "any exposure" check spans BOTH LOT_BASE_MEDS at any
-#     LOT_NUM AND MAP_STACKED.MAP_MED_TYPE = BELA, so a belantamab
-#     claim that did not surface inside a base-regimen string still
-#     excludes the patient.
-ASHLEY_VIEW <- "ashley_cohort"
-
-build_ashley_cohort <- function(con, lot_long, map_tbl, final_tbl,
-                                 enr_tbl, have_map, have_enr) {
-  log_msg("Building Ashley's planned study cohort (temp view)")
-
-  # Prefer the authoritative IE cohort from lot_ie_cohort.R if it has
-  # already been materialised - that view enforces the full criteria
-  # (1L date, belantamab-anywhere, CE >=12mo pre-LOT1, CE >=6mo
-  # pre-MM-dx). The dashboard then exactly matches the standalone IE
-  # cohort.
-  ie_tbl <- wrk(IE_COHORT_VIEW)
-  ie_ok <- isTRUE(tryCatch(
-    nrow(db_q(con, glue("SELECT 1 FROM {ie_tbl} LIMIT 1"))) >= 0,
-    error = function(e) FALSE))
-  if (ie_ok) {
-    log_msg("  Using existing ", ie_tbl, " (full IE criteria).")
-    db_exec(con, glue(
-      "CREATE OR REPLACE TEMPORARY VIEW {ASHLEY_VIEW} AS ",
-      "SELECT DISTINCT cast(PATID as string) AS PATID FROM {ie_tbl}"))
-    .CE_ENFORCED <<- TRUE
-    return(as.integer(db_q(con, glue(
-      "SELECT count(DISTINCT PATID) AS n FROM {ASHLEY_VIEW}"))$n))
-  }
-
+# ---- 1. Build the Ashley cohort -------------------------------------------
+# CREATE OR REPLACE TABLE so the materialised PATIDs persist across
+# the script's sections (and are reusable from any downstream notebook).
+# The CE windows are inlined as CTEs in this single statement so there
+# are no temp-view dependencies later.
+build_cohort <- function(con, lot_long, final_tbl, map_tbl, enr_tbl,
+                         have_map) {
   bela_map_branch <- if (have_map) glue("
-        UNION ALL
+        UNION
         SELECT DISTINCT cast(PATID as string) AS PATID
         FROM {map_tbl}
         WHERE upper(MAP_MED_TYPE) = upper('{BELA_TOKEN}')")
     else ""
-
-  # CE-window CTEs - inlined only when member_enrollment is readable.
-  # Mirrors the gap-allowing enrollment-span build in
-  # lot_ie_cohort.R / pipeline_steps.R:386-419.
-  if (have_enr) {
-    enr_ctes <- glue(",
+  sql <- glue("
+    CREATE OR REPLACE TABLE {wrk(COHORT_TABLE)} AS
+    WITH
     enr_base AS (
       SELECT cast(PATID as string) AS PATID,
-             cast(ELIGEFF as date) AS elig_eff,
-             cast(ELIGEND as date) AS elig_end
+             cast(ELIGEFF as date) AS s,
+             cast(ELIGEND as date) AS e
       FROM {enr_tbl}
       WHERE ELIGEFF IS NOT NULL AND ELIGEND IS NOT NULL
     ),
-    enr_ordered AS (
-      SELECT PATID, elig_eff, elig_end,
-        max(elig_end) OVER (PARTITION BY PATID ORDER BY elig_eff, elig_end
-          ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS max_end_so_far
+    -- gap-allowing spans (<= {GAP_DAYS} d) for pre-LOT1 / pre-MM-dx CE.
+    enr_ord AS (
+      SELECT PATID, s, e,
+        max(e) OVER (PARTITION BY PATID ORDER BY s, e
+                     ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS m
       FROM enr_base
     ),
-    enr_flagged AS (
-      SELECT PATID, elig_eff, elig_end,
-        CASE WHEN max_end_so_far IS NULL THEN 1
-             WHEN elig_eff <= date_add(max_end_so_far, {CE_GAP_DAYS} + 1) THEN 0
-             ELSE 1 END AS new_grp
-      FROM enr_ordered
+    enr_flg AS (
+      SELECT PATID, s, e,
+        CASE WHEN m IS NULL THEN 1
+             WHEN s <= date_add(m, {GAP_DAYS} + 1) THEN 0
+             ELSE 1 END AS g
+      FROM enr_ord
     ),
-    enr_grouped AS (
-      SELECT PATID, elig_eff, elig_end,
-        sum(new_grp) OVER (PARTITION BY PATID ORDER BY elig_eff, elig_end
-          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS grp_id
-      FROM enr_flagged
+    enr_grp AS (
+      SELECT PATID, s, e,
+        sum(g) OVER (PARTITION BY PATID ORDER BY s, e
+                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS gid
+      FROM enr_flg
     ),
-    enr_spans AS (
-      SELECT PATID, min(elig_eff) AS cov_start, max(elig_end) AS cov_end
-      FROM enr_grouped GROUP BY PATID, grp_id
-    )")
-    fu_clause <- if (APPLY_FU_EXCL) glue("
-      AND EXISTS (SELECT 1 FROM enr_spans s
-                  WHERE s.PATID = l.PATID
-                    AND s.cov_start <= l.LOT1_DT
-                    AND s.cov_end   >= date_add(l.LOT1_DT, {CE_POST_LOT_DAYS - 1L}))")
-      else ""
-    ce_join <- glue("
-      AND EXISTS (SELECT 1 FROM enr_spans s
-                  WHERE s.PATID = l.PATID
-                    AND s.cov_start <= date_sub(l.LOT1_DT, {CE_PRE_LOT_DAYS})
-                    AND s.cov_end   >= date_sub(l.LOT1_DT, 1))
-      AND EXISTS (SELECT 1 FROM enr_spans s
-                  JOIN mm_dx m ON m.PATID = l.PATID
-                  WHERE s.PATID = l.PATID
-                    AND s.cov_start <= date_sub(m.MM_DX_DT, {CE_PRE_MM_DAYS})
-                    AND s.cov_end   >= date_sub(m.MM_DX_DT, 1)){fu_clause}")
-    .CE_ENFORCED <<- TRUE
-  } else {
-    enr_ctes <- ""
-    ce_join  <- ""
-    log_msg("  member_enrollment not readable - CE windows NOT applied; ",
-            "Ashley cohort = 1L-date + belantamab only. Run ",
-            "lot_ie_cohort.R or check MEMBER_ENROLLMENT_TBL for the ",
-            "full criteria.")
-  }
-
-  sql <- glue("
-    CREATE OR REPLACE TEMPORARY VIEW {ASHLEY_VIEW} AS
-    WITH lot1 AS (
-      SELECT cast(PATID as string) AS PATID, LOT_START_DT AS LOT1_DT
+    spans_gap AS (
+      SELECT PATID, min(s) AS cov_s, max(e) AS cov_e
+      FROM enr_grp GROUP BY PATID, gid
+    ),
+    -- strict (no-gap) spans for the 3-mo post-LOT1 FU check.
+    spans_strict AS (
+      SELECT PATID, s AS cov_s, e AS cov_e FROM enr_base
+    ),
+    lot1 AS (
+      SELECT cast(PATID as string) AS PATID,
+             cast(LOT_START_DT as date) AS LOT1_DT
       FROM {lot_long}
       WHERE LOT_NUM = 1 AND LOT_START_DT IS NOT NULL
-    ),
-    base AS (
-      SELECT DISTINCT cast(PATID as string) AS PATID FROM {final_tbl}
     ),
     mm_dx AS (
       SELECT cast(PATID as string) AS PATID,
              cast(INDEX_DATE as date) AS MM_DX_DT
       FROM {final_tbl}
     ),
-    bela_any AS (
-      SELECT DISTINCT PATID FROM (
-        SELECT cast(PATID as string) AS PATID
-        FROM {lot_long}
-        WHERE LOT_BASE_MEDS IS NOT NULL
-          AND array_contains(split(LOT_BASE_MEDS, ' '), '{BELA_TOKEN}')
-        {bela_map_branch}
-      )
-    ){enr_ctes}
-    SELECT l.PATID
+    bela AS (
+      SELECT DISTINCT cast(PATID as string) AS PATID
+      FROM {lot_long}
+      WHERE LOT_BASE_MEDS IS NOT NULL
+        AND array_contains(split(LOT_BASE_MEDS, ' '), '{BELA_TOKEN}')
+      {bela_map_branch}
+    )
+    SELECT l.PATID, l.LOT1_DT, m.MM_DX_DT
     FROM lot1 l
-    JOIN base b ON b.PATID = l.PATID
-    LEFT JOIN bela_any x ON x.PATID = l.PATID
+    JOIN mm_dx m ON m.PATID = l.PATID
+    LEFT JOIN bela x ON x.PATID = l.PATID
     WHERE l.LOT1_DT >= cast('{ELIGIBLE_1L_FROM}' as date)
       AND x.PATID IS NULL
-      {ce_join}
+      AND EXISTS (SELECT 1 FROM spans_gap s
+                  WHERE s.PATID = l.PATID
+                    AND s.cov_s <= date_sub(l.LOT1_DT, {PRE_LOT_DAYS})
+                    AND s.cov_e >= date_sub(l.LOT1_DT, 1))
+      AND EXISTS (SELECT 1 FROM spans_gap s
+                  WHERE s.PATID = l.PATID
+                    AND s.cov_s <= date_sub(m.MM_DX_DT, {PRE_MM_DAYS})
+                    AND s.cov_e >= date_sub(m.MM_DX_DT, 1))
+      AND EXISTS (SELECT 1 FROM spans_strict s
+                  WHERE s.PATID = l.PATID
+                    AND s.cov_s <= l.LOT1_DT
+                    AND s.cov_e >= date_add(l.LOT1_DT, {POST_LOT_DAYS - 1L}))
   ")
-  ok <- tryCatch({ db_exec(con, sql); TRUE },
-                 error = function(e) {
-                   log_msg("  Ashley cohort view build failed: ",
-                           conditionMessage(e)); FALSE })
-  if (!ok) {
-    # Fallback: an empty view so downstream subqueries still resolve
-    # (every Ashley section then renders as empty rather than crashing).
-    tryCatch(db_exec(con, glue(
-      "CREATE OR REPLACE TEMPORARY VIEW {ASHLEY_VIEW} AS ",
-      "SELECT cast('' as string) AS PATID WHERE 1 = 0")),
-      error = function(e) NULL)
-    .CE_ENFORCED <<- FALSE
-    return(0L)
-  }
-  as.integer(db_q(con, glue(
-    "SELECT count(DISTINCT PATID) AS n FROM {ASHLEY_VIEW}"))$n)
+  db_exec(con, sql)
 }
 
-# Filter expression for a cohort definition. Returns a SQL fragment
-# appended to a WHERE clause; relies on the persisted ASHLEY_VIEW for
-# the Ashley cohort (no IN-list interpolation, so cohort size never
-# hits SQL/ODBC statement-length limits).
-cohort_filter_sql <- function(cohort_def) {
-  if (isTRUE(cohort_def$is_ashley))
-    return(paste0(" AND cast(PATID as string) IN (SELECT PATID FROM ",
-                  ASHLEY_VIEW, ")"))
-  ""
-}
-
-# ---- Q3 + Q4: filtered MED JOURNEY (max LOT_NUM >= 2) ---------------
-build_journeys <- function(con, lot_long, map_tbl, cohort_def) {
-  section <- paste0("JOURNEY_", cohort_def$section_suffix)
-  log_msg("Journeys (multi-LOT only) - cohort: ", cohort_def$label)
-
-  filt <- cohort_filter_sql(cohort_def)
-  pat_pick <- tryCatch(db_q(con, glue("
-    WITH pm AS (
-      SELECT cast(PATID as string) AS PATID, max(LOT_NUM) AS max_lot
+# Attrition counts - cheap re-evaluation of each criterion against the
+# delivered LOT1 population so the cohort card can show how each
+# filter shrinks the count.
+cohort_attrition <- function(con, lot_long, final_tbl, map_tbl, enr_tbl,
+                             have_map) {
+  bela_map_branch <- if (have_map) glue("
+        UNION
+        SELECT DISTINCT cast(PATID as string) AS PATID
+        FROM {map_tbl}
+        WHERE upper(MAP_MED_TYPE) = upper('{BELA_TOKEN}')")
+    else ""
+  db_q(con, glue("
+    WITH
+    enr_base AS (
+      SELECT cast(PATID as string) AS PATID,
+             cast(ELIGEFF as date) AS s, cast(ELIGEND as date) AS e
+      FROM {enr_tbl}
+      WHERE ELIGEFF IS NOT NULL AND ELIGEND IS NOT NULL
+    ),
+    enr_ord AS (
+      SELECT PATID, s, e,
+        max(e) OVER (PARTITION BY PATID ORDER BY s, e
+                     ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS m
+      FROM enr_base
+    ),
+    enr_flg AS (
+      SELECT PATID, s, e,
+        CASE WHEN m IS NULL THEN 1
+             WHEN s <= date_add(m, {GAP_DAYS} + 1) THEN 0
+             ELSE 1 END AS g
+      FROM enr_ord
+    ),
+    enr_grp AS (
+      SELECT PATID, s, e,
+        sum(g) OVER (PARTITION BY PATID ORDER BY s, e
+                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS gid
+      FROM enr_flg
+    ),
+    spans_gap AS (
+      SELECT PATID, min(s) AS cov_s, max(e) AS cov_e
+      FROM enr_grp GROUP BY PATID, gid
+    ),
+    spans_strict AS (
+      SELECT PATID, s AS cov_s, e AS cov_e FROM enr_base
+    ),
+    lot1 AS (
+      SELECT cast(PATID as string) AS PATID,
+             cast(LOT_START_DT as date) AS LOT1_DT
       FROM {lot_long}
-      WHERE 1 = 1{filt}
-      GROUP BY cast(PATID as string)
-      HAVING max(LOT_NUM) >= 2
+      WHERE LOT_NUM = 1 AND LOT_START_DT IS NOT NULL
+    ),
+    mm_dx AS (
+      SELECT cast(PATID as string) AS PATID,
+             cast(INDEX_DATE as date) AS MM_DX_DT
+      FROM {final_tbl}
+    ),
+    bela AS (
+      SELECT DISTINCT cast(PATID as string) AS PATID
+      FROM {lot_long}
+      WHERE LOT_BASE_MEDS IS NOT NULL
+        AND array_contains(split(LOT_BASE_MEDS, ' '), '{BELA_TOKEN}')
+      {bela_map_branch}
     )
-    SELECT pm.PATID, pm.max_lot,
-           ll.LOT_BASE_END_REASON AS terminal_reason
-    FROM pm
-    JOIN {lot_long} ll
-      ON cast(ll.PATID as string) = pm.PATID
-     AND ll.LOT_NUM = pm.max_lot
-  ")), error = function(e) {
-    log_msg("  pat_pick failed: ", conditionMessage(e)); NULL
-  })
-
-  if (is.null(pat_pick) || nrow(pat_pick) == 0) {
-    add_html_card(paste0(
-      '<div style="font-family:system-ui;padding:14px">',
-      '<h3>Patient medication journeys (', esc_html(cohort_def$label), ')</h3>',
-      '<p style="color:#555">No patients in this cohort reach ',
-      'LOT_NUM &ge; 2, so no auto journey examples were drawn.</p></div>'),
-      section = section,
-      title = paste0("Journeys (", cohort_def$label, ", none)"))
-    return(invisible())
-  }
-  pat_pick$max_lot <- as.numeric(pat_pick$max_lot)
-  ord <- pat_pick[order(-pat_pick$max_lot), , drop = FALSE]
-  pick_ids <- head(ord$PATID, 6)
-  for (rs in unique(ord$terminal_reason)) {
-    if (length(pick_ids) >= 12) break
-    cand <- ord$PATID[ord$terminal_reason %in% rs & !ord$PATID %in% pick_ids]
-    if (length(cand)) pick_ids <- c(pick_ids, cand[1])
-  }
-  pick_ids <- unique(pick_ids)[seq_len(min(12, length(unique(pick_ids))))]
-  id_list <- paste(sprintf("'%s'", gsub("'", "''", pick_ids)), collapse = ", ")
-
-  jdf <- db_q(con, glue("
-    SELECT cast(PATID as string) AS PATID, LOT_NUM, LOT_START_TYPE,
-           cast(cast(LOT_START_DT    as date) as string) AS LOT_START_DT,
-           cast(cast(LOT_BASE_END_DT as date) as string) AS LOT_BASE_END_DT,
-           LOT_BASE_END_REASON, LOT_BASE_LENGTH, LOT_BASE_MEDS
-    FROM {lot_long}
-    WHERE cast(PATID as string) IN ({id_list})
-    ORDER BY PATID, LOT_NUM
+    SELECT
+      (SELECT count(DISTINCT PATID) FROM lot1) AS n_lot1,
+      (SELECT count(DISTINCT PATID) FROM lot1
+       WHERE LOT1_DT >= cast('{ELIGIBLE_1L_FROM}' as date)) AS n_dt,
+      (SELECT count(DISTINCT l.PATID) FROM lot1 l
+       LEFT JOIN bela x ON x.PATID = l.PATID
+       WHERE l.LOT1_DT >= cast('{ELIGIBLE_1L_FROM}' as date)
+         AND x.PATID IS NULL) AS n_nobela,
+      (SELECT count(DISTINCT l.PATID) FROM lot1 l
+       LEFT JOIN bela x ON x.PATID = l.PATID
+       WHERE l.LOT1_DT >= cast('{ELIGIBLE_1L_FROM}' as date)
+         AND x.PATID IS NULL
+         AND EXISTS (SELECT 1 FROM spans_gap s WHERE s.PATID = l.PATID
+                     AND s.cov_s <= date_sub(l.LOT1_DT, {PRE_LOT_DAYS})
+                     AND s.cov_e >= date_sub(l.LOT1_DT, 1))) AS n_ce_lot1,
+      (SELECT count(DISTINCT l.PATID) FROM lot1 l
+       JOIN mm_dx m ON m.PATID = l.PATID
+       LEFT JOIN bela x ON x.PATID = l.PATID
+       WHERE l.LOT1_DT >= cast('{ELIGIBLE_1L_FROM}' as date)
+         AND x.PATID IS NULL
+         AND EXISTS (SELECT 1 FROM spans_gap s WHERE s.PATID = l.PATID
+                     AND s.cov_s <= date_sub(l.LOT1_DT, {PRE_LOT_DAYS})
+                     AND s.cov_e >= date_sub(l.LOT1_DT, 1))
+         AND EXISTS (SELECT 1 FROM spans_gap s WHERE s.PATID = l.PATID
+                     AND s.cov_s <= date_sub(m.MM_DX_DT, {PRE_MM_DAYS})
+                     AND s.cov_e >= date_sub(m.MM_DX_DT, 1))) AS n_ce_mmdx,
+      (SELECT count(DISTINCT PATID) FROM {wrk(COHORT_TABLE)}) AS n_final
   "))
-  jdf$LOT_NUM         <- as.numeric(jdf$LOT_NUM)
-  jdf$LOT_START_DT    <- as.Date(jdf$LOT_START_DT)
-  jdf$LOT_BASE_END_DT <- as.Date(jdf$LOT_BASE_END_DT)
-  eend <- jdf$LOT_BASE_END_DT
-  eend[is.na(eend)] <- jdf$LOT_START_DT[is.na(eend)]
-  jdf$LOT_BASE_END_DT <- eend
-
-  mdf <- tryCatch(db_q(con, glue("
-    SELECT cast(PATID as string) AS PATID,
-           MAP_MED_TYPE          AS MED,
-           MAP_MED_CLASS         AS CLASS,
-           cast(cast(MAP_START_DT as date) as string) AS MAP_START_DT,
-           cast(cast(MAP_END_DT   as date) as string) AS MAP_END_DT,
-           coalesce(MAP_CNT, 1)        AS MAP_CNT,
-           coalesce(MAP_DISCON_FLG, 0) AS MAP_DISCON_FLG
-    FROM {map_tbl}
-    WHERE cast(PATID as string) IN ({id_list})
-    ORDER BY PATID, MAP_MED_TYPE, MAP_START_DT
-  ")), error = function(e) {
-    log_msg("  MAP_STACKED read failed: ", conditionMessage(e)); NULL
-  })
-
-  if (is.null(mdf) || nrow(mdf) == 0) {
-    add_html_card(paste0(
-      '<div style="font-family:system-ui;padding:14px">',
-      '<h3>Patient medication journeys (', esc_html(cohort_def$label), ')</h3>',
-      '<p style="color:#555">No MAP_STACKED rows for the selected ',
-      'example patients in this cohort.</p></div>'),
-      section = section,
-      title = paste0("Journeys (", cohort_def$label, ", none)"))
-    return(invisible())
-  }
-  mdf$MAP_START_DT <- as.Date(mdf$MAP_START_DT)
-  mdf$MAP_END_DT   <- as.Date(mdf$MAP_END_DT)
-  bad_end <- is.na(mdf$MAP_END_DT) | mdf$MAP_END_DT < mdf$MAP_START_DT
-  mdf$MAP_END_DT[bad_end] <- mdf$MAP_START_DT[bad_end]
-
-  k <- 0L
-  for (pid in pick_ids) {
-    pm <- mdf[mdf$PATID == pid, , drop = FALSE]
-    pl <- jdf[jdf$PATID == pid, , drop = FALSE]
-    pl <- pl[order(pl$LOT_NUM), , drop = FALSE]
-    if (nrow(pm) == 0 || all(is.na(pm$MAP_START_DT))) next
-    if (nrow(pl) < 2) next
-    k <- k + 1L
-    tryCatch({
-      meds  <- sort(unique(pm$MED))
-      med_y <- setNames(seq_along(meds), meds)
-      ymax  <- length(meds)
-      shapes <- list(); annotations <- list()
-      for (j in seq_len(nrow(pm))) {
-        row <- pm[j, ]
-        y   <- med_y[[row$MED]]
-        cls <- as.character(row$CLASS)
-        color <- if (!is.na(cls) && cls %in% names(lot_class_palette))
-          lot_class_palette[[cls]] else "#636e72"
-        shapes[[length(shapes) + 1]] <- list(
-          type = "rect",
-          x0 = as.character(row$MAP_START_DT),
-          x1 = as.character(row$MAP_END_DT),
-          y0 = y - 0.35, y1 = y + 0.35,
-          fillcolor = color,
-          opacity = if (isTRUE(row$MAP_CNT > 1)) 0.6 else 0.85,
-          line = list(color = color, width = 1), layer = "below"
-        )
-      }
-      for (i in seq_len(nrow(pl))) {
-        st  <- as.character(pl$LOT_START_TYPE[i])
-        col <- if (!is.na(st) && st %in% names(lot_start_palette))
-          lot_start_palette[[st]] else "#2E86AB"
-        x <- as.character(pl$LOT_START_DT[i])
-        shapes[[length(shapes) + 1]] <- list(
-          type = "line", x0 = x, x1 = x, y0 = 0.3, y1 = ymax + 0.7,
-          line = list(color = col, width = 2, dash = "dash"),
-          layer = "above")
-        annotations[[length(annotations) + 1]] <- list(
-          x = x, y = ymax + 0.6,
-          text = paste0("LOT", pl$LOT_NUM[i], " start"),
-          showarrow = FALSE, font = list(size = 10, color = col),
-          xanchor = "left", textangle = -30)
-      }
-      mid_x <- pm$MAP_START_DT +
-        as.integer((pm$MAP_END_DT - pm$MAP_START_DT) / 2)
-      hover_df <- data.frame(
-        x = mid_x, y = med_y[pm$MED],
-        text = paste0("Med: ", pm$MED, "\nClass: ", pm$CLASS,
-                      "\nStart: ", pm$MAP_START_DT,
-                      "\nEnd: ", pm$MAP_END_DT,
-                      "\nMAP #", pm$MAP_CNT),
-        stringsAsFactors = FALSE)
-      pat_label <- paste0("Patient ", k)
-      pp <- plotly::plot_ly(hover_df, x = ~x, y = ~y, text = ~text,
-                            type = "scatter", mode = "markers",
-                            marker = list(size = 1, opacity = 0),
-                            hoverinfo = "text") |>
-        plotly::layout(
-          title = list(text = paste0(pat_label, " - Medication Journey (",
-                                     cohort_def$label, ")"),
-                       font = list(size = 14)),
-          xaxis = list(title = "", type = "date", gridcolor = "#eee"),
-          yaxis = list(title = "Medication", tickmode = "array",
-                       tickvals = seq_along(meds), ticktext = meds,
-                       range = c(0.4, length(meds) + 0.9),
-                       gridcolor = "#eee"),
-          shapes = shapes, annotations = annotations,
-          showlegend = FALSE,
-          margin = list(l = 110, t = 50, b = 40, r = 30),
-          plot_bgcolor = "#fafafa", paper_bgcolor = "white") |>
-        plotly::config(displayModeBar = TRUE, displaylogo = FALSE)
-      add_to_dashboard(pp, section = section,
-                       title = paste0(pat_label, " (",
-                                      length(meds), " meds, ",
-                                      nrow(pl), " LOTs)"))
-    }, error = function(e)
-      log_msg("  skip journey for ", pid, ": ", conditionMessage(e)))
-  }
-  log_msg("  ", cohort_def$label, ": ", k, " journey examples (>=2 LOTs)")
 }
 
-# ---- Q1 + Q4: category sankeys per cohort ---------------------------
-# Regimen-acronym -> drug-token map. Built-in defaults cover only
-# combos whose drug tokens are confirmed in the pipeline spec
-# (BORT / LENA / DARA per scripts/build_lot2_5_spec.py); for the
-# rest (KRd, IRd, DKd, etc.) provide a CSV at REGIMEN_ACRONYM_CSV
-# with columns acronym, drugs. Drugs are space/comma/slash separated
-# MED_ABBR tokens (e.g. "CARF LENA"). Steroid tokens in the drugs
-# list are stripped at expansion since LOT_BASE_MEDS is steroid-free.
-BUILTIN_ACRONYMS <- list(
-  "VRD" = c("BORT", "LENA"),
-  "VR"  = c("BORT", "LENA"),
-  "VD"  = c("BORT"),
-  "RD"  = c("LENA"),
-  "DRD" = c("DARA", "LENA"),
-  "DVD" = c("DARA", "BORT")
-)
-
-load_acronym_map <- function() {
-  m <- BUILTIN_ACRONYMS
-  user_path <- Sys.getenv("REGIMEN_ACRONYM_CSV", unset = "")
-  if (!nzchar(user_path) || !file.exists(user_path)) return(m)
-  df <- tryCatch(read.csv(user_path, stringsAsFactors = FALSE,
-                          check.names = FALSE),
-                 error = function(e) NULL)
-  if (is.null(df) || nrow(df) == 0) return(m)
-  ncols <- tolower(names(df))
-  ac_i  <- which(ncols %in% c("acronym", "regimen", "shorthand",
-                              "code"))[1]
-  dr_i  <- which(ncols %in% c("drugs", "tokens", "med_abbrs",
-                              "expansion"))[1]
-  if (is.na(ac_i) || is.na(dr_i)) {
-    log_msg("  REGIMEN_ACRONYM_CSV missing acronym/drugs columns; ",
-            "ignored. Found: ", paste(names(df), collapse = ", "))
-    return(m)
-  }
-  for (i in seq_len(nrow(df))) {
-    ac <- toupper(trimws(as.character(df[[ac_i]])[i]))
-    if (!nzchar(ac)) next
-    raw <- toupper(as.character(df[[dr_i]])[i])
-    drugs <- strsplit(raw, "[[:space:]/+,\\-]+", perl = TRUE)[[1]]
-    drugs <- drugs[nzchar(drugs) &
-                    !drugs %in% c("DEX", "DEXA", "DEXAMETHASONE",
-                                   "PRED", "PREDNISONE")]
-    if (length(drugs) > 0) m[[ac]] <- drugs
-  }
-  m
+build_cohort_card <- function(att, n_total_lot1) {
+  num <- function(x) suppressWarnings(as.numeric(x))
+  rows <- list(
+    c("LOT1 total in pipeline output",   att$n_lot1[1]),
+    c(paste0("+ 1L start &ge; ", ELIGIBLE_1L_FROM), att$n_dt[1]),
+    c("+ no belantamab anywhere",        att$n_nobela[1]),
+    c(paste0("+ CE &ge; ", PRE_LOT_DAYS, " d pre-LOT1 (gap &le; ", GAP_DAYS, " d)"),
+      att$n_ce_lot1[1]),
+    c(paste0("+ CE &ge; ", PRE_MM_DAYS, " d pre-MM-dx (gap &le; ", GAP_DAYS, " d)"),
+      att$n_ce_mmdx[1]),
+    c(paste0("+ CE &ge; ", POST_LOT_DAYS, " d post-LOT1 FU (STRICT, no gap)"),
+      att$n_final[1])
+  )
+  tbl <- paste0(
+    '<table border="1" cellpadding="6" style="border-collapse:collapse;font-size:13px">',
+    '<tr style="background:#f0f3f5"><th>Step</th><th>n patients</th></tr>',
+    paste(vapply(rows, function(r) sprintf(
+      '<tr><td>%s</td><td>%s</td></tr>', r[1],
+      format(num(r[2]), big.mark = ",")), character(1)), collapse = ""),
+    '</table>')
+  add_html_card(paste0(
+    '<div style="font-family:system-ui;padding:14px;max-width:900px">',
+    '<h3>Ashley planned-study cohort</h3>',
+    '<p style="color:#555;font-size:13px">Materialised as ',
+    '<code>', esc_html(wrk(COHORT_TABLE)), '</code>; downstream ',
+    'sections inner-join to it.</p>', tbl,
+    '<p style="color:#555;font-size:13px;margin-top:10px"><b>Honest scope:</b> ',
+    'other-malignancy / pregnancy / no-baseline-MM-therapy exclusions ',
+    'are inherited from the parent pipeline\'s 183-day-pre-MM-dx ',
+    'window (<code>baseline_days = 183</code>). Recomputing those ',
+    'against the 12-mo-pre-LOT1 window belongs in a pipeline edit, ',
+    'not here. Death-aware semantics for the 3-mo FU are not ',
+    'implemented (would need death-dt access not surfaced in ',
+    'persisted output).</p></div>'),
+    section = "COHORT", title = "Cohort definition + attrition")
 }
 
-load_category_lookup <- function() {
-  # Default to the committed Julia June-5 treatment-table CSV, located
-  # next to this script. Env var overrides for an analyst-supplied
-  # mapping. Without this default, an analyst running the dashboard
-  # normally still saw the "pending CSV" card despite the table being
-  # in the repo.
-  default_csv <- file.path(.script_dir, "mm_treatment_table.csv")
-  cat_path <- Sys.getenv("REGIMEN_CATEGORIES_CSV",
-                          unset = if (file.exists(default_csv)) default_csv else "")
-  if (!nzchar(cat_path) || !file.exists(cat_path)) return(NULL)
-  ext <- tolower(tools::file_ext(cat_path))
-  df <- tryCatch({
-    if (ext %in% c("xlsx", "xls")) {
-      if (!requireNamespace("readxl", quietly = TRUE)) {
-        log_msg("  readxl not installed - cannot read ", cat_path,
-                "; convert to CSV or install readxl.")
-        return(structure(list(), bad = TRUE, path = cat_path,
-                          cols = "(xlsx, readxl unavailable)"))
-      }
-      as.data.frame(readxl::read_excel(cat_path), check.names = FALSE)
-    } else {
-      read.csv(cat_path, stringsAsFactors = FALSE, check.names = FALSE)
-    }
-  }, error = function(e) {
-    log_msg("  category file read failed: ", conditionMessage(e)); NULL
-  })
-  if (is.null(df) || nrow(df) == 0)
-    return(structure(list(), bad = TRUE, path = cat_path))
-  ncols <- tolower(names(df))
-  reg_i <- which(ncols %in% c("regimen", "lot_base_meds", "med", "meds",
-                              "treatment", "regimen_name"))[1]
-  cat_i <- which(ncols %in% c("category", "regimen_category",
-                              "treatment_category", "class"))[1]
-  if (is.na(reg_i) || is.na(cat_i))
-    return(structure(list(), bad = TRUE, path = cat_path,
-                     cols = paste(names(df), collapse = ", ")))
-
-  # Tokeniser splits on whitespace / "/" / "+" / "," / "-" so xlsx
-  # rows like "Bort, Lena, Dexa" or "BORT/LENA/DEXA" normalise to
-  # the same sorted uppercase token vector after steroid stripping.
-  # NOTE: shorthand regimen acronyms ("VRd", "KRd") are SINGLE
-  # tokens after this step (VRD, KRD); the multi-drug expansion is
-  # handled separately by categorise_regimen() against the acronym
-  # map, not by the tokeniser. Steroids (DEX/DEXA/PRED) are stripped
-  # because current LOT_BASE_MEDS excludes them (lot_program.R:688)
-  # until Julia's Q2 update lands.
-  STEROID_TOKENS <- c("DEX", "DEXA", "DEXAMETHASONE",
-                       "PRED", "PREDNISONE")
-  norm_regimen <- function(s, strip_steroids = TRUE) {
-    if (is.na(s) || !nzchar(trimws(as.character(s))))
-      return(character(0))
-    toks <- strsplit(toupper(as.character(s)), "[[:space:]/+,\\-]+",
-                     perl = TRUE)[[1]]
-    toks <- toks[nzchar(toks)]
-    if (strip_steroids) toks <- toks[!toks %in% STEROID_TOKENS]
-    sort(unique(toks))
-  }
-  norm_key <- function(s, strip_steroids = TRUE)
-    paste(norm_regimen(s, strip_steroids), collapse = " ")
-
-  reg_raw <- trimws(as.character(df[[reg_i]]))
-  cat_raw <- trimws(as.character(df[[cat_i]]))
-  acronyms <- load_acronym_map()
-
-  # Build lookup_norm / lookup_nosterd by iterating rows so we can
-  # ALSO add expanded-drug-token keys for acronym rows. Without this,
-  # a category row like "VRd -> PI+IMID" only produces a key "VRD",
-  # so a LOT_BASE_MEDS of "BORT LENA" still hits (uncategorised) -
-  # the acronym tier in categorise_regimen() only fires when the
-  # INCOMING regimen is the acronym, which never happens for
-  # LOT_BASE_MEDS (always drug-token form). Adding the expanded key
-  # at lookup-build time fixes the direction.
-  acronym_collapse <- function(s)
-    gsub("[[:space:]/+,\\-]+", "", toupper(as.character(s)),
-         perl = TRUE)
-
-  add_pair <- function(map, key, val) {
-    if (!nzchar(key) || key %in% names(map)) return(map)
-    map[[key]] <- val
-    map
-  }
-  lookup_norm    <- list()
-  lookup_nosterd <- list()
-  for (i in seq_along(reg_raw)) {
-    reg <- reg_raw[i]; cat <- cat_raw[i]
-    lookup_norm    <- add_pair(lookup_norm,    norm_key(reg, FALSE), cat)
-    lookup_nosterd <- add_pair(lookup_nosterd, norm_key(reg, TRUE),  cat)
-    single <- acronym_collapse(reg)
-    if (nzchar(single) && single %in% names(acronyms)) {
-      drugs <- acronyms[[single]]
-      drugs <- drugs[!drugs %in% STEROID_TOKENS]
-      k     <- paste(sort(unique(drugs)), collapse = " ")
-      lookup_norm    <- add_pair(lookup_norm,    k, cat)
-      lookup_nosterd <- add_pair(lookup_nosterd, k, cat)
-    }
-  }
-  list(path           = cat_path,
-       norm_regimen   = norm_regimen,
-       norm_key       = norm_key,
-       acronyms       = acronyms,
-       lookup         = setNames(cat_raw, reg_raw),
-       lookup_norm    = unlist(lookup_norm),
-       lookup_nosterd = unlist(lookup_nosterd))
-}
-
-# Match LOT_BASE_MEDS or an xlsx regimen cell to a category. Tries
-# (in order):
-#   1. verbatim string match
-#   2. normalised match (strip whitespace/slashes/+/-, uppercase, sort)
-#   3. normalised + steroid-stripped match (current LOT regimens
-#      are steroid-free)
-#   4. acronym expansion (VRd -> BORT LENA, etc.) using
-#      BUILTIN_ACRONYMS + any user CSV from REGIMEN_ACRONYM_CSV.
-#      Built-in coverage is intentionally small (V/R/D combos using
-#      BORT/LENA/DARA, the tokens confirmed in the pipeline spec);
-#      KRd / IRd / DKd / etc. need the user CSV.
-# Returns NA when no tier matches; the caller surfaces as
-# "(uncategorised)".
-categorise_regimen <- function(reg, cat_data) {
-  if (is.na(reg) || !nzchar(trimws(as.character(reg))))
-    return(NA_character_)
-  if (reg %in% names(cat_data$lookup))
-    return(unname(cat_data$lookup[reg]))
-  k_norm <- cat_data$norm_key(reg, FALSE)
-  if (nzchar(k_norm) && k_norm %in% names(cat_data$lookup_norm))
-    return(unname(cat_data$lookup_norm[k_norm]))
-  k_strip <- cat_data$norm_key(reg, TRUE)
-  if (nzchar(k_strip) && k_strip %in% names(cat_data$lookup_nosterd))
-    return(unname(cat_data$lookup_nosterd[k_strip]))
-
-  # Acronym expansion: collapse whitespace/separators and lookup as
-  # a single uppercase key. If matched, treat the expanded drugs as
-  # a normalised regimen and try the lookup again.
-  single <- gsub("[[:space:]/+,\\-]+", "", toupper(as.character(reg)),
-                  perl = TRUE)
-  if (nzchar(single) && single %in% names(cat_data$acronyms)) {
-    drugs <- cat_data$acronyms[[single]]
-    k <- paste(sort(unique(drugs)), collapse = " ")
-    if (k %in% names(cat_data$lookup_nosterd))
-      return(unname(cat_data$lookup_nosterd[k]))
-    if (k %in% names(cat_data$lookup_norm))
-      return(unname(cat_data$lookup_norm[k]))
-  }
-  NA_character_
-}
-
-build_category_pair <- function(con, lot_long, n_from, n_to, cat_data,
-                                 cohort_def) {
-  section <- paste0("BY_CATEGORY_", cohort_def$section_suffix)
-  filt <- cohort_filter_sql(cohort_def)
-  # INNER JOIN, not LEFT - Julia's Q3 says no non-progressor patients
-  # in the Sankey view, so the (no LOTn) bucket is dropped at source.
+# ---- 2. Focused LOT-pair Sankeys (Q3 - inner-join drops non-progressors) -
+build_focused_pair <- function(con, lot_long, n_from, n_to) {
+  section <- paste0("LOT", n_from, "_TO_LOT", n_to)
   pairs <- db_q(con, glue("
     WITH a AS (
       SELECT cast(PATID as string) AS PATID, trim(LOT_BASE_MEDS) AS reg_from
       FROM {lot_long}
       WHERE LOT_NUM = {n_from}
-        AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''{filt}
+        AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
     ),
     b AS (
       SELECT cast(PATID as string) AS PATID, trim(LOT_BASE_MEDS) AS reg_to
       FROM {lot_long}
       WHERE LOT_NUM = {n_to}
-        AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''{filt}
-    )
-    SELECT a.PATID, a.reg_from, b.reg_to
-    FROM a JOIN b ON a.PATID = b.PATID
-  "))
-  if (nrow(pairs) == 0) return(invisible())
-
-  uncat <- "(uncategorised)"
-  pairs$cat_from <- vapply(pairs$reg_from, function(r) {
-    v <- categorise_regimen(r, cat_data); if (is.na(v)) uncat else v
-  }, character(1))
-  pairs$cat_to <- vapply(pairs$reg_to, function(r) {
-    v <- categorise_regimen(r, cat_data); if (is.na(v)) uncat else v
-  }, character(1))
-
-  links <- aggregate(PATID ~ cat_from + cat_to, data = pairs,
-                     FUN = function(x) length(unique(x)))
-  names(links)[3] <- "n_patients"
-  links <- links[order(-links$n_patients), , drop = FALSE]
-
-  src_lab <- paste0("L", n_from, ": ", links$cat_from)
-  tgt_lab <- paste0("L", n_to, ": ", links$cat_to)
-  fu_sankey(src_lab, tgt_lab, links$n_patients,
-            section = section,
-            title   = paste0("LOT", n_from, " -> LOT", n_to,
-                             " by regimen category (",
-                             cohort_def$label, ")"))
-
-  tbl_df <- links
-  names(tbl_df) <- c(paste0("LOT", n_from, "_category"),
-                     paste0("LOT", n_to, "_category"),
-                     "n_patients")
-  save_table(tbl_df, section = section,
-             title = paste0("LOT", n_from, " -> LOT", n_to,
-                            " category counts (", cohort_def$label, ")"))
-}
-
-build_category_for_cohort <- function(con, lot_long, cohort_def, cat_data) {
-  section <- paste0("BY_CATEGORY_", cohort_def$section_suffix)
-  if (is.null(cat_data)) {
-    add_html_card(paste0(
-      '<div style="font-family:system-ui;padding:14px">',
-      '<h3>Regimen-category sankeys (pending CSV) - ',
-      esc_html(cohort_def$label), '</h3>',
-      '<p style="color:#555">Per Julia Q1: pending the ',
-      '<em>MM Treatment Table for Protocol.xlsx</em>. Point ',
-      '<code>REGIMEN_CATEGORIES_CSV</code> at the file ',
-      '(<code>.xlsx</code> is accepted via <code>readxl</code>). ',
-      'Expected headers: one of <code>regimen</code> / ',
-      '<code>lot_base_meds</code> / <code>med</code> / ',
-      '<code>treatment</code>, plus one of <code>category</code> / ',
-      '<code>regimen_category</code> / <code>treatment_category</code>.',
-      '</p>',
-      '<p style="color:#555">Matching tiers: verbatim &rarr; ',
-      'normalised (split on whitespace / "/" / "+" / "-" / ",", ',
-      'uppercase, sort) &rarr; steroid-stripped (DEX/DEXA/PRED ',
-      'removed - current <code>LOT_BASE_MEDS</code> excludes ',
-      'steroids until Julia\'s Q2 lands) &rarr; <b>acronym ',
-      'expansion</b>. When the xlsx side has an acronym row ',
-      '(e.g. <code>VRd</code>), the lookup also gets the ',
-      'expanded-drug-token key (<code>BORT LENA</code>), so a ',
-      'LOT regimen of <code>BORT LENA</code> matches that ',
-      'category. Built-in acronyms cover V/R/D combos using ',
-      'BORT / LENA / DARA only (the tokens confirmed in the ',
-      'pipeline spec); add a CSV at ',
-      '<code>REGIMEN_ACRONYM_CSV</code> with columns ',
-      '<code>acronym, drugs</code> to extend (e.g. ',
-      '<code>KRd, CARF LENA</code>). Acronym xlsx rows whose ',
-      'acronym is not in the map will still fall to ',
-      '<code>(uncategorised)</code>.</p></div>'),
-      section = section,
-      title = paste0("Categories (", cohort_def$label, ", pending)"))
-    return(invisible())
-  }
-  if (isTRUE(attr(cat_data, "bad"))) {
-    add_html_card(paste0(
-      '<div style="font-family:system-ui;padding:14px">',
-      '<h3>Regimen-category CSV could not be parsed</h3>',
-      '<p style="color:#555">Cohort: ', esc_html(cohort_def$label),
-      '. Check the CSV at <code>',
-      esc_html(attr(cat_data, "path") %||% ""),
-      '</code> has a recognised <code>regimen</code> / ',
-      '<code>category</code> column pair.</p></div>'),
-      section = section,
-      title = paste0("Categories (", cohort_def$label, ", bad CSV)"))
-    return(invisible())
-  }
-  for (n in 1:4) build_category_pair(con, lot_long, n, n + 1L,
-                                      cat_data, cohort_def)
-}
-
-# ---- Q3 helper: focused LOTn->LOTn+1 sankeys per cohort -------------
-# Julia Q3 applies here too: the sankey must NOT showcase patients
-# with no subsequent LOT, so we INNER-JOIN LOTn and LOTn+1 and drop
-# the (no LOTn) bucket entirely.
-build_focused_pair <- function(con, lot_long, n_from, n_to, cohort_def) {
-  section <- paste0("LOT", n_from, "_TO_LOT", n_to, "_",
-                    cohort_def$section_suffix)
-  filt <- cohort_filter_sql(cohort_def)
-  pairs <- db_q(con, glue("
-    WITH a AS (
-      SELECT cast(PATID as string) AS PATID, trim(LOT_BASE_MEDS) AS reg_from
-      FROM {lot_long}
-      WHERE LOT_NUM = {n_from}
-        AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''{filt}
+        AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
     ),
-    b AS (
-      SELECT cast(PATID as string) AS PATID, trim(LOT_BASE_MEDS) AS reg_to
-      FROM {lot_long}
-      WHERE LOT_NUM = {n_to}
-        AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''{filt}
-    )
+    c AS (SELECT cast(PATID as string) AS PATID FROM {wrk(COHORT_TABLE)})
     SELECT a.PATID, a.reg_from, b.reg_to
     FROM a JOIN b ON a.PATID = b.PATID
+           JOIN c ON c.PATID = a.PATID
   "))
   if (nrow(pairs) == 0) return(invisible())
 
@@ -7787,146 +7351,185 @@ build_focused_pair <- function(con, lot_long, n_from, n_to, cohort_def) {
   names(links)[3] <- "n_patients"
   links <- links[order(-links$n_patients), , drop = FALSE]
 
-  src_lab <- paste0("L", n_from, ": ", links$reg_from)
-  tgt_lab <- paste0("L", n_to, ": ", links$tgt_node)
-  fu_sankey(src_lab, tgt_lab, links$n_patients,
+  fu_sankey(paste0("L", n_from, ": ", links$reg_from),
+            paste0("L", n_to,   ": ", links$tgt_node),
+            links$n_patients,
             section = section,
             title   = paste0("LOT", n_from, " -> LOT", n_to,
-                             " focused (", cohort_def$label, ")"))
+                             " (top ", TOP_N, " / ", TOP_N,
+                             ", non-progressors excluded)"))
 
   tbl_df <- links
   names(tbl_df) <- c(paste0("LOT", n_from, "_regimen"),
                      paste0("LOT", n_to, "_regimen"),
                      "n_patients")
   save_table(tbl_df, section = section,
+             title = paste0("LOT", n_from, " -> LOT", n_to, " counts"))
+}
+
+# ---- 3. Category Sankeys (Q1, drives BY_CATEGORY from CSV) ---------------
+load_categories <- function() {
+  if (!file.exists(CAT_CSV_PATH)) return(NULL)
+  df <- tryCatch(read.csv(CAT_CSV_PATH, stringsAsFactors = FALSE),
+                 error = function(e) NULL)
+  if (is.null(df) || nrow(df) == 0) return(NULL)
+  nm <- tolower(names(df))
+  reg_i <- which(nm %in% c("regimen","lot_base_meds","med","meds"))[1]
+  cat_i <- which(nm %in% c("category","regimen_category","treatment_category"))[1]
+  if (is.na(reg_i) || is.na(cat_i)) return(NULL)
+  setNames(trimws(df[[cat_i]]),
+           vapply(df[[reg_i]], norm_key, character(1)))
+}
+
+build_category_pair <- function(con, lot_long, n_from, n_to, lookup) {
+  section <- "BY_CATEGORY"
+  pairs <- db_q(con, glue("
+    WITH a AS (
+      SELECT cast(PATID as string) AS PATID, trim(LOT_BASE_MEDS) AS reg
+      FROM {lot_long}
+      WHERE LOT_NUM = {n_from}
+        AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
+    ),
+    b AS (
+      SELECT cast(PATID as string) AS PATID, trim(LOT_BASE_MEDS) AS reg
+      FROM {lot_long}
+      WHERE LOT_NUM = {n_to}
+        AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
+    ),
+    c AS (SELECT cast(PATID as string) AS PATID FROM {wrk(COHORT_TABLE)})
+    SELECT a.PATID, a.reg AS reg_from, b.reg AS reg_to
+    FROM a JOIN b ON a.PATID = b.PATID
+           JOIN c ON c.PATID = a.PATID
+  "))
+  if (nrow(pairs) == 0) return(invisible())
+
+  cat_of <- function(r) {
+    k <- norm_key(r); if (k %in% names(lookup)) unname(lookup[k]) else "(uncategorised)"
+  }
+  pairs$cat_from <- vapply(pairs$reg_from, cat_of, character(1))
+  pairs$cat_to   <- vapply(pairs$reg_to,   cat_of, character(1))
+
+  links <- aggregate(PATID ~ cat_from + cat_to, data = pairs,
+                     FUN = function(x) length(unique(x)))
+  names(links)[3] <- "n_patients"
+  links <- links[order(-links$n_patients), , drop = FALSE]
+
+  fu_sankey(paste0("L", n_from, ": ", links$cat_from),
+            paste0("L", n_to,   ": ", links$cat_to),
+            links$n_patients,
+            section = section,
+            title   = paste0("LOT", n_from, " -> LOT", n_to,
+                             " by regimen category"))
+  tbl_df <- links
+  names(tbl_df) <- c(paste0("LOT", n_from, "_category"),
+                     paste0("LOT", n_to, "_category"),
+                     "n_patients")
+  save_table(tbl_df, section = section,
              title = paste0("LOT", n_from, " -> LOT", n_to,
-                            " counts (", cohort_def$label, ")"))
+                            " category counts"))
 }
 
-# ---- Q2 steroid scoping card (no pipeline change applied) -----------
-build_steroid_card <- function() {
-  add_html_card(paste0(
-    '<div style="font-family:system-ui;padding:14px;max-width:900px">',
-    '<h3>Q2 - Steroid inclusion in LOT regimens (pipeline change pending)</h3>',
-    '<p style="color:#555">Per Julia: the team wants to include steroids ',
-    'in the LOT. Today’s LOT build explicitly excludes them ',
-    '(<code>WHERE MAP_MED_CLASS &lt;&gt; \'STEROID\'</code> in ',
-    '<code>lot_program.R:679</code> and the LOT2-5 induction-meds ',
-    'step). Switching steroids on is a <b>pipeline-level change + ',
-    'codelist addition + full rerun</b>; not applied here pending ',
-    'Julia’s confirmed LOT-rule update.</p>',
-    '<p style="color:#555;margin-bottom:6px">HCPCS codes Julia listed ',
-    '(from the June 5 PDF; OCR was imperfect so confirm before ',
-    'codelist load):</p>',
-    '<table style="border-collapse:collapse;font-size:13px" border="1" ',
-    'cellpadding="6">',
-    '<tr style="background:#f0f3f5"><th>HCPCS</th><th>Drug</th></tr>',
-    '<tr><td>J8540</td><td>Dexamethasone (oral)</td></tr>',
-    '<tr><td>J7512</td><td>Prednisone (oral)</td></tr>',
-    '<tr><td>J1100</td><td>Dexamethasone sodium phosphate (inj)</td></tr>',
-    '<tr><td>J1101</td><td>Dexamethasone (inj)</td></tr>',
-    '</table>',
-    '<p style="color:#555;font-size:13px;margin-top:10px">',
-    'Julia also flagged "quite a few NDC codes" — those need a ',
-    'dedicated codelist pull. Suggested next steps once rules are ',
-    'confirmed: (1) extend <code>cl_mma_codelist.csv</code> with ',
-    'STEROID HCPCS + NDC rows mapping to a single ',
-    '<code>STEROID</code> class and per-drug abbrevs (e.g. ',
-    '<code>DEXA</code>, <code>PRED</code>); (2) remove the ',
-    '<code>MAP_MED_CLASS &lt;&gt; \'STEROID\'</code> exclusion in the ',
-    'induction-meds steps; (3) rerun pipeline; (4) regenerate ',
-    'dashboards. Onkar to confirm whether the LOT length / ',
-    'discontinuation logic also needs adjustment so steroid-only ',
-    'gaps don’t fragment a line.</p></div>'),
-    section = "STEROID_NOTE",
-    title = "Q2 steroid inclusion (scoping)")
+build_categories <- function(con, lot_long) {
+  lookup <- load_categories()
+  if (is.null(lookup)) {
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:14px">',
+      '<h3>Regimen-category Sankeys (CSV not loaded)</h3>',
+      '<p style="color:#b06000">Could not read <code>',
+      esc_html(CAT_CSV_PATH), '</code>. Expected columns: ',
+      '<code>regimen</code>, <code>category</code>.</p></div>'),
+      section = "BY_CATEGORY",
+      title = "Categories (CSV missing)")
+    return(invisible())
+  }
+  log_msg("Categories loaded: ", length(lookup), " regimen rules")
+  for (n in 1:4) build_category_pair(con, lot_long, n, n + 1L, lookup)
 }
 
-`%||%` <- function(x, y) if (is.null(x)) y else x
+# ---- 4. Sequential SCT/CART events (Q II) --------------------------------
+build_sct_cart <- function(con, lot_long) {
+  section <- "SCT_CART"
+  union_sql <- glue("
+    SELECT cast(PATID as string) AS PATID, LOT_NUM,
+           cast(cast(LOT_START_DT as date) as string) AS event_dt,
+           LOT_START_TYPE AS event_type
+    FROM {lot_long}
+    WHERE LOT_START_TYPE IN ('SCT_AUTO','SCT_ALLO','SCT_CART','CART','CART_INIT')
+    UNION ALL
+    SELECT cast(PATID as string), LOT_NUM,
+           cast(cast(date_add(LOT_BASE_END_DT, 1) as date) as string),
+           LOT_BASE_END_REASON
+    FROM {lot_long}
+    WHERE LOT_BASE_END_REASON IN ('SCT_AUTO','SCT_ALLO','SCT_CART','CART_INIT')
+      AND LOT_BASE_END_DT IS NOT NULL
+      AND NOT (LOT_START_TYPE = 'SCT_ALLO' AND LOT_BASE_END_REASON = 'SCT_ALLO'
+               AND LOT_BASE_END_DT = LOT_START_DT)
+      AND NOT (LOT_START_TYPE = 'CART'     AND LOT_BASE_END_REASON = 'SCT_CART'
+               AND LOT_BASE_END_DT = LOT_START_DT)
+    UNION ALL
+    SELECT cast(PATID as string), LOT_NUM,
+           cast(cast(LOT_TX_AUTO_DT_1 as date) as string),
+           'SCT_AUTO'
+    FROM {lot_long} WHERE LOT_TX_AUTO_DT_1 IS NOT NULL
+    UNION ALL
+    SELECT cast(PATID as string), LOT_NUM,
+           cast(cast(LOT_TX_AUTO_DT_2 as date) as string),
+           'SCT_AUTO'
+    FROM {lot_long} WHERE LOT_TX_AUTO_DT_2 IS NOT NULL
+  ")
+  evt <- db_q(con, glue("
+    SELECT u.*
+    FROM ({union_sql}) u
+    JOIN {wrk(COHORT_TABLE)} c ON c.PATID = u.PATID
+  "))
+  if (nrow(evt) == 0) return(invisible())
 
-build_cohort_def_card <- function(con, lot_long, final_tbl, n_ash) {
-  n_all <- tryCatch(
-    as.numeric(db_q(con, glue("SELECT count(DISTINCT cast(PATID as string)) AS n FROM {final_tbl}"))$n),
-    error = function(e) NA_real_)
-  ach_pct <- if (isTRUE(n_all > 0)) round(100 * n_ash / n_all, 1) else NA_real_
+  evt$event_dt_d <- as.Date(evt$event_dt)
+  evt <- evt[!is.na(evt$event_dt_d), , drop = FALSE]
+  evt$event_type[evt$event_type %in% c("CART","CART_INIT","SCT_CART")] <- "CART"
+  evt <- evt[!duplicated(evt[, c("PATID","event_dt_d","event_type")]), , drop = FALSE]
+  evt <- evt[order(evt$PATID, evt$event_dt_d), , drop = FALSE]
 
+  by_p <- split(evt, evt$PATID)
+  seq_df <- data.frame(
+    PATID    = names(by_p),
+    n_events = vapply(by_p, nrow, integer(1)),
+    sequence = vapply(by_p, function(d) paste(d$event_type, collapse = " -> "),
+                      character(1)),
+    stringsAsFactors = FALSE
+  )
   add_html_card(paste0(
-    '<div style="font-family:system-ui;padding:14px;max-width:900px">',
-    '<h3>Cohort definitions</h3>',
-    '<table style="border-collapse:collapse;font-size:13px" border="1" ',
-    'cellpadding="6">',
-    '<tr style="background:#f0f3f5"><th>Cohort</th><th>n patients</th>',
-    '<th>Criteria</th></tr>',
-    '<tr><td>Whole delivered cohort</td><td>',
-    format(n_all, big.mark = ","), '</td>',
-    '<td>Final post-exclusion cohort from <code>',
-    esc_html(final_tbl), '</code>.</td></tr>',
-    '<tr><td>Ashley’s planned study cohort</td><td>',
-    format(n_ash, big.mark = ","),
-    if (!is.na(ach_pct)) paste0(' (', ach_pct, '% of whole)') else '',
-    '</td><td>',
-    '1L treatment start (<code>LOT_LONG.LOT_START_DT</code> at ',
-    '<code>LOT_NUM=1</code>) &ge; ', esc_html(ELIGIBLE_1L_FROM),
-    '; no <code>', esc_html(BELA_TOKEN), '</code> exposure anywhere ',
-    '— excluded if the token appears in <code>LOT_BASE_MEDS</code> ',
-    'at <b>any</b> LOT_NUM <i>or</i> in ',
-    '<code>MAP_STACKED.MAP_MED_TYPE</code> (true any-exposure, ',
-    'covers belantamab claims that did not surface inside a base ',
-    'regimen string).',
-    '</td></tr>',
-    '</table>',
-    if (isTRUE(.CE_ENFORCED)) paste0(
-      '<p style="color:#1a7a3a;font-size:13px;margin-top:10px">',
-      '<b>Enforced here</b> (member_enrollment readable, or reused ',
-      'from <code>', esc_html(IE_COHORT_VIEW), '</code>):</p>',
-      '<ul style="color:#1a7a3a;font-size:13px;margin-top:0">',
-      '<li>CE &ge; ', CE_PRE_LOT_DAYS, ' days before 1L treatment ',
-      'start (gap &le; ', CE_GAP_DAYS, ' d).</li>',
-      '<li>CE &ge; ', CE_PRE_MM_DAYS, ' days before MM diagnosis ',
-      'date (gap &le; ', CE_GAP_DAYS, ' d).</li>',
-      '<li>CE &ge; ', CE_POST_LOT_DAYS, ' days <b>post-LOT1 ',
-      'follow-up</b> ',
-      if (APPLY_FU_EXCL)
-        paste0('<b>applied as exclusion</b> (',
-               'APPLY_3MO_FU_EXCL=TRUE).')
-      else
-        '<b>checked but not excluded</b> (spec retains patients with limited FU; set <code>APPLY_3MO_FU_EXCL=TRUE</code> to switch to a hard exclusion).',
-      '</li></ul>')
-    else paste0(
-      '<p style="color:#b06000;font-size:13px;margin-top:10px">',
-      '<b>CE windows NOT applied</b> - member_enrollment not readable ',
-      'and no <code>', esc_html(IE_COHORT_VIEW), '</code> view found. ',
-      'Run <code>lot_ie_cohort.R</code> first (it materialises that ',
-      'view) or set <code>MEMBER_ENROLLMENT_TBL</code>, then rerun.</p>'),
-    '<p style="color:#b06000;font-size:13px;margin-top:10px">',
-    '<b>Remaining limitations (not silently dropped):</b></p>',
-    '<ul style="color:#b06000;font-size:13px;margin-top:0">',
-    '<li>Adult age &ge; 18 at MM-dx calendar year - applied upstream ',
-    'in the base cohort but not re-checked here.</li>',
-    '<li><b>Baseline-window recalc</b>: the Ashley cohort starts ',
-    'from the delivered <code>ELIG_COH_FINAL</code>, whose ',
-    'other-malignancy / pregnancy / no-baseline-MM-therapy ',
-    'exclusions were applied against the pipeline\'s baseline window ',
-    '(<code>baseline_days = 183</code>, anchored to MM-dx ',
-    '<code>INDEX_DATE</code>), NOT Julia\'s "12 months before 1L ',
-    'treatment start" window. To apply the Ashley window run ',
-    '<code>lot_baseline_recalc.R</code> first - it materialises ',
-    '<code>BASELINE_FLAGS_LOT1</code> and <code>lot_ie_cohort.R</code> ',
-    'automatically joins to it (excludes patients with ',
-    '<code>ANY_BASELINE_EXCL_LOT1 = 1</code>) when the view exists. ',
-    'IP-vs-OP setting derivation in the helper uses POS/TOS_CD only ',
-    '(no confinement); slight under-detection of pure-confinement IP ',
-    'claims relative to the pipeline.</li>',
-    '</ul>',
-    '<p style="color:#555;font-size:13px">',
-    'Note: <code>ELIG_COH_FINAL.INDEX_DATE</code> is the MM diagnosis ',
-    'qualifying date (<code>pipeline_steps.R:356</code>), NOT the 1L ',
-    'treatment start, so Julia\'s 2017-01-01 cutoff is correctly ',
-    'applied against <code>LOT1.LOT_START_DT</code> ',
-    '(<code>lot_program.R:686</code>) instead.',
-    '</p></div>'),
-    section = "COHORT_DEF",
-    title = "Cohort definitions + Ashley criterion limits")
+    '<div style="font-family:system-ui;padding:14px">',
+    '<h3>Sequential SCT/CART events (Ashley cohort)</h3>',
+    '<table border="1" cellpadding="6" style="border-collapse:collapse;font-size:13px">',
+    '<tr style="background:#f0f3f5"><th>Metric</th><th>n patients</th></tr>',
+    '<tr><td>&ge; 1 event</td><td>',  format(nrow(seq_df), big.mark = ","), '</td></tr>',
+    '<tr><td>&ge; 2 events</td><td>', format(sum(seq_df$n_events >= 2), big.mark = ","), '</td></tr>',
+    '<tr><td>&ge; 3 events</td><td>', format(sum(seq_df$n_events >= 3), big.mark = ","), '</td></tr>',
+    '</table></div>'),
+    section = section, title = "Summary")
+
+  pat_count <- aggregate(PATID ~ sequence, data = seq_df, FUN = length)
+  names(pat_count)[2] <- "n_patients"
+  pat_count <- pat_count[order(-pat_count$n_patients), , drop = FALSE]
+  save_table(pat_count, section = section,
+             title = "Patients by SCT/CART sequence")
+
+  pairs <- do.call(rbind, lapply(by_p, function(d) {
+    if (nrow(d) < 2) return(NULL)
+    data.frame(from = d$event_type[-nrow(d)],
+               to   = d$event_type[-1],
+               PATID = d$PATID[-1], stringsAsFactors = FALSE)
+  }))
+  if (!is.null(pairs) && nrow(pairs) > 0) {
+    lc <- aggregate(PATID ~ from + to, data = pairs,
+                    FUN = function(x) length(unique(x)))
+    names(lc)[3] <- "n_patients"
+    fu_sankey(paste0("From: ", lc$from), paste0("To: ", lc$to),
+              lc$n_patients, section,
+              "Consecutive SCT/CART transitions")
+    save_table(lc, section, "Transition counts")
+  }
 }
 
 main <- function() {
@@ -7940,54 +7543,40 @@ main <- function() {
   lot_long  <- wrk("LOT_LONG")
   map_tbl   <- wrk("MAP_STACKED")
   final_tbl <- wrk(cfg$input_cohort_table)
-  enr_tbl   <- cdm_src(ENR_TBL_NAME)
+  enr_tbl   <- cdm_src("member_enrollment")
 
-  ok <- function(tbl) isTRUE(tryCatch(
-    nrow(db_q(con, glue("SELECT 1 FROM {tbl} LIMIT 1"))) >= 0,
+  ok <- function(t) isTRUE(tryCatch(
+    nrow(db_q(con, glue("SELECT 1 FROM {t} LIMIT 1"))) >= 0,
     error = function(e) FALSE))
-  if (!ok(lot_long))  stop("Cannot read ", lot_long, ". Run the pipeline first.")
-  if (!ok(final_tbl)) stop("Cannot read ", final_tbl, " for cohort definition.")
-  if (!ok(map_tbl))   log_msg("WARN: ", map_tbl,
-                              " not readable; journey examples will be skipped.")
+  if (!ok(lot_long))  stop("Cannot read ", lot_long)
+  if (!ok(final_tbl)) stop("Cannot read ", final_tbl)
+  if (!ok(enr_tbl))   stop("Cannot read ", enr_tbl,
+                            " - Ashley CE windows require member_enrollment.")
+  have_map <- ok(map_tbl)
+  if (!have_map) log_msg("WARN: ", map_tbl,
+                          " not readable; belantamab check falls back to LOT_BASE_MEDS only.")
+
+  log_msg("Building cohort table ", wrk(COHORT_TABLE))
+  build_cohort(con, lot_long, final_tbl, map_tbl, enr_tbl, have_map)
+
+  log_msg("Computing attrition...")
+  att <- cohort_attrition(con, lot_long, final_tbl, map_tbl, enr_tbl, have_map)
+  log_msg(sprintf("  LOT1=%s  +1L>=2017=%s  +noBELA=%s  +CE-LOT1=%s  +CE-MMdx=%s  +FU-3mo=%s",
+                  att$n_lot1[1],  att$n_dt[1], att$n_nobela[1],
+                  att$n_ce_lot1[1], att$n_ce_mmdx[1], att$n_final[1]))
 
   dashboard_items <<- list()
-
-  n_ash <- build_ashley_cohort(con, lot_long, map_tbl, final_tbl, enr_tbl,
-                                 have_map = ok(map_tbl),
-                                 have_enr = ok(enr_tbl))
-  log_msg("Ashley cohort size: ", n_ash,
-          if (isTRUE(.CE_ENFORCED)) " (full IE criteria incl. CE windows)"
-          else " (CE windows NOT applied - see cohort card)")
-
-  cohorts <- list(
-    list(label = "whole cohort",         section_suffix = "ALL",
-         is_ashley = FALSE),
-    list(label = "Ashley planned study", section_suffix = "ASH",
-         is_ashley = TRUE)
-  )
-
-  build_cohort_def_card(con, lot_long, final_tbl, n_ash)
-  build_steroid_card()
-
-  cat_data <- load_category_lookup()
-
-  for (cd in cohorts) {
-    if (ok(map_tbl)) build_journeys(con, lot_long, map_tbl, cd)
-    for (n in 1:4) build_focused_pair(con, lot_long, n, n + 1L, cd)
-    build_category_for_cohort(con, lot_long, cd, cat_data)
-  }
+  build_cohort_card(att, att$n_lot1[1])
+  for (n in 1:4) build_focused_pair(con, lot_long, n, n + 1L)
+  build_categories(con, lot_long)
+  build_sct_cart(con, lot_long)
 
   build_dashboard(
-    out_name     = "julia_jun08_qs_dashboard.html",
-    header_title = "MM LOT &mdash; Julia June 08 follow-up",
-    header_sub   = paste0("Cohort defs &bull; Steroid scoping &bull; ",
-                          "Journeys (whole / Ashley) &bull; ",
-                          "Focused LOT pairs &bull; ",
-                          "By category &nbsp;&mdash;&nbsp; ",
-                          "pick a Category above")
+    out_name     = "julia_june5_dashboard.html",
+    header_title = "MM LOT &mdash; Julia June 5 follow-up",
+    header_sub   = "Cohort &bull; LOT1&rarr;5 focused &bull; By category &bull; SCT/CART"
   )
-  log_msg("June 08 follow-up dashboard written to ",
-          file.path(cfg$output_dir, "julia_jun08_qs_dashboard.html"))
+  log_msg("Wrote ", file.path(cfg$output_dir, "julia_june5_dashboard.html"))
 }
 
 if (!interactive()) main()
@@ -19277,1620 +18866,6 @@ main <- function() {
 if (!interactive()) {
   main()
 }
-
-
-================================================================================
-FILE: apr_30_2026/lot_baseline_recalc.R
-================================================================================
-
-#!/usr/bin/env Rscript
-# Baseline-window recalc helper - apply Julia's 12-mo-pre-LOT1 window to
-# the three pipeline baseline-exclusion flags WITHOUT editing the
-# pipeline. Materialises a thin work-schema view BASELINE_FLAGS_LOT1
-# with per-patient recomputed flags:
-#
-#   PATID
-#   OTHER_MALIGN_FLAG_LOT1    1 if >=1 IP or >=2 OP-within-30d cancer
-#                              dx (other than MM) in [LOT1-bsl, LOT1-1]
-#                              for ANY tumor group in cl_other_malig.
-#   PREGNANT_FLAG_LOT1        1 if >=1 pregnancy event (DX / HCPCS /
-#                              ICD-PROC / RVNU_CD) in same window.
-#   MM_BL_THERAPY_FLAG_LOT1   1 if >=1 MM ONCOLOGY THERAPY event
-#                              (rx NDC OR medical-claim HCPCS) matches
-#                              the MMA codelist in same window. Note:
-#                              MM diagnosis events (203.0x / C90.0x)
-#                              are NOT used - Julia's IE row is about
-#                              prior treatment exposure, not prior
-#                              diagnosis. Matches pipeline_steps.R
-#                              MM_THERAPY_BASELINE step (line 703).
-#   ANY_BASELINE_EXCL_LOT1    OR of the three flags.
-#
-# The pipeline currently computes these against the 183-day window
-# anchored to MM-dx INDEX_DATE (pipeline_steps.R: 17_mm_baseline_evidence_flag,
-# 20_pregnancy_flag, 22_other_malig_flag). Julia's June 5 IE criteria
-# want them against the 12-month window pre-LOT1 start, so a patient
-# is excluded only if they had the offending event in the year before
-# their first MM treatment - not in the half-year before their MM dx.
-#
-# Run AFTER the parent pipeline so MM_DX_EVENTS_ALL is persisted:
-#   Rscript apr_30_2026/lot_baseline_recalc.R
-#
-# Defaults: BSL_DAYS=365, GAP/IP-OP rules identical to pipeline. Knobs:
-#   BSL_DAYS_LOT1, CODELIST_DIR (parent of cl_other_malig / cl_preg /
-#   cl_mma_codelist CSVs), MEDICAL_TBL / MED_DIAG_TBL / MED_PROC_TBL /
-#   RX_TBL (override if your CDM uses non-default names).
-#
-# IMPORTANT scope notes:
-#   - Setting classification (IP vs OP) is derived inline from
-#     medical.POS / TOS_CD only. The pipeline's other_malig step also
-#     consults a `confinement` temp view; that view is not persisted
-#     and we do not rebuild it here. The effect is a SMALL
-#     under-detection of IP claims (claims with confinement records
-#     but no POS / TOS hit). Document and accept; if material, run
-#     the helper inside a pipeline session where `confinement` exists.
-#   - MM-baseline-therapy is rebuilt INLINE here (mm_dx_events_all is
-#     a temp view per pipeline_steps.R:208, NOT persisted, so reading
-#     it across sessions would fail). The inline CTE replicates the
-#     STRICT MM-dx detection from pipeline_steps.R:204-258 (any
-#     med_diagnosis row whose normalised code starts with 2030
-#     [ICD-9] or C900 [ICD-10]).
-#   - Cancer dx must NOT be an MM code (203.0x / C90.0x). The
-#     cl_other_malig codelist already encodes this exclusion in the
-#     pipeline. We rely on the same codelist here.
-#   - The IP/OP setting derivation pre-aggregates the `medical` table
-#     to claim grain (matches pipeline step 07a's
-#     `max(POS), max(TOS_CD)` GROUP BY on the 5-column claim key).
-#     Without this pre-aggregation a multi-line claim Cartesian-
-#     explodes the dx-event rows and the outpatient-pair logic
-#     fabricates false 30-day pairs from duplicates of the same
-#     physical claim.
-
-.script_dir <- local({
-  args <- commandArgs(trailingOnly = FALSE)
-  file_arg <- grep("^--file=", args, value = TRUE)
-  if (length(file_arg) > 0) {
-    return(dirname(normalizePath(sub("^--file=", "", file_arg[1]))))
-  }
-  for (i in seq_len(sys.nframe())) {
-    ofile <- tryCatch(sys.frame(i)$ofile, error = function(e) NULL)
-    if (!is.null(ofile)) return(dirname(normalizePath(ofile)))
-  }
-  getwd()
-})
-
-source_dir <- file.path(.script_dir, "R")
-if (file.exists(file.path(source_dir, "load_inputs.R"))) {
-  source(file.path(source_dir, "load_inputs.R"))
-  load_pipeline_inputs(c(.script_dir, dirname(.script_dir)))
-}
-source(file.path(source_dir, "config_lot.R"))
-source(file.path(source_dir, "db_utils_lot.R"))
-
-VIEW_BASE     <- Sys.getenv("BASELINE_FLAGS_VIEW", unset = "BASELINE_FLAGS_LOT1")
-BSL_DAYS      <- as.integer(Sys.getenv("BSL_DAYS_LOT1", unset = "365"))
-OP_PAIR_DAYS  <- as.integer(Sys.getenv("OP_PAIR_DAYS",  unset = "30"))
-CL_DIR        <- Sys.getenv("CODELIST_DIR",
-                             unset = if (!is.null(cfg$codelist_dir))
-                               cfg$codelist_dir else "/mnt/code/codelist")
-CL_OTHER      <- Sys.getenv("CL_OTHER_MALIG_CSV",
-                             unset = file.path(CL_DIR, "other_malig.csv"))
-CL_PREG       <- Sys.getenv("CL_PREG_CSV",
-                             unset = file.path(CL_DIR, "pregnancy.csv"))
-CL_MM_THERAPY <- Sys.getenv("CL_MM_THERAPY_CSV",
-                             unset = file.path(CL_DIR, "cl_mma_codelist.csv"))
-if (anyNA(c(BSL_DAYS, OP_PAIR_DAYS)))
-  stop("BSL_DAYS_LOT1 and OP_PAIR_DAYS must be integers.")
-
-# ---- helpers ------------------------------------------------------------
-read_csv_robust <- function(path) {
-  if (!file.exists(path)) return(NULL)
-  tryCatch(read.csv(path, stringsAsFactors = FALSE, check.names = FALSE,
-                    na.strings = c("", "NA")),
-           error = function(e) {
-             log_msg("Could not read ", path, ": ", conditionMessage(e))
-             NULL })
-}
-
-# Materialise a codelist CSV as a temp view named `vw`. The CSV must
-# have at minimum a `code` column; `code_type` is preserved when present.
-csv_to_view <- function(con, path, vw, normalise_code = TRUE) {
-  df <- read_csv_robust(path)
-  if (is.null(df) || nrow(df) == 0) {
-    log_msg("  ", vw, ": codelist ", path, " missing or empty - flag will read NA.")
-    db_exec(con, glue(
-      "CREATE OR REPLACE TEMPORARY VIEW {vw} AS ",
-      "SELECT cast('' as string) AS code_type, ",
-      "       cast('' as string) AS code,      ",
-      "       cast('' as string) AS dx,        ",
-      "       cast('' as string) AS icd_family,",
-      "       cast('' as string) AS tumor_group WHERE 1 = 0"))
-    return(0L)
-  }
-  nm <- tolower(names(df))
-  pick <- function(...) {
-    cands <- c(...); i <- which(nm %in% cands)[1]; if (is.na(i)) NA_character_ else names(df)[i]
-  }
-  code_col <- pick("code", "dx", "diag", "icd", "ndc", "hcpcs", "proc")
-  type_col <- pick("code_type", "codetype", "type")
-  tg_col   <- pick("tumor_group", "tumorgroup", "group")
-  fam_col  <- pick("icd_family", "icdfamily", "family")
-  dx_col   <- pick("dx")
-  if (is.na(code_col)) {
-    log_msg("  ", vw, ": ", path, " has no recognisable code column.")
-    return(0L)
-  }
-  # Local DataFrame -> temp view via createOrReplaceTempView; use a
-  # CREATE OR REPLACE VIEW from a VALUES clause for portability.
-  rows <- vapply(seq_len(nrow(df)), function(i) {
-    code <- trimws(as.character(df[[code_col]][i]))
-    if (normalise_code) code <- toupper(gsub("[^A-Za-z0-9]", "", code))
-    if (!nzchar(code)) return(NA_character_)
-    ty <- if (!is.na(type_col)) trimws(as.character(df[[type_col]][i])) else ""
-    tg <- if (!is.na(tg_col))   trimws(as.character(df[[tg_col]][i]))   else ""
-    fa <- if (!is.na(fam_col))  trimws(as.character(df[[fam_col]][i]))  else ""
-    dx <- if (!is.na(dx_col))   trimws(as.character(df[[dx_col]][i]))   else code
-    # Single-quote escape
-    sq <- function(x) gsub("'", "''", x, fixed = TRUE)
-    sprintf("('%s','%s','%s','%s','%s')",
-            sq(ty), sq(code), sq(sq(dx)), sq(fa), sq(tg))
-  }, character(1))
-  rows <- rows[!is.na(rows)]
-  if (length(rows) == 0) {
-    log_msg("  ", vw, ": ", path, " parsed but produced no rows.")
-    return(0L)
-  }
-  # Spark's VALUES has a row-count limit; chunk if needed (~50k safe).
-  CHUNK <- 50000L
-  parts <- split(rows, ceiling(seq_along(rows) / CHUNK))
-  union_sql <- paste(vapply(parts, function(pr) {
-    paste0("SELECT * FROM VALUES ", paste(pr, collapse = ","),
-           " AS t(code_type, code, dx, icd_family, tumor_group)")
-  }, character(1)), collapse = " UNION ALL ")
-  db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW {vw} AS {union_sql}"))
-  length(rows)
-}
-
-main <- function() {
-  stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
-  con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn,
-                        pwd = cfg$pwd, timeout = 120)
-  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-
-  lot_long  <- wrk("LOT_LONG")
-  med_diag  <- cdm_src(cfg$tbl_med_diag)           # raw CDM
-  medical   <- cdm_src(cfg$tbl_medical)
-  med_proc  <- cdm_src(cfg$tbl_med_proc)
-  view_name <- wrk(VIEW_BASE)
-
-  ok <- function(tbl) isTRUE(tryCatch(
-    nrow(db_q(con, glue("SELECT 1 FROM {tbl} LIMIT 1"))) >= 0,
-    error = function(e) FALSE))
-  if (!ok(lot_long)) stop("Cannot read ", lot_long, ". Run the pipeline first.")
-
-  # ---- Load codelists into temp views ---------------------------------
-  log_msg("Loading codelists from ", CL_DIR)
-  n_other <- csv_to_view(con, CL_OTHER, "_bl_other_malig_codes")
-  n_preg  <- csv_to_view(con, CL_PREG,  "_bl_preg_codes")
-  n_mm    <- csv_to_view(con, CL_MM_THERAPY, "_bl_mm_therapy_codes")
-  log_msg(sprintf("  codes loaded: other-malig=%d, pregnancy=%d, mm-therapy=%d",
-                  n_other, n_preg, n_mm))
-
-  log_msg("Building ", view_name,
-          " (window = [LOT1 - ", BSL_DAYS, ", LOT1 - 1])")
-  # CREATE OR REPLACE TABLE (not VIEW): the codelists below are
-  # SESSION temp views, and a persistent VIEW that references temp
-  # views is unusable across sessions (Spark / Databricks errors with
-  # CANNOT_READ_FROM_LOCAL_TEMP_VIEW). Materialising as a TABLE
-  # captures the row data at build time so lot_ie_cohort.R can read
-  # it in a separate Rscript session.
-  sql <- glue("
-    CREATE OR REPLACE TABLE {view_name} AS
-    WITH lot1 AS (
-      SELECT cast(PATID as string) AS PATID,
-             cast(LOT_START_DT as date) AS LOT1_DT,
-             cast(date_sub(LOT_START_DT, {BSL_DAYS}) as date) AS w_start,
-             cast(date_sub(LOT_START_DT, 1)          as date) AS w_end
-      FROM {lot_long}
-      WHERE LOT_NUM = 1 AND LOT_START_DT IS NOT NULL
-    ),
-    -- Pre-filter raw CDM to the union of all patients' baseline windows
-    -- so the joins below don't scan claims outside any window.
-    dx AS (
-      SELECT cast(d.PATID as string) AS PATID,
-             cast(d.FST_DT as date) AS event_dt,
-             d.CLMID, d.PAT_PLANID, d.LOC_CD, d.FST_DT,
-             CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9')
-                  THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
-             upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) AS code
-      FROM {med_diag} d
-      WHERE d.FST_DT IS NOT NULL AND d.DIAG IS NOT NULL
-    ),
-    hcpcs AS (
-      SELECT cast(m.PATID as string) AS PATID,
-             cast(m.FST_DT as date) AS event_dt,
-             upper(regexp_replace(m.PROC_CD, '[^A-Za-z0-9]', '')) AS code
-      FROM {medical} m
-      WHERE m.PROC_CD IS NOT NULL AND m.FST_DT IS NOT NULL
-    ),
-    icd_proc AS (
-      SELECT cast(p.PATID as string) AS PATID,
-             cast(p.FST_DT as date) AS event_dt,
-             CASE WHEN upper(p.ICD_FLAG) IN ('9','ICD9','ICD-9')
-                  THEN 'ICD9PROC' ELSE 'ICD10PROC' END AS code_type,
-             upper(regexp_replace(p.PROC, '[^A-Za-z0-9]', '')) AS code
-      FROM {med_proc} p
-      WHERE p.PROC IS NOT NULL AND p.FST_DT IS NOT NULL
-    ),
-    rev AS (
-      SELECT cast(m.PATID as string) AS PATID,
-             cast(m.FST_DT as date) AS event_dt,
-             upper(TRIM(m.RVNU_CD)) AS code
-      FROM {medical} m
-      WHERE m.RVNU_CD IS NOT NULL AND TRIM(m.RVNU_CD) <> ''
-        AND m.FST_DT IS NOT NULL
-    ),
-    -- Pre-aggregate medical to CLAIM grain (matches pipeline step 07a:
-    -- pipeline_steps.R:145-167) so multi-line claims do not Cartesian-
-    -- explode the dx join below.
-    mch AS (
-      SELECT cast(PATID as string) AS PATID,
-             PAT_PLANID, CLMID, FST_DT, LOC_CD,
-             max(POS)    AS POS,
-             max(TOS_CD) AS TOS_CD
-      FROM {medical}
-      WHERE FST_DT IS NOT NULL
-      GROUP BY PATID, PAT_PLANID, CLMID, FST_DT, LOC_CD
-    ),
-    -- IP/OP setting derived inline from POS + TOS_CD only (the
-    -- pipeline also uses a `confinement` temp view; not rebuilt here -
-    -- caveat documented in the header).
-    dx_settings AS (
-      SELECT d.*,
-             CASE WHEN m.POS IN ('21','51','61')
-                    OR m.TOS_CD IN ('FAC_IP.ACUTE','FAC_IP.REHSNF',
-                                    'PROF.INPVIS','FAC_IP.SNF')
-                  THEN 1 ELSE 0 END AS inpatient_flg
-      FROM dx d
-      LEFT JOIN mch m
-        ON d.PATID       =   m.PATID
-       AND d.CLMID       =   m.CLMID
-       AND d.FST_DT      =   m.FST_DT
-       AND d.PAT_PLANID <=> m.PAT_PLANID
-       AND d.LOC_CD     <=> m.LOC_CD
-    ),
-    -- Other-malig: cancer dx joined to cl_other_malig codelist.
-    -- inpatient dx in window OR 2+ outpatient dx within 30d (first in
-    -- window). MM codes are excluded by the codelist by construction.
-    om_dx AS (
-      SELECT dxs.PATID, dxs.event_dt, dxs.inpatient_flg, oc.tumor_group
-      FROM dx_settings dxs
-      INNER JOIN _bl_other_malig_codes oc
-        ON dxs.code = oc.dx AND dxs.icd_family = oc.icd_family
-    ),
-    om_ip AS (
-      SELECT l1.PATID, max(CASE WHEN om.inpatient_flg = 1
-                                  AND om.event_dt BETWEEN l1.w_start AND l1.w_end
-                                THEN 1 ELSE 0 END) AS ip_hit
-      FROM lot1 l1
-      LEFT JOIN om_dx om ON om.PATID = l1.PATID
-      GROUP BY l1.PATID
-    ),
-    om_op_pairs AS (
-      SELECT l1.PATID, om1.event_dt AS first_dt
-      FROM lot1 l1
-      JOIN om_dx om1 ON om1.PATID = l1.PATID AND om1.inpatient_flg = 0
-                   AND om1.event_dt BETWEEN l1.w_start AND l1.w_end
-      JOIN om_dx om2 ON om2.PATID = l1.PATID AND om2.inpatient_flg = 0
-                   AND om2.tumor_group = om1.tumor_group
-                   AND om2.event_dt > om1.event_dt
-                   AND datediff(om2.event_dt, om1.event_dt) <= {OP_PAIR_DAYS}
-    ),
-    om_op AS (
-      SELECT PATID, 1 AS op_hit FROM (SELECT DISTINCT PATID FROM om_op_pairs)
-    ),
-    -- Pregnancy: any DX / HCPCS / ICD-PROC / REV match in window.
-    preg_evts AS (
-      SELECT PATID, event_dt FROM dx
-      WHERE EXISTS (SELECT 1 FROM _bl_preg_codes p
-                    WHERE (p.code_type IN ('ICD9DIAG','ICD10DIAG')
-                           OR p.code_type = '')
-                      AND p.code = dx.code)
-      UNION ALL
-      SELECT PATID, event_dt FROM hcpcs
-      WHERE EXISTS (SELECT 1 FROM _bl_preg_codes p
-                    WHERE p.code_type = 'HCPCS' AND p.code = hcpcs.code)
-      UNION ALL
-      SELECT PATID, event_dt FROM icd_proc
-      WHERE EXISTS (SELECT 1 FROM _bl_preg_codes p
-                    WHERE p.code_type = icd_proc.code_type
-                      AND p.code = icd_proc.code)
-      UNION ALL
-      SELECT PATID, event_dt FROM rev
-      WHERE EXISTS (SELECT 1 FROM _bl_preg_codes p
-                    WHERE p.code_type = 'REV' AND p.code = rev.code)
-    ),
-    preg_hit AS (
-      SELECT l1.PATID, max(CASE
-        WHEN p.event_dt BETWEEN l1.w_start AND l1.w_end THEN 1 ELSE 0 END) AS f
-      FROM lot1 l1
-      LEFT JOIN preg_evts p ON p.PATID = l1.PATID
-      GROUP BY l1.PATID
-    ),
-    -- MM-baseline-therapy: any MM ONCOLOGY THERAPY event in window
-    -- (rx NDC OR medical-claim HCPCS that maps to the MMA codelist).
-    -- This is Julia's IE criterion ("Evidence of an MM oncology
-    -- therapy during the 12-month 1L baseline period"), NOT a prior
-    -- MM diagnosis check - those are different IE rows. Mirrors
-    -- pipeline_steps.R's MM_THERAPY_BASELINE step (line 703) which
-    -- scans MMA therapy events against the codelist, then
-    -- criteria_attrition.R filters MM_bl_agents = 0.
-    mm_therapy_evts AS (
-      SELECT cast(r.PATID as string) AS PATID,
-             cast(r.FILL_DT as date) AS event_dt
-      FROM {cdm_src(cfg$tbl_rx)} r
-      WHERE r.NDC IS NOT NULL AND r.FILL_DT IS NOT NULL
-        AND EXISTS (SELECT 1 FROM _bl_mm_therapy_codes c
-                    WHERE upper(c.code_type) IN ('NDC','')
-                      AND c.code = upper(regexp_replace(r.NDC, '[^A-Za-z0-9]', '')))
-      UNION ALL
-      SELECT cast(m.PATID as string) AS PATID,
-             cast(m.FST_DT as date) AS event_dt
-      FROM {medical} m
-      WHERE m.PROC_CD IS NOT NULL AND m.FST_DT IS NOT NULL
-        AND EXISTS (SELECT 1 FROM _bl_mm_therapy_codes c
-                    WHERE upper(c.code_type) IN ('HCPCS','')
-                      AND c.code = upper(regexp_replace(m.PROC_CD, '[^A-Za-z0-9]', '')))
-    ),
-    mm_hit AS (
-      SELECT l1.PATID,
-             max(CASE WHEN m.event_dt BETWEEN l1.w_start AND l1.w_end
-                       THEN 1 ELSE 0 END) AS f
-      FROM lot1 l1
-      LEFT JOIN mm_therapy_evts m ON m.PATID = l1.PATID
-      GROUP BY l1.PATID
-    )
-    SELECT l1.PATID,
-           coalesce(greatest(coalesce(om_ip.ip_hit, 0),
-                              coalesce(om_op.op_hit, 0)), 0)
-             AS OTHER_MALIGN_FLAG_LOT1,
-           coalesce(preg_hit.f, 0) AS PREGNANT_FLAG_LOT1,
-           coalesce(mm_hit.f, 0)   AS MM_BL_THERAPY_FLAG_LOT1,
-           CASE WHEN coalesce(om_ip.ip_hit,0)   = 1
-                  OR coalesce(om_op.op_hit,0)   = 1
-                  OR coalesce(preg_hit.f,0)     = 1
-                  OR coalesce(mm_hit.f,0)       = 1
-                THEN 1 ELSE 0 END AS ANY_BASELINE_EXCL_LOT1
-    FROM lot1 l1
-    LEFT JOIN om_ip    ON om_ip.PATID    = l1.PATID
-    LEFT JOIN om_op    ON om_op.PATID    = l1.PATID
-    LEFT JOIN preg_hit ON preg_hit.PATID = l1.PATID
-    LEFT JOIN mm_hit   ON mm_hit.PATID   = l1.PATID
-  ")
-  db_exec(con, sql)
-
-  # ---- Summary ------------------------------------------------------
-  s <- db_q(con, glue("
-    SELECT count(*) AS n_lot1,
-           sum(OTHER_MALIGN_FLAG_LOT1)  AS n_other_malig,
-           sum(PREGNANT_FLAG_LOT1)      AS n_pregnant,
-           sum(MM_BL_THERAPY_FLAG_LOT1) AS n_mm_bl_therapy,
-           sum(ANY_BASELINE_EXCL_LOT1)  AS n_any
-    FROM {view_name}"))
-  num <- function(x) suppressWarnings(as.numeric(x))
-  log_msg("Baseline recalc against [LOT1-", BSL_DAYS,
-          ", LOT1-1] - patients with each flag (LOT1 N=",
-          format(num(s$n_lot1[1]), big.mark = ","), "):")
-  log_msg(sprintf("  other malignancy : %s", format(num(s$n_other_malig[1]),  big.mark = ",")))
-  log_msg(sprintf("  pregnancy        : %s", format(num(s$n_pregnant[1]),     big.mark = ",")))
-  log_msg(sprintf("  MM baseline tx   : %s", format(num(s$n_mm_bl_therapy[1]),big.mark = ",")))
-  log_msg(sprintf("  ANY of the above : %s  (would be excluded under Ashley's 12-mo-pre-LOT1 rules)",
-                  format(num(s$n_any[1]), big.mark = ",")))
-  log_msg("Join to IE_COHORT_PATIDS via PATID and AND ANY_BASELINE_EXCL_LOT1 = 0",
-          " to get the fully-spec'd Ashley cohort.")
-}
-
-if (!interactive()) main()
-
-
-================================================================================
-FILE: apr_30_2026/lot_ce_sens_length.R
-================================================================================
-
-#!/usr/bin/env Rscript
-# Spec-compliance helper: emit LOT_BASE_LENGTH_CE_SENS without
-# editing the LOT2-5 base build.
-#
-#   Rscript lot_ce_sens_length.R
-#
-# The spec
-# (scripts/build_lot2_5_spec.py:504 - LOTN_BASE_LENGTH_CE_SENS) lists
-# the cohort-end-clamped LOT length as a required output column.
-# The LOT2-5 long-format build emits LOT_BASE_LENGTH and the CE-sens
-# end-date / end-reason variants (LOT_BASE_END_DT_CE_SENS,
-# LOT_BASE_END_REASON_CE_SENS) but never computed the parallel
-# length. lot_long_dashboard.R / downstream scripts therefore have
-# no way to expose CE-clamped duration.
-#
-# Rather than touching lot2_5_base.R (the user wants the existing
-# pipeline programs left alone), this script materialises a thin
-# work-schema VIEW that wraps LOT_LONG and adds the missing column
-# derived from already-persisted fields:
-#
-#   LOT_BASE_LENGTH_CE_SENS = datediff(LOT_BASE_END_DT_CE_SENS,
-#                                       LOT_START_DT) + 1
-#
-# The derivation is exact for every end-reason: when the reason is
-# DISCONTINUATION the LOT_LONG build sets LOT_BASE_END_DT =
-# LOT_BASE_DISCON_DT (so the CE-sens end date already captures the
-# discontinuation case), and when CE clamping triggered
-# LOT_BASE_END_DT_CE_SENS = ENDDATE_CE so the length is clamped.
-#
-# Idempotent: CREATE OR REPLACE VIEW. Safe to rerun any time after
-# the pipeline. View name overridable via LOT_LONG_PLUS_NAME.
-
-.script_dir <- local({
-  args <- commandArgs(trailingOnly = FALSE)
-  file_arg <- grep("^--file=", args, value = TRUE)
-  if (length(file_arg) > 0) {
-    return(dirname(normalizePath(sub("^--file=", "", file_arg[1]))))
-  }
-  for (i in seq_len(sys.nframe())) {
-    ofile <- tryCatch(sys.frame(i)$ofile, error = function(e) NULL)
-    if (!is.null(ofile)) return(dirname(normalizePath(ofile)))
-  }
-  getwd()
-})
-
-source_dir <- file.path(.script_dir, "R")
-if (file.exists(file.path(source_dir, "load_inputs.R"))) {
-  source(file.path(source_dir, "load_inputs.R"))
-  load_pipeline_inputs(c(.script_dir, dirname(.script_dir)))
-}
-source(file.path(source_dir, "config_lot.R"))
-source(file.path(source_dir, "db_utils_lot.R"))
-
-VIEW_BASE <- Sys.getenv("LOT_LONG_PLUS_NAME", unset = "LOT_LONG_PLUS")
-
-main <- function() {
-  stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
-  con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn,
-                        pwd = cfg$pwd, timeout = 120)
-  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-
-  lot_long  <- wrk("LOT_LONG")
-  view_name <- wrk(VIEW_BASE)
-  log_msg("Building ", view_name, " from ", lot_long,
-          " (adds LOT_BASE_LENGTH_CE_SENS per spec, no pipeline edit)")
-
-  cols <- tryCatch(db_q(con, glue("DESCRIBE TABLE {lot_long}")),
-                   error = function(e) NULL)
-  if (is.null(cols) || !"col_name" %in% names(cols)) {
-    stop("Cannot read ", lot_long,
-         ". Build LOT_LONG (run_pipeline.R / LOT2-5 stage) first.")
-  }
-  have <- toupper(trimws(cols$col_name))
-  for (req in c("LOT_BASE_END_DT_CE_SENS", "LOT_START_DT",
-                "LOT_BASE_LENGTH")) {
-    if (!req %in% have)
-      stop(lot_long, " is missing required column ", req,
-           "; rebuild LOT_LONG with the LOT2-5 stage first.")
-  }
-
-  db_exec(con, glue("
-    CREATE OR REPLACE VIEW {view_name} AS
-    SELECT
-      ll.*,
-      datediff(ll.LOT_BASE_END_DT_CE_SENS, ll.LOT_START_DT) + 1
-        AS LOT_BASE_LENGTH_CE_SENS
-    FROM {lot_long} ll
-  "))
-
-  qc <- db_q(con, glue("
-    SELECT
-      count(*)                                                AS total_rows,
-      sum(case when LOT_BASE_LENGTH_CE_SENS < LOT_BASE_LENGTH
-               then 1 else 0 end)                             AS n_ce_capped,
-      sum(case when LOT_BASE_LENGTH_CE_SENS = LOT_BASE_LENGTH
-               then 1 else 0 end)                             AS n_unchanged,
-      sum(case when LOT_BASE_LENGTH_CE_SENS IS NULL
-               then 1 else 0 end)                             AS n_null_length
-    FROM {view_name}
-  "))
-  log_msg(sprintf(
-    "Built %s | total=%s | CE-capped (LENGTH_CE_SENS<LENGTH)=%s | unchanged=%s | null=%s",
-    view_name,
-    format(as.numeric(qc$total_rows[1]),  big.mark = ","),
-    format(as.numeric(qc$n_ce_capped[1]), big.mark = ","),
-    format(as.numeric(qc$n_unchanged[1]), big.mark = ","),
-    format(as.numeric(qc$n_null_length[1]), big.mark = ",")))
-}
-
-if (!interactive()) main()
-
-
-================================================================================
-FILE: apr_30_2026/lot_fu_qs.R
-================================================================================
-
-#!/usr/bin/env Rscript
-# Focused MM LOT follow-up sankeys (Julia, "MM LOT FU Q's").
-#
-# ============================== SUPERSEDED ==============================
-# This is the May-22 response to Julia's first MM LOT FU Q's email.
-# Julia's June 5 follow-up changed two of the rules behind it:
-#   (a) journey/sankey examples must NOT show non-progressors -
-#       lot_fu_qs.R intentionally keeps the "(no LOTn)" retention
-#       bucket via LEFT JOIN, whereas julia_jun08_qs.R drops it via
-#       INNER JOIN (lines ~436-454 here vs ~441-475 there);
-#   (b) regimen-category source: lot_fu_qs.R reads CSV only;
-#       julia_jun08_qs.R also accepts .xlsx via readxl + provides
-#       the BUILTIN_ACRONYMS / steroid-strip / acronym-expansion
-#       four-tier match.
-# For Julia's current MM LOT analysis use apr_30_2026/julia_jun08_qs.R.
-# This script is retained for the retention/dropout view ("how many
-# patients stop after LOT_N") which is the legitimate use case for
-# the (no LOTn) bucket and is NOT replicated in julia_jun08_qs.R.
-# ========================================================================
-#
-#   Rscript lot_fu_qs.R
-#
-# Builds a SEPARATE single self-contained HTML dashboard
-# (lot_fu_qs_dashboard.html) from the persisted LOT_LONG with:
-#
-#   1. Focused LOT1->LOT2 sankey (Julia Q I.1). Top-N LOT1 regimens,
-#      then - among only those patients - the top-N LOT2 regimens they
-#      progressed to. The "(no LOT2)" bucket is shown separately and
-#      does NOT consume a top-N slot. Remainder real regimens are
-#      bucketed as "Other" so the total stays consistent.
-#   2. Same focused pattern for LOT2->LOT3, LOT3->LOT4, LOT4->LOT5
-#      (Julia Q I.2).
-#   3. Regimen-category sankeys (Julia Q I.3). Wired - when
-#      REGIMEN_CATEGORIES_CSV points to a regimen->category mapping it
-#      is loaded and LOT1->LOT5 sankeys are rendered with regimen
-#      strings collapsed to category labels. Until the MM Treatment
-#      Table for Protocol xlsx is finalised the section renders a
-#      clear placeholder explaining the expected CSV schema.
-#   4. Approval-status sankeys (Julia Q I.4) - placeholder pending an
-#      approval table (REGIMEN_APPROVALS_CSV); schema TBD with
-#      clinical because approval status varies by LOT and calendar
-#      year.
-#   5. Sequential SCT/CART events analysis (Julia Q II) - event-based,
-#      unioning all three places SCT/CART events live in LOT_LONG:
-#        (a) LOT_START_TYPE - SCT/CART starting a new LOT;
-#        (b) LOT_BASE_END_REASON - SCT/CART ending a LOT (event date
-#            = LOT_BASE_END_DT + 1 per lot2_5_base.R's end-date rule),
-#            so terminal SCTs with no next LOT are still captured;
-#        (c) LOT_TX_AUTO_DT_1 / LOT_TX_AUTO_DT_2 - in-LOT AUTOs.
-#      Deduped on (PATID, event_dt, event_type) and ordered by date.
-#
-# Reads only the persisted work-schema LOT_LONG; builds nothing; safe
-# to run any time after the cohort+LOT pipeline has completed.
-
-.script_dir <- local({
-  args <- commandArgs(trailingOnly = FALSE)
-  file_arg <- grep("^--file=", args, value = TRUE)
-  if (length(file_arg) > 0) {
-    return(dirname(normalizePath(sub("^--file=", "", file_arg[1]))))
-  }
-  for (i in seq_len(sys.nframe())) {
-    ofile <- tryCatch(sys.frame(i)$ofile, error = function(e) NULL)
-    if (!is.null(ofile)) return(dirname(normalizePath(ofile)))
-  }
-  getwd()
-})
-
-source_dir <- file.path(.script_dir, "R")
-if (file.exists(file.path(source_dir, "load_inputs.R"))) {
-  source(file.path(source_dir, "load_inputs.R"))
-  load_pipeline_inputs(c(.script_dir, dirname(.script_dir)))
-}
-source(file.path(source_dir, "config_lot.R"))
-source(file.path(source_dir, "db_utils_lot.R"))
-source(file.path(source_dir, "dashboard_lot.R"))
-
-TOP_N <- as.integer(Sys.getenv("FOCUSED_SANKEY_TOP_N", unset = "10"))
-if (is.na(TOP_N) || TOP_N < 1) TOP_N <- 10L
-
-# Local sankey helper - mirrors lot_long_dashboard.R's make_sankey but
-# accepts the dashboard section/title rather than hard-coding "SANKEY".
-fu_sankey <- function(src_lab, tgt_lab, value, section, title) {
-  if (!has_plotly || length(value) == 0) return(invisible())
-  nodes <- unique(c(src_lab, tgt_lab))
-  idx   <- setNames(seq_along(nodes) - 1L, nodes)
-  sk <- tryCatch(
-    plotly::plot_ly(
-      type = "sankey", orientation = "h", arrangement = "snap",
-      node = list(label = nodes, pad = 14, thickness = 16,
-                  color = "#2E86AB",
-                  line  = list(color = "white", width = 0.5)),
-      link = list(source = unname(idx[src_lab]),
-                  target = unname(idx[tgt_lab]),
-                  value  = as.numeric(value),
-                  color  = "rgba(46,134,171,0.30)")
-    ) |>
-      plotly::layout(title = list(text = title, font = list(size = 15)),
-                     font  = list(size = 11),
-                     margin = list(l = 10, r = 10, t = 50, b = 10),
-                     paper_bgcolor = "white") |>
-      plotly::config(displayModeBar = TRUE, displaylogo = FALSE),
-    error = function(e) {
-      log_msg("  INFO: sankey '", title, "' skipped (",
-              conditionMessage(e), ")")
-      NULL
-    })
-  if (!is.null(sk)) add_to_dashboard(sk, section = section, title = title)
-}
-
-build_focused_pair <- function(con, lot_long, n_from, n_to) {
-  section <- paste0("LOT", n_from, "_TO_LOT", n_to)
-  log_msg("Focused pair: LOT", n_from, " -> LOT", n_to)
-
-  pairs <- db_q(con, glue("
-    WITH a AS (
-      SELECT cast(PATID as string) AS PATID,
-             trim(LOT_BASE_MEDS)   AS reg_from
-      FROM {lot_long}
-      WHERE LOT_NUM = {n_from}
-        AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
-    ),
-    b AS (
-      SELECT cast(PATID as string) AS PATID,
-             trim(LOT_BASE_MEDS)   AS reg_to
-      FROM {lot_long}
-      WHERE LOT_NUM = {n_to}
-        AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
-    )
-    SELECT a.PATID, a.reg_from, b.reg_to
-    FROM a LEFT JOIN b ON a.PATID = b.PATID
-  "))
-
-  if (nrow(pairs) == 0) {
-    add_html_card(paste0(
-      '<div style="font-family:system-ui;padding:14px">',
-      '<h3>LOT', n_from, ' -> LOT', n_to, '</h3>',
-      '<p style="color:#555">No patients with a LOT', n_from,
-      ' regimen.</p></div>'),
-      section = section,
-      title = paste0("LOT", n_from, " -> LOT", n_to, " (no data)"))
-    return(invisible())
-  }
-
-  # Distinct-patient counts for source regimens; take top-N.
-  src_counts <- aggregate(PATID ~ reg_from, data = pairs,
-                          FUN = function(x) length(unique(x)))
-  names(src_counts)[2] <- "n_patients"
-  src_counts <- src_counts[order(-src_counts$n_patients), , drop = FALSE]
-  top_from <- head(src_counts$reg_from, TOP_N)
-
-  sub <- pairs[pairs$reg_from %in% top_from, , drop = FALSE]
-  no_lot_label <- paste0("(no LOT", n_to, ")")
-  sub$reg_to_label <- ifelse(is.na(sub$reg_to) | sub$reg_to == "",
-                              no_lot_label,
-                              as.character(sub$reg_to))
-
-  # Rank only the real LOTn_to regimens for the top-N; the "(no LOTn)"
-  # bucket is always shown separately so it does not consume a top-N
-  # slot (otherwise non-progression can edge a real regimen off the
-  # ranking and the chart no longer reads as "top 10 LOT2 regimens").
-  tgt_counts <- aggregate(PATID ~ reg_to_label, data = sub,
-                          FUN = function(x) length(unique(x)))
-  names(tgt_counts)[2] <- "n_patients"
-  tgt_counts <- tgt_counts[order(-tgt_counts$n_patients), , drop = FALSE]
-  tgt_real <- tgt_counts[tgt_counts$reg_to_label != no_lot_label,
-                          , drop = FALSE]
-  top_to <- head(tgt_real$reg_to_label, TOP_N)
-
-  sub$tgt_node <- ifelse(sub$reg_to_label %in% top_to, sub$reg_to_label,
-                  ifelse(sub$reg_to_label == no_lot_label, no_lot_label,
-                  "Other"))
-
-  links <- aggregate(PATID ~ reg_from + tgt_node, data = sub,
-                     FUN = function(x) length(unique(x)))
-  names(links)[3] <- "n_patients"
-  links <- links[order(-links$n_patients), , drop = FALSE]
-
-  # Prefix labels with the LOT number so the sankey reads clearly when
-  # the same regimen appears as both a source and a target.
-  src_lab <- paste0("L", n_from, ": ", links$reg_from)
-  tgt_lab <- paste0("L", n_to, ": ", links$tgt_node)
-
-  fu_sankey(src_lab, tgt_lab, links$n_patients,
-            section = section,
-            title   = paste0("LOT", n_from, " -> LOT", n_to,
-                             " (focused: top ", TOP_N,
-                             " sources, top ", TOP_N,
-                             " targets, remainder = Other)"))
-
-  tbl_df <- links
-  names(tbl_df) <- c(paste0("LOT", n_from, "_regimen"),
-                     paste0("LOT", n_to, "_regimen"),
-                     "n_patients")
-  save_table(tbl_df, section = section,
-             title = paste0("LOT", n_from, " -> LOT", n_to,
-                            " transition counts"))
-}
-
-esc_html <- function(s) {
-  s <- gsub("&", "&amp;", as.character(s), fixed = TRUE)
-  s <- gsub("<", "&lt;",  s, fixed = TRUE)
-  gsub(">", "&gt;", s, fixed = TRUE)
-}
-
-load_category_lookup <- function() {
-  cat_csv <- Sys.getenv("REGIMEN_CATEGORIES_CSV", unset = "")
-  if (!nzchar(cat_csv) || !file.exists(cat_csv)) return(NULL)
-  df <- tryCatch(read.csv(cat_csv, stringsAsFactors = FALSE,
-                          check.names = FALSE),
-                 error = function(e) NULL)
-  if (is.null(df) || nrow(df) == 0)
-    return(structure(list(), bad = TRUE, path = cat_csv))
-  ncols <- tolower(names(df))
-  reg_i <- which(ncols %in% c("regimen", "lot_base_meds", "med", "meds",
-                              "treatment", "regimen_name"))[1]
-  cat_i <- which(ncols %in% c("category", "regimen_category",
-                              "treatment_category", "class"))[1]
-  if (is.na(reg_i) || is.na(cat_i))
-    return(structure(list(), bad = TRUE, path = cat_csv,
-                     cols = paste(names(df), collapse = ", ")))
-  list(
-    path   = cat_csv,
-    lookup = setNames(trimws(as.character(df[[cat_i]])),
-                      trimws(as.character(df[[reg_i]])))
-  )
-}
-
-build_category_pair <- function(con, lot_long, n_from, n_to, lookup) {
-  section <- "BY_CATEGORY"
-  pairs <- db_q(con, glue("
-    WITH a AS (
-      SELECT cast(PATID as string) AS PATID,
-             trim(LOT_BASE_MEDS)   AS reg_from
-      FROM {lot_long}
-      WHERE LOT_NUM = {n_from}
-        AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
-    ),
-    b AS (
-      SELECT cast(PATID as string) AS PATID,
-             trim(LOT_BASE_MEDS)   AS reg_to
-      FROM {lot_long}
-      WHERE LOT_NUM = {n_to}
-        AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
-    )
-    SELECT a.PATID, a.reg_from, b.reg_to
-    FROM a LEFT JOIN b ON a.PATID = b.PATID
-  "))
-  if (nrow(pairs) == 0) return(invisible())
-
-  uncat        <- "(uncategorised)"
-  no_lot_label <- paste0("(no LOT", n_to, ")")
-  pairs$cat_from <- ifelse(pairs$reg_from %in% names(lookup),
-                            unname(lookup[pairs$reg_from]), uncat)
-  pairs$cat_to <- ifelse(is.na(pairs$reg_to) | pairs$reg_to == "",
-                          no_lot_label,
-                  ifelse(pairs$reg_to %in% names(lookup),
-                          unname(lookup[pairs$reg_to]), uncat))
-
-  links <- aggregate(PATID ~ cat_from + cat_to, data = pairs,
-                     FUN = function(x) length(unique(x)))
-  names(links)[3] <- "n_patients"
-  links <- links[order(-links$n_patients), , drop = FALSE]
-
-  src_lab <- paste0("L", n_from, ": ", links$cat_from)
-  tgt_lab <- paste0("L", n_to, ": ", links$cat_to)
-  fu_sankey(src_lab, tgt_lab, links$n_patients,
-            section = section,
-            title   = paste0("LOT", n_from, " -> LOT", n_to,
-                             " by regimen category"))
-
-  tbl_df <- links
-  names(tbl_df) <- c(paste0("LOT", n_from, "_category"),
-                     paste0("LOT", n_to, "_category"),
-                     "n_patients")
-  save_table(tbl_df, section = section,
-             title = paste0("LOT", n_from, " -> LOT", n_to,
-                            " category-transition counts"))
-}
-
-build_category_sankeys <- function(con, lot_long) {
-  section <- "BY_CATEGORY"
-  cat_csv <- Sys.getenv("REGIMEN_CATEGORIES_CSV", unset = "")
-
-  if (!nzchar(cat_csv) || !file.exists(cat_csv)) {
-    add_html_card(paste0(
-      '<div style="font-family:system-ui;padding:14px">',
-      '<h3>Regimen-category sankeys (placeholder)</h3>',
-      '<p style="color:#555">Per Julia: pending the ',
-      '<em>MM Treatment Table for Protocol.xlsx</em> (final version ',
-      'forthcoming). Save it as a 2-column CSV with headers ',
-      '<code>regimen</code> and <code>category</code> (other accepted ',
-      'pairs: <code>lot_base_meds</code> / ',
-      '<code>regimen_category</code>), then set ',
-      '<code>REGIMEN_CATEGORIES_CSV</code> to its path and rerun. ',
-      'LOT1-&gt;LOT5 category sankeys will then appear here ',
-      'automatically.</p></div>'),
-      section = section, title = "Regimen categories (pending xlsx)")
-    return(invisible())
-  }
-
-  cat_data <- load_category_lookup()
-  if (is.null(cat_data) || isTRUE(attr(cat_data, "bad"))) {
-    found_cols <- if (!is.null(attr(cat_data, "cols")))
-      attr(cat_data, "cols") else "(none)"
-    add_html_card(paste0(
-      '<div style="font-family:system-ui;padding:14px">',
-      '<h3>Regimen-category CSV could not be parsed</h3>',
-      '<p style="color:#555">Found <code>',
-      esc_html(cat_csv), '</code> but could not locate a ',
-      '<code>regimen</code>/<code>category</code> column pair. ',
-      'Columns seen: <code>', esc_html(found_cols), '</code>. ',
-      'Expected one header from <code>regimen</code> / ',
-      '<code>lot_base_meds</code> / <code>med</code> / <code>meds</code> ',
-      'and one from <code>category</code> / ',
-      '<code>regimen_category</code> / <code>treatment_category</code>.',
-      '</p></div>'),
-      section = section, title = "Regimen categories (bad CSV)")
-    return(invisible())
-  }
-
-  log_msg("Regimen categories: loaded ",
-          length(cat_data$lookup), " mappings from ", cat_data$path)
-  add_html_card(paste0(
-    '<div style="font-family:system-ui;padding:14px">',
-    '<h3>Regimen-category sankeys</h3>',
-    '<p style="color:#555;font-size:13px">Mapping loaded from <code>',
-    esc_html(cat_data$path), '</code> (',
-    format(length(cat_data$lookup), big.mark = ","),
-    ' regimen-&gt;category rows). Regimens not in the mapping appear ',
-    'as <code>(uncategorised)</code>.</p></div>'),
-    section = section, title = "Categories source")
-
-  for (n in 1:4) build_category_pair(con, lot_long, n, n + 1L,
-                                      cat_data$lookup)
-}
-
-build_approval_status <- function(con, lot_long) {
-  section <- "BY_APPROVAL"
-  appr_csv <- Sys.getenv("REGIMEN_APPROVALS_CSV", unset = "")
-  if (!nzchar(appr_csv) || !file.exists(appr_csv)) {
-    add_html_card(paste0(
-      '<div style="font-family:system-ui;padding:14px">',
-      '<h3>Approval-status sankeys (placeholder)</h3>',
-      '<p style="color:#555">Julia Q I.4 - whether the drug was ',
-      'FDA-approved for the LOT it appears in. Approval status varies ',
-      'by line of therapy AND by calendar year (the study window is ',
-      'long and approvals change over time), so this needs an external ',
-      'approval table. Save it as a CSV with columns ',
-      '<code>med_abbr</code>, <code>lot_num</code> (or ranges), and ',
-      '<code>effective_date</code> (or <code>start_date</code> / ',
-      '<code>end_date</code>), then set ',
-      '<code>REGIMEN_APPROVALS_CSV</code> to its path. The full ',
-      'approval schema is pending Julia / clinical input.</p></div>'),
-      section = section, title = "Approval status (pending schema)")
-    return(invisible())
-  }
-  add_html_card(paste0(
-    '<div style="font-family:system-ui;padding:14px">',
-    '<h3>Approval-status CSV detected</h3>',
-    '<p style="color:#555">Found <code>', esc_html(appr_csv),
-    '</code> but the approval-table schema has not been agreed ',
-    'with clinical yet. Once the columns are confirmed this section ',
-    'will tag every LOT regimen as approved / off-label / pending and ',
-    'render approval-status sankeys per LOT.</p></div>'),
-    section = section, title = "Approval status (schema TBD)")
-}
-
-build_sct_cart_sequence <- function(con, lot_long) {
-  section <- "SCT_CART_SEQ"
-  log_msg("Sequential SCT/CART events (event-based, includes in-LOT AUTOs)")
-
-  # SCT/CART events live in THREE places in LOT_LONG; a complete event
-  # union must cover all of them, otherwise sequences silently drop
-  # real procedures:
-  #   (a) LOT_START_TYPE - SCT/CART that STARTS a new LOT
-  #       (event date = LOT_START_DT).
-  #   (b) LOT_BASE_END_REASON - SCT/CART that ENDED a LOT (cut short
-  #       by the procedure). Per lot2_5_base.R:758-774 the LOT end
-  #       date is the procedure date minus 1, so the true event date
-  #       is LOT_BASE_END_DT + 1. Two same-row patterns are excluded
-  #       ONLY when they are also same-day, because the LOT-start
-  #       branch has already captured the procedure on LOT_START_DT:
-  #         - LOT_START_TYPE='SCT_ALLO' & LOT_BASE_END_REASON='SCT_ALLO'
-  #           & LOT_BASE_END_DT = LOT_START_DT (ALLO single-day,
-  #           lot2_5_base.R:814-815)
-  #         - LOT_START_TYPE='CART'    & LOT_BASE_END_REASON='SCT_CART'
-  #           & LOT_BASE_END_DT = LOT_START_DT (CAR-T no-consolidation,
-  #           lot2_5_base.R:816-817)
-  #       The date equality matters: an ALLO- or CAR-T-started LOT can
-  #       legitimately end with a LATER SCT/CART event via the
-  #       FIRST_* > LOT_START_DT path in lot2_5_base.R:763, and those
-  #       must NOT be dropped. A MED-started LOT cut short by an
-  #       SCT/CART on LOT_START_DT + 1 also passes through.
-  #   (c) LOT_TX_AUTO_DT_1 / LOT_TX_AUTO_DT_2 - in-LOT AUTO events
-  #       inside a non-SCT line of therapy.
-  # After fetch, the CAR-T family ({CART, CART_INIT, SCT_CART}) is
-  # normalised to a single 'CART' label BEFORE deduping, so the same
-  # physical CAR-T that ends LOT_N as CART_INIT and starts LOT_N+1 as
-  # CART collapses to one event on its date.
-  union_sql <- glue("
-    SELECT cast(PATID as string)                    AS PATID,
-           LOT_NUM,
-           cast(cast(LOT_START_DT as date) as string) AS event_dt,
-           LOT_START_TYPE                           AS event_type,
-           'lot_start'                              AS event_source
-    FROM {lot_long}
-    WHERE LOT_START_TYPE IN ('SCT_AUTO','SCT_ALLO','SCT_CART',
-                              'CART','CART_INIT')
-    UNION ALL
-    SELECT cast(PATID as string)                    AS PATID,
-           LOT_NUM,
-           cast(cast(date_add(LOT_BASE_END_DT, 1) as date) as string) AS event_dt,
-           LOT_BASE_END_REASON                      AS event_type,
-           'lot_end'                                AS event_source
-    FROM {lot_long}
-    WHERE LOT_BASE_END_REASON IN ('SCT_AUTO','SCT_ALLO','SCT_CART',
-                                    'CART_INIT')
-      AND LOT_BASE_END_DT IS NOT NULL
-      AND NOT (LOT_START_TYPE = 'SCT_ALLO'
-               AND LOT_BASE_END_REASON = 'SCT_ALLO'
-               AND LOT_BASE_END_DT = LOT_START_DT)
-      AND NOT (LOT_START_TYPE = 'CART'
-               AND LOT_BASE_END_REASON = 'SCT_CART'
-               AND LOT_BASE_END_DT = LOT_START_DT)
-    UNION ALL
-    SELECT cast(PATID as string)                    AS PATID,
-           LOT_NUM,
-           cast(cast(LOT_TX_AUTO_DT_1 as date) as string) AS event_dt,
-           'SCT_AUTO'                               AS event_type,
-           'in_lot_dt1'                             AS event_source
-    FROM {lot_long}
-    WHERE LOT_TX_AUTO_DT_1 IS NOT NULL
-    UNION ALL
-    SELECT cast(PATID as string)                    AS PATID,
-           LOT_NUM,
-           cast(cast(LOT_TX_AUTO_DT_2 as date) as string) AS event_dt,
-           'SCT_AUTO'                               AS event_type,
-           'in_lot_dt2'                             AS event_source
-    FROM {lot_long}
-    WHERE LOT_TX_AUTO_DT_2 IS NOT NULL
-  ")
-  evt <- tryCatch(db_q(con, union_sql), error = function(e) {
-    log_msg("  SCT/CART event union failed (",
-            conditionMessage(e),
-            ") - in-LOT AUTO columns may be missing; falling back to ",
-            "LOT_START_TYPE + LOT_BASE_END_REASON only. Sequences may ",
-            "still undercount in-LOT AUTO events.")
-    db_q(con, glue("
-      SELECT cast(PATID as string)                    AS PATID,
-             LOT_NUM,
-             cast(cast(LOT_START_DT as date) as string) AS event_dt,
-             LOT_START_TYPE                           AS event_type,
-             'lot_start'                              AS event_source
-      FROM {lot_long}
-      WHERE LOT_START_TYPE IN ('SCT_AUTO','SCT_ALLO','SCT_CART',
-                                'CART','CART_INIT')
-      UNION ALL
-      SELECT cast(PATID as string)                    AS PATID,
-             LOT_NUM,
-             cast(cast(date_add(LOT_BASE_END_DT, 1) as date) as string) AS event_dt,
-             LOT_BASE_END_REASON                      AS event_type,
-             'lot_end'                                AS event_source
-      FROM {lot_long}
-      WHERE LOT_BASE_END_REASON IN ('SCT_AUTO','SCT_ALLO','SCT_CART',
-                                      'CART_INIT')
-        AND LOT_BASE_END_DT IS NOT NULL
-        AND NOT (LOT_START_TYPE = 'SCT_ALLO'
-                 AND LOT_BASE_END_REASON = 'SCT_ALLO'
-                 AND LOT_BASE_END_DT = LOT_START_DT)
-        AND NOT (LOT_START_TYPE = 'CART'
-                 AND LOT_BASE_END_REASON = 'SCT_CART'
-                 AND LOT_BASE_END_DT = LOT_START_DT)
-    "))
-  })
-
-  if (is.null(evt) || nrow(evt) == 0) {
-    add_html_card(paste0(
-      '<div style="font-family:system-ui;padding:14px">',
-      '<h3>Sequential SCT/CART events</h3>',
-      '<p style="color:#555">No SCT/CART events found in LOT_LONG.',
-      '</p></div>'),
-      section = section, title = "Sequential SCT/CART (none)")
-    return(invisible())
-  }
-
-  evt$LOT_NUM <- as.integer(evt$LOT_NUM)
-  evt$event_dt_d <- as.Date(evt$event_dt)
-  evt <- evt[!is.na(evt$event_dt_d), , drop = FALSE]
-
-  # Normalise the CAR-T family to a single canonical "CART" label
-  # BEFORE deduping. The same physical CAR-T can surface as different
-  # types across the branches: 'CART' from LOT_START_TYPE, 'CART_INIT'
-  # from a multi-day LOT cut short by that CAR-T (LOT_BASE_END_REASON),
-  # and 'SCT_CART' for the no-consolidation single-day CAR-T case
-  # (already excluded from the LOT-end branch by the same-row +
-  # same-day guard on LOT_START_TYPE='CART' &
-  # LOT_BASE_END_REASON='SCT_CART' & LOT_BASE_END_DT = LOT_START_DT).
-  # Without this normalisation the (PATID, date, type) dedup would
-  # treat CART and CART_INIT as different events on the same date
-  # and double-count CAR-Ts that end LOT_N and start LOT_N+1. AUTO
-  # and ALLO already share labels across branches so no mapping is
-  # needed for them.
-  cart_family <- c("CART", "CART_INIT", "SCT_CART")
-  evt$event_type[evt$event_type %in% cart_family] <- "CART"
-
-  evt <- evt[!duplicated(evt[, c("PATID", "event_dt_d", "event_type")]), ,
-             drop = FALSE]
-  evt <- evt[order(evt$PATID, evt$event_dt_d, evt$LOT_NUM), , drop = FALSE]
-
-  by_pat <- split(evt, evt$PATID)
-  pat_seq <- data.frame(
-    PATID    = names(by_pat),
-    n_events = vapply(by_pat, nrow, integer(1)),
-    sequence = vapply(by_pat,
-                      function(d) paste(d$event_type, collapse = " -> "),
-                      character(1)),
-    timeline = vapply(by_pat,
-                      function(d) paste0(d$event_type, "@L", d$LOT_NUM,
-                                          collapse = " -> "),
-                      character(1)),
-    stringsAsFactors = FALSE
-  )
-
-  total_pat   <- nrow(pat_seq)
-  multi_pat   <- sum(pat_seq$n_events >= 2)
-  triple_plus <- sum(pat_seq$n_events >= 3)
-
-  pat_count <- aggregate(PATID ~ sequence,
-                          data = pat_seq, FUN = length)
-  names(pat_count)[2] <- "n_patients"
-  pat_count <- pat_count[order(-pat_count$n_patients), , drop = FALSE]
-
-  add_html_card(paste0(
-    '<div style="font-family:system-ui;padding:14px">',
-    '<h3>Sequential SCT/CART events summary</h3>',
-    '<p style="color:#555;font-size:13px">Event-based union of ',
-    'LOT-start SCT/CART types (<code>LOT_START_TYPE</code>), ',
-    'LOT-ending SCT/CART procedures ',
-    '(<code>LOT_BASE_END_REASON</code>, event date = ',
-    '<code>LOT_BASE_END_DT + 1</code>), and in-LOT AUTO events ',
-    '(<code>LOT_TX_AUTO_DT_1</code> / <code>LOT_TX_AUTO_DT_2</code>), ',
-    'deduped on (PATID, event date, event type).</p>',
-    '<table style="border-collapse:collapse;font-size:13px" ',
-    'border="1" cellpadding="6">',
-    '<tr style="background:#f0f3f5"><th>Metric</th><th>n patients</th></tr>',
-    '<tr><td>Patients with any SCT/CART event</td><td>',
-    format(total_pat, big.mark = ","), '</td></tr>',
-    '<tr><td>Patients with &ge;2 SCT/CART events (sequential)</td><td>',
-    format(multi_pat, big.mark = ","), '</td></tr>',
-    '<tr><td>Patients with &ge;3 SCT/CART events</td><td>',
-    format(triple_plus, big.mark = ","), '</td></tr>',
-    '</table></div>'),
-    section = section, title = "Summary counts")
-
-  save_table(pat_count, section = section,
-             title = "Patient counts by SCT/CART event sequence")
-
-  pairs <- do.call(rbind, lapply(by_pat, function(d) {
-    if (nrow(d) < 2) return(NULL)
-    data.frame(from  = d$event_type[-nrow(d)],
-               to    = d$event_type[-1],
-               PATID = d$PATID[-1],
-               stringsAsFactors = FALSE)
-  }))
-
-  if (!is.null(pairs) && nrow(pairs) > 0) {
-    link_counts <- aggregate(PATID ~ from + to, data = pairs,
-                              FUN = function(x) length(unique(x)))
-    names(link_counts)[3] <- "n_patients"
-    link_counts <- link_counts[order(-link_counts$n_patients), , drop = FALSE]
-
-    src_lab <- paste0("From: ", link_counts$from)
-    tgt_lab <- paste0("To: ",   link_counts$to)
-    fu_sankey(src_lab, tgt_lab, link_counts$n_patients,
-              section = section,
-              title   = "Consecutive SCT/CART transitions (event-based)")
-
-    save_table(link_counts, section = section,
-               title = "Consecutive SCT/CART transition counts")
-  }
-}
-
-main <- function() {
-  stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
-  cfg$build_dashboard <<- TRUE
-
-  con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn,
-                        pwd = cfg$pwd, timeout = 120)
-  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-
-  lot_long <- wrk("LOT_LONG")
-  log_msg("LOT FU Qs - reading ", lot_long)
-
-  if (!isTRUE(tryCatch(
-        nrow(db_q(con, glue("SELECT 1 FROM {lot_long} LIMIT 1"))) >= 0,
-        error = function(e) FALSE))) {
-    stop("Cannot read ", lot_long,
-         ". Build LOT_LONG (run_pipeline.R / LOT2-5 stage) first.")
-  }
-
-  dashboard_items <<- list()
-
-  for (n in 1:4) build_focused_pair(con, lot_long, n, n + 1L)
-  build_category_sankeys(con, lot_long)
-  build_approval_status(con, lot_long)
-  build_sct_cart_sequence(con, lot_long)
-
-  build_dashboard(
-    out_name     = "lot_fu_qs_dashboard.html",
-    header_title = "MM LOT &mdash; Focused Follow-up Q&apos;s",
-    header_sub   = paste0("LOT1&rarr;2 &bull; LOT2&rarr;3 &bull; ",
-                          "LOT3&rarr;4 &bull; LOT4&rarr;5 &bull; ",
-                          "By category &bull; By approval &bull; ",
-                          "SCT/CART sequence &nbsp;&mdash;&nbsp; ",
-                          "pick a Category above")
-  )
-  log_msg("LOT FU Qs dashboard written to ",
-          file.path(cfg$output_dir, "lot_fu_qs_dashboard.html"))
-}
-
-if (!interactive()) main()
-
-
-================================================================================
-FILE: apr_30_2026/lot_ie_cohort.R
-================================================================================
-
-#!/usr/bin/env Rscript
-# Apply Julia's June 5 IE criteria to the delivered cohort WITHOUT
-# editing any existing pipeline program.
-#
-#   Rscript lot_ie_cohort.R
-#
-# Materialises a thin work-schema VIEW (IE_COHORT_PATIDS by default;
-# overridable via IE_COHORT_VIEW) holding the PATIDs that pass:
-#
-#   1. 1L treatment start (LOT_LONG.LOT_START_DT at LOT_NUM=1)
-#      >= 2017-01-01.
-#   2. No belantamab exposure anywhere - excluded if the token
-#      appears in LOT_BASE_MEDS at any LOT_NUM OR in
-#      MAP_STACKED.MAP_MED_TYPE (true any-exposure).
-#   3. Continuous enrolment >= 12 months before 1L start, allowing
-#      gaps of <= 30 days (matches pipeline_steps.R:386-419 logic).
-#   4. Continuous enrolment >= 6 months before MM diagnosis date
-#      (ELIG_COH_FINAL.INDEX_DATE = MM-dx qualifying date per
-#      pipeline_steps.R:356), allowing the same 30-day gap.
-#
-# All thresholds are env-overridable: CE_PRE_LOT1_DAYS (365),
-# CE_PRE_MM_DX_DAYS (183), CE_GAP_DAYS (30), ELIGIBLE_1L_FROM
-# (2017-01-01), BELANTAMAB_MED_ABBR (BELA).
-#
-# The IE cohort view is self-contained (a single CREATE OR REPLACE
-# VIEW with the gap-allowing enrollment-span CTE inlined), so other
-# scripts can join to it across sessions without setting anything up.
-#
-# Q2 steroid placeholder: Julia said she is updating the LOT rules
-# to include steroids ("J8540 / J7512 / J1100 / J1101 plus quite a
-# few NDC codes"). Actually adding steroids to LOT_BASE_MEDS needs
-# a pipeline change, which is out of scope here. This script keeps
-# a clearly-marked NDC placeholder block; when she ships the full
-# list, drop the codes into STEROID_NDC_INLINE below (or a CSV
-# pointed to by STEROID_NDC_CSV) and rerun. The script then
-# reports steroid exposure counts for the IE cohort (informational
-# only - LOT regimens are unchanged until the pipeline rebuild).
-
-.script_dir <- local({
-  args <- commandArgs(trailingOnly = FALSE)
-  file_arg <- grep("^--file=", args, value = TRUE)
-  if (length(file_arg) > 0) {
-    return(dirname(normalizePath(sub("^--file=", "", file_arg[1]))))
-  }
-  for (i in seq_len(sys.nframe())) {
-    ofile <- tryCatch(sys.frame(i)$ofile, error = function(e) NULL)
-    if (!is.null(ofile)) return(dirname(normalizePath(ofile)))
-  }
-  getwd()
-})
-
-source_dir <- file.path(.script_dir, "R")
-if (file.exists(file.path(source_dir, "load_inputs.R"))) {
-  source(file.path(source_dir, "load_inputs.R"))
-  load_pipeline_inputs(c(.script_dir, dirname(.script_dir)))
-}
-source(file.path(source_dir, "config_lot.R"))
-source(file.path(source_dir, "db_utils_lot.R"))
-
-VIEW_BASE        <- Sys.getenv("IE_COHORT_VIEW",      unset = "IE_COHORT_PATIDS")
-ELIG_1L_FROM     <- Sys.getenv("ELIGIBLE_1L_FROM",    unset = "2017-01-01")
-BELA_TOKEN       <- Sys.getenv("BELANTAMAB_MED_ABBR", unset = "BELA")
-PRE_LOT_DAYS     <- as.integer(Sys.getenv("CE_PRE_LOT1_DAYS",  unset = "365"))
-PRE_MM_DAYS      <- as.integer(Sys.getenv("CE_PRE_MM_DX_DAYS", unset = "183"))
-POST_LOT_DAYS    <- as.integer(Sys.getenv("CE_POST_LOT1_DAYS", unset = "90"))
-GAP_DAYS         <- as.integer(Sys.getenv("CE_GAP_DAYS",       unset = "30"))
-APPLY_FU_EXCL    <- isTRUE(as.logical(Sys.getenv("APPLY_3MO_FU_EXCL",
-                                                  unset = "FALSE")))
-ENR_TBL_NAME     <- Sys.getenv("MEMBER_ENROLLMENT_TBL",
-                                unset = "member_enrollment")
-if (anyNA(c(PRE_LOT_DAYS, PRE_MM_DAYS, POST_LOT_DAYS, GAP_DAYS)))
-  stop("CE_PRE_LOT1_DAYS / CE_PRE_MM_DX_DAYS / CE_POST_LOT1_DAYS / CE_GAP_DAYS must be integers.")
-
-# -------- Steroid Q2 placeholder ------------------------------------
-# Julia June 5 PDF, item 2: HCPCS codes she listed (OCR-confirmed).
-# Inline-edit STEROID_NDC_INLINE below to add NDC codes (or supply
-# them via STEROID_NDC_CSV). Until the NDCs land the script just
-# documents the placeholder; once populated it reports IE-cohort
-# steroid-exposure counts from MMA_MED_PROCESSED (informational).
-STEROID_HCPCS <- c("J8540", "J7512", "J1100", "J1101")
-
-# ------- DROP NDC CODES HERE WHEN JULIA SHIPS THEM -------
-# Replace character(0) with a character vector of NDC strings, e.g.:
-#   STEROID_NDC_INLINE <- c("00054818025", "00054423025", "00781511595")
-STEROID_NDC_INLINE <- character(0)
-# ---------------------------------------------------------
-
-STEROID_NDC_CSV <- Sys.getenv("STEROID_NDC_CSV", unset = "")
-
-read_steroid_ndcs <- function() {
-  ndcs <- STEROID_NDC_INLINE
-  if (nzchar(STEROID_NDC_CSV) && file.exists(STEROID_NDC_CSV)) {
-    df <- tryCatch(read.csv(STEROID_NDC_CSV, stringsAsFactors = FALSE,
-                            check.names = FALSE),
-                   error = function(e) NULL)
-    if (!is.null(df) && nrow(df) > 0) {
-      col <- which(tolower(names(df)) %in%
-                    c("ndc", "ndc_code", "code", "value"))[1]
-      if (!is.na(col)) {
-        ndcs <- unique(c(ndcs, trimws(as.character(df[[col]]))))
-        log_msg("Loaded ", length(ndcs), " steroid NDCs (HCPCS + CSV)")
-      } else {
-        log_msg("STEROID_NDC_CSV has no recognised NDC/code column; ",
-                "ignoring (found cols: ", paste(names(df), collapse = ", "),
-                ")")
-      }
-    }
-  }
-  ndcs <- unique(ndcs[nzchar(ndcs)])
-  ndcs
-}
-
-main <- function() {
-  stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
-  con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn,
-                        pwd = cfg$pwd, timeout = 120)
-  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-
-  lot_long  <- wrk("LOT_LONG")
-  final_tbl <- wrk(cfg$input_cohort_table)
-  map_tbl   <- wrk("MAP_STACKED")
-  proc_tbl  <- wrk("MMA_MED_PROCESSED")
-  enr_tbl   <- cdm_src(ENR_TBL_NAME)
-  view_name <- wrk(VIEW_BASE)
-
-  ok <- function(tbl) isTRUE(tryCatch(
-    nrow(db_q(con, glue("SELECT 1 FROM {tbl} LIMIT 1"))) >= 0,
-    error = function(e) FALSE))
-  for (t in c(lot_long, final_tbl, enr_tbl)) {
-    if (!ok(t)) stop("Cannot read ", t,
-                     " (run the pipeline first or check env vars).")
-  }
-  have_map <- ok(map_tbl)
-
-  # ---- IE cohort view (single self-contained CTE chain) -------------
-  bela_map_branch <- if (have_map) glue("
-        UNION ALL
-        SELECT DISTINCT cast(PATID as string) AS PATID
-        FROM {map_tbl}
-        WHERE upper(MAP_MED_TYPE) = upper('{BELA_TOKEN}')") else ""
-
-  # Optional: if the Ashley-window baseline recalc has been
-  # materialised (lot_baseline_recalc.R produces BASELINE_FLAGS_LOT1),
-  # join it to additionally exclude patients with other-malig /
-  # pregnancy / MM-baseline-therapy events in [LOT1-365, LOT1-1].
-  # MUST be resolved before the glue() below or it errors with
-  # "object 'bl_join' not found".
-  bl_tbl  <- wrk(Sys.getenv("BASELINE_FLAGS_VIEW", unset = "BASELINE_FLAGS_LOT1"))
-  bl_ok   <- isTRUE(tryCatch(
-    nrow(db_q(con, glue("SELECT 1 FROM {bl_tbl} LIMIT 1"))) >= 0,
-    error = function(e) FALSE))
-  bl_join <- if (bl_ok) glue(
-    "JOIN {bl_tbl} bl ON bl.PATID = c.PATID AND bl.ANY_BASELINE_EXCL_LOT1 = 0")
-    else ""
-  if (bl_ok) log_msg("  Including baseline recalc exclusions from ", bl_tbl)
-  else log_msg("  ", bl_tbl, " not present - baseline exclusions stay on the pipeline's ",
-               "183-day pre-MM-dx window. Run lot_baseline_recalc.R to apply the ",
-               "12-month-pre-LOT1 recalc.")
-
-  ie_sql <- glue("
-    CREATE OR REPLACE VIEW {view_name} AS
-    WITH
-    enr_base AS (
-      SELECT cast(PATID as string) AS PATID,
-             cast(ELIGEFF as date) AS elig_eff,
-             cast(ELIGEND as date) AS elig_end
-      FROM {enr_tbl}
-      WHERE ELIGEFF IS NOT NULL AND ELIGEND IS NOT NULL
-    ),
-    enr_ordered AS (
-      SELECT PATID, elig_eff, elig_end,
-        max(elig_end) OVER (PARTITION BY PATID
-                            ORDER BY elig_eff, elig_end
-                            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)
-        AS max_end_so_far
-      FROM enr_base
-    ),
-    enr_flagged AS (
-      SELECT PATID, elig_eff, elig_end,
-        CASE WHEN max_end_so_far IS NULL THEN 1
-             WHEN elig_eff <= date_add(max_end_so_far, {GAP_DAYS} + 1) THEN 0
-             ELSE 1 END AS new_grp
-      FROM enr_ordered
-    ),
-    enr_grouped AS (
-      SELECT PATID, elig_eff, elig_end,
-        sum(new_grp) OVER (PARTITION BY PATID ORDER BY elig_eff, elig_end
-                           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
-        AS grp_id
-      FROM enr_flagged
-    ),
-    enr_spans AS (
-      SELECT PATID, min(elig_eff) AS cov_start, max(elig_end) AS cov_end
-      FROM enr_grouped GROUP BY PATID, grp_id
-    ),
-    -- Strict (no-gap) spans: each raw eligibility row is its own
-    -- span. The spec's CE_3mosf criterion is explicitly strict / no
-    -- gap (parent pipeline_steps.R:424). The pre-LOT1 and pre-MM-dx
-    -- CE windows above use the gap-allowing enr_spans
-    -- (~30-day-gap-tolerant), but the 3-mo post-LOT1 FU uses
-    -- enr_spans_strict.
-    enr_spans_strict AS (
-      SELECT PATID, elig_eff AS cov_start, elig_end AS cov_end
-      FROM enr_base
-    ),
-    lot1 AS (
-      SELECT cast(PATID as string) AS PATID, LOT_START_DT AS LOT1_DT
-      FROM {lot_long}
-      WHERE LOT_NUM = 1 AND LOT_START_DT IS NOT NULL
-    ),
-    mm_dx AS (
-      SELECT cast(PATID as string) AS PATID,
-             cast(INDEX_DATE as date) AS MM_DX_DT
-      FROM {final_tbl}
-    ),
-    bela AS (
-      SELECT DISTINCT PATID FROM (
-        SELECT cast(PATID as string) AS PATID
-        FROM {lot_long}
-        WHERE LOT_BASE_MEDS IS NOT NULL
-          AND array_contains(split(LOT_BASE_MEDS, ' '), '{BELA_TOKEN}')
-        {bela_map_branch}
-      )
-    ),
-    candidates AS (
-      SELECT l.PATID, l.LOT1_DT, m.MM_DX_DT,
-             date_sub(l.LOT1_DT, {PRE_LOT_DAYS}) AS w1_start,
-             date_sub(l.LOT1_DT, 1)              AS w1_end,
-             date_sub(m.MM_DX_DT, {PRE_MM_DAYS}) AS w2_start,
-             date_sub(m.MM_DX_DT, 1)             AS w2_end,
-             l.LOT1_DT                            AS w3_start,
-             date_add(l.LOT1_DT, {POST_LOT_DAYS - 1L}) AS w3_end
-      FROM lot1 l
-      JOIN mm_dx m ON l.PATID = m.PATID
-      LEFT JOIN bela x ON x.PATID = l.PATID
-      WHERE l.LOT1_DT >= cast('{ELIG_1L_FROM}' as date)
-        AND x.PATID IS NULL
-    ),
-    ce_pre_lot1 AS (
-      SELECT DISTINCT c.PATID
-      FROM candidates c
-      JOIN enr_spans s ON s.PATID = c.PATID
-      WHERE s.cov_start <= c.w1_start AND s.cov_end >= c.w1_end
-    ),
-    ce_pre_mm_dx AS (
-      SELECT DISTINCT c.PATID
-      FROM candidates c
-      JOIN enr_spans s ON s.PATID = c.PATID
-      WHERE s.cov_start <= c.w2_start AND s.cov_end >= c.w2_end
-    ),
-    ce_post_3mo_fu AS (
-      -- Continuous enrolment span covering [LOT1_DT, LOT1_DT + POST-1].
-      -- The spec text reads: "Patients with gaps in enrolment of <=30
-      -- days are considered to be continuously enrolled. <3 months
-      -- after the index date. these patients are retained and have a
-      -- limited follow-up period." The natural reading is RETAIN with
-      -- limited FU, not exclude. We therefore expose this as a flag
-      -- table and only apply it as an exclusion when
-      -- APPLY_3MO_FU_EXCL=TRUE (default FALSE). The view below is
-      -- always built so analysts can join to it.
-      SELECT DISTINCT c.PATID
-      FROM candidates c
-      JOIN enr_spans_strict s ON s.PATID = c.PATID
-      WHERE s.cov_start <= c.w3_start AND s.cov_end >= c.w3_end
-    )
-    SELECT c.PATID
-    FROM candidates c
-    JOIN ce_pre_lot1  pl ON pl.PATID = c.PATID
-    JOIN ce_pre_mm_dx pm ON pm.PATID = c.PATID
-    {if (APPLY_FU_EXCL) 'JOIN ce_post_3mo_fu pf ON pf.PATID = c.PATID' else ''}
-    {bl_join}
-  ")
-  log_msg("Building IE cohort view ", view_name)
-  db_exec(con, ie_sql)
-
-  # ---- Attrition log ------------------------------------------------
-  # Re-run the CTE counts so the user can see how each criterion
-  # whittles the cohort down. Cheap (single SQL).
-  log_msg("IE cohort criteria summary:")
-  attr_df <- db_q(con, glue("
-    WITH enr_base AS (
-      SELECT cast(PATID as string) AS PATID,
-             cast(ELIGEFF as date) AS elig_eff,
-             cast(ELIGEND as date) AS elig_end
-      FROM {enr_tbl}
-      WHERE ELIGEFF IS NOT NULL AND ELIGEND IS NOT NULL
-    ),
-    enr_ordered AS (
-      SELECT PATID, elig_eff, elig_end,
-        max(elig_end) OVER (PARTITION BY PATID
-                            ORDER BY elig_eff, elig_end
-                            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)
-        AS max_end_so_far
-      FROM enr_base
-    ),
-    enr_flagged AS (
-      SELECT PATID, elig_eff, elig_end,
-        CASE WHEN max_end_so_far IS NULL THEN 1
-             WHEN elig_eff <= date_add(max_end_so_far, {GAP_DAYS} + 1) THEN 0
-             ELSE 1 END AS new_grp
-      FROM enr_ordered
-    ),
-    enr_grouped AS (
-      SELECT PATID, elig_eff, elig_end,
-        sum(new_grp) OVER (PARTITION BY PATID ORDER BY elig_eff, elig_end
-                           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
-        AS grp_id
-      FROM enr_flagged
-    ),
-    enr_spans AS (
-      SELECT PATID, min(elig_eff) AS cov_start, max(elig_end) AS cov_end
-      FROM enr_grouped GROUP BY PATID, grp_id
-    ),
-    -- Strict (no-gap) spans: each raw eligibility row is its own
-    -- span. The spec's CE_3mosf criterion is explicitly strict / no
-    -- gap (parent pipeline_steps.R:424). The pre-LOT1 and pre-MM-dx
-    -- CE windows above use the gap-allowing enr_spans
-    -- (~30-day-gap-tolerant), but the 3-mo post-LOT1 FU uses
-    -- enr_spans_strict.
-    enr_spans_strict AS (
-      SELECT PATID, elig_eff AS cov_start, elig_end AS cov_end
-      FROM enr_base
-    ),
-    lot1 AS (
-      SELECT cast(PATID as string) AS PATID, LOT_START_DT AS LOT1_DT
-      FROM {lot_long}
-      WHERE LOT_NUM = 1 AND LOT_START_DT IS NOT NULL
-    ),
-    mm_dx AS (
-      SELECT cast(PATID as string) AS PATID,
-             cast(INDEX_DATE as date) AS MM_DX_DT
-      FROM {final_tbl}
-    ),
-    bela AS (
-      SELECT DISTINCT PATID FROM (
-        SELECT cast(PATID as string) AS PATID
-        FROM {lot_long}
-        WHERE LOT_BASE_MEDS IS NOT NULL
-          AND array_contains(split(LOT_BASE_MEDS, ' '), '{BELA_TOKEN}')
-        {bela_map_branch}
-      )
-    ),
-    n_total      AS (SELECT count(DISTINCT PATID) AS n FROM lot1),
-    n_dt_pass    AS (SELECT count(DISTINCT PATID) AS n FROM lot1
-                     WHERE LOT1_DT >= cast('{ELIG_1L_FROM}' as date)),
-    n_no_bela    AS (SELECT count(DISTINCT l.PATID) AS n
-                     FROM lot1 l
-                     LEFT JOIN bela x ON x.PATID = l.PATID
-                     WHERE l.LOT1_DT >= cast('{ELIG_1L_FROM}' as date)
-                       AND x.PATID IS NULL),
-    n_with_ce_lot1 AS (
-      SELECT count(DISTINCT l.PATID) AS n
-      FROM lot1 l
-      LEFT JOIN bela x ON x.PATID = l.PATID
-      JOIN enr_spans s ON s.PATID = l.PATID
-      WHERE l.LOT1_DT >= cast('{ELIG_1L_FROM}' as date)
-        AND x.PATID IS NULL
-        AND s.cov_start <= date_sub(l.LOT1_DT, {PRE_LOT_DAYS})
-        AND s.cov_end   >= date_sub(l.LOT1_DT, 1)
-    ),
-    n_with_3mo_fu AS (
-      -- Flag-only count (always reported, not always an exclusion).
-      -- Uses STRICT spans to match spec CE_3mosf (no-gap).
-      SELECT count(DISTINCT l.PATID) AS n
-      FROM lot1 l
-      JOIN enr_spans_strict s ON s.PATID = l.PATID
-      WHERE l.LOT1_DT >= cast('{ELIG_1L_FROM}' as date)
-        AND s.cov_start <= l.LOT1_DT
-        AND s.cov_end   >= date_add(l.LOT1_DT, {POST_LOT_DAYS - 1L})
-    ),
-    n_final AS (SELECT count(DISTINCT PATID) AS n FROM {view_name})
-    SELECT (SELECT n FROM n_total)        AS n_lot1_total,
-           (SELECT n FROM n_dt_pass)      AS n_1l_from_2017,
-           (SELECT n FROM n_no_bela)      AS n_no_belantamab,
-           (SELECT n FROM n_with_ce_lot1) AS n_with_ce_pre_lot1,
-           (SELECT n FROM n_with_3mo_fu)  AS n_with_3mo_fu,
-           (SELECT n FROM n_final)        AS n_ie_cohort
-  "))
-  num <- function(x) suppressWarnings(as.numeric(x))
-  log_msg(sprintf("  LOT1 total (delivered)            : %s",
-                  format(num(attr_df$n_lot1_total[1]),       big.mark = ",")))
-  log_msg(sprintf("  + 1L start >= %s             : %s",
-                  ELIG_1L_FROM,
-                  format(num(attr_df$n_1l_from_2017[1]),     big.mark = ",")))
-  log_msg(sprintf("  + no belantamab exposure          : %s",
-                  format(num(attr_df$n_no_belantamab[1]),    big.mark = ",")))
-  log_msg(sprintf("  + CE >= %s d pre-LOT1 (gap<=%s d)  : %s",
-                  PRE_LOT_DAYS, GAP_DAYS,
-                  format(num(attr_df$n_with_ce_pre_lot1[1]), big.mark = ",")))
-  log_msg(sprintf("  + CE >= %s d pre-MM-dx (gap<=%s d) : %s%s",
-                  PRE_MM_DAYS, GAP_DAYS,
-                  format(num(attr_df$n_ie_cohort[1]),        big.mark = ","),
-                  if (!APPLY_FU_EXCL) "  <- IE cohort" else ""))
-  log_msg(sprintf("  CE >= %s d post-LOT1 FU (gap<=%s d): %s patients flagged%s",
-                  POST_LOT_DAYS, GAP_DAYS,
-                  format(num(attr_df$n_with_3mo_fu[1]),      big.mark = ","),
-                  if (APPLY_FU_EXCL) "  <- IE cohort (exclusion applied)"
-                  else "  (flag only; spec says retained with limited FU)"))
-
-  # ---- Q2 steroid Q2 placeholder / report ---------------------------
-  ndcs <- read_steroid_ndcs()
-  if (length(ndcs) == 0 && length(STEROID_NDC_INLINE) == 0
-      && !nzchar(STEROID_NDC_CSV)) {
-    log_msg(
-      "Q2 steroid placeholder: HCPCS codes from Julia's June 5 PDF ",
-      "documented (", paste(STEROID_HCPCS, collapse = ", "),
-      "). NDC codes not yet provided - drop them into ",
-      "STEROID_NDC_INLINE in this script or set STEROID_NDC_CSV. ",
-      "Adding steroids to LOT_BASE_MEDS itself is a pipeline change ",
-      "and stays out of scope here.")
-    return(invisible())
-  }
-  if (!ok(proc_tbl)) {
-    log_msg("Q2 steroid count skipped - ", proc_tbl, " not readable.")
-    return(invisible())
-  }
-  hcpcs_in <- paste(sprintf("'%s'", STEROID_HCPCS), collapse = ", ")
-  ndc_in   <- if (length(ndcs) > 0)
-    paste(sprintf("'%s'", gsub("'", "''", ndcs)), collapse = ", ") else "''"
-  steroid_q <- glue("
-    SELECT count(DISTINCT p.PATID) AS n_ie_patients,
-           count(DISTINCT CASE WHEN p.CODE_TYPE = 'HCPCS'
-                                AND p.CODE IN ({hcpcs_in})
-                               THEN p.PATID END) AS n_with_steroid_hcpcs,
-           count(DISTINCT CASE WHEN p.CODE_TYPE = 'NDC'
-                                AND p.CODE IN ({ndc_in})
-                               THEN p.PATID END) AS n_with_steroid_ndc,
-           count(DISTINCT CASE WHEN (p.CODE_TYPE = 'HCPCS'
-                                     AND p.CODE IN ({hcpcs_in}))
-                                 OR (p.CODE_TYPE = 'NDC'
-                                     AND p.CODE IN ({ndc_in}))
-                               THEN p.PATID END) AS n_with_steroid_any
-    FROM {proc_tbl} p
-    JOIN {view_name} i ON cast(p.PATID as string) = i.PATID
-  ")
-  st <- tryCatch(db_q(con, steroid_q), error = function(e) NULL)
-  if (is.null(st)) {
-    log_msg("Q2 steroid count failed - MMA_MED_PROCESSED may not ",
-            "carry CODE/CODE_TYPE in this build; check the schema.")
-  } else {
-    log_msg(sprintf(
-      "Q2 steroid exposure in IE cohort | HCPCS=%s | NDC=%s | any=%s of %s",
-      format(num(st$n_with_steroid_hcpcs[1]), big.mark = ","),
-      format(num(st$n_with_steroid_ndc[1]),   big.mark = ","),
-      format(num(st$n_with_steroid_any[1]),   big.mark = ","),
-      format(num(st$n_ie_patients[1]),        big.mark = ",")))
-    log_msg("NOTE: informational only - LOT_BASE_MEDS is unchanged ",
-            "until the pipeline rebuild that folds steroids in.")
-  }
-}
-
-if (!interactive()) main()
 
 
 ================================================================================
