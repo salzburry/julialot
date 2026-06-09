@@ -1032,8 +1032,15 @@ build_lot2_5 <- function(con,
   log_msg("  allo_lot_span           = ", allo_lot_span, " (Q2)")
 
   # Discover med + class universes from the rollup so dynamic flag columns
-  # match LOT1 output exactly. STEROID class excluded - LOT1 uses the same
-  # filter, so persisted LOT1_MED_<DEXA>/<PRED> columns will not exist.
+  # match LOT1 output exactly. Julia variant: STEROID is INCLUDED here
+  # because the variant lot_program.R also discovers meds/classes from
+  # mma_rollup unfiltered (lines 232-233), and the membership-site
+  # steroid filters are removed (Q2) - so a steroid present in the
+  # codelist now produces a LOT1_MED_<steroid> column in LOT1_BASE that
+  # MUST also be projected into LOT_LONG, else the LOT2-5 INSERT INTO
+  # would carry a different column list than the LOT1 SELECT and
+  # LOT_BASE_MEDS / LOT_MED_CNT would not line up with the per-med
+  # dynamic flags.
   #
   # ORDER BY references the aliased name (MED_ABBR / MED_CLASS), NOT the
   # underlying column. After SELECT DISTINCT col AS alias, the projection
@@ -1043,14 +1050,12 @@ build_lot2_5 <- function(con,
   meds <- db_q(con, "
     SELECT DISTINCT CL_MED_ABBR AS MED_ABBR
     FROM mma_rollup
-    WHERE upper(coalesce(CL_MED_CLASS, '')) <> 'STEROID'
     ORDER BY MED_ABBR
   ")$MED_ABBR
   classes <- db_q(con, "
     SELECT DISTINCT CL_MED_CLASS AS MED_CLASS
     FROM mma_rollup
-    WHERE upper(coalesce(CL_MED_CLASS, '')) <> 'STEROID'
-      AND CL_MED_CLASS IS NOT NULL
+    WHERE CL_MED_CLASS IS NOT NULL
     ORDER BY MED_CLASS
   ")$MED_CLASS
 
