@@ -7000,14 +7000,22 @@ FILE: apr_30_2026/julia_jun08_qs.R
 #   Q4  Ashley's planned study cohort - best-effort filter using
 #       LOT_LONG (NOT ELIG_COH_FINAL.INDEX_DATE, which is the
 #       MM-dx qualifying date per pipeline_steps.R:356, not the
-#       1L treatment start). Enforced here: LOT1 LOT_START_DT
-#       >= 2017-01-01 (lot_program.R:686) and no belantamab token
-#       in LOT_BASE_MEDS at ANY LOT_NUM. NOT enforced (surfaced as
-#       explicit limitations in the cohort-def card, not silently
-#       dropped): CE >= 12 months before 1L start (pipeline default
-#       baseline_days = 183, ~6 months - config_prompts.R:89),
-#       CE >= 6 months before MM diagnosis date, CE >= 3 months
-#       follow-up, and re-check of adult age at MM-dx.
+#       1L treatment start). Materialised as a session-scoped temp
+#       view (ASHLEY_VIEW) so downstream queries INNER JOIN to it
+#       instead of carrying a giant IN-list literal - safe at
+#       cohort sizes of any scale. Enforced: LOT1 LOT_START_DT
+#       >= 2017-01-01 (lot_program.R:686); no belantamab token in
+#       LOT_BASE_MEDS at ANY LOT_NUM; and no MAP_STACKED row with
+#       MAP_MED_TYPE = BELA (true "any exposure", not just base
+#       regimen). NOT enforced - surfaced as explicit limitations
+#       in the cohort-def card, not silently dropped: CE >= 12
+#       months before 1L start (pipeline default baseline_days =
+#       183 - config_prompts.R:89), CE >= 6 months before MM dx,
+#       CE >= 3 months follow-up, re-check of age >= 18 at MM dx,
+#       and the baseline-window mismatch (other-malig / pregnancy /
+#       no-baseline-MM-therapy exclusions inherited from the
+#       delivered cohort were applied against the pipeline window,
+#       not Julia's 12-mo-pre-1L window).
 #
 # Reads only persisted work-schema tables (LOT_LONG, ELIG_COH_FINAL,
 # MAP_STACKED) plus an optional REGIMEN_CATEGORIES_CSV. Builds
@@ -7074,33 +7082,48 @@ fu_sankey <- function(src_lab, tgt_lab, value, section, title) {
   if (!is.null(sk)) add_to_dashboard(sk, section = section, title = title)
 }
 
-# Builds the Ashley-cohort PATID vector by applying the criteria we
-# CAN enforce from persisted columns. Returns a character vector of
-# PATIDs; an empty vector means no patient survives the filter.
+# Materialises the Ashley-cohort PATID set as a session-scoped temp
+# view so downstream queries can INNER JOIN to it instead of carrying
+# a giant SQL IN (...) literal. Returns the size of the cohort (for
+# the cohort-def card); 0 means no patient survived the filter.
 #
-# Verified pipeline semantics (per pipeline_steps.R:356 + lot_program.R:686):
+# Verified pipeline semantics (pipeline_steps.R:356 + lot_program.R:686):
 #   - ELIG_COH_FINAL.INDEX_DATE = MM diagnosis qualifying date, NOT
-#     the 1L treatment start. Julia's "eligible 1L treatment on/after
-#     2017-01-01" therefore filters LOT_LONG.LOT_START_DT at
-#     LOT_NUM=1, NOT ELIG_COH_FINAL.INDEX_DATE.
-#   - Belantamab exclusion applies to ANY LOT, not just 1L (Julia's
-#     PDF says "belantamab in any LOT excluded").
-build_ashley_cohort <- function(con, lot_long, final_tbl) {
-  log_msg("Building Ashley's planned study cohort filter")
-  ash <- tryCatch(db_q(con, glue("
+#     1L treatment start. Julia's "eligible 1L treatment on/after
+#     2017-01-01" therefore filters LOT_LONG.LOT_START_DT at LOT_NUM=1.
+#   - Belantamab "any exposure" check spans BOTH LOT_BASE_MEDS at any
+#     LOT_NUM AND MAP_STACKED.MAP_MED_TYPE = BELA, so a belantamab
+#     claim that did not surface inside a base-regimen string still
+#     excludes the patient.
+ASHLEY_VIEW <- "ashley_cohort"
+
+build_ashley_cohort <- function(con, lot_long, map_tbl, final_tbl,
+                                 have_map) {
+  log_msg("Building Ashley's planned study cohort (temp view)")
+  bela_map_branch <- if (have_map) glue("
+        UNION ALL
+        SELECT DISTINCT cast(PATID as string) AS PATID
+        FROM {map_tbl}
+        WHERE upper(MAP_MED_TYPE) = upper('{BELA_TOKEN}')")
+    else ""
+  sql <- glue("
+    CREATE OR REPLACE TEMPORARY VIEW {ASHLEY_VIEW} AS
     WITH lot1 AS (
       SELECT cast(PATID as string) AS PATID, LOT_START_DT AS LOT1_DT
       FROM {lot_long}
       WHERE LOT_NUM = 1 AND LOT_START_DT IS NOT NULL
     ),
-    bela_any AS (
-      SELECT DISTINCT cast(PATID as string) AS PATID
-      FROM {lot_long}
-      WHERE LOT_BASE_MEDS IS NOT NULL
-        AND array_contains(split(LOT_BASE_MEDS, ' '), '{BELA_TOKEN}')
-    ),
     base AS (
-      SELECT cast(PATID as string) AS PATID FROM {final_tbl}
+      SELECT DISTINCT cast(PATID as string) AS PATID FROM {final_tbl}
+    ),
+    bela_any AS (
+      SELECT DISTINCT PATID FROM (
+        SELECT cast(PATID as string) AS PATID
+        FROM {lot_long}
+        WHERE LOT_BASE_MEDS IS NOT NULL
+          AND array_contains(split(LOT_BASE_MEDS, ' '), '{BELA_TOKEN}')
+        {bela_map_branch}
+      )
     )
     SELECT l.PATID
     FROM lot1 l
@@ -7108,22 +7131,33 @@ build_ashley_cohort <- function(con, lot_long, final_tbl) {
     LEFT JOIN bela_any x ON x.PATID = l.PATID
     WHERE l.LOT1_DT >= cast('{ELIGIBLE_1L_FROM}' as date)
       AND x.PATID IS NULL
-  ")), error = function(e) {
-    log_msg("  Ashley cohort build failed: ", conditionMessage(e))
-    NULL
-  })
-  if (is.null(ash) || nrow(ash) == 0) return(character(0))
-  unique(ash$PATID)
+  ")
+  ok <- tryCatch({ db_exec(con, sql); TRUE },
+                 error = function(e) {
+                   log_msg("  Ashley cohort view build failed: ",
+                           conditionMessage(e)); FALSE })
+  if (!ok) {
+    # Fallback: an empty view so downstream subqueries still resolve
+    # (every Ashley section then renders as empty rather than crashing).
+    tryCatch(db_exec(con, glue(
+      "CREATE OR REPLACE TEMPORARY VIEW {ASHLEY_VIEW} AS ",
+      "SELECT cast('' as string) AS PATID WHERE 1 = 0")),
+      error = function(e) NULL)
+    return(0L)
+  }
+  as.integer(db_q(con, glue(
+    "SELECT count(DISTINCT PATID) AS n FROM {ASHLEY_VIEW}"))$n)
 }
 
+# Filter expression for a cohort definition. Returns a SQL fragment
+# appended to a WHERE clause; relies on the persisted ASHLEY_VIEW for
+# the Ashley cohort (no IN-list interpolation, so cohort size never
+# hits SQL/ODBC statement-length limits).
 cohort_filter_sql <- function(cohort_def) {
-  if (is.null(cohort_def$patids)) return("")
-  if (length(cohort_def$patids) == 0)
-    return(" AND PATID IN ('')")
-  paste0(" AND cast(PATID as string) IN (",
-         paste(sprintf("'%s'", gsub("'", "''", cohort_def$patids)),
-               collapse = ","),
-         ")")
+  if (isTRUE(cohort_def$is_ashley))
+    return(paste0(" AND cast(PATID as string) IN (SELECT PATID FROM ",
+                  ASHLEY_VIEW, ")"))
+  ""
 }
 
 # ---- Q3 + Q4: filtered MED JOURNEY (max LOT_NUM >= 2) ---------------
@@ -7330,37 +7364,57 @@ load_category_lookup <- function() {
     return(structure(list(), bad = TRUE, path = cat_path,
                      cols = paste(names(df), collapse = ", ")))
 
-  # Steroid-strip variant. Current LOT_BASE_MEDS excludes steroids
-  # (lot_program.R:688 / lot2_5_base.R), so an xlsx row like
-  # "BORT LENA DEXA" would never exact-match LOT_LONG. Build a second
-  # lookup keyed on the regimen with DEX/DEXA/PRED stripped, so the
-  # caller falls back to that when the verbatim match fails. This is
-  # a stopgap until Julia's Q2 (steroid inclusion) lands as a
-  # pipeline change.
-  strip_steroids <- function(s) {
-    tokens <- strsplit(toupper(trimws(s)), "\\s+")[[1]]
-    tokens <- tokens[!tokens %in% c("DEX", "DEXA", "DEXAMETHASONE",
-                                     "PRED", "PREDNISONE")]
-    paste(sort(tokens), collapse = " ")
+  # Tokenise on whitespace / slashes / plus / minus / comma so xlsx
+  # rows like "VRd", "K/R/d", "K+R+d", "Bort, Lena, Dexa" all
+  # normalise to the same sorted uppercase token vector. Steroid
+  # tokens (DEX/DEXA/PRED) are stripped because current
+  # LOT_BASE_MEDS excludes steroids (lot_program.R:688 / lot2_5_base.R)
+  # until Julia's Q2 update lands.
+  STEROID_TOKENS <- c("DEX", "DEXA", "DEXAMETHASONE",
+                       "PRED", "PREDNISONE")
+  norm_regimen <- function(s, strip_steroids = TRUE) {
+    if (is.na(s) || !nzchar(trimws(as.character(s))))
+      return(character(0))
+    toks <- strsplit(toupper(as.character(s)), "[[:space:]/+,\\-]+",
+                     perl = TRUE)[[1]]
+    toks <- toks[nzchar(toks)]
+    if (strip_steroids) toks <- toks[!toks %in% STEROID_TOKENS]
+    sort(unique(toks))
   }
+  norm_key <- function(s, strip_steroids = TRUE)
+    paste(norm_regimen(s, strip_steroids), collapse = " ")
+
   reg_raw <- trimws(as.character(df[[reg_i]]))
   cat_raw <- trimws(as.character(df[[cat_i]]))
   list(path           = cat_path,
+       norm_regimen   = norm_regimen,
+       norm_key       = norm_key,
        lookup         = setNames(cat_raw, reg_raw),
-       lookup_nosterd = setNames(cat_raw, vapply(reg_raw, strip_steroids,
-                                                  character(1))))
+       lookup_norm    = setNames(cat_raw,
+                                  vapply(reg_raw, function(r) norm_key(r, FALSE),
+                                         character(1))),
+       lookup_nosterd = setNames(cat_raw,
+                                  vapply(reg_raw, norm_key, character(1))))
 }
 
-# Match LOT_BASE_MEDS to a category, trying verbatim first then
-# steroid-stripped (since current LOT regimens are steroid-free).
+# Match LOT_BASE_MEDS to a category. Tries (in order):
+#   1. verbatim string match
+#   2. normalised match (strip whitespace/slashes/+/-, uppercase, sort)
+#   3. normalised + steroid-stripped match (since current LOT
+#      regimens are steroid-free)
+# Returns NA when no level matches; the caller surfaces as
+# "(uncategorised)".
 categorise_regimen <- function(reg, cat_data) {
-  if (is.na(reg) || reg == "") return(NA_character_)
+  if (is.na(reg) || !nzchar(trimws(as.character(reg))))
+    return(NA_character_)
   if (reg %in% names(cat_data$lookup))
     return(unname(cat_data$lookup[reg]))
-  key <- paste(sort(strsplit(toupper(trimws(reg)), "\\s+")[[1]]),
-               collapse = " ")
-  if (key %in% names(cat_data$lookup_nosterd))
-    return(unname(cat_data$lookup_nosterd[key]))
+  k_norm <- cat_data$norm_key(reg, FALSE)
+  if (nzchar(k_norm) && k_norm %in% names(cat_data$lookup_norm))
+    return(unname(cat_data$lookup_norm[k_norm]))
+  k_strip <- cat_data$norm_key(reg, TRUE)
+  if (nzchar(k_strip) && k_strip %in% names(cat_data$lookup_nosterd))
+    return(unname(cat_data$lookup_nosterd[k_strip]))
   NA_character_
 }
 
@@ -7560,11 +7614,10 @@ build_steroid_card <- function() {
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
-build_cohort_def_card <- function(con, lot_long, final_tbl, ash_ids) {
+build_cohort_def_card <- function(con, lot_long, final_tbl, n_ash) {
   n_all <- tryCatch(
     as.numeric(db_q(con, glue("SELECT count(DISTINCT cast(PATID as string)) AS n FROM {final_tbl}"))$n),
     error = function(e) NA_real_)
-  n_ash   <- length(ash_ids)
   ach_pct <- if (isTRUE(n_all > 0)) round(100 * n_ash / n_all, 1) else NA_real_
 
   add_html_card(paste0(
@@ -7606,6 +7659,17 @@ build_cohort_def_card <- function(con, lot_long, final_tbl, ash_ids) {
     'needs an enrollment-end-date check not currently surfaced.</li>',
     '<li>Adult age &ge; 18 at MM-dx calendar year - applied upstream ',
     'in the base cohort but not re-checked here.</li>',
+    '<li><b>Baseline-window mismatch</b>: the Ashley cohort starts ',
+    'from the delivered <code>ELIG_COH_FINAL</code>, so the ',
+    'other-malignancy / pregnancy / no-baseline-MM-therapy ',
+    'exclusions were applied against the pipeline\'s baseline window ',
+    '(<code>baseline_days = 183</code>, anchored to MM-dx ',
+    '<code>INDEX_DATE</code>), NOT Julia\'s "12 months before 1L ',
+    'treatment start" window. A patient excluded under the existing ',
+    'rules might be eligible under the Ashley rules, and vice versa. ',
+    'True Ashley parity requires a pipeline rerun with ',
+    'baseline_days=365 anchored to LOT1 start, then re-applying the ',
+    'baseline-window exclusions against that.</li>',
     '</ul>',
     '<p style="color:#555;font-size:13px">',
     'Note: <code>ELIG_COH_FINAL.INDEX_DATE</code> is the MM diagnosis ',
@@ -7640,17 +7704,18 @@ main <- function() {
 
   dashboard_items <<- list()
 
-  ash_ids <- build_ashley_cohort(con, lot_long, final_tbl)
-  log_msg("Ashley cohort size (best-effort): ", length(ash_ids))
+  n_ash <- build_ashley_cohort(con, lot_long, map_tbl, final_tbl,
+                                 have_map = ok(map_tbl))
+  log_msg("Ashley cohort size (best-effort): ", n_ash)
 
   cohorts <- list(
     list(label = "whole cohort",         section_suffix = "ALL",
-         patids = NULL),
+         is_ashley = FALSE),
     list(label = "Ashley planned study", section_suffix = "ASH",
-         patids = ash_ids)
+         is_ashley = TRUE)
   )
 
-  build_cohort_def_card(con, lot_long, final_tbl, ash_ids)
+  build_cohort_def_card(con, lot_long, final_tbl, n_ash)
   build_steroid_card()
 
   cat_data <- load_category_lookup()
