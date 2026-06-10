@@ -512,8 +512,14 @@ build_lot_long_filtered <- function(con, lot_long) {
 q4_counts <- function(con, lot_long, elig_coh_final) {
   whole <- db_q(con, glue(
     "SELECT count(DISTINCT PATID) AS n FROM {lot_long}"))$n
+  # ELIG_COH_FINAL intersected with LOT_LONG so the funnel is monotonic
+  # (the parent cohort can contain PATIDs that never enter LOT_LONG; the
+  # bare ELIG_COH_FINAL count could otherwise exceed the row above).
   elig <- db_q(con, glue(
-    "SELECT count(DISTINCT PATID) AS n FROM {elig_coh_final}"))$n
+    "SELECT count(DISTINCT ec.PATID) AS n
+     FROM {elig_coh_final} ec
+     INNER JOIN (SELECT DISTINCT cast(PATID as string) AS PATID FROM {lot_long}) ll
+             ON cast(ec.PATID as string) = ll.PATID"))$n
   elig_lot1 <- db_q(con, glue(
     "SELECT count(DISTINCT ec.PATID) AS n
      FROM {elig_coh_final} ec
@@ -745,7 +751,10 @@ main_q4 <- function() {
   build_dashboard(
     out_name     = "julia_q4_ashley_dashboard.html",
     header_title = "MM LOT &mdash; Julia June 5 Q4 (Ashley planned cohort)",
-    header_sub   = paste0("ELIG_COH_FINAL + 12-mo CE pre-LOT1 &bull; ",
+    header_sub   = paste0("ELIG_COH_FINAL &bull; LOT1 &ge; ", Q4_LOT1_FROM,
+                          " &bull; 12-mo CE pre-LOT1 &bull; no belantamab",
+                          " &bull; no MM Tx pre-LOT1 &bull; no other cancer",
+                          " pre-LOT1 &bull; ",
                           format(counts$ashley, big.mark = ","), " patients")
   )
   log_msg("Wrote ", file.path(cfg$output_dir,
