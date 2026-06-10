@@ -48,9 +48,12 @@ pipeline and its persisted tables stay untouched.
 
 ## How the Q4 filters are implemented
 
-All three filters are computed as flags in a single per-PATID temp
+All four filters are computed as flags in a single per-PATID temp
 view (`_jjq4_flags_all`) so the attrition card can count each step
-independently. Final Ashley membership requires all four flags set.
+independently. Final Ashley membership requires all four flags set
+(the LOT1 cutoff is enforced upstream in `Q4_LOT1_STARTS` and so
+appears in the funnel as the `LOT1 >= Q4_LOT1_FROM` row rather than
+as a flag column).
 
 ### LOT1 start cutoff (>= 2017-01-01)
 `build_lot1_starts_q4()` adds `LOT_START_DT >= date('{Q4_LOT1_FROM}')`
