@@ -12,6 +12,36 @@ whole `LOT_LONG` cohort.
 The whole-cohort view is produced by `../julia_q1_q3.R`. This script
 reuses every helper from that file verbatim - no logic is forked.
 
+> **Cohort label:** in dashboard output this planned cohort is labelled
+> **NDMM** (1L newly-diagnosed), not "Ashley". "Ashley" survives only in
+> internal names (this folder, the `_jjq4_ashley_patids` temp view, the
+> `julia_q4_ashley_dashboard.html` filename) so existing links keep
+> working.
+
+## One combined dashboard (both cohorts + exploratory)
+
+`../julia_combined_dashboard.R` produces a **single** HTML
+(`julia_combined_dashboard.html`) whose left sidebar has three
+top-level groups:
+
+```
+Overall                whole parent LOT_LONG cohort  (Q1/Q2/Q3 + QC)
+NDMM                   this planned 1L cohort         (Q1/Q2/Q3 + QC)
+Exploratory analysis   ad-hoc / one-off requests
+```
+
+It reuses `prepare_overall_cohort()` (from `../julia_q1_q3.R`) and
+`prepare_ndmm_cohort()` (this file, extracted from `main_q4()`), running
+both into one accumulating `dashboard_items` and writing once. The two
+standalone dashboards still build exactly as before - nothing is forked.
+
+**Where an ad-hoc ask goes** (Julia, 10-Jun): if it reuses the Overall
+or NDMM denominator (same patient counts) it is added *under that
+cohort* as a `QC:` / `Sensitivity:` item; if it changes the cohort (a
+different denominator, e.g. a POMA subset) it goes under **Exploratory
+analysis**. No different-cohort asks exist yet, so that group currently
+ships as a scaffold describing the rule.
+
 ## Cohort definition
 
 Ashley's planned cohort is layered on top of the parent pipeline:

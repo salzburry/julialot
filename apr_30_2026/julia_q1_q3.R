@@ -283,7 +283,8 @@ augment_lot_long <- function(con, lot_long, rx_tbl, medical_tbl, n_codes) {
 
 # Steroid prevalence: how many patients have at least one steroid
 # token in their LOT_BASE_MEDS_AUG, per LOT_NUM. Sanity check.
-build_steroid_prevalence <- function(con) {
+build_steroid_prevalence <- function(con, section = "STEROIDS",
+                                     title_prefix = "") {
   df <- db_q(con, glue("
     WITH per AS (
       SELECT LOT_NUM,
@@ -303,8 +304,8 @@ build_steroid_prevalence <- function(con) {
     FROM per ORDER BY LOT_NUM
   "))
   if (nrow(df) == 0) return(invisible())
-  save_table(df, section = "STEROIDS",
-             title = "Steroid prevalence per LOT_NUM (Q2)")
+  save_table(df, section = section,
+             title = paste0(title_prefix, "Steroid prevalence per LOT_NUM (Q2)"))
   add_html_card(paste0(
     '<div style="font-family:system-ui;padding:14px;max-width:700px">',
     '<h3>Steroid token attached to LOT_BASE_MEDS (Q2)</h3>',
@@ -325,13 +326,15 @@ build_steroid_prevalence <- function(con) {
     'counts, end reasons) are unchanged from <code>LOT_LONG</code>. ',
     'Steroid codes are loaded from ',
     '<code>julia_q1_q3_steroid_codes.csv</code>.</p></div>'),
-    section = "STEROIDS", title = "What this section shows")
+    section = section, title = paste0(title_prefix, "What this section shows"))
 }
 
 # Q1+Q2+Q3: focused LOT-pair Sankey by REGIMEN (steroid-augmented).
 # INNER JOIN drops non-progressors.
-build_focused_pair <- function(con, n_from, n_to) {
-  section <- paste0("LOT", n_from, "_TO_LOT", n_to, "_REGIMEN")
+build_focused_pair <- function(con, n_from, n_to, section = NULL,
+                               title_prefix = "") {
+  if (is.null(section))
+    section <- paste0("LOT", n_from, "_TO_LOT", n_to, "_REGIMEN")
   pairs <- db_q(con, glue("
     WITH a AS (
       SELECT cast(PATID as string) AS PATID, LOT_BASE_MEDS_AUG AS reg_from
@@ -375,22 +378,23 @@ build_focused_pair <- function(con, n_from, n_to) {
               paste0("L", n_to,   ": ", links$tgt_node),
               links$n_patients,
               section = section,
-              title   = paste0("LOT", n_from, " -> LOT", n_to,
+              title   = paste0(title_prefix, "LOT", n_from, " -> LOT", n_to,
                                " by regimen (top ", TOP_N, ", non-progressors excluded)"))
   tbl <- links
   names(tbl) <- c(paste0("LOT", n_from, "_regimen"),
                   paste0("LOT", n_to,   "_regimen"),
                   "n_patients")
   save_table(tbl, section = section,
-             title = paste0("LOT", n_from, " -> LOT", n_to, " regimen counts"))
+             title = paste0(title_prefix, "LOT", n_from, " -> LOT", n_to,
+                            " regimen counts"))
 }
 
 # Q1+Q3: focused LOT-pair Sankey by CATEGORY (Julia's mapping).
 # Line-aware: LOT_NUM=1 uses the 1L NDMM lookup, LOT_NUM>=2 uses the
 # 2L+ R/RMM lookup. Same regimen string can resolve to different
 # categories depending on which line it is being read at.
-build_category_pair <- function(con, n_from, n_to, lookups) {
-  section <- "BY_CATEGORY"
+build_category_pair <- function(con, n_from, n_to, lookups,
+                                section = "BY_CATEGORY", title_prefix = "") {
   lk_from <- if (n_from == 1L) lookups$lookup_1L else lookups$lookup_2L
   lk_to   <- if (n_to   == 1L) lookups$lookup_1L else lookups$lookup_2L
   pairs <- db_q(con, glue("
@@ -454,7 +458,7 @@ build_category_pair <- function(con, n_from, n_to, lookups) {
               paste0("L", n_to,   ": ", links$cat_to),
               links$n_patients,
               section = section,
-              title   = paste0("LOT", n_from, " -> LOT", n_to,
+              title   = paste0(title_prefix, "LOT", n_from, " -> LOT", n_to,
                                " by regimen category (non-progressors excluded; ",
                                "top ", CATEGORY_UNMAPPED_TOP,
                                " unmapped regimens per side, rest in ",
@@ -464,14 +468,16 @@ build_category_pair <- function(con, n_from, n_to, lookups) {
                   paste0("LOT", n_to,   "_category"),
                   "n_patients")
   save_table(tbl, section = section,
-             title = paste0("LOT", n_from, " -> LOT", n_to, " category counts"))
+             title = paste0(title_prefix, "LOT", n_from, " -> LOT", n_to,
+                            " category counts"))
 }
 
 # QC: how many LOT regimens fell into '(uncategorised)' per LOT_NUM.
 # Pulls distinct PATID + LOT_NUM rows, applies the same line-aware
 # lookup logic, and reports match rate. Surfaces mapping gaps that
 # would otherwise be invisible in the Sankeys.
-build_category_coverage <- function(con, lookups) {
+build_category_coverage <- function(con, lookups, section = "BY_CATEGORY",
+                                    title_prefix = "") {
   rows <- db_q(con, glue("
     SELECT cast(PATID as string) AS PATID, LOT_NUM,
            LOT_BASE_MEDS_AUG AS reg
@@ -507,8 +513,8 @@ build_category_coverage <- function(con, lookups) {
   out$pct_uncategorised <- ifelse(out$n_patients > 0,
                                    round(100 * out$n_uncategorised /
                                          out$n_patients, 1), 0)
-  save_table(out, section = "BY_CATEGORY",
-             title = "Category mapping coverage per LOT_NUM")
+  save_table(out, section = section,
+             title = paste0(title_prefix, "Category mapping coverage per LOT_NUM"))
 
   # Top-N unmapped regimen strings per LOT_NUM so Julia can extend the
   # CSV. Per-LOT ranking (not global) because Julia explicitly called
@@ -525,8 +531,8 @@ build_category_coverage <- function(con, lookups) {
                                FUN = function(x) seq_along(x))
     top <- top[top$rank_within_lot <= TOP_N, , drop = FALSE]
     top$rank_within_lot <- NULL
-    save_table(top, section = "BY_CATEGORY",
-               title = paste0("Top ", TOP_N,
+    save_table(top, section = section,
+               title = paste0(title_prefix, "Top ", TOP_N,
                               " unmapped regimens per LOT (extend the CSV)"))
   }
 }
@@ -560,7 +566,9 @@ load_categories <- function() {
   )
 }
 
-build_overview_card <- function(n_ster_codes, n_cat_rules) {
+build_overview_card <- function(n_ster_codes, n_cat_rules,
+                                section = "OVERVIEW",
+                                title = "What this dashboard shows") {
   add_html_card(paste0(
     '<div style="font-family:system-ui;padding:14px;max-width:900px">',
     '<h3>Julia June 5 - Q1 / Q2 / Q3 on the current pipeline</h3>',
@@ -577,17 +585,15 @@ build_overview_card <- function(n_ster_codes, n_cat_rules) {
     n_ster_codes, ' codes loaded; LOT boundaries unchanged).</li>',
     '<li><b>Q3</b>: non-progressors dropped (inner-join LOTn &rarr; LOTn+1).</li>',
     '</ul></div>'),
-    section = "OVERVIEW", title = "What this dashboard shows")
+    section = section, title = title)
 }
 
-main <- function() {
-  stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
-  cfg$build_dashboard <<- TRUE
-
-  con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn,
-                        pwd = cfg$pwd, timeout = 120)
-  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-
+# Whole-cohort setup, shared by main() and the combined dashboard.
+# Reads LOT_LONG, augments it with steroid tokens into LOT_LONG_AUG,
+# and loads the category lookups. Leaves LOT_LONG_AUG populated for
+# the whole (un-filtered) cohort and returns the scalars the overview
+# card + builders need. Does NOT touch dashboard_items.
+prepare_overall_cohort <- function(con) {
   lot_long    <- wrk("LOT_LONG")
   rx_tbl      <- cdm_src(cfg$tbl_rx)
   medical_tbl <- cdm_src(cfg$tbl_medical)
@@ -622,13 +628,25 @@ main <- function() {
     log_msg("  ", length(lookups$lookup_1L), " 1L rules, ",
             length(lookups$lookup_2L), " 2L+ rules loaded")
   }
+  list(q2_ok = q2_ok, n_ster = n_ster, lookups = lookups, n_rules = n_rules)
+}
+
+main <- function() {
+  stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
+  cfg$build_dashboard <<- TRUE
+
+  con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn,
+                        pwd = cfg$pwd, timeout = 120)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+
+  p <- prepare_overall_cohort(con)
 
   dashboard_items <<- list()
-  build_overview_card(n_ster, n_rules)
+  build_overview_card(p$n_ster, p$n_rules)
   build_steroid_prevalence(con)
   for (n in 1:4) build_focused_pair(con, n, n + 1L)
-  for (n in 1:4) build_category_pair(con, n, n + 1L, lookups)
-  build_category_coverage(con, lookups)
+  for (n in 1:4) build_category_pair(con, n, n + 1L, p$lookups)
+  build_category_coverage(con, p$lookups)
 
   build_dashboard(
     out_name     = "julia_q1_q3_dashboard.html",
