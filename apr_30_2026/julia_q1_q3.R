@@ -485,15 +485,24 @@ build_category_coverage <- function(con, lookups) {
   save_table(out, section = "BY_CATEGORY",
              title = "Category mapping coverage per LOT_NUM")
 
-  # Top 10 unmapped regimen strings so Julia can extend the CSV.
+  # Top-N unmapped regimen strings per LOT_NUM so Julia can extend the
+  # CSV. Per-LOT ranking (not global) because Julia explicitly called
+  # out that she only sees the LOT2/LOT3 buckets when global ranking
+  # is dominated by LOT1 / LOT4-5 tails. Result is sorted by LOT_NUM
+  # ascending, then n_patients descending within each LOT.
   if (nrow(un_rows) > 0) {
     top <- aggregate(PATID ~ reg + LOT_NUM,
                      data = un_rows[, c("PATID","LOT_NUM","reg")],
                      FUN = function(x) length(unique(x)))
     names(top)[3] <- "n_patients"
-    top <- top[order(-top$n_patients), , drop = FALSE]
-    save_table(head(top, TOP_N), section = "BY_CATEGORY",
-               title = paste0("Top ", TOP_N, " unmapped regimens (extend the CSV)"))
+    top <- top[order(top$LOT_NUM, -top$n_patients), , drop = FALSE]
+    top$rank_within_lot <- ave(top$n_patients, top$LOT_NUM,
+                               FUN = function(x) seq_along(x))
+    top <- top[top$rank_within_lot <= TOP_N, , drop = FALSE]
+    top$rank_within_lot <- NULL
+    save_table(top, section = "BY_CATEGORY",
+               title = paste0("Top ", TOP_N,
+                              " unmapped regimens per LOT (extend the CSV)"))
   }
 }
 
