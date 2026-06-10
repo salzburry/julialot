@@ -47,7 +47,12 @@ source(file.path(source_dir, "config_lot.R"))
 source(file.path(source_dir, "db_utils_lot.R"))
 source(file.path(source_dir, "dashboard_lot.R"))
 
-TOP_N            <- 25L
+TOP_N            <- 10L
+CATEGORY_UNMAPPED_TOP <- 15L  # cap on distinct (unmapped) nodes per
+                              # side in the category Sankey; rest
+                              # bucket into '(unmapped) other'. All
+                              # mapped categories from Julia's CSV
+                              # always render regardless of this cap.
 LOT_LONG_AUG     <- "_jjq_lot_long_aug"
 STEROID_VIEW     <- "_jjq_steroid"
 CAT_CSV_PATH     <- file.path(.script_dir, "julia_q1_q3_categories.csv")
@@ -422,6 +427,24 @@ build_category_pair <- function(con, n_from, n_to, lookups) {
   pairs$cat_from <- vapply(pairs$reg_from, cat_of, character(1), lk = lk_from)
   pairs$cat_to   <- vapply(pairs$reg_to,   cat_of, character(1), lk = lk_to)
 
+  # Cap (unmapped) nodes per side to keep the Sankey readable. Mapped
+  # categories are always kept. Unmapped labels beyond the top
+  # CATEGORY_UNMAPPED_TOP (by distinct PATIDs) collapse into one
+  # '(unmapped) other' node. The full breakdown stays visible in the
+  # per-LOT unmapped audit table below.
+  cap_unmapped <- function(lab, pid) {
+    is_un <- startsWith(lab, "(unmapped) ")
+    if (!any(is_un)) return(lab)
+    cnt <- tapply(pid[is_un], lab[is_un],
+                  FUN = function(x) length(unique(x)))
+    keep <- names(sort(cnt, decreasing = TRUE))[
+      seq_len(min(CATEGORY_UNMAPPED_TOP, length(cnt)))]
+    lab[is_un & !lab %in% keep] <- "(unmapped) other"
+    lab
+  }
+  pairs$cat_from <- cap_unmapped(pairs$cat_from, pairs$PATID)
+  pairs$cat_to   <- cap_unmapped(pairs$cat_to,   pairs$PATID)
+
   links <- aggregate(PATID ~ cat_from + cat_to, data = pairs,
                      FUN = function(x) length(unique(x)))
   names(links)[3] <- "n_patients"
@@ -433,7 +456,9 @@ build_category_pair <- function(con, n_from, n_to, lookups) {
               section = section,
               title   = paste0("LOT", n_from, " -> LOT", n_to,
                                " by regimen category (non-progressors excluded; ",
-                               "unmapped regimens shown verbatim with '(unmapped)' prefix)"))
+                               "top ", CATEGORY_UNMAPPED_TOP,
+                               " unmapped regimens per side, rest in ",
+                               "'(unmapped) other'; see audit table for full list)"))
   tbl <- links
   names(tbl) <- c(paste0("LOT", n_from, "_category"),
                   paste0("LOT", n_to,   "_category"),
