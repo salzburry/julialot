@@ -670,6 +670,93 @@ prepare_overall_cohort <- function(con) {
   list(q2_ok = q2_ok, n_ster = n_ster, lookups = lookups, n_rules = n_rules)
 }
 
+# Cohort-attrition card for the WHOLE (parent) cohort. Reads the
+# attrition_report table that main.R / persist_attrition_table() writes
+# at the end of Stage 1, picks the OP-confirmation window from
+# cfg$outpatient_window, and emits BOTH a table card and a horizontal
+# waterfall chart so Julia can see each parent IE rule applied
+# step-by-step (the same step list main.R prints to the log).
+#
+# Degrades gracefully: if the attrition_report table is missing (e.g.
+# Stage 1 was skipped or PERSIST_TO_SCHEMA=FALSE), an amber HTML card
+# explains how to populate it instead of failing the run.
+build_overall_attrition <- function(con, section = "OVERVIEW",
+                                    title_prefix = "") {
+  attrition_tbl <- if (nzchar(cfg$catalog))
+    paste0(cfg$catalog, ".", cfg$work_schema, ".attrition_report")
+  else
+    paste0(cfg$work_schema, ".attrition_report")
+
+  df <- tryCatch(db_q(con, glue("
+    SELECT row_order, step_id, description, n_30, n_60, n_90
+    FROM {attrition_tbl}
+    ORDER BY row_order
+  ")), error = function(e) NULL)
+
+  if (is.null(df) || nrow(df) == 0) {
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:14px;max-width:900px;',
+      'background:#fff3cd;border:1px solid #d9a800;border-radius:6px;',
+      'color:#5a4500"><b>Overall cohort attrition unavailable.</b><br>',
+      'This card reads <code>', attrition_tbl, '</code>, written by ',
+      '<code>main.R</code> (Stage 1 of <code>run_pipeline.R</code>) via ',
+      '<code>persist_attrition_table()</code>. Run Stage 1 against the ',
+      'same <code>PROJECT_WORK_SCHEMA</code> (and keep ',
+      '<code>PERSIST_TO_SCHEMA=TRUE</code>), then rebuild this dashboard.',
+      '</div>'),
+      section = section,
+      title = paste0(title_prefix, "Cohort attrition (unavailable)"))
+    return(invisible())
+  }
+
+  w <- as.integer(cfg$outpatient_window %||% 90L)
+  if (!(w %in% c(30L, 60L, 90L))) w <- 90L
+  df$n_at_step <- as.numeric(df[[paste0("n_", w)]])
+  df$pct_of_prev <- NA_real_
+  if (nrow(df) > 1) {
+    for (i in 2:nrow(df)) {
+      prev_n <- df$n_at_step[i - 1]
+      df$pct_of_prev[i] <- if (prev_n > 0)
+        round(100 * df$n_at_step[i] / prev_n, 1) else NA_real_
+    }
+  }
+
+  out <- data.frame(
+    step        = df$step_id,
+    description = df$description,
+    n_patients  = as.integer(df$n_at_step),
+    pct_of_prev = df$pct_of_prev,
+    stringsAsFactors = FALSE
+  )
+  save_table(out, section = section,
+             title = paste0(title_prefix, "Cohort attrition (", w,
+                            "-day OP window)"))
+
+  if (has_ggplot2) {
+    plot_df <- df
+    plot_df$description <- factor(plot_df$description,
+                                  levels = rev(plot_df$description))
+    p_att <- ggplot(plot_df,
+                    aes(x = description, y = n_at_step,
+                        text = paste0("Step: ", description,
+                                      "\nN: ", format(n_at_step, big.mark = ",")))) +
+      geom_col(fill = "#2E86AB", width = 0.7) +
+      geom_text(aes(label = format(n_at_step, big.mark = ",")),
+                hjust = -0.1, size = 3.3, color = "grey20") +
+      scale_y_continuous(labels = scales::comma_format(),
+                         expand = expansion(mult = c(0, 0.2))) +
+      coord_flip() +
+      labs(title = "Overall cohort attrition",
+           subtitle = paste0("Each parent IE rule applied; ",
+                             w, "-day OP confirmation window"),
+           x = NULL, y = "Patients remaining") +
+      theme_lot()
+    save_plot(p_att, "overall_attrition.png", width = 10, height = 6,
+              section = section,
+              title = paste0(title_prefix, "Cohort attrition waterfall"))
+  }
+}
+
 main <- function() {
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
   cfg$build_dashboard <<- TRUE
@@ -682,6 +769,7 @@ main <- function() {
 
   dashboard_items <<- list()
   build_overview_card(p$n_ster, p$n_rules)
+  build_overall_attrition(con)
   build_steroid_prevalence(con)
   for (n in 1:4) build_focused_pair(con, n, n + 1L)
   for (n in 1:4) build_category_pair(con, n, n + 1L, p$lookups)
