@@ -107,42 +107,56 @@ make_sankey <- function(src_lab, tgt_lab, value, section, title) {
 }
 
 # Load steroid codes from CSV into a session temp view (Q2).
+# Counts HCPCS vs NDC rows separately and surfaces both on
+# cfg$steroid_ndc_count / cfg$steroid_hcpcs_count so the overview cards
+# can banner an NDC-missing run (the common fresh-clone failure mode -
+# the tracked CSV ships with only HCPCS rows by design).
 load_steroid_codes <- function(con) {
+  set_counts <- function(n_hcpcs, n_ndc) {
+    cfg$steroid_hcpcs_count <<- n_hcpcs
+    cfg$steroid_ndc_count   <<- n_ndc
+  }
+  empty_view <- function() db_exec(con, glue(
+    "CREATE OR REPLACE TEMPORARY VIEW {STEROID_VIEW} AS ",
+    "SELECT cast('' as string) AS code, ",
+    " cast('' as string) AS code_type, ",
+    " cast('' as string) AS mapped_to WHERE 1=0"))
+
   if (!file.exists(STER_CSV_PATH)) {
     log_msg("  no steroid CSV at ", STER_CSV_PATH, " - Q2 augmentation skipped.")
-    db_exec(con, glue(
-      "CREATE OR REPLACE TEMPORARY VIEW {STEROID_VIEW} AS ",
-      "SELECT cast('' as string) AS code, ",
-      " cast('' as string) AS code_type, ",
-      " cast('' as string) AS mapped_to WHERE 1=0"))
-    return(0L)
+    set_counts(0L, 0L); empty_view(); return(0L)
   }
   df <- tryCatch(read.csv(STER_CSV_PATH, stringsAsFactors = FALSE,
                           check.names = FALSE, comment.char = "#"),
                  error = function(e) NULL)
   if (is.null(df) || nrow(df) == 0) {
     log_msg("  steroid CSV unreadable or empty.")
-    db_exec(con, glue(
-      "CREATE OR REPLACE TEMPORARY VIEW {STEROID_VIEW} AS ",
-      "SELECT cast('' as string) AS code, ",
-      " cast('' as string) AS code_type, ",
-      " cast('' as string) AS mapped_to WHERE 1=0"))
-    return(0L)
+    set_counts(0L, 0L); empty_view(); return(0L)
   }
   sq <- function(x) gsub("'","''",x,fixed=TRUE)
-  rows <- vapply(seq_len(nrow(df)), function(i) {
+  parsed <- lapply(seq_len(nrow(df)), function(i) {
     cd <- toupper(gsub("[^A-Za-z0-9]", "",
                         trimws(as.character(df$code[i]))))
     ty <- toupper(trimws(as.character(df$code_type[i])))
     mt <- toupper(trimws(as.character(df$mapped_to[i])))
-    if (!nzchar(cd) || !nzchar(mt)) return(NA_character_)
-    sprintf("('%s','%s','%s')", sq(cd), sq(ty), sq(mt))
-  }, character(1))
-  rows <- rows[!is.na(rows)]
-  if (length(rows) == 0) {
+    if (!nzchar(cd) || !nzchar(mt)) return(NULL)
+    list(tuple = sprintf("('%s','%s','%s')", sq(cd), sq(ty), sq(mt)),
+         code_type = ty)
+  })
+  parsed <- Filter(Negate(is.null), parsed)
+  if (length(parsed) == 0) {
     log_msg("  steroid CSV parsed but produced 0 valid rows.")
-    return(0L)
+    set_counts(0L, 0L); empty_view(); return(0L)
   }
+  rows  <- vapply(parsed, function(p) p$tuple,     character(1))
+  types <- vapply(parsed, function(p) p$code_type, character(1))
+  n_ndc   <- sum(types == "NDC")
+  n_hcpcs <- sum(types == "HCPCS")
+  set_counts(n_hcpcs, n_ndc)
+  if (n_ndc == 0L)
+    log_msg("  WARN: 0 NDC steroid rows in ", STER_CSV_PATH,
+            " - Q2 steroid prevalence will under-count by oral RX claims.",
+            " Add NDC rows (code,code_type,mapped_to,note) and re-run.")
   db_exec(con, glue(
     "CREATE OR REPLACE TEMPORARY VIEW {STEROID_VIEW} AS ",
     "SELECT * FROM VALUES {paste(rows, collapse=',')} ",
@@ -566,10 +580,35 @@ load_categories <- function() {
   )
 }
 
+# Returns an amber HTML banner when no NDC steroid codes were loaded
+# (returns "" otherwise). Both build_overview_card and the Q4 overview
+# card prepend it so a fresh clone / non-prod deploy can never silently
+# under-count Q2 steroid prevalence: the tracked CSV ships with only
+# HCPCS rows by design (Julia maintains the NDC list out-of-band).
+ndc_missing_banner <- function() {
+  n_ndc <- cfg$steroid_ndc_count
+  if (!is.null(n_ndc) && n_ndc > 0L) return("")
+  paste0(
+    '<div style="background:#fff3cd;border:1px solid #d9a800;',
+    'border-radius:6px;padding:10px 14px;margin:0 0 12px;',
+    'font-family:system-ui;font-size:13px;color:#5a4500;max-width:900px">',
+    '<b>Q2 caveat &mdash; no NDC steroid codes loaded.</b><br>',
+    'The steroid-code CSV at <code>', STER_CSV_PATH, '</code> contains ',
+    'only HCPCS rows (J-codes) in this run. Oral-RX steroid claims ',
+    '(NDCs) are <b>not</b> picked up, so Q2 steroid prevalence ',
+    'undercounts by however many patients have oral-RX-only steroid ',
+    'coverage in their induction window. Drop NDC rows ',
+    '(<code>code,code_type,mapped_to,note</code>) into the CSV and ',
+    're-run to clear this banner.',
+    '</div>'
+  )
+}
+
 build_overview_card <- function(n_ster_codes, n_cat_rules,
                                 section = "OVERVIEW",
                                 title = "What this dashboard shows") {
   add_html_card(paste0(
+    ndc_missing_banner(),
     '<div style="font-family:system-ui;padding:14px;max-width:900px">',
     '<h3>Julia June 5 - Q1 / Q2 / Q3 on the current pipeline</h3>',
     '<p style="color:#555;font-size:13px">Reads parent pipeline ',
