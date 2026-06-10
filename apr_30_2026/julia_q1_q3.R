@@ -47,7 +47,7 @@ source(file.path(source_dir, "config_lot.R"))
 source(file.path(source_dir, "db_utils_lot.R"))
 source(file.path(source_dir, "dashboard_lot.R"))
 
-TOP_N            <- 25L
+TOP_N            <- 10L
 LOT_LONG_AUG     <- "_jjq_lot_long_aug"
 STEROID_VIEW     <- "_jjq_steroid"
 CAT_CSV_PATH     <- file.path(.script_dir, "julia_q1_q3_categories.csv")
