@@ -47,7 +47,7 @@ source(file.path(source_dir, "config_lot.R"))
 source(file.path(source_dir, "db_utils_lot.R"))
 source(file.path(source_dir, "dashboard_lot.R"))
 
-TOP_N            <- 10L
+TOP_N            <- 25L
 LOT_LONG_AUG     <- "_jjq_lot_long_aug"
 STEROID_VIEW     <- "_jjq_steroid"
 CAT_CSV_PATH     <- file.path(.script_dir, "julia_q1_q3_categories.csv")
@@ -408,9 +408,16 @@ build_category_pair <- function(con, n_from, n_to, lookups) {
   "))
   if (nrow(pairs) == 0) return(invisible())
 
+  # Julia June 10: for regimens with no category in the CSV, show the
+  # actual regimen string instead of a single '(uncategorised)' bucket.
+  # The "(unmapped) " prefix lets viewers distinguish unmapped fallbacks
+  # from real mapped categories at a glance, and the regimen text is
+  # exactly what would be added to julia_q1_q3_categories.csv to map it.
+  # The QC coverage card below still uses '(uncategorised)' as a single
+  # bucket since it reports a per-LOT match-rate, not a Sankey node.
   cat_of <- function(r, lk) {
     k <- norm_key_no_steroid(r)
-    if (k %in% names(lk)) unname(lk[k]) else "(uncategorised)"
+    if (k %in% names(lk)) unname(lk[k]) else paste0("(unmapped) ", r)
   }
   pairs$cat_from <- vapply(pairs$reg_from, cat_of, character(1), lk = lk_from)
   pairs$cat_to   <- vapply(pairs$reg_to,   cat_of, character(1), lk = lk_to)
@@ -425,7 +432,8 @@ build_category_pair <- function(con, n_from, n_to, lookups) {
               links$n_patients,
               section = section,
               title   = paste0("LOT", n_from, " -> LOT", n_to,
-                               " by regimen category (non-progressors excluded)"))
+                               " by regimen category (non-progressors excluded; ",
+                               "unmapped regimens shown verbatim with '(unmapped)' prefix)"))
   tbl <- links
   names(tbl) <- c(paste0("LOT", n_from, "_category"),
                   paste0("LOT", n_to,   "_category"),
@@ -484,8 +492,8 @@ build_category_coverage <- function(con, lookups) {
                      FUN = function(x) length(unique(x)))
     names(top)[3] <- "n_patients"
     top <- top[order(-top$n_patients), , drop = FALSE]
-    save_table(head(top, 10), section = "BY_CATEGORY",
-               title = "Top 10 unmapped regimens (extend the CSV)")
+    save_table(head(top, TOP_N), section = "BY_CATEGORY",
+               title = paste0("Top ", TOP_N, " unmapped regimens (extend the CSV)"))
   }
 }
 
