@@ -565,6 +565,7 @@ build_q4_overview_card <- function(counts, n_ster_codes, n_cat_rules,
     paste0('<p style="color:#a06000;font-size:12px;margin-top:8px"><b>Notes:</b> ',
            paste(notes, collapse = " "), '</p>') else ""
   add_html_card(paste0(
+    ndc_missing_banner(),
     '<div style="font-family:system-ui;padding:14px;max-width:900px">',
     '<h3>Julia June 5 - NDMM (1L newly-diagnosed) planned cohort</h3>',
     '<p style="color:#555;font-size:13px">Q1 / Q2 / Q3 dashboards on ',
