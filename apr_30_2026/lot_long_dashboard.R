@@ -481,9 +481,14 @@ collect_lot_long_views <- function(con, lot_long = wrk("LOT_LONG"),
     # the BIGINT PATID to R as a numeric/scientific double, which then
     # never matches back in the `WHERE PATID IN (...)` list below (the
     # join inside SQL still uses the raw column, so it is unaffected).
+    # HAVING max(LOT_NUM) >= 2: Med Journey examples are about the
+    # patient journey THROUGH lines, so LOT1-only patients (no
+    # progression to show) are excluded even from the
+    # spread-of-terminal-reasons fill below.
     pat_pick <- db_q(con, glue("
       WITH pm AS (SELECT PATID, max(LOT_NUM) AS max_lot
-                  FROM {lot_long} GROUP BY PATID)
+                  FROM {lot_long} GROUP BY PATID
+                  HAVING max(LOT_NUM) >= 2)
       SELECT cast(pm.PATID as string) AS PATID, pm.max_lot,
              ll.LOT_BASE_END_REASON AS terminal_reason
       FROM pm

@@ -261,7 +261,9 @@ apply.
 matches `julia_q1_q3_dashboard.html` (same OVERVIEW, steroid
 prevalence card, Q1 category-pair Sankeys, Q3 focused-regimen
 Sankeys, Q1 category coverage QC) but every section is computed on
-the Ashley cohort.
+the NDMM cohort. (Folder + file names keep the `q4_ashley` token for
+backwards compatibility; the cohort and the dashboard heading both
+read as "NDMM planned cohort".)
 
 ## Reuse policy
 

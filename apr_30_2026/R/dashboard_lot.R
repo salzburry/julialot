@@ -88,7 +88,14 @@ theme_lot <- function(base_size = 13) {
 save_plot <- function(p, filename, width = 10, height = 6, section = "", title = "") {
   if (!has_ggplot2) return(invisible(NULL))
   dir.create(cfg$output_dir, showWarnings = FALSE, recursive = TRUE)
-  out_path <- file.path(cfg$output_dir, filename)
+  # cfg$plot_filename_prefix lets a caller that runs the same builders
+  # twice (e.g. the combined Overall+NDMM dashboard) keep both runs'
+  # static PNGs in cfg$output_dir without clobbering each other. The
+  # in-memory plotly object added below is unaffected - that's what
+  # the HTML dashboard actually renders, so this is purely about the
+  # standalone PNG artifact files.
+  prefix <- if (is.null(cfg$plot_filename_prefix)) "" else cfg$plot_filename_prefix
+  out_path <- file.path(cfg$output_dir, paste0(prefix, filename))
   tryCatch({
     ggsave(out_path, plot = p, width = width, height = height, dpi = 150, bg = "white")
     log_msg("  Figure saved: ", out_path)
