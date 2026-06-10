@@ -144,8 +144,15 @@ main_combined <- function() {
 
   dashboard_items <<- list()
 
+  # Cohort prefixes keep the LOT1-5 static PNG artifacts (lotlong_*.png)
+  # from clobbering each other across the two cohort passes. The HTML
+  # dashboard renders the in-memory plotly objects, so it is correct
+  # without this; the prefix is just for the on-disk PNG sidecars.
+  on.exit(cfg$plot_filename_prefix <<- NULL, add = TRUE)
+
   # ---- Overall (whole cohort) ----
   log_msg("==== Building OVERALL cohort views ====")
+  cfg$plot_filename_prefix <<- "overall_"
   p_overall <- prepare_overall_cohort(con)
   build_overview_card(p_overall$n_ster, p_overall$n_rules,
                       section = "Overall",
@@ -165,6 +172,7 @@ main_combined <- function() {
   # an explanatory card instead of killing the whole combined dashboard;
   # Overall + Exploratory still render.
   log_msg("==== Building NDMM cohort views ====")
+  cfg$plot_filename_prefix <<- "ndmm_"
   ndmm_ok <- tryCatch({
     p_ndmm <- prepare_ndmm_cohort(con)
     build_q4_overview_card(p_ndmm$counts, p_ndmm$n_ster, p_ndmm$n_rules,
@@ -197,6 +205,7 @@ main_combined <- function() {
   })
 
   # ---- Exploratory analysis ----
+  cfg$plot_filename_prefix <<- NULL
   build_exploratory_scaffold()
 
   build_dashboard(
