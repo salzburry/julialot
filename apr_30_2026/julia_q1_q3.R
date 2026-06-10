@@ -47,7 +47,7 @@ source(file.path(source_dir, "config_lot.R"))
 source(file.path(source_dir, "db_utils_lot.R"))
 source(file.path(source_dir, "dashboard_lot.R"))
 
-TOP_N            <- 10L
+TOP_N            <- 25L
 LOT_LONG_AUG     <- "_jjq_lot_long_aug"
 STEROID_VIEW     <- "_jjq_steroid"
 CAT_CSV_PATH     <- file.path(.script_dir, "julia_q1_q3_categories.csv")
@@ -492,8 +492,8 @@ build_category_coverage <- function(con, lookups) {
                      FUN = function(x) length(unique(x)))
     names(top)[3] <- "n_patients"
     top <- top[order(-top$n_patients), , drop = FALSE]
-    save_table(head(top, 10), section = "BY_CATEGORY",
-               title = "Top 10 unmapped regimens (extend the CSV)")
+    save_table(head(top, TOP_N), section = "BY_CATEGORY",
+               title = paste0("Top ", TOP_N, " unmapped regimens (extend the CSV)"))
   }
 }
 
