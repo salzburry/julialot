@@ -12,6 +12,53 @@ whole `LOT_LONG` cohort.
 The whole-cohort view is produced by `../julia_q1_q3.R`. This script
 reuses every helper from that file verbatim - no logic is forked.
 
+> **Cohort label:** in dashboard output this planned cohort is labelled
+> **NDMM** (1L newly-diagnosed), not "Ashley". "Ashley" survives only in
+> internal names (this folder, the `_jjq4_ashley_patids` temp view, the
+> `julia_q4_ashley_dashboard.html` filename) so existing links keep
+> working.
+
+## One combined dashboard (both cohorts + exploratory)
+
+`../julia_combined_dashboard.R` produces a **single** HTML
+(`julia_combined_dashboard.html`) whose left sidebar has three
+top-level groups:
+
+```
+Overall                whole parent LOT_LONG cohort
+                       (Q1/Q2/Q3 + full LOT1-5 detail + QC/Debug/Drilldown)
+NDMM                   this planned 1L cohort
+                       (Q1/Q2/Q3 + full LOT1-5 detail, on filtered LOT_LONG)
+Exploratory analysis   ad-hoc / one-off requests
+```
+
+Inside a cohort, items are clustered by title prefix: `Q1: / Q2: / QC:`
+for Julia's Q1/Q2/Q3 builders, and `FUNNEL: / START_TYPE: / END_REASON:
+/ LENGTH: / REGIMENS: / PROGRESSION: / GAPS: / TRANSITIONS: / SANKEY: /
+MEDCOUNT: / MTX: / TREND: / MED JOURNEY:` for the LOT1-5 detail.
+
+It reuses `prepare_overall_cohort()` (from `../julia_q1_q3.R`),
+`prepare_ndmm_cohort()` (this file, extracted from `main_q4()`), and
+`collect_lot_long_views()` (`../lot_long_dashboard.R`, extracted from
+its `main()`), running everything into one accumulating
+`dashboard_items` and writing once. The three standalone dashboards
+still build exactly as before - nothing is forked.
+
+**Adding a new LOT1-5 view:** drop a builder call inside
+`collect_lot_long_views()` in `../lot_long_dashboard.R` using the same
+`save_table` / `save_plot` / `add_html_card` / `add_to_dashboard`
+sinks. The standalone dashboard picks it up automatically, and the
+combined dashboard also picks it up under both cohorts (it gets
+re-sectioned to "Overall" / "NDMM" by `resection_recent_items` in the
+orchestrator, with the original section name folded into the title).
+
+**Where an ad-hoc ask goes** (Julia, 10-Jun): if it reuses the Overall
+or NDMM denominator (same patient counts) it is added *under that
+cohort* as a `QC:` / `Sensitivity:` item; if it changes the cohort (a
+different denominator, e.g. a POMA subset) it goes under **Exploratory
+analysis**. No different-cohort asks exist yet, so that group currently
+ships as a scaffold describing the rule.
+
 ## Cohort definition
 
 Ashley's planned cohort is layered on top of the parent pipeline:

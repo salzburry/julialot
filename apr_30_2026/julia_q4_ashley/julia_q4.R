@@ -31,6 +31,8 @@
 # Ashley} without confusion. Parent pipeline files untouched.
 
 .script_dir <- local({
+  override <- getOption("julia_q4.script_dir", NULL)
+  if (!is.null(override)) return(override)
   args <- commandArgs(trailingOnly = FALSE)
   fa <- grep("^--file=", args, value = TRUE)
   if (length(fa) > 0)
@@ -545,7 +547,8 @@ q4_counts <- function(con, lot_long, elig_coh_final) {
 }
 
 build_q4_overview_card <- function(counts, n_ster_codes, n_cat_rules,
-                                   notes = list()) {
+                                   notes = list(), section = "OVERVIEW",
+                                   title = "What this dashboard shows") {
   pct <- function(num, den)
     if (den > 0) sprintf("%.1f%%", 100 * num / den) else "-"
   row <- function(label, n, bold = FALSE, bg = "") {
@@ -563,7 +566,7 @@ build_q4_overview_card <- function(counts, n_ster_codes, n_cat_rules,
            paste(notes, collapse = " "), '</p>') else ""
   add_html_card(paste0(
     '<div style="font-family:system-ui;padding:14px;max-width:900px">',
-    '<h3>Julia June 5 Q4 - Ashley planned study cohort</h3>',
+    '<h3>Julia June 5 - NDMM (1L newly-diagnosed) planned cohort</h3>',
     '<p style="color:#555;font-size:13px">Q1 / Q2 / Q3 dashboards on ',
     'Julia&apos;s planned cohort: parent <code>ELIG_COH_FINAL</code> ',
     '(all default IE flags applied) plus a Q4-side LOT1 eligibility ',
@@ -601,7 +604,7 @@ build_q4_overview_card <- function(counts, n_ster_codes, n_cat_rules,
     row("+ 12-mo CE pre-LOT1",                                         counts$ce12),
     row("+ no belantamab in any LOT",                                  counts$ce12_nobela),
     row("+ no MM oncology Tx in 12-mo pre-LOT1",                       counts$ce12_nobela_nopriortx),
-    row("+ no other active cancer in 12-mo pre-LOT1 (Ashley final)",
+    row("+ no other active cancer in 12-mo pre-LOT1 (NDMM final)",
         counts$ashley, bold = TRUE, bg = "#efe"),
     '</table>',
     notes_html,
@@ -613,17 +616,16 @@ build_q4_overview_card <- function(counts, n_ster_codes, n_cat_rules,
     '<code>SCT_ALLO</code>-started LOTs suppressed).</li>',
     '<li><b>Q3</b>: non-progressors dropped (inner-join LOTn &rarr; LOTn+1).</li>',
     '</ul></div>'),
-    section = "OVERVIEW", title = "What this dashboard shows")
+    section = section, title = title)
 }
 
-main_q4 <- function() {
-  stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
-  cfg$build_dashboard <<- TRUE
-
-  con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn,
-                        pwd = cfg$pwd, timeout = 120)
-  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-
+# NDMM (Ashley planned) cohort setup, shared by main_q4() and the
+# combined dashboard. Computes the cohort, writes the filtered LOT_LONG
+# view, augments it with steroid tokens into LOT_LONG_AUG, and loads
+# category lookups. Leaves LOT_LONG_AUG populated for the NDMM cohort
+# and returns the scalars the overview card + builders need. Does NOT
+# touch dashboard_items.
+prepare_ndmm_cohort <- function(con) {
   lot_long        <- wrk("LOT_LONG")
   elig_coh_final  <- wrk(Q4_FINAL_TABLE_NAME)
   map_stacked     <- wrk("MAP_STACKED")
@@ -637,7 +639,7 @@ main_q4 <- function() {
     error = function(e) FALSE))
   if (!ok(lot_long))       stop("Cannot read ", lot_long)
   if (!ok(elig_coh_final)) stop("Cannot read ", elig_coh_final,
-                                " - Ashley cohort needs parent ELIG_COH_FINAL.")
+                                " - NDMM cohort needs parent ELIG_COH_FINAL.")
   raw_ok <- ok(rx_tbl) && ok(medical_tbl)
   if (!raw_ok) {
     log_msg("  WARN: rx or medical unreadable; Q2 steroid augmentation ",
@@ -702,7 +704,7 @@ main_q4 <- function() {
     build_q4_other_malig_pre_lot1(con, med_diag_tbl)
   }
 
-  log_msg("Applying Ashley filters: ELIG_COH_FINAL + 12-mo CE pre-LOT1 + ",
+  log_msg("Applying NDMM filters: ELIG_COH_FINAL + 12-mo CE pre-LOT1 + ",
           "no belantamab + no MM oncology Tx in 12-mo pre-LOT1 + ",
           "no other-cancer in 12-mo pre-LOT1")
   build_q4_flags(con, elig_coh_final, map_stacked,
@@ -737,20 +739,35 @@ main_q4 <- function() {
           " | + 12-mo CE: ", counts$ce12,
           " | + no bela: ", counts$ce12_nobela,
           " | + no MM Tx pre-LOT1: ", counts$ce12_nobela_nopriortx,
-          " | Ashley (final): ", counts$ashley)
+          " | NDMM (final): ", counts$ashley)
   if (counts$ashley == 0)
-    stop("Ashley cohort is empty - check ELIG_COH_FINAL and LOT_LONG inputs.")
+    stop("NDMM cohort is empty - check ELIG_COH_FINAL and LOT_LONG inputs.")
+
+  list(counts = counts, n_ster = n_ster, n_rules = n_rules,
+       lookups = lookups, overview_notes = overview_notes)
+}
+
+main_q4 <- function() {
+  stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
+  cfg$build_dashboard <<- TRUE
+
+  con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn,
+                        pwd = cfg$pwd, timeout = 120)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+
+  p <- prepare_ndmm_cohort(con)
 
   dashboard_items <<- list()
-  build_q4_overview_card(counts, n_ster, n_rules, overview_notes)
+  build_q4_overview_card(p$counts, p$n_ster, p$n_rules, p$overview_notes)
   build_steroid_prevalence(con)
   for (n in 1:4) build_focused_pair(con, n, n + 1L)
-  for (n in 1:4) build_category_pair(con, n, n + 1L, lookups)
-  build_category_coverage(con, lookups)
+  for (n in 1:4) build_category_pair(con, n, n + 1L, p$lookups)
+  build_category_coverage(con, p$lookups)
 
+  counts <- p$counts
   build_dashboard(
     out_name     = "julia_q4_ashley_dashboard.html",
-    header_title = "MM LOT &mdash; Julia June 5 Q4 (Ashley planned cohort)",
+    header_title = "MM LOT &mdash; Julia June 5 (NDMM planned cohort)",
     header_sub   = paste0("ELIG_COH_FINAL &bull; LOT1 &ge; ", Q4_LOT1_FROM,
                           " &bull; 12-mo CE pre-LOT1 &bull; no belantamab",
                           " &bull; no MM Tx pre-LOT1 &bull; no other cancer",
@@ -761,4 +778,4 @@ main_q4 <- function() {
                               "julia_q4_ashley_dashboard.html"))
 }
 
-if (!interactive()) main_q4()
+if (!interactive() && !isTRUE(getOption("julia_q4.no_autorun"))) main_q4()
