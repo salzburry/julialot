@@ -36,24 +36,60 @@
   getwd()
 })
 
-# Source julia_q4.R (which itself sources julia_q1_q3.R) without letting
-# either auto-run its own single-cohort main(). The script_dir overrides
-# pin each file's R/ helper + CSV resolution to the right folder, since
+# Source julia_q4.R (which itself sources julia_q1_q3.R) AND
+# lot_long_dashboard.R without letting any of them auto-run their own
+# single-cohort main(). The script_dir overrides pin each file's
+# R/ helper + CSV resolution to the right folder, since
 # commandArgs("--file=") now points at THIS combined script.
-options(julia_q4.no_autorun = TRUE)
-options(julia_q4.script_dir = file.path(.script_dir, "julia_q4_ashley"))
+options(julia_q4.no_autorun           = TRUE)
+options(julia_q4.script_dir           = file.path(.script_dir, "julia_q4_ashley"))
+options(lot_long_dashboard.no_autorun = TRUE)
 source(file.path(.script_dir, "julia_q4_ashley", "julia_q4.R"))
+source(file.path(.script_dir, "lot_long_dashboard.R"))
+
+# Rewrite the section/title fields of items newly added by a builder so
+# they cluster under one cohort heading in the combined sidebar while
+# preserving their original subsection name in the title. Range
+# [from_idx+1, length(dashboard_items)] is the freshly appended slice.
+# This is the post-processing alternative to parameterising every
+# save_*() call inside the ~900-line LOT1-5 collector - new views added
+# there will be re-sectioned automatically.
+resection_recent_items <- function(from_idx, cohort_label,
+                                   subsection_in_title = TRUE) {
+  n <- length(dashboard_items)
+  if (n <= from_idx) return(invisible())
+  for (i in (from_idx + 1):n) {
+    it <- dashboard_items[[i]]
+    orig_section <- it$section
+    if (isTRUE(subsection_in_title) &&
+        !identical(orig_section, cohort_label)) {
+      it$title <- paste0(orig_section, ": ", it$title)
+    }
+    it$section <- cohort_label
+    dashboard_items[[i]] <<- it
+  }
+}
 
 # ---- Per-cohort view collection -------------------------------------
-# Runs the shared Q1/Q2/Q3 + QC builders against whatever LOT_LONG_AUG
-# currently holds, tagging every item with section = cohort_label so the
-# sidebar groups them under one collapsible cohort heading. Q-area title
-# prefixes ("Q1: ", "Q2: ", "QC: ") cluster the views within a cohort.
+# Runs both the shared Julia Q1/Q2/Q3 builders AND the LOT1-5 detail
+# collector from lot_long_dashboard.R against this cohort's data, tagging
+# every produced item with section = cohort_label so the combined sidebar
+# groups them under one collapsible cohort heading.
+#
+# Within the cohort group, title prefixes cluster related views:
+#   Q1: / Q2: / QC:      Julia Q1/Q2/Q3 builders (steroids, Sankeys, ...)
+#   FUNNEL: / START_TYPE: / ...   LOT1-5 detail (carried in by re-section)
+#
 # Callers MUST have populated LOT_LONG_AUG for this cohort (via
 # prepare_overall_cohort / prepare_ndmm_cohort) immediately before, and
-# must not repopulate it until this returns - every builder pulls its
-# data to R here, so the next cohort can safely overwrite the view.
-collect_cohort_views <- function(con, cohort_label, lookups) {
+# must not repopulate it until this returns. lot_long_tbl is what the
+# LOT1-5 collector aggregates over; usually the cohort-filtered LOT_LONG
+# view so all the FUNNEL / START_TYPE / etc. detail reflects the cohort.
+# include_debug = TRUE only on the first call (Overall) - the DEBUG/QC
+# work-table inventory + ANY-PATID drilldown are schema-wide, not
+# cohort-scoped, so repeating them for NDMM would mislead.
+collect_cohort_views <- function(con, cohort_label, lookups, lot_long_tbl,
+                                 include_debug = FALSE) {
   build_steroid_prevalence(con, section = cohort_label, title_prefix = "Q2: ")
   for (n in 1:4)
     build_focused_pair(con, n, n + 1L, section = cohort_label,
@@ -63,6 +99,15 @@ collect_cohort_views <- function(con, cohort_label, lookups) {
                         title_prefix = "Q1: ")
   build_category_coverage(con, lookups, section = cohort_label,
                           title_prefix = "QC: ")
+
+  # LOT1-5 detail (FUNNEL, START_TYPE, END_REASON, LENGTH, REGIMENS,
+  # PROGRESSION, GAPS, TRANSITIONS, SANKEY, MEDCOUNT, MTX, TREND,
+  # MED JOURNEY, +DEBUG/DRILLDOWN if include_debug). The collector
+  # tags items with its original section names; we re-section them
+  # under cohort_label and fold the original name into the title.
+  before <- length(dashboard_items)
+  collect_lot_long_views(con, lot_long_tbl, include_debug = include_debug)
+  resection_recent_items(before, cohort_label)
 }
 
 # ---- Exploratory analysis scaffold ----------------------------------
@@ -105,7 +150,15 @@ main_combined <- function() {
   build_overview_card(p_overall$n_ster, p_overall$n_rules,
                       section = "Overall",
                       title   = "Overview & cohort definition")
-  collect_cohort_views(con, "Overall", p_overall$lookups)
+  # LOT1-5 detail runs on parent LOT_LONG (un-augmented) so the FUNNEL /
+  # START_TYPE / END_REASON / etc. counts match the persisted parent
+  # exactly - LOT_LONG_AUG only adds steroid tokens to LOT_BASE_MEDS for
+  # Julia's Q1 view, it does not change LOT boundaries or end reasons.
+  # include_debug = TRUE here so the audit + drilldown cards are
+  # produced once (under Overall).
+  collect_cohort_views(con, "Overall", p_overall$lookups,
+                       lot_long_tbl  = wrk("LOT_LONG"),
+                       include_debug = TRUE)
 
   # ---- NDMM (1L newly-diagnosed cohort) ----
   # Wrapped so a missing parent input (e.g. ELIG_COH_FINAL) degrades to
@@ -117,7 +170,13 @@ main_combined <- function() {
     build_q4_overview_card(p_ndmm$counts, p_ndmm$n_ster, p_ndmm$n_rules,
                            p_ndmm$overview_notes, section = "NDMM",
                            title = "Overview & cohort definition")
-    collect_cohort_views(con, "NDMM", p_ndmm$lookups)
+    # LOT1-5 detail re-runs on the cohort-filtered LOT_LONG view
+    # (Q4_LOT_LONG_FILT, built by prepare_ndmm_cohort) so every FUNNEL /
+    # START_TYPE / etc. number reflects the NDMM-restricted denominator.
+    # DEBUG/DRILLDOWN already produced under Overall - skip here.
+    collect_cohort_views(con, "NDMM", p_ndmm$lookups,
+                         lot_long_tbl  = Q4_LOT_LONG_FILT,
+                         include_debug = FALSE)
     TRUE
   }, error = function(e) {
     log_msg("  WARN: NDMM cohort could not be built: ", conditionMessage(e))

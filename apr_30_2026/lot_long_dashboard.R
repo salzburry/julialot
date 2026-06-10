@@ -36,28 +36,21 @@ source(file.path(source_dir, "config_lot.R"))
 source(file.path(source_dir, "db_utils_lot.R"))
 source(file.path(source_dir, "dashboard_lot.R"))
 
-main <- function() {
-  stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
-
-  # build_dashboard()/save_*() are gated on cfg$build_dashboard; force it
-  # on for this standalone tool regardless of the env default.
-  cfg$build_dashboard <<- TRUE
-
-  con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
-  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-
-  lot_long <- wrk("LOT_LONG")
-  log_msg("LOT1-5 dashboard - reading ", lot_long)
-
-  if (!isTRUE(tryCatch(
-        nrow(db_q(con, glue("SELECT 1 FROM {lot_long} LIMIT 1"))) >= 0,
-        error = function(e) FALSE))) {
-    stop("Cannot read ", lot_long,
-         ". Build LOT_LONG (lot2_5_program.R / LOT2-5 stage) first.")
-  }
-
-  # Reset the shared collector (dashboard_lot.R defines it at load).
-  dashboard_items <<- list()
+# Default args reproduce the standalone dashboard's behaviour byte-for-
+# byte. The combined orchestrator passes a cohort-filtered LOT_LONG and
+# disables the schema-wide DEBUG/QC + DRILLDOWN sections (they audit
+# work-schema tables and search ANY PATID, neither of which is
+# cohort-scoped). Connection / readability check / dashboard_items reset
+# / build_dashboard happen in main(), not here, so the function stays a
+# pure view collector that callers can chain.
+#
+# Adding a new LOT1-5 view? Drop it inside this function (or call a
+# helper from inside it) using the same save_table / save_plot /
+# add_html_card / add_to_dashboard sinks already in use. It will then
+# appear in BOTH the standalone dashboard AND the combined dashboard
+# (under each cohort) with no other changes needed.
+collect_lot_long_views <- function(con, lot_long = wrk("LOT_LONG"),
+                                   include_debug = TRUE) {
 
   # ---- Per-LOT patient/row counts ----
   by_lot <- db_q(con, glue("
@@ -705,6 +698,13 @@ main <- function() {
       section = "MED JOURNEY", title = "Med Journeys (unavailable)")
   }
 
+  # DEBUG/QC + DRILLDOWN are schema-wide audit/exploration tools
+  # (they inventory persisted work tables and let users look up ANY
+  # PATID). When the combined dashboard re-runs this collector for the
+  # NDMM cohort, repeating both would be misleading - they don't change
+  # between cohorts - so the orchestrator turns them off there.
+  if (include_debug) {
+
   # ---- DEBUG / QC: persisted work-schema tables ----
   # Reads the tables lot_program.R / LOT2-5 persist (NOT temp views), so
   # this stays a single robust script with no dependency on the LOT1
@@ -954,6 +954,30 @@ var first=Object.keys(PJ)[0]; if(first){document.getElementById("pjIn").value=fi
     log_msg("  Drilldown: no LOT_LONG rows - section skipped.")
   }
 
+  }  # end if (include_debug) - DEBUG + DRILLDOWN block
+}
+
+main <- function() {
+  stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
+  # build_dashboard()/save_*() are gated on cfg$build_dashboard; force it
+  # on for this standalone tool regardless of the env default.
+  cfg$build_dashboard <<- TRUE
+
+  con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+
+  lot_long <- wrk("LOT_LONG")
+  log_msg("LOT1-5 dashboard - reading ", lot_long)
+
+  if (!isTRUE(tryCatch(
+        nrow(db_q(con, glue("SELECT 1 FROM {lot_long} LIMIT 1"))) >= 0,
+        error = function(e) FALSE))) {
+    stop("Cannot read ", lot_long,
+         ". Build LOT_LONG (lot2_5_program.R / LOT2-5 stage) first.")
+  }
+
+  dashboard_items <<- list()
+  collect_lot_long_views(con, lot_long)
   build_dashboard(
     out_name     = "lot_long_dashboard.html",
     header_title = "LOT 1-5 &mdash; Long-Format Dashboard",
@@ -963,4 +987,4 @@ var first=Object.keys(PJ)[0]; if(first){document.getElementById("pjIn").value=fi
           file.path(cfg$output_dir, "lot_long_dashboard.html"))
 }
 
-main()
+if (!interactive() && !isTRUE(getOption("lot_long_dashboard.no_autorun"))) main()
