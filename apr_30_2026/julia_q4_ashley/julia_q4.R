@@ -620,6 +620,66 @@ build_q4_overview_card <- function(counts, n_ster_codes, n_cat_rules,
     section = section, title = title)
 }
 
+# Cohort-attrition card for the NDMM cohort. Mirrors
+# build_overall_attrition() shape (table + waterfall) so both cohorts
+# read the same way in the combined dashboard. Driven by the `counts`
+# struct that q4_counts() already computes during prepare_ndmm_cohort()
+# - no extra SQL needed. The inline 7-row table inside the NDMM overview
+# card stays as a quick-glance summary; this card is the detail view.
+build_ndmm_attrition <- function(counts, section = "OVERVIEW",
+                                 title_prefix = "") {
+  df <- data.frame(
+    step = c("01_whole", "02_elig", "03_lot1", "04_ce12",
+             "05_nobela", "06_nopriortx", "07_noother_final"),
+    description = c(
+      "Whole LOT_LONG cohort",
+      "+ in ELIG_COH_FINAL (parent IE)",
+      paste0("+ LOT1 start >= ", Q4_LOT1_FROM, " in LOT_LONG"),
+      "+ 12-mo CE pre-LOT1",
+      "+ no belantamab in any LOT",
+      "+ no MM oncology Tx in 12-mo pre-LOT1",
+      "+ no other active cancer in 12-mo pre-LOT1 (NDMM final)"),
+    n_patients = as.integer(c(
+      counts$whole, counts$elig, counts$elig_lot1, counts$ce12,
+      counts$ce12_nobela, counts$ce12_nobela_nopriortx, counts$ashley)),
+    stringsAsFactors = FALSE
+  )
+  df$pct_of_prev <- NA_real_
+  if (nrow(df) > 1) {
+    for (i in 2:nrow(df)) {
+      prev_n <- df$n_patients[i - 1]
+      df$pct_of_prev[i] <- if (prev_n > 0)
+        round(100 * df$n_patients[i] / prev_n, 1) else NA_real_
+    }
+  }
+  save_table(df, section = section,
+             title = paste0(title_prefix, "NDMM cohort attrition"))
+
+  if (has_ggplot2) {
+    plot_df <- df
+    plot_df$description <- factor(plot_df$description,
+                                  levels = rev(plot_df$description))
+    p_att <- ggplot(plot_df,
+                    aes(x = description, y = n_patients,
+                        text = paste0("Step: ", description,
+                                      "\nN: ", format(n_patients, big.mark = ",")))) +
+      geom_col(fill = "#2E86AB", width = 0.7) +
+      geom_text(aes(label = format(n_patients, big.mark = ",")),
+                hjust = -0.1, size = 3.3, color = "grey20") +
+      scale_y_continuous(labels = scales::comma_format(),
+                         expand = expansion(mult = c(0, 0.2))) +
+      coord_flip() +
+      labs(title = "NDMM cohort attrition",
+           subtitle = paste0("LOT1 cutoff ", Q4_LOT1_FROM,
+                             " + four June 5 filters applied to LOT_LONG"),
+           x = NULL, y = "Patients remaining") +
+      theme_lot()
+    save_plot(p_att, "ndmm_attrition.png", width = 10, height = 6,
+              section = section,
+              title = paste0(title_prefix, "NDMM attrition waterfall"))
+  }
+}
+
 # NDMM (Ashley planned) cohort setup, shared by main_q4() and the
 # combined dashboard. Computes the cohort, writes the filtered LOT_LONG
 # view, augments it with steroid tokens into LOT_LONG_AUG, and loads
@@ -760,6 +820,7 @@ main_q4 <- function() {
 
   dashboard_items <<- list()
   build_q4_overview_card(p$counts, p$n_ster, p$n_rules, p$overview_notes)
+  build_ndmm_attrition(p$counts)
   build_steroid_prevalence(con)
   for (n in 1:4) build_focused_pair(con, n, n + 1L)
   for (n in 1:4) build_category_pair(con, n, n + 1L, p$lookups)

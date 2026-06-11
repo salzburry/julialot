@@ -157,6 +157,8 @@ main_combined <- function() {
   build_overview_card(p_overall$n_ster, p_overall$n_rules,
                       section = "Overall",
                       title   = "Overview & cohort definition")
+  build_overall_attrition(con, section = "Overall",
+                          title_prefix = "Attrition: ")
   # LOT1-5 detail runs on parent LOT_LONG (un-augmented) so the FUNNEL /
   # START_TYPE / END_REASON / etc. counts match the persisted parent
   # exactly - LOT_LONG_AUG only adds steroid tokens to LOT_BASE_MEDS for
@@ -178,6 +180,8 @@ main_combined <- function() {
     build_q4_overview_card(p_ndmm$counts, p_ndmm$n_ster, p_ndmm$n_rules,
                            p_ndmm$overview_notes, section = "NDMM",
                            title = "Overview & cohort definition")
+    build_ndmm_attrition(p_ndmm$counts, section = "NDMM",
+                         title_prefix = "Attrition: ")
     # LOT1-5 detail re-runs on the cohort-filtered LOT_LONG view
     # (Q4_LOT_LONG_FILT, built by prepare_ndmm_cohort) so every FUNNEL /
     # START_TYPE / etc. number reflects the NDMM-restricted denominator.
