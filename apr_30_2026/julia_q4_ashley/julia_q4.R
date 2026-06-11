@@ -680,6 +680,186 @@ build_ndmm_attrition <- function(counts, section = "OVERVIEW",
   }
 }
 
+# QC card: break the no-other-cancer filter's hits down by tumor_group
+# so reviewers can see WHICH cancer families are driving the drop. Runs
+# the same dx / IP / OP-pair / pre-LOT1-window logic as
+# build_q4_other_malig_pre_lot1() (so totals tie), but keeps tumor_group
+# through to the final group-by instead of throwing it away. Reads only
+# the temp views that prepare_ndmm_cohort() already built - no new
+# persisted artifacts, no change to the filter logic.
+#
+# Each PATID is counted once per tumor_group that triggered them, so the
+# column sum is >= the distinct-PATID total (a patient can be flagged by
+# multiple groups).
+build_ndmm_other_cancer_qc <- function(con, section = "OVERVIEW",
+                                       title_prefix = "") {
+  view_ok <- isTRUE(tryCatch(
+    nrow(db_q(con, glue(
+      "SELECT 1 FROM {Q4_OTHER_MALIG_PATIDS} LIMIT 1"))) >= 0,
+    error = function(e) FALSE))
+  if (!view_ok) {
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:14px;max-width:900px;',
+      'background:#fff3cd;border:1px solid #d9a800;border-radius:6px;',
+      'color:#5a4500"><b>Other-cancer QC unavailable.</b><br>',
+      'The no-other-cancer filter was skipped this run (one of ',
+      '<code>med_diag</code> / <code>medical</code> / ',
+      '<code>confinement</code> was not readable), so there is no ',
+      'hit-set to break down.</div>'),
+      section = section,
+      title = paste0(title_prefix, "Other-cancer drop QC (unavailable)"))
+    return(invisible())
+  }
+
+  med_diag_tbl <- cdm_src(cfg$tbl_med_diag)
+  lower <- glue("date_sub(date('{Q4_LOT1_FROM}'), {Q4_PRE_LOT1_DAYS})")
+  upper <- glue("date('{cfg$study_end}')")
+
+  qc <- tryCatch(db_q(con, glue("
+    WITH dx AS (
+      SELECT d.PATID, d.PAT_PLANID, d.CLMID, d.FST_DT, d.LOC_CD,
+             cast(d.FST_DT as date) AS event_dt,
+             upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) AS dx,
+             CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family
+      FROM {med_diag_tbl} d
+      WHERE FST_DT BETWEEN {lower} AND {upper}
+    ),
+    dx_mapped AS (
+      SELECT /*+ BROADCAST(o) */
+             dx.PATID, dx.PAT_PLANID, dx.CLMID, dx.FST_DT, dx.LOC_CD,
+             dx.event_dt, o.tumor_group
+      FROM dx
+      INNER JOIN {Q4_OTHER_MALIG_CODES} o
+              ON dx.dx = o.dx AND dx.icd_family = o.icd_family
+    ),
+    dx_with_setting AS (
+      SELECT dm.PATID, dm.CLMID, dm.event_dt, dm.tumor_group,
+             CASE WHEN h.POS IN ('21', '51', '61')
+                    OR h.TOS_CD IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF')
+                    OR cf.CONF_ID IS NOT NULL
+                  THEN 1 ELSE 0 END AS inpatient_flg
+      FROM dx_mapped dm
+      INNER JOIN {Q4_MED_CLAIM_HEADER} h
+            ON dm.PATID      =   h.PATID
+           AND dm.CLMID      =   h.CLMID
+           AND dm.FST_DT     =   h.FST_DT
+           AND dm.PAT_PLANID <=> h.PAT_PLANID
+           AND dm.LOC_CD     <=> h.LOC_CD
+      LEFT JOIN {Q4_CONFINEMENT} cf
+        ON h.PATID = cf.PATID AND h.CONF_ID = cf.CONF_ID
+    ),
+    ip_hits AS (
+      SELECT DISTINCT PATID, tumor_group, event_dt
+      FROM dx_with_setting WHERE inpatient_flg = 1
+    ),
+    op_dates AS (
+      SELECT DISTINCT PATID, tumor_group, event_dt
+      FROM dx_with_setting WHERE inpatient_flg = 0
+    ),
+    op_pairs AS (
+      SELECT PATID, tumor_group, event_dt AS first_dt,
+             lead(event_dt) OVER (PARTITION BY PATID, tumor_group ORDER BY event_dt) AS next_dt
+      FROM op_dates
+    ),
+    l1 AS (
+      SELECT cast(PATID as string) AS PATID, LOT1_START_DT,
+             date_sub(LOT1_START_DT, {Q4_PRE_LOT1_DAYS}) AS pre_lot1_start,
+             date_sub(LOT1_START_DT, 1)                  AS pre_lot1_end
+      FROM {Q4_LOT1_STARTS}
+    ),
+    ip_in_window AS (
+      SELECT DISTINCT cast(ip.PATID as string) AS PATID, ip.tumor_group
+      FROM ip_hits ip
+      JOIN l1 ON cast(ip.PATID as string) = l1.PATID
+      WHERE ip.event_dt BETWEEN l1.pre_lot1_start AND l1.pre_lot1_end
+    ),
+    op_in_window AS (
+      SELECT DISTINCT cast(op.PATID as string) AS PATID, op.tumor_group
+      FROM op_pairs op
+      JOIN l1 ON cast(op.PATID as string) = l1.PATID
+      WHERE op.next_dt IS NOT NULL
+        AND datediff(op.next_dt, op.first_dt) <= 30
+        AND op.first_dt BETWEEN l1.pre_lot1_start AND l1.pre_lot1_end
+    ),
+    by_group AS (
+      SELECT PATID, tumor_group,
+             max(via_ip) AS via_ip, max(via_op) AS via_op
+      FROM (
+        SELECT PATID, tumor_group, 1 AS via_ip, 0 AS via_op FROM ip_in_window
+        UNION ALL
+        SELECT PATID, tumor_group, 0 AS via_ip, 1 AS via_op FROM op_in_window
+      )
+      GROUP BY PATID, tumor_group
+    )
+    SELECT tumor_group,
+           count(DISTINCT PATID)                                AS n_patients_hit,
+           count(DISTINCT CASE WHEN via_ip = 1 THEN PATID END)  AS n_via_ip,
+           count(DISTINCT CASE WHEN via_op = 1 THEN PATID END)  AS n_via_op
+    FROM by_group
+    GROUP BY tumor_group
+    ORDER BY n_patients_hit DESC
+  ")), error = function(e) {
+    log_msg("  WARN: other-cancer QC query failed: ", conditionMessage(e))
+    NULL
+  })
+
+  if (is.null(qc) || nrow(qc) == 0) {
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:14px;max-width:900px">',
+      '<b>Other-cancer QC: no hits to summarise.</b></div>'),
+      section = section,
+      title = paste0(title_prefix, "Other-cancer drop QC (empty)"))
+    return(invisible())
+  }
+
+  n_total <- as.numeric(qc[1, "n_patients_hit"]) * 0  # placeholder
+  n_total <- tryCatch(as.numeric(db_q(con, glue(
+    "SELECT count(DISTINCT PATID) AS n FROM {Q4_OTHER_MALIG_PATIDS}"))$n),
+    error = function(e) NA_real_)
+  qc$pct_of_drop <- if (is.finite(n_total) && n_total > 0)
+    round(100 * as.numeric(qc$n_patients_hit) / n_total, 1) else NA_real_
+
+  out <- data.frame(
+    tumor_group       = qc$tumor_group,
+    n_patients_hit    = as.integer(qc$n_patients_hit),
+    n_via_ip          = as.integer(qc$n_via_ip),
+    n_via_op_pair     = as.integer(qc$n_via_op),
+    pct_of_total_drop = qc$pct_of_drop,
+    stringsAsFactors  = FALSE
+  )
+  save_table(out, section = section,
+             title = paste0(title_prefix,
+                            "Other-cancer drop by tumor_group"))
+
+  if (has_ggplot2 && nrow(qc) > 0) {
+    top <- head(qc[order(-as.numeric(qc$n_patients_hit)), ], 15)
+    top$tumor_group <- factor(top$tumor_group,
+                              levels = rev(top$tumor_group))
+    p <- ggplot(top,
+                aes(x = tumor_group, y = as.numeric(n_patients_hit),
+                    text = paste0("Tumor group: ", tumor_group,
+                                  "\nPatients flagged: ",
+                                  format(n_patients_hit, big.mark = ",")))) +
+      geom_col(fill = "#C73E1D", width = 0.7) +
+      geom_text(aes(label = format(as.numeric(n_patients_hit),
+                                   big.mark = ",")),
+                hjust = -0.1, size = 3.3, color = "grey20") +
+      scale_y_continuous(labels = scales::comma_format(),
+                         expand = expansion(mult = c(0, 0.2))) +
+      coord_flip() +
+      labs(title = "NDMM other-cancer filter: drops by tumor_group",
+           subtitle = paste0("Top ", nrow(top), " of ", nrow(qc),
+                             " groups; patients counted once per group ",
+                             "(sum can exceed total drop because of overlap)"),
+           x = NULL, y = "Distinct patients flagged") +
+      theme_lot()
+    save_plot(p, "ndmm_other_cancer_qc.png", width = 10, height = 6,
+              section = section,
+              title = paste0(title_prefix,
+                             "Other-cancer drop QC chart"))
+  }
+}
+
 # NDMM (Ashley planned) cohort setup, shared by main_q4() and the
 # combined dashboard. Computes the cohort, writes the filtered LOT_LONG
 # view, augments it with steroid tokens into LOT_LONG_AUG, and loads
@@ -821,6 +1001,7 @@ main_q4 <- function() {
   dashboard_items <<- list()
   build_q4_overview_card(p$counts, p$n_ster, p$n_rules, p$overview_notes)
   build_ndmm_attrition(p$counts)
+  build_ndmm_other_cancer_qc(con)
   build_steroid_prevalence(con)
   for (n in 1:4) build_focused_pair(con, n, n + 1L)
   for (n in 1:4) build_category_pair(con, n, n + 1L, p$lookups)
