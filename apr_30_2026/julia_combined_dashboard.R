@@ -182,6 +182,8 @@ main_combined <- function() {
                            title = "Overview & cohort definition")
     build_ndmm_attrition(p_ndmm$counts, section = "NDMM",
                          title_prefix = "Attrition: ")
+    build_ndmm_other_cancer_qc(con, section = "NDMM",
+                               title_prefix = "QC: ")
     # LOT1-5 detail re-runs on the cohort-filtered LOT_LONG view
     # (Q4_LOT_LONG_FILT, built by prepare_ndmm_cohort) so every FUNNEL /
     # START_TYPE / etc. number reflects the NDMM-restricted denominator.
