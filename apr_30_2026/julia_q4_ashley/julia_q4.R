@@ -790,13 +790,27 @@ build_ndmm_other_cancer_qc <- function(con, section = "OVERVIEW",
         SELECT PATID, tumor_group, 0 AS via_ip, 1 AS via_op FROM op_in_window
       )
       GROUP BY PATID, tumor_group
+    ),
+    -- How many distinct tumor_groups did each PATID get flagged by?
+    -- Drives the n_exclusive_hit column: PATIDs with n_groups = 1 are
+    -- the ones who would actually become eligible if their single
+    -- flagging group were removed from the codelist. PATIDs with
+    -- n_groups > 1 are caught by multiple groups, so dropping any
+    -- single group leaves them excluded - the n_patients_hit count
+    -- overstates single-group-removal impact for those.
+    patid_group_count AS (
+      SELECT PATID, count(DISTINCT tumor_group) AS n_groups
+      FROM by_group
+      GROUP BY PATID
     )
-    SELECT tumor_group,
-           count(DISTINCT PATID)                                AS n_patients_hit,
-           count(DISTINCT CASE WHEN via_ip = 1 THEN PATID END)  AS n_via_ip,
-           count(DISTINCT CASE WHEN via_op = 1 THEN PATID END)  AS n_via_op
-    FROM by_group
-    GROUP BY tumor_group
+    SELECT bg.tumor_group,
+           count(DISTINCT bg.PATID)                                              AS n_patients_hit,
+           count(DISTINCT CASE WHEN pgc.n_groups = 1 THEN bg.PATID END)          AS n_exclusive_hit,
+           count(DISTINCT CASE WHEN bg.via_ip = 1 THEN bg.PATID END)             AS n_via_ip,
+           count(DISTINCT CASE WHEN bg.via_op = 1 THEN bg.PATID END)             AS n_via_op
+    FROM by_group bg
+    INNER JOIN patid_group_count pgc ON pgc.PATID = bg.PATID
+    GROUP BY bg.tumor_group
     ORDER BY n_patients_hit DESC
   ")), error = function(e) {
     log_msg("  WARN: other-cancer QC query failed: ", conditionMessage(e))
@@ -822,6 +836,7 @@ build_ndmm_other_cancer_qc <- function(con, section = "OVERVIEW",
   out <- data.frame(
     tumor_group       = qc$tumor_group,
     n_patients_hit    = as.integer(qc$n_patients_hit),
+    n_exclusive_hit   = as.integer(qc$n_exclusive_hit),
     n_via_ip          = as.integer(qc$n_via_ip),
     n_via_op_pair     = as.integer(qc$n_via_op),
     pct_of_total_drop = qc$pct_of_drop,
@@ -849,8 +864,9 @@ build_ndmm_other_cancer_qc <- function(con, section = "OVERVIEW",
       coord_flip() +
       labs(title = "NDMM other-cancer filter: drops by tumor_group",
            subtitle = paste0("Top ", nrow(top), " of ", nrow(qc),
-                             " groups; patients counted once per group ",
-                             "(sum can exceed total drop because of overlap)"),
+                             " groups; bar = n_patients_hit (overlap counted). ",
+                             "See n_exclusive_hit in the table for the ",
+                             "single-group-removal recoverable count."),
            x = NULL, y = "Distinct patients flagged") +
       theme_lot()
     save_plot(p, "ndmm_other_cancer_qc.png", width = 10, height = 6,
