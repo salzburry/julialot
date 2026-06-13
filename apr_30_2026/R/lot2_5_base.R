@@ -21,17 +21,17 @@
 #   LOT_ALLO_LOT_FLG, LOT_CART_LOT_FLG, contains_mtx_reg,
 #   LOT_BASE_END_DT_CE_SENS, LOT_BASE_END_REASON_CE_SENS
 #
-# Key parameters (defaults reflect Apr 22 study-team decisions):
+# Key parameters (defaults reflect study-team decisions):
 #   induction_window_days   = 30   (LOT1 uses 60)
 #     no LOT-level discontinuation buffer; per-drug 90d rule lives in
 #     map_discon_gap_days
-#   cart_consolidation_days = 45   (Apr 22; supersedes 30d protocol text)
+#   cart_consolidation_days = 45   (supersedes the 30d protocol text)
 #   sct_tandem_days         = 180  (>180d AUTO is unplanned)
-#   allo_lot_span           = "single_day" (Q2): ALLO LOT spans only ALLO_DT
+#   allo_lot_span           = "single_day": ALLO LOT spans only ALLO_DT
 #   max_lot                 = 5
 #
-# Spec tabs: 3.LOT2_5_BASE, 4.LOT2_5_BASE_END, 9.Decision_Flow
-# (date-driven; tie-break only on identical dates).
+# End reasons are date-driven, with the tie-break only on identical dates.
+# Spec tabs: 3.LOT2_5_BASE, 4.LOT2_5_BASE_END, 9.Decision_Flow.
 
 # ---- Helpers ----
 
@@ -101,10 +101,9 @@ init_lot_long_from_lot1 <- function(con, meds, classes) {
           THEN 'DISENROLLMENT'
         ELSE lbe.LOT1_BASE_END_REASON
       END                                   AS LOT_BASE_END_REASON_CE_SENS,
-      -- LOT-scoped AUTO/SCT fields, clamped to [LOT1_START_DT, LOT1_BASE_END_DT]
-      -- per workbook Q7 draft. SING/TAND classification is RECOMPUTED from
-      -- the clamped in-LOT dates so a within-LOT DT_1 with an outside-LOT
-      -- DT_2 lands on SING.
+      -- LOT-scoped AUTO/SCT fields, clamped to [LOT1_START_DT, LOT1_BASE_END_DT].
+      -- SING/TAND classification is recomputed from the clamped in-LOT dates,
+      -- so a within-LOT DT_1 with an outside-LOT DT_2 lands on SING.
       CASE WHEN sct.LOT1_TX_AUTO_DT_1 IS NOT NULL
             AND sct.LOT1_TX_AUTO_DT_1 <= lbe.LOT1_BASE_END_DT
            THEN 1 ELSE 0 END                      AS LOT_TX_AUTO_FLG,
@@ -239,7 +238,7 @@ build_lot_n <- function(con, lot_num,
         AND ac.TX_DT <= pe.OBS_END_DT
       GROUP BY pe.PATID
     ),
-    -- d_AUTO (Q16, 06-May): earliest AUTO after PREV_END_DT that triggers a new LOT.
+    -- d_AUTO: earliest AUTO after PREV_END_DT that triggers a new LOT.
     -- Rule: AUTO starts a new LOT UNLESS
     --   (i) it falls inside the prior LOT's applicable window from PREV_START_DT
     --       (30d MED/AUTO-started, 1d ALLO-started, 45d CART-started), or
@@ -273,7 +272,7 @@ build_lot_n <- function(con, lot_num,
         -- (ii) not a planned tandem. tx_auto_dates upstream already groups
         -- AUTO claims < 60 d apart into a single event, so tandem classification
         -- only needs the <= sct_tandem_days (180d) upper bound here (matches
-        -- LOT1; Q9 resolved 13-May).
+        -- LOT1).
         AND NOT (awp.PREV_AUTO_DT IS NOT NULL
                  AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {sct_tandem_days})
       GROUP BY pe.PATID
@@ -341,7 +340,7 @@ build_lot_n <- function(con, lot_num,
     FROM map_stacked ms
     INNER JOIN lot{lot_num}_start ls ON ms.PATID = ls.PATID
     WHERE ms.MAP_START_DT >= ls.LOT{lot_num}_START_DT
-      -- CAR-T-started LOTs use the 45-day consolidation window (Apr 22; Q3).
+      -- CAR-T-started LOTs use the 45-day consolidation window.
       -- All other start types use the 30-day induction window.
       AND ms.MAP_START_DT <= date_add(
             ls.LOT{lot_num}_START_DT,
@@ -374,11 +373,10 @@ build_lot_n <- function(con, lot_num,
     discon AS (
       SELECT
         ls.PATID,
-        -- Q1 (06-May): no LOT-level 90d confirmation buffer. LOT{lot_num}_BASE_DISCON_DT
-        -- is the last med date (max MAP_END_DT) whenever a runout exists and falls on or
-        -- before OBS_END_DT. Capping at OBS_END_DT prevents days-supply tails past
-        -- death/study_end from extending the LOT (previously a CART-only carve-out;
-        -- now applies uniformly to all LOT types).
+        -- No LOT-level 90d confirmation buffer. LOT{lot_num}_BASE_DISCON_DT is
+        -- the last med date (max MAP_END_DT) whenever a runout exists and falls
+        -- on or before OBS_END_DT. Capping at OBS_END_DT keeps days-supply tails
+        -- past death/study_end from extending the LOT (applies to all LOT types).
         CASE
           WHEN d.RAW_DISCON_DT IS NOT NULL AND d.RAW_DISCON_DT <= ls.OBS_END_DT
             THEN d.RAW_DISCON_DT
@@ -471,10 +469,10 @@ build_lot_n <- function(con, lot_num,
   run_step(con, paste0(pfx, "_lot", lot_num, "_sct"), glue("
     CREATE OR REPLACE TEMPORARY VIEW lot{lot_num}_sct AS
     WITH lb AS (
-      -- Q16 (06-May): LOT_WINDOW_DAYS = applicable window for this LOT's
-      -- in-LOT AUTO definition (30d MED/AUTO-started, 1d ALLO-started,
-      -- 45d CART-started). An AUTO_DT_1 outside this window is NOT in-LOT
-      -- and instead becomes the ENDING_AUTO_DT that closes the LOT.
+      -- LOT_WINDOW_DAYS = the applicable window for this LOT's in-LOT AUTO
+      -- definition (30d MED/AUTO-started, 1d ALLO-started, 45d CART-started).
+      -- An AUTO_DT_1 outside this window is not in-LOT and instead becomes
+      -- the ENDING_AUTO_DT that closes the LOT.
       SELECT PATID, LOT{lot_num}_START_DT, LOT{lot_num}_START_TYPE, OBS_END_DT,
         CASE LOT{lot_num}_START_TYPE
           WHEN 'SCT_ALLO' THEN 1
@@ -548,10 +546,10 @@ build_lot_n <- function(con, lot_num,
     )
     SELECT
       l.PATID,
-      -- Q16 (06-May): AUTO_DT_1 is in-LOT only if within the LOT
-      -- applicable window from LOT_START_DT (LOT_WINDOW_DAYS). If AUTO_DT_1
-      -- falls outside the window, it is NOT in-LOT (the TX_AUTO_* fields and
-      -- TAND/SING flags become NULL/0) and instead becomes the ENDING_AUTO_DT
+      -- AUTO_DT_1 is in-LOT only if within the LOT applicable window from
+      -- LOT_START_DT (LOT_WINDOW_DAYS). If AUTO_DT_1 falls outside the
+      -- window, it is not in-LOT (the TX_AUTO_* fields and TAND/SING flags
+      -- become NULL/0) and instead becomes the ENDING_AUTO_DT
       -- that closes LOT N. AUTO_DT_2 is in-LOT only when AUTO_DT_1 is in-LOT
       -- AND AUTO_DT_2 is a valid tandem (<= sct_tandem_days after AUTO_DT_1).
       CASE WHEN ap.AUTO_DT_1 IS NOT NULL
@@ -658,10 +656,10 @@ build_lot_n <- function(con, lot_num,
                  FROM lot{lot_num}_contains_mtx_reg GROUP BY contains_mtx_reg"))
 
   # ---- Step N.6: LOT_N base end ----
-  # ALLO singleton: end on ALLO_DT (Q2 resolved: single_day).
+  # ALLO singleton: end on ALLO_DT (single-day span).
   # CART singleton-ish: agents within cart_consolidation_days are part of LOT_N.
   # Otherwise: same end-reason logic as LOT1, with the same priority order.
-  # ALLO span Q2 - "single_day" hardcodes start = end = ALLO_DT with reason
+  # allo_lot_span "single_day" hardcodes start = end = ALLO_DT with reason
   # SCT_ALLO; "extend_to_next" lets the LOT extend until the next event with
   # the natural end reason (MED_ADD / DISCONTINUATION / DEATH / STUDY_END).
   allo_single_day <- (allo_lot_span == "single_day")
@@ -669,7 +667,7 @@ build_lot_n <- function(con, lot_num,
   run_step(con, paste0(pfx, "_lot", lot_num, "_base_end"), glue("
     CREATE OR REPLACE TEMPORARY VIEW lot{lot_num}_base_end AS
     WITH
-    -- Q1.1 (post-review fix): identify whether any LOT_(N+1)-qualifying
+    -- Post-runout guard: identify whether any LOT_(N+1)-qualifying
     -- trigger exists strictly after LOT_BASE_DISCON_DT and on/before
     -- OBS_END_DT. This is used to prevent DEATH from preempting
     -- DISCONTINUATION when a patient ran out and then started new therapy
@@ -772,7 +770,7 @@ build_lot_n <- function(con, lot_num,
             ), 1)
           ELSE NULL
         END AS LOT_TX_ENDDATE,
-        -- Same-day SCT end priority (Q14 resolved, inherits LOT1):
+        -- Same-day SCT end priority (inherits LOT1):
         -- SCT_ALLO > SCT_CART > SCT_AUTO. ALLO wins ALLO==CART or
         -- ALLO==AUTO ties; CART wins CART==AUTO; otherwise AUTO.
         CASE
@@ -806,7 +804,7 @@ build_lot_n <- function(con, lot_num,
     )
     SELECT
       ec.*,
-      -- Special-case start types (Q2 resolved single-day ALLO; Q3 draft for CAR-T-without-consolidation).
+      -- Special-case start types (single-day ALLO; CAR-T without consolidation).
       --   ALLO single_day: LOT spans only the ALLO date itself.
       --   CAR-T with no consolidation agents: LOT spans only FIRST_CART_DT.
       --   ALLO extend_to_next: fall through to the natural end-reason logic.
@@ -834,13 +832,13 @@ build_lot_n <- function(con, lot_num,
          AND ec.CART_INIT_FLG = 0
          AND (ec.LOT{lot_num}_BASE_DISCON_DT IS NULL OR ec.LOT{lot_num}_BASE_1ST_ADD_MED_DT <= ec.LOT{lot_num}_BASE_DISCON_DT)
         THEN 'MED_ADD'
-        -- Q1 (06-May): DEATH now outranks DISCONTINUATION. Patients who run out
-        -- and then die get REASON = DEATH; runout date is still recorded in
-        -- LOT{lot_num}_BASE_DISCON_DT.
-        -- Q1.1: DEATH preempts DISCONTINUATION only when no qualifying
-        -- LOT-start trigger exists in (DISCON_DT, OBS_END_DT]. If the patient
-        -- ran out then started new therapy (or had an SCT) before dying,
-        -- the runout is the true LOT end and the new event triggers LOT N+1.
+        -- DEATH outranks DISCONTINUATION. Patients who run out and then die
+        -- get REASON = DEATH; the runout date is still recorded in
+        -- LOT{lot_num}_BASE_DISCON_DT. The preemption applies only when no
+        -- qualifying LOT-start trigger exists in (DISCON_DT, OBS_END_DT]: if
+        -- the patient ran out then started new therapy (or had an SCT) before
+        -- dying, the runout is the true LOT end and the new event triggers
+        -- LOT N+1.
         WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT
          AND ec.POST_RUNOUT_TRIGGER_FLG = 0 THEN 'DEATH'
         WHEN ec.LOT{lot_num}_BASE_DISCON_DT IS NOT NULL THEN 'DISCONTINUATION'
@@ -922,11 +920,11 @@ build_lot_n <- function(con, lot_num,
           THEN 'DISENROLLMENT'
         ELSE lbe.LOT{lot_num}_BASE_END_REASON
       END AS LOT_BASE_END_REASON_CE_SENS,
-      -- LOT-scoped AUTO flags clamped to [LOT_START_DT, LOT_BASE_END_DT]
-      -- per workbook Q7 draft. lotN_sct collects through OBS_END_DT, so
-      -- AUTOs after the LOT ended are filtered here. SING/TAND classification
-      -- is RECOMPUTED from the clamped in-LOT dates so a within-LOT DT_1
-      -- with an outside-LOT DT_2 lands on SING (not on neither flag).
+      -- LOT-scoped AUTO flags clamped to [LOT_START_DT, LOT_BASE_END_DT].
+      -- lotN_sct collects through OBS_END_DT, so AUTOs after the LOT ended
+      -- are filtered here. SING/TAND classification is recomputed from the
+      -- clamped in-LOT dates so a within-LOT DT_1 with an outside-LOT DT_2
+      -- lands on SING (not on neither flag).
       CASE WHEN lbe.LOT{lot_num}_TX_AUTO_DT_1 IS NOT NULL
             AND lbe.LOT{lot_num}_TX_AUTO_DT_1 <= lbe.LOT{lot_num}_BASE_END_DT
            THEN 1 ELSE 0 END                          AS LOT_TX_AUTO_FLG,
@@ -984,7 +982,7 @@ build_lot2_5 <- function(con,
   log_msg("  induction_window_days   = ", induction_window_days)
   log_msg("  cart_consolidation_days = ", cart_consolidation_days)
   log_msg("  sct_tandem_days         = ", sct_tandem_days)
-  log_msg("  allo_lot_span           = ", allo_lot_span, " (Q2)")
+  log_msg("  allo_lot_span           = ", allo_lot_span)
 
   # Discover med + class universes from the rollup so dynamic flag columns
   # match LOT1 output exactly. STEROID class excluded - LOT1 uses the same

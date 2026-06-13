@@ -40,7 +40,8 @@ Rscript run_pipeline.R
 
 **One Domino Job (pipeline + dashboard).** `run_all.R` is a thin
 wrapper: it runs `run_pipeline.R` and, only if that succeeds, runs
-`04_lot_detail_dashboard.R`, with both sharing one combined
+`07_combined_dashboard.R` (the Overall + NDMM combined dashboard, with
+the LOT1-5 detail embedded per cohort), with both sharing one combined
 `PIPELINE_LOG_FILE` artifact. Use it as the single Job command:
 
 ```
