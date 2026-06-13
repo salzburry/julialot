@@ -3,7 +3,7 @@
 # PATID x LOT_NUM, LOT_NUM 1..5) per the LOT 2-5 spec
 # (lot2to5_spec_DRAFT_apr30.xlsx). Does not modify any LOT1 module.
 #
-# Prerequisites in the work schema (persisted by lot_program.R):
+# Prerequisites in the work schema (persisted by 02_lot1.R):
 #   MAP_STACKED, LOT1_SCT, LOT1_BASE_END, and cfg$input_cohort_table
 #   (default ELIG_COH_FINAL).
 #
@@ -56,7 +56,7 @@ main <- function() {
   log_msg("  Input Cohort: ", cfg$input_cohort_table)
 
   # Load CSV codelists - pass character vectors of required columns
-  # (matches lot_program.R's calls; the loader does setdiff() on names).
+  # (matches 02_lot1.R's calls; the loader does setdiff() on names).
   rollup_src <- load_codelist_csv("cl_mma_rollup.csv",
     c("CL_MEDICATION_FULL", "CL_MED_CLASS", "CL_MED_ABBR",
       "MONOMAINTENANCE", "DUALMAINTENANCEWITH", "CONDITIONING", "USED_FOR_OTHER_CANCERS"))

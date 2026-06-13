@@ -1,15 +1,15 @@
 #!/usr/bin/env Rscript
 # Standalone LOT1-5 dashboard.
 # Reads work_schema.LOT_LONG (one row per PATID x LOT_NUM) and writes a
-# SEPARATE interactive HTML (lot_long_dashboard.html) that breaks every
+# SEPARATE interactive HTML (lot_detail_dashboard.html) that breaks every
 # view down by LOT_NUM 1..max. This does NOT touch the LOT1 dashboard
-# produced by lot_program.R (lot_dashboard.html); it is an independent
+# produced by 02_lot1.R (lot_dashboard.html); it is an independent
 # entry script you can run any time LOT_LONG has been (re)built.
 #
-#   Rscript lot_long_dashboard.R
+#   Rscript apr_30_2026/04_lot_detail_dashboard.R
 #
 # Prerequisite: work_schema.LOT_LONG must exist and contain LOT2-5 rows
-# (i.e. lot2_5_program.R / the LOT2-5 stage completed, not just the
+# (i.e. 03_lot2_5.R / the LOT2-5 stage completed, not just the
 # LOT1 init). If LOT_LONG only has LOT_NUM = 1, every view will show
 # only LOT1 - rebuild LOT_LONG first.
 
@@ -41,7 +41,7 @@ source(file.path(source_dir, "dashboard_lot.R"))
 # disables the schema-wide DEBUG/QC + DRILLDOWN sections (they audit
 # work-schema tables and search ANY PATID, neither of which is
 # cohort-scoped). Connection / readability check / dashboard_items reset
-# / build_dashboard happen in main(), not here, so the function stays a
+# / build_dashboard happen in main_lot_detail(), not here, so the function stays a
 # pure view collector that callers can chain.
 #
 # Adding a new LOT1-5 view? Drop it inside this function (or call a
@@ -539,7 +539,7 @@ collect_lot_long_views <- function(con, lot_long = wrk("LOT_LONG"),
       # milestone vlines extend across every LOT_NUM boundary (start of
       # each line + final end), so a 5-line patient sees LOT1..LOT5
       # markers. Reads the persisted MAP_STACKED work-schema table that
-      # lot_program.R materializes.
+      # 02_lot1.R materializes.
       map_tbl <- wrk("MAP_STACKED")
       mdf <- tryCatch(db_q(con, glue("
         SELECT cast(PATID as string) AS PATID,
@@ -678,7 +678,7 @@ collect_lot_long_views <- function(con, lot_long = wrk("LOT_LONG"),
           '<h3>No medication journey examples</h3>',
           '<p style="color:#555">MAP_STACKED has no rows for the ',
           'selected example patients. Rebuild via ',
-          '<code>lot_program.R</code> / <code>run_pipeline.R</code> ',
+          '<code>02_lot1.R</code> / <code>run_pipeline.R</code> ',
           'so the medication-level table exists in the work schema.',
           '</p></div>'),
           section = "MED JOURNEY", title = "Med Journeys (none)")
@@ -711,7 +711,7 @@ collect_lot_long_views <- function(con, lot_long = wrk("LOT_LONG"),
   if (include_debug) {
 
   # ---- DEBUG / QC: persisted work-schema tables ----
-  # Reads the tables lot_program.R / LOT2-5 persist (NOT temp views), so
+  # Reads the tables 02_lot1.R / LOT2-5 persist (NOT temp views), so
   # this stays a single robust script with no dependency on the LOT1
   # pipeline session. Every probe is defensive: a missing table is
   # reported, never fatal.
@@ -962,7 +962,7 @@ var first=Object.keys(PJ)[0]; if(first){document.getElementById("pjIn").value=fi
   }  # end if (include_debug) - DEBUG + DRILLDOWN block
 }
 
-main <- function() {
+main_lot_detail <- function() {
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
   # build_dashboard()/save_*() are gated on cfg$build_dashboard; force it
   # on for this standalone tool regardless of the env default.
@@ -978,18 +978,18 @@ main <- function() {
         nrow(db_q(con, glue("SELECT 1 FROM {lot_long} LIMIT 1"))) >= 0,
         error = function(e) FALSE))) {
     stop("Cannot read ", lot_long,
-         ". Build LOT_LONG (lot2_5_program.R / LOT2-5 stage) first.")
+         ". Build LOT_LONG (03_lot2_5.R / LOT2-5 stage) first.")
   }
 
   dashboard_items <<- list()
   collect_lot_long_views(con, lot_long)
   build_dashboard(
-    out_name     = "lot_long_dashboard.html",
+    out_name     = "lot_detail_dashboard.html",
     header_title = "LOT 1-5 &mdash; Long-Format Dashboard",
     header_sub   = "Funnel &bull; Start/End &bull; Length &bull; Regimens &bull; Progression &bull; Gaps &bull; Transitions &bull; Sankey flows &bull; Med count &bull; MTX &bull; Trend &bull; Med Journeys &bull; Debug/QC &nbsp;&mdash;&nbsp; pick a Category above"
   )
   log_msg("LOT1-5 dashboard written to ",
-          file.path(cfg$output_dir, "lot_long_dashboard.html"))
+          file.path(cfg$output_dir, "lot_detail_dashboard.html"))
 }
 
-if (!interactive() && !isTRUE(getOption("lot_long_dashboard.no_autorun"))) main()
+if (!interactive() && !isTRUE(getOption("lot_detail_dashboard.no_autorun"))) main_lot_detail()

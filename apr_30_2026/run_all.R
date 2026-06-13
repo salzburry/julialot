@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # One Domino Job: full pipeline, then the LOT1-5 dashboard. Runs
-# run_pipeline.R and, only if it exits 0, runs lot_long_dashboard.R.
+# run_pipeline.R and, only if it exits 0, runs 04_lot_detail_dashboard.R.
 # Either failure fails the Job. pipeline_inputs.csv is loaded first so
 # the combined log lands in the OUTPUT_DIR the stages write to.
 #
@@ -55,8 +55,8 @@ if (rc1 != 0) {
   stop(sprintf("run_pipeline.R failed (exit %d); dashboard skipped.", rc1))
 }
 
-rc2 <- system2("Rscript", file.path(.d, "lot_long_dashboard.R"),
+rc2 <- system2("Rscript", file.path(.d, "04_lot_detail_dashboard.R"),
                 stdout = "", stderr = "")
 if (rc2 != 0) {
-  stop(sprintf("lot_long_dashboard.R failed (exit %d).", rc2))
+  stop(sprintf("04_lot_detail_dashboard.R failed (exit %d).", rc2))
 }

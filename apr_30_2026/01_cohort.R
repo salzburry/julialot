@@ -27,7 +27,7 @@ tryCatch(
 .ofile <- tryCatch(sys.frame(1)$ofile, error = function(e) NULL)
 source_dir <- file.path(dirname(if (!is.null(.ofile)) .ofile else "."), "R")
 # Apply pipeline_inputs.csv overrides BEFORE config_prompts.R reads
-# Sys.getenv(), so a direct `Rscript main.R` honours the same single
+# Sys.getenv(), so a direct `Rscript 01_cohort.R` honours the same single
 # input file as the orchestrated run.
 if (file.exists(file.path(source_dir, "load_inputs.R"))) {
   source(file.path(source_dir, "load_inputs.R"))
