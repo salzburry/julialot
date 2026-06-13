@@ -192,6 +192,52 @@ wider lower date bound (`Q4_LOT1_FROM - 365 = 2016-01-01` by default)
 so the full pre-LOT1 baseline is visible even for patients whose LOT1
 is at the cutoff.
 
+#### Q4-only MM-adjacent tumor-group override (Julia, 13-Jun)
+
+For the Q4/NDMM other-cancer exclusion only, the highlighted
+plasma-cell / MM-adjacent tumor groups are treated as
+**non-exclusionary**. Parent pipeline logic and shared codelists are
+unchanged. This aligns the Q4 filter with the protocol intent: the
+"another cancer" exclusion (study-pop Criterion 7) targets a cancer
+*distinct from* the index MM, not the MM disease itself, its precursor,
+or MM bone disease. Without this override the filter was dropping ~63%
+of NDMM candidates, the large majority for plasma-cell / MM-adjacent
+codes (see the dashboard's "Other-cancer override impact" QC card).
+
+The five tumor-group labels treated as non-exclusionary
+(`Q4_MM_ADJACENT_OVERRIDE` in `julia_q4.R`):
+
+```
+MONOCLONAL GAMMOPATHY                                    (MGUS, D47.2 - MM precursor)
+SECONDARY MALIGNANT NEOPLASM OF BONE                     (C79.5x - MM bone disease)
+SOLITARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION      (C90.3x - plasma cell)
+PLASMA CELL LEUKEMIA NOT HAVING ACHIEVED REMISSION       (C90.1x - plasma cell)
+EXTRAMEDULLARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION(C90.2x - plasma cell)
+```
+
+Mechanism: `build_q4_other_malig_codes()` tags each codelist row with
+`is_mm_adjacent_override`; the exclusion scan reads only
+`is_mm_adjacent_override = 0` rows, while the QC card scans all rows so
+the overridden groups stay auditable. The shared `other_malig.csv` is
+not edited — the override is a load-time flag, Q4-only. On each run the
+log prints `Q4 other-cancer override: matched N of 5 expected
+MM-adjacent tumor_group labels`; **`N < 5` is a run-review blocker**
+(the codelist's stored labels differ from the wording above — inspect
+`SELECT DISTINCT tumor_group` on the warehouse and align the list).
+
+> **Footnotes / open items.**
+> 1. **Remission variants not included.** Only the five
+>    `NOT HAVING ACHIEVED REMISSION` labels Julia named are overridden.
+>    Any `… IN REMISSION` variants of the same diseases remain in the
+>    Q4 filter. Confirm with Julia if the whole disease family
+>    (regardless of remission status) should be non-exclusionary.
+> 2. **Bone group is a judgement call.** `SECONDARY MALIGNANT NEOPLASM
+>    OF BONE` (C79.5x) can represent true non-MM solid-tumor bone
+>    metastasis, not only MM bone disease. The override-impact QC card
+>    separates patients re-included on MM-adjacent codes alone from
+>    those who also carry a genuine other-cancer signal (who stay
+>    excluded), so the relaxation is visible and quantified.
+
 ## Running it
 
 ```sh
