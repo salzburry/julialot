@@ -533,9 +533,9 @@ build_category_coverage <- function(con, lookups, section = "BY_CATEGORY",
              title = paste0(title_prefix, "Category mapping coverage per LOT_NUM"))
 
   # Top-N unmapped regimen strings per LOT_NUM so an analyst can extend the
-  # CSV. Per-LOT ranking (not global) because it was explicitly called
-  # out that she only sees the LOT2/LOT3 buckets when global ranking
-  # is dominated by LOT1 / LOT4-5 tails. Result is sorted by LOT_NUM
+  # CSV. Per-LOT ranking (not global) because with global ranking the
+  # LOT2/LOT3 buckets get hidden when the list is dominated by LOT1 /
+  # LOT4-5 tails. Result is sorted by LOT_NUM
   # ascending, then n_patients descending within each LOT.
   if (nrow(un_rows) > 0) {
     top <- aggregate(PATID ~ reg + LOT_NUM,
