@@ -74,6 +74,32 @@ Q4_FLAGS_ALL           <- "_jjq4_flags_all"   # per-PATID filter flags (for attr
 Q4_ASHLEY_PATIDS       <- "_jjq4_ashley_patids"
 Q4_PRE_LOT1_DAYS       <- 365L  # Julia June 5: 12-mo CE/baseline before 1L index date
 
+# Tumor_group labels treated as NON-exclusionary for the Q4/NDMM
+# other-cancer filter ONLY (Julia, 13-Jun). These are plasma-cell /
+# MM-adjacent diseases - the index MM itself (plasma cell leukemia,
+# solitary + extramedullary plasmacytoma), its precursor (monoclonal
+# gammopathy / MGUS), and MM bone disease (secondary malignant neoplasm
+# of bone). The protocol's "another cancer" exclusion (studypop spec
+# Criterion 7) targets a cancer DISTINCT from the index MM, so flagging
+# these as non-exclusionary moves the Q4 filter toward protocol intent.
+# Parent pipeline (step 22) and the shared other_malig.csv are NOT
+# changed - this list only adds a flag column at Q4 codelist-load time.
+#
+# Matched case/whitespace-insensitively against the codelist's
+# tumor_group column. Only the five "NOT HAVING ACHIEVED REMISSION"
+# labels Julia named are listed; "in remission" variants are left in
+# the filter pending her confirmation (see README). build_q4_other_-
+# malig_codes() logs how many of these actually matched the codelist;
+# a match count < length(this) means the stored labels differ from the
+# wording below and is a run-review blocker.
+Q4_MM_ADJACENT_OVERRIDE <- c(
+  "MONOCLONAL GAMMOPATHY",
+  "SECONDARY MALIGNANT NEOPLASM OF BONE",
+  "SOLITARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION",
+  "PLASMA CELL LEUKEMIA NOT HAVING ACHIEVED REMISSION",
+  "EXTRAMEDULLARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION"
+)
+
 # LOT1 eligible treatment cutoff (Julia June 5: "Received an eligible
 # treatment for MM ... on or after 01 Jan 2017"). Hard-enforced in
 # build_lot1_starts_q4() so the LOT1 view never returns pre-cutoff
@@ -260,24 +286,52 @@ build_q4_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl) {
 }
 
 # Other-malignancy codelist loaded from cl_other_malignancies CSV
-# (default file: other_malig.csv, per config_prompts.R:76). Same
-# loader and column normalisation as parent pipeline_steps.R step 06
-# (which materialises work('other_malig_codes')). Built here so the
-# Q4 IP/OP scan does not depend on the parent leaving its temp view
-# alive in the session.
-build_q4_other_malig_codes <- function() {
+# (default file: other_malig.csv, per config_prompts.R:76). Same loader
+# and column normalisation as parent pipeline_steps.R step 06 (which
+# materialises work('other_malig_codes')). Built here so the Q4 IP/OP
+# scan does not depend on the parent leaving its temp view alive.
+#
+# Tags each row with is_mm_adjacent_override (1 for the
+# Q4_MM_ADJACENT_OVERRIDE tumor groups, else 0). The actual exclusion
+# scan (build_q4_other_malig_pre_lot1) reads only
+# is_mm_adjacent_override = 0 rows; the QC card reads all rows so the
+# overridden groups stay visible. Logs how many of the expected override
+# labels matched the codelist - a partial match means the stored labels
+# differ from Q4_MM_ADJACENT_OVERRIDE and the override is a silent no-op
+# for the unmatched groups (run-review blocker). Takes con (was a pure
+# SQL-string builder) so it can run the post-create match-count probe.
+build_q4_other_malig_codes <- function(con) {
   src <- load_codelist_csv(
     "other_malig.csv",
     c("dx", "icd_family", "tumor_group"))
-  glue("
+  ovr_in <- paste(sprintf("'%s'", gsub("'", "''", Q4_MM_ADJACENT_OVERRIDE)),
+                  collapse = ", ")
+  db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {Q4_OTHER_MALIG_CODES} AS
     SELECT
       upper(tumor_group) AS tumor_group,
       CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
-      upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', '')) AS dx
+      upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', '')) AS dx,
+      CASE WHEN upper(trim(tumor_group)) IN ({ovr_in}) THEN 1 ELSE 0 END AS is_mm_adjacent_override
     FROM {src}
     WHERE dx IS NOT NULL AND tumor_group IS NOT NULL
-  ")
+  "))
+  n_exp     <- length(Q4_MM_ADJACENT_OVERRIDE)
+  n_matched <- tryCatch(as.integer(db_q(con, glue("
+    SELECT count(DISTINCT tumor_group) AS n
+    FROM {Q4_OTHER_MALIG_CODES}
+    WHERE is_mm_adjacent_override = 1
+  "))$n), error = function(e) NA_integer_)
+  log_msg("  Q4 other-cancer override: matched ",
+          if (is.na(n_matched)) "?" else n_matched, " of ", n_exp,
+          " expected MM-adjacent tumor_group labels",
+          if (is.na(n_matched) || n_matched < n_exp)
+            paste0(" - WARNING: < expected. Inspect 'SELECT DISTINCT ",
+                   "tumor_group FROM ", Q4_OTHER_MALIG_CODES, "' on the ",
+                   "warehouse and align Q4_MM_ADJACENT_OVERRIDE to the ",
+                   "stored labels before trusting the NDMM count.")
+          else "")
+  invisible(n_matched)
 }
 
 # 5-column claim-header view used for IP/OP classification of other-
@@ -338,12 +392,17 @@ build_q4_other_malig_pre_lot1 <- function(con, med_diag_tbl) {
       WHERE FST_DT BETWEEN {lower} AND {upper}
     ),
     dx_mapped AS (
+      -- is_mm_adjacent_override = 0 only: the five plasma-cell /
+      -- MM-adjacent tumor groups are NOT exclusionary for Q4 (Julia,
+      -- 13-Jun). The QC card scans the same codelist WITHOUT this
+      -- predicate so the overridden groups still show in the breakdown.
       SELECT /*+ BROADCAST(o) */
              dx.PATID, dx.PAT_PLANID, dx.CLMID, dx.FST_DT, dx.LOC_CD,
              dx.event_dt, o.tumor_group
       FROM dx
       INNER JOIN {Q4_OTHER_MALIG_CODES} o
               ON dx.dx = o.dx AND dx.icd_family = o.icd_family
+             AND o.is_mm_adjacent_override = 0
     ),
     dx_with_setting AS (
       SELECT dm.PATID, dm.CLMID, dm.event_dt, dm.tumor_group,
@@ -680,17 +739,26 @@ build_ndmm_attrition <- function(counts, section = "OVERVIEW",
   }
 }
 
-# QC card: break the no-other-cancer filter's hits down by tumor_group
-# so reviewers can see WHICH cancer families are driving the drop. Runs
-# the same dx / IP / OP-pair / pre-LOT1-window logic as
-# build_q4_other_malig_pre_lot1() (so totals tie), but keeps tumor_group
-# through to the final group-by instead of throwing it away. Reads only
-# the temp views that prepare_ndmm_cohort() already built - no new
-# persisted artifacts, no change to the filter logic.
+# QC card: break the other-cancer hits down by tumor_group so reviewers
+# can see WHICH families drive the drop, AND audit the Q4 MM-adjacent
+# override. Runs the same dx / IP / OP-pair / pre-LOT1-window logic as
+# build_q4_other_malig_pre_lot1() but WITHOUT the is_mm_adjacent_override
+# predicate, so overridden groups stay visible. Emits three artifacts:
 #
-# Each PATID is counted once per tumor_group that triggered them, so the
-# column sum is >= the distinct-PATID total (a patient can be flagged by
-# multiple groups).
+#   1. Override-impact summary card - partitions the pre-override drop
+#      into re-included (only MM-adjacent hits) vs still-excluded
+#      (genuine other cancer, with or without an MM-adjacent hit). This
+#      is the C79.5/bone audit: bone-group patients who also carry a
+#      genuine other-cancer code stay excluded.
+#   2. Per-group table - one row per tumor_group with is_override flag,
+#      n_patients_hit, n_exclusive_hit, IP/OP split, % of pre-override.
+#   3. Bar chart - top 15 groups coloured by override status.
+#
+# Reads only the temp views prepare_ndmm_cohort() already built. No new
+# persisted artifacts, no change to the filter logic (the override flag
+# is applied in build_q4_other_malig_codes / build_q4_other_malig_pre_-
+# lot1, not here). Each PATID is counted once per tumor_group, so column
+# sums can exceed the distinct-PATID drop (a patient can hit >1 group).
 build_ndmm_other_cancer_qc <- function(con, section = "OVERVIEW",
                                        title_prefix = "") {
   view_ok <- isTRUE(tryCatch(
@@ -714,8 +782,14 @@ build_ndmm_other_cancer_qc <- function(con, section = "OVERVIEW",
   med_diag_tbl <- cdm_src(cfg$tbl_med_diag)
   lower <- glue("date_sub(date('{Q4_LOT1_FROM}'), {Q4_PRE_LOT1_DAYS})")
   upper <- glue("date('{cfg$study_end}')")
+  # Same override list the filter uses, re-derived here so the QC can
+  # label each group and quantify the override's re-inclusion impact.
+  # The QC scans ALL codelist rows (no is_mm_adjacent_override predicate)
+  # so overridden groups remain visible in the breakdown.
+  ovr_in <- paste(sprintf("'%s'", gsub("'", "''", Q4_MM_ADJACENT_OVERRIDE)),
+                  collapse = ", ")
 
-  qc <- tryCatch(db_q(con, glue("
+  cte <- glue("
     WITH dx AS (
       SELECT d.PATID, d.PAT_PLANID, d.CLMID, d.FST_DT, d.LOC_CD,
              cast(d.FST_DT as date) AS event_dt,
@@ -802,8 +876,27 @@ build_ndmm_other_cancer_qc <- function(con, section = "OVERVIEW",
       SELECT PATID, count(DISTINCT tumor_group) AS n_groups
       FROM by_group
       GROUP BY PATID
+    ),
+    -- Per-PATID override mix: did this patient get flagged by any
+    -- override (MM-adjacent) group, any genuine other-cancer group, or
+    -- both? Drives the override-impact summary below. has_override +
+    -- has_genuine = 0 is impossible (every by_group row is one or the
+    -- other), so the three classes partition the pre-override drop.
+    patid_override_mix AS (
+      SELECT PATID,
+             max(CASE WHEN upper(trim(tumor_group)) IN ({ovr_in}) THEN 1 ELSE 0 END) AS has_override,
+             max(CASE WHEN upper(trim(tumor_group)) IN ({ovr_in}) THEN 0 ELSE 1 END) AS has_genuine
+      FROM by_group
+      GROUP BY PATID
     )
+  ")
+
+  # Per-group breakdown (all groups, including overridden ones, so the
+  # override's effect stays visible). is_override flags the now-non-
+  # exclusionary groups.
+  qc <- tryCatch(db_q(con, paste0(cte, glue("
     SELECT bg.tumor_group,
+           CASE WHEN upper(trim(bg.tumor_group)) IN ({ovr_in}) THEN 1 ELSE 0 END AS is_override,
            count(DISTINCT bg.PATID)                                              AS n_patients_hit,
            count(DISTINCT CASE WHEN pgc.n_groups = 1 THEN bg.PATID END)          AS n_exclusive_hit,
            count(DISTINCT CASE WHEN bg.via_ip = 1 THEN bg.PATID END)             AS n_via_ip,
@@ -812,10 +905,22 @@ build_ndmm_other_cancer_qc <- function(con, section = "OVERVIEW",
     INNER JOIN patid_group_count pgc ON pgc.PATID = bg.PATID
     GROUP BY bg.tumor_group
     ORDER BY n_patients_hit DESC
-  ")), error = function(e) {
+  "))), error = function(e) {
     log_msg("  WARN: other-cancer QC query failed: ", conditionMessage(e))
     NULL
   })
+
+  # Override-impact summary: how the pre-override drop population splits
+  # into re-included vs still-excluded. n_override_only_reincluded is
+  # the actual headcount the Julia, 13-Jun override adds back to NDMM.
+  impact <- tryCatch(db_q(con, paste0(cte, "
+    SELECT
+      count(DISTINCT PATID)                                                     AS n_preoverride_drop,
+      count(DISTINCT CASE WHEN has_override=1 AND has_genuine=0 THEN PATID END)  AS n_override_only_reincluded,
+      count(DISTINCT CASE WHEN has_override=1 AND has_genuine=1 THEN PATID END)  AS n_override_plus_genuine,
+      count(DISTINCT CASE WHEN has_override=0 AND has_genuine=1 THEN PATID END)  AS n_genuine_only
+    FROM patid_override_mix
+  ")), error = function(e) NULL)
 
   if (is.null(qc) || nrow(qc) == 0) {
     add_html_card(paste0(
@@ -826,49 +931,104 @@ build_ndmm_other_cancer_qc <- function(con, section = "OVERVIEW",
     return(invisible())
   }
 
-  n_total <- as.numeric(qc[1, "n_patients_hit"]) * 0  # placeholder
-  n_total <- tryCatch(as.numeric(db_q(con, glue(
-    "SELECT count(DISTINCT PATID) AS n FROM {Q4_OTHER_MALIG_PATIDS}"))$n),
-    error = function(e) NA_real_)
+  # ---- Override-impact summary card (the C79.5 / MM-adjacent audit) ----
+  # Partitions the pre-override drop into re-included vs still-excluded so
+  # the bone-group ambiguity is auditable: patients with a genuine
+  # other-cancer signal stay excluded even though their MM-adjacent codes
+  # no longer count.
+  if (!is.null(impact) && nrow(impact) == 1) {
+    fmt   <- function(x) format(as.integer(x), big.mark = ",")
+    pre   <- as.integer(impact$n_preoverride_drop)
+    reinc <- as.integer(impact$n_override_only_reincluded)
+    both  <- as.integer(impact$n_override_plus_genuine)
+    gen   <- as.integer(impact$n_genuine_only)
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:14px;max-width:900px">',
+      '<h3 style="margin:0 0 8px">NDMM other-cancer override impact</h3>',
+      '<p style="color:#555;font-size:13px;margin:0 0 10px">Effect of treating the ',
+      length(Q4_MM_ADJACENT_OVERRIDE), ' plasma-cell / MM-adjacent tumor groups ',
+      'as non-exclusionary for the Q4 other-cancer filter only (Julia, 13-Jun). ',
+      'Parent pipeline + shared <code>other_malig.csv</code> are unchanged.</p>',
+      '<table style="border-collapse:collapse;font-size:13px">',
+      '<tr><td style="padding:4px 12px">Pre-override drop (old other-cancer logic)</td>',
+      '<td style="text-align:right;padding:4px 12px"><b>', fmt(pre), '</b></td></tr>',
+      '<tr style="background:#e8f5e9"><td style="padding:4px 12px">&minus; Re-included by the other-cancer filter (only MM-adjacent hits)</td>',
+      '<td style="text-align:right;padding:4px 12px"><b>', fmt(reinc), '</b></td></tr>',
+      '<tr><td style="padding:4px 12px">Still excluded: MM-adjacent <i>and</i> genuine other cancer</td>',
+      '<td style="text-align:right;padding:4px 12px">', fmt(both), '</td></tr>',
+      '<tr><td style="padding:4px 12px">Still excluded: genuine other cancer only</td>',
+      '<td style="text-align:right;padding:4px 12px">', fmt(gen), '</td></tr>',
+      '<tr style="border-top:2px solid #333"><td style="padding:4px 12px"><b>Current other-cancer drop (post-override)</b></td>',
+      '<td style="text-align:right;padding:4px 12px"><b>', fmt(both + gen), '</b></td></tr>',
+      '</table>',
+      '<p style="color:#777;font-size:12px;margin-top:8px"><b>Note:</b> ',
+      '"Re-included" means no longer dropped <i>by the other-cancer filter</i>; ',
+      'these patients can still fail the CE / belantamab / prior-MM-Tx filters, ',
+      'so the final NDMM count rises by &le; this number (see the attrition card). ',
+      'The bone group <code>SECONDARY MALIGNANT NEOPLASM OF BONE</code> can be true ',
+      'non-MM metastasis; the "MM-adjacent <i>and</i> genuine" row is exactly those ',
+      'patients who keep a genuine other-cancer signal and stay excluded.</p>',
+      '</div>'),
+      section = section,
+      title = paste0(title_prefix, "Other-cancer override impact"))
+  }
+
+  # pct denominator = pre-override drop (stable; per-group rows including
+  # overridden ones read as % of the original drop population).
+  n_total <- if (!is.null(impact) && nrow(impact) == 1)
+    as.numeric(impact$n_preoverride_drop) else
+    tryCatch(as.numeric(db_q(con, glue(
+      "SELECT count(DISTINCT PATID) AS n FROM {Q4_OTHER_MALIG_PATIDS}"))$n),
+      error = function(e) NA_real_)
   qc$pct_of_drop <- if (is.finite(n_total) && n_total > 0)
     round(100 * as.numeric(qc$n_patients_hit) / n_total, 1) else NA_real_
 
   out <- data.frame(
-    tumor_group       = qc$tumor_group,
-    n_patients_hit    = as.integer(qc$n_patients_hit),
-    n_exclusive_hit   = as.integer(qc$n_exclusive_hit),
-    n_via_ip          = as.integer(qc$n_via_ip),
-    n_via_op_pair     = as.integer(qc$n_via_op),
-    pct_of_total_drop = qc$pct_of_drop,
-    stringsAsFactors  = FALSE
+    tumor_group        = qc$tumor_group,
+    is_override        = as.integer(qc$is_override),
+    n_patients_hit     = as.integer(qc$n_patients_hit),
+    n_exclusive_hit    = as.integer(qc$n_exclusive_hit),
+    n_via_ip           = as.integer(qc$n_via_ip),
+    n_via_op_pair      = as.integer(qc$n_via_op),
+    pct_of_preoverride = qc$pct_of_drop,
+    stringsAsFactors   = FALSE
   )
   save_table(out, section = section,
              title = paste0(title_prefix,
-                            "Other-cancer drop by tumor_group"))
+                            "Other-cancer drop by tumor_group (is_override=1 = now non-exclusionary)"))
 
   if (has_ggplot2 && nrow(qc) > 0) {
     top <- head(qc[order(-as.numeric(qc$n_patients_hit)), ], 15)
     top$tumor_group <- factor(top$tumor_group,
                               levels = rev(top$tumor_group))
+    top$grp_kind <- ifelse(top$is_override == 1,
+                           "Now non-exclusionary (MM-adjacent)",
+                           "Still exclusionary (genuine other cancer)")
     p <- ggplot(top,
                 aes(x = tumor_group, y = as.numeric(n_patients_hit),
+                    fill = grp_kind,
                     text = paste0("Tumor group: ", tumor_group,
                                   "\nPatients flagged: ",
-                                  format(n_patients_hit, big.mark = ",")))) +
-      geom_col(fill = "#C73E1D", width = 0.7) +
+                                  format(n_patients_hit, big.mark = ","),
+                                  "\n", grp_kind))) +
+      geom_col(width = 0.7) +
       geom_text(aes(label = format(as.numeric(n_patients_hit),
                                    big.mark = ",")),
                 hjust = -0.1, size = 3.3, color = "grey20") +
+      scale_fill_manual(values = c(
+        "Now non-exclusionary (MM-adjacent)"         = "#9aa0a6",
+        "Still exclusionary (genuine other cancer)"  = "#C73E1D")) +
       scale_y_continuous(labels = scales::comma_format(),
                          expand = expansion(mult = c(0, 0.2))) +
       coord_flip() +
       labs(title = "NDMM other-cancer filter: drops by tumor_group",
            subtitle = paste0("Top ", nrow(top), " of ", nrow(qc),
                              " groups; bar = n_patients_hit (overlap counted). ",
-                             "See n_exclusive_hit in the table for the ",
-                             "single-group-removal recoverable count."),
-           x = NULL, y = "Distinct patients flagged") +
-      theme_lot()
+                             "Grey groups are now non-exclusionary for Q4 ",
+                             "(MM-adjacent); red still exclude."),
+           x = NULL, y = "Distinct patients flagged", fill = NULL) +
+      theme_lot() +
+      theme(legend.position = "top")
     save_plot(p, "ndmm_other_cancer_qc.png", width = 10, height = 6,
               section = section,
               title = paste0(title_prefix,
@@ -953,7 +1113,7 @@ prepare_ndmm_cohort <- function(con) {
 
   if (othercancer_ok) {
     log_msg("Loading other-malignancy codelist -> ", Q4_OTHER_MALIG_CODES)
-    db_exec(con, build_q4_other_malig_codes())
+    build_q4_other_malig_codes(con)
     log_msg("Building Q4 med_claim_header and confinement views")
     build_q4_med_claim_header_and_confinement(con, medical_tbl, confinement_tbl)
     log_msg("Scanning other-malignancy claims in [LOT1-",
