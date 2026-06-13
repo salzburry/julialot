@@ -17,7 +17,7 @@
 #   - optum data dict.pdf (field validation)
 #   - optum business rules.pdf (join/filter logic guidance)
 #
-# Input:  ELIG_COH_FINAL (output of the Part 1 attrition pipeline; see main.R)
+# Input:  ELIG_COH_FINAL (output of the Part 1 attrition pipeline; see 01_cohort.R)
 # Output: MAP_STACKED, LOT1_BASE, LOT1_SCT, LOT1_BASE_END
 #
 # IMPORTANT - MAP algorithm corrections vs prior versions:
@@ -31,8 +31,8 @@
 #      The aggregate() state machine handles this correctly.
 
 # Resolve script directory robustly for all invocation modes:
-#   Rscript lot_program.R        -> commandArgs --file=
-#   source("lot_program.R")      -> sys.frame()$ofile
+#   Rscript 02_lot1.R        -> commandArgs --file=
+#   source("02_lot1.R")      -> sys.frame()$ofile
 #   interactive line-by-line      -> falls back to getwd()
 .script_dir <- local({
   # 1. Rscript --file=<path>
@@ -51,7 +51,7 @@
 })
 source_dir <- file.path(.script_dir, "R")
 # Apply pipeline_inputs.csv overrides BEFORE config_lot.R reads
-# Sys.getenv(), so a direct `Rscript lot_program.R` honours the same
+# Sys.getenv(), so a direct `Rscript 02_lot1.R` honours the same
 # single input file as the orchestrated run.
 if (file.exists(file.path(source_dir, "load_inputs.R"))) {
   source(file.path(source_dir, "load_inputs.R"))

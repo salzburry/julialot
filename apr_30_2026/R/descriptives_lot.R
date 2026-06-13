@@ -230,7 +230,7 @@ print_descriptives <- function(con) {
   })
 
   # 0c. Attrition tab - cohort flow from Part 1 (THIRD tab)
-  # Reads the attrition_report table written by Part 1's main.R (via
+  # Reads the attrition_report table written by Part 1's 01_cohort.R (via
   # persist_attrition_table in criteria_attrition.R). If that table
   # doesn't exist (Part 2 run standalone, or Part 1 skipped persist),
   # we emit a placeholder card instead of failing.
@@ -269,7 +269,7 @@ print_descriptives <- function(con) {
 <h2>Attrition Report Not Available</h2>
 <p>The LOT dashboard reads the cohort-attrition counts from <code>',
         attrition_tbl, '</code>, which is written by the Part 1 pipeline
-(<code>main.R</code> &rarr; <code>persist_attrition_table()</code>).</p>
+(<code>01_cohort.R</code> &rarr; <code>persist_attrition_table()</code>).</p>
 <p>Run Part 1 against the same <code>PROJECT_WORK_SCHEMA</code> to populate the
 attrition table, then rebuild the LOT dashboard to see it here.</p>
 </body></html>')

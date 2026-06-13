@@ -3,7 +3,7 @@
 # (lot2to5_spec_DRAFT_apr30.xlsx) as a standalone module; does not
 # modify any LOT1 module.
 #
-# Assumes lot_program.R already produced these views/tables in the same
+# Assumes 02_lot1.R already produced these views/tables in the same
 # connection / work schema:
 #   - lot_patient_input    patient cohort + OBS_END_DT, ENDDATE_CE, etc.
 #   - map_stacked          medication-available periods per agent

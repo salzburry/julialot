@@ -2,7 +2,7 @@
 
 This directory ships an additional, **standalone** module that builds LOT2
 through LOT5 on top of the existing LOT1 outputs. It does not modify
-`lot_program.R` or any LOT1 code.
+`02_lot1.R` or any LOT1 code.
 
 ## Files
 
@@ -11,7 +11,7 @@ through LOT5 on top of the existing LOT1 outputs. It does not modify
   `permissible_subs`, `sct_codelist`, `sct_claims_raw`, `tx_auto_dates`,
   `tx_allo_cart_dates`) from CSVs + persisted CDM/cohort tables.
 - `R/lot2_5_base.R` — module: `build_lot2_5(con, ...)` and helpers.
-- `lot2_5_program.R` — entry script.
+- `03_lot2_5.R` — entry script.
 - Spec: `../Apr 18 2026/Program Spec and Scenarios/lot2to5_spec_DRAFT_apr30.xlsx`.
 
 ## Order of operations
@@ -40,7 +40,7 @@ Rscript run_pipeline.R
 
 **One Domino Job (pipeline + dashboard).** `run_all.R` is a thin
 wrapper: it runs `run_pipeline.R` and, only if that succeeds, runs
-`lot_long_dashboard.R`, with both sharing one combined
+`04_lot_detail_dashboard.R`, with both sharing one combined
 `PIPELINE_LOG_FILE` artifact. Use it as the single Job command:
 
 ```
@@ -136,35 +136,35 @@ proceeds):
 
 ### Option B — run each stage manually
 
-1. Run `lot_program.R` first. LOT2-5 reads
+1. Run `02_lot1.R` first. LOT2-5 reads
    `MAP_STACKED`, `LOT1_SCT`, and `LOT1_BASE_END` (all persisted by
    LOT1), plus `cfg$input_cohort_table`. LOT1 also persists
    `LOT1_BASE` and `MMA_MED_PROCESSED` for downstream descriptives,
    but the LOT2-5 builder itself does not read them.
-2. Run `lot2_5_program.R`. It loads codelists from CSV, rebuilds the
+2. Run `03_lot2_5.R`. It loads codelists from CSV, rebuilds the
    session-scoped temp views, and produces `LOT_LONG` with one row per
    `(PATID, LOT_NUM)` for `LOT_NUM = 1..max_lot`.
 
 ```
-Rscript lot_program.R
-Rscript lot2_5_program.R
+Rscript 02_lot1.R
+Rscript 03_lot2_5.R
 ```
 
-All entry points — `run_pipeline.R`, `main.R`, `lot_program.R`,
-`lot2_5_program.R`, and `lot_long_dashboard.R` — load
+All entry points — `run_pipeline.R`, `01_cohort.R`, `02_lot1.R`,
+`03_lot2_5.R`, and `04_lot_detail_dashboard.R` — load
 `pipeline_inputs.csv` before reading any config, so the CSV is
 honoured identically whether you use the orchestrator or run a stage
 directly.
 
 ## LOT 1-5 dashboard
 
-`lot_program.R`'s dashboard (`lot_dashboard.html`) is LOT1-only — its
+`02_lot1.R`'s dashboard (`lot_dashboard.html`) is LOT1-only — its
 `descriptives_lot.R` has a `LOT1` section but no LOT2-5 sections, and
-`lot2_5_program.R` does not build a dashboard at all.
+`03_lot2_5.R` does not build a dashboard at all.
 
-`lot_long_dashboard.R` is a **standalone** entry script that reads
+`04_lot_detail_dashboard.R` is a **standalone** entry script that reads
 `work_schema.LOT_LONG` and writes a **separate** interactive HTML
-(`lot_long_dashboard.html` in `cfg$output_dir`). It does not modify or
+(`lot_detail_dashboard.html` in `cfg$output_dir`). It does not modify or
 overwrite `lot_dashboard.html`. Sections (all by `LOT_NUM`):
 
 - **Overview / Funnel** — patients per LOT + retention table
@@ -219,7 +219,7 @@ whole dashboard centrally. The LOT1 `lot_dashboard.html` gets the same
 sidebar UI, since both share `build_dashboard()`.
 
 ```
-Rscript lot_long_dashboard.R
+Rscript 04_lot_detail_dashboard.R
 ```
 
 Prerequisite: `LOT_LONG` must already be built. The LOT2-5 build is
@@ -256,8 +256,8 @@ Long-format table; one row per patient per LOT.
 An editable defaults file: edit `apr_30_2026/pipeline_inputs.csv`
 (open it in Excel or any editor) instead of memorising every env var.
 Columns: `name,value,description`. All five entry points
-(`run_pipeline.R`, `main.R`, `lot_program.R`, `lot2_5_program.R`,
-`lot_long_dashboard.R`) load it **before** reading any config.
+(`run_pipeline.R`, `01_cohort.R`, `02_lot1.R`, `03_lot2_5.R`,
+`04_lot_detail_dashboard.R`) load it **before** reading any config.
 
 **Precedence: the environment always wins.** A CSV value is applied
 only when that variable is currently unset/empty. So an inline

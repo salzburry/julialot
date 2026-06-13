@@ -1,9 +1,9 @@
 #!/usr/bin/env Rscript
 # Top-level orchestrator. Runs the full MM LOT pipeline end-to-end:
 #
-#   Stage 1  Cohort attrition  main.R            -> personal_schema.<final_table>
-#   Stage 2  LOT1              lot_program.R     -> work_schema.LOT1_BASE_END
-#   Stage 3  LOT2-5            lot2_5_program.R  -> work_schema.LOT_LONG
+#   Stage 1  Cohort attrition  01_cohort.R            -> personal_schema.<final_table>
+#   Stage 2  LOT1              02_lot1.R     -> work_schema.LOT1_BASE_END
+#   Stage 3  LOT2-5            03_lot2_5.R  -> work_schema.LOT_LONG
 #
 # Each stage runs in its own Rscript subprocess so the entry scripts
 # work unchanged. Between stages the orchestrator probes the schema each
@@ -213,7 +213,7 @@ force_rerun <- env_bool("FORCE_RERUN")
 stages <- list(
   list(
     name          = "Cohort attrition",
-    script        = "main.R",
+    script        = "01_cohort.R",
     required_inputs = list(),                # nothing to pre-check
     output_schema = cohort_schema,
     output_table  = cohort_table,
@@ -221,7 +221,7 @@ stages <- list(
   ),
   list(
     name          = "LOT1",
-    script        = "lot_program.R",
+    script        = "02_lot1.R",
     # LOT1 reads cohort from lot_work_schema.lot_input_table. If cohort
     # attrition wrote to cohort_schema and no view bridges the two,
     # this probe is what catches it BEFORE LOT1 hits
@@ -235,7 +235,7 @@ stages <- list(
   ),
   list(
     name          = "LOT2-5",
-    script        = "lot2_5_program.R",
+    script        = "03_lot2_5.R",
     # LOT2-5 needs every persisted LOT1 table that prepare_lot_inputs()
     # rebinds AS the temp views lot2_5_base.R reads, PLUS the cohort
     # table (lot2_5_inputs.R rebuilds lot_patient_input from it).

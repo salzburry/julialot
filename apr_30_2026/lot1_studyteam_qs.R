@@ -100,7 +100,7 @@ main <- function() {
   log_msg("LOT1 study-team questions - reading ", lot_long)
   if (!readable(lot_long)) {
     stop("Cannot read ", lot_long,
-         ". Build the LOT1 stage (lot_program.R) first.")
+         ". Build the LOT1 stage (02_lot1.R) first.")
   }
   have_flags <- readable(allflags)
   if (!have_flags) {
@@ -390,7 +390,7 @@ main <- function() {
   map_tbl <- wrk("MAP_STACKED")
   if (!readable(map_tbl)) {
     log_msg("  Q4: ", map_tbl, " not readable - anti-BCMA / Blenrep ",
-            "availability skipped (rebuild via lot_program.R).")
+            "availability skipped (rebuild via 02_lot1.R).")
   } else {
     bcma <- db_q(con, glue("
       SELECT MAP_MED_TYPE  AS med_abbr,

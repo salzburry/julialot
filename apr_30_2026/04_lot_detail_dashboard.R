@@ -539,7 +539,7 @@ collect_lot_long_views <- function(con, lot_long = wrk("LOT_LONG"),
       # milestone vlines extend across every LOT_NUM boundary (start of
       # each line + final end), so a 5-line patient sees LOT1..LOT5
       # markers. Reads the persisted MAP_STACKED work-schema table that
-      # lot_program.R materializes.
+      # 02_lot1.R materializes.
       map_tbl <- wrk("MAP_STACKED")
       mdf <- tryCatch(db_q(con, glue("
         SELECT cast(PATID as string) AS PATID,
@@ -678,7 +678,7 @@ collect_lot_long_views <- function(con, lot_long = wrk("LOT_LONG"),
           '<h3>No medication journey examples</h3>',
           '<p style="color:#555">MAP_STACKED has no rows for the ',
           'selected example patients. Rebuild via ',
-          '<code>lot_program.R</code> / <code>run_pipeline.R</code> ',
+          '<code>02_lot1.R</code> / <code>run_pipeline.R</code> ',
           'so the medication-level table exists in the work schema.',
           '</p></div>'),
           section = "MED JOURNEY", title = "Med Journeys (none)")
@@ -711,7 +711,7 @@ collect_lot_long_views <- function(con, lot_long = wrk("LOT_LONG"),
   if (include_debug) {
 
   # ---- DEBUG / QC: persisted work-schema tables ----
-  # Reads the tables lot_program.R / LOT2-5 persist (NOT temp views), so
+  # Reads the tables 02_lot1.R / LOT2-5 persist (NOT temp views), so
   # this stays a single robust script with no dependency on the LOT1
   # pipeline session. Every probe is defensive: a missing table is
   # reported, never fatal.
@@ -978,7 +978,7 @@ main_lot_detail <- function() {
         nrow(db_q(con, glue("SELECT 1 FROM {lot_long} LIMIT 1"))) >= 0,
         error = function(e) FALSE))) {
     stop("Cannot read ", lot_long,
-         ". Build LOT_LONG (lot2_5_program.R / LOT2-5 stage) first.")
+         ". Build LOT_LONG (03_lot2_5.R / LOT2-5 stage) first.")
   }
 
   dashboard_items <<- list()

@@ -148,11 +148,11 @@ DEXAMETHASONE / PRED / PREDNISONE - same tokens as
 `05_regimen_dashboard.R::STEROID_TOKENS`) before any join, so every downstream
 scan inherits the steroid exclusion. NDC11 normalisation
 (`lpad(...,11,'0')`) is identical to the parent join logic in
-`pipeline_steps.R:646-696` and `lot_program.R:300-388`.
+`pipeline_steps.R:646-696` and `02_lot1.R:300-388`.
 
 **Why not `MMA_MED_PROCESSED`:** the parent's persisted MMA table is
 bounded at `FST_DT >= p.INDEX_DATE` on every source branch
-(`lot_program.R:316`, `:336`, `:359`, `:386`), where `INDEX_DATE` is
+(`02_lot1.R:316`, `:336`, `:359`, `:386`), where `INDEX_DATE` is
 the MM-diagnosis qualifying date. That means it cannot see any claim
 in the `[LOT1_START - 365, INDEX_DATE - 1]` portion of the 12-month
 1L baseline. For an NDMM patient whose LOT1 starts shortly after

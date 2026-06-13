@@ -220,7 +220,7 @@ build_ndmm_mma_codelist <- function() {
 #
 # This raw-claim scan is necessary because the parent's persisted
 # MMA_MED_PROCESSED is built with `FST_DT >= INDEX_DATE` (MM-dx anchor)
-# on every source branch (lot_program.R:316,336,359,386). It therefore
+# on every source branch (02_lot1.R:316,336,359,386). It therefore
 # cannot see any claims before the MM diagnosis, and would miss MM
 # therapy occurring in the [LOT1_START - 365, INDEX_DATE - 1] portion
 # of the 12-month 1L baseline that the NDMM spec requires.
@@ -1073,7 +1073,7 @@ prepare_ndmm_cohort <- function(con) {
     overview_notes <- c(overview_notes,
       paste0("Belantamab exclusion <b>skipped</b> - <code>",
              map_stacked, "</code> unreadable. Rebuild via ",
-             "<code>lot_program.R</code>."))
+             "<code>02_lot1.R</code>."))
   }
   if (!priortx_ok) {
     log_msg("  WARN: rx or medical unreadable; MM-tx pre-LOT1 ",

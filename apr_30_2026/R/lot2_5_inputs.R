@@ -1,10 +1,10 @@
 #!/usr/bin/env Rscript
-# Rebuild the upstream views lot2_5_base.R needs. lot_program.R
+# Rebuild the upstream views lot2_5_base.R needs. 02_lot1.R
 # persists MAP_STACKED, LOT1_SCT, LOT1_BASE_END + the cohort input
 # table, but the temp views lot_patient_input, sct_codelist,
 # sct_claims_raw, tx_auto_dates, tx_allo_cart_dates are session-scoped
 # and gone once that script exits. This rebuilds them in a fresh
-# session using the same SQL lot_program.R uses, with no edits to it.
+# session using the same SQL 02_lot1.R uses, with no edits to it.
 #
 # Codelists (mma_rollup, permissible_subs, sct_codelist) come via the
 # CSV loaders in codelists_lot.R; the caller must have sourced that and
@@ -16,7 +16,7 @@ prepare_lot_inputs <- function(con,
                                sct_src) {
   log_msg("Preparing upstream views for LOT2-5 builder...")
 
-  # mma_rollup view - verbatim port of lot_program.R S00 so YES/YES%/1/0/NULL
+  # mma_rollup view - verbatim port of 02_lot1.R S00 so YES/YES%/1/0/NULL
   # values for MONOMAINTENANCE / CONDITIONING / USED_FOR_OTHER_CANCERS parse
   # the same way; otherwise contains_mtx_reg breaks for LOT2-5.
   run_step(con, "P00_mma_rollup", glue("
@@ -112,7 +112,7 @@ prepare_lot_inputs <- function(con,
     FROM {wrk(cfg$input_cohort_table)}
   "), qc = "SELECT count(*) AS n_patients FROM lot_patient_input")
 
-  # sct_codelist view (matches lot_program.R S11)
+  # sct_codelist view (matches 02_lot1.R S11)
   run_step(con, "P11_sct_codelist", glue("
     CREATE OR REPLACE TEMPORARY VIEW sct_codelist AS
     SELECT
@@ -141,7 +141,7 @@ prepare_lot_inputs <- function(con,
       AND SCT_TYPE IS NOT NULL AND trim(SCT_TYPE) <> ''
   "), qc = "SELECT count(*) AS n_rows FROM sct_codelist")
 
-  # sct_claims_raw view (matches lot_program.R S12)
+  # sct_claims_raw view (matches 02_lot1.R S12)
   run_step(con, "P12_sct_claims_raw", glue("
     CREATE OR REPLACE TEMPORARY VIEW sct_claims_raw AS
     WITH sct_codes AS (SELECT /*+ BROADCAST */ * FROM sct_codelist),
@@ -224,8 +224,8 @@ prepare_lot_inputs <- function(con,
     wrk("SCT_CLAIMS_RAW")
   ))
 
-  # tx_auto_dates view (matches lot_program.R S13).
-  # Verbatim aggregate state-machine - if lot_program.R S13 is updated,
+  # tx_auto_dates view (matches 02_lot1.R S13).
+  # Verbatim aggregate state-machine - if 02_lot1.R S13 is updated,
   # update this block to match.
   run_step(con, "P13_tx_auto_dates", glue("
     CREATE OR REPLACE TEMPORARY VIEW tx_auto_dates AS
@@ -324,7 +324,7 @@ prepare_lot_inputs <- function(con,
     SELECT PATID, pos + 1 AS TX_SEQ, TX_DT FROM exploded
   "), qc = NULL)  # QC deferred to P15 materialization to avoid double-evaluating the heavy AUTO aggregate.
 
-  # tx_allo_cart_dates view (matches lot_program.R S14)
+  # tx_allo_cart_dates view (matches 02_lot1.R S14)
   run_step(con, "P14_tx_allo_cart_dates", "
     CREATE OR REPLACE TEMPORARY VIEW tx_allo_cart_dates AS
     WITH allo_dates AS (
