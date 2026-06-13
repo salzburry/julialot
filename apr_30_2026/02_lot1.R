@@ -1436,7 +1436,7 @@ main <- function() {
   # Apr 19 spec numbering: Rule 1 = Discontinuation, Rule 2 = SCT / CAR-T,
   # Rule 3 = Death, Rule 4 = Disenrollment, Rule 5 = Study end.
   # End reason priority. Note this is NOT only a tie-break on identical
-  # dates: after the Q1 06-May changes, DEATH can outrank an earlier
+  # dates: after the 06-May changes, DEATH can outrank an earlier
   # DISCONTINUATION when there is no LOT2-qualifying trigger between
   # runout and death (Q1.1 post-runout guard). The earlier branches
   # (SCT, CART_INIT, MED_ADD) keep their own gating against DISCON_DT
@@ -1639,7 +1639,7 @@ main <- function() {
       END AS LOT1_BASE_END_DT,
       -- LOT1_BASE_LENGTH: mirrors the LOT1_BASE_END_DT cascade exactly so that
       -- length always equals (LOT1_BASE_END_DT - LOT1_START_DT + 1). Cascade
-      -- order matches the END_REASON priority including the Q1 06-May flip
+      -- order matches the END_REASON priority including the 06-May flip
       -- (DEATH > DISCONTINUATION > STUDY_END).
       CASE
         WHEN ec.LOT1_TX_ENDDATE IS NOT NULL
