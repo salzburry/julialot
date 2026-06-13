@@ -149,7 +149,7 @@ add_html_card <- function(html_content, section, title) {
 # Build and save the single combined HTML dashboard
 # out_name / header_title / header_sub default to the LOT1 (lot_program.R)
 # dashboard so existing callers are unaffected. The LOT1-5 dashboard
-# (lot_long_dashboard.R) passes its own values to write a separate file.
+# (04_lot_detail_dashboard.R) passes its own values to write a separate file.
 build_dashboard <- function(out_name     = "lot_dashboard.html",
                             header_title = "LOT Part 2 &mdash; Interactive Dashboard",
                             header_sub   = "MMA_MED &bull; MAP &bull; LOT1_BASE &bull; SCT &bull; Patient Journey") {

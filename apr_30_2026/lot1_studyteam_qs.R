@@ -324,7 +324,7 @@ main <- function() {
 
   # ---- Q3 : journey examples vs 6-9-meds-at-1L-induction -------------
   # Faithfully replays the dashboard's auto journey-example selection
-  # (lot_long_dashboard.R): deepest progressors first, then one extra per
+  # (04_lot_detail_dashboard.R): deepest progressors first, then one extra per
   # unique terminal reason, capped at 12. Then measures overlap with the
   # 6-9-induction-meds set the Sankey (Fig 9) highlights.
   pat_pick <- db_q(con, glue("

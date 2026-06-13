@@ -1,24 +1,25 @@
 #!/usr/bin/env Rscript
-# Julia June 5 - ONE combined dashboard for both cohorts + exploratory.
+# ONE combined dashboard for both cohorts + exploratory.
 #
-#   Rscript apr_30_2026/julia_combined_dashboard.R
+#   Rscript apr_30_2026/07_combined_dashboard.R
 #
-# Output: julia_combined_dashboard.html in cfg$output_dir.
+# Output: combined_dashboard.html in cfg$output_dir.
 #
 # The two standalone dashboards still build exactly as before:
-#   Rscript apr_30_2026/julia_q1_q3.R              -> whole cohort
-#   Rscript apr_30_2026/julia_q4_ashley/julia_q4.R -> NDMM cohort
+#   Rscript apr_30_2026/05_regimen_dashboard.R  -> whole (overall) cohort
+#   Rscript apr_30_2026/06_ndmm_dashboard.R     -> NDMM cohort
 # This script reuses their builders + cohort-prep functions to produce a
 # single HTML whose left sidebar has three top-level groups:
 #
-#   Overall              whole parent LOT_LONG cohort (Q1/Q2/Q3 + QC)
-#   NDMM                 1L newly-diagnosed cohort (June 5 IE filters)
+#   Overall              whole parent LOT_LONG cohort
+#                        (regimen transitions + steroids + QC + LOT1-5 detail)
+#   NDMM                 1L newly-diagnosed cohort (IE filters)
 #   Exploratory analysis ad-hoc / one-off requests
 #
-# Placement rule (Julia, 10-Jun): an ad-hoc ask that REUSES the Overall
-# or NDMM denominator (same patient counts) is added UNDER that cohort
-# as a "QC:" or "Sensitivity:" item. An ask that CHANGES the cohort
-# (a different denominator, e.g. a POMA-specific subset) goes under
+# Placement rule: an ad-hoc ask that REUSES the Overall or NDMM
+# denominator (same patient counts) is added UNDER that cohort as a
+# "QC:" or "Sensitivity:" item. An ask that CHANGES the cohort (a
+# different denominator, e.g. a POMA-specific subset) goes under
 # Exploratory analysis. Nothing in this repo currently needs the
 # Exploratory group, so it ships as a scaffold describing the rule.
 #
@@ -36,23 +37,24 @@
   getwd()
 })
 
-# Source julia_q4.R (which itself sources julia_q1_q3.R) AND
-# lot_long_dashboard.R without letting any of them auto-run their own
-# single-cohort main(). The script_dir overrides pin each file's
-# R/ helper + CSV resolution to the right folder, since
-# commandArgs("--file=") now points at THIS combined script.
-options(julia_q4.no_autorun           = TRUE)
-options(julia_q4.script_dir           = file.path(.script_dir, "julia_q4_ashley"))
-options(lot_long_dashboard.no_autorun = TRUE)
-source(file.path(.script_dir, "julia_q4_ashley", "julia_q4.R"))
-source(file.path(.script_dir, "lot_long_dashboard.R"))
+# Source 06_ndmm_dashboard.R (which itself sources 05_regimen_dashboard.R)
+# AND 04_lot_detail_dashboard.R without letting any of them auto-run their
+# own single-cohort main(). The script_dir overrides pin each file's
+# R/ helper + CSV resolution to this folder, since commandArgs("--file=")
+# now points at THIS combined script.
+options(ndmm_dashboard.no_autorun       = TRUE)
+options(ndmm_dashboard.script_dir       = .script_dir)
+options(regimen_dashboard.script_dir    = .script_dir)
+options(lot_detail_dashboard.no_autorun = TRUE)
+source(file.path(.script_dir, "06_ndmm_dashboard.R"))
+source(file.path(.script_dir, "04_lot_detail_dashboard.R"))
 
 # Rewrite the section/title fields of items newly added by a builder so
 # they cluster under one cohort heading in the combined sidebar while
 # preserving their original subsection name in the title. Range
 # [from_idx+1, length(dashboard_items)] is the freshly appended slice.
 # This is the post-processing alternative to parameterising every
-# save_*() call inside the ~900-line LOT1-5 collector - new views added
+# save_*() call inside the LOT1-5 detail collector - new views added
 # there will be re-sectioned automatically.
 resection_recent_items <- function(from_idx, cohort_label,
                                    subsection_in_title = TRUE) {
@@ -71,14 +73,15 @@ resection_recent_items <- function(from_idx, cohort_label,
 }
 
 # ---- Per-cohort view collection -------------------------------------
-# Runs both the shared Julia Q1/Q2/Q3 builders AND the LOT1-5 detail
-# collector from lot_long_dashboard.R against this cohort's data, tagging
-# every produced item with section = cohort_label so the combined sidebar
-# groups them under one collapsible cohort heading.
+# Runs both the shared regimen-transition / steroid builders AND the
+# LOT1-5 detail collector from 04_lot_detail_dashboard.R against this
+# cohort's data, tagging every produced item with section = cohort_label
+# so the combined sidebar groups them under one collapsible cohort
+# heading.
 #
 # Within the cohort group, title prefixes cluster related views:
-#   Q1: / Q2: / QC:      Julia Q1/Q2/Q3 builders (steroids, Sankeys, ...)
-#   FUNNEL: / START_TYPE: / ...   LOT1-5 detail (carried in by re-section)
+#   Transitions: / Steroids: / QC:   regimen builders (Sankeys, steroids)
+#   FUNNEL: / START_TYPE: / ...       LOT1-5 detail (carried in by re-section)
 #
 # Callers MUST have populated LOT_LONG_AUG for this cohort (via
 # prepare_overall_cohort / prepare_ndmm_cohort) immediately before, and
@@ -90,13 +93,13 @@ resection_recent_items <- function(from_idx, cohort_label,
 # cohort-scoped, so repeating them for NDMM would mislead.
 collect_cohort_views <- function(con, cohort_label, lookups, lot_long_tbl,
                                  include_debug = FALSE) {
-  build_steroid_prevalence(con, section = cohort_label, title_prefix = "Q2: ")
+  build_steroid_prevalence(con, section = cohort_label, title_prefix = "Steroids: ")
   for (n in 1:4)
     build_focused_pair(con, n, n + 1L, section = cohort_label,
-                       title_prefix = "Q1: ")
+                       title_prefix = "Transitions: ")
   for (n in 1:4)
     build_category_pair(con, n, n + 1L, lookups, section = cohort_label,
-                        title_prefix = "Q1: ")
+                        title_prefix = "Transitions: ")
   build_category_coverage(con, lookups, section = cohort_label,
                           title_prefix = "QC: ")
 
@@ -162,7 +165,8 @@ main_combined <- function() {
   # LOT1-5 detail runs on parent LOT_LONG (un-augmented) so the FUNNEL /
   # START_TYPE / END_REASON / etc. counts match the persisted parent
   # exactly - LOT_LONG_AUG only adds steroid tokens to LOT_BASE_MEDS for
-  # Julia's Q1 view, it does not change LOT boundaries or end reasons.
+  # the category-transition view, it does not change LOT boundaries or
+  # end reasons.
   # include_debug = TRUE here so the audit + drilldown cards are
   # produced once (under Overall).
   collect_cohort_views(con, "Overall", p_overall$lookups,
@@ -177,19 +181,19 @@ main_combined <- function() {
   cfg$plot_filename_prefix <<- "ndmm_"
   ndmm_ok <- tryCatch({
     p_ndmm <- prepare_ndmm_cohort(con)
-    build_q4_overview_card(p_ndmm$counts, p_ndmm$n_ster, p_ndmm$n_rules,
-                           p_ndmm$overview_notes, section = "NDMM",
-                           title = "Overview & cohort definition")
+    build_ndmm_overview_card(p_ndmm$counts, p_ndmm$n_ster, p_ndmm$n_rules,
+                             p_ndmm$overview_notes, section = "NDMM",
+                             title = "Overview & cohort definition")
     build_ndmm_attrition(p_ndmm$counts, section = "NDMM",
                          title_prefix = "Attrition: ")
     build_ndmm_other_cancer_qc(con, section = "NDMM",
                                title_prefix = "QC: ")
     # LOT1-5 detail re-runs on the cohort-filtered LOT_LONG view
-    # (Q4_LOT_LONG_FILT, built by prepare_ndmm_cohort) so every FUNNEL /
+    # (NDMM_LOT_LONG_FILT, built by prepare_ndmm_cohort) so every FUNNEL /
     # START_TYPE / etc. number reflects the NDMM-restricted denominator.
     # DEBUG/DRILLDOWN already produced under Overall - skip here.
     collect_cohort_views(con, "NDMM", p_ndmm$lookups,
-                         lot_long_tbl  = Q4_LOT_LONG_FILT,
+                         lot_long_tbl  = NDMM_LOT_LONG_FILT,
                          include_debug = FALSE)
     TRUE
   }, error = function(e) {
@@ -215,14 +219,14 @@ main_combined <- function() {
   build_exploratory_scaffold()
 
   build_dashboard(
-    out_name     = "julia_combined_dashboard.html",
-    header_title = "MM LOT &mdash; Julia June 5 (combined)",
+    out_name     = "combined_dashboard.html",
+    header_title = "MM LOT &mdash; combined (Overall + NDMM)",
     header_sub   = paste0("Overall &bull; NDMM",
                           if (!ndmm_ok) " (unavailable)" else "",
                           " &bull; Exploratory analysis")
   )
-  log_msg("Wrote ", file.path(cfg$output_dir, "julia_combined_dashboard.html"))
+  log_msg("Wrote ", file.path(cfg$output_dir, "combined_dashboard.html"))
 }
 
-if (!interactive() && !isTRUE(getOption("julia_combined.no_autorun")))
+if (!interactive() && !isTRUE(getOption("combined_dashboard.no_autorun")))
   main_combined()

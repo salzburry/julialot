@@ -1,23 +1,25 @@
 #!/usr/bin/env Rscript
-# Julia June-5 PDF Qs 1-3, on the current pipeline (whole cohort).
+# Regimen-transition + steroid dashboard for the whole (overall) cohort.
 #
-#   Rscript apr_30_2026/julia_q1_q3.R
+#   Rscript apr_30_2026/05_regimen_dashboard.R
 #
 # Inputs (all live next to this script):
-#   julia_q1_q3_categories.csv     regimen -> category from Julia's PDF
-#   julia_q1_q3_steroid_codes.csv  HCPCS + NDC codes -> token (DEXA / PRED)
+#   regimen_categories.csv   regimen -> category mapping
+#   steroid_codes.csv        HCPCS + NDC codes -> token (DEXA / PRED)
 #
-# Output: julia_q1_q3_dashboard.html in cfg$output_dir.
+# Output: regimen_dashboard.html in cfg$output_dir.
 #
-# Q1: Category Sankeys per LOT pair.
-# Q2: Steroid tokens (DEXA / PRED) appended to LOT_BASE_MEDS when the
+# Sections:
+#   - Category Sankeys per LOT pair (regimen -> category transitions).
+#   - Steroid tokens (DEXA / PRED) appended to LOT_BASE_MEDS when the
 #     patient had a matching rx.NDC, medical.PROC_CD, medical.BILL_PROC_CD
 #     or medical.NDC claim inside the parent induction window (LOT1
 #     cfg$induction_window_days, CART-started LOT2-5 cfg$cart_consolidation_days,
 #     else cfg$lot_n_induction_window_days; SCT_ALLO suppressed), capped at
 #     LOT_BASE_END_DT (same 4-source pattern as the parent in
-#     pipeline_steps.R). Membership only; LOT boundaries unchanged.
-# Q3: Non-progressors dropped (INNER JOIN LOTn -> LOTn+1).
+#     02_lot1.R / pipeline_steps.R). Membership only; LOT boundaries
+#     unchanged.
+#   - Non-progressors dropped from the Sankeys (INNER JOIN LOTn -> LOTn+1).
 #
 # Reuses parent pipeline helpers - R/dashboard_lot.R (build_dashboard,
 # add_to_dashboard, save_table, add_html_card, palettes), R/config_lot.R
@@ -25,7 +27,7 @@
 # Parent pipeline files are NOT edited.
 
 .script_dir <- local({
-  override <- getOption("julia_q1_q3.script_dir", NULL)
+  override <- getOption("regimen_dashboard.script_dir", NULL)
   if (!is.null(override)) return(override)
   args <- commandArgs(trailingOnly = FALSE)
   fa <- grep("^--file=", args, value = TRUE)
@@ -51,12 +53,12 @@ TOP_N            <- 10L
 CATEGORY_UNMAPPED_TOP <- 15L  # cap on distinct (unmapped) nodes per
                               # side in the category Sankey; rest
                               # bucket into '(unmapped) other'. All
-                              # mapped categories from Julia's CSV
+                              # mapped categories from the category CSV
                               # always render regardless of this cap.
-LOT_LONG_AUG     <- "_jjq_lot_long_aug"
-STEROID_VIEW     <- "_jjq_steroid"
-CAT_CSV_PATH     <- file.path(.script_dir, "julia_q1_q3_categories.csv")
-STER_CSV_PATH    <- file.path(.script_dir, "julia_q1_q3_steroid_codes.csv")
+LOT_LONG_AUG     <- "_regimen_lot_long_aug"
+STEROID_VIEW     <- "_regimen_steroid"
+CAT_CSV_PATH     <- file.path(.script_dir, "regimen_categories.csv")
+STER_CSV_PATH    <- file.path(.script_dir, "steroid_codes.csv")
 STEROID_TOKENS   <- c("DEX","DEXA","DEXAMETHASONE","PRED","PREDNISONE")
 
 esc_html <- function(s) {
@@ -77,7 +79,7 @@ norm_key_no_steroid <- function(s) {
   paste(sort(unique(t)), collapse = " ")
 }
 
-# Sankey wrapper - lifted verbatim from lot_long_dashboard.R:289 with
+# Sankey wrapper - lifted verbatim from 04_lot_detail_dashboard.R:289 with
 # the section parameterised. Same palette / layout / config conventions.
 make_sankey <- function(src_lab, tgt_lab, value, section, title) {
   if (!has_plotly || length(value) == 0) return(invisible())
@@ -106,7 +108,7 @@ make_sankey <- function(src_lab, tgt_lab, value, section, title) {
   if (!is.null(sk)) add_to_dashboard(sk, section = section, title = title)
 }
 
-# Load steroid codes from CSV into a session temp view (Q2).
+# Load steroid codes from CSV into a session temp view (steroid augmentation).
 # Counts HCPCS vs NDC rows separately and surfaces both on
 # cfg$steroid_ndc_count / cfg$steroid_hcpcs_count so the overview cards
 # can banner an NDC-missing run (the common fresh-clone failure mode -
@@ -123,7 +125,7 @@ load_steroid_codes <- function(con) {
     " cast('' as string) AS mapped_to WHERE 1=0"))
 
   if (!file.exists(STER_CSV_PATH)) {
-    log_msg("  no steroid CSV at ", STER_CSV_PATH, " - Q2 augmentation skipped.")
+    log_msg("  no steroid CSV at ", STER_CSV_PATH, " - steroid augmentation skipped.")
     set_counts(0L, 0L); empty_view(); return(0L)
   }
   df <- tryCatch(read.csv(STER_CSV_PATH, stringsAsFactors = FALSE,
@@ -155,7 +157,7 @@ load_steroid_codes <- function(con) {
   set_counts(n_hcpcs, n_ndc)
   if (n_ndc == 0L)
     log_msg("  WARN: 0 NDC steroid rows in ", STER_CSV_PATH,
-            " - Q2 steroid prevalence will under-count by oral RX claims.",
+            " - steroid prevalence will under-count by oral RX claims.",
             " Add NDC rows (code,code_type,mapped_to,note) and re-run.")
   db_exec(con, glue(
     "CREATE OR REPLACE TEMPORARY VIEW {STEROID_VIEW} AS ",
@@ -164,7 +166,7 @@ load_steroid_codes <- function(con) {
   length(rows)
 }
 
-# Augment LOT_LONG with steroid tokens appended to LOT_BASE_MEDS (Q2).
+# Augment LOT_LONG with steroid tokens appended to LOT_BASE_MEDS (steroid augmentation).
 # Materialised as a session temp view so the downstream Sankey queries
 # can JOIN to it without re-scanning rx + medical each time.
 augment_lot_long <- function(con, lot_long, rx_tbl, medical_tbl, n_codes) {
@@ -319,10 +321,10 @@ build_steroid_prevalence <- function(con, section = "STEROIDS",
   "))
   if (nrow(df) == 0) return(invisible())
   save_table(df, section = section,
-             title = paste0(title_prefix, "Steroid prevalence per LOT_NUM (Q2)"))
+             title = paste0(title_prefix, "Steroid prevalence per LOT_NUM"))
   add_html_card(paste0(
     '<div style="font-family:system-ui;padding:14px;max-width:700px">',
-    '<h3>Steroid token attached to LOT_BASE_MEDS (Q2)</h3>',
+    '<h3>Steroid token attached to LOT_BASE_MEDS</h3>',
     '<p style="color:#555;font-size:13px">Tokens (<code>DEXA</code>, ',
     '<code>PRED</code>) are appended to <code>LOT_BASE_MEDS</code> ',
     'when the patient had a matching <code>rx.NDC</code>, ',
@@ -339,11 +341,11 @@ build_steroid_prevalence <- function(con, section = "STEROIDS",
     'LOT boundaries (start dates, ',
     'counts, end reasons) are unchanged from <code>LOT_LONG</code>. ',
     'Steroid codes are loaded from ',
-    '<code>julia_q1_q3_steroid_codes.csv</code>.</p></div>'),
+    '<code>steroid_codes.csv</code>.</p></div>'),
     section = section, title = paste0(title_prefix, "What this section shows"))
 }
 
-# Q1+Q2+Q3: focused LOT-pair Sankey by REGIMEN (steroid-augmented).
+# Focused LOT-pair Sankey by REGIMEN (steroid-augmented).
 # INNER JOIN drops non-progressors.
 build_focused_pair <- function(con, n_from, n_to, section = NULL,
                                title_prefix = "") {
@@ -403,7 +405,7 @@ build_focused_pair <- function(con, n_from, n_to, section = NULL,
                             " regimen counts"))
 }
 
-# Q1+Q3: focused LOT-pair Sankey by CATEGORY (Julia's mapping).
+# Focused LOT-pair Sankey by CATEGORY (category CSV mapping).
 # Line-aware: LOT_NUM=1 uses the 1L NDMM lookup, LOT_NUM>=2 uses the
 # 2L+ R/RMM lookup. Same regimen string can resolve to different
 # categories depending on which line it is being read at.
@@ -431,11 +433,11 @@ build_category_pair <- function(con, n_from, n_to, lookups,
   "))
   if (nrow(pairs) == 0) return(invisible())
 
-  # Julia June 10: for regimens with no category in the CSV, show the
+  # For regimens with no category in the CSV, show the
   # actual regimen string instead of a single '(uncategorised)' bucket.
   # The "(unmapped) " prefix lets viewers distinguish unmapped fallbacks
   # from real mapped categories at a glance, and the regimen text is
-  # exactly what would be added to julia_q1_q3_categories.csv to map it.
+  # exactly what would be added to regimen_categories.csv to map it.
   # The QC coverage card below still uses '(uncategorised)' as a single
   # bucket since it reports a per-LOT match-rate, not a Sankey node.
   cat_of <- function(r, lk) {
@@ -530,8 +532,8 @@ build_category_coverage <- function(con, lookups, section = "BY_CATEGORY",
   save_table(out, section = section,
              title = paste0(title_prefix, "Category mapping coverage per LOT_NUM"))
 
-  # Top-N unmapped regimen strings per LOT_NUM so Julia can extend the
-  # CSV. Per-LOT ranking (not global) because Julia explicitly called
+  # Top-N unmapped regimen strings per LOT_NUM so an analyst can extend the
+  # CSV. Per-LOT ranking (not global) because it was explicitly called
   # out that she only sees the LOT2/LOT3 buckets when global ranking
   # is dominated by LOT1 / LOT4-5 tails. Result is sorted by LOT_NUM
   # ascending, then n_patients descending within each LOT.
@@ -581,10 +583,10 @@ load_categories <- function() {
 }
 
 # Returns an amber HTML banner when no NDC steroid codes were loaded
-# (returns "" otherwise). Both build_overview_card and the Q4 overview
+# (returns "" otherwise). Both build_overview_card and the NDMM overview
 # card prepend it so a fresh clone / non-prod deploy can never silently
-# under-count Q2 steroid prevalence: the tracked CSV ships with only
-# HCPCS rows by design (Julia maintains the NDC list out-of-band).
+# under-count steroid prevalence: the tracked CSV ships with only
+# HCPCS rows by design (the NDC list is maintained out-of-band).
 ndc_missing_banner <- function() {
   n_ndc <- cfg$steroid_ndc_count
   if (!is.null(n_ndc) && n_ndc > 0L) return("")
@@ -592,10 +594,10 @@ ndc_missing_banner <- function() {
     '<div style="background:#fff3cd;border:1px solid #d9a800;',
     'border-radius:6px;padding:10px 14px;margin:0 0 12px;',
     'font-family:system-ui;font-size:13px;color:#5a4500;max-width:900px">',
-    '<b>Q2 caveat &mdash; no NDC steroid codes loaded.</b><br>',
+    '<b>Steroid caveat &mdash; no NDC steroid codes loaded.</b><br>',
     'The steroid-code CSV at <code>', STER_CSV_PATH, '</code> contains ',
     'only HCPCS rows (J-codes) in this run. Oral-RX steroid claims ',
-    '(NDCs) are <b>not</b> picked up, so Q2 steroid prevalence ',
+    '(NDCs) are <b>not</b> picked up, so steroid prevalence ',
     'undercounts by however many patients have oral-RX-only steroid ',
     'coverage in their induction window. Drop NDC rows ',
     '(<code>code,code_type,mapped_to,note</code>) into the CSV and ',
@@ -610,24 +612,24 @@ build_overview_card <- function(n_ster_codes, n_cat_rules,
   add_html_card(paste0(
     ndc_missing_banner(),
     '<div style="font-family:system-ui;padding:14px;max-width:900px">',
-    '<h3>Julia June 5 - Q1 / Q2 / Q3 on the current pipeline</h3>',
+    '<h3>Regimen transitions &amp; steroid prevalence - overall cohort</h3>',
     '<p style="color:#555;font-size:13px">Reads parent pipeline ',
-    '<code>LOT_LONG</code>; no Ashley-cohort filter applied (that is ',
-    'Q4, separate).</p>',
+    '<code>LOT_LONG</code>; no cohort filter applied (the NDMM cohort ',
+    'is a separate dashboard).</p>',
     '<ul style="font-size:13px;color:#1a7a3a;margin-top:0">',
-    '<li><b>Q1</b>: regimen-category Sankeys per LOT pair (',
+    '<li><b>Category transitions</b>: regimen-category Sankeys per LOT pair (',
     n_cat_rules, ' regimen rules loaded).</li>',
-    '<li><b>Q2</b>: steroid tokens appended to <code>LOT_BASE_MEDS</code> ',
+    '<li><b>Steroid prevalence</b>: steroid tokens appended to <code>LOT_BASE_MEDS</code> ',
     'inside the parent induction window, capped at ',
     '<code>LOT_BASE_END_DT</code>; <code>SCT_ALLO</code>-started LOTs ',
     'suppressed to mirror the parent (',
     n_ster_codes, ' codes loaded; LOT boundaries unchanged).</li>',
-    '<li><b>Q3</b>: non-progressors dropped (inner-join LOTn &rarr; LOTn+1).</li>',
+    '<li><b>Progressor flows</b>: non-progressors dropped (inner-join LOTn &rarr; LOTn+1).</li>',
     '</ul></div>'),
     section = section, title = title)
 }
 
-# Whole-cohort setup, shared by main() and the combined dashboard.
+# Whole-cohort setup, shared by main_regimen() and the combined dashboard.
 # Reads LOT_LONG, augments it with steroid tokens into LOT_LONG_AUG,
 # and loads the category lookups. Leaves LOT_LONG_AUG populated for
 # the whole (un-filtered) cohort and returns the scalars the overview
@@ -643,8 +645,8 @@ prepare_overall_cohort <- function(con) {
   if (!ok(lot_long)) stop("Cannot read ", lot_long)
   q2_ok <- ok(rx_tbl) && ok(medical_tbl)
   if (!q2_ok) {
-    log_msg("  WARN: rx or medical unreadable; Q2 steroid augmentation ",
-            "skipped. Q1+Q3 will run on un-augmented LOT_LONG.")
+    log_msg("  WARN: rx or medical unreadable; steroid augmentation ",
+            "skipped. Sankeys will run on un-augmented LOT_LONG.")
   }
 
   if (q2_ok) {
@@ -662,7 +664,7 @@ prepare_overall_cohort <- function(con) {
   lookups <- load_categories()
   n_rules <- length(lookups$lookup_1L) + length(lookups$lookup_2L)
   if (n_rules == 0) {
-    log_msg("  WARN: no category mapping loaded; Q1 section will say uncategorised.")
+    log_msg("  WARN: no category mapping loaded; category section will say uncategorised.")
   } else {
     log_msg("  ", length(lookups$lookup_1L), " 1L rules, ",
             length(lookups$lookup_2L), " 2L+ rules loaded")
@@ -674,7 +676,7 @@ prepare_overall_cohort <- function(con) {
 # attrition_report table that main.R / persist_attrition_table() writes
 # at the end of Stage 1, picks the OP-confirmation window from
 # cfg$outpatient_window, and emits BOTH a table card and a horizontal
-# waterfall chart so Julia can see each parent IE rule applied
+# waterfall chart so reviewers can see each parent IE rule applied
 # step-by-step (the same step list main.R prints to the log).
 #
 # Degrades gracefully: if the attrition_report table is missing (e.g.
@@ -757,7 +759,7 @@ build_overall_attrition <- function(con, section = "OVERVIEW",
   }
 }
 
-main <- function() {
+main_regimen <- function() {
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
   cfg$build_dashboard <<- TRUE
 
@@ -776,11 +778,11 @@ main <- function() {
   build_category_coverage(con, p$lookups)
 
   build_dashboard(
-    out_name     = "julia_q1_q3_dashboard.html",
-    header_title = "MM LOT &mdash; Julia June 5 (Q1/Q2/Q3 on current pipeline)",
+    out_name     = "regimen_dashboard.html",
+    header_title = "MM LOT &mdash; Regimen transitions & steroid prevalence (overall cohort)",
     header_sub   = "Steroids &bull; LOT-pair regimen Sankeys &bull; By category &nbsp;&mdash; pick a Category above"
   )
-  log_msg("Wrote ", file.path(cfg$output_dir, "julia_q1_q3_dashboard.html"))
+  log_msg("Wrote ", file.path(cfg$output_dir, "regimen_dashboard.html"))
 }
 
-if (!interactive() && !isTRUE(getOption("julia_q1_q3.no_autorun"))) main()
+if (!interactive() && !isTRUE(getOption("regimen_dashboard.no_autorun"))) main_regimen()
