@@ -83,7 +83,7 @@ NDMM_PRE_LOT1_DAYS       <- 365L  # NDMM spec: 12-mo CE/baseline before 1L index
 # Matched case/whitespace-insensitively against the codelist's
 # tumor_group column. Only the five "NOT HAVING ACHIEVED REMISSION"
 # labels named in the spec are listed; "in remission" variants are left in
-# the filter pending her confirmation (see README). build_ndmm_other_-
+# the filter pending confirmation (see README). build_ndmm_other_-
 # malig_codes() logs how many of these actually matched the codelist;
 # a match count < length(this) means the stored labels differ from the
 # wording below and is a run-review blocker.

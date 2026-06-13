@@ -24,7 +24,7 @@
 # Reuses parent pipeline helpers - R/dashboard_lot.R (build_dashboard,
 # add_to_dashboard, save_table, add_html_card, palettes), R/config_lot.R
 # (cfg, wrk, cdm_src), R/db_utils_lot.R (db_q, db_exec, glue, log_msg).
-# Parent pipeline files are NOT edited.
+# Parent derivation logic is unchanged.
 
 .script_dir <- local({
   override <- getOption("regimen_dashboard.script_dir", NULL)

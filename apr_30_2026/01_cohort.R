@@ -23,15 +23,30 @@ tryCatch(
 )
 
 # ---- Source modules (order matters) ----
-# Resolve script directory without relying on %||% (not available before modules load)
-.ofile <- tryCatch(sys.frame(1)$ofile, error = function(e) NULL)
-source_dir <- file.path(dirname(if (!is.null(.ofile)) .ofile else "."), "R")
+# Resolve script directory robustly (same pattern as 02_lot1.R /
+# 03_lot2_5.R): Rscript --file= first, then a source()'d $ofile, then
+# the working dir. This makes both `Rscript apr_30_2026/01_cohort.R` and
+# the run_pipeline.R subprocess launch (full path, no wd change) resolve
+# R/ correctly, instead of looking for ./R relative to the caller's cwd.
+.script_dir <- local({
+  args <- commandArgs(trailingOnly = FALSE)
+  file_arg <- grep("^--file=", args, value = TRUE)
+  if (length(file_arg) > 0) {
+    return(dirname(normalizePath(sub("^--file=", "", file_arg[1]))))
+  }
+  for (i in seq_len(sys.nframe())) {
+    ofile <- tryCatch(sys.frame(i)$ofile, error = function(e) NULL)
+    if (!is.null(ofile)) return(dirname(normalizePath(ofile)))
+  }
+  getwd()
+})
+source_dir <- file.path(.script_dir, "R")
 # Apply pipeline_inputs.csv overrides BEFORE config_prompts.R reads
 # Sys.getenv(), so a direct `Rscript 01_cohort.R` honours the same single
 # input file as the orchestrated run.
 if (file.exists(file.path(source_dir, "load_inputs.R"))) {
   source(file.path(source_dir, "load_inputs.R"))
-  load_pipeline_inputs(c(dirname(source_dir), dirname(dirname(source_dir))))
+  load_pipeline_inputs(c(.script_dir, dirname(.script_dir)))
 }
 source(file.path(source_dir, "config_prompts.R"))
 source(file.path(source_dir, "db_utils.R"))

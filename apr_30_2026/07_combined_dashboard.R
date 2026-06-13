@@ -23,7 +23,7 @@
 # Exploratory analysis. Nothing in this repo currently needs the
 # Exploratory group, so it ships as a scaffold describing the rule.
 #
-# Parent pipeline files are NOT edited.
+# Parent derivation logic is unchanged.
 
 .script_dir <- local({
   args <- commandArgs(trailingOnly = FALSE)

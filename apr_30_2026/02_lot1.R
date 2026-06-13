@@ -1538,7 +1538,7 @@ main <- function() {
         -- drive end-reason routing or create a standalone maintenance period)
         COALESCE(cmr.contains_mtx_reg, 0) AS contains_mtx_reg,
         -- CART_INIT: MED_ADD followed by CART within {cfg$cart_consolidation_days} days
-        -- Apr 15 meeting (Julia): if someone has a new medication added, but then within
+        -- Apr 15 meeting: if someone has a new medication added, but then within
         -- 45 days of that new agent, they start CAR-T, the reason for LOT1 end should
         -- be initiation of CAR-T therapy, not a medication add.
         -- datediff(A, B) = A - B in Databricks; CART_DT - ADD_START_DT BETWEEN 0 AND 45
