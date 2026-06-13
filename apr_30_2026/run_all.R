@@ -1,12 +1,17 @@
 #!/usr/bin/env Rscript
-# One Domino Job: full pipeline, then the LOT1-5 dashboard. Runs
-# run_pipeline.R and, only if it exits 0, runs 04_lot_detail_dashboard.R.
-# Either failure fails the Job. pipeline_inputs.csv is loaded first so
-# the combined log lands in the OUTPUT_DIR the stages write to.
+# One Domino Job: full pipeline, then the combined dashboard. Runs
+# run_pipeline.R and, only if it exits 0, runs 07_combined_dashboard.R
+# (which produces the Overall + NDMM + Exploratory HTML, already
+# embedding the full LOT1-5 detail for each cohort). Either failure
+# fails the Job. pipeline_inputs.csv is loaded first so the combined
+# log lands in the OUTPUT_DIR the stages write to.
 #
 #   Domino Job command:  Rscript /mnt/code/.../run_all.R
 #   Set DATABRICKS_PWD as a Domino env var/secret. Run-control env
 #   vars (FORCE_RERUN, SKIP_*) still work and win over the CSV.
+#
+# To run the standalone LOT1-5 detail dashboard on its own (without
+# Overall/NDMM cohorts), invoke 04_lot_detail_dashboard.R directly.
 
 .d <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -55,8 +60,8 @@ if (rc1 != 0) {
   stop(sprintf("run_pipeline.R failed (exit %d); dashboard skipped.", rc1))
 }
 
-rc2 <- system2("Rscript", file.path(.d, "04_lot_detail_dashboard.R"),
+rc2 <- system2("Rscript", file.path(.d, "07_combined_dashboard.R"),
                 stdout = "", stderr = "")
 if (rc2 != 0) {
-  stop(sprintf("04_lot_detail_dashboard.R failed (exit %d).", rc2))
+  stop(sprintf("07_combined_dashboard.R failed (exit %d).", rc2))
 }
