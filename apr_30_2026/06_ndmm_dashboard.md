@@ -192,7 +192,7 @@ is at the cutoff.
 
 #### NDMM-only MM-adjacent tumor-group override 
 
-For the NDMM/NDMM other-cancer exclusion only, the highlighted
+For the NDMM other-cancer exclusion only, the highlighted
 plasma-cell / MM-adjacent tumor groups are treated as
 **non-exclusionary**. Parent pipeline logic and shared codelists are
 unchanged. This aligns the NDMM filter with the protocol intent: the
