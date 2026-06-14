@@ -1,64 +1,88 @@
-# Unified criteria catalog, filter builder, attrition tracker, and QC
-# reporting. No module-level mutable state - runtime state is passed by
-# argument.
+# Criteria catalog, filter builder, attrition tracker, and QC reporting.
+# Runtime state is passed by argument - no module-level mutable state.
 
-# ---- Canonical criteria catalog ----
-# Single source of truth for all IE criteria. Drives:
-#   - final filter SQL in build_steps() (Step 24)
-#   - cumulative attrition counting in main()
-#   - interactive prompt defaults (via config_prompts.R)
+# ---- The IE funnel: how the cohort narrows, one gate at a time ----
 #
-# Fields:
-#   attrition_id    : sort key for attrition table output
-#   label           : human-readable label for attrition table
-#   filter_sql      : SQL WHERE fragment (applied cumulatively)
-#   cfg_key         : name in cfg that toggles this criterion
+# Each criterion is a per-patient flag built in build_steps(). Step 24
+# then ANDs them on cumulatively, so every gate only ever drops patients.
+# Read top to bottom and you are walking the funnel:
 #
-# Step 1 is special (window-specific qualifying) and handled outside
-# the catalog because it uses different SQL per 30/60/90d window.
+#   Step 0   >=1 MM diagnosis (any position)             starting pool
+#   Step 1   qualifying MM dx: 1 inpatient OR 2 outpatient in window
+#   Step 2   include  age >= min_age at index
+#   Step 3   include  enrolled through the 6-month baseline
+#   Step 4   include  enrolled for >=1 day of follow-up
+#   Step 5   exclude  any MM therapy already in baseline (must be naive)
+#   Step 6   include  MM therapy in follow-up (a real new start)
+#   Step 7   exclude  MM diagnosis already in baseline (must be new)
+#   Step 8   exclude  other active cancer
+#   Step 9   exclude  pregnancy
+#   Step 10  exclude  clinical trial
+#
+# Steps 0-1 are counted in run_attrition_report() - their qualifying SQL
+# differs per 30/60/90-day window. Steps 2-10 are the catalog below, and
+# it feeds three things: the Step 24 filter, the cumulative attrition
+# counts, and the prompt defaults in config_prompts.R.
+#
+# This is also the attrition table's row order, so don't reorder it.
+#
+# Each entry:
+#   attrition_id  row id / sort key in the attrition table
+#   label         text shown in the attrition table
+#   filter_sql    WHERE fragment, ANDed on cumulatively
+#   cfg_key       the cfg toggle that turns this gate on
 
 build_criteria_catalog <- function(cfg) {
   list(
+    # Step 2 - include: old enough at index
     list(attrition_id = "02_step2_age",
          label = glue("Step 2: Age >= {cfg$min_age} at index year"),
          filter_sql = glue("AND AGE_INDEX_YR >= {cfg$min_age}"),
          cfg_key = "apply_age_incl"),
 
+    # Step 3 - include: covered through the whole 6-month baseline
     list(attrition_id = "03_step3_ce_baseline",
          label = "Step 3: 6-mo baseline enrollment",
          filter_sql = "AND CE_b = 1",
          cfg_key = "apply_ce_b_incl"),
 
+    # Step 4 - include: covered on the index date (>=1 day of follow-up)
     list(attrition_id = "04_step4_ce_followup",
          label = "Step 4: 1+ day FU enrollment",
          filter_sql = "AND CE_f = 1",
          cfg_key = "apply_ce_f_incl"),
 
+    # Step 5 - exclude: already on MM therapy in baseline (not naive)
     list(attrition_id = "05_step5_no_bl_therapy",
          label = "Step 5: No baseline therapy (excl)",
          filter_sql = "AND MM_bl_agents = 0",
          cfg_key = "apply_no_bl_agents_incl"),
 
+    # Step 6 - include: started MM therapy in follow-up (a real new LOT1)
     list(attrition_id = "06_step6_fu_therapy",
          label = "Step 6: FU therapy required",
          filter_sql = "AND MM_FU_agents = 1",
          cfg_key = "apply_fu_agents_incl"),
 
+    # Step 7 - exclude: MM diagnosis already in baseline (not newly diagnosed)
     list(attrition_id = "07_step7_bl_mm_evidence",
          label = "Step 7: BL MM evidence (excl)",
          filter_sql = "AND MM_baseline_diag = 0",
          cfg_key = "apply_baseline_mm_excl"),
 
+    # Step 8 - exclude: another active cancer
     list(attrition_id = "08_step8_other_cancer",
          label = "Step 8: Other cancer (excl)",
          filter_sql = "AND OTHER_MALIGN_FLAG = 0",
          cfg_key = "apply_other_malig_excl"),
 
+    # Step 9 - exclude: pregnancy in baseline or follow-up
     list(attrition_id = "09_step9_pregnancy",
          label = "Step 9: Pregnancy (excl)",
          filter_sql = "AND PREGNANT_FLAG = 0",
          cfg_key = "apply_pregnancy_excl"),
 
+    # Step 10 - exclude: clinical-trial participation in baseline or follow-up
     list(attrition_id = "10_step10_clintrial",
          label = "Step 10: Clinical trial (excl)",
          filter_sql = "AND CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0",
@@ -117,13 +141,11 @@ export_attrition_csv <- function(rows) {
   })
 }
 
-# Persist attrition rows to a Spark work-schema table so Part 2's LOT
-# descriptives dashboard can read it. Overwrites on each run (CREATE OR
-# REPLACE). Each persisted row carries the Part 1 run_id, the cohort
-# table name (cfg$final_table_name), and a build timestamp - Part 2
-# surfaces these so the dashboard viewer can tell which Part 1 run the
-# attrition chart came from and whether it matches the cohort the LOT
-# pipeline is consuming.
+# Persist attrition rows to a Spark work-schema table so the LOT
+# descriptives dashboard can read them. Overwrites each run. Every row
+# also carries the run_id, cohort table name, and a build timestamp, so
+# the dashboard can tell which run the chart came from and whether it
+# matches the cohort the LOT pipeline is consuming.
 persist_attrition_table <- function(rows, cfg, conn) {
   if (length(rows) == 0) {
     log_msg("WARN: no attrition rows to persist")
