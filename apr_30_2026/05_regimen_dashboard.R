@@ -788,6 +788,7 @@ main_regimen <- function() {
   for (n in 1:4) build_category_pair(con, n, n + 1L, p$lookups)
   build_category_coverage(con, p$lookups)
   build_patient_gallery(con, wrk("LOT_LONG"), section = "Patient examples")
+  build_validation_views(con, wrk("LOT_LONG"), section = "Validation")
 
   build_dashboard(
     out_name     = "regimen_dashboard.html",

@@ -92,7 +92,8 @@ resection_recent_items <- function(from_idx, cohort_label,
 # work-table inventory + ANY-PATID drilldown are schema-wide, not
 # cohort-scoped, so repeating them for NDMM would mislead.
 collect_cohort_views <- function(con, cohort_label, lookups, lot_long_tbl,
-                                 include_debug = FALSE) {
+                                 include_debug = FALSE,
+                                 ndmm_flags_tbl = NULL) {
   build_steroid_prevalence(con, section = cohort_label, title_prefix = "Steroids: ")
   for (n in 1:4)
     build_focused_pair(con, n, n + 1L, section = cohort_label,
@@ -104,6 +105,9 @@ collect_cohort_views <- function(con, cohort_label, lookups, lot_long_tbl,
                           title_prefix = "QC: ")
   build_patient_gallery(con, lot_long_tbl, section = cohort_label,
                         title_prefix = "Examples: ")
+  build_validation_views(con, lot_long_tbl, section = cohort_label,
+                         title_prefix = "Validation: ",
+                         ndmm_flags_tbl = ndmm_flags_tbl)
 
   # LOT1-5 detail (FUNNEL, START_TYPE, END_REASON, LENGTH, REGIMENS,
   # PROGRESSION, GAPS, TRANSITIONS, SANKEY, MEDCOUNT, MTX, TREND,
@@ -198,9 +202,12 @@ main_combined <- function() {
     # (NDMM_LOT_LONG_FILT, built by prepare_ndmm_cohort) so every FUNNEL /
     # START_TYPE / etc. number reflects the NDMM-restricted denominator.
     # DEBUG/DRILLDOWN already produced under Overall - skip here.
+    # ndmm_flags_tbl wires the NDMM IE evidence drilldown into the
+    # Validation views (Overall pass leaves it NULL).
     collect_cohort_views(con, "NDMM", p_ndmm$lookups,
-                         lot_long_tbl  = NDMM_LOT_LONG_FILT,
-                         include_debug = FALSE)
+                         lot_long_tbl   = NDMM_LOT_LONG_FILT,
+                         include_debug  = FALSE,
+                         ndmm_flags_tbl = NDMM_FLAGS_ALL)
     TRUE
   }, error = function(e) {
     log_msg("  WARN: NDMM cohort could not be built: ", conditionMessage(e))

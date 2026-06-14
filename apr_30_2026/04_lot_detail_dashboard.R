@@ -992,6 +992,7 @@ main_lot_detail <- function() {
   build_cohort_kpis(con, lot_long, section = "OVERVIEW")
   collect_lot_long_views(con, lot_long)
   build_patient_gallery(con, lot_long, section = "Patient examples")
+  build_validation_views(con, lot_long, section = "Validation")
   build_dashboard(
     out_name     = "lot_detail_dashboard.html",
     header_title = "LOT 1-5 &mdash; Long-Format Dashboard",

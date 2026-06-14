@@ -244,3 +244,286 @@ build_patient_gallery <- function(con, lot_long_tbl,
   cats <- .gallery_categories()
   for (cat in cats) .gallery_one(con, lot_long_tbl, cat, section, title_prefix)
 }
+
+# ---- LOT logic QC counters -----------------------------------------
+# Counts of the cases the LOT cascade is supposed to produce, so a
+# reviewer can confirm the rule actually fires on real patients in this
+# cohort. Pure aggregation on LOT_LONG - no new flags.
+build_lot_qc_counters <- function(con, lot_long_tbl,
+                                  section = "Validation",
+                                  title_prefix = "Validation: ") {
+  df <- tryCatch(db_q(con, glue("
+    WITH per_pat AS (
+      SELECT cast(PATID as string) AS PATID,
+             max(LOT_NUM)                                                  AS max_lot,
+             sum(CASE WHEN LOT_START_TYPE = 'SCT_AUTO' THEN 1 ELSE 0 END)  AS n_auto,
+             sum(CASE WHEN LOT_START_TYPE = 'SCT_ALLO' THEN 1 ELSE 0 END)  AS n_allo,
+             sum(CASE WHEN LOT_START_TYPE IN ('CART','SCT_CART','CART_INIT')
+                      THEN 1 ELSE 0 END)                                   AS n_cart,
+             sum(CASE WHEN LOT_BASE_END_REASON = 'CART_INIT' THEN 1 ELSE 0 END) AS n_cart_init,
+             sum(CASE WHEN LOT_BASE_END_REASON = 'MED_ADD'   THEN 1 ELSE 0 END) AS n_med_add,
+             sum(CASE WHEN LOT_BASE_END_REASON = 'DEATH'     THEN 1 ELSE 0 END) AS n_death,
+             sum(CASE WHEN LOT_BASE_END_REASON = 'DISCONTINUATION' THEN 1 ELSE 0 END) AS n_discon,
+             sum(CASE WHEN LOT_BASE_END_REASON = 'STUDY_END' THEN 1 ELSE 0 END) AS n_studyend
+      FROM {lot_long_tbl}
+      GROUP BY PATID
+    )
+    SELECT
+      cast((SELECT count(*) FROM per_pat)                       as int) AS total_patients,
+      cast((SELECT count(*) FROM per_pat WHERE n_cart      >= 1) as int) AS pts_with_any_cart,
+      cast((SELECT count(*) FROM per_pat WHERE n_auto      >= 1) as int) AS pts_with_any_sct_auto,
+      cast((SELECT count(*) FROM per_pat WHERE n_auto      >= 2) as int) AS pts_with_sct_auto_tandem_or_excess,
+      cast((SELECT count(*) FROM per_pat WHERE n_allo      >= 1) as int) AS pts_with_any_sct_allo,
+      cast((SELECT count(*) FROM per_pat WHERE n_cart_init >= 1) as int) AS pts_with_any_cart_init_end,
+      cast((SELECT count(*) FROM per_pat WHERE n_med_add   >= 1) as int) AS pts_with_any_med_add_end,
+      cast((SELECT count(*) FROM per_pat WHERE n_death     >= 1) as int) AS pts_with_any_death_end,
+      cast((SELECT count(*) FROM per_pat WHERE n_discon    >= 1) as int) AS pts_with_any_discon_end,
+      cast((SELECT count(*) FROM per_pat WHERE n_studyend  >= 1) as int) AS pts_with_any_study_end
+  ")), error = function(e) NULL)
+  if (is.null(df) || nrow(df) == 0) return(invisible())
+  total <- as.numeric(df$total_patients)
+  out <- data.frame(
+    metric = c("Total patients", "Any CAR-T LOT",
+               "Any SCT_AUTO LOT", "SCT_AUTO appears 2+ times (tandem or excess)",
+               "Any SCT_ALLO LOT", "Any CART_INIT end reason",
+               "Any MED_ADD end reason", "Any DEATH end reason",
+               "Any DISCONTINUATION end reason", "Any STUDY_END end reason"),
+    n_patients = as.numeric(c(df$total_patients,
+                              df$pts_with_any_cart,
+                              df$pts_with_any_sct_auto,
+                              df$pts_with_sct_auto_tandem_or_excess,
+                              df$pts_with_any_sct_allo,
+                              df$pts_with_any_cart_init_end,
+                              df$pts_with_any_med_add_end,
+                              df$pts_with_any_death_end,
+                              df$pts_with_any_discon_end,
+                              df$pts_with_any_study_end)),
+    stringsAsFactors = FALSE)
+  out$pct_of_cohort <- if (total > 0)
+    round(100 * out$n_patients / total, 1) else NA_real_
+  save_table(out, section = section,
+             title = paste0(title_prefix, "LOT cascade counters"))
+}
+
+# ---- LOT1 start-year trend ----------------------------------------
+build_lot1_start_year_trend <- function(con, lot_long_tbl,
+                                        section = "Validation",
+                                        title_prefix = "Validation: ") {
+  df <- tryCatch(db_q(con, glue("
+    SELECT year(LOT_START_DT)                                AS start_year,
+           count(DISTINCT PATID)                             AS n_patients,
+           sum(CASE WHEN LOT_START_TYPE = 'MED'      THEN 1 ELSE 0 END) AS n_med,
+           sum(CASE WHEN LOT_START_TYPE = 'SCT_AUTO' THEN 1 ELSE 0 END) AS n_sct_auto,
+           sum(CASE WHEN LOT_START_TYPE = 'SCT_ALLO' THEN 1 ELSE 0 END) AS n_sct_allo,
+           sum(CASE WHEN LOT_START_TYPE IN ('CART','SCT_CART','CART_INIT')
+                    THEN 1 ELSE 0 END)                                  AS n_cart
+    FROM {lot_long_tbl}
+    WHERE LOT_NUM = 1 AND LOT_START_DT IS NOT NULL
+    GROUP BY year(LOT_START_DT)
+    ORDER BY start_year
+  ")), error = function(e) NULL)
+  if (is.null(df) || nrow(df) == 0) return(invisible())
+  for (col in setdiff(names(df), "start_year"))
+    df[[col]] <- as.numeric(df[[col]])
+  save_table(df, section = section,
+             title = paste0(title_prefix, "LOT1 starts by year (by start type)"))
+  if (has_ggplot2) {
+    p <- ggplot(df, aes(x = factor(start_year), y = n_patients,
+                        text = paste0("Year: ", start_year,
+                                      "\nLOT1 patients: ", format(n_patients, big.mark=",")))) +
+      geom_col(fill = "#2E86AB", width = 0.7) +
+      geom_text(aes(label = format(n_patients, big.mark = ",")),
+                vjust = -0.3, size = 3.3, color = "grey20") +
+      labs(title = "LOT1 starts by calendar year",
+           subtitle = paste0("Cohort = ", lot_long_tbl,
+                             ". Cross-check that the trend tracks expected enrolment."),
+           x = NULL, y = "Distinct LOT1 patients") +
+      scale_y_continuous(labels = scales::comma_format(),
+                         expand = expansion(mult = c(0, 0.15))) +
+      theme_lot()
+    save_plot(p, "lot1_start_year_trend.png", width = 10, height = 5,
+              section = section,
+              title = paste0(title_prefix, "LOT1 starts by year"))
+  }
+}
+
+# ---- Data-quality / outlier checks ---------------------------------
+# Counts of suspicious cases. Each row should be 0 in a clean cohort;
+# a non-zero count is not necessarily a bug, but it tells reviewers
+# which edge case to inspect.
+build_outlier_checks <- function(con, lot_long_tbl,
+                                 section = "Validation",
+                                 title_prefix = "Validation: ") {
+  df <- tryCatch(db_q(con, glue("
+    WITH lot AS (SELECT * FROM {lot_long_tbl}),
+    per_pat AS (
+      SELECT cast(PATID as string) AS PATID,
+             count(*)               AS n_rows,
+             min(LOT_NUM)           AS min_lot,
+             max(LOT_NUM)           AS max_lot,
+             count(DISTINCT LOT_NUM) AS n_distinct_lot
+      FROM lot
+      GROUP BY PATID
+    ),
+    overlaps AS (
+      SELECT DISTINCT a.PATID
+      FROM lot a JOIN lot b
+        ON a.PATID = b.PATID AND a.LOT_NUM < b.LOT_NUM
+       AND a.LOT_BASE_END_DT IS NOT NULL AND b.LOT_START_DT IS NOT NULL
+       AND a.LOT_BASE_END_DT >= b.LOT_START_DT
+    )
+    SELECT
+      cast((SELECT count(*) FROM lot WHERE LOT_BASE_LENGTH IS NULL OR LOT_BASE_LENGTH <= 0) as int) AS n_zero_or_neg_length,
+      cast((SELECT count(*) FROM lot
+            WHERE LOT_BASE_END_DT IS NOT NULL
+              AND LOT_START_DT    IS NOT NULL
+              AND LOT_BASE_END_DT < LOT_START_DT) as int) AS n_end_before_start,
+      cast((SELECT count(*) FROM lot WHERE LOT_BASE_MEDS IS NULL OR trim(LOT_BASE_MEDS) = '') as int) AS n_missing_meds,
+      cast((SELECT count(*) FROM lot WHERE LOT_BASE_END_REASON IS NULL) as int) AS n_missing_end_reason,
+      cast((SELECT count(*) FROM per_pat WHERE min_lot > 1) as int) AS pts_with_lot2plus_but_no_lot1,
+      cast((SELECT count(*) FROM per_pat WHERE max_lot <> n_distinct_lot) as int) AS pts_with_lot_num_gap,
+      cast((SELECT count(*) FROM (SELECT PATID, LOT_NUM, count(*) AS c FROM lot
+                                  GROUP BY PATID, LOT_NUM
+                                  HAVING count(*) > 1)) as int) AS pts_with_duplicate_lot_rows,
+      cast((SELECT count(*) FROM overlaps) as int) AS pts_with_overlapping_lots,
+      cast((SELECT count(*) FROM lot WHERE LOT_BASE_LENGTH > 3650) as int) AS n_lots_over_10_years
+  ")), error = function(e) NULL)
+  if (is.null(df) || nrow(df) == 0) return(invisible())
+  out <- data.frame(
+    check = c("LOT_BASE_LENGTH zero or negative",
+              "LOT_BASE_END_DT < LOT_START_DT",
+              "LOT_BASE_MEDS missing or blank",
+              "LOT_BASE_END_REASON missing",
+              "Patient has LOT2+ but no LOT1",
+              "Patient has a LOT_NUM gap (e.g. 1, 3, no 2)",
+              "Duplicate (PATID, LOT_NUM) rows",
+              "Patient has overlapping LOT intervals",
+              "LOT length over 10 years (impossible)"),
+    n_cases = as.numeric(c(df$n_zero_or_neg_length,
+                           df$n_end_before_start,
+                           df$n_missing_meds,
+                           df$n_missing_end_reason,
+                           df$pts_with_lot2plus_but_no_lot1,
+                           df$pts_with_lot_num_gap,
+                           df$pts_with_duplicate_lot_rows,
+                           df$pts_with_overlapping_lots,
+                           df$n_lots_over_10_years)),
+    stringsAsFactors = FALSE)
+  out$status <- ifelse(out$n_cases == 0, "OK",
+                       ifelse(out$n_cases < 5, "review", "investigate"))
+  save_table(out, section = section,
+             title = paste0(title_prefix, "Data-quality / outlier checks"))
+  add_html_card(paste0(
+    '<div style="font-family:system-ui;padding:14px;max-width:900px">',
+    '<h3>Data-quality checks</h3>',
+    '<p style="color:#555;font-size:13px">Each row is a sanity check ',
+    'against <code>', lot_long_tbl, '</code>. A non-zero count is not ',
+    'necessarily a bug - some of these (e.g. very long LOTs, ',
+    'overlapping intervals) can be expected for data-edge patients. ',
+    'But anything that flips from <b>OK</b> to <b>investigate</b> ',
+    'between runs should be looked at.</p></div>'),
+    section = section,
+    title = paste0(title_prefix, "Data-quality checks - about"))
+}
+
+# ---- NDMM evidence drilldown ---------------------------------------
+# For 3 deterministically picked included and 3 excluded NDMM
+# patients, show their per-flag pass/fail values plus their LOT
+# detail. Lets a stakeholder verify the IE filters one patient at a
+# time. Requires NDMM_FLAGS_ALL (built by 06_ndmm_dashboard.R's
+# build_ndmm_flags()).
+.ndmm_pick_examples <- function(con, flags_tbl, include, n_each) {
+  pred <- if (isTRUE(include))
+    "CE_pre_lot1_12mo = 1 AND NO_BELANTAMAB = 1 AND NO_PRIOR_MM_TX = 1 AND NO_OTHER_CANCER_PRE_LOT1 = 1"
+  else
+    "NOT (CE_pre_lot1_12mo = 1 AND NO_BELANTAMAB = 1 AND NO_PRIOR_MM_TX = 1 AND NO_OTHER_CANCER_PRE_LOT1 = 1)"
+  sql <- glue("
+    SELECT PATID FROM {flags_tbl}
+    WHERE {pred}
+    ORDER BY PATID ASC
+    LIMIT {as.integer(n_each)}")
+  rows <- tryCatch(db_q(con, sql), error = function(e) NULL)
+  if (is.null(rows) || nrow(rows) == 0) return(character(0))
+  as.character(rows$PATID)
+}
+
+.ndmm_flags_for <- function(con, flags_tbl, patids) {
+  if (length(patids) == 0) return(NULL)
+  ids <- paste0("'", gsub("'", "''", patids), "'", collapse = ",")
+  df <- tryCatch(db_q(con, glue("
+    SELECT cast(PATID as string) AS PATID,
+           CE_pre_lot1_12mo, NO_BELANTAMAB,
+           NO_PRIOR_MM_TX, NO_OTHER_CANCER_PRE_LOT1
+    FROM {flags_tbl}
+    WHERE cast(PATID as string) IN ({ids})
+    ORDER BY PATID
+  ")), error = function(e) NULL)
+  if (is.null(df) || nrow(df) == 0) return(NULL)
+  for (col in c("CE_pre_lot1_12mo","NO_BELANTAMAB","NO_PRIOR_MM_TX",
+                "NO_OTHER_CANCER_PRE_LOT1"))
+    df[[col]] <- ifelse(as.numeric(df[[col]]) == 1, "PASS", "FAIL")
+  df$PATID <- .mask_pid(df$PATID)
+  df
+}
+
+build_ndmm_evidence_drilldown <- function(con, flags_tbl, lot_long_tbl,
+                                          section = "Validation",
+                                          title_prefix = "Validation: ",
+                                          n_each = 3L) {
+  inc_pids <- .ndmm_pick_examples(con, flags_tbl, TRUE,  n_each)
+  exc_pids <- .ndmm_pick_examples(con, flags_tbl, FALSE, n_each)
+  if (length(inc_pids) == 0 && length(exc_pids) == 0) return(invisible())
+
+  add_html_card(paste0(
+    '<div style="font-family:system-ui;padding:14px;max-width:900px">',
+    '<h3>NDMM IE evidence drilldown</h3>',
+    '<p style="color:#555;font-size:13px">Pass/fail of each NDMM ',
+    'inclusion/exclusion flag for a handful of deterministically picked ',
+    'patients - <b>', length(inc_pids), '</b> included plus <b>',
+    length(exc_pids), '</b> excluded. Pick the same patient ID in the ',
+    'LOT detail table to see which line of therapy each flag was tied ',
+    'to. <code>CE_pre_lot1_12mo</code> = continuous enrollment in the ',
+    '12 months before LOT1. <code>NO_BELANTAMAB</code> = no belantamab ',
+    'in any LOT. <code>NO_PRIOR_MM_TX</code> = no MM oncology therapy in ',
+    'the 12 months before LOT1. <code>NO_OTHER_CANCER_PRE_LOT1</code> ',
+    '= no other active cancer (1 IP or 2 OP within 30d) in the 12 ',
+    'months before LOT1, with the MM-adjacent override applied.</p>',
+    '</div>'),
+    section = section,
+    title = paste0(title_prefix, "NDMM evidence drilldown - about"))
+
+  inc_df <- .ndmm_flags_for(con, flags_tbl, inc_pids)
+  exc_df <- .ndmm_flags_for(con, flags_tbl, exc_pids)
+  if (!is.null(inc_df))
+    save_table(inc_df, section = section,
+               title = paste0(title_prefix, "NDMM included - flag pass/fail"))
+  if (!is.null(exc_df))
+    save_table(exc_df, section = section,
+               title = paste0(title_prefix, "NDMM excluded - flag pass/fail"))
+
+  # LOT detail for the same picked patients (only for INCLUDED, since
+  # excluded patients are not in NDMM_LOT_LONG_FILT by construction).
+  if (length(inc_pids) > 0) {
+    lot_df <- .gallery_fetch_lots(con, lot_long_tbl, inc_pids)
+    if (!is.null(lot_df)) {
+      lot_df$PATID <- .mask_pid(lot_df$PATID)
+      save_table(lot_df, section = section,
+                 title = paste0(title_prefix, "NDMM included - LOT detail"))
+    }
+  }
+}
+
+# ---- Phase-C entry: emit all validation views for a cohort ---------
+# ndmm_flags_tbl is optional and only meaningful for the NDMM cohort
+# (the Overall cohort does not have NDMM-specific flags).
+build_validation_views <- function(con, lot_long_tbl,
+                                   section = "Validation",
+                                   title_prefix = "Validation: ",
+                                   ndmm_flags_tbl = NULL) {
+  build_lot_qc_counters(con, lot_long_tbl, section, title_prefix)
+  build_lot1_start_year_trend(con, lot_long_tbl, section, title_prefix)
+  build_outlier_checks(con, lot_long_tbl, section, title_prefix)
+  if (!is.null(ndmm_flags_tbl) && nzchar(ndmm_flags_tbl))
+    build_ndmm_evidence_drilldown(con, ndmm_flags_tbl, lot_long_tbl,
+                                  section, title_prefix)
+}

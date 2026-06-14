@@ -1179,6 +1179,8 @@ main_ndmm <- function() {
   for (n in 1:4) build_category_pair(con, n, n + 1L, p$lookups)
   build_category_coverage(con, p$lookups)
   build_patient_gallery(con, NDMM_LOT_LONG_FILT, section = "Patient examples")
+  build_validation_views(con, NDMM_LOT_LONG_FILT, section = "Validation",
+                         ndmm_flags_tbl = NDMM_FLAGS_ALL)
 
   counts <- p$counts
   build_dashboard(
