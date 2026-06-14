@@ -151,9 +151,11 @@ Rscript 02_lot1.R
 Rscript 03_lot2_5.R
 ```
 
-All entry points — `run_pipeline.R`, `01_cohort.R`, `02_lot1.R`,
-`03_lot2_5.R`, and `04_lot_detail_dashboard.R` — load
-`pipeline_inputs.csv` before reading any config, so the CSV is
+Every entry point — `run_all.R`, `run_pipeline.R`, `01_cohort.R`,
+`02_lot1.R`, `03_lot2_5.R`, `04_lot_detail_dashboard.R`, and
+`05_regimen_dashboard.R` — loads `pipeline_inputs.csv` before reading any
+config. `06_ndmm_dashboard.R` and `07_combined_dashboard.R` inherit it
+through chained `source()` (07 → 06 → 05, and 07 → 04). So the CSV is
 honoured identically whether you use the orchestrator or run a stage
 directly.
 
