@@ -1170,6 +1170,7 @@ main_ndmm <- function() {
   p <- prepare_ndmm_cohort(con)
 
   dashboard_items <<- list()
+  build_cohort_kpis(con, NDMM_LOT_LONG_FILT, section = "OVERVIEW")
   build_ndmm_overview_card(p$counts, p$n_ster, p$n_rules, p$overview_notes)
   build_ndmm_attrition(p$counts)
   build_ndmm_other_cancer_qc(con)
@@ -1177,6 +1178,10 @@ main_ndmm <- function() {
   for (n in 1:4) build_focused_pair(con, n, n + 1L)
   for (n in 1:4) build_category_pair(con, n, n + 1L, p$lookups)
   build_category_coverage(con, p$lookups)
+  build_patient_gallery(con, NDMM_LOT_LONG_FILT, section = "Patient examples")
+  build_validation_views(con, NDMM_LOT_LONG_FILT, section = "Validation",
+                         ndmm_flags_tbl = NDMM_FLAGS_ALL)
+  build_run_comparison(con, "NDMM", NDMM_LOT_LONG_FILT, section = "Validation")
 
   counts <- p$counts
   build_dashboard(

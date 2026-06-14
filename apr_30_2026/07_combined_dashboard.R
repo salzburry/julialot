@@ -92,7 +92,8 @@ resection_recent_items <- function(from_idx, cohort_label,
 # work-table inventory + ANY-PATID drilldown are schema-wide, not
 # cohort-scoped, so repeating them for NDMM would mislead.
 collect_cohort_views <- function(con, cohort_label, lookups, lot_long_tbl,
-                                 include_debug = FALSE) {
+                                 include_debug = FALSE,
+                                 ndmm_flags_tbl = NULL) {
   build_steroid_prevalence(con, section = cohort_label, title_prefix = "Steroids: ")
   for (n in 1:4)
     build_focused_pair(con, n, n + 1L, section = cohort_label,
@@ -102,6 +103,11 @@ collect_cohort_views <- function(con, cohort_label, lookups, lot_long_tbl,
                         title_prefix = "Transitions: ")
   build_category_coverage(con, lookups, section = cohort_label,
                           title_prefix = "QC: ")
+  build_patient_gallery(con, lot_long_tbl, section = cohort_label,
+                        title_prefix = "Examples: ")
+  build_validation_views(con, lot_long_tbl, section = cohort_label,
+                         title_prefix = "Validation: ",
+                         ndmm_flags_tbl = ndmm_flags_tbl)
 
   # LOT1-5 detail (FUNNEL, START_TYPE, END_REASON, LENGTH, REGIMENS,
   # PROGRESSION, GAPS, TRANSITIONS, SANKEY, MEDCOUNT, MTX, TREND,
@@ -145,6 +151,11 @@ main_combined <- function() {
                         pwd = cfg$pwd, timeout = 120)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
+  # One run timestamp for both cohorts so a row pair in
+  # lot_dashboard_run_summary clearly belongs to the same dashboard
+  # build.
+  run_ts_combined <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+
   dashboard_items <<- list()
 
   # Cohort prefixes keep the LOT1-5 static PNG artifacts (lotlong_*.png)
@@ -157,6 +168,8 @@ main_combined <- function() {
   log_msg("==== Building OVERALL cohort views ====")
   cfg$plot_filename_prefix <<- "overall_"
   p_overall <- prepare_overall_cohort(con)
+  build_cohort_kpis(con, wrk("LOT_LONG"), section = "Overall",
+                    title = "KPI snapshot")
   build_overview_card(p_overall$n_ster, p_overall$n_rules,
                       section = "Overall",
                       title   = "Overview & cohort definition")
@@ -172,6 +185,10 @@ main_combined <- function() {
   collect_cohort_views(con, "Overall", p_overall$lookups,
                        lot_long_tbl  = wrk("LOT_LONG"),
                        include_debug = TRUE)
+  build_run_comparison(con, "Overall", wrk("LOT_LONG"),
+                       section = "Overall",
+                       title_prefix = "Validation: ",
+                       run_ts = run_ts_combined)
 
   # ---- NDMM (1L newly-diagnosed cohort) ----
   # Wrapped so a missing parent input (e.g. ELIG_COH_FINAL) degrades to
@@ -181,6 +198,8 @@ main_combined <- function() {
   cfg$plot_filename_prefix <<- "ndmm_"
   ndmm_ok <- tryCatch({
     p_ndmm <- prepare_ndmm_cohort(con)
+    build_cohort_kpis(con, NDMM_LOT_LONG_FILT, section = "NDMM",
+                      title = "KPI snapshot")
     build_ndmm_overview_card(p_ndmm$counts, p_ndmm$n_ster, p_ndmm$n_rules,
                              p_ndmm$overview_notes, section = "NDMM",
                              title = "Overview & cohort definition")
@@ -192,9 +211,16 @@ main_combined <- function() {
     # (NDMM_LOT_LONG_FILT, built by prepare_ndmm_cohort) so every FUNNEL /
     # START_TYPE / etc. number reflects the NDMM-restricted denominator.
     # DEBUG/DRILLDOWN already produced under Overall - skip here.
+    # ndmm_flags_tbl wires the NDMM IE evidence drilldown into the
+    # Validation views (Overall pass leaves it NULL).
     collect_cohort_views(con, "NDMM", p_ndmm$lookups,
-                         lot_long_tbl  = NDMM_LOT_LONG_FILT,
-                         include_debug = FALSE)
+                         lot_long_tbl   = NDMM_LOT_LONG_FILT,
+                         include_debug  = FALSE,
+                         ndmm_flags_tbl = NDMM_FLAGS_ALL)
+    build_run_comparison(con, "NDMM", NDMM_LOT_LONG_FILT,
+                         section = "NDMM",
+                         title_prefix = "Validation: ",
+                         run_ts = run_ts_combined)
     TRUE
   }, error = function(e) {
     log_msg("  WARN: NDMM cohort could not be built: ", conditionMessage(e))
