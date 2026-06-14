@@ -35,6 +35,7 @@ if (file.exists(file.path(source_dir, "load_inputs.R"))) {
 source(file.path(source_dir, "config_lot.R"))
 source(file.path(source_dir, "db_utils_lot.R"))
 source(file.path(source_dir, "dashboard_lot.R"))
+source(file.path(source_dir, "dashboard_validation.R"))
 
 # Default args reproduce the standalone dashboard's behaviour byte-for-
 # byte. The combined orchestrator passes a cohort-filtered LOT_LONG and
@@ -279,7 +280,8 @@ collect_lot_long_views <- function(con, lot_long = wrk("LOT_LONG"),
 
   # ---- Sankey flow diagrams ----
   # Helper: build a plotly Sankey from parallel src/tgt label vectors.
-  make_sankey <- function(src_lab, tgt_lab, value, title, pal = NULL) {
+  make_sankey <- function(src_lab, tgt_lab, value, title, pal = NULL,
+                          n_patients = NULL) {
     if (!has_plotly || length(value) == 0) return(invisible(NULL))
     nodes <- unique(c(src_lab, tgt_lab))
     idx   <- setNames(seq_along(nodes) - 1L, nodes)
@@ -290,6 +292,8 @@ collect_lot_long_views <- function(con, lot_long = wrk("LOT_LONG"),
         if (k %in% names(pal)) pal[[k]] else "#9aa5ab",
         character(1))
     }
+    title_html <- if (exists("sankey_title_with_n", mode = "function"))
+      sankey_title_with_n(title, n_patients) else title
     sk <- tryCatch(
       plotly::plot_ly(
         type = "sankey", orientation = "h",
@@ -307,9 +311,9 @@ collect_lot_long_views <- function(con, lot_long = wrk("LOT_LONG"),
         )
       ) |>
         plotly::layout(
-          title = list(text = title, font = list(size = 15)),
+          title = list(text = title_html, font = list(size = 15)),
           font  = list(size = 11),
-          margin = list(l = 10, r = 10, t = 50, b = 10),
+          margin = list(l = 10, r = 10, t = 70, b = 10),
           paper_bgcolor = "white"
         ) |>
         plotly::config(displayModeBar = TRUE, displaylogo = FALSE),
@@ -335,7 +339,8 @@ collect_lot_long_views <- function(con, lot_long = wrk("LOT_LONG"),
         tgt_lab = paste0("L", s1$from_lot + 1, ": ", s1$to_type),
         value   = s1$n,
         title   = "Start-type flow across LOTs",
-        pal     = type_pal)
+        pal     = type_pal,
+        n_patients = sum(s1$n, na.rm = TRUE))
     }
   }
 
@@ -357,7 +362,8 @@ collect_lot_long_views <- function(con, lot_long = wrk("LOT_LONG"),
                   paste0("L", er_next$from_lot, " (no next LOT)"),
                   paste0("L", er_next$from_lot + 1, " start: ", er_next$next_type))
     make_sankey(src, tgt, er_next$n,
-                "LOT end reason → next LOT start type")
+                "LOT end reason → next LOT start type",
+                n_patients = sum(er_next$n, na.rm = TRUE))
   }
 
   # Sankey 3: drop-off funnel (continue vs stop after each LOT).
@@ -388,7 +394,8 @@ collect_lot_long_views <- function(con, lot_long = wrk("LOT_LONG"),
         val <- c(val, cont$n_stop[i])
       }
     }
-    make_sankey(src, tgt, val, "Drop-off funnel (continue vs stop per LOT)")
+    make_sankey(src, tgt, val, "Drop-off funnel (continue vs stop per LOT)",
+                n_patients = sum(val, na.rm = TRUE))
   }
 
   # ---- MED count per LOT ----
@@ -984,6 +991,7 @@ main_lot_detail <- function() {
   dashboard_items <<- list()
   build_cohort_kpis(con, lot_long, section = "OVERVIEW")
   collect_lot_long_views(con, lot_long)
+  build_patient_gallery(con, lot_long, section = "Patient examples")
   build_dashboard(
     out_name     = "lot_detail_dashboard.html",
     header_title = "LOT 1-5 &mdash; Long-Format Dashboard",

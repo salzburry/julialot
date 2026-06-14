@@ -1178,6 +1178,7 @@ main_ndmm <- function() {
   for (n in 1:4) build_focused_pair(con, n, n + 1L)
   for (n in 1:4) build_category_pair(con, n, n + 1L, p$lookups)
   build_category_coverage(con, p$lookups)
+  build_patient_gallery(con, NDMM_LOT_LONG_FILT, section = "Patient examples")
 
   counts <- p$counts
   build_dashboard(

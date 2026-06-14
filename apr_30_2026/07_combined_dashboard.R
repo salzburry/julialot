@@ -102,6 +102,8 @@ collect_cohort_views <- function(con, cohort_label, lookups, lot_long_tbl,
                         title_prefix = "Transitions: ")
   build_category_coverage(con, lookups, section = cohort_label,
                           title_prefix = "QC: ")
+  build_patient_gallery(con, lot_long_tbl, section = cohort_label,
+                        title_prefix = "Examples: ")
 
   # LOT1-5 detail (FUNNEL, START_TYPE, END_REASON, LENGTH, REGIMENS,
   # PROGRESSION, GAPS, TRANSITIONS, SANKEY, MEDCOUNT, MTX, TREND,

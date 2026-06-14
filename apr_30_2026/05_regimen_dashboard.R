@@ -48,6 +48,7 @@ if (file.exists(file.path(source_dir, "load_inputs.R"))) {
 source(file.path(source_dir, "config_lot.R"))
 source(file.path(source_dir, "db_utils_lot.R"))
 source(file.path(source_dir, "dashboard_lot.R"))
+source(file.path(source_dir, "dashboard_validation.R"))
 
 TOP_N            <- 10L
 CATEGORY_UNMAPPED_TOP <- 15L  # cap on distinct (unmapped) nodes per
@@ -79,12 +80,17 @@ norm_key_no_steroid <- function(s) {
   paste(sort(unique(t)), collapse = " ")
 }
 
-# Sankey wrapper - lifted verbatim from 04_lot_detail_dashboard.R:289 with
-# the section parameterised. Same palette / layout / config conventions.
-make_sankey <- function(src_lab, tgt_lab, value, section, title) {
+# Sankey wrapper. Sibling to the local helper in 04_lot_detail_dashboard.R;
+# the polished variant takes n_patients so the title shows the
+# denominator above the chart (sankey_title_with_n() from
+# dashboard_validation.R). Same palette / layout / config conventions.
+make_sankey <- function(src_lab, tgt_lab, value, section, title,
+                        n_patients = NULL) {
   if (!has_plotly || length(value) == 0) return(invisible())
   nodes <- unique(c(src_lab, tgt_lab))
   idx   <- setNames(seq_along(nodes) - 1L, nodes)
+  title_html <- if (exists("sankey_title_with_n", mode = "function"))
+    sankey_title_with_n(title, n_patients) else title
   sk <- tryCatch(
     plotly::plot_ly(
       type = "sankey", orientation = "h", arrangement = "snap",
@@ -96,9 +102,9 @@ make_sankey <- function(src_lab, tgt_lab, value, section, title) {
                   value  = as.numeric(value),
                   color  = "rgba(46,134,171,0.30)")
     ) |>
-      plotly::layout(title = list(text = title, font = list(size = 15)),
+      plotly::layout(title = list(text = title_html, font = list(size = 15)),
                      font  = list(size = 11),
-                     margin = list(l = 10, r = 10, t = 50, b = 10),
+                     margin = list(l = 10, r = 10, t = 70, b = 10),
                      paper_bgcolor = "white") |>
       plotly::config(displayModeBar = TRUE, displaylogo = FALSE),
     error = function(e) {
@@ -390,16 +396,18 @@ build_focused_pair <- function(con, n_from, n_to, section = NULL,
   names(links)[3] <- "n_patients"
   links <- links[order(-links$n_patients), , drop = FALSE]
 
+  n_sankey <- length(unique(sub$PATID))
   make_sankey(paste0("L", n_from, ": ", links$reg_from),
               paste0("L", n_to,   ": ", links$tgt_node),
               links$n_patients,
               section = section,
               title   = paste0(title_prefix, "LOT", n_from, " -> LOT", n_to,
-                               " by regimen (top ", TOP_N, ", non-progressors excluded)"))
-  tbl <- links
-  names(tbl) <- c(paste0("LOT", n_from, "_regimen"),
-                  paste0("LOT", n_to,   "_regimen"),
-                  "n_patients")
+                               " by regimen (top ", TOP_N, ", non-progressors excluded)"),
+              n_patients = n_sankey)
+  tbl <- augment_transition_table(links)
+  names(tbl)[1:3] <- c(paste0("LOT", n_from, "_regimen"),
+                       paste0("LOT", n_to,   "_regimen"),
+                       "n_patients")
   save_table(tbl, section = section,
              title = paste0(title_prefix, "LOT", n_from, " -> LOT", n_to,
                             " regimen counts"))
@@ -470,6 +478,7 @@ build_category_pair <- function(con, n_from, n_to, lookups,
   names(links)[3] <- "n_patients"
   links <- links[order(-links$n_patients), , drop = FALSE]
 
+  n_sankey <- length(unique(pairs$PATID))
   make_sankey(paste0("L", n_from, ": ", links$cat_from),
               paste0("L", n_to,   ": ", links$cat_to),
               links$n_patients,
@@ -478,11 +487,12 @@ build_category_pair <- function(con, n_from, n_to, lookups,
                                " by regimen category (non-progressors excluded; ",
                                "top ", CATEGORY_UNMAPPED_TOP,
                                " unmapped regimens per side, rest in ",
-                               "'(unmapped) other'; see audit table for full list)"))
-  tbl <- links
-  names(tbl) <- c(paste0("LOT", n_from, "_category"),
-                  paste0("LOT", n_to,   "_category"),
-                  "n_patients")
+                               "'(unmapped) other'; see audit table for full list)"),
+              n_patients = n_sankey)
+  tbl <- augment_transition_table(links)
+  names(tbl)[1:3] <- c(paste0("LOT", n_from, "_category"),
+                       paste0("LOT", n_to,   "_category"),
+                       "n_patients")
   save_table(tbl, section = section,
              title = paste0(title_prefix, "LOT", n_from, " -> LOT", n_to,
                             " category counts"))
@@ -777,6 +787,7 @@ main_regimen <- function() {
   for (n in 1:4) build_focused_pair(con, n, n + 1L)
   for (n in 1:4) build_category_pair(con, n, n + 1L, p$lookups)
   build_category_coverage(con, p$lookups)
+  build_patient_gallery(con, wrk("LOT_LONG"), section = "Patient examples")
 
   build_dashboard(
     out_name     = "regimen_dashboard.html",
