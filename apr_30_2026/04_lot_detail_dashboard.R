@@ -281,7 +281,7 @@ collect_lot_long_views <- function(con, lot_long = wrk("LOT_LONG"),
   # ---- Sankey flow diagrams ----
   # Helper: build a plotly Sankey from parallel src/tgt label vectors.
   make_sankey <- function(src_lab, tgt_lab, value, title, pal = NULL,
-                          n_patients = NULL) {
+                          n_patients = NULL, unit = "patient") {
     if (!has_plotly || length(value) == 0) return(invisible(NULL))
     nodes <- unique(c(src_lab, tgt_lab))
     idx   <- setNames(seq_along(nodes) - 1L, nodes)
@@ -293,7 +293,7 @@ collect_lot_long_views <- function(con, lot_long = wrk("LOT_LONG"),
         character(1))
     }
     title_html <- if (exists("sankey_title_with_n", mode = "function"))
-      sankey_title_with_n(title, n_patients) else title
+      sankey_title_with_n(title, n_patients, unit = unit) else title
     sk <- tryCatch(
       plotly::plot_ly(
         type = "sankey", orientation = "h",
@@ -340,7 +340,8 @@ collect_lot_long_views <- function(con, lot_long = wrk("LOT_LONG"),
         value   = s1$n,
         title   = "Start-type flow across LOTs",
         pal     = type_pal,
-        n_patients = sum(s1$n, na.rm = TRUE))
+        n_patients = sum(s1$n, na.rm = TRUE),
+        unit    = "transition")
     }
   }
 
@@ -363,7 +364,8 @@ collect_lot_long_views <- function(con, lot_long = wrk("LOT_LONG"),
                   paste0("L", er_next$from_lot + 1, " start: ", er_next$next_type))
     make_sankey(src, tgt, er_next$n,
                 "LOT end reason → next LOT start type",
-                n_patients = sum(er_next$n, na.rm = TRUE))
+                n_patients = sum(er_next$n, na.rm = TRUE),
+                unit       = "transition")
   }
 
   # Sankey 3: drop-off funnel (continue vs stop after each LOT).
@@ -395,7 +397,8 @@ collect_lot_long_views <- function(con, lot_long = wrk("LOT_LONG"),
       }
     }
     make_sankey(src, tgt, val, "Drop-off funnel (continue vs stop per LOT)",
-                n_patients = sum(val, na.rm = TRUE))
+                n_patients = sum(val, na.rm = TRUE),
+                unit       = "flow")
   }
 
   # ---- MED count per LOT ----

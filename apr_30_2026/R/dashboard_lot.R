@@ -12,6 +12,14 @@ if (has_ggplot2) {
   suppressPackageStartupMessages(library(ggplot2))
 }
 
+# ---- Small operators / utilities -----------------------------------
+# Defined here because every dashboard sources dashboard_lot.R. The
+# parent pipeline has its own copy in R/criteria_attrition.R (not on
+# the dashboard source chain), and rolling a duplicate here keeps the
+# dashboards self-contained without forcing them to source a parent
+# file just for one helper.
+`%||%` <- function(a, b) if (is.null(a) || !nzchar(as.character(a))) b else a
+
 # ---- Dashboard collector: accumulates widgets for the combined HTML ----
 dashboard_items <- list()
 
