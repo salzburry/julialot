@@ -175,13 +175,9 @@ main_combined <- function() {
                       title   = "Overview & cohort definition")
   build_overall_attrition(con, section = "Overall",
                           title_prefix = "Attrition: ")
-  # LOT1-5 detail runs on parent LOT_LONG (un-augmented) so the FUNNEL /
-  # START_TYPE / END_REASON / etc. counts match the persisted parent
-  # exactly - LOT_LONG_AUG only adds steroid tokens to LOT_BASE_MEDS for
-  # the category-transition view, it does not change LOT boundaries or
-  # end reasons.
-  # include_debug = TRUE here so the audit + drilldown cards are
-  # produced once (under Overall).
+  # LOT1-5 detail runs on parent LOT_LONG so the funnel/start-type/end-
+  # reason counts match the persisted parent. include_debug = TRUE here
+  # so the audit + drilldown cards are produced once (under Overall).
   collect_cohort_views(con, "Overall", p_overall$lookups,
                        lot_long_tbl  = wrk("LOT_LONG"),
                        include_debug = TRUE)
@@ -207,12 +203,8 @@ main_combined <- function() {
                          title_prefix = "Attrition: ")
     build_ndmm_other_cancer_qc(con, section = "NDMM",
                                title_prefix = "QC: ")
-    # LOT1-5 detail re-runs on the cohort-filtered LOT_LONG view
-    # (NDMM_LOT_LONG_FILT, built by prepare_ndmm_cohort) so every FUNNEL /
-    # START_TYPE / etc. number reflects the NDMM-restricted denominator.
-    # DEBUG/DRILLDOWN already produced under Overall - skip here.
-    # ndmm_flags_tbl wires the NDMM IE evidence drilldown into the
-    # Validation views (Overall pass leaves it NULL).
+    # LOT1-5 detail re-runs on NDMM_LOT_LONG_FILT so every count reflects
+    # the NDMM denominator. Debug/drilldown already produced under Overall.
     collect_cohort_views(con, "NDMM", p_ndmm$lookups,
                          lot_long_tbl   = NDMM_LOT_LONG_FILT,
                          include_debug  = FALSE,
