@@ -12,12 +12,7 @@ if (has_ggplot2) {
   suppressPackageStartupMessages(library(ggplot2))
 }
 
-# ---- Small operators / utilities -----------------------------------
-# Defined here because every dashboard sources dashboard_lot.R. The
-# parent pipeline has its own copy in R/criteria_attrition.R (not on
-# the dashboard source chain), and rolling a duplicate here keeps the
-# dashboards self-contained without forcing them to source a parent
-# file just for one helper.
+# Defined here because every dashboard sources dashboard_lot.R.
 `%||%` <- function(a, b) if (is.null(a) || !nzchar(as.character(a))) b else a
 
 # ---- Dashboard collector: accumulates widgets for the combined HTML ----
@@ -158,11 +153,10 @@ save_table <- function(df, section, title) {
   })
 }
 
-# ---- Acronym tooltips (applied R-side, at card-build time) ----------
-# HTML cards render inside sandboxed iframes, so parent-page JS can't
-# annotate their <code> tokens. Instead we wrap known tokens with a
-# native title= attribute (works in any document) plus an inline dotted
-# underline, right when the card is created. One dictionary, one place.
+# ---- Acronym tooltips, baked into the card HTML at build time ------
+# Card HTML renders inside sandboxed iframes, so parent-page JS can't
+# annotate it. We rewrite known <code>TOKEN</code> tokens with a
+# native title= and an inline dotted underline instead.
 DASH_TOOLTIPS <- c(
   "CE_b" = "Continuous enrollment, baseline window",
   "CE_f" = "Continuous enrollment, follow-up window",
@@ -215,7 +209,7 @@ DASH_TOOLTIPS <- c(
 }
 
 inject_tooltips <- function(html) {
-  if (is.null(html) || length(html) != 1 || !nzchar(html)) return(html)
+  if (length(html) != 1 || !nzchar(html)) return(html)
   for (term in names(DASH_TOOLTIPS)) {
     plain <- paste0("<code>", term, "</code>")
     if (!grepl(plain, html, fixed = TRUE)) next
@@ -237,25 +231,20 @@ add_html_card <- function(html_content, section, title) {
   )
 }
 
-# ---- KPI tile strip ----
-# Renders a row of tiles. HTML cards are shown inside sandboxed iframes,
-# so the parent page's CSS does not reach them - every style here is
-# therefore inline (same convention as the other overview cards).
-# tiles = list(list(label=, value=, sub=, accent=), ...). accent is one
-# of "orange" (default), "teal", "muted" - matches the dashboard palette.
+# ---- KPI tile strip ------------------------------------------------
+# Styles are inline because HTML cards render inside sandboxed iframes.
+# Tile spec: list(label, value, sub, accent in c("orange","teal","muted")).
 fmt_n <- function(x) {
-  if (is.null(x) || length(x) == 0 || any(is.na(x))) return("-")
+  if (length(x) == 0 || any(is.na(x))) return("-")
   format(round(as.numeric(x)), big.mark = ",", scientific = FALSE)
 }
 fmt_pct <- function(num, den, digits = 1) {
-  if (is.null(num) || is.null(den) || length(num) == 0 || length(den) == 0)
-    return("-")
-  if (!is.finite(num) || !is.finite(den) || den == 0) return("-")
+  if (length(num) == 0 || length(den) == 0 ||
+      !is.finite(num) || !is.finite(den) || den == 0) return("-")
   sprintf(paste0("%.", digits, "f%%"), 100 * num / den)
 }
 fmt_date_range <- function(min_d, max_d) {
-  if (is.null(min_d) || is.null(max_d) || is.na(min_d) || is.na(max_d))
-    return("-")
+  if (is.na(min_d) || is.na(max_d)) return("-")
   paste0(as.character(min_d), " to ", as.character(max_d))
 }
 
@@ -283,9 +272,7 @@ kpi_strip_html <- function(tiles) {
          paste(tile_html, collapse = ""), '</div>')
 }
 
-# Headline counts pulled from a cohort's LOT_LONG view. Read-only; no
-# new derivation. Tile is skipped when the underlying number is missing
-# (e.g. zero rows) rather than rendered with a misleading value.
+# Headline counts pulled from a cohort's LOT_LONG view.
 query_cohort_kpis <- function(con, lot_long_tbl) {
   row <- tryCatch(db_q(con, glue("
     WITH per_pat AS (
