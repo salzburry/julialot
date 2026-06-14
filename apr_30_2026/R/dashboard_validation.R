@@ -133,11 +133,11 @@ GALLERY_CATEGORIES <- list(
 build_patient_gallery <- function(con, lot_long_tbl,
                                   section = "Patient examples",
                                   title_prefix = "Examples: ") {
+  empty <- character(0)
   for (cat in GALLERY_CATEGORIES) {
     patids <- .gallery_pick(con, lot_long_tbl, cat$pred, 3L)
-    if (length(patids) == 0) next
-    df <- .gallery_fetch_lots(con, lot_long_tbl, patids)
-    if (is.null(df)) next
+    df <- if (length(patids)) .gallery_fetch_lots(con, lot_long_tbl, patids) else NULL
+    if (is.null(df)) { empty <- c(empty, cat$label); next }
     sk <- .gallery_timeline_plot(df, cat$label)
     if (!is.null(sk))
       add_to_dashboard(sk, section = section,
@@ -146,6 +146,16 @@ build_patient_gallery <- function(con, lot_long_tbl,
     save_table(df, section = section,
                title = paste0(title_prefix, cat$label, " - LOT detail"))
   }
+  # Note the scenarios we checked but found no patients for, so a missing
+  # category reads as "none in this cohort" rather than "forgot to check".
+  if (length(empty))
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:14px;max-width:900px">',
+      '<h3>Categories with no examples in this cohort</h3>',
+      '<p style="color:#555;font-size:13px">Checked, matched no patients: ',
+      paste(empty, collapse = "; "), '.</p></div>'),
+      section = section,
+      title = paste0(title_prefix, "Categories with no matches"))
 }
 
 # ---- LOT cascade counters ------------------------------------------
