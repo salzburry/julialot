@@ -207,14 +207,22 @@ DASH_TOOLTIPS <- c(
   "PATID" = "Patient identifier"
 )
 
+.esc_attr <- function(s) {
+  s <- gsub("&", "&amp;",  as.character(s), fixed = TRUE)
+  s <- gsub("<", "&lt;",   s, fixed = TRUE)
+  s <- gsub(">", "&gt;",   s, fixed = TRUE)
+  gsub('"',     "&quot;",  s, fixed = TRUE)
+}
+
 inject_tooltips <- function(html) {
   if (is.null(html) || length(html) != 1 || !nzchar(html)) return(html)
   for (term in names(DASH_TOOLTIPS)) {
     plain <- paste0("<code>", term, "</code>")
     if (!grepl(plain, html, fixed = TRUE)) next
     tipped <- paste0(
-      '<code title="', DASH_TOOLTIPS[[term]],
-      '" style="border-bottom:1px dotted #0E7C7B;cursor:help">', term, "</code>")
+      '<code title="', .esc_attr(DASH_TOOLTIPS[[term]]),
+      '" style="border-bottom:1px dotted #0E7C7B;cursor:help">',
+      .esc_attr(term), "</code>")
     html <- gsub(plain, tipped, html, fixed = TRUE)
   }
   html
@@ -425,7 +433,7 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
         encoded <- base64enc::base64encode(charToRaw(widget_html))
         iframe_height <- if (item$type == "table") "600" else "500"
         tab_panels[[idx]] <- sprintf(
-          '<div id="%s" class="tab-content"><iframe src="data:text/html;base64,%s" style="width:100%%;height:%spx;border:none;" sandbox="allow-scripts allow-same-origin" onload="resizeIframe(this)"></iframe></div>',
+          '<div id="%s" class="tab-content"><iframe src="data:text/html;base64,%s" style="width:100%%;height:%spx;border:none;" sandbox="allow-scripts allow-same-origin allow-downloads" onload="resizeIframe(this)"></iframe></div>',
           tab_id, encoded, iframe_height
         )
       }
