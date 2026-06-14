@@ -18,14 +18,17 @@
 # ---- Sankey title with N denominator -------------------------------
 # Plotly title supports inline HTML, so we fold the N into a second
 # subtitle line that reads at a glance. Used by 04 + 05's local Sankey
-# builders via an optional n_patients arg.
-sankey_title_with_n <- function(title, n_patients) {
+# builders. `unit` lets the caller name what N is: 05's pairwise LOT
+# Sankeys use "patient" (distinct PATIDs); 04's multi-LOT flow Sankeys
+# use "transition" because the same patient can contribute to multiple
+# edges, so summing edges does not equal distinct patient count.
+sankey_title_with_n <- function(title, n_patients, unit = "patient") {
   if (is.null(n_patients) || !is.finite(n_patients) || n_patients <= 0)
     return(title)
   paste0(title,
          "<br><span style='font-size:11px;color:#6B7280'>N = ",
-         format(round(n_patients), big.mark = ","),
-         " patient", if (n_patients == 1) "" else "s",
+         format(round(n_patients), big.mark = ","), " ", unit,
+         if (n_patients == 1) "" else "s",
          " on this view</span>")
 }
 
@@ -168,11 +171,17 @@ augment_transition_table <- function(df, n_col = "n_patients") {
     "\n", df$LOT_BASE_LENGTH, " days",
     "\nEnd: ", df$LOT_BASE_END_REASON,
     "\nMeds: ", df$LOT_BASE_MEDS)
+  # Plotly date axes interpret numeric values as milliseconds since
+  # 1970-01-01 - not R's day-since-epoch. Pass ISO date strings for
+  # the bar anchor and width in ms so bars land on real calendar dates.
+  ms_per_day <- 86400000
+  df$base_iso <- format(df$LOT_START_DT, "%Y-%m-%d")
+  df$width_ms <- (as.numeric(df$LOT_BASE_END_DT - df$LOT_START_DT) + 1) * ms_per_day
   tryCatch({
     plotly::plot_ly(df, type = "bar", orientation = "h",
                     y = ~row_label,
-                    base = ~as.numeric(LOT_START_DT),
-                    x = ~as.numeric(LOT_BASE_END_DT - LOT_START_DT) + 1,
+                    base = ~base_iso,
+                    x    = ~width_ms,
                     marker = list(color = df$start_type_color,
                                   line = list(color = "white", width = 1)),
                     text = ~tooltip, hoverinfo = "text") |>
@@ -378,7 +387,12 @@ build_outlier_checks <- function(con, lot_long_tbl,
             WHERE LOT_BASE_END_DT IS NOT NULL
               AND LOT_START_DT    IS NOT NULL
               AND LOT_BASE_END_DT < LOT_START_DT) as int) AS n_end_before_start,
-      cast((SELECT count(*) FROM lot WHERE LOT_BASE_MEDS IS NULL OR trim(LOT_BASE_MEDS) = '') as int) AS n_missing_meds,
+      -- SCT_ALLO single-day LOTs intentionally have no induction meds
+      -- per the parent spec, so they are excluded here to avoid a
+      -- standing false positive.
+      cast((SELECT count(*) FROM lot
+            WHERE (LOT_BASE_MEDS IS NULL OR trim(LOT_BASE_MEDS) = '')
+              AND coalesce(LOT_START_TYPE, '') <> 'SCT_ALLO') as int) AS n_missing_meds,
       cast((SELECT count(*) FROM lot WHERE LOT_BASE_END_REASON IS NULL) as int) AS n_missing_end_reason,
       cast((SELECT count(*) FROM per_pat WHERE min_lot > 1) as int) AS pts_with_lot2plus_but_no_lot1,
       cast((SELECT count(*) FROM per_pat WHERE max_lot <> n_distinct_lot) as int) AS pts_with_lot_num_gap,
@@ -392,7 +406,7 @@ build_outlier_checks <- function(con, lot_long_tbl,
   out <- data.frame(
     check = c("LOT_BASE_LENGTH zero or negative",
               "LOT_BASE_END_DT < LOT_START_DT",
-              "LOT_BASE_MEDS missing or blank",
+              "LOT_BASE_MEDS missing or blank (excludes SCT_ALLO)",
               "LOT_BASE_END_REASON missing",
               "Patient has LOT2+ but no LOT1",
               "Patient has a LOT_NUM gap (e.g. 1, 3, no 2)",
