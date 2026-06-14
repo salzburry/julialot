@@ -1181,6 +1181,7 @@ main_ndmm <- function() {
   build_patient_gallery(con, NDMM_LOT_LONG_FILT, section = "Patient examples")
   build_validation_views(con, NDMM_LOT_LONG_FILT, section = "Validation",
                          ndmm_flags_tbl = NDMM_FLAGS_ALL)
+  build_run_comparison(con, "NDMM", NDMM_LOT_LONG_FILT, section = "Validation")
 
   counts <- p$counts
   build_dashboard(

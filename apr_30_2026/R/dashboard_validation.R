@@ -527,3 +527,159 @@ build_validation_views <- function(con, lot_long_tbl,
     build_ndmm_evidence_drilldown(con, ndmm_flags_tbl, lot_long_tbl,
                                   section, title_prefix)
 }
+
+# ---- Phase D: run-to-run comparison --------------------------------
+# Persists a small dashboard-owned table of per-cohort run summaries,
+# then surfaces the last few runs side by side so reviewers can spot
+# unexpected count changes after code or codelist updates.
+#
+# Schema (all STRING / DOUBLE so it round-trips cleanly through Spark):
+#   run_ts         STRING  e.g. "2026-06-14 11:00:00"
+#   cohort_label   STRING  e.g. "Overall", "NDMM"
+#   metric         STRING  e.g. "n_lot1", "n_cart_any"
+#   value          DOUBLE
+#
+# Caps history at the last 20 runs per cohort. Uses the same CREATE OR
+# REPLACE TABLE idiom as persist_attrition_table().
+.RUN_SUMMARY_TBL <- "lot_dashboard_run_summary"
+.RUN_SUMMARY_CAP <- 20L
+
+.run_summary_full_name <- function() {
+  if (!nzchar(cfg$work_schema)) return(NULL)
+  if (nzchar(cfg$catalog))
+    paste0(cfg$catalog, ".", cfg$work_schema, ".", .RUN_SUMMARY_TBL)
+  else
+    paste0(cfg$work_schema, ".", .RUN_SUMMARY_TBL)
+}
+
+.compute_run_metrics <- function(con, lot_long_tbl) {
+  row <- tryCatch(db_q(con, glue("
+    WITH per_pat AS (
+      SELECT PATID,
+             max(LOT_NUM)                                                   AS max_lot,
+             max(CASE WHEN LOT_NUM = 1 THEN LOT_START_DT END)              AS lot1_dt,
+             max(CASE WHEN LOT_NUM = 1 AND LOT_START_TYPE = 'MED'
+                      THEN 1 ELSE 0 END)                                    AS lot1_med,
+             max(CASE WHEN LOT_START_TYPE IN ('CART','SCT_CART','CART_INIT')
+                      THEN 1 ELSE 0 END)                                    AS cart_any,
+             max(CASE WHEN LOT_START_TYPE = 'SCT_ALLO' THEN 1 ELSE 0 END)   AS allo_any,
+             max(CASE WHEN LOT_START_TYPE = 'SCT_AUTO' THEN 1 ELSE 0 END)   AS auto_any,
+             max(CASE WHEN LOT_BASE_END_REASON = 'CART_INIT' THEN 1 ELSE 0 END) AS cart_init_any,
+             max(CASE WHEN LOT_BASE_END_REASON = 'DEATH'     THEN 1 ELSE 0 END) AS death_any
+      FROM {lot_long_tbl}
+      GROUP BY PATID
+    )
+    SELECT
+      cast((SELECT count(*)             FROM per_pat)                       as double) AS n_patients,
+      cast((SELECT count(*)             FROM per_pat WHERE max_lot >= 1)    as double) AS n_lot1,
+      cast((SELECT count(*)             FROM per_pat WHERE max_lot >= 2)    as double) AS n_lot2,
+      cast((SELECT count(*)             FROM per_pat WHERE max_lot >= 3)    as double) AS n_lot3,
+      cast((SELECT count(*)             FROM per_pat WHERE cart_any = 1)    as double) AS n_cart_any,
+      cast((SELECT count(*)             FROM per_pat WHERE allo_any = 1)    as double) AS n_allo_any,
+      cast((SELECT count(*)             FROM per_pat WHERE auto_any = 1)    as double) AS n_auto_any,
+      cast((SELECT count(*)             FROM per_pat WHERE cart_init_any = 1) as double) AS n_cart_init,
+      cast((SELECT count(*)             FROM per_pat WHERE death_any = 1)   as double) AS n_death_end,
+      cast((SELECT count(*)             FROM per_pat WHERE lot1_med = 1)    as double) AS n_lot1_med_started,
+      cast((SELECT year(min(lot1_dt))   FROM per_pat)                       as double) AS lot1_min_year,
+      cast((SELECT year(max(lot1_dt))   FROM per_pat)                       as double) AS lot1_max_year
+  ")), error = function(e) NULL)
+  if (is.null(row) || nrow(row) == 0) return(list())
+  for (col in names(row)) if (inherits(row[[col]], "integer64"))
+    row[[col]] <- as.numeric(row[[col]])
+  as.list(row[1, , drop = FALSE])
+}
+
+.read_run_summary <- function(con, tbl_name) {
+  tryCatch(db_q(con, glue("
+    SELECT run_ts, cohort_label, metric, cast(value as double) AS value
+    FROM {tbl_name}
+  ")), error = function(e) NULL)
+}
+
+.write_run_summary <- function(con, tbl_name, df) {
+  if (is.null(df) || nrow(df) == 0) return(invisible())
+  sq <- function(x) paste0("'", gsub("'", "''", as.character(x)), "'")
+  rows <- vapply(seq_len(nrow(df)), function(i) {
+    paste0("(", sq(df$run_ts[i]), ", ", sq(df$cohort_label[i]), ", ",
+           sq(df$metric[i]), ", ",
+           if (is.na(df$value[i])) "cast(NULL as double)"
+           else format(df$value[i], scientific = FALSE), ")")
+  }, character(1))
+  sql <- glue("
+    CREATE OR REPLACE TABLE {tbl_name} AS
+    SELECT * FROM VALUES
+      {paste(rows, collapse = ',\n      ')}
+    AS t(run_ts, cohort_label, metric, value)
+  ")
+  tryCatch(db_exec(con, sql), error = function(e)
+    log_msg("  WARN: could not persist run summary to ", tbl_name,
+            ": ", conditionMessage(e)))
+}
+
+build_run_comparison <- function(con, cohort_label, lot_long_tbl,
+                                 section = "Validation",
+                                 title_prefix = "Validation: ",
+                                 run_ts = format(Sys.time(), "%Y-%m-%d %H:%M:%S")) {
+  tbl_name <- .run_summary_full_name()
+  if (is.null(tbl_name)) {
+    log_msg("  WARN: cfg$work_schema not set; skipping run comparison.")
+    return(invisible())
+  }
+
+  # New run's metrics
+  metrics <- .compute_run_metrics(con, lot_long_tbl)
+  if (length(metrics) == 0) return(invisible())
+  new_rows <- data.frame(
+    run_ts       = run_ts,
+    cohort_label = cohort_label,
+    metric       = names(metrics),
+    value        = as.numeric(unlist(metrics)),
+    stringsAsFactors = FALSE)
+
+  # Combine with prior rows (if any), cap history per cohort.
+  prior <- .read_run_summary(con, tbl_name)
+  combined <- if (is.null(prior) || nrow(prior) == 0) new_rows
+              else rbind(prior, new_rows)
+  combined <- unique(combined)
+  ts_keep <- unique(combined$run_ts[combined$cohort_label == cohort_label])
+  ts_keep <- tail(sort(ts_keep), .RUN_SUMMARY_CAP)
+  combined <- combined[!(combined$cohort_label == cohort_label) |
+                         combined$run_ts %in% ts_keep, ]
+  .write_run_summary(con, tbl_name, combined)
+
+  # Build the side-by-side comparison for this cohort: last 4 runs.
+  this_cohort <- combined[combined$cohort_label == cohort_label, ]
+  if (nrow(this_cohort) == 0) return(invisible())
+  recent_ts <- tail(sort(unique(this_cohort$run_ts)), 4L)
+  wide_rows <- unique(this_cohort$metric)
+  cmp <- data.frame(metric = wide_rows, stringsAsFactors = FALSE)
+  for (ts in recent_ts) {
+    sub <- this_cohort[this_cohort$run_ts == ts, c("metric","value")]
+    cmp[[ts]] <- sub$value[match(cmp$metric, sub$metric)]
+  }
+  if (length(recent_ts) >= 2) {
+    cur  <- cmp[[recent_ts[length(recent_ts)]]]
+    prev <- cmp[[recent_ts[length(recent_ts) - 1L]]]
+    cmp$delta_vs_prev      <- cur - prev
+    cmp$pct_delta_vs_prev  <- ifelse(is.finite(prev) & prev != 0,
+                                     round(100 * (cur - prev) / prev, 1),
+                                     NA_real_)
+  }
+  save_table(cmp, section = section,
+             title = paste0(title_prefix, "Run-over-run comparison (last ",
+                            length(recent_ts), " runs)"))
+  add_html_card(paste0(
+    '<div style="font-family:system-ui;padding:14px;max-width:900px">',
+    '<h3>Run-over-run comparison</h3>',
+    '<p style="color:#555;font-size:13px">Cohort: <b>', cohort_label,
+    '</b>. The table reads <code>', tbl_name, '</code>, a small ',
+    'dashboard-owned summary table (current run is row <code>',
+    run_ts, '</code>). Last <b>', length(recent_ts),
+    '</b> runs are shown side by side; the <code>delta_vs_prev</code> ',
+    'and <code>pct_delta_vs_prev</code> columns are current minus the ',
+    'penultimate run. History is capped at ', .RUN_SUMMARY_CAP,
+    ' runs per cohort. Persistence is dashboard-side only - no parent ',
+    'pipeline table is touched.</p></div>'),
+    section = section,
+    title = paste0(title_prefix, "Run comparison - about"))
+}

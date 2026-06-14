@@ -151,6 +151,11 @@ main_combined <- function() {
                         pwd = cfg$pwd, timeout = 120)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
+  # One run timestamp for both cohorts so a row pair in
+  # lot_dashboard_run_summary clearly belongs to the same dashboard
+  # build.
+  run_ts_combined <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+
   dashboard_items <<- list()
 
   # Cohort prefixes keep the LOT1-5 static PNG artifacts (lotlong_*.png)
@@ -180,6 +185,10 @@ main_combined <- function() {
   collect_cohort_views(con, "Overall", p_overall$lookups,
                        lot_long_tbl  = wrk("LOT_LONG"),
                        include_debug = TRUE)
+  build_run_comparison(con, "Overall", wrk("LOT_LONG"),
+                       section = "Overall",
+                       title_prefix = "Validation: ",
+                       run_ts = run_ts_combined)
 
   # ---- NDMM (1L newly-diagnosed cohort) ----
   # Wrapped so a missing parent input (e.g. ELIG_COH_FINAL) degrades to
@@ -208,6 +217,10 @@ main_combined <- function() {
                          lot_long_tbl   = NDMM_LOT_LONG_FILT,
                          include_debug  = FALSE,
                          ndmm_flags_tbl = NDMM_FLAGS_ALL)
+    build_run_comparison(con, "NDMM", NDMM_LOT_LONG_FILT,
+                         section = "NDMM",
+                         title_prefix = "Validation: ",
+                         run_ts = run_ts_combined)
     TRUE
   }, error = function(e) {
     log_msg("  WARN: NDMM cohort could not be built: ", conditionMessage(e))
