@@ -249,7 +249,8 @@ main_combined <- function() {
     header_title = "MM LOT &mdash; combined (Overall + NDMM)",
     header_sub   = paste0("Overall &bull; NDMM",
                           if (!ndmm_ok) " (unavailable)" else "",
-                          " &bull; Exploratory analysis")
+                          " &bull; Exploratory analysis"),
+    cohort_sections = c("Overall", "NDMM", "Exploratory analysis")
   )
   log_msg("Wrote ", file.path(cfg$output_dir, "combined_dashboard.html"))
 }

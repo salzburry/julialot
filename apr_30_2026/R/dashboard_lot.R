@@ -158,17 +158,81 @@ save_table <- function(df, section, title) {
   })
 }
 
+# ---- Acronym tooltips (applied R-side, at card-build time) ----------
+# HTML cards render inside sandboxed iframes, so parent-page JS can't
+# annotate their <code> tokens. Instead we wrap known tokens with a
+# native title= attribute (works in any document) plus an inline dotted
+# underline, right when the card is created. One dictionary, one place.
+DASH_TOOLTIPS <- c(
+  "CE_b" = "Continuous enrollment, baseline window",
+  "CE_f" = "Continuous enrollment, follow-up window",
+  "CE_3mosf" = "Continuous enrollment through 90d follow-up (no gaps)",
+  "ELIG_COH_FINAL" = "Final eligibility cohort table",
+  "LOT_LONG" = "One row per (PATID, LOT_NUM)",
+  "LOT_LONG_AUG" = "LOT_LONG with steroid tokens appended for display",
+  "MAP_STACKED" = "Per-patient medication-administration-period rollup",
+  "MMA" = "Multiple-myeloma agent",
+  "MMA_MED_PROCESSED" = "Parent MMA medication events, ID-period forward",
+  "MED_ADD" = "LOT ended because a new non-base drug was added",
+  "MED_ABBR" = "Standardized medication abbreviation token",
+  "CART_INIT" = "LOT ended because CAR-T followed a MED_ADD within 45 days",
+  "SCT_AUTO" = "Autologous stem-cell transplant",
+  "SCT_ALLO" = "Allogeneic stem-cell transplant",
+  "SCT_CART" = "CAR-T therapy (categorized as SCT)",
+  "CART" = "CAR-T cell therapy (start type label)",
+  "DISCONTINUATION" = "LOT ended at runout of all base agents",
+  "DISENROLLMENT" = "LOT ended at enrollment gap (sensitivity only)",
+  "STUDY_END" = "LOT ended at study end or end of observable period",
+  "DEATH" = "LOT ended at death date",
+  "NDMM" = "Newly diagnosed multiple myeloma",
+  "OBS_END_DT" = "Observable-period end (min of study end, death, etc.)",
+  "ENDDATE" = "min(study_end, death)",
+  "ENDDATE_CE" = "min(study_end, death, disenrollment)",
+  "FU_DAYS" = "Follow-up days from index",
+  "INDEX_DATE" = "Patient index date (qualifying MM diagnosis)",
+  "LOT1_START_DT" = "Date the 1L line of therapy started",
+  "LOT_BASE_END_DT" = "Date the LOT ended (after the cascade)",
+  "LOT_BASE_END_REASON" = "Why the LOT ended (one of the cascade values)",
+  "LOT_START_TYPE" = "How the LOT started (MED, SCT_AUTO, CART, etc.)",
+  "LOT_BASE_MEDS" = "Distinct base agents on the LOT (induction window)",
+  "LOT_BASE_MEDS_AUG" = "LOT_BASE_MEDS plus steroid tokens (display only)",
+  "LOT_BASE_LENGTH" = "LOT_BASE_END_DT - LOT_START_DT + 1 (days)",
+  "PROC_CD" = "HCPCS / CPT procedure code on a medical claim",
+  "BILL_PROC_CD" = "Billing HCPCS code on a medical claim",
+  "RVNU_CD" = "Revenue code (facility claims only)",
+  "NDC" = "National Drug Code (11-digit, zero-padded)",
+  "CONF_ID" = "Confinement identifier on the inpatient confinement table",
+  "DEXA" = "Dexamethasone (steroid token)",
+  "PRED" = "Prednisone (steroid token)",
+  "PATID" = "Patient identifier"
+)
+
+inject_tooltips <- function(html) {
+  if (is.null(html) || length(html) != 1 || !nzchar(html)) return(html)
+  for (term in names(DASH_TOOLTIPS)) {
+    plain <- paste0("<code>", term, "</code>")
+    if (!grepl(plain, html, fixed = TRUE)) next
+    tipped <- paste0(
+      '<code title="', DASH_TOOLTIPS[[term]],
+      '" style="border-bottom:1px dotted #0E7C7B;cursor:help">', term, "</code>")
+    html <- gsub(plain, tipped, html, fixed = TRUE)
+  }
+  html
+}
+
 # Add a raw HTML card to the dashboard (for overview/QC - no htmlwidget needed)
 add_html_card <- function(html_content, section, title) {
   if (!isTRUE(cfg$build_dashboard)) return(invisible(NULL))
   dashboard_items[[length(dashboard_items) + 1]] <<- list(
-    html = html_content, section = section, title = title, type = "html_card"
+    html = inject_tooltips(html_content), section = section,
+    title = title, type = "html_card"
   )
 }
 
 # ---- KPI tile strip ----
-# Renders a row of tiles above an overview card. Each tile: a small
-# uppercase label, a big number, and an optional sub-line.
+# Renders a row of tiles. HTML cards are shown inside sandboxed iframes,
+# so the parent page's CSS does not reach them - every style here is
+# therefore inline (same convention as the other overview cards).
 # tiles = list(list(label=, value=, sub=, accent=), ...). accent is one
 # of "orange" (default), "teal", "muted" - matches the dashboard palette.
 fmt_n <- function(x) {
@@ -189,18 +253,26 @@ fmt_date_range <- function(min_d, max_d) {
 
 kpi_strip_html <- function(tiles) {
   if (length(tiles) == 0) return("")
+  accent_hex <- c(orange = "#F36633", teal = "#0E7C7B", muted = "#6B7280")
   tile_html <- vapply(tiles, function(t) {
     accent <- if (is.null(t$accent)) "orange" else t$accent
-    sub    <- if (is.null(t$sub) || !nzchar(t$sub)) "" else
-      paste0('<div class="kpi-sub">', t$sub, '</div>')
+    bar <- unname(accent_hex[[if (accent %in% names(accent_hex)) accent else "orange"]])
+    sub <- if (is.null(t$sub) || !nzchar(t$sub)) "" else
+      paste0('<div style="font-size:11.5px;color:#6B7280;margin-top:3px">',
+             t$sub, '</div>')
     sprintf(paste0(
-      '<div class="kpi kpi-%s">',
-      '<div class="kpi-label">%s</div>',
-      '<div class="kpi-value">%s</div>',
+      '<div style="flex:1 1 150px;min-width:140px;background:#fff;',
+      'border:1px solid #E5E7EB;border-left:4px solid %s;border-radius:10px;',
+      'padding:12px 14px;box-shadow:0 1px 2px rgba(0,0,0,0.04)">',
+      '<div style="font-size:10.5px;font-weight:800;letter-spacing:0.5px;',
+      'text-transform:uppercase;color:#6B7280;margin-bottom:4px">%s</div>',
+      '<div style="font-size:22px;font-weight:800;color:#2A2A33;line-height:1.1">%s</div>',
       '%s</div>'),
-      accent, t$label, t$value, sub)
+      bar, t$label, t$value, sub)
   }, character(1))
-  paste0('<div class="kpi-strip">', paste(tile_html, collapse = ""), '</div>')
+  paste0('<div style="display:flex;flex-wrap:wrap;gap:10px;margin:0 0 14px;',
+         "font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif\">",
+         paste(tile_html, collapse = ""), '</div>')
 }
 
 # Headline counts pulled from a cohort's LOT_LONG view. Read-only; no
@@ -285,9 +357,13 @@ build_cohort_kpis <- function(con, lot_long_tbl,
 # out_name / header_title / header_sub default to the LOT1 (02_lot1.R)
 # dashboard so existing callers are unaffected. The LOT1-5 dashboard
 # (04_lot_detail_dashboard.R) passes its own values to write a separate file.
+# cohort_sections: when set (combined dashboard only), the sidebar shows a
+# cohort-pill row built from exactly these section names. Left empty for
+# the standalone dashboards, whose sections are functional, not cohorts.
 build_dashboard <- function(out_name     = "lot_dashboard.html",
                             header_title = "LOT Part 2 &mdash; Interactive Dashboard",
-                            header_sub   = "MMA_MED &bull; MAP &bull; LOT1_BASE &bull; SCT &bull; Patient Journey") {
+                            header_sub   = "MMA_MED &bull; MAP &bull; LOT1_BASE &bull; SCT &bull; Patient Journey",
+                            cohort_sections = character(0)) {
   if (length(dashboard_items) == 0) {
     log_msg("  Skipping dashboard (no items collected).")
     return(invisible(NULL))
@@ -369,6 +445,12 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
     })
     nav_json <- paste0("var NAV = ",
       jsonlite::toJSON(nav_list, auto_unbox = TRUE, force = TRUE), ";")
+
+    # Explicit cohort-pill list (combined dashboard only). Restricted to
+    # sections that actually exist so a typo can't produce an empty pill.
+    cohort_present <- intersect(cohort_sections, sections)
+    cohort_json <- paste0("var COHORT_SECTIONS = ",
+      jsonlite::toJSON(as.character(cohort_present), force = TRUE), ";")
 
     # Build plotly specs as a single JSON object keyed by div id
     plotly_specs_json <- paste0("var PLOTLY_SPECS = {\n",
@@ -532,35 +614,8 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
     background: var(--gsk-orange); color: #fff;
     border-color: var(--gsk-orange-d);
   }
-  /* ---- KPI tiles ---- */
-  .kpi-strip {
-    display: flex; flex-wrap: wrap; gap: 10px;
-    margin: 0 0 14px; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  }
-  .kpi {
-    flex: 1 1 150px; min-width: 140px;
-    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
-    padding: 12px 14px; box-shadow: 0 1px 2px rgba(0,0,0,0.04);
-    border-left: 4px solid var(--gsk-orange);
-  }
-  .kpi-orange { border-left-color: var(--gsk-orange); }
-  .kpi-teal   { border-left-color: var(--accent); }
-  .kpi-muted  { border-left-color: var(--muted); }
-  .kpi-label {
-    font-size: 10.5px; font-weight: 800; letter-spacing: 0.5px;
-    text-transform: uppercase; color: var(--muted); margin-bottom: 4px;
-  }
-  .kpi-value {
-    font-size: 22px; font-weight: 800; color: var(--text); line-height: 1.1;
-  }
-  .kpi-sub {
-    font-size: 11.5px; color: var(--muted); margin-top: 3px;
-  }
-  /* ---- Acronym tooltips (auto-applied to <code> tokens) ---- */
-  code.has-tip {
-    cursor: help; border-bottom: 1px dotted var(--accent);
-  }
-  code.has-tip:hover { background: var(--gsk-orange-l); color: var(--gsk-orange-d); }
+  /* KPI tiles and code tooltips are styled inline (they live inside
+     sandboxed iframes, so parent CSS would not reach them). */
 </style>
 </head>
 <body>
@@ -715,13 +770,17 @@ function toggleFs() {
   }
 }
 // ---- Cohort tabs ---------------------------------------------------
-// COHORTS is populated below from NAV section names. If there are <2
-// cohorts, the tabs row stays hidden and the sidebar works exactly as
-// before (standalone 04/05/06 runs).
+// COHORTS comes from COHORT_SECTIONS, an explicit list emitted by R
+// (build_dashboard(cohort_sections=...)). Only the combined dashboard
+// passes it, so standalone 04/05/06 show no cohort pills - their NAV
+// sections are functional (FUNNEL, START_TYPE, ...), not cohorts.
+// Read inside buildCohortTabs(): COHORT_SECTIONS is assigned near the
+// end of this script (like NAV), so it must not be read at parse time.
 var COHORTS = [];
 var curCohort = null;
 function buildCohortTabs() {
-  COHORTS = NAV.map(function(g){ return g.section; });
+  COHORTS = (typeof COHORT_SECTIONS !== "undefined" && COHORT_SECTIONS) ?
+            COHORT_SECTIONS : [];
   if (COHORTS.length < 2) return;
   var bar = document.getElementById("sbCohorts");
   bar.classList.remove("hidden");
@@ -750,74 +809,13 @@ function setCohort(name, jump) {
     if (first) openView(first.getAttribute("data-id"));
   }
 }
-// ---- Acronym tooltips ----------------------------------------------
-// Wrap any <code> token (in HTML cards) whose text matches a known
-// acronym with a hover title. Re-runnable so iframe-loaded content is
-// covered too. Dictionary lives in one place.
-var TOOLTIPS = {
-  "CE_b": "Continuous enrollment, baseline window",
-  "CE_f": "Continuous enrollment, follow-up window",
-  "CE_3mosf": "Continuous enrollment through 90d follow-up (no gaps)",
-  "ELIG_COH_FINAL": "Final eligibility cohort table",
-  "LOT_LONG": "One row per (PATID, LOT_NUM)",
-  "LOT_LONG_AUG": "LOT_LONG with steroid tokens appended for display",
-  "MAP_STACKED": "Per-patient medication-administration-period rollup",
-  "MMA": "Multiple-myeloma agent",
-  "MMA_MED_PROCESSED": "Parent MMA medication events, ID-period forward",
-  "MED_ADD": "LOT ended because a new non-base drug was added",
-  "MED_ABBR": "Standardized medication abbreviation token",
-  "CART_INIT": "LOT ended because CAR-T followed a MED_ADD within 45 days",
-  "SCT_AUTO": "Autologous stem-cell transplant",
-  "SCT_ALLO": "Allogeneic stem-cell transplant",
-  "SCT_CART": "Chimeric antigen receptor T-cell therapy (categorized as SCT)",
-  "CART": "CAR-T cell therapy (start type label)",
-  "DISCONTINUATION": "LOT ended at runout of all base agents",
-  "DISENROLLMENT": "LOT ended at enrollment gap (sensitivity only)",
-  "STUDY_END": "LOT ended at study end or end of observable period",
-  "DEATH": "LOT ended at death date",
-  "NDMM": "Newly diagnosed multiple myeloma",
-  "OBS_END_DT": "Observable-period end (min of study end, death, etc.)",
-  "ENDDATE": "min(study_end, death)",
-  "ENDDATE_CE": "min(study_end, death, disenrollment)",
-  "FU_DAYS": "Follow-up days from index",
-  "FU_DAYS_CE": "Follow-up days, censoring at disenrollment",
-  "INDEX_DATE": "Patient index date (qualifying MM diagnosis)",
-  "LOT1_START_DT": "Date the 1L line of therapy started",
-  "LOT_BASE_END_DT": "Date the LOT ended (after the cascade)",
-  "LOT_BASE_END_REASON": "Why the LOT ended (one of the cascade values)",
-  "LOT_START_TYPE": "How the LOT started (MED, SCT_AUTO, CART, etc.)",
-  "LOT_BASE_MEDS": "Distinct base agents on the LOT (induction window)",
-  "LOT_BASE_MEDS_AUG": "LOT_BASE_MEDS plus steroid tokens (display only)",
-  "LOT_BASE_LENGTH": "LOT_BASE_END_DT - LOT_START_DT + 1 (days)",
-  "PROC_CD": "HCPCS / CPT procedure code on a medical claim",
-  "BILL_PROC_CD": "Billing HCPCS code on a medical claim",
-  "RVNU_CD": "Revenue code (facility claims only)",
-  "NDC": "National Drug Code (11-digit, zero-padded)",
-  "POS": "Place of service code",
-  "TOS_CD": "Type of service code",
-  "CONF_ID": "Confinement identifier on the inpatient confinement table",
-  "DEXA": "Dexamethasone (steroid token)",
-  "PRED": "Prednisone (steroid token)",
-  "PATID": "Patient identifier"
-};
-function applyTooltips(root) {
-  if (!root) root = document;
-  var codes = root.querySelectorAll("code");
-  for (var i = 0; i < codes.length; i++) {
-    var el = codes[i];
-    if (el.classList.contains("has-tip")) continue;
-    var t = el.textContent.trim();
-    if (TOOLTIPS[t]) {
-      el.setAttribute("title", TOOLTIPS[t]);
-      el.classList.add("has-tip");
-    }
-  }
-}
+// Acronym tooltips are applied R-side at card-build time (inject_tooltips
+// in dashboard_lot.R) so they work inside the sandboxed card iframes;
+// no client-side dictionary is needed here.
 document.addEventListener("DOMContentLoaded", function(){
   buildFlat();
   buildNav();
   buildCohortTabs();
-  applyTooltips(document);
   document.getElementById("prevBtn").addEventListener("click", function(){ step(-1); });
   document.getElementById("nextBtn").addEventListener("click", function(){ step(1); });
   document.getElementById("fsBtn").addEventListener("click", toggleFs);
@@ -847,6 +845,8 @@ document.addEventListener("DOMContentLoaded", function(){
 });
 // Category-grouped nav model
 ', nav_json, '
+// Cohort-pill list (combined dashboard only; empty for standalone)
+', cohort_json, '
 // Plotly figure specs - all figures share one copy of plotly.js
 ', plotly_specs_json, '
 </script>

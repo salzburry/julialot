@@ -258,9 +258,11 @@ Long-format table; one row per patient per LOT.
 
 An editable defaults file: edit `apr_30_2026/pipeline_inputs.csv`
 (open it in Excel or any editor) instead of memorising every env var.
-Columns: `name,value,description`. All five entry points
-(`run_pipeline.R`, `01_cohort.R`, `02_lot1.R`, `03_lot2_5.R`,
-`04_lot_detail_dashboard.R`) load it **before** reading any config.
+Columns: `name,value,description`. Every entry point loads it
+**before** reading any config: `run_all.R`, `run_pipeline.R`,
+`01_cohort.R`, `02_lot1.R`, `03_lot2_5.R`, `04_lot_detail_dashboard.R`,
+and `05_regimen_dashboard.R` directly, with `06_ndmm_dashboard.R` and
+`07_combined_dashboard.R` inheriting it through chained `source()`.
 
 **Precedence: the environment always wins.** A CSV value is applied
 only when that variable is currently unset/empty. So an inline
