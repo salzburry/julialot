@@ -157,6 +157,8 @@ main_combined <- function() {
   log_msg("==== Building OVERALL cohort views ====")
   cfg$plot_filename_prefix <<- "overall_"
   p_overall <- prepare_overall_cohort(con)
+  build_cohort_kpis(con, wrk("LOT_LONG"), section = "Overall",
+                    title = "KPI snapshot")
   build_overview_card(p_overall$n_ster, p_overall$n_rules,
                       section = "Overall",
                       title   = "Overview & cohort definition")
@@ -181,6 +183,8 @@ main_combined <- function() {
   cfg$plot_filename_prefix <<- "ndmm_"
   ndmm_ok <- tryCatch({
     p_ndmm <- prepare_ndmm_cohort(con)
+    build_cohort_kpis(con, NDMM_LOT_LONG_FILT, section = "NDMM",
+                      title = "KPI snapshot")
     build_ndmm_overview_card(p_ndmm$counts, p_ndmm$n_ster, p_ndmm$n_rules,
                              p_ndmm$overview_notes, section = "NDMM",
                              title = "Overview & cohort definition")

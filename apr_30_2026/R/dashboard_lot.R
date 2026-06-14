@@ -128,10 +128,22 @@ save_table <- function(df, section, title) {
     for (col in names(df)) {
       if (inherits(df[[col]], "integer64")) df[[col]] <- as.numeric(df[[col]])
     }
-    dt <- DT::datatable(df, rownames = FALSE,
-                         options = list(pageLength = 15, scrollX = TRUE,
-                                        dom = "ftip"),
-                         class = "display compact stripe hover")
+    # Buttons gives Copy + CSV export when the DT Buttons extension is
+    # installed (DT bundles it). If unavailable, fall back to the plain
+    # dom = "ftip" layout so the table still renders.
+    dt <- tryCatch(
+      DT::datatable(df, rownames = FALSE,
+                    extensions = "Buttons",
+                    options = list(pageLength = 15, scrollX = TRUE,
+                                   dom = "Bfrtip",
+                                   buttons = list("copy", list(extend = "csv",
+                                                                title = NULL))),
+                    class = "display compact stripe hover"),
+      error = function(e)
+        DT::datatable(df, rownames = FALSE,
+                      options = list(pageLength = 15, scrollX = TRUE,
+                                     dom = "ftip"),
+                      class = "display compact stripe hover"))
     add_to_dashboard(dt, section, title, type = "table")
   }, error = function(e) {
     log_msg("  WARNING: Could not create table for dashboard: ", e$message)
@@ -144,6 +156,121 @@ add_html_card <- function(html_content, section, title) {
   dashboard_items[[length(dashboard_items) + 1]] <<- list(
     html = html_content, section = section, title = title, type = "html_card"
   )
+}
+
+# ---- KPI tile strip ----
+# Renders a row of tiles above an overview card. Each tile: a small
+# uppercase label, a big number, and an optional sub-line.
+# tiles = list(list(label=, value=, sub=, accent=), ...). accent is one
+# of "orange" (default), "teal", "muted" - matches the dashboard palette.
+fmt_n <- function(x) {
+  if (is.null(x) || length(x) == 0 || any(is.na(x))) return("-")
+  format(round(as.numeric(x)), big.mark = ",", scientific = FALSE)
+}
+fmt_pct <- function(num, den, digits = 1) {
+  if (is.null(num) || is.null(den) || length(num) == 0 || length(den) == 0)
+    return("-")
+  if (!is.finite(num) || !is.finite(den) || den == 0) return("-")
+  sprintf(paste0("%.", digits, "f%%"), 100 * num / den)
+}
+fmt_date_range <- function(min_d, max_d) {
+  if (is.null(min_d) || is.null(max_d) || is.na(min_d) || is.na(max_d))
+    return("-")
+  paste0(as.character(min_d), " to ", as.character(max_d))
+}
+
+kpi_strip_html <- function(tiles) {
+  if (length(tiles) == 0) return("")
+  tile_html <- vapply(tiles, function(t) {
+    accent <- if (is.null(t$accent)) "orange" else t$accent
+    sub    <- if (is.null(t$sub) || !nzchar(t$sub)) "" else
+      paste0('<div class="kpi-sub">', t$sub, '</div>')
+    sprintf(paste0(
+      '<div class="kpi kpi-%s">',
+      '<div class="kpi-label">%s</div>',
+      '<div class="kpi-value">%s</div>',
+      '%s</div>'),
+      accent, t$label, t$value, sub)
+  }, character(1))
+  paste0('<div class="kpi-strip">', paste(tile_html, collapse = ""), '</div>')
+}
+
+# Headline counts pulled from a cohort's LOT_LONG view. Read-only; no
+# new derivation. Tile is skipped when the underlying number is missing
+# (e.g. zero rows) rather than rendered with a misleading value.
+query_cohort_kpis <- function(con, lot_long_tbl) {
+  row <- tryCatch(db_q(con, glue("
+    WITH per_pat AS (
+      SELECT PATID,
+             min(CASE WHEN LOT_NUM = 1 THEN LOT_START_DT END) AS lot1_dt,
+             max(LOT_NUM)                                     AS max_lot,
+             max(CASE WHEN LOT_NUM = 1
+                       AND LOT_START_TYPE IN ('CART','SCT_CART','CART_INIT')
+                      THEN 1 ELSE 0 END)                      AS cart_1l,
+             max(CASE WHEN LOT_START_TYPE IN ('CART','SCT_CART','CART_INIT')
+                      THEN 1 ELSE 0 END)                      AS cart_any,
+             max(CASE WHEN LOT_START_TYPE = 'SCT_ALLO' THEN 1 ELSE 0 END) AS allo_any,
+             max(CASE WHEN LOT_START_TYPE = 'SCT_AUTO' THEN 1 ELSE 0 END) AS auto_any
+      FROM {lot_long_tbl}
+      GROUP BY PATID
+    ),
+    lot1_len AS (
+      SELECT percentile_approx(LOT_BASE_LENGTH, 0.5) AS median_len
+      FROM {lot_long_tbl}
+      WHERE LOT_NUM = 1 AND LOT_BASE_LENGTH IS NOT NULL
+    )
+    SELECT
+      (SELECT count(*) FROM per_pat)                                      AS n_patients,
+      (SELECT count(*) FROM per_pat WHERE max_lot >= 1)                   AS n_lot1,
+      (SELECT count(*) FROM per_pat WHERE max_lot >= 2)                   AS n_lot2,
+      (SELECT count(*) FROM per_pat WHERE max_lot >= 3)                   AS n_lot3,
+      (SELECT count(*) FROM per_pat WHERE cart_any = 1)                   AS n_cart_any,
+      (SELECT count(*) FROM per_pat WHERE allo_any = 1)                   AS n_allo_any,
+      (SELECT count(*) FROM per_pat WHERE auto_any = 1)                   AS n_auto_any,
+      (SELECT min(lot1_dt) FROM per_pat)                                  AS lot1_min,
+      (SELECT max(lot1_dt) FROM per_pat)                                  AS lot1_max,
+      (SELECT median_len FROM lot1_len)                                   AS lot1_median_len
+  ")), error = function(e) NULL)
+  if (is.null(row) || nrow(row) == 0) return(list())
+  for (col in names(row)) if (inherits(row[[col]], "integer64"))
+    row[[col]] <- as.numeric(row[[col]])
+  as.list(row[1, , drop = FALSE])
+}
+
+build_cohort_kpis <- function(con, lot_long_tbl,
+                              section, title = "KPI snapshot") {
+  k <- query_cohort_kpis(con, lot_long_tbl)
+  if (length(k) == 0 || is.null(k$n_patients) || k$n_patients == 0) {
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:14px;max-width:900px;',
+      'color:#a06000">KPI snapshot unavailable - <code>', lot_long_tbl,
+      '</code> returned no rows.</div>'),
+      section = section, title = title)
+    return(invisible())
+  }
+  n_pat <- as.numeric(k$n_patients)
+  tiles <- list(
+    list(label = "Patients (any LOT)", value = fmt_n(n_pat),
+         sub = "distinct PATID", accent = "orange"),
+    list(label = "Reached LOT1", value = fmt_n(k$n_lot1),
+         sub = paste0(fmt_pct(k$n_lot1, n_pat), " of cohort"), accent = "orange"),
+    list(label = "Reached LOT2+", value = fmt_n(k$n_lot2),
+         sub = paste0(fmt_pct(k$n_lot2, n_pat), " of cohort"), accent = "teal"),
+    list(label = "Reached LOT3+", value = fmt_n(k$n_lot3),
+         sub = paste0(fmt_pct(k$n_lot3, n_pat), " of cohort"), accent = "teal"),
+    list(label = "Median LOT1 length", value = paste0(fmt_n(k$lot1_median_len), " d"),
+         sub = "LOT_BASE_LENGTH", accent = "muted"),
+    list(label = "Any CAR-T",
+         value = paste0(fmt_n(k$n_cart_any), " (", fmt_pct(k$n_cart_any, n_pat), ")"),
+         sub = "any LOT_START_TYPE in CART family", accent = "muted"),
+    list(label = "Any SCT_AUTO",
+         value = paste0(fmt_n(k$n_auto_any), " (", fmt_pct(k$n_auto_any, n_pat), ")"),
+         sub = "autologous SCT in any LOT", accent = "muted"),
+    list(label = "LOT1 start range",
+         value = fmt_date_range(k$lot1_min, k$lot1_max),
+         sub = "earliest -> latest", accent = "muted")
+  )
+  add_html_card(kpi_strip_html(tiles), section = section, title = title)
 }
 
 # Build and save the single combined HTML dashboard
@@ -380,6 +507,52 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
     .sidebar { width: 100%; min-width: 0; height: auto; position: static; }
     .main { height: auto; }
   }
+  /* ---- Cohort tabs (top of sidebar) ---- */
+  .sb-cohorts {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    padding: 10px 14px 4px; border-bottom: 1px solid var(--gsk-sidebar-bd);
+  }
+  .sb-cohorts.hidden { display: none; }
+  .ct-btn {
+    flex: 1 1 30%; padding: 7px 10px; font-size: 12px; font-weight: 700;
+    border: 1px solid var(--gsk-sidebar-bd); border-radius: 6px;
+    background: var(--gsk-sidebar-2); color: var(--gsk-sidebar-tx);
+    cursor: pointer; text-align: center; transition: all 0.12s;
+  }
+  .ct-btn:hover { border-color: var(--gsk-orange); color: var(--gsk-orange-d); }
+  .ct-btn.active {
+    background: var(--gsk-orange); color: #fff;
+    border-color: var(--gsk-orange-d);
+  }
+  /* ---- KPI tiles ---- */
+  .kpi-strip {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    margin: 0 0 14px; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .kpi {
+    flex: 1 1 150px; min-width: 140px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    border-left: 4px solid var(--gsk-orange);
+  }
+  .kpi-orange { border-left-color: var(--gsk-orange); }
+  .kpi-teal   { border-left-color: var(--accent); }
+  .kpi-muted  { border-left-color: var(--muted); }
+  .kpi-label {
+    font-size: 10.5px; font-weight: 800; letter-spacing: 0.5px;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 4px;
+  }
+  .kpi-value {
+    font-size: 22px; font-weight: 800; color: var(--text); line-height: 1.1;
+  }
+  .kpi-sub {
+    font-size: 11.5px; color: var(--muted); margin-top: 3px;
+  }
+  /* ---- Acronym tooltips (auto-applied to <code> tokens) ---- */
+  code.has-tip {
+    cursor: help; border-bottom: 1px dotted var(--accent);
+  }
+  code.has-tip:hover { background: var(--gsk-orange-l); color: var(--gsk-orange-d); }
 </style>
 </head>
 <body>
@@ -388,6 +561,7 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
     <h1>', header_title, '</h1>
     <p>', header_sub, '</p>
   </div>
+  <div class="sb-cohorts hidden" id="sbCohorts"></div>
   <div class="sb-search">
     <input id="navSearch" type="text" placeholder="Search views    ( / )" autocomplete="off">
   </div>
@@ -532,9 +706,110 @@ function toggleFs() {
     if (f) setTimeout(function(){ resizeIframe(f); }, 200);
   }
 }
+// ---- Cohort tabs ---------------------------------------------------
+// COHORTS is populated below from NAV section names. If there are <2
+// cohorts, the tabs row stays hidden and the sidebar works exactly as
+// before (standalone 04/05/06 runs).
+var COHORTS = [];
+var curCohort = null;
+function buildCohortTabs() {
+  COHORTS = NAV.map(function(g){ return g.section; });
+  if (COHORTS.length < 2) return;
+  var bar = document.getElementById("sbCohorts");
+  bar.classList.remove("hidden");
+  COHORTS.forEach(function(name){
+    var b = document.createElement("button");
+    b.className = "ct-btn"; b.type = "button";
+    b.setAttribute("data-cohort", name);
+    b.textContent = name;
+    b.addEventListener("click", function(){ setCohort(name, true); });
+    bar.appendChild(b);
+  });
+}
+function setCohort(name, jump) {
+  curCohort = name;
+  document.querySelectorAll(".ct-btn").forEach(function(b){
+    b.classList.toggle("active", b.getAttribute("data-cohort") === name);
+  });
+  document.querySelectorAll(".grp").forEach(function(g){
+    var h = g.querySelector(".grp-h span:nth-child(2)");
+    var s = h ? h.textContent : "";
+    g.classList.toggle("hidden", s !== name);
+    if (s === name) g.classList.remove("collapsed");
+  });
+  if (jump) {
+    var first = document.querySelector(".grp:not(.hidden) .nav-item:not(.hidden)");
+    if (first) openView(first.getAttribute("data-id"));
+  }
+}
+// ---- Acronym tooltips ----------------------------------------------
+// Wrap any <code> token (in HTML cards) whose text matches a known
+// acronym with a hover title. Re-runnable so iframe-loaded content is
+// covered too. Dictionary lives in one place.
+var TOOLTIPS = {
+  "CE_b": "Continuous enrollment, baseline window",
+  "CE_f": "Continuous enrollment, follow-up window",
+  "CE_3mosf": "Continuous enrollment through 90d follow-up (no gaps)",
+  "ELIG_COH_FINAL": "Final eligibility cohort table",
+  "LOT_LONG": "One row per (PATID, LOT_NUM)",
+  "LOT_LONG_AUG": "LOT_LONG with steroid tokens appended for display",
+  "MAP_STACKED": "Per-patient medication-administration-period rollup",
+  "MMA": "Multiple-myeloma agent",
+  "MMA_MED_PROCESSED": "Parent MMA medication events, ID-period forward",
+  "MED_ADD": "LOT ended because a new non-base drug was added",
+  "MED_ABBR": "Standardized medication abbreviation token",
+  "CART_INIT": "LOT ended because CAR-T followed a MED_ADD within 45 days",
+  "SCT_AUTO": "Autologous stem-cell transplant",
+  "SCT_ALLO": "Allogeneic stem-cell transplant",
+  "SCT_CART": "Chimeric antigen receptor T-cell therapy (categorized as SCT)",
+  "CART": "CAR-T cell therapy (start type label)",
+  "DISCONTINUATION": "LOT ended at runout of all base agents",
+  "DISENROLLMENT": "LOT ended at enrollment gap (sensitivity only)",
+  "STUDY_END": "LOT ended at study end or end of observable period",
+  "DEATH": "LOT ended at death date",
+  "NDMM": "Newly diagnosed multiple myeloma",
+  "OBS_END_DT": "Observable-period end (min of study end, death, etc.)",
+  "ENDDATE": "min(study_end, death)",
+  "ENDDATE_CE": "min(study_end, death, disenrollment)",
+  "FU_DAYS": "Follow-up days from index",
+  "FU_DAYS_CE": "Follow-up days, censoring at disenrollment",
+  "INDEX_DATE": "Patient index date (qualifying MM diagnosis)",
+  "LOT1_START_DT": "Date the 1L line of therapy started",
+  "LOT_BASE_END_DT": "Date the LOT ended (after the cascade)",
+  "LOT_BASE_END_REASON": "Why the LOT ended (one of the cascade values)",
+  "LOT_START_TYPE": "How the LOT started (MED, SCT_AUTO, CART, etc.)",
+  "LOT_BASE_MEDS": "Distinct base agents on the LOT (induction window)",
+  "LOT_BASE_MEDS_AUG": "LOT_BASE_MEDS plus steroid tokens (display only)",
+  "LOT_BASE_LENGTH": "LOT_BASE_END_DT - LOT_START_DT + 1 (days)",
+  "PROC_CD": "HCPCS / CPT procedure code on a medical claim",
+  "BILL_PROC_CD": "Billing HCPCS code on a medical claim",
+  "RVNU_CD": "Revenue code (facility claims only)",
+  "NDC": "National Drug Code (11-digit, zero-padded)",
+  "POS": "Place of service code",
+  "TOS_CD": "Type of service code",
+  "CONF_ID": "Confinement identifier on the inpatient confinement table",
+  "DEXA": "Dexamethasone (steroid token)",
+  "PRED": "Prednisone (steroid token)",
+  "PATID": "Patient identifier"
+};
+function applyTooltips(root) {
+  if (!root) root = document;
+  var codes = root.querySelectorAll("code");
+  for (var i = 0; i < codes.length; i++) {
+    var el = codes[i];
+    if (el.classList.contains("has-tip")) continue;
+    var t = el.textContent.trim();
+    if (TOOLTIPS[t]) {
+      el.setAttribute("title", TOOLTIPS[t]);
+      el.classList.add("has-tip");
+    }
+  }
+}
 document.addEventListener("DOMContentLoaded", function(){
   buildFlat();
   buildNav();
+  buildCohortTabs();
+  applyTooltips(document);
   document.getElementById("prevBtn").addEventListener("click", function(){ step(-1); });
   document.getElementById("nextBtn").addEventListener("click", function(){ step(1); });
   document.getElementById("fsBtn").addEventListener("click", toggleFs);
@@ -556,7 +831,11 @@ document.addEventListener("DOMContentLoaded", function(){
   var h0 = location.hash.replace("#","");
   var start = (h0 && FLAT.filter(function(f){return f.id===h0;}).length) ? h0
               : (FLAT[0] ? FLAT[0].id : null);
-  if (start) openView(start, false);
+  if (start) {
+    openView(start, false);
+    var rec = FLAT.filter(function(f){return f.id===start;})[0];
+    if (rec && COHORTS.indexOf(rec.section) !== -1) setCohort(rec.section, false);
+  }
 });
 // Category-grouped nav model
 ', nav_json, '

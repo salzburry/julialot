@@ -770,6 +770,7 @@ main_regimen <- function() {
   p <- prepare_overall_cohort(con)
 
   dashboard_items <<- list()
+  build_cohort_kpis(con, wrk("LOT_LONG"), section = "OVERVIEW")
   build_overview_card(p$n_ster, p$n_rules)
   build_overall_attrition(con)
   build_steroid_prevalence(con)

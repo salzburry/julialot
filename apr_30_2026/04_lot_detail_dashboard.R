@@ -982,6 +982,7 @@ main_lot_detail <- function() {
   }
 
   dashboard_items <<- list()
+  build_cohort_kpis(con, lot_long, section = "OVERVIEW")
   collect_lot_long_views(con, lot_long)
   build_dashboard(
     out_name     = "lot_detail_dashboard.html",

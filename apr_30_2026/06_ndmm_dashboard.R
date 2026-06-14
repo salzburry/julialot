@@ -1170,6 +1170,7 @@ main_ndmm <- function() {
   p <- prepare_ndmm_cohort(con)
 
   dashboard_items <<- list()
+  build_cohort_kpis(con, NDMM_LOT_LONG_FILT, section = "OVERVIEW")
   build_ndmm_overview_card(p$counts, p$n_ster, p$n_rules, p$overview_notes)
   build_ndmm_attrition(p$counts)
   build_ndmm_other_cancer_qc(con)
