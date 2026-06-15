@@ -351,6 +351,89 @@ build_steroid_prevalence <- function(con, section = "STEROIDS",
     section = section, title = paste0(title_prefix, "What this section shows"))
 }
 
+# Missing-steroid LOT1 examples (study-team ask): LOT1 patients with NO
+# steroid token whose regimen normally carries one - e.g. BORT alone where
+# most peers are BORT+DEXA. Reads the steroid-augmented LOT_LONG_AUG, so it
+# tracks the same induction window + steroid_codes.csv as the prevalence
+# card. A missing token = a genuinely steroid-free regimen, a steroid given
+# outside the window, OR a code still absent from steroid_codes.csv (which
+# is why this pairs with the codelist QC). NDMM-scoped when called from
+# 06 (LOT_LONG_AUG is then the NDMM-filtered augmentation).
+build_missing_steroid_lot1 <- function(con, section = "STEROIDS",
+                                       title_prefix = "",
+                                       min_regimen_n = 10L,
+                                       expect_pct    = 50,
+                                       max_examples  = 200L) {
+  ster_arr <- paste(sprintf("'%s'", STEROID_TOKENS), collapse = ", ")
+  # Shared shape: steroid-stripped base regimen + has_steroid flag.
+  base_cte <- glue("
+    SELECT cast(PATID as string)        AS PATID,
+           cast(LOT_START_DT as date)   AS LOT_START_DT,
+           array_join(filter(split(LOT_BASE_MEDS_AUG,' '),
+                      x -> length(x) > 0
+                       AND NOT array_contains(array({ster_arr}), x)), ' ')
+             AS base_regimen,
+           CASE WHEN arrays_overlap(split(LOT_BASE_MEDS_AUG,' '),
+                                    array({ster_arr})) THEN 1 ELSE 0 END
+             AS has_steroid
+    FROM {LOT_LONG_AUG}
+    WHERE LOT_NUM = 1 AND LOT_BASE_MEDS_AUG IS NOT NULL")
+
+  per <- db_q(con, glue("
+    WITH b AS ({base_cte})
+    SELECT base_regimen,
+           count(*)                                      AS n_patients,
+           cast(sum(has_steroid) as int)                 AS n_with_steroid,
+           round(100.0 * sum(has_steroid) / count(*), 1) AS pct_with_steroid
+    FROM b WHERE base_regimen <> ''
+    GROUP BY base_regimen
+    ORDER BY n_patients DESC
+  "))
+  if (nrow(per) == 0) return(invisible())
+  save_table(per, section = section,
+             title = paste0(title_prefix, "LOT1 steroid attachment by regimen"))
+
+  ex <- db_q(con, glue("
+    WITH b AS ({base_cte}),
+    r AS (
+      SELECT base_regimen, count(*) AS n_reg,
+             100.0 * sum(has_steroid) / count(*) AS pct_reg
+      FROM b WHERE base_regimen <> '' GROUP BY base_regimen
+    )
+    SELECT b.PATID,
+           b.base_regimen                 AS regimen_no_steroid,
+           cast(b.LOT_START_DT as string) AS lot1_start_dt,
+           cast(r.n_reg as int)           AS regimen_n_patients,
+           round(r.pct_reg, 1)            AS regimen_pct_with_steroid
+    FROM b JOIN r ON r.base_regimen = b.base_regimen
+    WHERE b.has_steroid = 0
+      AND r.n_reg   >= {min_regimen_n}
+      AND r.pct_reg >= {expect_pct}
+    ORDER BY r.pct_reg DESC, r.n_reg DESC, b.PATID
+    LIMIT {max_examples}
+  "))
+  if (nrow(ex) > 0)
+    save_table(ex, section = section,
+               title = paste0(title_prefix,
+                 "LOT1 patients missing a steroid where expected (sample)"))
+  add_html_card(paste0(
+    '<div style="font-family:system-ui;padding:14px;max-width:760px">',
+    '<h3>Missing-steroid LOT1 examples</h3>',
+    '<p style="color:#555;font-size:13px"><b>Table 1</b> - per LOT1 regimen ',
+    '(steroid tokens stripped), the share of patients with a ',
+    '<code>DEXA</code>/<code>PRED</code> token attached inside the induction ',
+    'window. <b>Table 2</b> - a sample of patients with <b>no</b> steroid ',
+    'token whose regimen has &ge; ', expect_pct, '% attachment across &ge; ',
+    min_regimen_n, ' patients, i.e. a steroid looks <b>expected but absent</b> ',
+    '(e.g. <code>BORT</code> where most peers are <code>BORT</code> + ',
+    '<code>DEXA</code>). A missing token can mean a genuinely steroid-free ',
+    'regimen, a steroid given outside the window, or a code still missing ',
+    'from <code>steroid_codes.csv</code> - so read this with the codelist QC. ',
+    nrow(ex), ' examples (capped at ', max_examples, ').</p></div>'),
+    section = section,
+    title = paste0(title_prefix, "Missing-steroid: what this shows"))
+}
+
 # Focused LOT-pair Sankey by REGIMEN (steroid-augmented).
 # INNER JOIN drops non-progressors.
 build_focused_pair <- function(con, n_from, n_to, section = NULL,
@@ -784,6 +867,7 @@ main_regimen <- function() {
   build_overview_card(p$n_ster, p$n_rules)
   build_overall_attrition(con)
   build_steroid_prevalence(con)
+  build_missing_steroid_lot1(con)
   for (n in 1:4) build_focused_pair(con, n, n + 1L)
   for (n in 1:4) build_category_pair(con, n, n + 1L, p$lookups)
   build_category_coverage(con, p$lookups)

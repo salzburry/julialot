@@ -13,7 +13,12 @@
 #   source("qc_steroid_codes.R")
 # Review steroid_codes_REMOVED_review.csv, then use steroid_codes_clean.csv.
 
-f <- "steroid_codes.csv"   # <-- set to your path if not in the working dir
+# Set to your file path. read.csv resolves it against RStudio's working
+# directory, so use a path that matches where you launched R:
+#   repo root      -> "apr_30_2026/steroid_codes.csv"
+#   apr_30_2026/   -> "steroid_codes.csv"
+# An absolute "/mnt/code/.../apr_30_2026/steroid_codes.csv" is safest on Domino.
+f <- "apr_30_2026/steroid_codes.csv"
 
 df <- read.csv(f, stringsAsFactors = FALSE, check.names = FALSE,
                comment.char = "#")

@@ -1175,6 +1175,7 @@ main_ndmm <- function() {
   build_ndmm_attrition(p$counts)
   build_ndmm_other_cancer_qc(con)
   build_steroid_prevalence(con)
+  build_missing_steroid_lot1(con)
   for (n in 1:4) build_focused_pair(con, n, n + 1L)
   for (n in 1:4) build_category_pair(con, n, n + 1L, p$lookups)
   build_category_coverage(con, p$lookups)
