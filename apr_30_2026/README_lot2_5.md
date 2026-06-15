@@ -304,6 +304,16 @@ criteria (`APPLY_PREGNANCY_EXCL`, `APPLY_CLINTRIAL_EXCL`,
 criteria were previously hardcoded; they are now env/CSV-driven with
 the same defaults, so existing builds are unaffected.)
 
+**`APPLY_OTHER_MALIG_EXCL` ships `FALSE`, not `TRUE`.** The NDMM
+workflow needs the parent to leave other-malignancy OFF so
+`06_ndmm_dashboard.R` can re-apply it with the MM-adjacent override
+(monoclonal gammopathy, solitary/extramedullary plasmacytoma, plasma
+cell leukemia, secondary neoplasm of bone are kept as non-exclusionary).
+Running the **parent** with `TRUE` drops those patients upstream — they
+never reach `LOT_LONG` — so the NDMM cohort silently loses them. The
+trade-off of `FALSE` is that the **Overall** (non-NDMM) cohort then has
+no other-malignancy exclusion at all.
+
 Example — rebuild only LOT2-5 (run control stays inline, env wins):
 
 ```
