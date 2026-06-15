@@ -38,7 +38,8 @@ APPLY_FU_AGENTS_INCL,TRUE,Require >= 1 MM agent during follow-up
 # --- Cohort EXCLUSION criteria (set FALSE to drop a rule) ---,,
 APPLY_PREGNANCY_EXCL,TRUE,Exclude patients with pregnancy claims
 APPLY_CLINTRIAL_EXCL,TRUE,Exclude patients in clinical trials
-APPLY_OTHER_MALIG_EXCL,TRUE,Exclude patients with other malignancies
+# APPLY_OTHER_MALIG_EXCL ships FALSE by design for the NDMM workflow: the parent leaves other-malig OFF so 06_ndmm_dashboard.R can re-apply it with the MM-adjacent override (keeps MGUS / solitary + extramedullary plasmacytoma / plasma-cell leukemia / secondary bone). TRUE drops those patients upstream and breaks the NDMM cohort. Caveat: with FALSE the Overall (non-NDMM) cohort has no other-malig exclusion.,,
+APPLY_OTHER_MALIG_EXCL,FALSE,Exclude other malignancies (FALSE by design - NDMM dashboard owns this via the MM-adjacent override; see comment above)
 APPLY_BASELINE_MM_EXCL,TRUE,Exclude patients with MM dx (203.0x/C90.0x) in baseline
 # --- Orchestrator (run_pipeline.R): leave BLANK; set per-run on the command line ---,,
 FORCE_RERUN,,Blank = default FALSE. Set TRUE here only for a persistent override
