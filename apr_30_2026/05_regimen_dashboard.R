@@ -303,6 +303,84 @@ augment_lot_long <- function(con, lot_long, rx_tbl, medical_tbl, n_codes) {
   "))
 }
 
+# ---- Most-common real-world regimen order --------------------------
+# LOT_BASE_MEDS collapses agent order (collect_set + sort_array), so the
+# real sequence is re-derived here from each agent's FIRST start date in
+# MAP_STACKED, per patient+LOT. For each canonical (alphabetical) backbone
+# the MODAL sequence across patients becomes the display order - e.g.
+# 'LENA DARA' when more patients start it that way than 'DARA LENA'. Sort
+# key is (first start date, clinical-class rank, abbr) so a real multi-day
+# order wins; same-day (concurrent) starts fall back to clinical, then
+# alphabetical. Only sequences whose token-set equals the canonical regimen
+# vote (drops claims gaps). Returns canonical -> modal order; empty on any
+# error so the dashboard always builds (disp_regimen then uses clinical).
+build_modal_map <- function(con, lot_long) {
+  tryCatch({
+    map_tbl <- wrk("MAP_STACKED")
+    rank_case <- paste(
+      "CASE WHEN abbr IN ('DARA','ISAT') THEN '1'",
+      "WHEN abbr IN ('ELOT','BELA','TECL','ELRA','TALQ') THEN '2'",
+      "WHEN abbr IN ('BORT','CARF','IXAZ') THEN '3'",
+      "WHEN abbr IN ('THAL','LENA','POMA') THEN '4'",
+      "WHEN abbr IN ('CYCL','MELP') THEN '5'",
+      "WHEN abbr = 'SELI' THEN '6' ELSE '7' END")
+    df <- db_q(con, glue("
+      WITH lot AS (
+        SELECT cast(PATID as string) AS PATID, LOT_NUM,
+               cast(LOT_START_DT as date)    AS lot_start,
+               cast(LOT_BASE_END_DT as date) AS lot_end,
+               LOT_BASE_MEDS
+        FROM {lot_long}
+        WHERE LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
+      ),
+      agent_dt AS (
+        SELECT l.PATID, l.LOT_NUM, l.LOT_BASE_MEDS,
+               m.MAP_MED_TYPE AS abbr,
+               min(cast(m.MAP_START_DT as date)) AS first_dt
+        FROM lot l
+        JOIN {map_tbl} m
+          ON cast(m.PATID as string) = l.PATID
+         AND upper(m.MAP_MED_CLASS) <> 'STEROID'
+         AND cast(m.MAP_START_DT as date) >= l.lot_start
+         AND cast(m.MAP_START_DT as date) <= coalesce(l.lot_end, date_add(l.lot_start, 365))
+         AND array_contains(split(l.LOT_BASE_MEDS, ' '), m.MAP_MED_TYPE)
+        GROUP BY l.PATID, l.LOT_NUM, l.LOT_BASE_MEDS, m.MAP_MED_TYPE
+      ),
+      seq AS (
+        SELECT PATID, LOT_NUM, LOT_BASE_MEDS,
+               concat_ws(' ', transform(
+                 array_sort(collect_list(
+                   concat(date_format(first_dt,'yyyyMMdd'), '~',
+                          {rank_case}, '~', abbr))),
+                 x -> element_at(split(x,'~'), 3))) AS seq_str
+        FROM agent_dt
+        GROUP BY PATID, LOT_NUM, LOT_BASE_MEDS
+      ),
+      counts AS (
+        SELECT LOT_BASE_MEDS, seq_str, count(*) AS n
+        FROM seq
+        WHERE concat_ws(' ', array_sort(split(seq_str,' '))) = LOT_BASE_MEDS
+        GROUP BY LOT_BASE_MEDS, seq_str
+      ),
+      ranked AS (
+        SELECT LOT_BASE_MEDS, seq_str, n,
+               row_number() OVER (PARTITION BY LOT_BASE_MEDS
+                                  ORDER BY n DESC, seq_str) AS rn
+        FROM counts
+      )
+      SELECT LOT_BASE_MEDS AS canonical, seq_str AS modal_order
+      FROM ranked WHERE rn = 1
+    "))
+    if (is.null(df) || nrow(df) == 0) return(character(0))
+    log_msg("  regimen modal-order map: ", nrow(df), " regimens")
+    setNames(as.character(df$modal_order), as.character(df$canonical))
+  }, error = function(e) {
+    log_msg("  modal regimen-order map unavailable (", conditionMessage(e),
+            "); regimen display falls back to clinical order.")
+    character(0)
+  })
+}
+
 # Steroid prevalence: how many patients have at least one steroid
 # token in their LOT_BASE_MEDS_AUG, per LOT_NUM. Sanity check.
 build_steroid_prevalence <- function(con, section = "STEROIDS",
@@ -384,12 +462,13 @@ build_missing_steroid_lot1 <- function(con, section = "STEROIDS",
     SELECT base_regimen,
            count(*)                                      AS n_patients,
            cast(sum(has_steroid) as int)                 AS n_with_steroid,
-           round(100.0 * sum(has_steroid) / count(*), 1) AS pct_with_steroid
+           round(100.0 * sum(has_steroid) / count(*), 2) AS pct_with_steroid
     FROM b WHERE base_regimen <> ''
     GROUP BY base_regimen
     ORDER BY n_patients DESC
   "))
   if (nrow(per) == 0) return(invisible())
+  per$base_regimen <- disp_regimen(per$base_regimen)
   save_table(per, section = section,
              title = paste0(title_prefix, "LOT1 steroid attachment by regimen"))
 
@@ -404,7 +483,7 @@ build_missing_steroid_lot1 <- function(con, section = "STEROIDS",
            b.base_regimen                 AS regimen_no_steroid,
            cast(b.LOT_START_DT as string) AS lot1_start_dt,
            cast(r.n_reg as int)           AS regimen_n_patients,
-           round(r.pct_reg, 1)            AS regimen_pct_with_steroid
+           round(r.pct_reg, 2)            AS regimen_pct_with_steroid
     FROM b JOIN r ON r.base_regimen = b.base_regimen
     WHERE b.has_steroid = 0
       AND r.n_reg   >= {min_regimen_n}
@@ -412,10 +491,12 @@ build_missing_steroid_lot1 <- function(con, section = "STEROIDS",
     ORDER BY r.pct_reg DESC, r.n_reg DESC, b.PATID
     LIMIT {max_examples}
   "))
-  if (nrow(ex) > 0)
+  if (nrow(ex) > 0) {
+    ex$regimen_no_steroid <- disp_regimen(ex$regimen_no_steroid)
     save_table(ex, section = section,
                title = paste0(title_prefix,
                  "LOT1 patients missing a steroid where expected (sample)"))
+  }
   add_html_card(paste0(
     '<div style="font-family:system-ui;padding:14px;max-width:760px">',
     '<h3>Missing-steroid LOT1 examples</h3>',
@@ -478,6 +559,10 @@ build_focused_pair <- function(con, n_from, n_to, section = NULL,
                      FUN = function(x) length(unique(x)))
   names(links)[3] <- "n_patients"
   links <- links[order(-links$n_patients), , drop = FALSE]
+  # Clinical-order the displayed regimen labels. Counting above is on the
+  # canonical alphabetical key; this remap is 1:1, so no merge/split.
+  links$reg_from <- disp_regimen(links$reg_from)
+  links$tgt_node <- disp_regimen(links$tgt_node)
 
   n_sankey <- length(unique(sub$PATID))
   make_sankey(paste0("L", n_from, ": ", links$reg_from),
@@ -533,7 +618,7 @@ build_category_pair <- function(con, n_from, n_to, lookups,
   # bucket since it reports a per-LOT match-rate, not a Sankey node.
   cat_of <- function(r, lk) {
     k <- norm_key_no_steroid(r)
-    if (k %in% names(lk)) unname(lk[k]) else paste0("(unmapped) ", r)
+    if (k %in% names(lk)) unname(lk[k]) else paste0("(unmapped) ", disp_regimen(r))
   }
   pairs$cat_from <- vapply(pairs$reg_from, cat_of, character(1), lk = lk_from)
   pairs$cat_to   <- vapply(pairs$reg_to,   cat_of, character(1), lk = lk_to)
@@ -752,6 +837,7 @@ prepare_overall_cohort <- function(con) {
 
   log_msg("Augmenting LOT_LONG with steroid tokens -> ", wrk(LOT_LONG_AUG))
   augment_lot_long(con, lot_long, rx_tbl, medical_tbl, n_ster)
+  REGIMEN_MODAL_MAP <<- build_modal_map(con, lot_long)
 
   log_msg("Loading categories from ", CAT_CSV_PATH)
   lookups <- load_categories()

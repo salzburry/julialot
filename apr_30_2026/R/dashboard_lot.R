@@ -123,6 +123,60 @@ save_plot <- function(p, filename, width = 10, height = 6, section = "", title =
 }
 
 # Collect a data table for the dashboard (DT does NOT require plotly)
+# ---- Clinical-order display for regimen strings --------------------
+# The pipeline stores regimens alphabetically (sort_array) - that canonical
+# key is what counting and regimen_categories.csv matching rely on, so it
+# stays untouched. For DISPLAY, re-order the SAME tokens by drug class so a
+# regimen reads anti-CD38 -> PI -> IMiD -> alkylator -> other -> steroid,
+# matching how regimen_categories.csv is written. The remap is 1:1 (same
+# token set, different order), so it never merges or splits groups.
+REGIMEN_CLASS_RANK <- c(
+  DARA = 1L, ISAT = 1L,                                  # anti-CD38 mAb
+  ELOT = 2L, BELA = 2L, TECL = 2L, ELRA = 2L, TALQ = 2L, # other mAb/bispecific/ADC
+  BORT = 3L, CARF = 3L, IXAZ = 3L,                       # proteasome inhibitor
+  THAL = 4L, LENA = 4L, POMA = 4L,                       # IMiD
+  CYCL = 5L, MELP = 5L,                                  # alkylator
+  SELI = 6L,                                             # other targeted
+  DEX = 9L, DEXA = 9L, DEXAMETHASONE = 9L,
+  PRED = 9L, PREDNISONE = 9L)                            # steroid - last
+clin_regimen <- function(x) {
+  vapply(x, function(s) {
+    if (is.na(s) || !nzchar(trimws(s))) return(s)
+    toks <- strsplit(trimws(s), "[[:space:]]+")[[1]]
+    toks <- toks[nzchar(toks)]
+    if (length(toks) <= 1L) return(paste(toks, collapse = " "))
+    rk <- REGIMEN_CLASS_RANK[toupper(toks)]
+    rk[is.na(rk)] <- 7L              # unknown agents: between other & steroid
+    paste(toks[order(rk, toupper(toks))], collapse = " ")
+  }, character(1), USE.NAMES = FALSE)
+}
+
+# Set by build_modal_map() during dashboard setup; maps a canonical
+# (alphabetical) backbone regimen -> its most-common real-world agent order.
+REGIMEN_MODAL_MAP <- character(0)
+
+# Display a regimen in the most-common real-world order: backbone agents in
+# the modal start-order (REGIMEN_MODAL_MAP), steroid tokens appended last.
+# Falls back to clinical order (clin_regimen) for any regimen with no modal
+# entry. Display only - counting + category matching still use the canonical
+# alphabetical key, so nothing double-counts.
+disp_regimen <- function(x) {
+  mm <- REGIMEN_MODAL_MAP
+  vapply(x, function(s) {
+    if (is.na(s) || !nzchar(trimws(s))) return(s)
+    toks <- strsplit(trimws(s), "[[:space:]]+")[[1]]
+    toks <- toks[nzchar(toks)]
+    if (length(toks) <= 1L) return(paste(toks, collapse = " "))
+    is_ster <- toupper(toks) %in% c("DEX","DEXA","DEXAMETHASONE","PRED","PREDNISONE")
+    back <- toks[!is_ster]; ster <- toks[is_ster]
+    if (length(back) == 0L) return(paste(toks, collapse = " "))
+    canon <- paste(sort(toupper(back)), collapse = " ")
+    disp_back <- if (length(mm) > 0L && canon %in% names(mm)) unname(mm[[canon]])
+                 else clin_regimen(paste(back, collapse = " "))
+    paste(c(disp_back, ster), collapse = " ")
+  }, character(1), USE.NAMES = FALSE)
+}
+
 save_table <- function(df, section, title) {
   if (!isTRUE(cfg$build_dashboard)) return(invisible(NULL))
   if (!has_dt || !requireNamespace("htmlwidgets", quietly = TRUE)) return(invisible(NULL))
@@ -147,6 +201,14 @@ save_table <- function(df, section, title) {
                       options = list(pageLength = 15, scrollX = TRUE,
                                      dom = "ftip"),
                       class = "display compact stripe hover"))
+    # Columns with a fractional part (rates, percentages) render to 2 dp;
+    # whole-number columns (counts, years) are left as integers.
+    frac_cols <- Filter(function(cn) {
+      v <- df[[cn]]
+      is.numeric(v) && any(is.finite(v) & v != round(v))
+    }, names(df))
+    if (length(frac_cols) > 0)
+      dt <- DT::formatRound(dt, columns = frac_cols, digits = 2)
     add_to_dashboard(dt, section, title, type = "table")
   }, error = function(e) {
     log_msg("  WARNING: Could not create table for dashboard: ", e$message)
@@ -502,9 +564,18 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html,body { height: 100%; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     background: var(--bg); color: var(--text); display: flex;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
+  /* DT tables default to a cramped, mismatched stack; force the app font. */
+  table.dataTable, .dataTables_wrapper, .dataTables_wrapper input,
+  .dataTables_wrapper select, .dataTables_filter, .dataTables_info,
+  .dt-buttons .dt-button { font-family: inherit !important; }
+  table.dataTable { font-size: 13px; }
+  table.dataTable thead th { font-weight: 600; letter-spacing: .01em; }
+  table.dataTable td, table.dataTable th { padding: 6px 10px; }
   /* ---- Sidebar (GSK orange + white) ---- */
   .sidebar {
     width: 280px; min-width: 280px; height: 100vh; overflow-y: auto;
