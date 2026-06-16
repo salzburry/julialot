@@ -275,9 +275,11 @@ Plus these raw CDM tables:
 
 - `member_enrollment` (CE span rebuild)
 - `medical`           (MM-Tx pre-LOT1 four-source scan, steroid augmentation,
-                       other-cancer IP/OP claim-header rebuild)
+                       other-cancer IP/OP claim-header rebuild, pregnancy
+                       HCPCS + revenue-code scan)
 - `rx`                (MM-Tx pre-LOT1 four-source scan and steroid augmentation)
-- `med_diagnosis`     (other-cancer diagnosis scan)
+- `med_diagnosis`     (other-cancer + pregnancy diagnosis scan)
+- `med_procedure`     (pregnancy ICD-procedure scan)
 - `confinement`       (other-cancer Optum Approach 2 IP detection)
 
 And these codelist CSVs in `cfg$codelist_dir` (loaded via
@@ -289,6 +291,9 @@ And these codelist CSVs in `cfg$codelist_dir` (loaded via
 - `other_malig.csv`     (other-cancer tumor-group codelist; same CSV
                          the parent uses for `other_malig_codes` in
                          `pipeline_steps.R:109-122`)
+- `pregnancy.csv`       (pregnancy exclusion codelist; `code_type` + `code`,
+                         scanned over the study period and restricted to NDMM
+                         LOT1 candidates)
 
 If a required input is unreadable the corresponding filter is
 **skipped** rather than aborting the run:
@@ -298,6 +303,9 @@ If a required input is unreadable the corresponding filter is
   steroid augmentation also degrades to no-op).
 - `med_diagnosis`, `medical`, or `confinement` missing -> other-cancer
   pre-LOT1 filter skipped.
+- `pregnancy.csv`, `med_diagnosis`, `medical`, or `med_procedure` missing
+  -> pregnancy filter skipped (the codelist load is wrapped so a missing CSV
+  WARN-skips instead of aborting the run).
 
 Each skip is logged to stdout and surfaced as a note in the OVERVIEW
 card; the script still produces a dashboard with the filters that did
