@@ -201,11 +201,14 @@ save_table <- function(df, section, title) {
                       options = list(pageLength = 15, scrollX = TRUE,
                                      dom = "ftip"),
                       class = "display compact stripe hover"))
-    # Columns with a fractional part (rates, percentages) render to 2 dp;
-    # whole-number columns (counts, years) are left as integers.
+    # Percentage/rate columns (by name) render to 2 dp even when a value is
+    # whole (98 -> 98.00); other numeric columns get 2 dp only if they hold a
+    # fractional value, so integer counts/years stay clean.
     frac_cols <- Filter(function(cn) {
       v <- df[[cn]]
-      is.numeric(v) && any(is.finite(v) & v != round(v))
+      if (!is.numeric(v)) return(FALSE)
+      grepl("pct|percent|rate|prop|share|ratio", cn, ignore.case = TRUE) ||
+        any(is.finite(v) & v != round(v))
     }, names(df))
     if (length(frac_cols) > 0)
       dt <- DT::formatRound(dt, columns = frac_cols, digits = 2)

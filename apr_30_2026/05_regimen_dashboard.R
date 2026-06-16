@@ -399,7 +399,7 @@ build_steroid_prevalence <- function(con, section = "STEROIDS",
            cast(n_lot as int)          AS n_patients,
            cast(n_with_steroid as int) AS n_with_steroid,
            CASE WHEN n_lot > 0
-                THEN round(100.0 * n_with_steroid / n_lot, 1)
+                THEN round(100.0 * n_with_steroid / n_lot, 2)
                 ELSE 0 END AS pct_with_steroid
     FROM per ORDER BY LOT_NUM
   "))
@@ -706,7 +706,7 @@ build_category_coverage <- function(con, lookups, section = "BY_CATEGORY",
   }
   out$pct_uncategorised <- ifelse(out$n_patients > 0,
                                    round(100 * out$n_uncategorised /
-                                         out$n_patients, 1), 0)
+                                         out$n_patients, 2), 0)
   save_table(out, section = section,
              title = paste0(title_prefix, "Category mapping coverage per LOT_NUM"))
 
@@ -898,7 +898,7 @@ build_overall_attrition <- function(con, section = "OVERVIEW",
     for (i in 2:nrow(df)) {
       prev_n <- df$n_at_step[i - 1]
       df$pct_of_prev[i] <- if (prev_n > 0)
-        round(100 * df$n_at_step[i] / prev_n, 1) else NA_real_
+        round(100 * df$n_at_step[i] / prev_n, 2) else NA_real_
     }
   }
 

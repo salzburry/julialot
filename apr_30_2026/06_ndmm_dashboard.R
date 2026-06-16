@@ -624,7 +624,9 @@ build_ndmm_overview_card <- function(counts, n_ster_codes, n_cat_rules,
     '<h3>NDMM (1L newly-diagnosed) planned cohort</h3>',
     '<p style="color:#555;font-size:13px">Regimen-transition + steroid dashboards on ',
     'The planned cohort: parent <code>ELIG_COH_FINAL</code> ',
-    '(all default IE flags applied) plus a NDMM-side LOT1 eligibility ',
+    '(default IE flags applied; the other-malignancy filter is (re-)applied ',
+    'by the NDMM layer below with the MM-adjacent override, not assumed ',
+    'from the parent) plus a NDMM-side LOT1 eligibility ',
     'cutoff (<code>LOT_START_DT &ge; ', NDMM_LOT1_FROM, '</code>) and ',
     'four NDMM-only post-filters from the spec: <b>12-mo CE before ',
     'LOT1</b>, <b>no belantamab in any LOT</b>, <b>no MM oncology therapy ',
@@ -703,7 +705,7 @@ build_ndmm_attrition <- function(counts, section = "OVERVIEW",
     for (i in 2:nrow(df)) {
       prev_n <- df$n_patients[i - 1]
       df$pct_of_prev[i] <- if (prev_n > 0)
-        round(100 * df$n_patients[i] / prev_n, 1) else NA_real_
+        round(100 * df$n_patients[i] / prev_n, 2) else NA_real_
     }
   }
   save_table(df, section = section,
@@ -976,7 +978,7 @@ build_ndmm_other_cancer_qc <- function(con, section = "OVERVIEW",
       "SELECT count(DISTINCT PATID) AS n FROM {NDMM_OTHER_MALIG_PATIDS}"))$n),
       error = function(e) NA_real_)
   qc$pct_of_drop <- if (is.finite(n_total) && n_total > 0)
-    round(100 * as.numeric(qc$n_patients_hit) / n_total, 1) else NA_real_
+    round(100 * as.numeric(qc$n_patients_hit) / n_total, 2) else NA_real_
 
   # Show only genuinely-excluded tumor groups; the 5 MM-adjacent groups
   # retained for NDMM (is_override=1) are not "drops" and are omitted here.
