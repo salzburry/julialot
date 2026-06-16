@@ -886,7 +886,18 @@ function setCohort(name, jump) {
   if (sbx) applySearch(sbx.value);
   if (jump) {
     var first = document.querySelector(".grp:not(.hidden) .nav-item:not(.hidden)");
-    if (first) openView(first.getAttribute("data-id"));
+    if (first) {
+      openView(first.getAttribute("data-id"));
+    } else {
+      // No views match in this cohort (e.g. active search with zero hits):
+      // clear the stale view so the main panel doesn't keep prior content.
+      document.querySelectorAll(".tab-content").forEach(function(el){ el.classList.remove("show"); });
+      document.querySelectorAll(".nav-item.active").forEach(function(el){ el.classList.remove("active"); });
+      curId = null;
+      var cbc = document.getElementById("cbCat"), cbv = document.getElementById("cbView");
+      if (cbc) cbc.textContent = name;
+      if (cbv) cbv.textContent = "no matching views - clear the search";
+    }
   }
 }
 // Acronym tooltips are applied R-side at card-build time (inject_tooltips

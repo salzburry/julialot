@@ -58,6 +58,7 @@ source(file.path(.script_dir, "R", "codelists_lot.R"))
 # concurrently with 05_regimen_dashboard.R without clobbering its temp views.
 NDMM_LOT_LONG_FILT       <- "_ndmm_lot_long"
 NDMM_ENROLL_SPANS        <- "_ndmm_enroll_spans"
+NDMM_ENROLL_SPANS_STRICT <- "_ndmm_enroll_spans_strict"  # no-gap spans for the 3-mo FU CE
 NDMM_LOT1_STARTS         <- "_ndmm_lot1_starts"
 NDMM_MMA_CODELIST        <- "_ndmm_mma_codelist"
 NDMM_THERAPY_PRE_LOT1    <- "_ndmm_therapy_pre_lot1"
@@ -131,9 +132,10 @@ NDMM_FINAL_TABLE_NAME      <- Sys.getenv("FINAL_TABLE_NAME",
 # member_enrollment - the parent's temp view isn't persisted, so we
 # rebuild it inside this script. SQL mirrors pipeline_steps.R:382-421
 # verbatim so the gap semantics stay identical to CE_b/CE_f.
-build_enrollment_spans_ndmm <- function(con) {
+build_enrollment_spans_ndmm <- function(con, view = NDMM_ENROLL_SPANS,
+                                        gap_days = NDMM_GAP_DAYS) {
   db_exec(con, glue("
-    CREATE OR REPLACE TEMPORARY VIEW {NDMM_ENROLL_SPANS} AS
+    CREATE OR REPLACE TEMPORARY VIEW {view} AS
     WITH base AS (
       SELECT PATID,
              cast(ELIGEFF as date) AS elig_eff,
@@ -153,7 +155,7 @@ build_enrollment_spans_ndmm <- function(con) {
     flagged AS (
       SELECT *,
         CASE WHEN max_end_so_far IS NULL THEN 1
-             WHEN elig_eff <= date_add(max_end_so_far, {NDMM_GAP_DAYS} + 1) THEN 0
+             WHEN elig_eff <= date_add(max_end_so_far, {gap_days} + 1) THEN 0
              ELSE 1 END AS new_grp
       FROM ordered
     ),
@@ -455,7 +457,7 @@ build_ndmm_other_malig_pre_lot1 <- function(con, med_diag_tbl) {
   "))
 }
 
-# Per-PATID flag table for the four NDMM filters layered on top of
+# Per-PATID flag table for the six NDMM filters layered on top of
 # ELIG_COH_FINAL. Rows are restricted to (ELIG_COH_FINAL INNER JOIN
 # LOT1) - i.e. patients in the parent cohort who actually have a 1L
 # treatment in LOT_LONG that starts on/after NDMM_LOT1_FROM. Flags:
@@ -489,6 +491,17 @@ build_ndmm_other_malig_pre_lot1 <- function(con, med_diag_tbl) {
 #                             re-anchored from parent OTHER_MALIGN_FLAG
 #                             which uses 6-mo pre-MM-dx. IP/OP same-tumor-
 #                             group logic mirrors parent step 22.)
+#
+#   CE_lot1_3mo_fu          : 3-month follow-up CE re-derived ANCHORED AT
+#                             LOT1 (the NDMM index): a span covers
+#                             [LOT1_START, least(LOT1_START + 90, study_end,
+#                             death)]. No-gap spans (NDMM_ENROLL_SPANS_STRICT)
+#                             per spec + carried-forward DEATH_DT (NDMM spec:
+#                             >=3-mo CE during follow-up or death, NO gaps).
+#
+#   NO_PREGNANCY            : the parent's PREGNANT_FLAG carried forward from
+#                             ELIG_COH_FINAL (study-period pregnancy, so
+#                             anchor-independent). NDMM spec exclusion.
 build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
                            q2_ok_belantamab, q2_ok_priortx,
                            q2_ok_othercancer) {
@@ -511,7 +524,15 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
     WITH ec_l1 AS (
       SELECT cast(ec.PATID as string) AS PATID, l1.LOT1_START_DT,
              date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS}) AS pre_lot1_start,
-             date_sub(l1.LOT1_START_DT, 1)                  AS pre_lot1_end
+             date_sub(l1.LOT1_START_DT, 1)                  AS pre_lot1_end,
+             -- Carried forward from the parent ELIG_COH_FINAL (computed there
+             -- even when the toggles are OFF). PREGNANT_FLAG is study-period so
+             -- it is a pure reuse (anchor-independent). DEATH_DT is carried so
+             -- the 3-month follow-up CE below can be re-derived ANCHORED AT
+             -- LOT1 (the NDMM index); the parent CE_3mosf is anchored at the
+             -- MM-dx index and so is NOT reused for it.
+             cast(ec.DEATH_DT as date)     AS DEATH_DT,
+             coalesce(ec.PREGNANT_FLAG, 0) AS PREGNANT_FLAG
       FROM {elig_coh_final} ec
       INNER JOIN {NDMM_LOT1_STARTS} l1
               ON cast(ec.PATID as string) = l1.PATID
@@ -525,16 +546,35 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
       LEFT JOIN {NDMM_ENROLL_SPANS} s ON s.PATID = ec_l1.PATID
       GROUP BY ec_l1.PATID
     ),
+    -- 3-month follow-up CE re-derived ANCHORED AT LOT1 (the NDMM index): a
+    -- span must cover [LOT1_START, least(LOT1_START + 90, study_end, death)].
+    -- Uses NDMM_ENROLL_SPANS_STRICT (no-gap spans, gap_days=0) per the spec:
+    -- 'no gaps in enrollment' for the follow-up CE, vs <30-day gaps allowed
+    -- for the 12-mo pre-LOT1 CE. Plus the carried-forward DEATH_DT.
+    fuce AS (
+      SELECT ec_l1.PATID,
+             max(CASE WHEN s.cov_start <= ec_l1.LOT1_START_DT
+                       AND s.cov_end   >= least(date_add(ec_l1.LOT1_START_DT, 90),
+                                                date('{cfg$study_end}'),
+                                                coalesce(ec_l1.DEATH_DT, date('{cfg$study_end}')))
+                      THEN 1 ELSE 0 END) AS CE_lot1_3mo
+      FROM ec_l1
+      LEFT JOIN {NDMM_ENROLL_SPANS_STRICT} s ON s.PATID = ec_l1.PATID
+      GROUP BY ec_l1.PATID
+    ),
     bela AS ({bela_expr}),
     prior_tx AS ({prior_tx_expr}),
     other_cancer AS ({other_cancer_expr})
     SELECT ec_l1.PATID,
            ce.CE_pre_lot1_12mo,
+           coalesce(fuce.CE_lot1_3mo, 0)                        AS CE_lot1_3mo_fu,
            CASE WHEN bela.PATID         IS NULL THEN 1 ELSE 0 END AS NO_BELANTAMAB,
            CASE WHEN prior_tx.PATID     IS NULL THEN 1 ELSE 0 END AS NO_PRIOR_MM_TX,
-           CASE WHEN other_cancer.PATID IS NULL THEN 1 ELSE 0 END AS NO_OTHER_CANCER_PRE_LOT1
+           CASE WHEN other_cancer.PATID IS NULL THEN 1 ELSE 0 END AS NO_OTHER_CANCER_PRE_LOT1,
+           CASE WHEN ec_l1.PREGNANT_FLAG = 1 THEN 0 ELSE 1 END  AS NO_PREGNANCY
     FROM ec_l1
     LEFT JOIN ce           ON ec_l1.PATID = ce.PATID
+    LEFT JOIN fuce         ON ec_l1.PATID = fuce.PATID
     LEFT JOIN bela         ON ec_l1.PATID = bela.PATID
     LEFT JOIN prior_tx     ON ec_l1.PATID = prior_tx.PATID
     LEFT JOIN other_cancer ON ec_l1.PATID = other_cancer.PATID
@@ -547,6 +587,8 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
       AND NO_BELANTAMAB           = 1
       AND NO_PRIOR_MM_TX          = 1
       AND NO_OTHER_CANCER_PRE_LOT1 = 1
+      AND CE_lot1_3mo_fu          = 1
+      AND NO_PREGNANCY            = 1
   "))
 }
 
@@ -592,11 +634,21 @@ ndmm_counts <- function(con, lot_long, elig_coh_final) {
      WHERE CE_pre_lot1_12mo = 1
        AND NO_BELANTAMAB    = 1
        AND NO_PRIOR_MM_TX   = 1"))$n
+  noother <- db_q(con, glue(
+    "SELECT count(DISTINCT PATID) AS n FROM {NDMM_FLAGS_ALL}
+     WHERE CE_pre_lot1_12mo = 1 AND NO_BELANTAMAB = 1
+       AND NO_PRIOR_MM_TX = 1 AND NO_OTHER_CANCER_PRE_LOT1 = 1"))$n
+  noother_fuce <- db_q(con, glue(
+    "SELECT count(DISTINCT PATID) AS n FROM {NDMM_FLAGS_ALL}
+     WHERE CE_pre_lot1_12mo = 1 AND NO_BELANTAMAB = 1
+       AND NO_PRIOR_MM_TX = 1 AND NO_OTHER_CANCER_PRE_LOT1 = 1
+       AND CE_lot1_3mo_fu = 1"))$n
   ndmm_final <- db_q(con, glue(
     "SELECT count(DISTINCT PATID) AS n FROM {NDMM_PATIDS}"))$n
   list(whole = whole, elig = elig, elig_lot1 = elig_lot1,
        ce12 = ce12, ce12_nobela = ce12_nobela,
        ce12_nobela_nopriortx = ce12_nobela_nopriortx,
+       noother = noother, noother_fuce = noother_fuce,
        ndmm_final = ndmm_final)
 }
 
@@ -628,10 +680,12 @@ build_ndmm_overview_card <- function(counts, n_ster_codes, n_cat_rules,
     'by the NDMM layer below with the MM-adjacent override, not assumed ',
     'from the parent) plus a NDMM-side LOT1 eligibility ',
     'cutoff (<code>LOT_START_DT &ge; ', NDMM_LOT1_FROM, '</code>) and ',
-    'four NDMM-only post-filters from the spec: <b>12-mo CE before ',
-    'LOT1</b>, <b>no belantamab in any LOT</b>, <b>no MM oncology therapy ',
-    'in the 12-mo 1L baseline</b>, and <b>no other active cancer in the ',
-    '12-mo 1L baseline</b>. CE-pre-LOT1 uses the parent&apos;s <code>gap_days = ',
+    'six NDMM-only post-filters aligned to the spec: <b>12-mo CE before ',
+    'LOT1</b>, <b>3-mo follow-up CE</b> (re-derived from the LOT1 index, ',
+    'no-gap per spec, death-aware), <b>no belantamab in any LOT</b>, ',
+    '<b>no MM oncology therapy in the 12-mo 1L baseline</b>, <b>no other ',
+    'active cancer in the 12-mo 1L baseline</b>, and <b>no pregnancy</b> ',
+    '(carried from the parent <code>PREGNANT_FLAG</code>). CE-pre-LOT1 uses the parent&apos;s <code>gap_days = ',
     NDMM_GAP_DAYS, '</code> allowance. Belantamab detection scans ',
     '<code>MAP_STACKED</code> for <code>MAP_MED_TYPE LIKE &apos;BEL%&apos;</code> ',
     '- narrower than the <code>lot1_studyteam_qs.R</code> inventory ',
@@ -661,7 +715,9 @@ build_ndmm_overview_card <- function(counts, n_ster_codes, n_cat_rules,
     row("+ 12-mo CE pre-LOT1",                                         counts$ce12),
     row("+ no belantamab in any LOT",                                  counts$ce12_nobela),
     row("+ no MM oncology Tx in 12-mo pre-LOT1",                       counts$ce12_nobela_nopriortx),
-    row("+ no other active cancer in 12-mo pre-LOT1 (NDMM final)",
+    row("+ no other active cancer in 12-mo pre-LOT1",                  counts$noother),
+    row("+ 3-mo follow-up CE (from LOT1)",                            counts$noother_fuce),
+    row("+ no pregnancy (NDMM final)",
         counts$ndmm_final, bold = TRUE, bg = "#efe"),
     '</table>',
     notes_html,
@@ -686,7 +742,8 @@ build_ndmm_attrition <- function(counts, section = "OVERVIEW",
                                  title_prefix = "") {
   df <- data.frame(
     step = c("01_whole", "02_elig", "03_lot1", "04_ce12",
-             "05_nobela", "06_nopriortx", "07_noother_final"),
+             "05_nobela", "06_nopriortx", "07_noother", "08_fuce",
+             "09_nopreg_final"),
     description = c(
       "Whole LOT_LONG cohort",
       "+ in ELIG_COH_FINAL (parent IE)",
@@ -694,10 +751,13 @@ build_ndmm_attrition <- function(counts, section = "OVERVIEW",
       "+ 12-mo CE pre-LOT1",
       "+ no belantamab in any LOT",
       "+ no MM oncology Tx in 12-mo pre-LOT1",
-      "+ no other active cancer in 12-mo pre-LOT1 (NDMM final)"),
+      "+ no other active cancer in 12-mo pre-LOT1",
+      "+ 3-mo follow-up CE (from LOT1)",
+      "+ no pregnancy (NDMM final)"),
     n_patients = as.integer(c(
       counts$whole, counts$elig, counts$elig_lot1, counts$ce12,
-      counts$ce12_nobela, counts$ce12_nobela_nopriortx, counts$ndmm_final)),
+      counts$ce12_nobela, counts$ce12_nobela_nopriortx, counts$noother,
+      counts$noother_fuce, counts$ndmm_final)),
     stringsAsFactors = FALSE
   )
   df$pct_of_prev <- NA_real_
@@ -727,7 +787,7 @@ build_ndmm_attrition <- function(counts, section = "OVERVIEW",
       coord_flip() +
       labs(title = "NDMM cohort attrition",
            subtitle = paste0("LOT1 cutoff ", NDMM_LOT1_FROM,
-                             " + four NDMM IE filters applied to LOT_LONG"),
+                             " + six NDMM IE filters applied to LOT_LONG"),
            x = NULL, y = "Patients remaining") +
       theme_lot()
     save_plot(p_att, "ndmm_attrition.png", width = 10, height = 6,
@@ -1089,6 +1149,7 @@ prepare_ndmm_cohort <- function(con) {
 
   log_msg("Building enrollment spans (gap_days=", NDMM_GAP_DAYS, ")")
   build_enrollment_spans_ndmm(con)
+  build_enrollment_spans_ndmm(con, NDMM_ENROLL_SPANS_STRICT, 0L)  # no-gap, for 3-mo FU CE
 
   log_msg("Pulling LOT1 starts (>= ", NDMM_LOT1_FROM, ") from ", lot_long)
   build_lot1_starts_ndmm(con, lot_long)
