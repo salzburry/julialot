@@ -51,9 +51,10 @@ source(file.path(source_dir, "dashboard_lot.R"))
 source(file.path(source_dir, "dashboard_validation.R"))
 
 TOP_N            <- 10L
-CATEGORY_UNMAPPED_TOP <- 15L  # cap on distinct (unmapped) nodes per
-                              # side in the category Sankey; rest
-                              # bucket into '(unmapped) other'. All
+CATEGORY_UNMAPPED_TOP <- TOP_N # cap on distinct (unmapped) nodes per
+                              # side in the category Sankey; tracks TOP_N so
+                              # "show N" stays consistent across views; the
+                              # rest bucket into '(unmapped) other'. All
                               # mapped categories from the category CSV
                               # always render regardless of this cap.
 LOT_LONG_AUG     <- "_regimen_lot_long_aug"
