@@ -495,11 +495,11 @@ build_missing_steroid_lot1 <- function(con, section = "STEROIDS",
     ex$regimen_no_steroid <- disp_regimen(ex$regimen_no_steroid)
     save_table(ex, section = section,
                title = paste0(title_prefix,
-                 "LOT1 patients missing a steroid where expected (sample)"))
+                 "Missing-steroid LOT1 examples (sample)"))
   }
   add_html_card(paste0(
     '<div style="font-family:system-ui;padding:14px;max-width:760px">',
-    '<h3>Missing-steroid LOT1 examples</h3>',
+    '<h3>Missing-steroid tables &mdash; how to read them</h3>',
     '<p style="color:#555;font-size:13px"><b>Table 1</b> - per LOT1 regimen ',
     '(steroid tokens stripped), the share of patients with a ',
     '<code>DEXA</code>/<code>PRED</code> token attached inside the induction ',
@@ -512,7 +512,7 @@ build_missing_steroid_lot1 <- function(con, section = "STEROIDS",
     'from <code>steroid_codes.csv</code> - so read this with the codelist QC. ',
     nrow(ex), ' examples (capped at ', max_examples, ').</p></div>'),
     section = section,
-    title = paste0(title_prefix, "Missing-steroid: what this shows"))
+    title = paste0(title_prefix, "Missing-steroid: notes"))
 }
 
 # Focused LOT-pair Sankey by REGIMEN (steroid-augmented).
