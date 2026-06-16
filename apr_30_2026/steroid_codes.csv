@@ -2,7 +2,7 @@ code,code_type,mapped_to,note
 # DROP STEROID CODES HERE WHEN THE LIST IS AVAILABLE.
 # Columns:
 #   code       - HCPCS (e.g. J8540) or NDC (11-digit, no dashes)
-#   code_type  - 'HCPCS' or 'NDC'
+#   code_type  - 'HCPCS', 'CPT', or 'NDC'
 #   mapped_to  - token to append to LOT_BASE_MEDS when a match is found
 #                ('DEXA', 'PRED', etc.)
 #   note       - free text (drug, dosage form, etc.)
