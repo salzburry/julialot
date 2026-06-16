@@ -6,8 +6,8 @@
 # eye/ear drops, topicals, and antibiotic-steroid combos (TobraDex,
 # Ciprodex, neomycin-polymyxin-dex, etc.) that are NOT MM-regimen steroids.
 # Counting those tags patients with a steroid they never took for MM:
-# inflates steroid prevalence (Julia Q3) AND hides the missing-steroid
-# cases (Julia Q4). This keeps oral + injectable (systemic) only.
+# inflates steroid prevalence AND hides the missing-steroid examples.
+# This keeps oral + injectable (systemic) steroids only.
 #
 # RUN in RStudio on Domino. Set `f` to your steroid_codes.csv, then:
 #   source("qc_steroid_codes.R")
