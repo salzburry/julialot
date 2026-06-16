@@ -300,7 +300,7 @@ If a required input is unreadable the corresponding filter is
 
 - `MAP_STACKED` missing -> belantamab filter skipped.
 - raw `medical`/`rx` missing -> MM-Tx-pre-LOT1 filter skipped (and steroid
-  steroid augmentation also degrades to no-op).
+  augmentation also degrades to no-op).
 - `med_diagnosis`, `medical`, or `confinement` missing -> other-cancer
   pre-LOT1 filter skipped.
 - `pregnancy.csv`, `med_diagnosis`, `medical`, or `med_procedure` missing
