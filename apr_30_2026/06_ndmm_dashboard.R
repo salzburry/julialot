@@ -1130,6 +1130,7 @@ prepare_ndmm_cohort <- function(con) {
 
   log_msg("Augmenting filtered LOT_LONG with steroid tokens")
   augment_lot_long(con, NDMM_LOT_LONG_FILT, rx_tbl, medical_tbl, n_ster)
+  REGIMEN_MODAL_MAP <<- build_modal_map(con, NDMM_LOT_LONG_FILT)
 
   log_msg("Loading categories")
   lookups <- load_categories()

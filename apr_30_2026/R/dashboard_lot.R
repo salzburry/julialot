@@ -151,6 +151,32 @@ clin_regimen <- function(x) {
   }, character(1), USE.NAMES = FALSE)
 }
 
+# Set by build_modal_map() during dashboard setup; maps a canonical
+# (alphabetical) backbone regimen -> its most-common real-world agent order.
+REGIMEN_MODAL_MAP <- character(0)
+
+# Display a regimen in the most-common real-world order: backbone agents in
+# the modal start-order (REGIMEN_MODAL_MAP), steroid tokens appended last.
+# Falls back to clinical order (clin_regimen) for any regimen with no modal
+# entry. Display only - counting + category matching still use the canonical
+# alphabetical key, so nothing double-counts.
+disp_regimen <- function(x) {
+  mm <- REGIMEN_MODAL_MAP
+  vapply(x, function(s) {
+    if (is.na(s) || !nzchar(trimws(s))) return(s)
+    toks <- strsplit(trimws(s), "[[:space:]]+")[[1]]
+    toks <- toks[nzchar(toks)]
+    if (length(toks) <= 1L) return(paste(toks, collapse = " "))
+    is_ster <- toupper(toks) %in% c("DEX","DEXA","DEXAMETHASONE","PRED","PREDNISONE")
+    back <- toks[!is_ster]; ster <- toks[is_ster]
+    if (length(back) == 0L) return(paste(toks, collapse = " "))
+    canon <- paste(sort(toupper(back)), collapse = " ")
+    disp_back <- if (length(mm) > 0L && canon %in% names(mm)) unname(mm[[canon]])
+                 else clin_regimen(paste(back, collapse = " "))
+    paste(c(disp_back, ster), collapse = " ")
+  }, character(1), USE.NAMES = FALSE)
+}
+
 save_table <- function(df, section, title) {
   if (!isTRUE(cfg$build_dashboard)) return(invisible(NULL))
   if (!has_dt || !requireNamespace("htmlwidgets", quietly = TRUE)) return(invisible(NULL))
