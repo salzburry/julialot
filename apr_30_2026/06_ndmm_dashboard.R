@@ -2,21 +2,25 @@
 # NDMM (newly-diagnosed multiple myeloma) cohort dashboard. Runs the
 # same regimen-transition / steroid / coverage views as the overall
 # regimen dashboard (05_regimen_dashboard.R), but on a 1L
-# newly-diagnosed cohort. It layers a LOT1 eligibility cutoff plus four
+# newly-diagnosed cohort. It layers a LOT1 eligibility cutoff plus six
 # IE post-filters on top of the parent ELIG_COH_FINAL:
 #
 #   0. LOT1_START_DT >= NDMM_LOT1_FROM   (default 2017-01-01; parent's
 #                                         id_start defaults to 2016-01-01)
 #   1. 12-mo CE before LOT1_START_DT     (parent CE_b is 6-mo before MM-dx)
-#   2. No belantamab in any LOT          (no parent equivalent)
-#   3. No MM oncology Tx in 12-mo
+#   2. 3-mo follow-up CE from LOT1       (strict NO-gap, death-aware; spec
+#                                         says no gaps for follow-up CE)
+#   3. No belantamab in any LOT          (no parent equivalent)
+#   4. No MM oncology Tx in 12-mo
 #      pre-LOT1 baseline                 (parent's MM_BASELINE_EVIDENCE is
 #                                         6-mo before MM-dx; re-anchored
 #                                         and re-derived from raw claims)
-#   4. No other active cancer in 12-mo
+#   5. No other active cancer in 12-mo
 #      pre-LOT1 baseline                 (parent's OTHER_MALIGN_FLAG is
 #                                         6-mo before MM-dx; re-anchored
 #                                         and re-derived from raw claims)
+#   6. No pregnancy                      (re-scanned from pregnancy.csv over
+#                                         the study period; NDMM candidates)
 #
 #   Rscript apr_30_2026/06_ndmm_dashboard.R
 #
@@ -68,6 +72,9 @@ NDMM_CONFINEMENT         <- "_ndmm_confinement"
 NDMM_OTHER_MALIG_PATIDS  <- "_ndmm_other_malig_patids"
 NDMM_FLAGS_ALL           <- "_ndmm_flags_all"   # per-PATID filter flags (for attrition)
 NDMM_PATIDS       <- "_ndmm_patids"
+NDMM_PREG_CODES          <- "_ndmm_preg_codes"
+NDMM_PREGNANCY_PATIDS    <- "_ndmm_pregnancy_patids"
+NDMM_STUDY_START         <- Sys.getenv("STUDY_START", unset = "2015-07-01")
 NDMM_PRE_LOT1_DAYS       <- 365L  # NDMM spec: 12-mo CE/baseline before 1L index date
 
 # Tumor_group labels treated as NON-exclusionary for the NDMM
@@ -499,12 +506,91 @@ build_ndmm_other_malig_pre_lot1 <- function(con, med_diag_tbl) {
 #                             per spec + carried-forward DEATH_DT (NDMM spec:
 #                             >=3-mo CE during follow-up or death, NO gaps).
 #
-#   NO_PREGNANCY            : the parent's PREGNANT_FLAG carried forward from
-#                             ELIG_COH_FINAL (study-period pregnancy, so
-#                             anchor-independent). NDMM spec exclusion.
+#   NO_PREGNANCY            : re-scanned from pregnancy.csv (dx / HCPCS / ICD
+#                             procedure / revenue codes) over the study period,
+#                             restricted to NDMM LOT1 candidates - NOT the
+#                             parent PREGNANT_FLAG. NDMM spec exclusion.
+# Readability probe used by the pregnancy gate (the scan view may not exist
+# if its source claims tables are unavailable).
+.ndmm_table_ok <- function(con, tbl) isTRUE(tryCatch(
+  nrow(db_q(con, glue("SELECT 1 FROM {tbl} LIMIT 1"))) >= 0,
+  error = function(e) FALSE))
+
+# Pregnancy exclusion (NDMM spec E3): re-scanned directly from pregnancy.csv
+# over the study period, NOT carried from the parent PREGNANT_FLAG - so it is
+# self-contained and uses the NDMM pregnancy codelist + the spec's any-time-
+# in-study-period window.
+build_ndmm_preg_codes <- function(con) {
+  src <- load_codelist_csv("pregnancy.csv", c("code_type", "code"))
+  db_exec(con, glue("
+    CREATE OR REPLACE TEMPORARY VIEW {NDMM_PREG_CODES} AS
+    SELECT upper(trim(code_type)) AS code_type,
+           upper(regexp_replace(trim(code), '[^A-Za-z0-9]', '')) AS code
+    FROM {src}
+    WHERE code IS NOT NULL AND trim(code) <> ''
+      AND code_type IS NOT NULL AND trim(code_type) <> ''
+  "))
+}
+
+# Distinct NDMM-candidate PATIDs with a pregnancy/childbirth claim (dx,
+# HCPCS / ICD procedure, or revenue code) anywhere in the study period.
+# Restricted to NDMM LOT1 candidates via the final INNER JOIN.
+build_ndmm_pregnancy_patids <- function(con, med_diag_tbl, medical_tbl, med_proc_tbl) {
+  db_exec(con, glue("
+    CREATE OR REPLACE TEMPORARY VIEW {NDMM_PREGNANCY_PATIDS} AS
+    WITH dx AS (
+      SELECT cast(PATID as string) AS PATID,
+             CASE WHEN upper(ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9DIAG' ELSE 'ICD10DIAG' END AS code_type,
+             upper(regexp_replace(DIAG, '[^A-Za-z0-9]', '')) AS code
+      FROM {med_diag_tbl}
+      WHERE DIAG IS NOT NULL
+        AND cast(FST_DT as date) BETWEEN date('{NDMM_STUDY_START}') AND date('{cfg$study_end}')
+    ),
+    hcpcs_proc AS (
+      SELECT cast(PATID as string) AS PATID,
+             'HCPCS' AS code_type,
+             upper(regexp_replace(PROC_CD, '[^A-Za-z0-9]', '')) AS code
+      FROM {medical_tbl}
+      WHERE PROC_CD IS NOT NULL
+        AND cast(FST_DT as date) BETWEEN date('{NDMM_STUDY_START}') AND date('{cfg$study_end}')
+    ),
+    icd_proc AS (
+      SELECT cast(PATID as string) AS PATID,
+             CASE WHEN upper(ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9PROC' ELSE 'ICD10PROC' END AS code_type,
+             upper(regexp_replace(PROC, '[^A-Za-z0-9]', '')) AS code
+      FROM {med_proc_tbl}
+      WHERE PROC IS NOT NULL
+        AND cast(FST_DT as date) BETWEEN date('{NDMM_STUDY_START}') AND date('{cfg$study_end}')
+    ),
+    rev AS (
+      SELECT cast(PATID as string) AS PATID,
+             'REV' AS code_type,
+             upper(trim(RVNU_CD)) AS code
+      FROM {medical_tbl}
+      WHERE RVNU_CD IS NOT NULL AND trim(RVNU_CD) <> ''
+        AND cast(FST_DT as date) BETWEEN date('{NDMM_STUDY_START}') AND date('{cfg$study_end}')
+    ),
+    events AS (
+      SELECT * FROM dx UNION ALL SELECT * FROM hcpcs_proc
+      UNION ALL SELECT * FROM icd_proc UNION ALL SELECT * FROM rev
+    ),
+    matched AS (
+      SELECT DISTINCT e.PATID
+      FROM events e
+      INNER JOIN {NDMM_PREG_CODES} p
+              ON e.code_type = p.code_type AND e.code = p.code
+    )
+    SELECT DISTINCT m.PATID
+    FROM matched m
+    INNER JOIN {NDMM_LOT1_STARTS} l1 ON m.PATID = l1.PATID
+  "))
+}
+
 build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
                            q2_ok_belantamab, q2_ok_priortx,
-                           q2_ok_othercancer) {
+                           q2_ok_othercancer, q2_ok_pregnancy = NULL) {
+  if (is.null(q2_ok_pregnancy))
+    q2_ok_pregnancy <- .ndmm_table_ok(con, NDMM_PREGNANCY_PATIDS)
   bela_expr <- if (q2_ok_belantamab) glue("
         SELECT DISTINCT cast(PATID as string) AS PATID
         FROM {map_stacked}
@@ -519,20 +605,23 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
         SELECT DISTINCT cast(PATID as string) AS PATID FROM {NDMM_OTHER_MALIG_PATIDS}
   ") else "SELECT cast(NULL as string) AS PATID WHERE 1 = 0"
 
+  pregnancy_expr <- if (q2_ok_pregnancy) glue("
+        SELECT DISTINCT cast(PATID as string) AS PATID FROM {NDMM_PREGNANCY_PATIDS}
+  ") else "SELECT cast(NULL as string) AS PATID WHERE 1 = 0"
+
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_FLAGS_ALL} AS
     WITH ec_l1 AS (
       SELECT cast(ec.PATID as string) AS PATID, l1.LOT1_START_DT,
              date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS}) AS pre_lot1_start,
              date_sub(l1.LOT1_START_DT, 1)                  AS pre_lot1_end,
-             -- Carried forward from the parent ELIG_COH_FINAL (computed there
-             -- even when the toggles are OFF). PREGNANT_FLAG is study-period so
-             -- it is a pure reuse (anchor-independent). DEATH_DT is carried so
+             -- DEATH_DT is carried forward from the parent ELIG_COH_FINAL so
              -- the 3-month follow-up CE below can be re-derived ANCHORED AT
              -- LOT1 (the NDMM index); the parent CE_3mosf is anchored at the
-             -- MM-dx index and so is NOT reused for it.
-             cast(ec.DEATH_DT as date)     AS DEATH_DT,
-             coalesce(ec.PREGNANT_FLAG, 0) AS PREGNANT_FLAG
+             -- MM-dx index and so is NOT reused for it. Pregnancy is NOT carried
+             -- from the parent flag - it is re-scanned from pregnancy.csv over
+             -- the study period (NDMM_PREGNANCY_PATIDS).
+             cast(ec.DEATH_DT as date)     AS DEATH_DT
       FROM {elig_coh_final} ec
       INNER JOIN {NDMM_LOT1_STARTS} l1
               ON cast(ec.PATID as string) = l1.PATID
@@ -564,20 +653,22 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
     ),
     bela AS ({bela_expr}),
     prior_tx AS ({prior_tx_expr}),
-    other_cancer AS ({other_cancer_expr})
+    other_cancer AS ({other_cancer_expr}),
+    pregnancy AS ({pregnancy_expr})
     SELECT ec_l1.PATID,
            ce.CE_pre_lot1_12mo,
            coalesce(fuce.CE_lot1_3mo, 0)                        AS CE_lot1_3mo_fu,
            CASE WHEN bela.PATID         IS NULL THEN 1 ELSE 0 END AS NO_BELANTAMAB,
            CASE WHEN prior_tx.PATID     IS NULL THEN 1 ELSE 0 END AS NO_PRIOR_MM_TX,
            CASE WHEN other_cancer.PATID IS NULL THEN 1 ELSE 0 END AS NO_OTHER_CANCER_PRE_LOT1,
-           CASE WHEN ec_l1.PREGNANT_FLAG = 1 THEN 0 ELSE 1 END  AS NO_PREGNANCY
+           CASE WHEN pregnancy.PATID    IS NULL THEN 1 ELSE 0 END AS NO_PREGNANCY
     FROM ec_l1
     LEFT JOIN ce           ON ec_l1.PATID = ce.PATID
     LEFT JOIN fuce         ON ec_l1.PATID = fuce.PATID
     LEFT JOIN bela         ON ec_l1.PATID = bela.PATID
     LEFT JOIN prior_tx     ON ec_l1.PATID = prior_tx.PATID
     LEFT JOIN other_cancer ON ec_l1.PATID = other_cancer.PATID
+    LEFT JOIN pregnancy    ON ec_l1.PATID = pregnancy.PATID
   "))
 
   db_exec(con, glue("
@@ -676,16 +767,17 @@ build_ndmm_overview_card <- function(counts, n_ster_codes, n_cat_rules,
     '<h3>NDMM (1L newly-diagnosed) planned cohort</h3>',
     '<p style="color:#555;font-size:13px">Regimen-transition + steroid dashboards on ',
     'The planned cohort: parent <code>ELIG_COH_FINAL</code> ',
-    '(default IE flags applied; the other-malignancy filter is (re-)applied ',
-    'by the NDMM layer below with the MM-adjacent override, not assumed ',
-    'from the parent) plus a NDMM-side LOT1 eligibility ',
+    '(for this project the parent runs through Step 6 - its other-malignancy, ',
+    'baseline-MM-dx, pregnancy and clinical-trial exclusions are OFF and are ',
+    're-applied where the spec requires by the NDMM layer below, the ',
+    'other-cancer one with the MM-adjacent override) plus a NDMM-side LOT1 eligibility ',
     'cutoff (<code>LOT_START_DT &ge; ', NDMM_LOT1_FROM, '</code>) and ',
     'six NDMM-only post-filters aligned to the spec: <b>12-mo CE before ',
     'LOT1</b>, <b>3-mo follow-up CE</b> (re-derived from the LOT1 index, ',
     'no-gap per spec, death-aware), <b>no belantamab in any LOT</b>, ',
     '<b>no MM oncology therapy in the 12-mo 1L baseline</b>, <b>no other ',
     'active cancer in the 12-mo 1L baseline</b>, and <b>no pregnancy</b> ',
-    '(carried from the parent <code>PREGNANT_FLAG</code>). CE-pre-LOT1 uses the parent&apos;s <code>gap_days = ',
+    '(re-scanned from <code>pregnancy.csv</code> over the study period). CE-pre-LOT1 uses the parent&apos;s <code>gap_days = ',
     NDMM_GAP_DAYS, '</code> allowance. Belantamab detection scans ',
     '<code>MAP_STACKED</code> for <code>MAP_MED_TYPE LIKE &apos;BEL%&apos;</code> ',
     '- narrower than the <code>lot1_studyteam_qs.R</code> inventory ',
@@ -1172,9 +1264,22 @@ prepare_ndmm_cohort <- function(con) {
     build_ndmm_other_malig_pre_lot1(con, med_diag_tbl)
   }
 
+  med_proc_tbl <- cdm_src(cfg$tbl_med_proc)
+  if (.ndmm_table_ok(con, med_diag_tbl) && .ndmm_table_ok(con, medical_tbl) &&
+      .ndmm_table_ok(con, med_proc_tbl)) {
+    log_msg("Loading pregnancy codelist -> ", NDMM_PREG_CODES)
+    build_ndmm_preg_codes(con)
+    log_msg("Scanning pregnancy claims in [", NDMM_STUDY_START, ", ",
+            cfg$study_end, "] -> ", NDMM_PREGNANCY_PATIDS)
+    build_ndmm_pregnancy_patids(con, med_diag_tbl, medical_tbl, med_proc_tbl)
+  } else {
+    log_msg("  WARN: pregnancy exclusion skipped; med_diagnosis, medical, ",
+            "or med_procedure unreadable.")
+  }
+
   log_msg("Applying NDMM filters: ELIG_COH_FINAL + 12-mo CE pre-LOT1 + ",
-          "no belantamab + no MM oncology Tx in 12-mo pre-LOT1 + ",
-          "no other-cancer in 12-mo pre-LOT1")
+          "3-mo FU CE (LOT1, no-gap) + no belantamab + no MM oncology Tx ",
+          "in 12-mo pre-LOT1 + no other-cancer in 12-mo pre-LOT1 + no pregnancy")
   build_ndmm_flags(con, elig_coh_final, map_stacked,
                  q2_ok_belantamab  = bela_ok,
                  q2_ok_priortx     = priortx_ok,
@@ -1208,6 +1313,8 @@ prepare_ndmm_cohort <- function(con) {
           " | + 12-mo CE: ", counts$ce12,
           " | + no bela: ", counts$ce12_nobela,
           " | + no MM Tx pre-LOT1: ", counts$ce12_nobela_nopriortx,
+          " | + no other-cancer: ", counts$noother,
+          " | + 3-mo FU CE: ", counts$noother_fuce,
           " | NDMM (final): ", counts$ndmm_final)
   if (counts$ndmm_final == 0)
     stop("NDMM cohort is empty - check ELIG_COH_FINAL and LOT_LONG inputs.")
