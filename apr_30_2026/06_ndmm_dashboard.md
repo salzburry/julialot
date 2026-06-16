@@ -260,9 +260,12 @@ Same connection environment as the parent pipeline. Required env vars:
 | `NDMM_LOT1_FROM`          | `2017-01-01`             | LOT1 eligible-treatment cutoff (spec: "on/after 01 Jan 2017") |
 | `STUDY_START`           | `2015-07-01`             | NDMM pregnancy-scan lower bound (pregnancy.csv claim window)  |
 
-All cohort-pipeline-equivalent env-var names match the corresponding
-`config_prompts.R` keys so a run that already exports them for the
-parent picks them up identically here. `NDMM_LOT1_FROM` is NDMM-only.
+Most cohort-pipeline-equivalent env-var names match the corresponding
+`config_prompts.R` keys, so a run that already exports them for the
+parent picks them up identically here. `STUDY_START` is the exception:
+it is currently NDMM-only (pregnancy-scan lower bound) - the parent study
+window is set in `config_prompts.R` and does not read it, so keep the two
+aligned manually if you shift the window. `NDMM_LOT1_FROM` is NDMM-only.
 
 ### Required parent work tables
 
