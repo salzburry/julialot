@@ -71,7 +71,7 @@ LOT_LONG                                          # whole cohort
   + no belantamab in any LOT                      # NDMM filter
   + no MM oncology Tx in [LOT1-365, LOT1-1]       # NDMM filter
   + no other active cancer in [LOT1-365, LOT1-1]  # NDMM filter
-  + no pregnancy                                  # NDMM filter (parent PREGNANT_FLAG)
+  + no pregnancy                                  # NDMM filter (re-scan pregnancy.csv)
   = NDMM_PATIDS
 ```
 
@@ -93,7 +93,7 @@ pipeline and its persisted tables stay untouched.
 | No MM oncology Tx in 12-mo pre-LOT1      | "Evidence of treatment with another MM oncology therapy during the 12-month 1L baseline period"                                                   | `MM_BASELINE_EVIDENCE` from `therapy_flags` = 6-mo before MM dx  | Same intent, different window and anchor: 12-mo before LOT1 vs. 6-mo before MM dx.                        |
 | No other active cancer in 12-mo pre-LOT1 | "Evidence of another active cancer ... during the 1L baseline period"                                                                             | `OTHER_MALIGN_FLAG` from parent step 22 = 6-mo before MM dx       | Same intent, different window and anchor: 12-mo before LOT1 vs. 6-mo before MM dx.                        |
 | 3-mo follow-up CE from LOT1 (no gaps)    | "CE of at least 3-months during follow-up or death with no gaps in enrollment"                                                                    | `CE_3mosf` = no-gap 90-day CE from `INDEX_DATE` (MM dx)           | Re-derived anchored at LOT1 (the 1L index) using a strict no-gap spans view + carried-forward `DEATH_DT`. |
-| No pregnancy                             | "Evidence of pregnancy ... during the study period"                                                                                               | `PREGNANT_FLAG` (computed at parent; gate off for this project)   | Carried forward from the parent flag; study-period so anchor-independent (pure reuse).                    |
+| No pregnancy                             | "Evidence of pregnancy ... during the study period"                                                                                               | `PREGNANT_FLAG` from parent step (gate off for this project)      | Re-scanned in the NDMM layer from `pregnancy.csv` (dx / proc / revenue) over the study period, restricted to NDMM LOT1 candidates. |
 
 ## How the NDMM filters are implemented
 
