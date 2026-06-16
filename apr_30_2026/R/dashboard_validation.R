@@ -360,8 +360,8 @@ build_ndmm_evidence_drilldown <- function(con, flags_tbl, lot_long_tbl,
     'no other active cancer (1 IP or 2 OP within 30d), with the MM-adjacent ',
     'override applied. <code>CE_lot1_3mo_fu</code>: strict no-gap enrollment ',
     'for 3 months of follow-up from LOT1 (death-aware). ',
-    '<code>NO_PREGNANCY</code>: no pregnancy claim (carried from the parent ',
-    'PREGNANT_FLAG).</p></div>'),
+    '<code>NO_PREGNANCY</code>: no pregnancy claim (re-scanned from ',
+    'pregnancy.csv over the study period).</p></div>'),
     section = section,
     title = paste0(title_prefix, "NDMM evidence - about"))
 

@@ -1265,17 +1265,33 @@ prepare_ndmm_cohort <- function(con) {
   }
 
   med_proc_tbl <- cdm_src(cfg$tbl_med_proc)
-  if (.ndmm_table_ok(con, med_diag_tbl) && .ndmm_table_ok(con, medical_tbl) &&
-      .ndmm_table_ok(con, med_proc_tbl)) {
-    log_msg("Loading pregnancy codelist -> ", NDMM_PREG_CODES)
-    build_ndmm_preg_codes(con)
-    log_msg("Scanning pregnancy claims in [", NDMM_STUDY_START, ", ",
-            cfg$study_end, "] -> ", NDMM_PREGNANCY_PATIDS)
-    build_ndmm_pregnancy_patids(con, med_diag_tbl, medical_tbl, med_proc_tbl)
+  # Fail-safe: a missing/malformed pregnancy.csv would otherwise hard-stop the
+  # whole dashboard (load_codelist_csv stops). Wrap the load + scan so the run
+  # degrades to a logged WARN + an overview note, like the other NDMM filters.
+  preg_ok <- .ndmm_table_ok(con, med_diag_tbl) && .ndmm_table_ok(con, medical_tbl) &&
+             .ndmm_table_ok(con, med_proc_tbl)
+  if (preg_ok) {
+    preg_ok <- tryCatch({
+      log_msg("Loading pregnancy codelist -> ", NDMM_PREG_CODES)
+      build_ndmm_preg_codes(con)
+      log_msg("Scanning pregnancy claims in [", NDMM_STUDY_START, ", ",
+              cfg$study_end, "] -> ", NDMM_PREGNANCY_PATIDS)
+      build_ndmm_pregnancy_patids(con, med_diag_tbl, medical_tbl, med_proc_tbl)
+      TRUE
+    }, error = function(e) {
+      log_msg("  WARN: pregnancy exclusion skipped (", conditionMessage(e),
+              ") - pregnancy.csv missing/malformed or scan failed.")
+      FALSE
+    })
   } else {
     log_msg("  WARN: pregnancy exclusion skipped; med_diagnosis, medical, ",
             "or med_procedure unreadable.")
   }
+  if (!preg_ok)
+    overview_notes <- c(overview_notes,
+      paste0("Pregnancy exclusion <b>skipped</b> - <code>pregnancy.csv</code> ",
+             "or a source claims table unavailable. <code>NO_PREGNANCY</code> ",
+             "passes all patients this run."))
 
   log_msg("Applying NDMM filters: ELIG_COH_FINAL + 12-mo CE pre-LOT1 + ",
           "3-mo FU CE (LOT1, no-gap) + no belantamab + no MM oncology Tx ",
@@ -1283,7 +1299,8 @@ prepare_ndmm_cohort <- function(con) {
   build_ndmm_flags(con, elig_coh_final, map_stacked,
                  q2_ok_belantamab  = bela_ok,
                  q2_ok_priortx     = priortx_ok,
-                 q2_ok_othercancer = othercancer_ok)
+                 q2_ok_othercancer = othercancer_ok,
+                 q2_ok_pregnancy   = preg_ok)
 
   log_msg("Building filtered LOT_LONG -> ", NDMM_LOT_LONG_FILT)
   build_lot_long_filtered(con, lot_long)
@@ -1353,9 +1370,10 @@ main_ndmm <- function() {
     out_name     = "ndmm_dashboard.html",
     header_title = "MM LOT &mdash; NDMM (1L newly-diagnosed) planned cohort",
     header_sub   = paste0("ELIG_COH_FINAL &bull; LOT1 &ge; ", NDMM_LOT1_FROM,
-                          " &bull; 12-mo CE pre-LOT1 &bull; no belantamab",
-                          " &bull; no MM Tx pre-LOT1 &bull; no other cancer",
-                          " pre-LOT1 &bull; ",
+                          " &bull; 12-mo CE pre-LOT1 &bull; 3-mo FU CE",
+                          " &bull; no belantamab &bull; no MM Tx pre-LOT1",
+                          " &bull; no other cancer pre-LOT1 &bull; no pregnancy",
+                          " &bull; ",
                           format(counts$ndmm_final, big.mark = ","), " patients")
   )
   log_msg("Wrote ", file.path(cfg$output_dir,
