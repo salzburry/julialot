@@ -31,7 +31,7 @@ type_n <- toupper(trimws(df$code_type))
 map_n  <- toupper(trimws(df$mapped_to))
 
 # --- format problems (silent failures in the loader) ---
-bad_type  <- !type_n %in% c("NDC", "HCPCS")          # won't match any claim field
+bad_type  <- !type_n %in% c("NDC", "HCPCS", "CPT")    # won't match any claim field
 blank_map <- !nzchar(map_n)                          # row is dropped at load
 bad_ndc   <- type_n == "NDC" & !grepl("^[0-9]{10,11}$", code_n)
 

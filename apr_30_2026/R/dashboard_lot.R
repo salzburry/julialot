@@ -127,8 +127,9 @@ save_plot <- function(p, filename, width = 10, height = 6, section = "", title =
 # The pipeline stores regimens alphabetically (sort_array) - that canonical
 # key is what counting and regimen_categories.csv matching rely on, so it
 # stays untouched. For DISPLAY, re-order the SAME tokens by drug class so a
-# regimen reads anti-CD38 -> PI -> IMiD -> alkylator -> other -> steroid,
-# matching how regimen_categories.csv is written. The remap is 1:1 (same
+# regimen reads anti-CD38 -> other mAb/bispecific/ADC -> PI -> IMiD ->
+# alkylator -> other targeted -> steroid (last), the novel-agent-first
+# convention regimen_categories.csv uses (e.g. ELOT POMA). The remap is 1:1 (same
 # token set, different order), so it never merges or splits groups.
 REGIMEN_CLASS_RANK <- c(
   DARA = 1L, ISAT = 1L,                                  # anti-CD38 mAb
@@ -797,9 +798,13 @@ function buildNav() {
 function applySearch(q) {
   q = (q || "").trim().toLowerCase();
   document.querySelectorAll(".grp").forEach(function(grp){
+    // Respect the active cohort pill (combined dashboard): groups outside
+    // the selected cohort stay hidden even when the search matches an item.
+    var ch = grp.querySelector(".grp-h span:nth-child(2)");
+    var inCohort = !curCohort || !ch || ch.textContent === curCohort;
     var any = false;
     grp.querySelectorAll(".nav-item").forEach(function(a){
-      var hit = !q || a.getAttribute("data-t").indexOf(q) !== -1;
+      var hit = inCohort && (!q || a.getAttribute("data-t").indexOf(q) !== -1);
       a.classList.toggle("hidden", !hit);
       if (hit) any = true;
     });
