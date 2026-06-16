@@ -1332,7 +1332,7 @@ prepare_ndmm_cohort <- function(con) {
           " | + no MM Tx pre-LOT1: ", counts$ce12_nobela_nopriortx,
           " | + no other-cancer: ", counts$noother,
           " | + 3-mo FU CE: ", counts$noother_fuce,
-          " | NDMM (final): ", counts$ndmm_final)
+          " | + no pregnancy (NDMM final): ", counts$ndmm_final)
   if (counts$ndmm_final == 0)
     stop("NDMM cohort is empty - check ELIG_COH_FINAL and LOT_LONG inputs.")
 
