@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 # QC + route-scrub for steroid_codes.csv (MM LOT steroid codelist).
 #
-# WHY: the steroid loader (05_regimen_dashboard.R) matches ANY NDC/HCPCS in
+# WHY: the steroid loader (05_regimen_dashboard.R) matches ANY NDC/HCPCS/CPT in
 # this file with no route filter. A broad NDC pull sweeps in dexamethasone
 # eye/ear drops, topicals, and antibiotic-steroid combos (TobraDex,
 # Ciprodex, neomycin-polymyxin-dex, etc.) that are NOT MM-regimen steroids.
@@ -49,8 +49,8 @@ nonsys <- grepl(paste(c(
 drop <- bad_type | blank_map | bad_ndc | nonsys
 
 cat("== steroid_codes QC ==\n")
-cat(sprintf("rows: %d | NDC: %d | HCPCS: %d\n",
-            nrow(df), sum(type_n == "NDC"), sum(type_n == "HCPCS")))
+cat(sprintf("rows: %d | NDC: %d | HCPCS: %d | CPT: %d\n",
+            nrow(df), sum(type_n == "NDC"), sum(type_n == "HCPCS"), sum(type_n == "CPT")))
 cat("mapped_to tokens:\n"); print(table(map_n))
 cat(sprintf("bad code_type: %d | blank mapped_to: %d | malformed NDC: %d | non-systemic/combo: %d\n",
             sum(bad_type), sum(blank_map), sum(bad_ndc), sum(nonsys)))

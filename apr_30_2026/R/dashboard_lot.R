@@ -122,7 +122,6 @@ save_plot <- function(p, filename, width = 10, height = 6, section = "", title =
   }
 }
 
-# Collect a data table for the dashboard (DT does NOT require plotly)
 # ---- Clinical-order display for regimen strings --------------------
 # The pipeline stores regimens alphabetically (sort_array) - that canonical
 # key is what counting and regimen_categories.csv matching rely on, so it
@@ -178,6 +177,7 @@ disp_regimen <- function(x) {
   }, character(1), USE.NAMES = FALSE)
 }
 
+# Collect a data table for the dashboard (DT does NOT require plotly)
 save_table <- function(df, section, title) {
   if (!isTRUE(cfg$build_dashboard)) return(invisible(NULL))
   if (!has_dt || !requireNamespace("htmlwidgets", quietly = TRUE)) return(invisible(NULL))
@@ -820,7 +820,9 @@ function visibleIds() {
   var out = [];
   document.querySelectorAll(".grp:not(.hidden) .nav-item:not(.hidden)")
     .forEach(function(a){ out.push(a.getAttribute("data-id")); });
-  return out.length ? out : FLAT.map(function(f){ return f.id; });
+  // When a cohort is selected, never fall back to the full FLAT list - that
+  // would let arrow nav jump into other cohorts on a no-results search.
+  return out.length ? out : (curCohort ? out : FLAT.map(function(f){ return f.id; }));
 }
 function step(delta) {
   var ids = visibleIds();
@@ -878,6 +880,10 @@ function setCohort(name, jump) {
     g.classList.toggle("hidden", s !== name);
     if (s === name) g.classList.remove("collapsed");
   });
+  // Re-apply any active search against the newly-selected cohort so nav
+  // items keep a correct shown/hidden state instead of one from the prior cohort.
+  var sbx = document.getElementById("navSearch");
+  if (sbx) applySearch(sbx.value);
   if (jump) {
     var first = document.querySelector(".grp:not(.hidden) .nav-item:not(.hidden)");
     if (first) openView(first.getAttribute("data-id"));
