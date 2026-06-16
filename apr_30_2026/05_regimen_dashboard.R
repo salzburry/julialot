@@ -384,7 +384,7 @@ build_missing_steroid_lot1 <- function(con, section = "STEROIDS",
     SELECT base_regimen,
            count(*)                                      AS n_patients,
            cast(sum(has_steroid) as int)                 AS n_with_steroid,
-           round(100.0 * sum(has_steroid) / count(*), 1) AS pct_with_steroid
+           round(100.0 * sum(has_steroid) / count(*), 2) AS pct_with_steroid
     FROM b WHERE base_regimen <> ''
     GROUP BY base_regimen
     ORDER BY n_patients DESC
@@ -404,7 +404,7 @@ build_missing_steroid_lot1 <- function(con, section = "STEROIDS",
            b.base_regimen                 AS regimen_no_steroid,
            cast(b.LOT_START_DT as string) AS lot1_start_dt,
            cast(r.n_reg as int)           AS regimen_n_patients,
-           round(r.pct_reg, 1)            AS regimen_pct_with_steroid
+           round(r.pct_reg, 2)            AS regimen_pct_with_steroid
     FROM b JOIN r ON r.base_regimen = b.base_regimen
     WHERE b.has_steroid = 0
       AND r.n_reg   >= {min_regimen_n}

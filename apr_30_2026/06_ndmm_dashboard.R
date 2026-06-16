@@ -978,52 +978,45 @@ build_ndmm_other_cancer_qc <- function(con, section = "OVERVIEW",
   qc$pct_of_drop <- if (is.finite(n_total) && n_total > 0)
     round(100 * as.numeric(qc$n_patients_hit) / n_total, 1) else NA_real_
 
+  # Show only genuinely-excluded tumor groups; the 5 MM-adjacent groups
+  # retained for NDMM (is_override=1) are not "drops" and are omitted here.
+  qc_excl <- qc[as.integer(qc$is_override) == 0, , drop = FALSE]
   out <- data.frame(
-    tumor_group        = qc$tumor_group,
-    is_override        = as.integer(qc$is_override),
-    n_patients_hit     = as.integer(qc$n_patients_hit),
-    n_exclusive_hit    = as.integer(qc$n_exclusive_hit),
-    n_via_ip           = as.integer(qc$n_via_ip),
-    n_via_op_pair      = as.integer(qc$n_via_op),
-    pct_of_preoverride = qc$pct_of_drop,
+    tumor_group        = qc_excl$tumor_group,
+    n_patients_hit     = as.integer(qc_excl$n_patients_hit),
+    n_exclusive_hit    = as.integer(qc_excl$n_exclusive_hit),
+    n_via_ip           = as.integer(qc_excl$n_via_ip),
+    n_via_op_pair      = as.integer(qc_excl$n_via_op),
+    pct_of_preoverride = qc_excl$pct_of_drop,
     stringsAsFactors   = FALSE
   )
   save_table(out, section = section,
              title = paste0(title_prefix,
-                            "Other-cancer drop by tumor_group (is_override=1 = now non-exclusionary)"))
+                            "Other-cancer drop by tumor_group (excluded only; 5 MM-adjacent retained groups omitted)"))
 
-  if (has_ggplot2 && nrow(qc) > 0) {
-    top <- head(qc[order(-as.numeric(qc$n_patients_hit)), ], 15)
+  if (has_ggplot2 && nrow(qc_excl) > 0) {
+    top <- head(qc_excl[order(-as.numeric(qc_excl$n_patients_hit)), ], 15)
     top$tumor_group <- factor(top$tumor_group,
                               levels = rev(top$tumor_group))
-    top$grp_kind <- ifelse(top$is_override == 1,
-                           "Now non-exclusionary (MM-adjacent)",
-                           "Still exclusionary (genuine other cancer)")
     p <- ggplot(top,
                 aes(x = tumor_group, y = as.numeric(n_patients_hit),
-                    fill = grp_kind,
                     text = paste0("Tumor group: ", tumor_group,
                                   "\nPatients flagged: ",
-                                  format(n_patients_hit, big.mark = ","),
-                                  "\n", grp_kind))) +
-      geom_col(width = 0.7) +
+                                  format(n_patients_hit, big.mark = ",")))) +
+      geom_col(width = 0.7, fill = "#C73E1D") +
       geom_text(aes(label = format(as.numeric(n_patients_hit),
                                    big.mark = ",")),
                 hjust = -0.1, size = 3.3, color = "grey20") +
-      scale_fill_manual(values = c(
-        "Now non-exclusionary (MM-adjacent)"         = "#9aa0a6",
-        "Still exclusionary (genuine other cancer)"  = "#C73E1D")) +
       scale_y_continuous(labels = scales::comma_format(),
                          expand = expansion(mult = c(0, 0.2))) +
       coord_flip() +
-      labs(title = "NDMM other-cancer filter: drops by tumor_group",
-           subtitle = paste0("Top ", nrow(top), " of ", nrow(qc),
-                             " groups; bar = n_patients_hit (overlap counted). ",
-                             "Grey groups are now non-exclusionary for NDMM ",
-                             "(MM-adjacent); red still exclude."),
-           x = NULL, y = "Distinct patients flagged", fill = NULL) +
-      theme_lot() +
-      theme(legend.position = "top")
+      labs(title = "NDMM other-cancer filter: tumor groups still excluded",
+           subtitle = paste0("Top ", nrow(top), " of ", nrow(qc_excl),
+                             " excluded groups; bar = n_patients_hit (overlap ",
+                             "counted). The 5 MM-adjacent groups retained for ",
+                             "NDMM are not shown."),
+           x = NULL, y = "Distinct patients flagged") +
+      theme_lot()
     save_plot(p, "ndmm_other_cancer_qc.png", width = 10, height = 6,
               section = section,
               title = paste0(title_prefix,

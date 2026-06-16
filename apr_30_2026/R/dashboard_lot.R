@@ -147,6 +147,14 @@ save_table <- function(df, section, title) {
                       options = list(pageLength = 15, scrollX = TRUE,
                                      dom = "ftip"),
                       class = "display compact stripe hover"))
+    # Columns with a fractional part (rates, percentages) render to 2 dp;
+    # whole-number columns (counts, years) are left as integers.
+    frac_cols <- Filter(function(cn) {
+      v <- df[[cn]]
+      is.numeric(v) && any(is.finite(v) & v != round(v))
+    }, names(df))
+    if (length(frac_cols) > 0)
+      dt <- DT::formatRound(dt, columns = frac_cols, digits = 2)
     add_to_dashboard(dt, section, title, type = "table")
   }, error = function(e) {
     log_msg("  WARNING: Could not create table for dashboard: ", e$message)
@@ -502,9 +510,18 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html,body { height: 100%; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     background: var(--bg); color: var(--text); display: flex;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
+  /* DT tables default to a cramped, mismatched stack; force the app font. */
+  table.dataTable, .dataTables_wrapper, .dataTables_wrapper input,
+  .dataTables_wrapper select, .dataTables_filter, .dataTables_info,
+  .dt-buttons .dt-button { font-family: inherit !important; }
+  table.dataTable { font-size: 13px; }
+  table.dataTable thead th { font-weight: 600; letter-spacing: .01em; }
+  table.dataTable td, table.dataTable th { padding: 6px 10px; }
   /* ---- Sidebar (GSK orange + white) ---- */
   .sidebar {
     width: 280px; min-width: 280px; height: 100vh; overflow-y: auto;
