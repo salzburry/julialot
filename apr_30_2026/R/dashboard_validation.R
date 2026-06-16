@@ -311,7 +311,7 @@ build_outlier_checks <- function(con, lot_long_tbl,
 # 3 deterministic NDMM-included + 3 excluded patients with their flag
 # pass/fail values. The flag view (NDMM_FLAGS_ALL) is built by 06.
 .ndmm_pick <- function(con, flags_tbl, include, n_each) {
-  all_pass <- "CE_pre_lot1_12mo = 1 AND NO_BELANTAMAB = 1 AND NO_PRIOR_MM_TX = 1 AND NO_OTHER_CANCER_PRE_LOT1 = 1"
+  all_pass <- "CE_pre_lot1_12mo = 1 AND CE_lot1_3mo_fu = 1 AND NO_BELANTAMAB = 1 AND NO_PRIOR_MM_TX = 1 AND NO_OTHER_CANCER_PRE_LOT1 = 1 AND NO_PREGNANCY = 1"
   pred <- if (isTRUE(include)) all_pass else paste0("NOT (", all_pass, ")")
   rows <- tryCatch(db_q(con, glue("
     SELECT PATID FROM {flags_tbl}
@@ -327,15 +327,15 @@ build_outlier_checks <- function(con, lot_long_tbl,
   ids <- paste0("'", gsub("'", "''", patids), "'", collapse = ",")
   df <- tryCatch(db_q(con, glue("
     SELECT cast(PATID as string) AS PATID,
-           CE_pre_lot1_12mo, NO_BELANTAMAB,
-           NO_PRIOR_MM_TX, NO_OTHER_CANCER_PRE_LOT1
+           CE_pre_lot1_12mo, CE_lot1_3mo_fu, NO_BELANTAMAB,
+           NO_PRIOR_MM_TX, NO_OTHER_CANCER_PRE_LOT1, NO_PREGNANCY
     FROM {flags_tbl}
     WHERE cast(PATID as string) IN ({ids})
     ORDER BY PATID
   ")), error = function(e) NULL)
   if (is.null(df) || nrow(df) == 0) return(NULL)
-  for (col in c("CE_pre_lot1_12mo","NO_BELANTAMAB",
-                "NO_PRIOR_MM_TX","NO_OTHER_CANCER_PRE_LOT1"))
+  for (col in c("CE_pre_lot1_12mo","CE_lot1_3mo_fu","NO_BELANTAMAB",
+                "NO_PRIOR_MM_TX","NO_OTHER_CANCER_PRE_LOT1","NO_PREGNANCY"))
     df[[col]] <- ifelse(as.numeric(df[[col]]) == 1, "PASS", "FAIL")
   df$PATID <- .mask_pid(df$PATID)
   df
@@ -358,7 +358,10 @@ build_ndmm_evidence_drilldown <- function(con, flags_tbl, lot_long_tbl,
     'belantamab in any LOT. <code>NO_PRIOR_MM_TX</code>: no MM oncology ',
     'therapy in the pre-LOT1 baseline. <code>NO_OTHER_CANCER_PRE_LOT1</code>: ',
     'no other active cancer (1 IP or 2 OP within 30d), with the MM-adjacent ',
-    'override applied.</p></div>'),
+    'override applied. <code>CE_lot1_3mo_fu</code>: strict no-gap enrollment ',
+    'for 3 months of follow-up from LOT1 (death-aware). ',
+    '<code>NO_PREGNANCY</code>: no pregnancy claim (carried from the parent ',
+    'PREGNANT_FLAG).</p></div>'),
     section = section,
     title = paste0(title_prefix, "NDMM evidence - about"))
 

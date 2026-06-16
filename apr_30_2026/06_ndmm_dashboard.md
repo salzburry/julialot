@@ -64,12 +64,14 @@ The NDMM cohort is layered on top of the parent pipeline:
 
 ```
 LOT_LONG                                          # whole cohort
-  + in ELIG_COH_FINAL                             # parent IE flags
+  + in ELIG_COH_FINAL                             # parent IE (Step 6 for this project)
   + LOT1_START_DT >= NDMM_LOT1_FROM (default 2017-01-01)  # NDMM cutoff
   + 12-mo CE before LOT1_START_DT                 # NDMM filter
+  + 3-mo follow-up CE from LOT1 (strict no-gap)   # NDMM filter
   + no belantamab in any LOT                      # NDMM filter
   + no MM oncology Tx in [LOT1-365, LOT1-1]       # NDMM filter
   + no other active cancer in [LOT1-365, LOT1-1]  # NDMM filter
+  + no pregnancy                                  # NDMM filter (parent PREGNANT_FLAG)
   = NDMM_PATIDS
 ```
 
@@ -90,12 +92,14 @@ pipeline and its persisted tables stay untouched.
 | No belantamab in any LOT                 | "Eligible 1L treatment: Received an eligible treatment for MM (other than belantamab)" + "Received belantamab (i.e., an ADC) in any LOT"          | Not present                                                      | Net-new exclusion.                                                                                        |
 | No MM oncology Tx in 12-mo pre-LOT1      | "Evidence of treatment with another MM oncology therapy during the 12-month 1L baseline period"                                                   | `MM_BASELINE_EVIDENCE` from `therapy_flags` = 6-mo before MM dx  | Same intent, different window and anchor: 12-mo before LOT1 vs. 6-mo before MM dx.                        |
 | No other active cancer in 12-mo pre-LOT1 | "Evidence of another active cancer ... during the 1L baseline period"                                                                             | `OTHER_MALIGN_FLAG` from parent step 22 = 6-mo before MM dx       | Same intent, different window and anchor: 12-mo before LOT1 vs. 6-mo before MM dx.                        |
+| 3-mo follow-up CE from LOT1 (no gaps)    | "CE of at least 3-months during follow-up or death with no gaps in enrollment"                                                                    | `CE_3mosf` = no-gap 90-day CE from `INDEX_DATE` (MM dx)           | Re-derived anchored at LOT1 (the 1L index) using a strict no-gap spans view + carried-forward `DEATH_DT`. |
+| No pregnancy                             | "Evidence of pregnancy ... during the study period"                                                                                               | `PREGNANT_FLAG` (computed at parent; gate off for this project)   | Carried forward from the parent flag; study-period so anchor-independent (pure reuse).                    |
 
 ## How the NDMM filters are implemented
 
-All four filters are computed as flags in a single per-PATID temp
+All six filters are computed as flags in a single per-PATID temp
 view (`_ndmm_flags_all`) so the attrition card can count each step
-independently. Final NDMM membership requires all four flags set
+independently. Final NDMM membership requires all six flags set
 (the LOT1 cutoff is enforced upstream in `NDMM_LOT1_STARTS` and so
 appears in the funnel as the `LOT1 >= NDMM_LOT1_FROM` row rather than
 as a flag column).

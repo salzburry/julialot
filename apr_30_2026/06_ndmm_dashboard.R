@@ -2,21 +2,25 @@
 # NDMM (newly-diagnosed multiple myeloma) cohort dashboard. Runs the
 # same regimen-transition / steroid / coverage views as the overall
 # regimen dashboard (05_regimen_dashboard.R), but on a 1L
-# newly-diagnosed cohort. It layers a LOT1 eligibility cutoff plus four
+# newly-diagnosed cohort. It layers a LOT1 eligibility cutoff plus six
 # IE post-filters on top of the parent ELIG_COH_FINAL:
 #
 #   0. LOT1_START_DT >= NDMM_LOT1_FROM   (default 2017-01-01; parent's
 #                                         id_start defaults to 2016-01-01)
 #   1. 12-mo CE before LOT1_START_DT     (parent CE_b is 6-mo before MM-dx)
-#   2. No belantamab in any LOT          (no parent equivalent)
-#   3. No MM oncology Tx in 12-mo
+#   2. 3-mo follow-up CE from LOT1       (strict NO-gap, death-aware; spec
+#                                         says no gaps for follow-up CE)
+#   3. No belantamab in any LOT          (no parent equivalent)
+#   4. No MM oncology Tx in 12-mo
 #      pre-LOT1 baseline                 (parent's MM_BASELINE_EVIDENCE is
 #                                         6-mo before MM-dx; re-anchored
 #                                         and re-derived from raw claims)
-#   4. No other active cancer in 12-mo
+#   5. No other active cancer in 12-mo
 #      pre-LOT1 baseline                 (parent's OTHER_MALIGN_FLAG is
 #                                         6-mo before MM-dx; re-anchored
 #                                         and re-derived from raw claims)
+#   6. No pregnancy                      (carried from parent PREGNANT_FLAG;
+#                                         study-period so anchor-independent)
 #
 #   Rscript apr_30_2026/06_ndmm_dashboard.R
 #
@@ -676,9 +680,10 @@ build_ndmm_overview_card <- function(counts, n_ster_codes, n_cat_rules,
     '<h3>NDMM (1L newly-diagnosed) planned cohort</h3>',
     '<p style="color:#555;font-size:13px">Regimen-transition + steroid dashboards on ',
     'The planned cohort: parent <code>ELIG_COH_FINAL</code> ',
-    '(default IE flags applied; the other-malignancy filter is (re-)applied ',
-    'by the NDMM layer below with the MM-adjacent override, not assumed ',
-    'from the parent) plus a NDMM-side LOT1 eligibility ',
+    '(for this project the parent runs through Step 6 - its other-malignancy, ',
+    'baseline-MM-dx, pregnancy and clinical-trial exclusions are OFF and are ',
+    're-applied where the spec requires by the NDMM layer below, the ',
+    'other-cancer one with the MM-adjacent override) plus a NDMM-side LOT1 eligibility ',
     'cutoff (<code>LOT_START_DT &ge; ', NDMM_LOT1_FROM, '</code>) and ',
     'six NDMM-only post-filters aligned to the spec: <b>12-mo CE before ',
     'LOT1</b>, <b>3-mo follow-up CE</b> (re-derived from the LOT1 index, ',
@@ -1173,8 +1178,8 @@ prepare_ndmm_cohort <- function(con) {
   }
 
   log_msg("Applying NDMM filters: ELIG_COH_FINAL + 12-mo CE pre-LOT1 + ",
-          "no belantamab + no MM oncology Tx in 12-mo pre-LOT1 + ",
-          "no other-cancer in 12-mo pre-LOT1")
+          "3-mo FU CE (LOT1, no-gap) + no belantamab + no MM oncology Tx ",
+          "in 12-mo pre-LOT1 + no other-cancer in 12-mo pre-LOT1 + no pregnancy")
   build_ndmm_flags(con, elig_coh_final, map_stacked,
                  q2_ok_belantamab  = bela_ok,
                  q2_ok_priortx     = priortx_ok,
@@ -1208,6 +1213,8 @@ prepare_ndmm_cohort <- function(con) {
           " | + 12-mo CE: ", counts$ce12,
           " | + no bela: ", counts$ce12_nobela,
           " | + no MM Tx pre-LOT1: ", counts$ce12_nobela_nopriortx,
+          " | + no other-cancer: ", counts$noother,
+          " | + 3-mo FU CE: ", counts$noother_fuce,
           " | NDMM (final): ", counts$ndmm_final)
   if (counts$ndmm_final == 0)
     stop("NDMM cohort is empty - check ELIG_COH_FINAL and LOT_LONG inputs.")
