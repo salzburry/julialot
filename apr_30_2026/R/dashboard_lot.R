@@ -123,6 +123,34 @@ save_plot <- function(p, filename, width = 10, height = 6, section = "", title =
 }
 
 # Collect a data table for the dashboard (DT does NOT require plotly)
+# ---- Clinical-order display for regimen strings --------------------
+# The pipeline stores regimens alphabetically (sort_array) - that canonical
+# key is what counting and regimen_categories.csv matching rely on, so it
+# stays untouched. For DISPLAY, re-order the SAME tokens by drug class so a
+# regimen reads anti-CD38 -> PI -> IMiD -> alkylator -> other -> steroid,
+# matching how regimen_categories.csv is written. The remap is 1:1 (same
+# token set, different order), so it never merges or splits groups.
+REGIMEN_CLASS_RANK <- c(
+  DARA = 1L, ISAT = 1L,                                  # anti-CD38 mAb
+  ELOT = 2L, BELA = 2L, TECL = 2L, ELRA = 2L, TALQ = 2L, # other mAb/bispecific/ADC
+  BORT = 3L, CARF = 3L, IXAZ = 3L,                       # proteasome inhibitor
+  THAL = 4L, LENA = 4L, POMA = 4L,                       # IMiD
+  CYCL = 5L, MELP = 5L,                                  # alkylator
+  SELI = 6L,                                             # other targeted
+  DEX = 9L, DEXA = 9L, DEXAMETHASONE = 9L,
+  PRED = 9L, PREDNISONE = 9L)                            # steroid - last
+clin_regimen <- function(x) {
+  vapply(x, function(s) {
+    if (is.na(s) || !nzchar(trimws(s))) return(s)
+    toks <- strsplit(trimws(s), "[[:space:]]+")[[1]]
+    toks <- toks[nzchar(toks)]
+    if (length(toks) <= 1L) return(paste(toks, collapse = " "))
+    rk <- REGIMEN_CLASS_RANK[toupper(toks)]
+    rk[is.na(rk)] <- 7L              # unknown agents: between other & steroid
+    paste(toks[order(rk, toupper(toks))], collapse = " ")
+  }, character(1), USE.NAMES = FALSE)
+}
+
 save_table <- function(df, section, title) {
   if (!isTRUE(cfg$build_dashboard)) return(invisible(NULL))
   if (!has_dt || !requireNamespace("htmlwidgets", quietly = TRUE)) return(invisible(NULL))

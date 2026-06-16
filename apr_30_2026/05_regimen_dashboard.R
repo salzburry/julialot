@@ -390,6 +390,7 @@ build_missing_steroid_lot1 <- function(con, section = "STEROIDS",
     ORDER BY n_patients DESC
   "))
   if (nrow(per) == 0) return(invisible())
+  per$base_regimen <- clin_regimen(per$base_regimen)
   save_table(per, section = section,
              title = paste0(title_prefix, "LOT1 steroid attachment by regimen"))
 
@@ -412,10 +413,12 @@ build_missing_steroid_lot1 <- function(con, section = "STEROIDS",
     ORDER BY r.pct_reg DESC, r.n_reg DESC, b.PATID
     LIMIT {max_examples}
   "))
-  if (nrow(ex) > 0)
+  if (nrow(ex) > 0) {
+    ex$regimen_no_steroid <- clin_regimen(ex$regimen_no_steroid)
     save_table(ex, section = section,
                title = paste0(title_prefix,
                  "LOT1 patients missing a steroid where expected (sample)"))
+  }
   add_html_card(paste0(
     '<div style="font-family:system-ui;padding:14px;max-width:760px">',
     '<h3>Missing-steroid LOT1 examples</h3>',
@@ -478,6 +481,10 @@ build_focused_pair <- function(con, n_from, n_to, section = NULL,
                      FUN = function(x) length(unique(x)))
   names(links)[3] <- "n_patients"
   links <- links[order(-links$n_patients), , drop = FALSE]
+  # Clinical-order the displayed regimen labels. Counting above is on the
+  # canonical alphabetical key; this remap is 1:1, so no merge/split.
+  links$reg_from <- clin_regimen(links$reg_from)
+  links$tgt_node <- clin_regimen(links$tgt_node)
 
   n_sankey <- length(unique(sub$PATID))
   make_sankey(paste0("L", n_from, ": ", links$reg_from),
@@ -533,7 +540,7 @@ build_category_pair <- function(con, n_from, n_to, lookups,
   # bucket since it reports a per-LOT match-rate, not a Sankey node.
   cat_of <- function(r, lk) {
     k <- norm_key_no_steroid(r)
-    if (k %in% names(lk)) unname(lk[k]) else paste0("(unmapped) ", r)
+    if (k %in% names(lk)) unname(lk[k]) else paste0("(unmapped) ", clin_regimen(r))
   }
   pairs$cat_from <- vapply(pairs$reg_from, cat_of, character(1), lk = lk_from)
   pairs$cat_to   <- vapply(pairs$reg_to,   cat_of, character(1), lk = lk_to)
