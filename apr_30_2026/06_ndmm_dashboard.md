@@ -258,6 +258,7 @@ Same connection environment as the parent pipeline. Required env vars:
 | `FINAL_TABLE_NAME`      | `ELIG_COH_FINAL`         | Parent IE-flagged cohort table name                      |
 | `TBL_CONFINEMENT`       | `confinement`            | NDMM IP/OP classification for other-cancer filter          |
 | `NDMM_LOT1_FROM`          | `2017-01-01`             | LOT1 eligible-treatment cutoff (spec: "on/after 01 Jan 2017") |
+| `STUDY_START`           | `2015-07-01`             | NDMM pregnancy-scan lower bound (pregnancy.csv claim window)  |
 
 All cohort-pipeline-equivalent env-var names match the corresponding
 `config_prompts.R` keys so a run that already exports them for the
@@ -300,7 +301,7 @@ If a required input is unreadable the corresponding filter is
 
 - `MAP_STACKED` missing -> belantamab filter skipped.
 - raw `medical`/`rx` missing -> MM-Tx-pre-LOT1 filter skipped (and steroid
-  steroid augmentation also degrades to no-op).
+  augmentation also degrades to no-op).
 - `med_diagnosis`, `medical`, or `confinement` missing -> other-cancer
   pre-LOT1 filter skipped.
 - `pregnancy.csv`, `med_diagnosis`, `medical`, or `med_procedure` missing
