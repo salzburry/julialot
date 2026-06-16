@@ -95,6 +95,7 @@ collect_cohort_views <- function(con, cohort_label, lookups, lot_long_tbl,
                                  include_debug = FALSE,
                                  ndmm_flags_tbl = NULL) {
   build_steroid_prevalence(con, section = cohort_label, title_prefix = "Steroids: ")
+  build_missing_steroid_lot1(con, section = cohort_label, title_prefix = "Steroids: ")
   for (n in 1:4)
     build_focused_pair(con, n, n + 1L, section = cohort_label,
                        title_prefix = "Transitions: ")
