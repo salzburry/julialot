@@ -547,6 +547,122 @@ build_missing_steroid_lot1 <- function(con, section = "STEROIDS",
     title = paste0(title_prefix, "Missing-steroid: notes"))
 }
 
+# ---- Payer split: LOT by Medicare vs Commercial (study-team ask) -------
+# "Can we look at line of therapy without Medicare?" Optum has no Medicare
+# boolean; member_enrollment.BUS carries the line of business (MCR=Medicare,
+# COM=Commercial). Each patient's payer AT INDEX = the BUS of the enrollment
+# span with the latest ELIGEFF on/before their LOT1 start ("closest prior to
+# index"); the 12-mo pre-index CE requirement guarantees such a span exists.
+# We then split the cohort's LOT by payer so the non-Medicare (Commercial)
+# slice is visible next to Medicare. member_enrollment is read via cdm_src
+# (resolves the quarterly t_member_enrollment_* table). Fail-safe: if BUS is
+# unreadable the section degrades to a note, not an error. Commercial N is
+# small (most MM patients are Medicare) - read the rates with that in mind.
+build_payer_lot_qc <- function(con, section = "OVERVIEW", title_prefix = "",
+                               top_n = 20L) {
+  enr <- tryCatch(cdm_src("member_enrollment"), error = function(e) NULL)
+  ok  <- !is.null(enr) && isTRUE(tryCatch({
+    db_q(con, glue("SELECT BUS FROM {enr} LIMIT 1")); TRUE
+  }, error = function(e) FALSE))
+  if (!ok) {
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:12px;max-width:760px">',
+      '<h3>Payer split unavailable</h3><p style="color:#555;font-size:13px">',
+      'Could not read <code>member_enrollment.BUS</code> (the Optum Medicare / ',
+      'Commercial line-of-business field), so the Medicare-vs-Commercial LOT ',
+      'split was skipped. The rest of this cohort is unaffected.</p></div>'),
+      section = section, title = paste0(title_prefix, "Payer split (unavailable)"))
+    return(invisible())
+  }
+
+  # Payer-at-index lookup, built once and read by the three split tables.
+  db_exec(con, glue("
+    CREATE OR REPLACE TEMPORARY VIEW _payer_at_index AS
+    WITH idx AS (
+      SELECT cast(PATID as string) AS PATID, cast(LOT_START_DT as date) AS index_dt
+      FROM {LOT_LONG_AUG}
+      WHERE LOT_NUM = 1 AND LOT_START_DT IS NOT NULL
+    ),
+    span AS (
+      SELECT i.PATID,
+             upper(trim(cast(e.BUS as string))) AS bus,
+             row_number() OVER (PARTITION BY i.PATID
+                                ORDER BY cast(e.ELIGEFF as date) DESC,
+                                         cast(e.ELIGEND as date) DESC) AS rn
+      FROM idx i
+      JOIN {enr} e
+        ON cast(e.PATID as string) = i.PATID
+       AND cast(e.ELIGEFF as date) <= i.index_dt
+    )
+    SELECT PATID,
+           CASE WHEN bus = 'MCR' THEN 'Medicare'
+                WHEN bus = 'COM' THEN 'Commercial'
+                WHEN bus IS NULL OR bus = '' THEN 'Unknown'
+                ELSE concat('Other (', bus, ')') END AS payer
+    FROM span WHERE rn = 1
+  "))
+
+  # (1) Headline split --------------------------------------------------
+  hdr <- db_q(con, "
+    SELECT payer, count(DISTINCT PATID) AS n_patients
+    FROM _payer_at_index GROUP BY payer ORDER BY n_patients DESC")
+  if (nrow(hdr) == 0) return(invisible())
+  total <- sum(hdr$n_patients)
+  hdr$pct_of_cohort <- round(100 * hdr$n_patients / total, 1)
+  add_html_card(paste0(
+    '<div style="font-family:system-ui;padding:10px;max-width:840px">',
+    '<h3 style="margin:0 0 6px">LOT by payer (Medicare vs Commercial)</h3>',
+    '<p style="color:#555;font-size:13px;margin:0 0 6px">Payer = Optum ',
+    '<code>member_enrollment.BUS</code> on the enrollment span with the latest ',
+    'start date on/before the LOT1 index (<code>MCR</code> = Medicare, ',
+    '<code>COM</code> = Commercial). The <b>Commercial</b> rows are the ',
+    '&ldquo;without Medicare&rdquo; view. Commercial N is small here, so read ',
+    'its rates as directional.</p></div>'),
+    section = section, title = paste0(title_prefix, "What this section shows"))
+  save_table(hdr, section = section,
+             title = paste0(title_prefix, "Cohort by payer at index"))
+
+  n_mcr <- sum(hdr$n_patients[hdr$payer == "Medicare"])
+  n_com <- sum(hdr$n_patients[hdr$payer == "Commercial"])
+
+  # (2) LOT1 regimen mix by payer (SQL-side pivot) ----------------------
+  reg <- db_q(con, glue("
+    WITH l1 AS (
+      SELECT cast(PATID as string) AS PATID, LOT_BASE_MEDS_AUG AS regimen
+      FROM {LOT_LONG_AUG}
+      WHERE LOT_NUM = 1 AND LOT_BASE_MEDS_AUG IS NOT NULL
+        AND trim(LOT_BASE_MEDS_AUG) <> ''
+    )
+    SELECT l1.regimen,
+           cast(sum(CASE WHEN p.payer = 'Medicare'   THEN 1 ELSE 0 END) as int) AS n_medicare,
+           cast(sum(CASE WHEN p.payer = 'Commercial' THEN 1 ELSE 0 END) as int) AS n_commercial,
+           count(*) AS n_total
+    FROM l1 JOIN _payer_at_index p ON p.PATID = l1.PATID
+    GROUP BY l1.regimen
+    ORDER BY n_total DESC
+    LIMIT {top_n}"))
+  if (nrow(reg) > 0) {
+    reg$regimen <- disp_regimen(reg$regimen)
+    reg$pct_medicare   <- if (n_mcr > 0) round(100 * reg$n_medicare   / n_mcr, 1) else NA_real_
+    reg$pct_commercial <- if (n_com > 0) round(100 * reg$n_commercial / n_com, 1) else NA_real_
+    save_table(reg, section = section,
+               title = paste0(title_prefix, "LOT1 regimen mix by payer (top ", top_n, ")"))
+  }
+
+  # (3) Line progression by payer --------------------------------------
+  prog <- db_q(con, glue("
+    SELECT p.payer, cast(l.LOT_NUM as int) AS lot_num,
+           count(DISTINCT cast(l.PATID as string)) AS n_patients
+    FROM {LOT_LONG_AUG} l JOIN _payer_at_index p ON p.PATID = cast(l.PATID as string)
+    GROUP BY p.payer, l.LOT_NUM
+    ORDER BY lot_num, p.payer"))
+  if (nrow(prog) > 0)
+    save_table(prog, section = section,
+               title = paste0(title_prefix, "Patients reaching each LOT, by payer"))
+
+  invisible()
+}
+
 # Focused LOT-pair Sankey by REGIMEN (steroid-augmented).
 # INNER JOIN drops non-progressors.
 build_focused_pair <- function(con, n_from, n_to, section = NULL,

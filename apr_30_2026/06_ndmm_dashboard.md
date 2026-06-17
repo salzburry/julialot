@@ -374,6 +374,13 @@ category coverage QC) but every section is computed on the NDMM
 cohort. The cohort and the dashboard heading both read as
 "NDMM planned cohort".
 
+A **Payer** group (shown for both cohorts) splits the cohort by payer at
+the LOT1 index - Medicare vs Commercial, taken from Optum
+`member_enrollment.BUS` (`MCR`/`COM`) on the enrollment span with the latest
+start on/before LOT1 - with a headline count, LOT1 regimen mix, and
+line-progression by payer. The Commercial rows are the "line of therapy
+without Medicare" view. If `BUS` is unreadable the group degrades to a note.
+
 ## Reuse policy
 
 `06_ndmm_dashboard.R` calls `source("../05_regimen_dashboard.R")` with two `options()`

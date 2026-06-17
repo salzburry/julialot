@@ -119,6 +119,8 @@ collect_cohort_views <- function(con, cohort_label, lookups, lot_long_tbl,
   build_validation_views(con, lot_long_tbl, section = cohort_label,
                          title_prefix = "Validation: ",
                          ndmm_flags_tbl = ndmm_flags_tbl)
+  log_msg("[", cohort_label, "] views 6b/8: payer split (Medicare vs Commercial)")
+  build_payer_lot_qc(con, section = cohort_label, title_prefix = "Payer: ")
 
   # LOT1-5 detail (FUNNEL, START_TYPE, END_REASON, LENGTH, REGIMENS,
   # PROGRESSION, GAPS, TRANSITIONS, SANKEY, MEDCOUNT, MTX, TREND,
