@@ -359,12 +359,14 @@ parent's `S16`). Two operational notes:
   view - the numbers are unchanged, just recomputed on each read.
 - **Concurrent runs:** the names are fixed, not run-scoped, so two dashboard
   jobs sharing one work schema would clobber each other's scratch tables -
-  `NDMM_FLAGS_ALL`, `REGIMEN_LOT_LONG_AUG`, and `NDMM_LOT_LONG_FILT` alike.
-  Give parallel runs separate `PROJECT_WORK_SCHEMA` values (the same caveat
-  applies to the parent's fixed-name work tables such as `MAP_STACKED`).
+  `NDMM_FLAGS_ALL`, `REGIMEN_LOT_LONG_AUG`, `NDMM_LOT_LONG_FILT`, and
+  `STEROID_DEXA_LOT` alike. Give parallel runs separate `PROJECT_WORK_SCHEMA`
+  values (the same caveat applies to the parent's fixed-name work tables such
+  as `MAP_STACKED`).
 
-These three are the performance scratch tables the dashboard writes (the
-second via the shared `05` augmentation it sources). One other write exists:
+These four are the performance scratch tables the dashboard writes (the
+`REGIMEN_LOT_LONG_AUG` / `STEROID_DEXA_LOT` ones via the shared `05` logic it
+sources). One other write exists:
 the validation / run-comparison helper maintains
 `<work_schema>.lot_dashboard_run_summary` (`CREATE OR REPLACE TABLE`, capped
 at the last 20 runs per cohort) for run-over-run drift - that one accumulates
