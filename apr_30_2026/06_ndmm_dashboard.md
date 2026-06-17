@@ -335,7 +335,10 @@ it - `NDMM_FLAGS_ALL` and `NDMM_LOT_LONG_FILT` on the NDMM pass only,
   appended, built by the shared regimen logic in `05_regimen_dashboard.R`
   (which `06`/`07` source) and read ~7x per cohort by the steroid and
   regimen-transition builders. Written once per cohort pass (Overall, then
-  NDMM); watch for the `STEP S_regimen_materialize_lot_long_aug` log line.
+  NDMM) - but only when steroid codes are loaded; with none, the augmentation
+  is a cheap passthrough projection and stays an in-place temp view (not
+  materialized). Watch for the `STEP S_regimen_materialize_lot_long_aug` log
+  line.
 - `<work_schema>.NDMM_LOT_LONG_FILT` - LOT_LONG restricted to the NDMM
   cohort, read ~20x by the NDMM augmentation, modal map, KPIs, gallery,
   validation and the LOT1-5 detail collector. NDMM pass only; watch for the
@@ -348,13 +351,18 @@ parent's `S16`). Two operational notes:
 - **Fail-safe:** if the work schema is not writable the materialization is
   skipped with a `WARN` and the run continues on the slower in-place temp
   view - the numbers are unchanged, just recomputed on each read.
-- **Concurrent runs:** the name is fixed, not run-scoped, so two dashboard
-  jobs sharing one work schema would clobber each other's `NDMM_FLAGS_ALL`.
+- **Concurrent runs:** the names are fixed, not run-scoped, so two dashboard
+  jobs sharing one work schema would clobber each other's scratch tables -
+  `NDMM_FLAGS_ALL`, `REGIMEN_LOT_LONG_AUG`, and `NDMM_LOT_LONG_FILT` alike.
   Give parallel runs separate `PROJECT_WORK_SCHEMA` values (the same caveat
   applies to the parent's fixed-name work tables such as `MAP_STACKED`).
 
-These are the only tables the NDMM dashboard writes (the second comes from
-the shared `05` augmentation it sources); every table listed above is
+These three are the performance scratch tables the dashboard writes (the
+second via the shared `05` augmentation it sources). One other write exists:
+the validation / run-comparison helper maintains
+`<work_schema>.lot_dashboard_run_summary` (`CREATE OR REPLACE TABLE`, capped
+at the last 20 runs per cohort) for run-over-run drift - that one accumulates
+history rather than being pure scratch. Every input table listed earlier is
 read-only.
 
 ## Output
