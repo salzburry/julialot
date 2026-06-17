@@ -98,9 +98,10 @@ collect_cohort_views <- function(con, cohort_label, lookups, lot_long_tbl,
   # or stalled one used to look like the run simply stopped after the cohort's
   # attrition figure. Each line names the view group about to be built, so the
   # last line printed before a stall pinpoints the culprit (for both cohorts).
-  log_msg("[", cohort_label, "] views 1/8: steroid prevalence + missing-steroid LOT1")
+  log_msg("[", cohort_label, "] views 1/8: steroid prevalence + missing-steroid LOT1 + DEXA-vs-LENA timing")
   build_steroid_prevalence(con, section = cohort_label, title_prefix = "Steroids: ")
   build_missing_steroid_lot1(con, section = cohort_label, title_prefix = "Steroids: ")
+  build_steroid_timing_qc(con, lot_long_tbl, section = cohort_label, title_prefix = "Steroids: ")
   log_msg("[", cohort_label, "] views 2/8: focused regimen-pair transitions")
   for (n in 1:4)
     build_focused_pair(con, n, n + 1L, section = cohort_label,

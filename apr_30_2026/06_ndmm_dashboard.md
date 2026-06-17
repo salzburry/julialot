@@ -317,12 +317,13 @@ apply.
 
 ### Work table written
 
-To avoid re-running heavy scans on every read, the script materializes three
+To avoid re-running heavy scans on every read, the script materializes four
 heavy views to work-schema tables and repoints the views at them (mirrors the
 parent's `S16` materialize-and-repoint in `02_lot1.R`; `CACHE TABLE` is not
 available on SQL warehouses). Each is rebuilt once per cohort pass that uses
 it - `NDMM_FLAGS_ALL` and `NDMM_LOT_LONG_FILT` on the NDMM pass only,
-`REGIMEN_LOT_LONG_AUG` on each of the Overall and NDMM passes:
+`REGIMEN_LOT_LONG_AUG` and `STEROID_DEXA_LOT` on each of the Overall and NDMM
+passes:
 
 - `<work_schema>.NDMM_FLAGS_ALL` - one row per NDMM LOT1 candidate with the
   six gate flags, consumed by the attrition counts, `NDMM_PATIDS`, the
@@ -343,6 +344,11 @@ it - `NDMM_FLAGS_ALL` and `NDMM_LOT_LONG_FILT` on the NDMM pass only,
   cohort, read ~20x by the NDMM augmentation, modal map, KPIs, gallery,
   validation and the LOT1-5 detail collector. NDMM pass only; watch for the
   `STEP S_ndmm_materialize_lot_long_filt` log line.
+- `<work_schema>.STEROID_DEXA_LOT` - first DEXA claim per LOT (re-scanned from
+  `medical`/`rx` for the steroid-timing QC, which needs DEXA dates that the
+  LOT_LONG_AUG augmentation collapses away). Materialized once because the
+  DEXA scan hits the giant claims tables and every timing output reads it.
+  Watch for the `STEP S_steroid_materialize_dexa_lot` log line.
 
 The write is unconditional (it is a performance materialization, not a
 final output, so it does not consult `PERSIST_TO_SCHEMA` - the same as the
@@ -380,6 +386,12 @@ the LOT1 index - Medicare vs Commercial, taken from Optum
 start on/before LOT1 - with a headline count, LOT1 regimen mix, and
 line-progression by payer. The Commercial rows are the "line of therapy
 without Medicare" view. If `BUS` is unreadable the group degrades to a note.
+
+The **Steroids** group also carries a DEXA-vs-LENA timing QC (both cohorts):
+among LOTs with both a `LENA` agent and an in-window `DEXA` claim, it reports
+before/same-day/after counts (LOT1 and all-lines), a gap-day distribution,
+DEXA-before-LENA examples, and DEXA attached to a LOT with no IMiD/PI/anti-CD38
+backbone - i.e. edge cases where the steroid is not behaving as expected.
 
 ## Reuse policy
 

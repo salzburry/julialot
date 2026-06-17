@@ -663,6 +663,184 @@ build_payer_lot_qc <- function(con, section = "OVERVIEW", title_prefix = "",
   invisible()
 }
 
+# ---- Steroid timing / sanity: edge cases where DEXA misbehaves ---------
+# Study-team ask: surface patients where steroids are not behaving as
+# expected - chiefly DEXA starting BEFORE LENA (clinically you expect dex
+# on/after the IMiD). DEXA claim DATES are not exposed anywhere (the steroid
+# augmentation collapses them into LOT_BASE_MEDS_AUG via collect_set), so we
+# re-scan medical + rx for DEXA codes (STEROID_VIEW, mapped_to='DEXA') and
+# materialize first-DEXA-per-LOT ONCE - it is read by every output below, and
+# re-scanning the giant claims tables each time would be very slow. LENA
+# starts come from MAP_STACKED. Both are attributed to a LOT by its window
+# [LOT_START_DT, LOT_BASE_END_DT] (365d fallback), the same window
+# build_modal_map uses. Fail-safe: any unreadable source -> a note, not an
+# error. Scratch table: <work_schema>.STEROID_DEXA_LOT (CREATE OR REPLACE).
+build_steroid_timing_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
+                                    title_prefix = "", max_examples = 200L) {
+  med <- cdm_src(cfg$tbl_medical); rxt <- cdm_src(cfg$tbl_rx)
+  map_tbl <- wrk("MAP_STACKED")
+  probe <- function(tb) isTRUE(tryCatch({
+    db_q(con, glue("SELECT 1 FROM {tb} LIMIT 1")); TRUE
+  }, error = function(e) FALSE))
+  if (!all(probe(STEROID_VIEW), probe(map_tbl), probe(med), probe(rxt))) {
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:12px;max-width:760px">',
+      '<h3>Steroid timing unavailable</h3><p style="color:#555;font-size:13px">',
+      'Could not read one of <code>STEROID_VIEW</code> / <code>MAP_STACKED</code> ',
+      '/ <code>medical</code> / <code>rx</code>, so the DEXA-vs-LENA timing ',
+      'section was skipped. The rest of this cohort is unaffected.</p></div>'),
+      section = section, title = paste0(title_prefix, "Steroid timing (unavailable)"))
+    return(invisible())
+  }
+
+  lots_sql <- glue("
+    lots AS (
+      SELECT cast(PATID as string) AS PATID, LOT_NUM,
+             cast(LOT_START_DT as date) AS lot_start,
+             coalesce(cast(LOT_BASE_END_DT as date),
+                      date_add(cast(LOT_START_DT as date), 365)) AS lot_end,
+             LOT_BASE_MEDS
+      FROM {lot_long_tbl} WHERE LOT_START_DT IS NOT NULL
+    ),
+    lot_pats AS (SELECT DISTINCT PATID FROM lots),
+    dexa_raw AS (
+      SELECT cast(m.PATID as string) AS PATID, cast(m.FST_DT as date) AS dt
+      FROM {med} m JOIN {STEROID_VIEW} sc ON sc.mapped_to = 'DEXA' AND (
+            (sc.code_type IN ('HCPCS','CPT') AND sc.code = upper(regexp_replace(coalesce(cast(m.PROC_CD as string),''),'[^A-Za-z0-9]','')))
+         OR (sc.code_type = 'HCPCS' AND sc.code = upper(regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''),'[^A-Za-z0-9]','')))
+         OR (sc.code_type = 'NDC' AND lpad(regexp_replace(coalesce(cast(m.NDC as string),''),'[^0-9]',''),11,'0') = lpad(regexp_replace(sc.code,'[^0-9]',''),11,'0')) )
+      WHERE m.FST_DT IS NOT NULL
+        AND EXISTS (SELECT 1 FROM lot_pats lp WHERE lp.PATID = cast(m.PATID as string))
+      UNION ALL
+      SELECT cast(r.PATID as string), cast(r.FILL_DT as date)
+      FROM {rxt} r JOIN {STEROID_VIEW} sc ON sc.mapped_to = 'DEXA' AND sc.code_type = 'NDC'
+        AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''),'[^0-9]',''),11,'0') = lpad(regexp_replace(sc.code,'[^0-9]',''),11,'0')
+      WHERE r.FILL_DT IS NOT NULL
+        AND EXISTS (SELECT 1 FROM lot_pats lp WHERE lp.PATID = cast(r.PATID as string))
+    )")
+  dexa_lot_select <- glue("
+    WITH {lots_sql}
+    SELECT l.PATID, l.LOT_NUM, l.lot_start, l.lot_end, l.LOT_BASE_MEDS,
+           min(d.dt) AS dexa_first
+    FROM lots l JOIN dexa_raw d
+      ON d.PATID = l.PATID AND d.dt BETWEEN l.lot_start AND l.lot_end
+    GROUP BY l.PATID, l.LOT_NUM, l.lot_start, l.lot_end, l.LOT_BASE_MEDS")
+
+  built <- tryCatch({
+    run_step(con, "S_steroid_materialize_dexa_lot", glue("
+      CREATE OR REPLACE TABLE {wrk('STEROID_DEXA_LOT')} AS {dexa_lot_select}
+    "), qc = glue("SELECT count(*) AS n_rows FROM {wrk('STEROID_DEXA_LOT')}"))
+    db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW _dexa_lot AS SELECT * FROM {wrk('STEROID_DEXA_LOT')}"))
+    TRUE
+  }, error = function(e) {
+    log_msg("WARN: could not materialize STEROID_DEXA_LOT (", conditionMessage(e),
+            "); using in-place temp view (slower).")
+    isTRUE(tryCatch({
+      db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW _dexa_lot AS {dexa_lot_select}")); TRUE
+    }, error = function(e2) FALSE))
+  })
+  if (!isTRUE(built)) return(invisible())
+
+  db_exec(con, glue("
+    CREATE OR REPLACE TEMPORARY VIEW _lena_lot AS
+    WITH lots AS (
+      SELECT cast(PATID as string) AS PATID, LOT_NUM,
+             cast(LOT_START_DT as date) AS lot_start,
+             coalesce(cast(LOT_BASE_END_DT as date),
+                      date_add(cast(LOT_START_DT as date), 365)) AS lot_end
+      FROM {lot_long_tbl} WHERE LOT_START_DT IS NOT NULL
+    )
+    SELECT l.PATID, l.LOT_NUM, min(cast(mp.MAP_START_DT as date)) AS lena_start
+    FROM lots l JOIN {map_tbl} mp
+      ON cast(mp.PATID as string) = l.PATID AND mp.MAP_MED_TYPE = 'LENA'
+     AND cast(mp.MAP_START_DT as date) BETWEEN l.lot_start AND l.lot_end
+    GROUP BY l.PATID, l.LOT_NUM
+  "))
+  db_exec(con, "
+    CREATE OR REPLACE TEMPORARY VIEW _dexa_lena AS
+    SELECT d.PATID, d.LOT_NUM, ll.lena_start, d.dexa_first,
+           datediff(d.dexa_first, ll.lena_start) AS gap_days
+    FROM _dexa_lot d JOIN _lena_lot ll ON d.PATID = ll.PATID AND d.LOT_NUM = ll.LOT_NUM")
+
+  scoped <- "(SELECT 'All lines' AS scope, gap_days FROM _dexa_lena
+             UNION ALL SELECT 'LOT1 only', gap_days FROM _dexa_lena WHERE LOT_NUM = 1)"
+
+  # (1) before / same-day / after summary
+  summ <- db_q(con, glue("
+    SELECT scope,
+           cast(sum(CASE WHEN gap_days < 0 THEN 1 ELSE 0 END) as int) AS n_dexa_before_lena,
+           cast(sum(CASE WHEN gap_days = 0 THEN 1 ELSE 0 END) as int) AS n_same_day,
+           cast(sum(CASE WHEN gap_days > 0 THEN 1 ELSE 0 END) as int) AS n_dexa_after_lena,
+           count(*) AS n_lena_plus_dexa
+    FROM {scoped} z GROUP BY scope ORDER BY scope DESC"))
+  if (nrow(summ) == 0) {
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:12px;max-width:760px">',
+      '<h3>DEXA vs LENA timing</h3><p style="color:#555;font-size:13px">No LOTs ',
+      'with both a LENA agent and an in-window DEXA claim were found in this ',
+      'cohort.</p></div>'),
+      section = section, title = paste0(title_prefix, "DEXA vs LENA timing"))
+    return(invisible())
+  }
+  summ$pct_dexa_before <- round(100 * summ$n_dexa_before_lena / summ$n_lena_plus_dexa, 1)
+  add_html_card(paste0(
+    '<div style="font-family:system-ui;padding:10px;max-width:860px">',
+    '<h3 style="margin:0 0 6px">Steroid timing: DEXA vs LENA</h3>',
+    '<p style="color:#555;font-size:13px;margin:0 0 6px">Among LOTs with both a ',
+    '<code>LENA</code> agent (MAP_STACKED start) and a <code>DEXA</code> claim ',
+    '(re-scanned from <code>steroid_codes.csv</code>) inside the LOT window ',
+    '[LOT_START, LOT_BASE_END], how the first DEXA date compares to the first ',
+    'LENA start. Clinically you expect DEXA on/after LENA, so ',
+    '<b>DEXA-before-LENA</b> is the edge case. Gap days &lt; 0 = DEXA earlier.',
+    '</p></div>'),
+    section = section, title = paste0(title_prefix, "What this section shows"))
+  save_table(summ, section = section,
+             title = paste0(title_prefix, "DEXA vs LENA: before / same / after"))
+
+  # (2) gap-day buckets
+  buckets <- db_q(con, glue("
+    SELECT scope, bucket, count(*) AS n_lots FROM (
+      SELECT scope,
+             CASE WHEN gap_days < -30 THEN '1 | < -30d  DEXA well before LENA'
+                  WHEN gap_days <   0 THEN '2 | -30..-1d  DEXA before LENA'
+                  WHEN gap_days =   0 THEN '3 | 0d  same day'
+                  WHEN gap_days <= 30 THEN '4 | 1..30d  DEXA after LENA'
+                  ELSE                     '5 | > 30d  DEXA well after LENA' END AS bucket
+      FROM {scoped} z
+    ) zz GROUP BY scope, bucket ORDER BY scope DESC, bucket"))
+  if (nrow(buckets) > 0)
+    save_table(buckets, section = section,
+               title = paste0(title_prefix, "DEXA-LENA gap distribution"))
+
+  # (3) DEXA-before-LENA examples
+  ex <- db_q(con, glue("
+    SELECT PATID, cast(LOT_NUM as int) AS lot_num,
+           cast(lena_start as string) AS lena_start,
+           cast(dexa_first as string) AS dexa_first,
+           cast(gap_days as int)      AS dexa_minus_lena_days
+    FROM _dexa_lena WHERE gap_days < 0
+    ORDER BY gap_days, PATID LIMIT {max_examples}"))
+  if (nrow(ex) > 0)
+    save_table(ex, section = section,
+               title = paste0(title_prefix, "DEXA-before-LENA examples (sample)"))
+
+  # (4) DEXA with no eligible backbone (IMiD / PI / anti-CD38)
+  nobb <- db_q(con, glue("
+    SELECT PATID, cast(LOT_NUM as int) AS lot_num, LOT_BASE_MEDS AS regimen,
+           cast(dexa_first as string) AS dexa_first
+    FROM _dexa_lot
+    WHERE LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
+      AND NOT arrays_overlap(split(LOT_BASE_MEDS, ' '),
+                array('LENA','POMA','THAL','BORT','CARF','IXAZ','DARA','ISAT'))
+    ORDER BY PATID, lot_num LIMIT {max_examples}"))
+  if (nrow(nobb) > 0) {
+    nobb$regimen <- disp_regimen(nobb$regimen)
+    save_table(nobb, section = section,
+               title = paste0(title_prefix, "DEXA with no IMiD/PI/anti-CD38 backbone (sample)"))
+  }
+  invisible()
+}
+
 # Focused LOT-pair Sankey by REGIMEN (steroid-augmented).
 # INNER JOIN drops non-progressors.
 build_focused_pair <- function(con, n_from, n_to, section = NULL,
