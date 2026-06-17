@@ -675,10 +675,14 @@ build_payer_lot_qc <- function(con, section = "OVERVIEW", title_prefix = "",
 }
 
 # ---- Steroid timing / sanity: edge cases where DEXA misbehaves ---------
-# Study-team ask: surface patients where steroids are not behaving as
-# expected - chiefly DEXA starting BEFORE LENA (clinically you expect dex
-# on/after the IMiD). DEXA claim DATES are not exposed anywhere (the steroid
-# augmentation collapses them into LOT_BASE_MEDS_AUG via collect_set), so we
+# Study-team ask: in the DEXA LENA doublet, does DEXA ever start BEFORE LENA?
+# The DEXA-vs-LENA timing is SCOPED to the DEXA LENA regimen
+# (LOT_BASE_MEDS = 'LENA' - lenalidomide the only agent, plus dex), because
+# LENA then defines the line start so DEXA-before-LENA is a real anomaly
+# (~0 expected). The broad cross-regimen view was dropped: it mostly caught
+# triplets where a third agent started the line and LENA was added later.
+# DEXA claim DATES are not exposed anywhere (the steroid augmentation
+# collapses them into LOT_BASE_MEDS_AUG via collect_set), so we
 # re-scan medical + rx for DEXA codes (STEROID_VIEW, mapped_to='DEXA') and
 # materialize first-DEXA-per-LOT ONCE - it is read by every output below, and
 # re-scanning the giant claims tables each time would be very slow. LENA
@@ -771,7 +775,8 @@ build_steroid_timing_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
     CREATE OR REPLACE TEMPORARY VIEW _dexa_lena AS
     SELECT d.PATID, d.LOT_NUM, ll.lena_start, d.dexa_first,
            datediff(d.dexa_first, ll.lena_start) AS gap_days
-    FROM _dexa_lot d JOIN _lena_lot ll ON d.PATID = ll.PATID AND d.LOT_NUM = ll.LOT_NUM")
+    FROM _dexa_lot d JOIN _lena_lot ll ON d.PATID = ll.PATID AND d.LOT_NUM = ll.LOT_NUM
+    WHERE upper(trim(d.LOT_BASE_MEDS)) = 'LENA'")
 
   scoped <- "(SELECT 'All lines' AS scope, gap_days FROM _dexa_lena
              UNION ALL SELECT 'LOT1 only', gap_days FROM _dexa_lena WHERE LOT_NUM = 1)"
@@ -787,26 +792,29 @@ build_steroid_timing_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
   if (nrow(summ) == 0) {
     add_html_card(paste0(
       '<div style="font-family:system-ui;padding:12px;max-width:760px">',
-      '<h3>DEXA vs LENA timing</h3><p style="color:#555;font-size:13px">No LOTs ',
-      'with both a LENA agent and an in-window DEXA claim were found in this ',
-      'cohort.</p></div>'),
-      section = section, title = paste0(title_prefix, "DEXA vs LENA timing"))
+      '<h3>DEXA LENA timing</h3><p style="color:#555;font-size:13px">No LOTs ',
+      'with the DEXA LENA regimen (LENA the only agent + an in-window DEXA ',
+      'claim) were found in this cohort.</p></div>'),
+      section = section, title = paste0(title_prefix, "DEXA LENA timing"))
     return(invisible())
   }
   summ$pct_dexa_before <- round(100 * summ$n_dexa_before_lena / summ$n_lena_plus_dexa, 1)
   add_html_card(paste0(
     '<div style="font-family:system-ui;padding:10px;max-width:860px">',
-    '<h3 style="margin:0 0 6px">Steroid timing: DEXA vs LENA</h3>',
-    '<p style="color:#555;font-size:13px;margin:0 0 6px">Among LOTs with both a ',
-    '<code>LENA</code> agent (MAP_STACKED start) and a <code>DEXA</code> claim ',
-    '(re-scanned from <code>steroid_codes.csv</code>) inside the LOT window ',
-    '[LOT_START, LOT_BASE_END], how the first DEXA date compares to the first ',
-    'LENA start. Clinically you expect DEXA on/after LENA, so ',
-    '<b>DEXA-before-LENA</b> is the edge case. Gap days &lt; 0 = DEXA earlier.',
+    '<h3 style="margin:0 0 6px">Steroid timing: DEXA vs LENA (DEXA LENA regimen)</h3>',
+    '<p style="color:#555;font-size:13px;margin:0 0 6px">Scoped to the ',
+    '<b>DEXA LENA</b> doublet (<code>LOT_BASE_MEDS = LENA</code> - lenalidomide ',
+    'the only agent, plus dex): first <code>DEXA</code> claim (re-scanned from ',
+    '<code>steroid_codes.csv</code>) vs first <code>LENA</code> start ',
+    '(MAP_STACKED), within the LOT window. In this doublet LENA <i>defines</i> ',
+    'the line start, so <b>DEXA-before-LENA</b> (gap &lt; 0) would be a genuine ',
+    'anomaly - expect ~0. Shown for LOT1 and all lines. (Cross-regimen ',
+    'DEXA-before-LENA is mostly triplets where another agent started the line, ',
+    'so it is excluded here.)',
     '</p></div>'),
     section = section, title = paste0(title_prefix, "What this section shows"))
   save_table(summ, section = section,
-             title = paste0(title_prefix, "DEXA vs LENA: before / same / after"))
+             title = paste0(title_prefix, "DEXA LENA: DEXA vs LENA (before / same / after)"))
 
   # (2) gap-day buckets
   buckets <- db_q(con, glue("
@@ -821,7 +829,7 @@ build_steroid_timing_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
     ) zz GROUP BY scope, bucket ORDER BY scope DESC, bucket"))
   if (nrow(buckets) > 0)
     save_table(buckets, section = section,
-               title = paste0(title_prefix, "DEXA-LENA gap distribution"))
+               title = paste0(title_prefix, "DEXA LENA: gap distribution"))
 
   # (3) DEXA-before-LENA examples
   ex <- db_q(con, glue("
@@ -833,7 +841,7 @@ build_steroid_timing_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
     ORDER BY gap_days, PATID LIMIT {max_examples}"))
   if (nrow(ex) > 0)
     save_table(ex, section = section,
-               title = paste0(title_prefix, "DEXA-before-LENA examples (sample)"))
+               title = paste0(title_prefix, "DEXA LENA: DEXA-before-LENA examples (sample)"))
 
   # (4) DEXA with no eligible backbone (IMiD / PI / anti-CD38)
   nobb <- db_q(con, glue("
