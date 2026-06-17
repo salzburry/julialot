@@ -61,6 +61,12 @@ source(file.path(.script_dir, "R", "codelists_lot.R"))
 # NDMM-only constants. Distinct view names so this script can run
 # concurrently with 05_regimen_dashboard.R without clobbering its temp views.
 NDMM_LOT_LONG_FILT       <- "_ndmm_lot_long"
+# Persisted (work-schema) twin of NDMM_LOT_LONG_FILT. The temp view joins
+# LOT_LONG to the NDMM cohort and is read ~20x downstream (KPIs, gallery,
+# validation, modal map, and ~13x inside the LOT1-5 detail); materializing it
+# once and repointing the view collapses those rejoins (same pattern as
+# NDMM_FLAGS_ALL / LOT_LONG_AUG).
+NDMM_LOT_LONG_FILT_TBL   <- "NDMM_LOT_LONG_FILT"
 NDMM_ENROLL_SPANS        <- "_ndmm_enroll_spans"
 NDMM_ENROLL_SPANS_STRICT <- "_ndmm_enroll_spans_strict"  # no-gap spans for the 3-mo FU CE
 NDMM_LOT1_STARTS         <- "_ndmm_lot1_starts"
@@ -755,6 +761,31 @@ build_lot_long_filtered <- function(con, lot_long) {
     INNER JOIN {NDMM_PATIDS} a
             ON cast(l.PATID as string) = a.PATID
   "))
+
+  # Materialize once, then repoint the view at the work-schema table. This
+  # filtered LOT_LONG is read ~20x downstream (NDMM augmentation, modal map,
+  # KPIs, gallery, validation, run-comparison, and ~13x inside the LOT1-5
+  # detail collector); as a bare TEMPORARY VIEW each read re-runs the LOT_LONG
+  # join. Materialize-and-repoint (same pattern as NDMM_FLAGS_ALL / LOT_LONG_AUG
+  # and the parent S16; CACHE TABLE is unavailable on SQL warehouses) so every
+  # downstream read hits the table. Fail-safe: a non-writable work schema
+  # WARN-degrades to the in-place view (correct, just slower). No change to
+  # which patients/LOT rows are included - identical rows, materialized once.
+  tryCatch({
+    run_step(con, "S_ndmm_materialize_lot_long_filt", glue("
+      CREATE OR REPLACE TABLE {wrk(NDMM_LOT_LONG_FILT_TBL)} AS
+      SELECT * FROM {NDMM_LOT_LONG_FILT}
+    "), qc = glue("SELECT count(*) AS n_rows FROM {wrk(NDMM_LOT_LONG_FILT_TBL)}"))
+    db_exec(con, glue("
+      CREATE OR REPLACE TEMPORARY VIEW {NDMM_LOT_LONG_FILT} AS
+      SELECT * FROM {wrk(NDMM_LOT_LONG_FILT_TBL)}
+    "))
+  }, error = function(e) {
+    log_msg("WARN: could not materialize ", wrk(NDMM_LOT_LONG_FILT_TBL), " (",
+            conditionMessage(e), "); keeping the in-place temp view - NDMM ",
+            "LOT-detail views stay correct but run slower (the join is ",
+            "recomputed on each read).")
+  })
 }
 
 # Counts at each filter step for the attrition card. Steps after

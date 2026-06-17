@@ -317,7 +317,7 @@ apply.
 
 ### Work table written
 
-To avoid re-running heavy scans on every read, the script materializes two
+To avoid re-running heavy scans on every read, the script materializes three
 views **once** each to work-schema tables and repoints the views at them
 (mirrors the parent's `S16` materialize-and-repoint in `02_lot1.R`;
 `CACHE TABLE` is not available on SQL warehouses):
@@ -334,6 +334,10 @@ views **once** each to work-schema tables and repoints the views at them
   (which `06`/`07` source) and read ~7x per cohort by the steroid and
   regimen-transition builders. Written once per cohort pass (Overall, then
   NDMM); watch for the `STEP S_regimen_materialize_lot_long_aug` log line.
+- `<work_schema>.NDMM_LOT_LONG_FILT` - LOT_LONG restricted to the NDMM
+  cohort, read ~20x by the NDMM augmentation, modal map, KPIs, gallery,
+  validation and the LOT1-5 detail collector. NDMM pass only; watch for the
+  `STEP S_ndmm_materialize_lot_long_filt` log line.
 
 The write is unconditional (it is a performance materialization, not a
 final output, so it does not consult `PERSIST_TO_SCHEMA` - the same as the
