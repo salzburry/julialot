@@ -94,18 +94,28 @@ resection_recent_items <- function(from_idx, cohort_label,
 collect_cohort_views <- function(con, cohort_label, lookups, lot_long_tbl,
                                  include_debug = FALSE,
                                  ndmm_flags_tbl = NULL) {
+  # Per-step progress logging: these builders are otherwise silent, so a slow
+  # or stalled one used to look like the run simply stopped after the cohort's
+  # attrition figure. Each line names the view group about to be built, so the
+  # last line printed before a stall pinpoints the culprit (for both cohorts).
+  log_msg("[", cohort_label, "] views 1/8: steroid prevalence + missing-steroid LOT1")
   build_steroid_prevalence(con, section = cohort_label, title_prefix = "Steroids: ")
   build_missing_steroid_lot1(con, section = cohort_label, title_prefix = "Steroids: ")
+  log_msg("[", cohort_label, "] views 2/8: focused regimen-pair transitions")
   for (n in 1:4)
     build_focused_pair(con, n, n + 1L, section = cohort_label,
                        title_prefix = "Transitions: ")
+  log_msg("[", cohort_label, "] views 3/8: category-pair transitions")
   for (n in 1:4)
     build_category_pair(con, n, n + 1L, lookups, section = cohort_label,
                         title_prefix = "Transitions: ")
+  log_msg("[", cohort_label, "] views 4/8: category coverage QC")
   build_category_coverage(con, lookups, section = cohort_label,
                           title_prefix = "QC: ")
+  log_msg("[", cohort_label, "] views 5/8: patient gallery")
   build_patient_gallery(con, lot_long_tbl, section = cohort_label,
                         title_prefix = "Examples: ")
+  log_msg("[", cohort_label, "] views 6/8: validation views")
   build_validation_views(con, lot_long_tbl, section = cohort_label,
                          title_prefix = "Validation: ",
                          ndmm_flags_tbl = ndmm_flags_tbl)
@@ -115,9 +125,11 @@ collect_cohort_views <- function(con, cohort_label, lookups, lot_long_tbl,
   # MED JOURNEY, +DEBUG/DRILLDOWN if include_debug). The collector
   # tags items with its original section names; we re-section them
   # under cohort_label and fold the original name into the title.
+  log_msg("[", cohort_label, "] views 7/8: LOT1-5 detail (funnel/sankey/transitions/...)")
   before <- length(dashboard_items)
   collect_lot_long_views(con, lot_long_tbl, include_debug = include_debug)
   resection_recent_items(before, cohort_label)
+  log_msg("[", cohort_label, "] views 8/8: done (", length(dashboard_items), " items)")
 }
 
 # ---- Exploratory analysis scaffold ----------------------------------

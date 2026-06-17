@@ -58,6 +58,11 @@ CATEGORY_UNMAPPED_TOP <- TOP_N # cap on distinct (unmapped) nodes per
                               # mapped categories from the category CSV
                               # always render regardless of this cap.
 LOT_LONG_AUG     <- "_regimen_lot_long_aug"
+# Persisted (work-schema) twin of LOT_LONG_AUG. The temp view joins LOT_LONG to
+# steroid claims across medical (HCPCS/bill/NDC) + rx and is read ~7x per cohort
+# by the regimen / steroid / transition builders; materializing it once and
+# repointing the view collapses those rescans (same pattern as NDMM_FLAGS_ALL).
+LOT_LONG_AUG_TBL <- "REGIMEN_LOT_LONG_AUG"
 STEROID_VIEW     <- "_regimen_steroid"
 CAT_CSV_PATH     <- file.path(.script_dir, "regimen_categories.csv")
 STER_CSV_PATH    <- file.path(.script_dir, "steroid_codes.csv")
@@ -302,6 +307,32 @@ augment_lot_long <- function(con, lot_long, rx_tbl, medical_tbl, n_codes) {
     LEFT JOIN lot_tokens lt ON lt.PATID = l.PATID
                            AND lt.LOT_NUM = l.LOT_NUM
   "))
+
+  # Materialize the steroid-augmented view once, then repoint it at the
+  # physical work-schema table. LOT_LONG_AUG joins LOT_LONG to steroid claims
+  # across medical (HCPCS/bill/NDC) + rx, and the regimen / steroid / transition
+  # builders read it ~7x per cohort; as a bare TEMPORARY VIEW each read re-runs
+  # that whole multi-source join. Materialize-and-repoint (same pattern as
+  # NDMM_FLAGS_ALL and the parent's S16; CACHE TABLE is unavailable on SQL
+  # warehouses) so every downstream read hits the table. Fail-safe: if the work
+  # schema is not writable, WARN and keep the in-place view (correct, just
+  # slower). The n_codes == 0 passthrough above is a cheap projection and is
+  # intentionally left un-materialized.
+  tryCatch({
+    run_step(con, "S_regimen_materialize_lot_long_aug", glue("
+      CREATE OR REPLACE TABLE {wrk(LOT_LONG_AUG_TBL)} AS
+      SELECT * FROM {LOT_LONG_AUG}
+    "), qc = glue("SELECT count(*) AS n_rows FROM {wrk(LOT_LONG_AUG_TBL)}"))
+    db_exec(con, glue("
+      CREATE OR REPLACE TEMPORARY VIEW {LOT_LONG_AUG} AS
+      SELECT * FROM {wrk(LOT_LONG_AUG_TBL)}
+    "))
+  }, error = function(e) {
+    log_msg("WARN: could not materialize ", wrk(LOT_LONG_AUG_TBL), " (",
+            conditionMessage(e), "); keeping the in-place temp view - regimen/",
+            "steroid views stay correct but run slower (the steroid join is ",
+            "recomputed on each read).")
+  })
 }
 
 # ---- Most-common real-world regimen order --------------------------

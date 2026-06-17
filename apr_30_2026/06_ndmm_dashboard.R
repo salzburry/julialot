@@ -61,6 +61,12 @@ source(file.path(.script_dir, "R", "codelists_lot.R"))
 # NDMM-only constants. Distinct view names so this script can run
 # concurrently with 05_regimen_dashboard.R without clobbering its temp views.
 NDMM_LOT_LONG_FILT       <- "_ndmm_lot_long"
+# Persisted (work-schema) twin of NDMM_LOT_LONG_FILT. The temp view joins
+# LOT_LONG to the NDMM cohort and is read ~20x downstream (KPIs, gallery,
+# validation, modal map, and ~13x inside the LOT1-5 detail); materializing it
+# once and repointing the view collapses those rejoins (same pattern as
+# NDMM_FLAGS_ALL / LOT_LONG_AUG).
+NDMM_LOT_LONG_FILT_TBL   <- "NDMM_LOT_LONG_FILT"
 NDMM_ENROLL_SPANS        <- "_ndmm_enroll_spans"
 NDMM_ENROLL_SPANS_STRICT <- "_ndmm_enroll_spans_strict"  # no-gap spans for the 3-mo FU CE
 NDMM_LOT1_STARTS         <- "_ndmm_lot1_starts"
@@ -540,7 +546,10 @@ build_ndmm_preg_codes <- function(con) {
 # Distinct NDMM-candidate PATIDs with a pregnancy/childbirth claim (dx,
 # HCPCS / ICD procedure, or revenue code) anywhere in the study period.
 # Restricted to NDMM LOT1 candidates up front in each source (and again by
-# the trailing INNER JOIN) so only cohort claims are scanned and de-duped.
+# the trailing INNER JOIN) so the UNION / de-dupe / codelist-join work runs
+# on cohort claims only. This is logical row pruning - Spark may still
+# physically scan source partitions before the join, depending on layout/
+# stats - not a guaranteed I/O reduction.
 build_ndmm_pregnancy_patids <- function(con, med_diag_tbl, medical_tbl, med_proc_tbl) {
   # Two scheduling-only optimisations (the matched PATID set is identical):
   #   1) Restrict every source to NDMM LOT1 candidates UP FRONT (INNER JOIN
@@ -706,15 +715,30 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
   # Overall attrition figure. Materializing collapses that to one computation;
   # every later read (including NDMM_PATIDS below) hits the table. Mirrors the
   # parent's S16 materialize-and-repoint (02_lot1.R); CACHE TABLE is not
-  # available on SQL warehouses.
-  run_step(con, "S_ndmm_materialize_flags_all", glue("
-    CREATE OR REPLACE TABLE {wrk(NDMM_FLAGS_ALL_TBL)} AS
-    SELECT * FROM {NDMM_FLAGS_ALL}
-  "), qc = glue("SELECT count(*) AS n_rows FROM {wrk(NDMM_FLAGS_ALL_TBL)}"))
-  db_exec(con, glue("
-    CREATE OR REPLACE TEMPORARY VIEW {NDMM_FLAGS_ALL} AS
-    SELECT * FROM {wrk(NDMM_FLAGS_ALL_TBL)}
-  "))
+  # available on SQL warehouses. The write is unconditional (not gated on
+  # cfg$persist_to_schema, which governs the FINAL persist to the personal
+  # schema, not intermediate work-schema materializations - same as the
+  # parent's S16).
+  #
+  # Fail-safe: the parent assumes a writable work schema; this is a dashboard,
+  # so if the CREATE TABLE is refused (e.g. a read-only work schema) we WARN
+  # and keep the in-place temp view rather than aborting. Downstream numbers
+  # are still correct - just recomputed on each read, i.e. slower.
+  tryCatch({
+    run_step(con, "S_ndmm_materialize_flags_all", glue("
+      CREATE OR REPLACE TABLE {wrk(NDMM_FLAGS_ALL_TBL)} AS
+      SELECT * FROM {NDMM_FLAGS_ALL}
+    "), qc = glue("SELECT count(*) AS n_rows FROM {wrk(NDMM_FLAGS_ALL_TBL)}"))
+    db_exec(con, glue("
+      CREATE OR REPLACE TEMPORARY VIEW {NDMM_FLAGS_ALL} AS
+      SELECT * FROM {wrk(NDMM_FLAGS_ALL_TBL)}
+    "))
+  }, error = function(e) {
+    log_msg("WARN: could not materialize ", wrk(NDMM_FLAGS_ALL_TBL), " (",
+            conditionMessage(e), "); keeping the in-place temp view - NDMM ",
+            "counts/dashboard stay correct but run slower (flag scans are ",
+            "recomputed on each read).")
+  })
 
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_PATIDS} AS
@@ -737,6 +761,31 @@ build_lot_long_filtered <- function(con, lot_long) {
     INNER JOIN {NDMM_PATIDS} a
             ON cast(l.PATID as string) = a.PATID
   "))
+
+  # Materialize once, then repoint the view at the work-schema table. This
+  # filtered LOT_LONG is read ~20x downstream (NDMM augmentation, modal map,
+  # KPIs, gallery, validation, run-comparison, and ~13x inside the LOT1-5
+  # detail collector); as a bare TEMPORARY VIEW each read re-runs the LOT_LONG
+  # join. Materialize-and-repoint (same pattern as NDMM_FLAGS_ALL / LOT_LONG_AUG
+  # and the parent S16; CACHE TABLE is unavailable on SQL warehouses) so every
+  # downstream read hits the table. Fail-safe: a non-writable work schema
+  # WARN-degrades to the in-place view (correct, just slower). No change to
+  # which patients/LOT rows are included - identical rows, materialized once.
+  tryCatch({
+    run_step(con, "S_ndmm_materialize_lot_long_filt", glue("
+      CREATE OR REPLACE TABLE {wrk(NDMM_LOT_LONG_FILT_TBL)} AS
+      SELECT * FROM {NDMM_LOT_LONG_FILT}
+    "), qc = glue("SELECT count(*) AS n_rows FROM {wrk(NDMM_LOT_LONG_FILT_TBL)}"))
+    db_exec(con, glue("
+      CREATE OR REPLACE TEMPORARY VIEW {NDMM_LOT_LONG_FILT} AS
+      SELECT * FROM {wrk(NDMM_LOT_LONG_FILT_TBL)}
+    "))
+  }, error = function(e) {
+    log_msg("WARN: could not materialize ", wrk(NDMM_LOT_LONG_FILT_TBL), " (",
+            conditionMessage(e), "); keeping the in-place temp view - NDMM ",
+            "LOT-detail views stay correct but run slower (the join is ",
+            "recomputed on each read).")
+  })
 }
 
 # Counts at each filter step for the attrition card. Steps after
