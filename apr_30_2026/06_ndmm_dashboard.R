@@ -71,6 +71,11 @@ NDMM_MED_CLAIM_HEADER    <- "_ndmm_med_claim_header"
 NDMM_CONFINEMENT         <- "_ndmm_confinement"
 NDMM_OTHER_MALIG_PATIDS  <- "_ndmm_other_malig_patids"
 NDMM_FLAGS_ALL           <- "_ndmm_flags_all"   # per-PATID filter flags (for attrition)
+# Persisted (work-schema) twin of NDMM_FLAGS_ALL. The temp view above embeds
+# every NDMM raw-claim scan (pregnancy / belantamab / prior-Tx / other-cancer)
+# and is read many times downstream; materializing it once to this table and
+# repointing the view collapses those repeated scans to a single computation.
+NDMM_FLAGS_ALL_TBL       <- "NDMM_FLAGS_ALL"
 NDMM_PATIDS       <- "_ndmm_patids"
 NDMM_PREG_CODES          <- "_ndmm_preg_codes"
 NDMM_PREGNANCY_PATIDS    <- "_ndmm_pregnancy_patids"
@@ -669,6 +674,27 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
     LEFT JOIN prior_tx     ON ec_l1.PATID = prior_tx.PATID
     LEFT JOIN other_cancer ON ec_l1.PATID = other_cancer.PATID
     LEFT JOIN pregnancy    ON ec_l1.PATID = pregnancy.PATID
+  "))
+
+  # Materialize NDMM_FLAGS_ALL once, then repoint the view at the physical
+  # work-schema table. As a bare TEMPORARY VIEW this re-runs the whole scan
+  # DAG (pregnancy + belantamab + prior-Tx + other-cancer over the study
+  # period, plus both enrollment-span builds) on EVERY read - and it is read
+  # heavily: ndmm_counts() alone issues six COUNT(DISTINCT) queries against
+  # it (one per funnel step), then NDMM_PATIDS, the dashboard sections and the
+  # validation drilldown read it again. Recomputing the scans six-plus times
+  # back-to-back is what makes the NDMM stage appear to hang right after the
+  # Overall attrition figure. Materializing collapses that to one computation;
+  # every later read (including NDMM_PATIDS below) hits the table. Mirrors the
+  # parent's S16 materialize-and-repoint (02_lot1.R); CACHE TABLE is not
+  # available on SQL warehouses.
+  run_step(con, "S_ndmm_materialize_flags_all", glue("
+    CREATE OR REPLACE TABLE {wrk(NDMM_FLAGS_ALL_TBL)} AS
+    SELECT * FROM {NDMM_FLAGS_ALL}
+  "), qc = glue("SELECT count(*) AS n_rows FROM {wrk(NDMM_FLAGS_ALL_TBL)}"))
+  db_exec(con, glue("
+    CREATE OR REPLACE TEMPORARY VIEW {NDMM_FLAGS_ALL} AS
+    SELECT * FROM {wrk(NDMM_FLAGS_ALL_TBL)}
   "))
 
   db_exec(con, glue("
