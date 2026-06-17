@@ -393,11 +393,14 @@ shows a headline count, LOT1 regimen mix, and line-progression by payer; the
 Commercial rows are the "line of therapy without Medicare" view. If `BUS` is
 unreadable the group degrades to a note.
 
-The **Steroids** group also carries a DEXA-vs-LENA timing QC (both cohorts):
-among LOTs with both a `LENA` agent and an in-window `DEXA` claim, it reports
-before/same-day/after counts (LOT1 and all-lines), a gap-day distribution,
-DEXA-before-LENA examples, and DEXA attached to a LOT with no IMiD/PI/anti-CD38
-backbone - i.e. edge cases where the steroid is not behaving as expected.
+The **Steroids** group also carries a DEXA-vs-LENA timing QC (both cohorts),
+**scoped to the DEXA LENA doublet** (`LOT_BASE_MEDS = LENA` - lenalidomide the
+only agent, plus dex). For LOT1 and all lines it reports before/same-day/after
+counts, a gap-day distribution, and any DEXA-before-LENA examples. In that
+doublet LENA defines the line start, so DEXA-before-LENA is a genuine anomaly
+(expect ~0; cross-regimen DEXA-before-LENA is mostly triplets where another
+agent started the line, so it is excluded). Separately it flags DEXA attached
+to a LOT with no IMiD/PI/anti-CD38 backbone (unscoped).
 
 ## Reuse policy
 
