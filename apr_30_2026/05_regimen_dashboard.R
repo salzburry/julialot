@@ -564,7 +564,7 @@ build_payer_lot_qc <- function(con, section = "OVERVIEW", title_prefix = "",
                                top_n = 20L) {
   enr <- tryCatch(cdm_src("member_enrollment"), error = function(e) NULL)
   ok  <- !is.null(enr) && isTRUE(tryCatch({
-    db_q(con, glue("SELECT BUS FROM {enr} LIMIT 1")); TRUE
+    db_q(con, glue("SELECT BUS, ELIGEFF, ELIGEND FROM {enr} LIMIT 1")); TRUE
   }, error = function(e) FALSE))
   if (!ok) {
     add_html_card(paste0(
