@@ -318,9 +318,11 @@ apply.
 ### Work table written
 
 To avoid re-running heavy scans on every read, the script materializes three
-views **once** each to work-schema tables and repoints the views at them
-(mirrors the parent's `S16` materialize-and-repoint in `02_lot1.R`;
-`CACHE TABLE` is not available on SQL warehouses):
+heavy views to work-schema tables and repoints the views at them (mirrors the
+parent's `S16` materialize-and-repoint in `02_lot1.R`; `CACHE TABLE` is not
+available on SQL warehouses). Each is rebuilt once per cohort pass that uses
+it - `NDMM_FLAGS_ALL` and `NDMM_LOT_LONG_FILT` on the NDMM pass only,
+`REGIMEN_LOT_LONG_AUG` on each of the Overall and NDMM passes:
 
 - `<work_schema>.NDMM_FLAGS_ALL` - one row per NDMM LOT1 candidate with the
   six gate flags, consumed by the attrition counts, `NDMM_PATIDS`, the
