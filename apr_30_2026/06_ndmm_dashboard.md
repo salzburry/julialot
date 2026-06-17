@@ -317,10 +317,10 @@ apply.
 
 ### Work table written
 
-To avoid re-running the per-PATID flag scans on every read, the script
-materializes the NDMM flag view **once** to a work-schema table and
-repoints the view at it (mirrors the parent's `S16` materialize-and-repoint
-in `02_lot1.R`; `CACHE TABLE` is not available on SQL warehouses):
+To avoid re-running heavy scans on every read, the script materializes two
+views **once** each to work-schema tables and repoints the views at them
+(mirrors the parent's `S16` materialize-and-repoint in `02_lot1.R`;
+`CACHE TABLE` is not available on SQL warehouses):
 
 - `<work_schema>.NDMM_FLAGS_ALL` - one row per NDMM LOT1 candidate with the
   six gate flags, consumed by the attrition counts, `NDMM_PATIDS`, the
@@ -329,6 +329,11 @@ in `02_lot1.R`; `CACHE TABLE` is not available on SQL warehouses):
   safe to drop between runs. Watch for the `STEP S_ndmm_materialize_flags_all`
   log line - reaching it is what moves the run past the post-Overall-attrition
   point.
+- `<work_schema>.REGIMEN_LOT_LONG_AUG` - LOT_LONG with steroid tokens
+  appended, built by the shared regimen logic in `05_regimen_dashboard.R`
+  (which `06`/`07` source) and read ~7x per cohort by the steroid and
+  regimen-transition builders. Written once per cohort pass (Overall, then
+  NDMM); watch for the `STEP S_regimen_materialize_lot_long_aug` log line.
 
 The write is unconditional (it is a performance materialization, not a
 final output, so it does not consult `PERSIST_TO_SCHEMA` - the same as the
@@ -342,7 +347,9 @@ parent's `S16`). Two operational notes:
   Give parallel runs separate `PROJECT_WORK_SCHEMA` values (the same caveat
   applies to the parent's fixed-name work tables such as `MAP_STACKED`).
 
-This is the only table `06` writes; every table listed above is read-only.
+These are the only tables the NDMM dashboard writes (the second comes from
+the shared `05` augmentation it sources); every table listed above is
+read-only.
 
 ## Output
 
