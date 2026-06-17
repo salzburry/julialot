@@ -551,8 +551,10 @@ build_missing_steroid_lot1 <- function(con, section = "STEROIDS",
 # "Can we look at line of therapy without Medicare?" Optum has no Medicare
 # boolean; member_enrollment.BUS carries the line of business (MCR=Medicare,
 # COM=Commercial). Each patient's payer AT INDEX = the BUS of the enrollment
-# span with the latest ELIGEFF on/before their LOT1 start ("closest prior to
-# index"); the 12-mo pre-index CE requirement guarantees such a span exists.
+# span COVERING their LOT1 start (ELIGEFF <= LOT1 <= ELIGEND); among
+# overlapping covering spans Medicare wins; if none covers LOT1, the latest
+# span starting on/before LOT1 (true closest-prior, no Medicare bias); a
+# patient with no pre-index span is Unknown (carried in the denominator).
 # We then split the cohort's LOT by payer so the non-Medicare (Commercial)
 # slice is visible next to Medicare. member_enrollment is read via cdm_src
 # (resolves the quarterly t_member_enrollment_* table). Fail-safe: if BUS is
@@ -590,9 +592,11 @@ build_payer_lot_qc <- function(con, section = "OVERVIEW", title_prefix = "",
                                 ORDER BY
                                   CASE WHEN cast(e.ELIGEND as date) >= i.index_dt
                                        THEN 0 ELSE 1 END,
-                                  CASE WHEN upper(trim(cast(e.BUS as string))) = 'MCR'
+                                  CASE WHEN cast(e.ELIGEND as date) >= i.index_dt
+                                        AND upper(trim(cast(e.BUS as string))) = 'MCR'
                                        THEN 0 ELSE 1 END,
-                                  cast(e.ELIGEFF as date) DESC) AS rn
+                                  cast(e.ELIGEFF as date) DESC,
+                                  cast(e.ELIGEND as date) DESC) AS rn
       FROM idx i
       LEFT JOIN {enr} e
         ON cast(e.PATID as string) = i.PATID
@@ -643,10 +647,10 @@ build_payer_lot_qc <- function(con, section = "OVERVIEW", title_prefix = "",
     SELECT l1.regimen,
            cast(sum(CASE WHEN p.payer = 'Medicare'   THEN 1 ELSE 0 END) as int) AS n_medicare,
            cast(sum(CASE WHEN p.payer = 'Commercial' THEN 1 ELSE 0 END) as int) AS n_commercial,
-           count(*) AS n_total
+           count(*) AS n_all_payers
     FROM l1 JOIN _payer_at_index p ON p.PATID = l1.PATID
     GROUP BY l1.regimen
-    ORDER BY n_total DESC
+    ORDER BY n_all_payers DESC
     LIMIT {top_n}"))
   if (nrow(reg) > 0) {
     reg$regimen <- disp_regimen(reg$regimen)

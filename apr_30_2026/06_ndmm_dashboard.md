@@ -383,11 +383,15 @@ cohort. The cohort and the dashboard heading both read as
 "NDMM planned cohort".
 
 A **Payer** group (shown for both cohorts) splits the cohort by payer at
-the LOT1 index - Medicare vs Commercial, taken from Optum
-`member_enrollment.BUS` (`MCR`/`COM`) on the enrollment span with the latest
-start on/before LOT1 - with a headline count, LOT1 regimen mix, and
-line-progression by payer. The Commercial rows are the "line of therapy
-without Medicare" view. If `BUS` is unreadable the group degrades to a note.
+the LOT1 index - Medicare vs Commercial, from Optum `member_enrollment.BUS`
+(`MCR`/`COM`). Payer-at-index is the span **covering** LOT1
+(`ELIGEFF` <= LOT1 <= `ELIGEND`); among overlapping covering spans Medicare
+is prioritized; if no span covers LOT1, the latest span starting on/before
+LOT1 (closest prior); a patient with no pre-index span is `Unknown` and is
+kept in the denominator (so the total is the full LOT1 cohort). The group
+shows a headline count, LOT1 regimen mix, and line-progression by payer; the
+Commercial rows are the "line of therapy without Medicare" view. If `BUS` is
+unreadable the group degrades to a note.
 
 The **Steroids** group also carries a DEXA-vs-LENA timing QC (both cohorts):
 among LOTs with both a `LENA` agent and an in-window `DEXA` claim, it reports
