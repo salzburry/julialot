@@ -315,6 +315,23 @@ Each skip is logged to stdout and surfaced as a note in the OVERVIEW
 card; the script still produces a dashboard with the filters that did
 apply.
 
+### Work table written
+
+To avoid re-running the per-PATID flag scans on every read, the script
+materializes the NDMM flag view **once** to a work-schema table and
+repoints the view at it (mirrors the parent's `S16` materialize-and-repoint
+in `02_lot1.R`; `CACHE TABLE` is not available on SQL warehouses):
+
+- `<work_schema>.NDMM_FLAGS_ALL` - one row per NDMM LOT1 candidate with the
+  six gate flags, consumed by the attrition counts, `NDMM_PATIDS`, the
+  dashboard sections and the validation drilldown. Created with
+  `CREATE OR REPLACE TABLE`, so every run overwrites it; it is scratch and
+  safe to drop between runs. Watch for the `STEP S_ndmm_materialize_flags_all`
+  log line - reaching it is what moves the run past the post-Overall-attrition
+  point.
+
+This is the only table `06` writes; every table listed above is read-only.
+
 ## Output
 
 `ndmm_dashboard.html` written to `OUTPUT_DIR`. Structure
