@@ -1451,6 +1451,8 @@ main_ndmm <- function() {
   build_ndmm_other_cancer_qc(con)
   build_steroid_prevalence(con)
   build_missing_steroid_lot1(con)
+  build_steroid_timing_qc(con, NDMM_LOT_LONG_FILT, section = "STEROIDS")
+  build_payer_lot_qc(con, section = "Payer")
   for (n in 1:4) build_focused_pair(con, n, n + 1L)
   for (n in 1:4) build_category_pair(con, n, n + 1L, p$lookups)
   build_category_coverage(con, p$lookups)

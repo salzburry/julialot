@@ -587,10 +587,14 @@ build_payer_lot_qc <- function(con, section = "OVERVIEW", title_prefix = "",
       SELECT i.PATID,
              upper(trim(cast(e.BUS as string))) AS bus,
              row_number() OVER (PARTITION BY i.PATID
-                                ORDER BY cast(e.ELIGEFF as date) DESC,
-                                         cast(e.ELIGEND as date) DESC) AS rn
+                                ORDER BY
+                                  CASE WHEN cast(e.ELIGEND as date) >= i.index_dt
+                                       THEN 0 ELSE 1 END,
+                                  CASE WHEN upper(trim(cast(e.BUS as string))) = 'MCR'
+                                       THEN 0 ELSE 1 END,
+                                  cast(e.ELIGEFF as date) DESC) AS rn
       FROM idx i
-      JOIN {enr} e
+      LEFT JOIN {enr} e
         ON cast(e.PATID as string) = i.PATID
        AND cast(e.ELIGEFF as date) <= i.index_dt
     )
@@ -610,14 +614,17 @@ build_payer_lot_qc <- function(con, section = "OVERVIEW", title_prefix = "",
   total <- sum(hdr$n_patients)
   hdr$pct_of_cohort <- round(100 * hdr$n_patients / total, 1)
   add_html_card(paste0(
-    '<div style="font-family:system-ui;padding:10px;max-width:840px">',
+    '<div style="font-family:system-ui;padding:10px;max-width:860px">',
     '<h3 style="margin:0 0 6px">LOT by payer (Medicare vs Commercial)</h3>',
     '<p style="color:#555;font-size:13px;margin:0 0 6px">Payer = Optum ',
-    '<code>member_enrollment.BUS</code> on the enrollment span with the latest ',
-    'start date on/before the LOT1 index (<code>MCR</code> = Medicare, ',
-    '<code>COM</code> = Commercial). The <b>Commercial</b> rows are the ',
-    '&ldquo;without Medicare&rdquo; view. Commercial N is small here, so read ',
-    'its rates as directional.</p></div>'),
+    '<code>member_enrollment.BUS</code> on the enrollment span <b>covering</b> ',
+    'the LOT1 index (<code>ELIGEFF</code> &le; LOT1 &le; <code>ELIGEND</code>); ',
+    'if no span covers it, the latest span starting on/before LOT1; Medicare ',
+    'wins when spans overlap. <code>MCR</code> = Medicare, <code>COM</code> = ',
+    'Commercial. Patients with no pre-index enrollment row are <b>Unknown</b>, ',
+    'so the total is the full LOT1 cohort. The <b>Commercial</b> rows are the ',
+    '&ldquo;without Medicare&rdquo; view; its N is small, so read its rates as ',
+    'directional.</p></div>'),
     section = section, title = paste0(title_prefix, "What this section shows"))
   save_table(hdr, section = section,
              title = paste0(title_prefix, "Cohort by payer at index"))
@@ -1280,6 +1287,8 @@ main_regimen <- function() {
   build_overall_attrition(con)
   build_steroid_prevalence(con)
   build_missing_steroid_lot1(con)
+  build_steroid_timing_qc(con, wrk("LOT_LONG"), section = "STEROIDS")
+  build_payer_lot_qc(con, section = "Payer")
   for (n in 1:4) build_focused_pair(con, n, n + 1L)
   for (n in 1:4) build_category_pair(con, n, n + 1L, p$lookups)
   build_category_coverage(con, p$lookups)
