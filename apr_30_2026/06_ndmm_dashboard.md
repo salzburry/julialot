@@ -330,6 +330,18 @@ in `02_lot1.R`; `CACHE TABLE` is not available on SQL warehouses):
   log line - reaching it is what moves the run past the post-Overall-attrition
   point.
 
+The write is unconditional (it is a performance materialization, not a
+final output, so it does not consult `PERSIST_TO_SCHEMA` - the same as the
+parent's `S16`). Two operational notes:
+
+- **Fail-safe:** if the work schema is not writable the materialization is
+  skipped with a `WARN` and the run continues on the slower in-place temp
+  view - the numbers are unchanged, just recomputed on each read.
+- **Concurrent runs:** the name is fixed, not run-scoped, so two dashboard
+  jobs sharing one work schema would clobber each other's `NDMM_FLAGS_ALL`.
+  Give parallel runs separate `PROJECT_WORK_SCHEMA` values (the same caveat
+  applies to the parent's fixed-name work tables such as `MAP_STACKED`).
+
 This is the only table `06` writes; every table listed above is read-only.
 
 ## Output
