@@ -71,6 +71,11 @@ NDMM_MED_CLAIM_HEADER    <- "_ndmm_med_claim_header"
 NDMM_CONFINEMENT         <- "_ndmm_confinement"
 NDMM_OTHER_MALIG_PATIDS  <- "_ndmm_other_malig_patids"
 NDMM_FLAGS_ALL           <- "_ndmm_flags_all"   # per-PATID filter flags (for attrition)
+# Persisted (work-schema) twin of NDMM_FLAGS_ALL. The temp view above embeds
+# every NDMM raw-claim scan (pregnancy / belantamab / prior-Tx / other-cancer)
+# and is read many times downstream; materializing it once to this table and
+# repointing the view collapses those repeated scans to a single computation.
+NDMM_FLAGS_ALL_TBL       <- "NDMM_FLAGS_ALL"
 NDMM_PATIDS       <- "_ndmm_patids"
 NDMM_PREG_CODES          <- "_ndmm_preg_codes"
 NDMM_PREGNANCY_PATIDS    <- "_ndmm_pregnancy_patids"
@@ -534,45 +539,64 @@ build_ndmm_preg_codes <- function(con) {
 
 # Distinct NDMM-candidate PATIDs with a pregnancy/childbirth claim (dx,
 # HCPCS / ICD procedure, or revenue code) anywhere in the study period.
-# Restricted to NDMM LOT1 candidates via the final INNER JOIN.
+# Restricted to NDMM LOT1 candidates up front in each source (and again by
+# the trailing INNER JOIN) so only cohort claims are scanned and de-duped.
 build_ndmm_pregnancy_patids <- function(con, med_diag_tbl, medical_tbl, med_proc_tbl) {
+  # Two scheduling-only optimisations (the matched PATID set is identical):
+  #   1) Restrict every source to NDMM LOT1 candidates UP FRONT (INNER JOIN
+  #      NDMM_LOT1_STARTS) instead of only at the very end. The output is
+  #      DISTINCT PATID intersected with NDMM_LOT1_STARTS either way, so the
+  #      early join only prunes claims that the trailing join would drop
+  #      anyway. The trailing join is kept as a belt-and-braces no-op so the
+  #      result stays cohort-restricted even if a future source arm forgets
+  #      the push-down.
+  #   2) Scan the large `medical` table ONCE: stack() emits its HCPCS
+  #      (PROC_CD) and REV (RVNU_CD) rows in a single pass instead of two
+  #      separate scans. The per-arm CASE reproduces the original inclusion
+  #      rules exactly - HCPCS keeps a blank-after-clean code (only PROC_CD
+  #      IS NOT NULL was required), REV drops blanks (trim(RVNU_CD) <> '') -
+  #      and a blank code never matches a real pregnancy code, so the matched
+  #      PATIDs are unchanged.
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_PREGNANCY_PATIDS} AS
     WITH dx AS (
-      SELECT cast(PATID as string) AS PATID,
-             CASE WHEN upper(ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9DIAG' ELSE 'ICD10DIAG' END AS code_type,
-             upper(regexp_replace(DIAG, '[^A-Za-z0-9]', '')) AS code
-      FROM {med_diag_tbl}
-      WHERE DIAG IS NOT NULL
-        AND cast(FST_DT as date) BETWEEN date('{NDMM_STUDY_START}') AND date('{cfg$study_end}')
+      SELECT cast(d.PATID as string) AS PATID,
+             CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9DIAG' ELSE 'ICD10DIAG' END AS code_type,
+             upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) AS code
+      FROM {med_diag_tbl} d
+      INNER JOIN {NDMM_LOT1_STARTS} l1 ON cast(d.PATID as string) = l1.PATID
+      WHERE d.DIAG IS NOT NULL
+        AND cast(d.FST_DT as date) BETWEEN date('{NDMM_STUDY_START}') AND date('{cfg$study_end}')
     ),
-    hcpcs_proc AS (
-      SELECT cast(PATID as string) AS PATID,
-             'HCPCS' AS code_type,
-             upper(regexp_replace(PROC_CD, '[^A-Za-z0-9]', '')) AS code
-      FROM {medical_tbl}
-      WHERE PROC_CD IS NOT NULL
-        AND cast(FST_DT as date) BETWEEN date('{NDMM_STUDY_START}') AND date('{cfg$study_end}')
+    med AS (
+      SELECT s.PATID, t.code_type, t.code
+      FROM (
+        SELECT cast(m.PATID as string) AS PATID, m.PROC_CD, m.RVNU_CD
+        FROM {medical_tbl} m
+        INNER JOIN {NDMM_LOT1_STARTS} l1 ON cast(m.PATID as string) = l1.PATID
+        WHERE cast(m.FST_DT as date) BETWEEN date('{NDMM_STUDY_START}') AND date('{cfg$study_end}')
+      ) s
+      LATERAL VIEW stack(2,
+        'HCPCS', CASE WHEN s.PROC_CD IS NOT NULL
+                      THEN upper(regexp_replace(s.PROC_CD, '[^A-Za-z0-9]', '')) END,
+        'REV',   CASE WHEN s.RVNU_CD IS NOT NULL AND trim(s.RVNU_CD) <> ''
+                      THEN upper(trim(s.RVNU_CD)) END
+      ) t AS code_type, code
+      WHERE t.code IS NOT NULL
     ),
     icd_proc AS (
-      SELECT cast(PATID as string) AS PATID,
-             CASE WHEN upper(ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9PROC' ELSE 'ICD10PROC' END AS code_type,
-             upper(regexp_replace(PROC, '[^A-Za-z0-9]', '')) AS code
-      FROM {med_proc_tbl}
-      WHERE PROC IS NOT NULL
-        AND cast(FST_DT as date) BETWEEN date('{NDMM_STUDY_START}') AND date('{cfg$study_end}')
-    ),
-    rev AS (
-      SELECT cast(PATID as string) AS PATID,
-             'REV' AS code_type,
-             upper(trim(RVNU_CD)) AS code
-      FROM {medical_tbl}
-      WHERE RVNU_CD IS NOT NULL AND trim(RVNU_CD) <> ''
-        AND cast(FST_DT as date) BETWEEN date('{NDMM_STUDY_START}') AND date('{cfg$study_end}')
+      SELECT cast(p.PATID as string) AS PATID,
+             CASE WHEN upper(p.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9PROC' ELSE 'ICD10PROC' END AS code_type,
+             upper(regexp_replace(p.PROC, '[^A-Za-z0-9]', '')) AS code
+      FROM {med_proc_tbl} p
+      INNER JOIN {NDMM_LOT1_STARTS} l1 ON cast(p.PATID as string) = l1.PATID
+      WHERE p.PROC IS NOT NULL
+        AND cast(p.FST_DT as date) BETWEEN date('{NDMM_STUDY_START}') AND date('{cfg$study_end}')
     ),
     events AS (
-      SELECT * FROM dx UNION ALL SELECT * FROM hcpcs_proc
-      UNION ALL SELECT * FROM icd_proc UNION ALL SELECT * FROM rev
+      SELECT * FROM dx
+      UNION ALL SELECT * FROM med
+      UNION ALL SELECT * FROM icd_proc
     ),
     matched AS (
       SELECT DISTINCT e.PATID
@@ -669,6 +693,27 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
     LEFT JOIN prior_tx     ON ec_l1.PATID = prior_tx.PATID
     LEFT JOIN other_cancer ON ec_l1.PATID = other_cancer.PATID
     LEFT JOIN pregnancy    ON ec_l1.PATID = pregnancy.PATID
+  "))
+
+  # Materialize NDMM_FLAGS_ALL once, then repoint the view at the physical
+  # work-schema table. As a bare TEMPORARY VIEW this re-runs the whole scan
+  # DAG (pregnancy + belantamab + prior-Tx + other-cancer over the study
+  # period, plus both enrollment-span builds) on EVERY read - and it is read
+  # heavily: ndmm_counts() alone issues six COUNT(DISTINCT) queries against
+  # it (one per funnel step), then NDMM_PATIDS, the dashboard sections and the
+  # validation drilldown read it again. Recomputing the scans six-plus times
+  # back-to-back is what makes the NDMM stage appear to hang right after the
+  # Overall attrition figure. Materializing collapses that to one computation;
+  # every later read (including NDMM_PATIDS below) hits the table. Mirrors the
+  # parent's S16 materialize-and-repoint (02_lot1.R); CACHE TABLE is not
+  # available on SQL warehouses.
+  run_step(con, "S_ndmm_materialize_flags_all", glue("
+    CREATE OR REPLACE TABLE {wrk(NDMM_FLAGS_ALL_TBL)} AS
+    SELECT * FROM {NDMM_FLAGS_ALL}
+  "), qc = glue("SELECT count(*) AS n_rows FROM {wrk(NDMM_FLAGS_ALL_TBL)}"))
+  db_exec(con, glue("
+    CREATE OR REPLACE TEMPORARY VIEW {NDMM_FLAGS_ALL} AS
+    SELECT * FROM {wrk(NDMM_FLAGS_ALL_TBL)}
   "))
 
   db_exec(con, glue("
@@ -1332,7 +1377,7 @@ prepare_ndmm_cohort <- function(con) {
           " | + no MM Tx pre-LOT1: ", counts$ce12_nobela_nopriortx,
           " | + no other-cancer: ", counts$noother,
           " | + 3-mo FU CE: ", counts$noother_fuce,
-          " | NDMM (final): ", counts$ndmm_final)
+          " | + no pregnancy (NDMM final): ", counts$ndmm_final)
   if (counts$ndmm_final == 0)
     stop("NDMM cohort is empty - check ELIG_COH_FINAL and LOT_LONG inputs.")
 

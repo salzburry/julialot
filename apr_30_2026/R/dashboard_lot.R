@@ -890,7 +890,7 @@ function setCohort(name, jump) {
       openView(first.getAttribute("data-id"));
     } else {
       // No views match in this cohort (e.g. active search with zero hits):
-      // clear the stale view so the main panel doesn't keep prior content.
+      // clear the stale view so the main panel does not keep prior content.
       document.querySelectorAll(".tab-content").forEach(function(el){ el.classList.remove("show"); });
       document.querySelectorAll(".nav-item.active").forEach(function(el){ el.classList.remove("active"); });
       curId = null;
