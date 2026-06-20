@@ -195,6 +195,13 @@ service date rejected before execution**.
 Degenerate: only-steroid patient; no-qualifying-meds patient; dedup
 (max day-supply, min code).
 
+Cohort gates / derivation (prove base + delta): a patient who **passes the base
+(Overall) but fails an added gate** (e.g. a pregnancy code in window → dropped by
+NDMM); a patient **flipped by a parameter change** (passes 6-month baseline CE,
+fails 12-month); a patient **flipped by a tightened gate** (qualifies on ≥1-day
+follow-up CE, fails strict 3-month). These prove a derived study = base + delta
+yields the expected attrition difference, per added / changed gate.
+
 ### 9.3 Coverage matrix
 An explicit matrix shows every important spec rule has **≥1 positive and ≥1
 negative** fixture. Gaps in the matrix block the harness from being declared
@@ -289,21 +296,59 @@ Registry row carries: code system; normalized code; concept/token; effective
 start/end; approval status; source; clinical owner; engineering approver;
 superseded version; change rationale; duplicate/normalization policy.
 
-## 16. Study definitions (select modules, don't encode logic)
+## 16. Study definitions: derivation + the four gate change-types
+
+Studies relate by **derivation**, not independent flat lists. The real
+Overall → NDMM transition is the general case: moving to a new study **added**
+some IE criteria, **changed** some existing ones, and left the rest alone.
+NDMM added the no-belantamab / no-prior-MM-tx / no-other-cancer / no-pregnancy
+exclusions *and* tightened existing gates (follow-up CE from ≥1 day to strict
+3-month; baseline CE from 6 to 12 months) on top of the Step-6 Overall base. A
+study definition must make that **explicit and auditable** — never a
+copied-and-edited pipeline.
+
+### 16.1 Base + delta (inheritance)
+A study may declare a `base:` it derives from, inheriting that base's resolved
+gate set + parameters, then apply a **gate delta**:
 
 ```yaml
-# good
+# studies/ndmm_2025/cohort.yml
+base: overall_2025                # inherit Overall's gate set (Step-6 denominator)
 gates:
-  qualifying_mm: true
-  adult_at_index: { minimum_age: 18 }
-  baseline_ce:    { months: 12, max_gap_days: 30 }
-  pregnancy_exclusion: { anchor: study_period }
-# avoid
-where: "age >= 18 AND ..."
+  add:                            # NEW IE criteria not in the base
+    no_belantamab:   true
+    no_prior_mm_tx:  true
+    no_other_cancer: { lookback_months: 12 }
+    no_pregnancy:    { anchor: study_period }
+  override:                       # EXISTING gates whose params/logic CHANGED
+    followup_ce: { months: 3, strict: true }   # Overall was >=1 day
+    baseline_ce: { months: 12 }                # Overall was 6 months
+  disable: []                     # base gates turned off (relaxation), recorded
 ```
+
+`overall_2025` is itself a base study that stops at the Step-6 denominator with
+the NDMM-only exclusions absent.
+
+### 16.2 The four change-types (each distinguishable + traceable)
+1. **New gate** — not in the base (new IE). Needs its own tested module + fixtures.
+2. **Parameter change** — same module, different params (baseline CE 6→12mo). The
+   module is parameterized; the study pins different values.
+3. **Logic change** — the rule itself changes, not just a number. This is a **new
+   gate version**, not a silent edit; both versions stay tested.
+4. **Removal/relaxation** — a base gate disabled/loosened, recorded explicitly.
+
+### 16.3 Versioned gates + an explicit base-diff
+Each gate module is versioned; a study pins `gate@version` + parameters. The
+**resolved gate set AND the diff from the base** are written to the run manifest,
+so when NDMM counts differ from Overall the cause is attributable ("added
+no_pregnancy; tightened followup_ce to strict 3-month"), never guessed. This is
+the cohort-side complement of the five version axes (§11): the study-definition
+version is the composition of its base + gate-version pins + parameters.
 
 Each gate module declares: input contract; index/anchor date; lookback/follow-up
 window; output flag; failure behaviour; relevant codelist; QC count; test cases.
+Study files **select and parameterize** modules by name — they never encode SQL
+(`where: "age >= 18 ..."` is disallowed).
 
 ## 17. Test strategy (three levels)
 
@@ -363,6 +408,9 @@ scripts/        { validate_config.R validate_reference_data.R
 - The production comparison shows no unexplained patient-level changes.
 - Old and new paths can run side by side during migration (`compare` mode).
 - A study can change dates/thresholds/enabled gates without editing core code.
+- A derived study (e.g. NDMM from Overall) is expressed as an explicit, versioned
+  gate delta — gates added / parameter-changed / logic-changed (new version) /
+  removed are auditable from the manifest, not a copied-and-edited pipeline.
 - A reference-data update requires no algorithm edit; releases are immutable once approved.
 - Output schemas are versioned and backward-compatible or explicitly migrated.
 - No unapproved degraded gate is allowed.
