@@ -1,0 +1,46 @@
+case_id,area,rule_name,spec_section,polarity,expected_outputs,clinical_reviewer,engineering_reviewer,status
+MAP001,MAP,pharmacy simple runout (date+days_sup-1),map_med,positive,map_stacked,,,inputs_drafted
+MAP002,MAP,pharmacy pushout (claim on/before rx_runout -> rx_runout+new_days_sup),map_med fig3,positive,map_stacked,,,inputs_drafted
+MAP003,MAP,pharmacy reset-without-pushout (after rx_runout within med_runout),map_med p5,positive,map_stacked,,,todo
+MAP004,MAP,medical runout never pushed out,map_med,positive,map_stacked,,,todo
+MAP005,MAP,imputed medical day-supply (28),map_med,positive,map_stacked,,,todo
+MAP006,MAP,imputed null/<1 rx day-supply (28),map_med,positive,map_stacked,,,todo
+MAP007,MAP,MAP boundary (date>max(rx_runout,med_runout)),map_med,positive,map_stacked,,,todo
+MAP008,MAP,discontinuation gap exactly at 90d,map_discon,negative,map_stacked,,,todo
+MAP009,MAP,discontinuation gap just over 90d,map_discon,positive,map_stacked,,,todo
+MAP010,MAP,same-date conflicting days-supply,dedup,negative,map_stacked,,,todo
+MAP011,MAP,duplicates differ only in source_record_id,dedup,negative,map_stacked,,,todo
+MAP012,MAP,overlapping pharmacy+medical same drug,map_med,positive,map_stacked,,,todo
+LOT101,LOT1,single-regimen LOT1,lot1_base,positive,lot1_base;lot_long,,,todo
+LOT102,LOT1,induction-window edge in (+window-1),lot1_base 5.1.1,positive,lot1_base,,,todo
+LOT103,LOT1,induction-window edge out (+window),lot1_base 5.1.1,negative,lot1_base,,,todo
+LOT104,LOT1,steroid excluded from induction but attached,lot1_base 5.1.1,positive,lot1_base,,,todo
+LOT105,LOT1,permissible substitute folded into base meds,lot1_base,positive,lot1_base,,,todo
+LOT106,LOT1,multiple same-day agents change LOT ordering,lot1_base,negative,lot1_base,,,todo
+SCT001,SCT,AUTO single,sct,positive,lot1_sct;lot_long,,,todo
+SCT002,SCT,AUTO tandem within 180d (no ALLO between),sct tandem,positive,lot1_sct,,,inputs_drafted
+SCT003,SCT,AUTO pair beyond tandem gap -> separate,sct,negative,lot1_sct,,,todo
+SCT004,SCT,AUTO 14-day windowing (workup vs actual TX),sct auto,positive,lot1_sct,,,todo
+SCT005,SCT,AUTO 60-day gap merging,sct auto,positive,lot1_sct,,,todo
+SCT006,SCT,ALLO ends LOT,sct,positive,lot_long,,,todo
+SCT007,SCT,CART ends LOT + 45-day consolidation,sct cart,positive,lot_long,,,todo
+SCT008,SCT,tandem-boundary date selection (near 180d),sct tandem,positive,lot1_sct,,,todo
+L25001,LOT2_5,clean progression to LOT2,lot2_5,positive,lot_long,,,todo
+L25002,LOT2_5,new induction med triggers next LOT,lot2_5,positive,lot_long,,,todo
+L25003,LOT2_5,MAX_LOT cap,lot2_5,negative,lot_long,,,todo
+L25004,LOT2_5,ALLO_LOT_SPAN single_day vs extend_to_next,lot2_5,positive,lot_long,,,todo
+CEN001,CENSOR,death cap on OBS_END_DT,obs_end,positive,lot_long,,,todo
+CEN002,CENSOR,CENSOR_AT_DISENROLLMENT sensitivity,obs_end,positive,lot_long,,,todo
+CEN003,CENSOR,enrollment gap within vs beyond tolerance,enrollment,negative,lot_long,,,todo
+DAT001,DATES,10->11 NDC normalization collision,refdata,negative,rejected_report,,,todo
+DAT002,DATES,effective-dated code changes classification over time,refdata,positive,rejected_report,,,todo
+DAT003,DATES,patient exactly at study-start boundary,study_period,positive,cohort,,,todo
+DAT004,DATES,patient exactly at study-end boundary,study_period,negative,cohort,,,todo
+DAT005,DATES,leap-day / month-end date arithmetic,map_med,positive,map_stacked,,,todo
+DAT006,DATES,backdated record arriving after a prior run,refdata,positive,map_stacked,,,todo
+DAT007,DATES,null/malformed service date rejected pre-execution,adapter,negative,rejected_report,,,todo
+DEG001,DEGEN,only-steroid patient (no backbone),lot1_base,negative,lot1_base,,,todo
+DEG002,DEGEN,no-qualifying-meds patient,lot1_base,negative,lot1_base,,,todo
+COH001,COHORT,passes Overall base but fails an added NDMM gate (pregnancy),study delta,negative,cohort,,,todo
+COH002,COHORT,flipped by parameter change (6 vs 12-month baseline CE),study delta,negative,cohort,,,todo
+COH003,COHORT,flipped by tightened gate (>=1-day vs strict 3-month follow-up CE),study delta,negative,cohort,,,todo

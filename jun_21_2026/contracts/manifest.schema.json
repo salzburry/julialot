@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "manifest.schema.json",
+  "title": "LOT run manifest",
+  "description": "Immutable, secret-redacted record written for every run (success, failed, or degraded). Sufficient to reproduce the run's inputs and settings. NEVER contains secret values.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["run_id", "timestamp", "run_status", "git", "version_axes", "config", "source", "environment", "outputs", "quality", "publication"],
+  "properties": {
+    "run_id": { "type": "string" },
+    "parent_run_id": { "type": ["string", "null"] },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "run_status": { "type": "string", "enum": ["success", "failed", "degraded"] },
+    "git": {
+      "type": "object",
+      "required": ["sha", "dirty"],
+      "properties": { "sha": { "type": "string" }, "dirty": { "type": "boolean" } }
+    },
+    "version_axes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "canonical_contract", "source_adapter", "study_definition", "reference_data", "source_data_vintage", "dashboard"],
+      "properties": {
+        "algorithm": { "type": "string" },
+        "canonical_contract": { "type": "string" },
+        "source_adapter": { "type": "string" },
+        "study_definition": { "type": "string" },
+        "reference_data": { "type": "string" },
+        "source_data_vintage": { "type": "string" },
+        "dashboard": { "type": "string" }
+      }
+    },
+    "config": {
+      "type": "object",
+      "required": ["resolved", "hash", "precedence"],
+      "properties": {
+        "resolved": { "type": "object", "description": "secret-redacted resolved config" },
+        "hash": { "type": "string" },
+        "precedence": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "secrets": {
+      "type": "array",
+      "description": "references only — never values",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reference", "resolved"],
+        "properties": {
+          "reference": { "type": "string" },
+          "version": { "type": ["string", "null"] },
+          "resolved": { "type": "boolean" }
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": ["database", "delta_versions", "vintage"],
+      "properties": {
+        "database": { "type": "string" },
+        "delta_versions": { "type": "object", "additionalProperties": { "type": ["integer", "string"] } },
+        "vintage": { "type": "string" },
+        "snapshot_retention_date": { "type": ["string", "null"], "format": "date" }
+      }
+    },
+    "reference_data": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "version", "hash", "approval_status"],
+        "properties": {
+          "id": { "type": "string" },
+          "version": { "type": "string" },
+          "hash": { "type": "string" },
+          "approval_status": { "type": "string", "enum": ["approved"] }
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "properties": {
+        "databricks_runtime": { "type": "string" },
+        "spark_version": { "type": "string" },
+        "photon": { "type": "boolean" },
+        "cluster": { "type": "string" },
+        "spark_settings": { "type": "object" },
+        "r_version": { "type": "string" },
+        "package_lock_hash": { "type": "string" },
+        "odbc_driver": { "type": "string" },
+        "os_image_digest": { "type": "string" },
+        "timezone": { "type": "string" },
+        "locale": { "type": "string" }
+      }
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "row_count", "runtime_sec"],
+        "properties": {
+          "name": { "type": "string" },
+          "row_count": { "type": "integer" },
+          "runtime_sec": { "type": "number" }
+        }
+      }
+    },
+    "outputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["table", "schema_hash", "checksum", "hash_algorithm"],
+        "properties": {
+          "table": { "type": "string" },
+          "schema_hash": { "type": "string" },
+          "checksum": { "type": "string" },
+          "hash_algorithm": { "type": "string" }
+        }
+      }
+    },
+    "quality": {
+      "type": "object",
+      "required": ["cohort_valid_for_primary_use"],
+      "properties": {
+        "cohort_valid_for_primary_use": { "type": "boolean" },
+        "degraded_gates": { "type": "array", "items": { "type": "string" } },
+        "warnings": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "properties": {
+        "baseline_run_id": { "type": ["string", "null"] },
+        "result": { "type": ["string", "null"], "enum": ["match", "mismatch", "not_run", null] }
+      }
+    },
+    "publication": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "type": "string", "enum": ["staged", "published", "failed", "degraded_blocked"] },
+        "published_alias": { "type": ["string", "null"] }
+      }
+    }
+  }
+}
