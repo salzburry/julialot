@@ -263,6 +263,25 @@ build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts,
     ' &nbsp;&bull;&nbsp; NDMM: ',    if (has_n) 'built' else 'unavailable',
     '</div>')
 
+  # Optional stakeholder-ask findings recorded by the steroid/payer builders
+  # for the Overall cohort - the exact numbers shown in their detail views,
+  # reused here. Failsafe: any problem yields an empty panel.
+  findings_html <- tryCatch({
+    fnd <- if (exists("dashboard_findings"))
+             Filter(function(f) identical(f$cohort, "Overall"), dashboard_findings)
+           else list()
+    if (length(fnd) == 0) "" else {
+      rows <- paste(vapply(fnd, function(f)
+        paste0('<li style="margin:4px 0"><b style="color:#0E7C7B">', f$group,
+               '</b> &mdash; ', f$text, '</li>'), character(1)), collapse = "")
+      paste0('<h3 style="margin:20px 0 6px;font-size:15px;font-weight:800">Key findings ',
+             '<span style="font-weight:600;color:#6B7280;font-size:12px">',
+             '(Overall cohort &middot; full detail in Steroids &amp; payer)</span></h3>',
+             '<ul style="margin:0;padding-left:18px;font-size:13px;color:#2A2A33;',
+             'line-height:1.5">', rows, '</ul>')
+    }
+  }, error = function(e) "")
+
   card <- paste0(
 '<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;',
      'padding:18px 20px;max-width:920px;color:#2A2A33">',
@@ -287,6 +306,7 @@ build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts,
     '<tbody>', body, '</tbody>',
   '</table>',
   ndmm_note,
+  findings_html,
   dq,
 '</div>')
 
@@ -362,6 +382,7 @@ main_combined <- function() {
   run_ts_combined <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
 
   dashboard_items <<- list()
+  dashboard_findings <<- list()
 
   # Cohort prefixes keep the LOT1-5 static PNG artifacts (lotlong_*.png)
   # from clobbering each other across the two cohort passes. The HTML

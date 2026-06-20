@@ -24,6 +24,20 @@ add_to_dashboard <- function(widget, section, title, type = "figure") {
   )
 }
 
+# ---- Optional summary findings ----
+# Builders may record a one-line headline (reusing a number they already
+# computed and display) here; the combined dashboard surfaces them on its
+# Executive summary. record_finding() can never raise - a capture failure
+# silently records nothing - so it is always safe to call from a builder.
+# Standalone dashboards simply never read this.
+dashboard_findings <- list()
+record_finding <- function(cohort, group, text) {
+  tryCatch(
+    dashboard_findings[[length(dashboard_findings) + 1]] <<-
+      list(cohort = cohort, group = group, text = text),
+    error = function(e) invisible(NULL))
+}
+
 # ---- Shared visual theme and palettes ----
 # One source of truth for both dashboards. Same category -> same colour
 # everywhere; tune here to retune every chart in both. Chosen to read

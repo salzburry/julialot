@@ -617,6 +617,15 @@ build_payer_lot_qc <- function(con, section = "OVERVIEW", title_prefix = "",
   if (nrow(hdr) == 0) return(invisible())
   total <- sum(hdr$n_patients)
   hdr$pct_of_cohort <- round(100 * hdr$n_patients / total, 1)
+  try({
+    gp <- function(p) { i <- which(hdr$payer == p); if (length(i)) hdr$n_patients[i[1]] else 0 }
+    mcr <- gp("Medicare"); com <- gp("Commercial")
+    record_finding(section, "Payer mix",
+      sprintf("Payer at LOT1 index: Medicare %s (%.0f%%), Commercial %s (%.0f%%) of %s patients.",
+              format(mcr, big.mark = ","), 100 * mcr / total,
+              format(com, big.mark = ","), 100 * com / total,
+              format(total, big.mark = ",")))
+  }, silent = TRUE)
   add_html_card(paste0(
     '<div style="font-family:system-ui;padding:10px;max-width:860px">',
     '<h3 style="margin:0 0 6px">LOT by payer (Medicare vs Commercial)</h3>',
@@ -789,6 +798,13 @@ build_steroid_timing_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
            cast(sum(CASE WHEN gap_days > 0 THEN 1 ELSE 0 END) as int) AS n_dexa_after_lena,
            count(*) AS n_lena_plus_dexa
     FROM {scoped} z GROUP BY scope ORDER BY scope DESC"))
+  try({
+    ar <- summ[summ$scope == "All lines", , drop = FALSE]
+    if (nrow(ar) > 0) record_finding(section, "DEXA vs LENA",
+      sprintf("DEXA-LENA timing (all lines): %s before LENA, %s same-day, %s after, of %s LENA+DEXA lines.",
+              ar$n_dexa_before_lena[1], ar$n_same_day[1], ar$n_dexa_after_lena[1],
+              ar$n_lena_plus_dexa[1]))
+  }, silent = TRUE)
   if (nrow(summ) == 0) {
     add_html_card(paste0(
       '<div style="font-family:system-ui;padding:12px;max-width:760px">',
@@ -997,6 +1013,10 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
              round(avg(closest_days_before),1)         AS mean_days_closest_steroid
       FROM per_pat"))
     n_before <- if (nrow(summ)) as.integer(summ$n_patients_steroid_before[1]) else 0L
+    try(record_finding(section, "Pre-LOT steroid",
+      sprintf("%s: %s of %s patients had a steroid claim before the line.",
+              label, format(n_before, big.mark = ","),
+              format(as.integer(n_reg), big.mark = ","))), silent = TRUE)
     add_html_card(paste0(
       '<div style="font-family:system-ui;padding:10px;max-width:880px">',
       '<h3 style="margin:0 0 6px">', label, '</h3>',
