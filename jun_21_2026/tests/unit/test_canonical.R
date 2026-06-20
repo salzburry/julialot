@@ -24,3 +24,14 @@ bad_date <- data.frame(patient_id = "9000000001", service_date = "01/02/2020",
   days_supply = "28", source_record_id = "x", data_vintage = "SYNTH",
   stringsAsFactors = FALSE)
 ok(any(grepl("non-ISO date", validate_entity(bad_date, sp)$errors)), "non-ISO date caught")
+
+# required-entity enforcement (an incomplete adapter output must not pass)
+tmp <- file.path(tempdir(), "incomplete_canon"); dir.create(tmp, showWarnings = FALSE)
+file.copy("tests/fixtures/synthetic/pharmacy.csv", file.path(tmp, "pharmacy.csv"), overwrite = TRUE)
+r2 <- validate_canonical_dir(tmp)   # require_present = TRUE (default)
+ok(!isTRUE(attr(r2, "ok")) &&
+   any(grepl("required canonical entity", unlist(lapply(r2, `[[`, "errors")))),
+   "missing required entity blocks (require_present)")
+ok(isTRUE(attr(validate_canonical_dir(tmp, require_present = FALSE), "ok")),
+   "require_present=FALSE allows a partial fixture dir")
+ok(length(REQUIRED_ENTITIES) == 6L, "all six canonical entities are in the spec")

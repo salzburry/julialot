@@ -38,9 +38,10 @@ scripts/                         # all runnable + unit-tested (except the Spark 
   validate_study.R               #   base+delta cross-rules + gate DAG (cycle detection)
   build_coverage_matrix.R        #   positive/negative coverage from the catalog
   verify_no_synthetic.R          #   release gate: allowlist + reserved-PATID scan
-  compare_run_outputs.R          #   comparison hierarchy: LOCAL CSV mode works;
-                                 #   the large-table Spark path (db_q) is the only stub
-  promote_reference_data.R       #   intake->validated->approved (write/impact = stub)
+  compare_run_outputs.R          #   comparison hierarchy: LOCAL CSV mode works + tested;
+                                 #   only the large-table Spark path (db_q) is a stub
+  promote_reference_data.R       #   intake->validated->approved: validation + dry-run
+                                 #   runnable + tested; only snapshot-write/impact = stub
 tests/
   run_unit_tests.R, testutil.R   # Level-1 runner + tiny framework
   unit/                          # the tests (config, refdata, canonical, study, gate,

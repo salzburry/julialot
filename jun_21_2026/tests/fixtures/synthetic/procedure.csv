@@ -1,0 +1,2 @@
+patient_id,event_date,raw_code,normalized_code,code_system,source_table,source_record_id,data_vintage
+9000000003,2020-03-01,38241,38241,HCPCS,med_procedure,proc-1,SYNTH

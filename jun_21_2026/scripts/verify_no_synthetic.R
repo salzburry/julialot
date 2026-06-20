@@ -33,10 +33,12 @@ verify_bundle_allowlist <- function(paths) {
 }
 
 # Scan a data file for synthetic PATIDs (reserved range) or a marker column.
+# Scans the WHOLE file (no row cap) - "no synthetic in production" is
+# non-negotiable, so a synthetic PATID anywhere must be caught.
 scan_file_for_synthetic <- function(path) {
   if (!grepl("\\.(csv|tsv)$", path, ignore.case = TRUE)) return(character(0))
   df <- tryCatch(utils::read.csv(path, stringsAsFactors = FALSE,
-                                 check.names = FALSE, nrows = 50000),
+                                 check.names = FALSE),
                  error = function(e) NULL)
   if (is.null(df) || nrow(df) == 0) return(character(0))
   hits <- character(0)
