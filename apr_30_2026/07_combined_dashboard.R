@@ -160,6 +160,214 @@ build_exploratory_scaffold <- function() {
     title   = "About this section")
 }
 
+# ---- Summary landing page (data-driven, opens first) ----------------
+# Side-by-side Overall vs NDMM headline numbers pulled straight from
+# query_cohort_kpis() - no hard-coded findings. Every figure is computed
+# at build time from each cohort's LOT_LONG. The NDMM column degrades to
+# "n/a" when that cohort could not be built this run. Rendered as a
+# self-contained html_card (sandboxed iframe), so it cannot affect the
+# rest of the dashboard's navigation.
+build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts,
+                                   n_ster = NA, n_rules = NA, study_end = NA) {
+  has_o <- length(kpi_overall) > 0 && !is.null(kpi_overall$n_patients) &&
+           !is.na(kpi_overall$n_patients)
+  has_n <- isTRUE(ndmm_ok) && length(kpi_ndmm) > 0 &&
+           !is.null(kpi_ndmm$n_patients) && !is.na(kpi_ndmm$n_patients)
+
+  fmt_days <- function(x)
+    if (length(x) == 0 || is.null(x) || is.na(x)) "-" else paste0(fmt_n(x), " d")
+  reached <- function(k, key)
+    paste0(fmt_n(k[[key]]), " <span style='color:#6B7280'>(",
+           fmt_pct(k[[key]], k$n_patients), ")</span>")
+
+  ov <- if (has_o) list(
+    pat = fmt_n(kpi_overall$n_patients),
+    pct = "&mdash;",
+    l2  = reached(kpi_overall, "n_lot2"),
+    l3  = reached(kpi_overall, "n_lot3"),
+    med = fmt_days(kpi_overall$lot1_median_len),
+    rng = fmt_date_range(kpi_overall$lot1_min, kpi_overall$lot1_max)
+  ) else NULL
+  nd <- if (has_n) list(
+    pat = fmt_n(kpi_ndmm$n_patients),
+    pct = fmt_pct(kpi_ndmm$n_patients, if (has_o) kpi_overall$n_patients else NA),
+    l2  = reached(kpi_ndmm, "n_lot2"),
+    l3  = reached(kpi_ndmm, "n_lot3"),
+    med = fmt_days(kpi_ndmm$lot1_median_len),
+    rng = fmt_date_range(kpi_ndmm$lot1_min, kpi_ndmm$lot1_max)
+  ) else NULL
+  ovcell <- function(key) if (is.null(ov)) "-" else ov[[key]]
+  ndcell <- function(key)
+    if (is.null(nd)) "<span style='color:#a06000'>n/a</span>" else nd[[key]]
+
+  rowh <- function(metric, key, hint = "")
+    paste0('<tr>',
+      '<td style="padding:10px 14px;border-bottom:1px solid #EEE">',
+        '<div style="font-weight:600;color:#2A2A33">', metric, '</div>',
+        if (nzchar(hint))
+          paste0('<div style="font-size:11px;color:#9aa0aa">', hint, '</div>')
+        else '',
+      '</td>',
+      '<td style="padding:10px 14px;border-bottom:1px solid #EEE;text-align:right;',
+        'font-variant-numeric:tabular-nums">', ovcell(key), '</td>',
+      '<td style="padding:10px 14px;border-bottom:1px solid #EEE;text-align:right;',
+        'font-variant-numeric:tabular-nums">', ndcell(key), '</td>',
+    '</tr>')
+
+  body <- paste0(
+    rowh("Patients (any LOT)", "pat", "distinct PATID"),
+    rowh("NDMM as % of Overall", "pct", "shared-denominator check"),
+    rowh("Reached LOT2+", "l2"),
+    rowh("Reached LOT3+", "l3"),
+    rowh("Median LOT1 length", "med", "LOT_BASE_LENGTH"),
+    rowh("LOT1 start range", "rng", "earliest &rarr; latest")
+  )
+
+  ndmm_note <- if (!has_n)
+    paste0('<p style="margin:10px 0 0;font-size:12px;color:#a06000">',
+           'The NDMM (1L) cohort could not be built this run, so its column ',
+           'shows <b>n/a</b>. See the NDMM section for the reason.</p>') else ""
+
+  or_na <- function(x)
+    if (length(x) == 0 || is.null(x) || (length(x) == 1 && is.na(x))) "n/a"
+    else as.character(x)
+  # One headline stat callout (accent = coloured top border per cohort).
+  stat_card <- function(label, value, sub, accent)
+    paste0('<div style="flex:1 1 200px;border:1px solid #E5E7EB;border-top:3px solid ',
+           accent, ';border-radius:10px;padding:14px 16px;background:#fff">',
+           '<div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;',
+           'color:#6B7280;font-weight:800">', label, '</div>',
+           '<div style="font-size:30px;font-weight:800;color:#1f2937;line-height:1.1;',
+           'margin-top:3px">', value, '</div>',
+           '<div style="font-size:12px;color:#6B7280;margin-top:2px">', sub, '</div></div>')
+  ov_pat <- if (has_o) fmt_n(kpi_overall$n_patients) else "n/a"
+  nd_pat <- if (has_n) fmt_n(kpi_ndmm$n_patients) else "n/a"
+  nd_sub <- if (has_n)
+      paste0(fmt_pct(kpi_ndmm$n_patients, if (has_o) kpi_overall$n_patients else NA),
+             " of Overall")
+    else "cohort unavailable this run"
+  stat_band <- paste0(
+    '<div style="display:flex;gap:14px;margin:0 0 18px;flex-wrap:wrap">',
+    stat_card("Overall cohort",   ov_pat, "patients with any LOT", "#0E7C7B"),
+    stat_card("NDMM cohort (1L)",  nd_pat, nd_sub,                  "#F36633"),
+    '</div>')
+  dq <- paste0(
+    '<div style="margin-top:16px;padding:10px 12px;background:#F7F8FA;',
+         'border:1px solid #E5E7EB;border-radius:8px;font-size:12px;color:#6B7280">',
+    '<b style="color:#2A2A33">Run &amp; data quality</b>',
+    ' &nbsp;&bull;&nbsp; Study end ',     or_na(study_end),
+    ' &nbsp;&bull;&nbsp; Steroid codes ', or_na(n_ster),
+    ' &nbsp;&bull;&nbsp; Category rules ', or_na(n_rules),
+    ' &nbsp;&bull;&nbsp; Generated ',     run_ts,
+    ' &nbsp;&bull;&nbsp; Overall: ', if (has_o) 'built' else 'unavailable',
+    ' &nbsp;&bull;&nbsp; NDMM: ',    if (has_n) 'built' else 'unavailable',
+    '</div>')
+
+  # Optional stakeholder-ask findings recorded by the steroid/payer builders
+  # for the Overall cohort - the exact numbers shown in their detail views,
+  # reused here. Failsafe: any problem yields an empty panel.
+  findings_html <- tryCatch({
+    fnd <- if (exists("dashboard_findings"))
+             Filter(function(f) identical(f$cohort, "Overall"), dashboard_findings)
+           else list()
+    if (length(fnd) == 0) "" else {
+      rows <- paste(vapply(fnd, function(f)
+        paste0('<li style="margin:4px 0"><b style="color:#0E7C7B">', f$group,
+               '</b> &mdash; ', f$text, '</li>'), character(1)), collapse = "")
+      paste0('<h3 style="margin:20px 0 6px;font-size:15px;font-weight:800">Key findings ',
+             '<span style="font-weight:600;color:#6B7280;font-size:12px">',
+             '(Overall cohort &middot; full detail in Steroids &amp; payer)</span></h3>',
+             '<ul style="margin:0;padding-left:18px;font-size:13px;color:#2A2A33;',
+             'line-height:1.5">', rows, '</ul>')
+    }
+  }, error = function(e) "")
+
+  card <- paste0(
+'<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;',
+     'padding:18px 20px;max-width:920px;color:#2A2A33">',
+  '<h2 style="margin:0 0 4px;font-size:20px;font-weight:800">Executive summary</h2>',
+  '<p style="margin:0 0 14px;font-size:13px;color:#6B7280;line-height:1.5">',
+    'Headline numbers for the two cohorts in this build. ',
+    '<b>Overall</b> is the whole parent line-of-therapy cohort; ',
+    '<b>NDMM</b> is the 1L newly-diagnosed subset (inclusion/exclusion gates applied). ',
+    'All figures are computed at build time from each cohort&rsquo;s LOT_LONG ',
+    '&mdash; nothing here is hard-coded.',
+  '</p>',
+  stat_band,
+  '<table style="border-collapse:collapse;width:100%;font-size:14px">',
+    '<thead><tr>',
+      '<th style="text-align:left;padding:8px 14px;border-bottom:2px solid #F36633;',
+        'font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#6B7280">Metric</th>',
+      '<th style="text-align:right;padding:8px 14px;border-bottom:2px solid #F36633;',
+        'color:#D24E1F">Overall</th>',
+      '<th style="text-align:right;padding:8px 14px;border-bottom:2px solid #F36633;',
+        'color:#0E7C7B">NDMM</th>',
+    '</tr></thead>',
+    '<tbody>', body, '</tbody>',
+  '</table>',
+  ndmm_note,
+  findings_html,
+  dq,
+'</div>')
+
+  add_html_card(card, section = "Summary", title = "Executive summary")
+}
+
+# ---- Bucket + audience tagging --------------------------------------
+# Classify every item into a stakeholder-facing bucket and an audience by
+# the title prefix its builder emits (folded in by resection_recent_items
+# / the shared title_prefix= args). The bucket drives a two-level nav
+# (cohort pill -> collapsible bucket); the audience drives the
+# Stakeholder/Full toggle. Buckets and audience are aligned so the three
+# stakeholder buckets are uniformly stakeholder and the three internal
+# buckets are uniformly full - in stakeholder view the internal buckets
+# simply disappear, leaving a clean three-bucket nav per cohort.
+#
+# The data still ships in the file regardless of audience (acceptable
+# here: internal GSK audience with equivalent data access), so the toggle
+# is a presentation cut, not a privacy boundary.
+COHORT_ORDER <- c("Summary", "Overall", "NDMM")
+BUCKET_ORDER <- c("Summary", "Cohort & attrition", "Treatment patterns",
+                  "Steroids & payer", "Patient explorer", "Validation",
+                  "Debug", "Other")
+
+classify_item <- function(title) {
+  rules <- list(
+    c("^Executive summary",                                  "Summary",            "stakeholder"),
+    c("^(KPI snapshot|Overview & cohort)",                   "Cohort & attrition", "stakeholder"),
+    c("^(Attrition|OVERVIEW|FUNNEL): ",                      "Cohort & attrition", "stakeholder"),
+    c(paste0("^(Transitions|START_TYPE|END_REASON|LENGTH|REGIMENS|",
+             "PROGRESSION|GAPS|TRANSITIONS|SANKEY|MEDCOUNT|MTX|TREND): "),
+                                                             "Treatment patterns", "stakeholder"),
+    c("^(Steroids|Payer): ",                                 "Steroids & payer",   "stakeholder"),
+    c("^(Examples|MED JOURNEY): ",                           "Patient explorer",   "full"),
+    c("^(Validation|QC): ",                                  "Validation",         "full"),
+    c("^(DEBUG|DRILLDOWN): ",                                "Debug",              "full")
+  )
+  for (r in rules) if (grepl(r[1], title)) return(list(bucket = r[2], audience = r[3]))
+  list(bucket = "Other", audience = "stakeholder")
+}
+
+# Tag $bucket + $audience on every item, then stable-sort into
+# (cohort, bucket) order so the nav reads top-down as a stakeholder would
+# expect, with unknowns falling to the end of their cohort.
+tag_and_order <- function() {
+  n <- length(dashboard_items)
+  for (i in seq_len(n)) {
+    it <- dashboard_items[[i]]
+    cl <- classify_item(it$title)
+    it$bucket   <- cl$bucket
+    it$audience <- cl$audience
+    dashboard_items[[i]] <<- it
+  }
+  rank <- function(x, levels) {
+    m <- match(x, levels); ifelse(is.na(m), length(levels) + 1L, m)
+  }
+  cr <- vapply(dashboard_items, function(it) rank(it$section, COHORT_ORDER), integer(1))
+  br <- vapply(dashboard_items, function(it) rank(it$bucket,  BUCKET_ORDER), integer(1))
+  dashboard_items <<- dashboard_items[order(cr, br, seq_len(n))]
+}
+
 main_combined <- function() {
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
   cfg$build_dashboard <<- TRUE
@@ -174,6 +382,7 @@ main_combined <- function() {
   run_ts_combined <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
 
   dashboard_items <<- list()
+  dashboard_findings <<- list()
 
   # Cohort prefixes keep the LOT1-5 static PNG artifacts (lotlong_*.png)
   # from clobbering each other across the two cohort passes. The HTML
@@ -185,6 +394,7 @@ main_combined <- function() {
   log_msg("==== Building OVERALL cohort views ====")
   cfg$plot_filename_prefix <<- "overall_"
   p_overall <- prepare_overall_cohort(con)
+  kpi_overall <- query_cohort_kpis(con, wrk("LOT_LONG"))
   build_cohort_kpis(con, wrk("LOT_LONG"), section = "Overall",
                     title = "KPI snapshot")
   build_overview_card(p_overall$n_ster, p_overall$n_rules,
@@ -209,8 +419,10 @@ main_combined <- function() {
   # Overall + Exploratory still render.
   log_msg("==== Building NDMM cohort views ====")
   cfg$plot_filename_prefix <<- "ndmm_"
+  kpi_ndmm <- list()
   ndmm_ok <- tryCatch({
     p_ndmm <- prepare_ndmm_cohort(con)
+    kpi_ndmm <- query_cohort_kpis(con, NDMM_LOT_LONG_FILT)
     build_cohort_kpis(con, NDMM_LOT_LONG_FILT, section = "NDMM",
                       title = "KPI snapshot")
     build_ndmm_overview_card(p_ndmm$counts, p_ndmm$n_ster, p_ndmm$n_rules,
@@ -249,17 +461,26 @@ main_combined <- function() {
     FALSE
   })
 
-  # ---- Exploratory analysis ----
   cfg$plot_filename_prefix <<- NULL
-  build_exploratory_scaffold()
+
+  # ---- Summary landing page + nav structuring ----
+  # Built last (it needs both cohorts' KPIs); tag_and_order() then assigns
+  # every item a bucket + audience and stable-sorts the whole list into
+  # (cohort, bucket) order, so the Summary leads and each cohort reads
+  # top-down (cohort & attrition -> treatment -> steroids & payer ->
+  # internal). The empty Exploratory scaffold is intentionally not built -
+  # it returns only when a real different-denominator analysis exists.
+  build_summary_landing(kpi_overall, kpi_ndmm, ndmm_ok, run_ts_combined,
+                        n_ster = p_overall$n_ster, n_rules = p_overall$n_rules,
+                        study_end = cfg$study_end)
+  tag_and_order()
 
   build_dashboard(
     out_name     = "combined_dashboard.html",
     header_title = "MM LOT &mdash; combined (Overall + NDMM)",
-    header_sub   = paste0("Overall &bull; NDMM",
-                          if (!ndmm_ok) " (unavailable)" else "",
-                          " &bull; Exploratory analysis"),
-    cohort_sections = c("Overall", "NDMM", "Exploratory analysis")
+    header_sub   = paste0("Summary &bull; Overall &bull; NDMM",
+                          if (!ndmm_ok) " (unavailable)" else ""),
+    cohort_sections = c("Summary", "Overall", "NDMM")
   )
   log_msg("Wrote ", file.path(cfg$output_dir, "combined_dashboard.html"))
 }

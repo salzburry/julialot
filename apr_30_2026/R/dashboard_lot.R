@@ -24,6 +24,20 @@ add_to_dashboard <- function(widget, section, title, type = "figure") {
   )
 }
 
+# ---- Optional summary findings ----
+# Builders may record a one-line headline (reusing a number they already
+# computed and display) here; the combined dashboard surfaces them on its
+# Executive summary. record_finding() can never raise - a capture failure
+# silently records nothing - so it is always safe to call from a builder.
+# Standalone dashboards simply never read this.
+dashboard_findings <- list()
+record_finding <- function(cohort, group, text) {
+  tryCatch(
+    dashboard_findings[[length(dashboard_findings) + 1]] <<-
+      list(cohort = cohort, group = group, text = text),
+    error = function(e) invisible(NULL))
+}
+
 # ---- Shared visual theme and palettes ----
 # One source of truth for both dashboards. Same category -> same colour
 # everywhere; tune here to retune every chart in both. Chosen to read
@@ -492,20 +506,44 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
       }
     }
 
-    # Category-grouped navigation model: [{section, items:[{id,title}]}].
-    # Rendered as two dropdowns (Category -> View) instead of a flat tab
-    # list, which scales when a dashboard has many figures.
-    nav_list <- lapply(sections, function(s) {
-      idxs <- which(vapply(dashboard_items,
-                           function(it) identical(it$section, s), logical(1)))
+    # Two-level navigation model: [{cohort, bucket, items:[{id,title,audience}]}].
+    # The cohort drives the pill row; the bucket is a collapsible sub-header
+    # within the selected cohort. Combined dashboard (cohort_sections set):
+    # cohort = item$section, bucket = item$bucket. Standalone 04/05/06: no
+    # cohort_sections, so cohort = "" and the functional section doubles as
+    # the bucket - their nav is unchanged (one collapsible group per section).
+    combined_mode <- length(cohort_sections) > 0
+    it_cohort <- function(it) if (combined_mode) it$section else ""
+    it_bucket <- function(it) if (!is.null(it$bucket)) it$bucket else it$section
+    # Ordered unique (cohort, bucket) groups in dashboard_items order.
+    gcoh <- character(0); gbuc <- character(0)
+    for (it in dashboard_items) {
+      ck <- it_cohort(it); bk <- it_bucket(it)
+      if (!any(gcoh == ck & gbuc == bk)) { gcoh <- c(gcoh, ck); gbuc <- c(gbuc, bk) }
+    }
+    nav_list <- lapply(seq_along(gcoh), function(gi) {
+      idxs <- which(vapply(dashboard_items, function(it)
+        identical(it_cohort(it), gcoh[gi]) && identical(it_bucket(it), gbuc[gi]),
+        logical(1)))
       list(
-        section = s,
-        items = lapply(idxs, function(i)
-          list(id = paste0("tab", i), title = dashboard_items[[i]]$title))
+        cohort = gcoh[gi], bucket = gbuc[gi],
+        items = lapply(idxs, function(i) {
+          aud <- dashboard_items[[i]]$audience
+          list(id = paste0("tab", i), title = dashboard_items[[i]]$title,
+               audience = if (is.null(aud)) "stakeholder" else aud)
+        })
       )
     })
     nav_json <- paste0("var NAV = ",
       jsonlite::toJSON(nav_list, auto_unbox = TRUE, force = TRUE), ";")
+
+    # Stakeholder/Full toggle only appears when at least one view is tagged
+    # full-only (combined dashboard); standalone 04/05/06 tag nothing, so the
+    # button stays hidden and their nav is unchanged.
+    has_full <- any(vapply(dashboard_items,
+      function(it) identical(it$audience, "full"), logical(1)))
+    has_full_json <- paste0("var HAS_FULL = ",
+      if (has_full) "true" else "false", ";")
 
     # Explicit cohort-pill list (combined dashboard only). Restricted to
     # sections that actually exist so a typo can't produce an empty pill.
@@ -647,6 +685,10 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
     font-size: 12px; font-weight: 700; cursor: pointer;
   }
   .icon-btn:hover { border-color: var(--gsk-orange); color: var(--gsk-orange-d); }
+  /* Full (internal) mode: make the toggle obvious so it is clear when
+     QC/DEBUG views are exposed during a live walkthrough. */
+  .icon-btn.aud.on { background: var(--gsk-orange); color:#fff; border-color: var(--gsk-orange-d); }
+  .icon-btn.aud.on:hover { color:#fff; }
   .content { padding: 22px 26px 60px; }
   .card {
     background: var(--card); border: 1px solid var(--border);
@@ -684,6 +726,14 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
     background: var(--gsk-orange); color: #fff;
     border-color: var(--gsk-orange-d);
   }
+  /* Per-cohort accent so the active pill signals which cohort you are in:
+     Summary = slate, Overall = teal, NDMM = brand orange. */
+  .ct-btn[data-cohort="Summary"].active { background:#475569; border-color:#334155; }
+  .ct-btn[data-cohort="Overall"].active { background:#0E7C7B; border-color:#0b6160; }
+  .ct-btn[data-cohort="NDMM"].active    { background:#F36633; border-color:#D24E1F; }
+  /* Bucket sub-headers read as quiet dividers under the cohort pill. */
+  .grp-h { border-top: 1px solid var(--gsk-sidebar-bd); }
+  .grp:first-child .grp-h { border-top: none; }
   /* KPI tiles and code tooltips are styled inline (they live inside
      sandboxed iframes, so parent CSS would not reach them). */
 </style>
@@ -705,6 +755,7 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
   <div class="topbar">
     <div class="crumb"><b id="cbCat">--</b> &nbsp;/&nbsp; <span id="cbView">--</span></div>
     <div class="spacer"></div>
+    <button class="icon-btn aud" id="audBtn" title="Toggle stakeholder / full views" style="display:none">View: Stakeholder</button>
     <button class="icon-btn" id="prevBtn" title="Previous (Left arrow)">&#8592; Prev</button>
     <button class="icon-btn" id="nextBtn" title="Next (Right arrow)">Next &#8594;</button>
     <button class="icon-btn" id="fsBtn" title="Toggle fullscreen (F)">&#9974; Fullscreen</button>
@@ -746,7 +797,7 @@ var FLAT = [];
 function buildFlat() {
   FLAT = [];
   NAV.forEach(function(g){ g.items.forEach(function(it){
-    FLAT.push({ id: it.id, title: it.title, section: g.section });
+    FLAT.push({ id: it.id, title: it.title, cohort: g.cohort, bucket: g.bucket });
   }); });
 }
 var curId = null;
@@ -760,7 +811,7 @@ function openView(id, push) {
   document.querySelectorAll(".nav-item").forEach(function(el){
     el.classList.toggle("active", el.getAttribute("data-id") === id);
   });
-  document.getElementById("cbCat").textContent  = rec.section;
+  document.getElementById("cbCat").textContent  = (rec.cohort ? rec.cohort + " / " : "") + rec.bucket;
   document.getElementById("cbView").textContent = rec.title;
   var plotDiv = t ? t.querySelector("[id^=plotly_]") : null;
   if (plotDiv) setTimeout(function(){ renderPlotlyIfVisible(plotDiv.id); }, 80);
@@ -775,9 +826,10 @@ function buildNav() {
   NAV.forEach(function(g, gi){
     var grp = document.createElement("div");
     grp.className = "grp" + (gi === 0 ? "" : " collapsed");
+    grp.setAttribute("data-cohort", g.cohort || "");
     var h = document.createElement("div");
     h.className = "grp-h";
-    h.innerHTML = "<span class=\\"caret\\">&#9660;</span><span>" + g.section +
+    h.innerHTML = "<span class=\\"caret\\">&#9660;</span><span>" + g.bucket +
       "</span><span class=\\"grp-count\\">" + g.items.length + "</span>";
     h.addEventListener("click", function(){ grp.classList.toggle("collapsed"); });
     grp.appendChild(h);
@@ -786,7 +838,8 @@ function buildNav() {
     g.items.forEach(function(it){
       var a = document.createElement("div");
       a.className = "nav-item"; a.setAttribute("data-id", it.id);
-      a.setAttribute("data-t", (g.section + " " + it.title).toLowerCase());
+      a.setAttribute("data-t", ((g.cohort || "") + " " + g.bucket + " " + it.title).toLowerCase());
+      a.setAttribute("data-aud", it.audience || "stakeholder");
       a.textContent = it.title;
       a.addEventListener("click", function(){ openView(it.id); });
       box.appendChild(a);
@@ -798,13 +851,14 @@ function buildNav() {
 function applySearch(q) {
   q = (q || "").trim().toLowerCase();
   document.querySelectorAll(".grp").forEach(function(grp){
-    // Respect the active cohort pill (combined dashboard): groups outside
+    // Respect the active cohort pill (combined dashboard): buckets outside
     // the selected cohort stay hidden even when the search matches an item.
-    var ch = grp.querySelector(".grp-h span:nth-child(2)");
-    var inCohort = !curCohort || !ch || ch.textContent === curCohort;
+    var gc = grp.getAttribute("data-cohort") || "";
+    var inCohort = !curCohort || gc === curCohort;
     var any = false;
     grp.querySelectorAll(".nav-item").forEach(function(a){
-      var hit = inCohort && (!q || a.getAttribute("data-t").indexOf(q) !== -1);
+      var audOk = (audMode === "full") || (a.getAttribute("data-aud") !== "full");
+      var hit = inCohort && audOk && (!q || a.getAttribute("data-t").indexOf(q) !== -1);
       a.classList.toggle("hidden", !hit);
       if (hit) any = true;
     });
@@ -874,11 +928,13 @@ function setCohort(name, jump) {
   document.querySelectorAll(".ct-btn").forEach(function(b){
     b.classList.toggle("active", b.getAttribute("data-cohort") === name);
   });
+  // Show only the buckets in this cohort; open the first and collapse the
+  // rest so the cohort lands as a tidy list of bucket headers.
+  var firstShown = true;
   document.querySelectorAll(".grp").forEach(function(g){
-    var h = g.querySelector(".grp-h span:nth-child(2)");
-    var s = h ? h.textContent : "";
-    g.classList.toggle("hidden", s !== name);
-    if (s === name) g.classList.remove("collapsed");
+    var match = (g.getAttribute("data-cohort") || "") === name;
+    g.classList.toggle("hidden", !match);
+    if (match) { g.classList.toggle("collapsed", !firstShown); firstShown = false; }
   });
   // Re-apply any active search against the newly-selected cohort so nav
   // items keep a correct shown/hidden state instead of one from the prior cohort.
@@ -900,6 +956,29 @@ function setCohort(name, jump) {
     }
   }
 }
+// ---- Stakeholder / Full audience toggle ----------------------------
+// Default to stakeholder. Full-only views (QC / Validation / DEBUG / raw
+// PATID drilldown / patient examples) carry data-aud="full"; the
+// applySearch filter hides them unless audMode === "full". This composes
+// with the cohort pills and search automatically, since every filter path
+// funnels through applySearch.
+var audMode = "stakeholder";
+function setAudMode(mode){
+  audMode = mode;
+  var btn = document.getElementById("audBtn");
+  if (btn){
+    btn.textContent = "View: " + (mode === "full" ? "Full (QC/DEBUG)" : "Stakeholder");
+    btn.classList.toggle("on", mode === "full");
+  }
+  var sbx = document.getElementById("navSearch");
+  applySearch(sbx ? sbx.value : "");
+  // If the active view was just hidden by the mode change, move to the
+  // first view still visible in the current cohort.
+  if (visibleIds().indexOf(curId) === -1){
+    var ids = visibleIds();
+    if (ids.length) openView(ids[0]);
+  }
+}
 // Acronym tooltips are applied R-side at card-build time (inject_tooltips
 // in dashboard_lot.R) so they work inside the sandboxed card iframes;
 // no client-side dictionary is needed here.
@@ -907,6 +986,13 @@ document.addEventListener("DOMContentLoaded", function(){
   buildFlat();
   buildNav();
   buildCohortTabs();
+  var audBtn = document.getElementById("audBtn");
+  if (audBtn){
+    if (typeof HAS_FULL !== "undefined" && HAS_FULL) audBtn.style.display = "";
+    audBtn.addEventListener("click", function(){
+      setAudMode(audMode === "full" ? "stakeholder" : "full");
+    });
+  }
   document.getElementById("prevBtn").addEventListener("click", function(){ step(-1); });
   document.getElementById("nextBtn").addEventListener("click", function(){ step(1); });
   document.getElementById("fsBtn").addEventListener("click", toggleFs);
@@ -931,11 +1017,13 @@ document.addEventListener("DOMContentLoaded", function(){
   if (start) {
     openView(start, false);
     var rec = FLAT.filter(function(f){return f.id===start;})[0];
-    if (rec && COHORTS.indexOf(rec.section) !== -1) setCohort(rec.section, false);
+    if (rec && COHORTS.indexOf(rec.cohort) !== -1) setCohort(rec.cohort, false);
   }
 });
 // Category-grouped nav model
 ', nav_json, '
+// Stakeholder/Full toggle availability (true only when full-only views exist)
+', has_full_json, '
 // Cohort-pill list (combined dashboard only; empty for standalone)
 ', cohort_json, '
 // Plotly figure specs - all figures share one copy of plotly.js
