@@ -103,10 +103,27 @@ collect_cohort_views <- function(con, cohort_label, lookups, lot_long_tbl,
   # attrition figure. Each line names the view group about to be built, so the
   # last line printed before a stall pinpoints the culprit (for both cohorts).
   log_msg("[", cohort_label, "] views 1/8: steroid prevalence + missing-steroid LOT1 + DEXA-vs-LENA timing + pre-LOT steroid")
-  build_steroid_prevalence(con, section = cohort_label, title_prefix = "Steroids: ")
-  build_missing_steroid_lot1(con, section = cohort_label, title_prefix = "Steroids: ")
-  build_steroid_timing_qc(con, lot_long_tbl, section = cohort_label, title_prefix = "Steroids: ")
-  build_pre_lot_steroid_qc(con, lot_long_tbl, section = cohort_label, title_prefix = "Steroids: ")
+  # Gate the steroid builders on a non-empty codelist. With no codes loaded an
+  # empty STEROID_VIEW still queries fine, so these would otherwise show 0%
+  # prevalence and "0 of N" cards that read as real absence in the
+  # stakeholder-visible Steroids section. Emit one "unavailable" card instead.
+  if (steroid_state() == "unavailable") {
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:14px;max-width:860px">',
+      '<h3 style="margin:0 0 6px">Steroid analyses unavailable</h3>',
+      '<p style="color:#7f1d1d;font-size:13px;line-height:1.5">No steroid codes ',
+      'were loaded (<code>steroid_codes.csv</code> missing, empty, or ',
+      'unreadable), so steroid prevalence, missing-steroid, DEXA-vs-LENA ',
+      'timing and pre-LOT steroid analyses did not run. They are omitted ',
+      'rather than shown as zeros, which would read as real absence. Supply a ',
+      'valid codelist and re-run.</p></div>'),
+      section = cohort_label, title = "Steroids: analyses unavailable")
+  } else {
+    build_steroid_prevalence(con, section = cohort_label, title_prefix = "Steroids: ")
+    build_missing_steroid_lot1(con, section = cohort_label, title_prefix = "Steroids: ")
+    build_steroid_timing_qc(con, lot_long_tbl, section = cohort_label, title_prefix = "Steroids: ")
+    build_pre_lot_steroid_qc(con, lot_long_tbl, section = cohort_label, title_prefix = "Steroids: ")
+  }
   log_msg("[", cohort_label, "] views 2/8: focused regimen-pair transitions")
   for (n in 1:4)
     build_focused_pair(con, n, n + 1L, section = cohort_label,
@@ -262,10 +279,12 @@ build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts,
   # oral steroids undercounted) or be missing/empty entirely (no codes at all
   # -> the steroid analyses did not run, so a "0 of N" finding must NOT read as
   # a real zero). Distinguish unavailable from HCPCS-only below.
-  ster_n <- function(x) if (is_num(x)) x else 0L
-  codes_known <- is_num(n_hcpcs) || is_num(n_ndc) || is_num(n_cpt)
-  ster_total  <- ster_n(n_hcpcs) + ster_n(n_cpt) + ster_n(n_ndc)
-  ster_unavail <- codes_known && ster_total == 0
+  # steroid_state() (defined in 05) is the shared source of truth, so the
+  # Summary, the overview banner and the per-cohort gate always agree - and
+  # unset counts (rx/medical unreadable) collapse to "unavailable" too.
+  st_steroid   <- steroid_state(n_hcpcs, n_cpt, n_ndc)
+  ster_unavail <- st_steroid == "unavailable"
+  codes_known  <- is_num(n_hcpcs) || is_num(n_ndc) || is_num(n_cpt)
   ster_codes <- if (ster_unavail) "none loaded"
     else if (codes_known) {
       parts <- c(if (is_num(n_hcpcs)) paste0(n_hcpcs, " HCPCS"),
@@ -287,18 +306,21 @@ build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts,
     '<div style="margin-top:12px;padding:10px 12px;background:#FEF2F2;',
     'border:1px solid #FECACA;border-left:4px solid #DC2626;border-radius:8px;',
     'font-size:12.5px;color:#7f1d1d">', html, '</div>')
-  # Unavailable (no codes) is a red alert and suppresses steroid findings;
-  # HCPCS-only (codes present, NDC absent) keeps findings with an amber caveat.
+  # Unavailable (no usable codes / inputs unreadable) is a red alert and
+  # suppresses steroid findings; procedure-only (HCPCS/CPT present, no NDC)
+  # keeps findings with an amber undercount caveat.
   ster_warn <- if (ster_unavail) alert_box(paste0(
-      '<b>Steroid codelist unavailable.</b> No steroid codes were loaded ',
-      '(<code>steroid_codes.csv</code> missing, empty, or unreadable), so the ',
-      'steroid analyses did not run &mdash; steroid findings are omitted here ',
-      'rather than shown as a real zero. Supply a valid codelist and re-run.'))
-    else if (is_num(n_ndc) && n_ndc == 0) warn_box(paste0(
+      '<b>Steroid codelist unavailable.</b> No usable steroid codes were ',
+      'loaded (<code>steroid_codes.csv</code> missing/empty/unreadable, or the ',
+      'rx/medical inputs were unreadable), so the steroid analyses did not run ',
+      '&mdash; steroid findings are omitted here rather than shown as a real ',
+      'zero. Supply a valid codelist and re-run.'))
+    else if (st_steroid == "procedure_only") warn_box(paste0(
       '<b>Steroid codelist has 0 NDC codes.</b> Oral pharmacy steroids are ',
-      'undercounted &mdash; steroid figures here reflect <b>HCPCS-observed</b> ',
-      'claims only. Replace <code>steroid_codes.csv</code> with an NDC-complete ',
-      'file before stakeholder distribution.'))
+      'undercounted &mdash; steroid figures here reflect ',
+      '<b>procedure-code (HCPCS/CPT)-observed</b> claims only. Replace ',
+      '<code>steroid_codes.csv</code> with an NDC-complete file before ',
+      'stakeholder distribution.'))
     else ""
   ndmm_warn <- if (has_n && length(ndmm_notes) > 0) warn_box(paste0(
     '<b>NDMM built with warnings.</b> One or more configured NDMM gates were ',
