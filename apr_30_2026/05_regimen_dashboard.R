@@ -1055,12 +1055,20 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
         paste0('Coverage this run is <b>procedure codes only</b> ',
                '(HCPCS/CPT-observed); oral pharmacy (NDC) claims are <b>not</b> ',
                'captured, so oral-only steroid use is undercounted.')
-      else 'Coverage spans HCPCS/CPT + NDC, across both medical and pharmacy claims.',
+      else paste0('Coverage spans ', steroid_types_loaded(),
+                  ' codes, across medical and pharmacy claims.'),
       '</p></div>'),
       section = section, title = paste0(title_prefix, label, " - summary"))
     if (n_before > 0) {
       save_table(summ, section = section,
                  title = paste0(title_prefix, label, " - mean lead time"))
+      # Show only the agents that are part of THIS target regimen, so a LOT2
+      # "LENA" example does not display a later, unrelated BORT start (BORT is
+      # not part of the LOT2 LENA target). LOT1 "BORT LENA" still shows both.
+      tgt_agents <- strsplit(regimen, " ")[[1]]
+      agents_in  <- paste(sprintf("'%s'", tgt_agents), collapse = ", ")
+      bort_col   <- if ("BORT" %in% tgt_agents)
+        "cast(max(CASE WHEN a.agent='BORT' THEN a.agent_start END) as string) AS bort_start," else ""
       # MAP_STACKED is not probed up front (the summary + mean lead time above
       # do not need it); guard the example join so a missing/unreadable
       # MAP_STACKED skips the example table instead of aborting the section.
@@ -1073,7 +1081,7 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
           SELECT cast(mp.PATID as string) AS PATID, mp.MAP_MED_TYPE AS agent,
                  min(cast(mp.MAP_START_DT as date)) AS agent_start
           FROM {map_tbl} mp JOIN ex_pat e ON cast(mp.PATID as string) = e.PATID
-          WHERE mp.MAP_MED_TYPE IN ('LENA','BORT')
+          WHERE mp.MAP_MED_TYPE IN ({agents_in})
             AND cast(mp.MAP_START_DT as date) >= e.lot_start
             AND cast(mp.MAP_START_DT as date) <= date_add(e.lot_start, 90)
           GROUP BY cast(mp.PATID as string), mp.MAP_MED_TYPE
@@ -1087,7 +1095,7 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
                cast(e.closest_days_before as int)    AS closest_days_before,
                cast(e.lot_start as string)           AS lot_start,
                cast(max(CASE WHEN a.agent='LENA' THEN a.agent_start END) as string) AS lena_start,
-               cast(max(CASE WHEN a.agent='BORT' THEN a.agent_start END) as string) AS bort_start,
+               {bort_col}
                cast(e.n_steroid_dates as int)        AS n_steroid_dates
         FROM ex_pat e LEFT JOIN agents a ON a.PATID = e.PATID
         GROUP BY e.PATID, e.earliest_token, e.earliest_steroid_dt, e.earliest_days_before,
@@ -1395,6 +1403,16 @@ steroid_state <- function(n_hcpcs = cfg$steroid_hcpcs_count,
   if (h + cpt + n == 0L) return("unavailable")
   if (n == 0L) return("procedure_only")
   "ndc_present"
+}
+
+# Human label of the steroid code types actually loaded (e.g. "HCPCS + NDC"),
+# for state-aware wording so a card never claims a code type that is absent.
+steroid_types_loaded <- function() {
+  z <- function(x) if (is.null(x) || length(x) != 1 || is.na(x)) 0L else as.integer(x)
+  parts <- c(if (z(cfg$steroid_hcpcs_count) > 0) "HCPCS",
+             if (z(cfg$steroid_cpt_count)   > 0) "CPT",
+             if (z(cfg$steroid_ndc_count)   > 0) "NDC")
+  paste(parts, collapse = " + ")
 }
 
 # Reset steroid code counts to zero. Called when a cohort cannot run steroid
