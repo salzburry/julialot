@@ -1405,6 +1405,8 @@ prepare_ndmm_cohort <- function(con) {
     log_msg("  ", n_ster, " codes loaded")
   } else {
     n_ster <- 0L
+    clear_steroid_counts()   # rx/medical unreadable -> steroids unavailable
+                             # (do not inherit the Overall pass's counts)
   }
 
   log_msg("Augmenting filtered LOT_LONG with steroid tokens")

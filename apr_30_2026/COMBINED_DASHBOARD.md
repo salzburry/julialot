@@ -58,7 +58,7 @@ front. All figures are computed at build time — nothing is hard-coded:
 - **Steroid codelist state** (one shared `steroid_state()` drives the Summary, the overview banner, and the per-cohort steroid section identically) — three states:
   1. **unavailable** — no usable codes loaded (CSV missing/empty/wrong-schema, or rx/medical unreadable): red alert, steroid findings suppressed and the detail steroid builders skipped, so nothing reads as a real zero
   2. **procedure_only** — HCPCS/CPT codes present but **0 NDC**: amber undercount caveat (oral-RX steroids not captured), findings kept
-  3. **complete** — NDC present: no warning
+  3. **ndc_present** — at least one NDC code present: no warning. (Named `ndc_present`, not `complete` — it does not prove the DEXA/PRED value set is fully covered; that needs a validated value-set check.)
 - **NDMM warning** — an amber **built with warnings** box when configured NDMM gates were skipped (a required source was unavailable); warnings render before the findings
 
 NDMM degrades to `n/a` across the page when that cohort cannot be built.
