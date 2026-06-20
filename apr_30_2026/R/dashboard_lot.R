@@ -712,6 +712,14 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
     background: var(--gsk-orange); color: #fff;
     border-color: var(--gsk-orange-d);
   }
+  /* Per-cohort accent so the active pill signals which cohort you are in:
+     Summary = slate, Overall = teal, NDMM = brand orange. */
+  .ct-btn[data-cohort="Summary"].active { background:#475569; border-color:#334155; }
+  .ct-btn[data-cohort="Overall"].active { background:#0E7C7B; border-color:#0b6160; }
+  .ct-btn[data-cohort="NDMM"].active    { background:#F36633; border-color:#D24E1F; }
+  /* Bucket sub-headers read as quiet dividers under the cohort pill. */
+  .grp-h { border-top: 1px solid var(--gsk-sidebar-bd); }
+  .grp:first-child .grp-h { border-top: none; }
   /* KPI tiles and code tooltips are styled inline (they live inside
      sandboxed iframes, so parent CSS would not reach them). */
 </style>

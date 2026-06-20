@@ -167,7 +167,8 @@ build_exploratory_scaffold <- function() {
 # "n/a" when that cohort could not be built this run. Rendered as a
 # self-contained html_card (sandboxed iframe), so it cannot affect the
 # rest of the dashboard's navigation.
-build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts) {
+build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts,
+                                   n_ster = NA, n_rules = NA, study_end = NA) {
   has_o <- length(kpi_overall) > 0 && !is.null(kpi_overall$n_patients) &&
            !is.na(kpi_overall$n_patients)
   has_n <- isTRUE(ndmm_ok) && length(kpi_ndmm) > 0 &&
@@ -227,6 +228,41 @@ build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts) {
            'The NDMM (1L) cohort could not be built this run, so its column ',
            'shows <b>n/a</b>. See the NDMM section for the reason.</p>') else ""
 
+  or_na <- function(x)
+    if (length(x) == 0 || is.null(x) || (length(x) == 1 && is.na(x))) "n/a"
+    else as.character(x)
+  # One headline stat callout (accent = coloured top border per cohort).
+  stat_card <- function(label, value, sub, accent)
+    paste0('<div style="flex:1 1 200px;border:1px solid #E5E7EB;border-top:3px solid ',
+           accent, ';border-radius:10px;padding:14px 16px;background:#fff">',
+           '<div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;',
+           'color:#6B7280;font-weight:800">', label, '</div>',
+           '<div style="font-size:30px;font-weight:800;color:#1f2937;line-height:1.1;',
+           'margin-top:3px">', value, '</div>',
+           '<div style="font-size:12px;color:#6B7280;margin-top:2px">', sub, '</div></div>')
+  ov_pat <- if (has_o) fmt_n(kpi_overall$n_patients) else "n/a"
+  nd_pat <- if (has_n) fmt_n(kpi_ndmm$n_patients) else "n/a"
+  nd_sub <- if (has_n)
+      paste0(fmt_pct(kpi_ndmm$n_patients, if (has_o) kpi_overall$n_patients else NA),
+             " of Overall")
+    else "cohort unavailable this run"
+  stat_band <- paste0(
+    '<div style="display:flex;gap:14px;margin:0 0 18px;flex-wrap:wrap">',
+    stat_card("Overall cohort",   ov_pat, "patients with any LOT", "#0E7C7B"),
+    stat_card("NDMM cohort (1L)",  nd_pat, nd_sub,                  "#F36633"),
+    '</div>')
+  dq <- paste0(
+    '<div style="margin-top:16px;padding:10px 12px;background:#F7F8FA;',
+         'border:1px solid #E5E7EB;border-radius:8px;font-size:12px;color:#6B7280">',
+    '<b style="color:#2A2A33">Run &amp; data quality</b>',
+    ' &nbsp;&bull;&nbsp; Study end ',     or_na(study_end),
+    ' &nbsp;&bull;&nbsp; Steroid codes ', or_na(n_ster),
+    ' &nbsp;&bull;&nbsp; Category rules ', or_na(n_rules),
+    ' &nbsp;&bull;&nbsp; Generated ',     run_ts,
+    ' &nbsp;&bull;&nbsp; Overall: ', if (has_o) 'built' else 'unavailable',
+    ' &nbsp;&bull;&nbsp; NDMM: ',    if (has_n) 'built' else 'unavailable',
+    '</div>')
+
   card <- paste0(
 '<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;',
      'padding:18px 20px;max-width:920px;color:#2A2A33">',
@@ -238,6 +274,7 @@ build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts) {
     'All figures are computed at build time from each cohort&rsquo;s LOT_LONG ',
     '&mdash; nothing here is hard-coded.',
   '</p>',
+  stat_band,
   '<table style="border-collapse:collapse;width:100%;font-size:14px">',
     '<thead><tr>',
       '<th style="text-align:left;padding:8px 14px;border-bottom:2px solid #F36633;',
@@ -250,12 +287,7 @@ build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts) {
     '<tbody>', body, '</tbody>',
   '</table>',
   ndmm_note,
-  '<div style="margin-top:16px;padding:10px 12px;background:#F7F8FA;',
-       'border:1px solid #E5E7EB;border-radius:8px;font-size:12px;color:#6B7280">',
-    '<b style="color:#2A2A33">Run status</b> &nbsp;&bull;&nbsp; Generated ', run_ts,
-    ' &nbsp;&bull;&nbsp; Overall: ', if (has_o) 'built' else 'unavailable',
-    ' &nbsp;&bull;&nbsp; NDMM: ', if (has_n) 'built' else 'unavailable',
-  '</div>',
+  dq,
 '</div>')
 
   add_html_card(card, section = "Summary", title = "Executive summary")
@@ -417,7 +449,9 @@ main_combined <- function() {
   # top-down (cohort & attrition -> treatment -> steroids & payer ->
   # internal). The empty Exploratory scaffold is intentionally not built -
   # it returns only when a real different-denominator analysis exists.
-  build_summary_landing(kpi_overall, kpi_ndmm, ndmm_ok, run_ts_combined)
+  build_summary_landing(kpi_overall, kpi_ndmm, ndmm_ok, run_ts_combined,
+                        n_ster = p_overall$n_ster, n_rules = p_overall$n_rules,
+                        study_end = cfg$study_end)
   tag_and_order()
 
   build_dashboard(
