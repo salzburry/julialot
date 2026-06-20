@@ -413,9 +413,8 @@ LOT1 `BORT LENA` (steroid within 90 days before LOT1 start) and LOT2 `LENA`
 "first receipt" and the closest "lead-in"), and a few example patients per
 regimen - each example showing the steroid token and date alongside the
 LENA/BORT treatment starts. "Any steroid" scans the loaded
-`steroid_codes.csv`; pharmacy (NDC) capture depends on that file having NDC
-rows (an HCPCS-only codelist undercounts oral steroid). The all-steroid scan
-is materialized once per cohort to `STEROID_CLAIMS_ALL`.
+`steroid_codes.csv` (HCPCS + NDC), covering both medical and pharmacy claims.
+The all-steroid scan is materialized once per cohort to `STEROID_CLAIMS_ALL`.
 
 ## Reuse policy
 

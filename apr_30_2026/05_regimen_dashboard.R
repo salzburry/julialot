@@ -896,9 +896,9 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
   # the TWO target groups only (LOT1 'BORT LENA', LOT2 'LENA') so the giant
   # medical/rx scan touches only the patients the outputs need - not the whole
   # cohort. NOTE: keep this lot_pats predicate in sync with the one_config(...)
-  # calls at the end of this function. NDC branches only match if
-  # steroid_codes.csv has NDC rows; with an HCPCS-only codelist pharmacy
-  # (oral) steroid is undercounted (surfaced in the card caveat).
+  # calls at the end of this function. NDC branches require steroid_codes.csv
+  # to include NDC rows (the deployed codelist does; the repo CSV is an
+  # HCPCS-only stub).
   claims_sql <- glue("
     WITH lot_pats AS (
       SELECT DISTINCT cast(PATID as string) AS PATID FROM {lot_long_tbl}
@@ -1010,9 +1010,8 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
       '(lead-in) before the line; days = LOT start minus steroid date. The ',
       'example table shows which steroid (token) plus the LENA/BORT starts. ',
       '&ldquo;Any steroid&rdquo; = any token in the loaded ',
-      '<code>steroid_codes.csv</code> (DEXA/PRED/&hellip;); pharmacy (NDC) ',
-      'capture depends on that file having NDC rows, so with an HCPCS-only ',
-      'codelist oral steroid is undercounted.</p></div>'),
+      '<code>steroid_codes.csv</code> (DEXA / PRED; HCPCS + NDC), covering ',
+      'both medical and pharmacy claims.</p></div>'),
       section = section, title = paste0(title_prefix, label, " - summary"))
     if (n_before > 0) {
       save_table(summ, section = section,
