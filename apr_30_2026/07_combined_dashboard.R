@@ -9,19 +9,23 @@
 #   Rscript apr_30_2026/05_regimen_dashboard.R  -> whole (overall) cohort
 #   Rscript apr_30_2026/06_ndmm_dashboard.R     -> NDMM cohort
 # This script reuses their builders + cohort-prep functions to produce a
-# single HTML whose left sidebar has three top-level groups:
+# single HTML. The left sidebar has cohort pills:
 #
-#   Overall              whole parent LOT_LONG cohort
-#                        (regimen transitions + steroids + QC + LOT1-5 detail)
-#   NDMM                 1L newly-diagnosed cohort (IE filters)
-#   Exploratory analysis ad-hoc / one-off requests
+#   Summary  executive landing page - Overall vs NDMM headline numbers,
+#            data-quality strip, and a Key findings panel (built last, then
+#            sorted to the front by tag_and_order()); the opening view.
+#   Overall  whole parent LOT_LONG cohort (regimen transitions + steroids +
+#            payer + QC + LOT1-5 detail)
+#   NDMM     1L newly-diagnosed cohort (IE filters)
 #
-# Placement rule: an ad-hoc ask that REUSES the Overall or NDMM
-# denominator (same patient counts) is added UNDER that cohort as a
-# "QC:" or "Sensitivity:" item. An ask that CHANGES the cohort (a
-# different denominator, e.g. a POMA-specific subset) goes under
-# Exploratory analysis. Nothing in this repo currently needs the
-# Exploratory group, so it ships as a scaffold describing the rule.
+# Within each cohort, tag_and_order() groups views into collapsible buckets
+# (Cohort & attrition / Treatment patterns / Steroids & payer, plus the
+# full-only Patient explorer / Validation / Debug), and a Stakeholder/Full
+# toggle hides the full-only buckets by default.
+#
+# An empty "Exploratory analysis" group is intentionally NOT built (it would
+# return only when a real different-denominator ad-hoc analysis exists).
+# build_exploratory_scaffold() is kept below as documentation of that rule.
 #
 # Parent derivation logic is unchanged.
 
@@ -168,7 +172,9 @@ build_exploratory_scaffold <- function() {
 # self-contained html_card (sandboxed iframe), so it cannot affect the
 # rest of the dashboard's navigation.
 build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts,
-                                   n_ster = NA, n_rules = NA, study_end = NA) {
+                                   n_ster = NA, n_rules = NA, study_end = NA,
+                                   n_hcpcs = NA, n_ndc = NA,
+                                   ndmm_notes = character(0)) {
   has_o <- length(kpi_overall) > 0 && !is.null(kpi_overall$n_patients) &&
            !is.na(kpi_overall$n_patients)
   has_n <- isTRUE(ndmm_ok) && length(kpi_ndmm) > 0 &&
@@ -251,35 +257,70 @@ build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts,
     stat_card("Overall cohort",   ov_pat, "patients with any LOT", "#0E7C7B"),
     stat_card("NDMM cohort (1L)",  nd_pat, nd_sub,                  "#F36633"),
     '</div>')
+  is_num <- function(x) !is.null(x) && length(x) == 1 && !is.na(x)
+  # Steroid codelist completeness. The tracked CSV can ship HCPCS-only, which
+  # undercounts oral pharmacy steroids, so show the HCPCS/NDC split (not just
+  # the total) and an amber banner + caveat wording when NDC is absent.
+  ster_codes <- if (is_num(n_hcpcs) || is_num(n_ndc))
+      paste0(or_na(n_hcpcs), " HCPCS + ", or_na(n_ndc), " NDC")
+    else or_na(n_ster)
+  # NDMM gate status: built / built with warnings (optional gates skipped) /
+  # unavailable - so a degraded run cannot look fully valid on the landing page.
+  ndmm_status <- if (!has_n) "unavailable"
+    else if (length(ndmm_notes) > 0) "built with warnings"
+    else "built"
+
+  warn_box <- function(html) paste0(
+    '<div style="margin-top:12px;padding:10px 12px;background:#FFF7ED;',
+    'border:1px solid #FED7AA;border-left:4px solid #EA8C00;border-radius:8px;',
+    'font-size:12.5px;color:#7c4a03">', html, '</div>')
+  ndc_warn <- if (is_num(n_ndc) && n_ndc == 0) warn_box(paste0(
+    '<b>Steroid codelist has 0 NDC codes.</b> Oral pharmacy steroids are ',
+    'undercounted &mdash; steroid figures here reflect <b>HCPCS-observed</b> ',
+    'claims only. Replace <code>steroid_codes.csv</code> with an NDC-complete ',
+    'file before stakeholder distribution.')) else ""
+  ndmm_warn <- if (has_n && length(ndmm_notes) > 0) warn_box(paste0(
+    '<b>NDMM built with warnings.</b> One or more optional inclusion/exclusion ',
+    'gates were skipped this run, so the NDMM cohort is broader than the full ',
+    'specification:<ul style="margin:6px 0 0;padding-left:18px">',
+    paste(vapply(as.character(ndmm_notes),
+                 function(x) paste0("<li>", x, "</li>"), character(1)), collapse = ""),
+    '</ul>')) else ""
+
   dq <- paste0(
     '<div style="margin-top:16px;padding:10px 12px;background:#F7F8FA;',
          'border:1px solid #E5E7EB;border-radius:8px;font-size:12px;color:#6B7280">',
     '<b style="color:#2A2A33">Run &amp; data quality</b>',
-    ' &nbsp;&bull;&nbsp; Study end ',     or_na(study_end),
-    ' &nbsp;&bull;&nbsp; Steroid codes ', or_na(n_ster),
+    ' &nbsp;&bull;&nbsp; Study end ',      or_na(study_end),
+    ' &nbsp;&bull;&nbsp; Steroid codes: ', ster_codes,
     ' &nbsp;&bull;&nbsp; Category rules ', or_na(n_rules),
-    ' &nbsp;&bull;&nbsp; Generated ',     run_ts,
+    ' &nbsp;&bull;&nbsp; Generated ',      run_ts,
     ' &nbsp;&bull;&nbsp; Overall: ', if (has_o) 'built' else 'unavailable',
-    ' &nbsp;&bull;&nbsp; NDMM: ',    if (has_n) 'built' else 'unavailable',
+    ' &nbsp;&bull;&nbsp; NDMM: ', ndmm_status,
     '</div>')
 
-  # Optional stakeholder-ask findings recorded by the steroid/payer builders
-  # for the Overall cohort - the exact numbers shown in their detail views,
-  # reused here. Failsafe: any problem yields an empty panel.
+  # Optional stakeholder-ask findings recorded by the steroid/payer builders -
+  # the exact numbers shown in their detail views, reused here, grouped by
+  # cohort (Overall then NDMM). Failsafe: any problem yields an empty panel.
   findings_html <- tryCatch({
-    fnd <- if (exists("dashboard_findings"))
-             Filter(function(f) identical(f$cohort, "Overall"), dashboard_findings)
-           else list()
-    if (length(fnd) == 0) "" else {
-      rows <- paste(vapply(fnd, function(f)
+    all_f <- if (exists("dashboard_findings")) dashboard_findings else list()
+    render_cohort <- function(coh) {
+      ff <- Filter(function(f) identical(f$cohort, coh), all_f)
+      if (length(ff) == 0) return("")
+      rows <- paste(vapply(ff, function(f)
         paste0('<li style="margin:4px 0"><b style="color:#0E7C7B">', f$group,
                '</b> &mdash; ', f$text, '</li>'), character(1)), collapse = "")
+      paste0('<div style="margin-top:8px"><div style="font-size:12px;font-weight:800;',
+             'text-transform:uppercase;letter-spacing:.04em;color:#6B7280">', coh,
+             '</div><ul style="margin:2px 0 0;padding-left:18px;font-size:13px;',
+             'color:#2A2A33;line-height:1.5">', rows, '</ul></div>')
+    }
+    blocks <- paste0(render_cohort("Overall"), render_cohort("NDMM"))
+    if (!nzchar(blocks)) "" else
       paste0('<h3 style="margin:20px 0 6px;font-size:15px;font-weight:800">Key findings ',
              '<span style="font-weight:600;color:#6B7280;font-size:12px">',
-             '(Overall cohort &middot; full detail in Steroids &amp; payer)</span></h3>',
-             '<ul style="margin:0;padding-left:18px;font-size:13px;color:#2A2A33;',
-             'line-height:1.5">', rows, '</ul>')
-    }
+             '(full detail in each cohort&rsquo;s Steroids &amp; payer section)</span></h3>',
+             blocks)
   }, error = function(e) "")
 
   card <- paste0(
@@ -299,14 +340,16 @@ build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts,
       '<th style="text-align:left;padding:8px 14px;border-bottom:2px solid #F36633;',
         'font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#6B7280">Metric</th>',
       '<th style="text-align:right;padding:8px 14px;border-bottom:2px solid #F36633;',
-        'color:#D24E1F">Overall</th>',
+        'color:#0E7C7B">Overall</th>',
       '<th style="text-align:right;padding:8px 14px;border-bottom:2px solid #F36633;',
-        'color:#0E7C7B">NDMM</th>',
+        'color:#D24E1F">NDMM</th>',
     '</tr></thead>',
     '<tbody>', body, '</tbody>',
   '</table>',
   ndmm_note,
   findings_html,
+  ndc_warn,
+  ndmm_warn,
   dq,
 '</div>')
 
@@ -332,20 +375,33 @@ BUCKET_ORDER <- c("Summary", "Cohort & attrition", "Treatment patterns",
                   "Debug", "Other")
 
 classify_item <- function(title) {
+  # Rule order matters. Anchored internal prefixes are matched FIRST so a
+  # debug/validation view whose title happens to contain "sample" stays in
+  # its bucket. Then a catch-all routes any remaining raw patient-example /
+  # sample table (notably the "Steroids: ... examples (sample)" and
+  # "... - example patients" tables) into the full-only Patient explorer,
+  # BEFORE the stakeholder Steroids/Treatment rules can claim it - so no
+  # raw PATID table leaks into the stakeholder view. Aggregate steroid
+  # summaries (prevalence, before/same/after, mean lead time) have no
+  # example/sample marker and stay stakeholder.
   rules <- list(
     c("^Executive summary",                                  "Summary",            "stakeholder"),
+    c("^(Examples|MED JOURNEY): ",                           "Patient explorer",   "full"),
+    c("^(Validation|QC): ",                                  "Validation",         "full"),
+    c("^(DEBUG|DRILLDOWN): ",                                "Debug",              "full"),
+    c("[Ee]xample|[Ss]ample",                                "Patient explorer",   "full"),
     c("^(KPI snapshot|Overview & cohort)",                   "Cohort & attrition", "stakeholder"),
     c("^(Attrition|OVERVIEW|FUNNEL): ",                      "Cohort & attrition", "stakeholder"),
     c(paste0("^(Transitions|START_TYPE|END_REASON|LENGTH|REGIMENS|",
              "PROGRESSION|GAPS|TRANSITIONS|SANKEY|MEDCOUNT|MTX|TREND): "),
                                                              "Treatment patterns", "stakeholder"),
-    c("^(Steroids|Payer): ",                                 "Steroids & payer",   "stakeholder"),
-    c("^(Examples|MED JOURNEY): ",                           "Patient explorer",   "full"),
-    c("^(Validation|QC): ",                                  "Validation",         "full"),
-    c("^(DEBUG|DRILLDOWN): ",                                "Debug",              "full")
+    c("^(Steroids|Payer): ",                                 "Steroids & payer",   "stakeholder")
   )
   for (r in rules) if (grepl(r[1], title)) return(list(bucket = r[2], audience = r[3]))
-  list(bucket = "Other", audience = "stakeholder")
+  # Fail closed: an unrecognized title (e.g. a future builder with a new
+  # prefix) lands in "Other" as full-only, so it is hidden from the
+  # stakeholder view by default rather than leaking an unvetted view.
+  list(bucket = "Other", audience = "full")
 }
 
 # Tag $bucket + $audience on every item, then stable-sort into
@@ -394,9 +450,8 @@ main_combined <- function() {
   log_msg("==== Building OVERALL cohort views ====")
   cfg$plot_filename_prefix <<- "overall_"
   p_overall <- prepare_overall_cohort(con)
-  kpi_overall <- query_cohort_kpis(con, wrk("LOT_LONG"))
-  build_cohort_kpis(con, wrk("LOT_LONG"), section = "Overall",
-                    title = "KPI snapshot")
+  kpi_overall <- build_cohort_kpis(con, wrk("LOT_LONG"), section = "Overall",
+                                   title = "KPI snapshot")
   build_overview_card(p_overall$n_ster, p_overall$n_rules,
                       section = "Overall",
                       title   = "Overview & cohort definition")
@@ -420,11 +475,13 @@ main_combined <- function() {
   log_msg("==== Building NDMM cohort views ====")
   cfg$plot_filename_prefix <<- "ndmm_"
   kpi_ndmm <- list()
+  ndmm_notes <- character(0)
   ndmm_ok <- tryCatch({
     p_ndmm <- prepare_ndmm_cohort(con)
-    kpi_ndmm <- query_cohort_kpis(con, NDMM_LOT_LONG_FILT)
-    build_cohort_kpis(con, NDMM_LOT_LONG_FILT, section = "NDMM",
-                      title = "KPI snapshot")
+    ndmm_notes <- if (!is.null(p_ndmm$overview_notes)) p_ndmm$overview_notes
+                  else character(0)
+    kpi_ndmm <- build_cohort_kpis(con, NDMM_LOT_LONG_FILT, section = "NDMM",
+                                  title = "KPI snapshot")
     build_ndmm_overview_card(p_ndmm$counts, p_ndmm$n_ster, p_ndmm$n_rules,
                              p_ndmm$overview_notes, section = "NDMM",
                              title = "Overview & cohort definition")
@@ -472,7 +529,10 @@ main_combined <- function() {
   # it returns only when a real different-denominator analysis exists.
   build_summary_landing(kpi_overall, kpi_ndmm, ndmm_ok, run_ts_combined,
                         n_ster = p_overall$n_ster, n_rules = p_overall$n_rules,
-                        study_end = cfg$study_end)
+                        study_end = cfg$study_end,
+                        n_hcpcs = cfg$steroid_hcpcs_count,
+                        n_ndc   = cfg$steroid_ndc_count,
+                        ndmm_notes = ndmm_notes)
   tag_and_order()
 
   build_dashboard(

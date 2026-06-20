@@ -1013,10 +1013,15 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
              round(avg(closest_days_before),1)         AS mean_days_closest_steroid
       FROM per_pat"))
     n_before <- if (nrow(summ)) as.integer(summ$n_patients_steroid_before[1]) else 0L
-    try(record_finding(section, "Pre-LOT steroid",
-      sprintf("%s: %s of %s patients had a steroid claim before the line.",
-              label, format(n_before, big.mark = ","),
-              format(as.integer(n_reg), big.mark = ","))), silent = TRUE)
+    try({
+      lead <- if (n_before > 0 && nrow(summ)) sprintf(
+        " Mean lead time: %s d to the earliest steroid, %s d to the closest.",
+        summ$mean_days_earliest_steroid[1], summ$mean_days_closest_steroid[1]) else ""
+      record_finding(section, "Pre-LOT steroid",
+        sprintf("%s: %s of %s patients had a steroid claim before the line.%s",
+                label, format(n_before, big.mark = ","),
+                format(as.integer(n_reg), big.mark = ","), lead))
+    }, silent = TRUE)
     add_html_card(paste0(
       '<div style="font-family:system-ui;padding:10px;max-width:880px">',
       '<h3 style="margin:0 0 6px">', label, '</h3>',
@@ -1036,7 +1041,10 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
     if (n_before > 0) {
       save_table(summ, section = section,
                  title = paste0(title_prefix, label, " - mean lead time"))
-      ex <- db_q(con, glue("
+      # MAP_STACKED is not probed up front (the summary + mean lead time above
+      # do not need it); guard the example join so a missing/unreadable
+      # MAP_STACKED skips the example table instead of aborting the section.
+      ex <- tryCatch(db_q(con, glue("
         WITH {per_pat},
         ex_pat AS (
           SELECT * FROM per_pat ORDER BY closest_days_before, PATID LIMIT {n_examples}
@@ -1065,8 +1073,8 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
         GROUP BY e.PATID, e.earliest_token, e.earliest_steroid_dt, e.earliest_days_before,
                  e.closest_token, e.closest_steroid_dt, e.closest_days_before,
                  e.lot_start, e.n_steroid_dates
-        ORDER BY e.closest_days_before, e.PATID"))
-      if (nrow(ex) > 0)
+        ORDER BY e.closest_days_before, e.PATID")), error = function(e) NULL)
+      if (!is.null(ex) && nrow(ex) > 0)
         save_table(ex, section = section,
                    title = paste0(title_prefix, label, " - example patients"))
     }
