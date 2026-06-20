@@ -1100,6 +1100,33 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
   invisible()
 }
 
+# Shared steroid section: gate the four steroid builders on steroid_state()
+# so an unavailable codelist yields ONE "analyses unavailable" card instead
+# of prevalence/missing/timing/pre-LOT tables that read as real zeros. Used by
+# the combined dashboard AND both standalone dashboards, so the behaviour is
+# identical everywhere.
+build_steroid_section <- function(con, lot_long_tbl, section = "STEROIDS",
+                                  title_prefix = "") {
+  if (steroid_state() == "unavailable") {
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:14px;max-width:860px">',
+      '<h3 style="margin:0 0 6px">Steroid analyses unavailable</h3>',
+      '<p style="color:#7f1d1d;font-size:13px;line-height:1.5">No usable steroid ',
+      'codes were loaded (<code>steroid_codes.csv</code> missing, empty, ',
+      'wrong-schema, or the rx/medical inputs were unreadable), so steroid ',
+      'prevalence, missing-steroid, DEXA-vs-LENA timing and pre-LOT steroid ',
+      'analyses did not run. They are omitted rather than shown as zeros, which ',
+      'would read as real absence. Supply a valid codelist and re-run.</p></div>'),
+      section = section, title = paste0(title_prefix, "analyses unavailable"))
+    return(invisible())
+  }
+  build_steroid_prevalence(con, section = section, title_prefix = title_prefix)
+  build_missing_steroid_lot1(con, section = section, title_prefix = title_prefix)
+  build_steroid_timing_qc(con, lot_long_tbl, section = section, title_prefix = title_prefix)
+  build_pre_lot_steroid_qc(con, lot_long_tbl, section = section, title_prefix = title_prefix)
+  invisible()
+}
+
 # Focused LOT-pair Sankey by REGIMEN (steroid-augmented).
 # INNER JOIN drops non-progressors.
 build_focused_pair <- function(con, n_from, n_to, section = NULL,
@@ -1566,10 +1593,7 @@ main_regimen <- function() {
   build_cohort_kpis(con, wrk("LOT_LONG"), section = "OVERVIEW")
   build_overview_card(p$n_ster, p$n_rules)
   build_overall_attrition(con)
-  build_steroid_prevalence(con)
-  build_missing_steroid_lot1(con)
-  build_steroid_timing_qc(con, wrk("LOT_LONG"), section = "STEROIDS")
-  build_pre_lot_steroid_qc(con, wrk("LOT_LONG"), section = "STEROIDS")
+  build_steroid_section(con, wrk("LOT_LONG"), section = "STEROIDS")
   build_payer_lot_qc(con, section = "Payer")
   for (n in 1:4) build_focused_pair(con, n, n + 1L)
   for (n in 1:4) build_category_pair(con, n, n + 1L, p$lookups)

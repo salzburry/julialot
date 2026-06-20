@@ -103,27 +103,11 @@ collect_cohort_views <- function(con, cohort_label, lookups, lot_long_tbl,
   # attrition figure. Each line names the view group about to be built, so the
   # last line printed before a stall pinpoints the culprit (for both cohorts).
   log_msg("[", cohort_label, "] views 1/8: steroid prevalence + missing-steroid LOT1 + DEXA-vs-LENA timing + pre-LOT steroid")
-  # Gate the steroid builders on a non-empty codelist. With no codes loaded an
-  # empty STEROID_VIEW still queries fine, so these would otherwise show 0%
-  # prevalence and "0 of N" cards that read as real absence in the
-  # stakeholder-visible Steroids section. Emit one "unavailable" card instead.
-  if (steroid_state() == "unavailable") {
-    add_html_card(paste0(
-      '<div style="font-family:system-ui;padding:14px;max-width:860px">',
-      '<h3 style="margin:0 0 6px">Steroid analyses unavailable</h3>',
-      '<p style="color:#7f1d1d;font-size:13px;line-height:1.5">No steroid codes ',
-      'were loaded (<code>steroid_codes.csv</code> missing, empty, or ',
-      'unreadable), so steroid prevalence, missing-steroid, DEXA-vs-LENA ',
-      'timing and pre-LOT steroid analyses did not run. They are omitted ',
-      'rather than shown as zeros, which would read as real absence. Supply a ',
-      'valid codelist and re-run.</p></div>'),
-      section = cohort_label, title = "Steroids: analyses unavailable")
-  } else {
-    build_steroid_prevalence(con, section = cohort_label, title_prefix = "Steroids: ")
-    build_missing_steroid_lot1(con, section = cohort_label, title_prefix = "Steroids: ")
-    build_steroid_timing_qc(con, lot_long_tbl, section = cohort_label, title_prefix = "Steroids: ")
-    build_pre_lot_steroid_qc(con, lot_long_tbl, section = cohort_label, title_prefix = "Steroids: ")
-  }
+  # Shared gate: an unavailable codelist yields one "analyses unavailable" card
+  # instead of 0%/"0 of N" tables that read as real absence in the
+  # stakeholder-visible Steroids section.
+  build_steroid_section(con, lot_long_tbl, section = cohort_label,
+                        title_prefix = "Steroids: ")
   log_msg("[", cohort_label, "] views 2/8: focused regimen-pair transitions")
   for (n in 1:4)
     build_focused_pair(con, n, n + 1L, section = cohort_label,
