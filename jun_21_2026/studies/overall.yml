@@ -1,0 +1,30 @@
+id: overall_2025
+version: 1.0.0
+description: >-
+  Overall parent LOT cohort (Step-6 denominator; NDMM-specific exclusions
+  absent). DRAFT - gate set pending clinical sign-off.
+adapter: optum
+base: null
+study_period:
+  study_start: "2015-07-01"
+  study_end: "2025-06-30"
+  id_start: "2016-01-01"
+  id_end: "2025-06-30"
+parameters:
+  induction_window_days: 60
+  lot_n_induction_window_days: 30
+  map_discon_gap_days: 90
+  medical_day_supply: 28
+  max_lot: 5
+  allo_lot_span: single_day
+reference_data: {}
+gates:
+  add:
+    qualifying_mm: true
+    adult_at_index: { minimum_age: 18 }
+    baseline_ce: { months: 6, max_gap_days: 30 }
+    no_baseline_mm_agents: true
+    fu_mm_agents: true
+    followup_ce: { months: 0, strict: false }
+  override: {}
+  disable: []
