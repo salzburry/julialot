@@ -331,12 +331,12 @@ build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts,
   # cohort (Overall then NDMM). Failsafe: any problem yields an empty panel.
   findings_html <- tryCatch({
     all_f <- if (exists("dashboard_findings")) dashboard_findings else list()
-    # When the steroid codelist is unavailable, drop the steroid findings so a
-    # non-result cannot be read as a real "0 of N" (the payer finding stays).
-    drop_groups <- if (ster_unavail) c("Pre-LOT steroid", "DEXA vs LENA") else character(0)
+    # No steroid-finding suppression needed here: build_steroid_section() gates
+    # at record time per cohort, so a steroid finding only exists when THAT
+    # cohort's steroids were available. (Suppressing on the global state would
+    # wrongly drop valid Overall findings if a later NDMM pass cleared it.)
     render_cohort <- function(coh) {
-      ff <- Filter(function(f) identical(f$cohort, coh) &&
-                   !(f$group %in% drop_groups), all_f)
+      ff <- Filter(function(f) identical(f$cohort, coh), all_f)
       if (length(ff) == 0) return("")
       rows <- paste(vapply(ff, function(f)
         paste0('<li style="margin:4px 0"><b style="color:#0E7C7B">', f$group,
@@ -481,6 +481,13 @@ main_combined <- function() {
   log_msg("==== Building OVERALL cohort views ====")
   cfg$plot_filename_prefix <<- "overall_"
   p_overall <- prepare_overall_cohort(con)
+  # Capture the Overall pass's steroid codelist state now, before the NDMM pass
+  # can overwrite or clear() the global cfg$steroid_*_count. The Summary (built
+  # last) reports this rather than the final global state, so a degraded NDMM
+  # pass cannot make valid Overall steroid evidence read as "unavailable".
+  ster_hcpcs_sum <- cfg$steroid_hcpcs_count
+  ster_cpt_sum   <- cfg$steroid_cpt_count
+  ster_ndc_sum   <- cfg$steroid_ndc_count
   kpi_overall <- build_cohort_kpis(con, wrk("LOT_LONG"), section = "Overall",
                                    title = "KPI snapshot")
   build_overview_card(p_overall$n_ster, p_overall$n_rules,
@@ -561,9 +568,9 @@ main_combined <- function() {
   build_summary_landing(kpi_overall, kpi_ndmm, ndmm_ok, run_ts_combined,
                         n_ster = p_overall$n_ster, n_rules = p_overall$n_rules,
                         study_end = cfg$study_end,
-                        n_hcpcs = cfg$steroid_hcpcs_count,
-                        n_ndc   = cfg$steroid_ndc_count,
-                        n_cpt   = cfg$steroid_cpt_count,
+                        n_hcpcs = ster_hcpcs_sum,
+                        n_ndc   = ster_ndc_sum,
+                        n_cpt   = ster_cpt_sum,
                         ndmm_notes = ndmm_notes)
   tag_and_order()
 
