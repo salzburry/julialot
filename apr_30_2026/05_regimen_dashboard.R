@@ -1344,15 +1344,29 @@ load_categories <- function() {
 # under-count steroid prevalence: the tracked CSV ships with only
 # HCPCS rows by design (the NDC list is maintained out-of-band).
 ndc_missing_banner <- function() {
-  n_ndc <- cfg$steroid_ndc_count
-  if (!is.null(n_ndc) && n_ndc > 0L) return("")
-  paste0(
+  z <- function(x) if (is.null(x) || is.na(x)) 0L else x
+  n_hcpcs <- z(cfg$steroid_hcpcs_count); n_cpt <- z(cfg$steroid_cpt_count)
+  n_ndc   <- z(cfg$steroid_ndc_count)
+  if (n_ndc > 0L) return("")                 # NDC-complete: no banner
+  if (n_hcpcs + n_cpt + n_ndc == 0L)         # nothing loaded at all: red alert
+    return(paste0(
+      '<div style="background:#FEF2F2;border:1px solid #FECACA;',
+      'border-left:4px solid #DC2626;border-radius:6px;padding:10px 14px;',
+      'margin:0 0 12px;font-family:system-ui;font-size:13px;color:#7f1d1d;',
+      'max-width:900px">',
+      '<b>Steroid codelist unavailable &mdash; no steroid codes loaded.</b><br>',
+      'The steroid-code CSV at <code>', STER_CSV_PATH, '</code> is missing, ',
+      'empty, or unreadable in this run, so the steroid analyses did not run. ',
+      'Any steroid counts shown are <b>non-results, not real zeros</b> &mdash; ',
+      'supply a valid <code>steroid_codes.csv</code> and re-run.',
+      '</div>'))
+  paste0(                                     # codes present but 0 NDC: amber caveat
     '<div style="background:#fff3cd;border:1px solid #d9a800;',
     'border-radius:6px;padding:10px 14px;margin:0 0 12px;',
     'font-family:system-ui;font-size:13px;color:#5a4500;max-width:900px">',
     '<b>Steroid caveat &mdash; no NDC steroid codes loaded.</b><br>',
     'The steroid-code CSV at <code>', STER_CSV_PATH, '</code> contains ',
-    'only HCPCS rows (J-codes) in this run. Oral-RX steroid claims ',
+    'only HCPCS/CPT rows (J-codes) in this run. Oral-RX steroid claims ',
     '(NDCs) are <b>not</b> picked up, so steroid prevalence ',
     'undercounts by however many patients have oral-RX-only steroid ',
     'coverage in their induction window. Drop NDC rows ',

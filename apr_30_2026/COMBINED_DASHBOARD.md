@@ -55,6 +55,7 @@ front. All figures are computed at build time — nothing is hard-coded:
 - **Comparison table** — patients, LOT2+/LOT3+ reach, median LOT1 length, date range
 - **Key findings** — payer mix, pre-LOT steroid N-of-M + mean lead time, DEXA-vs-LENA timing, for both cohorts (reused from the detail builders, never re-derived)
 - **Run & data quality strip** — study end, **steroid codes by type (HCPCS, CPT when present, NDC)**, category rules, generated time, and per-cohort build status (`built` / `built with warnings` / `unavailable`)
-- **Amber warnings** when the steroid codelist has **0 NDC codes** (oral steroids undercounted; figures are HCPCS-observed) or when NDMM was **built with warnings** (optional gates skipped)
+- **Codelist warnings** — a red **codelist-unavailable** alert when no steroid codes are loaded (steroid findings are suppressed, not shown as zeros), or an amber **HCPCS-only undercount** caveat when codes are present but **0 NDC**
+- **NDMM warning** — an amber **built with warnings** box when configured NDMM gates were skipped (a required source was unavailable); warnings render before the findings
 
 NDMM degrades to `n/a` across the page when that cohort cannot be built.
