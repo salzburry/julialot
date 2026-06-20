@@ -1,242 +1,385 @@
-# LOT algorithm — behavior-preserving refactor roadmap
+# LOT algorithm — behavior-preserving refactor roadmap (v2)
 
-Status: **design/roadmap only**. No algorithm code is moved or changed by this
-document. Implementation starts only after the regression harness exists
-(Increment 0).
+Status: **design/roadmap only.** No algorithm code is moved or changed by this
+document. Implementation starts only after the regression harness and frozen
+baseline exist (Increment 0A/0B).
+
+This v2 incorporates review feedback: source-system-agnostic (not "DB-agnostic")
+framing, contracts defined early, regression-expected vs spec-expected outputs,
+PHI governance for frozen baselines, canonical comparison/checksum rules,
+performance regression, dual-run/rollback, an explicit failure policy, a
+spec-traceable + dual-reviewed fixture catalog, a three-state reference-data
+registry, and the rule that **synthetic test data never ships to production**.
 
 ## 1. Goal & scope
 
 Reuse the LOT (line-of-therapy) algorithm across **studies** and over **time**,
 and make yearly/monthly **codelist updates** (NDC / HCPCS / CPT / dx) and other
 reference-data changes easy and *safe*. Today the algorithm logic, the Optum
-database bindings, the study/cohort definition, and the codelists are
-interleaved, and codelists have no versioning, provenance, or release-blocking
-validation.
+bindings, the study/cohort definition, and the codelists are interleaved, and
+codelists have no versioning, provenance, or release-blocking validation.
 
 **Scope guardrails (deliberately narrow):**
-- Optum is the only near-term database. Define a canonical input boundary, but
-  **do not** build a generalized multi-database adapter framework yet.
-- **Do not** build a generic cohort-rule DSL. Use explicit, individually tested
-  gate modules that a study file enables/parameterizes.
-- **Do not** create an installable package or multi-repo release process until
-  there is a real second consumer (second DB, second team, or independently
-  pinned study releases).
+- Optum is the only near-term database. Define the canonical input/output
+  contract now, but implement only the Optum canonicalization; **no** generalized
+  multi-database adapter framework.
+- **No** generic cohort-rule DSL. Use explicit, individually tested gate modules
+  that a study file *enables/parameterizes by name*.
+- **No** installable package / multi-repo release until a real second consumer
+  (second DB, second team, or independently pinned study releases).
 - **Behaviour-preserving**: the first refactor must reproduce current
   patient-level outputs; no opportunistic redesign while extracting modules.
 
-## 2. Hard constraint: no local Spark/sparklyr
+## 2. Naming correction: source-system-agnostic, Spark-native core
 
-The real algorithm is Spark SQL + Spark `aggregate()` state machines (MAP, SCT)
-executed on Databricks. There is **no local Spark/sparklyr**, so:
-- A full local (e.g. DuckDB) re-implementation is **rejected** — it would be a
-  second algorithm that can itself be wrong and give false confidence.
-- Databricks is the **only authoritative execution engine** for MAP/LOT/SCT.
+The target is **not** a "DB-agnostic" core. The algorithm is Spark SQL +
+Spark `aggregate()` state machines and depends on Databricks/Spark execution
+semantics. The realistic first target is a **source-system-agnostic,
+Spark-native** core: it stops depending on Optum physical table/column names
+(reads canonical views), but still runs only on Spark/Databricks. It is **not**
+portable to Snowflake/BigQuery/DuckDB/standard SQL, and this plan does not
+promise that.
+
+```
+R/core/       # Source-system-agnostic, Spark-native LOT algorithm
+R/adapters/   # Source-specific canonicalization, initially Optum only
+```
+
+## 3. Hard constraint: no local Spark/sparklyr
+
+There is no local Spark/sparklyr, so:
+- A full local (DuckDB) re-implementation is **rejected** — it would be a second
+  algorithm that can itself be wrong.
+- **Databricks is the only authoritative engine** for MAP/LOT/SCT.
 - Local testing is limited to the **pure-R** surface (config, codelist
   validation, manifest hashing, gate selection, parameter/date helpers).
 
-## 3. Principles
+## 4. Principles
 
-1. **Safety net first.** Lock current outputs with a baseline + synthetic golden
-   tests before moving any algorithm code.
-2. **Two tracks, never mixed.** (a) production stabilization branch for
-   dashboard/cohort bug fixes; (b) refactor branch with baseline comparisons. No
-   opportunistic cleanup while extracting modules — otherwise a moved count
-   can't be attributed to code vs. fix.
-3. **Config/data over code.** A new study or a codelist update should not edit
-   core SQL.
-4. **Separate version axes** (see §7): algorithm, study definition, reference
-   data, source-data vintage, dashboard — each independently recorded.
-5. **Explicit gates, not a DSL.** Each cohort gate is an identifiable module with
-   documented inputs, output flag, anchor date, and unit tests.
-6. **Fail fast.** Invalid config/reference data is a release-blocking error
-   *before* expensive claims scans, distinct from non-blocking warnings.
-7. **Package later.** Strict internal modules + versioned manifests deliver most
-   of the benefit now without operational overhead.
+1. **Safety net first** — frozen baseline + synthetic golden tests before any
+   algorithm code moves.
+2. **Two tracks, never mixed** — (a) production stabilization branch for
+   dashboard/cohort fixes; (b) refactor branch carrying baseline comparisons. No
+   opportunistic cleanup during extraction, so a moved count is always
+   attributable to code vs. fix.
+3. **Config/data over code** — a new study or codelist update must not edit core
+   SQL.
+4. **Separate version axes** (§11) — algorithm, study, reference data,
+   source-data vintage, dashboard — each independently recorded and immutable per
+   run.
+5. **Explicit gates, not a DSL** — each gate is a tested module; study files
+   select/parameterize by name.
+6. **Fail fast, by policy** (§10) — blocking errors before expensive claims
+   scans; warnings vs. release-blocking errors clearly distinguished.
+7. **Synthetic data is test-only** (§6) — it never ships to or runs in
+   production.
+8. **Package later** — strict internal modules + versioned manifests give most of
+   the benefit now.
 
-## 4. Test strategy (three levels)
+## 5. Canonical contracts (defined in Increment 0/1, before extraction)
 
-| Level | Where | What it covers | Runs on every change? |
-|------|-------|----------------|------------------------|
-| 1. Unit | Local (pure R) | deterministic helpers, parameter rules, config validation, codelist load/validate/normalize, manifest hashing, gate selection | yes (CI) |
-| 2. Synthetic integration | **Databricks** | the real Spark SQL / MAP / SCT / LOT2-5 pipeline over hand-built synthetic inputs with hand-defined expected outputs | per refactor increment |
-| 3. Golden production regression | **Databricks** | frozen real-cohort `MAP_STACKED` / `LOT1_BASE` / `LOT_LONG` outputs compared patient-by-patient | before merging any core extraction |
+The canonical **input** and **output** contracts are documented *before* code is
+moved, so Increment 3 extraction does not bake in hidden Optum assumptions that
+Increment 4 then has to undo. The Optum adapter is implemented later (Inc 4) but
+implements *this* contract.
 
-DuckDB may be used for simple SQL/config checks but is **never** the authority
-for MAP/SCT behaviour.
+Each canonical input entity declares: required entities; canonical column names
+& types; nullable vs required; code-normalization conventions; date semantics;
+expected uniqueness; allowed duplicate behaviour; and (for outputs) keys &
+schemas. Example:
 
-## 5. Synthetic golden-test harness — design
-
-The harness is the guardrail that lets the algorithm be refactored safely. It
-must be **rich enough to be trusted**: intentionally weird patients, not clean
-examples. A too-small set gives false confidence.
-
-### 5.1 Components
 ```
-tests/
-  fixtures/
-    synthetic/
-      members.csv            # PATID, enrollment spans, DOB, sex, death dt
-      medical.csv            # PATID, svc_date, PROC_CD, BILL_PROC_CD, NDC, claim_type
-      rx.csv                 # PATID, svc_date, NDC, days_sup
-      med_diagnosis.csv      # PATID, dt, DIAG  (for SCT/cohort)
-      med_procedure.csv      # PATID, dt, PROC  (ICD-tagged, for SCT)
-      cohort_input.csv       # ELIG_COH_FINAL stand-in (PATID, OBS_END_DT, ...)
-    expected/
-      map_stacked.csv        # hand-defined expected MAP rows per patient
-      lot1_base.csv          # hand-defined expected LOT1 fields
-      lot_long.csv           # hand-defined expected LOT 1..5 rows
-      nondeterministic.md    # documented fields excluded from strict compare
-  databricks_integration/
-    load_synthetic.R         # load fixtures as Databricks temp tables/views
-    run_pipeline_synthetic.R # run 02_lot1 + 03_lot2_5 against the synthetic schema
-  regression/
-    compare_run_outputs.R    # patient/column diff: actual vs expected (or frozen prod)
+canonical_medical
+  patient_id        string, required
+  service_date      date,   required
+  procedure_code    string, nullable
+  bill_proc_code    string, nullable
+  ndc               string, nullable      # normalized 11-digit (see §12)
+  claim_type        string, required       # {medical, pharmacy}
+  source_record_id  string, recommended
 ```
 
-### 5.2 Synthetic patient catalog (the cases that MUST exist)
+Output contracts (`MAP_STACKED`, `LOT1_BASE`, `LOT_LONG`) pin keys, columns,
+types, and which fields are intentionally nondeterministic (§9).
 
-Each patient is a tiny, hand-traced scenario with a documented expected result.
+## 6. Synthetic data is test-only — never in production
 
-**MAP engine**
-- pharmacy claim with simple runout (`date + days_sup - 1`)
-- pharmacy **pushout**: new claim on/before current rx-runout → `rx_runout + new_days_sup`
-- pharmacy **reset-without-pushout**: new claim after rx-runout but within med-runout (spec p.5 correction)
-- medical claim runout (`date + day_supply - 1`, **never** pushed out)
-- imputed medical day-supply (default 28) and imputed null/<1 rx day-supply
-- MAP boundary: new MAP when `date > max(rx_runout, med_runout)`
-- discontinuation flag at the 90-day gap threshold (exactly at, just under, just over)
+The synthetic fixtures and the whole golden harness exist **only to let CI/dev
+verify behaviour**. They must never be deployed to or executed in the production
+(Domino/Databricks) environment.
 
-**LOT1 induction**
-- single-regimen LOT1
-- induction-window edge: a med exactly at `LOT1_START + window - 1` (in) vs `+ window` (out)
-- steroid excluded from induction (protocol 5.1.1) but attached separately
-- permissible substitute (biosimilar) folded into base meds
-- first-add-med date and the seeded random tie-break (flag as nondeterministic input → fixed seed)
+- All synthetic data + harness live under `tests/` (a test-only tree).
+- The production bundle/deploy copies only `R/`, `studies/`,
+  `reference_data/approved/`, `orchestration/`, `reporting/` — **never**
+  `tests/`. A `compare`/promote build step asserts no `tests/` path is included.
+- Synthetic PATIDs use a reserved/obviously-fake range and a `SYNTHETIC` marker
+  column, so they can never be confused with real members and are trivial to
+  detect and purge.
+- A documented "purge synthetic" / "verify-no-synthetic-in-prod" check runs
+  before any production release.
 
-**SCT**
-- AUTO single
-- AUTO tandem (2nd AUTO within 180d, no ALLO between) → tandem flag
-- AUTO pair > tandem gap → treated as separate
-- AUTO 14-day windowing: workup claims + actual TX on the last day in window
-- AUTO 60-day gap merging across windows
-- ALLO ends the LOT
-- CART ends the LOT; CART consolidation (45-day) window
-- tandem-boundary date selection (claim near the 180d post-first-AUTO boundary)
+## 7. Two kinds of expected outputs (do not mix)
 
-**LOT2-5**
-- clean progression to LOT2/LOT3
-- new induction med not in prior base meds triggering the next LOT
-- `MAX_LOT` cap behaviour
-- `ALLO_LOT_SPAN` single_day vs extend_to_next
+- **Regression-expected (current-behavior)** — what the *current* code produces
+  today. Used to prove the refactor changed nothing. This is the merge gate.
+- **Spec-expected (clinical-expected)** — what the *specification* says should
+  happen. Used to flag *future* algorithm fixes where current behaviour and spec
+  diverge.
 
-**Censoring / observation**
-- death before natural LOT end → `OBS_END_DT` cap
-- `CENSOR_AT_DISENROLLMENT` sensitivity (primary vs sensitivity OBS_END_DT)
-- enrollment gap within tolerance vs beyond
+These live in separate files and are never mixed in one golden test — otherwise a
+refactor failure (regression) becomes indistinguishable from a known
+spec-divergence. Where they differ, the divergence is logged as a candidate
+future fix, not a refactor blocker.
 
-**Degenerate / "weird"**
-- patient with only steroid claims (no qualifying backbone)
-- patient with no qualifying meds at all
-- same-date two-token case (documents the known nondeterministic display field)
-- duplicate claims (same PATID/MED/date/claim_type) → dedup rule (max day-supply, min code)
+## 8. Frozen production baseline — PHI governance
 
-### 5.3 Expected-output method
-For each synthetic patient, the expected `MAP_STACKED` / `LOT1_BASE` /
-`LOT_LONG` rows are **hand-derived from the spec** and stored in
-`expected/`. Known nondeterministic fields (seeded tie-break, same-date token)
-are listed in `nondeterministic.md` and excluded from the strict compare (or
-compared as a set).
+Patient-level `MAP_STACKED` / `LOT1_BASE` / `LOT_LONG` for a frozen real cohort
+are **sensitive data and are NOT committed to Git.** They live only in an
+access-controlled Databricks schema / governed object store. The repo keeps only
+**metadata**: schemas, row counts, deterministic checksums (§12), the comparison
+script, and a pointer/manifest.
 
-### 5.4 Comparison script (Databricks)
-`compare_run_outputs.R` joins actual vs expected on `(PATID, LOT_NUM)` /
-`(PATID, MAP_CNT)`, reports: patients only-in-actual / only-in-expected, and
-per-column mismatches with both values. It returns a non-zero status on any
-unexplained difference. The same script runs against a **frozen real cohort**
-(Increment 0 baseline) for Level-3 regression.
+The baseline manifest records (so "same quarter" can't silently drift):
+Delta table version/timestamp, source table identifiers, schema snapshot/hash,
+extraction timestamp, cohort snapshot id, access-control owner. Prefer Delta
+time-travel / physical snapshotting over a bare quarter name.
 
-## 6. Increment roadmap (behaviour-preserving)
+## 9. Synthetic golden-test harness — design
 
-> Do not move algorithm code into `core/` until Increment 0 exists.
+The harness must be **rich enough to be trusted**: intentionally weird patients,
+not clean examples. A too-small set gives false confidence.
 
-- **Increment 0 — Freeze & document current behaviour.** Record the current Git
-  SHA as a release baseline; persist patient-level `MAP_STACKED`, `LOT1_BASE`,
-  `LOT_LONG` for a frozen real cohort + critical counts; build the synthetic
-  fixtures + expected outputs (§5); write `compare_run_outputs.R`; enumerate
-  known nondeterministic fields. Deliverable: a reproducible baseline + a
-  red/green diff, not screenshots.
-- **Increment 1 — Run manifests + typed config.** A validated config object
-  (explicit types, allowed values, defaults, required fields, fail-fast). Every
-  run writes a manifest: Git SHA, algorithm version, study id/version, full
-  resolved config + its hash, source DB + quarterly vintage, reference-data file
-  hashes, timestamp, runtime, key-stage row counts, output table checksums.
-  No algorithm logic changes.
-- **Increment 2 — Standardize reference-data loading (the codelist registry).**
-  One loader + one validation contract, migrated incrementally (one low-risk
-  list first, verify parity, then the rest). Registry row carries: code system,
-  normalized code, concept/token, effective start/end, approval status, source,
-  clinical owner, engineering approver, superseded version, change rationale,
-  expected row-count range, duplicate/normalization policy. **Invalid rows are
-  never silently dropped**; validation distinguishes warnings from
-  release-blocking errors. SME intake → automated validate/promote → live
-  (matches the mixed-ownership model).
-- **Increment 3 — Extract core by existing stage (no redesign).** Split the
-  *current* SQL into `core/{map,lot1,sct,lot2_5,maintenance}`, each exposing a
-  small contract (inputs, parameters, outputs, QC checks). Output must be
+### 9.1 Fixture catalog (spec-traceable, dual-reviewed)
+Each fixture is a row in a catalog (more durable than prose):
+```
+case_id, spec_section, rule_name, input_files, expected_outputs,
+expected_qc, clinical_reviewer, engineering_reviewer, status
+```
+**Governance:** each hand-derived expected output is derived by one person,
+independently reviewed by another, tied to a spec section, approved before it
+becomes a merge gate, and changed only through explicit review. A mistaken
+fixture must not be allowed to force the refactor to reproduce a mistaken
+expectation.
+
+### 9.2 Patient catalog (cases that MUST exist)
+MAP: simple runout; pharmacy pushout; pharmacy reset-without-pushout (spec p.5);
+medical runout (never pushed out); imputed medical day-supply (28) and imputed
+null/<1 rx day-supply; MAP boundary; 90-day discontinuation at / just under /
+just over threshold. **Two records same date, conflicting days-supply.**
+**Duplicates differing only in source_record_id.** **Overlapping pharmacy +
+medical coverage for the same drug.**
+
+LOT1: single regimen; induction-window edge (`+window-1` in vs `+window` out);
+steroid excluded from induction but attached separately; permissible substitute;
+seeded random tie-break (fixed seed); **multiple same-day agents that could
+change LOT ordering.**
+
+SCT: AUTO single; AUTO tandem (2nd within 180d, no ALLO between); AUTO pair
+beyond tandem gap; AUTO 14-day windowing (workup vs actual TX on last day);
+AUTO 60-day gap merging; ALLO ends LOT; CART ends LOT + 45-day consolidation;
+tandem-boundary date selection.
+
+LOT2-5: clean progression; new induction med triggering next LOT; `MAX_LOT` cap;
+`ALLO_LOT_SPAN` single_day vs extend_to_next.
+
+Censoring: death cap on `OBS_END_DT`; `CENSOR_AT_DISENROLLMENT` sensitivity;
+enrollment gap within vs beyond tolerance.
+
+Reference-data / dates: **10→11-digit NDC normalization that collides with
+another source form**; **effective-dated codelist where a code changes
+classification over time**; **patient exactly at study-start and study-end
+boundaries**; **leap-day / month-end date arithmetic**; **backdated record
+arriving after an earlier run** but inside the study period; **null/malformed
+service date rejected before execution**.
+
+Degenerate: only-steroid patient; no-qualifying-meds patient; dedup
+(max day-supply, min code).
+
+### 9.3 Coverage matrix
+An explicit matrix shows every important spec rule has **≥1 positive and ≥1
+negative** fixture. Gaps in the matrix block the harness from being declared
+ready.
+
+## 10. Failure policy (explicit)
+
+| Class | Example | Behaviour |
+|------|---------|-----------|
+| Blocking error | malformed codelist, missing required column, invalid date range | abort before claims scans |
+| Blocking regression | patient-level mismatch vs current-behavior expected | fail the build/merge |
+| Warning | unusual-but-allowed row count | proceed, record in manifest |
+| Degraded mode | a gate's source unavailable | allowed **only** where clinically approved, and recorded in the manifest |
+| Informational | expected data-vintage change | record only |
+
+A clinical cohort gate must **not** silently pass all patients because a source
+is unavailable unless that degraded behaviour is explicitly approved and recorded
+in the run manifest.
+
+## 11. Run manifest (immutable once a run completes)
+
+Records, at minimum: Git SHA + dirty-state flag; algorithm version; study
+id/version; full resolved config + its hash + config precedence sources; source
+DB + **exact Delta table versions** (not just names) + quarterly vintage;
+reference-data file hashes + approval status; Databricks Runtime + Spark version
++ warehouse/cluster config + Photon on/off + relevant Spark settings; key-stage
+row counts + stage runtimes; output table names + **schema hash** + output
+checksums; warnings + degraded gates; baseline/comparison run id; hash algorithm
+used; run timestamp + runtime version. **A completed manifest must be sufficient
+to reproduce the run's inputs and settings**, and is immutable after completion.
+
+**Five version axes** (a monthly NDC/HCPCS change bumps only reference-data — no
+algorithm release): algorithm · study-definition · reference-data ·
+source-data vintage · dashboard.
+
+## 12. Canonical comparison & checksums
+
+Equality is checked only **after canonical normalization**: deterministic sort
+keys; one canonical null representation; explicit date/time & timezone handling;
+numeric type coercion; floating-point tolerance; arrays declared ordered or
+unordered; duplicates treated as errors or normalized; intentionally-excluded
+columns (the nondeterministic fields); documented allowed-equivalence rules.
+
+**Checksums are computed only after canonical sort + normalization** — for large
+Spark tables use deterministic sorted hashes or per-partition fingerprints, so
+drift comes from logic, not row ordering or type coercion. The hash algorithm is
+recorded in the manifest.
+
+## 13. Performance regression
+
+Patient-level equivalence is necessary but not sufficient — a behaviour-
+preserving refactor can still be unusably slow. Capture stage-level baselines:
+duration; rows read/written; shuffle volume; spill; task skew; count of repeated
+heavy scans; output file/table counts. Use **tolerances**, not exact durations,
+e.g.:
+
+```
+No core stage may exceed baseline duration by >30% without an approved explanation.
+```
+
+## 14. Dual-run & rollback
+
+Every extraction increment supports old path, new path, side-by-side compare,
+explicit promotion, and immediate rollback. A switch drives it:
+
+```
+LOT_ENGINE_MODE = legacy | refactored | compare
+```
+
+`compare` runs both paths and fails on any unexplained difference. A validated
+stage is **never** replaced in place before its replacement passes both synthetic
+and frozen-production comparisons. Rollback to the prior algorithm version is
+documented and tested.
+
+## 15. Reference-data registry (three states)
+
+```
+intake     editable SME submission
+validated  machine-validated, not yet approved
+approved   immutable production release (versioned + hashed)
+```
+
+Promotion intake→approved requires: schema validation; code-system validation;
+**NDC 10→11-digit normalization with the exact documented rule** (not a generic
+format check) + normalization-collision checks; duplicate policy; effective-date
+checks; expected token coverage; row-count bounds (**at the codelist/version
+level, not per row**); clinical approval; engineering approval; generated
+immutable version + hash. Invalid rows are **never silently dropped**; the
+validation result distinguishes warnings from release-blocking errors.
+
+Registry row carries: code system; normalized code; concept/token; effective
+start/end; approval status; source; clinical owner; engineering approver;
+superseded version; change rationale; duplicate/normalization policy.
+
+## 16. Study definitions (select modules, don't encode logic)
+
+```yaml
+# good
+gates:
+  qualifying_mm: true
+  adult_at_index: { minimum_age: 18 }
+  baseline_ce:    { months: 12, max_gap_days: 30 }
+  pregnancy_exclusion: { anchor: study_period }
+# avoid
+where: "age >= 18 AND ..."
+```
+
+Each gate module declares: input contract; index/anchor date; lookback/follow-up
+window; output flag; failure behaviour; relevant codelist; QC count; test cases.
+
+## 17. Test strategy (three levels)
+
+1. **Unit (local, pure R)** — helpers, parameter rules, config validation,
+   codelist load/validate/normalize, manifest hashing, gate selection. Runs in CI
+   on every change.
+2. **Synthetic integration (Databricks)** — the real Spark pipeline over the
+   §9 fixtures vs current-behavior expected. Per increment.
+3. **Golden production regression (Databricks)** — frozen real-cohort
+   `MAP_STACKED`/`LOT1_BASE`/`LOT_LONG`, patient-by-patient (§8, §12). Before any
+   core extraction merges.
+
+## 18. Increment roadmap (behaviour-preserving)
+
+- **0A — Baseline inventory.** Freeze Git SHA; inventory source/output schemas;
+  define the deterministic comparison rules (§12); identify nondeterminism;
+  capture governed production snapshots (§8). A formal release baseline.
+- **0B — Synthetic harness.** Build fixtures (§9); **independently review &
+  approve** expected outputs; automate Databricks execution + comparison
+  (`compare_run_outputs.R`).
+- **1 — Contracts, manifest, typed config.** Define canonical input/output
+  contracts (§5); implement validated typed config (types, allowed values,
+  defaults, required, fail-fast); write immutable run manifests (§11). No
+  algorithm logic changes.
+- **2 — Reference-data registry** (§15) — one loader + one validation contract,
+  migrated incrementally (one low-risk list first, verify parity, then the rest).
+- **3 — Stage extraction (no redesign).** Split current SQL into
+  `core/{map,lot1,sct,lot2_5,maintenance}`, each with an `inputs/parameters/
+  outputs/QC` contract. Keep `legacy|refactored|compare` modes (§14);
   patient-for-patient equivalent (Level-3 gate).
-- **Increment 4 — Optum normalization boundary.** Canonical Optum views
-  (`patient_id, service_date, diagnosis_code, procedure_code, ndc, days_supply,
-  place_of_service, ...`) that core reads. Optum-specific fields stay reachable
-  via an extension area, not forced into a lowest-common-denominator minimum.
-  Only one adapter (Optum) is implemented.
-- **Increment 5 — Studies first-class.** `studies/<id>/` holds only what
-  legitimately varies (study.yml, cohort.yml selecting/parameterizing existing
-  gates, reference_data.lock, README). Adding a study selects gates or adds a
-  new *tested* gate module — never edits core MAP/LOT/SCT.
-- **Increment 6 — Package only at a real second consumer.** Promote `core/` to
-  an installable package when a second DB is onboarded, another team consumes
-  it, or multiple production studies need independently pinned algorithm
-  releases.
+- **4 — Optum normalization implementation.** Build the canonical Optum views
+  implementing the Increment-1 contract; Optum-specific fields stay reachable via
+  an extension area, not forced into a lowest-common-denominator minimum.
+- **5 — Studies first-class** (§16) — `studies/<id>/` holds only what varies;
+  adding a study selects gates or adds a new *tested* gate, never edits core.
+- **6 — Package only at a real second consumer.**
 
-## 7. Version axes (recorded in every run manifest)
-- **algorithm version** — the core MAP/LOT/SCT logic
-- **study-definition version** — cohort gates + study switches
-- **reference-data version** — codelist/registry snapshot
-- **source-data vintage** — Optum quarterly table set
-- **dashboard version** — reporting layer
-
-A monthly NDC/HCPCS change bumps only the reference-data version — no algorithm
-release. This is what lets us answer *why* a count moved (code vs. cohort vs.
-reference data vs. a new Optum quarter).
-
-## 8. Target repository shape (end-state)
+## 19. Repository shape (end-state)
 ```
 R/
-  core/      { map/ lot1/ lot2_5/ sct/ }   # DB-agnostic algorithm
-  cohort/    { gates/ }                     # explicit tested gate modules
-  adapters/  { optum/ }                     # only Optum implemented for now
-  config/                                   # one layered, validated config
-  reference_data/                           # registry loader + validation
-  orchestration/                            # run_pipeline + thin run_all wrapper
-  reporting/                                # dashboards (current 04-07 logic)
-studies/        { ndmm_2025/ }              # per-study config, no core edits
-reference_data/ { intake/ approved/ manifest.yml }
-tests/          { unit/ fixtures/ databricks_integration/ regression/ }
+  core/      { map/ lot1/ lot2_5/ sct/ }    # source-system-agnostic, Spark-native
+  cohort/    { gates/ }                      # explicit tested gate modules
+  adapters/  { optum/ }                      # Optum canonicalization only (for now)
+  config/                                    # one layered, validated config
+  reference_data/                            # registry loader + validation
+  orchestration/                             # run_pipeline + thin run_all wrapper
+  reporting/                                 # dashboards (current 04-07 logic)
+studies/        { ndmm_2025/ }               # per-study config, no core edits
+reference_data/ { intake/ validated/ approved/ manifest.yml }
+tests/          { unit/ fixtures/ databricks_integration/ regression/ }  # NEVER shipped to prod
 scripts/        { validate_config.R validate_reference_data.R
                   compare_run_outputs.R promote_reference_data.R }
 ```
 
-## 9. Acceptance criteria (refactor "done")
-- Frozen synthetic patients produce identical MAP and LOT results.
+## 20. Acceptance criteria (refactor "done")
+- Frozen synthetic patients produce identical MAP and LOT results (current-behavior).
 - The production comparison shows no unexplained patient-level changes.
+- Old and new paths can run side by side during migration (`compare` mode).
 - A study can change dates/thresholds/enabled gates without editing core code.
-- A reference-data update requires no algorithm edit.
+- A reference-data update requires no algorithm edit; releases are immutable once approved.
+- Output schemas are versioned and backward-compatible or explicitly migrated.
+- No unapproved degraded gate is allowed.
 - Every output traces to code, study, source-data, and reference-data versions.
+- Every synthetic fixture maps to a spec rule and a reviewer.
 - Invalid config / malformed inputs fail before expensive claims scans start.
+- Core-stage runtime stays within approved performance tolerance.
+- Frozen production data is stored outside Git with governed access.
+- **No synthetic data or harness ships to / runs in production.**
 - Current `run_all.R` behaviour stays available via a thin compatibility wrapper.
+- A completed run manifest is sufficient to reproduce the run's inputs & settings.
+- Rollback to the prior algorithm version is documented and tested.
 - A second study can be added without copying the pipeline.
 
-## 10. Explicitly out of scope for the first release
+## 21. Out of scope for the first release
 - Generalized multi-database adapter framework (revisit at a real 2nd DB).
 - Installable R package / multi-repo release (revisit at a real 2nd consumer).
 - Generic cohort-rule DSL (use explicit tested gates).
+- Portability to non-Spark engines (Snowflake/BigQuery/DuckDB/standard SQL).
 - Any algorithm redesign or opportunistic cleanup during extraction.
