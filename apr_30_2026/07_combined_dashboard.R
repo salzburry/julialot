@@ -361,7 +361,8 @@ build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts,
   '<p style="margin:0 0 14px;font-size:13px;color:#6B7280;line-height:1.5">',
     'Headline numbers for the two cohorts in this build. ',
     '<b>Overall</b> is the whole parent line-of-therapy cohort; ',
-    '<b>NDMM</b> is the 1L newly-diagnosed subset (inclusion/exclusion gates applied). ',
+    '<b>NDMM</b> is the 1L newly-diagnosed subset (inclusion/exclusion gates applied; ',
+    'any skipped gates are flagged below). ',
     'All figures are computed at build time from each cohort&rsquo;s LOT_LONG ',
     '&mdash; nothing here is hard-coded.',
   '</p>',
@@ -514,6 +515,12 @@ main_combined <- function() {
   cfg$plot_filename_prefix <<- "ndmm_"
   kpi_ndmm <- list()
   ndmm_notes <- character(0)
+  # Checkpoint the collector lengths so a late NDMM builder failure can roll
+  # back any partial NDMM cards/findings appended before it - otherwise the
+  # Summary (which renders recorded findings) and the NDMM pill could show
+  # partial NDMM content beside an "unavailable" status.
+  ndmm_items0 <- length(dashboard_items)
+  ndmm_find0  <- length(dashboard_findings)
   ndmm_ok <- tryCatch({
     p_ndmm <- prepare_ndmm_cohort(con)
     ndmm_notes <- if (!is.null(p_ndmm$overview_notes)) p_ndmm$overview_notes
@@ -540,6 +547,12 @@ main_combined <- function() {
     TRUE
   }, error = function(e) {
     log_msg("  WARN: NDMM cohort could not be built: ", conditionMessage(e))
+    # Roll back any partial NDMM items/findings appended before the failure so
+    # an unavailable NDMM never shows stale partial content (only the card below).
+    if (length(dashboard_items) > ndmm_items0)
+      dashboard_items <<- dashboard_items[seq_len(ndmm_items0)]
+    if (length(dashboard_findings) > ndmm_find0)
+      dashboard_findings <<- dashboard_findings[seq_len(ndmm_find0)]
     add_html_card(paste0(
       '<div style="font-family:system-ui;padding:14px;max-width:900px">',
       '<h3>NDMM cohort - not available</h3>',
