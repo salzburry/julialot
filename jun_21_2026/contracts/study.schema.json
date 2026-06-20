@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "study.schema.json",
+  "title": "LOT study definition (base + delta)",
+  "description": "Closed schema for a study. Structural rules only; cross-rules (single base, no inheritance cycles, override-references-inherited-only, add-not-duplicating-inherited, not-both-disabled-and-overridden, gate-DAG-satisfiable, params-conform-to-gate-module-schema) are enforced by the runtime study validator, not expressible in plain JSON Schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "version", "adapter"],
+  "properties": {
+    "id": { "type": "string" },
+    "version": { "type": "string", "description": "semantic version of this study definition" },
+    "description": { "type": "string" },
+    "adapter": { "type": "string", "enum": ["optum"], "description": "source canonicalization adapter" },
+    "base": {
+      "description": "the study this one derives from; null for a base study (e.g. overall). Pinned by version + hash so a reproducibility run never resolves a mutable base dynamically.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "version", "hash"],
+          "properties": {
+            "id": { "type": "string" },
+            "version": { "type": "string" },
+            "hash": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "study_period": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["study_start", "study_end", "id_start", "id_end"],
+      "properties": {
+        "study_start": { "type": "string", "format": "date" },
+        "study_end": { "type": "string", "format": "date" },
+        "id_start": { "type": "string", "format": "date" },
+        "id_end": { "type": "string", "format": "date" }
+      }
+    },
+    "parameters": {
+      "type": "object",
+      "description": "algorithm parameter overrides (induction windows, MAP discon gap, SCT/CART windows, MAX_LOT, ...). Validated against the parameter spec by the typed-config validator.",
+      "additionalProperties": { "type": ["number", "string", "boolean"] }
+    },
+    "reference_data": {
+      "type": "object",
+      "description": "per-codelist lock: id -> {version, hash} of the approved snapshot this study pins.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["version", "hash"],
+        "properties": {
+          "version": { "type": "string" },
+          "hash": { "type": "string" }
+        }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "the gate delta applied on top of `base`.",
+      "properties": {
+        "add": {
+          "$ref": "#/$defs/gateMap",
+          "description": "NEW gates not present in the base"
+        },
+        "override": {
+          "$ref": "#/$defs/gateMap",
+          "description": "EXISTING (inherited) gates whose parameters or pinned version changed"
+        },
+        "disable": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "inherited gates turned off (relaxation); recorded"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "gateMap": {
+      "type": "object",
+      "description": "gate name (optionally name@version) -> true | parameter object",
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "boolean" },
+          { "type": "object" }
+        ]
+      }
+    }
+  }
+}

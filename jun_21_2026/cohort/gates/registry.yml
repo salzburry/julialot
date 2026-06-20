@@ -1,0 +1,104 @@
+# Gate module registry - DRAFT.
+# Phases/anchors/codelists/semantics are pending clinical sign-off; the
+# structure is what the study + DAG validators check. Each gate is an
+# identifiable module; study files select/parameterize them by name (never SQL).
+
+# Algorithm-produced anchors a gate may depend on (the "stages").
+stages:
+  - index_date
+  - lot1_start
+  - lot_long
+
+gates:
+  qualifying_mm:
+    phase: pre_lot
+    depends_on: [index_date]
+    anchor: index_date
+    output_flag: incl_qualifying_mm
+    codelist: cl_mm_dx
+    params: {}
+    description: qualifying MM diagnosis within the outpatient window
+
+  adult_at_index:
+    phase: pre_lot
+    depends_on: [index_date]
+    anchor: index_date
+    output_flag: incl_adult
+    params:
+      minimum_age: { type: integer, default: 18 }
+    description: age >= minimum_age at index
+
+  baseline_ce:
+    phase: pre_lot
+    depends_on: [index_date]
+    anchor: index_date
+    output_flag: incl_baseline_ce
+    params:
+      months: { type: integer, default: 6 }
+      max_gap_days: { type: integer, default: 30 }
+    description: continuous enrollment in the baseline window before the anchor
+
+  no_baseline_mm_agents:
+    phase: pre_lot
+    depends_on: [index_date]
+    anchor: index_date
+    output_flag: incl_new_user
+    codelist: cl_mma_codelist
+    params: {}
+    description: no MM agents in baseline (new-user)
+
+  fu_mm_agents:
+    phase: post_lot1
+    depends_on: [lot1_start]
+    anchor: lot1_start
+    output_flag: incl_fu_agents
+    codelist: cl_mma_codelist
+    params: {}
+    description: a treatment start exists (>=1 MM agent in follow-up)
+
+  followup_ce:
+    phase: post_lot1
+    depends_on: [lot1_start]
+    anchor: lot1_start
+    output_flag: incl_followup_ce
+    params:
+      months: { type: integer, default: 0 }
+      strict: { type: boolean, default: false }
+    description: continuous enrollment in the follow-up window after LOT1 start
+
+  no_prior_mm_tx:
+    phase: post_lot1
+    depends_on: [lot1_start]
+    anchor: lot1_start
+    output_flag: excl_prior_mm_tx
+    codelist: cl_mma_codelist
+    params: {}
+    description: no MM treatment before LOT1 start
+
+  no_other_cancer:
+    phase: post_lot1
+    depends_on: [lot1_start]
+    anchor: lot1_start
+    output_flag: excl_other_cancer
+    codelist: cl_other_malignancies
+    params:
+      lookback_months: { type: integer, default: 12 }
+    description: no other malignancy in the lookback before LOT1
+
+  no_belantamab:
+    phase: study_period
+    depends_on: []
+    anchor: study_period
+    output_flag: excl_belantamab
+    codelist: cl_belantamab
+    params: {}
+    description: no belantamab exposure in the study period
+
+  no_pregnancy:
+    phase: study_period
+    depends_on: []
+    anchor: study_period
+    output_flag: excl_pregnancy
+    codelist: cl_pregnancy
+    params: {}
+    description: no pregnancy code in the study period

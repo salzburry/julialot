@@ -1,0 +1,5 @@
+patient_id,service_date,raw_ndc,normalized_code,code_system,days_supply,claim_status,reversal_status,source_table,source_record_id,data_vintage
+9000000001,2020-01-01,00002-1433-80,00002143380,NDC,28,paid,none,rx,rx-1,SYNTH
+9000000002,2020-01-01,00002-1433-80,00002143380,NDC,28,paid,none,rx,rx-2,SYNTH
+9000000002,2020-01-20,00002-1433-80,00002143380,NDC,28,paid,none,rx,rx-3,SYNTH
+9000000003,2020-01-15,00069-0116-01,00069011601,NDC,28,paid,none,rx,rx-4,SYNTH

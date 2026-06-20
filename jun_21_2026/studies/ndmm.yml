@@ -1,0 +1,28 @@
+id: ndmm_2025
+version: 1.0.0
+description: >-
+  NDMM 1L newly-diagnosed cohort = Overall + added/tightened gates. DRAFT -
+  gate set + values pending clinical sign-off. The base hash is a placeholder;
+  validate_study.R reports the hash to pin.
+adapter: optum
+base:
+  id: overall_2025
+  version: 1.0.0
+  hash: TBD
+study_period:
+  study_start: "2015-07-01"
+  study_end: "2025-06-30"
+  id_start: "2016-01-01"
+  id_end: "2025-06-30"
+parameters: {}
+reference_data: {}
+gates:
+  add:
+    no_prior_mm_tx: true
+    no_other_cancer: { lookback_months: 12 }
+    no_belantamab: true
+    no_pregnancy: true
+  override:
+    baseline_ce: { months: 12 }
+    followup_ce: { months: 3, strict: true }
+  disable: []

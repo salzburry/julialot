@@ -1,0 +1,3 @@
+patient_id,service_date,raw_proc_code,raw_bill_proc_code,raw_ndc,normalized_code,code_system,day_supply,place_of_service,claim_status,reversal_status,source_table,source_record_id,data_vintage
+9000000003,2020-03-01,38241,,,38241,CPT,28,21,paid,none,medical,med-1,SYNTH
+9000000003,2020-07-01,38241,,,38241,CPT,28,21,paid,none,medical,med-2,SYNTH
