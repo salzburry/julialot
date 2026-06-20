@@ -88,35 +88,53 @@ Each canonical input entity declares: required entities; canonical column names
 expected uniqueness; allowed duplicate behaviour; and (for outputs) keys &
 schemas. Example:
 
+Medical and pharmacy claims are **separate canonical entities** (they obey
+different runout rules — pharmacy pushout vs. medical never-pushout), so the
+contract does not use a confusing `claim_type` discriminator:
+
 ```
-canonical_medical
+canonical_medical            # medical claims (HCPCS / CPT / NDC)
   patient_id        string, required
   service_date      date,   required
-  procedure_code    string, nullable
-  bill_proc_code    string, nullable
+  procedure_code    string, nullable      # HCPCS / CPT
+  bill_proc_code    string, nullable      # HCPCS
   ndc               string, nullable      # normalized 11-digit (see §12)
-  claim_type        string, required       # {medical, pharmacy}
+  day_supply        int,    required      # imputed (default 28) where absent
+  source_record_id  string, recommended
+
+canonical_pharmacy           # rx claims (NDC)
+  patient_id        string, required
+  service_date      date,   required
+  ndc               string, required      # normalized 11-digit (see §12)
+  days_supply       int,    required      # imputed to 28 where null / <1
   source_record_id  string, recommended
 ```
 
 Output contracts (`MAP_STACKED`, `LOT1_BASE`, `LOT_LONG`) pin keys, columns,
 types, and which fields are intentionally nondeterministic (§9).
 
-## 6. Synthetic data is test-only — never in production
+## 6. Synthetic data is test-only — never in production (hard requirement)
 
-The synthetic fixtures and the whole golden harness exist **only to let CI/dev
-verify behaviour**. They must never be deployed to or executed in the production
-(Domino/Databricks) environment.
+Restated and non-negotiable: the synthetic fixtures and the whole golden harness
+exist **only to let CI/dev verify behaviour**, and must be kept entirely away
+from production — nothing synthetic goes near a production run.
 
-- All synthetic data + harness live under `tests/` (a test-only tree).
-- The production bundle/deploy copies only `R/`, `studies/`,
-  `reference_data/approved/`, `orchestration/`, `reporting/` — **never**
-  `tests/`. A `compare`/promote build step asserts no `tests/` path is included.
-- Synthetic PATIDs use a reserved/obviously-fake range and a `SYNTHETIC` marker
-  column, so they can never be confused with real members and are trivial to
-  detect and purge.
-- A documented "purge synthetic" / "verify-no-synthetic-in-prod" check runs
-  before any production release.
+- **Where it may run:** only in a **dev/test Databricks schema or workspace**
+  (the Level-2 synthetic-integration tests). **Never** in production schemas, the
+  production bundle/deploy, or any stakeholder output run. "Runs on Databricks"
+  means a dev/test schema — *not* the production environment; synthetic data
+  cannot run on Databricks at all is **not** the rule, production-Databricks is.
+- **Where it lives:** all synthetic data + harness under `tests/` (a test-only
+  tree). The production bundle copies only `R/`, `studies/`,
+  `reference_data/approved/`, `orchestration/`, `reporting/` — **never** `tests/`;
+  a build step asserts no `tests/` path is included.
+- **Unmistakable + removable:** synthetic PATIDs use a reserved, obviously-fake
+  range plus a `SYNTHETIC` marker column, so they can never be confused with real
+  members and are trivial to detect and purge. Any dev/test schema used for a
+  synthetic run is dropped after the test.
+- **Release gate:** a "verify-no-synthetic-in-prod" / purge check runs before any
+  production release and **blocks it** if any synthetic row, fixture path, or
+  test-only artifact would ship or persist in a production schema.
 
 ## 7. Two kinds of expected outputs (do not mix)
 
@@ -232,6 +250,9 @@ row counts + stage runtimes; output table names + **schema hash** + output
 checksums; warnings + degraded gates; baseline/comparison run id; hash algorithm
 used; run timestamp + runtime version. **A completed manifest must be sufficient
 to reproduce the run's inputs and settings**, and is immutable after completion.
+**Failed and degraded runs also write a manifest where possible** (recording the
+failing stage / degraded gates / partial counts), so an aborted or degraded run
+is as traceable as a successful one.
 
 **Five version axes** (a monthly NDC/HCPCS change bumps only reference-data — no
 algorithm release): algorithm · study-definition · reference-data ·
@@ -363,6 +384,11 @@ Study files **select and parameterize** modules by name — they never encode SQ
 
 ## 18. Increment roadmap (behaviour-preserving)
 
+**First deliverable, before any algorithm file is moved:** (1) baseline
+inventory, (2) canonical contract draft, (3) synthetic fixture catalog, (4)
+comparison/checksum script design, (5) a minimal Optum canonical-view shim. That
+is the safe foundation; only then is the validated LOT logic touched.
+
 - **0A — Baseline inventory.** Freeze Git SHA; inventory source/output schemas;
   define the deterministic comparison rules (§12); identify nondeterminism;
   capture governed production snapshots (§8). A formal release baseline.
@@ -375,16 +401,26 @@ Study files **select and parameterize** modules by name — they never encode SQ
   algorithm logic changes.
 - **2 — Reference-data registry** (§15) — one loader + one validation contract,
   migrated incrementally (one low-risk list first, verify parity, then the rest).
-- **3 — Stage extraction (no redesign).** Split current SQL into
-  `core/{map,lot1,sct,lot2_5,maintenance}`, each with an `inputs/parameters/
-  outputs/QC` contract. Keep `legacy|refactored|compare` modes (§14);
-  patient-for-patient equivalent (Level-3 gate).
-- **4 — Optum normalization implementation.** Build the canonical Optum views
-  implementing the Increment-1 contract; Optum-specific fields stay reachable via
-  an extension area, not forced into a lowest-common-denominator minimum.
-- **5 — Studies first-class** (§16) — `studies/<id>/` holds only what varies;
-  adding a study selects gates or adds a new *tested* gate, never edits core.
-- **6 — Package only at a real second consumer.**
+- **3 — Minimal Optum canonical-view shim (BEFORE extraction).** Build the
+  canonical views (`canonical_medical`, `canonical_pharmacy`, …) as **thin
+  wrappers over the existing Optum tables**, implementing the §5 contract. Nothing
+  is extracted yet; this just makes the canonical surface exist so extraction has
+  something stable to read.
+- **4 — Stage extraction *behind the canonical contract* (no redesign).** Split
+  current SQL into `core/{map,lot1,sct,lot2_5,maintenance}`, each with an
+  `inputs/parameters/outputs/QC` contract, reading **only the canonical views**
+  from Increment 3. Merge gate: **no core SQL references an Optum physical table
+  or column name** (§20). `legacy|refactored|compare` modes (§14);
+  patient-for-patient equivalent (Level-3 gate). This ordering stops Optum
+  assumptions leaking into `core/` and needing a second refactor.
+- **5 — Harden the Optum adapter.** Turn the shim into the real adapter: an
+  extension area for Optum-specific fields (not forced into a
+  lowest-common-denominator minimum), validation, and contract-conformance tests.
+  Still Optum-only.
+- **6 — Studies first-class** (§16) — `studies/<id>/` holds only what varies;
+  adding a study selects/parameterizes gates or adds a new *tested* gate, never
+  edits core.
+- **7 — Package only at a real second consumer.**
 
 ## 19. Repository shape (end-state)
 ```
@@ -407,6 +443,8 @@ scripts/        { validate_config.R validate_reference_data.R
 - Frozen synthetic patients produce identical MAP and LOT results (current-behavior).
 - The production comparison shows no unexplained patient-level changes.
 - Old and new paths can run side by side during migration (`compare` mode).
+- Core extraction is not complete until **no core SQL references a source-physical
+  (Optum) table or column name directly** — core reads only canonical views.
 - A study can change dates/thresholds/enabled gates without editing core code.
 - A derived study (e.g. NDMM from Overall) is expressed as an explicit, versioned
   gate delta — gates added / parameter-changed / logic-changed (new version) /
