@@ -317,13 +317,13 @@ apply.
 
 ### Work table written
 
-To avoid re-running heavy scans on every read, the script materializes four
+To avoid re-running heavy scans on every read, the script materializes five
 heavy views to work-schema tables and repoints the views at them (mirrors the
 parent's `S16` materialize-and-repoint in `02_lot1.R`; `CACHE TABLE` is not
 available on SQL warehouses). Each is rebuilt once per cohort pass that uses
 it - `NDMM_FLAGS_ALL` and `NDMM_LOT_LONG_FILT` on the NDMM pass only,
-`REGIMEN_LOT_LONG_AUG` and `STEROID_DEXA_LOT` on each of the Overall and NDMM
-passes:
+`REGIMEN_LOT_LONG_AUG`, `STEROID_DEXA_LOT` and `STEROID_CLAIMS_ALL` on each of
+the Overall and NDMM passes:
 
 - `<work_schema>.NDMM_FLAGS_ALL` - one row per NDMM LOT1 candidate with the
   six gate flags, consumed by the attrition counts, `NDMM_PATIDS`, the
@@ -349,6 +349,10 @@ passes:
   LOT_LONG_AUG augmentation collapses away). Materialized once because the
   DEXA scan hits the giant claims tables and every timing output reads it.
   Watch for the `STEP S_steroid_materialize_dexa_lot` log line.
+- `<work_schema>.STEROID_CLAIMS_ALL` - all steroid claim dates (any token, not
+  just DEXA), cohort-restricted, for the pre-LOT steroid lead-time QC. Same
+  reason: the all-steroid scan hits the giant claims tables and both configs
+  read it. Watch for the `STEP S_steroid_materialize_all_claims` log line.
 
 The write is unconditional (it is a performance materialization, not a
 final output, so it does not consult `PERSIST_TO_SCHEMA` - the same as the
@@ -359,14 +363,14 @@ parent's `S16`). Two operational notes:
   view - the numbers are unchanged, just recomputed on each read.
 - **Concurrent runs:** the names are fixed, not run-scoped, so two dashboard
   jobs sharing one work schema would clobber each other's scratch tables -
-  `NDMM_FLAGS_ALL`, `REGIMEN_LOT_LONG_AUG`, `NDMM_LOT_LONG_FILT`, and
-  `STEROID_DEXA_LOT` alike. Give parallel runs separate `PROJECT_WORK_SCHEMA`
-  values (the same caveat applies to the parent's fixed-name work tables such
-  as `MAP_STACKED`).
+  `NDMM_FLAGS_ALL`, `REGIMEN_LOT_LONG_AUG`, `NDMM_LOT_LONG_FILT`,
+  `STEROID_DEXA_LOT` and `STEROID_CLAIMS_ALL` alike. Give parallel runs
+  separate `PROJECT_WORK_SCHEMA` values (the same caveat applies to the
+  parent's fixed-name work tables such as `MAP_STACKED`).
 
-These four are the performance scratch tables the dashboard writes (the
-`REGIMEN_LOT_LONG_AUG` / `STEROID_DEXA_LOT` ones via the shared `05` logic it
-sources). One other write exists:
+These five are the performance scratch tables the dashboard writes (the
+`REGIMEN_LOT_LONG_AUG` / `STEROID_DEXA_LOT` / `STEROID_CLAIMS_ALL` ones via the
+shared `05` logic it sources). One other write exists:
 the validation / run-comparison helper maintains
 `<work_schema>.lot_dashboard_run_summary` (`CREATE OR REPLACE TABLE`, capped
 at the last 20 runs per cohort) for run-over-run drift - that one accumulates
@@ -401,6 +405,14 @@ doublet LENA defines the line start, so DEXA-before-LENA is a genuine anomaly
 (expect ~0; cross-regimen DEXA-before-LENA is mostly triplets where another
 agent started the line, so it is excluded). Separately it flags DEXA attached
 to a LOT with no IMiD/PI/anti-CD38 backbone (unscoped).
+
+The Steroids group also carries a **pre-LOT steroid lead-time** analysis: for
+LOT1 `BORT LENA` (RVd backbone, steroid within 90 days before LOT1 start) and
+LOT2 `LENA` (steroid any time before LOT2 start), it reports how many patients
+received **any** steroid before the line, the mean days before (both the
+earliest "first receipt" and the closest "lead-in"), and a few example
+patients per regimen. "Any steroid" scans the full `steroid_codes.csv`, not
+just DEXA.
 
 ## Reuse policy
 

@@ -102,6 +102,7 @@ collect_cohort_views <- function(con, cohort_label, lookups, lot_long_tbl,
   build_steroid_prevalence(con, section = cohort_label, title_prefix = "Steroids: ")
   build_missing_steroid_lot1(con, section = cohort_label, title_prefix = "Steroids: ")
   build_steroid_timing_qc(con, lot_long_tbl, section = cohort_label, title_prefix = "Steroids: ")
+  build_pre_lot_steroid_qc(con, lot_long_tbl, section = cohort_label, title_prefix = "Steroids: ")
   log_msg("[", cohort_label, "] views 2/8: focused regimen-pair transitions")
   for (n in 1:4)
     build_focused_pair(con, n, n + 1L, section = cohort_label,
