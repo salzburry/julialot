@@ -863,7 +863,8 @@ build_steroid_timing_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
 # ---- Pre-LOT steroid lead time (study-team ask) ------------------------
 # Julia: among patients on a given regimen at a given line, who received ANY
 # steroid BEFORE that line started, and on average how many days before?
-#   - LOT1 'BORT LENA' (RVd backbone): steroid <= 90 days before LOT1 start.
+#   - LOT1 'BORT LENA' (bortezomib + lenalidomide backbone): steroid within
+#     90 days before LOT1 start.
 #   - LOT2 'LENA':                     steroid any time before LOT2 start.
 # "Any steroid" = ANY steroid_codes.csv token (not just DEXA), so we scan
 # medical + rx against the full STEROID_VIEW (same four sources as the steroid
@@ -876,6 +877,7 @@ build_steroid_timing_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
 build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
                                      title_prefix = "", n_examples = 3L) {
   med <- cdm_src(cfg$tbl_medical); rxt <- cdm_src(cfg$tbl_rx)
+  map_tbl <- wrk("MAP_STACKED")
   probe <- function(tb) isTRUE(tryCatch({
     db_q(con, glue("SELECT 1 FROM {tb} LIMIT 1")); TRUE
   }, error = function(e) FALSE))
@@ -890,11 +892,22 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
     return(invisible())
   }
 
-  # All-steroid claim dates (any token), cohort-restricted, materialized once.
+  # All-steroid claim dates + token + source, materialized once. Restricted to
+  # the TWO target groups only (LOT1 'BORT LENA', LOT2 'LENA') so the giant
+  # medical/rx scan touches only the patients the outputs need - not the whole
+  # cohort. NOTE: keep this lot_pats predicate in sync with the one_config(...)
+  # calls at the end of this function. NDC branches only match if
+  # steroid_codes.csv has NDC rows; with an HCPCS-only codelist pharmacy
+  # (oral) steroid is undercounted (surfaced in the card caveat).
   claims_sql <- glue("
-    WITH lot_pats AS (SELECT DISTINCT cast(PATID as string) AS PATID FROM {lot_long_tbl}),
+    WITH lot_pats AS (
+      SELECT DISTINCT cast(PATID as string) AS PATID FROM {lot_long_tbl}
+      WHERE (LOT_NUM = 1 AND upper(trim(LOT_BASE_MEDS)) = 'BORT LENA')
+         OR (LOT_NUM = 2 AND upper(trim(LOT_BASE_MEDS)) = 'LENA')
+    ),
     ster_med_proc AS (
-      SELECT cast(m.PATID as string) AS PATID, cast(m.FST_DT as date) AS dt
+      SELECT cast(m.PATID as string) AS PATID, cast(m.FST_DT as date) AS dt,
+             sc.mapped_to AS token, 'med_proc' AS source
       FROM {med} m JOIN {STEROID_VIEW} sc
         ON sc.code_type IN ('HCPCS','CPT')
        AND sc.code = upper(regexp_replace(coalesce(cast(m.PROC_CD as string),''),'[^A-Za-z0-9]',''))
@@ -902,7 +915,8 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
         AND EXISTS (SELECT 1 FROM lot_pats lp WHERE lp.PATID = cast(m.PATID as string))
     ),
     ster_med_bill AS (
-      SELECT cast(m.PATID as string) AS PATID, cast(m.FST_DT as date) AS dt
+      SELECT cast(m.PATID as string) AS PATID, cast(m.FST_DT as date) AS dt,
+             sc.mapped_to AS token, 'med_bill' AS source
       FROM {med} m JOIN {STEROID_VIEW} sc
         ON sc.code_type = 'HCPCS'
        AND sc.code = upper(regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''),'[^A-Za-z0-9]',''))
@@ -910,7 +924,8 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
         AND EXISTS (SELECT 1 FROM lot_pats lp WHERE lp.PATID = cast(m.PATID as string))
     ),
     ster_med_ndc AS (
-      SELECT cast(m.PATID as string) AS PATID, cast(m.FST_DT as date) AS dt
+      SELECT cast(m.PATID as string) AS PATID, cast(m.FST_DT as date) AS dt,
+             sc.mapped_to AS token, 'med_ndc' AS source
       FROM {med} m JOIN {STEROID_VIEW} sc
         ON sc.code_type = 'NDC'
        AND lpad(regexp_replace(coalesce(cast(m.NDC as string),''),'[^0-9]',''),11,'0') = lpad(regexp_replace(sc.code,'[^0-9]',''),11,'0')
@@ -918,14 +933,15 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
         AND EXISTS (SELECT 1 FROM lot_pats lp WHERE lp.PATID = cast(m.PATID as string))
     ),
     ster_rx AS (
-      SELECT cast(r.PATID as string) AS PATID, cast(r.FILL_DT as date) AS dt
+      SELECT cast(r.PATID as string) AS PATID, cast(r.FILL_DT as date) AS dt,
+             sc.mapped_to AS token, 'rx_ndc' AS source
       FROM {rxt} r JOIN {STEROID_VIEW} sc
         ON sc.code_type = 'NDC'
        AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''),'[^0-9]',''),11,'0') = lpad(regexp_replace(sc.code,'[^0-9]',''),11,'0')
       WHERE r.NDC IS NOT NULL AND r.FILL_DT IS NOT NULL
         AND EXISTS (SELECT 1 FROM lot_pats lp WHERE lp.PATID = cast(r.PATID as string))
     )
-    SELECT DISTINCT PATID, dt FROM (
+    SELECT DISTINCT PATID, dt, token, source FROM (
       SELECT * FROM ster_med_proc UNION ALL SELECT * FROM ster_med_bill
       UNION ALL SELECT * FROM ster_med_ndc UNION ALL SELECT * FROM ster_rx
     ) u")
@@ -955,16 +971,19 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
           AND LOT_START_DT IS NOT NULL
       ),
       pre AS (
-        SELECT t.PATID, t.lot_start, s.dt, datediff(t.lot_start, s.dt) AS days_before
+        SELECT t.PATID, t.lot_start, s.dt, s.token,
+               datediff(t.lot_start, s.dt) AS days_before
         FROM tgt t JOIN _steroid_claims_all s ON s.PATID = t.PATID
         WHERE s.dt < t.lot_start {cap_clause}
       ),
       per_pat AS (
         SELECT PATID, lot_start,
                min(dt) AS earliest_steroid_dt, max(dt) AS closest_steroid_dt,
+               min_by(token, dt) AS earliest_token,
+               max_by(token, dt) AS closest_token,
                max(days_before) AS earliest_days_before,
                min(days_before) AS closest_days_before,
-               count(*) AS n_steroid_dates
+               count(DISTINCT dt) AS n_steroid_dates
         FROM pre GROUP BY PATID, lot_start
       )")
     n_reg <- db_q(con, glue("
@@ -988,22 +1007,46 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
       else paste0('within ', cap_days, ' days before the line started'),
       '. &ldquo;How long before&rdquo; is reported two ways per patient - the ',
       '<b>earliest</b> steroid (first receipt) and the <b>closest</b> steroid ',
-      '(lead-in) before the line - so use whichever you mean. Days are ',
-      'LOT start minus steroid date.</p></div>'),
+      '(lead-in) before the line; days = LOT start minus steroid date. The ',
+      'example table shows which steroid (token) plus the LENA/BORT starts. ',
+      '&ldquo;Any steroid&rdquo; = any token in the loaded ',
+      '<code>steroid_codes.csv</code> (DEXA/PRED/&hellip;); pharmacy (NDC) ',
+      'capture depends on that file having NDC rows, so with an HCPCS-only ',
+      'codelist oral steroid is undercounted.</p></div>'),
       section = section, title = paste0(title_prefix, label, " - summary"))
     if (n_before > 0) {
       save_table(summ, section = section,
                  title = paste0(title_prefix, label, " - mean lead time"))
       ex <- db_q(con, glue("
-        WITH {per_pat}
-        SELECT PATID,
-               cast(lot_start as string)           AS lot_start,
-               cast(earliest_steroid_dt as string) AS earliest_steroid_dt,
-               cast(earliest_days_before as int)   AS earliest_days_before,
-               cast(closest_steroid_dt as string)  AS closest_steroid_dt,
-               cast(closest_days_before as int)    AS closest_days_before,
-               cast(n_steroid_dates as int)        AS n_steroid_dates
-        FROM per_pat ORDER BY closest_days_before, PATID LIMIT {n_examples}"))
+        WITH {per_pat},
+        ex_pat AS (
+          SELECT * FROM per_pat ORDER BY closest_days_before, PATID LIMIT {n_examples}
+        ),
+        agents AS (
+          SELECT cast(mp.PATID as string) AS PATID, mp.MAP_MED_TYPE AS agent,
+                 min(cast(mp.MAP_START_DT as date)) AS agent_start
+          FROM {map_tbl} mp JOIN ex_pat e ON cast(mp.PATID as string) = e.PATID
+          WHERE mp.MAP_MED_TYPE IN ('LENA','BORT')
+            AND cast(mp.MAP_START_DT as date) >= e.lot_start
+            AND cast(mp.MAP_START_DT as date) <= date_add(e.lot_start, 90)
+          GROUP BY cast(mp.PATID as string), mp.MAP_MED_TYPE
+        )
+        SELECT e.PATID,
+               e.earliest_token,
+               cast(e.earliest_steroid_dt as string) AS earliest_steroid_dt,
+               cast(e.earliest_days_before as int)   AS earliest_days_before,
+               e.closest_token,
+               cast(e.closest_steroid_dt as string)  AS closest_steroid_dt,
+               cast(e.closest_days_before as int)    AS closest_days_before,
+               cast(e.lot_start as string)           AS lot_start,
+               cast(max(CASE WHEN a.agent='LENA' THEN a.agent_start END) as string) AS lena_start,
+               cast(max(CASE WHEN a.agent='BORT' THEN a.agent_start END) as string) AS bort_start,
+               cast(e.n_steroid_dates as int)        AS n_steroid_dates
+        FROM ex_pat e LEFT JOIN agents a ON a.PATID = e.PATID
+        GROUP BY e.PATID, e.earliest_token, e.earliest_steroid_dt, e.earliest_days_before,
+                 e.closest_token, e.closest_steroid_dt, e.closest_days_before,
+                 e.lot_start, e.n_steroid_dates
+        ORDER BY e.closest_days_before, e.PATID"))
       if (nrow(ex) > 0)
         save_table(ex, section = section,
                    title = paste0(title_prefix, label, " - example patients"))
@@ -1011,7 +1054,7 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
     invisible()
   }
 
-  one_config(1L, "BORT LENA", 90L, "Pre-LOT1 steroid (BORT LENA / RVd backbone, within 3 months)")
+  one_config(1L, "BORT LENA", 90L, "Pre-LOT1 steroid (BORT LENA backbone, within 90 days)")
   one_config(2L, "LENA", NULL, "Pre-LOT2 steroid (LENA, any time before)")
   invisible()
 }
