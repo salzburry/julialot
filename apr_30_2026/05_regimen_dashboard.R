@@ -860,6 +860,162 @@ build_steroid_timing_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
   invisible()
 }
 
+# ---- Pre-LOT steroid lead time (study-team ask) ------------------------
+# Julia: among patients on a given regimen at a given line, who received ANY
+# steroid BEFORE that line started, and on average how many days before?
+#   - LOT1 'BORT LENA' (RVd backbone): steroid <= 90 days before LOT1 start.
+#   - LOT2 'LENA':                     steroid any time before LOT2 start.
+# "Any steroid" = ANY steroid_codes.csv token (not just DEXA), so we scan
+# medical + rx against the full STEROID_VIEW (same four sources as the steroid
+# augmentation). Steroid claim dates are materialized once, cohort-restricted,
+# to STEROID_CLAIMS_ALL and reused by both configs. Two means are reported per
+# config so either reading of "how long before did they receive steroid" is
+# covered: the EARLIEST steroid (first receipt) and the CLOSEST steroid
+# (lead-in) before the line. Fail-safe: unreadable source / non-writable work
+# schema -> a note / in-place temp view, not an error.
+build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
+                                     title_prefix = "", n_examples = 3L) {
+  med <- cdm_src(cfg$tbl_medical); rxt <- cdm_src(cfg$tbl_rx)
+  probe <- function(tb) isTRUE(tryCatch({
+    db_q(con, glue("SELECT 1 FROM {tb} LIMIT 1")); TRUE
+  }, error = function(e) FALSE))
+  if (!all(probe(STEROID_VIEW), probe(med), probe(rxt))) {
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:12px;max-width:760px">',
+      '<h3>Pre-LOT steroid lead time unavailable</h3>',
+      '<p style="color:#555;font-size:13px">Could not read ',
+      '<code>STEROID_VIEW</code> / <code>medical</code> / <code>rx</code>, so ',
+      'the pre-LOT steroid section was skipped.</p></div>'),
+      section = section, title = paste0(title_prefix, "Pre-LOT steroid (unavailable)"))
+    return(invisible())
+  }
+
+  # All-steroid claim dates (any token), cohort-restricted, materialized once.
+  claims_sql <- glue("
+    WITH lot_pats AS (SELECT DISTINCT cast(PATID as string) AS PATID FROM {lot_long_tbl}),
+    ster_med_proc AS (
+      SELECT cast(m.PATID as string) AS PATID, cast(m.FST_DT as date) AS dt
+      FROM {med} m JOIN {STEROID_VIEW} sc
+        ON sc.code_type IN ('HCPCS','CPT')
+       AND sc.code = upper(regexp_replace(coalesce(cast(m.PROC_CD as string),''),'[^A-Za-z0-9]',''))
+      WHERE m.PROC_CD IS NOT NULL AND m.FST_DT IS NOT NULL
+        AND EXISTS (SELECT 1 FROM lot_pats lp WHERE lp.PATID = cast(m.PATID as string))
+    ),
+    ster_med_bill AS (
+      SELECT cast(m.PATID as string) AS PATID, cast(m.FST_DT as date) AS dt
+      FROM {med} m JOIN {STEROID_VIEW} sc
+        ON sc.code_type = 'HCPCS'
+       AND sc.code = upper(regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''),'[^A-Za-z0-9]',''))
+      WHERE m.BILL_PROC_CD IS NOT NULL AND m.FST_DT IS NOT NULL
+        AND EXISTS (SELECT 1 FROM lot_pats lp WHERE lp.PATID = cast(m.PATID as string))
+    ),
+    ster_med_ndc AS (
+      SELECT cast(m.PATID as string) AS PATID, cast(m.FST_DT as date) AS dt
+      FROM {med} m JOIN {STEROID_VIEW} sc
+        ON sc.code_type = 'NDC'
+       AND lpad(regexp_replace(coalesce(cast(m.NDC as string),''),'[^0-9]',''),11,'0') = lpad(regexp_replace(sc.code,'[^0-9]',''),11,'0')
+      WHERE m.NDC IS NOT NULL AND m.FST_DT IS NOT NULL
+        AND EXISTS (SELECT 1 FROM lot_pats lp WHERE lp.PATID = cast(m.PATID as string))
+    ),
+    ster_rx AS (
+      SELECT cast(r.PATID as string) AS PATID, cast(r.FILL_DT as date) AS dt
+      FROM {rxt} r JOIN {STEROID_VIEW} sc
+        ON sc.code_type = 'NDC'
+       AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''),'[^0-9]',''),11,'0') = lpad(regexp_replace(sc.code,'[^0-9]',''),11,'0')
+      WHERE r.NDC IS NOT NULL AND r.FILL_DT IS NOT NULL
+        AND EXISTS (SELECT 1 FROM lot_pats lp WHERE lp.PATID = cast(r.PATID as string))
+    )
+    SELECT DISTINCT PATID, dt FROM (
+      SELECT * FROM ster_med_proc UNION ALL SELECT * FROM ster_med_bill
+      UNION ALL SELECT * FROM ster_med_ndc UNION ALL SELECT * FROM ster_rx
+    ) u")
+
+  built <- tryCatch({
+    run_step(con, "S_steroid_materialize_all_claims", glue("
+      CREATE OR REPLACE TABLE {wrk('STEROID_CLAIMS_ALL')} AS {claims_sql}
+    "), qc = glue("SELECT count(*) AS n_rows FROM {wrk('STEROID_CLAIMS_ALL')}"))
+    db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW _steroid_claims_all AS SELECT * FROM {wrk('STEROID_CLAIMS_ALL')}"))
+    TRUE
+  }, error = function(e) {
+    log_msg("WARN: could not materialize STEROID_CLAIMS_ALL (", conditionMessage(e),
+            "); using in-place temp view (slower).")
+    isTRUE(tryCatch({
+      db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW _steroid_claims_all AS {claims_sql}")); TRUE
+    }, error = function(e2) FALSE))
+  })
+  if (!isTRUE(built)) return(invisible())
+
+  one_config <- function(n_lot, regimen, cap_days, label) {
+    cap_clause <- if (is.null(cap_days)) "" else glue("AND s.dt >= date_sub(t.lot_start, {cap_days})")
+    per_pat <- glue("
+      tgt AS (
+        SELECT cast(PATID as string) AS PATID, cast(LOT_START_DT as date) AS lot_start
+        FROM {lot_long_tbl}
+        WHERE LOT_NUM = {n_lot} AND upper(trim(LOT_BASE_MEDS)) = '{regimen}'
+          AND LOT_START_DT IS NOT NULL
+      ),
+      pre AS (
+        SELECT t.PATID, t.lot_start, s.dt, datediff(t.lot_start, s.dt) AS days_before
+        FROM tgt t JOIN _steroid_claims_all s ON s.PATID = t.PATID
+        WHERE s.dt < t.lot_start {cap_clause}
+      ),
+      per_pat AS (
+        SELECT PATID, lot_start,
+               min(dt) AS earliest_steroid_dt, max(dt) AS closest_steroid_dt,
+               max(days_before) AS earliest_days_before,
+               min(days_before) AS closest_days_before,
+               count(*) AS n_steroid_claims
+        FROM pre GROUP BY PATID, lot_start
+      )")
+    n_reg <- db_q(con, glue("
+      SELECT count(DISTINCT cast(PATID as string)) AS n
+      FROM {lot_long_tbl}
+      WHERE LOT_NUM = {n_lot} AND upper(trim(LOT_BASE_MEDS)) = '{regimen}'"))$n
+    summ <- db_q(con, glue("
+      WITH {per_pat}
+      SELECT count(*)                                  AS n_patients_steroid_before,
+             round(avg(earliest_days_before),1)        AS mean_days_earliest_steroid,
+             round(avg(closest_days_before),1)         AS mean_days_closest_steroid
+      FROM per_pat"))
+    n_before <- if (nrow(summ)) as.integer(summ$n_patients_steroid_before[1]) else 0L
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:10px;max-width:880px">',
+      '<h3 style="margin:0 0 6px">', label, '</h3>',
+      '<p style="color:#555;font-size:13px;margin:0 0 6px">Of <b>', n_reg,
+      '</b> LOT', n_lot, ' patients on the <code>', regimen, '</code> regimen, ',
+      '<b>', n_before, '</b> had a steroid claim ',
+      if (is.null(cap_days)) 'any time before the line started (no day cap)'
+      else paste0('within ', cap_days, ' days before the line started'),
+      '. &ldquo;How long before&rdquo; is reported two ways per patient - the ',
+      '<b>earliest</b> steroid (first receipt) and the <b>closest</b> steroid ',
+      '(lead-in) before the line - so use whichever you mean. Days are ',
+      'LOT start minus steroid date.</p></div>'),
+      section = section, title = paste0(title_prefix, label, " - summary"))
+    if (n_before > 0) {
+      save_table(summ, section = section,
+                 title = paste0(title_prefix, label, " - mean lead time"))
+      ex <- db_q(con, glue("
+        WITH {per_pat}
+        SELECT PATID,
+               cast(lot_start as string)           AS lot_start,
+               cast(earliest_steroid_dt as string) AS earliest_steroid_dt,
+               cast(earliest_days_before as int)   AS earliest_days_before,
+               cast(closest_steroid_dt as string)  AS closest_steroid_dt,
+               cast(closest_days_before as int)    AS closest_days_before,
+               cast(n_steroid_claims as int)       AS n_steroid_claims
+        FROM per_pat ORDER BY closest_days_before, PATID LIMIT {n_examples}"))
+      if (nrow(ex) > 0)
+        save_table(ex, section = section,
+                   title = paste0(title_prefix, label, " - example patients"))
+    }
+    invisible()
+  }
+
+  one_config(1L, "BORT LENA", 90L, "Pre-LOT1 steroid (BORT LENA / RVd backbone, within 3 months)")
+  one_config(2L, "LENA", NULL, "Pre-LOT2 steroid (LENA, any time before)")
+  invisible()
+}
+
 # Focused LOT-pair Sankey by REGIMEN (steroid-augmented).
 # INNER JOIN drops non-progressors.
 build_focused_pair <- function(con, n_from, n_to, section = NULL,
@@ -1300,6 +1456,7 @@ main_regimen <- function() {
   build_steroid_prevalence(con)
   build_missing_steroid_lot1(con)
   build_steroid_timing_qc(con, wrk("LOT_LONG"), section = "STEROIDS")
+  build_pre_lot_steroid_qc(con, wrk("LOT_LONG"), section = "STEROIDS")
   build_payer_lot_qc(con, section = "Payer")
   for (n in 1:4) build_focused_pair(con, n, n + 1L)
   for (n in 1:4) build_category_pair(con, n, n + 1L, p$lookups)
