@@ -797,13 +797,21 @@ var FLAT = [];
 function buildFlat() {
   FLAT = [];
   NAV.forEach(function(g){ g.items.forEach(function(it){
-    FLAT.push({ id: it.id, title: it.title, cohort: g.cohort, bucket: g.bucket });
+    FLAT.push({ id: it.id, title: it.title, cohort: g.cohort, bucket: g.bucket,
+                audience: it.audience || "stakeholder" });
   }); });
 }
 var curId = null;
 function openView(id, push) {
   var rec = FLAT.filter(function(f){ return f.id === id; })[0];
   if (!rec) return;
+  // Deep links / hash can target a view outside the current mode or cohort.
+  // Reconcile both before showing it so the sidebar pill, the Stakeholder/Full
+  // toggle and the main panel never disagree: a hash to a full-only view
+  // enables Full (otherwise stakeholder mode would show full content with its
+  // nav item hidden), and we switch to the target view cohort.
+  if (rec.audience === "full" && audMode === "stakeholder") setAudMode("full", true);
+  if (rec.cohort && curCohort !== rec.cohort) setCohort(rec.cohort, false);
   curId = id;
   document.querySelectorAll(".tab-content").forEach(function(el){ el.classList.remove("show"); });
   var t = document.getElementById(id);
@@ -811,7 +819,8 @@ function openView(id, push) {
   document.querySelectorAll(".nav-item").forEach(function(el){
     el.classList.toggle("active", el.getAttribute("data-id") === id);
   });
-  document.getElementById("cbCat").textContent  = (rec.cohort ? rec.cohort + " / " : "") + rec.bucket;
+  document.getElementById("cbCat").textContent  =
+    (rec.cohort && rec.cohort !== rec.bucket) ? rec.cohort + " / " + rec.bucket : rec.bucket;
   document.getElementById("cbView").textContent = rec.title;
   var plotDiv = t ? t.querySelector("[id^=plotly_]") : null;
   if (plotDiv) setTimeout(function(){ renderPlotlyIfVisible(plotDiv.id); }, 80);
@@ -963,7 +972,7 @@ function setCohort(name, jump) {
 // with the cohort pills and search automatically, since every filter path
 // funnels through applySearch.
 var audMode = "stakeholder";
-function setAudMode(mode){
+function setAudMode(mode, skipJump){
   audMode = mode;
   var btn = document.getElementById("audBtn");
   if (btn){
@@ -972,9 +981,11 @@ function setAudMode(mode){
   }
   var sbx = document.getElementById("navSearch");
   applySearch(sbx ? sbx.value : "");
-  // If the active view was just hidden by the mode change, move to the
-  // first view still visible in the current cohort.
-  if (visibleIds().indexOf(curId) === -1){
+  // If the active view was just hidden by the mode change, move to the first
+  // view still visible in the current cohort. Skipped when openView is mid-
+  // flight switching to Full for a deep-linked full-only view (it shows the
+  // target itself), which also avoids re-entering openView.
+  if (!skipJump && visibleIds().indexOf(curId) === -1){
     var ids = visibleIds();
     if (ids.length) openView(ids[0]);
   }
@@ -1014,11 +1025,9 @@ document.addEventListener("DOMContentLoaded", function(){
   var h0 = location.hash.replace("#","");
   var start = (h0 && FLAT.filter(function(f){return f.id===h0;}).length) ? h0
               : (FLAT[0] ? FLAT[0].id : null);
-  if (start) {
-    openView(start, false);
-    var rec = FLAT.filter(function(f){return f.id===start;})[0];
-    if (rec && COHORTS.indexOf(rec.cohort) !== -1) setCohort(rec.cohort, false);
-  }
+  // openView reconciles cohort + audience mode + expands the target bucket,
+  // so it is the single entry point for the initial (possibly deep-linked) view.
+  if (start) openView(start, false);
 });
 // Category-grouped nav model
 ', nav_json, '
