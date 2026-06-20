@@ -160,6 +160,107 @@ build_exploratory_scaffold <- function() {
     title   = "About this section")
 }
 
+# ---- Summary landing page (data-driven, opens first) ----------------
+# Side-by-side Overall vs NDMM headline numbers pulled straight from
+# query_cohort_kpis() - no hard-coded findings. Every figure is computed
+# at build time from each cohort's LOT_LONG. The NDMM column degrades to
+# "n/a" when that cohort could not be built this run. Rendered as a
+# self-contained html_card (sandboxed iframe), so it cannot affect the
+# rest of the dashboard's navigation.
+build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts) {
+  has_o <- length(kpi_overall) > 0 && !is.null(kpi_overall$n_patients) &&
+           !is.na(kpi_overall$n_patients)
+  has_n <- isTRUE(ndmm_ok) && length(kpi_ndmm) > 0 &&
+           !is.null(kpi_ndmm$n_patients) && !is.na(kpi_ndmm$n_patients)
+
+  fmt_days <- function(x)
+    if (length(x) == 0 || is.null(x) || is.na(x)) "-" else paste0(fmt_n(x), " d")
+  reached <- function(k, key)
+    paste0(fmt_n(k[[key]]), " <span style='color:#6B7280'>(",
+           fmt_pct(k[[key]], k$n_patients), ")</span>")
+
+  ov <- if (has_o) list(
+    pat = fmt_n(kpi_overall$n_patients),
+    pct = "&mdash;",
+    l2  = reached(kpi_overall, "n_lot2"),
+    l3  = reached(kpi_overall, "n_lot3"),
+    med = fmt_days(kpi_overall$lot1_median_len),
+    rng = fmt_date_range(kpi_overall$lot1_min, kpi_overall$lot1_max)
+  ) else NULL
+  nd <- if (has_n) list(
+    pat = fmt_n(kpi_ndmm$n_patients),
+    pct = fmt_pct(kpi_ndmm$n_patients, if (has_o) kpi_overall$n_patients else NA),
+    l2  = reached(kpi_ndmm, "n_lot2"),
+    l3  = reached(kpi_ndmm, "n_lot3"),
+    med = fmt_days(kpi_ndmm$lot1_median_len),
+    rng = fmt_date_range(kpi_ndmm$lot1_min, kpi_ndmm$lot1_max)
+  ) else NULL
+  ovcell <- function(key) if (is.null(ov)) "-" else ov[[key]]
+  ndcell <- function(key)
+    if (is.null(nd)) "<span style='color:#a06000'>n/a</span>" else nd[[key]]
+
+  rowh <- function(metric, key, hint = "")
+    paste0('<tr>',
+      '<td style="padding:10px 14px;border-bottom:1px solid #EEE">',
+        '<div style="font-weight:600;color:#2A2A33">', metric, '</div>',
+        if (nzchar(hint))
+          paste0('<div style="font-size:11px;color:#9aa0aa">', hint, '</div>')
+        else '',
+      '</td>',
+      '<td style="padding:10px 14px;border-bottom:1px solid #EEE;text-align:right;',
+        'font-variant-numeric:tabular-nums">', ovcell(key), '</td>',
+      '<td style="padding:10px 14px;border-bottom:1px solid #EEE;text-align:right;',
+        'font-variant-numeric:tabular-nums">', ndcell(key), '</td>',
+    '</tr>')
+
+  body <- paste0(
+    rowh("Patients (any LOT)", "pat", "distinct PATID"),
+    rowh("NDMM as % of Overall", "pct", "shared-denominator check"),
+    rowh("Reached LOT2+", "l2"),
+    rowh("Reached LOT3+", "l3"),
+    rowh("Median LOT1 length", "med", "LOT_BASE_LENGTH"),
+    rowh("LOT1 start range", "rng", "earliest &rarr; latest")
+  )
+
+  ndmm_note <- if (!has_n)
+    paste0('<p style="margin:10px 0 0;font-size:12px;color:#a06000">',
+           'The NDMM (1L) cohort could not be built this run, so its column ',
+           'shows <b>n/a</b>. See the NDMM section for the reason.</p>') else ""
+
+  card <- paste0(
+'<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;',
+     'padding:18px 20px;max-width:920px;color:#2A2A33">',
+  '<h2 style="margin:0 0 4px;font-size:20px;font-weight:800">Executive summary</h2>',
+  '<p style="margin:0 0 14px;font-size:13px;color:#6B7280;line-height:1.5">',
+    'Headline numbers for the two cohorts in this build. ',
+    '<b>Overall</b> is the whole parent line-of-therapy cohort; ',
+    '<b>NDMM</b> is the 1L newly-diagnosed subset (inclusion/exclusion gates applied). ',
+    'All figures are computed at build time from each cohort&rsquo;s LOT_LONG ',
+    '&mdash; nothing here is hard-coded.',
+  '</p>',
+  '<table style="border-collapse:collapse;width:100%;font-size:14px">',
+    '<thead><tr>',
+      '<th style="text-align:left;padding:8px 14px;border-bottom:2px solid #F36633;',
+        'font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#6B7280">Metric</th>',
+      '<th style="text-align:right;padding:8px 14px;border-bottom:2px solid #F36633;',
+        'color:#D24E1F">Overall</th>',
+      '<th style="text-align:right;padding:8px 14px;border-bottom:2px solid #F36633;',
+        'color:#0E7C7B">NDMM</th>',
+    '</tr></thead>',
+    '<tbody>', body, '</tbody>',
+  '</table>',
+  ndmm_note,
+  '<div style="margin-top:16px;padding:10px 12px;background:#F7F8FA;',
+       'border:1px solid #E5E7EB;border-radius:8px;font-size:12px;color:#6B7280">',
+    '<b style="color:#2A2A33">Run status</b> &nbsp;&bull;&nbsp; Generated ', run_ts,
+    ' &nbsp;&bull;&nbsp; Overall: ', if (has_o) 'built' else 'unavailable',
+    ' &nbsp;&bull;&nbsp; NDMM: ', if (has_n) 'built' else 'unavailable',
+  '</div>',
+'</div>')
+
+  add_html_card(card, section = "Summary", title = "Executive summary")
+}
+
 main_combined <- function() {
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
   cfg$build_dashboard <<- TRUE
@@ -185,6 +286,7 @@ main_combined <- function() {
   log_msg("==== Building OVERALL cohort views ====")
   cfg$plot_filename_prefix <<- "overall_"
   p_overall <- prepare_overall_cohort(con)
+  kpi_overall <- query_cohort_kpis(con, wrk("LOT_LONG"))
   build_cohort_kpis(con, wrk("LOT_LONG"), section = "Overall",
                     title = "KPI snapshot")
   build_overview_card(p_overall$n_ster, p_overall$n_rules,
@@ -209,8 +311,10 @@ main_combined <- function() {
   # Overall + Exploratory still render.
   log_msg("==== Building NDMM cohort views ====")
   cfg$plot_filename_prefix <<- "ndmm_"
+  kpi_ndmm <- list()
   ndmm_ok <- tryCatch({
     p_ndmm <- prepare_ndmm_cohort(con)
+    kpi_ndmm <- query_cohort_kpis(con, NDMM_LOT_LONG_FILT)
     build_cohort_kpis(con, NDMM_LOT_LONG_FILT, section = "NDMM",
                       title = "KPI snapshot")
     build_ndmm_overview_card(p_ndmm$counts, p_ndmm$n_ster, p_ndmm$n_rules,
@@ -253,13 +357,22 @@ main_combined <- function() {
   cfg$plot_filename_prefix <<- NULL
   build_exploratory_scaffold()
 
+  # ---- Summary landing page (opens first) ----
+  # Built last (it needs both cohorts' KPIs) then floated to the front of
+  # dashboard_items so it becomes FLAT[0] - the opening view - and the
+  # first cohort pill. Pure list reordering: no effect on any other view.
+  build_summary_landing(kpi_overall, kpi_ndmm, ndmm_ok, run_ts_combined)
+  is_sum <- vapply(dashboard_items,
+                   function(it) identical(it$section, "Summary"), logical(1))
+  dashboard_items <<- c(dashboard_items[is_sum], dashboard_items[!is_sum])
+
   build_dashboard(
     out_name     = "combined_dashboard.html",
     header_title = "MM LOT &mdash; combined (Overall + NDMM)",
-    header_sub   = paste0("Overall &bull; NDMM",
+    header_sub   = paste0("Summary &bull; Overall &bull; NDMM",
                           if (!ndmm_ok) " (unavailable)" else "",
                           " &bull; Exploratory analysis"),
-    cohort_sections = c("Overall", "NDMM", "Exploratory analysis")
+    cohort_sections = c("Summary", "Overall", "NDMM", "Exploratory analysis")
   )
   log_msg("Wrote ", file.path(cfg$output_dir, "combined_dashboard.html"))
 }
