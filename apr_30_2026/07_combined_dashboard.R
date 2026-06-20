@@ -9,19 +9,23 @@
 #   Rscript apr_30_2026/05_regimen_dashboard.R  -> whole (overall) cohort
 #   Rscript apr_30_2026/06_ndmm_dashboard.R     -> NDMM cohort
 # This script reuses their builders + cohort-prep functions to produce a
-# single HTML whose left sidebar has three top-level groups:
+# single HTML. The left sidebar has cohort pills:
 #
-#   Overall              whole parent LOT_LONG cohort
-#                        (regimen transitions + steroids + QC + LOT1-5 detail)
-#   NDMM                 1L newly-diagnosed cohort (IE filters)
-#   Exploratory analysis ad-hoc / one-off requests
+#   Summary  executive landing page - Overall vs NDMM headline numbers,
+#            data-quality strip, and a Key findings panel (built last, then
+#            sorted to the front by tag_and_order()); the opening view.
+#   Overall  whole parent LOT_LONG cohort (regimen transitions + steroids +
+#            payer + QC + LOT1-5 detail)
+#   NDMM     1L newly-diagnosed cohort (IE filters)
 #
-# Placement rule: an ad-hoc ask that REUSES the Overall or NDMM
-# denominator (same patient counts) is added UNDER that cohort as a
-# "QC:" or "Sensitivity:" item. An ask that CHANGES the cohort (a
-# different denominator, e.g. a POMA-specific subset) goes under
-# Exploratory analysis. Nothing in this repo currently needs the
-# Exploratory group, so it ships as a scaffold describing the rule.
+# Within each cohort, tag_and_order() groups views into collapsible buckets
+# (Cohort & attrition / Treatment patterns / Steroids & payer, plus the
+# full-only Patient explorer / Validation / Debug), and a Stakeholder/Full
+# toggle hides the full-only buckets by default.
+#
+# An empty "Exploratory analysis" group is intentionally NOT built (it would
+# return only when a real different-denominator ad-hoc analysis exists).
+# build_exploratory_scaffold() is kept below as documentation of that rule.
 #
 # Parent derivation logic is unchanged.
 
@@ -263,23 +267,28 @@ build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts,
     ' &nbsp;&bull;&nbsp; NDMM: ',    if (has_n) 'built' else 'unavailable',
     '</div>')
 
-  # Optional stakeholder-ask findings recorded by the steroid/payer builders
-  # for the Overall cohort - the exact numbers shown in their detail views,
-  # reused here. Failsafe: any problem yields an empty panel.
+  # Optional stakeholder-ask findings recorded by the steroid/payer builders -
+  # the exact numbers shown in their detail views, reused here, grouped by
+  # cohort (Overall then NDMM). Failsafe: any problem yields an empty panel.
   findings_html <- tryCatch({
-    fnd <- if (exists("dashboard_findings"))
-             Filter(function(f) identical(f$cohort, "Overall"), dashboard_findings)
-           else list()
-    if (length(fnd) == 0) "" else {
-      rows <- paste(vapply(fnd, function(f)
+    all_f <- if (exists("dashboard_findings")) dashboard_findings else list()
+    render_cohort <- function(coh) {
+      ff <- Filter(function(f) identical(f$cohort, coh), all_f)
+      if (length(ff) == 0) return("")
+      rows <- paste(vapply(ff, function(f)
         paste0('<li style="margin:4px 0"><b style="color:#0E7C7B">', f$group,
                '</b> &mdash; ', f$text, '</li>'), character(1)), collapse = "")
+      paste0('<div style="margin-top:8px"><div style="font-size:12px;font-weight:800;',
+             'text-transform:uppercase;letter-spacing:.04em;color:#6B7280">', coh,
+             '</div><ul style="margin:2px 0 0;padding-left:18px;font-size:13px;',
+             'color:#2A2A33;line-height:1.5">', rows, '</ul></div>')
+    }
+    blocks <- paste0(render_cohort("Overall"), render_cohort("NDMM"))
+    if (!nzchar(blocks)) "" else
       paste0('<h3 style="margin:20px 0 6px;font-size:15px;font-weight:800">Key findings ',
              '<span style="font-weight:600;color:#6B7280;font-size:12px">',
-             '(Overall cohort &middot; full detail in Steroids &amp; payer)</span></h3>',
-             '<ul style="margin:0;padding-left:18px;font-size:13px;color:#2A2A33;',
-             'line-height:1.5">', rows, '</ul>')
-    }
+             '(full detail in each cohort&rsquo;s Steroids &amp; payer section)</span></h3>',
+             blocks)
   }, error = function(e) "")
 
   card <- paste0(
@@ -345,7 +354,10 @@ classify_item <- function(title) {
     c("^(DEBUG|DRILLDOWN): ",                                "Debug",              "full")
   )
   for (r in rules) if (grepl(r[1], title)) return(list(bucket = r[2], audience = r[3]))
-  list(bucket = "Other", audience = "stakeholder")
+  # Fail closed: an unrecognized title (e.g. a future builder with a new
+  # prefix) lands in "Other" as full-only, so it is hidden from the
+  # stakeholder view by default rather than leaking an unvetted view.
+  list(bucket = "Other", audience = "full")
 }
 
 # Tag $bucket + $audience on every item, then stable-sort into

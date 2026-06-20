@@ -1036,7 +1036,10 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
     if (n_before > 0) {
       save_table(summ, section = section,
                  title = paste0(title_prefix, label, " - mean lead time"))
-      ex <- db_q(con, glue("
+      # MAP_STACKED is not probed up front (the summary + mean lead time above
+      # do not need it); guard the example join so a missing/unreadable
+      # MAP_STACKED skips the example table instead of aborting the section.
+      ex <- tryCatch(db_q(con, glue("
         WITH {per_pat},
         ex_pat AS (
           SELECT * FROM per_pat ORDER BY closest_days_before, PATID LIMIT {n_examples}
@@ -1065,8 +1068,8 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
         GROUP BY e.PATID, e.earliest_token, e.earliest_steroid_dt, e.earliest_days_before,
                  e.closest_token, e.closest_steroid_dt, e.closest_days_before,
                  e.lot_start, e.n_steroid_dates
-        ORDER BY e.closest_days_before, e.PATID"))
-      if (nrow(ex) > 0)
+        ORDER BY e.closest_days_before, e.PATID")), error = function(e) NULL)
+      if (!is.null(ex) && nrow(ex) > 0)
         save_table(ex, section = section,
                    title = paste0(title_prefix, label, " - example patients"))
     }
