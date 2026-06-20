@@ -621,12 +621,17 @@ build_payer_lot_qc <- function(con, section = "OVERVIEW", title_prefix = "",
   hdr$pct_of_cohort <- round(100 * hdr$n_patients / total, 1)
   try({
     gp <- function(p) { i <- which(hdr$payer == p); if (length(i)) hdr$n_patients[i[1]] else 0 }
-    mcr <- gp("Medicare"); com <- gp("Commercial")
+    mcr <- gp("Medicare"); com <- gp("Commercial"); oth <- total - mcr - com
+    # Keep the landing-page denominator transparent: Medicare + Commercial may
+    # not sum to 100% because Unknown/Other patients stay in the denominator.
+    oth_txt <- if (oth > 0)
+      sprintf(", Unknown/Other %s (%.0f%%)", format(oth, big.mark = ","), 100 * oth / total)
+      else ""
     record_finding(section, "Payer mix",
-      sprintf("Payer at LOT1 index: Medicare %s (%.0f%%), Commercial %s (%.0f%%) of %s patients.",
+      sprintf("Payer at LOT1 index: Medicare %s (%.0f%%), Commercial %s (%.0f%%)%s, of %s patients.",
               format(mcr, big.mark = ","), 100 * mcr / total,
               format(com, big.mark = ","), 100 * com / total,
-              format(total, big.mark = ",")))
+              oth_txt, format(total, big.mark = ",")))
   }, silent = TRUE)
   add_html_card(paste0(
     '<div style="font-family:system-ui;padding:10px;max-width:860px">',

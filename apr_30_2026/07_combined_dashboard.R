@@ -258,16 +258,22 @@ build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts,
     stat_card("NDMM cohort (1L)",  nd_pat, nd_sub,                  "#F36633"),
     '</div>')
   is_num <- function(x) !is.null(x) && length(x) == 1 && !is.na(x)
-  # Steroid codelist completeness. The tracked CSV can ship HCPCS-only, which
-  # undercounts oral pharmacy steroids, so show the HCPCS/NDC split (not just
-  # the total) and an amber banner + caveat wording when NDC is absent.
-  ster_codes <- if (is_num(n_hcpcs) || is_num(n_ndc) || is_num(n_cpt)) {
+  # Steroid codelist state. The tracked CSV can ship HCPCS-only (NDC absent ->
+  # oral steroids undercounted) or be missing/empty entirely (no codes at all
+  # -> the steroid analyses did not run, so a "0 of N" finding must NOT read as
+  # a real zero). Distinguish unavailable from HCPCS-only below.
+  ster_n <- function(x) if (is_num(x)) x else 0L
+  codes_known <- is_num(n_hcpcs) || is_num(n_ndc) || is_num(n_cpt)
+  ster_total  <- ster_n(n_hcpcs) + ster_n(n_cpt) + ster_n(n_ndc)
+  ster_unavail <- codes_known && ster_total == 0
+  ster_codes <- if (ster_unavail) "none loaded"
+    else if (codes_known) {
       parts <- c(if (is_num(n_hcpcs)) paste0(n_hcpcs, " HCPCS"),
                  if (is_num(n_cpt) && n_cpt > 0) paste0(n_cpt, " CPT"),
                  if (is_num(n_ndc)) paste0(n_ndc, " NDC"))
       if (length(parts) == 0) or_na(n_ster) else paste(parts, collapse = " + ")
     } else or_na(n_ster)
-  # NDMM gate status: built / built with warnings (optional gates skipped) /
+  # NDMM gate status: built / built with warnings (configured gates skipped) /
   # unavailable - so a degraded run cannot look fully valid on the landing page.
   ndmm_status <- if (!has_n) "unavailable"
     else if (length(ndmm_notes) > 0) "built with warnings"
@@ -277,13 +283,25 @@ build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts,
     '<div style="margin-top:12px;padding:10px 12px;background:#FFF7ED;',
     'border:1px solid #FED7AA;border-left:4px solid #EA8C00;border-radius:8px;',
     'font-size:12.5px;color:#7c4a03">', html, '</div>')
-  ndc_warn <- if (is_num(n_ndc) && n_ndc == 0) warn_box(paste0(
-    '<b>Steroid codelist has 0 NDC codes.</b> Oral pharmacy steroids are ',
-    'undercounted &mdash; steroid figures here reflect <b>HCPCS-observed</b> ',
-    'claims only. Replace <code>steroid_codes.csv</code> with an NDC-complete ',
-    'file before stakeholder distribution.')) else ""
+  alert_box <- function(html) paste0(
+    '<div style="margin-top:12px;padding:10px 12px;background:#FEF2F2;',
+    'border:1px solid #FECACA;border-left:4px solid #DC2626;border-radius:8px;',
+    'font-size:12.5px;color:#7f1d1d">', html, '</div>')
+  # Unavailable (no codes) is a red alert and suppresses steroid findings;
+  # HCPCS-only (codes present, NDC absent) keeps findings with an amber caveat.
+  ster_warn <- if (ster_unavail) alert_box(paste0(
+      '<b>Steroid codelist unavailable.</b> No steroid codes were loaded ',
+      '(<code>steroid_codes.csv</code> missing, empty, or unreadable), so the ',
+      'steroid analyses did not run &mdash; steroid findings are omitted here ',
+      'rather than shown as a real zero. Supply a valid codelist and re-run.'))
+    else if (is_num(n_ndc) && n_ndc == 0) warn_box(paste0(
+      '<b>Steroid codelist has 0 NDC codes.</b> Oral pharmacy steroids are ',
+      'undercounted &mdash; steroid figures here reflect <b>HCPCS-observed</b> ',
+      'claims only. Replace <code>steroid_codes.csv</code> with an NDC-complete ',
+      'file before stakeholder distribution.'))
+    else ""
   ndmm_warn <- if (has_n && length(ndmm_notes) > 0) warn_box(paste0(
-    '<b>NDMM built with warnings.</b> One or more source-dependent gates were ',
+    '<b>NDMM built with warnings.</b> One or more configured NDMM gates were ',
     'skipped this run (a required source was unavailable), so the NDMM cohort ',
     'is broader than the full specification:<ul style="margin:6px 0 0;padding-left:18px">',
     paste(vapply(as.character(ndmm_notes),
@@ -307,8 +325,12 @@ build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts,
   # cohort (Overall then NDMM). Failsafe: any problem yields an empty panel.
   findings_html <- tryCatch({
     all_f <- if (exists("dashboard_findings")) dashboard_findings else list()
+    # When the steroid codelist is unavailable, drop the steroid findings so a
+    # non-result cannot be read as a real "0 of N" (the payer finding stays).
+    drop_groups <- if (ster_unavail) c("Pre-LOT steroid", "DEXA vs LENA") else character(0)
     render_cohort <- function(coh) {
-      ff <- Filter(function(f) identical(f$cohort, coh), all_f)
+      ff <- Filter(function(f) identical(f$cohort, coh) &&
+                   !(f$group %in% drop_groups), all_f)
       if (length(ff) == 0) return("")
       rows <- paste(vapply(ff, function(f)
         paste0('<li style="margin:4px 0"><b style="color:#0E7C7B">', f$group,
@@ -350,9 +372,9 @@ build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts,
     '<tbody>', body, '</tbody>',
   '</table>',
   ndmm_note,
-  findings_html,
-  ndc_warn,
+  ster_warn,
   ndmm_warn,
+  findings_html,
   dq,
 '</div>')
 
