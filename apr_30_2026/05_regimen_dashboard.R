@@ -5,7 +5,7 @@
 #
 # Inputs (all live next to this script):
 #   regimen_categories.csv   regimen -> category mapping
-#   steroid_codes.csv        HCPCS + NDC codes -> token (DEXA / PRED)
+#   steroid_codes.csv        HCPCS / CPT / NDC codes -> token (DEXA / PRED)
 #
 # Output: regimen_dashboard.html in cfg$output_dir.
 #
@@ -1048,7 +1048,8 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
       '. &ldquo;How long before&rdquo; is reported two ways per patient - the ',
       '<b>earliest</b> steroid (first receipt) and the <b>closest</b> steroid ',
       '(lead-in) before the line; days = LOT start minus steroid date. The ',
-      'example table shows which steroid (token) plus the LENA/BORT starts. ',
+      'example table shows the steroid token and date alongside the ',
+      'treatment-start date(s) for the agents in the target regimen. ',
       '&ldquo;Any steroid&rdquo; = any token in the loaded ',
       '<code>steroid_codes.csv</code>. ',
       if (steroid_state() == "procedure_only")
