@@ -407,12 +407,14 @@ agent started the line, so it is excluded). Separately it flags DEXA attached
 to a LOT with no IMiD/PI/anti-CD38 backbone (unscoped).
 
 The Steroids group also carries a **pre-LOT steroid lead-time** analysis: for
-LOT1 `BORT LENA` (RVd backbone, steroid within 90 days before LOT1 start) and
-LOT2 `LENA` (steroid any time before LOT2 start), it reports how many patients
-received **any** steroid before the line, the mean days before (both the
-earliest "first receipt" and the closest "lead-in"), and a few example
-patients per regimen. "Any steroid" scans the full `steroid_codes.csv`, not
-just DEXA.
+LOT1 `BORT LENA` (steroid within 90 days before LOT1 start) and LOT2 `LENA`
+(steroid any time before LOT2 start), it reports how many patients received
+**any** steroid before the line, the mean days before (both the earliest
+"first receipt" and the closest "lead-in"), and a few example patients per
+regimen - each example showing the steroid token and date alongside the
+LENA/BORT treatment starts. "Any steroid" scans the loaded
+`steroid_codes.csv` (HCPCS + NDC), covering both medical and pharmacy claims.
+The all-steroid scan is materialized once per cohort to `STEROID_CLAIMS_ALL`.
 
 ## Reuse policy
 
