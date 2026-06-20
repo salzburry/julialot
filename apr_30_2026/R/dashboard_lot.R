@@ -500,12 +500,23 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
                            function(it) identical(it$section, s), logical(1)))
       list(
         section = s,
-        items = lapply(idxs, function(i)
-          list(id = paste0("tab", i), title = dashboard_items[[i]]$title))
+        items = lapply(idxs, function(i) {
+          aud <- dashboard_items[[i]]$audience
+          list(id = paste0("tab", i), title = dashboard_items[[i]]$title,
+               audience = if (is.null(aud)) "stakeholder" else aud)
+        })
       )
     })
     nav_json <- paste0("var NAV = ",
       jsonlite::toJSON(nav_list, auto_unbox = TRUE, force = TRUE), ";")
+
+    # Stakeholder/Full toggle only appears when at least one view is tagged
+    # full-only (combined dashboard); standalone 04/05/06 tag nothing, so the
+    # button stays hidden and their nav is unchanged.
+    has_full <- any(vapply(dashboard_items,
+      function(it) identical(it$audience, "full"), logical(1)))
+    has_full_json <- paste0("var HAS_FULL = ",
+      if (has_full) "true" else "false", ";")
 
     # Explicit cohort-pill list (combined dashboard only). Restricted to
     # sections that actually exist so a typo can't produce an empty pill.
@@ -647,6 +658,10 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
     font-size: 12px; font-weight: 700; cursor: pointer;
   }
   .icon-btn:hover { border-color: var(--gsk-orange); color: var(--gsk-orange-d); }
+  /* Full (internal) mode: make the toggle obvious so it is clear when
+     QC/DEBUG views are exposed during a live walkthrough. */
+  .icon-btn.aud.on { background: var(--gsk-orange); color:#fff; border-color: var(--gsk-orange-d); }
+  .icon-btn.aud.on:hover { color:#fff; }
   .content { padding: 22px 26px 60px; }
   .card {
     background: var(--card); border: 1px solid var(--border);
@@ -705,6 +720,7 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
   <div class="topbar">
     <div class="crumb"><b id="cbCat">--</b> &nbsp;/&nbsp; <span id="cbView">--</span></div>
     <div class="spacer"></div>
+    <button class="icon-btn aud" id="audBtn" title="Toggle stakeholder / full views" style="display:none">View: Stakeholder</button>
     <button class="icon-btn" id="prevBtn" title="Previous (Left arrow)">&#8592; Prev</button>
     <button class="icon-btn" id="nextBtn" title="Next (Right arrow)">Next &#8594;</button>
     <button class="icon-btn" id="fsBtn" title="Toggle fullscreen (F)">&#9974; Fullscreen</button>
@@ -787,6 +803,7 @@ function buildNav() {
       var a = document.createElement("div");
       a.className = "nav-item"; a.setAttribute("data-id", it.id);
       a.setAttribute("data-t", (g.section + " " + it.title).toLowerCase());
+      a.setAttribute("data-aud", it.audience || "stakeholder");
       a.textContent = it.title;
       a.addEventListener("click", function(){ openView(it.id); });
       box.appendChild(a);
@@ -804,7 +821,8 @@ function applySearch(q) {
     var inCohort = !curCohort || !ch || ch.textContent === curCohort;
     var any = false;
     grp.querySelectorAll(".nav-item").forEach(function(a){
-      var hit = inCohort && (!q || a.getAttribute("data-t").indexOf(q) !== -1);
+      var audOk = (audMode === "full") || (a.getAttribute("data-aud") !== "full");
+      var hit = inCohort && audOk && (!q || a.getAttribute("data-t").indexOf(q) !== -1);
       a.classList.toggle("hidden", !hit);
       if (hit) any = true;
     });
@@ -900,6 +918,29 @@ function setCohort(name, jump) {
     }
   }
 }
+// ---- Stakeholder / Full audience toggle ----------------------------
+// Default to stakeholder. Full-only views (QC / Validation / DEBUG / raw
+// PATID drilldown / patient examples) carry data-aud="full"; the
+// applySearch filter hides them unless audMode === "full". This composes
+// with the cohort pills and search automatically, since every filter path
+// funnels through applySearch.
+var audMode = "stakeholder";
+function setAudMode(mode){
+  audMode = mode;
+  var btn = document.getElementById("audBtn");
+  if (btn){
+    btn.textContent = "View: " + (mode === "full" ? "Full (QC/DEBUG)" : "Stakeholder");
+    btn.classList.toggle("on", mode === "full");
+  }
+  var sbx = document.getElementById("navSearch");
+  applySearch(sbx ? sbx.value : "");
+  // If the active view was just hidden by the mode change, move to the
+  // first view still visible in the current cohort.
+  if (visibleIds().indexOf(curId) === -1){
+    var ids = visibleIds();
+    if (ids.length) openView(ids[0]);
+  }
+}
 // Acronym tooltips are applied R-side at card-build time (inject_tooltips
 // in dashboard_lot.R) so they work inside the sandboxed card iframes;
 // no client-side dictionary is needed here.
@@ -907,6 +948,13 @@ document.addEventListener("DOMContentLoaded", function(){
   buildFlat();
   buildNav();
   buildCohortTabs();
+  var audBtn = document.getElementById("audBtn");
+  if (audBtn){
+    if (typeof HAS_FULL !== "undefined" && HAS_FULL) audBtn.style.display = "";
+    audBtn.addEventListener("click", function(){
+      setAudMode(audMode === "full" ? "stakeholder" : "full");
+    });
+  }
   document.getElementById("prevBtn").addEventListener("click", function(){ step(-1); });
   document.getElementById("nextBtn").addEventListener("click", function(){ step(1); });
   document.getElementById("fsBtn").addEventListener("click", toggleFs);
@@ -936,6 +984,8 @@ document.addEventListener("DOMContentLoaded", function(){
 });
 // Category-grouped nav model
 ', nav_json, '
+// Stakeholder/Full toggle availability (true only when full-only views exist)
+', has_full_json, '
 // Cohort-pill list (combined dashboard only; empty for standalone)
 ', cohort_json, '
 // Plotly figure specs - all figures share one copy of plotly.js

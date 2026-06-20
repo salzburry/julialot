@@ -261,6 +261,26 @@ build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts) {
   add_html_card(card, section = "Summary", title = "Executive summary")
 }
 
+# ---- Audience tagging for the Stakeholder/Full toggle ---------------
+# Mark each item full-only or stakeholder by the title prefix its builder
+# emits (folded in by resection_recent_items / the shared title_prefix=
+# args). Full-only = QC, Validation, the schema-wide DEBUG inventory, the
+# raw 8,000-PATID DRILLDOWN, and the patient-level example galleries
+# (Examples / MED JOURNEY). Everything else - KPIs, attrition, steroids,
+# transitions, payer, funnel/length/regimens/sankey/etc. - is stakeholder.
+# build_dashboard() reads $audience to filter the nav client-side; the
+# data still ships in the file (acceptable here: internal GSK audience
+# with equivalent data access), so this is a presentation cut, not a
+# privacy boundary.
+tag_audience <- function() {
+  full_re <- "^(Validation|QC|DEBUG|DRILLDOWN|Examples|MED JOURNEY): "
+  for (i in seq_along(dashboard_items)) {
+    it <- dashboard_items[[i]]
+    it$audience <- if (grepl(full_re, it$title)) "full" else "stakeholder"
+    dashboard_items[[i]] <<- it
+  }
+}
+
 main_combined <- function() {
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
   cfg$build_dashboard <<- TRUE
@@ -362,6 +382,7 @@ main_combined <- function() {
   # dashboard_items so it becomes FLAT[0] - the opening view - and the
   # first cohort pill. Pure list reordering: no effect on any other view.
   build_summary_landing(kpi_overall, kpi_ndmm, ndmm_ok, run_ts_combined)
+  tag_audience()
   is_sum <- vapply(dashboard_items,
                    function(it) identical(it$section, "Summary"), logical(1))
   dashboard_items <<- c(dashboard_items[is_sum], dashboard_items[!is_sum])
