@@ -1013,10 +1013,15 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
              round(avg(closest_days_before),1)         AS mean_days_closest_steroid
       FROM per_pat"))
     n_before <- if (nrow(summ)) as.integer(summ$n_patients_steroid_before[1]) else 0L
-    try(record_finding(section, "Pre-LOT steroid",
-      sprintf("%s: %s of %s patients had a steroid claim before the line.",
-              label, format(n_before, big.mark = ","),
-              format(as.integer(n_reg), big.mark = ","))), silent = TRUE)
+    try({
+      lead <- if (n_before > 0 && nrow(summ)) sprintf(
+        " Mean lead time: %s d to the earliest steroid, %s d to the closest.",
+        summ$mean_days_earliest_steroid[1], summ$mean_days_closest_steroid[1]) else ""
+      record_finding(section, "Pre-LOT steroid",
+        sprintf("%s: %s of %s patients had a steroid claim before the line.%s",
+                label, format(n_before, big.mark = ","),
+                format(as.integer(n_reg), big.mark = ","), lead))
+    }, silent = TRUE)
     add_html_card(paste0(
       '<div style="font-family:system-ui;padding:10px;max-width:880px">',
       '<h3 style="margin:0 0 6px">', label, '</h3>',

@@ -392,6 +392,9 @@ query_cohort_kpis <- function(con, lot_long_tbl) {
   as.list(row[1, , drop = FALSE])
 }
 
+# Returns the queried KPI list (invisibly) so callers - e.g. the combined
+# dashboard's Summary - can reuse it instead of calling query_cohort_kpis()
+# a second time. Standalone callers that ignore the return are unaffected.
 build_cohort_kpis <- function(con, lot_long_tbl,
                               section, title = "KPI snapshot") {
   k <- query_cohort_kpis(con, lot_long_tbl)
@@ -401,7 +404,7 @@ build_cohort_kpis <- function(con, lot_long_tbl,
       'color:#a06000">KPI snapshot unavailable - <code>', lot_long_tbl,
       '</code> returned no rows.</div>'),
       section = section, title = title)
-    return(invisible())
+    return(invisible(k))
   }
   n_pat <- as.numeric(k$n_patients)
   tiles <- list(
@@ -426,6 +429,7 @@ build_cohort_kpis <- function(con, lot_long_tbl,
          sub = "earliest -> latest", accent = "muted")
   )
   add_html_card(kpi_strip_html(tiles), section = section, title = title)
+  invisible(k)
 }
 
 # Build and save the single combined HTML dashboard
