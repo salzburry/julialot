@@ -148,6 +148,13 @@ load_steroid_codes <- function(con) {
     log_msg("  steroid CSV unreadable or empty.")
     set_counts(0L, 0L); empty_view(); return(0L)
   }
+  req <- c("code", "code_type", "mapped_to")
+  if (!all(req %in% names(df))) {
+    log_msg("  steroid CSV missing required column(s): ",
+            paste(setdiff(req, names(df)), collapse = ", "),
+            " - steroid augmentation skipped.")
+    set_counts(0L, 0L); empty_view(); return(0L)
+  }
   sq <- function(x) gsub("'","''",x,fixed=TRUE)
   parsed <- lapply(seq_len(nrow(df)), function(i) {
     cd <- toupper(gsub("[^A-Za-z0-9]", "",
@@ -628,7 +635,7 @@ build_payer_lot_qc <- function(con, section = "OVERVIEW", title_prefix = "",
       sprintf(", Unknown/Other %s (%.0f%%)", format(oth, big.mark = ","), 100 * oth / total)
       else ""
     record_finding(section, "Payer mix",
-      sprintf("Payer at LOT1 index: Medicare %s (%.0f%%), Commercial %s (%.0f%%)%s, of %s patients.",
+      sprintf("Payer at LOT1 index: Medicare %s (%.0f%%), Commercial %s (%.0f%%)%s of %s patients.",
               format(mcr, big.mark = ","), 100 * mcr / total,
               format(com, big.mark = ","), 100 * com / total,
               oth_txt, format(total, big.mark = ",")))
@@ -1338,17 +1345,31 @@ load_categories <- function() {
   )
 }
 
-# Returns an amber HTML banner when no NDC steroid codes were loaded
-# (returns "" otherwise). Both build_overview_card and the NDMM overview
-# card prepend it so a fresh clone / non-prod deploy can never silently
-# under-count steroid prevalence: the tracked CSV ships with only
-# HCPCS rows by design (the NDC list is maintained out-of-band).
+# Single source of truth for the steroid codelist state, so the Summary, the
+# overview banner, and the per-cohort steroid gate all report the SAME thing.
+# Counts that are NULL/NA (e.g. rx/medical unreadable, so load_steroid_codes()
+# never ran and the cfg$steroid_*_count were never set) collapse to
+# "unavailable" - in that run steroid results are not real zeros either.
+#   unavailable    no usable codes (or inputs unreadable)
+#   procedure_only HCPCS/CPT present but 0 NDC (oral-RX steroids undercounted)
+#   complete       NDC present
+steroid_state <- function(n_hcpcs = cfg$steroid_hcpcs_count,
+                          n_cpt   = cfg$steroid_cpt_count,
+                          n_ndc   = cfg$steroid_ndc_count) {
+  z <- function(x) if (is.null(x) || length(x) != 1 || is.na(x)) 0L else as.integer(x)
+  h <- z(n_hcpcs); cpt <- z(n_cpt); n <- z(n_ndc)
+  if (h + cpt + n == 0L) return("unavailable")
+  if (n == 0L) return("procedure_only")
+  "complete"
+}
+
+# Data-quality banner for the overview cards, keyed off steroid_state():
+# red "unavailable" when no usable codes, amber "HCPCS/CPT-only" undercount
+# caveat when procedure codes are present but no NDC, nothing when complete.
 ndc_missing_banner <- function() {
-  z <- function(x) if (is.null(x) || is.na(x)) 0L else x
-  n_hcpcs <- z(cfg$steroid_hcpcs_count); n_cpt <- z(cfg$steroid_cpt_count)
-  n_ndc   <- z(cfg$steroid_ndc_count)
-  if (n_ndc > 0L) return("")                 # NDC-complete: no banner
-  if (n_hcpcs + n_cpt + n_ndc == 0L)         # nothing loaded at all: red alert
+  st <- steroid_state()
+  if (st == "complete") return("")
+  if (st == "unavailable")
     return(paste0(
       '<div style="background:#FEF2F2;border:1px solid #FECACA;',
       'border-left:4px solid #DC2626;border-radius:6px;padding:10px 14px;',
@@ -1356,17 +1377,18 @@ ndc_missing_banner <- function() {
       'max-width:900px">',
       '<b>Steroid codelist unavailable &mdash; no steroid codes loaded.</b><br>',
       'The steroid-code CSV at <code>', STER_CSV_PATH, '</code> is missing, ',
-      'empty, or unreadable in this run, so the steroid analyses did not run. ',
-      'Any steroid counts shown are <b>non-results, not real zeros</b> &mdash; ',
-      'supply a valid <code>steroid_codes.csv</code> and re-run.',
+      'empty, or unreadable (or the rx/medical inputs were unreadable), so the ',
+      'steroid analyses did not run. Any steroid counts shown are ',
+      '<b>non-results, not real zeros</b> &mdash; supply a valid ',
+      '<code>steroid_codes.csv</code> and re-run.',
       '</div>'))
-  paste0(                                     # codes present but 0 NDC: amber caveat
+  paste0(                                     # procedure_only: amber caveat
     '<div style="background:#fff3cd;border:1px solid #d9a800;',
     'border-radius:6px;padding:10px 14px;margin:0 0 12px;',
     'font-family:system-ui;font-size:13px;color:#5a4500;max-width:900px">',
     '<b>Steroid caveat &mdash; no NDC steroid codes loaded.</b><br>',
     'The steroid-code CSV at <code>', STER_CSV_PATH, '</code> contains ',
-    'only HCPCS/CPT rows (J-codes) in this run. Oral-RX steroid claims ',
+    'only procedure codes (HCPCS/CPT) in this run. Oral-RX steroid claims ',
     '(NDCs) are <b>not</b> picked up, so steroid prevalence ',
     'undercounts by however many patients have oral-RX-only steroid ',
     'coverage in their induction window. Drop NDC rows ',
