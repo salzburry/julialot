@@ -964,7 +964,7 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
                min(dt) AS earliest_steroid_dt, max(dt) AS closest_steroid_dt,
                max(days_before) AS earliest_days_before,
                min(days_before) AS closest_days_before,
-               count(*) AS n_steroid_claims
+               count(*) AS n_steroid_dates
         FROM pre GROUP BY PATID, lot_start
       )")
     n_reg <- db_q(con, glue("
@@ -1002,7 +1002,7 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
                cast(earliest_days_before as int)   AS earliest_days_before,
                cast(closest_steroid_dt as string)  AS closest_steroid_dt,
                cast(closest_days_before as int)    AS closest_days_before,
-               cast(n_steroid_claims as int)       AS n_steroid_claims
+               cast(n_steroid_dates as int)        AS n_steroid_dates
         FROM per_pat ORDER BY closest_days_before, PATID LIMIT {n_examples}"))
       if (nrow(ex) > 0)
         save_table(ex, section = section,
