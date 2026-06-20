@@ -36,8 +36,27 @@ CANONICAL_SPEC <- list(
                 reversal_status = "string", source_table = "string",
                 source_record_id = "string", data_vintage = "string,required"),
     key = c("patient_id", "service_date", "normalized_code", "code_system", "source_record_id"),
-    ndc = TRUE)
+    ndc = TRUE),
+  diagnosis = list(file = "diagnosis.csv", entity = "canonical_diagnosis",
+    cols = list(patient_id = "string,required", event_date = "date,required",
+                raw_code = "string,required", normalized_code = "string,required",
+                code_system = "string,required", source_table = "string",
+                source_record_id = "string", data_vintage = "string,required"),
+    key = c("patient_id", "event_date", "normalized_code", "code_system", "source_record_id")),
+  procedure = list(file = "procedure.csv", entity = "canonical_procedure",
+    cols = list(patient_id = "string,required", event_date = "date,required",
+                raw_code = "string,required", normalized_code = "string,required",
+                code_system = "string,required", source_table = "string",
+                source_record_id = "string", data_vintage = "string,required"),
+    key = c("patient_id", "event_date", "normalized_code", "code_system", "source_record_id")),
+  death = list(file = "death.csv", entity = "canonical_death",
+    cols = list(patient_id = "string,required", death_date = "date,required",
+                death_date_source = "string", data_vintage = "string,required"),
+    key = c("patient_id"))
 )
+# All six entities are part of the contract; the adapter output must produce
+# each. validate_canonical_dir(require_present=TRUE) errors on any missing one.
+REQUIRED_ENTITIES <- names(CANONICAL_SPEC)
 
 .req <- function(spec_str) grepl("required", spec_str)
 .typ <- function(spec_str) sub(",.*$", "", spec_str)
@@ -87,11 +106,20 @@ validate_entity <- function(df, spec) {
        report = list(rows = nrow(df), rejected = rejected))
 }
 
-validate_canonical_dir <- function(dir, spec = CANONICAL_SPEC) {
+validate_canonical_dir <- function(dir, spec = CANONICAL_SPEC, require_present = TRUE) {
   out <- list(); ok <- TRUE
   for (nm in names(spec)) {
     p <- file.path(dir, spec[[nm]]$file)
-    if (!file.exists(p)) next
+    if (!file.exists(p)) {
+      # A required canonical entity that is absent is an ERROR (an incomplete
+      # adapter output / fixture dir must not pass the "adapter validation" gate).
+      if (require_present && nm %in% REQUIRED_ENTITIES) {
+        out[[nm]] <- list(errors = sprintf("required canonical entity '%s' missing (%s)", nm, spec[[nm]]$file),
+                          warnings = character(0), report = list(rows = 0L, rejected = NA))
+        ok <- FALSE
+      }
+      next
+    }
     df <- read.csv(p, stringsAsFactors = FALSE, check.names = FALSE, colClasses = "character")
     res <- validate_entity(df, spec[[nm]])
     out[[nm]] <- res

@@ -18,7 +18,7 @@ load_all_studies <- function(dir) {
 
 # Recursively resolve a study's gate set (gate -> params). Returns
 # list(resolved, errors, warnings).
-resolve_study <- function(study, studies, registry, seen = character(0)) {
+resolve_study <- function(study, studies, registry, seen = character(0), strict = FALSE) {
   errors <- character(0); warnings <- character(0)
   reg <- registry$gates
   g <- study$gates %||% list()
@@ -33,12 +33,18 @@ resolve_study <- function(study, studies, registry, seen = character(0)) {
     if (is.null(bid) || !(bid %in% names(studies)))
       errors <- c(errors, sprintf("base study '%s' not found", bid %||% "NA"))
     else {
-      br <- resolve_study(studies[[bid]], studies, registry, c(seen, study$id))
+      br <- resolve_study(studies[[bid]], studies, registry, c(seen, study$id), strict)
       base_resolved <- br$resolved; errors <- c(errors, br$errors); warnings <- c(warnings, br$warnings)
-      # base pin: hash must be pinned (not TBD) for reproducibility
+      # base pin: in strict mode an unpinned/TBD hash blocks; a non-TBD hash is
+      # always verified against the actual base, not merely accepted.
       exp_hash <- content_hash(paste(deparse(studies[[bid]]), collapse = ""))
-      if (is.null(study$base$hash) || study$base$hash == "TBD")
-        warnings <- c(warnings, sprintf("base '%s' hash unpinned (TBD); pin to: %s", bid, substr(exp_hash, 1, 16)))
+      given <- study$base$hash
+      if (is.null(given) || given == "TBD") {
+        msg <- sprintf("base '%s' hash unpinned (TBD); pin to: %s", bid, exp_hash)
+        if (strict) errors <- c(errors, msg) else warnings <- c(warnings, msg)
+      } else if (!(given %in% c(exp_hash, substr(exp_hash, 1, 16)))) {
+        errors <- c(errors, sprintf("base '%s' hash mismatch: pinned '%s', actual '%s'", bid, given, exp_hash))
+      }
     }
   } else {
     if (length(override)) errors <- c(errors, "base study must not use gates.override")
@@ -100,11 +106,11 @@ validate_dag <- function(resolved, registry) {
   errors
 }
 
-validate_study <- function(study_path, registry_path, studies_dir) {
+validate_study <- function(study_path, registry_path, studies_dir, strict = FALSE) {
   registry <- load_registry(registry_path)
   studies <- load_all_studies(studies_dir)
   study <- read_yaml_file(study_path)
-  r <- resolve_study(study, studies, registry)
+  r <- resolve_study(study, studies, registry, strict = strict)
   dag_err <- if (length(r$errors) == 0) validate_dag(r$resolved, registry) else character(0)
   list(id = study$id, errors = c(r$errors, dag_err), warnings = r$warnings,
        resolved = r$resolved)

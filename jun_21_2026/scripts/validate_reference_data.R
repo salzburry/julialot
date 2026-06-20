@@ -54,13 +54,21 @@ validate_reference_data <- function(df, manifest_entry) {
     if (length(bad_ndc))
       errors <- c(errors, sprintf("%d NDC row(s) not 10-11 digits after stripping (rejected, not matched)",
                                   length(bad_ndc)))
-    key <- paste(norm, df$mapped_to[is_ndc])
-    coll <- norm[!is.na(norm)][duplicated(key[!is.na(norm)]) & ave(seq_along(key[!is.na(norm)]),
-              key[!is.na(norm)], FUN = length) > 1]
-    raw_collide <- tapply(df$code[is_ndc][!is.na(norm)], norm[!is.na(norm)],
-                          function(x) length(unique(x)) > 1)
-    if (any(unlist(raw_collide)))
-      warnings <- c(warnings, "two raw NDC forms normalize to the same 11-digit code (collision)")
+    okn <- !is.na(norm)
+    if (any(okn)) {
+      nc  <- norm[okn]
+      mt  <- toupper(trimws(as.character(df$mapped_to[is_ndc][okn])))
+      raw <- as.character(df$code[is_ndc][okn])
+      # BLOCKING: one normalized NDC mapping to >1 distinct concept (mapped_to).
+      conflict <- names(which(tapply(mt, nc, function(x) length(unique(x)) > 1)))
+      if (length(conflict))
+        errors <- c(errors, sprintf("%d normalized NDC(s) map to >1 concept (e.g. %s -> {%s})",
+                    length(conflict), conflict[1],
+                    paste(unique(mt[nc == conflict[1]]), collapse = ", ")))
+      # WARNING: two raw forms normalize to the same code (same concept).
+      if (any(unlist(tapply(raw, nc, function(x) length(unique(x)) > 1))))
+        warnings <- c(warnings, "two raw NDC forms normalize to the same 11-digit code")
+    }
   }
 
   # 5. procedure-code normalization collisions (HCPCS/CPT)
