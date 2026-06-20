@@ -492,14 +492,27 @@ build_dashboard <- function(out_name     = "lot_dashboard.html",
       }
     }
 
-    # Category-grouped navigation model: [{section, items:[{id,title}]}].
-    # Rendered as two dropdowns (Category -> View) instead of a flat tab
-    # list, which scales when a dashboard has many figures.
-    nav_list <- lapply(sections, function(s) {
-      idxs <- which(vapply(dashboard_items,
-                           function(it) identical(it$section, s), logical(1)))
+    # Two-level navigation model: [{cohort, bucket, items:[{id,title,audience}]}].
+    # The cohort drives the pill row; the bucket is a collapsible sub-header
+    # within the selected cohort. Combined dashboard (cohort_sections set):
+    # cohort = item$section, bucket = item$bucket. Standalone 04/05/06: no
+    # cohort_sections, so cohort = "" and the functional section doubles as
+    # the bucket - their nav is unchanged (one collapsible group per section).
+    combined_mode <- length(cohort_sections) > 0
+    it_cohort <- function(it) if (combined_mode) it$section else ""
+    it_bucket <- function(it) if (!is.null(it$bucket)) it$bucket else it$section
+    # Ordered unique (cohort, bucket) groups in dashboard_items order.
+    gcoh <- character(0); gbuc <- character(0)
+    for (it in dashboard_items) {
+      ck <- it_cohort(it); bk <- it_bucket(it)
+      if (!any(gcoh == ck & gbuc == bk)) { gcoh <- c(gcoh, ck); gbuc <- c(gbuc, bk) }
+    }
+    nav_list <- lapply(seq_along(gcoh), function(gi) {
+      idxs <- which(vapply(dashboard_items, function(it)
+        identical(it_cohort(it), gcoh[gi]) && identical(it_bucket(it), gbuc[gi]),
+        logical(1)))
       list(
-        section = s,
+        cohort = gcoh[gi], bucket = gbuc[gi],
         items = lapply(idxs, function(i) {
           aud <- dashboard_items[[i]]$audience
           list(id = paste0("tab", i), title = dashboard_items[[i]]$title,
@@ -762,7 +775,7 @@ var FLAT = [];
 function buildFlat() {
   FLAT = [];
   NAV.forEach(function(g){ g.items.forEach(function(it){
-    FLAT.push({ id: it.id, title: it.title, section: g.section });
+    FLAT.push({ id: it.id, title: it.title, cohort: g.cohort, bucket: g.bucket });
   }); });
 }
 var curId = null;
@@ -776,7 +789,7 @@ function openView(id, push) {
   document.querySelectorAll(".nav-item").forEach(function(el){
     el.classList.toggle("active", el.getAttribute("data-id") === id);
   });
-  document.getElementById("cbCat").textContent  = rec.section;
+  document.getElementById("cbCat").textContent  = (rec.cohort ? rec.cohort + " / " : "") + rec.bucket;
   document.getElementById("cbView").textContent = rec.title;
   var plotDiv = t ? t.querySelector("[id^=plotly_]") : null;
   if (plotDiv) setTimeout(function(){ renderPlotlyIfVisible(plotDiv.id); }, 80);
@@ -791,9 +804,10 @@ function buildNav() {
   NAV.forEach(function(g, gi){
     var grp = document.createElement("div");
     grp.className = "grp" + (gi === 0 ? "" : " collapsed");
+    grp.setAttribute("data-cohort", g.cohort || "");
     var h = document.createElement("div");
     h.className = "grp-h";
-    h.innerHTML = "<span class=\\"caret\\">&#9660;</span><span>" + g.section +
+    h.innerHTML = "<span class=\\"caret\\">&#9660;</span><span>" + g.bucket +
       "</span><span class=\\"grp-count\\">" + g.items.length + "</span>";
     h.addEventListener("click", function(){ grp.classList.toggle("collapsed"); });
     grp.appendChild(h);
@@ -802,7 +816,7 @@ function buildNav() {
     g.items.forEach(function(it){
       var a = document.createElement("div");
       a.className = "nav-item"; a.setAttribute("data-id", it.id);
-      a.setAttribute("data-t", (g.section + " " + it.title).toLowerCase());
+      a.setAttribute("data-t", ((g.cohort || "") + " " + g.bucket + " " + it.title).toLowerCase());
       a.setAttribute("data-aud", it.audience || "stakeholder");
       a.textContent = it.title;
       a.addEventListener("click", function(){ openView(it.id); });
@@ -815,10 +829,10 @@ function buildNav() {
 function applySearch(q) {
   q = (q || "").trim().toLowerCase();
   document.querySelectorAll(".grp").forEach(function(grp){
-    // Respect the active cohort pill (combined dashboard): groups outside
+    // Respect the active cohort pill (combined dashboard): buckets outside
     // the selected cohort stay hidden even when the search matches an item.
-    var ch = grp.querySelector(".grp-h span:nth-child(2)");
-    var inCohort = !curCohort || !ch || ch.textContent === curCohort;
+    var gc = grp.getAttribute("data-cohort") || "";
+    var inCohort = !curCohort || gc === curCohort;
     var any = false;
     grp.querySelectorAll(".nav-item").forEach(function(a){
       var audOk = (audMode === "full") || (a.getAttribute("data-aud") !== "full");
@@ -892,11 +906,13 @@ function setCohort(name, jump) {
   document.querySelectorAll(".ct-btn").forEach(function(b){
     b.classList.toggle("active", b.getAttribute("data-cohort") === name);
   });
+  // Show only the buckets in this cohort; open the first and collapse the
+  // rest so the cohort lands as a tidy list of bucket headers.
+  var firstShown = true;
   document.querySelectorAll(".grp").forEach(function(g){
-    var h = g.querySelector(".grp-h span:nth-child(2)");
-    var s = h ? h.textContent : "";
-    g.classList.toggle("hidden", s !== name);
-    if (s === name) g.classList.remove("collapsed");
+    var match = (g.getAttribute("data-cohort") || "") === name;
+    g.classList.toggle("hidden", !match);
+    if (match) { g.classList.toggle("collapsed", !firstShown); firstShown = false; }
   });
   // Re-apply any active search against the newly-selected cohort so nav
   // items keep a correct shown/hidden state instead of one from the prior cohort.
@@ -979,7 +995,7 @@ document.addEventListener("DOMContentLoaded", function(){
   if (start) {
     openView(start, false);
     var rec = FLAT.filter(function(f){return f.id===start;})[0];
-    if (rec && COHORTS.indexOf(rec.section) !== -1) setCohort(rec.section, false);
+    if (rec && COHORTS.indexOf(rec.cohort) !== -1) setCohort(rec.cohort, false);
   }
 });
 // Category-grouped nav model

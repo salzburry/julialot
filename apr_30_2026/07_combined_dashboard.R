@@ -261,24 +261,59 @@ build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts) {
   add_html_card(card, section = "Summary", title = "Executive summary")
 }
 
-# ---- Audience tagging for the Stakeholder/Full toggle ---------------
-# Mark each item full-only or stakeholder by the title prefix its builder
-# emits (folded in by resection_recent_items / the shared title_prefix=
-# args). Full-only = QC, Validation, the schema-wide DEBUG inventory, the
-# raw 8,000-PATID DRILLDOWN, and the patient-level example galleries
-# (Examples / MED JOURNEY). Everything else - KPIs, attrition, steroids,
-# transitions, payer, funnel/length/regimens/sankey/etc. - is stakeholder.
-# build_dashboard() reads $audience to filter the nav client-side; the
-# data still ships in the file (acceptable here: internal GSK audience
-# with equivalent data access), so this is a presentation cut, not a
-# privacy boundary.
-tag_audience <- function() {
-  full_re <- "^(Validation|QC|DEBUG|DRILLDOWN|Examples|MED JOURNEY): "
-  for (i in seq_along(dashboard_items)) {
+# ---- Bucket + audience tagging --------------------------------------
+# Classify every item into a stakeholder-facing bucket and an audience by
+# the title prefix its builder emits (folded in by resection_recent_items
+# / the shared title_prefix= args). The bucket drives a two-level nav
+# (cohort pill -> collapsible bucket); the audience drives the
+# Stakeholder/Full toggle. Buckets and audience are aligned so the three
+# stakeholder buckets are uniformly stakeholder and the three internal
+# buckets are uniformly full - in stakeholder view the internal buckets
+# simply disappear, leaving a clean three-bucket nav per cohort.
+#
+# The data still ships in the file regardless of audience (acceptable
+# here: internal GSK audience with equivalent data access), so the toggle
+# is a presentation cut, not a privacy boundary.
+COHORT_ORDER <- c("Summary", "Overall", "NDMM")
+BUCKET_ORDER <- c("Summary", "Cohort & attrition", "Treatment patterns",
+                  "Steroids & payer", "Patient explorer", "Validation",
+                  "Debug", "Other")
+
+classify_item <- function(title) {
+  rules <- list(
+    c("^Executive summary",                                  "Summary",            "stakeholder"),
+    c("^(KPI snapshot|Overview & cohort)",                   "Cohort & attrition", "stakeholder"),
+    c("^(Attrition|OVERVIEW|FUNNEL): ",                      "Cohort & attrition", "stakeholder"),
+    c(paste0("^(Transitions|START_TYPE|END_REASON|LENGTH|REGIMENS|",
+             "PROGRESSION|GAPS|TRANSITIONS|SANKEY|MEDCOUNT|MTX|TREND): "),
+                                                             "Treatment patterns", "stakeholder"),
+    c("^(Steroids|Payer): ",                                 "Steroids & payer",   "stakeholder"),
+    c("^(Examples|MED JOURNEY): ",                           "Patient explorer",   "full"),
+    c("^(Validation|QC): ",                                  "Validation",         "full"),
+    c("^(DEBUG|DRILLDOWN): ",                                "Debug",              "full")
+  )
+  for (r in rules) if (grepl(r[1], title)) return(list(bucket = r[2], audience = r[3]))
+  list(bucket = "Other", audience = "stakeholder")
+}
+
+# Tag $bucket + $audience on every item, then stable-sort into
+# (cohort, bucket) order so the nav reads top-down as a stakeholder would
+# expect, with unknowns falling to the end of their cohort.
+tag_and_order <- function() {
+  n <- length(dashboard_items)
+  for (i in seq_len(n)) {
     it <- dashboard_items[[i]]
-    it$audience <- if (grepl(full_re, it$title)) "full" else "stakeholder"
+    cl <- classify_item(it$title)
+    it$bucket   <- cl$bucket
+    it$audience <- cl$audience
     dashboard_items[[i]] <<- it
   }
+  rank <- function(x, levels) {
+    m <- match(x, levels); ifelse(is.na(m), length(levels) + 1L, m)
+  }
+  cr <- vapply(dashboard_items, function(it) rank(it$section, COHORT_ORDER), integer(1))
+  br <- vapply(dashboard_items, function(it) rank(it$bucket,  BUCKET_ORDER), integer(1))
+  dashboard_items <<- dashboard_items[order(cr, br, seq_len(n))]
 }
 
 main_combined <- function() {
@@ -373,27 +408,24 @@ main_combined <- function() {
     FALSE
   })
 
-  # ---- Exploratory analysis ----
   cfg$plot_filename_prefix <<- NULL
-  build_exploratory_scaffold()
 
-  # ---- Summary landing page (opens first) ----
-  # Built last (it needs both cohorts' KPIs) then floated to the front of
-  # dashboard_items so it becomes FLAT[0] - the opening view - and the
-  # first cohort pill. Pure list reordering: no effect on any other view.
+  # ---- Summary landing page + nav structuring ----
+  # Built last (it needs both cohorts' KPIs); tag_and_order() then assigns
+  # every item a bucket + audience and stable-sorts the whole list into
+  # (cohort, bucket) order, so the Summary leads and each cohort reads
+  # top-down (cohort & attrition -> treatment -> steroids & payer ->
+  # internal). The empty Exploratory scaffold is intentionally not built -
+  # it returns only when a real different-denominator analysis exists.
   build_summary_landing(kpi_overall, kpi_ndmm, ndmm_ok, run_ts_combined)
-  tag_audience()
-  is_sum <- vapply(dashboard_items,
-                   function(it) identical(it$section, "Summary"), logical(1))
-  dashboard_items <<- c(dashboard_items[is_sum], dashboard_items[!is_sum])
+  tag_and_order()
 
   build_dashboard(
     out_name     = "combined_dashboard.html",
     header_title = "MM LOT &mdash; combined (Overall + NDMM)",
     header_sub   = paste0("Summary &bull; Overall &bull; NDMM",
-                          if (!ndmm_ok) " (unavailable)" else "",
-                          " &bull; Exploratory analysis"),
-    cohort_sections = c("Summary", "Overall", "NDMM", "Exploratory analysis")
+                          if (!ndmm_ok) " (unavailable)" else ""),
+    cohort_sections = c("Summary", "Overall", "NDMM")
   )
   log_msg("Wrote ", file.path(cfg$output_dir, "combined_dashboard.html"))
 }
