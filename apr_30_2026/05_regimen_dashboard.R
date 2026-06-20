@@ -126,9 +126,10 @@ make_sankey <- function(src_lab, tgt_lab, value, section, title,
 # can banner an NDC-missing run (the common fresh-clone failure mode -
 # the tracked CSV ships with only HCPCS rows by design).
 load_steroid_codes <- function(con) {
-  set_counts <- function(n_hcpcs, n_ndc) {
+  set_counts <- function(n_hcpcs, n_ndc, n_cpt = 0L) {
     cfg$steroid_hcpcs_count <<- n_hcpcs
     cfg$steroid_ndc_count   <<- n_ndc
+    cfg$steroid_cpt_count   <<- n_cpt
   }
   empty_view <- function() db_exec(con, glue(
     "CREATE OR REPLACE TEMPORARY VIEW {STEROID_VIEW} AS ",
@@ -166,7 +167,8 @@ load_steroid_codes <- function(con) {
   types <- vapply(parsed, function(p) p$code_type, character(1))
   n_ndc   <- sum(types == "NDC")
   n_hcpcs <- sum(types == "HCPCS")
-  set_counts(n_hcpcs, n_ndc)
+  n_cpt   <- sum(types == "CPT")
+  set_counts(n_hcpcs, n_ndc, n_cpt)
   if (n_ndc == 0L)
     log_msg("  WARN: 0 NDC steroid rows in ", STER_CSV_PATH,
             " - steroid prevalence will under-count by oral RX claims.",

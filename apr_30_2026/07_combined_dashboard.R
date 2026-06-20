@@ -173,7 +173,7 @@ build_exploratory_scaffold <- function() {
 # rest of the dashboard's navigation.
 build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts,
                                    n_ster = NA, n_rules = NA, study_end = NA,
-                                   n_hcpcs = NA, n_ndc = NA,
+                                   n_hcpcs = NA, n_ndc = NA, n_cpt = NA,
                                    ndmm_notes = character(0)) {
   has_o <- length(kpi_overall) > 0 && !is.null(kpi_overall$n_patients) &&
            !is.na(kpi_overall$n_patients)
@@ -261,9 +261,12 @@ build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts,
   # Steroid codelist completeness. The tracked CSV can ship HCPCS-only, which
   # undercounts oral pharmacy steroids, so show the HCPCS/NDC split (not just
   # the total) and an amber banner + caveat wording when NDC is absent.
-  ster_codes <- if (is_num(n_hcpcs) || is_num(n_ndc))
-      paste0(or_na(n_hcpcs), " HCPCS + ", or_na(n_ndc), " NDC")
-    else or_na(n_ster)
+  ster_codes <- if (is_num(n_hcpcs) || is_num(n_ndc) || is_num(n_cpt)) {
+      parts <- c(if (is_num(n_hcpcs)) paste0(n_hcpcs, " HCPCS"),
+                 if (is_num(n_cpt) && n_cpt > 0) paste0(n_cpt, " CPT"),
+                 if (is_num(n_ndc)) paste0(n_ndc, " NDC"))
+      if (length(parts) == 0) or_na(n_ster) else paste(parts, collapse = " + ")
+    } else or_na(n_ster)
   # NDMM gate status: built / built with warnings (optional gates skipped) /
   # unavailable - so a degraded run cannot look fully valid on the landing page.
   ndmm_status <- if (!has_n) "unavailable"
@@ -280,9 +283,9 @@ build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts,
     'claims only. Replace <code>steroid_codes.csv</code> with an NDC-complete ',
     'file before stakeholder distribution.')) else ""
   ndmm_warn <- if (has_n && length(ndmm_notes) > 0) warn_box(paste0(
-    '<b>NDMM built with warnings.</b> One or more optional inclusion/exclusion ',
-    'gates were skipped this run, so the NDMM cohort is broader than the full ',
-    'specification:<ul style="margin:6px 0 0;padding-left:18px">',
+    '<b>NDMM built with warnings.</b> One or more source-dependent gates were ',
+    'skipped this run (a required source was unavailable), so the NDMM cohort ',
+    'is broader than the full specification:<ul style="margin:6px 0 0;padding-left:18px">',
     paste(vapply(as.character(ndmm_notes),
                  function(x) paste0("<li>", x, "</li>"), character(1)), collapse = ""),
     '</ul>')) else ""
@@ -532,6 +535,7 @@ main_combined <- function() {
                         study_end = cfg$study_end,
                         n_hcpcs = cfg$steroid_hcpcs_count,
                         n_ndc   = cfg$steroid_ndc_count,
+                        n_cpt   = cfg$steroid_cpt_count,
                         ndmm_notes = ndmm_notes)
   tag_and_order()
 
