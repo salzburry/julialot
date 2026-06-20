@@ -121,10 +121,11 @@ make_sankey <- function(src_lab, tgt_lab, value, section, title,
 }
 
 # Load steroid codes from CSV into a session temp view (steroid augmentation).
-# Counts HCPCS vs NDC rows separately and surfaces both on
-# cfg$steroid_ndc_count / cfg$steroid_hcpcs_count so the overview cards
-# can banner an NDC-missing run (the common fresh-clone failure mode -
-# the tracked CSV ships with only HCPCS rows by design).
+# Counts HCPCS, CPT and NDC rows separately and surfaces all three on
+# cfg$steroid_hcpcs_count / cfg$steroid_cpt_count / cfg$steroid_ndc_count, which
+# steroid_state() reads so the overview cards, Summary and per-cohort gate can
+# banner an unavailable or NDC-missing run (the common fresh-clone failure mode
+# - the tracked CSV ships with only HCPCS rows by design).
 load_steroid_codes <- function(con) {
   set_counts <- function(n_hcpcs, n_ndc, n_cpt = 0L) {
     cfg$steroid_hcpcs_count <<- n_hcpcs
@@ -1049,8 +1050,13 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
       '(lead-in) before the line; days = LOT start minus steroid date. The ',
       'example table shows which steroid (token) plus the LENA/BORT starts. ',
       '&ldquo;Any steroid&rdquo; = any token in the loaded ',
-      '<code>steroid_codes.csv</code> (DEXA / PRED; HCPCS + NDC), covering ',
-      'both medical and pharmacy claims.</p></div>'),
+      '<code>steroid_codes.csv</code>. ',
+      if (steroid_state() == "procedure_only")
+        paste0('Coverage this run is <b>procedure codes only</b> ',
+               '(HCPCS/CPT-observed); oral pharmacy (NDC) claims are <b>not</b> ',
+               'captured, so oral-only steroid use is undercounted.')
+      else 'Coverage spans HCPCS/CPT + NDC, across both medical and pharmacy claims.',
+      '</p></div>'),
       section = section, title = paste0(title_prefix, label, " - summary"))
     if (n_before > 0) {
       save_table(summ, section = section,
@@ -1097,6 +1103,33 @@ build_pre_lot_steroid_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
 
   one_config(1L, "BORT LENA", 90L, "Pre-LOT1 steroid (BORT LENA backbone, within 90 days)")
   one_config(2L, "LENA", NULL, "Pre-LOT2 steroid (LENA, any time before)")
+  invisible()
+}
+
+# Shared steroid section: gate the four steroid builders on steroid_state()
+# so an unavailable codelist yields ONE "analyses unavailable" card instead
+# of prevalence/missing/timing/pre-LOT tables that read as real zeros. Used by
+# the combined dashboard AND both standalone dashboards, so the behaviour is
+# identical everywhere.
+build_steroid_section <- function(con, lot_long_tbl, section = "STEROIDS",
+                                  title_prefix = "") {
+  if (steroid_state() == "unavailable") {
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:14px;max-width:860px">',
+      '<h3 style="margin:0 0 6px">Steroid analyses unavailable</h3>',
+      '<p style="color:#7f1d1d;font-size:13px;line-height:1.5">No usable steroid ',
+      'codes were loaded (<code>steroid_codes.csv</code> missing, empty, ',
+      'wrong-schema, or the rx/medical inputs were unreadable), so steroid ',
+      'prevalence, missing-steroid, DEXA-vs-LENA timing and pre-LOT steroid ',
+      'analyses did not run. They are omitted rather than shown as zeros, which ',
+      'would read as real absence. Supply a valid codelist and re-run.</p></div>'),
+      section = section, title = paste0(title_prefix, "analyses unavailable"))
+    return(invisible())
+  }
+  build_steroid_prevalence(con, section = section, title_prefix = title_prefix)
+  build_missing_steroid_lot1(con, section = section, title_prefix = title_prefix)
+  build_steroid_timing_qc(con, lot_long_tbl, section = section, title_prefix = title_prefix)
+  build_pre_lot_steroid_qc(con, lot_long_tbl, section = section, title_prefix = title_prefix)
   invisible()
 }
 
@@ -1352,7 +1385,8 @@ load_categories <- function() {
 # "unavailable" - in that run steroid results are not real zeros either.
 #   unavailable    no usable codes (or inputs unreadable)
 #   procedure_only HCPCS/CPT present but 0 NDC (oral-RX steroids undercounted)
-#   complete       NDC present
+#   ndc_present    >=1 NDC code present (named "ndc_present", not "complete":
+#                  it does NOT prove the DEXA/PRED value set is fully covered)
 steroid_state <- function(n_hcpcs = cfg$steroid_hcpcs_count,
                           n_cpt   = cfg$steroid_cpt_count,
                           n_ndc   = cfg$steroid_ndc_count) {
@@ -1360,7 +1394,16 @@ steroid_state <- function(n_hcpcs = cfg$steroid_hcpcs_count,
   h <- z(n_hcpcs); cpt <- z(n_cpt); n <- z(n_ndc)
   if (h + cpt + n == 0L) return("unavailable")
   if (n == 0L) return("procedure_only")
-  "complete"
+  "ndc_present"
+}
+
+# Reset steroid code counts to zero. Called when a cohort cannot run steroid
+# augmentation (rx/medical unreadable) so steroid_state() reports "unavailable"
+# for THAT cohort instead of inheriting a prior cohort's counts from global cfg.
+clear_steroid_counts <- function() {
+  cfg$steroid_hcpcs_count <<- 0L
+  cfg$steroid_cpt_count   <<- 0L
+  cfg$steroid_ndc_count   <<- 0L
 }
 
 # Data-quality banner for the overview cards, keyed off steroid_state():
@@ -1368,7 +1411,7 @@ steroid_state <- function(n_hcpcs = cfg$steroid_hcpcs_count,
 # caveat when procedure codes are present but no NDC, nothing when complete.
 ndc_missing_banner <- function() {
   st <- steroid_state()
-  if (st == "complete") return("")
+  if (st == "ndc_present") return("")
   if (st == "unavailable")
     return(paste0(
       '<div style="background:#FEF2F2;border:1px solid #FECACA;',
@@ -1447,6 +1490,7 @@ prepare_overall_cohort <- function(con) {
     log_msg("  ", n_ster, " codes loaded")
   } else {
     n_ster <- 0L
+    clear_steroid_counts()   # rx/medical unreadable -> steroids unavailable
   }
 
   log_msg("Augmenting LOT_LONG with steroid tokens -> ", wrk(LOT_LONG_AUG))
@@ -1566,10 +1610,7 @@ main_regimen <- function() {
   build_cohort_kpis(con, wrk("LOT_LONG"), section = "OVERVIEW")
   build_overview_card(p$n_ster, p$n_rules)
   build_overall_attrition(con)
-  build_steroid_prevalence(con)
-  build_missing_steroid_lot1(con)
-  build_steroid_timing_qc(con, wrk("LOT_LONG"), section = "STEROIDS")
-  build_pre_lot_steroid_qc(con, wrk("LOT_LONG"), section = "STEROIDS")
+  build_steroid_section(con, wrk("LOT_LONG"), section = "STEROIDS")
   build_payer_lot_qc(con, section = "Payer")
   for (n in 1:4) build_focused_pair(con, n, n + 1L)
   for (n in 1:4) build_category_pair(con, n, n + 1L, p$lookups)

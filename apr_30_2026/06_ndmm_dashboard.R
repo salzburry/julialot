@@ -1405,6 +1405,8 @@ prepare_ndmm_cohort <- function(con) {
     log_msg("  ", n_ster, " codes loaded")
   } else {
     n_ster <- 0L
+    clear_steroid_counts()   # rx/medical unreadable -> steroids unavailable
+                             # (do not inherit the Overall pass's counts)
   }
 
   log_msg("Augmenting filtered LOT_LONG with steroid tokens")
@@ -1449,10 +1451,7 @@ main_ndmm <- function() {
   build_ndmm_overview_card(p$counts, p$n_ster, p$n_rules, p$overview_notes)
   build_ndmm_attrition(p$counts)
   build_ndmm_other_cancer_qc(con)
-  build_steroid_prevalence(con)
-  build_missing_steroid_lot1(con)
-  build_steroid_timing_qc(con, NDMM_LOT_LONG_FILT, section = "STEROIDS")
-  build_pre_lot_steroid_qc(con, NDMM_LOT_LONG_FILT, section = "STEROIDS")
+  build_steroid_section(con, NDMM_LOT_LONG_FILT, section = "STEROIDS")
   build_payer_lot_qc(con, section = "Payer")
   for (n in 1:4) build_focused_pair(con, n, n + 1L)
   for (n in 1:4) build_category_pair(con, n, n + 1L, p$lookups)
