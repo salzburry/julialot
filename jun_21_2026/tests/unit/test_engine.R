@@ -46,8 +46,8 @@ ok(inherits(try(.validate_params(list(map_discon_gap_days = 0)), silent = TRUE),
    "CONFIG_SPEC bound applied: map_discon_gap_days=0 (< min 1) rejected (the old .PARAM_SPEC allowed it)")
 ok(inherits(try(.validate_params(list(sct_auto_window_days = 100L)), silent = TRUE), "try-error"),
    "CONFIG_SPEC upper bound applied: sct_auto_window_days=100 (> max 60) rejected")
-ok(identical(.PARAM_NAMES <- names(DEFAULT_PARAMS), intersect(names(DEFAULT_PARAMS), names(CONFIG_SPEC))),
-   "every engine param is governed by the shared CONFIG_SPEC")
+ok(identical(DEFAULT_PARAMS, lapply(CONFIG_SPEC[names(DEFAULT_PARAMS)], `[[`, "default")),
+   "DEFAULT_PARAMS VALUES are derived from CONFIG_SPEC (single source of defaults, no drift)")
 ok(isTRUE(.validate_params(list(sct_tandem_days = 200L, allo_lot_span = "extend_to_next"))), "valid overrides accepted")
 ok(isTRUE(.validate_params(list())), "empty overrides accepted (defaults used)")
 

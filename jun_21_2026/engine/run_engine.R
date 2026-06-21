@@ -20,22 +20,25 @@ if (!exists("CONFIG_SPEC")) local({
   if (file.exists(vc)) source(vc)
 })
 
-# Params are DATA (resolved config), so retuning the algorithm is a config edit.
-DEFAULT_PARAMS <- list(map_discon_gap_days = 90L, medical_day_supply = 28L,
-                       induction_window_days = 60L, lot_n_induction_window_days = 30L,
-                       cart_consolidation_days = 45L, sct_auto_window_days = 13L,
-                       sct_auto_gap_days = 60L, sct_tandem_days = 180L,
-                       allo_lot_span = "single_day", max_lot = 5L)
-# Fail-closed validation of the OVERRIDES against the SAME CONFIG_SPEC the production
-# config uses (its engine-tunable subset) - one contract, so the local engine never
-# accepts a param set the production config would reject (unknown key, non-integer,
-# out-of-range incl. map_discon_gap_days=0, fractional). validate_canonical() of the
-# input ROWS is still pending - see README.
-.validate_params <- function(params) {
-  if (!length(params)) return(invisible(TRUE))
+# Params are DATA (resolved config). DEFAULTS are DERIVED from the ONE shared
+# CONFIG_SPEC (the refactor's typed contract) - a single source, so engine defaults
+# can't drift from the spec's defaults. (apr_30_2026 production still resolves config
+# from env vars via config_lot.R and does not yet consume CONFIG_SPEC - wiring that is
+# a future step; here CONFIG_SPEC is the refactor's validation contract.)
+if (!exists("CONFIG_SPEC")) stop("run_engine: CONFIG_SPEC not loaded (scripts/validate_config.R)")
+.ENGINE_PARAMS <- c("map_discon_gap_days", "medical_day_supply", "induction_window_days",
+                    "lot_n_induction_window_days", "cart_consolidation_days", "sct_auto_window_days",
+                    "sct_auto_gap_days", "sct_tandem_days", "allo_lot_span", "max_lot")
+DEFAULT_PARAMS <- lapply(CONFIG_SPEC[.ENGINE_PARAMS], `[[`, "default")
+# Fail-closed validation against CONFIG_SPEC's engine-tunable subset. Validates the
+# FULL RESOLVED config (not just the overrides), so even a no-override run is checked,
+# and an unknown override key (modifyList would silently add it) is rejected. Out-of-
+# range (e.g. map_discon_gap_days=0), non-integer, and bad enums all fail closed.
+# validate_canonical() of the input ROWS is still pending - see README.
+.validate_params <- function(cfg) {
   if (!exists("validate_config")) stop("run_engine: validate_config (scripts/validate_config.R) not loaded")
-  errs <- validate_config(params, spec = CONFIG_SPEC[names(DEFAULT_PARAMS)])   # engine-tunable subset
-  if (length(errs)) stop("run_engine: invalid param override(s): ", paste(errs, collapse = "; "))
+  errs <- validate_config(cfg, spec = CONFIG_SPEC[.ENGINE_PARAMS])
+  if (length(errs)) stop("run_engine: invalid engine config: ", paste(errs, collapse = "; "))
   invisible(TRUE)
 }
 
@@ -43,14 +46,14 @@ DEFAULT_PARAMS <- list(map_discon_gap_days = 90L, medical_day_supply = 28L,
 REQUIRED_INPUTS <- c("pharmacy.csv", "rollup.csv", "members.csv", "sct_codelist.csv")
 
 run_engine <- function(input_dir, params = list()) {
-  .validate_params(params)                            # fail closed on bad/unknown overrides
+  p <- modifyList(DEFAULT_PARAMS, params)
+  .validate_params(p)                                # validate the FULL RESOLVED config, fail closed
   miss <- REQUIRED_INPUTS[!file.exists(file.path(input_dir, REQUIRED_INPUTS))]
   if (length(miss))                                  # fail closed - never emit partial output
     stop("run_engine: missing required input(s): ", paste(miss, collapse = ", "))
-  rd <- function(f) { p <- file.path(input_dir, f)
-    if (file.exists(p)) read.csv(p, stringsAsFactors = FALSE, colClasses = "character")
+  rd <- function(f) { pp <- file.path(input_dir, f)
+    if (file.exists(pp)) read.csv(pp, stringsAsFactors = FALSE, colClasses = "character")
     else data.frame() }
-  p <- modifyList(DEFAULT_PARAMS, params)
   if (!all(c("index_date", "obs_end_dt") %in% names(read.csv(file.path(input_dir, "members.csv"),
             nrows = 1, stringsAsFactors = FALSE))))
     stop("run_engine: members.csv must carry index_date + obs_end_dt (claim-window scoping)")

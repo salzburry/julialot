@@ -16,7 +16,7 @@ comparing. That run is the reviewer/owner's step (it needs the warehouse).
 Run it (the driver runs the full pipeline MAP → LOT1 → SCT → LOT1 end):
 ```
 Rscript engine/run_engine.R engine/fixtures /tmp/out   # MAP_STACKED + LOT1_BASE + LOT1_END + LOT_LONG
-Rscript tests/run_unit_tests.R                          # 274 pass (engine: test_engine/sct/lot_end/lot_long); also CI
+Rscript tests/run_unit_tests.R                          # 276 pass (engine: test_engine/sct/lot_end/lot_long); also CI
 ```
 
 ## What to validate: each rule maps to a production source line
@@ -101,15 +101,18 @@ Rscript tests/run_unit_tests.R                          # 274 pass (engine: test
   LOT_LONG parity.
 - The **regression-expected** baseline (legacy execution on the same synthetic data,
   the owner's hive_metastore step) — the decisive gate — and the full **canonical
-  input ROW** validator (`validate_canonical`) in `run_engine` (it now validates param
-  overrides against the shared `CONFIG_SPEC` + checks filenames/members/codelist
-  columns, but not yet lineage / dates / dedup uniqueness of the input rows).
+  input ROW** validator (`validate_canonical`) in `run_engine` (it now derives defaults
+  from + validates the resolved config against `CONFIG_SPEC` + checks filenames/members/
+  codelist columns, but not yet lineage / dates / dedup uniqueness of the input rows).
+  `apr_30_2026` production also does not yet consume `CONFIG_SPEC` (still env vars).
 - **Now handled:** ALL tunables propagate into LOT1 end logic (CART_INIT / death
-  guard); param validation reuses the shared `CONFIG_SPEC` (one contract); caller-
-  scoped gap (local + warehouse); single-join value compare with double (BIGINT-safe)
-  counts; failure-isolated checksum SURFACED as `CHECKSUM_FAILED`; bounded `LIMIT 100`
-  mismatch sample (`sql_value_sample`, mismatch-only); `PATID` name+STRING bridge;
-  membership short-circuit (both modes); CART death-guard test through `build_lot_long`.
+  guard); defaults derived from + resolved config validated against the one
+  `CONFIG_SPEC` (single source); caller-scoped gap (local + warehouse); single-join
+  value compare with double counts + `bigint="numeric"` connection (BIGINT-safe);
+  checksum AND sample failures isolated + SURFACED (`CHECKSUM_FAILED`/`SAMPLE_FAILED`);
+  null-vs-dup key counts shown (`KEYS{...}`); patient-level mismatch sample is governed
+  (`--sample-into` table, deterministic `ORDER BY`, never logged); `PATID` name+STRING
+  bridge; membership short-circuit; CART death-guard test through `build_lot_long`.
   Checksum aggregation **bucketing** remains a deferred warehouse-scale optimization.
 
 ## Constraints to confirm
