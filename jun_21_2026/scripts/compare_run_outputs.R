@@ -154,6 +154,21 @@ sql_values <- function(tbl_a, tbl_b, keys, compare_cols, excluded = character(0)
   sprintf("SELECT %s FROM %s a JOIN %s b ON %s", paste(aggs, collapse = ", "), tbl_a, tbl_b, on)
 }
 
+# Bounded diagnostic (run ONLY after a value mismatch): the first `limit` shared-key
+# rows where any of the MISMATCHED `cols` differs, with both sides' values (a_<col>/
+# b_<col>), so a failure is investigable without hand-written SQL. LIMIT-capped, so it
+# never scans the full table; never issued on a clean run.
+sql_value_sample <- function(tbl_a, tbl_b, keys, cols, limit = 100L) {
+  if (!length(cols)) return(NULL)
+  on <- .key_join(keys)
+  anydiff <- paste(sprintf("NOT (a.%s <=> b.%s)", .bt(cols), .bt(cols)), collapse = " OR ")
+  ksel <- paste(sprintf("a.%s", .bt(keys)), collapse = ", ")
+  vsel <- paste(unlist(lapply(cols, function(c)
+    c(sprintf("a.%s AS `a_%s`", .bt(c), c), sprintf("b.%s AS `b_%s`", .bt(c), c)))), collapse = ", ")
+  sprintf("SELECT %s, %s FROM %s a JOIN %s b ON %s WHERE %s LIMIT %d",
+          ksel, vsel, tbl_a, tbl_b, on, anydiff, as.integer(limit))
+}
+
 # Per-table key integrity: a required key must be NON-NULL and UNIQUE. A duplicate
 # OR a null-component key on EITHER side makes the set-based membership compare
 # unsound (null `<=>` null is true), so both are checked explicitly and block the
@@ -239,9 +254,11 @@ compare_key_uniqueness <- function(con, tbl, keys) {
 }
 
 # Pure: turn the one-row per-column mismatch counts (c0..c{n-1}) into the verdict
-# tally, splitting blocking from excluded/gap columns (done in R, not SQL).
+# tally, splitting blocking from excluded/gap columns (done in R, not SQL). Counts
+# stay DOUBLE (the warehouse SUM is BIGINT) - as.integer would narrow to 32-bit and
+# silently turn a >2^31 count into NA->0 (a missed mismatch on a large study).
 .tally_values <- function(counts, cols, excluded = character(0)) {
-  counts <- as.integer(counts); counts[is.na(counts)] <- 0L
+  counts <- suppressWarnings(as.numeric(counts)); counts[is.na(counts)] <- 0
   is_excl <- tolower(cols) %in% tolower(excluded)
   blk <- counts > 0 & !is_excl
   list(mismatched_columns = cols[blk], value_mismatch = sum(counts[blk]),
@@ -302,6 +319,12 @@ compare_table <- function(con, tbl_a, tbl_b, table_name, patid = NULL, unimpleme
   res$values <- if (length(cmpset))
     compare_values(con, tbl_a, tbl_b, keys, c(tolower(keys), cmpset), tolower(excl))
     else list(mismatched_columns = character(0), value_mismatch = 0L, excluded_diffs = 0L)
+  # On a value mismatch ONLY (never a clean run), capture a BOUNDED sample of the
+  # changed keys + a/b values so a failure can be investigated without hand SQL.
+  # Failure-isolated: a sample-query error must not abort the authoritative verdict.
+  if (length(res$values$mismatched_columns))
+    res$value_sample <- tryCatch(db_q(con, sql_value_sample(tbl_a, tbl_b, keys, res$values$mismatched_columns, 100L)),
+                                 error = function(e) { res$sample_warning <- conditionMessage(e); NULL })
   # checksum is a NON-AUTHORITATIVE early-warning audit signal: computed ONLY after the
   # membership + value checks pass, and FAILURE-ISOLATED (a global aggregate that could
   # exhaust memory / hit a warehouse limit on a wide table must NOT abort the completed
@@ -472,10 +495,15 @@ if (sys.nframe() == 0 && !interactive()) {
         if (!isTRUE(r$key_unique)) sprintf("DUP_KEYS{a:%s b:%s}", r$dup_keys_a, r$dup_keys_b),
         if (length(r$values$mismatched_columns)) paste0("cols:", paste(r$values$mismatched_columns, collapse = ",")),
         if ((r$values$excluded_diffs %||% 0) > 0) sprintf("excluded_diffs=%s", r$values$excluded_diffs),
+        if (!is.null(r$checksum_warning)) sprintf("CHECKSUM_FAILED(audit-only):%s", r$checksum_warning),
+        if (!is.null(r$value_sample) && nrow(r$value_sample)) sprintf("sample:%d_rows", nrow(r$value_sample)),
         if (length(r$unimplemented)) sprintf("PARTIAL{unimplemented:%s}", paste(r$unimplemented, collapse = ",")))
       cat(sprintf("%-12s patid=%-10s only_in_a=%s only_in_b=%s value_mismatch=%s %s\n",
           t, r$patid, r$membership$only_in_a %||% "NA", r$membership$only_in_b %||% "NA",
-          r$values$value_mismatch %||% "NA", paste(flags, collapse = " "))) }
+          r$values$value_mismatch %||% "NA", paste(flags, collapse = " ")))
+      if (!is.null(r$value_sample) && nrow(r$value_sample)) {     # bounded diagnostic on mismatch
+        cat(sprintf("  %s value-diff sample (first %d changed keys):\n", t, nrow(r$value_sample)))
+        print(r$value_sample, row.names = FALSE) } }
     cat("verdict:", rr$verdict, "\n")
     if (identical(rr$verdict, "partial_match"))
       cat("  NOTE: partial_match excludes unimplemented deterministic field(s); NOT full equivalence.\n")

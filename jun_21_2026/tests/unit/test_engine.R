@@ -35,14 +35,45 @@ ok(cll$value_mismatch == 0 && cll$only_in_a == 0 && cll$only_in_b == 0 && isTRUE
 ok(cll$verdict == "partial_match" && "contains_mtx_reg" %in% cll$unimplemented,
    "LOT_LONG golden is partial_match: contains_mtx_reg is the flagged unimplemented gap (honest)")
 
-# typed param validation: run_engine fails CLOSED on bad/unknown overrides (before run)
+# typed param validation: run_engine fails CLOSED on bad/unknown overrides (before run),
+# reusing the SHARED CONFIG_SPEC (no second contract) - so its bounds apply here too.
 ok(inherits(try(.validate_params(list(max_lott = 5)), silent = TRUE), "try-error"), "unknown param key (typo max_lott) rejected")
 ok(inherits(try(.validate_params(list(sct_tandem_days = "bad")), silent = TRUE), "try-error"), "non-numeric param rejected")
 ok(inherits(try(.validate_params(list(induction_window_days = -10)), silent = TRUE), "try-error"), "negative param rejected")
 ok(inherits(try(.validate_params(list(map_discon_gap_days = 1.5)), silent = TRUE), "try-error"), "fractional param rejected")
 ok(inherits(try(.validate_params(list(allo_lot_span = "nope")), silent = TRUE), "try-error"), "bad enum value rejected")
+ok(inherits(try(.validate_params(list(map_discon_gap_days = 0)), silent = TRUE), "try-error"),
+   "CONFIG_SPEC bound applied: map_discon_gap_days=0 (< min 1) rejected (the old .PARAM_SPEC allowed it)")
+ok(inherits(try(.validate_params(list(sct_auto_window_days = 100L)), silent = TRUE), "try-error"),
+   "CONFIG_SPEC upper bound applied: sct_auto_window_days=100 (> max 60) rejected")
+ok(identical(.PARAM_NAMES <- names(DEFAULT_PARAMS), intersect(names(DEFAULT_PARAMS), names(CONFIG_SPEC))),
+   "every engine param is governed by the shared CONFIG_SPEC")
 ok(isTRUE(.validate_params(list(sct_tandem_days = 200L, allo_lot_span = "extend_to_next"))), "valid overrides accepted")
 ok(isTRUE(.validate_params(list())), "empty overrides accepted (defaults used)")
+
+# P2: run_engine PROPAGATES cart_consolidation_days into the LOT1 end (build_lot1_end).
+# A CART 36d after the first-add is CART_INIT under the default 45-day window (ends
+# FIRST_CART-1) but falls through to MED_ADD under a 30-day override - proving the
+# param reaches LOT1, not build_lot1_end's hardcoded default.
+ci_dir <- file.path(tempdir(), "ci_prop"); dir.create(ci_dir, showWarnings = FALSE)
+write.csv(data.frame(patient_id = "9000000200", index_date = "2020-06-01", obs_end_dt = "2021-12-31"),
+          file.path(ci_dir, "members.csv"), row.names = FALSE)
+write.csv(data.frame(patient_id = "9000000200",
+  service_date = c("2021-01-01", "2021-01-31", "2021-03-02", "2021-04-01", "2021-05-01", "2021-03-15"),
+  normalized_code = c("B", "B", "B", "B", "B", "D"), code_system = "NDC", days_supply = "30"),
+          file.path(ci_dir, "pharmacy.csv"), row.names = FALSE)
+write.csv(data.frame(code_type = "NDC", code = c("B", "D"), med_abbr = c("BORT", "DARA"), med_class = c("PI", "MAB")),
+          file.path(ci_dir, "rollup.csv"), row.names = FALSE)
+write.csv(data.frame(code_type = "HCPCS", code = "38241", sct_type = "CART"),
+          file.path(ci_dir, "sct_codelist.csv"), row.names = FALSE)
+write.csv(data.frame(patient_id = "9000000200", event_date = "2021-04-20", normalized_code = "38241", code_system = "HCPCS"),
+          file.path(ci_dir, "procedure.csv"), row.names = FALSE)
+le_def <- run_engine(ci_dir)$LOT1_END                                  # default cart_consolidation_days = 45
+le_30  <- run_engine(ci_dir, list(cart_consolidation_days = 30L))$LOT1_END
+ok(le_def$lot1_base_end_reason == "CART_INIT" && as.character(le_def$lot1_base_end_dt) == "2021-04-19",
+   "LOT1 CART_INIT fires under the default 45-day window")
+ok(le_30$lot1_base_end_reason == "MED_ADD" && as.character(le_30$lot1_base_end_dt) == "2021-03-14",
+   "cart_consolidation_days=30 override REACHES LOT1 (CART now outside window -> MED_ADD)")
 
 # --- targeted rule spot-checks ------------------------------------------------
 eq(nrow(map), 8L, "8 MAP periods across the cohort")

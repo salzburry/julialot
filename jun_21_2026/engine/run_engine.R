@@ -10,6 +10,15 @@ if (!exists("build_lot_long")) local({
   if (!file.exists(file.path(d, "map.R"))) d <- "engine"          # robust when sourced
   for (m in c("map.R", "lot1.R", "sct.R", "lot_end.R", "lot_long.R")) source(file.path(d, m))
 })
+# The ONE shared typed-config contract (CONFIG_SPEC) governs param validation too -
+# no second spec to drift. Source it standalone when not already loaded by the runner.
+if (!exists("CONFIG_SPEC")) local({
+  fa <- grep("^--file=", commandArgs(FALSE), value = TRUE)
+  d <- if (length(fa)) dirname(sub("^--file=", "", fa[1])) else "engine"
+  vc <- file.path(d, "..", "scripts", "validate_config.R")
+  if (!file.exists(vc)) vc <- "scripts/validate_config.R"
+  if (file.exists(vc)) source(vc)
+})
 
 # Params are DATA (resolved config), so retuning the algorithm is a config edit.
 DEFAULT_PARAMS <- list(map_discon_gap_days = 90L, medical_day_supply = 28L,
@@ -17,35 +26,16 @@ DEFAULT_PARAMS <- list(map_discon_gap_days = 90L, medical_day_supply = 28L,
                        cart_consolidation_days = 45L, sct_auto_window_days = 13L,
                        sct_auto_gap_days = 60L, sct_tandem_days = 180L,
                        allo_lot_span = "single_day", max_lot = 5L)
-# Typed contract for the overridable params: "int_pos" = whole number >= 1,
-# "int_nonneg" = >= 0, "int_2_9" = [2,9], else an explicit enum of allowed values.
-.PARAM_SPEC <- list(map_discon_gap_days = "int_nonneg", medical_day_supply = "int_pos",
-                    induction_window_days = "int_pos", lot_n_induction_window_days = "int_pos",
-                    cart_consolidation_days = "int_pos", sct_auto_window_days = "int_pos",
-                    sct_auto_gap_days = "int_pos", sct_tandem_days = "int_pos",
-                    allo_lot_span = c("single_day", "extend_to_next"), max_lot = "int_2_9")
-# Fail-closed typed validation of the OVERRIDES (before modifyList), so a typo'd key
-# (max_lott), a non-numeric (sct_tandem_days="bad"), a negative, or a fractional value
-# is REJECTED rather than silently ignored / coerced. (Lighter than the full
-# validate_config()/validate_canonical() boundary, still pending - see README.)
+# Fail-closed validation of the OVERRIDES against the SAME CONFIG_SPEC the production
+# config uses (its engine-tunable subset) - one contract, so the local engine never
+# accepts a param set the production config would reject (unknown key, non-integer,
+# out-of-range incl. map_discon_gap_days=0, fractional). validate_canonical() of the
+# input ROWS is still pending - see README.
 .validate_params <- function(params) {
   if (!length(params)) return(invisible(TRUE))
-  unknown <- setdiff(names(params), names(.PARAM_SPEC))
-  if (length(unknown)) stop("run_engine: unknown param(s): ", paste(unknown, collapse = ", "),
-                            " (known: ", paste(names(.PARAM_SPEC), collapse = ", "), ")")
-  for (k in names(params)) {
-    v <- params[[k]]; spec <- .PARAM_SPEC[[k]]
-    if (length(spec) > 1L) {                          # enum
-      if (!(is.character(v) && length(v) == 1L && v %in% spec))
-        stop("run_engine: ", k, " must be one of ", paste(spec, collapse = "/"), ", got ", v)
-    } else {
-      num <- suppressWarnings(as.numeric(v))
-      lo <- if (spec == "int_nonneg") 0 else if (spec == "int_2_9") 2 else 1
-      hi <- if (spec == "int_2_9") 9 else Inf
-      if (length(v) != 1L || is.na(num) || num != round(num) || num < lo || num > hi)
-        stop("run_engine: ", k, " must be a whole number in [", lo, ", ", hi, "], got ", v)
-    }
-  }
+  if (!exists("validate_config")) stop("run_engine: validate_config (scripts/validate_config.R) not loaded")
+  errs <- validate_config(params, spec = CONFIG_SPEC[names(DEFAULT_PARAMS)])   # engine-tunable subset
+  if (length(errs)) stop("run_engine: invalid param override(s): ", paste(errs, collapse = "; "))
   invisible(TRUE)
 }
 
@@ -83,7 +73,10 @@ run_engine <- function(input_dir, params = list()) {
   auto_dates <- finalize_auto_per_patient(sct_claims, members, p$sct_auto_window_days, p$sct_auto_gap_days, p$sct_tandem_days)
   deathd <- if (nrow(death)) death else NULL; subsd <- if (nrow(subs)) subs else NULL
   lot1_end <- build_lot1_end(lot1, sct, members, deathd, map_stacked = map_stacked,
-                             auto_dates = auto_dates, permissible_subs = subsd)
+                             auto_dates = auto_dates, permissible_subs = subsd,
+                             cart_consolidation_days = p$cart_consolidation_days,        # propagate ALL
+                             lot_n_induction_window_days = p$lot_n_induction_window_days, # tunables to LOT1
+                             sct_tandem_days = p$sct_tandem_days)                         # (CART_INIT / death guard)
   lot_long <- build_lot_long(lot1, lot1_end, map_stacked, sct_claims, members, deathd, subsd,
                 p$lot_n_induction_window_days, p$cart_consolidation_days, p$sct_tandem_days,
                 p$sct_auto_window_days, p$sct_auto_gap_days,

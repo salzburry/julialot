@@ -18,7 +18,7 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 266 tests, all pure-R / local (also run in CI)
+Rscript tests/run_unit_tests.R          # 274 tests, all pure-R / local (also run in CI)
 ```
 
 Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
@@ -82,14 +82,17 @@ CE-sensitive end is implemented (caps at `enddate_ce`, reason `DISENROLLMENT`). 
 parity claim:** `contains_mtx_reg` (= 0; needs maintenance metadata
 `MONOMAINTENANCE`/`DUALMAINTENANCEWITH`) — a *deterministic* field, so the comparator
 treats it as an `UNIMPLEMENTED_FIELDS` gap that forces `partial_match` rather than a
-silent `match`. `run_engine` now **typed-validates its param overrides** fail-closed
-(`.validate_params`): an unknown key (e.g. `max_lott`), a non-numeric
-(`sct_tandem_days="bad"`), a negative, or a fractional value is rejected, not silently
-ignored/coerced (`max_lot` is a whole number in `[2,9]`, so `1` fails fast vs R's
-descending `2:1`, and `2.9` is rejected). Regression-expected output (legacy execution
+silent `match`. `run_engine` **typed-validates its param overrides** against the
+**same shared `CONFIG_SPEC`** the production config uses (its engine-tunable subset —
+no second contract to drift): an unknown key (`max_lott`), a non-integer
+(`sct_tandem_days="bad"`), or an out-of-range value (`map_discon_gap_days=0`,
+`max_lot=2.9`) is rejected fail-closed. **All** tunables (incl. `cart_consolidation_days`,
+`lot_n_induction_window_days`, `sct_tandem_days`) now propagate into the LOT1 end logic
+too (CART_INIT / post-runout death guard), so a non-default study is internally
+consistent across LOT1 and LOT2-5. Regression-expected output (legacy execution
 on the same synthetic data) is the owner's hive_metastore step — this proves
 spec-conformance, not legacy equivalence; `run_engine` typed-validates params but does
-**not** yet run the full canonical-input validator (`validate_canonical`) — the
+**not** yet run the full canonical-input ROW validator (`validate_canonical`) — the
 adapter→canonical-validation→core wiring is still pending, as listed below.
 
 This is **verification only** — it runs the algorithm on synthetic fixtures locally
@@ -113,9 +116,13 @@ Both `--local` and `--run` exit **0 on `match`, 2 on `partial_match`, 1 on
 parity **incl. data types**, **key-uniqueness** (`GROUP BY ... HAVING count>1`),
 membership anti-joins (`EXCEPT`, which stop the column compare — both modes — when
 populations differ), null-safe value compare over **every shared column** in a
-**single join** (per-column conditional aggregates, so a wide table needs one scan,
-not one join per column), and a **failure-isolated** null-sentinel checksum (a
-non-authoritative audit signal that cannot abort the completed verdict).
+**single join** (per-column conditional aggregates — one scan, not one join per
+column — counts kept as **double**, never narrowed to 32-bit), and a
+**failure-isolated** null-sentinel checksum (a non-authoritative audit signal that
+cannot abort the completed verdict; a checksum failure is surfaced as
+`CHECKSUM_FAILED(audit-only)`). On a value mismatch only, a **bounded** `LIMIT 100`
+sample of the changed keys + a/b values is captured (`sql_value_sample`) so a failure
+is investigable without hand-written SQL; clean runs pay nothing.
 
 The **`partial_match`** verdict (for a known `UNIMPLEMENTED_FIELDS` gap like
 `contains_mtx_reg`) is **caller-scoped**, not global — for **both** modes. The
