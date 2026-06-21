@@ -29,6 +29,10 @@ faithful to `apr_30_2026/02_lot1.R`, that reproduces hand-derived expected outpu
 Rscript engine/run_engine.R engine/fixtures /tmp/out   # writes MAP_STACKED.csv + LOT1_BASE.csv
 ```
 
+**For reviewers:** `engine/REVIEW.md` maps every engine rule to its production
+source line (`apr_30_2026/02_lot1.R:NNN`) and lists verified coverage + the
+explicitly-deferred corners.
+
 Verified stages + edge cases (against hand-derived expected):
 - **MAP** (`engine/map.R`): pharmacy pushout / reset, gap→new MAP, medical
   no-pushout, same-day pharmacy-first tie, single claim, discon flag both sides of
