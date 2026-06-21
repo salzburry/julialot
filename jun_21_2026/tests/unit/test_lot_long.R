@@ -66,3 +66,14 @@ ok(x3$lot_start_type == "SCT_ALLO" && x3$lot_base_end_reason == "SCT_ALLO" &&
    "ALLO starts a single-day LOT (ends on the ALLO date)")
 ok(all(c("lot_allo_lot_flg", "contains_mtx_reg", "lot_base_end_dt_ce_sens", "lot_tx_auto_flg",
          "lot_tx_auto_dt_1") %in% names(llx)), "LOT_LONG carries the full contract columns (incl. SCT flags + CE-sens)")
+ok(setequal(names(llx), LOT_LONG_COLS), "LOT_LONG output == LOT_LONG_COLS (23 columns)")
+
+# CE-sensitive end: a LOT ending after enddate_ce (with disenrollment) is capped to
+# enddate_ce with reason DISENROLLMENT (the primary end is unchanged).
+memce <- data.frame(patient_id = "9000000061", index_date = "2020-06-01", obs_end_dt = "2021-12-31",
+  enddate_ce = "2021-03-01", enddate = "2021-12-31", stringsAsFactors = FALSE)
+llce <- build_lot_long(lb, le, mp, NULL, memce)
+c1 <- llce[llce$lot_num == 1, ]
+ok(as.character(c1$lot_base_end_dt) == "2021-03-14" &&
+   as.character(c1$lot_base_end_dt_ce_sens) == "2021-03-01" && c1$lot_base_end_reason_ce_sens == "DISENROLLMENT",
+   "CE-sensitive end caps at enddate_ce with DISENROLLMENT (primary end unchanged)")

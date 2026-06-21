@@ -16,14 +16,14 @@ comparing. That run is the reviewer/owner's step (it needs the warehouse).
 Run it (the driver runs the full pipeline MAP → LOT1 → SCT → LOT1 end):
 ```
 Rscript engine/run_engine.R engine/fixtures /tmp/out   # MAP_STACKED + LOT1_BASE + LOT1_END
-Rscript tests/run_unit_tests.R                          # 216 pass (engine: test_engine/sct/lot_end/lot_long)
+Rscript tests/run_unit_tests.R                          # 219 pass (engine: test_engine/sct/lot_end/lot_long)
 ```
 
 ## What to validate: each rule maps to a production source line
 
 | engine | rule | production source (apr_30_2026) |
 |---|---|---|
-| `map.R` | pharmacy/medical day-supply imputation (null/<1 → 28); de-dup (patient,med,date,type) keep max day-supply | `02_lot1.R:426-449` |
+| `map.R` | medical day-supply hardcoded to medical_day_supply; pharmacy null/<1→28; de-dup (patient,med,date,type) keep max day-supply | `02_lot1.R:299-449` |
 | `map.R` | MAP runout state machine (CASE1 open / CASE2 gap→new / CASE3 pushout·reset·medical) | `02_lot1.R:528-634` |
 | `map.R` | new MAP iff `dt > max(rx_runout, med_runout)` | `02_lot1.R:550` |
 | `map.R` | pharmacy pushout `rx_runout+ds`; reset `dt+ds-1`; medical never pushed out | `02_lot1.R:581-601` |
@@ -32,14 +32,14 @@ Rscript tests/run_unit_tests.R                          # 216 pass (engine: test
 | `lot1.R` | induction window `[start, start+60-1]`, steroid excluded | `02_lot1.R:692-704` |
 | `lot1.R` | base = induction ∪ permissible subs; discon = max base MAP_END ≤ OBS_END | `02_lot1.R:710-750` |
 | `lot1.R` | first-add = earliest non-base non-steroid in coverage, date = MAP_START−1 | `02_lot1.R:781-813` |
-| `sct.R` | AUTO 14-day window (max date) + 60-day gap merge | `02_lot1.R:985-1146` |
+| `sct.R` | AUTO window (datediff<=13) max date + 60-day gap merge; ALLO/CART censor + line scoping | `02_lot1.R:985-1146` |
 | `sct.R` | tandem = 2nd AUTO ≤180d of 1st, no ALLO between; excess ends LOT | `02_lot1.R:1264-1306` |
 | `sct.R` | tandem-boundary date selection (window straddling the 180-day mark) | `02_lot1.R:1041-1128` |
 | `sct.R` | ALLO/CART censor AUTO; end date = earliest SCT−1, reason 1/2/3 | `02_lot1.R:1313-1338` |
 | `lot_end.R` | end cascade SCT > CART_INIT > MED_ADD > DEATH > DISCON > STUDY_END, gated on runout | `02_lot1.R:1570-1632` |
 | `lot_end.R` | CART_INIT flag (CART within 45d of the add) + post-runout death guard | `02_lot1.R:1469-1549` |
 | `lot_long.R` | LOT2-5: trigger candidates (d_MED/d_ALLO/d_CART/d_AUTO) + start/type | `R/lot2_5_base.R:170-321` |
-| `lot_long.R` | per-line regimen (30-day window, base+subs, discon, first-add) + loop | `R/lot2_5_base.R:323-465` |
+| `lot_long.R` | per-line regimen + line-scoped SCT end + ALLO single-day + CE-sensitive end | `R/lot2_5_base.R:323-922` |
 
 ## Verified coverage (hand-derived expected)
 
@@ -67,8 +67,8 @@ Rscript tests/run_unit_tests.R                          # 216 pass (engine: test
 
 ## NOT yet ported (refinements)
 
-- **CART-started line consolidation** end nuances; **CE-sensitive end** (currently
-  = end) and **contains_mtx_reg** (= 0) in LOT_LONG; the **regression-expected**
+- **EXCLUDED from parity:** `contains_mtx_reg` (= 0; needs maintenance metadata).
+- **CART-started line consolidation** end nuances; the **regression-expected**
   baseline (legacy execution on the same synthetic data - the owner's hive_metastore
   step); and the warehouse-comparator cross-convention PATID + checksum scalability
   (deprioritized per the local-verification workflow).

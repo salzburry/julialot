@@ -234,8 +234,13 @@ compare_table <- function(con, tbl_a, tbl_b, table_name, patid = NULL) {
   res$values <- if (length(cmpset))
     compare_values(con, tbl_a, tbl_b, keys, c(tolower(keys), cmpset), tolower(excl))
     else list(mismatched_columns = character(0), value_mismatch = 0L, excluded_diffs = 0L)
-  res$checksum_a <- table_checksum(con, tbl_a, keys, c(tolower(keys), cmpset), tolower(excl))
-  res$checksum_b <- table_checksum(con, tbl_b, keys, c(tolower(keys), cmpset), tolower(excl))
+  # checksum is an early-warning audit signal: computed ONLY after the authoritative
+  # membership + value checks pass (skipped when a mismatch is already decisive).
+  if (isTRUE((res$membership$only_in_a %||% 1) == 0) && isTRUE((res$membership$only_in_b %||% 1) == 0) &&
+      isTRUE((res$values$value_mismatch %||% 1) == 0)) {
+    res$checksum_a <- table_checksum(con, tbl_a, keys, c(tolower(keys), cmpset), tolower(excl))
+    res$checksum_b <- table_checksum(con, tbl_b, keys, c(tolower(keys), cmpset), tolower(excl))
+  }
   res
 }
 
@@ -302,6 +307,7 @@ compare_local_table <- function(path_a, path_b, keys, excluded = character(0), r
   nullk <- function(df) Reduce(`|`, lapply(df[keys], function(c) is.na(c) | !nzchar(trimws(as.character(c)))))
   # parity with the live path: a missing key COMPONENT is not "unique" either
   res$key_unique <- !(any(duplicated(ka)) || any(duplicated(kb)) || any(nullk(a)) || any(nullk(b)))
+  if (!res$key_unique) { res$match <- FALSE; return(res) }       # decisive: stop here
   res$only_in_a <- sum(!(ka %in% kb)); res$only_in_b <- sum(!(kb %in% ka))
   shared <- intersect(ka, kb); ia <- match(shared, ka); ib <- match(shared, kb)
   for (cn in setdiff(names(a), keys)) {

@@ -18,7 +18,7 @@ DEFAULT_PARAMS <- list(map_discon_gap_days = 90L, medical_day_supply = 28L,
                        sct_auto_gap_days = 60L, sct_tandem_days = 180L)
 
 # Full local pipeline MAP -> LOT1 -> SCT -> LOT1 end.
-REQUIRED_INPUTS <- c("pharmacy.csv", "rollup.csv", "members.csv")
+REQUIRED_INPUTS <- c("pharmacy.csv", "rollup.csv", "members.csv", "sct_codelist.csv")
 
 run_engine <- function(input_dir, params = list()) {
   miss <- REQUIRED_INPUTS[!file.exists(file.path(input_dir, REQUIRED_INPUTS))]
@@ -33,9 +33,8 @@ run_engine <- function(input_dir, params = list()) {
     stop("run_engine: members.csv must carry index_date + obs_end_dt (claim-window scoping)")
   members <- rd("members.csv"); subs <- rd("permissible_subs.csv"); death <- rd("death.csv")
   proc <- rd("procedure.csv"); diag <- rd("diagnosis.csv"); med <- rd("medical.csv")
-  # SCT evidence present but no codelist would SILENTLY yield no SCT -> fail closed.
-  if ((nrow(proc) || nrow(diag)) && !file.exists(file.path(input_dir, "sct_codelist.csv")))
-    stop("run_engine: SCT evidence (procedure/diagnosis) present but sct_codelist.csv missing")
+  # sct_codelist.csv is REQUIRED (above), so SCT evidence on ANY route - procedure,
+  # diagnosis, OR medical - can never silently yield no SCT.
   map_stacked <- build_map_stacked(rd("pharmacy.csv"), med, rd("rollup.csv"), members,
     p$map_discon_gap_days, p$medical_day_supply)
   lot1 <- build_lot1_base(map_stacked, members, if (nrow(subs)) subs else NULL, p$induction_window_days)

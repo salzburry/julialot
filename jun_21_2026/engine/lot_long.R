@@ -64,7 +64,10 @@
 
 LOT_LONG_COLS <- c("patient_id", "lot_num", "lot_start_dt", "lot_start_type", "lot_base_meds",
   "lot_med_cnt", "lot_base_discon_dt", "lot_base_1st_add_med_dt", "lot_base_1st_add_med",
-  "lot_base_end_dt", "lot_base_end_reason", "lot_base_length")
+  "lot_base_end_dt", "lot_base_end_reason", "lot_base_length", "lot_allo_lot_flg",
+  "lot_cart_lot_flg", "contains_mtx_reg", "lot_base_end_dt_ce_sens", "lot_base_end_reason_ce_sens",
+  "lot_tx_auto_flg", "lot_tx_auto_tand_flg", "lot_tx_auto_sing_flg", "lot_tx_auto_dt_1",
+  "lot_tx_auto_dt_2", "lot_tx_auto_max_dt")
 
 # Line-scoped SCT summary for one line: SCT events within [start, OBS_END]. For a
 # CART-started line the start CART is the trigger (not an end event) and is dropped.
@@ -84,6 +87,8 @@ build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
                            sct_auto_gap_days = 60L, max_lot = 5L) {
   D <- function(x) as.Date(as.character(x))
   oe <- setNames(D(obs_end$obs_end_dt), as.character(obs_end$patient_id))
+  ece <- if ("enddate_ce" %in% names(obs_end)) setNames(D(obs_end$enddate_ce), as.character(obs_end$patient_id)) else NULL
+  ed  <- if ("enddate"    %in% names(obs_end)) setNames(D(obs_end$enddate),    as.character(obs_end$patient_id)) else NULL
   subs <- if (!is.null(permissible_subs) && nrow(permissible_subs))
     split(as.character(permissible_subs$substitute_med), as.character(permissible_subs$original_med)) else NULL
   ms <- map_stacked; ms$map_start_dt <- D(ms$map_start_dt); ms$map_end_dt <- D(ms$map_end_dt)
@@ -97,19 +102,24 @@ build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
   # 23-column LOT_LONG contract. CE-sensitive end = end (no CE adjustment here) and
   # contains_mtx_reg = 0 are documented simplifications; AUTO fields come from the
   # line-scoped SCT summary.
-  row <- function(pid, ln, start, type, reg, end, lsct = NULL) {
+  row <- function(pid, ln, start, type, reg, end, lsct = NULL, ce = NULL) {
     has <- !is.null(lsct) && nrow(lsct)
     ad <- function(f) if (has) D(lsct[[f]][1]) else as.Date(NA)
     af <- function(f) if (has) as.integer(lsct[[f]][1]) else 0L
     amax <- if (has && isTRUE(lsct$tand_flg[1] == 1)) ad("auto_dt_2") else ad("auto_dt_1")
+    ed_dt <- D(end$lot1_base_end_dt); ce_end <- ed_dt; ce_rs <- end$lot1_base_end_reason  # CE-sensitive end
+    if (!is.null(ce) && !is.na(ce$enddate_ce) && !is.na(ed_dt) && ed_dt > ce$enddate_ce) {
+      ce_end <- ce$enddate_ce
+      if (!is.na(ce$enddate) && ce$enddate_ce < ce$enddate) ce_rs <- "DISENROLLMENT"
+    }
     data.frame(patient_id = pid, lot_num = ln,
     lot_start_dt = start, lot_start_type = type, lot_base_meds = reg$base_meds, lot_med_cnt = reg$med_cnt,
     lot_base_discon_dt = reg$discon, lot_base_1st_add_med_dt = reg$add_dt, lot_base_1st_add_med = reg$add_med,
     lot_base_end_dt = D(end$lot1_base_end_dt), lot_base_end_reason = end$lot1_base_end_reason,
     lot_base_length = end$lot1_base_length,
     lot_allo_lot_flg = as.integer(type == "SCT_ALLO"), lot_cart_lot_flg = as.integer(type == "CART"),
-    contains_mtx_reg = 0L,
-    lot_base_end_dt_ce_sens = D(end$lot1_base_end_dt), lot_base_end_reason_ce_sens = end$lot1_base_end_reason,
+    contains_mtx_reg = 0L,                                # NOT computed: needs maintenance metadata
+    lot_base_end_dt_ce_sens = ce_end, lot_base_end_reason_ce_sens = ce_rs,
     lot_tx_auto_flg = as.integer(has && !is.na(ad("auto_dt_1"))), lot_tx_auto_tand_flg = af("tand_flg"),
     lot_tx_auto_sing_flg = af("sing_flg"), lot_tx_auto_dt_1 = ad("auto_dt_1"),
     lot_tx_auto_dt_2 = ad("auto_dt_2"), lot_tx_auto_max_dt = amax, stringsAsFactors = FALSE)
@@ -117,6 +127,8 @@ build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
 
   out <- lapply(as.character(lot1_base$patient_id), function(pid) {
     obs <- oe[[pid]]; msp <- ms[ms$patient_id == pid, , drop = FALSE]
+    cep <- list(enddate_ce = if (!is.null(ece)) ece[[pid]] else as.Date(NA),
+                enddate    = if (!is.null(ed))  ed[[pid]]  else as.Date(NA))
     autos <- sort(D(auto_all$tx_dt[as.character(auto_all$patient_id) == pid]))
     allo  <- if (!is.null(sc_allo)) sort(unique(D(sc_allo$dt[as.character(sc_allo$patient_id) == pid]))) else as.Date(character(0))
     cart  <- if (!is.null(sc_cart)) sort(unique(D(sc_cart$dt[as.character(sc_cart$patient_id) == pid]))) else as.Date(character(0))
@@ -125,7 +137,7 @@ build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
       discon = D(lb$lot1_base_discon_dt), add_dt = D(lb$lot1_base_1st_add_med_dt), add_med = as.character(lb$lot1_base_1st_add_med))
     lsct1 <- .line_sct(sct_claims, pid, D(lb$lot1_start_dt), "MED", obs_end, sct_tandem_days, sct_auto_window_days, sct_auto_gap_days)
     rows <- list(row(pid, 1L, D(lb$lot1_start_dt), "MED", reg1,
-      list(lot1_base_end_dt = le$lot1_base_end_dt, lot1_base_end_reason = le$lot1_base_end_reason, lot1_base_length = le$lot1_base_length), lsct1))
+      list(lot1_base_end_dt = le$lot1_base_end_dt, lot1_base_end_reason = le$lot1_base_end_reason, lot1_base_length = le$lot1_base_length), lsct1, cep))
     prev_end <- D(le$lot1_base_end_dt); prev_meds <- lb$lot1_base_meds; prev_start <- D(lb$lot1_start_dt); prev_type <- "MED"
     for (ln in 2:max_lot) {
       if (is.na(prev_end)) break
@@ -146,7 +158,7 @@ build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
                              cart_consolidation_days = cart_consolidation_days,
                              lot_n_induction_window_days = induction_window_days, sct_tandem_days = sct_tandem_days)
       }
-      rows[[length(rows) + 1L]] <- row(pid, ln, cd$start, cd$type, reg, en, lsct)
+      rows[[length(rows) + 1L]] <- row(pid, ln, cd$start, cd$type, reg, en, lsct, cep)
       prev_end <- D(en$lot1_base_end_dt); prev_meds <- reg$base_meds; prev_start <- cd$start; prev_type <- cd$type
     }
     do.call(rbind, rows)
