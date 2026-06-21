@@ -31,6 +31,8 @@ Rscript tests/run_unit_tests.R                          # 196 pass (engine: test
 | `sct.R` | ALLO/CART censor AUTO; end date = earliest SCT−1, reason 1/2/3 | `02_lot1.R:1313-1338` |
 | `lot_end.R` | end cascade SCT > CART_INIT > MED_ADD > DEATH > DISCON > STUDY_END, gated on runout | `02_lot1.R:1570-1632` |
 | `lot_end.R` | CART_INIT flag (CART within 45d of the add) + post-runout death guard | `02_lot1.R:1469-1549` |
+| `lot_long.R` | LOT2-5: trigger candidates (d_MED/d_ALLO/d_CART/d_AUTO) + start/type | `R/lot2_5_base.R:170-321` |
+| `lot_long.R` | per-line regimen (30-day window, base+subs, discon, first-add) + loop | `R/lot2_5_base.R:323-465` |
 
 ## Verified coverage (hand-derived expected)
 
@@ -51,11 +53,17 @@ Rscript tests/run_unit_tests.R                          # 196 pass (engine: test
   hand-derived expected, including an `SCT_ALLO` end for one patient.
 - **Production parity** (`test_engine.R`/`test_sct.R`): pharmacy day-supply
   imputation, same-day max-day-supply de-dup, AUTO window = 13.
+- **LOT2-5** (`test_lot_long.R`): a 3-line cohort (LENA→DARA→CARF) run through the
+  full chain MAP→LOT1→LOT_LONG — each line triggered from the prior line's end,
+  MED_ADD→MED_ADD→DISCONTINUATION, loop stops at line 3; plus the start-type
+  tie-break (SCT_ALLO > MED on a same-day candidate).
 
-## NOT yet ported (next stage)
+## NOT yet ported (refinements)
 
-- **LOT2-5** (`LOT_LONG`): trigger the next line from the LOT1 end event, re-derive
-  the regimen, repeat to MAX_LOT — `apr_30_2026/R/lot2_5_base.R`.
+- **LOT2-5 ALLO/CART-started lines**: singleton / consolidation regimen + end
+  specifics (`R/lot2_5_base.R:467-...`); the LOT-scoped SCT end fields
+  (CE-sensitive end, in-LOT AUTO flags); and wiring `LOT_LONG` into the main
+  driver. The verified loop above is MED-started.
 
 ## Constraints to confirm
 

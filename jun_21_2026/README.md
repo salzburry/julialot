@@ -18,7 +18,7 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 196 tests, all pure-R / local
+Rscript tests/run_unit_tests.R          # 203 tests, all pure-R / local
 ```
 
 Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
@@ -54,8 +54,15 @@ Verified stages + edge cases (against hand-derived expected):
   CART_INIT (MED_ADD then CART within 45d) and the post-runout death guard (a LOT2
   trigger after the runout makes DISCONTINUATION win over DEATH).
 
-Still to port + verify the same way: the **LOT2-5** loop (`LOT_LONG`) — trigger
-the next line from the LOT1 end event, re-derive the regimen, repeat to MAX_LOT.
+- **LOT2-5** (`engine/lot_long.R`): the multi-line loop — trigger candidates
+  (d_MED/d_ALLO/d_CART/d_AUTO) from the prior line's end, start+type tie-break,
+  per-line regimen (30-day window), end via the LOT1 cascade, repeat to MAX_LOT.
+  Verified on a 3-line cohort (LENA→DARA→CARF, MED_ADD→MED_ADD→DISCONTINUATION,
+  then the loop stops) run through the full chain MAP→LOT1→LOT_LONG.
+
+Remaining refinement (documented): ALLO/CART-started line regimen specifics
+(singletons / consolidation) and the LOT-scoped SCT end fields, plus wiring
+`LOT_LONG` into the main driver. The 3-line loop above is MED-started.
 
 This is **verification only** — it runs the algorithm on synthetic fixtures locally
 so the refactor logic can be checked without a warehouse. It is NOT the production
