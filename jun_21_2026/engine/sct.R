@@ -103,15 +103,22 @@ finalize_auto_per_patient <- function(sct_claims, members = NULL, window_days = 
   }))
 }
 
-# Per-patient SCT summary within LOT1 (the S15 derivations).
+# Per-patient SCT summary within a line (S15 for LOT1; Step N.4 for LOT_N).
+# lot_window_days = the LOT applicable window (NA for LOT1 = no window, the first
+# AUTO is induction; LOT_N = 30/45/1): an AUTO_DT_1 at/after that many days from the
+# start is NOT in-line - its TX fields clear and it becomes the ENDING_AUTO that
+# closes the line. allo_cart_strict = TRUE (LOT_N) uses `> start` for ALLO/CART so
+# the line's own start SCT is not treated as its end.
 build_sct_summary <- function(sct_claims, lot1_start, obs_end,
-                              tandem_days = 180L, window_days = 13L, gap_days = 60L) {
+                              tandem_days = 180L, window_days = 13L, gap_days = 60L,
+                              lot_window_days = NA_integer_, allo_cart_strict = FALSE) {
   ls <- setNames(as.Date(as.character(lot1_start$lot1_start_dt)), as.character(lot1_start$patient_id))
   oe <- setNames(as.Date(as.character(obs_end$obs_end_dt)), as.character(obs_end$patient_id))
   idx <- if ("index_date" %in% names(obs_end))
     setNames(as.Date(as.character(obs_end$index_date)), as.character(obs_end$patient_id)) else NULL
   rows <- lapply(names(ls), function(pid) {
-    L <- ls[[pid]]; O <- oe[[pid]]
+    L <- ls[[pid]]; O <- if (pid %in% names(oe)) oe[[pid]] else as.Date(NA)
+    if (length(O) == 0 || is.na(L) || is.na(O)) return(NULL)   # fail-closed: drop NA/unbounded patients (like MAP)
     sc <- sct_claims[sct_claims$patient_id == pid, , drop = FALSE]
     # SCT claims are scoped to [index_date, OBS_END] BEFORE windowing (production
     # S12), so a post-observation claim cannot become a window max and skew a TX.
@@ -119,7 +126,7 @@ build_sct_summary <- function(sct_claims, lot1_start, obs_end,
     sc <- sc[(is.na(lo) | sc$dt >= lo) & (is.na(O) | sc$dt <= O), , drop = FALSE]
     auto_tx <- finalize_auto_dates(sc$dt[sc$sct_type == "AUTO"], window_days, gap_days, tandem_days)
     allo <- sort(unique(sc$dt[sc$sct_type == "ALLO"])); cart <- sort(unique(sc$dt[sc$sct_type == "CART"]))
-    inw <- function(d) d[!is.na(d) & d >= L & d <= O]
+    inw <- function(d) d[!is.na(d) & (if (allo_cart_strict) d > L else d >= L) & d <= O]
     first_allo <- if (length(inw(allo))) min(inw(allo)) else as.Date(NA)
     first_cart <- if (length(inw(cart))) min(inw(cart)) else as.Date(NA)
     ena <- suppressWarnings(min(c(first_allo, first_cart), na.rm = TRUE))
@@ -129,9 +136,18 @@ build_sct_summary <- function(sct_claims, lot1_start, obs_end,
     d2 <- if (length(auto_in) >= 2) auto_in[2] else as.Date(NA)
     d3 <- if (length(auto_in) >= 3) auto_in[3] else as.Date(NA)
     n_allo_between <- if (!is.na(d2)) sum(allo >= d1 & allo <= d2) else 0L
-    tandem <- !is.na(d2) && as.integer(d2 - d1) <= tandem_days && n_allo_between == 0L
-    sing <- !is.na(d1) && !tandem
-    ending_auto <- if (tandem) d3 else if (!is.na(d1)) d2 else as.Date(NA)
+    tandem0 <- !is.na(d2) && as.integer(d2 - d1) <= tandem_days && n_allo_between == 0L
+    # LOT applicable window (Step N.4, lot2_5_base.R:555-610): for LOT_N the first
+    # AUTO is in-line only if `datediff(AUTO_DT_1, start) < lot_window_days`; the
+    # first AUTO outside that window is NOT in-line (TX fields clear, flags 0) and
+    # instead becomes the ENDING_AUTO that closes the line. LOT1 = NA window = the
+    # first AUTO is always the induction transplant (in-line), never an end trigger.
+    in_win <- is.na(lot_window_days) || (!is.na(d1) && as.integer(d1 - L) < lot_window_days)
+    tandem <- in_win && tandem0
+    sing <- in_win && !is.na(d1) && !tandem0
+    rep_d1 <- if (in_win) d1 else as.Date(NA)
+    rep_d2 <- if (in_win) d2 else as.Date(NA)
+    ending_auto <- if (is.na(d1)) as.Date(NA) else if (!in_win) d1 else if (tandem0) d3 else d2
     cands <- c(AUTO = ending_auto, ALLO = first_allo, CART = first_cart)
     if (all(is.na(cands))) { end_dt <- as.Date(NA); reason <- NA_integer_ } else {
       SENT <- as.Date("9999-12-31"); a <- cands["AUTO"]; al <- cands["ALLO"]; ca <- cands["CART"]
@@ -139,7 +155,7 @@ build_sct_summary <- function(sct_claims, lot1_start, obs_end,
       end_dt <- min(a, al, ca) - 1L
       reason <- if (a <= al && a <= ca) 1L else if (al <= ca) 2L else 3L
     }
-    data.frame(patient_id = pid, auto_dt_1 = d1, auto_dt_2 = d2,
+    data.frame(patient_id = pid, auto_dt_1 = rep_d1, auto_dt_2 = rep_d2,
                tand_flg = as.integer(tandem), sing_flg = as.integer(sing),
                ending_auto_dt = ending_auto, first_allo_dt = first_allo, first_cart_dt = first_cart,
                lot1_tx_enddate = end_dt, lot1_tx_enddate_reason = reason, stringsAsFactors = FALSE)

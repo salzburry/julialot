@@ -15,8 +15,8 @@ comparing. That run is the reviewer/owner's step (it needs the warehouse).
 
 Run it (the driver runs the full pipeline MAP → LOT1 → SCT → LOT1 end):
 ```
-Rscript engine/run_engine.R engine/fixtures /tmp/out   # MAP_STACKED + LOT1_BASE + LOT1_END
-Rscript tests/run_unit_tests.R                          # 219 pass (engine: test_engine/sct/lot_end/lot_long)
+Rscript engine/run_engine.R engine/fixtures /tmp/out   # MAP_STACKED + LOT1_BASE + LOT1_END + LOT_LONG
+Rscript tests/run_unit_tests.R                          # 229 pass (engine: test_engine/sct/lot_end/lot_long)
 ```
 
 ## What to validate: each rule maps to a production source line
@@ -39,7 +39,9 @@ Rscript tests/run_unit_tests.R                          # 219 pass (engine: test
 | `lot_end.R` | end cascade SCT > CART_INIT > MED_ADD > DEATH > DISCON > STUDY_END, gated on runout | `02_lot1.R:1570-1632` |
 | `lot_end.R` | CART_INIT flag (CART within 45d of the add) + post-runout death guard | `02_lot1.R:1469-1549` |
 | `lot_long.R` | LOT2-5: trigger candidates (d_MED/d_ALLO/d_CART/d_AUTO) + start/type | `R/lot2_5_base.R:170-321` |
-| `lot_long.R` | per-line regimen + line-scoped SCT end + ALLO single-day + CE-sensitive end | `R/lot2_5_base.R:323-922` |
+| `lot_long.R` | LOT applicable window: in-line AUTO iff `datediff(AUTO_DT_1,start)<win` (1/45/30); first AUTO outside = ENDING_AUTO; ALLO/CART scoped `>start` | `R/lot2_5_base.R:477-610` |
+| `lot_long.R` | per-line regimen + line-scoped SCT end + CE-sensitive end | `R/lot2_5_base.R:323-657` |
+| `lot_long.R` | special starts: ALLO single-day (`allo_lot_span`) + CART-no-med → `SCT_CART` | `R/lot2_5_base.R:658-870` |
 
 ## Verified coverage (hand-derived expected)
 
@@ -62,16 +64,22 @@ Rscript tests/run_unit_tests.R                          # 219 pass (engine: test
   imputation, same-day max-day-supply de-dup, AUTO window = 13.
 - **LOT2-5** (`test_lot_long.R`): a 3-line cohort (LENA→DARA→CARF) run through the
   full chain MAP→LOT1→LOT_LONG — each line triggered from the prior line's end,
-  MED_ADD→MED_ADD→DISCONTINUATION, loop stops at line 3; plus the start-type
-  tie-break (SCT_ALLO > MED on a same-day candidate).
+  MED_ADD→MED_ADD→DISCONTINUATION, loop stops at line 3; the start-type tie-break
+  (SCT_ALLO > MED on a same-day candidate); the **LOT applicable window** (the same
+  AUTO ends a MED LOT2 when *outside* the 30-day window but is an in-line transplant
+  when *inside* it); **CART-no-consolidation → `SCT_CART`** single-day; and both
+  **`allo_lot_span`** modes (single-day default vs extend-to-next at the later CART).
+- **SCT window unit** (`test_sct.R`): `build_sct_summary` with `lot_window_days`
+  flips an AUTO between in-line transplant and ENDING_AUTO; `allo_cart_strict`
+  (`>start`) makes a start-date ALLO the line's start under LOT_N but its end under
+  LOT1 (`>=`, faithful to `02_lot1.R:1209-1247` vs `lot2_5_base.R:498-535`).
 
 ## NOT yet ported (refinements)
 
 - **EXCLUDED from parity:** `contains_mtx_reg` (= 0; needs maintenance metadata).
-- **CART-started line consolidation** end nuances; the **regression-expected**
-  baseline (legacy execution on the same synthetic data - the owner's hive_metastore
-  step); and the warehouse-comparator cross-convention PATID + checksum scalability
-  (deprioritized per the local-verification workflow).
+- The **regression-expected** baseline (legacy execution on the same synthetic data
+  — the owner's hive_metastore step) and the warehouse-comparator cross-convention
+  PATID + checksum scalability (deprioritized per the local-verification workflow).
 
 ## Constraints to confirm
 

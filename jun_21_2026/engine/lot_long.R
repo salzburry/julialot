@@ -71,20 +71,33 @@ LOT_LONG_COLS <- c("patient_id", "lot_num", "lot_start_dt", "lot_start_type", "l
 
 # Line-scoped SCT summary for one line: SCT events within [start, OBS_END]. For a
 # CART-started line the start CART is the trigger (not an end event) and is dropped.
-.line_sct <- function(sct_claims, pid, lot_start, lot_type, obs_end, tandem, window, gap) {
+# lot_window_days = the LOT applicable window (Step N.4): the first AUTO is in-line
+# only within that many days of the start, else it is the ENDING_AUTO that closes
+# the line (NA = LOT1 = no window). allo_cart_strict = TRUE (LOT_N) scopes ALLO/CART
+# with `> start` so the line's own start SCT is not treated as its end.
+.line_sct <- function(sct_claims, pid, lot_start, lot_type, obs_end, tandem, window, gap,
+                      lot_window_days = NA_integer_, allo_cart_strict = FALSE) {
   if (is.null(sct_claims) || !nrow(sct_claims)) return(NULL)
   sc <- sct_claims[sct_claims$patient_id == pid, , drop = FALSE]
   if (lot_type == "CART") sc <- sc[!(as.Date(as.character(sc$dt)) == lot_start & sc$sct_type == "CART"), , drop = FALSE]
   if (!nrow(sc)) return(NULL)
   build_sct_summary(sc, data.frame(patient_id = pid, lot1_start_dt = lot_start, stringsAsFactors = FALSE),
-                    obs_end, tandem, window, gap)
+                    obs_end, tandem, window, gap, lot_window_days, allo_cart_strict)
+}
+
+# The LOT applicable window for a LOT_N start type (Step N.4 / lb CTE,
+# lot2_5_base.R:477-481): 1 (SCT_ALLO) / cart_consolidation (CART) / induction (else).
+.lot_window_days <- function(start_type, induction_window_days, cart_consolidation_days) {
+  switch(start_type, "SCT_ALLO" = 1L, "CART" = cart_consolidation_days, induction_window_days)
 }
 
 build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
                            obs_end, death = NULL, permissible_subs = NULL,
                            induction_window_days = 30L, cart_consolidation_days = 45L,
                            sct_tandem_days = 180L, sct_auto_window_days = 13L,
-                           sct_auto_gap_days = 60L, max_lot = 5L) {
+                           sct_auto_gap_days = 60L, allo_lot_span = c("single_day", "extend_to_next"),
+                           max_lot = 5L) {
+  allo_lot_span <- match.arg(allo_lot_span)   # production default single_day (lot2_5_base.R:665)
   D <- function(x) as.Date(as.character(x))
   oe <- setNames(D(obs_end$obs_end_dt), as.character(obs_end$patient_id))
   ece <- if ("enddate_ce" %in% names(obs_end)) setNames(D(obs_end$enddate_ce), as.character(obs_end$patient_id)) else NULL
@@ -99,9 +112,12 @@ build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
   sc_allo <- if (!is.null(sct_claims) && nrow(sct_claims)) sct_claims[sct_claims$sct_type == "ALLO", ] else NULL
   sc_cart <- if (!is.null(sct_claims) && nrow(sct_claims)) sct_claims[sct_claims$sct_type == "CART", ] else NULL
 
-  # 23-column LOT_LONG contract. CE-sensitive end = end (no CE adjustment here) and
-  # contains_mtx_reg = 0 are documented simplifications; AUTO fields come from the
-  # line-scoped SCT summary.
+  # 23-column LOT_LONG contract. CE-sensitive end caps at enddate_ce (reason
+  # DISENROLLMENT) when the line outlasts continuous enrollment. The in-LOT AUTO
+  # fields come from the line-scoped SCT summary and are WINDOW-scoped (Step N.4:
+  # in-line iff datediff(AUTO_DT_1, start) < lot_window_days) - matching production,
+  # they are NOT clamped to the line's end date. contains_mtx_reg = 0 (EXCLUDED:
+  # needs maintenance metadata).
   row <- function(pid, ln, start, type, reg, end, lsct = NULL, ce = NULL) {
     has <- !is.null(lsct) && nrow(lsct)
     ad <- function(f) if (has) D(lsct[[f]][1]) else as.Date(NA)
@@ -144,19 +160,25 @@ build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
       cd <- .lot_candidates(msp, allo, cart, autos, prev_end, prev_meds, prev_start, prev_type, obs, subs,
                             induction_window_days, cart_consolidation_days, sct_tandem_days)
       if (is.null(cd)) break
-      if (cd$type == "SCT_ALLO") {                          # ALLO single-day line: ends on its start
+      if (cd$type == "SCT_ALLO" && allo_lot_span == "single_day") {   # ALLO single-day: ends on its start
         reg <- list(base_meds = "", med_cnt = 0L, discon = as.Date(NA), add_dt = as.Date(NA), add_med = NA_character_)
         en <- list(lot1_base_end_dt = cd$start, lot1_base_end_reason = "SCT_ALLO", lot1_base_length = 1L)
         lsct <- NULL
-      } else {
+      } else {                                              # MED/CART/AUTO line (or extend_to_next ALLO)
         reg <- .lot_regimen(msp, cd$start, cd$type, obs, subs, induction_window_days, cart_consolidation_days)
-        lsct <- .line_sct(sct_claims, pid, cd$start, cd$type, obs_end, sct_tandem_days, sct_auto_window_days, sct_auto_gap_days)
-        lbn <- data.frame(patient_id = pid, lot1_start_dt = cd$start, lot1_base_meds = reg$base_meds,
-          lot1_base_1st_add_med_dt = reg$add_dt, lot1_base_discon_dt = reg$discon, stringsAsFactors = FALSE)
-        en <- build_lot1_end(lbn, lsct, obs_end, death, map_stacked = map_stacked,
-                             auto_dates = auto_all, permissible_subs = permissible_subs,
-                             cart_consolidation_days = cart_consolidation_days,
-                             lot_n_induction_window_days = induction_window_days, sct_tandem_days = sct_tandem_days)
+        win <- .lot_window_days(cd$type, induction_window_days, cart_consolidation_days)
+        lsct <- .line_sct(sct_claims, pid, cd$start, cd$type, obs_end, sct_tandem_days,
+                          sct_auto_window_days, sct_auto_gap_days, lot_window_days = win, allo_cart_strict = TRUE)
+        if (cd$type == "CART" && reg$med_cnt == 0L) {          # CART, no consolidation agent: single-day line
+          en <- list(lot1_base_end_dt = cd$start, lot1_base_end_reason = "SCT_CART", lot1_base_length = 1L)
+        } else {
+          lbn <- data.frame(patient_id = pid, lot1_start_dt = cd$start, lot1_base_meds = reg$base_meds,
+            lot1_base_1st_add_med_dt = reg$add_dt, lot1_base_discon_dt = reg$discon, stringsAsFactors = FALSE)
+          en <- build_lot1_end(lbn, lsct, obs_end, death, map_stacked = map_stacked,
+                               auto_dates = auto_all, permissible_subs = permissible_subs,
+                               cart_consolidation_days = cart_consolidation_days,
+                               lot_n_induction_window_days = induction_window_days, sct_tandem_days = sct_tandem_days)
+        }
       }
       rows[[length(rows) + 1L]] <- row(pid, ln, cd$start, cd$type, reg, en, lsct, cep)
       prev_end <- D(en$lot1_base_end_dt); prev_meds <- reg$base_meds; prev_start <- cd$start; prev_type <- cd$type
