@@ -18,7 +18,7 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 276 tests, all pure-R / local (also run in CI)
+Rscript tests/run_unit_tests.R          # 280 tests, all pure-R / local (also run in CI)
 ```
 
 Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
@@ -127,9 +127,10 @@ column — counts kept as **double**; `connect_compare` maps BIGINT to numeric s
 aborts the verdict). On a value mismatch only, a **bounded, deterministic** (`ORDER BY`
 keys, `LIMIT 100`) diagnostic of the changed keys + a/b values is produced; being
 patient-level, it is written to a **governed** run-scoped table via
-`--sample-into <prefix>` (the log then prints only the table pointer / row count /
-columns — never patient data), and a sample failure is surfaced as
-`SAMPLE_FAILED(audit-only)`. Clean runs pay nothing.
+`--sample-into <prefix>` (the log then prints only `sample_table:<name>(rows=N)` plus
+the changed columns in the `cols:` field — never patient data), and a sample failure
+is surfaced as `SAMPLE_FAILED(audit-only)`. `--sample-into` requires its prefix
+argument (fails fast otherwise). Clean runs pay nothing.
 
 The **`partial_match`** verdict (for a known `UNIMPLEMENTED_FIELDS` gap like
 `contains_mtx_reg`) is **caller-scoped**, not global — for **both** modes. The

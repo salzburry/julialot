@@ -121,6 +121,14 @@ connect_compare <- function(dsn = Sys.getenv("DATABRICKS_DSN", "RWDE"),
 .bt <- function(x) paste0("`", x, "`")                       # backtick-quote an identifier
 .keylist <- function(keys) paste(.bt(keys), collapse = ", ")
 .key_join <- function(keys) paste(sprintf("a.%s <=> b.%s", .bt(keys), .bt(keys)), collapse = " AND ")
+# Parse a CLI flag's value, REQUIRING a non-flag argument follows (so `--sample-into`
+# with no prefix fails fast instead of building a `NA_<table>` destination).
+.flag_val <- function(a, flag) {
+  i <- which(a == flag); if (!length(i)) return(NULL)
+  v <- if (i[1] < length(a)) a[i[1] + 1L] else NA_character_
+  if (is.na(v) || startsWith(v, "--")) stop(flag, " requires an argument")
+  v
+}
 
 # --- canonical normalization (roadmap S14) --------------------------------
 # Warehouse columns are already TYPED (DATE/INT/STRING), so the null-safe `<=>`
@@ -345,7 +353,9 @@ compare_table <- function(con, tbl_a, tbl_b, table_name, patid = NULL, unimpleme
       dest <- sprintf("%s_%s", sample_into, table_name)
       ok <- tryCatch({ db_exec(con, sql_value_sample_into(dest, tbl_a, tbl_b, keys, mc, 100L)); TRUE },
                      error = function(e) { res$sample_warning <<- conditionMessage(e); FALSE })
-      if (ok) res$value_sample_table <- dest
+      if (ok) { res$value_sample_table <- dest
+        res$value_sample_n <- tryCatch(as.numeric(db_q(con, sprintf("SELECT count(*) AS n FROM %s", dest))$n[1]),
+                                       error = function(e) NA_real_) }
     } else {
       res$value_sample <- tryCatch(db_q(con, sql_value_sample(tbl_a, tbl_b, keys, mc, 100L)),
                                    error = function(e) { res$sample_warning <<- conditionMessage(e); NULL })
@@ -510,8 +520,7 @@ compare_run <- function(con, ns_a, ns_b, tables = names(COMPARE_KEYS), patid = N
 if (sys.nframe() == 0 && !interactive()) {
   a <- commandArgs(trailingOnly = TRUE)
   if (length(a) >= 3 && a[1] == "--run") {        # live: compare two hive_metastore namespaces
-    pi <- which(a == "--patid"); patid <- if (length(pi)) a[pi + 1L] else NULL
-    si <- which(a == "--sample-into"); sample_into <- if (length(si)) a[si + 1L] else NULL
+    patid <- .flag_val(a, "--patid"); sample_into <- .flag_val(a, "--sample-into")
     con <- connect_compare()
     on.exit(try(DBI::dbDisconnect(con), silent = TRUE))
     rr <- compare_run(con, a[2], a[3], patid = patid, sample_into = sample_into)
@@ -529,7 +538,8 @@ if (sys.nframe() == 0 && !interactive()) {
         if (length(r$values$mismatched_columns)) paste0("cols:", paste(r$values$mismatched_columns, collapse = ",")),
         if ((r$values$excluded_diffs %||% 0) > 0) sprintf("excluded_diffs=%s", r$values$excluded_diffs),
         if (!is.null(r$checksum_warning)) sprintf("CHECKSUM_FAILED(audit-only):%s", r$checksum_warning),
-        if (!is.null(r$value_sample_table)) sprintf("sample_table:%s", r$value_sample_table),
+        if (!is.null(r$value_sample_table)) sprintf("sample_table:%s(rows=%s; cols in `cols:` above)",
+            r$value_sample_table, r$value_sample_n %||% "?"),
         if (!is.null(r$value_sample) && nrow(r$value_sample)) sprintf("sample:%d_rows(in-process,not-logged)", nrow(r$value_sample)),
         if (!is.null(r$sample_warning)) sprintf("SAMPLE_FAILED(audit-only):%s", r$sample_warning),
         if (length(r$unimplemented)) sprintf("PARTIAL{unimplemented:%s}", paste(r$unimplemented, collapse = ",")))

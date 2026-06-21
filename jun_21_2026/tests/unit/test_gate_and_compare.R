@@ -136,6 +136,13 @@ ok(is.null(sql_value_sample("a", "b", "patient_id", character(0))), "no mismatch
 si <- sql_value_sample_into("audit.lot_diff_LOT_LONG", "ns.A", "ns.B", c("patient_id", "lot_num"), c("lot_base_end_reason"), 100L)
 ok(grepl("^CREATE OR REPLACE TABLE audit.lot_diff_LOT_LONG AS SELECT", si) && grepl("ORDER BY", si),
    "sql_value_sample_into wraps the sample in CREATE TABLE AS (governed storage)")
+# CLI flag parsing requires an argument (a bare --sample-into must NOT build NA_<table>)
+ok(.flag_val(c("--run", "x", "y", "--sample-into", "audit.diff"), "--sample-into") == "audit.diff", "--flag value parsed")
+ok(is.null(.flag_val(c("--run", "x", "y"), "--sample-into")), "absent flag -> NULL")
+ok(inherits(try(.flag_val(c("--run", "x", "y", "--sample-into"), "--sample-into"), silent = TRUE), "try-error"),
+   "bare --sample-into (no prefix) fails fast, not NA_<table>")
+ok(inherits(try(.flag_val(c("--run", "x", "y", "--sample-into", "--patid"), "--sample-into"), silent = TRUE), "try-error"),
+   "--sample-into followed by another flag fails fast")
 ok(grepl("array_sort", sql_checksum("t", "patient_id", c("patient_id", "lot_start_type"))),
    "checksum SQL is order-independent (array_sort)")
 # legacy-named tables: --patid PATID remaps ONLY patient_id (Databricks folds case
