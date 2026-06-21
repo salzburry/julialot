@@ -2,6 +2,13 @@
 a <- verify_bundle_allowlist(c("R/core/map.R", "tests/fixtures/x.csv"))
 ok(!a$ok && "tests/fixtures/x.csv" %in% a$offending, "denylist path blocked")
 ok(verify_bundle_allowlist(c("R/core/map.R", "studies/ndmm.yml"))$ok, "allowlist paths pass")
+ok(!verify_bundle_allowlist("R/../tests/secret.csv")$ok, "path traversal (..) rejected")
+# manifest-vs-bundle reconciliation: an unlisted bundle file fails closed
+bd <- file.path(tempdir(), "bundle"); dir.create(file.path(bd, "R"), recursive = TRUE, showWarnings = FALSE)
+writeLines("x", file.path(bd, "R", "map.R")); writeLines("y", file.path(bd, "R", "sneaky.R"))
+rec <- verify_manifest_matches_bundle("R/map.R", bd)
+ok(!rec$ok && "R/sneaky.R" %in% rec$unlisted_in_manifest, "unlisted bundle file detected")
+ok(verify_manifest_matches_bundle(c("R/map.R", "R/sneaky.R"), bd)$ok, "fully-listed bundle reconciles")
 ok(length(scan_file_for_synthetic("tests/fixtures/synthetic/members.csv")) > 0,
    "synthetic-range PATID detected")
 # fail closed: a missing listed data file is a violation
@@ -15,21 +22,34 @@ res <- compare_local("tests/unit/cmp/legacy", "tests/unit/cmp/refactored")
 eq(attr(res, "verdict"), "match", "all required tables present, excluded-only diff -> match")
 eq(length(attr(res, "missing_tables")), 0L, "no missing required tables")
 ok(res$LOT_LONG$value_mismatch == 0L, "no non-excluded value mismatch")
+# corrected nondeterminism model: the seeded tie-break picks the MED identity, so
+# lot_base_1st_add_med is excluded (surfaced) while the *_DT is now STRICT.
+ok(res$LOT_LONG$excluded_diffs >= 1L, "excluded med-identity diff is surfaced, not blocking")
+tmpD <- file.path(tempdir(), "dtstrict"); dir.create(tmpD, showWarnings = FALSE)
+file.copy(list.files("tests/unit/cmp/refactored", full.names = TRUE), tmpD, overwrite = TRUE)
+dd <- read.csv(file.path(tmpD, "LOT_LONG.csv"), colClasses = "character", check.names = FALSE)
+dd$lot_base_1st_add_med_dt[1] <- "2019-12-31"      # perturb the (now strict) date
+write.csv(dd, file.path(tmpD, "LOT_LONG.csv"), row.names = FALSE)
+resDT <- compare_local("tests/unit/cmp/legacy", tmpD)
+eq(attr(resDT, "verdict"), "mismatch", "first-add-med DATE is strict (a diff blocks)")
+ok("lot_base_1st_add_med_dt" %in% resDT$LOT_LONG$mismatch_cols, "strict date diff identified")
 
 # output contract: two EQUALLY-incomplete outputs (both missing a required
 # column) must NOT be called a match (P1: a missing contract column is blocking).
+# Use a behaviourally-meaningful LOT_LONG field (lot_start_type) - the exact class
+# the contract must protect, not just a date.
 tmpC1 <- file.path(tempdir(), "contract_a"); dir.create(tmpC1, showWarnings = FALSE)
 tmpC2 <- file.path(tempdir(), "contract_b"); dir.create(tmpC2, showWarnings = FALSE)
 file.copy(list.files("tests/unit/cmp/legacy", full.names = TRUE), tmpC1, overwrite = TRUE)
 file.copy(list.files("tests/unit/cmp/refactored", full.names = TRUE), tmpC2, overwrite = TRUE)
 for (d in c(tmpC1, tmpC2)) {                       # drop a required col from BOTH sides
-  dd <- read.csv(file.path(d, "LOT1_BASE.csv"), colClasses = "character", check.names = FALSE)
-  write.csv(dd[setdiff(names(dd), "lot1_base_discon_dt")], file.path(d, "LOT1_BASE.csv"), row.names = FALSE)
+  dd <- read.csv(file.path(d, "LOT_LONG.csv"), colClasses = "character", check.names = FALSE)
+  write.csv(dd[setdiff(names(dd), "lot_start_type")], file.path(d, "LOT_LONG.csv"), row.names = FALSE)
 }
 resC <- compare_local(tmpC1, tmpC2)
 eq(attr(resC, "verdict"), "mismatch", "both sides missing a required column -> mismatch (not match)")
-ok(isFALSE(resC$LOT1_BASE$contract_ok), "contract_ok is FALSE when a required column is absent")
-ok("lot1_base_discon_dt" %in% resC$LOT1_BASE$missing_required$a, "missing required column reported")
+ok(isFALSE(resC$LOT_LONG$contract_ok), "contract_ok is FALSE when a required column is absent")
+ok("lot_start_type" %in% resC$LOT_LONG$missing_required$a, "missing required column reported")
 
 # a missing required output table -> blocking mismatch (fail closed)
 tmpL <- file.path(tempdir(), "onlylot"); dir.create(tmpL, showWarnings = FALSE)
@@ -49,7 +69,24 @@ ok("lot_base_end_reason" %in% res2$LOT_LONG$mismatch_cols, "mismatch column iden
 write.csv(df[-3, ], file.path(tmp, "LOT_LONG.csv"), row.names = FALSE)
 ok(compare_local("tests/unit/cmp/legacy", tmp)$LOT_LONG$only_in_a >= 1L, "missing row detected")
 
+# canonical cell normalization: numeric tolerance + date coercion, but a
+# leading-zero identifier (NDC, padded id) is NEVER coerced to a number.
+ok(.cells_equal("1.0", "1"), "numeric: 1.0 == 1")
+ok(.cells_equal("1.2300", "1.23"), "numeric: trailing zeros tolerated")
+ok(.cells_equal("2020-06-01 00:00:00", "2020-06-01"), "date: timestamp == date")
+ok(!.cells_equal("00002143380", "2143380"), "leading-zero id NOT numerically coerced")
+ok(!.cells_equal("PROGRESSION", "DEATH"), "distinct tokens differ")
+ok(!.cells_equal("\001NULL\001", "0"), "null is not 0")
+
 # coverage matrix builds (informational); gate mode fails on gaps (catalog is todo)
 ok(nrow(build_coverage_matrix("tests/fixtures/catalog.csv")) > 0, "coverage matrix builds")
 mg <- build_coverage_matrix("tests/fixtures/catalog.csv", approved_only = TRUE)
 ok(all(mg$gap == "GAP"), "gate mode: all rules are gaps (no approval-ready cases yet)")
+# artifact-awareness: an approved catalog row pointing at a missing fixture fails
+catA <- tempfile(fileext = ".csv")
+write.csv(data.frame(case_id = "C1", area = "MAP", rule_name = "r", spec_section = "s",
+  polarity = "positive", expected_outputs = "map_stacked", clinical_reviewer = "c",
+  engineering_reviewer = "e", status = "approved",
+  input_fixture = "nope/in.csv", expected_fixture = "nope/exp.csv"), catA, row.names = FALSE)
+probs <- check_catalog_artifacts(read.csv(catA, stringsAsFactors = FALSE, check.names = FALSE), tempdir())
+ok(any(grepl("artifact missing", probs)), "approved row with missing fixture artifact flagged")

@@ -58,12 +58,19 @@ validate_config <- function(cfg, spec = CONFIG_SPEC) {
     if (!is.null(s$max) && is.numeric(v) && v > s$max)
       errors <- c(errors, sprintf("[%s] %s > max %s", name, v, s$max))
   }
-  # cross-field sanity
+  # cross-field sanity on the study period + identification window. The ID window
+  # must be ordered AND contained within the study period (you cannot identify
+  # patients outside the observation window).
   d <- function(x) as.Date(cfg[[x]], "%Y-%m-%d")
-  if (all(c("study_start", "study_end") %in% names(cfg)) &&
-      .is_type(cfg$study_start, "date") && .is_type(cfg$study_end, "date") &&
-      d("study_start") >= d("study_end"))
+  isd <- function(x) x %in% names(cfg) && .is_type(cfg[[x]], "date")
+  if (isd("study_start") && isd("study_end") && d("study_start") >= d("study_end"))
     errors <- c(errors, "[study_period] study_start must be < study_end")
+  if (isd("id_start") && isd("id_end") && d("id_start") > d("id_end"))
+    errors <- c(errors, "[study_period] id_start must be <= id_end")
+  if (isd("id_start") && isd("study_start") && d("id_start") < d("study_start"))
+    errors <- c(errors, "[study_period] id_start must be >= study_start (ID window inside the study period)")
+  if (isd("id_end") && isd("study_end") && d("id_end") > d("study_end"))
+    errors <- c(errors, "[study_period] id_end must be <= study_end (ID window inside the study period)")
   errors
 }
 

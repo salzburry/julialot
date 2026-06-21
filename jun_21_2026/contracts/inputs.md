@@ -23,6 +23,15 @@ schema during Increment 1B before anything depends on them.
   segment-aware 10→11 conversion is the **source adapter's** responsibility, from
   the source's known segment format. A non-11-digit NDC is a **rejected record**
   (not silently padded or matched).
+  - **Validator limitation (Increment 1B decision).** The canonical validator
+    confirms `normalized_code` *is* 11 digits; it deliberately does **not** verify
+    the raw→normalized conversion, so an adapter that converts a 10-digit NDC to
+    the **wrong** 11-digit value would still pass this check. Before 1B the adapter
+    contract must close this with **one** of: (a) an authoritative 11-digit source
+    field (no conversion); (b) a source **segment-format** field + a validated
+    segment-aware converter; or (c) a retained `conversion_method` lineage field
+    **plus per-format test vectors** the converter must reproduce. Until one is
+    chosen, raw→normalized correctness is **not** guaranteed by this layer.
 - **HCPCS/CPT normalization.** Strip non-alphanumeric, uppercase. `code_system`
   distinguishes `HCPCS` vs `CPT`.
 - **Null/invalid dates.** A required date that is null or unparseable makes the
@@ -67,7 +76,18 @@ This unifies the grain with `canonical_diagnosis` / `canonical_procedure`.
 | data_vintage | string | required | |
 
 - **Uniqueness:** (patient_id, service_date, normalized_code, code_system, source_record_id).
-- **Duplicate resolution:** within (patient_id, normalized_code, service_date) keep **max day_supply, then min normalized_code** (deterministic; matches current dedup).
+  `source_code_field` is **lineage, not part of the key**: the same physical record
+  may carry one code in more than one field (e.g. `PROC_CD` and `BILL_PROC_CD`), and
+  those collapse to **one** canonical row so a single billed service is not
+  double-counted downstream.
+- **Duplicate resolution (deterministic, no random choice):** (1) when one record
+  yields the same `normalized_code`+`code_system` from more than one field, keep a
+  single row by field precedence **`proc_cd` > `bill_proc_cd` > `ndc`** (the
+  surviving row records the winner in `source_code_field`); (2) across records,
+  within (patient_id, normalized_code, service_date) keep **max day_supply, then min
+  normalized_code**. The validator's key-uniqueness check **enforces** step (1): a
+  residual same-key collision (two rows differing only by `source_code_field`) is a
+  blocking error, never silently merged.
 
 ## canonical_pharmacy — pharmacy (rx) claims (NDC)
 

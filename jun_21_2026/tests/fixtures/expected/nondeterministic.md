@@ -5,14 +5,20 @@ downstream MAP/LOT state must be deterministic.
 
 | table | field | reason | plan |
 |---|---|---|---|
-| LOT1_BASE | lot1_base_1st_add_med_dt | seeded random tie-break on same-day first-add-med (seed=42 today) | record seed + Spark/runtime versions; later, separately validated deterministic tie-break fix |
-| LOT_LONG | lot_base_1st_add_med_dt | inherits the LOT1 tie-break for LOT1 | same |
+| LOT1_BASE | lot1_base_1st_add_med | seeded random tie-break picks WHICH med among same-date first-add candidates (02_lot1.R:806, `ORDER BY MAP_START_DT, rand(42)`) | record seed + Spark/runtime versions; later, separately validated deterministic tie-break fix |
+| LOT_LONG | lot_base_1st_add_med | inherits the LOT1 tie-break for LOT1 | same |
 
-**This exclusion is PROVISIONAL — pending algorithmic sign-off.** Excluding
-`*_1st_add_med_dt` from the strict verdict is only justified if the seeded
-tie-break is confirmed NOT to influence any downstream LOT end/trigger/flag field
-(or the tie-break is replaced by a deterministic fix). Until that sign-off, the
-comparator still **surfaces** any difference in these fields
+The excluded field is the **med identity**, not the date. The date is
+`date_sub(MAP_START_DT, 1)`, which is identical across a same-date tie, so
+`*_1st_add_med_dt` is **deterministic and strictly compared**; only the med the
+seed happens to pick (`*_1st_add_med`) is excluded.
+
+**This exclusion is PROVISIONAL — pending algorithmic sign-off.** It is only
+justified if the seeded med pick is confirmed NOT to influence any downstream LOT
+end/trigger/flag field (or the tie-break is replaced by a deterministic fix). That
+confirmation is partly mechanical: every downstream field is NON-excluded, so the
+strict comparison there is exactly what would catch a propagation (fail-closed).
+The comparator also **surfaces** any difference in the excluded field
 (`compare_run_outputs.R` reports `excluded_diffs`, printed as
 `excluded_diffs=N (informational)`); a difference is never silently dropped, only
 held back from the blocking verdict. If the field is later found to affect

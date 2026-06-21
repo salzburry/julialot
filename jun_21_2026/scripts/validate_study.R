@@ -125,6 +125,7 @@ validate_dag <- function(resolved, registry) {
   # cannot depend on a stage produced later than its own phase.
   PHASE <- c(pre_lot = 1L, post_lot1 = 2L, post_lot_long = 3L, study_period = 4L)
   STAGE_AT <- c(index_date = 1L, lot1_start = 2L, lot_long = 3L)
+  gate_phase <- function(gn) unname(PHASE[registry$gates[[gn]]$phase %||% "pre_lot"])
   edges <- list()
   for (gn in gates) {
     ph <- registry$gates[[gn]]$phase %||% "pre_lot"
@@ -135,10 +136,18 @@ validate_dag <- function(resolved, registry) {
     dep <- unlist(registry$gates[[gn]]$depends_on %||% list())
     bad <- setdiff(dep, nodes)
     if (length(bad)) errors <- c(errors, sprintf("gate '%s' depends on unknown node(s): %s", gn, paste(bad, collapse = ", ")))
+    # phase feasibility applies to BOTH stage and gate dependencies: a dependency
+    # must not be produced in a LATER phase than the gate that needs it.
     for (d in intersect(dep, names(STAGE_AT)))
       if (!is.na(gph) && STAGE_AT[[d]] > gph)
         errors <- c(errors, sprintf("gate '%s' (phase %s) depends on stage '%s' not produced until a later phase",
                     gn, ph, d))
+    for (d in intersect(dep, gates)) {                # gate -> gate phase feasibility
+      dph <- gate_phase(d)
+      if (!is.na(gph) && !is.na(dph) && dph > gph)
+        errors <- c(errors, sprintf("gate '%s' (phase %s) depends on gate '%s' in a later phase (%s)",
+                    gn, ph, d, registry$gates[[d]]$phase %||% "pre_lot"))
+    }
     edges[[gn]] <- intersect(dep, nodes)
   }
   # Kahn's algorithm for cycle detection (stages have no deps)
@@ -172,8 +181,11 @@ validate_approval <- function(obj, label, require_approved = FALSE) {
   if (status == "approved") {
     if (!nzchar(trimws(as.character(ap$signed_off_by %||% ""))))
       errors <- c(errors, sprintf("%s: approval.status=approved requires signed_off_by", label))
-    if (!nzchar(trimws(as.character(ap$signed_off_date %||% ""))))
+    sod <- trimws(as.character(ap$signed_off_date %||% ""))
+    if (!nzchar(sod))
       errors <- c(errors, sprintf("%s: approval.status=approved requires signed_off_date", label))
+    else if (!is_iso_date(sod))                       # not just non-blank: a real ISO date
+      errors <- c(errors, sprintf("%s: approval.signed_off_date '%s' is not an ISO (YYYY-MM-DD) date", label, sod))
   } else {
     msg <- sprintf("%s is %s - NOT cleared for production (clinical sign-off pending)", label, status)
     if (require_approved) errors <- c(errors, msg) else warnings <- c(warnings, msg)
@@ -181,19 +193,59 @@ validate_approval <- function(obj, label, require_approved = FALSE) {
   list(errors = errors, warnings = warnings, status = status)
 }
 
+# The inheritance chain: this study + every base it derives from (current first).
+study_chain <- function(study, studies, seen = character(0)) {
+  if (is.null(study)) return(list())
+  chain <- list(study)
+  bid <- study$base$id
+  if (!is.null(bid) && !(bid %in% seen) && bid %in% names(studies))
+    chain <- c(chain, study_chain(studies[[bid]], studies, c(seen, study$id %||% "")))
+  chain
+}
+
+# Closed-schema conformance: the runtime validator and study.schema.json must be
+# ONE contract, not two. Enforce the schema's top-level `required` + (when
+# additionalProperties:false) reject any undeclared top-level key. (Deep JSON
+# Schema is left to a dedicated validator; this keeps the two from diverging - a
+# study key the schema does not know about, like an undeclared `approval`, fails.)
+validate_study_schema <- function(study, schema_path) {
+  schema <- tryCatch(read_json_file(schema_path), error = function(e) NULL)
+  if (is.null(schema)) return(sprintf("could not read study schema (%s)", schema_path))
+  errors <- character(0)
+  props <- names(schema$properties %||% list())
+  miss <- setdiff(unlist(schema$required %||% list()), names(study))
+  if (length(miss)) errors <- c(errors, sprintf("schema: missing required key(s): %s", paste(miss, collapse = ", ")))
+  if (isFALSE(schema$additionalProperties)) {
+    extra <- setdiff(names(study), props)
+    if (length(extra)) errors <- c(errors, sprintf("schema: undeclared top-level key(s) (closed schema): %s", paste(extra, collapse = ", ")))
+  }
+  errors
+}
+
 validate_study <- function(study_path, registry_path, studies_dir, strict = FALSE,
-                           require_approved = FALSE) {
+                           require_approved = FALSE,
+                           schema_path = "contracts/study.schema.json") {
   registry <- load_registry(registry_path)
   studies <- load_all_studies(studies_dir)
   study <- read_yaml_file(study_path)
   r <- resolve_study(study, studies, registry, strict = strict)
   dag_err <- if (length(r$errors) == 0) validate_dag(r$resolved, registry) else character(0)
-  ap_s <- validate_approval(study, sprintf("study '%s'", study$id %||% "?"), require_approved)
+  sch_err <- if (file.exists(schema_path)) validate_study_schema(study, schema_path) else character(0)
+  # Approval is validated for the WHOLE inheritance chain + the registry: a
+  # release run cannot be cleared while any inherited base (or the registry) is
+  # still draft. Every approval is recorded in the resolved artifact.
+  ap_errors <- character(0); ap_warnings <- character(0); approvals <- list()
+  for (st in study_chain(study, studies)) {
+    a <- validate_approval(st, sprintf("study '%s'", st$id %||% "?"), require_approved)
+    ap_errors <- c(ap_errors, a$errors); ap_warnings <- c(ap_warnings, a$warnings)
+    approvals[[st$id %||% sprintf("?%d", length(approvals) + 1L)]] <- a$status
+  }
   ap_r <- validate_approval(registry, "gate registry", require_approved)
   list(id = study$id,
-       errors = c(r$errors, dag_err, ap_s$errors, ap_r$errors),
-       warnings = c(r$warnings, ap_s$warnings, ap_r$warnings),
-       approval = ap_s$status, registry_approval = ap_r$status,
+       errors = c(r$errors, dag_err, sch_err, ap_errors, ap_r$errors),
+       warnings = c(r$warnings, ap_warnings, ap_r$warnings),
+       approval = approvals[[study$id %||% "?1"]] %||% "draft",
+       chain_approvals = approvals, registry_approval = ap_r$status,
        resolved = r$resolved)
 }
 

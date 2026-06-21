@@ -26,28 +26,49 @@ COMPARE_KEYS <- list(
   LOT_LONG    = c("patient_id", "lot_num")
 )
 # Fields excluded from the strict value VERDICT (see
-# tests/fixtures/expected/nondeterministic.md). NOTE: this exclusion is PENDING
-# algorithmic sign-off - the seeded first-add tie-break must be confirmed not to
-# affect downstream LOT end/trigger/flag fields (or replaced by a deterministic
-# fix) before it is frozen. Differences in these fields are still SURFACED
+# tests/fixtures/expected/nondeterministic.md). The seeded tie-break
+# (02_lot1.R:806 `row_number() ... ORDER BY MAP_START_DT, rand(42)`) selects WHICH
+# med is the first-add among candidates sharing the earliest add date; the DATE is
+# `date_sub(MAP_START_DT,1)`, identical across a same-date tie, so the *_DT field is
+# DETERMINISTIC and the *_MED field is the nondeterministic one. We therefore
+# exclude only the *_MED identity. This is still PENDING algorithmic sign-off: if
+# the med choice propagates into any downstream field (lot end/reason/flags), that
+# field is NOT excluded, so the strict comparison there is exactly the mechanism
+# that would catch the propagation (fail-closed). Excluded diffs are SURFACED
 # (compare result `excluded_diffs`), never silently dropped.
 EXCLUDED_FIELDS <- list(
-  LOT1_BASE = c("lot1_base_1st_add_med_dt"),
-  LOT_LONG  = c("lot_base_1st_add_med_dt")
+  LOT1_BASE = c("lot1_base_1st_add_med"),
+  LOT_LONG  = c("lot_base_1st_add_med")
 )
 
 # Required output columns per table (the versioned output contract; see
 # contracts/outputs.md). compare_local checks BOTH sides carry these, so two
-# equally-incomplete outputs can never be called behaviourally equivalent.
-OUTPUT_CONTRACT_VERSION <- "0.1-draft"
+# equally-incomplete outputs can never be called behaviourally equivalent. These
+# are the ALGORITHM-DERIVED (behaviourally meaningful) columns the production
+# builders emit (MAP_STACKED <- apr_30_2026/02_lot1.R:643-662; LOT1_BASE <-
+# 02_lot1.R:814-823; LOT_LONG <- apr_30_2026/R/lot2_5_base.R:76-135 & 891-960).
+# Two column classes are intentionally NOT enumerated here (both still covered by
+# the schema-equality check, which fails any ONE-sided drop):
+#   - study-specific per-drug / per-class WIDE columns (LOT1_MED_*, LOT_CLASS_*,
+#     ...): their set varies by cohort, so they are not a fixed contract;
+#   - cohort PASSTHROUGH demographics on LOT1_BASE (index_date, enddate,
+#     obs_end_dt, death_dt, gdr_cd, yrdob, age_index_yr): governed by the
+#     cohort / canonical-input contract, not the LOT-output gate.
+OUTPUT_CONTRACT_VERSION <- "0.2-draft"
 OUTPUT_CONTRACT <- list(
-  MAP_STACKED = c("patient_id", "med_abbr", "map_cnt", "map_start_dt",
-                  "map_rx_runout_dt", "map_med_runout_dt", "map_end_dt", "map_discon_flg"),
-  LOT1_BASE   = c("patient_id", "lot1_start_dt", "lot1_base_meds", "lot1_med_cnt",
-                  "lot1_base_discon_dt", "lot1_base_1st_add_med_dt"),
-  LOT_LONG    = c("patient_id", "lot_num", "lot_start_dt", "lot_base_meds", "lot_med_cnt",
-                  "lot_base_discon_dt", "lot_base_1st_add_med_dt", "lot_base_end_dt",
-                  "lot_base_end_reason")
+  MAP_STACKED = c("patient_id", "med_abbr", "med_class", "map_cnt", "map_start_dt",
+                  "map_rx_runout_dt", "map_med_runout_dt", "map_end_dt",
+                  "map_med_type", "map_med_class", "map_discon_flg"),
+  LOT1_BASE   = c("patient_id", "lot1_start_dt", "lot1_med_cnt", "lot1_base_meds",
+                  "lot1_base_discon_dt", "lot1_base_1st_add_med_dt", "lot1_base_1st_add_med"),
+  LOT_LONG    = c("patient_id", "lot_num", "lot_start_dt", "lot_start_type",
+                  "lot_base_meds", "lot_med_cnt", "lot_base_discon_dt",
+                  "lot_base_1st_add_med_dt", "lot_base_1st_add_med",
+                  "lot_base_end_dt", "lot_base_end_reason", "lot_base_length",
+                  "lot_allo_lot_flg", "lot_cart_lot_flg", "contains_mtx_reg",
+                  "lot_base_end_dt_ce_sens", "lot_base_end_reason_ce_sens",
+                  "lot_tx_auto_flg", "lot_tx_auto_tand_flg", "lot_tx_auto_sing_flg",
+                  "lot_tx_auto_dt_1", "lot_tx_auto_dt_2", "lot_tx_auto_max_dt")
 )
 
 # --- Databricks adapter (stub) -------------------------------------------
@@ -110,6 +131,26 @@ compare_table <- function(con, tbl_a, tbl_b, table_name) {
 # the Spark equivalent for large run-scoped tables.
 .norm_cell <- function(x) { x <- trimws(as.character(x)); x[is.na(x) | x == ""] <- "\001NULL\001"; x }
 
+# Cell equality AFTER canonical normalization (the documented rules, applied here
+# for the local CSV path): single null sentinel, numeric coercion with float
+# tolerance, and date coercion (so a timestamp export equals its date). A
+# leading-zero string (e.g. an 11-digit NDC, a zero-padded id) is NOT coerced to a
+# number, so "00002143380" never equals "2143380".
+.num_eligible <- function(s) grepl("^-?([0-9]+|[0-9]*\\.[0-9]+)([eE][-+]?[0-9]+)?$", s) & !grepl("^-?0[0-9]", s)
+.date_eligible <- function(s) grepl("^[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}", s)   # date or timestamp prefix
+.as_date <- function(s) suppressWarnings(as.Date(ifelse(.date_eligible(s), s, NA_character_), format = "%Y-%m-%d"))
+.cells_equal <- function(a, b, tol = 1e-9) {
+  eq <- a == b
+  cmp <- !eq & a != "\001NULL\001" & b != "\001NULL\001"     # both present, differ as strings
+  an <- suppressWarnings(as.numeric(a)); bn <- suppressWarnings(as.numeric(b))
+  numok <- cmp & .num_eligible(a) & .num_eligible(b) & !is.na(an) & !is.na(bn) &
+           abs(an - bn) <= tol * pmax(1, abs(an), abs(bn))
+  rem <- cmp & !numok
+  ad <- .as_date(a); bd <- .as_date(b)                       # explicit format -> NA, never errors
+  dateok <- rem & !is.na(ad) & !is.na(bd) & ad == bd
+  eq | numok | dateok
+}
+
 compare_local_table <- function(path_a, path_b, keys, excluded = character(0), required = character(0)) {
   a <- read.csv(path_a, stringsAsFactors = FALSE, check.names = FALSE, colClasses = "character")
   b <- read.csv(path_b, stringsAsFactors = FALSE, check.names = FALSE, colClasses = "character")
@@ -138,7 +179,7 @@ compare_local_table <- function(path_a, path_b, keys, excluded = character(0), r
   res$only_in_a <- sum(!(ka %in% kb)); res$only_in_b <- sum(!(kb %in% ka))
   shared <- intersect(ka, kb); ia <- match(shared, ka); ib <- match(shared, kb)
   for (cn in setdiff(names(a), keys)) {
-    va <- .norm_cell(a[[cn]][ia]); vb <- .norm_cell(b[[cn]][ib]); d <- which(va != vb)
+    va <- .norm_cell(a[[cn]][ia]); vb <- .norm_cell(b[[cn]][ib]); d <- which(!.cells_equal(va, vb))
     if (length(d)) {
       if (cn %in% excluded) {            # surfaced (not blocking), never silent
         res$excluded_diffs <- res$excluded_diffs + length(d)

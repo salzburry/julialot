@@ -4,8 +4,20 @@
   "title": "LOT run manifest",
   "description": "Immutable, secret-redacted record written for every run (success, failed, or degraded). Sufficient to reproduce the run's inputs and settings. NEVER contains secret values.",
   "type": "object",
-  "additionalProperties": true,
-  "required": ["run_id", "timestamp", "run_status", "git", "version_axes", "config", "source", "environment", "outputs", "quality", "publication"],
+  "additionalProperties": false,
+  "required": ["run_id", "timestamp", "run_status", "git", "version_axes", "config", "source", "reference_data", "environment", "outputs", "quality", "publication"],
+  "allOf": [
+    {
+      "$comment": "a failed run must never be marked published",
+      "if": { "properties": { "run_status": { "const": "failed" } } },
+      "then": { "properties": { "publication": { "properties": { "status": { "not": { "const": "published" } } } } } }
+    },
+    {
+      "$comment": "a successful run must emit at least one output table",
+      "if": { "properties": { "run_status": { "const": "success" } } },
+      "then": { "properties": { "outputs": { "minItems": 1 } } }
+    }
+  ],
   "properties": {
     "run_id": { "type": "string" },
     "parent_run_id": { "type": ["string", "null"] },
@@ -65,8 +77,10 @@
     },
     "reference_data": {
       "type": "array",
+      "minItems": 1,
       "items": {
         "type": "object",
+        "additionalProperties": false,
         "required": ["id", "version", "hash", "approval_status"],
         "properties": {
           "id": { "type": "string" },
@@ -78,6 +92,7 @@
     },
     "environment": {
       "type": "object",
+      "required": ["databricks_runtime", "spark_version", "r_version", "timezone"],
       "properties": {
         "databricks_runtime": { "type": "string" },
         "spark_version": { "type": "string" },
