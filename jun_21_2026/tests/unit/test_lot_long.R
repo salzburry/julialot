@@ -120,6 +120,26 @@ ok(ai2$lot_base_end_reason == "DISCONTINUATION" && as.character(ai2$lot_base_end
    ai2$lot_tx_auto_flg == 1 && as.character(ai2$lot_tx_auto_dt_1) == "2021-04-01",
    "LOT_N: AUTO inside the 30-day window is an in-line transplant (LOT2 still ends at runout)")
 
+# Final LOT_LONG clamp (Step N.7): an AUTO INSIDE the window but AFTER the line's
+# actual end (here an early runout) is dropped from the in-LOT AUTO fields, even
+# though Step N.4 would window-accept it. DARA runs out at 2021-03-24; the AUTO is
+# 2021-04-04 (20d after start < 30 window, but > the line end).
+lbk <- data.frame(patient_id = "9000000092", lot1_start_dt = "2021-01-01", lot1_med_cnt = 1L,
+  lot1_base_meds = "LENA", lot1_base_discon_dt = "2021-04-30",
+  lot1_base_1st_add_med_dt = "2021-03-14", lot1_base_1st_add_med = "DARA", stringsAsFactors = FALSE)
+lek <- data.frame(patient_id = "9000000092", lot1_base_end_dt = "2021-03-14",
+  lot1_base_end_reason = "MED_ADD", lot1_base_length = 73L, stringsAsFactors = FALSE)
+mpk <- data.frame(patient_id = "9000000092", med_abbr = c("LENA", "DARA"), med_class = c("IMID", "MAB"),
+  map_cnt = 1L, map_start_dt = c("2021-01-01", "2021-03-15"), map_end_dt = c("2021-04-30", "2021-03-24"),
+  stringsAsFactors = FALSE)
+memk <- data.frame(patient_id = "9000000092", index_date = "2020-06-01", obs_end_dt = "2021-12-31", stringsAsFactors = FALSE)
+llk <- build_lot_long(lbk, lek, mpk,
+  data.frame(patient_id = "9000000092", dt = "2021-04-04", sct_type = "AUTO", stringsAsFactors = FALSE), memk)
+k2 <- llk[llk$lot_num == 2, ]
+ok(k2$lot_base_end_reason == "DISCONTINUATION" && as.character(k2$lot_base_end_dt) == "2021-03-24" &&
+   k2$lot_tx_auto_flg == 0 && is.na(k2$lot_tx_auto_dt_1) && k2$lot_tx_auto_sing_flg == 0,
+   "final clamp: an in-window AUTO after the line end (early runout) is dropped (FLG/DT_1/SING cleared)")
+
 # allo_lot_span: an ALLO-started LOT is single-day by DEFAULT, but extend_to_next
 # lets it run to the next event (here a later CART -> SCT_CART). lot2_5_base.R:662-665.
 lbs <- data.frame(patient_id = "9000000101", lot1_start_dt = "2021-01-01", lot1_med_cnt = 1L,
@@ -142,3 +162,17 @@ e2 <- ex[ex$lot_num == 2, ]
 ok(e2$lot_start_type == "SCT_ALLO" && e2$lot_base_end_reason == "SCT_CART" &&
    as.character(e2$lot_base_end_dt) == "2021-08-08" && e2$lot_base_length == 100 && e2$lot_allo_lot_flg == 1,
    "allo_lot_span=extend_to_next: ALLO LOT runs to the next event (later CART -> SCT_CART)")
+# extend_to_next: a later MM agent (no induction window for ALLO) ends the ALLO LOT
+# via MED_ADD and starts the next LOT - NOT absorbed to STUDY_END. lot2_5_base.R:410-419.
+mpm <- data.frame(patient_id = "9000000101", med_abbr = c("LENA", "DARA"), med_class = c("IMID", "MAB"),
+  map_cnt = 1L, map_start_dt = c("2021-01-01", "2021-06-01"), map_end_dt = c("2021-03-01", "2021-08-30"),
+  stringsAsFactors = FALSE)
+emm <- build_lot_long(lbs, les, mpm, data.frame(patient_id = "9000000101", dt = "2021-05-01",
+  sct_type = "ALLO", stringsAsFactors = FALSE), mems, allo_lot_span = "extend_to_next")
+m2 <- emm[emm$lot_num == 2, ]; m3 <- emm[emm$lot_num == 3, ]
+ok(m2$lot_start_type == "SCT_ALLO" && m2$lot_base_end_reason == "MED_ADD" &&
+   as.character(m2$lot_base_end_dt) == "2021-05-31" && m2$lot_allo_lot_flg == 1,
+   "allo_lot_span=extend_to_next: a later MM agent ends the ALLO LOT via MED_ADD")
+ok(nrow(emm) == 3 && m3$lot_start_type == "MED" && m3$lot_base_meds == "DARA" &&
+   as.character(m3$lot_start_dt) == "2021-06-01",
+   "extend_to_next: the agent that ended the ALLO LOT starts the next LOT (DARA)")

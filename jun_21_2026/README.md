@@ -18,7 +18,7 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 229 tests, all pure-R / local
+Rscript tests/run_unit_tests.R          # 239 tests, all pure-R / local
 ```
 
 Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
@@ -63,15 +63,20 @@ Verified stages + edge cases (against hand-derived expected):
   becomes the ENDING_AUTO that closes the line; ALLO/CART are scoped `> start`
   (strict) so a line's own start SCT never ends it. Special starts: **ALLO
   single-day** (configurable via `allo_lot_span`: `single_day` default vs
-  `extend_to_next`) and **CART with no consolidation agent → `SCT_CART`
-  single-day**. The driver emits the full 23-column `LOT_LONG` (incl. SCT flags +
-  CE-sensitive fields). Verified on a 3-line MED cohort + line-scoped-SCT,
-  in/out-of-window AUTO, CART-no-med, and both `allo_lot_span` modes.
+  `extend_to_next`, where the next MM agent ends the ALLO line via `MED_ADD`) and
+  **CART with no consolidation agent → `SCT_CART` single-day**. A **final
+  projection clamp** (Step N.7) then trims the in-LOT AUTO fields to
+  `<= LOT_BASE_END_DT` and recomputes SING/TAND/MAX, so an AUTO after the line
+  actually ended is dropped. The driver emits the full 23-column `LOT_LONG` (incl.
+  SCT flags + CE-sensitive fields). Verified on a 3-line MED cohort +
+  line-scoped-SCT, in/out-of-window AUTO, the after-end clamp, CART-no-med, and
+  both `allo_lot_span` modes.
 
 Medical day-supply is hardcoded to `medical_day_supply` (every medical claim,
-matching production), pharmacy invalid day-supply to 28; the SCT codelist is a
-required input (SCT can never silently be empty). CE-sensitive end is implemented
-(caps at `enddate_ce`, reason `DISENROLLMENT`). **Explicitly EXCLUDED from the
+matching production), pharmacy invalid day-supply to 28; the SCT codelist is
+required **by content** (the driver fails closed unless it has rows + the
+`code_type`/`code`/`sct_type` columns, so SCT can never silently be empty).
+CE-sensitive end is implemented (caps at `enddate_ce`, reason `DISENROLLMENT`). **Explicitly EXCLUDED from the
 parity claim:** `contains_mtx_reg` (= 0; needs maintenance metadata
 `MONOMAINTENANCE`/`DUALMAINTENANCEWITH`). Regression-expected output (legacy
 execution on the same synthetic data) is the owner's hive_metastore step — this
@@ -87,13 +92,17 @@ Run the live current-vs-prior comparison on hive_metastore (same DSN/odbc as
 
 ```
 Rscript scripts/compare_run_outputs.R --run hive_metastore.lot_prior hive_metastore.lot_current
-# the patient-id column (PATID vs patient_id) is AUTO-DETECTED; override with --patid <col>
+# the patient-id column is detected PER SIDE; a cross-convention compare (legacy
+# PATID vs canonical patient_id) is normalized to patient_id; override with --patid <col>
 ```
 
 Per table it runs the full hierarchy and exits 0 on `match`, 1 on `mismatch`:
 schema parity **incl. data types**, **key-uniqueness** (`GROUP BY ... HAVING count>1`),
 membership anti-joins (`EXCEPT`), null-safe value compare over **every shared
 column** (per-drug/class flags included), and a null-sentinel checksum.
+`contains_mtx_reg` is in `EXCLUDED_FIELDS` (its diff is surfaced, non-blocking)
+since the local engine does not derive it. The live warehouse RUN is unexecuted
+here; the comparator builders + the cross-convention normalization are unit-tested.
 
 Contents:
 

@@ -121,3 +121,39 @@ ok(is.na(ss$first_allo_dt) && is.na(ss$lot1_tx_enddate_reason),
 sl1 <- build_sct_summary(sallo, slot, sobs)          # LOT1 non-strict (>=)
 ok(as.character(sl1$first_allo_dt) == "2021-01-01" && sl1$lot1_tx_enddate_reason == 2,
    "LOT1: an ALLO on the start date ends LOT1 (non-strict >=)")
+
+# auto_dt_2 is reported only for a valid IN-LINE tandem under LOT_N (Step N.4); a
+# non-tandem 2nd AUTO (the excess that ends the line) is NOT an in-line 2nd transplant.
+nt <- do.call(rbind, list(mk("9000000048", "2021-01-10", "AUTO"), mk("9000000048", "2021-10-01", "AUTO")))  # 264d -> non-tandem
+ntlot <- data.frame(patient_id = "9000000048", lot1_start_dt = "2021-01-01", stringsAsFactors = FALSE)
+ntobs <- data.frame(patient_id = "9000000048", obs_end_dt = "2022-12-31", stringsAsFactors = FALSE)
+ntn <- build_sct_summary(nt, ntlot, ntobs, lot_window_days = 30L, allo_cart_strict = TRUE, tie_priority = "lotn")
+ok(as.character(ntn$auto_dt_1) == "2021-01-10" && is.na(ntn$auto_dt_2) && ntn$sing_flg == 1 && ntn$tand_flg == 0,
+   "LOT_N: a non-tandem 2nd AUTO is NOT reported as auto_dt_2 (single, not tandem)")
+nt1 <- build_sct_summary(nt, ntlot, ntobs)           # LOT1 reports the raw 2nd AUTO (S15)
+ok(as.character(nt1$auto_dt_2) == "2021-10-01" && nt1$sing_flg == 1,
+   "LOT1: the raw 2nd AUTO is reported as auto_dt_2 (unconditional S15)")
+
+# Production uses a line-specific same-day tie order (LOT1 AUTO>ALLO>CART; LOT_N
+# ALLO>CART>AUTO). But an AUTO end can never TIE an ALLO/CART end: ALLO/CART CENSOR
+# any same-day-or-later AUTO (ending_auto is strictly before first ALLO/CART in both
+# the engine and 02_lot1.R:1219 / lot2_5_base.R:510). So both orderings agree on
+# every reachable input; the LOT_N order is mirrored for faithfulness. Here a
+# same-day AUTO+ALLO: the AUTO is censored, the ALLO ends -> reason 2 either way.
+tied <- do.call(rbind, list(mk("9000000049", "2021-01-11", "AUTO"),
+  mk("9000000049", "2021-07-20", "AUTO"), mk("9000000049", "2021-07-20", "ALLO")))
+tlot <- data.frame(patient_id = "9000000049", lot1_start_dt = "2021-01-01", stringsAsFactors = FALSE)
+tobs <- data.frame(patient_id = "9000000049", obs_end_dt = "2021-12-31", stringsAsFactors = FALSE)
+t1 <- build_sct_summary(tied, tlot, tobs)            # LOT1 ordering
+tn <- build_sct_summary(tied, tlot, tobs, lot_window_days = 30L, allo_cart_strict = TRUE, tie_priority = "lotn")
+ok(t1$lot1_tx_enddate_reason == 2 && tn$lot1_tx_enddate_reason == 2 &&
+   as.character(t1$lot1_tx_enddate) == "2021-07-19" && as.character(tn$lot1_tx_enddate) == "2021-07-19" &&
+   is.na(t1$auto_dt_2) && is.na(tn$auto_dt_2),
+   "same-day AUTO is censored by the ALLO -> ALLO ends under BOTH orderings (AUTO tie unreachable)")
+# LOT_N reason path is wired: an ALLO end yields 2, a CART end yields 3.
+cn <- build_sct_summary(mk("9000000050", "2021-06-01", "CART"),
+  data.frame(patient_id = "9000000050", lot1_start_dt = "2021-01-01", stringsAsFactors = FALSE),
+  data.frame(patient_id = "9000000050", obs_end_dt = "2021-12-31", stringsAsFactors = FALSE),
+  lot_window_days = 30L, allo_cart_strict = TRUE, tie_priority = "lotn")
+ok(cn$lot1_tx_enddate_reason == 3 && as.character(cn$lot1_tx_enddate) == "2021-05-31",
+   "LOT_N reason path: a CART end yields reason 3 (lotn ordering wired)")

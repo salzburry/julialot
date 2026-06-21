@@ -16,7 +16,7 @@ comparing. That run is the reviewer/owner's step (it needs the warehouse).
 Run it (the driver runs the full pipeline MAP → LOT1 → SCT → LOT1 end):
 ```
 Rscript engine/run_engine.R engine/fixtures /tmp/out   # MAP_STACKED + LOT1_BASE + LOT1_END + LOT_LONG
-Rscript tests/run_unit_tests.R                          # 229 pass (engine: test_engine/sct/lot_end/lot_long)
+Rscript tests/run_unit_tests.R                          # 239 pass (engine: test_engine/sct/lot_end/lot_long)
 ```
 
 ## What to validate: each rule maps to a production source line
@@ -40,8 +40,10 @@ Rscript tests/run_unit_tests.R                          # 229 pass (engine: test
 | `lot_end.R` | CART_INIT flag (CART within 45d of the add) + post-runout death guard | `02_lot1.R:1469-1549` |
 | `lot_long.R` | LOT2-5: trigger candidates (d_MED/d_ALLO/d_CART/d_AUTO) + start/type | `R/lot2_5_base.R:170-321` |
 | `lot_long.R` | LOT applicable window: in-line AUTO iff `datediff(AUTO_DT_1,start)<win` (1/45/30); first AUTO outside = ENDING_AUTO; ALLO/CART scoped `>start` | `R/lot2_5_base.R:477-610` |
+| `sct.R` | `auto_dt_2` reported only for a valid in-line tandem (LOT_N); same-day end-reason tie order line-specific (LOT1 AUTO>ALLO>CART; LOT_N ALLO>CART>AUTO) | `02_lot1.R:1268,1327-1338` / `R/lot2_5_base.R:558-563,776-791` |
 | `lot_long.R` | per-line regimen + line-scoped SCT end + CE-sensitive end | `R/lot2_5_base.R:323-657` |
-| `lot_long.R` | special starts: ALLO single-day (`allo_lot_span`) + CART-no-med → `SCT_CART` | `R/lot2_5_base.R:658-870` |
+| `lot_long.R` | special starts: ALLO single-day / extend-to-next (`allo_lot_span`) + CART-no-med → `SCT_CART` | `R/lot2_5_base.R:410-422,658-870` |
+| `lot_long.R` | final projection: in-LOT AUTO fields clamped to `<= LOT_BASE_END_DT`, SING/TAND/MAX recomputed | `R/lot2_5_base.R:104-145,923-960` |
 
 ## Verified coverage (hand-derived expected)
 
@@ -67,19 +69,30 @@ Rscript tests/run_unit_tests.R                          # 229 pass (engine: test
   MED_ADD→MED_ADD→DISCONTINUATION, loop stops at line 3; the start-type tie-break
   (SCT_ALLO > MED on a same-day candidate); the **LOT applicable window** (the same
   AUTO ends a MED LOT2 when *outside* the 30-day window but is an in-line transplant
-  when *inside* it); **CART-no-consolidation → `SCT_CART`** single-day; and both
-  **`allo_lot_span`** modes (single-day default vs extend-to-next at the later CART).
+  when *inside* it); the **final projection clamp** (an in-window AUTO *after* the
+  line ended by an early runout is dropped from FLG/DT_1/SING); **CART-no-
+  consolidation → `SCT_CART`** single-day; and both **`allo_lot_span`** modes
+  (single-day; extend-to-next ending at the later CART *and* via a later MM agent's
+  MED_ADD).
 - **SCT window unit** (`test_sct.R`): `build_sct_summary` with `lot_window_days`
   flips an AUTO between in-line transplant and ENDING_AUTO; `allo_cart_strict`
   (`>start`) makes a start-date ALLO the line's start under LOT_N but its end under
-  LOT1 (`>=`, faithful to `02_lot1.R:1209-1247` vs `lot2_5_base.R:498-535`).
+  LOT1 (`>=`, faithful to `02_lot1.R:1209-1247` vs `lot2_5_base.R:498-535`); a
+  non-tandem 2nd AUTO is NOT reported as `auto_dt_2` for LOT_N (it is for LOT1);
+  the same-day AUTO tie is censored away (so LOT1/LOT_N orderings agree on all
+  reachable inputs — the LOT_N order is mirrored for faithfulness).
+- **Comparator** (`test_gate_and_compare.R`): the cross-convention id bridge
+  (`sql_normalize_view`) aliases a legacy `PATID` side to canonical `patient_id`
+  so a `PATID`-vs-`patient_id` warehouse compare no longer fails on the id name.
 
 ## NOT yet ported (refinements)
 
-- **EXCLUDED from parity:** `contains_mtx_reg` (= 0; needs maintenance metadata).
+- **EXCLUDED from parity:** `contains_mtx_reg` (= 0; needs maintenance metadata) —
+  now also in the comparator's `EXCLUDED_FIELDS` (diff surfaced, non-blocking).
 - The **regression-expected** baseline (legacy execution on the same synthetic data
-  — the owner's hive_metastore step) and the warehouse-comparator cross-convention
-  PATID + checksum scalability (deprioritized per the local-verification workflow).
+  — the owner's hive_metastore step); canonical adapter→validation→core wiring in
+  `run_engine`; and warehouse-checksum scalability (deprioritized per the
+  local-verification workflow). The cross-convention `PATID` bridge is now handled.
 
 ## Constraints to confirm
 

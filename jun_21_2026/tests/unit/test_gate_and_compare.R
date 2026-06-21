@@ -110,6 +110,15 @@ ok(compare_schema_maps(c(a = "int"), c(a = "int"))$ok, "identical schema maps ma
 # patient-id auto-detect (PATID legacy vs patient_id canonical) - no flag needed
 ok(.detect_patid(c("PATID", "LOT_NUM")) == "PATID", "PATID auto-detected")
 ok(.detect_patid(c("patient_id", "lot_num")) == "patient_id", "patient_id auto-detected")
+# cross-convention bridge: normalize a legacy PATID side to canonical patient_id so a
+# PATID-vs-patient_id compare does not fail schema parity on the id name alone.
+nv <- sql_normalize_view("cmpnorm_MAP_STACKED_a", "ns.MAP_STACKED", c("patid", "med_abbr", "map_cnt"), "PATID")
+ok(grepl("CREATE OR REPLACE TEMPORARY VIEW cmpnorm_MAP_STACKED_a", nv) &&
+   grepl("`PATID` AS `patient_id`", nv) && grepl("`med_abbr`", nv) && grepl("`map_cnt`", nv),
+   "sql_normalize_view aliases the side's id to patient_id and passes other cols through")
+ok(grepl("FROM ns.MAP_STACKED", nv) && !grepl("AS `patient_id`.*AS `patient_id`", nv),
+   "sql_normalize_view renames exactly one column (the id) to patient_id")
+ok(.cmp_view("LOT_LONG", "b") == "cmpnorm_LOT_LONG_b", "normalize view name is per-table/per-side")
 # value compare spans ALL shared non-key cols (catches per-drug/class flags)
 ok(setequal(value_compare_cols(c("PATID", "LOT_NUM", "LOT1_MED_LENA"),
                                c("patid", "lot_num", "lot1_med_lena"), "PATID"),
