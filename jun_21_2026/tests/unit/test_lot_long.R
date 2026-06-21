@@ -209,3 +209,32 @@ ok(m2$lot_start_type == "SCT_ALLO" && m2$lot_base_end_reason == "MED_ADD" &&
 ok(nrow(emm) == 3 && m3$lot_start_type == "MED" && m3$lot_base_meds == "DARA" &&
    as.character(m3$lot_start_dt) == "2021-06-01",
    "extend_to_next: the agent that ended the ALLO LOT starts the next LOT (DARA)")
+
+# contains_mtx_reg (S16b / Step N.5): the induction contains a valid maintenance subset
+# (a MONO drug, or a DUAL pair both present + listed) PLUS an anchor drug outside it.
+rmaint <- data.frame(code_type = "NDC", code = c("L", "D", "B", "X"),
+  med_abbr = c("LENA", "DARA", "BORT", "DEX"), med_class = c("IMID", "MAB", "PI", "STEROID"),
+  MONOMAINTENANCE = c("YES", "0", "0", "0"),
+  DUALMAINTENANCEWITH = c("", "BORT", "", ""), stringsAsFactors = FALSE)
+mm <- .maint_maps(rmaint)
+ok("LENA" %in% mm$mono && identical(mm$dual$DARA, "BORT"), ".maint_maps parses MONOMAINTENANCE + DUALMAINTENANCEWITH")
+ok(.contains_mtx_reg(c("LENA", "DARA"), mm) == 1L, "mono (LENA) + anchor (DARA) -> contains_mtx_reg=1")
+ok(.contains_mtx_reg("LENA", mm) == 0L, "mono with NO anchor -> 0")
+ok(.contains_mtx_reg(c("DARA", "BORT"), mm) == 0L, "dual PAIR alone (DARA+BORT), no anchor -> 0")
+ok(.contains_mtx_reg(c("DARA", "BORT", "LENA"), mm) == 1L, "dual (DARA+BORT) + anchor (LENA) -> 1")
+ok(.contains_mtx_reg(c("BORT", "DEX"), mm) == 0L, "no maintenance drug in induction -> 0")
+ok(.contains_mtx_reg(c("LENA", "DARA"), .maint_maps(rmaint[, 1:4])) == 0L, "no maintenance metadata -> 0")
+
+# wiring: build_lot_long computes contains_mtx_reg from the rollup (LOT1 induction = DARA LENA)
+lbm2 <- data.frame(patient_id = "9000000110", lot1_start_dt = "2021-01-01", lot1_med_cnt = 2L,
+  lot1_base_meds = "DARA LENA", lot1_base_discon_dt = "2021-06-30",
+  lot1_base_1st_add_med_dt = NA, lot1_base_1st_add_med = NA, stringsAsFactors = FALSE)
+lem2 <- data.frame(patient_id = "9000000110", lot1_base_end_dt = "2021-06-30",
+  lot1_base_end_reason = "DISCONTINUATION", lot1_base_length = 181L, stringsAsFactors = FALSE)
+mpm2 <- data.frame(patient_id = "9000000110", med_abbr = c("LENA", "DARA"), med_class = c("IMID", "MAB"),
+  map_cnt = 1L, map_start_dt = "2021-01-01", map_end_dt = "2021-06-30", stringsAsFactors = FALSE)
+memm2 <- data.frame(patient_id = "9000000110", index_date = "2020-06-01", obs_end_dt = "2021-12-31", stringsAsFactors = FALSE)
+ok(build_lot_long(lbm2, lem2, mpm2, NULL, memm2, rollup = rmaint)$contains_mtx_reg[1] == 1L,
+   "build_lot_long wires the rollup -> contains_mtx_reg=1 (mono LENA + anchor DARA)")
+ok(build_lot_long(lbm2, lem2, mpm2, NULL, memm2)$contains_mtx_reg[1] == 0L,
+   "no rollup passed -> contains_mtx_reg=0")

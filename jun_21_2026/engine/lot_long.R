@@ -16,10 +16,52 @@
 #   N.6 special starts: ALLO single-day (or extend_to_next) + CART-no-med -> SCT_CART.
 #   N.7 final projection: the in-LOT AUTO fields are CLAMPED to <= LOT_BASE_END_DT
 #       and SING/TAND/MAX recomputed (the row() builder below).
+#   N.5 contains_mtx_reg: does the induction contain a valid maintenance subset
+#       (a MONO drug, or a DUAL pair) PLUS an anchor drug outside it?
+
+# Parse the rollup's OPTIONAL maintenance metadata (MONOMAINTENANCE / DUALMAINTENANCEWITH;
+# absent -> empty, so contains_mtx_reg = 0). Production normalization 02_lot1.R:101-109:
+# MONOMAINTENANCE = 1 iff 'YES%' or '1'; DUALMAINTENANCEWITH = upper/trim, comma-split,
+# blanked on NULL/NONE/NA/N/A.
+.maint_maps <- function(rollup) {
+  empty <- list(mono = character(0), dual = list())
+  if (is.null(rollup) || !nrow(rollup) || !"med_abbr" %in% names(rollup)) return(empty)
+  ln <- tolower(names(rollup)); ab <- toupper(trimws(as.character(rollup$med_abbr)))
+  mono <- character(0)
+  if ("monomaintenance" %in% ln) {
+    u <- toupper(trimws(as.character(rollup[[which(ln == "monomaintenance")[1]]])))
+    mono <- ab[!is.na(u) & (startsWith(u, "YES") | u == "1")]
+  }
+  dual <- list()
+  if ("dualmaintenancewith" %in% ln) {
+    dw <- as.character(rollup[[which(ln == "dualmaintenancewith")[1]]])
+    for (i in seq_along(ab)) {
+      v <- toupper(trimws(dw[i]))
+      if (!is.na(v) && nzchar(v) && !(v %in% c("NULL", "NONE", "NA", "N/A"))) {
+        partners <- toupper(trimws(strsplit(v, ",")[[1]])); partners <- partners[nzchar(partners)]
+        if (length(partners)) dual[[ab[i]]] <- unique(c(dual[[ab[i]]], partners))
+      }
+    }
+  }
+  list(mono = unique(mono), dual = dual)
+}
+
+# contains_mtx_reg for one LOT's INDUCTION regimen (02_lot1.R:1392-1429 / lot2_5_base.R:
+# 624-654): 1 iff the induction contains a valid maintenance subset (a MONO drug, or a
+# DUAL pair both present + listed) AND >= 1 anchor (an induction drug OUTSIDE that subset).
+.contains_mtx_reg <- function(induction_meds, maint) {
+  meds <- unique(toupper(trimws(as.character(induction_meds)))); meds <- meds[nzchar(meds)]
+  if (!length(meds)) return(0L)
+  regs <- list()
+  for (m in meds) if (m %in% maint$mono) regs[[length(regs) + 1L]] <- m            # mono subset
+  for (m in meds) { p <- maint$dual[[m]]                                            # dual subset (both in induction)
+    if (!is.null(p)) for (m2 in meds) if (m2 != m && m2 %in% p) regs[[length(regs) + 1L]] <- sort(c(m, m2)) }
+  for (reg in regs) if (any(!(meds %in% reg))) return(1L)                           # anchor outside the subset
+  0L
+}
 
 .lot_regimen <- function(ms_p, lot_start, start_type, obs, subs,
-                         induction_window_days, cart_consolidation_days, allo_extend = FALSE) {
-  if (start_type == "SCT_ALLO") {           # ALLO: induction rows suppressed (lot2_5_base.R:352)
+                         induction_window_days, cart_consolidation_days, allo_extend = FALSE) {  if (start_type == "SCT_ALLO") {           # ALLO: induction rows suppressed (lot2_5_base.R:352)
     if (!allo_extend)                        # single_day: ends on the ALLO date, add-med is moot
       return(list(base_meds = "", med_cnt = 0L, discon = as.Date(NA), add_dt = as.Date(NA), add_med = NA_character_))
     # extend_to_next: no induction window - the next MM agent strictly after the
@@ -104,8 +146,9 @@ build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
                            induction_window_days = 30L, cart_consolidation_days = 45L,
                            sct_tandem_days = 180L, sct_auto_window_days = 13L,
                            sct_auto_gap_days = 60L, allo_lot_span = c("single_day", "extend_to_next"),
-                           max_lot = 5L) {
+                           max_lot = 5L, rollup = NULL) {
   allo_lot_span <- match.arg(allo_lot_span)   # production default single_day (lot2_5_base.R:665)
+  maint <- .maint_maps(rollup)                # contains_mtx_reg maintenance metadata (empty -> all 0)
   # config contract: an INTEGER in [2, 9]. Validate the ORIGINAL value BEFORE coercion
   # so a fractional input (2.9, "5.8") is REJECTED, not silently truncated by as.integer.
   ml <- suppressWarnings(as.numeric(max_lot))
@@ -127,8 +170,8 @@ build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
   sc_cart <- if (!is.null(sct_claims) && nrow(sct_claims)) sct_claims[sct_claims$sct_type == "CART", ] else NULL
 
   # 23-column LOT_LONG contract. CE-sensitive end caps at enddate_ce (reason
-  # DISENROLLMENT) when the line outlasts continuous enrollment. contains_mtx_reg
-  # = 0 (EXCLUDED: needs maintenance metadata).
+  # DISENROLLMENT) when the line outlasts continuous enrollment. contains_mtx_reg is
+  # computed from the rollup maintenance metadata (0 when none provided).
   row <- function(pid, ln, start, type, reg, end, lsct = NULL, ce = NULL) {
     ed_dt <- D(end$lot1_base_end_dt)
     # FINAL LOT_LONG AUTO clamp (Step N.7 / init, lot2_5_base.R:104-145, 923-960):
@@ -158,7 +201,7 @@ build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
     lot_base_end_dt = ed_dt, lot_base_end_reason = end$lot1_base_end_reason,
     lot_base_length = end$lot1_base_length,
     lot_allo_lot_flg = as.integer(type == "SCT_ALLO"), lot_cart_lot_flg = as.integer(type == "CART"),
-    contains_mtx_reg = 0L,                                # NOT computed: needs maintenance metadata
+    contains_mtx_reg = .contains_mtx_reg(strsplit(reg$base_meds, " ")[[1]], maint),   # induction maint subset + anchor
     lot_base_end_dt_ce_sens = ce_end, lot_base_end_reason_ce_sens = ce_rs,
     lot_tx_auto_flg = a_flg, lot_tx_auto_tand_flg = a_tand,
     lot_tx_auto_sing_flg = a_sing, lot_tx_auto_dt_1 = a_dt1,
