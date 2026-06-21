@@ -1,0 +1,4 @@
+patient_id,lot1_start_dt,lot1_med_cnt,lot1_base_meds,lot1_base_discon_dt,lot1_base_1st_add_med_dt,lot1_base_1st_add_med
+9000000001,2021-01-01,1,LENA,2021-06-30,,
+9000000002,2021-02-01,1,BORT,2021-03-04,,
+9000000003,2021-03-01,2,BORT LENA,2021-06-28,2021-05-14,DARA

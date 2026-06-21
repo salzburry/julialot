@@ -73,14 +73,24 @@ OUTPUT_CONTRACT <- list(
                   "lot_tx_auto_dt_1", "lot_tx_auto_dt_2", "lot_tx_auto_max_dt")
 )
 
-# --- hive_metastore (Databricks SQL) adapter seam -------------------------
+# --- hive_metastore (Databricks SQL) adapter -------------------------------
 # The run-scoped outputs live as tables in the hive_metastore catalog and are
 # queried with Databricks SQL over ODBC (the project's DBI/odbc connection, same
-# as apr_30_2026/R/db_utils.R) - there is no Spark DataFrame API here. `db_q` is
-# the ONLY unwired seam: point it at the non-prod ODBC connection and the SQL
-# builders below execute as-is. Each `sql_*` builder is a pure function (unit-
-# tested) so the comparison LOGIC is reviewable now, ahead of a live warehouse.
-db_q <- function(con, sql) stop("db_q seam: wire to the hive_metastore ODBC connection; sql=\n", sql)
+# as apr_30_2026/R/db_utils.R) - there is no Spark DataFrame API here. The SQL
+# builders below are pure (unit-tested); db_q executes them. Local CSV tests
+# never call db_q, so DBI/odbc are needed only for the live --run path.
+db_q <- function(con, sql) {
+  if (is.null(con)) stop("db_q: no connection - pass a DBI/odbc handle (see connect_compare())")
+  DBI::dbGetQuery(con, sql)
+}
+
+# Connect exactly like apr_30_2026 (DSN=DATABRICKS_DSN default RWDE; pwd=DATABRICKS_PWD;
+# catalog hive_metastore). Used by the --run CLI.
+connect_compare <- function(dsn = Sys.getenv("DATABRICKS_DSN", "RWDE"),
+                            pwd = Sys.getenv("DATABRICKS_PWD", "")) {
+  if (!nzchar(pwd)) stop("DATABRICKS_PWD is not set")
+  DBI::dbConnect(odbc::odbc(), dsn = dsn, pwd = pwd, timeout = 120)
+}
 
 .bt <- function(x) paste0("`", x, "`")                       # backtick-quote an identifier
 .keylist <- function(keys) paste(.bt(keys), collapse = ", ")
@@ -119,25 +129,62 @@ sql_values <- function(tbl_a, tbl_b, keys, compare_cols, excluded = character(0)
   paste(per, collapse = "\nUNION ALL\n")
 }
 
+# Per-table key-uniqueness: a duplicate (patient, lot_num, ...) key on EITHER side
+# makes the set-based membership compare unsound, so it is checked explicitly
+# (the README's "key uniqueness" promise) and blocks the table verdict.
+sql_key_uniqueness <- function(tbl, keys)
+  sprintf("SELECT count(*) AS dup_keys FROM (SELECT %s FROM %s GROUP BY %s HAVING count(*) > 1)",
+          .keylist(keys), tbl, .keylist(keys))
+
 # Deterministic, partition-independent table hash: per-row md5 over the non-excluded
-# columns, array_sort'd then joined and hashed. Early warning only.
+# columns, array_sort'd then joined and hashed. Nulls are coalesced to an explicit
+# sentinel FIRST (concat_ws drops NULL args in Spark SQL, so without this two rows
+# with nulls in different columns could hash the same). Early warning only.
 sql_checksum <- function(tbl, keys, compare_cols, excluded = character(0)) {
   cols <- setdiff(compare_cols, excluded)
-  rowexpr <- sprintf("md5(concat_ws('\\037', %s))", paste(sprintf("cast(%s as string)", .bt(cols)), collapse = ", "))
+  parts <- sprintf("coalesce(cast(%s as string), '\\001NULL\\001')", .bt(cols))
+  rowexpr <- sprintf("md5(concat_ws('\\037', %s))", paste(parts, collapse = ", "))
   sprintf("SELECT md5(array_join(array_sort(collect_list(%s)), '|')) AS checksum FROM %s", rowexpr, tbl)
 }
 
 # --- steps (execute the builders via the db_q seam) -----------------------
-compare_schema <- function(con, tbl_a, tbl_b) {
-  da <- db_q(con, sql_schema(tbl_a)); db <- db_q(con, sql_schema(tbl_b))
-  ca <- da$col_name; cb <- db$col_name
-  list(ok = setequal(ca, cb), a_only = setdiff(ca, cb), b_only = setdiff(cb, ca))
+# DESCRIBE TABLE returns col_name/data_type/comment and, for partitioned tables,
+# a blank row + a "# Partition Information" section - drop those. Returns a
+# lower(name) -> lower(type) map so the schema compare covers TYPES, not just names.
+describe_schema <- function(con, tbl) {
+  d <- db_q(con, sql_schema(tbl))
+  nm <- trimws(as.character(d$col_name %||% d[[1]]))
+  ty <- trimws(as.character(d$data_type %||% d[[2]]))
+  keep <- nzchar(nm) & !startsWith(nm, "#") & !duplicated(tolower(nm))
+  setNames(tolower(ty[keep]), tolower(nm[keep]))
 }
+# Pure: name AND type parity. A column on one side only, OR a type drift
+# (LOT_START_DT string vs date), fails schema parity.
+compare_schema_maps <- function(sa, sb) {
+  a_only <- setdiff(names(sa), names(sb)); b_only <- setdiff(names(sb), names(sa))
+  shared <- intersect(names(sa), names(sb))
+  type_mismatch <- shared[sa[shared] != sb[shared]]
+  list(ok = length(a_only) == 0 && length(b_only) == 0 && length(type_mismatch) == 0,
+       a_only = a_only, b_only = b_only, type_mismatch = type_mismatch)
+}
+# Auto-detect the patient-id column from the actual schema (PATID legacy vs
+# patient_id canonical), so --run needs no flag for the apr_30 output tables.
+.detect_patid <- function(cols) {
+  lc <- tolower(cols)
+  if ("patient_id" %in% lc) return("patient_id")
+  if ("patid" %in% lc) return("PATID")
+  "patient_id"
+}
+# All SHARED non-key columns to value-compare (not just the curated contract), so
+# a current-vs-prior diff also catches the per-drug / per-class wide columns.
+value_compare_cols <- function(cols_a, cols_b, keys)
+  setdiff(intersect(tolower(cols_a), tolower(cols_b)), tolower(keys))
 
 compare_membership <- function(con, tbl_a, tbl_b, keys) {
   r <- db_q(con, sql_membership(tbl_a, tbl_b, keys))
   list(only_in_a = r$only_in_a[1], only_in_b = r$only_in_b[1])
 }
+compare_key_uniqueness <- function(con, tbl, keys) db_q(con, sql_key_uniqueness(tbl, keys))$dup_keys[1]
 
 compare_values <- function(con, tbl_a, tbl_b, keys, compare_cols, excluded = character(0)) {
   r <- db_q(con, sql_values(tbl_a, tbl_b, keys, compare_cols, excluded))
@@ -150,18 +197,33 @@ compare_values <- function(con, tbl_a, tbl_b, keys, compare_cols, excluded = cha
 table_checksum <- function(con, tbl, keys, compare_cols, excluded = character(0))
   db_q(con, sql_checksum(tbl, keys, compare_cols, excluded))$checksum[1]
 
-compare_table <- function(con, tbl_a, tbl_b, table_name) {
-  keys <- COMPARE_KEYS[[table_name]]
-  if (is.null(keys)) stop("no COMPARE_KEYS for ", table_name)
-  excl <- EXCLUDED_FIELDS[[table_name]] %||% character(0)
-  cols <- OUTPUT_CONTRACT[[table_name]] %||% keys
+# The contract is in canonical names. Databricks identifiers are case-insensitive
+# (LOT_NUM == lot_num), so only patient_id genuinely differs from the legacy tables
+# (PATID). `patid` remaps it; NULL = auto-detect from the table schema.
+.remap_patid <- function(v, patid) if (identical(patid, "patient_id")) v else gsub("^patient_id$", patid, v)
+compare_table <- function(con, tbl_a, tbl_b, table_name, patid = NULL) {
+  if (is.null(COMPARE_KEYS[[table_name]])) stop("no COMPARE_KEYS for ", table_name)
+  sa <- describe_schema(con, tbl_a); sb <- describe_schema(con, tbl_b)
+  if (is.null(patid)) patid <- .detect_patid(names(sa))
+  keys <- .remap_patid(COMPARE_KEYS[[table_name]], patid)
+  excl <- .remap_patid(EXCLUDED_FIELDS[[table_name]] %||% character(0), patid)
+  required <- .remap_patid(OUTPUT_CONTRACT[[table_name]] %||% keys, patid)
+  sch <- compare_schema_maps(sa, sb)
+  miss_req <- setdiff(tolower(required), intersect(names(sa), names(sb)))    # contract floor (both sides)
+  dup_a <- compare_key_uniqueness(con, tbl_a, keys)                          # P1: duplicate keys
+  dup_b <- compare_key_uniqueness(con, tbl_b, keys)
+  cmpset <- value_compare_cols(names(sa), names(sb), keys)                   # ALL shared non-key cols
+  vals <- if (length(cmpset))
+    compare_values(con, tbl_a, tbl_b, keys, c(tolower(keys), cmpset), tolower(excl))
+    else list(mismatched_columns = character(0), value_mismatch = 0L, excluded_diffs = 0L)
   list(
-    table      = table_name,
-    schema     = compare_schema(con, tbl_a, tbl_b),
+    table = table_name, patid = patid,
+    schema = sch, contract_ok = length(miss_req) == 0, missing_required = miss_req,
+    key_unique = (dup_a == 0 && dup_b == 0), dup_keys_a = dup_a, dup_keys_b = dup_b,
     membership = compare_membership(con, tbl_a, tbl_b, keys),
-    values     = compare_values(con, tbl_a, tbl_b, keys, cols, excl),
-    checksum_a = table_checksum(con, tbl_a, keys, cols, excl),
-    checksum_b = table_checksum(con, tbl_b, keys, cols, excl)
+    values = vals,
+    checksum_a = table_checksum(con, tbl_a, keys, c(tolower(keys), cmpset), tolower(excl)),
+    checksum_b = table_checksum(con, tbl_b, keys, c(tolower(keys), cmpset), tolower(excl))
   )
 }
 
@@ -275,11 +337,11 @@ compare_local <- function(dir_a, dir_b, tables = names(COMPARE_KEYS)) {
 
 # Compare a full run (all three output tables) in the hive_metastore catalog.
 # A run matches only if EVERY table matches on schema, membership, AND values.
-compare_run <- function(con, ns_a, ns_b, tables = names(COMPARE_KEYS)) {
+compare_run <- function(con, ns_a, ns_b, tables = names(COMPARE_KEYS), patid = NULL) {
   results <- lapply(tables, function(t)
-    compare_table(con, paste0(ns_a, ".", t), paste0(ns_b, ".", t), t))
+    compare_table(con, paste0(ns_a, ".", t), paste0(ns_b, ".", t), t, patid))
   names(results) <- tables
-  ok_one <- function(r) isTRUE(r$schema$ok) &&
+  ok_one <- function(r) isTRUE(r$schema$ok) && isTRUE(r$key_unique) && isTRUE(r$contract_ok) &&
     isTRUE((r$membership$only_in_a %||% NA) == 0) && isTRUE((r$membership$only_in_b %||% NA) == 0) &&
     isTRUE((r$values$value_mismatch %||% NA) == 0)
   list(verdict = if (all(vapply(results, ok_one, logical(1)))) "match" else "mismatch",
@@ -288,6 +350,26 @@ compare_run <- function(con, ns_a, ns_b, tables = names(COMPARE_KEYS)) {
 
 if (sys.nframe() == 0 && !interactive()) {
   a <- commandArgs(trailingOnly = TRUE)
+  if (length(a) >= 3 && a[1] == "--run") {        # live: compare two hive_metastore namespaces
+    pi <- which(a == "--patid"); patid <- if (length(pi)) a[pi + 1L] else NULL
+    con <- connect_compare()
+    on.exit(try(DBI::dbDisconnect(con), silent = TRUE))
+    rr <- compare_run(con, a[2], a[3], patid = patid)
+    for (t in names(rr$tables)) { r <- rr$tables[[t]]
+      flags <- c(
+        if (!isTRUE(r$schema$ok)) sprintf("SCHEMA{a_only:%s b_only:%s type:%s}",
+            paste(r$schema$a_only, collapse = ","), paste(r$schema$b_only, collapse = ","),
+            paste(r$schema$type_mismatch, collapse = ",")),
+        if (!isTRUE(r$contract_ok)) paste0("missing_required:", paste(r$missing_required, collapse = ",")),
+        if (!isTRUE(r$key_unique)) sprintf("DUP_KEYS{a:%s b:%s}", r$dup_keys_a, r$dup_keys_b),
+        if (length(r$values$mismatched_columns)) paste0("cols:", paste(r$values$mismatched_columns, collapse = ",")),
+        if ((r$values$excluded_diffs %||% 0) > 0) sprintf("excluded_diffs=%s", r$values$excluded_diffs))
+      cat(sprintf("%-12s patid=%-10s only_in_a=%s only_in_b=%s value_mismatch=%s %s\n",
+          t, r$patid, r$membership$only_in_a %||% "NA", r$membership$only_in_b %||% "NA",
+          r$values$value_mismatch %||% "NA", paste(flags, collapse = " "))) }
+    cat("verdict:", rr$verdict, "\n")
+    quit(status = if (identical(rr$verdict, "match")) 0L else 1L)
+  }
   if (length(a) >= 3 && a[1] == "--local") {
     res <- compare_local(a[2], a[3])
     for (t in names(res)) { r <- res[[t]]
@@ -305,6 +387,7 @@ if (sys.nframe() == 0 && !interactive()) {
     cat("verdict:", attr(res, "verdict"), "\n")
     quit(status = if (identical(attr(res, "verdict"), "match")) 0L else 1L)
   }
-  cat("compare_run_outputs.R loaded. Local: --local <dir_a> <dir_b>;",
-      "hive_metastore: wire db_q() for run-scoped namespaces.\n")
+  cat("compare_run_outputs.R. Local CSV: --local <dir_a> <dir_b>;",
+      "live hive_metastore: --run <ns_prior> <ns_current> [--patid PATID]",
+      "(DATABRICKS_DSN/DATABRICKS_PWD env; ns e.g. hive_metastore.lot_prior).\n")
 }

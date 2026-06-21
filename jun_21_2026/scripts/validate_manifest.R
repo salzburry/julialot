@@ -43,10 +43,22 @@ validate_manifest <- function(m, schema_path = "contracts/manifest.schema.json")
   errors <- character(0); warnings <- character(0)
   # 0. STRUCTURE: required run_id/git/version_axes/source/environment/outputs/... and
   #    closed secrets[] (this is what closes the secrets-subtree redaction bypass).
-  if (file.exists(schema_path)) {
+  if (!file.exists(schema_path)) {
+    errors <- c(errors, sprintf("schema file not found (fail closed): %s", schema_path))
+  } else {
     s <- schema_conformance(m, schema_path)
     if (length(s)) errors <- c(errors, paste0("schema: ", s))
   }
+  # 0b. ENUM leaves (schema_conformance does not check enums): catch a typo'd
+  #     status that the structural walk would let through.
+  .enum <- function(val, allowed, path) if (!is.null(val) && length(val) == 1 &&
+      nzchar(as.character(val)) && !(as.character(val) %in% allowed))
+    sprintf("%s '%s' not in {%s}", path, val, paste(allowed, collapse = ", ")) else character(0)
+  errors <- c(errors, .enum(m$run_status, c("success", "failed", "degraded"), "run_status"))
+  errors <- c(errors, .enum(m$publication$status, c("staged", "published", "failed", "degraded_blocked"), "publication.status"))
+  errors <- c(errors, .enum(m$comparison$result, c("match", "mismatch", "not_run"), "comparison.result"))
+  for (r in m$reference_data %||% list())
+    errors <- c(errors, .enum(r$approval_status, "approved", sprintf("reference_data[%s].approval_status", r$id %||% "?")))
   # 1. redaction (the security promise): no secret-like key carries a value
   leaked <- .scan_secrets(m)
   if (length(leaked))

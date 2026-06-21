@@ -1,0 +1,2 @@
+patient_id,service_date,normalized_code,code_system,day_supply
+9000000002,2021-02-05,J9999,HCPCS,28

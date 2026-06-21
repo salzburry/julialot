@@ -18,8 +18,57 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 137 tests, all pure-R / local
+Rscript tests/run_unit_tests.R          # 186 tests, all pure-R / local
 ```
+
+Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
+faithful to `apr_30_2026/02_lot1.R`, that reproduces hand-derived expected output
+— see `engine/` and `engine/fixtures/expected/TRACE.md`):
+
+```
+Rscript engine/run_engine.R engine/fixtures /tmp/out   # writes MAP_STACKED.csv + LOT1_BASE.csv
+```
+
+**For reviewers:** `engine/REVIEW.md` maps every engine rule to its production
+source line (`apr_30_2026/02_lot1.R:NNN`) and lists verified coverage + the
+explicitly-deferred corners.
+
+Verified stages + edge cases (against hand-derived expected):
+- **MAP** (`engine/map.R`): pharmacy pushout / reset, gap→new MAP, medical
+  no-pushout, same-day pharmacy-first tie, single claim, discon flag both sides of
+  the 90-day boundary.
+- **LOT1** (`engine/lot1.R`): steroid exclusion from start/induction/base,
+  induction-window cutoff, multi-drug regimen, first-add med+date, steroid-only →
+  no LOT1.
+- **SCT** (`engine/sct.R`): AUTO 14-day window (max date) + 60-day gap merge +
+  180-day tandem, single/tandem/excess AUTO, ALLO/CART censoring + LOT-end reason
+  (1=AUTO/2=ALLO/3=CART). (Tandem-boundary date-selection corner documented as
+  not-yet-ported.)
+- **LOT1 end** (`engine/lot_end.R`): the priority cascade SCT > MED_ADD > DEATH >
+  DISCONTINUATION > STUDY_END, each gated against the runout (a trigger after
+  discontinuation does not fire). (CART_INIT + post-runout-death-guard documented
+  as not-yet-ported.)
+
+Still to port + verify the same way: the **LOT2-5** loop (`LOT_LONG`) — trigger
+the next line from the LOT1 end event, re-derive the regimen, repeat to MAX_LOT.
+
+This is **verification only** — it runs the algorithm on synthetic fixtures locally
+so the refactor logic can be checked without a warehouse. It is NOT the production
+engine (production is Databricks SQL on `hive_metastore`) and never ships
+(`engine/` is outside the prod allowlist; fixtures use reserved synthetic PATIDs).
+
+Run the live current-vs-prior comparison on hive_metastore (same DSN/odbc as
+`apr_30_2026`; needs `DATABRICKS_DSN`/`DATABRICKS_PWD` + DBI/odbc):
+
+```
+Rscript scripts/compare_run_outputs.R --run hive_metastore.lot_prior hive_metastore.lot_current
+# the patient-id column (PATID vs patient_id) is AUTO-DETECTED; override with --patid <col>
+```
+
+Per table it runs the full hierarchy and exits 0 on `match`, 1 on `mismatch`:
+schema parity **incl. data types**, **key-uniqueness** (`GROUP BY ... HAVING count>1`),
+membership anti-joins (`EXCEPT`), null-safe value compare over **every shared
+column** (per-drug/class flags included), and a null-sentinel checksum.
 
 Contents:
 

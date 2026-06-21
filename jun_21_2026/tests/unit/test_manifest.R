@@ -30,3 +30,8 @@ m7 <- m; m7$quality$degraded_gates <- list("baseline_ce")
 ok(any(grepl("degraded cohort gate", validate_manifest(m7)$errors)), "degraded gate + published blocked")
 m8 <- m; m8$reference_data[[1]]$approval_status <- "draft"
 ok(any(grepl("not approved", validate_manifest(m8)$errors)), "unapproved reference_data caught")
+# enum leaves (a typo'd status the structural walk lets through) are caught at runtime
+m9 <- m; m9$publication$status <- "publishd"
+ok(any(grepl("publication.status 'publishd' not in", validate_manifest(m9)$errors)), "invalid publication.status enum caught")
+m10 <- m; m10$run_status <- "successs"
+ok(any(grepl("run_status 'successs' not in", validate_manifest(m10)$errors)), "invalid run_status enum caught")

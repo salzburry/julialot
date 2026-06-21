@@ -46,7 +46,10 @@ promote <- function(intake_csv, codelist_id, version, clinical = NULL, engineeri
   if (.blank(intake_csv) || !file.exists(intake_csv))
     return(list(promotable = FALSE, written = FALSE, reason = "intake file missing"))
   if (.blank(version)) return(list(promotable = FALSE, written = FALSE, reason = "version required"))
-  df <- utils::read.csv(intake_csv, stringsAsFactors = FALSE, check.names = FALSE, comment.char = "#")
+  # ALL columns as character: type inference would strip leading zeros from an
+  # NDC-only or numeric-ICD code column before validation/hashing.
+  df <- utils::read.csv(intake_csv, stringsAsFactors = FALSE, check.names = FALSE,
+                        comment.char = "#", colClasses = "character")
   res <- validate_reference_data(df, manifest_entry)
   if (length(res$errors))
     return(list(promotable = FALSE, written = FALSE, reason = "validation errors",

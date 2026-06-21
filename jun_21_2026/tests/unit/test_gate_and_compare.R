@@ -96,6 +96,29 @@ ok(grepl("'lot_base_1st_add_med' AS column_name, true AS excluded", sv), "exclud
 ok(!grepl("'patient_id' AS column_name", sv), "key column is not value-compared")
 ok(grepl("array_sort", sql_checksum("t", "patient_id", c("patient_id", "lot_start_type"))),
    "checksum SQL is order-independent (array_sort)")
+# legacy-named tables: --patid PATID remaps ONLY patient_id (Databricks folds case
+# for the rest, e.g. LOT_NUM == lot_num)
+ok(identical(.remap_patid(c("patient_id", "lot_num"), "PATID"), c("PATID", "lot_num")),
+   "patid remap swaps only patient_id")
+ok(grepl("a.`PATID` <=> b.`PATID`", sql_values("a", "b", "PATID", c("PATID", "lot_start_type"))),
+   "legacy comparison joins on PATID")
+# schema parity covers TYPES, not just names (review P2)
+sm <- compare_schema_maps(c(patient_id = "bigint", lot_num = "int", x = "date"),
+                          c(patient_id = "bigint", lot_num = "int", x = "string"))
+ok(!sm$ok && "x" %in% sm$type_mismatch, "schema type drift caught (date vs string)")
+ok(compare_schema_maps(c(a = "int"), c(a = "int"))$ok, "identical schema maps match")
+# patient-id auto-detect (PATID legacy vs patient_id canonical) - no flag needed
+ok(.detect_patid(c("PATID", "LOT_NUM")) == "PATID", "PATID auto-detected")
+ok(.detect_patid(c("patient_id", "lot_num")) == "patient_id", "patient_id auto-detected")
+# value compare spans ALL shared non-key cols (catches per-drug/class flags)
+ok(setequal(value_compare_cols(c("PATID", "LOT_NUM", "LOT1_MED_LENA"),
+                               c("patid", "lot_num", "lot1_med_lena"), "PATID"),
+            c("lot_num", "lot1_med_lena")), "all shared non-key cols compared")
+# duplicate-key check (review P1) + null-sentinel checksum (review P3)
+ok(grepl("GROUP BY .* HAVING count\\(\\*\\) > 1", sql_key_uniqueness("t", c("PATID", "LOT_NUM"))),
+   "key-uniqueness SQL uses GROUP BY ... HAVING count(*) > 1")
+ok(grepl("coalesce\\(cast", sql_checksum("t", "patient_id", c("patient_id", "x"))),
+   "checksum coalesces nulls to a sentinel (no concat_ws null collision)")
 
 # checksum uses the SAME normalization as the verdict (1 vs 1.0 -> match AND equal checksum)
 da <- file.path(tempdir(), "ca"); db2 <- file.path(tempdir(), "cb")
