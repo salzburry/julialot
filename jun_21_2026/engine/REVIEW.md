@@ -16,7 +16,7 @@ comparing. That run is the reviewer/owner's step (it needs the warehouse).
 Run it (the driver runs the full pipeline MAP → LOT1 → SCT → LOT1 end):
 ```
 Rscript engine/run_engine.R engine/fixtures /tmp/out   # MAP_STACKED + LOT1_BASE + LOT1_END + LOT_LONG
-Rscript tests/run_unit_tests.R                          # 255 pass (engine: test_engine/sct/lot_end/lot_long); also CI
+Rscript tests/run_unit_tests.R                          # 266 pass (engine: test_engine/sct/lot_end/lot_long); also CI
 ```
 
 ## What to validate: each rule maps to a production source line
@@ -94,17 +94,21 @@ Rscript tests/run_unit_tests.R                          # 255 pass (engine: test
 ## NOT yet ported (refinements)
 
 - **`contains_mtx_reg`** (= 0; needs maintenance metadata) is a DETERMINISTIC gap of
-  the LOCAL R engine, so it forces a `partial_match` verdict (never a silent `match`)
-  in the LOCAL engine-vs-golden comparison. It is CALLER-scoped, not global: the
-  WAREHOUSE `--run` (prior-vs-current, both production compute it) defaults to strict.
-  Implement the field locally for full LOT_LONG parity.
+  the LOCAL R engine. The gap is CALLER-scoped for BOTH modes (default STRICT): the
+  local engine-vs-golden caller passes the gap profile (`--local … --engine`) → forces
+  `partial_match`; the warehouse `--run` and a plain `--local` default strict, so a
+  real `contains_mtx_reg` regression is never weakened. Implement the field for full
+  LOT_LONG parity.
 - The **regression-expected** baseline (legacy execution on the same synthetic data,
-  the owner's hive_metastore step) — the decisive gate — and **canonical
-  adapter→validation→core wiring** in `run_engine` (it validates only filenames +
-  members/codelist columns today, not the full typed-config/canonical contract).
-- **Deprioritized** (warehouse path, untestable locally): checksum aggregation
-  scalability (bucket/optional). The cross-convention `PATID` bridge (name + STRING
-  type cast) and the membership-before-values short-circuit are now handled.
+  the owner's hive_metastore step) — the decisive gate — and the full **canonical
+  input** validator (`validate_canonical`) in `run_engine` (it now typed-validates
+  param overrides + checks filenames/members/codelist columns, but not yet the full
+  canonical row contract: lineage, dates, dedup uniqueness).
+- **Now handled:** caller-scoped gap (local + warehouse), single-join value compare
+  (one scan, not one join per column), failure-isolated checksum, `PATID` name+STRING
+  bridge, membership-before-values short-circuit (both modes), and a CART-started
+  death-guard test through `build_lot_long` (call-site window wiring). Checksum
+  aggregation **bucketing** remains a deferred warehouse-scale optimization.
 
 ## Constraints to confirm
 

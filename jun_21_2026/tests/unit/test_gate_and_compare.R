@@ -25,17 +25,19 @@ ok(!verify_no_synthetic_data("/nonexistent/file.csv")$ok, "missing data file fai
 tsv <- file.path(tempdir(), "syn.tsv"); writeLines(c("patient_id\tx", "9000000007\t1"), tsv)
 ok(length(scan_file_for_synthetic(tsv)) > 0, "synthetic PATID detected in TSV")
 
-# compare_local: all required tables present; the only blocking-eligible diff is the
-# nondeterministic excluded col. NOT a full match - LOT_LONG carries the UNIMPLEMENTED
-# deterministic gap (contains_mtx_reg), so the verdict is partial_match (a wrong
-# maintenance result must never silently pass). Gap-free tables stay full `match`.
+# compare_local is now CALLER-scoped like --run. DEFAULT is STRICT: the cmp fixtures
+# agree on contains_mtx_reg, and the only blocking-eligible diff is the nondeterministic
+# excluded col, so two "production" exports -> full `match` (the gap is NOT hardwired).
 res <- compare_local("tests/unit/cmp/legacy", "tests/unit/cmp/refactored")
-eq(attr(res, "verdict"), "partial_match", "excluded-only diff + unimplemented gap -> partial_match")
+eq(attr(res, "verdict"), "match", "default compare_local is STRICT -> excluded-only diff is a full match")
 eq(length(attr(res, "missing_tables")), 0L, "no missing required tables")
-ok(res$LOT_LONG$value_mismatch == 0L, "no non-excluded value mismatch")
-ok(isTRUE(res$LOT_LONG$partial) && "contains_mtx_reg" %in% res$LOT_LONG$unimplemented,
-   "LOT_LONG is partial: contains_mtx_reg is an unimplemented deterministic field")
-ok(res$MAP_STACKED$verdict == "match" && res$LOT1_BASE$verdict == "match",
+ok(res$LOT_LONG$value_mismatch == 0L && !isTRUE(res$LOT_LONG$partial), "no non-excluded value mismatch; not partial")
+# the LOCAL ENGINE profile (explicit) flags contains_mtx_reg -> partial_match.
+resE <- compare_local("tests/unit/cmp/legacy", "tests/unit/cmp/refactored", unimplemented = UNIMPLEMENTED_FIELDS)
+eq(attr(resE, "verdict"), "partial_match", "engine profile (UNIMPLEMENTED_FIELDS) -> partial_match")
+ok(isTRUE(resE$LOT_LONG$partial) && "contains_mtx_reg" %in% resE$LOT_LONG$unimplemented,
+   "engine profile: contains_mtx_reg flagged as the deterministic gap")
+ok(resE$MAP_STACKED$verdict == "match" && resE$LOT1_BASE$verdict == "match",
    "tables without a gap field are still a FULL match (partial is scoped to LOT_LONG)")
 # corrected nondeterminism model: the seeded tie-break picks the MED identity, so
 # lot_base_1st_add_med is excluded (surfaced) while the *_DT is now STRICT.
@@ -83,6 +85,16 @@ eq(attr(res2, "verdict"), "mismatch", "non-excluded diff -> mismatch")
 ok("lot_base_end_reason" %in% res2$LOT_LONG$mismatch_cols, "mismatch column identified")
 write.csv(df[-3, ], file.path(tmp, "LOT_LONG.csv"), row.names = FALSE)
 ok(compare_local("tests/unit/cmp/legacy", tmp)$LOT_LONG$only_in_a >= 1L, "missing row detected")
+# membership gap STOPS the column compare (matches README + the --run path): no value
+# detail or checksum is computed once populations differ (verdict is still mismatch).
+tmpm <- file.path(tempdir(), "memstop"); dir.create(tmpm, showWarnings = FALSE)
+file.copy(list.files("tests/unit/cmp/refactored", full.names = TRUE), tmpm, overwrite = TRUE)
+dm <- read.csv(file.path(tmpm, "LOT_LONG.csv"), colClasses = "character", check.names = FALSE)
+write.csv(dm[-1, ], file.path(tmpm, "LOT_LONG.csv"), row.names = FALSE)   # drop a row (membership only)
+rm2 <- compare_local("tests/unit/cmp/legacy", tmpm)$LOT_LONG
+ok(rm2$only_in_a >= 1L && rm2$value_mismatch == 0L && length(rm2$mismatch_cols) == 0L &&
+   rm2$verdict == "mismatch" && is.null(rm2$checksum_a),
+   "membership gap stops the column compare (no value detail / checksum) before the verdict")
 
 # canonical cell normalization: numeric tolerance + date coercion, but a
 # leading-zero identifier (NDC, padded id) is NEVER coerced to a number.
@@ -98,9 +110,17 @@ ok(grepl("EXCEPT", sql_membership("ns_a.LOT_LONG", "ns_b.LOT_LONG", c("patient_i
    "membership SQL uses EXCEPT anti-join")
 sv <- sql_values("a", "b", "patient_id",
                  c("patient_id", "lot_start_type", "lot_base_1st_add_med"), "lot_base_1st_add_med")
-ok(grepl("<=>", sv) && grepl("UNION ALL", sv), "values SQL is null-safe per-column union")
-ok(grepl("'lot_base_1st_add_med' AS column_name, true AS excluded", sv), "excluded col flagged in values SQL")
-ok(!grepl("'patient_id' AS column_name", sv), "key column is not value-compared")
+ok(grepl("<=>", sv) && grepl("sum\\(CASE WHEN NOT", sv) &&
+   lengths(gregexpr("\\bJOIN\\b", sv)) == 1L && !grepl("UNION", sv),
+   "values SQL is ONE join with per-column null-safe conditional aggregates (not N unions)")
+ok(grepl("a.`lot_start_type` <=> b.`lot_start_type`", sv) &&
+   grepl("a.`lot_base_1st_add_med` <=> b.`lot_base_1st_add_med`", sv),
+   "every non-key shared column is aggregated (excluded handled in R, not SQL)")
+ok(!grepl("sum\\(CASE WHEN NOT \\(a.`patient_id`", sv), "key column is not value-compared (only joined on)")
+# .tally_values: blocking vs excluded split from the one-row counts
+tv <- .tally_values(c(0L, 3L, 5L), c("lot_start_type", "lot_base_meds", "lot_base_1st_add_med"), "lot_base_1st_add_med")
+ok(tv$value_mismatch == 3L && identical(tv$mismatched_columns, "lot_base_meds") && tv$excluded_diffs == 5L,
+   ".tally_values: excluded col surfaced (5) but non-blocking; the real diff (3) blocks")
 ok(grepl("array_sort", sql_checksum("t", "patient_id", c("patient_id", "lot_start_type"))),
    "checksum SQL is order-independent (array_sort)")
 # legacy-named tables: --patid PATID remaps ONLY patient_id (Databricks folds case

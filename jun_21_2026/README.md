@@ -18,7 +18,7 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 255 tests, all pure-R / local (also run in CI)
+Rscript tests/run_unit_tests.R          # 266 tests, all pure-R / local (also run in CI)
 ```
 
 Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
@@ -82,13 +82,15 @@ CE-sensitive end is implemented (caps at `enddate_ce`, reason `DISENROLLMENT`). 
 parity claim:** `contains_mtx_reg` (= 0; needs maintenance metadata
 `MONOMAINTENANCE`/`DUALMAINTENANCEWITH`) — a *deterministic* field, so the comparator
 treats it as an `UNIMPLEMENTED_FIELDS` gap that forces `partial_match` rather than a
-silent `match`. `max_lot` and `allo_lot_span` overrides are validated at execution
-(`max_lot` to the config range `[2,9]` as a **whole number** — checked before integer
-coercion, so `1` fails fast rather than running R's descending `2:1`, and `2.9` is
-rejected, not truncated). Regression-expected output (legacy execution on the same synthetic
-data) is the owner's hive_metastore step — this proves spec-conformance, not legacy
-equivalence; `run_engine` does not yet invoke the canonical/typed-config validators
-(the adapter→validation→core wiring is still pending, as listed below).
+silent `match`. `run_engine` now **typed-validates its param overrides** fail-closed
+(`.validate_params`): an unknown key (e.g. `max_lott`), a non-numeric
+(`sct_tandem_days="bad"`), a negative, or a fractional value is rejected, not silently
+ignored/coerced (`max_lot` is a whole number in `[2,9]`, so `1` fails fast vs R's
+descending `2:1`, and `2.9` is rejected). Regression-expected output (legacy execution
+on the same synthetic data) is the owner's hive_metastore step — this proves
+spec-conformance, not legacy equivalence; `run_engine` typed-validates params but does
+**not** yet run the full canonical-input validator (`validate_canonical`) — the
+adapter→canonical-validation→core wiring is still pending, as listed below.
 
 This is **verification only** — it runs the algorithm on synthetic fixtures locally
 so the refactor logic can be checked without a warehouse. It is NOT the production
@@ -109,19 +111,22 @@ Rscript scripts/compare_run_outputs.R --run hive_metastore.lot_prior hive_metast
 Both `--local` and `--run` exit **0 on `match`, 2 on `partial_match`, 1 on
 `mismatch`** and print per-table status. Each table runs the full hierarchy: schema
 parity **incl. data types**, **key-uniqueness** (`GROUP BY ... HAVING count>1`),
-membership anti-joins (`EXCEPT`, which stop the column compare when populations
-differ), null-safe value compare over **every shared column** (per-drug/class flags
-included), and a null-sentinel checksum.
+membership anti-joins (`EXCEPT`, which stop the column compare — both modes — when
+populations differ), null-safe value compare over **every shared column** in a
+**single join** (per-column conditional aggregates, so a wide table needs one scan,
+not one join per column), and a **failure-isolated** null-sentinel checksum (a
+non-authoritative audit signal that cannot abort the completed verdict).
 
 The **`partial_match`** verdict (for a known `UNIMPLEMENTED_FIELDS` gap like
-`contains_mtx_reg`) is **caller-scoped**, not global: the **local** engine-vs-golden
-comparison passes it (the R engine hardcodes the field, so a wrong maintenance result
-can never silently pass as `match`), but the **warehouse `--run`** (prior-vs-current,
-both production-derived and both computing the field) defaults to **strict** — the
-field is compared normally and a full `match` is reachable. The cross-convention id
-bridge casts the legacy `PATID` to the canonical **string** `patient_id`
-(`contracts/inputs.md`). The live warehouse RUN is unexecuted here; the comparator
-builders + normalization + verdict logic are unit-tested.
+`contains_mtx_reg`) is **caller-scoped**, not global — for **both** modes. The
+default is **strict** (two production exports compare every field); the local
+engine-vs-golden caller passes the gap profile explicitly (`compare_local(...,
+unimplemented = UNIMPLEMENTED_FIELDS)`, or `--local … --engine`), so the R engine's
+hardcoded `contains_mtx_reg` yields `partial_match` instead of a silent `match`,
+while a real production `contains_mtx_reg` regression is **not** weakened. The
+cross-convention id bridge casts the legacy `PATID` to the canonical **string**
+`patient_id` (`contracts/inputs.md`). The live warehouse RUN is unexecuted here; the
+comparator builders + normalization + reshape + verdict logic are unit-tested.
 
 Contents:
 
