@@ -32,26 +32,26 @@ scope_to_window <- function(df, members) {
 
 # Map canonical pharmacy + medical claims to (MED_ABBR, MED_CLASS) via the rollup
 # codelist keyed on (code_system, normalized_code). Unmapped codes are dropped
-# (not MM agents). Faithful to 02_lot1.R:426-449: an invalid (null/<1) day-supply
-# is imputed - PHARMACY to a hardcoded 28, MEDICAL to the configurable
-# medical_day_supply (matches production, which differ if the param changes); then
-# claims are scoped to the observation window and DEDUPED within
-# (patient, med, date, claim_type) keeping MAX day-supply.
+# (not MM agents). Faithful to 02_lot1.R:299-435: a MEDICAL claim's day-supply is
+# HARDCODED to medical_day_supply (every medical arm; 02_lot1.R:304); a PHARMACY
+# claim uses its own days_supply, imputing null/<1 to a hardcoded 28. Then claims
+# are scoped to the observation window and DEDUPED within (patient, med, date,
+# claim_type) keeping MAX day-supply.
 map_claims <- function(pharmacy, medical, rollup, members = NULL, medical_day_supply = 28L) {
   key <- function(cs, code) paste(toupper(trimws(as.character(cs))), toupper(trimws(as.character(code))))
   rk <- key(rollup$code_type, rollup$code)
   ab <- setNames(as.character(rollup$med_abbr), rk); cl <- setNames(as.character(rollup$med_class), rk)
-  mk <- function(df, type, ds, impute) {
+  mk <- function(df, type, ds, default, hardcode) {
     if (is.null(df) || !nrow(df)) return(NULL)
-    ds[is.na(ds) | ds < 1L] <- impute                             # impute null/<1
+    ds <- if (hardcode) rep(default, nrow(df)) else { ds[is.na(ds) | ds < 1L] <- default; ds }
     k <- key(df$code_system, df$normalized_code); keep <- k %in% rk
     if (!any(keep)) return(NULL)
     data.frame(patient_id = as.character(df$patient_id)[keep], med_abbr = unname(ab[k[keep]]),
                med_class = unname(cl[k[keep]]), dt = as.Date(as.character(df$service_date))[keep],
                type = type, ds = ds[keep], stringsAsFactors = FALSE)
   }
-  claims <- rbind(mk(pharmacy, "pharmacy", suppressWarnings(as.integer(pharmacy$days_supply)), 28L),
-                  mk(medical,  "medical",  suppressWarnings(as.integer(medical$day_supply)), medical_day_supply))
+  claims <- rbind(mk(pharmacy, "pharmacy", suppressWarnings(as.integer(pharmacy$days_supply)), 28L, FALSE),
+                  mk(medical,  "medical",  NULL, medical_day_supply, TRUE))
   if (is.null(claims) || !nrow(claims)) return(claims)
   claims <- scope_to_window(claims, members)                      # INDEX_DATE <= dt <= OBS_END
   if (!nrow(claims)) return(claims)

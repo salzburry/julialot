@@ -66,3 +66,79 @@ ok(x3$lot_start_type == "SCT_ALLO" && x3$lot_base_end_reason == "SCT_ALLO" &&
    "ALLO starts a single-day LOT (ends on the ALLO date)")
 ok(all(c("lot_allo_lot_flg", "contains_mtx_reg", "lot_base_end_dt_ce_sens", "lot_tx_auto_flg",
          "lot_tx_auto_dt_1") %in% names(llx)), "LOT_LONG carries the full contract columns (incl. SCT flags + CE-sens)")
+ok(setequal(names(llx), LOT_LONG_COLS), "LOT_LONG output == LOT_LONG_COLS (23 columns)")
+
+# CE-sensitive end: a LOT ending after enddate_ce (with disenrollment) is capped to
+# enddate_ce with reason DISENROLLMENT (the primary end is unchanged).
+memce <- data.frame(patient_id = "9000000061", index_date = "2020-06-01", obs_end_dt = "2021-12-31",
+  enddate_ce = "2021-03-01", enddate = "2021-12-31", stringsAsFactors = FALSE)
+llce <- build_lot_long(lb, le, mp, NULL, memce)
+c1 <- llce[llce$lot_num == 1, ]
+ok(as.character(c1$lot_base_end_dt) == "2021-03-14" &&
+   as.character(c1$lot_base_end_dt_ce_sens) == "2021-03-01" && c1$lot_base_end_reason_ce_sens == "DISENROLLMENT",
+   "CE-sensitive end caps at enddate_ce with DISENROLLMENT (primary end unchanged)")
+
+# CART-started LOT with NO consolidation agent ends on its start date (SCT_CART,
+# single-day) - lot2_5_base.R:814-815/850-851. LOT1 LENA runs out, then a lone CART.
+lbc <- data.frame(patient_id = "9000000081", lot1_start_dt = "2021-01-01", lot1_med_cnt = 1L,
+  lot1_base_meds = "LENA", lot1_base_discon_dt = "2021-03-01",
+  lot1_base_1st_add_med_dt = NA, lot1_base_1st_add_med = NA, stringsAsFactors = FALSE)
+lec <- data.frame(patient_id = "9000000081", lot1_base_end_dt = "2021-03-01",
+  lot1_base_end_reason = "DISCONTINUATION", lot1_base_length = 60L, stringsAsFactors = FALSE)
+mpc <- data.frame(patient_id = "9000000081", med_abbr = "LENA", med_class = "IMID",
+  map_cnt = 1L, map_start_dt = "2021-01-01", map_end_dt = "2021-03-01", stringsAsFactors = FALSE)
+sctcart <- data.frame(patient_id = "9000000081", dt = "2021-05-01", sct_type = "CART", stringsAsFactors = FALSE)
+memc <- data.frame(patient_id = "9000000081", index_date = "2020-06-01", obs_end_dt = "2021-12-31", stringsAsFactors = FALSE)
+llc <- build_lot_long(lbc, lec, mpc, sctcart, memc)
+cc2 <- llc[llc$lot_num == 2, ]
+ok(nrow(llc) == 2 && cc2$lot_start_type == "CART" && cc2$lot_base_meds == "" && cc2$lot_med_cnt == 0 &&
+   cc2$lot_base_end_reason == "SCT_CART" && as.character(cc2$lot_base_end_dt) == "2021-05-01" &&
+   cc2$lot_base_length == 1 && cc2$lot_cart_lot_flg == 1,
+   "CART-started LOT with no consolidation agent ends on its start date (SCT_CART, single-day)")
+
+# LOT_N AUTO window (integration): a MED LOT2 (DARA) whose coverage spans an AUTO.
+# Outside the 30-day window -> the AUTO ENDS LOT2 (SCT_AUTO); inside -> in-line TX.
+lba <- data.frame(patient_id = "9000000091", lot1_start_dt = "2021-01-01", lot1_med_cnt = 1L,
+  lot1_base_meds = "LENA", lot1_base_discon_dt = "2021-04-30",
+  lot1_base_1st_add_med_dt = "2021-03-14", lot1_base_1st_add_med = "DARA", stringsAsFactors = FALSE)
+lea <- data.frame(patient_id = "9000000091", lot1_base_end_dt = "2021-03-14",
+  lot1_base_end_reason = "MED_ADD", lot1_base_length = 73L, stringsAsFactors = FALSE)
+mpa <- data.frame(patient_id = "9000000091", med_abbr = c("LENA", "DARA"), med_class = c("IMID", "MAB"),
+  map_cnt = 1L, map_start_dt = c("2021-01-01", "2021-03-15"), map_end_dt = c("2021-04-30", "2021-07-12"),
+  stringsAsFactors = FALSE)
+mema <- data.frame(patient_id = "9000000091", index_date = "2020-06-01", obs_end_dt = "2021-12-31", stringsAsFactors = FALSE)
+llao <- build_lot_long(lba, lea, mpa,
+  data.frame(patient_id = "9000000091", dt = "2021-05-20", sct_type = "AUTO", stringsAsFactors = FALSE), mema)  # 66d after start
+ao2 <- llao[llao$lot_num == 2, ]
+ok(ao2$lot_start_type == "MED" && ao2$lot_base_meds == "DARA" && ao2$lot_base_end_reason == "SCT_AUTO" &&
+   as.character(ao2$lot_base_end_dt) == "2021-05-19" && ao2$lot_tx_auto_flg == 0,
+   "LOT_N: AUTO outside the 30-day window ends the MED line (SCT_AUTO), not an in-line transplant")
+llai <- build_lot_long(lba, lea, mpa,
+  data.frame(patient_id = "9000000091", dt = "2021-04-01", sct_type = "AUTO", stringsAsFactors = FALSE), mema)  # 17d after start
+ai2 <- llai[llai$lot_num == 2, ]
+ok(ai2$lot_base_end_reason == "DISCONTINUATION" && as.character(ai2$lot_base_end_dt) == "2021-07-12" &&
+   ai2$lot_tx_auto_flg == 1 && as.character(ai2$lot_tx_auto_dt_1) == "2021-04-01",
+   "LOT_N: AUTO inside the 30-day window is an in-line transplant (LOT2 still ends at runout)")
+
+# allo_lot_span: an ALLO-started LOT is single-day by DEFAULT, but extend_to_next
+# lets it run to the next event (here a later CART -> SCT_CART). lot2_5_base.R:662-665.
+lbs <- data.frame(patient_id = "9000000101", lot1_start_dt = "2021-01-01", lot1_med_cnt = 1L,
+  lot1_base_meds = "LENA", lot1_base_discon_dt = "2021-03-01",
+  lot1_base_1st_add_med_dt = NA, lot1_base_1st_add_med = NA, stringsAsFactors = FALSE)
+les <- data.frame(patient_id = "9000000101", lot1_base_end_dt = "2021-03-01",
+  lot1_base_end_reason = "DISCONTINUATION", lot1_base_length = 60L, stringsAsFactors = FALSE)
+mps <- data.frame(patient_id = "9000000101", med_abbr = "LENA", med_class = "IMID",
+  map_cnt = 1L, map_start_dt = "2021-01-01", map_end_dt = "2021-03-01", stringsAsFactors = FALSE)
+scts <- data.frame(patient_id = "9000000101", dt = c("2021-05-01", "2021-08-09"),
+  sct_type = c("ALLO", "CART"), stringsAsFactors = FALSE)
+mems <- data.frame(patient_id = "9000000101", index_date = "2020-06-01", obs_end_dt = "2021-12-31", stringsAsFactors = FALSE)
+sd2 <- build_lot_long(lbs, les, mps, scts, mems)                       # default = single_day
+g2 <- sd2[sd2$lot_num == 2, ]
+ok(g2$lot_start_type == "SCT_ALLO" && g2$lot_base_end_reason == "SCT_ALLO" &&
+   as.character(g2$lot_base_end_dt) == "2021-05-01" && g2$lot_base_length == 1,
+   "allo_lot_span=single_day (default): ALLO LOT spans only its start date")
+ex <- build_lot_long(lbs, les, mps, scts, mems, allo_lot_span = "extend_to_next")
+e2 <- ex[ex$lot_num == 2, ]
+ok(e2$lot_start_type == "SCT_ALLO" && e2$lot_base_end_reason == "SCT_CART" &&
+   as.character(e2$lot_base_end_dt) == "2021-08-08" && e2$lot_base_length == 100 && e2$lot_allo_lot_flg == 1,
+   "allo_lot_span=extend_to_next: ALLO LOT runs to the next event (later CART -> SCT_CART)")

@@ -91,3 +91,33 @@ procc <- data.frame(patient_id = "9000000099", event_date = "2021-03-01",
                     normalized_code = "38241", code_system = "CPT", stringsAsFactors = FALSE)
 exc <- extract_sct_claims(procedure = procc, sct_codelist = data.frame(code_type = "HCPCS", code = "38241", sct_type = "Autologous"))
 ok(nrow(exc) == 1 && exc$sct_type == "AUTO", "CPT code_system normalized to HCPCS matches codelist")
+
+# --- LOT_N applicable window (Step N.4: lot_window_days + allo_cart_strict) --------
+# The same AUTO is an in-line transplant when WITHIN the LOT window, but becomes the
+# ENDING_AUTO (closes the line) when OUTSIDE it. lot2_5_base.R:555-610.
+wlot <- data.frame(patient_id = "9000000044", lot1_start_dt = "2021-01-01", stringsAsFactors = FALSE)
+wobs <- data.frame(patient_id = "9000000044", obs_end_dt = "2021-12-31", stringsAsFactors = FALSE)
+auto_in  <- mk("9000000044", "2021-01-20", "AUTO")   # 19d after start (< 30 window)
+auto_out <- mk("9000000044", "2021-03-01", "AUTO")   # 59d after start (>= 30 window)
+wi <- build_sct_summary(auto_in, wlot, wobs, lot_window_days = 30L, allo_cart_strict = TRUE)
+ok(as.character(wi$auto_dt_1) == "2021-01-20" && wi$sing_flg == 1 && wi$tand_flg == 0 &&
+   is.na(wi$lot1_tx_enddate_reason),
+   "LOT_N: AUTO within the applicable window is an in-line transplant (no line end)")
+wo <- build_sct_summary(auto_out, wlot, wobs, lot_window_days = 30L, allo_cart_strict = TRUE)
+ok(is.na(wo$auto_dt_1) && wo$sing_flg == 0 && wo$tand_flg == 0 &&
+   as.character(wo$ending_auto_dt) == "2021-03-01" &&
+   as.character(wo$lot1_tx_enddate) == "2021-02-28" && wo$lot1_tx_enddate_reason == 1,
+   "LOT_N: first AUTO outside the window is NOT in-line -> it is the ENDING_AUTO (ends the line)")
+wl1 <- build_sct_summary(auto_out, wlot, wobs)       # lot_window_days = NA (LOT1)
+ok(as.character(wl1$auto_dt_1) == "2021-03-01" && wl1$sing_flg == 1 && is.na(wl1$lot1_tx_enddate_reason),
+   "LOT1: the first AUTO is the induction transplant regardless of distance from start")
+# allo_cart_strict: an ALLO on the line's own start date is its START (not its end)
+sallo <- mk("9000000045", "2021-01-01", "ALLO")
+slot <- data.frame(patient_id = "9000000045", lot1_start_dt = "2021-01-01", stringsAsFactors = FALSE)
+sobs <- data.frame(patient_id = "9000000045", obs_end_dt = "2021-12-31", stringsAsFactors = FALSE)
+ss <- build_sct_summary(sallo, slot, sobs, allo_cart_strict = TRUE)
+ok(is.na(ss$first_allo_dt) && is.na(ss$lot1_tx_enddate_reason),
+   "LOT_N: an ALLO on the start date is the line's start, not its end (strict > start)")
+sl1 <- build_sct_summary(sallo, slot, sobs)          # LOT1 non-strict (>=)
+ok(as.character(sl1$first_allo_dt) == "2021-01-01" && sl1$lot1_tx_enddate_reason == 2,
+   "LOT1: an ALLO on the start date ends LOT1 (non-strict >=)")

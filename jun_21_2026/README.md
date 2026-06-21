@@ -18,7 +18,7 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 216 tests, all pure-R / local
+Rscript tests/run_unit_tests.R          # 229 tests, all pure-R / local
 ```
 
 Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
@@ -57,15 +57,25 @@ Verified stages + edge cases (against hand-derived expected):
 - **LOT2-5** (`engine/lot_long.R`): the multi-line loop — trigger candidates
   (d_MED/d_ALLO/d_CART/d_AUTO) from the prior line's end, start+type tie-break,
   per-line regimen (30-day window), **line-scoped SCT** end (a MED-started line
-  ending at a later ALLO/CART), **ALLO-started single-day** lines, repeat to
-  MAX_LOT. The driver now emits the full 23-column `LOT_LONG` (incl. SCT flags +
-  CE-sensitive fields). Verified on a 3-line MED cohort + the line-scoped-SCT and
-  ALLO-line cases.
+  ending at a later ALLO/CART), repeat to MAX_LOT. The **LOT applicable window**
+  (Step N.4) is enforced: an AUTO within `lot_window_days` of the start (1 ALLO /
+  45 CART / 30 else) is an in-line transplant, but the first AUTO *outside* it
+  becomes the ENDING_AUTO that closes the line; ALLO/CART are scoped `> start`
+  (strict) so a line's own start SCT never ends it. Special starts: **ALLO
+  single-day** (configurable via `allo_lot_span`: `single_day` default vs
+  `extend_to_next`) and **CART with no consolidation agent → `SCT_CART`
+  single-day**. The driver emits the full 23-column `LOT_LONG` (incl. SCT flags +
+  CE-sensitive fields). Verified on a 3-line MED cohort + line-scoped-SCT,
+  in/out-of-window AUTO, CART-no-med, and both `allo_lot_span` modes.
 
-Documented simplifications (not yet faithful): CE-sensitive end (= end) and
-`contains_mtx_reg` (= 0); regression-expected output (legacy execution on the same
-synthetic data) is the owner's hive_metastore step — this proves spec-conformance,
-not legacy equivalence.
+Medical day-supply is hardcoded to `medical_day_supply` (every medical claim,
+matching production), pharmacy invalid day-supply to 28; the SCT codelist is a
+required input (SCT can never silently be empty). CE-sensitive end is implemented
+(caps at `enddate_ce`, reason `DISENROLLMENT`). **Explicitly EXCLUDED from the
+parity claim:** `contains_mtx_reg` (= 0; needs maintenance metadata
+`MONOMAINTENANCE`/`DUALMAINTENANCEWITH`). Regression-expected output (legacy
+execution on the same synthetic data) is the owner's hive_metastore step — this
+proves spec-conformance, not legacy equivalence.
 
 This is **verification only** — it runs the algorithm on synthetic fixtures locally
 so the refactor logic can be checked without a warehouse. It is NOT the production

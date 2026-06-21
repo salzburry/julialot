@@ -89,3 +89,10 @@ imp2 <- data.frame(patient_id = "9000000001", service_date = "2021-01-10", norma
                    code_system = "NDC", days_supply = "", stringsAsFactors = FALSE)
 m28 <- build_map_stacked(imp2, data.frame(), rl, oe, 90L, 60L)   # medical_day_supply = 60
 ok(as.character(m28$map_end_dt) == "2021-02-06", "pharmacy imputation stays 28 even when medical_day_supply=60")
+# medical day-supply is HARDCODED to medical_day_supply (ignores the claim's value)
+rlh <- data.frame(code_type = "HCPCS", code = "J1", med_abbr = "AAA", med_class = "IMID", stringsAsFactors = FALSE)
+medh <- data.frame(patient_id = "9000000001", service_date = "2021-01-10", normalized_code = "J1",
+                   code_system = "HCPCS", day_supply = "10", stringsAsFactors = FALSE)
+mh <- build_map_stacked(data.frame(), medh, rlh, oe)            # medical_day_supply default 28
+ok(as.character(mh$map_med_runout_dt) == "2021-02-06",
+   "medical day-supply hardcoded to 28 (ignores the claim's 10) -> runout dt+27")
