@@ -108,10 +108,15 @@ finalize_auto_per_patient <- function(sct_claims, members = NULL, window_days = 
 # AUTO is induction; LOT_N = 30/45/1): an AUTO_DT_1 at/after that many days from the
 # start is NOT in-line - its TX fields clear and it becomes the ENDING_AUTO that
 # closes the line. allo_cart_strict = TRUE (LOT_N) uses `> start` for ALLO/CART so
-# the line's own start SCT is not treated as its end.
+# the line's own start SCT is not treated as its end. tie_priority selects the
+# SAME-DAY end-reason order: "lot1" = AUTO>ALLO>CART (02_lot1.R:1327-1338); "lotn" =
+# ALLO>CART>AUTO (lot2_5_base.R:776-791). auto_dt_2 is reported only when it is a
+# valid in-line tandem for LOT_N (Step N.4); LOT1 reports the raw 2nd AUTO (S15).
 build_sct_summary <- function(sct_claims, lot1_start, obs_end,
                               tandem_days = 180L, window_days = 13L, gap_days = 60L,
-                              lot_window_days = NA_integer_, allo_cart_strict = FALSE) {
+                              lot_window_days = NA_integer_, allo_cart_strict = FALSE,
+                              tie_priority = c("lot1", "lotn")) {
+  tie_priority <- match.arg(tie_priority)
   ls <- setNames(as.Date(as.character(lot1_start$lot1_start_dt)), as.character(lot1_start$patient_id))
   oe <- setNames(as.Date(as.character(obs_end$obs_end_dt)), as.character(obs_end$patient_id))
   idx <- if ("index_date" %in% names(obs_end))
@@ -146,14 +151,23 @@ build_sct_summary <- function(sct_claims, lot1_start, obs_end,
     tandem <- in_win && tandem0
     sing <- in_win && !is.na(d1) && !tandem0
     rep_d1 <- if (in_win) d1 else as.Date(NA)
-    rep_d2 <- if (in_win) d2 else as.Date(NA)
+    # auto_dt_2 is an in-line 2nd transplant ONLY for a valid tandem under LOT_N
+    # (Step N.4); LOT1 (NA window) reports the raw 2nd AUTO (S15, 02_lot1.R:1268).
+    rep_d2 <- if (in_win && (is.na(lot_window_days) || tandem0)) d2 else as.Date(NA)
     ending_auto <- if (is.na(d1)) as.Date(NA) else if (!in_win) d1 else if (tandem0) d3 else d2
     cands <- c(AUTO = ending_auto, ALLO = first_allo, CART = first_cart)
     if (all(is.na(cands))) { end_dt <- as.Date(NA); reason <- NA_integer_ } else {
       SENT <- as.Date("9999-12-31"); a <- cands["AUTO"]; al <- cands["ALLO"]; ca <- cands["CART"]
       a[is.na(a)] <- SENT; al[is.na(al)] <- SENT; ca[is.na(ca)] <- SENT
       end_dt <- min(a, al, ca) - 1L
-      reason <- if (a <= al && a <= ca) 1L else if (al <= ca) 2L else 3L
+      # Same-day tie order is line-specific in production: LOT1 AUTO>ALLO>CART; LOT_N
+      # ALLO>CART>AUTO. NOTE the AUTO branch only matters on an AUTO==ALLO/CART tie,
+      # which is UNREACHABLE: ALLO/CART censor any same-day-or-later AUTO (above), so
+      # ending_auto is strictly before first ALLO/CART. We still mirror production's
+      # distinct LOT_N order for faithfulness (the ALLO-vs-CART tie -> ALLO in both).
+      reason <- if (tie_priority == "lotn") {
+        if (al <= ca && al <= a) 2L else if (ca <= a) 3L else 1L
+      } else if (a <= al && a <= ca) 1L else if (al <= ca) 2L else 3L
     }
     data.frame(patient_id = pid, auto_dt_1 = rep_d1, auto_dt_2 = rep_d2,
                tand_flg = as.integer(tandem), sing_flg = as.integer(sing),

@@ -84,13 +84,13 @@ LOT_LONG_COLS <- c("patient_id", "lot_num", "lot_start_dt", "lot_start_type", "l
 # the line (NA = LOT1 = no window). allo_cart_strict = TRUE (LOT_N) scopes ALLO/CART
 # with `> start` so the line's own start SCT is not treated as its end.
 .line_sct <- function(sct_claims, pid, lot_start, lot_type, obs_end, tandem, window, gap,
-                      lot_window_days = NA_integer_, allo_cart_strict = FALSE) {
+                      lot_window_days = NA_integer_, allo_cart_strict = FALSE, tie_priority = "lot1") {
   if (is.null(sct_claims) || !nrow(sct_claims)) return(NULL)
   sc <- sct_claims[sct_claims$patient_id == pid, , drop = FALSE]
   if (lot_type == "CART") sc <- sc[!(as.Date(as.character(sc$dt)) == lot_start & sc$sct_type == "CART"), , drop = FALSE]
   if (!nrow(sc)) return(NULL)
   build_sct_summary(sc, data.frame(patient_id = pid, lot1_start_dt = lot_start, stringsAsFactors = FALSE),
-                    obs_end, tandem, window, gap, lot_window_days, allo_cart_strict)
+                    obs_end, tandem, window, gap, lot_window_days, allo_cart_strict, tie_priority)
 }
 
 # The LOT applicable window for a LOT_N start type (Step N.4 / lb CTE,
@@ -187,7 +187,8 @@ build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
                             allo_extend = (allo_lot_span == "extend_to_next"))
         win <- .lot_window_days(cd$type, induction_window_days, cart_consolidation_days)
         lsct <- .line_sct(sct_claims, pid, cd$start, cd$type, obs_end, sct_tandem_days,
-                          sct_auto_window_days, sct_auto_gap_days, lot_window_days = win, allo_cart_strict = TRUE)
+                          sct_auto_window_days, sct_auto_gap_days, lot_window_days = win,
+                          allo_cart_strict = TRUE, tie_priority = "lotn")
         if (cd$type == "CART" && reg$med_cnt == 0L) {          # CART, no consolidation agent: single-day line
           en <- list(lot1_base_end_dt = cd$start, lot1_base_end_reason = "SCT_CART", lot1_base_length = 1L)
         } else {

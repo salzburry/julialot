@@ -18,7 +18,7 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 232 tests, all pure-R / local
+Rscript tests/run_unit_tests.R          # 239 tests, all pure-R / local
 ```
 
 Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
@@ -92,13 +92,17 @@ Run the live current-vs-prior comparison on hive_metastore (same DSN/odbc as
 
 ```
 Rscript scripts/compare_run_outputs.R --run hive_metastore.lot_prior hive_metastore.lot_current
-# the patient-id column (PATID vs patient_id) is AUTO-DETECTED; override with --patid <col>
+# the patient-id column is detected PER SIDE; a cross-convention compare (legacy
+# PATID vs canonical patient_id) is normalized to patient_id; override with --patid <col>
 ```
 
 Per table it runs the full hierarchy and exits 0 on `match`, 1 on `mismatch`:
 schema parity **incl. data types**, **key-uniqueness** (`GROUP BY ... HAVING count>1`),
 membership anti-joins (`EXCEPT`), null-safe value compare over **every shared
 column** (per-drug/class flags included), and a null-sentinel checksum.
+`contains_mtx_reg` is in `EXCLUDED_FIELDS` (its diff is surfaced, non-blocking)
+since the local engine does not derive it. The live warehouse RUN is unexecuted
+here; the comparator builders + the cross-convention normalization are unit-tested.
 
 Contents:
 

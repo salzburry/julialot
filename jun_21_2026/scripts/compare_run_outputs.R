@@ -41,7 +41,10 @@ COMPARE_KEYS <- list(
 # (compare result `excluded_diffs`), never silently dropped.
 EXCLUDED_FIELDS <- list(
   LOT1_BASE = c("lot1_base_1st_add_med"),
-  LOT_LONG  = c("lot_base_1st_add_med")
+  # lot_base_1st_add_med: tie-break can pick a co-dated equal; contains_mtx_reg:
+  # the local engine does NOT derive it (needs MONOMAINTENANCE/DUALMAINTENANCEWITH
+  # metadata, README), so its diff is SURFACED but non-blocking, not silently equal.
+  LOT_LONG  = c("lot_base_1st_add_med", "contains_mtx_reg")
 )
 
 # Required output columns per table (the versioned output contract; see
@@ -83,6 +86,10 @@ OUTPUT_CONTRACT <- list(
 db_q <- function(con, sql) {
   if (is.null(con)) stop("db_q: no connection - pass a DBI/odbc handle (see connect_compare())")
   DBI::dbGetQuery(con, sql)
+}
+db_exec <- function(con, sql) {                              # DDL seam (normalize views)
+  if (is.null(con)) stop("db_exec: no connection - pass a DBI/odbc handle (see connect_compare())")
+  DBI::dbExecute(con, sql)
 }
 
 # Connect exactly like apr_30_2026 (DSN=DATABRICKS_DSN default RWDE; pwd=DATABRICKS_PWD;
@@ -180,6 +187,16 @@ compare_schema_maps <- function(sa, sb) {
   if ("patid" %in% lc) return("PATID")
   "patient_id"
 }
+# Normalize one side's id column to canonical `patient_id` (pure: returns the
+# CREATE VIEW DDL). Used to bridge a CROSS-CONVENTION compare (legacy PATID on one
+# side, canonical patient_id on the other) so the id-name difference alone does not
+# fail schema parity. All other columns pass through unchanged.
+sql_normalize_view <- function(view, tbl, cols, id_col) {
+  others <- cols[tolower(cols) != tolower(id_col)]
+  proj <- paste(c(sprintf("%s AS `patient_id`", .bt(id_col)), .bt(others)), collapse = ", ")
+  sprintf("CREATE OR REPLACE TEMPORARY VIEW %s AS SELECT %s FROM %s", view, proj, tbl)
+}
+.cmp_view <- function(table_name, side) sprintf("cmpnorm_%s_%s", gsub("[^A-Za-z0-9_]", "_", table_name), side)
 # All SHARED non-key columns to value-compare (not just the curated contract), so
 # a current-vs-prior diff also catches the per-drug / per-class wide columns.
 value_compare_cols <- function(cols_a, cols_b, keys)
@@ -216,7 +233,19 @@ table_checksum <- function(con, tbl, keys, compare_cols, excluded = character(0)
 compare_table <- function(con, tbl_a, tbl_b, table_name, patid = NULL) {
   if (is.null(COMPARE_KEYS[[table_name]])) stop("no COMPARE_KEYS for ", table_name)
   sa <- describe_schema(con, tbl_a); sb <- describe_schema(con, tbl_b)
-  if (is.null(patid)) patid <- .detect_patid(names(sa))
+  id_a <- patid %||% .detect_patid(names(sa)); id_b <- .detect_patid(names(sb))
+  # Cross-convention bridge: when the two sides name the patient id differently
+  # (legacy PATID vs canonical patient_id - the actual legacy-vs-refactored case),
+  # normalize EACH non-canonical side to `patient_id` via a temp view BEFORE schema/
+  # key/value comparison, then compare on canonical keys. Same-convention runs keep
+  # the legacy remap path (no view), so the existing single-name behavior is intact.
+  if (tolower(id_a) != tolower(id_b)) {
+    if (tolower(id_a) != "patient_id") { v <- .cmp_view(table_name, "a")
+      db_exec(con, sql_normalize_view(v, tbl_a, names(sa), id_a)); tbl_a <- v; sa <- describe_schema(con, v) }
+    if (tolower(id_b) != "patient_id") { v <- .cmp_view(table_name, "b")
+      db_exec(con, sql_normalize_view(v, tbl_b, names(sb), id_b)); tbl_b <- v; sb <- describe_schema(con, v) }
+    patid <- "patient_id"
+  } else patid <- id_a
   keys <- .remap_patid(COMPARE_KEYS[[table_name]], patid)
   excl <- .remap_patid(EXCLUDED_FIELDS[[table_name]] %||% character(0), patid)
   required <- .remap_patid(OUTPUT_CONTRACT[[table_name]] %||% keys, patid)

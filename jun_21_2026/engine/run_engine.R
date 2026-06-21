@@ -16,7 +16,7 @@ DEFAULT_PARAMS <- list(map_discon_gap_days = 90L, medical_day_supply = 28L,
                        induction_window_days = 60L, lot_n_induction_window_days = 30L,
                        cart_consolidation_days = 45L, sct_auto_window_days = 13L,
                        sct_auto_gap_days = 60L, sct_tandem_days = 180L,
-                       allo_lot_span = "single_day")
+                       allo_lot_span = "single_day", max_lot = 5L)
 
 # Full local pipeline MAP -> LOT1 -> SCT -> LOT1 end.
 REQUIRED_INPUTS <- c("pharmacy.csv", "rollup.csv", "members.csv", "sct_codelist.csv")
@@ -54,7 +54,8 @@ run_engine <- function(input_dir, params = list()) {
                              auto_dates = auto_dates, permissible_subs = subsd)
   lot_long <- build_lot_long(lot1, lot1_end, map_stacked, sct_claims, members, deathd, subsd,
                 p$lot_n_induction_window_days, p$cart_consolidation_days, p$sct_tandem_days,
-                p$sct_auto_window_days, p$sct_auto_gap_days, allo_lot_span = p$allo_lot_span)
+                p$sct_auto_window_days, p$sct_auto_gap_days,
+                allo_lot_span = p$allo_lot_span, max_lot = p$max_lot)
   list(MAP_STACKED = map_stacked, LOT1_BASE = lot1, LOT1_END = lot1_end, LOT_LONG = lot_long)
 }
 
