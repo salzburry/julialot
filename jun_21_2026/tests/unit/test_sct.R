@@ -58,3 +58,36 @@ proc <- data.frame(patient_id = "9000000011", event_date = "2021-03-01",
 cl <- data.frame(code_type = "HCPCS", code = "38241", sct_type = "Autologous", stringsAsFactors = FALSE)
 ex <- extract_sct_claims(proc, cl)
 ok(nrow(ex) == 1 && ex$sct_type == "AUTO", "SCT claim extracted + type normalized (Autologous->AUTO)")
+
+# --- additional SCT coverage (per review) -------------------------------------
+# a 3rd AUTO ends a valid tandem course (ENDING_AUTO = AUTO_DT_3)
+t3 <- do.call(rbind, list(mk("9000000041", "2021-03-01", "AUTO"),
+  mk("9000000041", "2021-06-01", "AUTO"), mk("9000000041", "2021-11-01", "AUTO")))
+s3 <- build_sct_summary(t3, data.frame(patient_id = "9000000041", lot1_start_dt = "2021-01-01"),
+  data.frame(patient_id = "9000000041", obs_end_dt = "2021-12-31"))
+ok(s3$tand_flg == 1 && as.character(s3$lot1_tx_enddate) == "2021-10-31" && s3$lot1_tx_enddate_reason == 1,
+   "tandem then 3rd AUTO -> 3rd AUTO ends LOT1 (reason AUTO)")
+# an AUTO AFTER an ALLO is censored (not AUTO_DT_2)
+t4 <- do.call(rbind, list(mk("9000000042", "2021-03-01", "AUTO"),
+  mk("9000000042", "2021-06-01", "ALLO"), mk("9000000042", "2021-08-01", "AUTO")))
+s4 <- build_sct_summary(t4, data.frame(patient_id = "9000000042", lot1_start_dt = "2021-01-01"),
+  data.frame(patient_id = "9000000042", obs_end_dt = "2021-12-31"))
+ok(as.character(s4$auto_dt_1) == "2021-03-01" && is.na(s4$auto_dt_2) && s4$lot1_tx_enddate_reason == 2,
+   "AUTO after ALLO is censored; ALLO ends LOT1")
+# OBS_END scoping: a post-observation claim in the same window must not replace the
+# valid in-window window-max and then be excluded (the event must survive)
+t5 <- do.call(rbind, list(mk("9000000043", "2021-06-28", "AUTO"), mk("9000000043", "2021-07-05", "AUTO")))
+s5 <- build_sct_summary(t5, data.frame(patient_id = "9000000043", lot1_start_dt = "2021-01-01"),
+  data.frame(patient_id = "9000000043", index_date = "2020-01-01", obs_end_dt = "2021-06-30"))
+eq(as.character(s5$auto_dt_1), "2021-06-28", "post-OBS_END claim scoped out BEFORE windowing (in-window event survives)")
+# diagnosis-coded SCT evidence + code-type normalization (ICD10DX alias)
+diag <- data.frame(patient_id = "9000000099", event_date = "2021-03-01",
+                   normalized_code = "Z9484", code_system = "ICD10DIAG", stringsAsFactors = FALSE)
+cld <- data.frame(code_type = "ICD10DX", code = "Z94.84", sct_type = "Allogenic", stringsAsFactors = FALSE)
+exd <- extract_sct_claims(procedure = NULL, sct_codelist = cld, diagnosis = diag)
+ok(nrow(exd) == 1 && exd$sct_type == "ALLO", "diagnosis-coded SCT detected (ICD10DX alias -> ICD10DIAG)")
+# CPT code_system normalized to HCPCS
+procc <- data.frame(patient_id = "9000000099", event_date = "2021-03-01",
+                    normalized_code = "38241", code_system = "CPT", stringsAsFactors = FALSE)
+exc <- extract_sct_claims(procedure = procc, sct_codelist = data.frame(code_type = "HCPCS", code = "38241", sct_type = "Autologous"))
+ok(nrow(exc) == 1 && exc$sct_type == "AUTO", "CPT code_system normalized to HCPCS matches codelist")

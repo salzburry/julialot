@@ -23,19 +23,36 @@
   ifelse(startsWith(u, "AUTO"), "AUTO",
   ifelse(u %in% c("CAR-T", "CART", "CAR_T"), "CART", u)))
 }
-extract_sct_claims <- function(procedure, sct_codelist) {
-  if (is.null(procedure) || !nrow(procedure)) return(data.frame(
-    patient_id = character(0), dt = as.Date(character(0)), sct_type = character(0)))
-  key <- function(cs, code) paste(toupper(trimws(as.character(cs))),
-                                   toupper(gsub("[^A-Za-z0-9]", "", as.character(code))))
-  ck <- key(sct_codelist$code_type, sct_codelist$code)
+# Normalize a code-system / code_type label to the canonical bucket (production
+# S11): ICD10PCS->ICD10PROC, CPT->HCPCS, ICD diagnosis aliases -> ICD{9,10}DIAG.
+.norm_code_type <- function(x) {
+  u <- toupper(trimws(as.character(x)))
+  ifelse(u %in% c("ICD10PROC", "ICD10PCS"), "ICD10PROC",
+  ifelse(u == "ICD9PROC", "ICD9PROC",
+  ifelse(u %in% c("ICD10DIAG", "ICD10DX", "DIAG10") | grepl("^ICD.*10.*DIAG", u), "ICD10DIAG",
+  ifelse(u %in% c("ICD9DIAG", "ICD9DX", "ICD9", "DIAG9") | grepl("^ICD.*9.*DIAG", u), "ICD9DIAG",
+  ifelse(u %in% c("CPT", "CPT4"), "HCPCS", u)))))
+}
+# Detect SCT evidence across the canonical entities that carry codes: procedure
+# (ICD9/10 PROC + HCPCS), diagnosis (ICD9/10 DIAG), medical (HCPCS/CPT). Matches on
+# (normalized code_system, code) against the SCT codelist; type normalized to
+# ALLO/AUTO/CART. Mirrors the four production evidence routes.
+extract_sct_claims <- function(procedure = NULL, sct_codelist, diagnosis = NULL, medical = NULL) {
+  empty <- data.frame(patient_id = character(0), dt = as.Date(character(0)), sct_type = character(0))
+  nc <- function(code) toupper(gsub("[^A-Za-z0-9]", "", as.character(code)))
+  ck <- paste(.norm_code_type(sct_codelist$code_type), nc(sct_codelist$code))
   ty <- setNames(.norm_sct_type(sct_codelist$sct_type), ck)
-  k <- key(procedure$code_system, procedure$normalized_code); keep <- k %in% ck
-  if (!any(keep)) return(data.frame(patient_id = character(0), dt = as.Date(character(0)), sct_type = character(0)))
-  d <- data.frame(patient_id = as.character(procedure$patient_id)[keep],
-                  dt = as.Date(as.character(procedure$event_date))[keep],
-                  sct_type = unname(ty[k[keep]]), stringsAsFactors = FALSE)
-  unique(d)
+  pull <- function(df, date_col) {
+    if (is.null(df) || !nrow(df)) return(NULL)
+    k <- paste(.norm_code_type(df$code_system), nc(df$normalized_code)); keep <- k %in% ck
+    if (!any(keep)) return(NULL)
+    data.frame(patient_id = as.character(df$patient_id)[keep],
+               dt = as.Date(as.character(df[[date_col]]))[keep],
+               sct_type = unname(ty[k[keep]]), stringsAsFactors = FALSE)
+  }
+  res <- rbind(pull(procedure, "event_date"), pull(diagnosis, "event_date"), pull(medical, "service_date"))
+  if (is.null(res)) return(empty)
+  unique(res)
 }
 
 # AUTO window (datediff <= window_days, default 13) + 60-day gap merge -> finalized
@@ -86,9 +103,15 @@ build_sct_summary <- function(sct_claims, lot1_start, obs_end,
                               tandem_days = 180L, window_days = 13L, gap_days = 60L) {
   ls <- setNames(as.Date(as.character(lot1_start$lot1_start_dt)), as.character(lot1_start$patient_id))
   oe <- setNames(as.Date(as.character(obs_end$obs_end_dt)), as.character(obs_end$patient_id))
+  idx <- if ("index_date" %in% names(obs_end))
+    setNames(as.Date(as.character(obs_end$index_date)), as.character(obs_end$patient_id)) else NULL
   rows <- lapply(names(ls), function(pid) {
     L <- ls[[pid]]; O <- oe[[pid]]
     sc <- sct_claims[sct_claims$patient_id == pid, , drop = FALSE]
+    # SCT claims are scoped to [index_date, OBS_END] BEFORE windowing (production
+    # S12), so a post-observation claim cannot become a window max and skew a TX.
+    lo <- if (!is.null(idx)) idx[[pid]] else as.Date(NA)
+    sc <- sc[(is.na(lo) | sc$dt >= lo) & (is.na(O) | sc$dt <= O), , drop = FALSE]
     auto_tx <- finalize_auto_dates(sc$dt[sc$sct_type == "AUTO"], window_days, gap_days, tandem_days)
     allo <- sort(unique(sc$dt[sc$sct_type == "ALLO"])); cart <- sort(unique(sc$dt[sc$sct_type == "CART"]))
     inw <- function(d) d[!is.na(d) & d >= L & d <= O]

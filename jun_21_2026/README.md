@@ -18,7 +18,7 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 203 tests, all pure-R / local
+Rscript tests/run_unit_tests.R          # 210 tests, all pure-R / local
 ```
 
 Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
@@ -99,9 +99,9 @@ scripts/                         # all runnable + unit-tested (except the hive_m
   validate_study.R               #   base+delta cross-rules + gate DAG (cycle detection)
   build_coverage_matrix.R        #   positive/negative coverage from the catalog
   verify_no_synthetic.R          #   release gate: allowlist + reserved-PATID scan
-  compare_run_outputs.R          #   comparison hierarchy: LOCAL CSV mode works + tested
-                                 #   (numeric/date normalization, output contract); the
-                                 #   hive_metastore SQL is authored - only db_q (ODBC) is unwired
+  compare_run_outputs.R          #   comparison hierarchy: LOCAL CSV mode works + tested;
+                                 #   hive_metastore SQL authored + db_q/--run wired (DBI/odbc) -
+                                 #   only the live warehouse RUN is unexecuted here
   promote_reference_data.R       #   intake->validated->approved: validation + dry-run
                                  #   runnable + tested; only snapshot-write/impact = stub
   validate_manifest.R            #   ONE manifest gate: structural (closed schema,
@@ -123,11 +123,11 @@ algorithm, no premature extraction):
   frozen from the approved legacy code at the baseline Git SHA* (Databricks),
   never hand-authored. Spec-expected outputs are *hand-derived and dual-reviewed*
   with clinical sign-off. So `tests/fixtures/expected/` holds templates only.
-- **The two hive_metastore-only seams:** executing the large-table comparison SQL
-  (the SQL is authored as `sql_*` builders; only `db_q` ODBC execution in
-  `compare_run_outputs.R` is unwired — the *local CSV* comparison is complete and
-  tested) and the snapshot-write + affected-patient impact estimate in
-  `promote_reference_data.R`. The engine is Databricks SQL over the
+- **The live hive_metastore RUN of the comparator** (the `sql_*` builders + `db_q`
+  + `--run` are wired and unit-tested; what is not done here is EXECUTING them
+  against a real warehouse — none in this environment; the *local CSV* comparison
+  is complete and tested) and the snapshot-write + affected-patient impact estimate
+  in `promote_reference_data.R`. The engine is Databricks SQL over the
   **hive_metastore** catalog (DBI/odbc), not Spark.
 - **Any moved/extracted algorithm code**, and the **Optum canonical-view shim**
   (Increment 1B) — both wait for the baseline + harness on the refactor branch.

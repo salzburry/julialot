@@ -16,11 +16,19 @@ DEFAULT_PARAMS <- list(map_discon_gap_days = 90L, medical_day_supply = 28L,
                        sct_auto_gap_days = 60L, sct_tandem_days = 180L)
 
 # Full local pipeline MAP -> LOT1 -> SCT -> LOT1 end.
+REQUIRED_INPUTS <- c("pharmacy.csv", "rollup.csv", "members.csv")
+
 run_engine <- function(input_dir, params = list()) {
+  miss <- REQUIRED_INPUTS[!file.exists(file.path(input_dir, REQUIRED_INPUTS))]
+  if (length(miss))                                  # fail closed - never emit partial output
+    stop("run_engine: missing required input(s): ", paste(miss, collapse = ", "))
   rd <- function(f) { p <- file.path(input_dir, f)
     if (file.exists(p)) read.csv(p, stringsAsFactors = FALSE, colClasses = "character")
     else data.frame() }
   p <- modifyList(DEFAULT_PARAMS, params)
+  if (!all(c("index_date", "obs_end_dt") %in% names(read.csv(file.path(input_dir, "members.csv"),
+            nrows = 1, stringsAsFactors = FALSE))))
+    stop("run_engine: members.csv must carry index_date + obs_end_dt (claim-window scoping)")
   members <- rd("members.csv"); subs <- rd("permissible_subs.csv"); death <- rd("death.csv")
   map_stacked <- build_map_stacked(rd("pharmacy.csv"), rd("medical.csv"),
     rd("rollup.csv"), members, p$map_discon_gap_days, p$medical_day_supply)

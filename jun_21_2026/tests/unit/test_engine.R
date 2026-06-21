@@ -72,3 +72,10 @@ dup <- data.frame(patient_id = "9000000001", service_date = "2021-01-10", normal
 md <- build_map_stacked(dup, data.frame(), rl, oe)
 ok(nrow(md) == 1 && as.character(md$map_end_dt) == "2021-02-08",
    "same-day dup pharmacy -> one MAP, MAX day-supply 30 (end dt+29), no pushout")
+# claim-window scoping: claims outside [index_date, obs_end] are dropped before MAP
+memw <- data.frame(patient_id = "9000000001", index_date = "2021-01-05", obs_end_dt = "2021-06-30", stringsAsFactors = FALSE)
+phw <- data.frame(patient_id = "9000000001", service_date = c("2021-01-01", "2021-02-01", "2021-08-01"),
+                  normalized_code = "X", code_system = "NDC", days_supply = "30", stringsAsFactors = FALSE)
+mw <- build_map_stacked(phw, data.frame(), rl, memw)
+ok(nrow(mw) == 1 && as.character(mw$map_start_dt) == "2021-02-01",
+   "claims before index_date / after obs_end dropped before MAP")

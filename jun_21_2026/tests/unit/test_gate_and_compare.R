@@ -117,6 +117,9 @@ ok(setequal(value_compare_cols(c("PATID", "LOT_NUM", "LOT1_MED_LENA"),
 # duplicate-key check (review P1) + null-sentinel checksum (review P3)
 ok(grepl("GROUP BY .* HAVING count\\(\\*\\) > 1", sql_key_uniqueness("t", c("PATID", "LOT_NUM"))),
    "key-uniqueness SQL uses GROUP BY ... HAVING count(*) > 1")
+ok(grepl("null_keys", sql_key_uniqueness("t", c("PATID", "LOT_NUM"))) &&
+   grepl("`PATID` IS NULL", sql_key_uniqueness("t", "PATID")),
+   "key-integrity SQL also checks NULL keys (non-null required)")
 ok(grepl("coalesce\\(cast", sql_checksum("t", "patient_id", c("patient_id", "x"))),
    "checksum coalesces nulls to a sentinel (no concat_ws null collision)")
 

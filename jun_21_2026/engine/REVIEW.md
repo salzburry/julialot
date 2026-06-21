@@ -6,10 +6,17 @@ is **verification only** — production stays the Databricks SQL on `hive_metast
 (`apr_30_2026/`, untouched). Every output is checked against a **hand-derived**
 expected value (independent of the engine), so a passing test is a real check.
 
+**What this proves (and does not).** The expected values are **spec-expected**
+(hand-derived from the documented rules), so this proves the engine agrees with the
+**specification** for the tested cases. It does **not** yet prove equivalence to the
+*actual legacy execution* — that requires running the same synthetic data through
+the legacy `hive_metastore` pipeline to produce **regression-expected** output and
+comparing. That run is the reviewer/owner's step (it needs the warehouse).
+
 Run it (the driver runs the full pipeline MAP → LOT1 → SCT → LOT1 end):
 ```
 Rscript engine/run_engine.R engine/fixtures /tmp/out   # MAP_STACKED + LOT1_BASE + LOT1_END
-Rscript tests/run_unit_tests.R                          # 196 pass (engine: test_engine/sct/lot_end)
+Rscript tests/run_unit_tests.R                          # 210 pass (engine: test_engine/sct/lot_end/lot_long)
 ```
 
 ## What to validate: each rule maps to a production source line

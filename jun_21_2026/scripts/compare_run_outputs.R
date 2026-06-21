@@ -6,9 +6,10 @@
 #
 # The comparison LOGIC and ordering are authoritative and the warehouse SQL is
 # authored as pure `sql_*` builders (Databricks SQL over the hive_metastore
-# catalog); the ONLY unwired seam is `db_q` (the DBI/odbc execution, as in
-# apr_30_2026/R/db_utils.R). There is no Spark DataFrame API. Full patient-level
-# comparison is the gate; checksums are only an early warning.
+# catalog). `db_q` IS wired (DBI::dbGetQuery) and `--run` connects via connect_compare;
+# what remains is EXECUTING the live path against a real hive_metastore here (no
+# warehouse in this environment). There is no Spark DataFrame API. Full
+# patient-level comparison is the gate; checksums are only an early warning.
 #
 # Comparison hierarchy (run in order; stop reporting at the first decisive gap):
 #   1. schema + key-uniqueness
@@ -129,12 +130,16 @@ sql_values <- function(tbl_a, tbl_b, keys, compare_cols, excluded = character(0)
   paste(per, collapse = "\nUNION ALL\n")
 }
 
-# Per-table key-uniqueness: a duplicate (patient, lot_num, ...) key on EITHER side
-# makes the set-based membership compare unsound, so it is checked explicitly
-# (the README's "key uniqueness" promise) and blocks the table verdict.
-sql_key_uniqueness <- function(tbl, keys)
-  sprintf("SELECT count(*) AS dup_keys FROM (SELECT %s FROM %s GROUP BY %s HAVING count(*) > 1)",
-          .keylist(keys), tbl, .keylist(keys))
+# Per-table key integrity: a required key must be NON-NULL and UNIQUE. A duplicate
+# OR a null-component key on EITHER side makes the set-based membership compare
+# unsound (null `<=>` null is true), so both are checked explicitly and block the
+# table verdict.
+sql_key_uniqueness <- function(tbl, keys) {
+  nullc <- paste(sprintf("%s IS NULL", .bt(keys)), collapse = " OR ")
+  sprintf(paste0("SELECT (SELECT count(*) FROM (SELECT %s FROM %s GROUP BY %s HAVING count(*) > 1)) AS dup_keys, ",
+                 "(SELECT count(*) FROM %s WHERE %s) AS null_keys"),
+          .keylist(keys), tbl, .keylist(keys), tbl, nullc)
+}
 
 # Deterministic, partition-independent table hash: per-row md5 over the non-excluded
 # columns, array_sort'd then joined and hashed. Nulls are coalesced to an explicit
@@ -184,7 +189,9 @@ compare_membership <- function(con, tbl_a, tbl_b, keys) {
   r <- db_q(con, sql_membership(tbl_a, tbl_b, keys))
   list(only_in_a = r$only_in_a[1], only_in_b = r$only_in_b[1])
 }
-compare_key_uniqueness <- function(con, tbl, keys) db_q(con, sql_key_uniqueness(tbl, keys))$dup_keys[1]
+compare_key_uniqueness <- function(con, tbl, keys) {
+  r <- db_q(con, sql_key_uniqueness(tbl, keys)); list(dup = r$dup_keys[1], null = r$null_keys[1])
+}
 
 compare_values <- function(con, tbl_a, tbl_b, keys, compare_cols, excluded = character(0)) {
   r <- db_q(con, sql_values(tbl_a, tbl_b, keys, compare_cols, excluded))
@@ -201,6 +208,11 @@ table_checksum <- function(con, tbl, keys, compare_cols, excluded = character(0)
 # (LOT_NUM == lot_num), so only patient_id genuinely differs from the legacy tables
 # (PATID). `patid` remaps it; NULL = auto-detect from the table schema.
 .remap_patid <- function(v, patid) if (identical(patid, "patient_id")) v else gsub("^patient_id$", patid, v)
+# Runs the hierarchy SEQUENTIALLY and STOPS at the first decisive gap (so a missing
+# column never triggers an unresolved-column error in a later value/checksum query,
+# and a failed table does no needless full-table work):
+#   schema(name+type) + contract -> key integrity (non-null + unique) ->
+#   membership -> values -> checksum (only after the authoritative checks pass).
 compare_table <- function(con, tbl_a, tbl_b, table_name, patid = NULL) {
   if (is.null(COMPARE_KEYS[[table_name]])) stop("no COMPARE_KEYS for ", table_name)
   sa <- describe_schema(con, tbl_a); sb <- describe_schema(con, tbl_b)
@@ -209,22 +221,22 @@ compare_table <- function(con, tbl_a, tbl_b, table_name, patid = NULL) {
   excl <- .remap_patid(EXCLUDED_FIELDS[[table_name]] %||% character(0), patid)
   required <- .remap_patid(OUTPUT_CONTRACT[[table_name]] %||% keys, patid)
   sch <- compare_schema_maps(sa, sb)
-  miss_req <- setdiff(tolower(required), intersect(names(sa), names(sb)))    # contract floor (both sides)
-  dup_a <- compare_key_uniqueness(con, tbl_a, keys)                          # P1: duplicate keys
-  dup_b <- compare_key_uniqueness(con, tbl_b, keys)
-  cmpset <- value_compare_cols(names(sa), names(sb), keys)                   # ALL shared non-key cols
-  vals <- if (length(cmpset))
+  miss_req <- setdiff(tolower(required), intersect(names(sa), names(sb)))
+  res <- list(table = table_name, patid = patid, schema = sch,
+              contract_ok = length(miss_req) == 0, missing_required = miss_req)
+  if (!sch$ok || length(miss_req)) return(res)                 # decisive: schema/contract
+  ka <- compare_key_uniqueness(con, tbl_a, keys); kb <- compare_key_uniqueness(con, tbl_b, keys)
+  res$key_unique <- ka$dup == 0 && kb$dup == 0 && ka$null == 0 && kb$null == 0
+  res$dup_keys_a <- ka$dup; res$dup_keys_b <- kb$dup; res$null_keys_a <- ka$null; res$null_keys_b <- kb$null
+  if (!res$key_unique) return(res)                              # decisive: null/duplicate keys
+  cmpset <- value_compare_cols(names(sa), names(sb), keys)
+  res$membership <- compare_membership(con, tbl_a, tbl_b, keys)
+  res$values <- if (length(cmpset))
     compare_values(con, tbl_a, tbl_b, keys, c(tolower(keys), cmpset), tolower(excl))
     else list(mismatched_columns = character(0), value_mismatch = 0L, excluded_diffs = 0L)
-  list(
-    table = table_name, patid = patid,
-    schema = sch, contract_ok = length(miss_req) == 0, missing_required = miss_req,
-    key_unique = (dup_a == 0 && dup_b == 0), dup_keys_a = dup_a, dup_keys_b = dup_b,
-    membership = compare_membership(con, tbl_a, tbl_b, keys),
-    values = vals,
-    checksum_a = table_checksum(con, tbl_a, keys, c(tolower(keys), cmpset), tolower(excl)),
-    checksum_b = table_checksum(con, tbl_b, keys, c(tolower(keys), cmpset), tolower(excl))
-  )
+  res$checksum_a <- table_checksum(con, tbl_a, keys, c(tolower(keys), cmpset), tolower(excl))
+  res$checksum_b <- table_checksum(con, tbl_b, keys, c(tolower(keys), cmpset), tolower(excl))
+  res
 }
 
 # --- LOCAL CSV comparison (real; the same hierarchy, runnable without a warehouse) --
