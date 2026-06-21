@@ -130,7 +130,12 @@ ok(grepl("a.`lot_base_end_reason` AS `a_lot_base_end_reason`", ss) &&
    grepl("b.`lot_base_end_reason` AS `b_lot_base_end_reason`", ss) &&
    grepl("WHERE NOT \\(a.`lot_base_end_reason` <=> b.`lot_base_end_reason`\\)", ss) && grepl("LIMIT 100", ss),
    "sql_value_sample returns keys + a/b values for changed rows, LIMIT-bounded")
+ok(grepl("ORDER BY a.`patient_id`, a.`lot_num` LIMIT", ss), "sql_value_sample ORDER BYs the keys (deterministic rows)")
 ok(is.null(sql_value_sample("a", "b", "patient_id", character(0))), "no mismatched cols -> no sample query")
+# governed persistence: CREATE the sample as a run-scoped table (patient data stays governed)
+si <- sql_value_sample_into("audit.lot_diff_LOT_LONG", "ns.A", "ns.B", c("patient_id", "lot_num"), c("lot_base_end_reason"), 100L)
+ok(grepl("^CREATE OR REPLACE TABLE audit.lot_diff_LOT_LONG AS SELECT", si) && grepl("ORDER BY", si),
+   "sql_value_sample_into wraps the sample in CREATE TABLE AS (governed storage)")
 ok(grepl("array_sort", sql_checksum("t", "patient_id", c("patient_id", "lot_start_type"))),
    "checksum SQL is order-independent (array_sort)")
 # legacy-named tables: --patid PATID remaps ONLY patient_id (Databricks folds case

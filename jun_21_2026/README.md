@@ -18,7 +18,7 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 274 tests, all pure-R / local (also run in CI)
+Rscript tests/run_unit_tests.R          # 276 tests, all pure-R / local (also run in CI)
 ```
 
 Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
@@ -82,16 +82,19 @@ CE-sensitive end is implemented (caps at `enddate_ce`, reason `DISENROLLMENT`). 
 parity claim:** `contains_mtx_reg` (= 0; needs maintenance metadata
 `MONOMAINTENANCE`/`DUALMAINTENANCEWITH`) — a *deterministic* field, so the comparator
 treats it as an `UNIMPLEMENTED_FIELDS` gap that forces `partial_match` rather than a
-silent `match`. `run_engine` **typed-validates its param overrides** against the
-**same shared `CONFIG_SPEC`** the production config uses (its engine-tunable subset —
-no second contract to drift): an unknown key (`max_lott`), a non-integer
-(`sct_tandem_days="bad"`), or an out-of-range value (`map_discon_gap_days=0`,
-`max_lot=2.9`) is rejected fail-closed. **All** tunables (incl. `cart_consolidation_days`,
-`lot_n_induction_window_days`, `sct_tandem_days`) now propagate into the LOT1 end logic
-too (CART_INIT / post-runout death guard), so a non-default study is internally
-consistent across LOT1 and LOT2-5. Regression-expected output (legacy execution
-on the same synthetic data) is the owner's hive_metastore step — this proves
-spec-conformance, not legacy equivalence; `run_engine` typed-validates params but does
+silent `match`. `run_engine` derives its **defaults from** and **validates the full
+resolved config against** the refactor's one typed contract `CONFIG_SPEC` (its
+engine-tunable subset — single source, no drift): an unknown key (`max_lott`), a
+non-integer (`sct_tandem_days="bad"`), or an out-of-range value (`map_discon_gap_days=0`,
+`max_lot=2.9`) is rejected fail-closed, even with no overrides. (`CONFIG_SPEC` is the
+*refactor's* contract; `apr_30_2026` production still resolves config from env vars via
+`config_lot.R` and does not yet consume it — that wiring is a future step.) **All**
+tunables (incl. `cart_consolidation_days`, `lot_n_induction_window_days`,
+`sct_tandem_days`) propagate into the LOT1 end logic too (CART_INIT / post-runout death
+guard), so a non-default study is internally consistent across LOT1 and LOT2-5.
+Regression-expected output (legacy execution on the same synthetic data) is the owner's
+hive_metastore step — this proves spec-conformance, not legacy equivalence; `run_engine`
+typed-validates params but does
 **not** yet run the full canonical-input ROW validator (`validate_canonical`) — the
 adapter→canonical-validation→core wiring is still pending, as listed below.
 
@@ -113,16 +116,20 @@ Rscript scripts/compare_run_outputs.R --run hive_metastore.lot_prior hive_metast
 
 Both `--local` and `--run` exit **0 on `match`, 2 on `partial_match`, 1 on
 `mismatch`** and print per-table status. Each table runs the full hierarchy: schema
-parity **incl. data types**, **key-uniqueness** (`GROUP BY ... HAVING count>1`),
+parity **incl. data types**, **key-uniqueness** (reported as
+`KEYS{dup_a dup_b null_a null_b}` so a null-key block is distinct from a duplicate),
 membership anti-joins (`EXCEPT`, which stop the column compare — both modes — when
 populations differ), null-safe value compare over **every shared column** in a
 **single join** (per-column conditional aggregates — one scan, not one join per
-column — counts kept as **double**, never narrowed to 32-bit), and a
-**failure-isolated** null-sentinel checksum (a non-authoritative audit signal that
-cannot abort the completed verdict; a checksum failure is surfaced as
-`CHECKSUM_FAILED(audit-only)`). On a value mismatch only, a **bounded** `LIMIT 100`
-sample of the changed keys + a/b values is captured (`sql_value_sample`) so a failure
-is investigable without hand-written SQL; clean runs pay nothing.
+column — counts kept as **double**; `connect_compare` maps BIGINT to numeric so a
+`>2^31` count is never narrowed), and a **failure-isolated** null-sentinel checksum
+(non-authoritative; a failure is surfaced as `CHECKSUM_FAILED(audit-only)`, never
+aborts the verdict). On a value mismatch only, a **bounded, deterministic** (`ORDER BY`
+keys, `LIMIT 100`) diagnostic of the changed keys + a/b values is produced; being
+patient-level, it is written to a **governed** run-scoped table via
+`--sample-into <prefix>` (the log then prints only the table pointer / row count /
+columns — never patient data), and a sample failure is surfaced as
+`SAMPLE_FAILED(audit-only)`. Clean runs pay nothing.
 
 The **`partial_match`** verdict (for a known `UNIMPLEMENTED_FIELDS` gap like
 `contains_mtx_reg`) is **caller-scoped**, not global — for **both** modes. The

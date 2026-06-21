@@ -112,7 +112,10 @@ db_exec <- function(con, sql) {                              # DDL seam (normali
 connect_compare <- function(dsn = Sys.getenv("DATABRICKS_DSN", "RWDE"),
                             pwd = Sys.getenv("DATABRICKS_PWD", "")) {
   if (!nzchar(pwd)) stop("DATABRICKS_PWD is not set")
-  DBI::dbConnect(odbc::odbc(), dsn = dsn, pwd = pwd, timeout = 120)
+  # bigint = "numeric": map SQL BIGINT to R double, NOT odbc's default bit64::integer64.
+  # The mismatch-count SUM()s are BIGINT; double keeps them exact (<2^53) and avoids
+  # integer64 surviving unlist()/arithmetic in .tally_values. Verify in the live smoke.
+  DBI::dbConnect(odbc::odbc(), dsn = dsn, pwd = pwd, timeout = 120, bigint = "numeric")
 }
 
 .bt <- function(x) paste0("`", x, "`")                       # backtick-quote an identifier
@@ -154,10 +157,12 @@ sql_values <- function(tbl_a, tbl_b, keys, compare_cols, excluded = character(0)
   sprintf("SELECT %s FROM %s a JOIN %s b ON %s", paste(aggs, collapse = ", "), tbl_a, tbl_b, on)
 }
 
-# Bounded diagnostic (run ONLY after a value mismatch): the first `limit` shared-key
-# rows where any of the MISMATCHED `cols` differs, with both sides' values (a_<col>/
-# b_<col>), so a failure is investigable without hand-written SQL. LIMIT-capped, so it
-# never scans the full table; never issued on a clean run.
+# Bounded diagnostic (run ONLY after a value mismatch): up to `limit` shared-key rows
+# where any of the MISMATCHED `cols` differs, with both sides' values (a_<col>/b_<col>),
+# so a failure is investigable without hand-written SQL. ORDER BY the keys makes the
+# selected rows DETERMINISTIC across runs. `LIMIT` bounds the RETURNED rows (it does not
+# bound the table scanned). PATIENT-LEVEL DATA: the caller persists this to governed
+# storage (sql_value_sample_into) - it is never dumped to job logs (see the CLI).
 sql_value_sample <- function(tbl_a, tbl_b, keys, cols, limit = 100L) {
   if (!length(cols)) return(NULL)
   on <- .key_join(keys)
@@ -165,8 +170,16 @@ sql_value_sample <- function(tbl_a, tbl_b, keys, cols, limit = 100L) {
   ksel <- paste(sprintf("a.%s", .bt(keys)), collapse = ", ")
   vsel <- paste(unlist(lapply(cols, function(c)
     c(sprintf("a.%s AS `a_%s`", .bt(c), c), sprintf("b.%s AS `b_%s`", .bt(c), c)))), collapse = ", ")
-  sprintf("SELECT %s, %s FROM %s a JOIN %s b ON %s WHERE %s LIMIT %d",
-          ksel, vsel, tbl_a, tbl_b, on, anydiff, as.integer(limit))
+  sprintf("SELECT %s, %s FROM %s a JOIN %s b ON %s WHERE %s ORDER BY %s LIMIT %d",
+          ksel, vsel, tbl_a, tbl_b, on, anydiff, ksel, as.integer(limit))
+}
+# Governed persistence of the sample: CREATE the (patient-level) sample as a run-scoped
+# table in an ACCESS-CONTROLLED schema, so the diagnostic never leaves governed storage
+# (the CLI then prints only the table pointer + row count + columns, no patient data).
+sql_value_sample_into <- function(dest_table, tbl_a, tbl_b, keys, cols, limit = 100L) {
+  sel <- sql_value_sample(tbl_a, tbl_b, keys, cols, limit)
+  if (is.null(sel)) return(NULL)
+  sprintf("CREATE OR REPLACE TABLE %s AS %s", dest_table, sel)
 }
 
 # Per-table key integrity: a required key must be NON-NULL and UNIQUE. A duplicate
@@ -283,7 +296,8 @@ table_checksum <- function(con, tbl, keys, compare_cols, excluded = character(0)
 # and a failed table does no needless full-table work):
 #   schema(name+type) + contract -> key integrity (non-null + unique) ->
 #   membership -> values -> checksum (only after the authoritative checks pass).
-compare_table <- function(con, tbl_a, tbl_b, table_name, patid = NULL, unimplemented = character(0)) {
+compare_table <- function(con, tbl_a, tbl_b, table_name, patid = NULL, unimplemented = character(0),
+                          sample_into = NULL) {
   if (is.null(COMPARE_KEYS[[table_name]])) stop("no COMPARE_KEYS for ", table_name)
   sa <- describe_schema(con, tbl_a); sb <- describe_schema(con, tbl_b)
   id_a <- .resolve_patid(patid, names(sa)); id_b <- .detect_patid(names(sb))
@@ -319,12 +333,24 @@ compare_table <- function(con, tbl_a, tbl_b, table_name, patid = NULL, unimpleme
   res$values <- if (length(cmpset))
     compare_values(con, tbl_a, tbl_b, keys, c(tolower(keys), cmpset), tolower(excl))
     else list(mismatched_columns = character(0), value_mismatch = 0L, excluded_diffs = 0L)
-  # On a value mismatch ONLY (never a clean run), capture a BOUNDED sample of the
-  # changed keys + a/b values so a failure can be investigated without hand SQL.
-  # Failure-isolated: a sample-query error must not abort the authoritative verdict.
-  if (length(res$values$mismatched_columns))
-    res$value_sample <- tryCatch(db_q(con, sql_value_sample(tbl_a, tbl_b, keys, res$values$mismatched_columns, 100L)),
-                                 error = function(e) { res$sample_warning <- conditionMessage(e); NULL })
+  # On a value mismatch ONLY (never a clean run), produce a BOUNDED diagnostic sample of
+  # the changed keys + a/b values. PATIENT-LEVEL: when `sample_into` is set, the sample
+  # is WRITTEN to a run-scoped GOVERNED table (<sample_into>_<table>) and only its
+  # pointer is kept (never returned to the caller / logs); otherwise the data.frame is
+  # captured in-process for governed handling by the caller - the CLI prints neither.
+  # Failure-isolated: a sample error records a warning, never aborts the verdict.
+  if (length(res$values$mismatched_columns)) {
+    mc <- res$values$mismatched_columns
+    if (!is.null(sample_into)) {
+      dest <- sprintf("%s_%s", sample_into, table_name)
+      ok <- tryCatch({ db_exec(con, sql_value_sample_into(dest, tbl_a, tbl_b, keys, mc, 100L)); TRUE },
+                     error = function(e) { res$sample_warning <<- conditionMessage(e); FALSE })
+      if (ok) res$value_sample_table <- dest
+    } else {
+      res$value_sample <- tryCatch(db_q(con, sql_value_sample(tbl_a, tbl_b, keys, mc, 100L)),
+                                   error = function(e) { res$sample_warning <<- conditionMessage(e); NULL })
+    }
+  }
   # checksum is a NON-AUTHORITATIVE early-warning audit signal: computed ONLY after the
   # membership + value checks pass, and FAILURE-ISOLATED (a global aggregate that could
   # exhaust memory / hit a warehouse limit on a wide table must NOT abort the completed
@@ -465,9 +491,11 @@ compare_local <- function(dir_a, dir_b, tables = names(COMPARE_KEYS), unimplemen
 # Prior-vs-current are BOTH production, so `unimplemented` defaults to none (every
 # field compared strictly; a full `match` is reachable). Pass a per-table gap map
 # only when one side provably lacks a deterministic field (e.g. the local engine).
-compare_run <- function(con, ns_a, ns_b, tables = names(COMPARE_KEYS), patid = NULL, unimplemented = list()) {
+compare_run <- function(con, ns_a, ns_b, tables = names(COMPARE_KEYS), patid = NULL, unimplemented = list(),
+                        sample_into = NULL) {
   results <- lapply(tables, function(t)
-    compare_table(con, paste0(ns_a, ".", t), paste0(ns_b, ".", t), t, patid, unimplemented[[t]] %||% character(0)))
+    compare_table(con, paste0(ns_a, ".", t), paste0(ns_b, ".", t), t, patid,
+                  unimplemented[[t]] %||% character(0), sample_into))
   names(results) <- tables
   clean_one <- function(r) isTRUE(r$schema$ok) && isTRUE(r$key_unique) && isTRUE(r$contract_ok) &&
     isTRUE((r$membership$only_in_a %||% NA) == 0) && isTRUE((r$membership$only_in_b %||% NA) == 0) &&
@@ -483,27 +511,31 @@ if (sys.nframe() == 0 && !interactive()) {
   a <- commandArgs(trailingOnly = TRUE)
   if (length(a) >= 3 && a[1] == "--run") {        # live: compare two hive_metastore namespaces
     pi <- which(a == "--patid"); patid <- if (length(pi)) a[pi + 1L] else NULL
+    si <- which(a == "--sample-into"); sample_into <- if (length(si)) a[si + 1L] else NULL
     con <- connect_compare()
     on.exit(try(DBI::dbDisconnect(con), silent = TRUE))
-    rr <- compare_run(con, a[2], a[3], patid = patid)
+    rr <- compare_run(con, a[2], a[3], patid = patid, sample_into = sample_into)
     for (t in names(rr$tables)) { r <- rr$tables[[t]]
+      # Per-table status is METADATA ONLY - no patient-level values are printed to the
+      # job log. A value-diff sample (if any) is in a governed table or the in-process
+      # object; the log shows only its pointer/row count + the affected columns.
       flags <- c(
         if (!isTRUE(r$schema$ok)) sprintf("SCHEMA{a_only:%s b_only:%s type:%s}",
             paste(r$schema$a_only, collapse = ","), paste(r$schema$b_only, collapse = ","),
             paste(r$schema$type_mismatch, collapse = ",")),
         if (!isTRUE(r$contract_ok)) paste0("missing_required:", paste(r$missing_required, collapse = ",")),
-        if (!isTRUE(r$key_unique)) sprintf("DUP_KEYS{a:%s b:%s}", r$dup_keys_a, r$dup_keys_b),
+        if (!isTRUE(r$key_unique)) sprintf("KEYS{dup_a:%s dup_b:%s null_a:%s null_b:%s}",
+            r$dup_keys_a, r$dup_keys_b, r$null_keys_a, r$null_keys_b),
         if (length(r$values$mismatched_columns)) paste0("cols:", paste(r$values$mismatched_columns, collapse = ",")),
         if ((r$values$excluded_diffs %||% 0) > 0) sprintf("excluded_diffs=%s", r$values$excluded_diffs),
         if (!is.null(r$checksum_warning)) sprintf("CHECKSUM_FAILED(audit-only):%s", r$checksum_warning),
-        if (!is.null(r$value_sample) && nrow(r$value_sample)) sprintf("sample:%d_rows", nrow(r$value_sample)),
+        if (!is.null(r$value_sample_table)) sprintf("sample_table:%s", r$value_sample_table),
+        if (!is.null(r$value_sample) && nrow(r$value_sample)) sprintf("sample:%d_rows(in-process,not-logged)", nrow(r$value_sample)),
+        if (!is.null(r$sample_warning)) sprintf("SAMPLE_FAILED(audit-only):%s", r$sample_warning),
         if (length(r$unimplemented)) sprintf("PARTIAL{unimplemented:%s}", paste(r$unimplemented, collapse = ",")))
       cat(sprintf("%-12s patid=%-10s only_in_a=%s only_in_b=%s value_mismatch=%s %s\n",
           t, r$patid, r$membership$only_in_a %||% "NA", r$membership$only_in_b %||% "NA",
-          r$values$value_mismatch %||% "NA", paste(flags, collapse = " ")))
-      if (!is.null(r$value_sample) && nrow(r$value_sample)) {     # bounded diagnostic on mismatch
-        cat(sprintf("  %s value-diff sample (first %d changed keys):\n", t, nrow(r$value_sample)))
-        print(r$value_sample, row.names = FALSE) } }
+          r$values$value_mismatch %||% "NA", paste(flags, collapse = " "))) }
     cat("verdict:", rr$verdict, "\n")
     if (identical(rr$verdict, "partial_match"))
       cat("  NOTE: partial_match excludes unimplemented deterministic field(s); NOT full equivalence.\n")
@@ -536,5 +568,6 @@ if (sys.nframe() == 0 && !interactive()) {
   cat("compare_run_outputs.R. Local CSV: --local <dir_a> <dir_b> [--engine];",
       "(both STRICT by default; --engine applies the local-engine gap profile).",
       "live hive_metastore: --run <ns_prior> <ns_current> [--patid PATID]",
-      "(DATABRICKS_DSN/DATABRICKS_PWD env; ns e.g. hive_metastore.lot_prior).\n")
+      "[--sample-into <governed.table_prefix>] (patient-level diff samples are written",
+      "there, NOT to the log; DATABRICKS_DSN/DATABRICKS_PWD env; ns e.g. hive_metastore.lot_prior).\n")
 }
