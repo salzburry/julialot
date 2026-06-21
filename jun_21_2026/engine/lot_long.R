@@ -66,6 +66,17 @@ LOT_LONG_COLS <- c("patient_id", "lot_num", "lot_start_dt", "lot_start_type", "l
   "lot_med_cnt", "lot_base_discon_dt", "lot_base_1st_add_med_dt", "lot_base_1st_add_med",
   "lot_base_end_dt", "lot_base_end_reason", "lot_base_length")
 
+# Line-scoped SCT summary for one line: SCT events within [start, OBS_END]. For a
+# CART-started line the start CART is the trigger (not an end event) and is dropped.
+.line_sct <- function(sct_claims, pid, lot_start, lot_type, obs_end, tandem, window, gap) {
+  if (is.null(sct_claims) || !nrow(sct_claims)) return(NULL)
+  sc <- sct_claims[sct_claims$patient_id == pid, , drop = FALSE]
+  if (lot_type == "CART") sc <- sc[!(as.Date(as.character(sc$dt)) == lot_start & sc$sct_type == "CART"), , drop = FALSE]
+  if (!nrow(sc)) return(NULL)
+  build_sct_summary(sc, data.frame(patient_id = pid, lot1_start_dt = lot_start, stringsAsFactors = FALSE),
+                    obs_end, tandem, window, gap)
+}
+
 build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
                            obs_end, death = NULL, permissible_subs = NULL,
                            induction_window_days = 30L, cart_consolidation_days = 45L,
@@ -77,17 +88,32 @@ build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
     split(as.character(permissible_subs$substitute_med), as.character(permissible_subs$original_med)) else NULL
   ms <- map_stacked; ms$map_start_dt <- D(ms$map_start_dt); ms$map_end_dt <- D(ms$map_end_dt)
   ms$med_class <- toupper(as.character(ms$med_class)); ms$patient_id <- as.character(ms$patient_id)
-  auto_all <- if (!is.null(sct_claims) && nrow(sct_claims))
-    finalize_auto_per_patient(sct_claims, sct_auto_window_days, sct_auto_gap_days, sct_tandem_days)
+  auto_all <- if (!is.null(sct_claims) && nrow(sct_claims))     # SCOPED before finalization
+    finalize_auto_per_patient(sct_claims, obs_end, sct_auto_window_days, sct_auto_gap_days, sct_tandem_days)
     else data.frame(patient_id = character(0), tx_dt = as.Date(character(0)))
   sc_allo <- if (!is.null(sct_claims) && nrow(sct_claims)) sct_claims[sct_claims$sct_type == "ALLO", ] else NULL
   sc_cart <- if (!is.null(sct_claims) && nrow(sct_claims)) sct_claims[sct_claims$sct_type == "CART", ] else NULL
 
-  row <- function(pid, ln, start, type, reg, end) data.frame(patient_id = pid, lot_num = ln,
+  # 23-column LOT_LONG contract. CE-sensitive end = end (no CE adjustment here) and
+  # contains_mtx_reg = 0 are documented simplifications; AUTO fields come from the
+  # line-scoped SCT summary.
+  row <- function(pid, ln, start, type, reg, end, lsct = NULL) {
+    has <- !is.null(lsct) && nrow(lsct)
+    ad <- function(f) if (has) D(lsct[[f]][1]) else as.Date(NA)
+    af <- function(f) if (has) as.integer(lsct[[f]][1]) else 0L
+    amax <- if (has && isTRUE(lsct$tand_flg[1] == 1)) ad("auto_dt_2") else ad("auto_dt_1")
+    data.frame(patient_id = pid, lot_num = ln,
     lot_start_dt = start, lot_start_type = type, lot_base_meds = reg$base_meds, lot_med_cnt = reg$med_cnt,
     lot_base_discon_dt = reg$discon, lot_base_1st_add_med_dt = reg$add_dt, lot_base_1st_add_med = reg$add_med,
     lot_base_end_dt = D(end$lot1_base_end_dt), lot_base_end_reason = end$lot1_base_end_reason,
-    lot_base_length = end$lot1_base_length, stringsAsFactors = FALSE)
+    lot_base_length = end$lot1_base_length,
+    lot_allo_lot_flg = as.integer(type == "SCT_ALLO"), lot_cart_lot_flg = as.integer(type == "CART"),
+    contains_mtx_reg = 0L,
+    lot_base_end_dt_ce_sens = D(end$lot1_base_end_dt), lot_base_end_reason_ce_sens = end$lot1_base_end_reason,
+    lot_tx_auto_flg = as.integer(has && !is.na(ad("auto_dt_1"))), lot_tx_auto_tand_flg = af("tand_flg"),
+    lot_tx_auto_sing_flg = af("sing_flg"), lot_tx_auto_dt_1 = ad("auto_dt_1"),
+    lot_tx_auto_dt_2 = ad("auto_dt_2"), lot_tx_auto_max_dt = amax, stringsAsFactors = FALSE)
+  }
 
   out <- lapply(as.character(lot1_base$patient_id), function(pid) {
     obs <- oe[[pid]]; msp <- ms[ms$patient_id == pid, , drop = FALSE]
@@ -97,22 +123,30 @@ build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
     lb <- lot1_base[as.character(lot1_base$patient_id) == pid, ]; le <- lot1_end[as.character(lot1_end$patient_id) == pid, ]
     reg1 <- list(base_meds = lb$lot1_base_meds, med_cnt = as.integer(lb$lot1_med_cnt),
       discon = D(lb$lot1_base_discon_dt), add_dt = D(lb$lot1_base_1st_add_med_dt), add_med = as.character(lb$lot1_base_1st_add_med))
+    lsct1 <- .line_sct(sct_claims, pid, D(lb$lot1_start_dt), "MED", obs_end, sct_tandem_days, sct_auto_window_days, sct_auto_gap_days)
     rows <- list(row(pid, 1L, D(lb$lot1_start_dt), "MED", reg1,
-      list(lot1_base_end_dt = le$lot1_base_end_dt, lot1_base_end_reason = le$lot1_base_end_reason, lot1_base_length = le$lot1_base_length)))
+      list(lot1_base_end_dt = le$lot1_base_end_dt, lot1_base_end_reason = le$lot1_base_end_reason, lot1_base_length = le$lot1_base_length), lsct1))
     prev_end <- D(le$lot1_base_end_dt); prev_meds <- lb$lot1_base_meds; prev_start <- D(lb$lot1_start_dt); prev_type <- "MED"
     for (ln in 2:max_lot) {
       if (is.na(prev_end)) break
       cd <- .lot_candidates(msp, allo, cart, autos, prev_end, prev_meds, prev_start, prev_type, obs, subs,
                             induction_window_days, cart_consolidation_days, sct_tandem_days)
       if (is.null(cd)) break
-      reg <- .lot_regimen(msp, cd$start, cd$type, obs, subs, induction_window_days, cart_consolidation_days)
-      lbn <- data.frame(patient_id = pid, lot1_start_dt = cd$start, lot1_base_meds = reg$base_meds,
-        lot1_base_1st_add_med_dt = reg$add_dt, lot1_base_discon_dt = reg$discon, stringsAsFactors = FALSE)
-      en <- build_lot1_end(lbn, NULL, obs_end, death, map_stacked = map_stacked,
-                           auto_dates = auto_all, permissible_subs = permissible_subs,
-                           cart_consolidation_days = cart_consolidation_days,
-                           lot_n_induction_window_days = induction_window_days, sct_tandem_days = sct_tandem_days)
-      rows[[length(rows) + 1L]] <- row(pid, ln, cd$start, cd$type, reg, en)
+      if (cd$type == "SCT_ALLO") {                          # ALLO single-day line: ends on its start
+        reg <- list(base_meds = "", med_cnt = 0L, discon = as.Date(NA), add_dt = as.Date(NA), add_med = NA_character_)
+        en <- list(lot1_base_end_dt = cd$start, lot1_base_end_reason = "SCT_ALLO", lot1_base_length = 1L)
+        lsct <- NULL
+      } else {
+        reg <- .lot_regimen(msp, cd$start, cd$type, obs, subs, induction_window_days, cart_consolidation_days)
+        lsct <- .line_sct(sct_claims, pid, cd$start, cd$type, obs_end, sct_tandem_days, sct_auto_window_days, sct_auto_gap_days)
+        lbn <- data.frame(patient_id = pid, lot1_start_dt = cd$start, lot1_base_meds = reg$base_meds,
+          lot1_base_1st_add_med_dt = reg$add_dt, lot1_base_discon_dt = reg$discon, stringsAsFactors = FALSE)
+        en <- build_lot1_end(lbn, lsct, obs_end, death, map_stacked = map_stacked,
+                             auto_dates = auto_all, permissible_subs = permissible_subs,
+                             cart_consolidation_days = cart_consolidation_days,
+                             lot_n_induction_window_days = induction_window_days, sct_tandem_days = sct_tandem_days)
+      }
+      rows[[length(rows) + 1L]] <- row(pid, ln, cd$start, cd$type, reg, en, lsct)
       prev_end <- D(en$lot1_base_end_dt); prev_meds <- reg$base_meds; prev_start <- cd$start; prev_type <- cd$type
     }
     do.call(rbind, rows)

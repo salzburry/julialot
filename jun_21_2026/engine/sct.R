@@ -31,7 +31,9 @@
   ifelse(u == "ICD9PROC", "ICD9PROC",
   ifelse(u %in% c("ICD10DIAG", "ICD10DX", "DIAG10") | grepl("^ICD.*10.*DIAG", u), "ICD10DIAG",
   ifelse(u %in% c("ICD9DIAG", "ICD9DX", "ICD9", "DIAG9") | grepl("^ICD.*9.*DIAG", u), "ICD9DIAG",
-  ifelse(u %in% c("CPT", "CPT4"), "HCPCS", u)))))
+  ifelse(grepl("PROC", u) | u == "ICD", "ICD10PROC",          # generic procedure aliases
+  ifelse(u %in% c("DIAG", "DX", "DIAGNOSIS"), "ICD10DIAG",    # generic diagnosis aliases
+  ifelse(u %in% c("CPT", "CPT4"), "HCPCS", u)))))))
 }
 # Detect SCT evidence across the canonical entities that carry codes: procedure
 # (ICD9/10 PROC + HCPCS), diagnosis (ICD9/10 DIAG), medical (HCPCS/CPT). Matches on
@@ -87,10 +89,13 @@ finalize_auto_dates <- function(dates, window_days = 13L, gap_days = 60L, tandem
   tx
 }
 
-# Finalized AUTO TX dates per patient (UNcensored) - the input the post-runout
-# death guard needs (tx_auto_dates in production).
-finalize_auto_per_patient <- function(sct_claims, window_days = 13L, gap_days = 60L, tandem_days = 180L) {
+# Finalized AUTO TX dates per patient (tx_auto_dates) - input the post-runout death
+# guard + LOT2+ triggers need. Production's source arms are already restricted to
+# the observation window, so AUTO dates are SCOPED to [index_date, OBS_END] BEFORE
+# windowing (a post-OBS claim must not skew the window-max/tandem selection).
+finalize_auto_per_patient <- function(sct_claims, members = NULL, window_days = 13L, gap_days = 60L, tandem_days = 180L) {
   a <- sct_claims[sct_claims$sct_type == "AUTO", , drop = FALSE]
+  if (!is.null(members) && nrow(a)) a <- scope_to_window(a, members)
   if (!nrow(a)) return(data.frame(patient_id = character(0), tx_dt = as.Date(character(0))))
   do.call(rbind, lapply(unique(a$patient_id), function(p) {
     d <- finalize_auto_dates(a$dt[a$patient_id == p], window_days, gap_days, tandem_days)

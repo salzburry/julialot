@@ -45,7 +45,7 @@ ok(!"9000000004" %in% lot1$patient_id, "steroid-only patient gets NO LOT1 row")
 
 # --- direct edge cases (inline, independent of the cohort) --------------------
 rl <- data.frame(code_type = "NDC", code = "X", med_abbr = "AAA", med_class = "IMID", stringsAsFactors = FALSE)
-oe <- data.frame(patient_id = "9000000001", obs_end_dt = "2022-12-31", stringsAsFactors = FALSE)
+oe <- data.frame(patient_id = "9000000001", index_date = "2020-01-01", obs_end_dt = "2022-12-31", stringsAsFactors = FALSE)
 # single claim -> single MAP
 single <- data.frame(patient_id = "9000000001", service_date = "2021-01-10", normalized_code = "X",
                      code_system = "NDC", days_supply = "30", stringsAsFactors = FALSE)
@@ -79,3 +79,13 @@ phw <- data.frame(patient_id = "9000000001", service_date = c("2021-01-01", "202
 mw <- build_map_stacked(phw, data.frame(), rl, memw)
 ok(nrow(mw) == 1 && as.character(mw$map_start_dt) == "2021-02-01",
    "claims before index_date / after obs_end dropped before MAP")
+# strict scoping: a claim for a patient ABSENT from members is dropped (no false patient)
+phu <- data.frame(patient_id = c("9000000001", "9999999999"), service_date = "2021-02-01",
+                  normalized_code = "X", code_system = "NDC", days_supply = "30", stringsAsFactors = FALSE)
+mu <- build_map_stacked(phu, data.frame(), rl, memw)
+ok(nrow(mu) == 1 && mu$patient_id == "9000000001", "claim for unknown (non-member) patient dropped")
+# pharmacy invalid day-supply is hardcoded to 28, independent of medical_day_supply
+imp2 <- data.frame(patient_id = "9000000001", service_date = "2021-01-10", normalized_code = "X",
+                   code_system = "NDC", days_supply = "", stringsAsFactors = FALSE)
+m28 <- build_map_stacked(imp2, data.frame(), rl, oe, 90L, 60L)   # medical_day_supply = 60
+ok(as.character(m28$map_end_dt) == "2021-02-06", "pharmacy imputation stays 28 even when medical_day_supply=60")

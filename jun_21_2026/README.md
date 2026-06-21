@@ -18,7 +18,7 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 210 tests, all pure-R / local
+Rscript tests/run_unit_tests.R          # 216 tests, all pure-R / local
 ```
 
 Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
@@ -26,7 +26,7 @@ faithful to `apr_30_2026/02_lot1.R`, that reproduces hand-derived expected outpu
 — see `engine/` and `engine/fixtures/expected/TRACE.md`):
 
 ```
-Rscript engine/run_engine.R engine/fixtures /tmp/out   # MAP_STACKED + LOT1_BASE + LOT1_END
+Rscript engine/run_engine.R engine/fixtures /tmp/out   # MAP_STACKED + LOT1_BASE + LOT1_END + LOT_LONG
 ```
 
 The driver runs the full pipeline **MAP → LOT1 → SCT → LOT1 end** and its
@@ -56,13 +56,16 @@ Verified stages + edge cases (against hand-derived expected):
 
 - **LOT2-5** (`engine/lot_long.R`): the multi-line loop — trigger candidates
   (d_MED/d_ALLO/d_CART/d_AUTO) from the prior line's end, start+type tie-break,
-  per-line regimen (30-day window), end via the LOT1 cascade, repeat to MAX_LOT.
-  Verified on a 3-line cohort (LENA→DARA→CARF, MED_ADD→MED_ADD→DISCONTINUATION,
-  then the loop stops) run through the full chain MAP→LOT1→LOT_LONG.
+  per-line regimen (30-day window), **line-scoped SCT** end (a MED-started line
+  ending at a later ALLO/CART), **ALLO-started single-day** lines, repeat to
+  MAX_LOT. The driver now emits the full 23-column `LOT_LONG` (incl. SCT flags +
+  CE-sensitive fields). Verified on a 3-line MED cohort + the line-scoped-SCT and
+  ALLO-line cases.
 
-Remaining refinement (documented): ALLO/CART-started line regimen specifics
-(singletons / consolidation) and the LOT-scoped SCT end fields, plus wiring
-`LOT_LONG` into the main driver. The 3-line loop above is MED-started.
+Documented simplifications (not yet faithful): CE-sensitive end (= end) and
+`contains_mtx_reg` (= 0); regression-expected output (legacy execution on the same
+synthetic data) is the owner's hive_metastore step — this proves spec-conformance,
+not legacy equivalence.
 
 This is **verification only** — it runs the algorithm on synthetic fixtures locally
 so the refactor logic can be checked without a warehouse. It is NOT the production

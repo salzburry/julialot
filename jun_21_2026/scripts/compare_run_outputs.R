@@ -299,7 +299,9 @@ compare_local_table <- function(path_a, path_b, keys, excluded = character(0), r
     return(res)
   }
   ka <- do.call(paste, c(a[keys], sep = "\037")); kb <- do.call(paste, c(b[keys], sep = "\037"))
-  res$key_unique <- !(any(duplicated(ka)) || any(duplicated(kb)))
+  nullk <- function(df) Reduce(`|`, lapply(df[keys], function(c) is.na(c) | !nzchar(trimws(as.character(c)))))
+  # parity with the live path: a missing key COMPONENT is not "unique" either
+  res$key_unique <- !(any(duplicated(ka)) || any(duplicated(kb)) || any(nullk(a)) || any(nullk(b)))
   res$only_in_a <- sum(!(ka %in% kb)); res$only_in_b <- sum(!(kb %in% ka))
   shared <- intersect(ka, kb); ia <- match(shared, ka); ib <- match(shared, kb)
   for (cn in setdiff(names(a), keys)) {

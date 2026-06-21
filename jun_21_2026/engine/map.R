@@ -17,42 +17,41 @@
 .gmax  <- function(...) { v <- c(...); v <- v[!is.na(v)]; if (!length(v)) .MIN_DATE else max(v) }
 
 # Scope a (patient_id, dt) frame to the observation window INDEX_DATE <= dt <=
-# OBS_END_DT (production filters claims to this window before MAP/SCT). members:
-# patient_id, index_date (optional), obs_end_dt. No window info -> returned as-is.
+# OBS_END_DT (production inner-joins claims to lot_patient_input before MAP/SCT).
+# STRICT: a patient absent from members, or with a missing bound, is DROPPED (an
+# unknown patient must not enter the medication stream).
 scope_to_window <- function(df, members) {
-  if (is.null(df) || !nrow(df) || is.null(members) || !nrow(members)) return(df)
-  if ("index_date" %in% names(members)) {
-    lo <- setNames(as.Date(as.character(members$index_date)), as.character(members$patient_id))[as.character(df$patient_id)]
-    df <- df[is.na(lo) | df$dt >= lo, , drop = FALSE]; if (!nrow(df)) return(df)
-  }
-  if ("obs_end_dt" %in% names(members)) {
-    hi <- setNames(as.Date(as.character(members$obs_end_dt)), as.character(members$patient_id))[as.character(df$patient_id)]
-    df <- df[is.na(hi) | df$dt <= hi, , drop = FALSE]
-  }
-  df
+  if (is.null(df) || !nrow(df)) return(df)
+  if (is.null(members) || !nrow(members) || !all(c("index_date", "obs_end_dt") %in% names(members)))
+    stop("scope_to_window: members with index_date + obs_end_dt is required (claim scoping)")
+  idx <- setNames(as.Date(as.character(members$index_date)), as.character(members$patient_id))
+  obs <- setNames(as.Date(as.character(members$obs_end_dt)), as.character(members$patient_id))
+  lo <- idx[as.character(df$patient_id)]; hi <- obs[as.character(df$patient_id)]
+  df[!is.na(lo) & !is.na(hi) & df$dt >= lo & df$dt <= hi, , drop = FALSE]   # unknown/NA-bound -> dropped
 }
 
 # Map canonical pharmacy + medical claims to (MED_ABBR, MED_CLASS) via the rollup
 # codelist keyed on (code_system, normalized_code). Unmapped codes are dropped
-# (not MM agents). Faithful to 02_lot1.R:426-449: a pharmacy OR medical claim with
-# null/<1 day-supply is IMPUTED to the default (28); then claims are DEDUPED within
-# (patient, med, date, claim_type) keeping MAX day-supply. Returns one row per
-# deduped claim: patient_id, med_abbr, med_class, dt, type, ds.
+# (not MM agents). Faithful to 02_lot1.R:426-449: an invalid (null/<1) day-supply
+# is imputed - PHARMACY to a hardcoded 28, MEDICAL to the configurable
+# medical_day_supply (matches production, which differ if the param changes); then
+# claims are scoped to the observation window and DEDUPED within
+# (patient, med, date, claim_type) keeping MAX day-supply.
 map_claims <- function(pharmacy, medical, rollup, members = NULL, medical_day_supply = 28L) {
   key <- function(cs, code) paste(toupper(trimws(as.character(cs))), toupper(trimws(as.character(code))))
   rk <- key(rollup$code_type, rollup$code)
   ab <- setNames(as.character(rollup$med_abbr), rk); cl <- setNames(as.character(rollup$med_class), rk)
-  mk <- function(df, type, ds) {
+  mk <- function(df, type, ds, impute) {
     if (is.null(df) || !nrow(df)) return(NULL)
-    ds[is.na(ds) | ds < 1L] <- medical_day_supply                 # impute null/<1 -> 28
+    ds[is.na(ds) | ds < 1L] <- impute                             # impute null/<1
     k <- key(df$code_system, df$normalized_code); keep <- k %in% rk
     if (!any(keep)) return(NULL)
     data.frame(patient_id = as.character(df$patient_id)[keep], med_abbr = unname(ab[k[keep]]),
                med_class = unname(cl[k[keep]]), dt = as.Date(as.character(df$service_date))[keep],
                type = type, ds = ds[keep], stringsAsFactors = FALSE)
   }
-  claims <- rbind(mk(pharmacy, "pharmacy", suppressWarnings(as.integer(pharmacy$days_supply))),
-                  mk(medical,  "medical",  suppressWarnings(as.integer(medical$day_supply))))
+  claims <- rbind(mk(pharmacy, "pharmacy", suppressWarnings(as.integer(pharmacy$days_supply)), 28L),
+                  mk(medical,  "medical",  suppressWarnings(as.integer(medical$day_supply)), medical_day_supply))
   if (is.null(claims) || !nrow(claims)) return(claims)
   claims <- scope_to_window(claims, members)                      # INDEX_DATE <= dt <= OBS_END
   if (!nrow(claims)) return(claims)

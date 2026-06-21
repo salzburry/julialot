@@ -16,7 +16,7 @@ comparing. That run is the reviewer/owner's step (it needs the warehouse).
 Run it (the driver runs the full pipeline MAP → LOT1 → SCT → LOT1 end):
 ```
 Rscript engine/run_engine.R engine/fixtures /tmp/out   # MAP_STACKED + LOT1_BASE + LOT1_END
-Rscript tests/run_unit_tests.R                          # 210 pass (engine: test_engine/sct/lot_end/lot_long)
+Rscript tests/run_unit_tests.R                          # 216 pass (engine: test_engine/sct/lot_end/lot_long)
 ```
 
 ## What to validate: each rule maps to a production source line
@@ -67,10 +67,11 @@ Rscript tests/run_unit_tests.R                          # 210 pass (engine: test
 
 ## NOT yet ported (refinements)
 
-- **LOT2-5 ALLO/CART-started lines**: singleton / consolidation regimen + end
-  specifics (`R/lot2_5_base.R:467-...`); the LOT-scoped SCT end fields
-  (CE-sensitive end, in-LOT AUTO flags); and wiring `LOT_LONG` into the main
-  driver. The verified loop above is MED-started.
+- **CART-started line consolidation** end nuances; **CE-sensitive end** (currently
+  = end) and **contains_mtx_reg** (= 0) in LOT_LONG; the **regression-expected**
+  baseline (legacy execution on the same synthetic data - the owner's hive_metastore
+  step); and the warehouse-comparator cross-convention PATID + checksum scalability
+  (deprioritized per the local-verification workflow).
 
 ## Constraints to confirm
 
