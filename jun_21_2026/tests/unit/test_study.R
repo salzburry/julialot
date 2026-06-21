@@ -29,6 +29,11 @@ ok(any(grepl("both disabled and overridden",
 # FALSE in add/override is invalid (use disable)
 ok(any(grepl("'false' invalid", resolve_study(mk(list(add = list(no_pregnancy = FALSE))), studies, reg)$errors)),
    "false in gates.add rejected")
+# any non-TRUE/non-object scalar must block, not silently enable the gate
+ok(any(grepl("invalid value", resolve_study(mk(list(add = list(no_pregnancy = "yes"))), studies, reg)$errors)),
+   "string gate value rejected")
+ok(any(grepl("invalid value", resolve_study(mk(list(add = list(no_pregnancy = 123))), studies, reg)$errors)),
+   "numeric gate value rejected")
 # param TYPE validation
 ok(any(grepl("param 'months' expected integer",
    resolve_study(mk(list(override = list(baseline_ce = list(months = "lots")))), studies, reg)$errors)),

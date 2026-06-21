@@ -66,13 +66,19 @@ resolve_study <- function(study, studies, registry, seen = character(0), strict 
   both <- intersect(disable, names(override))
   if (length(both)) errors <- c(errors, sprintf("gate(s) both disabled and overridden: %s", paste(both, collapse = ", ")))
 
-  # FALSE is invalid in add/override (it would enable the gate with empty params);
-  # use gates.disable to turn off an inherited gate.
+  # A gate value must be exactly TRUE or a parameter object. FALSE has a dedicated
+  # message (use gates.disable); any OTHER scalar ("yes", 123, null) is invalid and
+  # must BLOCK - .params_of() would otherwise silently coerce it to an enabled gate.
   is_false <- function(x) is.logical(x) && length(x) == 1 && !x
+  bad_val  <- function(x) !(isTRUE(x) || is.list(x)) && !is_false(x)
   ff_add <- names(add)[vapply(add, is_false, logical(1))]
   ff_ovr <- names(override)[vapply(override, is_false, logical(1))]
+  bv_add <- names(add)[vapply(add, bad_val, logical(1))]
+  bv_ovr <- names(override)[vapply(override, bad_val, logical(1))]
   if (length(ff_add)) errors <- c(errors, sprintf("gates.add: 'false' invalid (use disable): %s", paste(ff_add, collapse = ", ")))
   if (length(ff_ovr)) errors <- c(errors, sprintf("gates.override: 'false' invalid: %s", paste(ff_ovr, collapse = ", ")))
+  if (length(bv_add)) errors <- c(errors, sprintf("gates.add: invalid value (use TRUE or a param object): %s", paste(bv_add, collapse = ", ")))
+  if (length(bv_ovr)) errors <- c(errors, sprintf("gates.override: invalid value (use TRUE or a param object): %s", paste(bv_ovr, collapse = ", ")))
 
   # build resolved
   resolved <- base_resolved
@@ -217,7 +223,8 @@ validate_study <- function(study_path, registry_path, studies_dir, strict = FALS
   study <- read_yaml_file(study_path)
   r <- resolve_study(study, studies, registry, strict = strict)
   dag_err <- if (length(r$errors) == 0) validate_dag(r$resolved, registry) else character(0)
-  sch_err <- if (file.exists(schema_path)) validate_study_schema(study, schema_path) else character(0)
+  sch_err <- if (file.exists(schema_path)) validate_study_schema(study, schema_path)
+             else sprintf("schema file not found (fail closed): %s", schema_path)
   # Typed-config validation of the study's own study_period + parameters (dates,
   # ID-window containment, param ranges, unknown-key typos) - the same resolver
   # the run uses, so an invalid date / misspelled parameter cannot survive.

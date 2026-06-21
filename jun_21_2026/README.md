@@ -18,8 +18,21 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 148 tests, all pure-R / local
+Rscript tests/run_unit_tests.R          # 156 tests, all pure-R / local
 ```
+
+Run the LOCAL verification engine on synthetic data (a pure-R re-implementation of
+the MAP builder, faithful to `apr_30_2026/02_lot1.R`, that reproduces the
+hand-derived expected output — see `engine/`):
+
+```
+Rscript engine/run_engine.R engine/fixtures /tmp/out   # writes MAP_STACKED.csv
+```
+
+This is **verification only** — it runs the algorithm on synthetic fixtures locally
+so the refactor logic can be checked without a warehouse. It is NOT the production
+engine (production is Databricks SQL on `hive_metastore`) and never ships
+(`engine/` is outside the prod allowlist; fixtures use reserved synthetic PATIDs).
 
 Run the live current-vs-prior comparison on hive_metastore (same DSN/odbc as
 `apr_30_2026`; needs `DATABRICKS_DSN`/`DATABRICKS_PWD` + DBI/odbc):

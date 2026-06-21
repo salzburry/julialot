@@ -1,0 +1,4 @@
+patient_id,med_abbr,med_class,map_cnt,map_start_dt,map_rx_runout_dt,map_med_runout_dt,map_end_dt,map_med_type,map_med_class,map_discon_flg
+9000000001,LENA,IMID,1,2021-01-01,2021-03-01,,2021-03-01,LENA,IMID,1
+9000000001,LENA,IMID,2,2021-06-01,2021-06-30,,2021-06-30,LENA,IMID,1
+9000000002,BORT,PI,1,2021-02-01,2021-03-01,2021-03-04,2021-03-04,BORT,PI,1

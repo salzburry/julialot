@@ -43,7 +43,9 @@ validate_manifest <- function(m, schema_path = "contracts/manifest.schema.json")
   errors <- character(0); warnings <- character(0)
   # 0. STRUCTURE: required run_id/git/version_axes/source/environment/outputs/... and
   #    closed secrets[] (this is what closes the secrets-subtree redaction bypass).
-  if (file.exists(schema_path)) {
+  if (!file.exists(schema_path)) {
+    errors <- c(errors, sprintf("schema file not found (fail closed): %s", schema_path))
+  } else {
     s <- schema_conformance(m, schema_path)
     if (length(s)) errors <- c(errors, paste0("schema: ", s))
   }
