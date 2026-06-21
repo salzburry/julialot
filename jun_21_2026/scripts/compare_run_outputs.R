@@ -141,15 +141,17 @@ sql_membership <- function(tbl_a, tbl_b, keys) {
     k, tbl_a, k, tbl_b, k, tbl_b, k, tbl_a)
 }
 
-# Per-column null-safe mismatch counts over the inner join on keys, EXCLUDING the
-# nondeterministic columns from the verdict (still counted separately, surfaced).
+# ONE joined scan with per-column null-safe mismatch counts as conditional aggregates
+# (positional aliases c0..c{n-1}), so a WIDE table (per-drug/class flags) needs a
+# single join, not one full join per column. Excluded/gap handling is done in R
+# (compare_values), keeping the SQL a single pass.
 sql_values <- function(tbl_a, tbl_b, keys, compare_cols, excluded = character(0)) {
   cols <- setdiff(compare_cols, keys)
   on <- .key_join(keys)
-  per <- vapply(cols, function(c) sprintf(
-    "SELECT '%s' AS column_name, %s AS excluded, count(*) AS n_mismatch FROM %s a JOIN %s b ON %s WHERE NOT (a.%s <=> b.%s)",
-    c, if (c %in% excluded) "true" else "false", tbl_a, tbl_b, on, .bt(c), .bt(c)), character(1))
-  paste(per, collapse = "\nUNION ALL\n")
+  if (!length(cols)) return(sprintf("SELECT cast(0 as int) AS c0 FROM %s a JOIN %s b ON %s WHERE 1=0", tbl_a, tbl_b, on))
+  aggs <- vapply(seq_along(cols), function(i) sprintf(
+    "sum(CASE WHEN NOT (a.%s <=> b.%s) THEN 1 ELSE 0 END) AS c%d", .bt(cols[i]), .bt(cols[i]), i - 1L), character(1))
+  sprintf("SELECT %s FROM %s a JOIN %s b ON %s", paste(aggs, collapse = ", "), tbl_a, tbl_b, on)
 }
 
 # Per-table key integrity: a required key must be NON-NULL and UNIQUE. A duplicate
@@ -236,12 +238,20 @@ compare_key_uniqueness <- function(con, tbl, keys) {
   r <- db_q(con, sql_key_uniqueness(tbl, keys)); list(dup = r$dup_keys[1], null = r$null_keys[1])
 }
 
+# Pure: turn the one-row per-column mismatch counts (c0..c{n-1}) into the verdict
+# tally, splitting blocking from excluded/gap columns (done in R, not SQL).
+.tally_values <- function(counts, cols, excluded = character(0)) {
+  counts <- as.integer(counts); counts[is.na(counts)] <- 0L
+  is_excl <- tolower(cols) %in% tolower(excluded)
+  blk <- counts > 0 & !is_excl
+  list(mismatched_columns = cols[blk], value_mismatch = sum(counts[blk]),
+       excluded_diffs = sum(counts[counts > 0 & is_excl]))
+}
 compare_values <- function(con, tbl_a, tbl_b, keys, compare_cols, excluded = character(0)) {
-  r <- db_q(con, sql_values(tbl_a, tbl_b, keys, compare_cols, excluded))
-  blocking <- r[!as.logical(r$excluded) & r$n_mismatch > 0, , drop = FALSE]
-  excl     <- r[ as.logical(r$excluded) & r$n_mismatch > 0, , drop = FALSE]
-  list(mismatched_columns = blocking$column_name, value_mismatch = sum(blocking$n_mismatch),
-       excluded_diffs = sum(excl$n_mismatch))
+  cols <- setdiff(compare_cols, keys)
+  if (!length(cols)) return(list(mismatched_columns = character(0), value_mismatch = 0L, excluded_diffs = 0L))
+  r <- db_q(con, sql_values(tbl_a, tbl_b, keys, compare_cols, excluded))   # one row: c0..c{n-1} counts
+  .tally_values(unlist(r[1, seq_along(cols)], use.names = FALSE), cols, excluded)
 }
 
 table_checksum <- function(con, tbl, keys, compare_cols, excluded = character(0))
@@ -292,12 +302,15 @@ compare_table <- function(con, tbl_a, tbl_b, table_name, patid = NULL, unimpleme
   res$values <- if (length(cmpset))
     compare_values(con, tbl_a, tbl_b, keys, c(tolower(keys), cmpset), tolower(excl))
     else list(mismatched_columns = character(0), value_mismatch = 0L, excluded_diffs = 0L)
-  # checksum is an early-warning audit signal: computed ONLY after the authoritative
-  # membership + value checks pass (skipped when a mismatch is already decisive).
+  # checksum is a NON-AUTHORITATIVE early-warning audit signal: computed ONLY after the
+  # membership + value checks pass, and FAILURE-ISOLATED (a global aggregate that could
+  # exhaust memory / hit a warehouse limit on a wide table must NOT abort the completed
+  # authoritative comparison - it is recorded as a warning instead).
   if (isTRUE((res$membership$only_in_a %||% 1) == 0) && isTRUE((res$membership$only_in_b %||% 1) == 0) &&
       isTRUE((res$values$value_mismatch %||% 1) == 0)) {
-    res$checksum_a <- table_checksum(con, tbl_a, keys, c(tolower(keys), cmpset), tolower(excl))
-    res$checksum_b <- table_checksum(con, tbl_b, keys, c(tolower(keys), cmpset), tolower(excl))
+    ck <- function(tbl) tryCatch(table_checksum(con, tbl, keys, c(tolower(keys), cmpset), tolower(excl)),
+                                 error = function(e) { res$checksum_warning <<- conditionMessage(e); NA_character_ })
+    res$checksum_a <- ck(tbl_a); res$checksum_b <- ck(tbl_b)
   }
   res
 }
@@ -400,10 +413,11 @@ compare_local_table <- function(path_a, path_b, keys, excluded = character(0), r
 }
 
 # `tables` are REQUIRED outputs: a missing one is a blocking mismatch (fail
-# closed), never silently skipped. Returns the per-table results plus a
-# `missing_tables` attribute and a verdict that is "match" only when every
-# required table is present AND matches.
-compare_local <- function(dir_a, dir_b, tables = names(COMPARE_KEYS)) {
+# closed), never silently skipped. `unimplemented` is CALLER-scoped, like the
+# warehouse `compare_run`: it DEFAULTS to none (strict - two production CSV exports
+# compare every field), and the local engine-vs-golden caller passes the engine
+# profile (`UNIMPLEMENTED_FIELDS`) so contains_mtx_reg yields partial_match.
+compare_local <- function(dir_a, dir_b, tables = names(COMPARE_KEYS), unimplemented = list()) {
   out <- list(); missing <- character(0)
   for (t in tables) {
     fa <- file.path(dir_a, paste0(t, ".csv")); fb <- file.path(dir_b, paste0(t, ".csv"))
@@ -414,7 +428,7 @@ compare_local <- function(dir_a, dir_b, tables = names(COMPARE_KEYS)) {
       next
     }
     out[[t]] <- compare_local_table(fa, fb, COMPARE_KEYS[[t]], EXCLUDED_FIELDS[[t]] %||% character(0),
-                                    OUTPUT_CONTRACT[[t]] %||% character(0), UNIMPLEMENTED_FIELDS[[t]] %||% character(0))
+                                    OUTPUT_CONTRACT[[t]] %||% character(0), unimplemented[[t]] %||% character(0))
   }
   v <- vapply(out, function(r) r$verdict %||% (if (isTRUE(r$match)) "match" else "mismatch"), character(1))
   attr(out, "missing_tables") <- missing
@@ -468,7 +482,10 @@ if (sys.nframe() == 0 && !interactive()) {
     quit(status = if (identical(rr$verdict, "match")) 0L else if (identical(rr$verdict, "partial_match")) 2L else 1L)
   }
   if (length(a) >= 3 && a[1] == "--local") {
-    res <- compare_local(a[2], a[3])
+    # STRICT by default (two production exports compare every field); --engine applies
+    # the local-engine gap profile so contains_mtx_reg yields partial_match.
+    eng <- "--engine" %in% a
+    res <- compare_local(a[2], a[3], unimplemented = if (eng) UNIMPLEMENTED_FIELDS else list())
     for (t in names(res)) { r <- res[[t]]
       v <- r$verdict %||% (if (isTRUE(r$match)) "match" else "mismatch")   # 3-way, like --run
       detail <- character(0)
@@ -488,7 +505,8 @@ if (sys.nframe() == 0 && !interactive()) {
       cat("  NOTE: partial_match excludes unimplemented deterministic field(s); NOT full equivalence.\n")
     quit(status = if (identical(verdict, "match")) 0L else if (identical(verdict, "partial_match")) 2L else 1L)
   }
-  cat("compare_run_outputs.R. Local CSV: --local <dir_a> <dir_b>;",
+  cat("compare_run_outputs.R. Local CSV: --local <dir_a> <dir_b> [--engine];",
+      "(both STRICT by default; --engine applies the local-engine gap profile).",
       "live hive_metastore: --run <ns_prior> <ns_current> [--patid PATID]",
       "(DATABRICKS_DSN/DATABRICKS_PWD env; ns e.g. hive_metastore.lot_prior).\n")
 }

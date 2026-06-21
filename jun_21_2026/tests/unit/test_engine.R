@@ -35,6 +35,15 @@ ok(cll$value_mismatch == 0 && cll$only_in_a == 0 && cll$only_in_b == 0 && isTRUE
 ok(cll$verdict == "partial_match" && "contains_mtx_reg" %in% cll$unimplemented,
    "LOT_LONG golden is partial_match: contains_mtx_reg is the flagged unimplemented gap (honest)")
 
+# typed param validation: run_engine fails CLOSED on bad/unknown overrides (before run)
+ok(inherits(try(.validate_params(list(max_lott = 5)), silent = TRUE), "try-error"), "unknown param key (typo max_lott) rejected")
+ok(inherits(try(.validate_params(list(sct_tandem_days = "bad")), silent = TRUE), "try-error"), "non-numeric param rejected")
+ok(inherits(try(.validate_params(list(induction_window_days = -10)), silent = TRUE), "try-error"), "negative param rejected")
+ok(inherits(try(.validate_params(list(map_discon_gap_days = 1.5)), silent = TRUE), "try-error"), "fractional param rejected")
+ok(inherits(try(.validate_params(list(allo_lot_span = "nope")), silent = TRUE), "try-error"), "bad enum value rejected")
+ok(isTRUE(.validate_params(list(sct_tandem_days = 200L, allo_lot_span = "extend_to_next"))), "valid overrides accepted")
+ok(isTRUE(.validate_params(list())), "empty overrides accepted (defaults used)")
+
 # --- targeted rule spot-checks ------------------------------------------------
 eq(nrow(map), 8L, "8 MAP periods across the cohort")
 p1 <- map[map$patient_id == "9000000001", ]

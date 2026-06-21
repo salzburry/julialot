@@ -17,11 +17,43 @@ DEFAULT_PARAMS <- list(map_discon_gap_days = 90L, medical_day_supply = 28L,
                        cart_consolidation_days = 45L, sct_auto_window_days = 13L,
                        sct_auto_gap_days = 60L, sct_tandem_days = 180L,
                        allo_lot_span = "single_day", max_lot = 5L)
+# Typed contract for the overridable params: "int_pos" = whole number >= 1,
+# "int_nonneg" = >= 0, "int_2_9" = [2,9], else an explicit enum of allowed values.
+.PARAM_SPEC <- list(map_discon_gap_days = "int_nonneg", medical_day_supply = "int_pos",
+                    induction_window_days = "int_pos", lot_n_induction_window_days = "int_pos",
+                    cart_consolidation_days = "int_pos", sct_auto_window_days = "int_pos",
+                    sct_auto_gap_days = "int_pos", sct_tandem_days = "int_pos",
+                    allo_lot_span = c("single_day", "extend_to_next"), max_lot = "int_2_9")
+# Fail-closed typed validation of the OVERRIDES (before modifyList), so a typo'd key
+# (max_lott), a non-numeric (sct_tandem_days="bad"), a negative, or a fractional value
+# is REJECTED rather than silently ignored / coerced. (Lighter than the full
+# validate_config()/validate_canonical() boundary, still pending - see README.)
+.validate_params <- function(params) {
+  if (!length(params)) return(invisible(TRUE))
+  unknown <- setdiff(names(params), names(.PARAM_SPEC))
+  if (length(unknown)) stop("run_engine: unknown param(s): ", paste(unknown, collapse = ", "),
+                            " (known: ", paste(names(.PARAM_SPEC), collapse = ", "), ")")
+  for (k in names(params)) {
+    v <- params[[k]]; spec <- .PARAM_SPEC[[k]]
+    if (length(spec) > 1L) {                          # enum
+      if (!(is.character(v) && length(v) == 1L && v %in% spec))
+        stop("run_engine: ", k, " must be one of ", paste(spec, collapse = "/"), ", got ", v)
+    } else {
+      num <- suppressWarnings(as.numeric(v))
+      lo <- if (spec == "int_nonneg") 0 else if (spec == "int_2_9") 2 else 1
+      hi <- if (spec == "int_2_9") 9 else Inf
+      if (length(v) != 1L || is.na(num) || num != round(num) || num < lo || num > hi)
+        stop("run_engine: ", k, " must be a whole number in [", lo, ", ", hi, "], got ", v)
+    }
+  }
+  invisible(TRUE)
+}
 
 # Full local pipeline MAP -> LOT1 -> SCT -> LOT1 end.
 REQUIRED_INPUTS <- c("pharmacy.csv", "rollup.csv", "members.csv", "sct_codelist.csv")
 
 run_engine <- function(input_dir, params = list()) {
+  .validate_params(params)                            # fail closed on bad/unknown overrides
   miss <- REQUIRED_INPUTS[!file.exists(file.path(input_dir, REQUIRED_INPUTS))]
   if (length(miss))                                  # fail closed - never emit partial output
     stop("run_engine: missing required input(s): ", paste(miss, collapse = ", "))

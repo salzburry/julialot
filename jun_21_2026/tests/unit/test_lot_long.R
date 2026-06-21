@@ -106,6 +106,29 @@ ok(nrow(llc) == 2 && cc2$lot_start_type == "CART" && cc2$lot_base_meds == "" && 
    cc2$lot_base_length == 1 && cc2$lot_cart_lot_flg == 1,
    "CART-started LOT with no consolidation agent ends on its start date (SCT_CART, single-day)")
 
+# CART death guard THROUGH build_lot_long (call-site wiring of the 45-day applicable
+# window): LOT1 LENA runs out, a CART starts LOT2 with a CARF consolidation that runs
+# out 2021-04-29, an AUTO lands 2021-05-06 (35d after the CART start, INSIDE the 45-day
+# window), death 2021-05-19. The in-window AUTO is NOT a next-line trigger, so LOT2
+# ends DEATH - a fixed 30-day window would (wrongly) end at the 04-29 runout.
+lbg <- data.frame(patient_id = "9000000095", lot1_start_dt = "2021-01-01", lot1_med_cnt = 1L,
+  lot1_base_meds = "LENA", lot1_base_discon_dt = "2021-03-01",
+  lot1_base_1st_add_med_dt = NA, lot1_base_1st_add_med = NA, stringsAsFactors = FALSE)
+leg <- data.frame(patient_id = "9000000095", lot1_base_end_dt = "2021-03-01",
+  lot1_base_end_reason = "DISCONTINUATION", lot1_base_length = 60L, stringsAsFactors = FALSE)
+mpg <- data.frame(patient_id = "9000000095", med_abbr = c("LENA", "CARF"), med_class = c("IMID", "PI"),
+  map_cnt = 1L, map_start_dt = c("2021-01-01", "2021-04-10"), map_end_dt = c("2021-03-01", "2021-04-29"),
+  stringsAsFactors = FALSE)
+sctg <- data.frame(patient_id = "9000000095", dt = c("2021-04-01", "2021-05-06"),
+  sct_type = c("CART", "AUTO"), stringsAsFactors = FALSE)
+dthg <- data.frame(patient_id = "9000000095", death_dt = "2021-05-19", stringsAsFactors = FALSE)
+memg <- data.frame(patient_id = "9000000095", index_date = "2020-06-01", obs_end_dt = "2021-12-31", stringsAsFactors = FALSE)
+g2 <- build_lot_long(lbg, leg, mpg, sctg, memg, death = dthg)
+g2 <- g2[g2$lot_num == 2, ]
+ok(g2$lot_start_type == "CART" && g2$lot_base_end_reason == "DEATH" &&
+   as.character(g2$lot_base_end_dt) == "2021-05-19",
+   "CART LOT2 + in-45d-window AUTO + death -> DEATH (build_lot_long wires the CART window)")
+
 # LOT_N AUTO window (integration): a MED LOT2 (DARA) whose coverage spans an AUTO.
 # Outside the 30-day window -> the AUTO ENDS LOT2 (SCT_AUTO); inside -> in-line TX.
 lba <- data.frame(patient_id = "9000000091", lot1_start_dt = "2021-01-01", lot1_med_cnt = 1L,
