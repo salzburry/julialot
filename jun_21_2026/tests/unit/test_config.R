@@ -17,3 +17,6 @@ e <- validate_config(apply_defaults(modifyList(good, list(id_start = "2014-01-01
 ok(any(grepl("id_start must be >= study_start", e)), "id_start before study period caught")
 e <- validate_config(apply_defaults(modifyList(good, list(id_end = "2030-01-01"))))
 ok(any(grepl("id_end must be <= study_end", e)), "id_end after study period caught")
+# unknown key (typo) is rejected, not silently defaulted
+e <- validate_config(apply_defaults(c(good, list(map_disconn_gap_days = 90L))))
+ok(any(grepl("unknown config key", e)), "unknown config key (typo) rejected")

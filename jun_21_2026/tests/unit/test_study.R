@@ -136,3 +136,15 @@ ok(length(validate_study_schema(ov_obj, SCH)) == 0, "base: null still passes the
 reg6 <- reg; reg6$gates$qualifying_mm$depends_on <- list("no_prior_mm_tx")
 ok(any(grepl("depends on gate .* in a later phase", validate_dag(nd$resolved, reg6))),
    "gate->gate phase feasibility caught")
+# study -> validate_config wiring: a bad study_period date in the YAML is caught
+tmpsd <- file.path(tempdir(), "studies_badcfg"); dir.create(tmpsd, showWarnings = FALSE)
+file.copy("studies/overall.yml", file.path(tmpsd, "overall.yml"), overwrite = TRUE)
+ndl <- readLines("studies/ndmm.yml")
+ndl <- sub("study_start: \"2015-07-01\"", "study_start: \"2030-01-01\"", ndl, fixed = TRUE)
+writeLines(ndl, file.path(tmpsd, "ndmm.yml"))
+ndw <- validate_study(file.path(tmpsd, "ndmm.yml"), "cohort/gates/registry.yml", tmpsd, strict = FALSE)
+ok(any(grepl("config:.*study_start must be", ndw$errors)), "bad study_period date caught via config wiring")
+# the full resolved-study artifact carries definition + approval chain, not just gates
+art <- resolved_study_artifact(nd)
+ok(!is.null(art$study_period) && !is.null(art$parameters) && !is.null(art$chain_approvals) &&
+   !is.null(art$resolved_gates), "resolved-study artifact is complete (period+params+approvals+gates)")

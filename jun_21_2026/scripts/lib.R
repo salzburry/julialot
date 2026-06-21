@@ -61,6 +61,60 @@ is_iso_date <- function(x) {
   !is.na(x) & nzchar(x) & !is.na(suppressWarnings(as.Date(x, "%Y-%m-%d")))
 }
 
+# Canonical NDC: the STORED value must itself be exactly 11 digits (no stripping).
+# normalize_ndc() strips separators (adapter use); is_ndc11() is the canonical-
+# storage check so a dashed or letter-bearing value is rejected, not silently kept.
+is_ndc11 <- function(x) grepl("^[0-9]{11}$", as.character(x))
+
+# Shared closed-schema conformance engine (used by study + manifest validators).
+# Recursively enforces `required` and (where additionalProperties:false) rejects
+# undeclared keys at EVERY object level AND descends into array `items` (so e.g.
+# manifest secrets[] cannot carry an undeclared value field). `oneOf` passes if any
+# branch validates, reporting the branch matching the value's kind. Leaf
+# types/enums/formats and `$ref` bodies remain the full JSON-Schema tool's job.
+schema_node_errors <- function(obj, schema, path = NULL) {
+  if (!is.null(schema$oneOf)) {
+    branches <- lapply(schema$oneOf, function(s) schema_node_errors(obj, s, path))
+    if (any(vapply(branches, length, integer(1)) == 0)) return(character(0))
+    is_obj  <- vapply(schema$oneOf, function(s) !is.null(s$properties) || identical(s$type, "object"), logical(1))
+    is_null <- vapply(schema$oneOf, function(s) identical(s$type, "null"), logical(1))
+    pick <- if (is.list(obj) && any(is_obj)) which(is_obj)[1]
+            else if (is.null(obj) && any(is_null)) which(is_null)[1]
+            else which.min(vapply(branches, length, integer(1)))
+    return(branches[[pick]])
+  }
+  here <- path %||% "(root)"
+  if (identical(schema$type, "null"))
+    return(if (is.null(obj)) character(0) else sprintf("%s: expected null", here))
+  if (identical(schema$type, "array") && !is.null(schema$items)) {
+    if (is.null(obj)) return(character(0))
+    elems <- if (is.list(obj)) obj else as.list(obj)
+    return(unlist(lapply(seq_along(elems), function(i)
+      schema_node_errors(elems[[i]], schema$items, sprintf("%s[%d]", here, i)))))
+  }
+  has_props <- !is.null(schema$properties) || identical(schema$type, "object")
+  if (!has_props) return(character(0))
+  if (!is.null(obj) && !is.list(obj)) return(sprintf("%s: expected object", here))
+  errors <- character(0)
+  keys <- names(obj) %||% character(0)
+  miss <- setdiff(unlist(schema$required %||% list()), keys)
+  if (length(miss)) errors <- c(errors, sprintf("%s: missing required key(s): %s", here, paste(miss, collapse = ", ")))
+  declared <- names(schema$properties %||% list())
+  if (isFALSE(schema$additionalProperties)) {
+    extra <- setdiff(keys, declared)
+    if (length(extra)) errors <- c(errors, sprintf("%s: undeclared key(s) (closed schema): %s", here, paste(extra, collapse = ", ")))
+  }
+  for (k in intersect(keys, declared))
+    errors <- c(errors, schema_node_errors(obj[[k]], schema$properties[[k]],
+                                           if (is.null(path)) k else paste0(path, ".", k)))
+  errors
+}
+schema_conformance <- function(obj, schema_path) {
+  schema <- tryCatch(read_json_file(schema_path), error = function(e) NULL)
+  if (is.null(schema)) return(sprintf("could not read schema (%s)", schema_path))
+  schema_node_errors(obj, schema, NULL)
+}
+
 # Resolve scripts/lib.R relative to a script invoked via Rscript --file=...
 .find_lib <- function() {
   fa <- grep("^--file=", commandArgs(FALSE), value = TRUE)

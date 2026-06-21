@@ -50,7 +50,7 @@ verify_bundle_allowlist <- function(paths) {
 # closed - the scan must not trust an unverified manifest.
 verify_manifest_matches_bundle <- function(manifest_paths, bundle_dir) {
   mp <- gsub("\\\\", "/", trimws(manifest_paths)); mp <- mp[nzchar(mp)]
-  actual <- gsub("\\\\", "/", list.files(bundle_dir, recursive = TRUE))
+  actual <- gsub("\\\\", "/", list.files(bundle_dir, recursive = TRUE, all.files = TRUE, no.. = TRUE))
   missing_from_bundle <- setdiff(mp, actual)
   unlisted_in_manifest <- setdiff(actual, mp)
   list(ok = length(missing_from_bundle) == 0 && length(unlisted_in_manifest) == 0,

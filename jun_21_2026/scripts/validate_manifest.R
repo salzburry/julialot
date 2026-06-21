@@ -36,8 +36,17 @@ SECRET_KEY_RX <- "(?i)(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?k
   hits
 }
 
-validate_manifest <- function(m) {
+# ONE fail-closed gate = STRUCTURE (schema_conformance against manifest.schema.json:
+# required fields, closed objects, and - critically - closed secrets[] items so a
+# value field there is rejected) + RUNTIME value checks JSON Schema cannot express.
+validate_manifest <- function(m, schema_path = "contracts/manifest.schema.json") {
   errors <- character(0); warnings <- character(0)
+  # 0. STRUCTURE: required run_id/git/version_axes/source/environment/outputs/... and
+  #    closed secrets[] (this is what closes the secrets-subtree redaction bypass).
+  if (file.exists(schema_path)) {
+    s <- schema_conformance(m, schema_path)
+    if (length(s)) errors <- c(errors, paste0("schema: ", s))
+  }
   # 1. redaction (the security promise): no secret-like key carries a value
   leaked <- .scan_secrets(m)
   if (length(leaked))
@@ -50,7 +59,18 @@ validate_manifest <- function(m) {
   # 3. a comparison MISMATCH must never be published
   if (identical(m$comparison$result %||% "", "mismatch") && ps == "published")
     errors <- c(errors, "comparison.result=mismatch but publication.status=published")
-  # 4. reproducibility: reference_data present and every entry approved
+  # 4. a non-primary-use or degraded-gate cohort must never reach the published
+  #    alias (fail-closed cohort-quality policy).
+  if (ps == "published" && isFALSE(m$quality$cohort_valid_for_primary_use))
+    errors <- c(errors, "publication.status=published but quality.cohort_valid_for_primary_use=false")
+  deg <- m$quality$degraded_gates %||% list()
+  if (ps == "published" && length(deg) > 0)
+    errors <- c(errors, sprintf("publication.status=published but degraded cohort gate(s) present: %s",
+                paste(unlist(deg), collapse = ", ")))
+  # 5. a successful run must emit outputs
+  if (rs == "success" && length(m$outputs %||% list()) == 0)
+    errors <- c(errors, "run_status=success but no outputs recorded")
+  # 6. reproducibility: reference_data present and every entry approved
   rd <- m$reference_data %||% list()
   if (!length(rd)) errors <- c(errors, "reference_data is empty (reproducibility/provenance)")
   for (r in rd) if (!identical(r$approval_status %||% "", "approved"))

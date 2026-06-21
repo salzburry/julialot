@@ -203,51 +203,11 @@ study_chain <- function(study, studies, seen = character(0)) {
   chain
 }
 
-# Closed-schema conformance: the runtime validator and study.schema.json must be
-# ONE contract, not two. This walks the schema's object tree RECURSIVELY,
-# enforcing `required` and (where additionalProperties:false) rejecting undeclared
-# keys at EVERY closed level - top-level and nested (study_period, approval, base,
-# gates). `oneOf` passes if any branch validates (so base: null OR pinned object
-# both pass). Leaf types/enums/formats and `$ref` bodies remain the JSON-Schema
-# tool's job; this guarantees the closed STRUCTURE cannot silently diverge.
-.schema_node_errors <- function(obj, schema, path) {
-  if (!is.null(schema$oneOf)) {
-    branches <- lapply(schema$oneOf, function(s) .schema_node_errors(obj, s, path))
-    if (any(vapply(branches, length, integer(1)) == 0)) return(character(0))
-    # none clean: report the branch matching obj's KIND (object vs null) so the
-    # message is useful (e.g. a non-null base reports its missing key, not "expected null").
-    is_obj  <- vapply(schema$oneOf, function(s) !is.null(s$properties) || identical(s$type, "object"), logical(1))
-    is_null <- vapply(schema$oneOf, function(s) identical(s$type, "null"), logical(1))
-    pick <- if (is.list(obj) && any(is_obj)) which(is_obj)[1]
-            else if (is.null(obj) && any(is_null)) which(is_null)[1]
-            else which.min(vapply(branches, length, integer(1)))
-    return(branches[[pick]])
-  }
-  here <- path %||% "(root)"
-  if (identical(schema$type, "null"))
-    return(if (is.null(obj)) character(0) else sprintf("%s: expected null", here))
-  has_props <- !is.null(schema$properties) || identical(schema$type, "object")
-  if (!has_props) return(character(0))                       # arrays / scalars / $ref: not descended
-  if (!is.null(obj) && !is.list(obj)) return(sprintf("%s: expected object", here))
-  errors <- character(0)
-  keys <- names(obj) %||% character(0)
-  miss <- setdiff(unlist(schema$required %||% list()), keys)
-  if (length(miss)) errors <- c(errors, sprintf("%s: missing required key(s): %s", here, paste(miss, collapse = ", ")))
-  declared <- names(schema$properties %||% list())
-  if (isFALSE(schema$additionalProperties)) {
-    extra <- setdiff(keys, declared)
-    if (length(extra)) errors <- c(errors, sprintf("%s: undeclared key(s) (closed schema): %s", here, paste(extra, collapse = ", ")))
-  }
-  for (k in intersect(keys, declared))                      # recurse into present, declared children
-    errors <- c(errors, .schema_node_errors(obj[[k]], schema$properties[[k]],
-                                            if (is.null(path)) k else paste0(path, ".", k)))
-  errors
-}
-validate_study_schema <- function(study, schema_path) {
-  schema <- tryCatch(read_json_file(schema_path), error = function(e) NULL)
-  if (is.null(schema)) return(sprintf("could not read study schema (%s)", schema_path))
-  .schema_node_errors(study, schema, NULL)
-}
+# Closed-schema conformance: the runtime validator and study.schema.json are ONE
+# contract. Delegates to the shared recursive engine (lib.R schema_conformance):
+# required + additionalProperties:false at every level (study_period, approval,
+# base, gates), oneOf, and array items.
+validate_study_schema <- function(study, schema_path) schema_conformance(study, schema_path)
 
 validate_study <- function(study_path, registry_path, studies_dir, strict = FALSE,
                            require_approved = FALSE,
@@ -258,6 +218,15 @@ validate_study <- function(study_path, registry_path, studies_dir, strict = FALS
   r <- resolve_study(study, studies, registry, strict = strict)
   dag_err <- if (length(r$errors) == 0) validate_dag(r$resolved, registry) else character(0)
   sch_err <- if (file.exists(schema_path)) validate_study_schema(study, schema_path) else character(0)
+  # Typed-config validation of the study's own study_period + parameters (dates,
+  # ID-window containment, param ranges, unknown-key typos) - the same resolver
+  # the run uses, so an invalid date / misspelled parameter cannot survive.
+  cfg_err <- character(0)
+  if (exists("validate_config") && exists("apply_defaults")) {
+    cfg <- c(study$study_period %||% list(), study$parameters %||% list())
+    cfg_err <- validate_config(apply_defaults(cfg))
+    if (length(cfg_err)) cfg_err <- paste0("config: ", cfg_err)
+  }
   # Approval is validated for the WHOLE inheritance chain + the registry: a
   # release run cannot be cleared while any inherited base (or the registry) is
   # still draft. Every approval is recorded in the resolved artifact.
@@ -269,11 +238,25 @@ validate_study <- function(study_path, registry_path, studies_dir, strict = FALS
   }
   ap_r <- validate_approval(registry, "gate registry", require_approved)
   list(id = study$id,
-       errors = c(r$errors, dag_err, sch_err, ap_errors, ap_r$errors),
+       errors = c(r$errors, dag_err, sch_err, cfg_err, ap_errors, ap_r$errors),
        warnings = c(r$warnings, ap_warnings, ap_r$warnings),
        approval = approvals[[study$id %||% "?1"]] %||% "draft",
        chain_approvals = approvals, registry_approval = ap_r$status,
+       definition = list(adapter = study$adapter, base = study$base,
+                         study_period = study$study_period, parameters = study$parameters,
+                         reference_data = study$reference_data),
        resolved = r$resolved)
+}
+
+# The FULL resolved-study artifact (not just gates): identity + adapter + base pin
+# + study period + algorithm params + reference-data pins + the whole approval
+# chain + resolved gates. This is the reproducibility record the roadmap promises.
+resolved_study_artifact <- function(res) {
+  list(id = res$id, adapter = res$definition$adapter, base = res$definition$base,
+       study_period = res$definition$study_period, parameters = res$definition$parameters,
+       reference_data = res$definition$reference_data,
+       approval = res$approval, chain_approvals = res$chain_approvals,
+       registry_approval = res$registry_approval, resolved_gates = res$resolved)
 }
 
 report_study <- function(res) {
@@ -292,6 +275,8 @@ report_study <- function(res) {
 }
 
 if (sys.nframe() == 0 && !interactive()) {
+  for (p in c("scripts/validate_config.R", "validate_config.R"))   # for the typed-config check
+    if (!exists("validate_config") && file.exists(p)) source(p)
   a <- commandArgs(trailingOnly = TRUE)
   strict <- !("--no-strict" %in% a)          # strict (fail-closed) is the DEFAULT
   require_approved <- "--require-approved" %in% a   # release gate: draft -> BLOCK
@@ -301,7 +286,7 @@ if (sys.nframe() == 0 && !interactive()) {
                         strict = strict, require_approved = require_approved)
   ok <- report_study(res)
   emit <- a[which(a == "--emit") + 1L]
-  if (ok && length(emit) && !is.na(emit[1]))     # emit the resolved gate-set artifact
-    writeLines(jsonlite::toJSON(res$resolved, auto_unbox = TRUE, pretty = TRUE), emit[1])
+  if (ok && length(emit) && !is.na(emit[1]))     # emit the FULL resolved-study artifact
+    writeLines(jsonlite::toJSON(resolved_study_artifact(res), auto_unbox = TRUE, pretty = TRUE, null = "null"), emit[1])
   quit(status = if (ok) 0L else 1L)
 }

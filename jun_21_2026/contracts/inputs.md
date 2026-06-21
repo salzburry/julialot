@@ -1,6 +1,7 @@
 # Canonical input contracts (DRAFT)
 
-The **source-system-agnostic, Spark-native** core reads only these canonical
+The **source-system-agnostic** core (Databricks SQL over the **hive_metastore**
+catalog, via DBI/odbc — not Spark) reads only these canonical
 entities. A source adapter (Optum first) produces them as views over physical
 tables. Core SQL must never reference a physical (Optum) table or column name.
 
