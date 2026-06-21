@@ -15,21 +15,34 @@ res <- compare_local("tests/unit/cmp/legacy", "tests/unit/cmp/refactored")
 eq(attr(res, "verdict"), "match", "all required tables present, excluded-only diff -> match")
 eq(length(attr(res, "missing_tables")), 0L, "no missing required tables")
 ok(res$LOT_LONG$value_mismatch == 0L, "no non-excluded value mismatch")
+# corrected nondeterminism model: the seeded tie-break picks the MED identity, so
+# lot_base_1st_add_med is excluded (surfaced) while the *_DT is now STRICT.
+ok(res$LOT_LONG$excluded_diffs >= 1L, "excluded med-identity diff is surfaced, not blocking")
+tmpD <- file.path(tempdir(), "dtstrict"); dir.create(tmpD, showWarnings = FALSE)
+file.copy(list.files("tests/unit/cmp/refactored", full.names = TRUE), tmpD, overwrite = TRUE)
+dd <- read.csv(file.path(tmpD, "LOT_LONG.csv"), colClasses = "character", check.names = FALSE)
+dd$lot_base_1st_add_med_dt[1] <- "2019-12-31"      # perturb the (now strict) date
+write.csv(dd, file.path(tmpD, "LOT_LONG.csv"), row.names = FALSE)
+resDT <- compare_local("tests/unit/cmp/legacy", tmpD)
+eq(attr(resDT, "verdict"), "mismatch", "first-add-med DATE is strict (a diff blocks)")
+ok("lot_base_1st_add_med_dt" %in% resDT$LOT_LONG$mismatch_cols, "strict date diff identified")
 
 # output contract: two EQUALLY-incomplete outputs (both missing a required
 # column) must NOT be called a match (P1: a missing contract column is blocking).
+# Use a behaviourally-meaningful LOT_LONG field (lot_start_type) - the exact class
+# the contract must protect, not just a date.
 tmpC1 <- file.path(tempdir(), "contract_a"); dir.create(tmpC1, showWarnings = FALSE)
 tmpC2 <- file.path(tempdir(), "contract_b"); dir.create(tmpC2, showWarnings = FALSE)
 file.copy(list.files("tests/unit/cmp/legacy", full.names = TRUE), tmpC1, overwrite = TRUE)
 file.copy(list.files("tests/unit/cmp/refactored", full.names = TRUE), tmpC2, overwrite = TRUE)
 for (d in c(tmpC1, tmpC2)) {                       # drop a required col from BOTH sides
-  dd <- read.csv(file.path(d, "LOT1_BASE.csv"), colClasses = "character", check.names = FALSE)
-  write.csv(dd[setdiff(names(dd), "lot1_base_discon_dt")], file.path(d, "LOT1_BASE.csv"), row.names = FALSE)
+  dd <- read.csv(file.path(d, "LOT_LONG.csv"), colClasses = "character", check.names = FALSE)
+  write.csv(dd[setdiff(names(dd), "lot_start_type")], file.path(d, "LOT_LONG.csv"), row.names = FALSE)
 }
 resC <- compare_local(tmpC1, tmpC2)
 eq(attr(resC, "verdict"), "mismatch", "both sides missing a required column -> mismatch (not match)")
-ok(isFALSE(resC$LOT1_BASE$contract_ok), "contract_ok is FALSE when a required column is absent")
-ok("lot1_base_discon_dt" %in% resC$LOT1_BASE$missing_required$a, "missing required column reported")
+ok(isFALSE(resC$LOT_LONG$contract_ok), "contract_ok is FALSE when a required column is absent")
+ok("lot_start_type" %in% resC$LOT_LONG$missing_required$a, "missing required column reported")
 
 # a missing required output table -> blocking mismatch (fail closed)
 tmpL <- file.path(tempdir(), "onlylot"); dir.create(tmpL, showWarnings = FALSE)
