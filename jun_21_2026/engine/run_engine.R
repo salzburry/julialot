@@ -4,21 +4,28 @@
 # is the harness that lets us see the refactor reproduce behaviour on synthetic
 # data locally; production is Databricks SQL on hive_metastore (separate).
 
-if (!exists("build_map_stacked")) source(local({
+local({
   fa <- grep("^--file=", commandArgs(FALSE), value = TRUE)
   d <- if (length(fa)) dirname(sub("^--file=", "", fa[1])) else "engine"
-  file.path(d, "map.R") }))
+  if (!exists("build_map_stacked")) source(file.path(d, "map.R"))
+  if (!exists("build_lot1_base")) source(file.path(d, "lot1.R"))
+})
 
 # Params are DATA (resolved config), so retuning the algorithm is a config edit.
-DEFAULT_PARAMS <- list(map_discon_gap_days = 90L, medical_day_supply = 28L)
+DEFAULT_PARAMS <- list(map_discon_gap_days = 90L, medical_day_supply = 28L,
+                       induction_window_days = 60L)
 
 run_engine <- function(input_dir, params = list()) {
   rd <- function(f) { p <- file.path(input_dir, f)
     if (file.exists(p)) read.csv(p, stringsAsFactors = FALSE, colClasses = "character")
     else data.frame() }
   p <- modifyList(DEFAULT_PARAMS, params)
-  list(MAP_STACKED = build_map_stacked(rd("pharmacy.csv"), rd("medical.csv"),
-         rd("rollup.csv"), rd("members.csv"), p$map_discon_gap_days, p$medical_day_supply))
+  members <- rd("members.csv"); subs <- rd("permissible_subs.csv")
+  map_stacked <- build_map_stacked(rd("pharmacy.csv"), rd("medical.csv"),
+    rd("rollup.csv"), members, p$map_discon_gap_days, p$medical_day_supply)
+  list(MAP_STACKED = map_stacked,
+       LOT1_BASE   = build_lot1_base(map_stacked, members,
+                       if (nrow(subs)) subs else NULL, p$induction_window_days))
 }
 
 if (sys.nframe() == 0 && !interactive()) {

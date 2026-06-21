@@ -24,3 +24,30 @@ new MAP when `dt > MAP_END`; discon = gap to next MAP (or to OBS_END for the las
 
 Covers: pharmacy pushout, gap -> new MAP, medical (no pushout), and pharmacy reset
 within a medical-extended MAP.
+
+## 9000000003 - multi-drug regimen + steroid + add-med, OBS_END 2021-12-31
+- LENA refills 03-01/03-25/04-15/05-10 (ds30) -> one MAP, rx pushout to 2021-06-28.
+- BORT 03-10 ds30 -> MAP end 2021-04-08. DEX (STEROID) 03-05 ds30 -> MAP end 2021-04-03.
+- DARA 05-15 ds30 -> MAP end 2021-06-13.
+- LOT1: lot1_start = min non-steroid = 2021-03-01; induction window [03-01, 04-29].
+  Induction meds = {LENA(03-01), BORT(03-10)} (DARA 05-15 is outside the window;
+  DEX is steroid). base_meds = {BORT, LENA}. LOT1_BASE_MEDS = "BORT LENA", cnt 2.
+- DISCON = max base-med MAP_END = max(LENA 06-28, BORT 04-08) = **2021-06-28**.
+- first-add = earliest non-base non-steroid in [03-01, 06-28] = DARA (05-15);
+  LOT1_BASE_1ST_ADD_MED = DARA, _DT = date_sub(05-15,1) = **2021-05-14**.
+
+## 9000000004 - steroid-only, OBS_END 2021-12-31
+- DEX (STEROID) 07-01 ds30 -> one MAP. No non-steroid drug, so **no LOT1 row**
+  (steroid-only patients are excluded from LOT derivation).
+
+## Discontinuation-flag boundary
+- 9000000001 OBS_END is 2021-08-15: MAP2 ends 2021-06-30, gap to OBS_END = 46 < 90,
+  so **MAP2 discon = 0** (MAP1 still 1 via the 92-day gap to MAP2). Exercises both.
+
+## LOT1_BASE expected
+| patient | lot1_start | cnt | base_meds | discon | 1st_add_dt | 1st_add |
+|---|---|---|---|---|---|---|
+| 9000000001 | 2021-01-01 | 1 | LENA | 2021-06-30 | - | - |
+| 9000000002 | 2021-02-01 | 1 | BORT | 2021-03-04 | - | - |
+| 9000000003 | 2021-03-01 | 2 | BORT LENA | 2021-06-28 | 2021-05-14 | DARA |
+| 9000000004 | (steroid-only: no LOT1 row) |||||
