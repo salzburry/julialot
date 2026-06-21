@@ -1,4 +1,4 @@
-patient_id,lot_num,lot_start_dt,lot_base_meds,lot_base_end_dt,lot_base_end_reason,lot_base_1st_add_med_dt
-9000000001,1,2020-01-01,LENA,2020-06-01,progression,2020-02-15
-9000000002,1,2020-01-01,BORT LENA,2020-08-01,sct,2020-03-09
-9000000002,2,2020-08-15,DARA,2021-02-01,progression,
+patient_id,lot_num,lot_start_dt,lot_base_meds,lot_med_cnt,lot_base_discon_dt,lot_base_1st_add_med_dt,lot_base_end_dt,lot_base_end_reason
+9000000001,1,2020-01-01,LENA,1,2020-06-01,2020-02-15,2020-06-01,progression
+9000000002,1,2020-01-01,BORT LENA,2,2020-08-01,2020-03-09,2020-08-01,sct
+9000000002,2,2020-08-15,DARA,1,2021-02-01,,2021-02-01,progression

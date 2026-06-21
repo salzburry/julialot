@@ -10,6 +10,18 @@
 #     6->12 month parameter override of it.
 # Each gate is an identifiable module; study files select/parameterize them by
 # name (never SQL).
+#
+# Param spec fields (per param): type (integer|boolean|...), default, required
+# (true => must be supplied if no default), min/max (inclusive numeric bounds).
+# validate_study.R fills defaults into the resolved artifact and enforces these.
+
+# Clinical approval is machine-readable (validate_study.R), not just a comment:
+# while this is 'draft', a release run (--require-approved) is BLOCKED. Flipping to
+# 'approved' requires an auditable signed_off_by + signed_off_date.
+approval:
+  status: draft
+  signed_off_by: ~
+  signed_off_date: ~
 
 # Algorithm-produced anchors a gate may depend on (the "stages").
 stages:
@@ -33,7 +45,7 @@ gates:
     anchor: index_date
     output_flag: incl_adult
     params:
-      minimum_age: { type: integer, default: 18 }
+      minimum_age: { type: integer, default: 18, min: 0, max: 130 }
     description: age >= minimum_age at index
 
   baseline_ce:
@@ -42,8 +54,8 @@ gates:
     anchor: index_date
     output_flag: incl_baseline_ce
     params:
-      months: { type: integer, default: 6 }
-      max_gap_days: { type: integer, default: 30 }
+      months: { type: integer, default: 6, min: 0, max: 120 }
+      max_gap_days: { type: integer, default: 30, min: 0, max: 365 }
     description: continuous enrollment in the baseline window before the anchor
 
   no_baseline_mm_agents:
@@ -70,7 +82,7 @@ gates:
     anchor: lot1_start
     output_flag: incl_followup_ce
     params:
-      months: { type: integer, default: 0 }
+      months: { type: integer, default: 0, min: 0, max: 120 }
       strict: { type: boolean, default: false }
     description: continuous enrollment in the follow-up window after LOT1 start
 
@@ -90,7 +102,7 @@ gates:
     output_flag: excl_other_cancer
     codelist: cl_other_malignancies
     params:
-      lookback_months: { type: integer, default: 12 }
+      lookback_months: { type: integer, default: 12, min: 0, max: 120 }
     description: no other malignancy in the lookback before LOT1
 
   no_belantamab:

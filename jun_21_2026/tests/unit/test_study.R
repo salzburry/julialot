@@ -60,3 +60,37 @@ ok(length(resolve_study(pin_ok, studies, reg, strict = TRUE)$errors) == 0, "corr
 pin_bad <- list(id = "x", base = list(id = "overall_2025", version = "1.0.0", hash = "deadbeef"),
                 gates = list(add = list(no_pregnancy = TRUE)))
 ok(any(grepl("hash mismatch", resolve_study(pin_bad, studies, reg)$errors)), "wrong base hash rejected")
+
+# --- registry defaults / required params / numeric ranges --------------------
+# defaults are filled into the resolved artifact (baseline_ce gets max_gap_days=30)
+ok(isTRUE(nd$resolved$baseline_ce$max_gap_days == 30), "registry default filled into resolved gate")
+# numeric range bounds (min/max) enforced
+ok(any(grepl("above max", resolve_study(mk(list(override = list(baseline_ce = list(months = 999)))), studies, reg)$errors)),
+   "out-of-range param (above max) caught")
+ok(any(grepl("below min", resolve_study(mk(list(override = list(adult_at_index = list(minimum_age = -5)))), studies, reg)$errors)),
+   "out-of-range param (below min) caught")
+# a required param with NO default that is not supplied -> blocking
+reg_req <- reg; reg_req$gates$no_pregnancy$params <- list(window_days = list(type = "integer", required = TRUE))
+ok(any(grepl("missing required param", resolve_study(mk(list(add = list(no_pregnancy = TRUE))), studies, reg_req)$errors)),
+   "missing required param (no default) caught")
+# a param WITH a default is filled rather than required
+reg_def <- reg; reg_def$gates$no_pregnancy$params <- list(window_days = list(type = "integer", default = 30))
+ok(isTRUE(resolve_study(mk(list(add = list(no_pregnancy = TRUE))), studies, reg_def)$resolved$no_pregnancy$window_days == 30),
+   "param default fills when unset (no required error)")
+# an unknown registry phase name is not silently allowed
+reg5 <- reg; reg5$gates$qualifying_mm$phase <- "bogus_phase"
+ok(any(grepl("unknown phase", validate_dag(nd$resolved, reg5))), "invalid phase name caught")
+
+# --- clinical approval axis (machine-enforced, separate from structural) ------
+# a DRAFT study is structurally valid (errors==0) but warns; a release gate blocks
+ok(any(grepl("NOT cleared for production", ov$warnings)), "draft study warns by default")
+ov_ra <- validate_study("studies/overall.yml", "cohort/gates/registry.yml", "studies",
+                        strict = TRUE, require_approved = TRUE)
+ok(any(grepl("NOT cleared for production", ov_ra$errors)), "require_approved: draft study blocks (fail closed)")
+# an 'approved' claim must carry an auditable signer + date, else rejected
+ok(any(grepl("requires signed_off_by", validate_approval(list(approval = list(status = "approved")), "study x")$errors)),
+   "approved without signer rejected")
+ok(length(validate_approval(list(approval = list(status = "approved", signed_off_by = "Dr X",
+   signed_off_date = "2026-01-01")), "study x")$errors) == 0, "approved with signer+date passes")
+ok(any(grepl("not in", validate_approval(list(approval = list(status = "bogus")), "study x")$errors)),
+   "unknown approval status caught")

@@ -25,12 +25,29 @@ COMPARE_KEYS <- list(
   LOT1_BASE   = c("patient_id"),
   LOT_LONG    = c("patient_id", "lot_num")
 )
-# Display-only fields excluded from the strict value compare (see
-# tests/fixtures/expected/nondeterministic.md). State-influencing fields are
-# NOT listed here and must be deterministic.
+# Fields excluded from the strict value VERDICT (see
+# tests/fixtures/expected/nondeterministic.md). NOTE: this exclusion is PENDING
+# algorithmic sign-off - the seeded first-add tie-break must be confirmed not to
+# affect downstream LOT end/trigger/flag fields (or replaced by a deterministic
+# fix) before it is frozen. Differences in these fields are still SURFACED
+# (compare result `excluded_diffs`), never silently dropped.
 EXCLUDED_FIELDS <- list(
   LOT1_BASE = c("lot1_base_1st_add_med_dt"),
   LOT_LONG  = c("lot_base_1st_add_med_dt")
+)
+
+# Required output columns per table (the versioned output contract; see
+# contracts/outputs.md). compare_local checks BOTH sides carry these, so two
+# equally-incomplete outputs can never be called behaviourally equivalent.
+OUTPUT_CONTRACT_VERSION <- "0.1-draft"
+OUTPUT_CONTRACT <- list(
+  MAP_STACKED = c("patient_id", "med_abbr", "map_cnt", "map_start_dt",
+                  "map_rx_runout_dt", "map_med_runout_dt", "map_end_dt", "map_discon_flg"),
+  LOT1_BASE   = c("patient_id", "lot1_start_dt", "lot1_base_meds", "lot1_med_cnt",
+                  "lot1_base_discon_dt", "lot1_base_1st_add_med_dt"),
+  LOT_LONG    = c("patient_id", "lot_num", "lot_start_dt", "lot_base_meds", "lot_med_cnt",
+                  "lot_base_discon_dt", "lot_base_1st_add_med_dt", "lot_base_end_dt",
+                  "lot_base_end_reason")
 )
 
 # --- Databricks adapter (stub) -------------------------------------------
@@ -93,11 +110,23 @@ compare_table <- function(con, tbl_a, tbl_b, table_name) {
 # the Spark equivalent for large run-scoped tables.
 .norm_cell <- function(x) { x <- trimws(as.character(x)); x[is.na(x) | x == ""] <- "\001NULL\001"; x }
 
-compare_local_table <- function(path_a, path_b, keys, excluded = character(0)) {
+compare_local_table <- function(path_a, path_b, keys, excluded = character(0), required = character(0)) {
   a <- read.csv(path_a, stringsAsFactors = FALSE, check.names = FALSE, colClasses = "character")
   b <- read.csv(path_b, stringsAsFactors = FALSE, check.names = FALSE, colClasses = "character")
-  res <- list(schema_ok = TRUE, key_unique = TRUE, only_in_a = 0L, only_in_b = 0L,
-              value_mismatch = 0L, mismatch_cols = character(0), sample = NULL)
+  res <- list(schema_ok = TRUE, contract_ok = TRUE, key_unique = TRUE, only_in_a = 0L,
+              only_in_b = 0L, value_mismatch = 0L, excluded_diffs = 0L,
+              mismatch_cols = character(0), sample = NULL)
+  # Output contract: BOTH sides must carry the required columns, so two equally
+  # incomplete outputs cannot be called behaviourally equivalent.
+  miss_a <- setdiff(required, names(a)); miss_b <- setdiff(required, names(b))
+  if (length(miss_a) || length(miss_b)) {
+    res$contract_ok <- FALSE; res$match <- FALSE
+    res$missing_required <- list(a = miss_a, b = miss_b)
+    return(res)
+  }
+  if (!all(keys %in% names(a)) || !all(keys %in% names(b))) {  # keys before indexing
+    res$match <- FALSE; res$missing_keys <- TRUE; return(res)
+  }
   if (!identical(sort(names(a)), sort(names(b)))) {
     res$schema_ok <- FALSE; res$match <- FALSE
     res$schema_detail <- sprintf("a-only:{%s} b-only:{%s}",
@@ -108,18 +137,22 @@ compare_local_table <- function(path_a, path_b, keys, excluded = character(0)) {
   res$key_unique <- !(any(duplicated(ka)) || any(duplicated(kb)))
   res$only_in_a <- sum(!(ka %in% kb)); res$only_in_b <- sum(!(kb %in% ka))
   shared <- intersect(ka, kb); ia <- match(shared, ka); ib <- match(shared, kb)
-  for (cn in setdiff(names(a), c(keys, excluded))) {
+  for (cn in setdiff(names(a), keys)) {
     va <- .norm_cell(a[[cn]][ia]); vb <- .norm_cell(b[[cn]][ib]); d <- which(va != vb)
     if (length(d)) {
-      res$value_mismatch <- res$value_mismatch + length(d)
-      res$mismatch_cols <- union(res$mismatch_cols, cn)
-      if (is.null(res$sample)) res$sample <- sprintf("key=%s col=%s a=%s b=%s", shared[d[1]], cn, va[d[1]], vb[d[1]])
+      if (cn %in% excluded) {            # surfaced (not blocking), never silent
+        res$excluded_diffs <- res$excluded_diffs + length(d)
+      } else {
+        res$value_mismatch <- res$value_mismatch + length(d)
+        res$mismatch_cols <- union(res$mismatch_cols, cn)
+        if (is.null(res$sample)) res$sample <- sprintf("key=%s col=%s a=%s b=%s", shared[d[1]], cn, va[d[1]], vb[d[1]])
+      }
     }
   }
   res$checksum_a <- content_hash(a[order(ka), setdiff(names(a), excluded), drop = FALSE])
   res$checksum_b <- content_hash(b[order(kb), setdiff(names(b), excluded), drop = FALSE])
-  res$match <- res$schema_ok && res$key_unique && res$only_in_a == 0 &&
-               res$only_in_b == 0 && res$value_mismatch == 0
+  res$match <- res$schema_ok && res$contract_ok && res$key_unique &&
+               res$only_in_a == 0 && res$only_in_b == 0 && res$value_mismatch == 0
   res
 }
 
@@ -137,7 +170,8 @@ compare_local <- function(dir_a, dir_b, tables = names(COMPARE_KEYS)) {
                        missing = c(if (!file.exists(fa)) "a", if (!file.exists(fb)) "b"))
       next
     }
-    r <- compare_local_table(fa, fb, COMPARE_KEYS[[t]], EXCLUDED_FIELDS[[t]] %||% character(0))
+    r <- compare_local_table(fa, fb, COMPARE_KEYS[[t]], EXCLUDED_FIELDS[[t]] %||% character(0),
+                             OUTPUT_CONTRACT[[t]] %||% character(0))
     out[[t]] <- r; if (!isTRUE(r$match)) overall <- FALSE
   }
   attr(out, "missing_tables") <- missing
@@ -160,10 +194,17 @@ if (sys.nframe() == 0 && !interactive()) {
   if (length(a) >= 3 && a[1] == "--local") {
     res <- compare_local(a[2], a[3])
     for (t in names(res)) { r <- res[[t]]
+      detail <- character(0)
+      if (length(r$mismatch_cols)) detail <- c(detail, paste0("cols:", paste(r$mismatch_cols, collapse = ",")))
+      if (isTRUE(r$contract_ok == FALSE)) detail <- c(detail,
+          sprintf("missing_required:{a:%s b:%s}", paste(r$missing_required$a, collapse = ","),
+                  paste(r$missing_required$b, collapse = ",")))
+      if ((r$excluded_diffs %||% 0L) > 0L) detail <- c(detail,   # surfaced, never silent
+          sprintf("excluded_diffs=%d (informational)", r$excluded_diffs))
       cat(sprintf("%-12s %s (only_in_a=%d only_in_b=%d value_mismatch=%d %s)\n",
           t, if (isTRUE(r$match)) "MATCH" else "MISMATCH",
           r$only_in_a %||% 0L, r$only_in_b %||% 0L, r$value_mismatch %||% 0L,
-          if (length(r$mismatch_cols)) paste0("cols:", paste(r$mismatch_cols, collapse = ",")) else "")) }
+          paste(detail, collapse = " "))) }
     cat("verdict:", attr(res, "verdict"), "\n")
     quit(status = if (identical(attr(res, "verdict"), "match")) 0L else 1L)
   }

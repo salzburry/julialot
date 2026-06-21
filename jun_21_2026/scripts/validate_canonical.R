@@ -40,7 +40,8 @@ CANONICAL_SPEC <- list(
                 source_table = "string,required", source_record_id = "string,required",
                 data_vintage = "string,required"),
     key = c("patient_id", "service_date", "normalized_code", "code_system", "source_record_id"),
-    systems = c("HCPCS", "CPT", "NDC"), raw_col = "raw_code", pos_int = "day_supply"),
+    systems = c("HCPCS", "CPT", "NDC"), raw_col = "raw_code", pos_int = "day_supply",
+    enums = list(source_code_field = c("proc_cd", "bill_proc_cd", "ndc"))),
   diagnosis = list(file = "diagnosis.csv", entity = "canonical_diagnosis",
     cols = list(patient_id = "string,required", event_date = "date,required",
                 raw_code = "string,required", normalized_code = "string,required",
@@ -92,37 +93,47 @@ validate_entity <- function(df, spec) {
   }
   for (cn in (spec$pos_int %||% character(0))) if (cn %in% names(df)) {
     iv <- suppressWarnings(as.integer(as.character(df[[cn]])))
-    if (any(!is.na(iv) & iv <= 0L)) errors <- c(errors, sprintf("%s: %d non-positive value(s)", cn, sum(!is.na(iv) & iv <= 0L)))
+    bad <- !is.na(iv) & iv <= 0L
+    if (any(bad)) { errors <- c(errors, sprintf("%s: %d non-positive value(s)", cn, sum(bad))); rej <- rej | bad }
   }
   if (!is.null(spec$systems) && "code_system" %in% names(df)) {
     cs <- toupper(trimws(as.character(df$code_system)))
     bad <- !(cs %in% toupper(spec$systems))
-    if (any(bad)) errors <- c(errors, sprintf("code_system: %d value(s) not in {%s}", sum(bad), paste(spec$systems, collapse = ",")))
+    if (any(bad)) { errors <- c(errors, sprintf("code_system: %d value(s) not in {%s}", sum(bad), paste(spec$systems, collapse = ","))); rej <- rej | bad }
   }
+  for (cn in names(spec$enums %||% list())) if (cn %in% names(df)) {  # enum domains
+    bad <- !(tolower(trimws(as.character(df[[cn]]))) %in% tolower(spec$enums[[cn]]))
+    if (any(bad)) { errors <- c(errors, sprintf("%s: %d value(s) not in {%s}", cn, sum(bad), paste(spec$enums[[cn]], collapse = ","))); rej <- rej | bad }
+  }
+  # Normalization. NDC: normalized_code must ITSELF be a valid 11-digit NDC
+  # (segment-aware 10->11 from raw is the adapter's job; raw is preserved, not
+  # recomputed). Non-NDC: deterministic, so verify normalized == normalize(raw).
   rc <- spec$raw_col
   if (!is.null(rc) && all(c(rc, "normalized_code", "code_system") %in% names(df))) {
     cs <- toupper(trimws(as.character(df$code_system)))
-    expn <- ifelse(cs == "NDC", normalize_ndc(df[[rc]]), normalize_proc(df[[rc]]))
-    got  <- toupper(as.character(df$normalized_code))
-    has  <- nzchar(as.character(df[[rc]]))
-    bad  <- has & (is.na(expn) | toupper(expn) != got)
-    if (any(bad)) {
-      i <- which(bad)[1]
-      errors <- c(errors, sprintf("normalized_code mismatch/reject in %d row(s) (e.g. raw '%s' [%s] -> expected '%s', got '%s')",
-                  sum(bad), df[[rc]][i], cs[i], expn[i] %||% "NA", as.character(df$normalized_code)[i]))
+    nc <- toupper(as.character(df$normalized_code)); has <- nzchar(as.character(df[[rc]]))
+    badn <- cs == "NDC" & has & is.na(normalize_ndc(df$normalized_code))
+    if (any(badn)) { errors <- c(errors, sprintf("normalized_code not a valid 11-digit NDC in %d row(s)", sum(badn))); rej <- rej | badn }
+    is_p <- cs != "NDC" & has
+    if (any(is_p)) {
+      expp <- normalize_proc(df[[rc]]); badp <- is_p & (is.na(expp) | toupper(expp) != nc)
+      if (any(badp)) {
+        i <- which(badp)[1]
+        errors <- c(errors, sprintf("normalized_code != normalize(raw) in %d non-NDC row(s) (e.g. '%s' [%s] -> '%s', got '%s')",
+                    sum(badp), df[[rc]][i], cs[i], expp[i], as.character(df$normalized_code)[i])); rej <- rej | badp
+      }
     }
   }
   if (isTRUE(spec$span) && all(c("span_start", "span_end") %in% names(df))) {
     ss <- suppressWarnings(as.Date(as.character(df$span_start)))
     se <- suppressWarnings(as.Date(as.character(df$span_end)))
-    if (any(!is.na(ss) & !is.na(se) & ss > se))
-      errors <- c(errors, sprintf("span_start > span_end in %d row(s)", sum(!is.na(ss) & !is.na(se) & ss > se)))
+    bad <- !is.na(ss) & !is.na(se) & ss > se
+    if (any(bad)) { errors <- c(errors, sprintf("span_start > span_end in %d row(s)", sum(bad))); rej <- rej | bad }
   }
   if (!is.null(spec$key) && all(spec$key %in% names(df))) {
     k <- do.call(paste, c(df[spec$key], sep = "\037"))
-    if (any(duplicated(k)))
-      errors <- c(errors, sprintf("key %s not unique (%d duplicate rows)",
-                  paste(spec$key, collapse = "+"), sum(duplicated(k))))
+    dupd <- duplicated(k) | duplicated(k, fromLast = TRUE)
+    if (any(dupd)) { errors <- c(errors, sprintf("key %s not unique (%d duplicate rows)", paste(spec$key, collapse = "+"), sum(dupd))); rej <- rej | dupd }
   }
   list(errors = errors, warnings = warnings, report = list(rows = nrow(df), rejected = sum(rej)))
 }
