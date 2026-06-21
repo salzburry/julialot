@@ -66,7 +66,8 @@ run_engine <- function(input_dir, params = list()) {
   if (!nrow(codelist) || !all(need_cl %in% names(codelist)))
     stop("run_engine: sct_codelist.csv must have rows and columns ",
          paste(need_cl, collapse = "/"), " (SCT evidence cannot be silently empty)")
-  map_stacked <- build_map_stacked(rd("pharmacy.csv"), med, rd("rollup.csv"), members,
+  rollup <- rd("rollup.csv")                          # carries optional maintenance metadata too
+  map_stacked <- build_map_stacked(rd("pharmacy.csv"), med, rollup, members,
     p$map_discon_gap_days, p$medical_day_supply)
   lot1 <- build_lot1_base(map_stacked, members, if (nrow(subs)) subs else NULL, p$induction_window_days)
   # SCT from ALL canonical evidence routes (procedure + diagnosis + medical).
@@ -83,7 +84,7 @@ run_engine <- function(input_dir, params = list()) {
   lot_long <- build_lot_long(lot1, lot1_end, map_stacked, sct_claims, members, deathd, subsd,
                 p$lot_n_induction_window_days, p$cart_consolidation_days, p$sct_tandem_days,
                 p$sct_auto_window_days, p$sct_auto_gap_days,
-                allo_lot_span = p$allo_lot_span, max_lot = p$max_lot)
+                allo_lot_span = p$allo_lot_span, max_lot = p$max_lot, rollup = rollup)
   list(MAP_STACKED = map_stacked, LOT1_BASE = lot1, LOT1_END = lot1_end, LOT_LONG = lot_long)
 }
 

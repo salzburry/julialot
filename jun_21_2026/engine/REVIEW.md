@@ -16,7 +16,7 @@ comparing. That run is the reviewer/owner's step (it needs the warehouse).
 Run it (the driver runs the full pipeline MAP → LOT1 → SCT → LOT1 end):
 ```
 Rscript engine/run_engine.R engine/fixtures /tmp/out   # MAP_STACKED + LOT1_BASE + LOT1_END + LOT_LONG
-Rscript tests/run_unit_tests.R                          # 280 pass (engine: test_engine/sct/lot_end/lot_long); also CI
+Rscript tests/run_unit_tests.R                          # 293 pass (engine: test_engine/sct/lot_end/lot_long); also CI
 ```
 
 ## What to validate: each rule maps to a production source line
@@ -45,6 +45,7 @@ Rscript tests/run_unit_tests.R                          # 280 pass (engine: test
 | `lot_long.R` | per-line regimen + line-scoped SCT end + CE-sensitive end | `R/lot2_5_base.R:323-657` |
 | `lot_long.R` | special starts: ALLO single-day / extend-to-next (`allo_lot_span`) + CART-no-med → `SCT_CART` | `R/lot2_5_base.R:410-422,658-870` |
 | `lot_long.R` | final projection: in-LOT AUTO fields clamped to `<= LOT_BASE_END_DT`, SING/TAND/MAX recomputed | `R/lot2_5_base.R:104-145,923-960` |
+| `lot_long.R` | `contains_mtx_reg`: induction has a valid maintenance subset (MONO drug / DUAL pair) + an anchor outside it | `02_lot1.R:1392-1429` / `R/lot2_5_base.R:624-654` |
 
 ## Verified coverage (hand-derived expected)
 
@@ -65,9 +66,11 @@ Rscript tests/run_unit_tests.R                          # 280 pass (engine: test
   trigger so DEATH wins, where a fixed 30-day window would wrongly end at runout.
 - **End-to-end** (`test_engine.R`): the driver's `LOT1_END` (MAP→LOT1→SCT→end) vs
   hand-derived expected, including an `SCT_ALLO` end for one patient; PLUS the **full
-  23-column `LOT_LONG`** vs a hand-derived golden (`expected/LOT_LONG.csv`) — all 22
-  real columns compared exactly, `contains_mtx_reg` flagged as the unimplemented gap
-  (verdict `partial_match`, the honest "not full equivalence" signal).
+  23-column `LOT_LONG`** vs a hand-derived golden (`expected/LOT_LONG.csv`) — ALL 23
+  columns compared exactly (verdict `match`; `contains_mtx_reg` now computed).
+- **contains_mtx_reg** (`test_lot_long.R`): `.maint_maps` parsing + the mono/dual +
+  anchor logic (mono+anchor→1, mono-only→0, dual-pair-only→0, dual+anchor→1, none→0)
+  and the `build_lot_long` rollup wiring.
 - **Production parity** (`test_engine.R`/`test_sct.R`): pharmacy day-supply
   imputation, same-day max-day-supply de-dup, AUTO window = 13.
 - **LOT2-5** (`test_lot_long.R`): a 3-line cohort (LENA→DARA→CARF) run through the
@@ -91,28 +94,26 @@ Rscript tests/run_unit_tests.R                          # 280 pass (engine: test
   (`sql_normalize_view`) aliases a legacy `PATID` side to canonical `patient_id`
   so a `PATID`-vs-`patient_id` warehouse compare no longer fails on the id name.
 
-## NOT yet ported (refinements)
+## NOT yet ported (the decisive owner-side / warehouse gates)
 
-- **`contains_mtx_reg`** (= 0; needs maintenance metadata) is a DETERMINISTIC gap of
-  the LOCAL R engine. The gap is CALLER-scoped for BOTH modes (default STRICT): the
-  local engine-vs-golden caller passes the gap profile (`--local … --engine`) → forces
-  `partial_match`; the warehouse `--run` and a plain `--local` default strict, so a
-  real `contains_mtx_reg` regression is never weakened. Implement the field for full
-  LOT_LONG parity.
 - The **regression-expected** baseline (legacy execution on the same synthetic data,
-  the owner's hive_metastore step) — the decisive gate — and the full **canonical
-  input ROW** validator (`validate_canonical`) in `run_engine` (it now derives defaults
-  from + validates the resolved config against `CONFIG_SPEC` + checks filenames/members/
-  codelist columns, but not yet lineage / dates / dedup uniqueness of the input rows).
-  `apr_30_2026` production also does not yet consume `CONFIG_SPEC` (still env vars).
-- **Now handled:** ALL tunables propagate into LOT1 end logic (CART_INIT / death
-  guard); defaults derived from + resolved config validated against the one
-  `CONFIG_SPEC` (single source); caller-scoped gap (local + warehouse); single-join
-  value compare with double counts + `bigint="numeric"` connection (BIGINT-safe);
-  checksum AND sample failures isolated + SURFACED (`CHECKSUM_FAILED`/`SAMPLE_FAILED`);
-  null-vs-dup key counts shown (`KEYS{...}`); patient-level mismatch sample is governed
-  (`--sample-into` table, deterministic `ORDER BY`, never logged); `PATID` name+STRING
-  bridge; membership short-circuit; CART death-guard test through `build_lot_long`.
+  the owner's hive_metastore step) — the decisive parity gate — plus the live
+  comparator smoke run and golden-fixture approval/pinning.
+- The full **canonical input ROW** validator (`validate_canonical`) in `run_engine`:
+  it now derives defaults from + validates the resolved config against `CONFIG_SPEC`
+  and checks filenames/members/codelist columns, but not yet lineage / dates / dedup
+  uniqueness of the input rows (that needs the canonical adapter, since the engine
+  consumes POST-cohort inputs). `apr_30_2026` production also does not yet consume
+  `CONFIG_SPEC` (still env vars).
+- **Now handled (LOT_LONG is fully derived):** `contains_mtx_reg` COMPUTED (mono/dual
+  + anchor from rollup metadata) → `UNIMPLEMENTED_FIELDS` empty, golden is a full
+  `match`; ALL tunables propagate into LOT1 end logic; defaults derived from + resolved
+  config validated against the one `CONFIG_SPEC`; caller-scoped gap mechanism retained;
+  single-join value compare with double counts + `bigint="numeric"` (BIGINT-safe) +
+  case-insensitive key exclusion; checksum AND sample failures isolated + SURFACED;
+  null-vs-dup key counts (`KEYS{...}`); patient-level sample OFF by default, governed
+  via validated `--sample-into` (deterministic `ORDER BY`) or explicit `--sample-inprocess`,
+  never logged; `PATID` name+STRING bridge; membership short-circuit; CART death-guard.
   Checksum aggregation **bucketing** remains a deferred warehouse-scale optimization.
 
 ## Constraints to confirm

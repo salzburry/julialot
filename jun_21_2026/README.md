@@ -18,7 +18,7 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 280 tests, all pure-R / local (also run in CI)
+Rscript tests/run_unit_tests.R          # 293 tests, all pure-R / local (also run in CI)
 ```
 
 Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
@@ -31,10 +31,10 @@ Rscript engine/run_engine.R engine/fixtures /tmp/out   # MAP_STACKED + LOT1_BASE
 
 The driver runs the full pipeline **MAP → LOT1 → SCT → LOT1 end → LOT2-5** and all
 four outputs are compared against hand-derived golden CSVs: `MAP_STACKED`,
-`LOT1_BASE`, `LOT1_END`, and the **full 23-column `LOT_LONG`** (every real column;
-`contains_mtx_reg` is the one flagged unimplemented gap — see below). Pharmacy
-day-supply imputation (null/<1→28) and same-day claim de-dup (max day-supply) match
-production; the SCT AUTO window is 13 days.
+`LOT1_BASE`, `LOT1_END`, and the **full 23-column `LOT_LONG`** — now a **full match**
+(`contains_mtx_reg` is computed, no remaining gap). Pharmacy day-supply imputation
+(null/<1→28) and same-day claim de-dup (max day-supply) match production; the SCT AUTO
+window is 13 days.
 
 **For reviewers:** `engine/REVIEW.md` maps every engine rule to its production
 source line (`apr_30_2026/02_lot1.R:NNN`) and lists verified coverage + the
@@ -78,11 +78,13 @@ Medical day-supply is hardcoded to `medical_day_supply` (every medical claim,
 matching production), pharmacy invalid day-supply to 28; the SCT codelist is
 required **by content** (the driver fails closed unless it has rows + the
 `code_type`/`code`/`sct_type` columns, so SCT can never silently be empty).
-CE-sensitive end is implemented (caps at `enddate_ce`, reason `DISENROLLMENT`). **Explicitly EXCLUDED from the
-parity claim:** `contains_mtx_reg` (= 0; needs maintenance metadata
-`MONOMAINTENANCE`/`DUALMAINTENANCEWITH`) — a *deterministic* field, so the comparator
-treats it as an `UNIMPLEMENTED_FIELDS` gap that forces `partial_match` rather than a
-silent `match`. `run_engine` derives its **defaults from** and **validates the full
+CE-sensitive end is implemented (caps at `enddate_ce`, reason `DISENROLLMENT`).
+**`contains_mtx_reg` is now COMPUTED** (S16b / Step N.5): from the rollup's optional
+`MONOMAINTENANCE` / `DUALMAINTENANCEWITH` metadata, 1 iff a LOT's induction contains a
+valid maintenance subset (a MONO drug, or a DUAL pair) PLUS an anchor drug outside it
+(absent metadata → 0). LOT_LONG is therefore fully derived — no remaining parity gap;
+`UNIMPLEMENTED_FIELDS` is now empty (the partial_match mechanism is retained for any
+future gap). `run_engine` derives its **defaults from** and **validates the full
 resolved config against** the refactor's one typed contract `CONFIG_SPEC` (its
 engine-tunable subset — single source, no drift): an unknown key (`max_lott`), a
 non-integer (`sct_tandem_days="bad"`), or an out-of-range value (`map_discon_gap_days=0`,
@@ -124,22 +126,22 @@ populations differ), null-safe value compare over **every shared column** in a
 column — counts kept as **double**; `connect_compare` maps BIGINT to numeric so a
 `>2^31` count is never narrowed), and a **failure-isolated** null-sentinel checksum
 (non-authoritative; a failure is surfaced as `CHECKSUM_FAILED(audit-only)`, never
-aborts the verdict). On a value mismatch only, a **bounded, deterministic** (`ORDER BY`
-keys, `LIMIT 100`) diagnostic of the changed keys + a/b values is produced; being
-patient-level, it is written to a **governed** run-scoped table via
-`--sample-into <prefix>` (the log then prints only `sample_table:<name>(rows=N)` plus
-the changed columns in the `cols:` field — never patient data), and a sample failure
-is surfaced as `SAMPLE_FAILED(audit-only)`. `--sample-into` requires its prefix
-argument (fails fast otherwise). Clean runs pay nothing.
+aborts the verdict). Keys are excluded from the value compare **case-insensitively**
+(a legacy `PATID` key never leaks into the aggregates). On a value mismatch only, a
+**bounded, deterministic** (`ORDER BY` keys, `LIMIT 100`) diagnostic of the changed
+keys + a/b values can be produced; being patient-level it is **OFF by default** —
+`--sample-into <catalog.schema.cmp_<run_id>>` (validated as fully-qualified) writes it
+to a **governed** run-scoped table (the log shows only `sample_table:<name>(rows=N)` +
+the `cols:` field), and `--sample-inprocess` is an explicit diagnostic that holds it in
+the R process; neither prints patient data, and a failure shows `SAMPLE_FAILED(audit-only)`.
+Clean runs pay nothing.
 
-The **`partial_match`** verdict (for a known `UNIMPLEMENTED_FIELDS` gap like
-`contains_mtx_reg`) is **caller-scoped**, not global — for **both** modes. The
-default is **strict** (two production exports compare every field); the local
-engine-vs-golden caller passes the gap profile explicitly (`compare_local(...,
-unimplemented = UNIMPLEMENTED_FIELDS)`, or `--local … --engine`), so the R engine's
-hardcoded `contains_mtx_reg` yields `partial_match` instead of a silent `match`,
-while a real production `contains_mtx_reg` regression is **not** weakened. The
-cross-convention id bridge casts the legacy `PATID` to the canonical **string**
+The **`partial_match`** verdict is **caller-scoped**, not global — for **both** modes,
+default **strict**. No output field uses it today (`contains_mtx_reg` is now computed,
+`UNIMPLEMENTED_FIELDS` is empty); the mechanism is retained so that if a *future*
+deterministic field is not yet derived on one side, that caller passes it as a gap and
+the run reports `partial_match` (surfaced, non-blocking) rather than a silent `match`.
+The cross-convention id bridge casts the legacy `PATID` to the canonical **string**
 `patient_id` (`contracts/inputs.md`). The live warehouse RUN is unexecuted here; the
 comparator builders + normalization + reshape + verdict logic are unit-tested.
 

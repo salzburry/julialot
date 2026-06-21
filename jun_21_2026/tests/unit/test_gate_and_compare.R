@@ -32,11 +32,15 @@ res <- compare_local("tests/unit/cmp/legacy", "tests/unit/cmp/refactored")
 eq(attr(res, "verdict"), "match", "default compare_local is STRICT -> excluded-only diff is a full match")
 eq(length(attr(res, "missing_tables")), 0L, "no missing required tables")
 ok(res$LOT_LONG$value_mismatch == 0L && !isTRUE(res$LOT_LONG$partial), "no non-excluded value mismatch; not partial")
-# the LOCAL ENGINE profile (explicit) flags contains_mtx_reg -> partial_match.
-resE <- compare_local("tests/unit/cmp/legacy", "tests/unit/cmp/refactored", unimplemented = UNIMPLEMENTED_FIELDS)
-eq(attr(resE, "verdict"), "partial_match", "engine profile (UNIMPLEMENTED_FIELDS) -> partial_match")
-ok(isTRUE(resE$LOT_LONG$partial) && "contains_mtx_reg" %in% resE$LOT_LONG$unimplemented,
-   "engine profile: contains_mtx_reg flagged as the deterministic gap")
+# the partial_match MECHANISM is retained for a FUTURE unimplemented field (none today
+# - contains_mtx_reg is now computed): a present field passed as `unimplemented` becomes
+# non-blocking and downgrades the table to partial_match (demonstrated with a stand-in).
+resE <- compare_local("tests/unit/cmp/legacy", "tests/unit/cmp/refactored",
+                      unimplemented = list(LOT_LONG = "lot_base_meds"))
+eq(attr(resE, "verdict"), "partial_match", "a present `unimplemented` field -> partial_match (mechanism retained)")
+ok(isTRUE(resE$LOT_LONG$partial) && "lot_base_meds" %in% resE$LOT_LONG$unimplemented,
+   "the named gap field is flagged; UNIMPLEMENTED_FIELDS itself is now empty (contains_mtx_reg computed)")
+ok(length(UNIMPLEMENTED_FIELDS) == 0L, "UNIMPLEMENTED_FIELDS is empty - LOT_LONG is fully derived")
 ok(resE$MAP_STACKED$verdict == "match" && resE$LOT1_BASE$verdict == "match",
    "tables without a gap field are still a FULL match (partial is scoped to LOT_LONG)")
 # corrected nondeterminism model: the seeded tie-break picks the MED identity, so
@@ -136,6 +140,15 @@ ok(is.null(sql_value_sample("a", "b", "patient_id", character(0))), "no mismatch
 si <- sql_value_sample_into("audit.lot_diff_LOT_LONG", "ns.A", "ns.B", c("patient_id", "lot_num"), c("lot_base_end_reason"), 100L)
 ok(grepl("^CREATE OR REPLACE TABLE audit.lot_diff_LOT_LONG AS SELECT", si) && grepl("ORDER BY", si),
    "sql_value_sample_into wraps the sample in CREATE TABLE AS (governed storage)")
+# --sample-into must be a fully-qualified governed prefix (not an unqualified table)
+ok(.validate_sample_into("hive_metastore.audit.cmp_run1") == "hive_metastore.audit.cmp_run1", "qualified governed prefix accepted")
+ok(is.null(.validate_sample_into(NULL)), "NULL prefix accepted (sampling off)")
+ok(inherits(try(.validate_sample_into("unqualified_table"), silent = TRUE), "try-error"), "unqualified --sample-into rejected")
+# key exclusion is CASE-INSENSITIVE: a legacy PATID key must NOT value-compare a `patid`
+# compare column (Databricks folds case; the key is already the join condition)
+svk <- sql_values("a", "b", "PATID", c("patid", "lot_start_type"))
+ok(!grepl("sum\\(CASE WHEN NOT \\(a.`patid`", svk) && grepl("a.`lot_start_type` <=> b.`lot_start_type`", svk),
+   "sql_values excludes the key case-insensitively (PATID key vs patid column)")
 # CLI flag parsing requires an argument (a bare --sample-into must NOT build NA_<table>)
 ok(.flag_val(c("--run", "x", "y", "--sample-into", "audit.diff"), "--sample-into") == "audit.diff", "--flag value parsed")
 ok(is.null(.flag_val(c("--run", "x", "y"), "--sample-into")), "absent flag -> NULL")
@@ -175,13 +188,13 @@ ok(.resolve_patid("PATID", c("patient_id", "lot_num")) == "patient_id",
    "override IGNORED (falls back to auto-detect) when side A lacks that column")
 ok(.resolve_patid(NULL, c("patient_id")) == "patient_id", "no override -> auto-detect")
 # the gap downgrade is CALLER-scoped: warehouse prior-vs-current passes NO gaps
-# (both production compute the field -> strict, full match reachable); the local
-# engine path passes UNIMPLEMENTED_FIELDS (it hardcodes the field -> partial_match).
-ok(length(.present_gaps(character(0), c("contains_mtx_reg", "lot_num"))) == 0,
-   "warehouse default (no unimplemented) -> no gap, contains_mtx_reg compared strictly")
-ok(identical(.present_gaps(UNIMPLEMENTED_FIELDS$LOT_LONG, c("contains_mtx_reg", "lot_num")), "contains_mtx_reg"),
-   "local path (UNIMPLEMENTED_FIELDS) -> contains_mtx_reg flagged as the present gap")
-ok(length(.present_gaps("contains_mtx_reg", c("patient_id", "lot_num"))) == 0,
+# (both production compute the field -> strict, full match reachable). The mechanism is
+# generic (no field uses it today); .present_gaps reports a caller-named gap iff present.
+ok(length(.present_gaps(character(0), c("lot_base_meds", "lot_num"))) == 0,
+   "no unimplemented -> no gap (strict; the default)")
+ok(identical(.present_gaps("lot_base_meds", c("lot_base_meds", "lot_num")), "lot_base_meds"),
+   "a caller-named gap present in the table is flagged")
+ok(length(.present_gaps("lot_base_meds", c("patient_id", "lot_num"))) == 0,
    "a gap field absent from the table is not reported")
 # value compare spans ALL shared non-key cols (catches per-drug/class flags)
 ok(setequal(value_compare_cols(c("PATID", "LOT_NUM", "LOT1_MED_LENA"),

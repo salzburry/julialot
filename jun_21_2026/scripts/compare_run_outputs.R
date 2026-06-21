@@ -46,18 +46,13 @@ EXCLUDED_FIELDS <- list(
   # clean run over these is still a FULL match.
   LOT_LONG  = c("lot_base_1st_add_med")
 )
-# Known PARITY GAPS: DETERMINISTIC outputs the LOCAL R engine does not yet derive
-# (contains_mtx_reg needs MONOMAINTENANCE/DUALMAINTENANCEWITH maintenance metadata).
-# Whether they apply is the CALLER's SCOPE, not a global property of the column:
-#   - LOCAL engine-vs-golden (compare_local): the engine hardcodes contains_mtx_reg=0,
-#     so it passes UNIMPLEMENTED_FIELDS and the verdict is `partial_match` (a wrong
-#     maintenance result can never silently pass as a full match).
-#   - WAREHOUSE prior-vs-current (compare_run): BOTH sides are production and compute
-#     the field, so the default is NONE - it is compared STRICTLY and a full `match`
-#     is reachable. (A caller may still pass a gap map explicitly if one side lacks it.)
-UNIMPLEMENTED_FIELDS <- list(
-  LOT_LONG = c("contains_mtx_reg")
-)
+# Known PARITY GAPS: DETERMINISTIC outputs the LOCAL R engine does not yet derive.
+# contains_mtx_reg is now COMPUTED (rollup MONOMAINTENANCE/DUALMAINTENANCEWITH), so the
+# set is empty - LOT_LONG is fully derived and a full `match` is reachable. The
+# mechanism is retained (CALLER-scoped, per-table): a caller compares a side that lacks
+# a future deterministic field by passing it here (local) / to compare_run (warehouse);
+# it is surfaced + non-blocking but downgrades the verdict to `partial_match`.
+UNIMPLEMENTED_FIELDS <- list()
 # Pure: the gap columns actually present in a table (a non-blocking diff there only
 # downgrades to partial_match, never overturns an otherwise-clean comparison).
 .present_gaps <- function(unimplemented, cols) intersect(tolower(unimplemented %||% character(0)), tolower(cols))
@@ -157,7 +152,7 @@ sql_membership <- function(tbl_a, tbl_b, keys) {
 # single join, not one full join per column. Excluded/gap handling is done in R
 # (compare_values), keeping the SQL a single pass.
 sql_values <- function(tbl_a, tbl_b, keys, compare_cols, excluded = character(0)) {
-  cols <- setdiff(compare_cols, keys)
+  cols <- compare_cols[!tolower(compare_cols) %in% tolower(keys)]   # exclude keys CASE-INSENSITIVELY (PATID vs patid)
   on <- .key_join(keys)
   if (!length(cols)) return(sprintf("SELECT cast(0 as int) AS c0 FROM %s a JOIN %s b ON %s WHERE 1=0", tbl_a, tbl_b, on))
   aggs <- vapply(seq_along(cols), function(i) sprintf(
@@ -261,6 +256,16 @@ sql_normalize_view <- function(view, tbl, cols, id_col) {
   sprintf("CREATE OR REPLACE TEMPORARY VIEW %s AS SELECT %s FROM %s", view, proj, tbl)
 }
 .cmp_view <- function(table_name, side) sprintf("cmpnorm_%s_%s", gsub("[^A-Za-z0-9_]", "_", table_name), side)
+# A governed sample prefix must be FULLY QUALIFIED (catalog.schema.cmp_<run_id>) so the
+# patient-level diff lands in an access-controlled schema, not an ad-hoc/unqualified
+# table that could collide across concurrent runs. (Cannot verify the schema IS governed
+# from here - that is an environment ACL - but the qualification is enforced.)
+.validate_sample_into <- function(prefix) {
+  if (is.null(prefix)) return(invisible(NULL))
+  if (!is.character(prefix) || length(prefix) != 1L || !grepl("^[A-Za-z0-9_]+\\.[A-Za-z0-9_.]+$", prefix))
+    stop("--sample-into must be a fully-qualified governed prefix (catalog.schema.cmp_<run_id>), got: ", prefix)
+  invisible(prefix)
+}
 # All SHARED non-key columns to value-compare (not just the curated contract), so
 # a current-vs-prior diff also catches the per-drug / per-class wide columns.
 value_compare_cols <- function(cols_a, cols_b, keys)
@@ -286,7 +291,7 @@ compare_key_uniqueness <- function(con, tbl, keys) {
        excluded_diffs = sum(counts[counts > 0 & is_excl]))
 }
 compare_values <- function(con, tbl_a, tbl_b, keys, compare_cols, excluded = character(0)) {
-  cols <- setdiff(compare_cols, keys)
+  cols <- compare_cols[!tolower(compare_cols) %in% tolower(keys)]   # exclude keys CASE-INSENSITIVELY (matches sql_values)
   if (!length(cols)) return(list(mismatched_columns = character(0), value_mismatch = 0L, excluded_diffs = 0L))
   r <- db_q(con, sql_values(tbl_a, tbl_b, keys, compare_cols, excluded))   # one row: c0..c{n-1} counts
   .tally_values(unlist(r[1, seq_along(cols)], use.names = FALSE), cols, excluded)
@@ -305,7 +310,7 @@ table_checksum <- function(con, tbl, keys, compare_cols, excluded = character(0)
 #   schema(name+type) + contract -> key integrity (non-null + unique) ->
 #   membership -> values -> checksum (only after the authoritative checks pass).
 compare_table <- function(con, tbl_a, tbl_b, table_name, patid = NULL, unimplemented = character(0),
-                          sample_into = NULL) {
+                          sample_into = NULL, sample_inprocess = FALSE) {
   if (is.null(COMPARE_KEYS[[table_name]])) stop("no COMPARE_KEYS for ", table_name)
   sa <- describe_schema(con, tbl_a); sb <- describe_schema(con, tbl_b)
   id_a <- .resolve_patid(patid, names(sa)); id_b <- .detect_patid(names(sb))
@@ -342,11 +347,11 @@ compare_table <- function(con, tbl_a, tbl_b, table_name, patid = NULL, unimpleme
     compare_values(con, tbl_a, tbl_b, keys, c(tolower(keys), cmpset), tolower(excl))
     else list(mismatched_columns = character(0), value_mismatch = 0L, excluded_diffs = 0L)
   # On a value mismatch ONLY (never a clean run), produce a BOUNDED diagnostic sample of
-  # the changed keys + a/b values. PATIENT-LEVEL: when `sample_into` is set, the sample
-  # is WRITTEN to a run-scoped GOVERNED table (<sample_into>_<table>) and only its
-  # pointer is kept (never returned to the caller / logs); otherwise the data.frame is
-  # captured in-process for governed handling by the caller - the CLI prints neither.
-  # Failure-isolated: a sample error records a warning, never aborts the verdict.
+  # the changed keys + a/b values. PATIENT-LEVEL, so it is OFF BY DEFAULT (the diff stays
+  # in the warehouse): `sample_into` WRITES it to a run-scoped GOVERNED table
+  # (<sample_into>_<table>, only the pointer kept); `sample_inprocess=TRUE` is an EXPLICIT
+  # diagnostic that pulls the data.frame into the R process (never logged). With neither,
+  # NO patient-level sample is fetched. Failure-isolated: an error records a warning.
   if (length(res$values$mismatched_columns)) {
     mc <- res$values$mismatched_columns
     if (!is.null(sample_into)) {
@@ -356,10 +361,10 @@ compare_table <- function(con, tbl_a, tbl_b, table_name, patid = NULL, unimpleme
       if (ok) { res$value_sample_table <- dest
         res$value_sample_n <- tryCatch(as.numeric(db_q(con, sprintf("SELECT count(*) AS n FROM %s", dest))$n[1]),
                                        error = function(e) NA_real_) }
-    } else {
+    } else if (isTRUE(sample_inprocess)) {
       res$value_sample <- tryCatch(db_q(con, sql_value_sample(tbl_a, tbl_b, keys, mc, 100L)),
                                    error = function(e) { res$sample_warning <<- conditionMessage(e); NULL })
-    }
+    }   # else: no patient-level sample fetched (strict default)
   }
   # checksum is a NON-AUTHORITATIVE early-warning audit signal: computed ONLY after the
   # membership + value checks pass, and FAILURE-ISOLATED (a global aggregate that could
@@ -502,10 +507,11 @@ compare_local <- function(dir_a, dir_b, tables = names(COMPARE_KEYS), unimplemen
 # field compared strictly; a full `match` is reachable). Pass a per-table gap map
 # only when one side provably lacks a deterministic field (e.g. the local engine).
 compare_run <- function(con, ns_a, ns_b, tables = names(COMPARE_KEYS), patid = NULL, unimplemented = list(),
-                        sample_into = NULL) {
+                        sample_into = NULL, sample_inprocess = FALSE) {
+  .validate_sample_into(sample_into)               # fully-qualified governed prefix or stop
   results <- lapply(tables, function(t)
     compare_table(con, paste0(ns_a, ".", t), paste0(ns_b, ".", t), t, patid,
-                  unimplemented[[t]] %||% character(0), sample_into))
+                  unimplemented[[t]] %||% character(0), sample_into, sample_inprocess))
   names(results) <- tables
   clean_one <- function(r) isTRUE(r$schema$ok) && isTRUE(r$key_unique) && isTRUE(r$contract_ok) &&
     isTRUE((r$membership$only_in_a %||% NA) == 0) && isTRUE((r$membership$only_in_b %||% NA) == 0) &&
@@ -521,9 +527,11 @@ if (sys.nframe() == 0 && !interactive()) {
   a <- commandArgs(trailingOnly = TRUE)
   if (length(a) >= 3 && a[1] == "--run") {        # live: compare two hive_metastore namespaces
     patid <- .flag_val(a, "--patid"); sample_into <- .flag_val(a, "--sample-into")
+    sample_inprocess <- "--sample-inprocess" %in% a   # explicit diagnostic: pull patient rows in-process
     con <- connect_compare()
     on.exit(try(DBI::dbDisconnect(con), silent = TRUE))
-    rr <- compare_run(con, a[2], a[3], patid = patid, sample_into = sample_into)
+    rr <- compare_run(con, a[2], a[3], patid = patid, sample_into = sample_into,
+                      sample_inprocess = sample_inprocess)
     for (t in names(rr$tables)) { r <- rr$tables[[t]]
       # Per-table status is METADATA ONLY - no patient-level values are printed to the
       # job log. A value-diff sample (if any) is in a governed table or the in-process
@@ -578,6 +586,8 @@ if (sys.nframe() == 0 && !interactive()) {
   cat("compare_run_outputs.R. Local CSV: --local <dir_a> <dir_b> [--engine];",
       "(both STRICT by default; --engine applies the local-engine gap profile).",
       "live hive_metastore: --run <ns_prior> <ns_current> [--patid PATID]",
-      "[--sample-into <governed.table_prefix>] (patient-level diff samples are written",
-      "there, NOT to the log; DATABRICKS_DSN/DATABRICKS_PWD env; ns e.g. hive_metastore.lot_prior).\n")
+      "[--sample-into <catalog.schema.cmp_<run_id>>] [--sample-inprocess]. Patient-level",
+      "diff samples are OFF by default; --sample-into writes them to a governed table (only),",
+      "--sample-inprocess pulls them into the R process; never to the log.",
+      "DATABRICKS_DSN/DATABRICKS_PWD env; ns e.g. hive_metastore.lot_prior.\n")
 }
