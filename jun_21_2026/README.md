@@ -18,7 +18,7 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 251 tests, all pure-R / local (also run in CI)
+Rscript tests/run_unit_tests.R          # 255 tests, all pure-R / local (also run in CI)
 ```
 
 Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
@@ -82,9 +82,10 @@ CE-sensitive end is implemented (caps at `enddate_ce`, reason `DISENROLLMENT`). 
 parity claim:** `contains_mtx_reg` (= 0; needs maintenance metadata
 `MONOMAINTENANCE`/`DUALMAINTENANCEWITH`) — a *deterministic* field, so the comparator
 treats it as an `UNIMPLEMENTED_FIELDS` gap that forces `partial_match` rather than a
-silent `match`. `max_lot` and `allo_lot_span` overrides are validated (`max_lot` to
-the config range `[2,9]`, so `max_lot=1` fails fast rather than running R's
-descending `2:1`). Regression-expected output (legacy execution on the same synthetic
+silent `match`. `max_lot` and `allo_lot_span` overrides are validated at execution
+(`max_lot` to the config range `[2,9]` as a **whole number** — checked before integer
+coercion, so `1` fails fast rather than running R's descending `2:1`, and `2.9` is
+rejected, not truncated). Regression-expected output (legacy execution on the same synthetic
 data) is the owner's hive_metastore step — this proves spec-conformance, not legacy
 equivalence; `run_engine` does not yet invoke the canonical/typed-config validators
 (the adapter→validation→core wiring is still pending, as listed below).

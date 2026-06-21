@@ -51,3 +51,21 @@ ok(h("9000000033")$lot1_base_end_reason == "DEATH" && as.character(h("9000000033
    "death, no post-runout trigger -> DEATH")
 ok(h("9000000034")$lot1_base_end_reason == "DISCONTINUATION" && as.character(h("9000000034")$lot1_base_end_dt) == "2021-03-01",
    "death BUT a post-runout LOT2 trigger -> runout wins (DISCONTINUATION)")
+
+# CART-started post-runout death guard uses the CART 45-day applicable window, NOT a
+# fixed 30 days (lot2_5_base.R:721-727). CARC runs out day 20, an AUTO lands day 35
+# (inside the CART window), death day 50. In-window AUTO is NOT a next-line trigger,
+# so DEATH wins; the (wrong) 30-day window would flag it and end at runout instead.
+lbC <- data.frame(patient_id = "9000000071", lot1_start_dt = "2021-01-01", lot1_base_meds = "CARC",
+  lot1_base_1st_add_med_dt = NA, lot1_base_discon_dt = "2021-01-21", stringsAsFactors = FALSE)
+oeC <- data.frame(patient_id = "9000000071", obs_end_dt = "2021-12-31", stringsAsFactors = FALSE)
+dthC <- data.frame(patient_id = "9000000071", death_dt = "2021-02-20", stringsAsFactors = FALSE)   # day 50
+mpC <- data.frame(patient_id = "9000000071", med_abbr = "CARC", med_class = "PI", map_cnt = 1L,
+  map_start_dt = "2021-01-01", map_end_dt = "2021-01-21", stringsAsFactors = FALSE)
+auC <- data.frame(patient_id = "9000000071", tx_dt = "2021-02-05", stringsAsFactors = FALSE)        # day 35
+eC <- build_lot1_end(lbC, NULL, oeC, dthC, map_stacked = mpC, auto_dates = auC, lot_applicable_window_days = 45L)
+ok(eC$lot1_base_end_reason == "DEATH" && as.character(eC$lot1_base_end_dt) == "2021-02-20",
+   "CART line: post-runout AUTO inside the 45-day window does NOT suppress DEATH")
+eM <- build_lot1_end(lbC, NULL, oeC, dthC, map_stacked = mpC, auto_dates = auC, lot_applicable_window_days = 30L)
+ok(eM$lot1_base_end_reason == "DISCONTINUATION" && as.character(eM$lot1_base_end_dt) == "2021-01-21",
+   "30-day window would (wrongly) flag the same AUTO as a trigger and end at runout")

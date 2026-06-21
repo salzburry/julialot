@@ -16,7 +16,7 @@ comparing. That run is the reviewer/owner's step (it needs the warehouse).
 Run it (the driver runs the full pipeline MAP → LOT1 → SCT → LOT1 end):
 ```
 Rscript engine/run_engine.R engine/fixtures /tmp/out   # MAP_STACKED + LOT1_BASE + LOT1_END + LOT_LONG
-Rscript tests/run_unit_tests.R                          # 251 pass (engine: test_engine/sct/lot_end/lot_long); also CI
+Rscript tests/run_unit_tests.R                          # 255 pass (engine: test_engine/sct/lot_end/lot_long); also CI
 ```
 
 ## What to validate: each rule maps to a production source line
@@ -38,6 +38,7 @@ Rscript tests/run_unit_tests.R                          # 251 pass (engine: test
 | `sct.R` | ALLO/CART censor AUTO; end date = earliest SCT−1, reason 1/2/3 | `02_lot1.R:1313-1338` |
 | `lot_end.R` | end cascade SCT > CART_INIT > MED_ADD > DEATH > DISCON > STUDY_END, gated on runout | `02_lot1.R:1570-1632` |
 | `lot_end.R` | CART_INIT flag (CART within 45d of the add) + post-runout death guard | `02_lot1.R:1469-1549` |
+| `lot_end.R` | post-runout AUTO trigger uses the line's APPLICABLE window (ALLO 1 / CART 45 / MED·AUTO 30), not a fixed 30 | `R/lot2_5_base.R:721-727` |
 | `lot_long.R` | LOT2-5: trigger candidates (d_MED/d_ALLO/d_CART/d_AUTO) + start/type | `R/lot2_5_base.R:170-321` |
 | `lot_long.R` | LOT applicable window: in-line AUTO iff `datediff(AUTO_DT_1,start)<win` (1/45/30); first AUTO outside = ENDING_AUTO; ALLO/CART scoped `>start` | `R/lot2_5_base.R:477-610` |
 | `sct.R` | `auto_dt_2` reported only for a valid in-line tandem (LOT_N); same-day end-reason tie order line-specific (LOT1 AUTO>ALLO>CART; LOT_N ALLO>CART>AUTO) | `02_lot1.R:1268,1327-1338` / `R/lot2_5_base.R:558-563,776-791` |
@@ -59,7 +60,9 @@ Rscript tests/run_unit_tests.R                          # 251 pass (engine: test
 - **LOT1 end** (`test_lot_end.R`, inline): every cascade branch + runout gating,
   **CART_INIT** (MED_ADD then CART within 45d ends at `FIRST_CART-1`, vs `SCT_CART`
   with no prior add), and the **post-runout death guard** (a LOT2 trigger after
-  the runout makes DISCONTINUATION win over DEATH).
+  the runout makes DISCONTINUATION win over DEATH) — including the **CART-started
+  applicable window**: an AUTO inside the CART 45-day window is NOT a next-line
+  trigger so DEATH wins, where a fixed 30-day window would wrongly end at runout.
 - **End-to-end** (`test_engine.R`): the driver's `LOT1_END` (MAP→LOT1→SCT→end) vs
   hand-derived expected, including an `SCT_ALLO` end for one patient; PLUS the **full
   23-column `LOT_LONG`** vs a hand-derived golden (`expected/LOT_LONG.csv`) — all 22

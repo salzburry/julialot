@@ -106,9 +106,12 @@ build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
                            sct_auto_gap_days = 60L, allo_lot_span = c("single_day", "extend_to_next"),
                            max_lot = 5L) {
   allo_lot_span <- match.arg(allo_lot_span)   # production default single_day (lot2_5_base.R:665)
-  max_lot <- suppressWarnings(as.integer(max_lot))   # config contract: integer in [2, 9]
-  if (length(max_lot) != 1L || is.na(max_lot) || max_lot < 2L || max_lot > 9L)
-    stop("build_lot_long: max_lot must be an integer in [2, 9], got ", max_lot)
+  # config contract: an INTEGER in [2, 9]. Validate the ORIGINAL value BEFORE coercion
+  # so a fractional input (2.9, "5.8") is REJECTED, not silently truncated by as.integer.
+  ml <- suppressWarnings(as.numeric(max_lot))
+  if (length(ml) != 1L || is.na(ml) || ml != round(ml) || ml < 2 || ml > 9)
+    stop("build_lot_long: max_lot must be a whole number in [2, 9], got ", max_lot)
+  max_lot <- as.integer(ml)
   D <- function(x) as.Date(as.character(x))
   oe <- setNames(D(obs_end$obs_end_dt), as.character(obs_end$patient_id))
   ece <- if ("enddate_ce" %in% names(obs_end)) setNames(D(obs_end$enddate_ce), as.character(obs_end$patient_id)) else NULL
@@ -200,7 +203,8 @@ build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
           en <- build_lot1_end(lbn, lsct, obs_end, death, map_stacked = map_stacked,
                                auto_dates = auto_all, permissible_subs = permissible_subs,
                                cart_consolidation_days = cart_consolidation_days,
-                               lot_n_induction_window_days = induction_window_days, sct_tandem_days = sct_tandem_days)
+                               lot_n_induction_window_days = induction_window_days, sct_tandem_days = sct_tandem_days,
+                               lot_applicable_window_days = win)   # CART 45 / ALLO 1 / MED·AUTO 30 (post-runout AUTO)
         }
       }
       rows[[length(rows) + 1L]] <- row(pid, ln, cd$start, cd$type, reg, en, lsct, cep)
