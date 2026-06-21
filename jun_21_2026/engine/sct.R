@@ -2,18 +2,18 @@
 # engine/sct.R - Stem-cell-transplant detection, faithful to apr_30_2026/02_lot1.R
 # steps S12-S15. LOCAL verification engine (see map.R/lot1.R).
 #
-#   AUTO: group claims into `window_days` (14) windows, take the MAX date per
-#         window, then merge windows < `gap_days` (60) from the last finalized TX.
+#   AUTO: group claims by `window_days` (13; datediff(x, window_start) <= 13), take
+#         the MAX date per window, then merge windows < `gap_days` (60) from the
+#         last finalized TX.
 #         A 2nd AUTO within `tandem_days` (180) of the 1st (no ALLO between) is a
 #         planned TANDEM. Excess AUTO ends LOT1 (single -> 2nd; tandem -> 3rd).
 #   ALLO / CART: distinct sequential dates; the earliest CENSORS later AUTO and
 #         immediately ends LOT1.
 #   LOT1_TX_ENDDATE = earliest LOT-ending SCT event - 1; reason 1=AUTO 2=ALLO 3=CART.
 #
-# DOCUMENTED LIMITATION (not yet ported / synthetic-verified): the rare
-# tandem-boundary date-selection refinement (when a 14-day window straddles the
-# 180-day mark, production picks the boundary-closest date instead of the window
-# max). The fixtures below avoid that corner; selection here is the window max.
+# The tandem-boundary date-selection refinement is implemented in
+# finalize_auto_dates (a window straddling the 180-day mark picks the
+# boundary-closest date, for accurate tandem determination).
 
 # Normalize SCT_TYPE the way production does: ALLO* -> ALLO, AUTO* -> AUTO,
 # CAR-T/CART -> CART (anything else kept upper-cased).
@@ -23,53 +23,102 @@
   ifelse(startsWith(u, "AUTO"), "AUTO",
   ifelse(u %in% c("CAR-T", "CART", "CAR_T"), "CART", u)))
 }
-extract_sct_claims <- function(procedure, sct_codelist) {
-  if (is.null(procedure) || !nrow(procedure)) return(data.frame(
-    patient_id = character(0), dt = as.Date(character(0)), sct_type = character(0)))
-  key <- function(cs, code) paste(toupper(trimws(as.character(cs))),
-                                   toupper(gsub("[^A-Za-z0-9]", "", as.character(code))))
-  ck <- key(sct_codelist$code_type, sct_codelist$code)
+# Normalize a code-system / code_type label to the canonical bucket (production
+# S11): ICD10PCS->ICD10PROC, CPT->HCPCS, ICD diagnosis aliases -> ICD{9,10}DIAG.
+.norm_code_type <- function(x) {
+  u <- toupper(trimws(as.character(x)))
+  ifelse(u %in% c("ICD10PROC", "ICD10PCS"), "ICD10PROC",
+  ifelse(u == "ICD9PROC", "ICD9PROC",
+  ifelse(u %in% c("ICD10DIAG", "ICD10DX", "DIAG10") | grepl("^ICD.*10.*DIAG", u), "ICD10DIAG",
+  ifelse(u %in% c("ICD9DIAG", "ICD9DX", "ICD9", "DIAG9") | grepl("^ICD.*9.*DIAG", u), "ICD9DIAG",
+  ifelse(u %in% c("CPT", "CPT4"), "HCPCS", u)))))
+}
+# Detect SCT evidence across the canonical entities that carry codes: procedure
+# (ICD9/10 PROC + HCPCS), diagnosis (ICD9/10 DIAG), medical (HCPCS/CPT). Matches on
+# (normalized code_system, code) against the SCT codelist; type normalized to
+# ALLO/AUTO/CART. Mirrors the four production evidence routes.
+extract_sct_claims <- function(procedure = NULL, sct_codelist, diagnosis = NULL, medical = NULL) {
+  empty <- data.frame(patient_id = character(0), dt = as.Date(character(0)), sct_type = character(0))
+  nc <- function(code) toupper(gsub("[^A-Za-z0-9]", "", as.character(code)))
+  ck <- paste(.norm_code_type(sct_codelist$code_type), nc(sct_codelist$code))
   ty <- setNames(.norm_sct_type(sct_codelist$sct_type), ck)
-  k <- key(procedure$code_system, procedure$normalized_code); keep <- k %in% ck
-  if (!any(keep)) return(data.frame(patient_id = character(0), dt = as.Date(character(0)), sct_type = character(0)))
-  d <- data.frame(patient_id = as.character(procedure$patient_id)[keep],
-                  dt = as.Date(as.character(procedure$event_date))[keep],
-                  sct_type = unname(ty[k[keep]]), stringsAsFactors = FALSE)
-  unique(d)
+  pull <- function(df, date_col) {
+    if (is.null(df) || !nrow(df)) return(NULL)
+    k <- paste(.norm_code_type(df$code_system), nc(df$normalized_code)); keep <- k %in% ck
+    if (!any(keep)) return(NULL)
+    data.frame(patient_id = as.character(df$patient_id)[keep],
+               dt = as.Date(as.character(df[[date_col]]))[keep],
+               sct_type = unname(ty[k[keep]]), stringsAsFactors = FALSE)
+  }
+  res <- rbind(pull(procedure, "event_date"), pull(diagnosis, "event_date"), pull(medical, "service_date"))
+  if (is.null(res)) return(empty)
+  unique(res)
 }
 
-# 14-day window (max date) + 60-day gap merge -> finalized AUTO TX dates.
-finalize_auto_dates <- function(dates, window_days = 14L, gap_days = 60L) {
+# AUTO window (datediff <= window_days, default 13) + 60-day gap merge -> finalized
+# TX dates. Within a window the MAX date is taken, EXCEPT when the window straddles
+# the 180-day tandem mark from the last finalized TX (boundary = last_tx + 179):
+# then the date CLOSEST to that boundary is selected, for accurate tandem
+# determination (02_lot1.R:1041-1128).
+finalize_auto_dates <- function(dates, window_days = 13L, gap_days = 60L, tandem_days = 180L) {
   dates <- sort(unique(dates)); if (!length(dates)) return(as.Date(character(0)))
-  tx <- as.Date(character(0)); cur_start <- NULL; cur_max <- NULL; last_tx <- NULL
+  tx <- as.Date(character(0)); cur_start <- NULL; cur_max <- NULL
+  cur_bd <- as.Date(NA); cur_bdist <- NA_integer_; last_tx <- as.Date(NA)
+  bdist <- function(x) abs(as.integer(x - (last_tx + (tandem_days - 1L))))   # |x - (last_tx+179)|
+  open <- function(x) {                       # open a window; init boundary vs last_tx
+    cur_start <<- x; cur_max <<- x
+    if (!is.na(last_tx) && bdist(x) <= window_days) { cur_bd <<- x; cur_bdist <<- bdist(x) }
+    else { cur_bd <<- as.Date(NA); cur_bdist <<- NA_integer_ }
+  }
   finalize <- function() {
-    if (is.null(last_tx) || as.integer(cur_max - last_tx) >= gap_days) {
-      tx <<- c(tx, cur_max); last_tx <<- cur_max }      # else < gap: merge (discard)
+    sel <- if (!is.na(cur_bd)) cur_bd else cur_max          # boundary-closest, else max
+    if (is.na(last_tx) || as.integer(sel - last_tx) >= gap_days) { tx <<- c(tx, sel); last_tx <<- sel }
   }
   for (i in seq_along(dates)) {
     x <- dates[i]
-    if (is.null(cur_start)) { cur_start <- x; cur_max <- x }
-    else if (as.integer(x - cur_start) <= window_days) { cur_max <- x }   # within window
-    else { finalize(); cur_start <- x; cur_max <- x }                     # new window
+    if (is.null(cur_start)) { cur_start <- x; cur_max <- x; cur_bd <- as.Date(NA); cur_bdist <- NA_integer_ }
+    else if (as.integer(x - cur_start) <= window_days) {    # within window
+      cur_max <- x
+      if (!is.na(last_tx) && bdist(x) <= window_days && (is.na(cur_bdist) || bdist(x) < cur_bdist)) {
+        cur_bd <- x; cur_bdist <- bdist(x) }
+    } else { finalize(); open(x) }                          # new window (boundary vs new last_tx)
   }
   if (!is.null(cur_start)) finalize()
   tx
 }
 
+# Finalized AUTO TX dates per patient (UNcensored) - the input the post-runout
+# death guard needs (tx_auto_dates in production).
+finalize_auto_per_patient <- function(sct_claims, window_days = 13L, gap_days = 60L, tandem_days = 180L) {
+  a <- sct_claims[sct_claims$sct_type == "AUTO", , drop = FALSE]
+  if (!nrow(a)) return(data.frame(patient_id = character(0), tx_dt = as.Date(character(0))))
+  do.call(rbind, lapply(unique(a$patient_id), function(p) {
+    d <- finalize_auto_dates(a$dt[a$patient_id == p], window_days, gap_days, tandem_days)
+    if (length(d)) data.frame(patient_id = p, tx_dt = d, stringsAsFactors = FALSE) else NULL
+  }))
+}
+
 # Per-patient SCT summary within LOT1 (the S15 derivations).
 build_sct_summary <- function(sct_claims, lot1_start, obs_end,
-                              tandem_days = 180L, window_days = 14L, gap_days = 60L) {
+                              tandem_days = 180L, window_days = 13L, gap_days = 60L) {
   ls <- setNames(as.Date(as.character(lot1_start$lot1_start_dt)), as.character(lot1_start$patient_id))
   oe <- setNames(as.Date(as.character(obs_end$obs_end_dt)), as.character(obs_end$patient_id))
+  idx <- if ("index_date" %in% names(obs_end))
+    setNames(as.Date(as.character(obs_end$index_date)), as.character(obs_end$patient_id)) else NULL
   rows <- lapply(names(ls), function(pid) {
     L <- ls[[pid]]; O <- oe[[pid]]
     sc <- sct_claims[sct_claims$patient_id == pid, , drop = FALSE]
-    auto_tx <- finalize_auto_dates(sc$dt[sc$sct_type == "AUTO"], window_days, gap_days)
+    # SCT claims are scoped to [index_date, OBS_END] BEFORE windowing (production
+    # S12), so a post-observation claim cannot become a window max and skew a TX.
+    lo <- if (!is.null(idx)) idx[[pid]] else as.Date(NA)
+    sc <- sc[(is.na(lo) | sc$dt >= lo) & (is.na(O) | sc$dt <= O), , drop = FALSE]
+    auto_tx <- finalize_auto_dates(sc$dt[sc$sct_type == "AUTO"], window_days, gap_days, tandem_days)
     allo <- sort(unique(sc$dt[sc$sct_type == "ALLO"])); cart <- sort(unique(sc$dt[sc$sct_type == "CART"]))
     inw <- function(d) d[!is.na(d) & d >= L & d <= O]
     first_allo <- if (length(inw(allo))) min(inw(allo)) else as.Date(NA)
     first_cart <- if (length(inw(cart))) min(inw(cart)) else as.Date(NA)
-    ena <- min(c(first_allo, first_cart), na.rm = TRUE); if (is.infinite(ena)) ena <- as.Date(NA)
+    ena <- suppressWarnings(min(c(first_allo, first_cart), na.rm = TRUE))
+    if (is.infinite(ena)) ena <- as.Date(NA)
     auto_in <- sort(auto_tx[auto_tx >= L & auto_tx <= O & (is.na(ena) | auto_tx < ena)])
     d1 <- if (length(auto_in) >= 1) auto_in[1] else as.Date(NA)
     d2 <- if (length(auto_in) >= 2) auto_in[2] else as.Date(NA)

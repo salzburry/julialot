@@ -16,26 +16,49 @@
 .ddiff <- function(a, b) as.integer(a - b)       # datediff(a, b) = a - b (days)
 .gmax  <- function(...) { v <- c(...); v <- v[!is.na(v)]; if (!length(v)) .MIN_DATE else max(v) }
 
+# Scope a (patient_id, dt) frame to the observation window INDEX_DATE <= dt <=
+# OBS_END_DT (production filters claims to this window before MAP/SCT). members:
+# patient_id, index_date (optional), obs_end_dt. No window info -> returned as-is.
+scope_to_window <- function(df, members) {
+  if (is.null(df) || !nrow(df) || is.null(members) || !nrow(members)) return(df)
+  if ("index_date" %in% names(members)) {
+    lo <- setNames(as.Date(as.character(members$index_date)), as.character(members$patient_id))[as.character(df$patient_id)]
+    df <- df[is.na(lo) | df$dt >= lo, , drop = FALSE]; if (!nrow(df)) return(df)
+  }
+  if ("obs_end_dt" %in% names(members)) {
+    hi <- setNames(as.Date(as.character(members$obs_end_dt)), as.character(members$patient_id))[as.character(df$patient_id)]
+    df <- df[is.na(hi) | df$dt <= hi, , drop = FALSE]
+  }
+  df
+}
+
 # Map canonical pharmacy + medical claims to (MED_ABBR, MED_CLASS) via the rollup
 # codelist keyed on (code_system, normalized_code). Unmapped codes are dropped
-# (not MM agents). days_supply: pharmacy as-is; medical imputed to the default
-# where null/<1. Returns one row per claim: patient_id, med_abbr, med_class, dt,
-# type, ds.
-map_claims <- function(pharmacy, medical, rollup, medical_day_supply = 28L) {
+# (not MM agents). Faithful to 02_lot1.R:426-449: a pharmacy OR medical claim with
+# null/<1 day-supply is IMPUTED to the default (28); then claims are DEDUPED within
+# (patient, med, date, claim_type) keeping MAX day-supply. Returns one row per
+# deduped claim: patient_id, med_abbr, med_class, dt, type, ds.
+map_claims <- function(pharmacy, medical, rollup, members = NULL, medical_day_supply = 28L) {
   key <- function(cs, code) paste(toupper(trimws(as.character(cs))), toupper(trimws(as.character(code))))
   rk <- key(rollup$code_type, rollup$code)
   ab <- setNames(as.character(rollup$med_abbr), rk); cl <- setNames(as.character(rollup$med_class), rk)
   mk <- function(df, type, ds) {
     if (is.null(df) || !nrow(df)) return(NULL)
+    ds[is.na(ds) | ds < 1L] <- medical_day_supply                 # impute null/<1 -> 28
     k <- key(df$code_system, df$normalized_code); keep <- k %in% rk
     if (!any(keep)) return(NULL)
     data.frame(patient_id = as.character(df$patient_id)[keep], med_abbr = unname(ab[k[keep]]),
                med_class = unname(cl[k[keep]]), dt = as.Date(as.character(df$service_date))[keep],
                type = type, ds = ds[keep], stringsAsFactors = FALSE)
   }
-  ph_ds <- suppressWarnings(as.integer(pharmacy$days_supply))
-  md_ds <- suppressWarnings(as.integer(medical$day_supply)); md_ds[is.na(md_ds) | md_ds < 1L] <- medical_day_supply
-  rbind(mk(pharmacy, "pharmacy", ph_ds), mk(medical, "medical", md_ds))
+  claims <- rbind(mk(pharmacy, "pharmacy", suppressWarnings(as.integer(pharmacy$days_supply))),
+                  mk(medical,  "medical",  suppressWarnings(as.integer(medical$day_supply))))
+  if (is.null(claims) || !nrow(claims)) return(claims)
+  claims <- scope_to_window(claims, members)                      # INDEX_DATE <= dt <= OBS_END
+  if (!nrow(claims)) return(claims)
+  k <- paste(claims$patient_id, claims$med_abbr, claims$dt, claims$type, sep = "\037")
+  o <- order(k, -claims$ds)                                       # within group: max ds first
+  claims[o, , drop = FALSE][!duplicated(k[o]), , drop = FALSE]
 }
 
 # The runout state machine for ONE (patient, med) claim stream. Mirrors the Spark
@@ -84,7 +107,7 @@ build_map_stacked <- function(pharmacy, medical, rollup, obs_end,
     map_med_runout_dt = as.Date(character(0)), map_end_dt = as.Date(character(0)),
     map_med_type = character(0), map_med_class = character(0), map_discon_flg = integer(0),
     stringsAsFactors = FALSE)
-  claims <- map_claims(pharmacy, medical, rollup, medical_day_supply)
+  claims <- map_claims(pharmacy, medical, rollup, obs_end, medical_day_supply)
   if (is.null(claims) || !nrow(claims)) return(empty)
   oe <- setNames(as.Date(as.character(obs_end$obs_end_dt)), as.character(obs_end$patient_id))
   parts <- split(claims, list(claims$patient_id, claims$med_abbr), drop = TRUE)

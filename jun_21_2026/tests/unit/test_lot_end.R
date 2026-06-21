@@ -26,3 +26,28 @@ chk("9000000027", "DEATH", "2021-05-01", "death within observation -> DEATH")
 chk("9000000028", "DISCONTINUATION", "2021-03-01", "SCT AFTER discon does not fire -> DISCONTINUATION")
 eq(as.integer(g("9000000021")$lot1_base_length), 181L, "length = end - start + 1 (DISCON)")
 eq(as.integer(g("9000000026")$lot1_base_length), 365L, "length spans the full year (STUDY_END)")
+
+# --- CART_INIT + post-runout death guard (ported branches) --------------------
+lb2 <- data.frame(patient_id = sprintf("90000000%02d", 31:34), lot1_start_dt = "2021-01-01",
+  lot1_base_meds = "LENA",
+  lot1_base_1st_add_med_dt = c("2021-04-01", NA, NA, NA),
+  lot1_base_discon_dt = c("2021-06-30", "2021-06-30", "2021-03-01", "2021-03-01"), stringsAsFactors = FALSE)
+sct2 <- data.frame(patient_id = c("9000000031", "9000000032"),
+  lot1_tx_enddate = "2021-04-19", lot1_tx_enddate_reason = 3L,
+  first_cart_dt = "2021-04-20", first_allo_dt = NA, stringsAsFactors = FALSE)
+obs2 <- data.frame(patient_id = sprintf("90000000%02d", 31:34), obs_end_dt = "2021-12-31", stringsAsFactors = FALSE)
+death2 <- data.frame(patient_id = c("9000000033", "9000000034"), death_dt = "2021-05-01", stringsAsFactors = FALSE)
+# P34 has a non-base DARA MAP AFTER the runout (a LOT2 trigger); P33 does not
+ms2 <- data.frame(patient_id = c("9000000033", "9000000034", "9000000034"),
+  med_abbr = c("LENA", "LENA", "DARA"), med_class = c("IMID", "IMID", "MAB"),
+  map_start_dt = c("2021-01-01", "2021-01-01", "2021-04-01"), stringsAsFactors = FALSE)
+r2 <- build_lot1_end(lb2, sct2, obs2, death2, map_stacked = ms2)
+h <- function(p) r2[r2$patient_id == p, ]
+ok(h("9000000031")$lot1_base_end_reason == "CART_INIT" && as.character(h("9000000031")$lot1_base_end_dt) == "2021-04-19",
+   "MED_ADD then CART within 45d -> CART_INIT (end FIRST_CART-1)")
+ok(h("9000000032")$lot1_base_end_reason == "SCT_CART" && as.character(h("9000000032")$lot1_base_end_dt) == "2021-04-19",
+   "CART with no prior add -> SCT_CART (not CART_INIT)")
+ok(h("9000000033")$lot1_base_end_reason == "DEATH" && as.character(h("9000000033")$lot1_base_end_dt) == "2021-05-01",
+   "death, no post-runout trigger -> DEATH")
+ok(h("9000000034")$lot1_base_end_reason == "DISCONTINUATION" && as.character(h("9000000034")$lot1_base_end_dt) == "2021-03-01",
+   "death BUT a post-runout LOT2 trigger -> runout wins (DISCONTINUATION)")
