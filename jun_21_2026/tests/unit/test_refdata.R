@@ -1,6 +1,6 @@
-# validate_reference_data + NDC normalization
-eq(normalize_ndc("1234567890"), "01234567890", "10-digit NDC zero-padded to 11")
-eq(normalize_ndc("00002-1433-80"), "00002143380", "dashed NDC normalized")
+# validate_reference_data + NDC normalization (require validated 11-digit)
+ok(is.na(normalize_ndc("1234567890")), "10-digit NDC rejected as ambiguous (require 11)")
+eq(normalize_ndc("00002-1433-80"), "00002143380", "dashed 11-digit NDC normalized")
 ok(is.na(normalize_ndc("BADNDC")), "non-numeric NDC rejected (NA)")
 
 good <- data.frame(code = c("J8540", "00002-1433-80"),
@@ -30,16 +30,24 @@ samec <- data.frame(code = c("00002-1433-80", "00002143380"),
                     code_type = c("NDC", "NDC"), mapped_to = c("DEXA", "DEXA"),
                     stringsAsFactors = FALSE)
 rs <- validate_reference_data(samec, list(id = "s", row_count_min = 1))
-ok(length(rs$errors) == 0 && any(grepl("same 11-digit code", rs$warnings)),
+ok(length(rs$errors) == 0 && any(grepl("normalize to the same code", rs$warnings)),
    "raw-form collision (same concept) is warning, not blocking")
+# collision check is GENERAL: an HCPCS code mapping to two concepts also blocks
+hconf <- data.frame(code = c("J8540", "J8540"), code_type = c("HCPCS", "HCPCS"),
+                    mapped_to = c("DEXA", "PRED"), stringsAsFactors = FALSE)
+ok(any(grepl("map to >1 concept", validate_reference_data(hconf, list(id = "s", row_count_min = 1))$errors)),
+   "HCPCS code -> two concepts blocks")
 
-# promote: blocks bad codelist / missing approval; dry-run succeeds with both approvals
+# promote: blocks bad codelist / missing approval; dry-run is promotable but NOT written
 bad_csv <- tempfile(fileext = ".csv")
 write.csv(data.frame(code = "XYZ", code_type = "NDC", mapped_to = "DEXA"), bad_csv, row.names = FALSE)
-ok(!isTRUE(promote(bad_csv, "s", "1.0.0", clinical = "c", engineering = "e")$promoted),
+ok(!isTRUE(promote(bad_csv, "s", "1.0.0", clinical = "c", engineering = "e")$promotable),
    "promote blocks an invalid codelist")
 good_csv <- tempfile(fileext = ".csv")
 write.csv(data.frame(code = "J8540", code_type = "HCPCS", mapped_to = "DEXA"), good_csv, row.names = FALSE)
-ok(!isTRUE(promote(good_csv, "s", "1.0.0")$promoted), "promote blocks missing approval")
-ok(isTRUE(promote(good_csv, "s", "1.0.0", clinical = "c", engineering = "e")$promoted),
-   "promote dry-run succeeds with both approvals")
+ok(!isTRUE(promote(good_csv, "s", "1.0.0")$promotable), "promote blocks missing approval")
+ok(!isTRUE(promote(good_csv, "s", "1.0.0", clinical = "c", engineering = "")$promotable),
+   "promote blocks a blank approval")
+pr <- promote(good_csv, "s", "1.0.0", clinical = "c", engineering = "e")
+ok(isTRUE(pr$promotable) && !isTRUE(pr$written),
+   "promote dry-run is promotable but NOT written (distinct flags)")

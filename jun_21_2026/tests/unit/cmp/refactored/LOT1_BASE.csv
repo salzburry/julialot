@@ -1,0 +1,3 @@
+patient_id,lot1_start_dt,lot1_base_meds,lot1_med_cnt
+9000000001,2020-01-01,LENA,1
+9000000002,2020-01-01,BORT LENA,2

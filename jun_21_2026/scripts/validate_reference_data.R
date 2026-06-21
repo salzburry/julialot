@@ -8,15 +8,17 @@ VALID_CODE_SYSTEMS <- c("HCPCS", "CPT", "NDC", "ICD9DIAG", "ICD10DIAG",
                         "ICD9PROC", "ICD10PROC")
 REQUIRED_COLS <- c("code", "code_type", "mapped_to")
 
-# The exact, documented NDC normalization rule: strip non-digits, left-ZERO-pad
-# to 11. (Note: formatC(flag="0") space-pads characters, so we pad explicitly.)
+# NDC: require validated 11-digit (segment-aware 10->11 is the adapter's job).
 normalize_ndc <- function(code) {
-  digits <- gsub("[^0-9]", "", as.character(code))
-  ok <- nchar(digits) >= 10 & nchar(digits) <= 11
-  padded <- paste0(strrep("0", pmax(0, 11 - nchar(digits))), digits)
-  ifelse(ok, padded, NA_character_)
+  d <- gsub("[^0-9]", "", as.character(code))
+  ifelse(nchar(d) == 11L, d, NA_character_)
 }
 normalize_proc <- function(code) toupper(gsub("[^A-Za-z0-9]", "", as.character(code)))
+# Normalize per code system.
+normalize_code <- function(code, code_system) {
+  cs <- toupper(trimws(as.character(code_system)))
+  ifelse(cs == "NDC", normalize_ndc(code), normalize_proc(code))
+}
 
 # manifest_entry: list(id, version, expected_systems, row_count_min, row_count_max,
 #                      effective_start (optional), effective_end (optional))
@@ -46,37 +48,30 @@ validate_reference_data <- function(df, manifest_entry) {
     errors <- c(errors, sprintf("%d row(s) with blank code or mapped_to (e.g. row %d)",
                                 length(blank), blank[1]))
 
-  # 4. NDC normalization + collisions
-  is_ndc <- ct == "NDC"
-  if (any(is_ndc)) {
-    norm <- normalize_ndc(df$code[is_ndc])
-    bad_ndc <- which(is.na(norm))
-    if (length(bad_ndc))
-      errors <- c(errors, sprintf("%d NDC row(s) not 10-11 digits after stripping (rejected, not matched)",
-                                  length(bad_ndc)))
-    okn <- !is.na(norm)
-    if (any(okn)) {
-      nc  <- norm[okn]
-      mt  <- toupper(trimws(as.character(df$mapped_to[is_ndc][okn])))
-      raw <- as.character(df$code[is_ndc][okn])
-      # BLOCKING: one normalized NDC mapping to >1 distinct concept (mapped_to).
-      conflict <- names(which(tapply(mt, nc, function(x) length(unique(x)) > 1)))
-      if (length(conflict))
-        errors <- c(errors, sprintf("%d normalized NDC(s) map to >1 concept (e.g. %s -> {%s})",
-                    length(conflict), conflict[1],
-                    paste(unique(mt[nc == conflict[1]]), collapse = ", ")))
-      # WARNING: two raw forms normalize to the same code (same concept).
-      if (any(unlist(tapply(raw, nc, function(x) length(unique(x)) > 1))))
-        warnings <- c(warnings, "two raw NDC forms normalize to the same 11-digit code")
-    }
-  }
+  # 4. normalize per system; NDC must be 11-digit, others non-empty
+  norm <- normalize_code(df$code, ct)
+  mt   <- toupper(trimws(as.character(df$mapped_to)))
+  raw  <- as.character(df$code)
+  bad_ndc <- which(ct == "NDC" & is.na(norm))
+  if (length(bad_ndc))
+    errors <- c(errors, sprintf("%d NDC row(s) not a valid 11-digit code (rejected; supply 11-digit NDC)",
+                                length(bad_ndc)))
+  bad_proc <- which(ct != "NDC" & ct %in% VALID_CODE_SYSTEMS & (is.na(norm) | !nzchar(norm)))
+  if (length(bad_proc))
+    errors <- c(errors, sprintf("%d non-NDC code(s) empty after normalization", length(bad_proc)))
 
-  # 5. procedure-code normalization collisions (HCPCS/CPT)
-  is_proc <- ct %in% c("HCPCS", "CPT")
-  if (any(is_proc)) {
-    np <- normalize_proc(df$code[is_proc])
-    if (any(!nzchar(np)))
-      errors <- c(errors, "procedure code(s) empty after normalization")
+  # 5. GENERAL collision (every code system): one (code_system, normalized_code)
+  #    must not map to >1 distinct concept = BLOCKING; two raw forms -> same code
+  #    (same concept) = warning.
+  okc <- !is.na(norm) & nzchar(norm)
+  if (any(okc)) {
+    key <- paste(ct[okc], norm[okc])
+    conflict <- names(which(tapply(mt[okc], key, function(x) length(unique(x)) > 1)))
+    if (length(conflict))
+      errors <- c(errors, sprintf("%d normalized code(s) map to >1 concept (e.g. %s -> {%s})",
+                  length(conflict), conflict[1], paste(unique(mt[okc][key == conflict[1]]), collapse = ", ")))
+    if (any(unlist(tapply(raw[okc], key, function(x) length(unique(x)) > 1))))
+      warnings <- c(warnings, "two raw forms normalize to the same code")
   }
 
   # 6. row-count bounds (manifest/version level)
@@ -94,7 +89,9 @@ validate_reference_data <- function(df, manifest_entry) {
   }
 
   list(errors = errors, warnings = warnings,
-       normalized = data.frame(code_type = ct, stringsAsFactors = FALSE))
+       normalized = data.frame(code_type = ct, raw_code = raw,
+                               normalized_code = norm, mapped_to = mt,
+                               stringsAsFactors = FALSE))
 }
 
 report <- function(res, id = "codelist") {

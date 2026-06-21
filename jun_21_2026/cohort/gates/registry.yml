@@ -1,7 +1,15 @@
-# Gate module registry - DRAFT.
-# Phases/anchors/codelists/semantics are pending clinical sign-off; the
-# structure is what the study + DAG validators check. Each gate is an
-# identifiable module; study files select/parameterize them by name (never SQL).
+# Gate module registry - DRAFT (clinical semantics NOT yet signed off).
+# The STRUCTURE here is what the study + DAG validators check; the specific
+# phases / anchors / codelists are ILLUSTRATIVE and must be verified against the
+# production spec before this YAML is treated as an executable Overall->NDMM
+# representation. Known items to confirm with the spec owner:
+#   - fu_mm_agents: production applies "follow-up MM therapy required" as a
+#     Step-6 cohort gate BEFORE LOT derivation; modelled here as post_lot1.
+#   - NDMM's 12-month CE is a pre-LOT1 (anchored to lot1_start) criterion, i.e. a
+#     SEPARATE gate from the Overall index-anchored baseline_ce - not just a
+#     6->12 month parameter override of it.
+# Each gate is an identifiable module; study files select/parameterize them by
+# name (never SQL).
 
 # Algorithm-produced anchors a gate may depend on (the "stages").
 stages:

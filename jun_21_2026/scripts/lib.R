@@ -10,11 +10,13 @@ lpad0 <- function(x, n) {
   ifelse(nchar(x) >= n, x, paste0(strrep("0", pmax(0, n - nchar(x))), x))
 }
 
-# The documented NDC rule: strip non-digits, left-zero-pad to 11; 10-11 digits
-# only, else NA (rejected, never silently matched).
+# NDC contract: require a validated 11-digit NDC. A bare 10-digit value is
+# AMBIGUOUS (which package segment is missing its leading zero depends on the
+# source's 4-4-2 / 5-3-2 / 5-4-1 format), so we do NOT guess - segment-aware
+# 10->11 conversion is the source adapter's job. Non-11-digit -> NA (rejected).
 normalize_ndc <- function(code) {
   d <- gsub("[^0-9]", "", as.character(code))
-  ifelse(nchar(d) >= 10 & nchar(d) <= 11, lpad0(d, 11), NA_character_)
+  ifelse(nchar(d) == 11L, d, NA_character_)
 }
 normalize_proc <- function(code) toupper(gsub("[^A-Za-z0-9]", "", as.character(code)))
 

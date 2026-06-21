@@ -35,19 +35,26 @@ impact_estimate <- function(intake_csv, codelist_id) {
 }
 
 # Returns a plan list (does not quit); the CLI/report decides exit status.
+# State is distinguished: `promotable` (validated + approved + ready) vs
+# `written` (the immutable snapshot was actually written). A dry-run is
+# promotable=TRUE, written=FALSE - it must NOT share a flag with a completed
+# promotion. write=TRUE leaves written=FALSE today (the snapshot write is a stub).
+.blank <- function(x) is.null(x) || length(x) != 1 || is.na(x) || !nzchar(trimws(x))
 promote <- function(intake_csv, codelist_id, version, clinical = NULL, engineering = NULL,
                     manifest_entry = list(id = codelist_id, row_count_min = 1L),
                     write = FALSE) {
-  if (!file.exists(intake_csv)) return(list(promoted = FALSE, reason = "intake file missing"))
-  if (is.null(version) || !nzchar(version)) return(list(promoted = FALSE, reason = "version required"))
+  if (.blank(intake_csv) || !file.exists(intake_csv))
+    return(list(promotable = FALSE, written = FALSE, reason = "intake file missing"))
+  if (.blank(version)) return(list(promotable = FALSE, written = FALSE, reason = "version required"))
   df <- utils::read.csv(intake_csv, stringsAsFactors = FALSE, check.names = FALSE, comment.char = "#")
   res <- validate_reference_data(df, manifest_entry)
   if (length(res$errors))
-    return(list(promoted = FALSE, reason = "validation errors", errors = res$errors, warnings = res$warnings))
-  if (is.null(clinical) || is.null(engineering))
-    return(list(promoted = FALSE, reason = "clinical and engineering approval both required",
+    return(list(promotable = FALSE, written = FALSE, reason = "validation errors",
+                errors = res$errors, warnings = res$warnings))
+  if (.blank(clinical) || .blank(engineering))
+    return(list(promotable = FALSE, written = FALSE, reason = "clinical and engineering approval both required",
                 warnings = res$warnings))
-  plan <- list(promoted = TRUE,
+  plan <- list(promotable = TRUE, written = FALSE,
                out = file.path(REFDATA_ROOT, "approved", sprintf("%s@%s.csv", codelist_id, version)),
                version = version, hash = content_hash(df),
                clinical = clinical, engineering = engineering, warnings = res$warnings,
@@ -59,13 +66,14 @@ promote <- function(intake_csv, codelist_id, version, clinical = NULL, engineeri
 
 report_promote <- function(r) {
   for (w in r$warnings %||% character(0)) cat("WARN: ", w, "\n")
-  if (!isTRUE(r$promoted)) {
+  if (!isTRUE(r$promotable)) {
     cat("BLOCKED:", r$reason, "\n")
     for (e in r$errors %||% character(0)) cat("  ERROR:", e, "\n")
     return(invisible(FALSE))
   }
   cat("DIFF:  ", r$diff, "\n"); cat("IMPACT:", r$impact, "\n")
-  cat(sprintf("PROMOTE (dry-run; snapshot write stubbed): %s\n  version=%s hash=%s clinical=%s engineering=%s\n",
+  cat(sprintf("%s: %s\n  version=%s hash=%s clinical=%s engineering=%s\n",
+              if (isTRUE(r$written)) "PROMOTED (written)" else "PROMOTABLE (dry-run; NOT written)",
               r$out, r$version, substr(r$hash, 1, 16), r$clinical, r$engineering))
   invisible(TRUE)
 }
@@ -87,5 +95,5 @@ if (sys.nframe() == 0 && !interactive()) {
   }
   r <- promote(a$pos[1], a$pos[2], a$pos[3], a$flags$clinical, a$flags$engineering)
   report_promote(r)
-  quit(status = if (isTRUE(r$promoted)) 0L else 1L)
+  quit(status = if (isTRUE(r$promotable)) 0L else 1L)
 }

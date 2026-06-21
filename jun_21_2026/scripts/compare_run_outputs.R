@@ -123,14 +123,24 @@ compare_local_table <- function(path_a, path_b, keys, excluded = character(0)) {
   res
 }
 
+# `tables` are REQUIRED outputs: a missing one is a blocking mismatch (fail
+# closed), never silently skipped. Returns the per-table results plus a
+# `missing_tables` attribute and a verdict that is "match" only when every
+# required table is present AND matches.
 compare_local <- function(dir_a, dir_b, tables = names(COMPARE_KEYS)) {
-  out <- list(); overall <- TRUE
+  out <- list(); overall <- TRUE; missing <- character(0)
   for (t in tables) {
     fa <- file.path(dir_a, paste0(t, ".csv")); fb <- file.path(dir_b, paste0(t, ".csv"))
-    if (!file.exists(fa) || !file.exists(fb)) next
+    if (!file.exists(fa) || !file.exists(fb)) {
+      missing <- c(missing, t); overall <- FALSE
+      out[[t]] <- list(match = FALSE,
+                       missing = c(if (!file.exists(fa)) "a", if (!file.exists(fb)) "b"))
+      next
+    }
     r <- compare_local_table(fa, fb, COMPARE_KEYS[[t]], EXCLUDED_FIELDS[[t]] %||% character(0))
     out[[t]] <- r; if (!isTRUE(r$match)) overall <- FALSE
   }
+  attr(out, "missing_tables") <- missing
   attr(out, "verdict") <- if (overall) "match" else "mismatch"
   out
 }
