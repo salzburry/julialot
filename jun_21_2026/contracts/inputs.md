@@ -15,11 +15,14 @@ schema during Increment 1B before anything depends on them.
 - **Raw + normalized together.** Code-bearing rows keep both `raw_code` and
   `normalized_code` (+ `code_system`) for auditability — normalization is never
   destructive.
-- **NDC normalization (the rule).** `normalized_code` for `code_system = 'NDC'`
-  is `lpad(regexp_replace(raw_code, '[^0-9]', ''), 11, '0')` — strip non-digits,
-  then **left-zero-pad to 11**. Leading zeros are preserved (string, never
-  numeric). A raw NDC that is not 10–11 digits after stripping is a
-  **rejected record** (not silently matched).
+- **NDC (require validated 11-digit).** The canonical layer requires an NDC
+  already in **11-digit** form (`normalized_code` = the 11 digits, leading zeros
+  preserved as a string). A bare **10-digit** value is **ambiguous** — which
+  package segment (4-4-2 / 5-3-2 / 5-4-1) is missing its leading zero depends on
+  the source's segment format — so the canonical layer does **not** guess:
+  segment-aware 10→11 conversion is the **source adapter's** responsibility, from
+  the source's known segment format. A non-11-digit NDC is a **rejected record**
+  (not silently padded or matched).
 - **HCPCS/CPT normalization.** Strip non-alphanumeric, uppercase. `code_system`
   distinguishes `HCPCS` vs `CPT`.
 - **Null/invalid dates.** A required date that is null or unparseable makes the
@@ -39,24 +42,28 @@ normalization collisions (two raw forms normalizing to the same code).
 
 ---
 
-## canonical_medical — medical claims (HCPCS / CPT / NDC)
+## canonical_medical — medical claims, ONE ROW PER CODE (HCPCS / CPT / NDC)
 
-Obeys the **medical runout** rule (never pushed out).
+Obeys the **medical runout** rule (never pushed out). A medical claim that
+carries more than one code (e.g. a procedure code *and* an NDC) becomes **one
+canonical row per code**, with `source_code_field` recording which physical field
+it came from — so the single `normalized_code`/`code_system` is never ambiguous.
+This unifies the grain with `canonical_diagnosis` / `canonical_procedure`.
 
 | column | type | req | notes |
 |---|---|---|---|
 | patient_id | string | required | |
 | service_date | date | required | claim service date |
-| raw_proc_code | string | nullable | physician/outpatient procedure |
-| raw_bill_proc_code | string | nullable | institutional billed procedure |
-| raw_ndc | string | nullable | medical NDC (J-code drugs etc.) |
-| normalized_code | string | nullable | normalized per code_system |
-| code_system | string | nullable | {HCPCS, CPT, NDC} |
-| day_supply | int | required | imputed (default 28) where absent — see medical day-supply param |
+| raw_code | string | required | the source code value |
+| normalized_code | string | required | normalized per code_system |
+| code_system | string | required | {HCPCS, CPT, NDC} |
+| source_code_field | string | required | {proc_cd, bill_proc_cd, ndc} - the physical field |
+| day_supply | int | required | imputed (default 28) where absent |
 | place_of_service | string | nullable | |
 | claim_status | string | nullable | |
 | reversal_status | string | nullable | |
-| source_table, source_record_id | string | req/rec | lineage |
+| source_table | string | required | lineage |
+| source_record_id | string | required | lineage (in the key) |
 | data_vintage | string | required | |
 
 - **Uniqueness:** (patient_id, service_date, normalized_code, code_system, source_record_id).

@@ -33,14 +33,18 @@ verify_bundle_allowlist <- function(paths) {
 }
 
 # Scan a data file for synthetic PATIDs (reserved range) or a marker column.
-# Scans the WHOLE file (no row cap) - "no synthetic in production" is
-# non-negotiable, so a synthetic PATID anywhere must be caught.
+# Scans the WHOLE file (no row cap), parses TSV with a tab separator, and FAILS
+# CLOSED on an unreadable file - "no synthetic in production" is non-negotiable.
+# NOTE: this is the file-level gate only; a separate Databricks-side query that
+# no synthetic PATID persists in any PRODUCTION schema is still required (stub).
 scan_file_for_synthetic <- function(path) {
   if (!grepl("\\.(csv|tsv)$", path, ignore.case = TRUE)) return(character(0))
-  df <- tryCatch(utils::read.csv(path, stringsAsFactors = FALSE,
+  sep <- if (grepl("\\.tsv$", path, ignore.case = TRUE)) "\t" else ","
+  df <- tryCatch(utils::read.csv(path, sep = sep, stringsAsFactors = FALSE,
                                  check.names = FALSE),
                  error = function(e) NULL)
-  if (is.null(df) || nrow(df) == 0) return(character(0))
+  if (is.null(df)) return("UNREADABLE file (fail closed)")
+  if (nrow(df) == 0) return(character(0))
   hits <- character(0)
   if (any(names(df) %in% SYNTHETIC_MARKER_COLS))
     hits <- c(hits, "SYNTHETIC marker column present")
@@ -56,7 +60,8 @@ scan_file_for_synthetic <- function(path) {
 verify_no_synthetic_data <- function(paths) {
   offending <- list()
   for (p in paths) {
-    h <- if (file.exists(p)) scan_file_for_synthetic(p) else character(0)
+    if (!file.exists(p)) { offending[[p]] <- "MISSING listed file (fail closed)"; next }
+    h <- scan_file_for_synthetic(p)
     if (length(h)) offending[[p]] <- h
   }
   list(ok = length(offending) == 0, offending = offending)

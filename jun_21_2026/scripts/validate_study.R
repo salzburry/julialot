@@ -45,6 +45,10 @@ resolve_study <- function(study, studies, registry, seen = character(0), strict 
       } else if (!(given %in% c(exp_hash, substr(exp_hash, 1, 16)))) {
         errors <- c(errors, sprintf("base '%s' hash mismatch: pinned '%s', actual '%s'", bid, given, exp_hash))
       }
+      if (!is.null(study$base$version) &&
+          !identical(as.character(study$base$version), as.character(studies[[bid]]$version)))
+        errors <- c(errors, sprintf("base '%s' version pinned '%s' != actual '%s'",
+                    bid, study$base$version, studies[[bid]]$version))
     }
   } else {
     if (length(override)) errors <- c(errors, "base study must not use gates.override")
@@ -62,18 +66,35 @@ resolve_study <- function(study, studies, registry, seen = character(0), strict 
   both <- intersect(disable, names(override))
   if (length(both)) errors <- c(errors, sprintf("gate(s) both disabled and overridden: %s", paste(both, collapse = ", ")))
 
+  # FALSE is invalid in add/override (it would enable the gate with empty params);
+  # use gates.disable to turn off an inherited gate.
+  is_false <- function(x) is.logical(x) && length(x) == 1 && !x
+  ff_add <- names(add)[vapply(add, is_false, logical(1))]
+  ff_ovr <- names(override)[vapply(override, is_false, logical(1))]
+  if (length(ff_add)) errors <- c(errors, sprintf("gates.add: 'false' invalid (use disable): %s", paste(ff_add, collapse = ", ")))
+  if (length(ff_ovr)) errors <- c(errors, sprintf("gates.override: 'false' invalid: %s", paste(ff_ovr, collapse = ", ")))
+
   # build resolved
   resolved <- base_resolved
   for (nm in names(add)) resolved[[nm]] <- .params_of(add[[nm]])
   for (nm in names(override)) resolved[[nm]] <- modifyList(resolved[[nm]] %||% list(), .params_of(override[[nm]]))
   for (nm in disable) resolved[[nm]] <- NULL
 
-  # every resolved gate must exist in the registry; params must conform
+  # every resolved gate must exist in the registry; params must conform (name + type)
   for (nm in names(resolved)) {
     if (!(nm %in% names(reg))) { errors <- c(errors, sprintf("unknown gate '%s' (not in registry)", nm)); next }
-    declared <- names(reg[[nm]]$params %||% list())
-    unknown <- setdiff(names(resolved[[nm]]), declared)
+    pspec <- reg[[nm]]$params %||% list()
+    unknown <- setdiff(names(resolved[[nm]]), names(pspec))
     if (length(unknown)) errors <- c(errors, sprintf("gate '%s' has unknown param(s): %s", nm, paste(unknown, collapse = ", ")))
+    for (pn in intersect(names(resolved[[nm]]), names(pspec))) {
+      v <- resolved[[nm]][[pn]]; ty <- pspec[[pn]]$type %||% "any"
+      okty <- switch(ty,
+        integer = is.numeric(v) && length(v) == 1 && v == as.integer(v),
+        boolean = is.logical(v) && length(v) == 1,
+        TRUE)
+      if (!isTRUE(okty))
+        errors <- c(errors, sprintf("gate '%s' param '%s' expected %s, got '%s'", nm, pn, ty, paste(v, collapse = ",")))
+    }
   }
   list(resolved = resolved, errors = unique(errors), warnings = unique(warnings))
 }
@@ -85,11 +106,21 @@ validate_dag <- function(resolved, registry) {
   stages <- unlist(registry$stages)
   gates <- names(resolved)
   nodes <- c(stages, gates)
+  # phase ordering + the phase at which each stage becomes available, so a gate
+  # cannot depend on a stage produced later than its own phase.
+  PHASE <- c(pre_lot = 1L, post_lot1 = 2L, post_lot_long = 3L, study_period = 4L)
+  STAGE_AT <- c(index_date = 1L, lot1_start = 2L, lot_long = 3L)
   edges <- list()
   for (gn in gates) {
+    ph <- registry$gates[[gn]]$phase %||% "pre_lot"
+    gph <- unname(PHASE[ph])
     dep <- unlist(registry$gates[[gn]]$depends_on %||% list())
     bad <- setdiff(dep, nodes)
     if (length(bad)) errors <- c(errors, sprintf("gate '%s' depends on unknown node(s): %s", gn, paste(bad, collapse = ", ")))
+    for (d in intersect(dep, names(STAGE_AT)))
+      if (!is.na(gph) && STAGE_AT[[d]] > gph)
+        errors <- c(errors, sprintf("gate '%s' (phase %s) depends on stage '%s' not produced until a later phase",
+                    gn, ph, d))
     edges[[gn]] <- intersect(dep, nodes)
   }
   # Kahn's algorithm for cycle detection (stages have no deps)
@@ -133,7 +164,13 @@ report_study <- function(res) {
 
 if (sys.nframe() == 0 && !interactive()) {
   a <- commandArgs(trailingOnly = TRUE)
-  sp <- a[1] %||% "studies/ndmm.yml"
-  ok <- report_study(validate_study(sp, "cohort/gates/registry.yml", "studies"))
-  quit(status = if (ok) 0 else 1)
+  strict <- !("--no-strict" %in% a)          # strict (fail-closed) is the DEFAULT
+  pos <- a[!grepl("^--", a)]
+  sp <- if (length(pos)) pos[1] else "studies/ndmm.yml"
+  res <- validate_study(sp, "cohort/gates/registry.yml", "studies", strict = strict)
+  ok <- report_study(res)
+  emit <- a[which(a == "--emit") + 1L]
+  if (ok && length(emit) && !is.na(emit[1]))     # emit the resolved gate-set artifact
+    writeLines(jsonlite::toJSON(res$resolved, auto_unbox = TRUE, pretty = TRUE), emit[1])
+  quit(status = if (ok) 0L else 1L)
 }

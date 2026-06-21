@@ -2,108 +2,129 @@
 # validate_canonical.R
 # The adapter VALIDATION REPORT, runnable locally on canonical-shaped CSVs
 # (synthetic fixtures or, in prod, the adapter views). Checks schema
-# conformance, required/non-null, types, NDC normalization correctness,
-# key-uniqueness, and reports rejected rows (never silently dropped).
-# Pure R (+ lib.R). Runs before core stages.
+# conformance, required/non-null (incl. lineage), types (decimals rejected),
+# code-system domains, NDC/proc normalization correctness, positive day-supply,
+# enrollment span ordering, and key-uniqueness; reports rejected rows. Runs
+# before core stages. Pure R (+ lib.R).
 
 if (!exists(".lotlib")) source(local({ .find_lib <- function() {
   fa <- grep("^--file=", commandArgs(FALSE), value = TRUE)
   if (length(fa)) { p <- file.path(dirname(sub("^--file=", "", fa[1])), "lib.R"); if (file.exists(p)) return(p) }
   for (p in c("scripts/lib.R", "lib.R")) if (file.exists(p)) return(p); stop("lib.R not found") }; .find_lib() }))
 
-# Contract (subset; from contracts/inputs.md). type: string|date|integer.
+# Contract (from contracts/inputs.md). Per entity: cols (name="type[,required]"),
+# key, allowed code `systems`, the `raw_col` for normalization, `pos_int` columns
+# (must be > 0), and `span` (span_start <= span_end). canonical_medical is now
+# ONE ROW PER CODE (raw_code + source_code_field), unifying with dx/procedure.
 CANONICAL_SPEC <- list(
   members = list(file = "members.csv", entity = "canonical_enrollment",
     cols = list(patient_id = "string,required", span_start = "date,required",
                 span_end = "date,required", coverage_type = "string",
                 data_vintage = "string,required"),
-    key = c("patient_id", "span_start", "span_end", "coverage_type")),
+    key = c("patient_id", "span_start", "span_end", "coverage_type"), span = TRUE),
   pharmacy = list(file = "pharmacy.csv", entity = "canonical_pharmacy",
     cols = list(patient_id = "string,required", service_date = "date,required",
                 raw_ndc = "string,required", normalized_code = "string,required",
                 code_system = "string,required", days_supply = "integer,required",
                 claim_status = "string", reversal_status = "string",
-                source_table = "string", source_record_id = "string",
+                source_table = "string,required", source_record_id = "string,required",
                 data_vintage = "string,required"),
     key = c("patient_id", "service_date", "normalized_code", "source_record_id"),
-    ndc = TRUE),
+    systems = "NDC", raw_col = "raw_ndc", pos_int = "days_supply"),
   medical = list(file = "medical.csv", entity = "canonical_medical",
     cols = list(patient_id = "string,required", service_date = "date,required",
-                raw_proc_code = "string", raw_bill_proc_code = "string",
-                raw_ndc = "string", normalized_code = "string",
-                code_system = "string", day_supply = "integer,required",
-                place_of_service = "string", claim_status = "string",
-                reversal_status = "string", source_table = "string",
-                source_record_id = "string", data_vintage = "string,required"),
+                raw_code = "string,required", normalized_code = "string,required",
+                code_system = "string,required", source_code_field = "string,required",
+                day_supply = "integer,required", place_of_service = "string",
+                claim_status = "string", reversal_status = "string",
+                source_table = "string,required", source_record_id = "string,required",
+                data_vintage = "string,required"),
     key = c("patient_id", "service_date", "normalized_code", "code_system", "source_record_id"),
-    ndc = TRUE),
+    systems = c("HCPCS", "CPT", "NDC"), raw_col = "raw_code", pos_int = "day_supply"),
   diagnosis = list(file = "diagnosis.csv", entity = "canonical_diagnosis",
     cols = list(patient_id = "string,required", event_date = "date,required",
                 raw_code = "string,required", normalized_code = "string,required",
-                code_system = "string,required", source_table = "string",
-                source_record_id = "string", data_vintage = "string,required"),
-    key = c("patient_id", "event_date", "normalized_code", "code_system", "source_record_id")),
+                code_system = "string,required", source_table = "string,required",
+                source_record_id = "string,required", data_vintage = "string,required"),
+    key = c("patient_id", "event_date", "normalized_code", "code_system", "source_record_id"),
+    systems = c("ICD9DIAG", "ICD10DIAG"), raw_col = "raw_code"),
   procedure = list(file = "procedure.csv", entity = "canonical_procedure",
     cols = list(patient_id = "string,required", event_date = "date,required",
                 raw_code = "string,required", normalized_code = "string,required",
-                code_system = "string,required", source_table = "string",
-                source_record_id = "string", data_vintage = "string,required"),
-    key = c("patient_id", "event_date", "normalized_code", "code_system", "source_record_id")),
+                code_system = "string,required", source_table = "string,required",
+                source_record_id = "string,required", data_vintage = "string,required"),
+    key = c("patient_id", "event_date", "normalized_code", "code_system", "source_record_id"),
+    systems = c("ICD9PROC", "ICD10PROC", "HCPCS"), raw_col = "raw_code"),
   death = list(file = "death.csv", entity = "canonical_death",
     cols = list(patient_id = "string,required", death_date = "date,required",
                 death_date_source = "string", data_vintage = "string,required"),
     key = c("patient_id"))
 )
-# All six entities are part of the contract; the adapter output must produce
-# each. validate_canonical_dir(require_present=TRUE) errors on any missing one.
+# All six entities are part of the contract; the adapter output must produce each.
 REQUIRED_ENTITIES <- names(CANONICAL_SPEC)
 
-.req <- function(spec_str) grepl("required", spec_str)
-.typ <- function(spec_str) sub(",.*$", "", spec_str)
+.req <- function(s) grepl("required", s)
+.typ <- function(s) sub(",.*$", "", s)
 
 validate_entity <- function(df, spec) {
-  errors <- character(0); warnings <- character(0); rejected <- 0L
+  errors <- character(0); warnings <- character(0)
   cols <- spec$cols
   miss <- setdiff(names(cols)[vapply(cols, .req, logical(1))], names(df))
   if (length(miss)) {
     errors <- c(errors, sprintf("missing required column(s): %s", paste(miss, collapse = ", ")))
     return(list(errors = errors, warnings = warnings, report = list(rows = nrow(df), rejected = NA)))
   }
+  rej <- rep(FALSE, nrow(df))
   for (cn in intersect(names(cols), names(df))) {
-    v <- df[[cn]]; t <- .typ(cols[[cn]])
-    if (.req(cols[[cn]]) && any(!nzchar(trimws(as.character(v))) | is.na(v))) {
-      n <- sum(!nzchar(trimws(as.character(v))) | is.na(v))
-      errors <- c(errors, sprintf("%s: %d null/blank in required column", cn, n)); rejected <- rejected + n
+    v <- as.character(df[[cn]]); t <- .typ(cols[[cn]])
+    if (.req(cols[[cn]])) {
+      bad <- is.na(v) | !nzchar(trimws(v))
+      if (any(bad)) { errors <- c(errors, sprintf("%s: %d null/blank in required column", cn, sum(bad))); rej <- rej | bad }
     }
-    if (t == "date" && any(nzchar(as.character(v)) & !is_iso_date(v))) {
-      n <- sum(nzchar(as.character(v)) & !is_iso_date(v))
-      errors <- c(errors, sprintf("%s: %d non-ISO date(s)", cn, n)); rejected <- rejected + n
+    if (t == "date") {
+      bad <- nzchar(v) & !is_iso_date(v)
+      if (any(bad)) { errors <- c(errors, sprintf("%s: %d non-ISO date(s)", cn, sum(bad))); rej <- rej | bad }
     }
-    if (t == "integer" && any(nzchar(as.character(v)) &
-        is.na(suppressWarnings(as.integer(as.character(v)))))) {
-      errors <- c(errors, sprintf("%s: non-integer value(s)", cn))
-    }
-  }
-  # NDC normalization correctness
-  if (isTRUE(spec$ndc) && all(c("raw_ndc", "normalized_code", "code_system") %in% names(df))) {
-    isn <- toupper(df$code_system) == "NDC" & nzchar(as.character(df$raw_ndc))
-    if (any(isn)) {
-      exp <- normalize_ndc(df$raw_ndc[isn]); got <- as.character(df$normalized_code[isn])
-      bad <- which(is.na(exp) | exp != got)
-      if (length(bad))
-        errors <- c(errors, sprintf("NDC normalization mismatch/reject in %d row(s) (e.g. raw '%s' -> expected '%s', got '%s')",
-                    length(bad), df$raw_ndc[isn][bad[1]], exp[bad[1]] %||% "NA", got[bad[1]]))
+    if (t == "integer") {
+      bad <- nzchar(trimws(v)) & !grepl("^-?[0-9]+$", trimws(v))   # decimals/non-int rejected
+      if (any(bad)) { errors <- c(errors, sprintf("%s: %d non-integer value(s)", cn, sum(bad))); rej <- rej | bad }
     }
   }
-  # key uniqueness
+  for (cn in (spec$pos_int %||% character(0))) if (cn %in% names(df)) {
+    iv <- suppressWarnings(as.integer(as.character(df[[cn]])))
+    if (any(!is.na(iv) & iv <= 0L)) errors <- c(errors, sprintf("%s: %d non-positive value(s)", cn, sum(!is.na(iv) & iv <= 0L)))
+  }
+  if (!is.null(spec$systems) && "code_system" %in% names(df)) {
+    cs <- toupper(trimws(as.character(df$code_system)))
+    bad <- !(cs %in% toupper(spec$systems))
+    if (any(bad)) errors <- c(errors, sprintf("code_system: %d value(s) not in {%s}", sum(bad), paste(spec$systems, collapse = ",")))
+  }
+  rc <- spec$raw_col
+  if (!is.null(rc) && all(c(rc, "normalized_code", "code_system") %in% names(df))) {
+    cs <- toupper(trimws(as.character(df$code_system)))
+    expn <- ifelse(cs == "NDC", normalize_ndc(df[[rc]]), normalize_proc(df[[rc]]))
+    got  <- toupper(as.character(df$normalized_code))
+    has  <- nzchar(as.character(df[[rc]]))
+    bad  <- has & (is.na(expn) | toupper(expn) != got)
+    if (any(bad)) {
+      i <- which(bad)[1]
+      errors <- c(errors, sprintf("normalized_code mismatch/reject in %d row(s) (e.g. raw '%s' [%s] -> expected '%s', got '%s')",
+                  sum(bad), df[[rc]][i], cs[i], expn[i] %||% "NA", as.character(df$normalized_code)[i]))
+    }
+  }
+  if (isTRUE(spec$span) && all(c("span_start", "span_end") %in% names(df))) {
+    ss <- suppressWarnings(as.Date(as.character(df$span_start)))
+    se <- suppressWarnings(as.Date(as.character(df$span_end)))
+    if (any(!is.na(ss) & !is.na(se) & ss > se))
+      errors <- c(errors, sprintf("span_start > span_end in %d row(s)", sum(!is.na(ss) & !is.na(se) & ss > se)))
+  }
   if (!is.null(spec$key) && all(spec$key %in% names(df))) {
     k <- do.call(paste, c(df[spec$key], sep = "\037"))
     if (any(duplicated(k)))
       errors <- c(errors, sprintf("key %s not unique (%d duplicate rows)",
                   paste(spec$key, collapse = "+"), sum(duplicated(k))))
   }
-  list(errors = errors, warnings = warnings,
-       report = list(rows = nrow(df), rejected = rejected))
+  list(errors = errors, warnings = warnings, report = list(rows = nrow(df), rejected = sum(rej)))
 }
 
 validate_canonical_dir <- function(dir, spec = CANONICAL_SPEC, require_present = TRUE) {
@@ -111,8 +132,6 @@ validate_canonical_dir <- function(dir, spec = CANONICAL_SPEC, require_present =
   for (nm in names(spec)) {
     p <- file.path(dir, spec[[nm]]$file)
     if (!file.exists(p)) {
-      # A required canonical entity that is absent is an ERROR (an incomplete
-      # adapter output / fixture dir must not pass the "adapter validation" gate).
       if (require_present && nm %in% REQUIRED_ENTITIES) {
         out[[nm]] <- list(errors = sprintf("required canonical entity '%s' missing (%s)", nm, spec[[nm]]$file),
                           warnings = character(0), report = list(rows = 0L, rejected = NA))
@@ -132,7 +151,7 @@ validate_canonical_dir <- function(dir, spec = CANONICAL_SPEC, require_present =
 report_canonical <- function(res) {
   for (nm in names(res)) {
     r <- res[[nm]]
-    cat(sprintf("== %s (rows=%d, rejected=%s) ==\n", nm, r$report$rows, r$report$rejected))
+    cat(sprintf("== %s (rows=%d, rejected=%s) ==\n", nm, r$report$rows, as.character(r$report$rejected)))
     for (w in r$warnings) cat("  WARN: ", w, "\n")
     for (e in r$errors)  cat("  ERROR:", e, "\n")
     if (!length(r$errors)) cat("  OK\n")
