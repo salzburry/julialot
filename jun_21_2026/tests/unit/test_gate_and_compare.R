@@ -96,6 +96,12 @@ ok(grepl("'lot_base_1st_add_med' AS column_name, true AS excluded", sv), "exclud
 ok(!grepl("'patient_id' AS column_name", sv), "key column is not value-compared")
 ok(grepl("array_sort", sql_checksum("t", "patient_id", c("patient_id", "lot_start_type"))),
    "checksum SQL is order-independent (array_sort)")
+# legacy-named tables: --patid PATID remaps ONLY patient_id (Databricks folds case
+# for the rest, e.g. LOT_NUM == lot_num)
+ok(identical(.remap_patid(c("patient_id", "lot_num"), "PATID"), c("PATID", "lot_num")),
+   "patid remap swaps only patient_id")
+ok(grepl("a.`PATID` <=> b.`PATID`", sql_values("a", "b", "PATID", c("PATID", "lot_start_type"))),
+   "legacy comparison joins on PATID")
 
 # checksum uses the SAME normalization as the verdict (1 vs 1.0 -> match AND equal checksum)
 da <- file.path(tempdir(), "ca"); db2 <- file.path(tempdir(), "cb")

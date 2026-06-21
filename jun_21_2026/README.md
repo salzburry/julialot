@@ -18,8 +18,21 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 137 tests, all pure-R / local
+Rscript tests/run_unit_tests.R          # 139 tests, all pure-R / local
 ```
+
+Run the live current-vs-prior comparison on hive_metastore (same DSN/odbc as
+`apr_30_2026`; needs `DATABRICKS_DSN`/`DATABRICKS_PWD` + DBI/odbc):
+
+```
+# canonical-named (refactored) output tables:
+Rscript scripts/compare_run_outputs.R --run hive_metastore.lot_prior hive_metastore.lot_current
+# legacy apr_30 output tables use PATID (other names fold case): add --patid PATID
+Rscript scripts/compare_run_outputs.R --run hive_metastore.lot_prior hive_metastore.lot_current --patid PATID
+```
+
+It runs the full hierarchy per table (schema -> membership anti-joins -> null-safe
+value compare -> checksum) and exits 0 on `match`, 1 on `mismatch`.
 
 Contents:
 

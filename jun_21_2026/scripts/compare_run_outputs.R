@@ -73,14 +73,24 @@ OUTPUT_CONTRACT <- list(
                   "lot_tx_auto_dt_1", "lot_tx_auto_dt_2", "lot_tx_auto_max_dt")
 )
 
-# --- hive_metastore (Databricks SQL) adapter seam -------------------------
+# --- hive_metastore (Databricks SQL) adapter -------------------------------
 # The run-scoped outputs live as tables in the hive_metastore catalog and are
 # queried with Databricks SQL over ODBC (the project's DBI/odbc connection, same
-# as apr_30_2026/R/db_utils.R) - there is no Spark DataFrame API here. `db_q` is
-# the ONLY unwired seam: point it at the non-prod ODBC connection and the SQL
-# builders below execute as-is. Each `sql_*` builder is a pure function (unit-
-# tested) so the comparison LOGIC is reviewable now, ahead of a live warehouse.
-db_q <- function(con, sql) stop("db_q seam: wire to the hive_metastore ODBC connection; sql=\n", sql)
+# as apr_30_2026/R/db_utils.R) - there is no Spark DataFrame API here. The SQL
+# builders below are pure (unit-tested); db_q executes them. Local CSV tests
+# never call db_q, so DBI/odbc are needed only for the live --run path.
+db_q <- function(con, sql) {
+  if (is.null(con)) stop("db_q: no connection - pass a DBI/odbc handle (see connect_compare())")
+  DBI::dbGetQuery(con, sql)
+}
+
+# Connect exactly like apr_30_2026 (DSN=DATABRICKS_DSN default RWDE; pwd=DATABRICKS_PWD;
+# catalog hive_metastore). Used by the --run CLI.
+connect_compare <- function(dsn = Sys.getenv("DATABRICKS_DSN", "RWDE"),
+                            pwd = Sys.getenv("DATABRICKS_PWD", "")) {
+  if (!nzchar(pwd)) stop("DATABRICKS_PWD is not set")
+  DBI::dbConnect(odbc::odbc(), dsn = dsn, pwd = pwd, timeout = 120)
+}
 
 .bt <- function(x) paste0("`", x, "`")                       # backtick-quote an identifier
 .keylist <- function(keys) paste(.bt(keys), collapse = ", ")
@@ -128,10 +138,18 @@ sql_checksum <- function(tbl, keys, compare_cols, excluded = character(0)) {
 }
 
 # --- steps (execute the builders via the db_q seam) -----------------------
+# DESCRIBE TABLE returns col_name/data_type/comment and, for partitioned tables,
+# a blank row + a "# Partition Information" section - drop those; compare names
+# case-insensitively (the warehouse may fold case).
+.describe_cols <- function(d) {
+  cn <- trimws(as.character(d$col_name %||% d[[1]]))
+  unique(cn[nzchar(cn) & !startsWith(cn, "#")])
+}
 compare_schema <- function(con, tbl_a, tbl_b) {
-  da <- db_q(con, sql_schema(tbl_a)); db <- db_q(con, sql_schema(tbl_b))
-  ca <- da$col_name; cb <- db$col_name
-  list(ok = setequal(ca, cb), a_only = setdiff(ca, cb), b_only = setdiff(cb, ca))
+  ca <- .describe_cols(db_q(con, sql_schema(tbl_a)))
+  cb <- .describe_cols(db_q(con, sql_schema(tbl_b)))
+  la <- tolower(ca); lb <- tolower(cb)
+  list(ok = setequal(la, lb), a_only = ca[!(la %in% lb)], b_only = cb[!(lb %in% la)])
 }
 
 compare_membership <- function(con, tbl_a, tbl_b, keys) {
@@ -150,11 +168,16 @@ compare_values <- function(con, tbl_a, tbl_b, keys, compare_cols, excluded = cha
 table_checksum <- function(con, tbl, keys, compare_cols, excluded = character(0))
   db_q(con, sql_checksum(tbl, keys, compare_cols, excluded))$checksum[1]
 
-compare_table <- function(con, tbl_a, tbl_b, table_name) {
-  keys <- COMPARE_KEYS[[table_name]]
-  if (is.null(keys)) stop("no COMPARE_KEYS for ", table_name)
-  excl <- EXCLUDED_FIELDS[[table_name]] %||% character(0)
-  cols <- OUTPUT_CONTRACT[[table_name]] %||% keys
+# The contract is in canonical names. Databricks identifiers are case-insensitive
+# (LOT_NUM == lot_num), so only patient_id genuinely differs from the legacy tables
+# (PATID). `patid` remaps it so the same comparator runs against legacy-named
+# tables (--patid PATID) or canonical refactored output (default).
+.remap_patid <- function(v, patid) if (identical(patid, "patient_id")) v else gsub("^patient_id$", patid, v)
+compare_table <- function(con, tbl_a, tbl_b, table_name, patid = "patient_id") {
+  keys <- .remap_patid(COMPARE_KEYS[[table_name]], patid)
+  if (is.null(COMPARE_KEYS[[table_name]])) stop("no COMPARE_KEYS for ", table_name)
+  excl <- .remap_patid(EXCLUDED_FIELDS[[table_name]] %||% character(0), patid)
+  cols <- .remap_patid(OUTPUT_CONTRACT[[table_name]] %||% keys, patid)
   list(
     table      = table_name,
     schema     = compare_schema(con, tbl_a, tbl_b),
@@ -275,9 +298,9 @@ compare_local <- function(dir_a, dir_b, tables = names(COMPARE_KEYS)) {
 
 # Compare a full run (all three output tables) in the hive_metastore catalog.
 # A run matches only if EVERY table matches on schema, membership, AND values.
-compare_run <- function(con, ns_a, ns_b, tables = names(COMPARE_KEYS)) {
+compare_run <- function(con, ns_a, ns_b, tables = names(COMPARE_KEYS), patid = "patient_id") {
   results <- lapply(tables, function(t)
-    compare_table(con, paste0(ns_a, ".", t), paste0(ns_b, ".", t), t))
+    compare_table(con, paste0(ns_a, ".", t), paste0(ns_b, ".", t), t, patid))
   names(results) <- tables
   ok_one <- function(r) isTRUE(r$schema$ok) &&
     isTRUE((r$membership$only_in_a %||% NA) == 0) && isTRUE((r$membership$only_in_b %||% NA) == 0) &&
@@ -288,6 +311,19 @@ compare_run <- function(con, ns_a, ns_b, tables = names(COMPARE_KEYS)) {
 
 if (sys.nframe() == 0 && !interactive()) {
   a <- commandArgs(trailingOnly = TRUE)
+  if (length(a) >= 3 && a[1] == "--run") {        # live: compare two hive_metastore namespaces
+    pi <- which(a == "--patid"); patid <- if (length(pi)) a[pi + 1L] else "patient_id"
+    con <- connect_compare()
+    on.exit(try(DBI::dbDisconnect(con), silent = TRUE))
+    rr <- compare_run(con, a[2], a[3], patid = patid)
+    for (t in names(rr$tables)) { r <- rr$tables[[t]]
+      cat(sprintf("%-12s schema_ok=%s only_in_a=%s only_in_b=%s value_mismatch=%s excluded_diffs=%s%s\n",
+          t, r$schema$ok, r$membership$only_in_a %||% "NA", r$membership$only_in_b %||% "NA",
+          r$values$value_mismatch %||% "NA", r$values$excluded_diffs %||% "NA",
+          if (length(r$values$mismatched_columns)) paste0(" cols:", paste(r$values$mismatched_columns, collapse = ",")) else "")) }
+    cat("verdict:", rr$verdict, "\n")
+    quit(status = if (identical(rr$verdict, "match")) 0L else 1L)
+  }
   if (length(a) >= 3 && a[1] == "--local") {
     res <- compare_local(a[2], a[3])
     for (t in names(res)) { r <- res[[t]]
@@ -305,6 +341,7 @@ if (sys.nframe() == 0 && !interactive()) {
     cat("verdict:", attr(res, "verdict"), "\n")
     quit(status = if (identical(attr(res, "verdict"), "match")) 0L else 1L)
   }
-  cat("compare_run_outputs.R loaded. Local: --local <dir_a> <dir_b>;",
-      "hive_metastore: wire db_q() for run-scoped namespaces.\n")
+  cat("compare_run_outputs.R. Local CSV: --local <dir_a> <dir_b>;",
+      "live hive_metastore: --run <ns_prior> <ns_current> [--patid PATID]",
+      "(DATABRICKS_DSN/DATABRICKS_PWD env; ns e.g. hive_metastore.lot_prior).\n")
 }
