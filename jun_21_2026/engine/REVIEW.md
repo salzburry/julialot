@@ -16,7 +16,7 @@ comparing. That run is the reviewer/owner's step (it needs the warehouse).
 Run it (the driver runs the full pipeline MAP → LOT1 → SCT → LOT1 end):
 ```
 Rscript engine/run_engine.R engine/fixtures /tmp/out   # MAP_STACKED + LOT1_BASE + LOT1_END + LOT_LONG
-Rscript tests/run_unit_tests.R                          # 266 pass (engine: test_engine/sct/lot_end/lot_long); also CI
+Rscript tests/run_unit_tests.R                          # 274 pass (engine: test_engine/sct/lot_end/lot_long); also CI
 ```
 
 ## What to validate: each rule maps to a production source line
@@ -101,14 +101,16 @@ Rscript tests/run_unit_tests.R                          # 266 pass (engine: test
   LOT_LONG parity.
 - The **regression-expected** baseline (legacy execution on the same synthetic data,
   the owner's hive_metastore step) — the decisive gate — and the full **canonical
-  input** validator (`validate_canonical`) in `run_engine` (it now typed-validates
-  param overrides + checks filenames/members/codelist columns, but not yet the full
-  canonical row contract: lineage, dates, dedup uniqueness).
-- **Now handled:** caller-scoped gap (local + warehouse), single-join value compare
-  (one scan, not one join per column), failure-isolated checksum, `PATID` name+STRING
-  bridge, membership-before-values short-circuit (both modes), and a CART-started
-  death-guard test through `build_lot_long` (call-site window wiring). Checksum
-  aggregation **bucketing** remains a deferred warehouse-scale optimization.
+  input ROW** validator (`validate_canonical`) in `run_engine` (it now validates param
+  overrides against the shared `CONFIG_SPEC` + checks filenames/members/codelist
+  columns, but not yet lineage / dates / dedup uniqueness of the input rows).
+- **Now handled:** ALL tunables propagate into LOT1 end logic (CART_INIT / death
+  guard); param validation reuses the shared `CONFIG_SPEC` (one contract); caller-
+  scoped gap (local + warehouse); single-join value compare with double (BIGINT-safe)
+  counts; failure-isolated checksum SURFACED as `CHECKSUM_FAILED`; bounded `LIMIT 100`
+  mismatch sample (`sql_value_sample`, mismatch-only); `PATID` name+STRING bridge;
+  membership short-circuit (both modes); CART death-guard test through `build_lot_long`.
+  Checksum aggregation **bucketing** remains a deferred warehouse-scale optimization.
 
 ## Constraints to confirm
 

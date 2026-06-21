@@ -121,6 +121,16 @@ ok(!grepl("sum\\(CASE WHEN NOT \\(a.`patient_id`", sv), "key column is not value
 tv <- .tally_values(c(0L, 3L, 5L), c("lot_start_type", "lot_base_meds", "lot_base_1st_add_med"), "lot_base_1st_add_med")
 ok(tv$value_mismatch == 3L && identical(tv$mismatched_columns, "lot_base_meds") && tv$excluded_diffs == 5L,
    ".tally_values: excluded col surfaced (5) but non-blocking; the real diff (3) blocks")
+# BIGINT-safe: a count above the 32-bit limit must NOT narrow to NA->0 (a missed mismatch)
+tvB <- .tally_values(c(0, 3e9), c("lot_start_type", "lot_base_meds"))
+ok(tvB$value_mismatch == 3e9, ".tally_values keeps counts as double (>2^31 not narrowed to NA/0)")
+# sql_value_sample: bounded, mismatch-only diagnostic (keys + a_/b_ values, LIMIT)
+ss <- sql_value_sample("ns.A", "ns.B", c("patient_id", "lot_num"), c("lot_base_end_reason"), 100L)
+ok(grepl("a.`lot_base_end_reason` AS `a_lot_base_end_reason`", ss) &&
+   grepl("b.`lot_base_end_reason` AS `b_lot_base_end_reason`", ss) &&
+   grepl("WHERE NOT \\(a.`lot_base_end_reason` <=> b.`lot_base_end_reason`\\)", ss) && grepl("LIMIT 100", ss),
+   "sql_value_sample returns keys + a/b values for changed rows, LIMIT-bounded")
+ok(is.null(sql_value_sample("a", "b", "patient_id", character(0))), "no mismatched cols -> no sample query")
 ok(grepl("array_sort", sql_checksum("t", "patient_id", c("patient_id", "lot_start_type"))),
    "checksum SQL is order-independent (array_sort)")
 # legacy-named tables: --patid PATID remaps ONLY patient_id (Databricks folds case
