@@ -23,7 +23,7 @@
 build_lot1_end <- function(lot1_base, sct_summary = NULL, obs_end, death = NULL,
                            map_stacked = NULL, auto_dates = NULL, permissible_subs = NULL,
                            cart_consolidation_days = 45L, lot_n_induction_window_days = 30L,
-                           sct_tandem_days = 180L) {
+                           sct_tandem_days = 180L, lot_applicable_window_days = NULL) {
   if (is.null(lot1_base) || !nrow(lot1_base)) return(data.frame(
     patient_id = character(0), lot1_base_end_dt = as.Date(character(0)),
     lot1_base_end_reason = character(0), lot1_base_length = integer(0), stringsAsFactors = FALSE))
@@ -64,9 +64,14 @@ build_lot1_end <- function(lot1_base, sct_summary = NULL, obs_end, death = NULL,
       }
       pra <- FALSE
       if (!is.null(adt)) {
+        # The post-runout AUTO trigger uses the CURRENT line's APPLICABLE window
+        # (ALLO 1 / CART 45 / MED·AUTO 30), measured from LOT_START, so a planned
+        # in-window AUTO is NOT a next-line trigger (lot2_5_base.R:721-727). LOT1 /
+        # default uses lot_n_induction_window_days (30).
+        paw <- if (is.null(lot_applicable_window_days)) lot_n_induction_window_days else lot_applicable_window_days
         ad <- sort(D(adt$tx_dt[as.character(adt$patient_id) == pid]))
         if (length(ad)) { prev <- c(as.Date(NA), ad[-length(ad)])
-          pra <- any(ad > disc & ad <= obs & ad > (ls + (lot_n_induction_window_days - 1L)) &
+          pra <- any(ad > disc & ad <= obs & ad > (ls + (paw - 1L)) &
                      !(!is.na(prev) & as.integer(ad - prev) <= sct_tandem_days)) }
       }
       prt <- as.integer(prm || (!is.na(first_allo) && first_allo > disc) ||

@@ -39,6 +39,10 @@ ok(inherits(try(build_lot_long(l1, le, map, NULL, mem, max_lot = 1L), silent = T
    "max_lot < 2 fails fast (no silent 2:1 descending loop)")
 cap2 <- build_lot_long(l1, le, map, NULL, mem, max_lot = 2L)
 ok(max(cap2$lot_num) == 2 && nrow(cap2) == 2L, "max_lot=2 caps the loop at LOT2")
+ok(inherits(try(build_lot_long(l1, le, map, NULL, mem, max_lot = 2.9), silent = TRUE), "try-error"),
+   "max_lot=2.9 is REJECTED (validated before coercion), not silently truncated to 2")
+ok(inherits(try(build_lot_long(l1, le, map, NULL, mem, max_lot = "5.8"), silent = TRUE), "try-error"),
+   "max_lot=\"5.8\" is rejected (non-whole-number)")
 
 # candidate type tie-break: ALLO on the same day as a MED -> SCT_ALLO wins
 ct <- .lot_candidates(
