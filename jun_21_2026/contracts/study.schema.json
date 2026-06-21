@@ -27,6 +27,17 @@
         }
       ]
     },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "description": "machine-readable clinical sign-off (validate_study.R). 'approved' requires an auditable signer + ISO date; a release run (--require-approved) blocks any 'draft' in the inheritance chain.",
+      "properties": {
+        "status": { "type": "string", "enum": ["draft", "approved"] },
+        "signed_off_by": { "type": ["string", "null"] },
+        "signed_off_date": { "type": ["string", "null"], "format": "date" }
+      }
+    },
     "study_period": {
       "type": "object",
       "additionalProperties": false,

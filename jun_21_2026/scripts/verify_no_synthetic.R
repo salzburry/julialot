@@ -5,9 +5,18 @@
 # in production. Blocks the release on any violation.
 #
 # Pure R; runnable locally. Usage:
-#   Rscript verify_no_synthetic.R <bundle_manifest.txt> [data_dir ...]
+#   Rscript verify_no_synthetic.R <bundle_manifest.txt> [--bundle <dir>] [data_dir ...]
 # where bundle_manifest.txt lists, one per line, every repo-relative path the
-# production artifact will contain.
+# production artifact will contain. With --bundle, the manifest is RECONCILED
+# against the actual bundle directory so an unlisted file cannot escape the scan.
+#
+# Defenses: allowlist + denylist + `..`-traversal rejection on every path;
+# manifest-vs-bundle reconciliation; whole-file CSV/TSV synthetic scan (reserved
+# PATID range + marker column), fail-closed on unreadable/missing files.
+# Known limitations (documented, not silently ignored): the content scan covers
+# CSV/TSV only - binary data (e.g. Parquet) is guarded by the allowlist + the
+# reserved-PATID convention, and the authoritative "no synthetic PATID persists in
+# any PRODUCTION schema" check is a Databricks-side query (still a stub).
 
 # --- policy ---------------------------------------------------------------
 PROD_ALLOWLIST <- c("R/", "studies/", "reference_data/approved/",
@@ -21,15 +30,31 @@ SYNTHETIC_MARKER_COLS <- c("SYNTHETIC", "synthetic", "is_synthetic")
 # --- checks ---------------------------------------------------------------
 
 # Every shipped path must sit under an allowed prefix and under no denied one.
+# A `..` segment is rejected outright: a prefix check on `R/../tests/x.csv` would
+# pass the allowlist while actually pointing into a denied tree.
 verify_bundle_allowlist <- function(paths) {
   norm <- gsub("\\\\", "/", paths)
+  traversal <- grepl("(^|/)\\.\\.(/|$)", norm)
   allowed <- vapply(norm, function(p)
     any(startsWith(p, PROD_ALLOWLIST)), logical(1))
   denied  <- vapply(norm, function(p)
     any(vapply(PROD_DENYLIST, function(d) grepl(d, p, fixed = TRUE), logical(1))),
     logical(1))
-  bad <- norm[!allowed | denied]
+  bad <- norm[!allowed | denied | traversal]
   list(ok = length(bad) == 0, offending = bad)
+}
+
+# Reconcile the DECLARED manifest against the ACTUAL bundle contents. A file present
+# in the bundle but absent from the manifest would escape the per-file synthetic
+# scan; a manifested file absent from the bundle is a broken manifest. Both fail
+# closed - the scan must not trust an unverified manifest.
+verify_manifest_matches_bundle <- function(manifest_paths, bundle_dir) {
+  mp <- gsub("\\\\", "/", trimws(manifest_paths)); mp <- mp[nzchar(mp)]
+  actual <- gsub("\\\\", "/", list.files(bundle_dir, recursive = TRUE))
+  missing_from_bundle <- setdiff(mp, actual)
+  unlisted_in_manifest <- setdiff(actual, mp)
+  list(ok = length(missing_from_bundle) == 0 && length(unlisted_in_manifest) == 0,
+       missing_from_bundle = missing_from_bundle, unlisted_in_manifest = unlisted_in_manifest)
 }
 
 # Scan a data file for synthetic PATIDs (reserved range) or a marker column.
@@ -69,21 +94,32 @@ verify_no_synthetic_data <- function(paths) {
 
 # --- entry ----------------------------------------------------------------
 main <- function(args) {
-  if (length(args) < 1) stop("usage: verify_no_synthetic.R <bundle_manifest.txt> [data_dir ...]")
-  paths <- readLines(args[1], warn = FALSE)
+  if (length(args) < 1)
+    stop("usage: verify_no_synthetic.R <bundle_manifest.txt> [--bundle <dir>] [data_dir ...]")
+  bi <- which(args == "--bundle")
+  bundle_dir <- if (length(bi)) args[bi + 1L] else NA_character_
+  rest <- args[setdiff(seq_along(args), c(bi, bi + 1L))]
+  paths <- readLines(rest[1], warn = FALSE)
   paths <- trimws(paths[nzchar(trimws(paths))])
 
   a <- verify_bundle_allowlist(paths)
+  recon <- if (!is.na(bundle_dir)) verify_manifest_matches_bundle(paths, bundle_dir) else list(ok = TRUE)
   data_files <- paths[grepl("\\.(csv|tsv)$", paths, ignore.case = TRUE)]
-  if (length(args) > 1)
+  if (length(rest) > 1)
     data_files <- c(data_files,
-      list.files(args[-1], pattern = "\\.(csv|tsv)$", recursive = TRUE, full.names = TRUE))
+      list.files(rest[-1], pattern = "\\.(csv|tsv)$", recursive = TRUE, full.names = TRUE))
   s <- verify_no_synthetic_data(unique(data_files))
 
-  if (a$ok && s$ok) { cat("PASS: bundle is allowlist-clean and synthetic-free.\n"); quit(status = 0) }
+  if (a$ok && s$ok && recon$ok) {
+    cat("PASS: bundle is allowlist-clean, manifest-reconciled, and synthetic-free.\n"); quit(status = 0) }
   if (!a$ok) {
-    cat("FAIL: paths outside the production allowlist / inside the denylist:\n")
+    cat("FAIL: paths outside the production allowlist / inside the denylist / with traversal:\n")
     for (p in a$offending) cat("  ", p, "\n")
+  }
+  if (!isTRUE(recon$ok)) {
+    cat("FAIL: manifest does not match bundle contents:\n")
+    for (p in recon$missing_from_bundle) cat("    missing from bundle:", p, "\n")
+    for (p in recon$unlisted_in_manifest) cat("    unlisted in manifest (would escape scan):", p, "\n")
   }
   if (!s$ok) {
     cat("FAIL: synthetic data found in to-be-shipped files:\n")

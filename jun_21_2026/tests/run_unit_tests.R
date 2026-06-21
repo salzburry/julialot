@@ -7,7 +7,7 @@ stopifnot(file.exists("scripts/lib.R"))   # cwd must be the workspace root
 source("scripts/lib.R")
 for (f in c("validate_config.R", "validate_reference_data.R", "validate_canonical.R",
             "validate_study.R", "build_coverage_matrix.R", "verify_no_synthetic.R",
-            "compare_run_outputs.R", "promote_reference_data.R"))
+            "compare_run_outputs.R", "promote_reference_data.R", "validate_manifest.R"))
   source(file.path("scripts", f))
 source("tests/testutil.R")
 

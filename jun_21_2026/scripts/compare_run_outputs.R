@@ -131,6 +131,26 @@ compare_table <- function(con, tbl_a, tbl_b, table_name) {
 # the Spark equivalent for large run-scoped tables.
 .norm_cell <- function(x) { x <- trimws(as.character(x)); x[is.na(x) | x == ""] <- "\001NULL\001"; x }
 
+# Cell equality AFTER canonical normalization (the documented rules, applied here
+# for the local CSV path): single null sentinel, numeric coercion with float
+# tolerance, and date coercion (so a timestamp export equals its date). A
+# leading-zero string (e.g. an 11-digit NDC, a zero-padded id) is NOT coerced to a
+# number, so "00002143380" never equals "2143380".
+.num_eligible <- function(s) grepl("^-?([0-9]+|[0-9]*\\.[0-9]+)([eE][-+]?[0-9]+)?$", s) & !grepl("^-?0[0-9]", s)
+.date_eligible <- function(s) grepl("^[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}", s)   # date or timestamp prefix
+.as_date <- function(s) suppressWarnings(as.Date(ifelse(.date_eligible(s), s, NA_character_), format = "%Y-%m-%d"))
+.cells_equal <- function(a, b, tol = 1e-9) {
+  eq <- a == b
+  cmp <- !eq & a != "\001NULL\001" & b != "\001NULL\001"     # both present, differ as strings
+  an <- suppressWarnings(as.numeric(a)); bn <- suppressWarnings(as.numeric(b))
+  numok <- cmp & .num_eligible(a) & .num_eligible(b) & !is.na(an) & !is.na(bn) &
+           abs(an - bn) <= tol * pmax(1, abs(an), abs(bn))
+  rem <- cmp & !numok
+  ad <- .as_date(a); bd <- .as_date(b)                       # explicit format -> NA, never errors
+  dateok <- rem & !is.na(ad) & !is.na(bd) & ad == bd
+  eq | numok | dateok
+}
+
 compare_local_table <- function(path_a, path_b, keys, excluded = character(0), required = character(0)) {
   a <- read.csv(path_a, stringsAsFactors = FALSE, check.names = FALSE, colClasses = "character")
   b <- read.csv(path_b, stringsAsFactors = FALSE, check.names = FALSE, colClasses = "character")
@@ -159,7 +179,7 @@ compare_local_table <- function(path_a, path_b, keys, excluded = character(0), r
   res$only_in_a <- sum(!(ka %in% kb)); res$only_in_b <- sum(!(kb %in% ka))
   shared <- intersect(ka, kb); ia <- match(shared, ka); ib <- match(shared, kb)
   for (cn in setdiff(names(a), keys)) {
-    va <- .norm_cell(a[[cn]][ia]); vb <- .norm_cell(b[[cn]][ib]); d <- which(va != vb)
+    va <- .norm_cell(a[[cn]][ia]); vb <- .norm_cell(b[[cn]][ib]); d <- which(!.cells_equal(va, vb))
     if (length(d)) {
       if (cn %in% excluded) {            # surfaced (not blocking), never silent
         res$excluded_diffs <- res$excluded_diffs + length(d)

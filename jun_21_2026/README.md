@@ -18,7 +18,7 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 87 tests, all pure-R / local
+Rscript tests/run_unit_tests.R          # 114 tests, all pure-R / local
 ```
 
 Contents:
@@ -38,10 +38,13 @@ scripts/                         # all runnable + unit-tested (except the Spark 
   validate_study.R               #   base+delta cross-rules + gate DAG (cycle detection)
   build_coverage_matrix.R        #   positive/negative coverage from the catalog
   verify_no_synthetic.R          #   release gate: allowlist + reserved-PATID scan
-  compare_run_outputs.R          #   comparison hierarchy: LOCAL CSV mode works + tested;
+  compare_run_outputs.R          #   comparison hierarchy: LOCAL CSV mode works + tested
+                                 #   (numeric/float/date normalization, output contract);
                                  #   only the large-table Spark path (db_q) is a stub
   promote_reference_data.R       #   intake->validated->approved: validation + dry-run
                                  #   runnable + tested; only snapshot-write/impact = stub
+  validate_manifest.R            #   run-manifest runtime checks (secret redaction +
+                                 #   value cross-rules); manifest.schema.json owns structure
 tests/
   run_unit_tests.R, testutil.R   # Level-1 runner + tiny framework
   unit/                          # the tests (config, refdata, canonical, study, gate,

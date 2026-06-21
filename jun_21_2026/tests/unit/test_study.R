@@ -94,3 +94,27 @@ ok(length(validate_approval(list(approval = list(status = "approved", signed_off
    signed_off_date = "2026-01-01")), "study x")$errors) == 0, "approved with signer+date passes")
 ok(any(grepl("not in", validate_approval(list(approval = list(status = "bogus")), "study x")$errors)),
    "unknown approval status caught")
+# signed_off_date must be a real ISO date, not merely non-blank
+ok(any(grepl("not an ISO", validate_approval(list(approval = list(status = "approved",
+   signed_off_by = "Dr X", signed_off_date = "last tuesday")), "study x")$errors)),
+   "non-ISO signed_off_date rejected")
+# approval is validated across the WHOLE inherited chain: a draft BASE blocks a
+# release even if the derived study were approved.
+nd_ra <- validate_study("studies/ndmm.yml", "cohort/gates/registry.yml", "studies",
+                        strict = TRUE, require_approved = TRUE)
+ok(any(grepl("overall_2025.*NOT cleared", nd_ra$errors)), "draft BASE study blocks release (chain checked)")
+ok(!is.null(nd_ra$chain_approvals[["overall_2025"]]), "every chain approval recorded in the artifact")
+
+# study.schema.json and the runtime validator are one contract: the example
+# studies conform; an undeclared top-level key is rejected (closed schema).
+ov_obj <- read_yaml_file("studies/overall.yml")
+ok(length(validate_study_schema(ov_obj, "contracts/study.schema.json")) == 0, "overall conforms to closed schema")
+ov_bad <- modifyList(ov_obj, list(surprise_key = 1))
+ok(any(grepl("undeclared top-level key", validate_study_schema(ov_bad, "contracts/study.schema.json"))),
+   "undeclared top-level key rejected by closed schema")
+
+# gate -> gate phase feasibility (not just gate -> stage): a pre_lot gate may not
+# depend on a post_lot1 gate.
+reg6 <- reg; reg6$gates$qualifying_mm$depends_on <- list("no_prior_mm_tx")
+ok(any(grepl("depends on gate .* in a later phase", validate_dag(nd$resolved, reg6))),
+   "gate->gate phase feasibility caught")

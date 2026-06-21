@@ -48,6 +48,17 @@ nl <- ph(); nl$source_record_id <- NULL
 ok(any(grepl("source_record_id", validate_entity(nl, sp)$errors)), "missing lineage column caught")
  med_ok <- validate_canonical_dir("tests/fixtures/synthetic")$medical
 ok(length(med_ok$errors) == 0, "one-row-per-code medical fixture valid")
+# medical grain: the same code from two physical fields on ONE record must be
+# collapsed to one row by the adapter; a residual collision (rows differing only
+# by source_code_field) is a blocking key violation, not a silent merge.
+spm <- CANONICAL_SPEC$medical
+medc <- data.frame(patient_id = c("9000000001", "9000000001"), service_date = c("2020-01-01", "2020-01-01"),
+  raw_code = c("J9999", "J9999"), normalized_code = c("J9999", "J9999"), code_system = c("HCPCS", "HCPCS"),
+  source_code_field = c("proc_cd", "bill_proc_cd"), day_supply = c("1", "1"),
+  source_table = c("med", "med"), source_record_id = c("r1", "r1"), data_vintage = c("SYNTH", "SYNTH"),
+  stringsAsFactors = FALSE)
+ok(any(grepl("not unique", validate_entity(medc, spm)$errors)),
+   "same-record two-field code collision flagged (key enforces dedup-to-one)")
 
 # required-entity enforcement (an incomplete adapter output must not pass)
 tmp <- file.path(tempdir(), "incomplete_canon"); dir.create(tmp, showWarnings = FALSE)
