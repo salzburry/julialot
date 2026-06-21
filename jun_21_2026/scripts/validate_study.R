@@ -37,7 +37,7 @@ resolve_study <- function(study, studies, registry, seen = character(0), strict 
       base_resolved <- br$resolved; errors <- c(errors, br$errors); warnings <- c(warnings, br$warnings)
       # base pin: in strict mode an unpinned/TBD hash blocks; a non-TBD hash is
       # always verified against the actual base, not merely accepted.
-      exp_hash <- content_hash(paste(deparse(studies[[bid]]), collapse = ""))
+      exp_hash <- content_hash(studies[[bid]])   # order-stable (canonicalized), not deparse
       given <- study$base$hash
       if (is.null(given) || given == "TBD") {
         msg <- sprintf("base '%s' hash unpinned (TBD); pin to: %s", bid, exp_hash)
@@ -204,22 +204,49 @@ study_chain <- function(study, studies, seen = character(0)) {
 }
 
 # Closed-schema conformance: the runtime validator and study.schema.json must be
-# ONE contract, not two. Enforce the schema's top-level `required` + (when
-# additionalProperties:false) reject any undeclared top-level key. (Deep JSON
-# Schema is left to a dedicated validator; this keeps the two from diverging - a
-# study key the schema does not know about, like an undeclared `approval`, fails.)
+# ONE contract, not two. This walks the schema's object tree RECURSIVELY,
+# enforcing `required` and (where additionalProperties:false) rejecting undeclared
+# keys at EVERY closed level - top-level and nested (study_period, approval, base,
+# gates). `oneOf` passes if any branch validates (so base: null OR pinned object
+# both pass). Leaf types/enums/formats and `$ref` bodies remain the JSON-Schema
+# tool's job; this guarantees the closed STRUCTURE cannot silently diverge.
+.schema_node_errors <- function(obj, schema, path) {
+  if (!is.null(schema$oneOf)) {
+    branches <- lapply(schema$oneOf, function(s) .schema_node_errors(obj, s, path))
+    if (any(vapply(branches, length, integer(1)) == 0)) return(character(0))
+    # none clean: report the branch matching obj's KIND (object vs null) so the
+    # message is useful (e.g. a non-null base reports its missing key, not "expected null").
+    is_obj  <- vapply(schema$oneOf, function(s) !is.null(s$properties) || identical(s$type, "object"), logical(1))
+    is_null <- vapply(schema$oneOf, function(s) identical(s$type, "null"), logical(1))
+    pick <- if (is.list(obj) && any(is_obj)) which(is_obj)[1]
+            else if (is.null(obj) && any(is_null)) which(is_null)[1]
+            else which.min(vapply(branches, length, integer(1)))
+    return(branches[[pick]])
+  }
+  here <- path %||% "(root)"
+  if (identical(schema$type, "null"))
+    return(if (is.null(obj)) character(0) else sprintf("%s: expected null", here))
+  has_props <- !is.null(schema$properties) || identical(schema$type, "object")
+  if (!has_props) return(character(0))                       # arrays / scalars / $ref: not descended
+  if (!is.null(obj) && !is.list(obj)) return(sprintf("%s: expected object", here))
+  errors <- character(0)
+  keys <- names(obj) %||% character(0)
+  miss <- setdiff(unlist(schema$required %||% list()), keys)
+  if (length(miss)) errors <- c(errors, sprintf("%s: missing required key(s): %s", here, paste(miss, collapse = ", ")))
+  declared <- names(schema$properties %||% list())
+  if (isFALSE(schema$additionalProperties)) {
+    extra <- setdiff(keys, declared)
+    if (length(extra)) errors <- c(errors, sprintf("%s: undeclared key(s) (closed schema): %s", here, paste(extra, collapse = ", ")))
+  }
+  for (k in intersect(keys, declared))                      # recurse into present, declared children
+    errors <- c(errors, .schema_node_errors(obj[[k]], schema$properties[[k]],
+                                            if (is.null(path)) k else paste0(path, ".", k)))
+  errors
+}
 validate_study_schema <- function(study, schema_path) {
   schema <- tryCatch(read_json_file(schema_path), error = function(e) NULL)
   if (is.null(schema)) return(sprintf("could not read study schema (%s)", schema_path))
-  errors <- character(0)
-  props <- names(schema$properties %||% list())
-  miss <- setdiff(unlist(schema$required %||% list()), names(study))
-  if (length(miss)) errors <- c(errors, sprintf("schema: missing required key(s): %s", paste(miss, collapse = ", ")))
-  if (isFALSE(schema$additionalProperties)) {
-    extra <- setdiff(names(study), props)
-    if (length(extra)) errors <- c(errors, sprintf("schema: undeclared top-level key(s) (closed schema): %s", paste(extra, collapse = ", ")))
-  }
-  errors
+  .schema_node_errors(study, schema, NULL)
 }
 
 validate_study <- function(study_path, registry_path, studies_dir, strict = FALSE,

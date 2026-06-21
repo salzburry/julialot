@@ -24,13 +24,34 @@ read_yaml_file <- function(path) suppressWarnings(yaml::read_yaml(path))
 read_json_file <- function(path) jsonlite::fromJSON(path, simplifyVector = TRUE,
                                                     simplifyDataFrame = FALSE)
 
-# Stable content hash: canonicalize (sorted keys/rows) then sha256. Reordering
-# or whitespace must not change identity.
-content_hash <- function(obj) {
-  canon <- if (is.data.frame(obj)) {
+# Deterministic serialization: recursively SORT named-list keys (and data-frame
+# columns) so structures that are identical up to key/column order serialize
+# identically. Unnamed lists (arrays) keep their order. Scalars stringify as-is.
+canonical_string <- function(obj) {
+  if (is.data.frame(obj)) {
     obj <- obj[, order(names(obj)), drop = FALSE]
-    rows <- do.call(paste, c(lapply(obj, as.character), sep = "\037"))
-    sort(rows)
+    return(paste0("df{", paste(sort(do.call(paste, c(lapply(obj, as.character), sep = "\037"))), collapse = "|"), "}"))
+  }
+  if (is.list(obj)) {
+    nm <- names(obj)
+    if (!is.null(nm) && length(nm)) { o <- order(nm); obj <- obj[o]; nm <- nm[o] } else nm <- rep("", length(obj))
+    return(paste0("{", paste(vapply(seq_along(obj),
+      function(i) paste0(nm[i], ":", canonical_string(obj[[i]])), character(1)), collapse = ","), "}"))
+  }
+  if (is.null(obj)) return("null")
+  paste(as.character(obj), collapse = "|")
+}
+
+# Stable content hash: canonicalize (sorted keys/rows, recursively for lists) then
+# sha256. Reordering data-frame columns or (nested) list KEYS must not change
+# identity. Data frames AND lists are canonicalized; a bare scalar/string hashes
+# as-is. (Scalar VALUES, incl. their whitespace, are content and are preserved.)
+content_hash <- function(obj) {
+  canon <- if (is.data.frame(obj)) {            # unchanged from the original df path
+    obj <- obj[, order(names(obj)), drop = FALSE]
+    sort(do.call(paste, c(lapply(obj, as.character), sep = "\037")))
+  } else if (is.list(obj)) {
+    canonical_string(obj)
   } else obj
   digest::digest(canon, algo = "sha256")
 }

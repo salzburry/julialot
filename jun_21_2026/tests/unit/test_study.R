@@ -53,13 +53,18 @@ unp <- list(id = "u", base = list(id = "overall_2025", version = "1.0.0", hash =
             gates = list(add = list(no_pregnancy = TRUE)))
 ok(any(grepl("hash unpinned", resolve_study(unp, studies, reg, strict = TRUE)$errors)), "strict: TBD base hash blocks")
 ok(any(grepl("hash unpinned", resolve_study(unp, studies, reg, strict = FALSE)$warnings)), "non-strict: TBD base hash warns")
-exp <- content_hash(paste(deparse(studies[["overall_2025"]]), collapse = ""))
+exp <- content_hash(studies[["overall_2025"]])
 pin_ok <- list(id = "x", base = list(id = "overall_2025", version = "1.0.0", hash = exp),
                gates = list(add = list(no_pregnancy = TRUE)))
 ok(length(resolve_study(pin_ok, studies, reg, strict = TRUE)$errors) == 0, "correct base hash pin passes (strict)")
 pin_bad <- list(id = "x", base = list(id = "overall_2025", version = "1.0.0", hash = "deadbeef"),
                 gates = list(add = list(no_pregnancy = TRUE)))
 ok(any(grepl("hash mismatch", resolve_study(pin_bad, studies, reg)$errors)), "wrong base hash rejected")
+# base hash is order-stable: reordering YAML keys must NOT churn the pinned hash
+ov_s <- studies[["overall_2025"]]
+ok(content_hash(ov_s) == content_hash(ov_s[rev(names(ov_s))]), "base hash stable under key reordering")
+ok(content_hash(list(a = 1, b = list(x = 1, y = 2))) == content_hash(list(b = list(y = 2, x = 1), a = 1)),
+   "content_hash canonicalizes nested list key order")
 
 # --- registry defaults / required params / numeric ranges --------------------
 # defaults are filled into the resolved artifact (baseline_ce gets max_gap_days=30)
@@ -107,11 +112,24 @@ ok(!is.null(nd_ra$chain_approvals[["overall_2025"]]), "every chain approval reco
 
 # study.schema.json and the runtime validator are one contract: the example
 # studies conform; an undeclared top-level key is rejected (closed schema).
+SCH <- "contracts/study.schema.json"
 ov_obj <- read_yaml_file("studies/overall.yml")
-ok(length(validate_study_schema(ov_obj, "contracts/study.schema.json")) == 0, "overall conforms to closed schema")
-ov_bad <- modifyList(ov_obj, list(surprise_key = 1))
-ok(any(grepl("undeclared top-level key", validate_study_schema(ov_bad, "contracts/study.schema.json"))),
-   "undeclared top-level key rejected by closed schema")
+nd_obj <- read_yaml_file("studies/ndmm.yml")
+ok(length(validate_study_schema(ov_obj, SCH)) == 0, "overall conforms to closed schema")
+ok(length(validate_study_schema(nd_obj, SCH)) == 0, "ndmm conforms to nested closed schema")
+ok(any(grepl("undeclared key", validate_study_schema(modifyList(ov_obj, list(surprise_key = 1)), SCH))),
+   "undeclared top-level key rejected")
+# RECURSIVE: nested required + nested closedness + oneOf branch are all enforced
+sp_bad <- ov_obj; sp_bad$study_period$id_end <- NULL
+ok(any(grepl("study_period: missing required", validate_study_schema(sp_bad, SCH))),
+   "nested missing required (study_period.id_end) caught")
+ap_bad <- ov_obj; ap_bad$approval$bogus <- 1
+ok(any(grepl("approval: undeclared", validate_study_schema(ap_bad, SCH))),
+   "nested undeclared key (approval.bogus) caught")
+base_bad <- nd_obj; base_bad$base$hash <- NULL
+ok(any(grepl("base: missing required", validate_study_schema(base_bad, SCH))),
+   "oneOf object branch: base missing hash caught")
+ok(length(validate_study_schema(ov_obj, SCH)) == 0, "base: null still passes the oneOf null branch")
 
 # gate -> gate phase feasibility (not just gate -> stage): a pre_lot gate may not
 # depend on a post_lot1 gate.

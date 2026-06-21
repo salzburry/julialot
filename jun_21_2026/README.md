@@ -18,7 +18,7 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 114 tests, all pure-R / local
+Rscript tests/run_unit_tests.R          # 123 tests, all pure-R / local
 ```
 
 Contents:

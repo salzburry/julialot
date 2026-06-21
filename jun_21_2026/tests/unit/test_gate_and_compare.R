@@ -9,6 +9,14 @@ writeLines("x", file.path(bd, "R", "map.R")); writeLines("y", file.path(bd, "R",
 rec <- verify_manifest_matches_bundle("R/map.R", bd)
 ok(!rec$ok && "R/sneaky.R" %in% rec$unlisted_in_manifest, "unlisted bundle file detected")
 ok(verify_manifest_matches_bundle(c("R/map.R", "R/sneaky.R"), bd)$ok, "fully-listed bundle reconciles")
+# --bundle: data files are scanned at the BUNDLE root, not cwd
+ok(identical(bundle_data_files("reference_data/approved/x.csv", "/tmp/bundle"),
+             "/tmp/bundle/reference_data/approved/x.csv"),
+   "bundle data file resolved against bundle dir")
+bsyn <- file.path(tempdir(), "bsyn"); dir.create(file.path(bsyn, "reference_data", "approved"), recursive = TRUE, showWarnings = FALSE)
+writeLines(c("patient_id,x", "9000000123,1"), file.path(bsyn, "reference_data", "approved", "s.csv"))
+ok(!verify_no_synthetic_data(bundle_data_files("reference_data/approved/s.csv", bsyn))$ok,
+   "synthetic in BUNDLED file detected via the bundle root")
 ok(length(scan_file_for_synthetic("tests/fixtures/synthetic/members.csv")) > 0,
    "synthetic-range PATID detected")
 # fail closed: a missing listed data file is a violation
