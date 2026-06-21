@@ -1,6 +1,6 @@
 name: jun_21_2026 unit tests
 
-# Independently runs the jun_21_2026 local pure-R suite (the "239/248 pass" claim)
+# Independently runs the jun_21_2026 local pure-R suite (the README's "N pass" claim)
 # so the count is CI-recorded, not just an author's local run. Scoped to changes
 # under jun_21_2026/; apr_30_2026 production code is never built or run here.
 on:

@@ -370,6 +370,10 @@ compare_local_table <- function(path_a, path_b, keys, excluded = character(0), r
   res$key_unique <- !(any(duplicated(ka)) || any(duplicated(kb)) || any(nullk(a)) || any(nullk(b)))
   if (!res$key_unique) { res$match <- FALSE; return(res) }       # decisive: stop here
   res$only_in_a <- sum(!(ka %in% kb)); res$only_in_b <- sum(!(kb %in% ka))
+  res$unimplemented <- .present_gaps(unimplemented, names(a)); res$partial <- length(res$unimplemented) > 0
+  if (res$only_in_a > 0 || res$only_in_b > 0) {   # populations differ: STOP before the column compare
+    res$verdict <- "mismatch"; res$match <- FALSE; return(res)   # matches README + the --run path
+  }
   shared <- intersect(ka, kb); ia <- match(shared, ka); ib <- match(shared, kb)
   for (cn in setdiff(names(a), keys)) {
     va <- .norm_cell(a[[cn]][ia]); vb <- .norm_cell(b[[cn]][ib]); d <- which(!.cells_equal(va, vb))
@@ -388,8 +392,6 @@ compare_local_table <- function(path_a, path_b, keys, excluded = character(0), r
   cb <- as.data.frame(lapply(b[keep], .canon_cell), stringsAsFactors = FALSE, check.names = FALSE)
   res$checksum_a <- content_hash(ca[order(ka), , drop = FALSE])
   res$checksum_b <- content_hash(cb[order(kb), , drop = FALSE])
-  res$unimplemented <- .present_gaps(unimplemented, names(a))   # caller-scoped gap fields present
-  res$partial <- length(res$unimplemented) > 0
   clean <- res$schema_ok && res$contract_ok && res$key_unique &&
            res$only_in_a == 0 && res$only_in_b == 0 && res$value_mismatch == 0
   res$match <- clean && !res$partial             # a known-gap (unimplemented) run is partial, not full

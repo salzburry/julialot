@@ -83,6 +83,16 @@ eq(attr(res2, "verdict"), "mismatch", "non-excluded diff -> mismatch")
 ok("lot_base_end_reason" %in% res2$LOT_LONG$mismatch_cols, "mismatch column identified")
 write.csv(df[-3, ], file.path(tmp, "LOT_LONG.csv"), row.names = FALSE)
 ok(compare_local("tests/unit/cmp/legacy", tmp)$LOT_LONG$only_in_a >= 1L, "missing row detected")
+# membership gap STOPS the column compare (matches README + the --run path): no value
+# detail or checksum is computed once populations differ (verdict is still mismatch).
+tmpm <- file.path(tempdir(), "memstop"); dir.create(tmpm, showWarnings = FALSE)
+file.copy(list.files("tests/unit/cmp/refactored", full.names = TRUE), tmpm, overwrite = TRUE)
+dm <- read.csv(file.path(tmpm, "LOT_LONG.csv"), colClasses = "character", check.names = FALSE)
+write.csv(dm[-1, ], file.path(tmpm, "LOT_LONG.csv"), row.names = FALSE)   # drop a row (membership only)
+rm2 <- compare_local("tests/unit/cmp/legacy", tmpm)$LOT_LONG
+ok(rm2$only_in_a >= 1L && rm2$value_mismatch == 0L && length(rm2$mismatch_cols) == 0L &&
+   rm2$verdict == "mismatch" && is.null(rm2$checksum_a),
+   "membership gap stops the column compare (no value detail / checksum) before the verdict")
 
 # canonical cell normalization: numeric tolerance + date coercion, but a
 # leading-zero identifier (NDC, padded id) is NEVER coerced to a number.
