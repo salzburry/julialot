@@ -16,6 +16,21 @@ eq(attr(res, "verdict"), "match", "all required tables present, excluded-only di
 eq(length(attr(res, "missing_tables")), 0L, "no missing required tables")
 ok(res$LOT_LONG$value_mismatch == 0L, "no non-excluded value mismatch")
 
+# output contract: two EQUALLY-incomplete outputs (both missing a required
+# column) must NOT be called a match (P1: a missing contract column is blocking).
+tmpC1 <- file.path(tempdir(), "contract_a"); dir.create(tmpC1, showWarnings = FALSE)
+tmpC2 <- file.path(tempdir(), "contract_b"); dir.create(tmpC2, showWarnings = FALSE)
+file.copy(list.files("tests/unit/cmp/legacy", full.names = TRUE), tmpC1, overwrite = TRUE)
+file.copy(list.files("tests/unit/cmp/refactored", full.names = TRUE), tmpC2, overwrite = TRUE)
+for (d in c(tmpC1, tmpC2)) {                       # drop a required col from BOTH sides
+  dd <- read.csv(file.path(d, "LOT1_BASE.csv"), colClasses = "character", check.names = FALSE)
+  write.csv(dd[setdiff(names(dd), "lot1_base_discon_dt")], file.path(d, "LOT1_BASE.csv"), row.names = FALSE)
+}
+resC <- compare_local(tmpC1, tmpC2)
+eq(attr(resC, "verdict"), "mismatch", "both sides missing a required column -> mismatch (not match)")
+ok(isFALSE(resC$LOT1_BASE$contract_ok), "contract_ok is FALSE when a required column is absent")
+ok("lot1_base_discon_dt" %in% resC$LOT1_BASE$missing_required$a, "missing required column reported")
+
 # a missing required output table -> blocking mismatch (fail closed)
 tmpL <- file.path(tempdir(), "onlylot"); dir.create(tmpL, showWarnings = FALSE)
 file.copy("tests/unit/cmp/refactored/LOT_LONG.csv", file.path(tmpL, "LOT_LONG.csv"), overwrite = TRUE)

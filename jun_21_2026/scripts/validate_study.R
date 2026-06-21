@@ -80,20 +80,35 @@ resolve_study <- function(study, studies, registry, seen = character(0), strict 
   for (nm in names(override)) resolved[[nm]] <- modifyList(resolved[[nm]] %||% list(), .params_of(override[[nm]]))
   for (nm in disable) resolved[[nm]] <- NULL
 
-  # every resolved gate must exist in the registry; params must conform (name + type)
+  # Every resolved gate must exist in the registry; params are COMPLETED with the
+  # registry defaults (so the resolved artifact is explicit + reproducible), then
+  # conformed: unknown params, missing-required (no default), type, numeric range.
   for (nm in names(resolved)) {
     if (!(nm %in% names(reg))) { errors <- c(errors, sprintf("unknown gate '%s' (not in registry)", nm)); next }
     pspec <- reg[[nm]]$params %||% list()
     unknown <- setdiff(names(resolved[[nm]]), names(pspec))
     if (length(unknown)) errors <- c(errors, sprintf("gate '%s' has unknown param(s): %s", nm, paste(unknown, collapse = ", ")))
+    for (pn in names(pspec)) if (!(pn %in% names(resolved[[nm]]))) {   # fill defaults / require
+      if (!is.null(pspec[[pn]]$default)) resolved[[nm]][[pn]] <- pspec[[pn]]$default
+      else if (isTRUE(pspec[[pn]]$required))
+        errors <- c(errors, sprintf("gate '%s' missing required param '%s' (no default)", nm, pn))
+    }
     for (pn in intersect(names(resolved[[nm]]), names(pspec))) {
-      v <- resolved[[nm]][[pn]]; ty <- pspec[[pn]]$type %||% "any"
+      v <- resolved[[nm]][[pn]]; ps <- pspec[[pn]]; ty <- ps$type %||% "any"
       okty <- switch(ty,
         integer = is.numeric(v) && length(v) == 1 && v == as.integer(v),
         boolean = is.logical(v) && length(v) == 1,
         TRUE)
-      if (!isTRUE(okty))
+      if (!isTRUE(okty)) {
         errors <- c(errors, sprintf("gate '%s' param '%s' expected %s, got '%s'", nm, pn, ty, paste(v, collapse = ",")))
+        next
+      }
+      if (is.numeric(v) && length(v) == 1) {            # declared numeric bounds
+        if (!is.null(ps$min) && v < ps$min)
+          errors <- c(errors, sprintf("gate '%s' param '%s' = %s below min %s", nm, pn, v, ps$min))
+        if (!is.null(ps$max) && v > ps$max)
+          errors <- c(errors, sprintf("gate '%s' param '%s' = %s above max %s", nm, pn, v, ps$max))
+      }
     }
   }
   list(resolved = resolved, errors = unique(errors), warnings = unique(warnings))
@@ -114,6 +129,9 @@ validate_dag <- function(resolved, registry) {
   for (gn in gates) {
     ph <- registry$gates[[gn]]$phase %||% "pre_lot"
     gph <- unname(PHASE[ph])
+    if (is.na(gph))                                   # unknown phase name is not silently allowed
+      errors <- c(errors, sprintf("gate '%s' has unknown phase '%s' (not in {%s})",
+                  gn, ph, paste(names(PHASE), collapse = ", ")))
     dep <- unlist(registry$gates[[gn]]$depends_on %||% list())
     bad <- setdiff(dep, nodes)
     if (length(bad)) errors <- c(errors, sprintf("gate '%s' depends on unknown node(s): %s", gn, paste(bad, collapse = ", ")))
@@ -137,18 +155,50 @@ validate_dag <- function(resolved, registry) {
   errors
 }
 
-validate_study <- function(study_path, registry_path, studies_dir, strict = FALSE) {
+# Clinical approval is a SEPARATE axis from structural validity: a study can be
+# structurally strict-valid yet still DRAFT (not cleared for production). The
+# state is machine-readable so it cannot be conflated. `approved` is not just a
+# label - it must carry an auditable signer + date, else the claim is rejected.
+# By default a draft only WARNS; a release gate passes require_approved=TRUE to
+# make draft BLOCKING (fail-closed for production).
+APPROVAL_STATES <- c("draft", "approved")
+validate_approval <- function(obj, label, require_approved = FALSE) {
+  errors <- character(0); warnings <- character(0)
+  ap <- obj$approval %||% list()
+  status <- tolower(trimws(as.character(ap$status %||% "draft")))
+  if (!(status %in% APPROVAL_STATES))
+    errors <- c(errors, sprintf("%s: approval.status '%s' not in {%s}",
+                label, status, paste(APPROVAL_STATES, collapse = ", ")))
+  if (status == "approved") {
+    if (!nzchar(trimws(as.character(ap$signed_off_by %||% ""))))
+      errors <- c(errors, sprintf("%s: approval.status=approved requires signed_off_by", label))
+    if (!nzchar(trimws(as.character(ap$signed_off_date %||% ""))))
+      errors <- c(errors, sprintf("%s: approval.status=approved requires signed_off_date", label))
+  } else {
+    msg <- sprintf("%s is %s - NOT cleared for production (clinical sign-off pending)", label, status)
+    if (require_approved) errors <- c(errors, msg) else warnings <- c(warnings, msg)
+  }
+  list(errors = errors, warnings = warnings, status = status)
+}
+
+validate_study <- function(study_path, registry_path, studies_dir, strict = FALSE,
+                           require_approved = FALSE) {
   registry <- load_registry(registry_path)
   studies <- load_all_studies(studies_dir)
   study <- read_yaml_file(study_path)
   r <- resolve_study(study, studies, registry, strict = strict)
   dag_err <- if (length(r$errors) == 0) validate_dag(r$resolved, registry) else character(0)
-  list(id = study$id, errors = c(r$errors, dag_err), warnings = r$warnings,
+  ap_s <- validate_approval(study, sprintf("study '%s'", study$id %||% "?"), require_approved)
+  ap_r <- validate_approval(registry, "gate registry", require_approved)
+  list(id = study$id,
+       errors = c(r$errors, dag_err, ap_s$errors, ap_r$errors),
+       warnings = c(r$warnings, ap_s$warnings, ap_r$warnings),
+       approval = ap_s$status, registry_approval = ap_r$status,
        resolved = r$resolved)
 }
 
 report_study <- function(res) {
-  cat(sprintf("== study %s ==\n", res$id))
+  cat(sprintf("== study %s (approval: %s) ==\n", res$id, res$approval %||% "?"))
   for (w in res$warnings) cat("  WARN: ", w, "\n")
   for (e in res$errors)  cat("  ERROR:", e, "\n")
   if (!length(res$errors)) {
@@ -165,9 +215,11 @@ report_study <- function(res) {
 if (sys.nframe() == 0 && !interactive()) {
   a <- commandArgs(trailingOnly = TRUE)
   strict <- !("--no-strict" %in% a)          # strict (fail-closed) is the DEFAULT
+  require_approved <- "--require-approved" %in% a   # release gate: draft -> BLOCK
   pos <- a[!grepl("^--", a)]
   sp <- if (length(pos)) pos[1] else "studies/ndmm.yml"
-  res <- validate_study(sp, "cohort/gates/registry.yml", "studies", strict = strict)
+  res <- validate_study(sp, "cohort/gates/registry.yml", "studies",
+                        strict = strict, require_approved = require_approved)
   ok <- report_study(res)
   emit <- a[which(a == "--emit") + 1L]
   if (ok && length(emit) && !is.na(emit[1]))     # emit the resolved gate-set artifact

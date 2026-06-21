@@ -8,12 +8,22 @@ sp <- CANONICAL_SPEC$pharmacy
 miss <- data.frame(patient_id = "9000000001", stringsAsFactors = FALSE)
 ok(any(grepl("missing required", validate_entity(miss, sp)$errors)), "missing required column caught")
 
+# NDC contract: normalized_code must ITSELF be a valid 11-digit NDC. A non-11-digit
+# normalized value is rejected (the adapter owns segment-aware 10->11 conversion).
 bad_ndc <- data.frame(patient_id = "9000000001", service_date = "2020-01-01",
   raw_ndc = "00002-1433-80", normalized_code = "2143380", code_system = "NDC",
   days_supply = "28", source_table = "rx", source_record_id = "x", data_vintage = "SYNTH",
   stringsAsFactors = FALSE)
-ok(any(grepl("normalized_code mismatch", validate_entity(bad_ndc, sp)$errors)),
-   "wrong normalized NDC caught")
+ok(any(grepl("not a valid 11-digit NDC", validate_entity(bad_ndc, sp)$errors)),
+   "non-11-digit normalized NDC caught")
+# raw is preserved for lineage, NOT recomputed: an 11-digit normalized_code passes
+# the NDC check even when raw carries dashes / a different segmentation.
+good_ndc <- data.frame(patient_id = "9000000001", service_date = "2020-01-01",
+  raw_ndc = "00002-1433-80", normalized_code = "00002143380", code_system = "NDC",
+  days_supply = "28", source_table = "rx", source_record_id = "x", data_vintage = "SYNTH",
+  stringsAsFactors = FALSE)
+ok(!any(grepl("11-digit NDC", validate_entity(good_ndc, sp)$errors)),
+   "valid 11-digit normalized NDC accepted (raw not recomputed)")
 
 dup <- read.csv("tests/fixtures/synthetic/pharmacy.csv", colClasses = "character")
 dup <- rbind(dup, dup[1, ])  # duplicate the full key

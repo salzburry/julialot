@@ -5,6 +5,12 @@ description: >-
   absent). DRAFT - gate set pending clinical sign-off.
 adapter: optum
 base: null
+# Clinical approval is machine-checked (validate_study.R). DRAFT => a release run
+# (--require-approved) is blocked; 'approved' needs an auditable signer + date.
+approval:
+  status: draft
+  signed_off_by: ~
+  signed_off_date: ~
 study_period:
   study_start: "2015-07-01"
   study_end: "2025-06-30"

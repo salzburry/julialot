@@ -32,6 +32,13 @@ samec <- data.frame(code = c("00002-1433-80", "00002143380"),
 rs <- validate_reference_data(samec, list(id = "s", row_count_min = 1))
 ok(length(rs$errors) == 0 && any(grepl("normalize to the same code", rs$warnings)),
    "raw-form collision (same concept) is warning, not blocking")
+# exact-duplicate rows (identical code+type+concept) -> warning, not blocking
+exdup <- data.frame(code = c("J8540", "J8540"), code_type = c("HCPCS", "HCPCS"),
+                    mapped_to = c("DEXA", "DEXA"), stringsAsFactors = FALSE)
+rd <- validate_reference_data(exdup, list(id = "s", row_count_min = 1))
+ok(length(rd$errors) == 0 && any(grepl("exact-duplicate row", rd$warnings)),
+   "exact-duplicate row is warning, not blocking")
+
 # collision check is GENERAL: an HCPCS code mapping to two concepts also blocks
 hconf <- data.frame(code = c("J8540", "J8540"), code_type = c("HCPCS", "HCPCS"),
                     mapped_to = c("DEXA", "PRED"), stringsAsFactors = FALSE)

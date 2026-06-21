@@ -74,6 +74,20 @@ validate_reference_data <- function(df, manifest_entry) {
       warnings <- c(warnings, "two raw forms normalize to the same code")
   }
 
+  # 5b. EXACT duplicate rows: identical (code_type, normalized_code, mapped_to).
+  #     Harmless to set semantics but a hygiene smell (copy/paste, bad merge) -
+  #     reported, never silently de-duped. Computed on normalized rows so two raw
+  #     spellings of the same code+concept also count.
+  if (any(okc)) {
+    dk <- paste(ct[okc], norm[okc], mt[okc], sep = "\037")
+    ndup <- sum(duplicated(dk))
+    if (ndup > 0) {
+      ex <- dk[duplicated(dk)][1]
+      warnings <- c(warnings, sprintf("%d exact-duplicate row(s) (same code_type+normalized_code+mapped_to; e.g. %s)",
+                    ndup, gsub("\037", "/", ex)))
+    }
+  }
+
   # 6. row-count bounds (manifest/version level)
   if (!is.null(manifest_entry$row_count_min) && n < manifest_entry$row_count_min)
     errors <- c(errors, sprintf("row count %d below expected min %d", n, manifest_entry$row_count_min))

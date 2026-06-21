@@ -41,7 +41,7 @@
     },
     "secrets": {
       "type": "array",
-      "description": "references only — never values",
+      "description": "references only - never values",
       "items": {
         "type": "object",
         "additionalProperties": false,
