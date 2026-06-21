@@ -120,6 +120,11 @@ ok(grepl("GROUP BY .* HAVING count\\(\\*\\) > 1", sql_key_uniqueness("t", c("PAT
 ok(grepl("null_keys", sql_key_uniqueness("t", c("PATID", "LOT_NUM"))) &&
    grepl("`PATID` IS NULL", sql_key_uniqueness("t", "PATID")),
    "key-integrity SQL also checks NULL keys (non-null required)")
+# local CSV path: a missing key component is not "unique" either (parity with live)
+nkd <- file.path(tempdir(), "nullkey"); dir.create(nkd, showWarnings = FALSE)
+writeLines(c("patient_id,x", "P1,1", ",2"), file.path(nkd, "t.csv"))
+nk <- compare_local_table(file.path(nkd, "t.csv"), file.path(nkd, "t.csv"), "patient_id")
+ok(isFALSE(nk$key_unique), "local comparator: a NULL key component fails key-uniqueness")
 ok(grepl("coalesce\\(cast", sql_checksum("t", "patient_id", c("patient_id", "x"))),
    "checksum coalesces nulls to a sentinel (no concat_ws null collision)")
 

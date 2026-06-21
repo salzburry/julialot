@@ -4,15 +4,17 @@
 # is the harness that lets us see the refactor reproduce behaviour on synthetic
 # data locally; production is Databricks SQL on hive_metastore (separate).
 
-if (!exists("build_lot1_end")) local({
+if (!exists("build_lot_long")) local({
   fa <- grep("^--file=", commandArgs(FALSE), value = TRUE)
   d <- if (length(fa)) dirname(sub("^--file=", "", fa[1])) else "engine"
-  for (m in c("map.R", "lot1.R", "sct.R", "lot_end.R")) source(file.path(d, m))
+  if (!file.exists(file.path(d, "map.R"))) d <- "engine"          # robust when sourced
+  for (m in c("map.R", "lot1.R", "sct.R", "lot_end.R", "lot_long.R")) source(file.path(d, m))
 })
 
 # Params are DATA (resolved config), so retuning the algorithm is a config edit.
 DEFAULT_PARAMS <- list(map_discon_gap_days = 90L, medical_day_supply = 28L,
-                       induction_window_days = 60L, sct_auto_window_days = 13L,
+                       induction_window_days = 60L, lot_n_induction_window_days = 30L,
+                       cart_consolidation_days = 45L, sct_auto_window_days = 13L,
                        sct_auto_gap_days = 60L, sct_tandem_days = 180L)
 
 # Full local pipeline MAP -> LOT1 -> SCT -> LOT1 end.
@@ -30,17 +32,25 @@ run_engine <- function(input_dir, params = list()) {
             nrows = 1, stringsAsFactors = FALSE))))
     stop("run_engine: members.csv must carry index_date + obs_end_dt (claim-window scoping)")
   members <- rd("members.csv"); subs <- rd("permissible_subs.csv"); death <- rd("death.csv")
-  map_stacked <- build_map_stacked(rd("pharmacy.csv"), rd("medical.csv"),
-    rd("rollup.csv"), members, p$map_discon_gap_days, p$medical_day_supply)
+  proc <- rd("procedure.csv"); diag <- rd("diagnosis.csv"); med <- rd("medical.csv")
+  # SCT evidence present but no codelist would SILENTLY yield no SCT -> fail closed.
+  if ((nrow(proc) || nrow(diag)) && !file.exists(file.path(input_dir, "sct_codelist.csv")))
+    stop("run_engine: SCT evidence (procedure/diagnosis) present but sct_codelist.csv missing")
+  map_stacked <- build_map_stacked(rd("pharmacy.csv"), med, rd("rollup.csv"), members,
+    p$map_discon_gap_days, p$medical_day_supply)
   lot1 <- build_lot1_base(map_stacked, members, if (nrow(subs)) subs else NULL, p$induction_window_days)
-  sct_claims <- extract_sct_claims(rd("procedure.csv"), rd("sct_codelist.csv"))
+  # SCT from ALL canonical evidence routes (procedure + diagnosis + medical).
+  sct_claims <- extract_sct_claims(proc, rd("sct_codelist.csv"), diagnosis = diag, medical = med)
   sct <- if (nrow(lot1)) build_sct_summary(sct_claims, lot1[, c("patient_id", "lot1_start_dt")],
             members, p$sct_tandem_days, p$sct_auto_window_days, p$sct_auto_gap_days) else NULL
-  auto_dates <- finalize_auto_per_patient(sct_claims, p$sct_auto_window_days, p$sct_auto_gap_days, p$sct_tandem_days)
-  list(MAP_STACKED = map_stacked, LOT1_BASE = lot1,
-       LOT1_END = build_lot1_end(lot1, sct, members, if (nrow(death)) death else NULL,
-                    map_stacked = map_stacked, auto_dates = auto_dates,
-                    permissible_subs = if (nrow(subs)) subs else NULL))
+  auto_dates <- finalize_auto_per_patient(sct_claims, members, p$sct_auto_window_days, p$sct_auto_gap_days, p$sct_tandem_days)
+  deathd <- if (nrow(death)) death else NULL; subsd <- if (nrow(subs)) subs else NULL
+  lot1_end <- build_lot1_end(lot1, sct, members, deathd, map_stacked = map_stacked,
+                             auto_dates = auto_dates, permissible_subs = subsd)
+  lot_long <- build_lot_long(lot1, lot1_end, map_stacked, sct_claims, members, deathd, subsd,
+                p$lot_n_induction_window_days, p$cart_consolidation_days, p$sct_tandem_days,
+                p$sct_auto_window_days, p$sct_auto_gap_days)
+  list(MAP_STACKED = map_stacked, LOT1_BASE = lot1, LOT1_END = lot1_end, LOT_LONG = lot_long)
 }
 
 if (sys.nframe() == 0 && !interactive()) {
