@@ -18,7 +18,7 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 186 tests, all pure-R / local
+Rscript tests/run_unit_tests.R          # 190 tests, all pure-R / local
 ```
 
 Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
@@ -26,8 +26,13 @@ faithful to `apr_30_2026/02_lot1.R`, that reproduces hand-derived expected outpu
 — see `engine/` and `engine/fixtures/expected/TRACE.md`):
 
 ```
-Rscript engine/run_engine.R engine/fixtures /tmp/out   # writes MAP_STACKED.csv + LOT1_BASE.csv
+Rscript engine/run_engine.R engine/fixtures /tmp/out   # MAP_STACKED + LOT1_BASE + LOT1_END
 ```
+
+The driver runs the full pipeline **MAP → LOT1 → SCT → LOT1 end** and its
+`LOT1_END` output is verified against hand-derived expected (incl. an `SCT_ALLO`
+end). Pharmacy day-supply imputation (null/<1→28) and same-day claim de-dup
+(max day-supply) match production; the SCT AUTO window is 13 days.
 
 **For reviewers:** `engine/REVIEW.md` maps every engine rule to its production
 source line (`apr_30_2026/02_lot1.R:NNN`) and lists verified coverage + the

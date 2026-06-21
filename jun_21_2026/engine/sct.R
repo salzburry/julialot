@@ -2,8 +2,9 @@
 # engine/sct.R - Stem-cell-transplant detection, faithful to apr_30_2026/02_lot1.R
 # steps S12-S15. LOCAL verification engine (see map.R/lot1.R).
 #
-#   AUTO: group claims into `window_days` (14) windows, take the MAX date per
-#         window, then merge windows < `gap_days` (60) from the last finalized TX.
+#   AUTO: group claims by `window_days` (13; datediff(x, window_start) <= 13), take
+#         the MAX date per window, then merge windows < `gap_days` (60) from the
+#         last finalized TX.
 #         A 2nd AUTO within `tandem_days` (180) of the 1st (no ALLO between) is a
 #         planned TANDEM. Excess AUTO ends LOT1 (single -> 2nd; tandem -> 3rd).
 #   ALLO / CART: distinct sequential dates; the earliest CENSORS later AUTO and
@@ -38,8 +39,8 @@ extract_sct_claims <- function(procedure, sct_codelist) {
   unique(d)
 }
 
-# 14-day window (max date) + 60-day gap merge -> finalized AUTO TX dates.
-finalize_auto_dates <- function(dates, window_days = 14L, gap_days = 60L) {
+# AUTO window (datediff <= window_days, default 13) max-date + 60-day gap merge.
+finalize_auto_dates <- function(dates, window_days = 13L, gap_days = 60L) {
   dates <- sort(unique(dates)); if (!length(dates)) return(as.Date(character(0)))
   tx <- as.Date(character(0)); cur_start <- NULL; cur_max <- NULL; last_tx <- NULL
   finalize <- function() {
@@ -58,7 +59,7 @@ finalize_auto_dates <- function(dates, window_days = 14L, gap_days = 60L) {
 
 # Per-patient SCT summary within LOT1 (the S15 derivations).
 build_sct_summary <- function(sct_claims, lot1_start, obs_end,
-                              tandem_days = 180L, window_days = 14L, gap_days = 60L) {
+                              tandem_days = 180L, window_days = 13L, gap_days = 60L) {
   ls <- setNames(as.Date(as.character(lot1_start$lot1_start_dt)), as.character(lot1_start$patient_id))
   oe <- setNames(as.Date(as.character(obs_end$obs_end_dt)), as.character(obs_end$patient_id))
   rows <- lapply(names(ls), function(pid) {
@@ -69,7 +70,8 @@ build_sct_summary <- function(sct_claims, lot1_start, obs_end,
     inw <- function(d) d[!is.na(d) & d >= L & d <= O]
     first_allo <- if (length(inw(allo))) min(inw(allo)) else as.Date(NA)
     first_cart <- if (length(inw(cart))) min(inw(cart)) else as.Date(NA)
-    ena <- min(c(first_allo, first_cart), na.rm = TRUE); if (is.infinite(ena)) ena <- as.Date(NA)
+    ena <- suppressWarnings(min(c(first_allo, first_cart), na.rm = TRUE))
+    if (is.infinite(ena)) ena <- as.Date(NA)
     auto_in <- sort(auto_tx[auto_tx >= L & auto_tx <= O & (is.na(ena) | auto_tx < ena)])
     d1 <- if (length(auto_in) >= 1) auto_in[1] else as.Date(NA)
     d2 <- if (length(auto_in) >= 2) auto_in[2] else as.Date(NA)

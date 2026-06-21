@@ -18,24 +18,29 @@
 
 # Map canonical pharmacy + medical claims to (MED_ABBR, MED_CLASS) via the rollup
 # codelist keyed on (code_system, normalized_code). Unmapped codes are dropped
-# (not MM agents). days_supply: pharmacy as-is; medical imputed to the default
-# where null/<1. Returns one row per claim: patient_id, med_abbr, med_class, dt,
-# type, ds.
+# (not MM agents). Faithful to 02_lot1.R:426-449: a pharmacy OR medical claim with
+# null/<1 day-supply is IMPUTED to the default (28); then claims are DEDUPED within
+# (patient, med, date, claim_type) keeping MAX day-supply. Returns one row per
+# deduped claim: patient_id, med_abbr, med_class, dt, type, ds.
 map_claims <- function(pharmacy, medical, rollup, medical_day_supply = 28L) {
   key <- function(cs, code) paste(toupper(trimws(as.character(cs))), toupper(trimws(as.character(code))))
   rk <- key(rollup$code_type, rollup$code)
   ab <- setNames(as.character(rollup$med_abbr), rk); cl <- setNames(as.character(rollup$med_class), rk)
   mk <- function(df, type, ds) {
     if (is.null(df) || !nrow(df)) return(NULL)
+    ds[is.na(ds) | ds < 1L] <- medical_day_supply                 # impute null/<1 -> 28
     k <- key(df$code_system, df$normalized_code); keep <- k %in% rk
     if (!any(keep)) return(NULL)
     data.frame(patient_id = as.character(df$patient_id)[keep], med_abbr = unname(ab[k[keep]]),
                med_class = unname(cl[k[keep]]), dt = as.Date(as.character(df$service_date))[keep],
                type = type, ds = ds[keep], stringsAsFactors = FALSE)
   }
-  ph_ds <- suppressWarnings(as.integer(pharmacy$days_supply))
-  md_ds <- suppressWarnings(as.integer(medical$day_supply)); md_ds[is.na(md_ds) | md_ds < 1L] <- medical_day_supply
-  rbind(mk(pharmacy, "pharmacy", ph_ds), mk(medical, "medical", md_ds))
+  claims <- rbind(mk(pharmacy, "pharmacy", suppressWarnings(as.integer(pharmacy$days_supply))),
+                  mk(medical,  "medical",  suppressWarnings(as.integer(medical$day_supply))))
+  if (is.null(claims) || !nrow(claims)) return(claims)
+  k <- paste(claims$patient_id, claims$med_abbr, claims$dt, claims$type, sep = "\037")
+  o <- order(k, -claims$ds)                                       # within group: max ds first
+  claims[o, , drop = FALSE][!duplicated(k[o]), , drop = FALSE]
 }
 
 # The runout state machine for ONE (patient, med) claim stream. Mirrors the Spark

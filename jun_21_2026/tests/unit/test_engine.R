@@ -1,7 +1,8 @@
 # engine: the LOCAL pure-R re-implementation must reproduce the hand-derived
 # expected MAP_STACKED and LOT1_BASE on the synthetic cohort (verifies the refactor
 # logic end to end, MAP -> LOT1, including edge cases).
-source("engine/map.R"); source("engine/lot1.R")
+source("engine/map.R"); source("engine/lot1.R"); source("engine/sct.R"); source("engine/lot_end.R")
+source("engine/run_engine.R")
 .rd <- function(f) read.csv(file.path("engine/fixtures", f), stringsAsFactors = FALSE, colClasses = "character")
 ph <- .rd("pharmacy.csv"); md <- .rd("medical.csv"); rollup <- .rd("rollup.csv"); mem <- .rd("members.csv")
 
@@ -19,6 +20,11 @@ ok(isTRUE(cm$match), "engine MAP_STACKED reproduces hand-derived expected (synth
 cl <- compare_local_table(.write(lot1), "engine/fixtures/expected/LOT1_BASE.csv",
                           c("patient_id"), required = lot1_contract)
 ok(isTRUE(cl$match), "engine LOT1_BASE reproduces hand-derived expected (synthetic)")
+# end-to-end driver MAP -> LOT1 -> SCT -> LOT1 end reproduces hand-derived LOT1_END
+e2e <- run_engine("engine/fixtures")
+ce <- compare_local_table(.write(e2e$LOT1_END), "engine/fixtures/expected/LOT1_END.csv",
+        c("patient_id"), required = c("patient_id", "lot1_base_end_dt", "lot1_base_end_reason", "lot1_base_length"))
+ok(isTRUE(ce$match), "driver LOT1_END reproduces hand-derived expected (end-to-end, incl. SCT_ALLO)")
 
 # --- targeted rule spot-checks ------------------------------------------------
 eq(nrow(map), 8L, "8 MAP periods across the cohort")
@@ -54,3 +60,15 @@ sd_md <- data.frame(patient_id = "9000000001", service_date = "2021-01-10", norm
 m2 <- build_map_stacked(sd_ph, sd_md, rl2, oe)
 ok(nrow(m2) == 1 && as.character(m2$map_end_dt) == "2021-02-06",
    "same-day pharmacy+medical collapse to one MAP (end = medical runout)")
+# pharmacy day-supply imputation: missing/<1 -> 28 (production parity, 02_lot1.R:426-435)
+imp <- data.frame(patient_id = "9000000001", service_date = "2021-01-10", normalized_code = "X",
+                  code_system = "NDC", days_supply = "", stringsAsFactors = FALSE)
+mi <- build_map_stacked(imp, data.frame(), rl, oe)
+ok(nrow(mi) == 1 && as.character(mi$map_end_dt) == "2021-02-06",
+   "missing pharmacy day-supply imputed to 28 (end = dt + 27)")
+# same-day duplicate pharmacy claims -> deduped to MAX day-supply (no artificial pushout)
+dup <- data.frame(patient_id = "9000000001", service_date = "2021-01-10", normalized_code = "X",
+                  code_system = "NDC", days_supply = c("10", "30"), stringsAsFactors = FALSE)
+md <- build_map_stacked(dup, data.frame(), rl, oe)
+ok(nrow(md) == 1 && as.character(md$map_end_dt) == "2021-02-08",
+   "same-day dup pharmacy -> one MAP, MAX day-supply 30 (end dt+29), no pushout")

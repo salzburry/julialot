@@ -38,6 +38,10 @@ ok(as.character(g("9000000018")$auto_dt_1) == "2021-03-01" && is.na(g("900000001
 eq(length(finalize_auto_dates(as.Date(c("2021-03-01", "2021-03-10")))), 1L, "14-day window: 2 claims -> 1 TX")
 eq(length(finalize_auto_dates(as.Date(c("2021-03-01", "2021-08-01")))), 2L, "153d apart -> 2 TX")
 eq(length(finalize_auto_dates(as.Date(c("2021-03-01", "2021-04-10")))), 1L, "40d apart -> 60d merge -> 1 TX")
+# AUTO window default is 13 (datediff <= 13), matching production config_lot.R:53.
+# 03-15 is 14 days from 03-01 -> a NEW window (not 13), so the window-1 TX is 03-14.
+eq(as.character(finalize_auto_dates(as.Date(c("2021-03-01", "2021-03-14", "2021-03-15")))), "2021-03-14",
+   "AUTO window is 13 days (03-15 datediff 14 > 13 -> new window)")
 # extract from canonical procedure rows via the SCT codelist
 proc <- data.frame(patient_id = "9000000011", event_date = "2021-03-01",
                    normalized_code = "38241", code_system = "HCPCS", stringsAsFactors = FALSE)

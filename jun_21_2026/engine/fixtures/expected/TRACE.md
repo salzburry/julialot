@@ -9,12 +9,13 @@ medical runout = `date_add(dt, ds-1)` (never pushed out); MAP_END = max(runouts)
 new MAP when `dt > MAP_END`; discon = gap to next MAP (or to OBS_END for the last)
 `>= 90`.
 
-## 9000000001 / LENA (pharmacy only), OBS_END 2021-12-31
+## 9000000001 / LENA (pharmacy only), OBS_END 2021-08-15
 - 2021-01-01 ds30 -> open MAP1, rx_runout = 2021-01-30.
 - 2021-01-15 ds30 -> within (<=01-30): PUSHOUT, rx_runout = date_add(2021-01-30, 30) = **2021-03-01**.
 - 2021-06-01 ds30 -> 06-01 > MAP_END 03-01: close MAP1, open MAP2, rx_runout = **2021-06-30**.
 - MAP1: start 2021-01-01, end 2021-03-01; gap to MAP2 (06-01) = 92 days >= 90 -> **discon 1**.
-- MAP2: start 2021-06-01, end 2021-06-30; gap to OBS_END = 184 >= 90 -> **discon 1**.
+- MAP2: start 2021-06-01, end 2021-06-30; gap to OBS_END (08-15) = 46 days < 90 -> **discon 0**
+  (see "Discontinuation-flag boundary" below).
 
 ## 9000000002 / BORT (pharmacy + medical), OBS_END 2021-12-31
 - 2021-02-01 ds10 (ph) -> open MAP1, rx_runout = 2021-02-10.

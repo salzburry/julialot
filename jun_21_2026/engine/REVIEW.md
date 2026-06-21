@@ -6,16 +6,17 @@ is **verification only** — production stays the Databricks SQL on `hive_metast
 (`apr_30_2026/`, untouched). Every output is checked against a **hand-derived**
 expected value (independent of the engine), so a passing test is a real check.
 
-Run it:
+Run it (the driver runs the full pipeline MAP → LOT1 → SCT → LOT1 end):
 ```
-Rscript engine/run_engine.R engine/fixtures /tmp/out   # MAP_STACKED.csv + LOT1_BASE.csv
-Rscript tests/run_unit_tests.R                          # 186 pass (engine: test_engine/sct/lot_end)
+Rscript engine/run_engine.R engine/fixtures /tmp/out   # MAP_STACKED + LOT1_BASE + LOT1_END
+Rscript tests/run_unit_tests.R                          # 190 pass (engine: test_engine/sct/lot_end)
 ```
 
 ## What to validate: each rule maps to a production source line
 
 | engine | rule | production source (apr_30_2026) |
 |---|---|---|
+| `map.R` | pharmacy/medical day-supply imputation (null/<1 → 28); de-dup (patient,med,date,type) keep max day-supply | `02_lot1.R:426-449` |
 | `map.R` | MAP runout state machine (CASE1 open / CASE2 gap→new / CASE3 pushout·reset·medical) | `02_lot1.R:528-634` |
 | `map.R` | new MAP iff `dt > max(rx_runout, med_runout)` | `02_lot1.R:550` |
 | `map.R` | pharmacy pushout `rx_runout+ds`; reset `dt+ds-1`; medical never pushed out | `02_lot1.R:581-601` |
@@ -39,6 +40,10 @@ Rscript tests/run_unit_tests.R                          # 186 pass (engine: test
 - **SCT** (`test_sct.R`, inline): single / in-window / tandem / excess AUTO, 60-day
   merge, ALLO, CART, ALLO-censors-AUTO, end reason 1/2/3.
 - **LOT1 end** (`test_lot_end.R`, inline): every cascade branch + runout gating.
+- **End-to-end** (`test_engine.R`): the driver's `LOT1_END` (MAP→LOT1→SCT→end) vs
+  hand-derived expected, including an `SCT_ALLO` end for one patient.
+- **Production parity** (`test_engine.R`/`test_sct.R`): pharmacy day-supply
+  imputation, same-day max-day-supply de-dup, AUTO window = 13.
 
 ## NOT yet ported (flagged, fixtures avoid them) — to validate as scope-complete
 
