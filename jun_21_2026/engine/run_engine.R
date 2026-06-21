@@ -28,8 +28,11 @@ run_engine <- function(input_dir, params = list()) {
   sct_claims <- extract_sct_claims(rd("procedure.csv"), rd("sct_codelist.csv"))
   sct <- if (nrow(lot1)) build_sct_summary(sct_claims, lot1[, c("patient_id", "lot1_start_dt")],
             members, p$sct_tandem_days, p$sct_auto_window_days, p$sct_auto_gap_days) else NULL
+  auto_dates <- finalize_auto_per_patient(sct_claims, p$sct_auto_window_days, p$sct_auto_gap_days, p$sct_tandem_days)
   list(MAP_STACKED = map_stacked, LOT1_BASE = lot1,
-       LOT1_END = build_lot1_end(lot1, sct, members, if (nrow(death)) death else NULL))
+       LOT1_END = build_lot1_end(lot1, sct, members, if (nrow(death)) death else NULL,
+                    map_stacked = map_stacked, auto_dates = auto_dates,
+                    permissible_subs = if (nrow(subs)) subs else NULL))
 }
 
 if (sys.nframe() == 0 && !interactive()) {

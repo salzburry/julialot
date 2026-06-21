@@ -9,7 +9,7 @@ expected value (independent of the engine), so a passing test is a real check.
 Run it (the driver runs the full pipeline MAP → LOT1 → SCT → LOT1 end):
 ```
 Rscript engine/run_engine.R engine/fixtures /tmp/out   # MAP_STACKED + LOT1_BASE + LOT1_END
-Rscript tests/run_unit_tests.R                          # 190 pass (engine: test_engine/sct/lot_end)
+Rscript tests/run_unit_tests.R                          # 196 pass (engine: test_engine/sct/lot_end)
 ```
 
 ## What to validate: each rule maps to a production source line
@@ -27,8 +27,10 @@ Rscript tests/run_unit_tests.R                          # 190 pass (engine: test
 | `lot1.R` | first-add = earliest non-base non-steroid in coverage, date = MAP_START−1 | `02_lot1.R:781-813` |
 | `sct.R` | AUTO 14-day window (max date) + 60-day gap merge | `02_lot1.R:985-1146` |
 | `sct.R` | tandem = 2nd AUTO ≤180d of 1st, no ALLO between; excess ends LOT | `02_lot1.R:1264-1306` |
+| `sct.R` | tandem-boundary date selection (window straddling the 180-day mark) | `02_lot1.R:1041-1128` |
 | `sct.R` | ALLO/CART censor AUTO; end date = earliest SCT−1, reason 1/2/3 | `02_lot1.R:1313-1338` |
-| `lot_end.R` | end cascade SCT > MED_ADD > DEATH > DISCON > STUDY_END, gated on runout | `02_lot1.R:1570-1632` |
+| `lot_end.R` | end cascade SCT > CART_INIT > MED_ADD > DEATH > DISCON > STUDY_END, gated on runout | `02_lot1.R:1570-1632` |
+| `lot_end.R` | CART_INIT flag (CART within 45d of the add) + post-runout death guard | `02_lot1.R:1469-1549` |
 
 ## Verified coverage (hand-derived expected)
 
@@ -38,22 +40,17 @@ Rscript tests/run_unit_tests.R                          # 190 pass (engine: test
 - **LOT1** (`test_engine.R`, `LOT1_BASE.csv`): steroid exclusion, induction-window
   cutoff, multi-drug regimen, first-add med+date, steroid-only → no LOT1.
 - **SCT** (`test_sct.R`, inline): single / in-window / tandem / excess AUTO, 60-day
-  merge, ALLO, CART, ALLO-censors-AUTO, end reason 1/2/3.
-- **LOT1 end** (`test_lot_end.R`, inline): every cascade branch + runout gating.
+  merge, ALLO, CART, ALLO-censors-AUTO, end reason 1/2/3, **tandem-boundary date
+  selection** (`02_lot1.R:1041-1128`; a window straddling the 180-day mark picks
+  the boundary-closest date — verified to flip a non-tandem into a tandem).
+- **LOT1 end** (`test_lot_end.R`, inline): every cascade branch + runout gating,
+  **CART_INIT** (MED_ADD then CART within 45d ends at `FIRST_CART-1`, vs `SCT_CART`
+  with no prior add), and the **post-runout death guard** (a LOT2 trigger after
+  the runout makes DISCONTINUATION win over DEATH).
 - **End-to-end** (`test_engine.R`): the driver's `LOT1_END` (MAP→LOT1→SCT→end) vs
   hand-derived expected, including an `SCT_ALLO` end for one patient.
 - **Production parity** (`test_engine.R`/`test_sct.R`): pharmacy day-supply
   imputation, same-day max-day-supply de-dup, AUTO window = 13.
-
-## NOT yet ported (flagged, fixtures avoid them) — to validate as scope-complete
-
-1. SCT **tandem-boundary date selection** — when a 14-day window straddles the
-   180-day mark, production picks the boundary-closest date, not the window max
-   (`02_lot1.R:1041-1128`). Engine uses the window max.
-2. LOT1-end **CART_INIT** — MED_ADD followed by CART within 45 days ends the LOT
-   at `FIRST_CART_DT-1` (`02_lot1.R:1591-1593`).
-3. LOT1-end **post-runout death guard** — DEATH does not outrank DISCONTINUATION
-   when a LOT2 trigger sits between runout and death (`02_lot1.R:1599-1604`).
 
 ## NOT yet ported (next stage)
 

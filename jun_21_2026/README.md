@@ -18,7 +18,7 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 190 tests, all pure-R / local
+Rscript tests/run_unit_tests.R          # 196 tests, all pure-R / local
 ```
 
 Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
@@ -45,14 +45,14 @@ Verified stages + edge cases (against hand-derived expected):
 - **LOT1** (`engine/lot1.R`): steroid exclusion from start/induction/base,
   induction-window cutoff, multi-drug regimen, first-add med+date, steroid-only →
   no LOT1.
-- **SCT** (`engine/sct.R`): AUTO 14-day window (max date) + 60-day gap merge +
-  180-day tandem, single/tandem/excess AUTO, ALLO/CART censoring + LOT-end reason
-  (1=AUTO/2=ALLO/3=CART). (Tandem-boundary date-selection corner documented as
-  not-yet-ported.)
-- **LOT1 end** (`engine/lot_end.R`): the priority cascade SCT > MED_ADD > DEATH >
-  DISCONTINUATION > STUDY_END, each gated against the runout (a trigger after
-  discontinuation does not fire). (CART_INIT + post-runout-death-guard documented
-  as not-yet-ported.)
+- **SCT** (`engine/sct.R`): AUTO 13-day window + 60-day gap merge + 180-day tandem,
+  single/tandem/excess AUTO, ALLO/CART censoring + LOT-end reason (1=AUTO/2=ALLO/
+  3=CART), and the tandem-boundary date selection (window straddling the 180-day
+  mark picks the boundary-closest date).
+- **LOT1 end** (`engine/lot_end.R`): the priority cascade SCT > CART_INIT > MED_ADD
+  > DEATH > DISCONTINUATION > STUDY_END, each gated against the runout, with
+  CART_INIT (MED_ADD then CART within 45d) and the post-runout death guard (a LOT2
+  trigger after the runout makes DISCONTINUATION win over DEATH).
 
 Still to port + verify the same way: the **LOT2-5** loop (`LOT_LONG`) — trigger
 the next line from the LOT1 end event, re-derive the regimen, repeat to MAX_LOT.

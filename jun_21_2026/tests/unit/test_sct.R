@@ -42,6 +42,16 @@ eq(length(finalize_auto_dates(as.Date(c("2021-03-01", "2021-04-10")))), 1L, "40d
 # 03-15 is 14 days from 03-01 -> a NEW window (not 13), so the window-1 TX is 03-14.
 eq(as.character(finalize_auto_dates(as.Date(c("2021-03-01", "2021-03-14", "2021-03-15")))), "2021-03-14",
    "AUTO window is 13 days (03-15 datediff 14 > 13 -> new window)")
+# tandem-boundary: TX1=01-01 (boundary 06-29); window {06-28, 07-05} would take max
+# 07-05 (185d > 180 -> NOT tandem), but the boundary-closest 06-28 is selected
+# (178d <= 180 -> tandem). Verifies the refinement flips the outcome.
+tb <- finalize_auto_dates(as.Date(c("2021-01-01", "2021-06-28", "2021-07-05")))
+eq(as.character(tb[2]), "2021-06-28", "tandem-boundary picks boundary-closest date, not window max")
+tbc <- do.call(rbind, list(mk("9000000019", "2021-01-01", "AUTO"),
+  mk("9000000019", "2021-06-28", "AUTO"), mk("9000000019", "2021-07-05", "AUTO")))
+sb <- build_sct_summary(tbc, data.frame(patient_id = "9000000019", lot1_start_dt = "2020-12-01"),
+                        data.frame(patient_id = "9000000019", obs_end_dt = "2021-12-31"))
+eq(sb$tand_flg, 1L, "tandem-boundary selection yields a valid tandem (178d <= 180d)")
 # extract from canonical procedure rows via the SCT codelist
 proc <- data.frame(patient_id = "9000000011", event_date = "2021-03-01",
                    normalized_code = "38241", code_system = "HCPCS", stringsAsFactors = FALSE)
