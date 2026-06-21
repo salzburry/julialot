@@ -187,6 +187,14 @@ compare_schema_maps <- function(sa, sb) {
   if ("patid" %in% lc) return("PATID")
   "patient_id"
 }
+# Resolve side A's id column: an explicit --patid override is honored ONLY when that
+# column is actually present on side A (else fall back to auto-detect). This keeps a
+# wrong/stale override on a cross-convention compare from normalizing a side against
+# a column it does not have. --patid is for a NONSTANDARD id name; cross-convention
+# (PATID vs patient_id) needs no flag (each side is detected independently).
+.resolve_patid <- function(patid, cols) {
+  if (!is.null(patid) && tolower(patid) %in% tolower(cols)) patid else .detect_patid(cols)
+}
 # Normalize one side's id column to canonical `patient_id` (pure: returns the
 # CREATE VIEW DDL). Used to bridge a CROSS-CONVENTION compare (legacy PATID on one
 # side, canonical patient_id on the other) so the id-name difference alone does not
@@ -233,7 +241,7 @@ table_checksum <- function(con, tbl, keys, compare_cols, excluded = character(0)
 compare_table <- function(con, tbl_a, tbl_b, table_name, patid = NULL) {
   if (is.null(COMPARE_KEYS[[table_name]])) stop("no COMPARE_KEYS for ", table_name)
   sa <- describe_schema(con, tbl_a); sb <- describe_schema(con, tbl_b)
-  id_a <- patid %||% .detect_patid(names(sa)); id_b <- .detect_patid(names(sb))
+  id_a <- .resolve_patid(patid, names(sa)); id_b <- .detect_patid(names(sb))
   # Cross-convention bridge: when the two sides name the patient id differently
   # (legacy PATID vs canonical patient_id - the actual legacy-vs-refactored case),
   # normalize EACH non-canonical side to `patient_id` via a temp view BEFORE schema/

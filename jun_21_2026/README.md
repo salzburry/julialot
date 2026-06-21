@@ -92,8 +92,10 @@ Run the live current-vs-prior comparison on hive_metastore (same DSN/odbc as
 
 ```
 Rscript scripts/compare_run_outputs.R --run hive_metastore.lot_prior hive_metastore.lot_current
-# the patient-id column is detected PER SIDE; a cross-convention compare (legacy
-# PATID vs canonical patient_id) is normalized to patient_id; override with --patid <col>
+# the patient-id column is detected PER SIDE and a cross-convention compare (legacy
+# PATID vs canonical patient_id) is auto-normalized to patient_id - no flag needed.
+# --patid <col> is ONLY for a NONSTANDARD side-A id name (and is ignored unless that
+# column exists on side A); do NOT use it to bridge PATID vs patient_id.
 ```
 
 Per table it runs the full hierarchy and exits 0 on `match`, 1 on `mismatch`:

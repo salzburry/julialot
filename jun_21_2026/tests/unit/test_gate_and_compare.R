@@ -119,6 +119,12 @@ ok(grepl("CREATE OR REPLACE TEMPORARY VIEW cmpnorm_MAP_STACKED_a", nv) &&
 ok(grepl("FROM ns.MAP_STACKED", nv) && !grepl("AS `patient_id`.*AS `patient_id`", nv),
    "sql_normalize_view renames exactly one column (the id) to patient_id")
 ok(.cmp_view("LOT_LONG", "b") == "cmpnorm_LOT_LONG_b", "normalize view name is per-table/per-side")
+# --patid override is honored ONLY when the named column is present on side A, so a
+# wrong override on a cross-convention compare can't normalize a missing column.
+ok(.resolve_patid("PATID", c("PATID", "lot_num")) == "PATID", "override honored when the column exists")
+ok(.resolve_patid("PATID", c("patient_id", "lot_num")) == "patient_id",
+   "override IGNORED (falls back to auto-detect) when side A lacks that column")
+ok(.resolve_patid(NULL, c("patient_id")) == "patient_id", "no override -> auto-detect")
 # value compare spans ALL shared non-key cols (catches per-drug/class flags)
 ok(setequal(value_compare_cols(c("PATID", "LOT_NUM", "LOT1_MED_LENA"),
                                c("patid", "lot_num", "lot1_med_lena"), "PATID"),
