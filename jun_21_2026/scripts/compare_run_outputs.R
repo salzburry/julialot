@@ -4,9 +4,11 @@
 #   actual   vs  expected (regression-expected, generated from legacy@baseline)
 #   refactored vs legacy   (LOT_ENGINE_MODE=compare, run-scoped namespaces)
 #
-# SKELETON. The comparison LOGIC and ordering are authoritative; the Spark
-# queries are stubbed (`db_q`) for the live Databricks adapter. Full
-# patient-level comparison is the gate; checksums are only an early warning.
+# The comparison LOGIC and ordering are authoritative and the warehouse SQL is
+# authored as pure `sql_*` builders (Databricks SQL over the hive_metastore
+# catalog); the ONLY unwired seam is `db_q` (the DBI/odbc execution, as in
+# apr_30_2026/R/db_utils.R). There is no Spark DataFrame API. Full patient-level
+# comparison is the gate; checksums are only an early warning.
 #
 # Comparison hierarchy (run in order; stop reporting at the first decisive gap):
 #   1. schema + key-uniqueness
@@ -71,64 +73,101 @@ OUTPUT_CONTRACT <- list(
                   "lot_tx_auto_dt_1", "lot_tx_auto_dt_2", "lot_tx_auto_max_dt")
 )
 
-# --- Databricks adapter (stub) -------------------------------------------
-# Replace with the project db_q/db_exec against the non-prod test connection.
-db_q <- function(con, sql) stop("db_q stub: wire to the Databricks adapter; sql=\n", sql)
+# --- hive_metastore (Databricks SQL) adapter seam -------------------------
+# The run-scoped outputs live as tables in the hive_metastore catalog and are
+# queried with Databricks SQL over ODBC (the project's DBI/odbc connection, same
+# as apr_30_2026/R/db_utils.R) - there is no Spark DataFrame API here. `db_q` is
+# the ONLY unwired seam: point it at the non-prod ODBC connection and the SQL
+# builders below execute as-is. Each `sql_*` builder is a pure function (unit-
+# tested) so the comparison LOGIC is reviewable now, ahead of a live warehouse.
+db_q <- function(con, sql) stop("db_q seam: wire to the hive_metastore ODBC connection; sql=\n", sql)
 
-# --- canonical normalization (--14) ---------------------------------------
-# Applied in-SQL before comparison: deterministic sort, one null representation,
-# numeric coercion, float tolerance, NDC string form. Documented here, emitted
-# into the comparison SQL by the adapter.
+.bt <- function(x) paste0("`", x, "`")                       # backtick-quote an identifier
+.keylist <- function(keys) paste(.bt(keys), collapse = ", ")
+.key_join <- function(keys) paste(sprintf("a.%s <=> b.%s", .bt(keys), .bt(keys)), collapse = " AND ")
+
+# --- canonical normalization (roadmap S14) --------------------------------
+# Warehouse columns are already TYPED (DATE/INT/STRING), so the null-safe `<=>`
+# operator compares dates as dates and ints as ints with one null semantics; no
+# string coercion is needed (unlike the local CSV path). Float tolerance would be
+# emitted per float column - none exist in the current output contract.
 NORMALIZATION_NOTES <- c(
-  "sort by the table's COMPARE_KEYS",
-  "null -> a single canonical sentinel before equality",
-  "dates compared as DATE (no tz); numerics coerced; floats within tolerance",
-  "arrays compared as ordered unless declared unordered"
-)
+  "compare with the null-safe `<=>` on typed columns (one null semantics)",
+  "order checksums by array_sort so the hash is partition-independent",
+  "float columns (none today) would compare within tolerance via round()")
 
-# --- steps ---------------------------------------------------------------
+# --- SQL builders (pure; unit-tested) -------------------------------------
+sql_schema <- function(tbl) sprintf("DESCRIBE TABLE %s", tbl)   # R diffs the returned columns+types
 
+sql_membership <- function(tbl_a, tbl_b, keys) {
+  k <- .keylist(keys)
+  sprintf(paste0(
+    "SELECT\n",
+    "  (SELECT count(*) FROM (SELECT %s FROM %s EXCEPT SELECT %s FROM %s)) AS only_in_a,\n",
+    "  (SELECT count(*) FROM (SELECT %s FROM %s EXCEPT SELECT %s FROM %s)) AS only_in_b"),
+    k, tbl_a, k, tbl_b, k, tbl_b, k, tbl_a)
+}
+
+# Per-column null-safe mismatch counts over the inner join on keys, EXCLUDING the
+# nondeterministic columns from the verdict (still counted separately, surfaced).
+sql_values <- function(tbl_a, tbl_b, keys, compare_cols, excluded = character(0)) {
+  cols <- setdiff(compare_cols, keys)
+  on <- .key_join(keys)
+  per <- vapply(cols, function(c) sprintf(
+    "SELECT '%s' AS column_name, %s AS excluded, count(*) AS n_mismatch FROM %s a JOIN %s b ON %s WHERE NOT (a.%s <=> b.%s)",
+    c, if (c %in% excluded) "true" else "false", tbl_a, tbl_b, on, .bt(c), .bt(c)), character(1))
+  paste(per, collapse = "\nUNION ALL\n")
+}
+
+# Deterministic, partition-independent table hash: per-row md5 over the non-excluded
+# columns, array_sort'd then joined and hashed. Early warning only.
+sql_checksum <- function(tbl, keys, compare_cols, excluded = character(0)) {
+  cols <- setdiff(compare_cols, excluded)
+  rowexpr <- sprintf("md5(concat_ws('\\037', %s))", paste(sprintf("cast(%s as string)", .bt(cols)), collapse = ", "))
+  sprintf("SELECT md5(array_join(array_sort(collect_list(%s)), '|')) AS checksum FROM %s", rowexpr, tbl)
+}
+
+# --- steps (execute the builders via the db_q seam) -----------------------
 compare_schema <- function(con, tbl_a, tbl_b) {
-  # TODO: DESCRIBE both; compare column names+types; key uniqueness counts.
-  # Returns list(ok, detail). Decisive: a schema/key mismatch stops here.
-  list(ok = NA, detail = "schema+key-uniqueness compare (stub)")
+  da <- db_q(con, sql_schema(tbl_a)); db <- db_q(con, sql_schema(tbl_b))
+  ca <- da$col_name; cb <- db$col_name
+  list(ok = setequal(ca, cb), a_only = setdiff(ca, cb), b_only = setdiff(cb, ca))
 }
 
 compare_membership <- function(con, tbl_a, tbl_b, keys) {
-  # Anti-joins on `keys`: only-in-a, only-in-b counts + a bounded sample of PATIDs.
-  list(only_in_a = NA_integer_, only_in_b = NA_integer_, sample = NULL)
+  r <- db_q(con, sql_membership(tbl_a, tbl_b, keys))
+  list(only_in_a = r$only_in_a[1], only_in_b = r$only_in_b[1])
 }
 
-compare_values <- function(con, tbl_a, tbl_b, keys, excluded = character(0)) {
-  # Inner-join on keys; per-column mismatch counts (excluding `excluded`),
-  # AFTER canonical normalization; returns a bounded sample of (key, column,
-  # value_a, value_b). This is the authoritative gate.
-  list(mismatched_columns = NULL, mismatched_rows = NA_integer_, sample = NULL)
+compare_values <- function(con, tbl_a, tbl_b, keys, compare_cols, excluded = character(0)) {
+  r <- db_q(con, sql_values(tbl_a, tbl_b, keys, compare_cols, excluded))
+  blocking <- r[!as.logical(r$excluded) & r$n_mismatch > 0, , drop = FALSE]
+  excl     <- r[ as.logical(r$excluded) & r$n_mismatch > 0, , drop = FALSE]
+  list(mismatched_columns = blocking$column_name, value_mismatch = sum(blocking$n_mismatch),
+       excluded_diffs = sum(excl$n_mismatch))
 }
 
-table_checksum <- function(con, tbl, keys) {
-  # Deterministic sorted hash AFTER canonical sort+normalize (not per-partition).
-  # Early-warning only; never the release authority.
-  NA_character_
-}
+table_checksum <- function(con, tbl, keys, compare_cols, excluded = character(0))
+  db_q(con, sql_checksum(tbl, keys, compare_cols, excluded))$checksum[1]
 
 compare_table <- function(con, tbl_a, tbl_b, table_name) {
   keys <- COMPARE_KEYS[[table_name]]
-  excl <- EXCLUDED_FIELDS[[table_name]] %||% character(0)
   if (is.null(keys)) stop("no COMPARE_KEYS for ", table_name)
+  excl <- EXCLUDED_FIELDS[[table_name]] %||% character(0)
+  cols <- OUTPUT_CONTRACT[[table_name]] %||% keys
   list(
     table      = table_name,
     schema     = compare_schema(con, tbl_a, tbl_b),
     membership = compare_membership(con, tbl_a, tbl_b, keys),
-    values     = compare_values(con, tbl_a, tbl_b, keys, excl),
-    checksum_a = table_checksum(con, tbl_a, keys),
-    checksum_b = table_checksum(con, tbl_b, keys)
+    values     = compare_values(con, tbl_a, tbl_b, keys, cols, excl),
+    checksum_a = table_checksum(con, tbl_a, keys, cols, excl),
+    checksum_b = table_checksum(con, tbl_b, keys, cols, excl)
   )
 }
 
-# --- LOCAL CSV comparison (real; the same hierarchy, runnable without Spark) --
+# --- LOCAL CSV comparison (real; the same hierarchy, runnable without a warehouse) --
 # Used by the unit tests and for comparing exported CSVs; the db_q path above is
-# the Spark equivalent for large run-scoped tables.
+# the hive_metastore (Databricks SQL) equivalent for large run-scoped tables.
 .norm_cell <- function(x) { x <- trimws(as.character(x)); x[is.na(x) | x == ""] <- "\001NULL\001"; x }
 
 # Cell equality AFTER canonical normalization (the documented rules, applied here
@@ -149,6 +188,17 @@ compare_table <- function(con, tbl_a, tbl_b, table_name) {
   ad <- .as_date(a); bd <- .as_date(b)                       # explicit format -> NA, never errors
   dateok <- rem & !is.na(ad) & !is.na(bd) & ad == bd
   eq | numok | dateok
+}
+
+# Canonical cell form for the CHECKSUM, so the compact audit signal uses the SAME
+# normalization as the verdict (1 vs 1.0, a timestamp vs its date, hash identically).
+.canon_cell <- function(x) {
+  v <- .norm_cell(x)
+  ne <- .num_eligible(v)
+  if (any(ne)) v[ne] <- format(as.numeric(v[ne]), scientific = FALSE, trim = TRUE)
+  de <- !ne & .date_eligible(v); dd <- .as_date(v[de])
+  if (any(de)) v[de] <- as.character(dd)
+  v
 }
 
 compare_local_table <- function(path_a, path_b, keys, excluded = character(0), required = character(0)) {
@@ -190,8 +240,11 @@ compare_local_table <- function(path_a, path_b, keys, excluded = character(0), r
       }
     }
   }
-  res$checksum_a <- content_hash(a[order(ka), setdiff(names(a), excluded), drop = FALSE])
-  res$checksum_b <- content_hash(b[order(kb), setdiff(names(b), excluded), drop = FALSE])
+  keep <- setdiff(names(a), excluded)                        # checksum uses the canonical cell
+  ca <- as.data.frame(lapply(a[keep], .canon_cell), stringsAsFactors = FALSE, check.names = FALSE)
+  cb <- as.data.frame(lapply(b[keep], .canon_cell), stringsAsFactors = FALSE, check.names = FALSE)
+  res$checksum_a <- content_hash(ca[order(ka), , drop = FALSE])
+  res$checksum_b <- content_hash(cb[order(kb), , drop = FALSE])
   res$match <- res$schema_ok && res$contract_ok && res$key_unique &&
                res$only_in_a == 0 && res$only_in_b == 0 && res$value_mismatch == 0
   res
@@ -220,14 +273,17 @@ compare_local <- function(dir_a, dir_b, tables = names(COMPARE_KEYS)) {
   out
 }
 
-# Compare a full run (all three output tables). Returns "match" / "mismatch".
+# Compare a full run (all three output tables) in the hive_metastore catalog.
+# A run matches only if EVERY table matches on schema, membership, AND values.
 compare_run <- function(con, ns_a, ns_b, tables = names(COMPARE_KEYS)) {
   results <- lapply(tables, function(t)
     compare_table(con, paste0(ns_a, ".", t), paste0(ns_b, ".", t), t))
   names(results) <- tables
-  # A run matches only if every table matches on membership AND values.
-  # (Stub returns NA until db_q is wired; integration test asserts "match".)
-  list(verdict = "stub", tables = results)
+  ok_one <- function(r) isTRUE(r$schema$ok) &&
+    isTRUE((r$membership$only_in_a %||% NA) == 0) && isTRUE((r$membership$only_in_b %||% NA) == 0) &&
+    isTRUE((r$values$value_mismatch %||% NA) == 0)
+  list(verdict = if (all(vapply(results, ok_one, logical(1)))) "match" else "mismatch",
+       tables = results)
 }
 
 if (sys.nframe() == 0 && !interactive()) {
@@ -250,5 +306,5 @@ if (sys.nframe() == 0 && !interactive()) {
     quit(status = if (identical(attr(res, "verdict"), "match")) 0L else 1L)
   }
   cat("compare_run_outputs.R loaded. Local: --local <dir_a> <dir_b>;",
-      "Spark: wire db_q() for run-scoped namespaces.\n")
+      "hive_metastore: wire db_q() for run-scoped namespaces.\n")
 }

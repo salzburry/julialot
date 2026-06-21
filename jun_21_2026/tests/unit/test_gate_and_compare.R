@@ -9,6 +9,14 @@ writeLines("x", file.path(bd, "R", "map.R")); writeLines("y", file.path(bd, "R",
 rec <- verify_manifest_matches_bundle("R/map.R", bd)
 ok(!rec$ok && "R/sneaky.R" %in% rec$unlisted_in_manifest, "unlisted bundle file detected")
 ok(verify_manifest_matches_bundle(c("R/map.R", "R/sneaky.R"), bd)$ok, "fully-listed bundle reconciles")
+# --bundle: data files are scanned at the BUNDLE root, not cwd
+ok(identical(bundle_data_files("reference_data/approved/x.csv", "/tmp/bundle"),
+             "/tmp/bundle/reference_data/approved/x.csv"),
+   "bundle data file resolved against bundle dir")
+bsyn <- file.path(tempdir(), "bsyn"); dir.create(file.path(bsyn, "reference_data", "approved"), recursive = TRUE, showWarnings = FALSE)
+writeLines(c("patient_id,x", "9000000123,1"), file.path(bsyn, "reference_data", "approved", "s.csv"))
+ok(!verify_no_synthetic_data(bundle_data_files("reference_data/approved/s.csv", bsyn))$ok,
+   "synthetic in BUNDLED file detected via the bundle root")
 ok(length(scan_file_for_synthetic("tests/fixtures/synthetic/members.csv")) > 0,
    "synthetic-range PATID detected")
 # fail closed: a missing listed data file is a violation
@@ -77,6 +85,26 @@ ok(.cells_equal("2020-06-01 00:00:00", "2020-06-01"), "date: timestamp == date")
 ok(!.cells_equal("00002143380", "2143380"), "leading-zero id NOT numerically coerced")
 ok(!.cells_equal("PROGRESSION", "DEATH"), "distinct tokens differ")
 ok(!.cells_equal("\001NULL\001", "0"), "null is not 0")
+
+# hive_metastore SQL builders (pure; db_q is the only unwired seam)
+ok(grepl("EXCEPT", sql_membership("ns_a.LOT_LONG", "ns_b.LOT_LONG", c("patient_id", "lot_num"))),
+   "membership SQL uses EXCEPT anti-join")
+sv <- sql_values("a", "b", "patient_id",
+                 c("patient_id", "lot_start_type", "lot_base_1st_add_med"), "lot_base_1st_add_med")
+ok(grepl("<=>", sv) && grepl("UNION ALL", sv), "values SQL is null-safe per-column union")
+ok(grepl("'lot_base_1st_add_med' AS column_name, true AS excluded", sv), "excluded col flagged in values SQL")
+ok(!grepl("'patient_id' AS column_name", sv), "key column is not value-compared")
+ok(grepl("array_sort", sql_checksum("t", "patient_id", c("patient_id", "lot_start_type"))),
+   "checksum SQL is order-independent (array_sort)")
+
+# checksum uses the SAME normalization as the verdict (1 vs 1.0 -> match AND equal checksum)
+da <- file.path(tempdir(), "ca"); db2 <- file.path(tempdir(), "cb")
+dir.create(da, showWarnings = FALSE); dir.create(db2, showWarnings = FALSE)
+writeLines(c("patient_id,n", "P1,1"), file.path(da, "t.csv"))
+writeLines(c("patient_id,n", "P1,1.0"), file.path(db2, "t.csv"))
+rr <- compare_local_table(file.path(da, "t.csv"), file.path(db2, "t.csv"), "patient_id")
+ok(rr$value_mismatch == 0 && identical(rr$checksum_a, rr$checksum_b),
+   "checksum aligns with the numeric-equivalence verdict")
 
 # coverage matrix builds (informational); gate mode fails on gaps (catalog is todo)
 ok(nrow(build_coverage_matrix("tests/fixtures/catalog.csv")) > 0, "coverage matrix builds")

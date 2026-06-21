@@ -5,7 +5,7 @@
   "description": "Closed schema for a study. Structural rules only; cross-rules (single base, no inheritance cycles, override-references-inherited-only, add-not-duplicating-inherited, not-both-disabled-and-overridden, gate-DAG-satisfiable, params-conform-to-gate-module-schema) are enforced by the runtime study validator, not expressible in plain JSON Schema.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["id", "version", "adapter"],
+  "required": ["id", "version", "adapter", "study_period"],
   "properties": {
     "id": { "type": "string" },
     "version": { "type": "string", "description": "semantic version of this study definition" },

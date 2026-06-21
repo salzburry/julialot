@@ -19,7 +19,7 @@ deterministic. Currently known nondeterministic points (to be removed or pinned)
   `date_sub(MAP_START_DT, 1)` — identical across a same-date tie — so
   `*_1ST_ADD_MED_DT` is **deterministic** and only `*_1ST_ADD_MED` (the med
   identity) is excluded. Pending a deterministic fix, record `seed=42` + the
-  Spark/runtime versions. If the med choice ever propagates into a downstream
+  Databricks runtime versions. If the med choice ever propagates into a downstream
   field (end date/reason/flags), that field is **not** excluded, so the strict
   comparison there is what catches the propagation (fail closed);
 - any **same-date token display** (`min_by`/`max_by` over date alone) in

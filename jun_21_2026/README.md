@@ -18,7 +18,7 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 114 tests, all pure-R / local
+Rscript tests/run_unit_tests.R          # 137 tests, all pure-R / local
 ```
 
 Contents:
@@ -30,7 +30,7 @@ contracts/
   manifest.schema.json           # run manifest (7 version axes, secret-redacted)
 cohort/gates/registry.yml        # gate modules: phase, depends_on, anchor, codelist
 studies/overall.yml, ndmm.yml    # example base + derived study (Overall -> NDMM delta)
-scripts/                         # all runnable + unit-tested (except the Spark stubs):
+scripts/                         # all runnable + unit-tested (except the hive_metastore db_q seam):
   lib.R                          #   shared helpers (NDC normalize, hashing, yaml/json)
   validate_config.R              #   typed config, fail-fast
   validate_reference_data.R      #   codelist validation (schema/NDC/collision/bounds)
@@ -39,12 +39,12 @@ scripts/                         # all runnable + unit-tested (except the Spark 
   build_coverage_matrix.R        #   positive/negative coverage from the catalog
   verify_no_synthetic.R          #   release gate: allowlist + reserved-PATID scan
   compare_run_outputs.R          #   comparison hierarchy: LOCAL CSV mode works + tested
-                                 #   (numeric/float/date normalization, output contract);
-                                 #   only the large-table Spark path (db_q) is a stub
+                                 #   (numeric/date normalization, output contract); the
+                                 #   hive_metastore SQL is authored - only db_q (ODBC) is unwired
   promote_reference_data.R       #   intake->validated->approved: validation + dry-run
                                  #   runnable + tested; only snapshot-write/impact = stub
-  validate_manifest.R            #   run-manifest runtime checks (secret redaction +
-                                 #   value cross-rules); manifest.schema.json owns structure
+  validate_manifest.R            #   ONE manifest gate: structural (closed schema,
+                                 #   incl. secrets[]) + runtime (redaction, publish cross-rules)
 tests/
   run_unit_tests.R, testutil.R   # Level-1 runner + tiny framework
   unit/                          # the tests (config, refdata, canonical, study, gate,
@@ -62,10 +62,12 @@ algorithm, no premature extraction):
   frozen from the approved legacy code at the baseline Git SHA* (Databricks),
   never hand-authored. Spec-expected outputs are *hand-derived and dual-reviewed*
   with clinical sign-off. So `tests/fixtures/expected/` holds templates only.
-- **The two Spark-only stubs:** the large-table comparison path (`db_q` in
-  `compare_run_outputs.R`; the *local CSV* comparison is complete and tested) and
-  the snapshot-write + affected-patient impact estimate in
-  `promote_reference_data.R`.
+- **The two hive_metastore-only seams:** executing the large-table comparison SQL
+  (the SQL is authored as `sql_*` builders; only `db_q` ODBC execution in
+  `compare_run_outputs.R` is unwired — the *local CSV* comparison is complete and
+  tested) and the snapshot-write + affected-patient impact estimate in
+  `promote_reference_data.R`. The engine is Databricks SQL over the
+  **hive_metastore** catalog (DBI/odbc), not Spark.
 - **Any moved/extracted algorithm code**, and the **Optum canonical-view shim**
   (Increment 1B) — both wait for the baseline + harness on the refactor branch.
 - **Clinical sign-off** on the gate registry semantics and the example study

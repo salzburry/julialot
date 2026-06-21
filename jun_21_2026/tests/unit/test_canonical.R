@@ -14,16 +14,30 @@ bad_ndc <- data.frame(patient_id = "9000000001", service_date = "2020-01-01",
   raw_ndc = "00002-1433-80", normalized_code = "2143380", code_system = "NDC",
   days_supply = "28", source_table = "rx", source_record_id = "x", data_vintage = "SYNTH",
   stringsAsFactors = FALSE)
-ok(any(grepl("not a valid 11-digit NDC", validate_entity(bad_ndc, sp)$errors)),
+ok(any(grepl("canonical 11-digit NDC", validate_entity(bad_ndc, sp)$errors)),
    "non-11-digit normalized NDC caught")
-# raw is preserved for lineage, NOT recomputed: an 11-digit normalized_code passes
-# the NDC check even when raw carries dashes / a different segmentation.
+# the STORED value must be EXACTLY 11 digits: a dashed 11-digit value is rejected
+# (is_ndc11 does not strip separators the way the adapter's normalize_ndc does).
+dash_ndc <- data.frame(patient_id = "9000000001", service_date = "2020-01-01",
+  raw_ndc = "00002-1433-80", normalized_code = "0000-2143-380", code_system = "NDC",
+  days_supply = "28", source_table = "rx", source_record_id = "x", data_vintage = "SYNTH",
+  stringsAsFactors = FALSE)
+ok(any(grepl("canonical 11-digit NDC", validate_entity(dash_ndc, sp)$errors)),
+   "dashed stored NDC rejected (exact ^[0-9]{11}$, not stripped)")
+# raw is preserved for lineage, NOT recomputed: an exact 11-digit normalized_code
+# passes even when raw carries dashes / a different segmentation.
 good_ndc <- data.frame(patient_id = "9000000001", service_date = "2020-01-01",
   raw_ndc = "00002-1433-80", normalized_code = "00002143380", code_system = "NDC",
   days_supply = "28", source_table = "rx", source_record_id = "x", data_vintage = "SYNTH",
   stringsAsFactors = FALSE)
 ok(!any(grepl("11-digit NDC", validate_entity(good_ndc, sp)$errors)),
    "valid 11-digit normalized NDC accepted (raw not recomputed)")
+# two duplicate grains: source-level (incl source_record_id) AND the post-dedup
+# algorithm grain (excl it) are BOTH validated.
+ddp <- read.csv("tests/fixtures/synthetic/pharmacy.csv", colClasses = "character")
+ddp <- rbind(ddp, ddp[1, ]); ddp$source_record_id[nrow(ddp)] <- "DIFFERENT_REC"
+ok(any(grepl("dedup grain", validate_entity(ddp, sp)$errors)),
+   "post-dedup grain collision flagged (same patient+date+code, diff source_record_id)")
 
 dup <- read.csv("tests/fixtures/synthetic/pharmacy.csv", colClasses = "character")
 dup <- rbind(dup, dup[1, ])  # duplicate the full key

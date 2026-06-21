@@ -38,6 +38,9 @@ CONFIG_SPEC <- list(
 
 validate_config <- function(cfg, spec = CONFIG_SPEC) {
   errors <- character(0)
+  unknown <- setdiff(names(cfg), names(spec))         # reject typos (e.g. map_disconn_gap_days)
+  if (length(unknown))
+    errors <- c(errors, sprintf("unknown config key(s): %s", paste(unknown, collapse = ", ")))
   for (name in names(spec)) {
     s <- spec[[name]]
     present <- name %in% names(cfg) && !is.null(cfg[[name]])

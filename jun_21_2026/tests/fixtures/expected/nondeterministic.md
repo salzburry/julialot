@@ -5,7 +5,7 @@ downstream MAP/LOT state must be deterministic.
 
 | table | field | reason | plan |
 |---|---|---|---|
-| LOT1_BASE | lot1_base_1st_add_med | seeded random tie-break picks WHICH med among same-date first-add candidates (02_lot1.R:806, `ORDER BY MAP_START_DT, rand(42)`) | record seed + Spark/runtime versions; later, separately validated deterministic tie-break fix |
+| LOT1_BASE | lot1_base_1st_add_med | seeded random tie-break picks WHICH med among same-date first-add candidates (02_lot1.R:806, `ORDER BY MAP_START_DT, rand(42)`) | record seed + Databricks runtime versions; later, separately validated deterministic tie-break fix |
 | LOT_LONG | lot_base_1st_add_med | inherits the LOT1 tie-break for LOT1 | same |
 
 The excluded field is the **med identity**, not the date. The date is

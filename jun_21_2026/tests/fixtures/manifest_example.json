@@ -1,0 +1,47 @@
+{
+  "run_id": "run-2026-06-21-0001",
+  "timestamp": "2026-06-21T00:00:00Z",
+  "run_status": "success",
+  "git": { "sha": "0ded931abc", "dirty": false },
+  "version_axes": {
+    "algorithm": "lot-1.0.0",
+    "canonical_contract": "0.1-draft",
+    "source_adapter": "optum-1.0.0",
+    "study_definition": "ndmm_2025@1.0.0",
+    "reference_data": "rd-2026Q2",
+    "source_data_vintage": "optum-2026Q1",
+    "dashboard": "dash-1.0.0"
+  },
+  "config": {
+    "resolved": { "database": "hive_metastore", "max_lot": 5 },
+    "hash": "cfg-abc123",
+    "precedence": ["defaults", "study", "env"]
+  },
+  "secrets": [
+    { "reference": "kv://db_pwd", "version": "3", "resolved": true }
+  ],
+  "source": {
+    "database": "hive_metastore",
+    "delta_versions": { "med_claims": 42 },
+    "vintage": "optum-2026Q1"
+  },
+  "reference_data": [
+    { "id": "steroid_codes", "version": "1.0.0", "hash": "h1", "approval_status": "approved" }
+  ],
+  "environment": {
+    "databricks_runtime": "14.3 LTS",
+    "sql_warehouse": "wh-123",
+    "photon": true,
+    "r_version": "4.3.1",
+    "timezone": "UTC"
+  },
+  "stages": [
+    { "name": "cohort", "row_count": 1000, "runtime_sec": 12.5 }
+  ],
+  "outputs": [
+    { "table": "LOT_LONG", "schema_hash": "s1", "checksum": "c1", "hash_algorithm": "sha256" }
+  ],
+  "quality": { "cohort_valid_for_primary_use": true, "degraded_gates": [] },
+  "comparison": { "baseline_run_id": null, "result": "match" },
+  "publication": { "status": "published", "published_alias": "prod.lot_long" }
+}

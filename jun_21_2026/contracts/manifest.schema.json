@@ -92,13 +92,14 @@
     },
     "environment": {
       "type": "object",
-      "required": ["databricks_runtime", "spark_version", "r_version", "timezone"],
+      "$comment": "engine is Databricks SQL over the hive_metastore catalog (DBI/odbc); databricks_runtime is the authoritative engine-version axis. No Spark DataFrame API.",
+      "required": ["databricks_runtime", "r_version", "timezone"],
       "properties": {
         "databricks_runtime": { "type": "string" },
-        "spark_version": { "type": "string" },
+        "sql_warehouse": { "type": "string" },
+        "warehouse_channel": { "type": "string" },
         "photon": { "type": "boolean" },
-        "cluster": { "type": "string" },
-        "spark_settings": { "type": "object" },
+        "warehouse_settings": { "type": "object" },
         "r_version": { "type": "string" },
         "package_lock_hash": { "type": "string" },
         "odbc_driver": { "type": "string" },

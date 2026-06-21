@@ -25,21 +25,22 @@ package/multi-repo until a real second consumer; **behaviour-preserving** — th
 refactor must reproduce current patient-level outputs, no opportunistic redesign
 during extraction.
 
-## 2. Naming: source-system-agnostic, Spark-native core
+## 2. Naming: source-system-agnostic, hive_metastore (Databricks SQL) core
 
 The target is **not** "DB-agnostic." The core stops depending on Optum physical
-table/column names (reads canonical views) but still runs only on Spark/
-Databricks. It is **not** portable to Snowflake/BigQuery/DuckDB/standard SQL.
+table/column names (reads canonical views) but still runs only as **Databricks
+SQL over the hive_metastore catalog** (DBI/odbc) — there is no Spark DataFrame
+API. It is **not** portable to Snowflake/BigQuery/DuckDB/standard SQL.
 ```
-R/core/      # source-system-agnostic, Spark-native LOT algorithm
+R/core/      # source-system-agnostic, hive_metastore (Databricks SQL) LOT algorithm
 R/adapters/  # source-specific canonicalization, Optum only (for now)
 ```
 
 ## 3. Execution engines & the non-production test target
 
-- **No local Spark/sparklyr** → a local (DuckDB) re-implementation is rejected
-  (it would be a second algorithm that can itself be wrong). Databricks is the
-  **only authoritative engine** for MAP/LOT/SCT.
+- **No local engine / no DuckDB re-implementation** → it would be a second
+  algorithm that can itself be wrong. The Databricks SQL warehouse over the
+  **hive_metastore** catalog is the **only authoritative engine** for MAP/LOT/SCT.
 - **Local (pure-R)** tests cover config, codelist validation, manifest hashing,
   gate selection/DAG validation, parameter/date helpers, comparison-rule logic.
 - **Non-production Databricks test target** (required): a non-prod workspace or,
@@ -224,8 +225,8 @@ whether resolution succeeded. "Full resolved config" is secret-redacted.
 Records: Git SHA + dirty flag; **seven version axes** (below); full resolved
 (redacted) config + hash + precedence sources; source DB + **exact Delta table
 versions** + vintage + **snapshot retention date**; reference-data hashes +
-approval status; Databricks Runtime + Spark version + warehouse/cluster +
-Photon + Spark settings; **R version + package versions / renv.lock hash + ODBC
+approval status; Databricks Runtime version + warehouse/SQL-endpoint id +
+Photon + warehouse settings; **R version + package versions / renv.lock hash + ODBC
 driver version + OS/container image digest + session timezone/locale**;
 key-stage counts + stage runtimes; output names + schema hash + checksums;
 warnings + degraded gates + `cohort_valid_for_primary_use`; **publication
@@ -249,11 +250,11 @@ declared ordered/unordered, duplicate policy, excluded display-only columns);
 (4) checksums as early warning + compact audit. Per-partition fingerprints can
 change from repartitioning alone, so they are **not** the release authority
 unless partitioning is canonicalized; row hashes may narrow the changed
-population, but **patient-level Spark comparison is the final gate**.
+population, but **patient-level hive_metastore comparison is the final gate**.
 
 **Nondeterminism is minimized, not broadly excluded.** Only *display-only*
 nondeterminism is excluded. Any field that influences downstream MAP/LOT state
-must be deterministic. For same-date ties: record the seed + Spark/runtime
+must be deterministic. For same-date ties: record the seed + Databricks runtime
 versions; compare unordered sets only where order has no clinical meaning; plan a
 later, separately validated deterministic tie-break fix.
 
@@ -315,8 +316,8 @@ procedure. Reference-data and gate-change PRs **generate an impact report**
 
 1. **Unit (local, pure R)** — helpers, config/codelist/DAG validation, manifest
    hashing, comparison rules. CI on every change.
-2. **Synthetic integration (non-prod Databricks)** — real Spark pipeline over §9
-   fixtures vs current-behavior expected. Per increment.
+2. **Synthetic integration (non-prod Databricks)** — real hive_metastore pipeline
+   over §9 fixtures vs current-behavior expected. Per increment.
 3. **Golden production regression (governed Databricks)** — frozen real cohort,
    patient-by-patient (§8, §14). Before any extraction merges.
 
@@ -351,7 +352,7 @@ design, the Optum compatibility canonical views (1B).
 ## 21. Repository shape (end-state)
 ```
 R/
-  core/      { map/ lot1/ lot2_5/ sct/ maintenance/ }  # source-system-agnostic, Spark-native
+  core/      { map/ lot1/ lot2_5/ sct/ maintenance/ }  # source-agnostic, hive_metastore SQL
   cohort/    { gates/ }                                # explicit phased, tested gates
   adapters/  { optum/ }                                # Optum canonicalization only
   config/                                              # one layered, validated config
@@ -396,5 +397,5 @@ scripts/        { validate_config.R validate_reference_data.R
 
 ## 23. Out of scope for the first release
 Generalized multi-database adapter framework; installable package / multi-repo
-release; generic cohort-rule DSL; non-Spark portability; any algorithm redesign
+release; generic cohort-rule DSL; non-Databricks (off-hive_metastore) portability; any algorithm redesign
 or opportunistic cleanup during extraction.

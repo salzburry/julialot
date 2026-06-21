@@ -50,7 +50,7 @@ verify_bundle_allowlist <- function(paths) {
 # closed - the scan must not trust an unverified manifest.
 verify_manifest_matches_bundle <- function(manifest_paths, bundle_dir) {
   mp <- gsub("\\\\", "/", trimws(manifest_paths)); mp <- mp[nzchar(mp)]
-  actual <- gsub("\\\\", "/", list.files(bundle_dir, recursive = TRUE))
+  actual <- gsub("\\\\", "/", list.files(bundle_dir, recursive = TRUE, all.files = TRUE, no.. = TRUE))
   missing_from_bundle <- setdiff(mp, actual)
   unlisted_in_manifest <- setdiff(actual, mp)
   list(ok = length(missing_from_bundle) == 0 && length(unlisted_in_manifest) == 0,
@@ -82,6 +82,17 @@ scan_file_for_synthetic <- function(path) {
   unique(hits)
 }
 
+# The set of data files to synthetic-scan. With a bundle dir, the manifest paths
+# are bundle-relative, so they MUST be resolved against it (otherwise the scan
+# reads a clean repo file at cwd while the bundled file may carry synthetic rows).
+bundle_data_files <- function(manifest_paths, bundle_dir = NA_character_, extra_dirs = character(0)) {
+  d <- manifest_paths[grepl("\\.(csv|tsv)$", manifest_paths, ignore.case = TRUE)]
+  if (!is.na(bundle_dir)) d <- file.path(bundle_dir, d)
+  if (length(extra_dirs))
+    d <- c(d, list.files(extra_dirs, pattern = "\\.(csv|tsv)$", recursive = TRUE, full.names = TRUE))
+  unique(d)
+}
+
 verify_no_synthetic_data <- function(paths) {
   offending <- list()
   for (p in paths) {
@@ -104,11 +115,8 @@ main <- function(args) {
 
   a <- verify_bundle_allowlist(paths)
   recon <- if (!is.na(bundle_dir)) verify_manifest_matches_bundle(paths, bundle_dir) else list(ok = TRUE)
-  data_files <- paths[grepl("\\.(csv|tsv)$", paths, ignore.case = TRUE)]
-  if (length(rest) > 1)
-    data_files <- c(data_files,
-      list.files(rest[-1], pattern = "\\.(csv|tsv)$", recursive = TRUE, full.names = TRUE))
-  s <- verify_no_synthetic_data(unique(data_files))
+  data_files <- bundle_data_files(paths, bundle_dir, if (length(rest) > 1) rest[-1] else character(0))
+  s <- verify_no_synthetic_data(data_files)
 
   if (a$ok && s$ok && recon$ok) {
     cat("PASS: bundle is allowlist-clean, manifest-reconciled, and synthetic-free.\n"); quit(status = 0) }
