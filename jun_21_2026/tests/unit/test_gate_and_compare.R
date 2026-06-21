@@ -140,10 +140,13 @@ ok(is.null(sql_value_sample("a", "b", "patient_id", character(0))), "no mismatch
 si <- sql_value_sample_into("audit.lot_diff_LOT_LONG", "ns.A", "ns.B", c("patient_id", "lot_num"), c("lot_base_end_reason"), 100L)
 ok(grepl("^CREATE OR REPLACE TABLE audit.lot_diff_LOT_LONG AS SELECT", si) && grepl("ORDER BY", si),
    "sql_value_sample_into wraps the sample in CREATE TABLE AS (governed storage)")
-# --sample-into must be a fully-qualified governed prefix (not an unqualified table)
-ok(.validate_sample_into("hive_metastore.audit.cmp_run1") == "hive_metastore.audit.cmp_run1", "qualified governed prefix accepted")
+# --sample-into must be EXACTLY catalog.schema.cmp_<run_id> (3 nonempty parts, run-scoped)
+ok(.validate_sample_into("hive_metastore.audit.cmp_run1") == "hive_metastore.audit.cmp_run1", "qualified run-scoped prefix accepted")
 ok(is.null(.validate_sample_into(NULL)), "NULL prefix accepted (sampling off)")
-ok(inherits(try(.validate_sample_into("unqualified_table"), silent = TRUE), "try-error"), "unqualified --sample-into rejected")
+for (bad in c("unqualified_table", "catalog.schema", "catalog..cmp_run", "catalog.schema.",
+              "audit.diff", "catalog.schema.cmp_", "catalog.schema.run1"))
+  ok(inherits(try(.validate_sample_into(bad), silent = TRUE), "try-error"),
+     sprintf("malformed/insufficient --sample-into rejected: '%s'", bad))
 # key exclusion is CASE-INSENSITIVE: a legacy PATID key must NOT value-compare a `patid`
 # compare column (Databricks folds case; the key is already the join condition)
 svk <- sql_values("a", "b", "PATID", c("patid", "lot_start_type"))

@@ -55,15 +55,15 @@ within a medical-extended MAP.
 
 ## LOT_LONG expected (full 23-column golden; `expected/LOT_LONG.csv`)
 Hand-verified: LOT1 rows are anchored to the golden `LOT1_BASE` + `LOT1_END` above;
-LOT2-5 follow the documented sequential rules. All 22 real columns are compared
-exactly in `test_engine.R`; `contains_mtx_reg` is the one unimplemented gap (= 0),
-so the comparison verdict is `partial_match` (honest: not full equivalence).
+LOT2-5 follow the documented sequential rules. ALL 23 columns are compared exactly in
+`test_engine.R` (verdict `match`); `contains_mtx_reg` is now COMPUTED from the rollup
+maintenance metadata (the fixture marks `LENA` MONOMAINTENANCE=YES).
 
-| patient | lot | start | type | base_meds | end | reason | len | allo/cart | auto_flg |
+| patient | lot | start | type | base_meds | end | reason | len | allo/cart | mtx_reg |
 |---|---|---|---|---|---|---|---|---|---|
 | 9000000001 | 1 | 2021-01-01 | MED | LENA | 2021-06-30 | DISCONTINUATION | 181 | 0/0 | 0 |
 | 9000000002 | 1 | 2021-02-01 | MED | BORT | 2021-03-04 | DISCONTINUATION | 32 | 0/0 | 0 |
-| 9000000003 | 1 | 2021-03-01 | MED | BORT LENA | 2021-04-14 | SCT_ALLO | 45 | 0/0 | 0 |
+| 9000000003 | 1 | 2021-03-01 | MED | BORT LENA | 2021-04-14 | SCT_ALLO | 45 | 0/0 | **1** |
 | 9000000003 | 2 | 2021-04-15 | SCT_ALLO | (none) | 2021-04-15 | SCT_ALLO | 1 | 1/0 | 0 |
 | 9000000003 | 3 | 2021-05-15 | MED | DARA | 2021-06-13 | DISCONTINUATION | 30 | 0/0 | 0 |
 
@@ -71,3 +71,6 @@ so the comparison verdict is `partial_match` (honest: not full equivalence).
   2021-04-14); the ALLO starts a single-day LOT2 at 2021-04-15 (end+1); LOT3 = DARA
   triggered from the LOT2 end, ending `DISCONTINUATION` at its runout. CE-sensitive
   end equals the primary end (no `enddate_ce` cap in the fixture); no AUTO events.
+- **contains_mtx_reg** = 1 for 9000000003 LOT1: induction `BORT LENA` contains the
+  MONO-maintenance drug `LENA` (the subset) PLUS the anchor `BORT` outside it. LENA
+  alone (9000000001 LOT1) is mono but has no anchor → 0; BORT/DARA are not maintenance.

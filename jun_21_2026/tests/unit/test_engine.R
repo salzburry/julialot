@@ -62,7 +62,8 @@ write.csv(data.frame(patient_id = "9000000200",
   service_date = c("2021-01-01", "2021-01-31", "2021-03-02", "2021-04-01", "2021-05-01", "2021-03-15"),
   normalized_code = c("B", "B", "B", "B", "B", "D"), code_system = "NDC", days_supply = "30"),
           file.path(ci_dir, "pharmacy.csv"), row.names = FALSE)
-write.csv(data.frame(code_type = "NDC", code = c("B", "D"), med_abbr = c("BORT", "DARA"), med_class = c("PI", "MAB")),
+write.csv(data.frame(code_type = "NDC", code = c("B", "D"), med_abbr = c("BORT", "DARA"), med_class = c("PI", "MAB"),
+          MONOMAINTENANCE = "0", DUALMAINTENANCEWITH = ""),   # required maintenance metadata
           file.path(ci_dir, "rollup.csv"), row.names = FALSE)
 write.csv(data.frame(code_type = "HCPCS", code = "38241", sct_type = "CART"),
           file.path(ci_dir, "sct_codelist.csv"), row.names = FALSE)
@@ -74,6 +75,19 @@ ok(le_def$lot1_base_end_reason == "CART_INIT" && as.character(le_def$lot1_base_e
    "LOT1 CART_INIT fires under the default 45-day window")
 ok(le_30$lot1_base_end_reason == "MED_ADD" && as.character(le_30$lot1_base_end_dt) == "2021-03-14",
    "cart_consolidation_days=30 override REACHES LOT1 (CART now outside window -> MED_ADD)")
+
+# maintenance metadata is a REQUIRED rollup input (contains_mtx_reg must be EVALUATED,
+# never silently 0 from a missing input): run_engine fails closed without the columns.
+nomaint <- file.path(tempdir(), "nomaint"); dir.create(nomaint, showWarnings = FALSE)
+file.copy(list.files("engine/fixtures", full.names = TRUE, pattern = "\\.csv$"), nomaint, overwrite = TRUE)
+write.csv(data.frame(code_type = "NDC", code = "11111111111", med_abbr = "LENA", med_class = "IMID"),
+          file.path(nomaint, "rollup.csv"), row.names = FALSE)   # rollup WITHOUT maintenance columns
+ok(inherits(try(run_engine(nomaint), silent = TRUE), "try-error"),
+   "run_engine fails closed when the rollup lacks MONOMAINTENANCE/DUALMAINTENANCEWITH (no silent zero)")
+# the end-to-end golden now exercises a POSITIVE maintenance row (BORT LENA = mono LENA + anchor BORT)
+gold <- read.csv("engine/fixtures/expected/LOT_LONG.csv", colClasses = "character")
+ok("1" %in% gold$contains_mtx_reg && sum(gold$contains_mtx_reg == "1") == 1L,
+   "the LOT_LONG golden includes a contains_mtx_reg=1 row (BORT LENA induction)")
 
 # --- targeted rule spot-checks ------------------------------------------------
 eq(nrow(map), 8L, "8 MAP periods across the cohort")

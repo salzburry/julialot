@@ -1,6 +1,6 @@
 "patient_id","lot_num","lot_start_dt","lot_start_type","lot_base_meds","lot_med_cnt","lot_base_discon_dt","lot_base_1st_add_med_dt","lot_base_1st_add_med","lot_base_end_dt","lot_base_end_reason","lot_base_length","lot_allo_lot_flg","lot_cart_lot_flg","contains_mtx_reg","lot_base_end_dt_ce_sens","lot_base_end_reason_ce_sens","lot_tx_auto_flg","lot_tx_auto_tand_flg","lot_tx_auto_sing_flg","lot_tx_auto_dt_1","lot_tx_auto_dt_2","lot_tx_auto_max_dt"
 "9000000001",1,2021-01-01,"MED","LENA",1,2021-06-30,,,2021-06-30,"DISCONTINUATION",181,0,0,0,2021-06-30,"DISCONTINUATION",0,0,0,,,
 "9000000002",1,2021-02-01,"MED","BORT",1,2021-03-04,,,2021-03-04,"DISCONTINUATION",32,0,0,0,2021-03-04,"DISCONTINUATION",0,0,0,,,
-"9000000003",1,2021-03-01,"MED","BORT LENA",2,2021-06-28,2021-05-14,"DARA",2021-04-14,"SCT_ALLO",45,0,0,0,2021-04-14,"SCT_ALLO",0,0,0,,,
+"9000000003",1,2021-03-01,"MED","BORT LENA",2,2021-06-28,2021-05-14,"DARA",2021-04-14,"SCT_ALLO",45,0,0,1,2021-04-14,"SCT_ALLO",0,0,0,,,
 "9000000003",2,2021-04-15,"SCT_ALLO","",0,,,,2021-04-15,"SCT_ALLO",1,1,0,0,2021-04-15,"SCT_ALLO",0,0,0,,,
 "9000000003",3,2021-05-15,"MED","DARA",1,2021-06-13,,,2021-06-13,"DISCONTINUATION",30,0,0,0,2021-06-13,"DISCONTINUATION",0,0,0,,,

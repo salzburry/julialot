@@ -19,10 +19,11 @@
 #   N.5 contains_mtx_reg: does the induction contain a valid maintenance subset
 #       (a MONO drug, or a DUAL pair) PLUS an anchor drug outside it?
 
-# Parse the rollup's OPTIONAL maintenance metadata (MONOMAINTENANCE / DUALMAINTENANCEWITH;
-# absent -> empty, so contains_mtx_reg = 0). Production normalization 02_lot1.R:101-109:
-# MONOMAINTENANCE = 1 iff 'YES%' or '1'; DUALMAINTENANCEWITH = upper/trim, comma-split,
-# blanked on NULL/NONE/NA/N/A.
+# Parse the rollup's maintenance metadata (MONOMAINTENANCE / DUALMAINTENANCEWITH). These
+# are REQUIRED inputs at the run_engine boundary (it fails closed if absent); this helper
+# is lenient (absent -> empty) only for direct unit tests / a NULL rollup. Production
+# normalization 02_lot1.R:101-109: MONOMAINTENANCE = 1 iff 'YES%' or '1';
+# DUALMAINTENANCEWITH = upper/trim, comma-split, blanked on NULL/NONE/NA/N/A.
 .maint_maps <- function(rollup) {
   empty <- list(mono = character(0), dual = list())
   if (is.null(rollup) || !nrow(rollup) || !"med_abbr" %in% names(rollup)) return(empty)

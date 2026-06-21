@@ -66,7 +66,15 @@ run_engine <- function(input_dir, params = list()) {
   if (!nrow(codelist) || !all(need_cl %in% names(codelist)))
     stop("run_engine: sct_codelist.csv must have rows and columns ",
          paste(need_cl, collapse = "/"), " (SCT evidence cannot be silently empty)")
-  rollup <- rd("rollup.csv")                          # carries optional maintenance metadata too
+  rollup <- rd("rollup.csv")
+  # Maintenance metadata is a REQUIRED part of the rollup contract (production loads
+  # MONOMAINTENANCE + DUALMAINTENANCEWITH from cl_mma_rollup): require both columns so
+  # contains_mtx_reg is genuinely EVALUATED, never silently 0 from a missing input
+  # (fail closed; absent columns are an incomplete rollup, not "no maintenance").
+  need_ru <- c("med_abbr", "MONOMAINTENANCE", "DUALMAINTENANCEWITH")
+  if (!all(tolower(need_ru) %in% tolower(names(rollup))))
+    stop("run_engine: rollup.csv must carry ", paste(need_ru, collapse = "/"),
+         " (maintenance metadata is required; contains_mtx_reg must be evaluated, not silently 0)")
   map_stacked <- build_map_stacked(rd("pharmacy.csv"), med, rollup, members,
     p$map_discon_gap_days, p$medical_day_supply)
   lot1 <- build_lot1_base(map_stacked, members, if (nrow(subs)) subs else NULL, p$induction_window_days)
