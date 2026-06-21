@@ -25,6 +25,15 @@ e2e <- run_engine("engine/fixtures")
 ce <- compare_local_table(.write(e2e$LOT1_END), "engine/fixtures/expected/LOT1_END.csv",
         c("patient_id"), required = c("patient_id", "lot1_base_end_dt", "lot1_base_end_reason", "lot1_base_length"))
 ok(isTRUE(ce$match), "driver LOT1_END reproduces hand-derived expected (end-to-end, incl. SCT_ALLO)")
+# full 23-column LOT_LONG vs the hand-derived golden (LOT1 rows anchored to the golden
+# LOT1_BASE/LOT1_END; LOT2-5 to the documented sequential rules). All 22 REAL columns
+# must match exactly; contains_mtx_reg is the explicitly-flagged unimplemented gap.
+cll <- compare_local_table(.write(e2e$LOT_LONG), "engine/fixtures/expected/LOT_LONG.csv",
+        c("patient_id", "lot_num"), required = LOT_LONG_COLS, unimplemented = "contains_mtx_reg")
+ok(cll$value_mismatch == 0 && cll$only_in_a == 0 && cll$only_in_b == 0 && isTRUE(cll$schema_ok),
+   "driver LOT_LONG reproduces the hand-derived golden on all 22 real columns (full 23-col table)")
+ok(cll$verdict == "partial_match" && "contains_mtx_reg" %in% cll$unimplemented,
+   "LOT_LONG golden is partial_match: contains_mtx_reg is the flagged unimplemented gap (honest)")
 
 # --- targeted rule spot-checks ------------------------------------------------
 eq(nrow(map), 8L, "8 MAP periods across the cohort")

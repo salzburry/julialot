@@ -106,6 +106,9 @@ build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
                            sct_auto_gap_days = 60L, allo_lot_span = c("single_day", "extend_to_next"),
                            max_lot = 5L) {
   allo_lot_span <- match.arg(allo_lot_span)   # production default single_day (lot2_5_base.R:665)
+  max_lot <- suppressWarnings(as.integer(max_lot))   # config contract: integer in [2, 9]
+  if (length(max_lot) != 1L || is.na(max_lot) || max_lot < 2L || max_lot > 9L)
+    stop("build_lot_long: max_lot must be an integer in [2, 9], got ", max_lot)
   D <- function(x) as.Date(as.character(x))
   oe <- setNames(D(obs_end$obs_end_dt), as.character(obs_end$patient_id))
   ece <- if ("enddate_ce" %in% names(obs_end)) setNames(D(obs_end$enddate_ce), as.character(obs_end$patient_id)) else NULL
@@ -173,7 +176,7 @@ build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
     rows <- list(row(pid, 1L, D(lb$lot1_start_dt), "MED", reg1,
       list(lot1_base_end_dt = le$lot1_base_end_dt, lot1_base_end_reason = le$lot1_base_end_reason, lot1_base_length = le$lot1_base_length), lsct1, cep))
     prev_end <- D(le$lot1_base_end_dt); prev_meds <- lb$lot1_base_meds; prev_start <- D(lb$lot1_start_dt); prev_type <- "MED"
-    for (ln in 2:max_lot) {
+    for (ln in seq_len(max_lot - 1L) + 1L) {     # 2..max_lot, EMPTY if max_lot<2 (never 2:1 descending)
       if (is.na(prev_end)) break
       cd <- .lot_candidates(msp, allo, cart, autos, prev_end, prev_meds, prev_start, prev_type, obs, subs,
                             induction_window_days, cart_consolidation_days, sct_tandem_days)
