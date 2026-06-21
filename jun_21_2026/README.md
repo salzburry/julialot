@@ -18,7 +18,7 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 164 tests, all pure-R / local
+Rscript tests/run_unit_tests.R          # 176 tests, all pure-R / local
 ```
 
 Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
@@ -29,11 +29,20 @@ faithful to `apr_30_2026/02_lot1.R`, that reproduces hand-derived expected outpu
 Rscript engine/run_engine.R engine/fixtures /tmp/out   # writes MAP_STACKED.csv + LOT1_BASE.csv
 ```
 
-Verified stages + edge cases on the synthetic cohort: MAP (pharmacy pushout /
-reset, gap→new MAP, medical no-pushout, same-day pharmacy-first tie, single claim,
-discontinuation flag both sides of the 90-day boundary) and LOT1 (steroid
-exclusion from start/induction/base, induction-window cutoff, multi-drug regimen,
-first-add med+date, steroid-only patient → no LOT1).
+Verified stages + edge cases (against hand-derived expected):
+- **MAP** (`engine/map.R`): pharmacy pushout / reset, gap→new MAP, medical
+  no-pushout, same-day pharmacy-first tie, single claim, discon flag both sides of
+  the 90-day boundary.
+- **LOT1** (`engine/lot1.R`): steroid exclusion from start/induction/base,
+  induction-window cutoff, multi-drug regimen, first-add med+date, steroid-only →
+  no LOT1.
+- **SCT** (`engine/sct.R`): AUTO 14-day window (max date) + 60-day gap merge +
+  180-day tandem, single/tandem/excess AUTO, ALLO/CART censoring + LOT-end reason
+  (1=AUTO/2=ALLO/3=CART). (Tandem-boundary date-selection corner documented as
+  not-yet-ported.)
+
+Still to port + verify the same way: the **LOT1 end** combination (discon vs SCT
+vs progression) and the **LOT2-5** loop (`LOT_LONG`).
 
 This is **verification only** — it runs the algorithm on synthetic fixtures locally
 so the refactor logic can be checked without a warehouse. It is NOT the production
