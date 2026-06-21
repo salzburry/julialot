@@ -18,7 +18,7 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 176 tests, all pure-R / local
+Rscript tests/run_unit_tests.R          # 186 tests, all pure-R / local
 ```
 
 Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
@@ -40,9 +40,13 @@ Verified stages + edge cases (against hand-derived expected):
   180-day tandem, single/tandem/excess AUTO, ALLO/CART censoring + LOT-end reason
   (1=AUTO/2=ALLO/3=CART). (Tandem-boundary date-selection corner documented as
   not-yet-ported.)
+- **LOT1 end** (`engine/lot_end.R`): the priority cascade SCT > MED_ADD > DEATH >
+  DISCONTINUATION > STUDY_END, each gated against the runout (a trigger after
+  discontinuation does not fire). (CART_INIT + post-runout-death-guard documented
+  as not-yet-ported.)
 
-Still to port + verify the same way: the **LOT1 end** combination (discon vs SCT
-vs progression) and the **LOT2-5** loop (`LOT_LONG`).
+Still to port + verify the same way: the **LOT2-5** loop (`LOT_LONG`) — trigger
+the next line from the LOT1 end event, re-derive the regimen, repeat to MAX_LOT.
 
 This is **verification only** — it runs the algorithm on synthetic fixtures locally
 so the refactor logic can be checked without a warehouse. It is NOT the production
