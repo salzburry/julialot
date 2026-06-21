@@ -11,17 +11,25 @@
 #   N.3 regimen: induction in [start, start+win] (win: CART 44, else 29; ALLO=0),
 #       base = induction + subs, discon = max base MAP_END <= OBS_END, first-add
 #       AFTER the window; LOT_N end via the LOT1 cascade (build_lot1_end).
-#
-# Focus: MED-started lines (the common sequential-therapy path) with the full
-# candidate selection for start/type. DOCUMENTED REFINEMENT (not yet
-# synthetic-verified): ALLO/CART-singleton regimen specifics and the LOT-scoped SCT
-# end fields (CE-sensitive end, in-LOT AUTO flags). The cohort is MED-started.
+#   N.4 LOT-scoped SCT: in-LOT AUTO iff within the applicable window (1/45/30);
+#       first AUTO outside = ENDING_AUTO; ALLO/CART scoped `> start` (build_sct_summary).
+#   N.6 special starts: ALLO single-day (or extend_to_next) + CART-no-med -> SCT_CART.
+#   N.7 final projection: the in-LOT AUTO fields are CLAMPED to <= LOT_BASE_END_DT
+#       and SING/TAND/MAX recomputed (the row() builder below).
 
 .lot_regimen <- function(ms_p, lot_start, start_type, obs, subs,
-                         induction_window_days, cart_consolidation_days) {
-  if (start_type == "SCT_ALLO")             # ALLO singleton: no MM regimen rows
-    return(list(base_meds = "", med_cnt = 0L, discon = as.Date(NA),
-                add_dt = as.Date(NA), add_med = NA_character_))
+                         induction_window_days, cart_consolidation_days, allo_extend = FALSE) {
+  if (start_type == "SCT_ALLO") {           # ALLO: induction rows suppressed (lot2_5_base.R:352)
+    if (!allo_extend)                        # single_day: ends on the ALLO date, add-med is moot
+      return(list(base_meds = "", med_cnt = 0L, discon = as.Date(NA), add_dt = as.Date(NA), add_med = NA_character_))
+    # extend_to_next: no induction window - the next MM agent strictly after the
+    # ALLO date is the first-add that ends the LOT (lot2_5_base.R:410-419).
+    cand <- ms_p[ms_p$med_class != "STEROID" & ms_p$map_start_dt > lot_start & ms_p$map_start_dt <= obs, , drop = FALSE]
+    if (nrow(cand)) { cand <- cand[order(cand$map_start_dt, cand$med_abbr), , drop = FALSE]
+      add_dt <- cand$map_start_dt[1] - 1L; add_med <- cand$med_abbr[1]
+    } else { add_dt <- as.Date(NA); add_med <- NA_character_ }
+    return(list(base_meds = "", med_cnt = 0L, discon = as.Date(NA), add_dt = add_dt, add_med = add_med))
+  }
   win <- if (start_type == "CART") cart_consolidation_days - 1L else induction_window_days - 1L
   ind <- ms_p[ms_p$med_class != "STEROID" & ms_p$map_start_dt >= lot_start &
               ms_p$map_start_dt <= lot_start + win, , drop = FALSE]
@@ -113,17 +121,27 @@ build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
   sc_cart <- if (!is.null(sct_claims) && nrow(sct_claims)) sct_claims[sct_claims$sct_type == "CART", ] else NULL
 
   # 23-column LOT_LONG contract. CE-sensitive end caps at enddate_ce (reason
-  # DISENROLLMENT) when the line outlasts continuous enrollment. The in-LOT AUTO
-  # fields come from the line-scoped SCT summary and are WINDOW-scoped (Step N.4:
-  # in-line iff datediff(AUTO_DT_1, start) < lot_window_days) - matching production,
-  # they are NOT clamped to the line's end date. contains_mtx_reg = 0 (EXCLUDED:
-  # needs maintenance metadata).
+  # DISENROLLMENT) when the line outlasts continuous enrollment. contains_mtx_reg
+  # = 0 (EXCLUDED: needs maintenance metadata).
   row <- function(pid, ln, start, type, reg, end, lsct = NULL, ce = NULL) {
+    ed_dt <- D(end$lot1_base_end_dt)
+    # FINAL LOT_LONG AUTO clamp (Step N.7 / init, lot2_5_base.R:104-145, 923-960):
+    # the line-scoped SCT view (lsct) collects through OBS_END and Step N.4 keeps
+    # only window-eligible AUTOs, but the final projection ADDITIONALLY clamps each
+    # in-LOT AUTO date to <= LOT_BASE_END_DT and RECOMPUTES SING/TAND/MAX from the
+    # clamped dates. So an AUTO after the line actually ended (MED_ADD / CART_INIT /
+    # DEATH / runout) is dropped; a within-LOT DT_1 whose DT_2 falls outside the LOT
+    # collapses TAND->SING; MAX is the in-LOT tandem DT_2 else the in-LOT DT_1.
     has <- !is.null(lsct) && nrow(lsct)
-    ad <- function(f) if (has) D(lsct[[f]][1]) else as.Date(NA)
-    af <- function(f) if (has) as.integer(lsct[[f]][1]) else 0L
-    amax <- if (has && isTRUE(lsct$tand_flg[1] == 1)) ad("auto_dt_2") else ad("auto_dt_1")
-    ed_dt <- D(end$lot1_base_end_dt); ce_end <- ed_dt; ce_rs <- end$lot1_base_end_reason  # CE-sensitive end
+    raw <- function(f) if (has) D(lsct[[f]][1]) else as.Date(NA)
+    d1 <- raw("auto_dt_1"); d2 <- raw("auto_dt_2")
+    in1 <- !is.na(d1) && !is.na(ed_dt) && d1 <= ed_dt
+    in2 <- !is.na(d2) && !is.na(ed_dt) && d2 <= ed_dt
+    cl_tand <- in2 && has && isTRUE(lsct$tand_flg[1] == 1)
+    a_dt1 <- if (in1) d1 else as.Date(NA); a_dt2 <- if (in2) d2 else as.Date(NA)
+    a_flg <- as.integer(in1); a_tand <- as.integer(cl_tand); a_sing <- as.integer(in1 && !cl_tand)
+    a_max <- if (cl_tand) d2 else if (in1) d1 else as.Date(NA)
+    ce_end <- ed_dt; ce_rs <- end$lot1_base_end_reason  # CE-sensitive end
     if (!is.null(ce) && !is.na(ce$enddate_ce) && !is.na(ed_dt) && ed_dt > ce$enddate_ce) {
       ce_end <- ce$enddate_ce
       if (!is.na(ce$enddate) && ce$enddate_ce < ce$enddate) ce_rs <- "DISENROLLMENT"
@@ -131,14 +149,14 @@ build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
     data.frame(patient_id = pid, lot_num = ln,
     lot_start_dt = start, lot_start_type = type, lot_base_meds = reg$base_meds, lot_med_cnt = reg$med_cnt,
     lot_base_discon_dt = reg$discon, lot_base_1st_add_med_dt = reg$add_dt, lot_base_1st_add_med = reg$add_med,
-    lot_base_end_dt = D(end$lot1_base_end_dt), lot_base_end_reason = end$lot1_base_end_reason,
+    lot_base_end_dt = ed_dt, lot_base_end_reason = end$lot1_base_end_reason,
     lot_base_length = end$lot1_base_length,
     lot_allo_lot_flg = as.integer(type == "SCT_ALLO"), lot_cart_lot_flg = as.integer(type == "CART"),
     contains_mtx_reg = 0L,                                # NOT computed: needs maintenance metadata
     lot_base_end_dt_ce_sens = ce_end, lot_base_end_reason_ce_sens = ce_rs,
-    lot_tx_auto_flg = as.integer(has && !is.na(ad("auto_dt_1"))), lot_tx_auto_tand_flg = af("tand_flg"),
-    lot_tx_auto_sing_flg = af("sing_flg"), lot_tx_auto_dt_1 = ad("auto_dt_1"),
-    lot_tx_auto_dt_2 = ad("auto_dt_2"), lot_tx_auto_max_dt = amax, stringsAsFactors = FALSE)
+    lot_tx_auto_flg = a_flg, lot_tx_auto_tand_flg = a_tand,
+    lot_tx_auto_sing_flg = a_sing, lot_tx_auto_dt_1 = a_dt1,
+    lot_tx_auto_dt_2 = a_dt2, lot_tx_auto_max_dt = a_max, stringsAsFactors = FALSE)
   }
 
   out <- lapply(as.character(lot1_base$patient_id), function(pid) {
@@ -165,7 +183,8 @@ build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
         en <- list(lot1_base_end_dt = cd$start, lot1_base_end_reason = "SCT_ALLO", lot1_base_length = 1L)
         lsct <- NULL
       } else {                                              # MED/CART/AUTO line (or extend_to_next ALLO)
-        reg <- .lot_regimen(msp, cd$start, cd$type, obs, subs, induction_window_days, cart_consolidation_days)
+        reg <- .lot_regimen(msp, cd$start, cd$type, obs, subs, induction_window_days, cart_consolidation_days,
+                            allo_extend = (allo_lot_span == "extend_to_next"))
         win <- .lot_window_days(cd$type, induction_window_days, cart_consolidation_days)
         lsct <- .line_sct(sct_claims, pid, cd$start, cd$type, obs_end, sct_tandem_days,
                           sct_auto_window_days, sct_auto_gap_days, lot_window_days = win, allo_cart_strict = TRUE)
