@@ -33,6 +33,12 @@ ok(r3$lot_base_meds == "CARF" && as.character(r3$lot_start_dt) == "2021-06-01" &
    "LOT3 = CARF, ends DISCONTINUATION (runout)")
 eq(as.integer(r2$lot_base_length), 78L, "LOT2 length = end - start + 1")
 ok(all(ll$lot_num == c(1, 2, 3)), "lines are numbered 1..3 in order")
+# max_lot validated to the config contract [2,9]: < 2 fails fast (R's 2:1 is
+# DESCENDING, not empty); max_lot=2 caps the loop at LOT2 for this 3-line cohort.
+ok(inherits(try(build_lot_long(l1, le, map, NULL, mem, max_lot = 1L), silent = TRUE), "try-error"),
+   "max_lot < 2 fails fast (no silent 2:1 descending loop)")
+cap2 <- build_lot_long(l1, le, map, NULL, mem, max_lot = 2L)
+ok(max(cap2$lot_num) == 2 && nrow(cap2) == 2L, "max_lot=2 caps the loop at LOT2")
 
 # candidate type tie-break: ALLO on the same day as a MED -> SCT_ALLO wins
 ct <- .lot_candidates(

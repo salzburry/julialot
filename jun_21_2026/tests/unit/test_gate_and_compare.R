@@ -25,11 +25,18 @@ ok(!verify_no_synthetic_data("/nonexistent/file.csv")$ok, "missing data file fai
 tsv <- file.path(tempdir(), "syn.tsv"); writeLines(c("patient_id\tx", "9000000007\t1"), tsv)
 ok(length(scan_file_for_synthetic(tsv)) > 0, "synthetic PATID detected in TSV")
 
-# compare_local: all three required tables present; differ ONLY in excluded col -> MATCH
+# compare_local: all required tables present; the only blocking-eligible diff is the
+# nondeterministic excluded col. NOT a full match - LOT_LONG carries the UNIMPLEMENTED
+# deterministic gap (contains_mtx_reg), so the verdict is partial_match (a wrong
+# maintenance result must never silently pass). Gap-free tables stay full `match`.
 res <- compare_local("tests/unit/cmp/legacy", "tests/unit/cmp/refactored")
-eq(attr(res, "verdict"), "match", "all required tables present, excluded-only diff -> match")
+eq(attr(res, "verdict"), "partial_match", "excluded-only diff + unimplemented gap -> partial_match")
 eq(length(attr(res, "missing_tables")), 0L, "no missing required tables")
 ok(res$LOT_LONG$value_mismatch == 0L, "no non-excluded value mismatch")
+ok(isTRUE(res$LOT_LONG$partial) && "contains_mtx_reg" %in% res$LOT_LONG$unimplemented,
+   "LOT_LONG is partial: contains_mtx_reg is an unimplemented deterministic field")
+ok(res$MAP_STACKED$verdict == "match" && res$LOT1_BASE$verdict == "match",
+   "tables without a gap field are still a FULL match (partial is scoped to LOT_LONG)")
 # corrected nondeterminism model: the seeded tie-break picks the MED identity, so
 # lot_base_1st_add_med is excluded (surfaced) while the *_DT is now STRICT.
 ok(res$LOT_LONG$excluded_diffs >= 1L, "excluded med-identity diff is surfaced, not blocking")
@@ -114,11 +121,17 @@ ok(.detect_patid(c("patient_id", "lot_num")) == "patient_id", "patient_id auto-d
 # PATID-vs-patient_id compare does not fail schema parity on the id name alone.
 nv <- sql_normalize_view("cmpnorm_MAP_STACKED_a", "ns.MAP_STACKED", c("patid", "med_abbr", "map_cnt"), "PATID")
 ok(grepl("CREATE OR REPLACE TEMPORARY VIEW cmpnorm_MAP_STACKED_a", nv) &&
-   grepl("`PATID` AS `patient_id`", nv) && grepl("`med_abbr`", nv) && grepl("`map_cnt`", nv),
-   "sql_normalize_view aliases the side's id to patient_id and passes other cols through")
+   grepl("CAST\\(`PATID` AS STRING\\) AS `patient_id`", nv) && grepl("`med_abbr`", nv) && grepl("`map_cnt`", nv),
+   "sql_normalize_view casts the id to canonical STRING and passes other cols through")
 ok(grepl("FROM ns.MAP_STACKED", nv) && !grepl("AS `patient_id`.*AS `patient_id`", nv),
    "sql_normalize_view renames exactly one column (the id) to patient_id")
 ok(.cmp_view("LOT_LONG", "b") == "cmpnorm_LOT_LONG_b", "normalize view name is per-table/per-side")
+# --patid override is honored ONLY when the named column is present on side A, so a
+# wrong override on a cross-convention compare can't normalize a missing column.
+ok(.resolve_patid("PATID", c("PATID", "lot_num")) == "PATID", "override honored when the column exists")
+ok(.resolve_patid("PATID", c("patient_id", "lot_num")) == "patient_id",
+   "override IGNORED (falls back to auto-detect) when side A lacks that column")
+ok(.resolve_patid(NULL, c("patient_id")) == "patient_id", "no override -> auto-detect")
 # value compare spans ALL shared non-key cols (catches per-drug/class flags)
 ok(setequal(value_compare_cols(c("PATID", "LOT_NUM", "LOT1_MED_LENA"),
                                c("patid", "lot_num", "lot1_med_lena"), "PATID"),

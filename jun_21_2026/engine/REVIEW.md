@@ -16,7 +16,7 @@ comparing. That run is the reviewer/owner's step (it needs the warehouse).
 Run it (the driver runs the full pipeline MAP → LOT1 → SCT → LOT1 end):
 ```
 Rscript engine/run_engine.R engine/fixtures /tmp/out   # MAP_STACKED + LOT1_BASE + LOT1_END + LOT_LONG
-Rscript tests/run_unit_tests.R                          # 239 pass (engine: test_engine/sct/lot_end/lot_long)
+Rscript tests/run_unit_tests.R                          # 248 pass (engine: test_engine/sct/lot_end/lot_long); also CI
 ```
 
 ## What to validate: each rule maps to a production source line
@@ -61,7 +61,10 @@ Rscript tests/run_unit_tests.R                          # 239 pass (engine: test
   with no prior add), and the **post-runout death guard** (a LOT2 trigger after
   the runout makes DISCONTINUATION win over DEATH).
 - **End-to-end** (`test_engine.R`): the driver's `LOT1_END` (MAP→LOT1→SCT→end) vs
-  hand-derived expected, including an `SCT_ALLO` end for one patient.
+  hand-derived expected, including an `SCT_ALLO` end for one patient; PLUS the **full
+  23-column `LOT_LONG`** vs a hand-derived golden (`expected/LOT_LONG.csv`) — all 22
+  real columns compared exactly, `contains_mtx_reg` flagged as the unimplemented gap
+  (verdict `partial_match`, the honest "not full equivalence" signal).
 - **Production parity** (`test_engine.R`/`test_sct.R`): pharmacy day-supply
   imputation, same-day max-day-supply de-dup, AUTO window = 13.
 - **LOT2-5** (`test_lot_long.R`): a 3-line cohort (LENA→DARA→CARF) run through the
@@ -87,12 +90,17 @@ Rscript tests/run_unit_tests.R                          # 239 pass (engine: test
 
 ## NOT yet ported (refinements)
 
-- **EXCLUDED from parity:** `contains_mtx_reg` (= 0; needs maintenance metadata) —
-  now also in the comparator's `EXCLUDED_FIELDS` (diff surfaced, non-blocking).
-- The **regression-expected** baseline (legacy execution on the same synthetic data
-  — the owner's hive_metastore step); canonical adapter→validation→core wiring in
-  `run_engine`; and warehouse-checksum scalability (deprioritized per the
-  local-verification workflow). The cross-convention `PATID` bridge is now handled.
+- **`contains_mtx_reg`** (= 0; needs maintenance metadata) is a DETERMINISTIC gap, so
+  it is in the comparator's `UNIMPLEMENTED_FIELDS`: surfaced + non-blocking, but it
+  forces a `partial_match` verdict (never a silent full `match`). Implement it and
+  move it out of `UNIMPLEMENTED_FIELDS` for full LOT_LONG parity.
+- The **regression-expected** baseline (legacy execution on the same synthetic data,
+  the owner's hive_metastore step) — the decisive gate — and **canonical
+  adapter→validation→core wiring** in `run_engine` (it validates only filenames +
+  members/codelist columns today, not the full typed-config/canonical contract).
+- **Deprioritized** (warehouse path, untestable locally): checksum aggregation
+  scalability (bucket/optional). The cross-convention `PATID` bridge (name + STRING
+  type cast) and the membership-before-values short-circuit are now handled.
 
 ## Constraints to confirm
 

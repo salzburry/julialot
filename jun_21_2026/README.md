@@ -18,7 +18,7 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 239 tests, all pure-R / local
+Rscript tests/run_unit_tests.R          # 248 tests, all pure-R / local (also run in CI)
 ```
 
 Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
@@ -29,10 +29,12 @@ faithful to `apr_30_2026/02_lot1.R`, that reproduces hand-derived expected outpu
 Rscript engine/run_engine.R engine/fixtures /tmp/out   # MAP_STACKED + LOT1_BASE + LOT1_END + LOT_LONG
 ```
 
-The driver runs the full pipeline **MAP → LOT1 → SCT → LOT1 end** and its
-`LOT1_END` output is verified against hand-derived expected (incl. an `SCT_ALLO`
-end). Pharmacy day-supply imputation (null/<1→28) and same-day claim de-dup
-(max day-supply) match production; the SCT AUTO window is 13 days.
+The driver runs the full pipeline **MAP → LOT1 → SCT → LOT1 end → LOT2-5** and all
+four outputs are compared against hand-derived golden CSVs: `MAP_STACKED`,
+`LOT1_BASE`, `LOT1_END`, and the **full 23-column `LOT_LONG`** (every real column;
+`contains_mtx_reg` is the one flagged unimplemented gap — see below). Pharmacy
+day-supply imputation (null/<1→28) and same-day claim de-dup (max day-supply) match
+production; the SCT AUTO window is 13 days.
 
 **For reviewers:** `engine/REVIEW.md` maps every engine rule to its production
 source line (`apr_30_2026/02_lot1.R:NNN`) and lists verified coverage + the
@@ -78,9 +80,14 @@ required **by content** (the driver fails closed unless it has rows + the
 `code_type`/`code`/`sct_type` columns, so SCT can never silently be empty).
 CE-sensitive end is implemented (caps at `enddate_ce`, reason `DISENROLLMENT`). **Explicitly EXCLUDED from the
 parity claim:** `contains_mtx_reg` (= 0; needs maintenance metadata
-`MONOMAINTENANCE`/`DUALMAINTENANCEWITH`). Regression-expected output (legacy
-execution on the same synthetic data) is the owner's hive_metastore step — this
-proves spec-conformance, not legacy equivalence.
+`MONOMAINTENANCE`/`DUALMAINTENANCEWITH`) — a *deterministic* field, so the comparator
+treats it as an `UNIMPLEMENTED_FIELDS` gap that forces `partial_match` rather than a
+silent `match`. `max_lot` and `allo_lot_span` overrides are validated (`max_lot` to
+the config range `[2,9]`, so `max_lot=1` fails fast rather than running R's
+descending `2:1`). Regression-expected output (legacy execution on the same synthetic
+data) is the owner's hive_metastore step — this proves spec-conformance, not legacy
+equivalence; `run_engine` does not yet invoke the canonical/typed-config validators
+(the adapter→validation→core wiring is still pending, as listed below).
 
 This is **verification only** — it runs the algorithm on synthetic fixtures locally
 so the refactor logic can be checked without a warehouse. It is NOT the production
@@ -92,17 +99,23 @@ Run the live current-vs-prior comparison on hive_metastore (same DSN/odbc as
 
 ```
 Rscript scripts/compare_run_outputs.R --run hive_metastore.lot_prior hive_metastore.lot_current
-# the patient-id column is detected PER SIDE; a cross-convention compare (legacy
-# PATID vs canonical patient_id) is normalized to patient_id; override with --patid <col>
+# the patient-id column is detected PER SIDE and a cross-convention compare (legacy
+# PATID vs canonical patient_id) is auto-normalized to patient_id - no flag needed.
+# --patid <col> is ONLY for a NONSTANDARD side-A id name (and is ignored unless that
+# column exists on side A); do NOT use it to bridge PATID vs patient_id.
 ```
 
-Per table it runs the full hierarchy and exits 0 on `match`, 1 on `mismatch`:
-schema parity **incl. data types**, **key-uniqueness** (`GROUP BY ... HAVING count>1`),
-membership anti-joins (`EXCEPT`), null-safe value compare over **every shared
+Per table it runs the full hierarchy and exits **0 on `match`, 2 on `partial_match`,
+1 on `mismatch`**: schema parity **incl. data types**, **key-uniqueness**
+(`GROUP BY ... HAVING count>1`), membership anti-joins (`EXCEPT`, which stop the
+column compare when populations differ), null-safe value compare over **every shared
 column** (per-drug/class flags included), and a null-sentinel checksum.
-`contains_mtx_reg` is in `EXCLUDED_FIELDS` (its diff is surfaced, non-blocking)
-since the local engine does not derive it. The live warehouse RUN is unexecuted
-here; the comparator builders + the cross-convention normalization are unit-tested.
+`contains_mtx_reg` is a known **`UNIMPLEMENTED_FIELDS`** gap: its diff is surfaced
+and non-blocking, but its presence forces `partial_match` (never a silent full
+`match`) until the field is ported — so a wrong maintenance result cannot pass.
+The cross-convention id bridge casts the legacy `PATID` to the canonical **string**
+`patient_id` (`contracts/inputs.md`). The live warehouse RUN is unexecuted here;
+the comparator builders + normalization + verdict logic are unit-tested.
 
 Contents:
 

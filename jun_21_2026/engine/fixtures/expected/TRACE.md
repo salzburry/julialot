@@ -52,3 +52,22 @@ within a medical-extended MAP.
 | 9000000002 | 2021-02-01 | 1 | BORT | 2021-03-04 | - | - |
 | 9000000003 | 2021-03-01 | 2 | BORT LENA | 2021-06-28 | 2021-05-14 | DARA |
 | 9000000004 | (steroid-only: no LOT1 row) |||||
+
+## LOT_LONG expected (full 23-column golden; `expected/LOT_LONG.csv`)
+Hand-verified: LOT1 rows are anchored to the golden `LOT1_BASE` + `LOT1_END` above;
+LOT2-5 follow the documented sequential rules. All 22 real columns are compared
+exactly in `test_engine.R`; `contains_mtx_reg` is the one unimplemented gap (= 0),
+so the comparison verdict is `partial_match` (honest: not full equivalence).
+
+| patient | lot | start | type | base_meds | end | reason | len | allo/cart | auto_flg |
+|---|---|---|---|---|---|---|---|---|---|
+| 9000000001 | 1 | 2021-01-01 | MED | LENA | 2021-06-30 | DISCONTINUATION | 181 | 0/0 | 0 |
+| 9000000002 | 1 | 2021-02-01 | MED | BORT | 2021-03-04 | DISCONTINUATION | 32 | 0/0 | 0 |
+| 9000000003 | 1 | 2021-03-01 | MED | BORT LENA | 2021-04-14 | SCT_ALLO | 45 | 0/0 | 0 |
+| 9000000003 | 2 | 2021-04-15 | SCT_ALLO | (none) | 2021-04-15 | SCT_ALLO | 1 | 1/0 | 0 |
+| 9000000003 | 3 | 2021-05-15 | MED | DARA | 2021-06-13 | DISCONTINUATION | 30 | 0/0 | 0 |
+
+- 9000000003: LOT1 BORT·LENA ends `SCT_ALLO` (the ALLO censors the regimen at
+  2021-04-14); the ALLO starts a single-day LOT2 at 2021-04-15 (end+1); LOT3 = DARA
+  triggered from the LOT2 end, ending `DISCONTINUATION` at its runout. CE-sensitive
+  end equals the primary end (no `enddate_ce` cap in the fixture); no AUTO events.
