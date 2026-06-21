@@ -132,6 +132,15 @@ ok(.resolve_patid("PATID", c("PATID", "lot_num")) == "PATID", "override honored 
 ok(.resolve_patid("PATID", c("patient_id", "lot_num")) == "patient_id",
    "override IGNORED (falls back to auto-detect) when side A lacks that column")
 ok(.resolve_patid(NULL, c("patient_id")) == "patient_id", "no override -> auto-detect")
+# the gap downgrade is CALLER-scoped: warehouse prior-vs-current passes NO gaps
+# (both production compute the field -> strict, full match reachable); the local
+# engine path passes UNIMPLEMENTED_FIELDS (it hardcodes the field -> partial_match).
+ok(length(.present_gaps(character(0), c("contains_mtx_reg", "lot_num"))) == 0,
+   "warehouse default (no unimplemented) -> no gap, contains_mtx_reg compared strictly")
+ok(identical(.present_gaps(UNIMPLEMENTED_FIELDS$LOT_LONG, c("contains_mtx_reg", "lot_num")), "contains_mtx_reg"),
+   "local path (UNIMPLEMENTED_FIELDS) -> contains_mtx_reg flagged as the present gap")
+ok(length(.present_gaps("contains_mtx_reg", c("patient_id", "lot_num"))) == 0,
+   "a gap field absent from the table is not reported")
 # value compare spans ALL shared non-key cols (catches per-drug/class flags)
 ok(setequal(value_compare_cols(c("PATID", "LOT_NUM", "LOT1_MED_LENA"),
                                c("patid", "lot_num", "lot1_med_lena"), "PATID"),

@@ -18,7 +18,7 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 248 tests, all pure-R / local (also run in CI)
+Rscript tests/run_unit_tests.R          # 251 tests, all pure-R / local (also run in CI)
 ```
 
 Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
@@ -105,17 +105,22 @@ Rscript scripts/compare_run_outputs.R --run hive_metastore.lot_prior hive_metast
 # column exists on side A); do NOT use it to bridge PATID vs patient_id.
 ```
 
-Per table it runs the full hierarchy and exits **0 on `match`, 2 on `partial_match`,
-1 on `mismatch`**: schema parity **incl. data types**, **key-uniqueness**
-(`GROUP BY ... HAVING count>1`), membership anti-joins (`EXCEPT`, which stop the
-column compare when populations differ), null-safe value compare over **every shared
-column** (per-drug/class flags included), and a null-sentinel checksum.
-`contains_mtx_reg` is a known **`UNIMPLEMENTED_FIELDS`** gap: its diff is surfaced
-and non-blocking, but its presence forces `partial_match` (never a silent full
-`match`) until the field is ported — so a wrong maintenance result cannot pass.
-The cross-convention id bridge casts the legacy `PATID` to the canonical **string**
-`patient_id` (`contracts/inputs.md`). The live warehouse RUN is unexecuted here;
-the comparator builders + normalization + verdict logic are unit-tested.
+Both `--local` and `--run` exit **0 on `match`, 2 on `partial_match`, 1 on
+`mismatch`** and print per-table status. Each table runs the full hierarchy: schema
+parity **incl. data types**, **key-uniqueness** (`GROUP BY ... HAVING count>1`),
+membership anti-joins (`EXCEPT`, which stop the column compare when populations
+differ), null-safe value compare over **every shared column** (per-drug/class flags
+included), and a null-sentinel checksum.
+
+The **`partial_match`** verdict (for a known `UNIMPLEMENTED_FIELDS` gap like
+`contains_mtx_reg`) is **caller-scoped**, not global: the **local** engine-vs-golden
+comparison passes it (the R engine hardcodes the field, so a wrong maintenance result
+can never silently pass as `match`), but the **warehouse `--run`** (prior-vs-current,
+both production-derived and both computing the field) defaults to **strict** — the
+field is compared normally and a full `match` is reachable. The cross-convention id
+bridge casts the legacy `PATID` to the canonical **string** `patient_id`
+(`contracts/inputs.md`). The live warehouse RUN is unexecuted here; the comparator
+builders + normalization + verdict logic are unit-tested.
 
 Contents:
 

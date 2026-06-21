@@ -16,7 +16,7 @@ comparing. That run is the reviewer/owner's step (it needs the warehouse).
 Run it (the driver runs the full pipeline MAP → LOT1 → SCT → LOT1 end):
 ```
 Rscript engine/run_engine.R engine/fixtures /tmp/out   # MAP_STACKED + LOT1_BASE + LOT1_END + LOT_LONG
-Rscript tests/run_unit_tests.R                          # 248 pass (engine: test_engine/sct/lot_end/lot_long); also CI
+Rscript tests/run_unit_tests.R                          # 251 pass (engine: test_engine/sct/lot_end/lot_long); also CI
 ```
 
 ## What to validate: each rule maps to a production source line
@@ -90,10 +90,11 @@ Rscript tests/run_unit_tests.R                          # 248 pass (engine: test
 
 ## NOT yet ported (refinements)
 
-- **`contains_mtx_reg`** (= 0; needs maintenance metadata) is a DETERMINISTIC gap, so
-  it is in the comparator's `UNIMPLEMENTED_FIELDS`: surfaced + non-blocking, but it
-  forces a `partial_match` verdict (never a silent full `match`). Implement it and
-  move it out of `UNIMPLEMENTED_FIELDS` for full LOT_LONG parity.
+- **`contains_mtx_reg`** (= 0; needs maintenance metadata) is a DETERMINISTIC gap of
+  the LOCAL R engine, so it forces a `partial_match` verdict (never a silent `match`)
+  in the LOCAL engine-vs-golden comparison. It is CALLER-scoped, not global: the
+  WAREHOUSE `--run` (prior-vs-current, both production compute it) defaults to strict.
+  Implement the field locally for full LOT_LONG parity.
 - The **regression-expected** baseline (legacy execution on the same synthetic data,
   the owner's hive_metastore step) — the decisive gate — and **canonical
   adapter→validation→core wiring** in `run_engine` (it validates only filenames +

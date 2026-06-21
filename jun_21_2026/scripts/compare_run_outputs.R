@@ -46,21 +46,21 @@ EXCLUDED_FIELDS <- list(
   # clean run over these is still a FULL match.
   LOT_LONG  = c("lot_base_1st_add_med")
 )
-# Known PARITY GAPS: DETERMINISTIC outputs the local engine does NOT yet derive
+# Known PARITY GAPS: DETERMINISTIC outputs the LOCAL R engine does not yet derive
 # (contains_mtx_reg needs MONOMAINTENANCE/DUALMAINTENANCEWITH maintenance metadata).
-# These are excluded from BLOCKING (so the rest of the table still compares) but
-# their presence downgrades the verdict to `partial_match` - a run can NEVER be a
-# full `match` while a deterministic field is unimplemented, so a wrong maintenance
-# result cannot silently pass. Restore the field to EXCLUDED_FIELDS=none once ported.
+# Whether they apply is the CALLER's SCOPE, not a global property of the column:
+#   - LOCAL engine-vs-golden (compare_local): the engine hardcodes contains_mtx_reg=0,
+#     so it passes UNIMPLEMENTED_FIELDS and the verdict is `partial_match` (a wrong
+#     maintenance result can never silently pass as a full match).
+#   - WAREHOUSE prior-vs-current (compare_run): BOTH sides are production and compute
+#     the field, so the default is NONE - it is compared STRICTLY and a full `match`
+#     is reachable. (A caller may still pass a gap map explicitly if one side lacks it.)
 UNIMPLEMENTED_FIELDS <- list(
   LOT_LONG = c("contains_mtx_reg")
 )
-# Both sets are non-blocking in the value compare; the gap set additionally makes the
-# verdict partial. Helper: the union (per side, remapped) and the present gap columns.
-.excluded_for <- function(table_name)
-  c(EXCLUDED_FIELDS[[table_name]] %||% character(0), UNIMPLEMENTED_FIELDS[[table_name]] %||% character(0))
-.gaps_present <- function(table_name, cols)
-  intersect(tolower(UNIMPLEMENTED_FIELDS[[table_name]] %||% character(0)), tolower(cols))
+# Pure: the gap columns actually present in a table (a non-blocking diff there only
+# downgrades to partial_match, never overturns an otherwise-clean comparison).
+.present_gaps <- function(unimplemented, cols) intersect(tolower(unimplemented %||% character(0)), tolower(cols))
 
 # Required output columns per table (the versioned output contract; see
 # contracts/outputs.md). compare_local checks BOTH sides carry these, so two
@@ -256,7 +256,7 @@ table_checksum <- function(con, tbl, keys, compare_cols, excluded = character(0)
 # and a failed table does no needless full-table work):
 #   schema(name+type) + contract -> key integrity (non-null + unique) ->
 #   membership -> values -> checksum (only after the authoritative checks pass).
-compare_table <- function(con, tbl_a, tbl_b, table_name, patid = NULL) {
+compare_table <- function(con, tbl_a, tbl_b, table_name, patid = NULL, unimplemented = character(0)) {
   if (is.null(COMPARE_KEYS[[table_name]])) stop("no COMPARE_KEYS for ", table_name)
   sa <- describe_schema(con, tbl_a); sb <- describe_schema(con, tbl_b)
   id_a <- .resolve_patid(patid, names(sa)); id_b <- .detect_patid(names(sb))
@@ -273,11 +273,11 @@ compare_table <- function(con, tbl_a, tbl_b, table_name, patid = NULL) {
     patid <- "patient_id"
   } else patid <- id_a
   keys <- .remap_patid(COMPARE_KEYS[[table_name]], patid)
-  excl <- .remap_patid(.excluded_for(table_name), patid)
+  excl <- .remap_patid(union(EXCLUDED_FIELDS[[table_name]] %||% character(0), unimplemented), patid)
   required <- .remap_patid(OUTPUT_CONTRACT[[table_name]] %||% keys, patid)
   sch <- compare_schema_maps(sa, sb)
   miss_req <- setdiff(tolower(required), intersect(names(sa), names(sb)))
-  gaps <- .gaps_present(table_name, intersect(names(sa), names(sb)))   # unimplemented fields present
+  gaps <- .present_gaps(unimplemented, intersect(names(sa), names(sb)))   # caller-scoped gap fields present
   res <- list(table = table_name, patid = patid, schema = sch, unimplemented = gaps,
               partial = length(gaps) > 0, contract_ok = length(miss_req) == 0, missing_required = miss_req)
   if (!sch$ok || length(miss_req)) return(res)                 # decisive: schema/contract
@@ -388,7 +388,7 @@ compare_local_table <- function(path_a, path_b, keys, excluded = character(0), r
   cb <- as.data.frame(lapply(b[keep], .canon_cell), stringsAsFactors = FALSE, check.names = FALSE)
   res$checksum_a <- content_hash(ca[order(ka), , drop = FALSE])
   res$checksum_b <- content_hash(cb[order(kb), , drop = FALSE])
-  res$unimplemented <- intersect(tolower(unimplemented), tolower(names(a)))   # present gap fields
+  res$unimplemented <- .present_gaps(unimplemented, names(a))   # caller-scoped gap fields present
   res$partial <- length(res$unimplemented) > 0
   clean <- res$schema_ok && res$contract_ok && res$key_unique &&
            res$only_in_a == 0 && res$only_in_b == 0 && res$value_mismatch == 0
@@ -423,10 +423,12 @@ compare_local <- function(dir_a, dir_b, tables = names(COMPARE_KEYS)) {
 }
 
 # Compare a full run (all three output tables) in the hive_metastore catalog.
-# A run matches only if EVERY table matches on schema, membership, AND values.
-compare_run <- function(con, ns_a, ns_b, tables = names(COMPARE_KEYS), patid = NULL) {
+# Prior-vs-current are BOTH production, so `unimplemented` defaults to none (every
+# field compared strictly; a full `match` is reachable). Pass a per-table gap map
+# only when one side provably lacks a deterministic field (e.g. the local engine).
+compare_run <- function(con, ns_a, ns_b, tables = names(COMPARE_KEYS), patid = NULL, unimplemented = list()) {
   results <- lapply(tables, function(t)
-    compare_table(con, paste0(ns_a, ".", t), paste0(ns_b, ".", t), t, patid))
+    compare_table(con, paste0(ns_a, ".", t), paste0(ns_b, ".", t), t, patid, unimplemented[[t]] %||% character(0)))
   names(results) <- tables
   clean_one <- function(r) isTRUE(r$schema$ok) && isTRUE(r$key_unique) && isTRUE(r$contract_ok) &&
     isTRUE((r$membership$only_in_a %||% NA) == 0) && isTRUE((r$membership$only_in_b %||% NA) == 0) &&
@@ -466,6 +468,7 @@ if (sys.nframe() == 0 && !interactive()) {
   if (length(a) >= 3 && a[1] == "--local") {
     res <- compare_local(a[2], a[3])
     for (t in names(res)) { r <- res[[t]]
+      v <- r$verdict %||% (if (isTRUE(r$match)) "match" else "mismatch")   # 3-way, like --run
       detail <- character(0)
       if (length(r$mismatch_cols)) detail <- c(detail, paste0("cols:", paste(r$mismatch_cols, collapse = ",")))
       if (isTRUE(r$contract_ok == FALSE)) detail <- c(detail,
@@ -473,12 +476,15 @@ if (sys.nframe() == 0 && !interactive()) {
                   paste(r$missing_required$b, collapse = ",")))
       if ((r$excluded_diffs %||% 0L) > 0L) detail <- c(detail,   # surfaced, never silent
           sprintf("excluded_diffs=%d (informational)", r$excluded_diffs))
+      if (length(r$unimplemented)) detail <- c(detail, sprintf("unimplemented:%s", paste(r$unimplemented, collapse = ",")))
       cat(sprintf("%-12s %s (only_in_a=%d only_in_b=%d value_mismatch=%d %s)\n",
-          t, if (isTRUE(r$match)) "MATCH" else "MISMATCH",
-          r$only_in_a %||% 0L, r$only_in_b %||% 0L, r$value_mismatch %||% 0L,
+          t, toupper(v), r$only_in_a %||% 0L, r$only_in_b %||% 0L, r$value_mismatch %||% 0L,
           paste(detail, collapse = " "))) }
-    cat("verdict:", attr(res, "verdict"), "\n")
-    quit(status = if (identical(attr(res, "verdict"), "match")) 0L else 1L)
+    verdict <- attr(res, "verdict")
+    cat("verdict:", verdict, "\n")
+    if (identical(verdict, "partial_match"))
+      cat("  NOTE: partial_match excludes unimplemented deterministic field(s); NOT full equivalence.\n")
+    quit(status = if (identical(verdict, "match")) 0L else if (identical(verdict, "partial_match")) 2L else 1L)
   }
   cat("compare_run_outputs.R. Local CSV: --local <dir_a> <dir_b>;",
       "live hive_metastore: --run <ns_prior> <ns_current> [--patid PATID]",
