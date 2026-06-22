@@ -20,7 +20,7 @@
 #      not implemented"). Medical runout always = DATE_SERVICE + DAY_SUPPLY - 1.
 #   2. Pharmacy claims: pushout only when new claim arrives BEFORE current
 #      rx_runout. When pharmacy claim arrives AFTER rx_runout (but within
-#      med_runout), pharmacy resets without pushout (per Figure 3, iter 4).
+#      med_runout), pharmacy resets without pushout (per spec).
 #   3. The simplified "sum pharmacy day supply" approach is incorrect when
 #      pharmacy expires mid-MAP (kept alive by medical) and later resets.
 #      The aggregate() state machine handles this correctly.
@@ -419,7 +419,7 @@ main <- function() {
         ON r.MED_ABBR = ru.CL_MED_ABBR
     ),
     filtered AS (
-      -- C2 fix: Per spec and protocol (Section 5.1.1), pharmacy claims
+      -- C2 fix: Per spec and protocol, pharmacy claims
       -- with missing or anomalous DAY_SUPPLY should be imputed to 28, not dropped.
       SELECT
         PATID, CODE, CODE_TYPE, CLAIM_TYPE, DATE_SERVICE,
@@ -469,7 +469,7 @@ main <- function() {
   # CORRECTED per spec:
   #   "Medical runout date ... Pushout is not implemented."
   #
-  # Pharmacy pushout rules (per Figure 3):
+  # Pharmacy pushout rules (per spec):
   #   - If new pharmacy claim DATE_SERVICE <= current rx_runout:
   #     pushout = rx_runout - DATE_SERVICE + 1
   #     new rx_runout = DATE_SERVICE + DAY_SUPPLY - 1 + pushout
@@ -576,7 +576,7 @@ main <- function() {
                         WHEN x.dt <= s.rx_runout THEN
                           date_add(s.rx_runout, x.ds)
                         -- Pharmacy claim AFTER rx_runout but still in MAP (via med_runout)
-                        -- -> RESET without pushout (per Figure 3, iteration 4)
+                        -- -> RESET without pushout (per spec)
                         ELSE
                           date_add(x.dt, x.ds - 1)
                       END
@@ -696,7 +696,7 @@ main <- function() {
       ON ms.PATID = l1.PATID
     WHERE ms.MAP_START_DT >= l1.LOT1_START_DT
       AND ms.MAP_START_DT <= date_add(l1.LOT1_START_DT, {cfg$induction_window_days - 1})
-      AND ms.MAP_MED_CLASS <> 'STEROID'  -- H1 fix: exclude steroids per protocol Section 5.1.1
+      AND ms.MAP_MED_CLASS <> 'STEROID'  -- H1 fix: exclude steroids per protocol
   "), qc = "
     SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients, avg(cnt) AS avg_induction_meds
     FROM (SELECT PATID, count(DISTINCT MED_ABBR) AS cnt FROM lot1_induction_meds GROUP BY PATID)")
@@ -714,7 +714,7 @@ main <- function() {
         ON im.MED_ABBR = ps.original_med
     ),
     -- H1 fix: Steroids are now excluded from base_meds (via lot1_induction_meds filter)
-    -- per protocol Section 5.1.1: corticosteroids are not oncology agents and should
+    -- per protocol: corticosteroids are not oncology agents and should
     -- not drive regimen membership, discontinuation, or add-med logic.
     discon_raw AS (
       SELECT
