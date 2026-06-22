@@ -16,7 +16,7 @@ comparing. That run is the reviewer/owner's step (it needs the warehouse).
 Run it (the driver runs the full pipeline MAP → LOT1 → SCT → LOT1 end):
 ```
 Rscript engine/run_engine.R engine/fixtures /tmp/out   # MAP_STACKED + LOT1_BASE + LOT1_END + LOT_LONG
-Rscript tests/run_unit_tests.R                          # 293 pass (engine: test_engine/sct/lot_end/lot_long); also CI
+Rscript tests/run_unit_tests.R                          # 301 pass (engine: test_engine/sct/lot_end/lot_long); also CI
 ```
 
 ## What to validate: each rule maps to a production source line
@@ -67,10 +67,13 @@ Rscript tests/run_unit_tests.R                          # 293 pass (engine: test
 - **End-to-end** (`test_engine.R`): the driver's `LOT1_END` (MAP→LOT1→SCT→end) vs
   hand-derived expected, including an `SCT_ALLO` end for one patient; PLUS the **full
   23-column `LOT_LONG`** vs a hand-derived golden (`expected/LOT_LONG.csv`) — ALL 23
-  columns compared exactly (verdict `match`; `contains_mtx_reg` now computed).
-- **contains_mtx_reg** (`test_lot_long.R`): `.maint_maps` parsing + the mono/dual +
-  anchor logic (mono+anchor→1, mono-only→0, dual-pair-only→0, dual+anchor→1, none→0)
-  and the `build_lot_long` rollup wiring.
+  columns compared exactly (verdict `match`), incl. a POSITIVE `contains_mtx_reg=1` row
+  (`BORT LENA` = mono LENA + anchor BORT).
+- **contains_mtx_reg** (`test_lot_long.R` / `test_engine.R`): `.maint_maps` parsing +
+  the mono/dual + anchor logic (mono+anchor→1, mono-only→0, dual-pair-only→0,
+  dual+anchor→1, none→0); the `build_lot_long` rollup wiring; and `run_engine`
+  **fails closed** when the rollup lacks `MONOMAINTENANCE`/`DUALMAINTENANCEWITH`
+  (required input — the field is evaluated, never silently 0).
 - **Production parity** (`test_engine.R`/`test_sct.R`): pharmacy day-supply
   imputation, same-day max-day-supply de-dup, AUTO window = 13.
 - **LOT2-5** (`test_lot_long.R`): a 3-line cohort (LENA→DARA→CARF) run through the
@@ -106,14 +109,16 @@ Rscript tests/run_unit_tests.R                          # 293 pass (engine: test
   consumes POST-cohort inputs). `apr_30_2026` production also does not yet consume
   `CONFIG_SPEC` (still env vars).
 - **Now handled (LOT_LONG is fully derived):** `contains_mtx_reg` COMPUTED (mono/dual
-  + anchor from rollup metadata) → `UNIMPLEMENTED_FIELDS` empty, golden is a full
-  `match`; ALL tunables propagate into LOT1 end logic; defaults derived from + resolved
-  config validated against the one `CONFIG_SPEC`; caller-scoped gap mechanism retained;
+  + anchor from rollup metadata, **required** input - fail closed if absent) →
+  `UNIMPLEMENTED_FIELDS` empty, golden is a full `match` with a positive row; ALL
+  tunables propagate into LOT1 end logic; defaults derived from + resolved config
+  validated against the one `CONFIG_SPEC`; caller-scoped gap mechanism retained;
   single-join value compare with double counts + `bigint="numeric"` (BIGINT-safe) +
-  case-insensitive key exclusion; checksum AND sample failures isolated + SURFACED;
-  null-vs-dup key counts (`KEYS{...}`); patient-level sample OFF by default, governed
-  via validated `--sample-into` (deterministic `ORDER BY`) or explicit `--sample-inprocess`,
-  never logged; `PATID` name+STRING bridge; membership short-circuit; CART death-guard.
+  case-insensitive key exclusion; checksum AND sample (incl. row-count) failures
+  isolated + SURFACED; null-vs-dup key counts (`KEYS{...}`); patient-level sample OFF
+  by default, governed via `--sample-into` validated to EXACTLY `catalog.schema.cmp_<run_id>`
+  (deterministic `ORDER BY`) or explicit `--sample-inprocess`, never logged; `PATID`
+  name+STRING bridge; membership short-circuit; CART death-guard.
   Checksum aggregation **bucketing** remains a deferred warehouse-scale optimization.
 
 ## Constraints to confirm

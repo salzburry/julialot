@@ -18,7 +18,7 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 293 tests, all pure-R / local (also run in CI)
+Rscript tests/run_unit_tests.R          # 301 tests, all pure-R / local (also run in CI)
 ```
 
 Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
@@ -79,11 +79,14 @@ matching production), pharmacy invalid day-supply to 28; the SCT codelist is
 required **by content** (the driver fails closed unless it has rows + the
 `code_type`/`code`/`sct_type` columns, so SCT can never silently be empty).
 CE-sensitive end is implemented (caps at `enddate_ce`, reason `DISENROLLMENT`).
-**`contains_mtx_reg` is now COMPUTED** (S16b / Step N.5): from the rollup's optional
-`MONOMAINTENANCE` / `DUALMAINTENANCEWITH` metadata, 1 iff a LOT's induction contains a
-valid maintenance subset (a MONO drug, or a DUAL pair) PLUS an anchor drug outside it
-(absent metadata → 0). LOT_LONG is therefore fully derived — no remaining parity gap;
-`UNIMPLEMENTED_FIELDS` is now empty (the partial_match mechanism is retained for any
+**`contains_mtx_reg` is now COMPUTED** (S16b / Step N.5): 1 iff a LOT's induction
+contains a valid maintenance subset (a MONO drug, or a DUAL pair) PLUS an anchor drug
+outside it. `MONOMAINTENANCE` / `DUALMAINTENANCEWITH` are **required rollup columns**
+(production loads them from `cl_mma_rollup`): `run_engine` **fails closed** if they are
+absent, so the field is genuinely *evaluated* and never silently 0 from a missing input
+— and the end-to-end golden includes a positive `contains_mtx_reg=1` row (`BORT LENA` =
+mono LENA + anchor BORT). LOT_LONG is therefore fully derived — no remaining parity
+gap; `UNIMPLEMENTED_FIELDS` is empty (the partial_match mechanism is retained for any
 future gap). `run_engine` derives its **defaults from** and **validates the full
 resolved config against** the refactor's one typed contract `CONFIG_SPEC` (its
 engine-tunable subset — single source, no drift): an unknown key (`max_lott`), a
@@ -130,9 +133,11 @@ aborts the verdict). Keys are excluded from the value compare **case-insensitive
 (a legacy `PATID` key never leaks into the aggregates). On a value mismatch only, a
 **bounded, deterministic** (`ORDER BY` keys, `LIMIT 100`) diagnostic of the changed
 keys + a/b values can be produced; being patient-level it is **OFF by default** —
-`--sample-into <catalog.schema.cmp_<run_id>>` (validated as fully-qualified) writes it
-to a **governed** run-scoped table (the log shows only `sample_table:<name>(rows=N)` +
-the `cols:` field), and `--sample-inprocess` is an explicit diagnostic that holds it in
+`--sample-into <catalog.schema.cmp_<run_id>>` (validated to **exactly** that shape: 3
+nonempty parts + a run-scoped `cmp_` final, so concurrent/repeat runs don't overwrite)
+writes it to a **governed** run-scoped table (the log shows only
+`sample_table:<name>(rows=N)` + the `cols:` field), and `--sample-inprocess` is an
+explicit diagnostic that holds it in
 the R process; neither prints patient data, and a failure shows `SAMPLE_FAILED(audit-only)`.
 Clean runs pay nothing.
 

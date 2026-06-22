@@ -256,14 +256,18 @@ sql_normalize_view <- function(view, tbl, cols, id_col) {
   sprintf("CREATE OR REPLACE TEMPORARY VIEW %s AS SELECT %s FROM %s", view, proj, tbl)
 }
 .cmp_view <- function(table_name, side) sprintf("cmpnorm_%s_%s", gsub("[^A-Za-z0-9_]", "_", table_name), side)
-# A governed sample prefix must be FULLY QUALIFIED (catalog.schema.cmp_<run_id>) so the
-# patient-level diff lands in an access-controlled schema, not an ad-hoc/unqualified
-# table that could collide across concurrent runs. (Cannot verify the schema IS governed
-# from here - that is an environment ACL - but the qualification is enforced.)
+# A governed sample prefix must be EXACTLY `catalog.schema.cmp_<run_id>`: three nonempty
+# identifier components and a RUN-SCOPED final component (`cmp_<run_id>`), so the
+# patient-level diff lands in an access-controlled schema and concurrent/repeat runs do
+# not overwrite each other (the diagnostic uses CREATE OR REPLACE). (Cannot verify the
+# schema IS governed from here - that is an environment ACL - but the shape + run-scope
+# are enforced; `catalog.schema`, `catalog..cmp_x`, `catalog.schema.` are rejected.)
 .validate_sample_into <- function(prefix) {
   if (is.null(prefix)) return(invisible(NULL))
-  if (!is.character(prefix) || length(prefix) != 1L || !grepl("^[A-Za-z0-9_]+\\.[A-Za-z0-9_.]+$", prefix))
-    stop("--sample-into must be a fully-qualified governed prefix (catalog.schema.cmp_<run_id>), got: ", prefix)
+  if (!is.character(prefix) || length(prefix) != 1L ||
+      !grepl("^[A-Za-z0-9_]+\\.[A-Za-z0-9_]+\\.cmp_[A-Za-z0-9_]+$", prefix))
+    stop("--sample-into must be exactly catalog.schema.cmp_<run_id> (3 nonempty parts, ",
+         "run-scoped cmp_ final), got: ", prefix)
   invisible(prefix)
 }
 # All SHARED non-key columns to value-compare (not just the curated contract), so
@@ -360,7 +364,8 @@ compare_table <- function(con, tbl_a, tbl_b, table_name, patid = NULL, unimpleme
                      error = function(e) { res$sample_warning <<- conditionMessage(e); FALSE })
       if (ok) { res$value_sample_table <- dest
         res$value_sample_n <- tryCatch(as.numeric(db_q(con, sprintf("SELECT count(*) AS n FROM %s", dest))$n[1]),
-                                       error = function(e) NA_real_) }
+                                       error = function(e) {   # count failed: the table exists but is unverified
+                                         res$sample_warning <<- paste("row-count failed:", conditionMessage(e)); NA_real_ }) }
     } else if (isTRUE(sample_inprocess)) {
       res$value_sample <- tryCatch(db_q(con, sql_value_sample(tbl_a, tbl_b, keys, mc, 100L)),
                                    error = function(e) { res$sample_warning <<- conditionMessage(e); NULL })
@@ -478,9 +483,9 @@ compare_local_table <- function(path_a, path_b, keys, excluded = character(0), r
 
 # `tables` are REQUIRED outputs: a missing one is a blocking mismatch (fail
 # closed), never silently skipped. `unimplemented` is CALLER-scoped, like the
-# warehouse `compare_run`: it DEFAULTS to none (strict - two production CSV exports
-# compare every field), and the local engine-vs-golden caller passes the engine
-# profile (`UNIMPLEMENTED_FIELDS`) so contains_mtx_reg yields partial_match.
+# warehouse `compare_run`: it DEFAULTS to none (strict - every field compared).
+# No field uses it today (contains_mtx_reg is computed; UNIMPLEMENTED_FIELDS empty);
+# a caller passes a future not-yet-derived field here to get partial_match.
 compare_local <- function(dir_a, dir_b, tables = names(COMPARE_KEYS), unimplemented = list()) {
   out <- list(); missing <- character(0)
   for (t in tables) {
@@ -560,8 +565,9 @@ if (sys.nframe() == 0 && !interactive()) {
     quit(status = if (identical(rr$verdict, "match")) 0L else if (identical(rr$verdict, "partial_match")) 2L else 1L)
   }
   if (length(a) >= 3 && a[1] == "--local") {
-    # STRICT by default (two production exports compare every field); --engine applies
-    # the local-engine gap profile so contains_mtx_reg yields partial_match.
+    # STRICT by default (every field compared). --engine applies the local-engine gap
+    # profile (`UNIMPLEMENTED_FIELDS`) - empty today (contains_mtx_reg computed), so it is
+    # a no-op until a future field is not-yet-derived; retained for that case.
     eng <- "--engine" %in% a
     res <- compare_local(a[2], a[3], unimplemented = if (eng) UNIMPLEMENTED_FIELDS else list())
     for (t in names(res)) { r <- res[[t]]
