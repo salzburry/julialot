@@ -94,6 +94,17 @@ ok(.rollup_csv(data.frame(code = "L", med_abbr = "LENA", med_class = "IMID",
 gold <- read.csv("engine/fixtures/expected/LOT_LONG.csv", colClasses = "character")
 ok("1" %in% gold$contains_mtx_reg && sum(gold$contains_mtx_reg == "1") == 1L,
    "the LOT_LONG golden includes a contains_mtx_reg=1 row (BORT LENA induction)")
+# rollup HEADERS are canonicalized (case-insensitive): an UPPERCASE-header rollup is
+# accepted AND consumed correctly (the prior bug: validation passed case-insensitively
+# but map.R/.maint_maps read exact-lowercase, breaking downstream).
+upcase <- file.path(tempdir(), "upcase"); dir.create(upcase, showWarnings = FALSE)
+file.copy(list.files("engine/fixtures", full.names = TRUE, pattern = "\\.csv$"), upcase, overwrite = TRUE)
+ru <- read.csv("engine/fixtures/rollup.csv", colClasses = "character", check.names = FALSE)
+names(ru) <- toupper(names(ru))   # CODE_TYPE, MED_ABBR, MONOMAINTENANCE, ...
+write.csv(ru, file.path(upcase, "rollup.csv"), row.names = FALSE)
+up_ll <- run_engine(upcase)$LOT_LONG
+ok(nrow(up_ll) == 5L && sum(up_ll$contains_mtx_reg == 1) == 1L,
+   "UPPERCASE-header rollup is accepted and yields the same contains_mtx_reg (headers canonicalized)")
 
 # --- targeted rule spot-checks ------------------------------------------------
 eq(nrow(map), 8L, "8 MAP periods across the cohort")

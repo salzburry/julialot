@@ -66,16 +66,18 @@ run_engine <- function(input_dir, params = list()) {
   if (!nrow(codelist) || !all(need_cl %in% names(codelist)))
     stop("run_engine: sct_codelist.csv must have rows and columns ",
          paste(need_cl, collapse = "/"), " (SCT evidence cannot be silently empty)")
-  rollup <- rd("rollup.csv")
-  # The rollup is a REQUIRED reference input, validated by CONTENT (rows + every column
-  # the engine consumes): code_type/code/med_abbr/med_class for MAP construction, PLUS
-  # MONOMAINTENANCE/DUALMAINTENANCEWITH for maintenance (production cl_mma_rollup). Fail
-  # closed so a header-only / malformed rollup can't slip past and silently yield empty
-  # MAP/LOT output or a silent contains_mtx_reg=0.
-  need_ru <- c("code_type", "code", "med_abbr", "med_class", "MONOMAINTENANCE", "DUALMAINTENANCEWITH")
-  if (!nrow(rollup) || !all(tolower(need_ru) %in% tolower(names(rollup))))
+  rollup <- rd("rollup.csv"); names(rollup) <- tolower(names(rollup))
+  # The rollup is a REQUIRED reference input. Headers are CANONICALIZED to lowercase
+  # above so the engine's case-sensitive reads (map.R `rollup$code_type` etc.,
+  # .maint_maps `rollup$med_abbr`) work regardless of input header case - the validation
+  # below and downstream consumption are now consistent. Validate by CONTENT (rows +
+  # every consumed column): code_type/code/med_abbr/med_class (MAP) PLUS
+  # monomaintenance/dualmaintenancewith (maintenance; production cl_mma_rollup). Fail
+  # closed so a header-only / malformed rollup can't silently yield empty MAP/LOT.
+  need_ru <- c("code_type", "code", "med_abbr", "med_class", "monomaintenance", "dualmaintenancewith")
+  if (!nrow(rollup) || !all(need_ru %in% names(rollup)))
     stop("run_engine: rollup.csv must have rows and columns ", paste(need_ru, collapse = "/"),
-         " (reference + maintenance metadata; contains_mtx_reg must be evaluated, not silently 0)")
+         " (case-insensitive; reference + maintenance metadata; contains_mtx_reg must be evaluated)")
   map_stacked <- build_map_stacked(rd("pharmacy.csv"), med, rollup, members,
     p$map_discon_gap_days, p$medical_day_supply)
   lot1 <- build_lot1_base(map_stacked, members, if (nrow(subs)) subs else NULL, p$induction_window_days)

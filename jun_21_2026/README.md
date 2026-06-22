@@ -18,7 +18,7 @@ dedicated refactor branch with baseline comparisons.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 303 tests, all pure-R / local (also run in CI)
+Rscript tests/run_unit_tests.R          # 304 tests, all pure-R / local (also run in CI)
 ```
 
 Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
@@ -82,8 +82,10 @@ CE-sensitive end is implemented (caps at `enddate_ce`, reason `DISENROLLMENT`).
 **`contains_mtx_reg` is now COMPUTED** (S16b / Step N.5): 1 iff a LOT's induction
 contains a valid maintenance subset (a MONO drug, or a DUAL pair) PLUS an anchor drug
 outside it. `MONOMAINTENANCE` / `DUALMAINTENANCEWITH` are **required rollup columns**
-(production loads them from `cl_mma_rollup`): `run_engine` **fails closed** if they are
-absent, so the field is genuinely *evaluated* and never silently 0 from a missing input
+(production loads them from `cl_mma_rollup`; rollup headers are read **case-insensitively**
+and canonicalized): `run_engine` **fails closed** if they are absent (or the rollup is
+empty / missing `code_type`/`code`/`med_class`), so the field is genuinely *evaluated*
+and never silently 0 from a missing input
 — and the end-to-end golden includes a positive `contains_mtx_reg=1` row (`BORT LENA` =
 mono LENA + anchor BORT). LOT_LONG is therefore fully derived — no remaining parity
 gap; `UNIMPLEMENTED_FIELDS` is empty (the partial_match mechanism is retained for any
