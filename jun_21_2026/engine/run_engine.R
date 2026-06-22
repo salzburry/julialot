@@ -11,13 +11,15 @@ if (!exists("build_lot_long")) local({
   for (m in c("map.R", "lot1.R", "sct.R", "lot_end.R", "lot_long.R")) source(file.path(d, m))
 })
 # The ONE shared typed-config contract (CONFIG_SPEC) governs param validation too -
-# no second spec to drift. Source it standalone when not already loaded by the runner.
-if (!exists("CONFIG_SPEC")) local({
+# no second spec to drift. Source it (and the reference-data validator) standalone when
+# not already loaded by the runner.
+local({
   fa <- grep("^--file=", commandArgs(FALSE), value = TRUE)
   d <- if (length(fa)) dirname(sub("^--file=", "", fa[1])) else "engine"
-  vc <- file.path(d, "..", "scripts", "validate_config.R")
-  if (!file.exists(vc)) vc <- "scripts/validate_config.R"
-  if (file.exists(vc)) source(vc)
+  src <- function(f) { p <- file.path(d, "..", "scripts", f); if (!file.exists(p)) p <- file.path("scripts", f)
+    if (file.exists(p)) source(p) }
+  if (!exists("CONFIG_SPEC")) src("validate_config.R")
+  if (!exists("validate_reference_data")) src("validate_reference_data.R")
 })
 
 # Params are DATA (resolved config). DEFAULTS are DERIVED from the ONE shared
@@ -66,16 +68,30 @@ run_engine <- function(input_dir, params = list()) {
   if (!nrow(codelist) || !all(need_cl %in% names(codelist)))
     stop("run_engine: sct_codelist.csv must have rows and columns ",
          paste(need_cl, collapse = "/"), " (SCT evidence cannot be silently empty)")
-  rollup <- rd("rollup.csv")
-  # The rollup is a REQUIRED reference input, validated by CONTENT (rows + every column
-  # the engine consumes): code_type/code/med_abbr/med_class for MAP construction, PLUS
-  # MONOMAINTENANCE/DUALMAINTENANCEWITH for maintenance (production cl_mma_rollup). Fail
-  # closed so a header-only / malformed rollup can't slip past and silently yield empty
-  # MAP/LOT output or a silent contains_mtx_reg=0.
-  need_ru <- c("code_type", "code", "med_abbr", "med_class", "MONOMAINTENANCE", "DUALMAINTENANCEWITH")
-  if (!nrow(rollup) || !all(tolower(need_ru) %in% tolower(names(rollup))))
+  rollup <- rd("rollup.csv"); names(rollup) <- tolower(names(rollup))
+  # Headers are CANONICALIZED to lowercase so the engine's case-sensitive reads
+  # (map.R `rollup$code_type` etc., .maint_maps `rollup$med_abbr`) work regardless of
+  # input case - validation and consumption are consistent. Case-folding two headers
+  # onto one name is ambiguous, so reject duplicates.
+  if (anyDuplicated(names(rollup)))
+    stop("run_engine: rollup.csv has duplicate column names after case-normalization: ",
+         paste(unique(names(rollup)[duplicated(names(rollup))]), collapse = ", "))
+  # STRUCTURE: rows + every consumed column - code_type/code/med_abbr/med_class (MAP)
+  # PLUS monomaintenance/dualmaintenancewith (maintenance; production cl_mma_rollup).
+  need_ru <- c("code_type", "code", "med_abbr", "med_class", "monomaintenance", "dualmaintenancewith")
+  if (!nrow(rollup) || !all(need_ru %in% names(rollup)))
     stop("run_engine: rollup.csv must have rows and columns ", paste(need_ru, collapse = "/"),
-         " (reference + maintenance metadata; contains_mtx_reg must be evaluated, not silently 0)")
+         " (case-insensitive; reference + maintenance metadata; contains_mtx_reg must be evaluated)")
+  # SEMANTICS via the shared reference-data validator (not one-off checks): blank
+  # code/med_abbr, code-system domain, NDC 11-digit, and one (code_system, code) mapping
+  # to >1 medication (collision) all BLOCK - so a rows-but-unusable rollup fails clearly
+  # instead of silently emptying MAP/LOT. (`med_abbr` is the mapped_to concept.)
+  if (exists("validate_reference_data")) {
+    ru_chk <- validate_reference_data(transform(rollup, mapped_to = med_abbr),
+                                      list(id = "rollup", row_count_min = 1L))
+    if (length(ru_chk$errors))
+      stop("run_engine: rollup.csv reference-data errors: ", paste(ru_chk$errors, collapse = "; "))
+  }
   map_stacked <- build_map_stacked(rd("pharmacy.csv"), med, rollup, members,
     p$map_discon_gap_days, p$medical_day_supply)
   lot1 <- build_lot1_base(map_stacked, members, if (nrow(subs)) subs else NULL, p$induction_window_days)

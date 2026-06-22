@@ -149,7 +149,12 @@ build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
                            sct_auto_gap_days = 60L, allo_lot_span = c("single_day", "extend_to_next"),
                            max_lot = 5L, rollup = NULL) {
   allo_lot_span <- match.arg(allo_lot_span)   # production default single_day (lot2_5_base.R:665)
-  maint <- .maint_maps(rollup)                # contains_mtx_reg maintenance metadata (empty -> all 0)
+  # contains_mtx_reg needs maintenance evidence. If the caller supplies a rollup WITH the
+  # maintenance columns, evaluate it; otherwise the field is NOT EVALUATED -> NA (an
+  # explicit "maintenance unavailable", never a silent clinical 0). run_engine always
+  # supplies a validated rollup, so the production path is 0/1, never NA.
+  maint_available <- !is.null(rollup) && all(c("monomaintenance", "dualmaintenancewith") %in% tolower(names(rollup)))
+  maint <- if (maint_available) .maint_maps(rollup) else NULL
   # config contract: an INTEGER in [2, 9]. Validate the ORIGINAL value BEFORE coercion
   # so a fractional input (2.9, "5.8") is REJECTED, not silently truncated by as.integer.
   ml <- suppressWarnings(as.numeric(max_lot))
@@ -202,7 +207,7 @@ build_lot_long <- function(lot1_base, lot1_end, map_stacked, sct_claims = NULL,
     lot_base_end_dt = ed_dt, lot_base_end_reason = end$lot1_base_end_reason,
     lot_base_length = end$lot1_base_length,
     lot_allo_lot_flg = as.integer(type == "SCT_ALLO"), lot_cart_lot_flg = as.integer(type == "CART"),
-    contains_mtx_reg = .contains_mtx_reg(strsplit(reg$base_meds, " ")[[1]], maint),   # induction maint subset + anchor
+    contains_mtx_reg = if (maint_available) .contains_mtx_reg(strsplit(reg$base_meds, " ")[[1]], maint) else NA_integer_,
     lot_base_end_dt_ce_sens = ce_end, lot_base_end_reason_ce_sens = ce_rs,
     lot_tx_auto_flg = a_flg, lot_tx_auto_tand_flg = a_tand,
     lot_tx_auto_sing_flg = a_sing, lot_tx_auto_dt_1 = a_dt1,

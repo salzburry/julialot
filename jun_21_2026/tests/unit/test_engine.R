@@ -60,9 +60,9 @@ write.csv(data.frame(patient_id = "9000000200", index_date = "2020-06-01", obs_e
           file.path(ci_dir, "members.csv"), row.names = FALSE)
 write.csv(data.frame(patient_id = "9000000200",
   service_date = c("2021-01-01", "2021-01-31", "2021-03-02", "2021-04-01", "2021-05-01", "2021-03-15"),
-  normalized_code = c("B", "B", "B", "B", "B", "D"), code_system = "NDC", days_supply = "30"),
+  normalized_code = c(rep("00000000001", 5), "00000000002"), code_system = "NDC", days_supply = "30"),  # 11-digit NDC
           file.path(ci_dir, "pharmacy.csv"), row.names = FALSE)
-write.csv(data.frame(code_type = "NDC", code = c("B", "D"), med_abbr = c("BORT", "DARA"), med_class = c("PI", "MAB"),
+write.csv(data.frame(code_type = "NDC", code = c("00000000001", "00000000002"), med_abbr = c("BORT", "DARA"), med_class = c("PI", "MAB"),
           MONOMAINTENANCE = "0", DUALMAINTENANCEWITH = ""),   # required maintenance metadata
           file.path(ci_dir, "rollup.csv"), row.names = FALSE)
 write.csv(data.frame(code_type = "HCPCS", code = "38241", sct_type = "CART"),
@@ -94,6 +94,34 @@ ok(.rollup_csv(data.frame(code = "L", med_abbr = "LENA", med_class = "IMID",
 gold <- read.csv("engine/fixtures/expected/LOT_LONG.csv", colClasses = "character")
 ok("1" %in% gold$contains_mtx_reg && sum(gold$contains_mtx_reg == "1") == 1L,
    "the LOT_LONG golden includes a contains_mtx_reg=1 row (BORT LENA induction)")
+# rollup HEADERS are canonicalized (case-insensitive): an UPPERCASE-header rollup is
+# accepted AND consumed correctly (the prior bug: validation passed case-insensitively
+# but map.R/.maint_maps read exact-lowercase, breaking downstream).
+upcase <- file.path(tempdir(), "upcase"); dir.create(upcase, showWarnings = FALSE)
+file.copy(list.files("engine/fixtures", full.names = TRUE, pattern = "\\.csv$"), upcase, overwrite = TRUE)
+ru <- read.csv("engine/fixtures/rollup.csv", colClasses = "character", check.names = FALSE)
+names(ru) <- toupper(names(ru))   # CODE_TYPE, MED_ABBR, MONOMAINTENANCE, ...
+write.csv(ru, file.path(upcase, "rollup.csv"), row.names = FALSE)
+up_ll <- run_engine(upcase)$LOT_LONG
+ok(nrow(up_ll) == 5L && sum(up_ll$contains_mtx_reg == 1) == 1L,
+   "UPPERCASE-header rollup is accepted and yields the same contains_mtx_reg (headers canonicalized)")
+# SEMANTIC rollup validation via the shared validate_reference_data layer (not one-off
+# checks): a rows-but-unusable rollup BLOCKS instead of silently emptying MAP/LOT.
+ok(.rollup_csv(data.frame(code_type = "NDC", code = c("11111111111", "11111111111"),
+   med_abbr = c("LENA", "BORT"), med_class = c("IMID", "PI"), MONOMAINTENANCE = "0", DUALMAINTENANCEWITH = "")),
+   "run_engine fails closed on a rollup collision (one NDC code -> two medications)")
+ok(.rollup_csv(data.frame(code_type = "NDC", code = "11111111111", med_abbr = "",
+   med_class = "IMID", MONOMAINTENANCE = "0", DUALMAINTENANCEWITH = "")),
+   "run_engine fails closed on a blank med_abbr (no silent empty mapping)")
+ok(.rollup_csv(data.frame(code_type = "NDC", code = "123", med_abbr = "LENA",
+   med_class = "IMID", MONOMAINTENANCE = "0", DUALMAINTENANCEWITH = "")),
+   "run_engine fails closed on a non-11-digit NDC code")
+# headers folding to the same name after case-normalization (code_type + CODE_TYPE) are
+# ambiguous -> rejected
+writeLines(c("code_type,CODE_TYPE,code,med_abbr,med_class,MONOMAINTENANCE,DUALMAINTENANCEWITH",
+             "NDC,NDC,11111111111,LENA,IMID,0,"), file.path(nomaint, "rollup.csv"))
+ok(inherits(try(run_engine(nomaint), silent = TRUE), "try-error"),
+   "run_engine rejects a rollup whose headers collide after case-normalization")
 
 # --- targeted rule spot-checks ------------------------------------------------
 eq(nrow(map), 8L, "8 MAP periods across the cohort")
