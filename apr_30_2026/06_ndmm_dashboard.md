@@ -4,8 +4,7 @@
 cohort** (IE-filtered 1L newly-diagnosed population) rather than on the
 whole `LOT_LONG` cohort.
 
-> Source: the NDMM cohort spec PDF, page 1 yellow
-> highlight ("Can we also have a look at all of these new IE criteria
+> Source: the NDMM cohort spec ("Can we also have a look at all of these new IE criteria
 > being implemented, please show bullets 1-3 above amongst the whole
 > cohort and the planned study cohort.")
 

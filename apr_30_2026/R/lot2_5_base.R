@@ -1,7 +1,6 @@
 #!/usr/bin/env Rscript
 # LOT 2 through LOT 5 base-period builder. Implements the LOT 2-5 spec
-# (lot2to5_spec_DRAFT_apr30.xlsx) as a standalone module; does not
-# modify any LOT1 module.
+# as a standalone module; does not modify any LOT1 module.
 #
 # Assumes 02_lot1.R already produced these views/tables in the same
 # connection / work schema:

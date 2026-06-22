@@ -619,7 +619,7 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
   phase_clinical_flags <- function() list(
     # ---- Phase 7: baseline MM evidence (Step 7 gate) ----
     # Step 7 needs >=1 strict MM dx (203.0x / C90.0x) in baseline. We
-    # follow the attrition table, which - unlike IE PDF row 14 - does not
+    # follow the attrition table, which - unlike IE spec row 14 - does not
     # also require a non-diagnostic claim, so the old claim_nondiagnostic
     # view was dropped as unused.
     list(

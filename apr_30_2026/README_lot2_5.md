@@ -12,7 +12,7 @@ through LOT5 on top of the existing LOT1 outputs. It does not modify
   `tx_allo_cart_dates`) from CSVs + persisted CDM/cohort tables.
 - `R/lot2_5_base.R` — module: `build_lot2_5(con, ...)` and helpers.
 - `03_lot2_5.R` — entry script.
-- Spec: `../Apr 18 2026/Program Spec and Scenarios/lot2to5_spec_DRAFT_apr30.xlsx`.
+- Spec: the LOT2-5 derivation spec (maintained separately, not part of this code bundle).
 
 ## Order of operations
 

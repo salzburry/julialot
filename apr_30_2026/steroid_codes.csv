@@ -7,7 +7,7 @@ code,code_type,mapped_to,note
 #                ('DEXA', 'PRED', etc.)
 #   note       - free text (drug, dosage form, etc.)
 #
-# HCPCS codes already in the spec PDF:
+# HCPCS codes already in the spec:
 J8540,HCPCS,DEXA,Dexamethasone oral
 J7512,HCPCS,PRED,Prednisone oral
 J1100,HCPCS,DEXA,Dexamethasone sodium phosphate inj
