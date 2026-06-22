@@ -30,7 +30,7 @@ not a code change.
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 309 tests, all pure-R / local (also run in CI)
+Rscript tests/run_unit_tests.R          # 310 tests, all pure-R / local (also run in CI)
 ```
 
 Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
@@ -98,7 +98,8 @@ outside it. `MONOMAINTENANCE` / `DUALMAINTENANCEWITH` are **required rollup colu
 and canonicalized, duplicates rejected): `run_engine` **fails closed** if they are absent
 (or the rollup is empty / missing `code_type`/`code`/`med_class`), AND it runs the shared
 **`validate_reference_data`** layer over the rollup (blank `code`/`med_abbr`, code-system
-domain, NDC 11-digit, and one-code→**multiple-med collisions** all BLOCK) — so a
+domain, NDC 11-digit, and one-code→**multiple-med collisions** all BLOCK), plus an
+explicit non-blank `med_class` check (it drives steroid exclusion / LOT decisions) — so a
 rows-but-unusable rollup fails clearly instead of silently emptying MAP/LOT. The reusable
 core enforces it too: `build_lot_long` emits `contains_mtx_reg = NA` (an explicit
 "maintenance unavailable", never a silent clinical 0) when a caller supplies no

@@ -259,10 +259,11 @@ sql_normalize_view <- function(view, tbl, cols, id_col) {
 .cmp_view <- function(table_name, side) sprintf("cmpnorm_%s_%s", gsub("[^A-Za-z0-9_]", "_", table_name), side)
 # A governed sample prefix must be EXACTLY `catalog.schema.cmp_<run_id>`: three nonempty
 # identifier components and a RUN-SCOPED final component (`cmp_<run_id>`), so the
-# patient-level diff lands in an access-controlled schema and concurrent/repeat runs do
-# not overwrite each other (the diagnostic uses CREATE OR REPLACE). (Cannot verify the
-# schema IS governed from here - that is an environment ACL - but the shape + run-scope
-# are enforced; `catalog.schema`, `catalog..cmp_x`, `catalog.schema.` are rejected.)
+# patient-level diff lands in an access-controlled schema and a reused run_id ABORTS
+# (the diagnostic uses plain `CREATE TABLE`, immutable) rather than overwriting prior
+# audit evidence. (Cannot verify the schema IS governed from here - that is an
+# environment ACL - but the shape + run-scope are enforced; `catalog.schema`,
+# `catalog..cmp_x`, `catalog.schema.` are rejected.)
 .validate_sample_into <- function(prefix) {
   if (is.null(prefix)) return(invisible(NULL))
   if (!is.character(prefix) || length(prefix) != 1L ||
