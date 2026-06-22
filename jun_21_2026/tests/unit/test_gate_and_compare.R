@@ -138,8 +138,8 @@ ok(grepl("ORDER BY a.`patient_id`, a.`lot_num` LIMIT", ss), "sql_value_sample OR
 ok(is.null(sql_value_sample("a", "b", "patient_id", character(0))), "no mismatched cols -> no sample query")
 # governed persistence: CREATE the sample as a run-scoped table (patient data stays governed)
 si <- sql_value_sample_into("audit.lot_diff_LOT_LONG", "ns.A", "ns.B", c("patient_id", "lot_num"), c("lot_base_end_reason"), 100L)
-ok(grepl("^CREATE OR REPLACE TABLE audit.lot_diff_LOT_LONG AS SELECT", si) && grepl("ORDER BY", si),
-   "sql_value_sample_into wraps the sample in CREATE TABLE AS (governed storage)")
+ok(grepl("^CREATE TABLE audit.lot_diff_LOT_LONG AS SELECT", si) && !grepl("OR REPLACE", si) && grepl("ORDER BY", si),
+   "sql_value_sample_into uses plain CREATE TABLE (immutable: a reused run_id aborts, no overwrite)")
 # --sample-into must be EXACTLY catalog.schema.cmp_<run_id> (3 nonempty parts, run-scoped)
 ok(.validate_sample_into("hive_metastore.audit.cmp_run1") == "hive_metastore.audit.cmp_run1", "qualified run-scoped prefix accepted")
 ok(is.null(.validate_sample_into(NULL)), "NULL prefix accepted (sampling off)")

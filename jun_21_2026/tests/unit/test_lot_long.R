@@ -236,5 +236,7 @@ mpm2 <- data.frame(patient_id = "9000000110", med_abbr = c("LENA", "DARA"), med_
 memm2 <- data.frame(patient_id = "9000000110", index_date = "2020-06-01", obs_end_dt = "2021-12-31", stringsAsFactors = FALSE)
 ok(build_lot_long(lbm2, lem2, mpm2, NULL, memm2, rollup = rmaint)$contains_mtx_reg[1] == 1L,
    "build_lot_long wires the rollup -> contains_mtx_reg=1 (mono LENA + anchor DARA)")
-ok(build_lot_long(lbm2, lem2, mpm2, NULL, memm2)$contains_mtx_reg[1] == 0L,
-   "no rollup passed -> contains_mtx_reg=0")
+ok(is.na(build_lot_long(lbm2, lem2, mpm2, NULL, memm2)$contains_mtx_reg[1]),
+   "no maintenance evidence at the function boundary -> contains_mtx_reg=NA (not a silent clinical 0)")
+ok(is.na(build_lot_long(lbm2, lem2, mpm2, NULL, memm2, rollup = rmaint[, 1:4])$contains_mtx_reg[1]),
+   "a rollup WITHOUT maintenance columns is also 'unavailable' -> NA, not 0")

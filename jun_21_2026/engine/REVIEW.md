@@ -16,7 +16,7 @@ comparing. That run is the reviewer/owner's step (it needs the warehouse).
 Run it (the driver runs the full pipeline MAP → LOT1 → SCT → LOT1 end):
 ```
 Rscript engine/run_engine.R engine/fixtures /tmp/out   # MAP_STACKED + LOT1_BASE + LOT1_END + LOT_LONG
-Rscript tests/run_unit_tests.R                          # 304 pass (engine: test_engine/sct/lot_end/lot_long); also CI
+Rscript tests/run_unit_tests.R                          # 309 pass (engine: test_engine/sct/lot_end/lot_long); also CI
 ```
 
 ## What to validate: each rule maps to a production source line
@@ -71,9 +71,11 @@ Rscript tests/run_unit_tests.R                          # 304 pass (engine: test
   (`BORT LENA` = mono LENA + anchor BORT).
 - **contains_mtx_reg** (`test_lot_long.R` / `test_engine.R`): `.maint_maps` parsing +
   the mono/dual + anchor logic (mono+anchor→1, mono-only→0, dual-pair-only→0,
-  dual+anchor→1, none→0); the `build_lot_long` rollup wiring; and `run_engine`
-  **fails closed** when the rollup lacks `MONOMAINTENANCE`/`DUALMAINTENANCEWITH`
-  (required input — the field is evaluated, never silently 0).
+  dual+anchor→1, none→0); the rollup wiring; `build_lot_long` returns **NA** (not a
+  silent 0) when no maintenance evidence is supplied; and `run_engine` validates the
+  rollup STRUCTURE (rows + columns, case-insensitive, duplicates rejected) AND SEMANTICS
+  (via `validate_reference_data`: blank code/med, code-system domain, NDC 11-digit,
+  one-code→multi-med collision all BLOCK; uppercase-header rollup accepted/canonicalized).
 - **Production parity** (`test_engine.R`/`test_sct.R`): pharmacy day-supply
   imputation, same-day max-day-supply de-dup, AUTO window = 13.
 - **LOT2-5** (`test_lot_long.R`): a 3-line cohort (LENA→DARA→CARF) run through the
@@ -97,29 +99,34 @@ Rscript tests/run_unit_tests.R                          # 304 pass (engine: test
   (`sql_normalize_view`) aliases a legacy `PATID` side to canonical `patient_id`
   so a `PATID`-vs-`patient_id` warehouse compare no longer fails on the id name.
 
-## NOT yet ported (the decisive owner-side / warehouse gates)
+## NOT yet ported (the decisive owner-side / warehouse / governance gates)
 
 - The **regression-expected** baseline (legacy execution on the same synthetic data,
   the owner's hive_metastore step) — the decisive parity gate — plus the live
   comparator smoke run and golden-fixture approval/pinning.
+- **Roadmap reconciliation (owner sign-off):** `REFACTOR_PLAN.md` says don't build a
+  local MAP/LOT/SCT; the engine exists as a non-authoritative spec oracle (per an
+  explicit decision). Record the approved role (or classify as exploratory) so a
+  local-vs-legacy difference is never ambiguous. See README "Role of the pure-R engine".
 - The full **canonical input ROW** validator (`validate_canonical`) in `run_engine`:
-  it now derives defaults from + validates the resolved config against `CONFIG_SPEC`
-  and checks filenames/members/codelist columns, but not yet lineage / dates / dedup
-  uniqueness of the input rows (that needs the canonical adapter, since the engine
+  it now validates config (`CONFIG_SPEC`), members/codelist columns, and the rollup
+  (structure + `validate_reference_data` semantics), but not yet lineage / dates / dedup
+  uniqueness of the CLAIM rows (that needs the canonical adapter, since the engine
   consumes POST-cohort inputs). `apr_30_2026` production also does not yet consume
   `CONFIG_SPEC` (still env vars).
 - **Now handled (LOT_LONG is fully derived):** `contains_mtx_reg` COMPUTED (mono/dual
-  + anchor from rollup metadata, **required** input - fail closed if absent) →
-  `UNIMPLEMENTED_FIELDS` empty, golden is a full `match` with a positive row; ALL
-  tunables propagate into LOT1 end logic; defaults derived from + resolved config
-  validated against the one `CONFIG_SPEC`; caller-scoped gap mechanism retained;
+  + anchor; rollup **required** + STRUCTURE + SEMANTIC (`validate_reference_data`)
+  validated, headers canonicalized/dedup-rejected; `build_lot_long` returns NA when
+  evidence absent) → `UNIMPLEMENTED_FIELDS` empty, golden a full `match` with a positive
+  row; ALL tunables propagate into LOT1 end logic; defaults derived from + resolved
+  config validated against the one `CONFIG_SPEC`; caller-scoped gap mechanism retained;
   single-join value compare with double counts + `bigint="numeric"` (BIGINT-safe) +
   case-insensitive key exclusion; checksum AND sample (incl. row-count) failures
   isolated + SURFACED; null-vs-dup key counts (`KEYS{...}`); patient-level sample OFF
   by default, governed via `--sample-into` validated to EXACTLY `catalog.schema.cmp_<run_id>`
-  (deterministic `ORDER BY`) or explicit `--sample-inprocess`, never logged; `PATID`
-  name+STRING bridge; membership short-circuit; CART death-guard.
-  Checksum aggregation **bucketing** remains a deferred warehouse-scale optimization.
+  written with **immutable** `CREATE TABLE` (reused id aborts) or explicit
+  `--sample-inprocess`, never logged; `PATID` name+STRING bridge; membership short-circuit;
+  CART death-guard. Checksum aggregation **bucketing** remains a deferred optimization.
 
 ## Constraints to confirm
 

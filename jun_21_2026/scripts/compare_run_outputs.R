@@ -177,12 +177,13 @@ sql_value_sample <- function(tbl_a, tbl_b, keys, cols, limit = 100L) {
           ksel, vsel, tbl_a, tbl_b, on, anydiff, ksel, as.integer(limit))
 }
 # Governed persistence of the sample: CREATE the (patient-level) sample as a run-scoped
-# table in an ACCESS-CONTROLLED schema, so the diagnostic never leaves governed storage
-# (the CLI then prints only the table pointer + row count + columns, no patient data).
+# table in an ACCESS-CONTROLLED schema, so the diagnostic never leaves governed storage.
+# Plain CREATE TABLE (NOT `OR REPLACE`): a reused <run_id> ABORTS (table exists) rather
+# than overwriting a prior run's audit evidence - the error is surfaced as SAMPLE_FAILED.
 sql_value_sample_into <- function(dest_table, tbl_a, tbl_b, keys, cols, limit = 100L) {
   sel <- sql_value_sample(tbl_a, tbl_b, keys, cols, limit)
   if (is.null(sel)) return(NULL)
-  sprintf("CREATE OR REPLACE TABLE %s AS %s", dest_table, sel)
+  sprintf("CREATE TABLE %s AS %s", dest_table, sel)
 }
 
 # Per-table key integrity: a required key must be NON-NULL and UNIQUE. A duplicate

@@ -15,10 +15,22 @@ code has been moved or changed.** Per the roadmap, algorithm extraction begins
 only after the baseline (Increment 0A) and synthetic harness (0B) exist on a
 dedicated refactor branch with baseline comparisons.
 
+**Role of the pure-R `engine/` — a governance decision to confirm.** It is a
+**non-authoritative specification oracle**: a second, independent implementation used
+to *check* the documented rules on synthetic data locally, NOT a production algorithm
+and NOT the regression authority — the legacy `hive_metastore` SQL remains the only
+authoritative execution, and a local-vs-legacy difference is resolved there. (This
+followed an explicit "local re-implementation" decision.) The governing
+`REFACTOR_PLAN.md` predates that and still says *don't build a local MAP/LOT/SCT*; it
+should be reconciled to record the engine's approved oracle role (or to classify it as
+exploratory) so a difference is never ambiguous between test-bug / legacy-regression /
+spec-correction / unapproved-second-implementation. This is an **owner sign-off item**,
+not a code change.
+
 Run the unit tests (from this folder):
 
 ```
-Rscript tests/run_unit_tests.R          # 304 tests, all pure-R / local (also run in CI)
+Rscript tests/run_unit_tests.R          # 309 tests, all pure-R / local (also run in CI)
 ```
 
 Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
@@ -83,9 +95,14 @@ CE-sensitive end is implemented (caps at `enddate_ce`, reason `DISENROLLMENT`).
 contains a valid maintenance subset (a MONO drug, or a DUAL pair) PLUS an anchor drug
 outside it. `MONOMAINTENANCE` / `DUALMAINTENANCEWITH` are **required rollup columns**
 (production loads them from `cl_mma_rollup`; rollup headers are read **case-insensitively**
-and canonicalized): `run_engine` **fails closed** if they are absent (or the rollup is
-empty / missing `code_type`/`code`/`med_class`), so the field is genuinely *evaluated*
-and never silently 0 from a missing input
+and canonicalized, duplicates rejected): `run_engine` **fails closed** if they are absent
+(or the rollup is empty / missing `code_type`/`code`/`med_class`), AND it runs the shared
+**`validate_reference_data`** layer over the rollup (blank `code`/`med_abbr`, code-system
+domain, NDC 11-digit, and one-code→**multiple-med collisions** all BLOCK) — so a
+rows-but-unusable rollup fails clearly instead of silently emptying MAP/LOT. The reusable
+core enforces it too: `build_lot_long` emits `contains_mtx_reg = NA` (an explicit
+"maintenance unavailable", never a silent clinical 0) when a caller supplies no
+maintenance evidence. The field is therefore genuinely *evaluated* on the run_engine path
 — and the end-to-end golden includes a positive `contains_mtx_reg=1` row (`BORT LENA` =
 mono LENA + anchor BORT). LOT_LONG is therefore fully derived — no remaining parity
 gap; `UNIMPLEMENTED_FIELDS` is empty (the partial_match mechanism is retained for any
@@ -136,11 +153,12 @@ aborts the verdict). Keys are excluded from the value compare **case-insensitive
 **bounded, deterministic** (`ORDER BY` keys, `LIMIT 100`) diagnostic of the changed
 keys + a/b values can be produced; being patient-level it is **OFF by default** —
 `--sample-into <catalog.schema.cmp_<run_id>>` (validated to **exactly** that shape: 3
-nonempty parts + a run-scoped `cmp_` final, so concurrent/repeat runs don't overwrite)
-writes it to a **governed** run-scoped table (the log shows only
-`sample_table:<name>(rows=N)` + the `cols:` field), and `--sample-inprocess` is an
-explicit diagnostic that holds it in
-the R process; neither prints patient data, and a failure shows `SAMPLE_FAILED(audit-only)`.
+nonempty parts + a run-scoped `cmp_` final) writes it to a **governed** run-scoped table
+via plain `CREATE TABLE` (NOT `OR REPLACE`) — so a **reused `<run_id>` ABORTS** (the
+audit table is immutable) rather than overwriting prior evidence; the log shows only
+`sample_table:<name>(rows=N)` + the `cols:` field. `--sample-inprocess` is an explicit
+diagnostic that holds it in the R process; neither prints patient data, and a failure
+(incl. a reused-id collision) shows `SAMPLE_FAILED(audit-only)`.
 Clean runs pay nothing.
 
 The **`partial_match`** verdict is **caller-scoped**, not global — for **both** modes,
