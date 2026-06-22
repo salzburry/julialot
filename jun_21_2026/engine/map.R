@@ -98,7 +98,7 @@ map_claims <- function(pharmacy, medical, rollup, members = NULL, medical_day_su
 
 # Build MAP_STACKED for every (patient, med), then the discontinuation flag: a gap
 # to the next MAP (or to OBS_END_DT for the last MAP) >= map_discon_gap_days.
-# Returns the canonical MAP_STACKED columns (see contracts/outputs.md).
+# Returns the canonical MAP_STACKED columns (per the output contract).
 build_map_stacked <- function(pharmacy, medical, rollup, obs_end,
                               map_discon_gap_days = 90L, medical_day_supply = 28L) {
   empty <- data.frame(patient_id = character(0), med_abbr = character(0), med_class = character(0),

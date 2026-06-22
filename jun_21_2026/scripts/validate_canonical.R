@@ -12,7 +12,7 @@ if (!exists(".lotlib")) source(local({ .find_lib <- function() {
   if (length(fa)) { p <- file.path(dirname(sub("^--file=", "", fa[1])), "lib.R"); if (file.exists(p)) return(p) }
   for (p in c("scripts/lib.R", "lib.R")) if (file.exists(p)) return(p); stop("lib.R not found") }; .find_lib() }))
 
-# Contract (from contracts/inputs.md). Per entity: cols (name="type[,required]"),
+# Contract (the canonical input contract). Per entity: cols (name="type[,required]"),
 # key, allowed code `systems`, the `raw_col` for normalization, `pos_int` columns
 # (must be > 0), and `span` (span_start <= span_end). canonical_medical is now
 # ONE ROW PER CODE (raw_code + source_code_field), unifying with dx/procedure.

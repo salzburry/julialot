@@ -22,14 +22,14 @@ if (!exists(".lotlib")) source(local({ .find_lib <- function() {
   if (length(fa)) { p <- file.path(dirname(sub("^--file=", "", fa[1])), "lib.R"); if (file.exists(p)) return(p) }
   for (p in c("scripts/lib.R", "lib.R")) if (file.exists(p)) return(p); stop("lib.R not found") }; .find_lib() }))
 
-# Per-table comparison keys (see contracts/outputs.md).
+# Per-table comparison keys (per the output contract).
 COMPARE_KEYS <- list(
   MAP_STACKED = c("patient_id", "med_abbr", "map_cnt"),
   LOT1_BASE   = c("patient_id"),
   LOT_LONG    = c("patient_id", "lot_num")
 )
-# Fields excluded from the strict value VERDICT (see
-# tests/fixtures/expected/nondeterministic.md). The seeded tie-break
+# Fields excluded from the strict value VERDICT (the documented
+# nondeterministic fields). The seeded tie-break
 # (02_lot1.R:806 `row_number() ... ORDER BY MAP_START_DT, rand(42)`) selects WHICH
 # med is the first-add among candidates sharing the earliest add date; the DATE is
 # `date_sub(MAP_START_DT,1)`, identical across a same-date tie, so the *_DT field is
@@ -57,8 +57,8 @@ UNIMPLEMENTED_FIELDS <- list()
 # downgrades to partial_match, never overturns an otherwise-clean comparison).
 .present_gaps <- function(unimplemented, cols) intersect(tolower(unimplemented %||% character(0)), tolower(cols))
 
-# Required output columns per table (the versioned output contract; see
-# contracts/outputs.md). compare_local checks BOTH sides carry these, so two
+# Required output columns per table (the versioned output contract).
+# compare_local checks BOTH sides carry these, so two
 # equally-incomplete outputs can never be called behaviourally equivalent. These
 # are the ALGORITHM-DERIVED (behaviourally meaningful) columns the production
 # builders emit (MAP_STACKED <- apr_30_2026/02_lot1.R:643-662; LOT1_BASE <-
@@ -247,7 +247,7 @@ compare_schema_maps <- function(sa, sb) {
 # Normalize one side's id column to canonical `patient_id` (pure: returns the
 # CREATE VIEW DDL). Used to bridge a CROSS-CONVENTION compare (legacy PATID on one
 # side, canonical patient_id on the other). The id is CAST to the canonical type
-# (STRING, per contracts/inputs.md) so a numeric legacy PATID and a string canonical
+# (STRING, per the input contract) so a numeric legacy PATID and a string canonical
 # patient_id reconcile at the key without failing schema-type parity; all OTHER
 # columns pass through unchanged (genuine type drift elsewhere still blocks). Policy:
 # the id is compared as the canonical STRING type on both sides.

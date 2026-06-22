@@ -1,31 +1,26 @@
 #!/usr/bin/env Rscript
 # GSK MM LOT - Part 2: Lines of Therapy (LOT) Analysis
 #
-# Implements Part 2 specifications (based on provided PDFs):
+# Implements Part 2 specifications:
 #   5A. MMA_MED    - MM-approved + steroid medication claims pull
 #   5B. MAP_MED    - Medication Available Period algorithm (pushout/runout)
 #   6.  LOT1_BASE  - LOT1 induction regimen identification
 #   7.  SCT        - Stem Cell Transplant detection (AUTO/ALLO/CART)
 #
-# Key references (provided by user):
-#   - mma med.pdf
-#   - map med.pdf        (pushout/runout logic + Figure 3 example)
-#   - lot1base.pdf
-#   - sct.pdf            (SCT detection: AUTO/ALLO/CART)
-#   - tab 40.pdf         (CL_MMA_ROLLUP)
-#   - tab 41 sample.pdf  (CL_MMA_CODELIST)
-#   - optum data dict.pdf (field validation)
-#   - optum business rules.pdf (join/filter logic guidance)
+# Derived from the study spec and protocol: the MMA/MAP rules (pushout/
+# runout), LOT1 base regimen, SCT detection (AUTO/ALLO/CART), the MMA
+# rollup/codelist tables, and the Optum CDM field + business-rule
+# definitions.
 #
 # Input:  ELIG_COH_FINAL (output of the Part 1 attrition pipeline; see 01_cohort.R)
 # Output: MAP_STACKED, LOT1_BASE, LOT1_SCT, LOT1_BASE_END
 #
 # IMPORTANT - MAP algorithm corrections vs prior versions:
-#   1. Medical claims: NO pushout (per map med.pdf page 5: "Pushout is
+#   1. Medical claims: NO pushout (per spec: "Pushout is
 #      not implemented"). Medical runout always = DATE_SERVICE + DAY_SUPPLY - 1.
 #   2. Pharmacy claims: pushout only when new claim arrives BEFORE current
 #      rx_runout. When pharmacy claim arrives AFTER rx_runout (but within
-#      med_runout), pharmacy resets without pushout (per Figure 3, iter 4).
+#      med_runout), pharmacy resets without pushout (per spec).
 #   3. The simplified "sum pharmacy day supply" approach is incorrect when
 #      pharmacy expires mid-MAP (kept alive by medical) and later resets.
 #      The aggregate() state machine handles this correctly.
@@ -404,7 +399,7 @@ main <- function() {
       sum(case when CLAIM_SOURCE='rx_ndc' then 1 else 0 end) AS n_from_rx_ndc
     FROM mma_med_raw")
 
-  # Enrich + dedup (mma med.pdf spec)
+  # Enrich + dedup (per spec)
   run_step(con, "S05_mma_med_processed", glue("
     CREATE OR REPLACE TEMPORARY VIEW mma_med_processed AS
     WITH enriched AS (
@@ -424,7 +419,7 @@ main <- function() {
         ON r.MED_ABBR = ru.CL_MED_ABBR
     ),
     filtered AS (
-      -- C2 fix: Per spec (mmamedapr14) and protocol (Section 5.1.1), pharmacy claims
+      -- C2 fix: Per spec and protocol, pharmacy claims
       -- with missing or anomalous DAY_SUPPLY should be imputed to 28, not dropped.
       SELECT
         PATID, CODE, CODE_TYPE, CLAIM_TYPE, DATE_SERVICE,
@@ -471,10 +466,10 @@ main <- function() {
 
   # STEP 3 (5B): MAP_MED - Medication Available Period algorithm
   #
-  # CORRECTED per map med.pdf (page 5):
+  # CORRECTED per spec:
   #   "Medical runout date ... Pushout is not implemented."
   #
-  # Pharmacy pushout rules (per Figure 3):
+  # Pharmacy pushout rules (per spec):
   #   - If new pharmacy claim DATE_SERVICE <= current rx_runout:
   #     pushout = rx_runout - DATE_SERVICE + 1
   #     new rx_runout = DATE_SERVICE + DAY_SUPPLY - 1 + pushout
@@ -581,7 +576,7 @@ main <- function() {
                         WHEN x.dt <= s.rx_runout THEN
                           date_add(s.rx_runout, x.ds)
                         -- Pharmacy claim AFTER rx_runout but still in MAP (via med_runout)
-                        -- -> RESET without pushout (per Figure 3, iteration 4)
+                        -- -> RESET without pushout (per spec)
                         ELSE
                           date_add(x.dt, x.ds - 1)
                       END
@@ -589,7 +584,7 @@ main <- function() {
                     ELSE s.rx_runout
                   END,
                   -- MEDICAL RUNOUT UPDATE
-                  -- Per map med.pdf page 5: Pushout is not implemented for medical.
+                  -- Per spec: Pushout is not implemented for medical.
                   -- Always: DATE_SERVICE + DAY_SUPPLY - 1.
                   -- greatest() is a safety belt: if a same-day or out-of-order claim
                   -- produces an earlier runout, we keep the existing later one.
@@ -701,7 +696,7 @@ main <- function() {
       ON ms.PATID = l1.PATID
     WHERE ms.MAP_START_DT >= l1.LOT1_START_DT
       AND ms.MAP_START_DT <= date_add(l1.LOT1_START_DT, {cfg$induction_window_days - 1})
-      AND ms.MAP_MED_CLASS <> 'STEROID'  -- H1 fix: exclude steroids per protocol Section 5.1.1
+      AND ms.MAP_MED_CLASS <> 'STEROID'  -- H1 fix: exclude steroids per protocol
   "), qc = "
     SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients, avg(cnt) AS avg_induction_meds
     FROM (SELECT PATID, count(DISTINCT MED_ABBR) AS cnt FROM lot1_induction_meds GROUP BY PATID)")
@@ -719,7 +714,7 @@ main <- function() {
         ON im.MED_ABBR = ps.original_med
     ),
     -- H1 fix: Steroids are now excluded from base_meds (via lot1_induction_meds filter)
-    -- per protocol Section 5.1.1: corticosteroids are not oncology agents and should
+    -- per protocol: corticosteroids are not oncology agents and should
     -- not drive regimen membership, discontinuation, or add-med logic.
     discon_raw AS (
       SELECT
@@ -834,7 +829,7 @@ main <- function() {
 
 
   # STEP 7 (SCT): Stem Cell Transplant detection
-  # Per sct.pdf spec section 7:
+  # Per the SCT spec:
   #   - AUTO: 14-day window grouping + 60-day gap + 180-day tandem
   #   - ALLO/CART: simple sequential dates
   #   - ALLO/CART immediately end LOT1
@@ -966,7 +961,7 @@ main <- function() {
   # To audit source contributions, query the combined CTE directly before dedup.
 
 
-  # S13: AUTO SCT date processing (per sct.pdf)
+  # S13: AUTO SCT date processing (per spec)
   #
   # Step 1: Group AUTO claims into 14-day windows (claims within 14 days of
   #         window start are in same window). Per spec, select the LAST (max)
@@ -977,7 +972,7 @@ main <- function() {
   # tandem boundary (from the previous finalized TX date), select the date
   # closest to the boundary rather than the window max. This ensures accurate
   # tandem determination. Computed as min |date - boundary| over all dates
-  # in the window. (See sct.pdf example: TX_AUTO1=09MAY2018, 180-day mark
+  # in the window. (See SCT spec example: TX_AUTO1=09MAY2018, 180-day mark
   # ~05NOV2018, window 06NOV-20NOV picks 07NOV instead of 20NOV.)
   #
   # Step 2: Apply 60-day minimum gap between events (merge if < 60 days apart).
