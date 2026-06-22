@@ -29,9 +29,9 @@
 # Reuses 05_regimen_dashboard.R verbatim - all regimen-transition
 # builders, steroid CSV, category CSV, coverage QC. This script just
 # (a) computes the NDMM cohort, (b) writes a filtered LOT_LONG temp
-# view, then (c) calls the regimen builders against that view. See
-# 06_ndmm_dashboard.md for the per-filter SQL pattern, required parent
-# inputs, and known gaps. Parent pipeline files are untouched.
+# view, then (c) calls the regimen builders against that view. The
+# per-filter SQL pattern, required parent inputs, and known gaps are
+# documented separately. Parent pipeline files are untouched.
 
 .script_dir <- local({
   override <- getOption("ndmm_dashboard.script_dir", NULL)
