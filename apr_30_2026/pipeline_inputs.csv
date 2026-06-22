@@ -1,7 +1,7 @@
 name,value,description
 # Edit the `value` column to change an input; blank = use default. Open in Excel or any editor.,,
 # DATABRICKS_PWD is intentionally NOT here - it stays in the environment / Domino secret store.,,
-# --- Connection & schema ---, ,
+# --- Connection & schema ---,,
 DATABRICKS_DSN,RWDE,ODBC DSN
 DATABRICKS_CATALOG,hive_metastore,Unity/Hive catalog
 PROJECT_WORK_SCHEMA,,Schema LOT1/LOT2-5 read & write (blank = use env / DOMINO_USER_NAME fallback)
@@ -15,7 +15,7 @@ STUDY_START,2015-07-01,NDMM pregnancy-scan lower bound ONLY (read by 06 via Sys.
 USE_QUARTERLY_TABLES,TRUE,Use cumulative quarterly CDM tables
 CODELIST_DIR,/mnt/code/codelist,Directory holding cl_*.csv codelists
 OUTPUT_DIR,/mnt/artifacts/results,Where dashboards / figures are written
-# --- LOT parameters ---, ,
+# --- LOT parameters ---,,
 INDUCTION_WINDOW_DAYS,60,LOT1 induction window (days)
 INDUCTION_WINDOW_DAYS_LOT_N,30,LOT2-5 induction window (days)
 MAP_DISCON_GAP_DAYS,90,Per-drug MAP-level discontinuation gap (the only 90d rule)
@@ -29,30 +29,30 @@ ALLO_LOT_SPAN,single_day,ALLO LOT span: single_day or extend_to_next
 MAX_LOT,5,Highest LOT number to build
 CENSOR_AT_DISENROLLMENT,FALSE,Sensitivity: cap observation at disenrollment
 PERSIST_TO_SCHEMA,TRUE,Persist outputs to the work schema
-# --- Cohort INCLUSION criteria (set FALSE to drop a rule) ---, ,
+# --- Cohort INCLUSION criteria (set FALSE to drop a rule) ---,,
 APPLY_AGE_INCL,TRUE,Require age >= MIN_AGE at index
 MIN_AGE,18,Minimum age at index (years)
 APPLY_CE_B_INCL,TRUE,Require continuous enrollment in the baseline period
 APPLY_CE_F_INCL,TRUE,Require continuous enrollment in the follow-up period
 APPLY_NO_BL_AGENTS_INCL,TRUE,Require no MM agents during baseline (new users)
 APPLY_FU_AGENTS_INCL,TRUE,Require >= 1 MM agent during follow-up
-# --- Cohort EXCLUSION criteria (set FALSE to drop a rule) ---, ,
+# --- Cohort EXCLUSION criteria (set FALSE to drop a rule) ---,,
 # DESIGN (this project only): the parent/Overall cohort runs through Step 6 (qualifying MM + age + CE + treatment-naive + treated). The NDMM-specific exclusions (other-malig / pregnancy / baseline-MM-dx / clinical-trial) are turned OFF at the parent here and re-applied where the spec requires inside 06_ndmm_dashboard.R at the correct LOT1 or study-period anchor (pregnancy is study-period). The parent CODE is untouched - these are config toggles - so other projects using the parent with their own config still get the full funnel.,,
 APPLY_PREGNANCY_EXCL,FALSE,OFF at parent (Overall=Step6); NDMM re-applies it from pregnancy.csv / raw claims over the study period
 APPLY_CLINTRIAL_EXCL,FALSE,OFF at parent (Overall=Step6); not in the NDMM IE spec (S6.2.1) - confirm with team before any reuse
 # APPLY_OTHER_MALIG_EXCL ships FALSE by design for the NDMM workflow: the parent leaves other-malig OFF so 06_ndmm_dashboard.R can re-apply it with the MM-adjacent override (keeps MGUS / solitary + extramedullary plasmacytoma / plasma-cell leukemia / secondary bone). TRUE drops those patients upstream and breaks the NDMM cohort. Caveat: with FALSE the Overall (non-NDMM) cohort has no other-malig exclusion.,,
 APPLY_OTHER_MALIG_EXCL,FALSE,Exclude other malignancies (FALSE by design - NDMM dashboard owns this via the MM-adjacent override; see comment above)
 APPLY_BASELINE_MM_EXCL,FALSE,OFF at parent (Overall=Step6); NDMM defines newly-diagnosed by treatment (no prior MM tx in 12-mo) not dx history
-# --- Project design guard (primary Overall + NDMM run) ---, ,
+# --- Project design guard (primary Overall + NDMM run) ---,,
 NDMM_PROJECT_MODE,TRUE,Enable strict pre/post verification that Overall is Step 6 and NDMM applies all six gates
 NDMM_LOT1_FROM,2017-01-01,Primary NDMM eligible-treatment cutoff from the protocol
 NDMM_FAIL_ON_SKIPPED_GATE,TRUE,Fail run_all when a required NDMM gate is warn-skipped instead of silently accepting a broader cohort
-# --- Orchestrator (run_pipeline.R): leave BLANK; set per-run on the command line ---, ,
+# --- Orchestrator (run_pipeline.R): leave BLANK; set per-run on the command line ---,,
 FORCE_RERUN,,Blank = default FALSE. Set TRUE here only for a persistent override
 SKIP_COHORT,,Blank = default FALSE. Prefer the inline command for one-off skips
 SKIP_LOT1,,Blank = default FALSE. Prefer the inline command for one-off skips
 SKIP_LOT2_5,,Blank = default FALSE. Prefer the inline command for one-off skips
-# --- Reporting / dashboards ---, ,
+# --- Reporting / dashboards ---,,
 GENERATE_DESCRIPTIVES,TRUE,Build LOT1 descriptives
 BUILD_DASHBOARD,TRUE,Build the HTML dashboard(s)
 RUN_CYCLO_DEEPDIVE,TRUE,Run the cyclophosphamide deep-dive
