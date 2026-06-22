@@ -26,9 +26,9 @@ ce <- compare_local_table(.write(e2e$LOT1_END), "engine/fixtures/expected/LOT1_E
         c("patient_id"), required = c("patient_id", "lot1_base_end_dt", "lot1_base_end_reason", "lot1_base_length"))
 ok(isTRUE(ce$match), "driver LOT1_END reproduces hand-derived expected (end-to-end, incl. SCT_ALLO)")
 # full 23-column LOT_LONG vs the hand-derived golden (LOT1 rows anchored to the golden
-# LOT1_BASE/LOT1_END; LOT2-5 to the documented sequential rules). ALL 23 columns must
-# match exactly - contains_mtx_reg is now COMPUTED (=0 here, no maintenance metadata),
-# so this is a FULL match, not partial.
+# LOT1_BASE/LOT1_END; LOT2-5 to the documented sequential rules). ALL 23 columns match
+# exactly - incl. contains_mtx_reg, now COMPUTED (the fixture marks LENA MONOMAINTENANCE,
+# so 9000000003 LOT1 "BORT LENA" = 1). A FULL match, not partial.
 cll <- compare_local_table(.write(e2e$LOT_LONG), "engine/fixtures/expected/LOT_LONG.csv",
         c("patient_id", "lot_num"), required = LOT_LONG_COLS)
 ok(isTRUE(cll$match) && cll$verdict == "match" && cll$value_mismatch == 0 &&
@@ -80,10 +80,16 @@ ok(le_30$lot1_base_end_reason == "MED_ADD" && as.character(le_30$lot1_base_end_d
 # never silently 0 from a missing input): run_engine fails closed without the columns.
 nomaint <- file.path(tempdir(), "nomaint"); dir.create(nomaint, showWarnings = FALSE)
 file.copy(list.files("engine/fixtures", full.names = TRUE, pattern = "\\.csv$"), nomaint, overwrite = TRUE)
-write.csv(data.frame(code_type = "NDC", code = "11111111111", med_abbr = "LENA", med_class = "IMID"),
-          file.path(nomaint, "rollup.csv"), row.names = FALSE)   # rollup WITHOUT maintenance columns
-ok(inherits(try(run_engine(nomaint), silent = TRUE), "try-error"),
+.rollup_csv <- function(df) { write.csv(df, file.path(nomaint, "rollup.csv"), row.names = FALSE)
+  inherits(try(run_engine(nomaint), silent = TRUE), "try-error") }
+ok(.rollup_csv(data.frame(code_type = "NDC", code = "11111111111", med_abbr = "LENA", med_class = "IMID")),
    "run_engine fails closed when the rollup lacks MONOMAINTENANCE/DUALMAINTENANCEWITH (no silent zero)")
+ok(.rollup_csv(data.frame(code_type = character(0), code = character(0), med_abbr = character(0),
+   med_class = character(0), MONOMAINTENANCE = character(0), DUALMAINTENANCEWITH = character(0))),
+   "run_engine fails closed on a header-only (0-row) rollup")
+ok(.rollup_csv(data.frame(code = "L", med_abbr = "LENA", med_class = "IMID",
+   MONOMAINTENANCE = "0", DUALMAINTENANCEWITH = "")),
+   "run_engine fails closed when the rollup lacks code_type (MAP-construction column)")
 # the end-to-end golden now exercises a POSITIVE maintenance row (BORT LENA = mono LENA + anchor BORT)
 gold <- read.csv("engine/fixtures/expected/LOT_LONG.csv", colClasses = "character")
 ok("1" %in% gold$contains_mtx_reg && sum(gold$contains_mtx_reg == "1") == 1L,
