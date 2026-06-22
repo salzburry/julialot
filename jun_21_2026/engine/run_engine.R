@@ -92,6 +92,13 @@ run_engine <- function(input_dir, params = list()) {
     if (length(ru_chk$errors))
       stop("run_engine: rollup.csv reference-data errors: ", paste(ru_chk$errors, collapse = "; "))
   }
+  # med_class is a rollup-specific column (outside the reference-data code/concept
+  # contract) that drives STEROID exclusion + LOT start/end decisions (lot1.R / lot_long.R).
+  # A blank value would silently treat e.g. a DEX row as non-steroid, so reject it.
+  blank_mc <- !nzchar(trimws(as.character(rollup$med_class)))
+  if (any(blank_mc))
+    stop("run_engine: rollup.csv has ", sum(blank_mc), " row(s) with blank med_class ",
+         "(drives steroid exclusion / LOT decisions; must be non-blank)")
   map_stacked <- build_map_stacked(rd("pharmacy.csv"), med, rollup, members,
     p$map_discon_gap_days, p$medical_day_supply)
   lot1 <- build_lot1_base(map_stacked, members, if (nrow(subs)) subs else NULL, p$induction_window_days)

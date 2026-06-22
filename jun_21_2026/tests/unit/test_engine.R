@@ -113,6 +113,9 @@ ok(.rollup_csv(data.frame(code_type = "NDC", code = c("11111111111", "1111111111
 ok(.rollup_csv(data.frame(code_type = "NDC", code = "11111111111", med_abbr = "",
    med_class = "IMID", MONOMAINTENANCE = "0", DUALMAINTENANCEWITH = "")),
    "run_engine fails closed on a blank med_abbr (no silent empty mapping)")
+ok(.rollup_csv(data.frame(code_type = "NDC", code = "11111111111", med_abbr = "DEX",
+   med_class = "", MONOMAINTENANCE = "0", DUALMAINTENANCEWITH = "")),
+   "run_engine fails closed on a blank med_class (would treat e.g. DEX as non-steroid)")
 ok(.rollup_csv(data.frame(code_type = "NDC", code = "123", med_abbr = "LENA",
    med_class = "IMID", MONOMAINTENANCE = "0", DUALMAINTENANCEWITH = "")),
    "run_engine fails closed on a non-11-digit NDC code")
