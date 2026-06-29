@@ -51,13 +51,21 @@ examples — the raw CDM via `cdm_src()`. Builds nothing persistent.
 
 ## Operational definitions (stated on every output)
 
-- **Steroid signal**: a `STEROID`-class segment in `MAP_STACKED` — the same
-  codelist class the LOT engine (`02_lot1.R`) excludes from regimens.
-- **"Steroid at LOT*n*"**: a steroid MAP whose `MAP_START_DT` falls inside the
+- **Steroid signal**: the codes in `steroid_codes.csv` (mapped to DEX/PRED
+  tokens) scanned against medical (`PROC_CD`/`BILL_PROC_CD` HCPCS/CPT, `NDC`)
+  and rx (`NDC`) — the **same source** `05_regimen_dashboard.R` uses
+  (`load_steroid_codes` + `augment_lot_long`). This is the project's *only*
+  steroid source: there is **no** `STEROID` class in `cl_mma_codelist.csv`, so a
+  `MAP_STACKED` STEROID scan returns zero and would silently empty Q3/Q4/Q5.
+  ⚠️ The tracked `steroid_codes.csv` currently ships only a few HCPCS codes and
+  **0 NDC rows**, so oral-RX steroids are undercounted until NDC codes are added
+  — Q3/Q4/Q5 are only as complete as that CSV. If the CSV is empty, Q3/Q4/Q5 are
+  skipped with a note rather than reported as all-zero.
+- **"Steroid at LOT*n*"**: a steroid **claim** whose service date falls inside the
   induction window `[LOT_START_DT, LOT_START_DT + W − 1]`, `W` = 60 (LOT1) /
   30 (LOT2) — mirrors the engine's induction-membership rule.
 - **Before / after windows** (7/14/30 d) are cumulative (≤ N days) and measured
-  from a steroid MAP start date.
+  from a steroid claim date.
 - **CAR-T (Q6)** — two date sources, by necessity:
   - *During or closing LOT1*: `LOT1_SCT.FIRST_CART_DT` in `[LOT1_START,
     LOT_BASE_END_DT]`, **extended by +1 day only when the end reason is
@@ -94,10 +102,18 @@ per-patient tables are tagged "(sample)" so the dashboard keeps them in the
 full-only Patient-explorer view. The standalone program also writes a
 `validation_qs_jun29_definitions_<stamp>.csv` sidecar with these definitions.
 
-## Open item (steroid source)
+## Steroid source (resolved) + remaining data limitation
 
-Q3–Q5 use `MAP_STACKED` STEROID-class segments, while the existing dashboard
-steroid section can use the optional `steroid_codes.csv` augmentation
-(`LOT_BASE_MEDS_AUG`). These can differ if that CSV is populated; the choice is
-stated on every output. Reconciling the two steroid sources (or parameterising
-the module to accept either) is a deliberate follow-up, not done here.
+Q3–Q5 now use the **same** steroid source as the rest of the dashboard —
+`steroid_codes.csv` scanned on medical+rx — so the numbers reconcile with the
+existing Steroids section. (An earlier version used a `MAP_STACKED` STEROID
+class, which does **not** exist in `cl_mma_codelist.csv`; that returned zero and
+made Q3/Q4/Q5 read as "every patient has no steroid", which the first dashboard
+run surfaced.)
+
+**Remaining limitation — not a code issue:** `steroid_codes.csv` is still a
+near-placeholder (a few HCPCS codes, **0 NDC**). So Q3/Q4/Q5 capture
+medical/HCPCS steroid administrations but undercount oral-RX (NDC) steroids
+until the full code list is dropped into that CSV. The standalone log and the
+dashboard intro card state how many codes were loaded each run. Adding the NDC
+steroid codes is the one outstanding input needed for complete Q3–Q5 answers.

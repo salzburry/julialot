@@ -71,11 +71,102 @@ vqs_readable <- function(con, tbl) isTRUE(tryCatch(
   nrow(db_q(con, glue("SELECT 1 FROM {tbl} LIMIT 1"))) >= 0,
   error = function(e) FALSE))
 
-# Steroid-claim relation (sub-select string) over MAP_STACKED STEROID class.
-vqs_steroid_src <- function(map_tbl) glue(
-  "(SELECT cast(PATID as string) AS PATID, MAP_START_DT AS STER_DT
-      FROM {map_tbl}
-     WHERE upper(MAP_MED_CLASS) = 'STEROID' AND MAP_START_DT IS NOT NULL)")
+# Steroid-claim relation (sub-select string) over a built steroid-claims view.
+vqs_steroid_src <- function(ster_view) glue(
+  "(SELECT cast(PATID as string) AS PATID, STER_DT FROM {ster_view})")
+
+# Build the steroid-claim signal the way the rest of this project does it:
+# scan medical (PROC_CD/BILL_PROC_CD as HCPCS/CPT, NDC) + rx (NDC) for the
+# codes in steroid_codes.csv (mapped to DEX/PRED tokens). This is the same
+# source 05_regimen_dashboard.R uses (load_steroid_codes + augment_lot_long).
+#
+# IMPORTANT: do NOT use a MAP_STACKED MAP_MED_CLASS='STEROID' scan - steroids
+# are NOT a class in cl_mma_codelist.csv, so that scan returns zero rows and
+# silently empties Q3/Q4/Q5 (every patient reads as "no steroid"). steroid_
+# codes.csv is the project's only steroid source.
+#
+# Returns list(view=<temp view name or NULL>, n_codes, n_hcpcs, n_ndc, note).
+vqs_build_steroid_claims <- function(con, lot_long, ster_csv) {
+  out <- list(view = NULL, n_codes = 0L, n_hcpcs = 0L, n_ndc = 0L, note = NULL)
+  if (is.null(ster_csv) || !file.exists(ster_csv)) {
+    out$note <- paste0("steroid_codes.csv not found (", ster_csv,
+                       "); steroid analyses (Q3/Q4/Q5) skipped.")
+    return(out)
+  }
+  df <- tryCatch(read.csv(ster_csv, stringsAsFactors = FALSE,
+                          check.names = FALSE, comment.char = "#"),
+                 error = function(e) NULL)
+  if (is.null(df) || nrow(df) == 0 ||
+      !all(c("code", "code_type", "mapped_to") %in% names(df))) {
+    out$note <- "steroid_codes.csv empty/unreadable or missing columns; Q3/Q4/Q5 skipped."
+    return(out)
+  }
+  sq <- function(x) gsub("'", "''", x, fixed = TRUE)
+  rows <- character(0); types <- character(0)
+  for (i in seq_len(nrow(df))) {
+    cd <- toupper(gsub("[^A-Za-z0-9]", "", trimws(as.character(df$code[i]))))
+    ty <- toupper(trimws(as.character(df$code_type[i])))
+    mt <- toupper(trimws(as.character(df$mapped_to[i])))
+    if (!nzchar(cd) || !nzchar(mt)) next
+    rows  <- c(rows,  sprintf("('%s','%s','%s')", sq(cd), sq(ty), sq(mt)))
+    types <- c(types, ty)
+  }
+  if (length(rows) == 0) {
+    out$note <- "steroid_codes.csv parsed to 0 valid rows; Q3/Q4/Q5 skipped."
+    return(out)
+  }
+  out$n_codes <- length(rows)
+  out$n_hcpcs <- sum(types == "HCPCS")
+  out$n_ndc   <- sum(types == "NDC")
+  med <- cdm_src(cfg$tbl_medical); rxt <- cdm_src(cfg$tbl_rx)
+  ok <- tryCatch({
+    db_exec(con, glue("
+      CREATE OR REPLACE TEMPORARY VIEW vqs_steroid_claims AS
+      WITH sc AS (SELECT * FROM VALUES {paste(rows, collapse = ',')} AS t(code, code_type, mapped_to)),
+      lp AS (SELECT DISTINCT cast(PATID as string) AS PATID FROM {lot_long}),
+      s1 AS (
+        SELECT cast(m.PATID as string) AS PATID, cast(m.FST_DT as date) AS STER_DT
+        FROM {med} m JOIN sc ON sc.code_type IN ('HCPCS','CPT')
+          AND sc.code = upper(regexp_replace(coalesce(cast(m.PROC_CD as string),''), '[^A-Za-z0-9]', ''))
+        WHERE m.FST_DT IS NOT NULL AND EXISTS (SELECT 1 FROM lp WHERE lp.PATID = cast(m.PATID as string))
+      ),
+      s2 AS (
+        SELECT cast(m.PATID as string) AS PATID, cast(m.FST_DT as date) AS STER_DT
+        FROM {med} m JOIN sc ON sc.code_type = 'HCPCS'
+          AND sc.code = upper(regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''), '[^A-Za-z0-9]', ''))
+        WHERE m.FST_DT IS NOT NULL AND EXISTS (SELECT 1 FROM lp WHERE lp.PATID = cast(m.PATID as string))
+      ),
+      s3 AS (
+        SELECT cast(m.PATID as string) AS PATID, cast(m.FST_DT as date) AS STER_DT
+        FROM {med} m JOIN sc ON sc.code_type = 'NDC'
+          AND lpad(regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', ''), 11, '0')
+            = lpad(regexp_replace(sc.code, '[^0-9]', ''), 11, '0')
+        WHERE m.FST_DT IS NOT NULL AND EXISTS (SELECT 1 FROM lp WHERE lp.PATID = cast(m.PATID as string))
+      ),
+      s4 AS (
+        SELECT cast(r.PATID as string) AS PATID, cast(r.FILL_DT as date) AS STER_DT
+        FROM {rxt} r JOIN sc ON sc.code_type = 'NDC'
+          AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', ''), 11, '0')
+            = lpad(regexp_replace(sc.code, '[^0-9]', ''), 11, '0')
+        WHERE r.FILL_DT IS NOT NULL AND EXISTS (SELECT 1 FROM lp WHERE lp.PATID = cast(r.PATID as string))
+      )
+      SELECT DISTINCT PATID, STER_DT FROM (
+        SELECT * FROM s1 UNION ALL SELECT * FROM s2
+        UNION ALL SELECT * FROM s3 UNION ALL SELECT * FROM s4
+      ) WHERE STER_DT IS NOT NULL"))
+    TRUE
+  }, error = function(e) {
+    out$note <<- paste("steroid-claim scan failed:", conditionMessage(e)); FALSE
+  })
+  if (isTRUE(ok)) {
+    out$view <- "vqs_steroid_claims"
+    out$note <- sprintf(
+      "steroid signal = steroid_codes.csv (%d codes: %d HCPCS, %d NDC) scanned on medical+rx.%s",
+      out$n_codes, out$n_hcpcs, out$n_ndc,
+      if (out$n_ndc == 0L) " NOTE: 0 NDC codes - oral-RX steroids undercounted." else "")
+  }
+  out
+}
 
 # Observation-window bounds, reconstructed from the persisted Part-1 cohort
 # (ELIG_COH_FINAL) exactly as 02_lot1.R S03 builds lot_patient_input:
@@ -183,15 +274,14 @@ vqs_q1_exclusion_agents <- function(con, lot_long, tokens) {
 # Returns a tidy table: one row per (window). Reused for LOT1 (W=60) and
 # LOT2 (W=30).
 # ===========================================================================
-vqs_steroid_windows <- function(con, lot_long, map_tbl, lot_num, w) {
-  ster <- vqs_steroid_src(map_tbl)
+vqs_steroid_windows <- function(con, lot_long, ster_src, lot_num, w) {
   r <- db_q(con, glue("
     WITH lot AS (
       SELECT cast(PATID as string) AS PATID, cast(LOT_START_DT as date) AS LS
       FROM {lot_long}
       WHERE LOT_NUM = {lot_num} AND LOT_START_DT IS NOT NULL
     ),
-    ster AS {ster},
+    ster AS {ster_src},
     at_line AS (
       SELECT DISTINCT l.PATID
       FROM lot l JOIN ster s ON s.PATID = l.PATID
@@ -250,8 +340,7 @@ vqs_steroid_windows <- function(con, lot_long, map_tbl, lot_num, w) {
 # no-steroid-at-line patient who received a steroid in at least one prior/after
 # window, with per-window flags and the nearest steroid dates. `limit` caps the
 # rows for the dashboard (NULL = all, for the standalone CSV).
-vqs_steroid_windows_patients <- function(con, lot_long, map_tbl, lot_num, w, limit = NULL) {
-  ster <- vqs_steroid_src(map_tbl)
+vqs_steroid_windows_patients <- function(con, lot_long, ster_src, lot_num, w, limit = NULL) {
   lim  <- if (!is.null(limit)) glue("LIMIT {as.integer(limit)}") else ""
   db_q(con, glue("
     WITH lot AS (
@@ -259,7 +348,7 @@ vqs_steroid_windows_patients <- function(con, lot_long, map_tbl, lot_num, w, lim
       FROM {lot_long}
       WHERE LOT_NUM = {lot_num} AND LOT_START_DT IS NOT NULL
     ),
-    ster AS {ster},
+    ster AS {ster_src},
     at_line AS (
       SELECT DISTINCT l.PATID FROM lot l JOIN ster s ON s.PATID = l.PATID
        AND s.STER_DT BETWEEN l.LS AND date_add(l.LS, {w} - 1)
@@ -305,8 +394,7 @@ vqs_steroid_windows_patients <- function(con, lot_long, map_tbl, lot_num, w, lim
 # ended (a different, earlier steroid was in LOT1), which is exactly why they
 # are not the headline.
 # ===========================================================================
-vqs_q5_lot2_attribution <- function(con, lot_long, map_tbl, w1, w2) {
-  ster <- vqs_steroid_src(map_tbl)
+vqs_q5_lot2_attribution <- function(con, lot_long, ster_src, w1, w2) {
   r <- db_q(con, glue("
     WITH lot2 AS (
       SELECT cast(PATID as string) AS PATID, cast(LOT_START_DT as date) AS L2
@@ -318,7 +406,7 @@ vqs_q5_lot2_attribution <- function(con, lot_long, map_tbl, w1, w2) {
              cast(LOT_BASE_END_DT as date) AS L1_END
       FROM {lot_long} WHERE LOT_NUM = 1
     ),
-    ster AS {ster},
+    ster AS {ster_src},
     at_lot2 AS (
       SELECT DISTINCT l.PATID FROM lot2 l JOIN ster s ON s.PATID = l.PATID
        AND s.STER_DT BETWEEN l.L2 AND date_add(l.L2, {w2} - 1)

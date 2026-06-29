@@ -97,6 +97,15 @@ main <- function() {
   if (have_sct && is.null(cart_raw))
     log_msg("NOTE: raw CAR-T date scan unavailable - Q6 'before LOT1' reported as NA.")
 
+  # Steroid signal = steroid_codes.csv scanned on medical+rx (the project's
+  # only steroid source; there is no STEROID class in cl_mma_codelist.csv).
+  ster <- vqs_build_steroid_claims(con, lot_long,
+                                   file.path(.script_dir, "steroid_codes.csv"))
+  ster_src <- if (!is.null(ster$view)) vqs_steroid_src(ster$view) else NULL
+  log_msg("Steroid signal: ", ster$note)
+  if (is.null(ster_src))
+    log_msg("WARNING: no steroid signal - Q3/Q4/Q5 will be SKIPPED (load steroid_codes.csv).")
+
   # Definitions sidecar so every CSV batch travels with its operational
   # definitions (counts alone are easy to misread).
   defs <- data.frame(item = c(
@@ -105,9 +114,9 @@ main <- function() {
     "agent_tokens", "raw_claims_window"),
     definition = c(
       "Parent (Overall) LOT_LONG cohort.",
-      "MAP_STACKED segment with MAP_MED_CLASS='STEROID' (codelist class the LOT engine excludes from regimens).",
-      sprintf("Steroid MAP starting inside the induction window [LOT_START, LOT_START+W-1], W=%d (LOT1) / %d (LOT2).", VQS_W1, VQS_W2),
-      "Cumulative (<=N days) from a steroid MAP start; before=[start-N,start-1], after=[ind_end+1,ind_end+N].",
+      paste0("steroid_codes.csv codes scanned on medical (PROC_CD/BILL_PROC_CD/NDC) + rx (NDC). ", ster$note),
+      sprintf("A steroid claim within the induction window [LOT_START, LOT_START+W-1], W=%d (LOT1) / %d (LOT2).", VQS_W1, VQS_W2),
+      "Cumulative (<=N days) from a steroid claim date; before=[start-N,start-1], after=[ind_end+1,ind_end+N].",
       "FIRST_CART_DT in [LOT1_START, LOT_BASE_END_DT], extended by +1 day ONLY when LOT_BASE_END_REASON in (SCT_CART, CART_INIT) - the engine sets the LOT end to CAR-T date - 1 only for a CAR-T-ending line, so the closing CAR-T lands one day past the end; for other end reasons a CAR-T at end+1 is post-LOT1 and excluded.",
       "Raw SCT CAR-T claim with service date < LOT1_START (LOT1_SCT.FIRST_CART_DT cannot express this).",
       sprintf("POMA=%s, ELOT=%s, PANO=%s (best-effort from cl_mma_codelist.csv).", tokens$poma, tokens$elot, tokens$pano),
@@ -136,35 +145,35 @@ main <- function() {
     write_out(q2$raw,     "q2_poma_examples_raw_claims")
   } else log_msg("  skipped (MAP_STACKED unavailable).")
 
-  # ---- Q3 / Q4 ----
-  if (have_map) {
+  # ---- Q3 / Q4 / Q5 (need the steroid signal) ----
+  if (!is.null(ster_src)) {
     log_msg(DASH); log_msg("Q3: steroid timing for LOT1 patients with no steroid at LOT1")
-    q3 <- vqs_steroid_windows(con, lot_long, map_tbl, lot_num = 1L, w = VQS_W1)
+    q3 <- vqs_steroid_windows(con, lot_long, ster_src, lot_num = 1L, w = VQS_W1)
     write_out(q3, "q3_lot1_steroid_windows")
     log_msg(sprintf("  LOT1: %s patients, %s with steroid at LOT1, %s without (denominator).",
                     attr(q3, "line_patients"), attr(q3, "line_with_steroid"),
                     attr(q3, "line_without_steroid")))
     # "who" (patient-level): the actual no-steroid-at-LOT1 patients + windows.
-    write_out(vqs_steroid_windows_patients(con, lot_long, map_tbl, lot_num = 1L, w = VQS_W1),
+    write_out(vqs_steroid_windows_patients(con, lot_long, ster_src, lot_num = 1L, w = VQS_W1),
               "q3_lot1_steroid_window_patients")
 
     log_msg(DASH); log_msg("Q4: steroid timing for LOT2 patients with no steroid at LOT2")
-    q4 <- vqs_steroid_windows(con, lot_long, map_tbl, lot_num = 2L, w = VQS_W2)
+    q4 <- vqs_steroid_windows(con, lot_long, ster_src, lot_num = 2L, w = VQS_W2)
     write_out(q4, "q4_lot2_steroid_windows")
     log_msg(sprintf("  LOT2: %s patients, %s with steroid at LOT2, %s without (denominator).",
                     attr(q4, "line_patients"), attr(q4, "line_with_steroid"),
                     attr(q4, "line_without_steroid")))
-    write_out(vqs_steroid_windows_patients(con, lot_long, map_tbl, lot_num = 2L, w = VQS_W2),
+    write_out(vqs_steroid_windows_patients(con, lot_long, ster_src, lot_num = 2L, w = VQS_W2),
               "q4_lot2_steroid_window_patients")
 
     # ---- Q5 ----
     log_msg(DASH); log_msg("Q5: LOT2 pre-start steroid attribution to LOT1")
-    q5 <- vqs_q5_lot2_attribution(con, lot_long, map_tbl, w1 = VQS_W1, w2 = VQS_W2)
+    q5 <- vqs_q5_lot2_attribution(con, lot_long, ster_src, w1 = VQS_W1, w2 = VQS_W2)
     write_out(q5, "q5_lot2_steroid_attribution")
     log_msg("  denominator (no LOT2 steroid + steroid in 30d before LOT2): ", q5$n_patients[1],
             "; pre-LOT2 steroid ITSELF within LOT1 span (attributable): ", q5$n_patients[2],
             "; NOT within LOT1 span: ", q5$n_patients[3], ".")
-  }
+  } else log_msg("Q3/Q4/Q5 skipped - no steroid signal (steroid_codes.csv).")
 
   # ---- Q6 ----
   if (have_sct) {
