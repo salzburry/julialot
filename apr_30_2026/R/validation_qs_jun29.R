@@ -213,15 +213,21 @@ vqs_steroid_windows <- function(con, lot_long, map_tbl, lot_num, w) {
       FROM no_ster n LEFT JOIN ster s ON s.PATID = n.PATID
       GROUP BY n.PATID
     )
-    SELECT
-      (SELECT count(*) FROM lot)     AS line_patients,
-      (SELECT count(*) FROM at_line) AS line_with_steroid,
-      count(*)                       AS line_without_steroid,
-      coalesce(sum(p7),  0) AS prior_7d, coalesce(sum(p14), 0) AS prior_14d,
-      coalesce(sum(p30), 0) AS prior_30d,
-      coalesce(sum(a7),  0) AS after_7d, coalesce(sum(a14), 0) AS after_14d,
-      coalesce(sum(a30), 0) AS after_30d
-    FROM flags
+    SELECT lp.n_lp AS line_patients,
+           ls.n_ls AS line_with_steroid,
+           f.n_no  AS line_without_steroid,
+           f.prior_7d, f.prior_14d, f.prior_30d,
+           f.after_7d, f.after_14d, f.after_30d
+    FROM      (SELECT count(*) AS n_lp FROM lot)     lp
+    CROSS JOIN (SELECT count(*) AS n_ls FROM at_line) ls
+    CROSS JOIN (
+      SELECT count(*) AS n_no,
+             coalesce(sum(p7),  0) AS prior_7d, coalesce(sum(p14), 0) AS prior_14d,
+             coalesce(sum(p30), 0) AS prior_30d,
+             coalesce(sum(a7),  0) AS after_7d, coalesce(sum(a14), 0) AS after_14d,
+             coalesce(sum(a30), 0) AS after_30d
+      FROM flags
+    ) f
   "))
   denom <- as.numeric(r$line_without_steroid[1])
   pct <- function(x) if (isTRUE(denom > 0)) round(100 * as.numeric(x) / denom, 2) else NA_real_
