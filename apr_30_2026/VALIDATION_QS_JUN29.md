@@ -61,11 +61,21 @@ examples — the raw CDM via `cdm_src()`. Builds nothing persistent.
   **0 NDC rows**, so oral-RX steroids are undercounted until NDC codes are added
   — Q3/Q4/Q5 are only as complete as that CSV. If the CSV is empty, Q3/Q4/Q5 are
   skipped with a note rather than reported as all-zero.
-- **"Steroid at LOT*n*"**: a steroid **claim** whose service date falls inside the
-  induction window `[LOT_START_DT, LOT_START_DT + W − 1]`, `W` = 60 (LOT1) /
-  30 (LOT2) — mirrors the engine's induction-membership rule.
-- **Before / after windows** (7/14/30 d) are cumulative (≤ N days) and measured
-  from a steroid claim date.
+- **"Steroid classified as part of LOT*n*"** (the no-steroid **denominator**): a
+  steroid **claim** within the *capped* induction window `[LOT_START_DT,
+  LOT_INDUCTION_END_DT]`, where `LOT_INDUCTION_END_DT = least(LOT_BASE_END_DT,
+  LOT_START_DT + W − 1)`, `W` = 60 (LOT1) / 45 (CART-started LOT*n*) / 30 (other
+  LOT*n*); SCT_ALLO lines have no steroid membership. This mirrors the Steroids
+  panel's augmentation (`LOT_INDUCTION_END_DT`) **exactly**, so the no-steroid
+  denominators reconcile with that panel. (Earlier versions used an uncapped
+  fixed window, which over-counted "steroid at LOT" for short lines.)
+- **Before / after windows** (7/14/30 d) are cumulative (≤ N days), measured
+  from a steroid claim date. "Before" is relative to `LOT_START_DT`; "after" is
+  relative to the **fixed** induction end `LOT_START_DT + W − 1` (the "60/30 day
+  induction window" Julia named) — not the capped `LOT_INDUCTION_END_DT`. Steroid
+  claims are scanned across all of a patient's history (matching the panel), not
+  bounded to `[INDEX_DATE, OBS_END_DT]`, so a pre-index steroid can fall in a
+  LOT1 "before" window.
 - **CAR-T (Q6)** — two date sources, by necessity:
   - *During or closing LOT1*: `LOT1_SCT.FIRST_CART_DT` in `[LOT1_START,
     LOT_BASE_END_DT]`, **extended by +1 day only when the end reason is

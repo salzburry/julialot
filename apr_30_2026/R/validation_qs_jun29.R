@@ -28,22 +28,26 @@
 #       allow CAR-T during LOT1), with raw-claim journey examples.
 #
 # ---- Operational definitions (documented, single source of truth) ----------
-#  * "Receives a steroid at LOTn"  -> a STEROID-class MAP (MAP_STACKED,
-#    MAP_MED_CLASS = 'STEROID') whose MAP_START_DT falls inside the LOTn
-#    induction window [LOT_START_DT, LOT_START_DT + W - 1], W = 60 for LOT1,
-#    30 for LOT2. This mirrors the LOT engine's own induction-membership rule
-#    (02_lot1.R S09, which selects induction meds by MAP_START_DT in-window
-#    and explicitly EXCLUDES MAP_MED_CLASS = 'STEROID' from the regimen). The
-#    same STEROID-class MAP rows are the steroid signal used throughout.
-#  * "Received a steroid within N days prior / after" -> a STEROID-class MAP
-#    that STARTS in the respective window. The 7/14/30 windows are cumulative
-#    (<= N days), exactly as phrased in the ask.
-#  * Steroid signal source: MAP_STACKED STEROID-class segments (derived from
-#    cl_mma_codelist.csv). This is self-contained from persisted tables and is
-#    identical in the standalone program and the dashboard. NOTE: it is the
-#    codelist's STEROID class, which can differ slightly from the dashboard's
-#    optional steroid_codes.csv augmentation (LOT_BASE_MEDS_AUG) when that CSV
-#    is populated; the definition used here is stated on every output.
+#  * Steroid signal source: the codes in steroid_codes.csv (mapped to DEX/PRED
+#    tokens) scanned against medical (PROC_CD/BILL_PROC_CD HCPCS/CPT, NDC) + rx
+#    (NDC) - the SAME source 05_regimen_dashboard.R uses (load_steroid_codes +
+#    augment_lot_long), built here by vqs_build_steroid_claims(). There is NO
+#    STEROID class in cl_mma_codelist.csv, so a MAP_STACKED MAP_MED_CLASS=
+#    'STEROID' scan returns zero rows and would silently empty Q3/Q4/Q5.
+#  * "Steroid CLASSIFIED as part of LOTn" (the Q3/Q4/Q5 denominator) -> a steroid
+#    claim within the CAPPED induction window
+#    [LOT_START_DT, LOT_INDUCTION_END_DT], where LOT_INDUCTION_END_DT =
+#    least(LOT_BASE_END_DT, LOT_START_DT + W - 1), W = 60 (LOT1) / 45 (CART-
+#    started LOTn) / 30 (other LOTn); SCT_ALLO lines have no membership. This
+#    matches the Steroids panel's augmentation (LOT_INDUCTION_END_DT) EXACTLY,
+#    so the no-steroid denominators reconcile. (See vqs_induction_end_sql.)
+#  * "Received a steroid within N days prior / after" -> a steroid claim in the
+#    respective window, anchored to the FIXED induction end (LOT_START + W - 1)
+#    that the ask names ("their 60/30 day induction window"). The 7/14/30
+#    windows are cumulative (<= N days). These are NOT capped at LOT_BASE_END_DT.
+#  * Steroid claims are scanned for all LOT_LONG patients (matching the panel's
+#    augmentation); they are NOT bounded to [INDEX_DATE, OBS_END_DT], so a
+#    pre-index steroid can legitimately fall in a LOT1 prior window.
 # ---------------------------------------------------------------------------
 
 # Default medication abbreviations (overridable via env). Panobinostat in
@@ -56,8 +60,28 @@ VQS_PANO_TOKEN <- toupper(Sys.getenv("PANO_MED_ABBR", unset = "PANO"))
 # Induction windows (config-driven; fall back to study defaults).
 VQS_W1 <- tryCatch(as.integer(cfg$induction_window_days),       error = function(e) 60L)
 VQS_W2 <- tryCatch(as.integer(cfg$lot_n_induction_window_days), error = function(e) 30L)
+VQS_CART <- tryCatch(as.integer(cfg$cart_consolidation_days),   error = function(e) 45L)
 if (is.na(VQS_W1) || VQS_W1 < 1) VQS_W1 <- 60L
 if (is.na(VQS_W2) || VQS_W2 < 1) VQS_W2 <- 30L
+if (is.na(VQS_CART) || VQS_CART < 1) VQS_CART <- 45L
+
+# SQL for the induction-window END used to decide "steroid CLASSIFIED as part of
+# LOTn" (the denominator). Mirrors 05_regimen_dashboard.R augment_lot_long
+# (LOT_INDUCTION_END_DT) EXACTLY so Q3/Q4/Q5 reconcile with the Steroids panel:
+#   - SCT_ALLO-started line -> NULL (no steroid membership; parent suppresses it)
+#   - else cap at LOT_BASE_END_DT, window = 60d (LOT1) / 45d (CART-started LOTn)
+#     / 30d (other LOTn); when LOT_BASE_END_DT is NULL use the full window.
+# The 7/14/30d before/after windows are NOT capped - they are anchored to the
+# fixed induction end (LOT_START + W - 1) that Julia named ("their 60/30 day
+# induction window").
+vqs_induction_end_sql <- function(lot_num, w, start_expr = "cast(LOT_START_DT as date)") {
+  bw <- if (lot_num == 1L) as.character(as.integer(w))
+        else glue("CASE WHEN LOT_START_TYPE = 'CART' THEN {VQS_CART} ELSE {as.integer(w)} END")
+  glue("CASE WHEN LOT_START_TYPE = 'SCT_ALLO' THEN cast(NULL as date)
+             WHEN LOT_BASE_END_DT IS NULL THEN date_add({start_expr}, ({bw}) - 1)
+             ELSE least(cast(LOT_BASE_END_DT as date),
+                        date_add({start_expr}, ({bw}) - 1)) END")
+}
 
 # Quote a vector of ids for an IN (...) list; '' when empty so SQL stays valid.
 vqs_in_list <- function(ids) {
@@ -275,17 +299,19 @@ vqs_q1_exclusion_agents <- function(con, lot_long, tokens) {
 # LOT2 (W=30).
 # ===========================================================================
 vqs_steroid_windows <- function(con, lot_long, ster_src, lot_num, w) {
+  ind_end <- vqs_induction_end_sql(lot_num, w)
   r <- db_q(con, glue("
     WITH lot AS (
-      SELECT cast(PATID as string) AS PATID, cast(LOT_START_DT as date) AS LS
+      SELECT cast(PATID as string) AS PATID, cast(LOT_START_DT as date) AS LS,
+             {ind_end} AS IND_END
       FROM {lot_long}
       WHERE LOT_NUM = {lot_num} AND LOT_START_DT IS NOT NULL
     ),
     ster AS {ster_src},
-    at_line AS (
+    at_line AS (   -- steroid CLASSIFIED as part of the line (capped induction end)
       SELECT DISTINCT l.PATID
       FROM lot l JOIN ster s ON s.PATID = l.PATID
-       AND s.STER_DT BETWEEN l.LS AND date_add(l.LS, {w} - 1)
+       AND l.IND_END IS NOT NULL AND s.STER_DT BETWEEN l.LS AND l.IND_END
     ),
     no_ster AS (
       SELECT l.* FROM lot l
@@ -342,16 +368,18 @@ vqs_steroid_windows <- function(con, lot_long, ster_src, lot_num, w) {
 # rows for the dashboard (NULL = all, for the standalone CSV).
 vqs_steroid_windows_patients <- function(con, lot_long, ster_src, lot_num, w, limit = NULL) {
   lim  <- if (!is.null(limit)) glue("LIMIT {as.integer(limit)}") else ""
+  ind_end <- vqs_induction_end_sql(lot_num, w)
   db_q(con, glue("
     WITH lot AS (
-      SELECT cast(PATID as string) AS PATID, cast(LOT_START_DT as date) AS LS
+      SELECT cast(PATID as string) AS PATID, cast(LOT_START_DT as date) AS LS,
+             {ind_end} AS IND_END
       FROM {lot_long}
       WHERE LOT_NUM = {lot_num} AND LOT_START_DT IS NOT NULL
     ),
     ster AS {ster_src},
     at_line AS (
       SELECT DISTINCT l.PATID FROM lot l JOIN ster s ON s.PATID = l.PATID
-       AND s.STER_DT BETWEEN l.LS AND date_add(l.LS, {w} - 1)
+       AND l.IND_END IS NOT NULL AND s.STER_DT BETWEEN l.LS AND l.IND_END
     ),
     no_ster AS (
       SELECT l.* FROM lot l LEFT JOIN at_line a ON a.PATID = l.PATID
@@ -397,7 +425,8 @@ vqs_steroid_windows_patients <- function(con, lot_long, ster_src, lot_num, w, li
 vqs_q5_lot2_attribution <- function(con, lot_long, ster_src, w1, w2) {
   r <- db_q(con, glue("
     WITH lot2 AS (
-      SELECT cast(PATID as string) AS PATID, cast(LOT_START_DT as date) AS L2
+      SELECT cast(PATID as string) AS PATID, cast(LOT_START_DT as date) AS L2,
+             {vqs_induction_end_sql(2L, w2)} AS L2_IND_END
       FROM {lot_long} WHERE LOT_NUM = 2 AND LOT_START_DT IS NOT NULL
     ),
     lot1 AS (
@@ -407,9 +436,9 @@ vqs_q5_lot2_attribution <- function(con, lot_long, ster_src, w1, w2) {
       FROM {lot_long} WHERE LOT_NUM = 1
     ),
     ster AS {ster_src},
-    at_lot2 AS (
+    at_lot2 AS (   -- steroid CLASSIFIED as part of LOT2 (capped induction end)
       SELECT DISTINCT l.PATID FROM lot2 l JOIN ster s ON s.PATID = l.PATID
-       AND s.STER_DT BETWEEN l.L2 AND date_add(l.L2, {w2} - 1)
+       AND l.L2_IND_END IS NOT NULL AND s.STER_DT BETWEEN l.L2 AND l.L2_IND_END
     ),
     no_l2 AS (   -- LOT2 patients with NO steroid at LOT2 induction
       SELECT l.PATID, l.L2

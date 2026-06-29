@@ -75,8 +75,9 @@ main <- function() {
   have_map <- vqs_readable(con, map_tbl)
   have_sct <- vqs_readable(con, sct_tbl)
   if (!have_map)
-    log_msg("WARNING: ", map_tbl, " not readable - steroid questions (Q3/Q4/Q5) ",
-            "and MAP journeys will be skipped.")
+    log_msg("WARNING: ", map_tbl, " not readable - Q2 MAP-journey examples will ",
+            "be skipped. (Q3/Q4/Q5 use the steroid_codes.csv signal, built ",
+            "separately - not MAP_STACKED.)")
   if (!have_sct)
     log_msg("WARNING: ", sct_tbl, " not readable - CAR-T question (Q6) will be skipped.")
 
