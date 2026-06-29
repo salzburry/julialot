@@ -23,9 +23,12 @@
 # full-only Patient explorer / Validation / Debug), and a Stakeholder/Full
 # toggle hides the full-only buckets by default.
 #
-# An empty "Exploratory analysis" group is intentionally NOT built (it would
-# return only when a real different-denominator ad-hoc analysis exists).
-# build_exploratory_scaffold() is kept below as documentation of that rule.
+# The "Exploratory analysis" cohort pill carries the study-team validation
+# Q&A (Q1-Q6, "MM LOT Validation next steps"), built by
+# build_validation_exploratory() from the shared R/validation_qs_jun29.R
+# module (same logic as the standalone validation_qs_jun29.R program).
+# build_exploratory_scaffold() remains below as documentation of the
+# placement rule for future ad-hoc asks.
 #
 # Parent derivation logic is unchanged.
 
@@ -52,6 +55,14 @@ options(regimen_dashboard.script_dir    = .script_dir)
 options(lot_detail_dashboard.no_autorun = TRUE)
 source(file.path(.script_dir, "06_ndmm_dashboard.R"))
 source(file.path(.script_dir, "04_lot_detail_dashboard.R"))
+
+# Shared study-team validation Q&A logic (Q1-Q6, "MM LOT Validation next
+# steps"). Same module the standalone validation_qs_jun29.R uses, so the
+# Exploratory tables here and that program's CSVs can never drift apart.
+# load_codelist_csv (needed only for the guarded raw-claim examples) may not
+# be sourced by the dashboard chain; source it best-effort.
+try(source(file.path(.script_dir, "R", "codelists_lot.R")), silent = TRUE)
+source(file.path(.script_dir, "R", "validation_qs_jun29.R"))
 
 # Rewrite the section/title fields of items newly added by a builder so
 # they cluster under one cohort heading in the combined sidebar while
@@ -163,6 +174,107 @@ build_exploratory_scaffold <- function() {
     '</div>'),
     section = "Exploratory analysis",
     title   = "About this section")
+}
+
+# ---- Exploratory objective: MM LOT Validation next steps (Q1-Q6) ----------
+# Renders the six study-team validation questions (Julia Moore, Jun-2026) as
+# labelled tables under the Exploratory cohort pill. Denominator = the parent
+# (Overall) LOT_LONG cohort; the cohort definition is stated on the intro card.
+# Summary tables are stakeholder-visible; the raw-claim / MAP-journey patient
+# examples carry "(sample)" so classify_item() routes them to the full-only
+# Patient explorer (no raw PATID table leaks into the stakeholder view).
+# Whole body is guarded so a failure degrades to one note card instead of
+# killing the combined dashboard.
+SEC_EXPL <- "Exploratory analysis"
+
+build_validation_exploratory <- function(con) {
+  lot_long <- wrk("LOT_LONG"); map_tbl <- wrk("MAP_STACKED"); sct_tbl <- wrk("LOT1_SCT")
+  have_map <- isTRUE(tryCatch({ db_q(con, glue("SELECT 1 FROM {map_tbl} LIMIT 1")); TRUE },
+                              error = function(e) FALSE))
+  have_sct <- isTRUE(tryCatch({ db_q(con, glue("SELECT 1 FROM {sct_tbl} LIMIT 1")); TRUE },
+                              error = function(e) FALSE))
+  tokens <- tryCatch(vqs_resolve_agent_tokens(con),
+                     error = function(e) list(poma = "POMA", elot = "ELOT",
+                                              pano = "PANO", notes = character(0)))
+
+  add_html_card(paste0(
+    '<div style="font-family:system-ui;padding:14px;max-width:900px">',
+    '<h3>MM LOT Validation next steps (study-team Q&amp;A)</h3>',
+    '<p style="color:#555;font-size:13px">Six follow-up questions from the ',
+    'study team (Jun&nbsp;2026). Denominator = the parent <b>Overall</b> ',
+    '<code>LOT_LONG</code> cohort. The same logic backs the standalone ',
+    '<code>validation_qs_jun29.R</code> program (CSV outputs).</p>',
+    '<ul style="font-size:13px;color:#444">',
+    '<li><b>Steroid signal</b>: a <code>STEROID</code>-class segment in ',
+    '<code>MAP_STACKED</code> (the codelist class the LOT engine excludes ',
+    'from regimens). "Steroid at LOT<i>n</i>" = a steroid MAP starting inside ',
+    'the induction window (', VQS_W1, 'd for LOT1, ', VQS_W2, 'd for LOT2).</li>',
+    '<li><b>Before/after windows</b> (7/14/30d) are cumulative (&le;N days) ',
+    'and measured from a steroid MAP start date.</li>',
+    '<li><b>Agent tokens</b>: POMA=', tokens$poma, ', ELOT=', tokens$elot,
+    ', PANO=', tokens$pano, ' (best-effort from <code>cl_mma_codelist.csv</code>).</li>',
+    '</ul></div>'),
+    section = SEC_EXPL, title = "About this section")
+
+  # Q1 ----------------------------------------------------------------------
+  tryCatch({
+    q1 <- vqs_q1_exclusion_agents(con, lot_long, tokens)
+    save_table(q1, section = SEC_EXPL,
+               title = "Q1: LOT1 regimens with pomalidomide / elotuzumab / panobinostat")
+  }, error = function(e) log_msg("  [Exploratory] Q1 failed: ", conditionMessage(e)))
+
+  # Q3 / Q4 / Q5 (steroid timing) ------------------------------------------
+  if (have_map) {
+    tryCatch({
+      q3 <- vqs_steroid_windows(con, lot_long, map_tbl, lot_num = 1L, w = VQS_W1)
+      save_table(q3, section = SEC_EXPL, title = paste0(
+        "Q3: LOT1 no-steroid patients - steroid before/after induction (n=",
+        attr(q3, "line_without_steroid"), " of ", attr(q3, "line_patients"), ")"))
+    }, error = function(e) log_msg("  [Exploratory] Q3 failed: ", conditionMessage(e)))
+    tryCatch({
+      q4 <- vqs_steroid_windows(con, lot_long, map_tbl, lot_num = 2L, w = VQS_W2)
+      save_table(q4, section = SEC_EXPL, title = paste0(
+        "Q4: LOT2 no-steroid patients - steroid before/after induction (n=",
+        attr(q4, "line_without_steroid"), " of ", attr(q4, "line_patients"), ")"))
+    }, error = function(e) log_msg("  [Exploratory] Q4 failed: ", conditionMessage(e)))
+    tryCatch({
+      q5 <- vqs_q5_lot2_attribution(con, lot_long, map_tbl, w1 = VQS_W1, w2 = VQS_W2)
+      save_table(q5, section = SEC_EXPL,
+                 title = "Q5: LOT2 pre-start steroid - attributable to LOT1?")
+    }, error = function(e) log_msg("  [Exploratory] Q5 failed: ", conditionMessage(e)))
+
+    # Q2 examples (full-only: titles carry "(sample)") --------------------
+    tryCatch({
+      q2 <- vqs_q2_poma_examples(con, lot_long, map_tbl, tokens, n = 5L)
+      if (!is.null(q2$journey) && nrow(q2$journey) > 0)
+        save_table(q2$journey, section = SEC_EXPL,
+                   title = "Q2: Pomalidomide LOT1 - MAP journey examples (sample)")
+      if (!is.null(q2$raw) && nrow(q2$raw) > 0)
+        save_table(q2$raw, section = SEC_EXPL,
+                   title = "Q2: Pomalidomide LOT1 - raw claims before MAPs (sample)")
+    }, error = function(e) log_msg("  [Exploratory] Q2 examples failed: ", conditionMessage(e)))
+  }
+
+  # Q6 (CAR-T) --------------------------------------------------------------
+  if (have_sct) {
+    tryCatch({
+      q6 <- vqs_q6_cart(con, lot_long, sct_tbl, w1 = VQS_W1)
+      save_table(q6, section = SEC_EXPL, title = "Q6: CAR-T prior to or during LOT1")
+    }, error = function(e) log_msg("  [Exploratory] Q6 failed: ", conditionMessage(e)))
+    tryCatch({
+      ex <- vqs_q6_cart_examples(con, lot_long, sct_tbl, map_tbl, n = 5L)
+      if (!is.null(ex$sct_raw) && nrow(ex$sct_raw) > 0)
+        save_table(ex$sct_raw, section = SEC_EXPL,
+                   title = "Q6: CAR-T LOT1 - raw SCT claims (sample)")
+      if (!is.null(ex$mma_raw) && nrow(ex$mma_raw) > 0)
+        save_table(ex$mma_raw, section = SEC_EXPL,
+                   title = "Q6: CAR-T LOT1 - raw MM claims (sample)")
+      if (!is.null(ex$journey) && nrow(ex$journey) > 0)
+        save_table(ex$journey, section = SEC_EXPL,
+                   title = "Q6: CAR-T LOT1 - MAP journey examples (sample)")
+    }, error = function(e) log_msg("  [Exploratory] Q6 examples failed: ", conditionMessage(e)))
+  }
+  invisible()
 }
 
 # ---- Summary landing page (data-driven, opens first) ----------------
@@ -401,10 +513,10 @@ build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts,
 # The data still ships in the file regardless of audience (acceptable
 # here: internal GSK audience with equivalent data access), so the toggle
 # is a presentation cut, not a privacy boundary.
-COHORT_ORDER <- c("Summary", "Overall", "NDMM")
+COHORT_ORDER <- c("Summary", "Overall", "NDMM", "Exploratory analysis")
 BUCKET_ORDER <- c("Summary", "Cohort & attrition", "Treatment patterns",
-                  "Steroids & payer", "Patient explorer", "Validation",
-                  "Debug", "Other")
+                  "Steroids & payer", "Exploratory", "Patient explorer",
+                  "Validation", "Debug", "Other")
 
 classify_item <- function(title) {
   # Rule order matters. Anchored internal prefixes are matched FIRST so a
@@ -427,7 +539,11 @@ classify_item <- function(title) {
     c(paste0("^(Transitions|START_TYPE|END_REASON|LENGTH|REGIMENS|",
              "PROGRESSION|GAPS|TRANSITIONS|SANKEY|MEDCOUNT|MTX|TREND): "),
                                                              "Treatment patterns", "stakeholder"),
-    c("^(Steroids|Payer): ",                                 "Steroids & payer",   "stakeholder")
+    c("^(Steroids|Payer): ",                                 "Steroids & payer",   "stakeholder"),
+    # Exploratory objective (study-team validation Q1-Q6). Reached only after
+    # the example/sample rule above, so Q2/Q6 "(sample)" tables still route to
+    # the full-only Patient explorer; the Q-summary + intro stay stakeholder.
+    c("^(About this section|Q[0-9]|Exploratory)",            "Exploratory",        "stakeholder")
   )
   for (r in rules) if (grepl(r[1], title)) return(list(bucket = r[2], audience = r[3]))
   # Fail closed: an unrecognized title (e.g. a future builder with a new
@@ -571,13 +687,30 @@ main_combined <- function() {
 
   cfg$plot_filename_prefix <<- NULL
 
+  # ---- Exploratory objective (study-team validation Q1-Q6) ----
+  # Different-from-summary ad-hoc asks that reuse the Overall denominator but
+  # answer specific study-team questions; placed in their own cohort pill per
+  # the study team's request. Guarded so a failure can't sink the dashboard.
+  log_msg("==== Building EXPLORATORY objective views ====")
+  tryCatch(build_validation_exploratory(con), error = function(e) {
+    log_msg("  WARN: Exploratory objective could not be built: ", conditionMessage(e))
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:14px;max-width:900px">',
+      '<h3>Exploratory analysis - not available</h3>',
+      '<p style="color:#a06000;font-size:13px">The study-team validation ',
+      'questions could not be built in this run:</p>',
+      '<pre style="font-size:12px;background:#f7f7f7;padding:8px;border-radius:6px;',
+      'white-space:pre-wrap">', conditionMessage(e), '</pre></div>'),
+      section = SEC_EXPL, title = "About this section")
+  })
+
   # ---- Summary landing page + nav structuring ----
   # Built last (it needs both cohorts' KPIs); tag_and_order() then assigns
   # every item a bucket + audience and stable-sorts the whole list into
   # (cohort, bucket) order, so the Summary leads and each cohort reads
   # top-down (cohort & attrition -> treatment -> steroids & payer ->
-  # internal). The empty Exploratory scaffold is intentionally not built -
-  # it returns only when a real different-denominator analysis exists.
+  # internal). The Exploratory cohort (study-team validation Q1-Q6) was built
+  # just above and sorts after NDMM via COHORT_ORDER.
   build_summary_landing(kpi_overall, kpi_ndmm, ndmm_ok, run_ts_combined,
                         n_ster = p_overall$n_ster, n_rules = p_overall$n_rules,
                         study_end = cfg$study_end,
@@ -589,10 +722,11 @@ main_combined <- function() {
 
   build_dashboard(
     out_name     = "combined_dashboard.html",
-    header_title = "MM LOT &mdash; combined (Overall + NDMM)",
+    header_title = "MM LOT &mdash; combined (Overall + NDMM + Exploratory)",
     header_sub   = paste0("Summary &bull; Overall &bull; NDMM",
-                          if (!ndmm_ok) " (unavailable)" else ""),
-    cohort_sections = c("Summary", "Overall", "NDMM")
+                          if (!ndmm_ok) " (unavailable)" else "",
+                          " &bull; Exploratory"),
+    cohort_sections = c("Summary", "Overall", "NDMM", "Exploratory analysis")
   )
   log_msg("Wrote ", file.path(cfg$output_dir, "combined_dashboard.html"))
 }
