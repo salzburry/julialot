@@ -306,11 +306,12 @@ vqs_q5_lot2_attribution <- function(con, lot_long, map_tbl, w1, w2) {
 #
 # Two date sources, by necessity:
 #   * "DURING / closing LOT1" uses LOT1_SCT.FIRST_CART_DT (the engine's own
-#     derived value). Because a LOT-ending CAR-T sets LOT1_BASE_END_DT =
-#     FIRST_CART_DT - 1 (02_lot1.R LOT1_TX_ENDDATE), the CAR-T that CLOSES
-#     LOT1 lands on L1_END + 1 - so the window is [L1_START, L1_END + 1],
-#     which captures both in-line and line-closing CAR-T. (FIRST_CART_DT is
-#     itself >= LOT1_START_DT by construction.)
+#     derived value). The window is [L1_START, L1_END], extended to L1_END + 1
+#     ONLY when END_REASON in (SCT_CART, CART_INIT): a CAR-T-ending LOT1 sets
+#     LOT1_BASE_END_DT = FIRST_CART_DT - 1 (02_lot1.R LOT1_TX_ENDDATE), so the
+#     closing CAR-T lands one day past L1_END. For any other end reason a CAR-T
+#     at L1_END + 1 is post-LOT1 and is NOT counted. (FIRST_CART_DT is itself
+#     >= LOT1_START_DT by construction.)
 #   * "BEFORE LOT1" cannot come from LOT1_SCT at all (first_cart filters
 #     TX_DT >= LOT1_START_DT). It is taken from the raw CAR-T claim dates
 #     (cart_raw_tbl, observation-window-bounded). When that scan is
@@ -382,7 +383,7 @@ vqs_q6_cart <- function(con, lot_long, sct_tbl, w1, cart_raw_tbl = NULL) {
   labels <- c(
     "LOT1 patients (denominator)",
     "CAR-T BEFORE LOT1 start (raw SCT claims)",
-    "CAR-T within LOT1 60d induction window",
+    "CAR-T within 60d after LOT1 start (start-relative; not LOT-end capped)",
     "CAR-T during or closing LOT1 [start, base end; +1d iff CAR-T closed LOT1]",
     "CAR-T prior to OR during LOT1 (the ask)",
     "LOT1 ended by CAR-T (end reason SCT_CART/CART_INIT)",
@@ -694,9 +695,10 @@ vqs_q2_poma_examples <- function(con, lot_long, map_tbl, tokens, n = 5L, bounds 
 
 # Q6 example patients: a few with CAR-T prior to/during LOT1, with raw SCT
 # claims (guarded) + the surrounding raw MM claims + MAP journey. "During or
-# closing LOT1" uses [L1_START, L1_END + 1] (the engine sets L1_END to the
-# CAR-T date - 1); "before LOT1" patients are added from the raw CAR-T date
-# view when available.
+# closing LOT1" uses [L1_START, L1_END], extended to L1_END + 1 only when
+# END_REASON in (SCT_CART, CART_INIT) (the engine sets L1_END to the CAR-T
+# date - 1 only for a CAR-T-ending line); "before LOT1" patients are added
+# from the raw CAR-T date view when available.
 vqs_q6_cart_examples <- function(con, lot_long, sct_tbl, map_tbl, n = 5L,
                                  bounds = NULL, cart_raw_tbl = NULL) {
   before_union <- if (!is.null(cart_raw_tbl)) glue("
@@ -730,7 +732,11 @@ vqs_q6_cart_examples <- function(con, lot_long, sct_tbl, map_tbl, n = 5L,
   out <- list(patids = ids, sct_raw = NULL, mma_raw = NULL, journey = NULL,
               note = NULL, windowed = !is.null(bounds))
   if (length(ids) == 0) {
-    out$note <- "No patients with CAR-T prior to or during LOT1."
+    out$note <- if (is.null(cart_raw_tbl))
+      paste("No patients with CAR-T during or closing LOT1.",
+            "(Before-LOT1 CAR-T was NOT assessed for examples - the raw CAR-T",
+            "scan was unavailable.)")
+    else "No patients with CAR-T prior to or during LOT1."
     return(out)
   }
   out$journey <- tryCatch(vqs_map_journey(con, map_tbl, lot_long, ids),
