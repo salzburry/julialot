@@ -50,14 +50,38 @@ examples — the raw CDM via `cdm_src()`. Builds nothing persistent.
   30 (LOT2) — mirrors the engine's induction-membership rule.
 - **Before / after windows** (7/14/30 d) are cumulative (≤ N days) and measured
   from a steroid MAP start date.
-- **CAR-T date**: `LOT1_SCT.FIRST_CART_DT`; "prior to or during LOT1" =
-  `FIRST_CART_DT < LOT1_START` or within `[LOT1_START, LOT1_BASE_END_DT]`.
+- **CAR-T (Q6)** — two date sources, by necessity:
+  - *During or closing LOT1*: `LOT1_SCT.FIRST_CART_DT` in
+    `[LOT1_START, LOT_BASE_END_DT + 1]`. The `+1` is required because the LOT
+    engine sets the LOT end to the CAR-T date − 1 day for a LOT-ending CAR-T
+    (`02_lot1.R` `LOT1_TX_ENDDATE`), so the closing CAR-T lands one day past
+    `LOT_BASE_END_DT`. `FIRST_CART_DT` is itself always ≥ `LOT1_START`.
+  - *Before LOT1*: from **raw SCT CAR-T claims** (observation-window bounded),
+    because `LOT1_SCT.FIRST_CART_DT` is derived only from CAR-T on/after LOT1
+    start (`first_cart` filters `TX_DT >= LOT1_START_DT`) and so can never be
+    before LOT1. If the raw scan / `ELIG_COH_FINAL` bounds are unavailable,
+    the before-LOT1 rows are reported as `NA` (not a misleading `0`).
 - **Agent tokens**: POMA / ELOT / PANO, best-effort resolved from
   `cl_mma_codelist.csv` by medication-full-name (override via
   `POMA_MED_ABBR` / `ELOT_MED_ABBR` / `PANO_MED_ABBR`). A zero count
   (e.g. panobinostat absent from the cohort) is itself a valid answer.
 
-The raw-claim example pulls (Q2, Q6) are **guarded**: if the CDM / codelist
-CSVs are unreachable they degrade to a note and the reliable MAP-derived
-journey is shown instead. Raw per-patient tables are tagged "(sample)" so the
-dashboard keeps them in the full-only Patient-explorer view.
+The raw-claim example pulls (Q2, Q6) are **bounded to each patient's
+`[INDEX_DATE, OBS_END_DT]` window** (reconstructed from `ELIG_COH_FINAL` the
+same way the pipeline builds `lot_patient_input`), so they mirror the
+pipeline's S04/S12 raw extraction rather than a patient's whole claim history.
+They are also **guarded**: if the CDM / codelist CSVs / `ELIG_COH_FINAL` are
+unreachable they degrade to a note (in both the CSV log and a dashboard card)
+and the reliable MAP-derived journey is shown instead; when bounds are
+unavailable the examples fall back to full PATID history and say so. Raw
+per-patient tables are tagged "(sample)" so the dashboard keeps them in the
+full-only Patient-explorer view. The standalone program also writes a
+`validation_qs_jun29_definitions_<stamp>.csv` sidecar with these definitions.
+
+## Open item (steroid source)
+
+Q3–Q5 use `MAP_STACKED` STEROID-class segments, while the existing dashboard
+steroid section can use the optional `steroid_codes.csv` augmentation
+(`LOT_BASE_MEDS_AUG`). These can differ if that CSV is populated; the choice is
+stated on every output. Reconciling the two steroid sources (or parameterising
+the module to accept either) is a deliberate follow-up, not done here.

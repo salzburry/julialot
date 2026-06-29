@@ -168,9 +168,9 @@ build_exploratory_scaffold <- function() {
     'e.g. a POMA-specific subset) is added <b>here</b> as its own view, ',
     'with the cohort definition stated on the view.</li>',
     '</ul>',
-    '<p style="color:#888;font-size:12px">No different-cohort ad-hoc ',
-    'analyses are wired in yet, so this group is currently a ',
-    'placeholder. New ones land here as they come in.</p>',
+    '<p style="color:#888;font-size:12px">The study-team validation Q&amp;A ',
+    '(Q1-Q6) is wired in here via <code>build_validation_exploratory()</code>; ',
+    'further different-cohort ad-hoc analyses land here as they come in.</p>',
     '</div>'),
     section = "Exploratory analysis",
     title   = "About this section")
@@ -196,6 +196,13 @@ build_validation_exploratory <- function(con) {
   tokens <- tryCatch(vqs_resolve_agent_tokens(con),
                      error = function(e) list(poma = "POMA", elot = "ELOT",
                                               pano = "PANO", notes = character(0)))
+  # Observation-window bounds for the raw-claim examples + the raw CAR-T scan
+  # (the only source that can answer "CAR-T before LOT1").
+  bounds   <- tryCatch(vqs_obs_bounds_src(con),
+                       error = function(e) list(sql = NULL, available = FALSE))
+  cart_raw <- if (have_sct)
+    tryCatch(vqs_build_raw_cart_dates(con, lot_long, bounds$sql),
+             error = function(e) NULL) else NULL
 
   add_html_card(paste0(
     '<div style="font-family:system-ui;padding:14px;max-width:900px">',
@@ -211,8 +218,18 @@ build_validation_exploratory <- function(con) {
     'the induction window (', VQS_W1, 'd for LOT1, ', VQS_W2, 'd for LOT2).</li>',
     '<li><b>Before/after windows</b> (7/14/30d) are cumulative (&le;N days) ',
     'and measured from a steroid MAP start date.</li>',
+    '<li><b>CAR-T (Q6)</b>: "during or closing LOT1" = <code>LOT1_SCT.',
+    'FIRST_CART_DT</code> in <code>[LOT1_START, LOT_BASE_END_DT+1]</code> ',
+    '(the engine sets the LOT end to the CAR-T date&minus;1, so the closing ',
+    'CAR-T lands one day past the end). "Before LOT1" comes from raw SCT ',
+    'claims', if (is.null(cart_raw)) ' (unavailable this run &mdash; shown as NA)' else '',
+    ', since <code>FIRST_CART_DT</code> only captures CAR-T on/after LOT1 start.</li>',
     '<li><b>Agent tokens</b>: POMA=', tokens$poma, ', ELOT=', tokens$elot,
     ', PANO=', tokens$pano, ' (best-effort from <code>cl_mma_codelist.csv</code>).</li>',
+    '<li><b>Raw-claim examples</b> are ',
+    if (isTRUE(bounds$available)) 'bounded to each patient&rsquo;s [INDEX_DATE, OBS_END_DT] window.'
+    else 'NOT observation-window bounded this run (ELIG_COH_FINAL unavailable).',
+    '</li>',
     '</ul></div>'),
     section = SEC_EXPL, title = "About this section")
 
@@ -245,24 +262,29 @@ build_validation_exploratory <- function(con) {
 
     # Q2 examples (full-only: titles carry "(sample)") --------------------
     tryCatch({
-      q2 <- vqs_q2_poma_examples(con, lot_long, map_tbl, tokens, n = 5L)
+      q2 <- vqs_q2_poma_examples(con, lot_long, map_tbl, tokens, n = 5L, bounds = bounds$sql)
       if (!is.null(q2$journey) && nrow(q2$journey) > 0)
         save_table(q2$journey, section = SEC_EXPL,
                    title = "Q2: Pomalidomide LOT1 - MAP journey examples (sample)")
       if (!is.null(q2$raw) && nrow(q2$raw) > 0)
         save_table(q2$raw, section = SEC_EXPL,
                    title = "Q2: Pomalidomide LOT1 - raw claims before MAPs (sample)")
+      else
+        vqs_note_card(paste0("Q2 raw-claim examples unavailable. ",
+                             if (!is.null(q2$note)) q2$note else ""),
+                      "Q2: Pomalidomide LOT1 - raw claims (sample, unavailable)")
     }, error = function(e) log_msg("  [Exploratory] Q2 examples failed: ", conditionMessage(e)))
   }
 
   # Q6 (CAR-T) --------------------------------------------------------------
   if (have_sct) {
     tryCatch({
-      q6 <- vqs_q6_cart(con, lot_long, sct_tbl, w1 = VQS_W1)
+      q6 <- vqs_q6_cart(con, lot_long, sct_tbl, w1 = VQS_W1, cart_raw_tbl = cart_raw)
       save_table(q6, section = SEC_EXPL, title = "Q6: CAR-T prior to or during LOT1")
     }, error = function(e) log_msg("  [Exploratory] Q6 failed: ", conditionMessage(e)))
     tryCatch({
-      ex <- vqs_q6_cart_examples(con, lot_long, sct_tbl, map_tbl, n = 5L)
+      ex <- vqs_q6_cart_examples(con, lot_long, sct_tbl, map_tbl, n = 5L,
+                                 bounds = bounds$sql, cart_raw_tbl = cart_raw)
       if (!is.null(ex$sct_raw) && nrow(ex$sct_raw) > 0)
         save_table(ex$sct_raw, section = SEC_EXPL,
                    title = "Q6: CAR-T LOT1 - raw SCT claims (sample)")
@@ -272,9 +294,25 @@ build_validation_exploratory <- function(con) {
       if (!is.null(ex$journey) && nrow(ex$journey) > 0)
         save_table(ex$journey, section = SEC_EXPL,
                    title = "Q6: CAR-T LOT1 - MAP journey examples (sample)")
+      if ((is.null(ex$sct_raw) || nrow(ex$sct_raw) == 0) &&
+          (is.null(ex$mma_raw) || nrow(ex$mma_raw) == 0) &&
+          (is.null(ex$journey) || nrow(ex$journey) == 0))
+        vqs_note_card(paste0("Q6 CAR-T examples unavailable. ",
+                             if (!is.null(ex$note)) ex$note else ""),
+                      "Q6: CAR-T LOT1 - examples (sample, unavailable)")
     }, error = function(e) log_msg("  [Exploratory] Q6 examples failed: ", conditionMessage(e)))
   }
   invisible()
+}
+
+# Small note card used when a guarded example pull yields nothing, so the
+# Exploratory section explains the gap rather than silently omitting it.
+vqs_note_card <- function(msg, title) {
+  add_html_card(paste0(
+    '<div style="font-family:system-ui;padding:12px;max-width:760px">',
+    '<h3 style="margin:0 0 6px">', title, '</h3>',
+    '<p style="color:#a06000;font-size:13px">', msg, '</p></div>'),
+    section = SEC_EXPL, title = title)
 }
 
 # ---- Summary landing page (data-driven, opens first) ----------------

@@ -84,6 +84,38 @@ main <- function() {
   log_msg("Agent tokens -> POMA='", tokens$poma, "', ELOT='", tokens$elot,
           "', PANO='", tokens$pano, "'. ", paste(tokens$notes, collapse = " "))
 
+  # Observation-window bounds (ELIG_COH_FINAL) so the raw-claim examples are
+  # scoped to [INDEX_DATE, OBS_END_DT] like the pipeline's S04/S12 pulls.
+  bounds <- vqs_obs_bounds_src(con)
+  if (!bounds$available)
+    log_msg("WARNING: ", wrk(cfg$input_cohort_table), " not readable - raw-claim ",
+            "examples will NOT be observation-window bounded, and 'CAR-T before ",
+            "LOT1' (Q6) cannot be computed (needs the raw, bounded SCT scan).")
+  # Cohort-wide raw CAR-T claim dates (observation-bounded) - the only way to
+  # answer 'CAR-T BEFORE LOT1', which LOT1_SCT cannot express.
+  cart_raw <- if (have_sct) vqs_build_raw_cart_dates(con, lot_long, bounds$sql) else NULL
+  if (have_sct && is.null(cart_raw))
+    log_msg("NOTE: raw CAR-T date scan unavailable - Q6 'before LOT1' reported as NA.")
+
+  # Definitions sidecar so every CSV batch travels with its operational
+  # definitions (counts alone are easy to misread).
+  defs <- data.frame(item = c(
+    "denominator_cohort", "steroid_signal", "steroid_at_lotn",
+    "before_after_windows", "cart_during_or_closing", "cart_before_lot1",
+    "agent_tokens", "raw_claims_window"),
+    definition = c(
+      "Parent (Overall) LOT_LONG cohort.",
+      "MAP_STACKED segment with MAP_MED_CLASS='STEROID' (codelist class the LOT engine excludes from regimens).",
+      sprintf("Steroid MAP starting inside the induction window [LOT_START, LOT_START+W-1], W=%d (LOT1) / %d (LOT2).", VQS_W1, VQS_W2),
+      "Cumulative (<=N days) from a steroid MAP start; before=[start-N,start-1], after=[ind_end+1,ind_end+N].",
+      "FIRST_CART_DT in [LOT1_START, LOT_BASE_END_DT + 1]; the +1 captures the CAR-T that closes LOT1 (engine sets end = CAR-T date - 1).",
+      "Raw SCT CAR-T claim with service date < LOT1_START (LOT1_SCT.FIRST_CART_DT cannot express this).",
+      sprintf("POMA=%s, ELOT=%s, PANO=%s (best-effort from cl_mma_codelist.csv).", tokens$poma, tokens$elot, tokens$pano),
+      if (bounds$available) "Raw-claim examples bounded to [INDEX_DATE, OBS_END_DT] from ELIG_COH_FINAL."
+      else "ELIG_COH_FINAL unavailable: raw-claim examples show full PATID history (NOT observation-bounded)."),
+    stringsAsFactors = FALSE)
+  write_out(defs, "definitions")
+
   # ---- Q1 ----
   log_msg(DASH); log_msg("Q1: LOT1 regimens with pomalidomide / elotuzumab / panobinostat")
   q1 <- vqs_q1_exclusion_agents(con, lot_long, tokens)
@@ -97,7 +129,7 @@ main <- function() {
   # ---- Q2 ----
   log_msg(DASH); log_msg("Q2: raw-claim examples for pomalidomide-at-LOT1 patients")
   if (have_map) {
-    q2 <- vqs_q2_poma_examples(con, lot_long, map_tbl, tokens, n = 5L)
+    q2 <- vqs_q2_poma_examples(con, lot_long, map_tbl, tokens, n = 5L, bounds = bounds$sql)
     if (!is.null(q2$note)) log_msg("  ", q2$note)
     if (length(q2$patids)) log_msg("  example PATIDs: ", paste(q2$patids, collapse = ", "))
     write_out(q2$journey, "q2_poma_examples_map_journey")
@@ -132,14 +164,16 @@ main <- function() {
   # ---- Q6 ----
   if (have_sct) {
     log_msg(DASH); log_msg("Q6: CAR-T prior to or during LOT1")
-    q6 <- vqs_q6_cart(con, lot_long, sct_tbl, w1 = VQS_W1)
+    q6 <- vqs_q6_cart(con, lot_long, sct_tbl, w1 = VQS_W1, cart_raw_tbl = cart_raw)
     write_out(q6, "q6_cart_prior_or_during_lot1")
     log_msg("  CAR-T prior to OR during LOT1: ",
             q6$n_patients[q6$metric == "CAR-T prior to OR during LOT1 (the ask)"],
-            " patients (of ", q6$n_patients[1], " LOT1).")
+            " patients (of ", q6$n_patients[1], " LOT1).",
+            if (is.null(cart_raw)) " ('before LOT1' = NA: raw CAR-T scan unavailable.)" else "")
 
     log_msg(DASH); log_msg("Q6: raw-claim journey examples for CAR-T-at-LOT1 patients")
-    ex <- vqs_q6_cart_examples(con, lot_long, sct_tbl, map_tbl, n = 5L)
+    ex <- vqs_q6_cart_examples(con, lot_long, sct_tbl, map_tbl, n = 5L,
+                               bounds = bounds$sql, cart_raw_tbl = cart_raw)
     if (!is.null(ex$note)) log_msg("  ", ex$note)
     if (length(ex$patids)) log_msg("  example PATIDs: ", paste(ex$patids, collapse = ", "))
     write_out(ex$sct_raw, "q6_cart_examples_raw_sct_claims")
