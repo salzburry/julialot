@@ -318,13 +318,21 @@ vqs_q5_lot2_attribution <- function(con, lot_long, map_tbl, w1, w2) {
 # ===========================================================================
 vqs_q6_cart <- function(con, lot_long, sct_tbl, w1, cart_raw_tbl = NULL) {
   have_raw <- !is.null(cart_raw_tbl)
+  # "During or closing LOT1" upper bound: the engine sets the LOT end to the
+  # CAR-T date - 1 ONLY when CAR-T closes LOT1 (END_REASON SCT_CART/CART_INIT),
+  # so the +1 (to recover the closing CAR-T) applies in that case only. For any
+  # other end reason a CAR-T at L1_END + 1 is genuinely post-LOT1, so the upper
+  # bound stays at L1_END.
+  during_ub <- "CASE WHEN END_REASON IN ('SCT_CART','CART_INIT') THEN date_add(L1_END, 1) ELSE L1_END END"
+  during_expr <- glue("sum(CASE WHEN CART_DT IS NOT NULL
+              AND CART_DT BETWEEN L1 AND ({during_ub}) THEN 1 ELSE 0 END)")
   # before-LOT1 raw flag (only meaningful when have_raw). Expressions below
   # read from the outer query's FROM j, where the raw flag is column has_before.
   before_expr <- if (have_raw)
     "sum(CASE WHEN has_before = 1 THEN 1 ELSE 0 END)" else "cast(NULL as bigint)"
   prior_or_during_expr <- if (have_raw)
-    "sum(CASE WHEN has_before = 1 OR (CART_DT IS NOT NULL
-              AND CART_DT BETWEEN L1 AND date_add(L1_END, 1)) THEN 1 ELSE 0 END)"
+    glue("sum(CASE WHEN has_before = 1 OR (CART_DT IS NOT NULL
+              AND CART_DT BETWEEN L1 AND ({during_ub})) THEN 1 ELSE 0 END)")
   else "cast(NULL as bigint)"
   raw_cte <- if (have_raw) glue("
     rb AS (
@@ -361,8 +369,7 @@ vqs_q6_cart <- function(con, lot_long, sct_tbl, w1, cart_raw_tbl = NULL) {
       count(*) AS lot1_patients,
       {before_expr}                                                                          AS n_cart_before_lot1_start,
       sum(CASE WHEN CART_DT BETWEEN L1 AND date_add(L1, {w1} - 1) THEN 1 ELSE 0 END)         AS n_cart_in_lot1_induction,
-      sum(CASE WHEN CART_DT IS NOT NULL AND CART_DT BETWEEN L1 AND date_add(L1_END, 1)
-               THEN 1 ELSE 0 END)                                                            AS n_cart_during_or_closing_lot1,
+      {during_expr}                                                                          AS n_cart_during_or_closing_lot1,
       {prior_or_during_expr}                                                                 AS n_cart_prior_or_during_lot1,
       sum(CASE WHEN END_REASON IN ('SCT_CART','CART_INIT') THEN 1 ELSE 0 END)                AS n_lot1_ended_by_cart,
       sum(CASE WHEN CART_DT IS NOT NULL THEN 1 ELSE 0 END)                                   AS n_with_cart_on_after_lot1_start,
@@ -376,7 +383,7 @@ vqs_q6_cart <- function(con, lot_long, sct_tbl, w1, cart_raw_tbl = NULL) {
     "LOT1 patients (denominator)",
     "CAR-T BEFORE LOT1 start (raw SCT claims)",
     "CAR-T within LOT1 60d induction window",
-    "CAR-T during or closing LOT1 [start, base end + 1]",
+    "CAR-T during or closing LOT1 [start, base end; +1d iff CAR-T closed LOT1]",
     "CAR-T prior to OR during LOT1 (the ask)",
     "LOT1 ended by CAR-T (end reason SCT_CART/CART_INIT)",
     "Any CAR-T on/after LOT1 start (incl. later-line, informational)",
@@ -702,7 +709,8 @@ vqs_q6_cart_examples <- function(con, lot_long, sct_tbl, map_tbl, n = 5L,
   ids <- db_q(con, glue("
     WITH l1 AS (
       SELECT cast(PATID as string) AS PATID, cast(LOT_START_DT as date) AS L1,
-             cast(LOT_BASE_END_DT as date) AS L1_END
+             cast(LOT_BASE_END_DT as date) AS L1_END,
+             LOT_BASE_END_REASON AS END_REASON
       FROM {lot_long} WHERE LOT_NUM = 1
     ),
     sct AS (
@@ -711,8 +719,11 @@ vqs_q6_cart_examples <- function(con, lot_long, sct_tbl, map_tbl, n = 5L,
       GROUP BY cast(PATID as string)
     ),
     pick AS (
+      -- 'during or closing LOT1': +1 only when CAR-T itself closed LOT1.
       SELECT l.PATID FROM l1 l JOIN sct s ON s.PATID = l.PATID
-      WHERE s.CART_DT BETWEEN l.L1 AND date_add(l.L1_END, 1)
+      WHERE s.CART_DT BETWEEN l.L1 AND
+            (CASE WHEN l.END_REASON IN ('SCT_CART','CART_INIT')
+                  THEN date_add(l.L1_END, 1) ELSE l.L1_END END)
       {before_union}
     )
     SELECT PATID FROM pick ORDER BY PATID LIMIT {as.integer(n)}"))$PATID

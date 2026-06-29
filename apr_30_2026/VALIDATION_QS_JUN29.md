@@ -51,16 +51,24 @@ examples — the raw CDM via `cdm_src()`. Builds nothing persistent.
 - **Before / after windows** (7/14/30 d) are cumulative (≤ N days) and measured
   from a steroid MAP start date.
 - **CAR-T (Q6)** — two date sources, by necessity:
-  - *During or closing LOT1*: `LOT1_SCT.FIRST_CART_DT` in
-    `[LOT1_START, LOT_BASE_END_DT + 1]`. The `+1` is required because the LOT
-    engine sets the LOT end to the CAR-T date − 1 day for a LOT-ending CAR-T
+  - *During or closing LOT1*: `LOT1_SCT.FIRST_CART_DT` in `[LOT1_START,
+    LOT_BASE_END_DT]`, **extended by +1 day only when the end reason is
+    `SCT_CART`/`CART_INIT`** (i.e. CAR-T itself closed LOT1). The engine sets
+    the LOT end to the CAR-T date − 1 day *for a CAR-T-ending LOT1*
     (`02_lot1.R` `LOT1_TX_ENDDATE`), so the closing CAR-T lands one day past
-    `LOT_BASE_END_DT`. `FIRST_CART_DT` is itself always ≥ `LOT1_START`.
+    `LOT_BASE_END_DT`; for any other end reason a CAR-T at `LOT_BASE_END_DT + 1`
+    is post-LOT1 and is not counted. `FIRST_CART_DT` is itself always ≥
+    `LOT1_START`.
   - *Before LOT1*: from **raw SCT CAR-T claims** (observation-window bounded),
     because `LOT1_SCT.FIRST_CART_DT` is derived only from CAR-T on/after LOT1
     start (`first_cart` filters `TX_DT >= LOT1_START_DT`) and so can never be
     before LOT1. If the raw scan / `ELIG_COH_FINAL` bounds are unavailable,
     the before-LOT1 rows are reported as `NA` (not a misleading `0`).
+    Scope note: "before LOT1" here means a CAR-T claim in `[INDEX_DATE,
+    LOT1_START − 1]` (the analytic post-index window), **not** lifetime
+    pre-index history. If the study team wants any CAR-T ever before LOT1
+    including pre-index claims, this would need a wider lookback than the
+    pipeline's extraction window.
 - **Agent tokens**: POMA / ELOT / PANO, best-effort resolved from
   `cl_mma_codelist.csv` by medication-full-name (override via
   `POMA_MED_ABBR` / `ELOT_MED_ABBR` / `PANO_MED_ABBR`). A zero count

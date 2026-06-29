@@ -294,12 +294,16 @@ build_validation_exploratory <- function(con) {
       if (!is.null(ex$journey) && nrow(ex$journey) > 0)
         save_table(ex$journey, section = SEC_EXPL,
                    title = "Q6: CAR-T LOT1 - MAP journey examples (sample)")
-      if ((is.null(ex$sct_raw) || nrow(ex$sct_raw) == 0) &&
-          (is.null(ex$mma_raw) || nrow(ex$mma_raw) == 0) &&
-          (is.null(ex$journey) || nrow(ex$journey) == 0))
-        vqs_note_card(paste0("Q6 CAR-T examples unavailable. ",
+      # Julia asked specifically for RAW CAR-T claim examples. If the raw SCT
+      # pull is empty (even when the MAP journey rendered), say so explicitly
+      # rather than letting the journey stand in silently for the raw view.
+      if (length(ex$patids) > 0 && (is.null(ex$sct_raw) || nrow(ex$sct_raw) == 0))
+        vqs_note_card(paste0("Requested RAW CAR-T claim examples are unavailable",
+                             if (!is.null(ex$journey) && nrow(ex$journey) > 0)
+                               " (the MAP-derived journey above is shown instead)"
+                             else "", ". ",
                              if (!is.null(ex$note)) ex$note else ""),
-                      "Q6: CAR-T LOT1 - examples (sample, unavailable)")
+                      "Q6: CAR-T LOT1 - raw SCT claims (sample, unavailable)")
     }, error = function(e) log_msg("  [Exploratory] Q6 examples failed: ", conditionMessage(e)))
   }
   invisible()
