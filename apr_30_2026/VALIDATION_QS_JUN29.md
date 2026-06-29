@@ -33,11 +33,19 @@ examples — the raw CDM via `cdm_src()`. Builds nothing persistent.
    with pomalidomide in their LOT1 regimen, beside the MAP-derived journey.
 3. **Q3** — among LOT1 patients with **no** steroid at LOT1, how many received
    a steroid within 7/14/30 days **before** LOT1 start and within 7/14/30 days
-   **after** the 60-day induction window.
-4. **Q4** — same as Q3 for LOT2 (30-day induction window).
+   **after** the 60-day induction window. Answered both as counts (the summary
+   table) **and** patient-level ("who": one row per such patient with per-window
+   flags + nearest steroid dates) — the standalone writes the full patient list;
+   the dashboard shows a capped, full-only sample.
+4. **Q4** — same as Q3 for LOT2 (30-day induction window), counts + "who".
 5. **Q5** — patients with no steroid at LOT2 but a steroid in the 30 days
-   before LOT2 start: did they have a steroid at LOT1? (attribution check, to
-   confirm the pre-LOT2 steroid is not really the LOT1 regimen's).
+   before LOT2 start: is that pre-LOT2 steroid actually attributable to the
+   LOT1 regimen? **Headline (direct test):** how many have the *pre-LOT2
+   steroid date itself* fall inside LOT1's span `[LOT1_START, LOT_BASE_END_DT]`
+   (vs. not within span). Two "had any steroid at LOT1 induction / during
+   LOT1" rows are kept as supporting context — they are deliberately *not* the
+   headline because a patient can have an earlier LOT1 steroid plus a separate
+   pre-LOT2 steroid that lands after LOT1 ended.
 6. **Q6** — patients with CAR-T prior to or during LOT1 (the LOT rules do not
    allow CAR-T during LOT1), with raw-claim journey examples.
 

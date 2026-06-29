@@ -245,9 +245,65 @@ vqs_steroid_windows <- function(con, lot_long, map_tbl, lot_num, w) {
   df
 }
 
+# Patient-level companion to vqs_steroid_windows() - answers Julia's "can we
+# see WHO of these patients received a steroid within ..." (Q3/Q4). One row per
+# no-steroid-at-line patient who received a steroid in at least one prior/after
+# window, with per-window flags and the nearest steroid dates. `limit` caps the
+# rows for the dashboard (NULL = all, for the standalone CSV).
+vqs_steroid_windows_patients <- function(con, lot_long, map_tbl, lot_num, w, limit = NULL) {
+  ster <- vqs_steroid_src(map_tbl)
+  lim  <- if (!is.null(limit)) glue("LIMIT {as.integer(limit)}") else ""
+  db_q(con, glue("
+    WITH lot AS (
+      SELECT cast(PATID as string) AS PATID, cast(LOT_START_DT as date) AS LS
+      FROM {lot_long}
+      WHERE LOT_NUM = {lot_num} AND LOT_START_DT IS NOT NULL
+    ),
+    ster AS {ster},
+    at_line AS (
+      SELECT DISTINCT l.PATID FROM lot l JOIN ster s ON s.PATID = l.PATID
+       AND s.STER_DT BETWEEN l.LS AND date_add(l.LS, {w} - 1)
+    ),
+    no_ster AS (
+      SELECT l.* FROM lot l LEFT JOIN at_line a ON a.PATID = l.PATID
+      WHERE a.PATID IS NULL
+    ),
+    flags AS (
+      SELECT n.PATID, n.LS,
+        max(CASE WHEN s.STER_DT BETWEEN date_sub(n.LS, 7)  AND date_sub(n.LS, 1) THEN 1 ELSE 0 END) AS prior_7d,
+        max(CASE WHEN s.STER_DT BETWEEN date_sub(n.LS, 14) AND date_sub(n.LS, 1) THEN 1 ELSE 0 END) AS prior_14d,
+        max(CASE WHEN s.STER_DT BETWEEN date_sub(n.LS, 30) AND date_sub(n.LS, 1) THEN 1 ELSE 0 END) AS prior_30d,
+        max(CASE WHEN s.STER_DT BETWEEN date_add(n.LS, {w}) AND date_add(n.LS, {w} - 1 + 7)  THEN 1 ELSE 0 END) AS after_7d,
+        max(CASE WHEN s.STER_DT BETWEEN date_add(n.LS, {w}) AND date_add(n.LS, {w} - 1 + 14) THEN 1 ELSE 0 END) AS after_14d,
+        max(CASE WHEN s.STER_DT BETWEEN date_add(n.LS, {w}) AND date_add(n.LS, {w} - 1 + 30) THEN 1 ELSE 0 END) AS after_30d,
+        max(CASE WHEN s.STER_DT BETWEEN date_sub(n.LS, 30) AND date_sub(n.LS, 1) THEN s.STER_DT END) AS nearest_prior_ster_dt,
+        min(CASE WHEN s.STER_DT BETWEEN date_add(n.LS, {w}) AND date_add(n.LS, {w} - 1 + 30) THEN s.STER_DT END) AS first_after_ster_dt
+      FROM no_ster n LEFT JOIN ster s ON s.PATID = n.PATID
+      GROUP BY n.PATID, n.LS
+    )
+    SELECT PATID, cast(LS as string) AS lot_start,
+           prior_7d, prior_14d, prior_30d, after_7d, after_14d, after_30d,
+           cast(nearest_prior_ster_dt as string) AS nearest_prior_ster_dt,
+           cast(first_after_ster_dt   as string) AS first_after_ster_dt
+    FROM flags
+    WHERE prior_30d = 1 OR after_30d = 1
+    ORDER BY PATID
+    {lim}
+  "))
+}
+
 # ===========================================================================
-# Q5 - attribution check: of patients with no steroid at LOT2 but a steroid in
-# the 30d before LOT2 start, how many had a steroid at LOT1?
+# Q5 - attribution check. Julia: for patients with NO steroid classified at
+# LOT2 but a steroid in the month before LOT2, is that pre-LOT2 steroid
+# actually attributable to the LOT1 regimen?
+#
+# The DIRECT test (headline) preserves the actual pre-LOT2 steroid date(s) and
+# asks whether one of them falls INSIDE LOT1's active span [L1_START,
+# L1_BASE_END_DT] - that is the steroid being "the LOT1 regimen's". Two
+# weaker "had ANY steroid during LOT1" rows are kept as supporting context;
+# they can be 1 for a patient whose pre-LOT2 steroid is actually AFTER LOT1
+# ended (a different, earlier steroid was in LOT1), which is exactly why they
+# are not the headline.
 # ===========================================================================
 vqs_q5_lot2_attribution <- function(con, lot_long, map_tbl, w1, w2) {
   ster <- vqs_steroid_src(map_tbl)
@@ -267,43 +323,61 @@ vqs_q5_lot2_attribution <- function(con, lot_long, map_tbl, w1, w2) {
       SELECT DISTINCT l.PATID FROM lot2 l JOIN ster s ON s.PATID = l.PATID
        AND s.STER_DT BETWEEN l.L2 AND date_add(l.L2, {w2} - 1)
     ),
-    prior_grp AS (   -- no steroid at LOT2, but a steroid in the 30d before LOT2
-      SELECT DISTINCT l.PATID, l.L2
-      FROM lot2 l
-      LEFT JOIN at_lot2 a ON a.PATID = l.PATID
-      JOIN ster s ON s.PATID = l.PATID
-        AND s.STER_DT BETWEEN date_sub(l.L2, 30) AND date_sub(l.L2, 1)
+    no_l2 AS (   -- LOT2 patients with NO steroid at LOT2 induction
+      SELECT l.PATID, l.L2
+      FROM lot2 l LEFT JOIN at_lot2 a ON a.PATID = l.PATID
       WHERE a.PATID IS NULL
     ),
+    -- The actual pre-LOT2 steroid claim dates (one row per such claim),
+    -- carried alongside the patient's LOT1 span so we can test the SAME
+    -- steroid against LOT1.
+    prior_ster AS (
+      SELECT n.PATID, n.L2, l1.L1, l1.L1_END, s.STER_DT
+      FROM no_l2 n
+      JOIN ster s ON s.PATID = n.PATID
+        AND s.STER_DT BETWEEN date_sub(n.L2, 30) AND date_sub(n.L2, 1)
+      LEFT JOIN lot1 l1 ON l1.PATID = n.PATID
+    ),
+    denom AS (SELECT DISTINCT PATID FROM prior_ster),
+    -- DIRECT attribution: the pre-LOT2 steroid itself lands inside LOT1 span.
+    attrib AS (
+      SELECT DISTINCT PATID FROM prior_ster
+      WHERE L1_END IS NOT NULL AND STER_DT BETWEEN L1 AND L1_END
+    ),
+    -- Supporting context (any steroid, not necessarily the pre-LOT2 one).
     at_lot1_ind AS (
-      SELECT DISTINCT g.PATID FROM prior_grp g
-      JOIN lot1 l ON l.PATID = g.PATID
-      JOIN ster s ON s.PATID = g.PATID
+      SELECT DISTINCT d.PATID FROM denom d
+      JOIN lot1 l ON l.PATID = d.PATID
+      JOIN ster s ON s.PATID = d.PATID
         AND s.STER_DT BETWEEN l.L1 AND date_add(l.L1, {w1} - 1)
     ),
     during_lot1 AS (
-      SELECT DISTINCT g.PATID FROM prior_grp g
-      JOIN lot1 l ON l.PATID = g.PATID
-      JOIN ster s ON s.PATID = g.PATID
+      SELECT DISTINCT d.PATID FROM denom d
+      JOIN lot1 l ON l.PATID = d.PATID
+      JOIN ster s ON s.PATID = d.PATID
         AND l.L1_END IS NOT NULL AND s.STER_DT BETWEEN l.L1 AND l.L1_END
     )
-    SELECT a.n1 AS n_no_lot2_steroid_with_prior30,
-           b.n2 AS n_with_steroid_at_lot1_induction,
-           c.n3 AS n_with_steroid_anytime_during_lot1
-    FROM      (SELECT count(*) AS n1 FROM prior_grp)   a
-    CROSS JOIN (SELECT count(*) AS n2 FROM at_lot1_ind) b
-    CROSS JOIN (SELECT count(*) AS n3 FROM during_lot1) c
+    SELECT a.n_denom, b.n_attrib, c.n_ind, e.n_dur
+    FROM      (SELECT count(*) AS n_denom  FROM denom)       a
+    CROSS JOIN (SELECT count(*) AS n_attrib FROM attrib)      b
+    CROSS JOIN (SELECT count(*) AS n_ind    FROM at_lot1_ind) c
+    CROSS JOIN (SELECT count(*) AS n_dur    FROM during_lot1) e
   "))
-  denom <- as.numeric(r$n_no_lot2_steroid_with_prior30[1])
-  n_ind <- as.numeric(r$n_with_steroid_at_lot1_induction[1])
-  n_dur <- as.numeric(r$n_with_steroid_anytime_during_lot1[1])
+  denom    <- as.numeric(r$n_denom[1])
+  n_attrib <- as.numeric(r$n_attrib[1])
+  n_ind    <- as.numeric(r$n_ind[1])
+  n_dur    <- as.numeric(r$n_dur[1])
+  n_notattr <- denom - n_attrib
   pct <- function(x) if (isTRUE(denom > 0)) round(100 * x / denom, 2) else NA_real_
   data.frame(
-    metric = c("No-steroid-at-LOT2 patients with a steroid in the 30d before LOT2 (denominator)",
-               "  ... of whom had a steroid at LOT1 INDUCTION (within 60d window)",
-               "  ... of whom had a steroid ANY time during LOT1 [start, base end]"),
-    n_patients = as.integer(c(denom, n_ind, n_dur)),
-    pct_of_denominator = c(NA_real_, pct(n_ind), pct(n_dur)),
+    metric = c(
+      "No-steroid-at-LOT2 patients with a steroid in the 30d before LOT2 (denominator)",
+      "  HEADLINE: the pre-LOT2 steroid ITSELF falls within LOT1 span [start, base end] (attributable to LOT1)",
+      "  ... pre-LOT2 steroid NOT within LOT1 span (not attributable to LOT1 by the direct test)",
+      "  context: had ANY steroid at LOT1 induction (within 60d window)",
+      "  context: had ANY steroid any time during LOT1 [start, base end]"),
+    n_patients = as.integer(c(denom, n_attrib, n_notattr, n_ind, n_dur)),
+    pct_of_denominator = c(NA_real_, pct(n_attrib), pct(n_notattr), pct(n_ind), pct(n_dur)),
     stringsAsFactors = FALSE)
 }
 

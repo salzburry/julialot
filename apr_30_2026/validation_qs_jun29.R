@@ -144,6 +144,9 @@ main <- function() {
     log_msg(sprintf("  LOT1: %s patients, %s with steroid at LOT1, %s without (denominator).",
                     attr(q3, "line_patients"), attr(q3, "line_with_steroid"),
                     attr(q3, "line_without_steroid")))
+    # "who" (patient-level): the actual no-steroid-at-LOT1 patients + windows.
+    write_out(vqs_steroid_windows_patients(con, lot_long, map_tbl, lot_num = 1L, w = VQS_W1),
+              "q3_lot1_steroid_window_patients")
 
     log_msg(DASH); log_msg("Q4: steroid timing for LOT2 patients with no steroid at LOT2")
     q4 <- vqs_steroid_windows(con, lot_long, map_tbl, lot_num = 2L, w = VQS_W2)
@@ -151,14 +154,16 @@ main <- function() {
     log_msg(sprintf("  LOT2: %s patients, %s with steroid at LOT2, %s without (denominator).",
                     attr(q4, "line_patients"), attr(q4, "line_with_steroid"),
                     attr(q4, "line_without_steroid")))
+    write_out(vqs_steroid_windows_patients(con, lot_long, map_tbl, lot_num = 2L, w = VQS_W2),
+              "q4_lot2_steroid_window_patients")
 
     # ---- Q5 ----
     log_msg(DASH); log_msg("Q5: LOT2 pre-start steroid attribution to LOT1")
     q5 <- vqs_q5_lot2_attribution(con, lot_long, map_tbl, w1 = VQS_W1, w2 = VQS_W2)
     write_out(q5, "q5_lot2_steroid_attribution")
-    log_msg("  ", q5$metric[1], ": ", q5$n_patients[1],
-            "; with steroid at LOT1 induction: ", q5$n_patients[2],
-            "; any time during LOT1: ", q5$n_patients[3], ".")
+    log_msg("  denominator (no LOT2 steroid + steroid in 30d before LOT2): ", q5$n_patients[1],
+            "; pre-LOT2 steroid ITSELF within LOT1 span (attributable): ", q5$n_patients[2],
+            "; NOT within LOT1 span: ", q5$n_patients[3], ".")
   }
 
   # ---- Q6 ----

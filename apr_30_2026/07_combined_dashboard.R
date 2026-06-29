@@ -250,12 +250,21 @@ build_validation_exploratory <- function(con) {
       save_table(q3, section = SEC_EXPL, title = paste0(
         "Q3: LOT1 no-steroid patients - steroid before/after induction (n=",
         attr(q3, "line_without_steroid"), " of ", attr(q3, "line_patients"), ")"))
+      # "who" (patient-level, full-only via "sample"); capped for the HTML.
+      q3p <- vqs_steroid_windows_patients(con, lot_long, map_tbl, lot_num = 1L, w = VQS_W1, limit = 500L)
+      if (!is.null(q3p) && nrow(q3p) > 0)
+        save_table(q3p, section = SEC_EXPL,
+                   title = "Q3: LOT1 no-steroid patients - who got a steroid in-window (sample, max 500)")
     }, error = function(e) log_msg("  [Exploratory] Q3 failed: ", conditionMessage(e)))
     tryCatch({
       q4 <- vqs_steroid_windows(con, lot_long, map_tbl, lot_num = 2L, w = VQS_W2)
       save_table(q4, section = SEC_EXPL, title = paste0(
         "Q4: LOT2 no-steroid patients - steroid before/after induction (n=",
         attr(q4, "line_without_steroid"), " of ", attr(q4, "line_patients"), ")"))
+      q4p <- vqs_steroid_windows_patients(con, lot_long, map_tbl, lot_num = 2L, w = VQS_W2, limit = 500L)
+      if (!is.null(q4p) && nrow(q4p) > 0)
+        save_table(q4p, section = SEC_EXPL,
+                   title = "Q4: LOT2 no-steroid patients - who got a steroid in-window (sample, max 500)")
     }, error = function(e) log_msg("  [Exploratory] Q4 failed: ", conditionMessage(e)))
     tryCatch({
       q5 <- vqs_q5_lot2_attribution(con, lot_long, map_tbl, w1 = VQS_W1, w2 = VQS_W2)
