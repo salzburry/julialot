@@ -184,10 +184,22 @@ vqs_build_steroid_claims <- function(con, lot_long, ster_csv) {
   })
   if (isTRUE(ok)) {
     out$view <- "vqs_steroid_claims"
+    # QC the MATCHED contents, not just the input code count: a populated CSV
+    # that does not match the CDM fields would still leave Q3/Q4/Q5 all-zero,
+    # which is the exact failure mode that slipped through before. Surface the
+    # matched claim / patient counts so a bad run is obvious, not silent.
+    qc <- tryCatch(db_q(con,
+      "SELECT count(*) AS n, count(DISTINCT PATID) AS np FROM vqs_steroid_claims"),
+      error = function(e) NULL)
+    out$n_claims   <- if (!is.null(qc)) as.numeric(qc$n[1])  else NA_real_
+    out$n_patients <- if (!is.null(qc)) as.numeric(qc$np[1]) else NA_real_
     out$note <- sprintf(
-      "steroid signal = steroid_codes.csv (%d codes: %d HCPCS, %d NDC) scanned on medical+rx.%s",
+      "steroid signal = steroid_codes.csv (%d codes: %d HCPCS, %d NDC) scanned on medical+rx -> %s matched claims for %s patients.%s%s",
       out$n_codes, out$n_hcpcs, out$n_ndc,
-      if (out$n_ndc == 0L) " NOTE: 0 NDC codes - oral-RX steroids undercounted." else "")
+      ifelse(is.na(out$n_claims), "?", format(out$n_claims, big.mark = ",", scientific = FALSE)),
+      ifelse(is.na(out$n_patients), "?", format(out$n_patients, big.mark = ",", scientific = FALSE)),
+      if (out$n_ndc == 0L) " NOTE: 0 NDC codes - oral-RX steroids undercounted." else "",
+      if (isTRUE(out$n_claims == 0)) " WARNING: 0 steroid claims matched - codes may not match the CDM; Q3/Q4/Q5 will be empty." else "")
   }
   out
 }
