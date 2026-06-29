@@ -1,0 +1,194 @@
+#!/usr/bin/env Rscript
+# Standalone program: "MM LOT Validation next steps" study-team questions
+# (Julia Moore, 24-Jun-2026 e-mail; question set filed under
+# Questions/June 29 2026/). Sibling of lot1_studyteam_qs.R.
+#
+#   Rscript validation_qs_jun29.R
+#
+# Answers, against the persisted work-schema tables (LOT_LONG, MAP_STACKED,
+# LOT1_SCT) and the raw CDM (for the patient-journey examples):
+#
+#   Q1  LOT1 regimens including pomalidomide / elotuzumab / panobinostat,
+#       split into mono- vs combination-therapy.
+#   Q2  Raw-claim examples (before MAPs were derived) for patients with
+#       pomalidomide in their LOT1 regimen.
+#   Q3  LOT1 patients with NO steroid at LOT1: steroid receipt within 7/14/30d
+#       before LOT1 start, and within 7/14/30d after the 60-day induction
+#       window.
+#   Q4  Same as Q3 for LOT2 (30-day induction window).
+#   Q5  No-steroid-at-LOT2 patients with a steroid in the 30d before LOT2:
+#       did they have a steroid at LOT1? (attribution check).
+#   Q6  CAR-T prior to or during LOT1, with raw-claim journey examples.
+#
+# Builds nothing persistent; safe to run any time. Writes one CSV per result
+# plus a run log. All operational definitions live in R/validation_qs_jun29.R
+# and are shared verbatim with the combined dashboard's Exploratory objective.
+
+.script_dir <- local({
+  args <- commandArgs(trailingOnly = FALSE)
+  file_arg <- grep("^--file=", args, value = TRUE)
+  if (length(file_arg) > 0)
+    return(dirname(normalizePath(sub("^--file=", "", file_arg[1]))))
+  for (i in seq_len(sys.nframe())) {
+    ofile <- tryCatch(sys.frame(i)$ofile, error = function(e) NULL)
+    if (!is.null(ofile)) return(dirname(normalizePath(ofile)))
+  }
+  getwd()
+})
+
+source_dir <- file.path(.script_dir, "R")
+if (file.exists(file.path(source_dir, "load_inputs.R"))) {
+  source(file.path(source_dir, "load_inputs.R"))
+  load_pipeline_inputs(c(.script_dir, dirname(.script_dir)))
+}
+source(file.path(source_dir, "config_lot.R"))
+source(file.path(source_dir, "db_utils_lot.R"))
+source(file.path(source_dir, "codelists_lot.R"))         # load_codelist_csv
+source(file.path(source_dir, "validation_qs_jun29.R"))   # vqs_* logic
+
+main <- function() {
+  stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
+
+  con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+
+  out_dir <- cfg$output_dir
+  if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  stamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
+
+  write_out <- function(df, tag) {
+    if (is.null(df) || nrow(df) == 0) { log_msg("  (", tag, ": no rows)"); return(invisible()) }
+    f <- file.path(out_dir, paste0("validation_qs_jun29_", tag, "_", stamp, ".csv"))
+    write.csv(df, f, row.names = FALSE)
+    log_msg("  wrote ", tag, " -> ", f, " (", nrow(df), " rows)")
+  }
+
+  lot_long <- wrk("LOT_LONG")
+  map_tbl  <- wrk("MAP_STACKED")
+  sct_tbl  <- wrk("LOT1_SCT")
+
+  log_msg(SEP)
+  log_msg("MM LOT Validation next steps - study-team questions (Jun 2026)")
+  log_msg(SEP)
+  if (!vqs_readable(con, lot_long))
+    stop("Cannot read ", lot_long, ". Build the LOT pipeline (02_lot1.R / 03_lot2_5.R) first.")
+  have_map <- vqs_readable(con, map_tbl)
+  have_sct <- vqs_readable(con, sct_tbl)
+  if (!have_map)
+    log_msg("WARNING: ", map_tbl, " not readable - steroid questions (Q3/Q4/Q5) ",
+            "and MAP journeys will be skipped.")
+  if (!have_sct)
+    log_msg("WARNING: ", sct_tbl, " not readable - CAR-T question (Q6) will be skipped.")
+
+  tokens <- vqs_resolve_agent_tokens(con)
+  log_msg("Agent tokens -> POMA='", tokens$poma, "', ELOT='", tokens$elot,
+          "', PANO='", tokens$pano, "'. ", paste(tokens$notes, collapse = " "))
+
+  # Observation-window bounds (ELIG_COH_FINAL) so the raw-claim examples are
+  # scoped to [INDEX_DATE, OBS_END_DT] like the pipeline's S04/S12 pulls.
+  bounds <- vqs_obs_bounds_src(con)
+  if (!bounds$available)
+    log_msg("WARNING: ", wrk(cfg$input_cohort_table), " not readable - raw-claim ",
+            "examples will NOT be observation-window bounded, and 'CAR-T before ",
+            "LOT1' (Q6) cannot be computed (needs the raw, bounded SCT scan).")
+  # Cohort-wide raw CAR-T claim dates (observation-bounded) - the only way to
+  # answer 'CAR-T BEFORE LOT1', which LOT1_SCT cannot express.
+  cart_raw <- if (have_sct) vqs_build_raw_cart_dates(con, lot_long, bounds$sql) else NULL
+  if (have_sct && is.null(cart_raw))
+    log_msg("NOTE: raw CAR-T date scan unavailable - Q6 'before LOT1' reported as NA.")
+
+  # Definitions sidecar so every CSV batch travels with its operational
+  # definitions (counts alone are easy to misread).
+  defs <- data.frame(item = c(
+    "denominator_cohort", "steroid_signal", "steroid_at_lotn",
+    "before_after_windows", "cart_during_or_closing", "cart_before_lot1",
+    "agent_tokens", "raw_claims_window"),
+    definition = c(
+      "Parent (Overall) LOT_LONG cohort.",
+      "MAP_STACKED segment with MAP_MED_CLASS='STEROID' (codelist class the LOT engine excludes from regimens).",
+      sprintf("Steroid MAP starting inside the induction window [LOT_START, LOT_START+W-1], W=%d (LOT1) / %d (LOT2).", VQS_W1, VQS_W2),
+      "Cumulative (<=N days) from a steroid MAP start; before=[start-N,start-1], after=[ind_end+1,ind_end+N].",
+      "FIRST_CART_DT in [LOT1_START, LOT_BASE_END_DT], extended by +1 day ONLY when LOT_BASE_END_REASON in (SCT_CART, CART_INIT) - the engine sets the LOT end to CAR-T date - 1 only for a CAR-T-ending line, so the closing CAR-T lands one day past the end; for other end reasons a CAR-T at end+1 is post-LOT1 and excluded.",
+      "Raw SCT CAR-T claim with service date < LOT1_START (LOT1_SCT.FIRST_CART_DT cannot express this).",
+      sprintf("POMA=%s, ELOT=%s, PANO=%s (best-effort from cl_mma_codelist.csv).", tokens$poma, tokens$elot, tokens$pano),
+      if (bounds$available) "Raw-claim examples bounded to [INDEX_DATE, OBS_END_DT] from ELIG_COH_FINAL."
+      else "ELIG_COH_FINAL unavailable: raw-claim examples show full PATID history (NOT observation-bounded)."),
+    stringsAsFactors = FALSE)
+  write_out(defs, "definitions")
+
+  # ---- Q1 ----
+  log_msg(DASH); log_msg("Q1: LOT1 regimens with pomalidomide / elotuzumab / panobinostat")
+  q1 <- vqs_q1_exclusion_agents(con, lot_long, tokens)
+  write_out(q1, "q1_exclusion_agents_lot1")
+  log_msg(sprintf("  LOT1 patients = %s. Any of the three: %s (mono %s / combo %s).",
+                  attr(q1, "lot1_patients"),
+                  q1$n_lot1_with_agent[q1$agent == "Any of the three"],
+                  q1$n_as_monotherapy[q1$agent == "Any of the three"],
+                  q1$n_in_combination[q1$agent == "Any of the three"]))
+
+  # ---- Q2 ----
+  log_msg(DASH); log_msg("Q2: raw-claim examples for pomalidomide-at-LOT1 patients")
+  if (have_map) {
+    q2 <- vqs_q2_poma_examples(con, lot_long, map_tbl, tokens, n = 5L, bounds = bounds$sql)
+    if (!is.null(q2$note)) log_msg("  ", q2$note)
+    if (length(q2$patids)) log_msg("  example PATIDs: ", paste(q2$patids, collapse = ", "))
+    write_out(q2$journey, "q2_poma_examples_map_journey")
+    write_out(q2$raw,     "q2_poma_examples_raw_claims")
+  } else log_msg("  skipped (MAP_STACKED unavailable).")
+
+  # ---- Q3 / Q4 ----
+  if (have_map) {
+    log_msg(DASH); log_msg("Q3: steroid timing for LOT1 patients with no steroid at LOT1")
+    q3 <- vqs_steroid_windows(con, lot_long, map_tbl, lot_num = 1L, w = VQS_W1)
+    write_out(q3, "q3_lot1_steroid_windows")
+    log_msg(sprintf("  LOT1: %s patients, %s with steroid at LOT1, %s without (denominator).",
+                    attr(q3, "line_patients"), attr(q3, "line_with_steroid"),
+                    attr(q3, "line_without_steroid")))
+    # "who" (patient-level): the actual no-steroid-at-LOT1 patients + windows.
+    write_out(vqs_steroid_windows_patients(con, lot_long, map_tbl, lot_num = 1L, w = VQS_W1),
+              "q3_lot1_steroid_window_patients")
+
+    log_msg(DASH); log_msg("Q4: steroid timing for LOT2 patients with no steroid at LOT2")
+    q4 <- vqs_steroid_windows(con, lot_long, map_tbl, lot_num = 2L, w = VQS_W2)
+    write_out(q4, "q4_lot2_steroid_windows")
+    log_msg(sprintf("  LOT2: %s patients, %s with steroid at LOT2, %s without (denominator).",
+                    attr(q4, "line_patients"), attr(q4, "line_with_steroid"),
+                    attr(q4, "line_without_steroid")))
+    write_out(vqs_steroid_windows_patients(con, lot_long, map_tbl, lot_num = 2L, w = VQS_W2),
+              "q4_lot2_steroid_window_patients")
+
+    # ---- Q5 ----
+    log_msg(DASH); log_msg("Q5: LOT2 pre-start steroid attribution to LOT1")
+    q5 <- vqs_q5_lot2_attribution(con, lot_long, map_tbl, w1 = VQS_W1, w2 = VQS_W2)
+    write_out(q5, "q5_lot2_steroid_attribution")
+    log_msg("  denominator (no LOT2 steroid + steroid in 30d before LOT2): ", q5$n_patients[1],
+            "; pre-LOT2 steroid ITSELF within LOT1 span (attributable): ", q5$n_patients[2],
+            "; NOT within LOT1 span: ", q5$n_patients[3], ".")
+  }
+
+  # ---- Q6 ----
+  if (have_sct) {
+    log_msg(DASH); log_msg("Q6: CAR-T prior to or during LOT1")
+    q6 <- vqs_q6_cart(con, lot_long, sct_tbl, w1 = VQS_W1, cart_raw_tbl = cart_raw)
+    write_out(q6, "q6_cart_prior_or_during_lot1")
+    log_msg("  CAR-T prior to OR during LOT1: ",
+            q6$n_patients[q6$metric == "CAR-T prior to OR during LOT1 (the ask)"],
+            " patients (of ", q6$n_patients[1], " LOT1).",
+            if (is.null(cart_raw)) " ('before LOT1' = NA: raw CAR-T scan unavailable.)" else "")
+
+    log_msg(DASH); log_msg("Q6: raw-claim journey examples for CAR-T prior-to/during-LOT1 patients")
+    ex <- vqs_q6_cart_examples(con, lot_long, sct_tbl, map_tbl, n = 5L,
+                               bounds = bounds$sql, cart_raw_tbl = cart_raw)
+    if (!is.null(ex$note)) log_msg("  ", ex$note)
+    if (length(ex$patids)) log_msg("  example PATIDs: ", paste(ex$patids, collapse = ", "))
+    write_out(ex$sct_raw, "q6_cart_examples_raw_sct_claims")
+    write_out(ex$mma_raw, "q6_cart_examples_raw_mma_claims")
+    write_out(ex$journey, "q6_cart_examples_map_journey")
+  } else log_msg("Q6 skipped (LOT1_SCT unavailable).")
+
+  log_msg(SEP)
+  log_msg("Validation questions complete. CSVs in ", out_dir)
+  log_msg(SEP)
+}
+
+if (!interactive()) main()
