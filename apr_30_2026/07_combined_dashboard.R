@@ -290,23 +290,30 @@ build_validation_exploratory <- function(con) {
                                  bounds = bounds$sql, cart_raw_tbl = cart_raw)
       if (!is.null(ex$sct_raw) && nrow(ex$sct_raw) > 0)
         save_table(ex$sct_raw, section = SEC_EXPL,
-                   title = "Q6: CAR-T LOT1 - raw SCT claims (sample)")
+                   title = "Q6: CAR-T prior/during LOT1 - raw SCT claims (sample)")
       if (!is.null(ex$mma_raw) && nrow(ex$mma_raw) > 0)
         save_table(ex$mma_raw, section = SEC_EXPL,
-                   title = "Q6: CAR-T LOT1 - raw MM claims (sample)")
+                   title = "Q6: CAR-T prior/during LOT1 - raw MM claims (sample)")
       if (!is.null(ex$journey) && nrow(ex$journey) > 0)
         save_table(ex$journey, section = SEC_EXPL,
-                   title = "Q6: CAR-T LOT1 - MAP journey examples (sample)")
-      # Julia asked specifically for RAW CAR-T claim examples. If the raw SCT
-      # pull is empty (even when the MAP journey rendered), say so explicitly
-      # rather than letting the journey stand in silently for the raw view.
-      if (length(ex$patids) > 0 && (is.null(ex$sct_raw) || nrow(ex$sct_raw) == 0))
+                   title = "Q6: CAR-T prior/during LOT1 - MAP journey examples (sample)")
+      # Surface the example helper's note in both gap cases:
+      #  - no example patients selected (carries the honest "before-LOT1 not
+      #    assessed" caveat when the raw scan was unavailable), and
+      #  - patients selected but the requested RAW CAR-T claims came back empty
+      #    (Julia asked specifically for raw examples; don't let the MAP
+      #    journey stand in silently for them).
+      if (length(ex$patids) == 0)
+        vqs_note_card(if (!is.null(ex$note)) ex$note else
+                        "No CAR-T prior-to/during-LOT1 example patients selected.",
+                      "Q6: CAR-T prior/during LOT1 - examples (none)")
+      else if (is.null(ex$sct_raw) || nrow(ex$sct_raw) == 0)
         vqs_note_card(paste0("Requested RAW CAR-T claim examples are unavailable",
                              if (!is.null(ex$journey) && nrow(ex$journey) > 0)
                                " (the MAP-derived journey above is shown instead)"
                              else "", ". ",
                              if (!is.null(ex$note)) ex$note else ""),
-                      "Q6: CAR-T LOT1 - raw SCT claims (sample, unavailable)")
+                      "Q6: CAR-T prior/during LOT1 - raw SCT claims (sample, unavailable)")
     }, error = function(e) log_msg("  [Exploratory] Q6 examples failed: ", conditionMessage(e)))
   }
   invisible()

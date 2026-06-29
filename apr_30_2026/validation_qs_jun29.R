@@ -171,7 +171,7 @@ main <- function() {
             " patients (of ", q6$n_patients[1], " LOT1).",
             if (is.null(cart_raw)) " ('before LOT1' = NA: raw CAR-T scan unavailable.)" else "")
 
-    log_msg(DASH); log_msg("Q6: raw-claim journey examples for CAR-T-at-LOT1 patients")
+    log_msg(DASH); log_msg("Q6: raw-claim journey examples for CAR-T prior-to/during-LOT1 patients")
     ex <- vqs_q6_cart_examples(con, lot_long, sct_tbl, map_tbl, n = 5L,
                                bounds = bounds$sql, cart_raw_tbl = cart_raw)
     if (!is.null(ex$note)) log_msg("  ", ex$note)
