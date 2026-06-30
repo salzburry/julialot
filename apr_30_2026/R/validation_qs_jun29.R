@@ -69,8 +69,9 @@ if (is.na(VQS_CART) || VQS_CART < 1) VQS_CART <- 45L
 # LOTn" (the denominator). Mirrors 05_regimen_dashboard.R augment_lot_long
 # (LOT_INDUCTION_END_DT) EXACTLY so Q3/Q4/Q5 reconcile with the Steroids panel:
 #   - SCT_ALLO-started line -> NULL (no steroid membership; parent suppresses it)
-#   - else cap at LOT_BASE_END_DT, window = 60d (LOT1) / 45d (CART-started LOTn)
-#     / 30d (other LOTn); when LOT_BASE_END_DT is NULL use the full window.
+#   - else cap at LOT_BASE_END_DT, window = VQS_W1 d (LOT1) / VQS_CART d
+#     (CART-started LOTn, default 45) / VQS_W2 d (other LOTn); when
+#     LOT_BASE_END_DT is NULL use the full window.
 # The 7/14/30d before/after windows are NOT capped - they are anchored to the
 # fixed induction end (LOT_START + W - 1) that Julia named ("their 60/30 day
 # induction window").
@@ -109,9 +110,9 @@ vqs_steroid_src <- function(ster_view) glue(
 # silently empties Q3/Q4/Q5 (every patient reads as "no steroid"). steroid_
 # codes.csv is the project's only steroid source.
 #
-# Returns list(view=<temp view name or NULL>, n_codes, n_hcpcs, n_ndc, note).
+# Returns list(view=<temp view name or NULL>, n_codes, n_hcpcs, n_cpt, n_ndc, note).
 vqs_build_steroid_claims <- function(con, lot_long, ster_csv) {
-  out <- list(view = NULL, n_codes = 0L, n_hcpcs = 0L, n_ndc = 0L, note = NULL)
+  out <- list(view = NULL, n_codes = 0L, n_hcpcs = 0L, n_cpt = 0L, n_ndc = 0L, note = NULL)
   if (is.null(ster_csv) || !file.exists(ster_csv)) {
     out$note <- paste0("steroid_codes.csv not found (", ster_csv,
                        "); steroid analyses (Q3/Q4/Q5) skipped.")
@@ -141,6 +142,7 @@ vqs_build_steroid_claims <- function(con, lot_long, ster_csv) {
   }
   out$n_codes <- length(rows)
   out$n_hcpcs <- sum(types == "HCPCS")
+  out$n_cpt   <- sum(types == "CPT")
   out$n_ndc   <- sum(types == "NDC")
   med <- cdm_src(cfg$tbl_medical); rxt <- cdm_src(cfg$tbl_rx)
   ok <- tryCatch({
@@ -194,8 +196,8 @@ vqs_build_steroid_claims <- function(con, lot_long, ster_csv) {
     out$n_claims   <- if (!is.null(qc)) as.numeric(qc$n[1])  else NA_real_
     out$n_patients <- if (!is.null(qc)) as.numeric(qc$np[1]) else NA_real_
     out$note <- sprintf(
-      "steroid signal = steroid_codes.csv (%d codes: %d HCPCS, %d NDC) scanned on medical+rx -> %s matched claims for %s patients.%s%s",
-      out$n_codes, out$n_hcpcs, out$n_ndc,
+      "steroid signal = steroid_codes.csv (%d codes: %d HCPCS, %d CPT, %d NDC) scanned on medical+rx -> %s matched claims for %s patients.%s%s",
+      out$n_codes, out$n_hcpcs, out$n_cpt, out$n_ndc,
       ifelse(is.na(out$n_claims), "?", format(out$n_claims, big.mark = ",", scientific = FALSE)),
       ifelse(is.na(out$n_patients), "?", format(out$n_patients, big.mark = ",", scientific = FALSE)),
       if (out$n_ndc == 0L) " NOTE: 0 NDC codes - oral-RX steroids undercounted." else "",
