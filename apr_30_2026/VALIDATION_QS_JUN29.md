@@ -64,8 +64,9 @@ examples — the raw CDM via `cdm_src()`. Builds nothing persistent.
 - **"Steroid classified as part of LOT*n*"** (the no-steroid **denominator**): a
   steroid **claim** within the *capped* induction window `[LOT_START_DT,
   LOT_INDUCTION_END_DT]`, where `LOT_INDUCTION_END_DT = least(LOT_BASE_END_DT,
-  LOT_START_DT + W − 1)`, `W` = 60 (LOT1) / 45 (CART-started LOT*n*) / 30 (other
-  LOT*n*); SCT_ALLO lines have no steroid membership. This mirrors the Steroids
+  LOT_START_DT + W − 1)`, `W` = 60 (LOT1) / 45 (CART-started LOT*n*, i.e. the
+  `cart_consolidation_days` default) / 30 (other LOT*n*); SCT_ALLO lines have no
+  steroid membership. The displayed window values track config at runtime. This mirrors the Steroids
   panel's augmentation (`LOT_INDUCTION_END_DT`) **exactly**, so the no-steroid
   denominators reconcile with that panel. (Earlier versions used an uncapped
   fixed window, which over-counted "steroid at LOT" for short lines.)

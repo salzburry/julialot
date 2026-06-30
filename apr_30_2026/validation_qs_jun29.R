@@ -116,7 +116,7 @@ main <- function() {
     definition = c(
       "Parent (Overall) LOT_LONG cohort.",
       paste0("steroid_codes.csv codes scanned on medical (PROC_CD/BILL_PROC_CD/NDC) + rx (NDC). ", ster$note),
-      sprintf("No-steroid denominator: a steroid claim within the CAPPED induction window [LOT_START, LOT_INDUCTION_END_DT] = least(LOT_BASE_END_DT, LOT_START+W-1); W=%d (LOT1) / 45 (CART-started LOTn) / %d (other LOTn); SCT_ALLO = no membership. Matches the Steroids panel.", VQS_W1, VQS_W2),
+      sprintf("No-steroid denominator: a steroid claim within the CAPPED induction window [LOT_START, LOT_INDUCTION_END_DT] = least(LOT_BASE_END_DT, LOT_START+W-1); W=%d (LOT1) / %d (CART-started LOTn) / %d (other LOTn); SCT_ALLO = no membership. Matches the Steroids panel.", VQS_W1, VQS_CART, VQS_W2),
       "Cumulative (<=N days) from a steroid claim date; before=[start-N,start-1] (rel. LOT_START); after=[fixed_ind_end+1, fixed_ind_end+N] where fixed_ind_end=LOT_START+W-1 (NOT capped).",
       "FIRST_CART_DT in [LOT1_START, LOT_BASE_END_DT], extended by +1 day ONLY when LOT_BASE_END_REASON in (SCT_CART, CART_INIT) - the engine sets the LOT end to CAR-T date - 1 only for a CAR-T-ending line, so the closing CAR-T lands one day past the end; for other end reasons a CAR-T at end+1 is post-LOT1 and excluded.",
       "Raw SCT CAR-T claim with service date < LOT1_START (LOT1_SCT.FIRST_CART_DT cannot express this).",

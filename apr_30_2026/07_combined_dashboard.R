@@ -226,7 +226,7 @@ build_validation_exploratory <- function(con) {
     '"Steroid classified as part of LOT<i>n</i>" (the no-steroid denominator) = a ',
     'steroid claim in the <b>capped</b> induction window <code>[LOT_START, ',
     'LOT_INDUCTION_END_DT]</code> (= <code>least(LOT_BASE_END_DT, LOT_START+W-1)</code>; ',
-    'W=', VQS_W1, 'd LOT1 / 45d CART-started LOT<i>n</i> / ', VQS_W2, 'd other; ',
+    'W=', VQS_W1, 'd LOT1 / ', VQS_CART, 'd CART-started LOT<i>n</i> / ', VQS_W2, 'd other; ',
     'SCT_ALLO has no membership) - matching the Steroids panel exactly.</li>',
     '<li><b>Before/after windows</b> (7/14/30d) are cumulative (&le;N days), from ',
     'a steroid claim date; "after" is anchored to the <b>fixed</b> induction end ',
