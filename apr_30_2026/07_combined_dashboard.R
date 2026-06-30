@@ -203,6 +203,12 @@ build_validation_exploratory <- function(con) {
   cart_raw <- if (have_sct)
     tryCatch(vqs_build_raw_cart_dates(con, lot_long, bounds$sql),
              error = function(e) NULL) else NULL
+  # Steroid signal = steroid_codes.csv scanned on medical+rx (NOT a MAP_STACKED
+  # STEROID class, which does not exist in this codelist and returns zero).
+  ster <- tryCatch(vqs_build_steroid_claims(con, lot_long,
+                     file.path(.script_dir, "steroid_codes.csv")),
+                   error = function(e) list(view = NULL, note = conditionMessage(e)))
+  ster_src <- if (!is.null(ster$view)) vqs_steroid_src(ster$view) else NULL
 
   add_html_card(paste0(
     '<div style="font-family:system-ui;padding:14px;max-width:900px">',
@@ -212,12 +218,19 @@ build_validation_exploratory <- function(con) {
     '<code>LOT_LONG</code> cohort. The same logic backs the standalone ',
     '<code>validation_qs_jun29.R</code> program (CSV outputs).</p>',
     '<ul style="font-size:13px;color:#444">',
-    '<li><b>Steroid signal</b>: a <code>STEROID</code>-class segment in ',
-    '<code>MAP_STACKED</code> (the codelist class the LOT engine excludes ',
-    'from regimens). "Steroid at LOT<i>n</i>" = a steroid MAP starting inside ',
-    'the induction window (', VQS_W1, 'd for LOT1, ', VQS_W2, 'd for LOT2).</li>',
-    '<li><b>Before/after windows</b> (7/14/30d) are cumulative (&le;N days) ',
-    'and measured from a steroid MAP start date.</li>',
+    '<li><b>Steroid signal</b>: <code>steroid_codes.csv</code> codes scanned on ',
+    'medical (PROC_CD/BILL_PROC_CD/NDC) + rx (NDC) - the project\'s steroid ',
+    'source (there is no STEROID class in the MMA codelist). ',
+    if (is.null(ster_src)) '<b>Unavailable this run - Q3/Q4/Q5 skipped.</b> '
+    else paste0('<i>', esc_html(ster$note), '</i> '),
+    '"Steroid classified as part of LOT<i>n</i>" (the no-steroid denominator) = a ',
+    'steroid claim in the <b>capped</b> induction window <code>[LOT_START, ',
+    'LOT_INDUCTION_END_DT]</code> (= <code>least(LOT_BASE_END_DT, LOT_START+W-1)</code>; ',
+    'W=', VQS_W1, 'd LOT1 / ', VQS_CART, 'd CART-started LOT<i>n</i> / ', VQS_W2, 'd other; ',
+    'SCT_ALLO has no membership) - matching the Steroids panel exactly.</li>',
+    '<li><b>Before/after windows</b> (7/14/30d) are cumulative (&le;N days), from ',
+    'a steroid claim date; "after" is anchored to the <b>fixed</b> induction end ',
+    '<code>LOT_START+W-1</code> (not the capped end).</li>',
     '<li><b>CAR-T (Q6)</b>: "during or closing LOT1" = <code>LOT1_SCT.',
     'FIRST_CART_DT</code> in <code>[LOT1_START, LOT_BASE_END_DT]</code>, ',
     'extended to <code>LOT_BASE_END_DT+1</code> <b>only when</b> ',
@@ -243,36 +256,42 @@ build_validation_exploratory <- function(con) {
                title = "Q1: LOT1 regimens with pomalidomide / elotuzumab / panobinostat")
   }, error = function(e) log_msg("  [Exploratory] Q1 failed: ", conditionMessage(e)))
 
-  # Q3 / Q4 / Q5 (steroid timing) ------------------------------------------
-  if (have_map) {
+  # Q3 / Q4 / Q5 (steroid timing) - need the steroid_codes.csv signal --------
+  if (!is.null(ster_src)) {
     tryCatch({
-      q3 <- vqs_steroid_windows(con, lot_long, map_tbl, lot_num = 1L, w = VQS_W1)
+      q3 <- vqs_steroid_windows(con, lot_long, ster_src, lot_num = 1L, w = VQS_W1)
       save_table(q3, section = SEC_EXPL, title = paste0(
         "Q3: LOT1 no-steroid patients - steroid before/after induction (n=",
         attr(q3, "line_without_steroid"), " of ", attr(q3, "line_patients"), ")"))
       # "who" (patient-level, full-only via "sample"); capped for the HTML.
-      q3p <- vqs_steroid_windows_patients(con, lot_long, map_tbl, lot_num = 1L, w = VQS_W1, limit = 500L)
+      q3p <- vqs_steroid_windows_patients(con, lot_long, ster_src, lot_num = 1L, w = VQS_W1, limit = 500L)
       if (!is.null(q3p) && nrow(q3p) > 0)
         save_table(q3p, section = SEC_EXPL,
                    title = "Q3: LOT1 no-steroid patients - who got a steroid in-window (sample, max 500)")
     }, error = function(e) log_msg("  [Exploratory] Q3 failed: ", conditionMessage(e)))
     tryCatch({
-      q4 <- vqs_steroid_windows(con, lot_long, map_tbl, lot_num = 2L, w = VQS_W2)
+      q4 <- vqs_steroid_windows(con, lot_long, ster_src, lot_num = 2L, w = VQS_W2)
       save_table(q4, section = SEC_EXPL, title = paste0(
         "Q4: LOT2 no-steroid patients - steroid before/after induction (n=",
         attr(q4, "line_without_steroid"), " of ", attr(q4, "line_patients"), ")"))
-      q4p <- vqs_steroid_windows_patients(con, lot_long, map_tbl, lot_num = 2L, w = VQS_W2, limit = 500L)
+      q4p <- vqs_steroid_windows_patients(con, lot_long, ster_src, lot_num = 2L, w = VQS_W2, limit = 500L)
       if (!is.null(q4p) && nrow(q4p) > 0)
         save_table(q4p, section = SEC_EXPL,
                    title = "Q4: LOT2 no-steroid patients - who got a steroid in-window (sample, max 500)")
     }, error = function(e) log_msg("  [Exploratory] Q4 failed: ", conditionMessage(e)))
     tryCatch({
-      q5 <- vqs_q5_lot2_attribution(con, lot_long, map_tbl, w1 = VQS_W1, w2 = VQS_W2)
+      q5 <- vqs_q5_lot2_attribution(con, lot_long, ster_src, w1 = VQS_W1, w2 = VQS_W2)
       save_table(q5, section = SEC_EXPL,
                  title = "Q5: LOT2 pre-start steroid - attributable to LOT1?")
     }, error = function(e) log_msg("  [Exploratory] Q5 failed: ", conditionMessage(e)))
+  } else {
+    vqs_note_card(paste0("Q3/Q4/Q5 (steroid timing) skipped - no steroid signal. ",
+                         if (!is.null(ster$note)) ster$note else ""),
+                  "Q3-Q5: steroid analyses (unavailable)")
+  }
 
-    # Q2 examples (full-only: titles carry "(sample)") --------------------
+  # Q2 examples (full-only: titles carry "(sample)") -----------------------
+  if (have_map) {
     tryCatch({
       q2 <- vqs_q2_poma_examples(con, lot_long, map_tbl, tokens, n = 5L, bounds = bounds$sql)
       if (!is.null(q2$journey) && nrow(q2$journey) > 0)
