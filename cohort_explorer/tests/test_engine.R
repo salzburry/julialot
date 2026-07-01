@@ -158,12 +158,20 @@ if (requireNamespace("survival", quietly = TRUE)) {
   true_ce <- sapply(LM, function(tt) sum(dd$t <= tt & dd$e == 0))
   ok(all(km_ev == true_ev), "landmark cumulative EVENTS == ground truth (all 5)")
   ok(all(km_ce == true_ce), "landmark cumulative CENSORED == ground truth (all 5)")
-  # stratified: per-group cumulative events match ground truth too
+  # stratified: per-group cumulative events + censored match ground truth
   os_strat <- km_fit(ov$data, "OS", strata = "ti_te_age", min_fu = 3)
   lmk <- km_landmark(os_strat)
-  ok(all(LM %in% lmk$Month) && all(c("AtRisk","Events","Censored") %in% names(lmk)) &&
-       length(unique(lmk$Group)) == 2,
-     "km_landmark: stratified, all 5 landmarks, with at-risk/events/censored")
+  sub <- ov$data[ov$data$fu_potential_months >= 3, ]
+  strat_ok <- length(unique(lmk$Group)) == 2 && all(LM %in% lmk$Month)
+  for (g in unique(lmk$Group)) {
+    gg <- sub[sub$ti_te_age == g, ]
+    lg <- lmk[lmk$Group == g, ]; lg <- lg[order(lg$Month), ]
+    te <- sapply(LM, function(tt) sum(gg$os_time <= tt & gg$os_event == 1))
+    tc <- sapply(LM, function(tt) sum(gg$os_time <= tt & gg$os_event == 0))
+    strat_ok <- strat_ok && all(lg$Events == te) && all(lg$Censored == tc)
+  }
+  ok(strat_ok,
+     "km_landmark: per-group events + censored == ground truth at all 5 landmarks")
 }
 
 # ---- review round 3: consistency + type-safety + coverage + count validation ----
@@ -189,6 +197,28 @@ ok(tryCatch({ load_lot_long(function() ll_gap, cohort = df); FALSE },
 llx2 <- augment_lot_long(ll, df)
 ok(all(c("age_ge70","ip_hosp_band","bl_hepatic","soc_category") %in% names(llx2)),
    "augment carries ALL advertised strata onto LOT-long (no silent 2L/3L gaps)")
+
+# ---- review round 4: deeper LOT-long + flag/count consistency ----
+tr1 <- derive_next_soc(ll[ll$lot_num == 1L, ])   # only-1L rows, valid internally
+ok(tryCatch({ load_lot_long(function() tr1, cohort = df); FALSE },
+            error = function(e) TRUE),
+   "load_lot_long rejects LOT-long whose line count != n_lines (later-line undercount)")
+bc1 <- df; bc1$bl_cv[1] <- 1L; bc1$n_cv[1] <- 0L
+bc2 <- df; bc2$bl_renal[1] <- 0L; bc2$n_renal[1] <- 3L
+ok(tryCatch({ validate_flagged_cohort(bc1); FALSE }, error = function(e) TRUE) &&
+   tryCatch({ validate_flagged_cohort(bc2); FALSE }, error = function(e) TRUE),
+   "validate_flagged_cohort rejects a safety flag that disagrees with its count")
+na_soc <- ll; na_soc$lot_soc[1] <- NA; na_soc <- derive_next_soc(na_soc)
+na_pay <- ll; na_pay$payer_type[1] <- NA
+ok(tryCatch({ validate_lot_long(na_soc); FALSE }, error = function(e) TRUE) &&
+   tryCatch({ validate_lot_long(na_pay); FALSE }, error = function(e) TRUE),
+   "validate_lot_long rejects missing lot_soc / payer_type")
+bt <- ll; bt$ttd_time <- bt$fu_potential_months + 50
+ok(tryCatch({ validate_lot_long(bt); FALSE }, error = function(e) TRUE),
+   "validate_lot_long rejects a TTE beyond potential follow-up")
+be <- ll; be$ttnt_event <- 1L
+ok(tryCatch({ validate_lot_long(be); FALSE }, error = function(e) TRUE),
+   "validate_lot_long rejects a TTNT event with no subsequent line")
 
 # ---- review fix #7: safety-event rates per PY ----
 sb <- safety_baseline_table(df)
