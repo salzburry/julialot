@@ -96,6 +96,48 @@ ndmm_protocol_checks <- function(df, active_flags = character(),
   out
 }
 
+# ---- protocol data-quality / analysis-readiness checks ----------------------
+# Reports the TTE denominator (>=3-mo follow-up), missing/unknown tallies, and
+# <25-patient suppression flags on the protocol strata (§6.5-6.7).
+protocol_dq_checks <- function(df, min_fu = 3L,
+                               strata_vars = c("ti_te_age", "ti_te_age_cci",
+                                               "soc_category", "age_band")) {
+  if (!nrow(df))
+    return(.chk("Cohort non-empty", FALSE, "Selected cohort has 0 patients."))
+  rows <- list()
+
+  if ("fu_potential_months" %in% names(df)) {
+    n_fu <- sum(df$fu_potential_months >= min_fu, na.rm = TRUE)
+    rows[[length(rows) + 1L]] <- .chk(
+      sprintf("TTE denominator (>=%d-mo follow-up)", min_fu), n_fu > 0,
+      sprintf("%d of %d patients (%.1f%%) meet the follow-up cut.",
+              n_fu, nrow(df), 100 * n_fu / nrow(df)), warn_ok = TRUE)
+  }
+
+  # missing/unknown tally for key characteristics
+  key <- intersect(c("gender", "region", "race", "ethnicity", "cci",
+                     "soc_category"), names(df))
+  for (v in key) {
+    miss <- sum(is.na(df[[v]]) |
+                (is.character(df[[v]]) & df[[v]] %in% c("", "Unknown", "(Missing)")))
+    rows[[length(rows) + 1L]] <- .chk(
+      paste0("Missing/Unknown: ", v), miss == 0,
+      sprintf("%d of %d (%.1f%%).", miss, nrow(df), 100 * miss / nrow(df)),
+      warn_ok = TRUE)
+  }
+
+  # <25 suppression flags on the protocol strata
+  for (sv in intersect(strata_vars, names(df))) {
+    small <- names(which(table(as.character(df[[sv]])) < 25L))
+    rows[[length(rows) + 1L]] <- .chk(
+      paste0("Strata >=25 pts: ", sv), length(small) == 0,
+      if (length(small))
+        paste0("suppressed (<25): ", paste(small, collapse = ", "))
+      else "all levels reportable.", warn_ok = TRUE)
+  }
+  do.call(rbind, rows)
+}
+
 # Roll a checks table up to a one-line headline for the UI banner.
 checks_headline <- function(tbl) {
   if (is.null(tbl) || !nrow(tbl)) return("No checks run.")

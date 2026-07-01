@@ -1,98 +1,135 @@
 # =============================================================================
 # summaries.R  --  Patient Characteristics summary statistics
 # -----------------------------------------------------------------------------
-# Reproduces the sample dashboard's "Summary Statistics" tables: categorical
-# variables as N / % (overall + per strata level) and continuous variables as
-# mean / SD / median / IQR. Pure base R.
+# Reproduces the sample dashboard's "Summary Statistics" tables and the NDMM
+# protocol's Table 1: categorical variables as N / % (overall + per strata
+# level, incl. an explicit (Missing) category), continuous variables as
+# mean / SD / median / IQR / min / max + a Missing count. Applies the
+# protocol's <25-patient suppression to strata (§6.5). Pure base R.
 # =============================================================================
 
-# Variable dictionary: label + type ("cat" | "cont"). Drives the
+SUPPRESS_MIN_N <- 25L   # protocol §6.5: do not report a stratum with < 25 pts
+
+# Variable dictionary: label + type ("cat" | "cont" | "binary"). Drives the
 # "Select Variables" control and dispatches to the right summary.
 variable_dictionary <- function() {
   list(
-    age_index    = list(label = "Age at index (years)", type = "cont"),
-    lot1_length  = list(label = "LOT1 length (days)",    type = "cont"),
-    n_lines      = list(label = "Number of lines",       type = "cont"),
-    os_time      = list(label = "rwOS follow-up (months)", type = "cont"),
-    gender       = list(label = "Gender",                type = "cat"),
-    region       = list(label = "Region",                type = "cat"),
-    race         = list(label = "Race",                  type = "cat"),
-    payer_type   = list(label = "Payer / product type",  type = "cat"),
-    soc_category = list(label = "1L SOC regimen category", type = "cat")
+    # ---- continuous ----
+    age_index        = list(label = "Age at index (years)", type = "cont"),
+    cci              = list(label = "Charlson Comorbidity Index", type = "cont"),
+    dx_to_1l_months  = list(label = "Time diagnosis -> 1L (months)", type = "cont"),
+    fu_from_dx_months= list(label = "Follow-up from diagnosis (months)", type = "cont"),
+    lot1_length      = list(label = "LOT1 length (days)", type = "cont"),
+    n_lines          = list(label = "Number of lines", type = "cont"),
+    ip_los_days      = list(label = "Baseline inpatient LOS (days)", type = "cont"),
+    # ---- categorical (demographics) ----
+    gender       = list(label = "Sex", type = "cat"),
+    region       = list(label = "Region", type = "cat"),
+    race         = list(label = "Race", type = "cat"),
+    ethnicity    = list(label = "Ethnicity", type = "cat"),
+    payer_type   = list(label = "Insurance type", type = "cat"),
+    age_band     = list(label = "Age band", type = "cat"),
+    age_ge70     = list(label = "Age >= 70", type = "cat"),
+    cci_band     = list(label = "CCI band", type = "cat"),
+    dx_year      = list(label = "Year of first MM diagnosis", type = "cat"),
+    lot_init_year= list(label = "Year of 1L initiation", type = "cat"),
+    soc_category = list(label = "1L SOC regimen category", type = "cat"),
+    ti_te_age    = list(label = "Transplant eligibility (age proxy)", type = "cat"),
+    ti_te_age_cci= list(label = "Transplant eligibility (age or CCI proxy)", type = "cat"),
+    ip_hosp_band = list(label = "Baseline inpatient hospitalisations", type = "cat"),
+    er_visit_band= list(label = "Baseline ER visits", type = "cat"),
+    # ---- baseline comorbidities of interest (binary -> Yes/No) ----
+    bl_hepatic   = list(label = "Baseline hepatic toxicity", type = "binary"),
+    bl_renal     = list(label = "Baseline renal impairment", type = "binary"),
+    bl_infection = list(label = "Baseline serious infection", type = "binary"),
+    bl_ocular    = list(label = "Baseline ocular event", type = "binary"),
+    bl_cv        = list(label = "Baseline cardiovascular condition", type = "binary"),
+    bl_neuro     = list(label = "Baseline neurologic condition", type = "binary")
   )
 }
 
-var_label <- function(v, dict = variable_dictionary()) {
+var_label <- function(v, dict = variable_dictionary())
   if (!is.null(dict[[v]])) dict[[v]]$label else v
-}
-var_type <- function(v, dict = variable_dictionary()) {
+var_type <- function(v, dict = variable_dictionary())
   if (!is.null(dict[[v]])) dict[[v]]$type else "cat"
+
+# render a variable as a character vector of categories, mapping NA -> (Missing)
+# and binary 0/1 -> No/Yes.
+.as_category <- function(x, type) {
+  if (identical(type, "binary")) x <- ifelse(x == 1L, "Yes", "No")
+  x <- as.character(x)
+  x[is.na(x) | !nzchar(x)] <- "(Missing)"
+  x
+}
+
+# build strata groups, dropping any strata level with < SUPPRESS_MIN_N patients
+# (Overall is never suppressed). Returns list(groups=, suppressed=char vec).
+.build_groups <- function(df, strata, min_n = SUPPRESS_MIN_N) {
+  groups <- list(Overall = rep(TRUE, nrow(df)))
+  suppressed <- character(0)
+  if (!is.null(strata) && nzchar(strata) && strata %in% names(df)) {
+    lv <- sort(unique(.as_category(df[[strata]], "cat")))
+    for (l in lv) {
+      sel <- .as_category(df[[strata]], "cat") == l
+      if (sum(sel) < min_n) { suppressed <- c(suppressed, l); next }
+      groups[[l]] <- sel
+    }
+  }
+  list(groups = groups, suppressed = suppressed)
 }
 
 # ---- categorical summary ----------------------------------------------------
-# Returns a long data.frame: Variable, Category, then for "Overall" and each
-# strata level a paired N and pct column. Denominator per column = column total
-# (matches the sample footnote: strata columns are 100% on their own total).
 summarize_categorical <- function(df, vars, strata = NULL,
                                    dict = variable_dictionary()) {
-  vars <- vars[vapply(vars, function(v) var_type(v, dict) == "cat", logical(1))]
+  vars <- vars[vapply(vars, function(v) var_type(v, dict) %in% c("cat", "binary"),
+                      logical(1))]
   if (!length(vars) || !nrow(df)) return(NULL)
-
-  groups <- list(Overall = rep(TRUE, nrow(df)))
-  if (!is.null(strata) && nzchar(strata) && strata %in% names(df)) {
-    for (lv in sort(unique(as.character(df[[strata]]))))
-      groups[[lv]] <- as.character(df[[strata]]) == lv
-  }
+  g <- .build_groups(df, strata); groups <- g$groups
 
   out <- list()
   for (v in vars) {
-    lv_all <- sort(unique(as.character(df[[v]])))
-    for (lv in lv_all) {
+    cats <- .as_category(df[[v]], var_type(v, dict))
+    for (lv in sort(unique(cats))) {
       row <- list(Variable = var_label(v, dict), Category = lv)
-      for (g in names(groups)) {
-        sel <- groups[[g]]
-        n_g <- sum(sel)
-        n_c <- sum(sel & as.character(df[[v]]) == lv)
-        row[[paste0(g, " N")]]   <- n_c
-        row[[paste0(g, " %")]]   <- if (n_g) round(100 * n_c / n_g, 2) else NA_real_
+      for (nm in names(groups)) {
+        sel <- groups[[nm]]; n_g <- sum(sel); n_c <- sum(sel & cats == lv)
+        row[[paste0(nm, " N")]] <- n_c
+        row[[paste0(nm, " %")]] <- if (n_g) round(100 * n_c / n_g, 2) else NA_real_
       }
       out[[length(out) + 1L]] <- as.data.frame(row, check.names = FALSE,
                                                stringsAsFactors = FALSE)
     }
   }
-  do.call(rbind, out)
+  res <- do.call(rbind, out)
+  attr(res, "suppressed") <- g$suppressed
+  res
 }
 
 # ---- continuous summary ------------------------------------------------------
-# Returns: Variable, Statistic columns (N, Mean, SD, Median, Q1, Q3, Min, Max),
-# one block of rows per strata group.
 summarize_continuous <- function(df, vars, strata = NULL,
                                   dict = variable_dictionary()) {
   vars <- vars[vapply(vars, function(v) var_type(v, dict) == "cont", logical(1))]
   if (!length(vars) || !nrow(df)) return(NULL)
-
-  groups <- list(Overall = rep(TRUE, nrow(df)))
-  if (!is.null(strata) && nzchar(strata) && strata %in% names(df)) {
-    for (lv in sort(unique(as.character(df[[strata]]))))
-      groups[[lv]] <- as.character(df[[strata]]) == lv
-  }
+  g <- .build_groups(df, strata); groups <- g$groups
 
   out <- list()
   for (v in vars) {
-    for (g in names(groups)) {
-      x <- suppressWarnings(as.numeric(df[[v]][groups[[g]]]))
-      x <- x[!is.na(x)]
-      q <- if (length(x)) stats::quantile(x, c(0.25, 0.5, 0.75)) else rep(NA, 3)
+    for (nm in names(groups)) {
+      raw <- suppressWarnings(as.numeric(df[[v]][groups[[nm]]]))
+      x   <- raw[!is.na(raw)]
+      q   <- if (length(x)) stats::quantile(x, c(0.25, 0.5, 0.75)) else rep(NA, 3)
       out[[length(out) + 1L]] <- data.frame(
-        Variable = var_label(v, dict), Group = g,
-        N = length(x),
-        Mean   = rnd(mean_or_na(x)), SD = rnd(sd_or_na(x)),
+        Variable = var_label(v, dict), Group = nm,
+        N = length(x), Missing = sum(is.na(raw)),
+        Mean = rnd(mean_or_na(x)), SD = rnd(sd_or_na(x)),
         Median = rnd(q[2]), Q1 = rnd(q[1]), Q3 = rnd(q[3]),
         Min = rnd(min_or_na(x)), Max = rnd(max_or_na(x)),
         check.names = FALSE, stringsAsFactors = FALSE)
     }
   }
-  do.call(rbind, out)
+  res <- do.call(rbind, out)
+  attr(res, "suppressed") <- g$suppressed
+  res
 }
 
 # small NA-safe helpers

@@ -8,7 +8,7 @@
           error = function(e) ".")
 rdir <- normalizePath(file.path(.here, "..", "R"))
 for (f in c("criteria_registry.R", "build_flagged_cohort.R", "cohort_select.R",
-            "summaries.R", "checks.R", "km.R"))
+            "summaries.R", "checks.R", "km.R", "lot_views.R"))
   source(file.path(rdir, f))
 
 # tiny harness
@@ -20,7 +20,7 @@ ok <- function(cond, msg) {
 
 REG <- criteria_registry(); COH <- cohort_definitions()
 VARDICT <- variable_dictionary()
-df  <- synth_flagged_cohort(n = 2000L, seed = 7L)
+df  <- load_flagged_cohort("synthetic", n = 2000L, seed = 7L)
 
 # ---- flagged cohort contract ----
 ok(tryCatch({ validate_flagged_cohort(df); TRUE }, error = function(e) FALSE),
@@ -63,7 +63,7 @@ ok(empty_cat$n_out == nrow(df), "empty categorical selection = no restriction")
 # ---- summaries ----
 sc <- summarize_categorical(df, c("gender", "region"), strata = "payer_type", VARDICT)
 ok(!is.null(sc) && "Overall N" %in% names(sc), "categorical summary has Overall N")
-ok(all(c("Female", "Male") %in% sc$Category[sc$Variable == "Gender"]),
+ok(all(c("Female", "Male") %in% sc$Category[sc$Variable == "Sex"]),
    "categorical summary enumerates gender levels")
 sk <- summarize_continuous(df, c("age_index"), strata = NULL, VARDICT)
 ok(!is.null(sk) && "Median" %in% names(sk), "continuous summary has Median")
@@ -79,14 +79,44 @@ ok(all(nc$Status[active_rows] == "PASS"),
 ok(nc$Status[nc$Check == "12m baseline CE subset of 6m CE"] == "PASS",
    "12m-CE-subset-of-6m-CE invariant holds")
 
+# ---- new characteristics + suppression ----
+ok(all(c("age_band","age_ge70","cci_band","ti_te_age","ti_te_age_cci",
+         "ip_hosp_band") %in% names(df)), "derived subgroup columns are present")
+sc_bin <- summarize_categorical(df, c("bl_cv"), strata = NULL, VARDICT)
+ok(all(c("Yes","No") %in% sc_bin$Category), "binary comorbidity renders Yes/No")
+# force a tiny stratum to confirm <25 suppression drops it
+tiny <- df; tiny$region[1:15] <- "TINYREG"; tiny <- tiny[c(1:15, 100:nrow(tiny)), ]
+sc_sup <- summarize_categorical(tiny, c("gender"), strata = "region", VARDICT)
+ok("TINYREG" %in% attr(sc_sup, "suppressed"), "<25-patient stratum is suppressed")
+ok(!any(grepl("TINYREG", names(sc_sup))), "suppressed stratum has no column")
+
+# ---- LOT-long + regimen/transitions ----
+ll <- synth_lot_long(df)
+ok(nrow(ll) == sum(df$n_lines), "LOT-long has one row per patient-line")
+ok(all(c("lot_soc","next_soc","ttd_time") %in% names(ll)), "LOT-long has SOC + TTE cols")
+rf <- regimen_frequency(ll, df$patient_id, 2L)
+ok(!is.null(rf) && sum(rf$N) == sum(df$n_lines >= 2L), "2L regimen freq totals reaching-2L patients")
+tr <- lot_transition_table(ll, df$patient_id, 1L)
+ok(!is.null(tr) && all(c("From","To","Freq") %in% names(tr)), "1L->2L transition table built")
+
+# ---- protocol DQ checks ----
+dq <- protocol_dq_checks(ov$data)
+ok(any(grepl("TTE denominator", dq$Check)), "DQ reports the >=3-mo TTE denominator")
+
 # ---- KM (optional) ----
 if (requireNamespace("survival", quietly = TRUE)) {
-  k <- km_fit(ov$data, "rwOS")
-  ok(!is.null(k) && k$n > 0, "km_fit returns a fit for rwOS")
-  ok(!is.null(km_medians(k)) && "Median" %in% names(km_medians(k)),
-     "km_medians returns a median table")
-  ks <- km_fit(ov$data, "rwPFS", strata = "gender")
-  ok(!is.null(km_risk_table(ks)), "km_risk_table works with strata")
+  for (ep in c("OS","TTD","TTNT","Attrition","PFS_exploratory")) {
+    k <- km_fit(ov$data, ep, min_fu = if (ep == "Attrition") NULL else 3)
+    ok(!is.null(k) && k$n > 0, paste0("km_fit returns a fit for ", ep))
+  }
+  k <- km_fit(ov$data, "OS", strata = "ti_te_age", min_fu = 3)
+  lm <- km_landmark(k)
+  ok(!is.null(lm) && all(paste0(c(6,9,12,18,24),"mo") %in% names(lm)),
+     "km_landmark has 6/9/12/18/24-mo columns")
+  ok(nrow(km_medians(k)) == 2, "stratified median table has one row per stratum")
+  # per-LOT KM off the LOT-long slice
+  k2 <- km_fit(lot_slice(ll, ov$data$patient_id, 2L), "TTD", min_fu = 3)
+  ok(!is.null(k2) && k2$n > 0, "per-LOT (2L) KM fits off the LOT-long slice")
 } else cat("SKIP: survival not installed — KM tests skipped\n")
 
 cat(sprintf("\n%d passed, %d failed\n", .n_pass, .n_fail))

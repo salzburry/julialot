@@ -90,8 +90,8 @@ render_filter_accordion <- function(df, active_flags, reg) {
 }
 
 # ---- KM tab UI factory ------------------------------------------------------
-km_tab_ui <- function(key, ep_label, strata_choices) {
-  tabPanel(key,
+km_tab_ui <- function(key, ep_label, strata_choices, tab_label = key) {
+  tabPanel(tab_label,
     br(),
     fluidRow(
       column(4, sliderInput(paste0("km_", key, "_horizon"),
@@ -104,6 +104,8 @@ km_tab_ui <- function(key, ep_label, strata_choices) {
                                    class = "btn-apply"))),
     h4(ep_label),
     plotOutput(paste0("km_", key, "_plot"), height = "420px"),
+    h5("Landmark survival probability (95% CI) at 6/9/12/18/24 months"),
+    tableOutput(paste0("km_", key, "_landmark")),
     h5("Median (95% CI)"), tableOutput(paste0("km_", key, "_med")),
     h5("Number at risk"),  tableOutput(paste0("km_", key, "_risk")))
 }
