@@ -119,7 +119,12 @@ FLAGGED <- load_flagged_cohort(source_flagged_cohort_warehouse)
 
 `validate_flagged_cohort()` / `validate_lot_long()` **fail closed** on a malformed
 projection: missing contract column; flag/comorbidity not strictly 0/1; negative
-or non-integer safety counts; non-positive `baseline_py`; non-unique LOT-long key;
+or non-integer safety counts; non-positive `baseline_py`; **patient-level TTE**
+that isn't 0/1-eventful, is negative, or exceeds potential follow-up (`os`/`ttd`/
+`ttnt`/`pfs`), and `os_event=1` without a `death_dt`; **core numeric fields** out
+of contract (age / CCI / `n_lines` / HCRU counts not non-negative integers,
+`n_lines<1`, non-positive `lot1_length`, negative LOS); missing `index_date` /
+`lot1_start_dt` or `index_date > lot1_start_dt`; non-unique LOT-long key;
 non-integer-valued `lot_num` (integer-*valued* doubles from DBI/CSV are accepted,
 `1.5` is rejected); a LOT sequence that doesn't start at 1L / isn't contiguous /
 has decreasing dates; a `next_soc` inconsistent with the line SOC sequence; a

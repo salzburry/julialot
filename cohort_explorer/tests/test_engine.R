@@ -220,6 +220,34 @@ be <- ll; be$ttnt_event <- 1L
 ok(tryCatch({ validate_lot_long(be); FALSE }, error = function(e) TRUE),
    "validate_lot_long rejects a TTNT event with no subsequent line")
 
+# ---- review round 5: patient-level TTE + numeric contract + TTNT biconditional ----
+pe1 <- df; pe1$os_event[1] <- 5L
+pe2 <- df; pe2$ttd_event[1] <- 4L
+pe3 <- df; pe3$os_time[1] <- pe3$fu_potential_months[1] + 99
+ok(tryCatch({ validate_flagged_cohort(pe1); FALSE }, error = function(e) TRUE) &&
+   tryCatch({ validate_flagged_cohort(pe2); FALSE }, error = function(e) TRUE) &&
+   tryCatch({ validate_flagged_cohort(pe3); FALSE }, error = function(e) TRUE),
+   "validate_flagged_cohort validates patient-level TTE (0/1 events, TTE<=follow-up)")
+pd1 <- df; pd1$os_event[1] <- 1L; pd1$death_dt[1] <- NA
+ok(tryCatch({ validate_flagged_cohort(pd1); FALSE }, error = function(e) TRUE),
+   "validate_flagged_cohort requires a death_dt when os_event=1")
+nl <- df; nl$n_lines[1] <- 1.5
+ok(tryCatch({ validate_flagged_cohort(nl); FALSE }, error = function(e) TRUE),
+   "validate_flagged_cohort rejects a fractional n_lines")
+hc <- df; hc$ip_hosp_count[1] <- -2L
+ll1 <- df; ll1$lot1_length[1] <- 0
+ok(tryCatch({ validate_flagged_cohort(hc); FALSE }, error = function(e) TRUE) &&
+   tryCatch({ validate_flagged_cohort(ll1); FALSE }, error = function(e) TRUE),
+   "validate_flagged_cohort rejects negative HCRU counts and non-positive lot1_length")
+dt1 <- df; dt1$index_date[1] <- dt1$lot1_start_dt[1] + 5
+ok(tryCatch({ validate_flagged_cohort(dt1); FALSE }, error = function(e) TRUE),
+   "validate_flagged_cohort rejects index_date after lot1_start_dt")
+# TTNT biconditional: event=0 on a non-terminal line must also fail
+multi <- names(which(table(ll$patient_id) >= 2))[1]
+tb <- ll; tb$ttnt_event[tb$patient_id == multi & tb$lot_num == 1L] <- 0L
+ok(tryCatch({ validate_lot_long(tb); FALSE }, error = function(e) TRUE),
+   "validate_lot_long rejects ttnt_event=0 on a non-terminal line (biconditional)")
+
 # ---- review fix #7: safety-event rates per PY ----
 sb <- safety_baseline_table(df)
 ok(!is.null(sb) && "Rate per 100 PY" %in% names(sb) && nrow(sb) == 6,
