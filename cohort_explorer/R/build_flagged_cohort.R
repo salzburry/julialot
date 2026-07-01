@@ -90,6 +90,18 @@ validate_flagged_cohort <- function(df, reg = criteria_registry()) {
     if (!all(v %in% c(0L, 1L)))
       stop("column '", f, "' must be strictly 0/1 (no NA).", call. = FALSE)
   }
+  # safety-event counts feed rate-per-PY directly: must be non-negative,
+  # integer-valued, non-missing, and baseline_py strictly positive.
+  count_cols <- c("n_hepatic", "n_renal", "n_infection", "n_ocular", "n_cv", "n_neuro")
+  for (c in intersect(count_cols, names(df))) {
+    v <- df[[c]]
+    if (any(is.na(v)) || any(v < 0) || !all(v == round(v)))
+      stop("safety count '", c, "' must be non-negative integers (no NA).",
+           call. = FALSE)
+  }
+  if ("baseline_py" %in% names(df) &&
+      (any(is.na(df$baseline_py)) || any(df$baseline_py <= 0)))
+    stop("baseline_py must be strictly positive (no NA).", call. = FALSE)
   if (anyDuplicated(df$patient_id))
     stop("patient_id is not unique in the flagged cohort.", call. = FALSE)
   invisible(df)
@@ -322,6 +334,11 @@ validate_lot_long <- function(ll) {
          call. = FALSE)
   if (anyDuplicated(ll[c("patient_id", "lot_num")]))
     stop("LOT-long key (patient_id, lot_num) is not unique.", call. = FALSE)
+  # lot_num must be integer-VALUED (DBI/CSV often deliver it as double); compare
+  # by value, not R type, so 1,2,3 as numeric is accepted but 1.5 is rejected.
+  if (any(is.na(ll$lot_num)) || !all(ll$lot_num == round(ll$lot_num)))
+    stop("LOT-long lot_num must be integer-valued.", call. = FALSE)
+  ll$lot_num <- as.integer(round(ll$lot_num))
   if (!all(ll$lot_num >= 1L)) stop("LOT-long lot_num must be >= 1.", call. = FALSE)
   for (f in c("os_event", "ttd_event", "ttnt_event"))
     if (!all(ll[[f]] %in% c(0L, 1L)))
@@ -340,6 +357,15 @@ validate_lot_long <- function(ll) {
     stop(sum(bad_seq), " patient(s) have a non-contiguous / mis-ordered LOT ",
          "sequence (must start at 1L, be contiguous, dates non-decreasing).",
          call. = FALSE)
+  # next_soc must be CONSISTENT with the line SOC sequence, even when supplied
+  # (a stale/incorrect next_soc would silently corrupt the transition/pathway).
+  der <- ave(o$lot_soc, o$patient_id, FUN = function(s) c(s[-1], NA_character_))
+  mism <- (is.na(der) != is.na(o$next_soc)) |
+          (!is.na(der) & !is.na(o$next_soc) & der != o$next_soc)
+  if (any(mism))
+    stop(sum(mism), " LOT-long row(s) have next_soc inconsistent with the ",
+         "line SOC sequence (expected next line's lot_soc, NA on the last line).",
+         call. = FALSE)
   invisible(ll)
 }
 
@@ -352,19 +378,36 @@ load_lot_long <- function(source, cohort = NULL, ...) {
           x$lot_start_dt <- as.Date(x$lot_start_dt); x
         } else stop("load_lot_long: unknown source.", call. = FALSE)
   if (!"next_soc" %in% names(ll)) ll <- derive_next_soc(ll)
-  validate_lot_long(ll)
+  ll <- validate_lot_long(ll)
+  # coverage: every flagged patient must have a 1L LOT-long row, else the
+  # per-LOT / regimen / pathway views silently undercount vs the KPI N.
+  if (!is.null(cohort)) {
+    have_1l <- ll$patient_id[ll$lot_num == 1L]
+    miss <- setdiff(as.character(cohort$patient_id), as.character(have_1l))
+    if (length(miss))
+      stop(length(miss), " flagged-cohort patient(s) have no 1L LOT-long row ",
+           "(per-LOT / regimen / pathway views would undercount vs the KPI N). ",
+           "The LOT-long projection must cover every flagged patient.",
+           call. = FALSE)
+  }
+  ll
 }
 
 # Carry patient-level BASELINE strata onto LOT-long so later-line (2L/3L) KM
 # stratification works. These are explicitly 1L-BASELINE CARRY-FORWARD values
 # (the UI labels them as such); true per-line baselines are a warehouse step.
 augment_lot_long <- function(lot_long, cohort) {
-  carry <- intersect(c("age_band", "cci_band", "ti_te_age", "ti_te_age_cci",
-                       "gender", "region", "race", "ethnicity",
-                       "bl_cv", "bl_neuro", "bl_renal"), names(cohort))
+  # carry EVERY dictionary categorical/binary variable that the KM strata
+  # dropdown can offer, so an advertised stratum is never silently unavailable
+  # at 2L/3L (except the line-level columns already on LOT-long: lot_soc, payer).
+  vd <- variable_dictionary()
+  strata_vars <- names(vd)[vapply(vd, function(x) x$type %in% c("cat", "binary"),
+                                  logical(1))]
+  carry <- setdiff(intersect(strata_vars, names(cohort)), names(lot_long))
   add <- cohort[, c("patient_id", carry), drop = FALSE]
-  for (b in intersect(c("bl_cv", "bl_neuro", "bl_renal"), carry))
-    add[[b]] <- ifelse(add[[b]] == 1L, "Yes", "No")
+  bl_cols <- c("bl_hepatic", "bl_renal", "bl_infection", "bl_ocular",
+               "bl_cv", "bl_neuro")
+  for (b in intersect(bl_cols, carry)) add[[b]] <- ifelse(add[[b]] == 1L, "Yes", "No")
   merged <- merge(lot_long, add, by = "patient_id", all.x = TRUE, sort = FALSE)
   merged[order(merged$patient_id, merged$lot_num), , drop = FALSE]
 }
