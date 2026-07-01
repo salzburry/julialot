@@ -98,12 +98,18 @@ ndmm_protocol_checks <- function(df, active_flags = character(),
 
 # ---- protocol data-quality / analysis-readiness checks ----------------------
 # Reports the TTE denominator (>=3-mo follow-up), missing/unknown tallies, and
-# <25-patient suppression flags on the protocol strata (§6.5-6.7).
-protocol_dq_checks <- function(df, min_fu = 3L,
-                               strata_vars = c("ti_te_age", "ti_te_age_cci",
-                                               "soc_category", "age_band")) {
+# <25-patient suppression flags. By default it audits EVERY categorical/binary
+# variable the UI can offer as a stratum (from variable_dictionary()), so the
+# Checks tab covers exactly what a user can select -- not a hand-picked subset.
+protocol_dq_checks <- function(df, min_fu = 3L, strata_vars = NULL,
+                               dict = variable_dictionary()) {
   if (!nrow(df))
     return(.chk("Cohort non-empty", FALSE, "Selected cohort has 0 patients."))
+  cat_bin <- intersect(names(dict)[vapply(dict,
+    function(x) x$type %in% c("cat", "binary"), logical(1))], names(df))
+  cat_only <- intersect(names(dict)[vapply(dict,
+    function(x) identical(x$type, "cat"), logical(1))], names(df))
+  if (is.null(strata_vars)) strata_vars <- cat_bin      # all selectable strata
   rows <- list()
 
   if ("fu_potential_months" %in% names(df)) {
@@ -114,10 +120,8 @@ protocol_dq_checks <- function(df, min_fu = 3L,
               n_fu, nrow(df), 100 * n_fu / nrow(df)), warn_ok = TRUE)
   }
 
-  # missing/unknown tally for key characteristics
-  key <- intersect(c("gender", "region", "race", "ethnicity", "cci",
-                     "soc_category"), names(df))
-  for (v in key) {
+  # missing/unknown tally for every categorical characteristic (+ CCI)
+  for (v in unique(c(cat_only, intersect("cci", names(df))))) {
     miss <- sum(is.na(df[[v]]) |
                 (is.character(df[[v]]) & df[[v]] %in% c("", "Unknown", "(Missing)")))
     rows[[length(rows) + 1L]] <- .chk(
@@ -126,7 +130,7 @@ protocol_dq_checks <- function(df, min_fu = 3L,
       warn_ok = TRUE)
   }
 
-  # <25 suppression flags on the protocol strata
+  # <25 suppression flags on every selectable stratum
   for (sv in intersect(strata_vars, names(df))) {
     small <- names(which(table(as.character(df[[sv]])) < 25L))
     rows[[length(rows) + 1L]] <- .chk(

@@ -102,6 +102,15 @@ validate_flagged_cohort <- function(df, reg = criteria_registry()) {
   if ("baseline_py" %in% names(df) &&
       (any(is.na(df$baseline_py)) || any(df$baseline_py <= 0)))
     stop("baseline_py must be strictly positive (no NA).", call. = FALSE)
+  # the Yes/No flag and the event count must agree (prevalence is read from the
+  # flag, rates from the count -- a contradiction would be internally inconsistent)
+  pairs <- list(c("bl_hepatic", "n_hepatic"), c("bl_renal", "n_renal"),
+                c("bl_infection", "n_infection"), c("bl_ocular", "n_ocular"),
+                c("bl_cv", "n_cv"), c("bl_neuro", "n_neuro"))
+  for (p in pairs) if (all(p %in% names(df)))
+    if (any(df[[p[1]]] != as.integer(df[[p[2]]] > 0)))
+      stop("safety flag '", p[1], "' disagrees with count '", p[2],
+           "' (flag must equal count>0).", call. = FALSE)
   if (anyDuplicated(df$patient_id))
     stop("patient_id is not unique in the flagged cohort.", call. = FALSE)
   invisible(df)
@@ -366,6 +375,23 @@ validate_lot_long <- function(ll) {
     stop(sum(mism), " LOT-long row(s) have next_soc inconsistent with the ",
          "line SOC sequence (expected next line's lot_soc, NA on the last line).",
          call. = FALSE)
+  # lot_soc / payer_type must be non-missing & non-blank: table() silently drops
+  # NA, so a blank would quietly vanish from regimen / transition / pathway counts
+  for (col in c("lot_soc", "payer_type"))
+    if (any(is.na(ll[[col]]) | !nzchar(trimws(as.character(ll[[col]])))))
+      stop("LOT-long '", col, "' has missing/blank values.", call. = FALSE)
+  # event/time consistency: every TTE must fall within potential follow-up, and a
+  # TTNT event implies a subsequent line actually exists in the table
+  eps <- 1e-6
+  for (t in c("os_time", "ttd_time", "ttnt_time"))
+    if (any(ll[[t]] > ll$fu_potential_months + eps))
+      stop("LOT-long '", t, "' exceeds fu_potential_months for some rows.",
+           call. = FALSE)
+  max_ln <- ave(o$lot_num, o$patient_id, FUN = max)
+  n_orphan <- sum(o$ttnt_event == 1L & o$lot_num == max_ln)
+  if (n_orphan)
+    stop(n_orphan, " LOT-long row(s) have ttnt_event=1 on the last observed ",
+         "line (a next-treatment event with no subsequent line).", call. = FALSE)
   invisible(ll)
 }
 
@@ -389,6 +415,20 @@ load_lot_long <- function(source, cohort = NULL, ...) {
            "(per-LOT / regimen / pathway views would undercount vs the KPI N). ",
            "The LOT-long projection must cover every flagged patient.",
            call. = FALSE)
+    # row count per patient must equal n_lines (else later-line views undercount
+    # even though FLAGGED$n_lines says the lines exist). Lines are contiguous
+    # from 1L (checked above), so a matching count implies lines 1..n_lines.
+    if ("n_lines" %in% names(cohort)) {
+      rc  <- tapply(ll$lot_num, as.character(ll$patient_id), length)
+      exp <- setNames(as.integer(cohort$n_lines), as.character(cohort$patient_id))
+      got <- rc[names(exp)]
+      bad <- sum(is.na(got) | got != exp)
+      if (bad)
+        stop(bad, " flagged patient(s) have a LOT-long line count != n_lines ",
+             "(later-line regimen / KM / pathway views would disagree with the ",
+             "patient-level cohort). The projection must emit every line 1..n_lines.",
+             call. = FALSE)
+    }
   }
   ll
 }

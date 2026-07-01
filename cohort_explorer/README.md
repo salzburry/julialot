@@ -122,11 +122,16 @@ projection: missing contract column; flag/comorbidity not strictly 0/1; negative
 or non-integer safety counts; non-positive `baseline_py`; non-unique LOT-long key;
 non-integer-valued `lot_num` (integer-*valued* doubles from DBI/CSV are accepted,
 `1.5` is rejected); a LOT sequence that doesn't start at 1L / isn't contiguous /
-has decreasing dates; a `next_soc` inconsistent with the line SOC sequence; and
-(via `load_lot_long(cohort=)`) **any flagged patient missing a 1L LOT-long row**
-(so per-LOT / regimen / pathway views can't silently undercount vs the KPI N).
-All KM strata the UI offers are carried onto LOT-long (`augment_lot_long`), so an
-advertised stratum is never silently unavailable at 2L/3L.
+has decreasing dates; a `next_soc` inconsistent with the line SOC sequence; a
+safety flag that disagrees with its count (`bl_x != n_x>0`); a missing/blank
+`lot_soc` or `payer_type` (which `table()` would silently drop from counts); a
+TTE beyond potential follow-up; a `ttnt_event=1` on a patient's last line; and
+(via `load_lot_long(cohort=)`) **any flagged patient whose LOT-long line count
+≠ `n_lines`** (not just missing 1L) — so per-LOT / regimen / pathway views can't
+silently undercount vs the KPI N. All KM strata the UI offers are carried onto
+LOT-long (`augment_lot_long`), and the **Validation & Checks** data-quality
+audit covers **every** selectable stratum (missing/unknown + <25 suppression),
+not a hand-picked subset.
 
 **Synthetic guardrails (fail-closed):** if a **real** `COHORT_EXPLORER_DATA` is
 supplied **without** a real `COHORT_EXPLORER_LOTLONG`, the app **refuses to
