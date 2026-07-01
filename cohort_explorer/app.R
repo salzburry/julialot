@@ -43,7 +43,9 @@ main_tabs <- c(
       h4(textOutput("pc_title")),
       textOutput("pc_suppressed"),
       h5("Categorical variables"), tableOutput("pc_cat"),
-      h5("Continuous variables"),  tableOutput("pc_cont"))
+      h5("Continuous variables"),  tableOutput("pc_cont"),
+      h5("Baseline safety events of interest (n / % + rate per patient-year)"),
+      tableOutput("pc_safety"))
   ),
   if (HAS_SURVIVAL)
     lapply(names(KM_TABS), function(k)
@@ -54,10 +56,14 @@ main_tabs <- c(
     tabPanel("Regimen & Transitions",
       br(),
       div(class = "ce-note",
-          "Regimen frequency for the selected Line of Therapy, and 1L->2L SOC ",
-          "transitions (commercial-insured only, per protocol Exploratory Obj 3)."),
+          "Regimen frequency for the selected Line of Therapy, and per-line SOC ",
+          "transitions (commercial-insured only, per protocol Exploratory Obj 3). ",
+          "Choose the transition (1L->2L, 2L->3L, 3L->4L) below."),
       h4(textOutput("reg_title")), tableOutput("reg_freq"),
-      h4("1L -> 2L SOC transitions (commercial only)"),
+      fluidRow(column(4, selectInput("trans_from", "Transition (from line)",
+                    choices = c("1L -> 2L" = 1L, "2L -> 3L" = 2L, "3L -> 4L" = 3L),
+                    selected = 1L))),
+      h4(textOutput("trans_title")),
       plotOutput("sankey", height = "420px"), tableOutput("trans_tbl")),
 
     tabPanel("Cohort & Attrition",
@@ -79,6 +85,13 @@ ui <- fluidPage(
   div(class = "ce-header", "Oncology Real-World Data Explorer Tool",
       span(class = "sub",
            " — Multiple Myeloma (Overall & NDMM) · flag-driven IE selection · GSK 223926 protocol")),
+  if (isTRUE(PROVENANCE$any_synthetic))
+    div(class = "ce-banner",
+        strong("SYNTHETIC DATA — not for analysis. "),
+        if (PROVENANCE$cohort_synthetic) "Cohort is synthetic. " else
+          "Cohort is real; ",
+        if (PROVENANCE$lotlong_synthetic)
+          "LOT-long (per-LOT outcomes / regimen / transitions) is SYNTHETIC." else NULL),
   br(),
   fluidRow(
     column(3, class = "ce-side",
@@ -116,36 +129,80 @@ ui <- fluidPage(
 server <- function(input, output, session) {
 
   cohort_choice <- reactiveVal("overall")
-  refresh       <- reactiveVal(0L)
   cohort_def    <- reactive(COHORTS[[cohort_choice()]])
 
-  output$cohort_desc <- renderText(cohort_def()$desc)
-  output$filters <- renderUI(
-    render_filter_accordion(FLAGGED, cohort_def()$active_flags, REG))
-
-  observeEvent(input$apply_cohort, {
-    cohort_choice(input$cohort); refresh(refresh() + 1L) })
-  observeEvent(input$apply_filters, refresh(refresh() + 1L))
-
-  gather_selection <- function() {
-    cdef <- cohort_def(); flag_ids <- registry_flag_ids(REG)
-    active_flags <- Filter(function(id) {
-      v <- input[[crit_input_id(id)]]
-      if (is.null(v)) id %in% cdef$active_flags else isTRUE(v)
-    }, flag_ids)
-    param_ids <- registry_param_ids(REG); pvals <- list()
-    for (id in param_ids) {
-      v <- input[[crit_input_id(id)]]
-      pvals[[id]] <- if (is.null(v)) REG[[id]]$default else v
+  # neutral (all-data) values for every param filter
+  neutral_params <- function() {
+    pv <- list()
+    for (id in registry_param_ids(REG)) {
+      crit <- REG[[id]]
+      pv[[id]] <- if (identical(crit$filter, "range")) {
+        rng <- range(FLAGGED[[crit$variable]], na.rm = TRUE)
+        c(floor(rng[1]), ceiling(rng[2]))
+      } else sort(unique(as.character(FLAGGED[[crit$variable]])))
     }
-    list(active_flags = unlist(active_flags), param_values = pvals,
-         active_params = param_ids)
+    pv
   }
 
+  # BLOCKER fix #10: an authoritative selection state, set EXPLICITLY on
+  # Apply Cohort (to the cohort defaults) and on Apply Filters (from the
+  # controls). selected() depends on this, never on raw input values, so a
+  # cohort switch deterministically resets the IE flags regardless of any stale
+  # checkbox state left over from a prior cohort.
+  active_state <- reactiveVal(list(
+    active_flags  = COHORTS[["overall"]]$active_flags,
+    param_values  = NULL,   # NULL -> neutral, resolved in selected()
+    active_params = registry_param_ids(REG)))
+
+  output$cohort_desc <- renderText(cohort_def()$desc)
+  # render the accordion ONCE (structure is cohort-independent); cohort switches
+  # drive the control VALUES via update*(), not a re-render.
+  output$filters <- renderUI(
+    render_filter_accordion(FLAGGED, COHORTS[["overall"]]$active_flags, REG))
+
+  observeEvent(input$apply_cohort, {
+    cohort_choice(input$cohort)
+    cdef <- COHORTS[[input$cohort]]
+    active_state(list(active_flags = cdef$active_flags, param_values = NULL,
+                      active_params = registry_param_ids(REG)))
+    # reset the visible controls to match the new cohort
+    for (id in registry_flag_ids(REG))
+      updateCheckboxInput(session, crit_input_id(id),
+                          value = id %in% cdef$active_flags)
+    np <- neutral_params()
+    for (id in registry_param_ids(REG)) {
+      crit <- REG[[id]]
+      if (identical(crit$filter, "range"))
+        updateSliderInput(session, crit_input_id(id), value = np[[id]])
+      else updateSelectInput(session, crit_input_id(id), selected = np[[id]])
+    }
+  })
+
+  gather_selection <- function() {
+    cur <- active_state()
+    cur_flags <- cur$active_flags
+    cur_pv <- if (is.null(cur$param_values)) neutral_params() else cur$param_values
+    # a control that has not (yet) registered a value falls back to the current
+    # applied state, so Apply Filters only changes what the user actually touched.
+    active_flags <- Filter(function(id) {
+      v <- input[[crit_input_id(id)]]
+      if (is.null(v)) id %in% cur_flags else isTRUE(v)
+    }, registry_flag_ids(REG))
+    pvals <- list()
+    for (id in registry_param_ids(REG)) {
+      v <- input[[crit_input_id(id)]]
+      pvals[[id]] <- if (is.null(v)) cur_pv[[id]] else v
+    }
+    list(active_flags = unlist(active_flags), param_values = pvals,
+         active_params = registry_param_ids(REG))
+  }
+
+  observeEvent(input$apply_filters, active_state(gather_selection()))
+
   selected <- reactive({
-    refresh()
-    sel <- isolate(gather_selection())
-    select_cohort(FLAGGED, sel$active_flags, sel$param_values, sel$active_params, REG)
+    st <- active_state()
+    pv <- if (is.null(st$param_values)) neutral_params() else st$param_values
+    select_cohort(FLAGGED, st$active_flags, pv, st$active_params, REG)
   })
 
   output$kpis <- renderUI({
@@ -168,22 +225,24 @@ server <- function(input, output, session) {
     sprintf("Summary statistics — %s (N = %s)",
             COHORTS[[cohort_choice()]]$label, format(s$n_out, big.mark = ","))
   })
-  pc_cat_tbl <- reactive({
-    p <- pc(); req(nrow(p$df) > 0); summarize_categorical(p$df, p$vars, p$strata, VARDICT)
-  })
   output$pc_suppressed <- renderText({
-    supp <- attr(pc_cat_tbl(), "suppressed")
+    p <- pc(); req(nrow(p$df) > 0)
+    supp <- suppressed_strata(p$df, p$strata)   # from data, not a single table
     if (length(supp)) paste0("Suppressed strata (<25 patients): ",
                              paste(supp, collapse = ", ")) else ""
   })
   output$pc_cat <- renderTable({
-    res <- pc_cat_tbl()
+    p <- pc(); req(nrow(p$df) > 0)
+    res <- summarize_categorical(p$df, p$vars, p$strata, VARDICT)
     if (is.null(res)) data.frame(Note = "Select 1+ categorical variable.") else res
   }, striped = TRUE, bordered = TRUE, na = "")
   output$pc_cont <- renderTable({
     p <- pc(); req(nrow(p$df) > 0)
     res <- summarize_continuous(p$df, p$vars, p$strata, VARDICT)
     if (is.null(res)) data.frame(Note = "Select 1+ continuous variable.") else res
+  }, striped = TRUE, bordered = TRUE, na = "")
+  output$pc_safety <- renderTable({
+    s <- selected(); req(nrow(s$data) > 0); safety_baseline_table(s$data)
   }, striped = TRUE, bordered = TRUE, na = "")
 
   # data source for a KM endpoint at the chosen line
@@ -205,6 +264,11 @@ server <- function(input, output, session) {
       src <- km_source(key, line)
       if (!isTRUE(src$ok)) return(structure(list(), msg = src$msg))
       st <- input[[paste0("km_", key, "_strata")]]
+      # hard-warn (not silently ignore) if the requested stratum is unavailable
+      if (nzchar(st) && !(st %in% names(src$df)))
+        return(structure(list(), msg = sprintf(
+          "Stratum '%s' is not available at %dL (not carried onto later lines). Pick another stratum or 1L.",
+          st, line)))
       mf <- if (isTRUE(input$restrict_fu) && key != "Attrition") MIN_FU_MONTHS else NULL
       km_fit(src$df, key, strata = if (nzchar(st)) st else NULL, EPDICT, min_fu = mf)
     }, ignoreNULL = FALSE)
@@ -230,8 +294,14 @@ server <- function(input, output, session) {
     rf <- regimen_frequency(LOT_LONG, selected()$data$patient_id, as.integer(input$lot))
     if (is.null(rf)) data.frame(Note = "No patients reach this line.") else rf
   }, striped = TRUE, bordered = TRUE)
-  trans <- reactive(lot_transition_table(LOT_LONG, selected()$data$patient_id, 1L))
-  output$sankey    <- renderPlot(sankey_plot(trans()))
+  output$trans_title <- renderText(
+    sprintf("%dL -> %dL SOC transitions (commercial only)",
+            as.integer(input$trans_from), as.integer(input$trans_from) + 1L))
+  trans <- reactive(lot_transition_table(LOT_LONG, selected()$data$patient_id,
+                                         as.integer(input$trans_from)))
+  output$sankey <- renderPlot(sankey_plot(trans(),
+    title = sprintf("%dL -> %dL SOC transitions (commercial only)",
+                    as.integer(input$trans_from), as.integer(input$trans_from) + 1L)))
   output$trans_tbl <- renderTable({
     t <- trans(); if (is.null(t)) data.frame(Note = "No transitions.") else t
   }, striped = TRUE, bordered = TRUE)

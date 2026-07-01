@@ -132,6 +132,43 @@ summarize_continuous <- function(df, vars, strata = NULL,
   res
 }
 
+# ---- baseline safety-event table (n / % + rate per patient-year) ------------
+# Protocol §6.7.1: background prevalence of key safety events with n/% AND rate
+# per patient-year over the 12-mo baseline (baseline_py).
+safety_baseline_table <- function(df) {
+  if (!nrow(df) || !"baseline_py" %in% names(df)) return(NULL)
+  events <- list(
+    c("bl_hepatic", "n_hepatic",   "Hepatic toxicity"),
+    c("bl_renal",   "n_renal",     "Renal impairment"),
+    c("bl_infection","n_infection","Serious infection"),
+    c("bl_ocular",  "n_ocular",    "Ocular event"),
+    c("bl_cv",      "n_cv",        "Cardiovascular condition"),
+    c("bl_neuro",   "n_neuro",     "Neurologic condition"))
+  py <- sum(df$baseline_py, na.rm = TRUE)
+  rows <- lapply(events, function(e) {
+    flg <- e[1]; cnt <- e[2]
+    if (!all(c(flg, cnt) %in% names(df))) return(NULL)
+    n_pt <- sum(df[[flg]] == 1L); n_ev <- sum(df[[cnt]])
+    data.frame(
+      Event = e[3],
+      `Patients (n)` = n_pt,
+      `Patients (%)` = round(100 * n_pt / nrow(df), 2),
+      `Events (n)` = n_ev,
+      `Person-years` = round(py, 1),
+      `Rate per 100 PY` = if (py > 0) round(100 * n_ev / py, 2) else NA_real_,
+      check.names = FALSE, stringsAsFactors = FALSE)
+  })
+  do.call(rbind, Filter(Negate(is.null), rows))
+}
+
+# strata levels suppressed (<25 pts) for a df + strata var (drives the note even
+# when only continuous variables are shown).
+suppressed_strata <- function(df, strata, min_n = SUPPRESS_MIN_N) {
+  if (is.null(strata) || !nzchar(strata) || !strata %in% names(df)) return(character(0))
+  tb <- table(.as_category(df[[strata]], "cat"))
+  names(tb)[tb < min_n]
+}
+
 # small NA-safe helpers
 mean_or_na <- function(x) if (length(x)) mean(x) else NA_real_
 sd_or_na   <- function(x) if (length(x) > 1) stats::sd(x) else NA_real_

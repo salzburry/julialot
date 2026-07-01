@@ -22,17 +22,39 @@ COHORTS <- cohort_definitions()
 VARDICT <- variable_dictionary()
 EPDICT  <- if (HAS_SURVIVAL) endpoint_dictionary() else list()
 
-# ---- data source ----
-# COHORT_EXPLORER_DATA    -> flagged cohort CSV (else deterministic synthetic)
-# COHORT_EXPLORER_LOTLONG -> LOT-long CSV (else synthesised from the cohort)
+# ---- data source (with provenance + fail-closed synthetic guard) ----
+# COHORT_EXPLORER_DATA     -> flagged cohort CSV (else deterministic synthetic)
+# COHORT_EXPLORER_LOTLONG  -> LOT-long CSV (else synthesised from the cohort)
+# ALLOW_SYNTHETIC_LOTLONG  -> "TRUE" to permit synthetic LOT-long with REAL cohort
 .data_src <- Sys.getenv("COHORT_EXPLORER_DATA", "synthetic")
-FLAGGED   <- load_flagged_cohort(if (nzchar(.data_src)) .data_src else "synthetic")
+.cohort_synthetic <- !nzchar(.data_src) || identical(.data_src, "synthetic")
+FLAGGED <- load_flagged_cohort(if (.cohort_synthetic) "synthetic" else .data_src)
 
 .ll_src <- Sys.getenv("COHORT_EXPLORER_LOTLONG", "")
-LOT_LONG <- if (nzchar(.ll_src) && file.exists(.ll_src)) {
+.ll_ok  <- nzchar(.ll_src) && file.exists(.ll_src)
+.allow_synth_ll <- toupper(Sys.getenv("ALLOW_SYNTHETIC_LOTLONG", "")) == "TRUE"
+
+# BLOCKER fix #3: never silently fabricate later-line data for a REAL cohort.
+if (!.cohort_synthetic && !.ll_ok && !.allow_synth_ll)
+  stop("A real flagged cohort (COHORT_EXPLORER_DATA) was supplied without a ",
+       "real LOT-long table (COHORT_EXPLORER_LOTLONG). Per-LOT outcomes / ",
+       "regimen / transition views would be SYNTHETIC. Provide the LOT-long ",
+       "CSV, or set ALLOW_SYNTHETIC_LOTLONG=TRUE to explicitly opt in.",
+       call. = FALSE)
+
+.lotlong_synthetic <- !.ll_ok
+LOT_LONG <- if (.ll_ok) {
   ll <- read.csv(.ll_src, stringsAsFactors = FALSE)
   ll$lot_start_dt <- as.Date(ll$lot_start_dt); ll
 } else synth_lot_long(FLAGGED)
+validate_lot_long(LOT_LONG)
+LOT_LONG <- augment_lot_long(LOT_LONG, FLAGGED)   # carry baseline strata forward
+
+# provenance banner (surfaced in the UI whenever any source is synthetic)
+PROVENANCE <- list(
+  cohort_synthetic  = .cohort_synthetic,
+  lotlong_synthetic = .lotlong_synthetic,
+  any_synthetic     = .cohort_synthetic || .lotlong_synthetic)
 
 REG$flt_soc$default <- sort(unique(FLAGGED$soc_category))
 MAX_LOT <- 5L

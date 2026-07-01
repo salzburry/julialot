@@ -33,9 +33,11 @@ FLAGGED_COHORT_BASE_COLS <- c(
   # calendar / follow-up (protocol characteristics + attrition)
   "dx_year", "lot_init_year", "dx_to_1l_months", "fu_from_dx_months",
   "fu_potential_months",
-  # clinical: Charlson + baseline comorbidities of interest
+  # clinical: Charlson + baseline comorbidities of interest (flag + count + PY)
   "cci",
   "bl_hepatic", "bl_renal", "bl_infection", "bl_ocular", "bl_cv", "bl_neuro",
+  "n_hepatic", "n_renal", "n_infection", "n_ocular", "n_cv", "n_neuro",
+  "baseline_py",
   # baseline healthcare resource utilisation
   "ip_hosp_count", "er_visit_count", "ip_los_days",
   # LOT-derived
@@ -144,28 +146,48 @@ synth_flagged_cohort <- function(n = 4000L, seed = 42L, soc_levels = NULL) {
   # Charlson comorbidity index (0..8), skewed low
   cci <- pmin(8L, rpois(n, 1.6))
 
-  # baseline comorbidities of interest (protocol safety-event background)
+  # baseline comorbidities of interest (protocol safety-event background):
+  # per-patient EVENT COUNTS over the 12-mo baseline; the Yes/No flag is
+  # "count > 0". baseline_py = 1.0 (standardised 12-mo baseline person-year),
+  # so rates are events per patient-year over the baseline window.
   bern <- function(p) as.integer(runif(n) < p)
-  bl_cv        <- bern(0.30)
-  bl_neuro     <- bern(0.14)
-  bl_renal     <- as.integer(runif(n) < (0.12 + 0.03 * cci))       # ties to CCI
-  bl_hepatic   <- bern(0.06)
-  bl_infection <- bern(0.18)
-  bl_ocular    <- bern(0.05)
+  cnt  <- function(mean) rpois(n, mean)
+  n_cv        <- cnt(0.35)
+  n_neuro     <- cnt(0.15)
+  n_renal     <- rpois(n, 0.12 + 0.03 * cci)     # ties to CCI
+  n_hepatic   <- cnt(0.06)
+  n_infection <- cnt(0.20)
+  n_ocular    <- cnt(0.05)
+  baseline_py <- rep(1.0, n)
+  bl_cv        <- as.integer(n_cv > 0)
+  bl_neuro     <- as.integer(n_neuro > 0)
+  bl_renal     <- as.integer(n_renal > 0)
+  bl_hepatic   <- as.integer(n_hepatic > 0)
+  bl_infection <- as.integer(n_infection > 0)
+  bl_ocular    <- as.integer(n_ocular > 0)
 
   # baseline HCRU (12-mo pre-index)
   ip_hosp_count  <- rpois(n, 0.7)
   er_visit_count <- rpois(n, 0.9)
   ip_los_days    <- round(ip_hosp_count * pmax(0, rgamma(n, 1.5, scale = 3)), 1)
 
-  # ---- time-to-event (months, from 1L index) ----
-  base_os <- rexp(n, rate = 1 / 52)
-  os_raw  <- base_os * (1 - (age_index - 69) / 260) *
-    (1 - (n_lines - 1) * 0.07) * (1 - pmin(cci, 6) * 0.03)
-  os_time <- round(pmin(120, pmax(0.5, os_raw)), 1)
-  os_event <- as.integer(runif(n) < 0.46)
-  fu_potential_months <- os_time            # follow-up to death/censor from 1L
-  fu_from_dx_months   <- round(dx_to_1l_months + os_time, 1)
+  # ---- follow-up + time-to-event (months, from 1L index) ----
+  # Potential follow-up is ADMINISTRATIVE (death-independent): from 1L start to
+  # the earlier of study end and a random disenrollment horizon. OS is then the
+  # min of a latent death time and this potential follow-up -- so a patient who
+  # dies at 1 month still HAS >=3-mo potential follow-up and is retained by the
+  # protocol >=3-mo TTE restriction (fixes the death-unaware cut).
+  study_end   <- as.Date("2025-06-30")
+  admin_months <- pmax(0.1, as.integer(study_end - lot1_start_dt) / 30.44)
+  disenroll_months <- pmax(1, rgamma(n, shape = 2, scale = 22))
+  fu_potential_months <- round(pmin(admin_months, disenroll_months), 1)
+
+  latent_death <- pmax(0.2, rexp(n, rate = 1 / 52) *
+    (1 - (age_index - 69) / 260) * (1 - (n_lines - 1) * 0.07) *
+    (1 - pmin(cci, 6) * 0.03))
+  os_time  <- round(pmin(latent_death, fu_potential_months), 1)
+  os_event <- as.integer(latent_death <= fu_potential_months)
+  fu_from_dx_months <- round(dx_to_1l_months + fu_potential_months, 1)
 
   death_dt <- as.Date(rep(NA_integer_, n), origin = "1970-01-01")
   ev <- os_event == 1L
@@ -183,6 +205,7 @@ synth_flagged_cohort <- function(n = 4000L, seed = 42L, soc_levels = NULL) {
     index_date, lot1_start_dt, death_dt,
     dx_year, lot_init_year, dx_to_1l_months, fu_from_dx_months, fu_potential_months,
     cci, bl_hepatic, bl_renal, bl_infection, bl_ocular, bl_cv, bl_neuro,
+    n_hepatic, n_renal, n_infection, n_ocular, n_cv, n_neuro, baseline_py,
     ip_hosp_count, er_visit_count, ip_los_days,
     soc_category, n_lines, lot1_length,
     os_time, os_event, ttd_time, ttd_event, ttnt_time, ttnt_event,
@@ -264,4 +287,62 @@ synth_lot_long <- function(cohort, seed = 43L) {
   out$next_soc <- nxt
   rownames(out) <- NULL
   out
+}
+
+# ---- LOT-long contract + validation -----------------------------------------
+LOT_LONG_REQUIRED_COLS <- c(
+  "patient_id", "lot_num", "lot_start_dt", "lot_soc",
+  "os_time", "os_event", "ttd_time", "ttd_event",
+  "ttnt_time", "ttnt_event", "fu_potential_months")
+
+validate_lot_long <- function(ll) {
+  stopifnot(is.data.frame(ll))
+  miss <- setdiff(LOT_LONG_REQUIRED_COLS, names(ll))
+  if (length(miss))
+    stop("LOT-long is missing required columns: ", paste(miss, collapse = ", "),
+         call. = FALSE)
+  if (anyDuplicated(ll[c("patient_id", "lot_num")]))
+    stop("LOT-long key (patient_id, lot_num) is not unique.", call. = FALSE)
+  if (!all(ll$lot_num >= 1L)) stop("LOT-long lot_num must be >= 1.", call. = FALSE)
+  for (f in c("os_event", "ttd_event", "ttnt_event"))
+    if (!all(ll[[f]] %in% c(0L, 1L)))
+      stop("LOT-long '", f, "' must be strictly 0/1.", call. = FALSE)
+  for (t in c("os_time", "ttd_time", "ttnt_time", "fu_potential_months"))
+    if (any(ll[[t]] < 0, na.rm = TRUE))
+      stop("LOT-long '", t, "' has negative values.", call. = FALSE)
+  # within patient: lines ordered and start dates non-decreasing
+  o <- ll[order(ll$patient_id, ll$lot_num), ]
+  bad_order <- tapply(as.numeric(o$lot_start_dt), o$patient_id,
+                      function(d) any(diff(d) < 0))
+  if (any(unlist(bad_order), na.rm = TRUE))
+    stop("LOT-long lot_start_dt decreases within a patient.", call. = FALSE)
+  invisible(ll)
+}
+
+# Carry patient-level BASELINE strata onto LOT-long so later-line (2L/3L) KM
+# stratification works. These are explicitly 1L-BASELINE CARRY-FORWARD values
+# (the UI labels them as such); true per-line baselines are a warehouse step.
+augment_lot_long <- function(lot_long, cohort) {
+  carry <- intersect(c("age_band", "cci_band", "ti_te_age", "ti_te_age_cci",
+                       "gender", "region", "race", "ethnicity",
+                       "bl_cv", "bl_neuro", "bl_renal"), names(cohort))
+  add <- cohort[, c("patient_id", carry), drop = FALSE]
+  for (b in intersect(c("bl_cv", "bl_neuro", "bl_renal"), carry))
+    add[[b]] <- ifelse(add[[b]] == 1L, "Yes", "No")
+  merged <- merge(lot_long, add, by = "patient_id", all.x = TRUE, sort = FALSE)
+  merged[order(merged$patient_id, merged$lot_num), , drop = FALSE]
+}
+
+# =============================================================================
+# Warehouse source (production) -- fail-closed stub.
+# Implement the DBI/odbc projection of the validated apr_30_2026 outputs
+# (ELIG_COH_FINAL x LOT_LONG + per-criterion flags as columns) here; the
+# dashboard consumes it via load_flagged_cohort(source_flagged_cohort_warehouse).
+# =============================================================================
+source_flagged_cohort_warehouse <- function(...) {
+  stop("source_flagged_cohort_warehouse() is not implemented in this ",
+       "environment (no Databricks warehouse). Implement the DBI/odbc ",
+       "projection of ELIG_COH_FINAL x LOT_LONG + IE flags (see README / ",
+       "06_ndmm_dashboard.R) before using a production data path.",
+       call. = FALSE)
 }

@@ -99,6 +99,46 @@ ok(!is.null(rf) && sum(rf$N) == sum(df$n_lines >= 2L), "2L regimen freq totals r
 tr <- lot_transition_table(ll, df$patient_id, 1L)
 ok(!is.null(tr) && all(c("From","To","Freq") %in% names(tr)), "1L->2L transition table built")
 
+# ---- review fix #1: default filters are neutral ----
+neutral_pv <- list()
+for (id in registry_param_ids(REG)) {
+  crit <- REG[[id]]
+  neutral_pv[[id]] <- if (identical(crit$filter, "range"))
+    range(df[[crit$variable]], na.rm = TRUE)
+  else sort(unique(as.character(df[[crit$variable]])))
+}
+ov_np <- select_cohort(df, COH$overall$active_flags, neutral_pv,
+                       registry_param_ids(REG), REG)
+ok(ov_np$n_out == ov$n_out,
+   "neutral param filters do not shrink the cohort (Overall == flag-only)")
+ok(is.null(REG$flt_payer$default) && is.null(REG$flt_age$default),
+   "payer/age defaults are NULL (no silent Medicare / age>90 drop)")
+
+# ---- review fix #9: potential follow-up is death-independent ----
+early_death_kept <- sum(df$os_time < 3 & df$os_event == 1L & df$fu_potential_months >= 3)
+ok(early_death_kept > 0, "early deaths (<3mo) are retained by the >=3-mo cut")
+
+# ---- review fix: validate_lot_long ----
+ok(tryCatch({ validate_lot_long(ll); TRUE }, error = function(e) FALSE),
+   "synthetic LOT-long passes validation")
+bad_ll <- ll; bad_ll$os_event[1] <- 5L
+ok(tryCatch({ validate_lot_long(bad_ll); FALSE }, error = function(e) TRUE),
+   "validate_lot_long rejects a non-0/1 event")
+
+# ---- review fix #4: baseline strata carried onto LOT-long ----
+llx <- augment_lot_long(ll, df)
+ok(all(c("ti_te_age", "cci_band", "bl_cv") %in% names(llx)),
+   "augment_lot_long carries baseline strata forward for later-line KM")
+
+# ---- review fix #7: safety-event rates per PY ----
+sb <- safety_baseline_table(df)
+ok(!is.null(sb) && "Rate per 100 PY" %in% names(sb) && nrow(sb) == 6,
+   "safety_baseline_table reports 6 events with rate per 100 PY")
+
+# ---- review fix #2: warehouse source fails closed ----
+ok(tryCatch({ source_flagged_cohort_warehouse(); FALSE }, error = function(e) TRUE),
+   "source_flagged_cohort_warehouse() fails closed (not implemented)")
+
 # ---- protocol DQ checks ----
 dq <- protocol_dq_checks(ov$data)
 ok(any(grepl("TTE denominator", dq$Check)), "DQ reports the >=3-mo TTE denominator")
@@ -111,8 +151,9 @@ if (requireNamespace("survival", quietly = TRUE)) {
   }
   k <- km_fit(ov$data, "OS", strata = "ti_te_age", min_fu = 3)
   lm <- km_landmark(k)
-  ok(!is.null(lm) && all(paste0(c(6,9,12,18,24),"mo") %in% names(lm)),
-     "km_landmark has 6/9/12/18/24-mo columns")
+  ok(!is.null(lm) && all(c("Group","Month","AtRisk","Events","Censored") %in% names(lm)) &&
+       all(c(6,9,12,18,24) %in% lm$Month),
+     "km_landmark reports at-risk/events/censored at 6/9/12/18/24 months")
   ok(nrow(km_medians(k)) == 2, "stratified median table has one row per stratum")
   # per-LOT KM off the LOT-long slice
   k2 <- km_fit(lot_slice(ll, ov$data$patient_id, 2L), "TTD", min_fu = 3)
