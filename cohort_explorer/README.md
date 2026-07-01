@@ -113,8 +113,23 @@ COHORT_EXPLORER_LOTLONG=/path/lot_long.csv \
 FLAGGED <- load_flagged_cohort(source_flagged_cohort_warehouse)
 ```
 
-`validate_flagged_cohort()` **fails closed** if a contract column is missing or a
-flag is not strictly 0/1, so a malformed projection never silently mis-selects.
+`validate_flagged_cohort()` / `validate_lot_long()` **fail closed** if a contract
+column is missing, a flag is not strictly 0/1, or the LOT-long key is not unique,
+so a malformed projection never silently mis-selects.
+
+**Synthetic guardrails (fail-closed):** if a **real** `COHORT_EXPLORER_DATA` is
+supplied **without** a real `COHORT_EXPLORER_LOTLONG`, the app **refuses to
+start** (per-LOT / regimen / transition views would otherwise be fabricated)
+unless you explicitly set `ALLOW_SYNTHETIC_LOTLONG=TRUE`. Whenever any source is
+synthetic, a red **"SYNTHETIC DATA — not for analysis"** banner is shown. The
+production `source_flagged_cohort_warehouse()` is a **fail-closed stub** — it
+errors until the DBI/odbc projection of the `apr_30_2026` outputs is implemented;
+there is no silent synthetic fallback on the production path.
+
+**Filter neutrality:** IE/param filter defaults are **all-data** (all observed
+levels; full age range), so the initial Overall/NDMM cohort equals the flag-only
+selection — a filter only ever shrinks the cohort when the user changes it. A
+unit test asserts `Overall(initial) == Overall(flag-only)`.
 
 ## Status / caveats
 
@@ -125,6 +140,21 @@ flag is not strictly 0/1, so a malformed projection never silently mis-selects.
   Optum analogues here are *Region / Payer type / Race*. The accordion keeps the
   sample's category structure (incl. an empty **Labs** bucket) so lab criteria
   can be dropped in.
+- **Later-line strata** are 1L-baseline **carry-forward** (joined onto LOT-long
+  by `augment_lot_long()`); if a requested stratum is not available at the chosen
+  line the KM tab shows a **hard warning** rather than silently pooling.
+- **Suppression** is applied at the **stratum** level (protocol §6.5: "do not
+  report a stratum with <25 patients"), surfaced for categorical *and*
+  continuous selections. Cell-level suppression (small counts inside a
+  reportable stratum) is **not** applied pending confirmation of the exact
+  GSK/Optum output rule.
+- **≥3-mo follow-up** uses `fu_potential_months`, which the synthetic generator
+  builds as **administrative** potential follow-up (independent of death), so an
+  early death still counts as having ≥3-mo potential follow-up. The real
+  projection must define `fu_potential_months` the same way (index → min(study
+  end, disenrollment), not time-to-death).
+- **Transitions** cover **1L→2L→3L→4L** via the from-line selector; **4L is
+  start-only** (no 4L cohort, per protocol), so per-LOT *outcome* lines stop at 3L.
 - **Protocol alignment / known deferrals:** lab-value-defined comorbidity arms
   (hepatic/renal/ocular) use the ICD-code arm only — Optum lab values are
   sparse. The **SOC drug→category mappings and code lists** (protocol Annexes

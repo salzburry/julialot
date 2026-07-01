@@ -39,6 +39,8 @@ app_css <- function() {
     .ce-kpi .v { font-size:22px; font-weight:700; color:var(--accent); }
     .ce-kpi .l { font-size:12px; color:#666; }
     .ce-note { font-size:12px; color:#777; }
+    .ce-banner { background:#fde8e8; border:1px solid #f5b5b5; color:#7a1f1f;
+      padding:8px 16px; font-size:13px; }
     .st-PASS { color:#1a7f37; font-weight:600; }
     .st-WARN { color:#b58100; font-weight:600; }
     .st-FAIL { color:#c0392b; font-weight:700; }
@@ -70,11 +72,13 @@ kpi <- function(value, label) {
     } else if (identical(crit$filter, "range")) {
       rng <- range(df[[crit$variable]], na.rm = TRUE)
       lo <- floor(rng[1]); hi <- ceiling(rng[2])
-      # clamp the registry default into the data-derived bounds
-      val <- c(max(lo, crit$default[1]), min(hi, crit$default[2]))
+      # NULL default = full data range (neutral); else clamp into bounds
+      val <- if (is.null(crit$default)) c(lo, hi)
+             else c(max(lo, crit$default[1]), min(hi, crit$default[2]))
       sliderInput(iid, crit$label, min = lo, max = hi, value = val, step = 1)
     } else { # categorical
       lv <- sort(unique(as.character(df[[crit$variable]])))
+      # NULL default = all observed levels (neutral); else intersect
       sel <- if (is.null(crit$default)) lv else intersect(crit$default, lv)
       selectInput(iid, crit$label, choices = lv, selected = sel, multiple = TRUE)
     }

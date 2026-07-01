@@ -74,25 +74,28 @@ km_medians <- function(km) {
                UCL = round(s["0.95UCL"], 1), row.names = NULL, check.names = FALSE)
 }
 
-# Landmark survival probabilities (+95% CI) at protocol time points.
+# Landmark table at protocol time points: one row per (group, month) with
+# number at risk, cumulative events, cumulative censored, and the survival
+# estimate + 95% CI (survfit's default log-transform CI -- NOT labelled
+# Brookmeyer-Crowley, which applies to the median CI in km_medians()).
 km_landmark <- function(km, times = LANDMARK_MONTHS) {
   if (is.null(km)) return(NULL)
   s <- summary(km$fit, times = times, extend = TRUE)
-  cell <- function(p, lo, hi) sprintf("%.1f%% (%.1f-%.1f)", 100 * p, 100 * lo, 100 * hi)
-  if (is.null(s$strata)) {
-    vals <- cell(s$surv, s$lower, s$upper)
-    out <- as.data.frame(as.list(vals), check.names = FALSE)
-    names(out) <- paste0(s$time, "mo"); cbind(Group = "Overall", out)
-  } else {
-    grp <- sub("^grp=", "", as.character(s$strata))
-    parts <- lapply(split(seq_along(grp), grp), function(ix) {
-      r <- as.data.frame(as.list(cell(s$surv[ix], s$lower[ix], s$upper[ix])),
-                         check.names = FALSE)
-      names(r) <- paste0(s$time[ix], "mo"); r
-    })
-    data.frame(Group = names(parts), do.call(rbind, parts),
-               check.names = FALSE, row.names = NULL)
-  }
+  grp <- if (is.null(s$strata)) rep("Overall", length(s$time))
+         else sub("^grp=", "", as.character(s$strata))
+  d <- data.frame(Group = grp, Month = s$time, AtRisk = s$n.risk,
+                  ev = s$n.event, ce = s$n.censor,
+                  surv = s$surv, lo = s$lower, hi = s$upper,
+                  stringsAsFactors = FALSE)
+  d <- d[order(d$Group, d$Month), ]
+  d$Events   <- ave(d$ev, d$Group, FUN = cumsum)   # cumulative to each landmark
+  d$Censored <- ave(d$ce, d$Group, FUN = cumsum)
+  d$`Survival % (95% CI)` <- sprintf("%.1f (%.1f-%.1f)",
+                                     100 * d$surv, 100 * d$lo, 100 * d$hi)
+  out <- d[, c("Group", "Month", "AtRisk", "Events", "Censored",
+               "Survival % (95% CI)")]
+  rownames(out) <- NULL
+  out
 }
 
 # Plot a KM curve (base graphics). horizon = x-axis cap in months.

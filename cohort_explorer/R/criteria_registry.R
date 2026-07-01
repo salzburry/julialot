@@ -121,33 +121,38 @@ criteria_registry <- function() {
       type = "flag", keep_when = 1L),
 
     # --- live demographic / clinical filters (param-type) --------------------
+    # NOTE: param defaults are NULL = "all data" (no restriction). The UI
+    # resolves NULL to the full observed range / all levels, so the initial
+    # cohort equals the flag-only selection -- a filter only ever shrinks the
+    # cohort when the user intentionally changes it. Do NOT hard-code level
+    # lists here (that silently dropped Medicare / age>90 before).
     flt_age = list(
       id = "flt_age", label = "Age at index",
       desc = "Restrict to an age-at-index range.",
       polarity = "incl", phase = "pre_lot", ui_category = "Demographics",
       type = "param", variable = "age_index", filter = "range",
-      default = c(18L, 90L)),
+      default = NULL),
 
     flt_gender = list(
       id = "flt_gender", label = "Gender",
       desc = "Restrict to selected gender(s).",
       polarity = "incl", phase = "pre_lot", ui_category = "Demographics",
       type = "param", variable = "gender", filter = "categorical",
-      default = c("Female", "Male", "Unknown")),
+      default = NULL),
 
     flt_region = list(
       id = "flt_region", label = "Region",
       desc = "Restrict to selected US census region(s).",
       polarity = "incl", phase = "pre_lot", ui_category = "Demographics",
       type = "param", variable = "region", filter = "categorical",
-      default = c("Midwest", "Northeast", "South", "West", "Unknown")),
+      default = NULL),
 
     flt_payer = list(
       id = "flt_payer", label = "Payer / product type",
       desc = "Restrict to selected insurance product type(s).",
       polarity = "incl", phase = "pre_lot", ui_category = "Other",
       type = "param", variable = "payer_type", filter = "categorical",
-      default = c("Commercial", "Medicare Advantage")),
+      default = NULL),
 
     flt_soc = list(
       id = "flt_soc", label = "1L SOC regimen category",
