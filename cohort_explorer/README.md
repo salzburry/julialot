@@ -52,9 +52,10 @@ its outputs.
     plus *PFS\** clearly labelled **exploratory, non-protocol** (§6.9 states PFS
     could not be ascertained in claims). Outcomes recompute per selected
     **line of therapy**.
-  - *Regimen & Transitions* — regimen-frequency table per line + **1L→2L SOC
-    transition** table and a Sankey-style flow (commercial-insured only,
-    Exploratory Obj 3).
+  - *Regimen & Transitions* — regimen-frequency table per line, the full
+    **1L→2L→3L→4L treatment-pattern pathway Sankey** (commercial-insured only,
+    Exploratory Obj 3; patients who stop flow into an "End" node), and a
+    per-stage transition detail table.
   - *Cohort & Attrition* — sequential attrition waterfall.
   - *Validation & Checks* — LOT structural checks, NDMM protocol conformance,
     and **protocol data-quality / analysis-readiness** (≥3-mo TTE denominator,
@@ -80,7 +81,8 @@ cohort_explorer/
     lot_views.R               per-LOT slicing, regimen freq, SOC transitions/Sankey
     checks.R                  LOT structural + NDMM conformance + protocol DQ checks
     ui_helpers.R              theme + registry-driven control builders
-  tests/test_engine.R         base-R unit tests (36) for the engine + checks
+  tests/test_engine.R         base-R unit tests (51) for the engine + checks
+  tests/test_app.R            Shiny testServer tests (cohort reset, parity, ...)
 ```
 
 ## Reuse / extension
@@ -102,7 +104,9 @@ The dashboard reads a **flagged-cohort table** with the schema in
 COHORT_EXPLORER_DATA=/path/flagged_cohort.csv \
 COHORT_EXPLORER_LOTLONG=/path/lot_long.csv \
   Rscript -e 'shiny::runApp("cohort_explorer")'
-# (LOT-long is optional; if omitted it is synthesised from the cohort.)
+# With a REAL cohort, COHORT_EXPLORER_LOTLONG is REQUIRED (the app fails closed
+# otherwise; set ALLOW_SYNTHETIC_LOTLONG=TRUE only to intentionally demo with a
+# synthetic LOT-long). With the default synthetic cohort, LOT-long is synthesised.
 ```
 
 ```r

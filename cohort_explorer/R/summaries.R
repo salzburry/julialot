@@ -34,6 +34,7 @@ variable_dictionary <- function() {
     dx_year      = list(label = "Year of first MM diagnosis", type = "cat"),
     lot_init_year= list(label = "Year of 1L initiation", type = "cat"),
     soc_category = list(label = "1L SOC regimen category", type = "cat"),
+    lot_soc      = list(label = "Current-line SOC regimen", type = "cat"),
     ti_te_age    = list(label = "Transplant eligibility (age proxy)", type = "cat"),
     ti_te_age_cci= list(label = "Transplant eligibility (age or CCI proxy)", type = "cat"),
     ip_hosp_band = list(label = "Baseline inpatient hospitalisations", type = "cat"),

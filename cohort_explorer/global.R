@@ -43,11 +43,9 @@ if (!.cohort_synthetic && !.ll_ok && !.allow_synth_ll)
        call. = FALSE)
 
 .lotlong_synthetic <- !.ll_ok
-LOT_LONG <- if (.ll_ok) {
-  ll <- read.csv(.ll_src, stringsAsFactors = FALSE)
-  ll$lot_start_dt <- as.Date(ll$lot_start_dt); ll
-} else synth_lot_long(FLAGGED)
-validate_lot_long(LOT_LONG)
+# load_lot_long derives next_soc if absent and validates the full contract
+# (incl. payer_type / next_soc / contiguous 1L.. lines) before use.
+LOT_LONG <- load_lot_long(if (.ll_ok) .ll_src else "synthetic", cohort = FLAGGED)
 LOT_LONG <- augment_lot_long(LOT_LONG, FLAGGED)   # carry baseline strata forward
 
 # provenance banner (surfaced in the UI whenever any source is synthetic)
