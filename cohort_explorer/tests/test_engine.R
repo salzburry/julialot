@@ -148,15 +148,47 @@ pd <- lot_pathway_data(augment_lot_long(ll, df), df$patient_id, max_line = 4L)
 ok(!is.null(pd) && all(sort(unique(pd$trans$stage)) == 1:3),
    "lot_pathway_data yields the full 1L->2L->3L->4L journey")
 if (requireNamespace("survival", quietly = TRUE)) {
+  LM <- c(6, 9, 12, 18, 24)                     # all five protocol landmarks
   dd <- data.frame(t = ov$data$os_time, e = ov$data$os_event)
   dd <- dd[ov$data$fu_potential_months >= 3, ]
   fit <- survival::survfit(survival::Surv(t, e) ~ 1, data = dd)
-  ss <- summary(fit, times = c(6, 12, 24), extend = TRUE)
-  km_ev  <- cumsum(ss$n.event)
-  true_ev <- sapply(c(6, 12, 24), function(tt) sum(dd$t <= tt & dd$e == 1))
-  ok(all(km_ev == true_ev),
-     "landmark cumulative events == ground truth (F6 implementation is correct)")
+  ss <- summary(fit, times = LM, extend = TRUE)
+  km_ev  <- cumsum(ss$n.event);  km_ce <- cumsum(ss$n.censor)
+  true_ev <- sapply(LM, function(tt) sum(dd$t <= tt & dd$e == 1))
+  true_ce <- sapply(LM, function(tt) sum(dd$t <= tt & dd$e == 0))
+  ok(all(km_ev == true_ev), "landmark cumulative EVENTS == ground truth (all 5)")
+  ok(all(km_ce == true_ce), "landmark cumulative CENSORED == ground truth (all 5)")
+  # stratified: per-group cumulative events match ground truth too
+  os_strat <- km_fit(ov$data, "OS", strata = "ti_te_age", min_fu = 3)
+  lmk <- km_landmark(os_strat)
+  ok(all(LM %in% lmk$Month) && all(c("AtRisk","Events","Censored") %in% names(lmk)) &&
+       length(unique(lmk$Group)) == 2,
+     "km_landmark: stratified, all 5 landmarks, with at-risk/events/censored")
 }
+
+# ---- review round 3: consistency + type-safety + coverage + count validation ----
+bad_next <- ll; bad_next$next_soc <- "WRONG"
+ok(tryCatch({ validate_lot_long(bad_next); FALSE }, error = function(e) TRUE),
+   "validate_lot_long rejects next_soc inconsistent with the SOC sequence")
+dbl_ln <- ll; dbl_ln$lot_num <- as.numeric(dbl_ln$lot_num)
+ok(tryCatch({ validate_lot_long(dbl_ln); TRUE }, error = function(e) FALSE),
+   "validate_lot_long accepts integer-VALUED numeric lot_num (DBI/CSV type-safe)")
+frac_ln <- ll; frac_ln$lot_num[1] <- 1.5
+ok(tryCatch({ validate_lot_long(frac_ln); FALSE }, error = function(e) TRUE),
+   "validate_lot_long still rejects a non-integer lot_num")
+bad_cnt <- df; bad_cnt$n_cv[1] <- -1L
+ok(tryCatch({ validate_flagged_cohort(bad_cnt); FALSE }, error = function(e) TRUE),
+   "validate_flagged_cohort rejects a negative safety count")
+bad_py <- df; bad_py$baseline_py[1] <- 0
+ok(tryCatch({ validate_flagged_cohort(bad_py); FALSE }, error = function(e) TRUE),
+   "validate_flagged_cohort rejects non-positive baseline_py")
+ll_gap <- ll[!(ll$patient_id %in% df$patient_id[1:5]), ]
+ok(tryCatch({ load_lot_long(function() ll_gap, cohort = df); FALSE },
+            error = function(e) TRUE),
+   "load_lot_long rejects LOT-long missing flagged patients (no silent undercount)")
+llx2 <- augment_lot_long(ll, df)
+ok(all(c("age_ge70","ip_hosp_band","bl_hepatic","soc_category") %in% names(llx2)),
+   "augment carries ALL advertised strata onto LOT-long (no silent 2L/3L gaps)")
 
 # ---- review fix #7: safety-event rates per PY ----
 sb <- safety_baseline_table(df)
