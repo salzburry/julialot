@@ -56,15 +56,16 @@ main_tabs <- c(
     tabPanel("Regimen & Transitions",
       br(),
       div(class = "ce-note",
-          "Regimen frequency for the selected Line of Therapy, and per-line SOC ",
-          "transitions (commercial-insured only, per protocol Exploratory Obj 3). ",
-          "Choose the transition (1L->2L, 2L->3L, 3L->4L) below."),
+          "Regimen frequency for the selected Line of Therapy; the full 1L->4L ",
+          "treatment-pattern pathway (commercial-insured only, Exploratory ",
+          "Obj 3; patients who stop flow into 'End'); and a per-stage detail table."),
       h4(textOutput("reg_title")), tableOutput("reg_freq"),
-      fluidRow(column(4, selectInput("trans_from", "Transition (from line)",
+      h4("1L -> 4L treatment pathway (commercial only)"),
+      plotOutput("sankey", height = "460px"),
+      fluidRow(column(5, selectInput("trans_from", "Transition detail (from line)",
                     choices = c("1L -> 2L" = 1L, "2L -> 3L" = 2L, "3L -> 4L" = 3L),
                     selected = 1L))),
-      h4(textOutput("trans_title")),
-      plotOutput("sankey", height = "420px"), tableOutput("trans_tbl")),
+      h4(textOutput("trans_title")), tableOutput("trans_tbl")),
 
     tabPanel("Cohort & Attrition",
       br(), h4("Sequential cohort attrition"),
@@ -294,16 +295,18 @@ server <- function(input, output, session) {
     rf <- regimen_frequency(LOT_LONG, selected()$data$patient_id, as.integer(input$lot))
     if (is.null(rf)) data.frame(Note = "No patients reach this line.") else rf
   }, striped = TRUE, bordered = TRUE)
+  # full 1L->4L patient-journey pathway (Sankey)
+  output$sankey <- renderPlot(
+    lot_pathway_sankey(lot_pathway_data(LOT_LONG, selected()$data$patient_id,
+                                        max_line = 4L)))
+  # per-stage transition detail table (from-line selectable)
   output$trans_title <- renderText(
-    sprintf("%dL -> %dL SOC transitions (commercial only)",
+    sprintf("%dL -> %dL SOC transition detail (commercial only)",
             as.integer(input$trans_from), as.integer(input$trans_from) + 1L))
   trans <- reactive(lot_transition_table(LOT_LONG, selected()$data$patient_id,
                                          as.integer(input$trans_from)))
-  output$sankey <- renderPlot(sankey_plot(trans(),
-    title = sprintf("%dL -> %dL SOC transitions (commercial only)",
-                    as.integer(input$trans_from), as.integer(input$trans_from) + 1L)))
   output$trans_tbl <- renderTable({
-    t <- trans(); if (is.null(t)) data.frame(Note = "No transitions.") else t
+    t <- trans(); if (is.null(t)) data.frame(Note = "No transitions at this stage.") else t
   }, striped = TRUE, bordered = TRUE)
 
   # ----- Attrition -----
@@ -323,7 +326,7 @@ server <- function(input, output, session) {
   # ----- Validation & Checks -----
   lot_tbl  <- reactive(lot_checks(selected()$data, MAX_LOT))
   ndmm_tbl <- reactive(ndmm_protocol_checks(selected()$data,
-                          isolate(gather_selection())$active_flags, REG))
+                          active_state()$active_flags, REG))
   dq_tbl   <- reactive(protocol_dq_checks(selected()$data,
                           min_fu = if (isTRUE(input$restrict_fu)) MIN_FU_MONTHS else 3L))
   output$chk_headline_v <- renderText(

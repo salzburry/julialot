@@ -71,6 +71,9 @@ add_derived_cols <- function(df) {
   band4 <- function(x) { b <- as.character(pmin(x, 4L)); b[x >= 4L] <- "4+"; b }
   df$ip_hosp_band <- band4(df$ip_hosp_count)
   df$er_visit_band <- band4(df$er_visit_count)
+  # current-line SOC alias so one stratum ("lot_soc") works at BOTH the
+  # patient level (1L = soc_category) and later lines (LOT-long carries lot_soc)
+  df$lot_soc <- df$soc_category
   df
 }
 
@@ -260,13 +263,17 @@ synth_lot_long <- function(cohort, seed = 43L) {
     for (l in seq_len(nl)) {
       soc <- if (l == 1L) cohort$soc_category[i]
              else sample(later, 1, prob = c(0.22, 0.16, 0.10, 0.10, 0.10, 0.18, 0.14))
-      # per-line time-to-event (months, from this line's start)
-      ttd_t <- round(pmax(0.3, rgamma(1, 2, scale = 6)), 1)
+      # per-line ADMINISTRATIVE potential follow-up (death-independent), then
+      # OS = min(latent death, potential follow-up) -- same semantics as the
+      # patient level, so the >=3-mo TTE restriction retains early deaths.
+      fu_pot <- round(pmax(1, rgamma(1, shape = 2, scale = 20)), 1)
+      latent_death <- pmax(0.2, rgamma(1, 2, scale = 18))
+      os_t <- round(min(latent_death, fu_pot), 1)
+      os_e <- as.integer(latent_death <= fu_pot)
+      ttd_t <- round(pmax(0.3, min(os_t, rgamma(1, 2, scale = 6))), 1)
       ttd_e <- as.integer(runif(1) < 0.7)
-      ttnt_t <- round(ttd_t + rexp(1, 1 / 6), 1)
+      ttnt_t <- round(min(fu_pot, ttd_t + rexp(1, 1 / 6)), 1)
       ttnt_e <- as.integer(l < nl)              # next line observed iff one exists
-      os_t <- round(pmax(ttd_t, rgamma(1, 2, scale = 18)), 1)
-      os_e <- as.integer(runif(1) < 0.42)
       rows[[length(rows) + 1L]] <- data.frame(
         patient_id = pid, lot_num = l, lot_label = paste0(l, "L"),
         lot_start_dt = start, lot_soc = soc,
@@ -274,7 +281,7 @@ synth_lot_long <- function(cohort, seed = 43L) {
         os_time = os_t, os_event = os_e,
         ttd_time = ttd_t, ttd_event = ttd_e,
         ttnt_time = ttnt_t, ttnt_event = ttnt_e,
-        fu_potential_months = os_t,
+        fu_potential_months = fu_pot,
         stringsAsFactors = FALSE)
       start <- start + round(ttnt_t * 30.44)    # next line begins after TTNT
     }
@@ -290,10 +297,22 @@ synth_lot_long <- function(cohort, seed = 43L) {
 }
 
 # ---- LOT-long contract + validation -----------------------------------------
+# Required set = EVERY column the downstream views (KM per-LOT, regimen freq,
+# transition/Sankey) actually consume -- incl. payer_type and next_soc, whose
+# absence used to pass validation and then crash the transition tab.
 LOT_LONG_REQUIRED_COLS <- c(
-  "patient_id", "lot_num", "lot_start_dt", "lot_soc",
+  "patient_id", "lot_num", "lot_start_dt", "lot_soc", "next_soc", "payer_type",
   "os_time", "os_event", "ttd_time", "ttd_event",
   "ttnt_time", "ttnt_event", "fu_potential_months")
+
+# Derive next_soc (next line's SOC; NA on the last observed line) if a supplied
+# table lacks it -- so a real projection without the column still works.
+derive_next_soc <- function(ll) {
+  ll <- ll[order(ll$patient_id, ll$lot_num), ]
+  ll$next_soc <- ave(ll$lot_soc, ll$patient_id,
+                     FUN = function(s) c(s[-1], NA_character_))
+  ll
+}
 
 validate_lot_long <- function(ll) {
   stopifnot(is.data.frame(ll))
@@ -310,13 +329,30 @@ validate_lot_long <- function(ll) {
   for (t in c("os_time", "ttd_time", "ttnt_time", "fu_potential_months"))
     if (any(ll[[t]] < 0, na.rm = TRUE))
       stop("LOT-long '", t, "' has negative values.", call. = FALSE)
-  # within patient: lines ordered and start dates non-decreasing
+  # within patient: line 1 present, lot_num contiguous from 1, start dates
+  # non-decreasing (downstream code assumes a well-formed line sequence)
   o <- ll[order(ll$patient_id, ll$lot_num), ]
-  bad_order <- tapply(as.numeric(o$lot_start_dt), o$patient_id,
-                      function(d) any(diff(d) < 0))
-  if (any(unlist(bad_order), na.rm = TRUE))
-    stop("LOT-long lot_start_dt decreases within a patient.", call. = FALSE)
+  by_pt <- split(o, o$patient_id)
+  bad_seq <- vapply(by_pt, function(p)
+    p$lot_num[1] != 1L || !identical(p$lot_num, seq_len(nrow(p))) ||
+      any(diff(as.numeric(p$lot_start_dt)) < 0), logical(1))
+  if (any(bad_seq))
+    stop(sum(bad_seq), " patient(s) have a non-contiguous / mis-ordered LOT ",
+         "sequence (must start at 1L, be contiguous, dates non-decreasing).",
+         call. = FALSE)
   invisible(ll)
+}
+
+# Loader: read (CSV / synth / function), derive next_soc if absent, validate.
+load_lot_long <- function(source, cohort = NULL, ...) {
+  ll <- if (is.function(source)) source(...)
+        else if (identical(source, "synthetic")) synth_lot_long(cohort, ...)
+        else if (is.character(source) && file.exists(source)) {
+          x <- read.csv(source, stringsAsFactors = FALSE)
+          x$lot_start_dt <- as.Date(x$lot_start_dt); x
+        } else stop("load_lot_long: unknown source.", call. = FALSE)
+  if (!"next_soc" %in% names(ll)) ll <- derive_next_soc(ll)
+  validate_lot_long(ll)
 }
 
 # Carry patient-level BASELINE strata onto LOT-long so later-line (2L/3L) KM

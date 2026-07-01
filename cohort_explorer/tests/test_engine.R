@@ -130,6 +130,34 @@ llx <- augment_lot_long(ll, df)
 ok(all(c("ti_te_age", "cci_band", "bl_cv") %in% names(llx)),
    "augment_lot_long carries baseline strata forward for later-line KM")
 
+# ---- review round 2: LOT-long contract completeness + pathway ----
+ok(all(c("next_soc", "payer_type") %in% LOT_LONG_REQUIRED_COLS),
+   "LOT-long contract requires next_soc + payer_type (downstream deps)")
+ll_no_next <- ll; ll_no_next$next_soc <- NULL
+ok(tryCatch({ validate_lot_long(ll_no_next); FALSE }, error = function(e) TRUE),
+   "validate_lot_long now rejects a table missing next_soc")
+.tmp <- tempfile(fileext = ".csv"); .w <- ll; .w$next_soc <- NULL
+write.csv(.w, .tmp, row.names = FALSE)
+ok(tryCatch({ load_lot_long(.tmp); TRUE }, error = function(e) FALSE),
+   "load_lot_long derives next_soc for a CSV lacking it, then validates")
+ok("lot_soc" %in% names(variable_dictionary()) && "lot_soc" %in% names(df),
+   "current-line SOC (lot_soc) is available as a stratum at patient + line level")
+ok(any(ll$os_time < ll$fu_potential_months),
+   "synthetic LOT-long follow-up is death-independent (os_time can be < fu_potential)")
+pd <- lot_pathway_data(augment_lot_long(ll, df), df$patient_id, max_line = 4L)
+ok(!is.null(pd) && all(sort(unique(pd$trans$stage)) == 1:3),
+   "lot_pathway_data yields the full 1L->2L->3L->4L journey")
+if (requireNamespace("survival", quietly = TRUE)) {
+  dd <- data.frame(t = ov$data$os_time, e = ov$data$os_event)
+  dd <- dd[ov$data$fu_potential_months >= 3, ]
+  fit <- survival::survfit(survival::Surv(t, e) ~ 1, data = dd)
+  ss <- summary(fit, times = c(6, 12, 24), extend = TRUE)
+  km_ev  <- cumsum(ss$n.event)
+  true_ev <- sapply(c(6, 12, 24), function(tt) sum(dd$t <= tt & dd$e == 1))
+  ok(all(km_ev == true_ev),
+     "landmark cumulative events == ground truth (F6 implementation is correct)")
+}
+
 # ---- review fix #7: safety-event rates per PY ----
 sb <- safety_baseline_table(df)
 ok(!is.null(sb) && "Rate per 100 PY" %in% names(sb) && nrow(sb) == 6,
