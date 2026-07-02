@@ -81,8 +81,9 @@ cohort_explorer/
     lot_views.R               per-LOT slicing, regimen freq, SOC transitions/Sankey
     checks.R                  LOT structural + NDMM conformance + protocol DQ checks
     ui_helpers.R              theme + registry-driven control builders
-  tests/test_engine.R         base-R unit tests (51) for the engine + checks
-  tests/test_app.R            Shiny testServer tests (cohort reset, parity, ...)
+  tests/test_engine.R         base-R unit tests (84) for the engine + checks
+  tests/test_app.R            Shiny testServer tests (10): cohort reset, parity,
+                              value-based landmark/safety/pathway, 2L no-crash
 ```
 
 ## Reuse / extension

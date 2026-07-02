@@ -278,5 +278,72 @@ if (requireNamespace("survival", quietly = TRUE)) {
   ok(!is.null(k2) && k2$n > 0, "per-LOT (2L) KM fits off the LOT-long slice")
 } else cat("SKIP: survival not installed — KM tests skipped\n")
 
+# ---- review round 6 (QC workflow): correctness + labels + runtime guards ----
+# F1 patient-level TTNT biconditional
+a1 <- df; a1$ttnt_event[which(a1$n_lines > 1L)[1]] <- 0L
+ok(tryCatch({ validate_flagged_cohort(a1); FALSE }, error = function(e) TRUE),
+   "validate_flagged_cohort rejects patient-level ttnt_event != (n_lines>1)")
+# F2 neutral categorical filter keeps NA rows
+b1 <- df; b1$region[1:5] <- NA
+fo <- select_cohort(b1, COH$overall$active_flags, list(), character(), REG)$n_out
+ne <- select_cohort(b1, COH$overall$active_flags, list(flt_region = cat_levels(b1$region)),
+                    "flt_region", REG)$n_out
+ok(fo == ne, "a neutral categorical filter does not drop NA-valued rows")
+# F4 lot_checks death-date rule matches the validator (death_dt with os_event=0 OK)
+e1 <- df; j <- which(e1$os_event == 0)[1]; e1$death_dt[j] <- e1$lot1_start_dt[j] + 100
+lc1 <- lot_checks(e1, 5L)
+ok(tryCatch({ validate_flagged_cohort(e1); TRUE }, error = function(e) FALSE) &&
+   lc1$Status[grepl("Death", lc1$Check)] == "PASS",
+   "lot_checks does not FAIL a death_dt+os_event=0 state the validator allows")
+# F5 ttnt_time reconciled with next-line gap
+g1 <- ll; m1 <- names(which(table(ll$patient_id) >= 2))[1]
+g1$ttnt_time[g1$patient_id == m1 & g1$lot_num == 1L] <- 0.3
+ok(tryCatch({ validate_lot_long(g1); FALSE }, error = function(e) TRUE),
+   "validate_lot_long rejects ttnt_time inconsistent (>2mo) with the next-line gap")
+
+if (requireNamespace("survival", quietly = TRUE)) {
+  # QC1 single-surviving stratum keeps the real group label, never 'Overall'
+  d2 <- df[1:400, ]; d2$grp2 <- "BIG"; d2$grp2[1:10] <- "TINY"
+  km2 <- km_fit(d2, "OS", strata = "grp2")
+  ok(km_medians(km2)$Group[1] == "BIG" && km_landmark(km2)$Group[1] == "BIG",
+     "single-surviving stratum is labelled by its real name, not 'Overall'")
+  # F3 NA stratum becomes an explicit (Missing) group, not dropped
+  d3 <- df; d3$gender[1:80] <- NA; k3 <- km_fit(d3, "OS", strata = "gender", min_fu = 3)
+  ok("(Missing)" %in% k3$groups, "km_fit keeps NA stratum as an explicit (Missing) group")
+  # QC2 table renderers do not crash on the app's 1L-only sentinel (empty list)
+  sent <- structure(list(), msg = "1L only")
+  ok(is.null(km_medians(sent)) && is.null(km_landmark(sent)) && is.null(km_risk_table(sent)),
+     "km_medians/landmark/risk return NULL on the 1L-only sentinel (no 2L/3L crash)")
+  # QC8 binary strata render Yes/No consistently
+  kbin <- km_fit(df, "OS", strata = "bl_cv")
+  scb  <- summarize_categorical(df, "gender", strata = "bl_cv")
+  ok(all(c("Yes", "No") %in% kbin$groups) && any(grepl("Yes", names(scb))),
+     "binary strata are labelled Yes/No in km and summaries (not 0/1)")
+  # QC11 Attrition landmark never prints a malformed 'NA-NA' CI
+  lmk_at <- km_landmark(km_fit(df, "Attrition"))
+  ok(!any(grepl("NA-NA", lmk_at[["Survival % (95% CI)"]])),
+     "Attrition landmark CI is blanked (no 'NA-NA') beyond the last event time")
+}
+
+# QC5 'Follow-up from diagnosis' is OBSERVED (dx->1L + observed OS), not potential
+ok(isTRUE(all.equal(df$fu_from_dx_months, round(df$dx_to_1l_months + df$os_time, 1))),
+   "fu_from_dx_months is observed follow-up, not administrative potential")
+# QC9 HCRU counts are summarizable as continuous
+sc9 <- summarize_continuous(df, c("ip_hosp_count", "er_visit_count"), NULL, VARDICT)
+ok(!is.null(sc9) && nrow(sc9) == 2 && "Median" %in% names(sc9),
+   "HCRU counts (hosp/ER) are available as continuous Table-1 stats")
+# QC12 commercial-only transitions are strictly fewer than all-payer
+tr_c <- lot_transition_table(ll, df$patient_id, 1L, commercial_only = TRUE)
+tr_a <- lot_transition_table(ll, df$patient_id, 1L, commercial_only = FALSE)
+ok(sum(tr_c$Freq) < sum(tr_a$Freq) &&
+   sum(tr_c$Freq) == sum(df$payer_type == "Commercial"),
+   "commercial-only transition total < all-payer and equals the commercial-patient count")
+# QC13 continuous <25 suppression + suppressed_strata are exercised
+tinyc <- df; tinyc$region[1:12] <- "TINYREG"; tinyc <- tinyc[c(1:12, 200:nrow(tinyc)), ]
+sk13 <- summarize_continuous(tinyc, "age_index", strata = "region", VARDICT)
+ok(!("TINYREG" %in% sk13$Group) && "TINYREG" %in% attr(sk13, "suppressed") &&
+   "TINYREG" %in% suppressed_strata(tinyc, "region"),
+   "continuous <25 stratum is suppressed and reported by suppressed_strata()")
+
 cat(sprintf("\n%d passed, %d failed\n", .n_pass, .n_fail))
 if (.n_fail > 0) quit(status = 1L)

@@ -46,22 +46,36 @@ km_fit <- function(df, endpoint, strata = NULL, ep_dict = endpoint_dictionary(),
   d     <- data.frame(time = time[ok], event = event[ok])
 
   use_strata <- !is.null(strata) && nzchar(strata) && strata %in% names(df)
+  suppressed <- character(0); groups <- NULL
   if (use_strata) {
-    d$grp <- as.character(df[[strata]][ok])
-    # drop <25-patient strata (protocol §6.5)
-    keep_lv <- names(which(table(d$grp) >= 25))
+    # label strata by declared type: binary -> Yes/No, NA -> (Missing), so a
+    # missing value becomes its own group (not silently dropped) and labels
+    # match the summaries + later-line (augmented) rendering of the same field.
+    d$grp <- .as_category(df[[strata]][ok], var_type(strata))
+    tb <- table(d$grp)
+    keep_lv <- names(tb)[tb >= 25]                     # <25 suppression (§6.5)
+    suppressed <- setdiff(names(tb), keep_lv)
     d <- d[d$grp %in% keep_lv, , drop = FALSE]
     if (!nrow(d)) return(NULL)
+    groups <- sort(unique(d$grp))
   }
   surv <- survival::Surv(d$time, d$event)
   fit  <- if (use_strata) survival::survfit(surv ~ grp, data = d)
           else survival::survfit(surv ~ 1, data = d)
-  list(fit = fit, ep = ep, strata = if (use_strata) strata else NULL, n = nrow(d))
+  list(fit = fit, ep = ep, strata = if (use_strata) strata else NULL,
+       n = nrow(d), groups = groups, suppressed = suppressed)
+}
+
+# label a stratified/collapsed group correctly: when a single level survives
+# suppression, survfit collapses to an unstratified fit -- use the real
+# surviving group name, never mislabel a filtered subset as "Overall".
+.km_group_label <- function(km) {
+  if (!is.null(km$strata) && length(km$groups) == 1L) km$groups[1] else "Overall"
 }
 
 # Median survival (+ 95% CI) per stratum.
 km_medians <- function(km) {
-  if (is.null(km)) return(NULL)
+  if (is.null(km) || !length(km)) return(NULL)
   s <- summary(km$fit)$table
   if (is.matrix(s))
     data.frame(Group = sub("^grp=", "", rownames(s)), N = s[, "records"],
@@ -69,7 +83,7 @@ km_medians <- function(km) {
                LCL = round(s[, "0.95LCL"], 1), UCL = round(s[, "0.95UCL"], 1),
                row.names = NULL, check.names = FALSE)
   else
-    data.frame(Group = "Overall", N = s["records"], Events = s["events"],
+    data.frame(Group = .km_group_label(km), N = s["records"], Events = s["events"],
                Median = round(s["median"], 1), LCL = round(s["0.95LCL"], 1),
                UCL = round(s["0.95UCL"], 1), row.names = NULL, check.names = FALSE)
 }
@@ -79,9 +93,9 @@ km_medians <- function(km) {
 # estimate + 95% CI (survfit's default log-transform CI -- NOT labelled
 # Brookmeyer-Crowley, which applies to the median CI in km_medians()).
 km_landmark <- function(km, times = LANDMARK_MONTHS) {
-  if (is.null(km)) return(NULL)
+  if (is.null(km) || !length(km)) return(NULL)
   s <- summary(km$fit, times = times, extend = TRUE)
-  grp <- if (is.null(s$strata)) rep("Overall", length(s$time))
+  grp <- if (is.null(s$strata)) rep(.km_group_label(km), length(s$time))
          else sub("^grp=", "", as.character(s$strata))
   d <- data.frame(Group = grp, Month = s$time, AtRisk = s$n.risk,
                   ev = s$n.event, ce = s$n.censor,
@@ -90,8 +104,12 @@ km_landmark <- function(km, times = LANDMARK_MONTHS) {
   d <- d[order(d$Group, d$Month), ]
   d$Events   <- ave(d$ev, d$Group, FUN = cumsum)   # cumulative to each landmark
   d$Censored <- ave(d$ce, d$Group, FUN = cumsum)
-  d$`Survival % (95% CI)` <- sprintf("%.1f (%.1f-%.1f)",
-                                     100 * d$surv, 100 * d$lo, 100 * d$hi)
+  # blank the CI when it is undefined (e.g. landmark beyond the last event, as
+  # for Attrition past max dx->1L) instead of printing "0.0 (NA-NA)"
+  d$`Survival % (95% CI)` <- ifelse(
+    is.na(d$lo) | is.na(d$hi),
+    sprintf("%.1f", 100 * d$surv),
+    sprintf("%.1f (%.1f-%.1f)", 100 * d$surv, 100 * d$lo, 100 * d$hi))
   out <- d[, c("Group", "Month", "AtRisk", "Events", "Censored",
                "Survival % (95% CI)")]
   rownames(out) <- NULL
@@ -100,8 +118,9 @@ km_landmark <- function(km, times = LANDMARK_MONTHS) {
 
 # Plot a KM curve (base graphics). horizon = x-axis cap in months.
 km_plot <- function(km, horizon = 60) {
-  if (is.null(km)) { plot.new()
-    text(0.5, 0.5, "No data for the current cohort / follow-up restriction."); return(invisible()) }
+  if (is.null(km) || !length(km)) { plot.new()
+    text(0.5, 0.5, if (!is.null(attr(km, "msg"))) attr(km, "msg")
+         else "No data for the current cohort / follow-up restriction."); return(invisible()) }
   cols <- c("#E8480C", "#1F8A8A", "#6A4C93", "#3A6EA5", "#B5179E", "#666666",
             "#2E8B57", "#D62828")
   op <- par(mar = c(4.5, 4.5, 2.5, 1)); on.exit(par(op))
@@ -109,22 +128,29 @@ km_plot <- function(km, horizon = 60) {
        conf.int = FALSE, mark.time = TRUE, xlab = "Months since index",
        ylab = "Probability", main = km$ep$label)
   grid(col = "grey90")
+  # legend keyed on the FITTED strata (multi-level); for a single surviving
+  # level survfit has no $strata, so label it with the real group name.
   if (!is.null(km$strata)) {
-    labs <- sub("^grp=", "", names(km$fit$strata))
-    legend("topright", legend = labs, col = cols[seq_along(labs)], lwd = 2,
-           bty = "n", title = km$strata, cex = 0.9)
+    labs <- if (!is.null(km$fit$strata)) sub("^grp=", "", names(km$fit$strata))
+            else km$groups
+    if (length(labs))
+      legend("topright", legend = labs, col = cols[seq_along(labs)], lwd = 2,
+             bty = "n", title = km$strata, cex = 0.9)
   }
+  if (length(km$suppressed))
+    mtext(paste0("Suppressed (<25): ", paste(km$suppressed, collapse = ", ")),
+          side = 1, line = 3, cex = 0.75, col = "#b58100")
   invisible()
 }
 
 # Risk table: # at risk at evenly spaced horizon ticks.
 km_risk_table <- function(km, horizon = 60, n_ticks = 6) {
-  if (is.null(km)) return(NULL)
+  if (is.null(km) || !length(km)) return(NULL)
   times <- round(seq(0, horizon, length.out = n_ticks))
   s <- summary(km$fit, times = times, extend = TRUE)
   if (is.null(s$strata)) {
     risk <- data.frame(t(s$n.risk), check.names = FALSE); names(risk) <- times
-    data.frame(Group = "Overall", risk, check.names = FALSE, stringsAsFactors = FALSE)
+    data.frame(Group = .km_group_label(km), risk, check.names = FALSE, stringsAsFactors = FALSE)
   } else {
     grp <- sub("^grp=", "", as.character(s$strata))
     parts <- lapply(split(seq_along(grp), grp), function(ix) {

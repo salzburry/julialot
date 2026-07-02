@@ -44,7 +44,7 @@ main_tabs <- c(
       textOutput("pc_suppressed"),
       h5("Categorical variables"), tableOutput("pc_cat"),
       h5("Continuous variables"),  tableOutput("pc_cont"),
-      h5("Baseline safety events of interest (n / % + rate per patient-year)"),
+      h5("Baseline safety events of interest (n / % + rate per 100 patient-years)"),
       tableOutput("pc_safety"))
   ),
   if (HAS_SURVIVAL)
@@ -217,14 +217,18 @@ server <- function(input, output, session) {
   })
 
   # ----- Patient Characteristics -----
+  # capture the cohort + label at Apply time so the header N, safety table, and
+  # cat/cont tables ALL describe the same snapshot (they used to disagree: the
+  # header/safety read selected() live while the tables were gated on Apply).
   pc <- eventReactive(input$pc_apply, {
-    list(df = selected()$data, vars = input$pc_vars, strata = input$pc_strata)
+    list(df = selected()$data, vars = input$pc_vars, strata = input$pc_strata,
+         label = COHORTS[[cohort_choice()]]$label)
   }, ignoreNULL = FALSE)
 
   output$pc_title <- renderText({
-    s <- selected()
+    p <- pc()
     sprintf("Summary statistics — %s (N = %s)",
-            COHORTS[[cohort_choice()]]$label, format(s$n_out, big.mark = ","))
+            p$label, format(nrow(p$df), big.mark = ","))
   })
   output$pc_suppressed <- renderText({
     p <- pc(); req(nrow(p$df) > 0)
@@ -243,7 +247,7 @@ server <- function(input, output, session) {
     if (is.null(res)) data.frame(Note = "Select 1+ continuous variable.") else res
   }, striped = TRUE, bordered = TRUE, na = "")
   output$pc_safety <- renderTable({
-    s <- selected(); req(nrow(s$data) > 0); safety_baseline_table(s$data)
+    p <- pc(); req(nrow(p$df) > 0); safety_baseline_table(p$df)
   }, striped = TRUE, bordered = TRUE, na = "")
 
   # data source for a KM endpoint at the chosen line

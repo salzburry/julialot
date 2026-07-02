@@ -146,6 +146,12 @@ validate_flagged_cohort <- function(df, reg = criteria_registry()) {
   if (all(c("os_event", "death_dt") %in% names(df)) &&
       any(df$os_event == 1L & is.na(df$death_dt)))
     stop("os_event=1 requires a non-missing death_dt.", call. = FALSE)
+  # patient-level TTNT biconditional (mirrors the LOT-long one): a next-treatment
+  # event iff the patient reached >=2 lines -- else a treated 2L+ patient is
+  # miscensored on the 1L TTNT curve.
+  if (all(c("ttnt_event", "n_lines") %in% names(df)) &&
+      any(df$ttnt_event != as.integer(df$n_lines > 1L)))
+    stop("ttnt_event must equal (n_lines > 1) at the patient level.", call. = FALSE)
 
   # ---- required dates present & ordered ---------------------------------------
   for (d in c("index_date", "lot1_start_dt"))
@@ -255,7 +261,9 @@ synth_flagged_cohort <- function(n = 4000L, seed = 42L, soc_levels = NULL) {
     (1 - pmin(cci, 6) * 0.03))
   os_time  <- round(pmin(latent_death, fu_potential_months), 1)
   os_event <- as.integer(latent_death <= fu_potential_months)
-  fu_from_dx_months <- round(dx_to_1l_months + fu_potential_months, 1)
+  # OBSERVED follow-up from diagnosis (dx -> death/censor), not administrative
+  # potential follow-up -- this is the protocol Table-1 characteristic.
+  fu_from_dx_months <- round(dx_to_1l_months + os_time, 1)
 
   death_dt <- as.Date(rep(NA_integer_, n), origin = "1970-01-01")
   ev <- os_event == 1L
@@ -441,6 +449,17 @@ validate_lot_long <- function(ll) {
     stop(n_bad, " LOT-long row(s) have ttnt_event inconsistent with the next ",
          "line (must be 1 iff a subsequent line exists, 0 on the last line).",
          call. = FALSE)
+  # ttnt_time on a non-terminal line must reconcile with the actual gap to the
+  # next line's start (TTNT = time to next treatment). Generous tolerance
+  # absorbs day-rounding / minor definitional slack; catches gross mismatch.
+  next_start <- ave(as.numeric(o$lot_start_dt), o$patient_id,
+                    FUN = function(x) c(x[-1], NA_real_))
+  gap_m <- (next_start - as.numeric(o$lot_start_dt)) / 30.44
+  recon <- next_exists & !is.na(gap_m)
+  n_gap <- sum(abs(o$ttnt_time[recon] - gap_m[recon]) > 2)   # tolerance: 2 months
+  if (n_gap)
+    stop(n_gap, " LOT-long row(s) have ttnt_time inconsistent (>2mo) with the ",
+         "gap between this line and the next line's start date.", call. = FALSE)
   invisible(ll)
 }
 

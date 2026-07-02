@@ -38,9 +38,21 @@ isTRUE_vec <- function(x) vapply(x, isTRUE, logical(1))
   }
   if (identical(crit$filter, "categorical")) {
     if (length(val) == 0) return(rep(TRUE, nrow(df)))    # nothing selected = all
-    return(v %in% val)
+    # NA-safe: a missing value is its own "(Missing)" level, so a NEUTRAL filter
+    # (all levels incl "(Missing)" selected) never silently drops NA rows -- only
+    # an explicit deselect of "(Missing)" removes them. (v %in% val alone is
+    # FALSE for NA and would quietly shrink the cohort with no filter applied.)
+    cats <- as.character(v); cats[is.na(cats)] <- "(Missing)"
+    return(cats %in% val)
   }
   stop("unknown filter type for ", crit$id, call. = FALSE)
+}
+
+# categorical levels for a variable, with NA rendered as an explicit
+# "(Missing)" level (used by the UI control + neutral defaults so NA is
+# selectable and never dropped by a neutral filter).
+cat_levels <- function(v) {
+  l <- as.character(v); l[is.na(l)] <- "(Missing)"; sort(unique(l))
 }
 
 # Main entry: select a cohort.
@@ -101,5 +113,5 @@ param_levels <- function(df, crit_id, reg = criteria_registry()) {
   if (!identical(crit$type, "param")) return(NULL)
   v <- df[[crit$variable]]
   if (identical(crit$filter, "range")) return(range(v, na.rm = TRUE))
-  sort(unique(as.character(v)))
+  cat_levels(v)
 }

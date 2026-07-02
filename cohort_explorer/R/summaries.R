@@ -22,6 +22,8 @@ variable_dictionary <- function() {
     lot1_length      = list(label = "LOT1 length (days)", type = "cont"),
     n_lines          = list(label = "Number of lines", type = "cont"),
     ip_los_days      = list(label = "Baseline inpatient LOS (days)", type = "cont"),
+    ip_hosp_count    = list(label = "Baseline inpatient hospitalisations (n)", type = "cont"),
+    er_visit_count   = list(label = "Baseline ER visits (n)", type = "cont"),
     # ---- categorical (demographics) ----
     gender       = list(label = "Sex", type = "cat"),
     region       = list(label = "Region", type = "cat"),
@@ -69,9 +71,9 @@ var_type <- function(v, dict = variable_dictionary())
   groups <- list(Overall = rep(TRUE, nrow(df)))
   suppressed <- character(0)
   if (!is.null(strata) && nzchar(strata) && strata %in% names(df)) {
-    lv <- sort(unique(.as_category(df[[strata]], "cat")))
+    lv <- sort(unique(.as_category(df[[strata]], var_type(strata))))
     for (l in lv) {
-      sel <- .as_category(df[[strata]], "cat") == l
+      sel <- .as_category(df[[strata]], var_type(strata)) == l
       if (sum(sel) < min_n) { suppressed <- c(suppressed, l); next }
       groups[[l]] <- sel
     }
@@ -166,7 +168,7 @@ safety_baseline_table <- function(df) {
 # when only continuous variables are shown).
 suppressed_strata <- function(df, strata, min_n = SUPPRESS_MIN_N) {
   if (is.null(strata) || !nzchar(strata) || !strata %in% names(df)) return(character(0))
-  tb <- table(.as_category(df[[strata]], "cat"))
+  tb <- table(.as_category(df[[strata]], var_type(strata)))
   names(tb)[tb < min_n]
 }
 
