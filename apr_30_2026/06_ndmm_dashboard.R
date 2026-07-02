@@ -86,7 +86,7 @@ NDMM_PATIDS       <- "_ndmm_patids"
 NDMM_PREG_CODES          <- "_ndmm_preg_codes"
 NDMM_PREGNANCY_PATIDS    <- "_ndmm_pregnancy_patids"
 NDMM_STUDY_START         <- Sys.getenv("STUDY_START", unset = "2015-07-01")
-NDMM_PRE_LOT1_DAYS       <- 365L  # NDMM spec: 12-mo CE/baseline before 1L index date
+NDMM_PRE_LOT1_DAYS       <- as.integer(Sys.getenv("NDMM_PRE_LOT1_DAYS", unset = "365"))  # NDMM spec: 12-mo CE/baseline before 1L index date (env-configurable; default unchanged)
 
 # Tumor_group labels treated as NON-exclusionary for the NDMM
 # other-cancer filter ONLY (NDMM scope). These are plasma-cell /
