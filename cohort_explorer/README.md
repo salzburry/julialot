@@ -72,8 +72,9 @@ medical-condition flags (CV / neuro / renal) — protocol §6.2.3 / §6.3.3.
 
 **Movable thresholds / windows** (in-memory sliders over raw measures carried on
 the analytic cohort — no re-query): baseline-CE months, follow-up-CE months,
-year-of-diagnosis window, year-of-1L-initiation window, KM time horizon, and the
-≥N-month follow-up restriction. What is *runtime* (any threshold/covariate/group
+year-of-diagnosis window, year-of-1L-initiation window, KM time horizon, a
+**minimum-follow-up slider** (0–24 mo), and **editable KM landmark times**
+(comma-separated). What is *runtime* (any threshold/covariate/group
 over materialised columns) vs *build-time* (LOT-derivation params, a new
 claims-derived criterion, the SOC map, the superset window → re-materialise) is
 spelled out in **`ANALYTIC_COHORT.md`**.
@@ -93,10 +94,13 @@ cohort_explorer/
     lot_views.R               per-LOT slicing, regimen freq, SOC transitions/Sankey
     checks.R                  LOT structural + NDMM conformance + protocol DQ checks
     ui_helpers.R              theme + registry-driven control builders
-  tests/test_engine.R         base-R unit tests (95) for the engine + checks
-  tests/test_app.R            Shiny testServer tests (14): cohort reset, parity,
+  config/study_config.R       ONE study definition; study_config_to_env() maps
+                              it to the apr_30 pipeline env vars
+  config/emit_pipeline_env.R  emit that mapping as `export` lines for the build
+  tests/test_engine.R         base-R unit tests (101) for the engine + checks
+  tests/test_app.R            Shiny testServer tests (16): cohort reset, parity,
                               value-based landmark/safety/pathway, 2L no-crash,
-                              movable thresholds, Cox, A/B compare, Sankey config
+                              movable thresholds/landmarks, Cox, A/B, Sankey config
 ```
 
 ## Reuse / extension

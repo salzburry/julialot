@@ -26,6 +26,15 @@ endpoint_dictionary <- function() {
 LANDMARK_MONTHS <- c(6, 9, 12, 18, 24)   # protocol §6.7.2 survival probabilities
 MIN_FU_MONTHS   <- 3                      # protocol §6.7.2 potential-follow-up cut
 
+# parse a user "6, 9, 12" landmark string into a sorted positive numeric vector;
+# fall back to the protocol default on empty/garbage input (never errors).
+parse_landmark_months <- function(x, default = LANDMARK_MONTHS) {
+  if (is.null(x) || !nzchar(trimws(paste(x, collapse = "")))) return(default)
+  v <- suppressWarnings(as.numeric(trimws(strsplit(paste(x, collapse = ","), ",")[[1]])))
+  v <- sort(unique(v[!is.na(v) & v > 0]))
+  if (!length(v)) default else v
+}
+
 # Fit a KM curve. `min_fu` (months) applies the protocol >=3-mo potential
 # follow-up restriction when the cohort carries `fu_potential_months`.
 km_fit <- function(df, endpoint, strata = NULL, ep_dict = endpoint_dictionary(),

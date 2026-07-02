@@ -88,3 +88,42 @@ resolved_study_config <- function(cfg = study_config()) {
   cfg$max_lot       <- env_int("MAX_LOT", cfg$max_lot)
   cfg
 }
+
+# =============================================================================
+# study_config -> apr_30_2026 build mapping.
+# -----------------------------------------------------------------------------
+# apr_30's pipeline reads its knobs from env vars (config_lot.R / config_prompts.R).
+# This turns ONE study_config into the exact env var set the apr_30 run +
+# analytic-cohort materialisation consume, so a study is defined in one place and
+# flows to the (slow, warehouse) build. Keys with no apr_30 consumer today are
+# still emitted (marked) so they wire straight through once lifted (e.g. 06's
+# hard-coded NDMM_PRE_LOT1_DAYS = 365).
+# =============================================================================
+study_config_to_env <- function(cfg = resolved_study_config()) {
+  c(
+    STUDY_START                = cfg$study_start,
+    STUDY_END                  = cfg$study_end,
+    NDMM_LOT1_FROM             = cfg$lot1_from,
+    NDMM_PRE_LOT1_DAYS         = as.character(cfg$pre_lot1_days), # lift 06's 365
+    GAP_DAYS                   = as.character(cfg$ce_gap_days),
+    INDUCTION_WINDOW_DAYS      = as.character(cfg$induction_window_days),
+    INDUCTION_WINDOW_DAYS_LOT_N= as.character(cfg$lot_n_induction_window_days),
+    MAP_DISCON_GAP_DAYS        = as.character(cfg$map_discon_gap_days),
+    SCT_AUTO_WINDOW_DAYS       = as.character(cfg$sct_auto_window_days),
+    SCT_AUTO_GAP_DAYS          = as.character(cfg$sct_auto_gap_days),
+    SCT_TANDEM_DAYS            = as.character(cfg$sct_tandem_days),
+    CART_CONSOLIDATION_DAYS    = as.character(cfg$cart_consolidation_days),
+    MAX_LOT                    = as.character(cfg$max_lot)
+  )
+}
+
+# Emit the mapping as shell `export` lines (for `source pipeline_env.sh; Rscript
+# run_pipeline.R`) and, when apply=TRUE, also set them in this R session.
+emit_pipeline_env <- function(cfg = resolved_study_config(), file = NULL,
+                              apply = FALSE) {
+  kv <- study_config_to_env(cfg)
+  lines <- sprintf('export %s="%s"', names(kv), kv)
+  if (!is.null(file)) writeLines(lines, file)
+  if (isTRUE(apply)) do.call(Sys.setenv, as.list(kv))
+  invisible(kv)
+}

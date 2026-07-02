@@ -386,5 +386,28 @@ tc <- lot_transition_table(ll, df$patient_id, 1L, commercial_only = TRUE)
 ta <- lot_transition_table(ll, df$patient_id, 1L, commercial_only = FALSE)
 ok(sum(tc$Freq) < sum(ta$Freq), "commercial-only toggle changes the transition denominator")
 
+# ---- round 8: movable landmarks/follow-up parser + study_config env mapping ----
+ok(identical(parse_landmark_months("6, 9, 12"), c(6, 9, 12)),
+   "parse_landmark_months parses a comma list")
+ok(identical(parse_landmark_months(""), LANDMARK_MONTHS) &&
+   identical(parse_landmark_months("junk"), LANDMARK_MONTHS),
+   "parse_landmark_months falls back to the protocol default on empty/garbage")
+ok(identical(parse_landmark_months("12, 3, 3, -1"), c(3, 12)),
+   "parse_landmark_months sorts, dedups, drops non-positive")
+
+source(file.path(rdir, "..", "config", "study_config.R"))
+env <- study_config_to_env()
+ok(all(c("STUDY_START","STUDY_END","NDMM_LOT1_FROM","NDMM_PRE_LOT1_DAYS",
+         "MAP_DISCON_GAP_DAYS","MAX_LOT") %in% names(env)),
+   "study_config_to_env emits the apr_30 env keys")
+ok(env[["NDMM_LOT1_FROM"]] == study_config()$lot1_from &&
+   env[["NDMM_PRE_LOT1_DAYS"]] == as.character(study_config()$pre_lot1_days),
+   "study_config values map to the correct env vars")
+Sys.setenv(NDMM_LOT1_FROM = "2018-06-01")
+ok(resolved_study_config()$lot1_from == "2018-06-01" &&
+   study_config_to_env()[["NDMM_LOT1_FROM"]] == "2018-06-01",
+   "an env override flows through resolved_study_config into the mapping")
+Sys.unsetenv("NDMM_LOT1_FROM")
+
 cat(sprintf("\n%d passed, %d failed\n", .n_pass, .n_fail))
 if (.n_fail > 0) quit(status = 1L)

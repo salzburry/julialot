@@ -138,7 +138,11 @@ ui <- fluidPage(
       selectInput("lot", "Line of therapy (outcomes)", choices = LOT_CHOICES,
                   selected = 1L),
       checkboxInput("restrict_fu",
-                    "Restrict time-to-event to >=3-mo follow-up (protocol)", TRUE),
+                    "Restrict time-to-event to a minimum follow-up (protocol)", TRUE),
+      sliderInput("min_fu_months", "Minimum potential follow-up (months)",
+                  min = 0, max = 24, value = MIN_FU_MONTHS, step = 1),
+      textInput("landmark_months", "KM landmark times (months, comma-separated)",
+                value = paste(LANDMARK_MONTHS, collapse = ", ")),
 
       h4("Inclusion / Exclusion Criteria"),
       div(class = "ce-note",
@@ -293,6 +297,12 @@ server <- function(input, output, session) {
   }
 
   # ----- KM tabs -----
+  # shared time-to-event controls: the follow-up cut (0/off => none) and the
+  # landmark grid, both movable in-memory (no re-query).
+  mf_val   <- reactive(if (isTRUE(input$restrict_fu))
+                         as.integer(input$min_fu_months %||% MIN_FU_MONTHS) else NULL)
+  lm_times <- reactive(parse_landmark_months(input$landmark_months))
+
   if (HAS_SURVIVAL) for (.k in names(KM_TABS)) local({
     key <- .k
     km_react <- eventReactive(input[[paste0("km_", key, "_apply")]], {
@@ -305,7 +315,7 @@ server <- function(input, output, session) {
         return(structure(list(), msg = sprintf(
           "Stratum '%s' is not available at %dL (not carried onto later lines). Pick another stratum or 1L.",
           st, line)))
-      mf <- if (isTRUE(input$restrict_fu) && key != "Attrition") MIN_FU_MONTHS else NULL
+      mf <- if (key != "Attrition") mf_val() else NULL
       km_fit(src$df, key, strata = if (nzchar(st)) st else NULL, EPDICT, min_fu = mf)
     }, ignoreNULL = FALSE)
 
@@ -316,7 +326,7 @@ server <- function(input, output, session) {
       km_plot(k, horizon = input[[paste0("km_", key, "_horizon")]])
     })
     output[[paste0("km_", key, "_landmark")]] <- renderTable(
-      km_landmark(km_react()), bordered = TRUE, na = "")
+      km_landmark(km_react(), times = lm_times()), bordered = TRUE, na = "")
     output[[paste0("km_", key, "_med")]]  <- renderTable(
       km_medians(km_react()), bordered = TRUE, na = "")
     output[[paste0("km_", key, "_risk")]] <- renderTable(
@@ -335,8 +345,7 @@ server <- function(input, output, session) {
       if (is.null(grpB())) "unset" else paste(length(grpB()), "patients")))
 
     cox_tbl <- eventReactive(input$adj_run, {
-      mf <- if (isTRUE(input$restrict_fu)) MIN_FU_MONTHS else NULL
-      km_cox(selected()$data, input$adj_endpoint, input$adj_covars, EPDICT, min_fu = mf)
+      km_cox(selected()$data, input$adj_endpoint, input$adj_covars, EPDICT, min_fu = mf_val())
     })
     output$adj_cox <- renderTable({
       t <- cox_tbl()
@@ -346,7 +355,7 @@ server <- function(input, output, session) {
     cmp_km <- eventReactive(input$cmp_run, {
       validate(need(!is.null(grpA()) && !is.null(grpB()),
                     "Save Group A and Group B first."))
-      mf <- if (isTRUE(input$restrict_fu) && input$adj_endpoint != "Attrition") MIN_FU_MONTHS else NULL
+      mf <- if (input$adj_endpoint != "Attrition") mf_val() else NULL
       km_compare(FLAGGED, input$adj_endpoint, grpA(), grpB(), EPDICT, min_fu = mf)
     })
     output$cmp_plot <- renderPlot({
@@ -406,7 +415,7 @@ server <- function(input, output, session) {
   ndmm_tbl <- reactive(ndmm_protocol_checks(selected()$data,
                           active_state()$active_flags, REG))
   dq_tbl   <- reactive(protocol_dq_checks(selected()$data,
-                          min_fu = if (isTRUE(input$restrict_fu)) MIN_FU_MONTHS else 3L))
+                          min_fu = as.integer(input$min_fu_months %||% MIN_FU_MONTHS)))
   output$chk_headline_v <- renderText(
     checks_headline(rbind(lot_tbl(), ndmm_tbl(), dq_tbl())))
   render_checks <- function(tbl) { tbl$Status <- vapply(tbl$Status, status_html, character(1)); tbl }

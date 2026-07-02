@@ -124,6 +124,21 @@ testServer(app, {
   session$setInputs(sankey_maxline = 3, sankey_commercial = FALSE); session$flushReact()
   ok(grepl("1L -> 3L", output$sankey_title) && grepl("all payers", output$sankey_title),
      "pathway Sankey depth + payer toggle reconfigure the view")
+
+  # (12) movable follow-up cut changes the OS KM denominator
+  session$setInputs(cohort = "overall", apply_cohort = 1, lot = 1, restrict_fu = TRUE,
+                    min_fu_months = 3, km_OS_strata = "", km_OS_apply = 1); session$flushReact()
+  n3 <- km_fit(selected()$data, "OS", min_fu = 3)$n
+  session$setInputs(min_fu_months = 12, km_OS_apply = 2); session$flushReact()
+  n12 <- km_fit(selected()$data, "OS", min_fu = 12)$n
+  ok(n12 < n3, "raising the minimum-follow-up slider shrinks the TTE denominator")
+
+  # (13) movable landmark times drive the landmark table rows
+  session$setInputs(landmark_months = "3, 6", km_OS_apply = 3); session$flushReact()
+  lm2 <- as.character(output$km_OS_landmark)
+  ok(grepl("3.00", lm2, fixed = TRUE) && grepl("6.00", lm2, fixed = TRUE) &&
+     !grepl("24.00", lm2, fixed = TRUE),
+     "landmark-times control changes the landmark grid (3,6 -> no 24-mo row)")
 })
 
 cat(sprintf("\n%d passed, %d failed\n", .n_pass, .n_fail))
