@@ -25,8 +25,8 @@
 #
 # The "Exploratory analysis" cohort pill carries the study-team validation
 # Q&A (Q1-Q6, "MM LOT Validation next steps"), built by
-# build_validation_exploratory() from the shared R/validation_qs_jun29.R
-# module (same logic as the standalone validation_qs_jun29.R program).
+# build_validation_exploratory() from the shared R/validation_qs.R
+# module (same logic as the standalone validation_qs.R program).
 # build_exploratory_scaffold() remains below as documentation of the
 # placement rule for future ad-hoc asks.
 #
@@ -57,12 +57,12 @@ source(file.path(.script_dir, "06_ndmm_dashboard.R"))
 source(file.path(.script_dir, "04_lot_detail_dashboard.R"))
 
 # Shared study-team validation Q&A logic (Q1-Q6, "MM LOT Validation next
-# steps"). Same module the standalone validation_qs_jun29.R uses, so the
+# steps"). Same module the standalone validation_qs.R uses, so the
 # Exploratory tables here and that program's CSVs can never drift apart.
 # load_codelist_csv (needed only for the guarded raw-claim examples) may not
 # be sourced by the dashboard chain; source it best-effort.
 try(source(file.path(.script_dir, "R", "codelists_lot.R")), silent = TRUE)
-source(file.path(.script_dir, "R", "validation_qs_jun29.R"))
+source(file.path(.script_dir, "R", "validation_qs.R"))
 
 # Rewrite the section/title fields of items newly added by a builder so
 # they cluster under one cohort heading in the combined sidebar while
@@ -235,7 +235,7 @@ build_validation_exploratory <- function(con, ndmm_ok = FALSE) {
     'newly-diagnosed subset',
     if (ndmm_ready) '' else ' &mdash; <b>unavailable this run</b>, see the NDMM section',
     '); titles carry the cohort tag. The same logic backs the standalone ',
-    '<code>validation_qs_jun29.R</code> program (CSV outputs).</p>',
+    '<code>validation_qs.R</code> program (CSV outputs).</p>',
     '<ul style="font-size:13px;color:#444">',
     '<li><b>Steroid signal</b>: <code>steroid_codes.csv</code> codes scanned on ',
     'medical (PROC_CD/BILL_PROC_CD/NDC) + rx (NDC) - the project\'s steroid ',

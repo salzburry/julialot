@@ -2,7 +2,7 @@
 # Standalone program: "MM LOT Validation next steps" study-team questions.
 # Sibling of lot1_studyteam_qs.R.
 #
-#   Rscript validation_qs_jun29.R
+#   Rscript validation_qs.R
 #
 # Answers, against the persisted work-schema tables (LOT_LONG, MAP_STACKED,
 # LOT1_SCT) and the raw CDM (for the patient-journey examples):
@@ -20,7 +20,7 @@
 #   Q6  CAR-T prior to or during LOT1, with raw-claim journey examples.
 #
 # Builds nothing persistent; safe to run any time. Writes one CSV per result
-# plus a run log. All operational definitions live in R/validation_qs_jun29.R
+# plus a run log. All operational definitions live in R/validation_qs.R
 # and are shared verbatim with the combined dashboard's Exploratory objective.
 #
 # Cohorts: every question is answered once
@@ -48,7 +48,7 @@ if (file.exists(file.path(source_dir, "load_inputs.R"))) {
 source(file.path(source_dir, "config_lot.R"))
 source(file.path(source_dir, "db_utils_lot.R"))
 source(file.path(source_dir, "codelists_lot.R"))         # load_codelist_csv
-source(file.path(source_dir, "validation_qs_jun29.R"))   # vqs_* logic
+source(file.path(source_dir, "validation_qs.R"))   # vqs_* logic
 
 main <- function() {
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
@@ -62,7 +62,7 @@ main <- function() {
 
   write_out <- function(df, tag) {
     if (is.null(df) || nrow(df) == 0) { log_msg("  (", tag, ": no rows)"); return(invisible()) }
-    f <- file.path(out_dir, paste0("validation_qs_jun29_", tag, "_", stamp, ".csv"))
+    f <- file.path(out_dir, paste0("validation_qs_", tag, "_", stamp, ".csv"))
     write.csv(df, f, row.names = FALSE)
     log_msg("  wrote ", tag, " -> ", f, " (", nrow(df), " rows)")
   }
