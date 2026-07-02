@@ -162,16 +162,21 @@ main_analytic <- function() {
       year(ec.INDEX_DATE)                             AS dx_year,
       year(lr.lot1_start_dt)                          AS lot_init_year,
       round(datediff(lr.lot1_start_dt, ec.INDEX_DATE)/30.44, 1) AS dx_to_1l_months,
-      -- [C] OS = time to death, else censor at observation end. The endpoint
-      -- date is CAPPED at OBS_END_DT (least(...)) so a death AFTER observation
-      -- (os_event=0) never pushes os_time past administrative follow-up (which
-      -- would fail the dashboard's os_time <= fu_potential_months validator).
-      round(datediff(least(coalesce(ec.DEATH_DT, ec.OBS_END_DT), ec.OBS_END_DT), lr.lot1_start_dt)/30.44,1) AS os_time,
+      -- [C] OS = time to death, else censor at ENDDATE (= min(death, study_end),
+      -- the real ELIG_COH_FINAL column; OBS_END_DT is a LOT-builder alias that
+      -- does NOT exist here). The endpoint date is capped at ENDDATE (least(...))
+      -- so a death AFTER the window (os_event=0) never pushes os_time past
+      -- follow-up (which would fail the os_time <= fu_potential_months validator).
+      round(datediff(least(coalesce(ec.DEATH_DT, cast(ec.ENDDATE as date)), cast(ec.ENDDATE as date)), lr.lot1_start_dt)/30.44,1) AS os_time,
       CASE WHEN ec.DEATH_DT IS NOT NULL
-            AND ec.DEATH_DT <= ec.OBS_END_DT THEN 1 ELSE 0 END        AS os_event,
+            AND ec.DEATH_DT <= cast(ec.ENDDATE as date) THEN 1 ELSE 0 END        AS os_event,
       -- [C] potential (administrative, death-INDEPENDENT) follow-up from 1L
-      round(datediff(ec.OBS_END_DT, lr.lot1_start_dt)/30.44,1)        AS fu_potential_months,
-      round(datediff(least(coalesce(ec.DEATH_DT, ec.OBS_END_DT), ec.OBS_END_DT), ec.INDEX_DATE)/30.44,1) AS fu_from_dx_months,
+      -- [C/D] DEATH-INDEPENDENT administrative follow-up: index -> study end.
+      -- ENDDATE is min(death, study_end) and would make this death-DEPENDENT
+      -- (dropping early deaths from the >=N-mo TTE filter), so use study_end.
+      -- PRODUCTION: cap at DISENROLLMENT (enrollment-span max), NOT just study_end.
+      round(datediff(date('{cfg$study_end}'), lr.lot1_start_dt)/30.44,1)         AS fu_potential_months,
+      round(datediff(least(coalesce(ec.DEATH_DT, cast(ec.ENDDATE as date)), cast(ec.ENDDATE as date)), ec.INDEX_DATE)/30.44,1) AS fu_from_dx_months,
       -- [D] contract-VALID placeholders (never NULL -> validator/sliders safe).
       -- CE months are a FLAG-DERIVED proxy (real continuous measure = TODO from
       -- NDMM_ENROLL_SPANS) so the CE sliders have a usable, non-degenerate range.
@@ -188,18 +193,21 @@ main_analytic <- function() {
       lr.lot1_length                                  AS lot1_length,
       -- [C] TTD (1L discontinuation): end date, censored to OBS_END if the line
       -- is ongoing (missing end date) and capped at OBS_END (<= follow-up).
-      round(datediff(least(coalesce(l1.LOT_BASE_END_DT, ec.OBS_END_DT), ec.OBS_END_DT), lr.lot1_start_dt)/30.44,1) AS ttd_time,
+      round(datediff(least(coalesce(l1.LOT_BASE_END_DT, cast(ec.ENDDATE as date)), cast(ec.ENDDATE as date)), lr.lot1_start_dt)/30.44,1) AS ttd_time,
       CASE WHEN l1.LOT_BASE_END_REASON IS NOT NULL
             AND upper(l1.LOT_BASE_END_REASON) NOT LIKE '%STUDY_END%'
             AND upper(l1.LOT_BASE_END_REASON) NOT LIKE '%DISENROLL%'
            THEN 1 ELSE 0 END                          AS ttd_event,
       -- [C] TTNT = start of LOT2 (or death), capped at OBS_END (<= follow-up)
-      round(datediff(least(coalesce(l2.LOT_START_DT, ec.DEATH_DT, ec.OBS_END_DT), ec.OBS_END_DT),
+      round(datediff(least(coalesce(l2.LOT_START_DT, ec.DEATH_DT, cast(ec.ENDDATE as date)), cast(ec.ENDDATE as date)),
                      lr.lot1_start_dt)/30.44,1)        AS ttnt_time,
       CASE WHEN lr.n_lines > 1 THEN 1 ELSE 0 END      AS ttnt_event,
       -- [C] PFS is EXPLORATORY only (protocol: not ascertainable) -- proxy = TTD
-      round(datediff(least(coalesce(l1.LOT_BASE_END_DT, ec.OBS_END_DT), ec.OBS_END_DT), lr.lot1_start_dt)/30.44,1) AS pfs_time,
-      CASE WHEN l1.LOT_BASE_END_REASON IS NOT NULL THEN 1 ELSE 0 END  AS pfs_event,
+      round(datediff(least(coalesce(l1.LOT_BASE_END_DT, cast(ec.ENDDATE as date)), cast(ec.ENDDATE as date)), lr.lot1_start_dt)/30.44,1) AS pfs_time,
+      CASE WHEN l1.LOT_BASE_END_REASON IS NOT NULL
+            AND upper(l1.LOT_BASE_END_REASON) NOT LIKE '%STUDY_END%'
+            AND upper(l1.LOT_BASE_END_REASON) NOT LIKE '%DISENROLL%'
+           THEN 1 ELSE 0 END                          AS pfs_event,
       -- ===== NDMM IE flags (from 06's NDMM_FLAGS_ALL -- verbatim) =====
       coalesce(f.CE_pre_lot1_12mo, 0)                 AS incl_baseline_ce_12m,
       coalesce(f.CE_lot1_3mo_fu, 0)                   AS incl_fu_ce_3m,
@@ -230,13 +238,16 @@ main_analytic <- function() {
            coalesce(cat.soc_category, 'Other') AS lot_soc,            -- [E] per line
            nxc.soc_category AS next_soc,   -- next line's SOC (NULL on the last line, per contract)
            'Unknown' AS payer_type,                                    -- [B] TODO real payer join
-           round(datediff(least(coalesce(ec.DEATH_DT, ec.OBS_END_DT), ec.OBS_END_DT), ll.LOT_START_DT)/30.44,1) AS os_time,
-           CASE WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT THEN 1 ELSE 0 END AS os_event,
-           round(datediff(least(coalesce(ll.LOT_BASE_END_DT, ec.OBS_END_DT), ec.OBS_END_DT), ll.LOT_START_DT)/30.44,1) AS ttd_time,
-           CASE WHEN ll.LOT_BASE_END_REASON IS NOT NULL THEN 1 ELSE 0 END AS ttd_event,
-           round(datediff(least(coalesce(nx.LOT_START_DT, ec.DEATH_DT, ec.OBS_END_DT), ec.OBS_END_DT), ll.LOT_START_DT)/30.44,1) AS ttnt_time,
+           round(datediff(least(coalesce(ec.DEATH_DT, cast(ec.ENDDATE as date)), cast(ec.ENDDATE as date)), ll.LOT_START_DT)/30.44,1) AS os_time,
+           CASE WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= cast(ec.ENDDATE as date) THEN 1 ELSE 0 END AS os_event,
+           round(datediff(least(coalesce(ll.LOT_BASE_END_DT, cast(ec.ENDDATE as date)), cast(ec.ENDDATE as date)), ll.LOT_START_DT)/30.44,1) AS ttd_time,
+           CASE WHEN ll.LOT_BASE_END_REASON IS NOT NULL
+                 AND upper(ll.LOT_BASE_END_REASON) NOT LIKE '%STUDY_END%'
+                 AND upper(ll.LOT_BASE_END_REASON) NOT LIKE '%DISENROLL%'
+                THEN 1 ELSE 0 END AS ttd_event,   -- censoring reasons are NOT events
+           round(datediff(least(coalesce(nx.LOT_START_DT, ec.DEATH_DT, cast(ec.ENDDATE as date)), cast(ec.ENDDATE as date)), ll.LOT_START_DT)/30.44,1) AS ttnt_time,
            CASE WHEN nx.LOT_START_DT IS NOT NULL THEN 1 ELSE 0 END AS ttnt_event,
-           round(datediff(ec.OBS_END_DT, ll.LOT_START_DT)/30.44,1) AS fu_potential_months
+           round(datediff(date('{cfg$study_end}'), ll.LOT_START_DT)/30.44,1) AS fu_potential_months
     FROM {lot} ll
     INNER JOIN {elig} ec ON cast(ll.PATID as string) = cast(ec.PATID as string)
     LEFT JOIN {lot} nx   ON cast(ll.PATID as string) = cast(nx.PATID as string) AND nx.LOT_NUM = ll.LOT_NUM + 1
