@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 # Regimen-transition + steroid dashboard for the whole (overall) cohort.
 #
-#   Rscript apr_30_2026/05_regimen_dashboard.R
+#   Rscript 05_regimen_dashboard.R
 #
 # Inputs (all live next to this script):
 #   regimen_categories.csv   regimen -> category mapping

@@ -1,13 +1,13 @@
 #!/usr/bin/env Rscript
 # ONE combined dashboard for both cohorts + exploratory.
 #
-#   Rscript apr_30_2026/07_combined_dashboard.R
+#   Rscript 07_combined_dashboard.R
 #
 # Output: combined_dashboard.html in cfg$output_dir.
 #
 # The two standalone dashboards still build exactly as before:
-#   Rscript apr_30_2026/05_regimen_dashboard.R  -> whole (overall) cohort
-#   Rscript apr_30_2026/06_ndmm_dashboard.R     -> NDMM cohort
+#   Rscript 05_regimen_dashboard.R  -> whole (overall) cohort
+#   Rscript 06_ndmm_dashboard.R     -> NDMM cohort
 # This script reuses their builders + cohort-prep functions to produce a
 # single HTML. The left sidebar has cohort pills:
 #

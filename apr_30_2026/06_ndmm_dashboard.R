@@ -22,7 +22,7 @@
 #   6. No pregnancy                      (re-scanned from pregnancy.csv over
 #                                         the study period; NDMM candidates)
 #
-#   Rscript apr_30_2026/06_ndmm_dashboard.R
+#   Rscript 06_ndmm_dashboard.R
 #
 # Output: ndmm_dashboard.html in cfg$output_dir.
 #
