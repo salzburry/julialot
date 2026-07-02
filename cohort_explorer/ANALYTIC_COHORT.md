@@ -37,8 +37,8 @@ memory. Nothing is re-derived per interaction.
 windows, MAP gap, SCT windows, CART window, `max_lot`, disenrollment sensitivity,
 study end). What is **not** yet config-driven and should be:
 
-- `06`'s `NDMM_PRE_LOT1_DAYS <- 365L` is hard-coded (line 89). Lift to
-  `NDMM_PRE_LOT1_DAYS` env / study config.
+- `06`'s `NDMM_PRE_LOT1_DAYS` is now **env-configurable** (default 365,
+  behavior-preserving) — driven by `study_config` via `emit_pipeline_env.R`.
 - The six NDMM filters auto-skip only when a **source is unavailable**; they are
   not individually **includable/excludable by study choice**. The analytic-cohort
   build makes this moot: it *always computes every flag as a column*, and which
@@ -82,6 +82,17 @@ quarter), reusing `06`'s existing flag SQL verbatim (only the trailing
 projections are joined in). It cannot be executed in this environment (no
 warehouse), so `source_flagged_cohort_warehouse()` stays **fail-closed** until
 pointed at a live catalog.
+
+**The concrete script: `../apr_30_2026/08_analytic_cohort.R`** (DRAFT /
+unvalidated). It `source`s `06` with `no_autorun`, calls the same
+`prepare_ndmm_cohort()` (so `NDMM_FLAGS_ALL` is built by the validated SQL), and
+projects `ELIG_COH_FINAL ⋈ NDMM_FLAGS_ALL ⋈ LOT_LONG` into the two contract
+tables + CSV exports. Cross-checked to emit **all 57 contract columns**. Every
+new derivation is tagged inline: `[A]` Overall flags = 1 on the filtered base
+(toggle needs `ELIG_COH_ALLFLAGS`), `[B]` race/region/payer/ethnicity join from
+Optum member tables, `[C]` OS/TTD/TTNT derivation (clinical sign-off), `[D]`
+continuous CE months + safety counts/PY + HCRU, `[E]` SOC via `06`'s
+regimen→category lookup.
 
 ## How the dashboard consumes it (instant)
 
