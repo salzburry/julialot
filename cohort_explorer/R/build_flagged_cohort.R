@@ -526,10 +526,44 @@ augment_lot_long <- function(lot_long, cohort) {
 # (ELIG_COH_FINAL x LOT_LONG + per-criterion flags as columns) here; the
 # dashboard consumes it via load_flagged_cohort(source_flagged_cohort_warehouse).
 # =============================================================================
-source_flagged_cohort_warehouse <- function(...) {
-  stop("source_flagged_cohort_warehouse() is not implemented in this ",
-       "environment (no Databricks warehouse). Implement the DBI/odbc ",
-       "projection of ELIG_COH_FINAL x LOT_LONG + IE flags (see README / ",
-       "06_ndmm_dashboard.R) before using a production data path.",
-       call. = FALSE)
+# Read a materialised analytic table (built once by the pipeline: 06's flag
+# join, UN-filtered, + parent flags + CCI/safety/HCRU + LOT-long) over DBI/odbc.
+# Pass a live connection `con`; without one it fails closed (no warehouse here).
+.warehouse_read <- function(table, con = NULL,
+    catalog = Sys.getenv("DATABRICKS_CATALOG", "hive_metastore"),
+    schema  = Sys.getenv("PROJECT_WORK_SCHEMA",
+                         Sys.getenv("DOMINO_USER_NAME", "gsk_mm_lot_work"))) {
+  if (is.null(con))
+    stop("source_*_warehouse(): pass a live DBI connection `con`. The analytic ",
+         "cohort must be MATERIALISED once by the pipeline (CREATE TABLE ",
+         schema, ".", table, " AS <06 flag join, un-filtered> -- see ",
+         "ANALYTIC_COHORT.md); this environment has no warehouse.", call. = FALSE)
+  if (!requireNamespace("DBI", quietly = TRUE))
+    stop("DBI is required to read the analytic cohort.", call. = FALSE)
+  DBI::dbGetQuery(con, sprintf("SELECT * FROM %s.%s.%s", catalog, schema, table))
+}
+
+# patient-level analytic cohort (the flagged superset)
+source_flagged_cohort_warehouse <- function(con = NULL, table = "ANALYTIC_COHORT", ...)
+  .warehouse_read(table, con = con, ...)
+
+# per-line analytic LOT-long
+source_lot_long_warehouse <- function(con = NULL, table = "ANALYTIC_LOT_LONG", ...)
+  .warehouse_read(table, con = con, ...)
+
+# Export the materialised snapshot the OFFLINE dashboard path reads (the
+# artifact the pipeline writes once per data refresh). Writes two CSVs + a
+# build-stamp so the UI can show "data as of ...".
+export_analytic_cohort <- function(cohort, lot_long, dir, stamp = NULL) {
+  if (!dir.exists(dir)) dir.create(dir, recursive = TRUE)
+  validate_flagged_cohort(cohort); validate_lot_long(lot_long)
+  cp <- file.path(dir, "analytic_cohort.csv")
+  lp <- file.path(dir, "analytic_lot_long.csv")
+  utils::write.csv(cohort,   cp, row.names = FALSE)
+  utils::write.csv(lot_long, lp, row.names = FALSE)
+  writeLines(c(paste0("rows_cohort=", nrow(cohort)),
+               paste0("rows_lot_long=", nrow(lot_long)),
+               paste0("built=", if (is.null(stamp)) "unstamped" else stamp)),
+             file.path(dir, "analytic_cohort.stamp"))
+  invisible(list(cohort = cp, lot_long = lp))
 }
