@@ -175,7 +175,7 @@ server <- function(input, output, session) {
       pv[[id]] <- if (identical(crit$filter, "range")) {
         rng <- range(FLAGGED[[crit$variable]], na.rm = TRUE)
         c(floor(rng[1]), ceiling(rng[2]))
-      } else sort(unique(as.character(FLAGGED[[crit$variable]])))
+      } else cat_levels(FLAGGED[[crit$variable]])  # incl "(Missing)" so neutral keeps NA
     }
     pv
   }

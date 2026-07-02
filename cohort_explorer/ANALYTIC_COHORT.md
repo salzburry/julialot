@@ -96,9 +96,13 @@ regimen→category lookup.
 
 ## How the dashboard consumes it (instant)
 
-At startup `global.R` loads the snapshot **once** — either a materialized-table
-read (`COHORT_EXPLORER_DATA=source_flagged_cohort_warehouse`) or an exported
-CSV/parquet (`COHORT_EXPLORER_DATA=/path/analytic_cohort.csv`) — holds it in
+At startup `global.R` loads the snapshot **once** from
+`COHORT_EXPLORER_DATA` — which is either `"synthetic"` (default) or a path to an
+exported CSV (`COHORT_EXPLORER_DATA=/path/analytic_cohort.csv`), the wired path
+that `08_analytic_cohort.R` produces. A direct materialized-table read is also
+available but is called **programmatically**, not via the env var:
+`FLAGGED <- load_flagged_cohort(source_flagged_cohort_warehouse)` (that seam
+stays fail-closed until pointed at a live catalog). It holds the snapshot in
 memory, and every cohort switch / IE toggle / filter is an in-memory flag-AND
 (`select_cohort`). No query runs on interaction. `export_analytic_cohort()`
 writes the snapshot artifacts the offline path reads.
