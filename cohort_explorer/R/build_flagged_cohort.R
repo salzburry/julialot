@@ -111,6 +111,50 @@ validate_flagged_cohort <- function(df, reg = criteria_registry()) {
     if (any(df[[p[1]]] != as.integer(df[[p[2]]] > 0)))
       stop("safety flag '", p[1], "' disagrees with count '", p[2],
            "' (flag must equal count>0).", call. = FALSE)
+  # ---- core numeric contract (fail-closed at load, not just displayed later) --
+  nn_int <- function(v) !any(is.na(v)) && all(v >= 0) && all(v == round(v))
+  int_cols <- c("age_index", "cci", "n_lines", "ip_hosp_count", "er_visit_count")
+  for (c in intersect(int_cols, names(df)))
+    if (!nn_int(df[[c]]))
+      stop("'", c, "' must be non-negative integer-valued (no NA).", call. = FALSE)
+  if ("n_lines" %in% names(df) && any(df$n_lines < 1L))
+    stop("n_lines must be >= 1.", call. = FALSE)
+  if ("lot1_length" %in% names(df) &&
+      (any(is.na(df$lot1_length)) || any(df$lot1_length <= 0)))
+    stop("lot1_length must be strictly positive (no NA).", call. = FALSE)
+  if ("ip_los_days" %in% names(df) &&
+      (any(is.na(df$ip_los_days)) || any(df$ip_los_days < 0)))
+    stop("ip_los_days must be non-negative (no NA).", call. = FALSE)
+
+  # ---- patient-level time-to-event contract (mirrors validate_lot_long) -------
+  # the 1L KM tabs read these directly from the patient-level cohort, so they
+  # must fail closed the same way the LOT-long endpoints do.
+  eps <- 1e-6
+  ev_pairs <- list(c("os_time", "os_event"), c("ttd_time", "ttd_event"),
+                   c("ttnt_time", "ttnt_event"), c("pfs_time", "pfs_event"))
+  for (p in ev_pairs) if (all(p %in% names(df))) {
+    tt <- df[[p[1]]]; ev <- df[[p[2]]]
+    if (any(is.na(tt)) || any(tt < 0))
+      stop("'", p[1], "' must be non-negative (no NA).", call. = FALSE)
+    if (!all(ev %in% c(0L, 1L)))
+      stop("'", p[2], "' must be strictly 0/1.", call. = FALSE)
+    if ("fu_potential_months" %in% names(df) && any(tt > df$fu_potential_months + eps))
+      stop("'", p[1], "' exceeds fu_potential_months for some patients.", call. = FALSE)
+  }
+  # an OS death event requires a death date (a death after administrative
+  # censoring, death_dt present with os_event=0, is allowed by design)
+  if (all(c("os_event", "death_dt") %in% names(df)) &&
+      any(df$os_event == 1L & is.na(df$death_dt)))
+    stop("os_event=1 requires a non-missing death_dt.", call. = FALSE)
+
+  # ---- required dates present & ordered ---------------------------------------
+  for (d in c("index_date", "lot1_start_dt"))
+    if (d %in% names(df) && any(is.na(df[[d]])))
+      stop("'", d, "' has missing/unparseable dates.", call. = FALSE)
+  if (all(c("index_date", "lot1_start_dt") %in% names(df)) &&
+      any(df$index_date > df$lot1_start_dt))
+    stop("index_date must be <= lot1_start_dt.", call. = FALSE)
+
   if (anyDuplicated(df$patient_id))
     stop("patient_id is not unique in the flagged cohort.", call. = FALSE)
   invisible(df)
@@ -387,11 +431,16 @@ validate_lot_long <- function(ll) {
     if (any(ll[[t]] > ll$fu_potential_months + eps))
       stop("LOT-long '", t, "' exceeds fu_potential_months for some rows.",
            call. = FALSE)
+  # TTNT event must reconcile with whether a next line actually exists, BOTH
+  # ways: 1 on a non-terminal line (next treatment observed) and 0 on the last
+  # observed line. A one-sided check let an observed next line be miscensored.
   max_ln <- ave(o$lot_num, o$patient_id, FUN = max)
-  n_orphan <- sum(o$ttnt_event == 1L & o$lot_num == max_ln)
-  if (n_orphan)
-    stop(n_orphan, " LOT-long row(s) have ttnt_event=1 on the last observed ",
-         "line (a next-treatment event with no subsequent line).", call. = FALSE)
+  next_exists <- o$lot_num < max_ln
+  n_bad <- sum((o$ttnt_event == 1L) != next_exists)
+  if (n_bad)
+    stop(n_bad, " LOT-long row(s) have ttnt_event inconsistent with the next ",
+         "line (must be 1 iff a subsequent line exists, 0 on the last line).",
+         call. = FALSE)
   invisible(ll)
 }
 
