@@ -52,10 +52,14 @@ its outputs.
     plus *PFS\** clearly labelled **exploratory, non-protocol** (§6.9 states PFS
     could not be ascertained in claims). Outcomes recompute per selected
     **line of therapy**.
-  - *Regimen & Transitions* — regimen-frequency table per line, the full
-    **1L→2L→3L→4L treatment-pattern pathway Sankey** (commercial-insured only,
-    Exploratory Obj 3; patients who stop flow into an "End" node), and a
-    per-stage transition detail table.
+  - *Regimen & Transitions* — regimen-frequency table per line, a
+    **configurable** treatment-pattern pathway Sankey (**adjustable depth
+    1L→N** and a **commercial-only / all-payers** toggle; patients who stop flow
+    into an "End" node), and a per-stage transition detail table.
+  - *Adjusted & Compare* — **adjusted Cox models** with a free choice of
+    covariates (HRs + 95% CI), and a **KM comparison of two saved cohort
+    selections** (Group A vs B — save any IE+filter combination from the
+    sidebar). All computed in memory on the loaded snapshot → instant.
   - *Cohort & Attrition* — sequential attrition waterfall.
   - *Validation & Checks* — LOT structural checks, NDMM protocol conformance,
     and **protocol data-quality / analysis-readiness** (≥3-mo TTE denominator,
@@ -65,6 +69,14 @@ its outputs.
 SOC regimen category, age band, **age ≥70 vs <70**, CCI band, the two
 **transplant-eligibility proxies** (age; age-or-CCI≥3), and the baseline
 medical-condition flags (CV / neuro / renal) — protocol §6.2.3 / §6.3.3.
+
+**Movable thresholds / windows** (in-memory sliders over raw measures carried on
+the analytic cohort — no re-query): baseline-CE months, follow-up-CE months,
+year-of-diagnosis window, year-of-1L-initiation window, KM time horizon, and the
+≥N-month follow-up restriction. What is *runtime* (any threshold/covariate/group
+over materialised columns) vs *build-time* (LOT-derivation params, a new
+claims-derived criterion, the SOC map, the superset window → re-materialise) is
+spelled out in **`ANALYTIC_COHORT.md`**.
 
 ## Files
 
@@ -81,9 +93,10 @@ cohort_explorer/
     lot_views.R               per-LOT slicing, regimen freq, SOC transitions/Sankey
     checks.R                  LOT structural + NDMM conformance + protocol DQ checks
     ui_helpers.R              theme + registry-driven control builders
-  tests/test_engine.R         base-R unit tests (84) for the engine + checks
-  tests/test_app.R            Shiny testServer tests (10): cohort reset, parity,
-                              value-based landmark/safety/pathway, 2L no-crash
+  tests/test_engine.R         base-R unit tests (95) for the engine + checks
+  tests/test_app.R            Shiny testServer tests (14): cohort reset, parity,
+                              value-based landmark/safety/pathway, 2L no-crash,
+                              movable thresholds, Cox, A/B compare, Sankey config
 ```
 
 ## Reuse / extension

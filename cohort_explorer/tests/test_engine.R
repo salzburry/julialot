@@ -345,5 +345,46 @@ ok(!("TINYREG" %in% sk13$Group) && "TINYREG" %in% attr(sk13, "suppressed") &&
    "TINYREG" %in% suppressed_strata(tinyc, "region"),
    "continuous <25 stratum is suppressed and reported by suppressed_strata()")
 
+# ---- round 7: movable thresholds, Cox covariates, A/B compare, Sankey config ----
+ok(all(c("baseline_ce_months", "followup_ce_months") %in% names(df)),
+   "raw CE-month measures are carried on the analytic cohort")
+ok(all(df$incl_baseline_ce_6m == as.integer(df$baseline_ce_months >= 6L)) &&
+   all(df$incl_baseline_ce_12m == as.integer(df$baseline_ce_months >= 12L)) &&
+   all(df$incl_baseline_ce_12m <= df$incl_baseline_ce_6m),
+   "CE flags are derived from the raw measure (12mo subset of 6mo by construction)")
+ok(all(c("flt_baseline_ce","flt_followup_ce","flt_dx_year","flt_lot_init_year") %in%
+       registry_param_ids(REG)),
+   "movable CE / year range filters are registered")
+base_n <- select_cohort(df, COH$overall$active_flags, list(), character(), REG)$n_out
+ce9_n  <- select_cohort(df, COH$overall$active_flags, list(flt_baseline_ce = c(9, 999)),
+                        "flt_baseline_ce", REG)$n_out
+ok(ce9_n > 0 && ce9_n <= base_n, "movable baseline-CE slider restricts in memory")
+yr_n <- select_cohort(df, COH$overall$active_flags, list(flt_lot_init_year = c(2020, 2025)),
+                      "flt_lot_init_year", REG)$n_out
+ok(yr_n > 0 && yr_n <= base_n, "movable 1L-initiation-year window restricts in memory")
+
+if (requireNamespace("survival", quietly = TRUE)) {
+  cx <- km_cox(df, "OS", c("age_ge70", "cci_band", "soc_category"), min_fu = 3)
+  ok("HR" %in% names(cx) && all(c("LCL","UCL","p") %in% names(cx)) && nrow(cx) >= 3,
+     "km_cox returns an adjusted HR table for selected covariates")
+  ok("Note" %in% names(km_cox(df, "Attrition", "age_ge70")),
+     "km_cox declines the all-events Attrition endpoint with a Note")
+  ok("Note" %in% names(km_cox(df, "OS", character(0))),
+     "km_cox requires >=1 covariate")
+  aids <- df$patient_id[df$age_index >= 70]; bids <- df$patient_id[df$age_index < 70]
+  kc <- km_compare(df, "OS", aids, bids, min_fu = 3)
+  ok(!is.null(kc) && all(c("Group A","Group B") %in% km_medians(kc)$Group),
+     "km_compare overlays two id-sets as Group A / Group B")
+}
+
+# Sankey/pathway configurability
+pd4 <- lot_pathway_data(ll, df$patient_id, max_line = 4L)
+pd2 <- lot_pathway_data(ll, df$patient_id, max_line = 2L)
+ok(max(pd4$trans$stage) == 3 && max(pd2$trans$stage) == 1,
+   "pathway depth (max_line) is configurable")
+tc <- lot_transition_table(ll, df$patient_id, 1L, commercial_only = TRUE)
+ta <- lot_transition_table(ll, df$patient_id, 1L, commercial_only = FALSE)
+ok(sum(tc$Freq) < sum(ta$Freq), "commercial-only toggle changes the transition denominator")
+
 cat(sprintf("\n%d passed, %d failed\n", .n_pass, .n_fail))
 if (.n_fail > 0) quit(status = 1L)

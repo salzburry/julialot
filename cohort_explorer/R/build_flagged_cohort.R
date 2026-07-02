@@ -33,6 +33,9 @@ FLAGGED_COHORT_BASE_COLS <- c(
   # calendar / follow-up (protocol characteristics + attrition)
   "dx_year", "lot_init_year", "dx_to_1l_months", "fu_from_dx_months",
   "fu_potential_months",
+  # raw continuous-enrollment durations (months) -- carried as MEASURES, not
+  # just fixed-threshold flags, so a "movable CE window" is an in-memory slider
+  "baseline_ce_months", "followup_ce_months",
   # clinical: Charlson + baseline comorbidities of interest (flag + count + PY)
   "cci",
   "bl_hepatic", "bl_renal", "bl_infection", "bl_ocular", "bl_cv", "bl_neuro",
@@ -265,6 +268,13 @@ synth_flagged_cohort <- function(n = 4000L, seed = 42L, soc_levels = NULL) {
   # potential follow-up -- this is the protocol Table-1 characteristic.
   fu_from_dx_months <- round(dx_to_1l_months + os_time, 1)
 
+  # raw continuous-enrollment durations (months); the fixed-threshold CE flags
+  # below are DERIVED from these, so a movable CE slider stays consistent with
+  # the flags and 12mo is always a subset of 6mo.
+  baseline_ce_months <- pmax(0L, round(rgamma(n, shape = 2.4, scale = 7)))
+  followup_ce_months <- pmax(0L, round(pmin(fu_potential_months,
+                                            rgamma(n, shape = 2, scale = 8))))
+
   death_dt <- as.Date(rep(NA_integer_, n), origin = "1970-01-01")
   ev <- os_event == 1L
   death_dt[ev] <- lot1_start_dt[ev] + round(os_time[ev] * 30.44)
@@ -280,6 +290,7 @@ synth_flagged_cohort <- function(n = 4000L, seed = 42L, soc_levels = NULL) {
     patient_id, age_index, gender, region, race, ethnicity, payer_type,
     index_date, lot1_start_dt, death_dt,
     dx_year, lot_init_year, dx_to_1l_months, fu_from_dx_months, fu_potential_months,
+    baseline_ce_months, followup_ce_months,
     cci, bl_hepatic, bl_renal, bl_infection, bl_ocular, bl_cv, bl_neuro,
     n_hepatic, n_renal, n_infection, n_ocular, n_cv, n_neuro, baseline_py,
     ip_hosp_count, er_visit_count, ip_los_days,
@@ -292,9 +303,9 @@ synth_flagged_cohort <- function(n = 4000L, seed = 42L, soc_levels = NULL) {
   df$incl_qualifying_mm   <- bern(0.985)
   df$incl_adult           <- as.integer(age_index >= 18L)
   df$incl_eligible_1l_tx  <- as.integer(lot1_start_dt >= as.Date("2017-01-01"))
-  df$incl_baseline_ce_6m  <- bern(0.88)
-  df$incl_baseline_ce_12m <- as.integer(df$incl_baseline_ce_6m == 1L & runif(n) < 0.78)
-  df$incl_fu_ce_3m        <- as.integer(os_event == 1L | runif(n) < 0.8)
+  df$incl_baseline_ce_6m  <- as.integer(df$baseline_ce_months >= 6L)
+  df$incl_baseline_ce_12m <- as.integer(df$baseline_ce_months >= 12L)
+  df$incl_fu_ce_3m        <- as.integer(df$followup_ce_months >= 3L | os_event == 1L)
   df$incl_new_user        <- bern(0.9)
   df$incl_fu_mm_agents    <- bern(0.995)
   df$excl_prior_mm_tx     <- bern(0.91)

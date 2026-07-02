@@ -97,6 +97,33 @@ testServer(app, {
   n_after <- sub(".*N = ([0-9,]+).*", "\\1", output$pc_title)
   ok(n_before == n_after,
      "PC header N reflects the applied snapshot, not a stale/mismatched live cohort")
+
+  # (8) movable CE slider actually restricts the cohort in memory
+  session$setInputs(cohort = "overall", apply_cohort = 1); session$flushReact()
+  n_full <- selected()$n_out
+  session$setInputs(crit_flt_baseline_ce = c(12, 999), apply_filters = 1); session$flushReact()
+  ok(selected()$n_out > 0 && selected()$n_out < n_full,
+     "movable baseline-CE slider restricts the cohort (in-memory, instant)")
+
+  # (9) adjusted Cox model renders HRs for the chosen covariates
+  session$setInputs(adj_endpoint = "OS", adj_covars = c("age_ge70", "cci_band"),
+                    restrict_fu = TRUE, adj_run = 1); session$flushReact()
+  cox_html <- as.character(output$adj_cox)
+  ok(grepl("HR", cox_html) && grepl("age_ge70", cox_html),
+     "Adjusted Cox table renders hazard ratios for the selected covariates")
+
+  # (10) A/B comparison overlays two saved selections
+  session$setInputs(save_a = 1); session$flushReact()
+  session$setInputs(cohort = "ndmm", apply_cohort = 1); session$flushReact()
+  session$setInputs(save_b = 1, cmp_run = 1); session$flushReact()
+  ok(grepl("Group A", as.character(output$cmp_med)) &&
+     grepl("Group B", as.character(output$cmp_med)),
+     "KM comparison overlays saved Group A vs Group B")
+
+  # (11) Sankey depth + payer toggle are configurable
+  session$setInputs(sankey_maxline = 3, sankey_commercial = FALSE); session$flushReact()
+  ok(grepl("1L -> 3L", output$sankey_title) && grepl("all payers", output$sankey_title),
+     "pathway Sankey depth + payer toggle reconfigure the view")
 })
 
 cat(sprintf("\n%d passed, %d failed\n", .n_pass, .n_fail))

@@ -66,6 +66,60 @@ km_fit <- function(df, endpoint, strata = NULL, ep_dict = endpoint_dictionary(),
        n = nrow(d), groups = groups, suppressed = suppressed)
 }
 
+# Adjusted Cox model with user-selected covariates -- runs in memory on the
+# already-loaded snapshot (instant). Returns a tidy HR table or an informative
+# 1-row Note frame. Binary/categorical covariates are labelled + factored.
+km_cox <- function(df, endpoint, covariates, ep_dict = endpoint_dictionary(),
+                   min_fu = NULL, dict = variable_dictionary()) {
+  if (!requireNamespace("survival", quietly = TRUE))
+    stop("the 'survival' package is required for Cox models.", call. = FALSE)
+  ep <- ep_dict[[endpoint]]; if (is.null(ep)) stop("unknown endpoint: ", endpoint)
+  if (is.na(ep$event)[1])
+    return(data.frame(Note = "Cox model is not applicable to an all-events endpoint (Attrition)."))
+  covariates <- intersect(covariates, names(df))
+  if (!length(covariates))
+    return(data.frame(Note = "Select at least one covariate for the adjusted model."))
+  if (!is.null(min_fu) && "fu_potential_months" %in% names(df))
+    df <- df[!is.na(df$fu_potential_months) & df$fu_potential_months >= min_fu, , drop = FALSE]
+  md <- data.frame(.time = suppressWarnings(as.numeric(df[[ep$time]])),
+                   .event = suppressWarnings(as.integer(df[[ep$event]])))
+  for (cv in covariates) {
+    ty <- var_type(cv, dict)
+    md[[cv]] <- if (ty %in% c("cat", "binary")) factor(.as_category(df[[cv]], ty))
+                else suppressWarnings(as.numeric(df[[cv]]))
+  }
+  md <- md[stats::complete.cases(md) & !is.na(md$.time) & md$.time >= 0, , drop = FALSE]
+  # drop covariates with no contrast (single factor level) -- coxph would error
+  for (cv in covariates)
+    if (is.factor(md[[cv]]) && nlevels(droplevels(md[[cv]])) < 2) md[[cv]] <- NULL
+  terms <- intersect(covariates, names(md))
+  if (nrow(md) < 20 || !length(terms))
+    return(data.frame(Note = "Too few complete cases / no covariate contrast in this cohort."))
+  fit <- tryCatch(
+    survival::coxph(stats::as.formula(
+      paste0("survival::Surv(.time, .event) ~ ", paste(terms, collapse = " + "))),
+      data = md), error = function(e) NULL)
+  if (is.null(fit)) return(data.frame(Note = "Cox model failed to converge for this selection."))
+  s <- summary(fit)$coefficients; ci <- summary(fit)$conf.int
+  data.frame(Term = rownames(s), HR = round(ci[, "exp(coef)"], 2),
+             LCL = round(ci[, "lower .95"], 2), UCL = round(ci[, "upper .95"], 2),
+             p = signif(s[, "Pr(>|z|)"], 3), N = fit$n, Events = fit$nevent,
+             row.names = NULL, check.names = FALSE)
+}
+
+# Compare two id-sets (e.g. two saved filter selections) as a KM overlay:
+# builds a two-level `comparison_group` strata and reuses km_fit (so
+# suppression, labelling, landmark, medians all apply unchanged).
+km_compare <- function(df, endpoint, ids_a, ids_b, ep_dict = endpoint_dictionary(),
+                       labels = c("Group A", "Group B"), min_fu = NULL) {
+  a <- df[df$patient_id %in% ids_a, , drop = FALSE]
+  b <- df[df$patient_id %in% ids_b, , drop = FALSE]
+  if (!nrow(a) || !nrow(b)) return(NULL)
+  a$comparison_group <- labels[1]; b$comparison_group <- labels[2]
+  km_fit(rbind(a, b), endpoint, strata = "comparison_group", ep_dict = ep_dict,
+         min_fu = min_fu)
+}
+
 # label a stratified/collapsed group correctly: when a single level survives
 # suppression, survfit collapses to an unstratified fit -- use the real
 # surviving group name, never mislabel a filtered subset as "Overall".
