@@ -62,6 +62,19 @@
   getwd()
 })
 
+# SKELETON GUARD (fail closed BEFORE sourcing 06, which needs DBI): a plain
+# `Rscript 08_analytic_cohort.R` without the opt-in exits HERE with the intended
+# skeleton message, not a downstream "no package called 'DBI'" error. Sourcing
+# the file for its functions (interactive, or analytic_cohort.no_autorun=TRUE)
+# skips the guard. The in-main_analytic() guard below is kept belt-and-braces.
+.ac_autorun <- !interactive() && !isTRUE(getOption("analytic_cohort.no_autorun"))
+if (.ac_autorun && toupper(Sys.getenv("ANALYTIC_COHORT_ALLOW_PLACEHOLDER", "")) != "TRUE")
+  stop("08_analytic_cohort.R is a SKELETON: the [B]-[E] real-data derivations ",
+       "(demographics/payer, CCI, continuous CE, safety, HCRU, production SOC map) ",
+       "are not yet wired. Set ANALYTIC_COHORT_ALLOW_PLACEHOLDER=TRUE to emit a ",
+       "contract-valid PLACEHOLDER cohort for wiring/validation tests only.",
+       call. = FALSE)
+
 # Source 06 WITHOUT running its dashboard (we only want its cohort-prep +
 # view-builder functions + cfg). This reuses the validated NDMM flag SQL.
 options(ndmm_dashboard.no_autorun = TRUE)
@@ -149,13 +162,16 @@ main_analytic <- function() {
       year(ec.INDEX_DATE)                             AS dx_year,
       year(lr.lot1_start_dt)                          AS lot_init_year,
       round(datediff(lr.lot1_start_dt, ec.INDEX_DATE)/30.44, 1) AS dx_to_1l_months,
-      -- [C] OS = time to death, else censor at observation end
-      round(datediff(coalesce(ec.DEATH_DT, ec.OBS_END_DT), lr.lot1_start_dt)/30.44,1) AS os_time,
+      -- [C] OS = time to death, else censor at observation end. The endpoint
+      -- date is CAPPED at OBS_END_DT (least(...)) so a death AFTER observation
+      -- (os_event=0) never pushes os_time past administrative follow-up (which
+      -- would fail the dashboard's os_time <= fu_potential_months validator).
+      round(datediff(least(coalesce(ec.DEATH_DT, ec.OBS_END_DT), ec.OBS_END_DT), lr.lot1_start_dt)/30.44,1) AS os_time,
       CASE WHEN ec.DEATH_DT IS NOT NULL
             AND ec.DEATH_DT <= ec.OBS_END_DT THEN 1 ELSE 0 END        AS os_event,
       -- [C] potential (administrative, death-INDEPENDENT) follow-up from 1L
       round(datediff(ec.OBS_END_DT, lr.lot1_start_dt)/30.44,1)        AS fu_potential_months,
-      round(datediff(coalesce(ec.DEATH_DT, ec.OBS_END_DT), ec.INDEX_DATE)/30.44,1) AS fu_from_dx_months,
+      round(datediff(least(coalesce(ec.DEATH_DT, ec.OBS_END_DT), ec.OBS_END_DT), ec.INDEX_DATE)/30.44,1) AS fu_from_dx_months,
       -- [D] contract-VALID placeholders (never NULL -> validator/sliders safe).
       -- CE months are a FLAG-DERIVED proxy (real continuous measure = TODO from
       -- NDMM_ENROLL_SPANS) so the CE sliders have a usable, non-degenerate range.
@@ -170,18 +186,19 @@ main_analytic <- function() {
       coalesce(cat.soc_category, 'Other')             AS soc_category,   -- [E]
       lr.n_lines                                      AS n_lines,
       lr.lot1_length                                  AS lot1_length,
-      -- [C] TTD (1L discontinuation) from the 1L LOT row's end date
-      round(datediff(l1.LOT_BASE_END_DT, lr.lot1_start_dt)/30.44,1)   AS ttd_time,
+      -- [C] TTD (1L discontinuation): end date, censored to OBS_END if the line
+      -- is ongoing (missing end date) and capped at OBS_END (<= follow-up).
+      round(datediff(least(coalesce(l1.LOT_BASE_END_DT, ec.OBS_END_DT), ec.OBS_END_DT), lr.lot1_start_dt)/30.44,1) AS ttd_time,
       CASE WHEN l1.LOT_BASE_END_REASON IS NOT NULL
             AND upper(l1.LOT_BASE_END_REASON) NOT LIKE '%STUDY_END%'
             AND upper(l1.LOT_BASE_END_REASON) NOT LIKE '%DISENROLL%'
            THEN 1 ELSE 0 END                          AS ttd_event,
-      -- [C] TTNT = start of LOT2 (or death) from 1L start
-      round(datediff(coalesce(l2.LOT_START_DT, ec.DEATH_DT, ec.OBS_END_DT),
+      -- [C] TTNT = start of LOT2 (or death), capped at OBS_END (<= follow-up)
+      round(datediff(least(coalesce(l2.LOT_START_DT, ec.DEATH_DT, ec.OBS_END_DT), ec.OBS_END_DT),
                      lr.lot1_start_dt)/30.44,1)        AS ttnt_time,
       CASE WHEN lr.n_lines > 1 THEN 1 ELSE 0 END      AS ttnt_event,
       -- [C] PFS is EXPLORATORY only (protocol: not ascertainable) -- proxy = TTD
-      round(datediff(l1.LOT_BASE_END_DT, lr.lot1_start_dt)/30.44,1)   AS pfs_time,
+      round(datediff(least(coalesce(l1.LOT_BASE_END_DT, ec.OBS_END_DT), ec.OBS_END_DT), lr.lot1_start_dt)/30.44,1) AS pfs_time,
       CASE WHEN l1.LOT_BASE_END_REASON IS NOT NULL THEN 1 ELSE 0 END  AS pfs_event,
       -- ===== NDMM IE flags (from 06's NDMM_FLAGS_ALL -- verbatim) =====
       coalesce(f.CE_pre_lot1_12mo, 0)                 AS incl_baseline_ce_12m,
@@ -213,11 +230,11 @@ main_analytic <- function() {
            coalesce(cat.soc_category, 'Other') AS lot_soc,            -- [E] per line
            nxc.soc_category AS next_soc,   -- next line's SOC (NULL on the last line, per contract)
            'Unknown' AS payer_type,                                    -- [B] TODO real payer join
-           round(datediff(coalesce(ec.DEATH_DT, ec.OBS_END_DT), ll.LOT_START_DT)/30.44,1) AS os_time,
+           round(datediff(least(coalesce(ec.DEATH_DT, ec.OBS_END_DT), ec.OBS_END_DT), ll.LOT_START_DT)/30.44,1) AS os_time,
            CASE WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT THEN 1 ELSE 0 END AS os_event,
-           round(datediff(ll.LOT_BASE_END_DT, ll.LOT_START_DT)/30.44,1) AS ttd_time,
+           round(datediff(least(coalesce(ll.LOT_BASE_END_DT, ec.OBS_END_DT), ec.OBS_END_DT), ll.LOT_START_DT)/30.44,1) AS ttd_time,
            CASE WHEN ll.LOT_BASE_END_REASON IS NOT NULL THEN 1 ELSE 0 END AS ttd_event,
-           round(datediff(coalesce(nx.LOT_START_DT, ec.DEATH_DT, ec.OBS_END_DT), ll.LOT_START_DT)/30.44,1) AS ttnt_time,
+           round(datediff(least(coalesce(nx.LOT_START_DT, ec.DEATH_DT, ec.OBS_END_DT), ec.OBS_END_DT), ll.LOT_START_DT)/30.44,1) AS ttnt_time,
            CASE WHEN nx.LOT_START_DT IS NOT NULL THEN 1 ELSE 0 END AS ttnt_event,
            round(datediff(ec.OBS_END_DT, ll.LOT_START_DT)/30.44,1) AS fu_potential_months
     FROM {lot} ll
