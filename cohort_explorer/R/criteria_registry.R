@@ -154,6 +154,34 @@ criteria_registry <- function() {
       type = "param", variable = "payer_type", filter = "categorical",
       default = NULL),
 
+    # --- movable time-period / threshold filters (in-memory sliders over raw
+    #     measures carried on the analytic cohort -- no re-query needed) --------
+    flt_baseline_ce = list(
+      id = "flt_baseline_ce", label = "Baseline CE (months)",
+      desc = "Require at least this many months of baseline continuous enrollment.",
+      polarity = "incl", phase = "pre_lot", ui_category = "Other",
+      type = "param", variable = "baseline_ce_months", filter = "range",
+      default = NULL),
+
+    flt_followup_ce = list(
+      id = "flt_followup_ce", label = "Follow-up CE (months)",
+      desc = "Require at least this many months of follow-up enrollment.",
+      polarity = "incl", phase = "post_lot1", ui_category = "Other",
+      type = "param", variable = "followup_ce_months", filter = "range",
+      default = NULL),
+
+    flt_dx_year = list(
+      id = "flt_dx_year", label = "Year of MM diagnosis",
+      desc = "Restrict to a diagnosis-year window.",
+      polarity = "incl", phase = "pre_lot", ui_category = "Other",
+      type = "param", variable = "dx_year", filter = "range", default = NULL),
+
+    flt_lot_init_year = list(
+      id = "flt_lot_init_year", label = "Year of 1L initiation",
+      desc = "Restrict to a 1L-initiation-year window.",
+      polarity = "incl", phase = "pre_lot", ui_category = "Other",
+      type = "param", variable = "lot_init_year", filter = "range", default = NULL),
+
     flt_soc = list(
       id = "flt_soc", label = "1L SOC regimen category",
       desc = "Restrict to selected 1L standard-of-care regimen group(s).",

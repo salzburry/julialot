@@ -68,3 +68,8 @@ STRATA_VARS  <- names(VARDICT)[vapply(names(VARDICT),
   function(v) var_type(v, VARDICT) %in% c("cat", "binary"), logical(1))]
 STRATA_LABELLED <- setNames(STRATA_VARS, vapply(STRATA_VARS, var_label,
                                                 character(1), dict = VARDICT))
+
+# covariates offered to the adjusted (Cox) model: the strata set + clinically
+# meaningful continuous measures (age, CCI). Outcome/ID/date fields excluded.
+COVARS <- c(STRATA_VARS, "age_index", "cci")
+COVARS_LABELLED <- setNames(COVARS, vapply(COVARS, var_label, character(1), dict = VARDICT))

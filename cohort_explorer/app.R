@@ -44,7 +44,7 @@ main_tabs <- c(
       textOutput("pc_suppressed"),
       h5("Categorical variables"), tableOutput("pc_cat"),
       h5("Continuous variables"),  tableOutput("pc_cont"),
-      h5("Baseline safety events of interest (n / % + rate per patient-year)"),
+      h5("Baseline safety events of interest (n / % + rate per 100 patient-years)"),
       tableOutput("pc_safety"))
   ),
   if (HAS_SURVIVAL)
@@ -60,12 +60,43 @@ main_tabs <- c(
           "treatment-pattern pathway (commercial-insured only, Exploratory ",
           "Obj 3; patients who stop flow into 'End'); and a per-stage detail table."),
       h4(textOutput("reg_title")), tableOutput("reg_freq"),
-      h4("1L -> 4L treatment pathway (commercial only)"),
+      fluidRow(
+        column(5, sliderInput("sankey_maxline", "Pathway depth (lines)",
+                              min = 2, max = 5, value = 4, step = 1)),
+        column(5, checkboxInput("sankey_commercial",
+                                "Commercial-insured only (protocol Obj 3)", TRUE))),
+      h4(textOutput("sankey_title")),
       plotOutput("sankey", height = "460px"),
       fluidRow(column(5, selectInput("trans_from", "Transition detail (from line)",
                     choices = c("1L -> 2L" = 1L, "2L -> 3L" = 2L, "3L -> 4L" = 3L),
                     selected = 1L))),
       h4(textOutput("trans_title")), tableOutput("trans_tbl")),
+
+    if (HAS_SURVIVAL) tabPanel("Adjusted & Compare",
+      br(),
+      div(class = "ce-note",
+          "Adjusted (Cox) models with your choice of covariates, and a KM ",
+          "comparison of two saved cohort selections — all computed in memory ",
+          "on the loaded snapshot, so it is instant. Save Group A/B from the ",
+          "current sidebar selection (any IE + filter combination)."),
+      fluidRow(
+        column(4, selectInput("adj_endpoint", "Endpoint",
+                    choices = setNames(names(EPDICT),
+                              vapply(EPDICT, `[[`, character(1), "label")))),
+        column(5, selectInput("adj_covars", "Adjust for covariates",
+                    choices = COVARS_LABELLED, multiple = TRUE,
+                    selected = c("age_ge70", "cci_band"))),
+        column(3, br(), actionButton("adj_run", "Fit Cox model", class = "btn-apply"))),
+      h4("Adjusted hazard ratios (95% CI)"), tableOutput("adj_cox"),
+      hr(),
+      h4("Compare two cohort selections"),
+      fluidRow(
+        column(4, actionButton("save_a", "Save current → Group A", class = "btn-apply")),
+        column(4, actionButton("save_b", "Save current → Group B", class = "btn-apply")),
+        column(4, br(), actionButton("cmp_run", "Compare A vs B", class = "btn-apply"))),
+      div(class = "ce-note", textOutput("grp_status")),
+      plotOutput("cmp_plot", height = "420px"),
+      h5("Median (95% CI)"), tableOutput("cmp_med")) else NULL,
 
     tabPanel("Cohort & Attrition",
       br(), h4("Sequential cohort attrition"),
@@ -107,7 +138,11 @@ ui <- fluidPage(
       selectInput("lot", "Line of therapy (outcomes)", choices = LOT_CHOICES,
                   selected = 1L),
       checkboxInput("restrict_fu",
-                    "Restrict time-to-event to >=3-mo follow-up (protocol)", TRUE),
+                    "Restrict time-to-event to a minimum follow-up (protocol)", TRUE),
+      sliderInput("min_fu_months", "Minimum potential follow-up (months)",
+                  min = 0, max = 24, value = MIN_FU_MONTHS, step = 1),
+      textInput("landmark_months", "KM landmark times (months, comma-separated)",
+                value = paste(LANDMARK_MONTHS, collapse = ", ")),
 
       h4("Inclusion / Exclusion Criteria"),
       div(class = "ce-note",
@@ -217,14 +252,18 @@ server <- function(input, output, session) {
   })
 
   # ----- Patient Characteristics -----
+  # capture the cohort + label at Apply time so the header N, safety table, and
+  # cat/cont tables ALL describe the same snapshot (they used to disagree: the
+  # header/safety read selected() live while the tables were gated on Apply).
   pc <- eventReactive(input$pc_apply, {
-    list(df = selected()$data, vars = input$pc_vars, strata = input$pc_strata)
+    list(df = selected()$data, vars = input$pc_vars, strata = input$pc_strata,
+         label = COHORTS[[cohort_choice()]]$label)
   }, ignoreNULL = FALSE)
 
   output$pc_title <- renderText({
-    s <- selected()
+    p <- pc()
     sprintf("Summary statistics — %s (N = %s)",
-            COHORTS[[cohort_choice()]]$label, format(s$n_out, big.mark = ","))
+            p$label, format(nrow(p$df), big.mark = ","))
   })
   output$pc_suppressed <- renderText({
     p <- pc(); req(nrow(p$df) > 0)
@@ -243,7 +282,7 @@ server <- function(input, output, session) {
     if (is.null(res)) data.frame(Note = "Select 1+ continuous variable.") else res
   }, striped = TRUE, bordered = TRUE, na = "")
   output$pc_safety <- renderTable({
-    s <- selected(); req(nrow(s$data) > 0); safety_baseline_table(s$data)
+    p <- pc(); req(nrow(p$df) > 0); safety_baseline_table(p$df)
   }, striped = TRUE, bordered = TRUE, na = "")
 
   # data source for a KM endpoint at the chosen line
@@ -258,6 +297,12 @@ server <- function(input, output, session) {
   }
 
   # ----- KM tabs -----
+  # shared time-to-event controls: the follow-up cut (0/off => none) and the
+  # landmark grid, both movable in-memory (no re-query).
+  mf_val   <- reactive(if (isTRUE(input$restrict_fu))
+                         as.integer(input$min_fu_months %||% MIN_FU_MONTHS) else NULL)
+  lm_times <- reactive(parse_landmark_months(input$landmark_months))
+
   if (HAS_SURVIVAL) for (.k in names(KM_TABS)) local({
     key <- .k
     km_react <- eventReactive(input[[paste0("km_", key, "_apply")]], {
@@ -270,7 +315,7 @@ server <- function(input, output, session) {
         return(structure(list(), msg = sprintf(
           "Stratum '%s' is not available at %dL (not carried onto later lines). Pick another stratum or 1L.",
           st, line)))
-      mf <- if (isTRUE(input$restrict_fu) && key != "Attrition") MIN_FU_MONTHS else NULL
+      mf <- if (key != "Attrition") mf_val() else NULL
       km_fit(src$df, key, strata = if (nzchar(st)) st else NULL, EPDICT, min_fu = mf)
     }, ignoreNULL = FALSE)
 
@@ -281,7 +326,7 @@ server <- function(input, output, session) {
       km_plot(k, horizon = input[[paste0("km_", key, "_horizon")]])
     })
     output[[paste0("km_", key, "_landmark")]] <- renderTable(
-      km_landmark(km_react()), bordered = TRUE, na = "")
+      km_landmark(km_react(), times = lm_times()), bordered = TRUE, na = "")
     output[[paste0("km_", key, "_med")]]  <- renderTable(
       km_medians(km_react()), bordered = TRUE, na = "")
     output[[paste0("km_", key, "_risk")]] <- renderTable(
@@ -289,22 +334,64 @@ server <- function(input, output, session) {
       bordered = TRUE, na = "")
   })
 
+  # ----- Adjusted (Cox) model + A/B comparison -----
+  if (HAS_SURVIVAL) {
+    grpA <- reactiveVal(NULL); grpB <- reactiveVal(NULL)
+    observeEvent(input$save_a, grpA(selected()$data$patient_id))
+    observeEvent(input$save_b, grpB(selected()$data$patient_id))
+    output$grp_status <- renderText(sprintf(
+      "Group A: %s | Group B: %s   (save from the current sidebar selection)",
+      if (is.null(grpA())) "unset" else paste(length(grpA()), "patients"),
+      if (is.null(grpB())) "unset" else paste(length(grpB()), "patients")))
+
+    cox_tbl <- eventReactive(input$adj_run, {
+      km_cox(selected()$data, input$adj_endpoint, input$adj_covars, EPDICT, min_fu = mf_val())
+    })
+    output$adj_cox <- renderTable({
+      t <- cox_tbl()
+      if (is.null(t)) data.frame(Note = "Select an endpoint + covariates, then Fit.") else t
+    }, striped = TRUE, bordered = TRUE, na = "")
+
+    cmp_km <- eventReactive(input$cmp_run, {
+      validate(need(!is.null(grpA()) && !is.null(grpB()),
+                    "Save Group A and Group B first."))
+      mf <- if (input$adj_endpoint != "Attrition") mf_val() else NULL
+      km_compare(FLAGGED, input$adj_endpoint, grpA(), grpB(), EPDICT, min_fu = mf)
+    })
+    output$cmp_plot <- renderPlot({
+      k <- cmp_km()
+      if (is.null(k) || !length(k)) { plot.new()
+        text(0.5, 0.5, "Save Group A + Group B, then Compare."); return() }
+      km_plot(k, horizon = 60)
+    })
+    output$cmp_med <- renderTable(km_medians(cmp_km()), bordered = TRUE, na = "")
+  }
+
   # ----- Regimen & Transitions -----
   output$reg_title <- renderText(sprintf("Regimen frequency — %sL", input$lot))
   output$reg_freq <- renderTable({
     rf <- regimen_frequency(LOT_LONG, selected()$data$patient_id, as.integer(input$lot))
     if (is.null(rf)) data.frame(Note = "No patients reach this line.") else rf
   }, striped = TRUE, bordered = TRUE)
-  # full 1L->4L patient-journey pathway (Sankey)
+  # configurable 1L->NL patient-journey pathway (Sankey): depth + payer toggle.
+  # NULL-guarded so it is robust to reactive timing (defaults: depth 4, commercial).
+  sankey_depth <- reactive(as.integer(input$sankey_maxline %||% 4L))
+  sankey_comm  <- reactive(isTRUE(input$sankey_commercial %||% TRUE))
+  sankey_lbl   <- reactive(sprintf("1L -> %dL treatment pathway (%s)",
+    sankey_depth(), if (sankey_comm()) "commercial only" else "all payers"))
+  output$sankey_title <- renderText(sankey_lbl())
   output$sankey <- renderPlot(
     lot_pathway_sankey(lot_pathway_data(LOT_LONG, selected()$data$patient_id,
-                                        max_line = 4L)))
-  # per-stage transition detail table (from-line selectable)
+        max_line = sankey_depth(), commercial_only = sankey_comm()),
+      title = sankey_lbl()))
+  # per-stage transition detail table (from-line + payer toggle)
   output$trans_title <- renderText(
-    sprintf("%dL -> %dL SOC transition detail (commercial only)",
-            as.integer(input$trans_from), as.integer(input$trans_from) + 1L))
+    sprintf("%dL -> %dL SOC transition detail (%s)",
+            as.integer(input$trans_from), as.integer(input$trans_from) + 1L,
+            if (sankey_comm()) "commercial only" else "all payers"))
   trans <- reactive(lot_transition_table(LOT_LONG, selected()$data$patient_id,
-                                         as.integer(input$trans_from)))
+                                         as.integer(input$trans_from),
+                                         commercial_only = sankey_comm()))
   output$trans_tbl <- renderTable({
     t <- trans(); if (is.null(t)) data.frame(Note = "No transitions at this stage.") else t
   }, striped = TRUE, bordered = TRUE)
@@ -328,7 +415,7 @@ server <- function(input, output, session) {
   ndmm_tbl <- reactive(ndmm_protocol_checks(selected()$data,
                           active_state()$active_flags, REG))
   dq_tbl   <- reactive(protocol_dq_checks(selected()$data,
-                          min_fu = if (isTRUE(input$restrict_fu)) MIN_FU_MONTHS else 3L))
+                          min_fu = as.integer(input$min_fu_months %||% MIN_FU_MONTHS)))
   output$chk_headline_v <- renderText(
     checks_headline(rbind(lot_tbl(), ndmm_tbl(), dq_tbl())))
   render_checks <- function(tbl) { tbl$Status <- vapply(tbl$Status, status_html, character(1)); tbl }

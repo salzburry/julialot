@@ -33,6 +33,9 @@ FLAGGED_COHORT_BASE_COLS <- c(
   # calendar / follow-up (protocol characteristics + attrition)
   "dx_year", "lot_init_year", "dx_to_1l_months", "fu_from_dx_months",
   "fu_potential_months",
+  # raw continuous-enrollment durations (months) -- carried as MEASURES, not
+  # just fixed-threshold flags, so a "movable CE window" is an in-memory slider
+  "baseline_ce_months", "followup_ce_months",
   # clinical: Charlson + baseline comorbidities of interest (flag + count + PY)
   "cci",
   "bl_hepatic", "bl_renal", "bl_infection", "bl_ocular", "bl_cv", "bl_neuro",
@@ -146,6 +149,12 @@ validate_flagged_cohort <- function(df, reg = criteria_registry()) {
   if (all(c("os_event", "death_dt") %in% names(df)) &&
       any(df$os_event == 1L & is.na(df$death_dt)))
     stop("os_event=1 requires a non-missing death_dt.", call. = FALSE)
+  # patient-level TTNT biconditional (mirrors the LOT-long one): a next-treatment
+  # event iff the patient reached >=2 lines -- else a treated 2L+ patient is
+  # miscensored on the 1L TTNT curve.
+  if (all(c("ttnt_event", "n_lines") %in% names(df)) &&
+      any(df$ttnt_event != as.integer(df$n_lines > 1L)))
+    stop("ttnt_event must equal (n_lines > 1) at the patient level.", call. = FALSE)
 
   # ---- required dates present & ordered ---------------------------------------
   for (d in c("index_date", "lot1_start_dt"))
@@ -255,7 +264,16 @@ synth_flagged_cohort <- function(n = 4000L, seed = 42L, soc_levels = NULL) {
     (1 - pmin(cci, 6) * 0.03))
   os_time  <- round(pmin(latent_death, fu_potential_months), 1)
   os_event <- as.integer(latent_death <= fu_potential_months)
-  fu_from_dx_months <- round(dx_to_1l_months + fu_potential_months, 1)
+  # OBSERVED follow-up from diagnosis (dx -> death/censor), not administrative
+  # potential follow-up -- this is the protocol Table-1 characteristic.
+  fu_from_dx_months <- round(dx_to_1l_months + os_time, 1)
+
+  # raw continuous-enrollment durations (months); the fixed-threshold CE flags
+  # below are DERIVED from these, so a movable CE slider stays consistent with
+  # the flags and 12mo is always a subset of 6mo.
+  baseline_ce_months <- pmax(0L, round(rgamma(n, shape = 2.4, scale = 7)))
+  followup_ce_months <- pmax(0L, round(pmin(fu_potential_months,
+                                            rgamma(n, shape = 2, scale = 8))))
 
   death_dt <- as.Date(rep(NA_integer_, n), origin = "1970-01-01")
   ev <- os_event == 1L
@@ -272,6 +290,7 @@ synth_flagged_cohort <- function(n = 4000L, seed = 42L, soc_levels = NULL) {
     patient_id, age_index, gender, region, race, ethnicity, payer_type,
     index_date, lot1_start_dt, death_dt,
     dx_year, lot_init_year, dx_to_1l_months, fu_from_dx_months, fu_potential_months,
+    baseline_ce_months, followup_ce_months,
     cci, bl_hepatic, bl_renal, bl_infection, bl_ocular, bl_cv, bl_neuro,
     n_hepatic, n_renal, n_infection, n_ocular, n_cv, n_neuro, baseline_py,
     ip_hosp_count, er_visit_count, ip_los_days,
@@ -284,9 +303,9 @@ synth_flagged_cohort <- function(n = 4000L, seed = 42L, soc_levels = NULL) {
   df$incl_qualifying_mm   <- bern(0.985)
   df$incl_adult           <- as.integer(age_index >= 18L)
   df$incl_eligible_1l_tx  <- as.integer(lot1_start_dt >= as.Date("2017-01-01"))
-  df$incl_baseline_ce_6m  <- bern(0.88)
-  df$incl_baseline_ce_12m <- as.integer(df$incl_baseline_ce_6m == 1L & runif(n) < 0.78)
-  df$incl_fu_ce_3m        <- as.integer(os_event == 1L | runif(n) < 0.8)
+  df$incl_baseline_ce_6m  <- as.integer(df$baseline_ce_months >= 6L)
+  df$incl_baseline_ce_12m <- as.integer(df$baseline_ce_months >= 12L)
+  df$incl_fu_ce_3m        <- as.integer(df$followup_ce_months >= 3L | os_event == 1L)
   df$incl_new_user        <- bern(0.9)
   df$incl_fu_mm_agents    <- bern(0.995)
   df$excl_prior_mm_tx     <- bern(0.91)
@@ -441,6 +460,17 @@ validate_lot_long <- function(ll) {
     stop(n_bad, " LOT-long row(s) have ttnt_event inconsistent with the next ",
          "line (must be 1 iff a subsequent line exists, 0 on the last line).",
          call. = FALSE)
+  # ttnt_time on a non-terminal line must reconcile with the actual gap to the
+  # next line's start (TTNT = time to next treatment). Generous tolerance
+  # absorbs day-rounding / minor definitional slack; catches gross mismatch.
+  next_start <- ave(as.numeric(o$lot_start_dt), o$patient_id,
+                    FUN = function(x) c(x[-1], NA_real_))
+  gap_m <- (next_start - as.numeric(o$lot_start_dt)) / 30.44
+  recon <- next_exists & !is.na(gap_m)
+  n_gap <- sum(abs(o$ttnt_time[recon] - gap_m[recon]) > 2)   # tolerance: 2 months
+  if (n_gap)
+    stop(n_gap, " LOT-long row(s) have ttnt_time inconsistent (>2mo) with the ",
+         "gap between this line and the next line's start date.", call. = FALSE)
   invisible(ll)
 }
 
@@ -507,10 +537,44 @@ augment_lot_long <- function(lot_long, cohort) {
 # (ELIG_COH_FINAL x LOT_LONG + per-criterion flags as columns) here; the
 # dashboard consumes it via load_flagged_cohort(source_flagged_cohort_warehouse).
 # =============================================================================
-source_flagged_cohort_warehouse <- function(...) {
-  stop("source_flagged_cohort_warehouse() is not implemented in this ",
-       "environment (no Databricks warehouse). Implement the DBI/odbc ",
-       "projection of ELIG_COH_FINAL x LOT_LONG + IE flags (see README / ",
-       "06_ndmm_dashboard.R) before using a production data path.",
-       call. = FALSE)
+# Read a materialised analytic table (built once by the pipeline: 06's flag
+# join, UN-filtered, + parent flags + CCI/safety/HCRU + LOT-long) over DBI/odbc.
+# Pass a live connection `con`; without one it fails closed (no warehouse here).
+.warehouse_read <- function(table, con = NULL,
+    catalog = Sys.getenv("DATABRICKS_CATALOG", "hive_metastore"),
+    schema  = Sys.getenv("PROJECT_WORK_SCHEMA",
+                         Sys.getenv("DOMINO_USER_NAME", "gsk_mm_lot_work"))) {
+  if (is.null(con))
+    stop("source_*_warehouse(): pass a live DBI connection `con`. The analytic ",
+         "cohort must be MATERIALISED once by the pipeline (CREATE TABLE ",
+         schema, ".", table, " AS <06 flag join, un-filtered> -- see ",
+         "ANALYTIC_COHORT.md); this environment has no warehouse.", call. = FALSE)
+  if (!requireNamespace("DBI", quietly = TRUE))
+    stop("DBI is required to read the analytic cohort.", call. = FALSE)
+  DBI::dbGetQuery(con, sprintf("SELECT * FROM %s.%s.%s", catalog, schema, table))
+}
+
+# patient-level analytic cohort (the flagged superset)
+source_flagged_cohort_warehouse <- function(con = NULL, table = "ANALYTIC_COHORT", ...)
+  .warehouse_read(table, con = con, ...)
+
+# per-line analytic LOT-long
+source_lot_long_warehouse <- function(con = NULL, table = "ANALYTIC_LOT_LONG", ...)
+  .warehouse_read(table, con = con, ...)
+
+# Export the materialised snapshot the OFFLINE dashboard path reads (the
+# artifact the pipeline writes once per data refresh). Writes two CSVs + a
+# build-stamp so the UI can show "data as of ...".
+export_analytic_cohort <- function(cohort, lot_long, dir, stamp = NULL) {
+  if (!dir.exists(dir)) dir.create(dir, recursive = TRUE)
+  validate_flagged_cohort(cohort); validate_lot_long(lot_long)
+  cp <- file.path(dir, "analytic_cohort.csv")
+  lp <- file.path(dir, "analytic_lot_long.csv")
+  utils::write.csv(cohort,   cp, row.names = FALSE)
+  utils::write.csv(lot_long, lp, row.names = FALSE)
+  writeLines(c(paste0("rows_cohort=", nrow(cohort)),
+               paste0("rows_lot_long=", nrow(lot_long)),
+               paste0("built=", if (is.null(stamp)) "unstamped" else stamp)),
+             file.path(dir, "analytic_cohort.stamp"))
+  invisible(list(cohort = cp, lot_long = lp))
 }

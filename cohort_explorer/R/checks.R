@@ -42,15 +42,17 @@ lot_checks <- function(df, max_lot = 5L) {
          sprintf("PFS exceeds OS for %s patients.",
                  sum(df$pfs_time > df$os_time + 1e-6))),
 
-    .chk("Death date consistent with OS event",
-         all((df$os_event == 1L) == !is.na(df$death_dt)),
-         sprintf("Death-date present iff OS event=1 (%s mismatches).",
-                 sum((df$os_event == 1L) != !is.na(df$death_dt)))),
+    # matches the loader's rule: os_event=1 REQUIRES a death date; death_dt
+    # present with os_event=0 (death after administrative censoring) is allowed,
+    # so this no longer FAILs a state validate_flagged_cohort() accepts.
+    .chk("Death date present when OS event",
+         all(df$os_event != 1L | !is.na(df$death_dt)),
+         sprintf("%s death-event patient(s) missing a death date.",
+                 sum(df$os_event == 1L & is.na(df$death_dt)))),
 
-    .chk("rwTTNT observed only for LOT2+",
-         all((df$ttnt_event == 1L) <= (df$n_lines > 1L)),
-         "Next-treatment event implies a subsequent line exists.",
-         warn_ok = TRUE),
+    .chk("rwTTNT event iff LOT2+",
+         all((df$ttnt_event == 1L) == (df$n_lines > 1L)),
+         "Next-treatment event holds exactly when a subsequent line exists."),
 
     .chk("SOC regimen category populated",
          all(!is.na(df$soc_category) & nzchar(df$soc_category)),
