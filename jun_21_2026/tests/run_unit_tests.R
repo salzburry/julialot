@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # Level-1 (local, pure-R) unit tests for the refactor toolkit.
-# Run from the jun_21_2026 workspace root:   Rscript tests/run_unit_tests.R
+# Run from the workspace root:   Rscript tests/run_unit_tests.R
 # These cover everything testable WITHOUT Databricks or clinical sign-off.
 stopifnot(file.exists("scripts/lib.R"))   # cwd must be the workspace root
 

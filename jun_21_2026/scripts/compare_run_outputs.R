@@ -61,8 +61,8 @@ UNIMPLEMENTED_FIELDS <- list()
 # compare_local checks BOTH sides carry these, so two
 # equally-incomplete outputs can never be called behaviourally equivalent. These
 # are the ALGORITHM-DERIVED (behaviourally meaningful) columns the production
-# builders emit (MAP_STACKED <- apr_30_2026/02_lot1.R:643-662; LOT1_BASE <-
-# 02_lot1.R:814-823; LOT_LONG <- apr_30_2026/R/lot2_5_base.R:76-135 & 891-960).
+# builders emit (MAP_STACKED <- 02_lot1.R:643-662; LOT1_BASE <-
+# 02_lot1.R:814-823; LOT_LONG <- R/lot2_5_base.R:76-135 & 891-960).
 # Two column classes are intentionally NOT enumerated here (both still covered by
 # the schema-equality check, which fails any ONE-sided drop):
 #   - study-specific per-drug / per-class WIDE columns (LOT1_MED_*, LOT_CLASS_*,
@@ -90,7 +90,7 @@ OUTPUT_CONTRACT <- list(
 # --- hive_metastore (Databricks SQL) adapter -------------------------------
 # The run-scoped outputs live as tables in the hive_metastore catalog and are
 # queried with Databricks SQL over ODBC (the project's DBI/odbc connection, same
-# as apr_30_2026/R/db_utils.R) - there is no Spark DataFrame API here. The SQL
+# as the production R/db_utils.R) - there is no Spark DataFrame API here. The SQL
 # builders below are pure (unit-tested); db_q executes them. Local CSV tests
 # never call db_q, so DBI/odbc are needed only for the live --run path.
 db_q <- function(con, sql) {
@@ -102,7 +102,7 @@ db_exec <- function(con, sql) {                              # DDL seam (normali
   DBI::dbExecute(con, sql)
 }
 
-# Connect exactly like apr_30_2026 (DSN=DATABRICKS_DSN default RWDE; pwd=DATABRICKS_PWD;
+# Connect exactly like the production pipeline (DSN=DATABRICKS_DSN default RWDE; pwd=DATABRICKS_PWD;
 # catalog hive_metastore). Used by the --run CLI.
 connect_compare <- function(dsn = Sys.getenv("DATABRICKS_DSN", "RWDE"),
                             pwd = Sys.getenv("DATABRICKS_PWD", "")) {
@@ -229,7 +229,7 @@ compare_schema_maps <- function(sa, sb) {
        a_only = a_only, b_only = b_only, type_mismatch = type_mismatch)
 }
 # Auto-detect the patient-id column from the actual schema (PATID legacy vs
-# patient_id canonical), so --run needs no flag for the apr_30 output tables.
+# patient_id canonical), so --run needs no flag for the production output tables.
 .detect_patid <- function(cols) {
   lc <- tolower(cols)
   if ("patient_id" %in% lc) return("patient_id")

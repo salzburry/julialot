@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # engine/map.R - LOCAL, pure-R re-implementation of the MAP (medication-available
-# period) builder, faithful to apr_30_2026/02_lot1.R (the Spark `aggregate`
+# period) builder, faithful to the production 02_lot1.R (the Spark `aggregate`
 # runout state machine), STEP-for-STEP.
 #
 # PURPOSE: verification only. It runs on synthetic fixtures locally so we can see

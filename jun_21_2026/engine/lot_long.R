@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # engine/lot_long.R - LOT2-5 multi-line loop (LOT_LONG), faithful to
-# apr_30_2026/R/lot2_5_base.R. Triggers each line from the PRIOR line's end event,
+# the production R/lot2_5_base.R. Triggers each line from the PRIOR line's end event,
 # re-derives the regimen, and repeats to MAX_LOT (5). LOCAL verification engine.
 #
 #   N.1 candidates (after PREV_END_DT, <= OBS_END):
