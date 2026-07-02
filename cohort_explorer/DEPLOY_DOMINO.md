@@ -31,7 +31,11 @@ export OUTPUT_DIR=/mnt/artifacts/results
 Rscript cohort_explorer/warehouse/08_analytic_cohort.R
 ```
 
-Set `WAREHOUSE_PWD` as a Domino env var / secret. This writes
+The datasource (DSN / password / catalog / schema) is read from one file,
+`config/warehouse_config.R`, and every value is env-overridable — so you point
+at your warehouse by setting env vars, not by editing code. Set `WAREHOUSE_PWD`
+(and `WAREHOUSE_DSN` / `WAREHOUSE_CATALOG` / `PROJECT_WORK_SCHEMA` if they differ
+from the defaults) as Domino env vars / secrets. This writes
 `analytic_cohort.csv` and `analytic_lot_long.csv` to `/mnt/artifacts/results`
 (Domino persists Job artifacts there). Re-run on each data refresh.
 

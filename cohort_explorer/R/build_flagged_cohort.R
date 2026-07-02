@@ -539,11 +539,12 @@ augment_lot_long <- function(lot_long, cohort) {
 # =============================================================================
 # Read a materialised analytic table (built once by the pipeline: the NDMM flag
 # join, UN-filtered, + parent flags + CCI/safety/HCRU + LOT-long) over DBI/odbc.
-# Pass a live connection `con`; without one it fails closed (no warehouse here).
+# Datasource catalog/schema come from the ONE shared config/warehouse_config.R
+# (sourced at app startup by global.R). Pass a live connection `con`; without one
+# it fails closed (no warehouse here).
 .warehouse_read <- function(table, con = NULL,
-    catalog = Sys.getenv("WAREHOUSE_CATALOG", "main"),
-    schema  = Sys.getenv("PROJECT_WORK_SCHEMA",
-                         Sys.getenv("DOMINO_USER_NAME", "mm_lot_work"))) {
+    catalog = warehouse_config()$catalog,
+    schema  = warehouse_config()$schema) {
   if (is.null(con))
     stop("source_*_warehouse(): pass a live DBI connection `con`. The analytic ",
          "cohort must be MATERIALISED once by the pipeline (CREATE TABLE ",

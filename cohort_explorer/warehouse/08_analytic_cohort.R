@@ -21,8 +21,10 @@
 #   validate_flagged_cohort()/validate_lot_long() fail closed on any breach.
 #
 # CONFIG (env vars; generate from one study_config via ../config/emit_pipeline_env.R):
-#   WAREHOUSE_DSN / WAREHOUSE_PWD / WAREHOUSE_CATALOG / PROJECT_WORK_SCHEMA
-#   STUDY_END / NDMM_LOT1_FROM / OUTPUT_DIR
+#   Datasource (DSN/PWD/CATALOG/SCHEMA) is defined in ONE place:
+#     ../config/warehouse_config.R  (WAREHOUSE_DSN / WAREHOUSE_PWD /
+#     WAREHOUSE_CATALOG / PROJECT_WORK_SCHEMA)
+#   Study/output: STUDY_END / NDMM_LOT1_FROM / OUTPUT_DIR
 #
 # ASSUMPTIONS / TODOs (each must be reviewed):
 #   [A] Overall IE flags are 1 on the ELIG_COH_FINAL base (already row-filtered);
@@ -50,12 +52,15 @@ if (.autorun && toupper(Sys.getenv("ANALYTIC_COHORT_ALLOW_PLACEHOLDER", "")) != 
   if (length(fa)) dirname(normalizePath(sub("^--file=", "", fa[1]))) else getwd()
 })
 
+# Datasource connection comes from the ONE shared config file (../config/
+# warehouse_config.R); study/output params stay local to this job.
+source(file.path(.script_dir, "..", "config", "warehouse_config.R"))
+.wcfg <- warehouse_config()
 cfg <- list(
-  dsn         = Sys.getenv("WAREHOUSE_DSN", "RWDE"),
-  pwd         = Sys.getenv("WAREHOUSE_PWD", ""),
-  catalog     = Sys.getenv("WAREHOUSE_CATALOG", "main"),
-  work_schema = Sys.getenv("PROJECT_WORK_SCHEMA",
-                  Sys.getenv("DOMINO_USER_NAME", "mm_lot_work")),
+  dsn         = .wcfg$dsn,
+  pwd         = .wcfg$pwd,
+  catalog     = .wcfg$catalog,
+  work_schema = .wcfg$schema,
   study_end   = Sys.getenv("STUDY_END", "2025-06-30"),
   lot1_from   = Sys.getenv("NDMM_LOT1_FROM", "2017-01-01"),
   out_dir     = Sys.getenv("OUTPUT_DIR", file.path(.script_dir, "artifacts")))
