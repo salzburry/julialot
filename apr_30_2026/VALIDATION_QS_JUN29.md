@@ -11,6 +11,19 @@ drift apart:
 | `validation_qs_jun29.R` | **Standalone program.** Runs all six analyses, writes one CSV per result + a run log. |
 | `07_combined_dashboard.R` | Renders the same six answers as labelled tables under a new **Exploratory analysis** cohort pill. |
 
+**Cohorts (study-team follow-up, Jul-2026):** every question is answered
+**once per cohort** — the parent **Overall** `LOT_LONG` cohort always, and the
+**NDMM** (1L newly-diagnosed) cohort when available. In the dashboard, titles
+carry the cohort tag (`Q1 (Overall): …` / `Q1 (NDMM): …`); the NDMM answers
+render when the NDMM cohort pass succeeded, otherwise a note card explains the
+gap. The standalone answers NDMM when the persisted `NDMM_LOT_LONG_FILT`
+work-schema table (materialized by the combined dashboard's NDMM pass) is
+readable; its NDMM CSVs carry an `ndmm_` filename prefix (Overall filenames
+are unchanged). The shared signal views (steroid claims, raw CAR-T dates) are
+built once on the parent patient list — NDMM patients are a strict subset
+(inner join to the NDMM patient set), and every per-question query joins back
+to its own cohort's `LOT_LONG`, which applies the restriction.
+
 ## Run
 
 ```bash

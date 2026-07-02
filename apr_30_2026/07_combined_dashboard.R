@@ -178,8 +178,14 @@ build_exploratory_scaffold <- function() {
 
 # ---- Exploratory objective: MM LOT Validation next steps (Q1-Q6) ----------
 # Renders the six study-team validation questions (Julia Moore, Jun-2026) as
-# labelled tables under the Exploratory cohort pill. Denominator = the parent
-# (Overall) LOT_LONG cohort; the cohort definition is stated on the intro card.
+# labelled tables under the Exploratory cohort pill. Per the study team's
+# follow-up (Jul-2026), every question is answered ONCE PER COHORT: the parent
+# Overall LOT_LONG cohort, and the NDMM (1L) cohort when its pass succeeded
+# (titles carry the cohort tag, e.g. "Q1 (NDMM): ..."). The shared signal
+# views (steroid claims, raw CAR-T dates) are built once on the parent
+# patient list - NDMM_LOT_LONG_FILT is LOT_LONG INNER JOINed to the NDMM
+# patient set, so its patients are a strict subset and every per-question
+# query joins back to its own cohort lot_long, which applies the restriction.
 # Summary tables are stakeholder-visible; the raw-claim / MAP-journey patient
 # examples carry "(sample)" so classify_item() routes them to the full-only
 # Patient explorer (no raw PATID table leaks into the stakeholder view).
@@ -187,7 +193,7 @@ build_exploratory_scaffold <- function() {
 # killing the combined dashboard.
 SEC_EXPL <- "Exploratory analysis"
 
-build_validation_exploratory <- function(con) {
+build_validation_exploratory <- function(con, ndmm_ok = FALSE) {
   lot_long <- wrk("LOT_LONG"); map_tbl <- wrk("MAP_STACKED"); sct_tbl <- wrk("LOT1_SCT")
   have_map <- isTRUE(tryCatch({ db_q(con, glue("SELECT 1 FROM {map_tbl} LIMIT 1")); TRUE },
                               error = function(e) FALSE))
@@ -210,12 +216,25 @@ build_validation_exploratory <- function(con) {
                    error = function(e) list(view = NULL, note = conditionMessage(e)))
   ster_src <- if (!is.null(ster$view)) vqs_steroid_src(ster$view) else NULL
 
+  # Cohort passes (study-team follow-up, Jul-2026): Overall always; NDMM when
+  # its cohort pass succeeded AND the filtered LOT_LONG view is readable.
+  cohorts <- list(list(tag = "Overall", lot_long = lot_long))
+  ndmm_ready <- isTRUE(ndmm_ok) && exists("NDMM_LOT_LONG_FILT") &&
+    isTRUE(tryCatch({ db_q(con, glue("SELECT 1 FROM {NDMM_LOT_LONG_FILT} LIMIT 1")); TRUE },
+                    error = function(e) FALSE))
+  if (ndmm_ready)
+    cohorts <- c(cohorts, list(list(tag = "NDMM", lot_long = NDMM_LOT_LONG_FILT)))
+
   add_html_card(paste0(
     '<div style="font-family:system-ui;padding:14px;max-width:900px">',
     '<h3>MM LOT Validation next steps (study-team Q&amp;A)</h3>',
     '<p style="color:#555;font-size:13px">Six follow-up questions from the ',
-    'study team (Jun&nbsp;2026). Denominator = the parent <b>Overall</b> ',
-    '<code>LOT_LONG</code> cohort. The same logic backs the standalone ',
+    'study team (Jun&nbsp;2026). Per the study team&rsquo;s follow-up, every ',
+    'question is answered <b>once per cohort</b> &mdash; <b>Overall</b> (the ',
+    'parent <code>LOT_LONG</code> cohort) and <b>NDMM</b> (the 1L ',
+    'newly-diagnosed subset',
+    if (ndmm_ready) '' else ' &mdash; <b>unavailable this run</b>, see the NDMM section',
+    '); titles carry the cohort tag. The same logic backs the standalone ',
     '<code>validation_qs_jun29.R</code> program (CSV outputs).</p>',
     '<ul style="font-size:13px;color:#444">',
     '<li><b>Steroid signal</b>: <code>steroid_codes.csv</code> codes scanned on ',
@@ -249,100 +268,117 @@ build_validation_exploratory <- function(con) {
     '</ul></div>'),
     section = SEC_EXPL, title = "About this section")
 
-  # Q1 ----------------------------------------------------------------------
-  tryCatch({
-    q1 <- vqs_q1_exclusion_agents(con, lot_long, tokens)
-    save_table(q1, section = SEC_EXPL,
-               title = "Q1: LOT1 regimens with pomalidomide / elotuzumab / panobinostat")
-  }, error = function(e) log_msg("  [Exploratory] Q1 failed: ", conditionMessage(e)))
+  if (!ndmm_ready)
+    vqs_note_card(paste0(
+      "Q1-Q6 (NDMM) not available this run - the NDMM (1L) cohort was not ",
+      "built (see the NDMM section for the reason). Only the Overall cohort ",
+      "is answered below."),
+      "Q1-Q6 (NDMM): unavailable this run")
 
-  # Q3 / Q4 / Q5 (steroid timing) - need the steroid_codes.csv signal --------
-  if (!is.null(ster_src)) {
-    tryCatch({
-      q3 <- vqs_steroid_windows(con, lot_long, ster_src, lot_num = 1L, w = VQS_W1)
-      save_table(q3, section = SEC_EXPL, title = paste0(
-        "Q3: LOT1 no-steroid patients - steroid before/after induction (n=",
-        attr(q3, "line_without_steroid"), " of ", attr(q3, "line_patients"), ")"))
-      # "who" (patient-level, full-only via "sample"); capped for the HTML.
-      q3p <- vqs_steroid_windows_patients(con, lot_long, ster_src, lot_num = 1L, w = VQS_W1, limit = 500L)
-      if (!is.null(q3p) && nrow(q3p) > 0)
-        save_table(q3p, section = SEC_EXPL,
-                   title = "Q3: LOT1 no-steroid patients - who got a steroid in-window (sample, max 500)")
-    }, error = function(e) log_msg("  [Exploratory] Q3 failed: ", conditionMessage(e)))
-    tryCatch({
-      q4 <- vqs_steroid_windows(con, lot_long, ster_src, lot_num = 2L, w = VQS_W2)
-      save_table(q4, section = SEC_EXPL, title = paste0(
-        "Q4: LOT2 no-steroid patients - steroid before/after induction (n=",
-        attr(q4, "line_without_steroid"), " of ", attr(q4, "line_patients"), ")"))
-      q4p <- vqs_steroid_windows_patients(con, lot_long, ster_src, lot_num = 2L, w = VQS_W2, limit = 500L)
-      if (!is.null(q4p) && nrow(q4p) > 0)
-        save_table(q4p, section = SEC_EXPL,
-                   title = "Q4: LOT2 no-steroid patients - who got a steroid in-window (sample, max 500)")
-    }, error = function(e) log_msg("  [Exploratory] Q4 failed: ", conditionMessage(e)))
-    tryCatch({
-      q5 <- vqs_q5_lot2_attribution(con, lot_long, ster_src, w1 = VQS_W1, w2 = VQS_W2)
-      save_table(q5, section = SEC_EXPL,
-                 title = "Q5: LOT2 pre-start steroid - attributable to LOT1?")
-    }, error = function(e) log_msg("  [Exploratory] Q5 failed: ", conditionMessage(e)))
-  } else {
-    vqs_note_card(paste0("Q3/Q4/Q5 (steroid timing) skipped - no steroid signal. ",
-                         if (!is.null(ster$note)) ster$note else ""),
-                  "Q3-Q5: steroid analyses (unavailable)")
-  }
+  for (co in cohorts) {
+    tag <- co$tag; ll <- co$lot_long
+    # "Q1: ..." -> "Q1 (NDMM): ..."; also handles range titles ("Q3-Q5: ...").
+    qt <- function(t) sub("^(Q[0-9]+(-Q[0-9]+)?)", paste0("\\1 (", tag, ")"), t)
+    log_msg("  [Exploratory] cohort pass: ", tag, " (", ll, ")")
 
-  # Q2 examples (full-only: titles carry "(sample)") -----------------------
-  if (have_map) {
+    # Q1 --------------------------------------------------------------------
     tryCatch({
-      q2 <- vqs_q2_poma_examples(con, lot_long, map_tbl, tokens, n = 5L, bounds = bounds$sql)
-      if (!is.null(q2$journey) && nrow(q2$journey) > 0)
-        save_table(q2$journey, section = SEC_EXPL,
-                   title = "Q2: Pomalidomide LOT1 - MAP journey examples (sample)")
-      if (!is.null(q2$raw) && nrow(q2$raw) > 0)
-        save_table(q2$raw, section = SEC_EXPL,
-                   title = "Q2: Pomalidomide LOT1 - raw claims before MAPs (sample)")
-      else
-        vqs_note_card(paste0("Q2 raw-claim examples unavailable. ",
-                             if (!is.null(q2$note)) q2$note else ""),
-                      "Q2: Pomalidomide LOT1 - raw claims (sample, unavailable)")
-    }, error = function(e) log_msg("  [Exploratory] Q2 examples failed: ", conditionMessage(e)))
-  }
+      q1 <- vqs_q1_exclusion_agents(con, ll, tokens)
+      save_table(q1, section = SEC_EXPL,
+                 title = qt("Q1: LOT1 regimens with pomalidomide / elotuzumab / panobinostat"))
+    }, error = function(e) log_msg("  [Exploratory/", tag, "] Q1 failed: ", conditionMessage(e)))
 
-  # Q6 (CAR-T) --------------------------------------------------------------
-  if (have_sct) {
-    tryCatch({
-      q6 <- vqs_q6_cart(con, lot_long, sct_tbl, w1 = VQS_W1, cart_raw_tbl = cart_raw)
-      save_table(q6, section = SEC_EXPL, title = "Q6: CAR-T prior to or during LOT1")
-    }, error = function(e) log_msg("  [Exploratory] Q6 failed: ", conditionMessage(e)))
-    tryCatch({
-      ex <- vqs_q6_cart_examples(con, lot_long, sct_tbl, map_tbl, n = 5L,
-                                 bounds = bounds$sql, cart_raw_tbl = cart_raw)
-      if (!is.null(ex$sct_raw) && nrow(ex$sct_raw) > 0)
-        save_table(ex$sct_raw, section = SEC_EXPL,
-                   title = "Q6: CAR-T prior/during LOT1 - raw SCT claims (sample)")
-      if (!is.null(ex$mma_raw) && nrow(ex$mma_raw) > 0)
-        save_table(ex$mma_raw, section = SEC_EXPL,
-                   title = "Q6: CAR-T prior/during LOT1 - raw MM claims (sample)")
-      if (!is.null(ex$journey) && nrow(ex$journey) > 0)
-        save_table(ex$journey, section = SEC_EXPL,
-                   title = "Q6: CAR-T prior/during LOT1 - MAP journey examples (sample)")
-      # Surface the example helper's note in both gap cases:
-      #  - no example patients selected (carries the honest "before-LOT1 not
-      #    assessed" caveat when the raw scan was unavailable), and
-      #  - patients selected but the requested RAW CAR-T claims came back empty
-      #    (Julia asked specifically for raw examples; don't let the MAP
-      #    journey stand in silently for them).
-      if (length(ex$patids) == 0)
-        vqs_note_card(if (!is.null(ex$note)) ex$note else
-                        "No CAR-T prior-to/during-LOT1 example patients selected.",
-                      "Q6: CAR-T prior/during LOT1 - examples (none)")
-      else if (is.null(ex$sct_raw) || nrow(ex$sct_raw) == 0)
-        vqs_note_card(paste0("Requested RAW CAR-T claim examples are unavailable",
-                             if (!is.null(ex$journey) && nrow(ex$journey) > 0)
-                               " (the MAP-derived journey above is shown instead)"
-                             else "", ". ",
-                             if (!is.null(ex$note)) ex$note else ""),
-                      "Q6: CAR-T prior/during LOT1 - raw SCT claims (sample, unavailable)")
-    }, error = function(e) log_msg("  [Exploratory] Q6 examples failed: ", conditionMessage(e)))
+    # Q3 / Q4 / Q5 (steroid timing) - need the steroid_codes.csv signal ------
+    if (!is.null(ster_src)) {
+      tryCatch({
+        q3 <- vqs_steroid_windows(con, ll, ster_src, lot_num = 1L, w = VQS_W1)
+        save_table(q3, section = SEC_EXPL, title = qt(paste0(
+          "Q3: LOT1 no-steroid patients - steroid before/after induction (n=",
+          attr(q3, "line_without_steroid"), " of ", attr(q3, "line_patients"), ")")))
+        # "who" (patient-level, full-only via "sample"); capped for the HTML.
+        q3p <- vqs_steroid_windows_patients(con, ll, ster_src, lot_num = 1L, w = VQS_W1, limit = 500L)
+        if (!is.null(q3p) && nrow(q3p) > 0)
+          save_table(q3p, section = SEC_EXPL,
+                     title = qt("Q3: LOT1 no-steroid patients - who got a steroid in-window (sample, max 500)"))
+      }, error = function(e) log_msg("  [Exploratory/", tag, "] Q3 failed: ", conditionMessage(e)))
+      tryCatch({
+        q4 <- vqs_steroid_windows(con, ll, ster_src, lot_num = 2L, w = VQS_W2)
+        save_table(q4, section = SEC_EXPL, title = qt(paste0(
+          "Q4: LOT2 no-steroid patients - steroid before/after induction (n=",
+          attr(q4, "line_without_steroid"), " of ", attr(q4, "line_patients"), ")")))
+        q4p <- vqs_steroid_windows_patients(con, ll, ster_src, lot_num = 2L, w = VQS_W2, limit = 500L)
+        if (!is.null(q4p) && nrow(q4p) > 0)
+          save_table(q4p, section = SEC_EXPL,
+                     title = qt("Q4: LOT2 no-steroid patients - who got a steroid in-window (sample, max 500)"))
+      }, error = function(e) log_msg("  [Exploratory/", tag, "] Q4 failed: ", conditionMessage(e)))
+      tryCatch({
+        q5 <- vqs_q5_lot2_attribution(con, ll, ster_src, w1 = VQS_W1, w2 = VQS_W2)
+        save_table(q5, section = SEC_EXPL,
+                   title = qt("Q5: LOT2 pre-start steroid - attributable to LOT1?"))
+      }, error = function(e) log_msg("  [Exploratory/", tag, "] Q5 failed: ", conditionMessage(e)))
+    } else if (identical(tag, "Overall")) {
+      # The steroid signal is cohort-independent (one CSV scan), so a missing
+      # signal skips Q3-Q5 for BOTH cohorts - note it once, untagged.
+      vqs_note_card(paste0("Q3/Q4/Q5 (steroid timing) skipped for all cohorts - ",
+                           "no steroid signal. ",
+                           if (!is.null(ster$note)) ster$note else ""),
+                    "Q3-Q5: steroid analyses (unavailable)")
+    }
+
+    # Q2 examples (full-only: titles carry "(sample)") ----------------------
+    if (have_map) {
+      tryCatch({
+        q2 <- vqs_q2_poma_examples(con, ll, map_tbl, tokens, n = 5L, bounds = bounds$sql)
+        if (!is.null(q2$journey) && nrow(q2$journey) > 0)
+          save_table(q2$journey, section = SEC_EXPL,
+                     title = qt("Q2: Pomalidomide LOT1 - MAP journey examples (sample)"))
+        if (!is.null(q2$raw) && nrow(q2$raw) > 0)
+          save_table(q2$raw, section = SEC_EXPL,
+                     title = qt("Q2: Pomalidomide LOT1 - raw claims before MAPs (sample)"))
+        else
+          vqs_note_card(paste0("Q2 raw-claim examples unavailable. ",
+                               if (!is.null(q2$note)) q2$note else ""),
+                        qt("Q2: Pomalidomide LOT1 - raw claims (sample, unavailable)"))
+      }, error = function(e) log_msg("  [Exploratory/", tag, "] Q2 examples failed: ", conditionMessage(e)))
+    }
+
+    # Q6 (CAR-T) ------------------------------------------------------------
+    if (have_sct) {
+      tryCatch({
+        q6 <- vqs_q6_cart(con, ll, sct_tbl, w1 = VQS_W1, cart_raw_tbl = cart_raw)
+        save_table(q6, section = SEC_EXPL, title = qt("Q6: CAR-T prior to or during LOT1"))
+      }, error = function(e) log_msg("  [Exploratory/", tag, "] Q6 failed: ", conditionMessage(e)))
+      tryCatch({
+        ex <- vqs_q6_cart_examples(con, ll, sct_tbl, map_tbl, n = 5L,
+                                   bounds = bounds$sql, cart_raw_tbl = cart_raw)
+        if (!is.null(ex$sct_raw) && nrow(ex$sct_raw) > 0)
+          save_table(ex$sct_raw, section = SEC_EXPL,
+                     title = qt("Q6: CAR-T prior/during LOT1 - raw SCT claims (sample)"))
+        if (!is.null(ex$mma_raw) && nrow(ex$mma_raw) > 0)
+          save_table(ex$mma_raw, section = SEC_EXPL,
+                     title = qt("Q6: CAR-T prior/during LOT1 - raw MM claims (sample)"))
+        if (!is.null(ex$journey) && nrow(ex$journey) > 0)
+          save_table(ex$journey, section = SEC_EXPL,
+                     title = qt("Q6: CAR-T prior/during LOT1 - MAP journey examples (sample)"))
+        # Surface the example helper's note in both gap cases:
+        #  - no example patients selected (carries the honest "before-LOT1 not
+        #    assessed" caveat when the raw scan was unavailable), and
+        #  - patients selected but the requested RAW CAR-T claims came back
+        #    empty (Julia asked specifically for raw examples; don't let the
+        #    MAP journey stand in silently for them).
+        if (length(ex$patids) == 0)
+          vqs_note_card(if (!is.null(ex$note)) ex$note else
+                          "No CAR-T prior-to/during-LOT1 example patients selected.",
+                        qt("Q6: CAR-T prior/during LOT1 - examples (none)"))
+        else if (is.null(ex$sct_raw) || nrow(ex$sct_raw) == 0)
+          vqs_note_card(paste0("Requested RAW CAR-T claim examples are unavailable",
+                               if (!is.null(ex$journey) && nrow(ex$journey) > 0)
+                                 " (the MAP-derived journey above is shown instead)"
+                               else "", ". ",
+                               if (!is.null(ex$note)) ex$note else ""),
+                        qt("Q6: CAR-T prior/during LOT1 - raw SCT claims (sample, unavailable)"))
+      }, error = function(e) log_msg("  [Exploratory/", tag, "] Q6 examples failed: ", conditionMessage(e)))
+    }
   }
   invisible()
 }
@@ -768,11 +804,12 @@ main_combined <- function() {
   cfg$plot_filename_prefix <<- NULL
 
   # ---- Exploratory objective (study-team validation Q1-Q6) ----
-  # Different-from-summary ad-hoc asks that reuse the Overall denominator but
-  # answer specific study-team questions; placed in their own cohort pill per
-  # the study team's request. Guarded so a failure can't sink the dashboard.
+  # Ad-hoc study-team questions, answered once per cohort (Overall always;
+  # NDMM when its pass succeeded - ndmm_ok gates the NDMM answers); placed in
+  # their own cohort pill per the study team's request. Guarded so a failure
+  # can't sink the dashboard.
   log_msg("==== Building EXPLORATORY objective views ====")
-  tryCatch(build_validation_exploratory(con), error = function(e) {
+  tryCatch(build_validation_exploratory(con, ndmm_ok = ndmm_ok), error = function(e) {
     log_msg("  WARN: Exploratory objective could not be built: ", conditionMessage(e))
     add_html_card(paste0(
       '<div style="font-family:system-ui;padding:14px;max-width:900px">',
