@@ -83,7 +83,8 @@ kpi <- function(value, label) {
       selectInput(iid, crit$label, choices = lv, selected = sel, multiple = TRUE)
     }
   })
-  tags$details(class = "ce-acc", open = (cat == "Demographics") || NULL,
+  tags$details(class = "ce-acc",
+    open = if (identical(cat, "Demographics")) NA else NULL,
     tags$summary(cat),
     div(class = "ce-acc-body", controls))
 }
