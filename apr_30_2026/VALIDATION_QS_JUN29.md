@@ -1,9 +1,7 @@
-# MM LOT Validation next steps — study-team Q&A (Jun 2026)
+# MM LOT Validation next steps — study-team Q&A
 
-Answers the six follow-up questions in
-`Questions/June 29 2026/lot questions jul 24.pdf` (Julia Moore, GSK RWB,
-24-Jun-2026). Two deliverables, one shared logic module so they can never
-drift apart:
+Answers the six study-team follow-up questions. Two deliverables, one shared
+logic module so they can never drift apart:
 
 | File | What it is |
 |------|------------|
@@ -86,7 +84,7 @@ examples — the raw CDM via `cdm_src()`. Builds nothing persistent.
 - **Before / after windows** (7/14/30 d) are cumulative (≤ N days), measured
   from a steroid claim date. "Before" is relative to `LOT_START_DT`; "after" is
   relative to the **fixed** induction end `LOT_START_DT + W − 1` (the "60/30 day
-  induction window" Julia named) — not the capped `LOT_INDUCTION_END_DT`. Steroid
+  induction window" the study team named) — not the capped `LOT_INDUCTION_END_DT`. Steroid
   claims are scanned across all of a patient's history (matching the panel), not
   bounded to `[INDEX_DATE, OBS_END_DT]`, so a pre-index steroid can fall in a
   LOT1 "before" window.
