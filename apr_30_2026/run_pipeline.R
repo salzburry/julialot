@@ -56,7 +56,7 @@
 })
 
 # ---- Optional CSV-driven input overrides (before any env reads) ----
-# Edit apr_30_2026/pipeline_inputs.csv to change/reset inputs without
+# Edit pipeline_inputs.csv to change/reset inputs without
 # Sys.setenv juggling. Sys.setenv here propagates to the per-stage
 # Rscript subprocesses too. Not a "stage module" - just a tiny loader.
 local({

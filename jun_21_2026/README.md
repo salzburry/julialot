@@ -1,12 +1,12 @@
-# jun_21_2026 — LOT refactor workspace
+# LOT refactor workspace
 
 This folder is the **refactor workspace** for turning the validated LOT algorithm
-(currently in `../apr_30_2026/`) into a reusable, study-portable, reproducible
-platform. The prior folder `../apr_30_2026/` is the **dashboard production code**
+(currently in the production pipeline) into a reusable, study-portable, reproducible
+platform. The production pipeline is the **dashboard production code**
 and is left untouched.
 
 Governing design: **`REFACTOR_PLAN.md`** here (the v3 roadmap, the working copy
-going forward; an identical reviewed snapshot also remains in `../apr_30_2026/`).
+going forward; an identical reviewed snapshot also remains in the production pipeline).
 
 ## Status
 
@@ -34,7 +34,7 @@ Rscript tests/run_unit_tests.R          # 310 tests, all pure-R / local (also ru
 ```
 
 Run the LOCAL verification engine on synthetic data (a pure-R re-implementation,
-faithful to `apr_30_2026/02_lot1.R`, that reproduces hand-derived expected output
+faithful to the production `02_lot1.R`, that reproduces hand-derived expected output
 — see `engine/` and `engine/fixtures/expected/TRACE.md`):
 
 ```
@@ -49,7 +49,7 @@ four outputs are compared against hand-derived golden CSVs: `MAP_STACKED`,
 window is 13 days.
 
 **For reviewers:** `engine/REVIEW.md` maps every engine rule to its production
-source line (`apr_30_2026/02_lot1.R:NNN`) and lists verified coverage + the
+source line (`02_lot1.R:NNN`) and lists verified coverage + the
 explicitly-deferred corners.
 
 Verified stages + edge cases (against hand-derived expected):
@@ -112,7 +112,7 @@ resolved config against** the refactor's one typed contract `CONFIG_SPEC` (its
 engine-tunable subset — single source, no drift): an unknown key (`max_lott`), a
 non-integer (`sct_tandem_days="bad"`), or an out-of-range value (`map_discon_gap_days=0`,
 `max_lot=2.9`) is rejected fail-closed, even with no overrides. (`CONFIG_SPEC` is the
-*refactor's* contract; `apr_30_2026` production still resolves config from env vars via
+*refactor's* contract; the production pipeline still resolves config from env vars via
 `config_lot.R` and does not yet consume it — that wiring is a future step.) **All**
 tunables (incl. `cart_consolidation_days`, `lot_n_induction_window_days`,
 `sct_tandem_days`) propagate into the LOT1 end logic too (CART_INIT / post-runout death
@@ -129,7 +129,7 @@ engine (production is Databricks SQL on `hive_metastore`) and never ships
 (`engine/` is outside the prod allowlist; fixtures use reserved synthetic PATIDs).
 
 Run the live current-vs-prior comparison on hive_metastore (same DSN/odbc as
-`apr_30_2026`; needs `DATABRICKS_DSN`/`DATABRICKS_PWD` + DBI/odbc):
+the production pipeline; needs `DATABRICKS_DSN`/`DATABRICKS_PWD` + DBI/odbc):
 
 ```
 Rscript scripts/compare_run_outputs.R --run hive_metastore.lot_prior hive_metastore.lot_current

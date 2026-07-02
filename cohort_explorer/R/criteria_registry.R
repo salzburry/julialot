@@ -5,8 +5,8 @@
 # (IE) criteria. It is config-as-R (no yaml dependency) so the engine and the
 # Shiny UI are driven by the SAME object.
 #
-# Design (the same flag-per-gate model the upstream LOT pipeline uses for its
-# IE toggles):
+# Design (mirrors the refactor's cohort gate registry + the pipeline's
+# pipeline_inputs.csv IE toggles):
 #   * The pipeline builds ONE broad "superset" cohort (every 1L-treated MM
 #     patient) and stamps ONE boolean flag column per IE criterion onto it
 #     (see build_flagged_cohort.R). Nothing is dropped at build time.

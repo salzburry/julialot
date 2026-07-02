@@ -25,7 +25,7 @@ tryCatch(
 # ---- Source modules (order matters) ----
 # Resolve script directory robustly (same pattern as 02_lot1.R /
 # 03_lot2_5.R): Rscript --file= first, then a source()'d $ofile, then
-# the working dir. This makes both `Rscript apr_30_2026/01_cohort.R` and
+# the working dir. This makes both `Rscript 01_cohort.R` and
 # the run_pipeline.R subprocess launch (full path, no wd change) resolve
 # R/ correctly, instead of looking for ./R relative to the caller's cwd.
 .script_dir <- local({

@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # engine/lot1.R - LOT1 induction builder from MAP_STACKED, faithful to
-# apr_30_2026/02_lot1.R steps S08-S10. LOCAL verification engine (see map.R).
+# the production 02_lot1.R steps S08-S10. LOCAL verification engine (see map.R).
 #
 #   LOT1_START_DT   = min(MAP_START_DT) over NON-STEROID classes (steroid-only
 #                     patients get no LOT1).

@@ -50,6 +50,6 @@ harness from being declared ready.
 
 1. Add a row to `catalog.csv` (case_id, area, rule_name, spec_section, polarity).
 2. Add the canonical input rows under `synthetic/` (reserved PATID range).
-3. Generate regression-expected from legacy@baseline, or hand-derive
+3. Generate regression-expected from the legacy engine baseline, or hand-derive
    spec-expected and get it dual-reviewed.
 4. Fill the reviewer columns and set `status`.

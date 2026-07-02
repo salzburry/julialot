@@ -29,7 +29,7 @@ Excluded fields are listed per table in `tests/fixtures/expected/nondeterministi
 
 ## MAP_STACKED — one row per (patient, drug, medication-available period)
 
-Source projection: `apr_30_2026/02_lot1.R:643-662`.
+Source projection: `02_lot1.R:643-662`.
 
 | column | key | notes |
 |---|---|---|
@@ -50,7 +50,7 @@ Source projection: `apr_30_2026/02_lot1.R:643-662`.
 
 ## LOT1_BASE — one row per patient (LOT1 induction)
 
-Source projection: `apr_30_2026/02_lot1.R:814-823`. Besides the LOT-derived
+Source projection: `02_lot1.R:814-823`. Besides the LOT-derived
 columns below, the physical table also carries **cohort-passthrough demographics**
 (`index_date`, `enddate`, `obs_end_dt`, `death_dt`, `gdr_cd`, `yrdob`,
 `age_index_yr`) and **dynamic per-drug / per-class flags** (`lot1_med_*`,
@@ -71,7 +71,7 @@ study-specific schema) and are not part of the LOT-output contract — see below
 
 ## LOT_LONG — one row per (patient, LOT_NUM ∈ 1..MAX_LOT)
 
-Source projection: `apr_30_2026/R/lot2_5_base.R:76-135` (LOT1 init) and `:891-960`
+Source projection: `R/lot2_5_base.R:76-135` (LOT1 init) and `:891-960`
 (LOT≥2 append) — both emit the identical fixed column set. Plus the same dynamic
 per-drug / per-class wide columns as LOT1_BASE. There is **no** `lot_end_type`
 column (the end is captured by `lot_base_end_reason` + its CE-sensitive variant).
