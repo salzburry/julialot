@@ -537,14 +537,27 @@ augment_lot_long <- function(lot_long, cohort) {
 # (ELIG_COH_FINAL x LOT_LONG + per-criterion flags as columns) here; the
 # dashboard consumes it via load_flagged_cohort(source_flagged_cohort_warehouse).
 # =============================================================================
+# Datasource config lives in ONE file (config/warehouse_config.R), sourced at app
+# startup by global.R. Resolve it defensively so the programmatic warehouse-read
+# path still works when this file is sourced on its own (without global.R): prefer
+# warehouse_config() when present, else read the identical env-var contract so the
+# call reaches the intended fail-closed message rather than "could not find
+# function warehouse_config".
+.warehouse_cfg <- function() {
+  if (exists("warehouse_config", mode = "function")) return(warehouse_config())
+  list(dsn     = Sys.getenv("WAREHOUSE_DSN", "RWDE"),
+       pwd     = Sys.getenv("WAREHOUSE_PWD", ""),
+       catalog = Sys.getenv("WAREHOUSE_CATALOG", "main"),
+       schema  = Sys.getenv("PROJECT_WORK_SCHEMA",
+                            Sys.getenv("DOMINO_USER_NAME", "mm_lot_work")))
+}
+
 # Read a materialised analytic table (built once by the pipeline: the NDMM flag
 # join, UN-filtered, + parent flags + CCI/safety/HCRU + LOT-long) over DBI/odbc.
-# Datasource catalog/schema come from the ONE shared config/warehouse_config.R
-# (sourced at app startup by global.R). Pass a live connection `con`; without one
-# it fails closed (no warehouse here).
+# Pass a live connection `con`; without one it fails closed (no warehouse here).
 .warehouse_read <- function(table, con = NULL,
-    catalog = warehouse_config()$catalog,
-    schema  = warehouse_config()$schema) {
+    catalog = .warehouse_cfg()$catalog,
+    schema  = .warehouse_cfg()$schema) {
   if (is.null(con))
     stop("source_*_warehouse(): pass a live DBI connection `con`. The analytic ",
          "cohort must be MATERIALISED once by the pipeline (CREATE TABLE ",

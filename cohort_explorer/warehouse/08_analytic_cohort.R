@@ -48,8 +48,15 @@ if (.autorun && toupper(Sys.getenv("ANALYTIC_COHORT_ALLOW_PLACEHOLDER", "")) != 
        call. = FALSE)
 
 .script_dir <- local({
+  # Rscript path: --file=<this script>
   fa <- grep("^--file=", commandArgs(FALSE), value = TRUE)
-  if (length(fa)) dirname(normalizePath(sub("^--file=", "", fa[1]))) else getwd()
+  if (length(fa)) return(dirname(normalizePath(sub("^--file=", "", fa[1]))))
+  # source() path: find this file's ofile anywhere on the call stack
+  for (i in rev(seq_len(sys.nframe()))) {
+    of <- sys.frame(i)$ofile
+    if (!is.null(of) && nzchar(of)) return(dirname(normalizePath(of)))
+  }
+  getwd()
 })
 
 # Datasource connection comes from the ONE shared config file (../config/
