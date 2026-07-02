@@ -5,8 +5,8 @@ logic module so they can never drift apart:
 
 | File | What it is |
 |------|------------|
-| `R/validation_qs_jun29.R` | Shared logic (SQL → data.frame). Single source of truth for every definition. |
-| `validation_qs_jun29.R` | **Standalone program.** Runs all six analyses, writes one CSV per result + a run log. |
+| `R/validation_qs.R` | Shared logic (SQL → data.frame). Single source of truth for every definition. |
+| `validation_qs.R` | **Standalone program.** Runs all six analyses, writes one CSV per result + a run log. |
 | `07_combined_dashboard.R` | Renders the same six answers as labelled tables under a new **Exploratory analysis** cohort pill. |
 
 **Cohorts (study-team follow-up):** every question is answered
@@ -26,7 +26,7 @@ to its own cohort's `LOT_LONG`, which applies the restriction.
 
 ```bash
 # Standalone (CSVs in $OUTPUT_DIR):
-Rscript validation_qs_jun29.R
+Rscript validation_qs.R
 
 # In the combined dashboard (Exploratory pill):
 Rscript 07_combined_dashboard.R   # or the usual run_all.R
@@ -122,7 +122,7 @@ and the reliable MAP-derived journey is shown instead; when bounds are
 unavailable the examples fall back to full PATID history and say so. Raw
 per-patient tables are tagged "(sample)" so the dashboard keeps them in the
 full-only Patient-explorer view. The standalone program also writes a
-`validation_qs_jun29_definitions_<stamp>.csv` sidecar with these definitions.
+`validation_qs_definitions_<stamp>.csv` sidecar with these definitions.
 
 ## Steroid source (resolved) + remaining data limitation
 

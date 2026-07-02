@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 # compare_run_outputs.R
 # Authoritative patient-level comparison of two LOT output sets:
-#   actual   vs  expected (regression-expected, generated from legacy@baseline)
+#   actual   vs  expected (regression baseline from the legacy engine)
 #   refactored vs legacy   (LOT_ENGINE_MODE=compare, run-scoped namespaces)
 #
 # The comparison LOGIC and ordering are authoritative and the warehouse SQL is

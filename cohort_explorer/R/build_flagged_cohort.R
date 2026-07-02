@@ -11,7 +11,7 @@
 # per-LOT (1L/2L/3L) outcome views and the regimen / Sankey transition tab.
 #
 # PRODUCTION WIRING (not run in this environment -- no warehouse):
-#   The real builder is a thin projection over the validated apr_30_2026
+#   The real builder is a thin projection over the validated production pipeline
 #   outputs (ELIG_COH_FINAL + LOT_LONG), with the per-criterion flags and the
 #   baseline characteristics (CCI, comorbidities, HCRU) computed at the correct
 #   anchor -- the same SQL 06_ndmm_dashboard.R uses for its IE post-filters, but
@@ -77,7 +77,7 @@ add_derived_cols <- function(df) {
   df
 }
 
-# ---- validation: fail closed on a missing column (jun_21 convention) --------
+# ---- validation: fail closed on a missing column (fail-closed convention) ----
 validate_flagged_cohort <- function(df, reg = criteria_registry()) {
   stopifnot(is.data.frame(df))
   need <- c(FLAGGED_COHORT_BASE_COLS, registry_flag_ids(reg))
@@ -454,7 +454,7 @@ augment_lot_long <- function(lot_long, cohort) {
 
 # =============================================================================
 # Warehouse source (production) -- fail-closed stub.
-# Implement the DBI/odbc projection of the validated apr_30_2026 outputs
+# Implement the DBI/odbc projection of the validated production pipeline outputs
 # (ELIG_COH_FINAL x LOT_LONG + per-criterion flags as columns) here; the
 # dashboard consumes it via load_flagged_cohort(source_flagged_cohort_warehouse).
 # =============================================================================

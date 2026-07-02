@@ -1,7 +1,7 @@
 # Cohort Explorer — flag-driven IE dashboard (Overall & NDMM)
 
-A Shiny re-creation of the sample *Oncology Real-World Data Explorer Tool*
-(`../sample dashboard/dashboard sample.pdf`), built for the MM LOT cohorts in
+A Shiny re-creation of a sample *Oncology Real-World Data Explorer Tool*,
+built for the MM LOT cohorts in
 this repo. The point is **flexibility over the inclusion/exclusion (IE)
 criteria**: pick a cohort, freely toggle the IE rules, tune the filters, and
 every output re-selects from one pre-built **flagged superset cohort** — nothing
@@ -20,10 +20,10 @@ boolean column per IE criterion** onto it (`incl_qualifying_mm`, `incl_adult`,
 **AND-ing a chosen set of flags** — instant, and reusable across any cohort
 definition.
 
-This is the same design already sketched in
-`../jun_21_2026/cohort/gates/registry.yml` (each gate emits an `output_flag`)
-and exposed as IE toggles in `../apr_30_2026/pipeline_inputs.csv`
-(`APPLY_AGE_INCL`, `APPLY_CE_B_INCL`, …). `apr_30_2026` is the validated,
+This is the same design already sketched in the refactor's cohort gate
+registry (each gate emits an `output_flag`) and exposed as IE toggles in the
+pipeline's `pipeline_inputs.csv` (`APPLY_AGE_INCL`, `APPLY_CE_B_INCL`, …). The
+production pipeline is the validated,
 authoritative algorithm; this tool is a presentation + selection layer on top of
 its outputs.
 
@@ -111,7 +111,7 @@ COHORT_EXPLORER_LOTLONG=/path/lot_long.csv \
 
 ```r
 # (b) a warehouse projection: implement a function and pass it as the source.
-#     The real builder is a thin join of the validated apr_30_2026 outputs
+#     The real builder is a thin join of the validated production pipeline outputs
 #     (ELIG_COH_FINAL + LOT_LONG) with the per-criterion flags emitted as
 #     COLUMNS instead of applied as row filters — see build_flagged_cohort.R.
 FLAGGED <- load_flagged_cohort(source_flagged_cohort_warehouse)
@@ -139,7 +139,7 @@ start** (per-LOT / regimen / transition views would otherwise be fabricated)
 unless you explicitly set `ALLOW_SYNTHETIC_LOTLONG=TRUE`. Whenever any source is
 synthetic, a red **"SYNTHETIC DATA — not for analysis"** banner is shown. The
 production `source_flagged_cohort_warehouse()` is a **fail-closed stub** — it
-errors until the DBI/odbc projection of the `apr_30_2026` outputs is implemented;
+errors until the DBI/odbc projection of the production pipeline outputs is implemented;
 there is no silent synthetic fallback on the production path.
 
 **Filter neutrality:** IE/param filter defaults are **all-data** (all observed
@@ -149,7 +149,7 @@ unit test asserts `Overall(initial) == Overall(flag-only)`.
 
 ## Status / caveats
 
-- **Synthetic by default.** Real figures require the `apr_30_2026` outputs from
+- **Synthetic by default.** Real figures require the production pipeline outputs from
   Databricks `hive_metastore` (no warehouse in this environment), so the bundled
   data is a deterministic synthetic cohort (reserved `9`-billion PATIDs).
 - The sample's *Practice Type* / *Smoking* filters are Flatiron EHR fields; the

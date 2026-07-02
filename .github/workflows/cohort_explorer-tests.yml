@@ -2,7 +2,7 @@ name: cohort_explorer tests
 
 # Runs the cohort_explorer engine + Shiny (testServer) suites so the "N pass"
 # claim is CI-recorded, not just an author's local run. Scoped to changes under
-# cohort_explorer/; apr_30_2026 production code is never built or run here.
+# cohort_explorer/; the production pipeline code is never built or run here.
 on:
   push:
     paths: ['cohort_explorer/**', '.github/workflows/cohort_explorer-tests.yml']

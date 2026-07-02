@@ -2,7 +2,7 @@
 # Shared analysis module: "MM LOT Validation next steps" study-team questions.
 #
 # This module holds ONLY data logic (SQL -> data.frame). It is consumed by:
-#   - validation_qs_jun29.R          (standalone CSV/log program)
+#   - validation_qs.R          (standalone CSV/log program)
 #   - 07_combined_dashboard.R        (Exploratory objective tables)
 # so the two deliverables can never drift apart.
 #

@@ -123,7 +123,7 @@ ui <- fluidPage(
   ),
   div(class = "ce-note", style = "padding:8px 16px",
       "Internal decision-making only. Synthetic data unless COHORT_EXPLORER_DATA ",
-      "points at a validated flagged-cohort projection of the apr_30_2026 outputs.")
+      "points at a validated flagged-cohort projection of the production pipeline outputs.")
 )
 
 # ---- server -----------------------------------------------------------------
