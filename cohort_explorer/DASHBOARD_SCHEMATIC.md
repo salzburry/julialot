@@ -58,7 +58,7 @@ flowchart LR
     ENV --> P[apr_30 pipeline<br/>01 cohort · 02 lot1 · 03 lot2-5]
     P --> EF[(ELIG_COH_FINAL)]
     P --> LL[(LOT_LONG)]
-    EF --> A8[08_analytic_cohort.R<br/>reuse 06 NDMM_FLAGS_ALL + project]
+    EF --> A8[warehouse/08_analytic_cohort.R<br/>read persisted NDMM_FLAGS_ALL + project]
     LL --> A8
     A8 --> AC[(ANALYTIC_COHORT<br/>flags as COLUMNS)]
     A8 --> ALL[(ANALYTIC_LOT_LONG)]

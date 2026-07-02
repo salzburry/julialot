@@ -6,7 +6,7 @@
 #
 # then, on the warehouse host:
 #   source out.sh && Rscript apr_30_2026/run_pipeline.R        # build ELIG_COH_FINAL + LOT
-#   source out.sh && Rscript apr_30_2026/08_analytic_cohort.R  # materialise ANALYTIC_COHORT (to author)
+#   source out.sh && Rscript cohort_explorer/warehouse/08_analytic_cohort.R  # materialise ANALYTIC_COHORT (skeleton)
 #
 # Env vars already set in the shell OVERRIDE study_config (resolved_study_config),
 # so ad-hoc overrides still win. Prints the mapping to stdout and writes the file.
