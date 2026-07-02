@@ -9,7 +9,7 @@ logic module so they can never drift apart:
 | `validation_qs_jun29.R` | **Standalone program.** Runs all six analyses, writes one CSV per result + a run log. |
 | `07_combined_dashboard.R` | Renders the same six answers as labelled tables under a new **Exploratory analysis** cohort pill. |
 
-**Cohorts (study-team follow-up, Jul-2026):** every question is answered
+**Cohorts (study-team follow-up):** every question is answered
 **once per cohort** — the parent **Overall** `LOT_LONG` cohort always, and the
 **NDMM** (1L newly-diagnosed) cohort when available. In the dashboard, titles
 carry the cohort tag (`Q1 (Overall): …` / `Q1 (NDMM): …`); the NDMM answers
@@ -26,10 +26,10 @@ to its own cohort's `LOT_LONG`, which applies the restriction.
 
 ```bash
 # Standalone (CSVs in $OUTPUT_DIR):
-Rscript apr_30_2026/validation_qs_jun29.R
+Rscript validation_qs_jun29.R
 
 # In the combined dashboard (Exploratory pill):
-Rscript apr_30_2026/07_combined_dashboard.R   # or the usual run_all.R
+Rscript 07_combined_dashboard.R   # or the usual run_all.R
 ```
 
 Requires `DATABRICKS_PWD`. Reads only the persisted work-schema tables

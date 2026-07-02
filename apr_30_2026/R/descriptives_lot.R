@@ -829,7 +829,7 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
                  title = "Table: LOT1 End Reasons")
     }
 
-    # contains_mtx_reg flag (Apr 19 spec: descriptive, flag-only)
+    # contains_mtx_reg flag (per spec: descriptive, flag-only)
     # Summary count + cross-tab against LOT1_BASE_END_REASON so reviewers can
     # see how the anchor-maintenance subgroup distributes across end categories.
     mtx_summary <- tryCatch(db_q(con, "
