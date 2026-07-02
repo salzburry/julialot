@@ -4,7 +4,7 @@
 # Produces / loads the FLAGGED SUPERSET cohort: one row per patient in the
 # broadest 1L-treated MM population, with one boolean column per IE criterion
 # (registry_flag_ids()) plus the demographics / clinical / LOT-derived /
-# time-to-event fields the NDMM protocol (GSK 223926) asks for. Nothing is
+# time-to-event fields the NDMM study protocol asks for. Nothing is
 # dropped here -- selection happens in cohort_select.R by AND-ing flags.
 #
 # Also produces a LOT-LONG table (one row per patient x LOT_NUM) that backs the
@@ -14,13 +14,13 @@
 #   The real builder is a thin projection over the validated production pipeline
 #   outputs (ELIG_COH_FINAL + LOT_LONG), with the per-criterion flags and the
 #   baseline characteristics (CCI, comorbidities, HCRU) computed at the correct
-#   anchor -- the same SQL 06_ndmm_dashboard.R uses for its IE post-filters, but
+#   anchor -- the same SQL the upstream NDMM flag build uses for its IE post-filters, but
 #   emitted as COLUMNS instead of applied as row filters. Implement
 #   source_flagged_cohort_warehouse() to SELECT that projection via DBI/odbc.
 #
 # RUNNABLE HERE:
 #   load_flagged_cohort("synthetic") generates a deterministic synthetic cohort
-#   so the app is demoable without a warehouse (reserved 9-billion PATIDs).
+#   so the app is demoable without a warehouse (reserved 9-billion patient ids).
 # =============================================================================
 
 # ---- contract: non-flag columns every flagged cohort must carry -------------
@@ -537,17 +537,18 @@ augment_lot_long <- function(lot_long, cohort) {
 # (ELIG_COH_FINAL x LOT_LONG + per-criterion flags as columns) here; the
 # dashboard consumes it via load_flagged_cohort(source_flagged_cohort_warehouse).
 # =============================================================================
-# Read a materialised analytic table (built once by the pipeline: 06's flag
+# Read a materialised analytic table (built once by the pipeline: the NDMM flag
 # join, UN-filtered, + parent flags + CCI/safety/HCRU + LOT-long) over DBI/odbc.
-# Pass a live connection `con`; without one it fails closed (no warehouse here).
+# Datasource catalog/schema come from the ONE shared config/warehouse_config.R
+# (sourced at app startup by global.R). Pass a live connection `con`; without one
+# it fails closed (no warehouse here).
 .warehouse_read <- function(table, con = NULL,
-    catalog = Sys.getenv("DATABRICKS_CATALOG", "hive_metastore"),
-    schema  = Sys.getenv("PROJECT_WORK_SCHEMA",
-                         Sys.getenv("DOMINO_USER_NAME", "gsk_mm_lot_work"))) {
+    catalog = warehouse_config()$catalog,
+    schema  = warehouse_config()$schema) {
   if (is.null(con))
     stop("source_*_warehouse(): pass a live DBI connection `con`. The analytic ",
          "cohort must be MATERIALISED once by the pipeline (CREATE TABLE ",
-         schema, ".", table, " AS <06 flag join, un-filtered> -- see ",
+         schema, ".", table, " AS <NDMM flag join, un-filtered> -- see ",
          "ANALYTIC_COHORT.md); this environment has no warehouse.", call. = FALSE)
   if (!requireNamespace("DBI", quietly = TRUE))
     stop("DBI is required to read the analytic cohort.", call. = FALSE)

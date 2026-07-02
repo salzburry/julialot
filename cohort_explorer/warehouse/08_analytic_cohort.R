@@ -5,29 +5,31 @@
 # *** DRAFT / SKELETON -- UNVALIDATED. NOT RUN IN THIS REPO (no warehouse).
 #     Refuses to run unless ANALYTIC_COHORT_ALLOW_PLACEHOLDER=TRUE (guard below)
 #     because the [B]-[E] real-data derivations are not yet wired. Needs a
-#     Databricks connection + engineering AND clinical sign-off. ***
+#     warehouse connection + engineering AND clinical sign-off. ***
 #
-# DESIGN (decoupled from apr_30 -- it modifies NOTHING there):
-#   It does NOT source or edit any apr_30_2026 code. It READS the PERSISTED
-#   tables that a prior apr_30 run already wrote to the work schema:
-#     ELIG_COH_FINAL   (01_cohort)        -- the Overall Step-6 superset
-#     LOT_LONG         (02/03 LOT build)  -- broad, unfiltered (NOT NDMM_LOT_LONG_FILT)
-#     NDMM_FLAGS_ALL   (06_ndmm_dashboard)-- the 6 NDMM IE criteria as 0/1 columns
-#   PRECONDITION: run the apr_30 pipeline + 06 first (they persist those tables).
-#   This turns 06's ROW-FILTER model into the dashboard's FLAG-COLUMN model by
+# DESIGN (decoupled from the upstream pipeline -- it modifies NOTHING there):
+#   It does NOT source or edit any upstream pipeline code. It READS the PERSISTED
+#   tables that a prior pipeline run already wrote to the work schema:
+#     ELIG_COH_FINAL   (cohort build)     -- the Overall Step-6 superset
+#     LOT_LONG         (LOT build)        -- broad, unfiltered (NOT the filtered NDMM LOT-long)
+#     NDMM_FLAGS_ALL   (NDMM flag build)  -- the 6 NDMM IE criteria as 0/1 columns
+#   PRECONDITION: run the upstream LOT pipeline + NDMM flag build first (they persist those tables).
+#   This turns the NDMM build's ROW-FILTER model into the dashboard's FLAG-COLUMN model by
 #   PROJECTING the join into the dashboard contract (FLAGGED_COHORT_BASE_COLS +
 #   registry_flag_ids), then exporting two CSVs:
 #     COHORT_EXPLORER_DATA (patient-level) / COHORT_EXPLORER_LOTLONG (per line).
 #   validate_flagged_cohort()/validate_lot_long() fail closed on any breach.
 #
 # CONFIG (env vars; generate from one study_config via ../config/emit_pipeline_env.R):
-#   DATABRICKS_DSN / DATABRICKS_PWD / DATABRICKS_CATALOG / PROJECT_WORK_SCHEMA
-#   STUDY_END / NDMM_LOT1_FROM / OUTPUT_DIR
+#   Datasource (DSN/PWD/CATALOG/SCHEMA) is defined in ONE place:
+#     ../config/warehouse_config.R  (WAREHOUSE_DSN / WAREHOUSE_PWD /
+#     WAREHOUSE_CATALOG / PROJECT_WORK_SCHEMA)
+#   Study/output: STUDY_END / NDMM_LOT1_FROM / OUTPUT_DIR
 #
 # ASSUMPTIONS / TODOs (each must be reviewed):
 #   [A] Overall IE flags are 1 on the ELIG_COH_FINAL base (already row-filtered);
 #       to make them TOGGLEABLE, read a pre-filter ELIG_COH_ALLFLAGS base instead.
-#   [B] race/region/payer/ethnicity are NOT on ELIG_COH_FINAL -> join Optum
+#   [B] race/region/payer/ethnicity are NOT on ELIG_COH_FINAL -> join the source
 #       member/enrollment tables. 'Unknown' placeholders until wired.
 #   [C] OS/TTD/TTNT + fu_potential are DERIVED -> clinical sign-off (censoring, TTNT).
 #   [D] continuous CE months, safety counts + PY, HCRU -> derive from spans + claims.
@@ -50,12 +52,15 @@ if (.autorun && toupper(Sys.getenv("ANALYTIC_COHORT_ALLOW_PLACEHOLDER", "")) != 
   if (length(fa)) dirname(normalizePath(sub("^--file=", "", fa[1]))) else getwd()
 })
 
+# Datasource connection comes from the ONE shared config file (../config/
+# warehouse_config.R); study/output params stay local to this job.
+source(file.path(.script_dir, "..", "config", "warehouse_config.R"))
+.wcfg <- warehouse_config()
 cfg <- list(
-  dsn         = Sys.getenv("DATABRICKS_DSN", "RWDE"),
-  pwd         = Sys.getenv("DATABRICKS_PWD", ""),
-  catalog     = Sys.getenv("DATABRICKS_CATALOG", "hive_metastore"),
-  work_schema = Sys.getenv("PROJECT_WORK_SCHEMA",
-                  Sys.getenv("DOMINO_USER_NAME", "gsk_mm_lot_work")),
+  dsn         = .wcfg$dsn,
+  pwd         = .wcfg$pwd,
+  catalog     = .wcfg$catalog,
+  work_schema = .wcfg$schema,
   study_end   = Sys.getenv("STUDY_END", "2025-06-30"),
   lot1_from   = Sys.getenv("NDMM_LOT1_FROM", "2017-01-01"),
   out_dir     = Sys.getenv("OUTPUT_DIR", file.path(.script_dir, "artifacts")))
@@ -64,7 +69,7 @@ fq <- function(t) sprintf("`%s`.`%s`.`%s`", cfg$catalog, cfg$work_schema, t)
 
 main_analytic <- function() {
   if (!ok_dbi) stop("DBI/odbc required (warehouse run).", call. = FALSE)
-  if (!nzchar(cfg$pwd)) stop("DATABRICKS_PWD not set.", call. = FALSE)
+  if (!nzchar(cfg$pwd)) stop("WAREHOUSE_PWD not set.", call. = FALSE)
   con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
   db_exec <- function(sql) DBI::dbExecute(con, sql)

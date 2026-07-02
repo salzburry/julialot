@@ -4,7 +4,7 @@
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────────────┐
-│  Oncology Real-World Data Explorer Tool — MM (Overall & NDMM) · GSK 223926           │  header
+│  Oncology Real-World Data Explorer Tool — MM (Overall & NDMM) · NDMM protocol        │  header
 │  [ SYNTHETIC DATA — not for analysis ]  (red banner shows only on a synthetic source)│
 ├───────────────────────────┬──────────────────────────────────────────────────────────┤
 │  SIDEBAR (controls)        │  MAIN (tabs)                                              │
@@ -53,9 +53,9 @@ Every control is a **runtime, in-memory** operation over the loaded snapshot
 
 ```mermaid
 flowchart LR
-  subgraph BUILD["BUILD — once per data refresh (Databricks, slow)"]
+  subgraph BUILD["BUILD — once per data refresh (warehouse, slow)"]
     SC[study_config.R] -->|emit_pipeline_env.R| ENV[env vars]
-    ENV --> P[apr_30 pipeline<br/>01 cohort · 02 lot1 · 03 lot2-5]
+    ENV --> P[LOT pipeline<br/>cohort · lot1 · lot2-5]
     P --> EF[(ELIG_COH_FINAL)]
     P --> LL[(LOT_LONG)]
     EF --> A8[warehouse/08_analytic_cohort.R<br/>read persisted NDMM_FLAGS_ALL + project]
@@ -73,13 +73,13 @@ flowchart LR
   ALL -. fail closed .-> V2[validate_lot_long]
 ```
 
-## 3. Transition to a **different dataset** (e.g. Optum → Flatiron / MarketScan)
+## 3. Transition to a **different dataset** (e.g. another claims / EHR source)
 
 **What changes — only the BUILD side (left box):**
 | Layer | Change |
 |---|---|
 | Codelists | swap the `cl_*` code lists (MM dx, MMA agents, other-cancer, pregnancy, SOC map) for the new source's coding system |
-| Adapter / source tables | repoint `01`/`06`/`08` at the new claims/EHR tables; map its demographics (Flatiron adds *practice type / smoking / ECOG*; claims add *region / payer*) into the `[B]` columns |
+| Adapter / source tables | repoint the cohort / flag / analytic build steps at the new claims/EHR tables; map its demographics (EHR sources add *practice type / smoking / ECOG*; claims add *region / payer*) into the `[B]` columns |
 | `08` projection | adjust the demographic + safety/HCRU joins to the new schema; the flag SQL structure is reused |
 | `study_config` | set the source's study window, `lot1_from`, CE windows |
 
@@ -90,7 +90,7 @@ and the full test suite (101 engine + 17 app). As long as the new build emits th
 dashboard renders it unchanged. That is the point of the contract: the dashboard
 is **dataset-agnostic**; only the materialization is dataset-specific.
 
-*New source has extra fields (e.g. Flatiron ECOG/labs)?* Add a column + one
+*New source has extra fields (e.g. EHR ECOG/labs)?* Add a column + one
 `variable_dictionary()` / registry entry → it appears as a characteristic /
 stratum / covariate / filter automatically. The empty **Labs** accordion bucket
 is already there for exactly this.

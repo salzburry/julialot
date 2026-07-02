@@ -2,9 +2,9 @@
 # study_config.R  --  the ONE place study-level knobs live.
 # -----------------------------------------------------------------------------
 # This is the shared, reusable study definition. BOTH sides read it:
-#   * the apr_30_2026 analytic-cohort BUILD (materialisation) -- so a new study
-#     is a config change, not an algorithm edit (env vars in config_lot.R /
-#     config_prompts.R map 1:1 to these keys; see the mapping below);
+#   * the analytic-cohort BUILD (materialisation) -- so a new study
+#     is a config change, not an algorithm edit (the pipeline config env vars
+#     map 1:1 to these keys; see the mapping below);
 #   * the DASHBOARD -- criteria_registry() / cohort_definitions() / the
 #     synthetic generator read their defaults from here.
 #
@@ -12,15 +12,15 @@
 # IE criteria catalogue itself is criteria_registry.R and the cohort flag-sets
 # are cohort_definitions().
 #
-# env-var mapping (apr_30 build reads these; blank => default):
+# env-var mapping (the build reads these; blank => default):
 #   study_start          STUDY_START
 #   study_end            STUDY_END
-#   id_start / id_end    (cohort id window; config_prompts.R)
+#   id_start / id_end    (cohort id window; pipeline config)
 #   lot1_from            NDMM_LOT1_FROM
-#   pre_lot1_days        NDMM_PRE_LOT1_DAYS   (currently hard-coded 365 in 06 -> lift)
+#   pre_lot1_days        NDMM_PRE_LOT1_DAYS   (lift into the pipeline config)
 #   ce_gap_days          GAP_DAYS
 #   induction_window_days / lot_n_induction_window_days / map_discon_gap_days /
-#     sct_* / cart_consolidation_days / max_lot   -> identical keys in config_lot.R
+#     sct_* / cart_consolidation_days / max_lot   -> identical keys in the pipeline config
 # =============================================================================
 
 study_config <- function() {
@@ -33,7 +33,7 @@ study_config <- function() {
 
     # NDMM 1L anchoring
     lot1_from     = "2017-01-01",   # eligible-1L cutoff
-    pre_lot1_days = 365L,           # 12-mo pre-LOT1 baseline (was hard-coded in 06)
+    pre_lot1_days = 365L,           # 12-mo pre-LOT1 baseline
     ce_gap_days   = 30L,            # allowable enrollment gap counted as continuous
 
     # continuous-enrollment requirement, per cohort (months)
@@ -43,7 +43,7 @@ study_config <- function() {
     # demographic gate
     age_min = 18L,
 
-    # LOT algorithm params (mirror config_lot.R defaults; kept here so a study
+    # LOT algorithm params (mirror the pipeline config defaults; kept here so a study
     # override is declared in ONE file and flows to both build + dashboard)
     induction_window_days       = 60L,
     lot_n_induction_window_days = 30L,
@@ -59,7 +59,7 @@ study_config <- function() {
     landmark_months     = c(6, 9, 12, 18, 24),
 
     # SOC regimen category map (production loads the full drug->category list
-    # from the GSK LoT-algorithm doc; here we carry the §6.2.2 scheme labels)
+    # from the treatment-line algorithm reference; here we carry the §6.2.2 scheme labels)
     soc_categories_1l    = c(
       "Quadruplet with anti-CD38 backbone", "Triplet with anti-CD38 backbone",
       "Other triplet (non-anti-CD38)", "Doublet", "Monotherapy", "Other"),
@@ -70,7 +70,7 @@ study_config <- function() {
   )
 }
 
-# Resolve the config, letting env vars override (so the apr_30 batch run and the
+# Resolve the config, letting env vars override (so the batch build and the
 # dashboard honour the same overrides). Only scalar keys are env-overridable.
 resolved_study_config <- function(cfg = study_config()) {
   env_int <- function(name, default) {
@@ -90,13 +90,13 @@ resolved_study_config <- function(cfg = study_config()) {
 }
 
 # =============================================================================
-# study_config -> apr_30_2026 build mapping.
+# study_config -> pipeline build mapping.
 # -----------------------------------------------------------------------------
-# apr_30's pipeline reads its knobs from env vars (config_lot.R / config_prompts.R).
-# This turns ONE study_config into the exact env var set the apr_30 run +
+# The upstream LOT pipeline reads its knobs from env vars (its pipeline config).
+# This turns ONE study_config into the exact env var set the pipeline run +
 # analytic-cohort materialisation consume, so a study is defined in one place and
-# flows to the (slow, warehouse) build. Keys with no apr_30 consumer today are
-# still emitted (marked) so they wire straight through once lifted (e.g. 06's
+# flows to the (slow, warehouse) build. Keys with no pipeline consumer today are
+# still emitted (marked) so they wire straight through once lifted (e.g. a
 # hard-coded NDMM_PRE_LOT1_DAYS = 365).
 # =============================================================================
 study_config_to_env <- function(cfg = resolved_study_config()) {
@@ -104,7 +104,7 @@ study_config_to_env <- function(cfg = resolved_study_config()) {
     STUDY_START                = cfg$study_start,
     STUDY_END                  = cfg$study_end,
     NDMM_LOT1_FROM             = cfg$lot1_from,
-    NDMM_PRE_LOT1_DAYS         = as.character(cfg$pre_lot1_days), # lift 06's 365
+    NDMM_PRE_LOT1_DAYS         = as.character(cfg$pre_lot1_days), # 12-mo pre-LOT1 baseline
     GAP_DAYS                   = as.character(cfg$ce_gap_days),
     INDUCTION_WINDOW_DAYS      = as.character(cfg$induction_window_days),
     INDUCTION_WINDOW_DAYS_LOT_N= as.character(cfg$lot_n_induction_window_days),

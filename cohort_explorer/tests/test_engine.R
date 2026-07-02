@@ -28,7 +28,7 @@ ok(tryCatch({ validate_flagged_cohort(df); TRUE }, error = function(e) FALSE),
 ok(!anyDuplicated(df$patient_id), "patient_id is unique")
 ok(all(unlist(df[registry_flag_ids(REG)]) %in% c(0L, 1L)),
    "all flag columns are strictly 0/1")
-ok(all(grepl("^9", df$patient_id)), "synthetic PATIDs use the reserved 9b range")
+ok(all(grepl("^9", df$patient_id)), "synthetic patient ids use the reserved 9b range")
 
 # ---- selection: Overall ----
 ov <- select_cohort(df, COH$overall$active_flags, reg = REG)
@@ -399,7 +399,7 @@ source(file.path(rdir, "..", "config", "study_config.R"))
 env <- study_config_to_env()
 ok(all(c("STUDY_START","STUDY_END","NDMM_LOT1_FROM","NDMM_PRE_LOT1_DAYS",
          "MAP_DISCON_GAP_DAYS","MAX_LOT") %in% names(env)),
-   "study_config_to_env emits the apr_30 env keys")
+   "study_config_to_env emits the pipeline env keys")
 ok(env[["NDMM_LOT1_FROM"]] == study_config()$lot1_from &&
    env[["NDMM_PRE_LOT1_DAYS"]] == as.character(study_config()$pre_lot1_days),
    "study_config values map to the correct env vars")

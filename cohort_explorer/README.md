@@ -1,8 +1,7 @@
 # Cohort Explorer — flag-driven IE dashboard (Overall & NDMM)
 
-A Shiny re-creation of a sample *Oncology Real-World Data Explorer Tool*,
-built for the MM LOT cohorts in
-this repo. The point is **flexibility over the inclusion/exclusion (IE)
+An interactive Shiny *Oncology Real-World Data Explorer Tool* for the MM LOT
+cohorts. The point is **flexibility over the inclusion/exclusion (IE)
 criteria**: pick a cohort, freely toggle the IE rules, tune the filters, and
 every output re-selects from one pre-built **flagged superset cohort** — nothing
 is re-derived per change.
@@ -20,18 +19,17 @@ boolean column per IE criterion** onto it (`incl_qualifying_mm`, `incl_adult`,
 **AND-ing a chosen set of flags** — instant, and reusable across any cohort
 definition.
 
-This is the same design already sketched in the refactor's cohort gate
-registry (each gate emits an `output_flag`) and exposed as IE toggles in the
-pipeline's `pipeline_inputs.csv` (`APPLY_AGE_INCL`, `APPLY_CE_B_INCL`, …). The
-production pipeline is the validated,
+This is the same design the production pipeline uses: each cohort gate emits an
+`output_flag`, and the flags are exposed as IE toggles (`APPLY_AGE_INCL`,
+`APPLY_CE_B_INCL`, …). The production pipeline is the validated,
 authoritative algorithm; this tool is a presentation + selection layer on top of
 its outputs.
 
 - **Overall** and **NDMM** are just two default flag sets
-  (`cohort_definitions()`), mirroring `studies/overall.yml` and
-  `studies/ndmm.yml`. The user can start from either and add/remove criteria.
+  (`cohort_definitions()`), mirroring the pipeline's Overall and NDMM study
+  definitions. The user can start from either and add/remove criteria.
 
-## Layout (mirrors the sample, aligned to GSK 223926 protocol)
+## Layout (aligned to the NDMM study protocol)
 
 - **Sidebar** — *Cohort Selection* dropdown + *Apply Cohort*; *Analysis options*
   (**Line of therapy** 1L/2L/3L for the outcome tabs, and a **≥3-mo follow-up
@@ -95,7 +93,7 @@ cohort_explorer/
     checks.R                  LOT structural + NDMM conformance + protocol DQ checks
     ui_helpers.R              theme + registry-driven control builders
   config/study_config.R       ONE study definition; study_config_to_env() maps
-                              it to the apr_30 pipeline env vars
+                              it to the upstream LOT pipeline env vars
   config/emit_pipeline_env.R  emit that mapping as `export` lines for the build
   tests/test_engine.R         base-R unit tests (101) for the engine + checks
   tests/test_app.R            Shiny testServer tests (17): cohort reset, parity,
@@ -172,12 +170,12 @@ unit test asserts `Overall(initial) == Overall(flag-only)`.
 
 ## Status / caveats
 
-- **Synthetic by default.** Real figures require the production pipeline outputs from
-  Databricks `hive_metastore` (no warehouse in this environment), so the bundled
-  data is a deterministic synthetic cohort (reserved `9`-billion PATIDs).
-- The sample's *Practice Type* / *Smoking* filters are Flatiron EHR fields; the
-  Optum analogues here are *Region / Payer type / Race*. The accordion keeps the
-  sample's category structure (incl. an empty **Labs** bucket) so lab criteria
+- **Synthetic by default.** Real figures require the production pipeline outputs
+  from the data warehouse (no warehouse in this environment), so the bundled
+  data is a deterministic synthetic cohort (reserved `9`-billion patient ids).
+- The *Practice Type* / *Smoking* filters are EHR-only fields; the claims
+  analogues here are *Region / Payer type / Race*. The accordion keeps that
+  category structure (incl. an empty **Labs** bucket) so lab criteria
   can be dropped in.
 - **Later-line strata** are 1L-baseline **carry-forward** (joined onto LOT-long
   by `augment_lot_long()`); if a requested stratum is not available at the chosen
@@ -186,7 +184,7 @@ unit test asserts `Overall(initial) == Overall(flag-only)`.
   report a stratum with <25 patients"), surfaced for categorical *and*
   continuous selections. Cell-level suppression (small counts inside a
   reportable stratum) is **not** applied pending confirmation of the exact
-  GSK/Optum output rule.
+  source small-count output rule.
 - **≥3-mo follow-up** uses `fu_potential_months`, which the synthetic generator
   builds as **administrative** potential follow-up (independent of death), so an
   early death still counts as having ≥3-mo potential follow-up. The real
@@ -195,7 +193,7 @@ unit test asserts `Overall(initial) == Overall(flag-only)`.
 - **Transitions** cover **1L→2L→3L→4L** via the from-line selector; **4L is
   start-only** (no 4L cohort, per protocol), so per-LOT *outcome* lines stop at 3L.
 - **Protocol alignment / known deferrals:** lab-value-defined comorbidity arms
-  (hepatic/renal/ocular) use the ICD-code arm only — Optum lab values are
+  (hepatic/renal/ocular) use the ICD-code arm only — claims lab values are
   sparse. The **SOC drug→category mappings and code lists** (protocol Annexes
   2/5) are placeholders here, so the real builder must take them from the
   authoritative LoT-algorithm specification; the synthetic SOC labels

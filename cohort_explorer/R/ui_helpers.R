@@ -7,7 +7,7 @@
 # presentation side.
 # =============================================================================
 
-# canonical accordion buckets, in the order the sample dashboard shows them
+# canonical accordion buckets, in a standard IE-panel order
 UI_CATEGORIES <- c("Demographics", "Clinical", "Labs", "Treatments", "Other")
 
 # input id for a criterion control

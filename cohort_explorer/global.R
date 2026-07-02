@@ -17,6 +17,11 @@ for (f in c("criteria_registry.R", "build_flagged_cohort.R", "cohort_select.R",
   if (file.exists(src)) source(src, local = FALSE)
 }
 
+# datasource connection config (single source; used by the programmatic
+# warehouse read path in build_flagged_cohort.R)
+.wcfg_src <- file.path(.app_dir, "config", "warehouse_config.R")
+if (file.exists(.wcfg_src)) source(.wcfg_src, local = FALSE)
+
 REG     <- criteria_registry()
 COHORTS <- cohort_definitions()
 VARDICT <- variable_dictionary()

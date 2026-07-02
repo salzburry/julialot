@@ -1,8 +1,8 @@
 # =============================================================================
 # app.R  --  Oncology Real-World Data Explorer (cohort + IE flags edition)
 # -----------------------------------------------------------------------------
-# Shiny re-creation of the sample dashboard, driven by the flag-based cohort
-# engine and aligned to the NDMM protocol (GSK 223926): pick a cohort
+# Interactive Shiny dashboard, driven by the flag-based cohort
+# engine and aligned to the NDMM study protocol: pick a cohort
 # (Overall / NDMM), toggle IE criteria, tune filters, choose a line of therapy,
 # and every tab (Patient Characteristics, OS/TTD/TTNT/Attrition + exploratory
 # PFS, Regimen & Transitions, Attrition funnel, Checks) recomputes off the same
@@ -116,7 +116,7 @@ ui <- fluidPage(
   app_css(),
   div(class = "ce-header", "Oncology Real-World Data Explorer Tool",
       span(class = "sub",
-           " — Multiple Myeloma (Overall & NDMM) · flag-driven IE selection · GSK 223926 protocol")),
+           " — Multiple Myeloma (Overall & NDMM) · flag-driven IE selection · NDMM study protocol")),
   if (isTRUE(PROVENANCE$any_synthetic))
     div(class = "ce-banner",
         strong("SYNTHETIC DATA — not for analysis. "),
