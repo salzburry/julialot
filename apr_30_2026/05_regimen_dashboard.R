@@ -892,7 +892,7 @@ build_steroid_timing_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
 }
 
 # ---- Pre-LOT steroid lead time (study-team ask) ------------------------
-# Julia: among patients on a given regimen at a given line, who received ANY
+# Study-team ask: among patients on a given regimen at a given line, who received ANY
 # steroid BEFORE that line started, and on average how many days before?
 #   - LOT1 'BORT LENA' (bortezomib + lenalidomide backbone): steroid within
 #     90 days before LOT1 start.

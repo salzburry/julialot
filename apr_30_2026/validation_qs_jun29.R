@@ -1,7 +1,6 @@
 #!/usr/bin/env Rscript
-# Standalone program: "MM LOT Validation next steps" study-team questions
-# (Julia Moore, 24-Jun-2026 e-mail; question set filed under
-# Questions/June 29 2026/). Sibling of lot1_studyteam_qs.R.
+# Standalone program: "MM LOT Validation next steps" study-team questions.
+# Sibling of lot1_studyteam_qs.R.
 #
 #   Rscript validation_qs_jun29.R
 #
@@ -24,7 +23,7 @@
 # plus a run log. All operational definitions live in R/validation_qs_jun29.R
 # and are shared verbatim with the combined dashboard's Exploratory objective.
 #
-# Cohorts (study-team follow-up, Jul-2026): every question is answered once
+# Cohorts: every question is answered once
 # per cohort - the parent Overall LOT_LONG cohort always, and the NDMM (1L)
 # cohort when the persisted NDMM_LOT_LONG_FILT table (written by the combined
 # dashboard's NDMM pass) is readable. NDMM CSVs carry an "ndmm_" prefix.
@@ -73,7 +72,7 @@ main <- function() {
   sct_tbl  <- wrk("LOT1_SCT")
 
   log_msg(SEP)
-  log_msg("MM LOT Validation next steps - study-team questions (Jun 2026)")
+  log_msg("MM LOT Validation next steps - study-team questions")
   log_msg(SEP)
   if (!vqs_readable(con, lot_long))
     stop("Cannot read ", lot_long, ". Build the LOT pipeline (02_lot1.R / 03_lot2_5.R) first.")

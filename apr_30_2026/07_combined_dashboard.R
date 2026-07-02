@@ -177,9 +177,9 @@ build_exploratory_scaffold <- function() {
 }
 
 # ---- Exploratory objective: MM LOT Validation next steps (Q1-Q6) ----------
-# Renders the six study-team validation questions (Julia Moore, Jun-2026) as
-# labelled tables under the Exploratory cohort pill. Per the study team's
-# follow-up (Jul-2026), every question is answered ONCE PER COHORT: the parent
+# Renders the six study-team validation questions as labelled tables under
+# the Exploratory cohort pill. Per the study team's follow-up, every
+# question is answered ONCE PER COHORT: the parent
 # Overall LOT_LONG cohort, and the NDMM (1L) cohort when its pass succeeded
 # (titles carry the cohort tag, e.g. "Q1 (NDMM): ..."). The shared signal
 # views (steroid claims, raw CAR-T dates) are built once on the parent
@@ -216,7 +216,7 @@ build_validation_exploratory <- function(con, ndmm_ok = FALSE) {
                    error = function(e) list(view = NULL, note = conditionMessage(e)))
   ster_src <- if (!is.null(ster$view)) vqs_steroid_src(ster$view) else NULL
 
-  # Cohort passes (study-team follow-up, Jul-2026): Overall always; NDMM when
+  # Cohort passes (study-team follow-up): Overall always; NDMM when
   # its cohort pass succeeded AND the filtered LOT_LONG view is readable.
   cohorts <- list(list(tag = "Overall", lot_long = lot_long))
   ndmm_ready <- isTRUE(ndmm_ok) && exists("NDMM_LOT_LONG_FILT") &&
@@ -229,7 +229,7 @@ build_validation_exploratory <- function(con, ndmm_ok = FALSE) {
     '<div style="font-family:system-ui;padding:14px;max-width:900px">',
     '<h3>MM LOT Validation next steps (study-team Q&amp;A)</h3>',
     '<p style="color:#555;font-size:13px">Six follow-up questions from the ',
-    'study team (Jun&nbsp;2026). Per the study team&rsquo;s follow-up, every ',
+    'study team. Per the study team&rsquo;s follow-up, every ',
     'question is answered <b>once per cohort</b> &mdash; <b>Overall</b> (the ',
     'parent <code>LOT_LONG</code> cohort) and <b>NDMM</b> (the 1L ',
     'newly-diagnosed subset',
@@ -364,7 +364,7 @@ build_validation_exploratory <- function(con, ndmm_ok = FALSE) {
         #  - no example patients selected (carries the honest "before-LOT1 not
         #    assessed" caveat when the raw scan was unavailable), and
         #  - patients selected but the requested RAW CAR-T claims came back
-        #    empty (Julia asked specifically for raw examples; don't let the
+        #    empty (the study team asked specifically for raw examples; don't let the
         #    MAP journey stand in silently for them).
         if (length(ex$patids) == 0)
           vqs_note_card(if (!is.null(ex$note)) ex$note else
