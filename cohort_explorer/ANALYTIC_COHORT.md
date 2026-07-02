@@ -37,8 +37,10 @@ memory. Nothing is re-derived per interaction.
 windows, MAP gap, SCT windows, CART window, `max_lot`, disenrollment sensitivity,
 study end). What is **not** yet config-driven and should be:
 
-- `06`'s `NDMM_PRE_LOT1_DAYS` is now **env-configurable** (default 365,
-  behavior-preserving) — driven by `study_config` via `emit_pipeline_env.R`.
+- `06`'s `NDMM_PRE_LOT1_DAYS` is hard-coded `365L`. `emit_pipeline_env.R` emits an
+  `NDMM_PRE_LOT1_DAYS` env var, but `06` will only honour it once that one line is
+  lifted to `Sys.getenv(...)` — a deliberate one-line, behavior-preserving change
+  left for the apr_30 owner (this branch does not modify apr_30 code).
 - The six NDMM filters auto-skip only when a **source is unavailable**; they are
   not individually **includable/excludable by study choice**. The analytic-cohort
   build makes this moot: it *always computes every flag as a column*, and which
@@ -83,11 +85,14 @@ projections are joined in). It cannot be executed in this environment (no
 warehouse), so `source_flagged_cohort_warehouse()` stays **fail-closed** until
 pointed at a live catalog.
 
-**The concrete script: `../apr_30_2026/08_analytic_cohort.R`** (DRAFT /
-unvalidated). It `source`s `06` with `no_autorun`, calls the same
-`prepare_ndmm_cohort()` (so `NDMM_FLAGS_ALL` is built by the validated SQL), and
-projects `ELIG_COH_FINAL ⋈ NDMM_FLAGS_ALL ⋈ LOT_LONG` into the two contract
-tables + CSV exports. Cross-checked to emit **all 57 contract columns**. Every
+**The concrete script: `warehouse/08_analytic_cohort.R`** (DRAFT /
+unvalidated). It is **fully decoupled from apr_30 — it does not source or modify
+any apr_30 code.** It connects via DBI (env-var config) and **reads the
+PERSISTED tables a prior apr_30 pipeline + `06` run already wrote** —
+`ELIG_COH_FINAL`, broad `LOT_LONG`, and `NDMM_FLAGS_ALL` (the validated NDMM flag
+table) — then projects `ELIG_COH_FINAL ⋈ NDMM_FLAGS_ALL ⋈ LOT_LONG` into the two
+contract tables + CSV exports. Cross-checked to emit **all 57 contract
+columns**. Every
 new derivation is tagged inline: `[A]` Overall flags = 1 on the filtered base
 (toggle needs `ELIG_COH_ALLFLAGS`), `[B]` race/region/payer/ethnicity join from
 Optum member tables, `[C]` OS/TTD/TTNT derivation (clinical sign-off), `[D]`
