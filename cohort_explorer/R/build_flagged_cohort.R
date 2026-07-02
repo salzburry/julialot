@@ -14,13 +14,13 @@
 #   The real builder is a thin projection over the validated production pipeline
 #   outputs (ELIG_COH_FINAL + LOT_LONG), with the per-criterion flags and the
 #   baseline characteristics (CCI, comorbidities, HCRU) computed at the correct
-#   anchor -- the same SQL 06_ndmm_dashboard.R uses for its IE post-filters, but
+#   anchor -- the same SQL the upstream NDMM flag build uses for its IE post-filters, but
 #   emitted as COLUMNS instead of applied as row filters. Implement
 #   source_flagged_cohort_warehouse() to SELECT that projection via DBI/odbc.
 #
 # RUNNABLE HERE:
 #   load_flagged_cohort("synthetic") generates a deterministic synthetic cohort
-#   so the app is demoable without a warehouse (reserved 9-billion PATIDs).
+#   so the app is demoable without a warehouse (reserved 9-billion patient ids).
 # =============================================================================
 
 # ---- contract: non-flag columns every flagged cohort must carry -------------

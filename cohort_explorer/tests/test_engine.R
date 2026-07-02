@@ -28,7 +28,7 @@ ok(tryCatch({ validate_flagged_cohort(df); TRUE }, error = function(e) FALSE),
 ok(!anyDuplicated(df$patient_id), "patient_id is unique")
 ok(all(unlist(df[registry_flag_ids(REG)]) %in% c(0L, 1L)),
    "all flag columns are strictly 0/1")
-ok(all(grepl("^9", df$patient_id)), "synthetic PATIDs use the reserved 9b range")
+ok(all(grepl("^9", df$patient_id)), "synthetic patient ids use the reserved 9b range")
 
 # ---- selection: Overall ----
 ov <- select_cohort(df, COH$overall$active_flags, reg = REG)

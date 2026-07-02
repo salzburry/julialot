@@ -1,8 +1,7 @@
 # Cohort Explorer — flag-driven IE dashboard (Overall & NDMM)
 
-A Shiny re-creation of a sample *Oncology Real-World Data Explorer Tool*,
-built for the MM LOT cohorts in
-this repo. The point is **flexibility over the inclusion/exclusion (IE)
+An interactive Shiny *Oncology Real-World Data Explorer Tool* for the MM LOT
+cohorts. The point is **flexibility over the inclusion/exclusion (IE)
 criteria**: pick a cohort, freely toggle the IE rules, tune the filters, and
 every output re-selects from one pre-built **flagged superset cohort** — nothing
 is re-derived per change.
@@ -20,10 +19,9 @@ boolean column per IE criterion** onto it (`incl_qualifying_mm`, `incl_adult`,
 **AND-ing a chosen set of flags** — instant, and reusable across any cohort
 definition.
 
-This is the same design already sketched in the refactor's cohort gate
-registry (each gate emits an `output_flag`) and exposed as IE toggles in the
-pipeline's `pipeline_inputs.csv` (`APPLY_AGE_INCL`, `APPLY_CE_B_INCL`, …). The
-production pipeline is the validated,
+This is the same design the production pipeline uses: each cohort gate emits an
+`output_flag`, and the flags are exposed as IE toggles (`APPLY_AGE_INCL`,
+`APPLY_CE_B_INCL`, …). The production pipeline is the validated,
 authoritative algorithm; this tool is a presentation + selection layer on top of
 its outputs.
 
@@ -172,12 +170,12 @@ unit test asserts `Overall(initial) == Overall(flag-only)`.
 
 ## Status / caveats
 
-- **Synthetic by default.** Real figures require the production pipeline outputs from
-  Databricks `hive_metastore` (no warehouse in this environment), so the bundled
-  data is a deterministic synthetic cohort (reserved `9`-billion PATIDs).
-- The sample's *Practice Type* / *Smoking* filters are Flatiron EHR fields; the
-  Optum analogues here are *Region / Payer type / Race*. The accordion keeps the
-  sample's category structure (incl. an empty **Labs** bucket) so lab criteria
+- **Synthetic by default.** Real figures require the production pipeline outputs
+  from the data warehouse (no warehouse in this environment), so the bundled
+  data is a deterministic synthetic cohort (reserved `9`-billion patient ids).
+- The *Practice Type* / *Smoking* filters are EHR-only fields; the claims
+  analogues here are *Region / Payer type / Race*. The accordion keeps that
+  category structure (incl. an empty **Labs** bucket) so lab criteria
   can be dropped in.
 - **Later-line strata** are 1L-baseline **carry-forward** (joined onto LOT-long
   by `augment_lot_long()`); if a requested stratum is not available at the chosen
