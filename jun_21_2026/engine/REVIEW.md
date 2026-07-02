@@ -3,7 +3,7 @@
 `engine/` is a **local, pure-R re-implementation** of the LOT algorithm, built so
 the refactor can be run and checked on **synthetic** data without a warehouse. It
 is **verification only** — production stays the Databricks SQL on `hive_metastore`
-(`apr_30_2026/`, untouched). Every output is checked against a **hand-derived**
+(the production code, untouched). Every output is checked against a **hand-derived**
 expected value (independent of the engine), so a passing test is a real check.
 
 **What this proves (and does not).** The expected values are **spec-expected**
@@ -21,7 +21,7 @@ Rscript tests/run_unit_tests.R                          # 310 pass (engine: test
 
 ## What to validate: each rule maps to a production source line
 
-| engine | rule | production source (apr_30_2026) |
+| engine | rule | production source |
 |---|---|---|
 | `map.R` | medical day-supply hardcoded to medical_day_supply; pharmacy null/<1→28; de-dup (patient,med,date,type) keep max day-supply | `02_lot1.R:299-449` |
 | `map.R` | MAP runout state machine (CASE1 open / CASE2 gap→new / CASE3 pushout·reset·medical) | `02_lot1.R:528-634` |
@@ -112,7 +112,7 @@ Rscript tests/run_unit_tests.R                          # 310 pass (engine: test
   it now validates config (`CONFIG_SPEC`), members/codelist columns, and the rollup
   (structure + `validate_reference_data` semantics), but not yet lineage / dates / dedup
   uniqueness of the CLAIM rows (that needs the canonical adapter, since the engine
-  consumes POST-cohort inputs). `apr_30_2026` production also does not yet consume
+  consumes POST-cohort inputs). the production pipeline also does not yet consume
   `CONFIG_SPEC` (still env vars).
 - **Now handled (LOT_LONG is fully derived):** `contains_mtx_reg` COMPUTED (mono/dual
   + anchor; rollup **required** + STRUCTURE + SEMANTIC (`validate_reference_data`)
@@ -130,7 +130,7 @@ Rscript tests/run_unit_tests.R                          # 310 pass (engine: test
 
 ## Constraints to confirm
 
-- `apr_30_2026/` is byte-for-byte untouched (`git status` clean).
+- the production code is byte-for-byte untouched (`git status` clean).
 - `engine/` is outside the prod allowlist; `engine/fixtures/` use reserved
   synthetic PATIDs (`9000000000`-`9999999999`) and are denied by
   `verify_no_synthetic.R`. Nothing synthetic or engine-side ships to production.

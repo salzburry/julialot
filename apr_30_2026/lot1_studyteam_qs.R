@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# Standalone LOT1 study-team questions (forwarded MM LOT1 feedback).
+# Standalone LOT1 study-team questions.
 #
 #   Rscript lot1_studyteam_qs.R
 #

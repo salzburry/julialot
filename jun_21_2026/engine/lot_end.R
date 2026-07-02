@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# engine/lot_end.R - LOT1 end date + reason, faithful to apr_30_2026/02_lot1.R S16.
+# engine/lot_end.R - LOT1 end date + reason, faithful to the production 02_lot1.R S16.
 # LOCAL verification engine (see map.R/lot1.R/sct.R).
 #
 # End-reason cascade (highest priority wins, each gated so it only fires when its

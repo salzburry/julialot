@@ -80,11 +80,11 @@ output dashboard and to stdout when the script runs.
 ### Why these NDMM filters live here and not in the parent
 
 Each is a wording change in the spec that does **not** match
-what the May 12 program spec (the parent's source of truth)
+what the program spec (the parent's source of truth)
 implements. We add them only for this NDMM view so the parent
 pipeline and its persisted tables stay untouched.
 
-| NDMM filter                                | spec wording                                                                                                                                | Parent (May-12 spec) equivalent                                  | What's different                                                                                          |
+| NDMM filter                                | spec wording                                                                                                                                | Parent spec equivalent                                  | What's different                                                                                          |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | LOT1 start >= 2017-01-01                 | "Received an eligible treatment for MM ... on or after 01 Jan 2017"                                                                               | Parent's `id_start` defaults to 2016-01-01                       | NDMM hard-enforces the 2017 cutoff regardless of upstream `id_start`. Env-overridable via `NDMM_LOT1_FROM`.    |
 | 12-mo CE before LOT1                     | "CE of at least 12-months ... before the 1L cohort index date and at least 6 months before the MM diagnosis"                                      | `CE_b` = 6-mo CE before `INDEX_DATE` (MM dx)                     | Spec adds a second window with a different anchor (1L treatment start). Parent already enforces 6-mo MM-dx anchor. |
@@ -242,7 +242,7 @@ MM-adjacent tumor_group labels`; **`N < 5` is a run-review blocker**
 ## Running it
 
 ```sh
-Rscript apr_30_2026/06_ndmm_dashboard.R
+Rscript 06_ndmm_dashboard.R
 ```
 
 Same connection environment as the parent pipeline. Required env vars:
@@ -426,18 +426,18 @@ that the parent script honours:
 - `regimen_dashboard.no_autorun = TRUE` - skip its `main()` so sourcing
   does not trigger the whole-cohort dashboard.
 - `regimen_dashboard.script_dir = .parent_dir` - tell its `.script_dir`
-  resolver to look in `apr_30_2026/` for the parent `R/` helpers and
+  resolver to look in the parent folder for the parent `R/` helpers and
   CSV inputs (otherwise `commandArgs("--file=")` makes it look in
-  `apr_30_2026/` and the source fails).
+  the parent folder and the source fails).
 
 Both options are NULL by default so the standalone
-`Rscript apr_30_2026/05_regimen_dashboard.R` invocation is unchanged.
+`Rscript 05_regimen_dashboard.R` invocation is unchanged.
 
 No parent pipeline files are written or modified.
 
 ## Known gaps vs the spec
 
-- **MM dx in baseline** (`MM_baseline_diag` in the May 12 spec). The
+- **MM dx in baseline** (`MM_baseline_diag` in the program spec). The
   spec does not separately call this out; NDMM identification
   rests on the "first MM treatment claim" inclusion criterion. Parent
   `ELIG_COH_FINAL` still applies its own `MM_BASELINE_EVIDENCE` flag

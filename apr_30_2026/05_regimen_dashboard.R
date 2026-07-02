@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 # Regimen-transition + steroid dashboard for the whole (overall) cohort.
 #
-#   Rscript apr_30_2026/05_regimen_dashboard.R
+#   Rscript 05_regimen_dashboard.R
 #
 # Inputs (all live next to this script):
 #   regimen_categories.csv   regimen -> category mapping
@@ -892,7 +892,7 @@ build_steroid_timing_qc <- function(con, lot_long_tbl, section = "OVERVIEW",
 }
 
 # ---- Pre-LOT steroid lead time (study-team ask) ------------------------
-# Julia: among patients on a given regimen at a given line, who received ANY
+# Study-team ask: among patients on a given regimen at a given line, who received ANY
 # steroid BEFORE that line started, and on average how many days before?
 #   - LOT1 'BORT LENA' (bortezomib + lenalidomide backbone): steroid within
 #     90 days before LOT1 start.

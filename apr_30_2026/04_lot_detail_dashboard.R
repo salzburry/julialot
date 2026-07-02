@@ -6,7 +6,7 @@
 # produced by 02_lot1.R (lot_dashboard.html); it is an independent
 # entry script you can run any time LOT_LONG has been (re)built.
 #
-#   Rscript apr_30_2026/04_lot_detail_dashboard.R
+#   Rscript 04_lot_detail_dashboard.R
 #
 # Prerequisite: work_schema.LOT_LONG must exist and contain LOT2-5 rows
 # (i.e. 03_lot2_5.R / the LOT2-5 stage completed, not just the

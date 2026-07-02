@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# engine/sct.R - Stem-cell-transplant detection, faithful to apr_30_2026/02_lot1.R
+# engine/sct.R - Stem-cell-transplant detection, faithful to the production 02_lot1.R
 # steps S12-S15. LOCAL verification engine (see map.R/lot1.R).
 #
 #   AUTO: group claims by `window_days` (13; datediff(x, window_start) <= 13), take

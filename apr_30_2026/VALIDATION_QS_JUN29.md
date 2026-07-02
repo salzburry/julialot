@@ -1,9 +1,7 @@
-# MM LOT Validation next steps — study-team Q&A (Jun 2026)
+# MM LOT Validation next steps — study-team Q&A
 
-Answers the six follow-up questions in
-`Questions/June 29 2026/lot questions jul 24.pdf` (Julia Moore, GSK RWB,
-24-Jun-2026). Two deliverables, one shared logic module so they can never
-drift apart:
+Answers the six study-team follow-up questions. Two deliverables, one shared
+logic module so they can never drift apart:
 
 | File | What it is |
 |------|------------|
@@ -11,14 +9,27 @@ drift apart:
 | `validation_qs_jun29.R` | **Standalone program.** Runs all six analyses, writes one CSV per result + a run log. |
 | `07_combined_dashboard.R` | Renders the same six answers as labelled tables under a new **Exploratory analysis** cohort pill. |
 
+**Cohorts (study-team follow-up):** every question is answered
+**once per cohort** — the parent **Overall** `LOT_LONG` cohort always, and the
+**NDMM** (1L newly-diagnosed) cohort when available. In the dashboard, titles
+carry the cohort tag (`Q1 (Overall): …` / `Q1 (NDMM): …`); the NDMM answers
+render when the NDMM cohort pass succeeded, otherwise a note card explains the
+gap. The standalone answers NDMM when the persisted `NDMM_LOT_LONG_FILT`
+work-schema table (materialized by the combined dashboard's NDMM pass) is
+readable; its NDMM CSVs carry an `ndmm_` filename prefix (Overall filenames
+are unchanged). The shared signal views (steroid claims, raw CAR-T dates) are
+built once on the parent patient list — NDMM patients are a strict subset
+(inner join to the NDMM patient set), and every per-question query joins back
+to its own cohort's `LOT_LONG`, which applies the restriction.
+
 ## Run
 
 ```bash
 # Standalone (CSVs in $OUTPUT_DIR):
-Rscript apr_30_2026/validation_qs_jun29.R
+Rscript validation_qs_jun29.R
 
 # In the combined dashboard (Exploratory pill):
-Rscript apr_30_2026/07_combined_dashboard.R   # or the usual run_all.R
+Rscript 07_combined_dashboard.R   # or the usual run_all.R
 ```
 
 Requires `DATABRICKS_PWD`. Reads only the persisted work-schema tables
@@ -73,7 +84,7 @@ examples — the raw CDM via `cdm_src()`. Builds nothing persistent.
 - **Before / after windows** (7/14/30 d) are cumulative (≤ N days), measured
   from a steroid claim date. "Before" is relative to `LOT_START_DT`; "after" is
   relative to the **fixed** induction end `LOT_START_DT + W − 1` (the "60/30 day
-  induction window" Julia named) — not the capped `LOT_INDUCTION_END_DT`. Steroid
+  induction window" the study team named) — not the capped `LOT_INDUCTION_END_DT`. Steroid
   claims are scanned across all of a patient's history (matching the panel), not
   bounded to `[INDEX_DATE, OBS_END_DT]`, so a pre-index steroid can fall in a
   LOT1 "before" window.

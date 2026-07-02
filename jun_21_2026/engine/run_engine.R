@@ -24,7 +24,7 @@ local({
 
 # Params are DATA (resolved config). DEFAULTS are DERIVED from the ONE shared
 # CONFIG_SPEC (the refactor's typed contract) - a single source, so engine defaults
-# can't drift from the spec's defaults. (apr_30_2026 production still resolves config
+# can't drift from the spec's defaults. (the production pipeline still resolves config
 # from env vars via config_lot.R and does not yet consume CONFIG_SPEC - wiring that is
 # a future step; here CONFIG_SPEC is the refactor's validation contract.)
 if (!exists("CONFIG_SPEC")) stop("run_engine: CONFIG_SPEC not loaded (scripts/validate_config.R)")

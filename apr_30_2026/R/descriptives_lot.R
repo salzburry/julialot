@@ -829,7 +829,7 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
                  title = "Table: LOT1 End Reasons")
     }
 
-    # contains_mtx_reg flag (Apr 19 spec: descriptive, flag-only)
+    # contains_mtx_reg flag (per spec: descriptive, flag-only)
     # Summary count + cross-tab against LOT1_BASE_END_REASON so reviewers can
     # see how the anchor-maintenance subgroup distributes across end categories.
     mtx_summary <- tryCatch(db_q(con, "
@@ -1084,7 +1084,7 @@ attrition table, then rebuild the LOT dashboard to see it here.</p>
         GROUP BY PATID
         -- Secondary sort on PATID so ties on reason-count are broken
         -- deterministically; otherwise the LIMIT 20 sample drifts across
-        -- runs and makes QC screenshots non-reproducible. sort_array
+        -- runs and makes the QC sample non-reproducible. sort_array
         -- around collect_set stabilizes the order of reason labels
         -- within the title string too.
         ORDER BY length(concat_ws(',', sort_array(collect_set(reason)))) DESC,

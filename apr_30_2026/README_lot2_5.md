@@ -45,7 +45,7 @@ the LOT1-5 detail embedded per cohort), with both sharing one combined
 `PIPELINE_LOG_FILE` artifact. Use it as the single Job command:
 
 ```
-Rscript /mnt/code/.../apr_30_2026/run_all.R
+Rscript run_all.R
 ```
 
 Set `DATABRICKS_PWD` as a Domino env var / secret. Run-control env
@@ -256,7 +256,7 @@ Long-format table; one row per patient per LOT.
 
 ### `pipeline_inputs.csv` (edit inputs in one place)
 
-An editable defaults file: edit `apr_30_2026/pipeline_inputs.csv`
+An editable defaults file: edit `pipeline_inputs.csv`
 (open it in Excel or any editor) instead of memorising every env var.
 Columns: `name,value,description`. Every entry point loads it
 **before** reading any config: `run_all.R`, `run_pipeline.R`,
@@ -353,4 +353,4 @@ LOT2-5 only).
 
 Still open and shipping with the draft defaults above: Q3, Q4, Q5, Q6,
 Q10, Q13 (mostly draft confirmations; none behaviorally significant
-under common histories), Q7, Q8 (Onkar — pipeline-output verifications).
+under common histories), Q7, Q8 (pipeline-output verifications).

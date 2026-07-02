@@ -1,6 +1,5 @@
 # ---------------------------------------------------------------------------
-# Shared analysis module: "MM LOT Validation next steps" study-team questions
-# (Julia Moore, forwarded 24-Jun-2026 / "June 29 2026" question set).
+# Shared analysis module: "MM LOT Validation next steps" study-team questions.
 #
 # This module holds ONLY data logic (SQL -> data.frame). It is consumed by:
 #   - validation_qs_jun29.R          (standalone CSV/log program)
@@ -73,7 +72,7 @@ if (is.na(VQS_CART) || VQS_CART < 1) VQS_CART <- 45L
 #     (CART-started LOTn, default 45) / VQS_W2 d (other LOTn); when
 #     LOT_BASE_END_DT is NULL use the full window.
 # The 7/14/30d before/after windows are NOT capped - they are anchored to the
-# fixed induction end (LOT_START + W - 1) that Julia named ("their 60/30 day
+# fixed induction end (LOT_START + W - 1) the study team named ("their 60/30 day
 # induction window").
 vqs_induction_end_sql <- function(lot_num, w, start_expr = "cast(LOT_START_DT as date)") {
   bw <- if (lot_num == 1L) as.character(as.integer(w))
@@ -375,7 +374,7 @@ vqs_steroid_windows <- function(con, lot_long, ster_src, lot_num, w) {
   df
 }
 
-# Patient-level companion to vqs_steroid_windows() - answers Julia's "can we
+# Patient-level companion to vqs_steroid_windows() - answers the study-team ask "can we
 # see WHO of these patients received a steroid within ..." (Q3/Q4). One row per
 # no-steroid-at-line patient who received a steroid in at least one prior/after
 # window, with per-window flags and the nearest steroid dates. `limit` caps the
@@ -424,7 +423,7 @@ vqs_steroid_windows_patients <- function(con, lot_long, ster_src, lot_num, w, li
 }
 
 # ===========================================================================
-# Q5 - attribution check. Julia: for patients with NO steroid classified at
+# Q5 - attribution check. Study-team ask: for patients with NO steroid classified at
 # LOT2 but a steroid in the month before LOT2, is that pre-LOT2 steroid
 # actually attributable to the LOT1 regimen?
 #

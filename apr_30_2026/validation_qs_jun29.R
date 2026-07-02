@@ -1,7 +1,6 @@
 #!/usr/bin/env Rscript
-# Standalone program: "MM LOT Validation next steps" study-team questions
-# (Julia Moore, 24-Jun-2026 e-mail; question set filed under
-# Questions/June 29 2026/). Sibling of lot1_studyteam_qs.R.
+# Standalone program: "MM LOT Validation next steps" study-team questions.
+# Sibling of lot1_studyteam_qs.R.
 #
 #   Rscript validation_qs_jun29.R
 #
@@ -23,6 +22,11 @@
 # Builds nothing persistent; safe to run any time. Writes one CSV per result
 # plus a run log. All operational definitions live in R/validation_qs_jun29.R
 # and are shared verbatim with the combined dashboard's Exploratory objective.
+#
+# Cohorts: every question is answered once
+# per cohort - the parent Overall LOT_LONG cohort always, and the NDMM (1L)
+# cohort when the persisted NDMM_LOT_LONG_FILT table (written by the combined
+# dashboard's NDMM pass) is readable. NDMM CSVs carry an "ndmm_" prefix.
 
 .script_dir <- local({
   args <- commandArgs(trailingOnly = FALSE)
@@ -68,7 +72,7 @@ main <- function() {
   sct_tbl  <- wrk("LOT1_SCT")
 
   log_msg(SEP)
-  log_msg("MM LOT Validation next steps - study-team questions (Jun 2026)")
+  log_msg("MM LOT Validation next steps - study-team questions")
   log_msg(SEP)
   if (!vqs_readable(con, lot_long))
     stop("Cannot read ", lot_long, ". Build the LOT pipeline (02_lot1.R / 03_lot2_5.R) first.")
@@ -109,12 +113,32 @@ main <- function() {
 
   # Definitions sidecar so every CSV batch travels with its operational
   # definitions (counts alone are easy to misread).
+  # Cohort passes: Overall always; NDMM when the persisted NDMM cohort table
+  # (materialized by the combined dashboard's NDMM pass) is present. The NDMM
+  # table is LOT_LONG INNER JOINed to the NDMM patient set - a strict subset
+  # of the parent - so the shared signal views built above on the parent
+  # patient list (steroid claims, raw CAR-T dates) cover both cohorts; each
+  # per-question query joins back to its own cohort lot_long.
+  ndmm_tbl <- wrk("NDMM_LOT_LONG_FILT")
+  cohorts  <- list(list(tag = "overall", label = "Overall", lot_long = lot_long))
+  if (vqs_readable(con, ndmm_tbl)) {
+    cohorts <- c(cohorts, list(list(tag = "ndmm", label = "NDMM", lot_long = ndmm_tbl)))
+    log_msg("NDMM cohort table found (", ndmm_tbl, ") - Q1-Q6 answered for ",
+            "Overall AND NDMM (NDMM CSVs carry an 'ndmm_' prefix).")
+  } else {
+    log_msg("NOTE: ", ndmm_tbl, " not readable - NDMM answers skipped. ",
+            "(Run 07_combined_dashboard.R once to materialize the NDMM ",
+            "cohort, then re-run for both cohorts.) Overall only.")
+  }
+
   defs <- data.frame(item = c(
     "denominator_cohort", "steroid_signal", "steroid_at_lotn",
     "before_after_windows", "cart_during_or_closing", "cart_before_lot1",
     "agent_tokens", "raw_claims_window"),
     definition = c(
-      "Parent (Overall) LOT_LONG cohort.",
+      paste0("One pass per cohort: parent (Overall) LOT_LONG",
+             if (length(cohorts) > 1) " AND the NDMM (1L) subset (NDMM_LOT_LONG_FILT; CSVs prefixed 'ndmm_')"
+             else " (NDMM_LOT_LONG_FILT not readable this run - Overall only)", "."),
       paste0("steroid_codes.csv codes scanned on medical (PROC_CD/BILL_PROC_CD/NDC) + rx (NDC). ", ster$note),
       sprintf("No-steroid denominator: a steroid claim within the CAPPED induction window [LOT_START, LOT_INDUCTION_END_DT] = least(LOT_BASE_END_DT, LOT_START+W-1); W=%d (LOT1) / %d (CART-started LOTn) / %d (other LOTn); SCT_ALLO = no membership. Matches the Steroids panel.", VQS_W1, VQS_CART, VQS_W2),
       "Cumulative (<=N days) from a steroid claim date; before=[start-N,start-1] (rel. LOT_START); after=[fixed_ind_end+1, fixed_ind_end+N] where fixed_ind_end=LOT_START+W-1 (NOT capped).",
@@ -126,78 +150,87 @@ main <- function() {
     stringsAsFactors = FALSE)
   write_out(defs, "definitions")
 
-  # ---- Q1 ----
-  log_msg(DASH); log_msg("Q1: LOT1 regimens with pomalidomide / elotuzumab / panobinostat")
-  q1 <- vqs_q1_exclusion_agents(con, lot_long, tokens)
-  write_out(q1, "q1_exclusion_agents_lot1")
-  log_msg(sprintf("  LOT1 patients = %s. Any of the three: %s (mono %s / combo %s).",
-                  attr(q1, "lot1_patients"),
-                  q1$n_lot1_with_agent[q1$agent == "Any of the three"],
-                  q1$n_as_monotherapy[q1$agent == "Any of the three"],
-                  q1$n_in_combination[q1$agent == "Any of the three"]))
+  for (co in cohorts) {
+    ll <- co$lot_long
+    # NDMM outputs carry an "ndmm_" prefix; Overall filenames are unchanged
+    # (continuity with earlier runs).
+    tg <- function(x) if (identical(co$tag, "overall")) x else paste0(co$tag, "_", x)
+    log_msg(SEP); log_msg("Cohort pass: ", co$label, " (", ll, ")"); log_msg(SEP)
 
-  # ---- Q2 ----
-  log_msg(DASH); log_msg("Q2: raw-claim examples for pomalidomide-at-LOT1 patients")
-  if (have_map) {
-    q2 <- vqs_q2_poma_examples(con, lot_long, map_tbl, tokens, n = 5L, bounds = bounds$sql)
-    if (!is.null(q2$note)) log_msg("  ", q2$note)
-    if (length(q2$patids)) log_msg("  example PATIDs: ", paste(q2$patids, collapse = ", "))
-    write_out(q2$journey, "q2_poma_examples_map_journey")
-    write_out(q2$raw,     "q2_poma_examples_raw_claims")
-  } else log_msg("  skipped (MAP_STACKED unavailable).")
+    # ---- Q1 ----
+    log_msg(DASH); log_msg("[", co$label, "] Q1: LOT1 regimens with pomalidomide / elotuzumab / panobinostat")
+    q1 <- vqs_q1_exclusion_agents(con, ll, tokens)
+    write_out(q1, tg("q1_exclusion_agents_lot1"))
+    log_msg(sprintf("  LOT1 patients = %s. Any of the three: %s (mono %s / combo %s).",
+                    attr(q1, "lot1_patients"),
+                    q1$n_lot1_with_agent[q1$agent == "Any of the three"],
+                    q1$n_as_monotherapy[q1$agent == "Any of the three"],
+                    q1$n_in_combination[q1$agent == "Any of the three"]))
 
-  # ---- Q3 / Q4 / Q5 (need the steroid signal) ----
-  if (!is.null(ster_src)) {
-    log_msg(DASH); log_msg("Q3: steroid timing for LOT1 patients with no steroid at LOT1")
-    q3 <- vqs_steroid_windows(con, lot_long, ster_src, lot_num = 1L, w = VQS_W1)
-    write_out(q3, "q3_lot1_steroid_windows")
-    log_msg(sprintf("  LOT1: %s patients, %s with steroid at LOT1, %s without (denominator).",
-                    attr(q3, "line_patients"), attr(q3, "line_with_steroid"),
-                    attr(q3, "line_without_steroid")))
-    # "who" (patient-level): the actual no-steroid-at-LOT1 patients + windows.
-    write_out(vqs_steroid_windows_patients(con, lot_long, ster_src, lot_num = 1L, w = VQS_W1),
-              "q3_lot1_steroid_window_patients")
+    # ---- Q2 ----
+    log_msg(DASH); log_msg("[", co$label, "] Q2: raw-claim examples for pomalidomide-at-LOT1 patients")
+    if (have_map) {
+      q2 <- vqs_q2_poma_examples(con, ll, map_tbl, tokens, n = 5L, bounds = bounds$sql)
+      if (!is.null(q2$note)) log_msg("  ", q2$note)
+      if (length(q2$patids)) log_msg("  example PATIDs: ", paste(q2$patids, collapse = ", "))
+      write_out(q2$journey, tg("q2_poma_examples_map_journey"))
+      write_out(q2$raw,     tg("q2_poma_examples_raw_claims"))
+    } else log_msg("  skipped (MAP_STACKED unavailable).")
 
-    log_msg(DASH); log_msg("Q4: steroid timing for LOT2 patients with no steroid at LOT2")
-    q4 <- vqs_steroid_windows(con, lot_long, ster_src, lot_num = 2L, w = VQS_W2)
-    write_out(q4, "q4_lot2_steroid_windows")
-    log_msg(sprintf("  LOT2: %s patients, %s with steroid at LOT2, %s without (denominator).",
-                    attr(q4, "line_patients"), attr(q4, "line_with_steroid"),
-                    attr(q4, "line_without_steroid")))
-    write_out(vqs_steroid_windows_patients(con, lot_long, ster_src, lot_num = 2L, w = VQS_W2),
-              "q4_lot2_steroid_window_patients")
+    # ---- Q3 / Q4 / Q5 (need the steroid signal) ----
+    if (!is.null(ster_src)) {
+      log_msg(DASH); log_msg("[", co$label, "] Q3: steroid timing for LOT1 patients with no steroid at LOT1")
+      q3 <- vqs_steroid_windows(con, ll, ster_src, lot_num = 1L, w = VQS_W1)
+      write_out(q3, tg("q3_lot1_steroid_windows"))
+      log_msg(sprintf("  LOT1: %s patients, %s with steroid at LOT1, %s without (denominator).",
+                      attr(q3, "line_patients"), attr(q3, "line_with_steroid"),
+                      attr(q3, "line_without_steroid")))
+      # "who" (patient-level): the actual no-steroid-at-LOT1 patients + windows.
+      write_out(vqs_steroid_windows_patients(con, ll, ster_src, lot_num = 1L, w = VQS_W1),
+                tg("q3_lot1_steroid_window_patients"))
 
-    # ---- Q5 ----
-    log_msg(DASH); log_msg("Q5: LOT2 pre-start steroid attribution to LOT1")
-    q5 <- vqs_q5_lot2_attribution(con, lot_long, ster_src, w1 = VQS_W1, w2 = VQS_W2)
-    write_out(q5, "q5_lot2_steroid_attribution")
-    log_msg("  denominator (no LOT2 steroid + steroid in 30d before LOT2): ", q5$n_patients[1],
-            "; pre-LOT2 steroid ITSELF within LOT1 span (attributable): ", q5$n_patients[2],
-            "; NOT within LOT1 span: ", q5$n_patients[3], ".")
-  } else log_msg("Q3/Q4/Q5 skipped - no steroid signal (steroid_codes.csv).")
+      log_msg(DASH); log_msg("[", co$label, "] Q4: steroid timing for LOT2 patients with no steroid at LOT2")
+      q4 <- vqs_steroid_windows(con, ll, ster_src, lot_num = 2L, w = VQS_W2)
+      write_out(q4, tg("q4_lot2_steroid_windows"))
+      log_msg(sprintf("  LOT2: %s patients, %s with steroid at LOT2, %s without (denominator).",
+                      attr(q4, "line_patients"), attr(q4, "line_with_steroid"),
+                      attr(q4, "line_without_steroid")))
+      write_out(vqs_steroid_windows_patients(con, ll, ster_src, lot_num = 2L, w = VQS_W2),
+                tg("q4_lot2_steroid_window_patients"))
 
-  # ---- Q6 ----
-  if (have_sct) {
-    log_msg(DASH); log_msg("Q6: CAR-T prior to or during LOT1")
-    q6 <- vqs_q6_cart(con, lot_long, sct_tbl, w1 = VQS_W1, cart_raw_tbl = cart_raw)
-    write_out(q6, "q6_cart_prior_or_during_lot1")
-    log_msg("  CAR-T prior to OR during LOT1: ",
-            q6$n_patients[q6$metric == "CAR-T prior to OR during LOT1 (the ask)"],
-            " patients (of ", q6$n_patients[1], " LOT1).",
-            if (is.null(cart_raw)) " ('before LOT1' = NA: raw CAR-T scan unavailable.)" else "")
+      # ---- Q5 ----
+      log_msg(DASH); log_msg("[", co$label, "] Q5: LOT2 pre-start steroid attribution to LOT1")
+      q5 <- vqs_q5_lot2_attribution(con, ll, ster_src, w1 = VQS_W1, w2 = VQS_W2)
+      write_out(q5, tg("q5_lot2_steroid_attribution"))
+      log_msg("  denominator (no LOT2 steroid + steroid in 30d before LOT2): ", q5$n_patients[1],
+              "; pre-LOT2 steroid ITSELF within LOT1 span (attributable): ", q5$n_patients[2],
+              "; NOT within LOT1 span: ", q5$n_patients[3], ".")
+    } else log_msg("Q3/Q4/Q5 skipped - no steroid signal (steroid_codes.csv).")
 
-    log_msg(DASH); log_msg("Q6: raw-claim journey examples for CAR-T prior-to/during-LOT1 patients")
-    ex <- vqs_q6_cart_examples(con, lot_long, sct_tbl, map_tbl, n = 5L,
-                               bounds = bounds$sql, cart_raw_tbl = cart_raw)
-    if (!is.null(ex$note)) log_msg("  ", ex$note)
-    if (length(ex$patids)) log_msg("  example PATIDs: ", paste(ex$patids, collapse = ", "))
-    write_out(ex$sct_raw, "q6_cart_examples_raw_sct_claims")
-    write_out(ex$mma_raw, "q6_cart_examples_raw_mma_claims")
-    write_out(ex$journey, "q6_cart_examples_map_journey")
-  } else log_msg("Q6 skipped (LOT1_SCT unavailable).")
+    # ---- Q6 ----
+    if (have_sct) {
+      log_msg(DASH); log_msg("[", co$label, "] Q6: CAR-T prior to or during LOT1")
+      q6 <- vqs_q6_cart(con, ll, sct_tbl, w1 = VQS_W1, cart_raw_tbl = cart_raw)
+      write_out(q6, tg("q6_cart_prior_or_during_lot1"))
+      log_msg("  CAR-T prior to OR during LOT1: ",
+              q6$n_patients[q6$metric == "CAR-T prior to OR during LOT1 (the ask)"],
+              " patients (of ", q6$n_patients[1], " LOT1).",
+              if (is.null(cart_raw)) " ('before LOT1' = NA: raw CAR-T scan unavailable.)" else "")
+
+      log_msg(DASH); log_msg("[", co$label, "] Q6: raw-claim journey examples for CAR-T prior-to/during-LOT1 patients")
+      ex <- vqs_q6_cart_examples(con, ll, sct_tbl, map_tbl, n = 5L,
+                                 bounds = bounds$sql, cart_raw_tbl = cart_raw)
+      if (!is.null(ex$note)) log_msg("  ", ex$note)
+      if (length(ex$patids)) log_msg("  example PATIDs: ", paste(ex$patids, collapse = ", "))
+      write_out(ex$sct_raw, tg("q6_cart_examples_raw_sct_claims"))
+      write_out(ex$mma_raw, tg("q6_cart_examples_raw_mma_claims"))
+      write_out(ex$journey, tg("q6_cart_examples_map_journey"))
+    } else log_msg("Q6 skipped (LOT1_SCT unavailable).")
+  }
 
   log_msg(SEP)
-  log_msg("Validation questions complete. CSVs in ", out_dir)
+  log_msg("Validation questions complete (", length(cohorts), " cohort pass",
+          if (length(cohorts) > 1) "es" else "", "). CSVs in ", out_dir)
   log_msg(SEP)
 }
 

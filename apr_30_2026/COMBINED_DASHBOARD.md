@@ -3,7 +3,7 @@
 One self-contained HTML (`combined_dashboard.html`) covering both cohorts.
 
 ```
-Rscript apr_30_2026/07_combined_dashboard.R
+Rscript 07_combined_dashboard.R
 ```
 
 The two standalone dashboards still build unchanged:
