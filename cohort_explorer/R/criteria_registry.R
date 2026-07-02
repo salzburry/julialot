@@ -5,8 +5,8 @@
 # (IE) criteria. It is config-as-R (no yaml dependency) so the engine and the
 # Shiny UI are driven by the SAME object.
 #
-# Design (mirrors jun_21_2026/cohort/gates/registry.yml + apr_30_2026's
-# pipeline_inputs.csv IE toggles):
+# Design (the same flag-per-gate model the upstream LOT pipeline uses for its
+# IE toggles):
 #   * The pipeline builds ONE broad "superset" cohort (every 1L-treated MM
 #     patient) and stamps ONE boolean flag column per IE criterion onto it
 #     (see build_flagged_cohort.R). Nothing is dropped at build time.
@@ -23,7 +23,7 @@
 #
 # Every criterion declares a `ui_category` (Demographics / Clinical / Labs /
 # Treatments / Other) so the sidebar accordion is generated automatically,
-# matching the "Inclusion Filters" panel in the sample dashboard.
+# matching a standard "Inclusion Filters" panel layout.
 # =============================================================================
 
 # ---- IE criteria registry ---------------------------------------------------
@@ -193,7 +193,7 @@ criteria_registry <- function() {
 
 # ---- Cohort definitions -----------------------------------------------------
 # A cohort = the set of FLAG criteria active by default + the param filters it
-# starts with. These mirror studies/overall.yml and studies/ndmm.yml exactly.
+# starts with. These mirror the pipeline's Overall and NDMM study definitions.
 # Param filters always start at their registry default (the user tunes them).
 cohort_definitions <- function() {
   list(

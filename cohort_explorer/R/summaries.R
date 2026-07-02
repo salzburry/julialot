@@ -1,7 +1,7 @@
 # =============================================================================
 # summaries.R  --  Patient Characteristics summary statistics
 # -----------------------------------------------------------------------------
-# Reproduces the sample dashboard's "Summary Statistics" tables and the NDMM
+# Produces the "Summary Statistics" tables and the NDMM
 # protocol's Table 1: categorical variables as N / % (overall + per strata
 # level, incl. an explicit (Missing) category), continuous variables as
 # mean / SD / median / IQR / min / max + a Missing count. Applies the

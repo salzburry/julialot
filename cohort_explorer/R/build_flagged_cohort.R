@@ -4,18 +4,18 @@
 # Produces / loads the FLAGGED SUPERSET cohort: one row per patient in the
 # broadest 1L-treated MM population, with one boolean column per IE criterion
 # (registry_flag_ids()) plus the demographics / clinical / LOT-derived /
-# time-to-event fields the NDMM protocol (GSK 223926) asks for. Nothing is
+# time-to-event fields the NDMM study protocol asks for. Nothing is
 # dropped here -- selection happens in cohort_select.R by AND-ing flags.
 #
 # Also produces a LOT-LONG table (one row per patient x LOT_NUM) that backs the
 # per-LOT (1L/2L/3L) outcome views and the regimen / Sankey transition tab.
 #
 # PRODUCTION WIRING (not run in this environment -- no warehouse):
-#   The real builder is a thin projection over the validated apr_30_2026
-#   outputs (ELIG_COH_FINAL + LOT_LONG), with the per-criterion flags and the
-#   baseline characteristics (CCI, comorbidities, HCRU) computed at the correct
-#   anchor -- the same SQL 06_ndmm_dashboard.R uses for its IE post-filters, but
-#   emitted as COLUMNS instead of applied as row filters. Implement
+#   The real builder is a thin projection over the validated upstream LOT
+#   pipeline outputs (ELIG_COH_FINAL + LOT_LONG), with the per-criterion flags
+#   and the baseline characteristics (CCI, comorbidities, HCRU) computed at the
+#   correct anchor -- the same SQL the upstream NDMM flag build uses for its IE
+#   post-filters, but emitted as COLUMNS instead of applied as row filters. Implement
 #   source_flagged_cohort_warehouse() to SELECT that projection via DBI/odbc.
 #
 # RUNNABLE HERE:
@@ -80,7 +80,7 @@ add_derived_cols <- function(df) {
   df
 }
 
-# ---- validation: fail closed on a missing column (jun_21 convention) --------
+# ---- validation: fail closed on a missing column ----------------------------
 validate_flagged_cohort <- function(df, reg = criteria_registry()) {
   stopifnot(is.data.frame(df))
   need <- c(FLAGGED_COHORT_BASE_COLS, registry_flag_ids(reg))
@@ -533,21 +533,21 @@ augment_lot_long <- function(lot_long, cohort) {
 
 # =============================================================================
 # Warehouse source (production) -- fail-closed stub.
-# Implement the DBI/odbc projection of the validated apr_30_2026 outputs
-# (ELIG_COH_FINAL x LOT_LONG + per-criterion flags as columns) here; the
+# Implement the DBI/odbc projection of the validated upstream LOT pipeline
+# outputs (ELIG_COH_FINAL x LOT_LONG + per-criterion flags as columns) here; the
 # dashboard consumes it via load_flagged_cohort(source_flagged_cohort_warehouse).
 # =============================================================================
-# Read a materialised analytic table (built once by the pipeline: 06's flag
+# Read a materialised analytic table (built once by the pipeline: the NDMM flag
 # join, UN-filtered, + parent flags + CCI/safety/HCRU + LOT-long) over DBI/odbc.
 # Pass a live connection `con`; without one it fails closed (no warehouse here).
 .warehouse_read <- function(table, con = NULL,
-    catalog = Sys.getenv("DATABRICKS_CATALOG", "hive_metastore"),
+    catalog = Sys.getenv("WAREHOUSE_CATALOG", "main"),
     schema  = Sys.getenv("PROJECT_WORK_SCHEMA",
-                         Sys.getenv("DOMINO_USER_NAME", "gsk_mm_lot_work"))) {
+                         Sys.getenv("DOMINO_USER_NAME", "mm_lot_work"))) {
   if (is.null(con))
     stop("source_*_warehouse(): pass a live DBI connection `con`. The analytic ",
          "cohort must be MATERIALISED once by the pipeline (CREATE TABLE ",
-         schema, ".", table, " AS <06 flag join, un-filtered> -- see ",
+         schema, ".", table, " AS <NDMM flag join, un-filtered> -- see ",
          "ANALYTIC_COHORT.md); this environment has no warehouse.", call. = FALSE)
   if (!requireNamespace("DBI", quietly = TRUE))
     stop("DBI is required to read the analytic cohort.", call. = FALSE)

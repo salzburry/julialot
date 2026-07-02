@@ -2,7 +2,7 @@
 
 Two pieces: a **Domino App** (the Shiny dashboard) and, for real data, a
 **Domino Job** (`warehouse/08_analytic_cohort.R`) that builds the snapshot the
-App reads. The apr_30 pipeline already runs on Domino as a Job — same pattern.
+App reads. The upstream LOT pipeline already runs on Domino as a Job — same pattern.
 
 ## 0. Compute environment (once)
 
@@ -18,8 +18,8 @@ fast, rather than installing them at launch.
 
 ## 1. (Real data only) Build the snapshot — Domino **Job**
 
-Skip this for a first synthetic-data smoke test. For real data, run the apr_30
-pipeline + `06` first (they persist `ELIG_COH_FINAL`, `LOT_LONG`,
+Skip this for a first synthetic-data smoke test. For real data, run the upstream
+LOT pipeline + NDMM flag build first (they persist `ELIG_COH_FINAL`, `LOT_LONG`,
 `NDMM_FLAGS_ALL`), then run the materialization Job:
 
 ```bash
@@ -31,7 +31,7 @@ export OUTPUT_DIR=/mnt/artifacts/results
 Rscript cohort_explorer/warehouse/08_analytic_cohort.R
 ```
 
-Set `DATABRICKS_PWD` as a Domino env var / secret. This writes
+Set `WAREHOUSE_PWD` as a Domino env var / secret. This writes
 `analytic_cohort.csv` and `analytic_lot_long.csv` to `/mnt/artifacts/results`
 (Domino persists Job artifacts there). Re-run on each data refresh.
 
