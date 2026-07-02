@@ -84,7 +84,7 @@ kpi <- function(value, label) {
     }
   })
   tags$details(class = "ce-acc",
-    open = if (identical(cat, "Demographics")) NA else NULL,
+    open = if (cat == "Demographics") NA else NULL,
     tags$summary(cat),
     div(class = "ce-acc-body", controls))
 }
