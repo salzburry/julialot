@@ -141,5 +141,28 @@ testServer(app, {
      "landmark-times control changes the landmark grid (3,6 -> no 24-mo row)")
 })
 
+# (14) END-TO-END: a neutral categorical filter must not drop NA-valued rows
+# through the FULL app path (neutral_params + ui level list + mask). Drive a
+# real cohort CSV that contains NA region and confirm the neutral Overall count
+# equals the flag-only count (the NA rows are kept, as "(Missing)").
+local({
+  df <- load_flagged_cohort("synthetic", n = 1200L, seed = 4L)
+  df$region[1:40] <- NA
+  csv <- tempfile(fileext = ".csv"); write.csv(df, csv, row.names = FALSE)
+  Sys.setenv(COHORT_EXPLORER_DATA = csv, ALLOW_SYNTHETIC_LOTLONG = "TRUE")
+  old_wd <- setwd(app_dir); on.exit(setwd(old_wd), add = TRUE)  # app.R resolves global.R via cwd
+  app2 <- source("app.R", local = new.env())$value
+  testServer(app2, {
+    session$setInputs(cohort = "overall", apply_cohort = 1, apply_filters = 1)
+    session$flushReact()
+    n_neutral  <- selected()$n_out
+    n_flagonly <- select_cohort(FLAGGED, COHORTS$overall$active_flags, list(),
+                                character(), REG)$n_out
+    ok(n_neutral == n_flagonly,
+       "app neutral categorical filter keeps NA rows (end-to-end, via CSV with NA region)")
+  })
+  Sys.unsetenv("COHORT_EXPLORER_DATA"); Sys.unsetenv("ALLOW_SYNTHETIC_LOTLONG")
+})
+
 cat(sprintf("\n%d passed, %d failed\n", .n_pass, .n_fail))
 if (.n_fail > 0) quit(status = 1L)

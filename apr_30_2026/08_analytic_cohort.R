@@ -3,8 +3,14 @@
 # 08_analytic_cohort.R  --  materialise the ANALYTIC_COHORT that the
 #                           cohort_explorer dashboard reads.
 # -----------------------------------------------------------------------------
-# *** DRAFT -- UNVALIDATED. NOT RUN IN THIS REPO (no warehouse). Needs a
-#     Databricks connection + engineering AND clinical sign-off before use. ***
+# *** DRAFT / SKELETON -- UNVALIDATED. NOT RUN IN THIS REPO (no warehouse).
+#     Refuses to run unless ANALYTIC_COHORT_ALLOW_PLACEHOLDER=TRUE (see the guard
+#     in main_analytic) because the [B]-[E] real-data derivations are not yet
+#     wired. Needs a Databricks connection + engineering AND clinical sign-off.
+#     Base = the BROAD, unfiltered ELIG_COH_FINAL x LOT_LONG (Overall superset),
+#     NOT the already-filtered NDMM_LOT_LONG_FILT. All referenced views are built
+#     here; all emitted values are contract-valid (never NULL) so the dashboard's
+#     validators pass -- but placeholder values are NOT real analysis data. ***
 #
 # WHAT IT DOES
 #   Turns 06's ROW-FILTER model into the dashboard's FLAG-COLUMN model:
@@ -65,6 +71,18 @@ ANALYTIC_COHORT_TBL <- Sys.getenv("ANALYTIC_COHORT_TBL", "ANALYTIC_COHORT")
 OUT_DIR <- Sys.getenv("OUTPUT_DIR", file.path(.script_dir, "..", "artifacts"))
 
 main_analytic <- function() {
+  # SKELETON GUARD: the [B]-[E] derivations (real demographics/payer, CCI,
+  # continuous CE, safety counts, HCRU, production SOC map) are NOT yet wired.
+  # Running as-is emits a CONTRACT-VALID but PLACEHOLDER cohort (payer='Unknown'
+  # so the commercial-only Sankey is empty; CE months are a flag-derived proxy;
+  # CCI/safety/HCRU are zeros). Refuse to run unless the operator opts in, so
+  # placeholder data is never mistaken for a real analytic snapshot.
+  if (toupper(Sys.getenv("ANALYTIC_COHORT_ALLOW_PLACEHOLDER", "")) != "TRUE")
+    stop("08_analytic_cohort.R is a SKELETON. Wire the [B]-[E] derivations ",
+         "(real demographics/payer, CCI, continuous CE months, safety counts, ",
+         "HCRU, production SOC map), OR set ANALYTIC_COHORT_ALLOW_PLACEHOLDER=TRUE ",
+         "to emit a contract-valid PLACEHOLDER cohort for wiring/validation tests only.",
+         call. = FALSE)
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
   con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
@@ -73,11 +91,15 @@ main_analytic <- function() {
   #    the filtered LOT_LONG. No IE logic is duplicated here.
   prepare_ndmm_cohort(con)
 
-  elig <- wrk(cfg$final_table_name)   # ELIG_COH_FINAL (the Overall superset)
+  elig <- wrk(cfg$final_table_name)   # ELIG_COH_FINAL = the Overall Step-6 superset
   flags <- NDMM_FLAGS_ALL             # per-PATID NDMM flag view built by 06
-  lot  <- NDMM_LOT_LONG_FILT          # LOT_LONG for the 1L-candidate cohort
+  # BROAD, UNFILTERED LOT_LONG (NOT NDMM_LOT_LONG_FILT, which is already reduced
+  # to final NDMM patients). Using the filtered view here would have restricted
+  # the whole "Overall" cohort to NDMM patients -- breaking Overall-vs-NDMM.
+  lot  <- wrk("LOT_LONG")
 
-  # 2) per-patient LOT-derived rollup (1L anchor + line count + 1L length)
+  # 2) per-patient LOT-derived rollup (1L anchor + line count + 1L length),
+  #    over the FULL Overall population.
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW _ac_lotroll AS
     SELECT cast(PATID as string) AS PATID,
@@ -87,6 +109,24 @@ main_analytic <- function() {
            max(CASE WHEN LOT_NUM = 1 THEN LOT_BASE_MEDS END)   AS lot1_meds
     FROM {lot}
     GROUP BY cast(PATID as string)
+  "))
+
+  # 2b) SOC-category map, per (PATID, LOT_NUM). [E] PLACEHOLDER rule from
+  #     start-type + med count. PRODUCTION: replace with 06's regimen_categories.csv
+  #     modal-map (load_categories/build_modal_map) for the anti-CD38-backbone
+  #     quad/triplet distinctions. Defined here so no downstream join is dangling.
+  db_exec(con, glue("
+    CREATE OR REPLACE TEMPORARY VIEW _ac_socmap AS
+    SELECT cast(PATID as string) AS PATID, LOT_NUM AS lot_num,
+      CASE
+        WHEN upper(coalesce(LOT_START_TYPE,'')) LIKE 'CART%' THEN 'CAR-T'
+        WHEN upper(coalesce(LOT_START_TYPE,'')) LIKE 'SCT%'  THEN 'Transplant'
+        WHEN size(split(trim(coalesce(LOT_BASE_MEDS,'')), ' ')) >= 4 THEN 'Quadruplet'
+        WHEN size(split(trim(coalesce(LOT_BASE_MEDS,'')), ' ')) = 3 THEN 'Triplet'
+        WHEN size(split(trim(coalesce(LOT_BASE_MEDS,'')), ' ')) = 2 THEN 'Doublet'
+        WHEN length(trim(coalesce(LOT_BASE_MEDS,''))) > 0 THEN 'Monotherapy'
+        ELSE 'Other' END                                   AS soc_category
+    FROM {lot}
   "))
 
   # 3) ANALYTIC_COHORT projection into the dashboard contract.
@@ -116,9 +156,12 @@ main_analytic <- function() {
       -- [C] potential (administrative, death-INDEPENDENT) follow-up from 1L
       round(datediff(ec.OBS_END_DT, lr.lot1_start_dt)/30.44,1)        AS fu_potential_months,
       round(datediff(coalesce(ec.DEATH_DT, ec.OBS_END_DT), ec.INDEX_DATE)/30.44,1) AS fu_from_dx_months,
-      cast(NULL as double)                            AS baseline_ce_months,  -- [D]
-      cast(NULL as double)                            AS followup_ce_months,  -- [D]
-      cast(NULL as int)                               AS cci,                 -- [D]
+      -- [D] contract-VALID placeholders (never NULL -> validator/sliders safe).
+      -- CE months are a FLAG-DERIVED proxy (real continuous measure = TODO from
+      -- NDMM_ENROLL_SPANS) so the CE sliders have a usable, non-degenerate range.
+      CASE WHEN coalesce(f.CE_pre_lot1_12mo,0)=1 THEN 12.0 ELSE 6.0 END AS baseline_ce_months,
+      CASE WHEN coalesce(f.CE_lot1_3mo_fu,0)=1  THEN 3.0  ELSE 1.0 END AS followup_ce_months,
+      cast(0 as int)                                  AS cci,                 -- [D] TODO Charlson
       0 AS bl_hepatic, 0 AS bl_renal, 0 AS bl_infection,                      -- [D]
       0 AS bl_ocular, 0 AS bl_cv, 0 AS bl_neuro,                             -- [D]
       0 AS n_hepatic, 0 AS n_renal, 0 AS n_infection,                        -- [D]
@@ -158,7 +201,7 @@ main_analytic <- function() {
     LEFT JOIN {flags} f      ON cast(ec.PATID as string) = f.PATID
     LEFT JOIN {lot} l1       ON cast(ec.PATID as string) = cast(l1.PATID as string) AND l1.LOT_NUM = 1
     LEFT JOIN {lot} l2       ON cast(ec.PATID as string) = cast(l2.PATID as string) AND l2.LOT_NUM = 2
-    LEFT JOIN _ac_socmap cat ON cast(ec.PATID as string) = cat.PATID   -- [E] build _ac_socmap from load_categories()/REGIMEN_MODAL_MAP
+    LEFT JOIN _ac_socmap cat ON cast(ec.PATID as string) = cat.PATID AND cat.lot_num = 1
   "))
 
   # 4) LOT-long export (one row per patient x line) for the per-LOT / regimen /
@@ -167,8 +210,9 @@ main_analytic <- function() {
     CREATE OR REPLACE TABLE {wrk('ANALYTIC_LOT_LONG')} AS
     SELECT cast(ll.PATID as string) AS patient_id, ll.LOT_NUM AS lot_num,
            cast(ll.LOT_START_DT as date) AS lot_start_dt,
-           coalesce(cat.soc_category, 'Other') AS lot_soc,            -- [E]
-           'Unknown' AS payer_type,                                    -- [B]
+           coalesce(cat.soc_category, 'Other') AS lot_soc,            -- [E] per line
+           nxc.soc_category AS next_soc,   -- next line's SOC (NULL on the last line, per contract)
+           'Unknown' AS payer_type,                                    -- [B] TODO real payer join
            round(datediff(coalesce(ec.DEATH_DT, ec.OBS_END_DT), ll.LOT_START_DT)/30.44,1) AS os_time,
            CASE WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT THEN 1 ELSE 0 END AS os_event,
            round(datediff(ll.LOT_BASE_END_DT, ll.LOT_START_DT)/30.44,1) AS ttd_time,
@@ -179,7 +223,8 @@ main_analytic <- function() {
     FROM {lot} ll
     INNER JOIN {elig} ec ON cast(ll.PATID as string) = cast(ec.PATID as string)
     LEFT JOIN {lot} nx   ON cast(ll.PATID as string) = cast(nx.PATID as string) AND nx.LOT_NUM = ll.LOT_NUM + 1
-    LEFT JOIN _ac_socmap cat ON cast(ll.PATID as string) = cat.PATID   -- [E] (per-line SOC: extend the map to all lines)
+    LEFT JOIN _ac_socmap cat  ON cast(ll.PATID as string) = cat.PATID  AND cat.lot_num  = ll.LOT_NUM
+    LEFT JOIN _ac_socmap nxc  ON cast(ll.PATID as string) = nxc.PATID  AND nxc.lot_num = ll.LOT_NUM + 1
   "))
 
   # 5) export both to CSV for the dashboard (COHORT_EXPLORER_DATA / LOTLONG)

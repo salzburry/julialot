@@ -77,7 +77,7 @@ kpi <- function(value, label) {
              else c(max(lo, crit$default[1]), min(hi, crit$default[2]))
       sliderInput(iid, crit$label, min = lo, max = hi, value = val, step = 1)
     } else { # categorical
-      lv <- sort(unique(as.character(df[[crit$variable]])))
+      lv <- cat_levels(df[[crit$variable]])  # incl "(Missing)" so neutral keeps NA rows
       # NULL default = all observed levels (neutral); else intersect
       sel <- if (is.null(crit$default)) lv else intersect(crit$default, lv)
       selectInput(iid, crit$label, choices = lv, selected = sel, multiple = TRUE)

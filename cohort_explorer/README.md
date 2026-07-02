@@ -98,7 +98,7 @@ cohort_explorer/
                               it to the apr_30 pipeline env vars
   config/emit_pipeline_env.R  emit that mapping as `export` lines for the build
   tests/test_engine.R         base-R unit tests (101) for the engine + checks
-  tests/test_app.R            Shiny testServer tests (16): cohort reset, parity,
+  tests/test_app.R            Shiny testServer tests (17): cohort reset, parity,
                               value-based landmark/safety/pathway, 2L no-crash,
                               movable thresholds/landmarks, Cox, A/B, Sankey config
 ```

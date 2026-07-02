@@ -86,7 +86,7 @@ flowchart LR
 **What does NOT change — the entire RENDER side (right box):** the Shiny app,
 the flag engine (`select_cohort`), summaries, KM/Cox, Sankey, the criteria
 registry, the **contract** (`FLAGGED_COHORT_BASE_COLS` + `registry_flag_ids`),
-and all 111 tests. As long as the new build emits the same contract columns, the
+and the full test suite (101 engine + 17 app). As long as the new build emits the same contract columns, the
 dashboard renders it unchanged. That is the point of the contract: the dashboard
 is **dataset-agnostic**; only the materialization is dataset-specific.
 
