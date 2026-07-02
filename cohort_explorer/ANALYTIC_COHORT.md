@@ -96,8 +96,9 @@ columns**. Every
 new derivation is tagged inline: `[A]` Overall flags = 1 on the filtered base
 (toggle needs `ELIG_COH_ALLFLAGS`), `[B]` race/region/payer/ethnicity join from
 Optum member tables, `[C]` OS/TTD/TTNT derivation (clinical sign-off), `[D]`
-continuous CE months + safety counts/PY + HCRU, `[E]` SOC via `06`'s
-regimen→category lookup.
+continuous CE months + safety counts/PY + HCRU, `[E]` SOC via a **placeholder**
+start-type/med-count rule (production swaps in the authoritative
+regimen→category map).
 
 ## How the dashboard consumes it (instant)
 
