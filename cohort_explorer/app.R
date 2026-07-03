@@ -72,6 +72,27 @@ main_tabs <- c(
                     selected = 1L))),
       h4(textOutput("trans_title")), tableOutput("trans_tbl")),
 
+    tabPanel("Patient Explorer",
+      br(),
+      div(class = "ce-note",
+          "Look INTO the cohort: a sample of individual patients drawn as ",
+          "treatment timelines. Each lane is one patient; each segment is a line ",
+          "of therapy coloured by regimen; ", tags$b("x"), " marks death and ",
+          tags$b(">"), " a censored (still-followed) patient. Filter by 1L ",
+          "regimen to see representative journeys for a treatment choice. ",
+          "Illustrative, deterministic sample — not a cohort statistic."),
+      fluidRow(
+        column(4, selectInput("pe_soc", "1L regimen filter",
+                    choices = c("All", SOC_LEVELS_1L), selected = "All",
+                    multiple = TRUE)),
+        column(4, selectInput("pe_sort", "Order patients by",
+                    choices = c("Most lines of therapy" = "lines",
+                                "Longest follow-up" = "os",
+                                "1L regimen" = "soc"), selected = "lines")),
+        column(4, sliderInput("pe_n", "Patients to show",
+                              min = 6, max = 40, value = 18, step = 2))),
+      plotOutput("pe_swim", height = "580px")),
+
     if (HAS_SURVIVAL) tabPanel("Adjusted & Compare",
       br(),
       div(class = "ce-note",
@@ -394,6 +415,19 @@ server <- function(input, output, session) {
   output$trans_tbl <- renderTable({
     t <- trans(); if (is.null(t)) data.frame(Note = "No transitions at this stage.") else t
   }, striped = TRUE, bordered = TRUE)
+
+  # ----- Patient Explorer (swimlanes) -----
+  output$pe_swim <- renderPlot({
+    socf <- input$pe_soc %||% "All"
+    td <- patient_timeline_data(LOT_LONG, selected()$data,
+            n = as.integer(input$pe_n %||% 18L), soc_filter = socf,
+            sort_by = input$pe_sort %||% "lines")
+    lbl <- if (is.null(socf) || "All" %in% socf) "all 1L regimens"
+           else paste(socf, collapse = ", ")
+    patient_swimlane_plot(td, title = sprintf(
+      "Patient treatment journeys - %s (%d shown)", lbl,
+      if (is.null(td)) 0L else td$n))
+  })
 
   # ----- Attrition -----
   output$attr_plot <- renderPlot({

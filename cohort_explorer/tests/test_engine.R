@@ -431,5 +431,22 @@ options(cohort_explorer.indication = "mm")               # restore default
 ok(identical(registry_flag_ids(criteria_registry()), .mm_flags),
    "indication resets to mm after switching packs")
 
+# ---- patient explorer (swimlane) engine -------------------------------------
+source(file.path(rdir, "patient_explorer.R"))
+.pe_ll  <- synth_lot_long(df)
+.pe_coh <- df[df$patient_id %in% .pe_ll$patient_id[.pe_ll$lot_num == 1L], ]
+.pe_ll  <- .pe_ll[.pe_ll$patient_id %in% .pe_coh$patient_id, ]
+.td <- patient_timeline_data(.pe_ll, .pe_coh, n = 12L, sort_by = "lines")
+ok(!is.null(.td) && .td$n <= 12L && nrow(.td$segs) >= .td$n,
+   "patient_timeline_data returns <= n lanes and >=1 segment each")
+ok(all(.td$segs$x1 >= .td$segs$x0) && all(.td$marks$type %in% c("death", "censor")),
+   "swimlane segments are non-negative width; markers are death/censor")
+.socs <- sort(unique(.pe_coh$soc_category))
+.tf <- patient_timeline_data(.pe_ll, .pe_coh, n = 50L, soc_filter = .socs[1])
+ok(is.null(.tf) || all(.pe_coh$soc_category[match(.tf$ids, .pe_coh$patient_id)] == .socs[1]),
+   "1L-regimen filter restricts the swimlane sample to that regimen")
+ok(is.null(patient_timeline_data(.pe_ll, .pe_coh, soc_filter = "__none__")),
+   "swimlane returns NULL when no patient matches the filter")
+
 cat(sprintf("\n%d passed, %d failed\n", .n_pass, .n_fail))
 if (.n_fail > 0) quit(status = 1L)

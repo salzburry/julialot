@@ -15,7 +15,7 @@ if (is.null(.app_dir) || !nzchar(.app_dir)) .app_dir <- getwd()
 # below reads from (criteria, cohorts, SOC vocab, endpoints, safety, labels).
 for (f in c("indication.R", "criteria_registry.R", "build_flagged_cohort.R",
             "cohort_select.R", "summaries.R", "km.R", "checks.R", "lot_views.R",
-            "ui_helpers.R")) {
+            "patient_explorer.R", "ui_helpers.R")) {
   src <- file.path(.app_dir, "R", f)
   if (file.exists(src)) source(src, local = FALSE)
 }
@@ -64,6 +64,7 @@ PROVENANCE <- list(
   any_synthetic     = .cohort_synthetic || .lotlong_synthetic)
 
 REG$flt_soc$default <- sort(unique(FLAGGED$soc_category))
+SOC_LEVELS_1L <- sort(unique(FLAGGED$soc_category))   # Patient Explorer 1L filter
 MAX_LOT <- 5L
 
 # lines offered in the per-LOT selector (protocol focuses on 1L/2L/3L)
