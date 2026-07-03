@@ -18,10 +18,13 @@ source(file.path(
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
-# protocol time-to-event tabs: endpoint key -> short tab label
-KM_TABS <- list(OS = "OS", TTD = "TTD", TTNT = "TTNT",
-                Attrition = "Attrition", PFS_exploratory = "PFS*")
-PATIENT_LEVEL_ONLY <- c("Attrition", "PFS_exploratory")  # 1L-only endpoints
+# time-to-event tabs, derived from the active pack's endpoint dictionary so each
+# indication can name/label/order its own endpoints (e.g. EC treats PFS as a
+# primary endpoint, MM as exploratory). endpoint key -> short tab label.
+KM_TABS <- lapply(EPDICT, function(e) e$tab %||% e$label)
+# endpoints computed at the patient level only (1L), not per selected line
+PATIENT_LEVEL_ONLY <- names(EPDICT)[!vapply(EPDICT,
+  function(e) isTRUE(e$per_line), logical(1))]
 
 # ---- UI ---------------------------------------------------------------------
 main_tabs <- c(
@@ -142,7 +145,9 @@ main_tabs <- c(
       div(class = "ce-kpi", div(class = "v", textOutput("chk_headline_v")),
           div(class = "l", "overall status")),
       h4("LOT structural checks"), tableOutput("lot_chk"),
-      h4("NDMM protocol conformance"), tableOutput("ndmm_chk"),
+      h4(paste(PACK$short, "protocol conformance")), tableOutput("ndmm_chk"),
+      if (is.function(PACK$extra_checks))
+        tagList(h4(paste0(PACK$short, "-specific QC")), tableOutput("extra_chk")),
       h4("Protocol data-quality / analysis readiness"), tableOutput("dq_chk"))
   )
 )
@@ -488,12 +493,17 @@ server <- function(input, output, session) {
                           active_state()$active_flags, REG))
   dq_tbl   <- reactive(protocol_dq_checks(selected()$data,
                           min_fu = as.integer(input$min_fu_months %||% MIN_FU_MONTHS)))
+  extra_tbl <- reactive(cohort_specific_checks(selected()$data))  # pack QC (may be NULL)
   output$chk_headline_v <- renderText(
-    checks_headline(rbind(lot_tbl(), ndmm_tbl(), dq_tbl())))
+    checks_headline(rbind(lot_tbl(), ndmm_tbl(), dq_tbl(), extra_tbl())))
   render_checks <- function(tbl) { tbl$Status <- vapply(tbl$Status, status_html, character(1)); tbl }
   output$lot_chk  <- renderTable(render_checks(lot_tbl()),  sanitize.text.function = identity, striped = TRUE, bordered = TRUE)
   output$ndmm_chk <- renderTable(render_checks(ndmm_tbl()), sanitize.text.function = identity, striped = TRUE, bordered = TRUE)
   output$dq_chk   <- renderTable(render_checks(dq_tbl()),   sanitize.text.function = identity, striped = TRUE, bordered = TRUE)
+  output$extra_chk <- renderTable({
+    t <- extra_tbl(); if (is.null(t)) data.frame(Note = "No cohort-specific checks configured.")
+    else render_checks(t)
+  }, sanitize.text.function = identity, striped = TRUE, bordered = TRUE)
 }
 
 shinyApp(ui, server)

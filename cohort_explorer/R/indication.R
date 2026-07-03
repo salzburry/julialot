@@ -174,15 +174,15 @@ pack_mm <- function() list(
   soc_later_probs = c(0.22, 0.16, 0.10, 0.10, 0.10, 0.18, 0.14),
 
   endpoints = list(
-    OS   = list(time = "os_time",   event = "os_event",
+    OS   = list(time = "os_time",   event = "os_event", tab = "OS", per_line = TRUE,
                 label = "Overall Survival — time to death (OS)", protocol = TRUE),
-    TTD  = list(time = "ttd_time",  event = "ttd_event",
+    TTD  = list(time = "ttd_time",  event = "ttd_event", tab = "TTD", per_line = TRUE,
                 label = "Time to Treatment Discontinuation (TTD)", protocol = TRUE),
-    TTNT = list(time = "ttnt_time", event = "ttnt_event",
+    TTNT = list(time = "ttnt_time", event = "ttnt_event", tab = "TTNT", per_line = TRUE,
                 label = "Time to Next Treatment (TTNT)", protocol = TRUE),
-    Attrition = list(time = "dx_to_1l_months", event = NA,
+    Attrition = list(time = "dx_to_1l_months", event = NA, tab = "Attrition", per_line = FALSE,
                 label = "Attrition — time from diagnosis to 1L", protocol = TRUE),
-    PFS_exploratory = list(time = "pfs_time", event = "pfs_event",
+    PFS_exploratory = list(time = "pfs_time", event = "pfs_event", tab = "PFS*", per_line = FALSE,
                 label = "PFS — EXPLORATORY (NOT a protocol endpoint; §6.9)",
                 protocol = FALSE)
   ),
@@ -214,6 +214,9 @@ pack_mm <- function() list(
     bl_ocular    = "Baseline ocular event",
     bl_cv        = "Baseline cardiovascular condition",
     bl_neuro     = "Baseline neurologic condition"),
+
+  # cohort-specific QC beyond the registry conformance (optional). NULL = none.
+  extra_checks = NULL,
 
   soc_case_sql = "
     CASE
@@ -280,44 +283,48 @@ pack_mm <- function() list(
       desc = "No pregnancy/childbirth code during the study period.",
       polarity = "excl", phase = "study_period", ui_category = "Clinical",
       type = "flag", keep_when = 1L)),
-  # standard live filters (identical across tumours -- pure demographics/dates)
-  list(
-    flt_age = list(id = "flt_age", label = "Age at index",
-      desc = "Restrict to an age-at-index range.",
-      polarity = "incl", phase = "pre_lot", ui_category = "Demographics",
-      type = "param", variable = "age_index", filter = "range", default = NULL),
-    flt_gender = list(id = "flt_gender", label = "Gender",
-      desc = "Restrict to selected gender(s).",
-      polarity = "incl", phase = "pre_lot", ui_category = "Demographics",
-      type = "param", variable = "gender", filter = "categorical", default = NULL),
-    flt_region = list(id = "flt_region", label = "Region",
-      desc = "Restrict to selected US census region(s).",
-      polarity = "incl", phase = "pre_lot", ui_category = "Demographics",
-      type = "param", variable = "region", filter = "categorical", default = NULL),
-    flt_payer = list(id = "flt_payer", label = "Payer / product type",
-      desc = "Restrict to selected insurance product type(s).",
-      polarity = "incl", phase = "pre_lot", ui_category = "Other",
-      type = "param", variable = "payer_type", filter = "categorical", default = NULL),
-    flt_baseline_ce = list(id = "flt_baseline_ce", label = "Baseline CE (months)",
-      desc = "Require at least this many months of baseline continuous enrollment.",
-      polarity = "incl", phase = "pre_lot", ui_category = "Other",
-      type = "param", variable = "baseline_ce_months", filter = "range", default = NULL),
-    flt_followup_ce = list(id = "flt_followup_ce", label = "Follow-up CE (months)",
-      desc = "Require at least this many months of follow-up enrollment.",
-      polarity = "incl", phase = "post_lot1", ui_category = "Other",
-      type = "param", variable = "followup_ce_months", filter = "range", default = NULL),
-    flt_dx_year = list(id = "flt_dx_year", label = "Year of diagnosis",
-      desc = "Restrict to a diagnosis-year window.",
-      polarity = "incl", phase = "pre_lot", ui_category = "Other",
-      type = "param", variable = "dx_year", filter = "range", default = NULL),
-    flt_lot_init_year = list(id = "flt_lot_init_year", label = "Year of 1L initiation",
-      desc = "Restrict to a 1L-initiation-year window.",
-      polarity = "incl", phase = "pre_lot", ui_category = "Other",
-      type = "param", variable = "lot_init_year", filter = "range", default = NULL),
-    flt_soc = list(id = "flt_soc", label = "1L regimen category",
-      desc = "Restrict to selected 1L regimen group(s).",
-      polarity = "incl", phase = "post_lot1", ui_category = "Treatments",
-      type = "param", variable = "soc_category", filter = "categorical", default = NULL)))
+  .std_param_filters())
+
+# standard live filters (identical across tumours -- pure demographics/dates).
+# Shared by the stub packs and any full pack (e.g. EC) so the filter set stays
+# consistent; a pack can drop/relabel entries when it builds its criteria.
+.std_param_filters <- function() list(
+  flt_age = list(id = "flt_age", label = "Age at index",
+    desc = "Restrict to an age-at-index range.",
+    polarity = "incl", phase = "pre_lot", ui_category = "Demographics",
+    type = "param", variable = "age_index", filter = "range", default = NULL),
+  flt_gender = list(id = "flt_gender", label = "Gender",
+    desc = "Restrict to selected gender(s).",
+    polarity = "incl", phase = "pre_lot", ui_category = "Demographics",
+    type = "param", variable = "gender", filter = "categorical", default = NULL),
+  flt_region = list(id = "flt_region", label = "Region",
+    desc = "Restrict to selected US census region(s).",
+    polarity = "incl", phase = "pre_lot", ui_category = "Demographics",
+    type = "param", variable = "region", filter = "categorical", default = NULL),
+  flt_payer = list(id = "flt_payer", label = "Payer / product type",
+    desc = "Restrict to selected insurance product type(s).",
+    polarity = "incl", phase = "pre_lot", ui_category = "Other",
+    type = "param", variable = "payer_type", filter = "categorical", default = NULL),
+  flt_baseline_ce = list(id = "flt_baseline_ce", label = "Baseline CE (months)",
+    desc = "Require at least this many months of baseline continuous enrollment.",
+    polarity = "incl", phase = "pre_lot", ui_category = "Other",
+    type = "param", variable = "baseline_ce_months", filter = "range", default = NULL),
+  flt_followup_ce = list(id = "flt_followup_ce", label = "Follow-up CE (months)",
+    desc = "Require at least this many months of follow-up enrollment.",
+    polarity = "incl", phase = "post_lot1", ui_category = "Other",
+    type = "param", variable = "followup_ce_months", filter = "range", default = NULL),
+  flt_dx_year = list(id = "flt_dx_year", label = "Year of diagnosis",
+    desc = "Restrict to a diagnosis-year window.",
+    polarity = "incl", phase = "pre_lot", ui_category = "Other",
+    type = "param", variable = "dx_year", filter = "range", default = NULL),
+  flt_lot_init_year = list(id = "flt_lot_init_year", label = "Year of 1L initiation",
+    desc = "Restrict to a 1L-initiation-year window.",
+    polarity = "incl", phase = "pre_lot", ui_category = "Other",
+    type = "param", variable = "lot_init_year", filter = "range", default = NULL),
+  flt_soc = list(id = "flt_soc", label = "1L regimen category",
+    desc = "Restrict to selected 1L regimen group(s).",
+    polarity = "incl", phase = "post_lot1", ui_category = "Treatments",
+    type = "param", variable = "soc_category", filter = "categorical", default = NULL))
 
 .stub_cohorts <- function() list(
   overall = list(id = "overall", label = "Overall (parent LOT cohort)",
@@ -331,15 +338,15 @@ pack_mm <- function() list(
                      "incl_new_user", "incl_fu_mm_agents", "excl_other_cancer")))
 
 .stub_endpoints <- function() list(
-  OS   = list(time = "os_time",   event = "os_event",
+  OS   = list(time = "os_time",   event = "os_event", tab = "OS", per_line = TRUE,
               label = "Overall Survival — time to death (OS)", protocol = TRUE),
-  TTD  = list(time = "ttd_time",  event = "ttd_event",
+  TTD  = list(time = "ttd_time",  event = "ttd_event", tab = "TTD", per_line = TRUE,
               label = "Time to Treatment Discontinuation (TTD)", protocol = TRUE),
-  TTNT = list(time = "ttnt_time", event = "ttnt_event",
+  TTNT = list(time = "ttnt_time", event = "ttnt_event", tab = "TTNT", per_line = TRUE,
               label = "Time to Next Treatment (TTNT)", protocol = TRUE),
-  Attrition = list(time = "dx_to_1l_months", event = NA,
+  Attrition = list(time = "dx_to_1l_months", event = NA, tab = "Attrition", per_line = FALSE,
               label = "Attrition — time from diagnosis to 1L", protocol = TRUE),
-  PFS_exploratory = list(time = "pfs_time", event = "pfs_event",
+  PFS_exploratory = list(time = "pfs_time", event = "pfs_event", tab = "PFS*", per_line = FALSE,
               label = "PFS — EXPLORATORY (verify ascertainment)", protocol = FALSE))
 
 .stub_safety <- function() list(
@@ -380,6 +387,7 @@ pack_mm <- function() list(
   # add tumour-specific journey milestones here, e.g. for OC:
   #   list("Reached surgery" = "Interval debulking", "Platinum re-treatment" = ...)
   pe_milestones = NULL,
+  extra_checks = NULL,
   soc_case_sql = .stub_soc_case_sql,
   is_stub = TRUE)
 
@@ -388,14 +396,186 @@ pack_mm <- function() list(
 # are the generic .stub_criteria() core -- replace with each tumour's authoritative
 # study definition (and the drug->category SOC map) before running real data.
 
-# Endometrial cancer -- gynae-oncology core (checkpoint + PARP combination era)
-pack_ec <- function() .make_stub_pack(
-  "ec", "Endometrial Cancer", "EC",
+# =============================================================================
+# Endometrial cancer (EC) -- a FULLY worked indication pack (not a template).
+# Population: advanced (FIGO III-IV) or recurrent EC starting 1L systemic therapy
+# in the checkpoint-inhibitor + PARP era. Two cohorts: the overall 1L-systemic
+# population, and the dMMR/MSI-H biomarker subgroup (the chemo-immunotherapy
+# indication). NOTE vs MM: PFS is a PRIMARY endpoint here, not exploratory.
+# The IE wording is the reviewable draft; the authoritative code lists / dMMR
+# ascertainment still come from the study team.
+# =============================================================================
+pack_ec <- function() list(
+  id = "ec", disease = "Endometrial Cancer", short = "EC",
+  header_title = "Oncology Real-World Data Explorer Tool",
+  header_sub = paste(" — Endometrial Cancer (advanced / recurrent, 1L systemic) ·",
+                     "flag-driven IE selection · dMMR/MSI-H biomarker subgroup"),
+  superset_label = "Superset (1L-systemic EC)",
+
+  criteria = c(list(
+    incl_qualifying_ec = list(
+      id = "incl_qualifying_ec", label = "Qualifying endometrial cancer diagnosis",
+      desc = "Confirmed endometrial carcinoma diagnosis in the identification period.",
+      polarity = "incl", phase = "pre_lot", ui_category = "Clinical",
+      type = "flag", keep_when = 1L),
+    incl_advanced_recurrent = list(
+      id = "incl_advanced_recurrent", label = "Advanced (III-IV) or recurrent",
+      desc = "FIGO stage III-IV at diagnosis, or documented recurrence (1L systemic population).",
+      polarity = "incl", phase = "pre_lot", ui_category = "Clinical",
+      type = "flag", keep_when = 1L),
+    incl_adult = list(
+      id = "incl_adult", label = "Adult at index (age >= 18)",
+      desc = "Age >= 18 years at index.",
+      polarity = "incl", phase = "pre_lot", ui_category = "Demographics",
+      type = "flag", keep_when = 1L),
+    incl_baseline_ce_6m = list(
+      id = "incl_baseline_ce_6m", label = "Baseline CE >= 6 months",
+      desc = "Continuous enrollment >=6m before index (Overall default).",
+      polarity = "incl", phase = "pre_lot", ui_category = "Other",
+      type = "flag", keep_when = 1L),
+    incl_baseline_ce_12m = list(
+      id = "incl_baseline_ce_12m", label = "Baseline CE >= 12 months",
+      desc = "Continuous enrollment >=12m before 1L index (biomarker cohort default).",
+      polarity = "incl", phase = "pre_lot", ui_category = "Other",
+      type = "flag", keep_when = 1L),
+    incl_fu_ce_3m = list(
+      id = "incl_fu_ce_3m", label = "Follow-up CE >= 3 months",
+      desc = "CE >=3m during follow-up (or death), no gaps.",
+      polarity = "incl", phase = "post_lot1", ui_category = "Other",
+      type = "flag", keep_when = 1L),
+    incl_new_user = list(
+      id = "incl_new_user", label = "No prior systemic therapy for advanced/recurrent",
+      desc = "New user: no systemic anti-cancer therapy for advanced/recurrent EC before 1L.",
+      polarity = "incl", phase = "pre_lot", ui_category = "Treatments",
+      type = "flag", keep_when = 1L),
+    incl_fu_ec_agents = list(
+      id = "incl_fu_ec_agents", label = "Treated (>=1 systemic agent in follow-up)",
+      desc = "At least one systemic treatment start exists (defines the 1L LOT).",
+      polarity = "incl", phase = "post_lot1", ui_category = "Treatments",
+      type = "flag", keep_when = 1L),
+    incl_dmmr = list(
+      id = "incl_dmmr", label = "dMMR / MSI-H tumour",
+      desc = "Mismatch-repair-deficient / microsatellite-instability-high (biomarker cohort).",
+      polarity = "incl", phase = "pre_lot", ui_category = "Clinical",
+      type = "flag", keep_when = 1L),
+    excl_other_cancer = list(
+      id = "excl_other_cancer", label = "No other cancer (12m baseline)",
+      desc = "No other primary/metastatic malignancy in the 12m baseline.",
+      polarity = "excl", phase = "post_lot1", ui_category = "Clinical",
+      type = "flag", keep_when = 1L),
+    excl_prior_io = list(
+      id = "excl_prior_io", label = "Checkpoint-inhibitor naive",
+      desc = "No prior anti-PD-1 / anti-PD-L1 exposure before 1L.",
+      polarity = "excl", phase = "study_period", ui_category = "Treatments",
+      type = "flag", keep_when = 1L),
+    excl_pregnancy = list(
+      id = "excl_pregnancy", label = "No pregnancy",
+      desc = "No pregnancy/childbirth code during the study period.",
+      polarity = "excl", phase = "study_period", ui_category = "Clinical",
+      type = "flag", keep_when = 1L)),
+    .std_param_filters()),
+
+  cohorts = list(
+    overall = list(id = "overall",
+      label = "Overall (advanced/recurrent, 1L systemic)",
+      desc = paste("Qualifying EC + advanced/recurrent + adult + 6m baseline CE",
+                   "+ new user + treated. Biomarker restriction OFF."),
+      active_flags = c("incl_qualifying_ec", "incl_advanced_recurrent", "incl_adult",
+                       "incl_baseline_ce_6m", "incl_new_user", "incl_fu_ec_agents")),
+    dmmr = list(id = "dmmr",
+      label = "dMMR/MSI-H (1L chemo-immunotherapy)",
+      desc = paste("Overall + 12m baseline CE + 3m follow-up + dMMR/MSI-H",
+                   "+ checkpoint-naive + no other cancer/pregnancy",
+                   "(the chemo-immunotherapy indication)."),
+      active_flags = c("incl_qualifying_ec", "incl_advanced_recurrent", "incl_adult",
+                       "incl_baseline_ce_12m", "incl_fu_ce_3m", "incl_new_user",
+                       "incl_fu_ec_agents", "incl_dmmr", "excl_prior_io",
+                       "excl_other_cancer", "excl_pregnancy"))),
+
   soc_1l = c("Chemo + immunotherapy", "Platinum doublet (carbo-paclitaxel)",
              "Single-agent chemotherapy", "Hormonal therapy", "Other"),
-  soc_later = c("Immunotherapy (anti-PD-1)", "TKI + immunotherapy",
+  soc_later = c("Immunotherapy (anti-PD-1)", "TKI + immunotherapy (lenvatinib-based)",
                 "PARP maintenance", "Single-agent chemotherapy",
-                "Hormonal therapy", "Other"))
+                "Hormonal therapy", "Other"),
+  soc_later_probs = c(0.28, 0.20, 0.14, 0.20, 0.10, 0.08),
+
+  endpoints = list(
+    OS  = list(time = "os_time", event = "os_event", tab = "OS", per_line = TRUE,
+               label = "Overall Survival (OS)", protocol = TRUE),
+    PFS = list(time = "pfs_time", event = "pfs_event", tab = "PFS", per_line = FALSE,
+               label = "Progression-free Survival (PFS) — primary endpoint", protocol = TRUE),
+    TTD = list(time = "ttd_time", event = "ttd_event", tab = "TTD", per_line = TRUE,
+               label = "Time to Treatment Discontinuation (TTD)", protocol = TRUE),
+    TTNT= list(time = "ttnt_time", event = "ttnt_event", tab = "TTNT", per_line = TRUE,
+               label = "Time to Next Treatment (TTNT)", protocol = TRUE),
+    Attrition = list(time = "dx_to_1l_months", event = NA, tab = "Dx→1L", per_line = FALSE,
+               label = "Attrition — diagnosis to 1L systemic", protocol = TRUE)),
+
+  # baseline safety events of interest for the chemo-immunotherapy profile
+  # (immune-related AEs + taxane neuropathy), mapped onto the standard columns.
+  safety_events = list(
+    c("bl_hepatic",  "n_hepatic",    "Immune-related hepatitis"),
+    c("bl_renal",    "n_renal",      "Renal impairment"),
+    c("bl_infection","n_infection",  "Serious infection"),
+    c("bl_ocular",   "n_ocular",     "Colitis / GI immune-related AE"),
+    c("bl_cv",       "n_cv",         "Cardiac / hypertension"),
+    c("bl_neuro",    "n_neuro",      "Peripheral neuropathy")),
+
+  variable_labels = list(
+    dx_year      = "Year of first EC diagnosis",
+    soc_category = "1L regimen category",
+    lot_soc      = "Current-line regimen",
+    ti_te_age    = "Frailty proxy (age)",
+    ti_te_age_cci= "Frailty proxy (age or CCI)",
+    bl_hepatic   = "Immune-related hepatitis (baseline)",
+    bl_renal     = "Renal impairment (baseline)",
+    bl_infection = "Serious infection (baseline)",
+    bl_ocular    = "Colitis / GI irAE (baseline)",
+    bl_cv        = "Cardiac / hypertension (baseline)",
+    bl_neuro     = "Peripheral neuropathy (baseline)"),
+
+  pe_milestones = list(
+    "Reached immunotherapy" = "Immunotherapy (anti-PD-1)",
+    "Reached lenvatinib + pembro" = "TKI + immunotherapy (lenvatinib-based)",
+    "Reached PARP maintenance" = "PARP maintenance"),
+
+  # EC-specific QC beyond the registry conformance (runs on the selected cohort).
+  extra_checks = function(df) {
+    rows <- list()
+    if (all(c("incl_dmmr", "incl_advanced_recurrent") %in% names(df))) {
+      bad <- sum(df$incl_dmmr == 1L & df$incl_advanced_recurrent == 0L)
+      rows[[length(rows) + 1L]] <- qc_row(
+        "dMMR/MSI-H subset of advanced/recurrent", bad == 0,
+        sprintf("%d patient(s) flagged dMMR without advanced/recurrent.", bad))
+    }
+    if ("excl_prior_io" %in% names(df)) {
+      rate <- mean(df$excl_prior_io == 1L)
+      rows[[length(rows) + 1L]] <- qc_row(
+        "Checkpoint-inhibitor naive at 1L", isTRUE(all.equal(rate, 1)),
+        sprintf("%.1f%% checkpoint-naive in the selected cohort.", 100 * rate),
+        warn_ok = TRUE)
+    }
+    if (all(c("pfs_time", "os_time") %in% names(df))) {
+      bad <- sum(df$pfs_time > df$os_time + 1e-6)
+      rows[[length(rows) + 1L]] <- qc_row("PFS <= OS (per patient)", bad == 0,
+        sprintf("%d patient(s) with PFS > OS.", bad))
+    }
+    if (!length(rows)) return(NULL)
+    do.call(rbind, rows)
+  },
+
+  # placeholder drug->category SQL (swap in the authoritative EC regimen map)
+  soc_case_sql = "
+    CASE
+      WHEN coalesce(LOT_IO_FLG,0)=1 AND coalesce(LOT_MED_CNT,0)>=2 THEN 'Chemo + immunotherapy'
+      WHEN coalesce(LOT_TKI_FLG,0)=1 AND coalesce(LOT_IO_FLG,0)=1 THEN 'TKI + immunotherapy (lenvatinib-based)'
+      WHEN coalesce(LOT_IO_FLG,0)=1 THEN 'Immunotherapy (anti-PD-1)'
+      WHEN coalesce(LOT_PARP_FLG,0)=1 THEN 'PARP maintenance'
+      WHEN coalesce(LOT_MED_CNT,0)>=2 THEN 'Platinum doublet (carbo-paclitaxel)'
+      WHEN coalesce(LOT_HORMONE_FLG,0)=1 THEN 'Hormonal therapy'
+      WHEN coalesce(LOT_MED_CNT,0)=1 THEN 'Single-agent chemotherapy'
+      ELSE 'Other' END",
+  is_ec = TRUE)
 
 # Ovarian cancer -- platinum + PARP-maintenance (HRD) landscape
 pack_oc <- function() .make_stub_pack(

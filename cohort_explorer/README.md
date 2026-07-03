@@ -111,7 +111,16 @@ cohort_explorer/
   (Colorectal), `hnscc` (Head & Neck SCC), `nsclc` (NSCLC), `sclc` (SCLC). The
   templates use class-based standard-of-care labels + a generic IE core; replace
   each with the tumour's authoritative study definition + drug→category SOC map
-  before real data.
+  before real data. **`ec` (Endometrial) is a fully worked example** (not a
+  template): its own IE criteria, an Overall + a dMMR/MSI-H biomarker cohort,
+  PFS treated as a **primary** endpoint (vs MM's exploratory PFS), immune-related
+  safety events, Patient-Explorer milestones (reached immunotherapy /
+  lenvatinib+pembro / PARP maintenance), and **EC-specific QC** (`pack$extra_checks`:
+  dMMR⊂advanced/recurrent, checkpoint-naïve rate, PFS≤OS).
+- **Add cohort-specific QC** → give a pack an `extra_checks = function(df) …`
+  returning `qc_row(...)` rows; they appear in the Validation & Checks tab under
+  "<indication>-specific QC" and roll into the headline. (OC would add surgery /
+  platinum-sensitivity checks; EC ships dMMR/checkpoint checks.)
 - **Add a tumour type** → add a `pack_<id>()` builder and register it in
   `INDICATION_PACKS()`. Nothing else changes.
 - **Add an IE criterion** → add one entry to a pack's `criteria`. The sidebar

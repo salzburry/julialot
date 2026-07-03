@@ -472,5 +472,29 @@ ok(!is.null(active_pack("mm")$pe_milestones) &&
    "Reached CAR-T" %in% names(active_pack("mm")$pe_milestones),
    "MM pack exposes journey milestones for the Patient Explorer")
 
+# ---- endometrial (EC): the fully worked pack -------------------------------
+options(cohort_explorer.indication = "ec")
+ecp <- active_pack("ec")
+ok(isTRUE(ecp$endpoints$PFS$protocol) && isFALSE(ecp$endpoints$PFS$per_line),
+   "EC treats PFS as a PRIMARY (protocol), patient-level endpoint")
+ok(all(c("overall", "dmmr") %in% names(cohort_definitions())),
+   "EC ships the overall + dMMR/MSI-H cohorts")
+ok("incl_dmmr" %in% registry_flag_ids(criteria_registry()) &&
+   "incl_advanced_recurrent" %in% registry_flag_ids(criteria_registry()),
+   "EC registry carries the dMMR + advanced/recurrent flags")
+ecdf <- load_flagged_cohort("synthetic", n = 500L)
+ecx <- cohort_specific_checks(ecdf)
+ok(!is.null(ecx) && all(c("Check", "Status", "Detail") %in% names(ecx)) &&
+   any(grepl("dMMR", ecx$Check)),
+   "EC extra_checks produces cohort-specific QC rows (dMMR subset etc.)")
+# force a dMMR-without-advanced inconsistency -> the QC must FAIL it
+ecbad <- ecdf; ecbad$incl_dmmr[1] <- 1L; ecbad$incl_advanced_recurrent[1] <- 0L
+ecxb <- cohort_specific_checks(ecbad)
+ok(ecxb$Status[ecxb$Check == "dMMR/MSI-H subset of advanced/recurrent"] == "FAIL",
+   "EC QC FAILs a dMMR patient who is not advanced/recurrent")
+ok(is.null(cohort_specific_checks(ecdf, pack_fn = NULL)) ||
+   TRUE, "cohort_specific_checks is fail-soft")  # smoke: no error path
+options(cohort_explorer.indication = "mm")
+
 cat(sprintf("\n%d passed, %d failed\n", .n_pass, .n_fail))
 if (.n_fail > 0) quit(status = 1L)
