@@ -463,14 +463,14 @@ server <- function(input, output, session) {
     patient_swimlane_plot(td, title = sprintf("Patient journeys - %s (%d shown)",
       lbl, if (is.null(td)) 0L else td$n))
   })
-  # how many patients in the selected cohort MATCH the pathway filter (vs shown)
+  # how many patients in the selected cohort MATCH the pathway filter (vs shown).
+  # count_only skips building every matching patient's timeline -> cheap at scale.
   output$pe_count <- renderText({
     a <- pe_args()
-    full <- patient_timeline_data(LOT_LONG, selected()$data, n = nrow(selected()$data),
-      soc_filter = a$soc, then_soc = a$then, reached_regimen = a$reached, event = a$event)
-    nm <- if (is.null(full)) 0L else full$n
+    nm <- patient_timeline_data(LOT_LONG, selected()$data, soc_filter = a$soc,
+      then_soc = a$then, reached_regimen = a$reached, event = a$event, count_only = TRUE)
     sprintf("%s patient(s) match this pathway; showing up to %d.",
-            format(nm, big.mark = ","), a$n)
+            format(nm %||% 0L, big.mark = ","), a$n)
   })
 
   # ----- Attrition -----

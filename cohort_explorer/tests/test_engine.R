@@ -495,6 +495,12 @@ ok(ecxb$Status[ecxb$Check == "dMMR/MSI-H subset of advanced/recurrent"] == "FAIL
 ok(is.null(cohort_specific_checks(ecdf, pack_fn = NULL)) ||
    TRUE, "cohort_specific_checks is fail-soft")  # smoke: no error path
 options(cohort_explorer.indication = "mm")
+# count_only returns the match count cheaply (>= number of lanes actually shown)
+.cnt <- patient_timeline_data(.pe_ll, .pe_coh, n = 8L, count_only = TRUE)
+.shown <- patient_timeline_data(.pe_ll, .pe_coh, n = 8L)
+ok(is.numeric(.cnt) && .cnt >= .shown$n && .cnt == nrow(.pe_coh),
+   "patient_timeline_data(count_only=TRUE) counts all matches without capping at n")
+options(cohort_explorer.indication = "mm")
 
 cat(sprintf("\n%d passed, %d failed\n", .n_pass, .n_fail))
 if (.n_fail > 0) quit(status = 1L)

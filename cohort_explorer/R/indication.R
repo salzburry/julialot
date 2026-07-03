@@ -277,8 +277,8 @@ pack_mm <- function() list(
       desc = "No systemic anti-cancer therapy during the baseline period.",
       polarity = "incl", phase = "pre_lot", ui_category = "Treatments",
       type = "flag", keep_when = 1L),
-    incl_fu_mm_agents = list(
-      id = "incl_fu_mm_agents", label = "Treated (>=1 systemic agent in follow-up)",
+    incl_fu_systemic_agents = list(
+      id = "incl_fu_systemic_agents", label = "Treated (>=1 systemic agent in follow-up)",
       desc = "At least one systemic treatment start exists (defines the LOT).",
       polarity = "incl", phase = "post_lot1", ui_category = "Treatments",
       type = "flag", keep_when = 1L),
@@ -339,12 +339,12 @@ pack_mm <- function() list(
   overall = list(id = "overall", label = "Overall (parent LOT cohort)",
     desc = "Adult + 6m baseline CE + treatment-naive + treated.",
     active_flags = c("incl_qualifying_dx", "incl_adult",
-                     "incl_baseline_ce_6m", "incl_new_user", "incl_fu_mm_agents")),
+                     "incl_baseline_ce_6m", "incl_new_user", "incl_fu_systemic_agents")),
   newdx = list(id = "newdx", label = "Newly diagnosed (1L)",
     desc = "Overall + 12m baseline CE + 3m follow-up + no other cancer.",
     active_flags = c("incl_qualifying_dx", "incl_adult",
                      "incl_baseline_ce_12m", "incl_fu_ce_3m",
-                     "incl_new_user", "incl_fu_mm_agents", "excl_other_cancer")))
+                     "incl_new_user", "incl_fu_systemic_agents", "excl_other_cancer")))
 
 .stub_endpoints <- function() list(
   OS   = list(time = "os_time",   event = "os_event", tab = "OS", per_line = TRUE,
