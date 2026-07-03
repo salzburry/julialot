@@ -9,18 +9,20 @@
 #
 # Datasource config follows the SAME contract as config/warehouse_config.R:
 #   WAREHOUSE_DSN / WAREHOUSE_PWD / WAREHOUSE_CATALOG / PROJECT_WORK_SCHEMA
-# (this project: WAREHOUSE_CATALOG=hive_metastore PROJECT_WORK_SCHEMA=<your schema>)
+# (this project: WAREHOUSE_CATALOG=hive_metastore PROJECT_WORK_SCHEMA=<schema>)
+# Set COHORT_EXPLORER_DIR=<path to cohort_explorer> to self-validate (recommended).
 #
 #   export WAREHOUSE_PWD='<token>'; export WAREHOUSE_CATALOG=hive_metastore
-#   export PROJECT_WORK_SCHEMA=<your schema>; export OUT_DIR=/tmp/cohort_data
+#   export PROJECT_WORK_SCHEMA=<schema>; export OUT_DIR=/tmp/cohort_data
+#   export COHORT_EXPLORER_DIR=/path/to/cohort_explorer
 #   Rscript make_analytic_csv.R
 #
-# Follow-up model (administrative, death-INDEPENDENT): the per-patient horizon is
-# ENDDATE_CE (index->min(study end, disenrollment)). Only LOT lines that START
+# Follow-up model (administrative, death-INDEPENDENT): per-patient horizon is
+# ENDDATE_CE (index->min(study end, disenrollment)). Only LOT lines starting
 # on/before that horizon are "observable"; later lines are censored, NOT used to
 # stretch follow-up. Observable lines are renumbered 1..n (contiguous), so the
-# LOT-long line count == patient-level n_lines and the 1L row in LOT-long IS the
-# patient-level 1L outcome (no divergence).
+# LOT-long line count == n_lines and the 1L row IS the patient-level 1L outcome.
+# elig_coh_final is de-duplicated to one row per patient BEFORE any join.
 #
 # REAL: cohort, gender, age, all 12 IE flags, LOT structure, SOC category,
 #       OS/TTD/TTNT (administrative-horizon censored).
@@ -30,7 +32,6 @@
 
 library(DBI)
 
-# ---- datasource config: prefer warehouse_config.R, else same env contract ----
 cfg <- local({
   d <- Sys.getenv("COHORT_EXPLORER_DIR", "")
   wf <- if (nzchar(d)) file.path(d, "config", "warehouse_config.R") else ""
@@ -64,11 +65,16 @@ SOC_CASE <- "
       WHEN coalesce(LOT_MED_CNT,0)=1 THEN 'Monotherapy'
       ELSE 'Other' END"
 
-# ---- LOT-LONG (13 cols): observable lines only, renumbered 1..n, administrative
-#      horizon = ENDDATE_CE. This is the single source of truth for per-line +
-#      1L outcomes + n_lines. -----------------------------------------------------
+# de-duplicate elig_coh_final to ONE row per patient (guards against rn dupes
+# multiplying LOT rows). Used by BOTH queries.
+ELIG1 <- paste0("elig1 AS (SELECT * FROM (SELECT e.*, ",
+  "row_number() OVER (PARTITION BY cast(e.PATID as string) ORDER BY coalesce(e.rn,1)) AS _rk ",
+  "FROM ", T_elig, " e) t WHERE t._rk = 1)")
+
+# ---- LOT-LONG (13 cols): observable lines only, renumbered 1..n, horizon ENDDATE_CE
 sql_ll <- paste0("
 WITH soc AS (SELECT cast(PATID as string) AS PATID, LOT_NUM,", SOC_CASE, " AS soc_category FROM ", T_lot, "),
+", ELIG1, ",
 obs AS (
   SELECT cast(ll.PATID as string) AS patient_id,
          row_number() OVER (PARTITION BY cast(ll.PATID as string) ORDER BY ll.LOT_NUM, ll.LOT_START_DT) AS lot_num,
@@ -79,14 +85,14 @@ obs AS (
          cast(ec.DEATH_DT as date)        AS death_dt,
          cast(ec.ENDDATE_CE as date)      AS ce_end
   FROM ", T_lot, " ll
-  INNER JOIN ", T_elig, " ec ON cast(ll.PATID as string)=cast(ec.PATID as string)
+  INNER JOIN elig1 ec ON cast(ll.PATID as string)=cast(ec.PATID as string)
   LEFT  JOIN soc s ON cast(ll.PATID as string)=s.PATID AND s.LOT_NUM = ll.LOT_NUM
-  WHERE ll.LOT_START_DT <= cast(ec.ENDDATE_CE as date)           -- observable within administrative follow-up
+  WHERE ll.LOT_START_DT <= cast(ec.ENDDATE_CE as date)
 ),
 w AS (
   SELECT o.*,
-         lead(lot_soc)       OVER (PARTITION BY patient_id ORDER BY lot_num) AS next_soc,
-         lead(lot_start_dt)  OVER (PARTITION BY patient_id ORDER BY lot_num) AS next_start
+         lead(lot_soc)      OVER (PARTITION BY patient_id ORDER BY lot_num) AS next_soc,
+         lead(lot_start_dt) OVER (PARTITION BY patient_id ORDER BY lot_num) AS next_start
   FROM obs o
 )
 SELECT patient_id, lot_num, lot_start_dt, lot_soc, next_soc, 'Unknown' AS payer_type,
@@ -105,9 +111,10 @@ message("Querying per-line LOT-long ...")
 ll <- dbGetQuery(con, sql_ll)
 message(sprintf("  LOT-long rows: %s", format(nrow(ll), big.mark=",")))
 
-# ---- PATIENT-LEVEL base (demographics, CE, flags, 1L anchor). TTE / n_lines /
-#      soc_category are joined from the LOT-long 1L row below, NOT re-derived. ----
+# ---- PATIENT-LEVEL base (demographics, CE, flags, 1L anchor). fu_from_dx / TTE /
+#      n_lines / soc_category are derived below from the LOT-long 1L row. --------
 sql_pat <- paste0("
+WITH ", ELIG1, "
 SELECT
   cast(ec.PATID as string) AS patient_id, ec.AGE_INDEX_YR AS age_index,
   CASE upper(ec.GDR_CD) WHEN 'M' THEN 'Male' WHEN 'F' THEN 'Female' ELSE 'Unknown' END AS gender,
@@ -116,7 +123,6 @@ SELECT
   cast(ec.DEATH_DT as date) AS death_dt, coalesce(ec.INDEX_YR, year(ec.INDEX_DATE)) AS dx_year,
   year(lb.LOT1_START_DT) AS lot_init_year,
   round(datediff(lb.LOT1_START_DT, ec.INDEX_DATE)/30.44,1) AS dx_to_1l_months,
-  round(coalesce(ec.FU_DAYS, datediff(ec.ENDDATE, ec.INDEX_DATE))/30.44,1) AS fu_from_dx_months,
   greatest(0, round(datediff(ec.INDEX_DATE, cast(ec.baseline_start as date))/30.44,1)) AS baseline_ce_months,
   greatest(0, round(datediff(cast(ec.ENDDATE_CE as date), ec.INDEX_DATE)/30.44,1)) AS followup_ce_months,
   cast(0 as int) AS cci,
@@ -136,37 +142,32 @@ SELECT
   coalesce(f.NO_OTHER_CANCER_PRE_LOT1, 1 - coalesce(ec.OTHER_MALIGN_FLAG,0)) AS excl_other_cancer,
   coalesce(f.NO_BELANTAMAB,0) AS excl_belantamab,
   coalesce(f.NO_PREGNANCY, 1 - coalesce(ec.PREGNANT_FLAG,0)) AS excl_pregnancy
-FROM ", T_elig, " ec
+FROM elig1 ec
 INNER JOIN ", T_lb, " lb ON cast(ec.PATID as string)=cast(lb.PATID as string)
 LEFT  JOIN ", T_flags, " f ON cast(ec.PATID as string)=cast(f.PATID as string)")
 
 message("Querying patient-level base ...")
 pat <- dbGetQuery(con, sql_pat)
-pat <- pat[!duplicated(pat$patient_id), , drop = FALSE]      # guard elig_coh_final rn duplicates
+pat <- pat[!duplicated(pat$patient_id), , drop = FALSE]
 message(sprintf("  patient-level rows: %s", format(nrow(pat), big.mark=",")))
 
-# ---- derive LOT summary from ll (single source of truth -> guaranteed consistent)
+# ---- derive LOT summary from ll (single source of truth) ----
 n_lines <- as.data.frame(table(patient_id = as.character(ll$patient_id)),
                          stringsAsFactors = FALSE); names(n_lines)[2] <- "n_lines"
-ll1 <- ll[ll$lot_num == 1L, , drop = FALSE]                  # the 1L outcome row per patient
-ll1 <- ll1[!duplicated(ll1$patient_id), , drop = FALSE]
-
+ll1 <- ll[ll$lot_num == 1L, , drop = FALSE]; ll1 <- ll1[!duplicated(ll1$patient_id), , drop = FALSE]
 pat <- merge(pat, n_lines, by = "patient_id", all.x = TRUE, sort = FALSE)
 pat$n_lines[is.na(pat$n_lines)] <- 1L
 one <- ll1[, c("patient_id","lot_soc","os_time","os_event","ttd_time","ttd_event",
                "ttnt_time","ttnt_event","fu_potential_months")]
 names(one)[names(one) == "lot_soc"] <- "soc_category"
 pat <- merge(pat, one, by = "patient_id", all.x = TRUE, sort = FALSE)
-pat$pfs_time  <- pat$ttd_time                                # PFS exploratory = TTD proxy
+pat$pfs_time  <- pat$ttd_time
 pat$pfs_event <- pat$ttd_event
-
-# keep only patients with a 1L observable row (they anchor the cohort)
-pat <- pat[!is.na(pat$soc_category), , drop = FALSE]
+# observed follow-up from dx = dx->1L + CE-censored OS (matches dashboard contract)
+pat$fu_from_dx_months <- round(pat$dx_to_1l_months + pat$os_time, 1)
+pat <- pat[!is.na(pat$soc_category), , drop = FALSE]     # keep patients with a 1L observable row
 ll  <- ll[as.character(ll$patient_id) %in% as.character(pat$patient_id), , drop = FALSE]
 
-# ---- assemble the 57-col contract in order --------------------------------------
-suppressWarnings(source(file.path(Sys.getenv("COHORT_EXPLORER_DIR",""), "R", "criteria_registry.R"),
-                        local = TRUE))
 base_cols <- c("patient_id","age_index","gender","region","race","ethnicity","payer_type",
   "index_date","lot1_start_dt","death_dt","dx_year","lot_init_year","dx_to_1l_months",
   "fu_from_dx_months","fu_potential_months","baseline_ce_months","followup_ce_months","cci",
@@ -181,32 +182,33 @@ ac <- pat[, base_cols]
 
 ap <- file.path(out_dir, "analytic_cohort.csv")
 lp <- file.path(out_dir, "analytic_lot_long.csv")
-write.csv(ac, ap, row.names = FALSE, na = "NA")
-write.csv(ll, lp, row.names = FALSE, na = "NA")
 
-# ---- self-validate against the REAL dashboard validators (fail closed) ----------
-val_ok <- FALSE
+# ---- write to TEMP, self-validate, then promote (fail-closed: no bad final files)
+ap_t <- paste0(ap, ".tmp"); lp_t <- paste0(lp, ".tmp")
+write.csv(ac, ap_t, row.names = FALSE, na = "NA")
+write.csv(ll, lp_t, row.names = FALSE, na = "NA")
+
 cedir <- Sys.getenv("COHORT_EXPLORER_DIR", "")
 vfile <- if (nzchar(cedir)) file.path(cedir, "R", "build_flagged_cohort.R") else ""
+validated <- FALSE
 if (nzchar(vfile) && file.exists(vfile)) {
-  local({
+  tryCatch(local({
     source(file.path(cedir, "R", "criteria_registry.R"), local = TRUE)
     source(file.path(cedir, "R", "cohort_select.R"), local = TRUE)
     source(vfile, local = TRUE)
-    FL <- read.csv(ap, stringsAsFactors = FALSE)
+    FL <- read.csv(ap_t, stringsAsFactors = FALSE)
     for (d in c("index_date","lot1_start_dt","death_dt")) FL[[d]] <- as.Date(FL[[d]])
     validate_flagged_cohort(FL)
-    L2 <- read.csv(lp, stringsAsFactors = FALSE); L2$lot_start_dt <- as.Date(L2$lot_start_dt)
-    load_lot_long(lp, cohort = FL)
-    message("Self-validation: PASSED (validate_flagged_cohort + load_lot_long).")
-    val_ok <<- TRUE
-  })
+    load_lot_long(lp_t, cohort = FL)
+    validated <<- TRUE
+  }), error = function(e) { unlink(c(ap_t, lp_t)); stop("Self-validation FAILED: ", conditionMessage(e), call. = FALSE) })
+  message("Self-validation: PASSED (validate_flagged_cohort + load_lot_long).")
 } else {
-  message("NOTE: set COHORT_EXPLORER_DIR=<path to cohort_explorer> to self-validate ",
-          "against the dashboard validators before use.")
+  message("NOTE: set COHORT_EXPLORER_DIR=<cohort_explorer> to self-validate before promoting.")
 }
+file.rename(ap_t, ap); file.rename(lp_t, lp)
 
-message("\nDONE", if (val_ok) " (validated)" else " (NOT self-validated)")
+message("\nDONE", if (validated) " (validated)" else " (NOT self-validated)")
 message(sprintf("  %s  (%s patients)", ap, format(nrow(ac), big.mark=",")))
 message(sprintf("  %s  (%s lines)",    lp, format(nrow(ll), big.mark=",")))
 message(sprintf("  COHORT_EXPLORER_DATA=%s\n  COHORT_EXPLORER_LOTLONG=%s", ap, lp))
