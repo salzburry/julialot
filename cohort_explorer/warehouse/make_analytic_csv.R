@@ -304,19 +304,21 @@ if (!validated && !identical(toupper(Sys.getenv("ALLOW_UNVALIDATED_EXPORT", ""))
 # if the second rename fails restore the prior pair so we never leave a
 # half-updated (new cohort + stale/missing lot-long) output.
 promote_pair <- function(temps, finals) {
-  baks <- paste0(finals, ".bak")
-  had  <- file.exists(finals)
-  for (i in which(had)) if (!file.rename(finals[i], baks[i]))
-    stop("Could not back up existing ", finals[i], " before promotion.", call. = FALSE)
+  baks   <- paste0(finals, ".bak")
+  backed <- logical(length(finals))                 # which finals we moved to .bak
+  restore <- function() for (j in which(backed)) file.rename(baks[j], finals[j])
+  for (i in which(file.exists(finals))) {
+    if (file.rename(finals[i], baks[i])) { backed[i] <- TRUE }
+    else { restore(); stop("Could not back up existing ", finals[i],
+                           " before promotion; restored prior outputs.", call. = FALSE) }
+  }
   ok <- logical(length(temps))
   for (i in seq_along(temps)) ok[i] <- file.rename(temps[i], finals[i])
   if (!all(ok)) {                                   # roll back to the prior state
-    unlink(finals[ok])                              # drop any partial promotion
-    for (i in which(had)) file.rename(baks[i], finals[i])
-    unlink(temps)
+    unlink(finals[ok]); restore(); unlink(temps)    # drop partial promotion, restore backups
     stop("Promotion failed (file.rename); restored previous outputs.", call. = FALSE)
   }
-  unlink(baks[had])                                 # success: discard backups
+  unlink(baks[backed])                              # success: discard backups
 }
 promote_pair(c(ap_t, lp_t), c(ap, lp))
 
