@@ -49,10 +49,14 @@ app_css <- function() {
     .ce-header .sub{font-weight:400;font-size:13px;color:var(--muted);letter-spacing:0;}
 
     /* ---- layout shells ---- */
+    /* NOTE: .ce-side/.ce-main sit ON the Bootstrap grid columns (col-sm-3/9).
+       They must NOT have horizontal margins -- margins add to the 25%+75%=100%
+       column widths and push col-sm-9 onto the next row (sidebar-only layout).
+       Vertical margin only; the columns' built-in 15px padding is the gutter. */
     .ce-side{background:var(--surface);border:1px solid var(--line);
-      border-radius:var(--r-lg);padding:16px 16px 20px;margin:16px 6px 16px 16px;
+      border-radius:var(--r-lg);padding:16px 16px 20px;margin:16px 0;
       box-shadow:var(--sh-1);position:sticky;top:78px;}
-    .ce-main{margin:16px 16px 16px 6px;}
+    .ce-main{margin:16px 0;}
     .ce-side h4{color:var(--ink);font-size:12px;text-transform:uppercase;
       letter-spacing:.06em;font-weight:700;margin:18px 0 8px;padding-bottom:7px;
       border-bottom:1px solid var(--line);}
