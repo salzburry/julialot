@@ -123,6 +123,13 @@ COHORT_EXPLORER_LOTLONG=/path/lot_long.csv \
 # With a REAL cohort, COHORT_EXPLORER_LOTLONG is REQUIRED (the app fails closed
 # otherwise; set ALLOW_SYNTHETIC_LOTLONG=TRUE only to intentionally demo with a
 # synthetic LOT-long). With the default synthetic cohort, LOT-long is synthesised.
+#
+# Those two CSVs are produced by the scripts in warehouse/:
+#   make_analytic_csv.R  -- ACTIVE build: reads the persisted warehouse tables and
+#                           writes analytic_cohort.csv + analytic_lot_long.csv;
+#                           self-validates (fail-closed) when COHORT_EXPLORER_DIR set.
+#   diagnose_data.R      -- read-only: counts rows failing each contract check.
+#   08_analytic_cohort.R -- generic, source-agnostic scaffold (tagged derivations).
 ```
 
 ```r
