@@ -1,7 +1,7 @@
 # =============================================================================
 # km.R  --  time-to-event (Kaplan-Meier) for the protocol endpoints:
 #           OS (time to death), TTD, TTNT, Attrition (dx -> 1L), and a clearly
-#           labelled EXPLORATORY PFS (protocol §6.9: PFS not ascertainable).
+#           labelled EXPLORATORY PFS (protocol Sec 6.9: PFS not ascertainable).
 #           Uses `survival`; plotting is base graphics.
 # =============================================================================
 
@@ -9,8 +9,8 @@
 # patient reaches 1L, so the KM is the distribution of the gap).
 endpoint_dictionary <- function() active_pack()$endpoints
 
-LANDMARK_MONTHS <- c(6, 9, 12, 18, 24)   # protocol §6.7.2 survival probabilities
-MIN_FU_MONTHS   <- 3                      # protocol §6.7.2 potential-follow-up cut
+LANDMARK_MONTHS <- c(6, 9, 12, 18, 24)   # protocol Sec 6.7.2 survival probabilities
+MIN_FU_MONTHS   <- 3                      # protocol Sec 6.7.2 potential-follow-up cut
 
 # parse a user "6, 9, 12" landmark string into a sorted positive numeric vector;
 # fall back to the protocol default on empty/garbage input (never errors).
@@ -48,7 +48,7 @@ km_fit <- function(df, endpoint, strata = NULL, ep_dict = endpoint_dictionary(),
     # match the summaries + later-line (augmented) rendering of the same field.
     d$grp <- .as_category(df[[strata]][ok], var_type(strata))
     tb <- table(d$grp)
-    keep_lv <- names(tb)[tb >= 25]                     # <25 suppression (§6.5)
+    keep_lv <- names(tb)[tb >= 25]                     # <25 suppression (Sec 6.5)
     suppressed <- setdiff(names(tb), keep_lv)
     d <- d[d$grp %in% keep_lv, , drop = FALSE]
     if (!nrow(d)) return(NULL)

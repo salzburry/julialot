@@ -32,9 +32,7 @@ app_css <- function() {
     }
     html,body{background:var(--bg);}
     body{font-family:var(--font);color:var(--ink);-webkit-font-smoothing:antialiased;
-      font-size:14px;line-height:1.5;
-      background:radial-gradient(1200px 320px at 50% -90px, rgba(232,72,12,.07), transparent 72%), var(--bg);
-      background-attachment:fixed;}
+      font-size:14px;line-height:1.5;}
     .container-fluid{padding:0;max-width:1560px;margin:0 auto;}
     h1,h2,h3,h4,h5{color:var(--ink);font-weight:650;letter-spacing:-.01em;}
     h4{font-size:15px;} h5{font-size:13px;color:var(--muted);

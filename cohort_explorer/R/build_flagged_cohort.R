@@ -58,7 +58,7 @@ COMORBID_COLS <- c("bl_hepatic", "bl_renal", "bl_infection", "bl_ocular",
                    "bl_cv", "bl_neuro")
 
 # ---- derived subgroup columns (added after load; consistent for real data) --
-# age bands, transplant-eligibility proxies (protocol §6.2.3), CCI bands.
+# age bands, transplant-eligibility proxies (protocol Sec 6.2.3), CCI bands.
 add_derived_cols <- function(df) {
   df$age_band <- cut(df$age_index, breaks = c(-Inf, 44, 64, 74, Inf),
                      labels = c("18-44", "45-64", "65-74", "75+"))

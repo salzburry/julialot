@@ -83,7 +83,7 @@ main_tabs <- c(
           "of therapy coloured by regimen; ", tags$b("x"), " marks death and ",
           tags$b(">"), " a censored (still-followed) patient. Filter by 1L ",
           "regimen to see representative journeys for a treatment choice. ",
-          "Illustrative, deterministic sample — not a cohort statistic."),
+          "Illustrative, deterministic sample -- not a cohort statistic."),
       fluidRow(
         column(4, selectInput("pe_soc", "Started 1L with",
                     choices = c("All", SOC_LEVELS_1L), selected = "All",
@@ -114,7 +114,7 @@ main_tabs <- c(
       br(),
       div(class = "ce-note",
           "Adjusted (Cox) models with your choice of covariates, and a KM ",
-          "comparison of two saved cohort selections — all computed in memory ",
+          "comparison of two saved cohort selections -- all computed in memory ",
           "on the loaded snapshot, so it is instant. Save Group A/B from the ",
           "current sidebar selection (any IE + filter combination)."),
       fluidRow(
@@ -129,8 +129,8 @@ main_tabs <- c(
       hr(),
       h4("Compare two cohort selections"),
       fluidRow(
-        column(4, actionButton("save_a", "Save current → Group A", class = "btn-apply")),
-        column(4, actionButton("save_b", "Save current → Group B", class = "btn-apply")),
+        column(4, actionButton("save_a", "Save current -> Group A", class = "btn-apply")),
+        column(4, actionButton("save_b", "Save current -> Group B", class = "btn-apply")),
         column(4, br(), actionButton("cmp_run", "Compare A vs B", class = "btn-apply"))),
       div(class = "ce-note", textOutput("grp_status")),
       plotOutput("cmp_plot", height = "420px"),
@@ -158,7 +158,7 @@ ui <- fluidPage(
       span(class = "sub", PACK$header_sub)),
   if (isTRUE(PROVENANCE$any_synthetic))
     div(class = "ce-banner",
-        strong("SYNTHETIC DATA — not for analysis. "),
+        strong("SYNTHETIC DATA -- not for analysis. "),
         if (PROVENANCE$cohort_synthetic) "Cohort is synthetic. " else
           "Cohort is real; ",
         if (PROVENANCE$lotlong_synthetic)
@@ -187,7 +187,7 @@ ui <- fluidPage(
       div(class = "ce-note",
           "Tick / untick a criterion to change the cohort definition; tune the ",
           "filters, then Apply. The cohort is re-selected from the flagged ",
-          "superset — nothing is re-derived."),
+          "superset -- nothing is re-derived."),
       uiOutput("filters"), br(),
       actionButton("apply_filters", "Apply Filters", class = "btn-apply")),
 
@@ -301,7 +301,7 @@ server <- function(input, output, session) {
 
   output$pc_title <- renderText({
     p <- pc()
-    sprintf("Summary statistics — %s (N = %s)",
+    sprintf("Summary statistics -- %s (N = %s)",
             p$label, format(nrow(p$df), big.mark = ","))
   })
   output$pc_suppressed <- renderText({
@@ -407,7 +407,7 @@ server <- function(input, output, session) {
   }
 
   # ----- Regimen & Transitions -----
-  output$reg_title <- renderText(sprintf("Regimen frequency — %sL", input$lot))
+  output$reg_title <- renderText(sprintf("Regimen frequency -- %sL", input$lot))
   output$reg_freq <- renderTable({
     rf <- regimen_frequency(LOT_LONG, selected()$data$patient_id, as.integer(input$lot))
     if (is.null(rf)) data.frame(Note = "No patients reach this line.") else rf

@@ -10,7 +10,7 @@
 app_dir <- normalizePath(file.path(.here, ".."))
 
 if (!requireNamespace("shiny", quietly = TRUE)) {
-  cat("SKIP: shiny not installed — app tests skipped\n"); quit(status = 0L)
+  cat("SKIP: shiny not installed -- app tests skipped\n"); quit(status = 0L)
 }
 suppressMessages(library(shiny)); options(shiny.testmode = TRUE)
 
@@ -65,7 +65,7 @@ testServer(app, {
      "baseline safety table shows the per-100-PY rate + event rows")
 
   # (4) current-line SOC stratum actually STRATIFIES at 2L (groups are SOC
-  #     levels, not a single 'Overall' — proves lot_soc reached the fit)
+  #     levels, not a single 'Overall' -- proves lot_soc reached the fit)
   session$setInputs(lot = 2, km_OS_strata = "lot_soc", km_OS_apply = 2)
   session$flushReact()
   k2 <- km_fit(lot_slice(LOT_LONG, selected()$data$patient_id, 2L), "OS",

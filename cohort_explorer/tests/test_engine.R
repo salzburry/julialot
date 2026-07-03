@@ -276,7 +276,7 @@ if (requireNamespace("survival", quietly = TRUE)) {
   # per-LOT KM off the LOT-long slice
   k2 <- km_fit(lot_slice(ll, ov$data$patient_id, 2L), "TTD", min_fu = 3)
   ok(!is.null(k2) && k2$n > 0, "per-LOT (2L) KM fits off the LOT-long slice")
-} else cat("SKIP: survival not installed — KM tests skipped\n")
+} else cat("SKIP: survival not installed -- KM tests skipped\n")
 
 # ---- review round 6 (QC workflow): correctness + labels + runtime guards ----
 # F1 patient-level TTNT biconditional
@@ -500,6 +500,8 @@ options(cohort_explorer.indication = "mm")
 .shown <- patient_timeline_data(.pe_ll, .pe_coh, n = 8L)
 ok(is.numeric(.cnt) && .cnt >= .shown$n && .cnt == nrow(.pe_coh),
    "patient_timeline_data(count_only=TRUE) counts all matches without capping at n")
+ok(identical(patient_timeline_data(.pe_ll, .pe_coh, soc_filter = "__none__", count_only = TRUE), 0L),
+   "count_only=TRUE returns 0L (numeric, not NULL) when nothing matches")
 options(cohort_explorer.indication = "mm")
 
 cat(sprintf("\n%d passed, %d failed\n", .n_pass, .n_fail))

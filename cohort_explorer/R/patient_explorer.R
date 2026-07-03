@@ -36,7 +36,7 @@ patient_timeline_data <- function(lot_long, cohort, n = 16L, soc_filter = NULL,
                     "os_time", "os_event"), drop = FALSE]
   if (!is.null(soc_filter) && length(soc_filter) && !("All" %in% soc_filter))
     anc <- anc[anc$soc_category %in% soc_filter, , drop = FALSE]
-  if (!nrow(anc)) return(NULL)
+  if (!nrow(anc)) return(if (count_only) 0L else NULL)
 
   # pathway / event filters that need the per-line table (restricted to remaining
   # patients). Membership sets are computed once; anc is then intersected.
