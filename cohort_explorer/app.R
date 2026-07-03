@@ -151,7 +151,7 @@ ui <- fluidPage(
       uiOutput("filters"), br(),
       actionButton("apply_filters", "Apply Filters", class = "btn-apply")),
 
-    column(9,
+    column(9, class = "ce-main",
       uiOutput("kpis"),
       do.call(tabsetPanel, c(list(id = "maintabs"), main_tabs)))
   ),
@@ -242,7 +242,7 @@ server <- function(input, output, session) {
 
   output$kpis <- renderUI({
     s <- selected()
-    div(style = "margin-bottom:8px",
+    div(class = "ce-kpi-row",
       kpi(format(s$n_out, big.mark = ","), "Patients (selected cohort)"),
       kpi(sprintf("%.1f%%", 100 * s$n_out / s$n_in), "of superset"),
       kpi(format(s$n_in, big.mark = ","), "Superset (flagged) N"),
