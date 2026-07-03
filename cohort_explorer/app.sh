@@ -8,6 +8,14 @@
 # for app.sh at the project root, copy this there (or set the App command to
 # `bash cohort_explorer/app.sh`).
 #
+# Indication (tumour type): the app serves ONE indication per instance, chosen
+# here. Default is Multiple Myeloma. To serve Endometrial, Ovarian, etc., set
+# INDICATION and (re)deploy this App. There is no in-app switch -- the whole data
+# model / cohorts / endpoints are built for one pack at startup.
+#   mm=Multiple Myeloma (default)  ec=Endometrial  oc=Ovarian
+#   crc=Colorectal  hnscc=Head & Neck  nsclc=NSCLC  sclc=SCLC
+export INDICATION="${INDICATION:-mm}"
+#
 # Data source (optional): point at the snapshot that warehouse/08_analytic_cohort.R
 # produced (run it first as a Domino Job). If UNSET, the app runs on the built-in
 # SYNTHETIC cohort (useful for a first smoke-test deploy).

@@ -31,8 +31,17 @@ app_css <- function() {
       --font:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
     }
     html,body{background:var(--bg);}
+    /* warm top glow, dithered so it can't band. Two layers over --bg:
+       (1) a faint SVG fractal-noise tile (data URI) that breaks up the 8-bit
+           steps a low-alpha gradient would otherwise show as concentric rings;
+       (2) a soft top-anchored radial wash. No background-attachment:fixed. */
     body{font-family:var(--font);color:var(--ink);-webkit-font-smoothing:antialiased;
-      font-size:14px;line-height:1.5;}
+      font-size:14px;line-height:1.5;
+      background-color:var(--bg);
+      background-image:
+        url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/><feColorMatrix type='saturate' values='0'/></filter><rect width='120' height='120' filter='url(%23n)' opacity='0.02'/></svg>\"),
+        radial-gradient(1000px 300px at 50% -60px, rgba(232,72,12,.06), rgba(232,72,12,0) 70%);
+      background-repeat:repeat, no-repeat;}
     .container-fluid{padding:0;max-width:1560px;margin:0 auto;}
     h1,h2,h3,h4,h5{color:var(--ink);font-weight:650;letter-spacing:-.01em;}
     h4{font-size:15px;} h5{font-size:13px;color:var(--muted);
@@ -49,10 +58,14 @@ app_css <- function() {
     .ce-header .sub{font-weight:400;font-size:13px;color:var(--muted);letter-spacing:0;}
 
     /* ---- layout shells ---- */
+    /* NOTE: .ce-side/.ce-main sit ON the Bootstrap grid columns (col-sm-3/9).
+       They must NOT have horizontal margins -- margins add to the 25%+75%=100%
+       column widths and push col-sm-9 onto the next row (sidebar-only layout).
+       Vertical margin only; the columns' built-in 15px padding is the gutter. */
     .ce-side{background:var(--surface);border:1px solid var(--line);
-      border-radius:var(--r-lg);padding:16px 16px 20px;margin:16px 6px 16px 16px;
+      border-radius:var(--r-lg);padding:16px 16px 20px;margin:16px 0;
       box-shadow:var(--sh-1);position:sticky;top:78px;}
-    .ce-main{margin:16px 16px 16px 6px;}
+    .ce-main{margin:16px 0;}
     .ce-side h4{color:var(--ink);font-size:12px;text-transform:uppercase;
       letter-spacing:.06em;font-weight:700;margin:18px 0 8px;padding-bottom:7px;
       border-bottom:1px solid var(--line);}
