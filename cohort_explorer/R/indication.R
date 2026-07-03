@@ -354,11 +354,11 @@ pack_mm <- function() list(
       WHEN coalesce(LOT_MED_CNT,0)=1 THEN 'Monotherapy'
       ELSE 'Other' END"
 
-.make_stub_pack <- function(id, disease, short, soc_1l, soc_later, soc_probs) list(
+.make_stub_pack <- function(id, disease, short, soc_1l, soc_later) list(
   id = id, disease = disease, short = short,
   header_title = "Oncology Real-World Data Explorer Tool",
   header_sub = paste0(" — ", disease, " (", short,
-                      ") · flag-driven IE selection · STUB PACK (fill in)"),
+                      ") · flag-driven IE selection · template pack (verify SOC & criteria)"),
   superset_label = paste0("Superset (1L-treated ", short, ")"),
   criteria = .stub_criteria(short),
   cohorts  = .stub_cohorts(),
@@ -373,33 +373,63 @@ pack_mm <- function() list(
   soc_case_sql = .stub_soc_case_sql,
   is_stub = TRUE)
 
-# Ovarian cancer (STUB -- replace categories/criteria with authoritative defs)
+# Template packs for the oncology tumour areas served here. SOC categories use
+# CLASS-based labels (public standard-of-care), not brand assets. The IE criteria
+# are the generic .stub_criteria() core -- replace with each tumour's authoritative
+# study definition (and the drug->category SOC map) before running real data.
+
+# Endometrial cancer -- gynae-oncology core (checkpoint + PARP combination era)
+pack_ec <- function() .make_stub_pack(
+  "ec", "Endometrial Cancer", "EC",
+  soc_1l = c("Chemo + immunotherapy", "Platinum doublet (carbo-paclitaxel)",
+             "Single-agent chemotherapy", "Hormonal therapy", "Other"),
+  soc_later = c("Immunotherapy (anti-PD-1)", "TKI + immunotherapy",
+                "PARP maintenance", "Single-agent chemotherapy",
+                "Hormonal therapy", "Other"))
+
+# Ovarian cancer -- platinum + PARP-maintenance (HRD) landscape
 pack_oc <- function() .make_stub_pack(
   "oc", "Ovarian Cancer", "OC",
-  soc_1l = c("Platinum doublet + bevacizumab", "Platinum doublet",
-             "Platinum monotherapy", "PARP inhibitor maintenance", "Other"),
-  soc_later = c("Platinum doublet", "PARP inhibitor", "Bevacizumab-based",
-                "Non-platinum chemotherapy", "Monotherapy"))
+  soc_1l = c("Platinum doublet + anti-VEGF", "Platinum doublet + PARP maintenance",
+             "Platinum doublet", "PARP maintenance (HRD)", "Other"),
+  soc_later = c("Platinum rechallenge", "PARP inhibitor", "Anti-VEGF-based",
+                "Non-platinum chemotherapy", "Other"))
 
-# Prostate cancer (STUB)
-pack_pc <- function() .make_stub_pack(
-  "pc", "Prostate Cancer", "PC",
-  soc_1l = c("ARPI + ADT", "Docetaxel + ADT", "Triplet (ARPI+docetaxel+ADT)",
-             "ADT alone", "Other"),
-  soc_later = c("ARPI", "Taxane chemotherapy", "PARP inhibitor",
-                "Radioligand (Lu-177)", "Other"))
+# Colorectal cancer -- incl. immunotherapy for dMMR/MSI-H
+pack_crc <- function() .make_stub_pack(
+  "crc", "Colorectal Cancer", "CRC",
+  soc_1l = c("Doublet + anti-VEGF", "Doublet + anti-EGFR (RAS-wt)",
+             "Immunotherapy (dMMR/MSI-H)", "Chemotherapy doublet", "Other"),
+  soc_later = c("Anti-VEGF continuation", "Anti-EGFR", "Oral fluoropyrimidine",
+                "Multikinase inhibitor", "Immunotherapy", "Other"))
 
-# Non-small cell lung cancer (STUB)
+# Head & neck squamous cell carcinoma
+pack_hnscc <- function() .make_stub_pack(
+  "hnscc", "Head & Neck SCC", "HNSCC",
+  soc_1l = c("Platinum + 5-FU + immunotherapy", "Immunotherapy monotherapy",
+             "Platinum + anti-EGFR", "Single-agent chemotherapy", "Other"),
+  soc_later = c("Immunotherapy (anti-PD-1)", "Taxane", "Anti-EGFR-based",
+                "Methotrexate", "Other"))
+
+# Non-small cell lung cancer
 pack_nsclc <- function() .make_stub_pack(
   "nsclc", "Non-Small Cell Lung Cancer", "NSCLC",
   soc_1l = c("Chemo + immunotherapy", "Immunotherapy monotherapy",
-             "Targeted therapy (EGFR/ALK/...)", "Platinum doublet", "Other"),
-  soc_later = c("Immunotherapy", "Targeted therapy", "Docetaxel-based",
-                "Platinum doublet", "Monotherapy"))
+             "Targeted therapy (EGFR/ALK/ROS1)", "Platinum doublet", "Other"),
+  soc_later = c("Immunotherapy", "Docetaxel +/- anti-VEGF",
+                "Next-line targeted therapy", "Platinum doublet", "Other"))
+
+# Small cell lung cancer (extensive stage)
+pack_sclc <- function() .make_stub_pack(
+  "sclc", "Small Cell Lung Cancer", "SCLC",
+  soc_1l = c("Platinum-etoposide + immunotherapy", "Platinum-etoposide", "Other"),
+  soc_later = c("Topoisomerase inhibitor", "Second-line chemotherapy",
+                "Immunotherapy", "Platinum rechallenge", "Other"))
 
 # ---- pack registry + active-pack accessor -----------------------------------
 INDICATION_PACKS <- function()
-  list(mm = pack_mm, oc = pack_oc, pc = pack_pc, nsclc = pack_nsclc)
+  list(mm = pack_mm, ec = pack_ec, oc = pack_oc, crc = pack_crc,
+       hnscc = pack_hnscc, nsclc = pack_nsclc, sclc = pack_sclc)
 
 # selected tumour type: INDICATION env var (or option), default "mm". An env var
 # that is set-but-empty is treated as unset (falls through to the option/default).
