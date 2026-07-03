@@ -23,10 +23,14 @@
 #                    "disc1l" (stopped after 1L, no 2L) | "ge3lines" (>=3 lines)
 #   sort_by          "soc" groups by 1L regimen; "os" longest-followed; "lines"
 #                    most heavily treated first.
+# count_only = TRUE returns just the number of patients matching the filters
+# (before the top-n cap), skipping the per-patient segment build -- so the app's
+# "N match this pathway" count stays cheap on large real cohorts.
 patient_timeline_data <- function(lot_long, cohort, n = 16L, soc_filter = NULL,
                                   then_soc = NULL, reached_regimen = NULL,
                                   event = c("any", "died", "disc1l", "ge3lines"),
-                                  sort_by = c("soc", "os", "lines")) {
+                                  sort_by = c("soc", "os", "lines"),
+                                  count_only = FALSE) {
   sort_by <- match.arg(sort_by); event <- match.arg(event)
   anc <- cohort[, c("patient_id", "lot1_start_dt", "soc_category", "n_lines",
                     "os_time", "os_event"), drop = FALSE]
@@ -52,7 +56,8 @@ patient_timeline_data <- function(lot_long, cohort, n = 16L, soc_filter = NULL,
       ge3lines = anc$patient_id[anc$n_lines >= 3L])
     anc <- anc[anc$patient_id %in% keep, , drop = FALSE]
   }
-  if (!nrow(anc)) return(NULL)
+  if (!nrow(anc)) return(if (count_only) 0L else NULL)
+  if (isTRUE(count_only)) return(nrow(anc))
 
   ord <- switch(sort_by,
     soc   = order(anc$soc_category, -anc$n_lines, anc$patient_id),

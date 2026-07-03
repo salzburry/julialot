@@ -1,10 +1,13 @@
-# Cohort Explorer — flag-driven IE dashboard (Overall & NDMM)
+# Cohort Explorer — indication-pack LOT dashboard
 
-An interactive Shiny *Oncology Real-World Data Explorer Tool* for the MM LOT
-cohorts. The point is **flexibility over the inclusion/exclusion (IE)
-criteria**: pick a cohort, freely toggle the IE rules, tune the filters, and
-every output re-selects from one pre-built **flagged superset cohort** — nothing
-is re-derived per change.
+An interactive Shiny *Oncology Real-World Data Explorer Tool* for line-of-therapy
+(LOT) cohorts. It is **portable across tumour types** via indication packs
+(`INDICATION=<id>`); **Multiple Myeloma (Overall & NDMM) is the reference
+implementation**, Endometrial is a fully worked example, and other tumours ship
+as templates (see *Reuse / extension*). The point is **flexibility over the
+inclusion/exclusion (IE) criteria**: pick a cohort, freely toggle the IE rules,
+tune the filters, and every output re-selects from one pre-built **flagged
+superset cohort** — nothing is re-derived per change.
 
 ```
 shiny::runApp("cohort_explorer")          # runs on synthetic data, no warehouse
@@ -95,7 +98,8 @@ cohort_explorer/
   config/study_config.R       ONE study definition; study_config_to_env() maps
                               it to the upstream LOT pipeline env vars
   config/emit_pipeline_env.R  emit that mapping as `export` lines for the build
-  tests/test_engine.R         base-R unit tests (101) for the engine + checks
+  tests/test_engine.R         base-R unit tests (124) for the engine + checks
+                              (incl. indication packs, Patient Explorer, EC QC)
   tests/test_app.R            Shiny testServer tests (17): cohort reset, parity,
                               value-based landmark/safety/pathway, 2L no-crash,
                               movable thresholds/landmarks, Cox, A/B, Sankey config

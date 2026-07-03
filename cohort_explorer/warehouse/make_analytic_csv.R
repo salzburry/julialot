@@ -47,6 +47,12 @@
 
 library(DBI)
 
+# This adapter materializes the MULTIPLE MYELOMA cohort. Pin the indication up
+# front so an ambient INDICATION env var can't reshape the SOC map or the
+# self-validation contract (Sys.getenv has priority over the R option, so pinning
+# only the option is not enough -- the env var itself must be set).
+Sys.setenv(INDICATION = "mm")
+
 cfg <- local({
   d <- Sys.getenv("COHORT_EXPLORER_DIR", "")
   wf <- if (nzchar(d)) file.path(d, "config", "warehouse_config.R") else ""
@@ -124,7 +130,7 @@ if (horizon_col == "ENDDATE_CE" && nzchar(disenroll_col) && disenroll_col %in% e
 # (COHORT_EXPLORER_DIR unset). Pick the tumour type with INDICATION=<id>.
 SOC_CASE <- local({
   ind <- file.path(Sys.getenv("COHORT_EXPLORER_DIR", ""), "R", "indication.R")
-  if (file.exists(ind)) { source(ind, local = TRUE); return(indication_soc_case_sql()) }
+  if (file.exists(ind)) { source(ind, local = TRUE); return(indication_soc_case_sql("mm")) }
   "
     CASE
       WHEN coalesce(LOT_CART_LOT_FLG,0)=1 THEN 'CAR-T'
