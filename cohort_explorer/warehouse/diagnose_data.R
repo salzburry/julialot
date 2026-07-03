@@ -43,6 +43,9 @@ noncontig <- sum(vapply(sp, function(v){ v <- sort(unique(v)); !(v[1]==1 && all(
 row("patients w/ non-contiguous lines", noncontig, length(sp))
 row("lot_soc blank/NA",                sum(is.na(ll$lot_soc)  | ll$lot_soc  == ""), NL)
 row("payer_type blank/NA",             sum(is.na(ll$payer_type)| ll$payer_type== ""), NL)
+row("lot_start_dt missing",            sum(is.na(as.Date(ll$lot_start_dt))), NL)
+row("os_time  > fu_potential",         sum(ll$os_time  > ll$fu_potential_months, na.rm = TRUE), NL)
+row("ttd_time > fu_potential",         sum(ll$ttd_time > ll$fu_potential_months, na.rm = TRUE), NL)
 row("ttnt_time > fu_potential",        sum(ll$ttnt_time > ll$fu_potential_months, na.rm = TRUE), NL)
 row("any TTE negative",                sum(ll$os_time<0 | ll$ttd_time<0 | ll$ttnt_time<0, na.rm = TRUE), NL)
 # line-count vs n_lines
@@ -51,12 +54,22 @@ exp <- setNames(ac$n_lines, ac$patient_id)
 common <- intersect(names(rc), names(exp))
 row("patients: lot-long count != n_lines", sum(rc[common] != exp[common]), length(common))
 row("flagged patients missing in lot-long", sum(!ac$patient_id %in% ll$patient_id))
-# ttnt-time vs next line start reconciliation (>2mo)
+# per-patient ordered checks via row-shift (ord sorted by patient, lot_num):
+# a row "has a next line" iff the following row is the SAME patient.
 ord <- ll[order(ll$patient_id, ll$lot_num), ]
 ord$lot_start_dt <- as.Date(ord$lot_start_dt)
-nxt <- ave(as.numeric(ord$lot_start_dt), ord$patient_id, FUN = function(x) c(x[-1], NA))
-gap_mo <- (nxt - as.numeric(ord$lot_start_dt))/30.44
+n <- nrow(ord)
+has_next  <- c(ord$patient_id[-1] == ord$patient_id[-n], FALSE)     # row i's next row same patient?
+nxt_soc   <- c(ord$lot_soc[-1],    NA); nxt_soc[!has_next]   <- NA   # next line's lot_soc
+nxt_start <- c(as.numeric(ord$lot_start_dt)[-1], NA); nxt_start[!has_next] <- NA
+row("ttnt_event != (subsequent line exists)", sum(ord$ttnt_event != as.integer(has_next)), NL)
+mismatch_soc <- (is.na(ord$next_soc) != is.na(nxt_soc)) |
+                (!is.na(ord$next_soc) & !is.na(nxt_soc) & ord$next_soc != nxt_soc)
+row("next_soc != next line's lot_soc",  sum(mismatch_soc), NL)
+gap_mo <- (nxt_start - as.numeric(ord$lot_start_dt))/30.44
 recon_bad <- sum(ord$ttnt_event==1 & !is.na(gap_mo) & abs(gap_mo - ord$ttnt_time) > 2, na.rm = TRUE)
 row("ttnt_time vs next-line gap off >2mo", recon_bad, NL)
 
 cat("\n(For each: count of offending rows, and % of the denominator.)\n")
+cat("NOTE: make_analytic_csv.R also self-validates with the REAL dashboard\n")
+cat("validators when COHORT_EXPLORER_DIR is set - this is a quick pre-check.\n")
