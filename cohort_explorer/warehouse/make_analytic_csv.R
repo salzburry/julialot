@@ -9,20 +9,24 @@
 #
 # Datasource config follows the SAME contract as config/warehouse_config.R:
 #   WAREHOUSE_DSN / WAREHOUSE_PWD / WAREHOUSE_CATALOG / PROJECT_WORK_SCHEMA
-# (this project: WAREHOUSE_CATALOG=hive_metastore PROJECT_WORK_SCHEMA=<schema>)
+# (set WAREHOUSE_CATALOG / PROJECT_WORK_SCHEMA to your warehouse's values)
 # Set COHORT_EXPLORER_DIR=<path to cohort_explorer> to self-validate (recommended).
 #
-#   export WAREHOUSE_PWD='<token>'; export WAREHOUSE_CATALOG=hive_metastore
+#   export WAREHOUSE_PWD='<token>'; export WAREHOUSE_CATALOG=<catalog>
 #   export PROJECT_WORK_SCHEMA=<schema>; export OUT_DIR=/tmp/cohort_data
 #   export COHORT_EXPLORER_DIR=/path/to/cohort_explorer
 #   Rscript make_analytic_csv.R
 #
-# Follow-up model (administrative, death-INDEPENDENT): per-patient horizon is
-# ENDDATE_CE (index->min(study end, disenrollment)). Only LOT lines starting
-# on/before that horizon are "observable"; later lines are censored, NOT used to
-# stretch follow-up. Observable lines are renumbered 1..n (contiguous), so the
-# LOT-long line count == n_lines and the 1L row IS the patient-level 1L outcome.
-# elig_coh_final is de-duplicated to one row per patient BEFORE any join.
+# Follow-up model: TTE (OS/TTD/TTNT) is censored at ENDDATE_CE, the observed
+# horizon = min(study end, disenrollment, death). fu_potential is the
+# ADMINISTRATIVE, death-INDEPENDENT horizon: when death is what bound ENDDATE_CE
+# it is un-capped to the study end, so early deaths keep the potential follow-up
+# they had and are NOT dropped from the >=3-mo denominators. Only LOT lines
+# starting on/before ENDDATE_CE are "observable"; later lines are censored, not
+# used to stretch follow-up. Observable lines are renumbered 1..n (contiguous),
+# so the LOT-long line count == n_lines and the 1L row IS the patient-level 1L
+# outcome. elig_coh_final and raw lot_long are each de-duplicated (one row per
+# patient / per (patient,LOT_NUM)) BEFORE any join or renumbering.
 #
 # REAL: cohort, gender, age, all 12 IE flags, LOT structure, SOC category,
 #       OS/TTD/TTNT (administrative-horizon censored).
@@ -44,7 +48,8 @@ cfg <- local({
 })
 out_dir   <- Sys.getenv("OUT_DIR", "/tmp/cohort_data")
 lot1_from <- Sys.getenv("NDMM_LOT1_FROM", "2017-01-01")
-if (!nzchar(cfg$pwd)) stop("Set WAREHOUSE_PWD (your databricks token).", call. = FALSE)
+study_end <- Sys.getenv("STUDY_END", "2025-06-30")   # administrative study end (death-independent horizon)
+if (!nzchar(cfg$pwd)) stop("Set WAREHOUSE_PWD (your warehouse access token).", call. = FALSE)
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
 q <- function(t) sprintf("`%s`.`%s`.`%s`", cfg$catalog, cfg$schema, t)
@@ -71,9 +76,19 @@ ELIG1 <- paste0("elig1 AS (SELECT * FROM (SELECT e.*, ",
   "row_number() OVER (PARTITION BY cast(e.PATID as string) ORDER BY coalesce(e.rn,1)) AS _rk ",
   "FROM ", T_elig, " e) t WHERE t._rk = 1)")
 
-# ---- LOT-LONG (13 cols): observable lines only, renumbered 1..n, horizon ENDDATE_CE
+# ---- LOT-LONG (13 cols): observable lines only, renumbered 1..n.
+# TTE (OS/TTD/TTNT) is censored at ENDDATE_CE (min of study end, disenrollment,
+# death). fu_potential is the ADMINISTRATIVE, death-INDEPENDENT horizon: when
+# death is what bound ENDDATE_CE we un-cap it to the study end, so early deaths
+# still contribute the potential follow-up they had -> they are NOT dropped from
+# the >=3-mo denominators. Raw lot_long is de-duplicated to one row per
+# (patient, LOT_NUM) BEFORE renumbering so duplicate source rows can't fake lines.
 sql_ll <- paste0("
-WITH soc AS (SELECT cast(PATID as string) AS PATID, LOT_NUM,", SOC_CASE, " AS soc_category FROM ", T_lot, "),
+WITH lot_dedup AS (
+  SELECT * FROM (SELECT l.*,
+    row_number() OVER (PARTITION BY cast(l.PATID as string), l.LOT_NUM ORDER BY l.LOT_START_DT) AS _lk
+    FROM ", T_lot, " l) d WHERE d._lk = 1),
+soc AS (SELECT cast(PATID as string) AS PATID, LOT_NUM,", SOC_CASE, " AS soc_category FROM lot_dedup),
 ", ELIG1, ",
 obs AS (
   SELECT cast(ll.PATID as string) AS patient_id,
@@ -83,8 +98,10 @@ obs AS (
          ll.LOT_BASE_END_REASON           AS end_reason,
          coalesce(s.soc_category,'Other') AS lot_soc,
          cast(ec.DEATH_DT as date)        AS death_dt,
-         cast(ec.ENDDATE_CE as date)      AS ce_end
-  FROM ", T_lot, " ll
+         cast(ec.ENDDATE_CE as date)      AS ce_end,
+         CASE WHEN ec.DEATH_DT IS NOT NULL AND cast(ec.DEATH_DT as date) <= cast(ec.ENDDATE_CE as date)
+              THEN date('", study_end, "') ELSE cast(ec.ENDDATE_CE as date) END AS fu_end
+  FROM lot_dedup ll
   INNER JOIN elig1 ec ON cast(ll.PATID as string)=cast(ec.PATID as string)
   LEFT  JOIN soc s ON cast(ll.PATID as string)=s.PATID AND s.LOT_NUM = ll.LOT_NUM
   WHERE ll.LOT_START_DT <= cast(ec.ENDDATE_CE as date)
@@ -104,7 +121,7 @@ SELECT patient_id, lot_num, lot_start_dt, lot_soc, next_soc, 'Unknown' AS payer_
         AND upper(coalesce(end_reason,'')) NOT LIKE '%DISENROLL%' THEN 1 ELSE 0 END AS ttd_event,
   greatest(0, round(datediff(coalesce(next_start, ce_end), lot_start_dt)/30.44,1)) AS ttnt_time,
   CASE WHEN next_start IS NOT NULL THEN 1 ELSE 0 END AS ttnt_event,
-  greatest(0, round(datediff(ce_end, lot_start_dt)/30.44,1)) AS fu_potential_months
+  greatest(0, round(datediff(fu_end, lot_start_dt)/30.44,1)) AS fu_potential_months
 FROM w")
 
 message("Querying per-line LOT-long ...")
@@ -206,7 +223,17 @@ if (nzchar(vfile) && file.exists(vfile)) {
 } else {
   message("NOTE: set COHORT_EXPLORER_DIR=<cohort_explorer> to self-validate before promoting.")
 }
-file.rename(ap_t, ap); file.rename(lp_t, lp)
+
+# fail-closed: never promote un-validated CSVs unless the operator explicitly
+# opts out (ALLOW_UNVALIDATED_EXPORT=TRUE).
+if (!validated && !identical(toupper(Sys.getenv("ALLOW_UNVALIDATED_EXPORT", "")), "TRUE")) {
+  unlink(c(ap_t, lp_t))
+  stop("Refusing to write un-validated CSVs. Set COHORT_EXPLORER_DIR to self-validate, ",
+       "or ALLOW_UNVALIDATED_EXPORT=TRUE to override.", call. = FALSE)
+}
+if (!file.rename(ap_t, ap) || !file.rename(lp_t, lp)) {
+  stop("Failed to promote temp CSVs to their final paths (file.rename returned FALSE).", call. = FALSE)
+}
 
 message("\nDONE", if (validated) " (validated)" else " (NOT self-validated)")
 message(sprintf("  %s  (%s patients)", ap, format(nrow(ac), big.mark=",")))

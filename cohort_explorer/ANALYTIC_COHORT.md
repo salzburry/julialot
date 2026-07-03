@@ -101,6 +101,31 @@ continuous CE months + safety counts/PY + HCRU, `[E]` SOC via a **placeholder**
 start-type/med-count rule (production swaps in the authoritative
 regimen→category map).
 
+**The active build for this deployment: `warehouse/make_analytic_csv.R`.**
+`08_analytic_cohort.R` is the generic, source-agnostic **scaffold** (tagged
+derivations for whoever wires a new warehouse). `make_analytic_csv.R` is the
+**project-local adapter actually run here**: it reads the persisted tables
+(`elig_coh_final`, `lot1_base_end`, `ndmm_flags_all`, `lot_long`) and writes the
+two CSVs. It uses the same datasource contract as `config/warehouse_config.R`
+(`WAREHOUSE_DSN/PWD/CATALOG` + `PROJECT_WORK_SCHEMA`) and, when
+`COHORT_EXPLORER_DIR` is set, **self-validates** the output with the real
+`validate_flagged_cohort` + `load_lot_long` before promoting the temp files —
+**fail-closed by default** (it refuses to write un-validated CSVs unless
+`ALLOW_UNVALIDATED_EXPORT=TRUE`). `warehouse/diagnose_data.R` is a read-only
+companion that reports how many rows fail each contract check.
+
+Its follow-up model separates the two horizons the contract distinguishes:
+**TTE (OS/TTD/TTNT) is censored at `ENDDATE_CE`** (the observed horizon =
+`min(study end, disenrollment, death)`), while **`fu_potential` is
+administrative and death-independent** — when death is what bound `ENDDATE_CE`
+it is un-capped to the study end, so patients who die early keep the potential
+follow-up they had and are **not** dropped from the `>=3`-month denominators.
+Only LOT lines starting on/before `ENDDATE_CE` are "observable"; they are
+renumbered `1..n` (contiguous) so the LOT-long line count equals `n_lines` and
+the 1L row **is** the patient-level 1L outcome. Both `elig_coh_final` and raw
+`lot_long` are de-duplicated (one row per patient / per `(patient, LOT_NUM)`)
+before any join or renumbering.
+
 ## How the dashboard consumes it (instant)
 
 At startup `global.R` loads the snapshot **once** from
