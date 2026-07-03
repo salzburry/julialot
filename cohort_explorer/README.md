@@ -1,4 +1,4 @@
-# Cohort Explorer — indication-pack LOT dashboard
+# Cohort Explorer -- indication-pack LOT dashboard
 
 An interactive Shiny *Oncology Real-World Data Explorer Tool* for line-of-therapy
 (LOT) cohorts. It is **portable across tumour types** via indication packs
@@ -7,7 +7,7 @@ implementation**, Endometrial is a fully worked example, and other tumours ship
 as templates (see *Reuse / extension*). The point is **flexibility over the
 inclusion/exclusion (IE) criteria**: pick a cohort, freely toggle the IE rules,
 tune the filters, and every output re-selects from one pre-built **flagged
-superset cohort** — nothing is re-derived per change.
+superset cohort** -- nothing is re-derived per change.
 
 ```
 shiny::runApp("cohort_explorer")          # runs on synthetic data, no warehouse
@@ -18,13 +18,13 @@ shiny::runApp("cohort_explorer")          # runs on synthetic data, no warehouse
 Instead of re-running the cohort pipeline every time a criterion changes, the
 pipeline builds the **broadest** 1L-treated MM cohort **once** and stamps **one
 boolean column per IE criterion** onto it (`incl_qualifying_mm`, `incl_adult`,
-`incl_baseline_ce_12m`, `excl_belantamab`, …). "Selecting a cohort" is then just
-**AND-ing a chosen set of flags** — instant, and reusable across any cohort
+`incl_baseline_ce_12m`, `excl_belantamab`, ...). "Selecting a cohort" is then just
+**AND-ing a chosen set of flags** -- instant, and reusable across any cohort
 definition.
 
 This is the same design the production pipeline uses: each cohort gate emits an
 `output_flag`, and the flags are exposed as IE toggles (`APPLY_AGE_INCL`,
-`APPLY_CE_B_INCL`, …). The production pipeline is the validated,
+`APPLY_CE_B_INCL`, ...). The production pipeline is the validated,
 authoritative algorithm; this tool is a presentation + selection layer on top of
 its outputs.
 
@@ -34,50 +34,50 @@ its outputs.
 
 ## Layout (aligned to the NDMM study protocol)
 
-- **Sidebar** — *Cohort Selection* dropdown + *Apply Cohort*; *Analysis options*
-  (**Line of therapy** 1L/2L/3L for the outcome tabs, and a **≥3-mo follow-up
-  restriction** toggle per protocol §6.7.2); an *Inclusion / Exclusion Criteria*
+- **Sidebar** -- *Cohort Selection* dropdown + *Apply Cohort*; *Analysis options*
+  (**Line of therapy** 1L/2L/3L for the outcome tabs, and a **>=3-mo follow-up
+  restriction** toggle per protocol Sec 6.7.2); an *Inclusion / Exclusion Criteria*
   accordion grouped by **Demographics / Clinical / Labs / Treatments / Other**,
   where each IE flag is a checkbox and each live filter (age slider,
   gender/region/payer/SOC multiselects) is a control; *Apply Filters*.
 - **Tabs**
-  - *Patient Characteristics* — protocol Table 1: demographics (sex, region,
-    race, **ethnicity**, insurance), **age bands + ≥70**, **Charlson CCI**,
+  - *Patient Characteristics* -- protocol Table 1: demographics (sex, region,
+    race, **ethnicity**, insurance), **age bands + >=70**, **Charlson CCI**,
     **dx/1L-initiation years**, **follow-up from dx**, **baseline comorbidities
     of interest** (hepatic/renal/infection/ocular/CV/neuro) and **baseline
     HCRU** (hospitalisations, ER, LOS). Categorical N/% (with a `(Missing)`
     category) + continuous mean/SD/median/IQR/min/max + missing counts, by
-    strata, with **<25-patient suppression** (§6.5).
-  - *OS / TTD / TTNT / Attrition* — protocol time-to-event endpoints (KM curve,
+    strata, with **<25-patient suppression** (Sec 6.5).
+  - *OS / TTD / TTNT / Attrition* -- protocol time-to-event endpoints (KM curve,
     **landmark survival at 6/9/12/18/24 mo with 95% CI**, median, number-at-risk),
-    plus *PFS\** clearly labelled **exploratory, non-protocol** (§6.9 states PFS
+    plus *PFS\** clearly labelled **exploratory, non-protocol** (Sec 6.9 states PFS
     could not be ascertained in claims). Outcomes recompute per selected
     **line of therapy**.
-  - *Regimen & Transitions* — regimen-frequency table per line, a
+  - *Regimen & Transitions* -- regimen-frequency table per line, a
     **configurable** treatment-pattern pathway Sankey (**adjustable depth
-    1L→N** and a **commercial-only / all-payers** toggle; patients who stop flow
+    1L->N** and a **commercial-only / all-payers** toggle; patients who stop flow
     into an "End" node), and a per-stage transition detail table.
-  - *Adjusted & Compare* — **adjusted Cox models** with a free choice of
+  - *Adjusted & Compare* -- **adjusted Cox models** with a free choice of
     covariates (HRs + 95% CI), and a **KM comparison of two saved cohort
-    selections** (Group A vs B — save any IE+filter combination from the
-    sidebar). All computed in memory on the loaded snapshot → instant.
-  - *Cohort & Attrition* — sequential attrition waterfall.
-  - *Validation & Checks* — LOT structural checks, NDMM protocol conformance,
-    and **protocol data-quality / analysis-readiness** (≥3-mo TTE denominator,
+    selections** (Group A vs B -- save any IE+filter combination from the
+    sidebar). All computed in memory on the loaded snapshot -> instant.
+  - *Cohort & Attrition* -- sequential attrition waterfall.
+  - *Validation & Checks* -- LOT structural checks, NDMM protocol conformance,
+    and **protocol data-quality / analysis-readiness** (>=3-mo TTE denominator,
     missing/unknown tallies, <25 suppression flags).
 
 **Subgroups / strata** available on the Patient-Characteristics and KM tabs:
-SOC regimen category, age band, **age ≥70 vs <70**, CCI band, the two
-**transplant-eligibility proxies** (age; age-or-CCI≥3), and the baseline
-medical-condition flags (CV / neuro / renal) — protocol §6.2.3 / §6.3.3.
+SOC regimen category, age band, **age >=70 vs <70**, CCI band, the two
+**transplant-eligibility proxies** (age; age-or-CCI>=3), and the baseline
+medical-condition flags (CV / neuro / renal) -- protocol Sec 6.2.3 / Sec 6.3.3.
 
 **Movable thresholds / windows** (in-memory sliders over raw measures carried on
-the analytic cohort — no re-query): baseline-CE months, follow-up-CE months,
+the analytic cohort -- no re-query): baseline-CE months, follow-up-CE months,
 year-of-diagnosis window, year-of-1L-initiation window, KM time horizon, a
-**minimum-follow-up slider** (0–24 mo), and **editable KM landmark times**
+**minimum-follow-up slider** (0-24 mo), and **editable KM landmark times**
 (comma-separated). What is *runtime* (any threshold/covariate/group
 over materialised columns) vs *build-time* (LOT-derivation params, a new
-claims-derived criterion, the SOC map, the superset window → re-materialise) is
+claims-derived criterion, the SOC map, the superset window -> re-materialise) is
 spelled out in **`ANALYTIC_COHORT.md`**.
 
 ## Files
@@ -107,30 +107,30 @@ cohort_explorer/
 
 ## Reuse / extension
 
-- **Switch tumour type** → set `INDICATION=<id>` (default `mm`). Each tumour type
+- **Switch tumour type** -> set `INDICATION=<id>` (default `mm`). Each tumour type
   is one **indication pack** in `R/indication.R` carrying its IE criteria, cohort
-  definitions, SOC/regimen vocabulary, endpoints, safety events, and labels — the
+  definitions, SOC/regimen vocabulary, endpoints, safety events, and labels -- the
   same engine + UI render any of them. Shipped packs: `mm` (Multiple Myeloma, the
   reference), `ec` (Endometrial, a fully worked example), and **template** packs
   `oc` (Ovarian), `crc` (Colorectal), `hnscc` (Head & Neck SCC), `nsclc` (NSCLC),
   `sclc` (SCLC). The templates use class-based standard-of-care labels + a generic
   IE core; replace each with the tumour's authoritative study definition +
-  drug→category SOC map before real data. **`ec` is worked through end-to-end**: its own IE criteria, an Overall + a dMMR/MSI-H biomarker cohort,
+  drug->category SOC map before real data. **`ec` is worked through end-to-end**: its own IE criteria, an Overall + a dMMR/MSI-H biomarker cohort,
   PFS treated as a **primary** endpoint (vs MM's exploratory PFS), immune-related
   safety events, Patient-Explorer milestones (reached immunotherapy /
   lenvatinib+pembro / PARP maintenance), and **EC-specific QC** (`pack$extra_checks`:
-  dMMR⊂advanced/recurrent, checkpoint-naïve rate, PFS≤OS).
-- **Add cohort-specific QC** → give a pack an `extra_checks = function(df) …`
+  dMMRsubset ofadvanced/recurrent, checkpoint-naive rate, PFS<=OS).
+- **Add cohort-specific QC** -> give a pack an `extra_checks = function(df) ...`
   returning `qc_row(...)` rows; they appear in the Validation & Checks tab under
   "<indication>-specific QC" and roll into the headline. (OC would add surgery /
   platinum-sensitivity checks; EC ships dMMR/checkpoint checks.)
-- **Add a tumour type** → add a `pack_<id>()` builder and register it in
+- **Add a tumour type** -> add a `pack_<id>()` builder and register it in
   `INDICATION_PACKS()`. Nothing else changes.
-- **Add an IE criterion** → add one entry to a pack's `criteria`. The sidebar
+- **Add an IE criterion** -> add one entry to a pack's `criteria`. The sidebar
   control, the attrition step, and the protocol check all appear automatically.
-- **Add a cohort** → add an entry to a pack's `cohorts` listing its default
+- **Add a cohort** -> add an entry to a pack's `cohorts` listing its default
   active flags. It shows up in the dropdown.
-- **Add a variable / endpoint** → extend `variable_dictionary()` / a pack's
+- **Add a variable / endpoint** -> extend `variable_dictionary()` / a pack's
   `endpoints`.
 
 ## Wiring real data (replaces the synthetic source)
@@ -159,7 +159,7 @@ COHORT_EXPLORER_LOTLONG=/path/lot_long.csv \
 # (b) a warehouse projection: implement a function and pass it as the source.
 #     The real builder is a thin join of the validated production pipeline outputs
 #     (ELIG_COH_FINAL + LOT_LONG) with the per-criterion flags emitted as
-#     COLUMNS instead of applied as row filters — see build_flagged_cohort.R.
+#     COLUMNS instead of applied as row filters -- see build_flagged_cohort.R.
 FLAGGED <- load_flagged_cohort(source_flagged_cohort_warehouse)
 ```
 
@@ -178,7 +178,7 @@ safety flag that disagrees with its count (`bl_x != n_x>0`); a missing/blank
 `lot_soc` or `payer_type` (which `table()` would silently drop from counts); a
 TTE beyond potential follow-up; a `ttnt_event=1` on a patient's last line; and
 (via `load_lot_long(cohort=)`) **any flagged patient whose LOT-long line count
-≠ `n_lines`** (not just missing 1L) — so per-LOT / regimen / pathway views can't
+!= `n_lines`** (not just missing 1L) -- so per-LOT / regimen / pathway views can't
 silently undercount vs the KPI N. All KM strata the UI offers are carried onto
 LOT-long (`augment_lot_long`), and the **Validation & Checks** data-quality
 audit covers **every** selectable stratum (missing/unknown + <25 suppression),
@@ -188,14 +188,14 @@ not a hand-picked subset.
 supplied **without** a real `COHORT_EXPLORER_LOTLONG`, the app **refuses to
 start** (per-LOT / regimen / transition views would otherwise be fabricated)
 unless you explicitly set `ALLOW_SYNTHETIC_LOTLONG=TRUE`. Whenever any source is
-synthetic, a red **"SYNTHETIC DATA — not for analysis"** banner is shown. The
-production `source_flagged_cohort_warehouse()` is a **fail-closed stub** — it
+synthetic, a red **"SYNTHETIC DATA -- not for analysis"** banner is shown. The
+production `source_flagged_cohort_warehouse()` is a **fail-closed stub** -- it
 errors until the DBI/odbc projection of the production pipeline outputs is implemented;
 there is no silent synthetic fallback on the production path.
 
 **Filter neutrality:** IE/param filter defaults are **all-data** (all observed
 levels; full age range), so the initial Overall/NDMM cohort equals the flag-only
-selection — a filter only ever shrinks the cohort when the user changes it. A
+selection -- a filter only ever shrinks the cohort when the user changes it. A
 unit test asserts `Overall(initial) == Overall(flag-only)`.
 
 ## Status / caveats
@@ -210,66 +210,66 @@ unit test asserts `Overall(initial) == Overall(flag-only)`.
 - **Later-line strata** are 1L-baseline **carry-forward** (joined onto LOT-long
   by `augment_lot_long()`); if a requested stratum is not available at the chosen
   line the KM tab shows a **hard warning** rather than silently pooling.
-- **Suppression** is applied at the **stratum** level (protocol §6.5: "do not
+- **Suppression** is applied at the **stratum** level (protocol Sec 6.5: "do not
   report a stratum with <25 patients"), surfaced for categorical *and*
   continuous selections. Cell-level suppression (small counts inside a
   reportable stratum) is **not** applied pending confirmation of the exact
   source small-count output rule.
-- **≥3-mo follow-up** uses `fu_potential_months`, which the synthetic generator
+- **>=3-mo follow-up** uses `fu_potential_months`, which the synthetic generator
   builds as **administrative** potential follow-up (independent of death), so an
-  early death still counts as having ≥3-mo potential follow-up. The real
+  early death still counts as having >=3-mo potential follow-up. The real
   projection must define `fu_potential_months` death-independently: under the
   pipeline's **primary** horizon (`ENDDATE = min(study end, death)` for TTE) that
-  is simply index → **study end**; under the optional disenrollment-sensitivity
-  horizon (`CENSOR_HORIZON_COL=ENDDATE_CE`) it is index → **min(study end,
-  disenrollment)** — but that exact value requires a death-independent
+  is simply index -> **study end**; under the optional disenrollment-sensitivity
+  horizon (`CENSOR_HORIZON_COL=ENDDATE_CE`) it is index -> **min(study end,
+  disenrollment)** -- but that exact value requires a death-independent
   disenrollment date supplied via **`DISENROLL_END_COL=<column>`**. Without that
   column the sensitivity build approximates: it un-caps death-bound rows to the
   study end but otherwise keeps `ENDDATE_CE`, so follow-up can be over-estimated
   only for early deaths who would have disenrolled before study end (a warning is
   logged only when `DISENROLL_END_COL` is set but not found in the table). Never
   time-to-death. See `warehouse/make_analytic_csv.R`.
-- **Transitions** cover **1L→2L→3L→4L** via the from-line selector; **4L is
+- **Transitions** cover **1L->2L->3L->4L** via the from-line selector; **4L is
   start-only** (no 4L cohort, per protocol), so per-LOT *outcome* lines stop at 3L.
 - **Protocol alignment / known deferrals:** lab-value-defined comorbidity arms
-  (hepatic/renal/ocular) use the ICD-code arm only — claims lab values are
-  sparse. The **SOC drug→category mappings and code lists** (protocol Annexes
+  (hepatic/renal/ocular) use the ICD-code arm only -- claims lab values are
+  sparse. The **SOC drug->category mappings and code lists** (protocol Annexes
   2/5) are placeholders here, so the real builder must take them from the
   authoritative LoT-algorithm specification; the synthetic SOC labels
-  here follow the §6.2.2 category *scheme*. Patient Characteristics are computed
+  here follow the Sec 6.2.2 category *scheme*. Patient Characteristics are computed
   at the **1L baseline**; when a later line is selected only the **outcomes**
   re-anchor to that line (per-line baseline re-derivation is a warehouse step).
 - Dependencies: `shiny` (required), `survival` (enables the KM tabs; the app
-  degrades gracefully without it). Tables use base `renderTable` — no `DT`
+  degrades gracefully without it). Tables use base `renderTable` -- no `DT`
   dependency.
 
 ## Production-readiness checklist (data/policy, outside the dashboard code)
 
 The dashboard shell and the active materialization mechanics
 (`warehouse/make_analytic_csv.R`) are complete and validator-gated. The items
-below are **data-source and policy decisions** for the data owner — the code is
+below are **data-source and policy decisions** for the data owner -- the code is
 ready to consume them, but they cannot be closed from within this repo. Each is
 marked in code/docs today (placeholders or opt-in flags) so nothing ships
 silently wrong.
 
-- [ ] **Real demographics / payer** — region, race, ethnicity, `payer_type` are
+- [ ] **Real demographics / payer** -- region, race, ethnicity, `payer_type` are
   emitted as `'Unknown'`; join the source member tables. Until `payer_type` is
   real, the **commercial-only pathway/Sankey** is structural only, not analytic.
-- [ ] **CCI** — emitted as `0`; wire the Charlson comorbidity derivation (also
+- [ ] **CCI** -- emitted as `0`; wire the Charlson comorbidity derivation (also
   gates any CCI-based subgroup / transplant-eligibility view).
-- [ ] **Safety flags/counts + `baseline_py`** — emitted as `0` / `1.0`; wire the
+- [ ] **Safety flags/counts + `baseline_py`** -- emitted as `0` / `1.0`; wire the
   baseline safety-event derivation before any safety-rate output.
-- [ ] **HCRU** — `ip_hosp_count` / `er_visit_count` / `ip_los_days` emitted as
+- [ ] **HCRU** -- `ip_hosp_count` / `er_visit_count` / `ip_los_days` emitted as
   `0`; wire the HCRU source.
-- [ ] **SOC drug→category map** — the class/count rule here follows the §6.2.2
+- [ ] **SOC drug->category map** -- the class/count rule here follows the Sec 6.2.2
   *scheme* but is a placeholder; swap in the authoritative LoT-algorithm map.
-- [ ] **Sensitivity disenrollment source** — only if you run
+- [ ] **Sensitivity disenrollment source** -- only if you run
   `CENSOR_HORIZON_COL=ENDDATE_CE`: expose a death-independent disenrollment
   date and pass `DISENROLL_END_COL=<column>` for exact potential follow-up.
-- [ ] **Cell-level suppression** — stratum-level `<25` suppression is applied;
+- [ ] **Cell-level suppression** -- stratum-level `<25` suppression is applied;
   confirm whether cell-level masking inside reportable strata is required for
   external reporting.
-- [ ] **Run-time strictness** — set `STRICT_LOT_DEDUP=TRUE` for production runs
+- [ ] **Run-time strictness** -- set `STRICT_LOT_DEDUP=TRUE` for production runs
   (unless the source LOT table is already unique per `(patient, LOT_NUM)`), and
   set `COHORT_EXPLORER_DIR` so the export self-validates (promotion is
   fail-closed without it).

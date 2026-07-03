@@ -25,8 +25,8 @@
 pack_mm <- function() list(
   id = "mm", disease = "Multiple Myeloma", short = "MM",
   header_title = "Oncology Real-World Data Explorer Tool",
-  header_sub = paste(" — Multiple Myeloma (Overall & NDMM) ·",
-                     "flag-driven IE selection · NDMM study protocol"),
+  header_sub = paste(" -- Multiple Myeloma (Overall & NDMM) |",
+                     "flag-driven IE selection | NDMM study protocol"),
   superset_label = "Superset (1L-treated MM)",
   # indication-specific UI copy (app falls back to generic wording when absent)
   table1_note = paste("Baseline characteristics (12-mo pre-index) for the selected",
@@ -184,15 +184,15 @@ pack_mm <- function() list(
 
   endpoints = list(
     OS   = list(time = "os_time",   event = "os_event", tab = "OS", per_line = TRUE,
-                label = "Overall Survival — time to death (OS)", protocol = TRUE),
+                label = "Overall Survival -- time to death (OS)", protocol = TRUE),
     TTD  = list(time = "ttd_time",  event = "ttd_event", tab = "TTD", per_line = TRUE,
                 label = "Time to Treatment Discontinuation (TTD)", protocol = TRUE),
     TTNT = list(time = "ttnt_time", event = "ttnt_event", tab = "TTNT", per_line = TRUE,
                 label = "Time to Next Treatment (TTNT)", protocol = TRUE),
     Attrition = list(time = "dx_to_1l_months", event = NA, tab = "Attrition", per_line = FALSE,
-                label = "Attrition — time from diagnosis to 1L", protocol = TRUE),
+                label = "Attrition -- time from diagnosis to 1L", protocol = TRUE),
     PFS_exploratory = list(time = "pfs_time", event = "pfs_event", tab = "PFS*", per_line = FALSE,
-                label = "PFS — EXPLORATORY (NOT a protocol endpoint; §6.9)",
+                label = "PFS -- EXPLORATORY (NOT a protocol endpoint; Sec 6.9)",
                 protocol = FALSE)
   ),
 
@@ -348,15 +348,15 @@ pack_mm <- function() list(
 
 .stub_endpoints <- function() list(
   OS   = list(time = "os_time",   event = "os_event", tab = "OS", per_line = TRUE,
-              label = "Overall Survival — time to death (OS)", protocol = TRUE),
+              label = "Overall Survival -- time to death (OS)", protocol = TRUE),
   TTD  = list(time = "ttd_time",  event = "ttd_event", tab = "TTD", per_line = TRUE,
               label = "Time to Treatment Discontinuation (TTD)", protocol = TRUE),
   TTNT = list(time = "ttnt_time", event = "ttnt_event", tab = "TTNT", per_line = TRUE,
               label = "Time to Next Treatment (TTNT)", protocol = TRUE),
   Attrition = list(time = "dx_to_1l_months", event = NA, tab = "Attrition", per_line = FALSE,
-              label = "Attrition — time from diagnosis to 1L", protocol = TRUE),
+              label = "Attrition -- time from diagnosis to 1L", protocol = TRUE),
   PFS_exploratory = list(time = "pfs_time", event = "pfs_event", tab = "PFS*", per_line = FALSE,
-              label = "PFS — EXPLORATORY (verify ascertainment)", protocol = FALSE))
+              label = "PFS -- EXPLORATORY (verify ascertainment)", protocol = FALSE))
 
 .stub_safety <- function() list(
   c("bl_hepatic",  "n_hepatic",    "Hepatic toxicity"),
@@ -380,8 +380,8 @@ pack_mm <- function() list(
 .make_stub_pack <- function(id, disease, short, soc_1l, soc_later) list(
   id = id, disease = disease, short = short,
   header_title = "Oncology Real-World Data Explorer Tool",
-  header_sub = paste0(" — ", disease, " (", short,
-                      ") · flag-driven IE selection · template pack (verify SOC & criteria)"),
+  header_sub = paste0(" -- ", disease, " (", short,
+                      ") | flag-driven IE selection | template pack (verify SOC & criteria)"),
   superset_label = paste0("Superset (1L-treated ", short, ")"),
   criteria = .stub_criteria(short),
   cohorts  = .stub_cohorts(),
@@ -417,8 +417,8 @@ pack_mm <- function() list(
 pack_ec <- function() list(
   id = "ec", disease = "Endometrial Cancer", short = "EC",
   header_title = "Oncology Real-World Data Explorer Tool",
-  header_sub = paste(" — Endometrial Cancer (advanced / recurrent, 1L systemic) ·",
-                     "flag-driven IE selection · dMMR/MSI-H biomarker subgroup"),
+  header_sub = paste(" -- Endometrial Cancer (advanced / recurrent, 1L systemic) |",
+                     "flag-driven IE selection | dMMR/MSI-H biomarker subgroup"),
   superset_label = "Superset (1L-systemic EC)",
 
   criteria = c(list(
@@ -512,13 +512,13 @@ pack_ec <- function() list(
     OS  = list(time = "os_time", event = "os_event", tab = "OS", per_line = TRUE,
                label = "Overall Survival (OS)", protocol = TRUE),
     PFS = list(time = "pfs_time", event = "pfs_event", tab = "PFS", per_line = FALSE,
-               label = "Progression-free Survival (PFS) — primary endpoint", protocol = TRUE),
+               label = "Progression-free Survival (PFS) -- primary endpoint", protocol = TRUE),
     TTD = list(time = "ttd_time", event = "ttd_event", tab = "TTD", per_line = TRUE,
                label = "Time to Treatment Discontinuation (TTD)", protocol = TRUE),
     TTNT= list(time = "ttnt_time", event = "ttnt_event", tab = "TTNT", per_line = TRUE,
                label = "Time to Next Treatment (TTNT)", protocol = TRUE),
-    Attrition = list(time = "dx_to_1l_months", event = NA, tab = "Dx→1L", per_line = FALSE,
-               label = "Attrition — diagnosis to 1L systemic", protocol = TRUE)),
+    Attrition = list(time = "dx_to_1l_months", event = NA, tab = "Dx->1L", per_line = FALSE,
+               label = "Attrition -- diagnosis to 1L systemic", protocol = TRUE)),
 
   # baseline safety events of interest for the chemo-immunotherapy profile
   # (immune-related AEs + taxane neuropathy), mapped onto the standard columns.

@@ -276,7 +276,7 @@ if (requireNamespace("survival", quietly = TRUE)) {
   # per-LOT KM off the LOT-long slice
   k2 <- km_fit(lot_slice(ll, ov$data$patient_id, 2L), "TTD", min_fu = 3)
   ok(!is.null(k2) && k2$n > 0, "per-LOT (2L) KM fits off the LOT-long slice")
-} else cat("SKIP: survival not installed — KM tests skipped\n")
+} else cat("SKIP: survival not installed -- KM tests skipped\n")
 
 # ---- review round 6 (QC workflow): correctness + labels + runtime guards ----
 # F1 patient-level TTNT biconditional
