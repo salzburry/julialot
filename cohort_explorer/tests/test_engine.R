@@ -500,6 +500,8 @@ options(cohort_explorer.indication = "mm")
 .shown <- patient_timeline_data(.pe_ll, .pe_coh, n = 8L)
 ok(is.numeric(.cnt) && .cnt >= .shown$n && .cnt == nrow(.pe_coh),
    "patient_timeline_data(count_only=TRUE) counts all matches without capping at n")
+ok(identical(patient_timeline_data(.pe_ll, .pe_coh, soc_filter = "__none__", count_only = TRUE), 0L),
+   "count_only=TRUE returns 0L (numeric, not NULL) when nothing matches")
 options(cohort_explorer.indication = "mm")
 
 cat(sprintf("\n%d passed, %d failed\n", .n_pass, .n_fail))

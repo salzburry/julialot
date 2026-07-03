@@ -98,7 +98,7 @@ cohort_explorer/
   config/study_config.R       ONE study definition; study_config_to_env() maps
                               it to the upstream LOT pipeline env vars
   config/emit_pipeline_env.R  emit that mapping as `export` lines for the build
-  tests/test_engine.R         base-R unit tests (124) for the engine + checks
+  tests/test_engine.R         base-R unit tests (126) for the engine + checks
                               (incl. indication packs, Patient Explorer, EC QC)
   tests/test_app.R            Shiny testServer tests (17): cohort reset, parity,
                               value-based landmark/safety/pathway, 2L no-crash,
