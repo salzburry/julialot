@@ -38,16 +38,15 @@ app_css <- function() {
     h4{font-size:15px;} h5{font-size:13px;color:var(--muted);
       text-transform:uppercase;letter-spacing:.04em;font-weight:600;margin-top:18px;}
 
-    /* ---- header ---- */
-    .ce-header{position:sticky;top:0;z-index:50;
-      background:linear-gradient(100deg,#12141C 0%,#20242F 46%,#2B2130 100%);
-      color:#fff;padding:15px 26px;font-weight:700;font-size:19px;letter-spacing:-.01em;
-      box-shadow:var(--sh-2);display:flex;align-items:baseline;gap:6px;
+    /* ---- header (white + orange brand identity) ---- */
+    .ce-header{position:sticky;top:0;z-index:50;background:var(--surface);
+      color:var(--ink);padding:15px 26px;font-weight:700;font-size:19px;letter-spacing:-.01em;
+      box-shadow:var(--sh-1);display:flex;align-items:baseline;gap:6px;
       border-bottom:3px solid var(--accent);}
-    .ce-header::before{content:'';width:9px;height:20px;border-radius:3px;
+    .ce-header::before{content:'';width:9px;height:22px;border-radius:3px;
       background:linear-gradient(180deg,var(--accent),#F47C20);
-      display:inline-block;margin-right:12px;transform:translateY(3px);}
-    .ce-header .sub{font-weight:400;font-size:13px;opacity:.82;letter-spacing:0;}
+      display:inline-block;margin-right:12px;transform:translateY(4px);}
+    .ce-header .sub{font-weight:400;font-size:13px;color:var(--muted);letter-spacing:0;}
 
     /* ---- layout shells ---- */
     .ce-side{background:var(--surface);border:1px solid var(--line);
