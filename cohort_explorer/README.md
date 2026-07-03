@@ -107,12 +107,11 @@ cohort_explorer/
   is one **indication pack** in `R/indication.R` carrying its IE criteria, cohort
   definitions, SOC/regimen vocabulary, endpoints, safety events, and labels — the
   same engine + UI render any of them. Shipped packs: `mm` (Multiple Myeloma, the
-  reference), and template packs `ec` (Endometrial), `oc` (Ovarian), `crc`
-  (Colorectal), `hnscc` (Head & Neck SCC), `nsclc` (NSCLC), `sclc` (SCLC). The
-  templates use class-based standard-of-care labels + a generic IE core; replace
-  each with the tumour's authoritative study definition + drug→category SOC map
-  before real data. **`ec` (Endometrial) is a fully worked example** (not a
-  template): its own IE criteria, an Overall + a dMMR/MSI-H biomarker cohort,
+  reference), `ec` (Endometrial, a fully worked example), and **template** packs
+  `oc` (Ovarian), `crc` (Colorectal), `hnscc` (Head & Neck SCC), `nsclc` (NSCLC),
+  `sclc` (SCLC). The templates use class-based standard-of-care labels + a generic
+  IE core; replace each with the tumour's authoritative study definition +
+  drug→category SOC map before real data. **`ec` is worked through end-to-end**: its own IE criteria, an Overall + a dMMR/MSI-H biomarker cohort,
   PFS treated as a **primary** endpoint (vs MM's exploratory PFS), immune-related
   safety events, Patient-Explorer milestones (reached immunotherapy /
   lenvatinib+pembro / PARP maintenance), and **EC-specific QC** (`pack$extra_checks`:

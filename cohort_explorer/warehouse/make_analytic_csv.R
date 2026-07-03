@@ -4,6 +4,13 @@
 # warehouse tables (project-local adapter; see warehouse/08_analytic_cohort.R
 # for the generic, source-agnostic version).
 #
+# SCOPE: this adapter materializes the MULTIPLE MYELOMA cohort -- it reads the MM
+# pipeline tables (elig_coh_final / lot1_base_end / ndmm_flags_all / lot_long) and
+# emits the MM/NDMM flag columns. It self-validates against the MM pack regardless
+# of any ambient INDICATION. A different tumour type (e.g. EC) needs its OWN
+# adapter that emits that pack's flag columns from that study's source tables; the
+# dashboard/engine are already pack-driven, only this materialization is per-study.
+#
 #   analytic_cohort.csv    (patient level, 57-col contract)
 #   analytic_lot_long.csv  (per line, 13-col contract)
 #
@@ -289,6 +296,13 @@ vfile <- if (nzchar(cedir)) file.path(cedir, "R", "build_flagged_cohort.R") else
 validated <- FALSE
 if (nzchar(vfile) && file.exists(vfile)) {
   tryCatch(local({
+    # this adapter materializes the MM cohort, so validate against the MM pack
+    # regardless of any ambient INDICATION. indication.R must load first because
+    # criteria_registry()/cohort_definitions() now delegate to active_pack().
+    old_ind <- getOption("cohort_explorer.indication")
+    options(cohort_explorer.indication = "mm")
+    on.exit(options(cohort_explorer.indication = old_ind), add = TRUE)
+    source(file.path(cedir, "R", "indication.R"), local = TRUE)
     source(file.path(cedir, "R", "criteria_registry.R"), local = TRUE)
     source(file.path(cedir, "R", "cohort_select.R"), local = TRUE)
     source(vfile, local = TRUE)

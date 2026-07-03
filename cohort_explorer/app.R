@@ -31,9 +31,9 @@ main_tabs <- c(
   list(
     tabPanel("Patient Characteristics",
       br(),
-      div(class = "ce-note",
-          "Baseline characteristics (12-mo pre-index) for the selected cohort, ",
-          "NDMM protocol Table 1. Strata levels with <25 patients are suppressed."),
+      div(class = "ce-note", PACK$table1_note %||% paste(
+          "Baseline characteristics (12-mo pre-index) for the selected cohort.",
+          "Strata levels with <25 patients are suppressed.")),
       fluidRow(
         column(5, selectInput("pc_vars", "Select Variables",
                     choices = setNames(SUMMARY_VARS,
@@ -58,16 +58,16 @@ main_tabs <- c(
   list(
     tabPanel("Regimen & Transitions",
       br(),
-      div(class = "ce-note",
-          "Regimen frequency for the selected Line of Therapy; the full 1L->4L ",
-          "treatment-pattern pathway (commercial-insured only, Exploratory ",
-          "Obj 3; patients who stop flow into 'End'); and a per-stage detail table."),
+      div(class = "ce-note", PACK$pathway_note %||% paste(
+          "Regimen frequency for the selected Line of Therapy; the full",
+          "1L->NL treatment-pattern pathway (patients who stop flow into 'End');",
+          "and a per-stage transition detail table.")),
       h4(textOutput("reg_title")), tableOutput("reg_freq"),
       fluidRow(
         column(5, sliderInput("sankey_maxline", "Pathway depth (lines)",
                               min = 2, max = 5, value = 4, step = 1)),
         column(5, checkboxInput("sankey_commercial",
-                                "Commercial-insured only (protocol Obj 3)", TRUE))),
+                                PACK$commercial_label %||% "Commercial-insured only", TRUE))),
       h4(textOutput("sankey_title")),
       plotOutput("sankey", height = "460px"),
       fluidRow(column(5, selectInput("trans_from", "Transition detail (from line)",
