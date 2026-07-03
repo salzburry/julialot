@@ -11,11 +11,15 @@ HAS_SURVIVAL <- requireNamespace("survival", quietly = TRUE)
 .app_dir <- tryCatch(dirname(sys.frame(1)$ofile), error = function(e) getwd())
 if (is.null(.app_dir) || !nzchar(.app_dir)) .app_dir <- getwd()
 
-for (f in c("criteria_registry.R", "build_flagged_cohort.R", "cohort_select.R",
-            "summaries.R", "km.R", "checks.R", "lot_views.R", "ui_helpers.R")) {
+# indication.R first: it defines the active pack every disease-specific function
+# below reads from (criteria, cohorts, SOC vocab, endpoints, safety, labels).
+for (f in c("indication.R", "criteria_registry.R", "build_flagged_cohort.R",
+            "cohort_select.R", "summaries.R", "km.R", "checks.R", "lot_views.R",
+            "patient_explorer.R", "ui_helpers.R")) {
   src <- file.path(.app_dir, "R", f)
   if (file.exists(src)) source(src, local = FALSE)
 }
+PACK <- active_pack()   # the selected tumour type (INDICATION env var; default mm)
 
 # datasource connection config (single source; used by the programmatic
 # warehouse read path in build_flagged_cohort.R)
@@ -60,6 +64,9 @@ PROVENANCE <- list(
   any_synthetic     = .cohort_synthetic || .lotlong_synthetic)
 
 REG$flt_soc$default <- sort(unique(FLAGGED$soc_category))
+SOC_LEVELS_1L <- sort(unique(FLAGGED$soc_category))   # Patient Explorer 1L filter
+# later-line regimen categories (lot_num>=2) for the "then received" pathway filter
+LATER_SOC_LEVELS <- sort(unique(LOT_LONG$lot_soc[LOT_LONG$lot_num >= 2L]))
 MAX_LOT <- 5L
 
 # lines offered in the per-LOT selector (protocol focuses on 1L/2L/3L)

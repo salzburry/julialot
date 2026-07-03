@@ -33,10 +33,10 @@ variable_dictionary <- function() {
     age_band     = list(label = "Age band", type = "cat"),
     age_ge70     = list(label = "Age >= 70", type = "cat"),
     cci_band     = list(label = "CCI band", type = "cat"),
-    dx_year      = list(label = "Year of first MM diagnosis", type = "cat"),
+    dx_year      = list(label = "Year of first diagnosis", type = "cat"),
     lot_init_year= list(label = "Year of 1L initiation", type = "cat"),
-    soc_category = list(label = "1L SOC regimen category", type = "cat"),
-    lot_soc      = list(label = "Current-line SOC regimen", type = "cat"),
+    soc_category = list(label = "1L regimen category", type = "cat"),
+    lot_soc      = list(label = "Current-line regimen", type = "cat"),
     ti_te_age    = list(label = "Transplant eligibility (age proxy)", type = "cat"),
     ti_te_age_cci= list(label = "Transplant eligibility (age or CCI proxy)", type = "cat"),
     ip_hosp_band = list(label = "Baseline inpatient hospitalisations", type = "cat"),
@@ -48,7 +48,12 @@ variable_dictionary <- function() {
     bl_ocular    = list(label = "Baseline ocular event", type = "binary"),
     bl_cv        = list(label = "Baseline cardiovascular condition", type = "binary"),
     bl_neuro     = list(label = "Baseline neurologic condition", type = "binary")
-  )
+  ) -> dict
+  # overlay indication-specific label wording (disease name / regimen terms) so
+  # the same dictionary reads correctly for MM, OC, PC, NSCLC, ...
+  ovr <- tryCatch(active_pack()$variable_labels, error = function(e) NULL)
+  for (v in names(ovr)) if (!is.null(dict[[v]])) dict[[v]]$label <- ovr[[v]]
+  dict
 }
 
 var_label <- function(v, dict = variable_dictionary())
@@ -140,7 +145,8 @@ summarize_continuous <- function(df, vars, strata = NULL,
 # per patient-year over the 12-mo baseline (baseline_py).
 safety_baseline_table <- function(df) {
   if (!nrow(df) || !"baseline_py" %in% names(df)) return(NULL)
-  events <- list(
+  events <- tryCatch(active_pack()$safety_events, error = function(e) NULL)
+  if (is.null(events)) events <- list(
     c("bl_hepatic", "n_hepatic",   "Hepatic toxicity"),
     c("bl_renal",   "n_renal",     "Renal impairment"),
     c("bl_infection","n_infection","Serious infection"),

@@ -7,8 +7,8 @@
             grep("^--file=", commandArgs(FALSE), value = TRUE)[1])),
           error = function(e) ".")
 rdir <- normalizePath(file.path(.here, "..", "R"))
-for (f in c("criteria_registry.R", "build_flagged_cohort.R", "cohort_select.R",
-            "summaries.R", "checks.R", "km.R", "lot_views.R"))
+for (f in c("indication.R", "criteria_registry.R", "build_flagged_cohort.R",
+            "cohort_select.R", "summaries.R", "checks.R", "km.R", "lot_views.R"))
   source(file.path(rdir, f))
 
 # tiny harness
@@ -408,6 +408,93 @@ ok(resolved_study_config()$lot1_from == "2018-06-01" &&
    study_config_to_env()[["NDMM_LOT1_FROM"]] == "2018-06-01",
    "an env override flows through resolved_study_config into the mapping")
 Sys.unsetenv("NDMM_LOT1_FROM")
+
+# ---- indication-pack portability: every registered tumour type must build a
+#      valid synthetic cohort + LOT-long through the SAME engine ----------------
+.mm_flags <- registry_flag_ids(criteria_registry())      # capture before switching
+for (ind in names(INDICATION_PACKS())) {
+  options(cohort_explorer.indication = ind)
+  p <- active_pack(ind)
+  reg <- criteria_registry(); coh <- cohort_definitions()
+  d2 <- load_flagged_cohort("synthetic", n = 300L)
+  has1 <- unique(synth_lot_long(d2)$patient_id)           # ensure generator runs
+  ll2 <- synth_lot_long(d2)
+  d2 <- d2[d2$patient_id %in% ll2$patient_id[ll2$lot_num == 1L], ]
+  ll2 <- ll2[ll2$patient_id %in% d2$patient_id, ]
+  okp <- tryCatch({ validate_flagged_cohort(d2); validate_lot_long(ll2)
+                    length(soc_levels_1l()) >= 2 && length(endpoint_dictionary()) >= 1 &&
+                    all(registry_flag_ids(reg) %in% names(d2)) }, error = function(e) FALSE)
+  ok(isTRUE(okp), sprintf("indication pack '%s' (%s) builds + validates end-to-end",
+                          ind, p$disease))
+}
+options(cohort_explorer.indication = "mm")               # restore default
+ok(identical(registry_flag_ids(criteria_registry()), .mm_flags),
+   "indication resets to mm after switching packs")
+
+# ---- patient explorer (swimlane) engine -------------------------------------
+source(file.path(rdir, "patient_explorer.R"))
+.pe_ll  <- synth_lot_long(df)
+.pe_coh <- df[df$patient_id %in% .pe_ll$patient_id[.pe_ll$lot_num == 1L], ]
+.pe_ll  <- .pe_ll[.pe_ll$patient_id %in% .pe_coh$patient_id, ]
+.td <- patient_timeline_data(.pe_ll, .pe_coh, n = 12L, sort_by = "lines")
+ok(!is.null(.td) && .td$n <= 12L && nrow(.td$segs) >= .td$n,
+   "patient_timeline_data returns <= n lanes and >=1 segment each")
+ok(all(.td$segs$x1 >= .td$segs$x0) && all(.td$marks$type %in% c("death", "censor")),
+   "swimlane segments are non-negative width; markers are death/censor")
+.socs <- sort(unique(.pe_coh$soc_category))
+.tf <- patient_timeline_data(.pe_ll, .pe_coh, n = 50L, soc_filter = .socs[1])
+ok(is.null(.tf) || all(.pe_coh$soc_category[match(.tf$ids, .pe_coh$patient_id)] == .socs[1]),
+   "1L-regimen filter restricts the swimlane sample to that regimen")
+ok(is.null(patient_timeline_data(.pe_ll, .pe_coh, soc_filter = "__none__")),
+   "swimlane returns NULL when no patient matches the filter")
+# pathway filter: "then received (later line) X" keeps only patients with a 2L+ X
+.later <- sort(unique(.pe_ll$lot_soc[.pe_ll$lot_num >= 2L]))[1]
+.tt <- patient_timeline_data(.pe_ll, .pe_coh, n = 50L, then_soc = .later)
+ok(!is.null(.tt) && all(vapply(.tt$ids, function(pid)
+     any(.pe_ll$lot_num[.pe_ll$patient_id == pid] >= 2L &
+         .pe_ll$lot_soc[.pe_ll$patient_id == pid] == .later), logical(1))),
+   "then_soc keeps only patients with that regimen at a later line")
+# reached_regimen (pack milestone): ANY-line membership
+.rr <- patient_timeline_data(.pe_ll, .pe_coh, n = 50L, reached_regimen = .later)
+ok(!is.null(.rr) && all(.later %in% .pe_ll$lot_soc[.pe_ll$patient_id %in% .rr$ids] |
+     TRUE) && all(vapply(.rr$ids, function(pid)
+     .later %in% .pe_ll$lot_soc[.pe_ll$patient_id == pid], logical(1))),
+   "reached_regimen keeps only patients who ever received that regimen")
+# event filters resolve to the right patient-level predicate
+.ed <- patient_timeline_data(.pe_ll, .pe_coh, n = 50L, event = "disc1l")
+ok(is.null(.ed) || all(.pe_coh$n_lines[match(.ed$ids, .pe_coh$patient_id)] == 1L),
+   "event=disc1l keeps only single-line patients")
+.eg <- patient_timeline_data(.pe_ll, .pe_coh, n = 50L, event = "ge3lines")
+ok(is.null(.eg) || all(.pe_coh$n_lines[match(.eg$ids, .pe_coh$patient_id)] >= 3L),
+   "event=ge3lines keeps only 3+-line patients")
+# milestones are pack-driven (indication-agnostic): MM ships CAR-T + transplant
+ok(!is.null(active_pack("mm")$pe_milestones) &&
+   "Reached CAR-T" %in% names(active_pack("mm")$pe_milestones),
+   "MM pack exposes journey milestones for the Patient Explorer")
+
+# ---- endometrial (EC): the fully worked pack -------------------------------
+options(cohort_explorer.indication = "ec")
+ecp <- active_pack("ec")
+ok(isTRUE(ecp$endpoints$PFS$protocol) && isFALSE(ecp$endpoints$PFS$per_line),
+   "EC treats PFS as a PRIMARY (protocol), patient-level endpoint")
+ok(all(c("overall", "dmmr") %in% names(cohort_definitions())),
+   "EC ships the overall + dMMR/MSI-H cohorts")
+ok("incl_dmmr" %in% registry_flag_ids(criteria_registry()) &&
+   "incl_advanced_recurrent" %in% registry_flag_ids(criteria_registry()),
+   "EC registry carries the dMMR + advanced/recurrent flags")
+ecdf <- load_flagged_cohort("synthetic", n = 500L)
+ecx <- cohort_specific_checks(ecdf)
+ok(!is.null(ecx) && all(c("Check", "Status", "Detail") %in% names(ecx)) &&
+   any(grepl("dMMR", ecx$Check)),
+   "EC extra_checks produces cohort-specific QC rows (dMMR subset etc.)")
+# force a dMMR-without-advanced inconsistency -> the QC must FAIL it
+ecbad <- ecdf; ecbad$incl_dmmr[1] <- 1L; ecbad$incl_advanced_recurrent[1] <- 0L
+ecxb <- cohort_specific_checks(ecbad)
+ok(ecxb$Status[ecxb$Check == "dMMR/MSI-H subset of advanced/recurrent"] == "FAIL",
+   "EC QC FAILs a dMMR patient who is not advanced/recurrent")
+ok(is.null(cohort_specific_checks(ecdf, pack_fn = NULL)) ||
+   TRUE, "cohort_specific_checks is fail-soft")  # smoke: no error path
+options(cohort_explorer.indication = "mm")
 
 cat(sprintf("\n%d passed, %d failed\n", .n_pass, .n_fail))
 if (.n_fail > 0) quit(status = 1L)

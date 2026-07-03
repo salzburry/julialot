@@ -58,12 +58,13 @@ study_config <- function() {
     min_followup_months = 3L,               # protocol >=3-mo restriction
     landmark_months     = c(6, 9, 12, 18, 24),
 
-    # SOC regimen category map (production loads the full drug->category list
-    # from the treatment-line algorithm reference; here we carry the §6.2.2 scheme labels)
-    soc_categories_1l    = c(
+    # SOC regimen category map -- single source of truth is the active indication
+    # pack (R/indication.R). Use it when loaded; else fall back to the MM labels
+    # (keeps this file usable standalone by the pipeline-env emitter).
+    soc_categories_1l    = if (exists("active_pack")) active_pack()$soc_1l else c(
       "Quadruplet with anti-CD38 backbone", "Triplet with anti-CD38 backbone",
       "Other triplet (non-anti-CD38)", "Doublet", "Monotherapy", "Other"),
-    soc_categories_later = c(
+    soc_categories_later = if (exists("active_pack")) active_pack()$soc_later else c(
       "Triplet with anti-CD38 backbone", "Other triplet (non-anti-CD38)",
       "Other novel agent (e.g. selinexor)", "CAR-T",
       "Bispecific (BCMA / non-BCMA)", "Doublet", "Monotherapy")

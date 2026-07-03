@@ -15,6 +15,20 @@
   data.frame(Check = name, Status = status, Detail = detail,
              stringsAsFactors = FALSE)
 }
+# public helper so an indication pack's extra_checks() can build check rows
+# without reaching into internals; same (Check, Status, Detail) contract.
+qc_row <- function(name, ok, detail, warn_ok = NULL) .chk(name, ok, detail, warn_ok)
+
+# Cohort-specific QC contributed by the active indication pack (pack$extra_checks
+# is an optional function(df) -> checks data.frame). Returns NULL when the pack
+# defines none, or on any error (fail-soft: never break the Checks tab).
+cohort_specific_checks <- function(df, pack_fn = NULL) {
+  if (is.null(pack_fn))
+    pack_fn <- tryCatch(active_pack()$extra_checks, error = function(e) NULL)
+  if (is.null(pack_fn) || !is.function(pack_fn)) return(NULL)
+  if (!nrow(df)) return(NULL)
+  tryCatch(pack_fn(df), error = function(e) NULL)
+}
 
 # ---- LOT structural checks --------------------------------------------------
 lot_checks <- function(df, max_lot = 5L) {

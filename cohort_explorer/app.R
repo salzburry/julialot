@@ -18,10 +18,13 @@ source(file.path(
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
-# protocol time-to-event tabs: endpoint key -> short tab label
-KM_TABS <- list(OS = "OS", TTD = "TTD", TTNT = "TTNT",
-                Attrition = "Attrition", PFS_exploratory = "PFS*")
-PATIENT_LEVEL_ONLY <- c("Attrition", "PFS_exploratory")  # 1L-only endpoints
+# time-to-event tabs, derived from the active pack's endpoint dictionary so each
+# indication can name/label/order its own endpoints (e.g. EC treats PFS as a
+# primary endpoint, MM as exploratory). endpoint key -> short tab label.
+KM_TABS <- lapply(EPDICT, function(e) e$tab %||% e$label)
+# endpoints computed at the patient level only (1L), not per selected line
+PATIENT_LEVEL_ONLY <- names(EPDICT)[!vapply(EPDICT,
+  function(e) isTRUE(e$per_line), logical(1))]
 
 # ---- UI ---------------------------------------------------------------------
 main_tabs <- c(
@@ -72,6 +75,41 @@ main_tabs <- c(
                     selected = 1L))),
       h4(textOutput("trans_title")), tableOutput("trans_tbl")),
 
+    tabPanel("Patient Explorer",
+      br(),
+      div(class = "ce-note",
+          "Look INTO the cohort: a sample of individual patients drawn as ",
+          "treatment timelines. Each lane is one patient; each segment is a line ",
+          "of therapy coloured by regimen; ", tags$b("x"), " marks death and ",
+          tags$b(">"), " a censored (still-followed) patient. Filter by 1L ",
+          "regimen to see representative journeys for a treatment choice. ",
+          "Illustrative, deterministic sample — not a cohort statistic."),
+      fluidRow(
+        column(4, selectInput("pe_soc", "Started 1L with",
+                    choices = c("All", SOC_LEVELS_1L), selected = "All",
+                    multiple = TRUE)),
+        column(4, selectInput("pe_then", "Then received (any later line)",
+                    choices = c("Any", LATER_SOC_LEVELS), selected = "Any",
+                    multiple = TRUE)),
+        column(4, selectInput("pe_event", "Journey outcome",
+                    choices = c(list("Any" = "any", "Died (OS event)" = "died",
+                                "Discontinued after 1L (no 2L)" = "disc1l",
+                                "3+ lines of therapy" = "ge3lines"),
+                                # pack milestones (reached CAR-T / SCT / surgery / ...)
+                                setNames(as.list(paste0("reach:", names(PACK$pe_milestones))),
+                                         names(PACK$pe_milestones))),
+                    selected = "any"))),
+      fluidRow(
+        column(4, selectInput("pe_sort", "Order patients by",
+                    choices = c("Most lines of therapy" = "lines",
+                                "Longest follow-up" = "os",
+                                "1L regimen" = "soc"), selected = "lines")),
+        column(4, sliderInput("pe_n", "Patients to show",
+                              min = 6, max = 40, value = 18, step = 2)),
+        column(4, div(class = "ce-note", style = "margin-top:26px",
+                      textOutput("pe_count")))),
+      plotOutput("pe_swim", height = "580px")),
+
     if (HAS_SURVIVAL) tabPanel("Adjusted & Compare",
       br(),
       div(class = "ce-note",
@@ -107,16 +145,17 @@ main_tabs <- c(
       div(class = "ce-kpi", div(class = "v", textOutput("chk_headline_v")),
           div(class = "l", "overall status")),
       h4("LOT structural checks"), tableOutput("lot_chk"),
-      h4("NDMM protocol conformance"), tableOutput("ndmm_chk"),
+      h4(paste(PACK$short, "protocol conformance")), tableOutput("ndmm_chk"),
+      if (is.function(PACK$extra_checks))
+        tagList(h4(paste0(PACK$short, "-specific QC")), tableOutput("extra_chk")),
       h4("Protocol data-quality / analysis readiness"), tableOutput("dq_chk"))
   )
 )
 
 ui <- fluidPage(
   app_css(),
-  div(class = "ce-header", "Oncology Real-World Data Explorer Tool",
-      span(class = "sub",
-           " — Multiple Myeloma (Overall & NDMM) · flag-driven IE selection · NDMM study protocol")),
+  div(class = "ce-header", PACK$header_title,
+      span(class = "sub", PACK$header_sub)),
   if (isTRUE(PROVENANCE$any_synthetic))
     div(class = "ce-banner",
         strong("SYNTHETIC DATA — not for analysis. "),
@@ -152,7 +191,7 @@ ui <- fluidPage(
       uiOutput("filters"), br(),
       actionButton("apply_filters", "Apply Filters", class = "btn-apply")),
 
-    column(9,
+    column(9, class = "ce-main",
       uiOutput("kpis"),
       do.call(tabsetPanel, c(list(id = "maintabs"), main_tabs)))
   ),
@@ -243,7 +282,7 @@ server <- function(input, output, session) {
 
   output$kpis <- renderUI({
     s <- selected()
-    div(style = "margin-bottom:8px",
+    div(class = "ce-kpi-row",
       kpi(format(s$n_out, big.mark = ","), "Patients (selected cohort)"),
       kpi(sprintf("%.1f%%", 100 * s$n_out / s$n_in), "of superset"),
       kpi(format(s$n_in, big.mark = ","), "Superset (flagged) N"),
@@ -396,6 +435,44 @@ server <- function(input, output, session) {
     t <- trans(); if (is.null(t)) data.frame(Note = "No transitions at this stage.") else t
   }, striped = TRUE, bordered = TRUE)
 
+  # ----- Patient Explorer (swimlanes) -----
+  # Resolve the sidebar controls into engine args (pack milestone -> reached_regimen).
+  pe_args <- reactive({
+    ev <- input$pe_event %||% "any"
+    reached <- NULL
+    if (startsWith(ev, "reach:")) {
+      reached <- PACK$pe_milestones[[sub("^reach:", "", ev)]]; ev <- "any"
+    }
+    thn <- input$pe_then %||% "Any"
+    list(soc = input$pe_soc %||% "All",
+         then = if (is.null(thn) || "Any" %in% thn) NULL else thn,
+         reached = reached, event = ev, sort = input$pe_sort %||% "lines",
+         n = as.integer(input$pe_n %||% 18L))
+  })
+  pe_data <- reactive({
+    a <- pe_args()
+    patient_timeline_data(LOT_LONG, selected()$data, n = a$n, soc_filter = a$soc,
+      then_soc = a$then, reached_regimen = a$reached, event = a$event, sort_by = a$sort)
+  })
+  output$pe_swim <- renderPlot({
+    a <- pe_args(); td <- pe_data()
+    socf <- a$soc
+    lbl <- if (is.null(socf) || "All" %in% socf) "1L: all regimens"
+           else paste0("1L: ", paste(socf, collapse = "/"))
+    if (!is.null(a$then)) lbl <- paste0(lbl, "  ->  then: ", paste(a$then, collapse = "/"))
+    patient_swimlane_plot(td, title = sprintf("Patient journeys - %s (%d shown)",
+      lbl, if (is.null(td)) 0L else td$n))
+  })
+  # how many patients in the selected cohort MATCH the pathway filter (vs shown)
+  output$pe_count <- renderText({
+    a <- pe_args()
+    full <- patient_timeline_data(LOT_LONG, selected()$data, n = nrow(selected()$data),
+      soc_filter = a$soc, then_soc = a$then, reached_regimen = a$reached, event = a$event)
+    nm <- if (is.null(full)) 0L else full$n
+    sprintf("%s patient(s) match this pathway; showing up to %d.",
+            format(nm, big.mark = ","), a$n)
+  })
+
   # ----- Attrition -----
   output$attr_plot <- renderPlot({
     a <- selected()$attrition
@@ -416,12 +493,17 @@ server <- function(input, output, session) {
                           active_state()$active_flags, REG))
   dq_tbl   <- reactive(protocol_dq_checks(selected()$data,
                           min_fu = as.integer(input$min_fu_months %||% MIN_FU_MONTHS)))
+  extra_tbl <- reactive(cohort_specific_checks(selected()$data))  # pack QC (may be NULL)
   output$chk_headline_v <- renderText(
-    checks_headline(rbind(lot_tbl(), ndmm_tbl(), dq_tbl())))
+    checks_headline(rbind(lot_tbl(), ndmm_tbl(), dq_tbl(), extra_tbl())))
   render_checks <- function(tbl) { tbl$Status <- vapply(tbl$Status, status_html, character(1)); tbl }
   output$lot_chk  <- renderTable(render_checks(lot_tbl()),  sanitize.text.function = identity, striped = TRUE, bordered = TRUE)
   output$ndmm_chk <- renderTable(render_checks(ndmm_tbl()), sanitize.text.function = identity, striped = TRUE, bordered = TRUE)
   output$dq_chk   <- renderTable(render_checks(dq_tbl()),   sanitize.text.function = identity, striped = TRUE, bordered = TRUE)
+  output$extra_chk <- renderTable({
+    t <- extra_tbl(); if (is.null(t)) data.frame(Note = "No cohort-specific checks configured.")
+    else render_checks(t)
+  }, sanitize.text.function = identity, striped = TRUE, bordered = TRUE)
 }
 
 shinyApp(ui, server)
