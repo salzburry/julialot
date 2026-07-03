@@ -114,24 +114,32 @@ two CSVs. It uses the same datasource contract as `config/warehouse_config.R`
 `ALLOW_UNVALIDATED_EXPORT=TRUE`). `warehouse/diagnose_data.R` is a read-only
 companion that reports how many rows fail each contract check.
 
-Its follow-up model separates the two horizons the contract distinguishes:
-**TTE (OS/TTD/TTNT) is censored at `ENDDATE_CE`** (the observed horizon =
-`min(study end, disenrollment, death)`), while **`fu_potential` is
-administrative and death-independent** — when death is what bound `ENDDATE_CE`
-it is un-capped to the study end, so patients who die early keep the potential
-follow-up they had and are **not** dropped from the `>=3`-month denominators.
-Only LOT lines starting on/before `ENDDATE_CE` are "observable"; they are
-renumbered `1..n` (contiguous) so the LOT-long line count equals `n_lines` and
-the 1L row **is** the patient-level 1L outcome. Both `elig_coh_final` and raw
-`lot_long` are de-duplicated (one row per patient / per `(patient, LOT_NUM)`)
-before any join or renumbering.
+Its follow-up model separates the two horizons the contract distinguishes.
+**TTE (OS/TTD/TTNT) is censored at the pipeline's PRIMARY horizon
+`ENDDATE = min(study end, death)`** by default; disenrollment censoring
+(`ENDDATE_CE = min(study end, disenrollment, death)`) is the pipeline's
+*optional sensitivity* variant, opt-in via `CENSOR_HORIZON_COL=ENDDATE_CE`.
+**`fu_potential` is administrative and death-independent** — under the primary
+horizon it is exactly the study end (no disenrollment), so patients who die
+early keep the potential follow-up they had and are **not** dropped from the
+`>=3`-month denominators. (Under the sensitivity horizon the exact
+death-independent value is `min(study end, disenrollment)`; supply
+`DISENROLL_END_COL` to use a real disenrollment date, else it falls back to the
+study end.) Only LOT lines starting on/before the horizon are "observable"; they
+are renumbered `1..n` (contiguous) so the LOT-long line count equals `n_lines`
+and the 1L row **is** the patient-level 1L outcome. Both `elig_coh_final` (by
+`rn` when present, else earliest `INDEX_DATE`) and raw `lot_long` (one row per
+`(patient, LOT_NUM)`) are de-duplicated before any join or renumbering; the run
+logs how many duplicate line-rows were collapsed and whether any disagreed on
+key fields.
 
 ## How the dashboard consumes it (instant)
 
 At startup `global.R` loads the snapshot **once** from
 `COHORT_EXPLORER_DATA` — which is either `"synthetic"` (default) or a path to an
 exported CSV (`COHORT_EXPLORER_DATA=/path/analytic_cohort.csv`), the wired path
-that `08_analytic_cohort.R` produces. A direct materialized-table read is also
+that `make_analytic_csv.R` produces for this deployment (`08_analytic_cohort.R`
+is the generic scaffold). A direct materialized-table read is also
 available but is called **programmatically**, not via the env var:
 `FLAGGED <- load_flagged_cohort(source_flagged_cohort_warehouse)` (that seam
 stays fail-closed until pointed at a live catalog). It holds the snapshot in

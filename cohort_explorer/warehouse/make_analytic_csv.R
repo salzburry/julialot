@@ -17,16 +17,18 @@
 #   export COHORT_EXPLORER_DIR=/path/to/cohort_explorer
 #   Rscript make_analytic_csv.R
 #
-# Follow-up model: TTE (OS/TTD/TTNT) is censored at ENDDATE_CE, the observed
-# horizon = min(study end, disenrollment, death). fu_potential is the
-# ADMINISTRATIVE, death-INDEPENDENT horizon: when death is what bound ENDDATE_CE
-# it is un-capped to the study end, so early deaths keep the potential follow-up
-# they had and are NOT dropped from the >=3-mo denominators. Only LOT lines
-# starting on/before ENDDATE_CE are "observable"; later lines are censored, not
-# used to stretch follow-up. Observable lines are renumbered 1..n (contiguous),
-# so the LOT-long line count == n_lines and the 1L row IS the patient-level 1L
-# outcome. elig_coh_final and raw lot_long are each de-duplicated (one row per
-# patient / per (patient,LOT_NUM)) BEFORE any join or renumbering.
+# Follow-up model. TTE (OS/TTD/TTNT) is censored at the pipeline's PRIMARY
+# horizon ENDDATE = min(study end, death) by default; disenrollment censoring
+# (ENDDATE_CE = min(study end, disenrollment, death)) is the pipeline's OPTIONAL
+# sensitivity variant -- opt in with CENSOR_HORIZON_COL=ENDDATE_CE.
+# fu_potential is the ADMINISTRATIVE, death-INDEPENDENT horizon: under the primary
+# horizon it is exactly the study end (no disenrollment), so early deaths keep the
+# potential follow-up they had and are NOT dropped from the >=3-mo denominators.
+# Only LOT lines starting on/before the horizon are "observable"; later lines are
+# censored, not used to stretch follow-up. Observable lines are renumbered 1..n
+# (contiguous), so the LOT-long line count == n_lines and the 1L row IS the
+# patient-level 1L outcome. elig_coh_final and raw lot_long are each de-duplicated
+# (one row per patient / per (patient,LOT_NUM)) BEFORE any join or renumbering.
 #
 # REAL: cohort, gender, age, all 12 IE flags, LOT structure, SOC category,
 #       OS/TTD/TTNT (administrative-horizon censored).
@@ -59,6 +61,54 @@ con <- dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
 on.exit(try(dbDisconnect(con), silent = TRUE), add = TRUE)
 message(sprintf("Connected (%s.%s). Querying (no temp views) ...", cfg$catalog, cfg$schema))
 
+# ---- schema-aware expression building (don't assume optional columns exist) ----
+cols_of <- function(t) toupper(names(dbGetQuery(con, paste0("SELECT * FROM ", t, " LIMIT 0"))))
+elig_cols <- cols_of(T_elig)
+
+# elig_coh_final de-dup order: prefer the pipeline's `rn` when present; otherwise
+# fall back to earliest INDEX_DATE (a guaranteed column) so we don't hard-fail on
+# a table that never carried `rn`.
+elig_order <- if ("RN" %in% elig_cols) "coalesce(e.rn,1)" else "e.INDEX_DATE"
+if (!"RN" %in% elig_cols)
+  message("NOTE: elig_coh_final has no `rn`; de-duplicating by earliest INDEX_DATE.")
+
+# TTE censoring horizon. The upstream pipeline's PRIMARY analysis caps follow-up
+# at ENDDATE = min(study end, death). Disenrollment censoring (ENDDATE_CE =
+# min(study end, disenrollment, death)) is the OPTIONAL *sensitivity* analysis.
+# Default to the primary horizon; set CENSOR_HORIZON_COL=ENDDATE_CE for the
+# disenrollment-sensitivity variant. The column must exist in elig_coh_final.
+horizon_col <- toupper(Sys.getenv("CENSOR_HORIZON_COL", "ENDDATE"))
+if (!horizon_col %in% elig_cols)
+  stop(sprintf("CENSOR_HORIZON_COL=%s not found in elig_coh_final (have: %s).",
+               horizon_col, paste(elig_cols, collapse = ", ")), call. = FALSE)
+hz_end_expr <- paste0("cast(ec.`", tolower(horizon_col), "` as date)")
+message(sprintf("TTE horizon column: %s", horizon_col))
+# CE follow-up descriptor uses ENDDATE_CE when present (it is CE-specific), else
+# falls back to the chosen horizon so a table without ENDDATE_CE still builds.
+ce_end_expr <- if ("ENDDATE_CE" %in% elig_cols) "cast(ec.ENDDATE_CE as date)" else hz_end_expr
+
+# fu_potential = the ADMINISTRATIVE, death-INDEPENDENT horizon.
+#  * Primary (ENDDATE = min(study end, death)): removing death leaves exactly the
+#    study end -> fu_end = study end (EXACT; no disenrollment involved).
+#  * Sensitivity (ENDDATE_CE folds in disenrollment): the exact death-independent
+#    horizon is min(study end, disenrollment). Supply DISENROLL_END_COL to use it
+#    directly; else fall back to un-capping death to study end (documented
+#    over-estimate only for patients who died early AND would have disenrolled
+#    before study end).
+disenroll_col <- toupper(Sys.getenv("DISENROLL_END_COL", ""))
+if (horizon_col == "ENDDATE_CE" && nzchar(disenroll_col) && disenroll_col %in% elig_cols) {
+  fu_end_expr <- paste0("least(date('", study_end, "'), coalesce(cast(ec.`", tolower(disenroll_col),
+                        "` as date), date('", study_end, "')))")
+  message(sprintf("fu_potential: death-independent disenrollment horizon from `%s`.", tolower(disenroll_col)))
+} else if (horizon_col == "ENDDATE_CE") {
+  if (nzchar(disenroll_col))
+    message(sprintf("NOTE: DISENROLL_END_COL=`%s` not found; fu_potential uses study-end fallback (may over-estimate).", tolower(disenroll_col)))
+  fu_end_expr <- paste0("CASE WHEN ec.DEATH_DT IS NOT NULL AND cast(ec.DEATH_DT as date) <= ", hz_end_expr,
+                        " THEN date('", study_end, "') ELSE ", hz_end_expr, " END")
+} else {
+  fu_end_expr <- paste0("date('", study_end, "')")   # primary horizon: exact death-independent
+}
+
 SOC_CASE <- "
     CASE
       WHEN coalesce(LOT_CART_LOT_FLG,0)=1 THEN 'CAR-T'
@@ -73,16 +123,16 @@ SOC_CASE <- "
 # de-duplicate elig_coh_final to ONE row per patient (guards against rn dupes
 # multiplying LOT rows). Used by BOTH queries.
 ELIG1 <- paste0("elig1 AS (SELECT * FROM (SELECT e.*, ",
-  "row_number() OVER (PARTITION BY cast(e.PATID as string) ORDER BY coalesce(e.rn,1)) AS _rk ",
+  "row_number() OVER (PARTITION BY cast(e.PATID as string) ORDER BY ", elig_order, ") AS _rk ",
   "FROM ", T_elig, " e) t WHERE t._rk = 1)")
 
 # ---- LOT-LONG (13 cols): observable lines only, renumbered 1..n.
-# TTE (OS/TTD/TTNT) is censored at ENDDATE_CE (min of study end, disenrollment,
-# death). fu_potential is the ADMINISTRATIVE, death-INDEPENDENT horizon: when
-# death is what bound ENDDATE_CE we un-cap it to the study end, so early deaths
-# still contribute the potential follow-up they had -> they are NOT dropped from
-# the >=3-mo denominators. Raw lot_long is de-duplicated to one row per
-# (patient, LOT_NUM) BEFORE renumbering so duplicate source rows can't fake lines.
+# TTE (OS/TTD/TTNT) is censored at the configured horizon (hz_end; default the
+# pipeline's primary ENDDATE = min(study end, death)). fu_potential is the
+# ADMINISTRATIVE, death-INDEPENDENT horizon (fu_end; see above) so early deaths
+# keep the potential follow-up they had and are NOT dropped from the >=3-mo
+# denominators. Raw lot_long is de-duplicated to one row per (patient, LOT_NUM)
+# BEFORE renumbering so duplicate source rows can't fake lines.
 sql_ll <- paste0("
 WITH lot_dedup AS (
   SELECT * FROM (SELECT l.*,
@@ -98,13 +148,12 @@ obs AS (
          ll.LOT_BASE_END_REASON           AS end_reason,
          coalesce(s.soc_category,'Other') AS lot_soc,
          cast(ec.DEATH_DT as date)        AS death_dt,
-         cast(ec.ENDDATE_CE as date)      AS ce_end,
-         CASE WHEN ec.DEATH_DT IS NOT NULL AND cast(ec.DEATH_DT as date) <= cast(ec.ENDDATE_CE as date)
-              THEN date('", study_end, "') ELSE cast(ec.ENDDATE_CE as date) END AS fu_end
+         ", hz_end_expr, " AS hz_end,
+         ", fu_end_expr, " AS fu_end
   FROM lot_dedup ll
   INNER JOIN elig1 ec ON cast(ll.PATID as string)=cast(ec.PATID as string)
   LEFT  JOIN soc s ON cast(ll.PATID as string)=s.PATID AND s.LOT_NUM = ll.LOT_NUM
-  WHERE ll.LOT_START_DT <= cast(ec.ENDDATE_CE as date)
+  WHERE ll.LOT_START_DT <= ", hz_end_expr, "
 ),
 w AS (
   SELECT o.*,
@@ -113,13 +162,13 @@ w AS (
   FROM obs o
 )
 SELECT patient_id, lot_num, lot_start_dt, lot_soc, next_soc, 'Unknown' AS payer_type,
-  greatest(0, round(datediff(least(coalesce(death_dt, ce_end), ce_end), lot_start_dt)/30.44,1)) AS os_time,
-  CASE WHEN death_dt IS NOT NULL AND death_dt <= ce_end THEN 1 ELSE 0 END AS os_event,
-  greatest(0, round(datediff(least(coalesce(lot_base_end_dt, ce_end), ce_end), lot_start_dt)/30.44,1)) AS ttd_time,
-  CASE WHEN lot_base_end_dt IS NOT NULL AND lot_base_end_dt <= ce_end
+  greatest(0, round(datediff(least(coalesce(death_dt, hz_end), hz_end), lot_start_dt)/30.44,1)) AS os_time,
+  CASE WHEN death_dt IS NOT NULL AND death_dt <= hz_end THEN 1 ELSE 0 END AS os_event,
+  greatest(0, round(datediff(least(coalesce(lot_base_end_dt, hz_end), hz_end), lot_start_dt)/30.44,1)) AS ttd_time,
+  CASE WHEN lot_base_end_dt IS NOT NULL AND lot_base_end_dt <= hz_end
         AND upper(coalesce(end_reason,'')) NOT LIKE '%STUDY%'
         AND upper(coalesce(end_reason,'')) NOT LIKE '%DISENROLL%' THEN 1 ELSE 0 END AS ttd_event,
-  greatest(0, round(datediff(coalesce(next_start, ce_end), lot_start_dt)/30.44,1)) AS ttnt_time,
+  greatest(0, round(datediff(coalesce(next_start, hz_end), lot_start_dt)/30.44,1)) AS ttnt_time,
   CASE WHEN next_start IS NOT NULL THEN 1 ELSE 0 END AS ttnt_event,
   greatest(0, round(datediff(fu_end, lot_start_dt)/30.44,1)) AS fu_potential_months
 FROM w")
@@ -127,6 +176,26 @@ FROM w")
 message("Querying per-line LOT-long ...")
 ll <- dbGetQuery(con, sql_ll)
 message(sprintf("  LOT-long rows: %s", format(nrow(ll), big.mark=",")))
+
+# raw (PATID, LOT_NUM) duplicate diagnostic: report how many source rows the
+# lot_dedup CTE collapsed, and how many groups DISAGREE on SOC/date/end fields
+# (i.e. de-dup silently discarded a materially different row). STRICT_LOT_DEDUP=TRUE
+# turns any disagreement into a hard stop.
+dup <- dbGetQuery(con, paste0("
+  SELECT coalesce(count(*),0) AS dup_groups, coalesce(sum(cnt-1),0) AS extra_rows,
+         coalesce(sum(CASE WHEN n_variants>1 THEN 1 ELSE 0 END),0) AS disagree_groups
+  FROM (SELECT cast(PATID as string) AS p, LOT_NUM, count(*) AS cnt,
+          count(distinct concat_ws('~',
+            coalesce(cast(LOT_START_DT as string),''), coalesce(cast(LOT_BASE_END_DT as string),''),
+            coalesce(cast(LOT_MED_CNT as string),''),  coalesce(cast(LOT_CLASS_ACD38 as string),''),
+            coalesce(cast(LOT_CART_LOT_FLG as string),''), coalesce(cast(LOT_ALLO_LOT_FLG as string),''),
+            coalesce(cast(LOT_BASE_END_REASON as string),''))) AS n_variants
+        FROM ", T_lot, " GROUP BY 1,2 HAVING count(*)>1) g"))
+message(sprintf("  raw (PATID,LOT_NUM) dupes: %s group(s), %s extra row(s); %s disagree on key fields (kept earliest LOT_START_DT).",
+  format(dup$dup_groups, big.mark=","), format(dup$extra_rows, big.mark=","), format(dup$disagree_groups, big.mark=",")))
+if (dup$disagree_groups > 0 && identical(toupper(Sys.getenv("STRICT_LOT_DEDUP", "")), "TRUE"))
+  stop(sprintf("%s duplicate (PATID,LOT_NUM) group(s) disagree on key fields and STRICT_LOT_DEDUP=TRUE.",
+               format(dup$disagree_groups, big.mark=",")), call. = FALSE)
 
 # ---- PATIENT-LEVEL base (demographics, CE, flags, 1L anchor). fu_from_dx / TTE /
 #      n_lines / soc_category are derived below from the LOT-long 1L row. --------
@@ -141,7 +210,7 @@ SELECT
   year(lb.LOT1_START_DT) AS lot_init_year,
   round(datediff(lb.LOT1_START_DT, ec.INDEX_DATE)/30.44,1) AS dx_to_1l_months,
   greatest(0, round(datediff(ec.INDEX_DATE, cast(ec.baseline_start as date))/30.44,1)) AS baseline_ce_months,
-  greatest(0, round(datediff(cast(ec.ENDDATE_CE as date), ec.INDEX_DATE)/30.44,1)) AS followup_ce_months,
+  greatest(0, round(datediff(", ce_end_expr, ", ec.INDEX_DATE)/30.44,1)) AS followup_ce_months,
   cast(0 as int) AS cci,
   0 AS bl_hepatic,0 AS bl_renal,0 AS bl_infection,0 AS bl_ocular,0 AS bl_cv,0 AS bl_neuro,
   0 AS n_hepatic,0 AS n_renal,0 AS n_infection,0 AS n_ocular,0 AS n_cv,0 AS n_neuro,
@@ -231,9 +300,25 @@ if (!validated && !identical(toupper(Sys.getenv("ALLOW_UNVALIDATED_EXPORT", ""))
   stop("Refusing to write un-validated CSVs. Set COHORT_EXPLORER_DIR to self-validate, ",
        "or ALLOW_UNVALIDATED_EXPORT=TRUE to override.", call. = FALSE)
 }
-if (!file.rename(ap_t, ap) || !file.rename(lp_t, lp)) {
-  stop("Failed to promote temp CSVs to their final paths (file.rename returned FALSE).", call. = FALSE)
+# promote the pair rollback-safely: back up any existing finals, rename both, and
+# if the second rename fails restore the prior pair so we never leave a
+# half-updated (new cohort + stale/missing lot-long) output.
+promote_pair <- function(temps, finals) {
+  baks <- paste0(finals, ".bak")
+  had  <- file.exists(finals)
+  for (i in which(had)) if (!file.rename(finals[i], baks[i]))
+    stop("Could not back up existing ", finals[i], " before promotion.", call. = FALSE)
+  ok <- logical(length(temps))
+  for (i in seq_along(temps)) ok[i] <- file.rename(temps[i], finals[i])
+  if (!all(ok)) {                                   # roll back to the prior state
+    unlink(finals[ok])                              # drop any partial promotion
+    for (i in which(had)) file.rename(baks[i], finals[i])
+    unlink(temps)
+    stop("Promotion failed (file.rename); restored previous outputs.", call. = FALSE)
+  }
+  unlink(baks[had])                                 # success: discard backups
 }
+promote_pair(c(ap_t, lp_t), c(ap, lp))
 
 message("\nDONE", if (validated) " (validated)" else " (NOT self-validated)")
 message(sprintf("  %s  (%s patients)", ap, format(nrow(ac), big.mark=",")))
