@@ -200,10 +200,12 @@ unit test asserts `Overall(initial) == Overall(flag-only)`.
   is simply index → **study end**; under the optional disenrollment-sensitivity
   horizon (`CENSOR_HORIZON_COL=ENDDATE_CE`) it is index → **min(study end,
   disenrollment)** — but that exact value requires a death-independent
-  disenrollment date supplied via **`DISENROLL_END_COL=<column>`**; without it the
-  script falls back to the study end (and logs that sensitivity follow-up may be
-  over-estimated for early deaths). Never time-to-death. See
-  `warehouse/make_analytic_csv.R`.
+  disenrollment date supplied via **`DISENROLL_END_COL=<column>`**. Without that
+  column the sensitivity build approximates: it un-caps death-bound rows to the
+  study end but otherwise keeps `ENDDATE_CE`, so follow-up can be over-estimated
+  only for early deaths who would have disenrolled before study end (a warning is
+  logged only when `DISENROLL_END_COL` is set but not found in the table). Never
+  time-to-death. See `warehouse/make_analytic_csv.R`.
 - **Transitions** cover **1L→2L→3L→4L** via the from-line selector; **4L is
   start-only** (no 4L cohort, per protocol), so per-LOT *outcome* lines stop at 3L.
 - **Protocol alignment / known deferrals:** lab-value-defined comorbidity arms
