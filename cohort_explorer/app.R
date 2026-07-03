@@ -114,9 +114,8 @@ main_tabs <- c(
 
 ui <- fluidPage(
   app_css(),
-  div(class = "ce-header", "Oncology Real-World Data Explorer Tool",
-      span(class = "sub",
-           " — Multiple Myeloma (Overall & NDMM) · flag-driven IE selection · NDMM study protocol")),
+  div(class = "ce-header", PACK$header_title,
+      span(class = "sub", PACK$header_sub)),
   if (isTRUE(PROVENANCE$any_synthetic))
     div(class = "ce-banner",
         strong("SYNTHETIC DATA — not for analysis. "),

@@ -216,7 +216,9 @@ synth_flagged_cohort <- function(n = 4000L, seed = 42L, soc_levels = NULL) {
   dx_year       <- as.integer(format(index_date, "%Y"))
   lot_init_year <- as.integer(format(lot1_start_dt, "%Y"))
 
-  soc_category <- sample(soc_levels, n, TRUE, c(0.22, 0.20, 0.18, 0.20, 0.12, 0.08))
+  soc_1l_probs <- if (length(soc_levels) == 6L) c(0.22, 0.20, 0.18, 0.20, 0.12, 0.08)
+                  else NULL   # non-MM pack: uniform over its own categories
+  soc_category <- sample(soc_levels, n, TRUE, soc_1l_probs)
   n_lines      <- sample(1:5, n, TRUE, c(0.42, 0.27, 0.16, 0.09, 0.06))
   lot1_length  <- round(pmax(20, rgamma(n, shape = 2.2, scale = 130)))
 
@@ -313,24 +315,24 @@ synth_flagged_cohort <- function(n = 4000L, seed = 42L, soc_levels = NULL) {
   df$excl_belantamab      <- bern(0.985)
   df$excl_pregnancy       <- as.integer(!(gender == "Female" & runif(n) < 0.01))
 
+  # reconcile against the ACTIVE registry: emit any flag the current indication
+  # declares that the MM-named block above didn't set (e.g. incl_qualifying_dx
+  # for a stub pack), and keep the shared ones as-is. Missing incl_* default to
+  # "mostly satisfied", excl_* to "mostly passes" -- plausible synthetic data.
+  for (fid in registry_flag_ids()) {
+    if (fid %in% names(df)) next
+    df[[fid]] <- if (startsWith(fid, "excl_")) bern(0.9) else bern(0.95)
+  }
+
   rownames(df) <- NULL
   df
 }
 
-# 1L SOC categories (protocol §6.2.2)
-soc_levels_1l <- function() c(
-  "Quadruplet with anti-CD38 backbone",
-  "Triplet with anti-CD38 backbone",
-  "Other triplet (non-anti-CD38)",
-  "Doublet", "Monotherapy", "Other")
-
-# 2L+ SOC categories (protocol §6.2.2, later lines)
-soc_levels_later <- function() c(
-  "Triplet with anti-CD38 backbone",
-  "Other triplet (non-anti-CD38)",
-  "Other novel agent (e.g. selinexor)",
-  "CAR-T", "Bispecific (BCMA / non-BCMA)",
-  "Doublet", "Monotherapy")
+# SOC / regimen category vocabularies -- sourced from the active indication pack
+# (indication.R) so the same engine serves any tumour type. Fall back to the MM
+# pack defaults if the pack layer is not loaded (e.g. a bare unit import).
+soc_levels_1l    <- function() active_pack()$soc_1l
+soc_levels_later <- function() active_pack()$soc_later
 
 # =============================================================================
 # Synthetic LOT-LONG generator -- one row per (patient, lot_num).
@@ -340,13 +342,15 @@ soc_levels_later <- function() c(
 synth_lot_long <- function(cohort, seed = 43L) {
   set.seed(seed)
   later <- soc_levels_later()
+  later_probs <- active_pack()$soc_later_probs
+  if (length(later_probs) != length(later)) later_probs <- NULL  # let sample() default to uniform
   rows <- list()
   for (i in seq_len(nrow(cohort))) {
     pid <- cohort$patient_id[i]; nl <- cohort$n_lines[i]
     start <- cohort$lot1_start_dt[i]
     for (l in seq_len(nl)) {
       soc <- if (l == 1L) cohort$soc_category[i]
-             else sample(later, 1, prob = c(0.22, 0.16, 0.10, 0.10, 0.10, 0.18, 0.14))
+             else sample(later, 1, prob = later_probs)
       # per-line ADMINISTRATIVE potential follow-up (death-independent), then
       # OS = min(latent death, potential follow-up) -- same semantics as the
       # patient level, so the >=3-mo TTE restriction retains early deaths.

@@ -85,7 +85,8 @@ select_cohort <- function(df, active_flags = character(),
   rows <- list()
   n_prev <- sum(keep)
   rows[[length(rows) + 1L]] <- data.frame(
-    step = 0L, criterion = "Superset (1L-treated MM)",
+    step = 0L, criterion = tryCatch(active_pack()$superset_label,
+                                    error = function(e) "Superset (1L-treated)"),
     polarity = "base", n_remaining = n_prev, n_dropped = 0L,
     stringsAsFactors = FALSE)
 

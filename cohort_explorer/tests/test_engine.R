@@ -7,8 +7,8 @@
             grep("^--file=", commandArgs(FALSE), value = TRUE)[1])),
           error = function(e) ".")
 rdir <- normalizePath(file.path(.here, "..", "R"))
-for (f in c("criteria_registry.R", "build_flagged_cohort.R", "cohort_select.R",
-            "summaries.R", "checks.R", "km.R", "lot_views.R"))
+for (f in c("indication.R", "criteria_registry.R", "build_flagged_cohort.R",
+            "cohort_select.R", "summaries.R", "checks.R", "km.R", "lot_views.R"))
   source(file.path(rdir, f))
 
 # tiny harness
@@ -408,6 +408,28 @@ ok(resolved_study_config()$lot1_from == "2018-06-01" &&
    study_config_to_env()[["NDMM_LOT1_FROM"]] == "2018-06-01",
    "an env override flows through resolved_study_config into the mapping")
 Sys.unsetenv("NDMM_LOT1_FROM")
+
+# ---- indication-pack portability: every registered tumour type must build a
+#      valid synthetic cohort + LOT-long through the SAME engine ----------------
+.mm_flags <- registry_flag_ids(criteria_registry())      # capture before switching
+for (ind in names(INDICATION_PACKS())) {
+  options(cohort_explorer.indication = ind)
+  p <- active_pack(ind)
+  reg <- criteria_registry(); coh <- cohort_definitions()
+  d2 <- load_flagged_cohort("synthetic", n = 300L)
+  has1 <- unique(synth_lot_long(d2)$patient_id)           # ensure generator runs
+  ll2 <- synth_lot_long(d2)
+  d2 <- d2[d2$patient_id %in% ll2$patient_id[ll2$lot_num == 1L], ]
+  ll2 <- ll2[ll2$patient_id %in% d2$patient_id, ]
+  okp <- tryCatch({ validate_flagged_cohort(d2); validate_lot_long(ll2)
+                    length(soc_levels_1l()) >= 2 && length(endpoint_dictionary()) >= 1 &&
+                    all(registry_flag_ids(reg) %in% names(d2)) }, error = function(e) FALSE)
+  ok(isTRUE(okp), sprintf("indication pack '%s' (%s) builds + validates end-to-end",
+                          ind, p$disease))
+}
+options(cohort_explorer.indication = "mm")               # restore default
+ok(identical(registry_flag_ids(criteria_registry()), .mm_flags),
+   "indication resets to mm after switching packs")
 
 cat(sprintf("\n%d passed, %d failed\n", .n_pass, .n_fail))
 if (.n_fail > 0) quit(status = 1L)

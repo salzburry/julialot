@@ -111,7 +111,14 @@ if (horizon_col == "ENDDATE_CE" && nzchar(disenroll_col) && disenroll_col %in% e
   fu_end_expr <- paste0("date('", study_end, "')")   # primary horizon: exact death-independent
 }
 
-SOC_CASE <- "
+# drug->category CASE for the SOC field. Sourced from the active indication pack
+# (R/indication.R) so the warehouse mapping stays in lock-step with the app's
+# regimen vocabulary; falls back to the MM expression if the pack isn't reachable
+# (COHORT_EXPLORER_DIR unset). Pick the tumour type with INDICATION=<id>.
+SOC_CASE <- local({
+  ind <- file.path(Sys.getenv("COHORT_EXPLORER_DIR", ""), "R", "indication.R")
+  if (file.exists(ind)) { source(ind, local = TRUE); return(indication_soc_case_sql()) }
+  "
     CASE
       WHEN coalesce(LOT_CART_LOT_FLG,0)=1 THEN 'CAR-T'
       WHEN coalesce(LOT_ALLO_LOT_FLG,0)=1 THEN 'Transplant'
@@ -121,6 +128,7 @@ SOC_CASE <- "
       WHEN coalesce(LOT_MED_CNT,0)=2 THEN 'Doublet'
       WHEN coalesce(LOT_MED_CNT,0)=1 THEN 'Monotherapy'
       ELSE 'Other' END"
+})
 
 # de-duplicate elig_coh_final to ONE row per patient (guards against rn dupes
 # multiplying LOT rows). Used by BOTH queries.

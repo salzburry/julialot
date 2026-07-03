@@ -11,11 +11,15 @@ HAS_SURVIVAL <- requireNamespace("survival", quietly = TRUE)
 .app_dir <- tryCatch(dirname(sys.frame(1)$ofile), error = function(e) getwd())
 if (is.null(.app_dir) || !nzchar(.app_dir)) .app_dir <- getwd()
 
-for (f in c("criteria_registry.R", "build_flagged_cohort.R", "cohort_select.R",
-            "summaries.R", "km.R", "checks.R", "lot_views.R", "ui_helpers.R")) {
+# indication.R first: it defines the active pack every disease-specific function
+# below reads from (criteria, cohorts, SOC vocab, endpoints, safety, labels).
+for (f in c("indication.R", "criteria_registry.R", "build_flagged_cohort.R",
+            "cohort_select.R", "summaries.R", "km.R", "checks.R", "lot_views.R",
+            "ui_helpers.R")) {
   src <- file.path(.app_dir, "R", f)
   if (file.exists(src)) source(src, local = FALSE)
 }
+PACK <- active_pack()   # the selected tumour type (INDICATION env var; default mm)
 
 # datasource connection config (single source; used by the programmatic
 # warehouse read path in build_flagged_cohort.R)

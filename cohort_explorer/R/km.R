@@ -7,21 +7,7 @@
 
 # Endpoint dictionary. `event = NA` => an all-events endpoint (Attrition: every
 # patient reaches 1L, so the KM is the distribution of the gap).
-endpoint_dictionary <- function() {
-  list(
-    OS   = list(time = "os_time",   event = "os_event",
-                label = "Overall Survival — time to death (OS)", protocol = TRUE),
-    TTD  = list(time = "ttd_time",  event = "ttd_event",
-                label = "Time to Treatment Discontinuation (TTD)", protocol = TRUE),
-    TTNT = list(time = "ttnt_time", event = "ttnt_event",
-                label = "Time to Next Treatment (TTNT)", protocol = TRUE),
-    Attrition = list(time = "dx_to_1l_months", event = NA,
-                label = "Attrition — time from diagnosis to 1L", protocol = TRUE),
-    PFS_exploratory = list(time = "pfs_time", event = "pfs_event",
-                label = "PFS — EXPLORATORY (NOT a protocol endpoint; §6.9)",
-                protocol = FALSE)
-  )
-}
+endpoint_dictionary <- function() active_pack()$endpoints
 
 LANDMARK_MONTHS <- c(6, 9, 12, 18, 24)   # protocol §6.7.2 survival probabilities
 MIN_FU_MONTHS   <- 3                      # protocol §6.7.2 potential-follow-up cut
