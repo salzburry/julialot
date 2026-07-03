@@ -23,7 +23,7 @@ app_css <- function() {
       --accent:#E8480C; --accent-600:#C63D09; --accent-050:#FEF1EC;
       --teal:#0E7C7B; --teal-050:#E6F3F2;
       --ink:#1A1F2B; --muted:#5B6472; --faint:#8A93A2;
-      --line:#E7E9EE; --line-2:#EDEFF3; --bg:#F4F5F8; --surface:#FFFFFF;
+      --line:#EAE6E2; --line-2:#F0ECE8; --bg:#FAF5F1; --surface:#FFFFFF;
       --ok:#127A3E; --warn:#B4770B; --bad:#C0392B;
       --r-lg:14px; --r-md:10px; --r-sm:8px;
       --sh-1:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.08);
@@ -32,7 +32,9 @@ app_css <- function() {
     }
     html,body{background:var(--bg);}
     body{font-family:var(--font);color:var(--ink);-webkit-font-smoothing:antialiased;
-      font-size:14px;line-height:1.5;}
+      font-size:14px;line-height:1.5;
+      background:radial-gradient(1200px 320px at 50% -90px, rgba(232,72,12,.07), transparent 72%), var(--bg);
+      background-attachment:fixed;}
     .container-fluid{padding:0;max-width:1560px;margin:0 auto;}
     h1,h2,h3,h4,h5{color:var(--ink);font-weight:650;letter-spacing:-.01em;}
     h4{font-size:15px;} h5{font-size:13px;color:var(--muted);
