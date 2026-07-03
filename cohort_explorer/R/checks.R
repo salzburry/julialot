@@ -21,13 +21,16 @@ qc_row <- function(name, ok, detail, warn_ok = NULL) .chk(name, ok, detail, warn
 
 # Cohort-specific QC contributed by the active indication pack (pack$extra_checks
 # is an optional function(df) -> checks data.frame). Returns NULL when the pack
-# defines none, or on any error (fail-soft: never break the Checks tab).
+# defines none. A broken hook is NOT hidden: it surfaces as a WARN row so a
+# miswired indication QC is visible in the tab/headline instead of vanishing.
 cohort_specific_checks <- function(df, pack_fn = NULL) {
   if (is.null(pack_fn))
     pack_fn <- tryCatch(active_pack()$extra_checks, error = function(e) NULL)
   if (is.null(pack_fn) || !is.function(pack_fn)) return(NULL)
   if (!nrow(df)) return(NULL)
-  tryCatch(pack_fn(df), error = function(e) NULL)
+  tryCatch(pack_fn(df),
+           error = function(e) .chk("Cohort-specific QC hook", FALSE,
+             paste0("extra_checks() errored: ", conditionMessage(e)), warn_ok = TRUE))
 }
 
 # ---- LOT structural checks --------------------------------------------------

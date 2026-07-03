@@ -28,6 +28,15 @@ pack_mm <- function() list(
   header_sub = paste(" — Multiple Myeloma (Overall & NDMM) ·",
                      "flag-driven IE selection · NDMM study protocol"),
   superset_label = "Superset (1L-treated MM)",
+  # indication-specific UI copy (app falls back to generic wording when absent)
+  table1_note = paste("Baseline characteristics (12-mo pre-index) for the selected",
+                      "cohort, NDMM protocol Table 1. Strata levels with <25 patients",
+                      "are suppressed."),
+  pathway_note = paste("Regimen frequency for the selected Line of Therapy; the full",
+                       "1L->4L treatment-pattern pathway (commercial-insured only,",
+                       "Exploratory Obj 3; patients who stop flow into 'End'); and a",
+                       "per-stage detail table."),
+  commercial_label = "Commercial-insured only (protocol Obj 3)",
 
   criteria = list(
     incl_qualifying_mm = list(
