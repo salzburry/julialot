@@ -31,8 +31,17 @@ app_css <- function() {
       --font:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
     }
     html,body{background:var(--bg);}
+    /* warm top glow, dithered so it can't band. Two layers over --bg:
+       (1) a faint SVG fractal-noise tile (data URI) that breaks up the 8-bit
+           steps a low-alpha gradient would otherwise show as concentric rings;
+       (2) a soft top-anchored radial wash. No background-attachment:fixed. */
     body{font-family:var(--font);color:var(--ink);-webkit-font-smoothing:antialiased;
-      font-size:14px;line-height:1.5;}
+      font-size:14px;line-height:1.5;
+      background-color:var(--bg);
+      background-image:
+        url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/><feColorMatrix type='saturate' values='0'/></filter><rect width='120' height='120' filter='url(%23n)' opacity='0.02'/></svg>\"),
+        radial-gradient(1000px 300px at 50% -60px, rgba(232,72,12,.06), rgba(232,72,12,0) 70%);
+      background-repeat:repeat, no-repeat;}
     .container-fluid{padding:0;max-width:1560px;margin:0 auto;}
     h1,h2,h3,h4,h5{color:var(--ink);font-weight:650;letter-spacing:-.01em;}
     h4{font-size:15px;} h5{font-size:13px;color:var(--muted);
