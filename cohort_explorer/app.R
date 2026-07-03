@@ -82,15 +82,29 @@ main_tabs <- c(
           "regimen to see representative journeys for a treatment choice. ",
           "Illustrative, deterministic sample — not a cohort statistic."),
       fluidRow(
-        column(4, selectInput("pe_soc", "1L regimen filter",
+        column(4, selectInput("pe_soc", "Started 1L with",
                     choices = c("All", SOC_LEVELS_1L), selected = "All",
                     multiple = TRUE)),
+        column(4, selectInput("pe_then", "Then received (any later line)",
+                    choices = c("Any", LATER_SOC_LEVELS), selected = "Any",
+                    multiple = TRUE)),
+        column(4, selectInput("pe_event", "Journey outcome",
+                    choices = c(list("Any" = "any", "Died (OS event)" = "died",
+                                "Discontinued after 1L (no 2L)" = "disc1l",
+                                "3+ lines of therapy" = "ge3lines"),
+                                # pack milestones (reached CAR-T / SCT / surgery / ...)
+                                setNames(as.list(paste0("reach:", names(PACK$pe_milestones))),
+                                         names(PACK$pe_milestones))),
+                    selected = "any"))),
+      fluidRow(
         column(4, selectInput("pe_sort", "Order patients by",
                     choices = c("Most lines of therapy" = "lines",
                                 "Longest follow-up" = "os",
                                 "1L regimen" = "soc"), selected = "lines")),
         column(4, sliderInput("pe_n", "Patients to show",
-                              min = 6, max = 40, value = 18, step = 2))),
+                              min = 6, max = 40, value = 18, step = 2)),
+        column(4, div(class = "ce-note", style = "margin-top:26px",
+                      textOutput("pe_count")))),
       plotOutput("pe_swim", height = "580px")),
 
     if (HAS_SURVIVAL) tabPanel("Adjusted & Compare",
@@ -417,16 +431,41 @@ server <- function(input, output, session) {
   }, striped = TRUE, bordered = TRUE)
 
   # ----- Patient Explorer (swimlanes) -----
+  # Resolve the sidebar controls into engine args (pack milestone -> reached_regimen).
+  pe_args <- reactive({
+    ev <- input$pe_event %||% "any"
+    reached <- NULL
+    if (startsWith(ev, "reach:")) {
+      reached <- PACK$pe_milestones[[sub("^reach:", "", ev)]]; ev <- "any"
+    }
+    thn <- input$pe_then %||% "Any"
+    list(soc = input$pe_soc %||% "All",
+         then = if (is.null(thn) || "Any" %in% thn) NULL else thn,
+         reached = reached, event = ev, sort = input$pe_sort %||% "lines",
+         n = as.integer(input$pe_n %||% 18L))
+  })
+  pe_data <- reactive({
+    a <- pe_args()
+    patient_timeline_data(LOT_LONG, selected()$data, n = a$n, soc_filter = a$soc,
+      then_soc = a$then, reached_regimen = a$reached, event = a$event, sort_by = a$sort)
+  })
   output$pe_swim <- renderPlot({
-    socf <- input$pe_soc %||% "All"
-    td <- patient_timeline_data(LOT_LONG, selected()$data,
-            n = as.integer(input$pe_n %||% 18L), soc_filter = socf,
-            sort_by = input$pe_sort %||% "lines")
-    lbl <- if (is.null(socf) || "All" %in% socf) "all 1L regimens"
-           else paste(socf, collapse = ", ")
-    patient_swimlane_plot(td, title = sprintf(
-      "Patient treatment journeys - %s (%d shown)", lbl,
-      if (is.null(td)) 0L else td$n))
+    a <- pe_args(); td <- pe_data()
+    socf <- a$soc
+    lbl <- if (is.null(socf) || "All" %in% socf) "1L: all regimens"
+           else paste0("1L: ", paste(socf, collapse = "/"))
+    if (!is.null(a$then)) lbl <- paste0(lbl, "  ->  then: ", paste(a$then, collapse = "/"))
+    patient_swimlane_plot(td, title = sprintf("Patient journeys - %s (%d shown)",
+      lbl, if (is.null(td)) 0L else td$n))
+  })
+  # how many patients in the selected cohort MATCH the pathway filter (vs shown)
+  output$pe_count <- renderText({
+    a <- pe_args()
+    full <- patient_timeline_data(LOT_LONG, selected()$data, n = nrow(selected()$data),
+      soc_filter = a$soc, then_soc = a$then, reached_regimen = a$reached, event = a$event)
+    nm <- if (is.null(full)) 0L else full$n
+    sprintf("%s patient(s) match this pathway; showing up to %d.",
+            format(nm, big.mark = ","), a$n)
   })
 
   # ----- Attrition -----

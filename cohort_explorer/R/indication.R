@@ -195,6 +195,13 @@ pack_mm <- function() list(
     c("bl_cv",       "n_cv",         "Cardiovascular condition"),
     c("bl_neuro",    "n_neuro",      "Neurologic condition")),
 
+  # Patient Explorer "journey milestone" filters: label -> regimen name(s) that,
+  # if reached at ANY line, define the milestone. Indication-specific (OC would
+  # use surgery / platinum-sensitive; EC its own) -- add per pack.
+  pe_milestones = list(
+    "Reached CAR-T" = "CAR-T",
+    "Reached transplant / SCT" = c("Transplant", "SCT", "Stem cell transplant")),
+
   variable_labels = list(
     dx_year      = "Year of first MM diagnosis",
     soc_category = "1L SOC regimen category",
@@ -370,6 +377,9 @@ pack_mm <- function() list(
     dx_year = paste("Year of first", short, "diagnosis"),
     soc_category = "1L regimen category",
     lot_soc = "Current-line regimen"),
+  # add tumour-specific journey milestones here, e.g. for OC:
+  #   list("Reached surgery" = "Interval debulking", "Platinum re-treatment" = ...)
+  pe_milestones = NULL,
   soc_case_sql = .stub_soc_case_sql,
   is_stub = TRUE)
 

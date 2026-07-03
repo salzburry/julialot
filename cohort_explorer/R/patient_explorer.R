@@ -11,18 +11,49 @@
 # =============================================================================
 
 # Build per-patient, per-line timeline segments (months from the patient's 1L
-# start) for up to `n` patients. `soc_filter` (character vec) restricts to those
-# 1L SOC categories; NULL / "All" keeps everything. `sort_by`: "soc" groups by 1L
-# regimen; "os" shows longest-followed first; "lines" shows the most heavily
-# treated first.
+# start) for up to `n` patients, with PATHWAY + EVENT filters so a reviewer can
+# pull specific journeys for QC (e.g. "1L Monotherapy -> later CAR-T", or every
+# patient who discontinued after 1L). All filters are indication-agnostic --
+# regimen sets come from the data / the active pack, not hard-coded MM terms.
+#   soc_filter       restrict 1L regimen (NULL / "All" = any)
+#   then_soc         require >=1 LATER line (lot_num>=2) whose regimen is in this set
+#   reached_regimen  require ANY line (any position) whose regimen is in this set
+#                    (this is how pack "milestones" like CAR-T / SCT / surgery map)
+#   event            structural outcome: "any" | "died" (OS event) |
+#                    "disc1l" (stopped after 1L, no 2L) | "ge3lines" (>=3 lines)
+#   sort_by          "soc" groups by 1L regimen; "os" longest-followed; "lines"
+#                    most heavily treated first.
 patient_timeline_data <- function(lot_long, cohort, n = 16L, soc_filter = NULL,
+                                  then_soc = NULL, reached_regimen = NULL,
+                                  event = c("any", "died", "disc1l", "ge3lines"),
                                   sort_by = c("soc", "os", "lines")) {
-  sort_by <- match.arg(sort_by)
+  sort_by <- match.arg(sort_by); event <- match.arg(event)
   anc <- cohort[, c("patient_id", "lot1_start_dt", "soc_category", "n_lines",
                     "os_time", "os_event"), drop = FALSE]
   if (!is.null(soc_filter) && length(soc_filter) && !("All" %in% soc_filter))
     anc <- anc[anc$soc_category %in% soc_filter, , drop = FALSE]
   if (!nrow(anc)) return(NULL)
+
+  # pathway / event filters that need the per-line table (restricted to remaining
+  # patients). Membership sets are computed once; anc is then intersected.
+  llc <- lot_long[lot_long$patient_id %in% anc$patient_id, , drop = FALSE]
+  if (!is.null(then_soc) && length(then_soc) && !("Any" %in% then_soc)) {
+    hit <- unique(llc$patient_id[llc$lot_num >= 2L & llc$lot_soc %in% then_soc])
+    anc <- anc[anc$patient_id %in% hit, , drop = FALSE]
+  }
+  if (!is.null(reached_regimen) && length(reached_regimen)) {
+    hitr <- unique(llc$patient_id[llc$lot_soc %in% reached_regimen])
+    anc <- anc[anc$patient_id %in% hitr, , drop = FALSE]
+  }
+  if (event != "any") {
+    keep <- switch(event,
+      died     = anc$patient_id[anc$os_event == 1L],
+      disc1l   = anc$patient_id[anc$n_lines == 1L],
+      ge3lines = anc$patient_id[anc$n_lines >= 3L])
+    anc <- anc[anc$patient_id %in% keep, , drop = FALSE]
+  }
+  if (!nrow(anc)) return(NULL)
+
   ord <- switch(sort_by,
     soc   = order(anc$soc_category, -anc$n_lines, anc$patient_id),
     os    = order(-anc$os_time, anc$patient_id),

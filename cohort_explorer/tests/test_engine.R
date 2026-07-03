@@ -447,6 +447,30 @@ ok(is.null(.tf) || all(.pe_coh$soc_category[match(.tf$ids, .pe_coh$patient_id)] 
    "1L-regimen filter restricts the swimlane sample to that regimen")
 ok(is.null(patient_timeline_data(.pe_ll, .pe_coh, soc_filter = "__none__")),
    "swimlane returns NULL when no patient matches the filter")
+# pathway filter: "then received (later line) X" keeps only patients with a 2L+ X
+.later <- sort(unique(.pe_ll$lot_soc[.pe_ll$lot_num >= 2L]))[1]
+.tt <- patient_timeline_data(.pe_ll, .pe_coh, n = 50L, then_soc = .later)
+ok(!is.null(.tt) && all(vapply(.tt$ids, function(pid)
+     any(.pe_ll$lot_num[.pe_ll$patient_id == pid] >= 2L &
+         .pe_ll$lot_soc[.pe_ll$patient_id == pid] == .later), logical(1))),
+   "then_soc keeps only patients with that regimen at a later line")
+# reached_regimen (pack milestone): ANY-line membership
+.rr <- patient_timeline_data(.pe_ll, .pe_coh, n = 50L, reached_regimen = .later)
+ok(!is.null(.rr) && all(.later %in% .pe_ll$lot_soc[.pe_ll$patient_id %in% .rr$ids] |
+     TRUE) && all(vapply(.rr$ids, function(pid)
+     .later %in% .pe_ll$lot_soc[.pe_ll$patient_id == pid], logical(1))),
+   "reached_regimen keeps only patients who ever received that regimen")
+# event filters resolve to the right patient-level predicate
+.ed <- patient_timeline_data(.pe_ll, .pe_coh, n = 50L, event = "disc1l")
+ok(is.null(.ed) || all(.pe_coh$n_lines[match(.ed$ids, .pe_coh$patient_id)] == 1L),
+   "event=disc1l keeps only single-line patients")
+.eg <- patient_timeline_data(.pe_ll, .pe_coh, n = 50L, event = "ge3lines")
+ok(is.null(.eg) || all(.pe_coh$n_lines[match(.eg$ids, .pe_coh$patient_id)] >= 3L),
+   "event=ge3lines keeps only 3+-line patients")
+# milestones are pack-driven (indication-agnostic): MM ships CAR-T + transplant
+ok(!is.null(active_pack("mm")$pe_milestones) &&
+   "Reached CAR-T" %in% names(active_pack("mm")$pe_milestones),
+   "MM pack exposes journey milestones for the Patient Explorer")
 
 cat(sprintf("\n%d passed, %d failed\n", .n_pass, .n_fail))
 if (.n_fail > 0) quit(status = 1L)

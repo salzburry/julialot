@@ -65,6 +65,8 @@ PROVENANCE <- list(
 
 REG$flt_soc$default <- sort(unique(FLAGGED$soc_category))
 SOC_LEVELS_1L <- sort(unique(FLAGGED$soc_category))   # Patient Explorer 1L filter
+# later-line regimen categories (lot_num>=2) for the "then received" pathway filter
+LATER_SOC_LEVELS <- sort(unique(LOT_LONG$lot_soc[LOT_LONG$lot_num >= 2L]))
 MAX_LOT <- 5L
 
 # lines offered in the per-LOT selector (protocol focuses on 1L/2L/3L)
