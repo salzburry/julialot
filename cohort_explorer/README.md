@@ -195,8 +195,11 @@ unit test asserts `Overall(initial) == Overall(flag-only)`.
 - **≥3-mo follow-up** uses `fu_potential_months`, which the synthetic generator
   builds as **administrative** potential follow-up (independent of death), so an
   early death still counts as having ≥3-mo potential follow-up. The real
-  projection must define `fu_potential_months` the same way (index → min(study
-  end, disenrollment), not time-to-death).
+  projection must define `fu_potential_months` death-independently: under the
+  pipeline's **primary** horizon (`ENDDATE = min(study end, death)` for TTE) that
+  is simply index → **study end**; under the optional disenrollment-sensitivity
+  horizon (`CENSOR_HORIZON_COL=ENDDATE_CE`) it is index → **min(study end,
+  disenrollment)**. Never time-to-death. See `warehouse/make_analytic_csv.R`.
 - **Transitions** cover **1L→2L→3L→4L** via the from-line selector; **4L is
   start-only** (no 4L cohort, per protocol), so per-LOT *outcome* lines stop at 3L.
 - **Protocol alignment / known deferrals:** lab-value-defined comorbidity arms
