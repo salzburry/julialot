@@ -10,7 +10,9 @@
 # Datasource config follows the SAME contract as config/warehouse_config.R:
 #   WAREHOUSE_DSN / WAREHOUSE_PWD / WAREHOUSE_CATALOG / PROJECT_WORK_SCHEMA
 # (set WAREHOUSE_CATALOG / PROJECT_WORK_SCHEMA to your warehouse's values)
-# Set COHORT_EXPLORER_DIR=<path to cohort_explorer> to self-validate (recommended).
+# Set COHORT_EXPLORER_DIR=<path to cohort_explorer> to self-validate. Export is
+# fail-closed: promotion is REFUSED unless validation passes, so COHORT_EXPLORER_DIR
+# is effectively required for a normal run (or set ALLOW_UNVALIDATED_EXPORT=TRUE).
 #
 #   export WAREHOUSE_PWD='<token>'; export WAREHOUSE_CATALOG=<catalog>
 #   export PROJECT_WORK_SCHEMA=<schema>; export OUT_DIR=/tmp/cohort_data
@@ -306,7 +308,10 @@ if (!validated && !identical(toupper(Sys.getenv("ALLOW_UNVALIDATED_EXPORT", ""))
 promote_pair <- function(temps, finals) {
   baks   <- paste0(finals, ".bak")
   backed <- logical(length(finals))                 # which finals we moved to .bak
-  restore <- function() for (j in which(backed)) file.rename(baks[j], finals[j])
+  restore <- function() for (j in which(backed))    # best-effort; warn if a restore itself fails
+    if (!file.rename(baks[j], finals[j]))
+      warning("Could not restore backup ", baks[j], " -> ", finals[j],
+              " (prior output left at the .bak path).", call. = FALSE)
   for (i in which(file.exists(finals))) {
     if (file.rename(finals[i], baks[i])) { backed[i] <- TRUE }
     else { restore(); stop("Could not back up existing ", finals[i],

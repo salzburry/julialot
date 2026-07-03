@@ -200,10 +200,12 @@ unit test asserts `Overall(initial) == Overall(flag-only)`.
   is simply index → **study end**; under the optional disenrollment-sensitivity
   horizon (`CENSOR_HORIZON_COL=ENDDATE_CE`) it is index → **min(study end,
   disenrollment)** — but that exact value requires a death-independent
-  disenrollment date supplied via **`DISENROLL_END_COL=<column>`**; without it the
-  script falls back to the study end (and logs that sensitivity follow-up may be
-  over-estimated for early deaths). Never time-to-death. See
-  `warehouse/make_analytic_csv.R`.
+  disenrollment date supplied via **`DISENROLL_END_COL=<column>`**. Without that
+  column the sensitivity build approximates: it un-caps death-bound rows to the
+  study end but otherwise keeps `ENDDATE_CE`, so follow-up can be over-estimated
+  only for early deaths who would have disenrolled before study end (a warning is
+  logged only when `DISENROLL_END_COL` is set but not found in the table). Never
+  time-to-death. See `warehouse/make_analytic_csv.R`.
 - **Transitions** cover **1L→2L→3L→4L** via the from-line selector; **4L is
   start-only** (no 4L cohort, per protocol), so per-LOT *outcome* lines stop at 3L.
 - **Protocol alignment / known deferrals:** lab-value-defined comorbidity arms
@@ -217,3 +219,34 @@ unit test asserts `Overall(initial) == Overall(flag-only)`.
 - Dependencies: `shiny` (required), `survival` (enables the KM tabs; the app
   degrades gracefully without it). Tables use base `renderTable` — no `DT`
   dependency.
+
+## Production-readiness checklist (data/policy, outside the dashboard code)
+
+The dashboard shell and the active materialization mechanics
+(`warehouse/make_analytic_csv.R`) are complete and validator-gated. The items
+below are **data-source and policy decisions** for the data owner — the code is
+ready to consume them, but they cannot be closed from within this repo. Each is
+marked in code/docs today (placeholders or opt-in flags) so nothing ships
+silently wrong.
+
+- [ ] **Real demographics / payer** — region, race, ethnicity, `payer_type` are
+  emitted as `'Unknown'`; join the source member tables. Until `payer_type` is
+  real, the **commercial-only pathway/Sankey** is structural only, not analytic.
+- [ ] **CCI** — emitted as `0`; wire the Charlson comorbidity derivation (also
+  gates any CCI-based subgroup / transplant-eligibility view).
+- [ ] **Safety flags/counts + `baseline_py`** — emitted as `0` / `1.0`; wire the
+  baseline safety-event derivation before any safety-rate output.
+- [ ] **HCRU** — `ip_hosp_count` / `er_visit_count` / `ip_los_days` emitted as
+  `0`; wire the HCRU source.
+- [ ] **SOC drug→category map** — the class/count rule here follows the §6.2.2
+  *scheme* but is a placeholder; swap in the authoritative LoT-algorithm map.
+- [ ] **Sensitivity disenrollment source** — only if you run
+  `CENSOR_HORIZON_COL=ENDDATE_CE`: expose a death-independent disenrollment
+  date and pass `DISENROLL_END_COL=<column>` for exact potential follow-up.
+- [ ] **Cell-level suppression** — stratum-level `<25` suppression is applied;
+  confirm whether cell-level masking inside reportable strata is required for
+  external reporting.
+- [ ] **Run-time strictness** — set `STRICT_LOT_DEDUP=TRUE` for production runs
+  (unless the source LOT table is already unique per `(patient, LOT_NUM)`), and
+  set `COHORT_EXPLORER_DIR` so the export self-validates (promotion is
+  fail-closed without it).
