@@ -476,34 +476,34 @@ qsheet("Q2 POMA & SCT-CART", "C55A11",
 "  SELECT DISTINCT PATID FROM <work>.LOT_LONG\n"
 "  WHERE LOT_NUM = 1 AND array_contains(split(LOT_BASE_MEDS,' '), 'POMA')\n"
 "),\n"
-"near_1l AS (   -- transplant / CAR-T AT or CLOSING the first line (the 'near 1L' red-flag signal)\n"
+"first_line AS (   -- the LOT1 row itself: transplant AT / CLOSING the first line\n"
 "  SELECT PATID,\n"
-"    max(CASE WHEN LOT_NUM=1 AND (LOT_TX_AUTO_SING_FLG=1 OR LOT_TX_AUTO_TAND_FLG=1) THEN 1 ELSE 0 END) auto_1l,\n"
-"    max(CASE WHEN (LOT_NUM=1 AND LOT_BASE_END_REASON='SCT_ALLO')\n"
-"               OR (LOT_NUM<=2 AND LOT_ALLO_LOT_FLG=1) THEN 1 ELSE 0 END)                              allo_near_1l,\n"
-"    max(CASE WHEN (LOT_NUM=1 AND LOT_BASE_END_REASON='SCT_CART')\n"
-"               OR (LOT_NUM<=2 AND LOT_CART_LOT_FLG=1) THEN 1 ELSE 0 END)                              cart_near_1l\n"
-"  FROM <work>.LOT_LONG GROUP BY PATID\n"
+"    max(CASE WHEN LOT_TX_AUTO_SING_FLG=1 OR LOT_TX_AUTO_TAND_FLG=1  THEN 1 ELSE 0 END) auto_at_1l,\n"
+"    -- CART/ALLO are line-ending in the engine, so 'closed LOT1' == occurred during/closing LOT1\n"
+"    max(CASE WHEN LOT_BASE_END_REASON = 'SCT_ALLO'                 THEN 1 ELSE 0 END) allo_closed_1l,\n"
+"    max(CASE WHEN LOT_BASE_END_REASON IN ('SCT_CART','CART_INIT')  THEN 1 ELSE 0 END) cart_closed_1l\n"
+"  FROM <work>.LOT_LONG WHERE LOT_NUM = 1 GROUP BY PATID\n"
 "),\n"
-"context AS (   -- allo/CAR-T on ANY line, for context only (does NOT imply non-naive)\n"
+"context AS (   -- allo/CAR-T on ANY line, informational only (later-line progression is expected)\n"
 "  SELECT PATID, max(LOT_ALLO_LOT_FLG) allo_any, max(LOT_CART_LOT_FLG) cart_any\n"
 "  FROM <work>.LOT_LONG GROUP BY PATID\n"
 ")\n"
-"SELECT count(*)                                                          AS poma_1l_pts,\n"
-"       sum(n.auto_1l)                                                    AS autologous_at_1l,   -- normal 1L care\n"
-"       sum(n.allo_near_1l)                                               AS allogeneic_near_1l, -- red flag\n"
-"       sum(n.cart_near_1l)                                               AS cart_near_1l,       -- red flag\n"
-"       sum(CASE WHEN n.allo_near_1l=1 OR n.cart_near_1l=1 THEN 1 ELSE 0 END) AS red_flag_near_1l,\n"
-"       sum(CASE WHEN c.allo_any=1  OR c.cart_any=1  THEN 1 ELSE 0 END)   AS allo_or_cart_any_line  -- context only\n"
-"FROM poma1l p JOIN near_1l n USING (PATID) JOIN context c USING (PATID);"),
+"SELECT count(*)                                                            AS poma_1l_pts,\n"
+"       sum(f.auto_at_1l)                                                   AS autologous_at_1l,    -- normal 1L care\n"
+"       sum(f.allo_closed_1l)                                               AS allo_closed_1l,      -- red flag\n"
+"       sum(f.cart_closed_1l)                                               AS cart_closed_1l,      -- red flag\n"
+"       sum(CASE WHEN f.allo_closed_1l=1 OR f.cart_closed_1l=1 THEN 1 ELSE 0 END) AS red_flag_closed_1l,\n"
+"       sum(CASE WHEN c.allo_any=1 OR c.cart_any=1 THEN 1 ELSE 0 END)       AS allo_or_cart_any_line  -- context only\n"
+"FROM poma1l p JOIN first_line f USING (PATID) JOIN context c USING (PATID);"),
  ("gap",""),
  ("sec", "Honest limits"),
- ("amber", "For the authoritative CAR-T-relative-to-LOT1 timing, use the existing pattern in apr_30_2026/R/validation_qs.R "
-  "(vqs_q6_cart), which bounds CAR-T to the LOT1 span [LOT1_START, LOT1_END] — extended by one day only when CAR-T closes "
-  "LOT1 — and reads 'before LOT1' from raw CAR-T claim dates. The LOT_LONG-only query above is a good first pass; "
-  "vqs_q6_cart is the precise version. Either way, a POMA-1L patient with a near-1L allo/CAR-T most likely had prior "
-  "line(s) OUTSIDE the observable window (Exclusion Criterion 3 already removes OBSERVABLE prior MM therapy) — the "
-  "transplant is the tell, not a claims error. Pair with the pharmacy look-back on the Q5 tab."),
+ ("amber", "The query above uses LOT1's END REASON, which is authoritative for 'CAR-T/allo CLOSED the first line' (CAR-T and allo "
+  "are line-ending in the engine). It does NOT catch CAR-T that occurred BEFORE first line. For the full, authoritative "
+  "CAR-T-relative-to-LOT1 breakdown use apr_30_2026/R/validation_qs.R (vqs_q6_cart): it reads FIRST_CART_DT from LOT1_SCT, "
+  "bounds it to [LOT1_START, LOT1_END] (+1 day only when END_REASON is SCT_CART/CART_INIT), AND reads 'before LOT1' from "
+  "the raw CAR-T claim dates — the piece LOT_LONG alone cannot give. Either way, a POMA-1L patient with a near-1L allo/CAR-T "
+  "most likely had prior line(s) OUTSIDE the observable window (Exclusion Criterion 3 removes OBSERVABLE prior MM therapy) — "
+  "the transplant is the tell, not a claims error. Pair with the pharmacy look-back on the Q5 tab."),
  ])
 
 # ---------- Q3 ----------
@@ -545,10 +545,10 @@ qsheet("Q3 POMA & other cancers", "C55A11",
  ("gap",""),
  ("sec", "Honest limits"),
  ("amber", "Use OTHER_MALIGN_FLAG from ELIG_COH_ALLFLAGS, not a hand-rolled diagnosis query. That flag applies the other-cancer "
-  "tumour-group codelist (spec Tab 44) with the '>=2 codes on separate days within 30 days for the same tumour type' rule. "
-  "Note: the protocol also describes a 1-inpatient-or-2-outpatient confirmation, but the pipeline code implements the "
-  "30-day-window codelist rule only (no inpatient/outpatient distinction), so treat the flag as codelist-based. A raw "
-  "ICD-10 C-code scan (e.g. the Kaposi C46* hypothesis) is only a best-effort supplement; lot1_studyteam_qs.R marks it as such."),
+  "tumour-group codelist (spec Tab 44) with the protocol confirmation rule: >=1 INPATIENT claim OR >=2 OUTPATIENT claims "
+  "on separate days within 30 days for the same tumour group — the pipeline classifies inpatient vs outpatient via "
+  "POS / TOS_CD / confinement (pipeline_steps.R, step 22 '22_other_malig_flag'). A raw ICD-10 C-code scan (e.g. the "
+  "Kaposi C46* hypothesis) is only a best-effort supplement, not this criterion; lot1_studyteam_qs.R marks its raw scan as such."),
  ])
 
 # ---------- Q4 ----------
@@ -606,28 +606,54 @@ qsheet("Q5 POMA & pharmacy benefit", "375623",
  ("sec", "Confirmatory query — pharmacy-benefit continuity + extended LEN/THAL look-back"),
  ("p", "Even though Optum guarantees pharmacy benefit, you can prove it per-patient and push the look-back as far back as each "
   "patient's enrollment allows, to quantify the true residual:"),
- ("p", "Table names below follow the repo's config_prompts.R: CDM sources are read via cdm_src(), which resolves to the "
-  "quarterly tables when USE_QUARTERLY_TABLES=TRUE — e.g. cdm_src('rx') → <cdm>.t_rx_2025q2, "
-  "cdm_src('member_cont_enrollment') → <cdm>.t_member_cont_enrollment_2025q2. LEN/THAL NDCs come from the study's own "
-  "therapy code list (cl_mma_codelist.csv), the same source the pipeline's mm_therapy_codes view uses."),
+ ("p", "Table names follow config_prompts.R: CDM sources are read via cdm_src(), which resolves to the quarterly tables when "
+  "USE_QUARTERLY_TABLES=TRUE (e.g. cdm_src('rx') → <cdm>.t_rx_2025q2). Crucially, this rebuilds CONTINUOUS enrollment "
+  "spans from RAW member_enrollment with the <=30-day gap rule and keeps only the span that COVERS the index date — "
+  "exactly as pipeline_steps.R step 13 ('13_enrollment_spans') + step 14 CE do. (Do NOT take min(ELIGEFF)/max(ELIGEND) "
+  "over all of a patient's rows: that bridges non-continuous coverage and can include post-index spans.) LEN/THAL NDCs "
+  "come from cl_mma_codelist.csv, the same source as the pipeline's mm_therapy_codes view."),
  ("sql",
 "WITH poma1l AS (\n"
 "  SELECT DISTINCT cast(PATID AS string) PATID FROM <work>.LOT_LONG\n"
 "  WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'POMA')\n"
 "),\n"
 "idx AS (SELECT cast(PATID AS string) PATID, INDEX_DATE FROM <work>.ELIG_COH_FINAL),\n"
+"-- rebuild continuous enrollment spans from RAW member_enrollment, absorbing <=30-day gaps\n"
+"-- (mirrors pipeline_steps.R step 13; gap rule: new span when elig_eff > prev max end + 30 + 1)\n"
+"base AS (\n"
+"  SELECT cast(PATID AS string) PATID, cast(ELIGEFF AS date) elig_eff, cast(ELIGEND AS date) elig_end\n"
+"  FROM <cdm>.t_member_enrollment_2025q2                          -- = cdm_src('member_enrollment')\n"
+"  WHERE ELIGEFF IS NOT NULL AND ELIGEND IS NOT NULL\n"
+"),\n"
+"ordered AS (\n"
+"  SELECT *, max(elig_end) OVER (PARTITION BY PATID ORDER BY elig_eff, elig_end\n"
+"                                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS max_end_prev\n"
+"  FROM base\n"
+"),\n"
+"flagged AS (\n"
+"  SELECT *, CASE WHEN max_end_prev IS NULL THEN 1\n"
+"                 WHEN elig_eff > date_add(max_end_prev, 31) THEN 1 ELSE 0 END AS new_grp\n"
+"  FROM ordered\n"
+"),\n"
+"grouped AS (\n"
+"  SELECT *, sum(new_grp) OVER (PARTITION BY PATID ORDER BY elig_eff, elig_end\n"
+"                               ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS grp_id\n"
+"  FROM flagged\n"
+"),\n"
+"spans AS (SELECT PATID, grp_id, min(elig_eff) cov_start, max(elig_end) cov_end\n"
+"          FROM grouped GROUP BY PATID, grp_id),\n"
+"-- the single continuous span that covers each patient's INDEX_DATE\n"
+"idx_span AS (\n"
+"  SELECT i.PATID, i.INDEX_DATE, s.cov_start\n"
+"  FROM idx i JOIN spans s ON s.PATID=i.PATID\n"
+"                        AND s.cov_start <= i.INDEX_DATE AND s.cov_end >= i.INDEX_DATE\n"
+"),\n"
 "-- LEN/THAL NDCs from the study MM-therapy codelist (cl_mma_codelist), 11-digit normalized\n"
 "len_thal AS (\n"
 "  SELECT DISTINCT lpad(regexp_replace(CL_CODE,'[^0-9]',''),11,'0') AS ndc\n"
 "  FROM <ref>.cl_mma_codelist\n"
 "  WHERE upper(CL_CODE_TYPE)='NDC' AND upper(CL_MED_ABBR) IN ('LENA','THAL')\n"
 "),\n"
-"-- longest continuous pre-index enrollment span per patient (proxy for observable history)\n"
-"enr AS (\n"
-"  SELECT cast(PATID AS string) PATID, min(ELIGEFF) first_cov, max(ELIGEND) last_cov\n"
-"  FROM <cdm>.t_member_cont_enrollment_2025q2 GROUP BY PATID     -- = cdm_src('member_cont_enrollment')\n"
-"),\n"
-"-- earliest LEN/THAL pharmacy fill (any time observable)\n"
 "early_oral AS (\n"
 "  SELECT cast(r.PATID AS string) PATID, min(cast(r.FILL_DT AS date)) first_len_thal\n"
 "  FROM <cdm>.t_rx_2025q2 r                                        -- = cdm_src('rx')\n"
@@ -635,18 +661,20 @@ qsheet("Q5 POMA & pharmacy benefit", "375623",
 "    ON lpad(regexp_replace(coalesce(cast(r.NDC AS string),''),'[^0-9]',''),11,'0') = t.ndc\n"
 "  GROUP BY r.PATID\n"
 ")\n"
-"SELECT count(*)                                                            AS poma_1l_pts,\n"
-"       sum(CASE WHEN datediff(i.INDEX_DATE, e.first_cov) > 183 THEN 1 ELSE 0 END) AS obs_history_gt_6mo,\n"
-"       sum(CASE WHEN o.first_len_thal < date_sub(i.INDEX_DATE,183) THEN 1 ELSE 0 END) AS early_len_thal_pre_baseline\n"
-"FROM poma1l p JOIN idx i USING (PATID)\n"
-"             JOIN enr e USING (PATID)\n"
+"SELECT count(*)                                                                AS poma_1l_pts,\n"
+"       -- does the index-covering continuous span reach >183d before index? (room to look back)\n"
+"       sum(CASE WHEN datediff(x.INDEX_DATE, x.cov_start) > 183 THEN 1 ELSE 0 END) AS obs_history_gt_6mo,\n"
+"       -- LEN/THAL fill inside observable coverage but BEFORE the 6-month baseline window (the true residual)\n"
+"       sum(CASE WHEN o.first_len_thal >= x.cov_start\n"
+"                 AND o.first_len_thal <  date_sub(x.INDEX_DATE,183) THEN 1 ELSE 0 END) AS early_len_thal_pre_baseline\n"
+"FROM poma1l p JOIN idx_span x USING (PATID)\n"
 "             LEFT JOIN early_oral o USING (PATID);"),
  ("gap",""),
  ("sec", "Honest limits"),
- ("amber", "'early_len_thal_pre_baseline' finds prior oral exposure that sits before the 6-month exclusion window — that is exactly "
-  "the residual blind spot, and it is measurable. What remains truly unobservable is any therapy before a patient's first "
-  "Optum enrollment date; report obs_history_gt_6mo so Julia can see how many POMA-1L patients even have enough pre-index "
-  "history for the look-back to be meaningful."),
+ ("amber", "'early_len_thal_pre_baseline' finds prior oral exposure that sits inside the patient's index-covering continuous "
+  "enrollment span but before the 6-month exclusion window — that is exactly the residual blind spot, and it is measurable. "
+  "What remains truly unobservable is any therapy before that continuous span begins; report obs_history_gt_6mo so Julia can "
+  "see how many POMA-1L patients even have >6 months of continuous pre-index coverage for the look-back to be meaningful."),
  ])
 
 print("Q2-Q5 sheets built")
