@@ -32,26 +32,26 @@ its outputs.
   (`cohort_definitions()`), mirroring the pipeline's Overall and NDMM study
   definitions. The user can start from either and add/remove criteria.
 
-## Layout (aligned to the NDMM study protocol)
+## Layout
 
 - **Sidebar** -- *Cohort Selection* dropdown + *Apply Cohort*; *Analysis options*
   (**Line of therapy** 1L/2L/3L for the outcome tabs, and a **>=3-mo follow-up
-  restriction** toggle per protocol Sec 6.7.2); an *Inclusion / Exclusion Criteria*
+  restriction** toggle); an *Inclusion / Exclusion Criteria*
   accordion grouped by **Demographics / Clinical / Labs / Treatments / Other**,
   where each IE flag is a checkbox and each live filter (age slider,
   gender/region/payer/SOC multiselects) is a control; *Apply Filters*.
 - **Tabs**
-  - *Patient Characteristics* -- protocol Table 1: demographics (sex, region,
+  - *Patient Characteristics* -- baseline demographics (sex, region,
     race, **ethnicity**, insurance), **age bands + >=70**, **Charlson CCI**,
     **dx/1L-initiation years**, **follow-up from dx**, **baseline comorbidities
     of interest** (hepatic/renal/infection/ocular/CV/neuro) and **baseline
     HCRU** (hospitalisations, ER, LOS). Categorical N/% (with a `(Missing)`
     category) + continuous mean/SD/median/IQR/min/max + missing counts, by
-    strata, with **<25-patient suppression** (Sec 6.5).
-  - *OS / TTD / TTNT / Attrition* -- protocol time-to-event endpoints (KM curve,
+    strata, with **<25-patient suppression**.
+  - *OS / TTD / TTNT / Attrition* -- time-to-event endpoints (KM curve,
     **landmark survival at 6/9/12/18/24 mo with 95% CI**, median, number-at-risk),
-    plus *PFS\** clearly labelled **exploratory, non-protocol** (Sec 6.9 states PFS
-    could not be ascertained in claims). Outcomes recompute per selected
+    plus *PFS\** clearly labelled **exploratory** (PFS not reliably ascertainable
+    in claims). Outcomes recompute per selected
     **line of therapy**.
   - *Regimen & Transitions* -- regimen-frequency table per line, a
     **configurable** treatment-pattern pathway Sankey (**adjustable depth
@@ -62,14 +62,14 @@ its outputs.
     selections** (Group A vs B -- save any IE+filter combination from the
     sidebar). All computed in memory on the loaded snapshot -> instant.
   - *Cohort & Attrition* -- sequential attrition waterfall.
-  - *Validation & Checks* -- LOT structural checks, NDMM protocol conformance,
-    and **protocol data-quality / analysis-readiness** (>=3-mo TTE denominator,
+  - *Validation & Checks* -- LOT structural checks, NDMM conformance checks,
+    and **data-quality / analysis-readiness** (>=3-mo TTE denominator,
     missing/unknown tallies, <25 suppression flags).
 
 **Subgroups / strata** available on the Patient-Characteristics and KM tabs:
 SOC regimen category, age band, **age >=70 vs <70**, CCI band, the two
 **transplant-eligibility proxies** (age; age-or-CCI>=3), and the baseline
-medical-condition flags (CV / neuro / renal) -- protocol Sec 6.2.3 / Sec 6.3.3.
+medical-condition flags (CV / neuro / renal).
 
 **Movable thresholds / windows** (in-memory sliders over raw measures carried on
 the analytic cohort -- no re-query): baseline-CE months, follow-up-CE months,
@@ -91,9 +91,9 @@ cohort_explorer/
     build_flagged_cohort.R    flagged-cohort contract + loader + synthetic gen
     cohort_select.R           flags + filters -> sub-cohort + attrition (pure)
     summaries.R               Patient Characteristics summary stats
-    km.R                      protocol endpoints + landmark tables + >=3mo cut
+    km.R                      time-to-event endpoints + landmark tables + >=3mo cut
     lot_views.R               per-LOT slicing, regimen freq, SOC transitions/Sankey
-    checks.R                  LOT structural + NDMM conformance + protocol DQ checks
+    checks.R                  LOT structural + NDMM conformance + DQ checks
     ui_helpers.R              theme + registry-driven control builders
   config/study_config.R       ONE study definition; study_config_to_env() maps
                               it to the upstream LOT pipeline env vars
@@ -127,7 +127,7 @@ cohort_explorer/
 - **Add a tumour type** -> add a `pack_<id>()` builder and register it in
   `INDICATION_PACKS()`. Nothing else changes.
 - **Add an IE criterion** -> add one entry to a pack's `criteria`. The sidebar
-  control, the attrition step, and the protocol check all appear automatically.
+  control, the attrition step, and the conformance check all appear automatically.
 - **Add a cohort** -> add an entry to a pack's `cohorts` listing its default
   active flags. It shows up in the dropdown.
 - **Add a variable / endpoint** -> extend `variable_dictionary()` / a pack's
@@ -210,8 +210,8 @@ unit test asserts `Overall(initial) == Overall(flag-only)`.
 - **Later-line strata** are 1L-baseline **carry-forward** (joined onto LOT-long
   by `augment_lot_long()`); if a requested stratum is not available at the chosen
   line the KM tab shows a **hard warning** rather than silently pooling.
-- **Suppression** is applied at the **stratum** level (protocol Sec 6.5: "do not
-  report a stratum with <25 patients"), surfaced for categorical *and*
+- **Suppression** is applied at the **stratum** level (small-cell suppression),
+  surfaced for categorical *and*
   continuous selections. Cell-level suppression (small counts inside a
   reportable stratum) is **not** applied pending confirmation of the exact
   source small-count output rule.
@@ -230,13 +230,13 @@ unit test asserts `Overall(initial) == Overall(flag-only)`.
   logged only when `DISENROLL_END_COL` is set but not found in the table). Never
   time-to-death. See `warehouse/make_analytic_csv.R`.
 - **Transitions** cover **1L->2L->3L->4L** via the from-line selector; **4L is
-  start-only** (no 4L cohort, per protocol), so per-LOT *outcome* lines stop at 3L.
-- **Protocol alignment / known deferrals:** lab-value-defined comorbidity arms
+  start-only** (no 4L cohort), so per-LOT *outcome* lines stop at 3L.
+- **Known deferrals:** lab-value-defined comorbidity arms
   (hepatic/renal/ocular) use the ICD-code arm only -- claims lab values are
-  sparse. The **SOC drug->category mappings and code lists** (protocol Annexes
-  2/5) are placeholders here, so the real builder must take them from the
+  sparse. The **SOC drug->category mappings and code lists** are placeholders
+  here, so the real builder must take them from the
   authoritative LoT-algorithm specification; the synthetic SOC labels
-  here follow the Sec 6.2.2 category *scheme*. Patient Characteristics are computed
+  here follow a standard-of-care category *scheme*. Patient Characteristics are computed
   at the **1L baseline**; when a later line is selected only the **outcomes**
   re-anchor to that line (per-line baseline re-derivation is a warehouse step).
 - Dependencies: `shiny` (required), `survival` (enables the KM tabs; the app
@@ -261,7 +261,7 @@ silently wrong.
   baseline safety-event derivation before any safety-rate output.
 - [ ] **HCRU** -- `ip_hosp_count` / `er_visit_count` / `ip_los_days` emitted as
   `0`; wire the HCRU source.
-- [ ] **SOC drug->category map** -- the class/count rule here follows the Sec 6.2.2
+- [ ] **SOC drug->category map** -- the class/count rule here follows a standard-of-care
   *scheme* but is a placeholder; swap in the authoritative LoT-algorithm map.
 - [ ] **Sensitivity disenrollment source** -- only if you run
   `CENSOR_HORIZON_COL=ENDDATE_CE`: expose a death-independent disenrollment

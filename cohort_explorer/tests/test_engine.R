@@ -331,7 +331,7 @@ ok(isTRUE(all.equal(df$fu_from_dx_months, round(df$dx_to_1l_months + df$os_time,
 # QC9 HCRU counts are summarizable as continuous
 sc9 <- summarize_continuous(df, c("ip_hosp_count", "er_visit_count"), NULL, VARDICT)
 ok(!is.null(sc9) && nrow(sc9) == 2 && "Median" %in% names(sc9),
-   "HCRU counts (hosp/ER) are available as continuous Table-1 stats")
+   "HCRU counts (hosp/ER) are available as continuous baseline stats")
 # QC12 commercial-only transitions are strictly fewer than all-payer
 tr_c <- lot_transition_table(ll, df$patient_id, 1L, commercial_only = TRUE)
 tr_a <- lot_transition_table(ll, df$patient_id, 1L, commercial_only = FALSE)
@@ -391,7 +391,7 @@ ok(identical(parse_landmark_months("6, 9, 12"), c(6, 9, 12)),
    "parse_landmark_months parses a comma list")
 ok(identical(parse_landmark_months(""), LANDMARK_MONTHS) &&
    identical(parse_landmark_months("junk"), LANDMARK_MONTHS),
-   "parse_landmark_months falls back to the protocol default on empty/garbage")
+   "parse_landmark_months falls back to the default on empty/garbage")
 ok(identical(parse_landmark_months("12, 3, 3, -1"), c(3, 12)),
    "parse_landmark_months sorts, dedups, drops non-positive")
 
@@ -476,7 +476,7 @@ ok(!is.null(active_pack("mm")$pe_milestones) &&
 options(cohort_explorer.indication = "ec")
 ecp <- active_pack("ec")
 ok(isTRUE(ecp$endpoints$PFS$protocol) && isFALSE(ecp$endpoints$PFS$per_line),
-   "EC treats PFS as a PRIMARY (protocol), patient-level endpoint")
+   "EC treats PFS as a PRIMARY, patient-level endpoint")
 ok(all(c("overall", "dmmr") %in% names(cohort_definitions())),
    "EC ships the overall + dMMR/MSI-H cohorts")
 ok("incl_dmmr" %in% registry_flag_ids(criteria_registry()) &&
