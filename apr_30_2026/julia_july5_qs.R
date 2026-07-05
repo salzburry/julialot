@@ -62,15 +62,36 @@ source(file.path(source_dir, "codelists_lot.R"))        # load_codelist_csv
 source(file.path(source_dir, "validation_qs.R"))        # vqs_* helpers (shared)
 
 # ===========================================================================
-# Excel writer. openxlsx if available; else one CSV per table (still runnable).
+# Ensure the Excel engine is present. Try to load openxlsx; if missing, try to
+# install it once; report whether it is now usable. The deliverable is an .xlsx,
+# so main() fails closed when this returns FALSE (unless ALLOW_CSV_FALLBACK).
+# ===========================================================================
+jj_ensure_xlsx_engine <- function() {
+  if (requireNamespace("openxlsx", quietly = TRUE)) return(TRUE)
+  log_msg("openxlsx not installed - attempting install.packages('openxlsx')...")
+  tryCatch(utils::install.packages("openxlsx", repos = getOption("repos"), quiet = TRUE),
+           error = function(e) log_msg("  openxlsx install failed: ", conditionMessage(e)))
+  requireNamespace("openxlsx", quietly = TRUE)
+}
+
+# ===========================================================================
+# Excel writer. Writes ONE .xlsx via openxlsx. If openxlsx is unavailable it
+# fails closed (stop) unless allow_csv=TRUE, in which case it emits one CSV per
+# table as an explicit, opt-in degraded mode.
 # A "sheet" is list(name, title, subtitle=NULL, narrative=character(), tables=
 # named list of data.frames or list(caption, df)).
 # ===========================================================================
-jj_write_workbook <- function(sheets, xlsx_path, csv_dir, stamp) {
+jj_write_workbook <- function(sheets, xlsx_path, csv_dir, stamp, allow_csv = FALSE) {
   san <- function(x) gsub("[^A-Za-z0-9]+", "_", x)
   if (!requireNamespace("openxlsx", quietly = TRUE)) {
-    log_msg("openxlsx not installed - writing one CSV per table instead of .xlsx. ",
-            "install.packages('openxlsx') for the single-workbook deliverable.")
+    if (!isTRUE(allow_csv))
+      stop("openxlsx is required to build the Excel workbook for Julia, but it is ",
+           "not installed and could not be installed. Install it (install.packages",
+           "('openxlsx')) and re-run, or set ALLOW_CSV_FALLBACK=TRUE to emit one CSV ",
+           "per table instead of the .xlsx.")
+    log_msg("WARNING: openxlsx unavailable and ALLOW_CSV_FALLBACK set - emitting one ",
+            "CSV per table INSTEAD of the .xlsx deliverable. This is NOT the workbook ",
+            "Julia expects; install openxlsx for the single-file deliverable.")
     for (s in sheets) for (nm in names(s$tables)) {
       entry <- s$tables[[nm]]; df <- entry
       if (is.list(entry) && !is.data.frame(entry)) df <- entry$df
@@ -141,6 +162,19 @@ jj_write_workbook <- function(sheets, xlsx_path, csv_dir, stamp) {
 # ===========================================================================
 main <- function() {
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
+
+  # Fail closed on the Excel engine BEFORE running any query, so a missing
+  # openxlsx does not waste warehouse time and cannot masquerade as success.
+  allow_csv <- tolower(Sys.getenv("ALLOW_CSV_FALLBACK", unset = "")) %in% c("1", "true", "yes")
+  have_xlsx <- jj_ensure_xlsx_engine()
+  if (!have_xlsx && !allow_csv)
+    stop("openxlsx is required to build Julia's Excel workbook, and it is not ",
+         "installed / could not be installed here. Run install.packages('openxlsx') ",
+         "and re-run, or set ALLOW_CSV_FALLBACK=TRUE to emit one CSV per table instead.")
+  if (!have_xlsx)
+    log_msg("WARNING: openxlsx unavailable; ALLOW_CSV_FALLBACK is set -> CSV-per-table ",
+            "degraded mode (NOT the .xlsx deliverable).")
+
   con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
@@ -188,6 +222,15 @@ main <- function() {
 
   sheets <- list()
   add_sheet <- function(...) sheets[[length(sheets) + 1L]] <<- list(...)
+
+  # Capture query/helper failures into per-question notes so a missing table
+  # surfaces IN the workbook (as a NOTE line) and the log, instead of a silently
+  # empty sheet that reads as "answered".
+  notes_env <- new.env()
+  cap <- function(expr, label, key) tryCatch(expr, error = function(e) {
+    m <- sprintf("NOTE: '%s' could not be produced - %s", label, conditionMessage(e))
+    log_msg("  ", m); notes_env[[key]] <- c(notes_env[[key]], m); NULL
+  })
 
   # ---- Read Me -----------------------------------------------------------
   add_sheet(name = "Read Me", title = "Julia's questions - 5 July 2026 (real cohort)",
@@ -237,7 +280,7 @@ main <- function() {
     if (length(ids) > 0) {
       # final LOT assignment for the picked patients
       q1_tables[["Assigned lines (LOT_LONG) for the example patients"]] <-
-        tryCatch(db_q(con, glue("
+        cap(db_q(con, glue("
           SELECT cast(PATID as string) PATID, LOT_NUM,
                  cast(LOT_START_DT as string) LOT_START_DT, LOT_START_TYPE,
                  LOT_BASE_MEDS, cast(LOT_BASE_END_DT as string) LOT_BASE_END_DT,
@@ -246,18 +289,19 @@ main <- function() {
                  cast(LOT_TX_AUTO_DT_1 as string) LOT_TX_AUTO_DT_1,
                  cast(LOT_TX_AUTO_DT_2 as string) LOT_TX_AUTO_DT_2
           FROM {lot_long} WHERE cast(PATID as string) IN ({vqs_in_list(ids)})
-          ORDER BY PATID, LOT_NUM")), error = function(e) NULL)
+          ORDER BY PATID, LOT_NUM")), "Assigned lines (LOT_LONG)", "q1")
       q1_tables[["MAP segments the engine built"]] <-
-        tryCatch(vqs_map_journey(con, map_tbl, lot_long, ids), error = function(e) NULL)
+        cap(vqs_map_journey(con, map_tbl, lot_long, ids), "MAP segments", "q1")
       q1_tables[["Raw MM-therapy claims (all routes: rx NDC, medical PROC_CD/BILL_PROC_CD/NDC)"]] <-
-        tryCatch(vqs_raw_mma_claims(con, ids, bounds = bounds$sql), error = function(e) NULL)
+        cap(vqs_raw_mma_claims(con, ids, bounds = bounds$sql), "Raw MM-therapy claims", "q1")
       if (have_sct)
         q1_tables[["Raw SCT / CAR-T claims (medical PROC_CD/BILL_PROC_CD + med_procedure + med_diagnosis)"]] <-
-          tryCatch(vqs_raw_sct_claims(con, ids, bounds = bounds$sql), error = function(e) NULL)
+          cap(vqs_raw_sct_claims(con, ids, bounds = bounds$sql), "Raw SCT / CAR-T claims", "q1")
       q1_notes <- c(sprintf("Example patients (%d): %s.", length(ids), paste(ids, collapse = ", ")),
                     "Chain: raw claims (routes above) -> MAP segments -> assigned LOT, all with dates.",
                     if (!bounds$available) "Raw claims are NOT observation-window bounded (ELIG_COH_FINAL unavailable)." else
-                      "Raw claims scoped to [INDEX_DATE, OBS_END_DT] from ELIG_COH_FINAL.")
+                      "Raw claims scoped to [INDEX_DATE, OBS_END_DT] from ELIG_COH_FINAL.",
+                    notes_env$q1)
     } else q1_notes <- "No example patients could be selected from LOT_LONG."
   } else q1_notes <- paste0(map_tbl, " not readable - journeys skipped. Build MAP_STACKED (02_lot1.R).")
   add_sheet(name = "Q1 journeys", title = "Q1 - Patient journeys: raw claims -> assigned LOT",
@@ -285,7 +329,7 @@ main <- function() {
              sum(CASE WHEN f.allo_closed_1l=1 OR f.cart_closed_1l=1 THEN 1 ELSE 0 END) AS red_flag_closed_1l,
              sum(CASE WHEN c.allo_any=1 OR c.cart_any=1 THEN 1 ELSE 0 END)             AS allo_or_cart_any_line
       FROM poma1l p JOIN fl f USING (PATID) JOIN ctx c USING (PATID)")),
-      error = function(e) NULL)
+      "POMA-1L transplant summary", "q2")
 
     # Authoritative CAR-T-relative-to-LOT1 for the POMA-1L subset (reuses vqs_q6_cart).
     if (have_sct) {
@@ -295,17 +339,21 @@ main <- function() {
                            JOIN (SELECT DISTINCT PATID FROM {lot_long}
                                  WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{poma}')) p
                              ON cast(ll.PATID as string) = cast(p.PATID as string)")); TRUE
-      }, error = function(e) { log_msg("  Q2: temp view failed (", conditionMessage(e), ")"); FALSE })
+      }, error = function(e) {
+        m <- paste0("NOTE: POMA-filtered view for the authoritative CAR-T table failed - ", conditionMessage(e))
+        log_msg("  ", m); notes_env$q2 <- c(notes_env$q2, m); FALSE })
       if (ok_view)
         q2_tables[["POMA-1L CAR-T relative to LOT1 (authoritative; vqs_q6_cart)"]] <-
-          tryCatch(vqs_q6_cart(con, "jj_poma1l_lot_long", sct_tbl, w1 = VQS_W1, cart_raw_tbl = cart_raw),
-                   error = function(e) NULL)
-    }
+          cap(vqs_q6_cart(con, "jj_poma1l_lot_long", sct_tbl, w1 = VQS_W1, cart_raw_tbl = cart_raw),
+              "POMA-1L CAR-T relative to LOT1 (vqs_q6_cart)", "q2")
+    } else notes_env$q2 <- c(notes_env$q2,
+      paste0("NOTE: ", sct_tbl, " not readable - the authoritative CAR-T-relative-to-LOT1 table is omitted."))
     q2_notes <- c(
       "Autologous SCT at 1L is standard first-line care and is NOT evidence of prior treatment.",
       "The red flag is an allogeneic SCT or CAR-T that CLOSES the first line (end reason SCT_ALLO / SCT_CART / CART_INIT).",
       "allo_or_cart_any_line is context only: the same therapy on a LATER line is expected progression, not a non-naive signal.",
-      "The vqs_q6_cart table adds the authoritative timing, including CAR-T BEFORE LOT1 (from raw CAR-T claim dates).")
+      "The vqs_q6_cart table adds the authoritative timing, including CAR-T BEFORE LOT1 (from raw CAR-T claim dates).",
+      notes_env$q2)
   } else q2_notes <- sprintf("No POMA-at-1L patients (token '%s'). Set POMA_MED_ABBR if the token differs.", poma)
   add_sheet(name = "Q2 POMA & SCT-CART", title = "Q2 - POMA-1L patients who also received SCT or CAR-T",
     subtitle = "Split by transplant type and timing; later-line transplant is context, not a red flag.",
@@ -334,7 +382,7 @@ main <- function() {
              sum(CASE WHEN f.CLINTRIAL_BASELINE=1 OR f.CLINTRIAL_FOLLOWUP=1 THEN 1 ELSE 0 END) AS n_trial_any,
              round(100.0*sum(CASE WHEN f.CLINTRIAL_BASELINE=1 OR f.CLINTRIAL_FOLLOWUP=1 THEN 1 ELSE 0 END)/count(*),1) AS pct_trial_any
       FROM lot1 l JOIN f USING (PATID) LEFT JOIN poma1l p USING (PATID)
-      GROUP BY 1 ORDER BY 1")), error = function(e) NULL)
+      GROUP BY 1 ORDER BY 1")), "POMA-1L vs other-1L flag rates", "q34")
   }
   q3_df <- if (!is.null(assoc)) assoc[, c("grp","n_pts","n_other_cancer","pct_other_cancer")] else NULL
   q4_df <- if (!is.null(assoc)) assoc[, c("grp","n_pts","n_trial_baseline","n_trial_followup","n_trial_any","pct_trial_any")] else NULL
@@ -343,13 +391,13 @@ main <- function() {
            "ELIG_COH_ALLFLAGS holds the flags; ELIG_COH_FINAL aligns them to the selected INDEX_DATE.") else NULL
   add_sheet(name = "Q3 POMA & other cancers", title = "Q3 - POMA-1L vs other-1L: baseline other-cancer rate",
     subtitle = "OTHER_MALIGN_FLAG (>=1 inpatient OR >=2 outpatient claims within 30d per tumour group) - ELIG_COH retains these patients.",
-    narrative = c(q34_gap,
+    narrative = c(q34_gap, notes_env$q34,
       "Compare pct_other_cancer for POMA-1L vs other-1L; a higher POMA rate = association.",
       "Uses the pipeline flag (Step 22), not a raw C-code scan."),
     tables = list("Baseline other-cancer by group" = q3_df))
   add_sheet(name = "Q4 POMA & clinical trials", title = "Q4 - POMA-1L vs other-1L: clinical-trial evidence",
     subtitle = "CLINTRIAL_BASELINE / CLINTRIAL_FOLLOWUP from ELIG_COH_ALLFLAGS (retained in the build).",
-    narrative = c(q34_gap,
+    narrative = c(q34_gap, notes_env$q34,
       "A higher POMA-1L trial rate would support the 'not truly first-line / unobserved therapy on trial' hypothesis.",
       "Claims-based trial evidence is a lower bound (a fully masked study drug may carry no trial code)."),
     tables = list("Clinical-trial evidence by group" = q4_df))
@@ -405,8 +453,14 @@ main <- function() {
 
   # ---- write --------------------------------------------------------------
   xlsx <- file.path(out_dir, paste0("julia_july5_answers_", stamp, ".xlsx"))
-  jj_write_workbook(sheets, xlsx, out_dir, stamp)
-  log_msg(SEP); log_msg("Julia's July 5 questions complete. Workbook (or CSV fallback) in ", out_dir); log_msg(SEP)
+  wrote_xlsx <- jj_write_workbook(sheets, xlsx, out_dir, stamp, allow_csv = allow_csv)
+  log_msg(SEP)
+  if (isTRUE(wrote_xlsx))
+    log_msg("Julia's July 5 questions complete. Excel workbook -> ", xlsx)
+  else
+    log_msg("Julia's July 5 questions complete in DEGRADED mode: one CSV per table in ",
+            out_dir, " (openxlsx unavailable). Install openxlsx to get the single .xlsx.")
+  log_msg(SEP)
 }
 
 if (!interactive()) main()
