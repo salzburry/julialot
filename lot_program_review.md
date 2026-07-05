@@ -2,7 +2,7 @@
 
 **Reviewed file:** `lot_program.R` (4337 lines)
 
-**Reference documents (Apr 13 2026 folder):**
+**Reference documents (program specifications):**
 - Lot protocol Apr 13
 - mmamedapr14 (5A. MMA_MED spec)
 - maedapr14 (5B. MAP_MED spec)
@@ -10,7 +10,7 @@
 - sctapr14 (7. SCT spec)
 - lotbaseendapr14 (10. LOT1_BASE_END spec)
 - clmmarollupapr14 (Tab 40. CL_MMA_ROLLUP)
-- codelist.pdf (Tab 41, permissible subs, SCT codes)
+- codelist (Tab 41, permissible subs, SCT codes)
 - optum business rules / optum data dict (CDM v9.0)
 - sensitivity checks (study-team email)
 
@@ -37,7 +37,7 @@
 
 **Code:** Line 3223, inside a `glue("...")` block that opens at line 3122:
 ```
--- Per map med.pdf page 5: "Pushout is not implemented" for medical.
+-- Per the MAP_MED spec: "Pushout is not implemented" for medical.
 ```
 
 **Problem:** The literal `"` characters around `"Pushout is not implemented"` terminate the R string delimiter early. R cannot parse this file. The script is not executable.
