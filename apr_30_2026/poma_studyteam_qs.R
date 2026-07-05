@@ -370,7 +370,15 @@ main <- function() {
       "Autologous SCT at 1L is standard first-line care and is NOT evidence of prior treatment.",
       "The red flag is an allogeneic SCT or CAR-T that CLOSES the first line (end reason SCT_ALLO / SCT_CART / CART_INIT).",
       "allo_or_cart_any_line is context only: the same therapy on a LATER line is expected progression, not a non-naive signal.",
-      "The vqs_q6_cart table adds the authoritative timing, including CAR-T BEFORE LOT1 (from raw CAR-T claim dates).",
+      # The 'before LOT1' rows of vqs_q6_cart come from the raw CAR-T scan (cart_raw);
+      # when that scan is unavailable those metrics are NA - say so instead of
+      # implying the table covers before-LOT1.
+      if (have_sct && !is.null(cart_raw))
+        "The vqs_q6_cart table gives the authoritative timing, INCLUDING CAR-T BEFORE LOT1 (from raw CAR-T claim dates)."
+      else if (have_sct)
+        paste0("NOTE: the raw CAR-T scan was unavailable this run (cart_raw is NULL), so CAR-T BEFORE LOT1 could NOT be ",
+               "assessed - the 'before'/'prior-or-during' rows in the vqs_q6_cart table are NA. During/closing-LOT1 timing is still valid.")
+      else NULL,
       if (!have_sct) paste0(sct_tbl, " not readable - the authoritative CAR-T-relative-to-LOT1 table is omitted.") else NULL)
   } else q2_notes <- sprintf("No POMA-at-1L patients (token '%s'). Set POMA_MED_ABBR if the token differs.", poma)
   add_sheet(name = "Q2 POMA & SCT-CART", title = "Q2 - POMA-1L patients who also received SCT or CAR-T",
