@@ -19,7 +19,7 @@ cfg <- list(
   work_schema = Sys.getenv("PROJECT_WORK_SCHEMA",
                            unset = Sys.getenv("DOMINO_USER_NAME", unset = "gsk_mm_lot_work")),
 
-  # Clinformatics CDM base tables (validated against the Optum CDM data dictionary)
+  # Clinformatics CDM base tables
   tbl_medical  = "medical",
   tbl_med_proc = "med_procedure",
   tbl_med_diag = "med_diagnosis",

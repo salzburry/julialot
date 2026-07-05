@@ -883,7 +883,7 @@ main <- function() {
     WITH sct_codes AS (
       SELECT /*+ BROADCAST */ * FROM sct_codelist
     ),
-    -- Medical PROC_CD (contains CPT/HCPCS per Optum business rules)
+    -- Medical PROC_CD (contains CPT/HCPCS)
     med_proc AS (
       SELECT m.PATID, cast(m.FST_DT AS date) AS DATE_SERVICE,
              s.SCT_TYPE, s.CL_CODE AS CODE, 'med_proc_cd' AS SRC
@@ -895,7 +895,7 @@ main <- function() {
       WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT
     ),
-    -- Medical BILL_PROC_CD (also CPT/HCPCS per Optum business rules)
+    -- Medical BILL_PROC_CD (also CPT/HCPCS)
     med_bill AS (
       SELECT m.PATID, cast(m.FST_DT AS date) AS DATE_SERVICE,
              s.SCT_TYPE, s.CL_CODE AS CODE, 'med_bill_proc' AS SRC

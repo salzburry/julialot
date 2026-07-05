@@ -184,14 +184,13 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
         FROM {work('med_claim_header')}")
     ),
 
-    # CONFINEMENT TABLE EXTRACT (per Optum Business Rules Approach 2)
-    # Business rules: "inpatient should be restricted to cases where
-    # CONF_ID is not NULL from the T_CONFINEMENT table"
-    # This validates that CONF_ID corresponds to an actual confinement
-    # Per Approach 2: confinement should have associated admission AND discharge dates
+    # CONFINEMENT TABLE EXTRACT
+    # Inpatient is restricted to cases where CONF_ID is not NULL from the
+    # confinement table, so CONF_ID corresponds to an actual confinement; a
+    # confinement must also have associated admission AND discharge dates.
     list(
       name = "07b_confinement",
-      description = "Extracting confinement records (Optum Approach 2)",
+      description = "Extracting confinement records",
       source_tables = c("confinement"),
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('confinement')} AS
