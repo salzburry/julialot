@@ -149,7 +149,7 @@ rm("The patient-level counts Julia asks for (how many POMA-1L patients have an S
    "The patient-journey tabs ARE fully worked end-to-end — they were produced by running the project's LOT engine on "
    "illustrative synthetic patients, so they show the exact journey format and the algorithm's real behaviour.", AMBER, h=104)
 rm("")
-rm("The five questions (Julia, 4 Jul 2026)", NAVY, True, 12, color=WHITE); ws.cell(r-1,2).fill=fill(NAVY)
+rm("The five questions (Julia, chat forwarded — Questions/July 5 2026)", NAVY, True, 12, color=WHITE); ws.cell(r-1,2).fill=fill(NAVY)
 qs = [
  "1.  Trace a few different types of patients from raw claims to final assigned LOT — a mix of LOT1-5, SCT or CAR-T, and consolidation therapy around CAR-T.",
  "2.  For patients receiving POMA in 1L: are there patients who also receive SCT or CAR-T in the cohort? Would indicate they are not treatment-naive.",
@@ -319,12 +319,14 @@ jg("⚠  These six are illustrative SYNTHETIC patients (reserved ID range 900000
 jg("")
 jg("To pull the same journey for a REAL patient (Databricks SQL)", NAVY, True, 11, h=18, color=WHITE); ws.cell(r-1,2).fill=fill(NAVY)
 r = sqlblock(ws, r, (
+"-- CDM tables resolve through cdm_src() to the quarterly names when USE_QUARTERLY_TABLES=TRUE,\n"
+"-- e.g. cdm_src('rx') -> <cdm>.t_rx_2025q2, cdm_src('medical') -> <cdm>.t_medical_2025q2.\n"
 "-- 1. Raw pharmacy + medical claims for one patient (chronological)\n"
-"SELECT 'pharmacy' src, FILL_DT dt, NDC code, DAYS_SUP FROM <cdm>.t_rx      WHERE PATID = :pid\n"
+"SELECT 'pharmacy' src, FILL_DT dt, NDC code, DAYS_SUP FROM <cdm>.t_rx_2025q2      WHERE PATID = :pid  -- cdm_src('rx')\n"
 "UNION ALL\n"
-"SELECT 'medical'  src, FST_DT  dt, PROC_CD, NULL   FROM <cdm>.t_medical    WHERE PATID = :pid\n"
+"SELECT 'medical'  src, FST_DT  dt, PROC_CD, NULL   FROM <cdm>.t_medical_2025q2    WHERE PATID = :pid  -- cdm_src('medical')\n"
 "ORDER BY dt;\n\n"
-"-- 2. The MAP segments the engine built, and the final line assignment\n"
+"-- 2. The MAP segments the engine built, and the final line assignment (work schema)\n"
 "SELECT * FROM <work>.MAP_STACKED WHERE PATID = :pid ORDER BY MAP_START_DT;\n"
 "SELECT LOT_NUM, LOT_START_DT, LOT_START_TYPE, LOT_BASE_MEDS, LOT_BASE_END_DT,\n"
 "       LOT_BASE_END_REASON, LOT_ALLO_LOT_FLG, LOT_CART_LOT_FLG,\n"
