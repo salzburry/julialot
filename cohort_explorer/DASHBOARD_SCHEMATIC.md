@@ -4,7 +4,7 @@
 
 ```
 +------------------------------------------------------------------------------------+
-|  Oncology Real-World Data Explorer Tool -- MM (Overall & NDMM) | NDMM protocol        |  header
+|  Oncology Real-World Data Explorer Tool -- MM (Overall & NDMM) | NDMM                 |  header
 |  [ SYNTHETIC DATA -- not for analysis ]  (red banner shows only on a synthetic source)|
 +---------------------------+----------------------------------------------------------+
 |  SIDEBAR (controls)        |  MAIN (tabs)                                              |
@@ -39,7 +39,7 @@
 |                            |  |   endpoint v  covariates v  [Fit Cox] -> HR (95% CI) | |
 |                            |  |   [Save->A] [Save->B] [Compare]  -> KM overlay A vs B   | |
 |                            |  +----------------------------------------------------+ |
-|                            |  | Validation & Checks: LOT structural | NDMM protocol | |
+|                            |  | Validation & Checks: LOT structural | NDMM          | |
 |                            |  |   conformance | data-quality (>=N-mo denom, missing, | |
 |                            |  |   <25 suppression)                                  | |
 |                            |  +----------------------------------------------------+ |
@@ -105,7 +105,7 @@ regimen / pathway views to that line off `ANALYTIC_LOT_LONG` (per-line TTE,
 current-line SOC stratum). Nothing to rebuild; it's a dropdown.
 
 **(b) Make a later line the *index* cohort (e.g. a 2L RRMM cohort with its own
-IE criteria)** -- *mostly config.* The protocol already defines 2L/3L RRMM
+IE criteria)** -- *mostly config.* The study already defines 2L/3L RRMM
 cohorts (subsequent-LOT + 12-mo pre-line CE + 3-mo follow-up CE). To add one:
 1. **`cohort_definitions()`** -- add a `rrmm_2l` entry with its default active
    flag set (reusing the same registry criteria, re-anchored to the 2L index).

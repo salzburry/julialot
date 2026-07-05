@@ -1,7 +1,7 @@
 # =============================================================================
-# km.R  --  time-to-event (Kaplan-Meier) for the protocol endpoints:
+# km.R  --  time-to-event (Kaplan-Meier) for the primary endpoints:
 #           OS (time to death), TTD, TTNT, Attrition (dx -> 1L), and a clearly
-#           labelled EXPLORATORY PFS (protocol Sec 6.9: PFS not ascertainable).
+#           labelled EXPLORATORY PFS (PFS not reliably ascertainable).
 #           Uses `survival`; plotting is base graphics.
 # =============================================================================
 
@@ -9,11 +9,11 @@
 # patient reaches 1L, so the KM is the distribution of the gap).
 endpoint_dictionary <- function() active_pack()$endpoints
 
-LANDMARK_MONTHS <- c(6, 9, 12, 18, 24)   # protocol Sec 6.7.2 survival probabilities
-MIN_FU_MONTHS   <- 3                      # protocol Sec 6.7.2 potential-follow-up cut
+LANDMARK_MONTHS <- c(6, 9, 12, 18, 24)   # survival-probability landmarks (months)
+MIN_FU_MONTHS   <- 3                      # minimum potential-follow-up cut (months)
 
 # parse a user "6, 9, 12" landmark string into a sorted positive numeric vector;
-# fall back to the protocol default on empty/garbage input (never errors).
+# fall back to the default on empty/garbage input (never errors).
 parse_landmark_months <- function(x, default = LANDMARK_MONTHS) {
   if (is.null(x) || !nzchar(trimws(paste(x, collapse = "")))) return(default)
   v <- suppressWarnings(as.numeric(trimws(strsplit(paste(x, collapse = ","), ",")[[1]])))
@@ -21,7 +21,7 @@ parse_landmark_months <- function(x, default = LANDMARK_MONTHS) {
   if (!length(v)) default else v
 }
 
-# Fit a KM curve. `min_fu` (months) applies the protocol >=3-mo potential
+# Fit a KM curve. `min_fu` (months) applies the >=3-mo potential
 # follow-up restriction when the cohort carries `fu_potential_months`.
 km_fit <- function(df, endpoint, strata = NULL, ep_dict = endpoint_dictionary(),
                    min_fu = NULL) {
@@ -48,7 +48,7 @@ km_fit <- function(df, endpoint, strata = NULL, ep_dict = endpoint_dictionary(),
     # match the summaries + later-line (augmented) rendering of the same field.
     d$grp <- .as_category(df[[strata]][ok], var_type(strata))
     tb <- table(d$grp)
-    keep_lv <- names(tb)[tb >= 25]                     # <25 suppression (Sec 6.5)
+    keep_lv <- names(tb)[tb >= 25]                     # <25 suppression
     suppressed <- setdiff(names(tb), keep_lv)
     d <- d[d$grp %in% keep_lv, , drop = FALSE]
     if (!nrow(d)) return(NULL)
@@ -137,7 +137,7 @@ km_medians <- function(km) {
                UCL = round(s["0.95UCL"], 1), row.names = NULL, check.names = FALSE)
 }
 
-# Landmark table at protocol time points: one row per (group, month) with
+# Landmark table at the specified time points: one row per (group, month) with
 # number at risk, cumulative events, cumulative censored, and the survival
 # estimate + 95% CI (survfit's default log-transform CI -- NOT labelled
 # Brookmeyer-Crowley, which applies to the median CI in km_medians()).

@@ -3,7 +3,7 @@
 # -----------------------------------------------------------------------------
 # Two families:
 #   lot_checks()            structural sanity of the LOT derivation
-#   ndmm_protocol_checks()  each NDMM IE criterion, as a protocol conformance
+#   ndmm_protocol_checks()  each NDMM IE criterion, as a conformance
 #                           pass-rate on the currently selected cohort
 # Each returns a tidy data.frame (Check, Status, Detail) with Status in
 # PASS / WARN / FAIL, so the dashboard can colour them and a headless run can
@@ -79,7 +79,7 @@ lot_checks <- function(df, max_lot = 5L) {
   do.call(rbind, rows)
 }
 
-# ---- NDMM protocol conformance ---------------------------------------------
+# ---- NDMM conformance ------------------------------------------------------
 # For each NDMM IE criterion, report the pass-rate on the selected cohort.
 # If the criterion is ACTIVE it must be 100% (the selection enforced it) -> a
 # <100% rate is a FAIL (selection bug). If it is INACTIVE, the rate is
@@ -106,7 +106,7 @@ ndmm_protocol_checks <- function(df, active_flags = character(),
   })
   out <- do.call(rbind, rows)
 
-  # cross-criterion protocol invariant: 12m CE must be a subset of 6m CE
+  # cross-criterion invariant: 12m CE must be a subset of 6m CE
   if (all(c("incl_baseline_ce_6m", "incl_baseline_ce_12m") %in% names(df))) {
     bad <- sum(df$incl_baseline_ce_12m == 1L & df$incl_baseline_ce_6m == 0L)
     out <- rbind(out, .chk("12m baseline CE subset of 6m CE", bad == 0,
@@ -115,7 +115,7 @@ ndmm_protocol_checks <- function(df, active_flags = character(),
   out
 }
 
-# ---- protocol data-quality / analysis-readiness checks ----------------------
+# ---- data-quality / analysis-readiness checks ------------------------------
 # Reports the TTE denominator (>=3-mo follow-up), missing/unknown tallies, and
 # <25-patient suppression flags. By default it audits EVERY categorical/binary
 # variable the UI can offer as a stratum (from variable_dictionary()), so the

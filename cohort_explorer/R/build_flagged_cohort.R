@@ -4,7 +4,7 @@
 # Produces / loads the FLAGGED SUPERSET cohort: one row per patient in the
 # broadest 1L-treated MM population, with one boolean column per IE criterion
 # (registry_flag_ids()) plus the demographics / clinical / LOT-derived /
-# time-to-event fields the NDMM study protocol asks for. Nothing is
+# time-to-event fields the analysis requires. Nothing is
 # dropped here -- selection happens in cohort_select.R by AND-ing flags.
 #
 # Also produces a LOT-LONG table (one row per patient x LOT_NUM) that backs the
@@ -26,11 +26,11 @@
 # ---- contract: non-flag columns every flagged cohort must carry -------------
 FLAGGED_COHORT_BASE_COLS <- c(
   "patient_id",
-  # demographics (protocol Table 1)
+  # baseline demographics
   "age_index", "gender", "region", "race", "ethnicity", "payer_type",
   # dates
   "index_date", "lot1_start_dt", "death_dt",
-  # calendar / follow-up (protocol characteristics + attrition)
+  # calendar / follow-up (baseline characteristics + attrition)
   "dx_year", "lot_init_year", "dx_to_1l_months", "fu_from_dx_months",
   "fu_potential_months",
   # raw continuous-enrollment durations (months) -- carried as MEASURES, not
@@ -45,11 +45,11 @@ FLAGGED_COHORT_BASE_COLS <- c(
   "ip_hosp_count", "er_visit_count", "ip_los_days",
   # LOT-derived
   "soc_category", "n_lines", "lot1_length",
-  # time-to-event (months + 1/0 event); OS = time to death (protocol endpoint)
+  # time-to-event (months + 1/0 event); OS = time to death (primary endpoint)
   "os_time", "os_event",
   "ttd_time", "ttd_event",
   "ttnt_time", "ttnt_event",
-  # PFS retained as EXPLORATORY only (protocol says PFS not ascertainable)
+  # PFS retained as EXPLORATORY only (PFS not reliably ascertainable)
   "pfs_time", "pfs_event"
 )
 
@@ -58,7 +58,7 @@ COMORBID_COLS <- c("bl_hepatic", "bl_renal", "bl_infection", "bl_ocular",
                    "bl_cv", "bl_neuro")
 
 # ---- derived subgroup columns (added after load; consistent for real data) --
-# age bands, transplant-eligibility proxies (protocol Sec 6.2.3), CCI bands.
+# age bands, transplant-eligibility proxies, CCI bands.
 add_derived_cols <- function(df) {
   df$age_band <- cut(df$age_index, breaks = c(-Inf, 44, 64, 74, Inf),
                      labels = c("18-44", "45-64", "65-74", "75+"))
@@ -70,7 +70,7 @@ add_derived_cols <- function(df) {
   df$ti_te_age <- ifelse(df$age_index >= 70, "TI (age>=70)", "TE (age<70)")
   df$ti_te_age_cci <- ifelse(df$age_index >= 70 | df$cci >= 3L,
                              "TI (age>=70 or CCI>=3)", "TE (age<70 & CCI<3)")
-  # HCRU count bands (protocol: 1/2/3/4+)
+  # HCRU count bands (1/2/3/4+)
   band4 <- function(x) { b <- as.character(pmin(x, 4L)); b[x >= 4L] <- "4+"; b }
   df$ip_hosp_band <- band4(df$ip_hosp_count)
   df$er_visit_band <- band4(df$er_visit_count)
@@ -225,7 +225,7 @@ synth_flagged_cohort <- function(n = 4000L, seed = 42L, soc_levels = NULL) {
   # Charlson comorbidity index (0..8), skewed low
   cci <- pmin(8L, rpois(n, 1.6))
 
-  # baseline comorbidities of interest (protocol safety-event background):
+  # baseline comorbidities of interest (safety-event background):
   # per-patient EVENT COUNTS over the 12-mo baseline; the Yes/No flag is
   # "count > 0". baseline_py = 1.0 (standardised 12-mo baseline person-year),
   # so rates are events per patient-year over the baseline window.
@@ -255,7 +255,7 @@ synth_flagged_cohort <- function(n = 4000L, seed = 42L, soc_levels = NULL) {
   # the earlier of study end and a random disenrollment horizon. OS is then the
   # min of a latent death time and this potential follow-up -- so a patient who
   # dies at 1 month still HAS >=3-mo potential follow-up and is retained by the
-  # protocol >=3-mo TTE restriction (fixes the death-unaware cut).
+  # >=3-mo TTE restriction (fixes the death-unaware cut).
   study_end   <- as.Date("2025-06-30")
   admin_months <- pmax(0.1, as.integer(study_end - lot1_start_dt) / 30.44)
   disenroll_months <- pmax(1, rgamma(n, shape = 2, scale = 22))
@@ -267,7 +267,7 @@ synth_flagged_cohort <- function(n = 4000L, seed = 42L, soc_levels = NULL) {
   os_time  <- round(pmin(latent_death, fu_potential_months), 1)
   os_event <- as.integer(latent_death <= fu_potential_months)
   # OBSERVED follow-up from diagnosis (dx -> death/censor), not administrative
-  # potential follow-up -- this is the protocol Table-1 characteristic.
+  # potential follow-up -- this is the baseline characteristic.
   fu_from_dx_months <- round(dx_to_1l_months + os_time, 1)
 
   # raw continuous-enrollment durations (months); the fixed-threshold CE flags

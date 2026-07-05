@@ -26,17 +26,17 @@ pack_mm <- function() list(
   id = "mm", disease = "Multiple Myeloma", short = "MM",
   header_title = "Oncology Real-World Data Explorer Tool",
   header_sub = paste(" -- Multiple Myeloma (Overall & NDMM) |",
-                     "flag-driven IE selection | NDMM study protocol"),
+                     "flag-driven IE selection | NDMM study"),
   superset_label = "Superset (1L-treated MM)",
   # indication-specific UI copy (app falls back to generic wording when absent)
   table1_note = paste("Baseline characteristics (12-mo pre-index) for the selected",
-                      "cohort, NDMM protocol Table 1. Strata levels with <25 patients",
+                      "cohort, baseline characteristics. Strata levels with <25 patients",
                       "are suppressed."),
   pathway_note = paste("Regimen frequency for the selected Line of Therapy; the full",
                        "1L->4L treatment-pattern pathway (commercial-insured only,",
-                       "Exploratory Obj 3; patients who stop flow into 'End'); and a",
+                       "Exploratory; patients who stop flow into 'End'); and a",
                        "per-stage detail table."),
-  commercial_label = "Commercial-insured only (protocol Obj 3)",
+  commercial_label = "Commercial-insured only",
 
   criteria = list(
     incl_qualifying_mm = list(
@@ -192,7 +192,7 @@ pack_mm <- function() list(
     Attrition = list(time = "dx_to_1l_months", event = NA, tab = "Attrition", per_line = FALSE,
                 label = "Attrition -- time from diagnosis to 1L", protocol = TRUE),
     PFS_exploratory = list(time = "pfs_time", event = "pfs_event", tab = "PFS*", per_line = FALSE,
-                label = "PFS -- EXPLORATORY (NOT a protocol endpoint; Sec 6.9)",
+                label = "PFS -- EXPLORATORY (not a primary endpoint)",
                 protocol = FALSE)
   ),
 

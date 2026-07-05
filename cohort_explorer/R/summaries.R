@@ -1,14 +1,14 @@
 # =============================================================================
 # summaries.R  --  Patient Characteristics summary statistics
 # -----------------------------------------------------------------------------
-# Produces the "Summary Statistics" tables and the NDMM
-# protocol's Table 1: categorical variables as N / % (overall + per strata
+# Produces the "Summary Statistics" tables and the baseline
+# characteristics table: categorical variables as N / % (overall + per strata
 # level, incl. an explicit (Missing) category), continuous variables as
 # mean / SD / median / IQR / min / max + a Missing count. Applies the
-# protocol's <25-patient suppression to strata (Sec 6.5). Pure base R.
+# <25-patient suppression to strata. Pure base R.
 # =============================================================================
 
-SUPPRESS_MIN_N <- 25L   # protocol Sec 6.5: do not report a stratum with < 25 pts
+SUPPRESS_MIN_N <- 25L   # do not report a stratum with < 25 pts
 
 # Variable dictionary: label + type ("cat" | "cont" | "binary"). Drives the
 # "Select Variables" control and dispatches to the right summary.
@@ -141,7 +141,7 @@ summarize_continuous <- function(df, vars, strata = NULL,
 }
 
 # ---- baseline safety-event table (n / % + rate per patient-year) ------------
-# Protocol Sec 6.7.1: background prevalence of key safety events with n/% AND rate
+# Background prevalence of key safety events with n/% AND rate
 # per patient-year over the 12-mo baseline (baseline_py).
 safety_baseline_table <- function(df) {
   if (!nrow(df) || !"baseline_py" %in% names(df)) return(NULL)

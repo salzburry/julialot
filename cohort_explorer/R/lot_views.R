@@ -22,7 +22,7 @@ regimen_frequency <- function(lot_long, patient_ids, lot_num) {
 }
 
 # SOC transition counts from line `from_lot` -> next line.
-# Protocol: the Sankey is COMMERCIAL-insured only (excludes Medicare).
+# The Sankey is COMMERCIAL-insured only (excludes Medicare).
 lot_transition_table <- function(lot_long, patient_ids, from_lot = 1L,
                                  commercial_only = TRUE) {
   s <- lot_slice(lot_long, patient_ids, from_lot)
@@ -92,7 +92,7 @@ sankey_plot <- function(trans, title = "SOC transitions (commercial only)",
 # ---- true multi-stage 1L -> ...L patient-journey pathway --------------------
 # Build the full per-patient SOC sequence across lines 1..max_line (patients who
 # stop earlier flow into an "End (no next LOT)" terminal node), and the adjacent
-# transition counts for every stage. Commercial-only per protocol.
+# transition counts for every stage. Commercial-insured only.
 lot_pathway_data <- function(lot_long, patient_ids, max_line = 4L,
                              commercial_only = TRUE) {
   s <- lot_long[lot_long$patient_id %in% patient_ids, , drop = FALSE]

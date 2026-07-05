@@ -41,7 +41,7 @@
 #
 # REAL: cohort, gender, age, all 12 IE flags, LOT structure, SOC category,
 #       OS/TTD/TTNT (administrative-horizon censored).
-# PLACEHOLDER (no source table -> not protocol output): race/region/payer/
+# PLACEHOLDER (no source table -> not a study output): race/region/payer/
 #       ethnicity='Unknown', cci=0, safety flags/counts=0, HCRU=0, baseline_py=1.
 # =============================================================================
 
