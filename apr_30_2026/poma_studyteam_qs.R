@@ -270,7 +270,7 @@ main <- function() {
       "Q2 = POMA-1L split by transplant type and TIMING (autologous-at-1L vs allo/CAR-T that closed 1L vs later-line context).",
       "Q3 = other-cancer confounder is REMOVED BY CONSTRUCTION in NDMM (de-confounded filter #5); the flag shown is parent-window context, not the study exclusion.",
       "Q4 = POMA-1L vs other-1L clinical-trial rate; clinical-trial is NOT an NDMM post-filter, so this stays a LIVE, confounder-clean comparison.",
-      "Q5 = pharmacy-benefit continuity + LEN/THAL exposure before the 6-month baseline window.",
+      "Q5 = LOT1-anchored NDMM proof (ce_ge_12mo_pre_lot1 / len_thal_in_12mo_pre_lot1, the 12-mo pre-LOT1 check) PLUS a parent-index supplemental scan for LEN/THAL before the 6-month baseline window.",
       "Operational definitions are shared with R/validation_qs.R (single source of truth)."),
     tables = list())
 
@@ -284,8 +284,10 @@ main <- function() {
       "Source: studypoppage_validated.csv DATA_SOURCE ('membership restricted to individuals with both medical and pharmacy benefits');",
       "Criterion 5 / CE_b requires 6 months continuous enrollment WITH medical and pharmacy benefits before index.",
       "Implication for Q5: oral LEN/THAL fills are OBSERVABLE (when adjudicated and on the code list), and Criterion 3 already",
-      "excludes any baseline MM-therapy claim (medical or pharmacy). The residual is exposure before the 6-month look-back,",
-      "which Q5 measures directly. Not observable: samples, cash-pay/out-of-plan fills, NDCs missing from the code list."),
+      "excludes any baseline MM-therapy claim (medical or pharmacy). NDMM tightens this further - filter #4 excludes MM",
+      "oncology therapy across the 12-month pre-LOT1 window - which is the PRIMARY check the Q5 tab reports (LOT1-anchored",
+      "columns). The parent 6-month look-back is a supplemental residual probe. Not observable: samples, cash-pay/out-of-plan",
+      "fills, NDCs missing from the code list."),
     tables = list())
 
   # ---- Q1: patient journeys (mix) ---------------------------------------
