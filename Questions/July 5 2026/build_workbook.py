@@ -319,12 +319,18 @@ jg("⚠  These six are illustrative SYNTHETIC patients (reserved ID range 900000
 jg("")
 jg("To pull the same journey for a REAL patient (Databricks SQL)", NAVY, True, 11, h=18, color=WHITE); ws.cell(r-1,2).fill=fill(NAVY)
 r = sqlblock(ws, r, (
-"-- CDM tables resolve through cdm_src() to the quarterly names when USE_QUARTERLY_TABLES=TRUE,\n"
-"-- e.g. cdm_src('rx') -> <cdm>.t_rx_2025q2, cdm_src('medical') -> <cdm>.t_medical_2025q2.\n"
-"-- 1. Raw pharmacy + medical claims for one patient (chronological)\n"
-"SELECT 'pharmacy' src, FILL_DT dt, NDC code, DAYS_SUP FROM <cdm>.t_rx_2025q2      WHERE PATID = :pid  -- cdm_src('rx')\n"
-"UNION ALL\n"
-"SELECT 'medical'  src, FST_DT  dt, PROC_CD, NULL   FROM <cdm>.t_medical_2025q2    WHERE PATID = :pid  -- cdm_src('medical')\n"
+"-- CDM tables resolve through cdm_src() to quarterly names (USE_QUARTERLY_TABLES=TRUE):\n"
+"-- cdm_src('rx')->t_rx_2025q2, ('medical')->t_medical_2025q2, ('med_procedure')->t_med_procedure_2025q2,\n"
+"-- ('med_diagnosis')->t_med_diagnosis_2025q2.\n"
+"-- 1. ALL raw claim events the algorithm reads, chronological. MM therapy (-> MAP_STACKED) comes from\n"
+"--    Rx NDC + medical PROC_CD / BILL_PROC_CD / NDC (pipeline_steps.R step 18); SCT & CAR-T evidence adds\n"
+"--    med_procedure.PROC and med_diagnosis.DIAG (validation_qs.R vqs_raw_sct_claims / 02_lot1.R S12).\n"
+"SELECT 'rx.NDC'           src, FILL_DT dt, cast(NDC as string)       code FROM <cdm>.t_rx_2025q2          WHERE PATID=:pid\n"
+"UNION ALL SELECT 'med.PROC_CD',      FST_DT, cast(PROC_CD as string)      FROM <cdm>.t_medical_2025q2       WHERE PATID=:pid\n"
+"UNION ALL SELECT 'med.BILL_PROC_CD', FST_DT, cast(BILL_PROC_CD as string) FROM <cdm>.t_medical_2025q2       WHERE PATID=:pid\n"
+"UNION ALL SELECT 'med.NDC',          FST_DT, cast(NDC as string)          FROM <cdm>.t_medical_2025q2       WHERE PATID=:pid\n"
+"UNION ALL SELECT 'med_proc.PROC',    FST_DT, cast(PROC as string)         FROM <cdm>.t_med_procedure_2025q2 WHERE PATID=:pid\n"
+"UNION ALL SELECT 'dx.DIAG',          FST_DT, cast(DIAG as string)         FROM <cdm>.t_med_diagnosis_2025q2 WHERE PATID=:pid\n"
 "ORDER BY dt;\n\n"
 "-- 2. The MAP segments the engine built, and the final line assignment (work schema)\n"
 "SELECT * FROM <work>.MAP_STACKED WHERE PATID = :pid ORDER BY MAP_START_DT;\n"
@@ -470,7 +476,7 @@ qsheet("Q2 POMA & SCT-CART", "C55A11",
  ("sec", "Why this is the right read (clinical framing)"),
  ("p", "• POMA (pomalidomide) is itself normally a relapsed/refractory agent, so POMA appearing in 1L is the anomaly worth investigating — the transplant question is a way of triaging those patients."),
  ("p", "• Autologous SCT → part of first line. Not evidence of prior treatment. (See journey 9000000102 on the Q1 tabs.)"),
- ("p", "• Allogeneic SCT or CAR-T AT/closing 1L → strong signal of earlier, unobserved lines (journeys 9000000104, 9000000105). The SAME therapy several lines later is expected progression, not a red flag."),
+ ("p", "• Allogeneic SCT or CAR-T that CLOSES 1L → strong signal of earlier, unobserved lines (see 9000000104: the allo transplant ends LOT1). The SAME therapy on a later line is expected progression, NOT a red flag (see 9000000105: LOT1 discontinues, then CAR-T starts LOT2 — this is the 'context only' case, not near-1L)."),
  ("gap",""),
  ("sec", "Query (Databricks) — POMA-1L transplant broken down by WHEN it occurs"),
  ("sql",
@@ -656,21 +662,28 @@ qsheet("Q5 POMA & pharmacy benefit", "375623",
 "  FROM <ref>.cl_mma_codelist\n"
 "  WHERE upper(CL_CODE_TYPE)='NDC' AND upper(CL_MED_ABBR) IN ('LENA','THAL')\n"
 "),\n"
-"early_oral AS (\n"
-"  SELECT cast(r.PATID AS string) PATID, min(cast(r.FILL_DT AS date)) first_len_thal\n"
+"early_oral AS (   -- ALL LEN/THAL fills (do NOT collapse to min() here; the window filter is applied\n"
+"                  --  AFTER joining the index-covering span, so a fill in a PRIOR span can't hide a\n"
+"                  --  qualifying pre-baseline fill inside the index span)\n"
+"  SELECT cast(r.PATID AS string) PATID, cast(r.FILL_DT AS date) AS fill_dt\n"
 "  FROM <cdm>.t_rx_2025q2 r                                        -- = cdm_src('rx')\n"
 "  JOIN len_thal t\n"
 "    ON lpad(regexp_replace(coalesce(cast(r.NDC AS string),''),'[^0-9]',''),11,'0') = t.ndc\n"
-"  GROUP BY r.PATID\n"
+"),\n"
+"early_flag AS (   -- fills within [cov_start, baseline_start) of the INDEX-COVERING span\n"
+"  SELECT x.PATID,\n"
+"         max(CASE WHEN o.fill_dt >= x.cov_start\n"
+"                   AND o.fill_dt <  date_sub(x.INDEX_DATE,183) THEN 1 ELSE 0 END) AS pre_baseline_len_thal\n"
+"  FROM idx_span x LEFT JOIN early_oral o ON o.PATID = x.PATID\n"
+"  GROUP BY x.PATID\n"
 ")\n"
 "SELECT count(*)                                                                AS poma_1l_pts,\n"
 "       -- does the index-covering continuous span reach >183d before index? (room to look back)\n"
 "       sum(CASE WHEN datediff(x.INDEX_DATE, x.cov_start) > 183 THEN 1 ELSE 0 END) AS obs_history_gt_6mo,\n"
-"       -- LEN/THAL fill inside observable coverage but BEFORE the 6-month baseline window (the true residual)\n"
-"       sum(CASE WHEN o.first_len_thal >= x.cov_start\n"
-"                 AND o.first_len_thal <  date_sub(x.INDEX_DATE,183) THEN 1 ELSE 0 END) AS early_len_thal_pre_baseline\n"
+"       -- any LEN/THAL fill inside observable coverage but BEFORE the 6-month baseline window (the residual)\n"
+"       sum(coalesce(ef.pre_baseline_len_thal,0))                              AS early_len_thal_pre_baseline\n"
 "FROM poma1l p JOIN idx_span x USING (PATID)\n"
-"             LEFT JOIN early_oral o USING (PATID);"),
+"             LEFT JOIN early_flag ef USING (PATID);"),
  ("gap",""),
  ("sec", "Honest limits"),
  ("amber", "'early_len_thal_pre_baseline' finds prior oral exposure that sits inside the patient's index-covering continuous "
