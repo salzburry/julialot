@@ -1,13 +1,13 @@
 #!/usr/bin/env Rscript
 # GSK MM LOT - Part 2: Lines of Therapy (LOT) Analysis
 #
-# Implements Part 2 specifications:
+# Implements Part 2 components:
 #   5A. MMA_MED    - MM-approved + steroid medication claims pull
 #   5B. MAP_MED    - Medication Available Period algorithm (pushout/runout)
 #   6.  LOT1_BASE  - LOT1 induction regimen identification
 #   7.  SCT        - Stem Cell Transplant detection (AUTO/ALLO/CART)
 #
-# Derived from the study spec and protocol: the MMA/MAP rules (pushout/
+# The MMA/MAP rules (pushout/
 # runout), LOT1 base regimen, SCT detection (AUTO/ALLO/CART), the MMA
 # rollup/codelist tables, and the Optum CDM field + business-rule
 # definitions.
@@ -16,11 +16,11 @@
 # Output: MAP_STACKED, LOT1_BASE, LOT1_SCT, LOT1_BASE_END
 #
 # IMPORTANT - MAP algorithm corrections vs prior versions:
-#   1. Medical claims: NO pushout (per spec: "Pushout is
-#      not implemented"). Medical runout always = DATE_SERVICE + DAY_SUPPLY - 1.
+#   1. Medical claims: NO pushout (pushout is
+#      not implemented). Medical runout always = DATE_SERVICE + DAY_SUPPLY - 1.
 #   2. Pharmacy claims: pushout only when new claim arrives BEFORE current
 #      rx_runout. When pharmacy claim arrives AFTER rx_runout (but within
-#      med_runout), pharmacy resets without pushout (per spec).
+#      med_runout), pharmacy resets without pushout.
 #   3. The simplified "sum pharmacy day supply" approach is incorrect when
 #      pharmacy expires mid-MAP (kept alive by medical) and later resets.
 #      The aggregate() state machine handles this correctly.
@@ -91,7 +91,7 @@ main <- function() {
       lower(trim(CL_MEDICATION_FULL)) AS CL_MEDICATION_FULL,
       upper(trim(CL_MED_CLASS))       AS CL_MED_CLASS,
       upper(trim(CL_MED_ABBR))        AS CL_MED_ABBR,
-      -- Tab 40 fields can be 'YES', 'YES mainly...', 1, 0, or NULL.
+      -- Rollup fields can be 'YES', 'YES mainly...', 1, 0, or NULL.
       -- Robust parsing: treat 'YES%' or '1' as 1, everything else as 0.
       CASE WHEN upper(trim(cast(MONOMAINTENANCE AS string))) LIKE 'YES%'
             OR  trim(cast(MONOMAINTENANCE AS string)) = '1'
@@ -206,9 +206,9 @@ main <- function() {
   # H4 fix: Codelist minimum-coverage validation (fail-loud)
   # Ensures the loaded codelists meet minimum thresholds so the
   # pipeline never silently runs on incomplete fallback data.
-  min_rollup_meds <- 20L    # Tab 40 has 28 unique MED_ABBR; 20 is conservative floor
+  min_rollup_meds <- 20L    # the rollup has 28 unique MED_ABBR; 20 is conservative floor
 
-  min_codelist_codes <- 50L # Tab 41 has hundreds of codes; 50 is conservative floor
+  min_codelist_codes <- 50L # the codelist has hundreds of codes; 50 is conservative floor
   n_rollup <- db_q(con, "SELECT count(DISTINCT CL_MED_ABBR) AS n FROM mma_rollup")$n
   n_codelist <- db_q(con, "SELECT count(*) AS n FROM mma_codelist")$n
   if (n_rollup < min_rollup_meds) {
@@ -291,7 +291,7 @@ main <- function() {
       SELECT /*+ BROADCAST */ * FROM mma_codelist
     ),
     -- 1) Medical claims - PROC_CD (HCPCS)
-    -- Day supply hardcoded to {cfg$medical_day_supply} per spec (5A.MMA_MED row 15)
+    -- Day supply hardcoded to {cfg$medical_day_supply}
     med_proc_cd AS (
       SELECT
         m.PATID,
@@ -399,7 +399,7 @@ main <- function() {
       sum(case when CLAIM_SOURCE='rx_ndc' then 1 else 0 end) AS n_from_rx_ndc
     FROM mma_med_raw")
 
-  # Enrich + dedup (per spec)
+  # Enrich + dedup
   run_step(con, "S05_mma_med_processed", glue("
     CREATE OR REPLACE TEMPORARY VIEW mma_med_processed AS
     WITH enriched AS (
@@ -419,7 +419,7 @@ main <- function() {
         ON r.MED_ABBR = ru.CL_MED_ABBR
     ),
     filtered AS (
-      -- C2 fix: Per spec and protocol, pharmacy claims
+      -- C2 fix: pharmacy claims
       -- with missing or anomalous DAY_SUPPLY should be imputed to 28, not dropped.
       SELECT
         PATID, CODE, CODE_TYPE, CLAIM_TYPE, DATE_SERVICE,
@@ -432,7 +432,7 @@ main <- function() {
       FROM enriched
     ),
     dedup AS (
-      -- Dedup per spec: within (PATID, MED_ABBR, DATE_SERVICE, CLAIM_TYPE)
+      -- Dedup: within (PATID, MED_ABBR, DATE_SERVICE, CLAIM_TYPE)
       -- keep max DAY_SUPPLY (pharmacy) or single row (medical, all 28)
       SELECT
         PATID,
@@ -466,10 +466,10 @@ main <- function() {
 
   # STEP 3 (5B): MAP_MED - Medication Available Period algorithm
   #
-  # CORRECTED per spec:
-  #   "Medical runout date ... Pushout is not implemented."
+  # Medical runout rule:
+  #   Medical runout date is DATE_SERVICE + DAY_SUPPLY - 1; pushout is not implemented.
   #
-  # Pharmacy pushout rules (per spec):
+  # Pharmacy pushout rules:
   #   - If new pharmacy claim DATE_SERVICE <= current rx_runout:
   #     pushout = rx_runout - DATE_SERVICE + 1
   #     new rx_runout = DATE_SERVICE + DAY_SUPPLY - 1 + pushout
@@ -504,7 +504,7 @@ main <- function() {
         -- Design choice: pharmacy processed first on same-day ties. This is safe because:
         --   rx pushout only depends on rx_runout (not med_runout),
         --   and medical never has pushout, so order on same day doesn't distort either.
-        -- Spec doesn't mandate tie-break order; this choice is documented and deterministic.
+        -- The MAP algorithm doesn't mandate tie-break order; this choice is documented and deterministic.
         sort_array(collect_list(named_struct(
           'dt', dt,
           'type_ord', case when claim_type='pharmacy' then 0 else 1 end,
@@ -576,7 +576,7 @@ main <- function() {
                         WHEN x.dt <= s.rx_runout THEN
                           date_add(s.rx_runout, x.ds)
                         -- Pharmacy claim AFTER rx_runout but still in MAP (via med_runout)
-                        -- -> RESET without pushout (per spec)
+                        -- -> RESET without pushout
                         ELSE
                           date_add(x.dt, x.ds - 1)
                       END
@@ -584,7 +584,7 @@ main <- function() {
                     ELSE s.rx_runout
                   END,
                   -- MEDICAL RUNOUT UPDATE
-                  -- Per spec: Pushout is not implemented for medical.
+                  -- Pushout is not implemented for medical.
                   -- Always: DATE_SERVICE + DAY_SUPPLY - 1.
                   -- greatest() is a safety belt: if a same-day or out-of-order claim
                   -- produces an earlier runout, we keep the existing later one.
@@ -696,7 +696,7 @@ main <- function() {
       ON ms.PATID = l1.PATID
     WHERE ms.MAP_START_DT >= l1.LOT1_START_DT
       AND ms.MAP_START_DT <= date_add(l1.LOT1_START_DT, {cfg$induction_window_days - 1})
-      AND ms.MAP_MED_CLASS <> 'STEROID'  -- H1 fix: exclude steroids per protocol
+      AND ms.MAP_MED_CLASS <> 'STEROID'  -- H1 fix: exclude steroids (corticosteroids are not oncology agents)
   "), qc = "
     SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients, avg(cnt) AS avg_induction_meds
     FROM (SELECT PATID, count(DISTINCT MED_ABBR) AS cnt FROM lot1_induction_meds GROUP BY PATID)")
@@ -714,7 +714,7 @@ main <- function() {
         ON im.MED_ABBR = ps.original_med
     ),
     -- H1 fix: Steroids are now excluded from base_meds (via lot1_induction_meds filter)
-    -- per protocol: corticosteroids are not oncology agents and should
+    -- because corticosteroids are not oncology agents and should
     -- not drive regimen membership, discontinuation, or add-med logic.
     discon_raw AS (
       SELECT
@@ -788,7 +788,7 @@ main <- function() {
         AND ms.MAP_START_DT <= coalesce(bc.LOT1_BASE_DISCON_DT, bc.OBS_END_DT)
     ),
     first_add_pick AS (
-      -- Spec: when multiple non-induction drugs share the earliest add date,
+      -- When multiple non-induction drugs share the earliest add date,
       -- pick one at random with a fixed seed. rand(42) is deterministic
       -- across runs, so the pick is reproducible but not alphabetically
       -- biased the way min() was.
@@ -812,7 +812,7 @@ main <- function() {
       bc.LOT1_START_DT, bc.LOT1_MED_CNT, bc.LOT1_BASE_MEDS,
       bc.LOT1_BASE_DISCON_DT,
       -- M1 fix: LOT1_BASE_LENGTH moved to S16 where LOT1_BASE_END_DT is finalized.
-      -- This aligns with the spec's 2-way formula using the derived end date.
+      -- This uses the 2-way formula on the derived end date.
       {paste0('bc.', paste(c(paste0('LOT1_MED_', vapply(meds, sanitize_col, character(1))), paste0('LOT1_CLASS_', vapply(classes, sanitize_col, character(1)))), collapse = ', bc.'))},
       fa.LOT1_BASE_1ST_ADD_MED_DT,
       fa.LOT1_BASE_1ST_ADD_MED
@@ -829,7 +829,7 @@ main <- function() {
 
 
   # STEP 7 (SCT): Stem Cell Transplant detection
-  # Per the SCT spec:
+  # SCT detection rules:
   #   - AUTO: 14-day window grouping + 60-day gap + 180-day tandem
   #   - ALLO/CART: simple sequential dates
   #   - ALLO/CART immediately end LOT1
@@ -961,10 +961,10 @@ main <- function() {
   # To audit source contributions, query the combined CTE directly before dedup.
 
 
-  # S13: AUTO SCT date processing (per spec)
+  # S13: AUTO SCT date processing
   #
   # Step 1: Group AUTO claims into 14-day windows (claims within 14 days of
-  #         window start are in same window). Per spec, select the LAST (max)
+  #         window start are in same window). Select the LAST (max)
   #         date in each window, NOT the first -- first claims are workup
   #         activity, last claim is the actual transplant.
   #
@@ -972,7 +972,7 @@ main <- function() {
   # tandem boundary (from the previous finalized TX date), select the date
   # closest to the boundary rather than the window max. This ensures accurate
   # tandem determination. Computed as min |date - boundary| over all dates
-  # in the window. (See SCT spec example: TX_AUTO1=09MAY2018, 180-day mark
+  # in the window. (Worked example: TX_AUTO1=09MAY2018, 180-day mark
   # ~05NOV2018, window 06NOV-20NOV picks 07NOV instead of 20NOV.)
   #
   # Step 2: Apply 60-day minimum gap between events (merge if < 60 days apart).
@@ -1243,8 +1243,8 @@ main <- function() {
         AND ac.TX_DT <= l.OBS_END_DT
       GROUP BY ac.PATID
     ),
-    -- Check for ALLO between AUTO_DT_1 and AUTO_DT_2 (inclusive, per spec)
-    -- Spec: tandem disqualified if ALLO exists such that AUTO_DT_1 <= ALLO <= AUTO_DT_2
+    -- Check for ALLO between AUTO_DT_1 and AUTO_DT_2 (inclusive)
+    -- Tandem disqualified if ALLO exists such that AUTO_DT_1 <= ALLO <= AUTO_DT_2
     allo_between AS (
       SELECT ap.PATID,
         sum(CASE WHEN ac.TX_DT >= ap.AUTO_DT_1 AND ac.TX_DT <= ap.AUTO_DT_2
@@ -1289,9 +1289,9 @@ main <- function() {
         END AS ENDING_AUTO_DT,
         fa.ALLO_DT AS FIRST_ALLO_DT,
         fc.CART_DT AS FIRST_CART_DT,
-        -- LOT1_TX_AUTO_FLG: binary flag for any valid autologous HSCT (per spec)
+        -- LOT1_TX_AUTO_FLG: binary flag for any valid autologous HSCT
         CASE WHEN ap.AUTO_DT_1 IS NOT NULL THEN 1 ELSE 0 END AS LOT1_TX_AUTO_FLG,
-        -- LOT1_TX_AUTO_MAX_DT: date of 2nd tandem AUTO if tandem, else single AUTO date (per spec)
+        -- LOT1_TX_AUTO_MAX_DT: date of 2nd tandem AUTO if tandem, else single AUTO date
         CASE
           WHEN ap.AUTO_DT_2 IS NOT NULL
            AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}
@@ -1567,7 +1567,7 @@ main <- function() {
         -- When CART_INIT_FLG=1 and the SCT IS the CART (reason=3), skip this branch
         -- so CART_INIT can handle it. Otherwise CART events always route to SCT_CART
         -- before CART_INIT is ever reached.
-        -- Tie-break vs CART_INIT uses FIRST_CART_DT - 1 (CART_INIT's spec end date),
+        -- Tie-break vs CART_INIT uses FIRST_CART_DT - 1 (CART_INIT's end date),
         -- so SCT only wins on ties when its end is <= CART_INIT's end.
         WHEN ec.LOT1_TX_ENDDATE IS NOT NULL
          AND NOT (ec.CART_INIT_FLG = 1 AND ec.LOT1_TX_ENDDATE_REASON = 3)
@@ -1582,7 +1582,7 @@ main <- function() {
                ELSE 'SCT'
              END
         -- CART_INIT: MED_ADD followed by CART within {cfg$cart_consolidation_days} days.
-        -- Spec end date is FIRST_CART_DT - 1, so gate against discon uses that.
+        -- The end date is FIRST_CART_DT - 1, so gate against discon uses that.
         WHEN ec.CART_INIT_FLG = 1
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR date_sub(ec.FIRST_CART_DT, 1) <= ec.LOT1_BASE_DISCON_DT)
         THEN 'CART_INIT'
