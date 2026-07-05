@@ -47,8 +47,10 @@
 #    closed LOT1"); the full CAR-T-relative-to-LOT1 breakdown (incl. CAR-T
 #    BEFORE LOT1) reuses vqs_q6_cart on a POMA-filtered view.
 #  - Q5 rebuilds continuous enrollment spans from raw member_enrollment (<=30d
-#    gaps) and keeps the span covering INDEX_DATE - it does NOT collapse all
-#    rows to a min/max, which would bridge non-continuous coverage.
+#    gaps) and keeps the span covering LOT1_START_DT (the LOT1-anchored NDMM
+#    proof) and the span covering INDEX_DATE (parent-index supplemental) - it
+#    does NOT collapse all rows to a min/max, which would bridge non-continuous
+#    coverage.
 
 .script_dir <- local({
   args <- commandArgs(trailingOnly = FALSE)
