@@ -260,23 +260,35 @@ main <- function() {
     tables = list())
 
   # ---- Q1: patient journeys (mix) ---------------------------------------
+  # The example set is AUTO-picked to span archetypes, but an analyst can pin a
+  # curated list via JULIA_EXAMPLE_PATIDS (comma/space separated) after eyeballing
+  # a first run - so the workbook can show clinically chosen patients, not just
+  # whatever the heuristic surfaced.
   q1_tables <- list(); q1_notes <- character()
+  curated <- strsplit(Sys.getenv("JULIA_EXAMPLE_PATIDS", unset = ""), "[,; ]+")[[1]]
+  curated <- trimws(curated); curated <- curated[nzchar(curated)]
   if (have_map) {
-    # a diverse example set: deepest progressors + POMA-1L + allo + auto + CART
-    pick <- function(sql) tryCatch(db_q(con, sql)$PATID, error = function(e) character(0))
-    deep <- pick(glue("WITH pm AS (SELECT cast(PATID as string) PATID, max(LOT_NUM) mx
-                        FROM {lot_long} GROUP BY PATID)
-                       SELECT PATID FROM pm ORDER BY mx DESC, PATID LIMIT 3"))
-    allo <- pick(glue("SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
-                       WHERE LOT_NUM=1 AND LOT_BASE_END_REASON='SCT_ALLO' ORDER BY PATID LIMIT 2"))
-    auto <- pick(glue("SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
-                       WHERE LOT_NUM=1 AND (LOT_TX_AUTO_SING_FLG=1 OR LOT_TX_AUTO_TAND_FLG=1)
-                       ORDER BY PATID LIMIT 2"))
-    cart <- if (have_sct) pick(glue("SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
-                       WHERE LOT_BASE_END_REASON IN ('SCT_CART','CART_INIT') OR LOT_CART_LOT_FLG=1
-                       ORDER BY PATID LIMIT 2")) else character(0)
-    pomj <- head(poma_ids, 2)
-    ids  <- unique(c(deep, pomj, allo, auto, cart))
+    if (length(curated) > 0) {
+      ids <- unique(curated)
+      q1_notes <- c(sprintf("Curated example patients from JULIA_EXAMPLE_PATIDS (%d).", length(ids)))
+    } else {
+      # a diverse example set: deepest progressors + POMA-1L + allo + auto + CART
+      pick <- function(sql) tryCatch(db_q(con, sql)$PATID, error = function(e) character(0))
+      deep <- pick(glue("WITH pm AS (SELECT cast(PATID as string) PATID, max(LOT_NUM) mx
+                          FROM {lot_long} GROUP BY PATID)
+                         SELECT PATID FROM pm ORDER BY mx DESC, PATID LIMIT 3"))
+      allo <- pick(glue("SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
+                         WHERE LOT_NUM=1 AND LOT_BASE_END_REASON='SCT_ALLO' ORDER BY PATID LIMIT 2"))
+      auto <- pick(glue("SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
+                         WHERE LOT_NUM=1 AND (LOT_TX_AUTO_SING_FLG=1 OR LOT_TX_AUTO_TAND_FLG=1)
+                         ORDER BY PATID LIMIT 2"))
+      cart <- if (have_sct) pick(glue("SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
+                         WHERE LOT_BASE_END_REASON IN ('SCT_CART','CART_INIT') OR LOT_CART_LOT_FLG=1
+                         ORDER BY PATID LIMIT 2")) else character(0)
+      pomj <- head(poma_ids, 2)
+      ids  <- unique(c(deep, pomj, allo, auto, cart))
+      q1_notes <- "Example patients auto-selected (deep progressors + POMA-1L + allo/auto SCT + CAR-T). Pin a curated set with JULIA_EXAMPLE_PATIDS and re-run."
+    }
     if (length(ids) > 0) {
       # final LOT assignment for the picked patients
       q1_tables[["Assigned lines (LOT_LONG) for the example patients"]] <-
@@ -297,12 +309,13 @@ main <- function() {
       if (have_sct)
         q1_tables[["Raw SCT / CAR-T claims (medical PROC_CD/BILL_PROC_CD + med_procedure + med_diagnosis)"]] <-
           cap(vqs_raw_sct_claims(con, ids, bounds = bounds$sql), "Raw SCT / CAR-T claims", "q1")
-      q1_notes <- c(sprintf("Example patients (%d): %s.", length(ids), paste(ids, collapse = ", ")),
+      q1_notes <- c(q1_notes,
+                    sprintf("Example patients (%d): %s.", length(ids), paste(ids, collapse = ", ")),
                     "Chain: raw claims (routes above) -> MAP segments -> assigned LOT, all with dates.",
                     if (!bounds$available) "Raw claims are NOT observation-window bounded (ELIG_COH_FINAL unavailable)." else
                       "Raw claims scoped to [INDEX_DATE, OBS_END_DT] from ELIG_COH_FINAL.",
                     notes_env$q1)
-    } else q1_notes <- "No example patients could be selected from LOT_LONG."
+    } else q1_notes <- c(q1_notes, "No example patients could be selected from LOT_LONG.")
   } else q1_notes <- paste0(map_tbl, " not readable - journeys skipped. Build MAP_STACKED (02_lot1.R).")
   add_sheet(name = "Q1 journeys", title = "Q1 - Patient journeys: raw claims -> assigned LOT",
     subtitle = "A mix of patients (deep progressors, POMA-1L, autologous/allogeneic SCT, CAR-T), each traced with dates.",
@@ -433,15 +446,23 @@ main <- function() {
                        max(CASE WHEN o.fill_dt >= x.cov_start
                                  AND o.fill_dt <  date_sub(x.INDEX_DATE,183) THEN 1 ELSE 0 END) pre_baseline_len_thal
                      FROM idx_span x LEFT JOIN early_oral o ON o.PATID=x.PATID GROUP BY x.PATID)
-      SELECT count(*) AS poma_1l_pts,
-             sum(CASE WHEN datediff(x.INDEX_DATE, x.cov_start) > 183 THEN 1 ELSE 0 END) AS obs_history_gt_6mo,
-             sum(coalesce(ef.pre_baseline_len_thal,0))                                  AS early_len_thal_pre_baseline
-      FROM poma1l p JOIN idx_span x USING (PATID) LEFT JOIN early_flag ef USING (PATID)")),
+      -- LEFT JOIN so poma_1l_pts is the FULL POMA-1L denominator; a patient with no
+      -- index-covering enrollment span is retained and shown by poma_1l_with_index_span.
+      -- The two SHOULD be equal (the cohort enforces CE); a gap flags a LOT_LONG /
+      -- ELIG_COH_FINAL / enrollment mismatch to investigate, not a silent drop.
+      SELECT count(*)                                                                    AS poma_1l_pts,
+             count(x.PATID)                                                              AS poma_1l_with_index_span,
+             sum(CASE WHEN x.cov_start IS NOT NULL
+                       AND datediff(x.INDEX_DATE, x.cov_start) > 183 THEN 1 ELSE 0 END)  AS obs_history_gt_6mo,
+             sum(coalesce(ef.pre_baseline_len_thal,0))                                   AS early_len_thal_pre_baseline
+      FROM poma1l p LEFT JOIN idx_span x USING (PATID) LEFT JOIN early_flag ef USING (PATID)")),
       error = function(e) { q5_notes <<- paste("Q5 query failed:", conditionMessage(e)); NULL })
     q5_notes <- c(q5_notes,
-      "Every Optum member has pharmacy benefit; this measures how many POMA-1L patients have >6mo continuous",
-      "pre-index coverage (obs_history_gt_6mo) and how many have a LEN/THAL fill inside that coverage but",
-      "BEFORE the 6-month baseline window (early_len_thal_pre_baseline) - the true residual blind spot.",
+      "poma_1l_pts = full POMA-1L denominator; poma_1l_with_index_span = those with a continuous span covering index",
+      "(should match - if lower, investigate a LOT_LONG / ELIG_COH_FINAL / enrollment mismatch).",
+      "Every Optum member has pharmacy benefit; obs_history_gt_6mo = POMA-1L patients with >6mo continuous pre-index",
+      "coverage, and early_len_thal_pre_baseline = those with a LEN/THAL fill inside that coverage but BEFORE the",
+      "6-month baseline window (the true residual blind spot).",
       "Continuous spans are rebuilt from raw member_enrollment (<=30-day gaps), keeping the index-covering span.")
   } else {
     q5_notes <- if (n_poma == 0) "No POMA-at-1L patients - Q5 skipped." else
