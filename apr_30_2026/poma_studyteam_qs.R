@@ -159,6 +159,22 @@ wbx_write_workbook <- function(sheets, xlsx_path, csv_dir, stamp, allow_csv = FA
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
+# Best-effort optional table: return the data on success, else a one-row table
+# NAMING the failure. Assigning NULL into a list element would DELETE it (R
+# semantics), so an unavailable optional pull would vanish with no trace; this
+# keeps a visible "unavailable" row in the workbook (and logs the reason).
+best_effort <- function(expr, label) {
+  r <- tryCatch(expr, error = function(e) {
+    log_msg("  NOTE: '", label, "' unavailable - ", conditionMessage(e))
+    data.frame(status = sprintf("'%s' unavailable: %s", label, conditionMessage(e)),
+               stringsAsFactors = FALSE)
+  })
+  if (is.null(r))
+    data.frame(status = sprintf("'%s' returned no data (optional pull unavailable this run)", label),
+               stringsAsFactors = FALSE)
+  else r
+}
+
 # ===========================================================================
 main <- function() {
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
@@ -208,12 +224,14 @@ main <- function() {
   cart_raw <- if (have_sct) tryCatch(vqs_build_raw_cart_dates(con, lot_long, bounds$sql),
                                      error = function(e) NULL) else NULL
 
-  # POMA-at-1L patient set (delivered cohort)
-  poma_ids <- tryCatch(db_q(con, glue("
+  # POMA-at-1L patient set (delivered cohort). This is the denominator EVERY
+  # question depends on, so it runs fail-fast (no error swallow): if it errored we
+  # would report "0 POMA patients" and skip Q2/Q5, indistinguishable from a true
+  # zero. LOT_LONG readability is already checked above.
+  poma_ids <- db_q(con, glue("
     SELECT cast(PATID as string) AS PATID FROM {lot_long}
     WHERE LOT_NUM = 1 AND LOT_BASE_MEDS IS NOT NULL
-      AND array_contains(split(LOT_BASE_MEDS, ' '), '{poma}')"))$PATID,
-    error = function(e) character(0))
+      AND array_contains(split(LOT_BASE_MEDS, ' '), '{poma}')"))$PATID
   n_poma <- length(unique(poma_ids))
   n_lot1 <- num(db_q(con, glue(
     "SELECT count(DISTINCT PATID) n FROM {lot_long} WHERE LOT_NUM = 1"))$n)
@@ -298,10 +316,10 @@ main <- function() {
           ORDER BY PATID, LOT_NUM"))
       q1_tables[["MAP segments the engine built"]] <- vqs_map_journey(con, map_tbl, lot_long, ids)
       q1_tables[["Raw MM-therapy claims (all routes: rx NDC, medical PROC_CD/BILL_PROC_CD/NDC)"]] <-
-        tryCatch(vqs_raw_mma_claims(con, ids, bounds = bounds$sql), error = function(e) NULL)
+        best_effort(vqs_raw_mma_claims(con, ids, bounds = bounds$sql), "Raw MM-therapy claims")
       if (have_sct)
         q1_tables[["Raw SCT / CAR-T claims (medical PROC_CD/BILL_PROC_CD + med_procedure + med_diagnosis)"]] <-
-          tryCatch(vqs_raw_sct_claims(con, ids, bounds = bounds$sql), error = function(e) NULL)
+          best_effort(vqs_raw_sct_claims(con, ids, bounds = bounds$sql), "Raw SCT / CAR-T claims")
       q1_notes <- c(q1_notes,
                     sprintf("Example patients (%d): %s.", length(ids), paste(ids, collapse = ", ")),
                     "Chain: raw claims (routes above) -> MAP segments -> assigned LOT, all with dates.",
@@ -336,18 +354,18 @@ main <- function() {
       FROM poma1l p JOIN fl f USING (PATID) JOIN ctx c USING (PATID)"))
 
     # Authoritative CAR-T-relative-to-LOT1 for the POMA-1L subset (reuses vqs_q6_cart).
-    # Optional add-on: guarded so a temp-view / SCT-table hiccup omits this one
-    # table rather than aborting the workbook.
-    if (have_sct) {
-      db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW poma1l_lot_long_tmp AS
-                         SELECT ll.* FROM {lot_long} ll
-                         JOIN (SELECT DISTINCT PATID FROM {lot_long}
-                               WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{poma}')) p
-                           ON cast(ll.PATID as string) = cast(p.PATID as string)"))
-      q2_tables[["POMA-1L CAR-T relative to LOT1 (authoritative; vqs_q6_cart)"]] <-
-        tryCatch(vqs_q6_cart(con, "poma1l_lot_long_tmp", sct_tbl, w1 = VQS_W1, cart_raw_tbl = cart_raw),
-                 error = function(e) NULL)
-    }
+    # Optional add-on: BOTH the temp-view creation and the query are inside the
+    # guard, so a create-view or SCT-table hiccup leaves a visible "unavailable"
+    # row rather than aborting the workbook.
+    if (have_sct)
+      q2_tables[["POMA-1L CAR-T relative to LOT1 (authoritative; vqs_q6_cart)"]] <- best_effort({
+        db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW poma1l_lot_long_tmp AS
+                           SELECT ll.* FROM {lot_long} ll
+                           JOIN (SELECT DISTINCT PATID FROM {lot_long}
+                                 WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{poma}')) p
+                             ON cast(ll.PATID as string) = cast(p.PATID as string)"))
+        vqs_q6_cart(con, "poma1l_lot_long_tmp", sct_tbl, w1 = VQS_W1, cart_raw_tbl = cart_raw)
+      }, "POMA-1L CAR-T relative to LOT1")
     q2_notes <- c(
       "Autologous SCT at 1L is standard first-line care and is NOT evidence of prior treatment.",
       "The red flag is an allogeneic SCT or CAR-T that CLOSES the first line (end reason SCT_ALLO / SCT_CART / CART_INIT).",
