@@ -297,27 +297,37 @@ main <- function() {
   curated <- strsplit(Sys.getenv("EXAMPLE_PATIDS", unset = ""), "[,; ]+")[[1]]
   curated <- trimws(curated); curated <- curated[nzchar(curated)]
   if (have_map) {
-    if (length(curated) > 0) {
-      # Re-filter curated IDs to the NDMM cohort. An ID outside NDMM_LOT_LONG_FILT
-      # would show no assigned lines, but its raw MM / SCT claims (PATID-filtered on
-      # the PARENT ELIG_COH_FINAL bounds) would still leak a non-NDMM patient into
-      # this NDMM-only workbook. Drop any out-of-cohort IDs and name them.
+    # Decide the example set: curated (EXAMPLE_PATIDS) only when the IDs are VERIFIED
+    # to be in the NDMM cohort, otherwise auto-selection. Curated IDs are used only
+    # after they pass the NDMM membership check; if that check errors or leaves
+    # nothing, we FAIL CLOSED to auto-selection (which is NDMM-bounded), so an
+    # unverified ID can never reach the raw MM / SCT pulls and leak a non-NDMM
+    # patient into this NDMM-only workbook.
+    use_curated <- length(curated) > 0
+    if (use_curated) {
       req <- unique(curated)
       chk <- tryCatch(db_q(con, glue("SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
                                       WHERE cast(PATID as string) IN ({vqs_in_list(req)})"))$PATID,
                       error = function(e) NULL)
       if (is.null(chk)) {
-        ids <- req
-        q1_notes <- sprintf("Curated example patients from EXAMPLE_PATIDS (%d); NDMM-cohort membership NOT verified (check query failed).", length(ids))
+        use_curated <- FALSE
+        q1_notes <- c(q1_notes, "EXAMPLE_PATIDS given but the NDMM-membership check failed; falling back to auto-selection to avoid including non-NDMM patients.")
       } else {
         ids <- req[req %in% chk]
         dropped <- setdiff(req, ids)
-        q1_notes <- sprintf("Curated example patients from EXAMPLE_PATIDS: %d in NDMM cohort%s.",
-                            length(ids),
-                            if (length(dropped)) sprintf("; %d dropped as NOT in NDMM: %s",
-                                                         length(dropped), paste(dropped, collapse = ", ")) else "")
+        if (length(ids) > 0) {
+          q1_notes <- c(q1_notes,
+            sprintf("Curated example patients from EXAMPLE_PATIDS: %d in NDMM cohort%s.",
+                    length(ids),
+                    if (length(dropped)) sprintf("; %d dropped as NOT in NDMM: %s",
+                                                 length(dropped), paste(dropped, collapse = ", ")) else ""))
+        } else {
+          use_curated <- FALSE
+          q1_notes <- c(q1_notes, sprintf("None of the %d EXAMPLE_PATIDS were in the NDMM cohort; falling back to auto-selection.", length(req)))
+        }
       }
-    } else {
+    }
+    if (!use_curated) {
       # a diverse example set: deepest progressors + POMA-1L + allo + auto + CART
       pick <- function(sql) tryCatch(db_q(con, sql)$PATID, error = function(e) character(0))
       deep <- pick(glue("WITH pm AS (SELECT cast(PATID as string) PATID, max(LOT_NUM) mx
@@ -333,7 +343,7 @@ main <- function() {
                          ORDER BY PATID LIMIT 2")) else character(0)
       pomj <- head(poma_ids, 2)
       ids  <- unique(c(deep, pomj, allo, auto, cart))
-      q1_notes <- "Example patients auto-selected (deep progressors + POMA-1L + allo/auto SCT + CAR-T). Pin a curated set with EXAMPLE_PATIDS and re-run."
+      q1_notes <- c(q1_notes, "Example patients auto-selected (deep progressors + POMA-1L + allo/auto SCT + CAR-T). Pin a curated set with EXAMPLE_PATIDS and re-run.")
     }
     if (length(ids) > 0) {
       # final LOT assignment for the picked patients
@@ -528,7 +538,9 @@ main <- function() {
       -- counts. Those SHOULD equal the denominator (the cohort enforces CE); a gap flags
       -- a LOT_LONG / ELIG_COH_FINAL / enrollment mismatch to investigate, not a silent drop.
       SELECT count(*)                                                                    AS poma_1l_pts,
-             -- LOT1-anchored NDMM check (mirrors NDMM filter #1/#4: 12-mo pre-LOT1 window)
+             -- LOT1-anchored NDMM check: CE mirrors filter #1; len_thal is the LEN/THAL
+             -- SUBSET of filter #4's 12-mo pre-LOT1 window (filter #4 also scans medical
+             -- PROC/BILL_PROC/NDC + rx NDC for all non-steroid MM oncology therapy)
              count(ls.PATID)                                                             AS poma_1l_with_lot1_span,
              sum(CASE WHEN ls.lot1_cov_start IS NOT NULL
                        AND datediff(ls.lot1_dt, ls.lot1_cov_start) >= 365 THEN 1 ELSE 0 END) AS ce_ge_12mo_pre_lot1,
@@ -545,8 +557,9 @@ main <- function() {
       "LOT1-ANCHORED NDMM CHECK (the study proof, shown directly in the table, anchored on LOT1_START_DT):",
       "ce_ge_12mo_pre_lot1 = POMA-1L patients with >=12 months continuous enrollment before LOT1 (mirrors NDMM filter #1)",
       "- should equal poma_1l_pts. len_thal_in_12mo_pre_lot1 = those with a LEN/THAL fill in [LOT1_START-365, LOT1_START-1]",
-      "(mirrors NDMM filter #4) - should be 0, since NDMM already excludes observable MM oncology therapy in that window;",
-      "a nonzero value flags a discrepancy to investigate.",
+      "- this is the LEN/THAL SUBSET of NDMM filter #4's no-prior-therapy window (filter #4 itself is broader: all",
+      "non-steroid MM oncology therapy across medical PROC/BILL_PROC/NDC + rx NDC). It should be 0, since NDMM already",
+      "excludes observable MM therapy in that window; a nonzero value flags a discrepancy to investigate.",
       "PARENT-INDEX SUPPLEMENTAL (secondary; anchored on ELIG_COH_FINAL INDEX_DATE = 6-mo pre-MM-dx): obs_history_gt_6mo",
       "and early_len_thal_pre_baseline extend the look-back to catch a LEN/THAL fill even BEFORE that 6-month window -",
       "a residual blind-spot probe, NOT the NDMM proof.",
