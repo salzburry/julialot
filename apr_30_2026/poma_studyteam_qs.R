@@ -276,10 +276,10 @@ main <- function() {
       "Operational definitions are shared with R/validation_qs.R (single source of truth)."),
     tables = list())
 
-  # ---- Optum coverage validation (documentary) --------------------------
+  # ---- Optum coverage validation ----------------------------------------
   add_sheet(name = "Optum coverage (validation)",
     title = "Does Optum separate medical & pharmacy coverage?",
-    subtitle = "Documentary validation (not a query): does Optum track medical and pharmacy coverage separately?",
+    subtitle = "Reasoned from how the cohort is built, not a warehouse query.",
     narrative = c(
       "Bottom line: essentially no. Optum CDM restricts membership to individuals with BOTH medical and pharmacy",
       "benefits, so there is no medical-only sub-population; coverage is one continuous-enrollment span, not two",

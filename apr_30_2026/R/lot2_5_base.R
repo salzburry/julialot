@@ -147,7 +147,7 @@ init_lot_long_from_lot1 <- function(con, meds, classes) {
 }
 
 # ---- Build a single LOT_N (N >= 2) ----
-# Strategy (per Decision_Flow tab):
+# Strategy:
 #   1. For each patient, compute candidate trigger DATES after LOT_(N-1) end:
 #        d_MED, d_ALLO, d_CART, d_AUTO (unplanned only)
 #   2. LOT_N_START_DT = min of candidates (date-first; tie-break by type
