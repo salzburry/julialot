@@ -1,21 +1,21 @@
 #!/usr/bin/env Rscript
-# julia_july5_qs.R - Julia's 5 July 2026 study-team questions -> ONE Excel workbook.
+# Standalone POMA-in-1L study-team questions -> ONE Excel workbook.
 #
-#   Rscript julia_july5_qs.R
+#   Rscript poma_studyteam_qs.R
 #
-# Sibling of lot1_studyteam_qs.R and validation_qs.R. It answers Julia's five
-# follow-up questions on the REAL cohort (Databricks / Optum CDM) and writes a
-# single .xlsx (one tab per question + patient journeys + the Optum coverage
-# note). It reuses the shared operational definitions in R/validation_qs.R, so
-# the CAR-T / journey / raw-claim logic can never drift from the dashboard.
+# Sibling of lot1_studyteam_qs.R and validation_qs.R. Answers five follow-up
+# questions on the delivered cohort (Databricks / Optum CDM) and writes a single
+# .xlsx (one tab per question + patient journeys + the Optum coverage note). It
+# reuses the shared operational definitions in R/validation_qs.R, so the CAR-T /
+# journey / raw-claim logic can never drift from the dashboard.
 #
-# Questions (chat, forwarded - Questions/July 5 2026):
+# Questions, against patients whose 1L regimen contains POMA (pomalidomide):
 #   Q1  Trace a mix of patients from raw claims to final assigned LOT
 #       (LOT1-5, SCT/CAR-T, consolidation around CAR-T).
 #   Q2  Among POMA-in-1L patients, who also received SCT or CAR-T? Split by
 #       WHEN it happened: autologous at 1L is normal first-line care; an
 #       allogeneic transplant or CAR-T that CLOSES the first line is the
-#       "not treatment-naive" red flag; the same therapy on a later line is
+#       "not treatment-naive" signal; the same therapy on a later line is
 #       expected progression (context only).
 #   Q3  Is POMA-1L associated with the "permissible" other cancers ELIG_COH
 #       retains in baseline (OTHER_MALIGN_FLAG)?
@@ -62,20 +62,41 @@ source(file.path(source_dir, "codelists_lot.R"))        # load_codelist_csv
 source(file.path(source_dir, "validation_qs.R"))        # vqs_* helpers (shared)
 
 # ===========================================================================
-# Excel writer. openxlsx if available; else one CSV per table (still runnable).
+# Ensure the Excel engine is present. Try to load openxlsx; if missing, try to
+# install it once; report whether it is now usable. The deliverable is an .xlsx,
+# so main() fails closed when this returns FALSE (unless ALLOW_CSV_FALLBACK).
+# ===========================================================================
+wbx_ensure_openxlsx <- function() {
+  if (requireNamespace("openxlsx", quietly = TRUE)) return(TRUE)
+  log_msg("openxlsx not installed - attempting install.packages('openxlsx')...")
+  tryCatch(utils::install.packages("openxlsx", repos = getOption("repos"), quiet = TRUE),
+           error = function(e) log_msg("  openxlsx install failed: ", conditionMessage(e)))
+  requireNamespace("openxlsx", quietly = TRUE)
+}
+
+# ===========================================================================
+# Excel writer. Writes ONE .xlsx via openxlsx. If openxlsx is unavailable it
+# fails closed (stop) unless allow_csv=TRUE, in which case it emits one CSV per
+# table as an explicit, opt-in degraded mode.
 # A "sheet" is list(name, title, subtitle=NULL, narrative=character(), tables=
 # named list of data.frames or list(caption, df)).
 # ===========================================================================
-jj_write_workbook <- function(sheets, xlsx_path, csv_dir, stamp) {
+wbx_write_workbook <- function(sheets, xlsx_path, csv_dir, stamp, allow_csv = FALSE) {
   san <- function(x) gsub("[^A-Za-z0-9]+", "_", x)
   if (!requireNamespace("openxlsx", quietly = TRUE)) {
-    log_msg("openxlsx not installed - writing one CSV per table instead of .xlsx. ",
-            "install.packages('openxlsx') for the single-workbook deliverable.")
+    if (!isTRUE(allow_csv))
+      stop("openxlsx is required to build the Excel workbook, but it is not ",
+           "installed and could not be installed. Install it (install.packages",
+           "('openxlsx')) and re-run, or set ALLOW_CSV_FALLBACK=TRUE to emit one CSV ",
+           "per table instead of the .xlsx.")
+    log_msg("WARNING: openxlsx unavailable and ALLOW_CSV_FALLBACK set - emitting one ",
+            "CSV per table INSTEAD of the single .xlsx deliverable. Install openxlsx ",
+            "for the single-file workbook.")
     for (s in sheets) for (nm in names(s$tables)) {
       entry <- s$tables[[nm]]; df <- entry
       if (is.list(entry) && !is.data.frame(entry)) df <- entry$df
       if (is.data.frame(df) && nrow(df) > 0) {
-        f <- file.path(csv_dir, sprintf("julia_july5_%s__%s_%s.csv",
+        f <- file.path(csv_dir, sprintf("poma_studyteam_qs_%s__%s_%s.csv",
                                         san(s$name), san(nm), stamp))
         utils::write.csv(df, f, row.names = FALSE)
         log_msg("  wrote ", f, " (", nrow(df), " rows)")
@@ -141,6 +162,19 @@ jj_write_workbook <- function(sheets, xlsx_path, csv_dir, stamp) {
 # ===========================================================================
 main <- function() {
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
+
+  # Fail closed on the Excel engine BEFORE running any query, so a missing
+  # openxlsx does not waste warehouse time and cannot masquerade as success.
+  allow_csv <- tolower(Sys.getenv("ALLOW_CSV_FALLBACK", unset = "")) %in% c("1", "true", "yes")
+  have_xlsx <- wbx_ensure_openxlsx()
+  if (!have_xlsx && !allow_csv)
+    stop("openxlsx is required to build the Excel workbook, and it is not ",
+         "installed / could not be installed here. Run install.packages('openxlsx') ",
+         "and re-run, or set ALLOW_CSV_FALLBACK=TRUE to emit one CSV per table instead.")
+  if (!have_xlsx)
+    log_msg("WARNING: openxlsx unavailable; ALLOW_CSV_FALLBACK is set -> CSV-per-table ",
+            "degraded mode (NOT the .xlsx deliverable).")
+
   con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
@@ -155,7 +189,7 @@ main <- function() {
   allflags  <- wrk("ELIG_COH_ALLFLAGS")
   final_tbl <- wrk(cfg$input_cohort_table)
 
-  log_msg(SEP); log_msg("Julia's July 5 questions -> single Excel workbook"); log_msg(SEP)
+  log_msg(SEP); log_msg("POMA-in-1L study-team questions -> single Excel workbook"); log_msg(SEP)
   if (!vqs_readable(con, lot_long))
     stop("Cannot read ", lot_long, ". Build the LOT pipeline (02_lot1.R / 03_lot2_5.R) first.")
   have_map   <- vqs_readable(con, map_tbl)
@@ -189,9 +223,18 @@ main <- function() {
   sheets <- list()
   add_sheet <- function(...) sheets[[length(sheets) + 1L]] <<- list(...)
 
+  # Capture query/helper failures into per-question notes so a missing table
+  # surfaces IN the workbook (as a NOTE line) and the log, instead of a silently
+  # empty sheet that reads as "answered".
+  notes_env <- new.env()
+  cap <- function(expr, label, key) tryCatch(expr, error = function(e) {
+    m <- sprintf("NOTE: '%s' could not be produced - %s", label, conditionMessage(e))
+    log_msg("  ", m); notes_env[[key]] <- c(notes_env[[key]], m); NULL
+  })
+
   # ---- Read Me -----------------------------------------------------------
-  add_sheet(name = "Read Me", title = "Julia's questions - 5 July 2026 (real cohort)",
-    subtitle = paste0("Generated ", stamp, " by julia_july5_qs.R against ", cfg$work_schema),
+  add_sheet(name = "Read Me", title = "POMA-in-1L study-team questions (delivered cohort)",
+    subtitle = paste0("Generated ", stamp, " by poma_studyteam_qs.R against ", cfg$work_schema),
     narrative = c(
       "One tab per question, computed on the delivered LOT cohort in Databricks.",
       sprintf("POMA-at-1L denominator: %d of %d LOT1 patients.", n_poma, n_lot1),
@@ -217,27 +260,39 @@ main <- function() {
     tables = list())
 
   # ---- Q1: patient journeys (mix) ---------------------------------------
+  # The example set is AUTO-picked to span archetypes, but an analyst can pin a
+  # curated list via EXAMPLE_PATIDS (comma/space separated) after eyeballing
+  # a first run - so the workbook can show clinically chosen patients, not just
+  # whatever the heuristic surfaced.
   q1_tables <- list(); q1_notes <- character()
+  curated <- strsplit(Sys.getenv("EXAMPLE_PATIDS", unset = ""), "[,; ]+")[[1]]
+  curated <- trimws(curated); curated <- curated[nzchar(curated)]
   if (have_map) {
-    # a diverse example set: deepest progressors + POMA-1L + allo + auto + CART
-    pick <- function(sql) tryCatch(db_q(con, sql)$PATID, error = function(e) character(0))
-    deep <- pick(glue("WITH pm AS (SELECT cast(PATID as string) PATID, max(LOT_NUM) mx
-                        FROM {lot_long} GROUP BY PATID)
-                       SELECT PATID FROM pm ORDER BY mx DESC, PATID LIMIT 3"))
-    allo <- pick(glue("SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
-                       WHERE LOT_NUM=1 AND LOT_BASE_END_REASON='SCT_ALLO' ORDER BY PATID LIMIT 2"))
-    auto <- pick(glue("SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
-                       WHERE LOT_NUM=1 AND (LOT_TX_AUTO_SING_FLG=1 OR LOT_TX_AUTO_TAND_FLG=1)
-                       ORDER BY PATID LIMIT 2"))
-    cart <- if (have_sct) pick(glue("SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
-                       WHERE LOT_BASE_END_REASON IN ('SCT_CART','CART_INIT') OR LOT_CART_LOT_FLG=1
-                       ORDER BY PATID LIMIT 2")) else character(0)
-    pomj <- head(poma_ids, 2)
-    ids  <- unique(c(deep, pomj, allo, auto, cart))
+    if (length(curated) > 0) {
+      ids <- unique(curated)
+      q1_notes <- c(sprintf("Curated example patients from EXAMPLE_PATIDS (%d).", length(ids)))
+    } else {
+      # a diverse example set: deepest progressors + POMA-1L + allo + auto + CART
+      pick <- function(sql) tryCatch(db_q(con, sql)$PATID, error = function(e) character(0))
+      deep <- pick(glue("WITH pm AS (SELECT cast(PATID as string) PATID, max(LOT_NUM) mx
+                          FROM {lot_long} GROUP BY PATID)
+                         SELECT PATID FROM pm ORDER BY mx DESC, PATID LIMIT 3"))
+      allo <- pick(glue("SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
+                         WHERE LOT_NUM=1 AND LOT_BASE_END_REASON='SCT_ALLO' ORDER BY PATID LIMIT 2"))
+      auto <- pick(glue("SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
+                         WHERE LOT_NUM=1 AND (LOT_TX_AUTO_SING_FLG=1 OR LOT_TX_AUTO_TAND_FLG=1)
+                         ORDER BY PATID LIMIT 2"))
+      cart <- if (have_sct) pick(glue("SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
+                         WHERE LOT_BASE_END_REASON IN ('SCT_CART','CART_INIT') OR LOT_CART_LOT_FLG=1
+                         ORDER BY PATID LIMIT 2")) else character(0)
+      pomj <- head(poma_ids, 2)
+      ids  <- unique(c(deep, pomj, allo, auto, cart))
+      q1_notes <- "Example patients auto-selected (deep progressors + POMA-1L + allo/auto SCT + CAR-T). Pin a curated set with EXAMPLE_PATIDS and re-run."
+    }
     if (length(ids) > 0) {
       # final LOT assignment for the picked patients
       q1_tables[["Assigned lines (LOT_LONG) for the example patients"]] <-
-        tryCatch(db_q(con, glue("
+        cap(db_q(con, glue("
           SELECT cast(PATID as string) PATID, LOT_NUM,
                  cast(LOT_START_DT as string) LOT_START_DT, LOT_START_TYPE,
                  LOT_BASE_MEDS, cast(LOT_BASE_END_DT as string) LOT_BASE_END_DT,
@@ -246,19 +301,21 @@ main <- function() {
                  cast(LOT_TX_AUTO_DT_1 as string) LOT_TX_AUTO_DT_1,
                  cast(LOT_TX_AUTO_DT_2 as string) LOT_TX_AUTO_DT_2
           FROM {lot_long} WHERE cast(PATID as string) IN ({vqs_in_list(ids)})
-          ORDER BY PATID, LOT_NUM")), error = function(e) NULL)
+          ORDER BY PATID, LOT_NUM")), "Assigned lines (LOT_LONG)", "q1")
       q1_tables[["MAP segments the engine built"]] <-
-        tryCatch(vqs_map_journey(con, map_tbl, lot_long, ids), error = function(e) NULL)
+        cap(vqs_map_journey(con, map_tbl, lot_long, ids), "MAP segments", "q1")
       q1_tables[["Raw MM-therapy claims (all routes: rx NDC, medical PROC_CD/BILL_PROC_CD/NDC)"]] <-
-        tryCatch(vqs_raw_mma_claims(con, ids, bounds = bounds$sql), error = function(e) NULL)
+        cap(vqs_raw_mma_claims(con, ids, bounds = bounds$sql), "Raw MM-therapy claims", "q1")
       if (have_sct)
         q1_tables[["Raw SCT / CAR-T claims (medical PROC_CD/BILL_PROC_CD + med_procedure + med_diagnosis)"]] <-
-          tryCatch(vqs_raw_sct_claims(con, ids, bounds = bounds$sql), error = function(e) NULL)
-      q1_notes <- c(sprintf("Example patients (%d): %s.", length(ids), paste(ids, collapse = ", ")),
+          cap(vqs_raw_sct_claims(con, ids, bounds = bounds$sql), "Raw SCT / CAR-T claims", "q1")
+      q1_notes <- c(q1_notes,
+                    sprintf("Example patients (%d): %s.", length(ids), paste(ids, collapse = ", ")),
                     "Chain: raw claims (routes above) -> MAP segments -> assigned LOT, all with dates.",
                     if (!bounds$available) "Raw claims are NOT observation-window bounded (ELIG_COH_FINAL unavailable)." else
-                      "Raw claims scoped to [INDEX_DATE, OBS_END_DT] from ELIG_COH_FINAL.")
-    } else q1_notes <- "No example patients could be selected from LOT_LONG."
+                      "Raw claims scoped to [INDEX_DATE, OBS_END_DT] from ELIG_COH_FINAL.",
+                    notes_env$q1)
+    } else q1_notes <- c(q1_notes, "No example patients could be selected from LOT_LONG.")
   } else q1_notes <- paste0(map_tbl, " not readable - journeys skipped. Build MAP_STACKED (02_lot1.R).")
   add_sheet(name = "Q1 journeys", title = "Q1 - Patient journeys: raw claims -> assigned LOT",
     subtitle = "A mix of patients (deep progressors, POMA-1L, autologous/allogeneic SCT, CAR-T), each traced with dates.",
@@ -285,27 +342,31 @@ main <- function() {
              sum(CASE WHEN f.allo_closed_1l=1 OR f.cart_closed_1l=1 THEN 1 ELSE 0 END) AS red_flag_closed_1l,
              sum(CASE WHEN c.allo_any=1 OR c.cart_any=1 THEN 1 ELSE 0 END)             AS allo_or_cart_any_line
       FROM poma1l p JOIN fl f USING (PATID) JOIN ctx c USING (PATID)")),
-      error = function(e) NULL)
+      "POMA-1L transplant summary", "q2")
 
     # Authoritative CAR-T-relative-to-LOT1 for the POMA-1L subset (reuses vqs_q6_cart).
     if (have_sct) {
       ok_view <- tryCatch({
-        db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW jj_poma1l_lot_long AS
+        db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW poma1l_lot_long_tmp AS
                            SELECT ll.* FROM {lot_long} ll
                            JOIN (SELECT DISTINCT PATID FROM {lot_long}
                                  WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{poma}')) p
                              ON cast(ll.PATID as string) = cast(p.PATID as string)")); TRUE
-      }, error = function(e) { log_msg("  Q2: temp view failed (", conditionMessage(e), ")"); FALSE })
+      }, error = function(e) {
+        m <- paste0("NOTE: POMA-filtered view for the authoritative CAR-T table failed - ", conditionMessage(e))
+        log_msg("  ", m); notes_env$q2 <- c(notes_env$q2, m); FALSE })
       if (ok_view)
         q2_tables[["POMA-1L CAR-T relative to LOT1 (authoritative; vqs_q6_cart)"]] <-
-          tryCatch(vqs_q6_cart(con, "jj_poma1l_lot_long", sct_tbl, w1 = VQS_W1, cart_raw_tbl = cart_raw),
-                   error = function(e) NULL)
-    }
+          cap(vqs_q6_cart(con, "poma1l_lot_long_tmp", sct_tbl, w1 = VQS_W1, cart_raw_tbl = cart_raw),
+              "POMA-1L CAR-T relative to LOT1 (vqs_q6_cart)", "q2")
+    } else notes_env$q2 <- c(notes_env$q2,
+      paste0("NOTE: ", sct_tbl, " not readable - the authoritative CAR-T-relative-to-LOT1 table is omitted."))
     q2_notes <- c(
       "Autologous SCT at 1L is standard first-line care and is NOT evidence of prior treatment.",
       "The red flag is an allogeneic SCT or CAR-T that CLOSES the first line (end reason SCT_ALLO / SCT_CART / CART_INIT).",
       "allo_or_cart_any_line is context only: the same therapy on a LATER line is expected progression, not a non-naive signal.",
-      "The vqs_q6_cart table adds the authoritative timing, including CAR-T BEFORE LOT1 (from raw CAR-T claim dates).")
+      "The vqs_q6_cart table adds the authoritative timing, including CAR-T BEFORE LOT1 (from raw CAR-T claim dates).",
+      notes_env$q2)
   } else q2_notes <- sprintf("No POMA-at-1L patients (token '%s'). Set POMA_MED_ABBR if the token differs.", poma)
   add_sheet(name = "Q2 POMA & SCT-CART", title = "Q2 - POMA-1L patients who also received SCT or CAR-T",
     subtitle = "Split by transplant type and timing; later-line transplant is context, not a red flag.",
@@ -334,7 +395,7 @@ main <- function() {
              sum(CASE WHEN f.CLINTRIAL_BASELINE=1 OR f.CLINTRIAL_FOLLOWUP=1 THEN 1 ELSE 0 END) AS n_trial_any,
              round(100.0*sum(CASE WHEN f.CLINTRIAL_BASELINE=1 OR f.CLINTRIAL_FOLLOWUP=1 THEN 1 ELSE 0 END)/count(*),1) AS pct_trial_any
       FROM lot1 l JOIN f USING (PATID) LEFT JOIN poma1l p USING (PATID)
-      GROUP BY 1 ORDER BY 1")), error = function(e) NULL)
+      GROUP BY 1 ORDER BY 1")), "POMA-1L vs other-1L flag rates", "q34")
   }
   q3_df <- if (!is.null(assoc)) assoc[, c("grp","n_pts","n_other_cancer","pct_other_cancer")] else NULL
   q4_df <- if (!is.null(assoc)) assoc[, c("grp","n_pts","n_trial_baseline","n_trial_followup","n_trial_any","pct_trial_any")] else NULL
@@ -343,13 +404,13 @@ main <- function() {
            "ELIG_COH_ALLFLAGS holds the flags; ELIG_COH_FINAL aligns them to the selected INDEX_DATE.") else NULL
   add_sheet(name = "Q3 POMA & other cancers", title = "Q3 - POMA-1L vs other-1L: baseline other-cancer rate",
     subtitle = "OTHER_MALIGN_FLAG (>=1 inpatient OR >=2 outpatient claims within 30d per tumour group) - ELIG_COH retains these patients.",
-    narrative = c(q34_gap,
+    narrative = c(q34_gap, notes_env$q34,
       "Compare pct_other_cancer for POMA-1L vs other-1L; a higher POMA rate = association.",
       "Uses the pipeline flag (Step 22), not a raw C-code scan."),
     tables = list("Baseline other-cancer by group" = q3_df))
   add_sheet(name = "Q4 POMA & clinical trials", title = "Q4 - POMA-1L vs other-1L: clinical-trial evidence",
     subtitle = "CLINTRIAL_BASELINE / CLINTRIAL_FOLLOWUP from ELIG_COH_ALLFLAGS (retained in the build).",
-    narrative = c(q34_gap,
+    narrative = c(q34_gap, notes_env$q34,
       "A higher POMA-1L trial rate would support the 'not truly first-line / unobserved therapy on trial' hypothesis.",
       "Claims-based trial evidence is a lower bound (a fully masked study drug may carry no trial code)."),
     tables = list("Clinical-trial evidence by group" = q4_df))
@@ -385,15 +446,23 @@ main <- function() {
                        max(CASE WHEN o.fill_dt >= x.cov_start
                                  AND o.fill_dt <  date_sub(x.INDEX_DATE,183) THEN 1 ELSE 0 END) pre_baseline_len_thal
                      FROM idx_span x LEFT JOIN early_oral o ON o.PATID=x.PATID GROUP BY x.PATID)
-      SELECT count(*) AS poma_1l_pts,
-             sum(CASE WHEN datediff(x.INDEX_DATE, x.cov_start) > 183 THEN 1 ELSE 0 END) AS obs_history_gt_6mo,
-             sum(coalesce(ef.pre_baseline_len_thal,0))                                  AS early_len_thal_pre_baseline
-      FROM poma1l p JOIN idx_span x USING (PATID) LEFT JOIN early_flag ef USING (PATID)")),
+      -- LEFT JOIN so poma_1l_pts is the FULL POMA-1L denominator; a patient with no
+      -- index-covering enrollment span is retained and shown by poma_1l_with_index_span.
+      -- The two SHOULD be equal (the cohort enforces CE); a gap flags a LOT_LONG /
+      -- ELIG_COH_FINAL / enrollment mismatch to investigate, not a silent drop.
+      SELECT count(*)                                                                    AS poma_1l_pts,
+             count(x.PATID)                                                              AS poma_1l_with_index_span,
+             sum(CASE WHEN x.cov_start IS NOT NULL
+                       AND datediff(x.INDEX_DATE, x.cov_start) > 183 THEN 1 ELSE 0 END)  AS obs_history_gt_6mo,
+             sum(coalesce(ef.pre_baseline_len_thal,0))                                   AS early_len_thal_pre_baseline
+      FROM poma1l p LEFT JOIN idx_span x USING (PATID) LEFT JOIN early_flag ef USING (PATID)")),
       error = function(e) { q5_notes <<- paste("Q5 query failed:", conditionMessage(e)); NULL })
     q5_notes <- c(q5_notes,
-      "Every Optum member has pharmacy benefit; this measures how many POMA-1L patients have >6mo continuous",
-      "pre-index coverage (obs_history_gt_6mo) and how many have a LEN/THAL fill inside that coverage but",
-      "BEFORE the 6-month baseline window (early_len_thal_pre_baseline) - the true residual blind spot.",
+      "poma_1l_pts = full POMA-1L denominator; poma_1l_with_index_span = those with a continuous span covering index",
+      "(should match - if lower, investigate a LOT_LONG / ELIG_COH_FINAL / enrollment mismatch).",
+      "Every Optum member has pharmacy benefit; obs_history_gt_6mo = POMA-1L patients with >6mo continuous pre-index",
+      "coverage, and early_len_thal_pre_baseline = those with a LEN/THAL fill inside that coverage but BEFORE the",
+      "6-month baseline window (the true residual blind spot).",
       "Continuous spans are rebuilt from raw member_enrollment (<=30-day gaps), keeping the index-covering span.")
   } else {
     q5_notes <- if (n_poma == 0) "No POMA-at-1L patients - Q5 skipped." else
@@ -404,9 +473,15 @@ main <- function() {
     narrative = q5_notes, tables = q5_tables)
 
   # ---- write --------------------------------------------------------------
-  xlsx <- file.path(out_dir, paste0("julia_july5_answers_", stamp, ".xlsx"))
-  jj_write_workbook(sheets, xlsx, out_dir, stamp)
-  log_msg(SEP); log_msg("Julia's July 5 questions complete. Workbook (or CSV fallback) in ", out_dir); log_msg(SEP)
+  xlsx <- file.path(out_dir, paste0("poma_studyteam_qs_", stamp, ".xlsx"))
+  wrote_xlsx <- wbx_write_workbook(sheets, xlsx, out_dir, stamp, allow_csv = allow_csv)
+  log_msg(SEP)
+  if (isTRUE(wrote_xlsx))
+    log_msg("POMA-in-1L study-team questions complete. Excel workbook -> ", xlsx)
+  else
+    log_msg("POMA-in-1L study-team questions complete in DEGRADED mode: one CSV per table in ",
+            out_dir, " (openxlsx unavailable). Install openxlsx to get the single .xlsx.")
+  log_msg(SEP)
 }
 
 if (!interactive()) main()

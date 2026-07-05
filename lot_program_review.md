@@ -12,7 +12,7 @@
 - clmmarollupapr14 (Tab 40. CL_MMA_ROLLUP)
 - codelist.pdf (Tab 41, permissible subs, SCT codes)
 - optum business rules / optum data dict (CDM v9.0)
-- sensitivity cbecks (Julia Moore email)
+- sensitivity checks (study-team email)
 
 **Review type:** Static analysis only. Code was not modified.
 **Review date:** 2026-04-15
