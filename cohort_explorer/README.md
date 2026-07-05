@@ -234,8 +234,8 @@ unit test asserts `Overall(initial) == Overall(flag-only)`.
 - **Known deferrals:** lab-value-defined comorbidity arms
   (hepatic/renal/ocular) use the ICD-code arm only -- claims lab values are
   sparse. The **SOC drug->category mappings and code lists** are placeholders
-  here, so the real builder must take them from the
-  authoritative LoT-algorithm specification; the synthetic SOC labels
+  here, so the real builder must source them from the
+  production LoT-algorithm code lists; the synthetic SOC labels
   here follow a standard-of-care category *scheme*. Patient Characteristics are computed
   at the **1L baseline**; when a later line is selected only the **outcomes**
   re-anchor to that line (per-line baseline re-derivation is a warehouse step).

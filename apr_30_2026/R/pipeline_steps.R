@@ -136,7 +136,7 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
     ),
 
     # SCHEMA PROBE: Validate RVNU_CD column exists on medical table
-    # Per Optum CDM v9.0, the revenue code field is RVNU_CD (facility claims only).
+    # The revenue code field is RVNU_CD (facility claims only).
     # This check fails early with a clear message if the column is missing,
     # rather than erroring deep in the pregnancy/clinical trial steps.
     list(
@@ -933,7 +933,7 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
                                  AND date_sub(q.index_date, 1)
             THEN 1
             -- Path B: 2 outpatient claims within 30d, first in baseline
-            -- Per StudyPop MM_baseline_other: Only the first of the 2 codes
+            -- Only the first of the 2 codes
             -- is required to occur inside the baseline period. The confirming
             -- second claim may fall after index, as long as the pair is
             -- within 30 days of each other.

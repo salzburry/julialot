@@ -38,7 +38,7 @@ cfg_defaults <- list(
   work_schema = Sys.getenv("PROJECT_WORK_SCHEMA",
                            unset = Sys.getenv("DOMINO_USER_NAME", unset = "gsk_mm_lot_work")),
 
-  # ---- Source tables (Optum CDM v9.0) ----
+  # ---- Source tables ----
   tbl_member_elig       = "member_cont_enrollment",
   tbl_member_enrollment = "member_enrollment",
   tbl_medical           = "medical",

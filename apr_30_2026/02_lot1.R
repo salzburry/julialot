@@ -8,9 +8,8 @@
 #   7.  SCT        - Stem Cell Transplant detection (AUTO/ALLO/CART)
 #
 # The MMA/MAP rules (pushout/
-# runout), LOT1 base regimen, SCT detection (AUTO/ALLO/CART), the MMA
-# rollup/codelist tables, and the Optum CDM field + business-rule
-# definitions.
+# runout), LOT1 base regimen, SCT detection (AUTO/ALLO/CART), and the MMA
+# rollup/codelist tables.
 #
 # Input:  ELIG_COH_FINAL (output of the Part 1 attrition pipeline; see 01_cohort.R)
 # Output: MAP_STACKED, LOT1_BASE, LOT1_SCT, LOT1_BASE_END

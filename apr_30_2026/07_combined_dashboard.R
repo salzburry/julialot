@@ -537,7 +537,7 @@ build_summary_landing <- function(kpi_overall, kpi_ndmm, ndmm_ok, run_ts,
   ndmm_warn <- if (has_n && length(ndmm_notes) > 0) warn_box(paste0(
     '<b>NDMM built with warnings.</b> One or more configured NDMM gates were ',
     'skipped this run (a required source was unavailable), so the NDMM cohort ',
-    'is broader than the full specification:<ul style="margin:6px 0 0;padding-left:18px">',
+    'is broader than the fully-gated cohort:<ul style="margin:6px 0 0;padding-left:18px">',
     paste(vapply(as.character(ndmm_notes),
                  function(x) paste0("<li>", x, "</li>"), character(1)), collapse = ""),
     '</ul>')) else ""
