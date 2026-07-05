@@ -2,7 +2,7 @@
 # app.R  --  Oncology Real-World Data Explorer (cohort + IE flags edition)
 # -----------------------------------------------------------------------------
 # Interactive Shiny dashboard, driven by the flag-based cohort
-# engine and aligned to the NDMM study protocol: pick a cohort
+# engine, aligned to the NDMM study: pick a cohort
 # (Overall / NDMM), toggle IE criteria, tune filters, choose a line of therapy,
 # and every tab (Patient Characteristics, OS/TTD/TTNT/Attrition + exploratory
 # PFS, Regimen & Transitions, Attrition funnel, Checks) recomputes off the same
@@ -145,10 +145,10 @@ main_tabs <- c(
       div(class = "ce-kpi", div(class = "v", textOutput("chk_headline_v")),
           div(class = "l", "overall status")),
       h4("LOT structural checks"), tableOutput("lot_chk"),
-      h4(paste(PACK$short, "protocol conformance")), tableOutput("ndmm_chk"),
+      h4(paste(PACK$short, "conformance checks")), tableOutput("ndmm_chk"),
       if (is.function(PACK$extra_checks))
         tagList(h4(paste0(PACK$short, "-specific QC")), tableOutput("extra_chk")),
-      h4("Protocol data-quality / analysis readiness"), tableOutput("dq_chk"))
+      h4("Data-quality / analysis readiness"), tableOutput("dq_chk"))
   )
 )
 
@@ -177,7 +177,7 @@ ui <- fluidPage(
       selectInput("lot", "Line of therapy (outcomes)", choices = LOT_CHOICES,
                   selected = 1L),
       checkboxInput("restrict_fu",
-                    "Restrict time-to-event to a minimum follow-up (protocol)", TRUE),
+                    "Restrict time-to-event to a minimum follow-up", TRUE),
       sliderInput("min_fu_months", "Minimum potential follow-up (months)",
                   min = 0, max = 24, value = MIN_FU_MONTHS, step = 1),
       textInput("landmark_months", "KM landmark times (months, comma-separated)",

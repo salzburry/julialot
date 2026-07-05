@@ -148,7 +148,7 @@ pd <- lot_pathway_data(augment_lot_long(ll, df), df$patient_id, max_line = 4L)
 ok(!is.null(pd) && all(sort(unique(pd$trans$stage)) == 1:3),
    "lot_pathway_data yields the full 1L->2L->3L->4L journey")
 if (requireNamespace("survival", quietly = TRUE)) {
-  LM <- c(6, 9, 12, 18, 24)                     # all five protocol landmarks
+  LM <- c(6, 9, 12, 18, 24)                     # all five landmark months
   dd <- data.frame(t = ov$data$os_time, e = ov$data$os_event)
   dd <- dd[ov$data$fu_potential_months >= 3, ]
   fit <- survival::survfit(survival::Surv(t, e) ~ 1, data = dd)
@@ -257,7 +257,7 @@ ok(!is.null(sb) && "Rate per 100 PY" %in% names(sb) && nrow(sb) == 6,
 ok(tryCatch({ source_flagged_cohort_warehouse(); FALSE }, error = function(e) TRUE),
    "source_flagged_cohort_warehouse() fails closed (not implemented)")
 
-# ---- protocol DQ checks ----
+# ---- data-quality checks ----
 dq <- protocol_dq_checks(ov$data)
 ok(any(grepl("TTE denominator", dq$Check)), "DQ reports the >=3-mo TTE denominator")
 

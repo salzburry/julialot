@@ -69,7 +69,7 @@ SOC_LEVELS_1L <- sort(unique(FLAGGED$soc_category))   # Patient Explorer 1L filt
 LATER_SOC_LEVELS <- sort(unique(LOT_LONG$lot_soc[LOT_LONG$lot_num >= 2L]))
 MAX_LOT <- 5L
 
-# lines offered in the per-LOT selector (protocol focuses on 1L/2L/3L)
+# lines offered in the per-LOT selector (focus on 1L/2L/3L)
 LOT_CHOICES <- setNames(sort(unique(LOT_LONG$lot_num)),
                         paste0(sort(unique(LOT_LONG$lot_num)), "L"))
 LOT_CHOICES <- LOT_CHOICES[LOT_CHOICES <= 3L]

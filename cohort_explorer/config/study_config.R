@@ -55,7 +55,7 @@ study_config <- function() {
     max_lot                     = 5L,
 
     # TTE analysis
-    min_followup_months = 3L,               # protocol >=3-mo restriction
+    min_followup_months = 3L,               # >=3-mo follow-up restriction
     landmark_months     = c(6, 9, 12, 18, 24),
 
     # SOC regimen category map -- single source of truth is the active indication

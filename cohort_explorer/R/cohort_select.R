@@ -70,7 +70,7 @@ select_cohort <- function(df, active_flags = character(),
 
   # criterion application order: study_period -> pre_lot -> post_lot1, and
   # within a phase, flags before params, registry order otherwise. This makes
-  # the attrition funnel read like the protocol.
+  # the attrition funnel read like the study's inclusion/exclusion order.
   phase_rank <- c(study_period = 1L, pre_lot = 2L, post_lot1 = 3L)
   ids <- c(active_flags, active_params)
   ids <- ids[!duplicated(ids)]
