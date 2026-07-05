@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # Standalone runner for LOT 2-5. Builds LOT_LONG (one row per
-# PATID x LOT_NUM, LOT_NUM 1..5) per the LOT 2-5 spec.
+# PATID x LOT_NUM, LOT_NUM 1..5).
 # Does not modify any LOT1 module.
 #
 # Prerequisites in the work schema (persisted by 02_lot1.R):

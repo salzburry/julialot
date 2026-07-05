@@ -49,7 +49,7 @@ cfg <- list(
   # Code list sourcing - CSV-only (no embedded fallbacks)
   codelist_dir = Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist"),
 
-  # SCT parameters (per the SCT spec)
+  # SCT parameters
   sct_auto_window_days = as.integer(Sys.getenv("SCT_AUTO_WINDOW_DAYS", unset = "13")),
   sct_auto_gap_days    = as.integer(Sys.getenv("SCT_AUTO_GAP_DAYS", unset = "60")),
   sct_tandem_days      = as.integer(Sys.getenv("SCT_TANDEM_DAYS", unset = "180")),
