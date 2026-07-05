@@ -223,15 +223,6 @@ main <- function() {
   sheets <- list()
   add_sheet <- function(...) sheets[[length(sheets) + 1L]] <<- list(...)
 
-  # Capture query/helper failures into per-question notes so a missing table
-  # surfaces IN the workbook (as a NOTE line) and the log, instead of a silently
-  # empty sheet that reads as "answered".
-  notes_env <- new.env()
-  cap <- function(expr, label, key) tryCatch(expr, error = function(e) {
-    m <- sprintf("NOTE: '%s' could not be produced - %s", label, conditionMessage(e))
-    log_msg("  ", m); notes_env[[key]] <- c(notes_env[[key]], m); NULL
-  })
-
   # ---- Read Me -----------------------------------------------------------
   add_sheet(name = "Read Me", title = "POMA-in-1L study-team questions (delivered cohort)",
     subtitle = paste0("Generated ", stamp, " by poma_studyteam_qs.R against ", cfg$work_schema),
@@ -291,8 +282,11 @@ main <- function() {
     }
     if (length(ids) > 0) {
       # final LOT assignment for the picked patients
+      # final LOT assignment + MAP journey are core (LOT_LONG/MAP_STACKED are
+      # guarded readable above); the raw-CDM pulls are best-effort (the vqs_*
+      # helpers degrade to NULL when the raw claims / codelists are unreachable).
       q1_tables[["Assigned lines (LOT_LONG) for the example patients"]] <-
-        cap(db_q(con, glue("
+        db_q(con, glue("
           SELECT cast(PATID as string) PATID, LOT_NUM,
                  cast(LOT_START_DT as string) LOT_START_DT, LOT_START_TYPE,
                  LOT_BASE_MEDS, cast(LOT_BASE_END_DT as string) LOT_BASE_END_DT,
@@ -301,20 +295,18 @@ main <- function() {
                  cast(LOT_TX_AUTO_DT_1 as string) LOT_TX_AUTO_DT_1,
                  cast(LOT_TX_AUTO_DT_2 as string) LOT_TX_AUTO_DT_2
           FROM {lot_long} WHERE cast(PATID as string) IN ({vqs_in_list(ids)})
-          ORDER BY PATID, LOT_NUM")), "Assigned lines (LOT_LONG)", "q1")
-      q1_tables[["MAP segments the engine built"]] <-
-        cap(vqs_map_journey(con, map_tbl, lot_long, ids), "MAP segments", "q1")
+          ORDER BY PATID, LOT_NUM"))
+      q1_tables[["MAP segments the engine built"]] <- vqs_map_journey(con, map_tbl, lot_long, ids)
       q1_tables[["Raw MM-therapy claims (all routes: rx NDC, medical PROC_CD/BILL_PROC_CD/NDC)"]] <-
-        cap(vqs_raw_mma_claims(con, ids, bounds = bounds$sql), "Raw MM-therapy claims", "q1")
+        tryCatch(vqs_raw_mma_claims(con, ids, bounds = bounds$sql), error = function(e) NULL)
       if (have_sct)
         q1_tables[["Raw SCT / CAR-T claims (medical PROC_CD/BILL_PROC_CD + med_procedure + med_diagnosis)"]] <-
-          cap(vqs_raw_sct_claims(con, ids, bounds = bounds$sql), "Raw SCT / CAR-T claims", "q1")
+          tryCatch(vqs_raw_sct_claims(con, ids, bounds = bounds$sql), error = function(e) NULL)
       q1_notes <- c(q1_notes,
                     sprintf("Example patients (%d): %s.", length(ids), paste(ids, collapse = ", ")),
                     "Chain: raw claims (routes above) -> MAP segments -> assigned LOT, all with dates.",
                     if (!bounds$available) "Raw claims are NOT observation-window bounded (ELIG_COH_FINAL unavailable)." else
-                      "Raw claims scoped to [INDEX_DATE, OBS_END_DT] from ELIG_COH_FINAL.",
-                    notes_env$q1)
+                      "Raw claims scoped to [INDEX_DATE, OBS_END_DT] from ELIG_COH_FINAL.")
     } else q1_notes <- c(q1_notes, "No example patients could be selected from LOT_LONG.")
   } else q1_notes <- paste0(map_tbl, " not readable - journeys skipped. Build MAP_STACKED (02_lot1.R).")
   add_sheet(name = "Q1 journeys", title = "Q1 - Patient journeys: raw claims -> assigned LOT",
@@ -324,7 +316,7 @@ main <- function() {
   # ---- Q2: POMA-1L who also received SCT / CAR-T ------------------------
   q2_tables <- list(); q2_notes <- character()
   if (n_poma > 0) {
-    q2_tables[["POMA-1L transplant summary (by type and timing)"]] <- tryCatch(db_q(con, glue("
+    q2_tables[["POMA-1L transplant summary (by type and timing)"]] <- db_q(con, glue("
       WITH poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
                       WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{poma}')),
       fl AS (SELECT cast(PATID as string) PATID,
@@ -341,32 +333,27 @@ main <- function() {
              sum(f.cart_closed_1l)  AS cart_closed_1l,
              sum(CASE WHEN f.allo_closed_1l=1 OR f.cart_closed_1l=1 THEN 1 ELSE 0 END) AS red_flag_closed_1l,
              sum(CASE WHEN c.allo_any=1 OR c.cart_any=1 THEN 1 ELSE 0 END)             AS allo_or_cart_any_line
-      FROM poma1l p JOIN fl f USING (PATID) JOIN ctx c USING (PATID)")),
-      "POMA-1L transplant summary", "q2")
+      FROM poma1l p JOIN fl f USING (PATID) JOIN ctx c USING (PATID)"))
 
     # Authoritative CAR-T-relative-to-LOT1 for the POMA-1L subset (reuses vqs_q6_cart).
+    # Optional add-on: guarded so a temp-view / SCT-table hiccup omits this one
+    # table rather than aborting the workbook.
     if (have_sct) {
-      ok_view <- tryCatch({
-        db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW poma1l_lot_long_tmp AS
-                           SELECT ll.* FROM {lot_long} ll
-                           JOIN (SELECT DISTINCT PATID FROM {lot_long}
-                                 WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{poma}')) p
-                             ON cast(ll.PATID as string) = cast(p.PATID as string)")); TRUE
-      }, error = function(e) {
-        m <- paste0("NOTE: POMA-filtered view for the authoritative CAR-T table failed - ", conditionMessage(e))
-        log_msg("  ", m); notes_env$q2 <- c(notes_env$q2, m); FALSE })
-      if (ok_view)
-        q2_tables[["POMA-1L CAR-T relative to LOT1 (authoritative; vqs_q6_cart)"]] <-
-          cap(vqs_q6_cart(con, "poma1l_lot_long_tmp", sct_tbl, w1 = VQS_W1, cart_raw_tbl = cart_raw),
-              "POMA-1L CAR-T relative to LOT1 (vqs_q6_cart)", "q2")
-    } else notes_env$q2 <- c(notes_env$q2,
-      paste0("NOTE: ", sct_tbl, " not readable - the authoritative CAR-T-relative-to-LOT1 table is omitted."))
+      db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW poma1l_lot_long_tmp AS
+                         SELECT ll.* FROM {lot_long} ll
+                         JOIN (SELECT DISTINCT PATID FROM {lot_long}
+                               WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{poma}')) p
+                           ON cast(ll.PATID as string) = cast(p.PATID as string)"))
+      q2_tables[["POMA-1L CAR-T relative to LOT1 (authoritative; vqs_q6_cart)"]] <-
+        tryCatch(vqs_q6_cart(con, "poma1l_lot_long_tmp", sct_tbl, w1 = VQS_W1, cart_raw_tbl = cart_raw),
+                 error = function(e) NULL)
+    }
     q2_notes <- c(
       "Autologous SCT at 1L is standard first-line care and is NOT evidence of prior treatment.",
       "The red flag is an allogeneic SCT or CAR-T that CLOSES the first line (end reason SCT_ALLO / SCT_CART / CART_INIT).",
       "allo_or_cart_any_line is context only: the same therapy on a LATER line is expected progression, not a non-naive signal.",
       "The vqs_q6_cart table adds the authoritative timing, including CAR-T BEFORE LOT1 (from raw CAR-T claim dates).",
-      notes_env$q2)
+      if (!have_sct) paste0(sct_tbl, " not readable - the authoritative CAR-T-relative-to-LOT1 table is omitted.") else NULL)
   } else q2_notes <- sprintf("No POMA-at-1L patients (token '%s'). Set POMA_MED_ABBR if the token differs.", poma)
   add_sheet(name = "Q2 POMA & SCT-CART", title = "Q2 - POMA-1L patients who also received SCT or CAR-T",
     subtitle = "Split by transplant type and timing; later-line transplant is context, not a red flag.",
@@ -375,7 +362,7 @@ main <- function() {
   # ---- Q3 + Q4: POMA-1L vs other-1L flag rates --------------------------
   assoc <- NULL
   if (have_flags && have_final) {
-    assoc <- tryCatch(db_q(con, glue("
+    assoc <- db_q(con, glue("
       WITH poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
                       WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{poma}')),
       lot1 AS (SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long} WHERE LOT_NUM=1),
@@ -395,7 +382,7 @@ main <- function() {
              sum(CASE WHEN f.CLINTRIAL_BASELINE=1 OR f.CLINTRIAL_FOLLOWUP=1 THEN 1 ELSE 0 END) AS n_trial_any,
              round(100.0*sum(CASE WHEN f.CLINTRIAL_BASELINE=1 OR f.CLINTRIAL_FOLLOWUP=1 THEN 1 ELSE 0 END)/count(*),1) AS pct_trial_any
       FROM lot1 l JOIN f USING (PATID) LEFT JOIN poma1l p USING (PATID)
-      GROUP BY 1 ORDER BY 1")), "POMA-1L vs other-1L flag rates", "q34")
+      GROUP BY 1 ORDER BY 1"))
   }
   q3_df <- if (!is.null(assoc)) assoc[, c("grp","n_pts","n_other_cancer","pct_other_cancer")] else NULL
   q4_df <- if (!is.null(assoc)) assoc[, c("grp","n_pts","n_trial_baseline","n_trial_followup","n_trial_any","pct_trial_any")] else NULL
@@ -404,13 +391,13 @@ main <- function() {
            "ELIG_COH_ALLFLAGS holds the flags; ELIG_COH_FINAL aligns them to the selected INDEX_DATE.") else NULL
   add_sheet(name = "Q3 POMA & other cancers", title = "Q3 - POMA-1L vs other-1L: baseline other-cancer rate",
     subtitle = "OTHER_MALIGN_FLAG (>=1 inpatient OR >=2 outpatient claims within 30d per tumour group) - ELIG_COH retains these patients.",
-    narrative = c(q34_gap, notes_env$q34,
+    narrative = c(q34_gap,
       "Compare pct_other_cancer for POMA-1L vs other-1L; a higher POMA rate = association.",
       "Uses the pipeline flag (Step 22), not a raw C-code scan."),
     tables = list("Baseline other-cancer by group" = q3_df))
   add_sheet(name = "Q4 POMA & clinical trials", title = "Q4 - POMA-1L vs other-1L: clinical-trial evidence",
     subtitle = "CLINTRIAL_BASELINE / CLINTRIAL_FOLLOWUP from ELIG_COH_ALLFLAGS (retained in the build).",
-    narrative = c(q34_gap, notes_env$q34,
+    narrative = c(q34_gap,
       "A higher POMA-1L trial rate would support the 'not truly first-line / unobserved therapy on trial' hypothesis.",
       "Claims-based trial evidence is a lower bound (a fully masked study drug may carry no trial code)."),
     tables = list("Clinical-trial evidence by group" = q4_df))
