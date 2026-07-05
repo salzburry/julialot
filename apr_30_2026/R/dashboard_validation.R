@@ -251,7 +251,7 @@ build_lot1_start_year_trend <- function(con, lot_long_tbl,
 # ---- Data-quality / outlier checks ---------------------------------
 # Non-zero rows don't always mean a bug, but anything flipping from OK
 # to investigate between runs is worth looking at. SCT_ALLO is dropped
-# from the blank-meds count because the spec gives those LOTs no meds.
+# from the blank-meds count because those LOTs have no meds.
 build_outlier_checks <- function(con, lot_long_tbl,
                                  section = "Validation",
                                  title_prefix = "Validation: ") {

@@ -184,14 +184,13 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
         FROM {work('med_claim_header')}")
     ),
 
-    # CONFINEMENT TABLE EXTRACT (per Optum Business Rules Approach 2)
-    # Business rules: "inpatient should be restricted to cases where
-    # CONF_ID is not NULL from the T_CONFINEMENT table"
-    # This validates that CONF_ID corresponds to an actual confinement
-    # Per Approach 2: confinement should have associated admission AND discharge dates
+    # CONFINEMENT TABLE EXTRACT
+    # Inpatient is restricted to cases where CONF_ID is not NULL from the
+    # confinement table, so CONF_ID corresponds to an actual confinement; a
+    # confinement must also have associated admission AND discharge dates.
     list(
       name = "07b_confinement",
-      description = "Extracting confinement records (Optum Approach 2)",
+      description = "Extracting confinement records",
       source_tables = c("confinement"),
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('confinement')} AS
@@ -291,7 +290,7 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
     # the window qualifies; keep every candidate, not just the earliest.
     list(
       name = "09_mm_inpatient_potential",
-      description = "Finding ALL potential inpatient MM index dates (STRICT 203.0x/C90.0x only per spec)",
+      description = "Finding ALL potential inpatient MM index dates (STRICT 203.0x/C90.0x only)",
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('mm_inpatient_potential')} AS
         SELECT DISTINCT PATID, svc_dt AS potential_index, 'INPATIENT' AS index_source
@@ -619,7 +618,7 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
   phase_clinical_flags <- function() list(
     # ---- Phase 7: baseline MM evidence (Step 7 gate) ----
     # Step 7 needs >=1 strict MM dx (203.0x / C90.0x) in baseline. We
-    # follow the attrition table, which - unlike IE spec row 14 - does not
+    # follow the attrition table, which does not
     # also require a non-diagnostic claim, so the old claim_nondiagnostic
     # view was dropped as unused.
     list(
@@ -715,11 +714,11 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
         SELECT
           q.PATID,
           q.index_date,
-          -- Baseline excludes index_date per IE spec (baseline = before index)
+          -- Baseline excludes index_date (baseline = before index)
           max(CASE WHEN t.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
                                        AND date_sub(q.index_date, 1)
                THEN 1 ELSE 0 END) AS MM_THERAPY_BASELINE,
-          -- Followup starts on index_date per IE spec (>= index_date)
+          -- Followup starts on index_date (>= index_date)
           -- Bounded by fu_cap_expr (death + optionally ENDDATE_CE under sensitivity flag)
           max(CASE WHEN t.event_dt >= q.index_date
                     AND t.event_dt <= {fu_cap_expr}
@@ -796,9 +795,9 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
       qc = glue("SELECT sum(PREGNANT_FLAG) AS n_pregnant FROM {work('pregnancy_flag')}")
     ),
 
-    # Per IE spec: "Evidence of clinical trial participation during each of the
-    # baseline and follow-up periods. See tab CL CLNTRIAL."
-    # Revenue code (RVNU_CD) support for consistency with the CL CLNTRIAL tab
+    # Flags evidence of clinical trial participation during each of the
+    # baseline and follow-up periods.
+    # Revenue code (RVNU_CD) support is included for clinical trial detection.
     list(
       name = "21_clintrial_flag",
       description = "EXCLUSION: Clinical trial flag (DX + PROC + RVNU_CD, baseline + follow-up)",
@@ -843,11 +842,11 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
         SELECT
           q.PATID,
           q.index_date,
-          -- Baseline excludes index_date per IE spec (baseline = before index)
+          -- Baseline excludes index_date (baseline = before index)
           max(CASE WHEN m.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
                                        AND date_sub(q.index_date, 1)
                THEN 1 ELSE 0 END) AS CLINTRIAL_BASELINE,
-          -- Followup starts on index_date per IE spec
+          -- Followup starts on index_date
           -- Follow-up upper bound follows fu_cap_expr (sensitivity flag aware)
           max(CASE WHEN m.event_dt >= q.index_date
                     AND m.event_dt <= {fu_cap_expr}
@@ -863,7 +862,7 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
 
     list(
       name = "22_other_malig_flag",
-      description = "EXCLUSION: Other malignancy flag (>=1 IP or >=2 OP within 30d per spec)",
+      description = "EXCLUSION: Other malignancy flag (>=1 IP or >=2 OP within 30d)",
       source_tables = c("med_diagnosis", "medical", "confinement"),
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('other_malig_flag')} AS
@@ -927,7 +926,7 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
         SELECT
           q.PATID,
           q.index_date,
-          -- Per spec: >=1 inpatient OR >=2 outpatient within 30d, same tumor group, in baseline
+          -- >=1 inpatient OR >=2 outpatient within 30d, same tumor group, in baseline
           max(CASE
             -- Path A: single inpatient claim in baseline
             WHEN ip.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})

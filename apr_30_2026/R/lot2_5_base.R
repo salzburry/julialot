@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# LOT 2 through LOT 5 base-period builder. Implements the LOT 2-5 spec
+# LOT 2 through LOT 5 base-period builder, implemented
 # as a standalone module; does not modify any LOT1 module.
 #
 # Assumes 02_lot1.R already produced these views/tables in the same
@@ -24,13 +24,12 @@
 #   induction_window_days   = 30   (LOT1 uses 60)
 #     no LOT-level discontinuation buffer; per-drug 90d rule lives in
 #     map_discon_gap_days
-#   cart_consolidation_days = 45   (supersedes the 30d protocol text)
+#   cart_consolidation_days = 45   (supersedes the earlier 30d value)
 #   sct_tandem_days         = 180  (>180d AUTO is unplanned)
 #   allo_lot_span           = "single_day": ALLO LOT spans only ALLO_DT
 #   max_lot                 = 5
 #
 # End reasons are date-driven, with the tie-break only on identical dates.
-# Spec tabs: 3.LOT2_5_BASE, 4.LOT2_5_BASE_END, 9.Decision_Flow.
 
 # ---- Helpers ----
 
@@ -186,7 +185,7 @@ build_lot_n <- function(con, lot_num,
         AND ll.LOT_BASE_END_DT IS NOT NULL
     ),
     -- Permissible biosimilar substitutes of prior-LOT drugs.
-    -- Spec: a biosimilar of a prior-LOT drug does NOT trigger LOT_N.
+    -- A biosimilar of a prior-LOT drug does NOT trigger LOT_N.
     -- A same-drug restart (the original prior-LOT drug itself) DOES trigger;
     -- the prior LOT ended by run-out and a fresh fill is a new line.
     -- Note: explicit JOIN avoids the implicit cross join + correlated
@@ -248,7 +247,7 @@ build_lot_n <- function(con, lot_num,
     --        been handled - tandem classification only needs the 180d upper bound.
     -- The PREV_AUTO_DT IS NOT NULL guard from the prior rule is dropped:
     -- first-ever AUTOs CAN trigger a new LOT (LOT2-5 only; LOT1 retains the
-    -- protocol convention that the first AUTO is part of induction).
+    -- convention that the first AUTO is part of induction).
     autos_with_prev AS (
       SELECT a.PATID, a.TX_DT,
              lag(a.TX_DT) OVER (PARTITION BY a.PATID ORDER BY a.TX_DT) AS PREV_AUTO_DT

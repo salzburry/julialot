@@ -8,8 +8,8 @@
 #   0. LOT1_START_DT >= NDMM_LOT1_FROM   (default 2017-01-01; parent's
 #                                         id_start defaults to 2016-01-01)
 #   1. 12-mo CE before LOT1_START_DT     (parent CE_b is 6-mo before MM-dx)
-#   2. 3-mo follow-up CE from LOT1       (strict NO-gap, death-aware; spec
-#                                         says no gaps for follow-up CE)
+#   2. 3-mo follow-up CE from LOT1       (strict NO-gap, death-aware; no
+#                                         gaps allowed for follow-up CE)
 #   3. No belantamab in any LOT          (no parent equivalent)
 #   4. No MM oncology Tx in 12-mo
 #      pre-LOT1 baseline                 (parent's MM_BASELINE_EVIDENCE is
@@ -86,22 +86,22 @@ NDMM_PATIDS       <- "_ndmm_patids"
 NDMM_PREG_CODES          <- "_ndmm_preg_codes"
 NDMM_PREGNANCY_PATIDS    <- "_ndmm_pregnancy_patids"
 NDMM_STUDY_START         <- Sys.getenv("STUDY_START", unset = "2015-07-01")
-NDMM_PRE_LOT1_DAYS       <- 365L  # NDMM spec: 12-mo CE/baseline before 1L index date
+NDMM_PRE_LOT1_DAYS       <- 365L  # 12-mo CE/baseline before 1L index date
 
 # Tumor_group labels treated as NON-exclusionary for the NDMM
 # other-cancer filter ONLY (NDMM scope). These are plasma-cell /
 # MM-adjacent diseases - the index MM itself (plasma cell leukemia,
 # solitary + extramedullary plasmacytoma), its precursor (monoclonal
 # gammopathy / MGUS), and MM bone disease (secondary malignant neoplasm
-# of bone). The protocol's "another cancer" exclusion (studypop spec
-# Criterion 7) targets a cancer DISTINCT from the index MM, so flagging
-# these as non-exclusionary moves the NDMM filter toward protocol intent.
+# of bone). The another-cancer exclusion targets a cancer DISTINCT from
+# the index MM, so flagging these as non-exclusionary keeps the NDMM
+# filter aligned with that intent.
 # Parent pipeline (step 22) and the shared other_malig.csv are NOT
 # changed - this list only adds a flag column at NDMM codelist-load time.
 #
 # Matched case/whitespace-insensitively against the codelist's
 # tumor_group column. Only the five "NOT HAVING ACHIEVED REMISSION"
-# labels named in the spec are listed; "in remission" variants are left in
+# labels are listed; "in remission" variants are left in
 # the filter pending confirmation (see README). build_ndmm_other_-
 # malig_codes() logs how many of these actually matched the codelist;
 # a match count < length(this) means the stored labels differ from the
@@ -114,7 +114,7 @@ NDMM_MM_ADJACENT_OVERRIDE <- c(
   "EXTRAMEDULLARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION"
 )
 
-# LOT1 eligible treatment cutoff (NDMM spec: "Received an eligible
+# LOT1 eligible treatment cutoff ("Received an eligible
 # treatment for MM ... on or after 01 Jan 2017"). Hard-enforced in
 # build_lot1_starts_ndmm() so the LOT1 view never returns pre-cutoff
 # starts. Env-overridable for sensitivity runs (e.g. 2018-01-01).
@@ -129,7 +129,7 @@ NDMM_TBL_CONFINEMENT <- Sys.getenv("TBL_CONFINEMENT", unset = "confinement")
 # Steroid MED_ABBR values to exclude from the "MM oncology therapy"
 # pre-LOT1 check. Same tokens as 05_regimen_dashboard.R::STEROID_TOKENS so the
 # NDMM exclusion stays consistent with the steroid-augmentation semantics.
-# (Steroids are supportive care; the spec wording "MM oncology therapy"
+# (Steroids are supportive care; the "MM oncology therapy" rule
 # targets actual MM agents, not supportive care.)
 NDMM_STEROID_ABBRS <- c("DEX","DEXA","DEXAMETHASONE","PRED","PREDNISONE")
 
@@ -243,7 +243,7 @@ build_ndmm_mma_codelist <- function() {
 # on every source branch (02_lot1.R:316,336,359,386). It therefore
 # cannot see any claims before the MM diagnosis, and would miss MM
 # therapy occurring in the [LOT1_START - 365, INDEX_DATE - 1] portion
-# of the 12-month 1L baseline that the NDMM spec requires.
+# of the 12-month 1L baseline.
 build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl) {
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_THERAPY_PRE_LOT1} AS
@@ -482,7 +482,7 @@ build_ndmm_other_malig_pre_lot1 <- function(con, med_diag_tbl) {
 #
 #   CE_pre_lot1_12mo        : >=1 enrollment span covers
 #                             [LOT1_START - NDMM_PRE_LOT1_DAYS, LOT1_START - 1]
-#                             (NDMM spec: 12-mo CE before 1L; same gap
+#                             (12-mo CE before 1L; same gap
 #                             semantics as parent CE_b/CE_f via
 #                             NDMM_ENROLL_SPANS)
 #
@@ -504,7 +504,7 @@ build_ndmm_other_malig_pre_lot1 <- function(con, med_diag_tbl) {
 #                             for why we cannot reuse MMA_MED_PROCESSED).
 #
 #   NO_OTHER_CANCER_PRE_LOT1: zero PATID rows in NDMM_OTHER_MALIG_PATIDS
-#                             (NDMM spec: "Evidence of another active
+#                             ("Evidence of another active
 #                             cancer ... during the 1L baseline period";
 #                             re-anchored from parent OTHER_MALIGN_FLAG
 #                             which uses 6-mo pre-MM-dx. IP/OP same-tumor-
@@ -514,22 +514,22 @@ build_ndmm_other_malig_pre_lot1 <- function(con, med_diag_tbl) {
 #                             LOT1 (the NDMM index): a span covers
 #                             [LOT1_START, least(LOT1_START + 90, study_end,
 #                             death)]. No-gap spans (NDMM_ENROLL_SPANS_STRICT)
-#                             per spec + carried-forward DEATH_DT (NDMM spec:
-#                             >=3-mo CE during follow-up or death, NO gaps).
+#                             plus carried-forward DEATH_DT
+#                             (>=3-mo CE during follow-up or death, NO gaps).
 #
 #   NO_PREGNANCY            : re-scanned from pregnancy.csv (dx / HCPCS / ICD
 #                             procedure / revenue codes) over the study period,
 #                             restricted to NDMM LOT1 candidates - NOT the
-#                             parent PREGNANT_FLAG. NDMM spec exclusion.
+#                             parent PREGNANT_FLAG. NDMM exclusion.
 # Readability probe used by the pregnancy gate (the scan view may not exist
 # if its source claims tables are unavailable).
 .ndmm_table_ok <- function(con, tbl) isTRUE(tryCatch(
   nrow(db_q(con, glue("SELECT 1 FROM {tbl} LIMIT 1"))) >= 0,
   error = function(e) FALSE))
 
-# Pregnancy exclusion (NDMM spec E3): re-scanned directly from pregnancy.csv
+# Pregnancy exclusion: re-scanned directly from pregnancy.csv
 # over the study period, NOT carried from the parent PREGNANT_FLAG - so it is
-# self-contained and uses the NDMM pregnancy codelist + the spec's any-time-
+# self-contained and uses the NDMM pregnancy codelist + an any-time-
 # in-study-period window.
 build_ndmm_preg_codes <- function(con) {
   src <- load_codelist_csv("pregnancy.csv", c("code_type", "code"))
@@ -670,7 +670,7 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
     ),
     -- 3-month follow-up CE re-derived ANCHORED AT LOT1 (the NDMM index): a
     -- span must cover [LOT1_START, least(LOT1_START + 90, study_end, death)].
-    -- Uses NDMM_ENROLL_SPANS_STRICT (no-gap spans, gap_days=0) per the spec:
+    -- Uses NDMM_ENROLL_SPANS_STRICT (no-gap spans, gap_days=0):
     -- 'no gaps in enrollment' for the follow-up CE, vs <30-day gaps allowed
     -- for the 12-mo pre-LOT1 CE. Plus the carried-forward DEATH_DT.
     fuce AS (
@@ -863,12 +863,12 @@ build_ndmm_overview_card <- function(counts, n_ster_codes, n_cat_rules,
     'The planned cohort: parent <code>ELIG_COH_FINAL</code> ',
     '(for this project the parent runs through Step 6 - its other-malignancy, ',
     'baseline-MM-dx, pregnancy and clinical-trial exclusions are OFF and are ',
-    're-applied where the spec requires by the NDMM layer below, the ',
+    're-applied by the NDMM layer below, the ',
     'other-cancer one with the MM-adjacent override) plus a NDMM-side LOT1 eligibility ',
     'cutoff (<code>LOT_START_DT &ge; ', NDMM_LOT1_FROM, '</code>) and ',
-    'six NDMM-only post-filters aligned to the spec: <b>12-mo CE before ',
+    'six NDMM-only post-filters: <b>12-mo CE before ',
     'LOT1</b>, <b>3-mo follow-up CE</b> (re-derived from the LOT1 index, ',
-    'no-gap per spec, death-aware), <b>no belantamab in any LOT</b>, ',
+    'no-gap, death-aware), <b>no belantamab in any LOT</b>, ',
     '<b>no MM oncology therapy in the 12-mo 1L baseline</b>, <b>no other ',
     'active cancer in the 12-mo 1L baseline</b>, and <b>no pregnancy</b> ',
     '(re-scanned from <code>pregnancy.csv</code> over the study period). CE-pre-LOT1 uses the parent&apos;s <code>gap_days = ',
@@ -883,7 +883,7 @@ build_ndmm_overview_card <- function(counts, n_ster_codes, n_cat_rules,
     '- not <code>MMA_MED_PROCESSED</code>, which the parent bounds at ',
     '<code>FST_DT &gt;= INDEX_DATE</code> and so cannot see pre-MM-dx ',
     'claims. Steroid <code>MED_ABBR</code> values (DEX/DEXA/PRED/...) ',
-    'are dropped from the codelist before the scan since the spec wording ',
+    'are dropped from the codelist before the scan since the exclusion ',
     'targets MM oncology therapy, not supportive care. Other-cancer ',
     'pre-LOT1 mirrors parent step 22 (<code>OTHER_MALIGN_FLAG</code>) ',
     '1-IP-or-2-OP-within-30d-same-tumor-group logic, re-anchored to the ',

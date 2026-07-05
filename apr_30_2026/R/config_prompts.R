@@ -89,7 +89,7 @@ cfg_defaults <- list(
   baseline_days = 183L,
   gap_days      = 30L,
 
-  # ---- Diagnosis window thresholds (fixed per protocol) ----
+  # ---- Diagnosis window thresholds (fixed) ----
   dx_window_30 = 30,
   dx_window_60 = 60,
   dx_window_90 = 90,
@@ -111,12 +111,12 @@ cfg_defaults <- list(
 
   # ---- Exclusion criteria (defaults for static/batch mode) ----
   # Defaults now TRUE so a default ELIG_COH_FINAL build produces the Step 10
-  # attrition/spec cohort rather than the Step 6 working cohort. Flags are
+  # final attrition cohort rather than the Step 6 working cohort. Flags are
   # still computed in ELIG_COH_ALLFLAGS for ad-hoc sensitivity analyses; set
   # the corresponding env var to "FALSE" to drop an exclusion at runtime.
   # Prior default (2026-04-14 stakeholder decision): all FALSE - kept the
   # working cohort at Step 6 (~21k patients) for ad-hoc work. Superseded by
-  # spec-alignment pass 2026-04-21.
+  # the move to the final attrition cohort as the default build.
   apply_pregnancy_excl   = as.logical(Sys.getenv("APPLY_PREGNANCY_EXCL",   unset = "TRUE")),
   apply_clintrial_excl   = as.logical(Sys.getenv("APPLY_CLINTRIAL_EXCL",   unset = "TRUE")),
   apply_other_malig_excl = as.logical(Sys.getenv("APPLY_OTHER_MALIG_EXCL", unset = "TRUE")),

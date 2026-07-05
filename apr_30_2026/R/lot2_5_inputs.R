@@ -87,7 +87,7 @@ prepare_lot_inputs <- function(con,
   "), qc = "SELECT count(*) AS n_rows FROM permissible_subs")
 
   # lot_patient_input view: ALWAYS use ENDDATE for OBS_END_DT (primary semantics).
-  # The LOT2-5 spec says primary ignores disenrollment; the CE cap belongs to
+  # Primary semantics ignore disenrollment; the CE cap belongs to
   # the *_CE_SENS columns only. lot2_5_base.R computes those columns
   # unconditionally in the LOT_LONG INSERT, so we do not let
   # cfg$censor_at_disenrollment leak into primary OBS_END_DT.
