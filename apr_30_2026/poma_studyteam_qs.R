@@ -4,7 +4,8 @@
 #   Rscript poma_studyteam_qs.R
 #
 # Sibling of lot1_studyteam_qs.R and validation_qs.R. Answers five follow-up
-# questions on the delivered cohort (Databricks / Optum CDM) and writes a single
+# questions on the NDMM newly-diagnosed 1L study cohort (Databricks / Optum CDM)
+# and writes a single
 # .xlsx (one tab per question + patient journeys + the Optum coverage note). It
 # reuses the shared operational definitions in R/validation_qs.R, so the CAR-T /
 # journey / raw-claim logic can never drift from the dashboard.
@@ -17,11 +18,14 @@
 #       allogeneic transplant or CAR-T that CLOSES the first line is the
 #       "not treatment-naive" signal; the same therapy on a later line is
 #       expected progression (context only).
-#   Q3  Is POMA-1L associated with the "permissible" other cancers ELIG_COH
-#       retains in baseline (OTHER_MALIGN_FLAG)?
-#   Q4  Do POMA-1L patients have clinical-trial evidence (CLINTRIAL_*)?
-#   Q5  Do POMA-1L patients have continuous pharmacy benefit, and is there
-#       LEN/THAL exposure before the 6-month baseline window?
+#   Q3  Other cancer is excluded BY CONSTRUCTION in NDMM (de-confounded filter
+#       #5); the parent OTHER_MALIGN_FLAG is shown as context only, not the
+#       NDMM exclusion.
+#   Q4  Do POMA-1L patients have clinical-trial evidence? Headline the BASELINE
+#       (pre-index) column; follow-up is post-index context.
+#   Q5  Do POMA-1L patients have continuous pharmacy benefit? Shows the NDMM
+#       LOT1-anchored 12-mo pre-LOT1 check (the study proof) plus a parent-index
+#       supplemental scan for LEN/THAL before the 6-month baseline window.
 #
 # Runs on the NDMM newly-diagnosed 1L STUDY cohort. The POMA-in-1L questions are
 # most meaningful here: the other-cancer and prior-therapy confounders are already
@@ -239,10 +243,10 @@ main <- function() {
   cart_raw <- if (have_sct) tryCatch(vqs_build_raw_cart_dates(con, lot_long, bounds$sql),
                                      error = function(e) NULL) else NULL
 
-  # POMA-at-1L patient set (delivered cohort). This is the denominator EVERY
-  # question depends on, so it runs fail-fast (no error swallow): if it errored we
-  # would report "0 POMA patients" and skip Q2/Q5, indistinguishable from a true
-  # zero. LOT_LONG readability is already checked above.
+  # POMA-at-1L patient set (NDMM study cohort, via NDMM_LOT_LONG_FILT). This is the
+  # denominator EVERY question depends on, so it runs fail-fast (no error swallow):
+  # if it errored we would report "0 POMA patients" and skip Q2/Q5, indistinguishable
+  # from a true zero. lot_long readability is already checked above.
   poma_ids <- db_q(con, glue("
     SELECT cast(PATID as string) AS PATID FROM {lot_long}
     WHERE LOT_NUM = 1 AND LOT_BASE_MEDS IS NOT NULL
@@ -294,8 +298,25 @@ main <- function() {
   curated <- trimws(curated); curated <- curated[nzchar(curated)]
   if (have_map) {
     if (length(curated) > 0) {
-      ids <- unique(curated)
-      q1_notes <- c(sprintf("Curated example patients from EXAMPLE_PATIDS (%d).", length(ids)))
+      # Re-filter curated IDs to the NDMM cohort. An ID outside NDMM_LOT_LONG_FILT
+      # would show no assigned lines, but its raw MM / SCT claims (PATID-filtered on
+      # the PARENT ELIG_COH_FINAL bounds) would still leak a non-NDMM patient into
+      # this NDMM-only workbook. Drop any out-of-cohort IDs and name them.
+      req <- unique(curated)
+      chk <- tryCatch(db_q(con, glue("SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
+                                      WHERE cast(PATID as string) IN ({vqs_in_list(req)})"))$PATID,
+                      error = function(e) NULL)
+      if (is.null(chk)) {
+        ids <- req
+        q1_notes <- sprintf("Curated example patients from EXAMPLE_PATIDS (%d); NDMM-cohort membership NOT verified (check query failed).", length(ids))
+      } else {
+        ids <- req[req %in% chk]
+        dropped <- setdiff(req, ids)
+        q1_notes <- sprintf("Curated example patients from EXAMPLE_PATIDS: %d in NDMM cohort%s.",
+                            length(ids),
+                            if (length(dropped)) sprintf("; %d dropped as NOT in NDMM: %s",
+                                                         length(dropped), paste(dropped, collapse = ", ")) else "")
+      }
     } else {
       # a diverse example set: deepest progressors + POMA-1L + allo + auto + CART
       pick <- function(sql) tryCatch(db_q(con, sql)$PATID, error = function(e) character(0))
@@ -422,6 +443,7 @@ main <- function() {
              sum(f.OTHER_MALIGN_FLAG)                                          AS n_other_cancer,
              round(100.0*sum(f.OTHER_MALIGN_FLAG)/count(*),1)                  AS pct_other_cancer,
              sum(f.CLINTRIAL_BASELINE)                                         AS n_trial_baseline,
+             round(100.0*sum(f.CLINTRIAL_BASELINE)/count(*),1)                 AS pct_trial_baseline,
              sum(f.CLINTRIAL_FOLLOWUP)                                         AS n_trial_followup,
              sum(CASE WHEN f.CLINTRIAL_BASELINE=1 OR f.CLINTRIAL_FOLLOWUP=1 THEN 1 ELSE 0 END) AS n_trial_any,
              round(100.0*sum(CASE WHEN f.CLINTRIAL_BASELINE=1 OR f.CLINTRIAL_FOLLOWUP=1 THEN 1 ELSE 0 END)/count(*),1) AS pct_trial_any
@@ -429,7 +451,10 @@ main <- function() {
       GROUP BY 1 ORDER BY 1"))
   }
   q3_df <- if (!is.null(assoc)) assoc[, c("grp","n_pts","n_other_cancer","pct_other_cancer")] else NULL
-  q4_df <- if (!is.null(assoc)) assoc[, c("grp","n_pts","n_trial_baseline","n_trial_followup","n_trial_any","pct_trial_any")] else NULL
+  # Baseline (pre-index) trial evidence is THE signal for the prior-therapy
+  # hypothesis; follow-up / trial_any happen after index and are post-index context.
+  # Order the columns so the baseline count + rate lead.
+  q4_df <- if (!is.null(assoc)) assoc[, c("grp","n_pts","n_trial_baseline","pct_trial_baseline","n_trial_followup","n_trial_any","pct_trial_any")] else NULL
   q34_gap <- if (!(have_flags && have_final))
     paste0(allflags, " / ", final_tbl, " not readable - Q3/Q4 skipped. ",
            "ELIG_COH_ALLFLAGS holds the flags; ELIG_COH_FINAL aligns them to the selected INDEX_DATE.") else NULL
@@ -449,11 +474,13 @@ main <- function() {
       "The flag below is the parent 6-mo-pre-dx OTHER_MALIGN_FLAG (context only) and is expected to be low."),
     tables = list("Baseline other-cancer by group" = q3_df))
   add_sheet(name = "Q4 POMA & clinical trials", title = "Q4 - POMA-1L vs other-1L: clinical-trial evidence",
-    subtitle = paste0("CLINTRIAL_BASELINE / CLINTRIAL_FOLLOWUP from ELIG_COH_ALLFLAGS. Clinical-trial is NOT an NDMM ",
-                      "post-filter, so this stays a LIVE, confounder-clean comparison within the study cohort."),
+    subtitle = paste0("Read the BASELINE column (pre-index): CLINTRIAL_BASELINE from ELIG_COH_ALLFLAGS. Clinical-trial is ",
+                      "NOT an NDMM post-filter, so this stays a LIVE, confounder-clean comparison within the study cohort."),
     narrative = c(q34_gap,
+      "HEADLINE on n_trial_baseline / pct_trial_baseline: baseline (pre-index) trial evidence is the meaningful signal for the",
+      "'not truly first-line / prior unobserved therapy' hypothesis - a higher POMA-1L BASELINE rate would support it.",
+      "n_trial_followup / n_trial_any occur AT-OR-AFTER index and are post-index context, NOT evidence of prior lines - do not headline them.",
       "Clinical-trial is NOT one of the NDMM post-filters, so this comparison survives into the study cohort - and it is now confounder-clean (other-cancer / non-naive patients already removed).",
-      "A higher POMA-1L trial rate would support the 'not truly first-line / unobserved therapy on trial' hypothesis.",
       "Claims-based trial evidence is a lower bound (a fully masked study drug may carry no trial code)."),
     tables = list("Clinical-trial evidence by group" = q4_df))
 
@@ -461,9 +488,11 @@ main <- function() {
   q5_tables <- list(); q5_notes <- character()
   if (have_final && n_poma > 0 && length(tokens$notes) &&
       !any(grepl("unavailable", tokens$notes, ignore.case = TRUE))) {
-    q5_tables[["POMA-1L pharmacy-benefit continuity + pre-baseline LEN/THAL"]] <- tryCatch(db_q(con, glue("
+    q5_tables[["POMA-1L: LOT1-anchored 12-mo pre-LOT1 check + parent-index supplemental"]] <- tryCatch(db_q(con, glue("
       WITH poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
                       WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{poma}')),
+      lot1 AS (SELECT cast(PATID as string) PATID, min(cast(LOT_START_DT as date)) lot1_dt
+               FROM {lot_long} WHERE LOT_NUM=1 GROUP BY cast(PATID as string)),
       idx AS (SELECT cast(PATID as string) PATID, cast(INDEX_DATE as date) INDEX_DATE FROM {final_tbl}),
       base AS (SELECT cast(PATID as string) PATID, cast(ELIGEFF as date) elig_eff, cast(ELIGEND as date) elig_end
                FROM {cdm_src('member_enrollment')} WHERE ELIGEFF IS NOT NULL AND ELIGEND IS NOT NULL),
@@ -477,6 +506,8 @@ main <- function() {
                 FROM grouped GROUP BY PATID, grp_id),
       idx_span AS (SELECT i.PATID, i.INDEX_DATE, s.cov_start FROM idx i JOIN spans s
                    ON s.PATID=i.PATID AND s.cov_start <= i.INDEX_DATE AND s.cov_end >= i.INDEX_DATE),
+      lot1_span AS (SELECT l.PATID, l.lot1_dt, s.cov_start AS lot1_cov_start FROM lot1 l JOIN spans s
+                    ON s.PATID=l.PATID AND s.cov_start <= l.lot1_dt AND s.cov_end >= l.lot1_dt),
       len_thal AS (SELECT DISTINCT lpad(regexp_replace(CL_CODE,'[^0-9]',''),11,'0') ndc
                    FROM mma_codelist WHERE upper(CL_CODE_TYPE)='NDC'
                      AND (lower(CL_MEDICATION_FULL) LIKE '%lenalidomid%'
@@ -487,32 +518,48 @@ main <- function() {
       early_flag AS (SELECT x.PATID,
                        max(CASE WHEN o.fill_dt >= x.cov_start
                                  AND o.fill_dt <  date_sub(x.INDEX_DATE,183) THEN 1 ELSE 0 END) pre_baseline_len_thal
-                     FROM idx_span x LEFT JOIN early_oral o ON o.PATID=x.PATID GROUP BY x.PATID)
+                     FROM idx_span x LEFT JOIN early_oral o ON o.PATID=x.PATID GROUP BY x.PATID),
+      lot1_flag AS (SELECT ls.PATID,
+                      max(CASE WHEN o.fill_dt >= date_sub(ls.lot1_dt,365)
+                                AND o.fill_dt <  ls.lot1_dt THEN 1 ELSE 0 END) len_thal_pre_lot1_12mo
+                    FROM lot1_span ls LEFT JOIN early_oral o ON o.PATID=ls.PATID GROUP BY ls.PATID)
       -- LEFT JOIN so poma_1l_pts is the FULL POMA-1L denominator; a patient with no
-      -- index-covering enrollment span is retained and shown by poma_1l_with_index_span.
-      -- The two SHOULD be equal (the cohort enforces CE); a gap flags a LOT_LONG /
-      -- ELIG_COH_FINAL / enrollment mismatch to investigate, not a silent drop.
+      -- LOT1-/index-covering enrollment span is retained and shown by the *_with_*_span
+      -- counts. Those SHOULD equal the denominator (the cohort enforces CE); a gap flags
+      -- a LOT_LONG / ELIG_COH_FINAL / enrollment mismatch to investigate, not a silent drop.
       SELECT count(*)                                                                    AS poma_1l_pts,
+             -- LOT1-anchored NDMM check (mirrors NDMM filter #1/#4: 12-mo pre-LOT1 window)
+             count(ls.PATID)                                                             AS poma_1l_with_lot1_span,
+             sum(CASE WHEN ls.lot1_cov_start IS NOT NULL
+                       AND datediff(ls.lot1_dt, ls.lot1_cov_start) >= 365 THEN 1 ELSE 0 END) AS ce_ge_12mo_pre_lot1,
+             sum(coalesce(lf.len_thal_pre_lot1_12mo,0))                                  AS len_thal_in_12mo_pre_lot1,
+             -- Parent-index supplemental (6-mo pre-MM-dx window; reaches earlier than the parent flag)
              count(x.PATID)                                                              AS poma_1l_with_index_span,
              sum(CASE WHEN x.cov_start IS NOT NULL
                        AND datediff(x.INDEX_DATE, x.cov_start) > 183 THEN 1 ELSE 0 END)  AS obs_history_gt_6mo,
              sum(coalesce(ef.pre_baseline_len_thal,0))                                   AS early_len_thal_pre_baseline
-      FROM poma1l p LEFT JOIN idx_span x USING (PATID) LEFT JOIN early_flag ef USING (PATID)")),
+      FROM poma1l p LEFT JOIN idx_span x USING (PATID) LEFT JOIN early_flag ef USING (PATID)
+                    LEFT JOIN lot1_span ls USING (PATID) LEFT JOIN lot1_flag lf USING (PATID)")),
       error = function(e) { q5_notes <<- paste("Q5 query failed:", conditionMessage(e)); NULL })
     q5_notes <- c(q5_notes,
-      "In NDMM the hidden-prior-exposure concern is further closed: NDMM also requires 12-mo continuous enrollment before LOT1 and re-derives baseline naivety from raw claims (filter #4), on top of Criterion 3.",
-      "poma_1l_pts = full POMA-1L denominator; poma_1l_with_index_span = those with a continuous span covering index",
-      "(should match - if lower, investigate a LOT_LONG / ELIG_COH_FINAL / enrollment mismatch).",
-      "Every Optum member has pharmacy benefit; obs_history_gt_6mo = POMA-1L patients with >6mo continuous pre-index",
-      "coverage, and early_len_thal_pre_baseline = those with a LEN/THAL fill inside that coverage but BEFORE the",
-      "6-month baseline window (the true residual blind spot).",
-      "Continuous spans are rebuilt from raw member_enrollment (<=30-day gaps), keeping the index-covering span.")
+      "LOT1-ANCHORED NDMM CHECK (the study proof, shown directly in the table, anchored on LOT1_START_DT):",
+      "ce_ge_12mo_pre_lot1 = POMA-1L patients with >=12 months continuous enrollment before LOT1 (mirrors NDMM filter #1)",
+      "- should equal poma_1l_pts. len_thal_in_12mo_pre_lot1 = those with a LEN/THAL fill in [LOT1_START-365, LOT1_START-1]",
+      "(mirrors NDMM filter #4) - should be 0, since NDMM already excludes observable MM oncology therapy in that window;",
+      "a nonzero value flags a discrepancy to investigate.",
+      "PARENT-INDEX SUPPLEMENTAL (secondary; anchored on ELIG_COH_FINAL INDEX_DATE = 6-mo pre-MM-dx): obs_history_gt_6mo",
+      "and early_len_thal_pre_baseline extend the look-back to catch a LEN/THAL fill even BEFORE that 6-month window -",
+      "a residual blind-spot probe, NOT the NDMM proof.",
+      "poma_1l_pts = full POMA-1L denominator; poma_1l_with_lot1_span / poma_1l_with_index_span = those with a continuous",
+      "span covering LOT1 / index (should match the denominator - if lower, investigate a LOT_LONG / ELIG_COH_FINAL / enrollment mismatch).",
+      "Every Optum member has pharmacy benefit. Continuous spans are rebuilt from raw member_enrollment (<=30-day gaps).")
   } else {
     q5_notes <- if (n_poma == 0) "No POMA-at-1L patients - Q5 skipped." else
       paste0("Q5 needs ", final_tbl, " and the cl_mma_codelist (mma_codelist view). One is unavailable this run.")
   }
   add_sheet(name = "Q5 POMA & pharmacy benefit", title = "Q5 - POMA-1L pharmacy-benefit continuity + hidden LEN/THAL",
-    subtitle = "See the 'Optum coverage' tab for the coverage validation.",
+    subtitle = paste0("Read the LOT1-anchored columns (ce_ge_12mo_pre_lot1 / len_thal_in_12mo_pre_lot1) as the NDMM proof; ",
+                      "the parent-index columns are supplemental. See the 'Optum coverage' tab for the coverage validation."),
     narrative = q5_notes, tables = q5_tables)
 
   # ---- write --------------------------------------------------------------
