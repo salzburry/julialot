@@ -23,20 +23,16 @@
 #   Q5  Do POMA-1L patients have continuous pharmacy benefit, and is there
 #       LEN/THAL exposure before the 6-month baseline window?
 #
-# Cohort (env COHORT, default NDMM):
-#   NDMM = the newly-diagnosed 1L STUDY cohort. The POMA-in-1L questions are
-#          most meaningful here: the other-cancer and prior-therapy confounders
-#          are already EXCLUDED, so an anomaly that survives is a real one. Reads
-#          the persisted NDMM_LOT_LONG_FILT that 06_ndmm_dashboard.R materializes
-#          (LOT_LONG restricted to the NDMM cohort). Q3 (other cancer) is then
-#          resolved by construction; Q4 (clinical trial) stays a LIVE comparison
-#          because clinical-trial is not one of the NDMM post-filters.
-#   ELIG = the broad delivered cohort (LOT_LONG / ELIG_COH), which RETAINS the
-#          other-cancer / clinical-trial patients as flags for overlap analysis.
+# Runs on the NDMM newly-diagnosed 1L STUDY cohort. The POMA-in-1L questions are
+# most meaningful here: the other-cancer and prior-therapy confounders are already
+# EXCLUDED, so an anomaly that survives is a real one. Q3 (other cancer) is then
+# resolved by construction; Q4 (clinical trial) stays a LIVE comparison because
+# clinical-trial is not one of the NDMM post-filters.
 #
-# Builds nothing persistent (only session TEMP views); safe to run any time.
-# Reads the persisted work-schema tables (LOT_LONG or NDMM_LOT_LONG_FILT,
-# MAP_STACKED, LOT1_SCT, ELIG_COH_ALLFLAGS, ELIG_COH_FINAL) and the raw CDM.
+# Builds nothing persistent (only session TEMP views); safe to run any time. Reads
+# NDMM_LOT_LONG_FILT (LOT_LONG restricted to the NDMM cohort, persisted by
+# 06_ndmm_dashboard.R), plus MAP_STACKED, LOT1_SCT, ELIG_COH_ALLFLAGS,
+# ELIG_COH_FINAL and the raw CDM.
 #
 # Honest limits, surfaced in the workbook rather than hidden:
 #  - Q3/Q4 read OTHER_MALIGN_FLAG / CLINTRIAL_* from ELIG_COH_ALLFLAGS, aligned
@@ -210,32 +206,23 @@ main <- function() {
   stamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
   num <- function(x) suppressWarnings(as.numeric(x))
 
-  # Cohort selector. Default = NDMM (the newly-diagnosed 1L STUDY cohort); set
-  # COHORT=ELIG for the broad delivered cohort. Only lot_long changes: every LOT /
-  # POMA query flows from it, so re-pointing it restricts the whole analysis. The
-  # flag tables (ELIG_COH_ALLFLAGS / ELIG_COH_FINAL) are shared - NDMM is a subset,
-  # joined by PATID (+INDEX_DATE), and the lot1/poma sets already restrict to NDMM.
-  cohort <- toupper(Sys.getenv("COHORT", unset = "NDMM"))
-  if (!cohort %in% c("NDMM", "ELIG"))
-    stop("COHORT must be 'NDMM' or 'ELIG' (got '", cohort, "').")
-  is_ndmm <- identical(cohort, "NDMM")
-  cohort_label <- if (is_ndmm) "NDMM newly-diagnosed 1L study cohort"
-                  else "ELIG_COH broad delivered cohort"
-
-  lot_long  <- if (is_ndmm) wrk("NDMM_LOT_LONG_FILT") else wrk("LOT_LONG")
+  # The NDMM study cohort: LOT_LONG restricted to the newly-diagnosed 1L patients,
+  # persisted as NDMM_LOT_LONG_FILT by 06_ndmm_dashboard.R. Every LOT / POMA query
+  # flows from lot_long, so this restricts the whole analysis to the study cohort.
+  # The flag tables (ELIG_COH_ALLFLAGS / ELIG_COH_FINAL) are the parent's - NDMM is
+  # a subset, joined by PATID (+INDEX_DATE), and the lot1/poma sets already restrict
+  # to NDMM.
+  cohort_label <- "NDMM newly-diagnosed 1L study cohort"
+  lot_long  <- wrk("NDMM_LOT_LONG_FILT")
   map_tbl   <- wrk("MAP_STACKED")
   sct_tbl   <- wrk("LOT1_SCT")
   allflags  <- wrk("ELIG_COH_ALLFLAGS")
   final_tbl <- wrk(cfg$input_cohort_table)
 
   log_msg(SEP); log_msg("POMA-in-1L study-team questions [", cohort_label, "] -> single Excel workbook"); log_msg(SEP)
-  if (!vqs_readable(con, lot_long)) {
-    if (is_ndmm)
-      stop("Cannot read ", lot_long, ". Run 06_ndmm_dashboard.R first to persist ",
-           "NDMM_LOT_LONG_FILT (LOT_LONG restricted to the NDMM study cohort), or set ",
-           "COHORT=ELIG to run against the broad delivered cohort (LOT_LONG).")
-    stop("Cannot read ", lot_long, ". Build the LOT pipeline (02_lot1.R / 03_lot2_5.R) first.")
-  }
+  if (!vqs_readable(con, lot_long))
+    stop("Cannot read ", lot_long, ". Run 06_ndmm_dashboard.R first to persist ",
+         "NDMM_LOT_LONG_FILT (LOT_LONG restricted to the NDMM study cohort).")
   have_map   <- vqs_readable(con, map_tbl)
   have_sct   <- vqs_readable(con, sct_tbl)
   have_flags <- vqs_readable(con, allflags)
@@ -271,24 +258,14 @@ main <- function() {
 
   # ---- Read Me -----------------------------------------------------------
   add_sheet(name = "Read Me", title = paste0("POMA-in-1L study-team questions - ", cohort_label),
-    subtitle = paste0("Generated ", stamp, " by poma_studyteam_qs.R (COHORT=", cohort,
-                      ") against ", cfg$work_schema),
+    subtitle = paste0("Generated ", stamp, " by poma_studyteam_qs.R against ", cfg$work_schema),
     narrative = c(
-      if (is_ndmm)
-        "One tab per question, computed on the NDMM newly-diagnosed 1L STUDY cohort (NDMM_LOT_LONG_FILT)."
-      else
-        "One tab per question, computed on the broad delivered LOT cohort (LOT_LONG / ELIG_COH).",
+      "One tab per question, computed on the NDMM newly-diagnosed 1L STUDY cohort (NDMM_LOT_LONG_FILT).",
       sprintf("POMA-at-1L denominator: %d of %d LOT1 patients.", n_poma, n_lot1),
       "Q1 = real patient journeys (raw claims -> MAP -> assigned LOT, with dates).",
       "Q2 = POMA-1L split by transplant type and TIMING (autologous-at-1L vs allo/CAR-T that closed 1L vs later-line context).",
-      if (is_ndmm)
-        "Q3 = other-cancer confounder is REMOVED BY CONSTRUCTION in NDMM (de-confounded filter #5); the flag shown is parent-window context, not the study exclusion."
-      else
-        "Q3 = POMA-1L vs other-1L rate of OTHER_MALIGN_FLAG (ELIG_COH retains those patients as flags).",
-      if (is_ndmm)
-        "Q4 = POMA-1L vs other-1L clinical-trial rate; clinical-trial is NOT an NDMM post-filter, so this stays a LIVE, confounder-clean comparison."
-      else
-        "Q4 = POMA-1L vs other-1L rate of CLINTRIAL_* (ELIG_COH retains those patients as flags).",
+      "Q3 = other-cancer confounder is REMOVED BY CONSTRUCTION in NDMM (de-confounded filter #5); the flag shown is parent-window context, not the study exclusion.",
+      "Q4 = POMA-1L vs other-1L clinical-trial rate; clinical-trial is NOT an NDMM post-filter, so this stays a LIVE, confounder-clean comparison.",
       "Q5 = pharmacy-benefit continuity + LEN/THAL exposure before the 6-month baseline window.",
       "Operational definitions are shared with R/validation_qs.R (single source of truth)."),
     tables = list())
@@ -456,39 +433,26 @@ main <- function() {
   q34_gap <- if (!(have_flags && have_final))
     paste0(allflags, " / ", final_tbl, " not readable - Q3/Q4 skipped. ",
            "ELIG_COH_ALLFLAGS holds the flags; ELIG_COH_FINAL aligns them to the selected INDEX_DATE.") else NULL
-  # Q3/Q4 framing differs by cohort. In NDMM the other-cancer patients are already
+  # Q3/Q4 framing on the NDMM study cohort. The other-cancer patients are already
   # excluded (de-confounded filter #5), so Q3 is resolved by construction and the
   # flag shown is parent-window context only; clinical-trial is NOT an NDMM filter,
   # so Q4 stays a live, confounder-clean comparison.
-  q3_sub <- if (is_ndmm)
-    paste0("NDMM already EXCLUDES genuine other cancers (de-confounded filter #5, 12-mo pre-LOT1). The rate below is ",
-           "the PARENT OTHER_MALIGN_FLAG (6-mo pre-MM-dx, still includes MM-adjacent codes), joined on for continuity - ",
-           "context only, NOT the NDMM exclusion.")
-  else
-    "OTHER_MALIGN_FLAG (>=1 inpatient OR >=2 outpatient claims within 30d per tumour group) - ELIG_COH retains these patients."
-  q3_narr <- if (is_ndmm) c(q34_gap,
-    "In the NDMM study cohort the other-cancer confounder is handled BY CONSTRUCTION: filter #5 drops patients with a",
-    "genuine (non-MM-adjacent) other cancer in the 12-month pre-LOT1 baseline, de-confounded via is_mm_adjacent_override",
-    "(plasmacytoma / plasma-cell leukemia / secondary bone lesions are NOT counted as a second cancer).",
-    "So POMA-in-1L here is NOT explained by a second primary cancer - those patients were already removed.",
-    "The flag below is the parent 6-mo-pre-dx OTHER_MALIGN_FLAG (context only) and is expected to be low.")
-  else c(q34_gap,
-    "Compare pct_other_cancer for POMA-1L vs other-1L; a higher POMA rate = association.",
-    "Uses the pipeline flag (Step 22), not a raw C-code scan.")
-  q4_sub <- if (is_ndmm)
-    paste0("CLINTRIAL_BASELINE / CLINTRIAL_FOLLOWUP from ELIG_COH_ALLFLAGS. Clinical-trial is NOT an NDMM post-filter, ",
-           "so this stays a LIVE, confounder-clean comparison within the study cohort.")
-  else
-    "CLINTRIAL_BASELINE / CLINTRIAL_FOLLOWUP from ELIG_COH_ALLFLAGS (retained in the build)."
   add_sheet(name = "Q3 POMA & other cancers", title = "Q3 - POMA-1L vs other-1L: baseline other-cancer rate",
-    subtitle = q3_sub, narrative = q3_narr,
+    subtitle = paste0("NDMM already EXCLUDES genuine other cancers (de-confounded filter #5, 12-mo pre-LOT1). The rate ",
+                      "below is the PARENT OTHER_MALIGN_FLAG (6-mo pre-MM-dx, still includes MM-adjacent codes), joined ",
+                      "on for continuity - context only, NOT the NDMM exclusion."),
+    narrative = c(q34_gap,
+      "In the NDMM study cohort the other-cancer confounder is handled BY CONSTRUCTION: filter #5 drops patients with a",
+      "genuine (non-MM-adjacent) other cancer in the 12-month pre-LOT1 baseline, de-confounded via is_mm_adjacent_override",
+      "(plasmacytoma / plasma-cell leukemia / secondary bone lesions are NOT counted as a second cancer).",
+      "So POMA-in-1L here is NOT explained by a second primary cancer - those patients were already removed.",
+      "The flag below is the parent 6-mo-pre-dx OTHER_MALIGN_FLAG (context only) and is expected to be low."),
     tables = list("Baseline other-cancer by group" = q3_df))
   add_sheet(name = "Q4 POMA & clinical trials", title = "Q4 - POMA-1L vs other-1L: clinical-trial evidence",
-    subtitle = q4_sub,
+    subtitle = paste0("CLINTRIAL_BASELINE / CLINTRIAL_FOLLOWUP from ELIG_COH_ALLFLAGS. Clinical-trial is NOT an NDMM ",
+                      "post-filter, so this stays a LIVE, confounder-clean comparison within the study cohort."),
     narrative = c(q34_gap,
-      if (is_ndmm)
-        "Clinical-trial is NOT one of the NDMM post-filters, so this comparison survives into the study cohort - and it is now confounder-clean (other-cancer / non-naive patients already removed)."
-      else NULL,
+      "Clinical-trial is NOT one of the NDMM post-filters, so this comparison survives into the study cohort - and it is now confounder-clean (other-cancer / non-naive patients already removed).",
       "A higher POMA-1L trial rate would support the 'not truly first-line / unobserved therapy on trial' hypothesis.",
       "Claims-based trial evidence is a lower bound (a fully masked study drug may carry no trial code)."),
     tables = list("Clinical-trial evidence by group" = q4_df))
@@ -536,9 +500,7 @@ main <- function() {
       FROM poma1l p LEFT JOIN idx_span x USING (PATID) LEFT JOIN early_flag ef USING (PATID)")),
       error = function(e) { q5_notes <<- paste("Q5 query failed:", conditionMessage(e)); NULL })
     q5_notes <- c(q5_notes,
-      if (is_ndmm)
-        "In NDMM the hidden-prior-exposure concern is further closed: NDMM also requires 12-mo continuous enrollment before LOT1 and re-derives baseline naivety from raw claims (filter #4), on top of Criterion 3."
-      else NULL,
+      "In NDMM the hidden-prior-exposure concern is further closed: NDMM also requires 12-mo continuous enrollment before LOT1 and re-derives baseline naivety from raw claims (filter #4), on top of Criterion 3.",
       "poma_1l_pts = full POMA-1L denominator; poma_1l_with_index_span = those with a continuous span covering index",
       "(should match - if lower, investigate a LOT_LONG / ELIG_COH_FINAL / enrollment mismatch).",
       "Every Optum member has pharmacy benefit; obs_history_gt_6mo = POMA-1L patients with >6mo continuous pre-index",
@@ -554,7 +516,7 @@ main <- function() {
     narrative = q5_notes, tables = q5_tables)
 
   # ---- write --------------------------------------------------------------
-  xlsx <- file.path(out_dir, paste0("poma_studyteam_qs_", tolower(cohort), "_", stamp, ".xlsx"))
+  xlsx <- file.path(out_dir, paste0("poma_studyteam_qs_ndmm_", stamp, ".xlsx"))
   wrote_xlsx <- wbx_write_workbook(sheets, xlsx, out_dir, stamp, allow_csv = allow_csv)
   log_msg(SEP)
   if (isTRUE(wrote_xlsx))
