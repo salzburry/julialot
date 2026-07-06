@@ -465,14 +465,14 @@ main <- function() {
       FROM lot1 l JOIN f USING (PATID) LEFT JOIN poma1l p USING (PATID)
       GROUP BY 1 ORDER BY 1"))
   }
-  q3_df <- if (!is.null(assoc)) assoc[, c("grp","n_pts","n_other_cancer","pct_other_cancer")] else NULL
   # Baseline (pre-index) trial evidence is THE signal for the prior-therapy
   # hypothesis; follow-up / trial_any happen after index and are post-index context.
-  # Order the columns so the baseline count + rate lead.
+  # Order the columns so the baseline count + rate lead. (Q4 only - Q3 no longer
+  # uses ELIG_COH_ALLFLAGS; it re-derives its own flag from raw claims below.)
   q4_df <- if (!is.null(assoc)) assoc[, c("grp","n_pts","n_trial_baseline","pct_trial_baseline","n_trial_followup","n_trial_any","pct_trial_any")] else NULL
-  q34_gap <- if (!(have_flags && have_final))
-    paste0(allflags, " / ", final_tbl, " not readable - Q3/Q4 skipped. ",
-           "ELIG_COH_ALLFLAGS holds the flags; ELIG_COH_FINAL aligns them to the selected INDEX_DATE.") else NULL
+  q4_gap <- if (!(have_flags && have_final))
+    paste0(allflags, " / ", final_tbl, " not readable - Q4 skipped. ",
+           "ELIG_COH_ALLFLAGS holds the CLINTRIAL_* flags; ELIG_COH_FINAL aligns them to the selected INDEX_DATE.") else NULL
   # Q3 (other cancer) is a BROAD-cohort question ("cancers we ALLOW in baseline").
   # NDMM excludes those patients, so the association is measured on the full cohort.
   # The de-confounded rate is computed HERE IN THE WORKBOOK (the parent pipeline is
@@ -535,7 +535,7 @@ main <- function() {
   add_sheet(name = "Q4 POMA & clinical trials", title = "Q4 - POMA-1L vs other-1L: clinical-trial evidence",
     subtitle = paste0("Read the BASELINE column (pre-index): CLINTRIAL_BASELINE from ELIG_COH_ALLFLAGS. Clinical-trial is ",
                       "NOT an NDMM post-filter, so this stays a LIVE, confounder-clean comparison within the study cohort."),
-    narrative = c(q34_gap,
+    narrative = c(q4_gap,
       "HEADLINE on n_trial_baseline / pct_trial_baseline: baseline (pre-index) trial evidence is the meaningful signal for the",
       "'not truly first-line / prior unobserved therapy' hypothesis - a higher POMA-1L BASELINE rate would support it.",
       "n_trial_followup / n_trial_any occur AT-OR-AFTER index and are post-index context, NOT evidence of prior lines - do not headline them.",
