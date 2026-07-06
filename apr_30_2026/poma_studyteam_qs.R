@@ -18,9 +18,9 @@
 #       allogeneic transplant or CAR-T that CLOSES the first line is the
 #       "not treatment-naive" signal; the same therapy on a later line is
 #       expected progression (context only).
-#   Q3  POMA-1L vs other-1L other-cancer association on the BROAD cohort
-#       (using the de-confounded OTHER_MALIGN_FLAG), plus NDMM context where
-#       genuine other cancers are excluded by construction.
+#   Q3  POMA-1L vs other-1L other-cancer association on the BROAD cohort,
+#       de-confounded IN THE WORKBOOK (MM-adjacent codes dropped; pipeline
+#       untouched). NDMM excludes genuine other cancers by construction (~0).
 #   Q4  Do POMA-1L patients have clinical-trial evidence? Headline the BASELINE
 #       (pre-index) column; follow-up is post-index context.
 #   Q5  Do POMA-1L patients have continuous pharmacy benefit? Shows the NDMM
@@ -271,7 +271,7 @@ main <- function() {
       sprintf("POMA-at-1L denominator: %d of %d LOT1 patients.", n_poma, n_lot1),
       "Q1 = real patient journeys (raw claims -> MAP -> assigned LOT, with dates).",
       "Q2 = POMA-1L split by transplant type and TIMING (autologous-at-1L vs allo/CAR-T that closed 1L vs later-line context).",
-      "Q3 = POMA-1L vs other-1L other-cancer association on the BROAD cohort (de-confounded OTHER_MALIGN_FLAG), plus NDMM context (excludes genuine other cancers by construction).",
+      "Q3 = POMA-1L vs other-1L other-cancer association on the BROAD cohort, de-confounded in the workbook (MM-adjacent codes dropped; pipeline untouched). NDMM excludes genuine other cancers by construction (~0).",
       "Q4 = POMA-1L vs other-1L clinical-trial rate; clinical-trial is NOT an NDMM post-filter, so this stays a LIVE, confounder-clean comparison.",
       "Q5 = LOT1-anchored NDMM proof (ce_ge_12mo_pre_lot1 / len_thal_in_12mo_pre_lot1, the 12-mo pre-LOT1 check) PLUS a parent-index supplemental scan for LEN/THAL before the 6-month baseline window.",
       "Operational definitions are shared with R/validation_qs.R (single source of truth)."),
@@ -473,40 +473,63 @@ main <- function() {
   q34_gap <- if (!(have_flags && have_final))
     paste0(allflags, " / ", final_tbl, " not readable - Q3/Q4 skipped. ",
            "ELIG_COH_ALLFLAGS holds the flags; ELIG_COH_FINAL aligns them to the selected INDEX_DATE.") else NULL
-  # Q3 (other cancer) is a BROAD-cohort question by its framing ("cancers we
-  # ALLOW in baseline"). NDMM excludes those patients, so the POMA<->other-cancer
-  # association can only be measured on the full cohort. Run the same split on the
-  # overall LOT_LONG using the now de-confounded OTHER_MALIGN_FLAG (MM-adjacent
-  # codes removed in pipeline step 22). NDMM's own rate is ~0 by construction.
+  # Q3 (other cancer) is a BROAD-cohort question ("cancers we ALLOW in baseline").
+  # NDMM excludes those patients, so the association is measured on the full cohort.
+  # The de-confounded rate is computed HERE IN THE WORKBOOK (the parent pipeline is
+  # NOT touched): fraction of LOT1 patients with a baseline (6-mo pre-index) other-
+  # cancer diagnosis CLAIM, shown BOTH including the MM-adjacent tumor groups
+  # (confounded) and excluding them (de-confounded: drop plasmacytoma / plasma-cell
+  # leukemia / MGUS / secondary bone - MM-spectrum, not a distinct second cancer).
+  # Claim-presence basis - looser than the pipeline's confirmed >=1-IP-or->=2-OP
+  # flag, so use it for the POMA-vs-other comparison and the MM-adjacent share.
   overall_lot <- wrk("LOT_LONG")
-  q3_elig_df <- if (have_flags && have_final && vqs_readable(con, overall_lot))
-    best_effort(db_q(con, glue("
+  mm_adj_in <- paste(sprintf("'%s'", c(
+    "MONOCLONAL GAMMOPATHY", "SECONDARY MALIGNANT NEOPLASM OF BONE",
+    "SOLITARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION",
+    "PLASMA CELL LEUKEMIA NOT HAVING ACHIEVED REMISSION",
+    "EXTRAMEDULLARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION")), collapse = ", ")
+  q3_elig_df <- if (have_final && vqs_readable(con, overall_lot)) best_effort({
+    om_src <- load_codelist_csv("other_malig.csv", c("dx", "icd_family", "tumor_group"))
+    db_q(con, glue("
       WITH poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {overall_lot}
                       WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{poma}')),
       lot1 AS (SELECT DISTINCT cast(PATID as string) PATID FROM {overall_lot} WHERE LOT_NUM=1),
-      f AS (SELECT cast(a.PATID as string) PATID, coalesce(a.OTHER_MALIGN_FLAG,0) AS OTHER_MALIGN_FLAG
-            FROM {allflags} a
-            JOIN {final_tbl} e ON cast(a.PATID as string)=cast(e.PATID as string)
-                              AND a.INDEX_DATE = e.INDEX_DATE)
-      SELECT CASE WHEN p.PATID IS NOT NULL THEN 'POMA-1L' ELSE 'other-1L' END AS grp,
-             count(*)                                          AS n_pts,
-             sum(f.OTHER_MALIGN_FLAG)                          AS n_other_cancer,
-             round(100.0*sum(f.OTHER_MALIGN_FLAG)/count(*),1)  AS pct_other_cancer
-      FROM lot1 l JOIN f USING (PATID) LEFT JOIN poma1l p USING (PATID)
-      GROUP BY 1 ORDER BY 1")), "ELIG_COH de-confounded other-cancer") else NULL
+      idx AS (SELECT cast(PATID as string) PATID, cast(INDEX_DATE as date) index_date FROM {final_tbl}),
+      codes AS (SELECT upper(regexp_replace(trim(dx),'[^A-Za-z0-9]','')) dx,
+                       CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END icd_family,
+                       CASE WHEN upper(trim(tumor_group)) IN ({mm_adj_in}) THEN 1 ELSE 0 END is_mm_adj
+                FROM {om_src}
+                WHERE dx IS NOT NULL AND tumor_group IS NOT NULL),
+      hits AS (SELECT cast(d.PATID as string) PATID,
+                      max(1)                                            has_any,
+                      max(CASE WHEN c.is_mm_adj = 0 THEN 1 ELSE 0 END)  has_nonadj
+               FROM {cdm_src(cfg$tbl_med_diag)} d
+               JOIN idx i ON cast(d.PATID as string) = i.PATID
+               JOIN codes c
+                 ON upper(regexp_replace(d.DIAG,'[^A-Za-z0-9]','')) = c.dx
+                AND (CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END) = c.icd_family
+               WHERE cast(d.FST_DT as date) BETWEEN date_sub(i.index_date,183) AND date_sub(i.index_date,1)
+               GROUP BY cast(d.PATID as string))
+      SELECT CASE WHEN p.PATID IS NOT NULL THEN 'POMA-1L' ELSE 'other-1L' END  grp,
+             count(*)                                              n_pts,
+             sum(coalesce(h.has_any,0))                            n_incl_mm_adjacent,
+             round(100.0*sum(coalesce(h.has_any,0))/count(*),1)    pct_incl_mm_adjacent,
+             sum(coalesce(h.has_nonadj,0))                         n_other_cancer_deconf,
+             round(100.0*sum(coalesce(h.has_nonadj,0))/count(*),1) pct_other_cancer_deconf
+      FROM lot1 l LEFT JOIN poma1l p USING (PATID) LEFT JOIN hits h ON h.PATID = l.PATID
+      GROUP BY 1 ORDER BY 1"))
+  }, "broad-cohort de-confounded other-cancer") else NULL
 
   add_sheet(name = "Q3 POMA & other cancers", title = "Q3 - POMA-1L vs other-1L: other-cancer association",
-    subtitle = "Answered on the BROAD cohort (where these cancers exist), using the de-confounded OTHER_MALIGN_FLAG. NDMM excludes them by construction.",
-    narrative = c(q34_gap,
-      "The Q3 ask is about the other cancers we ALLOW in baseline - a broad-cohort question. NDMM excludes those patients,",
-      "so the POMA vs other-1L other-cancer association is measured on the FULL cohort (first table).",
-      "OTHER_MALIGN_FLAG is now de-confounded: MM-adjacent codes (plasmacytoma, plasma-cell leukemia, MGUS, secondary bone)",
-      "no longer count as a second cancer (pipeline step 22, is_mm_adjacent_override). Compare pct_other_cancer POMA-1L vs other-1L.",
-      "Second table = parent flag on the NDMM patients only. It uses the 6-mo-pre-dx window, so it can be nonzero; it is NOT",
-      "the NDMM exclusion. NDMM's own exclusion (12-mo pre-LOT1) removes genuine other cancers, so the NDMM rate is 0 by construction."),
-    tables = list(
-      "Other-cancer by group - BROAD cohort, de-confounded [the Q3 ask]"        = q3_elig_df,
-      "NDMM patients - parent 6-mo-pre-dx flag (context; NDMM's own exclusion = 0)" = q3_df))
+    subtitle = "Broad cohort. De-confounded (drops MM-adjacent codes) vs confounded, computed in the workbook - pipeline untouched. NDMM excludes genuine other cancers by construction (~0).",
+    narrative = c(
+      "The Q3 ask is whether POMA-1L is associated with the other cancers allowed in baseline - a broad-cohort question.",
+      "pct_other_cancer_deconf DROPS the MM-adjacent codes (plasmacytoma, plasma-cell leukemia, MGUS, secondary bone) - MM-spectrum,",
+      "not a distinct second cancer; pct_incl_mm_adjacent keeps them (the confounded rate). Compare POMA-1L vs other-1L on the DE-CONFOUNDED column.",
+      "Basis = a baseline (6-mo pre-index) diagnosis CLAIM for the tumor group - looser than the pipeline's confirmed",
+      ">=1-inpatient-or->=2-outpatient flag, so these run higher; use them for the relative POMA-vs-other comparison and the MM-adjacent share, not as the exact pipeline flag rate.",
+      "NDMM: genuine other cancers are excluded by construction, so the NDMM other-cancer rate is ~0."),
+    tables = list("Other-cancer by group - broad cohort (confounded vs de-confounded)" = q3_elig_df))
   add_sheet(name = "Q4 POMA & clinical trials", title = "Q4 - POMA-1L vs other-1L: clinical-trial evidence",
     subtitle = paste0("Read the BASELINE column (pre-index): CLINTRIAL_BASELINE from ELIG_COH_ALLFLAGS. Clinical-trial is ",
                       "NOT an NDMM post-filter, so this stays a LIVE, confounder-clean comparison within the study cohort."),
