@@ -40,10 +40,10 @@
 # ELIG_COH_FINAL and the raw CDM.
 #
 # Honest limits, surfaced in the workbook rather than hidden:
-#  - Q3/Q4 read OTHER_MALIGN_FLAG / CLINTRIAL_* from ELIG_COH_ALLFLAGS, aligned
-#    to the selected INDEX_DATE via ELIG_COH_FINAL (one row per patient). These
-#    exclusions are intentionally left OFF in the ELIG_COH build, so the flags
-#    exist for exactly this overlap analysis.
+#  - Q4 reads CLINTRIAL_* from ELIG_COH_ALLFLAGS, aligned to the selected
+#    INDEX_DATE via ELIG_COH_FINAL. Q3 does NOT use OTHER_MALIGN_FLAG - it
+#    re-derives a de-confounded other-cancer rate from raw med_diagnosis + the
+#    other_malig codelist inside this script (pipeline untouched).
 #  - Q2's LOT_LONG summary uses LOT1's END REASON (authoritative for "allo/CAR-T
 #    closed LOT1"); the full CAR-T-relative-to-LOT1 breakdown (incl. CAR-T
 #    BEFORE LOT1) reuses vqs_q6_cart on a POMA-filtered view.
@@ -267,7 +267,7 @@ main <- function() {
   add_sheet(name = "Read Me", title = paste0("POMA-in-1L study-team questions - ", cohort_label),
     subtitle = paste0("Generated ", stamp, " by poma_studyteam_qs.R against ", cfg$work_schema),
     narrative = c(
-      "One tab per question, computed on the NDMM newly-diagnosed 1L STUDY cohort (NDMM_LOT_LONG_FILT).",
+      "Q1/Q2/Q4/Q5 are computed on the NDMM newly-diagnosed 1L STUDY cohort (NDMM_LOT_LONG_FILT); Q3 is computed on the BROAD cohort (see the Q3 tab).",
       sprintf("POMA-at-1L denominator: %d of %d LOT1 patients.", n_poma, n_lot1),
       "Q1 = real patient journeys (raw claims -> MAP -> assigned LOT, with dates).",
       "Q2 = POMA-1L split by transplant type and TIMING (autologous-at-1L vs allo/CAR-T that closed 1L vs later-line context).",
@@ -483,6 +483,7 @@ main <- function() {
   # Claim-presence basis - looser than the pipeline's confirmed >=1-IP-or->=2-OP
   # flag, so use it for the POMA-vs-other comparison and the MM-adjacent share.
   overall_lot <- wrk("LOT_LONG")
+  bdays <- as.integer(Sys.getenv("BASELINE_DAYS", unset = "183"))  # match the pipeline baseline window
   mm_adj_in <- paste(sprintf("'%s'", c(
     "MONOCLONAL GAMMOPATHY", "SECONDARY MALIGNANT NEOPLASM OF BONE",
     "SOLITARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION",
@@ -508,7 +509,7 @@ main <- function() {
                JOIN codes c
                  ON upper(regexp_replace(d.DIAG,'[^A-Za-z0-9]','')) = c.dx
                 AND (CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END) = c.icd_family
-               WHERE cast(d.FST_DT as date) BETWEEN date_sub(i.index_date,183) AND date_sub(i.index_date,1)
+               WHERE cast(d.FST_DT as date) BETWEEN date_sub(i.index_date,{bdays}) AND date_sub(i.index_date,1)
                GROUP BY cast(d.PATID as string))
       SELECT CASE WHEN p.PATID IS NOT NULL THEN 'POMA-1L' ELSE 'other-1L' END  grp,
              count(*)                                              n_pts,
