@@ -42,14 +42,18 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
   # Myeloma-adjacent tumor groups (plasmacytoma, plasma cell leukemia, MGUS,
   # secondary bone neoplasm). These are MM-spectrum, not a distinct second
   # cancer, so they are de-confounded OUT of OTHER_MALIGN_FLAG (step 22). Same
-  # list the NDMM layer uses. Env-overridable via MM_ADJACENT_TUMOR_GROUPS.
-  mm_adjacent_groups <- if (!is.null(cfg$mm_adjacent_tumor_groups))
-    cfg$mm_adjacent_tumor_groups else c(
-      "MONOCLONAL GAMMOPATHY",
+  # list the NDMM layer uses. Override with a pipe-delimited MM_ADJACENT_TUMOR_GROUPS
+  # env var (or cfg$mm_adjacent_tumor_groups) for sensitivity runs.
+  mm_adjacent_groups <- local({
+    env <- Sys.getenv("MM_ADJACENT_TUMOR_GROUPS", unset = "")
+    if (nzchar(env)) return(trimws(strsplit(env, "\\|")[[1]]))
+    if (!is.null(cfg$mm_adjacent_tumor_groups)) return(cfg$mm_adjacent_tumor_groups)
+    c("MONOCLONAL GAMMOPATHY",
       "SECONDARY MALIGNANT NEOPLASM OF BONE",
       "SOLITARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION",
       "PLASMA CELL LEUKEMIA NOT HAVING ACHIEVED REMISSION",
       "EXTRAMEDULLARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION")
+  })
   mm_adj_in <- paste(sprintf("'%s'", toupper(gsub("'", "''", mm_adjacent_groups))),
                      collapse = ", ")
 
@@ -147,10 +151,10 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
         FROM {other_malig_source}
         WHERE dx IS NOT NULL AND tumor_group IS NOT NULL
       "),
-      # n_mm_adjacent surfaces how many rows got the override tag: if it is 0 the
-      # tumor_group labels did not match MM_ADJACENT and the de-confounding is a
-      # silent no-op - visible in the run log.
-      qc = glue("SELECT count(*) AS n_codes, sum(is_mm_adjacent_override) AS n_mm_adjacent FROM {work('other_malig_codes')}")
+      # n_mm_adjacent_groups = distinct tumor groups the override matched. If it
+      # is < the expected 5, one or more labels failed to match and the
+      # de-confounding is a partial no-op - visible in the run log.
+      qc = glue("SELECT count(*) AS n_codes, count(DISTINCT CASE WHEN is_mm_adjacent_override = 1 THEN tumor_group END) AS n_mm_adjacent_groups FROM {work('other_malig_codes')}")
     ),
 
     # SCHEMA PROBE: Validate RVNU_CD column exists on medical table
