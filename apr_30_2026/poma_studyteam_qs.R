@@ -29,9 +29,10 @@
 #
 # Runs on the NDMM newly-diagnosed 1L STUDY cohort. The POMA-in-1L questions are
 # most meaningful here: the other-cancer and prior-therapy confounders are already
-# EXCLUDED, so an anomaly that survives is a real one. Q3 (other cancer) is then
-# resolved by construction; Q4 (clinical trial) stays a LIVE comparison because
-# clinical-trial is not one of the NDMM post-filters.
+# EXCLUDED, so an anomaly that survives is a real one. Q3 (other cancer) reports the
+# broad-cohort de-confounded association and shows NDMM as excluded-by-construction
+# context; Q4 (clinical trial) stays a LIVE comparison because clinical-trial is not
+# one of the NDMM post-filters.
 #
 # Builds nothing persistent (only session TEMP views); safe to run any time. Reads
 # NDMM_LOT_LONG_FILT (LOT_LONG restricted to the NDMM cohort, persisted by
