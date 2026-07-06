@@ -39,6 +39,20 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
     other_malig_source <- ref(cfg$cl_other_malig)
   }
 
+  # Myeloma-adjacent tumor groups (plasmacytoma, plasma cell leukemia, MGUS,
+  # secondary bone neoplasm). These are MM-spectrum, not a distinct second
+  # cancer, so they are de-confounded OUT of OTHER_MALIGN_FLAG (step 22). Same
+  # list the NDMM layer uses. Env-overridable via MM_ADJACENT_TUMOR_GROUPS.
+  mm_adjacent_groups <- if (!is.null(cfg$mm_adjacent_tumor_groups))
+    cfg$mm_adjacent_tumor_groups else c(
+      "MONOCLONAL GAMMOPATHY",
+      "SECONDARY MALIGNANT NEOPLASM OF BONE",
+      "SOLITARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION",
+      "PLASMA CELL LEUKEMIA NOT HAVING ACHIEVED REMISSION",
+      "EXTRAMEDULLARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION")
+  mm_adj_in <- paste(sprintf("'%s'", toupper(gsub("'", "''", mm_adjacent_groups))),
+                     collapse = ", ")
+
   # BUILD COMBINED CRITERIA SQL (from unified criteria catalog)
   catalog      <- build_criteria_catalog(cfg)
   criteria_sql <- build_criteria_sql(catalog, cfg)
@@ -128,7 +142,8 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
         SELECT
           upper(tumor_group) AS tumor_group,
           CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
-          upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', '')) AS dx
+          upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', '')) AS dx,
+          CASE WHEN upper(trim(tumor_group)) IN ({mm_adj_in}) THEN 1 ELSE 0 END AS is_mm_adjacent_override
         FROM {other_malig_source}
         WHERE dx IS NOT NULL AND tumor_group IS NOT NULL
       "),
@@ -881,7 +896,11 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
                  dx.PATID, dx.PAT_PLANID, dx.CLMID, dx.FST_DT, dx.LOC_CD,
                  dx.event_dt, o.tumor_group
           FROM dx
+          -- is_mm_adjacent_override = 0 only: MM-spectrum codes (plasmacytoma,
+          -- plasma cell leukemia, MGUS, secondary bone) are NOT a second cancer,
+          -- so they do not drive OTHER_MALIGN_FLAG (de-confounded).
           INNER JOIN {work('other_malig_codes')} o ON dx.dx = o.dx AND dx.icd_family = o.icd_family
+            AND o.is_mm_adjacent_override = 0
         ),
         -- Classify inpatient vs outpatient using same Approach 1+2 as MM qualifying
         dx_with_setting AS (
