@@ -96,8 +96,9 @@ NDMM_PRE_LOT1_DAYS       <- 365L  # 12-mo CE/baseline before 1L index date
 # of bone). The another-cancer exclusion targets a cancer DISTINCT from
 # the index MM, so flagging these as non-exclusionary keeps the NDMM
 # filter aligned with that intent.
-# Parent pipeline (step 22) and the shared other_malig.csv are NOT
-# changed - this list only adds a flag column at NDMM codelist-load time.
+# The shared other_malig.csv is not changed. The parent pipeline (step 22)
+# now applies the SAME de-confounding via its own is_mm_adjacent_override; this
+# NDMM list is the re-anchored (12-mo pre-LOT1) equivalent.
 #
 # Matched case/whitespace-insensitively against the codelist's
 # tumor_group column. Only the five "NOT HAVING ACHIEVED REMISSION"

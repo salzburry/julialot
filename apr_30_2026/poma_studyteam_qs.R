@@ -18,9 +18,9 @@
 #       allogeneic transplant or CAR-T that CLOSES the first line is the
 #       "not treatment-naive" signal; the same therapy on a later line is
 #       expected progression (context only).
-#   Q3  Other cancer is excluded BY CONSTRUCTION in NDMM (de-confounded filter
-#       #5); the parent OTHER_MALIGN_FLAG is shown as context only, not the
-#       NDMM exclusion.
+#   Q3  POMA-1L vs other-1L other-cancer association on the BROAD cohort
+#       (using the de-confounded OTHER_MALIGN_FLAG), plus NDMM context where
+#       genuine other cancers are excluded by construction.
 #   Q4  Do POMA-1L patients have clinical-trial evidence? Headline the BASELINE
 #       (pre-index) column; follow-up is post-index context.
 #   Q5  Do POMA-1L patients have continuous pharmacy benefit? Shows the NDMM
@@ -270,7 +270,7 @@ main <- function() {
       sprintf("POMA-at-1L denominator: %d of %d LOT1 patients.", n_poma, n_lot1),
       "Q1 = real patient journeys (raw claims -> MAP -> assigned LOT, with dates).",
       "Q2 = POMA-1L split by transplant type and TIMING (autologous-at-1L vs allo/CAR-T that closed 1L vs later-line context).",
-      "Q3 = other-cancer confounder is REMOVED BY CONSTRUCTION in NDMM (de-confounded filter #5); the flag shown is parent-window context, not the study exclusion.",
+      "Q3 = POMA-1L vs other-1L other-cancer association on the BROAD cohort (de-confounded OTHER_MALIGN_FLAG), plus NDMM context (excludes genuine other cancers by construction).",
       "Q4 = POMA-1L vs other-1L clinical-trial rate; clinical-trial is NOT an NDMM post-filter, so this stays a LIVE, confounder-clean comparison.",
       "Q5 = LOT1-anchored NDMM proof (ce_ge_12mo_pre_lot1 / len_thal_in_12mo_pre_lot1, the 12-mo pre-LOT1 check) PLUS a parent-index supplemental scan for LEN/THAL before the 6-month baseline window.",
       "Operational definitions are shared with R/validation_qs.R (single source of truth)."),
@@ -497,14 +497,15 @@ main <- function() {
   add_sheet(name = "Q3 POMA & other cancers", title = "Q3 - POMA-1L vs other-1L: other-cancer association",
     subtitle = "Answered on the BROAD cohort (where these cancers exist), using the de-confounded OTHER_MALIGN_FLAG. NDMM excludes them by construction.",
     narrative = c(q34_gap,
-      "Julia's Q3 asks about the other cancers we ALLOW in baseline - a broad-cohort question. NDMM excludes those patients,",
+      "The Q3 ask is about the other cancers we ALLOW in baseline - a broad-cohort question. NDMM excludes those patients,",
       "so the POMA vs other-1L other-cancer association is measured on the FULL cohort (first table).",
       "OTHER_MALIGN_FLAG is now de-confounded: MM-adjacent codes (plasmacytoma, plasma-cell leukemia, MGUS, secondary bone)",
       "no longer count as a second cancer (pipeline step 22, is_mm_adjacent_override). Compare pct_other_cancer POMA-1L vs other-1L.",
-      "The NDMM table is context only - genuine other cancers are already excluded there, so its rate is ~0 by construction."),
+      "Second table = parent flag on the NDMM patients only. It uses the 6-mo-pre-dx window, so it can be nonzero; it is NOT",
+      "the NDMM exclusion. NDMM's own exclusion (12-mo pre-LOT1) removes genuine other cancers, so the NDMM rate is 0 by construction."),
     tables = list(
-      "Other-cancer by group - BROAD cohort, de-confounded [Julia's Q3]" = q3_elig_df,
-      "NDMM study cohort (excluded by construction; expect ~0)"         = q3_df))
+      "Other-cancer by group - BROAD cohort, de-confounded [the Q3 ask]"        = q3_elig_df,
+      "NDMM patients - parent 6-mo-pre-dx flag (context; NDMM's own exclusion = 0)" = q3_df))
   add_sheet(name = "Q4 POMA & clinical trials", title = "Q4 - POMA-1L vs other-1L: clinical-trial evidence",
     subtitle = paste0("Read the BASELINE column (pre-index): CLINTRIAL_BASELINE from ELIG_COH_ALLFLAGS. Clinical-trial is ",
                       "NOT an NDMM post-filter, so this stays a LIVE, confounder-clean comparison within the study cohort."),

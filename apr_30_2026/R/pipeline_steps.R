@@ -147,7 +147,10 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
         FROM {other_malig_source}
         WHERE dx IS NOT NULL AND tumor_group IS NOT NULL
       "),
-      qc = glue("SELECT count(*) AS n_codes FROM {work('other_malig_codes')}")
+      # n_mm_adjacent surfaces how many rows got the override tag: if it is 0 the
+      # tumor_group labels did not match MM_ADJACENT and the de-confounding is a
+      # silent no-op - visible in the run log.
+      qc = glue("SELECT count(*) AS n_codes, sum(is_mm_adjacent_override) AS n_mm_adjacent FROM {work('other_malig_codes')}")
     ),
 
     # SCHEMA PROBE: Validate RVNU_CD column exists on medical table
