@@ -267,11 +267,11 @@ main <- function() {
   add_sheet(name = "Read Me", title = paste0("POMA-in-1L study-team questions - ", cohort_label),
     subtitle = paste0("Generated ", stamp, " by poma_studyteam_qs.R against ", cfg$work_schema),
     narrative = c(
-      "Q1/Q2/Q4/Q5 are computed on the NDMM newly-diagnosed 1L STUDY cohort (NDMM_LOT_LONG_FILT); Q3 is computed on the BROAD cohort (see the Q3 tab).",
+      "Q1/Q2/Q4/Q5 are computed on the NDMM newly-diagnosed 1L STUDY cohort (NDMM_LOT_LONG_FILT). Q3 first shows an NDMM audit (must be 0), then uses the BROAD cohort for the association (see the Q3 tab).",
       sprintf("POMA-at-1L denominator: %d of %d LOT1 patients.", n_poma, n_lot1),
       "Q1 = real patient journeys (raw claims -> MAP -> assigned LOT, with dates).",
       "Q2 = POMA-1L split by transplant type and TIMING (autologous-at-1L vs allo/CAR-T that closed 1L vs later-line context).",
-      "Q3 = POMA-1L vs other-1L other-cancer association on the BROAD cohort, de-confounded in the workbook (MM-adjacent codes dropped; pipeline untouched). NDMM excludes genuine other cancers by construction (~0).",
+      "Q3 = an NDMM audit (other-cancer rate must be 0, since NDMM excludes those patients by construction) PLUS a POMA-1L vs other-1L other-cancer association on the BROAD cohort, de-confounded in the workbook (MM-adjacent codes dropped; pipeline untouched).",
       "Q4 = POMA-1L vs other-1L clinical-trial rate; clinical-trial is NOT an NDMM post-filter, so this stays a LIVE, confounder-clean comparison.",
       "Q5 = LOT1-anchored NDMM proof (ce_ge_12mo_pre_lot1 / len_thal_in_12mo_pre_lot1, the 12-mo pre-LOT1 check) PLUS a parent-index supplemental scan for LEN/THAL before the 6-month baseline window.",
       "Operational definitions are shared with R/validation_qs.R (single source of truth)."),
@@ -526,7 +526,10 @@ main <- function() {
   # NO_OTHER_CANCER_PRE_LOT1 = 1, so any non-zero is a genuine bug in the NDMM
   # build, not a real signal. Reads NDMM's OWN flag (12-mo pre-LOT1, de-confounded)
   # from NDMM_FLAGS_ALL - NOT the broad-cohort claim-presence method above (which
-  # uses a different window and would false-alarm). Pipeline untouched.
+  # uses a different window and would false-alarm). A missing flag row is counted
+  # separately (missing_flag_rows), NOT coerced to clean, so a broken join surfaces
+  # as its own signal - both n_other_cancer and missing_flag_rows must be 0.
+  # Pipeline untouched.
   ndmm_flags <- wrk("NDMM_FLAGS_ALL")
   q3_ndmm_df <- if (vqs_readable(con, ndmm_flags)) best_effort(db_q(con, glue("
       WITH poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
@@ -537,8 +540,9 @@ main <- function() {
              FROM {ndmm_flags} GROUP BY cast(PATID as string))
       SELECT CASE WHEN p.PATID IS NOT NULL THEN 'POMA-1L (NDMM)' ELSE 'other-1L (NDMM)' END grp,
              count(*)                                                                              n_pts,
-             sum(CASE WHEN coalesce(fl.no_other_cancer,1)=0 THEN 1 ELSE 0 END)                     n_other_cancer,
-             round(100.0*sum(CASE WHEN coalesce(fl.no_other_cancer,1)=0 THEN 1 ELSE 0 END)/count(*),1) pct_other_cancer
+             sum(CASE WHEN fl.PATID IS NOT NULL AND fl.no_other_cancer=0 THEN 1 ELSE 0 END)        n_other_cancer,
+             round(100.0*sum(CASE WHEN fl.PATID IS NOT NULL AND fl.no_other_cancer=0 THEN 1 ELSE 0 END)/count(*),1) pct_other_cancer,
+             sum(CASE WHEN fl.PATID IS NULL THEN 1 ELSE 0 END)                                     missing_flag_rows
       FROM lot1 l LEFT JOIN poma1l p USING (PATID) LEFT JOIN fl ON fl.PATID = l.PATID
       GROUP BY 1 ORDER BY 1")), "NDMM other-cancer audit") else NULL
 
@@ -547,7 +551,8 @@ main <- function() {
     narrative = c(
       "NDMM AUDIT (first table): the NDMM study cohort excludes genuine other cancers by construction, so its other-cancer rate",
       "MUST be 0. A non-zero value there is a BUG in the NDMM build, not a real signal. It uses NDMM's own 12-mo pre-LOT1 flag.",
-      "BROAD COHORT (second table): Julia's Q3 - is POMA-1L associated with the other cancers allowed in baseline? Only answerable",
+      "missing_flag_rows must also be 0: it counts NDMM 1L patients with NO row in NDMM_FLAGS_ALL (a broken join), not coerced to clean.",
+      "BROAD COHORT (second table): the Q3 ask - is POMA-1L associated with the other cancers allowed in baseline? Only answerable",
       "on the broad cohort, since NDMM already removed those patients. pct_other_cancer_deconf DROPS the MM-adjacent codes",
       "(plasmacytoma, plasma-cell leukemia, MGUS, secondary bone - MM-spectrum, not a second cancer); pct_incl_mm_adjacent keeps",
       "them (confounded). Compare POMA-1L vs other-1L on the DE-CONFOUNDED column.",
