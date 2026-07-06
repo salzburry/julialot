@@ -483,7 +483,8 @@ main <- function() {
   # Claim-presence basis - looser than the pipeline's confirmed >=1-IP-or->=2-OP
   # flag, so use it for the POMA-vs-other comparison and the MM-adjacent share.
   overall_lot <- wrk("LOT_LONG")
-  bdays <- as.integer(Sys.getenv("BASELINE_DAYS", unset = "183"))  # match the pipeline baseline window
+  bdays <- 183L  # mirrors config_prompts.R baseline_days (183L); the pipeline does not
+                 # read an env var for this, so keep these two in sync if it ever changes.
   mm_adj_in <- paste(sprintf("'%s'", c(
     "MONOCLONAL GAMMOPATHY", "SECONDARY MALIGNANT NEOPLASM OF BONE",
     "SOLITARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION",
