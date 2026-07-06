@@ -18,9 +18,11 @@
 #       allogeneic transplant or CAR-T that CLOSES the first line is the
 #       "not treatment-naive" signal; the same therapy on a later line is
 #       expected progression (context only).
-#   Q3  POMA-1L vs other-1L other-cancer association on the BROAD cohort,
-#       de-confounded IN THE WORKBOOK (MM-adjacent codes dropped; pipeline
-#       untouched). NDMM excludes genuine other cancers by construction (~0).
+#   Q3  First an NDMM AUDIT: other-cancer rate MUST be 0 (NDMM excludes those
+#       patients by construction), so a non-zero value is an NDMM-build bug.
+#       Then the POMA-1L vs other-1L other-cancer association on the BROAD
+#       cohort, de-confounded IN THE WORKBOOK (MM-adjacent codes dropped;
+#       pipeline untouched) - the association question NDMM can't answer.
 #   Q4  Do POMA-1L patients have clinical-trial evidence? Headline the BASELINE
 #       (pre-index) column; follow-up is post-index context.
 #   Q5  Do POMA-1L patients have continuous pharmacy benefit? Shows the NDMM
@@ -29,10 +31,10 @@
 #
 # Runs on the NDMM newly-diagnosed 1L STUDY cohort. The POMA-in-1L questions are
 # most meaningful here: the other-cancer and prior-therapy confounders are already
-# EXCLUDED, so an anomaly that survives is a real one. Q3 (other cancer) reports the
-# broad-cohort de-confounded association and shows NDMM as excluded-by-construction
-# context; Q4 (clinical trial) stays a LIVE comparison because clinical-trial is not
-# one of the NDMM post-filters.
+# EXCLUDED, so an anomaly that survives is a real one. Q3 (other cancer) first AUDITS
+# that exclusion (NDMM rate must be 0) and then reports the broad-cohort de-confounded
+# association as the question NDMM can't answer; Q4 (clinical trial) stays a LIVE
+# comparison because clinical-trial is not one of the NDMM post-filters.
 #
 # Builds nothing persistent (only session TEMP views); safe to run any time. Reads
 # NDMM_LOT_LONG_FILT (LOT_LONG restricted to the NDMM cohort, persisted by
@@ -544,7 +546,16 @@ main <- function() {
              round(100.0*sum(CASE WHEN fl.PATID IS NOT NULL AND fl.no_other_cancer=0 THEN 1 ELSE 0 END)/count(*),1) pct_other_cancer,
              sum(CASE WHEN fl.PATID IS NULL THEN 1 ELSE 0 END)                                     missing_flag_rows
       FROM lot1 l LEFT JOIN poma1l p USING (PATID) LEFT JOIN fl ON fl.PATID = l.PATID
-      GROUP BY 1 ORDER BY 1")), "NDMM other-cancer audit") else NULL
+      GROUP BY 1 ORDER BY 1")), "NDMM other-cancer audit")
+    else {
+      # NDMM_FLAGS_ALL unreadable: the "must be 0" audit could NOT run. Do not let
+      # it fall through to the writer's bland "(no rows / not available)" - emit a
+      # loud, explicit marker so a missing audit is never mistaken for a passing one.
+      log_msg("  AUDIT UNAVAILABLE: ", ndmm_flags, " unreadable - Q3 NDMM audit did not run; output NOT shareable until rerun.")
+      data.frame(status = sprintf(
+        "NDMM AUDIT COULD NOT RUN - %s unreadable. Rerun 06_ndmm_dashboard.R; output is NOT shareable until this table shows n_other_cancer=0 / missing_flag_rows=0.",
+        ndmm_flags), stringsAsFactors = FALSE)
+    }
 
   add_sheet(name = "Q3 POMA & other cancers", title = "Q3 - POMA-1L vs other-1L: other-cancer association",
     subtitle = "First table = NDMM audit (must be 0). Second = broad-cohort association (de-confounded vs confounded). Computed in the workbook - pipeline untouched.",
