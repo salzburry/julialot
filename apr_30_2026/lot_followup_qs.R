@@ -710,7 +710,7 @@ q_dara_bort_examples <- function(con, lot_long, map_tbl, dara, bort, w1, bounds,
       df[toupper(trimws(df$MED_ABBR)) %in% c(dara, bort), , drop = FALSE] else df
   }
   out$journey <- only_db(best_effort(vqs_map_journey(con, map_tbl, lot_long, ids), "MAP segments"))
-  # Raw claims are patient-level, so pull them ONLY when the observation window is
+  # Raw claims are patient-level, so pull them only when the observation window is
   # known, and keep just DARA/BORT. Otherwise skip the raw table (the picks table
   # already shows each agent's start date).
   # (name is skip_raw, not raw_skipped, so out$raw cannot partial-match it)
@@ -974,7 +974,9 @@ main <- function() {
     tables = d2_tables)
 
   # ---- D3: DARA+BORT journeys (is the same-service-date result real?) ----
-  d3_tables <- list(); d3_notes <- character()
+  # d3_raw_partial stays FALSE unless D3 built its tables but had to skip the
+  # source-claim check (see below); the completeness scan reads it later.
+  d3_tables <- list(); d3_notes <- character(); d3_raw_partial <- FALSE
   if (have_map) {
     d3 <- best_effort(q_dara_bort_examples(con, lot_long, map_tbl, tok$dara, tok$bort, VQS_W1,
                                            bounds$sql, bounds$available), "DARA+BORT journeys")
@@ -986,10 +988,13 @@ main <- function() {
       if (!is.null(d3$raw))     d3_tables[["Raw DARA/BORT claims (bounded to the study window)"]] <- d3$raw
       if (!is.null(d3$note))    d3_notes <- c(d3_notes, d3$note)
     }
+    # A skipped raw-claim pull means D3 could not check the source claims. Flag
+    # it so the run is reported as a partial deep dive, not a full one.
+    d3_raw_partial <- is.list(d3) && !is.data.frame(d3) && isTRUE(d3$skip_raw)
     d3_notes <- c(d3_notes,
-      "A few same-day and a few staggered DARA+BORT patients, traced from their DARA/BORT claims to the MAP start dates. This checks whether both agents were recorded on the same SERVICE DATE (the claims cannot show the same visit or the prescriber's intent).",
-      if (isTRUE(d3$skip_raw))
-        "The raw-claim table is omitted this run because the observation window (ELIG_COH_FINAL) was unavailable, so an unbounded claim pull is avoided. The per-agent start dates above still answer the question."
+      "A few same-day and a few staggered DARA+BORT patients, traced from their DARA/BORT claims to the MAP start dates. This checks whether both agents were recorded on the same service date (the claims cannot show the same visit or the prescriber's intent).",
+      if (d3_raw_partial)
+        "The raw-claim table is left out this run because the observation window (ELIG_COH_FINAL) was unavailable, so an unbounded claim pull is avoided. The per-agent start dates above still answer the question."
       else NULL)
   } else {
     d3_notes <- paste0(map_tbl, " not readable - journeys need MAP_STACKED; D3 could not be built.")
@@ -1014,6 +1019,12 @@ main <- function() {
       if (grepl("^D[0-9]", s$name)) deep_gaps <- c(deep_gaps, g) else core_gaps <- c(core_gaps, g)
     }
   }
+  # D3 built its tables but skipped the source-claim check (no observation
+  # bounds). That is a partial deep dive, not a core gap, so note it here
+  # without making the workbook incomplete.
+  if (isTRUE(d3_raw_partial))
+    deep_gaps <- c(deep_gaps,
+      "D3 DARA+BORT journeys / source claims not checked (observation bounds unavailable; per-agent start dates still shown)")
   incomplete <- length(core_gaps) > 0
   readme_extra <- character()
   if (incomplete) {
@@ -1025,10 +1036,10 @@ main <- function() {
              paste(core_gaps, collapse = "; "), "."))
   }
   if (length(deep_gaps) > 0) {
-    log_msg("NOTE: ", length(deep_gaps), " deep-dive tab(s) (D1-D3) could not be built (core answers unaffected):")
+    log_msg("NOTE: ", length(deep_gaps), " deep-dive item(s) (D1-D3) are incomplete or unavailable (core answers unaffected):")
     for (g in deep_gaps) log_msg("  - ", g)
     readme_extra <- c(readme_extra,
-      paste0("Note: ", length(deep_gaps), " deep-dive tab(s) (D1-D3) could not be built - the core Q1-Q5 answers are unaffected. ",
+      paste0("Note: ", length(deep_gaps), " deep-dive item(s) (D1-D3) are incomplete or unavailable - the core Q1-Q5 answers are unaffected. ",
              paste(deep_gaps, collapse = "; "), "."))
   }
   if (length(readme_extra) > 0)
@@ -1044,7 +1055,7 @@ main <- function() {
             " core issue(s)) - INCOMPLETE workbook -> ", xlsx)
   else
     log_msg("LOT follow-up study-team questions complete", if (length(deep_gaps) > 0)
-            paste0(" (", length(deep_gaps), " deep-dive tab(s) unavailable)") else "",
+            paste0(" (", length(deep_gaps), " deep-dive item(s) incomplete or unavailable)") else "",
             ". Excel workbook -> ", xlsx)
   log_msg(SEP)
 }
