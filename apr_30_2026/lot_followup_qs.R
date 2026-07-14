@@ -22,6 +22,9 @@
 #   Q4  Melphalan in 2L by start year - was it phased out after 2017?
 #   Q5  CAR-T: the CAR-T-vs-LOT1 table plus plain answers to the five CAR-T
 #       questions.
+#   D1-D3  Deep-dives on the study team's concerns: is Melphalan-in-2L really
+#       transplant conditioning (D1); top-15 1L/2L regimens with LENA+DARA in
+#       context (D2); raw-claim journeys behind the DARA+BORT same-day result (D3).
 #
 # Writes no permanent tables (only session temp views). A run writes one Excel
 # workbook, a log, and the output folder if missing, and may set env defaults
@@ -530,6 +533,147 @@ q5_cart_clarifications <- function(con, lot_long, sct_tbl, w1) {
 }
 
 # ===========================================================================
+# D1 - Melphalan in 2L: is it transplant conditioning?
+# High-dose melphalan is the drug that conditions an autologous transplant, so a
+# "MELP" 2L line that sits on a transplant and lasts only a day or two is a
+# conditioning event, not real 2L treatment. LOT_TX_AUTO_FLG marks an autologous
+# transplant inside the line; LOT_BASE_LENGTH is the line length in days.
+# ===========================================================================
+q_melp_conditioning <- function(con, lot_long, melp) {
+  base <- glue("
+    WITH l2 AS (
+      SELECT cast(PATID as string) AS PATID, LOT_START_TYPE,
+             {MEDS_ARR} AS meds,
+             cast(LOT_BASE_LENGTH as int) AS len,
+             coalesce(LOT_TX_AUTO_FLG, 0) AS auto_flg
+      FROM {lot_long}
+      WHERE LOT_NUM = 2 AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
+    ),
+    m AS (SELECT * FROM l2 WHERE array_contains(meds, '{melp}'))")
+
+  agg <- db_q(con, glue("{base}
+    SELECT
+      count(*)                                             AS n_melp_2l_lines,
+      sum(CASE WHEN size(meds) = 1 THEN 1 ELSE 0 END)      AS n_melp_mono,
+      sum(auto_flg)                                        AS n_with_transplant,
+      sum(CASE WHEN size(meds) = 1 AND auto_flg = 1 THEN 1 ELSE 0 END) AS n_mono_with_transplant,
+      sum(CASE WHEN LOT_START_TYPE = 'SCT_AUTO' THEN 1 ELSE 0 END)     AS n_start_type_auto
+    FROM m"))
+  n_melp <- num(agg$n_melp_2l_lines[1])
+  signal <- data.frame(
+    metric = c(
+      "MELP-containing 2L lines (denominator)",
+      "  ... melphalan monotherapy (regimen is MELP only)",
+      "  ... with an autologous transplant flagged in the line",
+      "  ... monotherapy AND transplant (likely conditioning)",
+      "  ... start type = SCT_AUTO (transplant-started line)"),
+    n = c(as.integer(n_melp),
+          as.integer(num(agg$n_melp_mono[1])),
+          as.integer(num(agg$n_with_transplant[1])),
+          as.integer(num(agg$n_mono_with_transplant[1])),
+          as.integer(num(agg$n_start_type_auto[1]))),
+    pct_of_melp_2l = c(NA_real_,
+          pct1(agg$n_melp_mono[1], n_melp), pct1(agg$n_with_transplant[1], n_melp),
+          pct1(agg$n_mono_with_transplant[1], n_melp), pct1(agg$n_start_type_auto[1], n_melp)),
+    stringsAsFactors = FALSE)
+
+  len <- db_q(con, glue("{base}
+    SELECT
+      sum(CASE WHEN size(meds) = 1 THEN 1 ELSE 0 END)                  AS n_mono,
+      percentile_approx(CASE WHEN size(meds)=1 THEN len END, 0.5)      AS median_len_days,
+      percentile_approx(CASE WHEN size(meds)=1 THEN len END, 0.25)     AS p25_len_days,
+      percentile_approx(CASE WHEN size(meds)=1 THEN len END, 0.75)     AS p75_len_days,
+      sum(CASE WHEN size(meds)=1 AND len <= 7 THEN 1 ELSE 0 END)       AS n_le_7d
+    FROM m"))
+  n_mono <- num(len$n_mono[1])
+  length_tbl <- data.frame(
+    metric = c("MELP-monotherapy 2L lines", "Median line length (days)",
+               "25th percentile length (days)", "75th percentile length (days)",
+               "Lines lasting 7 days or less"),
+    value = c(as.integer(n_mono), as.integer(num(len$median_len_days[1])),
+              as.integer(num(len$p25_len_days[1])), as.integer(num(len$p75_len_days[1])),
+              as.integer(num(len$n_le_7d[1]))),
+    pct_of_mono = c(NA_real_, NA_real_, NA_real_, NA_real_, pct1(len$n_le_7d[1], n_mono)),
+    stringsAsFactors = FALSE)
+
+  by_type <- db_q(con, glue("{base}
+    SELECT coalesce(LOT_START_TYPE, '(null)') AS lot2_start_type,
+           count(*) AS n_lines,
+           sum(auto_flg) AS n_with_transplant
+    FROM m GROUP BY coalesce(LOT_START_TYPE, '(null)') ORDER BY n_lines DESC"))
+
+  list(signal = signal, length = length_tbl, by_type = by_type)
+}
+
+# ===========================================================================
+# D2 - Top regimens in 1L and 2L, so LENA+DARA can be seen in context. Ranked by
+# distinct patients on each regimen string (steroids excluded, as everywhere).
+# ===========================================================================
+q_top_regimens <- function(con, lot_long, dara, lena, n_lot1, n_lot2, topn = 15L) {
+  top_one <- function(lnum, denom) {
+    d <- db_q(con, glue("
+      WITH l AS (SELECT cast(PATID as string) AS PATID, LOT_BASE_MEDS, {MEDS_ARR} AS meds
+                 FROM {lot_long}
+                 WHERE LOT_NUM = {lnum} AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> '')
+      SELECT LOT_BASE_MEDS AS regimen, count(*) AS n_patients,
+             max(CASE WHEN array_contains(meds, '{dara}') AND array_contains(meds, '{lena}')
+                      THEN 1 ELSE 0 END) AS has_dara_lena
+      FROM l GROUP BY LOT_BASE_MEDS ORDER BY n_patients DESC LIMIT {as.integer(topn)}"))
+    if (nrow(d) == 0) return(data.frame(status = sprintf("No LOT%d regimens found.", lnum),
+                                        stringsAsFactors = FALSE))
+    data.frame(
+      rank = seq_len(nrow(d)),
+      regimen = d$regimen,
+      n_patients = as.integer(num(d$n_patients)),
+      pct_of_line = vapply(num(d$n_patients), function(x) pct1(x, denom), numeric(1)),
+      contains_DARA_LENA = ifelse(num(d$has_dara_lena) == 1, "yes", ""),
+      stringsAsFactors = FALSE)
+  }
+  list(lot1 = top_one(1L, n_lot1), lot2 = top_one(2L, n_lot2))
+}
+
+# ===========================================================================
+# D3 - DARA+BORT journeys: for a few same-day and a few staggered dual patients,
+# show each agent's MAP start dates and the raw claims behind them, so the
+# same-day result can be checked against the source data.
+# ===========================================================================
+q_dara_bort_examples <- function(con, lot_long, map_tbl, dara, bort, w1, bounds, n_each = 4L) {
+  picks <- db_q(con, glue("
+    WITH l1 AS (
+      SELECT cast(PATID as string) AS PATID, cast(LOT_START_DT as date) AS L1, {MEDS_ARR} AS meds
+      FROM {lot_long} WHERE LOT_NUM = 1 AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
+    ),
+    dual AS (SELECT PATID, L1 FROM l1
+             WHERE size(meds) = 2 AND array_contains(meds, '{dara}') AND array_contains(meds, '{bort}')),
+    dd AS (SELECT cast(m.PATID as string) AS PATID, min(cast(m.MAP_START_DT as date)) AS d_dara
+           FROM {map_tbl} m JOIN dual d ON cast(m.PATID as string) = d.PATID
+           WHERE upper(trim(m.MAP_MED_TYPE)) = '{dara}'
+             AND cast(m.MAP_START_DT as date) BETWEEN d.L1 AND date_add(d.L1, {w1} - 1)
+           GROUP BY cast(m.PATID as string)),
+    bd AS (SELECT cast(m.PATID as string) AS PATID, min(cast(m.MAP_START_DT as date)) AS d_bort
+           FROM {map_tbl} m JOIN dual d ON cast(m.PATID as string) = d.PATID
+           WHERE upper(trim(m.MAP_MED_TYPE)) = '{bort}'
+             AND cast(m.MAP_START_DT as date) BETWEEN d.L1 AND date_add(d.L1, {w1} - 1)
+           GROUP BY cast(m.PATID as string)),
+    g AS (SELECT d.PATID, cast(d.L1 as string) AS lot1_start,
+                 cast(dd.d_dara as string) AS dara_start, cast(bd.d_bort as string) AS bort_start,
+                 datediff(bd.d_bort, dd.d_dara) AS gap_bort_minus_dara,
+                 abs(datediff(bd.d_bort, dd.d_dara)) AS abs_gap
+          FROM dual d JOIN dd USING (PATID) JOIN bd USING (PATID))
+    (SELECT 'same-day' AS grp, PATID, lot1_start, dara_start, bort_start, gap_bort_minus_dara
+       FROM g WHERE abs_gap = 0 ORDER BY PATID LIMIT {as.integer(n_each)})
+    UNION ALL
+    (SELECT 'staggered' AS grp, PATID, lot1_start, dara_start, bort_start, gap_bort_minus_dara
+       FROM g WHERE abs_gap > 0 ORDER BY abs_gap DESC, PATID LIMIT {as.integer(n_each)})"))
+  ids <- unique(as.character(picks$PATID))
+  out <- list(picks = picks)
+  if (length(ids) == 0) { out$note <- "No DARA+BORT dual patients to show."; return(out) }
+  out$journey <- best_effort(vqs_map_journey(con, map_tbl, lot_long, ids), "MAP journey")
+  out$raw <- best_effort(vqs_raw_mma_claims(con, ids, bounds = bounds), "raw MM claims")
+  out
+}
+
+# ===========================================================================
 main <- function() {
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
 
@@ -610,6 +754,7 @@ main <- function() {
       "Q3 = LENA+DARA dual-therapy share in 1L and 2L (exact dual + a 'contains both, any combination' context column).",
       "Q4 = Melphalan in 2L by LOT2 start year, with a pre-/post-2017 summary and the top MELP-containing 2L regimens.",
       "Q5 = CAR-T clarifications: the CAR-T-relative-to-LOT1 metric table recomputed on this cohort, then plain answers to the five CAR-T questions.",
+      "D1-D3 = deep-dives that follow up the study team's concerns: D1 tests whether Melphalan-in-2L is really transplant conditioning; D2 shows the top-15 1L/2L regimens so LENA+DARA can be seen in context; D3 traces same-day and staggered DARA+BORT patients back to their raw claims.",
       "Regimen strings (LOT_BASE_MEDS) are space-separated, alphabetically-sorted MM-agent tokens; steroids are excluded by construction, so 'DARA+BORT dual therapy, no other agents' means no other MM agent (a backbone steroid does not change the pairing).",
       "The CAR-T metrics and the induction-window setting are reused from R/validation_qs.R."),
     tables = list())
@@ -746,6 +891,58 @@ main <- function() {
     subtitle = paste0("Metric table recomputed on this cohort + empirical answers to the five CAR-T questions. Cohort: ",
                       cohort_label, "."),
     narrative = q5_notes, tables = q5_tables)
+
+  # ---- D1: Melphalan-in-2L = transplant conditioning? --------------------
+  d1 <- best_effort(q_melp_conditioning(con, lot_long, tok$melp), "Melphalan conditioning check")
+  d1_tables <- if (is.data.frame(d1)) list("Melphalan in 2L" = d1) else list(
+    "MELP-in-2L transplant signal"       = d1$signal,
+    "MELP-monotherapy 2L line length"    = d1$length,
+    "MELP-in-2L by LOT2 start type"      = d1$by_type)
+  add_sheet(name = "D1 Melphalan check", title = "D1 - Is Melphalan-in-2L actually transplant conditioning?",
+    subtitle = paste0("High-dose melphalan is the conditioning drug for an autologous transplant. Cohort: ", cohort_label, "."),
+    narrative = c(
+      "Peter flagged Melphalan as an odd top-10 2L regimen. Almost all MELP-in-2L is melphalan on its own, which is the conditioning drug given just before an autologous stem-cell transplant - not a second-line treatment.",
+      "The first table shows how many MELP-in-2L lines sit on an autologous transplant (n with a transplant flagged, and monotherapy-plus-transplant). If most do, these are conditioning events, not 2L therapy.",
+      "The second table shows how long the melphalan-only lines last - a conditioning event is a day or two, a real regimen is longer.",
+      "If confirmed, the study-team decision is whether to fold transplant-conditioning melphalan into 1L rather than open a 2L line (a spec choice, not changed here)."),
+    tables = d1_tables)
+
+  # ---- D2: Top regimens in 1L and 2L (LENA+DARA in context) --------------
+  d2 <- best_effort(q_top_regimens(con, lot_long, tok$dara, tok$lena, n_lot1, n_lot2), "Top regimens")
+  d2_tables <- if (is.data.frame(d2)) list("Top regimens" = d2) else list(
+    "Top 15 regimens in 1L" = d2$lot1,
+    "Top 15 regimens in 2L" = d2$lot2)
+  add_sheet(name = "D2 Top regimens", title = "D2 - Top 15 regimens in 1L and 2L",
+    subtitle = paste0("Ranked by distinct patients; the 'contains_DARA_LENA' flag marks DARA+LENA regimens. Cohort: ", cohort_label, "."),
+    narrative = c(
+      "This puts LENA+DARA in context. Steroids are excluded from the regimen strings, so real-world DARA+LEN+dexamethasone shows here as 'DARA LENA', and DARA+LEN+bortezomib as 'BORT DARA LENA'.",
+      "The 'contains_DARA_LENA' column marks every regimen with both agents, so you can see where the DARA+LENA combinations actually rank instead of only the exact pair."),
+    tables = d2_tables)
+
+  # ---- D3: DARA+BORT journeys (is the same-day result real?) -------------
+  d3_tables <- list(); d3_notes <- character()
+  if (have_map) {
+    d3 <- best_effort(q_dara_bort_examples(con, lot_long, map_tbl, tok$dara, tok$bort, VQS_W1, bounds$sql),
+                      "DARA+BORT journeys")
+    if (is.data.frame(d3)) {
+      d3_tables[["DARA+BORT examples"]] <- d3
+    } else {
+      d3_tables[["Example patients (same-day and staggered)"]] <- d3$picks
+      if (!is.null(d3$journey)) d3_tables[["MAP segments (per-agent start dates)"]] <- d3$journey
+      if (!is.null(d3$raw))     d3_tables[["Raw MM-therapy claims"]] <- d3$raw
+      if (!is.null(d3$note))    d3_notes <- c(d3_notes, d3$note)
+    }
+    d3_notes <- c(d3_notes,
+      "A few same-day and a few staggered DARA+BORT patients, traced from the raw claims to the MAP start dates. If the same-day patients genuinely have both agents billed on one visit, the 81% same-day result is real co-administration, not an artifact.",
+      if (!bounds$available) "Raw claims are not observation-window bounded this run (ELIG_COH_FINAL unavailable)." else NULL)
+  } else {
+    d3_notes <- paste0(map_tbl, " not readable - journeys need MAP_STACKED; D3 could not be built.")
+    d3_tables[["DARA+BORT journeys"]] <- data.frame(
+      status = paste0(map_tbl, " not readable - MAP_STACKED is required."), stringsAsFactors = FALSE)
+  }
+  add_sheet(name = "D3 DARA+BORT journeys", title = "D3 - DARA+BORT: raw-claim journeys behind the same-day result",
+    subtitle = paste0("Same-day and staggered example patients, traced to source claims. Cohort: ", cohort_label, "."),
+    narrative = d3_notes, tables = d3_tables)
 
   # ---- flag anything that makes the run incomplete -------------------------
   # A missing or failed answer must not look like a clean run. Collect both the
