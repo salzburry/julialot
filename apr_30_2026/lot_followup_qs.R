@@ -13,8 +13,9 @@
 #
 # Questions:
 #   Q1  Steroids: show the LOT already leaves steroids out of every rule, with an
-#       audit that no steroid token is in any regimen, plus where steroids still
-#       show up (display / timing outputs only).
+#       audit that no steroid token is in any regimen, plus a note on where
+#       steroids still surface (the display / timing outputs, and possibly the
+#       mapped medication data, depending on the production codelist).
 #   Q2  Among 1L DARA+BORT patients (just those two agents), how far apart are the
 #       two start dates - same day, or one then the other?
 #   Q3  Share of patients on LENA+DARA in 1L and 2L (exact pair, plus a wider
@@ -423,11 +424,11 @@ q4_melp_2l <- function(con, lot_long, melp) {
 
   top_reg <- db_q(con, glue("
     WITH l2 AS (
-      SELECT LOT_BASE_MEDS, {MEDS_ARR} AS meds
+      SELECT cast(PATID as string) AS PATID, LOT_BASE_MEDS, {MEDS_ARR} AS meds
       FROM {lot_long}
       WHERE LOT_NUM = 2 AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
     )
-    SELECT LOT_BASE_MEDS AS lot2_regimen, count(*) AS n_patients
+    SELECT LOT_BASE_MEDS AS lot2_regimen, count(DISTINCT PATID) AS n_patients
     FROM l2 WHERE array_contains(meds, '{melp}')
     GROUP BY LOT_BASE_MEDS ORDER BY n_patients DESC LIMIT 10"))
 
@@ -534,10 +535,13 @@ q5_cart_clarifications <- function(con, lot_long, sct_tbl, w1) {
 
 # ===========================================================================
 # D1 - Melphalan in 2L: is it transplant conditioning?
-# High-dose melphalan is the drug that conditions an autologous transplant, so a
-# "MELP" 2L line that sits on a transplant and lasts only a day or two is a
-# conditioning event, not real 2L treatment. LOT_TX_AUTO_FLG marks an autologous
-# transplant inside the line; LOT_BASE_LENGTH is the line length in days.
+# High-dose melphalan is the drug that conditions an autologous transplant. These
+# tables report signals CONSISTENT with conditioning - not proof: how many MELP-
+# in-2L lines carry an autologous transplant (LOT_TX_AUTO_FLG), how short the
+# melphalan-only lines are (LOT_BASE_LENGTH), and how many days from the melphalan
+# line start (LOT_START_DT, = the melphalan claim date for a MED-started line) to
+# the transplant (LOT_TX_AUTO_DT_1). Melphalan a few days BEFORE the transplant is
+# the conditioning pattern.
 # ===========================================================================
 q_melp_conditioning <- function(con, lot_long, melp) {
   base <- glue("
@@ -545,7 +549,9 @@ q_melp_conditioning <- function(con, lot_long, melp) {
       SELECT cast(PATID as string) AS PATID, LOT_START_TYPE,
              {MEDS_ARR} AS meds,
              cast(LOT_BASE_LENGTH as int) AS len,
-             coalesce(LOT_TX_AUTO_FLG, 0) AS auto_flg
+             coalesce(LOT_TX_AUTO_FLG, 0) AS auto_flg,
+             cast(LOT_START_DT as date) AS lot2_start,
+             cast(LOT_TX_AUTO_DT_1 as date) AS auto_dt1
       FROM {lot_long}
       WHERE LOT_NUM = 2 AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
     ),
@@ -596,13 +602,38 @@ q_melp_conditioning <- function(con, lot_long, melp) {
     pct_of_mono = c(NA_real_, NA_real_, NA_real_, NA_real_, pct1(len$n_le_7d[1], n_mono)),
     stringsAsFactors = FALSE)
 
+  # Days from the melphalan line start to the autologous transplant, for the
+  # MELP-mono lines that have both dates. A small positive gap (melphalan a few
+  # days before the transplant) is the conditioning pattern.
+  timing <- db_q(con, glue("{base},
+    md AS (SELECT datediff(auto_dt1, lot2_start) AS gap
+           FROM m WHERE size(meds) = 1 AND auto_flg = 1 AND auto_dt1 IS NOT NULL)
+    SELECT count(*)                                                  AS n_mono_with_dated_transplant,
+           percentile_approx(gap, 0.5)                               AS median_days_melp_to_transplant,
+           percentile_approx(gap, 0.25)                              AS p25_days,
+           percentile_approx(gap, 0.75)                              AS p75_days,
+           sum(CASE WHEN gap BETWEEN 0 AND 14 THEN 1 ELSE 0 END)     AS n_transplant_0_14d_after_melp
+    FROM md"))
+  n_dated <- num(timing$n_mono_with_dated_transplant[1])
+  timing_tbl <- data.frame(
+    metric = c("MELP-monotherapy lines with a dated transplant",
+               "Median days from melphalan start to transplant",
+               "25th percentile days", "75th percentile days",
+               "Transplant 0-14 days after the melphalan start (conditioning pattern)"),
+    value = c(as.integer(n_dated), as.integer(num(timing$median_days_melp_to_transplant[1])),
+              as.integer(num(timing$p25_days[1])), as.integer(num(timing$p75_days[1])),
+              as.integer(num(timing$n_transplant_0_14d_after_melp[1]))),
+    pct_of_dated = c(NA_real_, NA_real_, NA_real_, NA_real_,
+                     pct1(timing$n_transplant_0_14d_after_melp[1], n_dated)),
+    stringsAsFactors = FALSE)
+
   by_type <- db_q(con, glue("{base}
     SELECT coalesce(LOT_START_TYPE, '(null)') AS lot2_start_type,
            count(*) AS n_lines,
            sum(auto_flg) AS n_with_transplant
     FROM m GROUP BY coalesce(LOT_START_TYPE, '(null)') ORDER BY n_lines DESC"))
 
-  list(signal = signal, length = length_tbl, by_type = by_type)
+  list(signal = signal, length = length_tbl, timing = timing_tbl, by_type = by_type)
 }
 
 # ===========================================================================
@@ -615,7 +646,7 @@ q_top_regimens <- function(con, lot_long, dara, lena, n_lot1, n_lot2, topn = 15L
       WITH l AS (SELECT cast(PATID as string) AS PATID, LOT_BASE_MEDS, {MEDS_ARR} AS meds
                  FROM {lot_long}
                  WHERE LOT_NUM = {lnum} AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> '')
-      SELECT LOT_BASE_MEDS AS regimen, count(*) AS n_patients,
+      SELECT LOT_BASE_MEDS AS regimen, count(DISTINCT PATID) AS n_patients,
              max(CASE WHEN array_contains(meds, '{dara}') AND array_contains(meds, '{lena}')
                       THEN 1 ELSE 0 END) AS has_dara_lena
       FROM l GROUP BY LOT_BASE_MEDS ORDER BY n_patients DESC LIMIT {as.integer(topn)}"))
@@ -634,10 +665,12 @@ q_top_regimens <- function(con, lot_long, dara, lena, n_lot1, n_lot2, topn = 15L
 
 # ===========================================================================
 # D3 - DARA+BORT journeys: for a few same-day and a few staggered dual patients,
-# show each agent's MAP start dates and the raw claims behind them, so the
-# same-day result can be checked against the source data.
+# show each agent's MAP start dates and the DARA/BORT claims behind them, so the
+# same-service-date result can be checked against the source data. The raw-claim
+# pull is limited to DARA and BORT, and is written ONLY when the observation
+# window is known (bounds_available) - never an unbounded full claim history.
 # ===========================================================================
-q_dara_bort_examples <- function(con, lot_long, map_tbl, dara, bort, w1, bounds, n_each = 4L) {
+q_dara_bort_examples <- function(con, lot_long, map_tbl, dara, bort, w1, bounds, bounds_available, n_each = 4L) {
   picks <- db_q(con, glue("
     WITH l1 AS (
       SELECT cast(PATID as string) AS PATID, cast(LOT_START_DT as date) AS L1, {MEDS_ARR} AS meds
@@ -668,8 +701,19 @@ q_dara_bort_examples <- function(con, lot_long, map_tbl, dara, bort, w1, bounds,
   ids <- unique(as.character(picks$PATID))
   out <- list(picks = picks)
   if (length(ids) == 0) { out$note <- "No DARA+BORT dual patients to show."; return(out) }
-  out$journey <- best_effort(vqs_map_journey(con, map_tbl, lot_long, ids), "MAP journey")
-  out$raw <- best_effort(vqs_raw_mma_claims(con, ids, bounds = bounds), "raw MM claims")
+  only_db <- function(df) {   # keep only DARA/BORT rows (skip a status table)
+    if (is.data.frame(df) && "MED_ABBR" %in% names(df))
+      df[toupper(trimws(df$MED_ABBR)) %in% c(dara, bort), , drop = FALSE] else df
+  }
+  out$journey <- only_db(best_effort(vqs_map_journey(con, map_tbl, lot_long, ids), "MAP segments"))
+  # Raw claims are patient-level, so pull them ONLY when the observation window is
+  # known, and keep just DARA/BORT. Otherwise skip the raw table (the picks table
+  # already shows each agent's start date).
+  # (name is skip_raw, not raw_skipped, so out$raw cannot partial-match it)
+  if (isTRUE(bounds_available))
+    out$raw <- only_db(best_effort(vqs_raw_mma_claims(con, ids, bounds = bounds), "raw DARA/BORT claims"))
+  else
+    out$skip_raw <- TRUE
   out
 }
 
@@ -740,7 +784,7 @@ main <- function() {
   extra_gaps <- character()
   if (!isTRUE(tok$resolved))
     extra_gaps <- c(extra_gaps,
-      "Agent tokens could not be resolved from cl_mma_codelist.csv - fell back to defaults (DARA/BORT/LENA/MELP); Q2/Q3/Q4 counts are unverified")
+      "Agent tokens could not be resolved from cl_mma_codelist.csv - fell back to defaults (DARA/BORT/LENA/MELP); every token-based answer (Q2, Q3, Q4 and D1-D3) is unverified")
 
   # ---- Read Me -----------------------------------------------------------
   add_sheet(name = "Read Me", title = paste0("LOT follow-up study-team questions - ", cohort_label),
@@ -865,8 +909,12 @@ main <- function() {
     if (is.null(cart_raw))
       extra_gaps <- c(extra_gaps, "Q5 CAR-T / (b) pre-LOT1 CAR-T scan unavailable - question (b) unanswered")
     q5_notes <- c(
-      sprintf("The first table shows the CAR-T-relative-to-LOT1 metrics on this cohort (%s, LOT1 = %s patients). The earlier table the study team saw (denominator 11,148; 'Any CAR-T on/after LOT1' = 124) was the full Overall LOT cohort - use LOT_COHORT=FULL to compare with that full-cohort result (exact figures also depend on the same tables, CDM snapshot and config). The answers hold for either cohort.",
-              cohort_label, format(n_lot1, big.mark = ",")),
+      if (cohort_mode == "NDMM")
+        sprintf("The first table shows the CAR-T-relative-to-LOT1 metrics for this cohort (%s, LOT1 = %s patients). These match the CAR-T table the study team saw earlier (denominator 11,148; 'Any CAR-T on/after LOT1' = 124), so that table was this same NDMM cohort. Set LOT_COHORT=FULL to also see the whole LOT cohort.",
+                cohort_label, format(n_lot1, big.mark = ","))
+      else
+        sprintf("The first table shows the CAR-T-relative-to-LOT1 metrics for this cohort (%s, LOT1 = %s patients). The study team's earlier CAR-T table (denominator 11,148; 'Any CAR-T on/after LOT1' = 124) was the NDMM study cohort (the default), so this full-cohort run shows larger numbers. Run without LOT_COHORT (i.e. NDMM) to reproduce that table.",
+                cohort_label, format(n_lot1, big.mark = ",")),
       if (is.null(cart_raw))
         "The pre-LOT1 CAR-T rows need the raw claims scan, which was not available this run, so 'CAR-T before LOT1' and 'prior-to-or-during' show as NA. The during/closing timing is still valid. This run is marked incomplete for question (b)."
       else
@@ -895,16 +943,18 @@ main <- function() {
   # ---- D1: Melphalan-in-2L = transplant conditioning? --------------------
   d1 <- best_effort(q_melp_conditioning(con, lot_long, tok$melp), "Melphalan conditioning check")
   d1_tables <- if (is.data.frame(d1)) list("Melphalan in 2L" = d1) else list(
-    "MELP-in-2L transplant signal"       = d1$signal,
-    "MELP-monotherapy 2L line length"    = d1$length,
-    "MELP-in-2L by LOT2 start type"      = d1$by_type)
-  add_sheet(name = "D1 Melphalan check", title = "D1 - Is Melphalan-in-2L actually transplant conditioning?",
-    subtitle = paste0("High-dose melphalan is the conditioning drug for an autologous transplant. Cohort: ", cohort_label, "."),
+    "MELP-in-2L transplant signal"                 = d1$signal,
+    "MELP-monotherapy 2L line length"              = d1$length,
+    "Days from melphalan start to the transplant"  = d1$timing,
+    "MELP-in-2L by LOT2 start type"                = d1$by_type)
+  add_sheet(name = "D1 Melphalan check", title = "D1 - Is Melphalan-in-2L transplant conditioning?",
+    subtitle = paste0("Signals consistent with conditioning (not a proof). Cohort: ", cohort_label, "."),
     narrative = c(
-      "Peter flagged Melphalan as an odd top-10 2L regimen. Almost all MELP-in-2L is melphalan on its own, which is the conditioning drug given just before an autologous stem-cell transplant - not a second-line treatment.",
-      "The first table shows how many MELP-in-2L lines sit on an autologous transplant (n with a transplant flagged, and monotherapy-plus-transplant). If most do, these are conditioning events, not 2L therapy.",
-      "The second table shows how long the melphalan-only lines last - a conditioning event is a day or two, a real regimen is longer.",
-      "If confirmed, the study-team decision is whether to fold transplant-conditioning melphalan into 1L rather than open a 2L line (a spec choice, not changed here)."),
+      "The study team flagged Melphalan as an odd top-10 2L regimen. High-dose melphalan is the drug that conditions an autologous stem-cell transplant, so MELP-in-2L may be conditioning rather than second-line treatment. These tables show whether the signals point that way in this cohort - they are supporting evidence, not proof.",
+      "Table 1: how many MELP-in-2L lines carry an autologous transplant (transplant flagged, and monotherapy-plus-transplant).",
+      "Table 2: how long the melphalan-only lines last - a conditioning event is a day or two, a real regimen is longer.",
+      "Table 3: days from the melphalan line start to the transplant. Melphalan a few days BEFORE the transplant (a small positive gap) is the conditioning pattern; a large or negative gap is not.",
+      "If the signals line up, the study-team decision is whether to fold transplant-conditioning melphalan into 1L rather than open a 2L line (a spec choice, not changed here)."),
     tables = d1_tables)
 
   # ---- D2: Top regimens in 1L and 2L (LENA+DARA in context) --------------
@@ -919,51 +969,66 @@ main <- function() {
       "The 'contains_DARA_LENA' column marks every regimen with both agents, so you can see where the DARA+LENA combinations actually rank instead of only the exact pair."),
     tables = d2_tables)
 
-  # ---- D3: DARA+BORT journeys (is the same-day result real?) -------------
+  # ---- D3: DARA+BORT journeys (is the same-service-date result real?) ----
   d3_tables <- list(); d3_notes <- character()
   if (have_map) {
-    d3 <- best_effort(q_dara_bort_examples(con, lot_long, map_tbl, tok$dara, tok$bort, VQS_W1, bounds$sql),
-                      "DARA+BORT journeys")
+    d3 <- best_effort(q_dara_bort_examples(con, lot_long, map_tbl, tok$dara, tok$bort, VQS_W1,
+                                           bounds$sql, bounds$available), "DARA+BORT journeys")
     if (is.data.frame(d3)) {
       d3_tables[["DARA+BORT examples"]] <- d3
     } else {
       d3_tables[["Example patients (same-day and staggered)"]] <- d3$picks
-      if (!is.null(d3$journey)) d3_tables[["MAP segments (per-agent start dates)"]] <- d3$journey
-      if (!is.null(d3$raw))     d3_tables[["Raw MM-therapy claims"]] <- d3$raw
+      if (!is.null(d3$journey)) d3_tables[["MAP segments - DARA and BORT start dates"]] <- d3$journey
+      if (!is.null(d3$raw))     d3_tables[["Raw DARA/BORT claims (bounded to the study window)"]] <- d3$raw
       if (!is.null(d3$note))    d3_notes <- c(d3_notes, d3$note)
     }
     d3_notes <- c(d3_notes,
-      "A few same-day and a few staggered DARA+BORT patients, traced from the raw claims to the MAP start dates. If the same-day patients genuinely have both agents billed on one visit, the 81% same-day result is real co-administration, not an artifact.",
-      if (!bounds$available) "Raw claims are not observation-window bounded this run (ELIG_COH_FINAL unavailable)." else NULL)
+      "A few same-day and a few staggered DARA+BORT patients, traced from their DARA/BORT claims to the MAP start dates. This checks whether both agents were recorded on the same SERVICE DATE (the claims cannot show the same visit or the prescriber's intent).",
+      if (isTRUE(d3$skip_raw))
+        "The raw-claim table is omitted this run because the observation window (ELIG_COH_FINAL) was unavailable, so an unbounded claim pull is avoided. The per-agent start dates above still answer the question."
+      else NULL)
   } else {
     d3_notes <- paste0(map_tbl, " not readable - journeys need MAP_STACKED; D3 could not be built.")
     d3_tables[["DARA+BORT journeys"]] <- data.frame(
       status = paste0(map_tbl, " not readable - MAP_STACKED is required."), stringsAsFactors = FALSE)
   }
-  add_sheet(name = "D3 DARA+BORT journeys", title = "D3 - DARA+BORT: raw-claim journeys behind the same-day result",
-    subtitle = paste0("Same-day and staggered example patients, traced to source claims. Cohort: ", cohort_label, "."),
+  add_sheet(name = "D3 DARA+BORT journeys", title = "D3 - DARA+BORT: same-service-date check from the source claims",
+    subtitle = paste0("Same-day and staggered example patients (patient-level, DARA/BORT only). Cohort: ", cohort_label, "."),
     narrative = d3_notes, tables = d3_tables)
 
   # ---- flag anything that makes the run incomplete -------------------------
-  # A missing or failed answer must not look like a clean run. Collect both the
-  # status rows (a failed or skipped question) and the extra_gaps reasons, then
-  # mark the workbook INCOMPLETE (filename + a Read Me note) and log it.
-  gaps <- extra_gaps
+  # Keep the two deliverables separate: only a CORE gap (a Q1-Q5 answer or a
+  # token fallback that also affects them) makes the workbook INCOMPLETE and gets
+  # the filename suffix. A DEEP-DIVE gap (D1-D3) is noted but does not invalidate
+  # the core answers. extra_gaps are all core (token / steroid audit / Q5b).
+  core_gaps <- extra_gaps; deep_gaps <- character()
   for (s in sheets) for (nm in names(s$tables %||% list())) {
     entry <- s$tables[[nm]]; df <- entry
     if (is.list(entry) && !is.data.frame(entry)) df <- entry$df
-    if (is_status_table(df)) gaps <- c(gaps, sprintf("%s / %s", s$name, nm))
+    if (is_status_table(df)) {
+      g <- sprintf("%s / %s", s$name, nm)
+      if (grepl("^D[0-9]", s$name)) deep_gaps <- c(deep_gaps, g) else core_gaps <- c(core_gaps, g)
+    }
   }
-  incomplete <- length(gaps) > 0
+  incomplete <- length(core_gaps) > 0
+  readme_extra <- character()
   if (incomplete) {
-    log_msg("WARNING: this run is INCOMPLETE:")
-    for (g in gaps) log_msg("  - ", g)
-    sheets[[1]]$narrative <- c(
-      paste0("INCOMPLETE run: ", length(gaps),
-             " issue(s) - see the affected tabs and re-run once resolved. ",
-             paste(gaps, collapse = "; "), "."),
-      sheets[[1]]$narrative)
+    log_msg("WARNING: core answers are INCOMPLETE:")
+    for (g in core_gaps) log_msg("  - ", g)
+    readme_extra <- c(readme_extra,
+      paste0("INCOMPLETE run: ", length(core_gaps),
+             " core issue(s) - see the affected tabs and re-run once resolved. ",
+             paste(core_gaps, collapse = "; "), "."))
   }
+  if (length(deep_gaps) > 0) {
+    log_msg("NOTE: ", length(deep_gaps), " deep-dive tab(s) (D1-D3) could not be built (core answers unaffected):")
+    for (g in deep_gaps) log_msg("  - ", g)
+    readme_extra <- c(readme_extra,
+      paste0("Note: ", length(deep_gaps), " deep-dive tab(s) (D1-D3) could not be built - the core Q1-Q5 answers are unaffected. ",
+             paste(deep_gaps, collapse = "; "), "."))
+  }
+  if (length(readme_extra) > 0)
+    sheets[[1]]$narrative <- c(readme_extra, sheets[[1]]$narrative)
 
   # ---- write --------------------------------------------------------------
   suffix <- if (incomplete) "_INCOMPLETE" else ""
@@ -971,10 +1036,12 @@ main <- function() {
   wbx_write_workbook(sheets, xlsx)
   log_msg(SEP)
   if (incomplete)
-    log_msg("LOT follow-up study-team questions COMPLETED WITH GAPS (", length(gaps),
-            " issue(s)) - INCOMPLETE workbook -> ", xlsx)
+    log_msg("LOT follow-up study-team questions COMPLETED WITH GAPS (", length(core_gaps),
+            " core issue(s)) - INCOMPLETE workbook -> ", xlsx)
   else
-    log_msg("LOT follow-up study-team questions complete. Excel workbook -> ", xlsx)
+    log_msg("LOT follow-up study-team questions complete", if (length(deep_gaps) > 0)
+            paste0(" (", length(deep_gaps), " deep-dive tab(s) unavailable)") else "",
+            ". Excel workbook -> ", xlsx)
   log_msg(SEP)
 }
 
