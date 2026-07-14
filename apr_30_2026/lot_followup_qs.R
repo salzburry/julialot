@@ -865,8 +865,12 @@ main <- function() {
     if (is.null(cart_raw))
       extra_gaps <- c(extra_gaps, "Q5 CAR-T / (b) pre-LOT1 CAR-T scan unavailable - question (b) unanswered")
     q5_notes <- c(
-      sprintf("The first table shows the CAR-T-relative-to-LOT1 metrics on this cohort (%s, LOT1 = %s patients). The earlier table the study team saw (denominator 11,148; 'Any CAR-T on/after LOT1' = 124) was the full Overall LOT cohort - use LOT_COHORT=FULL to compare with that full-cohort result (exact figures also depend on the same tables, CDM snapshot and config). The answers hold for either cohort.",
-              cohort_label, format(n_lot1, big.mark = ",")),
+      if (cohort_mode == "NDMM")
+        sprintf("The first table shows the CAR-T-relative-to-LOT1 metrics for this cohort (%s, LOT1 = %s patients). These match the CAR-T table the study team saw earlier (denominator 11,148; 'Any CAR-T on/after LOT1' = 124), so that table was this same NDMM cohort. Set LOT_COHORT=FULL to also see the whole LOT cohort.",
+                cohort_label, format(n_lot1, big.mark = ","))
+      else
+        sprintf("The first table shows the CAR-T-relative-to-LOT1 metrics for this cohort (%s, LOT1 = %s patients). The study team's earlier CAR-T table (denominator 11,148; 'Any CAR-T on/after LOT1' = 124) was the NDMM study cohort (the default), so this full-cohort run shows larger numbers. Run without LOT_COHORT (i.e. NDMM) to reproduce that table.",
+                cohort_label, format(n_lot1, big.mark = ",")),
       if (is.null(cart_raw))
         "The pre-LOT1 CAR-T rows need the raw claims scan, which was not available this run, so 'CAR-T before LOT1' and 'prior-to-or-during' show as NA. The during/closing timing is still valid. This run is marked incomplete for question (b)."
       else
@@ -901,7 +905,7 @@ main <- function() {
   add_sheet(name = "D1 Melphalan check", title = "D1 - Is Melphalan-in-2L actually transplant conditioning?",
     subtitle = paste0("High-dose melphalan is the conditioning drug for an autologous transplant. Cohort: ", cohort_label, "."),
     narrative = c(
-      "Peter flagged Melphalan as an odd top-10 2L regimen. Almost all MELP-in-2L is melphalan on its own, which is the conditioning drug given just before an autologous stem-cell transplant - not a second-line treatment.",
+      "The study team flagged Melphalan as an odd top-10 2L regimen. If most MELP-in-2L is melphalan on its own, it is likely the conditioning drug given just before an autologous stem-cell transplant - not a second-line treatment. The tables below show whether that holds in this cohort.",
       "The first table shows how many MELP-in-2L lines sit on an autologous transplant (n with a transplant flagged, and monotherapy-plus-transplant). If most do, these are conditioning events, not 2L therapy.",
       "The second table shows how long the melphalan-only lines last - a conditioning event is a day or two, a real regimen is longer.",
       "If confirmed, the study-team decision is whether to fold transplant-conditioning melphalan into 1L rather than open a 2L line (a spec choice, not changed here)."),
