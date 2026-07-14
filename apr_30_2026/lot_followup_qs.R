@@ -13,7 +13,7 @@
 #
 # Questions:
 #   Q1  Steroids: show the LOT already leaves steroids out of every rule, with an
-#       audit that no steroid token is in any regimen, plus a note on where
+#       audit that no known steroid token is in any regimen, plus a note on where
 #       steroids still surface (the display / timing outputs, and possibly the
 #       mapped medication data, depending on the production codelist).
 #   Q2  Among 1L DARA+BORT patients (just those two agents), how far apart are the
@@ -143,8 +143,8 @@ pct1 <- function(x, d) if (isTRUE(num(d) > 0)) round(100 * num(x) / num(d), 1) e
 # ---------------------------------------------------------------------------
 resolve_lot_tokens <- function(con) {
   # resolved = TRUE only when the codes came from the codelist. If we fall back to
-  # the standard defaults, the caller flags it (Q2/Q3/Q4 could miscount if the
-  # real codes differ).
+  # the standard defaults, the caller flags it (any token-based answer - Q2/Q3/Q4
+  # and D1-D3 - could miscount if the real codes differ).
   out <- list(dara = "DARA", bort = "BORT", lena = "LENA", melp = "MELP",
               notes = character(0), resolved = FALSE)
   ok <- tryCatch({ vqs_build_mma_codelist(con); TRUE }, error = function(e) FALSE)
@@ -536,7 +536,7 @@ q5_cart_clarifications <- function(con, lot_long, sct_tbl, w1) {
 # ===========================================================================
 # D1 - Melphalan in 2L: is it transplant conditioning?
 # High-dose melphalan is the drug that conditions an autologous transplant. These
-# tables report signals CONSISTENT with conditioning - not proof: how many MELP-
+# tables report signals consistent with conditioning - not proof: how many MELP-
 # in-2L lines carry an autologous transplant (LOT_TX_AUTO_FLG), how short the
 # melphalan-only lines are (LOT_BASE_LENGTH), and how many days from the melphalan
 # line start (LOT_START_DT, = the melphalan claim date for a MED-started line) to
@@ -571,7 +571,7 @@ q_melp_conditioning <- function(con, lot_long, melp) {
       "MELP-containing 2L lines (denominator)",
       "  ... melphalan monotherapy (regimen is MELP only)",
       "  ... with an autologous transplant flagged in the line",
-      "  ... monotherapy AND transplant (likely conditioning)",
+      "  ... monotherapy with a transplant (consistent with conditioning)",
       "  ... start type = SCT_AUTO (transplant-started line)"),
     n = c(as.integer(n_melp),
           as.integer(num(agg$n_melp_mono[1])),
@@ -602,12 +602,16 @@ q_melp_conditioning <- function(con, lot_long, melp) {
     pct_of_mono = c(NA_real_, NA_real_, NA_real_, NA_real_, pct1(len$n_le_7d[1], n_mono)),
     stringsAsFactors = FALSE)
 
-  # Days from the melphalan line start to the autologous transplant, for the
-  # MELP-mono lines that have both dates. A small positive gap (melphalan a few
-  # days before the transplant) is the conditioning pattern.
+  # Days from the melphalan line start to the autologous transplant. Restricted to
+  # MED-started lines (LOT_START_TYPE='MED'), where the line start IS the melphalan
+  # claim date. SCT_AUTO-started lines are excluded, because there LOT_START_DT is
+  # the transplant date itself (the gap would be ~0 by construction, not a real
+  # melphalan-to-transplant measure). A small positive gap = melphalan a few days
+  # before the transplant = the conditioning pattern.
   timing <- db_q(con, glue("{base},
     md AS (SELECT datediff(auto_dt1, lot2_start) AS gap
-           FROM m WHERE size(meds) = 1 AND auto_flg = 1 AND auto_dt1 IS NOT NULL)
+           FROM m WHERE size(meds) = 1 AND auto_flg = 1 AND auto_dt1 IS NOT NULL
+             AND LOT_START_TYPE = 'MED')
     SELECT count(*)                                                  AS n_mono_with_dated_transplant,
            percentile_approx(gap, 0.5)                               AS median_days_melp_to_transplant,
            percentile_approx(gap, 0.25)                              AS p25_days,
@@ -616,7 +620,7 @@ q_melp_conditioning <- function(con, lot_long, melp) {
     FROM md"))
   n_dated <- num(timing$n_mono_with_dated_transplant[1])
   timing_tbl <- data.frame(
-    metric = c("MELP-monotherapy lines with a dated transplant",
+    metric = c("MED-started MELP-only lines with a dated transplant",
                "Median days from melphalan start to transplant",
                "25th percentile days", "75th percentile days",
                "Transplant 0-14 days after the melphalan start (conditioning pattern)"),
@@ -667,7 +671,7 @@ q_top_regimens <- function(con, lot_long, dara, lena, n_lot1, n_lot2, topn = 15L
 # D3 - DARA+BORT journeys: for a few same-day and a few staggered dual patients,
 # show each agent's MAP start dates and the DARA/BORT claims behind them, so the
 # same-service-date result can be checked against the source data. The raw-claim
-# pull is limited to DARA and BORT, and is written ONLY when the observation
+# pull is limited to DARA and BORT, and is written only when the observation
 # window is known (bounds_available) - never an unbounded full claim history.
 # ===========================================================================
 q_dara_bort_examples <- function(con, lot_long, map_tbl, dara, bort, w1, bounds, bounds_available, n_each = 4L) {
@@ -910,10 +914,10 @@ main <- function() {
       extra_gaps <- c(extra_gaps, "Q5 CAR-T / (b) pre-LOT1 CAR-T scan unavailable - question (b) unanswered")
     q5_notes <- c(
       if (cohort_mode == "NDMM")
-        sprintf("The first table shows the CAR-T-relative-to-LOT1 metrics for this cohort (%s, LOT1 = %s patients). These match the CAR-T table the study team saw earlier (denominator 11,148; 'Any CAR-T on/after LOT1' = 124), so that table was this same NDMM cohort. Set LOT_COHORT=FULL to also see the whole LOT cohort.",
+        sprintf("The first table recomputes the CAR-T-relative-to-LOT1 measures for this cohort (%s, LOT1 = %s patients). The study team's earlier table showed 11,148 LOT1 patients and 124 with any CAR-T on/after LOT1 - compare those to the table below. Set LOT_COHORT=FULL for the whole LOT cohort.",
                 cohort_label, format(n_lot1, big.mark = ","))
       else
-        sprintf("The first table shows the CAR-T-relative-to-LOT1 metrics for this cohort (%s, LOT1 = %s patients). The study team's earlier CAR-T table (denominator 11,148; 'Any CAR-T on/after LOT1' = 124) was the NDMM study cohort (the default), so this full-cohort run shows larger numbers. Run without LOT_COHORT (i.e. NDMM) to reproduce that table.",
+        sprintf("The first table recomputes the CAR-T-relative-to-LOT1 measures for this cohort (%s, LOT1 = %s patients). The study team's earlier table (11,148 LOT1 patients; 124 with any CAR-T) was the NDMM default cohort, so this full-cohort run will differ. Run without LOT_COHORT for the NDMM view.",
                 cohort_label, format(n_lot1, big.mark = ",")),
       if (is.null(cart_raw))
         "The pre-LOT1 CAR-T rows need the raw claims scan, which was not available this run, so 'CAR-T before LOT1' and 'prior-to-or-during' show as NA. The during/closing timing is still valid. This run is marked incomplete for question (b)."
@@ -952,8 +956,8 @@ main <- function() {
     narrative = c(
       "The study team flagged Melphalan as an odd top-10 2L regimen. High-dose melphalan is the drug that conditions an autologous stem-cell transplant, so MELP-in-2L may be conditioning rather than second-line treatment. These tables show whether the signals point that way in this cohort - they are supporting evidence, not proof.",
       "Table 1: how many MELP-in-2L lines carry an autologous transplant (transplant flagged, and monotherapy-plus-transplant).",
-      "Table 2: how long the melphalan-only lines last - a conditioning event is a day or two, a real regimen is longer.",
-      "Table 3: days from the melphalan line start to the transplant. Melphalan a few days BEFORE the transplant (a small positive gap) is the conditioning pattern; a large or negative gap is not.",
+      "Table 2: how long the melphalan-only lines last. A very short line is more consistent with conditioning than with ongoing therapy, but length alone does not prove intent.",
+      "Table 3: for MED-started melphalan-only lines (where the line start is the melphalan claim date), the days from the melphalan start to the transplant. Melphalan a few days before the transplant (a small positive gap) is the conditioning pattern. SCT_AUTO-started lines are excluded here because their line start is the transplant date itself.",
       "If the signals line up, the study-team decision is whether to fold transplant-conditioning melphalan into 1L rather than open a 2L line (a spec choice, not changed here)."),
     tables = d1_tables)
 
