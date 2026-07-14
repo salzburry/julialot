@@ -211,38 +211,67 @@ resolve_lot_tokens <- function(con) {
 # excluded from LOT_BASE_MEDS by the engine, so this is the MM-agent set).
 MEDS_ARR <- "filter(split(LOT_BASE_MEDS, ' '), x -> length(x) > 0)"
 
+# Known steroid abbreviations across the repo's codelists: the dashboard
+# STEROID_TOKENS (DEX/DEXA/DEXAMETHASONE/PRED/PREDNISONE, 05_regimen_dashboard.R),
+# steroid_codes.csv (mapped_to DEXA/PRED) and the engine rollup (DEX). Used as the
+# FIXED reference set for the LOT_BASE_MEDS audit so the check is a real test that
+# cannot pass vacuously (it does NOT depend on MAP_MED_CLASS='STEROID' being
+# populated, which R/validation_qs.R warns may be empty for cl_mma_codelist.csv).
+STEROID_TOKENS <- c("DEX", "DEXA", "DEXAMETHASONE", "DEXAMETH",
+                    "PRED", "PREDNISONE", "PREDNISOLONE",
+                    "METHYLPRED", "METHYLPREDNISOLONE", "MPRED")
+
 # ===========================================================================
-# Q1 - Steroids are already excluded from every LOT rule. Two audits:
-#   (a) NO steroid token appears in any LOT_BASE_MEDS regimen string (must be 0).
-#   (b) steroids ARE still pulled into the MAP layer (MAP_MED_CLASS='STEROID'),
-#       which is where the only residual steroid code sits (descriptive-only;
-#       every LOT step filters MAP_MED_CLASS <> 'STEROID').
-# The steroid token set is read from the MAP layer itself (not hard-coded), so
-# the audit is robust to token naming.
+# Q1 - Steroids are already excluded from every LOT rule. Evidence, robustly:
+#   (a) AUDIT: no known steroid token appears in any LOT_BASE_MEDS regimen
+#       (checked against the FIXED STEROID_TOKENS set -> a real, non-vacuous test).
+#   (b) VOCABULARY: the full set of agent tokens that DO appear in LOT_BASE_MEDS,
+#       so the reader can see directly there are no steroid tokens.
+#   (c) MAP CLASS INVENTORY: the actual MAP_MED_CLASS counts on THIS cohort
+#       (cohort-scoped), so whether steroids reach the mapped-claims layer at all
+#       is reported factually rather than assumed - and never enters a LOT.
 # ===========================================================================
 q1_steroid_audit <- function(con, lot_long, map_tbl) {
-  residual <- best_effort(db_q(con, glue("
-    SELECT count(*)                                                    AS n_steroid_map_rows,
-           count(DISTINCT PATID)                                       AS n_patients_with_steroid_map,
-           concat_ws(', ', array_sort(collect_set(upper(trim(MAP_MED_TYPE))))) AS steroid_tokens_in_map
-    FROM {map_tbl} WHERE MAP_MED_CLASS = 'STEROID'")), "steroid residual in MAP layer")
+  ster_arr <- paste(sprintf("'%s'", STEROID_TOKENS), collapse = ", ")
 
   audit <- best_effort(db_q(con, glue("
-    WITH ster AS (
-      SELECT collect_set(upper(trim(MAP_MED_TYPE))) AS toks
-      FROM {map_tbl} WHERE MAP_MED_CLASS = 'STEROID' AND MAP_MED_TYPE IS NOT NULL
-    ),
-    ll AS (
+    WITH ll AS (
       SELECT {MEDS_ARR} AS meds
       FROM {lot_long}
       WHERE LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
     )
     SELECT count(*)                                                              AS n_lot_regimen_rows,
-           sum(CASE WHEN size(array_intersect(ll.meds, ster.toks)) > 0
+           sum(CASE WHEN size(array_intersect(meds, array({ster_arr}))) > 0
                     THEN 1 ELSE 0 END)                                           AS n_rows_with_steroid_token
-    FROM ll CROSS JOIN ster")), "steroid-in-regimen audit (must be 0)")
+    FROM ll")), "steroid-in-regimen audit (must be 0)")
 
-  list(residual = residual, audit = audit)
+  vocab <- best_effort(db_q(con, glue("
+    WITH base AS (
+      SELECT cast(PATID as string) AS PATID, {MEDS_ARR} AS meds
+      FROM {lot_long}
+      WHERE LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
+    )
+    SELECT upper(tok)             AS agent_token,
+           count(*)              AS n_regimen_rows,
+           count(DISTINCT PATID) AS n_patients,
+           CASE WHEN array_contains(array({ster_arr}), upper(tok))
+                THEN 'STEROID - should NOT appear' ELSE '' END AS note
+    FROM base LATERAL VIEW explode(meds) t AS tok
+    GROUP BY upper(tok) ORDER BY n_patients DESC")), "LOT_BASE_MEDS token vocabulary")
+
+  # Cohort-scoped MAP class inventory: restrict to the selected cohort's patients
+  # so the counts match the sheet's cohort label (MAP_STACKED is patient-level and
+  # shared across cohorts).
+  map_classes <- best_effort(db_q(con, glue("
+    WITH coh AS (SELECT DISTINCT cast(PATID as string) AS PATID FROM {lot_long})
+    SELECT upper(coalesce(m.MAP_MED_CLASS, '(null)')) AS map_med_class,
+           count(*)                                   AS n_map_rows,
+           count(DISTINCT m.PATID)                    AS n_patients
+    FROM {map_tbl} m JOIN coh ON cast(m.PATID as string) = coh.PATID
+    GROUP BY upper(coalesce(m.MAP_MED_CLASS, '(null)')) ORDER BY n_map_rows DESC")),
+    "MAP class inventory (cohort-scoped)")
+
+  list(audit = audit, vocab = vocab, map_classes = map_classes)
 }
 
 # ===========================================================================
@@ -340,8 +369,8 @@ q2_dara_bort_gap <- function(con, lot_long, map_tbl, dara, bort, w1) {
       num(summ$max_abs_gap_days[1])),
     pct_of_dual = c(
       NA_real_, pct1(n_both, n_dual),
-      pct1(summ$n_same_day[1],  n_both), pct1(summ$n_dara_first[1], n_both),
-      pct1(summ$n_bort_first[1], n_both),
+      pct1(summ$n_same_day[1],  n_dual), pct1(summ$n_dara_first[1], n_dual),
+      pct1(summ$n_bort_first[1], n_dual),
       NA_real_, NA_real_, NA_real_, NA_real_, NA_real_, NA_real_),
     stringsAsFactors = FALSE)
 
@@ -361,11 +390,16 @@ q2_dara_bort_gap <- function(con, lot_long, map_tbl, dara, bort, w1) {
 # other agents (context, since Peter expected a meaningful share).
 # ===========================================================================
 q3_lena_dara <- function(con, lot_long, dara, lena) {
+  # Denominator = ALL distinct patients reaching each line (LOT_NUM), including
+  # ALLO/CART singleton lines that carry an empty/NULL LOT_BASE_MEDS, so
+  # n_lot_patients matches the Read Me's per-line counts. A NULL/empty regimen
+  # never matches a DARA/LENA numerator (size()/array_contains yield NULL -> the
+  # CASE is not counted), but the patient still counts in the denominator.
   r <- db_q(con, glue("
     WITH l AS (
       SELECT LOT_NUM, cast(PATID as string) AS PATID, {MEDS_ARR} AS meds
       FROM {lot_long}
-      WHERE LOT_NUM IN (1, 2) AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
+      WHERE LOT_NUM IN (1, 2)
     )
     SELECT LOT_NUM,
            count(DISTINCT PATID) AS n_lot_patients,
@@ -417,9 +451,7 @@ q4_melp_2l <- function(con, lot_long, melp) {
       (SELECT count(*) FROM melp WHERE yr <= 2017)                   AS n_melp_2017_and_earlier,
       (SELECT count(*) FROM melp WHERE yr >= 2018)                   AS n_melp_2018_and_later,
       (SELECT percentile_approx(yr, 0.5) FROM melp)                  AS median_melp_lot2_year,
-      (SELECT count(*) FROM l2)                                      AS n_lot2_total,
-      (SELECT count(*) FROM l2 WHERE array_contains(meds, '{melp}') AND yr >= 2018)
-        AS n_melp_2018plus_check"))
+      (SELECT count(*) FROM l2)                                      AS n_lot2_total"))
   n_melp <- num(era$n_lot2_with_melp_total[1])
   era_df <- data.frame(
     metric = c(
@@ -561,6 +593,9 @@ main <- function() {
     stop("openxlsx is required to build the Excel workbook, and it is not ",
          "installed / could not be installed here. Run install.packages('openxlsx') ",
          "and re-run, or set ALLOW_CSV_FALLBACK=TRUE to emit one CSV per table instead.")
+  if (!have_xlsx)
+    log_msg("WARNING: openxlsx unavailable; ALLOW_CSV_FALLBACK is set -> CSV-per-table ",
+            "degraded mode (NOT the .xlsx deliverable).")
 
   con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
@@ -620,7 +655,7 @@ main <- function() {
       sprintf("Cohort: %s. LOT1 = %s patients; LOT2 = %s patients. Switch with LOT_COHORT=FULL / NDMM.",
               cohort_label, format(n_lot1, big.mark = ","), format(n_lot2, big.mark = ",")),
       tok$notes,
-      "Q1 = steroids are ALREADY excluded from every LOT rule (start / induction / regimen / discontinuation / add-med). The audit proves NO steroid token appears in any LOT_BASE_MEDS regimen; the only residual steroid code is the descriptive MAP layer + Steroids panel.",
+      "Q1 = steroids are ALREADY excluded from every LOT rule (start / induction / regimen / discontinuation / add-med). The audit proves NO steroid token appears in any LOT_BASE_MEDS regimen; the only residual steroid surfaces are descriptive (the steroid_codes.csv-based dashboard Steroids panel and the steroid-timing analyses).",
       "Q2 = among 1L DARA+BORT dual-therapy patients (exactly two agents), the difference between the DARA and BORT start dates (same-day vs staggered; which comes first; gap distribution).",
       "Q3 = LENA+DARA dual-therapy share in 1L and 2L (exact dual + a 'contains both, any combination' context column).",
       "Q4 = Melphalan in 2L by LOT2 start year, with a pre-/post-2017 summary and the top MELP-containing 2L regimens.",
@@ -633,17 +668,23 @@ main <- function() {
   q1_tables <- list(); q1_notes <- character()
   if (have_map) {
     q1 <- q1_steroid_audit(con, lot_long, map_tbl)
-    q1_tables[["Audit - steroid tokens in any LOT regimen (n_rows_with_steroid_token MUST be 0)"]] <- q1$audit
-    q1_tables[["Residual - steroids still pulled into the MAP layer (descriptive-only; every LOT step filters MAP_MED_CLASS <> 'STEROID')"]] <- q1$residual
+    q1_tables[["Audit - any known steroid token in a LOT_BASE_MEDS regimen (n_rows_with_steroid_token MUST be 0)"]] <- q1$audit
+    q1_tables[["Full agent-token vocabulary appearing in LOT_BASE_MEDS (confirm: no steroid token)"]] <- q1$vocab
+    q1_tables[["MAP layer class inventory (cohort-scoped; shows whether steroids reach the mapped-claims layer at all)"]] <- q1$map_classes
   } else {
-    q1_notes <- c(q1_notes, paste0(map_tbl, " not readable - the steroid audit needs MAP_STACKED; skipped."))
+    q1_notes <- c(q1_notes, paste0(map_tbl, " not readable - the MAP class inventory is skipped; the LOT_BASE_MEDS audit still runs off ", lot_long, "."))
+    q1 <- q1_steroid_audit(con, lot_long, map_tbl)  # audit/vocab only need lot_long; map_classes will note the gap
+    q1_tables[["Audit - any known steroid token in a LOT_BASE_MEDS regimen (n_rows_with_steroid_token MUST be 0)"]] <- q1$audit
+    q1_tables[["Full agent-token vocabulary appearing in LOT_BASE_MEDS (confirm: no steroid token)"]] <- q1$vocab
   }
   q1_notes <- c(q1_notes,
     "Bottom line: steroids are ALREADY turned off in the LOT algorithm. In 02_lot1.R the LOT1 start, induction meds, base regimen, discontinuation and add-med steps all filter MAP_MED_CLASS <> 'STEROID' (the 'H1 fix'); lot2_5_base.R does the same for the LOT2-5 start/regimen candidates. So a steroid never sets a LOT start, never joins a regimen, and never triggers a new line.",
-    "The audit table therefore expects n_rows_with_steroid_token = 0 across every LOT_BASE_MEDS regimen string (all lines). A non-zero value would mean a steroid leaked into a regimen and should be investigated.",
-    "The only places steroids still appear are DESCRIPTIVE and do not touch the LOT: (1) the MAP layer still carries MAP_MED_CLASS='STEROID' rows (the residual table), (2) the dashboard 'Steroids panel' appends DEXA/PRED to a display-only LOT_BASE_MEDS_AUG (05_regimen_dashboard.R), and (3) the steroid-timing analyses (validation_qs.R Q3/Q4/Q5). To fully remove steroids end-to-end, suppress those three descriptive surfaces; none of them changes any LOT boundary or regimen, so no re-run of the LOT assignment is required.")
+    paste0("AUDIT (first table): every LOT_BASE_MEDS regimen string (all lines) is checked against the known steroid abbreviations (",
+           paste(STEROID_TOKENS, collapse = "/"), "). n_rows_with_steroid_token MUST be 0; a non-zero value would mean a steroid leaked into a regimen and should be investigated. The full token vocabulary (second table) lets you confirm directly that the regimens contain only oncology agents."),
+    "MAP layer (third table): the MAP_MED_CLASS inventory, scoped to this cohort, shows which classes reach the mapped-claims layer. Whether a STEROID class appears there depends on the medication codelist (cl_mma_codelist.csv); either way it never enters a LOT regimen - the audit is the proof.",
+    "The residual steroid surfaces are DESCRIPTIVE only and never touch a LOT: (1) the dashboard 'Steroids panel' appends DEXA/PRED to a display-only LOT_BASE_MEDS_AUG using steroid_codes.csv (05_regimen_dashboard.R), and (2) the steroid-timing analyses (validation_qs.R Q3/Q4/Q5). To fully remove steroids end-to-end, empty steroid_codes.csv (which turns the dashboard augmentation into a passthrough) and skip the steroid-timing tabs; no re-run of the LOT assignment is required.")
   add_sheet(name = "Q1 Steroids off", title = "Q1 - Steroids are already excluded from the LOT",
-    subtitle = paste0("Audit + residual map. Cohort: ", cohort_label, "."),
+    subtitle = paste0("Audit (regimen strings) + token vocabulary + MAP class inventory. Cohort: ", cohort_label, "."),
     narrative = q1_notes, tables = q1_tables)
 
   # ---- Q2: DARA+BORT start-date difference -------------------------------
@@ -660,7 +701,7 @@ main <- function() {
       q2_notes <- c(q2_notes,
         sprintf("Denominator: %s 1L patients whose regimen is EXACTLY DARA + BORT (no other MM agent).",
                 format(as.integer(q2$n_dual), big.mark = ",")),
-        "Each agent's start = the first MAP_STACKED segment of that agent inside the 60-day LOT1 induction window (the window that defines regimen membership). gap = BORT start - DARA start (days).",
+        sprintf("Each agent's start = the first MAP_STACKED segment of that agent inside the %d-day LOT1 induction window (the window that defines regimen membership). gap = BORT start - DARA start (days).", VQS_W1),
         "A large same-day count would support 'prescribed together'; a spread toward staggered starts (DARA first or BORT first) supports Peter's 'one and then the other, inside the induction window'.")
     }
   } else {
@@ -709,7 +750,8 @@ main <- function() {
     q5_tables[["Empirical answers to the five CAR-T questions"]] <-
       best_effort(q5_cart_clarifications(con, lot_long, sct_tbl, VQS_W1), "CAR-T clarifications")
     q5_notes <- c(
-      "The first table restates the CAR-T-relative-to-LOT1 metrics on THIS cohort so the numbers are live (they will differ from the 11,148-patient table if that was run on a different cohort; the structural answers below hold regardless).",
+      sprintf("The first table restates the CAR-T-relative-to-LOT1 metrics on THIS cohort (%s, LOT1 = %s patients) so the numbers are live. The earlier table Julia referenced (denominator 11,148; 'Any CAR-T on/after LOT1' = 124) was the FULL Overall LOT cohort - run this script with LOT_COHORT=FULL to reproduce those exact figures. The structural answers below hold for either cohort.",
+              cohort_label, format(n_lot1, big.mark = ",")),
       if (is.null(cart_raw))
         "NOTE: the raw CAR-T-before-LOT1 scan was unavailable this run, so 'CAR-T BEFORE LOT1' / 'prior-to-or-during' rows in the first table are NA. During/closing timing is still valid."
       else
