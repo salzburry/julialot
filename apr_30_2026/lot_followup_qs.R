@@ -62,48 +62,12 @@ source(file.path(source_dir, "validation_qs.R"))        # vqs_* helpers (shared)
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
 # ===========================================================================
-# Ensure the Excel engine is present. Try to load openxlsx; if missing, try to
-# install it once; report whether it is now usable. The deliverable is an .xlsx,
-# so main() fails closed when this returns FALSE (unless ALLOW_CSV_FALLBACK).
+# Excel writer. Writes ONE .xlsx via openxlsx (a hard requirement - main()
+# stops early with an install hint if it is missing, since the deliverable is
+# an Excel file). A "sheet" is list(name, title, subtitle=NULL,
+# narrative=character(), tables=named list of data.frames or list(caption, df)).
 # ===========================================================================
-wbx_ensure_openxlsx <- function() {
-  if (requireNamespace("openxlsx", quietly = TRUE)) return(TRUE)
-  log_msg("openxlsx not installed - attempting install.packages('openxlsx')...")
-  tryCatch(utils::install.packages("openxlsx", repos = getOption("repos"), quiet = TRUE),
-           error = function(e) log_msg("  openxlsx install failed: ", conditionMessage(e)))
-  requireNamespace("openxlsx", quietly = TRUE)
-}
-
-# ===========================================================================
-# Excel writer. Writes ONE .xlsx via openxlsx. If openxlsx is unavailable it
-# fails closed (stop) unless allow_csv=TRUE, in which case it emits one CSV per
-# table as an explicit, opt-in degraded mode.
-# A "sheet" is list(name, title, subtitle=NULL, narrative=character(), tables=
-# named list of data.frames or list(caption, df)).
-# ===========================================================================
-wbx_write_workbook <- function(sheets, xlsx_path, csv_dir, stamp, allow_csv = FALSE) {
-  san <- function(x) gsub("[^A-Za-z0-9]+", "_", x)
-  if (!requireNamespace("openxlsx", quietly = TRUE)) {
-    if (!isTRUE(allow_csv))
-      stop("openxlsx is required to build the Excel workbook, but it is not ",
-           "installed and could not be installed. Install it (install.packages",
-           "('openxlsx')) and re-run, or set ALLOW_CSV_FALLBACK=TRUE to emit one CSV ",
-           "per table instead of the .xlsx.")
-    log_msg("WARNING: openxlsx unavailable and ALLOW_CSV_FALLBACK set - emitting one ",
-            "CSV per table INSTEAD of the single .xlsx deliverable. Install openxlsx ",
-            "for the single-file workbook.")
-    for (s in sheets) for (nm in names(s$tables)) {
-      entry <- s$tables[[nm]]; df <- entry
-      if (is.list(entry) && !is.data.frame(entry)) df <- entry$df
-      if (is.data.frame(df) && nrow(df) > 0) {
-        f <- file.path(csv_dir, sprintf("lot_followup_qs_%s__%s_%s.csv",
-                                        san(s$name), san(nm), stamp))
-        utils::write.csv(df, f, row.names = FALSE)
-        log_msg("  wrote ", f, " (", nrow(df), " rows)")
-      }
-    }
-    return(invisible(FALSE))
-  }
+wbx_write_workbook <- function(sheets, xlsx_path) {
   ox <- function(f) getExportedValue("openxlsx", f)
   wb <- ox("createWorkbook")()
   st_title <- ox("createStyle")(fontSize = 14, textDecoration = "bold",
@@ -424,12 +388,16 @@ q3_lena_dara <- function(con, lot_long, dara, lena) {
 # a before/after-2017 summary, and the top MELP-containing 2L regimen strings.
 # ===========================================================================
 q4_melp_2l <- function(con, lot_long, melp) {
+  # Denominator = ALL 2L lines that year (any start type, incl. ALLO/CART
+  # singletons with an empty regimen), so pct_melp is the share of ALL 2L
+  # patients on MELP. MELP only ever appears in med-started regimens, so an
+  # empty regimen simply contributes 0 to the MELP count (array_contains over a
+  # NULL/empty set is not TRUE) while still counting in the denominator.
   by_year <- db_q(con, glue("
     WITH l2 AS (
       SELECT year(cast(LOT_START_DT as date)) AS yr, {MEDS_ARR} AS meds
       FROM {lot_long}
       WHERE LOT_NUM = 2 AND LOT_START_DT IS NOT NULL
-        AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
     )
     SELECT yr AS lot2_start_year,
            count(*)                                                    AS n_lot2_total,
@@ -443,7 +411,6 @@ q4_melp_2l <- function(con, lot_long, melp) {
       SELECT year(cast(LOT_START_DT as date)) AS yr, {MEDS_ARR} AS meds
       FROM {lot_long}
       WHERE LOT_NUM = 2 AND LOT_START_DT IS NOT NULL
-        AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
     ),
     melp AS (SELECT yr FROM l2 WHERE array_contains(meds, '{melp}'))
     SELECT
@@ -459,7 +426,7 @@ q4_melp_2l <- function(con, lot_long, melp) {
       "  ... with LOT2 starting in 2017 or earlier",
       "  ... with LOT2 starting in 2018 or later",
       "Median LOT2 start year among MELP-containing 2L regimens",
-      "All 2L regimens (any agent), all years"),
+      "All 2L lines (all start types), all years"),
     value = c(as.integer(n_melp),
               as.integer(num(era$n_melp_2017_and_earlier[1])),
               as.integer(num(era$n_melp_2018_and_later[1])),
@@ -585,17 +552,11 @@ q5_cart_clarifications <- function(con, lot_long, sct_tbl, w1) {
 main <- function() {
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
 
-  # Fail closed on the Excel engine BEFORE running any query, so a missing
-  # openxlsx does not waste warehouse time and cannot masquerade as success.
-  allow_csv <- tolower(Sys.getenv("ALLOW_CSV_FALLBACK", unset = "")) %in% c("1", "true", "yes")
-  have_xlsx <- wbx_ensure_openxlsx()
-  if (!have_xlsx && !allow_csv)
-    stop("openxlsx is required to build the Excel workbook, and it is not ",
-         "installed / could not be installed here. Run install.packages('openxlsx') ",
-         "and re-run, or set ALLOW_CSV_FALLBACK=TRUE to emit one CSV per table instead.")
-  if (!have_xlsx)
-    log_msg("WARNING: openxlsx unavailable; ALLOW_CSV_FALLBACK is set -> CSV-per-table ",
-            "degraded mode (NOT the .xlsx deliverable).")
+  # The deliverable is an Excel file, so require openxlsx up front (before any
+  # warehouse work) and stop with an install hint if it is missing.
+  if (!requireNamespace("openxlsx", quietly = TRUE))
+    stop("openxlsx is required to build the Excel workbook. Install it with ",
+         "install.packages('openxlsx') and re-run.")
 
   con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
@@ -655,7 +616,7 @@ main <- function() {
       sprintf("Cohort: %s. LOT1 = %s patients; LOT2 = %s patients. Switch with LOT_COHORT=FULL / NDMM.",
               cohort_label, format(n_lot1, big.mark = ","), format(n_lot2, big.mark = ",")),
       tok$notes,
-      "Q1 = steroids are ALREADY excluded from every LOT rule (start / induction / regimen / discontinuation / add-med). The audit proves NO steroid token appears in any LOT_BASE_MEDS regimen; the only residual steroid surfaces are descriptive (the steroid_codes.csv-based dashboard Steroids panel and the steroid-timing analyses).",
+      "Q1 = steroids are already excluded from the LOT rules; no LOT re-run is needed. The audit confirms no steroid token appears in any LOT regimen. Only the display / steroid-timing outputs use steroid_codes.csv.",
       "Q2 = among 1L DARA+BORT dual-therapy patients (exactly two agents), the difference between the DARA and BORT start dates (same-day vs staggered; which comes first; gap distribution).",
       "Q3 = LENA+DARA dual-therapy share in 1L and 2L (exact dual + a 'contains both, any combination' context column).",
       "Q4 = Melphalan in 2L by LOT2 start year, with a pre-/post-2017 summary and the top MELP-containing 2L regimens.",
@@ -668,23 +629,24 @@ main <- function() {
   q1_tables <- list(); q1_notes <- character()
   if (have_map) {
     q1 <- q1_steroid_audit(con, lot_long, map_tbl)
-    q1_tables[["Audit - any known steroid token in a LOT_BASE_MEDS regimen (n_rows_with_steroid_token MUST be 0)"]] <- q1$audit
-    q1_tables[["Full agent-token vocabulary appearing in LOT_BASE_MEDS (confirm: no steroid token)"]] <- q1$vocab
-    q1_tables[["MAP layer class inventory (cohort-scoped; shows whether steroids reach the mapped-claims layer at all)"]] <- q1$map_classes
+    q1_tables[["Steroid tokens in any LOT regimen (expected: 0)"]] <- q1$audit
+    q1_tables[["All agent tokens appearing in LOT regimens"]] <- q1$vocab
+    q1_tables[["MAP layer class inventory (this cohort)"]] <- q1$map_classes
   } else {
-    q1_notes <- c(q1_notes, paste0(map_tbl, " not readable - the MAP class inventory is skipped; the LOT_BASE_MEDS audit still runs off ", lot_long, "."))
+    q1_notes <- c(q1_notes, paste0(map_tbl, " not readable - the MAP class inventory is skipped; the regimen audit still runs off ", lot_long, "."))
     q1 <- q1_steroid_audit(con, lot_long, map_tbl)  # audit/vocab only need lot_long; map_classes will note the gap
-    q1_tables[["Audit - any known steroid token in a LOT_BASE_MEDS regimen (n_rows_with_steroid_token MUST be 0)"]] <- q1$audit
-    q1_tables[["Full agent-token vocabulary appearing in LOT_BASE_MEDS (confirm: no steroid token)"]] <- q1$vocab
+    q1_tables[["Steroid tokens in any LOT regimen (expected: 0)"]] <- q1$audit
+    q1_tables[["All agent tokens appearing in LOT regimens"]] <- q1$vocab
   }
   q1_notes <- c(q1_notes,
-    "Bottom line: steroids are ALREADY turned off in the LOT algorithm. In 02_lot1.R the LOT1 start, induction meds, base regimen, discontinuation and add-med steps all filter MAP_MED_CLASS <> 'STEROID' (the 'H1 fix'); lot2_5_base.R does the same for the LOT2-5 start/regimen candidates. So a steroid never sets a LOT start, never joins a regimen, and never triggers a new line.",
-    paste0("AUDIT (first table): every LOT_BASE_MEDS regimen string (all lines) is checked against the known steroid abbreviations (",
-           paste(STEROID_TOKENS, collapse = "/"), "). n_rows_with_steroid_token MUST be 0; a non-zero value would mean a steroid leaked into a regimen and should be investigated. The full token vocabulary (second table) lets you confirm directly that the regimens contain only oncology agents."),
-    "MAP layer (third table): the MAP_MED_CLASS inventory, scoped to this cohort, shows which classes reach the mapped-claims layer. Whether a STEROID class appears there depends on the medication codelist (cl_mma_codelist.csv); either way it never enters a LOT regimen - the audit is the proof.",
-    "The residual steroid surfaces are DESCRIPTIVE only and never touch a LOT: (1) the dashboard 'Steroids panel' appends DEXA/PRED to a display-only LOT_BASE_MEDS_AUG using steroid_codes.csv (05_regimen_dashboard.R), and (2) the steroid-timing analyses (validation_qs.R Q3/Q4/Q5). To fully remove steroids end-to-end, empty steroid_codes.csv (which turns the dashboard augmentation into a passthrough) and skip the steroid-timing tabs; no re-run of the LOT assignment is required.")
+    "Short answer: steroids are already excluded from the LOT rules. They never set a line start, join a regimen, or trigger a new line, so turning steroids off needs no change to the LOT assignment and no re-run. Only the display and steroid-timing outputs use steroid_codes.csv.",
+    paste0("The audit checks every LOT regimen string against the known steroid abbreviations (",
+           paste(STEROID_TOKENS, collapse = ", "),
+           ") and should be 0; the token-vocabulary table lets you see the full list of agents that actually appear in the regimens."),
+    "The MAP class inventory shows which drug classes reach the mapped-claims layer for this cohort (informational).",
+    "Steroids still show up only in the display / timing outputs that read steroid_codes.csv - the dashboard Steroids panel (05_regimen_dashboard.R) and the steroid-timing analyses (validation_qs.R). To drop them there too, empty steroid_codes.csv; the LOT results are unaffected.")
   add_sheet(name = "Q1 Steroids off", title = "Q1 - Steroids are already excluded from the LOT",
-    subtitle = paste0("Audit (regimen strings) + token vocabulary + MAP class inventory. Cohort: ", cohort_label, "."),
+    subtitle = paste0("Regimen audit + token vocabulary + MAP class inventory. Cohort: ", cohort_label, "."),
     narrative = q1_notes, tables = q1_tables)
 
   # ---- Q2: DARA+BORT start-date difference -------------------------------
@@ -736,7 +698,7 @@ main <- function() {
   add_sheet(name = "Q4 MELP in 2L", title = "Q4 - Melphalan in 2L: calendar timing",
     subtitle = paste0("Is MELP-in-2L concentrated before 2018? Cohort: ", cohort_label, "."),
     narrative = c(
-      "n_lot2_with_melp / pct_melp = 2L regimens (that year) whose regimen contains MELP. The study team expects MELP to fade as a common 2L option after 2017.",
+      "n_lot2_with_melp / pct_melp = share of ALL 2L lines that year (any start type) whose regimen contains MELP. The study team expects MELP to fade as a common 2L option after 2017.",
       "The summary table splits MELP-containing 2L regimens into LOT2-start <=2017 vs >=2018 and gives the median LOT2 start year.",
       "The regimen table lists the most common MELP-containing 2L regimen strings for context (e.g. transplant-conditioning vs oral combinations)."),
     tables = q4_tables)
@@ -758,7 +720,10 @@ main <- function() {
         "The raw CAR-T scan is available, so 'CAR-T BEFORE LOT1' is populated (from raw claim dates).",
       "Answers to the study team's questions (see the second table for the counts):",
       "(a) The 'within 60d after LOT1 start' window is start-relative and NOT capped at LOT1 end; 'during or closing LOT1' is capped at LOT1_BASE_END_DT (+1 day only when CAR-T CLOSED LOT1). They are NOT nested by definition: a within-60d CAR-T after LOT1 already ended would sit outside during/closing, and a CAR-T that closes LOT1 past day 60 sits outside within-60d. The subset-test rows show the actual overlap in this cohort.",
-      "(b) Because 'CAR-T BEFORE LOT1 start' = 0 and CAR-T dates are >= LOT1 start by construction, 'prior-to-OR-during LOT1' collapses to 'during LOT1' - so yes, all of those patients had the CAR-T during (not before) LOT1.",
+      if (is.null(cart_raw))
+        "(b) 'prior-to-OR-during LOT1' = ('CAR-T BEFORE LOT1' OR 'during/closing'). The BEFORE row could NOT be assessed this run (raw scan unavailable), so we cannot yet confirm that none occurred strictly before LOT1 start - re-run with the raw CAR-T scan to answer (b) definitively. What holds regardless: every patient counted in 'during or closing' had the CAR-T on/after LOT1 start (CAR-T dates from LOT1_SCT are >= LOT1 start by construction)."
+      else
+        "(b) 'prior-to-OR-during LOT1' = ('CAR-T BEFORE LOT1' OR 'during/closing'). When the BEFORE row above reads 0, 'prior-to-or-during' equals 'during', i.e. every such patient had the CAR-T during (not before) LOT1. If BEFORE is > 0, that many patients had a CAR-T strictly before LOT1 start.",
       "(c) 'Any CAR-T on/after LOT1 start' is a count of DISTINCT PATIENTS (one per patient, from LOT1_SCT.FIRST_CART_DT), NOT a count of CAR-T instances, and it DOES include later lines (2L+). The 'strictly after LOT1 ends' row shows how many of them are later-line rather than during-LOT1 CAR-T.",
       "(d) A CAR-T dated exactly ON the LOT1 start date is possible in principle (FIRST_CART_DT >= LOT1_START); the count row shows how often it actually happens here.",
       "(e) When a CAR-T closes LOT1 (end reason SCT_CART/CART_INIT), the engine sets LOT1_BASE_END_DT = FIRST_CART_DT - 1 (LOT1 ends the day BEFORE the infusion), and that same CAR-T is the LOT2 start candidate - so the CAR-T date becomes the 2L start (LOT2_START_TYPE = 'CART') unless an even earlier LOT2 trigger exists. The last rows confirm this on the data.",
@@ -773,13 +738,9 @@ main <- function() {
 
   # ---- write --------------------------------------------------------------
   xlsx <- file.path(out_dir, paste0("lot_followup_qs_", tolower(cohort_mode), "_", stamp, ".xlsx"))
-  wrote_xlsx <- wbx_write_workbook(sheets, xlsx, out_dir, stamp, allow_csv = allow_csv)
+  wbx_write_workbook(sheets, xlsx)
   log_msg(SEP)
-  if (isTRUE(wrote_xlsx))
-    log_msg("LOT follow-up study-team questions complete. Excel workbook -> ", xlsx)
-  else
-    log_msg("LOT follow-up study-team questions complete in DEGRADED mode: one CSV per table in ",
-            out_dir, " (openxlsx unavailable). Install openxlsx to get the single .xlsx.")
+  log_msg("LOT follow-up study-team questions complete. Excel workbook -> ", xlsx)
   log_msg(SEP)
 }
 
