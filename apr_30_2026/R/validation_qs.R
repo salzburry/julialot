@@ -593,7 +593,7 @@ vqs_q6_cart <- function(con, lot_long, sct_tbl, w1, cart_raw_tbl = NULL) {
   labels <- c(
     "LOT1 patients (denominator)",
     "CAR-T BEFORE LOT1 start (raw SCT claims)",
-    "CAR-T within 60d after LOT1 start (start-relative; not LOT-end capped)",
+    sprintf("CAR-T within %dd after LOT1 start (start-relative; not LOT-end capped)", as.integer(w1)),
     "CAR-T during or closing LOT1 [start, base end; +1d iff CAR-T closed LOT1]",
     "CAR-T prior to OR during LOT1 (the ask)",
     "LOT1 ended by CAR-T (end reason SCT_CART/CART_INIT)",

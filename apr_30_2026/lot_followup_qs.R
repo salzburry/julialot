@@ -35,8 +35,9 @@
 #       team's five CAR-T questions (subset relationships, the 124 count, CAR-T on
 #       the LOT1 start date, and whether a CAR-T becomes the 2L start date).
 #
-# Creates no persistent warehouse tables (only session temp views); writes one
-# Excel workbook (and its output folder if missing). Safe to run any time.
+# Creates no persistent warehouse tables (only session temp views). On a run it
+# writes one Excel workbook, a run log, and (if missing) the output folder, and
+# may set process env defaults from pipeline_inputs.csv. Safe to run any time.
 
 .script_dir <- local({
   args <- commandArgs(trailingOnly = FALSE)
@@ -154,7 +155,11 @@ pct1 <- function(x, d) if (isTRUE(num(d) > 0)) round(100 * num(x) / num(d), 1) e
 # to the study-standard tokens.
 # ---------------------------------------------------------------------------
 resolve_lot_tokens <- function(con) {
-  out <- list(dara = "DARA", bort = "BORT", lena = "LENA", melp = "MELP", notes = character(0))
+  # resolved = TRUE only when the tokens came from the codelist; FALSE when we
+  # fell back to the study-standard defaults, which the caller treats as a gap
+  # (Q2/Q3/Q4 could miscount if the real abbreviations differ).
+  out <- list(dara = "DARA", bort = "BORT", lena = "LENA", melp = "MELP",
+              notes = character(0), resolved = FALSE)
   ok <- tryCatch({ vqs_build_mma_codelist(con); TRUE }, error = function(e) FALSE)
   if (!ok) {
     out$notes <- "mma_codelist unavailable; using default tokens (DARA/BORT/LENA/MELP)."
@@ -173,6 +178,7 @@ resolve_lot_tokens <- function(con) {
   out$bort <- pick("bortezomib",  "BORT")
   out$lena <- pick("lenalidomid", "LENA")
   out$melp <- pick("melphalan",   "MELP")
+  out$resolved <- TRUE
   out$notes <- sprintf("Resolved tokens from cl_mma_codelist.csv: DARA=%s, BORT=%s, LENA=%s, MELP=%s.",
                        out$dara, out$bort, out$lena, out$melp)
   out
@@ -602,11 +608,15 @@ main <- function() {
   sheets <- list()
   add_sheet <- function(...) sheets[[length(sheets) + 1L]] <<- list(...)
 
-  # Conditions that make the run INCOMPLETE beyond a failed query table (which the
+  # Conditions that make the run incomplete beyond a failed query table (which the
   # status-table scan already catches): a non-zero steroid audit, a skipped
-  # question, or a sub-question that could not be answered. main() appends to this
-  # and the write step folds it into the incomplete marking.
+  # question, a sub-question that could not be answered, or agent tokens that
+  # could not be resolved from the codelist. main() appends to this and the write
+  # step folds it into the incomplete marking.
   extra_gaps <- character()
+  if (!isTRUE(tok$resolved))
+    extra_gaps <- c(extra_gaps,
+      "Agent tokens could not be resolved from cl_mma_codelist.csv - fell back to defaults (DARA/BORT/LENA/MELP); Q2/Q3/Q4 counts are unverified")
 
   # ---- Read Me -----------------------------------------------------------
   add_sheet(name = "Read Me", title = paste0("LOT follow-up study-team questions - ", cohort_label),
@@ -619,28 +629,37 @@ main <- function() {
       "Q2 = among 1L DARA+BORT dual-therapy patients (exactly two agents), the difference between the DARA and BORT start dates (same-day vs staggered; which comes first; gap distribution).",
       "Q3 = LENA+DARA dual-therapy share in 1L and 2L (exact dual + a 'contains both, any combination' context column).",
       "Q4 = Melphalan in 2L by LOT2 start year, with a pre-/post-2017 summary and the top MELP-containing 2L regimens.",
-      "Q5 = CAR-T clarifications: the CAR-T-relative-to-LOT1 metric table recomputed on THIS cohort, then empirical answers to the five CAR-T questions.",
+      "Q5 = CAR-T clarifications: the CAR-T-relative-to-LOT1 metric table recomputed on this cohort, then plain answers to the five CAR-T questions.",
       "Regimen strings (LOT_BASE_MEDS) are space-separated, alphabetically-sorted MM-agent tokens; steroids are excluded by construction, so 'DARA+BORT dual therapy, no other agents' means no other MM agent (a backbone steroid does not change the pairing).",
       "The CAR-T metrics and the induction-window setting are reused from R/validation_qs.R."),
     tables = list())
 
   # ---- Q1: steroids ------------------------------------------------------
   q1 <- q1_steroid_audit(con, lot_long)
-  # Read the audit result and let it drive the wording: a non-zero count is an
-  # audit FAILURE (a steroid leaked into a regimen), not a normal answer.
+  # Let the audit result drive the wording, and treat three cases distinctly:
+  #  - count > 0  : a steroid reached a regimen (audit failed) -> incomplete.
+  #  - count == 0 : the expected result -> "no known steroid token was found".
+  #  - NA / empty : the query ran but returned no usable count (e.g. no regimen
+  #    rows) -> inconclusive, not a silent pass. (A failed query is a status
+  #    table, already caught by the gap scan.)
   q1_hits <- if (is_status_table(q1$audit)) NA_integer_
              else suppressWarnings(as.integer(q1$audit$n_rows_with_steroid_token[1]))
+  q1_inconclusive <- !is_status_table(q1$audit) && is.na(q1_hits)
   if (isTRUE(q1_hits > 0)) {
-    extra_gaps <- c(extra_gaps, sprintf("Q1 Steroids off / audit FAILED: %d regimen row(s) contain a steroid token", q1_hits))
+    extra_gaps <- c(extra_gaps, sprintf("Q1 Steroids off / audit failed: %d regimen row(s) contain a steroid token", q1_hits))
     q1_notes <- c(
-      sprintf("AUDIT FAILED: %d LOT regimen row(s) contain a steroid token. This is unexpected - steroids should never enter a regimen. Investigate before using this workbook (see the audit and token tables).", q1_hits),
-      "The audit checks every LOT regimen against the known steroid abbreviations; a non-zero count means a steroid reached a regimen string, which the LOT rules are meant to prevent.")
+      sprintf("Audit failed: %d LOT regimen row(s) contain a steroid token. This is unexpected - steroids should never enter a regimen. Investigate before using this workbook (see the audit and token tables).", q1_hits),
+      "A non-zero count means a steroid reached a regimen string, which the LOT rules are meant to prevent.")
+  } else if (q1_inconclusive) {
+    extra_gaps <- c(extra_gaps, "Q1 Steroids off / audit inconclusive - no usable count (no LOT regimen rows?)")
+    q1_notes <- c(
+      "The steroid audit returned no usable count this run (no LOT regimen rows), so it is inconclusive. Re-run once the cohort's LOT_LONG is populated.")
   } else {
     q1_notes <- c(
       "Steroids are already excluded from LOT assignment. They never set a line start, join a regimen, or trigger a new line, so turning steroids off needs no change to the LOT rules and no re-run.",
-      paste0("The audit checks every LOT regimen against the known steroid abbreviations (",
+      paste0("No known steroid token was found in any LOT regimen. The audit checks against the known steroid abbreviations (",
              paste(STEROID_TOKENS, collapse = ", "),
-             ") and should be 0. The token table lists every agent that actually appears in the regimens, so a steroid (or any new steroid abbreviation) would be visible."),
+             "); the token table lists every agent that actually appears in the regimens, so an unlisted abbreviation would still be visible for a reader to catch."),
       "Steroids only feed the display and timing outputs that read steroid_codes.csv - the dashboard Steroids panel and the steroid-timing analyses. To drop them there too, empty steroid_codes.csv; the LOT results are unaffected.")
   }
   add_sheet(name = "Q1 Steroids off", title = "Q1 - Steroids are already excluded from the LOT",
@@ -686,9 +705,8 @@ main <- function() {
     subtitle = paste0("Exact dual = regimen is exactly DARA + LENA; 'contains both' allows other agents. Cohort: ",
                       cohort_label, "."),
     narrative = c(
-      "pct_dara_lena_dual = share of that line's patients whose regimen is EXACTLY DARA + LENA (dual therapy).",
-      "pct_contains_both_any = share whose regimen contains BOTH DARA and LENA in any combination (e.g. DARA+LENA+other) - the broader read of 'receiving this combo'.",
-      "Denominators are distinct patients reaching each line (LOT1 / LOT2)."),
+      "The first percentage is the share of each line's patients whose regimen is exactly DARA + LENA (dual therapy). The second is the broader share whose regimen contains both DARA and LENA in any combination (e.g. DARA + LENA + another agent).",
+      "Denominators are the distinct patients reaching each line (1L, then 2L)."),
     tables = list("LENA+DARA share by line" = q3_df))
 
   # ---- Q4: Melphalan in 2L timing ---------------------------------------
@@ -704,7 +722,7 @@ main <- function() {
   add_sheet(name = "Q4 MELP in 2L", title = "Q4 - Melphalan in 2L: calendar timing",
     subtitle = paste0("Is MELP-in-2L concentrated before 2018? Cohort: ", cohort_label, "."),
     narrative = c(
-      "n_lot2_with_melp / pct_melp = share of ALL 2L lines that year (any start type) whose regimen contains MELP. The study team expects MELP to fade as a common 2L option after 2017.",
+      "n_lot2_with_melp / pct_melp = share of all 2L lines that year (any start type) whose regimen contains MELP. The study team expects MELP to fade as a common 2L option after 2017.",
       "The summary table splits MELP-containing 2L regimens into LOT2-start <=2017 vs >=2018 and gives the median LOT2 start year.",
       "The regimen table lists the most common MELP-containing 2L regimen strings for context (e.g. transplant-conditioning vs oral combinations)."),
     tables = q4_tables)
@@ -720,7 +738,7 @@ main <- function() {
     if (is.null(cart_raw))
       extra_gaps <- c(extra_gaps, "Q5 CAR-T / (b) pre-LOT1 CAR-T scan unavailable - question (b) unanswered")
     q5_notes <- c(
-      sprintf("The first table shows the CAR-T-relative-to-LOT1 metrics on this cohort (%s, LOT1 = %s patients). The earlier table the study team saw (denominator 11,148; 'Any CAR-T on/after LOT1' = 124) was the full Overall LOT cohort - run with LOT_COHORT=FULL to reproduce it. The answers hold for either cohort.",
+      sprintf("The first table shows the CAR-T-relative-to-LOT1 metrics on this cohort (%s, LOT1 = %s patients). The earlier table the study team saw (denominator 11,148; 'Any CAR-T on/after LOT1' = 124) was the full Overall LOT cohort - use LOT_COHORT=FULL to compare with that full-cohort result (exact figures also depend on the same tables, CDM snapshot and config). The answers hold for either cohort.",
               cohort_label, format(n_lot1, big.mark = ",")),
       if (is.null(cart_raw))
         "The pre-LOT1 CAR-T rows need the raw claims scan, which was not available this run, so 'CAR-T before LOT1' and 'prior-to-or-during' show as NA. The during/closing timing is still valid. This run is marked incomplete for question (b)."
@@ -778,7 +796,7 @@ main <- function() {
   log_msg(SEP)
   if (incomplete)
     log_msg("LOT follow-up study-team questions COMPLETED WITH GAPS (", length(gaps),
-            " missing table(s)) - INCOMPLETE workbook -> ", xlsx)
+            " issue(s)) - INCOMPLETE workbook -> ", xlsx)
   else
     log_msg("LOT follow-up study-team questions complete. Excel workbook -> ", xlsx)
   log_msg(SEP)
