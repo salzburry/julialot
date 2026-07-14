@@ -1,43 +1,31 @@
 #!/usr/bin/env Rscript
-# Standalone LOT follow-up study-team questions -> ONE Excel workbook.
+# LOT follow-up questions -> one Excel workbook (one tab per question + a Read Me).
 #
 #   Rscript lot_followup_qs.R
 #
-# Sibling of lot1_studyteam_qs.R, poma_studyteam_qs.R and validation_qs.R.
-# Answers the LOT-algorithm follow-ups (steroids / regimen composition / CAR-T)
-# against the newly-diagnosed MM study cohort (Databricks / Optum CDM) and writes
-# a single .xlsx (one tab per question + a Read Me). It reuses the shared CAR-T
-# metrics and induction-window configuration from R/validation_qs.R (vqs_*
-# helpers).
+# A sibling of lot1_studyteam_qs.R / poma_studyteam_qs.R. It answers the study
+# team's follow-ups on steroids, regimen mix and CAR-T, reading the MM tables on
+# Databricks. It reuses the shared CAR-T helpers in R/validation_qs.R.
 #
-# Cohort. Runs on the NDMM newly-diagnosed 1L study cohort by default
-# (NDMM_LOT_LONG_FILT, LOT_LONG restricted to the NDMM cohort and persisted by
-# 06_ndmm_dashboard.R) - the study team asked to see NDMM first. Set
-# LOT_COHORT=FULL to re-run on the full LOT_LONG cohort (all LOT1 patients). Every
-# LOT/regimen/CAR-T query flows from this one table, so the switch scopes the whole
-# workbook. MAP_STACKED and LOT1_SCT are patient-level and shared (NDMM is a subset,
-# joined by PATID).
+# Cohort: the NDMM study cohort by default (NDMM_LOT_LONG_FILT), which the study
+# team asked to see first. Set LOT_COHORT=FULL for the whole LOT cohort. Every
+# query reads this one table. MAP_STACKED and LOT1_SCT are shared, joined by PATID.
 #
 # Questions:
-#   Q1  Steroids: confirm the LOT already excludes steroids from every rule
-#       (start / induction / regimen membership / discontinuation / add-med), with
-#       an audit that no steroid token appears in any LOT regimen, plus a note on
-#       where steroids still feed the display / timing outputs.
-#   Q2  Among 1L DARA+BORT dual-therapy patients (no other agents), summarise the
-#       difference in the two agents' start dates (same-day vs staggered, which
-#       comes first, and the gap distribution).
-#   Q3  Percentage of patients on LENA+DARA dual therapy in 1L and in 2L (exact
-#       dual, plus a "contains both, any combination" context column).
-#   Q4  Melphalan in 2L: the calendar timing (LOT2 start year) of MELP-containing
-#       2L regimens, to see whether MELP was phased out after 2017.
-#   Q5  CAR-T clarifications: recompute the CAR-T-relative-to-LOT1 metric table
-#       (vqs_q6_cart) on this cohort and answer, empirically, each of the study
-#       team's five CAR-T questions (subset relationships, the 124 count, CAR-T on
-#       the LOT1 start date, and whether a CAR-T becomes the 2L start date).
+#   Q1  Steroids: show the LOT already leaves steroids out of every rule, with an
+#       audit that no steroid token is in any regimen, plus where steroids still
+#       show up (display / timing outputs only).
+#   Q2  Among 1L DARA+BORT patients (just those two agents), how far apart are the
+#       two start dates - same day, or one then the other?
+#   Q3  Share of patients on LENA+DARA in 1L and 2L (exact pair, plus a wider
+#       "contains both" count).
+#   Q4  Melphalan in 2L by start year - was it phased out after 2017?
+#   Q5  CAR-T: the CAR-T-vs-LOT1 table plus plain answers to the five CAR-T
+#       questions.
 #
-# Creates no persistent warehouse tables (only session temp views). On a run it
-# writes one Excel workbook, a run log, and (if missing) the output folder, and
-# may set process env defaults from pipeline_inputs.csv. Safe to run any time.
+# Writes no permanent tables (only session temp views). A run writes one Excel
+# workbook, a log, and the output folder if missing, and may set env defaults
+# from pipeline_inputs.csv. Safe to run any time.
 
 .script_dir <- local({
   args <- commandArgs(trailingOnly = FALSE)
@@ -64,10 +52,9 @@ source(file.path(source_dir, "validation_qs.R"))        # vqs_* helpers (shared)
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
 # ===========================================================================
-# Excel writer. Writes ONE .xlsx via openxlsx (a hard requirement - main()
-# stops early with an install hint if it is missing, since the deliverable is
-# an Excel file). A "sheet" is list(name, title, subtitle=NULL,
-# narrative=character(), tables=named list of data.frames or list(caption, df)).
+# Writes the workbook with openxlsx. A "sheet" is a list of name, title,
+# optional subtitle, narrative lines, and named tables (each a data.frame, or a
+# list of caption + df). openxlsx must be installed; main() checks that first.
 # ===========================================================================
 wbx_write_workbook <- function(sheets, xlsx_path) {
   ox <- function(f) getExportedValue("openxlsx", f)
@@ -123,11 +110,9 @@ wbx_write_workbook <- function(sheets, xlsx_path) {
   invisible(TRUE)
 }
 
-# Best-effort table: return the data on success, else a one-row table naming the
-# failure. Assigning NULL into a list element would delete it (R semantics), so an
-# unavailable pull would vanish with no trace; this keeps a visible "unavailable"
-# row in the workbook (and logs the reason). Failure rows carry a single "status"
-# column, which is_status_table() detects so a failed answer can be surfaced.
+# Run a pull and return its data, or a one-row "status" table naming the failure.
+# This keeps a visible "unavailable" row in the workbook instead of a silent gap
+# (a NULL would just drop out). is_status_table() later spots these status rows.
 best_effort <- function(expr, label) {
   r <- tryCatch(expr, error = function(e) {
     log_msg("  NOTE: '", label, "' unavailable - ", conditionMessage(e))
@@ -140,8 +125,8 @@ best_effort <- function(expr, label) {
   else r
 }
 
-# TRUE if x is a best_effort() failure marker (a 1-column data.frame named
-# "status"), used to tell a real answer table from a "could not build" placeholder.
+# TRUE if x is a best_effort() failure row (one column named "status") - i.e. a
+# "could not build" placeholder rather than a real answer table.
 is_status_table <- function(x)
   is.data.frame(x) && identical(names(x), "status")
 
@@ -149,15 +134,13 @@ num <- function(x) suppressWarnings(as.numeric(x))
 pct1 <- function(x, d) if (isTRUE(num(d) > 0)) round(100 * num(x) / num(d), 1) else NA_real_
 
 # ---------------------------------------------------------------------------
-# Resolve the agent abbreviations from cl_mma_codelist.csv by medication-full
-# name, so a codelist abbreviation change does not silently zero out an answer.
-# Mirrors vqs_resolve_agent_tokens (which resolves POMA/ELOT/PANO). Falls back
-# to the study-standard tokens.
+# Look up the drug short-codes (DARA/BORT/LENA/MELP) from cl_mma_codelist.csv by
+# full drug name, so a code change in the codelist does not quietly break a count.
 # ---------------------------------------------------------------------------
 resolve_lot_tokens <- function(con) {
-  # resolved = TRUE only when the tokens came from the codelist; FALSE when we
-  # fell back to the study-standard defaults, which the caller treats as a gap
-  # (Q2/Q3/Q4 could miscount if the real abbreviations differ).
+  # resolved = TRUE only when the codes came from the codelist. If we fall back to
+  # the standard defaults, the caller flags it (Q2/Q3/Q4 could miscount if the
+  # real codes differ).
   out <- list(dara = "DARA", bort = "BORT", lena = "LENA", melp = "MELP",
               notes = character(0), resolved = FALSE)
   ok <- tryCatch({ vqs_build_mma_codelist(con); TRUE }, error = function(e) FALSE)
@@ -166,9 +149,8 @@ resolve_lot_tokens <- function(con) {
     return(out)
   }
   fell_back <- character()
-  # pick() returns the codelist abbreviation, or the default token when the drug
-  # name is not found - recording the fallback so a per-token miss (not just a
-  # missing codelist) marks the run incomplete.
+  # pick() returns the code from the codelist, or the default if the drug name
+  # is not found - noting each miss so even one fallback marks the run incomplete.
   pick <- function(name, like, dflt) {
     df <- tryCatch(db_q(con, glue("
       SELECT CL_MED_ABBR, count(*) AS n
@@ -191,26 +173,23 @@ resolve_lot_tokens <- function(con) {
   out
 }
 
-# non-empty agent tokens of a LOT_BASE_MEDS regimen string (steroids are already
-# excluded from LOT_BASE_MEDS by the engine, so this is the MM-agent set).
+# The drug codes in a regimen string, dropping blanks. The engine already keeps
+# steroids out of LOT_BASE_MEDS, so this is the list of MM agents.
 MEDS_ARR <- "filter(split(LOT_BASE_MEDS, ' '), x -> length(x) > 0)"
 
-# Known steroid abbreviations across the repo's codelists: the dashboard
-# STEROID_TOKENS (DEX/DEXA/DEXAMETHASONE/PRED/PREDNISONE, 05_regimen_dashboard.R),
-# steroid_codes.csv (mapped_to DEXA/PRED) and the engine rollup (DEX). The audit
-# checks LOT_BASE_MEDS against this fixed list, so it does not rely on
-# MAP_MED_CLASS='STEROID' (which R/validation_qs.R notes may be empty for
-# cl_mma_codelist.csv); the token-vocabulary table catches any unlisted token.
+# The steroid short-codes used across the repo's codelists (dashboard, steroid_
+# codes.csv, engine rollup). Q1 checks regimens against this fixed list rather
+# than the MAP steroid class, which may be empty for cl_mma_codelist.csv; the
+# token table backs it up by showing every code that does appear.
 STEROID_TOKENS <- c("DEX", "DEXA", "DEXAMETHASONE", "DEXAMETH",
                     "PRED", "PREDNISONE", "PREDNISOLONE",
                     "METHYLPRED", "METHYLPREDNISOLONE", "MPRED")
 
 # ===========================================================================
-# Q1 - Steroids are already excluded from the LOT rules. Two tables:
-#   - audit: does any known steroid token appear in a LOT_BASE_MEDS regimen?
-#     (checked against the fixed STEROID_TOKENS list; should be 0)
-#   - vocabulary: the full set of agent tokens that appear in the regimens, so a
-#     reader can see the actual agents (and that none is a steroid).
+# Q1 - steroids are already left out of the LOT rules. Two tables:
+#   - audit: does any steroid code show up in a regimen? (should be 0)
+#   - token list: every drug code that does appear, so a reader can see the
+#     agents and confirm none is a steroid.
 # ===========================================================================
 q1_steroid_audit <- function(con, lot_long) {
   ster_arr <- paste(sprintf("'%s'", STEROID_TOKENS), collapse = ", ")
@@ -244,12 +223,11 @@ q1_steroid_audit <- function(con, lot_long) {
 }
 
 # ===========================================================================
-# Q2 - 1L DARA+BORT dual therapy: difference in the two agents' start dates.
-# Denominator = LOT1 patients whose regimen is exactly {DARA, BORT} (2 agents,
-# no other MM agent). Each agent's start = the first MAP_STACKED segment of that
-# agent inside the LOT1 induction window [LOT1_START, LOT1_START + W1 - 1] (the
-# window that defines regimen membership). gap = BORT_start - DARA_start (days):
-# >0 => DARA first, <0 => BORT first, 0 => same day.
+# Q2 - 1L DARA+BORT: how far apart are the two start dates?
+# We look at LOT1 patients whose regimen is just DARA and BORT. Each agent's
+# start is its first MAP segment inside the LOT1 induction window (the window
+# that decides the regimen). gap = BORT start - DARA start, in days:
+# >0 = DARA first, <0 = BORT first, 0 = same day.
 # ===========================================================================
 q2_dara_bort_gap <- function(con, lot_long, map_tbl, dara, bort, w1) {
   base_cte <- glue("
@@ -284,8 +262,8 @@ q2_dara_bort_gap <- function(con, lot_long, map_tbl, dara, bort, w1) {
       FROM dual d JOIN dara_dt dd USING (PATID) JOIN bort_dt bd USING (PATID)
     )")
 
-  # Denominator (exactly DARA+BORT) kept separate from the gap aggregates so no
-  # single SELECT mixes a scalar subquery with aggregates (portable across Spark).
+  # Count the DARA+BORT patients in a separate query so no single SELECT mixes a
+  # sub-query with aggregates (safer across Spark).
   n_dual <- num(db_q(con, glue("{base_cte} SELECT count(*) AS n FROM dual"))$n[1])
 
   summ <- db_q(con, glue("{base_cte}
@@ -354,16 +332,14 @@ q2_dara_bort_gap <- function(con, lot_long, map_tbl, dara, bort, w1) {
 }
 
 # ===========================================================================
-# Q3 - LENA+DARA dual-therapy share in 1L and 2L. "exact dual" = regimen is
-# EXACTLY {DARA, LENA}; "contains both (any combo)" = both present, possibly with
-# other agents (context: the study team expected a meaningful share).
+# Q3 - share on LENA+DARA in 1L and 2L. "exact pair" = the regimen is just DARA
+# and LENA; "contains both" = both are there, maybe with other agents too.
 # ===========================================================================
 q3_lena_dara <- function(con, lot_long, dara, lena) {
-  # Denominator = ALL distinct patients reaching each line (LOT_NUM), including
-  # ALLO/CART singleton lines that carry an empty/NULL LOT_BASE_MEDS, so
-  # n_lot_patients matches the Read Me's per-line counts. A NULL/empty regimen
-  # never matches a DARA/LENA numerator (size()/array_contains yield NULL -> the
-  # CASE is not counted), but the patient still counts in the denominator.
+  # Denominator = every patient reaching each line, including transplant-only
+  # lines with an empty regimen, so it matches the Read Me's per-line counts. An
+  # empty regimen never matches the DARA/LENA test, so it adds to the denominator
+  # but not the numerator.
   r <- db_q(con, glue("
     WITH l AS (
       SELECT LOT_NUM, cast(PATID as string) AS PATID, {MEDS_ARR} AS meds
@@ -389,15 +365,14 @@ q3_lena_dara <- function(con, lot_long, dara, lena) {
 }
 
 # ===========================================================================
-# Q4 - Melphalan in 2L: calendar timing. LOT2 start year x MELP-containing share,
-# a before/after-2017 summary, and the top MELP-containing 2L regimen strings.
+# Q4 - Melphalan in 2L over time: MELP share by LOT2 start year, a before/after-
+# 2017 summary, and the most common MELP-containing 2L regimens.
 # ===========================================================================
 q4_melp_2l <- function(con, lot_long, melp) {
-  # Denominator = all 2L lines that year (any start type, incl. ALLO/CART
-  # singletons with an empty regimen), so pct_melp is the share of all 2L
-  # patients on MELP. MELP only ever appears in med-started regimens, so an
-  # empty regimen simply contributes 0 to the MELP count (array_contains over a
-  # NULL/empty set is not TRUE) while still counting in the denominator.
+  # Denominator = all 2L lines that year (any start type, incl. transplant-only
+  # lines with an empty regimen), so pct_melp is the share of all 2L patients on
+  # MELP. MELP only shows up in drug regimens, so empty ones add to the
+  # denominator but not the MELP count.
   by_year <- db_q(con, glue("
     WITH l2 AS (
       SELECT year(cast(LOT_START_DT as date)) AS yr, {MEDS_ARR} AS meds
@@ -457,15 +432,15 @@ q4_melp_2l <- function(con, lot_long, melp) {
 }
 
 # ===========================================================================
-# Q5 - CAR-T clarifications. Empirical answers to the five sub-questions, using
-# LOT1_SCT.FIRST_CART_DT (>= LOT1_START by construction) and the same
-# during/closing window vqs_q6_cart uses (upper bound = LOT1_BASE_END_DT, +1d
-# only when the end reason is SCT_CART/CART_INIT). w1 = LOT1 induction window.
+# Q5 - answers to the five CAR-T questions, using the first CAR-T date from
+# LOT1_SCT (always on/after LOT1 start) and the same during/closing window as
+# vqs_q6_cart (up to the LOT1 end, plus one day when a CAR-T closed LOT1).
+# w1 = LOT1 induction window.
 # ===========================================================================
 q5_cart_clarifications <- function(con, lot_long, sct_tbl, w1) {
   during_ub <- "CASE WHEN END_REASON IN ('SCT_CART','CART_INIT') THEN date_add(L1_END, 1) ELSE L1_END END"
 
-  # (a)+(c)+(d): relationships among the CAR-T windows, on one pass.
+  # (a)+(c)+(d): how the CAR-T windows overlap, in one query.
   rel <- db_q(con, glue("
     WITH l1 AS (
       SELECT cast(PATID as string) AS PATID, cast(LOT_START_DT as date) AS L1,
@@ -495,8 +470,8 @@ q5_cart_clarifications <- function(con, lot_long, sct_tbl, w1) {
       sum(CASE WHEN CART_DT = L1 THEN 1 ELSE 0 END)                   AS n_cart_on_lot1_start
     FROM j"))
 
-  # (e): does the closing CAR-T become the 2L start date? Compare LOT1-ended-by-
-  # CAR-T patients' LOT1 end vs FIRST_CART_DT-1 and LOT2 start vs FIRST_CART_DT.
+  # (e): does the CAR-T become the 2L start date? For patients whose LOT1 ended by
+  # CAR-T, check that LOT1 ends the day before the CAR-T and LOT2 starts on it.
   seq <- db_q(con, glue("
     WITH l1 AS (
       SELECT cast(PATID as string) AS PATID, cast(LOT_BASE_END_DT as date) AS L1_END,
@@ -558,8 +533,8 @@ q5_cart_clarifications <- function(con, lot_long, sct_tbl, w1) {
 main <- function() {
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
 
-  # The deliverable is an Excel file, so require openxlsx up front (before any
-  # warehouse work) and stop with an install hint if it is missing.
+  # The output is Excel, so check for openxlsx up front (before any warehouse
+  # work) and stop with an install hint if it is missing.
   if (!requireNamespace("openxlsx", quietly = TRUE))
     stop("openxlsx is required to build the Excel workbook. Install it with ",
          "install.packages('openxlsx') and re-run.")
@@ -572,8 +547,8 @@ main <- function() {
   stamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
 
   # ---- Cohort selection --------------------------------------------------
-  # Default = NDMM study cohort (the study team asked to see NDMM first). Set
-  # LOT_COHORT=FULL for the full LOT_LONG cohort (all LOT1 patients).
+  # NDMM study cohort by default (the study team asked to see it first);
+  # LOT_COHORT=FULL uses the whole LOT cohort.
   cohort_mode <- toupper(Sys.getenv("LOT_COHORT", unset = "NDMM"))
   if (cohort_mode == "FULL") {
     lot_long <- wrk("LOT_LONG")
@@ -615,11 +590,9 @@ main <- function() {
   sheets <- list()
   add_sheet <- function(...) sheets[[length(sheets) + 1L]] <<- list(...)
 
-  # Conditions that make the run incomplete beyond a failed query table (which the
-  # status-table scan already catches): a non-zero steroid audit, a skipped
-  # question, a sub-question that could not be answered, or agent tokens that
-  # could not be resolved from the codelist. main() appends to this and the write
-  # step folds it into the incomplete marking.
+  # Extra reasons a run counts as incomplete, on top of the failed-table check
+  # below: a steroid found in a regimen, a question that could not be answered,
+  # or drug codes that fell back to defaults. The write step reads this list.
   extra_gaps <- character()
   if (!isTRUE(tok$resolved))
     extra_gaps <- c(extra_gaps,
@@ -643,14 +616,11 @@ main <- function() {
 
   # ---- Q1: steroids ------------------------------------------------------
   q1 <- q1_steroid_audit(con, lot_long)
-  # Let the audit result drive the wording, so the tab text never contradicts the
-  # table. Four cases:
-  #  - query failed (status table) : audit could not run (the gap scan already
-  #    marks the run incomplete).
-  #  - count > 0  : a steroid reached a regimen (audit failed) -> incomplete.
-  #  - count == 0 : the expected result -> "no known steroid token was found".
-  #  - NA / empty : the query ran but returned no usable count (e.g. no regimen
-  #    rows) -> inconclusive, not a silent pass.
+  # Let the audit result pick the wording, so the tab never contradicts the table:
+  #  - query failed : could not run (the gap scan marks the run incomplete).
+  #  - count > 0     : a steroid got into a regimen -> incomplete.
+  #  - count == 0    : the expected result -> "no known steroid token was found".
+  #  - NA / empty    : ran but no usable count (no regimen rows) -> inconclusive.
   q1_failed <- is_status_table(q1$audit)
   q1_hits <- if (q1_failed) NA_integer_
              else suppressWarnings(as.integer(q1$audit$n_rows_with_steroid_token[1]))
@@ -701,8 +671,7 @@ main <- function() {
     }
   } else {
     q2_notes <- paste0(map_tbl, " not readable - per-agent start dates need MAP_STACKED; Q2 could not be built.")
-    # Leave a visible status table (not an empty tab) so the incomplete-workbook
-    # check flags a skipped Q2.
+    # Show a status row (not an empty tab) so the skipped Q2 marks the run incomplete.
     q2_tables[["DARA+BORT dual therapy - start-date difference"]] <- data.frame(
       status = paste0(map_tbl, " not readable - MAP_STACKED is required for per-agent start dates."),
       stringsAsFactors = FALSE)
@@ -768,8 +737,7 @@ main <- function() {
       "(e) When a CAR-T closes LOT1, LOT1 ends the day before the CAR-T and LOT2 starts on the CAR-T date. If another, higher-priority transplant event lands on that same date, it can change the LOT2 start type but not the date.")
   } else {
     q5_notes <- paste0(sct_tbl, " not readable - CAR-T analysis needs LOT1_SCT (FIRST_CART_DT). Q5 could not be built.")
-    # Leave a visible status table (not an empty tab) so the incomplete-workbook
-    # check flags a skipped Q5.
+    # Show a status row (not an empty tab) so the skipped Q5 marks the run incomplete.
     q5_tables[["CAR-T relative to LOT1"]] <- data.frame(
       status = paste0(sct_tbl, " not readable - LOT1_SCT (FIRST_CART_DT) is required."),
       stringsAsFactors = FALSE)
@@ -780,11 +748,9 @@ main <- function() {
     narrative = q5_notes, tables = q5_tables)
 
   # ---- flag anything that makes the run incomplete -------------------------
-  # An incomplete or failed answer must not be reported as a clean run. Two
-  # sources: (1) a status placeholder table (a failed query or a skipped
-  # question), and (2) the explicit conditions collected in extra_gaps (a
-  # non-zero steroid audit, an unanswered sub-question). Mark the workbook
-  # INCOMPLETE (filename + a note at the top of the Read Me) and say so in the log.
+  # A missing or failed answer must not look like a clean run. Collect both the
+  # status rows (a failed or skipped question) and the extra_gaps reasons, then
+  # mark the workbook INCOMPLETE (filename + a Read Me note) and log it.
   gaps <- extra_gaps
   for (s in sheets) for (nm in names(s$tables %||% list())) {
     entry <- s$tables[[nm]]; df <- entry
