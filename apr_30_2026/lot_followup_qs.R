@@ -165,21 +165,28 @@ resolve_lot_tokens <- function(con) {
     out$notes <- "mma_codelist unavailable; using default tokens (DARA/BORT/LENA/MELP)."
     return(out)
   }
-  pick <- function(like, dflt) {
+  fell_back <- character()
+  # pick() returns the codelist abbreviation, or the default token when the drug
+  # name is not found - recording the fallback so a per-token miss (not just a
+  # missing codelist) marks the run incomplete.
+  pick <- function(name, like, dflt) {
     df <- tryCatch(db_q(con, glue("
       SELECT CL_MED_ABBR, count(*) AS n
       FROM mma_codelist
       WHERE lower(CL_MEDICATION_FULL) LIKE '%{like}%'
       GROUP BY CL_MED_ABBR ORDER BY n DESC")), error = function(e) NULL)
-    if (is.null(df) || nrow(df) == 0) return(dflt)
+    if (is.null(df) || nrow(df) == 0) { fell_back <<- c(fell_back, name); return(dflt) }
     toupper(trimws(df$CL_MED_ABBR[1]))
   }
-  out$dara <- pick("daratumumab", "DARA")
-  out$bort <- pick("bortezomib",  "BORT")
-  out$lena <- pick("lenalidomid", "LENA")
-  out$melp <- pick("melphalan",   "MELP")
-  out$resolved <- TRUE
-  out$notes <- sprintf("Resolved tokens from cl_mma_codelist.csv: DARA=%s, BORT=%s, LENA=%s, MELP=%s.",
+  out$dara <- pick("DARA", "daratumumab", "DARA")
+  out$bort <- pick("BORT", "bortezomib",  "BORT")
+  out$lena <- pick("LENA", "lenalidomid", "LENA")
+  out$melp <- pick("MELP", "melphalan",   "MELP")
+  out$resolved <- length(fell_back) == 0
+  if (length(fell_back))
+    out$notes <- sprintf("Some tokens not found in cl_mma_codelist.csv (fell back to defaults for: %s). Tokens: DARA=%s, BORT=%s, LENA=%s, MELP=%s.",
+                         paste(fell_back, collapse = ", "), out$dara, out$bort, out$lena, out$melp)
+  else out$notes <- sprintf("Resolved tokens from cl_mma_codelist.csv: DARA=%s, BORT=%s, LENA=%s, MELP=%s.",
                        out$dara, out$bort, out$lena, out$melp)
   out
 }
@@ -636,16 +643,22 @@ main <- function() {
 
   # ---- Q1: steroids ------------------------------------------------------
   q1 <- q1_steroid_audit(con, lot_long)
-  # Let the audit result drive the wording, and treat three cases distinctly:
+  # Let the audit result drive the wording, so the tab text never contradicts the
+  # table. Four cases:
+  #  - query failed (status table) : audit could not run (the gap scan already
+  #    marks the run incomplete).
   #  - count > 0  : a steroid reached a regimen (audit failed) -> incomplete.
   #  - count == 0 : the expected result -> "no known steroid token was found".
   #  - NA / empty : the query ran but returned no usable count (e.g. no regimen
-  #    rows) -> inconclusive, not a silent pass. (A failed query is a status
-  #    table, already caught by the gap scan.)
-  q1_hits <- if (is_status_table(q1$audit)) NA_integer_
+  #    rows) -> inconclusive, not a silent pass.
+  q1_failed <- is_status_table(q1$audit)
+  q1_hits <- if (q1_failed) NA_integer_
              else suppressWarnings(as.integer(q1$audit$n_rows_with_steroid_token[1]))
-  q1_inconclusive <- !is_status_table(q1$audit) && is.na(q1_hits)
-  if (isTRUE(q1_hits > 0)) {
+  q1_inconclusive <- !q1_failed && is.na(q1_hits)
+  if (q1_failed) {
+    q1_notes <- c(
+      "The steroid audit query could not run this run (see the status table), so its result is unavailable. This run is marked incomplete.")
+  } else if (isTRUE(q1_hits > 0)) {
     extra_gaps <- c(extra_gaps, sprintf("Q1 Steroids off / audit failed: %d regimen row(s) contain a steroid token", q1_hits))
     q1_notes <- c(
       sprintf("Audit failed: %d LOT regimen row(s) contain a steroid token. This is unexpected - steroids should never enter a regimen. Investigate before using this workbook (see the audit and token tables).", q1_hits),
