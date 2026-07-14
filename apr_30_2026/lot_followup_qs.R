@@ -393,8 +393,8 @@ q3_lena_dara <- function(con, lot_long, dara, lena) {
 # a before/after-2017 summary, and the top MELP-containing 2L regimen strings.
 # ===========================================================================
 q4_melp_2l <- function(con, lot_long, melp) {
-  # Denominator = ALL 2L lines that year (any start type, incl. ALLO/CART
-  # singletons with an empty regimen), so pct_melp is the share of ALL 2L
+  # Denominator = all 2L lines that year (any start type, incl. ALLO/CART
+  # singletons with an empty regimen), so pct_melp is the share of all 2L
   # patients on MELP. MELP only ever appears in med-started regimens, so an
   # empty regimen simply contributes 0 to the MELP count (array_contains over a
   # NULL/empty set is not TRUE) while still counting in the denominator.
@@ -460,7 +460,7 @@ q4_melp_2l <- function(con, lot_long, melp) {
 # Q5 - CAR-T clarifications. Empirical answers to the five sub-questions, using
 # LOT1_SCT.FIRST_CART_DT (>= LOT1_START by construction) and the same
 # during/closing window vqs_q6_cart uses (upper bound = LOT1_BASE_END_DT, +1d
-# ONLY when the end reason is SCT_CART/CART_INIT). w1 = LOT1 induction window.
+# only when the end reason is SCT_CART/CART_INIT). w1 = LOT1 induction window.
 # ===========================================================================
 q5_cart_clarifications <- function(con, lot_long, sct_tbl, w1) {
   during_ub <- "CASE WHEN END_REASON IN ('SCT_CART','CART_INIT') THEN date_add(L1_END, 1) ELSE L1_END END"
@@ -657,7 +657,7 @@ main <- function() {
   q1_inconclusive <- !q1_failed && is.na(q1_hits)
   if (q1_failed) {
     q1_notes <- c(
-      "The steroid audit query could not run this run (see the status table), so its result is unavailable. This run is marked incomplete.")
+      "The steroid audit could not run (see the status table). This workbook is incomplete.")
   } else if (isTRUE(q1_hits > 0)) {
     extra_gaps <- c(extra_gaps, sprintf("Q1 Steroids off / audit failed: %d regimen row(s) contain a steroid token", q1_hits))
     q1_notes <- c(
@@ -673,7 +673,7 @@ main <- function() {
       paste0("No known steroid token was found in any LOT regimen. The audit checks against the known steroid abbreviations (",
              paste(STEROID_TOKENS, collapse = ", "),
              "); the token table lists every agent that actually appears in the regimens, so an unlisted abbreviation would still be visible for a reader to catch."),
-      "Steroids only feed the display and timing outputs that read steroid_codes.csv - the dashboard Steroids panel and the steroid-timing analyses. To drop them there too, empty steroid_codes.csv; the LOT results are unaffected.")
+      "Steroids do not affect LOT assignment. The dashboard and steroid-timing outputs use steroid_codes.csv, and steroid rows may still appear in the mapped medication data depending on the production codelist - but neither reaches a LOT. To drop steroids from the descriptive outputs too, empty steroid_codes.csv; the LOT results are unaffected.")
   }
   add_sheet(name = "Q1 Steroids off", title = "Q1 - Steroids are already excluded from the LOT",
     subtitle = paste0("Regimen audit + agent-token list. Cohort: ", cohort_label, "."),
