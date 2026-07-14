@@ -10,7 +10,7 @@
 # metrics and induction-window configuration from R/validation_qs.R (vqs_*
 # helpers).
 #
-# Cohort. Runs on the NDMM newly-diagnosed 1L STUDY cohort by DEFAULT
+# Cohort. Runs on the NDMM newly-diagnosed 1L study cohort by default
 # (NDMM_LOT_LONG_FILT, LOT_LONG restricted to the NDMM cohort and persisted by
 # 06_ndmm_dashboard.R) - the study team asked to see NDMM first. Set
 # LOT_COHORT=FULL to re-run on the full LOT_LONG cohort (all LOT1 patients). Every
@@ -245,7 +245,7 @@ q1_steroid_audit <- function(con, lot_long) {
 
 # ===========================================================================
 # Q2 - 1L DARA+BORT dual therapy: difference in the two agents' start dates.
-# Denominator = LOT1 patients whose regimen is EXACTLY {DARA, BORT} (2 agents,
+# Denominator = LOT1 patients whose regimen is exactly {DARA, BORT} (2 agents,
 # no other MM agent). Each agent's start = the first MAP_STACKED segment of that
 # agent inside the LOT1 induction window [LOT1_START, LOT1_START + W1 - 1] (the
 # window that defines regimen membership). gap = BORT_start - DARA_start (days):
@@ -758,14 +758,14 @@ main <- function() {
       else
         "The raw CAR-T scan ran, so 'CAR-T before LOT1' is populated from raw claim dates.",
       "Answers (counts are in the second table):",
-      sprintf("(a) The two windows differ. 'Within %dd after LOT1 start' runs from LOT1 start for the induction period and is not capped at the LOT1 end; 'during or closing LOT1' ends at the LOT1 end (plus one day when the CAR-T itself closed LOT1). So they are not nested - the subset-test rows show their actual overlap here.", VQS_W1),
+      sprintf("(a) The two windows are not the same. One counts a CAR-T in the first %d days after LOT1 starts; the other counts a CAR-T any time up to when LOT1 ends. A CAR-T can fall in one and not the other, so the subset-test rows show how much they overlap here.", VQS_W1),
       if (is.null(cart_raw))
-        "(b) 'Prior-to-or-during LOT1' = before-LOT1 or during/closing. The before-LOT1 count needs the raw scan, which was not available, so (b) cannot be answered this run. What holds regardless: every patient in 'during or closing' had the CAR-T on or after LOT1 start."
+        "(b) 'Prior-to-or-during LOT1' means a CAR-T before LOT1 or during/closing it. The before-LOT1 count needs the raw scan, which was not available, so (b) cannot be answered this run. What still holds: every patient counted in 'during or closing' had the CAR-T on or after LOT1 start."
       else
-        "(b) 'Prior-to-or-during LOT1' = before-LOT1 or during/closing. When before-LOT1 reads 0, prior-to-or-during equals during, so every such patient had the CAR-T during LOT1; if before-LOT1 is above 0, that many had a CAR-T strictly before LOT1 start.",
-      "(c) 'Any CAR-T on/after LOT1 start' counts distinct patients (one per patient), not CAR-T events, and it includes later lines (2L+). The 'strictly after LOT1 ends' row shows how many were later-line rather than during LOT1.",
+        "(b) 'Prior-to-or-during LOT1' means a CAR-T before LOT1 or during/closing it. When 'CAR-T before LOT1' is 0, every such patient had the CAR-T during LOT1; if it is above 0, that many had a CAR-T before LOT1 started.",
+      "(c) 'Any CAR-T on/after LOT1 start' counts patients (one per patient), not CAR-T events, and it includes later lines (2L and beyond). The 'strictly after LOT1 ends' row shows how many of those were on a later line rather than during LOT1.",
       "(d) A CAR-T on the LOT1 start date is possible (the first CAR-T date can equal the LOT1 start); the count row shows how often it happens here.",
-      "(e) When a CAR-T closes LOT1, LOT1 ends the day before the CAR-T and LOT2 starts on the CAR-T date. A higher-priority event on that same date (the engine ranks allogeneic SCT, then CAR-T, then autologous SCT, then a new medication) can change the LOT2 start type, but not the date.")
+      "(e) When a CAR-T closes LOT1, LOT1 ends the day before the CAR-T and LOT2 starts on the CAR-T date. If another, higher-priority transplant event lands on that same date, it can change the LOT2 start type but not the date.")
   } else {
     q5_notes <- paste0(sct_tbl, " not readable - CAR-T analysis needs LOT1_SCT (FIRST_CART_DT). Q5 could not be built.")
     # Leave a visible status table (not an empty tab) so the incomplete-workbook
