@@ -35,7 +35,8 @@
 #       team's five CAR-T questions (subset relationships, the 124 count, CAR-T on
 #       the LOT1 start date, and whether a CAR-T becomes the 2L start date).
 #
-# Builds nothing persistent (only session TEMP views); safe to run any time.
+# Creates no persistent warehouse tables (only session temp views); writes one
+# Excel workbook (and its output folder if missing). Safe to run any time.
 
 .script_dir <- local({
   args <- commandArgs(trailingOnly = FALSE)
@@ -183,10 +184,10 @@ MEDS_ARR <- "filter(split(LOT_BASE_MEDS, ' '), x -> length(x) > 0)"
 
 # Known steroid abbreviations across the repo's codelists: the dashboard
 # STEROID_TOKENS (DEX/DEXA/DEXAMETHASONE/PRED/PREDNISONE, 05_regimen_dashboard.R),
-# steroid_codes.csv (mapped_to DEXA/PRED) and the engine rollup (DEX). Used as the
-# FIXED reference set for the LOT_BASE_MEDS audit so the check is a real test that
-# cannot pass vacuously (it does NOT depend on MAP_MED_CLASS='STEROID' being
-# populated, which R/validation_qs.R warns may be empty for cl_mma_codelist.csv).
+# steroid_codes.csv (mapped_to DEXA/PRED) and the engine rollup (DEX). The audit
+# checks LOT_BASE_MEDS against this fixed list, so it does not rely on
+# MAP_MED_CLASS='STEROID' (which R/validation_qs.R notes may be empty for
+# cl_mma_codelist.csv); the token-vocabulary table catches any unlisted token.
 STEROID_TOKENS <- c("DEX", "DEXA", "DEXAMETHASONE", "DEXAMETH",
                     "PRED", "PREDNISONE", "PREDNISOLONE",
                     "METHYLPRED", "METHYLPREDNISOLONE", "MPRED")
@@ -607,7 +608,7 @@ main <- function() {
       sprintf("Cohort: %s. LOT1 = %s patients; LOT2 = %s patients. Switch with LOT_COHORT=FULL / NDMM.",
               cohort_label, format(n_lot1, big.mark = ","), format(n_lot2, big.mark = ",")),
       tok$notes,
-      "Q1 = steroids are already excluded from the LOT rules; no LOT re-run is needed. The audit confirms no steroid token appears in any LOT regimen. Only the display / steroid-timing outputs use steroid_codes.csv.",
+      "Q1 = steroids are already excluded from the LOT rules; no LOT re-run is needed. The audit finds no known steroid token in any LOT regimen. Only the display / steroid-timing outputs use steroid_codes.csv.",
       "Q2 = among 1L DARA+BORT dual-therapy patients (exactly two agents), the difference between the DARA and BORT start dates (same-day vs staggered; which comes first; gap distribution).",
       "Q3 = LENA+DARA dual-therapy share in 1L and 2L (exact dual + a 'contains both, any combination' context column).",
       "Q4 = Melphalan in 2L by LOT2 start year, with a pre-/post-2017 summary and the top MELP-containing 2L regimens.",
@@ -649,7 +650,12 @@ main <- function() {
         "A large same-day count means both agents have the same first observed start date; a spread toward staggered starts (DARA first or BORT first) means one was started and the other added later, within the induction window. Note these are observed claim dates, not the prescriber's intent.")
     }
   } else {
-    q2_notes <- paste0(map_tbl, " not readable - per-agent start dates need MAP_STACKED; Q2 skipped.")
+    q2_notes <- paste0(map_tbl, " not readable - per-agent start dates need MAP_STACKED; Q2 could not be built.")
+    # Leave a visible status table (not an empty tab) so the incomplete-workbook
+    # check flags a skipped Q2.
+    q2_tables[["DARA+BORT dual therapy - start-date difference"]] <- data.frame(
+      status = paste0(map_tbl, " not readable - MAP_STACKED is required for per-agent start dates."),
+      stringsAsFactors = FALSE)
   }
   add_sheet(name = "Q2 DARA+BORT dates", title = "Q2 - 1L DARA+BORT: difference in agent start dates",
     subtitle = paste0("Among patients whose 1L regimen is exactly DARA + BORT (dual therapy, no other agents). Cohort: ",
@@ -711,7 +717,12 @@ main <- function() {
       "(e) When a CAR-T closes LOT1 (end reason SCT_CART/CART_INIT), LOT1 ends one day earlier (LOT1_BASE_END_DT = FIRST_CART_DT - 1) and LOT2 starts on the CAR-T date. A higher-priority event on that same date (the engine ranks SCT_ALLO, then CAR-T, then SCT_AUTO, then a new medication) can change the LOT2 start type, but not the date. The last rows confirm this on the data.",
       if (!have_sct) paste0(sct_tbl, " not readable - CAR-T tables omitted.") else NULL)
   } else {
-    q5_notes <- paste0(sct_tbl, " not readable - CAR-T analysis needs LOT1_SCT (FIRST_CART_DT). Q5 skipped.")
+    q5_notes <- paste0(sct_tbl, " not readable - CAR-T analysis needs LOT1_SCT (FIRST_CART_DT). Q5 could not be built.")
+    # Leave a visible status table (not an empty tab) so the incomplete-workbook
+    # check flags a skipped Q5.
+    q5_tables[["CAR-T relative to LOT1"]] <- data.frame(
+      status = paste0(sct_tbl, " not readable - LOT1_SCT (FIRST_CART_DT) is required."),
+      stringsAsFactors = FALSE)
   }
   add_sheet(name = "Q5 CAR-T", title = "Q5 - CAR-T relative to LOT1: metrics + clarifications",
     subtitle = paste0("Metric table recomputed on this cohort + empirical answers to the five CAR-T questions. Cohort: ",
