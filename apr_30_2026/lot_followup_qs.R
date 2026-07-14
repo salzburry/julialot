@@ -35,7 +35,8 @@
 #       team's five CAR-T questions (subset relationships, the 124 count, CAR-T on
 #       the LOT1 start date, and whether a CAR-T becomes the 2L start date).
 #
-# Builds nothing persistent (only session TEMP views); safe to run any time.
+# Creates no persistent warehouse tables (only session temp views); writes one
+# Excel workbook (and its output folder if missing). Safe to run any time.
 
 .script_dir <- local({
   args <- commandArgs(trailingOnly = FALSE)
@@ -183,10 +184,10 @@ MEDS_ARR <- "filter(split(LOT_BASE_MEDS, ' '), x -> length(x) > 0)"
 
 # Known steroid abbreviations across the repo's codelists: the dashboard
 # STEROID_TOKENS (DEX/DEXA/DEXAMETHASONE/PRED/PREDNISONE, 05_regimen_dashboard.R),
-# steroid_codes.csv (mapped_to DEXA/PRED) and the engine rollup (DEX). Used as the
-# FIXED reference set for the LOT_BASE_MEDS audit so the check is a real test that
-# cannot pass vacuously (it does NOT depend on MAP_MED_CLASS='STEROID' being
-# populated, which R/validation_qs.R warns may be empty for cl_mma_codelist.csv).
+# steroid_codes.csv (mapped_to DEXA/PRED) and the engine rollup (DEX). The audit
+# checks LOT_BASE_MEDS against this fixed list, so it does not rely on
+# MAP_MED_CLASS='STEROID' (which R/validation_qs.R notes may be empty for
+# cl_mma_codelist.csv); the token-vocabulary table catches any unlisted token.
 STEROID_TOKENS <- c("DEX", "DEXA", "DEXAMETHASONE", "DEXAMETH",
                     "PRED", "PREDNISONE", "PREDNISOLONE",
                     "METHYLPRED", "METHYLPREDNISOLONE", "MPRED")
@@ -293,7 +294,7 @@ q2_dara_bort_gap <- function(con, lot_long, map_tbl, dara, bort, w1) {
       sum(CASE WHEN abs_gap = 0            THEN 1 ELSE 0 END) AS d_same_day,
       sum(CASE WHEN abs_gap BETWEEN 1 AND 7   THEN 1 ELSE 0 END) AS d_1_7,
       sum(CASE WHEN abs_gap BETWEEN 8 AND 30  THEN 1 ELSE 0 END) AS d_8_30,
-      sum(CASE WHEN abs_gap BETWEEN 31 AND 59 THEN 1 ELSE 0 END) AS d_31_59
+      sum(CASE WHEN abs_gap > 30              THEN 1 ELSE 0 END) AS d_gt_30
     FROM g"))
 
   n_both <- num(summ$n_with_both_start_dates[1])
@@ -301,8 +302,8 @@ q2_dara_bort_gap <- function(con, lot_long, map_tbl, dara, bort, w1) {
   overview <- data.frame(
     metric = c(
       "1L DARA+BORT dual-therapy patients (denominator)",
-      "  ... with a start date for BOTH agents in the induction window",
-      "Started on the SAME day",
+      "  ... with a start date for both agents in the induction window",
+      "Started on the same day",
       "DARA started first (BORT added later)",
       "BORT started first (DARA added later)",
       "Mean absolute gap (days)",
@@ -330,9 +331,9 @@ q2_dara_bort_gap <- function(con, lot_long, map_tbl, dara, bort, w1) {
     stringsAsFactors = FALSE)
 
   dist <- data.frame(
-    start_date_gap = c("Same day (0)", "1-7 days", "8-30 days", "31-59 days"),
+    start_date_gap = c("Same day (0)", "1-7 days", "8-30 days", "more than 30 days"),
     n_patients = as.integer(c(num(buckets$d_same_day[1]), num(buckets$d_1_7[1]),
-                              num(buckets$d_8_30[1]), num(buckets$d_31_59[1]))),
+                              num(buckets$d_8_30[1]), num(buckets$d_gt_30[1]))),
     stringsAsFactors = FALSE)
   dist$pct_of_pairs <- vapply(dist$n_patients, function(x) pct1(x, n_both), numeric(1))
 
@@ -513,21 +514,22 @@ q5_cart_clarifications <- function(con, lot_long, sct_tbl, w1) {
     FROM e"))
 
   na_i <- function(x) { v <- num(x); if (length(v) == 0 || is.na(v)) NA_integer_ else as.integer(v) }
+  wd <- as.integer(w1)
   data.frame(
     check = c(
-      "(a) CAR-T within 60d after LOT1 start",
+      sprintf("(a) CAR-T within %dd after LOT1 start", wd),
       "(a) CAR-T during or closing LOT1",
-      "(a)   ... in BOTH windows",
-      "(a)   ... within-60d but NOT during/closing (subset test: 0 => 60d is a subset)",
-      "(a)   ... during/closing but NOT within-60d (later closing CAR-T)",
+      "(a)   ... in both windows",
+      sprintf("(a)   ... within-%dd but not during/closing (subset test: 0 means it is a subset)", wd),
+      sprintf("(a)   ... during/closing but not within-%dd (later closing CAR-T)", wd),
       "(c) Any CAR-T on/after LOT1 start (distinct patients; incl. later lines)",
       "(c)   ... occurring strictly after LOT1 ends (i.e. on 2L+, not during LOT1)",
-      "(d) CAR-T dated exactly ON the LOT1 start date",
+      "(d) CAR-T dated exactly on the LOT1 start date",
       "(e) LOT1 ended by CAR-T (SCT_CART / CART_INIT)",
-      "(e)   ... LOT1 ends the day BEFORE the CAR-T (FIRST_CART_DT - 1)",
+      "(e)   ... LOT1 ends the day before the CAR-T (first CAR-T date - 1)",
       "(e)   ... has a LOT2 record",
-      "(e)   ... whose LOT2 START DATE equals the CAR-T date",
-      "(e)   ... whose LOT2 start TYPE is 'CART'"),
+      "(e)   ... whose LOT2 start date equals the CAR-T date",
+      "(e)   ... whose LOT2 start type is 'CART'"),
     n_patients = c(
       na_i(rel$n_within_60d_after[1]), na_i(rel$n_during_or_closing[1]),
       na_i(rel$n_in_both[1]), na_i(rel$n_60d_not_during[1]), na_i(rel$n_during_not_60d[1]),
@@ -581,8 +583,8 @@ main <- function() {
   }
   have_map <- vqs_readable(con, map_tbl)
   have_sct <- vqs_readable(con, sct_tbl)
-  if (!have_map) log_msg("WARNING: ", map_tbl, " not readable - Q1 residual / Q2 start-date gap will note the gap.")
-  if (!have_sct) log_msg("WARNING: ", sct_tbl, " not readable - Q5 CAR-T tables will note the gap.")
+  if (!have_map) log_msg("WARNING: ", map_tbl, " not readable - Q2 (DARA/BORT start dates) cannot be built.")
+  if (!have_sct) log_msg("WARNING: ", sct_tbl, " not readable - Q5 (CAR-T) cannot be built.")
 
   tok <- resolve_lot_tokens(con)
   log_msg(paste(tok$notes, collapse = " "))
@@ -600,6 +602,12 @@ main <- function() {
   sheets <- list()
   add_sheet <- function(...) sheets[[length(sheets) + 1L]] <<- list(...)
 
+  # Conditions that make the run INCOMPLETE beyond a failed query table (which the
+  # status-table scan already catches): a non-zero steroid audit, a skipped
+  # question, or a sub-question that could not be answered. main() appends to this
+  # and the write step folds it into the incomplete marking.
+  extra_gaps <- character()
+
   # ---- Read Me -----------------------------------------------------------
   add_sheet(name = "Read Me", title = paste0("LOT follow-up study-team questions - ", cohort_label),
     subtitle = paste0("Generated ", stamp, " by lot_followup_qs.R against ", cfg$work_schema),
@@ -607,7 +615,7 @@ main <- function() {
       sprintf("Cohort: %s. LOT1 = %s patients; LOT2 = %s patients. Switch with LOT_COHORT=FULL / NDMM.",
               cohort_label, format(n_lot1, big.mark = ","), format(n_lot2, big.mark = ",")),
       tok$notes,
-      "Q1 = steroids are already excluded from the LOT rules; no LOT re-run is needed. The audit confirms no steroid token appears in any LOT regimen. Only the display / steroid-timing outputs use steroid_codes.csv.",
+      "Q1 = steroids are already excluded from the LOT rules; no LOT re-run is needed. The audit checks whether any known steroid token appears in a LOT regimen (see the Q1 tab). Only the display / steroid-timing outputs use steroid_codes.csv.",
       "Q2 = among 1L DARA+BORT dual-therapy patients (exactly two agents), the difference between the DARA and BORT start dates (same-day vs staggered; which comes first; gap distribution).",
       "Q3 = LENA+DARA dual-therapy share in 1L and 2L (exact dual + a 'contains both, any combination' context column).",
       "Q4 = Melphalan in 2L by LOT2 start year, with a pre-/post-2017 summary and the top MELP-containing 2L regimens.",
@@ -618,12 +626,23 @@ main <- function() {
 
   # ---- Q1: steroids ------------------------------------------------------
   q1 <- q1_steroid_audit(con, lot_long)
-  q1_notes <- c(
-    "Steroids are already excluded from LOT assignment. They never set a line start, join a regimen, or trigger a new line, so turning steroids off needs no change to the LOT rules and no re-run.",
-    paste0("The audit checks every LOT regimen against the known steroid abbreviations (",
-           paste(STEROID_TOKENS, collapse = ", "),
-           ") and should be 0. The token table lists every agent that actually appears in the regimens, so a steroid (or any new steroid abbreviation) would be visible."),
-    "Steroids only feed the display and timing outputs that read steroid_codes.csv - the dashboard Steroids panel and the steroid-timing analyses. To drop them there too, empty steroid_codes.csv; the LOT results are unaffected.")
+  # Read the audit result and let it drive the wording: a non-zero count is an
+  # audit FAILURE (a steroid leaked into a regimen), not a normal answer.
+  q1_hits <- if (is_status_table(q1$audit)) NA_integer_
+             else suppressWarnings(as.integer(q1$audit$n_rows_with_steroid_token[1]))
+  if (isTRUE(q1_hits > 0)) {
+    extra_gaps <- c(extra_gaps, sprintf("Q1 Steroids off / audit FAILED: %d regimen row(s) contain a steroid token", q1_hits))
+    q1_notes <- c(
+      sprintf("AUDIT FAILED: %d LOT regimen row(s) contain a steroid token. This is unexpected - steroids should never enter a regimen. Investigate before using this workbook (see the audit and token tables).", q1_hits),
+      "The audit checks every LOT regimen against the known steroid abbreviations; a non-zero count means a steroid reached a regimen string, which the LOT rules are meant to prevent.")
+  } else {
+    q1_notes <- c(
+      "Steroids are already excluded from LOT assignment. They never set a line start, join a regimen, or trigger a new line, so turning steroids off needs no change to the LOT rules and no re-run.",
+      paste0("The audit checks every LOT regimen against the known steroid abbreviations (",
+             paste(STEROID_TOKENS, collapse = ", "),
+             ") and should be 0. The token table lists every agent that actually appears in the regimens, so a steroid (or any new steroid abbreviation) would be visible."),
+      "Steroids only feed the display and timing outputs that read steroid_codes.csv - the dashboard Steroids panel and the steroid-timing analyses. To drop them there too, empty steroid_codes.csv; the LOT results are unaffected.")
+  }
   add_sheet(name = "Q1 Steroids off", title = "Q1 - Steroids are already excluded from the LOT",
     subtitle = paste0("Regimen audit + agent-token list. Cohort: ", cohort_label, "."),
     narrative = q1_notes,
@@ -638,7 +657,7 @@ main <- function() {
                       "DARA+BORT start-date gap")
     if (is.data.frame(q2)) {
       q2_tables[["DARA+BORT dual therapy - start-date difference (overview)"]] <- q2
-      q2_notes <- c(q2_notes, "q2 returned a status row (see table); the gap distribution is omitted.")
+      q2_notes <- c(q2_notes, "The Q2 analysis could not run - see the status table.")
     } else {
       q2_tables[["DARA+BORT dual therapy - start-date difference (overview)"]] <- q2$overview
       q2_tables[["Absolute start-date gap distribution"]] <- q2$distribution
@@ -649,7 +668,12 @@ main <- function() {
         "A large same-day count means both agents have the same first observed start date; a spread toward staggered starts (DARA first or BORT first) means one was started and the other added later, within the induction window. Note these are observed claim dates, not the prescriber's intent.")
     }
   } else {
-    q2_notes <- paste0(map_tbl, " not readable - per-agent start dates need MAP_STACKED; Q2 skipped.")
+    q2_notes <- paste0(map_tbl, " not readable - per-agent start dates need MAP_STACKED; Q2 could not be built.")
+    # Leave a visible status table (not an empty tab) so the incomplete-workbook
+    # check flags a skipped Q2.
+    q2_tables[["DARA+BORT dual therapy - start-date difference"]] <- data.frame(
+      status = paste0(map_tbl, " not readable - MAP_STACKED is required for per-agent start dates."),
+      stringsAsFactors = FALSE)
   }
   add_sheet(name = "Q2 DARA+BORT dates", title = "Q2 - 1L DARA+BORT: difference in agent start dates",
     subtitle = paste0("Among patients whose 1L regimen is exactly DARA + BORT (dual therapy, no other agents). Cohort: ",
@@ -688,41 +712,49 @@ main <- function() {
   # ---- Q5: CAR-T clarifications -----------------------------------------
   q5_tables <- list(); q5_notes <- character()
   if (have_sct) {
-    q5_tables[["CAR-T relative to LOT1 (recomputed on this cohort; vqs_q6_cart)"]] <-
+    q5_tables[["CAR-T relative to LOT1 (recomputed on this cohort)"]] <-
       best_effort(vqs_q6_cart(con, lot_long, sct_tbl, w1 = VQS_W1, cart_raw_tbl = cart_raw),
                   "CAR-T-relative-to-LOT1 metric table")
     q5_tables[["Empirical answers to the five CAR-T questions"]] <-
       best_effort(q5_cart_clarifications(con, lot_long, sct_tbl, VQS_W1), "CAR-T clarifications")
+    if (is.null(cart_raw))
+      extra_gaps <- c(extra_gaps, "Q5 CAR-T / (b) pre-LOT1 CAR-T scan unavailable - question (b) unanswered")
     q5_notes <- c(
-      sprintf("The first table restates the CAR-T-relative-to-LOT1 metrics on this cohort (%s, LOT1 = %s patients) so the numbers are live. The earlier table the study team referenced (denominator 11,148; 'Any CAR-T on/after LOT1' = 124) was the full Overall LOT cohort - run this script with LOT_COHORT=FULL to reproduce those exact figures. The answers below hold for either cohort.",
+      sprintf("The first table shows the CAR-T-relative-to-LOT1 metrics on this cohort (%s, LOT1 = %s patients). The earlier table the study team saw (denominator 11,148; 'Any CAR-T on/after LOT1' = 124) was the full Overall LOT cohort - run with LOT_COHORT=FULL to reproduce it. The answers hold for either cohort.",
               cohort_label, format(n_lot1, big.mark = ",")),
       if (is.null(cart_raw))
-        "NOTE: the raw CAR-T-before-LOT1 scan was unavailable this run, so 'CAR-T BEFORE LOT1' / 'prior-to-or-during' rows in the first table are NA. During/closing timing is still valid."
+        "The pre-LOT1 CAR-T rows need the raw claims scan, which was not available this run, so 'CAR-T before LOT1' and 'prior-to-or-during' show as NA. The during/closing timing is still valid. This run is marked incomplete for question (b)."
       else
-        "The raw CAR-T scan is available, so 'CAR-T BEFORE LOT1' is populated (from raw claim dates).",
-      "Answers to the study team's questions (see the second table for the counts):",
-      "(a) The 'within 60d after LOT1 start' window is start-relative and NOT capped at LOT1 end; 'during or closing LOT1' is capped at LOT1_BASE_END_DT (+1 day only when CAR-T CLOSED LOT1). They are NOT nested by definition: a within-60d CAR-T after LOT1 already ended would sit outside during/closing, and a CAR-T that closes LOT1 past day 60 sits outside within-60d. The subset-test rows show the actual overlap in this cohort.",
+        "The raw CAR-T scan ran, so 'CAR-T before LOT1' is populated from raw claim dates.",
+      "Answers (counts are in the second table):",
+      sprintf("(a) The two windows differ. 'Within %dd after LOT1 start' runs from LOT1 start for the induction period and is not capped at the LOT1 end; 'during or closing LOT1' ends at the LOT1 end (plus one day when the CAR-T itself closed LOT1). So they are not nested - the subset-test rows show their actual overlap here.", VQS_W1),
       if (is.null(cart_raw))
-        "(b) 'prior-to-OR-during LOT1' = ('CAR-T BEFORE LOT1' OR 'during/closing'). The BEFORE row could NOT be assessed this run (raw scan unavailable), so we cannot yet confirm that none occurred strictly before LOT1 start - re-run with the raw CAR-T scan to answer (b) definitively. What holds regardless: every patient counted in 'during or closing' had the CAR-T on/after LOT1 start (CAR-T dates from LOT1_SCT are >= LOT1 start by construction)."
+        "(b) 'Prior-to-or-during LOT1' = before-LOT1 or during/closing. The before-LOT1 count needs the raw scan, which was not available, so (b) cannot be answered this run. What holds regardless: every patient in 'during or closing' had the CAR-T on or after LOT1 start."
       else
-        "(b) 'prior-to-OR-during LOT1' = ('CAR-T BEFORE LOT1' OR 'during/closing'). When the BEFORE row above reads 0, 'prior-to-or-during' equals 'during', i.e. every such patient had the CAR-T during (not before) LOT1. If BEFORE is > 0, that many patients had a CAR-T strictly before LOT1 start.",
-      "(c) 'Any CAR-T on/after LOT1 start' is a count of DISTINCT PATIENTS (one per patient, from LOT1_SCT.FIRST_CART_DT), NOT a count of CAR-T instances, and it DOES include later lines (2L+). The 'strictly after LOT1 ends' row shows how many of them are later-line rather than during-LOT1 CAR-T.",
-      "(d) A CAR-T dated exactly ON the LOT1 start date is possible in principle (FIRST_CART_DT >= LOT1_START); the count row shows how often it actually happens here.",
-      "(e) When a CAR-T closes LOT1 (end reason SCT_CART/CART_INIT), LOT1 ends one day earlier (LOT1_BASE_END_DT = FIRST_CART_DT - 1) and LOT2 starts on the CAR-T date. A higher-priority event on that same date (the engine ranks SCT_ALLO, then CAR-T, then SCT_AUTO, then a new medication) can change the LOT2 start type, but not the date. The last rows confirm this on the data.",
-      if (!have_sct) paste0(sct_tbl, " not readable - CAR-T tables omitted.") else NULL)
+        "(b) 'Prior-to-or-during LOT1' = before-LOT1 or during/closing. When before-LOT1 reads 0, prior-to-or-during equals during, so every such patient had the CAR-T during LOT1; if before-LOT1 is above 0, that many had a CAR-T strictly before LOT1 start.",
+      "(c) 'Any CAR-T on/after LOT1 start' counts distinct patients (one per patient), not CAR-T events, and it includes later lines (2L+). The 'strictly after LOT1 ends' row shows how many were later-line rather than during LOT1.",
+      "(d) A CAR-T on the LOT1 start date is possible (the first CAR-T date can equal the LOT1 start); the count row shows how often it happens here.",
+      "(e) When a CAR-T closes LOT1, LOT1 ends the day before the CAR-T and LOT2 starts on the CAR-T date. A higher-priority event on that same date (the engine ranks allogeneic SCT, then CAR-T, then autologous SCT, then a new medication) can change the LOT2 start type, but not the date.")
   } else {
-    q5_notes <- paste0(sct_tbl, " not readable - CAR-T analysis needs LOT1_SCT (FIRST_CART_DT). Q5 skipped.")
+    q5_notes <- paste0(sct_tbl, " not readable - CAR-T analysis needs LOT1_SCT (FIRST_CART_DT). Q5 could not be built.")
+    # Leave a visible status table (not an empty tab) so the incomplete-workbook
+    # check flags a skipped Q5.
+    q5_tables[["CAR-T relative to LOT1"]] <- data.frame(
+      status = paste0(sct_tbl, " not readable - LOT1_SCT (FIRST_CART_DT) is required."),
+      stringsAsFactors = FALSE)
   }
   add_sheet(name = "Q5 CAR-T", title = "Q5 - CAR-T relative to LOT1: metrics + clarifications",
     subtitle = paste0("Metric table recomputed on this cohort + empirical answers to the five CAR-T questions. Cohort: ",
                       cohort_label, "."),
     narrative = q5_notes, tables = q5_tables)
 
-  # ---- flag any question whose table could not be built --------------------
-  # A failed headline answer must not be reported as a clean run: name the gaps,
-  # mark the workbook INCOMPLETE (filename + a note at the top of the Read Me),
-  # and say so in the final log.
-  gaps <- character()
+  # ---- flag anything that makes the run incomplete -------------------------
+  # An incomplete or failed answer must not be reported as a clean run. Two
+  # sources: (1) a status placeholder table (a failed query or a skipped
+  # question), and (2) the explicit conditions collected in extra_gaps (a
+  # non-zero steroid audit, an unanswered sub-question). Mark the workbook
+  # INCOMPLETE (filename + a note at the top of the Read Me) and say so in the log.
+  gaps <- extra_gaps
   for (s in sheets) for (nm in names(s$tables %||% list())) {
     entry <- s$tables[[nm]]; df <- entry
     if (is.list(entry) && !is.data.frame(entry)) df <- entry$df
@@ -730,12 +762,12 @@ main <- function() {
   }
   incomplete <- length(gaps) > 0
   if (incomplete) {
-    log_msg("WARNING: some tables could not be built this run - workbook is INCOMPLETE:")
+    log_msg("WARNING: this run is INCOMPLETE:")
     for (g in gaps) log_msg("  - ", g)
     sheets[[1]]$narrative <- c(
       paste0("INCOMPLETE run: ", length(gaps),
-             " table(s) could not be built (see the affected tabs). Re-run once the ",
-             "warehouse tables are available. Missing: ", paste(gaps, collapse = "; "), "."),
+             " issue(s) - see the affected tabs and re-run once resolved. ",
+             paste(gaps, collapse = "; "), "."),
       sheets[[1]]$narrative)
   }
 
