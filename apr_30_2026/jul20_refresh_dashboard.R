@@ -32,13 +32,20 @@
 #   - A steroid audit table is added to the Validation section proving that
 #     no known steroid token occurs in any LOT regimen string.
 #
-# Cohort: the overall cohort by default, mirroring 05 (regimen_dashboard.html
-# is the overall-cohort dashboard). Set LOT_COHORT=NDMM to build the same
-# refresh on NDMM_LOT_LONG_FILT instead (the parent attrition card is skipped
-# there - it describes the parent cohort funnel, not the NDMM subset).
+# Cohort: the NDMM study cohort by default (NDMM_LOT_LONG_FILT) - the cohort
+# the July-20 questions name, and the same default as the sibling
+# jul20_studyteam_qs.R, so running the pair without env overrides always uses
+# one population. Set LOT_COHORT=OVERALL (or FULL) to refresh the overall-
+# cohort dashboard that 05 builds; the parent attrition card appears only in
+# overall mode (it describes the parent cohort funnel, not the NDMM subset).
 #
-# Output: regimen_dashboard_refresh.html (or regimen_dashboard_refresh_ndmm.html)
-# in cfg$output_dir, plus jul20_all_regimens_lot<N>_<cohort>_<stamp>.csv files.
+# Run sequence for the pair (state the cohort explicitly when sending run
+# instructions; do not rely on defaults):
+#   LOT_COHORT=NDMM Rscript jul20_refresh_dashboard.R
+#   LOT_COHORT=NDMM Rscript jul20_studyteam_qs.R
+#
+# Output: regimen_dashboard_refresh_ndmm.html (or _overall.html) in
+# cfg$output_dir, plus jul20_all_regimens_lot<N>_<cohort>_<stamp>.csv files.
 # Writes no permanent tables (only session temp views). Safe to run any time.
 
 .script_dir <- local({
@@ -218,18 +225,21 @@ main_refresh <- function() {
   if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   stamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
 
-  cohort_mode <- toupper(Sys.getenv("LOT_COHORT", unset = "OVERALL"))
-  if (cohort_mode == "NDMM") {
+  # NDMM by default, matching jul20_studyteam_qs.R so the July-20 pair always
+  # runs on one population unless the cohort is overridden explicitly.
+  cohort_mode <- toupper(Sys.getenv("LOT_COHORT", unset = "NDMM"))
+  if (cohort_mode %in% c("OVERALL", "FULL")) {
+    cohort_mode <- "OVERALL"
+    lot_long <- wrk("LOT_LONG")
+    cohort_label <- "overall cohort"
+    out_name <- "regimen_dashboard_refresh_overall.html"
+    cohort_tag <- "overall"
+  } else {
+    cohort_mode <- "NDMM"
     lot_long <- wrk("NDMM_LOT_LONG_FILT")
     cohort_label <- "NDMM newly-diagnosed 1L study cohort"
     out_name <- "regimen_dashboard_refresh_ndmm.html"
     cohort_tag <- "ndmm"
-  } else {
-    cohort_mode <- "OVERALL"
-    lot_long <- wrk("LOT_LONG")
-    cohort_label <- "overall cohort"
-    out_name <- "regimen_dashboard_refresh.html"
-    cohort_tag <- "overall"
   }
 
   log_msg(SEP)
@@ -243,7 +253,7 @@ main_refresh <- function() {
   if (!readable(lot_long)) {
     if (cohort_mode == "NDMM")
       stop("Cannot read ", lot_long, ". Run 06_ndmm_dashboard.R first to persist ",
-           "NDMM_LOT_LONG_FILT, or run without LOT_COHORT for the overall cohort.")
+           "NDMM_LOT_LONG_FILT, or set LOT_COHORT=OVERALL for the overall cohort.")
     stop("Cannot read ", lot_long,
          ". Build the LOT pipeline (02_lot1.R / 03_lot2_5.R) first.")
   }
