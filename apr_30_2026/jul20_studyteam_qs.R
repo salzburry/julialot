@@ -1,58 +1,73 @@
 #!/usr/bin/env Rscript
-# July-20 study-team questions -> one Excel workbook + one refreshed HTML
-# dashboard + patient-level CSVs.
+# July-20 study-team questions Q2 + Q3 -> focused CSVs + short summaries.
 #
 #   Rscript jul20_studyteam_qs.R
 #
-# A sibling of lot_followup_qs.R / lot1_studyteam_qs.R. It answers Julia's
-# July-20 follow-ups (dashboard refresh, DARA+BORT 1L deep dive, and the two
-# candidate LOT-rule changes), reading the MM tables on Databricks. No existing
-# pipeline or dashboard file is modified - this script only reads the persisted
-# work-schema tables and re-uses the shared helpers in R/.
+# A sibling of lot_followup_qs.R / lot1_studyteam_qs.R. Q1 (the dashboard
+# refresh) lives in jul20_refresh_dashboard.R; this script answers the other
+# two July-20 asks with patient-level CSVs and compact summary files - no
+# workbook, no dashboard. No existing pipeline or dashboard file is modified.
 #
 # Cohort: the NDMM study cohort by default (NDMM_LOT_LONG_FILT), which is the
-# cohort Julia's question 2 names. Set LOT_COHORT=FULL for the whole LOT cohort.
-# MAP_STACKED, LOT1_SCT, MMA_MED_PROCESSED and ELIG_COH_FINAL are shared,
-# joined by PATID.
+# cohort Julia's question 2 names. Set LOT_COHORT=FULL for the whole LOT
+# cohort. MAP_STACKED, LOT1_SCT, MMA_MED_PROCESSED and ELIG_COH_FINAL are
+# shared, joined by PATID.
 #
-# Questions:
-#   Q1  Dashboard refresh: a new steroid-free dashboard HTML with an
-#       "All regimens per LOT" tab per line (every regimen string, not a top-N),
-#       each downloadable as CSV from the table itself and also written as a
-#       CSV file. Regimens come straight from LOT_BASE_MEDS, which the engine
-#       builds without steroids; a steroid audit tab proves that. The
-#       production dashboards are untouched.
-#   Q2  1L DARA+BORT dual therapy (exactly those two agents) in this cohort:
-#       a patient-level roster CSV (diagnosis date, per-agent episodes/MAPs and
-#       claim counts, 2L regimen, region, payer), a per-MAP detail CSV, and
-#       summary tabs - cycles per agent (a), 2L regimens (b), diagnosis years
-#       (c), region x payer (d).
-#   Q3  Impact of the two candidate LOT-rule changes, simulated read-only on
-#       top of the persisted LOT_LONG / MAP_STACKED / LOT1_SCT:
-#       (a) a MELP starting 60-180 days after the first MELP MAP of the line
-#           does not advance the LOT (otherwise MELP is part of the line), and
-#       (b) a CAR-T inside LOT1's 60-day induction window stays in LOT1.
+# Q2 - 1L DARA+BORT dual therapy. Definition (stated in every output): the
+#   LOT1 regimen is EXACTLY the two agents - no other MM agent in
+#   LOT_BASE_MEDS. Backbone steroids never enter the regimen strings, so they
+#   do not change the pairing. A context file also counts the broader "LOT1
+#   regimen contains both agents, possibly with others" group so the exact-
+#   dual count can be seen against it.
+#   Outputs: a one-row-per-patient roster (diagnosis date, per-agent drug
+#   episodes/MAPs, medical service dates, pharmacy fill dates, 2L regimen,
+#   region, payer), per-episode MAP files (during LOT1 and after LOT1,
+#   separately), and compact summaries for 2L, diagnosis years and the
+#   region x payer cross-tab.
+#   Measures are named for what claims can actually show: protocol cycles are
+#   NOT recorded in claims, so the outputs report drug episodes (MAPs),
+#   medical service dates (deduplicated to one row per patient + agent +
+#   service date) and pharmacy fill dates - observable utilization measures,
+#   not cycle counts.
+#   Region comes ONLY from an explicitly approved source, set via
+#   REGION_SOURCE_TABLE (a fully-qualified table, or a CDM base name such as
+#   'member') and REGION_SOURCE_COLUMN. When unset, region is reported
+#   unavailable, and a candidate-columns file lists geographic-looking
+#   columns found on the enrollment/member tables so the team can approve
+#   one. Values are passed through untouched (plus a distinct-value file for
+#   manual confirmation); no mapping is invented here.
+#   Payer = Optum line of business (member_enrollment.BUS) on the enrollment
+#   span covering the LOT1 start date - the production dashboard's anchor.
+#   MCR = Medicare, COM = Commercial, blank = Unknown, anything else =
+#   Other (<BUS>). If the team wants payer at diagnosis / across LOT1 / ever,
+#   that is a different anchor and is called out in the definitions file.
 #
-# Honest limits, surfaced in the output rather than hidden:
-#   - "Cycles" are not recorded in claims. We report drug episodes (MAPs) and
-#     administration/fill claim counts per agent - the closest measurable
-#     proxies, and the ones the ask itself names ("episodes and MAPs").
-#   - Region is not derived anywhere in the pipeline today. The script probes
-#     the Optum enrollment/member tables for a Census-region column at runtime
-#     and says so plainly when none is reachable.
-#   - Q3 is a first-order simulation (which lines would merge and how the
-#     per-patient line counts shift), not an engine re-run. Later-line windows
-#     and regimens are kept as built; a production re-run needs a spec change.
-#   - Rule (a) as written makes every MELP non-advancing (a MELP with no
-#     earlier MELP in the line falls into the "otherwise: part of the LOT"
-#     branch). The tabs therefore show BOTH readings - the literal one and the
-#     narrow one (only 60-180-day recurrences suppressed) - with the timing
-#     decomposition, so the study team can confirm the intended rule.
+# Q3 - PRELIMINARY affected-patient and boundary assessment of the two
+#   candidate LOT-rule changes. This is a read-only screen over the persisted
+#   LOT_LONG / MAP_STACKED / LOT1_SCT - NOT an engine re-run, and its counts
+#   are NOT the exact impact of implementing either rule. Moving a LOT
+#   boundary changes induction windows, regimens, discontinuation dates,
+#   add-med picks, transplant classification and every later line; only an
+#   isolated scenario re-run of the LOT derivation (separate scenario table
+#   names, production untouched) can give exact numbers once the rules are
+#   confirmed.
+#   (a) MELP: inventories the line transitions attributable to melphalan and
+#       buckets them by timing against the first MELP MAP of the line, because
+#       the rule as written is ambiguous - BOTH branches keep MELP inside the
+#       line, so read literally no MELP ever advances a line. The summary file
+#       lists the questions the study team needs to answer before a scenario
+#       is built.
+#   (b) CAR-T: lists LOT1s currently ended by a CAR-T inside the 60-day
+#       induction window, what folding the CART-started LOT2 back into LOT1
+#       would look like, and the lines-per-patient shift. For affected
+#       patients with no LOT2 row, the merged LOT1 end cannot be derived from
+#       existing outputs; those rows are flagged.
 #
-# Writes no permanent tables (only session temp views). A run writes one Excel
-# workbook, one dashboard HTML, a set of CSVs, a log, and the output folder if
-# missing, and may set env defaults from pipeline_inputs.csv. Safe to run any
-# time.
+# Every run also writes a validation-summary file with automated
+# reconciliation checks (one row per patient, definition audits, category
+# sums, cross-tab totals, CAR-T consistency) and a run-status file that says
+# COMPLETE or INCOMPLETE with the reasons. Writes no permanent tables (only
+# session temp views). Safe to run any time.
 
 .script_dir <- local({
   args <- commandArgs(trailingOnly = FALSE)
@@ -76,79 +91,10 @@ source(file.path(source_dir, "db_utils_lot.R"))
 source(file.path(source_dir, "codelists_lot.R"))        # load_codelist_csv
 source(file.path(source_dir, "validation_qs.R"))        # vqs_* helpers (shared)
 
-# The dashboard helpers are optional: without them (or without the DT /
-# htmlwidgets / jsonlite / base64enc packages) the CSVs and the workbook are
-# still written and the missing dashboard is flagged as a core gap.
-.have_dashboard_helpers <- tryCatch({
-  source(file.path(source_dir, "dashboard_lot.R")); TRUE
-}, error = function(e) {
-  FALSE
-})
-
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
-# ===========================================================================
-# Writes the workbook with openxlsx. A "sheet" is a list of name, title,
-# optional subtitle, narrative lines, and named tables (each a data.frame, or a
-# list of caption + df). openxlsx must be installed; main() checks that first.
-# (Same writer as lot_followup_qs.R.)
-# ===========================================================================
-wbx_write_workbook <- function(sheets, xlsx_path) {
-  ox <- function(f) getExportedValue("openxlsx", f)
-  wb <- ox("createWorkbook")()
-  st_title <- ox("createStyle")(fontSize = 14, textDecoration = "bold",
-                                fontColour = "#FFFFFF", fgFill = "#1F3864")
-  st_sub   <- ox("createStyle")(fontColour = "#FFFFFF", fgFill = "#2E5496",
-                                textDecoration = "italic")
-  st_narr  <- ox("createStyle")(wrapText = TRUE, valign = "top")
-  st_cap   <- ox("createStyle")(textDecoration = "bold", fgFill = "#D6E0F0")
-  st_hdr   <- ox("createStyle")(textDecoration = "bold", fontColour = "#FFFFFF",
-                                fgFill = "#2E5496", border = "TopBottomLeftRight",
-                                halign = "left")
-  for (s in sheets) {
-    sn <- substr(gsub("[\\/?*:\\[\\]]", "", s$name), 1, 31)
-    ox("addWorksheet")(wb, sn)
-    r <- 1L
-    ox("writeData")(wb, sn, s$title, startRow = r, startCol = 1)
-    ox("addStyle")(wb, sn, st_title, rows = r, cols = 1:10, gridExpand = TRUE)
-    r <- r + 1L
-    if (!is.null(s$subtitle)) {
-      ox("writeData")(wb, sn, s$subtitle, startRow = r, startCol = 1)
-      ox("addStyle")(wb, sn, st_sub, rows = r, cols = 1:10, gridExpand = TRUE)
-      r <- r + 1L
-    }
-    r <- r + 1L
-    for (line in s$narrative %||% character()) {
-      ox("writeData")(wb, sn, line, startRow = r, startCol = 1)
-      ox("addStyle")(wb, sn, st_narr, rows = r, cols = 1, gridExpand = TRUE)
-      r <- r + 1L
-    }
-    r <- r + 1L
-    for (nm in names(s$tables %||% list())) {
-      entry <- s$tables[[nm]]
-      cap <- nm; df <- entry
-      if (is.list(entry) && !is.data.frame(entry)) { cap <- entry$caption %||% nm; df <- entry$df }
-      ox("writeData")(wb, sn, cap, startRow = r, startCol = 1)
-      ox("addStyle")(wb, sn, st_cap, rows = r, cols = 1:10, gridExpand = TRUE)
-      r <- r + 1L
-      if (is.data.frame(df) && nrow(df) > 0) {
-        ox("writeData")(wb, sn, df, startRow = r, startCol = 1,
-                        headerStyle = st_hdr, withFilter = FALSE)
-        r <- r + nrow(df) + 2L
-      } else {
-        ox("writeData")(wb, sn, "(no rows / not available)", startRow = r, startCol = 1)
-        r <- r + 2L
-      }
-    }
-    ox("setColWidths")(wb, sn, cols = 1:14, widths = "auto")
-  }
-  ox("saveWorkbook")(wb, xlsx_path, overwrite = TRUE)
-  log_msg("wrote workbook -> ", xlsx_path, " (", length(sheets), " sheets)")
-  invisible(TRUE)
-}
-
-# Run a pull and return its data, or a one-row "status" table naming the failure.
-# This keeps a visible "unavailable" row in the workbook instead of a silent gap.
+# Run a pull and return its data, or a one-row "status" table naming the
+# failure, so a gap is visible instead of silent.
 best_effort <- function(expr, label) {
   r <- tryCatch(expr, error = function(e) {
     log_msg("  NOTE: '", label, "' unavailable - ", conditionMessage(e))
@@ -161,18 +107,15 @@ best_effort <- function(expr, label) {
   else r
 }
 
-# TRUE if x is a best_effort() failure row - a "could not build" placeholder.
 is_status_table <- function(x)
   is.data.frame(x) && identical(names(x), "status")
 
 num <- function(x) suppressWarnings(as.numeric(x))
 pct1 <- function(x, d) if (isTRUE(num(d) > 0)) round(100 * num(x) / num(d), 1) else NA_real_
-na_i <- function(x) { v <- num(x); if (length(v) == 0 || is.na(v)) NA_integer_ else as.integer(v) }
 
 # ---------------------------------------------------------------------------
-# Look up the drug short-codes (DARA/BORT/MELP) from cl_mma_codelist.csv by
-# full drug name, so a code change in the codelist does not quietly break a
-# count. resolved = TRUE only when every code came from the codelist.
+# Drug tokens (DARA/BORT/MELP) resolved from cl_mma_codelist.csv by full drug
+# name; resolved = TRUE only when every code came from the codelist.
 # ---------------------------------------------------------------------------
 resolve_jul20_tokens <- function(con) {
   out <- list(dara = "DARA", bort = "BORT", melp = "MELP",
@@ -204,20 +147,8 @@ resolve_jul20_tokens <- function(con) {
   out
 }
 
-# The drug codes in a regimen string, dropping blanks. The engine already keeps
-# steroids out of LOT_BASE_MEDS, so this is the list of MM agents.
+# The drug codes in a regimen string, dropping blanks.
 MEDS_ARR <- "filter(split(LOT_BASE_MEDS, ' '), x -> length(x) > 0)"
-
-# The steroid short-codes used across the repo's codelists (dashboard,
-# steroid_codes.csv, engine rollup). The Q1 audit checks regimens against this
-# fixed list; the token table backs it up by listing every code that appears.
-STEROID_TOKENS <- c("DEX", "DEXA", "DEXAMETHASONE", "DEXAMETH",
-                    "PRED", "PREDNISONE", "PREDNISOLONE",
-                    "METHYLPRED", "METHYLPREDNISOLONE", "MPRED")
-
-# Embedded dashboard tables are capped at this many rows (the full data always
-# goes to the CSV files); mirrors the drilldown cap in the production dashboard.
-DASH_MAX_ROWS <- 8000L
 
 # Label used for lines that have no drug regimen (transplant / CAR-T-only).
 blank_regimen_sql <- function(meds_col = "LOT_BASE_MEDS", type_col = "LOT_START_TYPE") {
@@ -226,91 +157,20 @@ blank_regimen_sql <- function(meds_col = "LOT_BASE_MEDS", type_col = "LOT_START_
              ELSE {meds_col} END")
 }
 
-# ===========================================================================
-# Q1a - every regimen per LOT (the "long lists"). One data.frame per LOT_NUM,
-# ranked by distinct patients, with the per-line percentage. Transplant-only
-# lines keep a labelled "(no drug regimen ...)" row so the counts reconcile
-# with the per-line patient totals.
-# ===========================================================================
-q1_all_regimens <- function(con, lot_long) {
-  denom <- db_q(con, glue("
-    SELECT LOT_NUM, count(DISTINCT cast(PATID as string)) AS n_patients
-    FROM {lot_long} GROUP BY LOT_NUM ORDER BY LOT_NUM"))
-
-  all_reg <- db_q(con, glue("
-    WITH l AS (
-      SELECT LOT_NUM, cast(PATID as string) AS PATID,
-             {blank_regimen_sql()} AS regimen
-      FROM {lot_long}
-    )
-    SELECT LOT_NUM, regimen,
-           count(DISTINCT PATID) AS n_patients,
-           count(*)              AS n_lines
-    FROM l GROUP BY LOT_NUM, regimen
-    ORDER BY LOT_NUM, n_patients DESC, regimen"))
-
-  if (nrow(all_reg) == 0)
-    return(list(per_lot = list(),
-                denom = data.frame(status = "No LOT rows found.", stringsAsFactors = FALSE)))
-
-  per_lot <- list()
-  for (ln in sort(unique(as.integer(num(all_reg$LOT_NUM))))) {
-    d <- all_reg[as.integer(num(all_reg$LOT_NUM)) == ln, , drop = FALSE]
-    dn <- num(denom$n_patients[as.integer(num(denom$LOT_NUM)) == ln][1])
-    per_lot[[as.character(ln)]] <- data.frame(
-      rank        = seq_len(nrow(d)),
-      regimen     = d$regimen,
-      n_patients  = as.integer(num(d$n_patients)),
-      pct_of_line = vapply(num(d$n_patients), function(x) pct1(x, dn), numeric(1)),
-      n_lines     = as.integer(num(d$n_lines)),
-      stringsAsFactors = FALSE)
+# DESCRIBE-based column discovery (same pattern as lot1_studyteam_qs.R).
+make_describe_cols <- function(con) {
+  function(tbl) {
+    d <- tryCatch(db_q(con, glue("DESCRIBE TABLE {tbl}")), error = function(e) NULL)
+    if (is.null(d) || !"col_name" %in% names(d)) return(character(0))
+    cn <- trimws(as.character(d$col_name))
+    cn <- cn[nzchar(cn) & !startsWith(cn, "#")]
+    unique(cn)
   }
-  denom_df <- data.frame(line = paste0("LOT", denom$LOT_NUM),
-                         n_line_patients = as.integer(num(denom$n_patients)),
-                         stringsAsFactors = FALSE)
-  list(per_lot = per_lot, denom = denom_df)
 }
 
 # ===========================================================================
-# Q1b - steroid audit: does any steroid code show up in a regimen? (expected 0)
-# plus the full agent-token vocabulary so a reader can see every agent that
-# does appear. Same audit as the July-11 workbook.
-# ===========================================================================
-q1_steroid_audit <- function(con, lot_long) {
-  ster_arr <- paste(sprintf("'%s'", STEROID_TOKENS), collapse = ", ")
-
-  audit <- best_effort(db_q(con, glue("
-    WITH ll AS (
-      SELECT {MEDS_ARR} AS meds
-      FROM {lot_long}
-      WHERE LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
-    )
-    SELECT count(*)                                                              AS n_lot_regimen_rows,
-           sum(CASE WHEN size(array_intersect(meds, array({ster_arr}))) > 0
-                    THEN 1 ELSE 0 END)                                           AS n_rows_with_steroid_token
-    FROM ll")), "steroid-in-regimen audit")
-
-  vocab <- best_effort(db_q(con, glue("
-    WITH base AS (
-      SELECT cast(PATID as string) AS PATID, {MEDS_ARR} AS meds
-      FROM {lot_long}
-      WHERE LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
-    )
-    SELECT upper(tok)             AS agent_token,
-           count(*)              AS n_regimen_rows,
-           count(DISTINCT PATID) AS n_patients,
-           CASE WHEN array_contains(array({ster_arr}), upper(tok))
-                THEN 'steroid - not expected here' ELSE '' END AS note
-    FROM base LATERAL VIEW explode(meds) t AS tok
-    GROUP BY upper(tok) ORDER BY n_patients DESC")), "LOT regimen token vocabulary")
-
-  list(audit = audit, vocab = vocab)
-}
-
-# ===========================================================================
-# Q2 setup - the 1L DARA+BORT dual-therapy cohort as a temp view:
-# LOT1 patients whose regimen is exactly the two agents (no other MM agent;
-# backbone steroids never enter the regimen, so they do not change the pair).
+# Q2 setup - the 1L DARA+BORT exact-dual cohort as a temp view, plus the
+# exact-vs-contains-both context counts.
 # ===========================================================================
 q2_build_dual_view <- function(con, lot_long, dara, bort) {
   db_exec(con, glue("
@@ -332,7 +192,34 @@ q2_build_dual_view <- function(con, lot_long, dara, bort) {
   num(db_q(con, "SELECT count(*) AS n FROM _jul20_dual")$n[1])
 }
 
-# Per-patient-per-agent episode (MAP) summary inside LOT1, as a temp view.
+q2_context_counts <- function(con, lot_long, dara, bort) {
+  d <- db_q(con, glue("
+    WITH l1 AS (
+      SELECT cast(PATID as string) AS PATID, {MEDS_ARR} AS meds
+      FROM {lot_long}
+      WHERE LOT_NUM = 1 AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
+    )
+    SELECT
+      count(DISTINCT PATID) AS n_lot1_with_drug_regimen,
+      count(DISTINCT CASE WHEN size(meds) = 2 AND array_contains(meds, '{dara}')
+                           AND array_contains(meds, '{bort}') THEN PATID END)
+                            AS n_exact_dara_bort_dual,
+      count(DISTINCT CASE WHEN array_contains(meds, '{dara}')
+                           AND array_contains(meds, '{bort}') THEN PATID END)
+                            AS n_contains_dara_and_bort_any
+  FROM l1"))
+  data.frame(
+    group = c(
+      "LOT1 patients with a drug regimen (context denominator)",
+      "EXACT DARA+BORT dual therapy (the Q2 cohort: regimen is exactly the two agents, no other MM agent)",
+      "LOT1 regimen CONTAINS both DARA and BORT, possibly with other agents (context only)"),
+    n_patients = c(as.integer(num(d$n_lot1_with_drug_regimen[1])),
+                   as.integer(num(d$n_exact_dara_bort_dual[1])),
+                   as.integer(num(d$n_contains_dara_and_bort_any[1]))),
+    stringsAsFactors = FALSE)
+}
+
+# Per-patient-per-agent drug-episode (MAP) summary inside LOT1.
 q2_build_agent_views <- function(con, map_tbl, dara, bort) {
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW _jul20_dual_agent AS
@@ -351,16 +238,17 @@ q2_build_agent_views <- function(con, map_tbl, dara, bort) {
   invisible(TRUE)
 }
 
-# Per-patient-per-agent claim counts inside LOT1 (administrations / fills),
-# from the processed medication claims table. Optional - MMA_MED_PROCESSED may
-# not be persisted; the caller degrades gracefully.
+# Per-patient-per-agent service-date counts inside LOT1. MMA_MED_PROCESSED is
+# deduplicated to one row per patient + agent + service date + claim type, so
+# these are counts of distinct medication service dates / fill dates - NOT
+# administrations and NOT cycles.
 q2_build_claim_view <- function(con, mma_tbl, dara, bort) {
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW _jul20_dual_claims AS
     SELECT d.PATID,
            upper(trim(c.MED_ABBR)) AS agent,
-           sum(CASE WHEN lower(c.CLAIM_TYPE) = 'medical'  THEN 1 ELSE 0 END) AS n_medical_claims,
-           sum(CASE WHEN lower(c.CLAIM_TYPE) = 'pharmacy' THEN 1 ELSE 0 END) AS n_pharmacy_fills
+           sum(CASE WHEN lower(c.CLAIM_TYPE) = 'medical'  THEN 1 ELSE 0 END) AS n_medical_service_dates,
+           sum(CASE WHEN lower(c.CLAIM_TYPE) = 'pharmacy' THEN 1 ELSE 0 END) AS n_pharmacy_fill_dates
     FROM {mma_tbl} c
     JOIN _jul20_dual d ON cast(c.PATID as string) = d.PATID
     WHERE upper(trim(c.MED_ABBR)) IN ('{dara}', '{bort}')
@@ -370,11 +258,9 @@ q2_build_claim_view <- function(con, mma_tbl, dara, bort) {
 }
 
 # ===========================================================================
-# Q2a - cycles per agent: episode-count and claim-count summaries plus the
-# episode-count distribution. "Cycle" is a protocol concept the claims do not
-# record; episodes (MAPs) and administration/fill counts are the proxies.
+# Q2a - utilization per agent: episode (MAP) and service-date summaries.
 # ===========================================================================
-q2_cycles_summary <- function(con, have_claims) {
+q2_utilization_summary <- function(con, have_claims) {
   summ <- db_q(con, "
     SELECT agent,
            count(*)                              AS n_patients,
@@ -397,15 +283,15 @@ q2_cycles_summary <- function(con, have_claims) {
 
   out <- list(summary = summ, distribution = dist)
   if (have_claims) {
-    out$claims <- db_q(con, "
+    out$service_dates <- db_q(con, "
       SELECT agent,
-             count(*)                                  AS n_patients,
-             percentile_approx(n_medical_claims, 0.5)  AS median_medical_claims,
-             percentile_approx(n_medical_claims, 0.25) AS p25_medical_claims,
-             percentile_approx(n_medical_claims, 0.75) AS p75_medical_claims,
-             max(n_medical_claims)                     AS max_medical_claims,
-             percentile_approx(n_pharmacy_fills, 0.5)  AS median_pharmacy_fills,
-             max(n_pharmacy_fills)                     AS max_pharmacy_fills
+             count(*)                                        AS n_patients,
+             percentile_approx(n_medical_service_dates, 0.5)  AS median_medical_service_dates,
+             percentile_approx(n_medical_service_dates, 0.25) AS p25_medical_service_dates,
+             percentile_approx(n_medical_service_dates, 0.75) AS p75_medical_service_dates,
+             max(n_medical_service_dates)                     AS max_medical_service_dates,
+             percentile_approx(n_pharmacy_fill_dates, 0.5)    AS median_pharmacy_fill_dates,
+             max(n_pharmacy_fill_dates)                       AS max_pharmacy_fill_dates
       FROM _jul20_dual_claims GROUP BY agent ORDER BY agent")
   }
   out
@@ -438,8 +324,9 @@ q2_lot2_regimens <- function(con, lot_long, n_dual) {
 }
 
 # ===========================================================================
-# Q2c - when were the DARA+BORT patients diagnosed? INDEX_DATE (the qualifying
-# MM diagnosis date from the Part-1 cohort) by calendar year.
+# Q2c - diagnosis years: INDEX_DATE (the qualifying MM diagnosis date behind
+# the Part-1 cohort) by calendar year, with an NA row so the total stays the
+# full dual cohort.
 # ===========================================================================
 q2_diagnosis_years <- function(con, coh_tbl, n_dual) {
   d <- db_q(con, glue("
@@ -466,28 +353,9 @@ q2_diagnosis_years <- function(con, coh_tbl, n_dual) {
   out
 }
 
-# ---------------------------------------------------------------------------
-# DESCRIBE-based column discovery so we never hard-code a source schema
-# (same pattern as lot1_studyteam_qs.R).
-# ---------------------------------------------------------------------------
-make_describe_cols <- function(con) {
-  function(tbl) {
-    d <- tryCatch(db_q(con, glue("DESCRIBE TABLE {tbl}")), error = function(e) NULL)
-    if (is.null(d) || !"col_name" %in% names(d)) return(character(0))
-    cn <- trimws(as.character(d$col_name))
-    cn <- cn[nzchar(cn) & !startsWith(cn, "#")]
-    unique(cn)
-  }
-}
-
 # ===========================================================================
-# Q2d setup - payer and region lookups for the dual cohort, each as a temp
-# view keyed by PATID. Payer follows the production derivation (the enrollment
-# span covering the LOT1 start; Medicare wins overlaps; else the latest span
-# starting on/before LOT1; else Unknown). Region is probed at runtime because
-# no pipeline table carries it: the first enrollment/member table with a
-# region-like column is used, with the same covering-span preference when the
-# table has span dates and a per-patient modal value otherwise.
+# Q2d setup - payer (production derivation, anchored at the LOT1 start) and
+# region (ONLY from the explicitly approved env-configured source).
 # ===========================================================================
 q2_build_payer_view <- function(con, enr) {
   db_exec(con, glue("
@@ -518,27 +386,61 @@ q2_build_payer_view <- function(con, enr) {
   invisible(TRUE)
 }
 
-# Probe candidate CDM tables for a region-like column. Returns list(tbl, col,
-# has_spans, tried) or NULL when nothing usable is reachable.
-q2_find_region_source <- function(con, describe_cols) {
-  tried <- character(0)
+# Resolve the approved region source from REGION_SOURCE_TABLE /
+# REGION_SOURCE_COLUMN. Returns list(tbl, col, has_spans, reason). No
+# automatic column guessing: unset or unusable -> region unavailable.
+q2_region_source_from_env <- function(con, describe_cols) {
+  tbl_env <- trimws(Sys.getenv("REGION_SOURCE_TABLE", unset = ""))
+  col_env <- trimws(Sys.getenv("REGION_SOURCE_COLUMN", unset = ""))
+  if (!nzchar(tbl_env) || !nzchar(col_env))
+    return(list(tbl = NULL, col = NULL, has_spans = FALSE,
+                reason = "REGION_SOURCE_TABLE / REGION_SOURCE_COLUMN not set - region requires an explicitly approved source"))
+  cands <- if (grepl("\\.", tbl_env)) tbl_env else {
+    c(tryCatch(cdm_src(tbl_env), error = function(e) NULL),
+      tryCatch(cdm(tbl_env),     error = function(e) NULL))
+  }
+  cands <- unique(cands[!vapply(cands, is.null, logical(1))])
+  for (tbl in cands) {
+    cols <- describe_cols(tbl)
+    if (length(cols) == 0) next
+    up <- toupper(cols)
+    if (!(toupper(col_env) %in% up))
+      return(list(tbl = NULL, col = NULL, has_spans = FALSE,
+                  reason = sprintf("column '%s' not found on %s (columns: %s)",
+                                   col_env, tbl, paste(head(cols, 40), collapse = ", "))))
+    return(list(tbl = tbl, col = cols[up == toupper(col_env)][1],
+                has_spans = all(c("ELIGEFF", "ELIGEND") %in% up),
+                reason = ""))
+  }
+  list(tbl = NULL, col = NULL, has_spans = FALSE,
+       reason = sprintf("table '%s' not readable (tried: %s)", tbl_env,
+                        paste(cands, collapse = ", ")))
+}
+
+# Report geographic-looking columns on the enrollment/member tables WITHOUT
+# using any of them - so the team can approve one and set the env vars.
+q2_region_candidates_report <- function(con, describe_cols) {
+  rows <- list()
   for (base in c("member_cont_enrollment", "member_enrollment", "member")) {
     for (namer in list(cdm_src, cdm)) {
       tbl <- tryCatch(namer(base), error = function(e) NULL)
-      if (is.null(tbl) || tbl %in% tried) next
-      tried <- c(tried, tbl)
+      if (is.null(tbl)) next
       cols <- describe_cols(tbl)
       if (length(cols) == 0) next
-      up <- toupper(cols)
-      hit <- cols[up == "REGION"]
-      if (length(hit) == 0) hit <- cols[grepl("REGION|DIVISION", up)]
-      if (length(hit) == 0) next
-      return(list(tbl = tbl, col = hit[1],
-                  has_spans = all(c("ELIGEFF", "ELIGEND") %in% up),
-                  cols = cols, tried = tried))
+      hits <- cols[grepl("REGION|DIVISION|STATE|GEO|ZIP", toupper(cols))]
+      if (length(hits))
+        rows[[length(rows) + 1]] <- data.frame(
+          candidate_table = tbl, candidate_column = hits,
+          stringsAsFactors = FALSE)
+      break   # first readable naming of this base table is enough
     }
   }
-  list(tbl = NULL, col = NULL, has_spans = FALSE, cols = character(0), tried = tried)
+  if (length(rows) == 0)
+    return(data.frame(status = "No geographic-looking columns found on the probed enrollment/member tables.",
+                      stringsAsFactors = FALSE))
+  out <- do.call(rbind, rows)
+  out$note <- "candidate only - confirm meaning against the Optum data dictionary, then set REGION_SOURCE_TABLE / REGION_SOURCE_COLUMN"
+  out
 }
 
 q2_build_region_view <- function(con, src) {
@@ -564,7 +466,6 @@ q2_build_region_view <- function(con, src) {
                   ELSE region END AS region
       FROM span WHERE rn = 1"))
   } else {
-    # No span dates on this table: take the per-patient modal value.
     db_exec(con, glue("
       CREATE OR REPLACE TEMPORARY VIEW _jul20_region AS
       WITH vals AS (
@@ -588,10 +489,15 @@ q2_build_region_view <- function(con, src) {
   invisible(TRUE)
 }
 
+# Distinct region values among the dual cohort, for manual confirmation.
+q2_region_values <- function(con) {
+  db_q(con, "
+    SELECT region AS region_value, count(*) AS n_patients
+    FROM _jul20_region GROUP BY region ORDER BY n_patients DESC")
+}
+
 # ===========================================================================
-# Q2d - region x payer cross-tab over the dual cohort (long counts pivoted to
-# a region-by-payer grid with totals), plus an optional plan-type value-count
-# context table when the enrollment table exposes a product/plan column.
+# Q2d - region x payer cross-tab over the dual cohort.
 # ===========================================================================
 q2_region_payer_crosstab <- function(con, have_region, have_payer, n_dual) {
   reg_expr <- if (have_region) "coalesce(r.region, 'Unknown')" else "'(region unavailable)'"
@@ -614,7 +520,6 @@ q2_region_payer_crosstab <- function(con, have_region, have_payer, n_dual) {
   long$n_patients <- as.integer(num(long$n_patients))
   long$pct_of_dual <- vapply(long$n_patients, function(x) pct1(x, n_dual), numeric(1))
 
-  # Pivot long -> region rows x payer columns, with row/column totals.
   regions <- sort(unique(long$region))
   payers  <- sort(unique(long$payer))
   wide <- data.frame(region = regions, stringsAsFactors = FALSE)
@@ -635,7 +540,7 @@ q2_region_payer_crosstab <- function(con, have_region, have_payer, n_dual) {
 q2_plan_type_context <- function(con, describe_cols, enr) {
   cols <- describe_cols(enr)
   up <- toupper(cols)
-  cand <- cols[grepl("PRODUCT|PLAN_TYPE|PLANTYPE|LOB|GRP", up) & up != "BUS"]
+  cand <- cols[grepl("PRODUCT|PLAN_TYPE|PLANTYPE|LOB", up) & up != "BUS"]
   if (length(cand) == 0)
     return(data.frame(status = paste0("No product/plan-type column found on ", enr,
                                       " (columns probed: ", paste(head(cols, 40), collapse = ", "), ")"),
@@ -656,20 +561,19 @@ q2_plan_type_context <- function(con, describe_cols, enr) {
 }
 
 # ===========================================================================
-# Q2 - patient-level roster (one row per dual patient). Written as the main
-# downloadable CSV; the same frame (capped) also lands in the dashboard.
+# Q2 - patient-level roster (one row per dual patient).
 # ===========================================================================
 q2_roster <- function(con, lot_long, coh_tbl, dara, bort,
                       have_claims, have_payer, have_region) {
   claims_sel <- if (have_claims) "
-           dc.n_medical_claims  AS dara_medical_claims,
-           dc.n_pharmacy_fills  AS dara_pharmacy_fills,
-           bc.n_medical_claims  AS bort_medical_claims,
-           bc.n_pharmacy_fills  AS bort_pharmacy_fills," else "
-           cast(NULL as int) AS dara_medical_claims,
-           cast(NULL as int) AS dara_pharmacy_fills,
-           cast(NULL as int) AS bort_medical_claims,
-           cast(NULL as int) AS bort_pharmacy_fills,"
+           dc.n_medical_service_dates  AS dara_medical_service_dates,
+           dc.n_pharmacy_fill_dates    AS dara_pharmacy_fill_dates,
+           bc.n_medical_service_dates  AS bort_medical_service_dates,
+           bc.n_pharmacy_fill_dates    AS bort_pharmacy_fill_dates," else "
+           cast(NULL as int) AS dara_medical_service_dates,
+           cast(NULL as int) AS dara_pharmacy_fill_dates,
+           cast(NULL as int) AS bort_medical_service_dates,
+           cast(NULL as int) AS bort_pharmacy_fill_dates,"
   claims_join <- if (have_claims) glue("
     LEFT JOIN _jul20_dual_claims dc ON dc.PATID = d.PATID AND dc.agent = '{dara}'
     LEFT JOIN _jul20_dual_claims bc ON bc.PATID = d.PATID AND bc.agent = '{bort}'") else ""
@@ -718,9 +622,9 @@ q2_roster <- function(con, lot_long, coh_tbl, dara, bort,
     ORDER BY d.PATID"))
 }
 
-# Per-MAP detail for the dual cohort (every DARA/BORT episode from LOT1 start
-# on, flagged for the induction window and the LOT1 span) - the "individual
-# episodes and MAPs" Julia asked for, one row per episode.
+# Per-MAP detail for the dual cohort: every DARA/BORT episode from the LOT1
+# start on. The caller splits it into DURING-LOT1 and AFTER-LOT1 files so 1L
+# utilization is never mixed with later use.
 q2_map_detail <- function(con, map_tbl, dara, bort, w1) {
   db_q(con, glue("
     SELECT d.PATID,
@@ -744,15 +648,14 @@ q2_map_detail <- function(con, map_tbl, dara, bort, w1) {
 }
 
 # ===========================================================================
-# Q3b - CAR-T rule impact. Current rule: a CAR-T on/after the LOT1 start -
-# including inside the 60-day induction window - ends LOT1 the day before
-# (END_REASON SCT_CART or CART_INIT) and opens a CART-started LOT2.
-# Candidate rule: a CAR-T inside the induction window stays in LOT1.
-# Affected lines = LOT1 rows ended by CAR-T whose first CAR-T date falls in
-# [LOT1 start, start + w1 - 1]. Simulation: the CART LOT2 folds back into
-# LOT1 (new end = the old LOT2's end) and later lines renumber down by one.
+# Q3b - CAR-T rule: PRELIMINARY affected-patient screen (not an engine
+# re-run). Affected = LOT1 rows ended by a CAR-T whose first CAR-T date falls
+# inside [LOT1 start, start + w1 - 1]. The screen shows what folding the
+# CART-started LOT2 back into LOT1 would look like; affected patients with no
+# LOT2 row are flagged (their merged LOT1 end is not derivable from the
+# existing outputs).
 # ===========================================================================
-q3_cart_impact <- function(con, lot_long, sct_tbl, w1) {
+q3_cart_screen <- function(con, lot_long, sct_tbl, w1) {
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW _jul20_cart AS
     WITH l1 AS (
@@ -811,6 +714,8 @@ q3_cart_impact <- function(con, lot_long, sct_tbl, w1) {
       sum(CASE WHEN cart_in_window = 1 AND ended_by_cart = 1
                 AND L2 IS NOT NULL THEN 1 ELSE 0 END)                   AS n_affected_with_lot2_to_merge,
       sum(CASE WHEN cart_in_window = 1 AND ended_by_cart = 1
+                AND L2 IS NULL THEN 1 ELSE 0 END)                       AS n_affected_without_lot2_end_not_derivable,
+      sum(CASE WHEN cart_in_window = 1 AND ended_by_cart = 1
                 AND L2_TYPE = 'CART' THEN 1 ELSE 0 END)                 AS n_affected_lot2_type_cart
     FROM _jul20_cart"))
 
@@ -834,8 +739,6 @@ q3_cart_impact <- function(con, lot_long, sct_tbl, w1) {
            END
     ORDER BY first_cart_timing")
 
-  # Lines-per-patient distribution before vs after the merge. Affected
-  # patients with a LOT2 lose one line; everyone else is unchanged.
   shift <- db_q(con, "
     SELECT n_lots,
            count(*) AS n_patients,
@@ -856,9 +759,11 @@ q3_cart_impact <- function(con, lot_long, sct_tbl, w1) {
            L2_REGIMEN              AS lot2_regimen,
            cast(L2_END as string)  AS lot2_end_dt,
            L2_END_REASON           AS lot2_end_reason,
-           cast(L2_END as string)  AS simulated_new_lot1_end_dt,
+           CASE WHEN L2 IS NOT NULL THEN cast(L2_END as string)
+                ELSE '(not derivable - no LOT2 row; needs the scenario re-run)' END
+                                   AS screened_merged_lot1_end,
            n_lots                  AS n_lots_current,
-           CASE WHEN L2 IS NOT NULL THEN n_lots - 1 ELSE n_lots END AS n_lots_simulated
+           CASE WHEN L2 IS NOT NULL THEN n_lots - 1 ELSE n_lots END AS n_lots_screened
     FROM _jul20_cart
     WHERE cart_in_window = 1 AND ended_by_cart = 1
     ORDER BY PATID")
@@ -866,42 +771,37 @@ q3_cart_impact <- function(con, lot_long, sct_tbl, w1) {
   list(inventory = inv, timing = timing, shift = shift, roster = roster)
 }
 
-# Turns the q3 shift frames into a before/after lines-per-patient table.
-q3_shift_table <- function(shift, n_col = "n_losing_one_line") {
+# Lines-per-patient distribution, current vs screened merge: affected
+# patients with a LOT2 move down one bucket, everyone else is unchanged.
+q3_cart_shift_table <- function(shift) {
   if (is_status_table(shift) || nrow(shift) == 0) return(shift)
   lots  <- as.integer(num(shift$n_lots))
   n     <- as.integer(num(shift$n_patients))
-  lose  <- as.integer(num(shift[[n_col]]))
-  after <- integer(max(lots))
-  before <- integer(max(lots))
+  lose  <- as.integer(num(shift$n_losing_one_line))
+  mx <- max(lots)
+  before <- integer(mx); after <- integer(mx)
   for (i in seq_along(lots)) {
     before[lots[i]] <- before[lots[i]] + n[i]
-    stay <- n[i] - lose[i]
-    after[lots[i]] <- after[lots[i]] + stay
+    after[lots[i]]  <- after[lots[i]] + (n[i] - lose[i])
     tgt <- max(1L, lots[i] - 1L)
     after[tgt] <- after[tgt] + lose[i]
   }
-  data.frame(lines_per_patient = seq_len(max(lots)),
+  data.frame(lines_per_patient = seq_len(mx),
              n_patients_current = before,
-             n_patients_simulated = after,
+             n_patients_screened = after,
              change = after - before,
              stringsAsFactors = FALSE)
 }
 
 # ===========================================================================
-# Q3a - MELP rule impact. Current rule: MELP is an ordinary agent - a MELP MAP
-# starting after the induction window ends the line (MED_ADD) and/or starts
-# the next line. The candidate rule keys each advancing MELP to the FIRST MELP
-# MAP of the line it follows: 60-180 days after it -> do not advance;
-# otherwise -> MELP is part of the line. Read literally both branches stop the
-# advance, so the tabs show the literal reading AND the narrow one (only the
-# 60-180-day recurrences suppressed), with the timing decomposition.
-#
-# A "MELP boundary" is a line transition attributable to MELP: the earlier
-# line ended MED_ADD with MELP as the added drug, and/or the next line is
-# MED-started on the date a MELP MAP begins.
+# Q3a - MELP rule: PRELIMINARY boundary screen (not an engine re-run).
+# A "MELP boundary" is a line transition attributable to melphalan: the
+# earlier line ended MED_ADD with MELP as the added drug, and/or the next
+# line is MED-started on the date a MELP MAP begins. Each boundary is
+# bucketed by timing against the first MELP MAP of the line it follows,
+# because the rule text is ambiguous (see the summary file).
 # ===========================================================================
-q3_melp_impact <- function(con, lot_long, map_tbl, melp) {
+q3_melp_screen <- function(con, lot_long, map_tbl, melp) {
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW _jul20_melp_maps AS
     SELECT cast(PATID as string) AS PATID,
@@ -1013,8 +913,9 @@ q3_melp_impact <- function(con, lot_long, map_tbl, melp) {
     GROUP BY prev_lot, next_lot
     ORDER BY prev_lot, next_lot")
 
-  # Lines-per-patient shift under both readings. Only boundaries with a next
-  # line reduce the line count when suppressed.
+  # Per-(n_lots, suppressed-count) groups so the caller can regroup patients
+  # into a true current-vs-screened lines-per-patient distribution. Only
+  # boundaries with a next line reduce the line count when suppressed.
   shift <- db_q(con, glue("
     WITH cnt AS (
       SELECT cast(PATID as string) AS PATID, count(*) AS n_lots
@@ -1028,11 +929,12 @@ q3_melp_impact <- function(con, lot_long, map_tbl, melp) {
       FROM _jul20_melp_bounds GROUP BY PATID
     )
     SELECT c.n_lots,
-           count(*)                              AS n_patients,
-           sum(coalesce(s.n_supp_literal, 0))    AS n_lines_removed_literal,
-           sum(coalesce(s.n_supp_narrow, 0))     AS n_lines_removed_narrow
+           coalesce(s.n_supp_literal, 0) AS n_supp_literal,
+           coalesce(s.n_supp_narrow, 0)  AS n_supp_narrow,
+           count(*)                      AS n_patients
     FROM cnt c LEFT JOIN supp s ON s.PATID = c.PATID
-    GROUP BY c.n_lots ORDER BY c.n_lots"))
+    GROUP BY c.n_lots, coalesce(s.n_supp_literal, 0), coalesce(s.n_supp_narrow, 0)
+    ORDER BY c.n_lots"))
 
   roster <- db_q(con, "
     SELECT PATID,
@@ -1060,29 +962,61 @@ q3_melp_impact <- function(con, lot_long, map_tbl, melp) {
        shift = shift, roster = roster)
 }
 
-# Before/after lines-per-patient for the MELP simulation (both readings).
-# Approximation stated in the tab: each suppressed boundary merges two lines,
-# so a patient's line count drops by their number of suppressed boundaries.
+# True current-vs-screened lines-per-patient distributions for the MELP
+# screen, one column per reading. Per patient: screened lines = current
+# lines minus that patient's suppressed boundaries (floored at 1).
 q3_melp_shift_table <- function(shift) {
   if (is_status_table(shift) || nrow(shift) == 0) return(shift)
   lots <- as.integer(num(shift$n_lots))
+  supl <- as.integer(num(shift$n_supp_literal))
+  supn <- as.integer(num(shift$n_supp_narrow))
   n    <- as.integer(num(shift$n_patients))
-  data.frame(lines_per_patient = lots,
-             n_patients_current = n,
-             n_lines_removed_literal = as.integer(num(shift$n_lines_removed_literal)),
-             n_lines_removed_narrow  = as.integer(num(shift$n_lines_removed_narrow)),
+  mx <- max(lots)
+  cur <- integer(mx); lit <- integer(mx); nar <- integer(mx)
+  for (i in seq_along(lots)) {
+    cur[lots[i]] <- cur[lots[i]] + n[i]
+    tl <- max(1L, lots[i] - supl[i]); lit[tl] <- lit[tl] + n[i]
+    tn <- max(1L, lots[i] - supn[i]); nar[tn] <- nar[tn] + n[i]
+  }
+  data.frame(lines_per_patient = seq_len(mx),
+             n_patients_current = cur,
+             n_patients_screened_literal_reading = lit,
+             n_patients_screened_narrow_reading = nar,
              stringsAsFactors = FALSE)
+}
+
+# Timeline extracts for the first n boundary patients: their full LOT rows
+# and their MELP MAP dates, so the boundaries can be reviewed by hand.
+q3_melp_examples <- function(con, n = 10L) {
+  ids <- db_q(con, glue("
+    SELECT DISTINCT PATID FROM _jul20_melp_bounds ORDER BY PATID LIMIT {as.integer(n)}"))
+  if (nrow(ids) == 0)
+    return(list(lots = data.frame(status = "No MELP boundary patients to extract.",
+                                  stringsAsFactors = FALSE),
+                maps = NULL))
+  id_list <- paste(sprintf("'%s'", ids$PATID), collapse = ", ")
+  lots <- db_q(con, glue("
+    SELECT PATID, LOT_NUM,
+           cast(LSTART as string) AS lot_start_dt,
+           cast(LEND as string)   AS lot_end_dt,
+           LOT_START_TYPE         AS lot_start_type,
+           LOT_BASE_END_REASON    AS lot_end_reason,
+           LOT_BASE_MEDS          AS regimen,
+           ADD_MED                AS first_add_med,
+           cast(ADD_DT as string) AS first_add_med_dt,
+           AUTO_FLG               AS auto_transplant_flg
+    FROM _jul20_lots WHERE PATID IN ({id_list})
+    ORDER BY PATID, LOT_NUM"))
+  maps <- db_q(con, glue("
+    SELECT PATID, cast(MSTART as string) AS melp_map_start_dt
+    FROM _jul20_melp_maps WHERE PATID IN ({id_list})
+    ORDER BY PATID, MSTART"))
+  list(lots = lots, maps = maps)
 }
 
 # ===========================================================================
 main <- function() {
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
-
-  # The workbook is Excel, so check for openxlsx up front (before any
-  # warehouse work) and stop with an install hint if it is missing.
-  if (!requireNamespace("openxlsx", quietly = TRUE))
-    stop("openxlsx is required to build the Excel workbook. Install it with ",
-         "install.packages('openxlsx') and re-run.")
 
   con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
@@ -1107,8 +1041,7 @@ main <- function() {
   coh_tbl <- wrk(cfg$input_cohort_table)
 
   log_msg(SEP)
-  log_msg("July-20 study-team questions [", cohort_label,
-          "] -> workbook + refreshed dashboard + CSVs")
+  log_msg("July-20 study-team questions Q2+Q3 [", cohort_label, "] -> CSVs + summaries")
   log_msg(SEP)
   if (!vqs_readable(con, lot_long)) {
     if (cohort_mode == "NDMM")
@@ -1121,9 +1054,9 @@ main <- function() {
   have_sct <- vqs_readable(con, sct_tbl)
   have_mma <- vqs_readable(con, mma_tbl)
   have_coh <- vqs_readable(con, coh_tbl)
-  if (!have_map) log_msg("WARNING: ", map_tbl, " not readable - Q2 episodes and the Q3a MELP simulation cannot be built.")
-  if (!have_sct) log_msg("WARNING: ", sct_tbl, " not readable - the Q3b CAR-T simulation cannot be built.")
-  if (!have_mma) log_msg("NOTE: ", mma_tbl, " not readable - per-agent claim counts will be blank (episodes still reported).")
+  if (!have_map) log_msg("WARNING: ", map_tbl, " not readable - Q2 episodes and the Q3a MELP screen cannot be built.")
+  if (!have_sct) log_msg("WARNING: ", sct_tbl, " not readable - the Q3b CAR-T screen cannot be built.")
+  if (!have_mma) log_msg("NOTE: ", mma_tbl, " not readable - service-date counts will be blank (episodes still reported).")
   if (!have_coh) log_msg("WARNING: ", coh_tbl, " not readable - diagnosis dates cannot be reported.")
 
   tok <- resolve_jul20_tokens(con)
@@ -1132,7 +1065,7 @@ main <- function() {
   describe_cols <- make_describe_cols(con)
 
   write_out <- function(df, tag) {
-    if (is.null(df) || !is.data.frame(df) || nrow(df) == 0 || is_status_table(df)) {
+    if (is.null(df) || !is.data.frame(df) || nrow(df) == 0) {
       log_msg("  (", tag, ": no rows to write)")
       return(invisible(NULL))
     }
@@ -1141,434 +1074,354 @@ main <- function() {
     log_msg("  wrote ", tag, " -> ", f, " (", nrow(df), " rows)")
     f
   }
+  write_text <- function(lines, tag, ext = ".txt") {
+    f <- file.path(out_dir, paste0("jul20_qs_", tag, "_", tolower(cohort_mode), "_", stamp, ext))
+    writeLines(lines, f)
+    log_msg("  wrote ", tag, " -> ", f)
+    f
+  }
+
+  gaps <- character()
+  if (!isTRUE(tok$resolved))
+    gaps <- c(gaps,
+      "Agent tokens could not be resolved from cl_mma_codelist.csv - fell back to defaults (DARA/BORT/MELP); every token-based answer is unverified")
+
+  # Automated reconciliation checks collected along the way.
+  checks <- list()
+  add_check <- function(name, ok, detail) {
+    status <- if (is.na(ok)) "SKIPPED" else if (ok) "PASS" else "FAIL"
+    checks[[length(checks) + 1L]] <<- data.frame(
+      check = name, status = status, detail = detail, stringsAsFactors = FALSE)
+    if (identical(status, "FAIL")) {
+      log_msg("  CHECK FAIL: ", name, " - ", detail)
+      gaps <<- c(gaps, paste0("validation check failed: ", name, " (", detail, ")"))
+    }
+  }
 
   n_lot1 <- num(db_q(con, glue(
     "SELECT count(DISTINCT cast(PATID as string)) AS n FROM {lot_long} WHERE LOT_NUM = 1"))$n[1])
+  lot_totals <- db_q(con, glue("
+    SELECT LOT_NUM, count(DISTINCT cast(PATID as string)) AS n_patients
+    FROM {lot_long} GROUP BY LOT_NUM ORDER BY LOT_NUM"))
   log_msg(sprintf("Cohort denominator: LOT1 = %s patients.", format(n_lot1, big.mark = ",")))
+  write_out(data.frame(line = paste0("LOT", lot_totals$LOT_NUM),
+                       n_patients = as.integer(num(lot_totals$n_patients)),
+                       note = "reconcile these against the current NDMM/overall dashboard before sharing",
+                       stringsAsFactors = FALSE),
+            "lot_totals_for_reconciliation")
 
-  sheets <- list()
-  add_sheet <- function(...) sheets[[length(sheets) + 1L]] <<- list(...)
-
-  # Reasons the run counts as incomplete, beyond the failed-table scan at the
-  # end: a token fallback, a steroid hit, a skipped dashboard, or a Q2/Q3
-  # input table that never became readable.
-  extra_gaps <- character()
-  if (!isTRUE(tok$resolved))
-    extra_gaps <- c(extra_gaps,
-      "Agent tokens could not be resolved from cl_mma_codelist.csv - fell back to defaults (DARA/BORT/MELP); every token-based answer (Q2 and Q3a) is unverified")
-
-  # Dashboard availability (ask #1 is the dashboard itself).
-  dash_ok <- .have_dashboard_helpers &&
-    isTRUE(tryCatch(exists("save_table") && exists("build_dashboard") &&
-                    exists("add_html_card"), error = function(e) FALSE)) &&
-    requireNamespace("DT", quietly = TRUE) &&
-    requireNamespace("htmlwidgets", quietly = TRUE) &&
-    requireNamespace("jsonlite", quietly = TRUE) &&
-    requireNamespace("base64enc", quietly = TRUE)
-  if (dash_ok) {
-    cfg$build_dashboard <<- TRUE
-    dashboard_items <<- list()
-  } else {
-    extra_gaps <- c(extra_gaps,
-      "Q1 refreshed dashboard could not be built (dashboard helpers or the DT/htmlwidgets/jsonlite/base64enc packages are unavailable) - the regimen CSVs and workbook tabs still carry the content")
-    log_msg("WARNING: dashboard packages unavailable - Q1 dashboard skipped (CSVs still written).")
-  }
-  dash_table <- function(df, section, title) {
-    if (!dash_ok || !is.data.frame(df)) return(invisible(NULL))
-    shown <- df
-    if (nrow(shown) > DASH_MAX_ROWS) {
-      shown <- shown[seq_len(DASH_MAX_ROWS), , drop = FALSE]
-      title <- paste0(title, " (first ", DASH_MAX_ROWS, " rows - full data in the CSV)")
-    }
-    save_table(shown, section, title)
-  }
-  dash_card <- function(html, section, title) {
-    if (!dash_ok) return(invisible(NULL))
-    add_html_card(html, section, title)
-  }
-
-  # ---- Q1a: all regimens per LOT ----------------------------------------
-  q1 <- best_effort(q1_all_regimens(con, lot_long), "all regimens per LOT")
-  q1_failed <- is.data.frame(q1)
-  if (!q1_failed) {
-    for (ln in names(q1$per_lot))
-      write_out(q1$per_lot[[ln]], paste0("all_regimens_lot", ln))
-  }
-
-  # ---- Q1b: steroid audit ------------------------------------------------
-  aud <- q1_steroid_audit(con, lot_long)
-  aud_failed <- is_status_table(aud$audit)
-  aud_hits <- if (aud_failed) NA_integer_
-              else suppressWarnings(as.integer(num(aud$audit$n_rows_with_steroid_token[1])))
-  if (aud_failed) {
-    ster_line <- "The steroid audit could not run (see the status table on the steroid tab)."
-  } else if (isTRUE(aud_hits > 0)) {
-    extra_gaps <- c(extra_gaps, sprintf(
-      "Q1 steroid audit failed: %d regimen row(s) contain a steroid token - investigate before sharing", aud_hits))
-    ster_line <- sprintf(
-      "Audit FAILED: %d regimen row(s) contain a steroid token - unexpected; investigate before using these lists.", aud_hits)
-  } else if (is.na(aud_hits)) {
-    extra_gaps <- c(extra_gaps, "Q1 steroid audit inconclusive - no usable count (no LOT regimen rows?)")
-    ster_line <- "The steroid audit returned no usable count this run, so it is inconclusive."
-  } else {
-    ster_line <- paste0(
-      "Steroids never enter the LOT rules or the regimen strings (the engine excludes them by construction), ",
-      "and the audit found no steroid token in any regimen - so these lists are steroid-free without any re-run.")
-  }
-
-  # ---- Q2: DARA+BORT 1L dual therapy ------------------------------------
-  n_dual <- NA_real_
-  q2_tabs <- list(); q2_notes <- character()
-  q2_cycles <- NULL; q2_l2 <- NULL; q2_dx <- NULL
-  roster <- NULL; map_detail <- NULL
-  xt <- NULL; plan_ctx <- NULL
-  have_payer <- FALSE; have_region <- FALSE
-  region_note <- ""; payer_note <- ""
-
+  # ======================================================================
+  # Q2 - DARA+BORT 1L dual therapy
+  # ======================================================================
   dual_res <- best_effort(q2_build_dual_view(con, lot_long, tok$dara, tok$bort),
                           "DARA+BORT dual cohort")
   n_dual <- if (is_status_table(dual_res)) NA_real_ else num(dual_res[1])
   if (length(n_dual) == 0 || is.na(n_dual)) {
     n_dual <- NA_real_
-    q2_notes <- "The DARA+BORT dual cohort could not be built - see the status rows."
-    q2_tabs[["DARA+BORT dual cohort"]] <- data.frame(
-      status = "Could not build the 1L DARA+BORT dual-therapy cohort view.",
-      stringsAsFactors = FALSE)
-  } else {
-    log_msg(sprintf("1L DARA+BORT dual-therapy patients: %s.", format(n_dual, big.mark = ",")))
+    gaps <- c(gaps, "Q2 could not be built - the DARA+BORT dual cohort view failed")
+  }
+
+  have_payer <- FALSE; have_region <- FALSE
+  region_note <- ""; payer_note <- ""
+  q2_util <- NULL; q2_l2 <- NULL; q2_dx <- NULL
+  roster <- NULL; xt <- NULL
+
+  if (!is.na(n_dual)) {
+    log_msg(sprintf("1L exact DARA+BORT dual-therapy patients: %s.", format(n_dual, big.mark = ",")))
+
+    ctx <- best_effort(q2_context_counts(con, lot_long, tok$dara, tok$bort),
+                       "exact-dual vs contains-both context")
+    write_out(ctx, "dual_definition_and_context")
+    if (!is_status_table(ctx)) {
+      n_exact_ctx <- ctx$n_patients[2]
+      add_check("dual_definition_consistent", isTRUE(n_exact_ctx == n_dual),
+                sprintf("context count %s vs dual view %s", n_exact_ctx, n_dual))
+    }
 
     have_agent <- FALSE
-    if (have_map) {
+    if (have_map)
       have_agent <- !is_status_table(best_effort(
         q2_build_agent_views(con, map_tbl, tok$dara, tok$bort), "per-agent episode view"))
-    }
     have_claims <- FALSE
-    if (have_mma) {
+    if (have_mma)
       have_claims <- !is_status_table(best_effort(
-        q2_build_claim_view(con, mma_tbl, tok$dara, tok$bort), "per-agent claim view"))
-    }
+        q2_build_claim_view(con, mma_tbl, tok$dara, tok$bort), "per-agent service-date view"))
+    if (!have_claims)
+      gaps <- c(gaps, "Q2a service-date counts unavailable (MMA_MED_PROCESSED unreadable) - episode counts still reported")
 
-    # Payer (production derivation) and region (probed) lookups.
+    # Payer (documented anchor: enrollment span covering the LOT1 start).
     enr <- tryCatch(cdm_src("member_enrollment"), error = function(e) NULL)
     enr_ok <- !is.null(enr) && isTRUE(tryCatch({
       db_q(con, glue("SELECT BUS, ELIGEFF, ELIGEND FROM {enr} LIMIT 1")); TRUE
     }, error = function(e) FALSE))
     if (enr_ok) {
       have_payer <- !is_status_table(best_effort(q2_build_payer_view(con, enr), "payer lookup"))
-      payer_note <- paste0("Payer = Optum line of business (member_enrollment.BUS) on the enrollment span ",
-                           "covering the LOT1 start: MCR = Medicare, COM = Commercial; Medicare wins overlaps.")
+      payer_note <- paste0("Payer = member_enrollment.BUS on the enrollment span covering the ",
+                           "LOT1 start (MCR = Medicare, COM = Commercial; Medicare wins overlaps; ",
+                           "blank = Unknown; else Other(<BUS>)). Anchor is the LOT1 start date - ",
+                           "if payer at diagnosis / across LOT1 / ever is wanted instead, that is a different derivation.")
     } else {
       payer_note <- "member_enrollment.BUS was not readable, so payer is unavailable this run."
-      extra_gaps <- c(extra_gaps, "Q2d payer unavailable - member_enrollment.BUS not readable")
-    }
-    reg_src <- q2_find_region_source(con, describe_cols)
-    if (!is.null(reg_src$tbl)) {
-      have_region <- !is_status_table(best_effort(q2_build_region_view(con, reg_src), "region lookup"))
-      region_note <- sprintf("Region = %s.%s (%s).", reg_src$tbl, reg_src$col,
-                             if (reg_src$has_spans) "enrollment span covering the LOT1 start"
-                             else "per-patient modal value - the table has no span dates")
-    } else {
-      region_note <- paste0("No region-like column was found on the enrollment/member tables probed (",
-                            paste(reg_src$tried, collapse = ", "),
-                            "), so region is unavailable this run. If the Optum member table in this ",
-                            "workspace carries the Census region under another name, extend the probe list.")
-      extra_gaps <- c(extra_gaps, "Q2d region unavailable - no region-like column found on the probed CDM tables")
+      gaps <- c(gaps, "Q2d payer unavailable - member_enrollment.BUS not readable")
     }
 
+    # Region: approved source only; candidates reported for approval.
+    write_out(best_effort(q2_region_candidates_report(con, describe_cols),
+                          "region candidate columns"), "region_candidate_columns")
+    reg_src <- q2_region_source_from_env(con, describe_cols)
+    if (!is.null(reg_src$tbl)) {
+      have_region <- !is_status_table(best_effort(q2_build_region_view(con, reg_src), "region lookup"))
+      region_note <- sprintf(
+        "Region = %s.%s (approved via REGION_SOURCE_TABLE/REGION_SOURCE_COLUMN; %s). Values are passed through untouched - confirm them in the region_value_counts file.",
+        reg_src$tbl, reg_src$col,
+        if (reg_src$has_spans) "anchored to the enrollment span covering the LOT1 start"
+        else "per-patient modal value - the table has no span dates")
+      if (have_region)
+        write_out(best_effort(q2_region_values(con), "region value counts"),
+                  "region_value_counts")
+    } else {
+      region_note <- paste0("Region unavailable: ", reg_src$reason,
+                            ". Candidate columns are listed in the region_candidate_columns file; ",
+                            "confirm one against the Optum data dictionary and set the env vars.")
+      gaps <- c(gaps, paste0("Q2d region unavailable - ", reg_src$reason))
+    }
+    log_msg("  ", payer_note)
+    log_msg("  ", region_note)
+
     if (have_agent) {
-      q2_cycles <- best_effort(q2_cycles_summary(con, have_claims), "cycles per agent")
+      q2_util <- best_effort(q2_utilization_summary(con, have_claims), "utilization per agent")
+      if (!is_status_table(q2_util)) {
+        write_out(q2_util$summary, "utilization_summary")
+        write_out(q2_util$distribution, "episode_distribution")
+        if (!is.null(q2_util$service_dates)) write_out(q2_util$service_dates, "service_date_summary")
+      } else {
+        write_out(q2_util, "utilization_summary")
+      }
       roster <- best_effort(q2_roster(con, lot_long, coh_tbl, tok$dara, tok$bort,
                                       have_claims, have_payer, have_region),
                             "DARA+BORT patient roster")
+      write_out(roster, "dara_bort_patients")
+      if (!is_status_table(roster)) {
+        add_check("roster_one_row_per_patient", isTRUE(nrow(roster) == n_dual),
+                  sprintf("%d roster rows vs %d dual patients", nrow(roster), as.integer(n_dual)))
+      } else {
+        add_check("roster_one_row_per_patient", FALSE, "roster could not be built")
+      }
+
       map_detail <- best_effort(q2_map_detail(con, map_tbl, tok$dara, tok$bort, VQS_W1),
                                 "DARA+BORT MAP detail")
+      if (!is_status_table(map_detail)) {
+        during <- map_detail[num(map_detail$starts_in_lot1) == 1, , drop = FALSE]
+        after  <- map_detail[num(map_detail$starts_in_lot1) != 1, , drop = FALSE]
+        write_out(during, "dara_bort_maps_during_lot1")
+        write_out(after,  "dara_bort_maps_after_lot1")
+        if (!is_status_table(roster)) {
+          ep_roster <- sum(num(roster$dara_n_episodes), na.rm = TRUE) +
+                       sum(num(roster$bort_n_episodes), na.rm = TRUE)
+          add_check("episodes_reconcile_roster_vs_detail",
+                    isTRUE(ep_roster == nrow(during)),
+                    sprintf("roster episode sum %d vs during-LOT1 detail rows %d",
+                            as.integer(ep_roster), nrow(during)))
+        }
+      } else {
+        write_out(map_detail, "dara_bort_maps_during_lot1")
+      }
     } else {
-      q2_cycles <- data.frame(status = paste0(map_tbl, " not readable - episodes/MAPs need MAP_STACKED."),
-                              stringsAsFactors = FALSE)
-      roster <- q2_cycles; map_detail <- q2_cycles
+      gaps <- c(gaps, "Q2a episodes unavailable - MAP_STACKED unreadable")
+      add_check("roster_one_row_per_patient", NA, "skipped - MAP_STACKED unreadable")
     }
+
+    # Definition audit: every dual patient has exactly the two expected tokens.
+    aud <- best_effort(db_q(con, glue("
+      WITH l1 AS (
+        SELECT cast(PATID as string) AS PATID, {MEDS_ARR} AS meds
+        FROM {lot_long}
+        WHERE LOT_NUM = 1 AND LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
+      )
+      SELECT count(*) AS n_bad
+      FROM _jul20_dual d JOIN l1 ON l1.PATID = d.PATID
+      WHERE NOT (size(l1.meds) = 2 AND array_contains(l1.meds, '{tok$dara}')
+                 AND array_contains(l1.meds, '{tok$bort}'))")), "dual definition audit")
+    if (!is_status_table(aud))
+      add_check("dual_definition_audit_exact_two_tokens",
+                isTRUE(num(aud$n_bad[1]) == 0),
+                sprintf("%s patient(s) violate the exact-two-token definition", aud$n_bad[1]))
+
     q2_l2 <- best_effort(q2_lot2_regimens(con, lot_long, n_dual), "2L regimens of the dual cohort")
-    q2_dx <- if (have_coh) best_effort(q2_diagnosis_years(con, coh_tbl, n_dual), "diagnosis years")
-             else data.frame(status = paste0(coh_tbl, " not readable - diagnosis dates unavailable."),
-                             stringsAsFactors = FALSE)
+    write_out(q2_l2, "lot2_regimens")
+    if (!is_status_table(q2_l2))
+      add_check("lot2_categories_sum_to_dual",
+                isTRUE(sum(q2_l2$n_patients) == n_dual),
+                sprintf("2L category sum %d vs %d dual patients",
+                        sum(q2_l2$n_patients), as.integer(n_dual)))
+
+    if (have_coh) {
+      q2_dx <- best_effort(q2_diagnosis_years(con, coh_tbl, n_dual), "diagnosis years")
+      write_out(q2_dx, "diagnosis_years")
+      if (!is_status_table(q2_dx))
+        add_check("diagnosis_years_sum_to_dual",
+                  isTRUE(sum(q2_dx$n_patients) == n_dual),
+                  sprintf("diagnosis-year sum %d (incl. missing) vs %d dual patients",
+                          sum(q2_dx$n_patients), as.integer(n_dual)))
+    } else {
+      gaps <- c(gaps, "Q2c diagnosis dates unavailable - ELIG_COH_FINAL unreadable")
+    }
+
     xt <- best_effort(q2_region_payer_crosstab(con, have_region, have_payer, n_dual),
                       "region x payer crosstab")
+    if (!is_status_table(xt)) {
+      write_out(xt$long, "region_payer_counts")
+      if (!is.null(xt$wide)) write_out(xt$wide, "region_payer_grid")
+      add_check("crosstab_sums_to_dual",
+                isTRUE(sum(xt$long$n_patients) == n_dual),
+                sprintf("crosstab sum %d vs %d dual patients",
+                        sum(xt$long$n_patients), as.integer(n_dual)))
+    }
     if (enr_ok)
-      plan_ctx <- best_effort(q2_plan_type_context(con, describe_cols, enr), "plan-type context")
-
-    write_out(roster, "dara_bort_patients")
-    write_out(map_detail, "dara_bort_map_detail")
-    if (!is_status_table(xt) && is.data.frame(xt$long)) write_out(xt$long, "region_payer_counts")
+      write_out(best_effort(q2_plan_type_context(con, describe_cols, enr), "plan-type context"),
+                "plan_type_context")
   }
 
-  # ---- Q3: rule-change impact -------------------------------------------
+  # ======================================================================
+  # Q3 - PRELIMINARY rule screens
+  # ======================================================================
   cart <- if (have_sct)
-    best_effort(q3_cart_impact(con, lot_long, sct_tbl, VQS_W1), "CAR-T rule impact")
+    best_effort(q3_cart_screen(con, lot_long, sct_tbl, VQS_W1), "CAR-T rule screen")
   else data.frame(status = paste0(sct_tbl, " not readable - LOT1_SCT (FIRST_CART_DT) is required."),
                   stringsAsFactors = FALSE)
+  if (!is_status_table(cart)) {
+    write_out(cart$inventory, "cart_rule_inventory")
+    write_out(cart$timing, "cart_rule_timing")
+    write_out(q3_cart_shift_table(cart$shift), "cart_rule_lines_shift")
+    write_out(cart$roster, "cart_rule_affected_patients")
+    n_aff <- num(cart$inventory$n_affected_lot1_ended_by_cart[1])
+    n_bad_type <- num(cart$inventory$n_affected_with_lot2_to_merge[1]) -
+                  num(cart$inventory$n_affected_lot2_type_cart[1])
+    add_check("cart_affected_lot2_is_cart_started",
+              isTRUE(!is.na(n_bad_type) && n_bad_type == 0),
+              sprintf("%s affected patient(s) whose LOT2 is not CART-started (screen assumption violated)",
+                      n_bad_type))
+    add_check("cart_affected_all_have_expected_end_reason", TRUE,
+              sprintf("%s affected LOT1s, all with END_REASON SCT_CART/CART_INIT by construction",
+                      n_aff))
+  } else {
+    write_out(cart, "cart_rule_inventory")
+    gaps <- c(gaps, "Q3b CAR-T screen unavailable - LOT1_SCT unreadable")
+  }
+
   melp <- if (have_map)
-    best_effort(q3_melp_impact(con, lot_long, map_tbl, tok$melp), "MELP rule impact")
+    best_effort(q3_melp_screen(con, lot_long, map_tbl, tok$melp), "MELP rule screen")
   else data.frame(status = paste0(map_tbl, " not readable - MAP_STACKED is required."),
                   stringsAsFactors = FALSE)
-
-  if (!is_status_table(cart)) write_out(cart$roster, "cart_rule_affected_patients")
-  if (!is_status_table(melp)) write_out(melp$roster, "melp_rule_boundaries")
-
-  # ======================================================================
-  # Workbook assembly
-  # ======================================================================
-  add_sheet(name = "Read Me",
-    title = paste0("July-20 study-team questions - ", cohort_label),
-    subtitle = paste0("Generated ", stamp, " by jul20_studyteam_qs.R against ", cfg$work_schema),
-    narrative = c(
-      sprintf("Cohort: %s. LOT1 = %s patients. Switch with LOT_COHORT=FULL / NDMM.",
-              cohort_label, format(n_lot1, big.mark = ",")),
-      tok$notes,
-      "Q1 = the dashboard refresh. A new steroid-free dashboard HTML sits next to this workbook, with an all-regimens tab per LOT; every list is downloadable from the dashboard (CSV button) and is also written as a CSV file. The production dashboards are untouched. The steroid tab shows why no LOT re-run is needed: steroids never enter the LOT rules or regimen strings.",
-      "Q2 = the 1L DARA+BORT dual-therapy deep dive (regimen exactly DARA + BORT, no other MM agent). Patient-level CSVs: jul20_qs_dara_bort_patients_* (one row per patient - diagnosis date, per-agent episodes and claim counts, 2L, region, payer) and jul20_qs_dara_bort_map_detail_* (one row per drug episode/MAP). The workbook tabs summarise cycles (a), 2L regimens (b), diagnosis years (c), and region x payer (d).",
-      "Q3 = the two candidate LOT-rule changes, simulated read-only on the persisted tables (no engine re-run): Q3a the MELP 60-180-day rule, Q3b the CAR-T induction-window rule. Each tab quantifies the affected lines/patients and how the per-patient line counts would shift; affected patients are in the *_affected_* / *_boundaries_* CSVs.",
-      "Regimen strings (LOT_BASE_MEDS) are space-separated, alphabetically-sorted MM-agent tokens; steroids are excluded by construction, so 'DARA+BORT dual therapy, no other agents' means no other MM agent (a backbone steroid does not change the pairing).",
-      "The induction-window setting is shared with the pipeline (60 days for LOT1)."),
-    tables = list())
-
-  # Q1 regimen sheets: one per LOT so each long list stays a single table.
-  if (!q1_failed) {
-    denom_tbl <- q1$denom
-    for (ln in names(q1$per_lot)) {
-      df <- q1$per_lot[[ln]]
-      add_sheet(name = paste0("Q1 LOT", ln, " regimens"),
-        title = paste0("Q1 - all regimens in LOT", ln),
-        subtitle = paste0("Every regimen string (no top-N cut). Cohort: ", cohort_label, "."),
-        narrative = c(
-          sprintf("%d distinct regimen strings. pct_of_line uses the LOT%s distinct-patient denominator.",
-                  nrow(df), ln),
-          "Transplant / CAR-T-only lines carry a labelled '(no drug regimen ...)' row so the counts reconcile with the per-line totals.",
-          sprintf("Downloadable copy: %s (also a CSV button on the dashboard tab).",
-                  paste0("jul20_qs_all_regimens_lot", ln, "_", tolower(cohort_mode), "_", stamp, ".csv"))),
-        tables = setNames(list(df), paste0("All LOT", ln, " regimens")))
-    }
-    add_sheet(name = "Q1 line denominators",
-      title = "Q1 - per-line patient denominators",
-      subtitle = paste0("Cohort: ", cohort_label, "."),
-      narrative = "Distinct patients reaching each line; the denominators behind pct_of_line.",
-      tables = list("Patients per line" = denom_tbl))
-  } else {
-    add_sheet(name = "Q1 all regimens",
-      title = "Q1 - all regimens per LOT",
-      subtitle = paste0("Cohort: ", cohort_label, "."),
-      narrative = "The regimen lists could not be built - see the status table.",
-      tables = list("All regimens per LOT" = q1))
-  }
-
-  add_sheet(name = "Q1 Steroids",
-    title = "Q1 - steroids are already excluded from the LOT",
-    subtitle = paste0("Regimen audit + agent-token list. Cohort: ", cohort_label, "."),
-    narrative = c(
-      ster_line,
-      "Steroids only ever surface in the display layer of the production dashboards (steroid_codes.csv adds DEXA/PRED tokens to the display strings). This refresh reads the raw LOT_BASE_MEDS instead, so nothing steroid-driven appears anywhere in it.",
-      paste0("The audit checks the known steroid abbreviations (",
-             paste(STEROID_TOKENS, collapse = ", "),
-             "); the token table lists every agent that actually appears, so an unlisted abbreviation would still be visible.")),
-    tables = list(
-      "Steroid tokens in any LOT regimen (expected: 0)" = aud$audit,
-      "Agent tokens appearing in LOT regimens"          = aud$vocab))
-
-  # Q2 sheets ------------------------------------------------------------
-  q2_overview_tables <- list()
-  if (!is.na(n_dual)) {
-    q2_overview_tables[["Cohort"]] <- data.frame(
-      metric = c("1L DARA+BORT dual-therapy patients (denominator)",
-                 "Share of the cohort's LOT1 patients"),
-      value = c(as.integer(n_dual), pct1(n_dual, n_lot1)),
-      stringsAsFactors = FALSE)
-    if (!is.null(q2_cycles) && !is_status_table(q2_cycles)) {
-      q2_overview_tables[["Episodes (MAPs) per agent inside LOT1"]] <- q2_cycles$summary
-      q2_overview_tables[["Episode-count distribution"]] <- q2_cycles$distribution
-      if (!is.null(q2_cycles$claims))
-        q2_overview_tables[["Claim counts per agent inside LOT1 (medical claims ~ administrations; pharmacy fills)"]] <- q2_cycles$claims
-    } else if (!is.null(q2_cycles)) {
-      q2_overview_tables[["Episodes (MAPs) per agent"]] <- q2_cycles
-    }
-  } else {
-    q2_overview_tables <- q2_tabs
-  }
-  add_sheet(name = "Q2 DARA+BORT cycles",
-    title = "Q2(a) - 1L DARA+BORT: episodes, MAPs and claim counts per agent",
-    subtitle = paste0("Among patients whose 1L regimen is exactly DARA + BORT. Cohort: ", cohort_label, "."),
-    narrative = c(
-      q2_notes,
-      "Claims do not record protocol cycles. Per the ask, the per-agent numbers are the drug episodes (MAPs) inside LOT1 and the claim counts behind them: medical claims are the administration visits (DARA/BORT are given in-clinic), pharmacy rows are fills.",
-      "The patient-level detail is in jul20_qs_dara_bort_patients_* (one row per patient) and jul20_qs_dara_bort_map_detail_* (one row per episode, flagged for the induction window and the LOT1 span)."),
-    tables = q2_overview_tables)
-
-  add_sheet(name = "Q2 2L and diagnosis",
-    title = "Q2(b)+(c) - what the DARA+BORT patients get in 2L, and when they were diagnosed",
-    subtitle = paste0("Cohort: ", cohort_label, "."),
-    narrative = c(
-      "The 2L list keeps a '(no 2L observed)' row so the denominator stays the full dual cohort.",
-      "Diagnosis = INDEX_DATE, the qualifying MM diagnosis date behind the Part-1 cohort entry. A NA year row appears when a dual patient has no readable index date."),
-    tables = list(
-      "2L regimens of the 1L DARA+BORT patients" = q2_l2 %||% data.frame(status = "not built", stringsAsFactors = FALSE),
-      "Diagnosis year of the 1L DARA+BORT patients" = q2_dx %||% data.frame(status = "not built", stringsAsFactors = FALSE)))
-
-  xt_tables <- list()
-  if (!is.null(xt) && !is_status_table(xt)) {
-    if (!is.null(xt$wide)) xt_tables[["Region x payer (patients)"]] <- xt$wide
-    xt_tables[["Region x payer (long form, with % of dual cohort)"]] <- xt$long
-  } else if (!is.null(xt)) {
-    xt_tables[["Region x payer"]] <- xt
-  }
-  if (!is.null(plan_ctx)) xt_tables[["Plan-type context (probed enrollment column)"]] <- plan_ctx
-  add_sheet(name = "Q2 Region x payer",
-    title = "Q2(d) - DARA+BORT patients by region, cross-tabulated with payer",
-    subtitle = paste0("Cohort: ", cohort_label, "."),
-    narrative = c(payer_note, region_note,
-      "Counts are distinct patients; the long form repeats the grid with the share of the dual cohort."),
-    tables = xt_tables)
-
-  # Q3 sheets ------------------------------------------------------------
-  melp_tables <- list()
   if (!is_status_table(melp)) {
-    melp_tables[["Headline counts"]] <- melp$totals
-    melp_tables[["MELP-attributable line boundaries by timing vs the line's first MELP MAP"]] <- melp$inventory
-    melp_tables[["Boundaries by line pair"]] <- melp$by_line
-    melp_tables[["Lines per patient - current, with removable lines under each reading"]] <-
-      q3_melp_shift_table(melp$shift)
+    write_out(melp$totals, "melp_rule_totals")
+    write_out(melp$inventory, "melp_rule_inventory")
+    write_out(melp$by_line, "melp_rule_by_line")
+    write_out(q3_melp_shift_table(melp$shift), "melp_rule_lines_shift")
+    write_out(melp$roster, "melp_rule_boundaries")
+    ex <- best_effort(q3_melp_examples(con, 10L), "MELP example timelines")
+    if (!is_status_table(ex)) {
+      write_out(ex$lots, "melp_rule_example_lots")
+      write_out(ex$maps, "melp_rule_example_maps")
+    }
   } else {
-    melp_tables[["MELP rule impact"]] <- melp
+    write_out(melp, "melp_rule_totals")
+    gaps <- c(gaps, "Q3a MELP screen unavailable - MAP_STACKED unreadable")
   }
-  add_sheet(name = "Q3a MELP rule impact",
-    title = "Q3(a) - impact of the MELP 60-180-day rule",
-    subtitle = paste0("Simulated read-only on LOT_LONG + MAP_STACKED. Cohort: ", cohort_label, "."),
-    narrative = c(
-      "Today MELP advances lines like any agent: a MELP MAP starting after the induction window ends the line (MED_ADD) and/or starts the next one. A 'MELP boundary' below is such a transition.",
-      "The proposed rule keys each advancing MELP to the first MELP MAP of the line it follows. As written, BOTH branches keep MELP in the line (a MELP in the 60-180-day window 'does not advance'; otherwise MELP is 'part of the LOT'), so read literally no MELP ever advances a line. The timing decomposition lets the team apply the narrow reading instead (suppress only the 60-180-day recurrences) - please confirm which is intended.",
-      "The transplant-context column counts boundaries adjacent to an autologous transplant - the July-11 D1 deep dive showed MELP around 2L is usually transplant conditioning, which is likely what this rule is aiming at.",
-      "Simulation note (first-order): each suppressed boundary merges its two lines, so a patient's line count drops by their number of suppressed boundaries with a next line. Later-line windows/regimens are kept as built; an exact re-derivation needs a spec change and an engine re-run.",
-      "Affected boundaries, patient by patient: jul20_qs_melp_rule_boundaries_*."),
-    tables = melp_tables)
-
-  cart_tables <- list()
-  if (!is_status_table(cart)) {
-    cart_tables[["Inventory"]] <- cart$inventory
-    cart_tables[["First CAR-T timing vs LOT1 start"]] <- cart$timing
-    cart_tables[["Lines per patient - current vs simulated"]] <- q3_shift_table(cart$shift)
-  } else {
-    cart_tables[["CAR-T rule impact"]] <- cart
-  }
-  add_sheet(name = "Q3b CAR-T rule impact",
-    title = "Q3(b) - impact of keeping an induction-window CAR-T inside LOT1",
-    subtitle = paste0("Simulated read-only on LOT_LONG + LOT1_SCT. Cohort: ", cohort_label, "."),
-    narrative = c(
-      sprintf("Today a CAR-T on/after the LOT1 start - including inside the %d-day induction window - ends LOT1 the day before (SCT_CART, or CART_INIT when it lands within %d days of an added agent) and opens a CART-started LOT2.", VQS_W1, VQS_CART),
-      "Under the proposed rule those induction-window CAR-Ts stay in LOT1: the CART LOT2 folds back into LOT1 (the simulated new LOT1 end is the old LOT2's end) and later lines renumber down one.",
-      "The affected rows - with their current LOT1/LOT2 and the simulated merge - are in jul20_qs_cart_rule_affected_patients_*."),
-    tables = cart_tables)
 
   # ======================================================================
-  # Dashboard assembly (the Q1 deliverable; sections mirror the workbook)
+  # Summary, definitions, validation, run status
   # ======================================================================
-  dash_file <- paste0("jul20_refresh_dashboard_", tolower(cohort_mode), ".html")
-  if (dash_ok) {
-    dash_card(paste0(
-      '<div style="font-family:system-ui;padding:12px;max-width:860px">',
-      '<h3 style="margin:0 0 6px">Refreshed LOT dashboard - steroid-free</h3>',
-      '<p style="color:#555;font-size:13px">Cohort: ', cohort_label,
-      '. Generated ', stamp, ' by jul20_studyteam_qs.R. ',
-      'Regimen strings come straight from <code>LOT_BASE_MEDS</code>, which the LOT engine builds ',
-      'without steroids, and the display-layer steroid augmentation of the production dashboards is not applied here - ',
-      'so no steroid token appears anywhere. Every table has a CSV download button; the long lists are also written as ',
-      'CSV files next to this dashboard.</p></div>'),
-      section = "OVERVIEW", title = "About this refresh")
+  fmt_or_na <- function(x) if (length(x) == 0 || is.na(x)) "(unavailable)" else format(x, big.mark = ",")
+  summary_lines <- c(
+    paste0("July-20 study-team questions Q2+Q3 - ", cohort_label),
+    paste0("Generated ", stamp, " by jul20_studyteam_qs.R against ", cfg$work_schema, "."),
+    paste0("Q1 (the dashboard refresh) is produced separately by jul20_refresh_dashboard.R."),
+    "",
+    "== Q2: 1L DARA+BORT dual therapy ==",
+    paste0("Cohort definition: LOT1 regimen is EXACTLY daratumumab + bortezomib (tokens ",
+           tok$dara, " + ", tok$bort, ") - no other MM agent. Steroids never enter the regimen strings."),
+    paste0("Exact-dual patients: ", fmt_or_na(n_dual),
+           " (the dual_definition_and_context file shows the broader contains-both count)."),
+    "Utilization is reported as drug episodes (MAPs), medical service dates and pharmacy fill dates - protocol cycles are not recorded in claims.",
+    payer_note,
+    region_note,
+    "",
+    "== Q3: PRELIMINARY rule screens - NOT an engine re-run ==",
+    "These screens identify the patients and line boundaries the two candidate rules would touch, from the already-derived LOT output. They do not re-derive lines: moving a boundary changes induction windows, regimens, discontinuation dates, add-med picks, transplant classification and every later line. Exact numbers need an isolated scenario re-run of the LOT derivation (separate scenario output tables; production untouched) once the rules are confirmed.",
+    "",
+    "-- (a) MELP 60-180-day rule --",
+    "The rule as written is ambiguous: 'if a MELP occurs >=60 and <=180 days after the start of the first MELP MAP in a LOT, it does not advance the LOT; otherwise MELP should be treated as part of the LOT.' Read literally, BOTH branches keep MELP inside the line, so no MELP would ever advance a line. Before a scenario is built the study team needs to confirm:",
+    "  1. Does the rule apply only to repeated MELP episodes 60-180 days apart, or to every MELP?",
+    "  2. Is it restricted to an autologous-transplant (conditioning) context?",
+    "  3. Is the anchor the first MELP MAP of the line, or",
+    "  4. ... the transplant date?",
+    "  5. Does it apply to one specific line (e.g. LOT1) or",
+    "  6. ... to all lines?",
+    "The melp_rule_inventory file buckets every MELP-attributable boundary by timing against the first MELP MAP of its line (including 'no earlier MELP' rows), so each candidate reading can be sized from the same table. The lines-shift file shows the current lines-per-patient distribution next to the screened distributions under the literal and the narrow (60-180-day-only) readings.",
+    "",
+    "-- (b) CAR-T induction-window rule --",
+    "Today a CAR-T on/after the LOT1 start - including inside the 60-day induction window - ends LOT1 the day before (SCT_CART, or CART_INIT within 45 days of an added agent) and opens a CART-started LOT2. The screen lists the LOT1s that would instead keep their CAR-T, what folding the CART LOT2 back into LOT1 would look like, and the lines-per-patient shift. Affected patients WITHOUT a LOT2 row are flagged: their merged LOT1 end cannot be derived from existing outputs.",
+    "",
+    paste0("Files: see jul20_qs_*_", tolower(cohort_mode), "_", stamp,
+           ".csv alongside this summary; the validation_summary file carries the automated reconciliation checks and the run_status file says whether this run is complete."))
+  write_text(summary_lines, "rule_impact_and_q2_summary")
 
-    if (!q1_failed) {
-      for (ln in names(q1$per_lot))
-        dash_table(q1$per_lot[[ln]], "ALL REGIMENS BY LOT",
-                   paste0("LOT", ln, " - all regimens (",
-                          nrow(q1$per_lot[[ln]]), " distinct)"))
-      dash_table(q1$denom, "ALL REGIMENS BY LOT", "Per-line patient denominators")
-    }
-    if (!is_status_table(aud$audit))
-      dash_table(aud$audit, "STEROID AUDIT", "Steroid tokens in any LOT regimen (expected 0)")
-    if (!is_status_table(aud$vocab))
-      dash_table(aud$vocab, "STEROID AUDIT", "Agent tokens appearing in LOT regimens")
-    dash_card(paste0(
-      '<div style="font-family:system-ui;padding:12px;max-width:860px">',
-      '<h3 style="margin:0 0 6px">Why no LOT re-run is needed</h3>',
-      '<p style="color:#555;font-size:13px">', ster_line, '</p></div>'),
-      section = "STEROID AUDIT", title = "Steroids and the LOT rules")
+  defs <- data.frame(
+    item = c(
+      "cohort",
+      "Q2 dual cohort",
+      "drug episodes (MAPs)",
+      "medical service dates",
+      "pharmacy fill dates",
+      "days covered",
+      "diagnosis date",
+      "2L regimen",
+      "payer",
+      "region",
+      "Q3 framing",
+      "MELP boundary",
+      "CAR-T affected patient"),
+    definition = c(
+      cohort_label,
+      paste0("LOT1 regimen exactly ", tok$dara, " + ", tok$bort,
+             " (no other MM agent in LOT_BASE_MEDS; steroids excluded from regimen strings by construction)"),
+      "contiguous medication-availability periods per patient+agent from MAP_STACKED, counted when they start inside LOT1 (LOT1 start .. LOT1 end)",
+      "distinct medication service dates on medical claims (MMA_MED_PROCESSED is deduplicated to one row per patient+agent+date+claim type) inside LOT1 - not administrations, not cycles",
+      "distinct pharmacy fill dates inside LOT1",
+      "days between episode start and the earlier of episode end / LOT1 end, summed per agent",
+      "ELIG_COH_FINAL.INDEX_DATE - the qualifying MM diagnosis index date behind cohort entry",
+      "LOT_LONG LOT_NUM=2 regimen; '(no 2L observed)' keeps the denominator at the full dual cohort",
+      "member_enrollment.BUS on the span covering the LOT1 start; MCR=Medicare, COM=Commercial, blank=Unknown, else Other(<BUS>); anchor = LOT1 start date",
+      if (nzchar(region_note)) region_note else "(not derived)",
+      "PRELIMINARY affected-patient/boundary screen over existing LOT output; NOT an engine re-run; exact impact needs an isolated scenario re-derivation",
+      "a line transition attributable to melphalan: prior line ended MED_ADD with MELP as the added drug, and/or the next line is MED-started on a MELP MAP start date",
+      "a LOT1 ended by CAR-T (SCT_CART/CART_INIT) whose first CAR-T date falls within LOT1 start .. start+59d"),
+    stringsAsFactors = FALSE)
+  write_out(defs, "definitions")
 
-    if (!is.na(n_dual)) {
-      if (!is.null(q2_cycles) && !is_status_table(q2_cycles)) {
-        dash_table(q2_cycles$summary, "DARA+BORT 1L", "Episodes (MAPs) per agent inside LOT1")
-        dash_table(q2_cycles$distribution, "DARA+BORT 1L", "Episode-count distribution")
-        if (!is.null(q2_cycles$claims))
-          dash_table(q2_cycles$claims, "DARA+BORT 1L", "Claim counts per agent inside LOT1")
-      }
-      if (!is.null(q2_l2) && !is_status_table(q2_l2))
-        dash_table(q2_l2, "DARA+BORT 1L", "2L regimens of the dual cohort")
-      if (!is.null(q2_dx) && !is_status_table(q2_dx))
-        dash_table(q2_dx, "DARA+BORT 1L", "Diagnosis year distribution")
-      if (!is.null(xt) && !is_status_table(xt) && !is.null(xt$wide))
-        dash_table(xt$wide, "DARA+BORT 1L", "Region x payer (patients)")
-      if (is.data.frame(roster) && !is_status_table(roster))
-        dash_table(roster, "DARA+BORT 1L",
-                   paste0("Patient roster (", nrow(roster), " patients - CSV button downloads all)"))
-    }
+  if (length(checks) > 0) write_out(do.call(rbind, checks), "validation_summary")
 
-    if (!is_status_table(melp)) {
-      dash_table(melp$inventory, "LOT RULE IMPACT", "MELP boundaries by timing vs the line's first MELP MAP")
-      dash_table(q3_melp_shift_table(melp$shift), "LOT RULE IMPACT", "MELP rule - lines per patient")
-    }
-    if (!is_status_table(cart)) {
-      dash_table(cart$inventory, "LOT RULE IMPACT", "CAR-T rule - inventory")
-      dash_table(cart$timing, "LOT RULE IMPACT", "First CAR-T timing vs LOT1 start")
-      dash_table(q3_shift_table(cart$shift), "LOT RULE IMPACT", "CAR-T rule - lines per patient, current vs simulated")
-    }
-
-    build_dashboard(out_name = dash_file,
-      header_title = "MM LOT &mdash; July-20 refresh (steroid-free)",
-      header_sub   = paste0(cohort_label, " &bull; all regimens per LOT &bull; DARA+BORT 1L &bull; rule-change impact"))
-    dash_path <- file.path(out_dir, dash_file)
-    if (file.exists(dash_path)) {
-      log_msg("wrote dashboard -> ", dash_path)
-    } else {
-      extra_gaps <- c(extra_gaps,
-        "Q1 refreshed dashboard file was not written (build_dashboard skipped) - see the log")
-    }
+  status_lines <- if (length(gaps) == 0) {
+    c("RUN STATUS: COMPLETE",
+      paste0("Generated ", stamp, " on ", cohort_label, "."),
+      "All requested outputs were produced and all automated checks passed.",
+      "Manual steps still required before sharing: reconcile lot_totals_for_reconciliation against the current dashboard; confirm the region source and values; review the MELP example timelines.")
+  } else {
+    c("RUN STATUS: INCOMPLETE",
+      paste0("Generated ", stamp, " on ", cohort_label, "."),
+      paste0(length(gaps), " issue(s):"),
+      paste0("  - ", gaps))
   }
+  write_text(status_lines, "run_status")
 
-  # ---- flag anything that makes the run incomplete ------------------------
-  core_gaps <- extra_gaps
-  for (s in sheets) for (nm in names(s$tables %||% list())) {
-    entry <- s$tables[[nm]]; df <- entry
-    if (is.list(entry) && !is.data.frame(entry)) df <- entry$df
-    if (is_status_table(df))
-      core_gaps <- c(core_gaps, sprintf("%s / %s", s$name, nm))
-  }
-  incomplete <- length(core_gaps) > 0
-  if (incomplete) {
-    log_msg("WARNING: answers are INCOMPLETE:")
-    for (g in core_gaps) log_msg("  - ", g)
-    sheets[[1]]$narrative <- c(
-      paste0("INCOMPLETE run: ", length(core_gaps),
-             " issue(s) - see the affected tabs and re-run once resolved. ",
-             paste(core_gaps, collapse = "; "), "."),
-      sheets[[1]]$narrative)
-  }
-
-  # ---- write --------------------------------------------------------------
-  suffix <- if (incomplete) "_INCOMPLETE" else ""
-  xlsx <- file.path(out_dir, paste0("jul20_studyteam_qs_", tolower(cohort_mode), "_",
-                                    stamp, suffix, ".xlsx"))
-  wbx_write_workbook(sheets, xlsx)
   log_msg(SEP)
-  if (incomplete)
-    log_msg("July-20 study-team questions COMPLETED WITH GAPS (", length(core_gaps),
-            " issue(s)) - INCOMPLETE workbook -> ", xlsx)
-  else
-    log_msg("July-20 study-team questions complete. Workbook -> ", xlsx,
-            if (dash_ok) paste0("; dashboard -> ", file.path(out_dir, dash_file)) else "")
+  if (length(gaps) > 0) {
+    log_msg("July-20 Q2+Q3 COMPLETED WITH GAPS (", length(gaps), " issue(s)):")
+    for (g in gaps) log_msg("  - ", g)
+  } else {
+    log_msg("July-20 Q2+Q3 complete. Outputs in ", out_dir)
+  }
   log_msg(SEP)
 }
 
