@@ -21,29 +21,30 @@
 #              as one CSV file per LOT next to the dashboard.
 #
 # NDMM mode (default - the cohort the July-20 questions name, and the same
-# default as the sibling jul20_studyteam_qs.R) mirrors 06_ndmm_dashboard.R:
-# KPI snapshot, the NDMM overview card with the six-filter funnel, the NDMM
-# attrition table + waterfall, the other-cancer drop / override QC, payer,
-# LOT-pair regimen Sankeys, category Sankeys + coverage, all regimens,
-# patient gallery, and validation with the NDMM filter flags. Because this
-# refresh writes no permanent tables, it does NOT re-derive the cohort:
+# default as the sibling jul20_studyteam_qs.R) builds ONLY from the persisted
+# NDMM cohort, so nothing in the dashboard can mix data vintages:
 #
 #   - it READS the persisted NDMM_LOT_LONG_FILT and NDMM_FLAGS_ALL from the
 #     last production 06_ndmm_dashboard.R run and rebinds them as the session
 #     views the builders expect; it stops with a remediation message if
-#     either is missing;
-#   - the funnel/attrition counts are recomputed from those persisted flags
-#     (same queries as 06); a per-filter status table shows how many patients
-#     each flag excluded, with the caveat that a flag excluding zero patients
-#     is either genuinely non-excluding or was skipped in the producing run
-#     (skips are recorded in that run's own dashboard and log);
-#   - the other-cancer QC needs the claim-scan views; they are rebuilt here
-#     as session temp views when med_diagnosis / medical / confinement and
-#     the other-malignancy codelist are readable, else the QC degrades to a
-#     visible note explaining it is a refresh limitation, not a filter skip;
-#   - a consistency check compares the persisted flags-derived NDMM count to
-#     the persisted filtered LOT table and flags any mismatch prominently
-#     (a mismatch means the two persisted tables come from different runs).
+#     either is missing; every displayed section reads one of these two
+#     persisted tables (never the current parent LOT_LONG / ELIG_COH_FINAL /
+#     raw claims);
+#   - it verifies the two persisted tables are the SAME cohort with an exact
+#     PATID anti-join in both directions (equal counts alone do not prove
+#     it), and marks the run incomplete + warns on the dashboard if they
+#     diverge;
+#   - it shows KPI snapshot, a steroid-free NDMM overview card (cohort +
+#     six-filter description + final count), a per-filter status table derived
+#     from the persisted flags (a flag excluding zero patients is either
+#     genuinely non-excluding or was skipped in the producing run - that run's
+#     own dashboard/log records which), payer, LOT-pair regimen Sankeys,
+#     category Sankeys + coverage, all regimens, patient gallery, and
+#     validation with the NDMM filter flags;
+#   - the FULL attrition funnel and the other-cancer drop / override QC are
+#     deliberately NOT reconstructed here (rebuilding them would require the
+#     current parent/raw tables and could mix vintages). They remain in the
+#     authoritative production ndmm_dashboard.html; the overview card says so.
 #
 # OVERALL mode mirrors 05_regimen_dashboard.R: KPI snapshot, overview,
 # parent-cohort attrition, payer, Sankeys, category views, all regimens,
@@ -103,9 +104,14 @@ AUDIT_STEROID_TOKENS <- c("DEX", "DEXA", "DEXAMETHASONE", "DEXAMETH",
 # display_regimen is display-only. Each table is downloadable via its CSV
 # button, and the full list is also written as a CSV file per LOT.
 # ===========================================================================
+# Returns a status list so the caller can gate the run:
+#   list(ok, expected_lots, csvs_written, csv_failures, has_dt, reasons)
 build_all_regimens_section <- function(con, lot_long, out_dir, stamp,
                                        cohort_tag,
                                        section = "All regimens") {
+  st <- list(ok = FALSE, expected_lots = 0L, csvs_written = 0L,
+             csv_failures = character(0), has_dt = isTRUE(has_dt),
+             reasons = character(0))
   denom <- db_q(con, glue("
     SELECT LOT_NUM, count(DISTINCT cast(PATID as string)) AS n_patients
     FROM {lot_long} GROUP BY LOT_NUM ORDER BY LOT_NUM"))
@@ -115,8 +121,13 @@ build_all_regimens_section <- function(con, lot_long, out_dir, stamp,
       '<h3>All regimens unavailable</h3><p style="color:#555;font-size:13px">',
       'No LOT rows were found in <code>', esc_html(lot_long), '</code>.</p></div>'),
       section = section, title = "All regimens (unavailable)")
-    return(invisible(NULL))
+    st$reasons <- "no LOT rows found for the all-regimens lists"
+    return(st)
   }
+  st$expected_lots <- length(unique(as.integer(as.numeric(denom$LOT_NUM))))
+  if (!st$has_dt)
+    st$reasons <- c(st$reasons,
+      "DT/htmlwidgets unavailable - the in-dashboard CSV buttons will be missing (the per-LOT CSV files are still written)")
 
   all_reg <- db_q(con, glue("
     WITH l AS (
@@ -163,8 +174,12 @@ build_all_regimens_section <- function(con, lot_long, out_dir, stamp,
                                     conditionMessage(e))
                             FALSE
                           }))
-    if (ok) log_msg("  wrote all-regimens LOT", ln, " -> ", f,
-                    " (", nrow(df), " rows)")
+    if (ok) {
+      st$csvs_written <- st$csvs_written + 1L
+      log_msg("  wrote all-regimens LOT", ln, " -> ", f, " (", nrow(df), " rows)")
+    } else {
+      st$csv_failures <- c(st$csv_failures, paste0("LOT", ln))
+    }
 
     save_table(df, section = section,
                title = paste0("LOT", ln, " - all regimens (", nrow(df),
@@ -191,7 +206,11 @@ build_all_regimens_section <- function(con, lot_long, out_dir, stamp,
     'per-LOT CSV files written next to this dashboard.</p></div>'),
     section = section, title = "About the all-regimens lists")
 
-  invisible(denom_df)
+  if (length(st$csv_failures))
+    st$reasons <- c(st$reasons,
+      paste0("CSV file(s) failed to write: ", paste(st$csv_failures, collapse = ", ")))
+  st$ok <- (st$csvs_written == st$expected_lots) && (length(st$csv_failures) == 0)
+  st
 }
 
 # ===========================================================================
@@ -258,6 +277,85 @@ ndmm_bind_persisted_views <- function(con) {
   invisible(TRUE)
 }
 
+# Exact-PATID consistency between the two persisted NDMM tables: every
+# NDMM_LOT_LONG_FILT patient must be selected by the flags and vice versa.
+# Equal counts alone do not prove this (two 300-patient sets can differ), so
+# this anti-joins both directions. Returns list(ok, n_filt, n_flags,
+# only_in_filt, only_in_flags).
+ndmm_consistency_check <- function(con) {
+  d <- db_q(con, glue("
+    WITH filt AS (SELECT DISTINCT cast(PATID as string) AS PATID FROM {NDMM_LOT_LONG_FILT}),
+         sel  AS (SELECT DISTINCT cast(PATID as string) AS PATID FROM {NDMM_PATIDS})
+    SELECT (SELECT count(*) FROM filt)                                   AS n_filt,
+           (SELECT count(*) FROM sel)                                    AS n_flags,
+           (SELECT count(*) FROM filt WHERE PATID NOT IN (SELECT PATID FROM sel)) AS only_in_filt,
+           (SELECT count(*) FROM sel  WHERE PATID NOT IN (SELECT PATID FROM filt)) AS only_in_flags"))
+  n <- function(x) as.numeric(x)
+  only_filt  <- n(d$only_in_filt[1])
+  only_flags <- n(d$only_in_flags[1])
+  list(ok = isTRUE(only_filt == 0 && only_flags == 0),
+       n_filt = n(d$n_filt[1]), n_flags = n(d$n_flags[1]),
+       only_in_filt = only_filt, only_in_flags = only_flags)
+}
+
+# A steroid-free NDMM overview card. Purpose-built for the refresh so no
+# steroid narrative leaks in (unlike reusing build_ndmm_overview_card with
+# zero codes). Describes the cohort and its NDMM filters, states the
+# persisted final count, and points to the authoritative production dashboard
+# for the full attrition funnel and the other-cancer QC (which this read-only
+# refresh does not reconstruct - see the P1 note in the header).
+build_refresh_ndmm_overview_card <- function(n_final, n_cat_rules, sync,
+                                             section = "OVERVIEW",
+                                             title = "What this dashboard shows") {
+  sync_html <- if (sync$ok)
+    paste0('<p style="color:#1a7a3a;font-size:13px;margin:6px 0 0">Consistency ',
+           'check passed: the persisted <code>NDMM_LOT_LONG_FILT</code> and ',
+           '<code>NDMM_FLAGS_ALL</code> select the same ',
+           format(sync$n_filt, big.mark = ","), ' patients (exact PATID ',
+           'anti-join, both directions).</p>')
+  else
+    paste0('<p style="color:#b00020;font-size:13px;margin:6px 0 0"><b>WARNING - ',
+           'persisted NDMM tables are OUT OF SYNC.</b> ',
+           format(sync$only_in_filt, big.mark = ","), ' patient(s) are in ',
+           '<code>NDMM_LOT_LONG_FILT</code> but not selected by the flags, and ',
+           format(sync$only_in_flags, big.mark = ","), ' are selected by the ',
+           'flags but absent from the filtered table. The two tables come from ',
+           'different runs - re-run <code>06_ndmm_dashboard.R</code> before ',
+           'using this dashboard.</p>')
+  add_html_card(paste0(
+    '<div style="font-family:system-ui;padding:14px;max-width:900px">',
+    '<h3>NDMM (1L newly-diagnosed) planned cohort - July-20 refresh (steroid-free)</h3>',
+    '<p style="color:#555;font-size:13px">Regimen-transition dashboard on the ',
+    'planned NDMM cohort: parent <code>ELIG_COH_FINAL</code> plus a NDMM-side ',
+    'LOT1 cutoff (<code>LOT_START_DT &ge; ', NDMM_LOT1_FROM, '</code>) and six ',
+    'NDMM post-filters - 12-mo CE before LOT1, 3-mo follow-up CE, no belantamab ',
+    'in any LOT, no MM oncology therapy in the 12-mo 1L baseline, no other active ',
+    'cancer in the 12-mo 1L baseline, and no pregnancy. Final cohort: <b>',
+    format(n_final, big.mark = ","), '</b> patients.</p>',
+    '<p style="color:#555;font-size:13px">This refresh reads the persisted ',
+    '<code>', esc_html(wrk(NDMM_LOT_LONG_FILT_TBL)), '</code> and ',
+    '<code>', esc_html(wrk(NDMM_FLAGS_ALL_TBL)), '</code> from the last ',
+    'production <code>06_ndmm_dashboard.R</code> run and changes only two ',
+    'things: steroid display is removed (regimen strings come straight from the ',
+    'engine&#39;s steroid-free <code>LOT_BASE_MEDS</code>; see the steroid audit ',
+    'under Validation) and an All-regimens section with CSV downloads is added.</p>',
+    '<p style="color:#a06000;font-size:13px;margin:6px 0 0"><b>Authoritative ',
+    'attrition &amp; QC:</b> the full attrition funnel and the other-cancer ',
+    'drop / override QC are NOT reconstructed here (rebuilding them from ',
+    'current parent tables could mix data vintages). They live in the ',
+    'production <code>ndmm_dashboard.html</code> from the run that produced this ',
+    'cohort. The per-filter status table below is derived only from the same ',
+    'persisted flags, so it shares this cohort&#39;s vintage.</p>',
+    sync_html,
+    '<ul style="font-size:13px;color:#1a7a3a;margin-top:10px">',
+    '<li><b>Category transitions</b>: regimen-category Sankeys per LOT pair (',
+    n_cat_rules, ' regimen rules loaded).</li>',
+    '<li><b>All regimens</b>: every regimen per LOT with a CSV download.</li>',
+    '<li><b>Progressor flows</b>: non-progressors dropped (inner-join LOTn &rarr; LOTn+1).</li>',
+    '</ul></div>'),
+    section = section, title = title)
+}
+
 # Per-filter exclusion counts from the persisted flags. A filter excluding
 # zero patients is either genuinely non-excluding or was skipped in the
 # producing run (a skipped filter passes all patients); the producing run's
@@ -287,27 +385,26 @@ ndmm_filter_status <- function(con) {
   df
 }
 
-# Rebuild the session views the other-cancer QC reads (temp views only; the
-# expensive scan runs when the QC queries them). Returns TRUE on success.
-ndmm_rebuild_other_cancer_views <- function(con) {
-  med_diag_tbl    <- cdm_src(cfg$tbl_med_diag)
-  medical_tbl     <- cdm_src(cfg$tbl_medical)
-  confinement_tbl <- cdm_src(NDMM_TBL_CONFINEMENT)
-  ok <- function(t) isTRUE(tryCatch(
-    nrow(db_q(con, glue("SELECT 1 FROM {t} LIMIT 1"))) >= 0,
-    error = function(e) FALSE))
-  if (!(ok(med_diag_tbl) && ok(medical_tbl) && ok(confinement_tbl)))
-    return(FALSE)
-  isTRUE(tryCatch({
-    build_ndmm_other_malig_codes(con)
-    build_ndmm_med_claim_header_and_confinement(con, medical_tbl, confinement_tbl)
-    build_ndmm_other_malig_pre_lot1(con, med_diag_tbl)
-    TRUE
-  }, error = function(e) {
-    log_msg("  WARN: other-cancer QC views could not be rebuilt (",
-            conditionMessage(e), ") - the QC will show as unavailable.")
-    FALSE
-  }))
+# Writes the Q1 run-status file: TECHNICALLY COMPLETE - PENDING MANUAL REVIEW
+# when the dashboard built and every requested download was produced, else
+# INCOMPLETE with the reasons. Q1's analogue of the Q2/Q3 gate.
+write_refresh_status <- function(out_dir, cohort_tag, stamp, gaps, dash_written) {
+  f <- file.path(out_dir, paste0("jul20_refresh_run_status_", cohort_tag, "_", stamp, ".txt"))
+  lines <- if (length(gaps) == 0 && dash_written) {
+    c("RUN STATUS: TECHNICALLY COMPLETE - PENDING MANUAL REVIEW",
+      paste0("Generated ", stamp, " (", cohort_tag, ")."),
+      "The dashboard built and every requested all-regimen download was produced. This is NOT sign-off to share.",
+      "Manual review still required: confirm the cohort matches the authoritative production NDMM dashboard, and eyeball the all-regimen lists.")
+  } else {
+    c("RUN STATUS: INCOMPLETE",
+      paste0("Generated ", stamp, " (", cohort_tag, ")."),
+      if (!dash_written) "The dashboard HTML was not written (see the log)." else NULL,
+      if (length(gaps)) paste0(length(gaps), " issue(s):") else NULL,
+      paste0("  - ", gaps))
+  }
+  writeLines(lines, f)
+  log_msg("  wrote run status -> ", f)
+  invisible(f)
 }
 
 # ===========================================================================
@@ -322,6 +419,12 @@ main_refresh <- function() {
   out_dir <- cfg$output_dir
   if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   stamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
+
+  # Prefix every static PNG this refresh writes so it can never overwrite a
+  # production dashboard artifact in a shared cfg$output_dir. The HTML the
+  # dashboard actually renders uses the in-memory plotly objects; this only
+  # namespaces the standalone .png sidecar files.
+  cfg$plot_filename_prefix <<- "jul20_refresh_"
 
   # NDMM by default, matching jul20_studyteam_qs.R so the July-20 pair always
   # runs on one population unless the cohort is overridden explicitly.
@@ -338,8 +441,13 @@ main_refresh <- function() {
           "] - steroid-free + all-regimen downloads")
   log_msg(SEP)
 
+  gaps <- character()
+
   if (cohort_mode == "NDMM") {
-    # ---- NDMM: mirror 06_ndmm_dashboard.R from the persisted cohort ------
+    # ---- NDMM: build ONLY from the persisted NDMM cohort -----------------
+    # No current parent/raw tables are read for the funnel or QC, so nothing
+    # in this dashboard can mix data vintages. The authoritative attrition
+    # funnel and other-cancer QC stay in the production ndmm_dashboard.html.
     if (!readable(wrk(NDMM_LOT_LONG_FILT_TBL)) ||
         !readable(wrk(NDMM_FLAGS_ALL_TBL)))
       stop("Cannot read ", wrk(NDMM_LOT_LONG_FILT_TBL), " and/or ",
@@ -351,38 +459,23 @@ main_refresh <- function() {
     cohort_tag <- "ndmm"
     out_name   <- "regimen_dashboard_refresh_ndmm.html"
 
-    # Funnel counts from the persisted flags (same queries as 06); the LOT1
-    # starts view they need is a cheap projection of LOT_LONG.
-    lot_long_full <- wrk("LOT_LONG")
-    elig_tbl <- wrk(NDMM_FINAL_TABLE_NAME)
-    counts <- NULL
-    if (readable(lot_long_full) && readable(elig_tbl)) {
-      counts <- tryCatch({
-        build_lot1_starts_ndmm(con, lot_long_full)
-        ndmm_counts(con, lot_long_full, elig_tbl)
-      }, error = function(e) {
-        log_msg("  WARN: NDMM funnel counts unavailable (", conditionMessage(e), ")")
-        NULL
-      })
-    } else {
-      log_msg("  WARN: ", lot_long_full, " or ", elig_tbl,
-              " unreadable - NDMM funnel counts unavailable.")
+    # Exact-PATID consistency between the two persisted tables (not just a
+    # count match). A divergence means they come from different runs.
+    sync <- tryCatch(ndmm_consistency_check(con), error = function(e) {
+      log_msg("  WARN: NDMM consistency check failed to run (", conditionMessage(e), ")")
+      list(ok = FALSE, n_filt = NA, n_flags = NA, only_in_filt = NA, only_in_flags = NA)
+    })
+    if (!isTRUE(sync$ok)) {
+      log_msg("WARNING: persisted NDMM tables are OUT OF SYNC (only_in_filt=",
+              sync$only_in_filt, ", only_in_flags=", sync$only_in_flags,
+              ") - re-run 06_ndmm_dashboard.R.")
+      gaps <- c(gaps, paste0(
+        "persisted NDMM tables out of sync (", sync$only_in_filt,
+        " patients only in the filtered LOT table, ", sync$only_in_flags,
+        " only in the flags) - re-run 06_ndmm_dashboard.R"))
     }
-
+    n_final <- sync$n_filt
     filter_status <- tryCatch(ndmm_filter_status(con), error = function(e) NULL)
-
-    # Consistency: the flags-derived final count must match the persisted
-    # filtered LOT table; a mismatch means the two tables come from
-    # different runs and the refresh should not be trusted until 06 re-runs.
-    n_filt <- as.numeric(db_q(con, glue(
-      "SELECT count(DISTINCT cast(PATID as string)) AS n FROM {lot_view}"))$n[1])
-    n_flags_final <- as.numeric(db_q(con, glue(
-      "SELECT count(DISTINCT PATID) AS n FROM {NDMM_PATIDS}"))$n[1])
-    tables_in_sync <- isTRUE(n_filt == n_flags_final)
-    if (!tables_in_sync)
-      log_msg("WARNING: persisted NDMM tables look OUT OF SYNC - ",
-              "NDMM_LOT_LONG_FILT has ", n_filt, " patients but the flags ",
-              "select ", n_flags_final, ". Re-run 06_ndmm_dashboard.R.")
 
     # Steroid augmentation BYPASSED: n_codes = 0 builds LOT_LONG_AUG as a
     # plain passthrough temp view and returns before materialization, so the
@@ -395,75 +488,26 @@ main_refresh <- function() {
     lookups <- load_categories()
     n_rules <- length(lookups$lookup_1L) + length(lookups$lookup_2L)
 
-    qc_views_ok <- ndmm_rebuild_other_cancer_views(con)
-
-    # ---- Build: 06's sections minus steroids, plus all regimens ----------
+    # ---- Build: persisted-cohort sections, steroid-free, plus all regimens
     dashboard_items <<- list()
     build_cohort_kpis(con, lot_view, section = "OVERVIEW")
-
-    refresh_notes <- c(
-      paste0("<b>July-20 refresh</b>: steroid views removed and the steroid ",
-             "display augmentation bypassed - regimen strings come straight ",
-             "from the engine&#39;s steroid-free <code>LOT_BASE_MEDS</code> ",
-             "(see the steroid audit under Validation). An All-regimens ",
-             "section with CSV downloads is added. Everything else is the ",
-             "existing NDMM dashboard content."),
-      paste0("This refresh READS the persisted <code>",
-             wrk(NDMM_LOT_LONG_FILT_TBL), "</code> / <code>",
-             wrk(NDMM_FLAGS_ALL_TBL), "</code> from the last production ",
-             "06_ndmm_dashboard.R run; it does not re-derive the filters. ",
-             "Whether a filter was skipped in that run is recorded in that ",
-             "run&#39;s dashboard/log - see the per-filter status table."),
-      if (!tables_in_sync)
-        paste0("<b>WARNING: the persisted NDMM tables look out of sync</b> (",
-               format(n_filt, big.mark = ","), " patients in the filtered LOT ",
-               "table vs ", format(n_flags_final, big.mark = ","),
-               " selected by the flags). Re-run 06_ndmm_dashboard.R before ",
-               "trusting this refresh.") else NULL)
-
-    if (!is.null(counts)) {
-      build_ndmm_overview_card(counts, 0L, n_rules, notes = refresh_notes)
-      build_ndmm_attrition(counts)
-    } else {
-      add_html_card(paste0(
-        '<div style="font-family:system-ui;padding:14px;max-width:900px;',
-        'background:#fff3cd;border:1px solid #d9a800;border-radius:6px;',
-        'color:#5a4500"><b>NDMM funnel counts unavailable this run</b> - ',
-        'the parent <code>LOT_LONG</code> / <code>ELIG_COH_FINAL</code> ',
-        'tables could not be read, so the overview funnel and attrition ',
-        'waterfall are omitted. The cohort itself (below) still comes from ',
-        'the persisted NDMM tables. ',
-        paste(refresh_notes, collapse = " "), '</div>'),
-        section = "OVERVIEW", title = "NDMM overview (degraded)")
-    }
+    build_refresh_ndmm_overview_card(n_final, n_rules, sync)
     if (!is.null(filter_status))
       save_table(filter_status, section = "OVERVIEW",
                  title = "NDMM per-filter status (from the persisted flags)")
 
-    if (qc_views_ok) {
-      build_ndmm_other_cancer_qc(con)
-    } else {
-      add_html_card(paste0(
-        '<div style="font-family:system-ui;padding:14px;max-width:900px;',
-        'background:#fff3cd;border:1px solid #d9a800;border-radius:6px;',
-        'color:#5a4500"><b>Other-cancer QC not rebuilt in this refresh.</b><br>',
-        'The QC needs the other-malignancy claim-scan views; their source ',
-        'tables or codelist were unavailable to this run. This is a refresh ',
-        'limitation, not evidence the filter was skipped - the production ',
-        'NDMM dashboard carries the authoritative QC.</div>'),
-        section = "OVERVIEW", title = "Other-cancer drop QC (not rebuilt)")
-    }
-
     # (STEROIDS section intentionally omitted - the July-20 request.)
+    # (Attrition funnel + other-cancer QC intentionally left to the
+    #  authoritative production dashboard - see the overview card.)
     build_payer_lot_qc(con, section = "Payer")
     for (n in 1:4) build_focused_pair(con, n, n + 1L)
     for (n in 1:4) build_category_pair(con, n, n + 1L, lookups)
     build_category_coverage(con, lookups)
-    build_all_regimens_section(con, lot_view, out_dir, stamp, cohort_tag)
+    reg_st <- build_all_regimens_section(con, lot_view, out_dir, stamp, cohort_tag)
     build_patient_gallery(con, lot_view, section = "Patient examples")
     build_validation_views(con, lot_view, section = "Validation",
                            ndmm_flags_tbl = NDMM_FLAGS_ALL)
-    build_steroid_audit_table(con, lot_view, section = "Validation")
+    steroid_hits <- build_steroid_audit_table(con, lot_view, section = "Validation")
     add_html_card(paste0(
       '<div style="font-family:system-ui;padding:12px;max-width:760px">',
       '<h3>Run comparison omitted</h3><p style="color:#555;font-size:13px">',
@@ -473,19 +517,30 @@ main_refresh <- function() {
       'dashboard runs.</p></div>'),
       section = "Validation", title = "Run comparison (omitted by design)")
 
-    n_final <- if (!is.null(counts)) counts$ndmm_final else n_filt
+    # Q1 completeness: missing downloads or a failed steroid audit are gaps.
+    if (!isTRUE(reg_st$ok))
+      gaps <- c(gaps, paste0("all-regimen downloads incomplete: ",
+                             paste(reg_st$reasons, collapse = "; ")))
+    steroid_clean <- isTRUE(!is.null(steroid_hits) && steroid_hits == 0)
+    if (!steroid_clean)
+      gaps <- c(gaps, "steroid audit did not confirm steroid-free regimens - the dashboard is NOT titled steroid-free")
+
+    title_tag <- if (steroid_clean) " &mdash; July-20 refresh (steroid-free)"
+                 else " &mdash; July-20 refresh (STEROID AUDIT UNCONFIRMED)"
     build_dashboard(
       out_name     = out_name,
-      header_title = "MM LOT &mdash; NDMM (1L newly-diagnosed) planned cohort &mdash; July-20 refresh (steroid-free)",
+      header_title = paste0("MM LOT &mdash; NDMM (1L newly-diagnosed) planned cohort", title_tag),
       header_sub   = paste0("ELIG_COH_FINAL &bull; LOT1 &ge; ", NDMM_LOT1_FROM,
                             " &bull; 12-mo CE pre-LOT1 &bull; 3-mo FU CE",
                             " &bull; no belantamab &bull; no MM Tx pre-LOT1",
                             " &bull; no other cancer pre-LOT1 &bull; no pregnancy",
                             " &bull; all regimens per LOT (CSV downloads)",
                             " &bull; ", format(n_final, big.mark = ","),
-                            " patients")
-    )
-    log_msg("Wrote ", file.path(cfg$output_dir, out_name))
+                            " patients"))
+    dash_written <- file.exists(file.path(cfg$output_dir, out_name))
+    if (dash_written) log_msg("Wrote ", file.path(cfg$output_dir, out_name))
+    else gaps <- c(gaps, "dashboard HTML was not written (see the log)")
+    write_refresh_status(out_dir, cohort_tag, stamp, gaps, dash_written)
 
   } else {
     # ---- OVERALL: mirror 05_regimen_dashboard.R --------------------------
@@ -532,10 +587,10 @@ main_refresh <- function() {
     for (n in 1:4) build_focused_pair(con, n, n + 1L)
     for (n in 1:4) build_category_pair(con, n, n + 1L, lookups)
     build_category_coverage(con, lookups)
-    build_all_regimens_section(con, lot_long, out_dir, stamp, cohort_tag)
+    reg_st <- build_all_regimens_section(con, lot_long, out_dir, stamp, cohort_tag)
     build_patient_gallery(con, lot_long, section = "Patient examples")
     build_validation_views(con, lot_long, section = "Validation")
-    build_steroid_audit_table(con, lot_long, section = "Validation")
+    steroid_hits <- build_steroid_audit_table(con, lot_long, section = "Validation")
     add_html_card(paste0(
       '<div style="font-family:system-ui;padding:12px;max-width:760px">',
       '<h3>Run comparison omitted</h3><p style="color:#555;font-size:13px">',
@@ -545,14 +600,26 @@ main_refresh <- function() {
       'dashboard runs.</p></div>'),
       section = "Validation", title = "Run comparison (omitted by design)")
 
+    if (!isTRUE(reg_st$ok))
+      gaps <- c(gaps, paste0("all-regimen downloads incomplete: ",
+                             paste(reg_st$reasons, collapse = "; ")))
+    steroid_clean <- isTRUE(!is.null(steroid_hits) && steroid_hits == 0)
+    if (!steroid_clean)
+      gaps <- c(gaps, "steroid audit did not confirm steroid-free regimens - the dashboard is NOT titled steroid-free")
+
+    title_tag <- if (steroid_clean) " &mdash; July-20 refresh (steroid-free)"
+                 else " &mdash; July-20 refresh (STEROID AUDIT UNCONFIRMED)"
     build_dashboard(
       out_name     = out_name,
-      header_title = "MM LOT &mdash; Regimen transitions (overall cohort) &mdash; July-20 refresh (steroid-free)",
+      header_title = paste0("MM LOT &mdash; Regimen transitions (overall cohort)", title_tag),
       header_sub   = paste0("Steroid-free regimens &bull; LOT-pair Sankeys ",
                             "&bull; By category &bull; All regimens per LOT ",
                             "(CSV downloads)")
     )
-    log_msg("Wrote ", file.path(cfg$output_dir, out_name))
+    dash_written <- file.exists(file.path(cfg$output_dir, out_name))
+    if (dash_written) log_msg("Wrote ", file.path(cfg$output_dir, out_name))
+    else gaps <- c(gaps, "dashboard HTML was not written (see the log)")
+    write_refresh_status(out_dir, cohort_tag, stamp, gaps, dash_written)
   }
 }
 
