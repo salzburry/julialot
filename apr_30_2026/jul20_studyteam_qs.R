@@ -5,8 +5,11 @@
 #
 # A sibling of lot_followup_qs.R / lot1_studyteam_qs.R. Q1 (the dashboard
 # refresh) lives in jul20_refresh_dashboard.R; this script answers the other
-# two July-20 asks with patient-level CSVs and compact summary files - no
-# workbook, no dashboard. No existing pipeline or dashboard file is modified.
+# two July-20 asks with patient-level CSVs, compact summary files, AND one
+# consolidated Excel workbook that gathers every Q2/Q3 table into tabs
+# (jul20_studyteam_qs_<cohort>_<stamp>.xlsx; needs openxlsx - degrades to
+# CSV-only with a note if it is absent). No existing pipeline or dashboard
+# file is modified.
 #
 # Cohort: the NDMM study cohort by default (NDMM_LOT_LONG_FILT), which is the
 # cohort Julia's question 2 names, and the same default as the sibling
@@ -118,6 +121,69 @@ best_effort <- function(expr, label) {
 
 is_status_table <- function(x)
   is.data.frame(x) && identical(names(x), "status")
+
+# ===========================================================================
+# Consolidated Excel writer (openxlsx). A "sheet" is a list of name, title,
+# optional subtitle, narrative lines, and named tables (each a data.frame).
+# Same writer as lot_followup_qs.R / poma_studyteam_qs.R. openxlsx must be
+# installed; the caller checks and degrades to CSV-only if it is missing.
+# ===========================================================================
+wbx_write_workbook <- function(sheets, xlsx_path) {
+  ox <- function(f) getExportedValue("openxlsx", f)
+  wb <- ox("createWorkbook")()
+  st_title <- ox("createStyle")(fontSize = 14, textDecoration = "bold",
+                                fontColour = "#FFFFFF", fgFill = "#1F3864")
+  st_sub   <- ox("createStyle")(fontColour = "#FFFFFF", fgFill = "#2E5496",
+                                textDecoration = "italic")
+  st_narr  <- ox("createStyle")(wrapText = TRUE, valign = "top")
+  st_cap   <- ox("createStyle")(textDecoration = "bold", fgFill = "#D6E0F0")
+  st_hdr   <- ox("createStyle")(textDecoration = "bold", fontColour = "#FFFFFF",
+                                fgFill = "#2E5496", border = "TopBottomLeftRight",
+                                halign = "left")
+  for (s in sheets) {
+    # Excel forbids \ / ? * [ ] : in sheet names and caps them at 31 chars.
+    # Strip each illegal char literally (fixed = TRUE avoids regex-class
+    # escaping pitfalls), collapse whitespace, then truncate.
+    sn <- s$name
+    for (ch in c("\\", "/", "?", "*", "[", "]", ":")) sn <- gsub(ch, " ", sn, fixed = TRUE)
+    sn <- substr(trimws(gsub("[[:space:]]+", " ", sn)), 1, 31)
+    ox("addWorksheet")(wb, sn)
+    r <- 1L
+    ox("writeData")(wb, sn, s$title, startRow = r, startCol = 1)
+    ox("addStyle")(wb, sn, st_title, rows = r, cols = 1:10, gridExpand = TRUE)
+    r <- r + 1L
+    if (!is.null(s$subtitle)) {
+      ox("writeData")(wb, sn, s$subtitle, startRow = r, startCol = 1)
+      ox("addStyle")(wb, sn, st_sub, rows = r, cols = 1:10, gridExpand = TRUE)
+      r <- r + 1L
+    }
+    r <- r + 1L
+    for (line in s$narrative %||% character()) {
+      ox("writeData")(wb, sn, line, startRow = r, startCol = 1)
+      ox("addStyle")(wb, sn, st_narr, rows = r, cols = 1, gridExpand = TRUE)
+      r <- r + 1L
+    }
+    r <- r + 1L
+    for (nm in names(s$tables %||% list())) {
+      df <- s$tables[[nm]]
+      ox("writeData")(wb, sn, nm, startRow = r, startCol = 1)
+      ox("addStyle")(wb, sn, st_cap, rows = r, cols = 1:10, gridExpand = TRUE)
+      r <- r + 1L
+      if (is.data.frame(df) && nrow(df) > 0) {
+        ox("writeData")(wb, sn, df, startRow = r, startCol = 1,
+                        headerStyle = st_hdr, withFilter = FALSE)
+        r <- r + nrow(df) + 2L
+      } else {
+        ox("writeData")(wb, sn, "(no rows / not available)", startRow = r, startCol = 1)
+        r <- r + 2L
+      }
+    }
+    ox("setColWidths")(wb, sn, cols = 1:14, widths = "auto")
+  }
+  ox("saveWorkbook")(wb, xlsx_path, overwrite = TRUE)
+  log_msg("wrote consolidated workbook -> ", xlsx_path, " (", length(sheets), " sheets)")
+  invisible(TRUE)
+}
 
 num <- function(x) suppressWarnings(as.numeric(x))
 pct1 <- function(x, d) if (isTRUE(num(d) > 0)) round(100 * num(x) / num(d), 1) else NA_real_
@@ -1076,6 +1142,9 @@ main <- function() {
 
   describe_cols <- make_describe_cols(con)
 
+  # Every table written to CSV is also registered here so the consolidated
+  # Excel workbook can be assembled from the same frames at the end.
+  wb_reg <- list()
   write_out <- function(df, tag) {
     if (is.null(df) || !is.data.frame(df) || nrow(df) == 0) {
       log_msg("  (", tag, ": no rows to write)")
@@ -1083,6 +1152,7 @@ main <- function() {
     }
     f <- file.path(out_dir, paste0("jul20_qs_", tag, "_", tolower(cohort_mode), "_", stamp, ".csv"))
     write.csv(df, f, row.names = FALSE)
+    wb_reg[[tag]] <<- df
     log_msg("  wrote ", tag, " -> ", f, " (", nrow(df), " rows)")
     f
   }
@@ -1510,6 +1580,87 @@ main <- function() {
   write_out(defs, "definitions")
 
   if (length(checks) > 0) write_out(do.call(rbind, checks), "validation_summary")
+
+  # ---- consolidated Excel workbook (all Q2/Q3 tables in one file) ---------
+  # Assembled from the same frames already written as CSVs (wb_reg). Built
+  # before run_status so a workbook failure is reflected there. Degrades to
+  # CSV-only with a clear note if openxlsx is not installed.
+  if (requireNamespace("openxlsx", quietly = TRUE)) {
+    wb_status <- if (length(gaps) == 0)
+      "STATUS: TECHNICALLY COMPLETE - PENDING MANUAL REVIEW (not sign-off to share)."
+      else paste0("STATUS: INCOMPLETE - ", length(gaps), " issue(s); see the run_status file and the gaps below.")
+    tbls <- function(...) {
+      m <- list(...)
+      out <- list()
+      for (cap in names(m)) if (!is.null(wb_reg[[m[[cap]]]])) out[[cap]] <- wb_reg[[m[[cap]]]]
+      out
+    }
+    wb_sheets <- list()
+    add_wb <- function(name, title, subtitle = NULL, narrative = NULL, tables = list()) {
+      if (length(tables) == 0) return(invisible(NULL))
+      wb_sheets[[length(wb_sheets) + 1L]] <<- list(name = name, title = title,
+        subtitle = subtitle, narrative = narrative, tables = tables)
+    }
+    add_wb("Read Me", paste0("July-20 Q2+Q3 - ", cohort_label),
+      subtitle = paste0("Generated ", stamp, " by jul20_studyteam_qs.R against ", cfg$work_schema),
+      narrative = c(wb_status, if (length(gaps)) paste0("  - ", gaps) else NULL, "", summary_lines),
+      tables = tbls("Cohort denominators (reconcile vs the dashboard)" = "lot_totals_for_reconciliation",
+                    "Definitions" = "definitions",
+                    "Validation checks" = "validation_summary"))
+    add_wb("Q2 cohort and use", "Q2 - DARA+BORT dual therapy: cohort and per-agent utilization",
+      subtitle = cohort_label,
+      tables = tbls("Exact-dual vs contains-both context" = "dual_definition_and_context",
+                    "Episodes (MAPs) per agent in LOT1" = "utilization_summary",
+                    "Episode-count distribution" = "episode_distribution",
+                    "Service / fill dates per agent in LOT1" = "service_date_summary"))
+    add_wb("Q2 patients", "Q2 - DARA+BORT patient roster (one row per patient)",
+      subtitle = cohort_label,
+      tables = tbls("Patient roster" = "dara_bort_patients"))
+    add_wb("Q2 MAP detail", "Q2 - per-episode (MAP) detail",
+      subtitle = cohort_label,
+      tables = tbls("DARA/BORT episodes during LOT1" = "dara_bort_maps_during_lot1",
+                    "DARA/BORT episodes after LOT1" = "dara_bort_maps_after_lot1"))
+    add_wb("Q2 2L and diagnosis", "Q2 - 2L regimens and diagnosis years",
+      subtitle = cohort_label,
+      tables = tbls("2L regimens of the dual cohort" = "lot2_regimens",
+                    "Diagnosis years" = "diagnosis_years"))
+    add_wb("Q2 region x payer", "Q2 - region x payer",
+      subtitle = cohort_label,
+      tables = tbls("Region x payer (grid)" = "region_payer_grid",
+                    "Region x payer (long, with %)" = "region_payer_counts",
+                    "Region value counts" = "region_value_counts"))
+    add_wb("Q3a MELP", "Q3(a) - MELP rule PRELIMINARY screen (not exact impact)",
+      subtitle = cohort_label,
+      tables = tbls("Headline totals" = "melp_rule_totals",
+                    "Boundaries by timing bucket" = "melp_rule_inventory",
+                    "Boundaries by line pair" = "melp_rule_by_line",
+                    "Lines per patient (current vs screened)" = "melp_rule_lines_shift"))
+    add_wb("Q3a MELP patients", "Q3(a) - MELP boundary patients and example timelines",
+      subtitle = cohort_label,
+      tables = tbls("Boundary roster" = "melp_rule_boundaries",
+                    "Example patient LOT rows" = "melp_rule_example_lots",
+                    "Example patient MELP MAP dates" = "melp_rule_example_maps"))
+    add_wb("Q3b CAR-T", "Q3(b) - CAR-T rule PRELIMINARY screen (not exact impact)",
+      subtitle = cohort_label,
+      tables = tbls("Inventory" = "cart_rule_inventory",
+                    "First CAR-T timing vs LOT1 start" = "cart_rule_timing",
+                    "Lines per patient (current vs screened)" = "cart_rule_lines_shift"))
+    add_wb("Q3b CAR-T patients", "Q3(b) - CAR-T affected patients (all in-window CAR-T)",
+      subtitle = cohort_label,
+      tables = tbls("Affected patients" = "cart_rule_affected_patients"))
+
+    xlsx <- file.path(out_dir, paste0("jul20_studyteam_qs_", tolower(cohort_mode), "_", stamp, ".xlsx"))
+    ok_wb <- isTRUE(tryCatch({ wbx_write_workbook(wb_sheets, xlsx); TRUE },
+                             error = function(e) {
+                               log_msg("  WARN: consolidated Excel failed - ", conditionMessage(e))
+                               FALSE
+                             }))
+    if (!ok_wb)
+      gaps <- c(gaps, "consolidated Excel workbook could not be written (the per-result CSVs are present)")
+  } else {
+    log_msg("NOTE: openxlsx not installed - consolidated Excel skipped; the per-result CSVs are written. install.packages('openxlsx') to enable the workbook.")
+    gaps <- c(gaps, "consolidated Excel skipped - openxlsx not installed (per-result CSVs written)")
+  }
 
   status_lines <- if (length(gaps) == 0) {
     c("RUN STATUS: TECHNICALLY COMPLETE - PENDING MANUAL REVIEW",
