@@ -294,32 +294,42 @@ ndmm_bind_persisted_views <- function(con) {
 # Exact-PATID consistency between the two persisted NDMM tables: every
 # NDMM_LOT_LONG_FILT patient must be selected by the flags and vice versa.
 # Equal counts alone do not prove this (two 300-patient sets can differ), so
-# this anti-joins both directions. Uses NOT EXISTS (not NOT IN, which returns
-# UNKNOWN on a NULL PATID and can hide a real mismatch) and counts NULL
-# PATIDs separately. This proves the two tables select the same PATID set; it
-# does NOT prove they were built by the same engine run (no build id is
-# persisted). Returns list(ok, n_filt, n_flags, only_in_filt, only_in_flags,
-# n_null).
+# this compares the two PATID sets directly.
+#
+# Implemented as a handful of SIMPLE queries using only patterns the existing
+# production pipeline already runs on this warehouse: plain count(DISTINCT),
+# the left-anti-join (LEFT JOIN ... WHERE right IS NULL), and UNION ALL. The
+# earlier single-query form used correlated NOT EXISTS scalar subqueries in
+# the SELECT list, which trip a Spark SQL optimizer internal-error bug ("phase
+# optimization failed with an internal error"). NULLs are excluded from the
+# anti-joins and counted separately so a NULL PATID cannot hide a difference.
+#
+# Proves the two tables select the same PATID set; it does NOT prove they were
+# built by the same engine run (no build id is persisted). Returns
+# list(ok, n_filt, n_flags, only_in_filt, only_in_flags, n_null).
 ndmm_consistency_check <- function(con) {
-  d <- db_q(con, glue("
-    WITH filt AS (SELECT DISTINCT cast(PATID as string) AS PATID FROM {NDMM_LOT_LONG_FILT}),
-         sel  AS (SELECT DISTINCT cast(PATID as string) AS PATID FROM {NDMM_PATIDS})
-    SELECT (SELECT count(*) FROM filt WHERE PATID IS NOT NULL)           AS n_filt,
-           (SELECT count(*) FROM sel  WHERE PATID IS NOT NULL)           AS n_flags,
-           (SELECT count(*) FROM filt f
-             WHERE f.PATID IS NOT NULL
-               AND NOT EXISTS (SELECT 1 FROM sel s WHERE s.PATID = f.PATID)) AS only_in_filt,
-           (SELECT count(*) FROM sel s
-             WHERE s.PATID IS NOT NULL
-               AND NOT EXISTS (SELECT 1 FROM filt f WHERE f.PATID = s.PATID)) AS only_in_flags,
-           (SELECT count(*) FROM filt WHERE PATID IS NULL)
-             + (SELECT count(*) FROM sel WHERE PATID IS NULL)            AS n_null"))
-  n <- function(x) as.numeric(x)
-  only_filt  <- n(d$only_in_filt[1])
-  only_flags <- n(d$only_in_flags[1])
-  n_null     <- n(d$n_null[1])
+  n <- function(x) suppressWarnings(as.numeric(x))
+  q1 <- function(sql) n(db_q(con, sql)$n[1])
+  filt_distinct <- glue("(SELECT DISTINCT cast(PATID as string) AS PATID
+                          FROM {NDMM_LOT_LONG_FILT} WHERE PATID IS NOT NULL)")
+  sel_distinct  <- glue("(SELECT DISTINCT cast(PATID as string) AS PATID
+                          FROM {NDMM_PATIDS} WHERE PATID IS NOT NULL)")
+  n_filt  <- q1(glue("SELECT count(*) AS n FROM {filt_distinct} f"))
+  n_flags <- q1(glue("SELECT count(*) AS n FROM {sel_distinct} s"))
+  # left-anti-joins (proven idiom, used across 02/05/06)
+  only_filt  <- q1(glue("SELECT count(*) AS n FROM {filt_distinct} f
+                         LEFT JOIN {sel_distinct} s ON f.PATID = s.PATID
+                         WHERE s.PATID IS NULL"))
+  only_flags <- q1(glue("SELECT count(*) AS n FROM {sel_distinct} s
+                         LEFT JOIN {filt_distinct} f ON f.PATID = s.PATID
+                         WHERE f.PATID IS NULL"))
+  n_null <- q1(glue("SELECT coalesce(sum(n), 0) AS n FROM (
+                       SELECT count(*) AS n FROM {NDMM_LOT_LONG_FILT} WHERE PATID IS NULL
+                       UNION ALL
+                       SELECT count(*) AS n FROM {NDMM_PATIDS} WHERE PATID IS NULL
+                     ) u"))
   list(ok = isTRUE(only_filt == 0 && only_flags == 0 && n_null == 0),
-       n_filt = n(d$n_filt[1]), n_flags = n(d$n_flags[1]),
+       n_filt = n_filt, n_flags = n_flags,
        only_in_filt = only_filt, only_in_flags = only_flags, n_null = n_null)
 }
 
@@ -332,12 +342,18 @@ ndmm_consistency_check <- function(con) {
 build_refresh_ndmm_overview_card <- function(n_final, n_cat_rules, sync,
                                              section = "OVERVIEW",
                                              title = "What this dashboard shows") {
-  sync_html <- if (sync$ok)
+  sync_html <- if (isTRUE(sync$errored) || is.na(sync$ok))
+    paste0('<p style="color:#a06000;font-size:13px;margin:6px 0 0"><b>Consistency ',
+           'check could not run</b> this session, so the two persisted NDMM ',
+           'tables were not cross-verified. The dashboard still uses the ',
+           'persisted cohort; confirm it against the authoritative production ',
+           'NDMM dashboard before sharing.</p>')
+  else if (isTRUE(sync$ok))
     paste0('<p style="color:#1a7a3a;font-size:13px;margin:6px 0 0">Consistency ',
            'check passed: the persisted <code>NDMM_LOT_LONG_FILT</code> and ',
            '<code>NDMM_FLAGS_ALL</code> select the same ',
            format(sync$n_filt, big.mark = ","), ' patients (exact PATID ',
-           'anti-join, both directions, no NULL PATIDs). This confirms a ',
+           'set comparison, both directions, no NULL PATIDs). This confirms a ',
            'matching patient SET; it does not by itself prove both tables were ',
            'built by the same engine run (no build identifier is persisted).</p>')
   else
@@ -513,9 +529,15 @@ main_refresh <- function() {
     # count match). A divergence means they come from different runs.
     sync <- tryCatch(ndmm_consistency_check(con), error = function(e) {
       log_msg("  WARN: NDMM consistency check failed to run (", conditionMessage(e), ")")
-      list(ok = FALSE, n_filt = NA, n_flags = NA, only_in_filt = NA, only_in_flags = NA)
+      list(ok = NA, n_filt = NA, n_flags = NA, only_in_filt = NA,
+           only_in_flags = NA, n_null = NA, errored = TRUE)
     })
-    if (!isTRUE(sync$ok)) {
+    if (isTRUE(sync$errored) || is.na(sync$ok)) {
+      # Could not verify - do NOT claim out-of-sync (that would be a false
+      # alarm). Flag it as an unresolved gap so the run is not called complete.
+      gaps <- c(gaps,
+        "NDMM table consistency check could not run - the two persisted tables were not cross-verified this session")
+    } else if (!isTRUE(sync$ok)) {
       log_msg("WARNING: persisted NDMM tables are OUT OF SYNC (only_in_filt=",
               sync$only_in_filt, ", only_in_flags=", sync$only_in_flags,
               ") - re-run 06_ndmm_dashboard.R.")
@@ -524,7 +546,11 @@ main_refresh <- function() {
         " patients only in the filtered LOT table, ", sync$only_in_flags,
         " only in the flags) - re-run 06_ndmm_dashboard.R"))
     }
-    n_final <- sync$n_filt
+    # Fall back to a direct count if the consistency check could not supply one.
+    n_final <- if (is.na(sync$n_filt))
+      suppressWarnings(as.numeric(db_q(con, glue(
+        "SELECT count(DISTINCT cast(PATID as string)) AS n FROM {NDMM_LOT_LONG_FILT} WHERE PATID IS NOT NULL"))$n[1]))
+      else sync$n_filt
     filter_status <- tryCatch(ndmm_filter_status(con), error = function(e) NULL)
 
     # Steroid augmentation BYPASSED: n_codes = 0 builds LOT_LONG_AUG as a
