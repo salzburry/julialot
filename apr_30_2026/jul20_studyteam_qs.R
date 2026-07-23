@@ -38,11 +38,15 @@
 #   not cycle counts.
 #   Region comes ONLY from an explicitly approved source, set via
 #   REGION_SOURCE_TABLE (a fully-qualified table, or a CDM base name such as
-#   'member') and REGION_SOURCE_COLUMN. When unset, region is reported
-#   unavailable, and a candidate-columns file lists geographic-looking
-#   columns found on the enrollment/member tables so the team can approve
-#   one. Values are passed through untouched (plus a distinct-value file for
-#   manual confirmation); no mapping is invented here.
+#   'member_enrollment') and REGION_SOURCE_COLUMN. When unset, region is
+#   reported unavailable, and a candidate-columns file lists geographic-looking
+#   columns found on the enrollment/member tables so the team can approve one.
+#   By default the source values pass through untouched. If the source is a
+#   STATE field and the 4 US Census regions are wanted, set REGION_MAP=CENSUS
+#   to roll STATE (2-letter code or full name) up to Northeast/Midwest/South/
+#   West (DC in South) - reproducing Optum's own REGION derivation; any
+#   non-state value stays visible as 'Other/Unmapped'. The region_value_counts
+#   file shows the source-value -> region-used correspondence for confirmation.
 #   Payer = Optum line of business (member_enrollment.BUS) on the enrollment
 #   span covering the LOT1 start date - the production dashboard's anchor.
 #   MCR = Medicare, COM = Commercial, blank = Unknown, anything else =
@@ -241,6 +245,49 @@ make_describe_cols <- function(con) {
     cn <- cn[nzchar(cn) & !startsWith(cn, "#")]
     unique(cn)
   }
+}
+
+# ---------------------------------------------------------------------------
+# US Census Bureau state -> region rollup (opt-in via REGION_MAP=CENSUS), for
+# when the approved region source is a STATE field rather than a REGION field.
+# This reproduces Optum's own REGION derivation ("the US Census Region
+# associated with the member"). DC is in the South, per the Census Bureau.
+# The map is keyed on BOTH the 2-letter USPS code and the full state name, so
+# either encoding resolves; any value that is neither is left visible as
+# 'Other/Unmapped' (territories, military, junk) rather than silently bucketed.
+# ---------------------------------------------------------------------------
+CENSUS_REGIONS <- list(
+  Northeast = c("CT","ME","MA","NH","RI","VT","NJ","NY","PA"),
+  Midwest   = c("IL","IN","MI","OH","WI","IA","KS","MN","MO","NE","ND","SD"),
+  South     = c("DE","FL","GA","MD","NC","SC","VA","DC","WV","AL","KY","MS","TN","AR","LA","OK","TX"),
+  West      = c("AZ","CO","ID","MT","NV","NM","UT","WY","AK","CA","HI","OR","WA"))
+STATE_ABBR_NAME <- c(
+  AL="ALABAMA", AK="ALASKA", AZ="ARIZONA", AR="ARKANSAS", CA="CALIFORNIA",
+  CO="COLORADO", CT="CONNECTICUT", DE="DELAWARE", DC="DISTRICT OF COLUMBIA",
+  FL="FLORIDA", GA="GEORGIA", HI="HAWAII", ID="IDAHO", IL="ILLINOIS",
+  IN="INDIANA", IA="IOWA", KS="KANSAS", KY="KENTUCKY", LA="LOUISIANA",
+  ME="MAINE", MD="MARYLAND", MA="MASSACHUSETTS", MI="MICHIGAN", MN="MINNESOTA",
+  MS="MISSISSIPPI", MO="MISSOURI", MT="MONTANA", NE="NEBRASKA", NV="NEVADA",
+  NH="NEW HAMPSHIRE", NJ="NEW JERSEY", NM="NEW MEXICO", NY="NEW YORK",
+  NC="NORTH CAROLINA", ND="NORTH DAKOTA", OH="OHIO", OK="OKLAHOMA", OR="OREGON",
+  PA="PENNSYLVANIA", RI="RHODE ISLAND", SC="SOUTH CAROLINA", SD="SOUTH DAKOTA",
+  TN="TENNESSEE", TX="TEXAS", UT="UTAH", VT="VERMONT", VA="VIRGINIA",
+  WA="WASHINGTON", WV="WEST VIRGINIA", WI="WISCONSIN", WY="WYOMING")
+
+# Build a Spark SQL CASE mapping a state-value expression to its Census region.
+census_state_region_case <- function(val_expr) {
+  norm <- glue("upper(trim(cast({val_expr} as string)))")
+  whens <- vapply(names(CENSUS_REGIONS), function(reg) {
+    abbrs <- CENSUS_REGIONS[[reg]]
+    toks  <- unique(c(abbrs, unname(STATE_ABBR_NAME[abbrs])))
+    inlist <- paste(sprintf("'%s'", toks), collapse = ", ")
+    glue("WHEN {norm} IN ({inlist}) THEN '{reg}'")
+  }, character(1))
+  glue("CASE
+          {paste(whens, collapse = '\n          ')}
+          WHEN {norm} IS NULL OR {norm} = '' THEN 'Unknown'
+          ELSE 'Other/Unmapped'
+        END")
 }
 
 # ===========================================================================
@@ -520,13 +567,19 @@ q2_region_candidates_report <- function(con, describe_cols) {
   out
 }
 
-q2_build_region_view <- function(con, src) {
+# _jul20_region has TWO columns: region_raw (the source value, e.g. the state
+# code) and region (what the crosstab uses). When map_census is TRUE the raw
+# value is rolled up to the 4 Census regions; otherwise region = the raw value
+# (blank -> 'Unknown'). Keeping both lets the value-counts file audit the map.
+q2_build_region_view <- function(con, src, map_census = FALSE) {
+  region_final <- if (isTRUE(map_census)) census_state_region_case("region_raw")
+    else "CASE WHEN region_raw IS NULL OR region_raw = '' THEN 'Unknown' ELSE region_raw END"
   if (src$has_spans) {
     db_exec(con, glue("
       CREATE OR REPLACE TEMPORARY VIEW _jul20_region AS
       WITH span AS (
         SELECT d.PATID,
-               upper(trim(cast(e.{src$col} as string))) AS region,
+               upper(trim(cast(e.{src$col} as string))) AS region_raw,
                row_number() OVER (PARTITION BY d.PATID
                                   ORDER BY
                                     CASE WHEN cast(e.ELIGEND as date) >= d.L1
@@ -538,39 +591,37 @@ q2_build_region_view <- function(con, src) {
           ON cast(e.PATID as string) = d.PATID
          AND cast(e.ELIGEFF as date) <= d.L1
       )
-      SELECT PATID,
-             CASE WHEN region IS NULL OR region = '' THEN 'Unknown'
-                  ELSE region END AS region
+      SELECT PATID, region_raw, {region_final} AS region
       FROM span WHERE rn = 1"))
   } else {
     db_exec(con, glue("
       CREATE OR REPLACE TEMPORARY VIEW _jul20_region AS
       WITH vals AS (
         SELECT d.PATID,
-               upper(trim(cast(e.{src$col} as string))) AS region,
+               upper(trim(cast(e.{src$col} as string))) AS region_raw,
                count(*) AS n
         FROM _jul20_dual d
         JOIN {src$tbl} e ON cast(e.PATID as string) = d.PATID
         GROUP BY d.PATID, upper(trim(cast(e.{src$col} as string)))
       ),
       ranked AS (
-        SELECT PATID, region,
-               row_number() OVER (PARTITION BY PATID ORDER BY n DESC, region) AS rn
+        SELECT PATID, region_raw,
+               row_number() OVER (PARTITION BY PATID ORDER BY n DESC, region_raw) AS rn
         FROM vals
       )
-      SELECT PATID,
-             CASE WHEN region IS NULL OR region = '' THEN 'Unknown'
-                  ELSE region END AS region
+      SELECT PATID, region_raw, {region_final} AS region
       FROM ranked WHERE rn = 1"))
   }
   invisible(TRUE)
 }
 
-# Distinct region values among the dual cohort, for manual confirmation.
+# Source value -> region-used correspondence with counts, for manual
+# confirmation of the mapping (any 'Other/Unmapped' rows are visible here).
 q2_region_values <- function(con) {
   db_q(con, "
-    SELECT region AS region_value, count(*) AS n_patients
-    FROM _jul20_region GROUP BY region ORDER BY n_patients DESC")
+    SELECT region_raw AS region_source_value, region AS region_used,
+           count(*) AS n_patients
+    FROM _jul20_region GROUP BY region_raw, region ORDER BY n_patients DESC")
 }
 
 # ===========================================================================
@@ -1296,15 +1347,21 @@ main <- function() {
     # Region: approved source only; candidates reported for approval.
     write_out(best_effort(q2_region_candidates_report(con, describe_cols),
                           "region candidate columns"), "region_candidate_columns")
+    # Opt-in state -> Census region rollup (REGION_MAP=CENSUS). Use it when the
+    # approved region source is a STATE field and Julia wants the 4 regions.
+    region_map_mode <- toupper(Sys.getenv("REGION_MAP", unset = ""))
+    do_census <- region_map_mode %in% c("CENSUS", "CENSUS_REGION", "STATE_TO_CENSUS")
     reg_src <- q2_region_source_from_env(con, describe_cols)
     if (!is.null(reg_src$tbl)) {
-      have_region <- !is_status_table(best_effort(q2_build_region_view(con, reg_src), "region lookup"))
+      have_region <- !is_status_table(best_effort(q2_build_region_view(con, reg_src, do_census), "region lookup"))
       if (have_region) {
         region_note <- sprintf(
-          "Region = %s.%s (approved via REGION_SOURCE_TABLE/REGION_SOURCE_COLUMN; %s). Values are passed through untouched - confirm them in the region_value_counts file.",
+          "Region = %s.%s (approved via REGION_SOURCE_TABLE/REGION_SOURCE_COLUMN; %s). %s Confirm the mapping in the region_value_counts file.",
           reg_src$tbl, reg_src$col,
           if (reg_src$has_spans) "anchored to the enrollment span covering the LOT1 start"
-          else "per-patient modal value - the table has no span dates")
+          else "per-patient modal value - the table has no span dates",
+          if (do_census) "Values are rolled up to the 4 US Census regions (Northeast/Midwest/South/West; DC in South); any non-state value shows as 'Other/Unmapped'."
+          else "Values are passed through untouched (set REGION_MAP=CENSUS to roll a STATE field up to the 4 US Census regions).")
         write_out(best_effort(q2_region_values(con), "region value counts"),
                   "region_value_counts")
       } else {
