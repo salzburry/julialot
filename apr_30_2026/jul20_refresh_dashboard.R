@@ -271,14 +271,11 @@ build_all_regimen_transitions <- function(con, out_dir, stamp, cohort_tag,
       rank = seq_len(nrow(d)),
       from_disp = disp_regimen(as.character(d$reg_from)),
       to_disp   = disp_regimen(as.character(d$reg_to)),
-      from_key  = as.character(d$reg_from),
-      to_key    = as.character(d$reg_to),
       n_patients = as.integer(as.numeric(d$n_patients)),
       pct_of_transitions = round(100 * as.numeric(d$n_patients) / total, 1),
       stringsAsFactors = FALSE)
     names(df) <- c("rank",
                    paste0("LOT", n, "_regimen"), paste0("LOT", n + 1, "_regimen"),
-                   paste0("LOT", n, "_regimen_key"), paste0("LOT", n + 1, "_regimen_key"),
                    "n_patients", "pct_of_transitions")
     f <- file.path(out_dir, paste0("jul20_regimen_transitions_lot", n, "_to_lot",
                                    n + 1, "_", cohort_tag, "_", stamp, ".csv"))
@@ -313,9 +310,9 @@ build_all_regimen_transitions <- function(con, out_dir, stamp, cohort_tag,
     '<p style="color:#555;font-size:13px">Every LOT-pair regimen transition, complete - no ',
     'top-N cut. The Sankeys above stay top ', TOP_N, ' for readability; these tables (and their ',
     'CSV files written next to the dashboard) carry every combination. Population matches the ',
-    'Sankeys: patients who progress with a drug regimen on both lines. The <code>_regimen</code> ',
-    'columns use the dashboard display order; the <code>_regimen_key</code> columns are the ',
-    'engine&#39;s canonical strings the counts group on.</p></div>'),
+    'Sankeys: patients who progress with a drug regimen on both lines. Regimen columns use the ',
+    'dashboard display order; <code>n_patients</code> is the count and ',
+    '<code>pct_of_transitions</code> its share of the pair.</p></div>'),
     section = section, title = "About the full transition lists")
   if (!st$has_dt)
     st$reasons <- c(st$reasons,
