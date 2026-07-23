@@ -18,7 +18,12 @@
 #   ADDED    - an "All regimens" section: every regimen per LOT (no top-N cut),
 #              displayed in the same modal/clinical order the current dashboard
 #              uses, downloadable from each table's CSV button and also written
-#              as one CSV file per LOT next to the dashboard.
+#              as one CSV file per LOT next to the dashboard;
+#   ADDED    - a "Regimen transitions (full)" section: for each LOT pair
+#              (1->2, 2->3, 3->4, 4->5) the COMPLETE from->to regimen-transition
+#              counts (no top-N cut), downloadable per table and as one CSV per
+#              pair. The LOT-pair Sankeys stay top-N for readability; only their
+#              counts export is made complete.
 #
 # NDMM mode (default - the cohort the July-20 questions name, and the same
 # default as the sibling jul20_studyteam_qs.R) builds the COHORT and all LOT
@@ -224,6 +229,101 @@ build_all_regimens_section <- function(con, lot_long, out_dir, stamp,
   # requires BOTH the in-dashboard tables/buttons (DT) and the physical CSVs.
   st$ok <- (st$csvs_written == st$expected_lots) &&
            (length(st$csv_failures) == 0) && isTRUE(st$has_dt)
+  st
+}
+
+# ===========================================================================
+# For each LOT pair (n -> n+1), the FULL regimen-transition counts - every
+# from-regimen -> to-regimen combination, no top-N cut - as a downloadable
+# table and a CSV file per pair. The Sankeys (build_focused_pair) stay top-N
+# for readability; this is the complete counts export the study team asked
+# for. Population matches the Sankeys: progressors with a drug regimen on both
+# lines, read from the steroid-free LOT_LONG_AUG passthrough. Returns a status
+# list so the caller can gate the run.
+# ===========================================================================
+build_all_regimen_transitions <- function(con, out_dir, stamp, cohort_tag,
+                                          section = "Regimen transitions (full)") {
+  dt_ready <- isTRUE(has_dt) && requireNamespace("htmlwidgets", quietly = TRUE)
+  st <- list(ok = FALSE, pairs_written = 0L, csv_failures = character(0),
+             has_dt = dt_ready, reasons = character(0))
+  pairs_with_data <- 0L
+  for (n in 1:4) {
+    d <- tryCatch(db_q(con, glue("
+      WITH a AS (SELECT cast(PATID as string) AS PATID, LOT_BASE_MEDS_AUG AS reg_from
+                 FROM {LOT_LONG_AUG}
+                 WHERE LOT_NUM = {n} AND LOT_BASE_MEDS_AUG IS NOT NULL
+                   AND trim(LOT_BASE_MEDS_AUG) <> ''),
+           b AS (SELECT cast(PATID as string) AS PATID, LOT_BASE_MEDS_AUG AS reg_to
+                 FROM {LOT_LONG_AUG}
+                 WHERE LOT_NUM = {n + 1} AND LOT_BASE_MEDS_AUG IS NOT NULL
+                   AND trim(LOT_BASE_MEDS_AUG) <> '')
+      SELECT a.reg_from, b.reg_to, count(DISTINCT a.PATID) AS n_patients
+      FROM a JOIN b ON a.PATID = b.PATID
+      GROUP BY a.reg_from, b.reg_to
+      ORDER BY n_patients DESC, a.reg_from, b.reg_to")),
+      error = function(e) {
+        log_msg("  WARN: LOT", n, "->LOT", n + 1, " transitions failed - ",
+                conditionMessage(e)); NULL })
+    if (is.null(d) || nrow(d) == 0) next
+    pairs_with_data <- pairs_with_data + 1L
+    total <- sum(as.numeric(d$n_patients))
+    df <- data.frame(
+      rank = seq_len(nrow(d)),
+      from_disp = disp_regimen(as.character(d$reg_from)),
+      to_disp   = disp_regimen(as.character(d$reg_to)),
+      from_key  = as.character(d$reg_from),
+      to_key    = as.character(d$reg_to),
+      n_patients = as.integer(as.numeric(d$n_patients)),
+      pct_of_transitions = round(100 * as.numeric(d$n_patients) / total, 1),
+      stringsAsFactors = FALSE)
+    names(df) <- c("rank",
+                   paste0("LOT", n, "_regimen"), paste0("LOT", n + 1, "_regimen"),
+                   paste0("LOT", n, "_regimen_key"), paste0("LOT", n + 1, "_regimen_key"),
+                   "n_patients", "pct_of_transitions")
+    f <- file.path(out_dir, paste0("jul20_regimen_transitions_lot", n, "_to_lot",
+                                   n + 1, "_", cohort_tag, "_", stamp, ".csv"))
+    ok <- isTRUE(tryCatch({ write.csv(df, f, row.names = FALSE); TRUE },
+                          error = function(e) {
+                            log_msg("  WARN: could not write ", f, " - ",
+                                    conditionMessage(e)); FALSE }))
+    if (ok) {
+      st$pairs_written <- st$pairs_written + 1L
+      log_msg("  wrote transitions LOT", n, "->LOT", n + 1, " -> ", f,
+              " (", nrow(df), " rows)")
+    } else {
+      st$csv_failures <- c(st$csv_failures, paste0("LOT", n, "->LOT", n + 1))
+    }
+    save_table(df, section = section,
+               title = paste0("LOT", n, " -> LOT", n + 1,
+                              " - all regimen transitions (", nrow(df),
+                              " combinations; every row, no top-N cut)"))
+  }
+  if (pairs_with_data == 0) {
+    add_html_card(paste0(
+      '<div style="font-family:system-ui;padding:12px;max-width:760px">',
+      '<h3>Regimen transitions (full) unavailable</h3><p style="color:#555;font-size:13px">',
+      'No progressing patients with a drug regimen on both lines were found.</p></div>'),
+      section = section, title = "Regimen transitions (full) - unavailable")
+    st$reasons <- "no regimen transitions found"
+    return(st)
+  }
+  add_html_card(paste0(
+    '<div style="font-family:system-ui;padding:12px;max-width:860px">',
+    '<h3 style="margin:0 0 6px">Full regimen transitions (complete lists for CSV export)</h3>',
+    '<p style="color:#555;font-size:13px">Every LOT-pair regimen transition, complete - no ',
+    'top-N cut. The Sankeys above stay top ', TOP_N, ' for readability; these tables (and their ',
+    'CSV files written next to the dashboard) carry every combination. Population matches the ',
+    'Sankeys: patients who progress with a drug regimen on both lines. The <code>_regimen</code> ',
+    'columns use the dashboard display order; the <code>_regimen_key</code> columns are the ',
+    'engine&#39;s canonical strings the counts group on.</p></div>'),
+    section = section, title = "About the full transition lists")
+  if (!st$has_dt)
+    st$reasons <- c(st$reasons,
+      "DT/htmlwidgets unavailable - in-dashboard transition tables/buttons missing (CSV files still written)")
+  if (length(st$csv_failures))
+    st$reasons <- c(st$reasons,
+      paste0("transition CSV(s) failed to write: ", paste(st$csv_failures, collapse = ", ")))
+  st$ok <- (length(st$csv_failures) == 0) && isTRUE(st$has_dt)
   st
 }
 
@@ -577,6 +677,7 @@ main_refresh <- function() {
     #  authoritative production dashboard - see the overview card.)
     build_payer_lot_qc(con, section = "Payer")
     for (n in 1:4) build_focused_pair(con, n, n + 1L)
+    trans_st <- build_all_regimen_transitions(con, out_dir, stamp, cohort_tag)
     for (n in 1:4) build_category_pair(con, n, n + 1L, lookups)
     build_category_coverage(con, lookups)
     reg_st <- build_all_regimens_section(con, lot_view, out_dir, stamp, cohort_tag)
@@ -597,6 +698,9 @@ main_refresh <- function() {
     if (!isTRUE(reg_st$ok))
       gaps <- c(gaps, paste0("all-regimen downloads incomplete: ",
                              paste(reg_st$reasons, collapse = "; ")))
+    if (!isTRUE(trans_st$ok))
+      gaps <- c(gaps, paste0("full regimen-transition exports incomplete: ",
+                             paste(trans_st$reasons, collapse = "; ")))
     steroid_clean <- isTRUE(!is.null(steroid_hits) && steroid_hits == 0)
     if (!steroid_clean)
       gaps <- c(gaps, "steroid audit did not confirm steroid-free regimens - the dashboard is NOT titled steroid-free")
@@ -666,6 +770,7 @@ main_refresh <- function() {
     # (STEROIDS section intentionally omitted - the July-20 request.)
     build_payer_lot_qc(con, section = "Payer")
     for (n in 1:4) build_focused_pair(con, n, n + 1L)
+    trans_st <- build_all_regimen_transitions(con, out_dir, stamp, cohort_tag)
     for (n in 1:4) build_category_pair(con, n, n + 1L, lookups)
     build_category_coverage(con, lookups)
     reg_st <- build_all_regimens_section(con, lot_long, out_dir, stamp, cohort_tag)
@@ -684,6 +789,9 @@ main_refresh <- function() {
     if (!isTRUE(reg_st$ok))
       gaps <- c(gaps, paste0("all-regimen downloads incomplete: ",
                              paste(reg_st$reasons, collapse = "; ")))
+    if (!isTRUE(trans_st$ok))
+      gaps <- c(gaps, paste0("full regimen-transition exports incomplete: ",
+                             paste(trans_st$reasons, collapse = "; ")))
     steroid_clean <- isTRUE(!is.null(steroid_hits) && steroid_hits == 0)
     if (!steroid_clean)
       gaps <- c(gaps, "steroid audit did not confirm steroid-free regimens - the dashboard is NOT titled steroid-free")
