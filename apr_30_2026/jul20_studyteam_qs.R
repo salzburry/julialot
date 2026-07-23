@@ -9,9 +9,13 @@
 # workbook, no dashboard. No existing pipeline or dashboard file is modified.
 #
 # Cohort: the NDMM study cohort by default (NDMM_LOT_LONG_FILT), which is the
-# cohort Julia's question 2 names. Set LOT_COHORT=FULL for the whole LOT
-# cohort. MAP_STACKED, LOT1_SCT, MMA_MED_PROCESSED and ELIG_COH_FINAL are
-# shared, joined by PATID.
+# cohort Julia's question 2 names, and the same default as the sibling
+# jul20_refresh_dashboard.R. Set LOT_COHORT=FULL (or OVERALL - synonyms) for
+# the whole LOT cohort. Run the pair with the cohort stated explicitly:
+#   LOT_COHORT=NDMM Rscript jul20_refresh_dashboard.R
+#   LOT_COHORT=NDMM Rscript jul20_studyteam_qs.R
+# MAP_STACKED, LOT1_SCT, MMA_MED_PROCESSED and ELIG_COH_FINAL are shared,
+# joined by PATID.
 #
 # Q2 - 1L DARA+BORT dual therapy. Definition (stated in every output): the
 #   LOT1 regimen is EXACTLY the two agents - no other MM agent in
@@ -65,9 +69,11 @@
 #
 # Every run also writes a validation-summary file with automated
 # reconciliation checks (one row per patient, definition audits, category
-# sums, cross-tab totals, CAR-T consistency) and a run-status file that says
-# COMPLETE or INCOMPLETE with the reasons. Writes no permanent tables (only
-# session temp views). Safe to run any time.
+# sums, cross-tab totals, CAR-T consistency) and a run-status file. Status is
+# either TECHNICALLY COMPLETE - PENDING MANUAL REVIEW (all outputs produced
+# and automated checks passed - still not sign-off to share) or INCOMPLETE
+# with the reasons. Writes no permanent tables (only session temp views).
+# Safe to run any time.
 
 .script_dir <- local({
   args <- commandArgs(trailingOnly = FALSE)
@@ -400,21 +406,23 @@ q2_region_source_from_env <- function(con, describe_cols) {
       tryCatch(cdm(tbl_env),     error = function(e) NULL))
   }
   cands <- unique(cands[!vapply(cands, is.null, logical(1))])
+  fails <- character(0)
   for (tbl in cands) {
     cols <- describe_cols(tbl)
-    if (length(cols) == 0) next
+    if (length(cols) == 0) { fails <- c(fails, paste0(tbl, ": not readable")); next }
     up <- toupper(cols)
-    if (!(toupper(col_env) %in% up))
-      return(list(tbl = NULL, col = NULL, has_spans = FALSE,
-                  reason = sprintf("column '%s' not found on %s (columns: %s)",
-                                   col_env, tbl, paste(head(cols, 40), collapse = ", "))))
+    if (!(toupper(col_env) %in% up)) {
+      fails <- c(fails, sprintf("%s: column '%s' not present (columns: %s)",
+                                tbl, col_env, paste(head(cols, 30), collapse = ", ")))
+      next
+    }
     return(list(tbl = tbl, col = cols[up == toupper(col_env)][1],
                 has_spans = all(c("ELIGEFF", "ELIGEND") %in% up),
                 reason = ""))
   }
   list(tbl = NULL, col = NULL, has_spans = FALSE,
-       reason = sprintf("table '%s' not readable (tried: %s)", tbl_env,
-                        paste(cands, collapse = ", ")))
+       reason = sprintf("no usable source for '%s' (%s)", tbl_env,
+                        paste(fails, collapse = "; ")))
 }
 
 # Report geographic-looking columns on the enrollment/member tables WITHOUT
@@ -535,29 +543,6 @@ q2_region_payer_crosstab <- function(con, have_region, have_payer, n_dual) {
            as.list(colSums(wide[, c(payers, "row_total"), drop = FALSE])))
   wide <- rbind(wide, as.data.frame(tot, stringsAsFactors = FALSE, check.names = FALSE))
   list(long = long, wide = wide)
-}
-
-q2_plan_type_context <- function(con, describe_cols, enr) {
-  cols <- describe_cols(enr)
-  up <- toupper(cols)
-  cand <- cols[grepl("PRODUCT|PLAN_TYPE|PLANTYPE|LOB", up) & up != "BUS"]
-  if (length(cand) == 0)
-    return(data.frame(status = paste0("No product/plan-type column found on ", enr,
-                                      " (columns probed: ", paste(head(cols, 40), collapse = ", "), ")"),
-                      stringsAsFactors = FALSE))
-  col <- cand[1]
-  d <- db_q(con, glue("
-    SELECT '{col}' AS plan_type_column,
-           coalesce(nullif(upper(trim(cast(e.{col} as string))), ''), '(blank)') AS value,
-           count(DISTINCT d.PATID) AS n_patients
-    FROM _jul20_dual d
-    JOIN {enr} e ON cast(e.PATID as string) = d.PATID
-    GROUP BY coalesce(nullif(upper(trim(cast(e.{col} as string))), ''), '(blank)')
-    ORDER BY n_patients DESC"))
-  if (nrow(d) == 0)
-    return(data.frame(status = sprintf("Plan-type column %s had no values for the dual cohort.", col),
-                      stringsAsFactors = FALSE))
-  d
 }
 
 # ===========================================================================
@@ -1026,8 +1011,13 @@ main <- function() {
   stamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
 
   # ---- Cohort selection --------------------------------------------------
+  # NDMM by default - the cohort the July-20 questions name. Both July-20
+  # scripts share this default and accept the same values (FULL and OVERALL
+  # are synonyms for the whole LOT cohort), so running the pair without env
+  # overrides always uses the same population.
   cohort_mode <- toupper(Sys.getenv("LOT_COHORT", unset = "NDMM"))
-  if (cohort_mode == "FULL") {
+  if (cohort_mode %in% c("FULL", "OVERALL")) {
+    cohort_mode <- "FULL"
     lot_long <- wrk("LOT_LONG")
     cohort_label <- "full LOT cohort (all LOT1 patients)"
   } else {
@@ -1124,7 +1114,7 @@ main <- function() {
   have_payer <- FALSE; have_region <- FALSE
   region_note <- ""; payer_note <- ""
   q2_util <- NULL; q2_l2 <- NULL; q2_dx <- NULL
-  roster <- NULL; xt <- NULL
+  roster <- NULL; xt <- NULL; q2_zero_note <- NULL
 
   if (!is.na(n_dual)) {
     log_msg(sprintf("1L exact DARA+BORT dual-therapy patients: %s.", format(n_dual, big.mark = ",")))
@@ -1137,6 +1127,20 @@ main <- function() {
       add_check("dual_definition_consistent", isTRUE(n_exact_ctx == n_dual),
                 sprintf("context count %s vs dual view %s", n_exact_ctx, n_dual))
     }
+
+    if (n_dual == 0) {
+      # An empty exact-dual cohort is a RESULT, not an error: say so plainly
+      # instead of silently omitting the patient-level files.
+      q2_zero_note <- paste0(
+        "No exact DARA+BORT dual-therapy patients were identified in this cohort. ",
+        "This is a result, not an error. The dual_definition_and_context file shows how many ",
+        "LOT1 regimens contain both agents alongside other drugs; patient-level Q2 files ",
+        "are not produced for an empty cohort.")
+      log_msg("RESULT: ", q2_zero_note)
+      payer_note  <- "(not derived - zero exact-dual patients)"
+      region_note <- "(not derived - zero exact-dual patients)"
+      add_check("roster_one_row_per_patient", NA, "skipped - zero exact-dual patients")
+    } else {
 
     have_agent <- FALSE
     if (have_map)
@@ -1277,9 +1281,7 @@ main <- function() {
                 sprintf("crosstab sum %d vs %d dual patients",
                         sum(xt$long$n_patients), as.integer(n_dual)))
     }
-    if (enr_ok)
-      write_out(best_effort(q2_plan_type_context(con, describe_cols, enr), "plan-type context"),
-                "plan_type_context")
+    }   # end n_dual > 0
   }
 
   # ======================================================================
@@ -1343,6 +1345,7 @@ main <- function() {
            tok$dara, " + ", tok$bort, ") - no other MM agent. Steroids never enter the regimen strings."),
     paste0("Exact-dual patients: ", fmt_or_na(n_dual),
            " (the dual_definition_and_context file shows the broader contains-both count)."),
+    if (!is.null(q2_zero_note)) q2_zero_note else NULL,
     "Utilization is reported as drug episodes (MAPs), medical service dates and pharmacy fill dates - protocol cycles are not recorded in claims.",
     payer_note,
     region_note,
@@ -1364,7 +1367,7 @@ main <- function() {
     "Today a CAR-T on/after the LOT1 start - including inside the 60-day induction window - ends LOT1 the day before (SCT_CART, or CART_INIT within 45 days of an added agent) and opens a CART-started LOT2. The screen lists the LOT1s that would instead keep their CAR-T, what folding the CART LOT2 back into LOT1 would look like, and the lines-per-patient shift. Affected patients WITHOUT a LOT2 row are flagged: their merged LOT1 end cannot be derived from existing outputs.",
     "",
     paste0("Files: see jul20_qs_*_", tolower(cohort_mode), "_", stamp,
-           ".csv alongside this summary; the validation_summary file carries the automated reconciliation checks and the run_status file says whether this run is complete."))
+           ".csv alongside this summary; the validation_summary file carries the automated reconciliation checks, and the run_status file distinguishes 'technically complete - pending manual review' from an incomplete run."))
   write_text(summary_lines, "rule_impact_and_q2_summary")
 
   defs <- data.frame(
@@ -1392,7 +1395,7 @@ main <- function() {
       "days between episode start and the earlier of episode end / LOT1 end, summed per agent",
       "ELIG_COH_FINAL.INDEX_DATE - the qualifying MM diagnosis index date behind cohort entry",
       "LOT_LONG LOT_NUM=2 regimen; '(no 2L observed)' keeps the denominator at the full dual cohort",
-      "member_enrollment.BUS on the span covering the LOT1 start; MCR=Medicare, COM=Commercial, blank=Unknown, else Other(<BUS>); anchor = LOT1 start date",
+      "member_enrollment.BUS on the span covering the LOT1 start; MCR=Medicare, COM=Commercial, blank=Unknown, else Other(<BUS>); anchor = LOT1 start date. 'Payer/type' is answered by this line-of-business split; a finer plan/product breakdown would need an explicitly approved enrollment field, configured the same way as the region source",
       if (nzchar(region_note)) region_note else "(not derived)",
       "PRELIMINARY affected-patient/boundary screen over existing LOT output; NOT an engine re-run; exact impact needs an isolated scenario re-derivation",
       "a line transition attributable to melphalan: prior line ended MED_ADD with MELP as the added drug, and/or the next line is MED-started on a MELP MAP start date",
@@ -1403,10 +1406,13 @@ main <- function() {
   if (length(checks) > 0) write_out(do.call(rbind, checks), "validation_summary")
 
   status_lines <- if (length(gaps) == 0) {
-    c("RUN STATUS: COMPLETE",
+    c("RUN STATUS: TECHNICALLY COMPLETE - PENDING MANUAL REVIEW",
       paste0("Generated ", stamp, " on ", cohort_label, "."),
-      "All requested outputs were produced and all automated checks passed.",
-      "Manual steps still required before sharing: reconcile lot_totals_for_reconciliation against the current dashboard; confirm the region source and values; review the MELP example timelines.")
+      "All requested outputs were produced and all automated checks passed. This is NOT sign-off to share.",
+      "Manual review still required before anything goes to the study team:",
+      "  - reconcile lot_totals_for_reconciliation against the current dashboard;",
+      "  - confirm the region source and its values (region_value_counts);",
+      "  - review the MELP example timelines against the boundary definitions.")
   } else {
     c("RUN STATUS: INCOMPLETE",
       paste0("Generated ", stamp, " on ", cohort_label, "."),
