@@ -5,8 +5,11 @@
 #
 # A sibling of lot_followup_qs.R / lot1_studyteam_qs.R. Q1 (the dashboard
 # refresh) lives in jul20_refresh_dashboard.R; this script answers the other
-# two July-20 asks with patient-level CSVs and compact summary files - no
-# workbook, no dashboard. No existing pipeline or dashboard file is modified.
+# two July-20 asks with patient-level CSVs, compact summary files, AND one
+# consolidated Excel workbook that gathers every Q2/Q3 table into tabs
+# (jul20_studyteam_qs_<cohort>_<stamp>.xlsx; needs openxlsx - degrades to
+# CSV-only with a note if it is absent). No existing pipeline or dashboard
+# file is modified.
 #
 # Cohort: the NDMM study cohort by default (NDMM_LOT_LONG_FILT), which is the
 # cohort Julia's question 2 names, and the same default as the sibling
@@ -35,11 +38,15 @@
 #   not cycle counts.
 #   Region comes ONLY from an explicitly approved source, set via
 #   REGION_SOURCE_TABLE (a fully-qualified table, or a CDM base name such as
-#   'member') and REGION_SOURCE_COLUMN. When unset, region is reported
-#   unavailable, and a candidate-columns file lists geographic-looking
-#   columns found on the enrollment/member tables so the team can approve
-#   one. Values are passed through untouched (plus a distinct-value file for
-#   manual confirmation); no mapping is invented here.
+#   'member_enrollment') and REGION_SOURCE_COLUMN. When unset, region is
+#   reported unavailable, and a candidate-columns file lists geographic-looking
+#   columns found on the enrollment/member tables so the team can approve one.
+#   By default the source values pass through untouched. If the source is a
+#   STATE field and the 4 US Census regions are wanted, set REGION_MAP=CENSUS
+#   to roll STATE (2-letter code or full name) up to Northeast/Midwest/South/
+#   West (DC in South) - reproducing Optum's own REGION derivation; any
+#   non-state value stays visible as 'Other/Unmapped'. The region_value_counts
+#   file shows the source-value -> region-used correspondence for confirmation.
 #   Payer = Optum line of business (member_enrollment.BUS) on the enrollment
 #   span covering the LOT1 start date - the production dashboard's anchor.
 #   MCR = Medicare, COM = Commercial, blank = Unknown, anything else =
@@ -119,6 +126,69 @@ best_effort <- function(expr, label) {
 is_status_table <- function(x)
   is.data.frame(x) && identical(names(x), "status")
 
+# ===========================================================================
+# Consolidated Excel writer (openxlsx). A "sheet" is a list of name, title,
+# optional subtitle, narrative lines, and named tables (each a data.frame).
+# Same writer as lot_followup_qs.R / poma_studyteam_qs.R. openxlsx must be
+# installed; the caller checks and degrades to CSV-only if it is missing.
+# ===========================================================================
+wbx_write_workbook <- function(sheets, xlsx_path) {
+  ox <- function(f) getExportedValue("openxlsx", f)
+  wb <- ox("createWorkbook")()
+  st_title <- ox("createStyle")(fontSize = 14, textDecoration = "bold",
+                                fontColour = "#FFFFFF", fgFill = "#1F3864")
+  st_sub   <- ox("createStyle")(fontColour = "#FFFFFF", fgFill = "#2E5496",
+                                textDecoration = "italic")
+  st_narr  <- ox("createStyle")(wrapText = TRUE, valign = "top")
+  st_cap   <- ox("createStyle")(textDecoration = "bold", fgFill = "#D6E0F0")
+  st_hdr   <- ox("createStyle")(textDecoration = "bold", fontColour = "#FFFFFF",
+                                fgFill = "#2E5496", border = "TopBottomLeftRight",
+                                halign = "left")
+  for (s in sheets) {
+    # Excel forbids \ / ? * [ ] : in sheet names and caps them at 31 chars.
+    # Strip each illegal char literally (fixed = TRUE avoids regex-class
+    # escaping pitfalls), collapse whitespace, then truncate.
+    sn <- s$name
+    for (ch in c("\\", "/", "?", "*", "[", "]", ":")) sn <- gsub(ch, " ", sn, fixed = TRUE)
+    sn <- substr(trimws(gsub("[[:space:]]+", " ", sn)), 1, 31)
+    ox("addWorksheet")(wb, sn)
+    r <- 1L
+    ox("writeData")(wb, sn, s$title, startRow = r, startCol = 1)
+    ox("addStyle")(wb, sn, st_title, rows = r, cols = 1:10, gridExpand = TRUE)
+    r <- r + 1L
+    if (!is.null(s$subtitle)) {
+      ox("writeData")(wb, sn, s$subtitle, startRow = r, startCol = 1)
+      ox("addStyle")(wb, sn, st_sub, rows = r, cols = 1:10, gridExpand = TRUE)
+      r <- r + 1L
+    }
+    r <- r + 1L
+    for (line in s$narrative %||% character()) {
+      ox("writeData")(wb, sn, line, startRow = r, startCol = 1)
+      ox("addStyle")(wb, sn, st_narr, rows = r, cols = 1, gridExpand = TRUE)
+      r <- r + 1L
+    }
+    r <- r + 1L
+    for (nm in names(s$tables %||% list())) {
+      df <- s$tables[[nm]]
+      ox("writeData")(wb, sn, nm, startRow = r, startCol = 1)
+      ox("addStyle")(wb, sn, st_cap, rows = r, cols = 1:10, gridExpand = TRUE)
+      r <- r + 1L
+      if (is.data.frame(df) && nrow(df) > 0) {
+        ox("writeData")(wb, sn, df, startRow = r, startCol = 1,
+                        headerStyle = st_hdr, withFilter = FALSE)
+        r <- r + nrow(df) + 2L
+      } else {
+        ox("writeData")(wb, sn, "(no rows / not available)", startRow = r, startCol = 1)
+        r <- r + 2L
+      }
+    }
+    ox("setColWidths")(wb, sn, cols = 1:14, widths = "auto")
+  }
+  ox("saveWorkbook")(wb, xlsx_path, overwrite = TRUE)
+  log_msg("wrote consolidated workbook -> ", xlsx_path, " (", length(sheets), " sheets)")
+  invisible(TRUE)
+}
+
 num <- function(x) suppressWarnings(as.numeric(x))
 pct1 <- function(x, d) if (isTRUE(num(d) > 0)) round(100 * num(x) / num(d), 1) else NA_real_
 
@@ -175,6 +245,49 @@ make_describe_cols <- function(con) {
     cn <- cn[nzchar(cn) & !startsWith(cn, "#")]
     unique(cn)
   }
+}
+
+# ---------------------------------------------------------------------------
+# US Census Bureau state -> region rollup (opt-in via REGION_MAP=CENSUS), for
+# when the approved region source is a STATE field rather than a REGION field.
+# This reproduces Optum's own REGION derivation ("the US Census Region
+# associated with the member"). DC is in the South, per the Census Bureau.
+# The map is keyed on BOTH the 2-letter USPS code and the full state name, so
+# either encoding resolves; any value that is neither is left visible as
+# 'Other/Unmapped' (territories, military, junk) rather than silently bucketed.
+# ---------------------------------------------------------------------------
+CENSUS_REGIONS <- list(
+  Northeast = c("CT","ME","MA","NH","RI","VT","NJ","NY","PA"),
+  Midwest   = c("IL","IN","MI","OH","WI","IA","KS","MN","MO","NE","ND","SD"),
+  South     = c("DE","FL","GA","MD","NC","SC","VA","DC","WV","AL","KY","MS","TN","AR","LA","OK","TX"),
+  West      = c("AZ","CO","ID","MT","NV","NM","UT","WY","AK","CA","HI","OR","WA"))
+STATE_ABBR_NAME <- c(
+  AL="ALABAMA", AK="ALASKA", AZ="ARIZONA", AR="ARKANSAS", CA="CALIFORNIA",
+  CO="COLORADO", CT="CONNECTICUT", DE="DELAWARE", DC="DISTRICT OF COLUMBIA",
+  FL="FLORIDA", GA="GEORGIA", HI="HAWAII", ID="IDAHO", IL="ILLINOIS",
+  IN="INDIANA", IA="IOWA", KS="KANSAS", KY="KENTUCKY", LA="LOUISIANA",
+  ME="MAINE", MD="MARYLAND", MA="MASSACHUSETTS", MI="MICHIGAN", MN="MINNESOTA",
+  MS="MISSISSIPPI", MO="MISSOURI", MT="MONTANA", NE="NEBRASKA", NV="NEVADA",
+  NH="NEW HAMPSHIRE", NJ="NEW JERSEY", NM="NEW MEXICO", NY="NEW YORK",
+  NC="NORTH CAROLINA", ND="NORTH DAKOTA", OH="OHIO", OK="OKLAHOMA", OR="OREGON",
+  PA="PENNSYLVANIA", RI="RHODE ISLAND", SC="SOUTH CAROLINA", SD="SOUTH DAKOTA",
+  TN="TENNESSEE", TX="TEXAS", UT="UTAH", VT="VERMONT", VA="VIRGINIA",
+  WA="WASHINGTON", WV="WEST VIRGINIA", WI="WISCONSIN", WY="WYOMING")
+
+# Build a Spark SQL CASE mapping a state-value expression to its Census region.
+census_state_region_case <- function(val_expr) {
+  norm <- glue("upper(trim(cast({val_expr} as string)))")
+  whens <- vapply(names(CENSUS_REGIONS), function(reg) {
+    abbrs <- CENSUS_REGIONS[[reg]]
+    toks  <- unique(c(abbrs, unname(STATE_ABBR_NAME[abbrs])))
+    inlist <- paste(sprintf("'%s'", toks), collapse = ", ")
+    glue("WHEN {norm} IN ({inlist}) THEN '{reg}'")
+  }, character(1))
+  glue("CASE
+          {paste(whens, collapse = '\n          ')}
+          WHEN {norm} IS NULL OR {norm} = '' THEN 'Unknown'
+          ELSE 'Other/Unmapped'
+        END")
 }
 
 # ===========================================================================
@@ -454,13 +567,19 @@ q2_region_candidates_report <- function(con, describe_cols) {
   out
 }
 
-q2_build_region_view <- function(con, src) {
+# _jul20_region has TWO columns: region_raw (the source value, e.g. the state
+# code) and region (what the crosstab uses). When map_census is TRUE the raw
+# value is rolled up to the 4 Census regions; otherwise region = the raw value
+# (blank -> 'Unknown'). Keeping both lets the value-counts file audit the map.
+q2_build_region_view <- function(con, src, map_census = FALSE) {
+  region_final <- if (isTRUE(map_census)) census_state_region_case("region_raw")
+    else "CASE WHEN region_raw IS NULL OR region_raw = '' THEN 'Unknown' ELSE region_raw END"
   if (src$has_spans) {
     db_exec(con, glue("
       CREATE OR REPLACE TEMPORARY VIEW _jul20_region AS
       WITH span AS (
         SELECT d.PATID,
-               upper(trim(cast(e.{src$col} as string))) AS region,
+               upper(trim(cast(e.{src$col} as string))) AS region_raw,
                row_number() OVER (PARTITION BY d.PATID
                                   ORDER BY
                                     CASE WHEN cast(e.ELIGEND as date) >= d.L1
@@ -472,39 +591,37 @@ q2_build_region_view <- function(con, src) {
           ON cast(e.PATID as string) = d.PATID
          AND cast(e.ELIGEFF as date) <= d.L1
       )
-      SELECT PATID,
-             CASE WHEN region IS NULL OR region = '' THEN 'Unknown'
-                  ELSE region END AS region
+      SELECT PATID, region_raw, {region_final} AS region
       FROM span WHERE rn = 1"))
   } else {
     db_exec(con, glue("
       CREATE OR REPLACE TEMPORARY VIEW _jul20_region AS
       WITH vals AS (
         SELECT d.PATID,
-               upper(trim(cast(e.{src$col} as string))) AS region,
+               upper(trim(cast(e.{src$col} as string))) AS region_raw,
                count(*) AS n
         FROM _jul20_dual d
         JOIN {src$tbl} e ON cast(e.PATID as string) = d.PATID
         GROUP BY d.PATID, upper(trim(cast(e.{src$col} as string)))
       ),
       ranked AS (
-        SELECT PATID, region,
-               row_number() OVER (PARTITION BY PATID ORDER BY n DESC, region) AS rn
+        SELECT PATID, region_raw,
+               row_number() OVER (PARTITION BY PATID ORDER BY n DESC, region_raw) AS rn
         FROM vals
       )
-      SELECT PATID,
-             CASE WHEN region IS NULL OR region = '' THEN 'Unknown'
-                  ELSE region END AS region
+      SELECT PATID, region_raw, {region_final} AS region
       FROM ranked WHERE rn = 1"))
   }
   invisible(TRUE)
 }
 
-# Distinct region values among the dual cohort, for manual confirmation.
+# Source value -> region-used correspondence with counts, for manual
+# confirmation of the mapping (any 'Other/Unmapped' rows are visible here).
 q2_region_values <- function(con) {
   db_q(con, "
-    SELECT region AS region_value, count(*) AS n_patients
-    FROM _jul20_region GROUP BY region ORDER BY n_patients DESC")
+    SELECT region_raw AS region_source_value, region AS region_used,
+           count(*) AS n_patients
+    FROM _jul20_region GROUP BY region_raw, region ORDER BY n_patients DESC")
 }
 
 # ===========================================================================
@@ -1076,6 +1193,9 @@ main <- function() {
 
   describe_cols <- make_describe_cols(con)
 
+  # Every table written to CSV is also registered here so the consolidated
+  # Excel workbook can be assembled from the same frames at the end.
+  wb_reg <- list()
   write_out <- function(df, tag) {
     if (is.null(df) || !is.data.frame(df) || nrow(df) == 0) {
       log_msg("  (", tag, ": no rows to write)")
@@ -1083,6 +1203,7 @@ main <- function() {
     }
     f <- file.path(out_dir, paste0("jul20_qs_", tag, "_", tolower(cohort_mode), "_", stamp, ".csv"))
     write.csv(df, f, row.names = FALSE)
+    wb_reg[[tag]] <<- df
     log_msg("  wrote ", tag, " -> ", f, " (", nrow(df), " rows)")
     f
   }
@@ -1226,15 +1347,21 @@ main <- function() {
     # Region: approved source only; candidates reported for approval.
     write_out(best_effort(q2_region_candidates_report(con, describe_cols),
                           "region candidate columns"), "region_candidate_columns")
+    # Opt-in state -> Census region rollup (REGION_MAP=CENSUS). Use it when the
+    # approved region source is a STATE field and Julia wants the 4 regions.
+    region_map_mode <- toupper(Sys.getenv("REGION_MAP", unset = ""))
+    do_census <- region_map_mode %in% c("CENSUS", "CENSUS_REGION", "STATE_TO_CENSUS")
     reg_src <- q2_region_source_from_env(con, describe_cols)
     if (!is.null(reg_src$tbl)) {
-      have_region <- !is_status_table(best_effort(q2_build_region_view(con, reg_src), "region lookup"))
+      have_region <- !is_status_table(best_effort(q2_build_region_view(con, reg_src, do_census), "region lookup"))
       if (have_region) {
         region_note <- sprintf(
-          "Region = %s.%s (approved via REGION_SOURCE_TABLE/REGION_SOURCE_COLUMN; %s). Values are passed through untouched - confirm them in the region_value_counts file.",
+          "Region = %s.%s (approved via REGION_SOURCE_TABLE/REGION_SOURCE_COLUMN; %s). %s Confirm the mapping in the region_value_counts file.",
           reg_src$tbl, reg_src$col,
           if (reg_src$has_spans) "anchored to the enrollment span covering the LOT1 start"
-          else "per-patient modal value - the table has no span dates")
+          else "per-patient modal value - the table has no span dates",
+          if (do_census) "Values are rolled up to the 4 US Census regions (Northeast/Midwest/South/West; DC in South); any non-state value shows as 'Other/Unmapped'."
+          else "Values are passed through untouched (set REGION_MAP=CENSUS to roll a STATE field up to the 4 US Census regions).")
         write_out(best_effort(q2_region_values(con), "region value counts"),
                   "region_value_counts")
       } else {
@@ -1510,6 +1637,87 @@ main <- function() {
   write_out(defs, "definitions")
 
   if (length(checks) > 0) write_out(do.call(rbind, checks), "validation_summary")
+
+  # ---- consolidated Excel workbook (all Q2/Q3 tables in one file) ---------
+  # Assembled from the same frames already written as CSVs (wb_reg). Built
+  # before run_status so a workbook failure is reflected there. Degrades to
+  # CSV-only with a clear note if openxlsx is not installed.
+  if (requireNamespace("openxlsx", quietly = TRUE)) {
+    wb_status <- if (length(gaps) == 0)
+      "STATUS: TECHNICALLY COMPLETE - PENDING MANUAL REVIEW (not sign-off to share)."
+      else paste0("STATUS: INCOMPLETE - ", length(gaps), " issue(s); see the run_status file and the gaps below.")
+    tbls <- function(...) {
+      m <- list(...)
+      out <- list()
+      for (cap in names(m)) if (!is.null(wb_reg[[m[[cap]]]])) out[[cap]] <- wb_reg[[m[[cap]]]]
+      out
+    }
+    wb_sheets <- list()
+    add_wb <- function(name, title, subtitle = NULL, narrative = NULL, tables = list()) {
+      if (length(tables) == 0) return(invisible(NULL))
+      wb_sheets[[length(wb_sheets) + 1L]] <<- list(name = name, title = title,
+        subtitle = subtitle, narrative = narrative, tables = tables)
+    }
+    add_wb("Read Me", paste0("July-20 Q2+Q3 - ", cohort_label),
+      subtitle = paste0("Generated ", stamp, " by jul20_studyteam_qs.R against ", cfg$work_schema),
+      narrative = c(wb_status, if (length(gaps)) paste0("  - ", gaps) else NULL, "", summary_lines),
+      tables = tbls("Cohort denominators (reconcile vs the dashboard)" = "lot_totals_for_reconciliation",
+                    "Definitions" = "definitions",
+                    "Validation checks" = "validation_summary"))
+    add_wb("Q2 cohort and use", "Q2 - DARA+BORT dual therapy: cohort and per-agent utilization",
+      subtitle = cohort_label,
+      tables = tbls("Exact-dual vs contains-both context" = "dual_definition_and_context",
+                    "Episodes (MAPs) per agent in LOT1" = "utilization_summary",
+                    "Episode-count distribution" = "episode_distribution",
+                    "Service / fill dates per agent in LOT1" = "service_date_summary"))
+    add_wb("Q2 patients", "Q2 - DARA+BORT patient roster (one row per patient)",
+      subtitle = cohort_label,
+      tables = tbls("Patient roster" = "dara_bort_patients"))
+    add_wb("Q2 MAP detail", "Q2 - per-episode (MAP) detail",
+      subtitle = cohort_label,
+      tables = tbls("DARA/BORT episodes during LOT1" = "dara_bort_maps_during_lot1",
+                    "DARA/BORT episodes after LOT1" = "dara_bort_maps_after_lot1"))
+    add_wb("Q2 2L and diagnosis", "Q2 - 2L regimens and diagnosis years",
+      subtitle = cohort_label,
+      tables = tbls("2L regimens of the dual cohort" = "lot2_regimens",
+                    "Diagnosis years" = "diagnosis_years"))
+    add_wb("Q2 region x payer", "Q2 - region x payer",
+      subtitle = cohort_label,
+      tables = tbls("Region x payer (grid)" = "region_payer_grid",
+                    "Region x payer (long, with %)" = "region_payer_counts",
+                    "Region value counts" = "region_value_counts"))
+    add_wb("Q3a MELP", "Q3(a) - MELP rule PRELIMINARY screen (not exact impact)",
+      subtitle = cohort_label,
+      tables = tbls("Headline totals" = "melp_rule_totals",
+                    "Boundaries by timing bucket" = "melp_rule_inventory",
+                    "Boundaries by line pair" = "melp_rule_by_line",
+                    "Lines per patient (current vs screened)" = "melp_rule_lines_shift"))
+    add_wb("Q3a MELP patients", "Q3(a) - MELP boundary patients and example timelines",
+      subtitle = cohort_label,
+      tables = tbls("Boundary roster" = "melp_rule_boundaries",
+                    "Example patient LOT rows" = "melp_rule_example_lots",
+                    "Example patient MELP MAP dates" = "melp_rule_example_maps"))
+    add_wb("Q3b CAR-T", "Q3(b) - CAR-T rule PRELIMINARY screen (not exact impact)",
+      subtitle = cohort_label,
+      tables = tbls("Inventory" = "cart_rule_inventory",
+                    "First CAR-T timing vs LOT1 start" = "cart_rule_timing",
+                    "Lines per patient (current vs screened)" = "cart_rule_lines_shift"))
+    add_wb("Q3b CAR-T patients", "Q3(b) - CAR-T affected patients (all in-window CAR-T)",
+      subtitle = cohort_label,
+      tables = tbls("Affected patients" = "cart_rule_affected_patients"))
+
+    xlsx <- file.path(out_dir, paste0("jul20_studyteam_qs_", tolower(cohort_mode), "_", stamp, ".xlsx"))
+    ok_wb <- isTRUE(tryCatch({ wbx_write_workbook(wb_sheets, xlsx); TRUE },
+                             error = function(e) {
+                               log_msg("  WARN: consolidated Excel failed - ", conditionMessage(e))
+                               FALSE
+                             }))
+    if (!ok_wb)
+      gaps <- c(gaps, "consolidated Excel workbook could not be written (the per-result CSVs are present)")
+  } else {
+    log_msg("NOTE: openxlsx not installed - consolidated Excel skipped; the per-result CSVs are written. install.packages('openxlsx') to enable the workbook.")
+    gaps <- c(gaps, "consolidated Excel skipped - openxlsx not installed (per-result CSVs written)")
+  }
 
   status_lines <- if (length(gaps) == 0) {
     c("RUN STATUS: TECHNICALLY COMPLETE - PENDING MANUAL REVIEW",
