@@ -119,14 +119,17 @@ sql_cohort <- function(spec, cfg) {
   }
 
   paste0(head,
-    "-- Index selection AND-ed with the LOT1-anchored gates. INNER JOINs: a\n",
-    "-- patient with no 1L start has no LOT1 anchor and cannot be in the cohort.\n",
+    "-- Index selection AND-ed with the LOT1-anchored gates.\n",
+    "-- LEFT JOINs, deliberately: 'has a LOT1 start' is a declared GATE\n",
+    "-- (has_lot1), not a join side-effect, so patients with no 1L regimen are\n",
+    "-- dropped by a predicate the attrition funnel can count. Same row set as an\n",
+    "-- INNER JOIN -- visible instead of silent.\n",
     "SELECT s.PATID, s.INDEX_DATE\n",
     "FROM ", sel, " s\n",
-    "INNER JOIN ", cfg$lot1_starts, " l1\n",
-    "        ON l1.PATID = s.PATID AND l1.INDEX_DATE = s.INDEX_DATE\n",
-    "INNER JOIN ", cfg$lot1_flags, " n\n",
-    "        ON n.PATID = s.PATID AND n.INDEX_DATE = s.INDEX_DATE\n",
+    "LEFT JOIN ", cfg$lot1_starts, " l1\n",
+    "       ON l1.PATID = s.PATID AND l1.INDEX_DATE = s.INDEX_DATE\n",
+    "LEFT JOIN ", cfg$lot1_flags, " n\n",
+    "       ON n.PATID = s.PATID AND n.INDEX_DATE = s.INDEX_DATE\n",
     "WHERE 1 = 1\n",
     .and_block(gl, "  "))
 }
@@ -136,7 +139,7 @@ sql_cohort <- function(spec, cfg) {
 # the right relation. (Kept explicit rather than adding a per-gate `relation`
 # field: it is the single exception, and a silent mis-binding here would
 # quietly widen the cohort.)
-LOT1_STARTS_GATES <- c("lot1_from")
+LOT1_STARTS_GATES <- c("lot1_from", "has_lot1")
 
 bind_lot1_aliases <- function(spec) {
   for (i in seq_along(spec$resolved_gates)) {
@@ -227,10 +230,12 @@ sql_attrition <- function(spec, cfg) {
       from <- paste0("FROM ", cfg$index_flags, " f")
       where <- .and_block(upto, "         ")
     } else {
+      # LEFT JOINs so the has_lot1 arm reports the no-LOT1 drop instead of
+      # hiding it in the join, and so its denominator is the selected-index set.
       from <- paste0(
         "FROM ", sql_obj(cfg, paste0(spec$id, "_index_sel")), " s\n",
-        "       INNER JOIN ", cfg$lot1_starts, " l1 ON l1.PATID = s.PATID AND l1.INDEX_DATE = s.INDEX_DATE\n",
-        "       INNER JOIN ", cfg$lot1_flags,  " n  ON n.PATID  = s.PATID AND n.INDEX_DATE  = s.INDEX_DATE")
+        "       LEFT JOIN ", cfg$lot1_starts, " l1 ON l1.PATID = s.PATID AND l1.INDEX_DATE = s.INDEX_DATE\n",
+        "       LEFT JOIN ", cfg$lot1_flags,  " n  ON n.PATID  = s.PATID AND n.INDEX_DATE  = s.INDEX_DATE")
       where <- .and_block(Filter(function(x) identical(x$anchor, "lot1"), upto), "         ")
     }
     arms <- c(arms, paste0(
