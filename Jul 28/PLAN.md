@@ -226,28 +226,69 @@ a one-line spec edit, reviewed by the study team, with zero effect on Overall.
 
 ---
 
-## 5. Equivalence: Phase 1 must be a no-op
+## 5. Equivalence: does the new code do the same thing?
 
-This is the property that makes the change safe to ship, and it's tested:
+`tests/test_equivalence.R` (51 assertions) answers this, and every expectation
+in it is **derived from the production source** — read out of
+`criteria_attrition.R`, `pipeline_steps.R` and the pre-change
+`06_ndmm_dashboard.R` via git — rather than hardcoded. Edit an IE criterion
+upstream and the suite fails, which is the point.
 
-- Overall's generated predicates are **byte-identical, in order**, to
-  `build_criteria_catalog()` + step 24's index gate
-  (`criteria_attrition.R:38-88`, `pipeline_steps.R:1062`).
-- Overall's index selection uses the same
-  `row_number() OVER (PARTITION BY PATID ORDER BY INDEX_DATE)` and `rn = 1`.
-- NDMM's LOT1 predicates are identical to the `_ndmm_patids` filter
-  (`06_ndmm_dashboard.R:745`), plus `has_lot1`, which restates that script's
-  existing `INNER JOIN NDMM_LOT1_STARTS` as a countable predicate — same row
-  set. `has_lot1` restates the existing INNER JOIN as a predicate and splits the
-  cutoff out of it — same patients, one extra funnel row (§4a).
-- Because both specs' index gates are currently identical, `coh_index_union` is
-  **the same row set as today's `ELIG_COH_FINAL`** — so the LOT build's input is
-  unchanged and there is **no cost increase**. (Cost grows only in proportion to
-  any future divergence between the two index-gate sets.)
+**1. The LOT rules are untouched.** `02_lot1.R`, `03_lot2_5.R`,
+`lot2_5_base.R`, `config_lot.R` and the whole cohort pipeline
+(`01_cohort.R`, `pipeline_steps.R`, `criteria_attrition.R`) are **byte-identical
+to the baseline commit** — asserted per file. There is no rewrite to reason
+about. The LOT build's only change is which table it reads, and that was already
+`INPUT_COHORT_TABLE`, still defaulting to `ELIG_COH_FINAL`.
 
-Acceptance for the cutover: `coh_overall_cohort` count == today's
-`ELIG_COH_FINAL` count, and `coh_ndmm_cohort` count == today's `_ndmm_patids`
-count. Same numbers or it doesn't ship.
+**2. Overall's IE criteria.** The 9 `filter_sql` entries of
+`build_criteria_catalog()` plus the inline step-1 index gate are extracted,
+`{cfg$...}` substituted, alias-normalized, and compared **in order** to the 10
+predicates this folder generates. Same window function, same `rn = 1`, and
+filter-before-rank (getting that backwards would change the cohort without
+changing a criterion).
+
+**3. NDMM's IE criteria.** The `_ndmm_patids` `WHERE` clause is extracted from
+the pre-change dashboard and compared to NDMM's LOT1-anchored predicates.
+`has_lot1` + `lot1_from` are shown to restate what the old `NDMM_LOT1_STARTS`
+view already did through its own definition (`LOT_NUM = 1` and the cutoff), so
+splitting them is a no-op. The dashboard's own selection is confirmed unchanged.
+
+**4. The lifted SQL.** Every `CREATE ... VIEW` body in `R/lot1_flags.R` is
+compared against the original after applying the rename map: five are
+byte-identical, and the rest are token-diffed with only the documented
+`INDEX_DATE`-keying and patient-input tokens permitted. Anything else fails.
+
+**5. Every lifted constant.** Extracted from both files, **evaluated**, and
+compared element by element.
+
+> This section found a real bug. Its first version spot-checked constants
+> against names I had typed by hand, and passed 3 of 5. The systematic version
+> caught that `LOT1_MM_ADJACENT_OVERRIDE` had been reconstructed from memory
+> instead of copied — **four of its five tumor-group labels were wrong**. That
+> list marks tumor groups as *non*-exclusionary for the other-cancer filter, so
+> the error would have silently excluded patients the current NDMM cohort keeps.
+> Fixed, and the check now evaluates both definitions rather than trusting a
+> transcription.
+
+### What this does NOT prove
+
+**Identical SQL text is not identical row counts.** Same SQL on the same inputs
+must produce the same rows — but *must* is not *did*, and nothing here has
+executed against Databricks. The acceptance gate is unchanged:
+
+```
+coh_overall_cohort  ==  today's ELIG_COH_FINAL     (count, and PATID set)
+coh_ndmm_cohort     ==  today's _ndmm_patids       (count, and PATID set)
+```
+
+Compare the **PATID sets**, not just the counts — two different cohorts of the
+same size would pass a count check. Until that runs, this is a strong static
+argument, not an empirical result.
+
+Also worth noting for that run: because both cohorts' index gates are currently
+identical, `coh_index_union` is the same row set as today's `ELIG_COH_FINAL`, so
+the LOT build's input and cost are unchanged too.
 
 ---
 
@@ -411,10 +452,11 @@ report. 4–6 are cleanup and can wait.
 | `engine/` | Shared: gate registry (18 gates), SQL generator, runner, bootstrap |
 | `build_both.R` | Both cohorts + one shared PLD |
 | `tests/` | Engine + cross-cohort invariants |
-| `run_all_tests.R` | All three suites — 98 offline assertions, no warehouse needed |
+| `tests/test_equivalence.R` | **New vs old**: IE criteria, LOT rules, lifted SQL, constants (§5) |
+| `run_all_tests.R` | All four suites — 149 offline assertions, no warehouse needed |
 
 ```
-Rscript "Jul 28/run_all_tests.R"            # engine 69, overall 14, ndmm 15
+Rscript "Jul 28/run_all_tests.R"            # engine 69, equivalence 51, overall 14, ndmm 15
 Rscript "Jul 28/ndmm/build.R" --dry-run     # print the SQL, touch nothing
 ```
 

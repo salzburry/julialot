@@ -5,6 +5,8 @@
 #   Rscript "Jul 28/run_all_tests.R"
 #
 #   tests/test_engine.R          engine + cross-cohort invariants
+#   tests/test_equivalence.R     new cohorts vs the old pipeline (see its header
+#                                for what this can and cannot prove)
 #   overall/tests/test_overall.R the Overall cohort's own contract
 #   ndmm/tests/test_ndmm.R       the NDMM cohort's own contract
 #
@@ -18,9 +20,10 @@
   else dirname(normalizePath(gsub("~+~", " ", sub("^--file=", "", fa[1]), fixed = TRUE)))
 })
 
-suites <- c(file.path(.here, "tests", "test_engine.R"),
-            Sys.glob(file.path(.here, "*", "tests", "test_*.R")))
-suites <- unique(suites)
+# Root-level suites (engine, equivalence) plus each cohort folder's own.
+# Globbed, not listed: adding a suite must not require editing this file.
+suites <- unique(c(sort(Sys.glob(file.path(.here, "tests", "test_*.R"))),
+                   sort(Sys.glob(file.path(.here, "*", "tests", "test_*.R")))))
 
 fails <- 0L
 for (s in suites) {
