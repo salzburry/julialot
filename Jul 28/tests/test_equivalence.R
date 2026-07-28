@@ -288,8 +288,14 @@ section("5. every lifted constant equals the original")
 # This section exists because the first version of it did spot-check hardcoded
 # names, and missed that LOT1_MM_ADJACENT_OVERRIDE had been reconstructed from
 # memory rather than copied: four of its five tumor-group labels were wrong.
-# That list marks groups as NON-exclusionary for the other-cancer filter, so a
-# wrong entry silently changes who is in the cohort. Extract, evaluate, compare.
+#
+# The other-cancer exclusion matches on ICD CODES (dx.dx = o.dx, lot1_flags.R:350);
+# tumor_group is a label on those code rows that the override uses to pick which
+# ICD codes to drop from the exclusion list. Labels matching nothing = those
+# codes stay exclusionary = patients wrongly dropped. The pipeline does warn on a
+# shortfall at run time ("matched N of 5"), so this was not silent -- but
+# catching it here is cheaper than catching it in a run review.
+# Extract, evaluate, compare.
 if (!have_git) {
   ok(FALSE, "baseline commit reachable")
 } else {
