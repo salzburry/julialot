@@ -265,11 +265,21 @@ compared element by element.
 > This section found a real bug. Its first version spot-checked constants
 > against names I had typed by hand, and passed 3 of 5. The systematic version
 > caught that `LOT1_MM_ADJACENT_OVERRIDE` had been reconstructed from memory
-> instead of copied — **four of its five tumor-group labels were wrong**. That
-> list marks tumor groups as *non*-exclusionary for the other-cancer filter, so
-> the error would have silently excluded patients the current NDMM cohort keeps.
-> Fixed, and the check now evaluates both definitions rather than trusting a
-> transcription.
+> instead of copied — **four of its five tumor-group labels were wrong**.
+>
+> The other-cancer exclusion matches on **ICD codes**: a claim's `DIAG` joined to
+> `other_malig.csv`'s `dx` (`lot1_flags.R:350`). `tumor_group` is a label carried
+> on each of those code rows, and the override uses it to select which ICD codes
+> to *drop* from the exclusion list. Four labels matching nothing meant those
+> groups' ICD codes stayed exclusionary, so patients the current NDMM cohort
+> keeps would have been dropped.
+>
+> It would **not** have been silent: `build_lot1_other_malig_codes()` counts how
+> many override labels actually matched and warns on a shortfall (`:272-286`) —
+> it would have logged *"matched 1 of 5"* on the first real run. The static check
+> caught it earlier and more cheaply, which is the argument for having it, not a
+> claim that the pipeline had no guard. Fixed, and the check now evaluates both
+> definitions rather than trusting a transcription.
 
 ### What this does NOT prove
 
