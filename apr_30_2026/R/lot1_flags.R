@@ -56,6 +56,20 @@ LOT1_FLAGS_ALL_TBL       <- Sys.getenv("LOT1_FLAGS_TABLE",  unset = "LOT1_FLAGS_
 # Durable record of HOW a flag table was built -- see write_lot1_run_metadata().
 LOT1_RUN_TBL             <- Sys.getenv("LOT1_RUN_TABLE",    unset = "LOT1_FLAGS_RUN")
 
+# The pre-rename name. Renaming the PERSISTED table broke consumers that read it
+# by name in the warehouse -- the NDMM_* aliases elsewhere are R variables and do
+# nothing for them. Known readers: poma_studyteam_qs.R:535 and
+# cohort_explorer/warehouse/08_analytic_cohort.R:86. A view keeps them working
+# AND current; without one they either fail or, worse, keep reading a stale
+# table from before the rename.
+LOT1_COMPAT_TBL <- Sys.getenv("LOT1_COMPAT_TABLE", unset = "NDMM_FLAGS_ALL")
+
+# Columns those consumers actually select. Checked before the view is published
+# so a future column change breaks here, loudly, instead of in their queries.
+LOT1_COMPAT_REQUIRED <- c("PATID", "CE_pre_lot1_12mo", "CE_lot1_3mo_fu",
+                          "NO_BELANTAMAB", "NO_PRIOR_MM_TX",
+                          "NO_OTHER_CANCER_PRE_LOT1", "NO_PREGNANCY")
+
 # The criteria whose sources can be unavailable, and the flag each one sets.
 # When a source is unreadable the criterion is SKIPPED and its flag passes every
 # patient -- which is indistinguishable, in the data, from a criterion that
@@ -680,6 +694,60 @@ materialize_lot1_starts <- function(con, run_step_fn = NULL)
 
 materialize_lot1_flags <- function(con, run_step_fn = NULL)
   .materialize_and_repoint(con, LOT1_FLAGS_ALL, LOT1_FLAGS_ALL_TBL, run_step_fn)
+
+# =============================================================================
+# Backward compatibility for the pre-rename table name
+# =============================================================================
+# Publishes LOT1_COMPAT_TBL as a VIEW over the current flag table.
+#
+# NEVER DROPS A PHYSICAL TABLE BY DEFAULT. If the legacy name still exists as a
+# real table -- written by a run from before the rename -- that is somebody's
+# data and dropping it is not this function's call to make. It reports what is
+# there and stops, because the alternative (leaving it) means consumers silently
+# read pre-rename numbers. Pass replace_table = TRUE once you have looked.
+write_lot1_compat_view <- function(con, replace_table = FALSE) {
+  target <- wrk(LOT1_COMPAT_TBL)
+  src    <- wrk(LOT1_FLAGS_ALL_TBL)
+
+  have <- toupper(names(db_q(con, glue("SELECT * FROM {src} WHERE 1 = 0"))))
+  miss <- setdiff(toupper(LOT1_COMPAT_REQUIRED), have)
+  if (length(miss))
+    stop(src, " is missing column(s) the legacy consumers read: ",
+         paste(miss, collapse = ", "), ". Publishing the compatibility view ",
+         "would break them at query time instead of here.", call. = FALSE)
+
+  kind <- .lot1_relation_kind(con, target)
+  if (identical(kind, "TABLE") && !isTRUE(replace_table)) {
+    nrows <- tryCatch(db_q(con, glue("SELECT count(*) AS n FROM {target}"))$n,
+                      error = function(e) NA)
+    stop(target, " already exists as a physical TABLE",
+         if (!is.na(nrows)) paste0(" (", format(nrows, big.mark = ","), " rows)") else "",
+         ", almost certainly written before the rename to ", LOT1_FLAGS_ALL_TBL,
+         ".\n  Leaving it means poma_studyteam_qs.R and 08_analytic_cohort.R keep ",
+         "reading STALE flags.\n  Replacing it means dropping that table. Look at ",
+         "it first, then re-run with LOT1_REPLACE_LEGACY_TABLE=TRUE to drop it ",
+         "and publish a view over ", src, " instead.", call. = FALSE)
+  }
+  if (identical(kind, "TABLE")) {
+    log_msg("Dropping the pre-rename TABLE ", target,
+            " (LOT1_REPLACE_LEGACY_TABLE=TRUE)")
+    db_exec(con, glue("DROP TABLE IF EXISTS {target}"))
+  }
+  db_exec(con, glue("CREATE OR REPLACE VIEW {target} AS SELECT * FROM {src}"))
+  log_msg("Compatibility view ", target, " -> ", src)
+  invisible(TRUE)
+}
+
+# "TABLE", "VIEW", or NA when the name does not exist.
+.lot1_relation_kind <- function(con, name) {
+  d <- tryCatch(db_q(con, glue("DESCRIBE EXTENDED {name}")),
+                error = function(e) NULL)
+  if (is.null(d) || !nrow(d)) return(NA_character_)
+  cn <- tolower(as.character(d[[1]]))
+  ty <- as.character(d[[2]])[cn == "type"]
+  if (!length(ty)) return("TABLE")            # older DESCRIBE output: assume table
+  if (grepl("VIEW", toupper(ty[1]), fixed = TRUE)) "VIEW" else "TABLE"
+}
 
 # =============================================================================
 # Run metadata
