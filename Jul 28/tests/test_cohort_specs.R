@@ -18,6 +18,7 @@
 })
 source(file.path(.here, "..", "R", "cohort_specs.R"))
 source(file.path(.here, "..", "R", "cohort_sql.R"))
+source(file.path(.here, "..", "R", "cohort_run.R"))
 set_cohort_dir(file.path(.here, "..", "cohorts"))
 
 # ---- micro test harness -----------------------------------------------------
@@ -308,6 +309,39 @@ ok(grepl("AS COHORT_NDMM", solo_pld, fixed = TRUE) &&
    "--cohort=ndmm alone yields a PLD with only the NDMM membership column")
 ok(!grepl("overall", solo$steps[[1]]$sql, fixed = TRUE),
    "--cohort=ndmm alone emits no Overall step")
+
+# =============================================================================
+section("LOT-build input contract (Phase 2)")
+
+# coh_index_union must be a DROP-IN for ELIG_COH_FINAL as the LOT build's input,
+# so 02_lot1.R needs no edit -- only INPUT_COHORT_TABLE repointed. lot_patient_input
+# (02_lot1.R:278) reads these columns; step 23 emits all of them, so projecting
+# the full flag row is enough.
+LOT_INPUT_COLS <- c("PATID", "INDEX_DATE", "ENDDATE", "ENDDATE_CE", "DEATH_DT",
+                    "GDR_CD", "YRDOB", "AGE_INDEX_YR", "FU_DAYS", "FU_DAYS_CE")
+ok(grepl("SELECT f.*", u, fixed = TRUE) &&
+   grepl("INNER JOIN wk.ELIG_COH_ALLFLAGS f", u, fixed = TRUE),
+   "the union view projects the full flag row, not just the key pair")
+ok(all(vapply(LOT_INPUT_COLS, function(c) grepl(c, u, fixed = TRUE), logical(1))),
+   "the union view documents every column lot_patient_input reads")
+ok(grepl("SELECT DISTINCT PATID, INDEX_DATE FROM sel", u, fixed = TRUE),
+   "de-duplication still happens on the key pair before the projection")
+
+# --index-only exists to break the bootstrap ordering: the LOT build consumes
+# the union view, but the membership views consume flags that only exist after
+# the LOT build has run.
+ok(isTRUE(parse_args(c("--index-only"))$index_only) &&
+   !isTRUE(parse_args(character(0))$index_only),
+   "--index-only is parsed, and off by default")
+ok(which(step_names == "index_union") <
+   min(which(step_names %in% c("overall_cohort", "ndmm_cohort"))),
+   "the union view is produced before anything that needs the LOT1 flags")
+# Truncating at index_union must leave a runnable prefix: the per-cohort index
+# selections plus the union, and nothing that reads LOT1_FLAGS_ALL.
+prefix <- plan$steps[seq_len(which(step_names == "index_union"))]
+ok(!any(vapply(prefix, function(st) grepl("LOT1_FLAGS_ALL", st$sql, fixed = TRUE),
+                logical(1))),
+   "--index-only's prefix reads no LOT1 flag table (it does not exist yet)")
 
 # =============================================================================
 section("attrition funnel")

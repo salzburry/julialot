@@ -22,6 +22,7 @@ Rscript "Jul 28/tests/test_cohort_specs.R"
 
 # print the SQL a run would execute
 Rscript "Jul 28/build_ndmm.R" --dry-run
+Rscript "Jul 28/build_ndmm.R" --index-only --dry-run   # stop at the LOT-build input
 Rscript "Jul 28/build_overall.R" --dry-run
 Rscript "Jul 28/build_cohort.R" --cohort=both --dry-run
 
