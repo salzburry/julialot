@@ -29,8 +29,9 @@ parse_args <- function(argv = commandArgs(trailingOnly = TRUE)) {
     if (length(hit)) sub(paste0("^", flag, "="), "", hit[1]) else default
   }
   list(cohort     = tolower(get1("--cohort", "")),
-       dry_run    = "--dry-run"    %in% argv,
-       index_only = "--index-only" %in% argv)
+       dry_run       = "--dry-run"       %in% argv,
+       index_only    = "--index-only"    %in% argv,
+       rebuild_index = "--rebuild-index" %in% argv)
 }
 
 select_specs <- function(which_cohort, all = cohort_specs()) {
@@ -89,6 +90,9 @@ load_cfg <- function(load_project = TRUE) {
   work <- env("PROJECT_WORK_SCHEMA", env("WORK_SCHEMA", ""))
   qual <- function(t) if (nzchar(work)) paste0(work, ".", t) else t
   cfg <- list(
+    catalog        = env("DATABRICKS_CATALOG", ""),
+    dsn            = env("DATABRICKS_DSN", ""),
+    pwd            = Sys.getenv("DATABRICKS_PWD", unset = ""),
     work_schema    = work,
     view_prefix    = env("COHORT_VIEW_PREFIX", "coh_"),
     # Upstream flag tables. These are INPUTS -- this engine never rebuilds them.
@@ -124,10 +128,31 @@ load_cfg <- function(load_project = TRUE) {
 # Assert the upstream flag tables actually carry every column the requested
 # gates read, BEFORE running anything. A renamed or dropped upstream column
 # would otherwise not error -- it would silently produce a different cohort.
-assert_source_cols <- function(con, specs, cfg) {
+# `plan_sql` is the SQL of the steps about to run. A source is only checked if
+# some step actually references it -- otherwise --index-only demands
+# LOT1_FLAGS_ALL, the table the stage AFTER it is supposed to create, and a
+# clean bootstrap can never start.
+# Which sources this run must check: those with required columns AND actually
+# referenced by a step about to run. Pure, so the --index-only case is testable
+# without a warehouse -- the bug it fixes was invisible to a text-only suite
+# precisely because it lived past the connection.
+sources_to_check <- function(specs, cfg, plan_sql = NULL) {
   need <- required_source_cols(specs)
+  keep <- names(need)[vapply(names(need), function(src)
+    length(need[[src]]) > 0L &&
+      (is.null(plan_sql) || any(grepl(cfg[[src]], plan_sql, fixed = TRUE))),
+    logical(1))]
+  need[keep]
+}
+
+assert_source_cols <- function(con, specs, cfg, plan_sql = NULL) {
+  all_need <- required_source_cols(specs)
+  need     <- sources_to_check(specs, cfg, plan_sql)
+  for (src in setdiff(names(all_need), names(need)))
+    if (length(all_need[[src]]))
+      cat("[preflight] skipping ", cfg[[src]],
+          " -- no step in this run reads it\n", sep = "")
   for (src in names(need)) {
-    if (!length(need[[src]])) next
     tbl  <- cfg[[src]]
     have <- toupper(names(DBI::dbGetQuery(con,
               paste0("SELECT * FROM ", tbl, " WHERE 1 = 0"))))
@@ -170,15 +195,47 @@ report_index_gate_drift <- function(specs) {
   invisible(NULL)
 }
 
+.table_exists <- function(con, fq) isTRUE(tryCatch({
+  DBI::dbGetQuery(con, paste0("SELECT 1 FROM ", fq, " LIMIT 1")); TRUE
+}, error = function(e) FALSE))
+
 # ---- connection seam --------------------------------------------------------
 # Kept minimal and separate so the whole selection layer is testable without a
 # warehouse; the production stack passes its own connect_databricks(cfg) in.
-connect <- function() {
+# Connects the same way 02_lot1.R:63 and 05_regimen_dashboard.R:1622 do -- DSN
+# from the project config, password from the environment. So `Rscript
+# ndmm/build.R` works with DATABRICKS_PWD set and nothing else, which is what
+# the rest of the stack already requires.
+#
+# COHORT_CONNECT_FN overrides it with the name of a zero-arg function, for a
+# host that connects differently. The previous default was to refuse and point
+# at COHORT_CONNECT_FN=my_connect -- a command that could not work, because
+# nothing defines my_connect.
+.assert_connect_config <- function() {
   fn <- Sys.getenv("COHORT_CONNECT_FN", unset = "")
-  if (nzchar(fn) && exists(fn, mode = "function")) return(get(fn, mode = "function")())
-  stop("no connection configured. Set COHORT_CONNECT_FN to a zero-arg function ",
-       "returning a DBI connection (the pipeline's connect_databricks(cfg) ",
-       "wrapped), or run with --dry-run.", call. = FALSE)
+  if (nzchar(fn) && !exists(fn, mode = "function"))
+    stop("COHORT_CONNECT_FN is set to '", fn, "' but no such function is ",
+         "defined in this session. Source the file that defines it first, or ",
+         "unset COHORT_CONNECT_FN to connect via DATABRICKS_DSN + ",
+         "DATABRICKS_PWD like the rest of the pipeline.", call. = FALSE)
+  invisible(TRUE)
+}
+
+connect <- function(cfg) {
+  .assert_connect_config()
+  fn <- Sys.getenv("COHORT_CONNECT_FN", unset = "")
+  if (nzchar(fn)) return(get(fn, mode = "function")())
+  if (!requireNamespace("odbc", quietly = TRUE))
+    stop("package 'odbc' is required for the default DSN connection. Use ",
+         "--dry-run, or set COHORT_CONNECT_FN.", call. = FALSE)
+  if (!nzchar(cfg$dsn))
+    stop("no ODBC DSN configured. Set DATABRICKS_DSN (pipeline_inputs.csv ",
+         "normally supplies it).", call. = FALSE)
+  if (!nzchar(cfg$pwd))
+    stop("DATABRICKS_PWD is not set. It stays in the environment / secret ",
+         "store by design -- pipeline_inputs.csv does not carry it.",
+         call. = FALSE)
+  DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
 }
 
 # ---- the run ----------------------------------------------------------------
@@ -221,10 +278,11 @@ run_build <- function(cohort = NULL, argv = commandArgs(trailingOnly = TRUE)) {
     keep <- seq_len(which(vapply(plan$steps, `[[`, character(1), "name") == "index_union"))
     plan$steps <- plan$steps[keep]
     plan$attrition <- list()
-    cat("--index-only: stopping after ", sql_obj(cfg, "index_union"),
-        ". Next: run the LOT build with INPUT_COHORT_TABLE=",
-        sub("^.*\\.", "", sql_obj(cfg, "index_union")), ", then ",
-        "build_lot1_flags.R, then re-run without --index-only.\n", sep = "")
+    cat("--index-only: stopping after ", sql_table(cfg, "index_union"),
+        "\n  next: LOT build with INPUT_COHORT_TABLE=",
+        sql_table_short(cfg, "index_union"),
+        "\n  then: build_lot1_flags.R",
+        "\n  then: this script again, without --index-only\n", sep = "")
   }
   cat(strrep("=", 72), "\n", sep = "")
 
@@ -236,13 +294,42 @@ run_build <- function(cohort = NULL, argv = commandArgs(trailingOnly = TRUE)) {
     return(invisible(plan))
   }
 
+  # Validate the connection CONFIG before the package requirement: a bad
+  # COHORT_CONNECT_FN is the user's typo and should say so, rather than be
+  # masked by a generic "DBI is required".
+  .assert_connect_config()
   if (!requireNamespace("DBI", quietly = TRUE))
     stop("DBI is required to execute. Use --dry-run to emit SQL only.",
          call. = FALSE)
-  con <- connect()
+  con <- connect(cfg)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
-  assert_source_cols(con, specs, cfg)
+  # REUSE, don't silently rebuild. The index tables are what the LOT build and
+  # the flag stage consumed; recomputing them here would quietly re-derive the
+  # cohort from whatever ELIG_COH_ALLFLAGS looks like NOW and pair it with LOT
+  # output built from something else. Same reason a build system does not
+  # re-run a step whose output already exists.
+  idx_steps <- grepl("_index_sel$|^index_union$",
+                     vapply(plan$steps, `[[`, character(1), "name"))
+  if (!isTRUE(args$rebuild_index) && !isTRUE(args$index_only)) {
+    have <- vapply(plan$steps[idx_steps], function(st)
+      .table_exists(con, sub(".*CREATE OR REPLACE TABLE ([^ \n]+).*", "\\1",
+                             sub("\n.*", "", st$sql))), logical(1))
+    if (length(have) && all(have)) {
+      cat("[reuse] index tables already exist -- reusing them so this run ",
+          "selects from the SAME rows the LOT build consumed.\n",
+          "        Pass --rebuild-index to recompute from ", cfg$index_flags,
+          ".\n", sep = "")
+      plan$steps <- plan$steps[!idx_steps]
+    } else if (any(have)) {
+      stop("the index tables are only PARTIALLY present, so this run would mix ",
+           "vintages. Re-run with --index-only --rebuild-index to rebuild them ",
+           "all, then redo the LOT build and the flag stage.", call. = FALSE)
+    }
+  }
+
+  assert_source_cols(con, specs, cfg,
+                     plan_sql = vapply(plan$steps, `[[`, character(1), "sql"))
 
   for (st in plan$steps) {
     cat("[step] ", st$name, " -- ", st$description, "\n", sep = "")
