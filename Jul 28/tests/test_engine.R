@@ -339,6 +339,33 @@ ok(isTRUE(parse_args("--rebuild-index")$rebuild_index) &&
    !isTRUE(parse_args(character(0))$rebuild_index),
    "--rebuild-index is parsed, and off by default")
 
+# ---- one index per PATID (Phase 3) ------------------------------------------
+# LOT_LONG is keyed by (PATID, LOT_NUM) and carries no INDEX_DATE, so two index
+# dates for one patient cannot be represented downstream. The run must be
+# REJECTED rather than fan out. Only the wiring is testable offline -- whether
+# any patient actually diverges is a fact about data.
+u_step <- plan$steps[[which(step_names == "index_union")]]
+ok(!is.null(u_step$check), "the union step carries a check")
+ok(identical(u_step$check$column, "n_diverging") &&
+   grepl("count(DISTINCT INDEX_DATE) > 1", u_step$check$sql, fixed = TRUE) &&
+   grepl("GROUP BY PATID", u_step$check$sql, fixed = TRUE),
+   "the check counts patients holding more than one index date")
+ok(grepl(sql_table(CFG, "index_union"), u_step$check$sql, fixed = TRUE),
+   "it checks the union table the LOT build will actually read")
+ok(grepl("cannot represent", u_step$check$message, fixed = TRUE) &&
+   grepl("separate runs", u_step$check$message, fixed = TRUE),
+   "the failure message says why, and what to do instead")
+# No other step should silently depend on the pair being a key.
+ok(!any(vapply(plan$steps, function(st)
+          grepl("count(DISTINCT INDEX_DATE)", st$sql, fixed = TRUE), logical(1))),
+   "no build step tries to handle multiple indexes itself")
+# A single-cohort run cannot diverge -- rn = 1 guarantees one row per patient --
+# but the check is cheap and stays, so the invariant is verified either way.
+solo_u <- build_plan(list(ndmm = R$ndmm), CFG)$steps
+solo_u <- solo_u[[which(vapply(solo_u, `[[`, character(1), "name") == "index_union")]]
+ok(!is.null(solo_u$check),
+   "a single-cohort run still verifies one index per PATID")
+
 # =============================================================================
 section("attrition funnel")
 

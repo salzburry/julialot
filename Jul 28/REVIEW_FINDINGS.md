@@ -2,8 +2,8 @@
 
 **Verdict accepted in full. All six findings reproduced.**
 
-**Status: findings 1 and 2 are FIXED (steps 1–2 of the corrected sequence).
-Findings 3–6 remain open, so this folder is still NOT validated and NOT
+**Status: findings 1, 2 and 3 are FIXED (steps 1–3 of the corrected sequence).
+Findings 4–6 remain open, so this folder is still NOT validated and NOT
 production-ready. Nothing has run against the warehouse.**
 
 The single most useful sentence in the review: *the LOT source files being
@@ -145,7 +145,7 @@ irrelevant.
   `ELIG_COH_ALLFLAGS` looks like now; `--rebuild-index` forces recomputation,
   and a partially-present set is a hard error rather than a mixed-vintage run.
 
-### 3. [P1] Multi-index support is not implemented — confirmed
+### 3. [P1] Multi-index support is not implemented — ~~confirmed~~ **FIXED (by rejecting it)**
 
 `build_lot1_starts()` (`lot1_flags.R:147`) joins `LOT_LONG` to the patient input
 **on `PATID` alone**. Unchanged LOT code aggregates by `PATID` too
@@ -156,6 +156,33 @@ This directly contradicts the pair-keying I claimed. Identical index gates mask
 it today. The review's recommendation is right: **reject divergence until LOT
 carries `INDEX_DATE` throughout**, rather than advertise support that does not
 exist.
+
+#### Fix (step 3)
+
+Checked first, and it settles the design: **`LOT_LONG` carries no `INDEX_DATE`
+at all** — `lot2_5_base.R` has zero references to it, and its grain is
+`(PATID, LOT_NUM)`. A pair key is therefore *impossible* downstream without
+rewriting the LOT build. Divergence is rejected, not supported:
+
+- **A check runs immediately after the union is built** and aborts the run if
+  any patient holds more than one index date, naming the count and saying what
+  to do (build the cohorts in separate runs, or align their index gates). It is
+  a query rather than a plan-time inference because differing gates only *might*
+  diverge — two cohorts can declare different criteria and still pick the same
+  index for every patient. The data decides.
+- **The standalone flag stage verifies it too.** `coh_index_union` enforces the
+  invariant, but `LOT1_PATIENT_INPUT` can be pointed at any table, so
+  `build_lot1_flags.R` checks for duplicate PATIDs before building anything.
+- **The overclaim is gone.** `PLAN.md` §3 said the union "grows and the numbers
+  stay right" when cohorts diverge. That was wrong and is now corrected in
+  place, along with the grain claims in `README.md` (`PATID × INDEX_DATE`
+  became one row per PATID) and the header of `lot1_flags.R`, which now states the
+  invariant `build_lot1_starts()` depends on rather than implying it handles
+  pairs.
+
+`INDEX_DATE` is still carried on every object — it is the anchor the LOT1 gates
+measure from — but `PATID` is the key, and that is now enforced rather than
+assumed.
 
 ### 4. [P1] Failed persistence is swallowed — confirmed
 
@@ -197,8 +224,7 @@ Ordered so nothing is built on an unvalidated base:
 
 1. ~~**Load the real configuration.**~~ **DONE** — see the fix under finding 1.
 2. ~~**Fix the execution path.**~~ **DONE** — see the fix under finding 2.
-3. **Enforce one index per PATID** until LOT is genuinely pair-keyed; fail on
-   divergence rather than silently fanning out.
+3. ~~**Enforce one index per PATID.**~~ **DONE** — see the fix under finding 3.
 4. **Fail closed** on failed persistence and on missing criterion inputs; persist
    run metadata recording any skipped criterion.
 5. **Compatibility view** for `NDMM_FLAGS_ALL`.

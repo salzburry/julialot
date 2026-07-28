@@ -1,9 +1,10 @@
 # Cohort build codes: Overall + NDMM, one flag-driven PLD
 
 **Date:** 2026-07-28
-**Status:** ⚠️ **NOT VALIDATED — NOT PRODUCTION-READY.** Review findings 1 and 2
-are **fixed** (the configured cohort is built; the documented run order can now
-execute). Findings 3–6 are open. See **[REVIEW_FINDINGS.md](REVIEW_FINDINGS.md)**
+**Status:** ⚠️ **NOT VALIDATED — NOT PRODUCTION-READY.** Review findings 1–3
+are **fixed** (the configured cohort is built, the documented run order can
+execute, and multi-index divergence is rejected rather than fanned out).
+Findings 4–6 are open. See **[REVIEW_FINDINGS.md](REVIEW_FINDINGS.md)**
 — read it before this document, which still overstates what has been
 established. Nothing has run against the warehouse.
 
@@ -94,7 +95,7 @@ Four stages. Only stage 4 is cohort-specific, and it's cheap.
       ─► coh_overall_index_sel ─┤
       ─► coh_ndmm_index_sel   ──┤
                                 ▼
-                     coh_index_union   (distinct PATID × INDEX_DATE)
+                     coh_index_union   (ONE ROW PER PATID -- enforced)
                                 │
   [3] LOT build + LOT1-anchored flag build (cohort-agnostic, expensive, ONCE)
       ─► LOT1_STARTS, LOT_LONG, LOT1_FLAGS_ALL
@@ -131,9 +132,18 @@ whose index gates differ.
 
 So ranking is done **per cohort** (cheap — a window function over a
 materialized flag table), and the LOT build is fed the **union** of the selected
-`(PATID, INDEX_DATE)` pairs. When two cohorts pick the same index for a patient,
-the union collapses and the LOT build runs once. When they diverge, the union
-grows and the numbers stay right. Correct in both cases, cheap in the common one.
+indexes. When two cohorts pick the same index for a patient — what happens
+today, since their index gates are identical — the union collapses and the LOT
+build runs once.
+
+**When they diverge, the run is rejected.** An earlier draft of this section
+claimed the union "grows and the numbers stay right". That was wrong.
+`LOT_LONG` is keyed by `(PATID, LOT_NUM)` and carries no `INDEX_DATE`
+(`lot2_5_base.R` has zero references), and `02_lot1.R` aggregates by `PATID`
+throughout — so two index dates for one patient would fan out or be conflated
+with no error. A check runs immediately after the union is built and aborts on
+any patient with more than one index. Supporting divergence means threading
+`INDEX_DATE` through the LOT build first.
 
 ### Anchors are first-class, and that fixes a live hazard
 
@@ -343,7 +353,7 @@ same SQL (verified by normalized diff against the pre-change file):
 1. **The patient input is a parameter.** `FROM ELIG_COH_FINAL` became
    `FROM {patient_input}`. Pass `coh_index_union` and the flags build with no
    Overall cohort ever selected. Default is unchanged.
-2. **Views are keyed by `(PATID, INDEX_DATE)`.** The original could key on
+2. **Views carry `(PATID, INDEX_DATE)`; `PATID` remains the key.** The original could key on
    PATID because `ELIG_COH_FINAL` is already one row per patient. A union over
    cohorts that pick *different* index dates for the same patient would be
    silently conflated by a PATID-only key. The index-DEPENDENT scans (the two
@@ -438,10 +448,11 @@ confirmation.)
   LOT1 is derived from an index date. The staging index → LOT → LOT1-gates is
   irreducible. "Standalone" here means *one command, no Overall run, no
   `ELIG_COH_FINAL` dependency* — not *one query*.
-- **PLD grain is `(PATID, INDEX_DATE)`**, which is one row per patient today
-  because both cohorts select the same index. If the index gate sets ever
-  diverge, a patient can hold two rows. Downstream code should join on the pair,
-  not assume `PATID` is unique.
+- **PLD grain is one row per patient.** `INDEX_DATE` rides along as the anchor,
+  but `PATID` is the key and a run that would break that is rejected (§3). This
+  is a real limitation, not a design choice: cohorts that need different index
+  dates must be built in separate runs until `INDEX_DATE` is threaded through
+  the LOT build.
 - **`cohort_explorer` overlaps this.** Its `ANALYTIC_COHORT` is the same idea
   aimed at the Shiny app, sourced from `NDMM_FLAGS_ALL` and `ELIG_COH_FINAL`. Once
   `COHORT_PLD` exists, `make_analytic_csv.R` should read it instead of

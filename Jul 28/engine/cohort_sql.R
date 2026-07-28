@@ -23,12 +23,22 @@
 # across cohorts with different index gates.
 #
 # So ranking is done PER COHORT (cheap -- a window function over a materialized
-# flag table, no claim re-scan), and the LOT build is fed the UNION of the
-# selected (PATID, INDEX_DATE) pairs. When two cohorts pick the same index for
-# a patient -- which is what happens today, since their index gates are
-# identical -- the union collapses and the LOT build runs exactly once. When
-# they diverge, the union grows and the numbers stay correct. Correct in both
-# cases, cheap in the common one.
+# flag table, no claim re-scan), and the LOT build is fed the union of the
+# selected indexes. When two cohorts pick the same index for a patient -- which
+# is what happens today, since their index gates are identical -- the union
+# collapses and the LOT build runs exactly once.
+#
+# WHEN THEY DIVERGE, THIS RUN IS REJECTED. It is tempting to say the union
+# "grows and the numbers stay correct" -- I wrote that, and it is wrong. LOT_LONG
+# is keyed by (PATID, LOT_NUM) and carries NO INDEX_DATE at all (lot2_5_base.R
+# has zero references to it), and 02_lot1.R aggregates by PATID throughout. Two
+# index dates for one patient cannot be represented downstream: the LOT history
+# would fan out or be conflated, silently.
+#
+# So the union carries INDEX_DATE as the anchor it is, but PATID is the KEY, and
+# sql_index_union_check() enforces that at run time. Supporting divergence means
+# threading INDEX_DATE through the LOT build first -- a much larger change than
+# this folder makes.
 # =============================================================================
 
 # ---- naming ----------------------------------------------------------------
@@ -127,6 +137,20 @@ sql_index_union <- function(specs, cfg) {
     "INNER JOIN ", cfg$index_flags, " f\n",
     "        ON f.PATID = u.PATID AND f.INDEX_DATE = u.INDEX_DATE"
   )
+}
+
+# A run is REJECTED if any patient ended up with more than one selected index
+# date. Returns the offending count; the runner stops when it is non-zero.
+#
+# This is a real query rather than a plan-time inference because differing index
+# gates only MIGHT diverge -- two cohorts can declare different criteria and
+# still pick the same index for every patient. The data decides.
+sql_index_union_check <- function(cfg) {
+  paste0(
+    "SELECT count(*) AS n_diverging FROM (\n",
+    "  SELECT PATID FROM ", sql_table(cfg, "index_union"), "\n",
+    "  GROUP BY PATID HAVING count(DISTINCT INDEX_DATE) > 1\n",
+    ")")
 }
 
 # =============================================================================
@@ -302,15 +326,28 @@ sql_attrition <- function(spec, cfg) {
 build_plan <- function(specs, cfg) {
   specs <- lapply(specs, bind_lot1_aliases)
   steps <- list()
-  add <- function(name, sql, desc) steps[[length(steps) + 1L]] <<-
-    list(name = name, sql = sql, description = desc)
+  add <- function(name, sql, desc, check = NULL) steps[[length(steps) + 1L]] <<-
+    list(name = name, sql = sql, description = desc, check = check)
 
   for (s in specs)
     add(paste0(s$id, "_index_sel"), sql_index_sel(s, cfg),
         paste0("Index selection: ", s$label))
 
   add("index_union", sql_index_union(specs, cfg),
-      "Union of selected indexes (input to the LOT build)")
+      "Union of selected indexes (input to the LOT build)",
+      check = list(
+        sql = sql_index_union_check(cfg),
+        column = "n_diverging",
+        message = paste(
+          "patient(s) were assigned MORE THAN ONE index date by the requested",
+          "cohorts. The LOT build cannot represent that: LOT_LONG is keyed by",
+          "(PATID, LOT_NUM) and carries no INDEX_DATE, so the histories would",
+          "fan out or be conflated without any error.\n",
+          "  Fix: build the cohorts in separate runs (each is internally",
+          "consistent), or align their index-anchored gates so they select the",
+          "same index.\n",
+          "  Supporting divergence requires threading INDEX_DATE through the LOT",
+          "build first -- see REVIEW_FINDINGS.md finding 3.")))
 
   for (s in specs)
     add(paste0(s$id, "_cohort"), sql_cohort(s, cfg),

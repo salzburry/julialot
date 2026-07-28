@@ -189,8 +189,10 @@ report_index_gate_drift <- function(specs) {
     cat("  only in ", specs[[2]]$id, ": ", paste(d$only_in_b, collapse = ", "), "\n", sep = "")
   if (isTRUE(d$reordered))
     cat("  same set, different funnel order\n")
-  cat("  Intended? If so the cohorts select different index dates and the LOT\n",
-      "  build fans out over their union (PLAN.md 3). If not, fix <cohort>/cohort.R.\n",
+  cat("  If that makes them select DIFFERENT index dates for the same patient,\n",
+      "  this run will be REJECTED after the union is built -- LOT_LONG has no\n",
+      "  INDEX_DATE and cannot represent two histories per patient. Build them in\n",
+      "  separate runs, or align the gates. See REVIEW_FINDINGS.md finding 3.\n",
       sep = "")
   invisible(NULL)
 }
@@ -287,8 +289,12 @@ run_build <- function(cohort = NULL, argv = commandArgs(trailingOnly = TRUE)) {
   cat(strrep("=", 72), "\n", sep = "")
 
   if (args$dry_run) {
-    for (st in plan$steps)
+    for (st in plan$steps) {
       cat("\n-- [", st$name, "] ", st$description, "\n", st$sql, ";\n", sep = "")
+      if (!is.null(st$check))
+        cat("\n-- [check: ", st$name, "] run must ABORT unless ",
+            st$check$column, " = 0\n", st$check$sql, ";\n", sep = "")
+    }
     for (id in names(plan$attrition))
       cat("\n-- [attrition:", id, "]\n", plan$attrition[[id]], ";\n", sep = "")
     return(invisible(plan))
@@ -334,6 +340,15 @@ run_build <- function(cohort = NULL, argv = commandArgs(trailingOnly = TRUE)) {
   for (st in plan$steps) {
     cat("[step] ", st$name, " -- ", st$description, "\n", sep = "")
     DBI::dbExecute(con, st$sql)
+    # A step's check runs IMMEDIATELY after it, so a violated invariant stops
+    # the run before anything downstream is built on it.
+    if (!is.null(st$check)) {
+      v <- DBI::dbGetQuery(con, st$check$sql)[[st$check$column]][1]
+      if (!isTRUE(as.numeric(v) == 0))
+        stop("[", st$name, "] check failed: ", format(v, big.mark = ","), " ",
+             st$check$message, call. = FALSE)
+      cat("[check] ", st$name, " ok\n", sep = "")
+    }
   }
 
   for (id in names(plan$attrition)) {
