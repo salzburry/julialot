@@ -34,5 +34,9 @@ for (s in suites) {
 }
 
 cat("\n", strrep("=", 60), "\n", sep = "")
-if (fails == 0L) cat("ALL SUITES PASSED (", length(suites), " suites)\n", sep = "")
-else { cat(fails, " of ", length(suites), " suites FAILED\n", sep = ""); quit(status = 1L) }
+if (fails == 0L) {
+  cat("ALL SUITES PASSED (", length(suites), " suites)\n", sep = "")
+} else {
+  cat(fails, " of ", length(suites), " suites FAILED\n", sep = "")
+  quit(status = 1L)
+}

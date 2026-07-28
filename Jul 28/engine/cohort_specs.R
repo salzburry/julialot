@@ -57,6 +57,17 @@ ANCHOR_SOURCE <- list(
 # -----------------------------------------------------------------------------
 # Each gate is one criterion. Fields:
 #   id         stable key referenced by cohort specs
+#   cfg_key    the production toggle that decides whether this criterion is
+#              APPLIED (criteria_attrition.R's cfg_key; pipeline_inputs.csv sets
+#              it). NA_character_ = always applied, either because the pipeline
+#              has no toggle for it (the step-1 index gate, every LOT1-anchored
+#              criterion) or because it is not in the catalog at all.
+#
+#              A gate whose toggle is FALSE is still DECLARED and still emitted
+#              as a PLD column -- it is simply not AND-ed into membership and
+#              not counted in the funnel. That is the whole point of the flag
+#              design: turning a criterion off changes the selection, not the
+#              data.
 #   label      human label; may contain {param} placeholders
 #   polarity   "incl" | "excl"   (drives attrition wording only)
 #   anchor     "index" | "lot1"  (see ANCHORS above)
@@ -78,7 +89,7 @@ gate_registry <- function() list(
   # ---- index-anchored (ELIG_COH_ALLFLAGS; pipeline_steps.R step 23) ---------
 
   idx_qualifying = list(
-    id = "idx_qualifying", polarity = "incl", anchor = "index",
+    id = "idx_qualifying", cfg_key = NA_character_, polarity = "incl", anchor = "index",
     label = "Index qualifies: 1 inpatient MM dx, or 2 outpatient within {outpatient_window}d",
     params = list(outpatient_window = 60L), tunable = TRUE,
     sql = "({a}.inpt_qual = 1 OR {a}.outpt2_{outpatient_window} = 1)",
@@ -87,7 +98,7 @@ gate_registry <- function() list(
   ),
 
   age_at_index = list(
-    id = "age_at_index", polarity = "incl", anchor = "index",
+    id = "age_at_index", cfg_key = "apply_age_incl", polarity = "incl", anchor = "index",
     label = "Age >= {min_age} at index year",
     params = list(min_age = 18L), tunable = TRUE,
     sql = "{a}.AGE_INDEX_YR >= {min_age}",
@@ -95,7 +106,7 @@ gate_registry <- function() list(
   ),
 
   ce_baseline_6mo = list(
-    id = "ce_baseline_6mo", polarity = "incl", anchor = "index",
+    id = "ce_baseline_6mo", cfg_key = "apply_ce_b_incl", polarity = "incl", anchor = "index",
     label = "Continuous enrollment, 6 months before index (<=30d gaps)",
     params = list(), tunable = FALSE,
     sql = "{a}.CE_b = 1",
@@ -104,7 +115,7 @@ gate_registry <- function() list(
   ),
 
   ce_followup_1d = list(
-    id = "ce_followup_1d", polarity = "incl", anchor = "index",
+    id = "ce_followup_1d", cfg_key = "apply_ce_f_incl", polarity = "incl", anchor = "index",
     label = "At least 1 day of follow-up enrollment after index",
     params = list(), tunable = FALSE,
     sql = "{a}.CE_f = 1",
@@ -112,7 +123,7 @@ gate_registry <- function() list(
   ),
 
   ce_followup_3mo = list(
-    id = "ce_followup_3mo", polarity = "incl", anchor = "index",
+    id = "ce_followup_3mo", cfg_key = NA_character_, polarity = "incl", anchor = "index",
     label = "Continuous enrollment, 3 months after index (strict, death-aware)",
     params = list(), tunable = FALSE,
     sql = "{a}.CE_3mosf = 1",
@@ -121,7 +132,7 @@ gate_registry <- function() list(
   ),
 
   no_baseline_mm_agents = list(
-    id = "no_baseline_mm_agents", polarity = "excl", anchor = "index",
+    id = "no_baseline_mm_agents", cfg_key = "apply_no_bl_agents_incl", polarity = "excl", anchor = "index",
     label = "No MM agents in the baseline window (new-user)",
     params = list(), tunable = FALSE,
     sql = "{a}.MM_bl_agents = 0",
@@ -129,7 +140,7 @@ gate_registry <- function() list(
   ),
 
   fu_mm_agents = list(
-    id = "fu_mm_agents", polarity = "incl", anchor = "index",
+    id = "fu_mm_agents", cfg_key = "apply_fu_agents_incl", polarity = "incl", anchor = "index",
     label = "At least one MM agent claim in follow-up (any drug class)",
     params = list(), tunable = FALSE,
     sql = "{a}.MM_FU_agents = 1",
@@ -144,7 +155,7 @@ gate_registry <- function() list(
   ),
 
   no_baseline_mm_evidence = list(
-    id = "no_baseline_mm_evidence", polarity = "excl", anchor = "index",
+    id = "no_baseline_mm_evidence", cfg_key = "apply_baseline_mm_excl", polarity = "excl", anchor = "index",
     label = "No prior MM evidence in the baseline window",
     params = list(), tunable = FALSE,
     sql = "{a}.MM_baseline_diag = 0",
@@ -152,7 +163,7 @@ gate_registry <- function() list(
   ),
 
   no_other_cancer_index = list(
-    id = "no_other_cancer_index", polarity = "excl", anchor = "index",
+    id = "no_other_cancer_index", cfg_key = "apply_other_malig_excl", polarity = "excl", anchor = "index",
     label = "No other malignancy (index-anchored baseline)",
     params = list(), tunable = FALSE,
     sql = "{a}.OTHER_MALIGN_FLAG = 0",
@@ -160,7 +171,7 @@ gate_registry <- function() list(
   ),
 
   no_pregnancy_index = list(
-    id = "no_pregnancy_index", polarity = "excl", anchor = "index",
+    id = "no_pregnancy_index", cfg_key = "apply_pregnancy_excl", polarity = "excl", anchor = "index",
     label = "No pregnancy (index-anchored)",
     params = list(), tunable = FALSE,
     sql = "{a}.PREGNANT_FLAG = 0",
@@ -168,7 +179,7 @@ gate_registry <- function() list(
   ),
 
   no_clintrial = list(
-    id = "no_clintrial", polarity = "excl", anchor = "index",
+    id = "no_clintrial", cfg_key = "apply_clintrial_excl", polarity = "excl", anchor = "index",
     label = "No clinical-trial participation (baseline or follow-up)",
     params = list(), tunable = FALSE,
     sql = "{a}.CLINTRIAL_BASELINE = 0 AND {a}.CLINTRIAL_FOLLOWUP = 0",
@@ -178,7 +189,7 @@ gate_registry <- function() list(
   # ---- LOT1-anchored (NDMM_FLAGS_ALL; 06_ndmm_dashboard.R) ------------------
 
   has_lot1 = list(
-    id = "has_lot1", polarity = "incl", anchor = "lot1",
+    id = "has_lot1", cfg_key = NA_character_, polarity = "incl", anchor = "lot1",
     label = "A LOT1 regimen start exists (non-steroid MM agent)",
     params = list(), tunable = FALSE,
     sql = "{a}.LOT1_START_DT IS NOT NULL",
@@ -195,7 +206,7 @@ gate_registry <- function() list(
   ),
 
   lot1_from = list(
-    id = "lot1_from", polarity = "incl", anchor = "lot1",
+    id = "lot1_from", cfg_key = NA_character_, polarity = "incl", anchor = "lot1",
     label = "1L start on/after {lot1_from}",
     params = list(lot1_from = "2017-01-01"), tunable = TRUE,
     sql = "{a}.LOT1_START_DT >= date('{lot1_from}')",
@@ -204,7 +215,7 @@ gate_registry <- function() list(
   ),
 
   ce_pre_lot1_12mo = list(
-    id = "ce_pre_lot1_12mo", polarity = "incl", anchor = "lot1",
+    id = "ce_pre_lot1_12mo", cfg_key = NA_character_, polarity = "incl", anchor = "lot1",
     label = "Continuous enrollment, 12 months before 1L start (<=30d gaps)",
     params = list(), tunable = FALSE,
     sql = "{a}.CE_pre_lot1_12mo = 1",
@@ -213,7 +224,7 @@ gate_registry <- function() list(
   ),
 
   ce_fu_lot1_3mo = list(
-    id = "ce_fu_lot1_3mo", polarity = "incl", anchor = "lot1",
+    id = "ce_fu_lot1_3mo", cfg_key = NA_character_, polarity = "incl", anchor = "lot1",
     label = "Continuous enrollment, 3 months after 1L start (no gaps, death-aware)",
     params = list(), tunable = FALSE,
     sql = "{a}.CE_lot1_3mo_fu = 1",
@@ -221,7 +232,7 @@ gate_registry <- function() list(
   ),
 
   no_belantamab = list(
-    id = "no_belantamab", polarity = "excl", anchor = "lot1",
+    id = "no_belantamab", cfg_key = NA_character_, polarity = "excl", anchor = "lot1",
     label = "No belantamab in any line",
     params = list(), tunable = FALSE,
     sql = "{a}.NO_BELANTAMAB = 1",
@@ -229,7 +240,7 @@ gate_registry <- function() list(
   ),
 
   no_prior_mm_tx = list(
-    id = "no_prior_mm_tx", polarity = "excl", anchor = "lot1",
+    id = "no_prior_mm_tx", cfg_key = NA_character_, polarity = "excl", anchor = "lot1",
     label = "No MM oncology therapy in the 12 months before 1L start",
     params = list(), tunable = FALSE,
     sql = "{a}.NO_PRIOR_MM_TX = 1",
@@ -238,7 +249,7 @@ gate_registry <- function() list(
   ),
 
   no_other_cancer_pre_lot1 = list(
-    id = "no_other_cancer_pre_lot1", polarity = "excl", anchor = "lot1",
+    id = "no_other_cancer_pre_lot1", cfg_key = NA_character_, polarity = "excl", anchor = "lot1",
     label = "No other active cancer in the 12 months before 1L start",
     params = list(), tunable = FALSE,
     sql = "{a}.NO_OTHER_CANCER_PRE_LOT1 = 1",
@@ -247,7 +258,7 @@ gate_registry <- function() list(
   ),
 
   no_pregnancy_study = list(
-    id = "no_pregnancy_study", polarity = "excl", anchor = "lot1",
+    id = "no_pregnancy_study", cfg_key = NA_character_, polarity = "excl", anchor = "lot1",
     label = "No pregnancy code over the study period",
     params = list(), tunable = FALSE,
     sql = "{a}.NO_PREGNANCY = 1",
@@ -388,6 +399,10 @@ resolve_spec <- function(spec, cfg = list(), reg = gate_registry()) {
     g$alias           <- ANCHOR_SOURCE[[g$anchor]]$alias
     g$source          <- ANCHOR_SOURCE[[g$anchor]]$source
     g$predicate       <- .interp(.interp(g$sql, p), list(a = g$alias))
+    # ACTIVE = applied to membership. Mirrors build_criteria_sql()'s
+    # `if (isTRUE(cfg[[cr$cfg_key]]))` exactly, including its isTRUE(): an
+    # absent or NA toggle counts as OFF there, so it must here too.
+    g$active <- if (is.na(g$cfg_key)) TRUE else isTRUE(cfg[[g$cfg_key]])
     g
   })
   names(gates) <- spec$gates
@@ -396,9 +411,18 @@ resolve_spec <- function(spec, cfg = list(), reg = gate_registry()) {
   gates <- gates[ord]
   # Stamp the funnel position AFTER ordering so attrition ids are contiguous
   # and sort lexically (01_, 02_, ...) in the report.
+  # Number the funnel over APPLIED gates only: an inactive criterion has no
+  # attrition row, so contiguous ids must skip it rather than leave a hole.
+  n <- 0L
   for (i in seq_along(gates)) {
-    gates[[i]]$step_no <- i
-    gates[[i]]$attrition_id <- sprintf("%02d_%s", i, gates[[i]]$id)
+    if (isTRUE(gates[[i]]$active)) {
+      n <- n + 1L
+      gates[[i]]$step_no <- n
+      gates[[i]]$attrition_id <- sprintf("%02d_%s", n, gates[[i]]$id)
+    } else {
+      gates[[i]]$step_no <- NA_integer_
+      gates[[i]]$attrition_id <- NA_character_
+    }
   }
   spec$resolved_gates <- gates
   spec$anchors_used   <- unique(vapply(gates, `[[`, character(1), "anchor"))
@@ -447,8 +471,13 @@ validate_spec <- function(spec, reg = gate_registry()) {
 # build asserts these against the live schema before generating any SQL, so a
 # renamed upstream column fails at step 0 rather than silently dropping a
 # criterion from the cohort definition.
+# Columns needed by the gates that will actually be APPLIED. A disabled
+# criterion reads nothing, so requiring its column would fail a run for a
+# criterion the configuration has turned off.
 required_source_cols <- function(specs, reg = gate_registry()) {
-  gids <- unique(unlist(lapply(specs, `[[`, "gates")))
+  gids <- unique(unlist(lapply(specs, function(s)
+    if (!is.null(s$resolved_gates))
+      vapply(active_gates(s), `[[`, character(1), "id") else s$gates)))
   out <- list()
   for (a in ANCHORS) {
     cols <- unique(unlist(lapply(gids, function(g)
@@ -458,11 +487,16 @@ required_source_cols <- function(specs, reg = gate_registry()) {
   out
 }
 
+# The gates actually applied. Every SQL builder uses THIS, never resolved_gates
+# directly -- a gate the configuration disables must not reach a predicate.
+active_gates <- function(spec)
+  Filter(function(g) isTRUE(g$active), spec$resolved_gates %||% list())
+
 # Does this spec need the LOT build (and therefore the LOT1-anchored flags)?
 # Overall does not; NDMM does. Used to skip the LOT1 joins entirely for
 # cohorts that have no LOT1-anchored gates -- Overall's generated SQL stays
 # byte-comparable to today's step 24.
 needs_lot1 <- function(spec) "lot1" %in%
-  vapply(spec$resolved_gates %||% list(), `[[`, character(1), "anchor")
+  vapply(active_gates(spec), `[[`, character(1), "anchor")
 
 `%||%` <- function(x, y) if (is.null(x)) y else x

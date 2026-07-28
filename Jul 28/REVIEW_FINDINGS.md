@@ -1,8 +1,9 @@
 # Review findings — validated 2026-07-28
 
-**Verdict accepted in full. All six findings reproduce. This folder is NOT
-validated and NOT production-ready.** No fixes applied yet — this document
-records the validation only.
+**Verdict accepted in full. All six findings reproduced.**
+
+**Status: finding 1 is FIXED (step 1 of the corrected sequence). Findings 2–6
+remain open, so this folder is still NOT validated and NOT production-ready.**
 
 The single most useful sentence in the review: *the LOT source files being
 byte-identical is valid evidence the LOT algorithms were not edited; it does not
@@ -15,8 +16,9 @@ exactly the gap between what my suite tested and what "validated" means.
 
 Two structural mistakes, each producing several findings:
 
-1. **The engine never loads `pipeline_inputs.csv`.** `load_cfg()`
-   (`engine/cohort_run.R:51`) reads env vars only. The legacy stack applies the
+1. **The engine never loads `pipeline_inputs.csv`.** ~~`load_cfg()`
+   (`engine/cohort_run.R:51`) reads env vars only.~~ **FIXED — see finding 1.**
+   Originally: `load_cfg()` read env vars only. The legacy stack applies the
    committed CSV via `load_pipeline_inputs()` before any config is read. So the
    engine cannot see the project's actual configuration — not the 90-day window,
    not the four disabled exclusions. My files *mention* the CSV in comments and
@@ -32,7 +34,7 @@ Two structural mistakes, each producing several findings:
 
 ## Findings
 
-### 1. [P0] The configured cohort is not what I built — confirmed, and worse
+### 1. [P0] The configured cohort is not what I built — ~~confirmed~~ **FIXED**
 
 `build_criteria_sql()` (`criteria_attrition.R:94`) includes a criterion only
 `if (isTRUE(cfg[[cr$cfg_key]]))`. My equivalence test extracted `filter_sql`
@@ -60,11 +62,39 @@ about exactly this:
 > plasma-cell leukemia / secondary bone). **TRUE drops those patients upstream
 > and breaks the NDMM cohort.**
 
-My `ndmm/cohort.R` applies `no_other_cancer_index` unconditionally — i.e. the
-configuration the project documents as breaking NDMM. It also **defeats the
-MM-adjacent override entirely**: those patients are dropped upstream before the
-override can keep them. That is the same override whose labels I got wrong last
-turn; I fixed the list while leaving in place a gate that makes it irrelevant.
+My `ndmm/cohort.R` applied `no_other_cancer_index` unconditionally — i.e. the
+configuration the project documents as breaking NDMM. It also **defeated the
+MM-adjacent override entirely**: those patients were dropped upstream before the
+override could keep them. That is the same override whose labels I got wrong the
+turn before; I fixed the list while leaving in place a gate that made it
+irrelevant.
+
+#### Fix (step 1)
+
+- **`load_cfg()` calls `load_pipeline_inputs()`** before reading anything, so the
+  engine sees the committed configuration. `OUTPATIENT_WINDOW` now defaults to
+  **90**, matching `config_prompts.R:99` — the old 60 was wrong independently of
+  the CSV.
+- **Every gate carries its production `cfg_key`**, and `resolve_spec()` marks it
+  active with `isTRUE(cfg[[cfg_key]])` — the same test `build_criteria_sql()`
+  uses, `isTRUE()` included, so an absent toggle is OFF in both.
+- **A disabled criterion stays declared and stays a PLD column.** It is simply
+  not AND-ed into membership, not numbered in the funnel, and not demanded by the
+  schema guard. Turning a criterion off changes the selection, not the data —
+  which is the point of the flag design.
+- **Overall is now the 6-gate Step-6 cohort at 90 days.** NDMM leaves the
+  index-anchored other-cancer / pregnancy criteria off and applies the
+  LOT1-anchored ones, so the MM-adjacent override is no longer pre-empted —
+  exactly the design `pipeline_inputs.csv` documents. There is a test asserting
+  the generated NDMM SQL never contains `OTHER_MALIGN_FLAG`.
+- **`tests/test_equivalence.R` section 2 now CALLS** `build_criteria_catalog()`
+  and `build_criteria_sql()` with the real config and compares clause-for-clause
+  in order (pipeline 6, spec 6). The old version parsed the catalog and ignored
+  `cfg_key`.
+- **`tests/harness.R` builds `CFG` from `load_cfg()`** instead of hand-writing
+  one. The hand-written CFG — 60-day window, no toggles at all, so every toggled
+  criterion read as ON — is *how* the suites came to validate a configuration
+  nobody runs. One source of truth now.
 
 ### 2. [P0] The documented NDMM bootstrap cannot run — confirmed, four blockers
 
@@ -128,16 +158,11 @@ read stale data; absent → they fail. A compatibility view is required.
 
 ---
 
-## Corrected sequence (proposed, not yet done)
+## Corrected sequence
 
 Ordered so nothing is built on an unvalidated base:
 
-1. **Load the real configuration.** Call `load_pipeline_inputs()` in the engine,
-   and make gates *configurable*, not unconditional: each gate needs its
-   `cfg_key`, so the spec expresses "the configured cohort", not "all criteria".
-   Restore the 90-day default. Re-derive the equivalence test from
-   `build_criteria_sql()` — the function that actually decides — rather than from
-   `build_criteria_catalog()`.
+1. ~~**Load the real configuration.**~~ **DONE** — see the fix under finding 1.
 2. **Fix the execution path**: `--index-only` preflight scoped to the truncated
    plan; unqualified temp-view names; persist the union as a real table (or run
    dependent stages on one connection); a runnable connection example.
@@ -150,5 +175,10 @@ Ordered so nothing is built on an unvalidated base:
    warehouse `EXCEPT` checks in both directions — the only thing that will
    actually establish equivalence.
 
-Until step 1 lands, the green suite should not be cited as evidence of anything.
-`tests/test_equivalence.R` carries a banner saying so.
+Step 1 has landed, so section 2 of `tests/test_equivalence.R` is now sound.
+Sections 3 and 4 are not: `setequal()` cannot see funnel-order changes and the
+token-SET comparator discards order and multiplicity (finding 6). The suite
+carries a banner saying exactly which parts to trust.
+
+**Nothing here changes the fact that no code has run against the warehouse.**
+Step 1 makes the static comparison meaningful; it does not make it empirical.

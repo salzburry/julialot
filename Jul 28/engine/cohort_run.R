@@ -45,12 +45,47 @@ select_specs <- function(which_cohort, all = cohort_specs()) {
 }
 
 # ---- config -----------------------------------------------------------------
-# Env-var driven, matching the existing pipeline's convention (see
-# apr_30_2026/R/config_prompts.R and pipeline_inputs.csv). Anything the gates
-# parameterise (min_age, outpatient_window, lot1_from) is read here so a single
-# input file still drives the whole run.
-load_cfg <- function() {
+# THE PROJECT'S OWN CONFIGURATION, not this engine's idea of it.
+#
+# pipeline_inputs.csv is the committed configuration: it sets OUTPATIENT_WINDOW
+# to 90 and ships four exclusions FALSE (see its own DESIGN comment -- the
+# parent runs to Step 6 and NDMM re-applies those criteria at the LOT1 anchor).
+# An engine that reads only env vars cannot see any of that, and will happily
+# build a cohort nobody uses. So load the CSV exactly the way every other entry
+# point does, before reading anything.
+#
+# load_pipeline_inputs() only fills variables that are UNSET, so an explicit env
+# var still wins -- same precedence as the rest of the stack.
+.load_project_config <- function() {
+  apr <- Sys.getenv("APR30_DIR", unset = "")
+  if (!nzchar(apr)) {
+    here <- tryCatch(dirname(normalizePath(sys.frame(1)$ofile)), error = function(e) NULL)
+    roots <- c(if (!is.null(here)) dirname(dirname(here)), dirname(getwd()), getwd())
+    hit <- Filter(function(d) file.exists(file.path(d, "apr_30_2026", "R", "load_inputs.R")),
+                  roots)
+    if (length(hit)) apr <- file.path(hit[1], "apr_30_2026")
+  }
+  f <- file.path(apr, "R", "load_inputs.R")
+  if (!nzchar(apr) || !file.exists(f)) {
+    warning("could not locate apr_30_2026/R/load_inputs.R (set APR30_DIR). ",
+            "pipeline_inputs.csv was NOT loaded, so this run uses env vars and ",
+            "defaults only -- it may not be the configured cohort.",
+            call. = FALSE, immediate. = TRUE)
+    return(invisible(FALSE))
+  }
+  source(f, local = TRUE)
+  load_pipeline_inputs(c(apr, dirname(apr)))
+}
+
+# Env-var driven on top of that, matching config_prompts.R's own names and
+# defaults exactly -- including OUTPATIENT_WINDOW = 90, which is the pipeline's
+# default (config_prompts.R:99), not 60.
+load_cfg <- function(load_project = TRUE) {
+  if (isTRUE(load_project)) .load_project_config()
   env <- function(k, d) { v <- Sys.getenv(k, unset = ""); if (nzchar(v)) v else d }
+  # as.logical("TRUE"/"FALSE") -> TRUE/FALSE; anything else -> NA, which
+  # isTRUE() then treats as OFF. Same as config_prompts.R.
+  flag <- function(k) as.logical(env(k, "TRUE"))
   work <- env("PROJECT_WORK_SCHEMA", env("WORK_SCHEMA", ""))
   qual <- function(t) if (nzchar(work)) paste0(work, ".", t) else t
   cfg <- list(
@@ -65,8 +100,19 @@ load_cfg <- function() {
     pld_table      = env("PLD_TABLE", "COHORT_PLD"),
     # Gate parameters (registry defaults apply when unset)
     min_age            = as.integer(env("MIN_AGE", "18")),
-    outpatient_window  = as.integer(env("OUTPATIENT_WINDOW", "60")),
-    lot1_from          = env("NDMM_LOT1_FROM", "2017-01-01")
+    outpatient_window  = as.integer(env("OUTPATIENT_WINDOW", "90")),
+    lot1_from          = env("NDMM_LOT1_FROM", "2017-01-01"),
+    # The IE toggles. Names match criteria_attrition.R's cfg_key values, so a
+    # gate's cfg_key indexes straight into this list.
+    apply_age_incl          = flag("APPLY_AGE_INCL"),
+    apply_ce_b_incl         = flag("APPLY_CE_B_INCL"),
+    apply_ce_f_incl         = flag("APPLY_CE_F_INCL"),
+    apply_no_bl_agents_incl = flag("APPLY_NO_BL_AGENTS_INCL"),
+    apply_fu_agents_incl    = flag("APPLY_FU_AGENTS_INCL"),
+    apply_baseline_mm_excl  = flag("APPLY_BASELINE_MM_EXCL"),
+    apply_other_malig_excl  = flag("APPLY_OTHER_MALIG_EXCL"),
+    apply_pregnancy_excl    = flag("APPLY_PREGNANCY_EXCL"),
+    apply_clintrial_excl    = flag("APPLY_CLINTRIAL_EXCL")
   )
   if (!cfg$outpatient_window %in% c(30L, 60L, 90L))
     stop("OUTPATIENT_WINDOW must be 30, 60 or 90 (only those columns are ",
@@ -147,12 +193,22 @@ run_build <- function(cohort = NULL, argv = commandArgs(trailingOnly = TRUE)) {
 
   cat(strrep("=", 72), "\n", sep = "")
   cat("COHORT BUILD -- ", paste(names(specs), collapse = ", "), "\n", sep = "")
+  cat("  outpatient window ", cfg$outpatient_window, "d   min age ", cfg$min_age,
+      "   1L cutoff ", cfg$lot1_from, "\n", sep = "")
   for (s in plan$specs) {
     cat("\n", s$label, " (", s$id, ")  ->  ", s$flag_col,
         "   [", s$source_file %||% "?", "]\n", sep = "")
     for (g in s$resolved_gates)
-      cat(sprintf("  %-2d %-5s %-9s %s\n", g$step_no, g$polarity, g$anchor,
-                  g$label_resolved))
+      if (isTRUE(g$active))
+        cat(sprintf("  %-2d %-5s %-9s %s\n", g$step_no, g$polarity, g$anchor,
+                    g$label_resolved))
+      else
+        cat(sprintf("  -- %-5s %-9s %s   [OFF: %s=FALSE]\n", g$polarity, g$anchor,
+                    g$label_resolved, toupper(g$cfg_key)))
+    n_off <- length(s$resolved_gates) - length(active_gates(s))
+    if (n_off > 0L)
+      cat("  (", n_off, " criteria declared but NOT applied -- they remain 0/1 ",
+          "columns on the PLD)\n", sep = "")
   }
   cat("\n", strrep("-", 72), "\n", sep = "")
   report_index_gate_drift(plan$specs)

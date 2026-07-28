@@ -1,11 +1,11 @@
 # Cohort build codes: Overall + NDMM, one flag-driven PLD
 
 **Date:** 2026-07-28
-**Status:** ⚠️ **NOT VALIDATED — NOT PRODUCTION-READY.** An independent review
-found the generated cohort does not reproduce the repository's *configured*
-legacy cohort, and the documented NDMM run order cannot execute. All findings
-reproduce. See **[REVIEW_FINDINGS.md](REVIEW_FINDINGS.md)** — read it before
-this document, which overstates what was established.
+**Status:** ⚠️ **NOT VALIDATED — NOT PRODUCTION-READY.** Review finding 1 (the
+generated cohort did not reproduce the repository's *configured* legacy cohort)
+is **fixed**; findings 2–6 are open, including that the documented NDMM run
+order cannot execute. See **[REVIEW_FINDINGS.md](REVIEW_FINDINGS.md)** — read it
+before this document, which still overstates what has been established.
 
 ---
 
@@ -159,6 +159,13 @@ in the flag table**:
 | `outpatient_window` | yes | all of `outpt2_30/60/90` are materialized |
 | `lot1_from` | yes | filters `LOT1_START_DT` |
 | CE window months | **no** | `CE_b` is a pre-baked fixed-6-month flag |
+
+Separately from parameters, **whether a criterion is applied at all** is the
+project's configuration, not the spec's: each gate carries the `cfg_key` that
+`criteria_attrition.R` gates it on, and `pipeline_inputs.csv` ships four of them
+`FALSE`. A disabled criterion stays declared and stays a PLD column — it is just
+not AND-ed into membership. `load_cfg()` reads that CSV, so the default run is
+the configured cohort: **Overall is 6 gates at a 90-day window**, not 10 at 60.
 
 A spec that tries to "override" a non-tunable window is **rejected at
 validation**, not silently ignored. A config knob that quietly lies is worse
