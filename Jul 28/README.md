@@ -24,12 +24,13 @@ overall/                      ndmm/
 
 engine/          the shared SQL generator (see the note below)
 build_both.R     both cohorts + one shared PLD
+tools/           load slim CDM copies into your own schema (tools/README.md)
 tests/           engine invariants + old-vs-new equivalence (PLAN.md §5)
 run_all_tests.R  every suite
 ```
 
 ```sh
-Rscript "Jul 28/run_all_tests.R"                    # 149 assertions, 4 suites
+Rscript "Jul 28/run_all_tests.R"                    # 189 assertions, 5 suites
 
 Rscript "Jul 28/overall/build.R" --dry-run
 Rscript "Jul 28/ndmm/build.R" --dry-run

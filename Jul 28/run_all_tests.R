@@ -9,6 +9,7 @@
 #                                for what this can and cannot prove)
 #   overall/tests/test_overall.R the Overall cohort's own contract
 #   ndmm/tests/test_ndmm.R       the NDMM cohort's own contract
+#   tools/tests/test_load_tables.R  the CDM loader's generated SQL
 #
 # Each suite is also runnable on its own -- a cohort folder's tests never need
 # the other cohort's.
@@ -23,7 +24,8 @@
 # Root-level suites (engine, equivalence) plus each cohort folder's own.
 # Globbed, not listed: adding a suite must not require editing this file.
 suites <- unique(c(sort(Sys.glob(file.path(.here, "tests", "test_*.R"))),
-                   sort(Sys.glob(file.path(.here, "*", "tests", "test_*.R")))))
+                   sort(Sys.glob(file.path(.here, "*", "tests", "test_*.R"))),
+                   sort(Sys.glob(file.path(.here, "*", "*", "tests", "test_*.R")))))
 
 fails <- 0L
 for (s in suites) {
