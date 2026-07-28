@@ -196,6 +196,13 @@ main <- function() {
                     other_cancer = othercancer_ok, pregnancy = preg_ok)
   n_skipped <- write_lot1_run_metadata(con, evaluated, patient_input)
 
+  # Republish the pre-rename name as a view over the current table, so the
+  # consumers that read NDMM_FLAGS_ALL by name keep working AND stay current.
+  # Refuses to drop a physical legacy table unless explicitly told to.
+  write_lot1_compat_view(
+    con, replace_table = identical(toupper(Sys.getenv("LOT1_REPLACE_LEGACY_TABLE",
+                                                      unset = "FALSE")), "TRUE"))
+
   if (n_skipped > 0L && !ALLOW_SKIPPED) {
     skipped <- names(evaluated)[!vapply(names(evaluated),
                                         function(k) isTRUE(evaluated[[k]]), logical(1))]

@@ -398,6 +398,61 @@ ok(setequal(unname(crit[!is.na(crit)]),
 ok(all(vapply(REG[!is.na(crit)], function(g) identical(g$anchor, "lot1"), logical(1))),
    "all of them are LOT1-anchored (the index flags are built with the cohort)")
 
+# ---- legacy-name compatibility (Phase 5) ------------------------------------
+# Renaming the PERSISTED table broke consumers that read it by name in the
+# warehouse; the NDMM_* aliases in the dashboard are R variables and do nothing
+# for them. Asserted against the real consumer files, so this fails if either
+# starts reading a column the view does not carry.
+APR <- file.path(dirname(ROOT), "apr_30_2026")
+lf  <- paste(readLines(file.path(APR, "R", "lot1_flags.R")), collapse = "\n")
+
+ok(grepl('LOT1_COMPAT_TBL <- Sys.getenv("LOT1_COMPAT_TABLE", unset = "NDMM_FLAGS_ALL")',
+         lf, fixed = TRUE),
+   "the pre-rename name is republished as NDMM_FLAGS_ALL")
+ok(grepl("CREATE OR REPLACE VIEW {target} AS SELECT * FROM {src}", lf, fixed = TRUE),
+   "it is a VIEW over the current flag table, so consumers stay current")
+
+# Every column the known consumers select must be declared required.
+consumers <- c(file.path(APR, "poma_studyteam_qs.R"),
+               file.path(dirname(ROOT), "cohort_explorer", "warehouse",
+                         "08_analytic_cohort.R"))
+used <- unique(unlist(lapply(consumers, function(f) {
+  if (!file.exists(f)) return(character(0))
+  txt <- paste(readLines(f, warn = FALSE), collapse = "\n")
+  unlist(regmatches(txt, gregexpr(
+    "\\b(NO_[A-Z_]+|CE_pre_lot1_12mo|CE_lot1_3mo_fu)\\b", txt)))
+})))
+# NB: run gregexpr on the EXTRACTED block, not on lf -- regmatches must be
+# given the same string the match positions came from.
+blk <- regmatches(lf, regexpr("LOT1_COMPAT_REQUIRED <- c\\([^)]*\\)", lf))
+req <- gsub('"', "", regmatches(blk, gregexpr('"[A-Za-z0-9_]+"', blk))[[1]])
+ok(length(used) > 0L && all(used %in% req),
+   paste0("every column the legacy consumers read is required by the view (",
+          paste(setdiff(used, req), collapse = ", "), ")"))
+ok("PATID" %in% req, "PATID is required (both consumers join on it)")
+
+# Dropping someone else's table is not a default.
+ok(grepl("replace_table = FALSE", lf, fixed = TRUE),
+   "replacing a physical legacy table is opt-in, not the default")
+ok(grepl("already exists as a physical TABLE", lf, fixed = TRUE) &&
+   grepl("format(nrows, big.mark", lf, fixed = TRUE) &&
+   grepl("LOT1_REPLACE_LEGACY_TABLE=TRUE", lf, fixed = TRUE),
+   "it reports what is there (row count) and how to proceed, rather than dropping silently")
+ok(grepl("DROP TABLE IF EXISTS", lf, fixed = TRUE) &&
+   grepl('if (identical(kind, "TABLE")) {', lf, fixed = TRUE),
+   "a drop only happens on the explicitly-allowed path")
+
+# Both producers must publish it, or a dashboard run leaves the old name stale.
+dash <- paste(readLines(file.path(APR, "06_ndmm_dashboard.R")), collapse = "\n")
+stg  <- paste(readLines(file.path(ROOT, "ndmm", "build_lot1_flags.R")), collapse = "\n")
+ok(grepl("write_lot1_compat_view", dash, fixed = TRUE),
+   "the dashboard publishes the compatibility view too")
+ok(grepl("write_lot1_compat_view", stg, fixed = TRUE),
+   "the standalone flag stage publishes it")
+# Different failure policies, deliberately: a dashboard must still render.
+ok(grepl("tryCatch(\n    write_lot1_compat_view", dash, fixed = TRUE),
+   "the dashboard treats a compat-view failure as best-effort")
+
 # =============================================================================
 section("attrition funnel")
 

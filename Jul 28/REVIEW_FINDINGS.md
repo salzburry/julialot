@@ -2,8 +2,8 @@
 
 **Verdict accepted in full. All six findings reproduced.**
 
-**Status: findings 1–4 are FIXED (steps 1–4 of the corrected sequence).
-Findings 5 and 6 remain open, so this folder is still NOT validated and NOT
+**Status: findings 1–5 are FIXED (steps 1–5 of the corrected sequence).
+Finding 6 remains open, so this folder is still NOT validated and NOT
 production-ready. Nothing has run against the warehouse.**
 
 The single most useful sentence in the review: *the LOT source files being
@@ -217,13 +217,37 @@ note — and dropped where it is not.
   is a **warning**, not an error: dashboard-built flags predate the record, and
   unknown provenance is not the same as known-bad.
 
-### 5. [P1] The persisted rename breaks consumers — confirmed
+### 5. [P1] The persisted rename breaks consumers — ~~confirmed~~ **FIXED**
 
 The `NDMM_* -> LOT1_*` aliases in the dashboard are R variables only. Real
 warehouse readers of the old table name exist:
 `poma_studyteam_qs.R:535` (`wrk("NDMM_FLAGS_ALL")`) and
 `cohort_explorer/warehouse/08_analytic_cohort.R:86`. Old table present → they
 read stale data; absent → they fail. A compatibility view is required.
+
+#### Fix (step 5)
+
+`write_lot1_compat_view()` republishes `NDMM_FLAGS_ALL` as a **view** over the
+current `LOT1_FLAGS_ALL`, so the existing readers keep working *and* stay
+current.
+
+- **Both producers publish it.** The dashboard writes `LOT1_FLAGS_ALL` too since
+  the rename, so a dashboard run would otherwise leave the old name stale. It
+  does so best-effort (a dashboard must still render); the standalone stage
+  treats the same failure as fatal.
+- **The column contract is checked before publishing.** Both consumers select
+  named columns — `PATID`, `CE_pre_lot1_12mo`, `CE_lot1_3mo_fu`, `NO_BELANTAMAB`,
+  `NO_PRIOR_MM_TX`, `NO_OTHER_CANCER_PRE_LOT1`, `NO_PREGNANCY` — so the extra
+  `INDEX_DATE` / `LOT1_START_DT` are harmless, and a missing one fails here
+  rather than in their queries. A test reads the consumer files and asserts
+  every column they select is in the required list, so it stays true if they
+  change.
+- **It never drops a physical table by default.** If the legacy name still
+  exists as a real table from a pre-rename run, that is somebody's data. The
+  function reports what is there — including the row count — and stops, because
+  leaving it silently means consumers read pre-rename numbers.
+  `LOT1_REPLACE_LEGACY_TABLE=TRUE` is the explicit opt-in after you have
+  looked.
 
 ### 6. [P2] Attrition claims are inaccurate — confirmed
 
@@ -251,7 +275,8 @@ Ordered so nothing is built on an unvalidated base:
 3. ~~**Enforce one index per PATID.**~~ **DONE** — see the fix under finding 3.
 4. ~~**Fail closed** on failed persistence and on missing criterion inputs.~~
    **DONE** — see the fix under finding 4.
-5. **Compatibility view** for `NDMM_FLAGS_ALL`.
+5. ~~**Compatibility view** for `NDMM_FLAGS_ALL`.~~ **DONE** — see the fix
+   under finding 5.
 6. **Replace the static comparator** with configured SQL snapshots plus
    warehouse `EXCEPT` checks in both directions — the only thing that will
    actually establish equivalence.
