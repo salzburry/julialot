@@ -53,6 +53,19 @@ LOT1_PREGNANCY_PATIDS    <- "_lot1_pregnancy_patids"
 LOT1_FLAGS_ALL           <- "_lot1_flags_all"
 LOT1_STARTS_TBL          <- Sys.getenv("LOT1_STARTS_TABLE", unset = "LOT1_STARTS")
 LOT1_FLAGS_ALL_TBL       <- Sys.getenv("LOT1_FLAGS_TABLE",  unset = "LOT1_FLAGS_ALL")
+# Durable record of HOW a flag table was built -- see write_lot1_run_metadata().
+LOT1_RUN_TBL             <- Sys.getenv("LOT1_RUN_TABLE",    unset = "LOT1_FLAGS_RUN")
+
+# The criteria whose sources can be unavailable, and the flag each one sets.
+# When a source is unreadable the criterion is SKIPPED and its flag passes every
+# patient -- which is indistinguishable, in the data, from a criterion that
+# excluded nobody. That is why it has to be recorded (write_lot1_run_metadata).
+LOT1_SKIPPABLE <- list(
+  belantamab   = "NO_BELANTAMAB",
+  prior_mm_tx  = "NO_PRIOR_MM_TX",
+  other_cancer = "NO_OTHER_CANCER_PRE_LOT1",
+  pregnancy    = "NO_PREGNANCY"
+)
 
 # ---- parameters -------------------------------------------------------------
 LOT1_STUDY_START   <- Sys.getenv("STUDY_START", unset = "2015-07-01")
@@ -667,3 +680,39 @@ materialize_lot1_starts <- function(con, run_step_fn = NULL)
 
 materialize_lot1_flags <- function(con, run_step_fn = NULL)
   .materialize_and_repoint(con, LOT1_FLAGS_ALL, LOT1_FLAGS_ALL_TBL, run_step_fn)
+
+# =============================================================================
+# Run metadata
+# =============================================================================
+# Which criteria were actually EVALUATED, and with what parameters. Without
+# this, a skipped criterion is invisible downstream: NO_PREGNANCY = 1 for every
+# patient reads as "excluded nobody" when it may mean "never ran".
+#
+# Consumers should check this before trusting a flag. "Jul 28"'s cohort engine
+# does: it refuses to apply a gate whose criterion was skipped.
+#
+# `evaluated` is a named logical over LOT1_SKIPPABLE.
+write_lot1_run_metadata <- function(con, evaluated, patient_input,
+                                    n_rows = NA_integer_) {
+  q <- function(x) paste0("'", gsub("'", "''", as.character(x)), "'")
+  rows <- vapply(names(LOT1_SKIPPABLE), function(k) paste0(
+    "(", paste(q(k), q(LOT1_SKIPPABLE[[k]]),
+               if (isTRUE(evaluated[[k]])) "true" else "false",
+               sep = ", "), ")"), character(1))
+  db_exec(con, glue("
+    CREATE OR REPLACE TABLE {wrk(LOT1_RUN_TBL)} AS
+    WITH c(criterion, flag_column, evaluated) AS (VALUES {paste(rows, collapse = ', ')})
+    SELECT c.criterion, c.flag_column, c.evaluated,
+           {q(patient_input)}            AS patient_input,
+           {q(LOT1_FROM)}                AS lot1_from,
+           cast({LOT1_PRE_DAYS} as int)  AS pre_lot1_days,
+           {q(cfg$study_end)}            AS study_end,
+           cast({if (is.na(n_rows)) 'NULL' else n_rows} as bigint) AS n_flag_rows,
+           current_timestamp()           AS built_at
+    FROM c"))
+  n_skipped <- sum(!vapply(names(LOT1_SKIPPABLE),
+                           function(k) isTRUE(evaluated[[k]]), logical(1)))
+  log_msg("Run metadata -> ", wrk(LOT1_RUN_TBL), " (", n_skipped,
+          " criterion/criteria SKIPPED)")
+  invisible(n_skipped)
+}

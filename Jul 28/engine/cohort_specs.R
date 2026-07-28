@@ -57,6 +57,11 @@ ANCHOR_SOURCE <- list(
 # -----------------------------------------------------------------------------
 # Each gate is one criterion. Fields:
 #   id         stable key referenced by cohort specs
+#   criterion  (LOT1-anchored only) the key this criterion is recorded under in
+#              LOT1_FLAGS_RUN. Its source can be unavailable, in which case the
+#              flag passes EVERY patient -- indistinguishable in the data from a
+#              criterion that excluded nobody. The engine refuses to apply a
+#              gate whose criterion was not evaluated.
 #   cfg_key    the production toggle that decides whether this criterion is
 #              APPLIED (criteria_attrition.R's cfg_key; pipeline_inputs.csv sets
 #              it). NA_character_ = always applied, either because the pipeline
@@ -232,7 +237,7 @@ gate_registry <- function() list(
   ),
 
   no_belantamab = list(
-    id = "no_belantamab", cfg_key = NA_character_, polarity = "excl", anchor = "lot1",
+    id = "no_belantamab", cfg_key = NA_character_, criterion = "belantamab", polarity = "excl", anchor = "lot1",
     label = "No belantamab in any line",
     params = list(), tunable = FALSE,
     sql = "{a}.NO_BELANTAMAB = 1",
@@ -240,7 +245,7 @@ gate_registry <- function() list(
   ),
 
   no_prior_mm_tx = list(
-    id = "no_prior_mm_tx", cfg_key = NA_character_, polarity = "excl", anchor = "lot1",
+    id = "no_prior_mm_tx", cfg_key = NA_character_, criterion = "prior_mm_tx", polarity = "excl", anchor = "lot1",
     label = "No MM oncology therapy in the 12 months before 1L start",
     params = list(), tunable = FALSE,
     sql = "{a}.NO_PRIOR_MM_TX = 1",
@@ -249,7 +254,7 @@ gate_registry <- function() list(
   ),
 
   no_other_cancer_pre_lot1 = list(
-    id = "no_other_cancer_pre_lot1", cfg_key = NA_character_, polarity = "excl", anchor = "lot1",
+    id = "no_other_cancer_pre_lot1", cfg_key = NA_character_, criterion = "other_cancer", polarity = "excl", anchor = "lot1",
     label = "No other active cancer in the 12 months before 1L start",
     params = list(), tunable = FALSE,
     sql = "{a}.NO_OTHER_CANCER_PRE_LOT1 = 1",
@@ -258,7 +263,7 @@ gate_registry <- function() list(
   ),
 
   no_pregnancy_study = list(
-    id = "no_pregnancy_study", cfg_key = NA_character_, polarity = "excl", anchor = "lot1",
+    id = "no_pregnancy_study", cfg_key = NA_character_, criterion = "pregnancy", polarity = "excl", anchor = "lot1",
     label = "No pregnancy code over the study period",
     params = list(), tunable = FALSE,
     sql = "{a}.NO_PREGNANCY = 1",
@@ -491,6 +496,20 @@ required_source_cols <- function(specs, reg = gate_registry()) {
 # directly -- a gate the configuration disables must not reach a predicate.
 active_gates <- function(spec)
   Filter(function(g) isTRUE(g$active), spec$resolved_gates %||% list())
+
+# Applied gates whose criterion was NOT evaluated when the flag table was built.
+# `meta` is LOT1_FLAGS_RUN as a data frame (criterion, evaluated). Pure, so the
+# decision is testable without a warehouse.
+unevaluated_gates <- function(specs, meta, reg = gate_registry()) {
+  if (is.null(meta) || !nrow(meta)) return(character(0))
+  skipped <- as.character(meta$criterion[!as.logical(meta$evaluated)])
+  ids <- unique(unlist(lapply(specs, function(s)
+    vapply(active_gates(s), `[[`, character(1), "id"))))
+  ids[vapply(ids, function(i) {
+    cr <- reg[[i]]$criterion
+    !is.null(cr) && !is.na(cr) && cr %in% skipped
+  }, logical(1))]
+}
 
 # Does this spec need the LOT build (and therefore the LOT1-anchored flags)?
 # Overall does not; NDMM does. Used to skip the LOT1 joins entirely for

@@ -7,6 +7,13 @@ Everything for the NDMM cohort lives here.
 | `cohort.R` | **The definition.** Gate list in funnel order. No SQL. |
 | `build.R` | Entry point |
 | `build_lot1_flags.R` | The LOT1-anchored flag stage (only NDMM needs it) |
+
+`build_lot1_flags.R` **fails closed**: it stops if a table cannot be persisted,
+and stops if any criterion could not be evaluated (an unreadable source makes
+its flag pass every patient — indistinguishable, in the data, from a criterion
+that excluded nobody). `--allow-skipped` builds anyway. Either way it writes
+`LOT1_FLAGS_RUN` recording which criteria ran, and `ndmm/build.R` refuses to
+apply a gate the record says was skipped.
 | `tests/test_ndmm.R` | This cohort's contract |
 
 ```sh
