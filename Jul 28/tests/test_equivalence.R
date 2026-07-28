@@ -1,6 +1,18 @@
 #!/usr/bin/env Rscript
 # =============================================================================
 # test_equivalence.R -- do the new cohorts do the same thing as the old?
+#
+#   !!  KNOWN UNSOUND -- DO NOT CITE THIS SUITE'S GREEN RESULT.  !!
+#
+#   Section 2 extracts filter_sql from build_criteria_catalog() but IGNORES each
+#   entry's cfg_key. build_criteria_sql() (criteria_attrition.R:94) only applies
+#   a criterion when its toggle is TRUE, and pipeline_inputs.csv ships four of
+#   them FALSE. So this compares the new spec against a configuration nothing
+#   uses, and passes. It must be re-derived from build_criteria_sql() with the
+#   project config loaded. See REVIEW_FINDINGS.md finding 1.
+#
+#   Section 3's setequal() also cannot see funnel-order changes, and section 4's
+#   token-SET comparison discards order and multiplicity. Findings 6.
 # -----------------------------------------------------------------------------
 #   Rscript "Jul 28/tests/test_equivalence.R"
 #
