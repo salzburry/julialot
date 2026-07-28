@@ -95,15 +95,36 @@ ok(identical(unname(vapply(ov$resolved_gates, `[[`, character(1), "predicate")),
 nd <- bind_lot1_aliases(R$ndmm)
 nd_lot1 <- Filter(function(g) identical(g$anchor, "lot1"), nd$resolved_gates)
 ok(identical(unname(vapply(nd_lot1, `[[`, character(1), "predicate")), c(
+     "l1.LOT1_START_DT IS NOT NULL",
      "l1.LOT1_START_DT >= date('2017-01-01')",
      "n.CE_pre_lot1_12mo = 1", "n.CE_lot1_3mo_fu = 1", "n.NO_BELANTAMAB = 1",
      "n.NO_PRIOR_MM_TX = 1", "n.NO_OTHER_CANCER_PRE_LOT1 = 1",
      "n.NO_PREGNANCY = 1")),
    "NDMM's LOT1 predicates match 06_ndmm_dashboard.R's NDMM_PATIDS filter")
 ok(setequal(setdiff(nd$gates, ov$gates),
-            c("lot1_from", "ce_pre_lot1_12mo", "ce_fu_lot1_3mo", "no_belantamab",
-              "no_prior_mm_tx", "no_other_cancer_pre_lot1", "no_pregnancy_study")),
-   "NDMM = Overall's gate set plus exactly the seven documented additions")
+            c("has_lot1", "lot1_from", "ce_pre_lot1_12mo", "ce_fu_lot1_3mo",
+              "no_belantamab", "no_prior_mm_tx", "no_other_cancer_pre_lot1",
+              "no_pregnancy_study")),
+   "NDMM = Overall's gate set plus the seven documented additions and has_lot1")
+
+# ---------------------------------------------------------------------------
+# fu_mm_agents vs has_lot1 -- these are NOT the same criterion.
+#   fu_mm_agents : any cl_mma_codelist claim in follow-up, NO class filter
+#                  (pipeline_steps.R:723) -- steroids count.
+#   has_lot1     : a LOT1 regimen start, which 02_lot1.R:678 derives as
+#                  min(MAP_START_DT) WHERE MAP_MED_CLASS <> 'STEROID'.
+# A steroid-only follow-up satisfies the first and not the second. Overall
+# keeps that patient; NDMM cannot (no LOT1 anchor to hang its gates on).
+ok(identical(REG$fu_mm_agents$anchor, "index") &&
+   identical(REG$has_lot1$anchor, "lot1"),
+   "fu_mm_agents and has_lot1 are distinct gates at distinct anchors")
+ok("fu_mm_agents" %in% SPECS$overall$gates && !("has_lot1" %in% SPECS$overall$gates),
+   "Overall requires a treatment start but NOT a LOT1 regimen start")
+ok(all(c("fu_mm_agents", "has_lot1") %in% SPECS$ndmm$gates),
+   "NDMM requires both: a treatment start AND a LOT1 anchor")
+nd_ids <- unname(vapply(nd$resolved_gates, `[[`, character(1), "id"))
+ok(which(nd_ids == "has_lot1") < which(nd_ids == "lot1_from"),
+   "has_lot1 is evaluated before any gate that reads LOT1_START_DT")
 
 # =============================================================================
 section("anchor discipline")
@@ -193,9 +214,14 @@ ok(!grepl("JOIN", ovc_code, fixed = TRUE) &&
    !grepl("LOT1", ovc_code, fixed = TRUE),
    "Overall's membership view never joins the LOT1 tables")
 ndc <- plan$steps[[which(step_names == "ndmm_cohort")]]$sql
-ok(grepl("INNER JOIN wk.LOT1_STARTS", ndc, fixed = TRUE) &&
-   grepl("INNER JOIN wk.LOT1_FLAGS_ALL", ndc, fixed = TRUE),
-   "NDMM's membership view inner-joins both LOT1 tables")
+ok(grepl("LEFT JOIN wk.LOT1_STARTS", ndc, fixed = TRUE) &&
+   grepl("LEFT JOIN wk.LOT1_FLAGS_ALL", ndc, fixed = TRUE),
+   "NDMM's membership view LEFT-joins the LOT1 tables")
+# The whole point: no-LOT1 patients must be dropped by a COUNTABLE predicate,
+# not silently by an inner join.
+ok(!grepl("INNER JOIN wk.LOT1", ndc, fixed = TRUE) &&
+   grepl("AND l1.LOT1_START_DT IS NOT NULL", ndc, fixed = TRUE),
+   "the no-LOT1 drop is an explicit predicate, not a join side-effect")
 
 pld <- plan$steps[[which(step_names == "pld")]]$sql
 ok(grepl("AS COHORT_OVERALL", pld, fixed = TRUE) &&
@@ -234,6 +260,10 @@ ok(length(gregexpr("AND ", first_arm, fixed = TRUE)[[1]]) <
    "funnel arms are cumulative (later arms carry more predicates)")
 ok(grepl("wk.coh_ndmm_index_sel", af, fixed = TRUE),
    "LOT1-anchored funnel arms count off the selected-index set, not raw candidates")
+ok(grepl("_has_lot1", af, fixed = TRUE),
+   "the funnel reports the no-LOT1 drop as its own step (invisible today)")
+ok(!grepl("INNER JOIN", af, fixed = TRUE),
+   "funnel arms LEFT-join, so the has_lot1 arm measures a real drop")
 
 # =============================================================================
 section("schema guard inputs")

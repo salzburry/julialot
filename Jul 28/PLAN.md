@@ -157,11 +157,41 @@ the other. The NDMM spec is:
 
 ```
   the ten index-anchored gates
+  + has_lot1                                          (see §4a)
   + lot1_from + ce_pre_lot1_12mo + ce_fu_lot1_3mo
   + no_belantamab + no_prior_mm_tx + no_other_cancer_pre_lot1 + no_pregnancy_study
 ```
 
-which is exactly what `06_ndmm_dashboard.R`'s own header documents.
+The seven after `has_lot1` are exactly what `06_ndmm_dashboard.R`'s own header
+documents.
+
+### 4a. "A treatment start" is not the same as "a LOT1"
+
+Worth stating explicitly, because the two are easy to conflate and the pipeline
+treats them differently:
+
+| | definition | steroids? |
+|---|---|---|
+| `fu_mm_agents` | any `cl_mma_codelist` claim between index and the death/study cap (`pipeline_steps.R:723`) — **no drug-class filter** | **counted** |
+| `has_lot1` | `min(MAP_START_DT) WHERE MAP_MED_CLASS <> 'STEROID'` (`02_lot1.R:678`) | **excluded** |
+
+So a patient whose only follow-up MM agents are steroids **satisfies
+`fu_mm_agents` but has no LOT1 row.**
+
+- **Overall** wants that patient. It is defined by "a treatment start exists"
+  and never anchors on LOT1, so it takes `fu_mm_agents` and not `has_lot1`.
+- **NDMM** cannot use them: every NDMM gate is anchored at `LOT1_START_DT`, so
+  with no LOT1 there is nothing to anchor to.
+
+Today NDMM enforces this with a **silent `INNER JOIN NDMM_LOT1_STARTS`**
+(`06_ndmm_dashboard.R:658`). It is not one of the six documented filters, so the
+patients it drops **never appear in the NDMM attrition**. Here it is a declared
+gate and the joins are `LEFT`, so the funnel reports the drop. Identical row set
+— `LEFT JOIN` + `IS NOT NULL` is the same as `INNER JOIN` — just visible.
+
+That also makes it a real question for the study team rather than an accident of
+join type: *is steroid-only follow-up meant to count as first-line treatment?*
+Overall says yes today, NDMM says no, and neither says so out loud.
 
 **Decoupling is not redefining.** The two index-gate lists are *currently
 identical* — that is a fact about the study definition, not a code dependency.
@@ -180,7 +210,9 @@ This is the property that makes the change safe to ship, and it's tested:
 - Overall's index selection uses the same
   `row_number() OVER (PARTITION BY PATID ORDER BY INDEX_DATE)` and `rn = 1`.
 - NDMM's LOT1 predicates are identical to the `_ndmm_patids` filter
-  (`06_ndmm_dashboard.R:745`).
+  (`06_ndmm_dashboard.R:745`), plus `has_lot1`, which restates that script's
+  existing `INNER JOIN NDMM_LOT1_STARTS` as a countable predicate — same row
+  set (§4a).
 - Because both specs' index gates are currently identical, `coh_index_union` is
   **the same row set as today's `ELIG_COH_FINAL`** — so the LOT build's input is
   unchanged and there is **no cost increase**. (Cost grows only in proportion to
@@ -231,7 +263,9 @@ own:
 | Prior MM therapy | `MM_bl_agents` | `NO_PRIOR_MM_TX` | ? |
 
 Also: **should NDMM exclude clinical-trial patients?** It does today, purely by
-inheritance — that was never an NDMM decision.
+inheritance — that was never an NDMM decision. And per §4a: **does steroid-only
+follow-up count as a first-line treatment start?** Overall says yes, NDMM says
+no, and the disagreement is currently expressed as a join type.
 
 I've kept all of them ON, so Phase 1 reproduces current numbers. But these are
 now one-line spec edits instead of archaeology, and they're worth putting in
@@ -281,13 +315,13 @@ report. 4–6 are cleanup and can wait.
 
 | File | |
 |---|---|
-| `R/cohort_specs.R` | Gate registry (17 gates, anchor + tunability) and the two cohort specs |
+| `R/cohort_specs.R` | Gate registry (18 gates, anchor + tunability) and the two cohort specs |
 | `R/cohort_sql.R` | Spec → Spark SQL: index selection, union, membership, PLD, attrition |
 | `build_cohort.R` | Entry point: `--cohort=overall\|ndmm\|both`, `--dry-run` |
-| `tests/test_cohort_specs.R` | 49 offline assertions — no warehouse needed |
+| `tests/test_cohort_specs.R` | 56 offline assertions — no warehouse needed |
 
 ```
-Rscript "Jul 28/tests/test_cohort_specs.R"                    # 49 passed, 0 failed
+Rscript "Jul 28/tests/test_cohort_specs.R"                    # 56 passed, 0 failed
 Rscript "Jul 28/build_cohort.R" --cohort=ndmm --dry-run       # print the SQL
 ```
 

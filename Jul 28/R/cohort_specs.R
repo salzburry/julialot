@@ -130,11 +130,17 @@ gate_registry <- function() list(
 
   fu_mm_agents = list(
     id = "fu_mm_agents", polarity = "incl", anchor = "index",
-    label = "At least one MM agent in follow-up (a treatment start exists)",
+    label = "At least one MM agent claim in follow-up (any drug class)",
     params = list(), tunable = FALSE,
     sql = "{a}.MM_FU_agents = 1",
     source_col = "MM_FU_agents",
-    note = "Required by BOTH cohorts: without a 1L start there is no LOT to anchor on."
+    note = paste(
+      "ANY code in cl_mma_codelist, with NO drug-class filter (pipeline_steps.R:723)",
+      "-- steroids included. This is NOT the same as having a LOT1: 02_lot1.R:678",
+      "derives LOT1_START_DT as min(MAP_START_DT) WHERE MAP_MED_CLASS <> 'STEROID'.",
+      "A patient whose only follow-up MM agents are steroids satisfies THIS gate but",
+      "has no LOT1 row. Overall wants that patient; NDMM cannot use them (no anchor).",
+      "See has_lot1.")
   ),
 
   no_baseline_mm_evidence = list(
@@ -170,6 +176,20 @@ gate_registry <- function() list(
   ),
 
   # ---- LOT1-anchored (NDMM_FLAGS_ALL; 06_ndmm_dashboard.R) ------------------
+
+  has_lot1 = list(
+    id = "has_lot1", polarity = "incl", anchor = "lot1",
+    label = "A LOT1 regimen start exists (non-steroid MM agent)",
+    params = list(), tunable = FALSE,
+    sql = "{a}.LOT1_START_DT IS NOT NULL",
+    source_col = "LOT1_START_DT",
+    note = paste(
+      "STRICTLY STRONGER than fu_mm_agents, which counts any MM agent including",
+      "steroids. Today this is enforced as a silent INNER JOIN in",
+      "06_ndmm_dashboard.R:658 and is absent from the documented six-filter list,",
+      "so the patients it drops never appear in the NDMM attrition. Declared as a",
+      "gate here so the funnel reports it. Same row set, visible instead of silent.")
+  ),
 
   lot1_from = list(
     id = "lot1_from", polarity = "incl", anchor = "lot1",
@@ -283,6 +303,7 @@ cohort_specs <- function() list(
                      "plus six LOT1-anchored criteria and a 1L start cutoff.",
                      "Runs standalone -- no Overall run required."),
     gates    = c(INDEX_GATES_1L_TREATED_MM,
+                 "has_lot1",
                  "lot1_from",
                  "ce_pre_lot1_12mo",
                  "ce_fu_lot1_3mo",
