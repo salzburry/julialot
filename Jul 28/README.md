@@ -1,24 +1,32 @@
 # Jul 28 — cohort build codes (Overall + NDMM) on a shared flagged PLD
 
-Standalone cohort builders. `--cohort=ndmm` is a complete run: it does not build
-the Overall cohort and does not read `ELIG_COH_FINAL`.
+Standalone cohort builders, one file per cohort. `build_ndmm.R` is a complete
+run: it does not build the Overall cohort and does not read `ELIG_COH_FINAL`.
 
 Read **[PLAN.md](PLAN.md)** for the design, the equivalence argument, and the two
 upstream changes this assumes.
 
 ## Run
 
+One file per cohort, one build script per cohort:
+
+```
+cohorts/overall.R  ->  build_overall.R
+cohorts/ndmm.R     ->  build_ndmm.R
+                       build_cohort.R   (either, or both + the shared PLD)
+```
+
 ```sh
 # offline tests (no warehouse, base R only)
 Rscript "Jul 28/tests/test_cohort_specs.R"
 
 # print the SQL a run would execute
-Rscript "Jul 28/build_cohort.R" --cohort=ndmm --dry-run
-Rscript "Jul 28/build_cohort.R" --cohort=overall --dry-run
+Rscript "Jul 28/build_ndmm.R" --dry-run
+Rscript "Jul 28/build_overall.R" --dry-run
 Rscript "Jul 28/build_cohort.R" --cohort=both --dry-run
 
 # execute (requires DBI + a connection function; see below)
-COHORT_CONNECT_FN=my_connect Rscript "Jul 28/build_cohort.R" --cohort=both
+COHORT_CONNECT_FN=my_connect Rscript "Jul 28/build_ndmm.R"
 ```
 
 Without `COHORT_CONNECT_FN` the script refuses to run outside `--dry-run` — it
@@ -60,9 +68,20 @@ applies upstream).
 
 ## Adding or changing a cohort
 
-Edit `R/cohort_specs.R` only. A cohort is a `gates` list; a new cohort is a new
-entry in `cohort_specs()`. Everything else — SQL, attrition funnel, PLD column,
-schema guard — follows automatically.
+**Changing one:** edit its file in `cohorts/`. Nothing else moves, and the other
+cohort is untouched — the two files share no constant.
+
+**Adding one:** drop a new file in `cohorts/`. Its last expression must be a spec
+list (`id`, `label`, `flag_col`, `gates`, optional `order`/`params`). SQL,
+attrition funnel, PLD column and schema guard all follow automatically; no
+engine file needs an edit. `build_cohort.R --cohort=<id>` picks it up.
+
+A cohort file contains **no SQL** — only a gate list in funnel order. The gate
+ids resolve against the registry in `R/cohort_specs.R`, which holds the SQL.
+
+Because the files are independent, two gate lists that are *meant* to agree can
+drift. Every multi-cohort run prints an index-gate diff, and the tests assert
+the current agreement, so drift shows up at review rather than in the numbers.
 
 Validation fails closed on unknown gates, duplicates, unknown parameters, and on
 attempts to override a window that is baked into an upstream flag (see PLAN §3).

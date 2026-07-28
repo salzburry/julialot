@@ -257,66 +257,94 @@ gate_registry <- function() list(
 )
 
 # =============================================================================
-# Cohort specifications
+# Cohort specifications -- ONE FILE PER COHORT, loaded from cohorts/
 # -----------------------------------------------------------------------------
-# SIBLINGS, not a chain. `ndmm` does not reference `overall` anywhere -- the
-# fact that the two index-gate lists are currently IDENTICAL is a statement
-# about the study definition, not a code dependency. That is the whole point:
+#   cohorts/overall.R   the Overall cohort, complete
+#   cohorts/ndmm.R      the NDMM cohort, complete
+#
+# SIBLINGS, not a chain. Neither file references the other, neither inherits
+# from the other, and each spells out its own gate list in full. Editing one
+# cannot change the other -- there is no shared constant to edit by accident.
 #
 #   Decoupling is not redefining.
 #
-# Phase 1 reproduces today's numbers exactly. Any future divergence in NDMM's
-# index gates is a one-line edit here, reviewed by the study team, with no
-# pipeline code change and no effect on Overall.
+# The two index-gate lists are currently IDENTICAL. That is a statement about
+# the study definition, not a code dependency, and it is what makes Phase 1
+# numerically a no-op. `index_gate_diff()` below reports drift between them so
+# the agreement stays a REVIEWED fact rather than an assumed one.
+#
+# Adding a cohort = adding a file. Nothing else changes.
 # =============================================================================
 
-# The index gates every 1L-treated MM cohort currently shares. Written once so
-# a spec reads as a definition, not a copy-paste; both cohorts still list their
-# gates EXPLICITLY (via this constant) rather than inheriting them.
-INDEX_GATES_1L_TREATED_MM <- c(
-  "idx_qualifying",
-  "age_at_index",
-  "ce_baseline_6mo",
-  "ce_followup_1d",
-  "no_baseline_mm_agents",
-  "fu_mm_agents",
-  "no_baseline_mm_evidence",
-  "no_other_cancer_index",
-  "no_pregnancy_index",
-  "no_clintrial"
-)
+COHORT_DIR <- "cohorts"
 
-cohort_specs <- function() list(
+# Locate cohorts/ relative to this file, so sourcing works from any wd.
+default_cohort_dir <- function() {
+  here <- tryCatch(dirname(normalizePath(sys.frame(1)$ofile)),
+                   error = function(e) NULL)
+  cand <- c(if (!is.null(here)) file.path(dirname(here), COHORT_DIR),
+            file.path(getwd(), COHORT_DIR),
+            file.path(dirname(getwd()), COHORT_DIR))
+  hit <- Filter(dir.exists, cand)
+  if (!length(hit))
+    stop("cannot locate the ", COHORT_DIR, "/ directory (looked in: ",
+         paste(cand, collapse = ", "), ")", call. = FALSE)
+  hit[1]
+}
 
-  overall = list(
-    id       = "overall",
-    label    = "Overall MM (1L-treated)",
-    flag_col = "COHORT_OVERALL",
-    desc     = paste("Every 1L-treated MM patient passing the index-anchored IE",
-                     "funnel. Equivalent to today's ELIG_COH_FINAL."),
-    gates    = INDEX_GATES_1L_TREATED_MM,
-    params   = list()   # registry defaults; cfg supplies min_age / outpatient_window
-  ),
+# Load every cohort file. Each file's last expression IS its spec (a list), so
+# a cohort definition is a plain data literal with no registration side-effects
+# -- it can be read, diffed and reviewed on its own.
+cohort_specs <- function(dir = NULL) {
+  dir <- dir %||% .COHORT_DIR_CACHE %||% default_cohort_dir()
+  files <- sort(list.files(dir, pattern = "\\.R$", full.names = TRUE))
+  if (!length(files))
+    stop("no cohort definitions found in ", dir, call. = FALSE)
 
-  ndmm = list(
-    id       = "ndmm",
-    label    = "NDMM (newly diagnosed, 1L)",
-    flag_col = "COHORT_NDMM",
-    desc     = paste("Newly-diagnosed 1L cohort: the same index-anchored funnel",
-                     "plus six LOT1-anchored criteria and a 1L start cutoff.",
-                     "Runs standalone -- no Overall run required."),
-    gates    = c(INDEX_GATES_1L_TREATED_MM,
-                 "has_lot1",
-                 "lot1_from",
-                 "ce_pre_lot1_12mo",
-                 "ce_fu_lot1_3mo",
-                 "no_belantamab",
-                 "no_prior_mm_tx",
-                 "no_other_cancer_pre_lot1",
-                 "no_pregnancy_study"),
-    params   = list()
-  )
-)
+  specs <- lapply(files, function(f) {
+    s <- tryCatch(source(f, local = new.env())$value,
+                  error = function(e)
+                    stop("failed to load cohort file ", basename(f), ": ",
+                         conditionMessage(e), call. = FALSE))
+    if (!is.list(s) || is.null(s$id))
+      stop("cohort file ", basename(f), " must evaluate to a spec list with an ",
+           "`id` field as its final expression.", call. = FALSE)
+    s$source_file <- basename(f)
+    s
+  })
+
+  ids <- vapply(specs, `[[`, character(1), "id")
+  if (anyDuplicated(ids))
+    stop("duplicate cohort id(s) across cohort files: ",
+         paste(unique(ids[duplicated(ids)]), collapse = ", "), call. = FALSE)
+
+  # Explicit `order` (not filename order) drives multi-cohort runs, so the PLD's
+  # column order and the step order are stable however the files are named.
+  ord <- order(vapply(specs, function(s) as.integer(s$order %||% 100L), integer(1)),
+               ids)
+  stats::setNames(specs[ord], ids[ord])
+}
+
+# Set once by an entry point that already knows its own directory; avoids
+# re-deriving the path on every cohort_specs() call.
+.COHORT_DIR_CACHE <- NULL
+set_cohort_dir <- function(dir) {
+  if (!dir.exists(dir)) stop("no such cohort directory: ", dir, call. = FALSE)
+  .COHORT_DIR_CACHE <<- dir
+  invisible(dir)
+}
+
+# Report where two cohorts' index-anchored gates differ. Separate files mean the
+# lists CAN drift; this makes drift visible instead of silent. Used by the tests
+# and printed by the build so an unintended divergence is caught at review.
+index_gate_diff <- function(a, b, reg = gate_registry()) {
+  idx <- function(s) Filter(function(g) identical(reg[[g]]$anchor, "index"), s$gates)
+  ga <- idx(a); gb <- idx(b)
+  list(only_in_a = setdiff(ga, gb),
+       only_in_b = setdiff(gb, ga),
+       reordered = identical(sort(ga), sort(gb)) && !identical(ga, gb),
+       identical = identical(ga, gb))
+}
 
 # =============================================================================
 # Resolution + validation
