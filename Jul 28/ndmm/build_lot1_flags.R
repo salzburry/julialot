@@ -95,6 +95,25 @@ main <- function() {
                     .lot1_table_ok(con, medical_tbl) &&
                     .lot1_table_ok(con, confinement)
 
+  # The invariant build_lot1_starts() depends on. It joins LOT_LONG on PATID
+  # alone -- it has no choice, LOT_LONG carries no INDEX_DATE -- so a patient
+  # input with two rows for one patient fans the LOT history out silently.
+  # coh_index_union enforces this, but LOT1_PATIENT_INPUT can point anywhere,
+  # so verify it here rather than trust the caller.
+  dup <- db_q(con, glue("
+    SELECT count(*) AS n FROM (
+      SELECT PATID FROM {patient_input}
+      GROUP BY PATID HAVING count(*) > 1
+    )"))$n
+  if (!isTRUE(as.numeric(dup) == 0))
+    stop(format(dup, big.mark = ","), " patient(s) appear more than once in ",
+         patient_input, ". build_lot1_starts() joins LOT_LONG on PATID alone ",
+         "(LOT_LONG is keyed by (PATID, LOT_NUM) and has no INDEX_DATE), so ",
+         "duplicate patients would fan out or conflate LOT histories with no ",
+         "error. Fix the patient input before building flags. See ",
+         "REVIEW_FINDINGS.md finding 3.", call. = FALSE)
+  log_msg("Patient input verified: one row per PATID")
+
   log_msg("Building enrollment spans (gap_days=", LOT1_GAP_DAYS, ")")
   build_lot1_enrollment_spans(con)
   build_lot1_enrollment_spans(con, LOT1_ENROLL_SPANS_STRICT, 0L)  # no-gap, 3-mo FU CE

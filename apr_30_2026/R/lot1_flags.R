@@ -19,13 +19,18 @@
 #      (coh_index_union) to build the flags without an Overall cohort ever
 #      being selected. The input must expose PATID + INDEX_DATE; both do.
 #
-#   2. Views are keyed by (PATID, INDEX_DATE), not PATID alone. The original
-#      could key on PATID because ELIG_COH_FINAL is already one row per patient
-#      (step 24 takes rn = 1). A union over cohorts that select DIFFERENT index
-#      dates for the same patient can carry two rows, and a PATID-only key
-#      would silently conflate them. See the per-view notes on which scans are
-#      index-DEPENDENT (window anchored at LOT1, so keyed by the pair) and
-#      which are index-INDEPENDENT (whole study period, so PATID is enough).
+#   2. Views CARRY (PATID, INDEX_DATE), so the LOT1 anchor travels with each
+#      row. PATID is still the KEY, and the patient input must hold exactly one
+#      row per patient.
+#
+#      THAT IS AN INVARIANT, NOT AN ASSUMPTION TO IGNORE. build_lot1_starts()
+#      joins LOT_LONG on PATID alone -- it has no choice, because LOT_LONG is
+#      keyed by (PATID, LOT_NUM) and carries no INDEX_DATE at all
+#      (lot2_5_base.R has zero references to it), and 02_lot1.R aggregates by
+#      PATID throughout. Two index dates for one patient would fan out here,
+#      silently. ELIG_COH_FINAL satisfies the invariant by construction (step 24
+#      takes rn = 1); "Jul 28"'s coh_index_union enforces it with a check that
+#      aborts the run. Do not point this at anything that has not.
 #
 # Requires the LOT stack's helpers: cfg, db_exec, db_q, log_msg (config_lot.R,
 # db_utils_lot.R) and load_codelist_csv (codelists_lot.R).

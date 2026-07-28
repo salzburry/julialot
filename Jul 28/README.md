@@ -60,10 +60,16 @@ and I'll wire that up permanently.
 
 | Object | Grain | |
 |---|---|---|
-| `coh_<id>_index_sel` | PATID × INDEX_DATE | **table** — index-anchored IE funnel, then earliest qualifying index |
-| `coh_index_union` | PATID × INDEX_DATE | **table** — distinct union across cohorts; **the LOT build's input**, so it must outlive the connection that made it |
-| `coh_<id>_cohort` | PATID × INDEX_DATE | temp view — final membership (adds LOT1-anchored gates) |
-| `coh_pld` / `COHORT_PLD` | PATID × INDEX_DATE | **the shared PLD**: every criterion a column, plus `COHORT_OVERALL` / `COHORT_NDMM` |
+| `coh_<id>_index_sel` | one row per PATID | **table** — index-anchored IE funnel, then earliest qualifying index |
+| `coh_index_union` | one row per PATID | **table** — union across cohorts; **the LOT build's input**, so it must outlive the connection that made it |
+| `coh_<id>_cohort` | one row per PATID | temp view — final membership (adds LOT1-anchored gates) |
+| `coh_pld` / `COHORT_PLD` | one row per PATID | **the shared PLD**: every criterion a column, plus `COHORT_OVERALL` / `COHORT_NDMM` |
+
+`INDEX_DATE` is carried on every one of these as the anchor, but **`PATID` is the
+key**. `LOT_LONG` is keyed by `(PATID, LOT_NUM)` and has no `INDEX_DATE`, so two
+index dates for one patient cannot be represented downstream. If the requested
+cohorts ever select different indexes for the same patient, the run is
+**rejected** right after the union is built rather than fanning out silently.
 
 Plus a per-cohort attrition funnel (cumulative distinct patients, one row per
 gate, terminal check row).
@@ -84,7 +90,7 @@ applies upstream).
 | `PROJECT_WORK_SCHEMA` / `WORK_SCHEMA` | — | schema qualifier for all objects |
 | `INDEX_FLAGS_TABLE` | `ELIG_COH_ALLFLAGS` | index-anchored flags (step 23) |
 | `LOT1_FLAGS_TABLE` | `LOT1_FLAGS_ALL` | LOT1-anchored flags (see PLAN §6a) |
-| `LOT1_STARTS_TABLE` | `LOT1_STARTS` | 1L starts keyed by (PATID, INDEX_DATE) |
+| `LOT1_STARTS_TABLE` | `LOT1_STARTS` | 1L starts, one row per PATID, carrying INDEX_DATE |
 | `PLD_TABLE` | `COHORT_PLD` | persisted PLD |
 | `MIN_AGE` | `18` | |
 | `OUTPATIENT_WINDOW` | `90` | must be 30, 60 or 90; from `pipeline_inputs.csv` |
