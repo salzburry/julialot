@@ -13,27 +13,30 @@ dependent on Overall is that the flags get **filtered away one step too early,
 twice**. Stop filtering, keep the flags as columns, and the dependency
 disappears on its own.
 
-**Two separate cohort files, two separate build scripts:**
+**Two separate folders, one per cohort. Everything for a cohort is inside its folder:**
 
 ```
-cohorts/overall.R    the Overall definition, complete and self-contained
-cohorts/ndmm.R       the NDMM definition, complete and self-contained
+overall/          ndmm/
+  cohort.R          cohort.R              <- the definition
+  build.R           build.R               <- its entry point
+  tests/            build_lot1_flags.R    <- only NDMM needs this
+  README.md         tests/  README.md
 
-Rscript "Jul 28/build_overall.R"     # Overall only
-Rscript "Jul 28/build_ndmm.R"        # NDMM only -- no Overall run, ever
-Rscript "Jul 28/build_cohort.R"      # both + the shared PLD
+Rscript "Jul 28/overall/build.R"     # Overall only
+Rscript "Jul 28/ndmm/build.R"        # NDMM only -- no Overall run, ever
+Rscript "Jul 28/build_both.R"        # both + the shared PLD
 ```
 
-Neither cohort file references the other, neither inherits from the other, and
+Neither cohort folder references the other, neither inherits from the other, and
 each **spells out its own gate list in full** — there is no shared constant, so
 editing one cannot change the other. Adding a third cohort is adding a file.
 
-What is *not* duplicated is the derivation logic: both files name criteria from
+What is *not* duplicated is the derivation logic: both definitions name criteria from
 one gate registry that holds the SQL. That split is what keeps NDMM's CE /
 prior-therapy / other-cancer definitions from drifting further than they already
 have. The definitions are separate; the machinery is shared.
 
-The cost of separate files is real and worth naming: two gate lists that are
+The cost of separate definitions is real and worth naming: two gate lists that are
 *meant* to agree must be kept in step by review. So the build prints an
 index-gate diff on every multi-cohort run and the tests assert the current
 agreement — drift is **detected**, not prevented. Diverging is a legitimate
@@ -161,8 +164,8 @@ than no knob.
 
 ## 4. Two cohorts are siblings, not a chain
 
-`cohorts/overall.R` and `cohorts/ndmm.R` are peers, loaded from disk by
-`cohort_specs()`. Neither references the other. The NDMM spec is:
+`overall/cohort.R` and `ndmm/cohort.R` are peers, discovered on disk by
+`cohort_specs()` (a cohort is a folder containing `cohort.R`). Neither references the other. The NDMM spec is:
 
 ```
   the ten index-anchored gates
@@ -403,25 +406,20 @@ report. 4–6 are cleanup and can wait.
 
 | File | |
 |---|---|
-| `cohorts/overall.R` | **The Overall cohort definition.** Gate list only, no SQL |
-| `cohorts/ndmm.R` | **The NDMM cohort definition.** Gate list only, no SQL |
-| `build_overall.R` | Entry point — Overall alone |
-| `build_ndmm.R` | Entry point — NDMM alone |
-| `build_cohort.R` | Entry point — `--cohort=overall\|ndmm\|both` (default both) |
-| `R/cohort_specs.R` | Gate registry (18 gates, anchor + tunability), loader, drift check |
-| `R/cohort_sql.R` | Spec → Spark SQL: index selection, union, membership, PLD, attrition |
-| `R/cohort_run.R` | Shared engine: config, schema guard, execution, reporting |
-| `R/bootstrap.R` | Path resolution + source order for the entry points |
-| `build_lot1_flags.R` | The LOT1-anchored flag stage, standalone (§6a) |
-| `tests/test_cohort_specs.R` | 75 offline assertions — no warehouse needed |
+| `overall/` | **The Overall cohort** — definition, build script, tests, README |
+| `ndmm/` | **The NDMM cohort** — same, plus the LOT1 flag stage it needs (§6a) |
+| `engine/` | Shared: gate registry (18 gates), SQL generator, runner, bootstrap |
+| `build_both.R` | Both cohorts + one shared PLD |
+| `tests/` | Engine + cross-cohort invariants |
+| `run_all_tests.R` | All three suites — 98 offline assertions, no warehouse needed |
 
 ```
-Rscript "Jul 28/tests/test_cohort_specs.R"           # 75 passed, 0 failed
-Rscript "Jul 28/build_ndmm.R" --dry-run              # print the SQL, touch nothing
+Rscript "Jul 28/run_all_tests.R"            # engine 69, overall 14, ndmm 15
+Rscript "Jul 28/ndmm/build.R" --dry-run     # print the SQL, touch nothing
 ```
 
-A cohort file contains **no SQL** — only a gate list, in funnel order, with the
-parameters it overrides. It is meant to be reviewed by the study team without
+A cohort's `cohort.R` contains **no SQL** — only a gate list, in funnel order,
+with the parameters it overrides. It is meant to be reviewed by the study team without
 reading any code.
 
 Config-as-R rather than YAML, matching `cohort_explorer`'s reasoning: the

@@ -3,15 +3,16 @@
 # -----------------------------------------------------------------------------
 # Not run directly. The entry points are:
 #
-#   build_overall.R    Overall only  -- complete run, no NDMM, no LOT build
-#   build_ndmm.R       NDMM only     -- complete run, no Overall, no
+#   overall/build.R    Overall only  -- complete run, no NDMM, no LOT build
+#   ndmm/build.R       NDMM only     -- complete run, no Overall, no
 #                                       ELIG_COH_FINAL dependency
-#   build_cohort.R     --cohort=...  -- one, the other, or both + shared PLD
+#   build_both.R       --cohort=...  -- one, the other, or both + shared PLD
 #
-# Each cohort's DEFINITION lives in its own file under cohorts/. This file holds
-# the machinery they share: config, the schema guard, execution and reporting.
-# Splitting it this way is what lets the two cohorts be genuinely independent
-# without the SQL being written twice.
+# Each cohort gets its own FOLDER holding its definition, its build script, its
+# tests, and anything only it needs. This file holds the machinery they share:
+# config, the schema guard, execution and reporting. Splitting it this way is
+# what lets the two cohorts be genuinely independent without the SQL being
+# written twice.
 #
 # What this engine does NOT do: scan raw claims. The per-criterion flags already
 # exist upstream (ELIG_COH_ALLFLAGS from pipeline_steps.R step 23; the
@@ -38,7 +39,7 @@ select_specs <- function(which_cohort, all = cohort_specs()) {
   bad <- setdiff(ids, names(all))
   if (length(bad))
     stop("unknown cohort(s): ", paste(bad, collapse = ", "),
-         ". Known (one file each in cohorts/): ",
+         ". Known (one folder each): ",
          paste(names(all), collapse = ", "), call. = FALSE)
   all[ids]
 }
@@ -118,7 +119,7 @@ report_index_gate_drift <- function(specs) {
   if (isTRUE(d$reordered))
     cat("  same set, different funnel order\n")
   cat("  Intended? If so the cohorts select different index dates and the LOT\n",
-      "  build fans out over their union (PLAN.md 3). If not, fix the cohorts/ file.\n",
+      "  build fans out over their union (PLAN.md 3). If not, fix <cohort>/cohort.R.\n",
       sep = "")
   invisible(NULL)
 }
@@ -148,7 +149,7 @@ run_build <- function(cohort = NULL, argv = commandArgs(trailingOnly = TRUE)) {
   cat("COHORT BUILD -- ", paste(names(specs), collapse = ", "), "\n", sep = "")
   for (s in plan$specs) {
     cat("\n", s$label, " (", s$id, ")  ->  ", s$flag_col,
-        "   [cohorts/", s$source_file %||% "?", "]\n", sep = "")
+        "   [", s$source_file %||% "?", "]\n", sep = "")
     for (g in s$resolved_gates)
       cat(sprintf("  %-2d %-5s %-9s %s\n", g$step_no, g$polarity, g$anchor,
                   g$label_resolved))
