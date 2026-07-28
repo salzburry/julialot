@@ -2,8 +2,9 @@
 
 **Verdict accepted in full. All six findings reproduced.**
 
-**Status: finding 1 is FIXED (step 1 of the corrected sequence). Findings 2–6
-remain open, so this folder is still NOT validated and NOT production-ready.**
+**Status: findings 1 and 2 are FIXED (steps 1–2 of the corrected sequence).
+Findings 3–6 remain open, so this folder is still NOT validated and NOT
+production-ready. Nothing has run against the warehouse.**
 
 The single most useful sentence in the review: *the LOT source files being
 byte-identical is valid evidence the LOT algorithms were not edited; it does not
@@ -26,9 +27,15 @@ Two structural mistakes, each producing several findings:
 
 2. **Every test validates generated TEXT; none validates an execution path.**
    149 assertions, all on strings. Findings 2–5 are all runtime behaviour, and
-   the suite is structurally incapable of catching them. I only ever ran
-   `--dry-run`, which returns (`cohort_run.R:175`) before the connection is
-   opened at `:186` — so the `--index-only` blocker could never have surfaced.
+   the suite was structurally incapable of catching them. I only ever ran
+   `--dry-run`, which returns before the connection is opened — so the
+   `--index-only` blocker could never have surfaced.
+
+   **Partly addressed in step 2:** the preflight-scoping decision was extracted
+   into a pure `sources_to_check()` so it *is* testable without a warehouse, and
+   the temp-view qualification rule is now asserted over every `CREATE` in a
+   full plan. The deeper point stands: these are still text assertions, and only
+   a real run settles the row counts.
 
 ---
 
@@ -96,7 +103,7 @@ irrelevant.
   criterion read as ON — is *how* the suites came to validate a configuration
   nobody runs. One source of truth now.
 
-### 2. [P0] The documented NDMM bootstrap cannot run — confirmed, four blockers
+### 2. [P0] The documented NDMM bootstrap cannot run — ~~confirmed~~ **FIXED**
 
 - **Schema guard.** `assert_source_cols(con, specs, cfg)` (`cohort_run.R:189`)
   runs against the full `specs`, after the `--index-only` truncation at `:164`.
@@ -111,6 +118,32 @@ irrelevant.
   returning the **unqualified** name. I diverged from the working pattern.
 - **`COHORT_CONNECT_FN=my_connect`** in the README defines nothing; `connect()`
   only looks up an existing function. The documented command cannot run.
+
+#### Fix (step 2)
+
+- **Preflight is scoped to the steps about to run.** `sources_to_check()` (pure,
+  therefore tested) keeps a source only if some step in the — possibly truncated
+  — plan actually references its table. `--index-only` no longer demands
+  `LOT1_FLAGS_ALL`, the table the *next* stage creates.
+- **The union is a persisted table.** `coh_index_union` and the per-cohort
+  `coh_<id>_index_sel` are `CREATE OR REPLACE TABLE`, so they outlive the
+  connection that made them and a separately launched LOT build can read them.
+  `INPUT_COHORT_TABLE` is handed the **unqualified** name, because
+  `02_lot1.R:278` qualifies it itself via `wrk()`.
+- **Temp views are never schema-qualified.** Split into `sql_view()` (bare) and
+  `sql_table()` (catalog.schema-qualified) — the distinction the legacy code
+  already draws between `db_utils.R:60` `work <- function(tbl) tbl` and
+  `db_utils_lot.R:49` `wrk()`. A test walks every `CREATE` in a full plan and
+  asserts no temp view carries a dot and every table does.
+- **The default connection works.** `connect()` now uses `DATABRICKS_DSN` +
+  `DATABRICKS_PWD` exactly as `02_lot1.R:63` does, so a real run needs only the
+  password. `COHORT_CONNECT_FN` remains an override and reports a clear error
+  when it names a function that is not defined, instead of being masked by a
+  generic "DBI is required".
+- **Index tables are reused, not silently rebuilt.** The final run consumes the
+  same rows the LOT build did rather than re-deriving the cohort from whatever
+  `ELIG_COH_ALLFLAGS` looks like now; `--rebuild-index` forces recomputation,
+  and a partially-present set is a hard error rather than a mixed-vintage run.
 
 ### 3. [P1] Multi-index support is not implemented — confirmed
 
@@ -163,9 +196,7 @@ read stale data; absent → they fail. A compatibility view is required.
 Ordered so nothing is built on an unvalidated base:
 
 1. ~~**Load the real configuration.**~~ **DONE** — see the fix under finding 1.
-2. **Fix the execution path**: `--index-only` preflight scoped to the truncated
-   plan; unqualified temp-view names; persist the union as a real table (or run
-   dependent stages on one connection); a runnable connection example.
+2. ~~**Fix the execution path.**~~ **DONE** — see the fix under finding 2.
 3. **Enforce one index per PATID** until LOT is genuinely pair-keyed; fail on
    divergence rather than silently fanning out.
 4. **Fail closed** on failed persistence and on missing criterion inputs; persist

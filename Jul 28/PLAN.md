@@ -1,11 +1,11 @@
 # Cohort build codes: Overall + NDMM, one flag-driven PLD
 
 **Date:** 2026-07-28
-**Status:** ⚠️ **NOT VALIDATED — NOT PRODUCTION-READY.** Review finding 1 (the
-generated cohort did not reproduce the repository's *configured* legacy cohort)
-is **fixed**; findings 2–6 are open, including that the documented NDMM run
-order cannot execute. See **[REVIEW_FINDINGS.md](REVIEW_FINDINGS.md)** — read it
-before this document, which still overstates what has been established.
+**Status:** ⚠️ **NOT VALIDATED — NOT PRODUCTION-READY.** Review findings 1 and 2
+are **fixed** (the configured cohort is built; the documented run order can now
+execute). Findings 3–6 are open. See **[REVIEW_FINDINGS.md](REVIEW_FINDINGS.md)**
+— read it before this document, which still overstates what has been
+established. Nothing has run against the warehouse.
 
 ---
 

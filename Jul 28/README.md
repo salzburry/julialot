@@ -36,11 +36,14 @@ Rscript "Jul 28/ndmm/build.R" --dry-run
 Rscript "Jul 28/ndmm/build.R" --index-only --dry-run # stop at the LOT-build input
 Rscript "Jul 28/build_both.R" --dry-run              # both + the shared PLD
 
-COHORT_CONNECT_FN=my_connect Rscript "Jul 28/ndmm/build.R"   # execute
+DATABRICKS_PWD=... Rscript "Jul 28/ndmm/build.R"     # execute
 ```
 
-Without `COHORT_CONNECT_FN` a build refuses to run outside `--dry-run` — it
-never opens a connection or writes a table by accident.
+Connects via `DATABRICKS_DSN` (from `pipeline_inputs.csv`) + `DATABRICKS_PWD`,
+the same way `02_lot1.R` does — so a real run needs only the password, which
+stays in the environment by design. `COHORT_CONNECT_FN=<function name>`
+overrides it for a host that connects differently; the function must already be
+defined in the session, and you get a clear error if it isn't.
 
 ### One thing is shared: the engine
 
@@ -57,9 +60,9 @@ and I'll wire that up permanently.
 
 | Object | Grain | |
 |---|---|---|
-| `coh_<id>_index_sel` | PATID × INDEX_DATE | index-anchored IE funnel, then earliest qualifying index |
-| `coh_index_union` | PATID × INDEX_DATE | distinct union across requested cohorts — **the LOT build's input** |
-| `coh_<id>_cohort` | PATID × INDEX_DATE | final membership (adds LOT1-anchored gates) |
+| `coh_<id>_index_sel` | PATID × INDEX_DATE | **table** — index-anchored IE funnel, then earliest qualifying index |
+| `coh_index_union` | PATID × INDEX_DATE | **table** — distinct union across cohorts; **the LOT build's input**, so it must outlive the connection that made it |
+| `coh_<id>_cohort` | PATID × INDEX_DATE | temp view — final membership (adds LOT1-anchored gates) |
 | `coh_pld` / `COHORT_PLD` | PATID × INDEX_DATE | **the shared PLD**: every criterion a column, plus `COHORT_OVERALL` / `COHORT_NDMM` |
 
 Plus a per-cohort attrition funnel (cumulative distinct patients, one row per

@@ -238,8 +238,8 @@ pld <- plan$steps[[which(step_names == "pld")]]$sql
 ok(grepl("AS COHORT_OVERALL", pld, fixed = TRUE) &&
    grepl("AS COHORT_NDMM", pld, fixed = TRUE),
    "the PLD carries one 0/1 membership column per cohort")
-ok(!grepl("INNER JOIN wk.coh_overall_cohort", pld, fixed = TRUE) &&
-    grepl("LEFT JOIN wk.coh_overall_cohort", pld, fixed = TRUE),
+ok(!grepl(paste("INNER JOIN", sql_view(CFG, "overall_cohort")), pld, fixed = TRUE) &&
+    grepl(paste("LEFT JOIN",  sql_view(CFG, "overall_cohort")), pld, fixed = TRUE),
    "the PLD LEFT-joins membership: it is the superset, it drops nobody")
 ok(grepl("n.NO_BELANTAMAB", pld, fixed = TRUE) &&
    grepl("n.CE_pre_lot1_12mo", pld, fixed = TRUE),
@@ -286,6 +286,58 @@ prefix <- plan$steps[seq_len(which(step_names == "index_union"))]
 ok(!any(vapply(prefix, function(st) grepl("LOT1_FLAGS_ALL", st$sql, fixed = TRUE),
                 logical(1))),
    "--index-only's prefix reads no LOT1 flag table (it does not exist yet)")
+
+# =============================================================================
+section("execution path (Phase 2 fixes)")
+
+# A temp view must NEVER be schema-qualified -- Databricks rejects it outright,
+# and the legacy pipeline gets this right (db_utils.R:60 returns the bare name).
+# Every CREATE across a full plan is checked, not a sample.
+creates <- unlist(regmatches(
+  vapply(plan$steps, `[[`, character(1), "sql"),
+  gregexpr("CREATE OR REPLACE (TEMPORARY VIEW|TABLE) [^ \n]+",
+           vapply(plan$steps, `[[`, character(1), "sql"))))
+tmp_views <- grep("TEMPORARY VIEW", creates, value = TRUE)
+tables    <- grep("REPLACE TABLE",  creates, value = TRUE)
+ok(length(tmp_views) > 0L && !any(grepl("\\.", sub(".*VIEW ", "", tmp_views))),
+   "no temp view is schema-qualified")
+ok(length(tables) > 0L && all(grepl("\\.", sub(".*TABLE ", "", tables))),
+   "every persisted table IS schema-qualified")
+ok(identical(sql_view(CFG, "pld"), "coh_pld") &&
+   grepl("^hive|^wk\\.|\\.", sql_table(CFG, "pld")),
+   "sql_view() and sql_table() differ exactly in qualification")
+
+# The union must be a real TABLE: the LOT build is a separate process and a
+# session-scoped view dies with the connection that created it.
+u_sql <- plan$steps[[which(step_names == "index_union")]]$sql
+ok(grepl("^CREATE OR REPLACE TABLE", u_sql),
+   "coh_index_union is a persisted table, not a temp view")
+ok(all(grepl("^CREATE OR REPLACE TABLE",
+             vapply(plan$steps[grepl("_index_sel$", step_names)], `[[`,
+                    character(1), "sql"))),
+   "the per-cohort index selections are persisted too")
+# INPUT_COHORT_TABLE is consumed as wrk(<name>) by 02_lot1.R:278, so the name
+# handed over must be UNqualified.
+ok(!grepl("\\.", sql_table_short(CFG, "index_union")),
+   "the name given to INPUT_COHORT_TABLE is unqualified, as the LOT build expects")
+
+# --index-only must not demand the table the NEXT stage creates.
+idx_only_sql <- vapply(plan$steps[seq_len(which(step_names == "index_union"))],
+                       `[[`, character(1), "sql")
+ok(!("lot1_flags" %in% names(sources_to_check(R, CFG, idx_only_sql))),
+   "--index-only does not preflight LOT1_FLAGS_ALL (the stage after it makes it)")
+ok("index_flags" %in% names(sources_to_check(R, CFG, idx_only_sql)),
+   "--index-only still preflights the flag table it does read")
+ok("lot1_flags" %in% names(sources_to_check(R, CFG,
+     vapply(plan$steps, `[[`, character(1), "sql"))),
+   "a full run does preflight LOT1_FLAGS_ALL")
+ok(identical(names(sources_to_check(R, CFG, NULL)),
+             names(Filter(length, required_source_cols(R)))),
+   "with no plan supplied, every source with required columns is checked")
+
+ok(isTRUE(parse_args("--rebuild-index")$rebuild_index) &&
+   !isTRUE(parse_args(character(0))$rebuild_index),
+   "--rebuild-index is parsed, and off by default")
 
 # =============================================================================
 section("attrition funnel")
