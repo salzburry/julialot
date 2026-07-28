@@ -3,10 +3,10 @@
 Standalone cohort builders, one file per cohort. `build_ndmm.R` is a complete
 run: it does not build the Overall cohort and does not read `ELIG_COH_FINAL`.
 
-> ⚠️ **NOT VALIDATED / NOT PRODUCTION-READY.** The generated cohort does not
-> reproduce the repository's *configured* legacy cohort (the engine never loads
-> `pipeline_inputs.csv`), and the documented NDMM run order cannot execute.
-> Read **[REVIEW_FINDINGS.md](REVIEW_FINDINGS.md)** first.
+> ⚠️ **NOT VALIDATED / NOT PRODUCTION-READY.** Review finding 1 is fixed — the
+> engine now loads `pipeline_inputs.csv` and builds the *configured* cohort — but
+> findings 2–6 are open, including that the documented NDMM run order cannot
+> execute. Read **[REVIEW_FINDINGS.md](REVIEW_FINDINGS.md)** first.
 
 Read **[PLAN.md](PLAN.md)** for the design and the upstream changes it assumes.
 
@@ -29,7 +29,7 @@ run_all_tests.R  every suite
 ```
 
 ```sh
-Rscript "Jul 28/run_all_tests.R"                    # 149 assertions, 4 suites
+Rscript "Jul 28/run_all_tests.R"                    # 184 assertions, 4 suites
 
 Rscript "Jul 28/overall/build.R" --dry-run
 Rscript "Jul 28/ndmm/build.R" --dry-run
@@ -84,7 +84,7 @@ applies upstream).
 | `LOT1_STARTS_TABLE` | `LOT1_STARTS` | 1L starts keyed by (PATID, INDEX_DATE) |
 | `PLD_TABLE` | `COHORT_PLD` | persisted PLD |
 | `MIN_AGE` | `18` | |
-| `OUTPATIENT_WINDOW` | `60` | must be 30, 60 or 90 |
+| `OUTPATIENT_WINDOW` | `90` | must be 30, 60 or 90; from `pipeline_inputs.csv` |
 | `NDMM_LOT1_FROM` | `2017-01-01` | 1L start cutoff |
 
 ## Adding or changing a cohort

@@ -46,8 +46,10 @@ sql_obj <- function(cfg, name) {
          collapse = "\n")
 }
 
+# APPLIED gates at an anchor. Reads active_gates(), never resolved_gates: a
+# criterion the project configuration disables must never reach a predicate.
 .gates_at <- function(spec, anchor) {
-  Filter(function(g) identical(g$anchor, anchor), spec$resolved_gates)
+  Filter(function(g) identical(g$anchor, anchor), active_gates(spec))
 }
 
 # =============================================================================
@@ -228,7 +230,7 @@ sql_pld_persist <- function(cfg) {
 # gates: up to that point the denominator is every candidate index row; after
 # it, the index is already selected and the LOT1 tables are in scope.
 sql_attrition <- function(spec, cfg) {
-  gates <- spec$resolved_gates
+  gates <- active_gates(spec)   # an unapplied criterion has no attrition row
   idx   <- .gates_at(spec, "index")
   arms  <- character(0)
 

@@ -146,10 +146,16 @@ for (s in R) {
   ok(identical(a, a[order(match(a, ANCHORS))]),
      paste0(s$id, ": index-anchored gates are ordered before LOT1-anchored"))
 }
-nd_aid <- unname(vapply(R$ndmm$resolved_gates, `[[`, character(1), "attrition_id"))
+# Numbered over APPLIED gates only: a criterion the configuration disables has
+# no attrition row, so the ids must skip it rather than leave a hole.
+nd_act <- active_gates(R$ndmm)
+nd_aid <- unname(vapply(nd_act, `[[`, character(1), "attrition_id"))
 ok(identical(nd_aid, sprintf("%02d_%s", seq_along(nd_aid),
-                             unname(vapply(R$ndmm$resolved_gates, `[[`, character(1), "id")))),
-   "attrition ids are renumbered contiguously after anchor ordering")
+                             unname(vapply(nd_act, `[[`, character(1), "id")))),
+   "attrition ids are contiguous over the APPLIED gates")
+ok(all(is.na(vapply(Filter(function(g) !isTRUE(g$active), R$ndmm$resolved_gates),
+                    `[[`, character(1), "attrition_id"))),
+   "a disabled criterion gets no attrition id at all")
 
 # =============================================================================
 section("validation fails closed")
@@ -286,8 +292,8 @@ section("attrition funnel")
 
 af <- plan$attrition$ndmm
 ok(length(gregexpr("UNION ALL", af, fixed = TRUE)[[1]]) ==
-     length(R$ndmm$resolved_gates),
-   "the funnel has one arm per gate plus a terminal FINAL arm")
+     length(active_gates(R$ndmm)),
+   "the funnel has one arm per APPLIED gate plus a terminal FINAL arm")
 ok(grepl("count(DISTINCT PATID)", af, fixed = TRUE), "the funnel counts distinct patients")
 ok(grepl("_final", af, fixed = TRUE), "the funnel ends with the built cohort as a check row")
 # Cumulative, not per-gate: arm k must carry all k predicates.
@@ -307,9 +313,14 @@ ok(!grepl("INNER JOIN", af, fixed = TRUE),
 section("schema guard inputs")
 
 need <- required_source_cols(R)
-ok(all(c("CE_b", "MM_FU_agents", "CLINTRIAL_FOLLOWUP", "AGE_INDEX_YR") %in%
+ok(all(c("CE_b", "CE_f", "MM_FU_agents", "MM_bl_agents", "AGE_INDEX_YR") %in%
        need$index_flags),
-   "index flag columns are collected for the schema guard")
+   "every APPLIED criterion's column is collected for the schema guard")
+# The guard must not demand columns for criteria the configuration disabled --
+# that would fail a run over a criterion nobody is applying.
+ok(!any(c("CLINTRIAL_FOLLOWUP", "OTHER_MALIGN_FLAG", "PREGNANT_FLAG") %in%
+        need$index_flags),
+   "no column is required for a disabled criterion")
 ok(all(c("NO_BELANTAMAB", "CE_pre_lot1_12mo", "LOT1_START_DT") %in% need$lot1_flags),
    "LOT1 flag columns are collected for the schema guard")
 need_ov <- required_source_cols(list(overall = SPECS$overall))
