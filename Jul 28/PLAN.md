@@ -1,7 +1,11 @@
 # Cohort build codes: Overall + NDMM, one flag-driven PLD
 
 **Date:** 2026-07-28
-**Status:** Phases 1–2 implemented and tested offline; not yet run against the warehouse
+**Status:** ⚠️ **NOT VALIDATED — NOT PRODUCTION-READY.** An independent review
+found the generated cohort does not reproduce the repository's *configured*
+legacy cohort, and the documented NDMM run order cannot execute. All findings
+reproduce. See **[REVIEW_FINDINGS.md](REVIEW_FINDINGS.md)** — read it before
+this document, which overstates what was established.
 
 ---
 
@@ -227,6 +231,12 @@ a one-line spec edit, reviewed by the study team, with zero effect on Overall.
 ---
 
 ## 5. Equivalence: does the new code do the same thing?
+
+> ⚠️ **This section's conclusion is withdrawn.** The suite it describes ignores
+> the `cfg_key` toggle on every criterion and so validated against an unused
+> configuration. See [REVIEW_FINDINGS.md](REVIEW_FINDINGS.md) finding 1. The
+> mechanics below (deriving expectations from source rather than hardcoding)
+> remain the right approach; the specific comparison is wrong.
 
 `tests/test_equivalence.R` (51 assertions) answers this, and every expectation
 in it is **derived from the production source** — read out of

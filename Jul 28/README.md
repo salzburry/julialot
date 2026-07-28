@@ -3,8 +3,12 @@
 Standalone cohort builders, one file per cohort. `build_ndmm.R` is a complete
 run: it does not build the Overall cohort and does not read `ELIG_COH_FINAL`.
 
-Read **[PLAN.md](PLAN.md)** for the design, the equivalence argument, and the two
-upstream changes this assumes.
+> ⚠️ **NOT VALIDATED / NOT PRODUCTION-READY.** The generated cohort does not
+> reproduce the repository's *configured* legacy cohort (the engine never loads
+> `pipeline_inputs.csv`), and the documented NDMM run order cannot execute.
+> Read **[REVIEW_FINDINGS.md](REVIEW_FINDINGS.md)** first.
+
+Read **[PLAN.md](PLAN.md)** for the design and the upstream changes it assumes.
 
 ## Layout
 
