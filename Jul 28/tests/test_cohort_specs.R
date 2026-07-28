@@ -18,6 +18,7 @@
 })
 source(file.path(.here, "..", "R", "cohort_specs.R"))
 source(file.path(.here, "..", "R", "cohort_sql.R"))
+set_cohort_dir(file.path(.here, "..", "cohorts"))
 
 # ---- micro test harness -----------------------------------------------------
 .n_pass <- 0L; .n_fail <- 0L
@@ -63,10 +64,52 @@ section("the decoupling property -- this is the point of the whole change")
 
 ok(is.null(SPECS$ndmm$base) && is.null(SPECS$overall$base),
    "no spec declares a base cohort (siblings, not a chain)")
-spec_src <- paste(readLines(file.path(.here, "..", "R", "cohort_specs.R")), collapse = "\n")
-ndmm_block <- sub(".*ndmm = list\\(", "", spec_src)
-ok(!grepl("overall", sub("\\n\\s*\\)\\s*\\n\\)\\s*$", "", ndmm_block)),
-   "the ndmm spec body never references the overall spec")
+
+# ONE FILE PER COHORT. Each definition must stand alone on disk: no shared
+# constant to edit by accident, no cross-reference between the two files.
+COH_DIR <- file.path(.here, "..", "cohorts")
+ok(setequal(basename(list.files(COH_DIR, pattern = "\\.R$")),
+            c("overall.R", "ndmm.R")),
+   "cohorts/ holds exactly one file per cohort")
+ok(identical(SPECS$overall$source_file, "overall.R") &&
+   identical(SPECS$ndmm$source_file, "ndmm.R"),
+   "each spec records the file it was loaded from")
+nd_src <- paste(readLines(file.path(COH_DIR, "ndmm.R")), collapse = "\n")
+ov_src <- paste(readLines(file.path(COH_DIR, "overall.R")), collapse = "\n")
+nd_code <- paste(grep("^\\s*#", strsplit(nd_src, "\n")[[1]], value = TRUE, invert = TRUE),
+                 collapse = "\n")
+ov_code <- paste(grep("^\\s*#", strsplit(ov_src, "\n")[[1]], value = TRUE, invert = TRUE),
+                 collapse = "\n")
+ok(!grepl("overall", nd_code, fixed = TRUE),
+   "cohorts/ndmm.R does not reference overall anywhere in its code")
+ok(!grepl("ndmm", ov_code, fixed = TRUE),
+   "cohorts/overall.R does not reference ndmm anywhere in its code")
+# Each file must literally enumerate its gates -- a shared constant would mean
+# editing one cohort silently edits the other.
+ok(!grepl("INDEX_GATES", paste(nd_code, ov_code), fixed = TRUE),
+   "neither cohort file pulls its gates from a shared constant")
+ok(all(vapply(SPECS$ndmm$gates,
+              function(g) grepl(paste0('"', g, '"'), nd_src, fixed = TRUE), logical(1))),
+   "cohorts/ndmm.R literally lists every one of its gates")
+ok(all(vapply(SPECS$overall$gates,
+              function(g) grepl(paste0('"', g, '"'), ov_src, fixed = TRUE), logical(1))),
+   "cohorts/overall.R literally lists every one of its gates")
+
+# A new cohort must need no engine edit.
+tmp <- file.path(tempdir(), "cohorts_extra")
+dir.create(tmp, showWarnings = FALSE)
+invisible(file.copy(list.files(COH_DIR, full.names = TRUE), tmp, overwrite = TRUE))
+writeLines(c('list(id = "probe", label = "Probe", flag_col = "COHORT_PROBE",',
+             '     order = 30L, gates = c("age_at_index"), params = list())'),
+           file.path(tmp, "probe.R"))
+probe <- cohort_specs(tmp)
+ok(identical(names(probe), c("overall", "ndmm", "probe")),
+   "dropping a file into cohorts/ registers a new cohort, ordered by `order`")
+ok(identical(build_plan(list(probe = resolve_spec(probe$probe, CFG)), CFG)$steps[[1]]$name,
+             "probe_index_sel"),
+   "a newly added cohort builds with no engine change")
+throws(cohort_specs(file.path(tempdir(), "definitely_absent")),
+       "a missing cohorts/ directory is rejected")
 ok(!any(grepl("ELIG_COH_FINAL", c(
      sql_index_sel(R$ndmm, CFG), sql_cohort(bind_lot1_aliases(R$ndmm), CFG)))),
    "NDMM's generated SQL never reads ELIG_COH_FINAL")
@@ -125,6 +168,29 @@ ok(all(c("fu_mm_agents", "has_lot1") %in% SPECS$ndmm$gates),
 nd_ids <- unname(vapply(nd$resolved_gates, `[[`, character(1), "id"))
 ok(which(nd_ids == "has_lot1") < which(nd_ids == "lot1_from"),
    "has_lot1 is evaluated before any gate that reads LOT1_START_DT")
+
+# =============================================================================
+section("index-gate drift between the two files")
+
+# Separate files CAN drift. They are identical today, and that is what makes
+# Phase 1 a numeric no-op -- so assert it, and make the assertion the place
+# where an intentional future divergence gets acknowledged.
+d <- index_gate_diff(SPECS$overall, SPECS$ndmm)
+ok(isTRUE(d$identical),
+   "overall and ndmm currently declare identical index gates, in the same order")
+ok(length(d$only_in_a) == 0L && length(d$only_in_b) == 0L,
+   "neither file carries an index gate the other lacks")
+# Drift must be DETECTED, not prevented -- diverging is a legitimate study
+# decision, silently diverging is not.
+fake <- SPECS$ndmm; fake$gates <- setdiff(fake$gates, "no_clintrial")
+d2 <- index_gate_diff(SPECS$overall, fake)
+ok(!isTRUE(d2$identical) && identical(d2$only_in_a, "no_clintrial"),
+   "removing a gate from one file is reported as drift")
+fake2 <- SPECS$ndmm
+fake2$gates <- c(rev(Filter(function(g) identical(REG[[g]]$anchor, "index"), fake2$gates)),
+                 Filter(function(g) identical(REG[[g]]$anchor, "lot1"), fake2$gates))
+ok(isTRUE(index_gate_diff(SPECS$overall, fake2)$reordered),
+   "same gates in a different funnel order is reported as drift too")
 
 # =============================================================================
 section("anchor discipline")
