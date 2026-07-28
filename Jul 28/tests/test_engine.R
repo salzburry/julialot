@@ -1,49 +1,26 @@
 #!/usr/bin/env Rscript
 # =============================================================================
-# test_cohort_specs.R -- offline tests for the spec + SQL layer
+# test_engine.R -- engine + cross-cohort invariants
 # -----------------------------------------------------------------------------
-#   Rscript "Jul 28/tests/test_cohort_specs.R"
+#   Rscript "Jul 28/tests/test_engine.R"
 #
 # Base R only, no warehouse: everything under test is pure config -> SQL text.
-# These lock the properties that make the flag design safe, not the SQL string
-# itself (which is expected to evolve).
 # =============================================================================
 
-# NOTE: commandArgs() escapes spaces in the script path as "~+~" (this folder is
-# "Jul 28"). Un-escape before normalizePath() or every source() below fails.
 .here <- local({
   fa <- grep("^--file=", commandArgs(FALSE), value = TRUE)
-  if (!length(fa)) return(getwd())
-  dirname(normalizePath(gsub("~+~", " ", sub("^--file=", "", fa[1]), fixed = TRUE)))
+  if (!length(fa)) getwd()
+  else dirname(normalizePath(gsub("~+~", " ", sub("^--file=", "", fa[1]), fixed = TRUE)))
 })
-source(file.path(.here, "..", "R", "cohort_specs.R"))
-source(file.path(.here, "..", "R", "cohort_sql.R"))
-source(file.path(.here, "..", "R", "cohort_run.R"))
-set_cohort_dir(file.path(.here, "..", "cohorts"))
-
-# ---- micro test harness -----------------------------------------------------
-.n_pass <- 0L; .n_fail <- 0L
-ok <- function(cond, what) {
-  if (isTRUE(cond)) { .n_pass <<- .n_pass + 1L; cat("  ok   ", what, "\n") }
-  else { .n_fail <<- .n_fail + 1L; cat("  FAIL ", what, "\n") }
-}
-throws <- function(expr, what) {
-  e <- tryCatch({ force(expr); NULL }, error = function(e) e)
-  ok(!is.null(e), what)
-}
-section <- function(s) cat("\n", s, "\n", sep = "")
-
-CFG <- list(work_schema = "wk", view_prefix = "coh_",
-            index_flags = "wk.ELIG_COH_ALLFLAGS",
-            lot1_flags  = "wk.LOT1_FLAGS_ALL",
-            lot1_starts = "wk.LOT1_STARTS",
-            persist_schema = "wk", pld_table = "COHORT_PLD",
-            min_age = 18L, outpatient_window = 60L, lot1_from = "2017-01-01")
+source(file.path(.here, "harness.R"))
+test_bootstrap(.here)
 
 REG   <- gate_registry()
 SPECS <- cohort_specs()
 R     <- lapply(SPECS, resolve_spec, cfg = CFG)
 
+plan <- build_plan(R, CFG)
+step_names <- vapply(plan$steps, `[[`, character(1), "name")
 # =============================================================================
 section("registry integrity")
 
@@ -61,114 +38,75 @@ ok(all(vapply(REG, function(g) length(g$params) == 0L || isTRUE(g$tunable), logi
    "parameterised gates are all selection-time tunable")
 
 # =============================================================================
-section("the decoupling property -- this is the point of the whole change")
+section("one folder per cohort")
 
-ok(is.null(SPECS$ndmm$base) && is.null(SPECS$overall$base),
-   "no spec declares a base cohort (siblings, not a chain)")
+ROOT <- dirname(.here)
+ok(setequal(basename(dirname(Sys.glob(file.path(ROOT, "*", "cohort.R")))),
+            c("overall", "ndmm")),
+   "each cohort is a folder containing cohort.R")
+ok(identical(SPECS$overall$source_file, file.path("overall", "cohort.R")) &&
+   identical(SPECS$ndmm$source_file,    file.path("ndmm",    "cohort.R")),
+   "each spec records the folder it came from")
+ok(identical(SPECS$overall$folder, SPECS$overall$id) &&
+   identical(SPECS$ndmm$folder,    SPECS$ndmm$id),
+   "the folder name IS the cohort id")
 
-# ONE FILE PER COHORT. Each definition must stand alone on disk: no shared
-# constant to edit by accident, no cross-reference between the two files.
-COH_DIR <- file.path(.here, "..", "cohorts")
-ok(setequal(basename(list.files(COH_DIR, pattern = "\\.R$")),
-            c("overall.R", "ndmm.R")),
-   "cohorts/ holds exactly one file per cohort")
-ok(identical(SPECS$overall$source_file, "overall.R") &&
-   identical(SPECS$ndmm$source_file, "ndmm.R"),
-   "each spec records the file it was loaded from")
-nd_src <- paste(readLines(file.path(COH_DIR, "ndmm.R")), collapse = "\n")
-ov_src <- paste(readLines(file.path(COH_DIR, "overall.R")), collapse = "\n")
-nd_code <- paste(grep("^\\s*#", strsplit(nd_src, "\n")[[1]], value = TRUE, invert = TRUE),
-                 collapse = "\n")
-ov_code <- paste(grep("^\\s*#", strsplit(ov_src, "\n")[[1]], value = TRUE, invert = TRUE),
-                 collapse = "\n")
-ok(!grepl("overall", nd_code, fixed = TRUE),
-   "cohorts/ndmm.R does not reference overall anywhere in its code")
-ok(!grepl("ndmm", ov_code, fixed = TRUE),
-   "cohorts/overall.R does not reference ndmm anywhere in its code")
-# Each file must literally enumerate its gates -- a shared constant would mean
-# editing one cohort silently edits the other.
-ok(!grepl("INDEX_GATES", paste(nd_code, ov_code), fixed = TRUE),
-   "neither cohort file pulls its gates from a shared constant")
-ok(all(vapply(SPECS$ndmm$gates,
-              function(g) grepl(paste0('"', g, '"'), nd_src, fixed = TRUE), logical(1))),
-   "cohorts/ndmm.R literally lists every one of its gates")
-ok(all(vapply(SPECS$overall$gates,
-              function(g) grepl(paste0('"', g, '"'), ov_src, fixed = TRUE), logical(1))),
-   "cohorts/overall.R literally lists every one of its gates")
+# Everything a cohort needs is in its folder; nothing reaches into the other's.
+for (id in names(SPECS)) {
+  # Non-test code only: a test legitimately NAMES the other cohort in order to
+  # assert its absence, which is the opposite of a dependency on it.
+  fs <- setdiff(list.files(file.path(ROOT, id), recursive = TRUE, full.names = TRUE,
+                           pattern = "\\.R$"),
+                list.files(file.path(ROOT, id, "tests"), recursive = TRUE,
+                           full.names = TRUE, pattern = "\\.R$"))
+  other <- setdiff(names(SPECS), id)
+  txt <- unlist(lapply(fs, function(f)
+    grep("^\\s*#", readLines(f, warn = FALSE), value = TRUE, invert = TRUE)))
+  ok(!any(grepl(paste0("\\b", other, "\\b"), txt)),
+     paste0(id, "/ non-test code never references ", other))
+  ok(file.exists(file.path(ROOT, id, "build.R")),
+     paste0(id, "/ has its own build entry point"))
+  ok(length(list.files(file.path(ROOT, id, "tests"), pattern = "\\.R$")) > 0L,
+     paste0(id, "/ has its own tests"))
+}
+
+# The shared engine is deliberately NOT copied into each folder: definitions are
+# separate, the SQL generator is written once. Assert it lives in exactly one
+# place so a stray copy cannot drift.
+ok(setequal(basename(list.files(file.path(ROOT, "engine"), pattern = "\\.R$")),
+            c("bootstrap.R", "cohort_specs.R", "cohort_sql.R", "cohort_run.R")),
+   "the engine lives in engine/, as four files")
+ok(!length(Sys.glob(file.path(ROOT, "*", "engine"))),
+   "no cohort folder carries its own copy of the engine")
+# bootstrap.R hardcodes the cohort filename because it is sourced first.
+bt <- paste(readLines(file.path(ROOT, "engine", "bootstrap.R")), collapse = "\n")
+ok(grepl('COHORT_FILE_NAME <- "cohort.R"', bt, fixed = TRUE) &&
+   identical(COHORT_FILE, "cohort.R"),
+   "bootstrap.R's cohort filename matches the loader's")
 
 # A new cohort must need no engine edit.
-tmp <- file.path(tempdir(), "cohorts_extra")
-dir.create(tmp, showWarnings = FALSE)
-invisible(file.copy(list.files(COH_DIR, full.names = TRUE), tmp, overwrite = TRUE))
+tmp <- file.path(tempdir(), "cohort_root"); unlink(tmp, recursive = TRUE)
+dir.create(file.path(tmp, "probe"), recursive = TRUE, showWarnings = FALSE)
+for (id in names(SPECS)) {
+  dir.create(file.path(tmp, id), showWarnings = FALSE)
+  invisible(file.copy(file.path(ROOT, id, "cohort.R"), file.path(tmp, id)))
+}
 writeLines(c('list(id = "probe", label = "Probe", flag_col = "COHORT_PROBE",',
              '     order = 30L, gates = c("age_at_index"), params = list())'),
-           file.path(tmp, "probe.R"))
+           file.path(tmp, "probe", "cohort.R"))
 probe <- cohort_specs(tmp)
 ok(identical(names(probe), c("overall", "ndmm", "probe")),
-   "dropping a file into cohorts/ registers a new cohort, ordered by `order`")
+   "dropping in a folder registers a new cohort, ordered by `order`")
 ok(identical(build_plan(list(probe = resolve_spec(probe$probe, CFG)), CFG)$steps[[1]]$name,
              "probe_index_sel"),
    "a newly added cohort builds with no engine change")
+# The folder name is load-bearing: a mismatch must fail, not silently rename.
+writeLines(c('list(id = "wrong", label = "X", flag_col = "C",',
+             '     gates = c("age_at_index"), params = list())'),
+           file.path(tmp, "probe", "cohort.R"))
+throws(cohort_specs(tmp), "an id that disagrees with its folder is rejected")
 throws(cohort_specs(file.path(tempdir(), "definitely_absent")),
-       "a missing cohorts/ directory is rejected")
-ok(!any(grepl("ELIG_COH_FINAL", c(
-     sql_index_sel(R$ndmm, CFG), sql_cohort(bind_lot1_aliases(R$ndmm), CFG)))),
-   "NDMM's generated SQL never reads ELIG_COH_FINAL")
-
-# =============================================================================
-section("equivalence with today's pipeline (Phase 1 must be a no-op)")
-
-ov <- R$overall
-ok(identical(unname(vapply(ov$resolved_gates, `[[`, character(1), "anchor")),
-             rep("index", length(ov$resolved_gates))),
-   "Overall has only index-anchored gates")
-ok(!needs_lot1(ov), "Overall does not require the LOT1 flag tables")
-ok(grepl("row_number() OVER (PARTITION BY PATID ORDER BY INDEX_DATE)",
-         sql_index_sel(ov, CFG), fixed = TRUE),
-   "Overall reproduces step 24's earliest-qualifying-index window function")
-# The 10 predicates of build_criteria_catalog() + the step-1 index gate.
-todays_overall <- c(
-  "(f.inpt_qual = 1 OR f.outpt2_60 = 1)", "f.AGE_INDEX_YR >= 18",
-  "f.CE_b = 1", "f.CE_f = 1", "f.MM_bl_agents = 0", "f.MM_FU_agents = 1",
-  "f.MM_baseline_diag = 0", "f.OTHER_MALIGN_FLAG = 0", "f.PREGNANT_FLAG = 0",
-  "f.CLINTRIAL_BASELINE = 0 AND f.CLINTRIAL_FOLLOWUP = 0")
-ok(identical(unname(vapply(ov$resolved_gates, `[[`, character(1), "predicate")),
-             todays_overall),
-   "Overall's predicates match pipeline_steps.R step 24 exactly, in order")
-
-nd <- bind_lot1_aliases(R$ndmm)
-nd_lot1 <- Filter(function(g) identical(g$anchor, "lot1"), nd$resolved_gates)
-ok(identical(unname(vapply(nd_lot1, `[[`, character(1), "predicate")), c(
-     "l1.LOT1_START_DT IS NOT NULL",
-     "l1.LOT1_START_DT >= date('2017-01-01')",
-     "n.CE_pre_lot1_12mo = 1", "n.CE_lot1_3mo_fu = 1", "n.NO_BELANTAMAB = 1",
-     "n.NO_PRIOR_MM_TX = 1", "n.NO_OTHER_CANCER_PRE_LOT1 = 1",
-     "n.NO_PREGNANCY = 1")),
-   "NDMM's LOT1 predicates match 06_ndmm_dashboard.R's NDMM_PATIDS filter")
-ok(setequal(setdiff(nd$gates, ov$gates),
-            c("has_lot1", "lot1_from", "ce_pre_lot1_12mo", "ce_fu_lot1_3mo",
-              "no_belantamab", "no_prior_mm_tx", "no_other_cancer_pre_lot1",
-              "no_pregnancy_study")),
-   "NDMM = Overall's gate set plus the seven documented additions and has_lot1")
-
-# ---------------------------------------------------------------------------
-# fu_mm_agents vs has_lot1 -- these are NOT the same criterion.
-#   fu_mm_agents : any cl_mma_codelist claim in follow-up, NO class filter
-#                  (pipeline_steps.R:723) -- steroids count.
-#   has_lot1     : a LOT1 regimen start, which 02_lot1.R:678 derives as
-#                  min(MAP_START_DT) WHERE MAP_MED_CLASS <> 'STEROID'.
-# A steroid-only follow-up satisfies the first and not the second. Overall
-# keeps that patient; NDMM cannot (no LOT1 anchor to hang its gates on).
-ok(identical(REG$fu_mm_agents$anchor, "index") &&
-   identical(REG$has_lot1$anchor, "lot1"),
-   "fu_mm_agents and has_lot1 are distinct gates at distinct anchors")
-ok("fu_mm_agents" %in% SPECS$overall$gates && !("has_lot1" %in% SPECS$overall$gates),
-   "Overall requires a treatment start but NOT a LOT1 regimen start")
-ok(all(c("fu_mm_agents", "has_lot1") %in% SPECS$ndmm$gates),
-   "NDMM requires both: a treatment start AND a LOT1 anchor")
-nd_ids <- unname(vapply(nd$resolved_gates, `[[`, character(1), "id"))
-ok(which(nd_ids == "has_lot1") < which(nd_ids == "lot1_from"),
-   "has_lot1 is evaluated before any gate that reads LOT1_START_DT")
+       "a root with no cohort folders is rejected")
 
 # =============================================================================
 section("index-gate drift between the two files")
@@ -379,6 +317,7 @@ ok(length(need_ov$lot1_flags) == 0L,
    "an Overall-only run requires no LOT1 columns at all")
 
 # =============================================================================
-cat("\n", strrep("-", 52), "\n", sep = "")
-cat(sprintf("%d passed, %d failed\n", .n_pass, .n_fail))
-if (.n_fail > 0L) quit(status = 1L)
+
+
+res <- test_summary("engine")
+if (res[["fail"]] > 0L) quit(status = 1L)

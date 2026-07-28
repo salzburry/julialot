@@ -6,32 +6,48 @@ run: it does not build the Overall cohort and does not read `ELIG_COH_FINAL`.
 Read **[PLAN.md](PLAN.md)** for the design, the equivalence argument, and the two
 upstream changes this assumes.
 
-## Run
+## Layout
 
-One file per cohort, one build script per cohort:
+One folder per cohort. Everything for a cohort is inside its folder.
 
 ```
-cohorts/overall.R  ->  build_overall.R
-cohorts/ndmm.R     ->  build_ndmm.R
-                       build_cohort.R   (either, or both + the shared PLD)
+overall/                      ndmm/
+  cohort.R      definition      cohort.R              definition
+  build.R       entry point     build.R               entry point
+  tests/                        build_lot1_flags.R    LOT1 flag stage
+  README.md                     tests/
+                                README.md
+
+engine/          the shared SQL generator (see the note below)
+build_both.R     both cohorts + one shared PLD
+tests/           engine + cross-cohort invariants
+run_all_tests.R  every suite
 ```
 
 ```sh
-# offline tests (no warehouse, base R only)
-Rscript "Jul 28/tests/test_cohort_specs.R"
+Rscript "Jul 28/run_all_tests.R"                    # 98 assertions, 3 suites
 
-# print the SQL a run would execute
-Rscript "Jul 28/build_ndmm.R" --dry-run
-Rscript "Jul 28/build_ndmm.R" --index-only --dry-run   # stop at the LOT-build input
-Rscript "Jul 28/build_overall.R" --dry-run
-Rscript "Jul 28/build_cohort.R" --cohort=both --dry-run
+Rscript "Jul 28/overall/build.R" --dry-run
+Rscript "Jul 28/ndmm/build.R" --dry-run
+Rscript "Jul 28/ndmm/build.R" --index-only --dry-run # stop at the LOT-build input
+Rscript "Jul 28/build_both.R" --dry-run              # both + the shared PLD
 
-# execute (requires DBI + a connection function; see below)
-COHORT_CONNECT_FN=my_connect Rscript "Jul 28/build_ndmm.R"
+COHORT_CONNECT_FN=my_connect Rscript "Jul 28/ndmm/build.R"   # execute
 ```
 
-Without `COHORT_CONNECT_FN` the script refuses to run outside `--dry-run` — it
+Without `COHORT_CONNECT_FN` a build refuses to run outside `--dry-run` — it
 never opens a connection or writes a table by accident.
+
+### One thing is shared: the engine
+
+`engine/` holds the SQL generator, the gate registry and the runner. It is
+**not** copied into each cohort folder: the cohort *definitions* are separate,
+the SQL is written once. That split is what keeps NDMM's CE / prior-therapy /
+other-cancer definitions from drifting further than they already have.
+
+If you need a folder to be genuinely portable on its own — zip `ndmm/` and hand
+it to someone — copy `engine/` into it and set `COHORT_ENGINE_DIR`. Say the word
+and I'll wire that up permanently.
 
 ## What it produces
 

@@ -2,7 +2,7 @@
 # =============================================================================
 # build_lot1_flags.R -- the LOT1-anchored flag stage, standalone
 # -----------------------------------------------------------------------------
-#   Rscript "Jul 28/build_lot1_flags.R"
+#   Rscript "Jul 28/ndmm/build_lot1_flags.R"
 #
 # Stage 3 of PLAN.md's four. Produces the two tables the NDMM cohort selects
 # from, WITHOUT running a dashboard and WITHOUT an Overall cohort:
@@ -14,12 +14,12 @@
 # Run order for a full NDMM build from scratch:
 #
 #   1. the cohort pipeline through step 23   -> ELIG_COH_ALLFLAGS
-#   2. Rscript "Jul 28/build_ndmm.R" --index-only
+#   2. Rscript "Jul 28/ndmm/build.R" --index-only
 #                                            -> coh_ndmm_index_sel, coh_index_union
 #   3. the LOT build, INPUT_COHORT_TABLE=coh_index_union
 #                                            -> LOT_LONG, MAP_STACKED
 #   4. THIS SCRIPT                           -> LOT1_STARTS, LOT1_FLAGS_ALL
-#   5. Rscript "Jul 28/build_ndmm.R"         -> the cohort + PLD
+#   5. Rscript "Jul 28/ndmm/build.R"         -> the cohort + PLD
 #
 # Steps 1-3 are shared: run them once and BOTH cohorts select from the result.
 #
@@ -27,7 +27,7 @@
 # 06_ndmm_dashboard.R so there is exactly one definition of each.
 # =============================================================================
 
-.root <- local({
+.here <- local({
   fa <- grep("^--file=", commandArgs(FALSE), value = TRUE)
   if (length(fa)) dirname(normalizePath(
     gsub("~+~", " ", sub("^--file=", "", fa[1]), fixed = TRUE))) else getwd()
@@ -35,7 +35,8 @@
 
 # The LOT helper stack. Defaults to the sibling apr_30_2026/ folder; override
 # with APR30_DIR if the pipeline lives elsewhere (e.g. /mnt/code on Domino).
-.apr30 <- Sys.getenv("APR30_DIR", unset = file.path(dirname(.root), "apr_30_2026"))
+.apr30 <- Sys.getenv("APR30_DIR",
+                     unset = file.path(dirname(dirname(.here)), "apr_30_2026"))
 if (!dir.exists(file.path(.apr30, "R")))
   stop("cannot find the LOT helper stack at ", .apr30,
        "/R -- set APR30_DIR to the pipeline folder.", call. = FALSE)
@@ -169,7 +170,7 @@ main <- function() {
     log_msg(sprintf("  %-22s %10s  (%.1f%%)", k, format(summ[[k]], big.mark = ","),
                     100 * summ[[k]] / max(summ$n_rows, 1)))
   log_msg(strrep("=", 60))
-  log_msg("Done. Now run: Rscript \"Jul 28/build_ndmm.R\"")
+  log_msg("Done. Now run: Rscript \"Jul 28/ndmm/build.R\"")
   invisible(summ)
 }
 

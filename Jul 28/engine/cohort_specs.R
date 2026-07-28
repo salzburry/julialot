@@ -276,67 +276,87 @@ gate_registry <- function() list(
 # Adding a cohort = adding a file. Nothing else changes.
 # =============================================================================
 
-COHORT_DIR <- "cohorts"
+# One FOLDER per cohort, each holding everything for that cohort:
+#
+#   overall/          ndmm/
+#     cohort.R          cohort.R              <- the definition (this loader)
+#     build.R           build.R               <- its entry point
+#     tests/            build_lot1_flags.R    <- NDMM also needs the flag stage
+#                       tests/
+#
+# A cohort is discovered by the presence of <folder>/cohort.R. Adding a cohort
+# is adding a folder; no engine file changes.
+#
+# The engine itself (this file, cohort_sql.R, cohort_run.R) is SHARED at
+# Jul 28/engine/ rather than copied into each folder -- the cohort DEFINITIONS
+# are separate, the SQL generator is written once. If a folder ever needs to be
+# genuinely portable on its own, copy engine/ into it and set COHORT_ENGINE_DIR.
+COHORT_FILE <- "cohort.R"
 
-# Locate cohorts/ relative to this file, so sourcing works from any wd.
-default_cohort_dir <- function() {
+# Locate the Jul 28 root (the folder holding the cohort folders).
+default_cohort_root <- function() {
   here <- tryCatch(dirname(normalizePath(sys.frame(1)$ofile)),
                    error = function(e) NULL)
-  cand <- c(if (!is.null(here)) file.path(dirname(here), COHORT_DIR),
-            file.path(getwd(), COHORT_DIR),
-            file.path(dirname(getwd()), COHORT_DIR))
-  hit <- Filter(dir.exists, cand)
+  cand <- c(if (!is.null(here)) dirname(here),   # engine/ -> root
+            getwd(), dirname(getwd()))
+  hit <- Filter(function(d) length(Sys.glob(file.path(d, "*", COHORT_FILE))) > 0, cand)
   if (!length(hit))
-    stop("cannot locate the ", COHORT_DIR, "/ directory (looked in: ",
+    stop("cannot locate any <cohort>/", COHORT_FILE, " (looked in: ",
          paste(cand, collapse = ", "), ")", call. = FALSE)
   hit[1]
 }
 
-# Load every cohort file. Each file's last expression IS its spec (a list), so
-# a cohort definition is a plain data literal with no registration side-effects
-# -- it can be read, diffed and reviewed on its own.
-cohort_specs <- function(dir = NULL) {
-  dir <- dir %||% .COHORT_DIR_CACHE %||% default_cohort_dir()
-  files <- sort(list.files(dir, pattern = "\\.R$", full.names = TRUE))
+# Load every cohort folder. Each cohort.R's last expression IS its spec (a
+# list), so a definition is a plain data literal with no registration
+# side-effects -- readable, diffable and reviewable on its own.
+cohort_specs <- function(root = NULL) {
+  root  <- root %||% .COHORT_ROOT_CACHE %||% default_cohort_root()
+  files <- sort(Sys.glob(file.path(root, "*", COHORT_FILE)))
   if (!length(files))
-    stop("no cohort definitions found in ", dir, call. = FALSE)
+    stop("no <cohort>/", COHORT_FILE, " found under ", root, call. = FALSE)
 
   specs <- lapply(files, function(f) {
     s <- tryCatch(source(f, local = new.env())$value,
                   error = function(e)
-                    stop("failed to load cohort file ", basename(f), ": ",
-                         conditionMessage(e), call. = FALSE))
+                    stop("failed to load ", basename(dirname(f)), "/",
+                         basename(f), ": ", conditionMessage(e), call. = FALSE))
     if (!is.list(s) || is.null(s$id))
-      stop("cohort file ", basename(f), " must evaluate to a spec list with an ",
-           "`id` field as its final expression.", call. = FALSE)
-    s$source_file <- basename(f)
+      stop(basename(dirname(f)), "/", basename(f), " must evaluate to a spec ",
+           "list with an `id` field as its final expression.", call. = FALSE)
+    s$folder      <- basename(dirname(f))
+    s$source_file <- file.path(s$folder, basename(f))
+    # The folder name IS the cohort id. Anything else makes "which folder builds
+    # this cohort?" a lookup instead of an answer.
+    if (!identical(s$folder, s$id))
+      stop("cohort id '", s$id, "' does not match its folder '", s$folder,
+           "'. Rename one so they agree.", call. = FALSE)
     s
   })
 
   ids <- vapply(specs, `[[`, character(1), "id")
   if (anyDuplicated(ids))
-    stop("duplicate cohort id(s) across cohort files: ",
+    stop("duplicate cohort id(s): ",
          paste(unique(ids[duplicated(ids)]), collapse = ", "), call. = FALSE)
 
-  # Explicit `order` (not filename order) drives multi-cohort runs, so the PLD's
-  # column order and the step order are stable however the files are named.
+  # Explicit `order` (not folder name) drives multi-cohort runs, so the PLD's
+  # column order and the step order are stable however the folders are named.
   ord <- order(vapply(specs, function(s) as.integer(s$order %||% 100L), integer(1)),
                ids)
   stats::setNames(specs[ord], ids[ord])
 }
 
-# Set once by an entry point that already knows its own directory; avoids
-# re-deriving the path on every cohort_specs() call.
-.COHORT_DIR_CACHE <- NULL
-set_cohort_dir <- function(dir) {
-  if (!dir.exists(dir)) stop("no such cohort directory: ", dir, call. = FALSE)
-  .COHORT_DIR_CACHE <<- dir
-  invisible(dir)
+.COHORT_ROOT_CACHE <- NULL
+set_cohort_root <- function(root) {
+  if (!length(Sys.glob(file.path(root, "*", COHORT_FILE))))
+    stop("no <cohort>/", COHORT_FILE, " under: ", root, call. = FALSE)
+  .COHORT_ROOT_CACHE <<- root
+  invisible(root)
 }
 
 # Report where two cohorts' index-anchored gates differ. Separate files mean the
 # lists CAN drift; this makes drift visible instead of silent. Used by the tests
 # and printed by the build so an unintended divergence is caught at review.
+# (Separate FOLDERS make this more important, not less.)
 index_gate_diff <- function(a, b, reg = gate_registry()) {
   idx <- function(s) Filter(function(g) identical(reg[[g]]$anchor, "index"), s$gates)
   ga <- idx(a); gb <- idx(b)
