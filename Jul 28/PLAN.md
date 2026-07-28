@@ -1,7 +1,7 @@
 # Cohort build codes: Overall + NDMM, one flag-driven PLD
 
 **Date:** 2026-07-28
-**Status:** proposal + working selection layer (Phase 1 code in this folder, tested offline)
+**Status:** Phases 1–2 implemented and tested offline; not yet run against the warehouse
 
 ---
 
@@ -248,28 +248,89 @@ count. Same numbers or it doesn't ship.
 
 ---
 
-## 6. Two upstream changes this assumes
+## 6. The two upstream changes — DONE
 
-Neither is in this folder — both touch existing pipeline code and should be a
-separate, reviewed change. Both are small.
+Both are now made. One turned out to need no pipeline code change at all.
 
-**(a) Lift the LOT1-anchored flag build out of the dashboard.**
-`build_ndmm_flags()` (`06_ndmm_dashboard.R:622`) moves to its own script, and
-its `FROM ELIG_COH_FINAL` becomes `FROM coh_index_union`. It must also **carry
-`INDEX_DATE` alongside `PATID`** — today it's PATID-keyed only, because
-`ELIG_COH_FINAL` is already one row per patient. Rename the output
-`LOT1_FLAGS_ALL`: nothing about those flags is NDMM-specific, and the name is
-part of why they were never reused.
+### (a) The LOT1 flag build is out of the dashboard
 
-**(b) Point the LOT build at the union view.**
-`02_lot1.R` / `03_lot2_5.R` read `ELIG_COH_FINAL` via `FINAL_TABLE_NAME`. Repoint
-that to `coh_index_union` and emit `LOT1_STARTS` keyed by
-`(PATID, INDEX_DATE)`. Since the union is currently the same row set, this is
-behaviour-preserving.
+`build_ndmm_flags()` and its seven supporting builders moved from
+`06_ndmm_dashboard.R` into **`apr_30_2026/R/lot1_flags.R`**, a pipeline stage
+shared by two consumers: the dashboard (unchanged behaviour) and the new
+standalone `build_lot1_flags.R`. The dashboard lost ~640 lines and keeps
+back-compat aliases, so the ~20 downstream references to `NDMM_*` names still
+resolve.
 
-**(c) Minor, already known:** `NDMM_PRE_LOT1_DAYS` is hard-coded `365L` at
-`06_ndmm_dashboard.R:89`. `cohort_explorer/ANALYTIC_COHORT.md` already flags this
-as a one-line `Sys.getenv()` lift.
+Renamed `NDMM_*` → `LOT1_*`: nothing about "12-month CE before 1L start" or "no
+belantamab in any line" is NDMM-specific. They are IE criteria anchored at
+`LOT1_START_DT`, and the misnomer is a good part of why they were never reused.
+The persisted table is now `LOT1_FLAGS_ALL`.
+
+Two deliberate generalizations; everything else is character-for-character the
+same SQL (verified by normalized diff against the pre-change file):
+
+1. **The patient input is a parameter.** `FROM ELIG_COH_FINAL` became
+   `FROM {patient_input}`. Pass `coh_index_union` and the flags build with no
+   Overall cohort ever selected. Default is unchanged.
+2. **Views are keyed by `(PATID, INDEX_DATE)`.** The original could key on
+   PATID because `ELIG_COH_FINAL` is already one row per patient. A union over
+   cohorts that pick *different* index dates for the same patient would be
+   silently conflated by a PATID-only key. The index-DEPENDENT scans (the two
+   pre-LOT1 windows) now carry the pair; the index-INDEPENDENT ones
+   (belantamab = any line, pregnancy = whole study period) stay at PATID grain
+   deliberately, since adding INDEX_DATE there would only duplicate rows.
+
+Two fixes fell out of the move:
+
+- **Materialization order.** `LOT1_STARTS` is now materialized *before* the four
+  claim scans rather than never — every scan joins it. A repoint only affects
+  views created after it, so doing this late would leave the flag view on the
+  old plan.
+- **Fan-out in the pregnancy scan.** It joined `LOT1_STARTS` directly in four
+  places; once that table can hold >1 row per patient, those joins would
+  multiply claim rows before the `DISTINCT`. Now joins a `cand` CTE
+  (`SELECT DISTINCT PATID`). Same answer, no fan-out.
+
+`NDMM_PRE_LOT1_DAYS` is also no longer hard-coded `365L` — it reads the env var,
+the one-line lift `cohort_explorer/ANALYTIC_COHORT.md` flagged. Default unchanged.
+
+### (b) The LOT build needed no code change
+
+PLAN originally assumed `02_lot1.R` had to be edited. It does not:
+**`INPUT_COHORT_TABLE` already parameterises the LOT build's input**
+(`config_lot.R:33`, default `ELIG_COH_FINAL`).
+
+So the only requirement is that `coh_index_union` be a *drop-in* for
+`ELIG_COH_FINAL`. `lot_patient_input` (`02_lot1.R:278`) reads `PATID`,
+`INDEX_DATE`, `ENDDATE`, `ENDDATE_CE`, `DEATH_DT`, `GDR_CD`, `YRDOB`,
+`AGE_INDEX_YR`, `FU_DAYS`, `FU_DAYS_CE` — **step 23 already emits every one of
+them.** The union view now projects the full flag row instead of just the key
+pair, and the change is a config setting:
+
+```
+INPUT_COHORT_TABLE=coh_index_union
+```
+
+`LOT1_STARTS` likewise needs no LOT change: it is derived from `LOT_LONG`
+(`LOT_NUM = 1`) joined back to the patient input, inside the flag stage.
+
+### Run order
+
+`--index-only` exists to break the bootstrap: the LOT build consumes the union
+view, but the membership views consume flags that only exist after the LOT build
+has run.
+
+```
+1. cohort pipeline through step 23              -> ELIG_COH_ALLFLAGS
+2. build_ndmm.R --index-only                    -> coh_ndmm_index_sel, coh_index_union
+3. LOT build, INPUT_COHORT_TABLE=coh_index_union -> LOT_LONG, MAP_STACKED
+4. build_lot1_flags.R                           -> LOT1_STARTS, LOT1_FLAGS_ALL
+5. build_ndmm.R                                 -> the cohort + PLD
+```
+
+Steps 1–3 are shared: run them once and **both** cohorts select from the result.
+Overall alone needs only step 1 — it has no LOT1-anchored gates, so
+`build_overall.R` never touches the LOT stack.
 
 ---
 
@@ -314,7 +375,9 @@ confirmation.)
   aimed at the Shiny app, sourced from `NDMM_FLAGS_ALL` and `ELIG_COH_FINAL`. Once
   `COHORT_PLD` exists, `make_analytic_csv.R` should read it instead of
   re-projecting — otherwise there are two flagged supersets to keep in sync.
-- **Not yet run against the warehouse.** Everything here is tested offline as
+- **Not yet run against the warehouse.** This is the main caveat on Phase 2: the
+  lifted SQL is verified by normalized diff against the original, and the R
+  parses, but nothing has executed. Everything here is tested offline as
   config → SQL text (49 assertions). The SQL has not executed against Databricks;
   the row-count acceptance in §5 is the gate for that.
 
@@ -325,9 +388,9 @@ confirmation.)
 | Phase | Work | Risk |
 |---|---|---|
 | 1 | This folder: spec + selection layer, `--dry-run` reviewed | none (no writes) |
-| 2 | Upstream changes (a) + (b); run `--cohort=both`; assert §5 row counts | low — equivalence-tested |
+| 2 | ~~Upstream changes (a) + (b)~~ **done**; still to do: run against the warehouse and assert §5 row counts | low — equivalence-tested |
 | 3 | Persist `COHORT_PLD`; repoint `07_combined_dashboard.R` at it | low |
-| 4 | Strip cohort logic from `06_ndmm_dashboard.R`; it becomes a reader | medium — biggest diff |
+| 4 | ~~Strip cohort logic from `06_ndmm_dashboard.R`~~ **done in Phase 2** (−640 lines); still to do: have it read `COHORT_PLD` rather than rebuild | low |
 | 5 | Point `cohort_explorer` at `COHORT_PLD`; retire the duplicate projection | low |
 | 6 | Reconcile `jun_21_2026/studies/*.yml` with the registry (drop `base:`) | none |
 
@@ -349,10 +412,11 @@ report. 4–6 are cleanup and can wait.
 | `R/cohort_sql.R` | Spec → Spark SQL: index selection, union, membership, PLD, attrition |
 | `R/cohort_run.R` | Shared engine: config, schema guard, execution, reporting |
 | `R/bootstrap.R` | Path resolution + source order for the entry points |
-| `tests/test_cohort_specs.R` | 69 offline assertions — no warehouse needed |
+| `build_lot1_flags.R` | The LOT1-anchored flag stage, standalone (§6a) |
+| `tests/test_cohort_specs.R` | 75 offline assertions — no warehouse needed |
 
 ```
-Rscript "Jul 28/tests/test_cohort_specs.R"           # 69 passed, 0 failed
+Rscript "Jul 28/tests/test_cohort_specs.R"           # 75 passed, 0 failed
 Rscript "Jul 28/build_ndmm.R" --dry-run              # print the SQL, touch nothing
 ```
 

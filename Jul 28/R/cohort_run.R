@@ -27,8 +27,9 @@ parse_args <- function(argv = commandArgs(trailingOnly = TRUE)) {
     hit <- grep(paste0("^", flag, "="), argv, value = TRUE)
     if (length(hit)) sub(paste0("^", flag, "="), "", hit[1]) else default
   }
-  list(cohort  = tolower(get1("--cohort", "")),
-       dry_run = "--dry-run" %in% argv)
+  list(cohort     = tolower(get1("--cohort", "")),
+       dry_run    = "--dry-run"    %in% argv,
+       index_only = "--index-only" %in% argv)
 }
 
 select_specs <- function(which_cohort, all = cohort_specs()) {
@@ -154,6 +155,20 @@ run_build <- function(cohort = NULL, argv = commandArgs(trailingOnly = TRUE)) {
   }
   cat("\n", strrep("-", 72), "\n", sep = "")
   report_index_gate_drift(plan$specs)
+
+  # --index-only: stop after the union view. Needed to break the bootstrap
+  # ordering -- the LOT build consumes coh_index_union, but the membership
+  # views consume the LOT1 flags that only exist once the LOT build and the
+  # flag stage have run. So: index-only -> LOT build -> flag stage -> full run.
+  if (isTRUE(args$index_only)) {
+    keep <- seq_len(which(vapply(plan$steps, `[[`, character(1), "name") == "index_union"))
+    plan$steps <- plan$steps[keep]
+    plan$attrition <- list()
+    cat("--index-only: stopping after ", sql_obj(cfg, "index_union"),
+        ". Next: run the LOT build with INPUT_COHORT_TABLE=",
+        sub("^.*\\.", "", sql_obj(cfg, "index_union")), ", then ",
+        "build_lot1_flags.R, then re-run without --index-only.\n", sep = "")
+  }
   cat(strrep("=", 72), "\n", sep = "")
 
   if (args$dry_run) {

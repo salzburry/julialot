@@ -86,16 +86,27 @@ sql_index_sel <- function(spec, cfg) {
 # FINAL_TABLE_NAME and neither cohort has to run the other's build.
 sql_index_union <- function(specs, cfg) {
   arms <- vapply(specs, function(s) paste0(
-    "  SELECT PATID, INDEX_DATE FROM ", sql_obj(cfg, paste0(s$id, "_index_sel"))),
+    "    SELECT PATID, INDEX_DATE FROM ", sql_obj(cfg, paste0(s$id, "_index_sel"))),
     character(1))
   paste0(
     "CREATE OR REPLACE TEMPORARY VIEW ", sql_obj(cfg, "index_union"), " AS\n",
-    "-- Distinct (PATID, INDEX_DATE) across every requested cohort. This is the\n",
-    "-- LOT build's input. Cohorts that agree on a patient's index collapse to\n",
+    "-- Distinct (PATID, INDEX_DATE) across every requested cohort, projected back\n",
+    "-- to the full flag row. Cohorts that agree on a patient's index collapse to\n",
     "-- one row, so the LOT build runs once for the common case.\n",
-    "SELECT DISTINCT PATID, INDEX_DATE FROM (\n",
-    paste(arms, collapse = "\n  UNION ALL\n"), "\n",
-    ")"
+    "--\n",
+    "-- This is a DROP-IN for ELIG_COH_FINAL as the LOT build's input: it carries\n",
+    "-- every column lot_patient_input reads (02_lot1.R:278) -- PATID, INDEX_DATE,\n",
+    "-- ENDDATE, ENDDATE_CE, DEATH_DT, GDR_CD, YRDOB, AGE_INDEX_YR, FU_DAYS,\n",
+    "-- FU_DAYS_CE -- all of which step 23 already emits. So no LOT code changes:\n",
+    "--   INPUT_COHORT_TABLE=", sub("^.*\\.", "", sql_obj(cfg, "index_union")), "\n",
+    "WITH sel AS (\n",
+    paste(arms, collapse = "\n    UNION ALL\n"), "\n",
+    "),\n",
+    "pairs AS (SELECT DISTINCT PATID, INDEX_DATE FROM sel)\n",
+    "SELECT f.*\n",
+    "FROM pairs u\n",
+    "INNER JOIN ", cfg$index_flags, " f\n",
+    "        ON f.PATID = u.PATID AND f.INDEX_DATE = u.INDEX_DATE"
   )
 }
 
@@ -190,12 +201,10 @@ sql_pld <- function(specs, cfg) {
     "-- The shared patient-level dataset: every criterion as a COLUMN, plus one\n",
     "-- membership column per cohort. Built once, read by every downstream job.\n",
     "SELECT\n",
-    "  f.*,\n",
+    "  u.*,\n",
     lot1_cols,
     paste(cols, collapse = ",\n"), "\n",
     "FROM ", sql_obj(cfg, "index_union"), " u\n",
-    "INNER JOIN ", cfg$index_flags, " f\n",
-    "        ON f.PATID = u.PATID AND f.INDEX_DATE = u.INDEX_DATE\n",
     lot1_join,
     paste(joins, collapse = "\n")
   )
