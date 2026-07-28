@@ -183,15 +183,28 @@ So a patient whose only follow-up MM agents are steroids **satisfies
 - **NDMM** cannot use them: every NDMM gate is anchored at `LOT1_START_DT`, so
   with no LOT1 there is nothing to anchor to.
 
-Today NDMM enforces this with a **silent `INNER JOIN NDMM_LOT1_STARTS`**
-(`06_ndmm_dashboard.R:658`). It is not one of the six documented filters, so the
-patients it drops **never appear in the NDMM attrition**. Here it is a declared
-gate and the joins are `LEFT`, so the funnel reports the drop. Identical row set
-— `LEFT JOIN` + `IS NOT NULL` is the same as `INNER JOIN` — just visible.
+**The existing build handles this correctly.** NDMM applies the restriction with
+an `INNER JOIN NDMM_LOT1_STARTS` (`06_ndmm_dashboard.R:658`) — the right
+semantic, since a patient with no LOT1 has no anchor for any NDMM criterion —
+and it **already reports it**: `ndmm_counts()` computes `elig_lot1` at `:806`,
+`build_ndmm_overview_card()` renders it at `:900` as *"+ has LOT1 start ≥
+2017-01-01 in LOT_LONG"*, and it is logged at `:1425`. No patient is wrongly
+included or excluded, and the drop is not hidden.
 
-That also makes it a real question for the study team rather than an accident of
-join type: *is steroid-only follow-up meant to count as first-line treatment?*
-Overall says yes today, NDMM says no, and neither says so out loud.
+The only change here is **granularity**. `NDMM_LOT1_STARTS` bakes the cutoff into
+its own definition (`:207`: `WHERE LOT_NUM = 1 AND LOT_START_DT >=
+NDMM_LOT1_FROM`), so that single reported row fuses two distinct criteria:
+
+- *no non-steroid regimen at all* → `has_lot1`
+- *first regimen predates the cutoff* → `lot1_from`
+
+Declaring them separately gives each its own funnel row. Same patients, same
+final count (`LEFT JOIN` + `IS NOT NULL` is identical to `INNER JOIN`) — two
+numbers instead of one.
+
+It also puts a question to the study team that is currently implicit in a
+codelist class filter rather than in the cohort spec: *is steroid-only follow-up
+meant to count as first-line treatment?* Overall says yes, NDMM says no.
 
 **Decoupling is not redefining.** The two index-gate lists are *currently
 identical* — that is a fact about the study definition, not a code dependency.
@@ -212,7 +225,8 @@ This is the property that makes the change safe to ship, and it's tested:
 - NDMM's LOT1 predicates are identical to the `_ndmm_patids` filter
   (`06_ndmm_dashboard.R:745`), plus `has_lot1`, which restates that script's
   existing `INNER JOIN NDMM_LOT1_STARTS` as a countable predicate — same row
-  set (§4a).
+  set. `has_lot1` restates the existing INNER JOIN as a predicate and splits the
+  cutoff out of it — same patients, one extra funnel row (§4a).
 - Because both specs' index gates are currently identical, `coh_index_union` is
   **the same row set as today's `ELIG_COH_FINAL`** — so the LOT build's input is
   unchanged and there is **no cost increase**. (Cost grows only in proportion to
@@ -265,7 +279,8 @@ own:
 Also: **should NDMM exclude clinical-trial patients?** It does today, purely by
 inheritance — that was never an NDMM decision. And per §4a: **does steroid-only
 follow-up count as a first-line treatment start?** Overall says yes, NDMM says
-no, and the disagreement is currently expressed as a join type.
+no — a real divergence, though it currently lives in a codelist class filter
+rather than in either cohort's stated definition.
 
 I've kept all of them ON, so Phase 1 reproduces current numbers. But these are
 now one-line spec edits instead of archaeology, and they're worth putting in

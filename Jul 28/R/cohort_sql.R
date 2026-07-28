@@ -120,10 +120,10 @@ sql_cohort <- function(spec, cfg) {
 
   paste0(head,
     "-- Index selection AND-ed with the LOT1-anchored gates.\n",
-    "-- LEFT JOINs, deliberately: 'has a LOT1 start' is a declared GATE\n",
-    "-- (has_lot1), not a join side-effect, so patients with no 1L regimen are\n",
-    "-- dropped by a predicate the attrition funnel can count. Same row set as an\n",
-    "-- INNER JOIN -- visible instead of silent.\n",
+    "-- LEFT JOINs so 'has a LOT1 start' is a declared GATE (has_lot1) rather than\n",
+    "-- join semantics. The existing build applies and reports this correctly; the\n",
+    "-- gain here is only that has_lot1 and lot1_from get separate funnel rows\n",
+    "-- instead of one fused row. Same row set as an INNER JOIN.\n",
     "SELECT s.PATID, s.INDEX_DATE\n",
     "FROM ", sel, " s\n",
     "LEFT JOIN ", cfg$lot1_starts, " l1\n",
@@ -230,8 +230,8 @@ sql_attrition <- function(spec, cfg) {
       from <- paste0("FROM ", cfg$index_flags, " f")
       where <- .and_block(upto, "         ")
     } else {
-      # LEFT JOINs so the has_lot1 arm reports the no-LOT1 drop instead of
-      # hiding it in the join, and so its denominator is the selected-index set.
+      # LEFT JOINs so the has_lot1 arm can count the no-LOT1 drop on its own,
+      # separately from the lot1_from cutoff, against the selected-index set.
       from <- paste0(
         "FROM ", sql_obj(cfg, paste0(spec$id, "_index_sel")), " s\n",
         "       LEFT JOIN ", cfg$lot1_starts, " l1 ON l1.PATID = s.PATID AND l1.INDEX_DATE = s.INDEX_DATE\n",

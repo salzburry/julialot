@@ -185,10 +185,13 @@ gate_registry <- function() list(
     source_col = "LOT1_START_DT",
     note = paste(
       "STRICTLY STRONGER than fu_mm_agents, which counts any MM agent including",
-      "steroids. Today this is enforced as a silent INNER JOIN in",
-      "06_ndmm_dashboard.R:658 and is absent from the documented six-filter list,",
-      "so the patients it drops never appear in the NDMM attrition. Declared as a",
-      "gate here so the funnel reports it. Same row set, visible instead of silent.")
+      "steroids. The existing build already applies this correctly (INNER JOIN on",
+      "NDMM_LOT1_STARTS, 06_ndmm_dashboard.R:658) AND already reports it",
+      "(ndmm_counts()$elig_lot1 at :806, rendered at :900). The only change here is",
+      "granularity: NDMM_LOT1_STARTS bakes the >= NDMM_LOT1_FROM cutoff into its",
+      "definition (:207), so that one reported row fuses 'has a non-steroid",
+      "regimen' with 'started on/after the cutoff'. Splitting them into has_lot1 +",
+      "lot1_from separates the two counts. Same patients either way.")
   ),
 
   lot1_from = list(

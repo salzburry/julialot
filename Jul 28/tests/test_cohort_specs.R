@@ -217,11 +217,11 @@ ndc <- plan$steps[[which(step_names == "ndmm_cohort")]]$sql
 ok(grepl("LEFT JOIN wk.LOT1_STARTS", ndc, fixed = TRUE) &&
    grepl("LEFT JOIN wk.LOT1_FLAGS_ALL", ndc, fixed = TRUE),
    "NDMM's membership view LEFT-joins the LOT1 tables")
-# The whole point: no-LOT1 patients must be dropped by a COUNTABLE predicate,
-# not silently by an inner join.
+# no-LOT1 patients are dropped by a COUNTABLE predicate rather than by join
+# semantics -- same row set, but has_lot1 and lot1_from can be counted apart.
 ok(!grepl("INNER JOIN wk.LOT1", ndc, fixed = TRUE) &&
    grepl("AND l1.LOT1_START_DT IS NOT NULL", ndc, fixed = TRUE),
-   "the no-LOT1 drop is an explicit predicate, not a join side-effect")
+   "the no-LOT1 drop is an explicit predicate, separable from the cutoff")
 
 pld <- plan$steps[[which(step_names == "pld")]]$sql
 ok(grepl("AS COHORT_OVERALL", pld, fixed = TRUE) &&
@@ -260,10 +260,10 @@ ok(length(gregexpr("AND ", first_arm, fixed = TRUE)[[1]]) <
    "funnel arms are cumulative (later arms carry more predicates)")
 ok(grepl("wk.coh_ndmm_index_sel", af, fixed = TRUE),
    "LOT1-anchored funnel arms count off the selected-index set, not raw candidates")
-ok(grepl("_has_lot1", af, fixed = TRUE),
-   "the funnel reports the no-LOT1 drop as its own step (invisible today)")
+ok(grepl("_has_lot1", af, fixed = TRUE) && grepl("_lot1_from", af, fixed = TRUE),
+   "has_lot1 and lot1_from get SEPARATE funnel rows (one fused row today)")
 ok(!grepl("INNER JOIN", af, fixed = TRUE),
-   "funnel arms LEFT-join, so the has_lot1 arm measures a real drop")
+   "funnel arms LEFT-join, so has_lot1 is counted by its own predicate")
 
 # =============================================================================
 section("schema guard inputs")
