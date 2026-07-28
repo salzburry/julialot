@@ -366,6 +366,38 @@ solo_u <- solo_u[[which(vapply(solo_u, `[[`, character(1), "name") == "index_uni
 ok(!is.null(solo_u$check),
    "a single-cohort run still verifies one index per PATID")
 
+# ---- criterion provenance (Phase 4) -----------------------------------------
+# A flag whose criterion never ran passes EVERY patient, which in the data is
+# indistinguishable from a criterion that excluded nobody. LOT1_FLAGS_RUN
+# records which ran; unevaluated_gates() is the pure decision, so it is testable
+# without a warehouse.
+meta_all_ok <- data.frame(
+  criterion = c("belantamab", "prior_mm_tx", "other_cancer", "pregnancy"),
+  evaluated = c(TRUE, TRUE, TRUE, TRUE), stringsAsFactors = FALSE)
+ok(identical(unevaluated_gates(R, meta_all_ok), character(0)),
+   "nothing is flagged when every criterion was evaluated")
+
+meta_skipped <- transform(meta_all_ok,
+  evaluated = c(TRUE, FALSE, TRUE, FALSE))       # prior_mm_tx + pregnancy skipped
+bad <- unevaluated_gates(R, meta_skipped)
+ok(setequal(bad, c("no_prior_mm_tx", "no_pregnancy_study")),
+   "a skipped criterion is traced back to the gate(s) that apply it")
+ok(identical(unevaluated_gates(list(overall = R$overall), meta_skipped),
+             character(0)),
+   "Overall is unaffected -- it applies no LOT1-anchored criterion")
+ok(identical(unevaluated_gates(R, NULL), character(0)) &&
+   identical(unevaluated_gates(R, meta_all_ok[0, ]), character(0)),
+   "absent metadata yields no false positives (it warns elsewhere, not errors)")
+
+# Only the four skippable criteria carry a `criterion` key; the rest cannot be
+# skipped, so claiming otherwise would be a false alarm.
+crit <- vapply(REG, function(g) g$criterion %||% NA_character_, character(1))
+ok(setequal(unname(crit[!is.na(crit)]),
+            c("belantamab", "prior_mm_tx", "other_cancer", "pregnancy")),
+   "exactly the four source-dependent criteria are marked skippable")
+ok(all(vapply(REG[!is.na(crit)], function(g) identical(g$anchor, "lot1"), logical(1))),
+   "all of them are LOT1-anchored (the index flags are built with the cohort)")
+
 # =============================================================================
 section("attrition funnel")
 

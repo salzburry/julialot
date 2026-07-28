@@ -99,6 +99,7 @@ load_cfg <- function(load_project = TRUE) {
     index_flags    = qual(env("INDEX_FLAGS_TABLE", "ELIG_COH_ALLFLAGS")),
     lot1_flags     = qual(env("LOT1_FLAGS_TABLE",  "LOT1_FLAGS_ALL")),
     lot1_starts    = qual(env("LOT1_STARTS_TABLE", "LOT1_STARTS")),
+    lot1_run       = qual(env("LOT1_RUN_TABLE", "LOT1_FLAGS_RUN")),
     # Output
     persist_schema = env("PERSIST_SCHEMA", work),
     pld_table      = env("PLD_TABLE", "COHORT_PLD"),
@@ -163,6 +164,36 @@ assert_source_cols <- function(con, specs, cfg, plan_sql = NULL) {
            ". Refusing to build a cohort from an incomplete flag table.",
            call. = FALSE)
   }
+  invisible(TRUE)
+}
+
+# ---- criterion provenance ---------------------------------------------------
+# A flag whose criterion was never evaluated passes every patient, so a cohort
+# built on it silently omits that criterion. LOT1_FLAGS_RUN records which ran;
+# refuse to apply a gate the record says was skipped.
+#
+# An ABSENT record is a warning, not an error: flags built by the dashboard
+# (which predates the metadata) carry no provenance. Unknown provenance is worth
+# saying out loud; it is not the same as known-bad.
+assert_criteria_evaluated <- function(con, specs, cfg) {
+  meta <- tryCatch(DBI::dbGetQuery(con, paste0(
+    "SELECT criterion, evaluated FROM ", cfg$lot1_run)), error = function(e) NULL)
+  if (is.null(meta)) {
+    if (any(vapply(specs, needs_lot1, logical(1))))
+      warning("no ", cfg$lot1_run, " found, so it cannot be confirmed that every ",
+              "LOT1 criterion was actually evaluated when the flags were built. ",
+              "Rebuild them with build_lot1_flags.R to get that record.",
+              call. = FALSE, immediate. = TRUE)
+    return(invisible(TRUE))
+  }
+  bad <- unevaluated_gates(specs, meta)
+  if (length(bad))
+    stop("these gates are applied but their criterion was NOT evaluated when ",
+         cfg$lot1_flags, " was built: ", paste(bad, collapse = ", "),
+         ". Their flags pass every patient, so the cohort would silently omit ",
+         "them. Rebuild the flags with the source available, or drop the gates ",
+         "from the cohort definition. See ", cfg$lot1_run, ".", call. = FALSE)
+  cat("[preflight] all applied LOT1 criteria were evaluated\n")
   invisible(TRUE)
 }
 
@@ -334,8 +365,10 @@ run_build <- function(cohort = NULL, argv = commandArgs(trailingOnly = TRUE)) {
     }
   }
 
-  assert_source_cols(con, specs, cfg,
-                     plan_sql = vapply(plan$steps, `[[`, character(1), "sql"))
+  plan_sql <- vapply(plan$steps, `[[`, character(1), "sql")
+  assert_source_cols(con, specs, cfg, plan_sql = plan_sql)
+  if (any(grepl(cfg$lot1_flags, plan_sql, fixed = TRUE)))
+    assert_criteria_evaluated(con, specs, cfg)
 
   for (st in plan$steps) {
     cat("[step] ", st$name, " -- ", st$description, "\n", sep = "")

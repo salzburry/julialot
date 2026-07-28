@@ -2,8 +2,8 @@
 
 **Verdict accepted in full. All six findings reproduced.**
 
-**Status: findings 1, 2 and 3 are FIXED (steps 1–3 of the corrected sequence).
-Findings 4–6 remain open, so this folder is still NOT validated and NOT
+**Status: findings 1–4 are FIXED (steps 1–4 of the corrected sequence).
+Findings 5 and 6 remain open, so this folder is still NOT validated and NOT
 production-ready. Nothing has run against the warehouse.**
 
 The single most useful sentence in the review: *the LOT source files being
@@ -184,7 +184,7 @@ rewriting the LOT build. Divergence is rejected, not supported:
 measure from — but `PATID` is the key, and that is now enforced rather than
 assumed.
 
-### 4. [P1] Failed persistence is swallowed — confirmed
+### 4. [P1] Failed persistence is swallowed — ~~confirmed~~ **FIXED**
 
 `.materialize_and_repoint()` (`lot1_flags.R:643`) catches and returns `FALSE`;
 `build_lot1_flags.R:104` ignores the return. A failed write leaves an older
@@ -192,6 +192,30 @@ physical table in place, which the summary reads and reports as this run's
 output. Fail-soft is defensible for a same-session dashboard; not for a durable
 cohort-production stage. Same for unreadable exclusion sources becoming all-pass
 `NO_* = 1` with no persisted record that the criterion was skipped.
+
+#### Fix (step 4)
+
+The fail-soft policy is kept where it is **correct** — the dashboard is a
+same-session reader, its temp views remain valid, and it renders the skip as a
+note — and dropped where it is not.
+
+- **Persistence failure stops the durable stage.** `build_lot1_flags.R` checks
+  both `materialize_*()` results and refuses to continue. It will not print a
+  summary read from a table that an earlier run wrote.
+- **A skipped criterion stops it too**, by default. Its flag passes every
+  patient, which in the data is indistinguishable from a criterion that excluded
+  nobody. `--allow-skipped` is the explicit opt-in for an exploratory build, and
+  the run still warns at the end.
+- **`LOT1_FLAGS_RUN` records what actually ran** — per criterion: the flag
+  column it sets, whether it was evaluated, plus the patient input, `lot1_from`,
+  `pre_lot1_days`, `study_end` and a build timestamp. Written *before* any
+  summary, so the record exists even for a run that then reports skips.
+- **The engine refuses to apply a gate whose criterion was skipped.** Each of the
+  four source-dependent gates carries a `criterion` key; `unevaluated_gates()`
+  (pure, therefore tested) maps the record back to gates, and the run stops
+  rather than building a cohort that silently omits a criterion. Absent metadata
+  is a **warning**, not an error: dashboard-built flags predate the record, and
+  unknown provenance is not the same as known-bad.
 
 ### 5. [P1] The persisted rename breaks consumers — confirmed
 
@@ -225,8 +249,8 @@ Ordered so nothing is built on an unvalidated base:
 1. ~~**Load the real configuration.**~~ **DONE** — see the fix under finding 1.
 2. ~~**Fix the execution path.**~~ **DONE** — see the fix under finding 2.
 3. ~~**Enforce one index per PATID.**~~ **DONE** — see the fix under finding 3.
-4. **Fail closed** on failed persistence and on missing criterion inputs; persist
-   run metadata recording any skipped criterion.
+4. ~~**Fail closed** on failed persistence and on missing criterion inputs.~~
+   **DONE** — see the fix under finding 4.
 5. **Compatibility view** for `NDMM_FLAGS_ALL`.
 6. **Replace the static comparator** with configured SQL snapshots plus
    warehouse `EXCEPT` checks in both directions — the only thing that will

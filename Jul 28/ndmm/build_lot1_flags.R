@@ -58,6 +58,14 @@ if (file.exists(file.path(.apr30, "R", "load_inputs.R"))) {
 # PATIENT_INPUT is the whole point: point it at the union view and no Overall
 # cohort has to exist. It defaults to the union view for that reason -- set it
 # to ELIG_COH_FINAL for the legacy path.
+# A criterion whose source is unreadable is SKIPPED, and its flag then passes
+# every patient -- in the data, indistinguishable from a criterion that excluded
+# nobody. The dashboard fail-softs on that by design (it renders a note and the
+# reader sees it). THIS IS NOT A DASHBOARD: it writes tables another process
+# consumes, so it stops instead. --allow-skipped is the explicit opt-in for an
+# exploratory build, and the skip is recorded in the metadata either way.
+ALLOW_SKIPPED <- "--allow-skipped" %in% commandArgs(trailingOnly = TRUE)
+
 PATIENT_INPUT <- Sys.getenv("LOT1_PATIENT_INPUT", unset = "coh_index_union")
 LOT_LONG      <- Sys.getenv("LOT_LONG_TABLE",     unset = "LOT_LONG")
 MAP_STACKED   <- Sys.getenv("MAP_STACKED_TABLE",  unset = "MAP_STACKED")
@@ -120,7 +128,15 @@ main <- function() {
 
   log_msg("Pulling LOT1 starts (>= ", LOT1_FROM, ") from ", lot_long)
   build_lot1_starts(con, lot_long, patient_input)
-  materialize_lot1_starts(con, run_step)   # before the scans: they all join it
+  # Fail CLOSED. materialize_*() returns FALSE on a refused write and keeps the
+  # temp view -- fine for a same-session dashboard, wrong here: the next process
+  # would read whatever older physical table happened to be sitting there, and
+  # the summary below would report it as this run's output.
+  if (!isTRUE(materialize_lot1_starts(con, run_step)))
+    stop("could not persist ", wrk(LOT1_STARTS_TBL), ". The LOT1 starts exist ",
+         "only as a session temp view, so the next stage would read a stale ",
+         "table or none at all. Check write permission on the work schema.",
+         call. = FALSE)
 
   if (priortx_ok) {
     log_msg("Loading MMA codelist (steroid abbrs excluded)")
@@ -168,7 +184,28 @@ main <- function() {
                    q2_ok_priortx     = priortx_ok,
                    q2_ok_othercancer = othercancer_ok,
                    q2_ok_pregnancy   = preg_ok)
-  materialize_lot1_flags(con, run_step)
+  if (!isTRUE(materialize_lot1_flags(con, run_step)))
+    stop("could not persist ", wrk(LOT1_FLAGS_ALL_TBL), ". Refusing to report ",
+         "success: the flags exist only as a session temp view and any table of ",
+         "that name is from an earlier run. Check write permission on the work ",
+         "schema.", call. = FALSE)
+
+  # Record WHICH criteria actually ran, before any summary is printed. A
+  # consumer can then tell an all-pass flag apart from an unevaluated one.
+  evaluated <- list(belantamab = bela_ok, prior_mm_tx = priortx_ok,
+                    other_cancer = othercancer_ok, pregnancy = preg_ok)
+  n_skipped <- write_lot1_run_metadata(con, evaluated, patient_input)
+
+  if (n_skipped > 0L && !ALLOW_SKIPPED) {
+    skipped <- names(evaluated)[!vapply(names(evaluated),
+                                        function(k) isTRUE(evaluated[[k]]), logical(1))]
+    stop(n_skipped, " criterion/criteria could not be evaluated (",
+         paste(skipped, collapse = ", "), ") because a source table was ",
+         "unreadable. Their flags pass EVERY patient, which is not ",
+         "distinguishable downstream from a criterion that excluded nobody. ",
+         "Fix the source, or re-run with --allow-skipped to build anyway -- the ",
+         "skip is recorded in ", wrk(LOT1_RUN_TBL), " either way.", call. = FALSE)
+  }
 
   # Per-flag prevalence. Not an attrition funnel (these are not applied in any
   # order here) -- just how many candidates each criterion would keep, so a
@@ -189,6 +226,10 @@ main <- function() {
     log_msg(sprintf("  %-22s %10s  (%.1f%%)", k, format(summ[[k]], big.mark = ","),
                     100 * summ[[k]] / max(summ$n_rows, 1)))
   log_msg(strrep("=", 60))
+  if (n_skipped > 0L)
+    log_msg("WARNING: built with ", n_skipped, " SKIPPED criterion/criteria ",
+            "(--allow-skipped). The cohort engine will refuse to apply the ",
+            "corresponding gates; see ", wrk(LOT1_RUN_TBL), ".")
   log_msg("Done. Now run: Rscript \"Jul 28/ndmm/build.R\"")
   invisible(summ)
 }

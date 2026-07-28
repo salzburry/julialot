@@ -1,10 +1,10 @@
 # Cohort build codes: Overall + NDMM, one flag-driven PLD
 
 **Date:** 2026-07-28
-**Status:** ⚠️ **NOT VALIDATED — NOT PRODUCTION-READY.** Review findings 1–3
+**Status:** ⚠️ **NOT VALIDATED — NOT PRODUCTION-READY.** Review findings 1–4
 are **fixed** (the configured cohort is built, the documented run order can
-execute, and multi-index divergence is rejected rather than fanned out).
-Findings 4–6 are open. See **[REVIEW_FINDINGS.md](REVIEW_FINDINGS.md)**
+execute, multi-index divergence is rejected, and persistence/criterion failures
+fail closed with a durable provenance record). Findings 5 and 6 are open. See **[REVIEW_FINDINGS.md](REVIEW_FINDINGS.md)**
 — read it before this document, which still overstates what has been
 established. Nothing has run against the warehouse.
 
