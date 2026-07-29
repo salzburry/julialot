@@ -2,9 +2,14 @@
 
 **Verdict accepted in full. All six findings reproduced.**
 
-**Status: findings 1–5 are FIXED (steps 1–5 of the corrected sequence).
-Finding 6 remains open, so this folder is still NOT validated and NOT
-production-ready. Nothing has run against the warehouse.**
+**Status: all six findings are addressed in code (steps 1–6 of the corrected
+sequence).**
+
+**This folder is still NOT VALIDATED.** Step 6 fixed the comparators *and*
+wrote the check that can settle equivalence — but that check has never run.
+Until `tests/verify_against_legacy.R` comes back empty in both directions on the
+warehouse, there is no evidence about patients, only about SQL text. Do not
+treat a green `run_all_tests.R` as validation; it cannot be.
 
 The single most useful sentence in the review: *the LOT source files being
 byte-identical is valid evidence the LOT algorithms were not edited; it does not
@@ -249,7 +254,7 @@ current.
   `LOT1_REPLACE_LEGACY_TABLE=TRUE` is the explicit opt-in after you have
   looked.
 
-### 6. [P2] Attrition claims are inaccurate — confirmed
+### 6. [P2] Attrition claims are inaccurate — ~~confirmed~~ **FIXED (static half); empirical half now RUNNABLE but UNRUN**
 
 - **Funnel order differs.** Dashboard: `CE_pre_lot1 → NO_BELANTAMAB →
   NO_PRIOR_MM_TX → NO_OTHER_CANCER → CE_lot1_3mo_fu → NO_PREGNANCY`. Mine puts
@@ -264,6 +269,47 @@ current.
 - **The lifted-SQL comparator compares token SETS**, discarding order and
   multiplicity — too permissive to prove semantic equivalence.
 
+#### Fix (step 6)
+
+**The funnel order is now the dashboard's.** `ce_fu_lot1_3mo` moved from fourth
+to fifth in `ndmm/cohort.R`, matching `ndmm_counts()`. The final AND-set is
+order-independent so the cohort is unchanged, but the intermediate attrition
+counts are not — and this folder is meant to reproduce the legacy *report*, not
+merely the legacy cohort.
+
+**Section 3 compares in order**, not with `setequal()`, and additionally asserts
+the generated funnel emits them in that order.
+
+**Section 4 compares token SEQUENCES with multiplicity.** The allowed additions
+are removed from both sides and the remainder must be identical
+element-for-element, with the first divergence reported.
+
+> This immediately caught something the set comparison had hidden: the flag
+> table gained `LOT1_START_DT` as an output column in step 2, and I had
+> documented only *two* generalizations. It is now a third, stated in
+> `lot1_flags.R`'s header and **pinned** by assertions that it is present in the
+> new SELECT list, absent from the old, and occurs exactly once more than before
+> — so it is allowed as a known addition rather than tolerated as noise.
+
+**`tests/verify_against_legacy.R` is the empirical check.** `EXCEPT` in both
+directions, never counts — two different cohorts of the same size pass a count
+check. It compares:
+
+| new | legacy |
+|---|---|
+| `coh_overall_cohort` | `ELIG_COH_FINAL` |
+| `coh_index_union` | `ELIG_COH_FINAL` (the LOT build's input) |
+| `coh_ndmm_cohort` | the six-flag filter over `LOT1_FLAGS_ALL` |
+
+`_ndmm_patids` is a temp view and never persisted, so the legacy NDMM set is
+reconstructed — **derived from the spec's own LOT1 gates**, so it cannot drift
+into comparing the cohort with itself. Non-empty either way reports the count
+and sample PATIDs and exits non-zero, so it works as a release gate. It is named
+`verify_*` so `run_all_tests.R`'s `test_*` glob cannot run it without a
+warehouse and cannot silently skip it either.
+
+**It has not been run.** That is the whole of what is left.
+
 ---
 
 ## Corrected sequence
@@ -277,9 +323,9 @@ Ordered so nothing is built on an unvalidated base:
    **DONE** — see the fix under finding 4.
 5. ~~**Compatibility view** for `NDMM_FLAGS_ALL`.~~ **DONE** — see the fix
    under finding 5.
-6. **Replace the static comparator** with configured SQL snapshots plus
-   warehouse `EXCEPT` checks in both directions — the only thing that will
-   actually establish equivalence.
+6. ~~**Replace the static comparator**~~ **DONE** — see the fix under finding 6.
+   The `EXCEPT` checks exist and are runnable; **running them is the remaining
+   work, and it needs a warehouse.**
 
 Step 1 has landed, so section 2 of `tests/test_equivalence.R` is now sound.
 Sections 3 and 4 are not: `setequal()` cannot see funnel-order changes and the

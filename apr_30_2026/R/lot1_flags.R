@@ -11,8 +11,9 @@
 # anchored at LOT1_START_DT". The NDMM_ naming was an artifact of where they
 # were written, and is why they were never reusable. Renamed LOT1_ here.
 #
-# TWO GENERALISATIONS vs the original (everything else is character-for-
-# character the same SQL):
+# THREE GENERALISATIONS vs the original (everything else is character-for-
+# character the same SQL, verified token-for-token by
+# "Jul 28"/tests/test_equivalence.R section 4):
 #
 #   1. The patient input is a PARAMETER, not hardcoded to ELIG_COH_FINAL.
 #      Pass ELIG_COH_FINAL for the legacy path, or the "Jul 28" union view
@@ -31,6 +32,10 @@
 #      silently. ELIG_COH_FINAL satisfies the invariant by construction (step 24
 #      takes rn = 1); "Jul 28"'s coh_index_union enforces it with a check that
 #      aborts the run. Do not point this at anything that has not.
+#
+#   3. The flag table EXPOSES LOT1_START_DT as an output column, so the
+#      has_lot1 and lot1_from gates can read the anchor directly. An added
+#      column only -- no predicate or grouping changed around it.
 #
 # Requires the LOT stack's helpers: cfg, db_exec, db_q, log_msg (config_lot.R,
 # db_utils_lot.R) and load_codelist_csv (codelists_lot.R).

@@ -453,6 +453,36 @@ ok(grepl("write_lot1_compat_view", stg, fixed = TRUE),
 ok(grepl("tryCatch(\n    write_lot1_compat_view", dash, fixed = TRUE),
    "the dashboard treats a compat-view failure as best-effort")
 
+# ---- the warehouse verifier (Phase 6) ---------------------------------------
+# Everything else in tests/ compares SQL TEXT. This is the script that compares
+# PATIENTS, so its shape is worth locking down even though running it needs a
+# warehouse.
+VERIFY <- file.path(ROOT, "tests", "verify_against_legacy.R")
+ok(file.exists(VERIFY), "the warehouse verifier exists")
+vf <- paste(readLines(VERIFY), collapse = "\n")
+
+ok(grepl("EXCEPT", vf, fixed = TRUE), "it uses EXCEPT")
+ok(grepl("in NEW but not OLD", vf, fixed = TRUE) &&
+   grepl("in OLD but not NEW", vf, fixed = TRUE),
+   "BOTH directions -- one alone proves nothing about set equality")
+# A count check would pass two different cohorts of the same size. Make sure the
+# pass condition is emptiness, not a count comparison.
+ok(!grepl("count(*) AS n_a", vf, fixed = TRUE) &&
+   grepl("except_sql", vf, fixed = TRUE),
+   "the pass condition is an empty difference, not matching counts")
+ok(grepl("quit(status = 1L)", vf, fixed = TRUE),
+   "it exits non-zero on any difference, so it is usable as a release gate")
+ok(grepl("ELIG_COH_FINAL", vf, fixed = TRUE) &&
+   grepl("index_union", vf, fixed = TRUE) &&
+   grepl("ndmm_cohort", vf, fixed = TRUE),
+   "it compares Overall, the LOT build input, and NDMM")
+# The legacy NDMM set must be DERIVED from the spec, not hardcoded, or it drifts
+# the moment a gate changes and silently compares the cohort to itself.
+ok(grepl("active_gates(spec)", vf, fixed = TRUE),
+   "the legacy NDMM filter is derived from the spec's own LOT1 gates")
+ok(grepl("_ndmm_patids is a temp view", vf, fixed = TRUE),
+   "it says why the legacy NDMM set has to be reconstructed at all")
+
 # =============================================================================
 section("attrition funnel")
 

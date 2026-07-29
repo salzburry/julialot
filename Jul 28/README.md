@@ -3,10 +3,11 @@
 Standalone cohort builders, one file per cohort. `build_ndmm.R` is a complete
 run: it does not build the Overall cohort and does not read `ELIG_COH_FINAL`.
 
-> ⚠️ **NOT VALIDATED / NOT PRODUCTION-READY.** Review finding 1 is fixed — the
-> engine now loads `pipeline_inputs.csv` and builds the *configured* cohort — but
-> findings 2–6 are open, including that the documented NDMM run order cannot
-> execute. Read **[REVIEW_FINDINGS.md](REVIEW_FINDINGS.md)** first.
+> ⚠️ **NOT VALIDATED.** All six review findings are addressed in code, but the
+> check that would establish equivalence — `tests/verify_against_legacy.R`,
+> `EXCEPT` in both directions against the legacy cohorts — **has never been run**.
+> A green `run_all_tests.R` is evidence about SQL text, not about patients.
+> Read **[REVIEW_FINDINGS.md](REVIEW_FINDINGS.md)** first.
 
 Read **[PLAN.md](PLAN.md)** for the design and the upstream changes it assumes.
 
@@ -29,7 +30,12 @@ run_all_tests.R  every suite
 ```
 
 ```sh
-Rscript "Jul 28/run_all_tests.R"                    # 184 assertions, 4 suites
+Rscript "Jul 28/run_all_tests.R"                    # 229 assertions, 4 suites
+
+# The one that settles equivalence -- needs a warehouse:
+Rscript "Jul 28/tests/verify_against_legacy.R" --dry-run     # see the SQL
+DATABRICKS_PWD=... Rscript "Jul 28/tests/verify_against_legacy.R"
+
 
 Rscript "Jul 28/overall/build.R" --dry-run
 Rscript "Jul 28/ndmm/build.R" --dry-run

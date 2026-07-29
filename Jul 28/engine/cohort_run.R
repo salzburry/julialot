@@ -88,9 +88,13 @@ load_cfg <- function(load_project = TRUE) {
   # isTRUE() then treats as OFF. Same as config_prompts.R.
   flag <- function(k) as.logical(env(k, "TRUE"))
   work <- env("PROJECT_WORK_SCHEMA", env("WORK_SCHEMA", ""))
-  qual <- function(t) if (nzchar(work)) paste0(work, ".", t) else t
+  cat_ <- env("DATABRICKS_CATALOG", "")
+  # catalog.schema.object, matching db_utils_lot.R's wrk() and sql_table().
+  # Qualifying inputs with the schema but not the catalog, while outputs carried
+  # both, meant a run could read from one catalog and write to another.
+  qual <- function(t) paste(c(Filter(nzchar, c(cat_, work)), t), collapse = ".")
   cfg <- list(
-    catalog        = env("DATABRICKS_CATALOG", ""),
+    catalog        = cat_,
     dsn            = env("DATABRICKS_DSN", ""),
     pwd            = Sys.getenv("DATABRICKS_PWD", unset = ""),
     work_schema    = work,
@@ -100,6 +104,9 @@ load_cfg <- function(load_project = TRUE) {
     lot1_flags     = qual(env("LOT1_FLAGS_TABLE",  "LOT1_FLAGS_ALL")),
     lot1_starts    = qual(env("LOT1_STARTS_TABLE", "LOT1_STARTS")),
     lot1_run       = qual(env("LOT1_RUN_TABLE", "LOT1_FLAGS_RUN")),
+    # The legacy persisted cohort, for verify_against_legacy.R to compare
+    # against. Same env var the pipeline uses (pipeline_inputs.csv sets it).
+    index_flags_final = qual(env("FINAL_TABLE_NAME", "ELIG_COH_FINAL")),
     # Output
     persist_schema = env("PERSIST_SCHEMA", work),
     pld_table      = env("PLD_TABLE", "COHORT_PLD"),
