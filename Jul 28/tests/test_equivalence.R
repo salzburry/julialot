@@ -87,10 +87,17 @@ LOT_FILES <- c("02_lot1.R", "03_lot2_5.R", "R/lot2_5_base.R", "R/lot2_5_inputs.R
                "R/config_lot.R", "R/codelists_lot.R", "R/db_utils_lot.R")
 COHORT_FILES <- c("01_cohort.R", "R/pipeline_steps.R", "R/criteria_attrition.R",
                   "R/config_prompts.R", "R/codelists.R", "R/db_utils.R")
+# apr_30_2026 is left ENTIRELY untouched, the dashboard included. An earlier
+# revision lifted the LOT1 criteria out of 06_ndmm_dashboard.R; that has been
+# reverted, the criteria now live in ndmm/lot1_flags.R, and this asserts the
+# pipeline folder is byte-identical to the branch point in full -- not
+# file-by-file for a chosen list, but every file in it.
+DASH_FILES <- c("06_ndmm_dashboard.R", "05_regimen_dashboard.R",
+                "07_combined_dashboard.R", "poma_studyteam_qs.R")
 if (!have_git) {
   ok(FALSE, paste0("baseline commit ", BASE, " is reachable (set EQUIV_BASE)"))
 } else {
-  for (f in c(LOT_FILES, COHORT_FILES)) {
+  for (f in c(LOT_FILES, COHORT_FILES, DASH_FILES)) {
     rc <- system2("git", c("-C", shQuote(REPO), "diff", "--quiet", BASE, "--",
                            shQuote(file.path("apr_30_2026", f))),
                   stdout = FALSE, stderr = FALSE)
@@ -105,6 +112,12 @@ ok(any(grepl('input_cohort_table\\s*=\\s*Sys.getenv\\("INPUT_COHORT_TABLE"', cl)
    "the LOT input is a pre-existing env knob (INPUT_COHORT_TABLE), not a new edit")
 ok(any(grepl('unset\\s*=\\s*"ELIG_COH_FINAL"', cl)),
    "its default is still ELIG_COH_FINAL, so an unconfigured run is unchanged")
+
+# The strongest form of "untouched": the WHOLE folder, not a chosen list.
+rc <- system2("git", c("-C", shQuote(REPO), "diff", "--quiet", BASE, "--",
+                       "apr_30_2026"), stdout = FALSE, stderr = FALSE)
+ok(identical(rc, 0L),
+   "the ENTIRE apr_30_2026 folder is byte-identical to the branch point")
 
 # =============================================================================
 section("2. Overall's IE criteria == build_criteria_sql() under the real config")
@@ -297,7 +310,7 @@ if (!have_git) {
   ok(FALSE, "baseline commit reachable")
 } else {
   old_txt <- paste(git_show("apr_30_2026/06_ndmm_dashboard.R"), collapse = "\n")
-  new_txt <- paste(readLines(file.path(APR, "R", "lot1_flags.R")), collapse = "\n")
+  new_txt <- paste(readLines(file.path(ROOT, "ndmm", "lot1_flags.R")), collapse = "\n")
 
   # Renames applied when lifting NDMM_* -> LOT1_*. Longest first so
   # NDMM_ENROLL_SPANS_STRICT is not eaten by NDMM_ENROLL_SPANS.
@@ -430,7 +443,7 @@ if (!have_git) {
   ok(FALSE, "baseline commit reachable")
 } else {
   old_lines <- git_show("apr_30_2026/06_ndmm_dashboard.R")
-  new_lines <- readLines(file.path(APR, "R", "lot1_flags.R"))
+  new_lines <- readLines(file.path(ROOT, "ndmm", "lot1_flags.R"))
 
   # Pull `NAME <- <expr>` (possibly multi-line) and evaluate it in an empty env.
   const_value <- function(lines, name) {
@@ -472,7 +485,7 @@ if (!have_git) {
 }
 
 # --- windows that live inside the SQL rather than in a constant ---------------
-lf <- paste(readLines(file.path(APR, "R", "lot1_flags.R")), collapse = "\n")
+lf <- paste(readLines(file.path(ROOT, "ndmm", "lot1_flags.R")), collapse = "\n")
 ok(grepl("date_add\\(ec_l1.LOT1_START_DT, 90\\)", lf),
    "the follow-up CE window is still 90 days")
 ok(grepl("op.diff_days <= 30", lf, fixed = TRUE),
