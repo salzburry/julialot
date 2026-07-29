@@ -124,7 +124,23 @@ attempts to override a window that is baked into an upstream flag (see PLAN §3)
 
 ## Note
 
-This folder adds objects; it renames and modifies nothing in `apr_30_2026/`.
+**This folder is no longer self-contained.** It was through Phase 1; Phase 2
+(review finding 2 / PLAN §6a) changed that, and this line used to say otherwise.
+Exactly two files in `apr_30_2026/` are touched:
+
+| | |
+|---|---|
+| `R/lot1_flags.R` | **new** — the LOT1-anchored flag stage, lifted out of the dashboard so the criteria have one definition instead of being private to a 1,400-line render script |
+| `06_ndmm_dashboard.R` | **−640 lines** — those definitions removed and sourced from the module instead, plus back-compat `NDMM_*` aliases so its remaining ~20 references still resolve |
+
+Everything else is byte-identical to the branch point, asserted per file by
+`tests/test_equivalence.R` §1 — including `01_cohort.R`, `02_lot1.R`,
+`03_lot2_5.R`, `pipeline_steps.R`, `criteria_attrition.R` and both config files.
+The LOT build reads a different input table, but that was already the
+`INPUT_COHORT_TABLE` knob, not an edit.
+
+Generated objects are prefixed `coh_` (`COHORT_VIEW_PREFIX`) so they cannot
+collide with the existing pipeline.
 Generated views are prefixed `coh_` (`COHORT_VIEW_PREFIX`) so they cannot
 collide with the existing pipeline.
 
