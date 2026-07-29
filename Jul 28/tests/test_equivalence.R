@@ -6,9 +6,13 @@
 #   with the project configuration loaded, so it compares against the cohort the
 #   repo actually builds (REVIEW_FINDINGS.md finding 1 -- fixed).
 #
-#   STILL WEAK, and still open: section 3's setequal() cannot see funnel-order
-#   changes, and section 4 compares token SETS, discarding order and
-#   multiplicity. REVIEW_FINDINGS.md finding 6. Findings 2-5 are untouched.
+#   Section 3 compares the LOT1 predicates IN ORDER, and section 4 compares token
+#   SEQUENCES with multiplicity plus a committed snapshot of the generated SQL
+#   (REVIEW_FINDINGS.md finding 6 -- static half fixed).
+#
+#   WHAT REMAINS: this is still a comparison of SQL TEXT. It cannot tell you the
+#   two produce the same patients. tests/verify_against_legacy.R does that, with
+#   EXCEPT in both directions, and it needs a warehouse.
 # -----------------------------------------------------------------------------
 #   Rscript "Jul 28/tests/test_equivalence.R"
 #
@@ -247,10 +251,28 @@ if (!have_git) {
                 sprintf("LOT1_START_DT >= date('%s')", CFG$lot1_from))
   ok(identical(new_ndmm[1:2], implicit),
      "has_lot1 + lot1_from are the first two LOT1-anchored predicates")
-  ok(setequal(setdiff(new_ndmm, implicit), old_ndmm),
-     "the remaining NDMM predicates are exactly the old six, unchanged")
+  # IN ORDER, not setequal(). The final AND-set is order-independent but the
+  # attrition funnel is not: the old test could not have seen that
+  # ce_fu_lot1_3mo had been moved from fifth to fourth, which would have made
+  # every middle row of the funnel disagree with the dashboard's.
+  ok(identical(setdiff(new_ndmm, implicit), old_ndmm),
+     "the remaining NDMM predicates are the old six, unchanged AND in the same order")
+  if (!identical(setdiff(new_ndmm, implicit), old_ndmm))
+    for (x in seq_len(max(length(old_ndmm), length(setdiff(new_ndmm, implicit)))))
+      cat("      dashboard: ", if (x <= length(old_ndmm)) old_ndmm[x] else "<none>",
+          "\n      spec     : ",
+          if (x <= length(setdiff(new_ndmm, implicit))) setdiff(new_ndmm, implicit)[x]
+          else "<none>", "\n", sep = "")
   ok(length(setdiff(old_ndmm, new_ndmm)) == 0L,
      "no criterion from the old filter was dropped")
+  # The funnel the engine will actually emit must follow that same order.
+  af_order <- unlist(regmatches(plan_nd_af <- sql_attrition(NDC, PCFG),
+    gregexpr("[0-9]{2}_(ce_[a-z0-9_]+|no_[a-z0-9_]+)", plan_nd_af)))
+  af_order <- sub("^[0-9]{2}_", "", af_order[!duplicated(af_order)])
+  ok(identical(tail(af_order, 6L),
+               c("ce_pre_lot1_12mo", "no_belantamab", "no_prior_mm_tx",
+                 "no_other_cancer_pre_lot1", "ce_fu_lot1_3mo", "no_pregnancy_study")),
+     "the generated attrition funnel applies them in the dashboard's order")
 
   # The old restriction really was baked into the LOT1 view, not applied loosely.
   l1 <- old[grep("VIEW \\{NDMM_LOT1_STARTS\\}", old)[1] + (0:8)]
@@ -328,10 +350,13 @@ if (!have_git) {
     ok(identical(o, n), paste0("byte-identical SQL: ", k))
   }
 
-  # Views that DID change may only have gained INDEX_DATE keying. Rather than
-  # enumerate every token, normalize the way norm() does -- strip alias
-  # prefixes and trailing commas -- so what is left is only meaning-bearing.
-  # Anything outside ALLOWED is a real change to the criteria and fails.
+  # Views that DID change may only have gained INDEX_DATE keying.
+  #
+  # Compared as SEQUENCES WITH MULTIPLICITY, not sets. The old version diffed
+  # set(old) vs set(new), which is blind to reordering and to a predicate
+  # appearing a different number of times -- "AND x = 1" dropped from one of
+  # three arms would have passed. Here the allowed additions are removed from
+  # both sides and the REMAINDER must be identical element-for-element.
   tok <- function(x) {
     t <- strsplit(x, " ")[[1]]
     t <- sub(",$", "", t)                    # trailing commas carry no meaning
@@ -346,16 +371,43 @@ if (!have_git) {
                "PATID", "LOT_NUM", "LOT_START_DT", "(", ")", "1)",
                "{patient_input}", "{LOT1_STARTS}", "{LOT1_PRE_DAYS})",
                "cand", "{win}", "BETWEEN", "date_sub(LOT1_START_DT",
-               "l", "p", "u", "ec")
+               "l", "p", "u", "ec",
+               # Generalisation (3): the flag table now EXPOSES LOT1_START_DT as
+               # an output column, so has_lot1 / lot1_from can read it. Pinned
+               # by the dedicated assertion below rather than merely tolerated
+               # -- the set-based comparison hid this addition entirely, which
+               # is precisely why it was replaced.
+               "LOT1_START_DT")
   for (k in setdiff(shared, IDENTICAL_EXPECTED)) {
-    o <- tok(ob[match(k, key(ob))]); n <- tok(nb[match(k, key(nb))])
-    changed <- setdiff(union(setdiff(o, n), setdiff(n, o)), ALLOWED)
-    ok(length(changed) == 0L,
-       paste0("only documented changes in ", k,
-              if (length(changed)) paste0(" -- UNEXPECTED: ",
-                                          paste(changed, collapse = " | ")) else ""))
+    o <- tok(ob[match(k, key(ob))]); nn <- tok(nb[match(k, key(nb))])
+    o_rest  <- o[!(o  %in% ALLOWED)]
+    n_rest  <- nn[!(nn %in% ALLOWED)]
+    same <- identical(o_rest, n_rest)
+    detail <- if (same) "" else {
+      i <- which(c(o_rest, rep(NA, max(0, length(n_rest) - length(o_rest)))) !=
+                 c(n_rest, rep(NA, max(0, length(o_rest) - length(n_rest)))))[1]
+      paste0(" -- first divergence at token ", i, ": original '",
+             if (!is.na(i) && i <= length(o_rest)) o_rest[i] else "<end>",
+             "' vs '", if (!is.na(i) && i <= length(n_rest)) n_rest[i] else "<end>", "'")
+    }
+    ok(same, paste0("token SEQUENCE outside the documented additions is ",
+                    "identical in ", k, detail))
   }
 }
+
+# Generalisation (3), pinned: the flag table exposes LOT1_START_DT as an output
+# column. Allowed above, so assert here that it is a genuine ADDITION -- present
+# in the new SELECT list, absent from the old one -- rather than a token that
+# happened to move.
+new_flags <- nb[match("{LOT1_FLAGS_ALL}", key(nb))]
+old_flags <- ob[match("{LOT1_FLAGS_ALL}", key(ob))]
+ok(grepl("ec_l1.LOT1_START_DT, ce.CE_pre_lot1_12mo", new_flags, fixed = TRUE),
+   "the flag table now selects LOT1_START_DT as an output column")
+ok(!grepl("LOT1_START_DT, ce.CE_pre_lot1_12mo", old_flags, fixed = TRUE),
+   "the original did not -- so this is an addition, not a move")
+ok(length(gregexpr("LOT1_START_DT", new_flags, fixed = TRUE)[[1]]) ==
+   length(gregexpr("LOT1_START_DT", old_flags, fixed = TRUE)[[1]]) + 1L,
+   "exactly ONE extra occurrence of it, i.e. nothing else changed around it")
 
 # =============================================================================
 section("5. every lifted constant equals the original")

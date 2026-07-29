@@ -1,13 +1,12 @@
 # Cohort build codes: Overall + NDMM, one flag-driven PLD
 
 **Date:** 2026-07-28
-**Status:** ⚠️ **NOT VALIDATED — NOT PRODUCTION-READY.** Review findings 1–5
-are **fixed** (configured cohort, executable run order, divergence rejected,
-fail-closed persistence with a provenance record, and a compatibility view for
-the renamed flag table). **Finding 6 is open, and it is the one that matters
-most: nothing here has run against the warehouse.** See **[REVIEW_FINDINGS.md](REVIEW_FINDINGS.md)**
-— read it before this document, which still overstates what has been
-established. Nothing has run against the warehouse.
+**Status:** ⚠️ **NOT VALIDATED — NOT PRODUCTION-READY.** All six review findings
+are addressed in code. **The folder is still not validated:**
+`tests/verify_against_legacy.R` now exists and can settle equivalence with
+`EXCEPT` in both directions, but **it has never been run**. A green
+`run_all_tests.R` is evidence about SQL text, not about patients. See **[REVIEW_FINDINGS.md](REVIEW_FINDINGS.md)**
+— read it before this document. Nothing here has run against the warehouse.
 
 ---
 
