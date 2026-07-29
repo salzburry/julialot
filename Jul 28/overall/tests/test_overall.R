@@ -48,20 +48,35 @@ mem_code <- paste(grep("^\\s*--", strsplit(mem, "\n")[[1]], value = TRUE, invert
 ok(!grepl("JOIN", mem_code, fixed = TRUE) && !grepl("LOT1", mem_code, fixed = TRUE),
    "the membership view joins nothing and never names a LOT1 table")
 
-section("equivalence with pipeline_steps.R step 24")
-# Phase 1 must be a numeric no-op: same predicates, same order, same ranking as
-# build_criteria_catalog() (criteria_attrition.R:38) + the step-1 index gate.
-ok(identical(unname(vapply(OV$resolved_gates, `[[`, character(1), "predicate")), c(
-     "(f.inpt_qual = 1 OR f.outpt2_60 = 1)", "f.AGE_INDEX_YR >= 18",
-     "f.CE_b = 1", "f.CE_f = 1", "f.MM_bl_agents = 0", "f.MM_FU_agents = 1",
-     "f.MM_baseline_diag = 0", "f.OTHER_MALIGN_FLAG = 0", "f.PREGNANT_FLAG = 0",
-     "f.CLINTRIAL_BASELINE = 0 AND f.CLINTRIAL_FOLLOWUP = 0")),
-   "predicates match step 24 exactly, in funnel order")
+section("the CONFIGURED cohort, not every criterion")
+
+# What Overall applies is a configuration decision: criteria_attrition.R gates
+# each criterion on its cfg_key, and pipeline_inputs.csv ships four FALSE. The
+# authoritative comparison against build_criteria_sql() lives in
+# tests/test_equivalence.R; here we only assert that this cohort reflects the
+# configuration it was resolved with, in step-24 order.
+applied  <- vapply(active_gates(OV), `[[`, character(1), "id")
+declared <- vapply(OV$resolved_gates, `[[`, character(1), "id")
+
+ok(identical(applied, declared[declared %in% applied]),
+   "applied gates keep their declared funnel order")
+for (g in declared) {
+  key  <- gate_registry()[[g]]$cfg_key
+  want <- if (is.na(key)) TRUE else isTRUE(CFG[[key]])
+  ok(identical(g %in% applied, want),
+     paste0(g, if (want) " is applied" else " is NOT applied",
+            if (!is.na(key)) paste0("  (", key, ")") else "  (no toggle)"))
+}
+ok(grepl(paste0("outpt2_", CFG$outpatient_window), sql_index_sel(OV, CFG),
+         fixed = TRUE),
+   paste0("the index gate uses the configured ", CFG$outpatient_window,
+          "-day outpatient window"))
 ok(grepl("row_number() OVER (PARTITION BY PATID ORDER BY INDEX_DATE)",
          sql_index_sel(OV, CFG), fixed = TRUE) &&
    grepl("WHERE rn = 1", sql_index_sel(OV, CFG), fixed = TRUE),
-   "reproduces the earliest-qualifying-index window function and rn = 1")
+   "reproduces step 24's earliest-qualifying-index selection")
 
+# =============================================================================
 section("treatment start, not a LOT1")
 # fu_mm_agents counts ANY MM agent (pipeline_steps.R:723, no drug-class filter);
 # a LOT1 start excludes steroids (02_lot1.R:678). Overall wants the broader one.

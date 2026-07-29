@@ -23,22 +23,47 @@
 # across cohorts with different index gates.
 #
 # So ranking is done PER COHORT (cheap -- a window function over a materialized
-# flag table, no claim re-scan), and the LOT build is fed the UNION of the
-# selected (PATID, INDEX_DATE) pairs. When two cohorts pick the same index for
-# a patient -- which is what happens today, since their index gates are
-# identical -- the union collapses and the LOT build runs exactly once. When
-# they diverge, the union grows and the numbers stay correct. Correct in both
-# cases, cheap in the common one.
+# flag table, no claim re-scan), and the LOT build is fed the union of the
+# selected indexes. When two cohorts pick the same index for a patient -- which
+# is what happens today, since their index gates are identical -- the union
+# collapses and the LOT build runs exactly once.
+#
+# WHEN THEY DIVERGE, THIS RUN IS REJECTED. It is tempting to say the union
+# "grows and the numbers stay correct" -- I wrote that, and it is wrong. LOT_LONG
+# is keyed by (PATID, LOT_NUM) and carries NO INDEX_DATE at all (lot2_5_base.R
+# has zero references to it), and 02_lot1.R aggregates by PATID throughout. Two
+# index dates for one patient cannot be represented downstream: the LOT history
+# would fan out or be conflated, silently.
+#
+# So the union carries INDEX_DATE as the anchor it is, but PATID is the KEY, and
+# sql_index_union_check() enforces that at run time. Supporting divergence means
+# threading INDEX_DATE through the LOT build first -- a much larger change than
+# this folder makes.
 # =============================================================================
 
 # ---- naming ----------------------------------------------------------------
 # Every generated object is prefixed so it cannot collide with the existing
-# pipeline's views (this folder adds objects; it renames nothing).
-sql_obj <- function(cfg, name) {
-  pre <- cfg$view_prefix %||% "coh_"
-  if (nzchar(cfg$work_schema %||% "")) paste0(cfg$work_schema, ".", pre, name)
-  else paste0(pre, name)
+# pipeline's objects (this folder adds objects; it renames nothing).
+#
+# TEMP VIEWS ARE NEVER SCHEMA-QUALIFIED. They are session-scoped and Databricks
+# rejects a qualified name outright ("it is not allowed to add database prefix
+# ... for the TEMPORARY view name"). The legacy pipeline has this right and I
+# had it wrong: db_utils.R:60 is `work <- function(tbl) tbl` -- unqualified --
+# for exactly the objects it creates as temp views, while db_utils_lot.R:49
+# qualifies only the tables it persists. Two helpers, so the distinction cannot
+# be lost again.
+.obj <- function(cfg, name) paste0(cfg$view_prefix %||% "coh_", name)
+
+sql_view <- function(cfg, name) .obj(cfg, name)          # CREATE TEMPORARY VIEW
+
+sql_table <- function(cfg, name) {                       # CREATE TABLE
+  q <- Filter(nzchar, c(cfg$catalog %||% "", cfg$work_schema %||% ""))
+  paste(c(q, .obj(cfg, name)), collapse = ".")
 }
+
+# The unqualified table name, which is what the LOT build wants: 02_lot1.R:278
+# reads `wrk(cfg$input_cohort_table)` and qualifies it itself.
+sql_table_short <- function(cfg, name) .obj(cfg, name)
 
 .and_block <- function(gates, indent = "            ") {
   if (!length(gates)) return("")
@@ -46,8 +71,10 @@ sql_obj <- function(cfg, name) {
          collapse = "\n")
 }
 
+# APPLIED gates at an anchor. Reads active_gates(), never resolved_gates: a
+# criterion the project configuration disables must never reach a predicate.
 .gates_at <- function(spec, anchor) {
-  Filter(function(g) identical(g$anchor, anchor), spec$resolved_gates)
+  Filter(function(g) identical(g$anchor, anchor), active_gates(spec))
 }
 
 # =============================================================================
@@ -59,7 +86,7 @@ sql_obj <- function(cfg, name) {
 sql_index_sel <- function(spec, cfg) {
   g <- .gates_at(spec, "index")
   paste0(
-    "CREATE OR REPLACE TEMPORARY VIEW ", sql_obj(cfg, paste0(spec$id, "_index_sel")), " AS\n",
+    "CREATE OR REPLACE TABLE ", sql_table(cfg, paste0(spec$id, "_index_sel")), " AS\n",
     "-- ", spec$label, ": index-anchored IE funnel, then EARLIEST QUALIFYING index.\n",
     "-- Filter-then-rank (not rank-then-filter): a patient whose earliest\n",
     "-- candidate index fails IE may still enter on a later qualifying one.\n",
@@ -86,10 +113,10 @@ sql_index_sel <- function(spec, cfg) {
 # FINAL_TABLE_NAME and neither cohort has to run the other's build.
 sql_index_union <- function(specs, cfg) {
   arms <- vapply(specs, function(s) paste0(
-    "    SELECT PATID, INDEX_DATE FROM ", sql_obj(cfg, paste0(s$id, "_index_sel"))),
+    "    SELECT PATID, INDEX_DATE FROM ", sql_table(cfg, paste0(s$id, "_index_sel"))),
     character(1))
   paste0(
-    "CREATE OR REPLACE TEMPORARY VIEW ", sql_obj(cfg, "index_union"), " AS\n",
+    "CREATE OR REPLACE TABLE ", sql_table(cfg, "index_union"), " AS\n",
     "-- Distinct (PATID, INDEX_DATE) across every requested cohort, projected back\n",
     "-- to the full flag row. Cohorts that agree on a patient's index collapse to\n",
     "-- one row, so the LOT build runs once for the common case.\n",
@@ -98,7 +125,9 @@ sql_index_union <- function(specs, cfg) {
     "-- every column lot_patient_input reads (02_lot1.R:278) -- PATID, INDEX_DATE,\n",
     "-- ENDDATE, ENDDATE_CE, DEATH_DT, GDR_CD, YRDOB, AGE_INDEX_YR, FU_DAYS,\n",
     "-- FU_DAYS_CE -- all of which step 23 already emits. So no LOT code changes:\n",
-    "--   INPUT_COHORT_TABLE=", sub("^.*\\.", "", sql_obj(cfg, "index_union")), "\n",
+    "--   INPUT_COHORT_TABLE=", sql_table_short(cfg, "index_union"), "\n",
+    "-- A real TABLE, not a temp view: the LOT build runs in a SEPARATE PROCESS\n",
+    "-- and a session-scoped view dies with the connection that made it.\n",
     "WITH sel AS (\n",
     paste(arms, collapse = "\n    UNION ALL\n"), "\n",
     "),\n",
@@ -110,6 +139,20 @@ sql_index_union <- function(specs, cfg) {
   )
 }
 
+# A run is REJECTED if any patient ended up with more than one selected index
+# date. Returns the offending count; the runner stops when it is non-zero.
+#
+# This is a real query rather than a plan-time inference because differing index
+# gates only MIGHT diverge -- two cohorts can declare different criteria and
+# still pick the same index for every patient. The data decides.
+sql_index_union_check <- function(cfg) {
+  paste0(
+    "SELECT count(*) AS n_diverging FROM (\n",
+    "  SELECT PATID FROM ", sql_table(cfg, "index_union"), "\n",
+    "  GROUP BY PATID HAVING count(DISTINCT INDEX_DATE) > 1\n",
+    ")")
+}
+
 # =============================================================================
 # 3. Per-cohort final membership
 # =============================================================================
@@ -118,9 +161,9 @@ sql_index_union <- function(specs, cfg) {
 # `--cohort=overall` runnable with the LOT build switched off entirely.
 sql_cohort <- function(spec, cfg) {
   gl <- .gates_at(spec, "lot1")
-  sel <- sql_obj(cfg, paste0(spec$id, "_index_sel"))
+  sel <- sql_table(cfg, paste0(spec$id, "_index_sel"))
   head <- paste0(
-    "CREATE OR REPLACE TEMPORARY VIEW ", sql_obj(cfg, paste0(spec$id, "_cohort")), " AS\n",
+    "CREATE OR REPLACE TEMPORARY VIEW ", sql_view(cfg, paste0(spec$id, "_cohort")), " AS\n",
     "-- ", spec$label, ": final membership.\n")
 
   if (!length(gl)) {
@@ -174,7 +217,7 @@ bind_lot1_aliases <- function(spec) {
 # patient in the common case where the cohorts agree on the index.
 sql_pld <- function(specs, cfg) {
   joins <- vapply(specs, function(s) paste0(
-    "LEFT JOIN ", sql_obj(cfg, paste0(s$id, "_cohort")), " ", s$id, "\n",
+    "LEFT JOIN ", sql_view(cfg, paste0(s$id, "_cohort")), " ", s$id, "\n",
     "       ON ", s$id, ".PATID = u.PATID AND ", s$id, ".INDEX_DATE = u.INDEX_DATE"),
     character(1))
   cols <- vapply(specs, function(s) paste0(
@@ -197,14 +240,14 @@ sql_pld <- function(specs, cfg) {
     "  n.NO_OTHER_CANCER_PRE_LOT1, n.NO_PREGNANCY,\n") else ""
 
   paste0(
-    "CREATE OR REPLACE TEMPORARY VIEW ", sql_obj(cfg, "pld"), " AS\n",
+    "CREATE OR REPLACE TEMPORARY VIEW ", sql_view(cfg, "pld"), " AS\n",
     "-- The shared patient-level dataset: every criterion as a COLUMN, plus one\n",
     "-- membership column per cohort. Built once, read by every downstream job.\n",
     "SELECT\n",
     "  u.*,\n",
     lot1_cols,
     paste(cols, collapse = ",\n"), "\n",
-    "FROM ", sql_obj(cfg, "index_union"), " u\n",
+    "FROM ", sql_table(cfg, "index_union"), " u\n",
     lot1_join,
     paste(joins, collapse = "\n")
   )
@@ -214,10 +257,11 @@ sql_pld <- function(specs, cfg) {
 # reads; without it each dashboard re-computes the flag DAG (the exact cost
 # 06_ndmm_dashboard.R hit and worked around with its own materialize-and-repoint).
 sql_pld_persist <- function(cfg) {
-  tbl <- paste0(cfg$persist_schema, ".", cfg$pld_table)
+  q <- Filter(nzchar, c(cfg$catalog %||% "", cfg$persist_schema %||% ""))
+  tbl <- paste(c(q, cfg$pld_table), collapse = ".")
   paste0(
     "CREATE OR REPLACE TABLE ", tbl, " AS\n",
-    "SELECT * FROM ", sql_obj(cfg, "pld"))
+    "SELECT * FROM ", sql_view(cfg, "pld"))
 }
 
 # =============================================================================
@@ -228,7 +272,7 @@ sql_pld_persist <- function(cfg) {
 # gates: up to that point the denominator is every candidate index row; after
 # it, the index is already selected and the LOT1 tables are in scope.
 sql_attrition <- function(spec, cfg) {
-  gates <- spec$resolved_gates
+  gates <- active_gates(spec)   # an unapplied criterion has no attrition row
   idx   <- .gates_at(spec, "index")
   arms  <- character(0)
 
@@ -242,7 +286,7 @@ sql_attrition <- function(spec, cfg) {
       # LEFT JOINs so the has_lot1 arm can count the no-LOT1 drop on its own,
       # separately from the lot1_from cutoff, against the selected-index set.
       from <- paste0(
-        "FROM ", sql_obj(cfg, paste0(spec$id, "_index_sel")), " s\n",
+        "FROM ", sql_table(cfg, paste0(spec$id, "_index_sel")), " s\n",
         "       LEFT JOIN ", cfg$lot1_starts, " l1 ON l1.PATID = s.PATID AND l1.INDEX_DATE = s.INDEX_DATE\n",
         "       LEFT JOIN ", cfg$lot1_flags,  " n  ON n.PATID  = s.PATID AND n.INDEX_DATE  = s.INDEX_DATE")
       where <- .and_block(Filter(function(x) identical(x$anchor, "lot1"), upto), "         ")
@@ -264,7 +308,7 @@ sql_attrition <- function(spec, cfg) {
     "         'FINAL: ", spec$label, "' AS label,\n",
     "         'final' AS polarity,\n",
     "         count(DISTINCT PATID) AS n_patients\n",
-    "  FROM ", sql_obj(cfg, paste0(spec$id, "_cohort"))))
+    "  FROM ", sql_view(cfg, paste0(spec$id, "_cohort"))))
 
   paste0(
     "-- Attrition funnel: ", spec$label, " (cumulative distinct patients)\n",
@@ -282,15 +326,28 @@ sql_attrition <- function(spec, cfg) {
 build_plan <- function(specs, cfg) {
   specs <- lapply(specs, bind_lot1_aliases)
   steps <- list()
-  add <- function(name, sql, desc) steps[[length(steps) + 1L]] <<-
-    list(name = name, sql = sql, description = desc)
+  add <- function(name, sql, desc, check = NULL) steps[[length(steps) + 1L]] <<-
+    list(name = name, sql = sql, description = desc, check = check)
 
   for (s in specs)
     add(paste0(s$id, "_index_sel"), sql_index_sel(s, cfg),
         paste0("Index selection: ", s$label))
 
   add("index_union", sql_index_union(specs, cfg),
-      "Union of selected indexes (input to the LOT build)")
+      "Union of selected indexes (input to the LOT build)",
+      check = list(
+        sql = sql_index_union_check(cfg),
+        column = "n_diverging",
+        message = paste(
+          "patient(s) were assigned MORE THAN ONE index date by the requested",
+          "cohorts. The LOT build cannot represent that: LOT_LONG is keyed by",
+          "(PATID, LOT_NUM) and carries no INDEX_DATE, so the histories would",
+          "fan out or be conflated without any error.\n",
+          "  Fix: build the cohorts in separate runs (each is internally",
+          "consistent), or align their index-anchored gates so they select the",
+          "same index.\n",
+          "  Supporting divergence requires threading INDEX_DATE through the LOT",
+          "build first -- see REVIEW_FINDINGS.md finding 3.")))
 
   for (s in specs)
     add(paste0(s$id, "_cohort"), sql_cohort(s, cfg),

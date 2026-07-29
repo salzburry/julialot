@@ -146,10 +146,16 @@ for (s in R) {
   ok(identical(a, a[order(match(a, ANCHORS))]),
      paste0(s$id, ": index-anchored gates are ordered before LOT1-anchored"))
 }
-nd_aid <- unname(vapply(R$ndmm$resolved_gates, `[[`, character(1), "attrition_id"))
+# Numbered over APPLIED gates only: a criterion the configuration disables has
+# no attrition row, so the ids must skip it rather than leave a hole.
+nd_act <- active_gates(R$ndmm)
+nd_aid <- unname(vapply(nd_act, `[[`, character(1), "attrition_id"))
 ok(identical(nd_aid, sprintf("%02d_%s", seq_along(nd_aid),
-                             unname(vapply(R$ndmm$resolved_gates, `[[`, character(1), "id")))),
-   "attrition ids are renumbered contiguously after anchor ordering")
+                             unname(vapply(nd_act, `[[`, character(1), "id")))),
+   "attrition ids are contiguous over the APPLIED gates")
+ok(all(is.na(vapply(Filter(function(g) !isTRUE(g$active), R$ndmm$resolved_gates),
+                    `[[`, character(1), "attrition_id"))),
+   "a disabled criterion gets no attrition id at all")
 
 # =============================================================================
 section("validation fails closed")
@@ -232,8 +238,8 @@ pld <- plan$steps[[which(step_names == "pld")]]$sql
 ok(grepl("AS COHORT_OVERALL", pld, fixed = TRUE) &&
    grepl("AS COHORT_NDMM", pld, fixed = TRUE),
    "the PLD carries one 0/1 membership column per cohort")
-ok(!grepl("INNER JOIN wk.coh_overall_cohort", pld, fixed = TRUE) &&
-    grepl("LEFT JOIN wk.coh_overall_cohort", pld, fixed = TRUE),
+ok(!grepl(paste("INNER JOIN", sql_view(CFG, "overall_cohort")), pld, fixed = TRUE) &&
+    grepl(paste("LEFT JOIN",  sql_view(CFG, "overall_cohort")), pld, fixed = TRUE),
    "the PLD LEFT-joins membership: it is the superset, it drops nobody")
 ok(grepl("n.NO_BELANTAMAB", pld, fixed = TRUE) &&
    grepl("n.CE_pre_lot1_12mo", pld, fixed = TRUE),
@@ -282,12 +288,208 @@ ok(!any(vapply(prefix, function(st) grepl("LOT1_FLAGS_ALL", st$sql, fixed = TRUE
    "--index-only's prefix reads no LOT1 flag table (it does not exist yet)")
 
 # =============================================================================
+section("execution path (Phase 2 fixes)")
+
+# A temp view must NEVER be schema-qualified -- Databricks rejects it outright,
+# and the legacy pipeline gets this right (db_utils.R:60 returns the bare name).
+# Every CREATE across a full plan is checked, not a sample.
+creates <- unlist(regmatches(
+  vapply(plan$steps, `[[`, character(1), "sql"),
+  gregexpr("CREATE OR REPLACE (TEMPORARY VIEW|TABLE) [^ \n]+",
+           vapply(plan$steps, `[[`, character(1), "sql"))))
+tmp_views <- grep("TEMPORARY VIEW", creates, value = TRUE)
+tables    <- grep("REPLACE TABLE",  creates, value = TRUE)
+ok(length(tmp_views) > 0L && !any(grepl("\\.", sub(".*VIEW ", "", tmp_views))),
+   "no temp view is schema-qualified")
+ok(length(tables) > 0L && all(grepl("\\.", sub(".*TABLE ", "", tables))),
+   "every persisted table IS schema-qualified")
+ok(identical(sql_view(CFG, "pld"), "coh_pld") &&
+   grepl("^hive|^wk\\.|\\.", sql_table(CFG, "pld")),
+   "sql_view() and sql_table() differ exactly in qualification")
+
+# The union must be a real TABLE: the LOT build is a separate process and a
+# session-scoped view dies with the connection that created it.
+u_sql <- plan$steps[[which(step_names == "index_union")]]$sql
+ok(grepl("^CREATE OR REPLACE TABLE", u_sql),
+   "coh_index_union is a persisted table, not a temp view")
+ok(all(grepl("^CREATE OR REPLACE TABLE",
+             vapply(plan$steps[grepl("_index_sel$", step_names)], `[[`,
+                    character(1), "sql"))),
+   "the per-cohort index selections are persisted too")
+# INPUT_COHORT_TABLE is consumed as wrk(<name>) by 02_lot1.R:278, so the name
+# handed over must be UNqualified.
+ok(!grepl("\\.", sql_table_short(CFG, "index_union")),
+   "the name given to INPUT_COHORT_TABLE is unqualified, as the LOT build expects")
+
+# --index-only must not demand the table the NEXT stage creates.
+idx_only_sql <- vapply(plan$steps[seq_len(which(step_names == "index_union"))],
+                       `[[`, character(1), "sql")
+ok(!("lot1_flags" %in% names(sources_to_check(R, CFG, idx_only_sql))),
+   "--index-only does not preflight LOT1_FLAGS_ALL (the stage after it makes it)")
+ok("index_flags" %in% names(sources_to_check(R, CFG, idx_only_sql)),
+   "--index-only still preflights the flag table it does read")
+ok("lot1_flags" %in% names(sources_to_check(R, CFG,
+     vapply(plan$steps, `[[`, character(1), "sql"))),
+   "a full run does preflight LOT1_FLAGS_ALL")
+ok(identical(names(sources_to_check(R, CFG, NULL)),
+             names(Filter(length, required_source_cols(R)))),
+   "with no plan supplied, every source with required columns is checked")
+
+ok(isTRUE(parse_args("--rebuild-index")$rebuild_index) &&
+   !isTRUE(parse_args(character(0))$rebuild_index),
+   "--rebuild-index is parsed, and off by default")
+
+# ---- one index per PATID (Phase 3) ------------------------------------------
+# LOT_LONG is keyed by (PATID, LOT_NUM) and carries no INDEX_DATE, so two index
+# dates for one patient cannot be represented downstream. The run must be
+# REJECTED rather than fan out. Only the wiring is testable offline -- whether
+# any patient actually diverges is a fact about data.
+u_step <- plan$steps[[which(step_names == "index_union")]]
+ok(!is.null(u_step$check), "the union step carries a check")
+ok(identical(u_step$check$column, "n_diverging") &&
+   grepl("count(DISTINCT INDEX_DATE) > 1", u_step$check$sql, fixed = TRUE) &&
+   grepl("GROUP BY PATID", u_step$check$sql, fixed = TRUE),
+   "the check counts patients holding more than one index date")
+ok(grepl(sql_table(CFG, "index_union"), u_step$check$sql, fixed = TRUE),
+   "it checks the union table the LOT build will actually read")
+ok(grepl("cannot represent", u_step$check$message, fixed = TRUE) &&
+   grepl("separate runs", u_step$check$message, fixed = TRUE),
+   "the failure message says why, and what to do instead")
+# No other step should silently depend on the pair being a key.
+ok(!any(vapply(plan$steps, function(st)
+          grepl("count(DISTINCT INDEX_DATE)", st$sql, fixed = TRUE), logical(1))),
+   "no build step tries to handle multiple indexes itself")
+# A single-cohort run cannot diverge -- rn = 1 guarantees one row per patient --
+# but the check is cheap and stays, so the invariant is verified either way.
+solo_u <- build_plan(list(ndmm = R$ndmm), CFG)$steps
+solo_u <- solo_u[[which(vapply(solo_u, `[[`, character(1), "name") == "index_union")]]
+ok(!is.null(solo_u$check),
+   "a single-cohort run still verifies one index per PATID")
+
+# ---- criterion provenance (Phase 4) -----------------------------------------
+# A flag whose criterion never ran passes EVERY patient, which in the data is
+# indistinguishable from a criterion that excluded nobody. LOT1_FLAGS_RUN
+# records which ran; unevaluated_gates() is the pure decision, so it is testable
+# without a warehouse.
+meta_all_ok <- data.frame(
+  criterion = c("belantamab", "prior_mm_tx", "other_cancer", "pregnancy"),
+  evaluated = c(TRUE, TRUE, TRUE, TRUE), stringsAsFactors = FALSE)
+ok(identical(unevaluated_gates(R, meta_all_ok), character(0)),
+   "nothing is flagged when every criterion was evaluated")
+
+meta_skipped <- transform(meta_all_ok,
+  evaluated = c(TRUE, FALSE, TRUE, FALSE))       # prior_mm_tx + pregnancy skipped
+bad <- unevaluated_gates(R, meta_skipped)
+ok(setequal(bad, c("no_prior_mm_tx", "no_pregnancy_study")),
+   "a skipped criterion is traced back to the gate(s) that apply it")
+ok(identical(unevaluated_gates(list(overall = R$overall), meta_skipped),
+             character(0)),
+   "Overall is unaffected -- it applies no LOT1-anchored criterion")
+ok(identical(unevaluated_gates(R, NULL), character(0)) &&
+   identical(unevaluated_gates(R, meta_all_ok[0, ]), character(0)),
+   "absent metadata yields no false positives (it warns elsewhere, not errors)")
+
+# Only the four skippable criteria carry a `criterion` key; the rest cannot be
+# skipped, so claiming otherwise would be a false alarm.
+crit <- vapply(REG, function(g) g$criterion %||% NA_character_, character(1))
+ok(setequal(unname(crit[!is.na(crit)]),
+            c("belantamab", "prior_mm_tx", "other_cancer", "pregnancy")),
+   "exactly the four source-dependent criteria are marked skippable")
+ok(all(vapply(REG[!is.na(crit)], function(g) identical(g$anchor, "lot1"), logical(1))),
+   "all of them are LOT1-anchored (the index flags are built with the cohort)")
+
+# ---- legacy-name compatibility (Phase 5) ------------------------------------
+# Renaming the PERSISTED table broke consumers that read it by name in the
+# warehouse; the NDMM_* aliases in the dashboard are R variables and do nothing
+# for them. Asserted against the real consumer files, so this fails if either
+# starts reading a column the view does not carry.
+APR <- file.path(dirname(ROOT), "apr_30_2026")
+lf  <- paste(readLines(file.path(APR, "R", "lot1_flags.R")), collapse = "\n")
+
+ok(grepl('LOT1_COMPAT_TBL <- Sys.getenv("LOT1_COMPAT_TABLE", unset = "NDMM_FLAGS_ALL")',
+         lf, fixed = TRUE),
+   "the pre-rename name is republished as NDMM_FLAGS_ALL")
+ok(grepl("CREATE OR REPLACE VIEW {target} AS SELECT * FROM {src}", lf, fixed = TRUE),
+   "it is a VIEW over the current flag table, so consumers stay current")
+
+# Every column the known consumers select must be declared required.
+consumers <- c(file.path(APR, "poma_studyteam_qs.R"),
+               file.path(dirname(ROOT), "cohort_explorer", "warehouse",
+                         "08_analytic_cohort.R"))
+used <- unique(unlist(lapply(consumers, function(f) {
+  if (!file.exists(f)) return(character(0))
+  txt <- paste(readLines(f, warn = FALSE), collapse = "\n")
+  unlist(regmatches(txt, gregexpr(
+    "\\b(NO_[A-Z_]+|CE_pre_lot1_12mo|CE_lot1_3mo_fu)\\b", txt)))
+})))
+# NB: run gregexpr on the EXTRACTED block, not on lf -- regmatches must be
+# given the same string the match positions came from.
+blk <- regmatches(lf, regexpr("LOT1_COMPAT_REQUIRED <- c\\([^)]*\\)", lf))
+req <- gsub('"', "", regmatches(blk, gregexpr('"[A-Za-z0-9_]+"', blk))[[1]])
+ok(length(used) > 0L && all(used %in% req),
+   paste0("every column the legacy consumers read is required by the view (",
+          paste(setdiff(used, req), collapse = ", "), ")"))
+ok("PATID" %in% req, "PATID is required (both consumers join on it)")
+
+# Dropping someone else's table is not a default.
+ok(grepl("replace_table = FALSE", lf, fixed = TRUE),
+   "replacing a physical legacy table is opt-in, not the default")
+ok(grepl("already exists as a physical TABLE", lf, fixed = TRUE) &&
+   grepl("format(nrows, big.mark", lf, fixed = TRUE) &&
+   grepl("LOT1_REPLACE_LEGACY_TABLE=TRUE", lf, fixed = TRUE),
+   "it reports what is there (row count) and how to proceed, rather than dropping silently")
+ok(grepl("DROP TABLE IF EXISTS", lf, fixed = TRUE) &&
+   grepl('if (identical(kind, "TABLE")) {', lf, fixed = TRUE),
+   "a drop only happens on the explicitly-allowed path")
+
+# Both producers must publish it, or a dashboard run leaves the old name stale.
+dash <- paste(readLines(file.path(APR, "06_ndmm_dashboard.R")), collapse = "\n")
+stg  <- paste(readLines(file.path(ROOT, "ndmm", "build_lot1_flags.R")), collapse = "\n")
+ok(grepl("write_lot1_compat_view", dash, fixed = TRUE),
+   "the dashboard publishes the compatibility view too")
+ok(grepl("write_lot1_compat_view", stg, fixed = TRUE),
+   "the standalone flag stage publishes it")
+# Different failure policies, deliberately: a dashboard must still render.
+ok(grepl("tryCatch(\n    write_lot1_compat_view", dash, fixed = TRUE),
+   "the dashboard treats a compat-view failure as best-effort")
+
+# ---- the warehouse verifier (Phase 6) ---------------------------------------
+# Everything else in tests/ compares SQL TEXT. This is the script that compares
+# PATIENTS, so its shape is worth locking down even though running it needs a
+# warehouse.
+VERIFY <- file.path(ROOT, "tests", "verify_against_legacy.R")
+ok(file.exists(VERIFY), "the warehouse verifier exists")
+vf <- paste(readLines(VERIFY), collapse = "\n")
+
+ok(grepl("EXCEPT", vf, fixed = TRUE), "it uses EXCEPT")
+ok(grepl("in NEW but not OLD", vf, fixed = TRUE) &&
+   grepl("in OLD but not NEW", vf, fixed = TRUE),
+   "BOTH directions -- one alone proves nothing about set equality")
+# A count check would pass two different cohorts of the same size. Make sure the
+# pass condition is emptiness, not a count comparison.
+ok(!grepl("count(*) AS n_a", vf, fixed = TRUE) &&
+   grepl("except_sql", vf, fixed = TRUE),
+   "the pass condition is an empty difference, not matching counts")
+ok(grepl("quit(status = 1L)", vf, fixed = TRUE),
+   "it exits non-zero on any difference, so it is usable as a release gate")
+ok(grepl("ELIG_COH_FINAL", vf, fixed = TRUE) &&
+   grepl("index_union", vf, fixed = TRUE) &&
+   grepl("ndmm_cohort", vf, fixed = TRUE),
+   "it compares Overall, the LOT build input, and NDMM")
+# The legacy NDMM set must be DERIVED from the spec, not hardcoded, or it drifts
+# the moment a gate changes and silently compares the cohort to itself.
+ok(grepl("active_gates(spec)", vf, fixed = TRUE),
+   "the legacy NDMM filter is derived from the spec's own LOT1 gates")
+ok(grepl("_ndmm_patids is a temp view", vf, fixed = TRUE),
+   "it says why the legacy NDMM set has to be reconstructed at all")
+
+# =============================================================================
 section("attrition funnel")
 
 af <- plan$attrition$ndmm
 ok(length(gregexpr("UNION ALL", af, fixed = TRUE)[[1]]) ==
-     length(R$ndmm$resolved_gates),
-   "the funnel has one arm per gate plus a terminal FINAL arm")
+     length(active_gates(R$ndmm)),
+   "the funnel has one arm per APPLIED gate plus a terminal FINAL arm")
 ok(grepl("count(DISTINCT PATID)", af, fixed = TRUE), "the funnel counts distinct patients")
 ok(grepl("_final", af, fixed = TRUE), "the funnel ends with the built cohort as a check row")
 # Cumulative, not per-gate: arm k must carry all k predicates.
@@ -307,9 +509,14 @@ ok(!grepl("INNER JOIN", af, fixed = TRUE),
 section("schema guard inputs")
 
 need <- required_source_cols(R)
-ok(all(c("CE_b", "MM_FU_agents", "CLINTRIAL_FOLLOWUP", "AGE_INDEX_YR") %in%
+ok(all(c("CE_b", "CE_f", "MM_FU_agents", "MM_bl_agents", "AGE_INDEX_YR") %in%
        need$index_flags),
-   "index flag columns are collected for the schema guard")
+   "every APPLIED criterion's column is collected for the schema guard")
+# The guard must not demand columns for criteria the configuration disabled --
+# that would fail a run over a criterion nobody is applying.
+ok(!any(c("CLINTRIAL_FOLLOWUP", "OTHER_MALIGN_FLAG", "PREGNANT_FLAG") %in%
+        need$index_flags),
+   "no column is required for a disabled criterion")
 ok(all(c("NO_BELANTAMAB", "CE_pre_lot1_12mo", "LOT1_START_DT") %in% need$lot1_flags),
    "LOT1 flag columns are collected for the schema guard")
 need_ov <- required_source_cols(list(overall = SPECS$overall))

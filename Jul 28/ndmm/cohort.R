@@ -52,13 +52,18 @@ list(
     "has_lot1",                  # a LOT1 regimen start exists
     "lot1_from",                 # 1L start on/after the cutoff
 
-    # The six criteria documented in 06_ndmm_dashboard.R's header, in the order
-    # its own attrition funnel applies them (:745).
+    # The six criteria documented in 06_ndmm_dashboard.R's header, IN THE ORDER
+    # ITS OWN ATTRITION FUNNEL APPLIES THEM (ndmm_counts()). The final AND-set is
+    # the same whatever the order, so this does not change the cohort -- but the
+    # INTERMEDIATE attrition counts are order-dependent, and this folder is meant
+    # to reproduce the legacy report, not merely the legacy cohort. An earlier
+    # draft had ce_fu_lot1_3mo fourth and would have produced a funnel that
+    # silently disagreed with the dashboard's at every middle row.
     "ce_pre_lot1_12mo",          # 12-mo CE before 1L start
-    "ce_fu_lot1_3mo",            # 3-mo CE after 1L start (strict, no gaps)
     "no_belantamab",             # no belantamab in any line
     "no_prior_mm_tx",            # no MM oncology Tx in the 12-mo pre-1L window
     "no_other_cancer_pre_lot1",  # no other active cancer in that window
+    "ce_fu_lot1_3mo",            # 3-mo CE after 1L start (strict, no gaps)
     "no_pregnancy_study"         # no pregnancy over the study period
   ),
 

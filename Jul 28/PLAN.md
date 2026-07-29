@@ -1,7 +1,12 @@
 # Cohort build codes: Overall + NDMM, one flag-driven PLD
 
 **Date:** 2026-07-28
-**Status:** Phases 1–2 implemented and tested offline; not yet run against the warehouse
+**Status:** ⚠️ **NOT VALIDATED — NOT PRODUCTION-READY.** All six review findings
+are addressed in code. **The folder is still not validated:**
+`tests/verify_against_legacy.R` now exists and can settle equivalence with
+`EXCEPT` in both directions, but **it has never been run**. A green
+`run_all_tests.R` is evidence about SQL text, not about patients. See **[REVIEW_FINDINGS.md](REVIEW_FINDINGS.md)**
+— read it before this document. Nothing here has run against the warehouse.
 
 ---
 
@@ -90,7 +95,7 @@ Four stages. Only stage 4 is cohort-specific, and it's cheap.
       ─► coh_overall_index_sel ─┤
       ─► coh_ndmm_index_sel   ──┤
                                 ▼
-                     coh_index_union   (distinct PATID × INDEX_DATE)
+                     coh_index_union   (ONE ROW PER PATID -- enforced)
                                 │
   [3] LOT build + LOT1-anchored flag build (cohort-agnostic, expensive, ONCE)
       ─► LOT1_STARTS, LOT_LONG, LOT1_FLAGS_ALL
@@ -127,9 +132,18 @@ whose index gates differ.
 
 So ranking is done **per cohort** (cheap — a window function over a
 materialized flag table), and the LOT build is fed the **union** of the selected
-`(PATID, INDEX_DATE)` pairs. When two cohorts pick the same index for a patient,
-the union collapses and the LOT build runs once. When they diverge, the union
-grows and the numbers stay right. Correct in both cases, cheap in the common one.
+indexes. When two cohorts pick the same index for a patient — what happens
+today, since their index gates are identical — the union collapses and the LOT
+build runs once.
+
+**When they diverge, the run is rejected.** An earlier draft of this section
+claimed the union "grows and the numbers stay right". That was wrong.
+`LOT_LONG` is keyed by `(PATID, LOT_NUM)` and carries no `INDEX_DATE`
+(`lot2_5_base.R` has zero references), and `02_lot1.R` aggregates by `PATID`
+throughout — so two index dates for one patient would fan out or be conflated
+with no error. A check runs immediately after the union is built and aborts on
+any patient with more than one index. Supporting divergence means threading
+`INDEX_DATE` through the LOT build first.
 
 ### Anchors are first-class, and that fixes a live hazard
 
@@ -155,6 +169,13 @@ in the flag table**:
 | `outpatient_window` | yes | all of `outpt2_30/60/90` are materialized |
 | `lot1_from` | yes | filters `LOT1_START_DT` |
 | CE window months | **no** | `CE_b` is a pre-baked fixed-6-month flag |
+
+Separately from parameters, **whether a criterion is applied at all** is the
+project's configuration, not the spec's: each gate carries the `cfg_key` that
+`criteria_attrition.R` gates it on, and `pipeline_inputs.csv` ships four of them
+`FALSE`. A disabled criterion stays declared and stays a PLD column — it is just
+not AND-ed into membership. `load_cfg()` reads that CSV, so the default run is
+the configured cohort: **Overall is 6 gates at a 90-day window**, not 10 at 60.
 
 A spec that tries to "override" a non-tunable window is **rejected at
 validation**, not silently ignored. A config knob that quietly lies is worse
@@ -227,6 +248,12 @@ a one-line spec edit, reviewed by the study team, with zero effect on Overall.
 ---
 
 ## 5. Equivalence: does the new code do the same thing?
+
+> ⚠️ **This section's conclusion is withdrawn.** The suite it describes ignores
+> the `cfg_key` toggle on every criterion and so validated against an unused
+> configuration. See [REVIEW_FINDINGS.md](REVIEW_FINDINGS.md) finding 1. The
+> mechanics below (deriving expectations from source rather than hardcoding)
+> remain the right approach; the specific comparison is wrong.
 
 `tests/test_equivalence.R` (51 assertions) answers this, and every expectation
 in it is **derived from the production source** — read out of
@@ -326,7 +353,7 @@ same SQL (verified by normalized diff against the pre-change file):
 1. **The patient input is a parameter.** `FROM ELIG_COH_FINAL` became
    `FROM {patient_input}`. Pass `coh_index_union` and the flags build with no
    Overall cohort ever selected. Default is unchanged.
-2. **Views are keyed by `(PATID, INDEX_DATE)`.** The original could key on
+2. **Views carry `(PATID, INDEX_DATE)`; `PATID` remains the key.** The original could key on
    PATID because `ELIG_COH_FINAL` is already one row per patient. A union over
    cohorts that pick *different* index dates for the same patient would be
    silently conflated by a PATID-only key. The index-DEPENDENT scans (the two
@@ -421,10 +448,11 @@ confirmation.)
   LOT1 is derived from an index date. The staging index → LOT → LOT1-gates is
   irreducible. "Standalone" here means *one command, no Overall run, no
   `ELIG_COH_FINAL` dependency* — not *one query*.
-- **PLD grain is `(PATID, INDEX_DATE)`**, which is one row per patient today
-  because both cohorts select the same index. If the index gate sets ever
-  diverge, a patient can hold two rows. Downstream code should join on the pair,
-  not assume `PATID` is unique.
+- **PLD grain is one row per patient.** `INDEX_DATE` rides along as the anchor,
+  but `PATID` is the key and a run that would break that is rejected (§3). This
+  is a real limitation, not a design choice: cohorts that need different index
+  dates must be built in separate runs until `INDEX_DATE` is threaded through
+  the LOT build.
 - **`cohort_explorer` overlaps this.** Its `ANALYTIC_COHORT` is the same idea
   aimed at the Shiny app, sourced from `NDMM_FLAGS_ALL` and `ELIG_COH_FINAL`. Once
   `COHORT_PLD` exists, `make_analytic_csv.R` should read it instead of

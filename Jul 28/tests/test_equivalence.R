@@ -1,6 +1,18 @@
 #!/usr/bin/env Rscript
 # =============================================================================
 # test_equivalence.R -- do the new cohorts do the same thing as the old?
+#
+#   PARTIALLY SOUND. Section 2 now calls the production build_criteria_sql()
+#   with the project configuration loaded, so it compares against the cohort the
+#   repo actually builds (REVIEW_FINDINGS.md finding 1 -- fixed).
+#
+#   Section 3 compares the LOT1 predicates IN ORDER, and section 4 compares token
+#   SEQUENCES with multiplicity plus a committed snapshot of the generated SQL
+#   (REVIEW_FINDINGS.md finding 6 -- static half fixed).
+#
+#   WHAT REMAINS: this is still a comparison of SQL TEXT. It cannot tell you the
+#   two produce the same patients. tests/verify_against_legacy.R does that, with
+#   EXCEPT in both directions, and it needs a warehouse.
 # -----------------------------------------------------------------------------
 #   Rscript "Jul 28/tests/test_equivalence.R"
 #
@@ -95,42 +107,114 @@ ok(any(grepl('unset\\s*=\\s*"ELIG_COH_FINAL"', cl)),
    "its default is still ELIG_COH_FINAL, so an unconfigured run is unchanged")
 
 # =============================================================================
-section("2. Overall's IE criteria == build_criteria_catalog() + step 24")
+section("2. Overall's IE criteria == build_criteria_sql() under the real config")
 
-# --- extract the catalog's filter_sql, in declaration order -------------------
-ca  <- readLines(file.path(APR, "R", "criteria_attrition.R"))
-i   <- grep("build_criteria_catalog <- function", ca)[1]
-j   <- grep("^\\}", ca); j <- j[j > i][1]
-blk <- ca[i:j]
-raw <- regmatches(blk, regexpr("filter_sql\\s*=\\s*(glue\\()?\"[^\"]*\"", blk))
-cat_sql <- sub(".*\"(.*)\"$", "\\1", raw)
-cat_sql <- gsub("\\{cfg\\$min_age\\}", CFG$min_age, cat_sql)
+# Derived by CALLING the production functions, not by parsing them. The catalog
+# lists every possible criterion; build_criteria_sql() decides which are applied
+# (`if (isTRUE(cfg[[cr$cfg_key]]))`), and pipeline_inputs.csv ships four FALSE.
+# Reading the catalog and ignoring cfg_key -- what this section used to do --
+# validated against a configuration nobody runs.
+glue <- function(..., .envir = parent.frame()) {   # stub: no CRAN here
+  x <- paste0(...)
+  repeat {
+    m <- regexpr("\\{[^{}]*\\}", x); if (m == -1L) break
+    len <- attr(m, "match.length")
+    v <- paste(as.character(eval(parse(text = substr(x, m + 1L, m + len - 2L)),
+                                 envir = .envir)), collapse = "")
+    x <- paste0(substr(x, 1L, m - 1L), v, substr(x, m + len, nchar(x)))
+  }
+  x
+}
+# Source into an ISOLATED env and lift out only the two functions we call.
+# criteria_attrition.R:212 defines its own `%||%` (empty-string-aware), which
+# would otherwise shadow the engine's null-coalescing one and break
+# active_gates(). Importing the whole file is not worth that.
+.prod <- new.env(parent = globalenv())
+local({ glue <- glue; sys.source(file.path(APR, "R", "criteria_attrition.R"), envir = .prod) })
+environment(.prod$build_criteria_catalog) <- list2env(list(glue = glue),
+                                                      parent = globalenv())
+build_criteria_catalog <- .prod$build_criteria_catalog
+build_criteria_sql     <- .prod$build_criteria_sql
 
-# --- the step-1 index gate, inline in step 24 ---------------------------------
-ps  <- readLines(file.path(APR, "R", "pipeline_steps.R"))
-k   <- grep("24_ELIG_COH_FINAL", ps)[1]; s24 <- ps[k:(k + 30)]
-step1 <- grep("inpt_qual", s24, value = TRUE)[1]
-step1 <- gsub("\\{cfg\\$outpatient_window\\}", CFG$outpatient_window, step1)
+PCFG <- load_cfg()          # loads pipeline_inputs.csv, then env, then defaults
+OVC  <- resolve_spec(SPECS$overall, cfg = PCFG)
+NDC  <- bind_lot1_aliases(resolve_spec(SPECS$ndmm, cfg = PCFG))
 
-old_overall <- norm(c(step1, cat_sql))
-new_overall <- norm(vapply(OV$resolved_gates, `[[`, character(1), "predicate"))
+ok(identical(PCFG$outpatient_window, 90L),
+   sprintf("the configured outpatient window is used (%d, not 60)",
+           PCFG$outpatient_window))
+
+# The four the project ships OFF, with the reason recorded in the CSV: the
+# parent runs to Step 6 and NDMM re-applies these at the LOT1/study anchor.
+OFF <- c("apply_baseline_mm_excl", "apply_other_malig_excl",
+         "apply_pregnancy_excl", "apply_clintrial_excl")
+for (k in OFF)
+  ok(isTRUE(!isTRUE(PCFG[[k]])), paste0("configuration has ", k, " OFF"))
+for (k in c("apply_age_incl", "apply_ce_b_incl", "apply_ce_f_incl",
+            "apply_no_bl_agents_incl", "apply_fu_agents_incl"))
+  ok(isTRUE(PCFG[[k]]), paste0("configuration has ", k, " ON"))
+
+# --- what the pipeline would actually put in step 24's WHERE ------------------
+applied <- build_criteria_sql(build_criteria_catalog(PCFG), PCFG)
+applied <- trimws(strsplit(applied, "\n", fixed = TRUE)[[1]])
+applied <- applied[nzchar(applied)]
+
+ps    <- readLines(file.path(APR, "R", "pipeline_steps.R"))
+k24   <- grep("24_ELIG_COH_FINAL", ps)[1]; s24 <- ps[k24:(k24 + 30)]
+step1 <- gsub("\\{cfg\\$outpatient_window\\}", PCFG$outpatient_window,
+              grep("inpt_qual", s24, value = TRUE)[1])
+
+old_overall <- norm(c(step1, applied))
+new_overall <- norm(vapply(active_gates(OVC), `[[`, character(1), "predicate"))
 
 ok(length(old_overall) == length(new_overall),
-   sprintf("same number of criteria (old %d, new %d)",
+   sprintf("same number of APPLIED criteria (pipeline %d, spec %d)",
            length(old_overall), length(new_overall)))
 ok(identical(old_overall, new_overall),
-   "every Overall predicate matches the production catalog, in the same order")
-if (!identical(old_overall, new_overall)) {
-  n <- max(length(old_overall), length(new_overall))
-  for (x in seq_len(n)) {
-    a <- if (x <= length(old_overall)) old_overall[x] else "<none>"
-    b <- if (x <= length(new_overall)) new_overall[x] else "<none>"
-    if (!identical(a, b)) cat("      old: ", a, "\n      new: ", b, "\n", sep = "")
-  }
+   "every applied Overall predicate matches build_criteria_sql(), in order")
+if (!identical(old_overall, new_overall))
+  for (x in seq_len(max(length(old_overall), length(new_overall))))
+    cat("      pipeline: ", if (x <= length(old_overall)) old_overall[x] else "<none>",
+        "\n      spec    : ", if (x <= length(new_overall)) new_overall[x] else "<none>",
+        "\n", sep = "")
+
+# The disabled criteria must be DECLARED but not APPLIED -- still PLD columns,
+# just not AND-ed into membership. That is what makes them a config decision.
+declared <- vapply(OVC$resolved_gates, `[[`, character(1), "id")
+active   <- vapply(active_gates(OVC), `[[`, character(1), "id")
+for (g in c("no_baseline_mm_evidence", "no_other_cancer_index",
+            "no_pregnancy_index", "no_clintrial")) {
+  ok(g %in% declared && !(g %in% active),
+     paste0(g, " is declared but not applied"))
 }
+ok(!any(grepl("OTHER_MALIGN_FLAG|PREGNANT_FLAG|CLINTRIAL|MM_baseline_diag",
+              sql_index_sel(OVC, PCFG))),
+   "no disabled criterion reaches the generated WHERE clause")
+# The schema guard must not demand columns for criteria the config disabled --
+# that would fail a run over a criterion nobody is applying.
+need_ov <- required_source_cols(list(overall = OVC))$index_flags
+ok(!any(c("OTHER_MALIGN_FLAG", "PREGNANT_FLAG", "CLINTRIAL_BASELINE",
+          "MM_baseline_diag") %in% need_ov),
+   "the schema guard does not require columns for disabled criteria")
+ok(all(c("CE_b", "CE_f", "MM_FU_agents", "AGE_INDEX_YR") %in% need_ov),
+   "the schema guard still requires every applied criterion's column")
+
+# --- and the same for NDMM: the parent-level exclusions stay off so the -------
+# MM-adjacent override at the LOT1 anchor is not pre-empted upstream.
+nd_active <- vapply(active_gates(NDC), `[[`, character(1), "id")
+ok(!("no_other_cancer_index" %in% nd_active),
+   "NDMM does NOT apply the index-anchored other-cancer exclusion")
+ok("no_other_cancer_pre_lot1" %in% nd_active,
+   "NDMM DOES apply the LOT1-anchored one (where the override lives)")
+ok(!("no_pregnancy_index" %in% nd_active) && "no_pregnancy_study" %in% nd_active,
+   "NDMM uses the study-period pregnancy scan, not the index-anchored flag")
+# pipeline_inputs.csv states TRUE here "breaks the NDMM cohort" -- assert we
+# never generate that configuration by accident.
+ok(!any(grepl("OTHER_MALIGN_FLAG", sql_index_sel(NDC, PCFG), fixed = TRUE)),
+   "NDMM never drops MM-adjacent patients upstream (the documented breakage)")
 
 # --- the index-selection rule -------------------------------------------------
-sel <- sql_index_sel(OV, CFG)
+sel <- sql_index_sel(OVC, PCFG)
 ok(any(grepl("row_number() OVER (PARTITION BY PATID ORDER BY INDEX_DATE)", s24,
              fixed = TRUE)) &&
    grepl("row_number() OVER (PARTITION BY PATID ORDER BY INDEX_DATE)", sel,
@@ -139,12 +223,10 @@ ok(any(grepl("row_number() OVER (PARTITION BY PATID ORDER BY INDEX_DATE)", s24,
 ok(any(grepl("WHERE rn = 1", s24, fixed = TRUE)) &&
    grepl("WHERE rn = 1", sel, fixed = TRUE),
    "same rn = 1 selection as step 24")
-# Filter-THEN-rank, not rank-then-filter: a patient whose earliest candidate
-# index fails IE may still enter on a later one. Getting this backwards would
-# change the cohort without changing a single criterion.
-ok(regexpr("WHERE 1 = 1", sel, fixed = TRUE) <
-   regexpr("row_number()", sel, fixed = TRUE),
+ok(regexpr("WHERE 1 = 1", sel, fixed = TRUE) < regexpr("row_number()", sel, fixed = TRUE),
    "criteria are applied BEFORE the ranking, as step 24 does")
+ok(grepl("outpt2_90", sel, fixed = TRUE) && !grepl("outpt2_60", sel, fixed = TRUE),
+   "the generated SQL uses the configured 90-day outpatient column")
 
 # =============================================================================
 section("3. NDMM's IE criteria == the pre-change _ndmm_patids filter")
@@ -169,10 +251,28 @@ if (!have_git) {
                 sprintf("LOT1_START_DT >= date('%s')", CFG$lot1_from))
   ok(identical(new_ndmm[1:2], implicit),
      "has_lot1 + lot1_from are the first two LOT1-anchored predicates")
-  ok(setequal(setdiff(new_ndmm, implicit), old_ndmm),
-     "the remaining NDMM predicates are exactly the old six, unchanged")
+  # IN ORDER, not setequal(). The final AND-set is order-independent but the
+  # attrition funnel is not: the old test could not have seen that
+  # ce_fu_lot1_3mo had been moved from fifth to fourth, which would have made
+  # every middle row of the funnel disagree with the dashboard's.
+  ok(identical(setdiff(new_ndmm, implicit), old_ndmm),
+     "the remaining NDMM predicates are the old six, unchanged AND in the same order")
+  if (!identical(setdiff(new_ndmm, implicit), old_ndmm))
+    for (x in seq_len(max(length(old_ndmm), length(setdiff(new_ndmm, implicit)))))
+      cat("      dashboard: ", if (x <= length(old_ndmm)) old_ndmm[x] else "<none>",
+          "\n      spec     : ",
+          if (x <= length(setdiff(new_ndmm, implicit))) setdiff(new_ndmm, implicit)[x]
+          else "<none>", "\n", sep = "")
   ok(length(setdiff(old_ndmm, new_ndmm)) == 0L,
      "no criterion from the old filter was dropped")
+  # The funnel the engine will actually emit must follow that same order.
+  af_order <- unlist(regmatches(plan_nd_af <- sql_attrition(NDC, PCFG),
+    gregexpr("[0-9]{2}_(ce_[a-z0-9_]+|no_[a-z0-9_]+)", plan_nd_af)))
+  af_order <- sub("^[0-9]{2}_", "", af_order[!duplicated(af_order)])
+  ok(identical(tail(af_order, 6L),
+               c("ce_pre_lot1_12mo", "no_belantamab", "no_prior_mm_tx",
+                 "no_other_cancer_pre_lot1", "ce_fu_lot1_3mo", "no_pregnancy_study")),
+     "the generated attrition funnel applies them in the dashboard's order")
 
   # The old restriction really was baked into the LOT1 view, not applied loosely.
   l1 <- old[grep("VIEW \\{NDMM_LOT1_STARTS\\}", old)[1] + (0:8)]
@@ -250,10 +350,13 @@ if (!have_git) {
     ok(identical(o, n), paste0("byte-identical SQL: ", k))
   }
 
-  # Views that DID change may only have gained INDEX_DATE keying. Rather than
-  # enumerate every token, normalize the way norm() does -- strip alias
-  # prefixes and trailing commas -- so what is left is only meaning-bearing.
-  # Anything outside ALLOWED is a real change to the criteria and fails.
+  # Views that DID change may only have gained INDEX_DATE keying.
+  #
+  # Compared as SEQUENCES WITH MULTIPLICITY, not sets. The old version diffed
+  # set(old) vs set(new), which is blind to reordering and to a predicate
+  # appearing a different number of times -- "AND x = 1" dropped from one of
+  # three arms would have passed. Here the allowed additions are removed from
+  # both sides and the REMAINDER must be identical element-for-element.
   tok <- function(x) {
     t <- strsplit(x, " ")[[1]]
     t <- sub(",$", "", t)                    # trailing commas carry no meaning
@@ -268,16 +371,43 @@ if (!have_git) {
                "PATID", "LOT_NUM", "LOT_START_DT", "(", ")", "1)",
                "{patient_input}", "{LOT1_STARTS}", "{LOT1_PRE_DAYS})",
                "cand", "{win}", "BETWEEN", "date_sub(LOT1_START_DT",
-               "l", "p", "u", "ec")
+               "l", "p", "u", "ec",
+               # Generalisation (3): the flag table now EXPOSES LOT1_START_DT as
+               # an output column, so has_lot1 / lot1_from can read it. Pinned
+               # by the dedicated assertion below rather than merely tolerated
+               # -- the set-based comparison hid this addition entirely, which
+               # is precisely why it was replaced.
+               "LOT1_START_DT")
   for (k in setdiff(shared, IDENTICAL_EXPECTED)) {
-    o <- tok(ob[match(k, key(ob))]); n <- tok(nb[match(k, key(nb))])
-    changed <- setdiff(union(setdiff(o, n), setdiff(n, o)), ALLOWED)
-    ok(length(changed) == 0L,
-       paste0("only documented changes in ", k,
-              if (length(changed)) paste0(" -- UNEXPECTED: ",
-                                          paste(changed, collapse = " | ")) else ""))
+    o <- tok(ob[match(k, key(ob))]); nn <- tok(nb[match(k, key(nb))])
+    o_rest  <- o[!(o  %in% ALLOWED)]
+    n_rest  <- nn[!(nn %in% ALLOWED)]
+    same <- identical(o_rest, n_rest)
+    detail <- if (same) "" else {
+      i <- which(c(o_rest, rep(NA, max(0, length(n_rest) - length(o_rest)))) !=
+                 c(n_rest, rep(NA, max(0, length(o_rest) - length(n_rest)))))[1]
+      paste0(" -- first divergence at token ", i, ": original '",
+             if (!is.na(i) && i <= length(o_rest)) o_rest[i] else "<end>",
+             "' vs '", if (!is.na(i) && i <= length(n_rest)) n_rest[i] else "<end>", "'")
+    }
+    ok(same, paste0("token SEQUENCE outside the documented additions is ",
+                    "identical in ", k, detail))
   }
 }
+
+# Generalisation (3), pinned: the flag table exposes LOT1_START_DT as an output
+# column. Allowed above, so assert here that it is a genuine ADDITION -- present
+# in the new SELECT list, absent from the old one -- rather than a token that
+# happened to move.
+new_flags <- nb[match("{LOT1_FLAGS_ALL}", key(nb))]
+old_flags <- ob[match("{LOT1_FLAGS_ALL}", key(ob))]
+ok(grepl("ec_l1.LOT1_START_DT, ce.CE_pre_lot1_12mo", new_flags, fixed = TRUE),
+   "the flag table now selects LOT1_START_DT as an output column")
+ok(!grepl("LOT1_START_DT, ce.CE_pre_lot1_12mo", old_flags, fixed = TRUE),
+   "the original did not -- so this is an addition, not a move")
+ok(length(gregexpr("LOT1_START_DT", new_flags, fixed = TRUE)[[1]]) ==
+   length(gregexpr("LOT1_START_DT", old_flags, fixed = TRUE)[[1]]) + 1L,
+   "exactly ONE extra occurrence of it, i.e. nothing else changed around it")
 
 # =============================================================================
 section("5. every lifted constant equals the original")

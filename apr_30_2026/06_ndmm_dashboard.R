@@ -766,6 +766,19 @@ prepare_ndmm_cohort <- function(con) {
                  q2_ok_othercancer = othercancer_ok,
                  q2_ok_pregnancy   = preg_ok)
   materialize_lot1_flags(con, run_step)
+  # The persisted table is LOT1_FLAGS_ALL since the rename, so republish the old
+  # name as a view -- otherwise a dashboard run leaves NDMM_FLAGS_ALL pointing at
+  # pre-rename data for poma_studyteam_qs.R / 08_analytic_cohort.R. Best-effort
+  # here: this is a dashboard, and a compat-view failure must not abort the
+  # render. The standalone stage treats the same failure as fatal.
+  tryCatch(
+    write_lot1_compat_view(
+      con, replace_table = identical(toupper(Sys.getenv(
+        "LOT1_REPLACE_LEGACY_TABLE", unset = "FALSE")), "TRUE")),
+    error = function(e)
+      log_msg("WARN: compatibility view not published (", conditionMessage(e),
+              "). Consumers reading ", wrk(LOT1_COMPAT_TBL),
+              " may be seeing stale flags."))
   build_ndmm_patids(con)
 
   log_msg("Building filtered LOT_LONG -> ", NDMM_LOT_LONG_FILT)

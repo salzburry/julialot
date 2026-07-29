@@ -7,6 +7,13 @@ Everything for the NDMM cohort lives here.
 | `cohort.R` | **The definition.** Gate list in funnel order. No SQL. |
 | `build.R` | Entry point |
 | `build_lot1_flags.R` | The LOT1-anchored flag stage (only NDMM needs it) |
+
+`build_lot1_flags.R` **fails closed**: it stops if a table cannot be persisted,
+and stops if any criterion could not be evaluated (an unreadable source makes
+its flag pass every patient — indistinguishable, in the data, from a criterion
+that excluded nobody). `--allow-skipped` builds anyway. Either way it writes
+`LOT1_FLAGS_RUN` recording which criteria ran, and `ndmm/build.R` refuses to
+apply a gate the record says was skipped.
 | `tests/test_ndmm.R` | This cohort's contract |
 
 ```sh
@@ -35,11 +42,18 @@ the membership view consumes flags that only exist after the LOT build has run.
 
 ```
 1. cohort pipeline through step 23               -> ELIG_COH_ALLFLAGS
-2. ndmm/build.R --index-only                     -> coh_index_union
+2. ndmm/build.R --index-only                     -> coh_index_union  (a TABLE)
 3. LOT build, INPUT_COHORT_TABLE=coh_index_union -> LOT_LONG, MAP_STACKED
 4. ndmm/build_lot1_flags.R                       -> LOT1_STARTS, LOT1_FLAGS_ALL
 5. ndmm/build.R                                  -> the cohort + PLD
 ```
+
+Each step is a separate process, so `coh_index_union` is a **persisted table**,
+not a session-scoped temp view. Step 5 **reuses** the index tables rather than
+recomputing them, so the cohort is selected from the same rows the LOT build
+consumed; pass `--rebuild-index` to recompute, which means redoing steps 3–4.
+Step 2 preflights only what it reads, so it does not demand the `LOT1_FLAGS_ALL`
+that step 4 creates.
 
 Steps 1–3 are shared with Overall: run them once and both cohorts select from
 the result.

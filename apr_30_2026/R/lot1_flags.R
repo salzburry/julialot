@@ -11,21 +11,31 @@
 # anchored at LOT1_START_DT". The NDMM_ naming was an artifact of where they
 # were written, and is why they were never reusable. Renamed LOT1_ here.
 #
-# TWO GENERALISATIONS vs the original (everything else is character-for-
-# character the same SQL):
+# THREE GENERALISATIONS vs the original (everything else is character-for-
+# character the same SQL, verified token-for-token by
+# "Jul 28"/tests/test_equivalence.R section 4):
 #
 #   1. The patient input is a PARAMETER, not hardcoded to ELIG_COH_FINAL.
 #      Pass ELIG_COH_FINAL for the legacy path, or the "Jul 28" union view
 #      (coh_index_union) to build the flags without an Overall cohort ever
 #      being selected. The input must expose PATID + INDEX_DATE; both do.
 #
-#   2. Views are keyed by (PATID, INDEX_DATE), not PATID alone. The original
-#      could key on PATID because ELIG_COH_FINAL is already one row per patient
-#      (step 24 takes rn = 1). A union over cohorts that select DIFFERENT index
-#      dates for the same patient can carry two rows, and a PATID-only key
-#      would silently conflate them. See the per-view notes on which scans are
-#      index-DEPENDENT (window anchored at LOT1, so keyed by the pair) and
-#      which are index-INDEPENDENT (whole study period, so PATID is enough).
+#   2. Views CARRY (PATID, INDEX_DATE), so the LOT1 anchor travels with each
+#      row. PATID is still the KEY, and the patient input must hold exactly one
+#      row per patient.
+#
+#      THAT IS AN INVARIANT, NOT AN ASSUMPTION TO IGNORE. build_lot1_starts()
+#      joins LOT_LONG on PATID alone -- it has no choice, because LOT_LONG is
+#      keyed by (PATID, LOT_NUM) and carries no INDEX_DATE at all
+#      (lot2_5_base.R has zero references to it), and 02_lot1.R aggregates by
+#      PATID throughout. Two index dates for one patient would fan out here,
+#      silently. ELIG_COH_FINAL satisfies the invariant by construction (step 24
+#      takes rn = 1); "Jul 28"'s coh_index_union enforces it with a check that
+#      aborts the run. Do not point this at anything that has not.
+#
+#   3. The flag table EXPOSES LOT1_START_DT as an output column, so the
+#      has_lot1 and lot1_from gates can read the anchor directly. An added
+#      column only -- no predicate or grouping changed around it.
 #
 # Requires the LOT stack's helpers: cfg, db_exec, db_q, log_msg (config_lot.R,
 # db_utils_lot.R) and load_codelist_csv (codelists_lot.R).
@@ -48,6 +58,33 @@ LOT1_PREGNANCY_PATIDS    <- "_lot1_pregnancy_patids"
 LOT1_FLAGS_ALL           <- "_lot1_flags_all"
 LOT1_STARTS_TBL          <- Sys.getenv("LOT1_STARTS_TABLE", unset = "LOT1_STARTS")
 LOT1_FLAGS_ALL_TBL       <- Sys.getenv("LOT1_FLAGS_TABLE",  unset = "LOT1_FLAGS_ALL")
+# Durable record of HOW a flag table was built -- see write_lot1_run_metadata().
+LOT1_RUN_TBL             <- Sys.getenv("LOT1_RUN_TABLE",    unset = "LOT1_FLAGS_RUN")
+
+# The pre-rename name. Renaming the PERSISTED table broke consumers that read it
+# by name in the warehouse -- the NDMM_* aliases elsewhere are R variables and do
+# nothing for them. Known readers: poma_studyteam_qs.R:535 and
+# cohort_explorer/warehouse/08_analytic_cohort.R:86. A view keeps them working
+# AND current; without one they either fail or, worse, keep reading a stale
+# table from before the rename.
+LOT1_COMPAT_TBL <- Sys.getenv("LOT1_COMPAT_TABLE", unset = "NDMM_FLAGS_ALL")
+
+# Columns those consumers actually select. Checked before the view is published
+# so a future column change breaks here, loudly, instead of in their queries.
+LOT1_COMPAT_REQUIRED <- c("PATID", "CE_pre_lot1_12mo", "CE_lot1_3mo_fu",
+                          "NO_BELANTAMAB", "NO_PRIOR_MM_TX",
+                          "NO_OTHER_CANCER_PRE_LOT1", "NO_PREGNANCY")
+
+# The criteria whose sources can be unavailable, and the flag each one sets.
+# When a source is unreadable the criterion is SKIPPED and its flag passes every
+# patient -- which is indistinguishable, in the data, from a criterion that
+# excluded nobody. That is why it has to be recorded (write_lot1_run_metadata).
+LOT1_SKIPPABLE <- list(
+  belantamab   = "NO_BELANTAMAB",
+  prior_mm_tx  = "NO_PRIOR_MM_TX",
+  other_cancer = "NO_OTHER_CANCER_PRE_LOT1",
+  pregnancy    = "NO_PREGNANCY"
+)
 
 # ---- parameters -------------------------------------------------------------
 LOT1_STUDY_START   <- Sys.getenv("STUDY_START", unset = "2015-07-01")
@@ -662,3 +699,93 @@ materialize_lot1_starts <- function(con, run_step_fn = NULL)
 
 materialize_lot1_flags <- function(con, run_step_fn = NULL)
   .materialize_and_repoint(con, LOT1_FLAGS_ALL, LOT1_FLAGS_ALL_TBL, run_step_fn)
+
+# =============================================================================
+# Backward compatibility for the pre-rename table name
+# =============================================================================
+# Publishes LOT1_COMPAT_TBL as a VIEW over the current flag table.
+#
+# NEVER DROPS A PHYSICAL TABLE BY DEFAULT. If the legacy name still exists as a
+# real table -- written by a run from before the rename -- that is somebody's
+# data and dropping it is not this function's call to make. It reports what is
+# there and stops, because the alternative (leaving it) means consumers silently
+# read pre-rename numbers. Pass replace_table = TRUE once you have looked.
+write_lot1_compat_view <- function(con, replace_table = FALSE) {
+  target <- wrk(LOT1_COMPAT_TBL)
+  src    <- wrk(LOT1_FLAGS_ALL_TBL)
+
+  have <- toupper(names(db_q(con, glue("SELECT * FROM {src} WHERE 1 = 0"))))
+  miss <- setdiff(toupper(LOT1_COMPAT_REQUIRED), have)
+  if (length(miss))
+    stop(src, " is missing column(s) the legacy consumers read: ",
+         paste(miss, collapse = ", "), ". Publishing the compatibility view ",
+         "would break them at query time instead of here.", call. = FALSE)
+
+  kind <- .lot1_relation_kind(con, target)
+  if (identical(kind, "TABLE") && !isTRUE(replace_table)) {
+    nrows <- tryCatch(db_q(con, glue("SELECT count(*) AS n FROM {target}"))$n,
+                      error = function(e) NA)
+    stop(target, " already exists as a physical TABLE",
+         if (!is.na(nrows)) paste0(" (", format(nrows, big.mark = ","), " rows)") else "",
+         ", almost certainly written before the rename to ", LOT1_FLAGS_ALL_TBL,
+         ".\n  Leaving it means poma_studyteam_qs.R and 08_analytic_cohort.R keep ",
+         "reading STALE flags.\n  Replacing it means dropping that table. Look at ",
+         "it first, then re-run with LOT1_REPLACE_LEGACY_TABLE=TRUE to drop it ",
+         "and publish a view over ", src, " instead.", call. = FALSE)
+  }
+  if (identical(kind, "TABLE")) {
+    log_msg("Dropping the pre-rename TABLE ", target,
+            " (LOT1_REPLACE_LEGACY_TABLE=TRUE)")
+    db_exec(con, glue("DROP TABLE IF EXISTS {target}"))
+  }
+  db_exec(con, glue("CREATE OR REPLACE VIEW {target} AS SELECT * FROM {src}"))
+  log_msg("Compatibility view ", target, " -> ", src)
+  invisible(TRUE)
+}
+
+# "TABLE", "VIEW", or NA when the name does not exist.
+.lot1_relation_kind <- function(con, name) {
+  d <- tryCatch(db_q(con, glue("DESCRIBE EXTENDED {name}")),
+                error = function(e) NULL)
+  if (is.null(d) || !nrow(d)) return(NA_character_)
+  cn <- tolower(as.character(d[[1]]))
+  ty <- as.character(d[[2]])[cn == "type"]
+  if (!length(ty)) return("TABLE")            # older DESCRIBE output: assume table
+  if (grepl("VIEW", toupper(ty[1]), fixed = TRUE)) "VIEW" else "TABLE"
+}
+
+# =============================================================================
+# Run metadata
+# =============================================================================
+# Which criteria were actually EVALUATED, and with what parameters. Without
+# this, a skipped criterion is invisible downstream: NO_PREGNANCY = 1 for every
+# patient reads as "excluded nobody" when it may mean "never ran".
+#
+# Consumers should check this before trusting a flag. "Jul 28"'s cohort engine
+# does: it refuses to apply a gate whose criterion was skipped.
+#
+# `evaluated` is a named logical over LOT1_SKIPPABLE.
+write_lot1_run_metadata <- function(con, evaluated, patient_input,
+                                    n_rows = NA_integer_) {
+  q <- function(x) paste0("'", gsub("'", "''", as.character(x)), "'")
+  rows <- vapply(names(LOT1_SKIPPABLE), function(k) paste0(
+    "(", paste(q(k), q(LOT1_SKIPPABLE[[k]]),
+               if (isTRUE(evaluated[[k]])) "true" else "false",
+               sep = ", "), ")"), character(1))
+  db_exec(con, glue("
+    CREATE OR REPLACE TABLE {wrk(LOT1_RUN_TBL)} AS
+    WITH c(criterion, flag_column, evaluated) AS (VALUES {paste(rows, collapse = ', ')})
+    SELECT c.criterion, c.flag_column, c.evaluated,
+           {q(patient_input)}            AS patient_input,
+           {q(LOT1_FROM)}                AS lot1_from,
+           cast({LOT1_PRE_DAYS} as int)  AS pre_lot1_days,
+           {q(cfg$study_end)}            AS study_end,
+           cast({if (is.na(n_rows)) 'NULL' else n_rows} as bigint) AS n_flag_rows,
+           current_timestamp()           AS built_at
+    FROM c"))
+  n_skipped <- sum(!vapply(names(LOT1_SKIPPABLE),
+                           function(k) isTRUE(evaluated[[k]]), logical(1)))
+  log_msg("Run metadata -> ", wrk(LOT1_RUN_TBL), " (", n_skipped,
+          " criterion/criteria SKIPPED)")
+  invisible(n_skipped)
+}

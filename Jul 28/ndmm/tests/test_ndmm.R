@@ -44,13 +44,18 @@ ok(!any(grepl("overall", gen, fixed = TRUE)),
 
 section("LOT1-anchored gates")
 lot1 <- Filter(function(g) identical(g$anchor, "lot1"), ND$resolved_gates)
+# Order matters: the final AND-set does not depend on it, but the attrition
+# funnel does, and this folder reproduces the legacy REPORT, not just the legacy
+# cohort. This is ndmm_counts()' order in 06_ndmm_dashboard.R -- CE_lot1_3mo_fu
+# is FIFTH, after other-cancer. tests/test_equivalence.R derives the same order
+# from the dashboard source rather than hardcoding it.
 ok(identical(unname(vapply(lot1, `[[`, character(1), "predicate")), c(
      "l1.LOT1_START_DT IS NOT NULL",
      "l1.LOT1_START_DT >= date('2017-01-01')",
-     "n.CE_pre_lot1_12mo = 1", "n.CE_lot1_3mo_fu = 1", "n.NO_BELANTAMAB = 1",
-     "n.NO_PRIOR_MM_TX = 1", "n.NO_OTHER_CANCER_PRE_LOT1 = 1",
+     "n.CE_pre_lot1_12mo = 1", "n.NO_BELANTAMAB = 1", "n.NO_PRIOR_MM_TX = 1",
+     "n.NO_OTHER_CANCER_PRE_LOT1 = 1", "n.CE_lot1_3mo_fu = 1",
      "n.NO_PREGNANCY = 1")),
-   "match 06_ndmm_dashboard.R's NDMM_PATIDS filter, plus has_lot1")
+   "match 06_ndmm_dashboard.R's NDMM_PATIDS filter and funnel order, plus has_lot1")
 ids <- unname(vapply(ND$resolved_gates, `[[`, character(1), "id"))
 ok(which(ids == "has_lot1") < which(ids == "lot1_from"),
    "has_lot1 precedes every gate that reads LOT1_START_DT")

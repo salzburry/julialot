@@ -22,6 +22,11 @@
 
 # Root-level suites (engine, equivalence) plus each cohort folder's own.
 # Globbed, not listed: adding a suite must not require editing this file.
+#
+# tests/verify_against_legacy.R is deliberately NOT matched: it needs a live
+# warehouse, and a suite that cannot run offline must not be able to make this
+# runner look red for the wrong reason -- or, worse, be quietly skipped and
+# counted as passing. Run it explicitly, with a connection.
 suites <- unique(c(sort(Sys.glob(file.path(.here, "tests", "test_*.R"))),
                    sort(Sys.glob(file.path(.here, "*", "tests", "test_*.R")))))
 
@@ -34,5 +39,9 @@ for (s in suites) {
 }
 
 cat("\n", strrep("=", 60), "\n", sep = "")
-if (fails == 0L) cat("ALL SUITES PASSED (", length(suites), " suites)\n", sep = "")
-else { cat(fails, " of ", length(suites), " suites FAILED\n", sep = ""); quit(status = 1L) }
+if (fails == 0L) {
+  cat("ALL SUITES PASSED (", length(suites), " suites)\n", sep = "")
+} else {
+  cat(fails, " of ", length(suites), " suites FAILED\n", sep = "")
+  quit(status = 1L)
+}
