@@ -23,8 +23,14 @@
 #
 # Steps 1-3 are shared: run them once and BOTH cohorts select from the result.
 #
-# The criteria themselves live in apr_30_2026/R/lot1_flags.R, shared with
-# 06_ndmm_dashboard.R so there is exactly one definition of each.
+# The criteria live in ndmm/lot1_flags.R, in THIS folder.
+#
+# TRADE-OFF, STATED PLAINLY: apr_30_2026 is left untouched, so
+# 06_ndmm_dashboard.R keeps its own inline copy of these criteria and there are
+# now TWO definitions of each. They are identical today -- ndmm/lot1_flags.R was
+# lifted from that file verbatim, and tests/test_equivalence.R section 4 still
+# compares them token-for-token against it. But nothing PREVENTS them diverging:
+# an edit to one will not touch the other, and only the test will notice.
 # =============================================================================
 
 .here <- local({
@@ -49,10 +55,13 @@ if (file.exists(file.path(.apr30, "R", "load_inputs.R"))) {
   .src("load_inputs.R")
   load_pipeline_inputs(c(.apr30, dirname(.apr30)))
 }
+# Helpers are READ from the pipeline (cfg, connection, naming, codelists). This
+# folder does not modify apr_30_2026 -- see the note in the header.
 .src("config_lot.R")      # cfg
 .src("db_utils_lot.R")    # db_exec, db_q, run_step, wrk, cdm_src, log_msg
 .src("codelists_lot.R")   # load_codelist_csv
-.src("lot1_flags.R")      # the criteria
+# The criteria live HERE, alongside the cohort that uses them.
+source(file.path(.here, "lot1_flags.R"))
 
 # ---- inputs -----------------------------------------------------------------
 # PATIENT_INPUT is the whole point: point it at the union view and no Overall

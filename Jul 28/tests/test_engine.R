@@ -404,7 +404,7 @@ ok(all(vapply(REG[!is.na(crit)], function(g) identical(g$anchor, "lot1"), logica
 # for them. Asserted against the real consumer files, so this fails if either
 # starts reading a column the view does not carry.
 APR <- file.path(dirname(ROOT), "apr_30_2026")
-lf  <- paste(readLines(file.path(APR, "R", "lot1_flags.R")), collapse = "\n")
+lf  <- paste(readLines(file.path(ROOT, "ndmm", "lot1_flags.R")), collapse = "\n")
 
 ok(grepl('LOT1_COMPAT_TBL <- Sys.getenv("LOT1_COMPAT_TABLE", unset = "NDMM_FLAGS_ALL")',
          lf, fixed = TRUE),
@@ -442,16 +442,21 @@ ok(grepl("DROP TABLE IF EXISTS", lf, fixed = TRUE) &&
    grepl('if (identical(kind, "TABLE")) {', lf, fixed = TRUE),
    "a drop only happens on the explicitly-allowed path")
 
-# Both producers must publish it, or a dashboard run leaves the old name stale.
+# apr_30_2026 is untouched, so the dashboard still writes NDMM_FLAGS_ALL itself,
+# exactly as it always did -- legacy consumers are unaffected on that path and
+# need nothing from this folder. The compat view matters only when THIS folder's
+# stage is used INSTEAD of the dashboard, and it must never clobber a table the
+# dashboard wrote.
 dash <- paste(readLines(file.path(APR, "06_ndmm_dashboard.R")), collapse = "\n")
 stg  <- paste(readLines(file.path(ROOT, "ndmm", "build_lot1_flags.R")), collapse = "\n")
-ok(grepl("write_lot1_compat_view", dash, fixed = TRUE),
-   "the dashboard publishes the compatibility view too")
+ok(!grepl("write_lot1_compat_view", dash, fixed = TRUE),
+   "the dashboard does NOT call into this folder (it is untouched)")
+ok(grepl("NDMM_FLAGS_ALL", dash, fixed = TRUE),
+   "the dashboard still writes the legacy name itself, as it always did")
 ok(grepl("write_lot1_compat_view", stg, fixed = TRUE),
-   "the standalone flag stage publishes it")
-# Different failure policies, deliberately: a dashboard must still render.
-ok(grepl("tryCatch(\n    write_lot1_compat_view", dash, fixed = TRUE),
-   "the dashboard treats a compat-view failure as best-effort")
+   "only this folder's stage publishes the compatibility view")
+ok(grepl("replace_table = FALSE", lf, fixed = TRUE),
+   "and it refuses to clobber a physical table the dashboard may have written")
 
 # ---- the warehouse verifier (Phase 6) ---------------------------------------
 # Everything else in tests/ compares SQL TEXT. This is the script that compares
