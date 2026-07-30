@@ -27,15 +27,12 @@ build_cohort <- function(cohort_dir, root = cohort_dir, expect_table = NULL,
   }
 
   write_build_status(conn, cfg, "started")
-  # Any failure past this point leaves half the tables from this run and half
-  # from the last one. Record that rather than leaving it to be discovered.
-  if (!interactive()) {
-    on.exit({
-      st <- get0(".build_state", ifnotfound = "failed")
-      if (!identical(st, "complete"))
-        try(write_build_status(conn, cfg, "failed"), silent = TRUE)
-    }, add = TRUE, after = FALSE)
-  }
+  build_complete <- FALSE
+  # Mark partial runs before the connection closes.
+  on.exit({
+    if (!build_complete)
+      try(write_build_status(conn, cfg, "failed"), silent = TRUE)
+  }, add = TRUE, after = FALSE)
 
   load_csv_codelists(conn, cfg)
 
@@ -94,8 +91,8 @@ build_cohort <- function(cohort_dir, root = cohort_dir, expect_table = NULL,
   if (isTRUE(cfg$persist_to_schema)) persist_attrition_table(rows, cfg, conn)
   print_cohort_characteristics(cfg, conn, h$work_tbl)
 
-  .build_state <<- "complete"
   write_build_status(conn, cfg, "complete")
+  build_complete <- TRUE
   log_msg("=", SEP_59)
 
   invisible(list(cfg = cfg, conn = conn, mat_tables = mat_tables))

@@ -63,8 +63,7 @@ cfg_defaults <- list(
   cl_permissible_subs = "cl_permissible_subs",
 
   # ---- Code-list CSVs (on server filesystem at /mnt/code/codelist/) ----
-  # When use_csv_codelists = TRUE, all CSVs are loaded into Spark temp views
-  # via load_csv_codelists() before the pipeline runs.
+  # When use_csv_codelists = TRUE, the cohort CSVs are loaded into temp views.
   use_csv_codelists = as.logical(Sys.getenv("USE_CSV_CODELISTS", unset = "TRUE")),
   codelist_dir      = Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist"),
   codelist_csv_map  = list(

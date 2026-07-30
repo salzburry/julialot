@@ -38,10 +38,10 @@ APPLY_CE_F_INCL,TRUE,Require continuous enrollment in the follow-up period
 APPLY_NO_BL_AGENTS_INCL,TRUE,Require no MM agents during baseline (new users)
 APPLY_FU_AGENTS_INCL,TRUE,Require >= 1 MM agent during follow-up
 # --- Cohort EXCLUSION criteria (set FALSE to drop a rule) ---,,
-# DESIGN (this project only): the parent/Overall cohort runs through Step 6 (qualifying MM + age + CE + treatment-naive + treated). The NDMM-specific exclusions (other-malig / pregnancy / baseline-MM-dx / clinical-trial) are turned OFF at the parent here and re-applied where the spec requires inside 06_ndmm_dashboard.R at the correct LOT1 or study-period anchor (pregnancy is study-period). The parent CODE is untouched - these are config toggles - so other projects using the parent with their own config still get the full funnel.,,
+# Overall stops at Step 6. NDMM applies its own exclusions downstream.,,
 APPLY_PREGNANCY_EXCL,FALSE,OFF at parent (Overall=Step6); NDMM re-applies it from pregnancy.csv / raw claims over the study period
 APPLY_CLINTRIAL_EXCL,FALSE,OFF at parent (Overall=Step6); not in the NDMM IE spec (S6.2.1) - confirm with team before any reuse
-# APPLY_OTHER_MALIG_EXCL ships FALSE by design for the NDMM workflow: the parent leaves other-malig OFF so 06_ndmm_dashboard.R can re-apply it with the MM-adjacent override (keeps MGUS / solitary + extramedullary plasmacytoma / plasma-cell leukemia / secondary bone). TRUE drops those patients upstream and breaks the NDMM cohort. Caveat: with FALSE the Overall (non-NDMM) cohort has no other-malig exclusion.,,
+# Other malignancy stays off in Overall; NDMM applies its own rule.,,
 APPLY_OTHER_MALIG_EXCL,FALSE,Exclude other malignancies (FALSE by design - NDMM dashboard owns this via the MM-adjacent override; see comment above)
 APPLY_BASELINE_MM_EXCL,FALSE,OFF at parent (Overall=Step6); NDMM defines newly-diagnosed by treatment (no prior MM tx in 12-mo) not dx history
 # --- Orchestrator (run_pipeline.R): leave BLANK; set per-run on the command line ---,,

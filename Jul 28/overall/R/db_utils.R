@@ -86,13 +86,16 @@ load_csv_codelists <- function(conn, cfg) {
   if (!isTRUE(cfg$use_csv_codelists)) return(invisible(NULL))
 
   csv_map <- cfg$codelist_csv_map
-  # The 5 cohort-critical codelists - pipeline cannot proceed without these
-  required <- c(cfg$cl_mm_dx, cfg$cl_mm_therapy, cfg$cl_preg,
-                cfg$cl_clintrial, cfg$cl_other_malig)
+  required <- unique(c(cfg$cl_mm_dx, cfg$cl_mm_therapy, cfg$cl_preg,
+                       cfg$cl_clintrial, cfg$cl_other_malig))
+  missing <- setdiff(required, names(csv_map))
+  if (length(missing))
+    stop("No CSV mapping for: ", paste(missing, collapse = ", "), call. = FALSE)
 
   log_msg("Loading code lists from CSV: ", cfg$codelist_dir)
 
-  for (tbl_name in names(csv_map)) {
+  # LOT loads its own lists. This runner only needs the cohort lists.
+  for (tbl_name in required) {
     csv_file <- csv_map[[tbl_name]]
     csv_path <- file.path(cfg$codelist_dir, csv_file)
     tryCatch({
@@ -126,11 +129,10 @@ load_csv_codelists <- function(conn, cfg) {
       DBI::dbExecute(conn$con, sql)
       log_msg("  >> ", tbl_name, " <- ", csv_file, " (", format(n, big.mark = ","), " rows)")
     }, error = function(e) {
-      if (tbl_name %in% required) {
-        log_msg("  ERROR: Required codelist ", csv_file, " failed: ", conditionMessage(e))
-        stop("Cannot proceed without required codelist: ", tbl_name, call. = FALSE)
-      }
-      log_msg("  WARN: Could not load ", csv_file, ": ", conditionMessage(e))
+      log_msg("  ERROR: Required codelist ", csv_file, " failed: ",
+              conditionMessage(e))
+      stop("Cannot proceed without required codelist: ", tbl_name,
+           call. = FALSE)
     })
   }
   log_msg("Code lists loaded")
@@ -277,19 +279,23 @@ materialize_to_personal_schema <- function(con, view_name, cfg, mat_tables, repl
   FALSE
 }
 
-# Run a step's QC query and log the headline metric. Separate from
-# run_step() so checkpoint steps can defer QC until AFTER the view is
-# materialized: the QC then scans the cheap persisted table instead of
-# recomputing the heavy view a second time. Same SQL, same result.
+# Run QC after materialization so it scans the saved table.
 run_qc <- function(con, qc_sql) {
   if (is.null(qc_sql)) return(invisible(NULL))
   qc <- DBI::dbGetQuery(con, qc_sql)
-  qc_metric <- colnames(qc)[1]
-  qc_value  <- as.character(qc[[1]][1])
-  numeric_val <- suppressWarnings(as.numeric(qc_value))
-  formatted   <- if (!is.na(numeric_val)) format(numeric_val, big.mark = ",") else qc_value
-  log_msg("  >> Result: ", qc_metric, " = ", formatted)
+  if (!nrow(qc)) {
+    log_msg("  >> Result: no rows")
+    return(invisible(qc))
+  }
+  formatted <- vapply(qc, function(col) {
+    value <- as.character(col[[1]])
+    number <- suppressWarnings(as.numeric(value))
+    if (is.na(number)) value else format(number, big.mark = ",")
+  }, character(1))
+  metrics <- paste0(names(formatted), " = ", formatted)
+  log_msg("  >> Result: ", paste(metrics, collapse = ", "))
   flush.console()
+  invisible(qc)
 }
 
 # ---- Step runner ----

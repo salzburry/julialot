@@ -13,15 +13,8 @@ phase_dx_events <- function(cfg, h, ctx) {
       source_tables = c("medical"),
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('med_claim_header')} AS
-        -- Claim grain is (PATID, PAT_PLANID, CLMID, FST_DT, LOC_CD). CLMID alone is
-        -- not unique: it is a plan-assigned sequence number, so the same value can
-        -- legitimately repeat across plan changes, service dates, or service-line
-        -- locations. Grouping on only (PATID, CLMID) silently merges genuinely
-        -- distinct claims. This 5-column key matches the GSK house convention
-        -- used elsewhere (e.g. vax_300081 R/02_codes/005_outcomes.Rmd).
-        -- Test each line, then aggregate the flag. max(POS) picks the highest
-        -- string, so a claim with lines at POS 21 and 81 collapses to 81 and the
-        -- inpatient signal is gone. max(POS)/max(TOS_CD) are kept as columns.
+        -- Keep the five-column claim grain.
+        -- Flag each line before max(POS) can hide an inpatient code.
         SELECT PATID, PAT_PLANID, CLMID, FST_DT, LOC_CD,
                max(CONF_ID) AS CONF_ID,
                max(POS)     AS POS,
@@ -41,10 +34,7 @@ phase_dx_events <- function(cfg, h, ctx) {
         FROM {work('med_claim_header')}")
     ),
 
-    # CONFINEMENT TABLE EXTRACT
-    # Inpatient is restricted to cases where CONF_ID is not NULL from the
-    # confinement table, so CONF_ID corresponds to an actual confinement; a
-    # confinement must also have associated admission AND discharge dates.
+    # Keep confinements with valid admission and discharge dates.
     list(
       name = "07b_confinement",
       description = "Extracting confinement records",
@@ -62,13 +52,7 @@ phase_dx_events <- function(cfg, h, ctx) {
       qc = glue("SELECT count(*) AS n_confinements FROM {work('confinement')}")
     ),
 
-    # All MM dx events in study period (for baseline lookback)
-    # Inpatient identification using EITHER Approach 1 OR Approach 2
-    # - Approach 1: POS IN (21, 51, 61) OR TOS_CD IN (FAC_IP.ACUTE, FAC_IP.REHSNF, PROF.INPVIS, FAC_IP.SNF)
-    # - Approach 2: CONF_ID is validated in T_CONFINEMENT
-    # Patient qualifies as inpatient if EITHER approach identifies them as inpatient
-    # Join key matches the 5-column claim grain used by med_claim_header:
-    # (PATID, PAT_PLANID, CLMID, FST_DT, LOC_CD).
+    # Inpatient means a POS/TOS line flag or a valid confinement.
     list(
       name = "08a_mm_dx_events_all",
       description = "Identifying MM diagnosis events (full study period, Approach 1+2 inpatient)",
@@ -86,14 +70,10 @@ phase_dx_events <- function(cfg, h, ctx) {
           h.CONF_ID,
           h.POS,
           h.TOS_CD,
-          -- Inpatient = Approach 1 (POS/TOS) OR Approach 2 (CONF_ID validated)
-          -- Approach 1: POS 21/51/61; TOS_CD IN (FAC_IP.ACUTE, FAC_IP.REHSNF, PROF.INPVIS, FAC_IP.SNF)
-          -- Approach 2: CONF_ID exists in T_CONFINEMENT with valid dates
+          -- POS/TOS line flag or valid confinement.
           CASE WHEN h.line_inpatient = 1 OR cf.CONF_ID IS NOT NULL
                THEN 1 ELSE 0 END AS inpatient_flg,
-          -- Outpatient: NOT identified as inpatient by either approach.
-          -- Both operands are TRUE/FALSE, never NULL, so this can't fall through
-          -- to 0 on a claim with no POS and no TOS_CD.
+          -- line_inpatient is 0/1, so missing POS/TOS stays null-safe.
           CASE WHEN NOT (h.line_inpatient = 1 OR cf.CONF_ID IS NOT NULL)
                THEN 1 ELSE 0 END AS outpatient_flg,
           -- STRICT MM dx flag: 203.0x / C90.0x only (for inpatient qualifying + baseline evidence)
@@ -108,10 +88,7 @@ phase_dx_events <- function(cfg, h, ctx) {
           h.line_inpatient AS pos_tos_inpatient
         FROM {cdm_src(cfg$tbl_med_diag)} d
         INNER JOIN {work('med_claim_header')} h
-          -- PAT_PLANID and LOC_CD can be NULL on some Optum claim lines; use
-          -- null-safe equality (Spark `<=>`) so a NULL on both sides matches
-          -- instead of silently dropping the diagnosis row. PATID / CLMID /
-          -- FST_DT should never be NULL on a valid claim, so plain `=` there.
+          -- PAT_PLANID and LOC_CD may be NULL; use null-safe equality.
           ON d.PATID      =   h.PATID
          AND d.CLMID      =   h.CLMID
          AND d.FST_DT     =   h.FST_DT

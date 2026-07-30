@@ -27,11 +27,10 @@ phase_codelists <- function(cfg, h, ctx) {
 
     list(
       name = "03_mm_therapy_codes",
-      description = "Loading MM therapy codes (HCPCS/NDC) — sourced from cl_mma_codelist.csv (single source of truth with LOT S04)",
+      description = "Loading MM therapy codes (HCPCS/NDC)",
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('mm_therapy_codes')} AS
-        -- cl_mma_codelist.csv has columns CL_CODE_TYPE, CL_CODE (+ CL_MEDICATION_FULL, CL_MED_CLASS, CL_MED_ABBR)
-        -- Aliased here to code_type/code to match downstream therapy join logic
+        -- Keep the fields used for claim matching.
         SELECT upper(trim(CL_CODE_TYPE)) AS code_type,
                upper(regexp_replace(trim(CL_CODE), '[^A-Za-z0-9]', '')) AS code
         FROM {mm_therapy_source}
