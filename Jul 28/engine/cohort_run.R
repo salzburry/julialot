@@ -57,25 +57,31 @@ select_specs <- function(which_cohort, all = cohort_specs()) {
 #
 # load_pipeline_inputs() only fills variables that are UNSET, so an explicit env
 # var still wins -- same precedence as the rest of the stack.
+# Everything is read from inside "Jul 28": lib/load_inputs.R and
+# pipeline_inputs.csv, both verbatim copies of the apr_30_2026 originals with
+# byte-identity asserted by tests/test_equivalence.R while that folder is still
+# present. This folder is the deployable unit, so it cannot depend on a directory
+# nobody intends to ship.
 .load_project_config <- function() {
-  apr <- Sys.getenv("APR30_DIR", unset = "")
-  if (!nzchar(apr)) {
-    here <- tryCatch(dirname(normalizePath(sys.frame(1)$ofile)), error = function(e) NULL)
-    roots <- c(if (!is.null(here)) dirname(dirname(here)), dirname(getwd()), getwd())
-    hit <- Filter(function(d) file.exists(file.path(d, "apr_30_2026", "R", "load_inputs.R")),
-                  roots)
-    if (length(hit)) apr <- file.path(hit[1], "apr_30_2026")
+  root <- .COHORT_ROOT_CACHE %||% ""
+  if (!nzchar(root)) {
+    here <- tryCatch(dirname(normalizePath(sys.frame(1)$ofile)),
+                     error = function(e) NULL)
+    cands <- c(if (!is.null(here)) dirname(here), getwd(), dirname(getwd()))
+    hit <- Filter(function(d) file.exists(file.path(d, "lib", "load_inputs.R")),
+                  cands)
+    root <- if (length(hit)) hit[1] else ""
   }
-  f <- file.path(apr, "R", "load_inputs.R")
-  if (!nzchar(apr) || !file.exists(f)) {
-    warning("could not locate apr_30_2026/R/load_inputs.R (set APR30_DIR). ",
+  f <- file.path(root, "lib", "load_inputs.R")
+  if (!nzchar(root) || !file.exists(f)) {
+    warning("could not locate lib/load_inputs.R under the Jul 28 root. ",
             "pipeline_inputs.csv was NOT loaded, so this run uses env vars and ",
             "defaults only -- it may not be the configured cohort.",
             call. = FALSE, immediate. = TRUE)
     return(invisible(FALSE))
   }
   source(f, local = TRUE)
-  load_pipeline_inputs(c(apr, dirname(apr)))
+  load_pipeline_inputs(root)
 }
 
 # Env-var driven on top of that, matching config_prompts.R's own names and

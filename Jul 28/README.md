@@ -28,27 +28,46 @@ build_both.R     both cohorts + one shared PLD
 tests/           engine invariants + old-vs-new equivalence (PLAN.md §5)
 run_all_tests.R  every suite
 
-cohort1_ie/      cohort 1 (Overall) IE criteria, built FROM THE CDM
+cohort_overall/  the Overall cohort's IE criteria, built FROM THE CDM
+lib/             the shared plumbing, so this folder ships on its own
+pipeline_inputs.csv   the configuration these entry points read
 ```
 
 `overall/` and `ndmm/` are the **selection** layer: flags in, cohorts out. They
 read `ELIG_COH_ALLFLAGS`, which the legacy pipeline produces.
-**[`cohort1_ie/`](cohort1_ie/README.md)** is the other half — it implements the
-ten index-anchored IE criteria from the raw CDM, one file per flag view, so
-cohort 1 can be built without `01_cohort.R` running first. Its README is a
-step-by-step walkthrough of every criterion. Its SQL is asserted token-for-token
-against `pipeline_steps.R` on every test run, because it is a second copy.
+**[`cohort_overall/`](cohort_overall/README.md)** is the other half — it
+implements the ten index-anchored IE criteria from the raw CDM, one file per
+table, so Overall can be built without `01_cohort.R` running first. Its README is
+a step-by-step walkthrough of every criterion.
+
+## This folder is the deployable unit
+
+`Jul 28` is what goes to production, so **nothing in it reads `apr_30_2026` at run
+time**. The shared plumbing lives in [`lib/`](lib/README.md) as a **verbatim copy**
+of `apr_30_2026/R/`, and `pipeline_inputs.csv` is a verbatim copy too. Both are
+asserted byte-identical by `tests/test_equivalence.R` §6 **while `apr_30_2026` is
+still present**; in production it is absent, those checks skip, and the copies are
+simply the code. `tests/test_equivalence.R` also asserts that no run-time file
+here resolves a path into `apr_30_2026`.
+
+Copying is a second definition and a second definition can drift. The alternative
+was worse: the production folder would not have been the deployable unit. See
+[`lib/README.md`](lib/README.md) for the rule that keeps the copy honest — never
+edit it; layer behaviour on top in the caller.
 
 ```sh
-Rscript "Jul 28/run_all_tests.R"                    # 356 assertions, 5 suites
+Rscript "Jul 28/run_all_tests.R"                    # 398 assertions, 5 suites
 
 # The one that settles equivalence -- needs a warehouse:
 Rscript "Jul 28/tests/verify_against_legacy.R" --dry-run     # see the SQL
 DATABRICKS_PWD=... Rscript "Jul 28/tests/verify_against_legacy.R"
 
 
-Rscript "Jul 28/cohort1_ie/build_cohort1.R" --funnel  # cohort 1's IE funnel
-Rscript "Jul 28/cohort1_ie/build_cohort1.R" --dry-run # ...and its 28 statements
+Rscript "Jul 28/cohort_overall/build_overall.R" --funnel  # Overall's IE funnel
+Rscript "Jul 28/cohort_overall/build_overall.R" --dry-run # ...and its 27 statements
+
+# The one that settles equivalence for that build -- needs a warehouse:
+Rscript "Jul 28/cohort_overall/tests/verify_cohort_overall.R" --dry-run
 
 Rscript "Jul 28/overall/build.R" --dry-run
 Rscript "Jul 28/ndmm/build.R" --dry-run
@@ -137,10 +156,11 @@ attempts to override a window that is baked into an upstream flag (see PLAN §3)
 
 ## Note
 
-**`apr_30_2026/` is not modified.** This folder READS from it — config, DB
-helpers, codelist loaders — but changes nothing in it. The **entire folder** is
-asserted byte-identical to the branch point by `tests/test_equivalence.R` §1
-(one `git diff --quiet` over the whole directory, not a chosen file list).
+**`apr_30_2026/` is not modified, and is no longer read at run time.** Its
+helpers were COPIED into `lib/` (verbatim, byte-identity asserted) so this folder
+ships alone. The **entire** `apr_30_2026` directory is still asserted
+byte-identical to the branch point by `tests/test_equivalence.R` §1 (one
+`git diff --quiet` over the whole directory, not a chosen file list).
 
 Generated objects are prefixed `coh_` (`COHORT_VIEW_PREFIX`) so they cannot
 collide with the existing pipeline.

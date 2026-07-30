@@ -1,29 +1,37 @@
 # =============================================================================
-# 08_clintrial.R -- IE Step 10: no clinical-trial participation
+# 07_pregnancy.R -- IE Step 9: no pregnancy
 # -----------------------------------------------------------------------------
-#   Step 10  CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0
+#   Step 9  PREGNANT_FLAG = 0
 #
-# THE ONLY CRITERION WITH TWO COLUMNS IN ONE PREDICATE. Baseline and follow-up
-# are separate flags, ANDed in the filter:
+# ONE WINDOW, NOT TWO. Unlike the clinical-trial flag next door -- which splits
+# baseline and follow-up into separate columns -- pregnancy is a SINGLE flag over
+# one continuous span:
 #
-#     baseline    index-183 .. index-1     (excludes index)
-#     follow-up   index     .. fu_cap      (includes index)
+#       index-183  ..  fu_cap        (baseline AND follow-up, no split)
 #
-# Because they are separate, this is also the only gate whose relaxation is
-# partial: dropping the follow-up half while keeping the baseline half is a
-# one-column edit. Step 9 (pregnancy) collapses its two periods into a single
-# flag and cannot be split that way.
+# Note the boundary: `BETWEEN date_sub(index_date, 183) AND fu_cap` includes the
+# index date, so there is no gap between the two halves and no separate
+# CLINTRIAL_BASELINE/FOLLOWUP-style pair to AND together. That asymmetry with
+# Step 10 is in the original and is preserved here; it is not a simplification.
 #
-# Same four code surfaces as pregnancy (ICD dx, HCPCS proc, ICD proc, revenue
-# code), same code_type + code matching, different code list (clintrial_codes).
+# FOUR CODE SURFACES, because a pregnancy shows up in whichever one the biller
+# used:
+#   ICD diagnosis   (ICD9DIAG / ICD10DIAG)
+#   HCPCS procedure (medical.PROC_CD)
+#   ICD procedure   (ICD9PROC / ICD10PROC, from med_procedure)
+#   REVENUE code    (medical.RVNU_CD -- facility claims only)
+# `code_type` is matched as well as `code`, so a numeric revenue code cannot
+# accidentally match an identically-spelled procedure code.
 #
-# CONFIGURED OFF (APPLY_CLINTRIAL_EXCL=FALSE). Read pipeline_inputs.csv's note
-# before turning it on: clinical trial is NOT in the NDMM IE spec (S6.2.1), so
-# nothing downstream re-applies it, and the study team has to confirm it belongs
-# in cohort 1 at all.
+# The RVNU_CD surface is exactly what 00_inputs.R's rvnu_cd_check probe protects:
+# without the column this step would fail deep in a scan of the full medical
+# table instead of in the first seconds of the run.
+#
+# CONFIGURED OFF (APPLY_PREGNANCY_EXCL=FALSE). NDMM re-applies pregnancy over the
+# study period from its own scan.
 # =============================================================================
 
-ie_step_clintrial <- function(cfg, h) {
+ie_step_pregnancy <- function(cfg, h) {
   work <- h$work; cdm_src <- h$cdm_src
   cap <- ie_fu_cap(cfg, h)
   fu_cap_expr <- cap$fu_cap_expr
@@ -31,12 +39,11 @@ ie_step_clintrial <- function(cfg, h) {
 
   views <- list(
     ie_view(
-      name = "clintrial_flag",
-      legacy = "21_clintrial_flag",
-      description = "EXCLUSION: Clinical trial flag (DX + PROC + RVNU_CD, baseline + follow-up)",
+      name = "pregnancy_flag",
+      legacy = "20_pregnancy_flag",
+      description = "EXCLUSION: Pregnancy flag (DX + PROC + RVNU_CD, baseline + follow-up)",
       source_tables = c("med_diagnosis", "medical", "med_procedure"),
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('clintrial_flag')} AS
+      select = fmt("
         WITH dx AS (
           SELECT PATID, cast(FST_DT as date) AS event_dt,
                  CASE WHEN upper(ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9DIAG' ELSE 'ICD10DIAG' END AS code_type,
@@ -68,44 +75,40 @@ ie_step_clintrial <- function(cfg, h) {
         ),
         events AS (SELECT * FROM dx UNION ALL SELECT * FROM hcpcs_proc UNION ALL SELECT * FROM icd_proc UNION ALL SELECT * FROM rev),
         matched AS (
-          SELECT /*+ BROADCAST(c) */ e.PATID, e.event_dt
+          SELECT /*+ BROADCAST(p) */ e.PATID, e.event_dt
           FROM events e
-          INNER JOIN {work('clintrial_codes')} c ON e.code_type = c.code_type AND e.code = c.code
+          INNER JOIN {work('preg_codes')} p ON e.code_type = p.code_type AND e.code = p.code
         )
         SELECT
           q.PATID,
           q.index_date,
-          -- Baseline excludes index_date (baseline = before index)
-          max(CASE WHEN m.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
-                                       AND date_sub(q.index_date, 1)
-               THEN 1 ELSE 0 END) AS CLINTRIAL_BASELINE,
-          -- Followup starts on index_date
+          -- Per attrition table: pregnancy during baseline or follow-up period
           -- Follow-up upper bound follows fu_cap_expr (sensitivity flag aware)
-          max(CASE WHEN m.event_dt >= q.index_date
-                    AND m.event_dt <= {fu_cap_expr}
-               THEN 1 ELSE 0 END) AS CLINTRIAL_FOLLOWUP
+          max(CASE WHEN m.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
+                                       AND {fu_cap_expr}
+               THEN 1 ELSE 0 END) AS PREGNANT_FLAG
         FROM {work('mm_qualifying')} q
         LEFT JOIN {work('death_dt')} d ON q.PATID = d.PATID AND q.index_date = d.index_date
         {ce_join_for_fu_cap}
         LEFT JOIN matched m ON q.PATID = m.PATID
         GROUP BY q.PATID, q.index_date
       "),
-      qc = fmt("SELECT sum(CLINTRIAL_BASELINE) + sum(CLINTRIAL_FOLLOWUP) AS n_clintrial FROM {work('clintrial_flag')}")
+      qc = fmt("SELECT sum(PREGNANT_FLAG) AS n_pregnant FROM {work('pregnancy_flag')}")
     )
   )
 
   criteria <- list(
     ie_criterion(
-      step = 10L,
-      id = "no_clintrial",
-      attrition_id = "10_step10_clintrial",
-      label = "Step 10: Clinical trial (excl)",
-      flag_col = c("CLINTRIAL_BASELINE", "CLINTRIAL_FOLLOWUP"),
-      predicate = "CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0",
-      cfg_key = "apply_clintrial_excl",
+      step = 9L,
+      id = "no_pregnancy",
+      attrition_id = "09_step9_pregnancy",
+      label = "Step 9: Pregnancy (excl)",
+      flag_col = "PREGNANT_FLAG",
+      predicate = "PREGNANT_FLAG = 0",
+      cfg_key = "apply_pregnancy_excl",
       polarity = "exclude",
-      note = paste("Two columns, one gate. Ships OFF, and nothing downstream",
-                   "re-applies it -- not in the NDMM IE spec (S6.2.1).")
+      note = paste("One window spanning baseline AND follow-up (unlike Step 10).",
+                   "Ships OFF: APPLY_PREGNANCY_EXCL=FALSE.")
     )
   )
 

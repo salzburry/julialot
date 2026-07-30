@@ -5,8 +5,8 @@
 #   Step 6  MM_FU_agents = 1   >=1 MM agent in follow-up (a real treatment start)
 #
 # These two are one idea: the patient must START treatment at or after index, not
-# already be on it. Together they are what makes cohort 1 "1L-treated" and what
-# makes the index date the start of the treated course.
+# already be on it. Together they are what makes the index date the start of a
+# treated course -- but see below: that is NOT the same as "1L-treated".
 #
 # ---------------------------------------------------------------------------
 # WHAT STEP 6 IS NOT
@@ -51,8 +51,7 @@ ie_step_therapy <- function(cfg, h) {
       legacy = "18_therapy_events",
       description = "Identifying MM therapy events (medical PROC_CD + BILL_PROC_CD + NDC, Rx NDC)",
       source_tables = c("medical", "rx"),
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('therapy_events')} AS
+      select = fmt("
         -- 1) Medical therapy via PROC_CD (HCPCS/CPT)
         SELECT /*+ BROADCAST(c) */
           m.PATID, cast(m.FST_DT as date) AS event_dt, 'MEDICAL_PROC_CD' AS source
@@ -105,8 +104,7 @@ ie_step_therapy <- function(cfg, h) {
       name = "therapy_flags",
       legacy = "19_therapy_flags",
       description = "CRITERION: MM therapy in baseline/follow-up (death-aware)",
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('therapy_flags')} AS
+      select = fmt("
         SELECT
           q.PATID,
           q.index_date,

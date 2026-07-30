@@ -3,10 +3,11 @@
 # -----------------------------------------------------------------------------
 # Two objects, and the order between them is the whole design.
 #
-#   ELIG_COH_ALLFLAGS   one row per (PATID, candidate index date), every
-#                       criterion stamped as a column. NOBODY IS DROPPED HERE.
-#   ELIG_COH_FINAL      apply the active criteria, THEN take each patient's
-#                       EARLIEST SURVIVING index date.
+#   c1_ELIG_COH_ALLFLAGS  one row per (PATID, candidate index date), every
+#                         criterion stamped as a column. NOBODY IS DROPPED HERE.
+#   c1_ELIG_COH_FINAL     apply the active criteria, THEN take each patient's
+#                         EARLIEST SURVIVING index date. This IS the cohort --
+#                         it is a table, so there is no separate persist step.
 #
 # FILTER FIRST, RANK SECOND. Reversing those two lines changes the cohort:
 #
@@ -40,8 +41,8 @@
 # ---------------------------------------------------------------------------
 # THE ONE PLACE ADDING A CRITERION IS NOT A SINGLE-FILE EDIT
 # ---------------------------------------------------------------------------
-# The ALLFLAGS SELECT below is a verbatim copy of pipeline_steps.R step 23, so it
-# names its flag views and columns explicitly instead of generating them from the
+# The ALLFLAGS SELECT below is a copy of pipeline_steps.R step 23, so it names
+# its source tables and columns explicitly instead of generating them from the
 # criteria list. That is what makes the token comparison in
 # tests/test_cohort1_ie.R section 5 possible.
 #
@@ -51,7 +52,7 @@
 # =============================================================================
 
 ie_step_assemble <- function(cfg, h, criteria) {
-  work <- h$work; persist <- h$persist
+  work <- h$work
 
   # Steps 2-10, in funnel order, only the ones the configuration turns on.
   # Rendered exactly as build_criteria_sql() renders it: "AND <predicate>",
@@ -70,8 +71,7 @@ ie_step_assemble <- function(cfg, h, criteria) {
       name = cfg$flags_view,
       legacy = "23_ELIG_COH_ALLFLAGS",
       description = "Assembling cohort with all flags",
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work(cfg$flags_view)} AS
+      select = fmt("
         WITH base AS (
           SELECT
             q.PATID,
@@ -156,9 +156,8 @@ ie_step_assemble <- function(cfg, h, criteria) {
     ie_view(
       name = cfg$final_table_name,
       legacy = "24_ELIG_COH_FINAL",
-      description = fmt("FINAL COHORT (temp view {work(cfg$final_table_name)}, persisted as {cfg$ie_final_table}): Apply IE criteria then select EARLIEST qualifying index_date per patient"),
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work(cfg$final_table_name)} AS
+      description = fmt("FINAL COHORT ({work(cfg$final_table_name)}): Apply IE criteria then select EARLIEST qualifying index_date per patient"),
+      select = fmt("
         -- First apply IE criteria, then select the EARLIEST qualifying index_date per patient
         -- This ensures that if a patient's earliest potential index_date fails IE criteria,
         -- a later index_date that passes can still be selected
@@ -181,28 +180,12 @@ ie_step_assemble <- function(cfg, h, criteria) {
     )
   )
 
-  # ---- persist ---------------------------------------------------------------
-  # A temp view dies with the session, so the cohort has to become a table for
-  # anything else to read it. Written under IE_FINAL_TABLE, never under
-  # FINAL_TABLE_NAME (ie_config.R refuses that outright).
-  if (isTRUE(cfg$persist_to_schema)) {
-    if (!nzchar(h$out_schema()))
-      stop("PERSIST_TO_SCHEMA is TRUE but neither DOMINO_USER_NAME nor ",
-           "PROJECT_WORK_SCHEMA is set, so there is nowhere to write ",
-           cfg$ie_final_table, ". Set one, or set PERSIST_TO_SCHEMA=FALSE and ",
-           "accept that the cohort disappears when the session ends.",
-           call. = FALSE)
-    views <- c(views, list(ie_view(
-      name = paste0("persist_", cfg$ie_final_table),
-      legacy = "24b_persist_final_cohort",
-      description = fmt("Persist final cohort to {persist(cfg$ie_final_table)}"),
-      sql = fmt("
-        CREATE OR REPLACE TABLE {persist(cfg$ie_final_table)} AS
-        SELECT * FROM {work(cfg$final_table_name)}
-      "),
-      qc = fmt("SELECT count(*) AS n_persisted FROM {persist(cfg$ie_final_table)}")
-    )))
-  }
+  # NO SEPARATE PERSIST STEP. The legacy pipeline needed one because its final
+  # object was a temp view; here every step is already a table, so the cohort IS
+  # persisted the moment the step above finishes. That removes the class of bug
+  # where the persist step reads a different object than the one just built --
+  # legacy step 24b is therefore not reproduced, and the test lists it as
+  # deliberately absent rather than missing.
 
   list(views = views, criteria = list())
 }
