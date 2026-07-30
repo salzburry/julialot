@@ -223,6 +223,15 @@ build_lot <- function(here, cohort_table, prefix) {
 
   check_cohort_input(con, cfg)
 
+  # LOT1 tables are replaced before LOT2-5 runs, so a failure in between leaves
+  # new LOT1 output beside an older LOT_LONG. Splitting the persist step would
+  # break the line-for-line port, so instead every run says what state it is
+  # in: nothing here is complete until the last line below says so.
+  write_build_status(con, cfg, "started")
+  on.exit(if (!isTRUE(getOption("lot_complete", FALSE)))
+            try(write_build_status(con, cfg, "failed"), silent = TRUE), add = TRUE)
+  options(lot_complete = FALSE)
+
   ctx <- phase_codelists(con)
   phase_patient_input(con)
   phase_mma_map(con, ctx)
@@ -232,12 +241,17 @@ build_lot <- function(here, cohort_table, prefix) {
   phase_qc(con, ctx)
   phase_persist(con, ctx)
 
-  # LOT2 onwards reads what phase_persist just wrote, so it runs after it.
-  # prepare_lot_inputs() rebuilds the session views the builder needs; in one
-  # process LOT1 already made them, but it is idempotent and keeps this phase
-  # correct on its own.
-  prepare_lot_inputs(con, rollup_src = ctx$rollup_src, subs_src = ctx$subs_src,
-                     sct_src = ctx$sct_src)
+  # prepare_lot_inputs() exists to rebuild the session views when LOT2-5 runs
+  # on its own. LOT1 has just built them here, and rebuilding means re-scanning
+  # medical, procedure and diagnosis for SCT all over again - so only do it if
+  # something is actually missing.
+  if (!lot_inputs_present(con)) {
+    log_msg("Session views missing; rebuilding them for LOT2-5.")
+    prepare_lot_inputs(con, rollup_src = ctx$rollup_src, subs_src = ctx$subs_src,
+                       sct_src = ctx$sct_src)
+  } else {
+    log_msg("Session views from LOT1 are still here; not rebuilding them.")
+  }
   build_lot2_5(con,
                induction_window_days   = cfg$lot_n_induction_window_days,
                cart_consolidation_days = cfg$cart_consolidation_days,
@@ -245,8 +259,86 @@ build_lot <- function(here, cohort_table, prefix) {
                allo_lot_span           = cfg$allo_lot_span,
                max_lot                 = cfg$max_lot)
 
+  phase_line_criteria(con, cfg)
+  check_lot_long(con, cfg)
+  options(lot_complete = TRUE)
+  write_build_status(con, cfg, "complete")
+
   log_msg(SEP)
   log_msg("LOT complete for ", cfg$input_cohort_table, " -> ", cfg$object_prefix, "*")
   log_msg(SEP)
+  invisible(TRUE)
+}
+
+# The views LOT2-5 reads. All present means LOT1 ran in this session.
+LOT2_5_INPUT_VIEWS <- c("lot_patient_input", "mma_rollup", "permissible_subs",
+                        "sct_codelist", "sct_claims_raw", "tx_auto_dates",
+                        "tx_allo_cart_dates", "map_stacked", "lot1_sct",
+                        "lot1_base_end")
+
+lot_inputs_present <- function(con) {
+  all(vapply(LOT2_5_INPUT_VIEWS, function(v)
+    !inherits(tryCatch(db_q(con, glue("SELECT 1 FROM {v} LIMIT 1")),
+                       error = function(e) e), "error"), logical(1)))
+}
+
+# One row per run saying whether its outputs belong together. Without it a
+# failed run leaves tables that look complete.
+write_build_status <- function(con, cfg, state) {
+  tbl <- lot_out("LOT_BUILD_STATUS")
+  db_exec(con, glue("
+    CREATE TABLE IF NOT EXISTS {tbl} (
+      RUN_ID STRING, INPUT_COHORT_TABLE STRING, OBJECT_PREFIX STRING,
+      STATE STRING, UPDATED_AT TIMESTAMP)"))
+  db_exec(con, glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"))
+  db_exec(con, glue("
+    INSERT INTO {tbl} VALUES ('{run_id}', '{cfg$input_cohort_table}',
+      '{cfg$object_prefix}', '{state}', current_timestamp())"))
+  log_msg("Build status: ", state, " (run ", run_id, ")")
+  invisible(TRUE)
+}
+
+# LOT_LONG invariants. These are structural, not judgement calls, so a breach
+# stops the build rather than printing INVESTIGATE.
+check_lot_long <- function(con, cfg) {
+  t <- lot_out("LOT_LONG")
+  q <- db_q(con, glue("
+    SELECT count(*) AS n_rows,
+           count(DISTINCT PATID) AS n_patients,
+           sum(CASE WHEN LOT_BASE_END_DT < LOT_START_DT THEN 1 ELSE 0 END) AS n_end_before_start,
+           sum(CASE WHEN LOT_NUM < 1 OR LOT_NUM > {cfg$max_lot} THEN 1 ELSE 0 END) AS n_bad_lot_num
+    FROM {t}"))
+  d <- db_q(con, glue("
+    SELECT count(*) AS n FROM (
+      SELECT PATID, LOT_NUM FROM {t} GROUP BY PATID, LOT_NUM HAVING count(*) > 1)"))$n
+  g <- db_q(con, glue("
+    SELECT count(*) AS n FROM (
+      SELECT PATID, min(LOT_NUM) AS lo, max(LOT_NUM) AS hi, count(DISTINCT LOT_NUM) AS k
+      FROM {t} GROUP BY PATID HAVING lo <> 1 OR k <> hi - lo + 1)"))$n
+  bad <- character(0)
+  if (q$n_rows == 0)           bad <- c(bad, "it is empty")
+  if (d > 0)                   bad <- c(bad, paste0(d, " duplicate (PATID, LOT_NUM)"))
+  if (q$n_end_before_start > 0) bad <- c(bad, paste0(q$n_end_before_start, " lines end before they start"))
+  if (q$n_bad_lot_num > 0)     bad <- c(bad, paste0(q$n_bad_lot_num, " lines outside 1..", cfg$max_lot))
+  if (g > 0)                   bad <- c(bad, paste0(g, " patients whose lines do not run 1..n"))
+  if (length(bad))
+    stop(t, " is not usable: ", paste(bad, collapse = "; "), call. = FALSE)
+  log_msg("LOT_LONG OK: ", q$n_rows, " lines for ", q$n_patients, " patients")
+  invisible(TRUE)
+}
+
+# The criteria layer, on top of LOT_LONG. With no criteria declared both
+# tables are copies, so downstream can always read them.
+phase_line_criteria <- function(con, cfg) {
+  run_step(con, "L40_lot_long_allflags",
+           line_criteria_flags_sql(cfg, "lot_long", "lot_long_allflags"))
+  run_step(con, "L41_lot_long_final",
+           line_criteria_final_sql(cfg, "lot_long_allflags", "lot_long_final"))
+  for (v in list(list(view = "lot_long_allflags", name = "LOT_LONG_ALLFLAGS"),
+                 list(view = "lot_long_final",    name = "LOT_LONG_FINAL"))) {
+    run_step(con, paste0("L42_persist_", tolower(v$name)),
+             glue("CREATE OR REPLACE TABLE {lot_out(v$name)} AS SELECT * FROM {v$view}"),
+             qc = glue("SELECT count(*) AS n_rows FROM {lot_out(v$name)}"))
+  }
   invisible(TRUE)
 }

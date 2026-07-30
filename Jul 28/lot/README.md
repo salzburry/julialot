@@ -13,6 +13,14 @@ All of it ported line for line from the validated source.
 exactly apart from the one change the port is allowed to make - LOT's outputs
 carry the cohort prefix.
 
+Three places deliberately differ from the source, all the same defect: the
+code lists filter on the raw value but store the normalized one, so a
+punctuation-only code survives as `""` - and the claim side turns a missing
+code into `""` too, so the two match. For NDC both sides pad to eleven zeros.
+The port drops codes that normalize to blank, de-duplicates the lists, and
+requires digits on both NDC joins. `test_same_as_source.R` marks these as
+approved differences and asserts each guard by name.
+
 It has never been run against Databricks. Nothing here is validated output
 until it has been, and compared with the source build patient for patient.
 
@@ -77,7 +85,7 @@ Then turn it on with `APPLY_L2_STARTED_ON_MED,TRUE` in `config.csv`. Any value
 other than `TRUE` or `FALSE` stops the build rather than quietly leaving the
 criterion off.
 
-Two tables come out:
+Two tables come out of every run, whether or not any criterion is declared:
 
 - `<prefix>LOT_LONG_ALLFLAGS` - every criterion as a 0/1 column, computed
   whether or not it is enabled. Check what a criterion would cost before
@@ -103,6 +111,18 @@ Two rules worth knowing:
   failure - otherwise a criterion aimed at L2 would fail every L1.
 - A predicate that evaluates to NULL **fails**. Unknown is not evidence the
   line qualifies.
+
+## Knowing a run finished
+
+LOT1's tables are replaced before LOT2-5 starts, so a failure in between would
+leave new LOT1 output beside an older `LOT_LONG`. Every run therefore writes
+`<prefix>LOT_BUILD_STATUS`: `started` at the beginning, then `complete`, or
+`failed` if it stops anywhere. Read that before trusting a set of tables.
+
+`LOT_LONG` is also checked before the run is called complete - no duplicate
+`(PATID, LOT_NUM)`, no line ending before it starts, no line number outside
+`1..MAX_LOT`, and every patient's lines running `1..n` with no gaps. These are
+structural, so a breach stops the build rather than printing a warning.
 
 ## Tests
 
@@ -137,6 +157,6 @@ R/steps/             the rules, in order:
   06_lot1_end.R        LOT1 end date and reason
   07_qc.R              QC counts
   08_persist.R         write the LOT1 outputs, all prefixed
-  09_lot2_5_inputs.R   rebuild the views LOT2-5 reads
+  09_lot2_5_inputs.R   rebuild the views LOT2-5 reads, if they are gone
   10_lot2_5_base.R     LOT2 onwards, and LOT_LONG
 ```

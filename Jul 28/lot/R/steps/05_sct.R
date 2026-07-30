@@ -23,7 +23,7 @@ phase_sct <- function(con, ctx) {
   # Normalize SCT_TYPE: Allogenic->ALLO, Autologous->AUTO, CAR-T->CART
   run_step(con, "S11_sct_codelist", glue("
     CREATE OR REPLACE TEMPORARY VIEW sct_codelist AS
-    SELECT
+    SELECT DISTINCT
       CASE
         WHEN upper(trim(CL_CODE_TYPE)) IN ('ICD10PROC', 'ICD10PCS') THEN 'ICD10PROC'
         WHEN upper(trim(CL_CODE_TYPE)) = 'ICD9PROC' THEN 'ICD9PROC'
@@ -49,6 +49,9 @@ phase_sct <- function(con, ctx) {
       END AS SCT_TYPE
     FROM {sct_src}
     WHERE CL_CODE IS NOT NULL AND trim(CL_CODE) <> ''
+      -- Normalized, not raw: see mma_codelist. A punctuation-only code would
+      -- otherwise match every claim with a missing procedure or diagnosis.
+      AND regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''
       AND SCT_TYPE IS NOT NULL AND trim(SCT_TYPE) <> ''
   "), qc = "SELECT SCT_TYPE, CL_CODE_TYPE, count(*) AS n_codes FROM sct_codelist GROUP BY SCT_TYPE, CL_CODE_TYPE ORDER BY SCT_TYPE, CL_CODE_TYPE")
 

@@ -42,7 +42,8 @@ phase_codelists <- function(con) {
 
   run_step(con, "S01_mma_codelist", glue("
     CREATE OR REPLACE TEMPORARY VIEW mma_codelist AS
-    SELECT
+    -- DISTINCT: a repeated row would duplicate every claim it matches.
+    SELECT DISTINCT
       upper(trim(CL_CODE_TYPE)) AS CL_CODE_TYPE,
       upper(regexp_replace(trim(CL_CODE), '[^A-Za-z0-9]', '')) AS CL_CODE,
       lower(trim(CL_MEDICATION_FULL)) AS CL_MEDICATION_FULL,
@@ -51,6 +52,10 @@ phase_codelists <- function(con) {
     FROM {codelist_src}
     WHERE CL_CODE IS NOT NULL AND trim(CL_CODE) <> ''
       AND CL_CODE_TYPE IS NOT NULL AND trim(CL_CODE_TYPE) <> ''
+      -- The filter above tests the raw value but the code is stored normalized,
+      -- so '--' would survive as ''. The claim side coalesces a missing code to
+      -- '' too, and the two would match every claim with no code at all.
+      AND regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''
   "), qc = "SELECT count(*) AS n_rows, count(DISTINCT CL_MED_ABBR) AS n_meds, count(DISTINCT CL_CODE_TYPE) AS n_code_types FROM mma_codelist")
 
   run_step(con, "S02_permissible_subs", glue("
