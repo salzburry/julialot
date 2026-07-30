@@ -182,11 +182,52 @@ for (st in c("started", "complete", "failed"))
   ok(grepl(paste0('"', st, '"'), bl, fixed = TRUE),
      paste0("build status records '", st, "'"))
 ok(grepl("LOT_BUILD_STATUS", bl, fixed = TRUE), "into its own prefixed table")
-ok(grepl("CODELIST_WAIVERS STRING", bl, fixed = TRUE),
+ok("CODELIST_WAIVERS" %in% names(BUILD_STATUS_COLS),
    "and the status row records which checks were waived")
 # 08_persist writes metadata inside a tryCatch, so confirm the row arrived.
 ok(grepl("check_run_recorded", bl, fixed = TRUE),
    "a run with no metadata row is not called complete")
+
+cat("\n-- an older status table is upgraded, not written into blind --\n")
+# CREATE TABLE IF NOT EXISTS does nothing to a table an earlier version of this
+# package left behind, so a run after a column was added would INSERT a column
+# that is not there. LOT_RUN_METADATA already had a DESCRIBE/ALTER path; this
+# table had only a comment claiming that naming the columns was enough, which
+# prevents a positional mis-fill but cannot supply a missing column.
+se <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_lot.R"), envir = se)
+assign("log_msg", function(...) invisible(NULL), envir = se)
+assign("lot_out", function(x) paste0("wk.p_", x), envir = se)
+assign("codelist_waivers", function() "code_types", envir = se)
+assign("run_id", "TESTRUN", envir = se)
+BSC <- get("BUILD_STATUS_COLS", envir = se)
+# `present` is what DESCRIBE answers; NULL means it could not answer at all.
+sql_for <- function(present) {
+  out <- character(0)
+  assign("db_exec", function(con, s) { out <<- c(out, s); invisible(TRUE) }, envir = se)
+  assign("db_q", if (is.null(present)) function(con, s) stop("no such table")
+         else function(con, s) data.frame(col_name = present, stringsAsFactors = FALSE),
+         envir = se)
+  se$write_build_status(NULL, list(input_cohort_table = "COH",
+                                   object_prefix = "p_"), "started")
+  out
+}
+old <- sql_for(setdiff(names(BSC), "CODELIST_WAIVERS"))
+ok(any(grepl("ALTER TABLE wk.p_LOT_BUILD_STATUS ADD COLUMNS (CODELIST_WAIVERS STRING)",
+             old, fixed = TRUE)),
+   "a five-column table gets the column it is missing")
+ok(which(grepl("ALTER", old))[1] < which(grepl("INSERT", old))[1],
+   "added before the insert that needs it, not after")
+cur <- sql_for(names(BSC))
+ok(!any(grepl("ALTER", cur)), "a current table is left alone")
+ok(any(grepl(paste0("(", paste(names(BSC), collapse = ", "), ")"), cur, fixed = TRUE)),
+   "the insert still names every column, so nothing is filled positionally")
+ok(any(grepl(paste(paste(names(BSC), BSC), collapse = ", "), cur, fixed = TRUE)),
+   "and one declaration drives the CREATE, the upgrade and the INSERT alike")
+# An empty answer means DESCRIBE failed, not that the table has no columns.
+# Adding all six to a table that has them would error on the first.
+ok(!any(grepl("ALTER", sql_for(NULL))),
+   "a DESCRIBE that cannot answer adds nothing")
 
 cat("\n-- the code lists are recorded and checked --\n")
 # They live outside git, so the run log is the only record of which version
@@ -538,11 +579,9 @@ cat("\n-- the README still describes this build --\n")
 # stale: the README named six waivers where the code has eight, and its layout
 # had the step files in an order the build does not run them in.
 readme <- readLines(file.path(ROOT, "README.md"), warn = FALSE)
-bl <- new.env(parent = globalenv())
-sys.source(file.path(ROOT, "R", "build_lot.R"), envir = bl)
 documented <- unique(unlist(regmatches(readme, gregexpr("`[a-z_0-9]+`", readme))))
 documented <- gsub("`", "", documented)
-missing_w <- setdiff(get("WAIVABLE_CHECKS", envir = bl), documented)
+missing_w <- setdiff(WAIVABLE_CHECKS, documented)
 ok(length(missing_w) == 0,
    if (length(missing_w)) paste0("waiver not in the README: ",
                                  paste(missing_w, collapse = ", "))
