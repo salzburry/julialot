@@ -1,0 +1,16 @@
+code,code_type,mapped_to,note
+# DROP STEROID CODES HERE WHEN THE LIST IS AVAILABLE.
+# Columns:
+#   code       - HCPCS (e.g. J8540) or NDC (11-digit, no dashes)
+#   code_type  - 'HCPCS', 'CPT', or 'NDC'
+#   mapped_to  - token to append to LOT_BASE_MEDS when a match is found
+#                ('DEXA', 'PRED', etc.)
+#   note       - free text (drug, dosage form, etc.)
+#
+# HCPCS codes already in the spec:
+J8540,HCPCS,DEXA,Dexamethasone oral
+J7512,HCPCS,PRED,Prednisone oral
+J1100,HCPCS,DEXA,Dexamethasone sodium phosphate inj
+J1101,HCPCS,DEXA,Dexamethasone inj
+# Add NDC rows below (from the spec). Format: code,code_type,mapped_to,note
+# e.g.: 00054012025,NDC,DEXA,Dexamethasone 4mg tablet
