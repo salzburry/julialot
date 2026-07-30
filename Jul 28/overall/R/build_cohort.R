@@ -3,9 +3,8 @@
 build_cohort <- function(cohort_dir, root = cohort_dir, expect_table = NULL,
                          expect_prefix = NULL) {
   check_settings()
-  user_cfg    <- prompt_user_options(cfg_defaults)
-  ie_criteria <- prompt_ie_criteria(cfg_defaults)
-  cfg         <- pin_output_schema(finalize_cfg(cfg_defaults, user_cfg, ie_criteria))
+  cfg <- pin_output_schema(cfg_defaults)
+  cfg$outpatient_window <- validate_outpatient_window(cfg$outpatient_window)
   check_output_contract(cfg, expect_table, expect_prefix)
 
   log_msg("=", SEP_59)
@@ -288,7 +287,7 @@ load_cohort_modules <- function(root) {
   if (!file.exists(file.path(root, "config.csv")))
     stop("No config.csv in ", root, call. = FALSE)
   load_pipeline_inputs(root, filename = "config.csv")
-  for (f in c("config_prompts.R", "db_utils.R", "codelists.R",
+  for (f in c("config_prompts.R", "db_utils.R",
               "criteria_attrition.R", "pipeline_steps.R"))
     source(file.path(d, f))
   invisible(TRUE)

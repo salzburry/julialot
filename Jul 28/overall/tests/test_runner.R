@@ -125,7 +125,7 @@ cat("\n-- every function build_cohort.R calls actually exists --\n")
 # called but never defined. Nothing caught it: the SQL tests don't run the
 # runner, and R only resolves a function when the call is reached.
 mod <- new.env(parent = globalenv())
-for (f in c("load_inputs.R", "config_prompts.R", "db_utils.R", "codelists.R",
+for (f in c("load_inputs.R", "config_prompts.R", "db_utils.R",
             "criteria_attrition.R", "pipeline_steps.R", "build_cohort.R"))
   sys.source(file.path(ROOT, "R", f), envir = mod)
 
