@@ -1,43 +1,37 @@
 # =============================================================================
-# 01_index.R -- IE Step 1: a qualifying MM diagnosis, and the index date
+# 01_index.R -- step 1: a qualifying MM diagnosis, and the index date
 # -----------------------------------------------------------------------------
-# THE RULE
-#   1 INPATIENT MM diagnosis (STRICT codes 203.0x / C90.0x), or
-#   2 OUTPATIENT MM diagnoses (BROAD codes) on separate days within the
-#     configured window (30 / 60 / 90 days).
+# 1 inpatient MM diagnosis (strict 203.0x / C90.0x), or 2 outpatient ones (broad
+# codes) on separate days within the configured window.
 #
-# Step 0 -- ">=1 MM dx, any position" -- is not a gate. It is the starting pool,
-# counted straight off mm_dx_events_id in the attrition table.
+# Step 0 (">=1 MM dx") is not a gate -- it is the starting pool, counted off
+# mm_dx_events_id in the attrition table.
 #
-# THE PART THAT IS EASY TO GET WRONG
-# This step does NOT pick one index date. It keeps EVERY qualifying candidate,
-# one row per (PATID, index_date), and it builds them at the WIDEST window (90d)
-# regardless of how OUTPATIENT_WINDOW is set. The configured window is applied
-# later, as a predicate, alongside every other gate.
+# This step does not pick an index date. It keeps every qualifying candidate, one
+# row per (PATID, index_date), built at the widest window (90d) whatever
+# OUTPATIENT_WINDOW says. The configured window is applied later, as a predicate.
 #
-# That is not an optimisation, it changes who is in the cohort. If the earliest
-# candidate index date fails a downstream gate -- say the patient was not
-# enrolled for the full baseline before it -- a LATER candidate can still carry
-# them in. Narrowing to the earliest date here would drop those patients
-# silently. See 09_assemble.R for where the choice actually happens.
+# That is not just an optimisation -- it changes who is in the cohort. If the
+# earliest candidate fails a later gate, say the patient was not enrolled for the
+# whole baseline before it, a later candidate can still carry them in. Narrowing
+# to the earliest date here would drop those patients. 09_assemble.R is where the
+# choice happens.
 #
-# So `outpt2_30 / outpt2_60 / outpt2_90` are all carried forward: the predicate
-# reads the configured one, and the attrition table reports all three side by
-# side without rebuilding anything.
+# All three of outpt2_30 / 60 / 90 are carried forward, so the attrition table
+# can report three windows without rebuilding anything.
 # =============================================================================
 
 ie_step_index <- function(cfg, h) {
   work <- h$work
 
   views <- list(
-    # Inpatient candidates. STRICT codes only, and no window applies -- one
-    # inpatient claim is sufficient on its own.
+    # Inpatient candidates. Strict codes only, and no window -- one claim is
+    # enough.
     ie_view(
       name = "mm_inpatient_potential",
       legacy = "09_mm_inpatient_potential",
       description = "Finding ALL potential inpatient MM index dates (STRICT 203.0x/C90.0x only)",
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('mm_inpatient_potential')} AS
+      select = fmt("
         SELECT DISTINCT PATID, svc_dt AS potential_index, 'INPATIENT' AS index_source
         FROM {work('mm_dx_events_id')}
         WHERE inpatient_flg = 1
@@ -46,15 +40,13 @@ ie_step_index <- function(cfg, h) {
       qc = fmt("SELECT count(*) AS n_potential_inpt FROM {work('mm_inpatient_potential')}")
     ),
 
-    # Outpatient pairs: consecutive DISTINCT service dates. Distinct dates is
-    # what makes "2 claims on separate days" hold -- two claims on one day are
-    # one date and cannot pair with each other.
+    # Consecutive distinct service dates. Distinct is what makes "separate days"
+    # hold: two claims on one day are one date and cannot pair.
     ie_view(
       name = "mm_outpatient_pairs",
       legacy = "10_mm_outpatient_pairs",
       description = "Building outpatient diagnosis date pairs",
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('mm_outpatient_pairs')} AS
+      select = fmt("
         WITH distinct_dates AS (
           SELECT DISTINCT PATID, svc_dt
           FROM {work('mm_dx_events_id')}
@@ -73,14 +65,13 @@ ie_step_index <- function(cfg, h) {
       qc = fmt("SELECT count(*) AS n_pairs FROM {work('mm_outpatient_pairs')}")
     ),
 
-    # The FIRST date of a qualifying pair is the candidate index. Built at 90d,
-    # with a flag per window so the configured one can be selected later.
+    # The first date of a qualifying pair is the candidate index. Built at 90d,
+    # with a flag per window.
     ie_view(
       name = "mm_outpatient_potential",
       legacy = "11_mm_outpatient_potential",
       description = "Finding ALL potential outpatient MM index dates (2+ OP in window, not just earliest)",
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('mm_outpatient_potential')} AS
+      select = fmt("
         -- Each qualifying pair's first_dt is a potential index date
         -- Keep track of which windows (30/60/90) each date qualifies for
         SELECT DISTINCT
@@ -96,15 +87,14 @@ ie_step_index <- function(cfg, h) {
       qc = fmt("SELECT count(*) AS n_potential_outpt FROM {work('mm_outpatient_potential')}")
     ),
 
-    # One row per (PATID, candidate index date). A date reachable both ways is
-    # aggregated, and inpatient wins: outpt_qual is forced to 0 for an inpatient
-    # date so the two paths never double-count in the attrition table.
+    # One row per (PATID, candidate index date). If a date qualifies both ways,
+    # inpatient wins -- outpt_qual is forced to 0 -- so the two paths never
+    # double-count.
     ie_view(
       name = "mm_qualifying",
       legacy = "12_mm_qualifying",
       description = "Combining ALL potential index dates (IP or OP within 90d max window) - keeps all, not just earliest",
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('mm_qualifying')} AS
+      select = fmt("
         -- Option B: Always build with MAX window (90 days) so all candidates are preserved.
         -- The configured outpatient window ({cfg$outpatient_window}d) is applied later in Step 24
         -- via the outpt_qual flag, NOT here. This ensures that if a patient's earliest
@@ -144,14 +134,12 @@ ie_step_index <- function(cfg, h) {
   )
 
   criteria <- list(
-    # No cfg_key: this one cannot be switched off. Without a qualifying MM
-    # diagnosis there is no index date, so there is nothing to anchor the other
-    # nine criteria to.
+    # No cfg_key: without a qualifying diagnosis there is no index date, so
+    # there is nothing for the other nine gates to anchor to.
     #
-    # The predicate reads outpt2_<window>, NOT outpt_qual. They agree for the
-    # configured window by construction, and the legacy Step 24 filter is
-    # written on outpt2_<window> -- kept identical so the two are comparable
-    # character for character.
+    # The predicate reads outpt2_<window>, not outpt_qual. They agree for the
+    # configured window anyway, and the legacy step 24 filter is written on
+    # outpt2_<window>, so keeping it identical keeps the two comparable.
     ie_criterion(
       step = 1L,
       id = "idx_qualifying",
@@ -161,8 +149,8 @@ ie_step_index <- function(cfg, h) {
       predicate = fmt("(inpt_qual = 1 OR outpt2_{cfg$outpatient_window} = 1)"),
       cfg_key = NA_character_,
       polarity = "include",
-      note = paste("1 inpatient MM dx (strict 203.0x/C90.0x) or 2 outpatient",
-                   "(broad) within", cfg$outpatient_window, "days.")
+      note = paste("1 inpatient MM dx (strict) or 2 outpatient (broad) within",
+                   cfg$outpatient_window, "days.")
     )
   )
 

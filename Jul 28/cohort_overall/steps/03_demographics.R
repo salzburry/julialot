@@ -1,37 +1,30 @@
 # =============================================================================
-# 03_demographics.R -- IE Step 2: age at index (plus the death date)
+# 03_demographics.R -- step 2: age at index, plus the death date
 # -----------------------------------------------------------------------------
-#   Step 2  AGE_INDEX_YR >= MIN_AGE
+#   step 2  AGE_INDEX_YR >= MIN_AGE
 #
-# THE ONE CRITERION WITH NO FLAG VIEW OF ITS OWN
-# Age is not computed as a 0/1 flag anywhere. member_demo supplies YRDOB, and
-# 09_assemble.R derives
-#       AGE_INDEX_YR = year(INDEX_DATE) - YRDOB
-# on the assembled row. So the "flag" this criterion reads is an integer, and its
-# predicate is a comparison rather than `= 1`.
+# The only criterion with no flag table of its own. member_demo supplies YRDOB and
+# 09_assemble.R derives AGE_INDEX_YR = year(INDEX_DATE) - YRDOB, so the column
+# this gate reads is an integer and its predicate is a comparison, not `= 1`.
 #
-# Note what that means: age is in WHOLE YEARS from the birth YEAR, not from a
-# birth date -- Optum supplies YRDOB only. A patient turning 18 later in their
-# index year already counts as 18. That is the study definition, and the label
-# says so ("at index year"). It is not an approximation introduced here.
+# Age is whole years from the birth YEAR -- Optum has no birth date. Someone
+# turning 18 later in their index year already counts as 18. That is the study
+# definition, and the label says "at index year".
 #
-# member_demo picks ONE row per patient: prefer a usable gender code, then the
-# latest ELIGEND. So a patient whose gender was 'U' on their most recent segment
-# keeps the coded value from an earlier one, rather than losing it.
+# member_demo takes one row per patient: prefer a usable gender code, then the
+# latest ELIGEND. So a 'U' on the most recent segment does not lose a coded value
+# from an earlier one.
 #
-# ---------------------------------------------------------------------------
-# THE DEATH DATE IS HERE BECAUSE THE FOLLOW-UP WINDOW DEPENDS ON IT
-# ---------------------------------------------------------------------------
-# Not a criterion. But Steps 5/6, 9 and 10 all cap follow-up at
-# least(study_end, death), so death_dt has to exist before any of them.
+# The death date is here, not because it is a criterion, but because steps 5/6, 9
+# and 10 cap follow-up at least(study_end, death) and need it first.
 #
-# Optum DOD is partial: YYYYMM or YYYY. Coarsening it naively can place death
-# BEFORE the index date and make FU_DAYS negative, so:
-#   month known  -> the 15th, or month-end if index is later in that same month
-#   year only    -> Jul 15,   or Dec 31   if index is later in that same year
-# and then a final clamp, DEATH_DT >= index_date, for anything the rules miss.
-# The output is keyed by (PATID, index_date) precisely because the coarsening
-# depends on which candidate index you are asking about.
+# Optum DOD is partial -- YYYYMM or YYYY. Coarsening it carelessly can put death
+# before index and make FU_DAYS negative, so:
+#   month known  -> the 15th, or month-end if index is later that month
+#   year only    -> Jul 15, or Dec 31 if index is later that year
+# then a final clamp, DEATH_DT >= index_date. The output is keyed by
+# (PATID, index_date) because the coarsening depends on which candidate you ask
+# about.
 # =============================================================================
 
 ie_step_demographics <- function(cfg, h) {
@@ -43,8 +36,7 @@ ie_step_demographics <- function(cfg, h) {
       legacy = "15_member_demo",
       description = "Extracting patient demographics (age/gender)",
       source_tables = c("member_cont_enrollment"),
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('member_demo')} AS
+      select = fmt("
         WITH ranked AS (
           SELECT PATID, GDR_CD, cast(YRDOB as int) AS YRDOB,
                  row_number() OVER (PARTITION BY PATID
@@ -62,8 +54,7 @@ ie_step_demographics <- function(cfg, h) {
       legacy = "15b_death_dt",
       description = "Deriving death dates (month->15th, year-only uses July15/Dec31 rule)",
       source_tables = c("dod"),
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('death_dt')} AS
+      select = fmt("
         WITH raw_death AS (
           SELECT
             PATID,
@@ -137,8 +128,7 @@ ie_step_demographics <- function(cfg, h) {
       predicate = fmt("AGE_INDEX_YR >= {cfg$min_age}"),
       cfg_key = "apply_age_incl",
       polarity = "include",
-      note = paste("year(INDEX_DATE) - YRDOB, derived in the assembly step.",
-                   "Whole years from the birth YEAR; Optum has no birth date.")
+      note = "year(INDEX_DATE) - YRDOB, derived in the assembly step."
     )
   )
 

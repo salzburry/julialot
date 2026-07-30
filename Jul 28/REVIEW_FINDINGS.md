@@ -334,3 +334,80 @@ carries a banner saying exactly which parts to trust.
 
 **Nothing here changes the fact that no code has run against the warehouse.**
 Step 1 makes the static comparison meaningful; it does not make it empirical.
+
+---
+
+# Second review round — `cohort_overall`
+
+Nine findings, all reproduced, all addressed. Two were release blockers.
+
+| # | Finding | Status |
+|---|---|---|
+| 1 | **P0** Checkpoint materialisation used the unprefixed name, so a clean run died at the first checkpoint | fixed structurally |
+| 2 | **P0** `verify_against_legacy.R` never reads this build's output, so the README pointed at a gate that could pass while the build had failed | new gate written |
+| 3 | **P1** `--no-persist` still wrote tables | flag removed |
+| 4 | **P1** README claimed the study window comes from the CSV; `cfg_defaults` hardcodes it | fixed, working override added |
+| 5 | **P1** Invalid `OUTPATIENT_WINDOW` silently became 90; a malformed `APPLY_*` silently disabled a gate | both rejected |
+| 6 | **P1** `--views` ran nothing silently on a typo; `--attrition-only` could never work from a fresh session | flags removed |
+| 7 | **P1** Inpatient/outpatient are not exhaustive (`NOT(NULL)` is NULL), and step 8 treats the same claim as outpatient | comments fixed, diagnostic added, SQL unchanged |
+| 8 | **P2** The attrition terminal row never read the cohort table | `ie_reconcile()` added |
+| 9 | **P2** "1L-treated" contradicted step 6's own definition | relabelled |
+
+## Finding 1
+
+A step used to carry its own `CREATE ... {work('x')} AS`, so the object name
+existed twice: in the step's SQL, and again in what the runner handed the
+materialiser. They disagreed.
+
+Now a step carries only `name` and a `SELECT`. `work()` is the only place a name
+is built, `ie_stmt()` the only place a `CREATE` is built, and `ie_view()` rejects a
+`select` containing a `CREATE`. There is no second place for a name to come from.
+
+This also carried out the request to drop temp views — a Databricks SQL warehouse
+re-runs a view's definition on every read. All 27 objects are tables, which
+removed checkpoints, the materialiser and the persist step along with the bug.
+
+## Finding 2
+
+`tests/verify_cohort_overall.R`: `ovr_ELIG_COH_FINAL` vs the legacy
+`ELIG_COH_FINAL`, `EXCEPT` both ways on PATID **and** `(PATID, INDEX_DATE)`, grain
+on both sides, 15 key fields over shared pairs, and the funnel reconciliation.
+
+`(PATID, INDEX_DATE)` matters because criteria are applied before the index date
+is ranked, so the same patient can legitimately survive on a different date — and
+every LOT number is computed from that date. A PATID-only check would report
+agreement while the exposure dates had moved.
+
+Not run yet. It needs a warehouse.
+
+## Finding 7
+
+`NOT (POS IN (...) OR TOS_CD IN (...) OR CONF_ID IS NOT NULL)` is NULL when the
+first two are NULL and there is no confinement, so both flags come out 0 and the
+claim cannot produce an index date. Step 8 writes the inpatient flag with `ELSE 0`
+and treats everything else as outpatient, so it classifies the same claim
+differently.
+
+Both are inherited, so the legacy comparison cannot show either. Changing them
+would change the cohort, which is the study team's call — so the SQL is untouched,
+the comments say what actually happens, and `mm_dx_events_all` carries a
+diagnostic counting the affected claims and the strict subset.
+
+## On "token for token"
+
+The offline comparison is normalised text: whitespace collapsed, `CREATE` dropped,
+object qualifier removed, both checked safe first. Earlier wording said "token for
+token", which overstated it.
+
+## On overengineering
+
+Dropped: the checkpoint layer, the materialiser, the persist step, the
+`mat_tables` environment, four CLI modes, the attrition CSV export and the
+`IE_CREATE_TABLE_FN` hook. Kept: the criterion object model, which drives the
+filter, the attrition table, the reconciliation and the validation from one
+declaration, and `fmt()`, which exists so the SQL stays a literal copy of the
+templates it is compared against.
+
+The suggestion to reuse `build_steps()` instead of a second copy was not taken:
+`Jul 28` is the deployable folder and must not read `apr_30_2026` at run time. The
+copy is the price, and it is drift-tested while both are present.
