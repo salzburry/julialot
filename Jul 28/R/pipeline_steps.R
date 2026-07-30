@@ -1,25 +1,11 @@
-# =============================================================================
-# pipeline_steps.R -- build the ordered list of CREATE-VIEW steps
-# -----------------------------------------------------------------------------
-# Same steps, same order, same SQL as apr_30_2026/R/pipeline_steps.R. The only
-# change is that each phase now lives in its own file under steps/, so the IE
-# criteria can be read one at a time.
+# The ordered list of CREATE-VIEW steps.
 #
-#   steps/01_codelists.R      code lists
-#   steps/02_dx_events.R      MM diagnosis events
-#   steps/03_index_date.R     Step 1   qualifying dx, all candidate index dates
-#   steps/04_enrollment.R     Steps 3-4 continuous enrollment
-#   steps/05_demographics.R   Step 2   age at index, plus death date
-#   steps/06_clinical_flags.R Steps 5-7 MM therapy, baseline MM dx
-#   steps/07_exclusions.R     Steps 8-10 other cancer, pregnancy, clin trial
-#   steps/08_assembly.R       join flags, apply criteria, earliest index
+# Same steps, same order, same SQL as apr_30_2026/R/pipeline_steps.R - each
+# phase just lives in its own file under steps/ now, so the IE criteria can be
+# read one at a time. tests/test_same_as_source.R checks the SQL matches.
 #
-# The funnel itself is in criteria_attrition.R.
-#
-# The phases used to be closures inside build_steps(). They now take the helpers
-# they used to capture: `h` (naming) and `ctx` (criteria SQL, follow-up cap,
-# code-list sources).
-# =============================================================================
+# The phases used to be closures inside build_steps(); they now take `h`
+# (naming) and `ctx` (criteria SQL, follow-up cap, code-list sources).
 
 PHASE_FILES <- c(
   codelists      = "01_codelists.R",
