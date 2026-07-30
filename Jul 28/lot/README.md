@@ -178,7 +178,12 @@ upper(trim(coalesce(CL_MED_CLASS, ''))) <> 'STEROID'
 The `trim` matters: the projection trims the class but the raw column does
 not, so a padded `' STEROID '` would otherwise slip through.
 
-Without that the rollup lists medications whose codes are deliberately absent,
+The file itself should not list them either. `Jul 28/tools/remove_steroids_from_rollup.R`
+makes that edit on the server, keeping every remaining line byte for byte and
+reporting the md5 before and after. Run it without arguments first - it reports
+and changes nothing. The SQL filter stays afterwards as a defensive guard.
+
+Without the filter the rollup lists medications whose codes are deliberately absent,
 `uncoded_meds` fires on every run, and LOT1 builds always-zero
 `LOT1_MED_<steroid>` columns that `LOT_LONG` does not carry. `build_lot2_5()`
 already filtered this way when discovering meds and classes and its comment
