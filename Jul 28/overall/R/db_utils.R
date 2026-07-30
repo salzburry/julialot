@@ -1,18 +1,14 @@
-# Connection, retry, naming, and materialization helpers. No
-# module-level mutable state - runtime state is created in main() and
-# passed by argument.
+# Connection, retry, naming and materialization. No module-level state -
+# build_cohort() creates it and passes it by argument.
 
 # ---- Separators (pre-computed constants) ----
 SEP_59  <- strrep("=", 59)
 SEP_60  <- strrep("=", 60)
-SEP_70  <- strrep("=", 70)
 DASH_60 <- strrep("-", 60)
-DASH_70 <- strrep("-", 70)
 
 # ---- Logging ----
-# Resolve a single run log file (memoized). Honour PIPELINE_LOG_FILE if
-# set (the orchestrator points all stages at one file); else write a
-# timestamped file under OUTPUT_DIR (falls back to tempdir()).
+# One log file per run. PIPELINE_LOG_FILE wins; else a timestamped file under
+# OUTPUT_DIR, falling back to tempdir().
 .resolve_log_file <- function() {
   lf <- getOption("pipeline_log_file", default = NULL)
   if (!is.null(lf)) return(lf)
@@ -66,7 +62,6 @@ make_naming_helpers <- function(cfg, mat_tables = new.env()) {
     else paste0(schema, ".", object)
   }
   cdm  <- function(tbl) full_name(cfg$cdm_schema, tbl)
-  ref  <- function(tbl) full_name(cfg$ref_schema, tbl)
   work <- function(tbl) tbl
 
   work_tbl <- function(name) {
@@ -74,7 +69,7 @@ make_naming_helpers <- function(cfg, mat_tables = new.env()) {
     name
   }
 
-  # Quarterly table resolution (from codelists.R logic)
+  # Quarterly table resolution
   cdm_quarterly <- function(base_table) {
     cdm(get_quarterly_table(base_table, cfg$study_end))
   }
@@ -83,7 +78,7 @@ make_naming_helpers <- function(cfg, mat_tables = new.env()) {
     else cdm(base_table)
   }
 
-  list(full_name = full_name, cdm = cdm, ref = ref, work = work,
+  list(full_name = full_name, cdm = cdm, work = work,
        work_tbl = work_tbl, cdm_src = cdm_src, cdm_quarterly = cdm_quarterly)
 }
 
@@ -192,7 +187,7 @@ with_retry <- function(fn, max_retries = 3L, base_sleep = 5) {
   "DELTA_CONCURRENT", "could not be committed"
 )
 
-materialize_to_personal_schema <- function(con, view_name, cfg, mat_tables, replace = TRUE) {
+materialize_to_personal_schema <- function(con, view_name, cfg, mat_tables) {
   if (!nzchar(cfg$personal_schema)) {
     log_msg("WARN: personal_schema not set, skipping materialization of ", view_name)
     return(FALSE)
@@ -207,24 +202,6 @@ materialize_to_personal_schema <- function(con, view_name, cfg, mat_tables, repl
 
   max_attempts <- as.integer(Sys.getenv("MATERIALIZE_RETRIES", unset = "3"))
   if (is.na(max_attempts) || max_attempts < 1) max_attempts <- 3L
-
-  # replace = FALSE keeps the simple "create if absent" semantics
-  # (unchanged behaviour; this is not the failing path).
-  if (!isTRUE(replace)) {
-    return(tryCatch({
-      DBI::dbExecute(con, glue(
-        "CREATE TABLE IF NOT EXISTS {full_table_name} AS SELECT * FROM `{view_name}`"))
-      DBI::dbExecute(con, glue(
-        "CREATE OR REPLACE TEMPORARY VIEW {view_name} AS SELECT * FROM {full_table_name}"))
-      assign(view_name, full_table_name, envir = mat_tables)
-      log_msg("  >> Materialized ", view_name, " (create-if-absent)")
-      TRUE
-    }, error = function(e) {
-      log_msg("  >> WARN: Materialization of ", view_name,
-              " failed (create-if-absent): ", conditionMessage(e))
-      FALSE
-    }))
-  }
 
   # Write to a new staging table, then publish it to the final name.
   # The long write touches no existing table metadata, so a concurrent

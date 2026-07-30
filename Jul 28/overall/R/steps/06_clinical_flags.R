@@ -80,7 +80,9 @@ phase_clinical_flags <- function(cfg, h, ctx) {
           r.PATID, cast(r.FILL_DT as date) AS event_dt, 'RX' AS source
         FROM {cdm_src(cfg$tbl_rx)} r
         INNER JOIN {work('mm_therapy_codes')} c
+          -- Same guard as the medical NDC join above.
           ON c.code_type = 'NDC'
+          AND regexp_replace(c.code, '[^0-9]', '') <> ''
           AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', ''), 11, '0')
             = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')
         WHERE r.FILL_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')

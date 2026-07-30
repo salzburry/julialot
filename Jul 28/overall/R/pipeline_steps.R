@@ -34,24 +34,16 @@ load_phase_steps <- function(dir) {
   invisible(TRUE)
 }
 
-build_steps <- function(cfg, mat_tables, phases = NULL) {
+build_steps <- function(cfg, mat_tables) {
   h <- make_naming_helpers(cfg, mat_tables)
 
-  # Code-list sources. With use_csv_codelists = TRUE the CSVs have already been
-  # loaded into temp views by load_csv_codelists(), so reference them by name.
-  if (isTRUE(cfg$use_csv_codelists)) {
-    ctx <- list(mm_dx_source       = cfg$cl_mm_dx,
-                mm_therapy_source  = cfg$cl_mm_therapy,
-                preg_source        = cfg$cl_preg,
-                clintrial_source   = cfg$cl_clintrial,
-                other_malig_source = cfg$cl_other_malig)
-  } else {
-    ctx <- list(mm_dx_source       = h$ref(cfg$cl_mm_dx),
-                mm_therapy_source  = h$ref(cfg$cl_mm_therapy),
-                preg_source        = h$ref(cfg$cl_preg),
-                clintrial_source   = h$ref(cfg$cl_clintrial),
-                other_malig_source = h$ref(cfg$cl_other_malig))
-  }
+  # The code lists are loaded as views by load_csv_codelists(), so the steps
+  # reference them by name.
+  ctx <- list(mm_dx_source       = cfg$cl_mm_dx,
+              mm_therapy_source  = cfg$cl_mm_therapy,
+              preg_source        = cfg$cl_preg,
+              clintrial_source   = cfg$cl_clintrial,
+              other_malig_source = cfg$cl_other_malig)
 
   # The Step 24 filter, built from the criteria catalog.
   ctx$criteria_sql <- build_criteria_sql(build_criteria_catalog(cfg), cfg)
@@ -71,22 +63,5 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
   all_phases <- lapply(PHASE_FNS, function(fn)
     function() do.call(fn, list(cfg = cfg, h = h, ctx = ctx)))
 
-  if (is.null(phases)) {
-    selected <- all_phases
-  } else {
-    bad <- setdiff(phases, names(all_phases))
-    if (length(bad) > 0) {
-      stop("Unknown phase(s): ", paste(bad, collapse = ", "),
-           ". Valid phases: ", paste(names(all_phases), collapse = ", "))
-    }
-    phase_order <- names(all_phases)
-    last_idx <- max(match(phases, phase_order))
-    missing <- setdiff(phase_order[seq_len(last_idx)], phases)
-    if (length(missing) > 0) {
-      log_msg("WARN: Skipped prerequisite phase(s): ", paste(missing, collapse = ", "),
-              ". Views from those phases must already exist.")
-    }
-    selected <- all_phases[phases]
-  }
-  do.call(c, lapply(selected, function(fn) fn()))
+  do.call(c, lapply(all_phases, function(fn) fn()))
 }

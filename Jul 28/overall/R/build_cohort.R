@@ -60,8 +60,7 @@ build_cohort <- function(cohort_dir, root = cohort_dir, expect_table = NULL,
     }, max_retries = cfg$max_retries, base_sleep = cfg$base_sleep)
 
     if (is_ckpt) {
-      ok <- materialize_to_personal_schema(conn$con, view_name, cfg,
-                                           mat_tables, replace = TRUE)
+      ok <- materialize_to_personal_schema(conn$con, view_name, cfg, mat_tables)
       if (isTRUE(ok)) check_normalized_codelist(conn, cfg, view_name, mat_tables)
       if (!isTRUE(ok)) {
         stop("'", view_name, "' failed to materialize to '",
@@ -102,6 +101,7 @@ build_cohort <- function(cohort_dir, root = cohort_dir, expect_table = NULL,
 # config.csv together, deliberately.
 CONTRACT <- list(
   catalog                 = "hive_metastore",
+  cdm_schema              = "clnprw_optum",
   use_csv_codelists       = TRUE,
   codelist_dir            = "/mnt/code/codelist",
   use_quarterly_tables    = TRUE,
@@ -236,8 +236,7 @@ check_normalized_codelist <- function(conn, cfg, view_name, mat_tables) {
 
 # One schema for everything: <catalog>.<schema>, e.g. hive_metastore.osk02156.
 # config_prompts.R resolves work and personal schema separately, and an empty
-# personal schema silently skips writing the cohort. OBJECT_PREFIX keeps the
-# two cohorts apart.
+# personal schema silently skips writing the cohort.
 pin_output_schema <- function(cfg) {
   schema <- Sys.getenv("PROJECT_WORK_SCHEMA",
               unset = Sys.getenv("DOMINO_USER_NAME",
