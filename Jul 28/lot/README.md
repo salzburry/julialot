@@ -192,17 +192,23 @@ changes nothing. The SQL filter stays afterwards as a defensive guard.
 It is a governed file shared with `apr_30_2026`, so the script is built to be
 boring about it. The file is handled as raw bytes and whole lines are sliced
 out of it, so every kept row - its quoting, spacing and line ending - goes back
-out unchanged. The new bytes are written beside the original and replace it by
-rename, so it is either the old file or the new one and never a half-written
-one. The md5 is printed before and after, and re-checked immediately before the
-rename so a concurrent edit is refused rather than discarded.
+out unchanged. The new bytes are written beside the original, given the
+original's mode, and replace it by rename - so it is either the old file or the
+new one and never a half-written one, and a shared file does not quietly lose
+group write to the umask.
 
 It also checks its own premise instead of asserting it: the rows are only safe
 to remove because a steroid has no codes, so it refuses unless
-`cl_mma_codelist.csv` is present, carries none of the abbreviations being
-removed, and has no `STEROID` rows of its own. It refuses too if the edit would
-leave fewer medications than `01_codelists.R` requires. `Jul 28/tools/tests/`
-covers all of that, including the byte-for-byte claim.
+`cl_mma_codelist.csv` is present, has a `CL_MED_CLASS` column to judge on,
+carries none of the abbreviations being removed, and has no `STEROID` rows of
+its own. It refuses too if the edit would leave fewer medications than
+`01_codelists.R` requires.
+
+Both files' md5s are printed and re-checked immediately before the rename, so
+an edit landing in either one while the script runs stops it: a change to the
+rollup would be discarded by the replacement, and a change to the code list
+could make the premise untrue after it was checked. `Jul 28/tools/tests/`
+covers all of that, including the byte-for-byte claim and both mid-run edits.
 
 Without the filter the rollup lists medications whose codes are deliberately absent,
 `uncoded_meds` fires on every run, and LOT1 builds always-zero

@@ -15,12 +15,15 @@
 # governed file, and a reformat would bury the real change in review.
 #
 # Nothing is written over the original. The kept bytes go to a temporary file
-# beside it, are read back and checked, and only then replace it by rename.
+# beside it, are read back and checked, given the original's mode, and only
+# then replace it by rename.
 #
 # The premise - that removing these rows cannot change who counts as treated,
 # because a steroid has no codes - is checked against cl_mma_codelist.csv
-# rather than assumed. Both files are governed and shared with apr_30_2026, so
-# record the md5 printed below with whatever change request covers the edit.
+# rather than assumed. Both files are read once and both md5s are re-checked
+# immediately before the rename, so an edit landing in either while this runs
+# stops it. Both are governed and shared with apr_30_2026, so record the md5s
+# printed below with whatever change request covers the edit.
 
 argv     <- commandArgs(trailingOnly = TRUE)
 do_write <- "--write" %in% argv
@@ -92,27 +95,33 @@ if (!file.exists(code_path))
   stop("Cannot verify the premise: no code list at ", code_path,
        ". These rows are only safe to remove because a steroid has no codes.",
        call. = FALSE)
+code_md5_before <- unname(tools::md5sum(code_path))
 cdf <- read.csv(code_path, stringsAsFactors = FALSE, colClasses = "character",
                 check.names = FALSE)
 c_abb <- col(cdf, "CL_MED_ABBR")
 c_cls <- col(cdf, "CL_MED_CLASS")
-if (is.null(c_abb))
-  stop(code_path, " has no CL_MED_ABBR; cannot verify the premise.", call. = FALSE)
+# Both, not just the abbreviation. The claim below is that the code list has no
+# steroids, and that cannot be shown without the class column - and 01_codelists
+# requires it of this same file anyway, so a code list without it would not
+# build.
+missing <- c("CL_MED_ABBR", "CL_MED_CLASS")[c(is.null(c_abb), is.null(c_cls))]
+if (length(missing))
+  stop(code_path, " has no ", paste(missing, collapse = " or "),
+       "; the premise cannot be verified without it.", call. = FALSE)
 coded <- intersect(gone, toupper(trimws(c_abb)))
 if (length(coded))
   stop("The code list carries codes for ", paste(coded, collapse = ", "),
        ". Removing those rollup rows would leave a medication that claims ",
        "still extract with no class or flags. Fix the code list first.",
        call. = FALSE)
-say("Premise: none of these appear in cl_mma_codelist.csv.")
-if (!is.null(c_cls)) {
-  n_st <- sum(toupper(trimws(c_cls)) == "STEROID")
-  if (n_st > 0)
-    stop("The code list has ", n_st, " row(s) classed STEROID. Steroids are ",
-         "supposed to live in a separate file; resolve that before editing ",
-         "the rollup.", call. = FALSE)
-  say("         and it has no STEROID rows of its own.")
-}
+n_st <- sum(toupper(trimws(c_cls)) == "STEROID")
+if (n_st > 0)
+  stop("The code list has ", n_st, " row(s) classed STEROID. Steroids are ",
+       "supposed to live in a separate file; resolve that before editing ",
+       "the rollup.", call. = FALSE)
+say("Premise: none of these appear in cl_mma_codelist.csv, and it has no")
+say("         STEROID rows of its own.")
+say("         md5 ", code_md5_before)
 
 # The build refuses to run on a short rollup, so say now whether this edit
 # would produce one rather than discovering it on the next run.
@@ -157,6 +166,14 @@ tmp <- paste0(path, ".tmp.", Sys.getpid())
 on.exit(if (file.exists(tmp)) unlink(tmp), add = TRUE)
 writeBin(unlist(lines_raw[keep]), tmp)
 
+# The rename replaces the inode, so the new file keeps the temporary file's
+# mode - umask, not the original's. On a shared file that quietly withdraws
+# group write. Only the mode bits: as an ordinary user this cannot restore the
+# owner, and POSIX ACLs beyond the mode are not visible here, so check those on
+# the server if the directory uses them.
+mode <- file.info(path)$mode
+if (!is.na(mode)) Sys.chmod(tmp, mode, use_umask = FALSE)
+
 # The kept bytes are the original's bytes, so the sizes have to add up exactly.
 dropped <- sum(lengths(lines_raw[!keep]))
 if (file.size(tmp) != file.size(path) - dropped)
@@ -170,12 +187,18 @@ if (left > 0 || nrow(chk) != sum(!is_steroid))
   stop("Verification failed (", nrow(chk), " rows, ", left,
        " steroid). Nothing was replaced.", call. = FALSE)
 
-# Someone else may have written to the file while this ran. Replacing it now
-# would silently discard their edit.
+# Someone else may have written to either file while this ran. Replacing the
+# rollup now would discard an edit to it - or act on a premise that has since
+# stopped being true, if the code list gained codes for a medication about to
+# be removed.
 if (!identical(unname(tools::md5sum(path)), md5_before))
   stop("The rollup changed while this was running (md5 is no longer ",
        md5_before, "). Nothing was replaced - re-run and look at the diff.",
        call. = FALSE)
+if (!identical(unname(tools::md5sum(code_path)), code_md5_before))
+  stop("The code list changed while this was running (md5 is no longer ",
+       code_md5_before, "), so the premise checked above may no longer hold. ",
+       "Nothing was replaced - re-run.", call. = FALSE)
 
 if (!file.rename(tmp, path))
   stop("Could not replace ", path, ". The original is untouched.", call. = FALSE)
