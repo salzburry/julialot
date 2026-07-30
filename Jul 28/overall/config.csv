@@ -31,6 +31,6 @@ PROJECT_WORK_SCHEMA,,Schema this build writes to; blank = DOMINO_USER_NAME
 DOMINO_USER_NAME,,Personal schema; blank = Domino-injected value is used
 OPTUM_CDM_SCHEMA,clnprw_optum,Optum CDM source schema
 USE_QUARTERLY_TABLES,TRUE,Use cumulative quarterly CDM tables
-OUTPUT_DIR,/mnt/artifacts/results,Where the run log and attrition CSV go
+OUTPUT_DIR,/mnt/artifacts/results,Where the run log goes
 CENSOR_AT_DISENROLLMENT,FALSE,Sensitivity: cap observation at disenrollment
 PERSIST_TO_SCHEMA,TRUE,Persist outputs to the work schema

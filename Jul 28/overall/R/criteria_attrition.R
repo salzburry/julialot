@@ -32,7 +32,7 @@ build_criteria_catalog <- function(cfg) {
          cfg_key = "apply_no_bl_agents_incl"),
 
     # Step 6 - include: at least one MM-agent claim in follow-up.
-    # This does not prove a valid regimen, only that an agent was claimed.
+    # At least one MM-agent claim; not proof of a valid regimen.
     list(attrition_id = "06_step6_fu_therapy",
          label = "Step 6: FU therapy required",
          filter_sql = "AND MM_FU_agents = 1",
@@ -108,9 +108,8 @@ print_attrition_table <- function(rows, window = NULL) {
   }
 }
 
-# Write the attrition rows to a table. Overwrites each run. Every row carries
-# the run_id, cohort name and build time, so a reader can tell which run it
-# came from.
+# Persist the attrition counts for this run. Overwrites each run; every row
+# carries run_id, cohort name and build time.
 persist_attrition_table <- function(rows, cfg, conn) {
   # CREATE OR REPLACE, so skipping the write leaves last run's rows looking
   # current. Fail instead.

@@ -57,7 +57,7 @@ build_steps <- function(cfg, mat_tables, phases = NULL) {
   ctx$criteria_sql <- build_criteria_sql(build_criteria_catalog(cfg), cfg)
 
   # Follow-up cap, used by therapy / pregnancy / clintrial so the IE window
-  # matches the observation end used downstream.
+  # ends at death or study end.
   #   primary      least(study_end, death)
   #   sensitivity  also cap at last enrollment (censor_at_disenrollment)
   if (isTRUE(cfg$censor_at_disenrollment)) {

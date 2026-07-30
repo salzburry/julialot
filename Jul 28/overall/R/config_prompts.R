@@ -23,10 +23,7 @@ cfg_defaults <- list(
   # ---- Databricks / ODBC ----
   dsn         = Sys.getenv("DATABRICKS_DSN", unset = "RWDE"),
   pwd         = Sys.getenv("DATABRICKS_PWD", unset = ""),
-  # Databricks catalog: default matches config_lot.R (Part 2) so that an
-  # unset DATABRICKS_CATALOG env var resolves to the same qualified table
-  # path in both pipelines. Set empty string explicitly to fall back to
-  # the session's default catalog.
+  # Set an empty string to fall back to the session's default catalog.
   catalog     = Sys.getenv("DATABRICKS_CATALOG", unset = "hive_metastore"),
   max_retries = as.integer(Sys.getenv("MAX_RETRIES", unset = "3")),
   base_sleep  = as.numeric(Sys.getenv("BASE_SLEEP_SECS", unset = "5")),
@@ -126,8 +123,7 @@ cfg_defaults <- list(
   #                  patients keep contributing follow-up.
   # TRUE  (sensitivity): IE follow-up window also caps at last continuous-enrollment
   #                  end (ENDDATE_CE).
-  # Read from the same env var as Part 2's config_lot.R so a single override flips
-  # both pipelines symmetrically and lot_patient_input ↔ lot1_base counts stay in sync.
+  # Sensitivity flag; the contract pins it FALSE.
   censor_at_disenrollment = as.logical(Sys.getenv("CENSOR_AT_DISENROLLMENT", unset = "FALSE")),
 
   # ---- Performance ----

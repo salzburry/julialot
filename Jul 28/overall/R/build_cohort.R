@@ -98,8 +98,37 @@ build_cohort <- function(cohort_dir, root = cohort_dir, expect_table = NULL,
   invisible(list(cfg = cfg, conn = conn, mat_tables = mat_tables))
 }
 
-# An env var beats config.csv, so check what we got - don't just default it.
+# What this build is. An env var beats config.csv, so every setting that moves
+# the cohort has to be checked, not just defaulted. Change a value here and in
+# config.csv together, deliberately.
+CONTRACT <- list(
+  catalog                 = "hive_metastore",
+  use_csv_codelists       = TRUE,
+  codelist_dir            = "/mnt/code/codelist",
+  use_quarterly_tables    = TRUE,
+  outpatient_window       = 90L,
+  min_age                 = 18L,
+  censor_at_disenrollment = FALSE,
+  apply_age_incl          = TRUE,
+  apply_ce_b_incl         = TRUE,
+  apply_ce_f_incl         = TRUE,
+  apply_no_bl_agents_incl = TRUE,
+  apply_fu_agents_incl    = TRUE,
+  apply_baseline_mm_excl  = FALSE,
+  apply_other_malig_excl  = FALSE,
+  apply_pregnancy_excl    = FALSE,
+  apply_clintrial_excl    = FALSE
+)
+
 check_output_contract <- function(cfg, expect_table, expect_prefix = NULL) {
+  wrong <- Filter(Negate(is.null), lapply(names(CONTRACT), function(k) {
+    got <- cfg[[k]]
+    if (isTRUE(all.equal(got, CONTRACT[[k]]))) NULL
+    else paste0(k, " = ", format(got), " (want ", format(CONTRACT[[k]]), ")")
+  }))
+  if (length(wrong))
+    stop("This build is defined as:\n  ", paste(unlist(wrong), collapse = "\n  "),
+         call. = FALSE)
   if (!is.null(expect_table) && !identical(cfg$final_table_name, expect_table)) {
     stop("This build writes ", expect_table, ", but FINAL_TABLE_NAME is '",
          cfg$final_table_name, "'. Unset it, or fix config.csv.", call. = FALSE)
@@ -145,14 +174,11 @@ check_settings <- function() {
   if (nzchar(a) && is.na(suppressWarnings(as.integer(a))))
     bad <- c(bad, paste0("MIN_AGE='", a, "' (want a whole number)"))
 
-  # as.Date("30-06-2025", "%Y-%m-%d") returns year 30 rather than failing, so
-  # check the shape first.
+  # The study window is fixed in config_prompts.R and nothing reads these.
+  # Validating them would suggest they work.
   for (v in c("STUDY_START", "STUDY_END", "ID_START", "ID_END")) {
-    x <- Sys.getenv(v, unset = "")
-    if (!nzchar(x)) next
-    if (!grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", x) ||
-        is.na(suppressWarnings(as.Date(x, "%Y-%m-%d"))))
-      bad <- c(bad, paste0(v, "='", x, "' (want YYYY-MM-DD)"))
+    if (nzchar(Sys.getenv(v, unset = "")))
+      bad <- c(bad, paste0(v, " is set but ignored - the study window is fixed"))
   }
   for (v in c("PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME")) {
     x <- Sys.getenv(v, unset = "")

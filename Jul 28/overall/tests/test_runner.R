@@ -72,8 +72,9 @@ ok(identical(resolve_checkpoints(), c("a", "b", "c")), "splits and trims a list"
 
 cat("\n-- check_output_contract --\n")
 Sys.setenv(CHECKPOINT_STEPS = "*")
-good <- list(final_table_name = "OVERALL_COH_FINAL", object_prefix = "overall_",
-             persist_to_schema = TRUE)
+good <- modifyList(list(final_table_name = "OVERALL_COH_FINAL",
+                        object_prefix = "overall_", persist_to_schema = TRUE),
+                   get("CONTRACT", envir = env))
 runs(check_output_contract(good, "OVERALL_COH_FINAL", "overall_"), "accepts the declared contract")
 stops(check_output_contract(modifyList(good, list(final_table_name = "ELIG_COH_FINAL")),
                             "OVERALL_COH_FINAL", "overall_"),
@@ -162,6 +163,26 @@ for (v in names(NORMALIZED_CODELISTS)) {
      paste0(v, ": ", paste(want, collapse = "+"), " in (",
             paste(have, collapse = ", "), ")"))
 }
+
+cat("\n-- the clinical contract is pinned, not just defaulted --\n")
+# An ambient APPLY_AGE_INCL=FALSE or OUTPATIENT_WINDOW=30 is a valid value that
+# would quietly build a different cohort. Every setting that moves the cohort
+# has to be checked.
+CONTRACT <- get("CONTRACT", envir = env)
+Sys.setenv(CHECKPOINT_STEPS = "*")
+base <- modifyList(list(final_table_name = "OVERALL_COH_FINAL",
+                        object_prefix = "overall_", persist_to_schema = TRUE),
+                   CONTRACT)
+runs(check_output_contract(base, "OVERALL_COH_FINAL", "overall_"),
+     "accepts the declared contract")
+for (k in names(CONTRACT)) {
+  v <- CONTRACT[[k]]
+  other <- if (is.logical(v)) !v else if (is.numeric(v)) v + 1 else paste0(v, "x")
+  stops(check_output_contract(modifyList(base, setNames(list(other), k)),
+                              "OVERALL_COH_FINAL", "overall_"),
+        paste0("rejects ", k, " = ", format(other)))
+}
+clear()
 
 cat("\n-- the shipped config.csv, not a sample --\n")
 # Both suites built their cfg from apr_30_2026 or a literal. Someone could flip
