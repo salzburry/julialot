@@ -45,8 +45,7 @@ ie_step_inputs <- function(cfg, h) {
       name = "mm_dx_codes",
       legacy = "01_mm_dx_codes",
       description = "Loading MM diagnosis codes (ICD-9/ICD-10)",
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('mm_dx_codes')} AS
+      select = fmt("
         SELECT
           CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
           upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', '')) AS dx
@@ -60,8 +59,7 @@ ie_step_inputs <- function(cfg, h) {
       name = "mm_therapy_codes",
       legacy = "03_mm_therapy_codes",
       description = "Loading MM therapy codes (HCPCS/NDC) - sourced from cl_mma_codelist.csv (single source of truth with LOT S04)",
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('mm_therapy_codes')} AS
+      select = fmt("
         -- cl_mma_codelist.csv has columns CL_CODE_TYPE, CL_CODE (+ CL_MEDICATION_FULL, CL_MED_CLASS, CL_MED_ABBR)
         -- Aliased here to code_type/code to match downstream therapy join logic
         SELECT upper(trim(CL_CODE_TYPE)) AS code_type,
@@ -77,8 +75,7 @@ ie_step_inputs <- function(cfg, h) {
       name = "preg_codes",
       legacy = "04_preg_codes",
       description = "Loading pregnancy exclusion codes",
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('preg_codes')} AS
+      select = fmt("
         SELECT upper(trim(code_type)) AS code_type,
                upper(regexp_replace(trim(code), '[^A-Za-z0-9]', '')) AS code
         FROM {preg_source}
@@ -91,8 +88,7 @@ ie_step_inputs <- function(cfg, h) {
       name = "clintrial_codes",
       legacy = "05_clintrial_codes",
       description = "Loading clinical trial exclusion codes",
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('clintrial_codes')} AS
+      select = fmt("
         SELECT upper(trim(code_type)) AS code_type,
                upper(regexp_replace(trim(code), '[^A-Za-z0-9]', '')) AS code
         FROM {clintrial_source}
@@ -105,8 +101,7 @@ ie_step_inputs <- function(cfg, h) {
       name = "other_malig_codes",
       legacy = "06_other_malig_codes",
       description = "Loading other malignancy exclusion codes",
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('other_malig_codes')} AS
+      select = fmt("
         SELECT
           upper(tumor_group) AS tumor_group,
           CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
@@ -124,8 +119,7 @@ ie_step_inputs <- function(cfg, h) {
       legacy = "06c_validate_rvnu_cd",
       description = "Validating RVNU_CD column exists on medical table",
       source_tables = c("medical"),
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('rvnu_cd_check')} AS
+      select = fmt("
         SELECT RVNU_CD FROM {cdm_src(cfg$tbl_medical)} LIMIT 1
       "),
       qc = "SELECT 'RVNU_CD column validated on medical table' AS status"
@@ -136,8 +130,7 @@ ie_step_inputs <- function(cfg, h) {
       legacy = "07a_med_claim_header",
       description = "Extracting medical claim headers from CDM (study period)",
       source_tables = c("medical"),
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('med_claim_header')} AS
+      select = fmt("
         -- Claim grain is (PATID, PAT_PLANID, CLMID, FST_DT, LOC_CD). CLMID alone is
         -- not unique: it is a plan-assigned sequence number, so the same value can
         -- legitimately repeat across plan changes, service dates, or service-line
@@ -169,8 +162,7 @@ ie_step_inputs <- function(cfg, h) {
       legacy = "07b_confinement",
       description = "Extracting confinement records",
       source_tables = c("confinement"),
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('confinement')} AS
+      select = fmt("
         SELECT DISTINCT PATID, CONF_ID,
                cast(ADMIT_DATE as date) AS ADMIT_DATE,
                cast(DISCH_DATE as date) AS DISCH_DATE
@@ -183,15 +175,31 @@ ie_step_inputs <- function(cfg, h) {
     ),
 
     # Inpatient = Approach 1 (POS/TOS) OR Approach 2 (validated CONF_ID).
-    # Outpatient is the strict negation of that, so the two are exhaustive and
-    # mutually exclusive -- a claim cannot count toward both paths of Step 1.
+    # Outpatient is written as the negation, so the two are mutually exclusive.
+    #
+    # THEY ARE NOT EXHAUSTIVE, and an earlier revision of this comment wrongly
+    # said they were. Under SQL three-valued logic, a claim with POS AND TOS_CD
+    # both NULL and no validated confinement makes the condition NULL:
+    #
+    #     inpatient_flg   CASE WHEN NULL      THEN 1 ELSE 0 END  ->  0
+    #     outpatient_flg  CASE WHEN NOT NULL  THEN 1 ELSE 0 END  ->  0
+    #
+    # So such a claim is NEITHER, and it can therefore never qualify a patient at
+    # Step 1 by either path. Step 1 is ON, so this is live: an MM diagnosis whose
+    # care setting is unrecorded cannot produce an index date.
+    #
+    # This is copied faithfully from pipeline_steps.R, so the legacy comparison
+    # can never surface it -- both sides do the same thing. It is NOT fixed here:
+    # changing it would change the cohort, which is a study-team decision, not a
+    # refactor. qc_extra below counts the affected claims so the size of the
+    # question is a number rather than a worry. See also 06_other_malig.R, which
+    # resolves the same ambiguity DIFFERENTLY.
     ie_view(
       name = "mm_dx_events_all",
       legacy = "08a_mm_dx_events_all",
       description = "Identifying MM diagnosis events (full study period, Approach 1+2 inpatient)",
       source_tables = c("med_diagnosis", "confinement"),
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('mm_dx_events_all')} AS
+      select = fmt("
         SELECT /*+ BROADCAST(c) */
           d.PATID,
           d.PAT_PLANID,
@@ -243,15 +251,25 @@ ie_step_inputs <- function(cfg, h) {
           ON h.PATID = cf.PATID AND h.CONF_ID = cf.CONF_ID
         WHERE cast(d.FST_DT as date) BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
       "),
-      qc = fmt("SELECT count(DISTINCT PATID) AS n_patients, sum(inpatient_flg) AS n_inpatient_events, sum(conf_validated) AS n_via_conf, sum(pos_tos_inpatient) AS n_via_pos_tos FROM {work('mm_dx_events_all')}")
+      qc = fmt("SELECT count(DISTINCT PATID) AS n_patients, sum(inpatient_flg) AS n_inpatient_events, sum(conf_validated) AS n_via_conf, sum(pos_tos_inpatient) AS n_via_pos_tos FROM {work('mm_dx_events_all')}"),
+      # NOT compared to the legacy QC -- it asks a question the legacy QC does
+      # not. Quantifies the unknown-care-setting gap described above, and the
+      # subset of it that is a STRICT MM code (those are the claims that could
+      # otherwise have produced an inpatient index date at Step 1).
+      qc_extra = fmt("
+        SELECT
+          count(*) AS n_events,
+          sum(CASE WHEN inpatient_flg = 0 AND outpatient_flg = 0 THEN 1 ELSE 0 END) AS n_setting_unknown,
+          count(DISTINCT CASE WHEN inpatient_flg = 0 AND outpatient_flg = 0 THEN PATID END) AS n_patients_affected,
+          sum(CASE WHEN inpatient_flg = 0 AND outpatient_flg = 0 AND mm_dx_strict_flg = 1 THEN 1 ELSE 0 END) AS n_unknown_strict
+        FROM {work('mm_dx_events_all')}")
     ),
 
     ie_view(
       name = "mm_dx_events_id",
       legacy = "08b_mm_dx_events_id",
       description = "Filtering MM events to identification period",
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('mm_dx_events_id')} AS
+      select = fmt("
         SELECT * FROM {work('mm_dx_events_all')}
         WHERE svc_dt BETWEEN date('{cfg$id_start}') AND date('{cfg$id_end}')
       "),

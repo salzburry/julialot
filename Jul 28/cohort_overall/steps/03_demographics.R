@@ -43,8 +43,7 @@ ie_step_demographics <- function(cfg, h) {
       legacy = "15_member_demo",
       description = "Extracting patient demographics (age/gender)",
       source_tables = c("member_cont_enrollment"),
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('member_demo')} AS
+      select = fmt("
         WITH ranked AS (
           SELECT PATID, GDR_CD, cast(YRDOB as int) AS YRDOB,
                  row_number() OVER (PARTITION BY PATID
@@ -62,8 +61,7 @@ ie_step_demographics <- function(cfg, h) {
       legacy = "15b_death_dt",
       description = "Deriving death dates (month->15th, year-only uses July15/Dec31 rule)",
       source_tables = c("dod"),
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('death_dt')} AS
+      select = fmt("
         WITH raw_death AS (
           SELECT
             PATID,

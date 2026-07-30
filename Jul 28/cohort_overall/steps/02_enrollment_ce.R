@@ -36,8 +36,7 @@ ie_step_enrollment_ce <- function(cfg, h) {
       legacy = "13_enrollment_spans",
       description = "Building enrollment spans with 30-day gap logic from member_enrollment",
       source_tables = c("member_enrollment"),
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('enrollment_spans')} AS
+      select = fmt("
         WITH base AS (
           -- Use member_enrollment (raw) with 30-day gap allowance
           SELECT PATID, cast(ELIGEFF as date) AS elig_eff, cast(ELIGEND as date) AS elig_end
@@ -83,8 +82,7 @@ ie_step_enrollment_ce <- function(cfg, h) {
       legacy = "13b_enrollment_spans_strict",
       description = "Building strict enrollment spans (no gaps, handles overlaps)",
       source_tables = c("member_enrollment"),
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('enrollment_spans_strict')} AS
+      select = fmt("
         WITH base AS (
           -- Use member_enrollment (raw) to detect ALL gaps
           SELECT PATID, cast(ELIGEFF as date) AS elig_eff, cast(ELIGEND as date) AS elig_end
@@ -130,8 +128,7 @@ ie_step_enrollment_ce <- function(cfg, h) {
       name = "ce_flags",
       legacy = "14_ce_flags",
       description = "CRITERION: Continuous enrollment (baseline before index, follow-up from index)",
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('ce_flags')} AS
+      select = fmt("
         WITH idx AS (
           SELECT PATID, index_date,
                  date_sub(index_date, {cfg$baseline_days}) AS baseline_start,

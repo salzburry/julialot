@@ -39,24 +39,22 @@
     gsub("~+~", " ", sub("^--file=", "", fa[1]), fixed = TRUE))) else getwd()
 })
 
-# The LOT helper stack. Defaults to the sibling apr_30_2026/ folder; override
-# with APR30_DIR if the pipeline lives elsewhere (e.g. /mnt/code on Domino).
-.apr30 <- Sys.getenv("APR30_DIR",
-                     unset = file.path(dirname(dirname(.here)), "apr_30_2026"))
-if (!dir.exists(file.path(.apr30, "R")))
-  stop("cannot find the LOT helper stack at ", .apr30,
-       "/R -- set APR30_DIR to the pipeline folder.", call. = FALSE)
+# The LOT helper stack, from inside the folder that ships. ../lib holds verbatim
+# copies of the apr_30_2026/R originals, byte-identity asserted by
+# ../tests/test_equivalence.R while that folder is still present. Nothing outside
+# "Jul 28" is read at run time.
+.root <- Sys.getenv("IE_ROOT_DIR", unset = dirname(.here))
+.lib  <- file.path(.root, "lib")
+if (!dir.exists(.lib))
+  stop("cannot find the shipped lib/ at ", .lib,
+       " -- set IE_ROOT_DIR to the Jul 28 folder.", call. = FALSE)
 
 library(glue)
 library(DBI)
 library(odbc)
-.src <- function(f) source(file.path(.apr30, "R", f))
-if (file.exists(file.path(.apr30, "R", "load_inputs.R"))) {
-  .src("load_inputs.R")
-  load_pipeline_inputs(c(.apr30, dirname(.apr30)))
-}
-# Helpers are READ from the pipeline (cfg, connection, naming, codelists). This
-# folder does not modify apr_30_2026 -- see the note in the header.
+.src <- function(f) source(file.path(.lib, f))
+.src("load_inputs.R")
+load_pipeline_inputs(.root)
 .src("config_lot.R")      # cfg
 .src("db_utils_lot.R")    # db_exec, db_q, run_step, wrk, cdm_src, log_msg
 .src("codelists_lot.R")   # load_codelist_csv

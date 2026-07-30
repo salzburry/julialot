@@ -29,8 +29,23 @@
 # partition the pair logic -- patients are excluded by code, grouped by label.
 #
 # Inpatient/outpatient classification is the same Approach 1 + 2 as Step 1,
-# re-derived here off the same 5-column claim key, so the two steps cannot
-# disagree about what an inpatient claim is.
+# re-derived here off the same 5-column claim key. It agrees with Step 1 on what
+# an INPATIENT claim is -- and DISAGREES with it on what an outpatient one is:
+#
+#   here      inpatient_flg = CASE WHEN <ip condition> THEN 1 ELSE 0 END, and
+#             everything with inpatient_flg = 0 is then treated as outpatient.
+#   Step 1    outpatient_flg = CASE WHEN NOT <ip condition> THEN 1 ELSE 0 END.
+#
+# A claim whose care setting is unrecorded (POS and TOS_CD both NULL, no
+# confinement) makes that condition NULL. So the SAME claim is:
+#
+#   neither inpatient nor outpatient  for the MM index criterion (Step 1)
+#   outpatient                        for this criterion (Step 8)
+#
+# Inherited verbatim from pipeline_steps.R and not "fixed" here -- see the note in
+# 00_inputs.R. Step 8 ships OFF, so it does not affect the current Overall count;
+# Step 1 is ON, so its half does. The intended handling of unknown care setting
+# needs a study-team answer, and 00_inputs.R's qc_extra sizes it.
 #
 # CONFIGURED OFF (APPLY_OTHER_MALIG_EXCL=FALSE), and this one is not a
 # preference. The NDMM cohort re-applies other-malignancy at the LOT1 anchor with
@@ -50,8 +65,7 @@ ie_step_other_malig <- function(cfg, h) {
       legacy = "22_other_malig_flag",
       description = "EXCLUSION: Other malignancy flag (>=1 IP or >=2 OP within 30d)",
       source_tables = c("med_diagnosis", "medical", "confinement"),
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('other_malig_flag')} AS
+      select = fmt("
         WITH dx AS (
           -- Carry the full 5-column claim key so dx_with_setting can join
           -- med_claim_header on the same grain (see step 07a comment).

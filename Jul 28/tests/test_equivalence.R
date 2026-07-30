@@ -500,5 +500,49 @@ ok(TRUE, "STATIC ONLY: identical SQL text, not identical row counts")
 ok(TRUE, "the warehouse gate remains: coh_overall_cohort == ELIG_COH_FINAL")
 ok(TRUE, "the warehouse gate remains: coh_ndmm_cohort == _ndmm_patids")
 
+# =============================================================================
+section("6. Jul 28 ships on its own -- lib/ is a VERBATIM copy")
+# "Jul 28" is the folder that goes to production, so nothing in it may read
+# apr_30_2026 at run time. The shared plumbing therefore lives in Jul 28/lib as a
+# copy -- and a copy that nothing compares is exactly how definitions drift.
+#
+# So each file is asserted BYTE-IDENTICAL to its apr_30_2026/R original, while
+# that folder is still present. In production it is absent, these checks skip, and
+# the copies are simply the code. If you need to change one of these files, change
+# it in apr_30_2026/R and re-copy -- do not edit the copy, or this fails and the
+# two have silently diverged.
+LIB_FILES <- c("load_inputs.R", "config_prompts.R", "codelists.R", "db_utils.R",
+               "config_lot.R", "db_utils_lot.R", "codelists_lot.R")
+if (!dir.exists(file.path(APR, "R"))) {
+  cat("  skip   apr_30_2026 is not present -- normal in production\n")
+} else {
+  for (f in LIB_FILES) {
+    a <- file.path(ROOT, "lib", f)
+    b <- file.path(APR, "R", f)
+    ok(file.exists(a) && file.exists(b) &&
+       identical(readLines(a, warn = FALSE), readLines(b, warn = FALSE)),
+       paste0("lib/", f, " is byte-identical to apr_30_2026/R/", f))
+  }
+  ok(identical(readLines(file.path(ROOT, "pipeline_inputs.csv"), warn = FALSE),
+               readLines(file.path(APR, "pipeline_inputs.csv"), warn = FALSE)),
+     "pipeline_inputs.csv is byte-identical to apr_30_2026's")
+}
+
+# And the run-time files must not reach outside the shipped folder. Comments may
+# mention apr_30_2026; code may not resolve a path into it.
+RUNTIME <- c(Sys.glob(file.path(ROOT, "*.R")),
+             Sys.glob(file.path(ROOT, "engine", "*.R")),
+             Sys.glob(file.path(ROOT, "*", "*.R")))
+RUNTIME <- Filter(function(f) !grepl("/tests?/", f), RUNTIME)
+bad_runtime <- Filter(function(f) {
+  code <- grep("^\\s*#", readLines(f, warn = FALSE), invert = TRUE, value = TRUE)
+  any(grepl("apr_30_2026", code))
+}, RUNTIME)
+ok(length(bad_runtime) == 0L,
+   paste0("no run-time file in Jul 28 resolves a path into apr_30_2026",
+          if (length(bad_runtime))
+            paste0(" (", paste(basename(bad_runtime), collapse = ", "), ")")
+          else ""))
+
 res <- test_summary("equivalence")
 if (res[["fail"]] > 0L) quit(status = 1L)

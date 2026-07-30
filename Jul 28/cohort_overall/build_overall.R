@@ -2,23 +2,25 @@
 # =============================================================================
 # build_cohort1.R -- build cohort 1 (Overall) from the Optum CDM
 # -----------------------------------------------------------------------------
-#   Rscript "Jul 28/cohort1_ie/build_cohort1.R" --funnel      # the funnel only
-#   Rscript "Jul 28/cohort1_ie/build_cohort1.R" --dry-run     # every statement
+#   Rscript "Jul 28/cohort1_ie/build_cohort1.R" --funnel    # the funnel, no connection
+#   Rscript "Jul 28/cohort1_ie/build_cohort1.R" --dry-run   # every statement, no connection
 #   DATABRICKS_PWD=... Rscript "Jul 28/cohort1_ie/build_cohort1.R"
 #
-#   --views=a,b        run only these views (they must already have their inputs)
-#   --no-persist       build the temp views, write no tables
-#   --no-attrition     skip the attrition table
-#   --attrition-only   count off views this session already built
+# Those are the only modes. See ie_runner.R for why the partial-run options were
+# removed.
 #
 # COMPLETE ON ITS OWN. It reads the CDM, not ELIG_COH_ALLFLAGS, so 01_cohort.R
-# does not have to have run. It writes C1_ELIG_COH_FINAL and never touches the
-# legacy pipeline's ELIG_COH_FINAL.
+# does not have to have run. Every object is a real table in your own schema,
+# prefixed c1_, and the cohort is c1_ELIG_COH_FINAL -- the legacy pipeline's
+# ELIG_COH_FINAL is never written.
 #
-# NOT VALIDATED AGAINST THE WAREHOUSE. The SQL is asserted token-for-token
-# against pipeline_steps.R by tests/test_cohort1_ie.R, which is a strong static
-# argument and not an empirical one. Read README.md before quoting a number from
-# this.
+# After building, it reconciles the cohort table against the funnel (grain,
+# count, membership both ways, and that the selected index date is the earliest
+# SURVIVING candidate) and exits non-zero if any check fails.
+#
+# NOT VALIDATED AGAINST THE LEGACY COHORT. Reconciliation is internal
+# consistency. Agreement with ELIG_COH_FINAL is tests/verify_cohort1.R, which
+# needs a warehouse and has not been run. Read README.md before quoting a number.
 # =============================================================================
 
 .here <- local({

@@ -32,8 +32,7 @@ ie_step_baseline_mm <- function(cfg, h) {
       name = "mm_baseline_evidence_flag",
       legacy = "17_mm_baseline_evidence_flag",
       description = "Checking for any STRICT MM dx (203.0x/C90.0x) claim in baseline period",
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('mm_baseline_evidence_flag')} AS
+      select = fmt("
         SELECT
           q.PATID,
           q.index_date,

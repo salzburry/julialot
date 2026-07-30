@@ -36,8 +36,7 @@ ie_step_index <- function(cfg, h) {
       name = "mm_inpatient_potential",
       legacy = "09_mm_inpatient_potential",
       description = "Finding ALL potential inpatient MM index dates (STRICT 203.0x/C90.0x only)",
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('mm_inpatient_potential')} AS
+      select = fmt("
         SELECT DISTINCT PATID, svc_dt AS potential_index, 'INPATIENT' AS index_source
         FROM {work('mm_dx_events_id')}
         WHERE inpatient_flg = 1
@@ -53,8 +52,7 @@ ie_step_index <- function(cfg, h) {
       name = "mm_outpatient_pairs",
       legacy = "10_mm_outpatient_pairs",
       description = "Building outpatient diagnosis date pairs",
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('mm_outpatient_pairs')} AS
+      select = fmt("
         WITH distinct_dates AS (
           SELECT DISTINCT PATID, svc_dt
           FROM {work('mm_dx_events_id')}
@@ -79,8 +77,7 @@ ie_step_index <- function(cfg, h) {
       name = "mm_outpatient_potential",
       legacy = "11_mm_outpatient_potential",
       description = "Finding ALL potential outpatient MM index dates (2+ OP in window, not just earliest)",
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('mm_outpatient_potential')} AS
+      select = fmt("
         -- Each qualifying pair's first_dt is a potential index date
         -- Keep track of which windows (30/60/90) each date qualifies for
         SELECT DISTINCT
@@ -103,8 +100,7 @@ ie_step_index <- function(cfg, h) {
       name = "mm_qualifying",
       legacy = "12_mm_qualifying",
       description = "Combining ALL potential index dates (IP or OP within 90d max window) - keeps all, not just earliest",
-      sql = fmt("
-        CREATE OR REPLACE TEMPORARY VIEW {work('mm_qualifying')} AS
+      select = fmt("
         -- Option B: Always build with MAX window (90 days) so all candidates are preserved.
         -- The configured outpatient window ({cfg$outpatient_window}d) is applied later in Step 24
         -- via the outpt_qual flag, NOT here. This ensures that if a patient's earliest

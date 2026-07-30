@@ -15,11 +15,14 @@
 
 list(
   id       = "overall",
-  label    = "Overall MM (1L-treated)",
+  label    = "Overall MM (index IE + follow-up MM-agent evidence)",
   flag_col = "COHORT_OVERALL",
   order    = 10L,           # position in multi-cohort runs (PLD column order)
   desc     = paste(
-    "Every 1L-treated MM patient passing the index-anchored IE funnel.",
+    "MM patients passing the index-anchored IE funnel, with >=1 MM-agent claim",
+    "in follow-up. NOT '1L-treated': fu_mm_agents requires an MM-agent claim of",
+    "ANY class, not a LOT1 regimen, so steroid-only follow-up qualifies and this",
+    "is a SUPERSET of the 1L-regimen population.",
     "Equivalent to today's ELIG_COH_FINAL (pipeline_steps.R step 24)."),
 
   # ---- Gates, in attrition-funnel order --------------------------------------

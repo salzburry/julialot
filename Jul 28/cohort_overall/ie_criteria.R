@@ -27,9 +27,11 @@
 #       that is an error, but only at RUN time, after the expensive scans.
 #   a missing or duplicated funnel step
 #       a gap in 1..10 means a criterion was dropped in a refactor.
-#   an unprefixed CREATE
-#       would collide with the legacy pipeline's temp view of the same name and
-#       silently rewire whichever ran second.
+#   an object name that is not the prefixed, schema-qualified one
+#       would collide with the legacy pipeline's object of the same name, and
+#       whichever ran second would win. Structurally, work() is the only place a
+#       name is formed and ie_stmt() the only place a CREATE is formed -- both
+#       from a step's `name` -- so this is asserted, not hoped for.
 # =============================================================================
 
 # Build order. The number in the file name IS this order.
@@ -142,31 +144,38 @@ ie_validate <- function(funnel) {
 
   vnames <- vapply(views, function(v) v$name, character(1))
   if (anyDuplicated(vnames))
-    stop("duplicate view name(s): ",
+    stop("duplicate table name(s): ",
          paste(unique(vnames[duplicated(vnames)]), collapse = ", "),
          call. = FALSE)
 
-  # Every temp view this folder creates must carry the prefix, or it collides
-  # with the legacy pipeline's view of the same name.
+  # Every object this folder creates must be the prefixed, schema-qualified name,
+  # and nothing here may create a temporary view (a Databricks SQL warehouse
+  # re-runs a view's definition on every reference).
+  h <- funnel$h
   for (v in views) {
-    m <- regmatches(v$sql, regexpr("CREATE OR REPLACE TEMPORARY VIEW\\s+\\S+",
-                                   v$sql))
-    if (!length(m)) next
-    obj <- sub("^CREATE OR REPLACE TEMPORARY VIEW\\s+", "", m)
-    if (!startsWith(obj, cfg$view_prefix))
-      stop("view '", v$name, "' creates ", obj, ", which is not prefixed with '",
-           cfg$view_prefix, "'. An unprefixed temp view collides with the ",
-           "legacy pipeline's view of the same name.", call. = FALSE)
+    stmt <- ie_stmt(v, cfg, h)
+    target <- sub("^CREATE OR REPLACE TABLE\\s+", "",
+                  regmatches(stmt, regexpr("CREATE OR REPLACE TABLE\\s+\\S+", stmt)))
+    if (!identical(target, h$work(v$name)))
+      stop("step '", v$name, "' would create ", target, " rather than ",
+           h$work(v$name), call. = FALSE)
+    if (!grepl(cfg$obj_prefix, target, fixed = TRUE))
+      stop("step '", v$name, "' creates ", target, ", which does not carry the '",
+           cfg$obj_prefix, "' prefix -- it could overwrite the legacy ",
+           "pipeline's object of the same name.", call. = FALSE)
+    if (grepl("TEMPORARY VIEW", v$select, ignore.case = TRUE))
+      stop("step '", v$name, "' creates a temporary view. Every object here is ",
+           "a table; see ie_config.R.", call. = FALSE)
   }
 
   # Every column a predicate reads has to be produced by the assembly step.
   flags_sql <- Find(function(v) identical(v$name, cfg$flags_view), views)
   if (is.null(flags_sql))
-    stop("no view named ", cfg$flags_view,
+    stop("no step named ", cfg$flags_view,
          " -- the assembly step did not run.", call. = FALSE)
   for (cr in criteria) {
     for (col in cr$flag_col) {
-      if (!grepl(paste0("\\b", col, "\\b"), flags_sql$sql))
+      if (!grepl(paste0("\\b", col, "\\b"), flags_sql$select))
         stop("criterion '", cr$id, "' (step ", cr$step, ") reads column '", col,
              "', which ", cfg$flags_view, " does not produce. Add it to ",
              "steps/09_assemble.R -- the assembly SELECT is explicit, not ",
@@ -201,8 +210,8 @@ ie_print_funnel <- function(funnel) {
         " switched OFF by the configuration: ",
         paste(vapply(off, function(c) c$id, character(1)), collapse = ", "),
         "\n", sep = "")
-    cat("  The flags are still computed -- they are columns on ", cfg$flags_view,
-        ".\n", sep = "")
+    cat("  The flags are still computed -- they are columns on ",
+        funnel$h$work(cfg$flags_view), ".\n", sep = "")
   }
   cat(strrep("=", 78), "\n\n", sep = "")
   invisible(funnel)
