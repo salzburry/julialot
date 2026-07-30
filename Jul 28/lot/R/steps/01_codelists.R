@@ -38,13 +38,8 @@ phase_codelists <- function(con) {
             OR  trim(cast(USED_FOR_OTHER_CANCERS AS string)) = '1'
            THEN 1 ELSE 0 END AS USED_FOR_OTHER_CANCERS
     FROM {rollup_src}
-    -- Steroids are maintained in a separate file, so their codes are not in
-    -- cl_mma_codelist.csv. Dropping them here too keeps the two files saying
-    -- the same thing: otherwise every run reports rollup medications that can
-    -- never be matched, and LOT1 builds always-zero LOT1_MED_<steroid> columns
-    -- that LOT2-5 does not carry. build_lot2_5() already filters this way when
-    -- it discovers meds and classes - this makes LOT1 agree, which its comment
-    -- there already claims.
+    -- Steroid codes are maintained separately, so the rollup should not list
+    -- them either. build_lot2_5() filters the same way.
     WHERE upper(trim(coalesce(CL_MED_CLASS, ''))) <> 'STEROID'
   "), qc = "SELECT count(*) AS n_rows, count(DISTINCT CL_MED_ABBR) AS n_meds,
             sum(MONOMAINTENANCE) AS n_monomaint, sum(CONDITIONING) AS n_conditioning,
@@ -82,8 +77,8 @@ phase_codelists <- function(con) {
   # These were warnings inside a tryCatch, so a bad code list printed a line
   # and the build carried on - and a QC query that itself failed was swallowed
   # whole. Each of these silently changes who counts as treated, so they stop
-  # the build. ALLOW_CODELIST_WARNINGS=TRUE downgrades them for a run where the
-  # study team has looked and accepted what they say.
+  # the build. CODELIST_WAIVERS names the ones a run may skip, for something
+  # the study team has looked at and accepted.
   log_msg("Checking codelist <-> rollup consistency...")
   problems <- data.frame(check = character(0), detail = character(0),
                          stringsAsFactors = FALSE)
@@ -149,10 +144,19 @@ phase_codelists <- function(con) {
   # (CL_CODE_TYPE, CL_CODE). Two rows sharing a code but naming different drugs
   # both survive, and one claim then becomes two treatment events.
   code_to_med <- db_q(con, "
-    SELECT CL_CODE_TYPE, CL_CODE, count(DISTINCT CL_MED_ABBR) AS n_meds,
+    SELECT CL_CODE_TYPE, join_key, count(DISTINCT CL_MED_ABBR) AS n_meds,
            concat_ws(', ', collect_set(CL_MED_ABBR)) AS meds
-    FROM mma_codelist
-    GROUP BY CL_CODE_TYPE, CL_CODE
+    FROM (
+      SELECT CL_CODE_TYPE, CL_MED_ABBR,
+             -- The key extraction joins on, not the stored code: the NDC join
+             -- pads to eleven digits, so '123456789' and '0123456789' are one
+             -- key there and would look like two here.
+             CASE WHEN CL_CODE_TYPE = 'NDC'
+                  THEN lpad(regexp_replace(CL_CODE, '[^0-9]', ''), 11, '0')
+                  ELSE CL_CODE END AS join_key
+      FROM mma_codelist
+    )
+    GROUP BY CL_CODE_TYPE, join_key
     HAVING count(DISTINCT CL_MED_ABBR) > 1
   ")
   if (nrow(code_to_med) > 0) {
@@ -160,7 +164,7 @@ phase_codelists <- function(con) {
     print(code_to_med)
     problems <- rbind(problems, data.frame(check = "code_to_med", detail = paste0(
       nrow(code_to_med), " code(s) mapped to several meds: ",
-      paste(utils::head(code_to_med$CL_CODE, 5), collapse = ", ")),
+      paste(utils::head(code_to_med$join_key, 5), collapse = ", ")),
       stringsAsFactors = FALSE))
   } else {
     log_msg("  OK: Each code names exactly one medication.")
@@ -183,6 +187,45 @@ phase_codelists <- function(con) {
   } else {
     log_msg("  OK: No all-zero NDC rows.")
   }
+
+  rollup_defs <- db_q(con, "
+    SELECT CL_MED_ABBR, count(*) AS n_defs
+    FROM (
+      SELECT DISTINCT CL_MED_ABBR, CL_MED_CLASS, MONOMAINTENANCE,
+             coalesce(DUALMAINTENANCEWITH, '') AS DUALMAINTENANCEWITH,
+             CONDITIONING, USED_FOR_OTHER_CANCERS
+      FROM mma_rollup
+    )
+    GROUP BY CL_MED_ABBR
+    HAVING count(*) > 1
+  ")
+  if (nrow(rollup_defs) > 0) {
+    log_msg("  Rollup medications defined more than one way:")
+    print(rollup_defs)
+    problems <- rbind(problems, data.frame(check = "rollup_defs", detail = paste0(
+      nrow(rollup_defs), " med(s) with conflicting rollup rows: ",
+      paste(rollup_defs$CL_MED_ABBR, collapse = ", ")), stringsAsFactors = FALSE))
+  } else {
+    log_msg("  OK: Each rollup medication is defined one way.")
+  }
+
+  # Blank keys join to nothing useful and make the checks above meaningless.
+  blank_keys <- db_q(con, "
+    SELECT
+      (SELECT count(*) FROM mma_rollup
+       WHERE CL_MED_ABBR IS NULL OR trim(CL_MED_ABBR) = ''
+          OR CL_MED_CLASS IS NULL OR trim(CL_MED_CLASS) = '') AS n_rollup,
+      (SELECT count(*) FROM mma_codelist
+       WHERE CL_MED_ABBR IS NULL OR trim(CL_MED_ABBR) = ''
+          OR CL_MED_CLASS IS NULL OR trim(CL_MED_CLASS) = '') AS n_codelist
+  ")
+  if (blank_keys$n_rollup > 0 || blank_keys$n_codelist > 0)
+    problems <- rbind(problems, data.frame(check = "blank_keys", detail = paste0(
+      blank_keys$n_rollup, " rollup and ", blank_keys$n_codelist,
+      " codelist row(s) with a blank medication or class"),
+      stringsAsFactors = FALSE))
+  else
+    log_msg("  OK: No blank medication or class.")
 
   # Two classes for one abbreviation: min() later picks one without saying so.
   multi_class <- db_q(con, "
@@ -218,7 +261,7 @@ phase_codelists <- function(con) {
 
   # Minimum code list coverage.
   # A short list means something failed to load, not that the study is small.
-  min_rollup_meds <- 20L    # the rollup carries 28
+  min_rollup_meds <- 20L    # after steroids are filtered out
 
   min_codelist_codes <- 50L # the code list carries hundreds
   n_rollup <- db_q(con, "SELECT count(DISTINCT CL_MED_ABBR) AS n FROM mma_rollup")$n

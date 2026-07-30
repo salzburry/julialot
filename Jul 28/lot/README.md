@@ -141,11 +141,23 @@ counts as treated:
 | a code type other than NDC or HCPCS | sits in the list and matches nothing |
 | one abbreviation with two classes | `min()` picks one without saying so |
 
-Two more stop the build because `DISTINCT` cannot see them: a code naming more
-than one medication (extraction joins on code alone, so one claim becomes two
-treatments), and an all-zero NDC (it pads to the same eleven zeros as a claim
-with no NDC). The SCT list is checked the same way - one code, one transplant
-type.
+Four more stop the build because `DISTINCT` cannot see them:
+
+- a code naming more than one medication - extraction joins on the code alone,
+  so one claim becomes two treatments
+- an all-zero NDC, which pads to the same eleven zeros as a claim with no NDC
+- a rollup medication defined two ways: `DISTINCT` removes identical rows, but
+  two rows for one drug that disagree on a flag both survive, and the
+  enrichment joins on the abbreviation alone
+- a blank medication or class, which would make the checks above meaningless
+
+Each check groups by the key extraction actually joins on, not the stored one.
+That matters for NDC: the join pads to eleven digits, so `123456789` and
+`0123456789` are one key there and would look like two here.
+
+The SCT list is checked the same way - one code, one transplant type - and
+again ignoring the code type, because the `med_procedure` join accepts
+`ICD10PROC`, `ICD9PROC` or `HCPCS` against the same column.
 
 ### Steroids
 

@@ -268,6 +268,12 @@ mk_db_q <- function(problem) function(con, sql) {
       data.frame(CL_MED_ABBR = "DUP", n_classes = 2, classes = "A, B") else
       data.frame(CL_MED_ABBR = character(0), n_classes = integer(0),
                  classes = character(0)))
+  if (grepl("AS n_defs", sql))
+    return(if (problem == "rollup_defs") data.frame(CL_MED_ABBR = "LEN", n_defs = 2)
+           else data.frame(CL_MED_ABBR = character(0), n_defs = integer(0)))
+  if (grepl("AS n_rollup", sql))
+    return(data.frame(n_rollup = if (problem == "blank_keys") 2 else 0,
+                      n_codelist = 0))
   if (grepl("AS bigint\\) = 0", sql))
     return(if (problem == "bad_ndc") data.frame(CL_CODE = "00000000000", CL_MED_ABBR = "X")
            else data.frame(CL_CODE = character(0), CL_MED_ABBR = character(0)))
@@ -293,7 +299,8 @@ Sys.unsetenv("CODELIST_WAIVERS")
 assign("db_q", mk_db_q("none"), envir = ce)
 ok(!inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
    "a consistent pair of code lists runs")
-for (prob in c("orphan", "uncoded", "type", "class", "code_to_med", "bad_ndc")) {
+for (prob in c("orphan", "uncoded", "type", "class", "code_to_med", "bad_ndc",
+               "rollup_defs", "blank_keys")) {
   assign("db_q", mk_db_q(prob), envir = ce)
   ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
      paste0("'", prob, "' stops the build"))
@@ -349,6 +356,28 @@ ok(!isTRUE(pe$lot_inputs_present(NULL)), "a missing view is detected")
 assign("db_q", function(con, sql) stop("no such command"), envir = pe)
 ok(!isTRUE(pe$lot_inputs_present(NULL)),
    "and if the catalogue cannot answer, it rebuilds rather than assumes")
+
+cat("\n-- the checks group by the key extraction actually joins on --\n")
+# The NDC join pads to eleven digits, so '123456789' and '0123456789' are one
+# key there. Grouping by the stored code would call them two, and a code
+# naming two medications would go unreported.
+cd2 <- paste(readLines(file.path(ROOT, "R", "steps", "01_codelists.R"), warn = FALSE),
+             collapse = "\n")
+ok(grepl("lpad(regexp_replace(CL_CODE, '[^0-9]', ''), 11, '0')", cd2, fixed = TRUE) &&
+     grepl("GROUP BY CL_CODE_TYPE, join_key", cd2, fixed = TRUE),
+   "code_to_med groups NDC rows by the padded key, not the stored code")
+mm2 <- paste(readLines(file.path(ROOT, "R", "steps", "03_mma_map.R"), warn = FALSE),
+             collapse = "\n")
+ok(grepl("lpad(regexp_replace(c.CL_CODE, '[^0-9]', ''), 11, '0')", mm2, fixed = TRUE),
+   "and that is the same expression the NDC join uses")
+sc2 <- paste(readLines(file.path(ROOT, "R", "steps", "05_sct.R"), warn = FALSE),
+             collapse = "\n")
+ok(grepl("WHERE CL_CODE_TYPE IN ('ICD10PROC', 'ICD9PROC', 'HCPCS')", sc2, fixed = TRUE),
+   "SCT also checks across the types that share a claim column")
+ok(grepl("AS n_defs", cd2, fixed = TRUE),
+   "one rollup medication, one definition - DISTINCT only removes identical rows")
+ok(grepl("AS n_rollup", cd2, fixed = TRUE),
+   "and no blank medication or class, which would make the rest meaningless")
 
 cat("\n-- the SQL is structurally sane --\n")
 # The equivalence test proves no source line was removed. It says nothing

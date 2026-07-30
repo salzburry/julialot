@@ -70,6 +70,23 @@ phase_sct <- function(con, ctx) {
          paste(sct_dup$CL_CODE, collapse = ", "),
          " - one claim would become several transplants.", call. = FALSE)
   }
+  # ...and again ignoring the code type, for the types that share a claim
+  # column. The med_procedure join accepts ICD10PROC, ICD9PROC or HCPCS
+  # against mp.PROC, so one code under two of them matches the same row twice.
+  sct_cross <- db_q(con, "
+    SELECT CL_CODE, concat_ws(', ', collect_set(CL_CODE_TYPE)) AS code_types,
+           concat_ws(', ', collect_set(SCT_TYPE)) AS types
+    FROM sct_codelist
+    WHERE CL_CODE_TYPE IN ('ICD10PROC', 'ICD9PROC', 'HCPCS')
+    GROUP BY CL_CODE
+    HAVING count(DISTINCT SCT_TYPE) > 1
+  ")
+  if (nrow(sct_cross) > 0) {
+    print(sct_cross)
+    stop("SCT codes naming more than one transplant type across the code ",
+         "types that share a claim column: ",
+         paste(sct_cross$CL_CODE, collapse = ", "), call. = FALSE)
+  }
   log_msg("  OK: Each SCT code names exactly one transplant type.")
 
   # S12: Extract raw SCT claims from MEDICAL + MED_PROCEDURE

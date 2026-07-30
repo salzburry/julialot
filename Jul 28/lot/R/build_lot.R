@@ -39,7 +39,7 @@ CONTRACT <- list(
 # Code-list checks a run may waive by name. A single switch for all of them
 # meant waiving one expected condition also waived the dangerous ones.
 WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types", "multi_class",
-                     "code_to_med", "bad_ndc")
+                     "code_to_med", "bad_ndc", "rollup_defs", "blank_keys")
 
 codelist_waivers <- function() {
   v <- trimws(strsplit(Sys.getenv("CODELIST_WAIVERS", unset = ""), "[,|]")[[1]])
@@ -309,15 +309,9 @@ lot_inputs_present <- function(con) {
   all(tolower(LOT2_5_INPUT_VIEWS) %in% have)
 }
 
-# LOT1 leaves these three as views over raw medical, procedure and diagnosis.
-# LOT2-5 reads them once per line, so Spark re-runs those scans every time -
-# the source measures roughly 8 AUTO aggregates and 20 SCT scans across
-# LOT2..LOT5. prepare_lot_inputs() materializes them, but it rebuilds the
-# views first, which in one session is work LOT1 already did. This is the half
-# that is worth doing: materialize what exists, and repoint the views at it.
-#
-# sct_claims_raw goes first and is repointed before the other two, so their
-# writes read a table rather than re-running the CDM scan.
+# LOT1 leaves these three as views over the raw CDM, and LOT2-5 reads them
+# once per line - roughly 8 AUTO aggregates and 20 SCT scans if left lazy.
+# sct_claims_raw goes first, so the other two write from a table.
 SCT_MATERIALIZE <- list(
   list(view = "sct_claims_raw",     name = "SCT_CLAIMS_RAW"),
   list(view = "tx_auto_dates",      name = "TX_AUTO_DATES"),
@@ -350,8 +344,12 @@ write_build_status <- function(con, cfg, state) {
       STATE STRING, CODELIST_WAIVERS STRING, UPDATED_AT TIMESTAMP)"))
   db_exec(con, glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"))
   waivers <- paste(codelist_waivers(), collapse = "|")
+  # Name the columns: CREATE TABLE IF NOT EXISTS is a no-op against an older
+  # five-column table, and a positional insert would then mis-fill it.
   db_exec(con, glue("
-    INSERT INTO {tbl} VALUES ('{run_id}', '{cfg$input_cohort_table}',
+    INSERT INTO {tbl}
+      (RUN_ID, INPUT_COHORT_TABLE, OBJECT_PREFIX, STATE, CODELIST_WAIVERS, UPDATED_AT)
+    VALUES ('{run_id}', '{cfg$input_cohort_table}',
       '{cfg$object_prefix}', '{state}', '{waivers}', current_timestamp())"))
   log_msg("Build status: ", state, " (run ", run_id, ")")
   invisible(TRUE)
