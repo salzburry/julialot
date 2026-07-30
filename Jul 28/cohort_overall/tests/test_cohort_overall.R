@@ -11,9 +11,9 @@
 # build_steps() (section 6). "Matches" means normalised text -- whitespace
 # collapsed, the CREATE dropped, the object qualifier stripped.
 #
-# It runs no SQL, so it cannot prove the two produce the same patients -- that is
-# tests/verify_cohort_overall.R, which needs a warehouse. What it does instead is
-# assert the structure that makes a runtime fault impossible (section 2).
+# It runs no SQL, so it cannot prove the two produce the same patients on the
+# warehouse. What it does instead is assert the structure that makes a runtime
+# fault impossible (section 2).
 #
 # When apr_30_2026 is absent (production), sections 4-6 skip and the suite passes.
 # =============================================================================

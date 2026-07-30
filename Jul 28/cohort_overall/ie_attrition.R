@@ -158,8 +158,7 @@ ie_print_reconcile <- function(results, funnel) {
   cat(strrep("=", 84), "\n", sep = "")
   cat(if (bad) paste0("  ", bad, " check(s) FAILED.\n")
       else "  The cohort table matches the funnel.\n")
-  cat("  Internal consistency only. Agreement with the legacy cohort is\n",
-      "  tests/verify_cohort_overall.R.\n", sep = "")
+  cat("  Internal consistency only -- not a comparison with the legacy cohort.\n")
   invisible(bad)
 }
 

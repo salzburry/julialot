@@ -14,9 +14,6 @@
 #
 # To inspect the SQL or the funnel without a warehouse, run the offline test
 # suite: tests/test_cohort_overall.R.
-#
-# Not yet compared to the legacy cohort on patients -- that is
-# tests/verify_cohort_overall.R, which needs a warehouse.
 # =============================================================================
 
 .here <- local({

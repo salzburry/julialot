@@ -62,8 +62,6 @@ Rscript "Jul 28/run_all_tests.R"                          # every offline suite
 
 # Build the Overall cohort (edit cohort_overall/cohort_config.csv first):
 DATABRICKS_PWD=... Rscript "Jul 28/cohort_overall/build_overall.R"
-# Compare it to the legacy cohort on patients (needs a warehouse):
-DATABRICKS_PWD=... Rscript "Jul 28/cohort_overall/tests/verify_cohort_overall.R"
 
 # The selection-layer path (NDMM etc.):
 DATABRICKS_PWD=... Rscript "Jul 28/ndmm/build.R"

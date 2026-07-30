@@ -369,16 +369,16 @@ removed checkpoints, the materialiser and the persist step along with the bug.
 
 ## Finding 2
 
-`tests/verify_cohort_overall.R`: `ovr_ELIG_COH_FINAL` vs the legacy
-`ELIG_COH_FINAL`, `EXCEPT` both ways on PATID **and** `(PATID, INDEX_DATE)`, grain
-on both sides, 15 key fields over shared pairs, and the funnel reconciliation.
+The fix at the time was a `verify_cohort_overall.R` script that compared
+`ovr_ELIG_COH_FINAL` against the legacy `ELIG_COH_FINAL`. It was later **removed**
+at the user's request, so this repo no longer carries a patient-level comparison.
 
-`(PATID, INDEX_DATE)` matters because criteria are applied before the index date
-is ranked, so the same patient can legitimately survive on a different date — and
-every LOT number is computed from that date. A PATID-only check would report
-agreement while the exposure dates had moved.
-
-Not run yet. It needs a warehouse.
+The comparison still needs doing on the warehouse before the numbers are used:
+`EXCEPT` both ways on PATID **and** on `(PATID, INDEX_DATE)`. The
+`(PATID, INDEX_DATE)` part matters because criteria are applied before the index
+date is ranked, so the same patient can survive on a different date — and every
+LOT number is computed from that date. A PATID-only check would report agreement
+while the exposure dates had moved.
 
 ## Finding 7
 

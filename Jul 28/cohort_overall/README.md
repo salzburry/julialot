@@ -17,10 +17,10 @@ run, so you can see which criteria are on before it starts.
 > regimen, so steroid-only follow-up passes. This cohort is a **superset** of the
 > 1L-regimen population.
 
-> ⚠️ **Not yet compared to the legacy cohort.** The SQL and every criterion are
-> compared against `pipeline_steps.R` and `criteria_attrition.R`, which is a
-> statement about text. `tests/verify_cohort_overall.R` compares patients, and it
-> needs a warehouse.
+> ⚠️ **Not compared to the legacy cohort on patients.** The SQL and every
+> criterion are compared against `pipeline_steps.R` and `criteria_attrition.R`,
+> which is a statement about text, not about which patients come out. Confirm the
+> numbers against the legacy `ELIG_COH_FINAL` on the warehouse before using them.
 
 ## Turning criteria on and off
 
@@ -79,7 +79,7 @@ ie_attrition.R     attrition table, reconciliation, run status, staging, cleanup
 ie_runner.R        connect, build, report
 build_overall.R    entry point
 steps/             one file per table, in build order
-tests/             test_cohort_overall.R (offline), verify_cohort_overall.R (warehouse)
+tests/             test_cohort_overall.R (offline)
 ```
 
 Nothing outside `Jul 28` is read at run time — plumbing is `../lib`, config is
@@ -164,14 +164,14 @@ over the flags table and never reads the cohort table.
 |---|---|---|
 | criteria + SQL match the legacy definition | `tests/test_cohort_overall.R` | passing, 154 checks, offline |
 | cohort table matches its own funnel | `ie_reconcile()` | every build |
-| **same patients as `ELIG_COH_FINAL`** | **`tests/verify_cohort_overall.R`** | **not run** — needs a warehouse |
+| **same patients as `ELIG_COH_FINAL`** | on the warehouse | **not done** — see below |
 
-`../tests/verify_against_legacy.R` does not cover this folder. It compares the
-selection layer and never reads `ovr_ELIG_COH_FINAL`.
-
-`verify_cohort_overall.R` compares both directions on PATID and on
-`(PATID, INDEX_DATE)`, plus 15 key fields over shared pairs, grain on both sides,
-and the funnel reconciliation.
+Nothing in this repo compares this build to the legacy cohort on patients.
+`../tests/verify_against_legacy.R` covers the selection layer and never reads
+`ovr_ELIG_COH_FINAL`. To confirm the numbers, build the legacy `ELIG_COH_FINAL`
+on the same source vintage and configuration, then `EXCEPT`-compare it against
+`ovr_ELIG_COH_FINAL` both directions — on PATID **and** on `(PATID, INDEX_DATE)`,
+since filter-then-rank can move a surviving patient to a different index date.
 
 The offline suite compares **normalised text** — whitespace collapsed, `CREATE`
 dropped, this folder's object qualifier removed — not tokens or bytes. It also
