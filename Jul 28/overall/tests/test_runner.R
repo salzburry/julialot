@@ -143,6 +143,16 @@ ok(length(missing) == 0,
    if (length(missing)) paste("undefined:", paste(missing, collapse = ", "))
    else paste0("all ", length(called), " calls resolve"))
 
+cat("\n-- the code-list checksum describes the file that was read --\n")
+# Hashing only after the read would log a version the build never loaded.
+# The order is easy to lose in a tidy-up, so pin it.
+du <- readLines(file.path(ROOT, "R", "db_utils.R"), warn = FALSE)
+hashes <- grep("tools::md5sum(csv_path)", du, fixed = TRUE)
+read_at <- grep("read.csv(csv_path", du, fixed = TRUE)
+ok(length(hashes) == 2 && length(read_at) == 1 &&
+     hashes[1] < read_at[1] && hashes[2] > read_at[1],
+   "code lists are hashed before and after the read")
+
 cat("\n-- codelist checks name columns the views actually have --\n")
 # A wrong column here is an unresolved-column error at run time, several
 # minutes into a build. preg_codes and clintrial_codes carry code/code_type,

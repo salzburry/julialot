@@ -102,8 +102,15 @@ load_csv_codelists <- function(conn, cfg) {
     csv_file <- csv_map[[tbl_name]]
     csv_path <- file.path(cfg$codelist_dir, csv_file)
     tryCatch({
+      # The code lists live outside git, so the file name alone does not say
+      # which version a run used. Hash it, and hash it again after the read:
+      # if it were swapped mid-read the logged hash would describe a file we
+      # did not load.
+      md5 <- unname(tools::md5sum(csv_path))
       # Read CSV in R (driver-local filesystem access)
       df <- read.csv(csv_path, stringsAsFactors = FALSE, colClasses = "character")
+      if (!identical(md5, unname(tools::md5sum(csv_path))))
+        stop("file changed while it was being read", call. = FALSE)
       df[] <- lapply(df, trimws)
       n <- nrow(df)
       cols <- names(df)
@@ -130,9 +137,6 @@ load_csv_codelists <- function(conn, cfg) {
       }
 
       DBI::dbExecute(conn$con, sql)
-      # The code lists live outside git, so the file name alone does not say
-      # which version a run used. Log a checksum too.
-      md5 <- tryCatch(unname(tools::md5sum(csv_path)), error = function(e) NA_character_)
       log_msg("  >> ", tbl_name, " <- ", csv_file, " (",
               format(n, big.mark = ","), " rows, md5 ",
               if (is.na(md5)) "unavailable" else md5, ")")
