@@ -76,8 +76,9 @@ phase_dx_events <- function(cfg, h, ctx) {
           -- line_inpatient is 0/1, so missing POS/TOS stays null-safe.
           CASE WHEN NOT (h.line_inpatient = 1 OR cf.CONF_ID IS NOT NULL)
                THEN 1 ELSE 0 END AS outpatient_flg,
-          -- STRICT MM dx flag: 203.0x / C90.0x only (for inpatient qualifying + baseline evidence)
-          -- BROAD codes (203.x / C90.x) are used for Step 0 base and outpatient qualifying
+          -- The code list decides which codes are in scope at all. This flag
+          -- marks the 203.0x / C90.0x subset, which inpatient qualifying and
+          -- the baseline rule additionally require.
           CASE WHEN (CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END) = 'ICD9'
                       AND upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) LIKE '2030%'
                  OR (CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END) = 'ICD10'
