@@ -44,6 +44,16 @@ log_msg <- function(...) {
   }, silent = TRUE)
 }
 
+# ---- Quarterly CDM table names (t_<table>_YYYYqQ) ----
+get_quarter_suffix <- function(date_str) {
+  d <- as.Date(date_str)
+  paste0(format(d, "%Y"), "q", ceiling(as.integer(format(d, "%m")) / 3))
+}
+
+get_quarterly_table <- function(base_table, date_str) {
+  paste0("t_", base_table, "_", get_quarter_suffix(date_str))
+}
+
 # ---- Naming helpers (closure factory) ----
 # Returns naming functions that close over cfg and mat_tables. Callers
 # unpack them into locals so the ~114 glue interpolations in

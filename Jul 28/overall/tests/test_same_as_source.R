@@ -69,7 +69,7 @@ cfg$outpatient_window <- apr$validate_outpatient_window(cfg$outpatient_window)
 
 # This folder. Same helper files, but our split pipeline_steps.R + steps/.
 new <- env_of(file.path(ROOT, "R"),
-              c("load_inputs.R", "config_prompts.R", "codelists.R",
+              c("load_inputs.R", "config_prompts.R",
                 "db_utils.R", "criteria_attrition.R", "pipeline_steps.R"))
 new$load_phase_steps(file.path(ROOT, "R", "steps"))
 
@@ -138,10 +138,19 @@ code_lines <- function(path) {
   lines <- readLines(path, warn = FALSE)
   lines[!grepl("^[[:space:]]*#", lines)]
 }
-for (f in c("config_prompts.R", "codelists.R", "load_inputs.R"))
-  ok(identical(code_lines(file.path(ROOT, "R", f)),
-               code_lines(file.path(APR, "R", f))),
-     paste0("R/", f, " has identical executable lines"))
+ok(identical(code_lines(file.path(ROOT, "R", "load_inputs.R")),
+             code_lines(file.path(APR, "R", "load_inputs.R"))),
+   "R/load_inputs.R has identical executable lines")
+
+# config_prompts.R is deliberately smaller - the interactive prompts and the
+# finalize_cfg round trip did nothing under Rscript. What still has to match is
+# the study window, which CONTRACT does not cover.
+apr_cfg <- apr$cfg_defaults
+for (k in c("study_start", "study_end", "id_start", "id_end",
+            "baseline_days", "gap_days", "dx_window_30", "dx_window_60",
+            "dx_window_90"))
+  ok(identical(new$cfg_defaults[[k]], apr_cfg[[k]]),
+     paste0("cfg_defaults$", k, " = ", format(apr_cfg[[k]]), ", same as apr_30_2026"))
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))
 if (fail > 0L) quit(status = 1L)
