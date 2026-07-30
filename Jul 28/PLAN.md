@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-28
 **Status:** ⚠️ **NOT VALIDATED — NOT PRODUCTION-READY.** All six review findings
-are addressed in code. **The folder is still not validated:**
+are addressed in code, with `apr_30_2026/` left entirely unmodified (§6a). **The folder is still not validated:**
 `tests/verify_against_legacy.R` now exists and can settle equivalence with
 `EXCEPT` in both directions, but **it has never been run**. A green
 `run_all_tests.R` is evidence about SQL text, not about patients. See **[REVIEW_FINDINGS.md](REVIEW_FINDINGS.md)**
@@ -333,47 +333,36 @@ the LOT build's input and cost are unchanged too.
 
 Both are now made. One turned out to need no pipeline code change at all.
 
-### (a) The LOT1 flag build is out of the dashboard
+### (a) The LOT1 flag build has its own module — inside this folder
 
-`build_ndmm_flags()` and its seven supporting builders moved from
-`06_ndmm_dashboard.R` into **`apr_30_2026/R/lot1_flags.R`**, a pipeline stage
-shared by two consumers: the dashboard (unchanged behaviour) and the new
-standalone `build_lot1_flags.R`. The dashboard lost ~640 lines and keeps
-back-compat aliases, so the ~20 downstream references to `NDMM_*` names still
-resolve.
+> **Revised.** This originally lifted the criteria out of `06_ndmm_dashboard.R`
+> so there was a single definition shared by the dashboard and the standalone
+> stage. That modified `apr_30_2026/`, and the requirement is that the folder
+> stay untouched. **Reverted:** `06_ndmm_dashboard.R` is byte-identical to the
+> branch point again, and the module now lives at **`ndmm/lot1_flags.R`**.
 
-Renamed `NDMM_*` → `LOT1_*`: nothing about "12-month CE before 1L start" or "no
-belantamab in any line" is NDMM-specific. They are IE criteria anchored at
-`LOT1_START_DT`, and the misnomer is a good part of why they were never reused.
-The persisted table is now `LOT1_FLAGS_ALL`.
+`build_ndmm_flags()` and its seven supporting builders were copied — verbatim —
+into `ndmm/lot1_flags.R`, renamed `NDMM_* → LOT1_*` (nothing about "12-month CE
+before 1L start" is NDMM-specific). Three deliberate generalizations, every
+other character of SQL unchanged and verified token-for-token by
+`tests/test_equivalence.R` §4 against the dashboard's copy:
 
-Two deliberate generalizations; everything else is character-for-character the
-same SQL (verified by normalized diff against the pre-change file):
+1. **The patient input is a parameter**, not a hardcoded `ELIG_COH_FINAL`, so
+   the flags can be built off `coh_index_union` with no Overall cohort selected.
+2. **Views carry `(PATID, INDEX_DATE)`**; `PATID` remains the key (§3).
+3. **`LOT1_START_DT` is exposed as an output column**, so `has_lot1` and
+   `lot1_from` can read the anchor directly.
 
-1. **The patient input is a parameter.** `FROM ELIG_COH_FINAL` became
-   `FROM {patient_input}`. Pass `coh_index_union` and the flags build with no
-   Overall cohort ever selected. Default is unchanged.
-2. **Views carry `(PATID, INDEX_DATE)`; `PATID` remains the key.** The original could key on
-   PATID because `ELIG_COH_FINAL` is already one row per patient. A union over
-   cohorts that pick *different* index dates for the same patient would be
-   silently conflated by a PATID-only key. The index-DEPENDENT scans (the two
-   pre-LOT1 windows) now carry the pair; the index-INDEPENDENT ones
-   (belantamab = any line, pregnancy = whole study period) stay at PATID grain
-   deliberately, since adding INDEX_DATE there would only duplicate rows.
+Two fixes fell out of the copy — `LOT1_STARTS` is materialized *before* the four
+claim scans that join it, and the pregnancy scan joins a `SELECT DISTINCT PATID`
+CTE instead of the starts table four times, avoiding a fan-out once that table
+can hold more than one row per patient.
 
-Two fixes fell out of the move:
-
-- **Materialization order.** `LOT1_STARTS` is now materialized *before* the four
-  claim scans rather than never — every scan joins it. A repoint only affects
-  views created after it, so doing this late would leave the flag view on the
-  old plan.
-- **Fan-out in the pregnancy scan.** It joined `LOT1_STARTS` directly in four
-  places; once that table can hold >1 row per patient, those joins would
-  multiply claim rows before the `DISTINCT`. Now joins a `cand` CTE
-  (`SELECT DISTINCT PATID`). Same answer, no fan-out.
-
-`NDMM_PRE_LOT1_DAYS` is also no longer hard-coded `365L` — it reads the env var,
-the one-line lift `cohort_explorer/ANALYTIC_COHORT.md` flagged. Default unchanged.
+**The cost:** the dashboard keeps its own copy, so there are now **two
+definitions** of each criterion. Identical today, and compared by the test suite
+— but an edit to one will not touch the other. That is precisely the drift this
+work set out to remove, traded for leaving the production folder alone. If that
+trade is ever reversed, the shared module is in git history at `553c396`.
 
 ### (b) The LOT build needed no code change
 

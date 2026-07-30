@@ -27,15 +27,28 @@ engine/          the shared SQL generator (see the note below)
 build_both.R     both cohorts + one shared PLD
 tests/           engine invariants + old-vs-new equivalence (PLAN.md §5)
 run_all_tests.R  every suite
+
+cohort1_ie/      cohort 1 (Overall) IE criteria, built FROM THE CDM
 ```
 
+`overall/` and `ndmm/` are the **selection** layer: flags in, cohorts out. They
+read `ELIG_COH_ALLFLAGS`, which the legacy pipeline produces.
+**[`cohort1_ie/`](cohort1_ie/README.md)** is the other half — it implements the
+ten index-anchored IE criteria from the raw CDM, one file per flag view, so
+cohort 1 can be built without `01_cohort.R` running first. Its README is a
+step-by-step walkthrough of every criterion. Its SQL is asserted token-for-token
+against `pipeline_steps.R` on every test run, because it is a second copy.
+
 ```sh
-Rscript "Jul 28/run_all_tests.R"                    # 229 assertions, 4 suites
+Rscript "Jul 28/run_all_tests.R"                    # 356 assertions, 5 suites
 
 # The one that settles equivalence -- needs a warehouse:
 Rscript "Jul 28/tests/verify_against_legacy.R" --dry-run     # see the SQL
 DATABRICKS_PWD=... Rscript "Jul 28/tests/verify_against_legacy.R"
 
+
+Rscript "Jul 28/cohort1_ie/build_cohort1.R" --funnel  # cohort 1's IE funnel
+Rscript "Jul 28/cohort1_ie/build_cohort1.R" --dry-run # ...and its 28 statements
 
 Rscript "Jul 28/overall/build.R" --dry-run
 Rscript "Jul 28/ndmm/build.R" --dry-run
@@ -124,7 +137,28 @@ attempts to override a window that is baked into an upstream flag (see PLAN §3)
 
 ## Note
 
-This folder adds objects; it renames and modifies nothing in `apr_30_2026/`.
+**`apr_30_2026/` is not modified.** This folder READS from it — config, DB
+helpers, codelist loaders — but changes nothing in it. The **entire folder** is
+asserted byte-identical to the branch point by `tests/test_equivalence.R` §1
+(one `git diff --quiet` over the whole directory, not a chosen file list).
+
+Generated objects are prefixed `coh_` (`COHORT_VIEW_PREFIX`) so they cannot
+collide with the existing pipeline.
+
+### The cost of that, stated plainly
+
+An earlier revision lifted the LOT1-anchored criteria out of
+`06_ndmm_dashboard.R` into a shared module, so there was one definition. That is
+reverted. The criteria now live in **`ndmm/lot1_flags.R`**, and
+`06_ndmm_dashboard.R` keeps its own inline copy — so **there are two definitions
+of each criterion**.
+
+They are identical today: `ndmm/lot1_flags.R` was lifted verbatim, and
+`tests/test_equivalence.R` §4 still compares it token-for-token against the
+dashboard's version, §5 compares every constant by evaluation. But nothing
+*prevents* them diverging — an edit to one will not touch the other, and only
+the test will notice. That is the same failure mode that let NDMM's CE and
+prior-therapy definitions drift from Overall's in the first place.
 Generated views are prefixed `coh_` (`COHORT_VIEW_PREFIX`) so they cannot
 collide with the existing pipeline.
 
