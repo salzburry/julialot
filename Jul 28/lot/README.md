@@ -210,8 +210,8 @@ CODELIST_WAIVERS=code_types
 
 Names: `orphan_meds`, `uncoded_meds`, `code_types`, `multi_class`,
 `code_to_med`, `bad_ndc`, `rollup_defs`, `blank_keys`, `subs_substitute`,
-`subs_original`. Unknown names are rejected, and whatever was waived is
-recorded in `LOT_BUILD_STATUS`.
+`subs_original`, `ndc_shape`, `class_agreement`. Unknown names are rejected,
+and whatever was waived is recorded in `LOT_BUILD_STATUS`.
 
 The SCT checks in `05_sct.R` are not on this list. They stop the build
 outright, because each one means a transplant is being counted twice or not at
@@ -226,6 +226,31 @@ matches nothing - the substitution rule quietly does not fire, and a typo
 looks exactly like a drug with no claims. Both sides are checked against
 `mma_codelist`: `subs_substitute` for the one that enters a regimen,
 `subs_original` for the one that is only ever matched against.
+
+### NDC shape
+
+The NDC join pads whatever digits it finds to eleven:
+
+```sql
+lpad(regexp_replace(CL_CODE, '[^0-9]', ''), 11, '0')
+```
+
+`bad_ndc` catches the all-zero result, which is what a claim with no NDC looks
+like. `ndc_shape` catches the other ways a code survives that expression as a
+different eleven-digit key without raising anything: letters (storage strips
+punctuation but not letters, so `ABC123` arrives as `00000000123`), more than
+eleven digits, and fewer than nine.
+
+### Class agreement
+
+`multi_class` looks inside the code list. The two files also have to agree with
+each other, and they disagree silently: every claim carries `CL_MED_CLASS` from
+the **code list**, while the `LOT1_CLASS_<x>` columns are named from the classes
+of the **rollup**. A medication the two spell differently gets a column named
+for one spelling and values that only ever hold the other, so the column is
+always zero. `class_agreement` compares them on the medications both files
+carry - a medication in only one is `orphan_meds` or `uncoded_meds`, and
+steroids are absent from the rollup by design.
 
 ### Transplant types
 

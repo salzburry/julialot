@@ -188,6 +188,42 @@ phase_codelists <- function(con) {
     log_msg("  OK: No all-zero NDC rows.")
   }
 
+  # The join pads the digits of a code to eleven:
+  #   lpad(regexp_replace(CL_CODE, '[^0-9]', ''), 11, '0')
+  # bad_ndc above catches the all-zero result. These are the other ways a code
+  # can survive that expression as a DIFFERENT eleven-digit key, none of which
+  # raises an error:
+  #   letters      storage strips punctuation but not letters, so 'ABC123'
+  #                reaches the join as 123 and pads to 00000000123
+  #   over eleven  more digits than the key holds, so it cannot be one
+  #   under nine   shorter than any NDC form, so the padding invents the rest
+  ndc_shape <- db_q(con, "
+    SELECT CL_CODE, CL_MED_ABBR,
+           length(regexp_replace(CL_CODE, '[^0-9]', '')) AS n_digits,
+           CASE
+             WHEN CL_CODE RLIKE '[^0-9]' THEN 'non-digits'
+             WHEN length(regexp_replace(CL_CODE, '[^0-9]', '')) > 11
+               THEN 'over eleven digits'
+             ELSE 'under nine digits'
+           END AS why
+    FROM mma_codelist
+    WHERE CL_CODE_TYPE = 'NDC'
+      AND (CL_CODE RLIKE '[^0-9]'
+           OR length(regexp_replace(CL_CODE, '[^0-9]', '')) > 11
+           OR length(regexp_replace(CL_CODE, '[^0-9]', '')) < 9)
+    ORDER BY CL_MED_ABBR, CL_CODE
+  ")
+  if (nrow(ndc_shape) > 0) {
+    log_msg("  NDC rows that cannot be the code they claim to be:")
+    print(ndc_shape)
+    problems <- rbind(problems, data.frame(check = "ndc_shape", detail = paste0(
+      nrow(ndc_shape), " malformed NDC row(s): ",
+      paste(utils::head(paste0(ndc_shape$CL_CODE, " (", ndc_shape$why, ")"), 5),
+            collapse = ", ")), stringsAsFactors = FALSE))
+  } else {
+    log_msg("  OK: Every NDC is the shape of an NDC.")
+  }
+
   rollup_defs <- db_q(con, "
     SELECT CL_MED_ABBR, count(*) AS n_defs
     FROM (
@@ -243,6 +279,45 @@ phase_codelists <- function(con) {
       paste(multi_class$CL_MED_ABBR, collapse = ", ")), stringsAsFactors = FALSE))
   } else {
     log_msg("  OK: Each MED_ABBR maps to exactly one class.")
+  }
+
+  # multi_class above looks inside the code list. The two files also have to
+  # agree with each other, and a disagreement is silent in a specific way:
+  # every claim carries c.CL_MED_CLASS from the CODE LIST (03_mma_map), while
+  # the LOT1_CLASS_<x> columns are generated from the classes of the ROLLUP.
+  # So a med the two spell differently produces a flag column named for the
+  # rollup's spelling that the code list's value never equals - the column is
+  # always zero and nothing says why. 03_mma_map even notes MED_CLASS "should
+  # be 1:1 with MED_ABBR via rollup"; this is what checks it.
+  #
+  # INNER JOIN on purpose: a med in one file and not the other is orphan_meds
+  # or uncoded_meds, and steroids are filtered from the rollup by design.
+  #
+  # Only meds each file classes one way. Two classes inside one file is
+  # multi_class or rollup_defs, and reporting it here as well would mean
+  # waiving one of those - an accepted condition - dragged this check down
+  # with it for every other medication.
+  class_agreement <- db_q(con, "
+    SELECT c.CL_MED_ABBR,
+           concat_ws(', ', collect_set(c.CL_MED_CLASS)) AS codelist_class,
+           concat_ws(', ', collect_set(r.CL_MED_CLASS)) AS rollup_class
+    FROM mma_codelist c
+    INNER JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR
+    GROUP BY c.CL_MED_ABBR
+    HAVING count(DISTINCT c.CL_MED_CLASS) = 1
+       AND count(DISTINCT r.CL_MED_CLASS) = 1
+       AND min(c.CL_MED_CLASS) <> min(r.CL_MED_CLASS)
+    ORDER BY c.CL_MED_ABBR
+  ")
+  if (nrow(class_agreement) > 0) {
+    log_msg("  Medications the code list and the rollup class differently:")
+    print(class_agreement)
+    problems <- rbind(problems, data.frame(check = "class_agreement", detail = paste0(
+      nrow(class_agreement), " med(s) classed differently by the two files: ",
+      paste(class_agreement$CL_MED_ABBR, collapse = ", ")),
+      stringsAsFactors = FALSE))
+  } else {
+    log_msg("  OK: The code list and the rollup agree on every class.")
   }
 
   # A substitution names two medications by abbreviation and nothing else
