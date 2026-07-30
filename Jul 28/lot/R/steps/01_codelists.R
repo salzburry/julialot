@@ -45,7 +45,7 @@ phase_codelists <- function(con) {
     -- that LOT2-5 does not carry. build_lot2_5() already filters this way when
     -- it discovers meds and classes - this makes LOT1 agree, which its comment
     -- there already claims.
-    WHERE upper(coalesce(CL_MED_CLASS, '')) <> 'STEROID'
+    WHERE upper(trim(coalesce(CL_MED_CLASS, ''))) <> 'STEROID'
   "), qc = "SELECT count(*) AS n_rows, count(DISTINCT CL_MED_ABBR) AS n_meds,
             sum(MONOMAINTENANCE) AS n_monomaint, sum(CONDITIONING) AS n_conditioning,
             sum(USED_FOR_OTHER_CANCERS) AS n_other_cancer FROM mma_rollup")

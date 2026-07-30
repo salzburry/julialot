@@ -48,8 +48,8 @@ prepare_lot_inputs <- function(con,
     -- that LOT2-5 does not carry. build_lot2_5() already filters this way when
     -- it discovers meds and classes - this makes LOT1 agree, which its comment
     -- there already claims.
-    WHERE upper(coalesce(CL_MED_CLASS, '')) <> 'STEROID'
     WHERE CL_MED_ABBR IS NOT NULL AND trim(CL_MED_ABBR) <> ''
+      AND upper(trim(coalesce(CL_MED_CLASS, ''))) <> 'STEROID'
   "), qc = "SELECT count(*) AS n_rows, sum(MONOMAINTENANCE) AS n_monomaint FROM mma_rollup")
 
   # Diagnostic + guard: confirm mma_rollup actually has the columns the

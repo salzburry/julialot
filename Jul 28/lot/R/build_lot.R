@@ -451,15 +451,14 @@ phase_line_criteria <- function(con, cfg) {
            line_criteria_flags_sql(cfg, "lot_long", "lot_long_allflags"))
   run_step(con, "L41_lot_long_final",
            line_criteria_final_sql(cfg, "lot_long_allflags", "lot_long_final"))
-  # With no criteria declared both are copies of LOT_LONG, so write them as
-  # views: downstream always resolves them, without two full table writes for
-  # no difference. A declared criterion makes them real tables.
-  as_table <- length(LINE_CRITERIA) > 0
+  # Both are tables, always. Writing them as views when no criterion is
+  # declared would save two writes, but Spark refuses a persistent view over a
+  # temporary one (INVALID_TEMP_OBJ_REFERENCE) and these are built from temp
+  # views - so that "optimization" failed every run.
   for (v in list(list(view = "lot_long_allflags", name = "LOT_LONG_ALLFLAGS"),
                  list(view = "lot_long_final",    name = "LOT_LONG_FINAL"))) {
-    kind <- if (as_table) "TABLE" else "VIEW"
     run_step(con, paste0("L42_persist_", tolower(v$name)),
-             glue("CREATE OR REPLACE {kind} {lot_out(v$name)} AS SELECT * FROM {v$view}"),
+             glue("CREATE OR REPLACE TABLE {lot_out(v$name)} AS SELECT * FROM {v$view}"),
              qc = glue("SELECT count(*) AS n_rows FROM {lot_out(v$name)}"))
   }
   invisible(TRUE)

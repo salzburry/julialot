@@ -193,8 +193,11 @@ n_ndc <- length(gregexpr("AND regexp_replace(c.CL_CODE, '[^0-9]', '') <> ''",
                          mm, fixed = TRUE)[[1]])
 ok(n_ndc == 2, paste0("both NDC joins require digits in the code (", n_ndc, ")"))
 # Both rollup builders, or a fresh-session run would disagree with LOT1.
+# One builder puts it in a new WHERE, the other in an existing one, so match
+# the predicate rather than the clause. trim matters: the projection trims and
+# the raw column does not, so ' STEROID ' would otherwise survive.
 for (f in c("01_codelists.R", "09_lot2_5_inputs.R"))
-  ok(grepl("WHERE upper(coalesce(CL_MED_CLASS, '')) <> 'STEROID'",
+  ok(grepl("upper(trim(coalesce(CL_MED_CLASS, ''))) <> 'STEROID'",
            sql_of(f), fixed = TRUE),
      paste0(f, ": the rollup drops steroids"))
 # The unchanged files must still be untouched.

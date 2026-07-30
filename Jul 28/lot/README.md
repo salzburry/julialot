@@ -89,7 +89,9 @@ Then turn it on with `APPLY_L2_STARTED_ON_MED,TRUE` in `config.csv`. Any value
 other than `TRUE` or `FALSE` stops the build rather than quietly leaving the
 criterion off.
 
-Two tables come out of every run, whether or not any criterion is declared:
+Two tables come out of every run, whether or not any criterion is declared.
+Both are real tables: Spark will not create a persistent view over a temporary
+one, and these are built from temp views.
 
 - `<prefix>LOT_LONG_ALLFLAGS` - every criterion as a 0/1 column, computed
   whether or not it is enabled. Check what a criterion would cost before
@@ -151,8 +153,11 @@ Steroids are maintained separately, so their codes are not in
 `cl_mma_codelist.csv`. Both places that build `mma_rollup` drop them too:
 
 ```sql
-WHERE upper(coalesce(CL_MED_CLASS, '')) <> 'STEROID'
+upper(trim(coalesce(CL_MED_CLASS, ''))) <> 'STEROID'
 ```
+
+The `trim` matters: the projection trims the class but the raw column does
+not, so a padded `' STEROID '` would otherwise slip through.
 
 Without that the rollup lists medications whose codes are deliberately absent,
 `uncoded_meds` fires on every run, and LOT1 builds always-zero

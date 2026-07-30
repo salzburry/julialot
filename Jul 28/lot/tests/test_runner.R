@@ -338,6 +338,44 @@ assign("db_q", function(con, sql) stop("no such command"), envir = pe)
 ok(!isTRUE(pe$lot_inputs_present(NULL)),
    "and if the catalogue cannot answer, it rebuilds rather than assumes")
 
+cat("\n-- the SQL is structurally sane --\n")
+# The equivalence test proves no source line was removed. It says nothing
+# about whether what was ADDED is valid SQL - two real runtime failures got
+# through it, so check the shapes that Spark rejects outright.
+sql_files <- c(list.files(file.path(ROOT, "R", "steps"), "\\.R$", full.names = TRUE),
+               file.path(ROOT, "R", "build_lot.R"))
+
+# Spark refuses a persistent view over a temporary one
+# (INVALID_TEMP_OBJ_REFERENCE), and every LOT output is built from temp views.
+bad_view <- unlist(lapply(sql_files, function(f) {
+  l <- readLines(f, warn = FALSE)
+  l <- l[!grepl("^\\s*(#|--)", l)]
+  grep("CREATE (OR REPLACE )?VIEW\\s*\\{?lot_out", l, value = TRUE)
+}))
+ok(length(bad_view) == 0,
+   if (length(bad_view)) paste0("persistent view over a temp view: ", trimws(bad_view[1]))
+   else "no persistent output is created as a VIEW")
+
+# Two WHERE clauses for one SELECT is a parse error. It happened by inserting
+# a filter after FROM in a query that already had a WHERE further down.
+double_where <- character(0)
+for (f in sql_files) {
+  l <- readLines(f, warn = FALSE)
+  l <- l[!grepl("^\\s*(#|--)", l) & nzchar(trimws(l))]
+  seen <- FALSE
+  for (i in seq_along(l)) {
+    t <- trimws(l[i])
+    if (grepl("SELECT", t)) seen <- FALSE
+    if (grepl("^WHERE\\b", t)) {
+      if (seen) double_where <- c(double_where, paste0(basename(f), ": ", t))
+      seen <- TRUE
+    }
+  }
+}
+ok(length(double_where) == 0,
+   if (length(double_where)) paste0("two WHERE for one SELECT -- ", double_where[1])
+   else "no SELECT carries two WHERE clauses")
+
 cat("\n-- the contract rejects every value that changes a LOT --\n")
 clear()
 for (k in names(CONTRACT)) {
