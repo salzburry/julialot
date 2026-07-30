@@ -186,9 +186,23 @@ The `trim` matters: the projection trims the class but the raw column does
 not, so a padded `' STEROID '` would otherwise slip through.
 
 The file itself should not list them either. `Jul 28/tools/remove_steroids_from_rollup.R`
-makes that edit on the server, keeping every remaining line byte for byte and
-reporting the md5 before and after. Run it without arguments first - it reports
-and changes nothing. The SQL filter stays afterwards as a defensive guard.
+makes that edit on the server. Run it without arguments first - it reports and
+changes nothing. The SQL filter stays afterwards as a defensive guard.
+
+It is a governed file shared with `apr_30_2026`, so the script is built to be
+boring about it. The file is handled as raw bytes and whole lines are sliced
+out of it, so every kept row - its quoting, spacing and line ending - goes back
+out unchanged. The new bytes are written beside the original and replace it by
+rename, so it is either the old file or the new one and never a half-written
+one. The md5 is printed before and after, and re-checked immediately before the
+rename so a concurrent edit is refused rather than discarded.
+
+It also checks its own premise instead of asserting it: the rows are only safe
+to remove because a steroid has no codes, so it refuses unless
+`cl_mma_codelist.csv` is present, carries none of the abbreviations being
+removed, and has no `STEROID` rows of its own. It refuses too if the edit would
+leave fewer medications than `01_codelists.R` requires. `Jul 28/tools/tests/`
+covers all of that, including the byte-for-byte claim.
 
 Without the filter the rollup lists medications whose codes are deliberately absent,
 `uncoded_meds` fires on every run, and LOT1 builds always-zero
