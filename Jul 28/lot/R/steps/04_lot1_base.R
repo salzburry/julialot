@@ -28,7 +28,7 @@ phase_lot1_base <- function(con, ctx) {
       ON ms.PATID = l1.PATID
     WHERE ms.MAP_START_DT >= l1.LOT1_START_DT
       AND ms.MAP_START_DT <= date_add(l1.LOT1_START_DT, {cfg$induction_window_days - 1})
-      AND ms.MAP_MED_CLASS <> 'STEROID'  -- H1 fix: exclude steroids (corticosteroids are not oncology agents)
+      AND ms.MAP_MED_CLASS <> 'STEROID'  -- corticosteroids are not oncology agents
   "), qc = "
     SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients, avg(cnt) AS avg_induction_meds
     FROM (SELECT PATID, count(DISTINCT MED_ABBR) AS cnt FROM lot1_induction_meds GROUP BY PATID)")
@@ -45,7 +45,7 @@ phase_lot1_base <- function(con, ctx) {
       INNER JOIN permissible_subs ps
         ON im.MED_ABBR = ps.original_med
     ),
-    -- H1 fix: Steroids are now excluded from base_meds (via lot1_induction_meds filter)
+    -- Steroids are excluded from base_meds by the lot1_induction_meds filter.
     -- because corticosteroids are not oncology agents and should
     -- not drive regimen membership, discontinuation, or add-med logic.
     discon_raw AS (
@@ -115,7 +115,7 @@ phase_lot1_base <- function(con, ctx) {
       LEFT JOIN base_meds bm
         ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
       WHERE bm.MED_ABBR IS NULL
-        AND ms.MAP_MED_CLASS <> 'STEROID'  -- H1 fix: steroids cannot trigger add-med
+        AND ms.MAP_MED_CLASS <> 'STEROID'  -- a steroid cannot trigger an add-med
         AND ms.MAP_START_DT >= bc.LOT1_START_DT
         AND ms.MAP_START_DT <= coalesce(bc.LOT1_BASE_DISCON_DT, bc.OBS_END_DT)
     ),

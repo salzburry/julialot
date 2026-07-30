@@ -73,16 +73,38 @@ body_of <- function(lines) {
 # present, in order. Anything removed or edited fails - which is what
 # "differs, and the guards are there" could not catch.
 CONSISTENCY_FROM <- "  # Code list vs rollup consistency."
-CONSISTENCY_TO   <- "  # H4 fix: Codelist minimum-coverage validation (fail-loud)"
+CONSISTENCY_TO   <- "  # Minimum code list coverage."
 SRC_FROM         <- "  # Codelist <-> Rollup consistency QC"
 
 undeviate <- function(lines) {
   a <- which(lines == CONSISTENCY_FROM); b <- which(lines == CONSISTENCY_TO)
   if (length(a) == 1 && length(b) == 1 && b > a) {
-    sa <- which(src == SRC_FROM); sb <- which(src == CONSISTENCY_TO)
+    sa <- which(src == SRC_FROM); sb <- which(src == "  # H4 fix: Codelist minimum-coverage validation (fail-loud)")
     lines <- c(lines[seq_len(a - 1)], src[sa:(sb - 1)], lines[b:length(lines)])
   }
   sub("^(\\s*)SELECT DISTINCT$", "\\1SELECT", lines)
+}
+
+# Comments do not execute, so they are compared out. That is what lets the
+# copied review-diary comments be tidied without weakening this test: the
+# executable R and SQL still has to match exactly. Whole-line comments only -
+# stripping trailing ones would mangle a "#" inside a SQL string.
+code_only <- function(lines) {
+  # A trailing "--" or "#" is a comment only when it is outside quotes; an odd
+  # number of quotes before it means the marker sits inside a string literal.
+  # If that guess were ever wrong the comparison below would fail, loudly.
+  drop_trailing <- function(l) {
+    at <- sort(c(gregexpr("--", l, fixed = TRUE)[[1]],
+                 gregexpr("#", l, fixed = TRUE)[[1]]))
+    at <- at[at > 0]
+    for (i in at) {
+      head <- substr(l, 1, i - 1)
+      if (nchar(gsub("[^\\'\"]", "", head)) %% 2 == 0) return(substr(l, 1, i - 1))
+    }
+    l
+  }
+  keep <- !grepl("^\\s*(#|--)", lines) & nzchar(trimws(lines))
+  trimws(vapply(lines[keep], drop_trailing, character(1), USE.NAMES = FALSE))
 }
 
 # Every element of `want` appears in `got`, in order. Returns the first source
@@ -111,22 +133,22 @@ cat("\n-- every phase is the source, line for line --\n")
 for (p in PHASES) {
   f <- file.path(ROOT, "R", "steps", p$file)
   if (!file.exists(f)) { ok(FALSE, paste0(p$file, ": missing")); next }
-  got  <- unport(body_of(readLines(f, warn = FALSE)))
-  want <- src[p$from:p$to]
-  while (length(want) && !nzchar(trimws(want[length(want)]))) want <- want[-length(want)]
+  raw  <- unport(body_of(readLines(f, warn = FALSE)))
+  if (p$file %in% CHANGED) raw <- undeviate(raw)
+  got  <- code_only(raw)
+  want <- code_only(src[p$from:p$to])
   same <- identical(got, want)
   if (p$file %in% CHANGED) {
     # "differs, and the guards are there" would let an unrelated clinical
     # change ride along. Undo the approved deviations and require the rest to
     # be identical, so anything else shows up as a real difference.
-    got <- undeviate(got)
     miss <- first_missing(got, want)
     if (!is.na(miss)) {
       ok(FALSE, paste0(p$file, ": a source line was changed or removed, at ",
                        "source line ", p$from + miss - 1,
                        "\n           source: ", want[miss]))
     } else {
-      ok(TRUE, paste0(p$file, ": every source line survives; ",
+      ok(TRUE, paste0(p$file, ": every source code line survives; ",
                       length(got) - length(want), " guard line(s) added"))
     }
     next
@@ -139,7 +161,7 @@ for (p in PHASES) {
                      p$from + d - 1, "\n           source: ", w[d],
                      "\n           ported: ", g[d]))
   } else {
-    ok(TRUE, paste0(p$file, ": identical to 02_lot1.R lines ", p$from, "-", p$to,
+    ok(TRUE, paste0(p$file, ": same code as 02_lot1.R lines ", p$from, "-", p$to,
                     " (", length(want), " lines)"))
   }
 }
@@ -182,8 +204,8 @@ for (p in WHOLE) {
   f  <- file.path(ROOT, "R", "steps", p$file)
   sf <- file.path(dirname(SRC), p$src)
   if (!file.exists(f) || !file.exists(sf)) { ok(FALSE, paste0(p$file, ": missing")); next }
-  got  <- unport(readLines(f, warn = FALSE))
-  want <- readLines(sf, warn = FALSE)
+  got  <- code_only(unport(readLines(f, warn = FALSE)))
+  want <- code_only(readLines(sf, warn = FALSE))
   same <- identical(got, want)
   if (!same) {
     n <- max(length(got), length(want))
@@ -192,7 +214,7 @@ for (p in WHOLE) {
     ok(FALSE, paste0(p$file, ": differs from ", p$src, " at line ", d,
                      "\n           source: ", w[d], "\n           ported: ", g[d]))
   } else {
-    ok(TRUE, paste0(p$file, ": identical to ", p$src, " (", length(want), " lines)"))
+    ok(TRUE, paste0(p$file, ": same code as ", p$src, " (", length(want), " lines)"))
   }
 }
 

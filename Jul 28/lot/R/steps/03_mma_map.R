@@ -81,11 +81,9 @@ phase_mma_map <- function(con, ctx) {
         AND cast(m.FST_DT AS date) >= p.INDEX_DATE
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT  -- ENDDATE primary; ENDDATE_CE under sensitivity flag
     ),
-    -- 4) med_procedure table: REMOVED — Optum med_procedure.PROC contains ICD
-    -- procedure codes, not HCPCS/NDC drug codes. The MMA codelist only has HCPCS
-    -- and NDC codes for medication identification, so matching against ICD procedure
-    -- codes is not meaningful. SCT extraction (S12) correctly matches ICD procedure
-    -- codes from this table using the SCT codelist.
+    -- 4) med_procedure is not a drug source: its PROC column holds ICD
+    -- procedure codes, and the MMA code list is HCPCS and NDC. SCT does read
+    -- it, against the SCT code list.
     -- 5) Pharmacy (rx) claims (NDC)
     rx_claims AS (
       SELECT
@@ -125,7 +123,7 @@ phase_mma_map <- function(con, ctx) {
       count(DISTINCT MED_ABBR) AS n_meds,
       sum(case when CLAIM_TYPE='pharmacy' then 1 else 0 end) AS n_pharmacy_rows,
       sum(case when CLAIM_TYPE='medical' then 1 else 0 end) AS n_medical_rows,
-      -- Source contribution audit (Item 9B: confirms each source path is active)
+      -- Confirms each source path is actually contributing claims.
       sum(case when CLAIM_SOURCE='med_proc_cd' then 1 else 0 end) AS n_from_proc_cd,
       sum(case when CLAIM_SOURCE='med_bill_proc' then 1 else 0 end) AS n_from_bill_proc,
       sum(case when CLAIM_SOURCE='med_ndc' then 1 else 0 end) AS n_from_med_ndc,
@@ -152,7 +150,7 @@ phase_mma_map <- function(con, ctx) {
         ON r.MED_ABBR = ru.CL_MED_ABBR
     ),
     filtered AS (
-      -- C2 fix: pharmacy claims
+      -- Pharmacy claims
       -- with missing or anomalous DAY_SUPPLY should be imputed to 28, not dropped.
       SELECT
         PATID, CODE, CODE_TYPE, CLAIM_TYPE, DATE_SERVICE,

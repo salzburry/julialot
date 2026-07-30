@@ -9,9 +9,13 @@ end date) and LOT2 onwards up to `LOT_LONG`, one row per patient per line.
 All of it ported line for line from the validated source.
 
 `tests/test_same_as_source.R` proves that: every phase is compared against
-`apr_30_2026/02_lot1.R`, `lot2_5_inputs.R` and `lot2_5_base.R`, and must match
-exactly apart from the one change the port is allowed to make - LOT's outputs
-carry the cohort prefix.
+`apr_30_2026/02_lot1.R`, `lot2_5_inputs.R` and `lot2_5_base.R`, and the
+executable R and SQL must match exactly apart from the one change the port is
+allowed to make - LOT's outputs carry the cohort prefix.
+
+Comments are compared out, so the copied review-diary comments could be tidied
+without weakening the check. Change a code line and it fails; change a comment
+and it does not.
 
 Three places deliberately differ from the source, all the same defect: the
 code lists filter on the raw value but store the normalized one, so a

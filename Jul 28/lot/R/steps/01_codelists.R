@@ -208,12 +208,11 @@ phase_codelists <- function(con) {
            "CODELIST_WAIVERS=uncoded_meds", call. = FALSE)
   }
 
-  # H4 fix: Codelist minimum-coverage validation (fail-loud)
-  # Ensures the loaded codelists meet minimum thresholds so the
-  # pipeline never silently runs on incomplete fallback data.
-  min_rollup_meds <- 20L    # the rollup has 28 unique MED_ABBR; 20 is conservative floor
+  # Minimum code list coverage.
+  # A short list means something failed to load, not that the study is small.
+  min_rollup_meds <- 20L    # the rollup carries 28
 
-  min_codelist_codes <- 50L # the codelist has hundreds of codes; 50 is conservative floor
+  min_codelist_codes <- 50L # the code list carries hundreds
   n_rollup <- db_q(con, "SELECT count(DISTINCT CL_MED_ABBR) AS n FROM mma_rollup")$n
   n_codelist <- db_q(con, "SELECT count(*) AS n FROM mma_codelist")$n
   if (n_rollup < min_rollup_meds) {
