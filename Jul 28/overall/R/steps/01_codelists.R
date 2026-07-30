@@ -9,8 +9,7 @@ phase_codelists <- function(cfg, h, ctx) {
   other_malig_source <- ctx$other_malig_source
 
   list(
-    # ---- Phase 1: normalize the code lists (small, run once) ----
-    # Source: CSV temp views, or server-side ref tables (see above).
+    # ---- Phase 1: normalize the production CSV code lists (run once) ----
     list(
       name = "01_mm_dx_codes",
       description = "Loading MM diagnosis codes (ICD-9/ICD-10)",

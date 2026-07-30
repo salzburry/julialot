@@ -125,7 +125,14 @@ CONTRACT <- list(
   tbl_med_proc            = "med_procedure",
   tbl_rx                  = "rx",
   tbl_dod                 = "dod",
-  tbl_confinement         = "confinement"
+  tbl_confinement         = "confinement",
+  # Which map entry each code list reads. Pinned with the file names below,
+  # so a re-pointed selector can't reach a different file.
+  cl_mm_dx                = "cl_mm_dx",
+  cl_mm_therapy           = "cl_mm_therapy",
+  cl_preg                 = "cl_pregnancy",
+  cl_clintrial            = "cl_clintrial",
+  cl_other_malig          = "cl_other_malignancies"
 )
 
 # The file behind each code list. Renaming one silently changes the cohort.
@@ -153,14 +160,16 @@ check_output_contract <- function(cfg, expect_table, expect_prefix = NULL) {
   if (!is.null(expect_prefix) && !identical(cfg$object_prefix, expect_prefix)) {
     stop("This build prefixes its tables '", expect_prefix,
          "', but OBJECT_PREFIX is '", cfg$object_prefix,
-         "'. Wrong prefix overwrites the other cohort.", call. = FALSE)
+         "'. A wrong prefix overwrites another build's tables.", call. = FALSE)
   }
   if (!identical(resolve_checkpoints(), "*")) {
     stop("CHECKPOINT_STEPS must be '*' so every step is written to the schema. ",
          "It is '", paste(resolve_checkpoints(), collapse = "|"), "'.",
          call. = FALSE)
   }
-  if (!identical(cfg$codelist_csv_map[names(CODELIST_FILES)], CODELIST_FILES)) {
+  # Whole map, not just these five keys: checking a subset would let an added
+  # key plus a re-pointed cl_* selector feed the build a different file.
+  if (!identical(cfg$codelist_csv_map, CODELIST_FILES)) {
     stop("The code-list file names are not the ones this build is defined on.",
          call. = FALSE)
   }
