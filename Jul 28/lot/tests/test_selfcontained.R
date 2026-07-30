@@ -108,6 +108,29 @@ NEED <- c("build.R", "config.csv", "R/build_lot.R", "R/config_lot.R",
 for (f in NEED)
   ok(file.exists(file.path(ROOT, f)), paste0(f, " is in the folder"))
 
+cat("\n-- one definition per step, not two --\n")
+# The fresh-session path used to carry its own copies of the code-list,
+# cohort and SCT SQL. They drifted: guards added to the LOT1 code lists never
+# reached them, and its cohort view ignored censor_at_disenrollment. It calls
+# the LOT1 phases now, so a step must be defined exactly once.
+defs <- list()
+for (f in list.files(file.path(ROOT, "R", "steps"), "\\.R$", full.names = TRUE)) {
+  for (n in unlist(regmatches(readLines(f, warn = FALSE),
+        gregexpr('(?<=run_step\\(con, ")[^"]+', readLines(f, warn = FALSE), perl = TRUE))))
+    defs[[n]] <- c(defs[[n]], basename(f))
+}
+dup <- names(defs)[vapply(defs, length, integer(1)) > 1]
+ok(length(dup) == 0,
+   if (length(dup)) paste0("step defined more than once: ", paste(dup, collapse = ", "))
+   else paste0("all ", length(defs), " steps are defined exactly once"))
+fresh <- readLines(file.path(ROOT, "R", "steps", "09_lot2_5_inputs.R"), warn = FALSE)
+ok(!any(grepl("CREATE OR REPLACE TEMPORARY VIEW (mma_rollup|sct_codelist|lot_patient_input)",
+               fresh)),
+   "the fresh-session path defines no code-list or cohort view of its own")
+ok(all(vapply(c("phase_codelists", "phase_patient_input", "phase_sct"),
+              function(f) any(grepl(paste0(f, "(con"), fresh, fixed = TRUE)), logical(1))),
+   "it calls the LOT1 phases instead")
+
 cat("\n-- the entry point can actually run --\n")
 # These fail until the rules are ported. That is the honest state: the previous
 # version of this file checked only that files existed, so it passed a package

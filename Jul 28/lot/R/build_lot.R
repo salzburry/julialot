@@ -252,6 +252,7 @@ build_lot <- function(here, cohort_table, prefix) {
   phase_mma_map(con, ctx)
   phase_lot1_base(con, ctx)
   phase_sct(con, ctx)
+  phase_lot1_sct(con, ctx)
   phase_lot1_end(con, ctx)
   phase_qc(con, ctx)
   check_lot1_invariants(con, cfg)
@@ -263,8 +264,7 @@ build_lot <- function(here, cohort_table, prefix) {
   # something is actually missing.
   if (!lot_inputs_present(con)) {
     log_msg("Session views missing; rebuilding them for LOT2-5.")
-    prepare_lot_inputs(con, rollup_src = ctx$rollup_src, subs_src = ctx$subs_src,
-                       sct_src = ctx$sct_src)
+    prepare_lot_inputs(con)
   } else {
     log_msg("Session views from LOT1 are still here; not rebuilding them.")
     materialize_sct_views(con)

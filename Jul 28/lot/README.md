@@ -181,6 +181,21 @@ Names: `orphan_meds`, `uncoded_meds`, `code_types`, `multi_class`,
 `code_to_med`, `bad_ndc`. Unknown names are rejected, and whatever was waived
 is recorded in `LOT_BUILD_STATUS`.
 
+## Running LOT2-5 on its own
+
+`prepare_lot_inputs()` rebuilds what LOT2-5 needs in a session where LOT1 did
+not run. It used to hold its own copies of the code-list, cohort and SCT SQL -
+"the same SQL LOT1 uses", except the copies drifted: the code-list guards never
+reached them, and its cohort view ignored `censor_at_disenrollment` entirely.
+
+It calls the LOT1 phases now, and holds only what is genuinely different -
+rebinding the tables LOT1 persisted, and materializing the SCT views. Every
+step is defined exactly once, and `tests/test_selfcontained.R` fails if that
+stops being true.
+
+`phase_sct()` stops at the SCT date views; LOT1's own `lot1_sct` summary is
+`phase_lot1_sct()`, which needs `lot1_base` and so is not part of the rebuild.
+
 ## Why the run materializes the SCT views
 
 LOT1 leaves `sct_claims_raw`, `tx_auto_dates` and `tx_allo_cart_dates` as views
@@ -249,10 +264,11 @@ R/steps/             the rules, in order:
   02_patient_input.R   the cohort, and OBS_END_DT
   03_mma_map.R         MM/steroid claims, then Medication Available Period
   04_lot1_base.R       LOT1 start, induction meds, base regimen
-  05_sct.R             transplant: AUTO, ALLO, CAR-T
+  05_sct.R             transplant dates: AUTO, ALLO, CAR-T
   06_lot1_end.R        LOT1 end date and reason
   07_qc.R              QC counts
   08_persist.R         write the LOT1 outputs, all prefixed
-  09_lot2_5_inputs.R   rebuild the views LOT2-5 reads, if they are gone
+  05b_lot1_sct.R       LOT1's SCT summary (needs lot1_base)
+  09_lot2_5_inputs.R   rebuild for a fresh-session LOT2-5 run
   10_lot2_5_base.R     LOT2 onwards, and LOT_LONG
 ```

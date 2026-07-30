@@ -30,7 +30,8 @@ PHASES <- list(
   list(file = "02_patient_input.R", from = 245,  to = 283),
   list(file = "03_mma_map.R",       from = 284,  to = 674),
   list(file = "04_lot1_base.R",     from = 675,  to = 829),
-  list(file = "05_sct.R",           from = 830,  to = 1364),
+  list(file = "05_sct.R",           from = 830,  to = 1189),
+  list(file = "05b_lot1_sct.R",     from = 1190, to = 1364),
   list(file = "06_lot1_end.R",      from = 1365, to = 1666),
   list(file = "07_qc.R",            from = 1667, to = 1809),
   list(file = "08_persist.R",       from = 1819, to = 1954)
@@ -131,7 +132,7 @@ CHANGED <- c("01_codelists.R", "03_mma_map.R", "05_sct.R")
 # Same for the whole-file copy: it builds mma_rollup the same way S00 does, so
 # the steroid filter has to go in both or a fresh-session LOT2-5 run would see
 # a different rollup from the one LOT1 used.
-CHANGED_WHOLE <- c("09_lot2_5_inputs.R")
+CHANGED_WHOLE <- character(0)
 
 cat("\n-- every phase is the source, line for line --\n")
 for (p in PHASES) {
@@ -196,10 +197,9 @@ ok(n_ndc == 2, paste0("both NDC joins require digits in the code (", n_ndc, ")")
 # One builder puts it in a new WHERE, the other in an existing one, so match
 # the predicate rather than the clause. trim matters: the projection trims and
 # the raw column does not, so ' STEROID ' would otherwise survive.
-for (f in c("01_codelists.R", "09_lot2_5_inputs.R"))
-  ok(grepl("upper(trim(coalesce(CL_MED_CLASS, ''))) <> 'STEROID'",
-           sql_of(f), fixed = TRUE),
-     paste0(f, ": the rollup drops steroids"))
+ok(grepl("upper(trim(coalesce(CL_MED_CLASS, ''))) <> 'STEROID'",
+         sql_of("01_codelists.R"), fixed = TRUE),
+   "the rollup drops steroids - once, now that both paths share it")
 # The unchanged files must still be untouched.
 for (f in setdiff(vapply(PHASES, `[[`, character(1), "file"), CHANGED))
   ok(!grepl("regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''", sql_of(f), fixed = TRUE),
@@ -208,8 +208,11 @@ for (f in setdiff(vapply(PHASES, `[[`, character(1), "file"), CHANGED))
 cat("\n-- LOT2-5 and LOT_LONG are whole-file copies --\n")
 # These two were already function-structured in the source, so they are copied
 # entire rather than cut into phases. Same rule: identical once unported.
+# 09_lot2_5_inputs.R is deliberately no longer a copy: it carried its own
+# drifting duplicates of the code-list, cohort and SCT SQL, and now calls the
+# LOT1 phases instead. The SQL it used to hold is still compared - as part of
+# the phases it now calls.
 WHOLE <- list(
-  list(file = "09_lot2_5_inputs.R", src = "R/lot2_5_inputs.R"),
   list(file = "10_lot2_5_base.R",   src = "R/lot2_5_base.R")
 )
 for (p in WHOLE) {

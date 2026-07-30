@@ -74,12 +74,23 @@ ok(identical(wrk(cfg$input_cohort_table), paste0("hive_metastore.osk02156.", TBL
 # Read the real output names out of the ported steps rather than listing them
 # by hand - a hand list goes stale the moment a step adds a table, which is
 # exactly when a collision would slip through.
-step_src <- unlist(lapply(list.files(file.path(ROOT, "R", "steps"), "\\.R$",
-                                     full.names = TRUE), readLines, warn = FALSE))
+# build_lot.R too: the SCT materialization names live there now that the
+# fresh-session path no longer carries its own copy.
+step_src <- unlist(lapply(c(list.files(file.path(ROOT, "R", "steps"), "\\.R$",
+                                       full.names = TRUE),
+                            file.path(ROOT, "R", "build_lot.R")),
+                          readLines, warn = FALSE))
 step_src <- step_src[!grepl("^\\s*(#|--)", step_src)]
+# Two forms: lot_out("NAME") directly, and name = "NAME" in a list whose
+# entries are passed to lot_out(). Scanning only the first missed three.
 lits <- unlist(regmatches(step_src, gregexpr("lot_out\\((\'|\")[A-Z_0-9]+(\'|\")\\)",
                                              step_src, perl = TRUE)))
-OUTPUTS <- unique(gsub("lot_out\\(|\'|\"|\\)", "", lits))
+# Only entries that also name a source view are tables; the bare name = "..."
+# form is also used for QC check labels, which are not outputs.
+vlines <- grep("view = ", step_src, fixed = TRUE, value = TRUE)
+named <- unlist(regmatches(vlines, gregexpr("(?<=name = \")[A-Z_0-9]{4,}(?=\")",
+                                            vlines, perl = TRUE)))
+OUTPUTS <- unique(c(gsub("lot_out\\(|\'|\"|\\)", "", lits), named))
 ok(length(OUTPUTS) >= 6,
    paste0("found ", length(OUTPUTS), " named outputs in the steps: ",
           paste(sort(OUTPUTS), collapse = ", ")))
@@ -142,7 +153,8 @@ body <- sub(".*build_lot <- function\\([^)]*\\) \\{", "", bl)
 ORDER <- c("check_settings", "pin_output_schema", "pin_cohort",
            "check_lot_contract", "set_lot_config", "check_cohort_input",
            "phase_codelists", "phase_patient_input", "phase_mma_map",
-           "phase_lot1_base", "phase_sct", "phase_lot1_end", "phase_qc",
+           "phase_lot1_base", "phase_sct", "phase_lot1_sct",
+           "phase_lot1_end", "phase_qc",
            "check_lot1_invariants", "phase_persist", "materialize_sct_views",
            "build_lot2_5",
            "check_lot_long", "phase_line_criteria", "check_run_recorded")
