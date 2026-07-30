@@ -22,5 +22,6 @@ MIN_AGE,18,Step 2 minimum age at index
 OUTPATIENT_WINDOW,90,Two-outpatient confirmation window - 30, 60 or 90
 CENSOR_AT_DISENROLLMENT,FALSE,Sensitivity - cap follow-up at disenrollment
 # --- output ---
+# Schema follows the legacy config: PROJECT_WORK_SCHEMA, else DOMINO_USER_NAME.
+# On Domino that is your own schema, e.g. hive_metastore.osk02156.
 IE_OBJ_PREFIX,ovr_,Prefix on every table this build writes
-IE_OUT_SCHEMA,,Blank = personal schema (DOMINO_USER_NAME)

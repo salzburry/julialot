@@ -206,8 +206,15 @@ throws(with_env("IE_STUDY_END", "30-06-2026", ie_cfg(IE_DIR)),
 throws(with_env("IE_STUDY_END", "2015-01-01", ie_cfg(IE_DIR)),
        "a study window that ends before the ID period is rejected")
 ok(TRUE, "baseline_days and gap_days stay code constants -- no override added")
-throws(with_env("IE_OUT_SCHEMA", CFG$cdm_schema, ie_cfg(IE_DIR)),
+throws(with_env("PROJECT_WORK_SCHEMA", CFG$cdm_schema, ie_cfg(IE_DIR)),
        "writing into the CDM schema is rejected")
+# The output schema is resolved the way config_lot.R does it, not by a new knob.
+ok(identical(with_env("DOMINO_USER_NAME", "osk02156",
+                      ie_cfg(IE_DIR))$out_schema, "osk02156"),
+   "output schema follows DOMINO_USER_NAME")
+ok(identical(with_env("PROJECT_WORK_SCHEMA", "someschema",
+                      ie_cfg(IE_DIR))$out_schema, "someschema"),
+   "PROJECT_WORK_SCHEMA overrides it, as in the legacy config")
 ok(is.list(with_env("OUTPATIENT_WINDOW", "60", ie_cfg(IE_DIR))),
    "...but a legitimate OUTPATIENT_WINDOW=60 is accepted")
 

@@ -8,14 +8,12 @@
 # Every object is a real table in your personal schema. No temp views -- a
 # Databricks SQL warehouse re-runs a view's definition on every read.
 #
-# The IE switches are in cohort_config.csv (this folder) -- the operator edits
-# that to shape the cohort. pipeline_inputs.csv and ../lib supply the rest.
-# Nothing outside "Jul 28" is read.
+# IE switches are in cohort_config.csv. pipeline_inputs.csv and ../lib supply
+# the rest. Nothing outside "Jul 28" is read.
 # =============================================================================
 
-# {expr} interpolation. The SELECTs are copied from pipeline_steps.R, which uses
-# glue(); this does the same substitution without the dependency, so the
-# templates stay comparable to the originals.
+# {expr} interpolation, so the SELECTs stay copies of the glue templates in
+# pipeline_steps.R without taking the dependency.
 fmt <- function(tmpl, envir = parent.frame()) {
   out <- character(length(tmpl))
   for (k in seq_along(tmpl)) {
@@ -51,25 +49,18 @@ ie_root <- function(here = NULL) {
 
 # ---- config -----------------------------------------------------------------
 # Study parameters come from ../lib/config_prompts.R's cfg_defaults, so they are
-# the project's values, not a second copy.
-#
-# Only some are reachable from config. cfg_defaults reads Sys.getenv for
-# OUTPATIENT_WINDOW, MIN_AGE, the nine APPLY_*, CENSOR_AT_DISENROLLMENT and the
-# schemas. The study window is set as literals there, so STUDY_END and friends do
-# nothing -- use IE_STUDY_END etc., handled below.
+# the project's values rather than a second copy. It reads env vars for the
+# window, min age, the APPLY_* switches and the schemas, but sets the study
+# window as literals -- so STUDY_END does nothing and IE_STUDY_END is the name
+# that works (below).
 ie_cfg <- function(here = NULL, load_project = TRUE) {
   root <- ie_root(here)
   lib  <- file.path(root, "lib")
   e <- new.env(parent = globalenv())
 
-  # Config precedence: exported env var > cohort_config.csv > pipeline_inputs.csv
-  # > code default. Both loaders only fill variables that are unset, so loading
-  # cohort_config.csv FIRST lets it win over the shared file, and a real env var
-  # (set before either) wins over both.
-  #
-  # cohort_config.csv is the operator surface -- the nine IE switches and the
-  # handful of parameters that shape the cohort. pipeline_inputs.csv supplies the
-  # rest (connection, schemas, CDM source, code-list dir).
+  # Precedence: env var > cohort_config.csv > pipeline_inputs.csv > default.
+  # Each loader only fills what is unset, so reading cohort_config.csv first
+  # makes it win over the shared file.
   if (isTRUE(load_project)) {
     sys.source(file.path(lib, "load_inputs.R"), envir = e)
     if (!is.null(here) && file.exists(file.path(here, "cohort_config.csv")))
@@ -83,11 +74,10 @@ ie_cfg <- function(here = NULL, load_project = TRUE) {
   cfg <- e$cfg_defaults
   source(file.path(lib, "codelists.R"))   # get_quarterly_table()
 
-  # Reject bad values before anything is scanned. The project's own readers are
-  # lenient on purpose, which is fine with an operator watching and not fine in
-  # batch: validate_outpatient_window() swaps in 90 for anything invalid, and
-  # as.logical("Y") is NA, which isTRUE() reads as FALSE -- so a criterion would
-  # never apply and the cohort would come out larger.
+  # Reject bad values before anything is scanned. The project's readers are
+  # lenient: an invalid window silently becomes 90, and as.logical("Y") is NA,
+  # which reads as FALSE -- so a gate would never apply and the cohort would be
+  # larger.
   w <- .ie_env("OUTPATIENT_WINDOW")
   if (nzchar(w) &&
       !identical(suppressWarnings(as.integer(trimws(w))) %in% c(30L, 60L, 90L),
@@ -113,10 +103,8 @@ ie_cfg <- function(here = NULL, load_project = TRUE) {
            call. = FALSE)
   }
 
-  # The study window. cfg_defaults hardcodes it, so IE_STUDY_END is the name that
-  # works. A conflicting value under the dead name is an error, not a no-op:
-  # quarterly source tables resolve off study_end, so a silent miss would keep
-  # reading last vintage's data.
+  # A value under the dead name is an error, not a no-op: quarterly source
+  # tables resolve off study_end, so a silent miss reads last vintage's data.
   for (p in list(c("STUDY_START", "study_start"), c("STUDY_END", "study_end"),
                  c("ID_START", "id_start"), c("ID_END", "id_end"))) {
     v <- trimws(.ie_env(p[1]))
@@ -144,54 +132,33 @@ ie_cfg <- function(here = NULL, load_project = TRUE) {
   cfg$lib        <- lib
   cfg$obj_prefix <- env("IE_OBJ_PREFIX", "ovr_")
   cfg$flags_view <- env("IE_FLAGS_TABLE", "ELIG_COH_ALLFLAGS")
-  # Personal schema, the same way the rest of the pipeline does it:
-  # DOMINO_USER_NAME, falling back to the work schema.
-  cfg$out_schema <- env("IE_OUT_SCHEMA",
-                        if (nzchar(cfg$personal_schema)) cfg$personal_schema
-                        else cfg$work_schema)
+  # Output schema, resolved the same way config_lot.R does it:
+  # PROJECT_WORK_SCHEMA, then DOMINO_USER_NAME, then the shared fallback.
+  # On Domino that is your own schema, e.g. hive_metastore.osk02156.
+  cfg$out_schema <- cfg$work_schema
 
   # The prefix keeps these tables off the legacy pipeline's names, so it has to
-  # be a usable identifier fragment. Empty means unset and takes the default.
+  # be a usable identifier.
   if (!grepl("^[A-Za-z][A-Za-z0-9_]*$", cfg$obj_prefix))
     stop("IE_OBJ_PREFIX='", cfg$obj_prefix, "' must be letters, digits and ",
          "underscore, starting with a letter.", call. = FALSE)
   if (!nzchar(cfg$out_schema))
-    stop("no output schema: set DOMINO_USER_NAME or IE_OUT_SCHEMA.",
+    stop("no output schema: set DOMINO_USER_NAME or PROJECT_WORK_SCHEMA.",
          call. = FALSE)
   if (identical(tolower(cfg$out_schema), tolower(cfg$cdm_schema)))
-    stop("IE_OUT_SCHEMA is the CDM schema. This build writes tables.",
+    stop("the output schema is the CDM schema. This build writes tables.",
          call. = FALSE)
   cfg
 }
 
-# Output-schema enforcement, checked at build time. The build has been run many
-# times against osk, so these make sure it keeps writing there.
+# Checked at build time, before connecting.
 ie_require_output <- function(cfg) {
-  env <- function(k, d) { v <- .ie_env(k); if (nzchar(v)) v else d }
-
-  # Don't fall back to the shared work schema just because DOMINO_USER_NAME was
-  # unset -- that would scatter the outputs somewhere unintended.
-  if (!nzchar(cfg$personal_schema) && !nzchar(.ie_env("IE_OUT_SCHEMA")) &&
-      !identical(toupper(env("IE_ALLOW_WORK_SCHEMA", "FALSE")), "TRUE"))
-    stop("DOMINO_USER_NAME is not set, so the output would default to the ",
-         "shared work schema '", cfg$work_schema, "'. Set DOMINO_USER_NAME, ",
-         "or IE_OUT_SCHEMA=<schema>, or IE_ALLOW_WORK_SCHEMA=TRUE.",
-         call. = FALSE)
-
-  # Name the schema you expect and the build refuses to write anywhere else --
-  # for a scheduled run where a wrong target should stop everything.
-  req <- env("IE_REQUIRE_SCHEMA", "")
-  if (nzchar(req) && !identical(tolower(req), tolower(cfg$out_schema)))
-    stop("IE_REQUIRE_SCHEMA='", req, "' but the output resolved to '",
-         cfg$out_schema, "'. Nothing was written.", call. = FALSE)
-
-  # PERSIST_TO_SCHEMA governs the legacy pipeline's optional persist step. This
-  # builder always writes tables, so a FALSE here would look like an off switch
-  # that does nothing.
+  # PERSIST_TO_SCHEMA switches the legacy pipeline's persist step. Every step
+  # here writes a table, so FALSE would look like an off switch that does
+  # nothing.
   if (!isTRUE(cfg$persist_to_schema))
     stop("PERSIST_TO_SCHEMA=FALSE has no effect here -- every step writes a ",
-         "table. Set it TRUE if you want the outputs written.",
-         call. = FALSE)
+         "table. Set it TRUE.", call. = FALSE)
   invisible(TRUE)
 }
 

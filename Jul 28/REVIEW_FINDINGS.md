@@ -449,7 +449,7 @@ reconciliation on a dead handle.
 
 `ie_require_output()` runs before connecting. It refuses to fall back to the
 shared work schema when `DOMINO_USER_NAME` is unset (override with `IE_OUT_SCHEMA`
-or `IE_ALLOW_WORK_SCHEMA=TRUE`), and `IE_REQUIRE_SCHEMA=osk` pins the target.
+or `IE_ALLOW_WORK_SCHEMA=TRUE`). Superseded in round four -- see below.
 
 ## Repeated-run controls (4, 5, 6)
 
@@ -465,3 +465,43 @@ success; and `PERSIST_TO_SCHEMA=FALSE` is rejected rather than silently ignored.
   Edit it, run, and the printed funnel shows each step ON/off.
 - **Fewer modes.** `--funnel` and `--dry-run` removed from the builder; it builds.
   The offline suite covers SQL/funnel inspection without a warehouse.
+
+---
+
+# Fourth review round — `cohort_overall`
+
+| # | Finding | Status |
+|---|---|---|
+| 1 | **P1** patient-level legacy comparison deleted | stays deleted (owner's call); the queries are in the README |
+| 2 | **P1** deliverables could come from different runs | cohort + attrition published together after reconcile |
+| 3 | **P1** `osk` not enforced | superseded: schema now resolves exactly as `config_lot.R` does |
+| 4 | **P1** status / attrition / count failures were warnings | all fatal |
+| 5 | **P2** `RUN_STATUS` did not record the cohort definition | records active criteria, censoring, prefix, source quarter, codelist dir |
+| 6 | **P2** reconnect lost the temp-view codelists | codelists are prefixed tables now |
+| 7 | **P2** concurrent runs | not added — `RUN_STATUS` makes a stale run visible; a lock was more than this needs |
+| 8 | comments still long | another pass |
+
+## Schema resolution
+
+The owner's steer was to use what the prior code used, so the invented
+`IE_OUT_SCHEMA` / `IE_REQUIRE_SCHEMA` / `IE_ALLOW_WORK_SCHEMA` knobs are gone.
+`cfg$out_schema` is now `cfg$work_schema`, resolved by `config_prompts.R` exactly
+as `config_lot.R` does it: `PROJECT_WORK_SCHEMA`, else `DOMINO_USER_NAME`, else
+the shared fallback. On Domino that gives
+`hive_metastore.<user>.ovr_ELIG_COH_FINAL`, e.g. `hive_metastore.osk02156.*`.
+The only guard left is that it may not be the CDM schema.
+
+## Codelists as tables
+
+`ie_load_codelists()` writes the five cohort lists to `ovr_cl_*` tables instead of
+session temp views. That fixes the reconnect gap in one move -- a replacement
+session still sees them -- and they are dropped with the other intermediates.
+The drift comparison is unaffected: the qualifier strips `ovr_cl_mm_dx` back to
+`cl_mm_dx`, which is what the legacy SQL names.
+
+## What was left alone
+
+`ALLFLAGS` is still replaced before reconciliation, because the cohort is derived
+from it and it has to exist first. On a reconcile failure it is the new run's
+while the cohort and attrition are the last good run's. That is documented, and
+`RUN_STATUS` says `reconcile_failed`.

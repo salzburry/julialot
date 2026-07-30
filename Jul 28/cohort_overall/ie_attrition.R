@@ -1,24 +1,18 @@
 # =============================================================================
-# ie_attrition.R -- the attrition table, and the check that it landed
+# ie_attrition.R -- attrition table, reconciliation, run status
 # -----------------------------------------------------------------------------
-# The table is cumulative: each row is how many patients survive every gate up to
-# and including that one, so a gate's drop is the difference from the row above.
-# Counts are count(DISTINCT PATID), so a patient with several surviving candidate
-# index dates counts once per row.
+# The table is cumulative: each row counts the patients surviving every gate up
+# to that one, so a gate's drop is the difference from the row above. Counts are
+# count(DISTINCT PATID).
 #
-# The 30 / 60 / 90 columns come from one query per row. The three windows differ
-# only in which outpt2_* column step 1 reads, and all three are on the flags
-# table. The configured window is the build; the other two are free sensitivity
-# numbers.
+# The 30/60/90 columns come from one query per row -- the windows differ only in
+# which outpt2_* step 1 reads, and all three are on the flags table.
 #
-# Step 0 comes from mm_dx_events_id, not the flags table. The flags table only
-# holds patients who already have a qualifying index date, so step 0 counted
-# there would equal step 1 and the biggest drop in the study would disappear.
+# Step 0 comes from mm_dx_events_id. The flags table only holds patients who
+# already have an index date, so step 0 counted there would equal step 1.
 #
-# The funnel does not check itself. Every row re-runs the predicates over the
-# flags table and never reads the cohort table, so it cannot see a wrong object
-# written, a wrong index date picked, duplicate PATIDs, or a failed write.
-# ie_reconcile() does that, after every build.
+# The funnel cannot check itself: every row re-runs the predicates over the flags
+# table and never reads the cohort table. ie_reconcile() does that.
 # =============================================================================
 
 ie_attrition_rows <- function(con, funnel) {
@@ -84,15 +78,12 @@ ie_print_attrition <- function(rows, cfg) {
 }
 
 # ---- reconciliation ---------------------------------------------------------
-# Does the cohort table match the funnel? Five checks, each of which can fail
-# while every attrition row still looks fine.
+# Does the cohort match the funnel? Each check can fail while every attrition row
+# still looks fine. The index-date check is the one no text comparison can make:
+# if ranking ran before filtering, the others could pass while patients carried
+# the wrong index date, and every LOT number comes from that date.
 #
-# The index-date check is the one no text comparison can make. If the ranking ran
-# before the filter, or over the wrong order, the first three checks could pass
-# while patients carried the wrong index date -- and every LOT number downstream
-# is computed from that date.
-# final_tbl defaults to the published cohort. The runner passes the STAGED table,
-# so the build is checked before it is published under the real name.
+# The runner passes the STAGED table, so this runs before anything is published.
 ie_reconcile <- function(con, funnel, cum_where,
                          final_tbl = funnel$h$work(funnel$cfg$final_table_name)) {
   cfg <- funnel$cfg; h <- funnel$h
@@ -162,8 +153,8 @@ ie_print_reconcile <- function(results, funnel) {
   invisible(bad)
 }
 
-# Persist the attrition rows so the numbers outlive the run. Best-effort: a
-# failure here must not lose a cohort table that was already written.
+# Write the attrition rows. Called after reconciliation passes, alongside the
+# cohort publish, so the two tables always come from the same run.
 ie_persist_attrition <- function(con, rows, funnel) {
   cfg <- funnel$cfg; h <- funnel$h
   if (!length(rows)) return(invisible(NULL))
@@ -184,28 +175,24 @@ ie_persist_attrition <- function(con, rows, funnel) {
                 paste(vals, collapse = ",\n  "),
                 "\nAS t(row_order, created_at, cohort_table, outpatient_window,",
                 "\n     step_id, description, n_30, n_60, n_90)")
-  tryCatch({
-    DBI::dbExecute(con, sql)
-    message("attrition -> ", tbl, " (", length(rows), " rows)")
-  }, error = function(e)
-    message("WARN: could not write ", tbl, ": ", conditionMessage(e)))
+  DBI::dbExecute(con, sql)
+  log_msg("attrition -> ", tbl, " (", length(rows), " rows)")
   invisible(tbl)
 }
 
 # ---- run status, staging, cleanup -------------------------------------------
-# This build has been run many times against the same personal schema, so the
-# controls below are about telling one run's output from another's and not
-# leaving a half-built or stale cohort looking current.
+# This build gets re-run against the same schema, so these tell one run's output
+# from another's and stop a half-built cohort looking current.
 
-# A run id: DOMINO_RUN_ID if set, else a timestamp. Passed in, because a
-# timestamp read here would differ between the "started" and "complete" rows.
+# DOMINO_RUN_ID if set, else a timestamp. Passed in so the "started" and
+# "complete" rows share one id.
 ie_run_id <- function()
   Sys.getenv("DOMINO_RUN_ID",
              unset = format(Sys.time(), "%Y%m%d_%H%M%S"))
 
-# One row per build attempt, overwritten each run. It records who wrote the
-# current tables and whether the run finished, so a reader can tell whether
-# ovr_ELIG_COH_FINAL belongs to a completed build or an abandoned one.
+# Records which criteria were on, not just the dates and window -- two runs can
+# share those and still be different cohorts. Fatal on failure: if the status
+# cannot be written there is no way to tell which run the tables belong to.
 ie_write_status <- function(con, funnel, run_id, state, n_final = NA,
                             started = "") {
   cfg <- funnel$cfg; h <- funnel$h
@@ -214,24 +201,28 @@ ie_write_status <- function(con, funnel, run_id, state, n_final = NA,
   now <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
   n <- if (is.na(n_final)) "NULL" else
     format(as.integer(n_final), scientific = FALSE, trim = TRUE)
+  active <- paste(vapply(ie_active_criteria(funnel$criteria, cfg),
+                         function(c) c$id, character(1)), collapse = ",")
   sql <- paste0(
     "CREATE OR REPLACE TABLE ", tbl, " AS SELECT ",
     q(run_id), " AS run_id, ", q(state), " AS state, ",
     q(if (nzchar(started)) started else now), " AS started_at, ",
     q(now), " AS updated_at, ", q(h$work(cfg$final_table_name)), " AS cohort_table, ",
-    q(cfg$out_schema), " AS out_schema, ", q(cfg$study_start), " AS study_start, ",
+    q(cfg$out_schema), " AS out_schema, ", q(cfg$obj_prefix), " AS obj_prefix, ",
+    q(cfg$study_start), " AS study_start, ",
     q(cfg$study_end), " AS study_end, ", q(cfg$id_start), " AS id_start, ",
     q(cfg$id_end), " AS id_end, ", cfg$outpatient_window, " AS outpatient_window, ",
-    cfg$min_age, " AS min_age, ", n, " AS n_final")
-  tryCatch(DBI::dbExecute(con, sql),
-           error = function(e)
-             message("WARN: could not write ", tbl, ": ", conditionMessage(e)))
+    cfg$min_age, " AS min_age, ",
+    q(active), " AS active_criteria, ",
+    q(as.character(isTRUE(cfg$censor_at_disenrollment))), " AS censor_at_disenrollment, ",
+    q(h$cdm_src(cfg$tbl_medical)), " AS cdm_source, ",
+    q(cfg$codelist_dir), " AS codelist_dir, ", n, " AS n_final")
+  DBI::dbExecute(con, sql)
   invisible(tbl)
 }
 
-# Publish the staged cohort under its real name, then drop the staging table.
-# Only called after reconciliation passes, so the published cohort is only ever
-# replaced by a reconciled build.
+# Publish the staged cohort, then drop the staging table. Called only after
+# reconciliation passes.
 ie_publish_final <- function(con, funnel) {
   h <- funnel$h; cfg <- funnel$cfg
   final <- h$work(cfg$final_table_name)
@@ -243,8 +234,8 @@ ie_publish_final <- function(con, funnel) {
   invisible(final)
 }
 
-# Drop the intermediate tables after a clean build. Deliverables stay. Set
-# IE_KEEP_INTERMEDIATE=TRUE to keep them for debugging.
+# Drop the intermediates after a clean build. IE_KEEP_INTERMEDIATE=TRUE keeps
+# them for debugging.
 ie_cleanup_intermediates <- function(con, funnel) {
   if (identical(toupper(Sys.getenv("IE_KEEP_INTERMEDIATE", unset = "FALSE")),
                 "TRUE")) {
