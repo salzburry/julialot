@@ -17,6 +17,13 @@ Comments are compared out, so the copied review-diary comments could be tidied
 without weakening the check. Change a code line and it fails; change a comment
 and it does not.
 
+For the three files that carry safety guards, each approved deviation is named
+and undone one at a time - then the two sides must be **identical**. Adding an
+unapproved line fails, and deleting an approved guard leaves its entry with
+nothing to remove, which is reported. An earlier version asked only that every
+source line still be present somewhere, which let an inserted second `WHERE`
+clause through.
+
 Three places deliberately differ from the source, all the same defect: the
 code lists filter on the raw value but store the normalized one, so a
 punctuation-only code survives as `""` - and the claim side turns a missing
