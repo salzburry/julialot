@@ -24,3 +24,5 @@ INPUT_COHORT_TABLE,OVERALL_COH_FINAL,Cohort table the LOT run reads
 CHECKPOINT_STEPS,*,Write every step to the schema; no temp views left behind
 OBJECT_PREFIX,overall_,Prefix for this cohort's tables so the two builds don't collide
 ATTRITION_TABLE,overall_attrition_report,Attrition table this build writes and the dashboards read
+USE_CSV_CODELISTS,TRUE,Read the prod codelist CSVs rather than reference tables
+CODELIST_DIR,/mnt/code/codelist,Where the prod codelists live

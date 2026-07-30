@@ -1,13 +1,8 @@
 #!/usr/bin/env Rscript
-# =============================================================================
-# test_runner.R -- the wrapper around the IE SQL
-# -----------------------------------------------------------------------------
-#   Rscript "Jul 28/ndmm/tests/test_runner.R"
+# The wrapper around the IE SQL - what gets written, and where.
+# test_same_as_source.R covers the SQL itself. Runs offline.
 #
-# test_same_as_source.R proves the step SQL matches apr_30_2026. This covers
-# the code that decides what gets written and where, which that test does not
-# touch. Offline: no warehouse, no connection.
-# =============================================================================
+#   Rscript "Jul 28/ndmm/tests/test_runner.R"
 
 here <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -147,6 +142,28 @@ for (f in list.files(file.path(ROOT, "R", "steps"), full.names = TRUE)) {
        paste0(step, ": bounded by the study window"))
   }
 }
+
+cat("\n-- every function build_cohort.R calls actually exists --\n")
+# A missed edit once left write_build_status() and check_normalized_codelist()
+# called but never defined. Nothing caught it: the SQL tests don't run the
+# runner, and R only resolves a function when the call is reached.
+mod <- new.env(parent = globalenv())
+for (f in c("load_inputs.R", "config_prompts.R", "db_utils.R", "codelists.R",
+            "criteria_attrition.R", "pipeline_steps.R", "build_cohort.R"))
+  sys.source(file.path(ROOT, "R", f), envir = mod)
+
+src <- paste(readLines(file.path(ROOT, "R", "build_cohort.R"), warn = FALSE),
+             collapse = "\n")
+src <- gsub('"[^"]*"', '""', src)          # string literals hold SQL, not calls
+src <- gsub("'[^']*'", "''", src)
+src <- gsub("#[^\n]*", "", src)           # comments
+# skip pkg::fn and list$fn - only bare names have to resolve here
+called <- unique(sub("\\($", "", regmatches(src,
+  gregexpr("(?<![$:\\w.])[A-Za-z_][A-Za-z0-9_.]*\\(", src, perl = TRUE))[[1]]))
+missing <- Filter(function(f) !exists(f, envir = mod), called)
+ok(length(missing) == 0,
+   if (length(missing)) paste("undefined:", paste(missing, collapse = ", "))
+   else paste0("all ", length(called), " calls resolve"))
 
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))

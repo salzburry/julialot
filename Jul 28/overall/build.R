@@ -1,15 +1,11 @@
 #!/usr/bin/env Rscript
-# =============================================================================
-# Build the Overall cohort.
+# Build the Overall cohort. Writes OVERALL_COH_FINAL.
 #
 #   DATABRICKS_PWD=... Rscript "Jul 28/overall/build.R"
 #
-# R/ holds this cohort's helpers and IE steps, config.csv its switches. Shared
-# defaults still come from ../pipeline_inputs.csv; the build stops if neither
-# that nor a local copy is found. It reads the CDM directly and writes OVERALL_COH_FINAL to
-# <catalog>.<schema>, along with every intermediate step as a real table.
-# Nothing here depends on another cohort.
-# =============================================================================
+# R/ is this cohort's code, config.csv its switches. Shared defaults come
+# from ../pipeline_inputs.csv.
+
 here <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
   if (!length(a)) getwd()

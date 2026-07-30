@@ -38,7 +38,6 @@ build_cohort <- function(cohort_dir, root = cohort_dir, expect_table = NULL,
   }
 
   load_csv_codelists(conn, cfg)
-  check_codelists_not_empty(conn, cfg)
 
   mat_tables <- new.env()
   ckpt_steps <- resolve_checkpoints()
@@ -102,9 +101,7 @@ build_cohort <- function(cohort_dir, root = cohort_dir, expect_table = NULL,
   invisible(list(cfg = cfg, conn = conn, mat_tables = mat_tables))
 }
 
-# What this build must write. config.csv only fills a variable when it is
-# unset, so an ambient value wins over the committed one - the table name, the
-# prefix and the checkpoint set all have to be checked, not just defaulted.
+# An env var beats config.csv, so check what we got - don't just default it.
 check_output_contract <- function(cfg, expect_table, expect_prefix = NULL) {
   if (!is.null(expect_table) && !identical(cfg$final_table_name, expect_table)) {
     stop("This build writes ", expect_table, ", but FINAL_TABLE_NAME is '",
@@ -127,10 +124,8 @@ check_output_contract <- function(cfg, expect_table, expect_prefix = NULL) {
   invisible(TRUE)
 }
 
-# The Apr 30 config fails open: as.logical("Y") is NA and isTRUE(NA) is FALSE,
-# so a typo silently drops a criterion; validate_outpatient_window() silently
-# substitutes 90. Environment wins over config.csv, so a committed file does
-# not protect against either. Check the raw values before anything runs.
+# Bad values fail open: as.logical("Y") is NA, which reads as FALSE and drops a
+# criterion. An invalid window silently becomes 90. Catch both up front.
 BOOL_SETTINGS <- c("APPLY_AGE_INCL", "APPLY_CE_B_INCL", "APPLY_CE_F_INCL",
                    "APPLY_NO_BL_AGENTS_INCL", "APPLY_FU_AGENTS_INCL",
                    "APPLY_BASELINE_MM_EXCL", "APPLY_OTHER_MALIG_EXCL",
@@ -172,27 +167,43 @@ check_settings <- function() {
   invisible(TRUE)
 }
 
-# Stop when a required code list has no rows.
-check_codelists_not_empty <- function(conn, cfg) {
-  required <- c(cfg$cl_mm_dx, cfg$cl_mm_therapy, cfg$cl_preg,
-                cfg$cl_clintrial, cfg$cl_other_malig)
-  for (tbl in required) {
-    src <- if (isTRUE(cfg$use_csv_codelists)) tbl else
-      paste0(if (nzchar(cfg$catalog)) paste0(cfg$catalog, ".") else "",
-             cfg$ref_schema, ".", tbl)
-    n <- DBI::dbGetQuery(conn$con, paste0("SELECT count(*) AS n FROM ", src))$n
-    if (is.na(n) || n == 0) stop("Code list '", src, "' is empty.", call. = FALSE)
-    log_msg("  code list ", tbl, ": ", format(n, big.mark = ","), " rows")
-  }
+# How the last run ended. A run that dies halfway leaves some tables from this
+# run and some from the one before, and nothing else says so.
+write_build_status <- function(conn, cfg, state) {
+  obj <- paste0(tolower(cfg$object_prefix), "build_status")
+  tbl <- if (nzchar(cfg$catalog))
+    paste0(cfg$catalog, ".", cfg$work_schema, ".", obj) else
+    paste0(cfg$work_schema, ".", obj)
+  q <- function(x) paste0("'", gsub("'", "''", as.character(x)), "'")
+  DBI::dbExecute(conn$con, paste0(
+    "CREATE OR REPLACE TABLE ", tbl, " AS SELECT ",
+    q(get0("run_id", ifnotfound = "")), " AS run_id, ",
+    q(state), " AS state, ",
+    q(cfg$final_table_name), " AS final_table_name, ",
+    q(format(Sys.time(), "%Y-%m-%d %H:%M:%S")), " AS updated_at"))
+  log_msg("Build status: ", state, " (", tbl, ")")
   invisible(TRUE)
 }
 
-# Where this build writes: one schema for everything - every step, the final
-# cohort, attrition_report - as <catalog>.<schema>, e.g. hive_metastore.osk02156.
-# config_prompts.R resolves work_schema and personal_schema separately and
-# personal_schema can come back empty, which silently skips writing the cohort.
-#
-# OBJECT_PREFIX keeps the two cohorts apart in that one schema.
+# Normalization drops blanks and bad rows, so a file with rows can still end up
+# with no usable codes.
+NORMALIZED_CODELISTS <- c("mm_dx_codes", "mm_therapy_codes", "preg_codes",
+                          "clintrial_codes", "other_malig_codes")
+
+check_normalized_codelist <- function(conn, cfg, view_name, mat_tables) {
+  if (!(view_name %in% NORMALIZED_CODELISTS)) return(invisible(TRUE))
+  n <- DBI::dbGetQuery(conn$con, paste0(
+    "SELECT count(*) AS n FROM ", get(view_name, envir = mat_tables)))$n
+  if (is.na(n) || n == 0)
+    stop("Code list '", view_name, "' has no usable codes.", call. = FALSE)
+  log_msg("  code list ", view_name, ": ", format(n, big.mark = ","), " codes")
+  invisible(TRUE)
+}
+
+# One schema for everything: <catalog>.<schema>, e.g. hive_metastore.osk02156.
+# config_prompts.R resolves work and personal schema separately, and an empty
+# personal schema silently skips writing the cohort. OBJECT_PREFIX keeps the
+# two cohorts apart.
 pin_output_schema <- function(cfg) {
   schema <- Sys.getenv("PROJECT_WORK_SCHEMA",
               unset = Sys.getenv("DOMINO_USER_NAME",
@@ -207,13 +218,8 @@ pin_output_schema <- function(cfg) {
   cfg
 }
 
-# Which views get written to the schema. "*" means every step, which is what
-# the cohort configs use -- nothing then depends on a temp view surviving, and
-# every table is there to query after the run. Set per cohort in config.csv,
-# pipe-separated, or name specific steps:
-#
-#   CHECKPOINT_STEPS,*
-#   CHECKPOINT_STEPS,mm_dx_events_all|mm_qualifying|ELIG_COH_ALLFLAGS
+# Which views get written to the schema. "*" is every step, which is what the
+# cohort configs use. Or name them, pipe-separated, in config.csv.
 resolve_checkpoints <- function() {
   v <- Sys.getenv("CHECKPOINT_STEPS", unset = "")
   if (!nzchar(v)) return(CHECKPOINT_STEPS)
@@ -221,10 +227,9 @@ resolve_checkpoints <- function() {
   s[nzchar(s)]
 }
 
-# The view a step creates. Not the same as the step name: 24_ELIG_COH_FINAL
-# creates the view named by FINAL_TABLE_NAME, and 06c_validate_rvnu_cd creates
-# rvnu_cd_check. Materializing by step name would look for a view that isn't
-# there. NA when the step writes a real table rather than a view (24b).
+# The view a step creates - not its name. 24_ELIG_COH_FINAL creates the view
+# named by FINAL_TABLE_NAME; 06c_validate_rvnu_cd creates rvnu_cd_check.
+# NA when the step writes a table (24b).
 step_view_name <- function(sql) {
   m <- regmatches(sql, regexpr("CREATE OR REPLACE TEMPORARY VIEW +[^ \n]+",
                                sql, ignore.case = TRUE))
@@ -232,8 +237,7 @@ step_view_name <- function(sql) {
   sub("CREATE OR REPLACE TEMPORARY VIEW +", "", m[1], ignore.case = TRUE)
 }
 
-# The final cohort view is skipped: step 24b already writes it as a permanent
-# table under its own name, which is what LOT reads.
+# Skip the final cohort view - 24b writes that table already.
 is_checkpoint <- function(view_name, ckpt_steps, cfg) {
   if (is.na(view_name)) return(FALSE)
   if (identical(view_name, cfg$final_table_name)) return(FALSE)
@@ -241,11 +245,8 @@ is_checkpoint <- function(view_name, ckpt_steps, cfg) {
 }
 
 # Source this folder's modules. Call before build_cohort().
-#
-# Order matters: cfg_defaults reads Sys.getenv() at source time, so the config
-# has to be applied before config_prompts.R is sourced. config.csv is read
-# first and wins; pipeline_inputs.csv (this folder, else Jul 28/) fills the
-# rest. A real env var set before either wins over both.
+# Order matters: cfg_defaults reads Sys.getenv() when sourced, so the config
+# files have to be applied first. config.csv wins, then pipeline_inputs.csv.
 load_cohort_modules <- function(root) {
   d <- file.path(root, "R")
   source(file.path(d, "load_inputs.R"))

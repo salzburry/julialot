@@ -1,52 +1,16 @@
 #!/usr/bin/env Rscript
-# =============================================================================
-# stage_cdm.R -- copy the CDM tables this study needs into the work schema
-# -----------------------------------------------------------------------------
-#   DATABRICKS_PWD=... Rscript "Jul 28/stage_cdm.R"
+# Copy the CDM tables this study needs into the work schema, so the build
+# stops re-scanning the shared quarterly tables.
 #
-# then build against the copies:
+#   Rscript "Jul 28/stage_cdm.R"
+#   OPTUM_CDM_SCHEMA=osk02156 Rscript "Jul 28/overall/build.R"
 #
-#   OPTUM_CDM_SCHEMA=osk02156 DATABRICKS_PWD=... Rscript "Jul 28/overall/build.R"
+# The copies keep the names cdm_src() builds, so pointing OPTUM_CDM_SCHEMA at
+# them is the only change. Run once per data vintage.
 #
-# The staged tables keep the names cdm_src() already builds -- t_medical_2025q2
-# and so on -- so pointing OPTUM_CDM_SCHEMA at the work schema is the whole
-# change. No step SQL moves, and the equivalence test is untouched.
-#
-# Run it once per data vintage. Both cohorts and LOT can read the same copies.
-#
-# Rows only, every column. Dropping columns saves little and a missing one
-# breaks a step at runtime.
-#
-# THE WINDOW HAS TO COVER EVERY LOOKBACK AND LOOK-AFTER:
-#   baseline lookback   index - baseline_days, and index can be as early as
-#                       id_start, so the copy must start at
-#                       id_start - baseline_days - gap_days.
-#                       With the shipped dates that is 2015-06-02, which is
-#                       BEFORE study_start (2015-07-01) - the study window on
-#                       its own leaves only one day of slack.
-#   30/60/90-day pair   both claims come from mm_dx_events_id, so both sit
-#                       inside the ID period. Nothing spills past id_end.
-#   other cancer 30d    the second claim is already truncated at study_end by
-#                       the step itself, so the copy loses nothing.
-#   follow-up           ends at min(death, study_end). Nothing past study_end.
-#
-# So: lower bound is the earliest of study_start and the baseline requirement,
-# upper bound is study_end. Every claim-table read in steps/ is itself bounded
-# by study_start..study_end, which is what makes the copy a superset.
-#
-# WHICH TABLES GET A DATE FILTER MATTERS:
-#   medical / med_diagnosis / med_procedure   FST_DT in the study window
-#   rx                                        FILL_DT in the study window
-#     - every step that reads these bounds itself the same way, so the window
-#       is a superset of what any of them ask for.
-#   confinement                               NO FILTER
-#     - joined on CONF_ID, not on date. A stay that began before study_start
-#       can still cover an in-window claim, and dropping it would silently
-#       lose inpatient_flg.
-#   member_enrollment / member_cont_enrollment  NO FILTER
-#     - baseline needs coverage from before study_start.
-#   dod                                       NO FILTER (small)
-# =============================================================================
+# Two things to get right, both handled below: the window has to reach back far
+# enough for the baseline lookback, and three tables must not be date-filtered
+# at all.
 
 here <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -70,7 +34,8 @@ baseline    <- as.integer(Sys.getenv("BASELINE_DAYS", unset = "183"))
 gap         <- as.integer(Sys.getenv("GAP_DAYS", unset = "30"))
 quarterly   <- !identical(toupper(Sys.getenv("USE_QUARTERLY_TABLES", unset = "TRUE")), "FALSE")
 
-# Earliest date any step can ask for, and the copy has to reach it.
+# Baseline looks back from the earliest possible index date. study_start only
+# clears that by a day, so derive the bound instead of trusting it.
 need_from <- as.Date(id_start) - baseline - gap
 from <- format(min(as.Date(study_start), need_from))
 to   <- study_end
@@ -81,7 +46,9 @@ if (identical(target, cdm_schema))
   stop("Target schema is the CDM schema. Refusing to write over the source.",
        call. = FALSE)
 
-# base table -> the column to bound on, or NA to copy whole
+# Date column to bound on, or NA to copy the whole table.
+# confinement joins on CONF_ID and a stay can start before the window.
+# The enrollment tables carry the baseline coverage. dod is small.
 TABLES <- list(
   medical                = "FST_DT",
   med_diagnosis          = "FST_DT",
@@ -128,8 +95,7 @@ for (base in names(TABLES)) {
   say(base, if (is.na(date_col)) "  (whole table)" else paste0("  ", date_col, " in window"))
   dbExecute(con, paste0("CREATE OR REPLACE TABLE ", dst, " AS SELECT * FROM ", src, where))
 
-  # The copy has to match what the source holds under the same filter, or a
-  # step reading it will quietly see fewer rows than it should.
+  # Same filter both sides, or the copy is quietly short.
   n_src <- dbGetQuery(con, paste0("SELECT count(*) AS n FROM ", src, where))$n
   n_dst <- dbGetQuery(con, paste0("SELECT count(*) AS n FROM ", dst))$n
   secs  <- round(as.numeric(difftime(Sys.time(), t0, units = "secs")), 1)

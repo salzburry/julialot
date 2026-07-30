@@ -1,11 +1,6 @@
-# The ordered list of CREATE-VIEW steps.
-#
-# Same steps, same order, same SQL as apr_30_2026/R/pipeline_steps.R - each
-# phase just lives in its own file under steps/ now, so the IE criteria can be
-# read one at a time. tests/test_same_as_source.R checks the SQL matches.
-#
-# The phases used to be closures inside build_steps(); they now take `h`
-# (naming) and `ctx` (criteria SQL, follow-up cap, code-list sources).
+# The ordered list of CREATE-VIEW steps. One file per phase under steps/, so
+# the IE criteria can be read a step at a time. test_same_as_source.R checks
+# the SQL still matches apr_30_2026.
 
 PHASE_FILES <- c(
   codelists      = "01_codelists.R",
