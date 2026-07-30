@@ -68,8 +68,10 @@ body_of <- function(lines) {
 # because every source line was still there.
 #
 # The list is strict both ways. An unapproved line survives the undoing and
-# breaks equality; an approved guard that gets deleted leaves its entry with
-# nothing to remove, which is reported.
+# breaks equality; an approved deviation that gets deleted leaves its entry
+# with nothing to remove, which is reported. That second half matters most for
+# CUT: an added block is not in the source, so losing all of it would otherwise
+# read as a perfect match.
 
 # Blocks that replace source text: cut ours, put the source's back.
 SPLICE <- list(
@@ -81,8 +83,11 @@ SPLICE <- list(
 
 # Blocks that are pure additions: cut, replace with nothing.
 CUT <- list(
-  "05_sct.R" = list(c(from = "sct_dup <- db_q(con, \"",
-                      to   = "log_msg(\"  OK: Each SCT code names exactly one transplant type.\")"))
+  "05_sct.R" = list(
+    c(from = "sct_dup <- db_q(con, \"",
+      to   = "log_msg(\"  OK: Each SCT code names exactly one transplant type.\")"),
+    c(from = "sct_unmapped <- db_q(con, \"",
+      to   = "log_msg(\"  OK: Every SCT_TYPE is one the build reads.\")"))
 )
 
 # Lines that were EDITED rather than added, and how many of each. Counted like
@@ -118,12 +123,25 @@ undeviate <- function(lines, file) {
     }
   }
   lines <- code_only(lines)
+  short <- character(0)
+  # Reported like the rest. A CUT block is a pure addition, so deleting the
+  # whole of it - both anchors with it - would leave nothing to cut and a port
+  # that matches the source exactly, which is how a safety check could be
+  # removed with every suite still green.
   for (cb in CUT[[file]]) {
     a <- grep(cb[["from"]], lines, fixed = TRUE)[1]
     b <- grep(cb[["to"]],   lines, fixed = TRUE)[1]
-    if (!is.na(a) && !is.na(b) && b >= a) lines <- lines[-(a:b)]
+    if (is.na(a) || is.na(b) || b < a) {
+      short <- c(short, paste0(cb[["from"]], " ... ", cb[["to"]],
+                               " (added block gone: ",
+                               if (is.na(a) && is.na(b)) "neither anchor found"
+                               else if (is.na(a)) "opening anchor not found"
+                               else if (is.na(b)) "closing anchor not found"
+                               else "anchors out of order", ")"))
+      next
+    }
+    lines <- lines[-(a:b)]
   }
-  short <- character(0)
   for (sb in SUBST[[file]]) {
     hit <- which(lines == sb$from)
     if (length(hit) != sb$n)
@@ -200,7 +218,7 @@ for (p in PHASES) {
   if (p$file %in% CHANGED) {
     short <- get(p$file, envir = undo_report)
     if (length(short)) {
-      ok(FALSE, paste0(p$file, ": an approved guard is missing -- ", short[1]))
+      ok(FALSE, paste0(p$file, ": an approved deviation is missing -- ", short[1]))
       next
     }
     # "differs, and the guards are there" would let an unrelated clinical

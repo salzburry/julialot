@@ -39,7 +39,8 @@ CONTRACT <- list(
 # Code-list checks a run may waive by name. A single switch for all of them
 # meant waiving one expected condition also waived the dangerous ones.
 WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types", "multi_class",
-                     "code_to_med", "bad_ndc", "rollup_defs", "blank_keys")
+                     "code_to_med", "bad_ndc", "rollup_defs", "blank_keys",
+                     "subs_substitute", "subs_original")
 
 codelist_waivers <- function() {
   v <- trimws(strsplit(Sys.getenv("CODELIST_WAIVERS", unset = ""), "[,|]")[[1]])
@@ -336,21 +337,57 @@ materialize_sct_views <- function(con) {
 
 # One row per run saying whether its outputs belong together. Without it a
 # failed run leaves tables that look complete.
+BUILD_STATUS_COLS <- c(
+  RUN_ID = "STRING", INPUT_COHORT_TABLE = "STRING", OBJECT_PREFIX = "STRING",
+  STATE = "STRING", CODELIST_WAIVERS = "STRING", UPDATED_AT = "TIMESTAMP")
+
 write_build_status <- function(con, cfg, state) {
-  tbl <- lot_out("LOT_BUILD_STATUS")
-  db_exec(con, glue("
-    CREATE TABLE IF NOT EXISTS {tbl} (
-      RUN_ID STRING, INPUT_COHORT_TABLE STRING, OBJECT_PREFIX STRING,
-      STATE STRING, CODELIST_WAIVERS STRING, UPDATED_AT TIMESTAMP)"))
+  tbl  <- lot_out("LOT_BUILD_STATUS")
+  cols <- names(BUILD_STATUS_COLS)
+  db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
+                    paste(cols, BUILD_STATUS_COLS, collapse = ", "), ")"))
+
+  # CREATE TABLE IF NOT EXISTS does nothing to a table an earlier version of
+  # this package left behind, so a column added since is still absent. Naming
+  # the columns in the INSERT below stops a positional mis-fill - it cannot
+  # supply a column that is not there, and the insert would simply fail. Add
+  # it, the way LOT_RUN_METADATA does in 08_persist. Look before adding:
+  # adding a column that already exists is an error.
+  have <- tryCatch({
+    d  <- db_q(con, glue("DESCRIBE {tbl}"))
+    cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
+    if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else character(0)
+  }, error = function(e) character(0))
+  # No answer means DESCRIBE failed, not that the table has no columns. Acting
+  # on that would try to add all six to a table that already has them.
+  for (m in if (length(have)) setdiff(cols, have) else character(0)) {
+    tryCatch({
+      db_exec(con, glue("ALTER TABLE {tbl} ADD COLUMNS ({m} {BUILD_STATUS_COLS[[m]]})"))
+      log_msg("  Build status schema evolution: added ", m)
+    }, error = function(e) {
+      msg <- conditionMessage(e)
+      # Unlike the metadata table, every one of these is in the INSERT, so a
+      # column we could not add is a failure now rather than a warning.
+      if (!grepl("already exists|AlreadyExists|FIELD_ALREADY_EXISTS",
+                 msg, ignore.case = TRUE))
+        stop("Cannot add ", m, " to ", tbl, ": ", msg, call. = FALSE)
+    })
+  }
+
   db_exec(con, glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"))
   waivers <- paste(codelist_waivers(), collapse = "|")
-  # Name the columns: CREATE TABLE IF NOT EXISTS is a no-op against an older
-  # five-column table, and a positional insert would then mis-fill it.
-  db_exec(con, glue("
-    INSERT INTO {tbl}
-      (RUN_ID, INPUT_COHORT_TABLE, OBJECT_PREFIX, STATE, CODELIST_WAIVERS, UPDATED_AT)
-    VALUES ('{run_id}', '{cfg$input_cohort_table}',
-      '{cfg$object_prefix}', '{state}', '{waivers}', current_timestamp())"))
+  vals <- c(RUN_ID             = glue("'{run_id}'"),
+            INPUT_COHORT_TABLE = glue("'{cfg$input_cohort_table}'"),
+            OBJECT_PREFIX      = glue("'{cfg$object_prefix}'"),
+            STATE              = glue("'{state}'"),
+            CODELIST_WAIVERS   = glue("'{waivers}'"),
+            UPDATED_AT         = "current_timestamp()")
+  # One declaration drives the CREATE, the upgrade and the INSERT, so they
+  # cannot drift apart again - a column added to BUILD_STATUS_COLS with no
+  # value here stops the build rather than reaching the warehouse.
+  stopifnot(identical(names(vals), cols))
+  db_exec(con, glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) ",
+                    "VALUES ({paste(vals, collapse = ', ')})"))
   log_msg("Build status: ", state, " (run ", run_id, ")")
   invisible(TRUE)
 }

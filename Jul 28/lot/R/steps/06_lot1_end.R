@@ -3,6 +3,16 @@
 phase_lot1_end <- function(con, ctx) {
   meds <- ctx$meds
 
+  # Materialize heavy upstream views before final assembly + reporting.
+  # map_stacked, lot1_base, and lot1_sct are TEMPORARY VIEWs with deep
+  # CTE chains back to CDM tables. S16 itself only references each
+  # once, so the pay-off is downstream: descriptives reads map_stacked
+  # ~17x, lot1_sct ~11x, and lot1_base several times; MAP validation
+  # QC and run-metadata counts touch them again. Materializing once
+  # here lets every downstream query hit a physical work-schema table
+  # instead of re-evaluating the CTE chain.
+  # Write to work schema tables, then repoint the views at them.
+  # (CACHE TABLE is not supported on SQL warehouses.)
   log_msg("Materializing intermediate views for downstream reporting/QC...")
   for (mv in list(
     list(name = "MAP_STACKED", view = "map_stacked"),

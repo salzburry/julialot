@@ -182,11 +182,52 @@ for (st in c("started", "complete", "failed"))
   ok(grepl(paste0('"', st, '"'), bl, fixed = TRUE),
      paste0("build status records '", st, "'"))
 ok(grepl("LOT_BUILD_STATUS", bl, fixed = TRUE), "into its own prefixed table")
-ok(grepl("CODELIST_WAIVERS STRING", bl, fixed = TRUE),
+ok("CODELIST_WAIVERS" %in% names(BUILD_STATUS_COLS),
    "and the status row records which checks were waived")
 # 08_persist writes metadata inside a tryCatch, so confirm the row arrived.
 ok(grepl("check_run_recorded", bl, fixed = TRUE),
    "a run with no metadata row is not called complete")
+
+cat("\n-- an older status table is upgraded, not written into blind --\n")
+# CREATE TABLE IF NOT EXISTS does nothing to a table an earlier version of this
+# package left behind, so a run after a column was added would INSERT a column
+# that is not there. LOT_RUN_METADATA already had a DESCRIBE/ALTER path; this
+# table had only a comment claiming that naming the columns was enough, which
+# prevents a positional mis-fill but cannot supply a missing column.
+se <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_lot.R"), envir = se)
+assign("log_msg", function(...) invisible(NULL), envir = se)
+assign("lot_out", function(x) paste0("wk.p_", x), envir = se)
+assign("codelist_waivers", function() "code_types", envir = se)
+assign("run_id", "TESTRUN", envir = se)
+BSC <- get("BUILD_STATUS_COLS", envir = se)
+# `present` is what DESCRIBE answers; NULL means it could not answer at all.
+sql_for <- function(present) {
+  out <- character(0)
+  assign("db_exec", function(con, s) { out <<- c(out, s); invisible(TRUE) }, envir = se)
+  assign("db_q", if (is.null(present)) function(con, s) stop("no such table")
+         else function(con, s) data.frame(col_name = present, stringsAsFactors = FALSE),
+         envir = se)
+  se$write_build_status(NULL, list(input_cohort_table = "COH",
+                                   object_prefix = "p_"), "started")
+  out
+}
+old <- sql_for(setdiff(names(BSC), "CODELIST_WAIVERS"))
+ok(any(grepl("ALTER TABLE wk.p_LOT_BUILD_STATUS ADD COLUMNS (CODELIST_WAIVERS STRING)",
+             old, fixed = TRUE)),
+   "a five-column table gets the column it is missing")
+ok(which(grepl("ALTER", old))[1] < which(grepl("INSERT", old))[1],
+   "added before the insert that needs it, not after")
+cur <- sql_for(names(BSC))
+ok(!any(grepl("ALTER", cur)), "a current table is left alone")
+ok(any(grepl(paste0("(", paste(names(BSC), collapse = ", "), ")"), cur, fixed = TRUE)),
+   "the insert still names every column, so nothing is filled positionally")
+ok(any(grepl(paste(paste(names(BSC), BSC), collapse = ", "), cur, fixed = TRUE)),
+   "and one declaration drives the CREATE, the upgrade and the INSERT alike")
+# An empty answer means DESCRIBE failed, not that the table has no columns.
+# Adding all six to a table that has them would error on the first.
+ok(!any(grepl("ALTER", sql_for(NULL))),
+   "a DESCRIBE that cannot answer adds nothing")
 
 cat("\n-- the code lists are recorded and checked --\n")
 # They live outside git, so the run log is the only record of which version
@@ -237,8 +278,13 @@ ok(grepl("stop(\"The production code lists would change", cd, fixed = TRUE),
 ok(grepl("codelist_waivers()", cd, fixed = TRUE),
    "and a waiver names the individual check, not all of them")
 for (w in c("orphan_meds", "uncoded_meds", "unexpected_types", "multi_class",
-            "code_to_med", "bad_ndc"))
+            "code_to_med", "bad_ndc", "subs_sub", "subs_orig"))
   ok(grepl(paste0(w, " <-"), cd, fixed = TRUE), paste0(w, " is checked"))
+# NOT IN against a column that may be NULL returns no rows at all, so the
+# check would pass by being unanswerable. Both sides use NOT EXISTS.
+ok(length(gregexpr("NOT EXISTS (", cd, fixed = TRUE)[[1]]) == 2 &&
+     !grepl("NOT IN (SELECT", cd, fixed = TRUE),
+   "the substitution checks cannot pass by being unanswerable")
 # Extraction only joins NDC and HCPCS; the source also accepted ICD, which
 # matches nothing.
 ok(grepl('EXTRACTED_CODE_TYPES <- c("NDC", "HCPCS")', cd, fixed = TRUE),
@@ -277,6 +323,12 @@ mk_db_q <- function(problem) function(con, sql) {
   if (grepl("AS bigint\\) = 0", sql))
     return(if (problem == "bad_ndc") data.frame(CL_CODE = "00000000000", CL_MED_ABBR = "X")
            else data.frame(CL_CODE = character(0), CL_MED_ABBR = character(0)))
+  if (grepl("c.CL_MED_ABBR = p.substitute_med", sql, fixed = TRUE))
+    return(if (problem == "subs_substitute") data.frame(med = "LENN")
+           else data.frame(med = character(0)))
+  if (grepl("c.CL_MED_ABBR = p.original_med", sql, fixed = TRUE))
+    return(if (problem == "subs_original") data.frame(med = "BORT")
+           else data.frame(med = character(0)))
   if (grepl("count\\(DISTINCT CL_MED_ABBR\\) AS n FROM mma_rollup", sql)) return(data.frame(n = 28))
   if (grepl("count\\(\\*\\) AS n FROM mma_codelist", sql)) return(data.frame(n = 500))
   if (grepl("SELECT DISTINCT CL_MED_ABBR FROM mma_rollup", sql, fixed = TRUE))
@@ -300,7 +352,7 @@ assign("db_q", mk_db_q("none"), envir = ce)
 ok(!inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
    "a consistent pair of code lists runs")
 for (prob in c("orphan", "uncoded", "type", "class", "code_to_med", "bad_ndc",
-               "rollup_defs", "blank_keys")) {
+               "rollup_defs", "blank_keys", "subs_substitute", "subs_original")) {
   assign("db_q", mk_db_q(prob), envir = ce)
   ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
      paste0("'", prob, "' stops the build"))
@@ -418,6 +470,43 @@ sc2 <- paste(readLines(file.path(ROOT, "R", "steps", "05_sct.R"), warn = FALSE),
              collapse = "\n")
 ok(grepl("WHERE CL_CODE_TYPE IN ('ICD10PROC', 'ICD9PROC', 'HCPCS')", sc2, fixed = TRUE),
    "SCT also checks across the types that share a claim column")
+# S11 maps the spellings it knows and passes anything else through. Only AUTO,
+# ALLO and CART are ever selected from - UNKNOWN is a bucket nothing reads - so
+# an unmapped spelling is not an error anywhere, it just never matches.
+ok(grepl("ELSE upper(trim(SCT_TYPE))", sc2, fixed = TRUE),
+   "the normalizer still passes an unrecognized spelling through unchanged")
+se2 <- new.env(parent = globalenv())
+for (nm in c("log_msg", "print")) assign(nm, function(...) invisible(NULL), envir = se2)
+assign("run_step", function(...) invisible(TRUE), envir = se2)
+assign("glue", function(..., .envir = parent.frame()) paste0(..., collapse = ""),
+       envir = se2)
+sys.source(file.path(ROOT, "R", "steps", "05_sct.R"), envir = se2)
+sct_db_q <- function(bad) function(con, sql) {
+  if (grepl("NOT IN ('AUTO', 'ALLO', 'CART', 'UNKNOWN')", sql, fixed = TRUE))
+    return(if (is.null(bad)) data.frame(SCT_TYPE = character(0), n_codes = integer(0))
+           else data.frame(SCT_TYPE = bad, n_codes = 4L))
+  data.frame()
+}
+run_sct <- function(bad) {
+  assign("db_q", sct_db_q(bad), envir = se2)
+  tryCatch({ se2$phase_sct(NULL, list(sct_src = "src")); NULL },
+           error = function(e) conditionMessage(e))
+}
+ok(is.null(run_sct(NULL)), "only the types the build reads: the phase runs")
+unmapped <- run_sct("PERIPHERAL BLOOD")
+ok(!is.null(unmapped), "an unmapped SCT_TYPE stops the build")
+ok(grepl("PERIPHERAL BLOOD", unmapped, fixed = TRUE),
+   "and the message names the spelling to add or fix")
+# Which types count is decided by the query, not by the stub above, so assert
+# the predicate itself. UNKNOWN is deliberate - the CASE creates it and nothing
+# reads it - so stopping on it would fail every run that has one.
+ok(grepl("NOT IN ('AUTO', 'ALLO', 'CART', 'UNKNOWN')", sc2, fixed = TRUE),
+   "UNKNOWN is accepted alongside the three that are read")
+for (t in c("AUTO", "ALLO", "CART"))
+  ok(grepl(paste0("SCT_TYPE = '", t, "'"), paste(sc2, sql_of_10 <- paste(
+       readLines(file.path(ROOT, "R", "steps", "10_lot2_5_base.R"), warn = FALSE),
+       collapse = "\n")), fixed = TRUE),
+     paste0(t, " is a type something downstream actually selects"))
 ok(grepl("AS n_defs", cd2, fixed = TRUE),
    "one rollup medication, one definition - DISTINCT only removes identical rows")
 ok(grepl("AS n_rollup", cd2, fixed = TRUE),
@@ -532,5 +621,25 @@ for (k in names(EXPECT))
 # The caller passes the cohort, so config.csv must not pin one.
 ok(!any(c("INPUT_COHORT_TABLE", "OBJECT_PREFIX") %in% names(shipped)),
    "config.csv does not name a cohort")
+
+cat("\n-- the README still describes this build --\n")
+# Prose cannot be checked, but these two lists can, and both had already gone
+# stale: the README named six waivers where the code has eight, and its layout
+# had the step files in an order the build does not run them in.
+readme <- readLines(file.path(ROOT, "README.md"), warn = FALSE)
+documented <- unique(unlist(regmatches(readme, gregexpr("`[a-z_0-9]+`", readme))))
+documented <- gsub("`", "", documented)
+missing_w <- setdiff(WAIVABLE_CHECKS, documented)
+ok(length(missing_w) == 0,
+   if (length(missing_w)) paste0("waiver not in the README: ",
+                                 paste(missing_w, collapse = ", "))
+   else "every waivable check is named in the README")
+steps_on_disk <- basename(list.files(file.path(ROOT, "R", "steps"), "\\.R$"))
+missing_s <- steps_on_disk[!vapply(steps_on_disk, function(f)
+  any(grepl(f, readme, fixed = TRUE)), logical(1))]
+ok(length(missing_s) == 0,
+   if (length(missing_s)) paste0("step file not in the README layout: ",
+                                 paste(missing_s, collapse = ", "))
+   else paste0("all ", length(steps_on_disk), " step files appear in the README"))
 
 report()
