@@ -143,7 +143,8 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_cohort",
            "check_lot_contract", "set_lot_config", "check_cohort_input",
            "phase_codelists", "phase_patient_input", "phase_mma_map",
            "phase_lot1_base", "phase_sct", "phase_lot1_end", "phase_qc",
-           "check_lot1_invariants", "phase_persist", "build_lot2_5",
+           "check_lot1_invariants", "phase_persist", "materialize_sct_views",
+           "build_lot2_5",
            "check_lot_long", "phase_line_criteria", "check_run_recorded")
 at <- vapply(ORDER, function(f) {
   m <- regexpr(paste0("(?<![A-Za-z0-9_.])", f, "\\("), body, perl = TRUE)
@@ -296,6 +297,46 @@ assign("db_q", mk_db_q("code_to_med"), envir = ce)
 ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
    "and still stops on a code naming two medications")
 Sys.unsetenv("CODELIST_WAIVERS")
+
+cat("\n-- LOT2-5 reads tables, not repeated CDM scans --\n")
+# LOT1 leaves sct_claims_raw, tx_auto_dates and tx_allo_cart_dates as views
+# over raw medical/procedure/diagnosis. LOT2-5 reads them once per line, so
+# leaving them lazy means Spark re-runs those scans every time. Skipping the
+# rebuild is right; skipping the materialization was not.
+ok(grepl("materialize_sct_views(con)", body, fixed = TRUE),
+   "build_lot() calls materialize_sct_views(), not merely defines it")
+mv_at <- regexpr("SCT_MATERIALIZE <- list", bl, fixed = TRUE)
+mv <- substr(bl, mv_at, mv_at + 400)
+ok(regexpr("sct_claims_raw", mv, fixed = TRUE) <
+     regexpr("tx_auto_dates", mv, fixed = TRUE),
+   "sct_claims_raw first, so the other two read a table not a CDM scan")
+ok(grepl("CREATE OR REPLACE TEMPORARY VIEW {mv$view} AS SELECT * FROM {lot_out(mv$name)}",
+         bl, fixed = TRUE),
+   "and each view is repointed at its table afterwards")
+# The probe must not be the expensive thing it is checking for.
+ok(grepl("SHOW VIEWS", bl, fixed = TRUE) &&
+     !grepl("SELECT 1 FROM {v} LIMIT 1", bl, fixed = TRUE),
+   "existence is asked of the catalogue, not by running the view")
+
+pe <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_lot.R"), envir = pe)
+assign("log_msg", function(...) invisible(NULL), envir = pe)
+asked <- character(0)
+assign("db_q", function(con, sql) {
+  asked <<- c(asked, sql)
+  data.frame(viewName = get("LOT2_5_INPUT_VIEWS", envir = pe),
+             stringsAsFactors = FALSE)
+}, envir = pe)
+ok(isTRUE(pe$lot_inputs_present(NULL)), "all ten present is detected")
+ok(length(asked) == 1 && grepl("SHOW VIEWS", asked[1], fixed = TRUE),
+   "with one catalogue query, not ten reads")
+assign("db_q", function(con, sql)
+  data.frame(viewName = c("lot_patient_input", "mma_rollup"),
+             stringsAsFactors = FALSE), envir = pe)
+ok(!isTRUE(pe$lot_inputs_present(NULL)), "a missing view is detected")
+assign("db_q", function(con, sql) stop("no such command"), envir = pe)
+ok(!isTRUE(pe$lot_inputs_present(NULL)),
+   "and if the catalogue cannot answer, it rebuilds rather than assumes")
 
 cat("\n-- the contract rejects every value that changes a LOT --\n")
 clear()

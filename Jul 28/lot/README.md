@@ -154,6 +154,27 @@ drugs. The waived checks are recorded in `LOT_BUILD_STATUS`. Names:
 `orphan_meds`, `uncoded_meds`, `code_types`, `multi_class`, `code_to_med`,
 `bad_ndc`.
 
+## Why the run materializes the SCT views
+
+LOT1 leaves `sct_claims_raw`, `tx_auto_dates` and `tx_allo_cart_dates` as views
+over raw medical, procedure and diagnosis. LOT2-5 reads them once per line, so
+left alone Spark re-runs those scans every time - the source puts it at roughly
+8 AUTO aggregates and 20 SCT scans across LOT2..LOT5.
+
+`prepare_lot_inputs()` exists for a fresh session: it rebuilds those views and
+then materializes them. In a combined run the rebuild is work LOT1 already did,
+so the run does only the half that matters - materialize what is already there
+and repoint the views at the tables. `sct_claims_raw` goes first, so the other
+two write from a table instead of re-running the CDM scan.
+
+Whether the views exist is asked of the catalogue (`SHOW VIEWS`), not by
+selecting from them: a `SELECT 1` on a lazy view runs the view, which is the
+cost being avoided. If the catalogue cannot answer, the run rebuilds - slower,
+but never wrong.
+
+Each materialization logs its own duration, so the first run says what this
+actually costs rather than leaving it an assumption.
+
 ## Knowing a run finished
 
 LOT1's tables are replaced before LOT2-5 starts, so a failure in between would

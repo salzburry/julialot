@@ -267,6 +267,7 @@ build_lot <- function(here, cohort_table, prefix) {
                        sct_src = ctx$sct_src)
   } else {
     log_msg("Session views from LOT1 are still here; not rebuilding them.")
+    materialize_sct_views(con)
   }
   build_lot2_5(con,
                induction_window_days   = cfg$lot_n_induction_window_days,
@@ -297,10 +298,46 @@ LOT2_5_INPUT_VIEWS <- c("lot_patient_input", "mma_rollup", "permissible_subs",
                         "tx_allo_cart_dates", "map_stacked", "lot1_sct",
                         "lot1_base_end")
 
+# Ask the catalogue, not the data. "SELECT 1 FROM v LIMIT 1" on a lazy view
+# runs the view - and three of these are raw CDM scans, so the existence check
+# itself would have cost real time.
 lot_inputs_present <- function(con) {
-  all(vapply(LOT2_5_INPUT_VIEWS, function(v)
-    !inherits(tryCatch(db_q(con, glue("SELECT 1 FROM {v} LIMIT 1")),
-                       error = function(e) e), "error"), logical(1)))
+  have <- tryCatch(tolower(db_q(con, "SHOW VIEWS")$viewName),
+                   error = function(e) NULL)
+  # If the catalogue cannot answer, say no: rebuilding is slow but correct.
+  if (is.null(have)) return(FALSE)
+  all(tolower(LOT2_5_INPUT_VIEWS) %in% have)
+}
+
+# LOT1 leaves these three as views over raw medical, procedure and diagnosis.
+# LOT2-5 reads them once per line, so Spark re-runs those scans every time -
+# the source measures roughly 8 AUTO aggregates and 20 SCT scans across
+# LOT2..LOT5. prepare_lot_inputs() materializes them, but it rebuilds the
+# views first, which in one session is work LOT1 already did. This is the half
+# that is worth doing: materialize what exists, and repoint the views at it.
+#
+# sct_claims_raw goes first and is repointed before the other two, so their
+# writes read a table rather than re-running the CDM scan.
+SCT_MATERIALIZE <- list(
+  list(view = "sct_claims_raw",     name = "SCT_CLAIMS_RAW"),
+  list(view = "tx_auto_dates",      name = "TX_AUTO_DATES"),
+  list(view = "tx_allo_cart_dates", name = "TX_ALLO_CART_DATES")
+)
+
+materialize_sct_views <- function(con) {
+  for (mv in SCT_MATERIALIZE) {
+    t0 <- Sys.time()
+    run_step(con, paste0("L20_materialize_", tolower(mv$name)),
+             glue("CREATE OR REPLACE TABLE {lot_out(mv$name)} AS SELECT * FROM {mv$view}"),
+             qc = glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients
+                        FROM {lot_out(mv$name)}"))
+    db_exec(con, glue(
+      "CREATE OR REPLACE TEMPORARY VIEW {mv$view} AS SELECT * FROM {lot_out(mv$name)}"))
+    log_msg("  ", mv$name, " materialized in ",
+            round(as.numeric(difftime(Sys.time(), t0, units = "secs")), 1), " s")
+  }
+  log_msg("SCT views materialized; LOT2-5 reads tables, not CDM scans.")
+  invisible(TRUE)
 }
 
 # One row per run saying whether its outputs belong together. Without it a
