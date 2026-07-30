@@ -42,7 +42,6 @@ cfg_defaults <- list(
   cl_preg            = "cl_pregnancy",
   cl_clintrial       = "cl_clintrial",
   cl_other_malig     = "cl_other_malignancies",
-  # Not used by this build; kept so the code lists stay one set
 
   # ---- Code-list CSVs (on server filesystem at /mnt/code/codelist/) ----
   # When use_csv_codelists = TRUE, the cohort CSVs are loaded into temp views.

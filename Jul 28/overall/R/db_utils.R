@@ -202,8 +202,10 @@ materialize_to_personal_schema <- function(con, view_name, cfg, mat_tables) {
   if (is.na(max_attempts) || max_attempts < 1) max_attempts <- 3L
 
   # Write to a new staging table, then publish it to the final name.
-  # The long write touches no existing table metadata, so a concurrent
-  # commit can't collide with it; the swap itself takes seconds.
+  # The long write touches no existing table metadata, so a concurrent commit
+  # can't collide with it. Publishing is a second copy, not a rename - it
+  # re-reads the staged table instead of the query, but it still writes the
+  # rows again. Both times are logged; measure before assuming it is cheap.
   for (attempt in seq_len(max_attempts)) {
     t0 <- Sys.time()
     stg <- paste0(full_table_name, "__stg_",
@@ -218,19 +220,22 @@ materialize_to_personal_schema <- function(con, view_name, cfg, mat_tables) {
       # to the concurrent-metadata failure during the long scan).
       DBI::dbExecute(con, glue(
         "CREATE TABLE {stg} AS SELECT * FROM `{view_name}`"))
-      el_stg <- round(as.numeric(difftime(Sys.time(), t0, units = "secs")), 1)
+      t1 <- Sys.time()
+      el_stg <- round(as.numeric(difftime(t1, t0, units = "secs")), 1)
       log_msg("  >> Staged ", view_name, " in ", el_stg,
               " s; publishing to ", full_table_name, " ...")
-      # Fast swap: source is a materialized table, seconds not minutes.
+      # Second copy, reading the staged table rather than re-running the query.
       DBI::dbExecute(con, glue(
         "CREATE OR REPLACE TABLE {full_table_name} AS SELECT * FROM {stg}"))
+      el_pub <- round(as.numeric(difftime(Sys.time(), t1, units = "secs")), 1)
       DBI::dbExecute(con, glue(
         "CREATE OR REPLACE TEMPORARY VIEW {view_name} AS SELECT * FROM {full_table_name}"))
       try(DBI::dbExecute(con, glue("DROP TABLE IF EXISTS {stg}")), silent = TRUE)
       assign(view_name, full_table_name, envir = mat_tables)
       el <- round(as.numeric(difftime(Sys.time(), t0, units = "secs")), 1)
       log_msg("  >> Materialized ", view_name, " OK in ", el,
-              " s (staged + published, view alias re-pointed)")
+              " s (stage ", el_stg, " s + publish ", el_pub,
+              " s, view alias re-pointed)")
       TRUE
     }, error = function(e) e)
 

@@ -188,6 +188,12 @@ bad_files <- modifyList(base, list(codelist_csv_map =
   modifyList(CODELIST_FILES, list(cl_mm_dx = "some_other_file.csv"))))
 stops(check_output_contract(bad_files, "OVERALL_COH_FINAL", "overall_"),
       "rejects a renamed code-list file")
+# The five declared entries are untouched here; only the whole-map check
+# catches it, and cl_mm_dx is pinned so nothing could select the new key.
+extra_key <- modifyList(base, list(codelist_csv_map =
+  c(CODELIST_FILES, list(cl_mm_dx_v2 = "some_other_file.csv"))))
+stops(check_output_contract(extra_key, "OVERALL_COH_FINAL", "overall_"),
+      "rejects an extra code-list mapping")
 clear()
 
 cat("\n-- the shipped config.csv, not a sample --\n")
