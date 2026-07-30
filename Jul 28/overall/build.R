@@ -3,8 +3,7 @@
 #
 #   DATABRICKS_PWD=... Rscript "Jul 28/overall/build.R"
 #
-# R/ is this cohort's code, config.csv its switches. Shared defaults come
-# from ../pipeline_inputs.csv.
+# R/ holds the helpers and IE steps, config.csv everything else.
 
 here <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
