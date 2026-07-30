@@ -254,17 +254,14 @@ is_checkpoint <- function(view_name, ckpt_steps, cfg) {
 }
 
 # Source this folder's modules. Call before build_cohort().
-# Order matters: cfg_defaults reads Sys.getenv() when sourced, so the config
-# files have to be applied first. config.csv wins, then pipeline_inputs.csv.
+# Order matters: cfg_defaults reads Sys.getenv() when sourced, so config.csv
+# has to be applied first. A real env var still wins over the file.
 load_cohort_modules <- function(root) {
   d <- file.path(root, "R")
   source(file.path(d, "load_inputs.R"))
   if (!file.exists(file.path(root, "config.csv")))
     stop("No config.csv in ", root, call. = FALSE)
   load_pipeline_inputs(root, filename = "config.csv")
-  if (!isTRUE(load_pipeline_inputs(c(root, dirname(root)))))
-    stop("No pipeline_inputs.csv in ", root, " or ", dirname(root),
-         ". Running on code defaults would be silently wrong.", call. = FALSE)
   for (f in c("config_prompts.R", "db_utils.R", "codelists.R",
               "criteria_attrition.R", "pipeline_steps.R"))
     source(file.path(d, f))

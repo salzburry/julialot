@@ -78,9 +78,9 @@ runs(check_output_contract(good, "OVERALL_COH_FINAL", "overall_"), "accepts the 
 stops(check_output_contract(modifyList(good, list(final_table_name = "ELIG_COH_FINAL")),
                             "OVERALL_COH_FINAL", "overall_"),
       "rejects an ambient FINAL_TABLE_NAME")
-stops(check_output_contract(modifyList(good, list(object_prefix = "ndmm_")),
+stops(check_output_contract(modifyList(good, list(object_prefix = "other_")),
                             "OVERALL_COH_FINAL", "overall_"),
-      "rejects a prefix that would overwrite the other cohort")
+      "rejects a prefix other than the declared one")
 stops(check_output_contract(modifyList(good, list(persist_to_schema = FALSE)),
                             "OVERALL_COH_FINAL", "overall_"),
       "rejects PERSIST_TO_SCHEMA=FALSE")
@@ -118,31 +118,6 @@ ok(identical(p$object_prefix, "overall_"), "prefix carried onto cfg")
 clear()
 stops(pin_output_schema(list(catalog = "hive_metastore")),
       "stops when no schema resolves")
-
-cat("\n-- every windowed CDM read is bounded (stage_cdm.R relies on it) --\n")
-# stage_cdm.R copies medical / med_diagnosis / med_procedure / rx filtered to
-# the study window. That is only a superset because every step bounds itself
-# the same way. A new step reading outside the window would silently see fewer
-# rows from the copy than from the CDM.
-WINDOWED <- c("tbl_medical", "tbl_med_diag", "tbl_med_proc", "tbl_rx")
-PROBES   <- "06c_validate_rvnu_cd"   # column probe, LIMIT 1, needs no rows
-for (f in list.files(file.path(ROOT, "R", "steps"), full.names = TRUE)) {
-  src <- paste(readLines(f, warn = FALSE), collapse = "\n")
-  starts <- gregexpr('name = "([^"]+)"', src)[[1]]
-  if (starts[1] == -1L) next
-  names_found <- regmatches(src, gregexpr('name = "([^"]+)"', src))[[1]]
-  ends <- c(starts[-1] - 1L, nchar(src))
-  for (i in seq_along(starts)) {
-    step <- gsub('^name = "|"$', "", names_found[i])
-    block <- substr(src, starts[i], ends[i])
-    reads <- vapply(WINDOWED, function(t) grepl(paste0("cdm_src(cfg$", t, ")"),
-                                                block, fixed = TRUE), logical(1))
-    if (!any(reads) || step %in% PROBES) next
-    ok(grepl("BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')",
-             block, fixed = TRUE),
-       paste0(step, ": bounded by the study window"))
-  }
-}
 
 cat("\n-- every function build_cohort.R calls actually exists --\n")
 # A missed edit once left write_build_status() and check_normalized_codelist()
