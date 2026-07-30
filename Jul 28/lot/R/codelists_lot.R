@@ -2,6 +2,7 @@
 # there is no embedded or ref-schema fallback.
 
 load_codelist_csv <- function(csv_name, col_spec) {
+  cfg <- lot_config()
   if (!dir.exists(cfg$codelist_dir)) {
     stop(glue("CODELIST ERROR: codelist directory does not exist: {cfg$codelist_dir}"))
   }
@@ -9,7 +10,9 @@ load_codelist_csv <- function(csv_name, col_spec) {
   if (!file.exists(csv_path)) {
     stop(glue("CODELIST ERROR: required CSV file not found: {csv_path}"))
   }
-  df <- read.csv(csv_path, stringsAsFactors = FALSE, na.strings = c("", "NA", "NaN"))
+  # colClasses: without it R reads an NDC as a number and drops leading zeros.
+  df <- read.csv(csv_path, stringsAsFactors = FALSE, na.strings = c("", "NA", "NaN"),
+                 colClasses = "character")
   log_msg("  CSV columns in ", csv_name, ": ", paste(names(df), collapse = ", "))
   missing <- setdiff(col_spec, names(df))
   if (length(missing) > 0) {

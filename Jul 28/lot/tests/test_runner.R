@@ -70,8 +70,20 @@ ok(identical(lot_out("LOT1_BASE"), paste0("hive_metastore.osk02156.", PFX_A, "LO
 ok(identical(wrk(cfg$input_cohort_table), paste0("hive_metastore.osk02156.", TBL_A)),
    "wrk() reads the cohort table as the cohort named it")
 
-OUTPUTS <- c("MAP_STACKED", "LOT1_BASE", "LOT1_SCT", "LOT1_BASE_END",
-             "LOT_RUN_METADATA", "LOT_QC_SUMMARY")
+# Read the real output names out of the ported steps rather than listing them
+# by hand - a hand list goes stale the moment a step adds a table, which is
+# exactly when a collision would slip through.
+step_src <- unlist(lapply(list.files(file.path(ROOT, "R", "steps"), "\\.R$",
+                                     full.names = TRUE), readLines, warn = FALSE))
+step_src <- step_src[!grepl("^\\s*(#|--)", step_src)]
+lits <- unlist(regmatches(step_src, gregexpr("lot_out\\((\'|\")[A-Z_0-9]+(\'|\")\\)",
+                                             step_src, perl = TRUE)))
+OUTPUTS <- unique(gsub("lot_out\\(|\'|\"|\\)", "", lits))
+ok(length(OUTPUTS) >= 6,
+   paste0("found ", length(OUTPUTS), " named outputs in the steps: ",
+          paste(sort(OUTPUTS), collapse = ", ")))
+ok(all(c("LOT_LONG", "LOT_RUN_METADATA") %in% OUTPUTS),
+   "including LOT_LONG, the table LOT2-5 exists to build")
 names_for <- function(prefix) {
   assign("cfg", modifyList(cfg, list(object_prefix = prefix)), envir = globalenv())
   vapply(OUTPUTS, lot_out, character(1))
@@ -84,20 +96,41 @@ assign("cfg", cfg, envir = globalenv())
 cat("\n-- the cohort table is checked before any work --\n")
 # A missing column would otherwise surface deep into the build.
 fake_con <- structure(list(), class = "fakecon")
-with_cols <- function(cols) {
-  assign("db_q", function(con, sql) data.frame(col_name = cols,
-                                               stringsAsFactors = FALSE),
-         envir = globalenv())
+GOOD <- list(n_rows = 10, n_patients = 10, n_null_patid = 0, n_null_index = 0,
+             n_null_end = 0, n_end_before_index = 0)
+# DESCRIBE answers with columns; the shape query answers with counts.
+stub <- function(cols = REQUIRED_COHORT_COLS, shape = list()) {
+  sh <- modifyList(GOOD, shape)
+  assign("db_q", function(con, sql) {
+    if (grepl("DESCRIBE", sql)) data.frame(col_name = cols, stringsAsFactors = FALSE)
+    else as.data.frame(sh)
+  }, envir = globalenv())
 }
-with_cols(REQUIRED_COHORT_COLS)
-runs(check_cohort_input(fake_con, cfg), "a table with every column is accepted")
-with_cols(tolower(REQUIRED_COHORT_COLS))
+assign("log_msg", function(...) invisible(NULL), envir = globalenv())
+
+stub()
+runs(check_cohort_input(fake_con, cfg), "a sound cohort table is accepted")
+stub(cols = tolower(REQUIRED_COHORT_COLS))
 runs(check_cohort_input(fake_con, cfg), "column case does not matter")
-with_cols(setdiff(REQUIRED_COHORT_COLS, "ENDDATE_CE"))
+stub(cols = setdiff(REQUIRED_COHORT_COLS, "ENDDATE_CE"))
 stops(check_cohort_input(fake_con, cfg), "a missing column is named, not ignored")
-with_cols(character(0))
+
+cat("\n-- and for shape, not just column names --\n")
+# The rules read this table row for row: no DISTINCT, no ranking. A repeated
+# patient would multiply their claims and their lines.
+stub(shape = list(n_rows = 12, n_patients = 10))
+stops(check_cohort_input(fake_con, cfg), "more rows than patients is rejected")
+stub(shape = list(n_rows = 0, n_patients = 0))
 stops(check_cohort_input(fake_con, cfg), "an empty table cannot drive LOT")
-rm("db_q", envir = globalenv())
+stub(shape = list(n_null_patid = 1))
+stops(check_cohort_input(fake_con, cfg), "a null PATID is rejected")
+stub(shape = list(n_null_index = 3))
+stops(check_cohort_input(fake_con, cfg), "a null INDEX_DATE is rejected")
+stub(shape = list(n_null_end = 2))
+stops(check_cohort_input(fake_con, cfg), "a null ENDDATE is rejected")
+stub(shape = list(n_end_before_index = 1))
+stops(check_cohort_input(fake_con, cfg), "an ENDDATE before INDEX_DATE is rejected")
+rm("db_q", "log_msg", envir = globalenv())
 
 cat("\n-- the contract rejects every value that changes a LOT --\n")
 clear()
@@ -154,8 +187,8 @@ EXPECT <- c(DATABRICKS_DSN = "RWDE", DATABRICKS_CATALOG = "hive_metastore",
             SCT_TANDEM_DAYS = "180", CART_CONSOLIDATION_DAYS = "45")
 for (k in names(EXPECT))
   ok(identical(shipped[[k]], EXPECT[[k]]), paste0("config.csv ", k, " = ", EXPECT[[k]]))
-# config.csv must not name a cohort: COHORTS is the only place that decides.
+# The caller passes the cohort, so config.csv must not pin one.
 ok(!any(c("INPUT_COHORT_TABLE", "OBJECT_PREFIX") %in% names(shipped)),
-   "config.csv does not set a cohort - COHORTS does")
+   "config.csv does not name a cohort")
 
 report()

@@ -15,6 +15,9 @@ CONTRACT <- list(
   cdm_schema                  = "clnprw_optum",
   codelist_dir                = "/mnt/code/codelist",
   use_quarterly_tables        = TRUE,
+  # Picks the quarterly CDM tables, so a different date is different source
+  # data for every read.
+  study_end                   = "2025-06-30",
   censor_at_disenrollment     = FALSE,
   induction_window_days       = 60L,
   lot_n_induction_window_days = 30L,
@@ -24,6 +27,8 @@ CONTRACT <- list(
   sct_auto_gap_days           = 60L,
   sct_tandem_days             = 180L,
   cart_consolidation_days     = 45L,
+  allo_lot_span               = "single_day",
+  max_lot                     = 5L,
   dsn                         = "RWDE",
   tbl_medical                 = "medical",
   tbl_med_proc                = "med_procedure",
@@ -45,7 +50,7 @@ BOOL_SETTINGS <- c("USE_QUARTERLY_TABLES", "CENSOR_AT_DISENROLLMENT",
 INT_SETTINGS  <- c("INDUCTION_WINDOW_DAYS", "INDUCTION_WINDOW_DAYS_LOT_N",
                    "MAP_DISCON_GAP_DAYS", "MEDICAL_DAY_SUPPLY",
                    "SCT_AUTO_WINDOW_DAYS", "SCT_AUTO_GAP_DAYS",
-                   "SCT_TANDEM_DAYS", "CART_CONSOLIDATION_DAYS")
+                   "SCT_TANDEM_DAYS", "CART_CONSOLIDATION_DAYS", "MAX_LOT")
 
 check_settings <- function() {
   bad <- character(0)
@@ -66,6 +71,10 @@ check_settings <- function() {
   e <- Sys.getenv("STUDY_END", unset = "")
   if (nzchar(e) && !grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", e))
     bad <- c(bad, paste0("STUDY_END='", e, "' (want YYYY-MM-DD)"))
+  a <- Sys.getenv("ALLO_LOT_SPAN", unset = "")
+  if (nzchar(a) && !a %in% c("single_day", "extend_to_next"))
+    bad <- c(bad, paste0("ALLO_LOT_SPAN='", a,
+                         "' (want single_day or extend_to_next)"))
 
   if (length(bad))
     stop("Settings that would build a different LOT:\n  ",
@@ -82,6 +91,10 @@ pin_output_schema <- function(cfg) {
   if (!nzchar(schema))
     stop("No output schema. Set DOMINO_USER_NAME to your personal schema ",
          "(e.g. osk02156), or PROJECT_WORK_SCHEMA to override.", call. = FALSE)
+  # It goes straight into table names, so check the value we resolved rather
+  # than each variable it could have come from.
+  if (!grepl("^[A-Za-z_][A-Za-z0-9_]*$", schema))
+    stop("Output schema '", schema, "' is not a schema name.", call. = FALSE)
   cfg$work_schema <- schema
   cfg
 }
@@ -121,6 +134,32 @@ check_cohort_input <- function(con, cfg) {
   if (length(miss))
     stop(tbl, " cannot drive LOT. Missing: ", paste(miss, collapse = ", "),
          call. = FALSE)
+
+  # The rules read this table row for row - no DISTINCT, no ranking. A repeated
+  # patient would multiply their claims and their lines, so check the shape too,
+  # not just the column names. ENDDATE_CE may be null: the primary branch uses
+  # ENDDATE and the sensitivity branch falls back to it.
+  q <- db_q(con, glue("
+    SELECT count(*) AS n_rows,
+           count(DISTINCT PATID) AS n_patients,
+           sum(CASE WHEN PATID IS NULL THEN 1 ELSE 0 END) AS n_null_patid,
+           sum(CASE WHEN INDEX_DATE IS NULL THEN 1 ELSE 0 END) AS n_null_index,
+           sum(CASE WHEN ENDDATE IS NULL THEN 1 ELSE 0 END) AS n_null_end,
+           sum(CASE WHEN ENDDATE < INDEX_DATE THEN 1 ELSE 0 END) AS n_end_before_index
+    FROM {tbl}"))
+  bad <- character(0)
+  if (q$n_rows == 0)            bad <- c(bad, "it is empty")
+  if (q$n_null_patid > 0)       bad <- c(bad, paste0(q$n_null_patid, " rows have no PATID"))
+  if (q$n_null_index > 0)       bad <- c(bad, paste0(q$n_null_index, " rows have no INDEX_DATE"))
+  if (q$n_null_end > 0)         bad <- c(bad, paste0(q$n_null_end, " rows have no ENDDATE"))
+  if (q$n_end_before_index > 0) bad <- c(bad, paste0(q$n_end_before_index,
+                                                     " rows end before they start"))
+  if (q$n_rows != q$n_patients)
+    bad <- c(bad, paste0(q$n_rows, " rows for ", q$n_patients,
+                         " patients - one index per patient is required"))
+  if (length(bad))
+    stop(tbl, " cannot drive LOT: ", paste(bad, collapse = "; "), call. = FALSE)
+  log_msg("  Cohort input OK: ", q$n_patients, " patients")
   invisible(TRUE)
 }
 
@@ -155,5 +194,59 @@ load_lot_modules <- function(here) {
     source(file.path(here, "R", f))
   steps <- sort(list.files(file.path(here, "R", "steps"), "\\.R$", full.names = TRUE))
   for (f in steps) source(f)
+  invisible(TRUE)
+}
+
+# The run. Phases in order, each one leaving temp views the next reads.
+build_lot <- function(here, cohort_table, prefix) {
+  check_settings()
+  cfg <- pin_output_schema(cfg_defaults)
+  cfg <- pin_cohort(cfg, cohort_table, prefix)
+  check_lot_contract(cfg)
+  # Every helper reads the config, so publish it before anything runs.
+  set_lot_config(cfg)
+
+  stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
+  con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+
+  log_msg("Connected. Run ID: ", run_id)
+  log_msg("Configuration:")
+  log_msg("  CDM Schema:        ", cfg$cdm_schema)
+  log_msg("  Work Schema:       ", cfg$work_schema)
+  log_msg("  Input Cohort:      ", cfg$input_cohort_table)
+  log_msg("  Output Prefix:     ", cfg$object_prefix)
+  log_msg("  Induction Window (LOT1):   ", cfg$induction_window_days, " days")
+  log_msg("  Induction Window (LOT2-5): ", cfg$lot_n_induction_window_days, " days")
+  log_msg("  Discon Gap (per-drug, MAP-level): ", cfg$map_discon_gap_days, " days")
+  log_msg("  Medical Day Supply: ", cfg$medical_day_supply, " days")
+
+  check_cohort_input(con, cfg)
+
+  ctx <- phase_codelists(con)
+  phase_patient_input(con)
+  phase_mma_map(con, ctx)
+  phase_lot1_base(con, ctx)
+  phase_sct(con, ctx)
+  phase_lot1_end(con, ctx)
+  phase_qc(con, ctx)
+  phase_persist(con, ctx)
+
+  # LOT2 onwards reads what phase_persist just wrote, so it runs after it.
+  # prepare_lot_inputs() rebuilds the session views the builder needs; in one
+  # process LOT1 already made them, but it is idempotent and keeps this phase
+  # correct on its own.
+  prepare_lot_inputs(con, rollup_src = ctx$rollup_src, subs_src = ctx$subs_src,
+                     sct_src = ctx$sct_src)
+  build_lot2_5(con,
+               induction_window_days   = cfg$lot_n_induction_window_days,
+               cart_consolidation_days = cfg$cart_consolidation_days,
+               sct_tandem_days         = cfg$sct_tandem_days,
+               allo_lot_span           = cfg$allo_lot_span,
+               max_lot                 = cfg$max_lot)
+
+  log_msg(SEP)
+  log_msg("LOT complete for ", cfg$input_cohort_table, " -> ", cfg$object_prefix, "*")
+  log_msg(SEP)
   invisible(TRUE)
 }

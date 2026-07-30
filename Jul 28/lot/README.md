@@ -2,9 +2,23 @@
 
 Lines of therapy, built once and run per cohort.
 
-The folder is self-contained: copy it into another project and it works. The
-only outside dependencies are the R packages `DBI`, `odbc` and `glue`.
-`tests/test_selfcontained.R` checks this, so it cannot quietly stop being true.
+## Status: ported, not yet run
+
+`R/steps/` holds the whole build - LOT1 (MMA claims, MAP, base regimen, SCT,
+end date) and LOT2 onwards up to `LOT_LONG`, one row per patient per line.
+All of it ported line for line from the validated source.
+
+`tests/test_same_as_source.R` proves that: every phase is compared against
+`apr_30_2026/02_lot1.R`, `lot2_5_inputs.R` and `lot2_5_base.R`, and must match
+exactly apart from the one change the port is allowed to make - LOT's outputs
+carry the cohort prefix.
+
+It has never been run against Databricks. Nothing here is validated output
+until it has been, and compared with the source build patient for patient.
+
+The folder is self-contained - the only outside dependencies are the R
+packages `DBI`, `odbc` and `glue`, and no file resolves a path outside it.
+`tests/test_selfcontained.R` checks that, so it cannot quietly stop being true.
 
 ## Run it
 
@@ -37,8 +51,10 @@ rejected rather than allowed to overwrite another one.
 `PATID`, `INDEX_DATE`, `ENDDATE`, `ENDDATE_CE`, `DEATH_DT`, `GDR_CD`, `YRDOB`,
 `AGE_INDEX_YR`, `FU_DAYS`, `FU_DAYS_CE`.
 
-The build checks the real table for these before it starts, and names any that
-are missing.
+The build checks the real table before it starts: the columns, and also one row
+per patient, no null `PATID`/`INDEX_DATE`/`ENDDATE`, and `ENDDATE` on or after
+`INDEX_DATE`. The rules read this table row for row, so a repeated patient
+would multiply their claims and their lines. `ENDDATE_CE` may be null.
 
 ## Extra criteria on a line
 
@@ -57,7 +73,9 @@ list(
 )
 ```
 
-Then turn it on with `APPLY_L2_STARTED_ON_MED,TRUE` in `config.csv`.
+Then turn it on with `APPLY_L2_STARTED_ON_MED,TRUE` in `config.csv`. Any value
+other than `TRUE` or `FALSE` stops the build rather than quietly leaving the
+criterion off.
 
 Two tables come out:
 
@@ -70,15 +88,14 @@ Two tables come out:
 
 | value | effect |
 |---|---|
-| `flag` | column only, nothing removed |
-| `drop_line` | that line goes |
+| `flag` | column only, nothing removed - a true no-op |
 | `truncate` | that line and every later line for the patient go |
-| `drop_patient` | the patient goes entirely |
 
-`flag` is the default, so a new criterion cannot change a result until someone
-deliberately chooses otherwise. `truncate` exists because LOT N is defined
-against LOT N-1: dropping a middle line would leave L1 and L3 with nothing
-between them.
+`flag` is the default and may be left out, so a new criterion cannot change a
+result until someone deliberately chooses otherwise. `truncate` is the only
+removal mode offered, because LOT N is defined against LOT N-1: dropping a
+middle line would leave L1 next to L3. Anything more is left until a real
+criterion needs it.
 
 Two rules worth knowing:
 
@@ -90,12 +107,15 @@ Two rules worth knowing:
 ## Tests
 
 ```
-Rscript tests/test_runner.R          # cohort switch, contract, settings
+Rscript tests/test_runner.R          # cohort input, contract, settings
 Rscript tests/test_line_criteria.R   # the per-line criteria layer
-Rscript tests/test_selfcontained.R   # no outside paths, no cohort names
+Rscript tests/test_selfcontained.R   # no outside paths, everything resolves
+Rscript tests/test_same_as_source.R  # the steps match apr_30_2026 exactly
 ```
 
-No warehouse needed. They run offline; `glue` is stubbed if absent.
+No warehouse needed. They run offline; `glue` is stubbed if absent. The last
+one skips when `apr_30_2026` is not beside this folder, so a copied-out package
+still runs green.
 
 ## Layout
 
@@ -108,5 +128,15 @@ R/db_utils_lot.R     logging, retry, naming (wrk / lot_out)
 R/codelists_lot.R    code list loading
 R/line_criteria.R    per-line criteria
 R/load_inputs.R      config.csv reader
-R/steps/             the rules
+R/steps/             the rules, in order:
+  01_codelists.R       code lists, and the rollup consistency checks
+  02_patient_input.R   the cohort, and OBS_END_DT
+  03_mma_map.R         MM/steroid claims, then Medication Available Period
+  04_lot1_base.R       LOT1 start, induction meds, base regimen
+  05_sct.R             transplant: AUTO, ALLO, CAR-T
+  06_lot1_end.R        LOT1 end date and reason
+  07_qc.R              QC counts
+  08_persist.R         write the LOT1 outputs, all prefixed
+  09_lot2_5_inputs.R   rebuild the views LOT2-5 reads
+  10_lot2_5_base.R     LOT2 onwards, and LOT_LONG
 ```

@@ -1,0 +1,163 @@
+# LOT1 start, induction meds, and the base regimen.
+
+phase_lot1_base <- function(con, ctx) {
+  meds <- ctx$meds; classes <- ctx$classes
+  sanitize_col <- ctx$sanitize_col
+  med_flag_exprs <- ctx$med_flag_exprs; class_flag_exprs <- ctx$class_flag_exprs
+
+  # STEP 5 (6): LOT1_BASE
+  run_step(con, "S08_lot1_start", "
+    CREATE OR REPLACE TEMPORARY VIEW lot1_start AS
+    SELECT
+      ms.PATID,
+      min(ms.MAP_START_DT) AS LOT1_START_DT
+    FROM map_stacked ms
+    WHERE ms.MAP_MED_CLASS <> 'STEROID'
+    GROUP BY ms.PATID
+  ", qc = "SELECT count(*) AS n_patients_with_lot1, min(LOT1_START_DT) AS min_lot1_start, max(LOT1_START_DT) AS max_lot1_start FROM lot1_start")
+
+  run_step(con, "S09_lot1_induction_meds", glue("
+    CREATE OR REPLACE TEMPORARY VIEW lot1_induction_meds AS
+    SELECT DISTINCT
+      ms.PATID,
+      l1.LOT1_START_DT,
+      ms.MAP_MED_TYPE AS MED_ABBR,
+      ms.MAP_MED_CLASS AS MED_CLASS
+    FROM map_stacked ms
+    INNER JOIN lot1_start l1
+      ON ms.PATID = l1.PATID
+    WHERE ms.MAP_START_DT >= l1.LOT1_START_DT
+      AND ms.MAP_START_DT <= date_add(l1.LOT1_START_DT, {cfg$induction_window_days - 1})
+      AND ms.MAP_MED_CLASS <> 'STEROID'  -- H1 fix: exclude steroids (corticosteroids are not oncology agents)
+  "), qc = "
+    SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients, avg(cnt) AS avg_induction_meds
+    FROM (SELECT PATID, count(DISTINCT MED_ABBR) AS cnt FROM lot1_induction_meds GROUP BY PATID)")
+
+  # LOT1 BASE: induction meds + permissible subs, discon, first add
+  run_step(con, "S10_lot1_base", glue("
+    CREATE OR REPLACE TEMPORARY VIEW lot1_base AS
+    WITH base_meds AS (
+      SELECT PATID, MED_ABBR
+      FROM lot1_induction_meds
+      UNION
+      SELECT im.PATID, ps.substitute_med AS MED_ABBR
+      FROM lot1_induction_meds im
+      INNER JOIN permissible_subs ps
+        ON im.MED_ABBR = ps.original_med
+    ),
+    -- H1 fix: Steroids are now excluded from base_meds (via lot1_induction_meds filter)
+    -- because corticosteroids are not oncology agents and should
+    -- not drive regimen membership, discontinuation, or add-med logic.
+    discon_raw AS (
+      SELECT
+        ms.PATID,
+        max(ms.MAP_END_DT) AS RAW_DISCON_DT
+      FROM map_stacked ms
+      INNER JOIN lot1_start l1 ON ms.PATID = l1.PATID
+      INNER JOIN base_meds bm
+        ON ms.PATID = bm.PATID
+       AND ms.MAP_MED_TYPE = bm.MED_ABBR
+      WHERE ms.MAP_START_DT >= l1.LOT1_START_DT
+      GROUP BY ms.PATID
+    ),
+    discon AS (
+      SELECT
+        p.PATID,
+        -- No LOT-level 90d confirmation buffer. LOT1_BASE_DISCON_DT
+        -- is the last med date (max MAP_END_DT across induction agents) whenever
+        -- a runout exists and falls on or before OBS_END_DT. Capping at OBS_END_DT
+        -- prevents days-supply tails past death/study_end from extending the LOT.
+        CASE
+          WHEN d.RAW_DISCON_DT IS NOT NULL AND d.RAW_DISCON_DT <= p.OBS_END_DT
+            THEN d.RAW_DISCON_DT
+          ELSE NULL
+        END AS LOT1_BASE_DISCON_DT
+      FROM lot_patient_input p
+      LEFT JOIN discon_raw d ON p.PATID = d.PATID
+    ),
+    med_summary AS (
+      SELECT
+        im.PATID,
+        min(im.LOT1_START_DT) AS LOT1_START_DT,  -- same for all rows per PATID; min for determinism
+        count(DISTINCT im.MED_ABBR) AS LOT1_MED_CNT,
+        concat_ws(' ', sort_array(collect_set(im.MED_ABBR))) AS LOT1_BASE_MEDS,
+        {med_flag_exprs},
+        {class_flag_exprs}
+      FROM lot1_induction_meds im
+      GROUP BY im.PATID
+    ),
+    base_core AS (
+      SELECT
+        p.PATID,
+        p.INDEX_DATE,
+        p.ENDDATE,
+        p.OBS_END_DT,
+        p.DEATH_DT,
+        p.GDR_CD,
+        p.YRDOB,
+        p.AGE_INDEX_YR,
+        ms.LOT1_START_DT,
+        ms.LOT1_MED_CNT,
+        ms.LOT1_BASE_MEDS,
+        d.LOT1_BASE_DISCON_DT,
+        {paste0('ms.', paste(c(paste0('LOT1_MED_', vapply(meds, sanitize_col, character(1))), paste0('LOT1_CLASS_', vapply(classes, sanitize_col, character(1)))), collapse = ', ms.'))}
+      FROM lot_patient_input p
+      INNER JOIN med_summary ms ON p.PATID = ms.PATID
+      LEFT JOIN discon d ON p.PATID = d.PATID
+    ),
+    first_add_candidates AS (
+      SELECT
+        ms.PATID,
+        ms.MAP_START_DT,
+        ms.MAP_MED_TYPE
+      FROM map_stacked ms
+      INNER JOIN base_core bc ON ms.PATID = bc.PATID
+      LEFT JOIN base_meds bm
+        ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
+      WHERE bm.MED_ABBR IS NULL
+        AND ms.MAP_MED_CLASS <> 'STEROID'  -- H1 fix: steroids cannot trigger add-med
+        AND ms.MAP_START_DT >= bc.LOT1_START_DT
+        AND ms.MAP_START_DT <= coalesce(bc.LOT1_BASE_DISCON_DT, bc.OBS_END_DT)
+    ),
+    first_add_pick AS (
+      -- When multiple non-induction drugs share the earliest add date,
+      -- pick one at random with a fixed seed. rand(42) is deterministic
+      -- across runs, so the pick is reproducible but not alphabetically
+      -- biased the way min() was.
+      SELECT PATID, LOT1_BASE_1ST_ADD_MED_DT, LOT1_BASE_1ST_ADD_MED
+      FROM (
+        SELECT
+          PATID,
+          date_sub(MAP_START_DT, 1) AS LOT1_BASE_1ST_ADD_MED_DT,
+          MAP_MED_TYPE              AS LOT1_BASE_1ST_ADD_MED,
+          row_number() OVER (
+            PARTITION BY PATID
+            ORDER BY MAP_START_DT, rand(42)
+          ) AS rn
+        FROM first_add_candidates
+      ) ranked
+      WHERE rn = 1
+    )
+    SELECT
+      bc.PATID, bc.INDEX_DATE, bc.ENDDATE, bc.OBS_END_DT, bc.DEATH_DT,
+      bc.GDR_CD, bc.YRDOB, bc.AGE_INDEX_YR,
+      bc.LOT1_START_DT, bc.LOT1_MED_CNT, bc.LOT1_BASE_MEDS,
+      bc.LOT1_BASE_DISCON_DT,
+      -- M1 fix: LOT1_BASE_LENGTH moved to S16 where LOT1_BASE_END_DT is finalized.
+      -- This uses the 2-way formula on the derived end date.
+      {paste0('bc.', paste(c(paste0('LOT1_MED_', vapply(meds, sanitize_col, character(1))), paste0('LOT1_CLASS_', vapply(classes, sanitize_col, character(1)))), collapse = ', bc.'))},
+      fa.LOT1_BASE_1ST_ADD_MED_DT,
+      fa.LOT1_BASE_1ST_ADD_MED
+    FROM base_core bc
+    LEFT JOIN first_add_pick fa
+      ON bc.PATID = fa.PATID
+  "), qc = "
+    SELECT
+      count(*) AS n_patients,
+      avg(LOT1_MED_CNT) AS avg_induction_meds,
+      sum(case when LOT1_BASE_DISCON_DT is not null then 1 else 0 end) as n_with_discon_dt,
+      sum(case when LOT1_BASE_1ST_ADD_MED_DT is not null then 1 else 0 end) as n_with_add_med
+    FROM lot1_base")
+
+
+}
