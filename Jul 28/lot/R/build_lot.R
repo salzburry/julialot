@@ -39,7 +39,8 @@ CONTRACT <- list(
 # Code-list checks a run may waive by name. A single switch for all of them
 # meant waiving one expected condition also waived the dangerous ones.
 WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types", "multi_class",
-                     "code_to_med", "bad_ndc", "rollup_defs", "blank_keys")
+                     "code_to_med", "bad_ndc", "rollup_defs", "blank_keys",
+                     "subs_substitute", "subs_original")
 
 codelist_waivers <- function() {
   v <- trimws(strsplit(Sys.getenv("CODELIST_WAIVERS", unset = ""), "[,|]")[[1]])

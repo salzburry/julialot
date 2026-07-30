@@ -89,6 +89,27 @@ phase_sct <- function(con, ctx) {
   }
   log_msg("  OK: Each SCT code names exactly one transplant type.")
 
+  # The CASE above maps the spellings it knows and passes anything else
+  # through unchanged. Only AUTO, ALLO and CART are ever selected from -
+  # UNKNOWN is a deliberate bucket that nothing reads - so an unmapped
+  # spelling does not raise an error, it just never matches: those
+  # transplants stop existing, and no count says so.
+  sct_unmapped <- db_q(con, "
+    SELECT SCT_TYPE, count(*) AS n_codes
+    FROM sct_codelist
+    WHERE SCT_TYPE NOT IN ('AUTO', 'ALLO', 'CART', 'UNKNOWN')
+    GROUP BY SCT_TYPE
+    ORDER BY SCT_TYPE
+  ")
+  if (nrow(sct_unmapped) > 0) {
+    print(sct_unmapped)
+    stop("SCT_TYPE value(s) nothing reads: ",
+         paste(sct_unmapped$SCT_TYPE, collapse = ", "),
+         " - add the spelling to the CASE in S11, or fix the code list. ",
+         "Left alone these transplants are dropped silently.", call. = FALSE)
+  }
+  log_msg("  OK: Every SCT_TYPE is one the build reads.")
+
   # S12: Extract raw SCT claims from MEDICAL + MED_PROCEDURE
   run_step(con, "S12_sct_claims_raw", glue("
     CREATE OR REPLACE TEMPORARY VIEW sct_claims_raw AS

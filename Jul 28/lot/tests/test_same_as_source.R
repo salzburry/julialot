@@ -83,8 +83,11 @@ SPLICE <- list(
 
 # Blocks that are pure additions: cut, replace with nothing.
 CUT <- list(
-  "05_sct.R" = list(c(from = "sct_dup <- db_q(con, \"",
-                      to   = "log_msg(\"  OK: Each SCT code names exactly one transplant type.\")"))
+  "05_sct.R" = list(
+    c(from = "sct_dup <- db_q(con, \"",
+      to   = "log_msg(\"  OK: Each SCT code names exactly one transplant type.\")"),
+    c(from = "sct_unmapped <- db_q(con, \"",
+      to   = "log_msg(\"  OK: Every SCT_TYPE is one the build reads.\")"))
 )
 
 # Lines that were EDITED rather than added, and how many of each. Counted like

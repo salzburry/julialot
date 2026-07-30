@@ -245,6 +245,51 @@ phase_codelists <- function(con) {
     log_msg("  OK: Each MED_ABBR maps to exactly one class.")
   }
 
+  # A substitution names two medications by abbreviation and nothing else
+  # checks either one. The substitute is unioned straight into the regimen and
+  # then matched against map_stacked on MED_ABBR, so an abbreviation the code
+  # list never produces matches nothing: the rule quietly does not fire. A
+  # typo on that side is indistinguishable from a drug with no claims.
+  #
+  # NOT EXISTS rather than NOT IN: a single NULL CL_MED_ABBR would make NOT IN
+  # return no rows at all, and the check would pass by being unanswerable.
+  subs_sub <- db_q(con, "
+    SELECT DISTINCT p.substitute_med AS med
+    FROM permissible_subs p
+    WHERE NOT EXISTS (
+      SELECT 1 FROM mma_codelist c WHERE c.CL_MED_ABBR = p.substitute_med)
+    ORDER BY med
+  ")
+  if (nrow(subs_sub) > 0) {
+    log_msg("  Substitutions naming a medication the code list never produces:")
+    print(subs_sub)
+    problems <- rbind(problems, data.frame(check = "subs_substitute", detail = paste0(
+      nrow(subs_sub), " substitute_med(s) not in the code list: ",
+      paste(subs_sub$med, collapse = ", ")), stringsAsFactors = FALSE))
+  } else {
+    log_msg("  OK: Every substitute_med is a medication the code list produces.")
+  }
+
+  # The other side is less damaging - the join simply never matches, so the
+  # substitution is dead rather than wrong - but it is still a rule the study
+  # team believes is running.
+  subs_orig <- db_q(con, "
+    SELECT DISTINCT p.original_med AS med
+    FROM permissible_subs p
+    WHERE NOT EXISTS (
+      SELECT 1 FROM mma_codelist c WHERE c.CL_MED_ABBR = p.original_med)
+    ORDER BY med
+  ")
+  if (nrow(subs_orig) > 0) {
+    log_msg("  Substitutions for a medication the code list never produces:")
+    print(subs_orig)
+    problems <- rbind(problems, data.frame(check = "subs_original", detail = paste0(
+      nrow(subs_orig), " original_med(s) not in the code list: ",
+      paste(subs_orig$med, collapse = ", ")), stringsAsFactors = FALSE))
+  } else {
+    log_msg("  OK: Every original_med is a medication the code list produces.")
+  }
+
   if (nrow(problems)) {
     waived <- problems[problems$check %in% codelist_waivers(), , drop = FALSE]
     fatal  <- problems[!problems$check %in% codelist_waivers(), , drop = FALSE]

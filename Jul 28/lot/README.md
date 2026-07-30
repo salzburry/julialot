@@ -209,8 +209,32 @@ CODELIST_WAIVERS=code_types
 ```
 
 Names: `orphan_meds`, `uncoded_meds`, `code_types`, `multi_class`,
-`code_to_med`, `bad_ndc`, `rollup_defs`, `blank_keys`. Unknown names are
-rejected, and whatever was waived is recorded in `LOT_BUILD_STATUS`.
+`code_to_med`, `bad_ndc`, `rollup_defs`, `blank_keys`, `subs_substitute`,
+`subs_original`. Unknown names are rejected, and whatever was waived is
+recorded in `LOT_BUILD_STATUS`.
+
+The SCT checks in `05_sct.R` are not on this list. They stop the build
+outright, because each one means a transplant is being counted twice or not at
+all, and there is no version of that a run should carry on through.
+
+### Substitutions
+
+`permissible_subs.csv` names two medications per row by abbreviation. The
+substitute is unioned straight into the regimen and then matched against
+`map_stacked` on `MED_ABBR`, so an abbreviation the code list never produces
+matches nothing - the substitution rule quietly does not fire, and a typo
+looks exactly like a drug with no claims. Both sides are checked against
+`mma_codelist`: `subs_substitute` for the one that enters a regimen,
+`subs_original` for the one that is only ever matched against.
+
+### Transplant types
+
+`S11` maps the spellings it knows - `ALLO%`, `AUTO%`, `CAR-T` and friends -
+and passes anything else through unchanged. Nothing downstream selects
+anything but `AUTO`, `ALLO` and `CART`, so an unmapped spelling is not an
+error anywhere, it simply never matches and those transplants stop existing.
+The build now stops on any `SCT_TYPE` outside those three and `UNKNOWN`, which
+is a deliberate bucket nothing reads.
 
 ## Running LOT2-5 on its own
 

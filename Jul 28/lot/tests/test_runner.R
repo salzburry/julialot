@@ -278,8 +278,13 @@ ok(grepl("stop(\"The production code lists would change", cd, fixed = TRUE),
 ok(grepl("codelist_waivers()", cd, fixed = TRUE),
    "and a waiver names the individual check, not all of them")
 for (w in c("orphan_meds", "uncoded_meds", "unexpected_types", "multi_class",
-            "code_to_med", "bad_ndc"))
+            "code_to_med", "bad_ndc", "subs_sub", "subs_orig"))
   ok(grepl(paste0(w, " <-"), cd, fixed = TRUE), paste0(w, " is checked"))
+# NOT IN against a column that may be NULL returns no rows at all, so the
+# check would pass by being unanswerable. Both sides use NOT EXISTS.
+ok(length(gregexpr("NOT EXISTS (", cd, fixed = TRUE)[[1]]) == 2 &&
+     !grepl("NOT IN (SELECT", cd, fixed = TRUE),
+   "the substitution checks cannot pass by being unanswerable")
 # Extraction only joins NDC and HCPCS; the source also accepted ICD, which
 # matches nothing.
 ok(grepl('EXTRACTED_CODE_TYPES <- c("NDC", "HCPCS")', cd, fixed = TRUE),
@@ -318,6 +323,12 @@ mk_db_q <- function(problem) function(con, sql) {
   if (grepl("AS bigint\\) = 0", sql))
     return(if (problem == "bad_ndc") data.frame(CL_CODE = "00000000000", CL_MED_ABBR = "X")
            else data.frame(CL_CODE = character(0), CL_MED_ABBR = character(0)))
+  if (grepl("c.CL_MED_ABBR = p.substitute_med", sql, fixed = TRUE))
+    return(if (problem == "subs_substitute") data.frame(med = "LENN")
+           else data.frame(med = character(0)))
+  if (grepl("c.CL_MED_ABBR = p.original_med", sql, fixed = TRUE))
+    return(if (problem == "subs_original") data.frame(med = "BORT")
+           else data.frame(med = character(0)))
   if (grepl("count\\(DISTINCT CL_MED_ABBR\\) AS n FROM mma_rollup", sql)) return(data.frame(n = 28))
   if (grepl("count\\(\\*\\) AS n FROM mma_codelist", sql)) return(data.frame(n = 500))
   if (grepl("SELECT DISTINCT CL_MED_ABBR FROM mma_rollup", sql, fixed = TRUE))
@@ -341,7 +352,7 @@ assign("db_q", mk_db_q("none"), envir = ce)
 ok(!inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
    "a consistent pair of code lists runs")
 for (prob in c("orphan", "uncoded", "type", "class", "code_to_med", "bad_ndc",
-               "rollup_defs", "blank_keys")) {
+               "rollup_defs", "blank_keys", "subs_substitute", "subs_original")) {
   assign("db_q", mk_db_q(prob), envir = ce)
   ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
      paste0("'", prob, "' stops the build"))
@@ -459,6 +470,43 @@ sc2 <- paste(readLines(file.path(ROOT, "R", "steps", "05_sct.R"), warn = FALSE),
              collapse = "\n")
 ok(grepl("WHERE CL_CODE_TYPE IN ('ICD10PROC', 'ICD9PROC', 'HCPCS')", sc2, fixed = TRUE),
    "SCT also checks across the types that share a claim column")
+# S11 maps the spellings it knows and passes anything else through. Only AUTO,
+# ALLO and CART are ever selected from - UNKNOWN is a bucket nothing reads - so
+# an unmapped spelling is not an error anywhere, it just never matches.
+ok(grepl("ELSE upper(trim(SCT_TYPE))", sc2, fixed = TRUE),
+   "the normalizer still passes an unrecognized spelling through unchanged")
+se2 <- new.env(parent = globalenv())
+for (nm in c("log_msg", "print")) assign(nm, function(...) invisible(NULL), envir = se2)
+assign("run_step", function(...) invisible(TRUE), envir = se2)
+assign("glue", function(..., .envir = parent.frame()) paste0(..., collapse = ""),
+       envir = se2)
+sys.source(file.path(ROOT, "R", "steps", "05_sct.R"), envir = se2)
+sct_db_q <- function(bad) function(con, sql) {
+  if (grepl("NOT IN ('AUTO', 'ALLO', 'CART', 'UNKNOWN')", sql, fixed = TRUE))
+    return(if (is.null(bad)) data.frame(SCT_TYPE = character(0), n_codes = integer(0))
+           else data.frame(SCT_TYPE = bad, n_codes = 4L))
+  data.frame()
+}
+run_sct <- function(bad) {
+  assign("db_q", sct_db_q(bad), envir = se2)
+  tryCatch({ se2$phase_sct(NULL, list(sct_src = "src")); NULL },
+           error = function(e) conditionMessage(e))
+}
+ok(is.null(run_sct(NULL)), "only the types the build reads: the phase runs")
+unmapped <- run_sct("PERIPHERAL BLOOD")
+ok(!is.null(unmapped), "an unmapped SCT_TYPE stops the build")
+ok(grepl("PERIPHERAL BLOOD", unmapped, fixed = TRUE),
+   "and the message names the spelling to add or fix")
+# Which types count is decided by the query, not by the stub above, so assert
+# the predicate itself. UNKNOWN is deliberate - the CASE creates it and nothing
+# reads it - so stopping on it would fail every run that has one.
+ok(grepl("NOT IN ('AUTO', 'ALLO', 'CART', 'UNKNOWN')", sc2, fixed = TRUE),
+   "UNKNOWN is accepted alongside the three that are read")
+for (t in c("AUTO", "ALLO", "CART"))
+  ok(grepl(paste0("SCT_TYPE = '", t, "'"), paste(sc2, sql_of_10 <- paste(
+       readLines(file.path(ROOT, "R", "steps", "10_lot2_5_base.R"), warn = FALSE),
+       collapse = "\n")), fixed = TRUE),
+     paste0(t, " is a type something downstream actually selects"))
 ok(grepl("AS n_defs", cd2, fixed = TRUE),
    "one rollup medication, one definition - DISTINCT only removes identical rows")
 ok(grepl("AS n_rollup", cd2, fixed = TRUE),
