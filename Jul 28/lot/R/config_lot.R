@@ -16,8 +16,19 @@ cfg <- list(
   # Databricks catalog + schemas
   catalog     = Sys.getenv("DATABRICKS_CATALOG", unset = "hive_metastore"),
   cdm_schema  = Sys.getenv("OPTUM_CDM_SCHEMA", unset = "clnprw_optum"),
-  work_schema = Sys.getenv("PROJECT_WORK_SCHEMA",
-                           unset = Sys.getenv("DOMINO_USER_NAME", unset = "gsk_mm_lot_work")),
+  # Same schema the cohort build writes to (see R/build_cohort.R,
+  # pin_output_schema): <catalog>.<schema>, e.g. hive_metastore.osk02156.
+  # No "gsk_mm_lot_work" fallback - that used to send LOT somewhere the cohort
+  # build never wrote, and the missing-table error came many steps later.
+  work_schema = local({
+    s <- Sys.getenv("PROJECT_WORK_SCHEMA",
+           unset = Sys.getenv("DOMINO_USER_NAME",
+             unset = Sys.getenv("DOMINO_STARTING_USERNAME", unset = "")))
+    if (!nzchar(s))
+      stop("No work schema. Set DOMINO_USER_NAME to your personal schema ",
+           "(e.g. osk02156), or PROJECT_WORK_SCHEMA to override.", call. = FALSE)
+    s
+  }),
 
   # Clinformatics CDM base tables
   tbl_medical  = "medical",

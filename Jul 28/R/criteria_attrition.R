@@ -103,14 +103,21 @@ build_criteria_sql <- function(catalog, cfg) {
 
 # ---- Attrition reporting ----
 
-print_attrition_table <- function(rows) {
+# The three columns are the 30/60/90 sensitivity. Only one of them is the
+# cohort that was actually built - the one matching cfg$outpatient_window.
+# Mark it, or people read the row left to right and quote the 30-day number.
+print_attrition_table <- function(rows, window = NULL) {
   sep <- strrep("=", 84)
   dash <- strrep("-", 84)
+  hdr <- function(w) {
+    if (!is.null(window) && as.character(window) == as.character(w))
+      paste0(w, "-day *") else paste0(w, "-day")
+  }
   cat("\n")
   cat(sep, "\n")
   cat("  ATTRITION TABLE\n")
   cat(sep, "\n")
-  cat(sprintf("%-45s %12s %12s %12s\n", "Step", "30-day", "60-day", "90-day"))
+  cat(sprintf("%-45s %12s %12s %12s\n", "Step", hdr(30), hdr(60), hdr(90)))
   cat(dash, "\n")
 
   for (row in rows) {
@@ -121,6 +128,10 @@ print_attrition_table <- function(rows) {
                 format(row$n_90, big.mark = ",")))
   }
   cat(sep, "\n")
+  if (!is.null(window)) {
+    cat("* configured outpatient window - this column is the cohort that was written.\n")
+    cat("  The other two columns are sensitivity only; no table exists for them.\n")
+  }
 }
 
 export_attrition_csv <- function(rows) {
@@ -147,14 +158,12 @@ export_attrition_csv <- function(rows) {
 # the dashboard can tell which run the chart came from and whether it
 # matches the cohort the LOT pipeline is consuming.
 persist_attrition_table <- function(rows, cfg, conn) {
-  if (length(rows) == 0) {
-    log_msg("WARN: no attrition rows to persist")
-    return(invisible(NULL))
-  }
-  if (!nzchar(cfg$work_schema)) {
-    log_msg("WARN: cfg$work_schema not set; skipping attrition table persist")
-    return(invisible(NULL))
-  }
+  # These used to WARN and return. The dashboard reads this table, and the
+  # write is CREATE OR REPLACE - skipping it leaves last run's rows in place
+  # looking current. Fail instead.
+  if (length(rows) == 0) stop("no attrition rows to persist", call. = FALSE)
+  if (!nzchar(cfg$work_schema))
+    stop("cfg$work_schema not set; cannot persist attrition_report", call. = FALSE)
 
   tbl_name <- if (nzchar(cfg$catalog)) {
     paste0(cfg$catalog, ".", cfg$work_schema, ".attrition_report")
@@ -197,15 +206,10 @@ persist_attrition_table <- function(rows, cfg, conn) {
          step_id, description, n_30, n_60, n_90)
   ")
 
-  tryCatch({
-    DBI::dbExecute(conn$con, sql)
-    log_msg("Attrition table persisted to: ", tbl_name,
-            " (", length(rows), " rows, run_id=", get0("run_id", ifnotfound = "?"),
-            ", cohort=", cfg$final_table_name %||% "?", ")")
-  }, error = function(e) {
-    log_msg("WARN: Could not persist attrition table to ", tbl_name,
-            ": ", conditionMessage(e))
-  })
+  DBI::dbExecute(conn$con, sql)
+  log_msg("Attrition table persisted to: ", tbl_name,
+          " (", length(rows), " rows, run_id=", get0("run_id", ifnotfound = "?"),
+          ", cohort=", cfg$final_table_name %||% "?", ")")
 }
 
 # Simple null-coalesce operator used above.
@@ -263,15 +267,20 @@ run_attrition_report <- function(catalog, cfg, conn, work_tbl_fn) {
     }
   }
 
-  # Final cohort row
+  # Final cohort row. Steps 0-10 are recomputed three ways, but only the
+  # configured window was written to a table. Count that column off the cohort
+  # table itself so the printed number can't drift from the table people query.
   final <- count_3w(
     glue("{qual_30}{cum_cond}"),
     glue("{qual_60}{cum_cond}"),
     glue("{qual_90}{cum_cond}"))
-  record("99_final", glue("FINAL COHORT ({cfg$final_table_name})"),
+  w <- cfg$outpatient_window
+  final[[paste0("n_", w)]] <- DBI::dbGetQuery(conn$con, glue(
+    "SELECT count(*) AS n FROM {work_tbl_fn(cfg$final_table_name)}"))$n
+  record("99_final", glue("FINAL COHORT ({cfg$final_table_name}, {w}d)"),
                    final$n_30, final$n_60, final$n_90)
 
-  print_attrition_table(rows)
+  print_attrition_table(rows, window = w)
   export_attrition_csv(rows)
   invisible(rows)
 }

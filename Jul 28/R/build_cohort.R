@@ -11,11 +11,12 @@
 build_cohort <- function(cohort_dir, root = dirname(cohort_dir)) {
   user_cfg    <- prompt_user_options(cfg_defaults)
   ie_criteria <- prompt_ie_criteria(cfg_defaults)
-  cfg         <- finalize_cfg(cfg_defaults, user_cfg, ie_criteria)
+  cfg         <- pin_output_schema(finalize_cfg(cfg_defaults, user_cfg, ie_criteria))
 
   log_msg("=", SEP_59)
   log_msg("COHORT BUILD - ", basename(cohort_dir), " - run_id: ", run_id)
   log_msg("OUTPATIENT WINDOW: ", cfg$outpatient_window, " days")
+  log_msg("OUTPUT SCHEMA: ", cfg$catalog, ".", cfg$work_schema)
   log_msg("OUTPUT TABLE: ", cfg$final_table_name)
   log_msg("=", SEP_59)
 
@@ -68,19 +69,45 @@ build_cohort <- function(cohort_dir, root = dirname(cohort_dir)) {
   log_msg("=", SEP_59)
   log_msg("BUILD COMPLETE - generating attrition report...")
 
-  tryCatch({
-    h <- make_naming_helpers(cfg, mat_tables)
-    catalog <- build_criteria_catalog(cfg)
-    rows <- run_attrition_report(catalog, cfg, conn, h$work_tbl)
-    if (isTRUE(cfg$persist_to_schema)) persist_attrition_table(rows, cfg, conn)
-    print_cohort_characteristics(cfg, conn, h$work_tbl)
-  }, error = function(e) {
-    log_msg("WARN: could not generate the full attrition report: ",
-            conditionMessage(e))
-  })
+  # No tryCatch here. The old code wrapped this block in one and logged a WARN,
+  # so a broken report still printed "COMPLETE" - and because
+  # persist_attrition_table() is CREATE OR REPLACE, the previous run's rows
+  # stayed in attrition_report and the LOT dashboard rendered them as current.
+  # The attrition table is a deliverable. If it can't be produced, the run failed.
+  h <- make_naming_helpers(cfg, mat_tables)
+  catalog <- build_criteria_catalog(cfg)
+  rows <- run_attrition_report(catalog, cfg, conn, h$work_tbl)
+  if (isTRUE(cfg$persist_to_schema)) persist_attrition_table(rows, cfg, conn)
+  print_cohort_characteristics(cfg, conn, h$work_tbl)
   log_msg("=", SEP_59)
 
   invisible(list(cfg = cfg, conn = conn, mat_tables = mat_tables))
+}
+
+# One schema for everything this build writes: the checkpoints, the final
+# cohort table, and attrition_report. All of it lands in
+#
+#   <catalog>.<schema>.<table>    e.g. hive_metastore.osk02156.OVERALL_COH_FINAL
+#
+# config_prompts.R resolves work_schema and personal_schema from different env
+# vars with different fallbacks, so they can point at different places. Worse,
+# personal_schema falls back to "" - and an empty personal_schema silently
+# skips the step that writes the cohort table, while attrition_report still
+# gets written naming that table. Pin both, and stop if there's nothing to
+# pin to.
+#
+# PROJECT_WORK_SCHEMA is the explicit override; otherwise it's the Domino user.
+pin_output_schema <- function(cfg) {
+  schema <- Sys.getenv("PROJECT_WORK_SCHEMA",
+              unset = Sys.getenv("DOMINO_USER_NAME",
+                unset = Sys.getenv("DOMINO_STARTING_USERNAME", unset = "")))
+  if (!nzchar(schema)) {
+    stop("No output schema. Set DOMINO_USER_NAME to your personal schema ",
+         "(e.g. osk02156), or PROJECT_WORK_SCHEMA to override.", call. = FALSE)
+  }
+  cfg$work_schema     <- schema
+  cfg$personal_schema <- schema
+  cfg
 }
 
 # Source the shared modules. Call before build_cohort().

@@ -95,9 +95,14 @@ if (length(a) == length(b)) {
   }
 }
 
-# The helper files are copies, so they must not have drifted.
-for (f in c("config_prompts.R", "db_utils.R", "codelists.R", "load_inputs.R",
-            "criteria_attrition.R"))
+# These helper files are copies, so they must not have drifted.
+#
+# criteria_attrition.R is deliberately NOT in this list. It carries two fixes
+# the source doesn't have: the FINAL COHORT row now names the configured
+# window and reads that count off the cohort table, and a failed persist stops
+# the run instead of warning. build_criteria_catalog() and build_criteria_sql()
+# are untouched, so the step SQL compared above is unaffected.
+for (f in c("config_prompts.R", "db_utils.R", "codelists.R", "load_inputs.R"))
   ok(identical(readLines(file.path(ROOT, "R", f), warn = FALSE),
                readLines(file.path(APR, "R", f), warn = FALSE)),
      paste0("R/", f, " is a byte-identical copy"))
