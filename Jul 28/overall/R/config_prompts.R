@@ -21,8 +21,10 @@ cfg_defaults <- list(
 
   # ---- Schemas (Optum CDM / Domino pattern) ----
   cdm_schema  = Sys.getenv("OPTUM_CDM_SCHEMA", unset = "clnprw_optum"),
-  work_schema = Sys.getenv("PROJECT_WORK_SCHEMA",
-                           unset = Sys.getenv("DOMINO_USER_NAME", unset = "gsk_mm_lot_work")),
+  # pin_output_schema() sets this from the environment before the build reads
+  # it. Blank here so a build that skipped that step stops instead of writing
+  # somewhere shared.
+  work_schema = "",
 
   # ---- Source tables ----
   tbl_member_elig       = "member_cont_enrollment",
@@ -74,9 +76,8 @@ cfg_defaults <- list(
   outpatient_window = as.integer(Sys.getenv("OUTPATIENT_WINDOW", unset = "90")),
 
   # ---- Inclusion criteria (defaults for static/batch mode) ----
-  # Env-configurable (same pattern as the exclusion block below) so
-  # config.csv can toggle them. Defaults preserve prior
-  # behaviour exactly (all TRUE, min age 18).
+  # Read from config.csv, then checked against CONTRACT. This build only runs
+  # with the values below; change both together, deliberately.
   apply_age_incl          = as.logical(Sys.getenv("APPLY_AGE_INCL",          unset = "TRUE")),
   min_age                 = as.integer(Sys.getenv("MIN_AGE",                 unset = "18")),
   apply_ce_b_incl         = as.logical(Sys.getenv("APPLY_CE_B_INCL",         unset = "TRUE")),
@@ -102,8 +103,7 @@ cfg_defaults <- list(
 
   # ---- Performance ----
   persist_to_schema       = as.logical(Sys.getenv("PERSIST_TO_SCHEMA", unset = "TRUE")),
-  personal_schema         = Sys.getenv("DOMINO_USER_NAME",
-                                       unset = Sys.getenv("DOMINO_STARTING_USERNAME", unset = "")),
+  personal_schema         = "",   # set by pin_output_schema(), same as work_schema
   materialize_checkpoints = TRUE
 )
 

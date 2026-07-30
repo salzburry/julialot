@@ -120,6 +120,14 @@ ok(identical(p$object_prefix, "overall_"), "prefix carried onto cfg")
 clear()
 stops(pin_output_schema(list(catalog = "hive_metastore")),
       "stops when no schema resolves")
+# The defaults used to fall back to a shared schema name, which would have
+# written there instead of stopping. Blank is what makes the stop reachable.
+# Sourced with the environment cleared, which is the case that matters.
+cp <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "config_prompts.R"), envir = cp)
+cd <- get("cfg_defaults", envir = cp)
+ok(identical(cd$work_schema, "") && identical(cd$personal_schema, ""),
+   "schema defaults are blank, not a shared fallback")
 
 cat("\n-- every function build_cohort.R calls actually exists --\n")
 # A missed edit once left write_build_status() and check_normalized_codelist()
