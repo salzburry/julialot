@@ -1,11 +1,9 @@
-# Optional CSV-driven input defaults: edit pipeline_inputs.csv
-# (columns name,value,description) instead of juggling Sys.setenv() or
-# shell exports.
+# CSV-driven input defaults: edit config.csv (columns name,value,description)
+# instead of juggling Sys.setenv() or shell exports.
 #
 # The environment always wins. A CSV value is applied only when that
 # variable is unset/empty, so the CSV is an editable defaults file and
-# never overrides a shell export, a Domino-injected value, or an inline
-# `SKIP_COHORT=TRUE FORCE_RERUN=TRUE Rscript run_pipeline.R`.
+# never overrides a shell export or a Domino-injected value.
 #
 # Rules:
 #   - Variable already set (non-empty)  -> CSV row ignored.
@@ -14,8 +12,7 @@
 #   - name blank or starting with '#'   -> comment row.
 #   - DATABRICKS_PWD is never read from the file (secrets stay in env).
 #
-# Must be sourced before config_lot.R, config_prompts.R, or
-# run_pipeline.R read Sys.getenv().
+# Must be sourced before config_prompts.R reads Sys.getenv().
 
 # Coerce a date string to YYYY-MM-DD. Accepts ISO (pass-through) plus
 # the common Excel reformats (DD-MM-YYYY, DD/MM/YYYY, MM/DD/YYYY,

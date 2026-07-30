@@ -20,7 +20,7 @@ phase_codelists <- function(cfg, h, ctx) {
           CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
           upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', '')) AS dx
         FROM {mm_dx_source}
-        WHERE dx IS NOT NULL
+        WHERE dx IS NOT NULL AND regexp_replace(dx, '[^A-Za-z0-9]', '') <> ''
       "),
       qc = glue("SELECT count(*) AS n_codes FROM {work('mm_dx_codes')}")
     ),
@@ -48,7 +48,7 @@ phase_codelists <- function(cfg, h, ctx) {
         SELECT upper(trim(code_type)) AS code_type,
                upper(regexp_replace(trim(code), '[^A-Za-z0-9]', '')) AS code
         FROM {preg_source}
-        WHERE code IS NOT NULL
+        WHERE code IS NOT NULL AND regexp_replace(code, '[^A-Za-z0-9]', '') <> ''
       "),
       qc = glue("SELECT count(*) AS n_codes FROM {work('preg_codes')}")
     ),
@@ -61,7 +61,7 @@ phase_codelists <- function(cfg, h, ctx) {
         SELECT upper(trim(code_type)) AS code_type,
                upper(regexp_replace(trim(code), '[^A-Za-z0-9]', '')) AS code
         FROM {clintrial_source}
-        WHERE code IS NOT NULL
+        WHERE code IS NOT NULL AND regexp_replace(code, '[^A-Za-z0-9]', '') <> ''
       "),
       qc = glue("SELECT count(*) AS n_codes FROM {work('clintrial_codes')}")
     ),
@@ -77,6 +77,7 @@ phase_codelists <- function(cfg, h, ctx) {
           upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', '')) AS dx
         FROM {other_malig_source}
         WHERE dx IS NOT NULL AND tumor_group IS NOT NULL
+          AND regexp_replace(dx, '[^A-Za-z0-9]', '') <> ''
       "),
       qc = glue("SELECT count(*) AS n_codes FROM {work('other_malig_codes')}")
     ),

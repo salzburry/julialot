@@ -163,6 +163,29 @@ for (v in names(NORMALIZED_CODELISTS)) {
             paste(have, collapse = ", "), ")"))
 }
 
+cat("\n-- the shipped config.csv, not a sample --\n")
+# Both suites built their cfg from apr_30_2026 or a literal. Someone could flip
+# a criterion in config.csv and neither would notice.
+cfg_rows <- read.csv(file.path(ROOT, "config.csv"), stringsAsFactors = FALSE,
+                     comment.char = "#")
+shipped <- setNames(trimws(as.character(cfg_rows$value)), trimws(cfg_rows$name))
+EXPECT <- c(FINAL_TABLE_NAME = "OVERALL_COH_FINAL", OBJECT_PREFIX = "overall_",
+            CHECKPOINT_STEPS = "*", USE_CSV_CODELISTS = "TRUE",
+            CODELIST_DIR = "/mnt/code/codelist", PERSIST_TO_SCHEMA = "TRUE",
+            MIN_AGE = "18", OUTPATIENT_WINDOW = "90",
+            APPLY_AGE_INCL = "TRUE", APPLY_CE_B_INCL = "TRUE",
+            APPLY_CE_F_INCL = "TRUE", APPLY_NO_BL_AGENTS_INCL = "TRUE",
+            APPLY_FU_AGENTS_INCL = "TRUE", APPLY_BASELINE_MM_EXCL = "FALSE",
+            APPLY_OTHER_MALIG_EXCL = "FALSE", APPLY_PREGNANCY_EXCL = "FALSE",
+            APPLY_CLINTRIAL_EXCL = "FALSE")
+for (k in names(EXPECT))
+  ok(identical(shipped[[k]], EXPECT[[k]]),
+     paste0("config.csv ", k, " = ", EXPECT[[k]],
+            if (!identical(shipped[[k]], EXPECT[[k]]))
+              paste0(" (is ", shipped[[k]], ")") else ""))
+ok(all(names(EXPECT) %in% names(shipped)),
+   "config.csv still declares every setting the build is pinned to")
+
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))
 if (fail > 0L) quit(status = 1L)

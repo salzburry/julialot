@@ -94,7 +94,7 @@ load_csv_codelists <- function(conn, cfg) {
 
   log_msg("Loading code lists from CSV: ", cfg$codelist_dir)
 
-  # LOT loads its own lists. This runner only needs the cohort lists.
+  # Only the five lists this build uses.
   for (tbl_name in required) {
     csv_file <- csv_map[[tbl_name]]
     csv_path <- file.path(cfg$codelist_dir, csv_file)
