@@ -11,7 +11,7 @@
 # runout), LOT1 base regimen, SCT detection (AUTO/ALLO/CART), and the MMA
 # rollup/codelist tables.
 #
-# Input:  ELIG_COH_FINAL (output of the Part 1 attrition pipeline; see 01_cohort.R)
+# Input:  the cohort table named by INPUT_COHORT_TABLE, written by ../overall/build.R
 # Output: MAP_STACKED, LOT1_BASE, LOT1_SCT, LOT1_BASE_END
 #
 # IMPORTANT - MAP algorithm corrections vs prior versions:
