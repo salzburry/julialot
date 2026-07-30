@@ -121,10 +121,13 @@ persist_attrition_table <- function(rows, cfg, conn) {
   if (!nzchar(cfg$work_schema))
     stop("cfg$work_schema not set; cannot persist attrition_report", call. = FALSE)
 
+  # Prefixed per cohort, or an NDMM run overwrites Overall's report.
+  obj <- paste0(if (is.null(cfg$object_prefix)) "" else tolower(cfg$object_prefix),
+                "attrition_report")
   tbl_name <- if (nzchar(cfg$catalog)) {
-    paste0(cfg$catalog, ".", cfg$work_schema, ".attrition_report")
+    paste0(cfg$catalog, ".", cfg$work_schema, ".", obj)
   } else {
-    paste0(cfg$work_schema, ".attrition_report")
+    paste0(cfg$work_schema, ".", obj)
   }
 
   sql_int <- function(x) {

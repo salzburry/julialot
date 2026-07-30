@@ -182,7 +182,8 @@ materialize_to_personal_schema <- function(con, view_name, cfg, mat_tables, repl
     log_msg("WARN: personal_schema not set, skipping materialization of ", view_name)
     return(FALSE)
   }
-  remote_table <- tolower(view_name)
+  prefix <- if (is.null(cfg$object_prefix)) "" else tolower(cfg$object_prefix)
+  remote_table <- paste0(prefix, tolower(view_name))
   full_table_name <- if (nzchar(cfg$catalog)) {
     paste0(cfg$catalog, ".", cfg$personal_schema, ".", remote_table)
   } else {
@@ -313,15 +314,13 @@ run_step <- function(step_name, sql, conn, cfg, qc_sql = NULL, description = NUL
   flush.console()
 
   tryCatch({
-    # Reconnect if stale
+    # A dropped connection cannot be repaired in place. The step SQL reads the
+    # aliases materialize_to_personal_schema() creates, and those are
+    # session-scoped -- a new session has none of them, so the retry fails on a
+    # missing view and the real cause is buried. Stop and let the run restart.
     if (!db_ping(conn$con)) {
-      log_msg("Connection stale, reconnecting with retry...")
-      try(DBI::dbDisconnect(conn$con), silent = TRUE)
-      conn$con <- with_retry(function() {
-        c <- connect_databricks(cfg)
-        log_msg("Reconnected to Databricks")
-        c
-      }, max_retries = cfg$max_retries, base_sleep = cfg$base_sleep)
+      stop("Lost the Databricks connection. The session's views are gone; ",
+           "rerun the build.", call. = FALSE)
     }
 
     DBI::dbExecute(conn$con, sql)

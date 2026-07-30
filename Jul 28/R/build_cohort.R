@@ -41,8 +41,9 @@ build_cohort <- function(cohort_dir, root = dirname(cohort_dir),
 
   for (i in seq_along(steps)) {
     s <- steps[[i]]
-    table_name <- sub("^\\d+[a-z]?_", "", s$name)
-    is_ckpt <- isTRUE(cfg$materialize_checkpoints) && table_name %in% ckpt_steps
+    view_name <- step_view_name(s$sql)
+    is_ckpt <- isTRUE(cfg$materialize_checkpoints) &&
+               is_checkpoint(view_name, ckpt_steps, cfg)
 
     with_retry(function() {
       run_step(s$name, s$sql, conn = conn, cfg = cfg,
@@ -53,10 +54,10 @@ build_cohort <- function(cohort_dir, root = dirname(cohort_dir),
     }, max_retries = cfg$max_retries, base_sleep = cfg$base_sleep)
 
     if (is_ckpt) {
-      ok <- materialize_to_personal_schema(conn$con, table_name, cfg,
+      ok <- materialize_to_personal_schema(conn$con, view_name, cfg,
                                            mat_tables, replace = TRUE)
-      if (nzchar(cfg$personal_schema) && !isTRUE(ok)) {
-        stop("Checkpoint '", table_name, "' failed to materialize to '",
+      if (!isTRUE(ok)) {
+        stop("'", view_name, "' failed to materialize to '",
              cfg$personal_schema, "'. See the WARN above.")
       }
       with_retry(function() run_qc(conn$con, s$qc),
@@ -66,6 +67,13 @@ build_cohort <- function(cohort_dir, root = dirname(cohort_dir),
 
   log_msg("=", SEP_59)
   log_msg("BUILD COMPLETE - generating attrition report...")
+
+  # Point the final-cohort lookups at the table step 24b wrote, not the view
+  # it was built from, so the attrition row counts the actual deliverable.
+  assign(cfg$final_table_name,
+         make_naming_helpers(cfg, mat_tables)$full_name(cfg$personal_schema,
+                                                        cfg$final_table_name),
+         envir = mat_tables)
 
   # No tryCatch. The attrition table is a deliverable - if it can't be
   # produced, the run failed.
@@ -114,10 +122,12 @@ check_codelists_not_empty <- function(conn, cfg) {
   invisible(TRUE)
 }
 
-# One schema for everything this build writes - checkpoints, the final cohort,
-# attrition_report - as <catalog>.<schema>, e.g. hive_metastore.osk02156.
+# Where this build writes: one schema for everything - every step, the final
+# cohort, attrition_report - as <catalog>.<schema>, e.g. hive_metastore.osk02156.
 # config_prompts.R resolves work_schema and personal_schema separately and
 # personal_schema can come back empty, which silently skips writing the cohort.
+#
+# OBJECT_PREFIX keeps the two cohorts apart in that one schema.
 pin_output_schema <- function(cfg) {
   schema <- Sys.getenv("PROJECT_WORK_SCHEMA",
               unset = Sys.getenv("DOMINO_USER_NAME",
@@ -128,18 +138,41 @@ pin_output_schema <- function(cfg) {
   }
   cfg$work_schema     <- schema
   cfg$personal_schema <- schema
+  cfg$object_prefix   <- Sys.getenv("OBJECT_PREFIX", unset = "")
   cfg
 }
 
-# Which views get written to the schema. Everything else stays a temp view and
-# is gone when the session ends. Set per cohort in config.csv, pipe-separated:
+# Which views get written to the schema. "*" means every step, which is what
+# the cohort configs use -- nothing then depends on a temp view surviving, and
+# every table is there to query after the run. Set per cohort in config.csv,
+# pipe-separated, or name specific steps:
 #
-#   CHECKPOINT_STEPS,mm_dx_events_all|mm_dx_events_id|mm_qualifying|ELIG_COH_ALLFLAGS
+#   CHECKPOINT_STEPS,*
+#   CHECKPOINT_STEPS,mm_dx_events_all|mm_qualifying|ELIG_COH_ALLFLAGS
 resolve_checkpoints <- function() {
   v <- Sys.getenv("CHECKPOINT_STEPS", unset = "")
   if (!nzchar(v)) return(CHECKPOINT_STEPS)
   s <- trimws(strsplit(v, "[|,]")[[1]])
   s[nzchar(s)]
+}
+
+# The view a step creates. Not the same as the step name: 24_ELIG_COH_FINAL
+# creates the view named by FINAL_TABLE_NAME, and 06c_validate_rvnu_cd creates
+# rvnu_cd_check. Materializing by step name would look for a view that isn't
+# there. NA when the step writes a real table rather than a view (24b).
+step_view_name <- function(sql) {
+  m <- regmatches(sql, regexpr("CREATE OR REPLACE TEMPORARY VIEW +[^ \n]+",
+                               sql, ignore.case = TRUE))
+  if (!length(m)) return(NA_character_)
+  sub("CREATE OR REPLACE TEMPORARY VIEW +", "", m[1], ignore.case = TRUE)
+}
+
+# The final cohort view is skipped: step 24b already writes it as a permanent
+# table under its own name, which is what LOT reads.
+is_checkpoint <- function(view_name, ckpt_steps, cfg) {
+  if (is.na(view_name)) return(FALSE)
+  if (identical(view_name, cfg$final_table_name)) return(FALSE)
+  identical(ckpt_steps, "*") || view_name %in% ckpt_steps
 }
 
 # Source the shared modules. Call before build_cohort().
