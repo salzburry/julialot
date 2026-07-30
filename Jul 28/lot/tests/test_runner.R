@@ -704,9 +704,9 @@ ok(!any(c("INPUT_COHORT_TABLE", "OBJECT_PREFIX") %in% names(shipped)),
    "config.csv does not name a cohort")
 
 cat("\n-- the README still describes this build --\n")
-# Prose cannot be checked, but these two lists can, and both had already gone
-# stale: the README named six waivers where the code has eight, and its layout
-# had the step files in an order the build does not run them in.
+# Prose cannot be checked, but these two lists can, and both had gone stale.
+# Membership only - a step file reordered in the layout still passes, so the
+# order there is maintained by hand.
 readme <- readLines(file.path(ROOT, "README.md"), warn = FALSE)
 documented <- unique(unlist(regmatches(readme, gregexpr("`[a-z_0-9]+`", readme))))
 documented <- gsub("`", "", documented)

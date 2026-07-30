@@ -348,11 +348,9 @@ write_build_status <- function(con, cfg, state) {
   db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
                     paste(cols, BUILD_STATUS_COLS, collapse = ", "), ")"))
 
-  # CREATE TABLE IF NOT EXISTS does nothing to a table an earlier version of
-  # this package left behind, so a column added since is still absent. Naming
-  # the columns in the INSERT below stops a positional mis-fill - it cannot
-  # supply a column that is not there, and the insert would simply fail. Add
-  # it, the way LOT_RUN_METADATA does in 08_persist. Look before adding:
+  # CREATE TABLE IF NOT EXISTS does nothing to a table an earlier version left
+  # behind, so add any column it lacks: naming the columns in the INSERT stops
+  # a positional mis-fill but cannot supply a missing one. Look before adding -
   # adding a column that already exists is an error.
   have <- tryCatch({
     d  <- db_q(con, glue("DESCRIBE {tbl}"))
@@ -511,10 +509,8 @@ phase_line_criteria <- function(con, cfg) {
            line_criteria_flags_sql(cfg, "lot_long", "lot_long_allflags"))
   run_step(con, "L41_lot_long_final",
            line_criteria_final_sql(cfg, "lot_long_allflags", "lot_long_final"))
-  # Both are tables, always. Writing them as views when no criterion is
-  # declared would save two writes, but Spark refuses a persistent view over a
-  # temporary one (INVALID_TEMP_OBJ_REFERENCE) and these are built from temp
-  # views - so that "optimization" failed every run.
+  # Persisted, not views: both are built from temporary views, and Spark
+  # refuses a persistent view over one of those.
   for (v in list(list(view = "lot_long_allflags", name = "LOT_LONG_ALLFLAGS"),
                  list(view = "lot_long_final",    name = "LOT_LONG_FINAL"))) {
     run_step(con, paste0("L42_persist_", tolower(v$name)),

@@ -4,26 +4,14 @@
 #   Rscript "Jul 28/tools/remove_steroids_from_rollup.R"            # report only
 #   Rscript "Jul 28/tools/remove_steroids_from_rollup.R" --write    # make the edit
 #
-# Steroid codes are maintained in a separate file, so cl_mma_codelist.csv has
-# none. The rollup still listing them means every run reports medications whose
-# codes are deliberately absent. The LOT build filters them in SQL as well, but
-# that hides the disagreement rather than fixing it - this corrects the file.
+# Steroid codes are maintained in a separate file, so the rollup should not
+# list them either. Report only by default; --write builds a checked
+# replacement beside the original, keeps a backup, and renames it into place.
 #
-# Kept rows are written back byte for byte. The file is handled as raw bytes
-# and lines are sliced out of it whole, terminators included, so CRLF endings,
-# quoting, spacing and a missing final newline all survive untouched: this is a
-# governed file, and a reformat would bury the real change in review.
-#
-# Nothing is written over the original. The kept bytes go to a temporary file
-# beside it, are read back and checked, given the original's mode, and only
-# then replace it by rename.
-#
-# The premise - that removing these rows cannot change who counts as treated,
-# because a steroid has no codes - is checked against cl_mma_codelist.csv
-# rather than assumed. Both files are read once and both md5s are re-checked
-# immediately before the rename, so an edit landing in either while this runs
-# stops it. Both are governed and shared with apr_30_2026, so record the md5s
-# printed below with whatever change request covers the edit.
+# It refuses rather than guesses: the premise is verified against
+# cl_mma_codelist.csv, and both files' md5s are re-checked before the rename.
+# Kept rows go back byte for byte. Jul 28/lot/README.md has the reasoning, and
+# Jul 28/tools/tests/ has the checks.
 
 argv     <- commandArgs(trailingOnly = TRUE)
 do_write <- "--write" %in% argv

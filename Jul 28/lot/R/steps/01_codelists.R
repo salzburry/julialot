@@ -83,8 +83,9 @@ phase_codelists <- function(con) {
   problems <- data.frame(check = character(0), detail = character(0),
                          stringsAsFactors = FALSE)
 
-  # A code list med with no rollup row is extracted with no class, so the
-  # STEROID exclusion and the maintenance flags do not apply to it.
+  # A code list med with no rollup row is still extracted and still carries its
+  # class - that comes from the code list. What it has no values for are the
+  # rollup flags, so no rule keyed on one of those applies to it.
   orphan_meds <- db_q(con, "
     SELECT c.CL_MED_ABBR, count(*) AS n_codes
     FROM mma_codelist c
@@ -188,15 +189,9 @@ phase_codelists <- function(con) {
     log_msg("  OK: No all-zero NDC rows.")
   }
 
-  # The join pads the digits of a code to eleven:
-  #   lpad(regexp_replace(CL_CODE, '[^0-9]', ''), 11, '0')
-  # bad_ndc above catches the all-zero result. These are the other ways a code
-  # can survive that expression as a DIFFERENT eleven-digit key, none of which
-  # raises an error:
-  #   letters      storage strips punctuation but not letters, so 'ABC123'
-  #                reaches the join as 123 and pads to 00000000123
-  #   over eleven  more digits than the key holds, so it cannot be one
-  #   under nine   shorter than any NDC form, so the padding invents the rest
+  # bad_ndc catches the all-zero key. These are the other ways a code survives
+  # the join's pad-to-eleven as a different key without erroring: letters
+  # ('ABC123' joins as 00000000123), more than eleven digits, fewer than nine.
   ndc_shape <- db_q(con, "
     SELECT CL_CODE, CL_MED_ABBR,
            length(regexp_replace(CL_CODE, '[^0-9]', '')) AS n_digits,
@@ -281,22 +276,15 @@ phase_codelists <- function(con) {
     log_msg("  OK: Each MED_ABBR maps to exactly one class.")
   }
 
-  # multi_class above looks inside the code list. The two files also have to
-  # agree with each other, and a disagreement is silent in a specific way:
-  # every claim carries c.CL_MED_CLASS from the CODE LIST (03_mma_map), while
-  # the LOT1_CLASS_<x> columns are generated from the classes of the ROLLUP.
-  # So a med the two spell differently produces a flag column named for the
-  # rollup's spelling that the code list's value never equals - the column is
-  # always zero and nothing says why. 03_mma_map even notes MED_CLASS "should
-  # be 1:1 with MED_ABBR via rollup"; this is what checks it.
+  # multi_class looks inside one file; the two also have to agree. Claims take
+  # MED_CLASS from the code list (03_mma_map) while the LOT1_CLASS_<x> columns
+  # are named from the rollup's classes, so a med the two spell differently
+  # gets a column that is always zero.
   #
-  # INNER JOIN on purpose: a med in one file and not the other is orphan_meds
-  # or uncoded_meds, and steroids are filtered from the rollup by design.
-  #
-  # Only meds each file classes one way. Two classes inside one file is
-  # multi_class or rollup_defs, and reporting it here as well would mean
-  # waiving one of those - an accepted condition - dragged this check down
-  # with it for every other medication.
+  # Only meds each file classes one way: two classes inside one file is
+  # multi_class or rollup_defs, and reporting it here too would tie their
+  # waivers together. INNER JOIN because a med in only one file is orphan_meds
+  # or uncoded_meds, and steroids are absent from the rollup by design.
   class_agreement <- db_q(con, "
     SELECT c.CL_MED_ABBR,
            concat_ws(', ', collect_set(c.CL_MED_CLASS)) AS codelist_class,
