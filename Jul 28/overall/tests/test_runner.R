@@ -120,6 +120,14 @@ ok(identical(p$object_prefix, "overall_"), "prefix carried onto cfg")
 clear()
 stops(pin_output_schema(list(catalog = "hive_metastore")),
       "stops when no schema resolves")
+# The defaults used to fall back to a shared schema name, which would have
+# written there instead of stopping. Blank is what makes the stop reachable.
+# Sourced with the environment cleared, which is the case that matters.
+cp <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "config_prompts.R"), envir = cp)
+cd <- get("cfg_defaults", envir = cp)
+ok(identical(cd$work_schema, "") && identical(cd$personal_schema, ""),
+   "schema defaults are blank, not a shared fallback")
 
 cat("\n-- every function build_cohort.R calls actually exists --\n")
 # A missed edit once left write_build_status() and check_normalized_codelist()
@@ -142,6 +150,16 @@ missing <- Filter(function(f) !exists(f, envir = mod), called)
 ok(length(missing) == 0,
    if (length(missing)) paste("undefined:", paste(missing, collapse = ", "))
    else paste0("all ", length(called), " calls resolve"))
+
+cat("\n-- the code-list checksum describes the file that was read --\n")
+# Hashing only after the read would log a version the build never loaded.
+# The order is easy to lose in a tidy-up, so pin it.
+du <- readLines(file.path(ROOT, "R", "db_utils.R"), warn = FALSE)
+hashes <- grep("tools::md5sum(csv_path)", du, fixed = TRUE)
+read_at <- grep("read.csv(csv_path", du, fixed = TRUE)
+ok(length(hashes) == 2 && length(read_at) == 1 &&
+     hashes[1] < read_at[1] && hashes[2] > read_at[1],
+   "code lists are hashed before and after the read")
 
 cat("\n-- codelist checks name columns the views actually have --\n")
 # A wrong column here is an unresolved-column error at run time, several
