@@ -27,15 +27,28 @@ engine/          the shared SQL generator (see the note below)
 build_both.R     both cohorts + one shared PLD
 tests/           engine invariants + old-vs-new equivalence (PLAN.md §5)
 run_all_tests.R  every suite
+
+cohort1_ie/      cohort 1 (Overall) IE criteria, built FROM THE CDM
 ```
 
+`overall/` and `ndmm/` are the **selection** layer: flags in, cohorts out. They
+read `ELIG_COH_ALLFLAGS`, which the legacy pipeline produces.
+**[`cohort1_ie/`](cohort1_ie/README.md)** is the other half — it implements the
+ten index-anchored IE criteria from the raw CDM, one file per flag view, so
+cohort 1 can be built without `01_cohort.R` running first. Its README is a
+step-by-step walkthrough of every criterion. Its SQL is asserted token-for-token
+against `pipeline_steps.R` on every test run, because it is a second copy.
+
 ```sh
-Rscript "Jul 28/run_all_tests.R"                    # 229 assertions, 4 suites
+Rscript "Jul 28/run_all_tests.R"                    # 356 assertions, 5 suites
 
 # The one that settles equivalence -- needs a warehouse:
 Rscript "Jul 28/tests/verify_against_legacy.R" --dry-run     # see the SQL
 DATABRICKS_PWD=... Rscript "Jul 28/tests/verify_against_legacy.R"
 
+
+Rscript "Jul 28/cohort1_ie/build_cohort1.R" --funnel  # cohort 1's IE funnel
+Rscript "Jul 28/cohort1_ie/build_cohort1.R" --dry-run # ...and its 28 statements
 
 Rscript "Jul 28/overall/build.R" --dry-run
 Rscript "Jul 28/ndmm/build.R" --dry-run
