@@ -458,6 +458,8 @@ check_lot_long <- function(con, cfg) {
   q <- db_q(con, glue("
     SELECT count(*) AS n_rows,
            count(DISTINCT PATID) AS n_patients,
+           sum(CASE WHEN LOT_START_DT IS NULL THEN 1 ELSE 0 END) AS n_null_start,
+           sum(CASE WHEN LOT_BASE_END_DT IS NULL THEN 1 ELSE 0 END) AS n_null_end,
            sum(CASE WHEN LOT_BASE_END_DT < LOT_START_DT THEN 1 ELSE 0 END) AS n_end_before_start,
            sum(CASE WHEN LOT_NUM < 1 OR LOT_NUM > {cfg$max_lot} THEN 1 ELSE 0 END) AS n_bad_lot_num
     FROM {t}"))
@@ -486,6 +488,11 @@ check_lot_long <- function(con, cfg) {
   bad <- character(0)
   if (q$n_rows == 0)           bad <- c(bad, "it is empty")
   if (d > 0)                   bad <- c(bad, paste0(d, " duplicate (PATID, LOT_NUM)"))
+  # First, because a null date is why every other check here would pass. All
+  # of them compare dates, and a comparison with NULL is unknown rather than
+  # true, so a line with no start or no end slips through the lot of them.
+  if (q$n_null_start > 0)      bad <- c(bad, paste0(q$n_null_start, " lines with no start date"))
+  if (q$n_null_end > 0)        bad <- c(bad, paste0(q$n_null_end, " lines with no end date"))
   if (q$n_end_before_start > 0) bad <- c(bad, paste0(q$n_end_before_start, " lines end before they start"))
   if (q$n_bad_lot_num > 0)     bad <- c(bad, paste0(q$n_bad_lot_num, " lines outside 1..", cfg$max_lot))
   if (g > 0)                   bad <- c(bad, paste0(g, " patients whose lines do not run 1..n"))

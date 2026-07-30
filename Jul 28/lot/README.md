@@ -275,6 +275,13 @@ error anywhere, it simply never matches and those transplants stop existing.
 The build now stops on any `SCT_TYPE` outside those three and `UNKNOWN`, which
 is a deliberate bucket nothing reads.
 
+The same `CASE` has the same hole on `CL_CODE_TYPE`, and it is checked the same
+way. The claim joins read exactly `HCPCS`, `ICD10PROC`, `ICD9PROC`,
+`ICD10DIAG` and `ICD9DIAG`; anything else - including a blank type, which the
+MM code list filters out and this one does not - sits in the view matching
+nothing. Neither check is waivable: a code type no branch reads cannot produce
+a transplant, so there is no version of it worth carrying on through.
+
 ## Running LOT2-5 on its own
 
 `prepare_lot_inputs()` rebuilds what LOT2-5 needs in a session where LOT1 did
@@ -327,11 +334,17 @@ QC phase reports these and carries on; these stop the build.
 called complete:
 
 - no duplicate `(PATID, LOT_NUM)`
+- no line with a null start or end date
 - no line ending before it starts
 - no line number outside `1..MAX_LOT`
 - every patient's lines running `1..n` with no gaps
 - each line starting strictly after the previous one ended
 - no line ending after the patient's observation
+
+The null check comes first because it is what makes the others meaningful.
+Every one of them compares dates, and a comparison with `NULL` is unknown
+rather than true - so before it was added, a line with no start or no end
+passed all of them.
 
 The last two are the chain the iterative builder is supposed to produce: every
 LOT N candidate is taken strictly after the previous line's end, and every

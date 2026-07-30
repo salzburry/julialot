@@ -110,6 +110,31 @@ phase_sct <- function(con, ctx) {
   }
   log_msg("  OK: Every SCT_TYPE is one the build reads.")
 
+  # The same hole on the other arm of the same CASE. The claim joins below
+  # read exactly five code types; anything the CASE does not map passes
+  # through and matches none of them. A blank type gets through too - S01
+  # drops those from the MM code list, and this list has no equivalent filter,
+  # so the WHERE above guards CL_CODE and SCT_TYPE but not this.
+  sct_code_type <- db_q(con, "
+    SELECT coalesce(CL_CODE_TYPE, '<null>') AS CL_CODE_TYPE, count(*) AS n_codes
+    FROM sct_codelist
+    WHERE CL_CODE_TYPE IS NULL
+       OR trim(CL_CODE_TYPE) = ''
+       OR CL_CODE_TYPE NOT IN ('HCPCS', 'ICD10PROC', 'ICD9PROC',
+                               'ICD10DIAG', 'ICD9DIAG')
+    GROUP BY coalesce(CL_CODE_TYPE, '<null>')
+    ORDER BY CL_CODE_TYPE
+  ")
+  if (nrow(sct_code_type) > 0) {
+    print(sct_code_type)
+    stop("SCT code type(s) no extraction reads: ",
+         paste(sct_code_type$CL_CODE_TYPE, collapse = ", "),
+         " - add the spelling to the CASE in S11, or fix the code list. ",
+         "Left alone these codes match nothing and the transplant is lost.",
+         call. = FALSE)
+  }
+  log_msg("  OK: Every SCT code type is one an extraction branch reads.")
+
   # S12: Extract raw SCT claims from MEDICAL + MED_PROCEDURE
   run_step(con, "S12_sct_claims_raw", glue("
     CREATE OR REPLACE TEMPORARY VIEW sct_claims_raw AS

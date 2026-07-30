@@ -87,7 +87,9 @@ CUT <- list(
     c(from = "sct_dup <- db_q(con, \"",
       to   = "log_msg(\"  OK: Each SCT code names exactly one transplant type.\")"),
     c(from = "sct_unmapped <- db_q(con, \"",
-      to   = "log_msg(\"  OK: Every SCT_TYPE is one the build reads.\")"))
+      to   = "log_msg(\"  OK: Every SCT_TYPE is one the build reads.\")"),
+    c(from = "sct_code_type <- db_q(con, \"",
+      to   = "log_msg(\"  OK: Every SCT code type is one an extraction branch reads.\")"))
 )
 
 # Lines that were EDITED rather than added, and how many of each. Counted like
