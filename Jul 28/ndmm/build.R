@@ -1,31 +1,26 @@
 #!/usr/bin/env Rscript
 # =============================================================================
-# ndmm/build.R -- build the NDMM cohort. Everything it needs is here.
+# ndmm/build.R -- build the NDMM cohort base
 # -----------------------------------------------------------------------------
-#   Rscript "Jul 28/ndmm/build.R"
-#   Rscript "Jul 28/ndmm/build.R" --index-only    # stop at the LOT-build input
-#   Rscript "Jul 28/ndmm/build.R" --dry-run       # print the SQL, touch nothing
+#   DATABRICKS_PWD=... Rscript "Jul 28/ndmm/build.R"
 #
-#   ndmm/cohort.R             the definition (gate list, no SQL)
-#   ndmm/build_lot1_flags.R   the LOT1-anchored flag stage NDMM needs
-#   ndmm/tests/               its tests
-#   ../engine/                the shared SQL generator
+# Runs the shared steps in ../R/steps with the switches in config.csv.
+# Writes NDMM_COH_FINAL. It does not read the Overall cohort.
 #
-# Does NOT build the Overall cohort and never reads ELIG_COH_FINAL. It reads
-# ELIG_COH_ALLFLAGS directly, selects its own index dates, and applies its
-# LOT1-anchored gates against LOT1_STARTS / LOT1_FLAGS_ALL.
+# This is only the index-anchored half. NDMM's own criteria are anchored on the
+# LOT1 start date, so they can only run after the LOT build:
 #
-# It DOES need the LOT build to have run -- its gates are anchored at
-# LOT1_START_DT, so there is nothing to measure without a 1L regimen. On the
-# union view, not on Overall. Run order: build_lot1_flags.R header, PLAN.md 6.
+#   ndmm/build.R       ->  NDMM_COH_FINAL
+#   ../lot/02_lot1.R   ->  LOT1_STARTS, LOT_LONG  (INPUT_COHORT_TABLE=NDMM_COH_FINAL)
+#   ndmm/ndmm_flags.R  ->  the NDMM cohort
 # =============================================================================
-
-.here <- local({
-  fa <- grep("^--file=", commandArgs(FALSE), value = TRUE)
-  if (length(fa)) dirname(normalizePath(
-    gsub("~+~", " ", sub("^--file=", "", fa[1]), fixed = TRUE))) else getwd()
+here <- local({
+  a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
+  if (!length(a)) getwd()
+  else dirname(normalizePath(gsub("~+~", " ", sub("^--file=", "", a[1]), fixed = TRUE)))
 })
-source(file.path(dirname(.here), "engine", "bootstrap.R"))
-cohort_bootstrap(.here)
-
-if (!interactive()) run_build("ndmm")
+root <- dirname(here)
+library(DBI); library(odbc); library(glue)
+source(file.path(root, "R", "build_cohort.R"))
+load_cohort_modules(root, here)
+if (!interactive()) build_cohort(here, root)

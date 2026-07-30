@@ -1,0 +1,22 @@
+name,value,description
+# ---------------------------------------------------------------------------
+# Overall cohort. TRUE applies a criterion, FALSE drops it.
+# Step 1 (qualifying MM dx) has no switch -- without it there is no index date.
+# This file wins over ../pipeline_inputs.csv.
+# ---------------------------------------------------------------------------
+FINAL_TABLE_NAME,OVERALL_COH_FINAL,Cohort table this build writes
+# --- inclusions ---
+APPLY_AGE_INCL,TRUE,Step 2 - age >= MIN_AGE at index
+APPLY_CE_B_INCL,TRUE,Step 3 - 6-month baseline enrollment
+APPLY_CE_F_INCL,TRUE,Step 4 - enrolled on the index date
+APPLY_NO_BL_AGENTS_INCL,TRUE,Step 5 - no MM agent in baseline
+APPLY_FU_AGENTS_INCL,TRUE,Step 6 - at least one MM agent in follow-up
+# --- exclusions ---
+APPLY_BASELINE_MM_EXCL,FALSE,Step 7 - no MM diagnosis in baseline
+APPLY_OTHER_MALIG_EXCL,FALSE,Step 8 - no other malignancy
+APPLY_PREGNANCY_EXCL,FALSE,Step 9 - no pregnancy
+APPLY_CLINTRIAL_EXCL,FALSE,Step 10 - no clinical trial
+# --- parameters ---
+MIN_AGE,18,Minimum age at index
+OUTPATIENT_WINDOW,90,Two-outpatient confirmation window (30/60/90)
+CHECKPOINT_STEPS,mm_dx_events_all|mm_dx_events_id|mm_qualifying|ELIG_COH_ALLFLAGS,Views written to the schema (pipe-separated); the rest stay temp views

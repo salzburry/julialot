@@ -1,24 +1,19 @@
 #!/usr/bin/env Rscript
 # =============================================================================
-# overall/build.R -- build the Overall cohort. Everything it needs is here.
+# overall/build.R -- build the Overall cohort
 # -----------------------------------------------------------------------------
-#   Rscript "Jul 28/overall/build.R"
-#   Rscript "Jul 28/overall/build.R" --dry-run    # print the SQL, touch nothing
+#   DATABRICKS_PWD=... Rscript "Jul 28/overall/build.R"
 #
-#   overall/cohort.R    the definition (gate list, no SQL)
-#   overall/tests/      its tests
-#   ../engine/          the shared SQL generator
-#
-# Reads ELIG_COH_ALLFLAGS and nothing else. Overall has no LOT1-anchored gates,
-# so this never touches the LOT build, the LOT1 flag tables, or the ndmm folder.
+# Runs the shared steps in ../R/steps with the switches in config.csv.
+# Writes OVERALL_COH_FINAL. Does not read or need any other cohort.
 # =============================================================================
-
-.here <- local({
-  fa <- grep("^--file=", commandArgs(FALSE), value = TRUE)
-  if (length(fa)) dirname(normalizePath(
-    gsub("~+~", " ", sub("^--file=", "", fa[1]), fixed = TRUE))) else getwd()
+here <- local({
+  a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
+  if (!length(a)) getwd()
+  else dirname(normalizePath(gsub("~+~", " ", sub("^--file=", "", a[1]), fixed = TRUE)))
 })
-source(file.path(dirname(.here), "engine", "bootstrap.R"))
-cohort_bootstrap(.here)
-
-if (!interactive()) run_build("overall")
+root <- dirname(here)
+library(DBI); library(odbc); library(glue)
+source(file.path(root, "R", "build_cohort.R"))
+load_cohort_modules(root, here)
+if (!interactive()) build_cohort(here, root)
