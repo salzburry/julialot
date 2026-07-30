@@ -281,14 +281,21 @@ for (w in c("orphan_meds", "uncoded_meds", "unexpected_types", "multi_class",
             "code_to_med", "bad_ndc", "subs_sub", "subs_orig", "ndc_shape",
             "class_agreement"))
   ok(grepl(paste0(w, " <-"), cd, fixed = TRUE), paste0(w, " is checked"))
-# bad_ndc catches the all-zero key. The rest of a malformed NDC is silent
-# because the join pads whatever digits it finds, so each of these becomes a
-# real-looking but different eleven-digit key.
-for (shape in c("CL_CODE RLIKE '[^0-9]'",
-                "length(regexp_replace(CL_CODE, '[^0-9]', '')) > 11",
-                "length(regexp_replace(CL_CODE, '[^0-9]', '')) < 9"))
-  ok(grepl(shape, cd, fixed = TRUE),
-     paste0("NDCs are checked for ", shape))
+# bad_ndc catches the all-zero key. The rest is silent because the join pads
+# whatever digits it finds, so each of these becomes a real-looking but
+# different eleven-digit key. The contract is canonical eleven digits.
+ok(grepl("WHERE CL_CODE_TYPE = 'NDC' AND (has_alpha OR n_digits <> 11)", cd, fixed = TRUE),
+   "the code list has to carry eleven-digit NDCs, not merely plausible ones")
+for (shape in c("WHEN has_alpha      THEN 'non-digits'",
+                "WHEN n_digits > 11  THEN 'over eleven digits'",
+                "WHEN n_digits = 10  THEN 'ten digits'"))
+  ok(grepl(shape, cd, fixed = TRUE), paste0("and reports which: ", trimws(shape)))
+# Ten digits is its own name: it is a real FDA form whose layout the strip at
+# S01 destroys, so waiving it is a judgement the study team can make. Waiving
+# it must not also accept 'ABC123'.
+ok(grepl('check = "ndc_short"', cd, fixed = TRUE) &&
+     grepl('check = "ndc_shape"', cd, fixed = TRUE),
+   "ten-digit codes are waivable separately from malformed ones")
 # The two files are compared to each other, not each to itself: MED_CLASS on a
 # claim comes from the code list while the LOT1_CLASS_<x> columns are named
 # from the rollup's classes, so a disagreement is an always-zero column.
@@ -349,11 +356,13 @@ mk_db_q <- function(problem) function(con, sql) {
     return(if (problem == "bad_ndc") data.frame(CL_CODE = "00000000000", CL_MED_ABBR = "X")
            else data.frame(CL_CODE = character(0), CL_MED_ABBR = character(0)))
   if (grepl("AS why", sql, fixed = TRUE))
-    return(if (problem == "ndc_shape")
-      data.frame(CL_CODE = "ABC123", CL_MED_ABBR = "LEN", n_digits = 3L,
-                 why = "non-digits")
-      else data.frame(CL_CODE = character(0), CL_MED_ABBR = character(0),
-                      n_digits = integer(0), why = character(0)))
+    return(switch(problem,
+      ndc_shape = data.frame(CL_CODE = "ABC123", CL_MED_ABBR = "LEN",
+                             n_digits = 3L, why = "non-digits"),
+      ndc_short = data.frame(CL_CODE = "5024204062", CL_MED_ABBR = "LEN",
+                             n_digits = 10L, why = "ten digits"),
+      data.frame(CL_CODE = character(0), CL_MED_ABBR = character(0),
+                 n_digits = integer(0), why = character(0))))
   if (grepl("AS rollup_class", sql, fixed = TRUE))
     return(if (problem == "class_agreement")
       data.frame(CL_MED_ABBR = "LEN", codelist_class = "IMID", rollup_class = "PI")
@@ -389,7 +398,7 @@ ok(!inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error")
    "a consistent pair of code lists runs")
 for (prob in c("orphan", "uncoded", "type", "class", "code_to_med", "bad_ndc",
                "rollup_defs", "blank_keys", "subs_substitute", "subs_original",
-               "ndc_shape", "class_agreement")) {
+               "ndc_shape", "ndc_short", "class_agreement")) {
   assign("db_q", mk_db_q(prob), envir = ce)
   ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
      paste0("'", prob, "' stops the build"))
@@ -613,6 +622,9 @@ ok(length(bad_view) == 0,
 
 # Two WHERE clauses for one SELECT is a parse error. It happened by inserting
 # a filter after FROM in a query that already had a WHERE further down.
+# Deliberately blunt: it does not track subqueries, so an inner WHERE followed
+# by an outer one reads as the bug. Write the filter as one clause rather than
+# teaching this to parse SQL - the value here is that it cannot be argued with.
 double_where <- character(0)
 for (f in sql_files) {
   l <- readLines(f, warn = FALSE)

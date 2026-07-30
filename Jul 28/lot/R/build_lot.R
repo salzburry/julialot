@@ -41,7 +41,7 @@ CONTRACT <- list(
 WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types", "multi_class",
                      "code_to_med", "bad_ndc", "rollup_defs", "blank_keys",
                      "subs_substitute", "subs_original", "ndc_shape",
-                     "class_agreement")
+                     "ndc_short", "class_agreement")
 
 codelist_waivers <- function() {
   v <- trimws(strsplit(Sys.getenv("CODELIST_WAIVERS", unset = ""), "[,|]")[[1]])

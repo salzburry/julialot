@@ -230,8 +230,8 @@ CODELIST_WAIVERS=code_types
 
 Names: `orphan_meds`, `uncoded_meds`, `code_types`, `multi_class`,
 `code_to_med`, `bad_ndc`, `rollup_defs`, `blank_keys`, `subs_substitute`,
-`subs_original`, `ndc_shape`, `class_agreement`. Unknown names are rejected,
-and whatever was waived is recorded in `LOT_BUILD_STATUS`.
+`subs_original`, `ndc_shape`, `ndc_short`, `class_agreement`. Unknown names are
+rejected, and whatever was waived is recorded in `LOT_BUILD_STATUS`.
 
 The SCT checks in `05_sct.R` are not on this list. They stop the build
 outright, because each one means a transplant is being counted twice or not at
@@ -249,17 +249,33 @@ looks exactly like a drug with no claims. Both sides are checked against
 
 ### NDC shape
 
-The NDC join pads whatever digits it finds to eleven:
+**The code lists must carry canonical eleven-digit NDCs.** The join pads
+whatever digits it finds to eleven:
 
 ```sql
 lpad(regexp_replace(CL_CODE, '[^0-9]', ''), 11, '0')
 ```
 
 `bad_ndc` catches the all-zero result, which is what a claim with no NDC looks
-like. `ndc_shape` catches the other ways a code survives that expression as a
-different eleven-digit key without raising anything: letters (storage strips
-punctuation but not letters, so `ABC123` arrives as `00000000123`), more than
-eleven digits, and fewer than nine.
+like. Two more checks enforce the contract, separately because they need
+different answers.
+
+`ndc_shape` is for codes that cannot be an NDC in any form: letters (storage
+strips punctuation but not letters, so `ABC123` arrives as `00000000123`), more
+than eleven digits, fewer than ten. Fix the code list.
+
+`ndc_short` is for ten-digit codes, and it is the subtle one. Ten digits is a
+real FDA form, but one of three layouts - 4-4-2, 5-3-2 or 5-4-1 - and the
+eleven-digit form is made by inserting the zero into the *short* segment, not
+at the far left. `50242-040-62` is 5-3-2, so it becomes `50242004062`; the
+blanket left-pad produces `05024204062`, which is a different key. S01 strips
+the separators, so by the time anything can look at the code the layout is
+unrecoverable - the conversion has to happen in the file, not here. Waive
+`ndc_short` only once the study team has confirmed the ten-digit entries are
+4-4-2, which is the one layout the pad gets right.
+
+The two are separate names so that accepting a documented short representation
+does not also accept `ABC123`.
 
 ### Class agreement
 

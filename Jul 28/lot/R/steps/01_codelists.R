@@ -189,34 +189,56 @@ phase_codelists <- function(con) {
     log_msg("  OK: No all-zero NDC rows.")
   }
 
-  # bad_ndc catches the all-zero key. These are the other ways a code survives
-  # the join's pad-to-eleven as a different key without erroring: letters
-  # ('ABC123' joins as 00000000123), more than eleven digits, fewer than nine.
+  # The code list has to carry canonical eleven-digit NDCs. Anything else the
+  # join pads to eleven anyway, silently, and bad_ndc only catches the all-zero
+  # result. Two conditions, because they need different answers:
+  #
+  #   malformed  letters ('ABC123' joins as 00000000123), over eleven digits,
+  #              under ten. None of these can be an NDC in any form.
+  #   ten digits a real FDA form, but one of 4-4-2, 5-3-2 or 5-4-1, and which
+  #              cannot be told once the separators are stripped at S01. The
+  #              zero belongs in the short segment, so only 4-4-2 comes out
+  #              right: 50242-040-62 is 50242004062, not 05024204062. Every
+  #              other layout joins as a different drug's key, or none.
   ndc_shape <- db_q(con, "
-    SELECT CL_CODE, CL_MED_ABBR,
-           length(regexp_replace(CL_CODE, '[^0-9]', '')) AS n_digits,
+    SELECT CL_CODE, CL_MED_ABBR, n_digits,
            CASE
-             WHEN CL_CODE RLIKE '[^0-9]' THEN 'non-digits'
-             WHEN length(regexp_replace(CL_CODE, '[^0-9]', '')) > 11
-               THEN 'over eleven digits'
-             ELSE 'under nine digits'
+             WHEN has_alpha      THEN 'non-digits'
+             WHEN n_digits > 11  THEN 'over eleven digits'
+             WHEN n_digits = 10  THEN 'ten digits'
+             ELSE 'under ten digits'
            END AS why
-    FROM mma_codelist
-    WHERE CL_CODE_TYPE = 'NDC'
-      AND (CL_CODE RLIKE '[^0-9]'
-           OR length(regexp_replace(CL_CODE, '[^0-9]', '')) > 11
-           OR length(regexp_replace(CL_CODE, '[^0-9]', '')) < 9)
-    ORDER BY CL_MED_ABBR, CL_CODE
+    FROM (
+      SELECT CL_CODE, CL_MED_ABBR, CL_CODE_TYPE,
+             CL_CODE RLIKE '[^0-9]' AS has_alpha,
+             length(regexp_replace(CL_CODE, '[^0-9]', '')) AS n_digits
+      FROM mma_codelist)
+    WHERE CL_CODE_TYPE = 'NDC' AND (has_alpha OR n_digits <> 11)
+    ORDER BY why, CL_MED_ABBR, CL_CODE
   ")
-  if (nrow(ndc_shape) > 0) {
+  ten  <- ndc_shape[ndc_shape$why == "ten digits", , drop = FALSE]
+  junk <- ndc_shape[ndc_shape$why != "ten digits", , drop = FALSE]
+  if (nrow(junk) > 0) {
     log_msg("  NDC rows that cannot be the code they claim to be:")
-    print(ndc_shape)
+    print(junk)
     problems <- rbind(problems, data.frame(check = "ndc_shape", detail = paste0(
-      nrow(ndc_shape), " malformed NDC row(s): ",
-      paste(utils::head(paste0(ndc_shape$CL_CODE, " (", ndc_shape$why, ")"), 5),
+      nrow(junk), " malformed NDC row(s): ",
+      paste(utils::head(paste0(junk$CL_CODE, " (", junk$why, ")"), 5),
             collapse = ", ")), stringsAsFactors = FALSE))
   } else {
     log_msg("  OK: Every NDC is the shape of an NDC.")
+  }
+  if (nrow(ten) > 0) {
+    log_msg("  Ten-digit NDC rows, whose segment layout the join has to guess:")
+    print(ten)
+    problems <- rbind(problems, data.frame(check = "ndc_short", detail = paste0(
+      nrow(ten), " ten-digit NDC row(s), padded as if 4-4-2: ",
+      paste(utils::head(unique(ten$CL_CODE), 5), collapse = ", "),
+      ". Convert them to eleven digits in the code list, or waive ndc_short ",
+      "once the study team has confirmed the layout is 4-4-2"),
+      stringsAsFactors = FALSE))
+  } else {
+    log_msg("  OK: Every NDC is already eleven digits.")
   }
 
   rollup_defs <- db_q(con, "
