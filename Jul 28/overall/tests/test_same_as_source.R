@@ -1,7 +1,6 @@
 #!/usr/bin/env Rscript
-# Same steps, same order, same SQL as apr_30_2026 - compared as exact strings.
-# Two steps deliberately differ; see CHANGED below. Skips when apr_30_2026 is
-# absent, which is normal in prod.
+# Compare step order, QC, and unchanged SQL with apr_30_2026.
+# Three steps deliberately differ; see CHANGED below.
 #
 #   Rscript "Jul 28/overall/tests/test_same_as_source.R"
 
@@ -87,10 +86,9 @@ if (length(a) == length(b)) {
   ok(identical(vapply(a, `[[`, character(1), "name"),
                vapply(b, `[[`, character(1), "name")),
      "same step names, in the same order")
-  # These two differ on purpose. med_claim_header used to collapse lines with
-  # max(POS) and then test it, so POS 21 + 81 came out 81 and stopped being
-  # inpatient - 348 patients mislabelled, 7 dropped. Flagged per line now.
-  CHANGED <- c("07a_med_claim_header", "08a_mm_dx_events_all")
+  # These steps now use the line-level inpatient flag.
+  CHANGED <- c("07a_med_claim_header", "08a_mm_dx_events_all",
+               "22_other_malig_flag")
   for (i in seq_along(a)) {
     same_sql <- identical(as.character(a[[i]]$sql), as.character(b[[i]]$sql))
     if (a[[i]]$name %in% CHANGED) {
@@ -106,24 +104,34 @@ if (length(a) == length(b)) {
   hdr <- as.character(b[[match("07a_med_claim_header",
                                vapply(b, `[[`, character(1), "name"))]]$sql)
   ev  <- as.character(b[[match("08a_mm_dx_events_all",
-                               vapply(b, `[[`, character(1), "name"))]]$sql)
-  ok(grepl("AS line_inpatient", hdr, fixed = TRUE),
-     "med_claim_header flags each line before aggregating")
+                                vapply(b, `[[`, character(1), "name"))]]$sql)
+  om  <- as.character(b[[match("22_other_malig_flag",
+                                vapply(b, `[[`, character(1), "name"))]]$sql)
+  ok(grepl("max(CASE WHEN POS IN ('21', '51', '61')", hdr, fixed = TRUE) &&
+     grepl("THEN 1 ELSE 0 END) AS line_inpatient", hdr, fixed = TRUE),
+      "med_claim_header flags each line before aggregating")
   ok(grepl("h.line_inpatient = 1 OR cf.CONF_ID IS NOT NULL", ev, fixed = TRUE),
-     "inpatient_flg reads the aggregated line flag")
-  ok(!grepl("h.POS IN ('21', '51', '61')", ev, fixed = TRUE),
-     "no step tests a collapsed max(POS) any more")
-  # Both operands are 0/1 or IS NOT NULL, so NOT(...) can never be NULL and a
-  # claim can no longer end up neither inpatient nor outpatient.
+      "inpatient_flg reads the aggregated line flag")
+  ok(grepl("h.line_inpatient = 1 OR cf.CONF_ID IS NOT NULL", om, fixed = TRUE),
+     "other-malignancy setting reads the same line flag")
+  all_sql <- vapply(b, function(step) as.character(step$sql), character(1))
+  ok(!any(grepl("h.POS IN ('21', '51', '61')", all_sql, fixed = TRUE)) &&
+     !any(grepl("h.TOS_CD IN (", all_sql, fixed = TRUE)),
+     "no step tests collapsed POS or TOS_CD")
   ok(grepl("CASE WHEN NOT (h.line_inpatient = 1 OR cf.CONF_ID IS NOT NULL)",
-           ev, fixed = TRUE),
-     "outpatient_flg cannot evaluate to NULL")
+            ev, fixed = TRUE),
+      "outpatient_flg cannot evaluate to NULL")
 }
 
-# Copies, so they must not have drifted. criteria_attrition.R and db_utils.R
-# are left out - both carry fixes the source doesn't have, and neither touches
-# build_steps().
-for (f in c("config_prompts.R", "codelists.R", "load_inputs.R"))
+# Copies, so they must not have drifted. Local comments may differ.
+code_lines <- function(path) {
+  lines <- readLines(path, warn = FALSE)
+  lines[!grepl("^[[:space:]]*#", lines)]
+}
+ok(identical(code_lines(file.path(ROOT, "R", "config_prompts.R")),
+             code_lines(file.path(APR, "R", "config_prompts.R"))),
+   "R/config_prompts.R has identical executable lines")
+for (f in c("codelists.R", "load_inputs.R"))
   ok(identical(readLines(file.path(ROOT, "R", f), warn = FALSE),
                readLines(file.path(APR, "R", f), warn = FALSE)),
      paste0("R/", f, " is a byte-identical copy"))

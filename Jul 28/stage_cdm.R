@@ -8,9 +8,7 @@
 # The copies keep the names cdm_src() builds, so pointing OPTUM_CDM_SCHEMA at
 # them is the only change. Run once per data vintage.
 #
-# Two things to get right, both handled below: the window has to reach back far
-# enough for the baseline lookback, and three tables must not be date-filtered
-# at all.
+# Claim tables use the study window. The other four are copied whole.
 
 here <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
