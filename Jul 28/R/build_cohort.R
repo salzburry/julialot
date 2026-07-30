@@ -1,12 +1,5 @@
-# =============================================================================
-# build_cohort.R -- run the cohort steps and report attrition
-# -----------------------------------------------------------------------------
-# The body of apr_30_2026/01_cohort.R's main(), unchanged, with one difference:
-# it takes the folder whose config.csv should be applied. That is what lets
-# overall/ and ndmm/ run the same SQL with different switches.
-#
-# Each cohort folder's build.R calls build_cohort(<its own folder>).
-# =============================================================================
+# Shared cohort runner. Each cohort folder supplies its own config.csv and
+# calls build_cohort(<its own folder>).
 
 build_cohort <- function(cohort_dir, root = dirname(cohort_dir)) {
   user_cfg    <- prompt_user_options(cfg_defaults)
@@ -71,11 +64,8 @@ build_cohort <- function(cohort_dir, root = dirname(cohort_dir)) {
   log_msg("=", SEP_59)
   log_msg("BUILD COMPLETE - generating attrition report...")
 
-  # No tryCatch here. The old code wrapped this block in one and logged a WARN,
-  # so a broken report still printed "COMPLETE" - and because
-  # persist_attrition_table() is CREATE OR REPLACE, the previous run's rows
-  # stayed in attrition_report and the LOT dashboard rendered them as current.
-  # The attrition table is a deliverable. If it can't be produced, the run failed.
+  # No tryCatch. The attrition table is a deliverable - if it can't be
+  # produced, the run failed.
   h <- make_naming_helpers(cfg, mat_tables)
   catalog <- build_criteria_catalog(cfg)
   rows <- run_attrition_report(catalog, cfg, conn, h$work_tbl)
@@ -86,19 +76,10 @@ build_cohort <- function(cohort_dir, root = dirname(cohort_dir)) {
   invisible(list(cfg = cfg, conn = conn, mat_tables = mat_tables))
 }
 
-# One schema for everything this build writes: the checkpoints, the final
-# cohort table, and attrition_report. All of it lands in
-#
-#   <catalog>.<schema>.<table>    e.g. hive_metastore.osk02156.OVERALL_COH_FINAL
-#
-# config_prompts.R resolves work_schema and personal_schema from different env
-# vars with different fallbacks, so they can point at different places. Worse,
-# personal_schema falls back to "" - and an empty personal_schema silently
-# skips the step that writes the cohort table, while attrition_report still
-# gets written naming that table. Pin both, and stop if there's nothing to
-# pin to.
-#
-# PROJECT_WORK_SCHEMA is the explicit override; otherwise it's the Domino user.
+# One schema for everything this build writes - checkpoints, the final cohort,
+# attrition_report - as <catalog>.<schema>, e.g. hive_metastore.osk02156.
+# config_prompts.R resolves work_schema and personal_schema separately and
+# personal_schema can come back empty, which silently skips writing the cohort.
 pin_output_schema <- function(cfg) {
   schema <- Sys.getenv("PROJECT_WORK_SCHEMA",
               unset = Sys.getenv("DOMINO_USER_NAME",
@@ -112,12 +93,8 @@ pin_output_schema <- function(cfg) {
   cfg
 }
 
-# Which views get written to the schema. Everything else is a temp view and
-# is gone when the session ends -- you can't query it afterwards, and a stale
-# table left behind by an older run is never overwritten.
-#
-# Defaults to the three in config_prompts.R. Widen it from a cohort's
-# config.csv, pipe-separated:
+# Which views get written to the schema. Everything else stays a temp view and
+# is gone when the session ends. Set per cohort in config.csv, pipe-separated:
 #
 #   CHECKPOINT_STEPS,mm_dx_events_all|mm_dx_events_id|mm_qualifying|ELIG_COH_ALLFLAGS
 resolve_checkpoints <- function() {
@@ -129,14 +106,10 @@ resolve_checkpoints <- function() {
 
 # Source the shared modules. Call before build_cohort().
 #
-# Order matters and is the same order 01_cohort.R uses: the config CSVs are
-# applied BEFORE config_prompts.R is sourced, because cfg_defaults reads
-# Sys.getenv() at source time. Source it first and the CSV values never reach
-# it -- the build silently runs on code defaults.
-#
-# The cohort's own config.csv is read before the shared pipeline_inputs.csv,
-# and load_pipeline_inputs() only fills variables that are still unset, so the
-# cohort's value wins. A real env var, set before either, wins over both.
+# Order matters: cfg_defaults reads Sys.getenv() at source time, so the config
+# CSVs must be applied before config_prompts.R is sourced. The cohort's own
+# config.csv is read first and wins over pipeline_inputs.csv; a real env var
+# set before either wins over both.
 load_cohort_modules <- function(root, cohort_dir = NULL) {
   d <- file.path(root, "R")
   source(file.path(d, "load_inputs.R"))

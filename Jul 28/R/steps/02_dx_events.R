@@ -1,22 +1,7 @@
-# =============================================================================
-# 02_dx_events.R -- Phase 2 -- MM diagnosis events, inpatient vs outpatient.
-# -----------------------------------------------------------------------------
-# Lifted from apr_30_2026/R/pipeline_steps.R. Every SQL line below is
-# byte-identical to the source; only this function's first line changed,
-# because the helpers it used to close over are now passed in.
-# =============================================================================
+# MM diagnosis events: claim headers, confinements, then the dx event tables.
 
 phase_dx_events <- function(cfg, h, ctx) {
-  full_name <- h$full_name; cdm <- h$cdm; ref <- h$ref
-  work <- h$work; work_tbl <- h$work_tbl; cdm_src <- h$cdm_src
-  criteria_sql <- ctx$criteria_sql
-  fu_cap_expr <- ctx$fu_cap_expr
-  ce_join_for_fu_cap <- ctx$ce_join_for_fu_cap
-  mm_dx_source <- ctx$mm_dx_source
-  mm_therapy_source <- ctx$mm_therapy_source
-  preg_source <- ctx$preg_source
-  clintrial_source <- ctx$clintrial_source
-  other_malig_source <- ctx$other_malig_source
+  work <- h$work; cdm_src <- h$cdm_src
 
   list(
     # ---- Phase 2: MM diagnosis events ----

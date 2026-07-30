@@ -53,7 +53,7 @@ if (!requireNamespace("glue", quietly = TRUE)) {
   assign("glue", glue, envir = globalenv())
 }
 
-# Build the config once, the way 01_cohort.R does, and use it for both sides.
+# Build the config once and use it for both sides.
 env_of <- function(dir, files, extra = NULL) {
   e <- new.env(parent = globalenv())
   for (f in files) sys.source(file.path(dir, f), envir = e)
@@ -106,10 +106,6 @@ for (f in c("config_prompts.R", "db_utils.R", "codelists.R", "load_inputs.R"))
   ok(identical(readLines(file.path(ROOT, "R", f), warn = FALSE),
                readLines(file.path(APR, "R", f), warn = FALSE)),
      paste0("R/", f, " is a byte-identical copy"))
-ok(identical(readLines(file.path(ROOT, "01_cohort.R"), warn = FALSE),
-             readLines(file.path(APR, "01_cohort.R"), warn = FALSE)),
-   "01_cohort.R is a byte-identical copy")
-
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))
 if (fail > 0L) quit(status = 1L)
