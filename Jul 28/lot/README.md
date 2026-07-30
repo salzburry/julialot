@@ -192,17 +192,23 @@ changes nothing. The SQL filter stays afterwards as a defensive guard.
 It is a governed file shared with `apr_30_2026`, so the script is built to be
 boring about it. The file is handled as raw bytes and whole lines are sliced
 out of it, so every kept row - its quoting, spacing and line ending - goes back
-out unchanged. The new bytes are written beside the original and replace it by
-rename, so it is either the old file or the new one and never a half-written
-one. The md5 is printed before and after, and re-checked immediately before the
-rename so a concurrent edit is refused rather than discarded.
+out unchanged. The new bytes are written beside the original, given the
+original's mode, and replace it by rename - so it is either the old file or the
+new one and never a half-written one, and a shared file does not quietly lose
+group write to the umask.
 
 It also checks its own premise instead of asserting it: the rows are only safe
 to remove because a steroid has no codes, so it refuses unless
-`cl_mma_codelist.csv` is present, carries none of the abbreviations being
-removed, and has no `STEROID` rows of its own. It refuses too if the edit would
-leave fewer medications than `01_codelists.R` requires. `Jul 28/tools/tests/`
-covers all of that, including the byte-for-byte claim.
+`cl_mma_codelist.csv` is present, has a `CL_MED_CLASS` column to judge on,
+carries none of the abbreviations being removed, and has no `STEROID` rows of
+its own. It refuses too if the edit would leave fewer medications than
+`01_codelists.R` requires.
+
+Both files' md5s are printed and re-checked immediately before the rename, so
+an edit landing in either one while the script runs stops it: a change to the
+rollup would be discarded by the replacement, and a change to the code list
+could make the premise untrue after it was checked. `Jul 28/tools/tests/`
+covers all of that, including the byte-for-byte claim and both mid-run edits.
 
 Without the filter the rollup lists medications whose codes are deliberately absent,
 `uncoded_meds` fires on every run, and LOT1 builds always-zero
@@ -222,14 +228,37 @@ Per check, not one switch, and only for something the study team has looked at:
 CODELIST_WAIVERS=code_types
 ```
 
-Names: `orphan_meds`, `uncoded_meds`, `code_types`, `multi_class`,
-`code_to_med`, `bad_ndc`, `rollup_defs`, `blank_keys`, `subs_substitute`,
-`subs_original`, `ndc_shape`, `class_agreement`. Unknown names are rejected,
-and whatever was waived is recorded in `LOT_BUILD_STATUS`.
+Waivable, because each has a reading the study team can accept - a medication
+deliberately kept in a separate file, a code type this study does not use, a
+substitution left inactive, a ten-digit NDC in a documented layout:
 
-The SCT checks in `05_sct.R` are not on this list. They stop the build
+`orphan_meds`, `uncoded_meds`, `code_types`, `multi_class`, `subs_substitute`,
+`subs_original`, `ndc_short`.
+
+Not waivable, because each means a claim counted twice, a code matching every
+claim with no NDC, a medication with no class, or an output column that is
+always zero - conditions to correct in the code list, not to accept:
+
+`code_to_med`, `bad_ndc`, `rollup_defs`, `blank_keys`, `ndc_shape`,
+`class_agreement`.
+
+Naming one of the second group is refused before the build starts, and told
+why rather than "no such check". Refusing at startup is not enough on its own -
+LOT2-5 can be run in a session of its own and reach the code lists without
+that check - so the waiver list itself drops them too. Unknown names are
+rejected, and whatever was waived is recorded in `LOT_BUILD_STATUS`.
+
+`multi_class` is the arguable one. A medication with two classes inside the
+code list has `min()` pick one silently, which is close to the second group;
+it is here because a study may knowingly carry a drug that two sources class
+differently. Move it if that turns out not to be so.
+
+The SCT checks in `05_sct.R` are on neither list. They stop the build
 outright, because each one means a transplant is being counted twice or not at
 all, and there is no version of that a run should carry on through.
+
+Run with none of them set first. A check that fires is evidence about the
+production code lists, to look at - not a reason to turn the rest on.
 
 ### Substitutions
 
@@ -243,17 +272,33 @@ looks exactly like a drug with no claims. Both sides are checked against
 
 ### NDC shape
 
-The NDC join pads whatever digits it finds to eleven:
+**The code lists must carry canonical eleven-digit NDCs.** The join pads
+whatever digits it finds to eleven:
 
 ```sql
 lpad(regexp_replace(CL_CODE, '[^0-9]', ''), 11, '0')
 ```
 
 `bad_ndc` catches the all-zero result, which is what a claim with no NDC looks
-like. `ndc_shape` catches the other ways a code survives that expression as a
-different eleven-digit key without raising anything: letters (storage strips
-punctuation but not letters, so `ABC123` arrives as `00000000123`), more than
-eleven digits, and fewer than nine.
+like. Two more checks enforce the contract, separately because they need
+different answers.
+
+`ndc_shape` is for codes that cannot be an NDC in any form: letters (storage
+strips punctuation but not letters, so `ABC123` arrives as `00000000123`), more
+than eleven digits, fewer than ten. Fix the code list.
+
+`ndc_short` is for ten-digit codes, and it is the subtle one. Ten digits is a
+real FDA form, but one of three layouts - 4-4-2, 5-3-2 or 5-4-1 - and the
+eleven-digit form is made by inserting the zero into the *short* segment, not
+at the far left. `50242-040-62` is 5-3-2, so it becomes `50242004062`; the
+blanket left-pad produces `05024204062`, which is a different key. S01 strips
+the separators, so by the time anything can look at the code the layout is
+unrecoverable - the conversion has to happen in the file, not here. Waive
+`ndc_short` only once the study team has confirmed the ten-digit entries are
+4-4-2, which is the one layout the pad gets right.
+
+The two are separate names so that accepting a documented short representation
+does not also accept `ABC123`.
 
 ### Class agreement
 
@@ -274,6 +319,13 @@ anything but `AUTO`, `ALLO` and `CART`, so an unmapped spelling is not an
 error anywhere, it simply never matches and those transplants stop existing.
 The build now stops on any `SCT_TYPE` outside those three and `UNKNOWN`, which
 is a deliberate bucket nothing reads.
+
+The same `CASE` has the same hole on `CL_CODE_TYPE`, and it is checked the same
+way. The claim joins read exactly `HCPCS`, `ICD10PROC`, `ICD9PROC`,
+`ICD10DIAG` and `ICD9DIAG`; anything else - including a blank type, which the
+MM code list filters out and this one does not - sits in the view matching
+nothing. Neither check is waivable: a code type no branch reads cannot produce
+a transplant, so there is no version of it worth carrying on through.
 
 ## Running LOT2-5 on its own
 
@@ -327,11 +379,17 @@ QC phase reports these and carries on; these stop the build.
 called complete:
 
 - no duplicate `(PATID, LOT_NUM)`
+- no line with a null start or end date
 - no line ending before it starts
 - no line number outside `1..MAX_LOT`
 - every patient's lines running `1..n` with no gaps
 - each line starting strictly after the previous one ended
 - no line ending after the patient's observation
+
+The null check comes first because it is what makes the others meaningful.
+Every one of them compares dates, and a comparison with `NULL` is unknown
+rather than true - so before it was added, a line with no start or no end
+passed all of them.
 
 The last two are the chain the iterative builder is supposed to produce: every
 LOT N candidate is taken strictly after the previous line's end, and every

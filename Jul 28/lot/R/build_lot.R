@@ -38,15 +38,32 @@ CONTRACT <- list(
 
 # Code-list checks a run may waive by name. A single switch for all of them
 # meant waiving one expected condition also waived the dangerous ones.
+#
+# These have a reading a study team can accept: a medication deliberately kept
+# in a separate file, a code type unused by this study, a substitution left
+# inactive, a ten-digit NDC in a documented layout.
 WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types", "multi_class",
-                     "code_to_med", "bad_ndc", "rollup_defs", "blank_keys",
-                     "subs_substitute", "subs_original", "ndc_shape",
-                     "class_agreement")
+                     "subs_substitute", "subs_original", "ndc_short")
 
-codelist_waivers <- function() {
+# These do not. Each one means a claim counted twice, a code matching every
+# claim with no NDC, a medication with no class, or an output column that is
+# always zero - conditions to correct in the code list, not to accept. Named
+# rather than merely absent, so a waiver naming one is told why it is refused
+# instead of "no such check".
+FATAL_CHECKS <- c("code_to_med", "bad_ndc", "rollup_defs", "blank_keys",
+                  "ndc_shape", "class_agreement")
+
+ALL_CHECKS <- c(WAIVABLE_CHECKS, FATAL_CHECKS)
+
+codelist_waivers_named <- function() {
   v <- trimws(strsplit(Sys.getenv("CODELIST_WAIVERS", unset = ""), "[,|]")[[1]])
   v[nzchar(v)]
 }
+
+# Never hands back a check that cannot be waived, whatever the environment
+# says. check_settings refuses those before the build starts, but LOT2-5 can be
+# run on its own and reach the code lists without it.
+codelist_waivers <- function() intersect(codelist_waivers_named(), WAIVABLE_CHECKS)
 
 # The columns LOT reads off whatever cohort table it is pointed at. Checked
 # against the real table before any work starts, so a cohort that cannot drive
@@ -83,10 +100,17 @@ check_settings <- function() {
   e <- Sys.getenv("STUDY_END", unset = "")
   if (nzchar(e) && !grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", e))
     bad <- c(bad, paste0("STUDY_END='", e, "' (want YYYY-MM-DD)"))
-  w <- setdiff(codelist_waivers(), WAIVABLE_CHECKS)
-  if (length(w))
+  w <- codelist_waivers_named()
+  refused <- intersect(w, FATAL_CHECKS)
+  if (length(refused))
+    bad <- c(bad, paste0("CODELIST_WAIVERS names checks that cannot be waived: ",
+                         paste(refused, collapse = ", "),
+                         " - each one changes who counts as treated, so it has ",
+                         "to be corrected in the code list"))
+  unknown <- setdiff(w, ALL_CHECKS)
+  if (length(unknown))
     bad <- c(bad, paste0("CODELIST_WAIVERS names no such check: ",
-                         paste(w, collapse = ", "), " (choose from ",
+                         paste(unknown, collapse = ", "), " (choose from ",
                          paste(WAIVABLE_CHECKS, collapse = ", "), ")"))
   a <- Sys.getenv("ALLO_LOT_SPAN", unset = "")
   if (nzchar(a) && !a %in% c("single_day", "extend_to_next"))
@@ -348,11 +372,9 @@ write_build_status <- function(con, cfg, state) {
   db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
                     paste(cols, BUILD_STATUS_COLS, collapse = ", "), ")"))
 
-  # CREATE TABLE IF NOT EXISTS does nothing to a table an earlier version of
-  # this package left behind, so a column added since is still absent. Naming
-  # the columns in the INSERT below stops a positional mis-fill - it cannot
-  # supply a column that is not there, and the insert would simply fail. Add
-  # it, the way LOT_RUN_METADATA does in 08_persist. Look before adding:
+  # CREATE TABLE IF NOT EXISTS does nothing to a table an earlier version left
+  # behind, so add any column it lacks: naming the columns in the INSERT stops
+  # a positional mis-fill but cannot supply a missing one. Look before adding -
   # adding a column that already exists is an error.
   have <- tryCatch({
     d  <- db_q(con, glue("DESCRIBE {tbl}"))
@@ -458,6 +480,8 @@ check_lot_long <- function(con, cfg) {
   q <- db_q(con, glue("
     SELECT count(*) AS n_rows,
            count(DISTINCT PATID) AS n_patients,
+           sum(CASE WHEN LOT_START_DT IS NULL THEN 1 ELSE 0 END) AS n_null_start,
+           sum(CASE WHEN LOT_BASE_END_DT IS NULL THEN 1 ELSE 0 END) AS n_null_end,
            sum(CASE WHEN LOT_BASE_END_DT < LOT_START_DT THEN 1 ELSE 0 END) AS n_end_before_start,
            sum(CASE WHEN LOT_NUM < 1 OR LOT_NUM > {cfg$max_lot} THEN 1 ELSE 0 END) AS n_bad_lot_num
     FROM {t}"))
@@ -486,6 +510,11 @@ check_lot_long <- function(con, cfg) {
   bad <- character(0)
   if (q$n_rows == 0)           bad <- c(bad, "it is empty")
   if (d > 0)                   bad <- c(bad, paste0(d, " duplicate (PATID, LOT_NUM)"))
+  # First, because a null date is why every other check here would pass. All
+  # of them compare dates, and a comparison with NULL is unknown rather than
+  # true, so a line with no start or no end slips through the lot of them.
+  if (q$n_null_start > 0)      bad <- c(bad, paste0(q$n_null_start, " lines with no start date"))
+  if (q$n_null_end > 0)        bad <- c(bad, paste0(q$n_null_end, " lines with no end date"))
   if (q$n_end_before_start > 0) bad <- c(bad, paste0(q$n_end_before_start, " lines end before they start"))
   if (q$n_bad_lot_num > 0)     bad <- c(bad, paste0(q$n_bad_lot_num, " lines outside 1..", cfg$max_lot))
   if (g > 0)                   bad <- c(bad, paste0(g, " patients whose lines do not run 1..n"))
@@ -504,10 +533,8 @@ phase_line_criteria <- function(con, cfg) {
            line_criteria_flags_sql(cfg, "lot_long", "lot_long_allflags"))
   run_step(con, "L41_lot_long_final",
            line_criteria_final_sql(cfg, "lot_long_allflags", "lot_long_final"))
-  # Both are tables, always. Writing them as views when no criterion is
-  # declared would save two writes, but Spark refuses a persistent view over a
-  # temporary one (INVALID_TEMP_OBJ_REFERENCE) and these are built from temp
-  # views - so that "optimization" failed every run.
+  # Persisted, not views: both are built from temporary views, and Spark
+  # refuses a persistent view over one of those.
   for (v in list(list(view = "lot_long_allflags", name = "LOT_LONG_ALLFLAGS"),
                  list(view = "lot_long_final",    name = "LOT_LONG_FINAL"))) {
     run_step(con, paste0("L42_persist_", tolower(v$name)),

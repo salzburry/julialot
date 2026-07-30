@@ -281,14 +281,21 @@ for (w in c("orphan_meds", "uncoded_meds", "unexpected_types", "multi_class",
             "code_to_med", "bad_ndc", "subs_sub", "subs_orig", "ndc_shape",
             "class_agreement"))
   ok(grepl(paste0(w, " <-"), cd, fixed = TRUE), paste0(w, " is checked"))
-# bad_ndc catches the all-zero key. The rest of a malformed NDC is silent
-# because the join pads whatever digits it finds, so each of these becomes a
-# real-looking but different eleven-digit key.
-for (shape in c("CL_CODE RLIKE '[^0-9]'",
-                "length(regexp_replace(CL_CODE, '[^0-9]', '')) > 11",
-                "length(regexp_replace(CL_CODE, '[^0-9]', '')) < 9"))
-  ok(grepl(shape, cd, fixed = TRUE),
-     paste0("NDCs are checked for ", shape))
+# bad_ndc catches the all-zero key. The rest is silent because the join pads
+# whatever digits it finds, so each of these becomes a real-looking but
+# different eleven-digit key. The contract is canonical eleven digits.
+ok(grepl("WHERE CL_CODE_TYPE = 'NDC' AND (has_alpha OR n_digits <> 11)", cd, fixed = TRUE),
+   "the code list has to carry eleven-digit NDCs, not merely plausible ones")
+for (shape in c("WHEN has_alpha      THEN 'non-digits'",
+                "WHEN n_digits > 11  THEN 'over eleven digits'",
+                "WHEN n_digits = 10  THEN 'ten digits'"))
+  ok(grepl(shape, cd, fixed = TRUE), paste0("and reports which: ", trimws(shape)))
+# Ten digits is its own name: it is a real FDA form whose layout the strip at
+# S01 destroys, so waiving it is a judgement the study team can make. Waiving
+# it must not also accept 'ABC123'.
+ok(grepl('check = "ndc_short"', cd, fixed = TRUE) &&
+     grepl('check = "ndc_shape"', cd, fixed = TRUE),
+   "ten-digit codes are waivable separately from malformed ones")
 # The two files are compared to each other, not each to itself: MED_CLASS on a
 # claim comes from the code list while the LOT1_CLASS_<x> columns are named
 # from the rollup's classes, so a disagreement is an always-zero column.
@@ -349,11 +356,13 @@ mk_db_q <- function(problem) function(con, sql) {
     return(if (problem == "bad_ndc") data.frame(CL_CODE = "00000000000", CL_MED_ABBR = "X")
            else data.frame(CL_CODE = character(0), CL_MED_ABBR = character(0)))
   if (grepl("AS why", sql, fixed = TRUE))
-    return(if (problem == "ndc_shape")
-      data.frame(CL_CODE = "ABC123", CL_MED_ABBR = "LEN", n_digits = 3L,
-                 why = "non-digits")
-      else data.frame(CL_CODE = character(0), CL_MED_ABBR = character(0),
-                      n_digits = integer(0), why = character(0)))
+    return(switch(problem,
+      ndc_shape = data.frame(CL_CODE = "ABC123", CL_MED_ABBR = "LEN",
+                             n_digits = 3L, why = "non-digits"),
+      ndc_short = data.frame(CL_CODE = "5024204062", CL_MED_ABBR = "LEN",
+                             n_digits = 10L, why = "ten digits"),
+      data.frame(CL_CODE = character(0), CL_MED_ABBR = character(0),
+                 n_digits = integer(0), why = character(0))))
   if (grepl("AS rollup_class", sql, fixed = TRUE))
     return(if (problem == "class_agreement")
       data.frame(CL_MED_ABBR = "LEN", codelist_class = "IMID", rollup_class = "PI")
@@ -378,9 +387,12 @@ for (nm in c("log_msg", "print")) assign(nm, function(...) invisible(NULL), envi
 assign("run_step", function(...) invisible(TRUE), envir = ce)
 assign("glue", function(..., .envir = parent.frame()) paste0(..., collapse = ""), envir = ce)
 assign("load_codelist_csv", function(...) "(SELECT 1) src", envir = ce)
-# codelist_waivers() lives in build_lot.R, which this env does not source.
+# codelist_waivers() lives in build_lot.R, which this env does not source. It
+# filters to WAIVABLE_CHECKS, and the stub has to as well - a stub that waived
+# anything named would make the fatal-check assertions below pass on their own.
 assign("codelist_waivers", function()
-  { v <- trimws(strsplit(Sys.getenv("CODELIST_WAIVERS", unset = ""), "[,|]")[[1]]); v[nzchar(v)] },
+  { v <- trimws(strsplit(Sys.getenv("CODELIST_WAIVERS", unset = ""), "[,|]")[[1]])
+    intersect(v[nzchar(v)], WAIVABLE_CHECKS) },
   envir = ce)
 sys.source(file.path(ROOT, "R", "steps", "01_codelists.R"), envir = ce)
 Sys.unsetenv("CODELIST_WAIVERS")
@@ -389,7 +401,7 @@ ok(!inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error")
    "a consistent pair of code lists runs")
 for (prob in c("orphan", "uncoded", "type", "class", "code_to_med", "bad_ndc",
                "rollup_defs", "blank_keys", "subs_substitute", "subs_original",
-               "ndc_shape", "class_agreement")) {
+               "ndc_shape", "ndc_short", "class_agreement")) {
   assign("db_q", mk_db_q(prob), envir = ce)
   ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
      paste0("'", prob, "' stops the build"))
@@ -404,6 +416,33 @@ ok(!inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error")
 assign("db_q", mk_db_q("code_to_med"), envir = ce)
 ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
    "and still stops on a code naming two medications")
+Sys.unsetenv("CODELIST_WAIVERS")
+
+cat("\n-- some conditions have no reading worth accepting --\n")
+# A code counted twice, a code matching every claim with no NDC, a medication
+# with no class, an always-zero output column. There is no version of those a
+# run should carry on through, so they are not waivable at all.
+ok(length(intersect(WAIVABLE_CHECKS, FATAL_CHECKS)) == 0,
+   "the two lists do not overlap")
+for (f in FATAL_CHECKS) {
+  Sys.setenv(CODELIST_WAIVERS = f)
+  ok(inherits(tryCatch(check_settings(), error = function(e) e), "error"),
+     paste0("naming '", f, "' in CODELIST_WAIVERS is refused up front"))
+}
+Sys.setenv(CODELIST_WAIVERS = "bad_ndc")
+msg <- tryCatch({ check_settings(); "" }, error = conditionMessage)
+ok(grepl("cannot be waived", msg, fixed = TRUE),
+   "and told why, rather than 'no such check'")
+# Refusing at startup is not enough: LOT2-5 can be run on its own and reach the
+# code lists without check_settings, so the waiver list itself filters.
+ok(length(codelist_waivers()) == 0,
+   "codelist_waivers() hands back nothing that cannot be waived")
+assign("db_q", mk_db_q("bad_ndc"), envir = ce)
+ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
+   "so the check still stops the build even with the waiver set")
+Sys.setenv(CODELIST_WAIVERS = "uncoded_meds,bad_ndc")
+ok(identical(codelist_waivers(), "uncoded_meds"),
+   "a mixed list keeps the reviewable name and drops the rest")
 Sys.unsetenv("CODELIST_WAIVERS")
 
 cat("\n-- LOT2-5 reads tables, not repeated CDM scans --\n")
@@ -459,7 +498,8 @@ assign("glue", function(..., .envir = parent.frame()) {
   for (v in c("t")) t <- gsub("\\{t\\}", "LOT_LONG", t)
   gsub("\\{cfg\\$max_lot\\}", "5", t)
 }, envir = le)
-LL_OK <- list(n_rows = 100, n_patients = 40, n_end_before_start = 0, n_bad_lot_num = 0)
+LL_OK <- list(n_rows = 100, n_patients = 40, n_null_start = 0, n_null_end = 0,
+              n_end_before_start = 0, n_bad_lot_num = 0)
 ll_stub <- function(shape = list(), dup = 0, gaps = 0, seq_bad = 0, past_obs = 0) {
   sh <- modifyList(LL_OK, shape)
   assign("db_q", function(con, sql) {
@@ -489,6 +529,18 @@ ok(inherits(tryCatch(le$check_lot_long(NULL, cfg_ll), error = function(e) e), "e
 ll_stub(shape = list(n_end_before_start = 1))
 ok(inherits(tryCatch(le$check_lot_long(NULL, cfg_ll), error = function(e) e), "error"),
    "a line ending before it starts still stops the build")
+# Every other check here compares dates, and a comparison with NULL is unknown
+# rather than true - so a line with no start or no end passed all of them.
+ll_stub(shape = list(n_null_start = 2))
+ok(inherits(tryCatch(le$check_lot_long(NULL, cfg_ll), error = function(e) e), "error"),
+   "a line with no start date stops the build")
+ll_stub(shape = list(n_null_end = 3))
+ok(inherits(tryCatch(le$check_lot_long(NULL, cfg_ll), error = function(e) e), "error"),
+   "a line with no end date stops the build")
+ll_stub(shape = list(n_null_start = 1))
+ok(grepl("no start date", tryCatch({ le$check_lot_long(NULL, cfg_ll); "" },
+                                   error = conditionMessage), fixed = TRUE),
+   "and says so, rather than reporting a downstream symptom")
 
 cat("\n-- the checks group by the key extraction actually joins on --\n")
 # The NDC join pads to eleven digits, so '123456789' and '0123456789' are one
@@ -518,14 +570,18 @@ assign("run_step", function(...) invisible(TRUE), envir = se2)
 assign("glue", function(..., .envir = parent.frame()) paste0(..., collapse = ""),
        envir = se2)
 sys.source(file.path(ROOT, "R", "steps", "05_sct.R"), envir = se2)
-sct_db_q <- function(bad) function(con, sql) {
+sct_db_q <- function(bad, bad_type = NULL) function(con, sql) {
   if (grepl("NOT IN ('AUTO', 'ALLO', 'CART', 'UNKNOWN')", sql, fixed = TRUE))
     return(if (is.null(bad)) data.frame(SCT_TYPE = character(0), n_codes = integer(0))
            else data.frame(SCT_TYPE = bad, n_codes = 4L))
+  if (grepl("CL_CODE_TYPE IS NULL", sql, fixed = TRUE))
+    return(if (is.null(bad_type))
+             data.frame(CL_CODE_TYPE = character(0), n_codes = integer(0))
+           else data.frame(CL_CODE_TYPE = bad_type, n_codes = 7L))
   data.frame()
 }
-run_sct <- function(bad) {
-  assign("db_q", sct_db_q(bad), envir = se2)
+run_sct <- function(bad, bad_type = NULL) {
+  assign("db_q", sct_db_q(bad, bad_type), envir = se2)
   tryCatch({ se2$phase_sct(NULL, list(sct_src = "src")); NULL },
            error = function(e) conditionMessage(e))
 }
@@ -544,6 +600,33 @@ for (t in c("AUTO", "ALLO", "CART"))
        readLines(file.path(ROOT, "R", "steps", "10_lot2_5_base.R"), warn = FALSE),
        collapse = "\n")), fixed = TRUE),
      paste0(t, " is a type something downstream actually selects"))
+
+# The same hole on the other arm of the same CASE: the claim joins read five
+# code types, and anything the CASE does not map passes through and matches
+# none of them. A blank one gets through too - the WHERE guards CL_CODE and
+# SCT_TYPE but not this, where S01 drops blank types from the MM list.
+ok(grepl("ELSE upper(trim(CL_CODE_TYPE))", sc2, fixed = TRUE),
+   "the normalizer still passes an unrecognized code type through unchanged")
+ok(!is.null(run_sct(NULL, "HCPC")), "an unmapped SCT code type stops the build")
+ok(grepl("HCPC", run_sct(NULL, "HCPC"), fixed = TRUE),
+   "and the message names the spelling to add or fix")
+ok(!is.null(run_sct(NULL, "<null>")), "a blank or null code type stops it too")
+# The accepted set is decided by the query, not by the stub above. Read both
+# sides out of the SQL and require them to be the SAME set: a new extraction
+# branch, or a type quietly dropped from the whitelist, fails here. Checking
+# only that each read type appears somewhere in the file would not - the first
+# version of this did exactly that and passed a type the whitelist rejects.
+quoted <- function(x) sort(unique(gsub("'", "",
+  regmatches(x, gregexpr("'[A-Z0-9]+'", x))[[1]])))
+flat  <- gsub("\n", " ", sc2)
+reads <- sort(unique(vapply(
+  regmatches(flat, gregexpr("s\\.CL_CODE_TYPE = '[A-Z0-9]+'", flat))[[1]],
+  function(m) sub("^.*'([A-Z0-9]+)'$", "\\1", m), character(1), USE.NAMES = FALSE)))
+accepted <- quoted(regmatches(flat,
+  regexpr("CL_CODE_TYPE NOT IN \\([^)]*\\)", flat)))
+ok(setequal(accepted, reads) && length(reads) == 5,
+   paste0("the accepted code types are exactly the ", length(reads),
+          " an extraction branch reads: ", paste(reads, collapse = ", ")))
 ok(grepl("AS n_defs", cd2, fixed = TRUE),
    "one rollup medication, one definition - DISTINCT only removes identical rows")
 ok(grepl("AS n_rollup", cd2, fixed = TRUE),
@@ -569,6 +652,9 @@ ok(length(bad_view) == 0,
 
 # Two WHERE clauses for one SELECT is a parse error. It happened by inserting
 # a filter after FROM in a query that already had a WHERE further down.
+# Deliberately blunt: it does not track subqueries, so an inner WHERE followed
+# by an outer one reads as the bug. Write the filter as one clause rather than
+# teaching this to parse SQL - the value here is that it cannot be argued with.
 double_where <- character(0)
 for (f in sql_files) {
   l <- readLines(f, warn = FALSE)
@@ -624,8 +710,11 @@ clear()
 Sys.setenv(CODELIST_WAIVERS = "no_such_check")
 stops(check_settings(), "a waiver naming a check that does not exist")
 clear()
+Sys.setenv(CODELIST_WAIVERS = "uncoded_meds,ndc_short")
+runs(check_settings(), "two reviewable check names are accepted")
+clear()
 Sys.setenv(CODELIST_WAIVERS = "uncoded_meds,bad_ndc")
-runs(check_settings(), "two real check names are accepted")
+stops(check_settings(), "one reviewable name plus one that cannot be waived")
 clear()
 
 cat("\n-- pin_output_schema --\n")
@@ -660,13 +749,13 @@ ok(!any(c("INPUT_COHORT_TABLE", "OBJECT_PREFIX") %in% names(shipped)),
    "config.csv does not name a cohort")
 
 cat("\n-- the README still describes this build --\n")
-# Prose cannot be checked, but these two lists can, and both had already gone
-# stale: the README named six waivers where the code has eight, and its layout
-# had the step files in an order the build does not run them in.
+# Prose cannot be checked, but these two lists can, and both had gone stale.
+# Membership only - a step file reordered in the layout still passes, so the
+# order there is maintained by hand.
 readme <- readLines(file.path(ROOT, "README.md"), warn = FALSE)
 documented <- unique(unlist(regmatches(readme, gregexpr("`[a-z_0-9]+`", readme))))
 documented <- gsub("`", "", documented)
-missing_w <- setdiff(WAIVABLE_CHECKS, documented)
+missing_w <- setdiff(ALL_CHECKS, documented)
 ok(length(missing_w) == 0,
    if (length(missing_w)) paste0("waiver not in the README: ",
                                  paste(missing_w, collapse = ", "))

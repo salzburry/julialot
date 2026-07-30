@@ -37,8 +37,8 @@ PHASES <- list(
   list(file = "08_persist.R",       from = 1819, to = 1954)
 )
 
-# The one allowed change: LOT's own outputs carry the cohort prefix. Undo it
-# and the two sides must be identical.
+# The deviation every file makes: LOT's own outputs carry the cohort prefix.
+# The named ones below are undone per file on top of this.
 unport <- function(l) ifelse(grepl("wrk(cfg$input_cohort_table)", l, fixed = TRUE),
                              l, gsub("lot_out(", "wrk(", l, fixed = TRUE))
 
@@ -48,7 +48,6 @@ body_of <- function(lines) {
   open  <- grep("^phase_[a-z0-9_]+ <- function\\(", lines)
   stopifnot(length(open) == 1)
   keep  <- lines[(open + 1):length(lines)]
-  keep  <- keep[!grepl("^\\s*$", keep) | TRUE]
   # drop the unpacking block and the trailing return/brace the port added
   while (length(keep) && grepl("^  (meds|classes|sanitize_col|sct_src|med_flag_exprs) <- ctx\\$",
                                keep[1])) keep <- keep[-1]
@@ -87,7 +86,9 @@ CUT <- list(
     c(from = "sct_dup <- db_q(con, \"",
       to   = "log_msg(\"  OK: Each SCT code names exactly one transplant type.\")"),
     c(from = "sct_unmapped <- db_q(con, \"",
-      to   = "log_msg(\"  OK: Every SCT_TYPE is one the build reads.\")"))
+      to   = "log_msg(\"  OK: Every SCT_TYPE is one the build reads.\")"),
+    c(from = "sct_code_type <- db_q(con, \"",
+      to   = "log_msg(\"  OK: Every SCT code type is one an extraction branch reads.\")"))
 )
 
 # Lines that were EDITED rather than added, and how many of each. Counted like
@@ -181,31 +182,12 @@ code_only <- function(lines) {
   trimws(vapply(lines[keep], drop_trailing, character(1), USE.NAMES = FALSE))
 }
 
-# Every element of `want` appears in `got`, in order. Returns the first source
-# line that does not, or NA.
-first_missing <- function(got, want) {
-  i <- 1L
-  for (k in seq_along(want)) {
-    hit <- FALSE
-    while (i <= length(got)) {
-      if (identical(got[i], want[k])) { i <- i + 1L; hit <- TRUE; break }
-      i <- i + 1L
-    }
-    if (!hit) return(k)
-  }
-  NA_integer_
-}
-
 # Files that deliberately differ, and why. The source drops code-list rows on
 # the RAW value while storing the NORMALIZED one, so a punctuation-only code
 # survives as "" - and the claim side coalesces a missing code to "" too. That
 # is a silent false match, not a rule, so the port fixes it. Each guard is
 # asserted by name below; "differs" on its own would let one go missing.
 CHANGED <- c("01_codelists.R", "03_mma_map.R", "05_sct.R")
-# Same for the whole-file copy: it builds mma_rollup the same way S00 does, so
-# the steroid filter has to go in both or a fresh-session LOT2-5 run would see
-# a different rollup from the one LOT1 used.
-CHANGED_WHOLE <- character(0)
 
 cat("\n-- every phase is the source, line for line --\n")
 for (p in PHASES) {
@@ -300,15 +282,6 @@ for (p in WHOLE) {
   if (!file.exists(f) || !file.exists(sf)) { ok(FALSE, paste0(p$file, ": missing")); next }
   got  <- code_only(unport(readLines(f, warn = FALSE)))
   want <- code_only(readLines(sf, warn = FALSE))
-  if (p$file %in% CHANGED_WHOLE) {
-    miss <- first_missing(got, want)
-    ok(is.na(miss), if (is.na(miss))
-         paste0(p$file, ": every source code line survives; ",
-                length(got) - length(want), " guard line(s) added")
-       else paste0(p$file, ": a source line was changed or removed, at line ",
-                   miss, "\n           source: ", want[miss]))
-    next
-  }
   same <- identical(got, want)
   if (!same) {
     n <- max(length(got), length(want))

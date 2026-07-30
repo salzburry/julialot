@@ -1,12 +1,8 @@
-# Rebuild what LOT2-5 needs when it runs on its own, in a session where LOT1
-# did not.
+# Rebuild the shared LOT inputs for a session running LOT2-5 on its own.
 #
-# This used to carry its own copies of the code-list, cohort and SCT SQL -
-# "the same SQL 02_lot1.R uses", except the copies drifted. Guards added to
-# the LOT1 code lists never reached these, and the cohort view here ignored
-# censor_at_disenrollment entirely. So it calls the LOT1 phases now, and holds
-# only what is genuinely different: rebinding the tables LOT1 persisted, and
-# materializing the heavy SCT views.
+# It calls the LOT1 phases so both paths apply the same rules, then does the
+# only things that differ: rebind the tables LOT1 persisted, and materialize
+# the heavy SCT views.
 
 prepare_lot_inputs <- function(con) {
   log_msg("Preparing upstream views for LOT2-5...")

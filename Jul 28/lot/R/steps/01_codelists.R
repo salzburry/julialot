@@ -83,8 +83,9 @@ phase_codelists <- function(con) {
   problems <- data.frame(check = character(0), detail = character(0),
                          stringsAsFactors = FALSE)
 
-  # A code list med with no rollup row is extracted with no class, so the
-  # STEROID exclusion and the maintenance flags do not apply to it.
+  # A code list med with no rollup row is still extracted and still carries its
+  # class - that comes from the code list. What it has no values for are the
+  # rollup flags, so no rule keyed on one of those applies to it.
   orphan_meds <- db_q(con, "
     SELECT c.CL_MED_ABBR, count(*) AS n_codes
     FROM mma_codelist c
@@ -188,40 +189,56 @@ phase_codelists <- function(con) {
     log_msg("  OK: No all-zero NDC rows.")
   }
 
-  # The join pads the digits of a code to eleven:
-  #   lpad(regexp_replace(CL_CODE, '[^0-9]', ''), 11, '0')
-  # bad_ndc above catches the all-zero result. These are the other ways a code
-  # can survive that expression as a DIFFERENT eleven-digit key, none of which
-  # raises an error:
-  #   letters      storage strips punctuation but not letters, so 'ABC123'
-  #                reaches the join as 123 and pads to 00000000123
-  #   over eleven  more digits than the key holds, so it cannot be one
-  #   under nine   shorter than any NDC form, so the padding invents the rest
+  # The code list has to carry canonical eleven-digit NDCs. Anything else the
+  # join pads to eleven anyway, silently, and bad_ndc only catches the all-zero
+  # result. Two conditions, because they need different answers:
+  #
+  #   malformed  letters ('ABC123' joins as 00000000123), over eleven digits,
+  #              under ten. None of these can be an NDC in any form.
+  #   ten digits a real FDA form, but one of 4-4-2, 5-3-2 or 5-4-1, and which
+  #              cannot be told once the separators are stripped at S01. The
+  #              zero belongs in the short segment, so only 4-4-2 comes out
+  #              right: 50242-040-62 is 50242004062, not 05024204062. Every
+  #              other layout joins as a different drug's key, or none.
   ndc_shape <- db_q(con, "
-    SELECT CL_CODE, CL_MED_ABBR,
-           length(regexp_replace(CL_CODE, '[^0-9]', '')) AS n_digits,
+    SELECT CL_CODE, CL_MED_ABBR, n_digits,
            CASE
-             WHEN CL_CODE RLIKE '[^0-9]' THEN 'non-digits'
-             WHEN length(regexp_replace(CL_CODE, '[^0-9]', '')) > 11
-               THEN 'over eleven digits'
-             ELSE 'under nine digits'
+             WHEN has_alpha      THEN 'non-digits'
+             WHEN n_digits > 11  THEN 'over eleven digits'
+             WHEN n_digits = 10  THEN 'ten digits'
+             ELSE 'under ten digits'
            END AS why
-    FROM mma_codelist
-    WHERE CL_CODE_TYPE = 'NDC'
-      AND (CL_CODE RLIKE '[^0-9]'
-           OR length(regexp_replace(CL_CODE, '[^0-9]', '')) > 11
-           OR length(regexp_replace(CL_CODE, '[^0-9]', '')) < 9)
-    ORDER BY CL_MED_ABBR, CL_CODE
+    FROM (
+      SELECT CL_CODE, CL_MED_ABBR, CL_CODE_TYPE,
+             CL_CODE RLIKE '[^0-9]' AS has_alpha,
+             length(regexp_replace(CL_CODE, '[^0-9]', '')) AS n_digits
+      FROM mma_codelist)
+    WHERE CL_CODE_TYPE = 'NDC' AND (has_alpha OR n_digits <> 11)
+    ORDER BY why, CL_MED_ABBR, CL_CODE
   ")
-  if (nrow(ndc_shape) > 0) {
+  ten  <- ndc_shape[ndc_shape$why == "ten digits", , drop = FALSE]
+  junk <- ndc_shape[ndc_shape$why != "ten digits", , drop = FALSE]
+  if (nrow(junk) > 0) {
     log_msg("  NDC rows that cannot be the code they claim to be:")
-    print(ndc_shape)
+    print(junk)
     problems <- rbind(problems, data.frame(check = "ndc_shape", detail = paste0(
-      nrow(ndc_shape), " malformed NDC row(s): ",
-      paste(utils::head(paste0(ndc_shape$CL_CODE, " (", ndc_shape$why, ")"), 5),
+      nrow(junk), " malformed NDC row(s): ",
+      paste(utils::head(paste0(junk$CL_CODE, " (", junk$why, ")"), 5),
             collapse = ", ")), stringsAsFactors = FALSE))
   } else {
     log_msg("  OK: Every NDC is the shape of an NDC.")
+  }
+  if (nrow(ten) > 0) {
+    log_msg("  Ten-digit NDC rows, whose segment layout the join has to guess:")
+    print(ten)
+    problems <- rbind(problems, data.frame(check = "ndc_short", detail = paste0(
+      nrow(ten), " ten-digit NDC row(s), padded as if 4-4-2: ",
+      paste(utils::head(unique(ten$CL_CODE), 5), collapse = ", "),
+      ". Convert them to eleven digits in the code list, or waive ndc_short ",
+      "once the study team has confirmed the layout is 4-4-2"),
+      stringsAsFactors = FALSE))
+  } else {
+    log_msg("  OK: Every NDC is already eleven digits.")
   }
 
   rollup_defs <- db_q(con, "
@@ -281,22 +298,15 @@ phase_codelists <- function(con) {
     log_msg("  OK: Each MED_ABBR maps to exactly one class.")
   }
 
-  # multi_class above looks inside the code list. The two files also have to
-  # agree with each other, and a disagreement is silent in a specific way:
-  # every claim carries c.CL_MED_CLASS from the CODE LIST (03_mma_map), while
-  # the LOT1_CLASS_<x> columns are generated from the classes of the ROLLUP.
-  # So a med the two spell differently produces a flag column named for the
-  # rollup's spelling that the code list's value never equals - the column is
-  # always zero and nothing says why. 03_mma_map even notes MED_CLASS "should
-  # be 1:1 with MED_ABBR via rollup"; this is what checks it.
+  # multi_class looks inside one file; the two also have to agree. Claims take
+  # MED_CLASS from the code list (03_mma_map) while the LOT1_CLASS_<x> columns
+  # are named from the rollup's classes, so a med the two spell differently
+  # gets a column that is always zero.
   #
-  # INNER JOIN on purpose: a med in one file and not the other is orphan_meds
-  # or uncoded_meds, and steroids are filtered from the rollup by design.
-  #
-  # Only meds each file classes one way. Two classes inside one file is
-  # multi_class or rollup_defs, and reporting it here as well would mean
-  # waiving one of those - an accepted condition - dragged this check down
-  # with it for every other medication.
+  # Only meds each file classes one way: two classes inside one file is
+  # multi_class or rollup_defs, and reporting it here too would tie their
+  # waivers together. INNER JOIN because a med in only one file is orphan_meds
+  # or uncoded_meds, and steroids are absent from the rollup by design.
   class_agreement <- db_q(con, "
     SELECT c.CL_MED_ABBR,
            concat_ws(', ', collect_set(c.CL_MED_CLASS)) AS codelist_class,
@@ -374,9 +384,10 @@ phase_codelists <- function(con) {
     if (nrow(fatal))
       stop("The production code lists would change who counts as treated:\n  ",
            paste0(fatal$check, ": ", fatal$detail, collapse = "\n  "),
-           "\nFix the code lists, or name the checks to waive in ",
-           "CODELIST_WAIVERS once the study team has reviewed them, e.g. ",
-           "CODELIST_WAIVERS=uncoded_meds", call. = FALSE)
+           "\nFix the code lists. The checks a run may waive once the study ",
+           "team has reviewed them are listed in the README and named in ",
+           "CODELIST_WAIVERS, e.g. CODELIST_WAIVERS=uncoded_meds; the rest ",
+           "have no reading that leaves the result usable.", call. = FALSE)
   }
 
   # Minimum code list coverage.
