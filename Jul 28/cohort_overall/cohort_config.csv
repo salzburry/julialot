@@ -1,0 +1,26 @@
+name,value,description
+# ---------------------------------------------------------------------------
+# cohort_config.csv -- the Overall cohort's IE switches. Edit this to shape it.
+# TRUE = apply the criterion, FALSE = drop it. Run build_overall.R and the
+# funnel it prints shows each step ON / off / always. Step 1 has no switch --
+# without a qualifying diagnosis there is no index date.
+# These win over pipeline_inputs.csv; an exported env var wins over both.
+# ---------------------------------------------------------------------------
+# --- inclusions ---
+APPLY_AGE_INCL,TRUE,Step 2 - age >= MIN_AGE at index
+APPLY_CE_B_INCL,TRUE,Step 3 - 6-month baseline continuous enrollment
+APPLY_CE_F_INCL,TRUE,Step 4 - enrolled on the index date
+APPLY_NO_BL_AGENTS_INCL,TRUE,Step 5 - no MM agent in baseline (new user)
+APPLY_FU_AGENTS_INCL,TRUE,Step 6 - at least one MM agent in follow-up
+# --- exclusions ---
+APPLY_BASELINE_MM_EXCL,FALSE,Step 7 - no MM diagnosis in baseline
+APPLY_OTHER_MALIG_EXCL,FALSE,Step 8 - no other malignancy (NDMM re-applies at LOT1; ON here drops MM-adjacent patients)
+APPLY_PREGNANCY_EXCL,FALSE,Step 9 - no pregnancy
+APPLY_CLINTRIAL_EXCL,FALSE,Step 10 - no clinical trial
+# --- parameters ---
+MIN_AGE,18,Step 2 minimum age at index
+OUTPATIENT_WINDOW,90,Two-outpatient confirmation window - 30, 60 or 90
+CENSOR_AT_DISENROLLMENT,FALSE,Sensitivity - cap follow-up at disenrollment
+# --- output ---
+IE_OBJ_PREFIX,ovr_,Prefix on every table this build writes
+IE_OUT_SCHEMA,,Blank = personal schema (DOMINO_USER_NAME)

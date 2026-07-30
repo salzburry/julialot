@@ -3,28 +3,16 @@
 # -----------------------------------------------------------------------------
 #   step 2  AGE_INDEX_YR >= MIN_AGE
 #
-# The only criterion with no flag table of its own. member_demo supplies YRDOB and
-# 09_assemble.R derives AGE_INDEX_YR = year(INDEX_DATE) - YRDOB, so the column
-# this gate reads is an integer and its predicate is a comparison, not `= 1`.
+# Age has no flag table of its own: member_demo supplies YRDOB, 09_assemble.R
+# derives AGE_INDEX_YR = year(INDEX_DATE) - YRDOB, so the gate is a comparison,
+# not `= 1`. Whole years from the birth YEAR (Optum has no birth date), so
+# someone turning 18 later in their index year already counts as 18.
 #
-# Age is whole years from the birth YEAR -- Optum has no birth date. Someone
-# turning 18 later in their index year already counts as 18. That is the study
-# definition, and the label says "at index year".
-#
-# member_demo takes one row per patient: prefer a usable gender code, then the
-# latest ELIGEND. So a 'U' on the most recent segment does not lose a coded value
-# from an earlier one.
-#
-# The death date is here, not because it is a criterion, but because steps 5/6, 9
-# and 10 cap follow-up at least(study_end, death) and need it first.
-#
-# Optum DOD is partial -- YYYYMM or YYYY. Coarsening it carelessly can put death
-# before index and make FU_DAYS negative, so:
-#   month known  -> the 15th, or month-end if index is later that month
-#   year only    -> Jul 15, or Dec 31 if index is later that year
-# then a final clamp, DEATH_DT >= index_date. The output is keyed by
-# (PATID, index_date) because the coarsening depends on which candidate you ask
-# about.
+# The death date is built here because steps 5/6, 9 and 10 cap follow-up at
+# least(study_end, death). Optum DOD is partial (YYYYMM or YYYY); coarsening it
+# carelessly can put death before index and make FU_DAYS negative, so month->15th
+# (or month-end), year->Jul 15 (or Dec 31), then clamp DEATH_DT >= index_date.
+# Keyed by (PATID, index_date) because the coarsening depends on the candidate.
 # =============================================================================
 
 ie_step_demographics <- function(cfg, h) {

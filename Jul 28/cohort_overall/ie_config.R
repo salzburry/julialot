@@ -8,7 +8,9 @@
 # Every object is a real table in your personal schema. No temp views -- a
 # Databricks SQL warehouse re-runs a view's definition on every read.
 #
-# Config is ../pipeline_inputs.csv and ../lib. Nothing outside "Jul 28" is read.
+# The IE switches are in cohort_config.csv (this folder) -- the operator edits
+# that to shape the cohort. pipeline_inputs.csv and ../lib supply the rest.
+# Nothing outside "Jul 28" is read.
 # =============================================================================
 
 # {expr} interpolation. The SELECTs are copied from pipeline_steps.R, which uses
@@ -60,9 +62,18 @@ ie_cfg <- function(here = NULL, load_project = TRUE) {
   lib  <- file.path(root, "lib")
   e <- new.env(parent = globalenv())
 
-  # The CSV only fills variables that are unset, so an env var still wins.
+  # Config precedence: exported env var > cohort_config.csv > pipeline_inputs.csv
+  # > code default. Both loaders only fill variables that are unset, so loading
+  # cohort_config.csv FIRST lets it win over the shared file, and a real env var
+  # (set before either) wins over both.
+  #
+  # cohort_config.csv is the operator surface -- the nine IE switches and the
+  # handful of parameters that shape the cohort. pipeline_inputs.csv supplies the
+  # rest (connection, schemas, CDM source, code-list dir).
   if (isTRUE(load_project)) {
     sys.source(file.path(lib, "load_inputs.R"), envir = e)
+    if (!is.null(here) && file.exists(file.path(here, "cohort_config.csv")))
+      e$load_pipeline_inputs(here, filename = "cohort_config.csv")
     if (!isTRUE(e$load_pipeline_inputs(root)))
       stop("cannot read ", file.path(root, "pipeline_inputs.csv"),
            " -- that file is the config; without it this builds a different ",
@@ -145,17 +156,54 @@ ie_cfg <- function(here = NULL, load_project = TRUE) {
     stop("IE_OBJ_PREFIX='", cfg$obj_prefix, "' must be letters, digits and ",
          "underscore, starting with a letter.", call. = FALSE)
   if (!nzchar(cfg$out_schema))
-    stop("no output schema: set DOMINO_USER_NAME, PROJECT_WORK_SCHEMA or ",
-         "IE_OUT_SCHEMA. Every object here is a table.", call. = FALSE)
+    stop("no output schema: set DOMINO_USER_NAME or IE_OUT_SCHEMA.",
+         call. = FALSE)
   if (identical(tolower(cfg$out_schema), tolower(cfg$cdm_schema)))
     stop("IE_OUT_SCHEMA is the CDM schema. This build writes tables.",
          call. = FALSE)
   cfg
 }
 
+# Output-schema enforcement, checked at build time. The build has been run many
+# times against osk, so these make sure it keeps writing there.
+ie_require_output <- function(cfg) {
+  env <- function(k, d) { v <- .ie_env(k); if (nzchar(v)) v else d }
+
+  # Don't fall back to the shared work schema just because DOMINO_USER_NAME was
+  # unset -- that would scatter the outputs somewhere unintended.
+  if (!nzchar(cfg$personal_schema) && !nzchar(.ie_env("IE_OUT_SCHEMA")) &&
+      !identical(toupper(env("IE_ALLOW_WORK_SCHEMA", "FALSE")), "TRUE"))
+    stop("DOMINO_USER_NAME is not set, so the output would default to the ",
+         "shared work schema '", cfg$work_schema, "'. Set DOMINO_USER_NAME, ",
+         "or IE_OUT_SCHEMA=<schema>, or IE_ALLOW_WORK_SCHEMA=TRUE.",
+         call. = FALSE)
+
+  # Name the schema you expect and the build refuses to write anywhere else --
+  # for a scheduled run where a wrong target should stop everything.
+  req <- env("IE_REQUIRE_SCHEMA", "")
+  if (nzchar(req) && !identical(tolower(req), tolower(cfg$out_schema)))
+    stop("IE_REQUIRE_SCHEMA='", req, "' but the output resolved to '",
+         cfg$out_schema, "'. Nothing was written.", call. = FALSE)
+
+  # PERSIST_TO_SCHEMA governs the legacy pipeline's optional persist step. This
+  # builder always writes tables, so a FALSE here would look like an off switch
+  # that does nothing.
+  if (!isTRUE(cfg$persist_to_schema))
+    stop("PERSIST_TO_SCHEMA=FALSE has no effect here -- every step writes a ",
+         "table. Set it TRUE if you want the outputs written.",
+         call. = FALSE)
+  invisible(TRUE)
+}
+
 # ---- naming -----------------------------------------------------------------
-# One kind of object, one rule: catalog.schema.<prefix><name>. work() is the only
-# place a name is built.
+# work() is the only place an object name is built, and it is a pure function of
+# the logical name, so two steps naming the same object cannot disagree.
+#
+# Deliverables are kept after a clean build; everything else is an intermediate
+# and dropped (IE_KEEP_INTERMEDIATE=TRUE keeps them for debugging).
+IE_DELIVERABLES <- function(cfg)
+  c(cfg$flags_view, cfg$final_table_name, "ATTRITION_REPORT", "RUN_STATUS")
+
 ie_names <- function(cfg) {
   full_name <- function(schema, object) {
     if (nzchar(cfg$catalog)) paste0(cfg$catalog, ".", schema, ".", object)
@@ -168,16 +216,22 @@ ie_names <- function(cfg) {
                    if (isTRUE(cfg$use_quarterly_tables))
                      get_quarterly_table(base_table, cfg$study_end)
                    else base_table),
-       work = function(tbl)
-         full_name(cfg$out_schema, paste0(cfg$obj_prefix, tbl)),
+       work = function(tbl) full_name(cfg$out_schema,
+                                      paste0(cfg$obj_prefix, tbl)),
        out_schema = function() cfg$out_schema,
        # The leading part of every object name, for the drift test to strip.
        qualifier = function() full_name(cfg$out_schema, cfg$obj_prefix))
 }
 
+# Where a step writes. The final cohort is staged, then published only after
+# reconciliation passes, so a failed run cannot leave a stale table under the
+# published name looking current. Everything else writes to its own name.
+ie_target <- function(v, cfg, h)
+  if (isTRUE(v$stage)) paste0(h$work(v$name), "__stg") else h$work(v$name)
+
 # A step's CREATE. Built from `name`, never written in a step file.
 ie_stmt <- function(v, cfg, h)
-  paste0("CREATE OR REPLACE TABLE ", h$work(v$name), " AS\n", v$select)
+  paste0("CREATE OR REPLACE TABLE ", ie_target(v, cfg, h), " AS\n", v$select)
 
 # ---- the follow-up cap ------------------------------------------------------
 # Steps 5/6, 9 and 10 need an upper bound on follow-up, and it has to match the
@@ -202,7 +256,8 @@ ie_fu_cap <- function(cfg, h) {
 #   qc_extra  optional diagnostic; not compared to the legacy step.
 #   legacy    the pipeline_steps.R step this reproduces, for the drift test.
 ie_view <- function(name, description, select, qc = NULL, qc_extra = NULL,
-                    source_tables = NULL, legacy = NA_character_) {
+                    source_tables = NULL, legacy = NA_character_,
+                    stage = FALSE) {
   if (!is.character(name) || !nzchar(name))
     stop("ie_view(): name is required", call. = FALSE)
   if (!is.character(select) || !nzchar(select))
@@ -212,7 +267,8 @@ ie_view <- function(name, description, select, qc = NULL, qc_extra = NULL,
          "from `name`, so a step cannot create one object and reference ",
          "another.", call. = FALSE)
   list(name = name, description = description, select = select, qc = qc,
-       qc_extra = qc_extra, source_tables = source_tables, legacy = legacy)
+       qc_extra = qc_extra, source_tables = source_tables, legacy = legacy,
+       stage = stage)
 }
 
 # A criterion is one gate.

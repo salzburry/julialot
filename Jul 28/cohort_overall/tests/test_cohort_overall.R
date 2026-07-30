@@ -4,37 +4,18 @@
 # -----------------------------------------------------------------------------
 #   Rscript "Jul 28/cohort_overall/tests/test_cohort_overall.R"
 #
-# This folder holds a second copy of the criteria SQL, and a copy nothing compares
-# is how NDMM's CE and prior-therapy definitions drifted from Overall's. So the
-# copy is compared on every run:
+# The criteria SQL here is a copy of the legacy pipeline's, so it is compared to
+# the legacy definition on every run: each criterion against
+# build_criteria_catalog() (section 4), the active filter against
+# build_criteria_sql() (section 5), and every generated SELECT against
+# build_steps() (section 6). "Matches" means normalised text -- whitespace
+# collapsed, the CREATE dropped, the object qualifier stripped.
 #
-#   section 4  every criterion -- label, predicate, toggle, order -- against
-#              build_criteria_catalog(), by calling it, not by reading text
-#   section 5  the active filter against build_criteria_sql() under the real
-#              config
-#   section 6  every generated SELECT against the one build_steps() generates for
-#              the same cfg
+# It runs no SQL, so it cannot prove the two produce the same patients on the
+# warehouse. What it does instead is assert the structure that makes a runtime
+# fault impossible (section 2).
 #
-# What "matches" means: normalised text, not token-for-token. Whitespace is
-# collapsed, the CREATE clause dropped, and this folder's object qualifier
-# (catalog.schema.ovr_) removed. Both are checked safe first -- the legacy side
-# must not contain the qualifier, and the output schema must differ from the CDM
-# schema.
-#
-# What this cannot show: that the two produce the same patients. Identical SQL on
-# identical inputs must, but must is not did. That is
-# tests/verify_cohort_overall.R, which needs a warehouse and has not been run.
-# ../tests/verify_against_legacy.R does NOT check this folder -- it compares the
-# selection layer and never reads ovr_ELIG_COH_FINAL.
-#
-# This suite also runs nothing: it opens no connection, so it cannot catch a
-# runtime fault. Instead it asserts the structure that makes one impossible --
-# every name from work(), every CREATE from ie_stmt(), both from a step's `name`
-# (section 2). That is what the earlier checkpoint bug taught: the text comparison
-# passed while the runner could not run.
-#
-# apr_30_2026 is not shipped. When it is absent, sections 4-6 skip and the suite
-# still passes -- a production checkout has nothing to compare against.
+# When apr_30_2026 is absent (production), sections 4-6 skip and the suite passes.
 # =============================================================================
 
 .here <- local({
@@ -124,10 +105,9 @@ ok(length(unique(vapply(VIEWS, function(v) v$name, character(1)))) == length(VIE
 
 # =============================================================================
 section("2. object naming cannot go wrong")
-# The bug this replaces: views were created with the prefix, then the checkpoint
-# was materialised under the unprefixed name, so a clean run died at the first
-# checkpoint. The fix is not a corrected string -- a step no longer names its own
-# object at all.
+# A step names only its logical object; work() builds the physical name and
+# ie_stmt()/ie_target() build the CREATE. There is no second place a name comes
+# from.
 
 ok(all(vapply(VIEWS, function(v)
      !grepl("CREATE\\s+OR\\s+REPLACE", v$select, ignore.case = TRUE),
@@ -140,9 +120,13 @@ ok(all(vapply(VIEWS, function(v)
                    regmatches(ie_stmt(v, CFG, H),
                               regexpr("CREATE OR REPLACE TABLE\\s+\\S+",
                                       ie_stmt(v, CFG, H)))),
-               H$work(v$name)),
+               ie_target(v, CFG, H)),
      logical(1))),
-   "every generated CREATE targets exactly work(name)")
+   "every generated CREATE targets exactly ie_target(name)")
+# The final cohort is staged, then published to work(name) by the runner.
+ok(sum(vapply(VIEWS, function(v) isTRUE(v$stage), logical(1))) == 1L &&
+   endsWith(ie_target(Find(function(v) isTRUE(v$stage), VIEWS), CFG, H), "__stg"),
+   "exactly the final cohort is staged (__stg), published after reconciliation")
 ok(all(vapply(VIEWS, function(v) startsWith(H$work(v$name), QUALIFIER),
               logical(1))),
    paste0("every object is schema-qualified and prefixed (", QUALIFIER, ")"))
@@ -365,16 +349,36 @@ ok(!any(grepl("apr_30_2026.*(writeLines|write\\.csv|file\\.copy|unlink)", srcs))
    "no file here writes into apr_30_2026")
 
 # =============================================================================
-section("8. the runner offers only modes it can honour")
-# --no-persist could not suppress table writes, --views ran nothing silently on a
-# typo, --attrition-only needed temp views no fresh session has. All gone, and an
-# unknown option errors.
+section("8. the IE criteria are switched from cohort_config.csv")
+# The operator surface: turn a criterion on or off in cohort_config.csv and the
+# funnel follows. cohort_config.csv wins over pipeline_inputs.csv; an env var
+# wins over both.
 
-ok(setequal(names(ie_parse_args(character(0))), c("funnel_only", "dry_run")),
-   "the only modes are --funnel and --dry-run (plus the default build)")
-for (dead in c("--no-persist", "--views=x", "--attrition-only", "--no-attrition"))
-  throws(ie_parse_args(dead),
-         paste0(dead, " is rejected rather than silently ignored"))
+CFG_CSV <- file.path(IE_DIR, "cohort_config.csv")
+ok(file.exists(CFG_CSV), "cohort_config.csv exists next to the build")
+cfg_rows <- read.csv(CFG_CSV, stringsAsFactors = FALSE, comment.char = "#")
+ok(setequal(intersect(cfg_rows$name, paste0("APPLY_",
+      c("AGE_INCL","CE_B_INCL","CE_F_INCL","NO_BL_AGENTS_INCL","FU_AGENTS_INCL",
+        "BASELINE_MM_EXCL","OTHER_MALIG_EXCL","PREGNANCY_EXCL","CLINTRIAL_EXCL"))),
+      grep("^APPLY_", cfg_rows$name, value = TRUE)),
+   "all nine APPLY_* switches are in cohort_config.csv")
+
+# Flipping a switch flips the funnel. Env wins over the CSV, so this is how the
+# CSV edit would land.
+flip <- function(k, v, id) {
+  old <- Sys.getenv(k, unset = NA); do.call(Sys.setenv, setNames(list(v), k))
+  on.exit(if (is.na(old)) Sys.unsetenv(k) else
+          do.call(Sys.setenv, setNames(list(old), k)), add = TRUE)
+  cr <- Find(function(c) identical(c$id, id), ie_funnel(ie_cfg(IE_DIR))$criteria)
+  ie_is_active(cr, ie_cfg(IE_DIR))
+}
+ok(isTRUE(flip("APPLY_OTHER_MALIG_EXCL", "TRUE", "no_other_cancer")),
+   "APPLY_OTHER_MALIG_EXCL=TRUE turns step 8 on")
+ok(!isTRUE(flip("APPLY_AGE_INCL", "FALSE", "age_at_index")),
+   "APPLY_AGE_INCL=FALSE turns step 2 off")
+# The builder builds; it takes no options.
+throws(ie_main(IE_DIR, argv = "--dry-run"),
+       "the builder rejects options -- it only builds")
 
 # =============================================================================
 section("9. \"Jul 28\" ships on its own")
