@@ -2,23 +2,25 @@
 
 Lines of therapy, built once and run per cohort.
 
-## Status: not runnable yet
+## Status: LOT1 ported, not yet run
 
-This is the shell, not the implementation. `R/steps/` is empty and
-`build_lot()` is not written, so `build.R` stops on an undefined function. The
-LOT rules still have to be ported from the validated source. Two assertions in
-`tests/test_selfcontained.R` fail on purpose until that is done - they are the
-status, not a bug to silence.
+`R/steps/` holds LOT1 - MMA claims, MAP, LOT1 base, SCT, LOT1 end - ported
+line for line from the validated source. `tests/test_same_as_source.R` proves
+that: every phase is compared against `apr_30_2026/02_lot1.R` and must match
+exactly, apart from the one change the port is allowed to make (LOT's outputs
+carry the cohort prefix).
 
-What is here and tested: the cohort input and prefix handling, the settings
-contract, the code-list loader, and the per-line criteria layer. Nothing below
-produces a table yet.
+It has never been run against Databricks. Nothing here is validated output
+until it has been, and compared with the source build patient for patient.
+
+LOT2-5 and `LOT_LONG` are not ported yet, so the line-criteria layer has no
+`lot_long` to act on.
 
 The folder is self-contained - the only outside dependencies are the R
 packages `DBI`, `odbc` and `glue`, and no file resolves a path outside it.
 `tests/test_selfcontained.R` checks that, so it cannot quietly stop being true.
 
-## Running it, once the rules are ported
+## Run it
 
 ```
 DATABRICKS_PWD=... Rscript build.R <COHORT_TABLE> <prefix_>
@@ -105,12 +107,15 @@ Two rules worth knowing:
 ## Tests
 
 ```
-Rscript tests/test_runner.R          # cohort switch, contract, settings
+Rscript tests/test_runner.R          # cohort input, contract, settings
 Rscript tests/test_line_criteria.R   # the per-line criteria layer
-Rscript tests/test_selfcontained.R   # no outside paths, no cohort names
+Rscript tests/test_selfcontained.R   # no outside paths, everything resolves
+Rscript tests/test_same_as_source.R  # the steps match apr_30_2026 exactly
 ```
 
-No warehouse needed. They run offline; `glue` is stubbed if absent.
+No warehouse needed. They run offline; `glue` is stubbed if absent. The last
+one skips when `apr_30_2026` is not beside this folder, so a copied-out package
+still runs green.
 
 ## Layout
 
@@ -123,5 +128,13 @@ R/db_utils_lot.R     logging, retry, naming (wrk / lot_out)
 R/codelists_lot.R    code list loading
 R/line_criteria.R    per-line criteria
 R/load_inputs.R      config.csv reader
-R/steps/             the rules
+R/steps/             the rules, in order:
+  01_codelists.R       code lists, and the rollup consistency checks
+  02_patient_input.R   the cohort, and OBS_END_DT
+  03_mma_map.R         MM/steroid claims, then Medication Available Period
+  04_lot1_base.R       LOT1 start, induction meds, base regimen
+  05_sct.R             transplant: AUTO, ALLO, CAR-T
+  06_lot1_end.R        LOT1 end date and reason
+  07_qc.R              QC counts
+  08_persist.R         write the outputs, all prefixed
 ```

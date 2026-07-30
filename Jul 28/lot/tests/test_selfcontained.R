@@ -15,8 +15,13 @@ source(file.path(ROOT, "tests", "testutil.R"))
 
 files <- list.files(ROOT, pattern = "\\.R$", recursive = TRUE, full.names = TRUE)
 rel   <- sub(paste0("^", ROOT, "/"), "", files)
-# This file names the things it forbids, so it would flag itself.
-keep  <- rel != "tests/test_selfcontained.R"
+# Two exclusions, both justified below:
+#   this file names the things it forbids, so it would flag itself;
+#   test_same_as_source.R compares against apr_30_2026 on purpose, and is a
+#   development check rather than part of the package - it is asserted to skip
+#   cleanly when that folder is absent.
+SELF <- "tests/test_selfcontained.R"; EQUIV <- "tests/test_same_as_source.R"
+keep  <- !rel %in% c(SELF, EQUIV)
 files <- files[keep]; rel <- rel[keep]
 code  <- setNames(lapply(files, readLines, warn = FALSE), rel)
 # Comments talk about apr_30_2026 and the cohort build; only code matters here.
@@ -82,6 +87,19 @@ ok(any(grepl("commandArgs\\(trailingOnly = TRUE\\)", bd)) &&
      any(grepl("INPUT_COHORT_TABLE", bd)),
    "the entry point takes them from the caller or the environment")
 
+cat("\n-- the one test that looks outside degrades cleanly --\n")
+# It reads apr_30_2026 to prove the port is faithful. A copied-out package has
+# no such folder, so it must skip rather than fail - otherwise the copy arrives
+# with a red suite.
+eq <- readLines(file.path(ROOT, EQUIV), warn = FALSE)
+ok(any(grepl("if (!file.exists(SRC))", eq, fixed = TRUE)) &&
+     any(grepl("quit(status = 0L)", eq, fixed = TRUE)),
+   "test_same_as_source.R skips when apr_30_2026 is not there")
+# One line resolves the path; the rest are the comment and the skip message.
+eq_code <- eq[!grepl("^\\s*#", eq)]
+eq_path <- grep("file\\.path\\(.*apr_30_2026", eq_code, value = TRUE)
+ok(length(eq_path) == 1, "and only one line in it resolves that path")
+
 cat("\n-- the pieces a copy needs are all present --\n")
 NEED <- c("build.R", "config.csv", "R/build_lot.R", "R/config_lot.R",
           "R/db_utils_lot.R", "R/codelists_lot.R", "R/line_criteria.R",
@@ -115,5 +133,29 @@ ok(length(unresolved) == 0,
    if (length(unresolved)) paste0("build.R calls undefined: ",
                                   paste(unresolved, collapse = ", "))
    else paste0("all ", length(called), " calls in build.R resolve"))
+
+# Every step has to parse. A syntax error here would only surface mid-run,
+# after the connection is open and the earlier phases have already written.
+for (f in file.path(steps_dir, step_files)) {
+  e <- tryCatch({ parse(f); NULL }, error = function(e) e)
+  ok(is.null(e), paste0(basename(f), ": parses",
+                        if (!is.null(e)) paste0(" -- ", conditionMessage(e)) else ""))
+}
+
+# ...and every function the steps call has to exist. glue comes from the
+# package build.R loads, so it resolves at run time even when absent here.
+ssrc <- paste(unlist(lapply(file.path(steps_dir, step_files), readLines, warn = FALSE)),
+              collapse = "\n")
+ssrc <- gsub('"[^"]*"', '""', ssrc)
+ssrc <- gsub("'[^']*'", "''", ssrc)
+ssrc <- gsub("#[^\n]*", "", ssrc)
+scalled <- unique(sub("\\($", "", regmatches(ssrc,
+  gregexpr("(?<![$:\\w.])[A-Za-z_][A-Za-z0-9_.]*\\(", ssrc, perl = TRUE))[[1]]))
+FROM_PKG <- c("glue")
+sbad <- Filter(function(f) !exists(f, envir = mod) && !exists(f) && !f %in% FROM_PKG,
+               scalled)
+ok(length(sbad) == 0,
+   if (length(sbad)) paste0("steps call undefined: ", paste(sbad, collapse = ", "))
+   else paste0("all ", length(scalled), " calls in the steps resolve"))
 
 report()

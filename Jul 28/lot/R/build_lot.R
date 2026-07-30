@@ -190,3 +190,44 @@ load_lot_modules <- function(here) {
   for (f in steps) source(f)
   invisible(TRUE)
 }
+
+# The run. Phases in order, each one leaving temp views the next reads.
+build_lot <- function(here, cohort_table, prefix) {
+  check_settings()
+  cfg <- pin_output_schema(cfg_defaults)
+  cfg <- pin_cohort(cfg, cohort_table, prefix)
+  check_lot_contract(cfg)
+  # Every helper reads the config, so publish it before anything runs.
+  set_lot_config(cfg)
+
+  stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
+  con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+
+  log_msg("Connected. Run ID: ", run_id)
+  log_msg("Configuration:")
+  log_msg("  CDM Schema:        ", cfg$cdm_schema)
+  log_msg("  Work Schema:       ", cfg$work_schema)
+  log_msg("  Input Cohort:      ", cfg$input_cohort_table)
+  log_msg("  Output Prefix:     ", cfg$object_prefix)
+  log_msg("  Induction Window (LOT1):   ", cfg$induction_window_days, " days")
+  log_msg("  Induction Window (LOT2-5): ", cfg$lot_n_induction_window_days, " days")
+  log_msg("  Discon Gap (per-drug, MAP-level): ", cfg$map_discon_gap_days, " days")
+  log_msg("  Medical Day Supply: ", cfg$medical_day_supply, " days")
+
+  check_cohort_input(con, cfg)
+
+  ctx <- phase_codelists(con)
+  phase_patient_input(con)
+  phase_mma_map(con, ctx)
+  phase_lot1_base(con, ctx)
+  phase_sct(con, ctx)
+  phase_lot1_end(con, ctx)
+  phase_qc(con, ctx)
+  phase_persist(con, ctx)
+
+  log_msg(SEP)
+  log_msg("LOT1 complete for ", cfg$input_cohort_table, " -> ", cfg$object_prefix, "*")
+  log_msg(SEP)
+  invisible(TRUE)
+}
