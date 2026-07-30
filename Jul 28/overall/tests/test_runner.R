@@ -123,6 +123,31 @@ clear()
 stops(pin_output_schema(list(catalog = "hive_metastore")),
       "stops when no schema resolves")
 
+cat("\n-- every windowed CDM read is bounded (stage_cdm.R relies on it) --\n")
+# stage_cdm.R copies medical / med_diagnosis / med_procedure / rx filtered to
+# the study window. That is only a superset because every step bounds itself
+# the same way. A new step reading outside the window would silently see fewer
+# rows from the copy than from the CDM.
+WINDOWED <- c("tbl_medical", "tbl_med_diag", "tbl_med_proc", "tbl_rx")
+PROBES   <- "06c_validate_rvnu_cd"   # column probe, LIMIT 1, needs no rows
+for (f in list.files(file.path(ROOT, "R", "steps"), full.names = TRUE)) {
+  src <- paste(readLines(f, warn = FALSE), collapse = "\n")
+  starts <- gregexpr('name = "([^"]+)"', src)[[1]]
+  if (starts[1] == -1L) next
+  names_found <- regmatches(src, gregexpr('name = "([^"]+)"', src))[[1]]
+  ends <- c(starts[-1] - 1L, nchar(src))
+  for (i in seq_along(starts)) {
+    step <- gsub('^name = "|"$', "", names_found[i])
+    block <- substr(src, starts[i], ends[i])
+    reads <- vapply(WINDOWED, function(t) grepl(paste0("cdm_src(cfg$", t, ")"),
+                                                block, fixed = TRUE), logical(1))
+    if (!any(reads) || step %in% PROBES) next
+    ok(grepl("BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')",
+             block, fixed = TRUE),
+       paste0(step, ": bounded by the study window"))
+  }
+}
+
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))
 if (fail > 0L) quit(status = 1L)
