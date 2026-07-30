@@ -16,7 +16,9 @@ phase_codelists <- function(cfg, h, ctx) {
       description = "Loading MM diagnosis codes (ICD-9/ICD-10)",
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('mm_dx_codes')} AS
-        SELECT
+        -- DISTINCT: the CSV repeats some codes, and a repeat would
+        -- duplicate every claim it matches.
+        SELECT DISTINCT
           CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
           upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', '')) AS dx
         FROM {mm_dx_source}
@@ -31,7 +33,7 @@ phase_codelists <- function(cfg, h, ctx) {
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('mm_therapy_codes')} AS
         -- Keep the fields used for claim matching.
-        SELECT upper(trim(CL_CODE_TYPE)) AS code_type,
+        SELECT DISTINCT upper(trim(CL_CODE_TYPE)) AS code_type,
                upper(regexp_replace(trim(CL_CODE), '[^A-Za-z0-9]', '')) AS code
         FROM {mm_therapy_source}
         WHERE CL_CODE IS NOT NULL AND trim(CL_CODE) <> ''
@@ -46,7 +48,7 @@ phase_codelists <- function(cfg, h, ctx) {
       description = "Loading pregnancy exclusion codes",
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('preg_codes')} AS
-        SELECT upper(trim(code_type)) AS code_type,
+        SELECT DISTINCT upper(trim(code_type)) AS code_type,
                upper(regexp_replace(trim(code), '[^A-Za-z0-9]', '')) AS code
         FROM {preg_source}
         WHERE code IS NOT NULL AND regexp_replace(code, '[^A-Za-z0-9]', '') <> ''
@@ -59,7 +61,7 @@ phase_codelists <- function(cfg, h, ctx) {
       description = "Loading clinical trial exclusion codes",
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('clintrial_codes')} AS
-        SELECT upper(trim(code_type)) AS code_type,
+        SELECT DISTINCT upper(trim(code_type)) AS code_type,
                upper(regexp_replace(trim(code), '[^A-Za-z0-9]', '')) AS code
         FROM {clintrial_source}
         WHERE code IS NOT NULL AND regexp_replace(code, '[^A-Za-z0-9]', '') <> ''
@@ -72,7 +74,7 @@ phase_codelists <- function(cfg, h, ctx) {
       description = "Loading other malignancy exclusion codes",
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('other_malig_codes')} AS
-        SELECT
+        SELECT DISTINCT
           upper(tumor_group) AS tumor_group,
           CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
           upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', '')) AS dx

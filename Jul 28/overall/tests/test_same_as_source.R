@@ -145,6 +145,11 @@ if (length(a) == length(b)) {
   for (nm in names(BLANK))
     ok(grepl(BLANK[[nm]], sql_of(nm), fixed = TRUE),
        paste0(nm, ": drops codes that normalize to blank"))
+
+  # A repeated code in a CSV duplicates every claim it matches.
+  for (nm in names(BLANK))
+    ok(grepl("SELECT DISTINCT", sql_of(nm), fixed = TRUE),
+       paste0(nm, ": de-duplicates the code list"))
   te <- sql_of("18_therapy_events")
   ok(lengths(regmatches(te, gregexpr("regexp_replace(c.code, '[^0-9]', '') <> ''",
                                      te, fixed = TRUE))) == 2,
