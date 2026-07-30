@@ -43,7 +43,6 @@ cfg_defaults <- list(
   cl_clintrial       = "cl_clintrial",
   cl_other_malig     = "cl_other_malignancies",
   # Not used by this build; kept so the code lists stay one set
-  cl_mma_codelist    = "cl_mma_codelist",
 
   # ---- Code-list CSVs (on server filesystem at /mnt/code/codelist/) ----
   # When use_csv_codelists = TRUE, the cohort CSVs are loaded into temp views.
@@ -86,14 +85,9 @@ cfg_defaults <- list(
   apply_no_bl_agents_incl = as.logical(Sys.getenv("APPLY_NO_BL_AGENTS_INCL", unset = "TRUE")),
   apply_fu_agents_incl    = as.logical(Sys.getenv("APPLY_FU_AGENTS_INCL",    unset = "TRUE")),
 
-  # ---- Exclusion criteria (defaults for static/batch mode) ----
-  # Defaults now TRUE so a default ELIG_COH_FINAL build produces the Step 10
-  # final attrition cohort rather than the Step 6 working cohort. Flags are
-  # still computed in ELIG_COH_ALLFLAGS for ad-hoc sensitivity analyses; set
-  # the corresponding env var to "FALSE" to drop an exclusion at runtime.
-  # Prior default (2026-04-14 stakeholder decision): all FALSE - kept the
-  # working cohort at Step 6 (~21k patients) for ad-hoc work. Superseded by
-  # the move to the final attrition cohort as the default build.
+  # ---- Exclusion criteria ----
+  # config.csv turns all four off for Overall; the flags are still computed in
+  # ELIG_COH_ALLFLAGS.
   apply_pregnancy_excl   = as.logical(Sys.getenv("APPLY_PREGNANCY_EXCL",   unset = "TRUE")),
   apply_clintrial_excl   = as.logical(Sys.getenv("APPLY_CLINTRIAL_EXCL",   unset = "TRUE")),
   apply_other_malig_excl = as.logical(Sys.getenv("APPLY_OTHER_MALIG_EXCL", unset = "TRUE")),
