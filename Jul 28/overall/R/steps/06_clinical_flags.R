@@ -33,7 +33,7 @@ phase_clinical_flags <- function(cfg, h, ctx) {
     ),
 
     # ---- Phase 8: MM therapy events + flags (Steps 5-6) ----
-    # Scan the same 4 sources as the LOT pipeline (S04):
+    # Four sources:
     #   (1) medical PROC_CD (HCPCS/CPT)   -> MEDICAL_PROC_CD
     #   (2) medical BILL_PROC_CD (HCPCS)  -> MEDICAL_BILL_PROC_CD
     #   (3) medical NDC                   -> MEDICAL_NDC
@@ -67,7 +67,10 @@ phase_clinical_flags <- function(cfg, h, ctx) {
           m.PATID, cast(m.FST_DT as date) AS event_dt, 'MEDICAL_NDC' AS source
         FROM {cdm_src(cfg$tbl_medical)} m
         INNER JOIN {work('mm_therapy_codes')} c
+          -- Both sides lpad to 11. A code with no digits and a NULL NDC both
+          -- become 00000000000, so require digits on the code list side.
           ON c.code_type = 'NDC'
+          AND regexp_replace(c.code, '[^0-9]', '') <> ''
           AND lpad(regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', ''), 11, '0')
             = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')
         WHERE m.FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')

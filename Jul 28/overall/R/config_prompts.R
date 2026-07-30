@@ -56,7 +56,7 @@ cfg_defaults <- list(
   cl_preg            = "cl_pregnancy",
   cl_clintrial       = "cl_clintrial",
   cl_other_malig     = "cl_other_malignancies",
-  # Used by downstream LOT analysis
+  # Not used by this build; kept so the code lists stay one set
   cl_mma_codelist    = "cl_mma_codelist",
   cl_mma_rollup      = "cl_mma_rollup",
   cl_sct_codelist    = "cl_sct_codelist",
@@ -73,7 +73,7 @@ cfg_defaults <- list(
     cl_pregnancy          = "pregnancy.csv",
     cl_clintrial          = "clintrial.csv",
     cl_other_malignancies = "other_malig.csv",
-    # LOT analysis codelists
+    # Not loaded here - only the five below are
     cl_mma_codelist       = "cl_mma_codelist.csv",
     cl_mma_rollup         = "cl_mma_rollup.csv",
     cl_sct_codelist       = "cl_sct_codelist.csv",
@@ -99,7 +99,7 @@ cfg_defaults <- list(
 
   # ---- Inclusion criteria (defaults for static/batch mode) ----
   # Env-configurable (same pattern as the exclusion block below) so
-  # pipeline_inputs.csv can toggle them. Defaults preserve prior
+  # config.csv can toggle them. Defaults preserve prior
   # behaviour exactly (all TRUE, min age 18).
   apply_age_incl          = as.logical(Sys.getenv("APPLY_AGE_INCL",          unset = "TRUE")),
   min_age                 = as.integer(Sys.getenv("MIN_AGE",                 unset = "18")),
@@ -123,9 +123,9 @@ cfg_defaults <- list(
 
   # ---- Disenrollment censoring (sensitivity flag) ----
   # FALSE (primary): IE follow-up window is min(study_end, death). Disenrolled
-  #                  patients keep contributing follow-up - same as LOT primary.
+  #                  patients keep contributing follow-up.
   # TRUE  (sensitivity): IE follow-up window also caps at last continuous-enrollment
-  #                  end (ENDDATE_CE), matching the LOT sensitivity branch.
+  #                  end (ENDDATE_CE).
   # Read from the same env var as Part 2's config_lot.R so a single override flips
   # both pipelines symmetrically and lot_patient_input ↔ lot1_base counts stay in sync.
   censor_at_disenrollment = as.logical(Sys.getenv("CENSOR_AT_DISENROLLMENT", unset = "FALSE")),

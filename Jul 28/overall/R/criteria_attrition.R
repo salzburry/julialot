@@ -32,7 +32,7 @@ build_criteria_catalog <- function(cfg) {
          cfg_key = "apply_no_bl_agents_incl"),
 
     # Step 6 - include: at least one MM-agent claim in follow-up.
-    # This does not prove a valid LOT1 regimen; that is Part 2's job.
+    # This does not prove a valid regimen, only that an agent was claimed.
     list(attrition_id = "06_step6_fu_therapy",
          label = "Step 6: FU therapy required",
          filter_sql = "AND MM_FU_agents = 1",
@@ -108,20 +108,17 @@ print_attrition_table <- function(rows, window = NULL) {
   }
 }
 
-# Persist attrition rows to a Spark work-schema table so the LOT
-# descriptives dashboard can read them. Overwrites each run. Every row
-# also carries the run_id, cohort table name, and a build timestamp, so
-# the dashboard can tell which run the chart came from and whether it
-# matches the cohort the LOT pipeline is consuming.
+# Write the attrition rows to a table. Overwrites each run. Every row carries
+# the run_id, cohort name and build time, so a reader can tell which run it
+# came from.
 persist_attrition_table <- function(rows, cfg, conn) {
-  # These used to WARN and return. The dashboard reads this table, and the
-  # write is CREATE OR REPLACE - skipping it leaves last run's rows in place
-  # looking current. Fail instead.
+  # CREATE OR REPLACE, so skipping the write leaves last run's rows looking
+  # current. Fail instead.
   if (length(rows) == 0) stop("no attrition rows to persist", call. = FALSE)
   if (!nzchar(cfg$work_schema))
     stop("cfg$work_schema not set; cannot persist attrition_report", call. = FALSE)
 
-  # Prefixed per cohort, or an NDMM run overwrites Overall's report.
+  # Prefixed, so another cohort's build can't overwrite this one's.
   obj <- paste0(if (is.null(cfg$object_prefix)) "" else tolower(cfg$object_prefix),
                 "attrition_report")
   tbl_name <- if (nzchar(cfg$catalog)) {

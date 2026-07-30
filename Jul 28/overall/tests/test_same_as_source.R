@@ -88,7 +88,11 @@ if (length(a) == length(b)) {
      "same step names, in the same order")
   # These steps now use the line-level inpatient flag.
   CHANGED <- c("07a_med_claim_header", "08a_mm_dx_events_all",
-               "22_other_malig_flag")
+               "22_other_malig_flag",
+               # a code that is only punctuation normalizes to "" and would
+               # match blank claim values - for NDC, every claim with no NDC
+               "01_mm_dx_codes", "04_preg_codes", "05_clintrial_codes",
+               "06_other_malig_codes", "18_therapy_events")
   # Compare what runs, not the comments around it. A tidied -- comment inside a
   # SQL string is not a change to the study logic.
   strip <- function(x) {
@@ -134,13 +138,10 @@ code_lines <- function(path) {
   lines <- readLines(path, warn = FALSE)
   lines[!grepl("^[[:space:]]*#", lines)]
 }
-ok(identical(code_lines(file.path(ROOT, "R", "config_prompts.R")),
-             code_lines(file.path(APR, "R", "config_prompts.R"))),
-   "R/config_prompts.R has identical executable lines")
-for (f in c("codelists.R", "load_inputs.R"))
-  ok(identical(readLines(file.path(ROOT, "R", f), warn = FALSE),
-               readLines(file.path(APR, "R", f), warn = FALSE)),
-     paste0("R/", f, " is a byte-identical copy"))
+for (f in c("config_prompts.R", "codelists.R", "load_inputs.R"))
+  ok(identical(code_lines(file.path(ROOT, "R", f)),
+               code_lines(file.path(APR, "R", f))),
+     paste0("R/", f, " has identical executable lines"))
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))
 if (fail > 0L) quit(status = 1L)
