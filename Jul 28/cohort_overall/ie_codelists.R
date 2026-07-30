@@ -1,26 +1,19 @@
 # =============================================================================
-# ie_codelists.R -- push the five cohort code lists into the session
+# ie_codelists.R -- push the five cohort code lists into the output schema
 # -----------------------------------------------------------------------------
 # Spark executors cannot read the driver's filesystem, so each CSV is read in R
 # and sent as a VALUES list.
 #
-# Two reasons this is here instead of using ../lib/db_utils.R's loader:
-#   - that one calls glue() unqualified, and nothing here declares glue
-#   - it iterates the whole codelist map, including the LOT and dashboard lists
-#     this build does not use
+# They are written as prefixed TABLES, not session temp views, so they survive a
+# reconnect mid-build. They are intermediates and get dropped after a clean run.
 #
-# The views keep their logical names (cl_mm_dx and so on) because the step SQL
-# references them by those names. They are temporary, so they live in the session
-# only, and they stay views because they are small and read once each.
-#
-# All five are required. A missing or empty one is an error, not a warning: the
-# step that reads it would otherwise produce an empty code list and silently
-# drop every patient.
+# All five are required. A missing or empty file is an error: every flag is built
+# even when its gate is off, so an empty list would quietly change one.
 # =============================================================================
 
-ie_load_codelists <- function(con, cfg) {
+ie_load_codelists <- function(con, cfg, h = ie_names(cfg)) {
   if (!isTRUE(cfg$use_csv_codelists)) {
-    message("USE_CSV_CODELISTS=FALSE; reading code lists from ", cfg$ref_schema)
+    log_msg("USE_CSV_CODELISTS=FALSE; reading code lists from ", cfg$ref_schema)
     return(invisible(NULL))
   }
   need <- c(cfg$cl_mm_dx, cfg$cl_mm_therapy, cfg$cl_preg, cfg$cl_clintrial,
@@ -46,11 +39,11 @@ ie_load_codelists <- function(con, cfg) {
       paste0("(", paste(vapply(cols, function(c) lit(df[[c]][i]), character(1)),
                         collapse = ","), ")"), character(1))
     DBI::dbExecute(con, paste0(
-      "CREATE OR REPLACE TEMPORARY VIEW ", tbl, " AS\nSELECT ",
+      "CREATE OR REPLACE TABLE ", h$work(tbl), " AS\nSELECT ",
       paste(cols, collapse = ", "), " FROM VALUES\n",
       paste(rows, collapse = ",\n"), "\nAS t(", paste(cols, collapse = ", "),
       ")"))
-    log_msg("code list ", tbl, " <- ", file, " (",
+    log_msg("code list ", h$work(tbl), " <- ", file, " (",
             format(nrow(df), big.mark = ","), " rows)")
   }
   invisible(need)

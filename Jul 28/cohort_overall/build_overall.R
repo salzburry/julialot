@@ -6,11 +6,14 @@
 #
 # Runs on its own: reads the CDM, not ELIG_COH_ALLFLAGS.
 #
-# Writes to your personal schema (DOMINO_USER_NAME), all objects prefixed ovr_.
-# The cohort is ovr_ELIG_COH_FINAL. The legacy ELIG_COH_FINAL is never touched.
-# It stages the final cohort and publishes it only after reconciliation, writes
-# an ovr_RUN_STATUS row, and drops the intermediates on success. Refuses to run
-# if the output does not resolve to a personal schema.
+# Writes to your own schema -- PROJECT_WORK_SCHEMA, else DOMINO_USER_NAME, the
+# same resolution config_lot.R uses -- so on Domino that is
+# hive_metastore.<user>.ovr_*. The cohort is ovr_ELIG_COH_FINAL; the legacy
+# ELIG_COH_FINAL is never touched.
+#
+# The final cohort is staged and published with the attrition table only after
+# reconciliation passes. ovr_RUN_STATUS records the run and the active criteria.
+# Intermediates are dropped on success.
 #
 # To inspect the SQL or the funnel without a warehouse, run the offline test
 # suite: tests/test_cohort_overall.R.

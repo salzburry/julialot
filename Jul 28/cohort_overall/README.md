@@ -14,8 +14,9 @@ The builder takes no options — it builds. It prints the funnel it is about to
 run, so you can see which criteria are on before it starts.
 
 > **Not "1L-treated."** Step 6 wants an MM-agent claim of any class, not a LOT1
-> regimen, so steroid-only follow-up passes. This cohort is a **superset** of the
-> 1L-regimen population.
+> regimen. Steroid-only follow-up can pass when those steroid codes are in the
+> configured MM-agent codelist. This cohort is a **superset** of the 1L-regimen
+> population.
 
 > ⚠️ **Not compared to the legacy cohort on patients.** The SQL and every
 > criterion are compared against `pipeline_steps.R` and `criteria_attrition.R`,
@@ -31,11 +32,16 @@ var wins over both. The funnel the build prints reflects your edits.
 
 ## Output
 
-Writes to your **personal schema** (`DOMINO_USER_NAME`), everything prefixed
-`ovr_`. The build **refuses to run** if the output resolves to the shared work
-schema (i.e. `DOMINO_USER_NAME` unset) unless you name it explicitly with
-`IE_OUT_SCHEMA` or set `IE_ALLOW_WORK_SCHEMA=TRUE`. `IE_REQUIRE_SCHEMA=osk` makes
-it write only to `osk` and stop otherwise.
+Writes to your own schema, resolved exactly as `config_lot.R` does it:
+`PROJECT_WORK_SCHEMA`, else `DOMINO_USER_NAME`, else the shared fallback. On
+Domino that gives fully-qualified names like:
+
+```
+hive_metastore.osk02156.ovr_ELIG_COH_FINAL
+```
+
+Everything is prefixed `ovr_`. The build prints the schema it is writing to
+before it starts, and refuses if that schema is the CDM schema.
 
 Kept after a successful build:
 
@@ -51,13 +57,22 @@ are **dropped** after a clean build (`IE_KEEP_INTERMEDIATE=TRUE` keeps them). Re
 tables, not views — a Databricks SQL warehouse re-runs a view's definition on
 every read.
 
-Because this build has been run against the same schema many times, it also:
+Because this gets re-run against the same schema, it also:
 
-- **stages** the final cohort as `ovr_ELIG_COH_FINAL__stg` and publishes it to
-  the real name **only after reconciliation passes** — so a failed run leaves the
-  previous cohort intact rather than a half-built one looking current;
-- writes **`ovr_RUN_STATUS`** at start and finish, so you can tell which run the
-  current tables belong to and whether it completed.
+- **stages** the final cohort as `ovr_ELIG_COH_FINAL__stg` and publishes it only
+  after reconciliation passes, together with the attrition table — so those two
+  always come from the same run, and a failed run leaves the previous cohort
+  intact rather than a half-built one looking current;
+- writes **`ovr_RUN_STATUS`** at start and finish with the run id, the **active
+  criteria**, dates, window, min age, source quarter and final count. Two runs
+  can share dates and window and still be different cohorts, so the switches are
+  recorded.
+
+One caveat to know: `ovr_ELIG_COH_ALLFLAGS` is replaced before reconciliation
+(the cohort is derived from it, so it has to exist first). If reconciliation
+fails, `ALLFLAGS` is from the failed run while the cohort and attrition are from
+the last good one. `ovr_RUN_STATUS` says `reconcile_failed` — check it before
+reading the flags table after a failure.
 
 The legacy `ELIG_COH_FINAL` is never written.
 
@@ -74,7 +89,7 @@ explicitly.
 cohort_config.csv  the IE switches (operator edits this)
 ie_config.R        config, naming, {expr} formatter, follow-up cap
 ie_criteria.R      load steps, order the funnel, validate it
-ie_codelists.R     load the five cohort code lists (no glue dependency)
+ie_codelists.R     load the five cohort code lists into prefixed tables
 ie_attrition.R     attrition table, reconciliation, run status, staging, cleanup
 ie_runner.R        connect, build, report
 build_overall.R    entry point
@@ -108,13 +123,13 @@ the attrition table. CE is built before age because `death_dt` needs
 | 9 | `PREGNANT_FLAG = 0` | `07_pregnancy.R` | **off** |
 | 10 | `CLINTRIAL_* = 0` | `08_clintrial.R` | **off** |
 
-The four that ship off are set `FALSE` in `pipeline_inputs.csv`. Their flags are
+The four that ship off are set `FALSE` in `cohort_config.csv`. Their flags are
 still computed, as columns on the flags table, so NDMM can re-apply them at the
 LOT1 anchor. For other-malignancy that is not optional: NDMM keeps five
 MM-adjacent tumour groups (MGUS, secondary bone, solitary and extramedullary
 plasmacytoma, plasma-cell leukaemia), and turning step 8 on here would drop those
-patients before NDMM can put them back. The cost, per `pipeline_inputs.csv`:
-Overall has no other-malignancy exclusion.
+patients before NDMM can put them back. The cost: Overall has no
+other-malignancy exclusion.
 
 Each step file explains its own rule. The points worth knowing up front:
 
@@ -133,7 +148,8 @@ changed here — that would change the cohort. `mm_dx_events_all` carries a
 diagnostic that counts the affected claims.
 
 **Step 6 is not "has a LOT1 regimen."** Any MM agent, any class. Steroid-only
-follow-up passes here and is excluded by the LOT build's LOT1 definition.
+follow-up can pass when those codes are in the configured MM-agent codelist,
+while the LOT build excludes steroid-only starts from LOT1.
 
 **Step 7's asymmetry.** Step 1 admits on broad codes; only strict codes in
 baseline exclude.
@@ -168,10 +184,47 @@ over the flags table and never reads the cohort table.
 
 Nothing in this repo compares this build to the legacy cohort on patients.
 `../tests/verify_against_legacy.R` covers the selection layer and never reads
-`ovr_ELIG_COH_FINAL`. To confirm the numbers, build the legacy `ELIG_COH_FINAL`
-on the same source vintage and configuration, then `EXCEPT`-compare it against
-`ovr_ELIG_COH_FINAL` both directions — on PATID **and** on `(PATID, INDEX_DATE)`,
-since filter-then-rank can move a surviving patient to a different index date.
+`ovr_ELIG_COH_FINAL`.
+
+To confirm the numbers, build the legacy `ELIG_COH_FINAL` on the **same source
+quarter, codelists, IE switches and dates**, then run these. Every one must come
+back 0 — a count check alone would pass two different cohorts of the same size.
+
+```sql
+-- swap in your schema, e.g. hive_metastore.osk02156
+-- 1. same patients, both directions
+SELECT count(*) FROM (SELECT PATID FROM <s>.ovr_ELIG_COH_FINAL
+                      EXCEPT SELECT PATID FROM <s>.ELIG_COH_FINAL);
+SELECT count(*) FROM (SELECT PATID FROM <s>.ELIG_COH_FINAL
+                      EXCEPT SELECT PATID FROM <s>.ovr_ELIG_COH_FINAL);
+
+-- 2. same index dates. Filter-then-rank can move a surviving patient to a
+--    different date, and every LOT number is computed from it, so PATID alone
+--    is not enough.
+SELECT count(*) FROM (SELECT PATID, INDEX_DATE FROM <s>.ovr_ELIG_COH_FINAL
+                      EXCEPT SELECT PATID, INDEX_DATE FROM <s>.ELIG_COH_FINAL);
+SELECT count(*) FROM (SELECT PATID, INDEX_DATE FROM <s>.ELIG_COH_FINAL
+                      EXCEPT SELECT PATID, INDEX_DATE FROM <s>.ovr_ELIG_COH_FINAL);
+
+-- 3. one row per patient on both sides
+SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_pat FROM <s>.ovr_ELIG_COH_FINAL;
+
+-- 4. key flags agree for the patients both sides picked on the same date
+SELECT count(*) AS n_compared,
+       sum(CASE WHEN NOT (a.AGE_INDEX_YR <=> b.AGE_INDEX_YR) THEN 1 ELSE 0 END) AS d_age,
+       sum(CASE WHEN NOT (a.CE_b        <=> b.CE_b)        THEN 1 ELSE 0 END) AS d_ce_b,
+       sum(CASE WHEN NOT (a.CE_f        <=> b.CE_f)        THEN 1 ELSE 0 END) AS d_ce_f,
+       sum(CASE WHEN NOT (a.MM_bl_agents <=> b.MM_bl_agents) THEN 1 ELSE 0 END) AS d_bl,
+       sum(CASE WHEN NOT (a.MM_FU_agents <=> b.MM_FU_agents) THEN 1 ELSE 0 END) AS d_fu,
+       sum(CASE WHEN NOT (a.index_source <=> b.index_source) THEN 1 ELSE 0 END) AS d_src,
+       sum(CASE WHEN NOT (a.FU_DAYS     <=> b.FU_DAYS)     THEN 1 ELSE 0 END) AS d_fud
+FROM <s>.ovr_ELIG_COH_FINAL a
+JOIN <s>.ELIG_COH_FINAL     b ON a.PATID = b.PATID AND a.INDEX_DATE = b.INDEX_DATE;
+```
+
+Also read the unknown-care-setting diagnostic the build logs for
+`mm_dx_events_all` (affected events, patients, and strict-code events). A legacy
+comparison cannot answer that one, because both programs share the behaviour.
 
 The offline suite compares **normalised text** — whitespace collapsed, `CREATE`
 dropped, this folder's object qualifier removed — not tokens or bytes. It also
@@ -195,9 +248,7 @@ resolve off `study_end`.
 
 | Var | |
 |---|---|
-| `IE_OUT_SCHEMA` | output schema; defaults to `DOMINO_USER_NAME`; may not be the CDM schema |
-| `IE_REQUIRE_SCHEMA` | if set, the build writes only to this schema and stops otherwise |
-| `IE_ALLOW_WORK_SCHEMA` | `TRUE` to allow the shared work-schema fallback when `DOMINO_USER_NAME` is unset |
+| `PROJECT_WORK_SCHEMA` / `DOMINO_USER_NAME` | output schema, as in the legacy config |
 | `IE_KEEP_INTERMEDIATE` | `TRUE` to keep the intermediate tables after a build |
 | `IE_OBJ_PREFIX` | `ovr_`; letters, digits, underscore |
 | `IE_CONNECT_FN` | a connect function already in the session |
@@ -209,8 +260,7 @@ Each of these has a matching way to fail *quietly*:
 
 | check | what it would otherwise do |
 |---|---|
-| output resolves to a personal schema | scatter the outputs into the shared work schema |
-| `IE_REQUIRE_SCHEMA` matches | write to the wrong schema on a scheduled run |
+| output schema is not the CDM schema | write tables into the source schema |
 | `PERSIST_TO_SCHEMA` is TRUE | look like an off switch that does nothing |
 | `OUTPATIENT_WINDOW` is 30/60/90 | silently becomes 90 |
 | `APPLY_*` is `TRUE`/`FALSE` | `as.logical("Y")` is NA, read as FALSE, so a gate never applies and the cohort is larger |
@@ -223,6 +273,8 @@ Each of these has a matching way to fail *quietly*:
 | every object prefixed and qualified | collides with the legacy pipeline's object |
 | no step writes its own `CREATE` | the create/reference mismatch that broke the earlier checkpoint |
 | reconciliation before publish | a stale or half-built cohort under the real name |
+| attrition / run-status writes | a published cohort with no record of which run made it |
+| final count after publish | a run marked complete that cannot be counted |
 
 ## The second copy
 

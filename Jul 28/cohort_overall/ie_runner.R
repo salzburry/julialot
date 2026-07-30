@@ -93,19 +93,18 @@ ie_main <- function(here, argv = commandArgs(trailingOnly = TRUE)) {
   conn <- new.env(); conn$con <- ie_connect(cfg)
   on.exit(try(DBI::dbDisconnect(conn$con), silent = TRUE), add = TRUE)
 
-  log_msg("writing to schema ", cfg$out_schema, " (personal)")
+  log_msg("writing to ", cfg$catalog, ".", cfg$out_schema)
   run_id  <- ie_run_id()
   started <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
   ie_write_status(conn$con, funnel, run_id, "started", started = started)
 
-  ie_load_codelists(conn$con, cfg)
+  ie_load_codelists(conn$con, cfg, funnel$h)
   ie_execute(conn, funnel)
 
   rows <- ie_attrition_rows(conn$con, funnel)
   ie_print_attrition(rows, cfg)
-  ie_persist_attrition(conn$con, rows, funnel)
 
-  # Reconcile the STAGED cohort before publishing under the real name.
+  # Reconcile the staged cohort before anything is published.
   stg <- paste0(funnel$h$work(cfg$final_table_name), "__stg")
   bad <- ie_print_reconcile(
     ie_reconcile(conn$con, funnel, attr(rows, "cum_where"), final_tbl = stg),
@@ -113,22 +112,23 @@ ie_main <- function(here, argv = commandArgs(trailingOnly = TRUE)) {
   if (isTRUE(bad > 0L)) {
     ie_write_status(conn$con, funnel, run_id, "reconcile_failed",
                     started = started)
-    stop("reconciliation failed -- see above. The staged cohort was NOT ",
-         "published, so ", funnel$h$work(cfg$final_table_name),
-         " still holds the previous build. Do not use these numbers.",
-         call. = FALSE)
+    stop("reconciliation failed -- see above. Nothing was published: ",
+         funnel$h$work(cfg$final_table_name), " and the attrition table still ",
+         "hold the previous build. Do not use these numbers.", call. = FALSE)
   }
 
+  # Publish the cohort and the attrition table together, so the two always come
+  # from the same run.
   ie_publish_final(conn$con, funnel)
-  n <- tryCatch(DBI::dbGetQuery(conn$con, paste0(
-    "SELECT count(*) AS n FROM ", funnel$h$work(cfg$final_table_name)))$n[1],
-    error = function(e) NA)
+  ie_persist_attrition(conn$con, rows, funnel)
+
+  n <- DBI::dbGetQuery(conn$con, paste0(
+    "SELECT count(*) AS n FROM ", funnel$h$work(cfg$final_table_name)))$n[1]
   ie_cleanup_intermediates(conn$con, funnel)
   ie_write_status(conn$con, funnel, run_id, "complete", n_final = n,
                   started = started)
 
   log_msg("cohort -> ", funnel$h$work(cfg$final_table_name), " (",
-          if (is.na(n)) "COUNT FAILED" else format(n, big.mark = ","),
-          " patients, run_id ", run_id, ")")
+          format(n, big.mark = ","), " patients, run_id ", run_id, ")")
   invisible(funnel)
 }

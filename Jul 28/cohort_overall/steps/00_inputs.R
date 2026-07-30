@@ -16,15 +16,14 @@
 ie_step_inputs <- function(cfg, h) {
   work <- h$work; cdm_src <- h$cdm_src; ref <- h$ref
 
-  # Code lists come from temp views that ie_load_codelists() has already pushed
-  # from each cl_*.csv (USE_CSV_CODELISTS=TRUE, the default), or from reference
-  # tables. They stay views because they are tiny.
+  # Code lists: tables ie_load_codelists() wrote from each cl_*.csv
+  # (USE_CSV_CODELISTS=TRUE, the default), or the reference tables.
   if (isTRUE(cfg$use_csv_codelists)) {
-    mm_dx_source       <- cfg$cl_mm_dx
-    mm_therapy_source  <- cfg$cl_mm_therapy
-    preg_source        <- cfg$cl_preg
-    clintrial_source   <- cfg$cl_clintrial
-    other_malig_source <- cfg$cl_other_malig
+    mm_dx_source       <- work(cfg$cl_mm_dx)
+    mm_therapy_source  <- work(cfg$cl_mm_therapy)
+    preg_source        <- work(cfg$cl_preg)
+    clintrial_source   <- work(cfg$cl_clintrial)
+    other_malig_source <- work(cfg$cl_other_malig)
   } else {
     mm_dx_source       <- ref(cfg$cl_mm_dx)
     mm_therapy_source  <- ref(cfg$cl_mm_therapy)
