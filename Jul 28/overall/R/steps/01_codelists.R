@@ -1,7 +1,7 @@
 # Load the five code lists into views the later phases join against.
 
 phase_codelists <- function(cfg, h, ctx) {
-  ref <- h$ref; work <- h$work; cdm_src <- h$cdm_src
+  work <- h$work; cdm_src <- h$cdm_src
   mm_dx_source       <- ctx$mm_dx_source
   mm_therapy_source  <- ctx$mm_therapy_source
   preg_source        <- ctx$preg_source
@@ -36,6 +36,7 @@ phase_codelists <- function(cfg, h, ctx) {
         FROM {mm_therapy_source}
         WHERE CL_CODE IS NOT NULL AND trim(CL_CODE) <> ''
           AND CL_CODE_TYPE IS NOT NULL AND trim(CL_CODE_TYPE) <> ''
+          AND regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''
       "),
       qc = glue("SELECT count(*) AS n_codes, count(DISTINCT code_type) AS n_code_types FROM {work('mm_therapy_codes')}")
     ),

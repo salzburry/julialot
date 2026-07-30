@@ -1,4 +1,5 @@
-# Configuration defaults, env-var loading, and interactive prompts.
+# Configuration defaults. config.csv is applied to the environment before
+# this file is sourced, so these pick it up.
 
 # ---- Validation helpers ----
 validate_outpatient_window <- function(x, default = 90L) {
@@ -8,7 +9,7 @@ validate_outpatient_window <- function(x, default = 90L) {
 }
 
 # ---- Configuration defaults ----
-# Template seed only; finalize_cfg() returns the live cfg as a local.
+# Defaults; build.R pins the ones that move the cohort as a local.
 cfg_defaults <- list(
   # ---- Databricks / ODBC ----
   dsn         = Sys.getenv("DATABRICKS_DSN", unset = "RWDE"),
@@ -20,8 +21,6 @@ cfg_defaults <- list(
 
   # ---- Schemas (Optum CDM / Domino pattern) ----
   cdm_schema  = Sys.getenv("OPTUM_CDM_SCHEMA", unset = "clnprw_optum"),
-  ref_schema  = Sys.getenv("PROJECT_REF_SCHEMA",
-                           unset = Sys.getenv("DOMINO_USER_NAME", unset = "gsk_mm_lot_ref")),
   work_schema = Sys.getenv("PROJECT_WORK_SCHEMA",
                            unset = Sys.getenv("DOMINO_USER_NAME", unset = "gsk_mm_lot_work")),
 
@@ -45,26 +44,18 @@ cfg_defaults <- list(
   cl_other_malig     = "cl_other_malignancies",
   # Not used by this build; kept so the code lists stay one set
   cl_mma_codelist    = "cl_mma_codelist",
-  cl_mma_rollup      = "cl_mma_rollup",
-  cl_sct_codelist    = "cl_sct_codelist",
-  cl_permissible_subs = "cl_permissible_subs",
 
   # ---- Code-list CSVs (on server filesystem at /mnt/code/codelist/) ----
   # When use_csv_codelists = TRUE, the cohort CSVs are loaded into temp views.
   use_csv_codelists = as.logical(Sys.getenv("USE_CSV_CODELISTS", unset = "TRUE")),
   codelist_dir      = Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist"),
+  # The five lists this build loads, and the file each comes from.
   codelist_csv_map  = list(
-    # Cohort pipeline codelists
     cl_mm_dx              = "mm_dx.csv",
     cl_mm_therapy         = "cl_mma_codelist.csv",
     cl_pregnancy          = "pregnancy.csv",
     cl_clintrial          = "clintrial.csv",
-    cl_other_malignancies = "other_malig.csv",
-    # Not loaded here - only the five below are
-    cl_mma_codelist       = "cl_mma_codelist.csv",
-    cl_mma_rollup         = "cl_mma_rollup.csv",
-    cl_sct_codelist       = "cl_sct_codelist.csv",
-    cl_permissible_subs   = "permissible_subs.csv"
+    cl_other_malignancies = "other_malig.csv"
   ),
 
   # ---- Study parameters ----

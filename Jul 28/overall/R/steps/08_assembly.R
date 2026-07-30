@@ -125,9 +125,7 @@ phase_assembly <- function(cfg, h, ctx) {
       qc = glue("SELECT count(*) AS n_final_cohort FROM {work(cfg$final_table_name)}")
     ),
 
-    # ---- Step 24b: persist final cohort to the personal schema ----
-    # Saves the final cohort as a permanent table. Set
-    # PERSIST_TO_SCHEMA=FALSE to skip.
+    # ---- Step 24b: write the final cohort as a permanent table ----
 
     if (isTRUE(cfg$persist_to_schema) && nzchar(cfg$personal_schema)) {
       persist_tbl <- full_name(cfg$personal_schema, cfg$final_table_name)

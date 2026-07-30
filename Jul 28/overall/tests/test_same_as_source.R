@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # Compare step order, QC, and unchanged SQL with apr_30_2026.
-# Three steps deliberately differ; see CHANGED below.
+# Some steps deliberately differ; see CHANGED below.
 #
 #   Rscript "Jul 28/overall/tests/test_same_as_source.R"
 
@@ -91,7 +91,8 @@ if (length(a) == length(b)) {
                "22_other_malig_flag",
                # a code that is only punctuation normalizes to "" and would
                # match blank claim values - for NDC, every claim with no NDC
-               "01_mm_dx_codes", "04_preg_codes", "05_clintrial_codes",
+               "01_mm_dx_codes", "03_mm_therapy_codes", "04_preg_codes",
+               "05_clintrial_codes",
                "06_other_malig_codes", "18_therapy_events")
   # Compare what runs, not the comments around it. A tidied -- comment inside a
   # SQL string is not a change to the study logic.
@@ -131,6 +132,23 @@ if (length(a) == length(b)) {
   ok(grepl("CASE WHEN NOT (h.line_inpatient = 1 OR cf.CONF_ID IS NOT NULL)",
             ev, fixed = TRUE),
       "outpatient_flg cannot evaluate to NULL")
+
+  # Each code-list filter is present, and BOTH NDC joins are guarded. Asserting
+  # only "differs from source" let the Rx join ship without its guard.
+  sql_of <- function(nm) as.character(b[[match(nm, vapply(b, `[[`, character(1),
+                                                          "name"))]]$sql)
+  BLANK <- list("01_mm_dx_codes"       = "regexp_replace(dx, '[^A-Za-z0-9]', '') <> ''",
+                "03_mm_therapy_codes"  = "regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''",
+                "04_preg_codes"        = "regexp_replace(code, '[^A-Za-z0-9]', '') <> ''",
+                "05_clintrial_codes"   = "regexp_replace(code, '[^A-Za-z0-9]', '') <> ''",
+                "06_other_malig_codes" = "regexp_replace(dx, '[^A-Za-z0-9]', '') <> ''")
+  for (nm in names(BLANK))
+    ok(grepl(BLANK[[nm]], sql_of(nm), fixed = TRUE),
+       paste0(nm, ": drops codes that normalize to blank"))
+  te <- sql_of("18_therapy_events")
+  ok(lengths(regmatches(te, gregexpr("regexp_replace(c.code, '[^0-9]', '') <> ''",
+                                     te, fixed = TRUE))) == 2,
+     "both NDC joins require digits in the code (medical and Rx)")
 }
 
 # Copies, so they must not have drifted. Local comments may differ.
