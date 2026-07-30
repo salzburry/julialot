@@ -9,56 +9,127 @@
 # codes are deliberately absent. The LOT build filters them in SQL as well, but
 # that hides the disagreement rather than fixing it - this corrects the file.
 #
-# Kept rows are written back byte for byte. The parser only decides WHICH lines
-# to drop; it never reformats quoting, spacing or line endings, because this is
-# a governed file and a reformat would obscure the real change in review.
+# Kept rows are written back byte for byte. The file is handled as raw bytes
+# and lines are sliced out of it whole, terminators included, so CRLF endings,
+# quoting, spacing and a missing final newline all survive untouched: this is a
+# governed file, and a reformat would bury the real change in review.
+#
+# Nothing is written over the original. The kept bytes go to a temporary file
+# beside it, are read back and checked, and only then replace it by rename.
+#
+# The premise - that removing these rows cannot change who counts as treated,
+# because a steroid has no codes - is checked against cl_mma_codelist.csv
+# rather than assumed. Both files are governed and shared with apr_30_2026, so
+# record the md5 printed below with whatever change request covers the edit.
 
-argv    <- commandArgs(trailingOnly = TRUE)
+argv     <- commandArgs(trailingOnly = TRUE)
 do_write <- "--write" %in% argv
-dir     <- Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist")
-path    <- file.path(dir, "cl_mma_rollup.csv")
+unknown  <- setdiff(argv, "--write")
+if (length(unknown))
+  stop("Unknown argument(s): ", paste(unknown, collapse = ", "),
+       ". Only --write is understood.", call. = FALSE)
+
+dir       <- Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist")
+path      <- file.path(dir, "cl_mma_rollup.csv")
+code_path <- file.path(dir, "cl_mma_codelist.csv")
+
+# 01_codelists.R stops the build below this many distinct rollup medications.
+# Keep the two in step; the tests check that they agree.
+MIN_ROLLUP_MEDS <- 20L
 
 say <- function(...) cat(..., "\n", sep = "")
+col <- function(df, name) {
+  i <- grep(paste0("^", name, "$"), names(df), ignore.case = TRUE)
+  if (!length(i)) NULL else df[[i[1]]]
+}
 
 if (!file.exists(path)) stop("No rollup at ", path, call. = FALSE)
+md5_before <- unname(tools::md5sum(path))
 say("File : ", path)
-say("md5  : ", unname(tools::md5sum(path)))
+say("md5  : ", md5_before)
 
-lines <- readLines(path, warn = FALSE)
+# Whole lines, terminator included, so the bytes of a kept row are the bytes
+# that go back out. A file ending in a newline has no empty line after it.
+bytes  <- readBin(path, "raw", file.size(path))
+nl     <- which(bytes == as.raw(0x0A))
+starts <- c(1L, nl + 1L)
+ends   <- c(nl, length(bytes))
+ok_ln  <- starts <= ends
+lines_raw <- Map(function(a, b) bytes[a:b], starts[ok_ln], ends[ok_ln])
+
 df <- read.csv(path, stringsAsFactors = FALSE, colClasses = "character",
                check.names = FALSE)
 
 # Row i of the frame is line i+1 of the file. That only holds when no field
 # contains a newline; if it does not hold, stop rather than delete the wrong
 # lines.
-if (nrow(df) != length(lines) - 1L)
-  stop("This file has ", nrow(df), " rows but ", length(lines) - 1L,
+if (nrow(df) != length(lines_raw) - 1L)
+  stop("This file has ", nrow(df), " rows but ", length(lines_raw) - 1L,
        " data lines - a field probably contains a newline. Edit it by hand.",
        call. = FALSE)
 
-cls <- grep("^CL_MED_CLASS$", names(df), ignore.case = TRUE)
-abb <- grep("^CL_MED_ABBR$",  names(df), ignore.case = TRUE)
-if (!length(cls) || !length(abb))
+cls <- col(df, "CL_MED_CLASS")
+abb <- col(df, "CL_MED_ABBR")
+if (is.null(cls) || is.null(abb))
   stop("Expected CL_MED_CLASS and CL_MED_ABBR; found: ",
        paste(names(df), collapse = ", "), call. = FALSE)
 
-is_steroid <- toupper(trimws(df[[cls[1]]])) == "STEROID"
+is_steroid <- toupper(trimws(cls)) == "STEROID"
 say("Rows : ", nrow(df), " total, ", sum(is_steroid), " steroid")
 
 if (!any(is_steroid)) {
   say("Nothing to do - the rollup already has no steroid rows.")
   quit(status = 0L)
 }
-say("Removing: ", paste(sort(unique(trimws(df[[abb[1]]][is_steroid]))), collapse = ", "))
+gone <- sort(unique(toupper(trimws(abb[is_steroid]))))
+say("Removing: ", paste(gone, collapse = ", "))
+
+# The premise, checked rather than asserted. If the code list does carry codes
+# for one of these, deleting its rollup row DOES change who counts as treated:
+# the medication would still be extracted from claims and would then have no
+# class, no maintenance flag and no conditioning flag.
+if (!file.exists(code_path))
+  stop("Cannot verify the premise: no code list at ", code_path,
+       ". These rows are only safe to remove because a steroid has no codes.",
+       call. = FALSE)
+cdf <- read.csv(code_path, stringsAsFactors = FALSE, colClasses = "character",
+                check.names = FALSE)
+c_abb <- col(cdf, "CL_MED_ABBR")
+c_cls <- col(cdf, "CL_MED_CLASS")
+if (is.null(c_abb))
+  stop(code_path, " has no CL_MED_ABBR; cannot verify the premise.", call. = FALSE)
+coded <- intersect(gone, toupper(trimws(c_abb)))
+if (length(coded))
+  stop("The code list carries codes for ", paste(coded, collapse = ", "),
+       ". Removing those rollup rows would leave a medication that claims ",
+       "still extract with no class or flags. Fix the code list first.",
+       call. = FALSE)
+say("Premise: none of these appear in cl_mma_codelist.csv.")
+if (!is.null(c_cls)) {
+  n_st <- sum(toupper(trimws(c_cls)) == "STEROID")
+  if (n_st > 0)
+    stop("The code list has ", n_st, " row(s) classed STEROID. Steroids are ",
+         "supposed to live in a separate file; resolve that before editing ",
+         "the rollup.", call. = FALSE)
+  say("         and it has no STEROID rows of its own.")
+}
+
+# The build refuses to run on a short rollup, so say now whether this edit
+# would produce one rather than discovering it on the next run.
+kept_meds <- length(unique(toupper(trimws(abb[!is_steroid]))))
+say("Meds : ", kept_meds, " distinct medications would remain (minimum ",
+    MIN_ROLLUP_MEDS, ")")
+if (kept_meds < MIN_ROLLUP_MEDS)
+  stop("That is below the minimum 01_codelists.R enforces, so the build would ",
+       "stop on the result. Not editing.", call. = FALSE)
 
 # A surviving row may still name a steroid as its dual-maintenance partner.
 # That is harmless - the dual-maintenance rule needs BOTH drugs to be induction
 # meds, and a steroid has no codes so it can never be one - but say so, because
 # it looks like a dangling reference on inspection.
-dual <- grep("^DUALMAINTENANCEWITH$", names(df), ignore.case = TRUE)
-if (length(dual)) {
-  gone <- toupper(trimws(df[[abb[1]]][is_steroid]))
-  refs <- vapply(df[[dual[1]]][!is_steroid], function(v) {
+dual <- col(df, "DUALMAINTENANCEWITH")
+if (!is.null(dual)) {
+  refs <- vapply(dual[!is_steroid], function(v) {
     if (is.na(v) || !nzchar(trimws(v))) return(FALSE)
     any(toupper(trimws(strsplit(v, ",")[[1]])) %in% gone)
   }, logical(1), USE.NAMES = FALSE)
@@ -74,21 +145,41 @@ if (!do_write) {
   quit(status = 0L)
 }
 
-bak <- paste0(path, ".bak.", format(Sys.time(), "%Y%m%d%H%M%S"))
+keep <- c(TRUE, !is_steroid)
+bak  <- paste0(path, ".bak.", format(Sys.time(), "%Y%m%d%H%M%S"))
 if (!file.copy(path, bak)) stop("Could not write a backup at ", bak, call. = FALSE)
 say("Backup: ", bak)
 
-writeLines(lines[c(TRUE, !is_steroid)], path)
+# Beside the original, so the rename below stays on one filesystem and is
+# therefore atomic: the file is either the old one or the new one, never a
+# half-written one, whatever happens to this process.
+tmp <- paste0(path, ".tmp.", Sys.getpid())
+on.exit(if (file.exists(tmp)) unlink(tmp), add = TRUE)
+writeBin(unlist(lines_raw[keep]), tmp)
 
-# Read it back rather than trusting the write.
-chk <- read.csv(path, stringsAsFactors = FALSE, colClasses = "character",
+# The kept bytes are the original's bytes, so the sizes have to add up exactly.
+dropped <- sum(lengths(lines_raw[!keep]))
+if (file.size(tmp) != file.size(path) - dropped)
+  stop("The new file is ", file.size(tmp), " bytes, expected ",
+       file.size(path) - dropped, ". Not replacing anything.", call. = FALSE)
+
+chk <- read.csv(tmp, stringsAsFactors = FALSE, colClasses = "character",
                 check.names = FALSE)
-left <- sum(toupper(trimws(chk[[cls[1]]])) == "STEROID")
-if (left > 0 || nrow(chk) != sum(!is_steroid)) {
-  file.copy(bak, path, overwrite = TRUE)
+left <- sum(toupper(trimws(col(chk, "CL_MED_CLASS"))) == "STEROID")
+if (left > 0 || nrow(chk) != sum(!is_steroid))
   stop("Verification failed (", nrow(chk), " rows, ", left,
-       " steroid). Restored from the backup.", call. = FALSE)
-}
+       " steroid). Nothing was replaced.", call. = FALSE)
+
+# Someone else may have written to the file while this ran. Replacing it now
+# would silently discard their edit.
+if (!identical(unname(tools::md5sum(path)), md5_before))
+  stop("The rollup changed while this was running (md5 is no longer ",
+       md5_before, "). Nothing was replaced - re-run and look at the diff.",
+       call. = FALSE)
+
+if (!file.rename(tmp, path))
+  stop("Could not replace ", path, ". The original is untouched.", call. = FALSE)
+
 say("Wrote: ", nrow(chk), " rows, 0 steroid")
 say("md5  : ", unname(tools::md5sum(path)), "  (record this with the run)")
 say("")

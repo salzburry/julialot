@@ -186,9 +186,23 @@ The `trim` matters: the projection trims the class but the raw column does
 not, so a padded `' STEROID '` would otherwise slip through.
 
 The file itself should not list them either. `Jul 28/tools/remove_steroids_from_rollup.R`
-makes that edit on the server, keeping every remaining line byte for byte and
-reporting the md5 before and after. Run it without arguments first - it reports
-and changes nothing. The SQL filter stays afterwards as a defensive guard.
+makes that edit on the server. Run it without arguments first - it reports and
+changes nothing. The SQL filter stays afterwards as a defensive guard.
+
+It is a governed file shared with `apr_30_2026`, so the script is built to be
+boring about it. The file is handled as raw bytes and whole lines are sliced
+out of it, so every kept row - its quoting, spacing and line ending - goes back
+out unchanged. The new bytes are written beside the original and replace it by
+rename, so it is either the old file or the new one and never a half-written
+one. The md5 is printed before and after, and re-checked immediately before the
+rename so a concurrent edit is refused rather than discarded.
+
+It also checks its own premise instead of asserting it: the rows are only safe
+to remove because a steroid has no codes, so it refuses unless
+`cl_mma_codelist.csv` is present, carries none of the abbreviations being
+removed, and has no `STEROID` rows of its own. It refuses too if the edit would
+leave fewer medications than `01_codelists.R` requires. `Jul 28/tools/tests/`
+covers all of that, including the byte-for-byte claim.
 
 Without the filter the rollup lists medications whose codes are deliberately absent,
 `uncoded_meds` fires on every run, and LOT1 builds always-zero
@@ -210,8 +224,8 @@ CODELIST_WAIVERS=code_types
 
 Names: `orphan_meds`, `uncoded_meds`, `code_types`, `multi_class`,
 `code_to_med`, `bad_ndc`, `rollup_defs`, `blank_keys`, `subs_substitute`,
-`subs_original`. Unknown names are rejected, and whatever was waived is
-recorded in `LOT_BUILD_STATUS`.
+`subs_original`, `ndc_shape`, `class_agreement`. Unknown names are rejected,
+and whatever was waived is recorded in `LOT_BUILD_STATUS`.
 
 The SCT checks in `05_sct.R` are not on this list. They stop the build
 outright, because each one means a transplant is being counted twice or not at
@@ -226,6 +240,31 @@ matches nothing - the substitution rule quietly does not fire, and a typo
 looks exactly like a drug with no claims. Both sides are checked against
 `mma_codelist`: `subs_substitute` for the one that enters a regimen,
 `subs_original` for the one that is only ever matched against.
+
+### NDC shape
+
+The NDC join pads whatever digits it finds to eleven:
+
+```sql
+lpad(regexp_replace(CL_CODE, '[^0-9]', ''), 11, '0')
+```
+
+`bad_ndc` catches the all-zero result, which is what a claim with no NDC looks
+like. `ndc_shape` catches the other ways a code survives that expression as a
+different eleven-digit key without raising anything: letters (storage strips
+punctuation but not letters, so `ABC123` arrives as `00000000123`), more than
+eleven digits, and fewer than nine.
+
+### Class agreement
+
+`multi_class` looks inside the code list. The two files also have to agree with
+each other, and they disagree silently: every claim carries `CL_MED_CLASS` from
+the **code list**, while the `LOT1_CLASS_<x>` columns are named from the classes
+of the **rollup**. A medication the two spell differently gets a column named
+for one spelling and values that only ever hold the other, so the column is
+always zero. `class_agreement` compares them on the medications both files
+carry - a medication in only one is `orphan_meds` or `uncoded_meds`, and
+steroids are absent from the rollup by design.
 
 ### Transplant types
 

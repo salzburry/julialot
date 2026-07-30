@@ -278,8 +278,33 @@ ok(grepl("stop(\"The production code lists would change", cd, fixed = TRUE),
 ok(grepl("codelist_waivers()", cd, fixed = TRUE),
    "and a waiver names the individual check, not all of them")
 for (w in c("orphan_meds", "uncoded_meds", "unexpected_types", "multi_class",
-            "code_to_med", "bad_ndc", "subs_sub", "subs_orig"))
+            "code_to_med", "bad_ndc", "subs_sub", "subs_orig", "ndc_shape",
+            "class_agreement"))
   ok(grepl(paste0(w, " <-"), cd, fixed = TRUE), paste0(w, " is checked"))
+# bad_ndc catches the all-zero key. The rest of a malformed NDC is silent
+# because the join pads whatever digits it finds, so each of these becomes a
+# real-looking but different eleven-digit key.
+for (shape in c("CL_CODE RLIKE '[^0-9]'",
+                "length(regexp_replace(CL_CODE, '[^0-9]', '')) > 11",
+                "length(regexp_replace(CL_CODE, '[^0-9]', '')) < 9"))
+  ok(grepl(shape, cd, fixed = TRUE),
+     paste0("NDCs are checked for ", shape))
+# The two files are compared to each other, not each to itself: MED_CLASS on a
+# claim comes from the code list while the LOT1_CLASS_<x> columns are named
+# from the rollup's classes, so a disagreement is an always-zero column.
+ok(grepl("INNER JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR", cd, fixed = TRUE),
+   "class agreement joins the code list to the rollup")
+# Each check owns one failure mode. Reporting a within-file disagreement here
+# too would mean waiving multi_class - an accepted condition - also had to
+# waive this, losing the cross-file check for every other medication.
+ok(grepl("HAVING count(DISTINCT c.CL_MED_CLASS) = 1", cd, fixed = TRUE) &&
+     grepl("AND count(DISTINCT r.CL_MED_CLASS) = 1", cd, fixed = TRUE),
+   "and only where each file is itself unambiguous, so it cannot double-report")
+mmx <- paste(readLines(file.path(ROOT, "R", "steps", "03_mma_map.R"), warn = FALSE),
+             collapse = "\n")
+ok(grepl("c.CL_MED_CLASS AS MED_CLASS", mmx, fixed = TRUE) &&
+     grepl("FROM mma_rollup ORDER BY CL_MED_CLASS", cd, fixed = TRUE),
+   "...which is the pairing that matters: claims classed from one, columns from the other")
 # NOT IN against a column that may be NULL returns no rows at all, so the
 # check would pass by being unanswerable. Both sides use NOT EXISTS.
 ok(length(gregexpr("NOT EXISTS (", cd, fixed = TRUE)[[1]]) == 2 &&
@@ -323,6 +348,17 @@ mk_db_q <- function(problem) function(con, sql) {
   if (grepl("AS bigint\\) = 0", sql))
     return(if (problem == "bad_ndc") data.frame(CL_CODE = "00000000000", CL_MED_ABBR = "X")
            else data.frame(CL_CODE = character(0), CL_MED_ABBR = character(0)))
+  if (grepl("AS why", sql, fixed = TRUE))
+    return(if (problem == "ndc_shape")
+      data.frame(CL_CODE = "ABC123", CL_MED_ABBR = "LEN", n_digits = 3L,
+                 why = "non-digits")
+      else data.frame(CL_CODE = character(0), CL_MED_ABBR = character(0),
+                      n_digits = integer(0), why = character(0)))
+  if (grepl("AS rollup_class", sql, fixed = TRUE))
+    return(if (problem == "class_agreement")
+      data.frame(CL_MED_ABBR = "LEN", codelist_class = "IMID", rollup_class = "PI")
+      else data.frame(CL_MED_ABBR = character(0), codelist_class = character(0),
+                      rollup_class = character(0)))
   if (grepl("c.CL_MED_ABBR = p.substitute_med", sql, fixed = TRUE))
     return(if (problem == "subs_substitute") data.frame(med = "LENN")
            else data.frame(med = character(0)))
@@ -352,7 +388,8 @@ assign("db_q", mk_db_q("none"), envir = ce)
 ok(!inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
    "a consistent pair of code lists runs")
 for (prob in c("orphan", "uncoded", "type", "class", "code_to_med", "bad_ndc",
-               "rollup_defs", "blank_keys", "subs_substitute", "subs_original")) {
+               "rollup_defs", "blank_keys", "subs_substitute", "subs_original",
+               "ndc_shape", "class_agreement")) {
   assign("db_q", mk_db_q(prob), envir = ce)
   ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
      paste0("'", prob, "' stops the build"))
