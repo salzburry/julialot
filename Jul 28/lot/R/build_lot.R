@@ -39,7 +39,7 @@ CONTRACT <- list(
 # Code-list checks a run may waive by name. A single switch for all of them
 # meant waiving one expected condition also waived the dangerous ones.
 WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types", "multi_class",
-                     "code_to_med", "bad_ndc")
+                     "code_to_med", "bad_ndc", "rollup_defs", "blank_keys")
 
 codelist_waivers <- function() {
   v <- trimws(strsplit(Sys.getenv("CODELIST_WAIVERS", unset = ""), "[,|]")[[1]])
@@ -252,6 +252,7 @@ build_lot <- function(here, cohort_table, prefix) {
   phase_mma_map(con, ctx)
   phase_lot1_base(con, ctx)
   phase_sct(con, ctx)
+  phase_lot1_sct(con, ctx)
   phase_lot1_end(con, ctx)
   phase_qc(con, ctx)
   check_lot1_invariants(con, cfg)
@@ -263,8 +264,7 @@ build_lot <- function(here, cohort_table, prefix) {
   # something is actually missing.
   if (!lot_inputs_present(con)) {
     log_msg("Session views missing; rebuilding them for LOT2-5.")
-    prepare_lot_inputs(con, rollup_src = ctx$rollup_src, subs_src = ctx$subs_src,
-                       sct_src = ctx$sct_src)
+    prepare_lot_inputs(con)
   } else {
     log_msg("Session views from LOT1 are still here; not rebuilding them.")
     materialize_sct_views(con)
@@ -309,15 +309,9 @@ lot_inputs_present <- function(con) {
   all(tolower(LOT2_5_INPUT_VIEWS) %in% have)
 }
 
-# LOT1 leaves these three as views over raw medical, procedure and diagnosis.
-# LOT2-5 reads them once per line, so Spark re-runs those scans every time -
-# the source measures roughly 8 AUTO aggregates and 20 SCT scans across
-# LOT2..LOT5. prepare_lot_inputs() materializes them, but it rebuilds the
-# views first, which in one session is work LOT1 already did. This is the half
-# that is worth doing: materialize what exists, and repoint the views at it.
-#
-# sct_claims_raw goes first and is repointed before the other two, so their
-# writes read a table rather than re-running the CDM scan.
+# LOT1 leaves these three as views over the raw CDM, and LOT2-5 reads them
+# once per line - roughly 8 AUTO aggregates and 20 SCT scans if left lazy.
+# sct_claims_raw goes first, so the other two write from a table.
 SCT_MATERIALIZE <- list(
   list(view = "sct_claims_raw",     name = "SCT_CLAIMS_RAW"),
   list(view = "tx_auto_dates",      name = "TX_AUTO_DATES"),
@@ -350,8 +344,12 @@ write_build_status <- function(con, cfg, state) {
       STATE STRING, CODELIST_WAIVERS STRING, UPDATED_AT TIMESTAMP)"))
   db_exec(con, glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"))
   waivers <- paste(codelist_waivers(), collapse = "|")
+  # Name the columns: CREATE TABLE IF NOT EXISTS is a no-op against an older
+  # five-column table, and a positional insert would then mis-fill it.
   db_exec(con, glue("
-    INSERT INTO {tbl} VALUES ('{run_id}', '{cfg$input_cohort_table}',
+    INSERT INTO {tbl}
+      (RUN_ID, INPUT_COHORT_TABLE, OBJECT_PREFIX, STATE, CODELIST_WAIVERS, UPDATED_AT)
+    VALUES ('{run_id}', '{cfg$input_cohort_table}',
       '{cfg$object_prefix}', '{state}', '{waivers}', current_timestamp())"))
   log_msg("Build status: ", state, " (run ", run_id, ")")
   invisible(TRUE)
@@ -428,6 +426,21 @@ check_lot_long <- function(con, cfg) {
   d <- db_q(con, glue("
     SELECT count(*) AS n FROM (
       SELECT PATID, LOT_NUM FROM {t} GROUP BY PATID, LOT_NUM HAVING count(*) > 1)"))$n
+  # A line has to start after the previous one ended. Every LOT_N candidate is
+  # taken strictly after PREV_END_DT, so anything else means the chain broke.
+  seq_bad <- db_q(con, glue("
+    SELECT count(*) AS n FROM (
+      SELECT LOT_START_DT,
+             lag(LOT_BASE_END_DT) OVER (PARTITION BY PATID ORDER BY LOT_NUM) AS prev_end
+      FROM {t})
+    WHERE prev_end IS NOT NULL AND LOT_START_DT <= prev_end"))$n
+  # And no line may run past the patient's observation. Every branch of the
+  # end-date rule is bounded by OBS_END_DT, so a breach is a real defect.
+  past_obs <- db_q(con, glue("
+    SELECT count(*) AS n
+    FROM {t} l
+    INNER JOIN lot_patient_input p ON l.PATID = p.PATID
+    WHERE l.LOT_BASE_END_DT > p.OBS_END_DT"))$n
   g <- db_q(con, glue("
     SELECT count(*) AS n FROM (
       SELECT PATID, min(LOT_NUM) AS lo, max(LOT_NUM) AS hi, count(DISTINCT LOT_NUM) AS k
@@ -438,6 +451,8 @@ check_lot_long <- function(con, cfg) {
   if (q$n_end_before_start > 0) bad <- c(bad, paste0(q$n_end_before_start, " lines end before they start"))
   if (q$n_bad_lot_num > 0)     bad <- c(bad, paste0(q$n_bad_lot_num, " lines outside 1..", cfg$max_lot))
   if (g > 0)                   bad <- c(bad, paste0(g, " patients whose lines do not run 1..n"))
+  if (seq_bad > 0)             bad <- c(bad, paste0(seq_bad, " lines starting on or before the previous line's end"))
+  if (past_obs > 0)            bad <- c(bad, paste0(past_obs, " lines ending after the patient's observation"))
   if (length(bad))
     stop(t, " is not usable: ", paste(bad, collapse = "; "), call. = FALSE)
   log_msg("LOT_LONG OK: ", q$n_rows, " lines for ", q$n_patients, " patients")
@@ -451,15 +466,14 @@ phase_line_criteria <- function(con, cfg) {
            line_criteria_flags_sql(cfg, "lot_long", "lot_long_allflags"))
   run_step(con, "L41_lot_long_final",
            line_criteria_final_sql(cfg, "lot_long_allflags", "lot_long_final"))
-  # With no criteria declared both are copies of LOT_LONG, so write them as
-  # views: downstream always resolves them, without two full table writes for
-  # no difference. A declared criterion makes them real tables.
-  as_table <- length(LINE_CRITERIA) > 0
+  # Both are tables, always. Writing them as views when no criterion is
+  # declared would save two writes, but Spark refuses a persistent view over a
+  # temporary one (INVALID_TEMP_OBJ_REFERENCE) and these are built from temp
+  # views - so that "optimization" failed every run.
   for (v in list(list(view = "lot_long_allflags", name = "LOT_LONG_ALLFLAGS"),
                  list(view = "lot_long_final",    name = "LOT_LONG_FINAL"))) {
-    kind <- if (as_table) "TABLE" else "VIEW"
     run_step(con, paste0("L42_persist_", tolower(v$name)),
-             glue("CREATE OR REPLACE {kind} {lot_out(v$name)} AS SELECT * FROM {v$view}"),
+             glue("CREATE OR REPLACE TABLE {lot_out(v$name)} AS SELECT * FROM {v$view}"),
              qc = glue("SELECT count(*) AS n_rows FROM {lot_out(v$name)}"))
   }
   invisible(TRUE)

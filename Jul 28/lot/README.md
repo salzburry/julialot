@@ -17,6 +17,13 @@ Comments are compared out, so the copied review-diary comments could be tidied
 without weakening the check. Change a code line and it fails; change a comment
 and it does not.
 
+For the three files that carry safety guards, each approved deviation is named
+and undone one at a time - then the two sides must be **identical**. Adding an
+unapproved line fails, and deleting an approved guard leaves its entry with
+nothing to remove, which is reported. An earlier version asked only that every
+source line still be present somewhere, which let an inserted second `WHERE`
+clause through.
+
 Three places deliberately differ from the source, all the same defect: the
 code lists filter on the raw value but store the normalized one, so a
 punctuation-only code survives as `""` - and the claim side turns a missing
@@ -89,7 +96,9 @@ Then turn it on with `APPLY_L2_STARTED_ON_MED,TRUE` in `config.csv`. Any value
 other than `TRUE` or `FALSE` stops the build rather than quietly leaving the
 criterion off.
 
-Two tables come out of every run, whether or not any criterion is declared:
+Two tables come out of every run, whether or not any criterion is declared.
+Both are real tables: Spark will not create a persistent view over a temporary
+one, and these are built from temp views.
 
 - `<prefix>LOT_LONG_ALLFLAGS` - every criterion as a 0/1 column, computed
   whether or not it is enabled. Check what a criterion would cost before
@@ -139,11 +148,23 @@ counts as treated:
 | a code type other than NDC or HCPCS | sits in the list and matches nothing |
 | one abbreviation with two classes | `min()` picks one without saying so |
 
-Two more stop the build because `DISTINCT` cannot see them: a code naming more
-than one medication (extraction joins on code alone, so one claim becomes two
-treatments), and an all-zero NDC (it pads to the same eleven zeros as a claim
-with no NDC). The SCT list is checked the same way - one code, one transplant
-type.
+Four more stop the build because `DISTINCT` cannot see them:
+
+- a code naming more than one medication - extraction joins on the code alone,
+  so one claim becomes two treatments
+- an all-zero NDC, which pads to the same eleven zeros as a claim with no NDC
+- a rollup medication defined two ways: `DISTINCT` removes identical rows, but
+  two rows for one drug that disagree on a flag both survive, and the
+  enrichment joins on the abbreviation alone
+- a blank medication or class, which would make the checks above meaningless
+
+Each check groups by the key extraction actually joins on, not the stored one.
+That matters for NDC: the join pads to eleven digits, so `123456789` and
+`0123456789` are one key there and would look like two here.
+
+The SCT list is checked the same way - one code, one transplant type - and
+again ignoring the code type, because the `med_procedure` join accepts
+`ICD10PROC`, `ICD9PROC` or `HCPCS` against the same column.
 
 ### Steroids
 
@@ -151,10 +172,18 @@ Steroids are maintained separately, so their codes are not in
 `cl_mma_codelist.csv`. Both places that build `mma_rollup` drop them too:
 
 ```sql
-WHERE upper(coalesce(CL_MED_CLASS, '')) <> 'STEROID'
+upper(trim(coalesce(CL_MED_CLASS, ''))) <> 'STEROID'
 ```
 
-Without that the rollup lists medications whose codes are deliberately absent,
+The `trim` matters: the projection trims the class but the raw column does
+not, so a padded `' STEROID '` would otherwise slip through.
+
+The file itself should not list them either. `Jul 28/tools/remove_steroids_from_rollup.R`
+makes that edit on the server, keeping every remaining line byte for byte and
+reporting the md5 before and after. Run it without arguments first - it reports
+and changes nothing. The SQL filter stays afterwards as a defensive guard.
+
+Without the filter the rollup lists medications whose codes are deliberately absent,
 `uncoded_meds` fires on every run, and LOT1 builds always-zero
 `LOT1_MED_<steroid>` columns that `LOT_LONG` does not carry. `build_lot2_5()`
 already filtered this way when discovering meds and classes and its comment
@@ -175,6 +204,21 @@ CODELIST_WAIVERS=code_types
 Names: `orphan_meds`, `uncoded_meds`, `code_types`, `multi_class`,
 `code_to_med`, `bad_ndc`. Unknown names are rejected, and whatever was waived
 is recorded in `LOT_BUILD_STATUS`.
+
+## Running LOT2-5 on its own
+
+`prepare_lot_inputs()` rebuilds what LOT2-5 needs in a session where LOT1 did
+not run. It used to hold its own copies of the code-list, cohort and SCT SQL -
+"the same SQL LOT1 uses", except the copies drifted: the code-list guards never
+reached them, and its cohort view ignored `censor_at_disenrollment` entirely.
+
+It calls the LOT1 phases now, and holds only what is genuinely different -
+rebinding the tables LOT1 persisted, and materializing the SCT views. Every
+step is defined exactly once, and `tests/test_selfcontained.R` fails if that
+stops being true.
+
+`phase_sct()` stops at the SCT date views; LOT1's own `lot1_sct` summary is
+`phase_lot1_sct()`, which needs `lot1_base` and so is not part of the rebuild.
 
 ## Why the run materializes the SCT views
 
@@ -210,10 +254,24 @@ transplant flagged both tandem and single, and an AUTO before LOT1 began. The
 QC phase reports these and carries on; these stop the build.
 
 `LOT_LONG` is checked before anything is derived from it and before the run is
-called complete - no duplicate
-`(PATID, LOT_NUM)`, no line ending before it starts, no line number outside
-`1..MAX_LOT`, and every patient's lines running `1..n` with no gaps. These are
-structural, so a breach stops the build rather than printing a warning.
+called complete:
+
+- no duplicate `(PATID, LOT_NUM)`
+- no line ending before it starts
+- no line number outside `1..MAX_LOT`
+- every patient's lines running `1..n` with no gaps
+- each line starting strictly after the previous one ended
+- no line ending after the patient's observation
+
+The last two are the chain the iterative builder is supposed to produce: every
+LOT N candidate is taken strictly after the previous line's end, and every
+branch of the end-date rule is bounded by `OBS_END_DT`. So neither can fail
+unless something went wrong upstream. All of them stop the build rather than
+printing a warning.
+
+`LOT_LONG_FINAL` inherits these: `truncate` is the only removal mode, and it
+drops a trailing run of lines per patient, so what is left is a prefix of a
+chain that already passed.
 
 ## Tests
 
@@ -244,10 +302,11 @@ R/steps/             the rules, in order:
   02_patient_input.R   the cohort, and OBS_END_DT
   03_mma_map.R         MM/steroid claims, then Medication Available Period
   04_lot1_base.R       LOT1 start, induction meds, base regimen
-  05_sct.R             transplant: AUTO, ALLO, CAR-T
+  05_sct.R             transplant dates: AUTO, ALLO, CAR-T
   06_lot1_end.R        LOT1 end date and reason
   07_qc.R              QC counts
   08_persist.R         write the LOT1 outputs, all prefixed
-  09_lot2_5_inputs.R   rebuild the views LOT2-5 reads, if they are gone
+  05b_lot1_sct.R       LOT1's SCT summary (needs lot1_base)
+  09_lot2_5_inputs.R   rebuild for a fresh-session LOT2-5 run
   10_lot2_5_base.R     LOT2 onwards, and LOT_LONG
 ```

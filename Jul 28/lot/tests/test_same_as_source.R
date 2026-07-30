@@ -30,7 +30,8 @@ PHASES <- list(
   list(file = "02_patient_input.R", from = 245,  to = 283),
   list(file = "03_mma_map.R",       from = 284,  to = 674),
   list(file = "04_lot1_base.R",     from = 675,  to = 829),
-  list(file = "05_sct.R",           from = 830,  to = 1364),
+  list(file = "05_sct.R",           from = 830,  to = 1189),
+  list(file = "05b_lot1_sct.R",     from = 1190, to = 1364),
   list(file = "06_lot1_end.R",      from = 1365, to = 1666),
   list(file = "07_qc.R",            from = 1667, to = 1809),
   list(file = "08_persist.R",       from = 1819, to = 1954)
@@ -61,28 +62,83 @@ body_of <- function(lines) {
   keep
 }
 
-# What the approved deviations may do, stated as a property rather than a list
-# of expected lines - a list goes stale and hides the next real change.
+# Every approved deviation, named exactly. They are undone one at a time and
+# then the two sides must be IDENTICAL - not "the source still fits inside
+# what we have". A subsequence check let an inserted second WHERE clause pass,
+# because every source line was still there.
 #
-#   1. the code-list consistency block in 01_codelists.R was rewritten to fail
-#      closed. It is spliced back to the source text before comparing.
-#   2. two SELECT became SELECT DISTINCT.
-#   3. guards and their comments were ADDED.
-#
-# So: after undoing (1) and (2), every remaining source line must still be
-# present, in order. Anything removed or edited fails - which is what
-# "differs, and the guards are there" could not catch.
-CONSISTENCY_FROM <- "  # Code list vs rollup consistency."
-CONSISTENCY_TO   <- "  # Minimum code list coverage."
-SRC_FROM         <- "  # Codelist <-> Rollup consistency QC"
+# The list is strict both ways. An unapproved line survives the undoing and
+# breaks equality; an approved guard that gets deleted leaves its entry with
+# nothing to remove, which is reported.
 
-undeviate <- function(lines) {
-  a <- which(lines == CONSISTENCY_FROM); b <- which(lines == CONSISTENCY_TO)
-  if (length(a) == 1 && length(b) == 1 && b > a) {
-    sa <- which(src == SRC_FROM); sb <- which(src == "  # H4 fix: Codelist minimum-coverage validation (fail-loud)")
-    lines <- c(lines[seq_len(a - 1)], src[sa:(sb - 1)], lines[b:length(lines)])
+# Blocks that replace source text: cut ours, put the source's back.
+SPLICE <- list(
+  "01_codelists.R" = list(from = "  # Code list vs rollup consistency.",
+                          to   = "  # Minimum code list coverage.",
+                          src  = "  # Codelist <-> Rollup consistency QC",
+                          src_to = "  # H4 fix: Codelist minimum-coverage validation (fail-loud)")
+)
+
+# Blocks that are pure additions: cut, replace with nothing.
+CUT <- list(
+  "05_sct.R" = list(c(from = "sct_dup <- db_q(con, \"",
+                      to   = "log_msg(\"  OK: Each SCT code names exactly one transplant type.\")"))
+)
+
+# Lines that were EDITED rather than added, and how many of each. Counted like
+# the rest: a blanket regex here would also hide an unapproved DISTINCT.
+SUBST <- list(
+  "01_codelists.R" = list(list(from = "SELECT DISTINCT", to = "SELECT", n = 2L)),
+  "05_sct.R"       = list(list(from = "SELECT DISTINCT", to = "SELECT", n = 1L))
+)
+
+# Single added code lines, and how many of each.
+DROP <- list(
+  "01_codelists.R" = c(
+    "AND regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''" = 1L,
+    "WHERE upper(trim(coalesce(CL_MED_CLASS, ''))) <> 'STEROID'" = 1L),
+  "03_mma_map.R" = c(
+    "AND regexp_replace(c.CL_CODE, '[^0-9]', '') <> ''" = 2L,
+    "AND regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '') <> ''" = 1L,
+    "AND regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') <> ''" = 1L),
+  "05_sct.R" = c(
+    "AND regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''" = 1L)
+)
+
+# Reported so a stale entry cannot hide a deleted guard.
+undo_report <- new.env()
+
+undeviate <- function(lines, file) {
+  sp <- SPLICE[[file]]
+  if (!is.null(sp)) {
+    a <- which(lines == sp$from); b <- which(lines == sp$to)
+    if (length(a) == 1 && length(b) == 1 && b > a) {
+      sa <- which(src == sp$src); sb <- which(src == sp$src_to)
+      lines <- c(lines[seq_len(a - 1)], src[sa:(sb - 1)], lines[b:length(lines)])
+    }
   }
-  sub("^(\\s*)SELECT DISTINCT$", "\\1SELECT", lines)
+  lines <- code_only(lines)
+  for (cb in CUT[[file]]) {
+    a <- grep(cb[["from"]], lines, fixed = TRUE)[1]
+    b <- grep(cb[["to"]],   lines, fixed = TRUE)[1]
+    if (!is.na(a) && !is.na(b) && b >= a) lines <- lines[-(a:b)]
+  }
+  short <- character(0)
+  for (sb in SUBST[[file]]) {
+    hit <- which(lines == sb$from)
+    if (length(hit) != sb$n)
+      short <- c(short, paste0(sb$from, " (expected ", sb$n, ", found ", length(hit), ")"))
+    if (length(hit)) lines[hit[seq_len(min(sb$n, length(hit)))]] <- sb$to
+  }
+  for (nm in names(DROP[[file]])) {
+    want_n <- DROP[[file]][[nm]]
+    hit <- which(lines == nm)
+    if (length(hit) < want_n)
+      short <- c(short, paste0(nm, " (expected ", want_n, ", found ", length(hit), ")"))
+    if (length(hit)) lines <- lines[-hit[seq_len(min(want_n, length(hit)))]]
+  }
+  assign(file, short, envir = undo_report)
+  lines
 }
 
 # Comments do not execute, so they are compared out. That is what lets the
@@ -131,29 +187,35 @@ CHANGED <- c("01_codelists.R", "03_mma_map.R", "05_sct.R")
 # Same for the whole-file copy: it builds mma_rollup the same way S00 does, so
 # the steroid filter has to go in both or a fresh-session LOT2-5 run would see
 # a different rollup from the one LOT1 used.
-CHANGED_WHOLE <- c("09_lot2_5_inputs.R")
+CHANGED_WHOLE <- character(0)
 
 cat("\n-- every phase is the source, line for line --\n")
 for (p in PHASES) {
   f <- file.path(ROOT, "R", "steps", p$file)
   if (!file.exists(f)) { ok(FALSE, paste0(p$file, ": missing")); next }
   raw  <- unport(body_of(readLines(f, warn = FALSE)))
-  if (p$file %in% CHANGED) raw <- undeviate(raw)
-  got  <- code_only(raw)
+  got  <- if (p$file %in% CHANGED) undeviate(raw, p$file) else code_only(raw)
   want <- code_only(src[p$from:p$to])
   same <- identical(got, want)
   if (p$file %in% CHANGED) {
+    short <- get(p$file, envir = undo_report)
+    if (length(short)) {
+      ok(FALSE, paste0(p$file, ": an approved guard is missing -- ", short[1]))
+      next
+    }
     # "differs, and the guards are there" would let an unrelated clinical
     # change ride along. Undo the approved deviations and require the rest to
     # be identical, so anything else shows up as a real difference.
-    miss <- first_missing(got, want)
-    if (!is.na(miss)) {
-      ok(FALSE, paste0(p$file, ": a source line was changed or removed, at ",
-                       "source line ", p$from + miss - 1,
-                       "\n           source: ", want[miss]))
+    if (!same) {
+      n <- max(length(got), length(want))
+      g <- c(got, rep(NA, n - length(got))); w <- c(want, rep(NA, n - length(want)))
+      d <- which(is.na(g) | is.na(w) | g != w)[1]
+      ok(FALSE, paste0(p$file, ": differs beyond the approved deviations, at ",
+                       "source line ", p$from + d - 1,
+                       "\n           source: ", if (is.na(w[d])) "<nothing>" else w[d],
+                       "\n           ported: ", if (is.na(g[d])) "<nothing>" else g[d]))
     } else {
-      ok(TRUE, paste0(p$file, ": every source code line survives; ",
-                      length(got) - length(want), " guard line(s) added"))
+      ok(TRUE, paste0(p$file, ": identical once the approved deviations are undone"))
     }
     next
   }
@@ -193,10 +255,12 @@ n_ndc <- length(gregexpr("AND regexp_replace(c.CL_CODE, '[^0-9]', '') <> ''",
                          mm, fixed = TRUE)[[1]])
 ok(n_ndc == 2, paste0("both NDC joins require digits in the code (", n_ndc, ")"))
 # Both rollup builders, or a fresh-session run would disagree with LOT1.
-for (f in c("01_codelists.R", "09_lot2_5_inputs.R"))
-  ok(grepl("WHERE upper(coalesce(CL_MED_CLASS, '')) <> 'STEROID'",
-           sql_of(f), fixed = TRUE),
-     paste0(f, ": the rollup drops steroids"))
+# One builder puts it in a new WHERE, the other in an existing one, so match
+# the predicate rather than the clause. trim matters: the projection trims and
+# the raw column does not, so ' STEROID ' would otherwise survive.
+ok(grepl("upper(trim(coalesce(CL_MED_CLASS, ''))) <> 'STEROID'",
+         sql_of("01_codelists.R"), fixed = TRUE),
+   "the rollup drops steroids - once, now that both paths share it")
 # The unchanged files must still be untouched.
 for (f in setdiff(vapply(PHASES, `[[`, character(1), "file"), CHANGED))
   ok(!grepl("regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''", sql_of(f), fixed = TRUE),
@@ -205,8 +269,11 @@ for (f in setdiff(vapply(PHASES, `[[`, character(1), "file"), CHANGED))
 cat("\n-- LOT2-5 and LOT_LONG are whole-file copies --\n")
 # These two were already function-structured in the source, so they are copied
 # entire rather than cut into phases. Same rule: identical once unported.
+# 09_lot2_5_inputs.R is deliberately no longer a copy: it carried its own
+# drifting duplicates of the code-list, cohort and SCT SQL, and now calls the
+# LOT1 phases instead. The SQL it used to hold is still compared - as part of
+# the phases it now calls.
 WHOLE <- list(
-  list(file = "09_lot2_5_inputs.R", src = "R/lot2_5_inputs.R"),
   list(file = "10_lot2_5_base.R",   src = "R/lot2_5_base.R")
 )
 for (p in WHOLE) {

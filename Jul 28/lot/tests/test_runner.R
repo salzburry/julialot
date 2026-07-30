@@ -74,12 +74,23 @@ ok(identical(wrk(cfg$input_cohort_table), paste0("hive_metastore.osk02156.", TBL
 # Read the real output names out of the ported steps rather than listing them
 # by hand - a hand list goes stale the moment a step adds a table, which is
 # exactly when a collision would slip through.
-step_src <- unlist(lapply(list.files(file.path(ROOT, "R", "steps"), "\\.R$",
-                                     full.names = TRUE), readLines, warn = FALSE))
+# build_lot.R too: the SCT materialization names live there now that the
+# fresh-session path no longer carries its own copy.
+step_src <- unlist(lapply(c(list.files(file.path(ROOT, "R", "steps"), "\\.R$",
+                                       full.names = TRUE),
+                            file.path(ROOT, "R", "build_lot.R")),
+                          readLines, warn = FALSE))
 step_src <- step_src[!grepl("^\\s*(#|--)", step_src)]
+# Two forms: lot_out("NAME") directly, and name = "NAME" in a list whose
+# entries are passed to lot_out(). Scanning only the first missed three.
 lits <- unlist(regmatches(step_src, gregexpr("lot_out\\((\'|\")[A-Z_0-9]+(\'|\")\\)",
                                              step_src, perl = TRUE)))
-OUTPUTS <- unique(gsub("lot_out\\(|\'|\"|\\)", "", lits))
+# Only entries that also name a source view are tables; the bare name = "..."
+# form is also used for QC check labels, which are not outputs.
+vlines <- grep("view = ", step_src, fixed = TRUE, value = TRUE)
+named <- unlist(regmatches(vlines, gregexpr("(?<=name = \")[A-Z_0-9]{4,}(?=\")",
+                                            vlines, perl = TRUE)))
+OUTPUTS <- unique(c(gsub("lot_out\\(|\'|\"|\\)", "", lits), named))
 ok(length(OUTPUTS) >= 6,
    paste0("found ", length(OUTPUTS), " named outputs in the steps: ",
           paste(sort(OUTPUTS), collapse = ", ")))
@@ -142,7 +153,8 @@ body <- sub(".*build_lot <- function\\([^)]*\\) \\{", "", bl)
 ORDER <- c("check_settings", "pin_output_schema", "pin_cohort",
            "check_lot_contract", "set_lot_config", "check_cohort_input",
            "phase_codelists", "phase_patient_input", "phase_mma_map",
-           "phase_lot1_base", "phase_sct", "phase_lot1_end", "phase_qc",
+           "phase_lot1_base", "phase_sct", "phase_lot1_sct",
+           "phase_lot1_end", "phase_qc",
            "check_lot1_invariants", "phase_persist", "materialize_sct_views",
            "build_lot2_5",
            "check_lot_long", "phase_line_criteria", "check_run_recorded")
@@ -256,6 +268,12 @@ mk_db_q <- function(problem) function(con, sql) {
       data.frame(CL_MED_ABBR = "DUP", n_classes = 2, classes = "A, B") else
       data.frame(CL_MED_ABBR = character(0), n_classes = integer(0),
                  classes = character(0)))
+  if (grepl("AS n_defs", sql))
+    return(if (problem == "rollup_defs") data.frame(CL_MED_ABBR = "LEN", n_defs = 2)
+           else data.frame(CL_MED_ABBR = character(0), n_defs = integer(0)))
+  if (grepl("AS n_rollup", sql))
+    return(data.frame(n_rollup = if (problem == "blank_keys") 2 else 0,
+                      n_codelist = 0))
   if (grepl("AS bigint\\) = 0", sql))
     return(if (problem == "bad_ndc") data.frame(CL_CODE = "00000000000", CL_MED_ABBR = "X")
            else data.frame(CL_CODE = character(0), CL_MED_ABBR = character(0)))
@@ -281,7 +299,8 @@ Sys.unsetenv("CODELIST_WAIVERS")
 assign("db_q", mk_db_q("none"), envir = ce)
 ok(!inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
    "a consistent pair of code lists runs")
-for (prob in c("orphan", "uncoded", "type", "class", "code_to_med", "bad_ndc")) {
+for (prob in c("orphan", "uncoded", "type", "class", "code_to_med", "bad_ndc",
+               "rollup_defs", "blank_keys")) {
   assign("db_q", mk_db_q(prob), envir = ce)
   ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
      paste0("'", prob, "' stops the build"))
@@ -337,6 +356,110 @@ ok(!isTRUE(pe$lot_inputs_present(NULL)), "a missing view is detected")
 assign("db_q", function(con, sql) stop("no such command"), envir = pe)
 ok(!isTRUE(pe$lot_inputs_present(NULL)),
    "and if the catalogue cannot answer, it rebuilds rather than assumes")
+
+cat("\n-- LOT_LONG has to be chronologically possible --\n")
+# The lines form a chain: each starts strictly after the previous one ended,
+# and none runs past the patient's observation. Both are re-derivable, so a
+# breach means the iterative builder went wrong - it should stop, not report.
+le <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_lot.R"), envir = le)
+assign("log_msg", function(...) invisible(NULL), envir = le)
+assign("lot_out", function(x) x, envir = le)
+assign("glue", function(..., .envir = parent.frame()) {
+  t <- paste0(..., collapse = "")
+  for (v in c("t")) t <- gsub("\\{t\\}", "LOT_LONG", t)
+  gsub("\\{cfg\\$max_lot\\}", "5", t)
+}, envir = le)
+LL_OK <- list(n_rows = 100, n_patients = 40, n_end_before_start = 0, n_bad_lot_num = 0)
+ll_stub <- function(shape = list(), dup = 0, gaps = 0, seq_bad = 0, past_obs = 0) {
+  sh <- modifyList(LL_OK, shape)
+  assign("db_q", function(con, sql) {
+    if (grepl("HAVING count(*) > 1", sql, fixed = TRUE)) return(data.frame(n = dup))
+    if (grepl("lag(LOT_BASE_END_DT)", sql, fixed = TRUE)) return(data.frame(n = seq_bad))
+    if (grepl("l.LOT_BASE_END_DT > p.OBS_END_DT", sql, fixed = TRUE)) return(data.frame(n = past_obs))
+    if (grepl("HAVING lo <> 1", sql, fixed = TRUE)) return(data.frame(n = gaps))
+    as.data.frame(sh)
+  }, envir = le)
+}
+cfg_ll <- list(max_lot = 5L)
+ll_stub()
+ok(!inherits(tryCatch(le$check_lot_long(NULL, cfg_ll), error = function(e) e), "error"),
+   "a sound LOT_LONG passes")
+ll_stub(seq_bad = 3)
+ok(inherits(tryCatch(le$check_lot_long(NULL, cfg_ll), error = function(e) e), "error"),
+   "a line starting on or before the previous line's end stops the build")
+ll_stub(past_obs = 2)
+ok(inherits(tryCatch(le$check_lot_long(NULL, cfg_ll), error = function(e) e), "error"),
+   "a line ending after the patient's observation stops the build")
+ll_stub(dup = 1)
+ok(inherits(tryCatch(le$check_lot_long(NULL, cfg_ll), error = function(e) e), "error"),
+   "a duplicate (PATID, LOT_NUM) still stops the build")
+ll_stub(gaps = 4)
+ok(inherits(tryCatch(le$check_lot_long(NULL, cfg_ll), error = function(e) e), "error"),
+   "lines that do not run 1..n still stop the build")
+ll_stub(shape = list(n_end_before_start = 1))
+ok(inherits(tryCatch(le$check_lot_long(NULL, cfg_ll), error = function(e) e), "error"),
+   "a line ending before it starts still stops the build")
+
+cat("\n-- the checks group by the key extraction actually joins on --\n")
+# The NDC join pads to eleven digits, so '123456789' and '0123456789' are one
+# key there. Grouping by the stored code would call them two, and a code
+# naming two medications would go unreported.
+cd2 <- paste(readLines(file.path(ROOT, "R", "steps", "01_codelists.R"), warn = FALSE),
+             collapse = "\n")
+ok(grepl("lpad(regexp_replace(CL_CODE, '[^0-9]', ''), 11, '0')", cd2, fixed = TRUE) &&
+     grepl("GROUP BY CL_CODE_TYPE, join_key", cd2, fixed = TRUE),
+   "code_to_med groups NDC rows by the padded key, not the stored code")
+mm2 <- paste(readLines(file.path(ROOT, "R", "steps", "03_mma_map.R"), warn = FALSE),
+             collapse = "\n")
+ok(grepl("lpad(regexp_replace(c.CL_CODE, '[^0-9]', ''), 11, '0')", mm2, fixed = TRUE),
+   "and that is the same expression the NDC join uses")
+sc2 <- paste(readLines(file.path(ROOT, "R", "steps", "05_sct.R"), warn = FALSE),
+             collapse = "\n")
+ok(grepl("WHERE CL_CODE_TYPE IN ('ICD10PROC', 'ICD9PROC', 'HCPCS')", sc2, fixed = TRUE),
+   "SCT also checks across the types that share a claim column")
+ok(grepl("AS n_defs", cd2, fixed = TRUE),
+   "one rollup medication, one definition - DISTINCT only removes identical rows")
+ok(grepl("AS n_rollup", cd2, fixed = TRUE),
+   "and no blank medication or class, which would make the rest meaningless")
+
+cat("\n-- the SQL is structurally sane --\n")
+# The equivalence test proves no source line was removed. It says nothing
+# about whether what was ADDED is valid SQL - two real runtime failures got
+# through it, so check the shapes that Spark rejects outright.
+sql_files <- c(list.files(file.path(ROOT, "R", "steps"), "\\.R$", full.names = TRUE),
+               file.path(ROOT, "R", "build_lot.R"))
+
+# Spark refuses a persistent view over a temporary one
+# (INVALID_TEMP_OBJ_REFERENCE), and every LOT output is built from temp views.
+bad_view <- unlist(lapply(sql_files, function(f) {
+  l <- readLines(f, warn = FALSE)
+  l <- l[!grepl("^\\s*(#|--)", l)]
+  grep("CREATE (OR REPLACE )?VIEW\\s*\\{?lot_out", l, value = TRUE)
+}))
+ok(length(bad_view) == 0,
+   if (length(bad_view)) paste0("persistent view over a temp view: ", trimws(bad_view[1]))
+   else "no persistent output is created as a VIEW")
+
+# Two WHERE clauses for one SELECT is a parse error. It happened by inserting
+# a filter after FROM in a query that already had a WHERE further down.
+double_where <- character(0)
+for (f in sql_files) {
+  l <- readLines(f, warn = FALSE)
+  l <- l[!grepl("^\\s*(#|--)", l) & nzchar(trimws(l))]
+  seen <- FALSE
+  for (i in seq_along(l)) {
+    t <- trimws(l[i])
+    if (grepl("SELECT", t)) seen <- FALSE
+    if (grepl("^WHERE\\b", t)) {
+      if (seen) double_where <- c(double_where, paste0(basename(f), ": ", t))
+      seen <- TRUE
+    }
+  }
+}
+ok(length(double_where) == 0,
+   if (length(double_where)) paste0("two WHERE for one SELECT -- ", double_where[1])
+   else "no SELECT carries two WHERE clauses")
 
 cat("\n-- the contract rejects every value that changes a LOT --\n")
 clear()
