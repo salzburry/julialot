@@ -128,7 +128,7 @@ check_lot_contract <- function(cfg) {
 load_lot_modules <- function(here) {
   source(file.path(here, "R", "load_inputs.R"))
   load_pipeline_inputs(here, "config.csv")
-  for (f in c("config_lot.R", "db_utils_lot.R", "codelists_lot.R"))
+  for (f in c("config_lot.R", "db_utils_lot.R", "codelists_lot.R", "line_criteria.R"))
     source(file.path(here, "R", f))
   steps <- sort(list.files(file.path(here, "R", "steps"), "\\.R$", full.names = TRUE))
   for (f in steps) source(f)

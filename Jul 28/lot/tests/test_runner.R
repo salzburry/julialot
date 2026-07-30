@@ -11,13 +11,7 @@ ROOT <- local({
   dirname(d)
 })
 
-pass <- 0L; fail <- 0L
-ok <- function(cond, what) {
-  if (isTRUE(cond)) { pass <<- pass + 1L; cat("  ok    ", what, "\n") }
-  else { fail <<- fail + 1L; cat("  FAIL  ", what, "\n") }
-}
-runs  <- function(expr, what) ok(!inherits(tryCatch(expr, error = function(e) e), "error"), what)
-stops <- function(expr, what) ok(inherits(tryCatch(expr, error = function(e) e), "error"), what)
+source(file.path(ROOT, "tests", "testutil.R"))
 
 env <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "build_lot.R"), envir = env)
@@ -146,6 +140,4 @@ for (k in names(EXPECT))
 ok(!any(c("INPUT_COHORT_TABLE", "OBJECT_PREFIX") %in% names(shipped)),
    "config.csv does not set a cohort - COHORTS does")
 
-cat("\n", strrep("-", 52), "\n", sep = "")
-cat(sprintf("%d passed, %d failed\n", pass, fail))
-if (fail > 0L) quit(status = 1L)
+report()
