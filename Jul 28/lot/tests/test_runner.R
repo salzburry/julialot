@@ -387,9 +387,12 @@ for (nm in c("log_msg", "print")) assign(nm, function(...) invisible(NULL), envi
 assign("run_step", function(...) invisible(TRUE), envir = ce)
 assign("glue", function(..., .envir = parent.frame()) paste0(..., collapse = ""), envir = ce)
 assign("load_codelist_csv", function(...) "(SELECT 1) src", envir = ce)
-# codelist_waivers() lives in build_lot.R, which this env does not source.
+# codelist_waivers() lives in build_lot.R, which this env does not source. It
+# filters to WAIVABLE_CHECKS, and the stub has to as well - a stub that waived
+# anything named would make the fatal-check assertions below pass on their own.
 assign("codelist_waivers", function()
-  { v <- trimws(strsplit(Sys.getenv("CODELIST_WAIVERS", unset = ""), "[,|]")[[1]]); v[nzchar(v)] },
+  { v <- trimws(strsplit(Sys.getenv("CODELIST_WAIVERS", unset = ""), "[,|]")[[1]])
+    intersect(v[nzchar(v)], WAIVABLE_CHECKS) },
   envir = ce)
 sys.source(file.path(ROOT, "R", "steps", "01_codelists.R"), envir = ce)
 Sys.unsetenv("CODELIST_WAIVERS")
@@ -413,6 +416,33 @@ ok(!inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error")
 assign("db_q", mk_db_q("code_to_med"), envir = ce)
 ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
    "and still stops on a code naming two medications")
+Sys.unsetenv("CODELIST_WAIVERS")
+
+cat("\n-- some conditions have no reading worth accepting --\n")
+# A code counted twice, a code matching every claim with no NDC, a medication
+# with no class, an always-zero output column. There is no version of those a
+# run should carry on through, so they are not waivable at all.
+ok(length(intersect(WAIVABLE_CHECKS, FATAL_CHECKS)) == 0,
+   "the two lists do not overlap")
+for (f in FATAL_CHECKS) {
+  Sys.setenv(CODELIST_WAIVERS = f)
+  ok(inherits(tryCatch(check_settings(), error = function(e) e), "error"),
+     paste0("naming '", f, "' in CODELIST_WAIVERS is refused up front"))
+}
+Sys.setenv(CODELIST_WAIVERS = "bad_ndc")
+msg <- tryCatch({ check_settings(); "" }, error = conditionMessage)
+ok(grepl("cannot be waived", msg, fixed = TRUE),
+   "and told why, rather than 'no such check'")
+# Refusing at startup is not enough: LOT2-5 can be run on its own and reach the
+# code lists without check_settings, so the waiver list itself filters.
+ok(length(codelist_waivers()) == 0,
+   "codelist_waivers() hands back nothing that cannot be waived")
+assign("db_q", mk_db_q("bad_ndc"), envir = ce)
+ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
+   "so the check still stops the build even with the waiver set")
+Sys.setenv(CODELIST_WAIVERS = "uncoded_meds,bad_ndc")
+ok(identical(codelist_waivers(), "uncoded_meds"),
+   "a mixed list keeps the reviewable name and drops the rest")
 Sys.unsetenv("CODELIST_WAIVERS")
 
 cat("\n-- LOT2-5 reads tables, not repeated CDM scans --\n")
@@ -680,8 +710,11 @@ clear()
 Sys.setenv(CODELIST_WAIVERS = "no_such_check")
 stops(check_settings(), "a waiver naming a check that does not exist")
 clear()
+Sys.setenv(CODELIST_WAIVERS = "uncoded_meds,ndc_short")
+runs(check_settings(), "two reviewable check names are accepted")
+clear()
 Sys.setenv(CODELIST_WAIVERS = "uncoded_meds,bad_ndc")
-runs(check_settings(), "two real check names are accepted")
+stops(check_settings(), "one reviewable name plus one that cannot be waived")
 clear()
 
 cat("\n-- pin_output_schema --\n")
@@ -722,7 +755,7 @@ cat("\n-- the README still describes this build --\n")
 readme <- readLines(file.path(ROOT, "README.md"), warn = FALSE)
 documented <- unique(unlist(regmatches(readme, gregexpr("`[a-z_0-9]+`", readme))))
 documented <- gsub("`", "", documented)
-missing_w <- setdiff(WAIVABLE_CHECKS, documented)
+missing_w <- setdiff(ALL_CHECKS, documented)
 ok(length(missing_w) == 0,
    if (length(missing_w)) paste0("waiver not in the README: ",
                                  paste(missing_w, collapse = ", "))

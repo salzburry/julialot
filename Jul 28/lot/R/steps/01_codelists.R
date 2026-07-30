@@ -384,9 +384,10 @@ phase_codelists <- function(con) {
     if (nrow(fatal))
       stop("The production code lists would change who counts as treated:\n  ",
            paste0(fatal$check, ": ", fatal$detail, collapse = "\n  "),
-           "\nFix the code lists, or name the checks to waive in ",
-           "CODELIST_WAIVERS once the study team has reviewed them, e.g. ",
-           "CODELIST_WAIVERS=uncoded_meds", call. = FALSE)
+           "\nFix the code lists. The checks a run may waive once the study ",
+           "team has reviewed them are listed in the README and named in ",
+           "CODELIST_WAIVERS, e.g. CODELIST_WAIVERS=uncoded_meds; the rest ",
+           "have no reading that leaves the result usable.", call. = FALSE)
   }
 
   # Minimum code list coverage.

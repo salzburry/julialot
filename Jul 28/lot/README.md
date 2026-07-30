@@ -228,14 +228,37 @@ Per check, not one switch, and only for something the study team has looked at:
 CODELIST_WAIVERS=code_types
 ```
 
-Names: `orphan_meds`, `uncoded_meds`, `code_types`, `multi_class`,
-`code_to_med`, `bad_ndc`, `rollup_defs`, `blank_keys`, `subs_substitute`,
-`subs_original`, `ndc_shape`, `ndc_short`, `class_agreement`. Unknown names are
+Waivable, because each has a reading the study team can accept - a medication
+deliberately kept in a separate file, a code type this study does not use, a
+substitution left inactive, a ten-digit NDC in a documented layout:
+
+`orphan_meds`, `uncoded_meds`, `code_types`, `multi_class`, `subs_substitute`,
+`subs_original`, `ndc_short`.
+
+Not waivable, because each means a claim counted twice, a code matching every
+claim with no NDC, a medication with no class, or an output column that is
+always zero - conditions to correct in the code list, not to accept:
+
+`code_to_med`, `bad_ndc`, `rollup_defs`, `blank_keys`, `ndc_shape`,
+`class_agreement`.
+
+Naming one of the second group is refused before the build starts, and told
+why rather than "no such check". Refusing at startup is not enough on its own -
+LOT2-5 can be run in a session of its own and reach the code lists without
+that check - so the waiver list itself drops them too. Unknown names are
 rejected, and whatever was waived is recorded in `LOT_BUILD_STATUS`.
 
-The SCT checks in `05_sct.R` are not on this list. They stop the build
+`multi_class` is the arguable one. A medication with two classes inside the
+code list has `min()` pick one silently, which is close to the second group;
+it is here because a study may knowingly carry a drug that two sources class
+differently. Move it if that turns out not to be so.
+
+The SCT checks in `05_sct.R` are on neither list. They stop the build
 outright, because each one means a transplant is being counted twice or not at
 all, and there is no version of that a run should carry on through.
+
+Run with none of them set first. A check that fires is evidence about the
+production code lists, to look at - not a reason to turn the rest on.
 
 ### Substitutions
 

@@ -38,15 +38,32 @@ CONTRACT <- list(
 
 # Code-list checks a run may waive by name. A single switch for all of them
 # meant waiving one expected condition also waived the dangerous ones.
+#
+# These have a reading a study team can accept: a medication deliberately kept
+# in a separate file, a code type unused by this study, a substitution left
+# inactive, a ten-digit NDC in a documented layout.
 WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types", "multi_class",
-                     "code_to_med", "bad_ndc", "rollup_defs", "blank_keys",
-                     "subs_substitute", "subs_original", "ndc_shape",
-                     "ndc_short", "class_agreement")
+                     "subs_substitute", "subs_original", "ndc_short")
 
-codelist_waivers <- function() {
+# These do not. Each one means a claim counted twice, a code matching every
+# claim with no NDC, a medication with no class, or an output column that is
+# always zero - conditions to correct in the code list, not to accept. Named
+# rather than merely absent, so a waiver naming one is told why it is refused
+# instead of "no such check".
+FATAL_CHECKS <- c("code_to_med", "bad_ndc", "rollup_defs", "blank_keys",
+                  "ndc_shape", "class_agreement")
+
+ALL_CHECKS <- c(WAIVABLE_CHECKS, FATAL_CHECKS)
+
+codelist_waivers_named <- function() {
   v <- trimws(strsplit(Sys.getenv("CODELIST_WAIVERS", unset = ""), "[,|]")[[1]])
   v[nzchar(v)]
 }
+
+# Never hands back a check that cannot be waived, whatever the environment
+# says. check_settings refuses those before the build starts, but LOT2-5 can be
+# run on its own and reach the code lists without it.
+codelist_waivers <- function() intersect(codelist_waivers_named(), WAIVABLE_CHECKS)
 
 # The columns LOT reads off whatever cohort table it is pointed at. Checked
 # against the real table before any work starts, so a cohort that cannot drive
@@ -83,10 +100,17 @@ check_settings <- function() {
   e <- Sys.getenv("STUDY_END", unset = "")
   if (nzchar(e) && !grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", e))
     bad <- c(bad, paste0("STUDY_END='", e, "' (want YYYY-MM-DD)"))
-  w <- setdiff(codelist_waivers(), WAIVABLE_CHECKS)
-  if (length(w))
+  w <- codelist_waivers_named()
+  refused <- intersect(w, FATAL_CHECKS)
+  if (length(refused))
+    bad <- c(bad, paste0("CODELIST_WAIVERS names checks that cannot be waived: ",
+                         paste(refused, collapse = ", "),
+                         " - each one changes who counts as treated, so it has ",
+                         "to be corrected in the code list"))
+  unknown <- setdiff(w, ALL_CHECKS)
+  if (length(unknown))
     bad <- c(bad, paste0("CODELIST_WAIVERS names no such check: ",
-                         paste(w, collapse = ", "), " (choose from ",
+                         paste(unknown, collapse = ", "), " (choose from ",
                          paste(WAIVABLE_CHECKS, collapse = ", "), ")"))
   a <- Sys.getenv("ALLO_LOT_SPAN", unset = "")
   if (nzchar(a) && !a %in% c("single_day", "extend_to_next"))
