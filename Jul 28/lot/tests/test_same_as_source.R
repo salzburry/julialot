@@ -128,6 +128,10 @@ first_missing <- function(got, want) {
 # is a silent false match, not a rule, so the port fixes it. Each guard is
 # asserted by name below; "differs" on its own would let one go missing.
 CHANGED <- c("01_codelists.R", "03_mma_map.R", "05_sct.R")
+# Same for the whole-file copy: it builds mma_rollup the same way S00 does, so
+# the steroid filter has to go in both or a fresh-session LOT2-5 run would see
+# a different rollup from the one LOT1 used.
+CHANGED_WHOLE <- c("09_lot2_5_inputs.R")
 
 cat("\n-- every phase is the source, line for line --\n")
 for (p in PHASES) {
@@ -188,6 +192,11 @@ mm <- sql_of("03_mma_map.R")
 n_ndc <- length(gregexpr("AND regexp_replace(c.CL_CODE, '[^0-9]', '') <> ''",
                          mm, fixed = TRUE)[[1]])
 ok(n_ndc == 2, paste0("both NDC joins require digits in the code (", n_ndc, ")"))
+# Both rollup builders, or a fresh-session run would disagree with LOT1.
+for (f in c("01_codelists.R", "09_lot2_5_inputs.R"))
+  ok(grepl("WHERE upper(coalesce(CL_MED_CLASS, '')) <> 'STEROID'",
+           sql_of(f), fixed = TRUE),
+     paste0(f, ": the rollup drops steroids"))
 # The unchanged files must still be untouched.
 for (f in setdiff(vapply(PHASES, `[[`, character(1), "file"), CHANGED))
   ok(!grepl("regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''", sql_of(f), fixed = TRUE),
@@ -206,6 +215,15 @@ for (p in WHOLE) {
   if (!file.exists(f) || !file.exists(sf)) { ok(FALSE, paste0(p$file, ": missing")); next }
   got  <- code_only(unport(readLines(f, warn = FALSE)))
   want <- code_only(readLines(sf, warn = FALSE))
+  if (p$file %in% CHANGED_WHOLE) {
+    miss <- first_missing(got, want)
+    ok(is.na(miss), if (is.na(miss))
+         paste0(p$file, ": every source code line survives; ",
+                length(got) - length(want), " guard line(s) added")
+       else paste0(p$file, ": a source line was changed or removed, at line ",
+                   miss, "\n           source: ", want[miss]))
+    next
+  }
   same <- identical(got, want)
   if (!same) {
     n <- max(length(got), length(want))

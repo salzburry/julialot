@@ -145,18 +145,36 @@ treatments), and an all-zero NDC (it pads to the same eleven zeros as a claim
 with no NDC). The SCT list is checked the same way - one code, one transplant
 type.
 
-Waivers are per check, not one switch:
+### Steroids
+
+Steroids are maintained separately, so their codes are not in
+`cl_mma_codelist.csv`. Both places that build `mma_rollup` drop them too:
+
+```sql
+WHERE upper(coalesce(CL_MED_CLASS, '')) <> 'STEROID'
+```
+
+Without that the rollup lists medications whose codes are deliberately absent,
+`uncoded_meds` fires on every run, and LOT1 builds always-zero
+`LOT1_MED_<steroid>` columns that `LOT_LONG` does not carry. `build_lot2_5()`
+already filtered this way when discovering meds and classes and its comment
+claimed LOT1 did the same - now it does.
+
+Nothing about who counts as treated changes: every join into the rollup is
+keyed on a medication abbreviation that comes from the code list, and the code
+list has no steroids. So no waiver is needed for this.
+
+### Waivers
+
+Per check, not one switch, and only for something the study team has looked at:
 
 ```
-CODELIST_WAIVERS=uncoded_meds
+CODELIST_WAIVERS=code_types
 ```
 
-That matters here. Steroids live in a separate file, so the rollup has
-medications with no codes - expected, and it would otherwise stop every run.
-Waiving `uncoded_meds` lets that through and still stops on a code naming two
-drugs. The waived checks are recorded in `LOT_BUILD_STATUS`. Names:
-`orphan_meds`, `uncoded_meds`, `code_types`, `multi_class`, `code_to_med`,
-`bad_ndc`.
+Names: `orphan_meds`, `uncoded_meds`, `code_types`, `multi_class`,
+`code_to_med`, `bad_ndc`. Unknown names are rejected, and whatever was waived
+is recorded in `LOT_BUILD_STATUS`.
 
 ## Why the run materializes the SCT views
 

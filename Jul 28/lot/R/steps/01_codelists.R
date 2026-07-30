@@ -38,6 +38,14 @@ phase_codelists <- function(con) {
             OR  trim(cast(USED_FOR_OTHER_CANCERS AS string)) = '1'
            THEN 1 ELSE 0 END AS USED_FOR_OTHER_CANCERS
     FROM {rollup_src}
+    -- Steroids are maintained in a separate file, so their codes are not in
+    -- cl_mma_codelist.csv. Dropping them here too keeps the two files saying
+    -- the same thing: otherwise every run reports rollup medications that can
+    -- never be matched, and LOT1 builds always-zero LOT1_MED_<steroid> columns
+    -- that LOT2-5 does not carry. build_lot2_5() already filters this way when
+    -- it discovers meds and classes - this makes LOT1 agree, which its comment
+    -- there already claims.
+    WHERE upper(coalesce(CL_MED_CLASS, '')) <> 'STEROID'
   "), qc = "SELECT count(*) AS n_rows, count(DISTINCT CL_MED_ABBR) AS n_meds,
             sum(MONOMAINTENANCE) AS n_monomaint, sum(CONDITIONING) AS n_conditioning,
             sum(USED_FOR_OTHER_CANCERS) AS n_other_cancer FROM mma_rollup")
