@@ -61,6 +61,45 @@ body_of <- function(lines) {
   keep
 }
 
+# What the approved deviations may do, stated as a property rather than a list
+# of expected lines - a list goes stale and hides the next real change.
+#
+#   1. the code-list consistency block in 01_codelists.R was rewritten to fail
+#      closed. It is spliced back to the source text before comparing.
+#   2. two SELECT became SELECT DISTINCT.
+#   3. guards and their comments were ADDED.
+#
+# So: after undoing (1) and (2), every remaining source line must still be
+# present, in order. Anything removed or edited fails - which is what
+# "differs, and the guards are there" could not catch.
+CONSISTENCY_FROM <- "  # Code list vs rollup consistency."
+CONSISTENCY_TO   <- "  # H4 fix: Codelist minimum-coverage validation (fail-loud)"
+SRC_FROM         <- "  # Codelist <-> Rollup consistency QC"
+
+undeviate <- function(lines) {
+  a <- which(lines == CONSISTENCY_FROM); b <- which(lines == CONSISTENCY_TO)
+  if (length(a) == 1 && length(b) == 1 && b > a) {
+    sa <- which(src == SRC_FROM); sb <- which(src == CONSISTENCY_TO)
+    lines <- c(lines[seq_len(a - 1)], src[sa:(sb - 1)], lines[b:length(lines)])
+  }
+  sub("^(\\s*)SELECT DISTINCT$", "\\1SELECT", lines)
+}
+
+# Every element of `want` appears in `got`, in order. Returns the first source
+# line that does not, or NA.
+first_missing <- function(got, want) {
+  i <- 1L
+  for (k in seq_along(want)) {
+    hit <- FALSE
+    while (i <= length(got)) {
+      if (identical(got[i], want[k])) { i <- i + 1L; hit <- TRUE; break }
+      i <- i + 1L
+    }
+    if (!hit) return(k)
+  }
+  NA_integer_
+}
+
 # Files that deliberately differ, and why. The source drops code-list rows on
 # the RAW value while storing the NORMALIZED one, so a punctuation-only code
 # survives as "" - and the claim side coalesces a missing code to "" too. That
@@ -77,7 +116,19 @@ for (p in PHASES) {
   while (length(want) && !nzchar(trimws(want[length(want)]))) want <- want[-length(want)]
   same <- identical(got, want)
   if (p$file %in% CHANGED) {
-    ok(!same, paste0(p$file, ": differs from the source, as intended"))
+    # "differs, and the guards are there" would let an unrelated clinical
+    # change ride along. Undo the approved deviations and require the rest to
+    # be identical, so anything else shows up as a real difference.
+    got <- undeviate(got)
+    miss <- first_missing(got, want)
+    if (!is.na(miss)) {
+      ok(FALSE, paste0(p$file, ": a source line was changed or removed, at ",
+                       "source line ", p$from + miss - 1,
+                       "\n           source: ", want[miss]))
+    } else {
+      ok(TRUE, paste0(p$file, ": every source line survives; ",
+                      length(got) - length(want), " guard line(s) added"))
+    }
     next
   }
   if (!same) {

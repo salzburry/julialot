@@ -72,6 +72,9 @@ phase_mma_map <- function(con, ctx) {
        -- Without this a codelist NDC with no digits pads to eleven zeros, and
        -- so does a claim with no NDC: every such claim becomes a treatment.
        AND regexp_replace(c.CL_CODE, '[^0-9]', '') <> ''
+       -- ...and the claim side. The WHERE below only tests the raw value, so a
+       -- punctuation-only NDC passes it and still normalizes to eleven zeros.
+       AND regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '') <> ''
        AND lpad(regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', ''), 11, '0')
          = lpad(regexp_replace(c.CL_CODE, '[^0-9]', ''), 11, '0')
       WHERE cast(m.NDC as string) IS NOT NULL AND trim(cast(m.NDC as string)) <> ''
@@ -103,6 +106,9 @@ phase_mma_map <- function(con, ctx) {
        -- Same guard as the medical NDC join above. The Rx path has no other
        -- claim-side filter, so an unguarded blank code reaches every fill.
        AND regexp_replace(c.CL_CODE, '[^0-9]', '') <> ''
+       -- The Rx branch has no WHERE on NDC at all, so without this a missing
+       -- fill NDC becomes eleven zeros and matches an all-zero code list row.
+       AND regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') <> ''
        AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', ''), 11, '0')
          = lpad(regexp_replace(c.CL_CODE, '[^0-9]', ''), 11, '0')
       WHERE cast(r.FILL_DT AS date) >= p.INDEX_DATE

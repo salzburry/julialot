@@ -24,7 +24,7 @@ SETTINGS <- c("USE_QUARTERLY_TABLES", "CENSOR_AT_DISENROLLMENT", "PERSIST_TO_SCH
               "SCT_AUTO_GAP_DAYS", "SCT_TANDEM_DAYS", "CART_CONSOLIDATION_DAYS",
               "PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME", "DOMINO_STARTING_USERNAME",
               "STUDY_END", "INPUT_COHORT_TABLE", "OBJECT_PREFIX",
-              "ALLO_LOT_SPAN", "MAX_LOT")
+              "ALLO_LOT_SPAN", "MAX_LOT", "CODELIST_WAIVERS")
 clear <- function() for (v in SETTINGS) Sys.unsetenv(v)
 
 # Stand-in names. The package knows no real cohort, so the tests must not
@@ -143,8 +143,8 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_cohort",
            "check_lot_contract", "set_lot_config", "check_cohort_input",
            "phase_codelists", "phase_patient_input", "phase_mma_map",
            "phase_lot1_base", "phase_sct", "phase_lot1_end", "phase_qc",
-           "phase_persist", "build_lot2_5", "phase_line_criteria",
-           "check_lot_long")
+           "check_lot1_invariants", "phase_persist", "build_lot2_5",
+           "check_lot_long", "phase_line_criteria", "check_run_recorded")
 at <- vapply(ORDER, function(f) {
   m <- regexpr(paste0("(?<![A-Za-z0-9_.])", f, "\\("), body, perl = TRUE)
   if (m == -1) NA_integer_ else as.integer(m)
@@ -169,6 +169,11 @@ for (st in c("started", "complete", "failed"))
   ok(grepl(paste0('"', st, '"'), bl, fixed = TRUE),
      paste0("build status records '", st, "'"))
 ok(grepl("LOT_BUILD_STATUS", bl, fixed = TRUE), "into its own prefixed table")
+ok(grepl("CODELIST_WAIVERS STRING", bl, fixed = TRUE),
+   "and the status row records which checks were waived")
+# 08_persist writes metadata inside a tryCatch, so confirm the row arrived.
+ok(grepl("check_run_recorded", bl, fixed = TRUE),
+   "a run with no metadata row is not called complete")
 
 cat("\n-- the code lists are recorded and checked --\n")
 # They live outside git, so the run log is the only record of which version
@@ -214,12 +219,13 @@ cd <- paste(readLines(file.path(ROOT, "R", "steps", "01_codelists.R"), warn = FA
             collapse = "\n")
 ok(!grepl("WARNING: Codelist consistency QC failed", cd, fixed = TRUE),
    "the tryCatch that swallowed QC errors is gone")
-ok(grepl("stop(msg,", cd, fixed = TRUE), "the checks stop the build")
-ok(grepl("ALLOW_CODELIST_WARNINGS", cd, fixed = TRUE),
-   "with one documented way to override after review")
-for (w in c("orphan_meds", "uncoded_meds", "unexpected_types", "multi_class"))
-  ok(grepl(paste0(w, ")"), cd, fixed = TRUE) || grepl(paste0(w, " <-"), cd, fixed = TRUE),
-     paste0(w, " is still checked"))
+ok(grepl("stop(\"The production code lists would change", cd, fixed = TRUE),
+   "the checks stop the build")
+ok(grepl("codelist_waivers()", cd, fixed = TRUE),
+   "and a waiver names the individual check, not all of them")
+for (w in c("orphan_meds", "uncoded_meds", "unexpected_types", "multi_class",
+            "code_to_med", "bad_ndc"))
+  ok(grepl(paste0(w, " <-"), cd, fixed = TRUE), paste0(w, " is checked"))
 # Extraction only joins NDC and HCPCS; the source also accepted ICD, which
 # matches nothing.
 ok(grepl('EXTRACTED_CODE_TYPES <- c("NDC", "HCPCS")', cd, fixed = TRUE),
@@ -235,6 +241,12 @@ mk_db_q <- function(problem) function(con, sql) {
   if (grepl("c.CL_MED_ABBR IS NULL", sql)) return(if (problem == "uncoded")
     data.frame(CL_MED_ABBR = "ABC", CL_MED_CLASS = "IMID") else
     data.frame(CL_MED_ABBR = character(0), CL_MED_CLASS = character(0)))
+  if (grepl("count\\(DISTINCT CL_MED_ABBR\\) AS n_meds", sql))
+    return(if (problem == "code_to_med")
+      data.frame(CL_CODE_TYPE = "NDC", CL_CODE = "00011122233", n_meds = 2,
+                 meds = "A, B") else
+      data.frame(CL_CODE_TYPE = character(0), CL_CODE = character(0),
+                 n_meds = integer(0), meds = character(0)))
   if (grepl("GROUP BY CL_CODE_TYPE", sql))
     return(data.frame(CL_CODE_TYPE = if (problem == "type") c("NDC", "ICD")
                                      else c("NDC", "HCPCS"), n_codes = c(10, 10)))
@@ -243,10 +255,15 @@ mk_db_q <- function(problem) function(con, sql) {
       data.frame(CL_MED_ABBR = "DUP", n_classes = 2, classes = "A, B") else
       data.frame(CL_MED_ABBR = character(0), n_classes = integer(0),
                  classes = character(0)))
+  if (grepl("AS bigint\\) = 0", sql))
+    return(if (problem == "bad_ndc") data.frame(CL_CODE = "00000000000", CL_MED_ABBR = "X")
+           else data.frame(CL_CODE = character(0), CL_MED_ABBR = character(0)))
   if (grepl("count\\(DISTINCT CL_MED_ABBR\\) AS n FROM mma_rollup", sql)) return(data.frame(n = 28))
   if (grepl("count\\(\\*\\) AS n FROM mma_codelist", sql)) return(data.frame(n = 500))
-  if (grepl("DISTINCT CL_MED_ABBR FROM mma_rollup", sql)) return(data.frame(CL_MED_ABBR = c("LEN", "BOR")))
-  if (grepl("DISTINCT CL_MED_CLASS FROM mma_rollup", sql)) return(data.frame(CL_MED_CLASS = c("IMID", "PI")))
+  if (grepl("SELECT DISTINCT CL_MED_ABBR FROM mma_rollup", sql, fixed = TRUE))
+    return(data.frame(CL_MED_ABBR = c("LEN", "BOR")))
+  if (grepl("SELECT DISTINCT CL_MED_CLASS FROM mma_rollup", sql, fixed = TRUE))
+    return(data.frame(CL_MED_CLASS = c("IMID", "PI")))
   data.frame()
 }
 ce <- new.env(parent = globalenv())
@@ -254,21 +271,31 @@ for (nm in c("log_msg", "print")) assign(nm, function(...) invisible(NULL), envi
 assign("run_step", function(...) invisible(TRUE), envir = ce)
 assign("glue", function(..., .envir = parent.frame()) paste0(..., collapse = ""), envir = ce)
 assign("load_codelist_csv", function(...) "(SELECT 1) src", envir = ce)
+# codelist_waivers() lives in build_lot.R, which this env does not source.
+assign("codelist_waivers", function()
+  { v <- trimws(strsplit(Sys.getenv("CODELIST_WAIVERS", unset = ""), "[,|]")[[1]]); v[nzchar(v)] },
+  envir = ce)
 sys.source(file.path(ROOT, "R", "steps", "01_codelists.R"), envir = ce)
-Sys.unsetenv("ALLOW_CODELIST_WARNINGS")
+Sys.unsetenv("CODELIST_WAIVERS")
 assign("db_q", mk_db_q("none"), envir = ce)
 ok(!inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
    "a consistent pair of code lists runs")
-for (prob in c("orphan", "uncoded", "type", "class")) {
+for (prob in c("orphan", "uncoded", "type", "class", "code_to_med", "bad_ndc")) {
   assign("db_q", mk_db_q(prob), envir = ce)
   ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
      paste0("'", prob, "' stops the build"))
 }
-Sys.setenv(ALLOW_CODELIST_WARNINGS = "TRUE")
-assign("db_q", mk_db_q("class"), envir = ce)
+# A waiver names one check. The study team keeps steroids in a separate file,
+# so the rollup has meds with no codes - an expected condition. Waiving that
+# must NOT also waive a code naming two different drugs.
+Sys.setenv(CODELIST_WAIVERS = "uncoded_meds")
+assign("db_q", mk_db_q("uncoded"), envir = ce)
 ok(!inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
-   "and ALLOW_CODELIST_WARNINGS=TRUE lets a reviewed run through")
-Sys.unsetenv("ALLOW_CODELIST_WARNINGS")
+   "waiving uncoded_meds lets the expected steroid case through")
+assign("db_q", mk_db_q("code_to_med"), envir = ce)
+ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
+   "and still stops on a code naming two medications")
+Sys.unsetenv("CODELIST_WAIVERS")
 
 cat("\n-- the contract rejects every value that changes a LOT --\n")
 clear()
@@ -303,6 +330,12 @@ stops(check_settings(), "an ALLO span that is not one of the two")
 clear()
 Sys.setenv(MAX_LOT = "five")
 stops(check_settings(), "a MAX_LOT that will not parse")
+clear()
+Sys.setenv(CODELIST_WAIVERS = "no_such_check")
+stops(check_settings(), "a waiver naming a check that does not exist")
+clear()
+Sys.setenv(CODELIST_WAIVERS = "uncoded_meds,bad_ndc")
+runs(check_settings(), "two real check names are accepted")
 clear()
 
 cat("\n-- pin_output_schema --\n")

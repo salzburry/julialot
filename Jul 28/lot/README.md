@@ -135,10 +135,24 @@ counts as treated:
 | a code type other than NDC or HCPCS | sits in the list and matches nothing |
 | one abbreviation with two classes | `min()` picks one without saying so |
 
-These were warnings inside a `tryCatch` that also swallowed query errors. If
-the study team has looked at what a check reports and accepts it,
-`ALLOW_CODELIST_WARNINGS=TRUE` downgrades all four to warnings for that run,
-and the log says so.
+Two more stop the build because `DISTINCT` cannot see them: a code naming more
+than one medication (extraction joins on code alone, so one claim becomes two
+treatments), and an all-zero NDC (it pads to the same eleven zeros as a claim
+with no NDC). The SCT list is checked the same way - one code, one transplant
+type.
+
+Waivers are per check, not one switch:
+
+```
+CODELIST_WAIVERS=uncoded_meds
+```
+
+That matters here. Steroids live in a separate file, so the rollup has
+medications with no codes - expected, and it would otherwise stop every run.
+Waiving `uncoded_meds` lets that through and still stops on a code naming two
+drugs. The waived checks are recorded in `LOT_BUILD_STATUS`. Names:
+`orphan_meds`, `uncoded_meds`, `code_types`, `multi_class`, `code_to_med`,
+`bad_ndc`.
 
 ## Knowing a run finished
 
@@ -147,7 +161,13 @@ leave new LOT1 output beside an older `LOT_LONG`. Every run therefore writes
 `<prefix>LOT_BUILD_STATUS`: `started` at the beginning, then `complete`, or
 `failed` if it stops anywhere. Read that before trusting a set of tables.
 
-`LOT_LONG` is also checked before the run is called complete - no duplicate
+LOT1 is checked too, before LOT2-5 starts: MAP ending before it starts, a MAP
+end that is not the later runout, LOT1 ending after observation, an AUTO
+transplant flagged both tandem and single, and an AUTO before LOT1 began. The
+QC phase reports these and carries on; these stop the build.
+
+`LOT_LONG` is checked before anything is derived from it and before the run is
+called complete - no duplicate
 `(PATID, LOT_NUM)`, no line ending before it starts, no line number outside
 `1..MAX_LOT`, and every patient's lines running `1..n` with no gaps. These are
 structural, so a breach stops the build rather than printing a warning.
