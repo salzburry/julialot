@@ -28,7 +28,8 @@ sys.source(file.path(ROOT, "R", "build_cohort.R"), envir = env)
 CHECKPOINT_STEPS <- c("mm_dx_events_all", "mm_qualifying", "ELIG_COH_ALLFLAGS")
 assign("CHECKPOINT_STEPS", CHECKPOINT_STEPS, envir = env)
 for (f in c("step_view_name", "is_checkpoint", "check_output_contract",
-            "check_settings", "resolve_checkpoints", "pin_output_schema"))
+            "check_settings", "resolve_checkpoints", "pin_output_schema",
+            "NORMALIZED_CODELISTS"))
   assign(f, get(f, envir = env), envir = globalenv())
 
 restore <- Sys.getenv(c("CHECKPOINT_STEPS", "OBJECT_PREFIX", "PROJECT_WORK_SCHEMA",
@@ -164,6 +165,28 @@ missing <- Filter(function(f) !exists(f, envir = mod), called)
 ok(length(missing) == 0,
    if (length(missing)) paste("undefined:", paste(missing, collapse = ", "))
    else paste0("all ", length(called), " calls resolve"))
+
+cat("\n-- codelist checks name columns the views actually have --\n")
+# A wrong column here is an unresolved-column error at run time, several
+# minutes into a build. preg_codes and clintrial_codes carry code/code_type,
+# not dx; guessing from the view name gets them wrong.
+cl_src <- paste(readLines(file.path(ROOT, "R", "steps", "01_codelists.R"),
+                          warn = FALSE), collapse = "\n")
+view_cols <- function(view) {
+  i <- regexpr(paste0("TEMPORARY VIEW \\{work\\('", view, "'\\)\\}"), cl_src)
+  if (i < 0) return(character(0))
+  blk <- substr(cl_src, i, i + attr(i, "match.length") + 900)
+  blk <- substr(blk, 1, regexpr('"\\)', blk))
+  unlist(regmatches(blk, gregexpr("AS +[A-Za-z_][A-Za-z0-9_]*", blk))) |>
+    sub(pattern = "AS +", replacement = "")
+}
+for (v in names(NORMALIZED_CODELISTS)) {
+  have <- view_cols(v)
+  want <- NORMALIZED_CODELISTS[[v]]
+  ok(length(have) > 0 && all(want %in% have),
+     paste0(v, ": ", paste(want, collapse = "+"), " in (",
+            paste(have, collapse = ", "), ")"))
+}
 
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))
