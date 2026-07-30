@@ -1,42 +1,28 @@
 # =============================================================================
-# 04_therapy.R -- IE Steps 5 and 6: treatment-naive at index, treated after it
+# 04_therapy.R -- steps 5 and 6: naive at index, treated after it
 # -----------------------------------------------------------------------------
-#   Step 5  MM_bl_agents = 0   NO MM agent in baseline   (new-user design)
-#   Step 6  MM_FU_agents = 1   >=1 MM agent in follow-up (a real treatment start)
+#   step 5  MM_bl_agents = 0   no MM agent in baseline (new-user design)
+#   step 6  MM_FU_agents = 1   >=1 MM agent in follow-up
 #
-# These two are one idea: the patient must START treatment at or after index, not
-# already be on it. Together they are what makes the index date the start of a
-# treated course -- but see below: that is NOT the same as "1L-treated".
+# One idea in two gates: treatment must start at or after index, not already be
+# running.
 #
-# ---------------------------------------------------------------------------
-# WHAT STEP 6 IS NOT
-# ---------------------------------------------------------------------------
-# It is NOT "has a LOT1 regimen". It is one claim for ANY MM agent, any drug
-# class, from the same code list the LOT build uses. A patient whose only
-# follow-up MM agent is a steroid passes Step 6 and belongs to cohort 1 -- the
-# LOT build, by contrast, excludes steroid-only starts when it defines LOT1.
+# Step 6 is NOT "has a LOT1 regimen". It is one claim for any MM agent, any drug
+# class, from the same code list the LOT build uses. Steroid-only follow-up passes
+# step 6, while the LOT build excludes steroid-only starts when it defines LOT1.
+# So this cohort is a superset of the 1L-regimen population, and the difference is
+# real patients. Reading step 6 as "LOT1 exists" is the usual mistake.
 #
-# So cohort 1 is a superset of the 1L-regimen population, and the difference is
-# real patients, not a rounding artefact. Reading Step 6 as "LOT1 exists" is the
-# single most common misreading of this funnel.
+# Four scans, the same four the LOT pipeline uses (S04), so IE and LOT agree on
+# what an MM agent is: medical PROC_CD, medical BILL_PROC_CD, medical NDC, Rx NDC.
+# NDCs are matched 11-digit zero-padded on both sides, because Optum and the code
+# list disagree about leading zeros.
 #
-# ---------------------------------------------------------------------------
-# FOUR SOURCES, ONE CODE LIST
-# ---------------------------------------------------------------------------
-# The same four scans the LOT pipeline uses (S04), so IE and LOT agree on what
-# counts as an MM agent:
-#   medical PROC_CD (HCPCS/CPT), medical BILL_PROC_CD (HCPCS),
-#   medical NDC, Rx NDC
-# NDCs are matched on an 11-digit zero-padded form on BOTH sides, because Optum
-# and the code list disagree about leading zeros.
-#
-# WINDOWS
-#   baseline   index-183 .. index-1     (excludes index)
-#   follow-up  index .. fu_cap          (includes index; capped at death /
-#                                        study end, and at disenrollment under
-#                                        CENSOR_AT_DISENROLLMENT)
-# The cap is why this view joins death_dt: a post-death claim is a data artefact
-# and must not qualify somebody as treated.
+# Windows:
+#   baseline   index-183 .. index-1   (excludes index)
+#   follow-up  index .. fu_cap        (includes index)
+# The cap is why this joins death_dt -- a post-death claim is a data artefact and
+# must not make someone count as treated.
 # =============================================================================
 
 ie_step_therapy <- function(cfg, h) {
@@ -137,7 +123,7 @@ ie_step_therapy <- function(cfg, h) {
       predicate = "MM_bl_agents = 0",
       cfg_key = "apply_no_bl_agents_incl",
       polarity = "exclude",
-      note = "New-user design: no MM agent in the 183 days before index."
+      note = "No MM agent in the 183 days before index."
     ),
     ie_criterion(
       step = 6L,
@@ -148,8 +134,7 @@ ie_step_therapy <- function(cfg, h) {
       predicate = "MM_FU_agents = 1",
       cfg_key = "apply_fu_agents_incl",
       polarity = "include",
-      note = paste("ANY MM agent, any class -- NOT a LOT1 regimen start.",
-                   "Steroid-only follow-up therapy passes this gate.")
+      note = "Any MM agent, any class. Not a LOT1 regimen start."
     )
   )
 

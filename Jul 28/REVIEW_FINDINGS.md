@@ -337,90 +337,77 @@ Step 1 makes the static comparison meaningful; it does not make it empirical.
 
 ---
 
-# Second review round — `cohort_overall` (was `cohort1_ie`)
+# Second review round — `cohort_overall`
 
 Nine findings, all reproduced, all addressed. Two were release blockers.
 
 | # | Finding | Status |
 |---|---|---|
-| 1 | **[P0]** Checkpoint materialization passed the UNPREFIXED logical name to `materialize_to_personal_schema()`, so a clean run died at the first checkpoint — and a dirty schema would have materialized a stale object of that name instead | **fixed structurally** |
-| 2 | **[P0]** `verify_against_legacy.R` never reads this folder's output, so the README pointed at a gate that could pass while this build had failed | **fixed**; new gate written |
-| 3 | **[P1]** `--no-persist` still wrote tables (checkpoint materialization) | **removed** |
-| 4 | **[P1]** README claimed the study window comes from `pipeline_inputs.csv`; `cfg_defaults` hardcodes it | **fixed**, and a working override added |
-| 5 | **[P1]** Invalid `OUTPATIENT_WINDOW` silently became 90; a malformed `APPLY_*` silently disabled a criterion | **fixed** |
-| 6 | **[P1]** `--views` rejected unknown names in dry-run but ran nothing silently in a real run; `--attrition-only` could never work from a fresh session; "cohort 1 built" printed regardless | **removed** |
-| 7 | **[P1]** Inpatient/outpatient are NOT exhaustive — `NOT(NULL)` is NULL, so a claim with no care setting is neither. Comment claimed otherwise. Step 8 treats the same claim as outpatient | **comments corrected**, diagnostic added, SQL unchanged |
-| 8 | **[P2]** The attrition "final cohort" row never read the cohort table, so it could not check what it claimed to | **fixed** |
-| 9 | **[P2]** "1L-treated" label contradicted Step 6's own definition | **fixed** |
+| 1 | **P0** Checkpoint materialisation used the unprefixed name, so a clean run died at the first checkpoint | fixed structurally |
+| 2 | **P0** `verify_against_legacy.R` never reads this build's output, so the README pointed at a gate that could pass while the build had failed | new gate written |
+| 3 | **P1** `--no-persist` still wrote tables | flag removed |
+| 4 | **P1** README claimed the study window comes from the CSV; `cfg_defaults` hardcodes it | fixed, working override added |
+| 5 | **P1** Invalid `OUTPATIENT_WINDOW` silently became 90; a malformed `APPLY_*` silently disabled a gate | both rejected |
+| 6 | **P1** `--views` ran nothing silently on a typo; `--attrition-only` could never work from a fresh session | flags removed |
+| 7 | **P1** Inpatient/outpatient are not exhaustive (`NOT(NULL)` is NULL), and step 8 treats the same claim as outpatient | comments fixed, diagnostic added, SQL unchanged |
+| 8 | **P2** The attrition terminal row never read the cohort table | `ie_reconcile()` added |
+| 9 | **P2** "1L-treated" contradicted step 6's own definition | relabelled |
 
-## Finding 1 — fixed by removing the possibility, not the symptom
+## Finding 1
 
-A step used to carry its own `CREATE OR REPLACE TEMPORARY VIEW {work('x')} AS`,
-so the object name existed in two places: inside the step's SQL, and again in
-whatever the runner passed to the materializer. They disagreed.
+A step used to carry its own `CREATE ... {work('x')} AS`, so the object name
+existed twice: in the step's SQL, and again in what the runner handed the
+materialiser. They disagreed.
 
-Now a step carries only `name` and a `SELECT` body. `work()` is the only place an
-object name is formed, `ie_stmt()` the only place a `CREATE` is formed, both from
-`name`, and `ie_view()` **rejects** a `select` containing a `CREATE`. There is no
-second place for a name to come from. Asserted by `test_cohort_overall.R` §2.
+Now a step carries only `name` and a `SELECT`. `work()` is the only place a name
+is built, `ie_stmt()` the only place a `CREATE` is built, and `ie_view()` rejects a
+`select` containing a `CREATE`. There is no second place for a name to come from.
 
-This also carried out the request to stop using temp views (a Databricks SQL
-warehouse re-executes a view's definition on every reference): all 27 objects are
-now tables, which removed checkpoints, `materialize_to_personal_schema()` and the
-separate persist step along with the bug.
+This also carried out the request to drop temp views — a Databricks SQL warehouse
+re-runs a view's definition on every read. All 27 objects are tables, which
+removed checkpoints, the materialiser and the persist step along with the bug.
 
-## Finding 2 — the gate that was missing
+## Finding 2
 
 `tests/verify_cohort_overall.R`: `ovr_ELIG_COH_FINAL` vs the legacy
-`ELIG_COH_FINAL`, `EXCEPT` both directions, on **PATID** *and*
-**`(PATID, INDEX_DATE)`**, plus grain on both sides, 15 key fields over shared
-pairs (null-safe), and the funnel reconciliation.
+`ELIG_COH_FINAL`, `EXCEPT` both ways on PATID **and** `(PATID, INDEX_DATE)`, grain
+on both sides, 15 key fields over shared pairs, and the funnel reconciliation.
 
-`(PATID, INDEX_DATE)` is not decoration. Because criteria are applied *before* the
-index date is ranked, the same patient can legitimately survive on a different
-index date under a different implementation — and every LOT number downstream is
-computed from that date. A PATID-only comparison would report full agreement while
-the exposure dates had moved.
+`(PATID, INDEX_DATE)` matters because criteria are applied before the index date
+is ranked, so the same patient can legitimately survive on a different date — and
+every LOT number is computed from that date. A PATID-only check would report
+agreement while the exposure dates had moved.
 
-**It has not been run.** It needs a warehouse.
+Not run yet. It needs a warehouse.
 
-## Findings 3 and 6 — fewer modes, all honourable
-
-`--views`, `--no-persist`, `--attrition-only` and `--no-attrition` are gone. Each
-could report success having done nothing. What remains: `--funnel`, `--dry-run`,
-and the default build. An unknown option is now an error, not a no-op, and the
-completion line names the table and its row count so "built" cannot be printed
-over a run that produced nothing.
-
-## Finding 7 — corrected in the comments, not in the SQL
+## Finding 7
 
 `NOT (POS IN (...) OR TOS_CD IN (...) OR CONF_ID IS NOT NULL)` is NULL when the
-first two are NULL and there is no confinement, so both `inpatient_flg` and
-`outpatient_flg` come out 0 and the claim cannot produce an index date. Step 8
-writes the inpatient flag with `ELSE 0` and treats everything non-inpatient as
-outpatient, so it classifies the *same* claim differently.
+first two are NULL and there is no confinement, so both flags come out 0 and the
+claim cannot produce an index date. Step 8 writes the inpatient flag with `ELSE 0`
+and treats everything else as outpatient, so it classifies the same claim
+differently.
 
-Both are inherited verbatim, so the legacy comparison can never surface either.
-Changing them would change the cohort, which is a study-team decision and not a
-refactor — so the SQL is untouched, the comments and README now say what actually
-happens, and `mm_dx_events_all` carries a `qc_extra` diagnostic counting the
-affected claims and the STRICT subset of them, so the question has a number.
+Both are inherited, so the legacy comparison cannot show either. Changing them
+would change the cohort, which is the study team's call — so the SQL is untouched,
+the comments say what actually happens, and `mm_dx_events_all` carries a
+diagnostic counting the affected claims and the strict subset.
 
 ## On "token for token"
 
-The offline comparison is **normalized-text** equality: whitespace collapsed, the
-`CREATE` clause dropped, this folder's object qualifier removed (both
-transformations asserted safe first). Earlier wording said "token for token",
-which overstated it. Corrected everywhere.
+The offline comparison is normalised text: whitespace collapsed, `CREATE` dropped,
+object qualifier removed, both checked safe first. Earlier wording said "token for
+token", which overstated it.
 
 ## On overengineering
 
-The framework lost the checkpoint layer, the materializer, the persist step, the
-`mat_tables` environment and four CLI modes. What was kept is load-bearing: the
-criterion object model drives the filter, the attrition table, the reconciliation
-and the validation from one declaration, and `fmt()` exists so the SQL stays a
-literal copy of the glue templates it is compared against.
+Dropped: the checkpoint layer, the materialiser, the persist step, the
+`mat_tables` environment, four CLI modes, the attrition CSV export and the
+`IE_CREATE_TABLE_FN` hook. Kept: the criterion object model, which drives the
+filter, the attrition table, the reconciliation and the validation from one
+declaration, and `fmt()`, which exists so the SQL stays a literal copy of the
+templates it is compared against.
 
-The suggestion to reuse `build_steps()` instead of holding a second copy was not
-taken: `Jul 28` is now the deployable folder and must not read `apr_30_2026` at run
-time. The copy is the price of that, and it is drift-tested while both are present.
+The suggestion to reuse `build_steps()` instead of a second copy was not taken:
+`Jul 28` is the deployable folder and must not read `apr_30_2026` at run time. The
+copy is the price, and it is drift-tested while both are present.

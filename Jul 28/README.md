@@ -35,25 +35,24 @@ pipeline_inputs.csv   the configuration these entry points read
 
 `overall/` and `ndmm/` are the **selection** layer: flags in, cohorts out. They
 read `ELIG_COH_ALLFLAGS`, which the legacy pipeline produces.
-**[`cohort_overall/`](cohort_overall/README.md)** is the other half — it
-implements the ten index-anchored IE criteria from the raw CDM, one file per
-table, so Overall can be built without `01_cohort.R` running first. Its README is
-a step-by-step walkthrough of every criterion.
+**[`cohort_overall/`](cohort_overall/README.md)** is the other half — it builds
+the ten index-anchored IE criteria from the raw CDM, one file per table, so
+Overall can be built without `01_cohort.R` running first. It writes real tables to
+your personal schema, prefixed `ovr_`.
 
-## This folder is the deployable unit
+## This folder ships on its own
 
 `Jul 28` is what goes to production, so **nothing in it reads `apr_30_2026` at run
-time**. The shared plumbing lives in [`lib/`](lib/README.md) as a **verbatim copy**
-of `apr_30_2026/R/`, and `pipeline_inputs.csv` is a verbatim copy too. Both are
-asserted byte-identical by `tests/test_equivalence.R` §6 **while `apr_30_2026` is
-still present**; in production it is absent, those checks skip, and the copies are
-simply the code. `tests/test_equivalence.R` also asserts that no run-time file
-here resolves a path into `apr_30_2026`.
+time**. The plumbing is in [`lib/`](lib/README.md) as a verbatim copy of
+`apr_30_2026/R/`, and `pipeline_inputs.csv` is a verbatim copy too. Both are
+asserted byte-identical by `tests/test_equivalence.R` §6 while `apr_30_2026` is
+present; in production it is absent and the checks skip. The same suite asserts
+that no run-time file here resolves a path into `apr_30_2026`.
 
-Copying is a second definition and a second definition can drift. The alternative
-was worse: the production folder would not have been the deployable unit. See
-[`lib/README.md`](lib/README.md) for the rule that keeps the copy honest — never
-edit it; layer behaviour on top in the caller.
+Copying means two definitions, which can drift. The alternative was worse — the
+production folder would not have been deployable. `lib/README.md` has the rule
+that keeps it honest: never edit those files, layer behaviour on top in the
+caller.
 
 ```sh
 Rscript "Jul 28/run_all_tests.R"                    # 398 assertions, 5 suites

@@ -1,27 +1,21 @@
 # =============================================================================
-# 05_baseline_mm.R -- IE Step 7: no MM diagnosis already in baseline
+# 05_baseline_mm.R -- step 7: no MM diagnosis already in baseline
 # -----------------------------------------------------------------------------
-#   Step 7  MM_baseline_diag = 0
+#   step 7  MM_baseline_diag = 0
 #
-# ">=1 STRICT MM diagnosis (203.0x / C90.0x) in index-183 .. index-1" excludes.
-# Step 5 said the patient was not already being TREATED for MM; this says they
-# were not already DIAGNOSED with it. Both are needed for "newly diagnosed": a
-# patient can carry an MM diagnosis for months before their first claim for an
-# MM agent.
+# >=1 strict MM diagnosis (203.0x / C90.0x) in index-183 .. index-1 excludes.
+# Step 5 said the patient was not already being treated; this says they were not
+# already diagnosed. Both are needed for "newly diagnosed" -- a diagnosis can
+# predate the first MM-agent claim by months.
 #
-# STRICT CODES ONLY, and that is the asymmetry worth noticing. Step 1 admits a
-# patient on 2 BROAD outpatient claims (203.x / C90.x), but only a STRICT claim
-# in baseline excludes them. So a broad-code history in baseline does not
-# disqualify anyone. Deliberate: broad codes cover MM-adjacent conditions that
-# are not a prior MM diagnosis.
+# Note the asymmetry: step 1 admits on 2 broad outpatient claims, but only a
+# strict claim in baseline excludes. Broad-code history disqualifies nobody, on
+# purpose -- broad codes cover MM-adjacent conditions that are not prior MM.
 #
-# Reads mm_dx_events_all, not mm_dx_events_id -- the whole point is to look
-# BEFORE the identification period, and mm_dx_events_id has already been cut to
-# it. Using the ID-period view here would make the flag silently blind for
-# indexes early in the study.
+# Reads mm_dx_events_all, not mm_dx_events_id: the point is to look before the
+# identification period, and the ID-period table has already been cut to it.
 #
-# CONFIGURED OFF (APPLY_BASELINE_MM_EXCL=FALSE in pipeline_inputs.csv). The flag
-# is still computed. See the README section on the four criteria that ship off.
+# Ships off (APPLY_BASELINE_MM_EXCL=FALSE). The flag is still computed.
 # =============================================================================
 
 ie_step_baseline_mm <- function(cfg, h) {
@@ -61,8 +55,7 @@ ie_step_baseline_mm <- function(cfg, h) {
       predicate = "MM_baseline_diag = 0",
       cfg_key = "apply_baseline_mm_excl",
       polarity = "exclude",
-      note = paste("STRICT codes only. Ships OFF:",
-                   "APPLY_BASELINE_MM_EXCL=FALSE in pipeline_inputs.csv.")
+      note = "Strict codes only. Ships off."
     )
   )
 

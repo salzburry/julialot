@@ -1,31 +1,24 @@
 # =============================================================================
-# 00_inputs.R -- the inputs every criterion is built from
+# 00_inputs.R -- inputs. No criteria.
 # -----------------------------------------------------------------------------
-# NO CRITERIA IN THIS FILE. Nothing here includes or excludes anybody; it
-# normalizes the code lists and turns raw claims into MM diagnosis events. The
-# funnel starts in 01_index.R.
+# Nothing here includes or excludes anybody. It normalises the code lists and
+# turns raw claims into MM diagnosis events. The funnel starts in 01_index.R.
 #
-# File numbers are BUILD order (what depends on what). IE Step numbers are
-# FUNNEL order (what drops whom). They are not the same sequence and it matters:
-# every flag is computed for every candidate index date first, and only then are
-# the gates applied. That is why a patient whose earliest index fails a gate can
-# still enter on a later one -- see 09_assemble.R.
-#
-# Two grains of MM events, and the difference is load-bearing:
-#   mm_dx_events_all  full study period  -> baseline lookback (Step 7)
-#   mm_dx_events_id   ID period only     -> index qualification (Step 1)
+# Two grains of MM events, and the difference matters:
+#   mm_dx_events_all  full study period  -> baseline lookback (step 7)
+#   mm_dx_events_id   ID period only     -> index qualification (step 1)
 #
 # Two MM code sets, likewise:
-#   BROAD   203.x / C90.x    -> Step 0 base count, outpatient qualification
-#   STRICT  203.0x / C90.0x  -> inpatient qualification, baseline MM evidence
+#   broad   203.x / C90.x    -> step 0 count, outpatient qualification
+#   strict  203.0x / C90.0x  -> inpatient qualification, baseline MM evidence
 # =============================================================================
 
 ie_step_inputs <- function(cfg, h) {
   work <- h$work; cdm_src <- h$cdm_src; ref <- h$ref
 
-  # Code lists come from CSV temp views (USE_CSV_CODELISTS=TRUE, the default:
-  # load_csv_codelists() has already pushed each cl_*.csv into a temp view of
-  # that name) or from server-side reference tables.
+  # Code lists come from temp views that load_csv_codelists() has already pushed
+  # from each cl_*.csv (USE_CSV_CODELISTS=TRUE, the default), or from reference
+  # tables. They stay views because they are tiny.
   if (isTRUE(cfg$use_csv_codelists)) {
     mm_dx_source       <- cfg$cl_mm_dx
     mm_therapy_source  <- cfg$cl_mm_therapy
@@ -112,8 +105,8 @@ ie_step_inputs <- function(cfg, h) {
       qc = fmt("SELECT count(*) AS n_codes FROM {work('other_malig_codes')}")
     ),
 
-    # Fail early and legibly if the revenue-code column is absent, instead of
-    # erroring deep inside the pregnancy / clinical-trial scans that need it.
+    # Fails early if RVNU_CD is missing, instead of erroring deep inside the
+    # pregnancy / clinical-trial scans that need it.
     ie_view(
       name = "rvnu_cd_check",
       legacy = "06c_validate_rvnu_cd",
@@ -155,8 +148,8 @@ ie_step_inputs <- function(cfg, h) {
         FROM {work('med_claim_header')}")
     ),
 
-    # Inpatient via CONF_ID requires an actual confinement, which requires both
-    # an admission and a discharge date.
+    # Inpatient via CONF_ID needs a real confinement, so both an admission and a
+    # discharge date.
     ie_view(
       name = "confinement",
       legacy = "07b_confinement",
@@ -174,26 +167,23 @@ ie_step_inputs <- function(cfg, h) {
       qc = fmt("SELECT count(*) AS n_confinements FROM {work('confinement')}")
     ),
 
-    # Inpatient = Approach 1 (POS/TOS) OR Approach 2 (validated CONF_ID).
-    # Outpatient is written as the negation, so the two are mutually exclusive.
+    # Inpatient = approach 1 (POS/TOS) or approach 2 (validated CONF_ID).
+    # Outpatient is the negation, so the two never overlap.
     #
-    # THEY ARE NOT EXHAUSTIVE, and an earlier revision of this comment wrongly
-    # said they were. Under SQL three-valued logic, a claim with POS AND TOS_CD
-    # both NULL and no validated confinement makes the condition NULL:
+    # But they do not cover everything. If POS and TOS_CD are both NULL and there
+    # is no confinement, the condition is NULL, and NOT NULL is still NULL, so
+    # both CASEs fall to ELSE 0:
     #
-    #     inpatient_flg   CASE WHEN NULL      THEN 1 ELSE 0 END  ->  0
-    #     outpatient_flg  CASE WHEN NOT NULL  THEN 1 ELSE 0 END  ->  0
+    #     inpatient_flg = 0
+    #     outpatient_flg = 0     <- neither
     #
-    # So such a claim is NEITHER, and it can therefore never qualify a patient at
-    # Step 1 by either path. Step 1 is ON, so this is live: an MM diagnosis whose
-    # care setting is unrecorded cannot produce an index date.
+    # That claim cannot qualify a patient at step 1 by either path. Step 1 is on,
+    # so this is live.
     #
-    # This is copied faithfully from pipeline_steps.R, so the legacy comparison
-    # can never surface it -- both sides do the same thing. It is NOT fixed here:
-    # changing it would change the cohort, which is a study-team decision, not a
-    # refactor. qc_extra below counts the affected claims so the size of the
-    # question is a number rather than a worry. See also 06_other_malig.R, which
-    # resolves the same ambiguity DIFFERENTLY.
+    # Copied as-is from pipeline_steps.R, so the legacy comparison cannot show it
+    # -- both sides behave the same. Not changed here: that would change the
+    # cohort, which is the study team's call. qc_extra below counts the affected
+    # claims. 06_other_malig.R handles the same case differently.
     ie_view(
       name = "mm_dx_events_all",
       legacy = "08a_mm_dx_events_all",
@@ -252,10 +242,9 @@ ie_step_inputs <- function(cfg, h) {
         WHERE cast(d.FST_DT as date) BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
       "),
       qc = fmt("SELECT count(DISTINCT PATID) AS n_patients, sum(inpatient_flg) AS n_inpatient_events, sum(conf_validated) AS n_via_conf, sum(pos_tos_inpatient) AS n_via_pos_tos FROM {work('mm_dx_events_all')}"),
-      # NOT compared to the legacy QC -- it asks a question the legacy QC does
-      # not. Quantifies the unknown-care-setting gap described above, and the
-      # subset of it that is a STRICT MM code (those are the claims that could
-      # otherwise have produced an inpatient index date at Step 1).
+      # Not compared to the legacy QC. Sizes the unknown-setting gap above, and
+      # the strict-code subset -- those are the claims that could otherwise have
+      # produced an inpatient index date.
       qc_extra = fmt("
         SELECT
           count(*) AS n_events,

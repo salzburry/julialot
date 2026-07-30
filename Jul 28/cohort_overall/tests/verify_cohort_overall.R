@@ -1,55 +1,37 @@
 #!/usr/bin/env Rscript
 # =============================================================================
-# verify_cohort_overall.R -- THE gate: does this build produce the same PATIENTS?
+# verify_cohort_overall.R -- does this build produce the same patients?
 # -----------------------------------------------------------------------------
 #   Rscript "Jul 28/cohort_overall/tests/verify_cohort_overall.R" --dry-run
 #   DATABRICKS_PWD=... Rscript "Jul 28/cohort_overall/tests/verify_cohort_overall.R"
 #
-# Named verify_* so run_all_tests.R's test_*.R glob does NOT pick it up: a suite
-# that cannot run offline must not be able to make the runner red for the wrong
-# reason, or -- worse -- be quietly skipped and counted as passing.
+# Named verify_* so run_all_tests.R's test_*.R glob skips it. A suite that needs a
+# warehouse must not be able to turn the offline runner red, or be quietly
+# skipped and counted as a pass.
 #
-# ---------------------------------------------------------------------------
-# WHY THIS SCRIPT EXISTS
-# ---------------------------------------------------------------------------
-# ../../tests/verify_against_legacy.R compares the SELECTION layer's cohorts
-# (coh_overall_cohort, coh_index_union, coh_ndmm_cohort). It never reads anything
-# this folder produces. So it could pass in full while this build had failed,
-# written nothing, or produced different patients -- and an earlier revision of
-# the README nonetheless pointed at it as this folder's validation gate. It was
-# not one. This is.
+# ../../tests/verify_against_legacy.R does not cover this build. It compares the
+# selection layer (coh_overall_cohort, coh_index_union, coh_ndmm_cohort) and never
+# reads ovr_ELIG_COH_FINAL, so it could pass in full while this build had failed.
 #
-# ---------------------------------------------------------------------------
-# WHAT IT COMPARES, AND WHY PATID ALONE IS NOT ENOUGH
-# ---------------------------------------------------------------------------
-#   1 grain          one row per PATID on BOTH sides
-#   2 PATID set      EXCEPT in BOTH directions
-#   3 (PATID, INDEX_DATE)  EXCEPT in BOTH directions
-#   4 key fields     for shared patients: index_source, AGE_INDEX_YR, CE_b, CE_f,
-#                    CE_3mosf, MM_bl_agents, MM_FU_agents, MM_baseline_diag,
-#                    OTHER_MALIGN_FLAG, PREGNANT_FLAG, CLINTRIAL_*, DEATH_DT,
-#                    ENDDATE, FU_DAYS
-#   5 attrition      the funnel's own end count vs the cohort table
+# What it compares:
+#   1 grain                  one row per PATID on both sides
+#   2 PATID                  EXCEPT both directions
+#   3 (PATID, INDEX_DATE)    EXCEPT both directions
+#   4 15 key fields          over shared pairs, null-safe
+#   5 funnel reconciliation
 #
-# Check 3 is the one PATID cannot substitute for. Because the criteria are applied
-# BEFORE the index date is ranked, the SAME patient can legitimately survive on a
-# DIFFERENT index date under a different implementation -- and every LOT number
-# downstream is computed from that date. A PATID-only comparison would report full
-# agreement while the study's exposure dates had moved.
+# Check 3 is the one PATID cannot stand in for. Criteria are applied before the
+# index date is ranked, so the same patient can legitimately survive on a
+# different index date under a different implementation -- and every LOT number
+# downstream is computed from that date. A PATID-only check would report full
+# agreement while the exposure dates had moved.
 #
-# Check 4 catches the case where both cohorts pick the same patient and the same
-# index date from differently-computed flags.
+# EXCEPT both ways, never counts: two different cohorts of the same size pass a
+# count check.
 #
-# EXCEPT IN BOTH DIRECTIONS, never counts. Two different cohorts of the same size
-# pass a count check; A EXCEPT B and B EXCEPT A both empty is set equality.
-#
-# ---------------------------------------------------------------------------
-# WHAT A PASS DOES AND DOES NOT MEAN
-# ---------------------------------------------------------------------------
-# A pass means this build reproduces the legacy cohort ON THE DATA AS IT STANDS.
-# It does not mean the study definition is right -- only that reimplementing it
-# did not change it. Both sides share the unknown-care-setting behaviour described
-# in steps/00_inputs.R, so agreement here says nothing about that.
+# A pass means this build reproduces the legacy cohort on the data as it stands.
+# It does not mean the study definition is right. Both sides share the
+# unknown-care-setting behaviour described in steps/00_inputs.R.
 # =============================================================================
 
 .here <- local({
@@ -68,8 +50,8 @@ h   <- ie_names(cfg)
 fun <- ie_funnel(cfg, h)
 
 NEW <- h$work(cfg$final_table_name)
-# The legacy persisted cohort: same name the LOT build reads. In the legacy
-# pipeline it lands in personal_schema; fall back to the output schema.
+# The legacy cohort, the table the LOT build reads. It lands in the personal
+# schema; fall back to the output schema.
 OLD <- local({
   s <- Sys.getenv("LEGACY_COHORT_TABLE", unset = "")
   if (nzchar(s)) return(s)
@@ -93,9 +75,8 @@ except_s <- function(x, y) paste0("SELECT * FROM (\n", x, "\n  EXCEPT\n", y,
 grain_sql <- function(t) paste0(
   "SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_pat FROM ", t)
 
-# Field-by-field disagreement over the patients BOTH sides selected on the SAME
-# index date. Null-safe (`<=>`), so a NULL on both sides counts as agreement
-# rather than as a difference.
+# Field-by-field over the patients both sides picked on the same index date.
+# Null-safe (<=>), so NULL on both sides is agreement, not a difference.
 fields_sql <- function() {
   cmp <- paste0("sum(CASE WHEN NOT (a.", KEY_FIELDS, " <=> b.", KEY_FIELDS,
                 ") THEN 1 ELSE 0 END) AS d_", tolower(KEY_FIELDS),

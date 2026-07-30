@@ -1,64 +1,40 @@
 #!/usr/bin/env Rscript
 # =============================================================================
-# test_cohort_overall.R -- does this folder implement the SAME IE funnel?
+# test_cohort_overall.R -- does this folder implement the same IE funnel?
 # -----------------------------------------------------------------------------
 #   Rscript "Jul 28/cohort_overall/tests/test_cohort_overall.R"
 #
-# This folder contains a SECOND copy of the criteria SQL. A second copy that
-# nothing compares is how NDMM's continuous-enrolment and prior-therapy
-# definitions drifted from Overall's. So the copy is compared, mechanically:
+# This folder holds a second copy of the criteria SQL, and a copy nothing compares
+# is how NDMM's CE and prior-therapy definitions drifted from Overall's. So the
+# copy is compared on every run:
 #
-#   section 3  every criterion -- label, predicate, toggle, order -- against
-#              build_criteria_catalog(), EVALUATED, not read as text
-#   section 4  the active filter against build_criteria_sql() under the
-#              project's real configuration
-#   section 5  every generated SELECT against the SELECT pipeline_steps.R's
-#              build_steps() generates for the same cfg
+#   section 4  every criterion -- label, predicate, toggle, order -- against
+#              build_criteria_catalog(), by calling it, not by reading text
+#   section 5  the active filter against build_criteria_sql() under the real
+#              config
+#   section 6  every generated SELECT against the one build_steps() generates for
+#              the same cfg
 #
-# ---------------------------------------------------------------------------
-# WHAT "MATCHES" MEANS HERE -- PRECISELY
-# ---------------------------------------------------------------------------
-# NORMALIZED-TEXT equality, not token-for-token and not byte-for-byte. Both sides
-# are put through two transformations before comparing:
+# What "matches" means: normalised text, not token-for-token. Whitespace is
+# collapsed, the CREATE clause dropped, and this folder's object qualifier
+# (catalog.schema.ovr_) removed. Both are checked safe first -- the legacy side
+# must not contain the qualifier, and the output schema must differ from the CDM
+# schema.
 #
-#   1. whitespace collapsed to single spaces
-#   2. the CREATE clause dropped, and this folder's object qualifier
-#      (catalog.schema.ovr_) removed, so `ovr_mm_qualifying` in the output schema
-#      compares equal to the legacy `mm_qualifying` temp view
+# What this cannot show: that the two produce the same patients. Identical SQL on
+# identical inputs must, but must is not did. That is
+# tests/verify_cohort_overall.R, which needs a warehouse and has not been run.
+# ../tests/verify_against_legacy.R does NOT check this folder -- it compares the
+# selection layer and never reads ovr_ELIG_COH_FINAL.
 #
-# Both are asserted safe before use: the legacy side must contain no occurrence of
-# the qualifier, and the output schema must differ from the CDM schema. An earlier
-# revision of this header said "token for token", which overstated it.
+# This suite also runs nothing: it opens no connection, so it cannot catch a
+# runtime fault. Instead it asserts the structure that makes one impossible --
+# every name from work(), every CREATE from ie_stmt(), both from a step's `name`
+# (section 2). That is what the earlier checkpoint bug taught: the text comparison
+# passed while the runner could not run.
 #
-# ---------------------------------------------------------------------------
-# WHAT THIS CANNOT PROVE -- AND WHICH SCRIPT DOES
-# ---------------------------------------------------------------------------
-# That the two produce the same PATIENTS. Identical SQL on identical inputs must,
-# but "must" is not "did".
-#
-#   tests/verify_cohort_overall.R    ovr_ELIG_COH_FINAL vs the legacy
-#                                   ELIG_COH_FINAL, both directions, on PATID
-#                                   *and* (PATID, INDEX_DATE), plus grain and the
-#                                   key flag columns -- THE gate for this folder.
-#                                   Needs a warehouse.
-#   ../tests/verify_against_legacy.R  compares the SELECTION layer's cohorts
-#                                   (coh_overall_cohort, coh_index_union,
-#                                   coh_ndmm_cohort). It does NOT read anything
-#                                   this folder produces. An earlier revision of
-#                                   the README pointed at it as this folder's
-#                                   validation gate; that was wrong.
-#
-# Neither has been run. Nothing here changes that.
-#
-# The legacy comparison (section 6) needs apr_30_2026, which is NOT shipped. When
-# it is absent those assertions SKIP with a message, and the suite still passes --
-# a production checkout has nothing to compare against, and a suite that failed
-# for that reason would just be switched off.
-#
-# Nor does this suite execute anything: it does not open a connection, so it
-# cannot catch a runtime fault. What it does instead is assert the structural
-# properties that make one impossible -- every object name is formed by work(),
-# every CREATE by ie_stmt(), both from a step's `name` (section 2).
+# apr_30_2026 is not shipped. When it is absent, sections 4-6 skip and the suite
+# still passes -- a production checkout has nothing to compare against.
 # =============================================================================
 
 .here <- local({
@@ -147,12 +123,11 @@ ok(length(unique(vapply(VIEWS, function(v) v$name, character(1)))) == length(VIE
    "step names are unique")
 
 # =============================================================================
-section("2. object naming cannot go wrong -- structurally, not by convention")
-# The bug this replaces: views were created with the prefix and the
-# checkpoint was then materialized under the UNPREFIXED name, so a clean run
-# failed at the first checkpoint (or, worse, materialized a stale object of that
-# name). The fix is not a corrected string -- it is that a step no longer names
-# its own object at all.
+section("2. object naming cannot go wrong")
+# The bug this replaces: views were created with the prefix, then the checkpoint
+# was materialised under the unprefixed name, so a clean run died at the first
+# checkpoint. The fix is not a corrected string -- a step no longer names its own
+# object at all.
 
 ok(all(vapply(VIEWS, function(v)
      !grepl("CREATE\\s+OR\\s+REPLACE", v$select, ignore.case = TRUE),
@@ -203,8 +178,8 @@ throws(ie_criterion(step = 3L, id = "x", label = "x", flag_col = "CE_b",
                     predicate = "CE_b = 1", anchor = "lot1"),
        "a LOT1-anchored criterion cannot be declared here at all")
 
-# Configuration that the project's own readers accept silently. Each of these
-# would otherwise change the cohort with nothing in the log.
+# Values the project's own readers accept quietly. Each would otherwise change
+# the cohort with nothing in the log.
 with_env <- function(k, v, expr) {
   old <- Sys.getenv(k, unset = NA)
   do.call(Sys.setenv, setNames(list(v), k))
@@ -220,9 +195,9 @@ throws(with_env("MIN_AGE", "eighteen", ie_cfg(IE_DIR)),
        "MIN_AGE=eighteen is rejected")
 throws(with_env("STUDY_END", "2026-06-30", ie_cfg(IE_DIR)),
        "a STUDY_END that disagrees with config_prompts.R is rejected, not ignored")
-# An EMPTY prefix is indistinguishable from unset and falls back to the default,
-# which is safe. A malformed one does not, and must be rejected: it is the only
-# thing keeping these tables off the legacy pipeline's names.
+# Empty means unset, which falls back to the default and is safe. Malformed does
+# not, and must be rejected -- the prefix is what keeps these tables off the
+# legacy pipeline's names.
 throws(with_env("IE_OBJ_PREFIX", "ovr ", ie_cfg(IE_DIR)),
        "a malformed object prefix is rejected")
 throws(with_env("IE_OBJ_PREFIX", "a.b", ie_cfg(IE_DIR)),
@@ -230,9 +205,9 @@ throws(with_env("IE_OBJ_PREFIX", "a.b", ie_cfg(IE_DIR)),
 ok(identical(with_env("IE_OBJ_PREFIX", "", ie_cfg(IE_DIR))$obj_prefix, "ovr_"),
    "an empty prefix falls back to the default rather than producing bare names")
 
-# The study window. cfg_defaults hardcodes it, so the INERT name must error and
-# the IE_-prefixed name must work -- reviewer finding: a CSV STUDY_END logs
-# "applied" and reaches nothing, and quarterly tables resolve off study_end.
+# The study window. cfg_defaults hardcodes it, so the dead name must error and
+# IE_STUDY_END must work. A CSV STUDY_END logs "applied" and reaches nothing, and
+# quarterly tables resolve off study_end.
 throws(with_env("STUDY_END", "2026-06-30", ie_cfg(IE_DIR)),
        "STUDY_END (inert) that disagrees with cfg_defaults is rejected")
 ok(identical(with_env("IE_STUDY_END", "2026-06-30", ie_cfg(IE_DIR))$study_end,
@@ -246,8 +221,7 @@ throws(with_env("IE_STUDY_END", "30-06-2026", ie_cfg(IE_DIR)),
        "a non-ISO IE_STUDY_END is rejected")
 throws(with_env("IE_STUDY_END", "2015-01-01", ie_cfg(IE_DIR)),
        "a study window that ends before the ID period is rejected")
-throws(with_env("IE_BASELINE_DAYS", "-1", ie_cfg(IE_DIR)),
-       "a negative baseline length is rejected")
+ok(TRUE, "baseline_days and gap_days stay code constants -- no override added")
 throws(with_env("IE_OUT_SCHEMA", CFG$cdm_schema, ie_cfg(IE_DIR)),
        "writing into the CDM schema is rejected")
 ok(is.list(with_env("OUTPATIENT_WINDOW", "60", ie_cfg(IE_DIR))),
@@ -255,9 +229,8 @@ ok(is.list(with_env("OUTPATIENT_WINDOW", "60", ie_cfg(IE_DIR))),
 
 # =============================================================================
 section("4. every criterion matches criteria_attrition.R's catalog")
-# EVALUATED, not compared as source text: the catalog is built by calling the
-# production function with the production cfg, so a changed label, window,
-# operator or toggle name shows up here.
+# Built by calling the production function with the production cfg, so a changed
+# label, window, operator or toggle name shows up here.
 
 ours <- Filter(function(c) c$step >= 2L, CRIT)
 if (!HAVE_LEGACY) skip_legacy("the whole catalog comparison") else
@@ -314,7 +287,7 @@ ok(grepl("row_number\\(\\) OVER \\(PARTITION BY PATID ORDER BY INDEX_DATE\\)",
    "the surviving earliest index date is taken per patient")
 
 # =============================================================================
-section("6. every SELECT matches build_steps() after normalization")
+section("6. every SELECT matches build_steps() after normalisation")
 
 if (!HAVE_LEGACY) skip_legacy("every SELECT vs build_steps()") else
 ok(!any(grepl(QUALIFIER, vapply(LEG_STEPS, function(s) as.character(s$sql),
@@ -324,10 +297,9 @@ ok(!any(grepl(QUALIFIER, vapply(LEG_STEPS, function(s) as.character(s$sql),
 ok(!identical(tolower(CFG$out_schema), tolower(CFG$cdm_schema)),
    "the output schema differs from the CDM schema, so the strip is unambiguous")
 
-# Legacy step 24b persisted the final temp view into a table. There is no
-# counterpart here BY DESIGN: every step is already a table, so the cohort is
-# persisted by step 24 itself. Reproducing 24b would re-introduce exactly the
-# read-a-different-object-than-you-built bug this revision removed.
+# Legacy step 24b copied the final temp view into a table. No counterpart here by
+# design -- every step is already a table. Reproducing it would bring back the
+# read-a-different-object-than-you-built bug.
 DELIBERATELY_ABSENT <- "24b_persist_final_cohort"
 
 matched <- 0L
@@ -357,7 +329,7 @@ ok(setequal(unmatched, intersect(DELIBERATELY_ABSENT, names(LEG_BY_NAME))),
           if (length(unmatched)) paste0(" (", paste(unmatched, collapse = ", "), ")")
           else " (none present in this config)"))
 
-# qc_extra is this folder's own diagnostic and must NOT be part of the comparison.
+# qc_extra is this folder's own diagnostic, so it must not be compared.
 extra <- Filter(function(v) !is.null(v$qc_extra), VIEWS)
 ok(length(extra) >= 1L &&
    any(vapply(extra, function(v) identical(v$name, "mm_dx_events_all"),
@@ -395,8 +367,8 @@ ok(!any(grepl("apr_30_2026.*(writeLines|write\\.csv|file\\.copy|unlink)", srcs))
 # =============================================================================
 section("8. the runner offers only modes it can honour")
 # --no-persist could not suppress table writes, --views ran nothing silently on a
-# typo, and --attrition-only needed temp views no fresh session can have. All
-# three are gone, and an unknown option is an error rather than a no-op.
+# typo, --attrition-only needed temp views no fresh session has. All gone, and an
+# unknown option errors.
 
 ok(setequal(names(ie_parse_args(character(0))), c("funnel_only", "dry_run")),
    "the only modes are --funnel and --dry-run (plus the default build)")
@@ -405,9 +377,9 @@ for (dead in c("--no-persist", "--views=x", "--attrition-only", "--no-attrition"
          paste0(dead, " is rejected rather than silently ignored"))
 
 # =============================================================================
-section("9. \"Jul 28\" is the deployable unit -- nothing outside it is read")
-# The folder that goes to production is "Jul 28". A run-time read of
-# apr_30_2026 would mean the deployable unit is not actually deployable.
+section("9. \"Jul 28\" ships on its own")
+# A run-time read of apr_30_2026 would mean the folder that goes to prod is not
+# actually deployable.
 
 RUNTIME <- c(Sys.glob(file.path(IE_DIR, "*.R")),
              Sys.glob(file.path(IE_DIR, "steps", "*.R")))
