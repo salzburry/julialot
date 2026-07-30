@@ -155,12 +155,10 @@ phase_exclusions <- function(cfg, h, ctx) {
           FROM dx
           INNER JOIN {work('other_malig_codes')} o ON dx.dx = o.dx AND dx.icd_family = o.icd_family
         ),
-        -- Classify inpatient vs outpatient using same Approach 1+2 as MM qualifying
+        -- Use the same inpatient rule as MM qualifying.
         dx_with_setting AS (
           SELECT dm.PATID, dm.CLMID, dm.event_dt, dm.tumor_group,
-                 CASE WHEN h.POS IN ('21', '51', '61')
-                        OR h.TOS_CD IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF')
-                        OR cf.CONF_ID IS NOT NULL
+                 CASE WHEN h.line_inpatient = 1 OR cf.CONF_ID IS NOT NULL
                       THEN 1 ELSE 0 END AS inpatient_flg
           FROM dx_mapped dm
           INNER JOIN {work('med_claim_header')} h

@@ -89,8 +89,14 @@ if (length(a) == length(b)) {
   # These steps now use the line-level inpatient flag.
   CHANGED <- c("07a_med_claim_header", "08a_mm_dx_events_all",
                "22_other_malig_flag")
+  # Compare what runs, not the comments around it. A tidied -- comment inside a
+  # SQL string is not a change to the study logic.
+  strip <- function(x) {
+    l <- strsplit(as.character(x), "\n")[[1]]
+    paste(trimws(l[!grepl("^\\s*--", l)]), collapse = "\n")
+  }
   for (i in seq_along(a)) {
-    same_sql <- identical(as.character(a[[i]]$sql), as.character(b[[i]]$sql))
+    same_sql <- identical(strip(a[[i]]$sql), strip(b[[i]]$sql))
     if (a[[i]]$name %in% CHANGED) {
       ok(!same_sql, paste0(a[[i]]$name, ": differs from source, as intended"))
     } else {

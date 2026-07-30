@@ -27,15 +27,12 @@ build_cohort <- function(cohort_dir, root = cohort_dir, expect_table = NULL,
   }
 
   write_build_status(conn, cfg, "started")
-  # Any failure past this point leaves half the tables from this run and half
-  # from the last one. Record that rather than leaving it to be discovered.
-  if (!interactive()) {
-    on.exit({
-      st <- get0(".build_state", ifnotfound = "failed")
-      if (!identical(st, "complete"))
-        try(write_build_status(conn, cfg, "failed"), silent = TRUE)
-    }, add = TRUE, after = FALSE)
-  }
+  build_complete <- FALSE
+  # Mark partial runs before the connection closes.
+  on.exit({
+    if (!build_complete)
+      try(write_build_status(conn, cfg, "failed"), silent = TRUE)
+  }, add = TRUE, after = FALSE)
 
   load_csv_codelists(conn, cfg)
 
@@ -94,8 +91,8 @@ build_cohort <- function(cohort_dir, root = cohort_dir, expect_table = NULL,
   if (isTRUE(cfg$persist_to_schema)) persist_attrition_table(rows, cfg, conn)
   print_cohort_characteristics(cfg, conn, h$work_tbl)
 
-  .build_state <<- "complete"
   write_build_status(conn, cfg, "complete")
+  build_complete <- TRUE
   log_msg("=", SEP_59)
 
   invisible(list(cfg = cfg, conn = conn, mat_tables = mat_tables))
@@ -185,15 +182,27 @@ write_build_status <- function(conn, cfg, state) {
   invisible(TRUE)
 }
 
-# Normalization drops blanks and bad rows, so a file with rows can still end up
-# with no usable codes.
-NORMALIZED_CODELISTS <- c("mm_dx_codes", "mm_therapy_codes", "preg_codes",
-                          "clintrial_codes", "other_malig_codes")
+# What counts as a usable row in each list. A row count isn't enough:
+# normalization strips punctuation, so a code of "--" becomes "" and still
+# counts. The columns differ per list - dx lists carry dx, the procedure/NDC
+# lists carry code and code_type - so each one is spelled out rather than
+# guessed from the name.
+NORMALIZED_CODELISTS <- list(
+  mm_dx_codes       = "dx",
+  mm_therapy_codes  = c("code", "code_type"),
+  preg_codes        = c("code", "code_type"),
+  clintrial_codes   = c("code", "code_type"),
+  other_malig_codes = c("dx", "tumor_group")
+)
 
 check_normalized_codelist <- function(conn, cfg, view_name, mat_tables) {
-  if (!(view_name %in% NORMALIZED_CODELISTS)) return(invisible(TRUE))
+  cols <- NORMALIZED_CODELISTS[[view_name]]
+  if (is.null(cols)) return(invisible(TRUE))
+  where <- paste(sprintf("%s IS NOT NULL AND trim(%s) <> ''", cols, cols),
+                 collapse = " AND ")
   n <- DBI::dbGetQuery(conn$con, paste0(
-    "SELECT count(*) AS n FROM ", get(view_name, envir = mat_tables)))$n
+    "SELECT count(*) AS n FROM ", get(view_name, envir = mat_tables),
+    " WHERE ", where))$n
   if (is.na(n) || n == 0)
     stop("Code list '", view_name, "' has no usable codes.", call. = FALSE)
   log_msg("  code list ", view_name, ": ", format(n, big.mark = ","), " codes")
