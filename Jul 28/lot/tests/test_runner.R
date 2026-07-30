@@ -170,6 +170,106 @@ for (st in c("started", "complete", "failed"))
      paste0("build status records '", st, "'"))
 ok(grepl("LOT_BUILD_STATUS", bl, fixed = TRUE), "into its own prefixed table")
 
+cat("\n-- the code lists are recorded and checked --\n")
+# They live outside git, so the run log is the only record of which version
+# built a cohort.
+cl <- paste(readLines(file.path(ROOT, "R", "codelists_lot.R"), warn = FALSE),
+            collapse = "\n")
+cls <- readLines(file.path(ROOT, "R", "codelists_lot.R"), warn = FALSE)
+hashes <- grep("tools::md5sum(csv_path)", cls, fixed = TRUE)
+read_at <- grep("read.csv(csv_path", cls, fixed = TRUE)
+ok(length(hashes) == 2 && length(read_at) == 1 &&
+     hashes[1] < read_at[1] && hashes[2] > read_at[1],
+   "each code list is hashed before and after the read")
+ok(grepl("md5 ", cl, fixed = TRUE), "and the hash goes in the run log")
+ok(grepl("CODELIST_FILES", cl, fixed = TRUE),
+   "only the four declared file names can be loaded")
+
+# The guard has to actually behave, not just be present.
+cle <- new.env(parent = globalenv())
+assign("log_msg", function(...) invisible(NULL), envir = cle)
+assign("glue", function(..., .envir = parent.frame()) paste0(..., collapse = ""), envir = cle)
+assign("lot_config", function() list(codelist_dir = tempdir()), envir = cle)
+sys.source(file.path(ROOT, "R", "codelists_lot.R"), envir = cle)
+f <- file.path(tempdir(), "cl_mma_rollup.csv")
+writeLines(c("CL_MED_ABBR", "LEN"), f)
+ok(!inherits(tryCatch(cle$load_codelist_csv("cl_mma_rollup.csv", "CL_MED_ABBR"),
+                      error = function(e) e), "error"),
+   "a normal read succeeds")
+ok(inherits(tryCatch(cle$load_codelist_csv("not_a_codelist.csv", "X"),
+                     error = function(e) e), "error"),
+   "an undeclared file name is refused")
+# Leading zeros must survive, or an NDC silently becomes a different drug.
+writeLines(c("CL_CODE", "00093075601"), f)
+sqltxt <- cle$load_codelist_csv("cl_mma_rollup.csv", "CL_CODE")
+ok(grepl("00093075601", sqltxt, fixed = TRUE),
+   "leading zeros survive the read")
+unlink(f)
+
+cat("\n-- a bad code list stops the build, it does not warn and continue --\n")
+# All four checks used to print a warning inside a tryCatch that also
+# swallowed query errors, so a code list that changed who counts as treated
+# went through silently.
+cd <- paste(readLines(file.path(ROOT, "R", "steps", "01_codelists.R"), warn = FALSE),
+            collapse = "\n")
+ok(!grepl("WARNING: Codelist consistency QC failed", cd, fixed = TRUE),
+   "the tryCatch that swallowed QC errors is gone")
+ok(grepl("stop(msg,", cd, fixed = TRUE), "the checks stop the build")
+ok(grepl("ALLOW_CODELIST_WARNINGS", cd, fixed = TRUE),
+   "with one documented way to override after review")
+for (w in c("orphan_meds", "uncoded_meds", "unexpected_types", "multi_class"))
+  ok(grepl(paste0(w, ")"), cd, fixed = TRUE) || grepl(paste0(w, " <-"), cd, fixed = TRUE),
+     paste0(w, " is still checked"))
+# Extraction only joins NDC and HCPCS; the source also accepted ICD, which
+# matches nothing.
+ok(grepl('EXTRACTED_CODE_TYPES <- c("NDC", "HCPCS")', cd, fixed = TRUE),
+   "the accepted code types are the ones extraction actually reads")
+
+cat("\n-- ...and the stop actually fires, not just appears in the source --\n")
+# Static greps cannot tell a stop() that runs from one that never does. Drive
+# phase_codelists() with stubbed answers and see what it does.
+mk_db_q <- function(problem) function(con, sql) {
+  if (grepl("r.CL_MED_ABBR IS NULL", sql)) return(if (problem == "orphan")
+    data.frame(CL_MED_ABBR = "XYZ", n_codes = 3) else
+    data.frame(CL_MED_ABBR = character(0), n_codes = integer(0)))
+  if (grepl("c.CL_MED_ABBR IS NULL", sql)) return(if (problem == "uncoded")
+    data.frame(CL_MED_ABBR = "ABC", CL_MED_CLASS = "IMID") else
+    data.frame(CL_MED_ABBR = character(0), CL_MED_CLASS = character(0)))
+  if (grepl("GROUP BY CL_CODE_TYPE", sql))
+    return(data.frame(CL_CODE_TYPE = if (problem == "type") c("NDC", "ICD")
+                                     else c("NDC", "HCPCS"), n_codes = c(10, 10)))
+  if (grepl("HAVING count\\(DISTINCT CL_MED_CLASS\\) > 1", sql))
+    return(if (problem == "class")
+      data.frame(CL_MED_ABBR = "DUP", n_classes = 2, classes = "A, B") else
+      data.frame(CL_MED_ABBR = character(0), n_classes = integer(0),
+                 classes = character(0)))
+  if (grepl("count\\(DISTINCT CL_MED_ABBR\\) AS n FROM mma_rollup", sql)) return(data.frame(n = 28))
+  if (grepl("count\\(\\*\\) AS n FROM mma_codelist", sql)) return(data.frame(n = 500))
+  if (grepl("DISTINCT CL_MED_ABBR FROM mma_rollup", sql)) return(data.frame(CL_MED_ABBR = c("LEN", "BOR")))
+  if (grepl("DISTINCT CL_MED_CLASS FROM mma_rollup", sql)) return(data.frame(CL_MED_CLASS = c("IMID", "PI")))
+  data.frame()
+}
+ce <- new.env(parent = globalenv())
+for (nm in c("log_msg", "print")) assign(nm, function(...) invisible(NULL), envir = ce)
+assign("run_step", function(...) invisible(TRUE), envir = ce)
+assign("glue", function(..., .envir = parent.frame()) paste0(..., collapse = ""), envir = ce)
+assign("load_codelist_csv", function(...) "(SELECT 1) src", envir = ce)
+sys.source(file.path(ROOT, "R", "steps", "01_codelists.R"), envir = ce)
+Sys.unsetenv("ALLOW_CODELIST_WARNINGS")
+assign("db_q", mk_db_q("none"), envir = ce)
+ok(!inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
+   "a consistent pair of code lists runs")
+for (prob in c("orphan", "uncoded", "type", "class")) {
+  assign("db_q", mk_db_q(prob), envir = ce)
+  ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
+     paste0("'", prob, "' stops the build"))
+}
+Sys.setenv(ALLOW_CODELIST_WARNINGS = "TRUE")
+assign("db_q", mk_db_q("class"), envir = ce)
+ok(!inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
+   "and ALLOW_CODELIST_WARNINGS=TRUE lets a reviewed run through")
+Sys.unsetenv("ALLOW_CODELIST_WARNINGS")
+
 cat("\n-- the contract rejects every value that changes a LOT --\n")
 clear()
 for (k in names(CONTRACT)) {

@@ -67,73 +67,101 @@ phase_codelists <- function(con) {
     WHERE original_med IS NOT NULL AND substitute_med IS NOT NULL
   "), qc = "SELECT count(*) AS n_rows, count(DISTINCT original_med) AS n_orig_meds FROM permissible_subs")
 
-  # Codelist <-> Rollup consistency QC
+  # Code list vs rollup consistency.
+  #
+  # These were warnings inside a tryCatch, so a bad code list printed a line
+  # and the build carried on - and a QC query that itself failed was swallowed
+  # whole. Each of these silently changes who counts as treated, so they stop
+  # the build. ALLOW_CODELIST_WARNINGS=TRUE downgrades them for a run where the
+  # study team has looked and accepted what they say.
   log_msg("Checking codelist <-> rollup consistency...")
-  tryCatch({
-    # Codelist meds not in rollup (will be missing class/flag info)
-    orphan_meds <- db_q(con, "
-      SELECT c.CL_MED_ABBR, count(*) AS n_codes
-      FROM mma_codelist c
-      LEFT JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR
-      WHERE r.CL_MED_ABBR IS NULL
-      GROUP BY c.CL_MED_ABBR
-      ORDER BY n_codes DESC
-    ")
-    if (nrow(orphan_meds) > 0) {
-      log_msg("  WARNING: Codelist meds NOT in rollup (will have NULL class/flags):")
-      print(orphan_meds)
-    } else {
-      log_msg("  OK: All codelist meds found in rollup.")
-    }
+  problems <- character(0)
 
-    # Reverse check: rollup meds with ZERO codes in codelist (therapy would be
-    # completely undetectable - silent drop of an entire medication)
-    uncoded_meds <- db_q(con, "
-      SELECT r.CL_MED_ABBR, r.CL_MED_CLASS
-      FROM mma_rollup r
-      LEFT JOIN mma_codelist c ON r.CL_MED_ABBR = c.CL_MED_ABBR
-      WHERE c.CL_MED_ABBR IS NULL
-      ORDER BY r.CL_MED_CLASS, r.CL_MED_ABBR
-    ")
-    if (nrow(uncoded_meds) > 0) {
-      log_msg("  WARNING: Rollup meds with ZERO codes in codelist (will never be extracted!):")
-      print(uncoded_meds)
-    } else {
-      log_msg("  OK: All rollup meds have at least one code in codelist.")
-    }
+  # A code list med with no rollup row is extracted with no class, so the
+  # STEROID exclusion and the maintenance flags do not apply to it.
+  orphan_meds <- db_q(con, "
+    SELECT c.CL_MED_ABBR, count(*) AS n_codes
+    FROM mma_codelist c
+    LEFT JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR
+    WHERE r.CL_MED_ABBR IS NULL
+    GROUP BY c.CL_MED_ABBR
+    ORDER BY n_codes DESC
+  ")
+  if (nrow(orphan_meds) > 0) {
+    log_msg("  Codelist meds NOT in rollup (no class, no flags):")
+    print(orphan_meds)
+    problems <- c(problems, paste0(nrow(orphan_meds),
+      " codelist med(s) missing from the rollup: ",
+      paste(orphan_meds$CL_MED_ABBR, collapse = ", ")))
+  } else {
+    log_msg("  OK: All codelist meds found in rollup.")
+  }
 
-    # Validate CL_CODE_TYPE values are exactly the expected set
-    code_types <- db_q(con, "
-      SELECT CL_CODE_TYPE, count(*) AS n_codes
-      FROM mma_codelist
-      GROUP BY CL_CODE_TYPE
-      ORDER BY CL_CODE_TYPE
-    ")
-    log_msg("  Code type distribution in codelist:")
-    print(code_types)
-    unexpected_types <- setdiff(code_types$CL_CODE_TYPE, c("NDC", "HCPCS", "ICD"))
-    if (length(unexpected_types) > 0) {
-      log_msg("  WARNING: Unexpected CL_CODE_TYPE values: ", paste(unexpected_types, collapse = ", "))
-      log_msg("  These codes will NOT be matched by the extraction logic!")
-    }
+  # A rollup med with no codes can never be seen in a claim, so patients on it
+  # look untreated.
+  uncoded_meds <- db_q(con, "
+    SELECT r.CL_MED_ABBR, r.CL_MED_CLASS
+    FROM mma_rollup r
+    LEFT JOIN mma_codelist c ON r.CL_MED_ABBR = c.CL_MED_ABBR
+    WHERE c.CL_MED_ABBR IS NULL
+    ORDER BY r.CL_MED_CLASS, r.CL_MED_ABBR
+  ")
+  if (nrow(uncoded_meds) > 0) {
+    log_msg("  Rollup meds with ZERO codes (never extractable):")
+    print(uncoded_meds)
+    problems <- c(problems, paste0(nrow(uncoded_meds),
+      " rollup med(s) with no codes: ",
+      paste(uncoded_meds$CL_MED_ABBR, collapse = ", ")))
+  } else {
+    log_msg("  OK: All rollup meds have at least one code in codelist.")
+  }
 
-    # MED_ABBR mapping to >1 class (min() will hide this)
-    multi_class <- db_q(con, "
-      SELECT CL_MED_ABBR, count(DISTINCT CL_MED_CLASS) AS n_classes,
-             concat_ws(', ', collect_set(CL_MED_CLASS)) AS classes
-      FROM mma_codelist
-      GROUP BY CL_MED_ABBR
-      HAVING count(DISTINCT CL_MED_CLASS) > 1
-    ")
-    if (nrow(multi_class) > 0) {
-      log_msg("  WARNING: MED_ABBR maps to multiple classes (min() will pick one):")
-      print(multi_class)
+  # Only these two are ever joined on, in 03_mma_map. A code of any other type
+  # sits in the list and matches nothing - the medication looks unused.
+  EXTRACTED_CODE_TYPES <- c("NDC", "HCPCS")
+  code_types <- db_q(con, "
+    SELECT CL_CODE_TYPE, count(*) AS n_codes
+    FROM mma_codelist
+    GROUP BY CL_CODE_TYPE
+    ORDER BY CL_CODE_TYPE
+  ")
+  log_msg("  Code type distribution in codelist:")
+  print(code_types)
+  unexpected_types <- setdiff(code_types$CL_CODE_TYPE, EXTRACTED_CODE_TYPES)
+  if (length(unexpected_types) > 0)
+    problems <- c(problems, paste0("code type(s) nothing extracts: ",
+      paste(unexpected_types, collapse = ", "),
+      " (extraction reads ", paste(EXTRACTED_CODE_TYPES, collapse = " and "), ")"))
+
+  # Two classes for one abbreviation: min() later picks one without saying so.
+  multi_class <- db_q(con, "
+    SELECT CL_MED_ABBR, count(DISTINCT CL_MED_CLASS) AS n_classes,
+           concat_ws(', ', collect_set(CL_MED_CLASS)) AS classes
+    FROM mma_codelist
+    GROUP BY CL_MED_ABBR
+    HAVING count(DISTINCT CL_MED_CLASS) > 1
+  ")
+  if (nrow(multi_class) > 0) {
+    log_msg("  MED_ABBR mapping to more than one class:")
+    print(multi_class)
+    problems <- c(problems, paste0(nrow(multi_class),
+      " med(s) with more than one class: ",
+      paste(multi_class$CL_MED_ABBR, collapse = ", ")))
+  } else {
+    log_msg("  OK: Each MED_ABBR maps to exactly one class.")
+  }
+
+  if (length(problems)) {
+    msg <- paste0("The production code lists would change who counts as ",
+                  "treated:\n  ", paste(problems, collapse = "\n  "))
+    if (identical(toupper(Sys.getenv("ALLOW_CODELIST_WARNINGS", unset = "FALSE")),
+                  "TRUE")) {
+      log_msg("WARNING (ALLOW_CODELIST_WARNINGS=TRUE): ", msg)
     } else {
-      log_msg("  OK: Each MED_ABBR maps to exactly one class.")
+      stop(msg, "\nFix the code lists, or set ALLOW_CODELIST_WARNINGS=TRUE ",
+           "for a run where this has been reviewed.", call. = FALSE)
     }
-  }, error = function(e) {
-    log_msg("  WARNING: Codelist consistency QC failed: ", e$message)
-  })
+  }
 
   # H4 fix: Codelist minimum-coverage validation (fail-loud)
   # Ensures the loaded codelists meet minimum thresholds so the

@@ -112,6 +112,34 @@ Two rules worth knowing:
 - A predicate that evaluates to NULL **fails**. Unknown is not evidence the
   line qualifies.
 
+## The production code lists
+
+Four files, read from `CODELIST_DIR`, named in `R/codelists_lot.R`:
+
+```
+cl_mma_rollup.csv  cl_mma_codelist.csv  permissible_subs.csv  cl_sct_codelist.csv
+```
+
+They live outside git, so each is hashed before and after being read and the
+md5 goes in the run log. That is the only record of which version built a given
+set of tables - keep the log with the results. A file that changes mid-read
+stops the build rather than being recorded under the wrong hash.
+
+Four consistency checks stop the build, because each one silently changes who
+counts as treated:
+
+| check | what it would do |
+|---|---|
+| a code-list med with no rollup row | extracted with no class, so the steroid and maintenance rules miss it |
+| a rollup med with no codes | never matched, so patients on it look untreated |
+| a code type other than NDC or HCPCS | sits in the list and matches nothing |
+| one abbreviation with two classes | `min()` picks one without saying so |
+
+These were warnings inside a `tryCatch` that also swallowed query errors. If
+the study team has looked at what a check reports and accepts it,
+`ALLOW_CODELIST_WARNINGS=TRUE` downgrades all four to warnings for that run,
+and the log says so.
+
 ## Knowing a run finished
 
 LOT1's tables are replaced before LOT2-5 starts, so a failure in between would
