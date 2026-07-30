@@ -34,6 +34,8 @@ build_cohort <- function(cohort_dir, root = dirname(cohort_dir)) {
   load_csv_codelists(conn, cfg)
 
   mat_tables <- new.env()
+  ckpt_steps <- resolve_checkpoints()
+  log_msg("CHECKPOINTS: ", paste(ckpt_steps, collapse = ", "))
   load_phase_steps(file.path(root, "R", "steps"))
   steps <- Filter(Negate(is.null), build_steps(cfg, mat_tables))
 
@@ -44,7 +46,7 @@ build_cohort <- function(cohort_dir, root = dirname(cohort_dir)) {
   for (i in seq_along(steps)) {
     s <- steps[[i]]
     table_name <- sub("^\\d+[a-z]?_", "", s$name)
-    is_ckpt <- isTRUE(cfg$materialize_checkpoints) && table_name %in% CHECKPOINT_STEPS
+    is_ckpt <- isTRUE(cfg$materialize_checkpoints) && table_name %in% ckpt_steps
 
     with_retry(function() {
       run_step(s$name, s$sql, conn = conn, cfg = cfg,
@@ -108,6 +110,21 @@ pin_output_schema <- function(cfg) {
   cfg$work_schema     <- schema
   cfg$personal_schema <- schema
   cfg
+}
+
+# Which views get written to the schema. Everything else is a temp view and
+# is gone when the session ends -- you can't query it afterwards, and a stale
+# table left behind by an older run is never overwritten.
+#
+# Defaults to the three in config_prompts.R. Widen it from a cohort's
+# config.csv, pipe-separated:
+#
+#   CHECKPOINT_STEPS,mm_dx_events_all|mm_dx_events_id|mm_qualifying|ELIG_COH_ALLFLAGS
+resolve_checkpoints <- function() {
+  v <- Sys.getenv("CHECKPOINT_STEPS", unset = "")
+  if (!nzchar(v)) return(CHECKPOINT_STEPS)
+  s <- trimws(strsplit(v, "[|,]")[[1]])
+  s[nzchar(s)]
 }
 
 # Source the shared modules. Call before build_cohort().
