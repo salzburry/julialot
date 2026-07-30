@@ -1,30 +1,25 @@
 # =============================================================================
-# 02_enrollment_ce.R -- IE Steps 3 and 4: continuous enrollment
+# 02_enrollment_ce.R -- steps 3 and 4: continuous enrolment
 # -----------------------------------------------------------------------------
-#   Step 3  CE_b = 1   enrolled across the WHOLE baseline (index-183d .. index-1)
-#   Step 4  CE_f = 1   enrolled ON the index date (>=1 day of follow-up)
+#   step 3  CE_b = 1   enrolled across the whole baseline (index-183 .. index-1)
+#   step 4  CE_f = 1   enrolled on the index date (>=1 day of follow-up)
 #
-# Baseline EXCLUDES the index date; follow-up STARTS on it. So the two windows
-# abut and never overlap, and a patient enrolled from exactly index-183 through
-# exactly index passes both.
+# Baseline excludes the index date, follow-up starts on it, so the two windows
+# abut and never overlap.
 #
-# TWO SPAN BUILDS, AND WHY THERE HAVE TO BE TWO
-#   enrollment_spans         gaps of <= GAP_DAYS (30) absorbed   -> CE_b, CE_f
-#   enrollment_spans_strict  no gap absorbed at all              -> CE_3mosf
-# Both are built from RAW member_enrollment rather than the CDM's prebuilt
-# member_cont_enrollment, which has already absorbed sub-30-day gaps and
-# therefore cannot reveal a true one. Reading the prebuilt table would make the
-# strict flag a copy of the lenient one.
+# Two span builds, and both are needed:
+#   enrollment_spans         gaps up to GAP_DAYS (30) absorbed  -> CE_b, CE_f
+#   enrollment_spans_strict  no gap absorbed                    -> CE_3mosf
+# Both from raw member_enrollment, not the CDM's member_cont_enrollment -- that
+# table has already absorbed sub-30-day gaps, so it cannot reveal a real one and
+# the strict flag would just copy the lenient one.
 #
-# CE_3mosf (90-day, death-aware, no gaps) is derived in 09_assemble.R and is NOT
-# an IE gate here -- it is carried for downstream LOT work. Kept where the study
-# put it rather than promoted to a criterion, because promoting it would change
-# the cohort.
+# Coverage is max() over spans, not a sum: one span must cover the window. Two
+# spans that together cover the baseline but sit either side of a longer gap do
+# not qualify. That is why spans are built first.
 #
-# The window is a max() over spans, not a sum: enrollment must be covered by ONE
-# span. Two adjacent spans that jointly cover the baseline but are separated by a
-# gap longer than GAP_DAYS do not qualify -- which is the whole point of building
-# spans first instead of testing each raw segment.
+# CE_3mosf (90-day, strict, death-aware) is derived in 09_assemble.R and is not a
+# gate -- it is carried for the LOT build.
 # =============================================================================
 
 ie_step_enrollment_ce <- function(cfg, h) {
@@ -74,9 +69,8 @@ ie_step_enrollment_ce <- function(cfg, h) {
       qc = fmt("SELECT count(DISTINCT PATID) AS n_patients FROM {work('enrollment_spans')}")
     ),
 
-    # Identical logic with the gap allowance removed. max(elig_end) over the
-    # window rather than lag() so a short segment nested inside a long one does
-    # not read as a gap.
+    # Same logic without the gap allowance. max(elig_end) over the window rather
+    # than lag(), so a short segment nested in a long one is not read as a gap.
     ie_view(
       name = "enrollment_spans_strict",
       legacy = "13b_enrollment_spans_strict",
@@ -121,9 +115,9 @@ ie_step_enrollment_ce <- function(cfg, h) {
       qc = fmt("SELECT count(DISTINCT PATID) AS n_patients FROM {work('enrollment_spans_strict')}")
     ),
 
-    # Per candidate index date. ENDDATE_CE (last covered day of the span that
-    # contains index) is emitted here and used by 09_assemble.R and, under the
-    # sensitivity flag, by the follow-up cap.
+    # Per candidate index date. ENDDATE_CE is the last covered day of the span
+    # containing index; 09_assemble.R uses it, and so does the follow-up cap
+    # under the sensitivity flag.
     ie_view(
       name = "ce_flags",
       legacy = "14_ce_flags",
@@ -169,7 +163,7 @@ ie_step_enrollment_ce <- function(cfg, h) {
       predicate = "CE_b = 1",
       cfg_key = "apply_ce_b_incl",
       polarity = "include",
-      note = paste0("One span must cover all of index-", cfg$baseline_days,
+      note = paste0("One span covering index-", cfg$baseline_days,
                     " .. index-1; gaps up to ", cfg$gap_days, "d absorbed.")
     ),
     ie_criterion(
@@ -181,7 +175,7 @@ ie_step_enrollment_ce <- function(cfg, h) {
       predicate = "CE_f = 1",
       cfg_key = "apply_ce_f_incl",
       polarity = "include",
-      note = "Enrolled on the index date itself -- follow-up starts on index."
+      note = "Enrolled on the index date itself."
     )
   )
 

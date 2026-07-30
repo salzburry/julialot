@@ -1,409 +1,209 @@
-# cohort_overall — the Overall cohort's IE criteria, implemented on their own
+# cohort_overall — the Overall cohort's IE criteria, on their own
 
-The **Overall** cohort: MM patients who clear the index-anchored IE funnel and
-have an MM-agent claim in follow-up. This folder builds it **from the Optum
-CDM** — it does not read `ELIG_COH_ALLFLAGS`, so `01_cohort.R` does not have to
-have run first.
-
-> **Not "1L-treated."** Step 6 requires an MM-agent claim of *any* class, not a
-> LOT1 regimen, so steroid-only follow-up qualifies. This cohort is a **superset**
-> of the 1L-regimen population. The earlier label said "1L-treated", which invited
-> exactly the wrong reading of the denominator.
+MM patients who pass the index-anchored IE funnel and have an MM-agent claim in
+follow-up. Built from the Optum CDM, so it does not need `01_cohort.R` to have
+run first.
 
 ```sh
 Rscript "Jul 28/cohort_overall/build_overall.R" --funnel    # the funnel
-Rscript "Jul 28/cohort_overall/build_overall.R" --dry-run   # all 27 statements
-Rscript "Jul 28/cohort_overall/tests/test_cohort_overall.R" # 154 assertions
+Rscript "Jul 28/cohort_overall/build_overall.R" --dry-run   # the SQL
+Rscript "Jul 28/cohort_overall/tests/test_cohort_overall.R" # 154 checks
 
 DATABRICKS_PWD=... Rscript "Jul 28/cohort_overall/build_overall.R"
 ```
 
-Those are the only modes. `--views`, `--no-persist` and `--attrition-only` were
-removed: each could report success having done nothing (see `ie_runner.R`).
+Those are the only modes.
 
-> ⚠️ **Not validated against the legacy cohort.** Every statement is compared
-> against `pipeline_steps.R` and every criterion against `criteria_attrition.R` —
-> a strong *static* argument, not an empirical one. The gate is
-> **`tests/verify_cohort_overall.R`**, and it has not been run.
+> **Not "1L-treated."** Step 6 wants an MM-agent claim of any class, not a LOT1
+> regimen, so steroid-only follow-up passes. This cohort is a **superset** of the
+> 1L-regimen population.
 
-## Everything is a real table. No temporary views.
+> ⚠️ **Not yet compared to the legacy cohort.** The SQL and every criterion are
+> compared against `pipeline_steps.R` and `criteria_attrition.R`, which is a
+> statement about text. `tests/verify_cohort_overall.R` is the one that compares
+> patients, and it needs a warehouse.
 
-A Databricks SQL warehouse re-executes a view's definition on **every**
-reference, so a chain of views re-scans the claims tables once per downstream
-reader. Each of the 27 steps writes a table in your own schema instead, prefixed
-`ovr_` (`IE_OBJ_PREFIX`).
+## Output
 
-That also removed a whole class of bug rather than patching one. An earlier
-revision created prefixed *views* and then materialized the checkpoint under the
-**unprefixed** name — so a clean run died at the first checkpoint, and a dirty
-schema would have silently materialized a stale object of that name. The fix is
-structural: a step declares only its `name` and its `SELECT` body. `work()` is the
-only place an object name is formed and `ie_stmt()` the only place a `CREATE` is
-formed, both from that `name`, and a step whose `select` contains a `CREATE` is
-rejected outright. There is no second place for a name to come from.
+27 tables in your **personal schema** (`DOMINO_USER_NAME`, falling back to
+`PROJECT_WORK_SCHEMA`), all prefixed `ovr_`:
 
-There is no separate persist step either: the cohort **is**
-`ovr_ELIG_COH_FINAL`, written by step 27. The legacy `ELIG_COH_FINAL` is never
-touched.
+| table | |
+|---|---|
+| `ovr_ELIG_COH_ALLFLAGS` | one row per (PATID, candidate index date), every criterion as a column |
+| `ovr_ELIG_COH_FINAL` | **the cohort** — one row per PATID |
+| `ovr_ATTRITION_REPORT` | the attrition table |
+| the other 24 | code lists, claim events, enrolment spans, per-criterion flags |
 
-If your site creates tables through a helper — e.g. Domino's
-`personalSchemaFunctions.R` — set `IE_CREATE_TABLE_FN` to a function
-`f(con, table_name, select_sql)` already defined in the session. That helper is
-not in this repository, so its signature is not assumed anywhere; wire it up with
-a one-line adapter.
+Real tables, not views: a Databricks SQL warehouse re-runs a view's definition on
+every read, so a chain of views re-scans the claims tables once per reader.
+
+The legacy `ELIG_COH_FINAL` is never written. The prefix is what guarantees that.
 
 ## Layout
 
 ```
-ie_config.R      configuration, naming, the {expr} formatter, the follow-up cap
-ie_criteria.R    loads the steps, orders the funnel, validates it
-ie_attrition.R   the attrition table + the reconciliation that checks it
-ie_runner.R      connect / build / report — no IE logic
+ie_config.R      config, naming, {expr} formatter, follow-up cap
+ie_criteria.R    load steps, order the funnel, validate it
+ie_attrition.R   attrition table + reconciliation
+ie_runner.R      connect, build, report
 build_overall.R  entry point
-steps/           ONE FILE PER TABLE, in build order
-tests/           test_cohort_overall.R (offline) + verify_cohort_overall.R (warehouse)
+steps/           one file per table, in build order
+tests/           test_cohort_overall.R (offline), verify_cohort_overall.R (warehouse)
 ```
 
-Nothing outside `Jul 28` is read at run time. The plumbing is `../lib` (a verbatim
-copy of `apr_30_2026/R/`, byte-identity asserted while that folder is present) and
-the configuration is `../pipeline_inputs.csv`. `apr_30_2026` appears only in the
-dev-time drift test, which skips when it is absent.
+Nothing outside `Jul 28` is read at run time — plumbing is `../lib`, config is
+`../pipeline_inputs.csv`.
 
 ---
 
-## Step by step: how each IE criterion is implemented
+## The criteria, step by step
 
-### The two orderings
+Two orderings, and they differ. **Build order** is the file numbers (`00`–`09`),
+driven by dependencies. **Funnel order** is the `step` field (`1`–`10`), driven by
+the attrition table. CE is built before age because `death_dt` needs
+`mm_qualifying`; the attrition table still reports age second.
 
-| | order | driven by | where |
+| Step | Rule | File | State |
 |---|---|---|---|
-| **Build** | `00 → 09` | dependencies (what needs what) | file numbers |
-| **Funnel** | `1 → 10` | the study's attrition table | the `step` field |
+| 0 | ≥1 MM dx, any position — the starting pool, not a gate | counted off `ovr_mm_dx_events_id` | count |
+| 1 | 1 inpatient MM dx (strict) **or** 2 outpatient (broad) in window | `01_index.R` | always |
+| 2 | `AGE_INDEX_YR >= 18` | `03_demographics.R` | ON |
+| 3 | `CE_b = 1` — enrolled across the whole baseline | `02_enrollment_ce.R` | ON |
+| 4 | `CE_f = 1` — enrolled on the index date | `02_enrollment_ce.R` | ON |
+| 5 | `MM_bl_agents = 0` — no MM agent in baseline | `04_therapy.R` | ON |
+| 6 | `MM_FU_agents = 1` — ≥1 MM agent in follow-up | `04_therapy.R` | ON |
+| 7 | `MM_baseline_diag = 0` | `05_baseline_mm.R` | **off** |
+| 8 | `OTHER_MALIGN_FLAG = 0` | `06_other_malig.R` | **off** |
+| 9 | `PREGNANT_FLAG = 0` | `07_pregnancy.R` | **off** |
+| 10 | `CLINTRIAL_* = 0` | `08_clintrial.R` | **off** |
 
-They genuinely differ — continuous enrolment (Steps 3–4) is *built* before age
-(Step 2), because `death_dt` needs `mm_qualifying` and the therapy flags need
-`ce_flags`. The attrition table still reports age second.
+The four that ship off are set `FALSE` in `pipeline_inputs.csv`. Their flags are
+still computed, as columns on the flags table, so NDMM can re-apply them at the
+LOT1 anchor. For other-malignancy that is not optional: NDMM keeps five
+MM-adjacent tumour groups (MGUS, secondary bone, solitary and extramedullary
+plasmacytoma, plasma-cell leukaemia), and turning step 8 on here would drop those
+patients before NDMM can put them back. The cost, per `pipeline_inputs.csv`:
+Overall has no other-malignancy exclusion.
 
-### Step 0 — the starting pool (not a gate)
+Each step file explains its own rule. The points worth knowing up front:
 
-`>= 1 MM diagnosis, any position`, counted off `ovr_mm_dx_events_id`. It is never
-applied; it gives the attrition table a denominator. It has to come from that
-table rather than the flags table, which only contains patients who already have a
-qualifying index date — counted there, Step 0 would equal Step 1 and the largest
-drop in the study would vanish.
+**Step 1 does not pick an index date.** Every qualifying candidate is kept, built
+at the widest window (90d) whatever `OUTPATIENT_WINDOW` says. Combined with
+filter-then-rank below, a patient whose earliest candidate fails a later gate can
+still enter on a subsequent one.
 
-### Step 1 — a qualifying MM diagnosis → `steps/01_index.R`
+**Inpatient and outpatient do not cover everything.** If `POS` and `TOS_CD` are
+both NULL and there is no confinement, the condition is NULL, `NOT NULL` is still
+NULL, and both flags come out 0 — the claim is neither, so it cannot produce an
+index date. Step 1 is on, so this is live. Step 8 handles the same case
+differently: it treats non-inpatient as outpatient. Both are inherited from
+`pipeline_steps.R`, so the legacy comparison cannot show them, and neither is
+changed here — that would change the cohort. `mm_dx_events_all` carries a
+diagnostic that counts the affected claims.
 
-**1 inpatient** MM dx (STRICT `203.0x` / `C90.0x`) **or 2 outpatient** (BROAD
-`203.x` / `C90.x`) on separate days within the configured window.
+**Step 6 is not "has a LOT1 regimen."** Any MM agent, any class. Steroid-only
+follow-up passes here and is excluded by the LOT build's LOT1 definition.
 
-- **It does not pick an index date.** Every qualifying candidate is kept, built at
-  the **widest** window (90d) whatever `OUTPATIENT_WINDOW` is. The configured
-  window is applied later, as a predicate.
-- **That changes who is in the cohort.** With filter-then-rank (below), a patient
-  whose earliest candidate fails a later gate can still enter on a subsequent one.
-- **`outpt2_30 / 60 / 90` are all carried forward**, which is what lets the
-  attrition table report three windows from one pass.
+**Step 7's asymmetry.** Step 1 admits on broad codes; only strict codes in
+baseline exclude.
 
-**Inpatient and outpatient are mutually exclusive but NOT exhaustive.** Under SQL
-three-valued logic, a claim with `POS` *and* `TOS_CD` both NULL and no validated
-confinement makes the condition NULL, so `CASE WHEN NULL` and
-`CASE WHEN NOT NULL` both fall to `ELSE 0`:
+**Step 8's window is a hardcoded 30 days**, not `OUTPATIENT_WINDOW`, and the
+confirming outpatient claim may fall after index.
 
-```
-inpatient_flg  = 0
-outpatient_flg = 0     -- neither
-```
+**Step 9 is one window** over baseline and follow-up; step 10 is two columns.
 
-Such a claim can never produce an index date by either path. Step 1 is **ON**, so
-this is live. It is copied faithfully from `pipeline_steps.R` — so the legacy
-comparison can never surface it, both sides do the same thing — and it is **not
-fixed here**, because changing it would change the cohort, which is a study-team
-decision. `mm_dx_events_all` carries a `qc_extra` diagnostic counting the affected
-claims (and the STRICT subset of them) so the question has a number attached.
-Step 8 resolves the same ambiguity **differently** — see below.
+**Filter first, rank second.** `ovr_ELIG_COH_ALLFLAGS` drops nobody;
+`ovr_ELIG_COH_FINAL` applies the active criteria and then takes each patient's
+earliest surviving index date. Reversing that changes the cohort — and turning a
+gate off moves some patients to an *earlier* index date, not just in or out.
+Counts alone will not show it, which is why the verification compares
+`(PATID, INDEX_DATE)`.
 
-This is the one criterion with **no toggle**: without a qualifying diagnosis there
-is no index date for the other nine to anchor to.
+## Checks
 
-### Step 2 — age at index → `steps/03_demographics.R`
+**Every build reconciles** the cohort table against the funnel and exits non-zero
+if a check fails: one row per PATID, count equals the funnel end, membership both
+ways, no NULL keys, and `INDEX_DATE` is the earliest *surviving* candidate. That
+last one is the filter-then-rank property, checked on real rows.
 
-`AGE_INDEX_YR >= MIN_AGE` (18). The only criterion with **no flag table of its
-own**: `member_demo` supplies `YRDOB` and the assembly derives
-`year(INDEX_DATE) - YRDOB`, so the column it reads is an integer and its predicate
-is a comparison, not `= 1`.
-
-Whole years from the birth **year** — Optum has no birth date, and the label says
-so ("at index year"). Not an approximation introduced here.
-
-### Steps 3 & 4 — continuous enrolment → `steps/02_enrollment_ce.R`
-
-| | rule |
-|---|---|
-| Step 3 | `CE_b = 1` — one span covers **all** of `index-183 .. index-1` |
-| Step 4 | `CE_f = 1` — enrolled **on** the index date (≥1 day of follow-up) |
-
-Baseline *excludes* the index date, follow-up *starts* on it, so the windows abut
-and never overlap.
-
-Two span builds, and there have to be two: `enrollment_spans` absorbs gaps up to
-`GAP_DAYS` (30); `enrollment_spans_strict` absorbs none. Both from raw
-`member_enrollment`, not the CDM's `member_cont_enrollment` — that table has
-already absorbed sub-30-day gaps and cannot reveal a true one.
-
-Coverage is `max()` over spans, not a sum: **one** span must cover the window. Two
-spans that jointly cover the baseline but are separated by a gap longer than 30
-days do not qualify.
-
-`CE_3mosf` is derived in the assembly and is **not** a gate — it is carried for
-downstream LOT work.
-
-### Steps 5 & 6 — treatment-naive, then treated → `steps/04_therapy.R`
-
-| | rule |
-|---|---|
-| Step 5 | `MM_bl_agents = 0` — no MM agent in baseline (new-user design) |
-| Step 6 | `MM_FU_agents = 1` — ≥1 MM agent in follow-up |
-
-**Step 6 is not "has a LOT1 regimen"** — see the note at the top of this file. Any
-MM agent, any class; steroid-only follow-up passes; the LOT build excludes
-steroid-only starts when it defines LOT1.
-
-Four scans, the same four the LOT pipeline uses (S04), so IE and LOT agree on what
-an MM agent is: medical `PROC_CD`, medical `BILL_PROC_CD`, medical `NDC`, Rx `NDC`.
-NDCs match 11-digit zero-padded on **both** sides.
-
-Follow-up is capped at `least(study_end, death)`, plus disenrollment under
-`CENSOR_AT_DISENROLLMENT`. That cap is why the step joins `death_dt`: a post-death
-claim is a data artefact and must not qualify somebody as treated.
-
-### Step 7 — no MM diagnosis already in baseline → `steps/05_baseline_mm.R`
-
-`MM_baseline_diag = 0`: ≥1 **STRICT** MM dx in `index-183 .. index-1` excludes.
-
-Step 5 said the patient was not already *treated*; this says they were not already
-*diagnosed*. Both are needed for "newly diagnosed".
-
-Note the asymmetry: Step 1 **admits** on 2 BROAD outpatient claims, but only a
-**STRICT** claim in baseline **excludes**. Broad-code history disqualifies nobody
-— broad codes cover MM-adjacent conditions that are not a prior MM diagnosis.
-
-Reads `mm_dx_events_all`, not `mm_dx_events_id`: the point is to look *before* the
-identification period. **Ships OFF** (`APPLY_BASELINE_MM_EXCL=FALSE`).
-
-### Step 8 — no other active cancer → `steps/06_other_malig.R`
-
-`OTHER_MALIGN_FLAG = 0`. Per tumour group, in baseline: **≥1 inpatient** claim, or
-**≥2 outpatient** claims within 30 days, the first in baseline.
-
-Same 1-IP-or-2-OP shape as Step 1, with four differences that matter:
-
-1. **Per tumour group.** The pair must be the *same* group — the window partitions
-   by `(PATID, tumor_group)`.
-2. **A hardcoded 30-day window, not `OUTPATIENT_WINDOW`.** Moving the outpatient
-   window to 60 or 90 changes Step 1 and leaves Step 8 at 30.
-3. **The confirming claim may fall after index.** Only `first_dt` must be in
-   baseline, so a patient can be excluded on a claim that post-dates their index
-   date. Intended — but it means Step 8 is not purely a baseline-window criterion.
-4. **Unknown care setting is treated as OUTPATIENT here**, because this step writes
-   `inpatient_flg = CASE WHEN <ip> THEN 1 ELSE 0 END` and then treats everything
-   with `0` as outpatient. Step 1 writes the negation explicitly and gets
-   *neither*. The same claim is therefore classified differently by the two
-   criteria. Step 8 ships OFF, so it does not affect the current count; the
-   inconsistency is inherited and needs a study-team answer.
-
-Patients are excluded **by diagnosis code** (`dx.dx = o.dx` plus ICD family);
-`tumor_group` is a *label* used to partition the pair logic.
-
-**Ships OFF by design.** NDMM re-applies other-malignancy at the LOT1 anchor with
-an **MM-adjacent override** keeping five tumour groups (MGUS, secondary bone,
-solitary and extramedullary plasmacytoma, plasma-cell leukaemia). Turning it on
-here drops those patients *upstream*, before NDMM can restore them, and breaks the
-NDMM cohort. Consequence for Overall, per `pipeline_inputs.csv`: **no**
-other-malignancy exclusion.
-
-### Step 9 — no pregnancy → `steps/07_pregnancy.R`
-
-`PREGNANT_FLAG = 0`. **One window, not two:** `index-183 .. fu_cap`, spanning
-baseline *and* follow-up as a single flag; `BETWEEN` includes the index date, so
-there is no gap and no column pair to AND.
-
-Four code surfaces: ICD diagnosis, HCPCS procedure, ICD procedure, **revenue
-code** (`RVNU_CD`, facility claims only). `code_type` is matched as well as `code`,
-so a numeric revenue code cannot match a procedure code. The `rvnu_cd_check` probe
-in `00_inputs.R` exists so a missing `RVNU_CD` fails in the first seconds rather
-than deep in a full-table scan.
-
-**Ships OFF**; NDMM re-applies it over the study period.
-
-### Step 10 — no clinical trial → `steps/08_clintrial.R`
-
-`CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0`. The **only criterion with two
-columns in one predicate**, so also the only gate whose relaxation can be partial.
-Step 9 collapses its two periods into one flag and cannot be split.
-
-**Ships OFF**, and nothing downstream re-applies it — clinical trial is not in the
-NDMM IE spec (S6.2.1).
-
-### Assembly → `steps/09_assemble.R`
-
-| table | grain | |
-|---|---|---|
-| `ovr_ELIG_COH_ALLFLAGS` | `(PATID, candidate index date)` | every criterion as a column. **Nobody is dropped.** |
-| `ovr_ELIG_COH_FINAL` | one row per `PATID` | apply the active criteria, **then** take the earliest surviving index |
-
-**Filter first, rank second.** Reversing those two lines changes the cohort:
-
-- *rank-then-filter* — take the earliest candidate; drop the patient if it fails
-- *filter-then-rank* — drop the failing candidates; keep the earliest survivor
-
-So the index date a patient ends up with is a function of which gates are on.
-**Turn a gate off and some patients move to an earlier index date**, not just in or
-out. Counts alone will not show that — which is why `verify_cohort_overall.R`
-compares `(PATID, INDEX_DATE)` and not just `PATID`.
-
-Keeping every flag as a column makes a sensitivity analysis a `WHERE` clause
-instead of a rebuild, and lets the four criteria that ship OFF be computed anyway
-and re-applied downstream at a different anchor.
-
-Derived, not criteria: `AGE_INDEX_YR` (Step 2 reads it), `ENDDATE`, `ENDDATE_CE`,
-`FU_DAYS`, `FU_DAYS_CE`, `CE_3mosf`. `FU_DAYS` counts from the day *after* index
-then adds 1 back, so a patient who dies on their index date has `FU_DAYS = 0`.
-
-### The attrition table, and what checks it → `ie_attrition.R`
-
-**Cumulative**, so a gate's drop is the difference between its row and the one
-above. Counts are `count(DISTINCT PATID)`. Three window columns come from one pass
-per row; the configured one is the build, the other two are free sensitivity
-numbers. Row ids and labels match `criteria_attrition.R`.
-
-**The funnel does not validate itself.** Every row, including the terminal one, is
-computed by re-running the predicates over the *flags* table — it never reads the
-cohort table, so it cannot see a wrong object written, a wrong index date selected,
-duplicate PATIDs, or a failed write. An earlier revision claimed the terminal row
-provided that check; it did not.
-
-`ie_reconcile()` does, after every build, and the build **exits non-zero** if it
-fails:
-
-| check | catches |
-|---|---|
-| grain: one row per PATID | a broken ranking, a duplicated join |
-| count == funnel end | a partial or failed write |
-| membership, **both directions** | a wrong object read or written |
-| `INDEX_DATE` == earliest **surviving** candidate | filter-then-rank applied in the wrong order |
-| no NULL PATID / INDEX_DATE | an upstream join gone wrong |
-
-That is internal consistency. Agreement with the legacy cohort is a different
-question — next section.
-
----
-
-## Validation status, precisely
+The attrition table does **not** check itself — every row re-runs the predicates
+over the flags table and never reads the cohort table.
 
 | what | script | state |
 |---|---|---|
-| criteria + SQL match the legacy definition | `tests/test_cohort_overall.R` | **passing**, 154 assertions, offline |
-| the cohort table matches its own funnel | `ie_reconcile()` | runs on every build, fails the run |
-| **the same patients as `ELIG_COH_FINAL`** | **`tests/verify_cohort_overall.R`** | **never run** — needs a warehouse |
+| criteria + SQL match the legacy definition | `tests/test_cohort_overall.R` | passing, 154 checks, offline |
+| cohort table matches its own funnel | `ie_reconcile()` | every build |
+| **same patients as `ELIG_COH_FINAL`** | **`tests/verify_cohort_overall.R`** | **not run** — needs a warehouse |
 
-`../tests/verify_against_legacy.R` does **not** validate this folder. It compares
-the *selection* layer (`coh_overall_cohort`, `coh_index_union`, `coh_ndmm_cohort`)
-and never reads `ovr_ELIG_COH_FINAL`. An earlier revision of this README pointed at
-it as the gate here; that was wrong.
+`../tests/verify_against_legacy.R` does not cover this folder. It compares the
+selection layer and never reads `ovr_ELIG_COH_FINAL`.
 
-`verify_cohort_overall.R` compares, both directions:
+`verify_cohort_overall.R` compares both directions on PATID and on
+`(PATID, INDEX_DATE)`, plus 15 key fields over shared pairs, grain on both sides,
+and the funnel reconciliation.
 
-- the **PATID** set
-- **`(PATID, INDEX_DATE)`** — because filter-then-rank means the same patient can
-  legitimately survive on a *different* index date, and every LOT number
-  downstream is computed from that date. PATID alone would report agreement while
-  the exposure dates had moved.
-- **15 key fields** over shared `(PATID, INDEX_DATE)` pairs, null-safe
-- grain on both sides, and the funnel reconciliation
-
-### What "matches" means in the offline suite
-
-**Normalized-text** equality — not token-for-token, not byte-for-byte. Both sides
-are whitespace-collapsed, the `CREATE` clause is dropped, and this folder's object
-qualifier (`catalog.schema.ovr_`) is removed. Both transformations are asserted
-safe first: the legacy side must contain no occurrence of the qualifier, and the
-output schema must differ from the CDM schema. An earlier revision said "token for
-token", which overstated it.
-
-The offline suite also **executes nothing** — it opens no connection, so it cannot
-catch a runtime fault. What it does instead is assert the structural properties
-that make one impossible (section 2: every object name from `work()`, every
-`CREATE` from `ie_stmt()`, both from a step's `name`). That is what the checkpoint
-bug taught: a text comparison passed while the runner was unrunnable.
+The offline suite compares **normalised text** — whitespace collapsed, `CREATE`
+dropped, this folder's object qualifier removed — not tokens or bytes. It also
+runs nothing, so it cannot catch a runtime fault; instead it asserts the structure
+that makes one impossible (every name from `work()`, every `CREATE` from
+`ie_stmt()`, both from a step's `name`).
 
 ## Configuration
 
-Read from `../pipeline_inputs.csv` and the environment. **Which parameters are
-actually reachable matters**, because `cfg_defaults` hardcodes some of them:
+`../pipeline_inputs.csv` and the environment. Which parameters actually reach the
+build matters, because `cfg_defaults` hardcodes some:
 
-| | |
-|---|---|
-| **Configurable** (`cfg_defaults` reads `Sys.getenv`) | `OUTPATIENT_WINDOW`, `MIN_AGE`, the nine `APPLY_*`, `CENSOR_AT_DISENROLLMENT`, schemas, catalog, DSN, `USE_QUARTERLY_TABLES`, `CODELIST_DIR` |
-| **Hardcoded as literals** — no env var reaches them | `study_start`, `study_end`, `id_start`, `id_end`, `baseline_days`, `gap_days`, `dx_window_30/60/90` |
+- **Reachable:** `OUTPATIENT_WINDOW`, `MIN_AGE`, the nine `APPLY_*`,
+  `CENSOR_AT_DISENROLLMENT`, schemas, catalog, DSN, `USE_QUARTERLY_TABLES`,
+  `CODELIST_DIR`
+- **Hardcoded as literals:** `study_start`, `study_end`, `id_start`, `id_end`,
+  `baseline_days`, `gap_days`, `dx_window_30/60/90`
 
-`pipeline_inputs.csv`'s own `STUDY_START` row says as much: it feeds the NDMM
-dashboard's pregnancy scan, **not** the parent study window. Setting `STUDY_END`
-there logs `applied` and reaches nothing — and since quarterly source tables
-resolve off `cfg$study_end`, a new data vintage would silently keep reading the old
-tables.
+`pipeline_inputs.csv`'s `STUDY_START` row says so itself: it feeds the NDMM
+pregnancy scan, not the study window. Setting `STUDY_END` there logs "applied" and
+reaches nothing — and since quarterly source tables resolve off `study_end`, a new
+data vintage would keep reading the old tables.
 
-So this folder adds working overrides under **distinct names**, validated, and
-layered on top rather than patched into `../lib`:
+So the working names here are `IE_STUDY_START`, `IE_STUDY_END`, `IE_ID_START`,
+`IE_ID_END` (ISO dates, and the window must be in order). Setting a dead name to
+something that disagrees is an error that names the working one.
 
 | Var | |
 |---|---|
-| `IE_STUDY_START` / `IE_STUDY_END` / `IE_ID_START` / `IE_ID_END` | ISO dates; must satisfy `study_start <= id_start <= id_end <= study_end` |
-| `IE_BASELINE_DAYS` / `IE_GAP_DAYS` | integers |
-| `IE_OBJ_PREFIX` | `ovr_`; must be a plain identifier fragment |
-| `IE_OUT_SCHEMA` | defaults to `DOMINO_USER_NAME`, else `PROJECT_WORK_SCHEMA`; may not be the CDM schema |
+| `IE_OBJ_PREFIX` | `ovr_`; letters, digits, underscore |
+| `IE_OUT_SCHEMA` | defaults to `DOMINO_USER_NAME`, then `PROJECT_WORK_SCHEMA`; may not be the CDM schema |
 | `IE_FLAGS_TABLE` | `ELIG_COH_ALLFLAGS` base name; the prefix is added |
-| `IE_CREATE_TABLE_FN` | site helper `f(con, table, select_sql)` |
 | `IE_CONNECT_FN` | a connect function already in the session |
 | `IE_ROOT_DIR` | the `Jul 28` folder, if auto-detection is wrong |
 
-Setting an **inert** name (`STUDY_END`, `ID_START`, …) to something that disagrees
-with `cfg_defaults` is an **error** naming the working variable — never a silent
-no-op.
-
 ## What fails closed
 
-Each has a matching way to fail *silently*, which is why it is checked:
+Each of these has a matching way to fail *quietly*:
 
 | check | what it would otherwise do |
 |---|---|
-| `OUTPATIENT_WINDOW` is 30/60/90 | `validate_outpatient_window()` silently substitutes **90**, so an invalid value looks configured |
-| `APPLY_*` is exactly `TRUE`/`FALSE` | `as.logical("Y")` is `NA`, `isTRUE(NA)` is `FALSE` — the criterion never applies and the cohort is quietly larger |
-| `MIN_AGE` parses | an `NA` age comparison drops everyone |
-| inert date vars don't conflict | the run looks configured and uses the old window, including the old quarterly tables |
-| study window ordered | an empty or nonsensical cohort |
-| `cfg_key` is a real key | `isTRUE(NULL)` is `FALSE` — the same silent enlargement |
-| `flag_col` is produced by the assembly | a missing column errors only at run time, after the expensive scans |
-| steps 1..10 present, none duplicated | a criterion lost in a refactor |
-| every object is prefixed + schema-qualified | collision with the legacy pipeline's object of that name |
-| no step writes its own `CREATE` | the create/reference mismatch that was the checkpoint bug |
-| unknown CLI option | a typo that silently builds nothing |
+| `OUTPATIENT_WINDOW` is 30/60/90 | silently becomes 90 |
+| `APPLY_*` is `TRUE`/`FALSE` | `as.logical("Y")` is NA, read as FALSE, so a gate never applies and the cohort is larger |
+| `MIN_AGE` parses | an NA comparison drops everyone |
+| dead date vars don't conflict | the run looks configured and reads the old vintage |
+| study window in order | an empty cohort |
+| `cfg_key` is a real key | `isTRUE(NULL)` is FALSE — same silent enlargement |
+| `flag_col` exists on the flags table | errors only at run time, after the expensive scans |
+| steps 1–10, none duplicated | a criterion lost in a refactor |
+| every object prefixed and qualified | collides with the legacy pipeline's object |
+| no step writes its own `CREATE` | the create/reference mismatch that broke the earlier checkpoint |
+| unknown CLI option | a typo that builds nothing |
 | reconciliation | a cohort table that does not match its funnel |
 
-## The cost of a second copy, stated plainly
+## The second copy
 
-The criteria SQL in `steps/` is a **copy** of `pipeline_steps.R`'s. There are two
-definitions of each index-anchored criterion, and nothing *prevents* them
-diverging — an edit to one will not touch the other. That is the same failure mode
-that let NDMM's CE and prior-therapy definitions drift from Overall's.
+The SQL in `steps/` is a copy of `pipeline_steps.R`'s, so there are two
+definitions of each criterion and nothing stops them diverging. What keeps it
+honest: while `apr_30_2026` is present, the test suite renders both sides from the
+same `cfg` and requires the SQL to match, and checks every criterion against
+`build_criteria_catalog()` by calling it. In production that folder is gone, those
+checks skip, and this folder is simply the definition.
 
-What is different is that the copy is **compared mechanically on every test run**,
-while `apr_30_2026` is present: both sides are rendered from the same `cfg` and the
-SQL must match after normalization, and every criterion is checked against
-`build_criteria_catalog()` by *evaluating* it. In production `apr_30_2026` is gone,
-those checks skip, and this folder is simply the definition.
-
-- **Duplicated, drift-tested:** the criteria SQL; `../lib` (byte-identical);
-  `../pipeline_inputs.csv` (byte-identical).
-- **Not duplicated:** study parameters and IE toggles — read from
-  `../lib/config_prompts.R`'s `cfg_defaults`, one source of truth.
+Study parameters and IE toggles are **not** copied — they come from
+`../lib/config_prompts.R`'s `cfg_defaults`.

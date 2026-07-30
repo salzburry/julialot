@@ -1,34 +1,23 @@
 # =============================================================================
-# 07_pregnancy.R -- IE Step 9: no pregnancy
+# 07_pregnancy.R -- step 9: no pregnancy
 # -----------------------------------------------------------------------------
-#   Step 9  PREGNANT_FLAG = 0
+#   step 9  PREGNANT_FLAG = 0
 #
-# ONE WINDOW, NOT TWO. Unlike the clinical-trial flag next door -- which splits
-# baseline and follow-up into separate columns -- pregnancy is a SINGLE flag over
-# one continuous span:
+# One window, not two: index-183 .. fu_cap, covering baseline and follow-up as a
+# single flag. BETWEEN includes the index date, so there is no gap between the
+# halves and no column pair to AND. Step 10 splits its two periods; this does not.
+# That asymmetry is in the original.
 #
-#       index-183  ..  fu_cap        (baseline AND follow-up, no split)
+# Four code surfaces, because a pregnancy shows up in whichever one the biller
+# used: ICD diagnosis, HCPCS procedure, ICD procedure, revenue code (RVNU_CD,
+# facility claims only). code_type is matched as well as code, so a numeric
+# revenue code cannot match a procedure code that happens to be spelled the same.
 #
-# Note the boundary: `BETWEEN date_sub(index_date, 183) AND fu_cap` includes the
-# index date, so there is no gap between the two halves and no separate
-# CLINTRIAL_BASELINE/FOLLOWUP-style pair to AND together. That asymmetry with
-# Step 10 is in the original and is preserved here; it is not a simplification.
+# RVNU_CD is what 00_inputs.R's rvnu_cd_check probe protects -- without the column
+# this step would fail deep in a full-table scan instead of in the first seconds.
 #
-# FOUR CODE SURFACES, because a pregnancy shows up in whichever one the biller
-# used:
-#   ICD diagnosis   (ICD9DIAG / ICD10DIAG)
-#   HCPCS procedure (medical.PROC_CD)
-#   ICD procedure   (ICD9PROC / ICD10PROC, from med_procedure)
-#   REVENUE code    (medical.RVNU_CD -- facility claims only)
-# `code_type` is matched as well as `code`, so a numeric revenue code cannot
-# accidentally match an identically-spelled procedure code.
-#
-# The RVNU_CD surface is exactly what 00_inputs.R's rvnu_cd_check probe protects:
-# without the column this step would fail deep in a scan of the full medical
-# table instead of in the first seconds of the run.
-#
-# CONFIGURED OFF (APPLY_PREGNANCY_EXCL=FALSE). NDMM re-applies pregnancy over the
-# study period from its own scan.
+# Ships off (APPLY_PREGNANCY_EXCL=FALSE). NDMM re-applies it over the study
+# period.
 # =============================================================================
 
 ie_step_pregnancy <- function(cfg, h) {
@@ -107,8 +96,7 @@ ie_step_pregnancy <- function(cfg, h) {
       predicate = "PREGNANT_FLAG = 0",
       cfg_key = "apply_pregnancy_excl",
       polarity = "exclude",
-      note = paste("One window spanning baseline AND follow-up (unlike Step 10).",
-                   "Ships OFF: APPLY_PREGNANCY_EXCL=FALSE.")
+      note = "One window over baseline and follow-up. Ships off."
     )
   )
 

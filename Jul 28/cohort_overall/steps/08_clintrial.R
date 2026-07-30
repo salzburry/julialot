@@ -1,26 +1,20 @@
 # =============================================================================
-# 08_clintrial.R -- IE Step 10: no clinical-trial participation
+# 08_clintrial.R -- step 10: no clinical-trial participation
 # -----------------------------------------------------------------------------
-#   Step 10  CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0
+#   step 10  CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0
 #
-# THE ONLY CRITERION WITH TWO COLUMNS IN ONE PREDICATE. Baseline and follow-up
-# are separate flags, ANDed in the filter:
+# The only gate with two columns in one predicate:
+#   baseline   index-183 .. index-1  (excludes index)
+#   follow-up  index .. fu_cap       (includes index)
+# Because they are separate, this is also the only gate that can be relaxed by
+# half. Step 9 collapses its two periods into one flag and cannot be.
 #
-#     baseline    index-183 .. index-1     (excludes index)
-#     follow-up   index     .. fu_cap      (includes index)
+# Same four code surfaces as pregnancy, same code_type + code matching, different
+# code list.
 #
-# Because they are separate, this is also the only gate whose relaxation is
-# partial: dropping the follow-up half while keeping the baseline half is a
-# one-column edit. Step 9 (pregnancy) collapses its two periods into a single
-# flag and cannot be split that way.
-#
-# Same four code surfaces as pregnancy (ICD dx, HCPCS proc, ICD proc, revenue
-# code), same code_type + code matching, different code list (clintrial_codes).
-#
-# CONFIGURED OFF (APPLY_CLINTRIAL_EXCL=FALSE). Read pipeline_inputs.csv's note
-# before turning it on: clinical trial is NOT in the NDMM IE spec (S6.2.1), so
-# nothing downstream re-applies it, and the study team has to confirm it belongs
-# in cohort 1 at all.
+# Ships off (APPLY_CLINTRIAL_EXCL=FALSE). Read pipeline_inputs.csv's note before
+# turning it on: clinical trial is not in the NDMM IE spec (S6.2.1), so nothing
+# downstream re-applies it.
 # =============================================================================
 
 ie_step_clintrial <- function(cfg, h) {
@@ -103,8 +97,7 @@ ie_step_clintrial <- function(cfg, h) {
       predicate = "CLINTRIAL_BASELINE = 0 AND CLINTRIAL_FOLLOWUP = 0",
       cfg_key = "apply_clintrial_excl",
       polarity = "exclude",
-      note = paste("Two columns, one gate. Ships OFF, and nothing downstream",
-                   "re-applies it -- not in the NDMM IE spec (S6.2.1).")
+      note = "Two columns, one gate. Ships off, and nothing re-applies it."
     )
   )
 

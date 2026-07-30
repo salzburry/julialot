@@ -1,59 +1,38 @@
 # =============================================================================
-# 06_other_malig.R -- IE Step 8: no other active cancer
+# 06_other_malig.R -- step 8: no other active cancer
 # -----------------------------------------------------------------------------
-#   Step 8  OTHER_MALIGN_FLAG = 0
+#   step 8  OTHER_MALIGN_FLAG = 0
 #
-# THE RULE, per tumour group, in baseline:
-#   Path A  >=1 INPATIENT claim for that tumour group, or
-#   Path B  >=2 OUTPATIENT claims for that tumour group within 30 days of each
-#           other, the FIRST of which is in baseline.
+# Per tumour group, in baseline: >=1 inpatient claim, or >=2 outpatient claims
+# within 30 days of each other, the first of them in baseline.
 #
-# Same 1-IP-or-2-OP shape as Step 1, with three differences that all matter:
+# Same 1-IP-or-2-OP shape as step 1, with four differences that matter:
 #
-#   1. PER TUMOUR GROUP. The pair in Path B must be the SAME tumour group -- the
-#      window partitions by (PATID, tumour_group). Two outpatient claims for two
-#      different cancers do not confirm either one.
+#   1. Per tumour group. The pair must be the same group -- the window partitions
+#      by (PATID, tumor_group). Two claims for two different cancers confirm
+#      neither.
+#   2. A hardcoded 30-day window, not OUTPATIENT_WINDOW. Moving the outpatient
+#      window to 60 or 90 changes step 1 and leaves this at 30.
+#   3. The confirming claim may fall after index. Only first_dt has to be in
+#      baseline, so a patient can be excluded on a claim that post-dates their
+#      index date. Intended -- the pair confirms a cancer already present in
+#      baseline -- but it means this is not purely a baseline-window gate.
+#   4. Unknown care setting counts as OUTPATIENT here. This step writes
+#      inpatient_flg with ELSE 0 and treats everything non-inpatient as
+#      outpatient; step 1 writes the negation and gets neither. So the same claim
+#      is classified differently by the two gates. Inherited as-is -- see
+#      00_inputs.R. Step 8 ships off, so it does not affect the current count.
 #
-#   2. A FIXED 30-DAY WINDOW, hardcoded, NOT OUTPATIENT_WINDOW. Setting the
-#      outpatient window to 60 or 90 changes Step 1 and leaves Step 8 at 30.
+# Exclusion joins on the diagnosis code (dx.dx = o.dx plus ICD family).
+# tumor_group is a label on the matched rows, used to partition the pair logic:
+# excluded by code, grouped by label.
 #
-#   3. THE CONFIRMING CLAIM MAY FALL AFTER INDEX. Only `first_dt` has to be in
-#      baseline; the second claim of the pair just has to be within 30 days of
-#      it. So a patient can be excluded on the strength of a claim that post-
-#      dates their index date. That is the study's intent -- the pair confirms a
-#      cancer that was already present in baseline -- but it means Step 8 is not
-#      purely a baseline-window criterion, unlike Steps 5 and 7.
-#
-# The exclusion joins on the DIAGNOSIS CODE (dx.dx = o.dx AND matching ICD
-# family). `tumor_group` is a LABEL carried on the matched rows and used to
-# partition the pair logic -- patients are excluded by code, grouped by label.
-#
-# Inpatient/outpatient classification is the same Approach 1 + 2 as Step 1,
-# re-derived here off the same 5-column claim key. It agrees with Step 1 on what
-# an INPATIENT claim is -- and DISAGREES with it on what an outpatient one is:
-#
-#   here      inpatient_flg = CASE WHEN <ip condition> THEN 1 ELSE 0 END, and
-#             everything with inpatient_flg = 0 is then treated as outpatient.
-#   Step 1    outpatient_flg = CASE WHEN NOT <ip condition> THEN 1 ELSE 0 END.
-#
-# A claim whose care setting is unrecorded (POS and TOS_CD both NULL, no
-# confinement) makes that condition NULL. So the SAME claim is:
-#
-#   neither inpatient nor outpatient  for the MM index criterion (Step 1)
-#   outpatient                        for this criterion (Step 8)
-#
-# Inherited verbatim from pipeline_steps.R and not "fixed" here -- see the note in
-# 00_inputs.R. Step 8 ships OFF, so it does not affect the current Overall count;
-# Step 1 is ON, so its half does. The intended handling of unknown care setting
-# needs a study-team answer, and 00_inputs.R's qc_extra sizes it.
-#
-# CONFIGURED OFF (APPLY_OTHER_MALIG_EXCL=FALSE), and this one is not a
-# preference. The NDMM cohort re-applies other-malignancy at the LOT1 anchor with
-# an MM-ADJACENT OVERRIDE that keeps five tumour groups (MGUS, secondary bone,
-# solitary / extramedullary plasmacytoma, plasma-cell leukaemia). Turning it on
-# here drops those patients upstream, before NDMM can put them back, and breaks
-# the NDMM cohort. The consequence for cohort 1 is stated plainly in
-# pipeline_inputs.csv: with FALSE, Overall has NO other-malignancy exclusion.
+# Ships off (APPLY_OTHER_MALIG_EXCL=FALSE), and that is not a preference. NDMM
+# re-applies other-malignancy at the LOT1 anchor with an MM-adjacent override that
+# keeps five tumour groups (MGUS, secondary bone, solitary and extramedullary
+# plasmacytoma, plasma-cell leukaemia). Turning it on here drops those patients
+# before NDMM can put them back. Consequence for Overall, per
+# pipeline_inputs.csv: no other-malignancy exclusion at all.
 # =============================================================================
 
 ie_step_other_malig <- function(cfg, h) {
@@ -162,9 +141,7 @@ ie_step_other_malig <- function(cfg, h) {
       predicate = "OTHER_MALIGN_FLAG = 0",
       cfg_key = "apply_other_malig_excl",
       polarity = "exclude",
-      note = paste("Fixed 30d pair window, NOT OUTPATIENT_WINDOW.",
-                   "Ships OFF by design so NDMM can re-apply it at LOT1 with",
-                   "the MM-adjacent override; see the file header.")
+      note = "Fixed 30d pair window, not OUTPATIENT_WINDOW. Ships off."
     )
   )
 

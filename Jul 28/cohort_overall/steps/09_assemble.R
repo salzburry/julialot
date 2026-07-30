@@ -1,65 +1,51 @@
 # =============================================================================
-# 09_assemble.R -- join every flag, THEN apply the funnel
+# 09_assemble.R -- join every flag, then apply the funnel
 # -----------------------------------------------------------------------------
-# Two objects, and the order between them is the whole design.
+# Two tables, and the order between them is the design:
 #
-#   c1_ELIG_COH_ALLFLAGS  one row per (PATID, candidate index date), every
-#                         criterion stamped as a column. NOBODY IS DROPPED HERE.
-#   c1_ELIG_COH_FINAL     apply the active criteria, THEN take each patient's
-#                         EARLIEST SURVIVING index date. This IS the cohort --
-#                         it is a table, so there is no separate persist step.
+#   ovr_ELIG_COH_ALLFLAGS  one row per (PATID, candidate index date), every
+#                          criterion as a column. Nobody is dropped.
+#   ovr_ELIG_COH_FINAL     apply the active criteria, then take each patient's
+#                          earliest surviving index date. This is the cohort.
 #
-# FILTER FIRST, RANK SECOND. Reversing those two lines changes the cohort:
+# Filter first, rank second. Swap those and the cohort changes:
+#   rank-then-filter  take the earliest candidate, drop the patient if it fails
+#   filter-then-rank  drop the failing candidates, keep the earliest survivor
 #
-#   rank-then-filter  take the earliest candidate; drop the patient if it fails
-#   filter-then-rank  drop the candidates that fail; keep the earliest survivor
+# A patient whose earliest qualifying diagnosis predates their enrolment, or who
+# had an MM agent in the baseline of that candidate but not of a later one, is in
+# under filter-then-rank and out under rank-then-filter. So the index date depends
+# on which gates are on: turn one off and some patients move to an earlier date,
+# not just in or out. Counts alone will not show that.
 #
-# A patient whose first qualifying MM diagnosis predates their enrollment, or who
-# had an MM agent in the baseline of their earliest candidate but not of a later
-# one, is IN under filter-then-rank and OUT under rank-then-filter. So the index
-# date a patient ends up with is a function of the criteria that are switched on
-# -- turn a gate off and some patients move to an EARLIER index date, not just in
-# or out of the cohort. Any comparison of two configurations has to account for
-# that; the counts alone will not show it.
+# Keeping every flag as a column makes a sensitivity analysis a WHERE clause
+# instead of a rebuild, and lets the four gates that ship off still be computed
+# and re-applied downstream at a different anchor.
 #
-# WHY THE FLAGS ARE KEPT RATHER THAN FILTERED AWAY EARLY
-# Every criterion survives as a column, so a sensitivity analysis is a WHERE
-# clause on ALLFLAGS rather than a rebuild. That is also what lets the four
-# criteria that ship OFF be computed anyway and re-applied downstream at a
-# different anchor.
-#
-# DERIVED COLUMNS THAT ARE NOT CRITERIA (carried for the LOT build):
-#   AGE_INDEX_YR  year(INDEX_DATE) - YRDOB          <- Step 2 reads this
+# Derived here, not criteria (carried for the LOT build):
+#   AGE_INDEX_YR  year(INDEX_DATE) - YRDOB      <- step 2 reads this
 #   ENDDATE       least(study_end, death)
-#   ENDDATE_CE    least(study_end, death, disenrollment)
+#   ENDDATE_CE    least(study_end, death, disenrolment)
 #   FU_DAYS       ENDDATE    - (index+1) + 1
 #   FU_DAYS_CE    ENDDATE_CE - (index+1) + 1
-#   CE_3mosf      90-day strict, death-aware continuous enrolment
-# FU_DAYS counts from the day AFTER index, then adds 1 back -- so a patient who
-# dies on their index date has FU_DAYS = 0, not 1 and not -1.
+#   CE_3mosf      90-day strict, death-aware enrolment
+# FU_DAYS counts from the day after index then adds 1 back, so someone who dies on
+# their index date has FU_DAYS = 0.
 #
-# ---------------------------------------------------------------------------
-# THE ONE PLACE ADDING A CRITERION IS NOT A SINGLE-FILE EDIT
-# ---------------------------------------------------------------------------
-# The ALLFLAGS SELECT below is a copy of pipeline_steps.R step 23, so it names
-# its source tables and columns explicitly instead of generating them from the
-# criteria list. That is what makes the token comparison in
-# tests/test_cohort1_ie.R section 5 possible.
-#
-# The cost: a new criterion needs its column added here as well as its own step
-# file. ie_criteria.R fails closed on exactly that -- a criterion whose flag_col
-# is absent from this SQL is an error at load time, not a silently dropped gate.
+# The ALLFLAGS SELECT is a copy of pipeline_steps.R step 23, so it names its
+# source tables and columns explicitly rather than generating them from the
+# criteria list -- that is what makes the drift comparison possible. The cost: a
+# new criterion needs a column added here as well as its own step file, and
+# ie_criteria.R errors at load time if that is missed.
 # =============================================================================
 
 ie_step_assemble <- function(cfg, h, criteria) {
   work <- h$work
 
-  # Steps 2-10, in funnel order, only the ones the configuration turns on.
-  # Rendered exactly as build_criteria_sql() renders it: "AND <predicate>",
-  # joined by a newline and ten spaces.
+  # Steps 2-10 in funnel order, only the ones config turns on.
   criteria_sql <- ie_criteria_sql(criteria, cfg)
-  # Step 1 is rendered separately because the legacy Step 24 filter does, and it
-  # is read out of the criterion rather than repeated here.
+  # Step 1 goes on its own line, as the legacy step 24 filter does. Read out of
+  # the criterion rather than repeated here.
   idx <- Filter(function(c) identical(c$step, 1L), criteria)
   if (length(idx) != 1L)
     stop("expected exactly one Step 1 criterion; found ", length(idx),
@@ -180,12 +166,11 @@ ie_step_assemble <- function(cfg, h, criteria) {
     )
   )
 
-  # NO SEPARATE PERSIST STEP. The legacy pipeline needed one because its final
-  # object was a temp view; here every step is already a table, so the cohort IS
-  # persisted the moment the step above finishes. That removes the class of bug
-  # where the persist step reads a different object than the one just built --
-  # legacy step 24b is therefore not reproduced, and the test lists it as
-  # deliberately absent rather than missing.
+  # No persist step. The legacy pipeline needed one because its final object was
+  # a temp view; here the step above already wrote a table. That also removes the
+  # bug where the persist step reads a different object than the one just built,
+  # so legacy step 24b has no counterpart and the test lists it as absent by
+  # design.
 
   list(views = views, criteria = list())
 }
