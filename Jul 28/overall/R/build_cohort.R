@@ -1,8 +1,6 @@
-# Shared cohort runner. Each cohort folder supplies its own config.csv and
-# calls build_cohort(<its own folder>).
+# Cohort runner for overall/. build.R calls build_cohort(<this folder>).
 
-build_cohort <- function(cohort_dir, root = dirname(cohort_dir),
-                         expect_table = NULL) {
+build_cohort <- function(cohort_dir, root = cohort_dir, expect_table = NULL) {
   user_cfg    <- prompt_user_options(cfg_defaults)
   ie_criteria <- prompt_ie_criteria(cfg_defaults)
   cfg         <- pin_output_schema(finalize_cfg(cfg_defaults, user_cfg, ie_criteria))
@@ -175,18 +173,18 @@ is_checkpoint <- function(view_name, ckpt_steps, cfg) {
   identical(ckpt_steps, "*") || view_name %in% ckpt_steps
 }
 
-# Source the shared modules. Call before build_cohort().
+# Source this folder's modules. Call before build_cohort().
 #
 # Order matters: cfg_defaults reads Sys.getenv() at source time, so the config
-# CSVs must be applied before config_prompts.R is sourced. The cohort's own
-# config.csv is read first and wins over pipeline_inputs.csv; a real env var
-# set before either wins over both.
-load_cohort_modules <- function(root, cohort_dir = NULL) {
+# has to be applied before config_prompts.R is sourced. config.csv is read
+# first and wins; pipeline_inputs.csv (this folder, else Jul 28/) fills the
+# rest. A real env var set before either wins over both.
+load_cohort_modules <- function(root) {
   d <- file.path(root, "R")
   source(file.path(d, "load_inputs.R"))
-  if (!is.null(cohort_dir) && file.exists(file.path(cohort_dir, "config.csv")))
-    load_pipeline_inputs(cohort_dir, filename = "config.csv")
-  load_pipeline_inputs(root)
+  if (file.exists(file.path(root, "config.csv")))
+    load_pipeline_inputs(root, filename = "config.csv")
+  load_pipeline_inputs(c(root, dirname(root)))
   for (f in c("config_prompts.R", "db_utils.R", "codelists.R",
               "criteria_attrition.R", "pipeline_steps.R"))
     source(file.path(d, f))

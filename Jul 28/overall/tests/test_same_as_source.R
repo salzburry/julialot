@@ -1,8 +1,8 @@
 #!/usr/bin/env Rscript
 # =============================================================================
-# test_same_as_source.R -- is the split identical to apr_30_2026?
+# test_same_as_source.R -- is overall/R/steps identical to apr_30_2026?
 # -----------------------------------------------------------------------------
-#   Rscript "Jul 28/tests/test_same_as_source.R"
+#   Rscript "Jul 28/overall/tests/test_same_as_source.R"
 #
 # This is a refactor, so there is exactly one thing to prove: the steps this
 # folder builds are the same steps, in the same order, with the same SQL, as
@@ -19,8 +19,16 @@ here <- local({
   else dirname(normalizePath(gsub("~+~", " ", sub("^--file=", "", a[1]), fixed = TRUE)))
 })
 ROOT <- dirname(here)
-REPO <- dirname(ROOT)
-APR  <- Sys.getenv("APR30_DIR", unset = file.path(REPO, "apr_30_2026"))
+# apr_30_2026 sits at the repo root; walk up until we find it.
+APR <- Sys.getenv("APR30_DIR", unset = "")
+if (!nzchar(APR)) {
+  d <- ROOT
+  repeat {
+    if (dir.exists(file.path(d, "apr_30_2026"))) { APR <- file.path(d, "apr_30_2026"); break }
+    up <- dirname(d); if (identical(up, d)) break
+    d <- up
+  }
+}
 
 pass <- 0L; fail <- 0L
 ok <- function(cond, what) {
