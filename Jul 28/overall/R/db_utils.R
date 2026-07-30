@@ -130,7 +130,12 @@ load_csv_codelists <- function(conn, cfg) {
       }
 
       DBI::dbExecute(conn$con, sql)
-      log_msg("  >> ", tbl_name, " <- ", csv_file, " (", format(n, big.mark = ","), " rows)")
+      # The code lists live outside git, so the file name alone does not say
+      # which version a run used. Log a checksum too.
+      md5 <- tryCatch(unname(tools::md5sum(csv_path)), error = function(e) NA_character_)
+      log_msg("  >> ", tbl_name, " <- ", csv_file, " (",
+              format(n, big.mark = ","), " rows, md5 ",
+              if (is.na(md5)) "unavailable" else md5, ")")
     }, error = function(e) {
       log_msg("  ERROR: Required codelist ", csv_file, " failed: ",
               conditionMessage(e))

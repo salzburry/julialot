@@ -15,8 +15,8 @@ phase_codelists <- function(cfg, h, ctx) {
       description = "Loading MM diagnosis codes (ICD-9/ICD-10)",
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('mm_dx_codes')} AS
-        -- DISTINCT: the CSV repeats some codes, and a repeat would
-        -- duplicate every claim it matches.
+        -- DISTINCT: a repeated row in the CSV would duplicate every claim
+        -- it matches.
         SELECT DISTINCT
           CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
           upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', '')) AS dx

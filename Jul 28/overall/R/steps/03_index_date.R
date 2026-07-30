@@ -69,11 +69,10 @@ phase_index_date <- function(cfg, h, ctx) {
       description = "Combining ALL potential index dates (IP or OP within 90d max window) - keeps all, not just earliest",
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('mm_qualifying')} AS
-        -- Option B: Always build with MAX window (90 days) so all candidates are preserved.
-        -- The configured outpatient window ({cfg$outpatient_window}d) is applied later in Step 24
-        -- via the outpt_qual flag, NOT here. This ensures that if a patient's earliest
-        -- 90d-qualified date fails IE criteria, a later date can still be selected.
-        -- Flags outpt2_30, outpt2_60, outpt2_90 are carried forward for attrition reporting.
+        -- Keep every candidate at the widest window (90d); Step 24 applies the
+        -- configured {cfg$outpatient_window}d window. Filtering here would lose a
+        -- patient whose earliest date fails IE but whose later date passes.
+        -- outpt2_30/60/90 carry through for attrition reporting.
         WITH all_potential AS (
           -- Inpatient potential index dates (always qualify regardless of window)
           SELECT PATID, potential_index, 1 AS inpt_qual, 0 AS outpt2_30, 0 AS outpt2_60, 0 AS outpt2_90
