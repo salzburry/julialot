@@ -1,11 +1,10 @@
 # LOT1's own SCT summary. Needs lot1_base, so it is not part of what a
 # fresh-session LOT2-5 run rebuilds.
+#
+# It reads views phase_sct left behind rather than anything out of ctx, so ctx
+# is in the signature for consistency with the other phases and nothing more.
 
 phase_lot1_sct <- function(con, ctx) {
-  sct_src <- ctx$sct_src
-
-
-
   # S15: LOT1 SCT variables
   # Derives: LOT1_TX_AUTO_DT_1/2, TAND_FLG, SING_FLG,
   #          LOT1_TX_ENDDATE, LOT1_TX_ENDDATE_REASON, LOT1_1ST_SCT_DT
@@ -173,15 +172,4 @@ phase_lot1_sct <- function(con, ctx) {
       sum(LOT1_SCT_AUTO_SING_FLG) AS n_single_auto,
       sum(CASE WHEN LOT1_TX_ENDDATE IS NOT NULL THEN 1 ELSE 0 END) AS n_with_sct_end
     FROM lot1_sct")
-
-  # Materialize heavy upstream views before final assembly + reporting.
-  # map_stacked, lot1_base, and lot1_sct are TEMPORARY VIEWs with deep
-  # CTE chains back to CDM tables. S16 itself only references each
-  # once, so the pay-off is downstream: descriptives reads map_stacked
-  # ~17x, lot1_sct ~11x, and lot1_base several times; MAP validation
-  # QC and run-metadata counts touch them again. Materializing once
-  # here lets every downstream query hit a physical work-schema table
-  # instead of re-evaluating the CTE chain.
-  # Write to work schema tables, then repoint the views at them.
-  # (CACHE TABLE is not supported on SQL warehouses.)
 }
