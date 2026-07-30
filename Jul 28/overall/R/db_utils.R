@@ -51,11 +51,9 @@ get_quarterly_table <- function(base_table, date_str) {
 }
 
 # ---- Naming helpers (closure factory) ----
-# Returns naming functions that close over cfg and mat_tables. Callers
-# unpack them into locals so the ~114 glue interpolations in
-# pipeline_steps.R need no changes. mat_tables is an environment
-# (reference semantics) so materialize_to_personal_schema() writes are
-# visible to work_tbl().
+# Naming functions that close over cfg and mat_tables. The step files unpack
+# the ones they use. mat_tables is an environment, so what
+# materialize_to_personal_schema() writes is visible to work_tbl().
 make_naming_helpers <- function(cfg, mat_tables = new.env()) {
   full_name <- function(schema, object) {
     if (nzchar(cfg$catalog)) paste0(cfg$catalog, ".", schema, ".", object)

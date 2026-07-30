@@ -116,7 +116,25 @@ CONTRACT <- list(
   apply_baseline_mm_excl  = FALSE,
   apply_other_malig_excl  = FALSE,
   apply_pregnancy_excl    = FALSE,
-  apply_clintrial_excl    = FALSE
+  apply_clintrial_excl    = FALSE,
+  dsn                     = "RWDE",
+  tbl_member_elig         = "member_cont_enrollment",
+  tbl_member_enrollment   = "member_enrollment",
+  tbl_medical             = "medical",
+  tbl_med_diag            = "med_diagnosis",
+  tbl_med_proc            = "med_procedure",
+  tbl_rx                  = "rx",
+  tbl_dod                 = "dod",
+  tbl_confinement         = "confinement"
+)
+
+# The file behind each code list. Renaming one silently changes the cohort.
+CODELIST_FILES <- list(
+  cl_mm_dx              = "mm_dx.csv",
+  cl_mm_therapy         = "cl_mma_codelist.csv",
+  cl_pregnancy          = "pregnancy.csv",
+  cl_clintrial          = "clintrial.csv",
+  cl_other_malignancies = "other_malig.csv"
 )
 
 check_output_contract <- function(cfg, expect_table, expect_prefix = NULL) {
@@ -140,6 +158,10 @@ check_output_contract <- function(cfg, expect_table, expect_prefix = NULL) {
   if (!identical(resolve_checkpoints(), "*")) {
     stop("CHECKPOINT_STEPS must be '*' so every step is written to the schema. ",
          "It is '", paste(resolve_checkpoints(), collapse = "|"), "'.",
+         call. = FALSE)
+  }
+  if (!identical(cfg$codelist_csv_map[names(CODELIST_FILES)], CODELIST_FILES)) {
+    stop("The code-list file names are not the ones this build is defined on.",
          call. = FALSE)
   }
   if (!isTRUE(cfg$persist_to_schema)) {
@@ -235,8 +257,8 @@ check_normalized_codelist <- function(conn, cfg, view_name, mat_tables) {
 }
 
 # One schema for everything: <catalog>.<schema>, e.g. hive_metastore.osk02156.
-# config_prompts.R resolves work and personal schema separately, and an empty
-# personal schema silently skips writing the cohort.
+# work and personal schema are set together, and no schema is an error rather
+# than a silently skipped write.
 pin_output_schema <- function(cfg) {
   schema <- Sys.getenv("PROJECT_WORK_SCHEMA",
               unset = Sys.getenv("DOMINO_USER_NAME",

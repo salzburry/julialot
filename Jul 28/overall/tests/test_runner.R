@@ -29,7 +29,7 @@ CHECKPOINT_STEPS <- c("mm_dx_events_all", "mm_qualifying", "ELIG_COH_ALLFLAGS")
 assign("CHECKPOINT_STEPS", CHECKPOINT_STEPS, envir = env)
 for (f in c("step_view_name", "is_checkpoint", "check_output_contract",
             "check_settings", "resolve_checkpoints", "pin_output_schema",
-            "NORMALIZED_CODELISTS"))
+            "NORMALIZED_CODELISTS", "CODELIST_FILES"))
   assign(f, get(f, envir = env), envir = globalenv())
 
 restore <- Sys.getenv(c("CHECKPOINT_STEPS", "OBJECT_PREFIX", "PROJECT_WORK_SCHEMA",
@@ -73,7 +73,8 @@ ok(identical(resolve_checkpoints(), c("a", "b", "c")), "splits and trims a list"
 cat("\n-- check_output_contract --\n")
 Sys.setenv(CHECKPOINT_STEPS = "*")
 good <- modifyList(list(final_table_name = "OVERALL_COH_FINAL",
-                        object_prefix = "overall_", persist_to_schema = TRUE),
+                        object_prefix = "overall_", persist_to_schema = TRUE,
+                        codelist_csv_map = CODELIST_FILES),
                    get("CONTRACT", envir = env))
 runs(check_output_contract(good, "OVERALL_COH_FINAL", "overall_"), "accepts the declared contract")
 stops(check_output_contract(modifyList(good, list(final_table_name = "ELIG_COH_FINAL")),
@@ -171,7 +172,8 @@ cat("\n-- the clinical contract is pinned, not just defaulted --\n")
 CONTRACT <- get("CONTRACT", envir = env)
 Sys.setenv(CHECKPOINT_STEPS = "*")
 base <- modifyList(list(final_table_name = "OVERALL_COH_FINAL",
-                        object_prefix = "overall_", persist_to_schema = TRUE),
+                        object_prefix = "overall_", persist_to_schema = TRUE,
+                        codelist_csv_map = CODELIST_FILES),
                    CONTRACT)
 runs(check_output_contract(base, "OVERALL_COH_FINAL", "overall_"),
      "accepts the declared contract")
@@ -182,6 +184,10 @@ for (k in names(CONTRACT)) {
                               "OVERALL_COH_FINAL", "overall_"),
         paste0("rejects ", k, " = ", format(other)))
 }
+bad_files <- modifyList(base, list(codelist_csv_map =
+  modifyList(CODELIST_FILES, list(cl_mm_dx = "some_other_file.csv"))))
+stops(check_output_contract(bad_files, "OVERALL_COH_FINAL", "overall_"),
+      "rejects a renamed code-list file")
 clear()
 
 cat("\n-- the shipped config.csv, not a sample --\n")
@@ -198,7 +204,11 @@ EXPECT <- c(FINAL_TABLE_NAME = "OVERALL_COH_FINAL", OBJECT_PREFIX = "overall_",
             APPLY_CE_F_INCL = "TRUE", APPLY_NO_BL_AGENTS_INCL = "TRUE",
             APPLY_FU_AGENTS_INCL = "TRUE", APPLY_BASELINE_MM_EXCL = "FALSE",
             APPLY_OTHER_MALIG_EXCL = "FALSE", APPLY_PREGNANCY_EXCL = "FALSE",
-            APPLY_CLINTRIAL_EXCL = "FALSE")
+            APPLY_CLINTRIAL_EXCL = "FALSE",
+            DATABRICKS_CATALOG = "hive_metastore",
+            OPTUM_CDM_SCHEMA = "clnprw_optum",
+            USE_QUARTERLY_TABLES = "TRUE",
+            CENSOR_AT_DISENROLLMENT = "FALSE")
 for (k in names(EXPECT))
   ok(identical(shipped[[k]], EXPECT[[k]]),
      paste0("config.csv ", k, " = ", EXPECT[[k]],

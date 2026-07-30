@@ -142,6 +142,4 @@ phase_assembly <- function(cfg, h, ctx) {
   )
 
   # ---- Assemble phases ----
-  # Named list allows filtering by phase for interactive debugging:
-  #   build_steps(cfg, mat_tables, phases = c("codelists", "dx_events"))
 }
