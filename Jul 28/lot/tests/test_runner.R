@@ -533,4 +533,26 @@ for (k in names(EXPECT))
 ok(!any(c("INPUT_COHORT_TABLE", "OBJECT_PREFIX") %in% names(shipped)),
    "config.csv does not name a cohort")
 
+cat("\n-- the README still describes this build --\n")
+# Prose cannot be checked, but these two lists can, and both had already gone
+# stale: the README named six waivers where the code has eight, and its layout
+# had the step files in an order the build does not run them in.
+readme <- readLines(file.path(ROOT, "README.md"), warn = FALSE)
+bl <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_lot.R"), envir = bl)
+documented <- unique(unlist(regmatches(readme, gregexpr("`[a-z_0-9]+`", readme))))
+documented <- gsub("`", "", documented)
+missing_w <- setdiff(get("WAIVABLE_CHECKS", envir = bl), documented)
+ok(length(missing_w) == 0,
+   if (length(missing_w)) paste0("waiver not in the README: ",
+                                 paste(missing_w, collapse = ", "))
+   else "every waivable check is named in the README")
+steps_on_disk <- basename(list.files(file.path(ROOT, "R", "steps"), "\\.R$"))
+missing_s <- steps_on_disk[!vapply(steps_on_disk, function(f)
+  any(grepl(f, readme, fixed = TRUE)), logical(1))]
+ok(length(missing_s) == 0,
+   if (length(missing_s)) paste0("step file not in the README layout: ",
+                                 paste(missing_s, collapse = ", "))
+   else paste0("all ", length(steps_on_disk), " step files appear in the README"))
+
 report()
