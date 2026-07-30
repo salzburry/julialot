@@ -9,9 +9,13 @@ end date) and LOT2 onwards up to `LOT_LONG`, one row per patient per line.
 All of it ported line for line from the validated source.
 
 `tests/test_same_as_source.R` proves that: every phase is compared against
-`apr_30_2026/02_lot1.R`, `lot2_5_inputs.R` and `lot2_5_base.R`, and must match
-exactly apart from the one change the port is allowed to make - LOT's outputs
-carry the cohort prefix.
+`apr_30_2026/02_lot1.R`, `lot2_5_inputs.R` and `lot2_5_base.R`, and the
+executable R and SQL must match exactly apart from the one change the port is
+allowed to make - LOT's outputs carry the cohort prefix.
+
+Comments are compared out, so the copied review-diary comments could be tidied
+without weakening the check. Change a code line and it fails; change a comment
+and it does not.
 
 Three places deliberately differ from the source, all the same defect: the
 code lists filter on the raw value but store the normalized one, so a
@@ -135,10 +139,63 @@ counts as treated:
 | a code type other than NDC or HCPCS | sits in the list and matches nothing |
 | one abbreviation with two classes | `min()` picks one without saying so |
 
-These were warnings inside a `tryCatch` that also swallowed query errors. If
-the study team has looked at what a check reports and accepts it,
-`ALLOW_CODELIST_WARNINGS=TRUE` downgrades all four to warnings for that run,
-and the log says so.
+Two more stop the build because `DISTINCT` cannot see them: a code naming more
+than one medication (extraction joins on code alone, so one claim becomes two
+treatments), and an all-zero NDC (it pads to the same eleven zeros as a claim
+with no NDC). The SCT list is checked the same way - one code, one transplant
+type.
+
+### Steroids
+
+Steroids are maintained separately, so their codes are not in
+`cl_mma_codelist.csv`. Both places that build `mma_rollup` drop them too:
+
+```sql
+WHERE upper(coalesce(CL_MED_CLASS, '')) <> 'STEROID'
+```
+
+Without that the rollup lists medications whose codes are deliberately absent,
+`uncoded_meds` fires on every run, and LOT1 builds always-zero
+`LOT1_MED_<steroid>` columns that `LOT_LONG` does not carry. `build_lot2_5()`
+already filtered this way when discovering meds and classes and its comment
+claimed LOT1 did the same - now it does.
+
+Nothing about who counts as treated changes: every join into the rollup is
+keyed on a medication abbreviation that comes from the code list, and the code
+list has no steroids. So no waiver is needed for this.
+
+### Waivers
+
+Per check, not one switch, and only for something the study team has looked at:
+
+```
+CODELIST_WAIVERS=code_types
+```
+
+Names: `orphan_meds`, `uncoded_meds`, `code_types`, `multi_class`,
+`code_to_med`, `bad_ndc`. Unknown names are rejected, and whatever was waived
+is recorded in `LOT_BUILD_STATUS`.
+
+## Why the run materializes the SCT views
+
+LOT1 leaves `sct_claims_raw`, `tx_auto_dates` and `tx_allo_cart_dates` as views
+over raw medical, procedure and diagnosis. LOT2-5 reads them once per line, so
+left alone Spark re-runs those scans every time - the source puts it at roughly
+8 AUTO aggregates and 20 SCT scans across LOT2..LOT5.
+
+`prepare_lot_inputs()` exists for a fresh session: it rebuilds those views and
+then materializes them. In a combined run the rebuild is work LOT1 already did,
+so the run does only the half that matters - materialize what is already there
+and repoint the views at the tables. `sct_claims_raw` goes first, so the other
+two write from a table instead of re-running the CDM scan.
+
+Whether the views exist is asked of the catalogue (`SHOW VIEWS`), not by
+selecting from them: a `SELECT 1` on a lazy view runs the view, which is the
+cost being avoided. If the catalogue cannot answer, the run rebuilds - slower,
+but never wrong.
+
+Each materialization logs its own duration, so the first run says what this
+actually costs rather than leaving it an assumption.
 
 ## Knowing a run finished
 
@@ -147,7 +204,13 @@ leave new LOT1 output beside an older `LOT_LONG`. Every run therefore writes
 `<prefix>LOT_BUILD_STATUS`: `started` at the beginning, then `complete`, or
 `failed` if it stops anywhere. Read that before trusting a set of tables.
 
-`LOT_LONG` is also checked before the run is called complete - no duplicate
+LOT1 is checked too, before LOT2-5 starts: MAP ending before it starts, a MAP
+end that is not the later runout, LOT1 ending after observation, an AUTO
+transplant flagged both tandem and single, and an AUTO before LOT1 began. The
+QC phase reports these and carries on; these stop the build.
+
+`LOT_LONG` is checked before anything is derived from it and before the run is
+called complete - no duplicate
 `(PATID, LOT_NUM)`, no line ending before it starts, no line number outside
 `1..MAX_LOT`, and every patient's lines running `1..n` with no gaps. These are
 structural, so a breach stops the build rather than printing a warning.

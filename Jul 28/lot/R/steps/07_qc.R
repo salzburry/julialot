@@ -43,7 +43,7 @@ phase_qc <- function(con, ctx) {
     log_msg("  WARNING: NDC QC failed: ", e$message)
   })
 
-  # Validation QC Suite (Fix #10 from review)
+  # Validation QC suite.
   # Must-run validations for MAP + LOT correctness
   log_msg("Running validation QC suite...")
   tryCatch({

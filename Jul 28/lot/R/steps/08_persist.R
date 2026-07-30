@@ -34,12 +34,9 @@ phase_persist <- function(con, ctx) {
           N_MAPS BIGINT, N_LOT1_PATIENTS BIGINT
         )
       "))
-      # Schema evolution: older LOT_RUN_METADATA tables pre-date the
-      # INDUCTION_WINDOW_DAYS_LOT_N column. CREATE TABLE IF NOT EXISTS is
-      # a no-op when the table already exists. Check the column FIRST and
-      # only ALTER when it is genuinely missing -- otherwise a rerun
-      # raises FIELD_ALREADY_EXISTS which db_exec/with_retry logs as a
-      # noisy "Permanent error" stack BEFORE the catch can swallow it.
+      # An older table may pre-date INDUCTION_WINDOW_DAYS_LOT_N, and CREATE
+      # TABLE IF NOT EXISTS will not add it. Look before altering: adding a
+      # column that is already there errors.
       have_cols <- tryCatch({
         d  <- db_q(con, glue("DESCRIBE {lot_out('LOT_RUN_METADATA')}"))
         cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))

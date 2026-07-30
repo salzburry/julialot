@@ -14,7 +14,9 @@ phase_codelists <- function(con) {
     c("CL_CODE_TYPE", "CL_CODE", "SCT_TYPE"))
   run_step(con, "S00_mma_rollup", glue("
     CREATE OR REPLACE TEMPORARY VIEW mma_rollup AS
-    SELECT
+    -- DISTINCT: this is a lookup keyed on CL_MED_ABBR, so a repeated row
+    -- would fan out every join against it.
+    SELECT DISTINCT
       lower(trim(CL_MEDICATION_FULL)) AS CL_MEDICATION_FULL,
       upper(trim(CL_MED_CLASS))       AS CL_MED_CLASS,
       upper(trim(CL_MED_ABBR))        AS CL_MED_ABBR,
@@ -36,6 +38,14 @@ phase_codelists <- function(con) {
             OR  trim(cast(USED_FOR_OTHER_CANCERS AS string)) = '1'
            THEN 1 ELSE 0 END AS USED_FOR_OTHER_CANCERS
     FROM {rollup_src}
+    -- Steroids are maintained in a separate file, so their codes are not in
+    -- cl_mma_codelist.csv. Dropping them here too keeps the two files saying
+    -- the same thing: otherwise every run reports rollup medications that can
+    -- never be matched, and LOT1 builds always-zero LOT1_MED_<steroid> columns
+    -- that LOT2-5 does not carry. build_lot2_5() already filters this way when
+    -- it discovers meds and classes - this makes LOT1 agree, which its comment
+    -- there already claims.
+    WHERE upper(coalesce(CL_MED_CLASS, '')) <> 'STEROID'
   "), qc = "SELECT count(*) AS n_rows, count(DISTINCT CL_MED_ABBR) AS n_meds,
             sum(MONOMAINTENANCE) AS n_monomaint, sum(CONDITIONING) AS n_conditioning,
             sum(USED_FOR_OTHER_CANCERS) AS n_other_cancer FROM mma_rollup")
@@ -75,7 +85,8 @@ phase_codelists <- function(con) {
   # the build. ALLOW_CODELIST_WARNINGS=TRUE downgrades them for a run where the
   # study team has looked and accepted what they say.
   log_msg("Checking codelist <-> rollup consistency...")
-  problems <- character(0)
+  problems <- data.frame(check = character(0), detail = character(0),
+                         stringsAsFactors = FALSE)
 
   # A code list med with no rollup row is extracted with no class, so the
   # STEROID exclusion and the maintenance flags do not apply to it.
@@ -90,9 +101,9 @@ phase_codelists <- function(con) {
   if (nrow(orphan_meds) > 0) {
     log_msg("  Codelist meds NOT in rollup (no class, no flags):")
     print(orphan_meds)
-    problems <- c(problems, paste0(nrow(orphan_meds),
-      " codelist med(s) missing from the rollup: ",
-      paste(orphan_meds$CL_MED_ABBR, collapse = ", ")))
+    problems <- rbind(problems, data.frame(check = "orphan_meds", detail = paste0(
+      nrow(orphan_meds), " codelist med(s) missing from the rollup: ",
+      paste(orphan_meds$CL_MED_ABBR, collapse = ", ")), stringsAsFactors = FALSE))
   } else {
     log_msg("  OK: All codelist meds found in rollup.")
   }
@@ -109,9 +120,9 @@ phase_codelists <- function(con) {
   if (nrow(uncoded_meds) > 0) {
     log_msg("  Rollup meds with ZERO codes (never extractable):")
     print(uncoded_meds)
-    problems <- c(problems, paste0(nrow(uncoded_meds),
-      " rollup med(s) with no codes: ",
-      paste(uncoded_meds$CL_MED_ABBR, collapse = ", ")))
+    problems <- rbind(problems, data.frame(check = "uncoded_meds", detail = paste0(
+      nrow(uncoded_meds), " rollup med(s) with no codes: ",
+      paste(uncoded_meds$CL_MED_ABBR, collapse = ", ")), stringsAsFactors = FALSE))
   } else {
     log_msg("  OK: All rollup meds have at least one code in codelist.")
   }
@@ -129,9 +140,49 @@ phase_codelists <- function(con) {
   print(code_types)
   unexpected_types <- setdiff(code_types$CL_CODE_TYPE, EXTRACTED_CODE_TYPES)
   if (length(unexpected_types) > 0)
-    problems <- c(problems, paste0("code type(s) nothing extracts: ",
-      paste(unexpected_types, collapse = ", "),
-      " (extraction reads ", paste(EXTRACTED_CODE_TYPES, collapse = " and "), ")"))
+    problems <- rbind(problems, data.frame(check = "code_types", detail = paste0(
+      "code type(s) nothing extracts: ", paste(unexpected_types, collapse = ", "),
+      " (extraction reads ", paste(EXTRACTED_CODE_TYPES, collapse = " and "), ")"),
+      stringsAsFactors = FALSE))
+
+  # DISTINCT covers all five selected columns, but extraction joins on only
+  # (CL_CODE_TYPE, CL_CODE). Two rows sharing a code but naming different drugs
+  # both survive, and one claim then becomes two treatment events.
+  code_to_med <- db_q(con, "
+    SELECT CL_CODE_TYPE, CL_CODE, count(DISTINCT CL_MED_ABBR) AS n_meds,
+           concat_ws(', ', collect_set(CL_MED_ABBR)) AS meds
+    FROM mma_codelist
+    GROUP BY CL_CODE_TYPE, CL_CODE
+    HAVING count(DISTINCT CL_MED_ABBR) > 1
+  ")
+  if (nrow(code_to_med) > 0) {
+    log_msg("  One code naming more than one medication:")
+    print(code_to_med)
+    problems <- rbind(problems, data.frame(check = "code_to_med", detail = paste0(
+      nrow(code_to_med), " code(s) mapped to several meds: ",
+      paste(utils::head(code_to_med$CL_CODE, 5), collapse = ", ")),
+      stringsAsFactors = FALSE))
+  } else {
+    log_msg("  OK: Each code names exactly one medication.")
+  }
+
+  # An NDC of '0' passes the digit guard on the join and still pads to eleven
+  # zeros, which is what a claim with no NDC looks like.
+  bad_ndc <- db_q(con, "
+    SELECT CL_CODE, CL_MED_ABBR
+    FROM mma_codelist
+    WHERE CL_CODE_TYPE = 'NDC'
+      AND cast(regexp_replace(CL_CODE, '[^0-9]', '') AS bigint) = 0
+  ")
+  if (nrow(bad_ndc) > 0) {
+    log_msg("  NDC rows that are all zeros:")
+    print(bad_ndc)
+    problems <- rbind(problems, data.frame(check = "bad_ndc", detail = paste0(
+      nrow(bad_ndc), " all-zero NDC row(s): ",
+      paste(bad_ndc$CL_MED_ABBR, collapse = ", ")), stringsAsFactors = FALSE))
+  } else {
+    log_msg("  OK: No all-zero NDC rows.")
+  }
 
   # Two classes for one abbreviation: min() later picks one without saying so.
   multi_class <- db_q(con, "
@@ -144,31 +195,32 @@ phase_codelists <- function(con) {
   if (nrow(multi_class) > 0) {
     log_msg("  MED_ABBR mapping to more than one class:")
     print(multi_class)
-    problems <- c(problems, paste0(nrow(multi_class),
-      " med(s) with more than one class: ",
-      paste(multi_class$CL_MED_ABBR, collapse = ", ")))
+    problems <- rbind(problems, data.frame(check = "multi_class", detail = paste0(
+      nrow(multi_class), " med(s) with more than one class: ",
+      paste(multi_class$CL_MED_ABBR, collapse = ", ")), stringsAsFactors = FALSE))
   } else {
     log_msg("  OK: Each MED_ABBR maps to exactly one class.")
   }
 
-  if (length(problems)) {
-    msg <- paste0("The production code lists would change who counts as ",
-                  "treated:\n  ", paste(problems, collapse = "\n  "))
-    if (identical(toupper(Sys.getenv("ALLOW_CODELIST_WARNINGS", unset = "FALSE")),
-                  "TRUE")) {
-      log_msg("WARNING (ALLOW_CODELIST_WARNINGS=TRUE): ", msg)
-    } else {
-      stop(msg, "\nFix the code lists, or set ALLOW_CODELIST_WARNINGS=TRUE ",
-           "for a run where this has been reviewed.", call. = FALSE)
-    }
+  if (nrow(problems)) {
+    waived <- problems[problems$check %in% codelist_waivers(), , drop = FALSE]
+    fatal  <- problems[!problems$check %in% codelist_waivers(), , drop = FALSE]
+    if (nrow(waived))
+      for (i in seq_len(nrow(waived)))
+        log_msg("WAIVED (", waived$check[i], "): ", waived$detail[i])
+    if (nrow(fatal))
+      stop("The production code lists would change who counts as treated:\n  ",
+           paste0(fatal$check, ": ", fatal$detail, collapse = "\n  "),
+           "\nFix the code lists, or name the checks to waive in ",
+           "CODELIST_WAIVERS once the study team has reviewed them, e.g. ",
+           "CODELIST_WAIVERS=uncoded_meds", call. = FALSE)
   }
 
-  # H4 fix: Codelist minimum-coverage validation (fail-loud)
-  # Ensures the loaded codelists meet minimum thresholds so the
-  # pipeline never silently runs on incomplete fallback data.
-  min_rollup_meds <- 20L    # the rollup has 28 unique MED_ABBR; 20 is conservative floor
+  # Minimum code list coverage.
+  # A short list means something failed to load, not that the study is small.
+  min_rollup_meds <- 20L    # the rollup carries 28
 
-  min_codelist_codes <- 50L # the codelist has hundreds of codes; 50 is conservative floor
+  min_codelist_codes <- 50L # the code list carries hundreds
   n_rollup <- db_q(con, "SELECT count(DISTINCT CL_MED_ABBR) AS n FROM mma_rollup")$n
   n_codelist <- db_q(con, "SELECT count(*) AS n FROM mma_codelist")$n
   if (n_rollup < min_rollup_meds) {

@@ -36,6 +36,16 @@ CONTRACT <- list(
   tbl_rx                      = "rx"
 )
 
+# Code-list checks a run may waive by name. A single switch for all of them
+# meant waiving one expected condition also waived the dangerous ones.
+WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types", "multi_class",
+                     "code_to_med", "bad_ndc")
+
+codelist_waivers <- function() {
+  v <- trimws(strsplit(Sys.getenv("CODELIST_WAIVERS", unset = ""), "[,|]")[[1]])
+  v[nzchar(v)]
+}
+
 # The columns LOT reads off whatever cohort table it is pointed at. Checked
 # against the real table before any work starts, so a cohort that cannot drive
 # LOT says so immediately instead of failing somewhere in the middle.
@@ -71,6 +81,11 @@ check_settings <- function() {
   e <- Sys.getenv("STUDY_END", unset = "")
   if (nzchar(e) && !grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", e))
     bad <- c(bad, paste0("STUDY_END='", e, "' (want YYYY-MM-DD)"))
+  w <- setdiff(codelist_waivers(), WAIVABLE_CHECKS)
+  if (length(w))
+    bad <- c(bad, paste0("CODELIST_WAIVERS names no such check: ",
+                         paste(w, collapse = ", "), " (choose from ",
+                         paste(WAIVABLE_CHECKS, collapse = ", "), ")"))
   a <- Sys.getenv("ALLO_LOT_SPAN", unset = "")
   if (nzchar(a) && !a %in% c("single_day", "extend_to_next"))
     bad <- c(bad, paste0("ALLO_LOT_SPAN='", a,
@@ -239,6 +254,7 @@ build_lot <- function(here, cohort_table, prefix) {
   phase_sct(con, ctx)
   phase_lot1_end(con, ctx)
   phase_qc(con, ctx)
+  check_lot1_invariants(con, cfg)
   phase_persist(con, ctx)
 
   # prepare_lot_inputs() exists to rebuild the session views when LOT2-5 runs
@@ -251,6 +267,7 @@ build_lot <- function(here, cohort_table, prefix) {
                        sct_src = ctx$sct_src)
   } else {
     log_msg("Session views from LOT1 are still here; not rebuilding them.")
+    materialize_sct_views(con)
   }
   build_lot2_5(con,
                induction_window_days   = cfg$lot_n_induction_window_days,
@@ -259,10 +276,15 @@ build_lot <- function(here, cohort_table, prefix) {
                allo_lot_span           = cfg$allo_lot_span,
                max_lot                 = cfg$max_lot)
 
-  phase_line_criteria(con, cfg)
+  # Validate before deriving: publishing the criteria tables first would leave
+  # them behind, built from a LOT_LONG that then failed its checks.
   check_lot_long(con, cfg)
-  options(lot_complete = TRUE)
+  phase_line_criteria(con, cfg)
+  check_run_recorded(con, cfg)
   write_build_status(con, cfg, "complete")
+  # Only after the write succeeded. Setting it first meant a failed write left
+  # the run marked "started" with on.exit believing it had finished.
+  options(lot_complete = TRUE)
 
   log_msg(SEP)
   log_msg("LOT complete for ", cfg$input_cohort_table, " -> ", cfg$object_prefix, "*")
@@ -276,10 +298,46 @@ LOT2_5_INPUT_VIEWS <- c("lot_patient_input", "mma_rollup", "permissible_subs",
                         "tx_allo_cart_dates", "map_stacked", "lot1_sct",
                         "lot1_base_end")
 
+# Ask the catalogue, not the data. "SELECT 1 FROM v LIMIT 1" on a lazy view
+# runs the view - and three of these are raw CDM scans, so the existence check
+# itself would have cost real time.
 lot_inputs_present <- function(con) {
-  all(vapply(LOT2_5_INPUT_VIEWS, function(v)
-    !inherits(tryCatch(db_q(con, glue("SELECT 1 FROM {v} LIMIT 1")),
-                       error = function(e) e), "error"), logical(1)))
+  have <- tryCatch(tolower(db_q(con, "SHOW VIEWS")$viewName),
+                   error = function(e) NULL)
+  # If the catalogue cannot answer, say no: rebuilding is slow but correct.
+  if (is.null(have)) return(FALSE)
+  all(tolower(LOT2_5_INPUT_VIEWS) %in% have)
+}
+
+# LOT1 leaves these three as views over raw medical, procedure and diagnosis.
+# LOT2-5 reads them once per line, so Spark re-runs those scans every time -
+# the source measures roughly 8 AUTO aggregates and 20 SCT scans across
+# LOT2..LOT5. prepare_lot_inputs() materializes them, but it rebuilds the
+# views first, which in one session is work LOT1 already did. This is the half
+# that is worth doing: materialize what exists, and repoint the views at it.
+#
+# sct_claims_raw goes first and is repointed before the other two, so their
+# writes read a table rather than re-running the CDM scan.
+SCT_MATERIALIZE <- list(
+  list(view = "sct_claims_raw",     name = "SCT_CLAIMS_RAW"),
+  list(view = "tx_auto_dates",      name = "TX_AUTO_DATES"),
+  list(view = "tx_allo_cart_dates", name = "TX_ALLO_CART_DATES")
+)
+
+materialize_sct_views <- function(con) {
+  for (mv in SCT_MATERIALIZE) {
+    t0 <- Sys.time()
+    run_step(con, paste0("L20_materialize_", tolower(mv$name)),
+             glue("CREATE OR REPLACE TABLE {lot_out(mv$name)} AS SELECT * FROM {mv$view}"),
+             qc = glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients
+                        FROM {lot_out(mv$name)}"))
+    db_exec(con, glue(
+      "CREATE OR REPLACE TEMPORARY VIEW {mv$view} AS SELECT * FROM {lot_out(mv$name)}"))
+    log_msg("  ", mv$name, " materialized in ",
+            round(as.numeric(difftime(Sys.time(), t0, units = "secs")), 1), " s")
+  }
+  log_msg("SCT views materialized; LOT2-5 reads tables, not CDM scans.")
+  invisible(TRUE)
 }
 
 # One row per run saying whether its outputs belong together. Without it a
@@ -289,12 +347,71 @@ write_build_status <- function(con, cfg, state) {
   db_exec(con, glue("
     CREATE TABLE IF NOT EXISTS {tbl} (
       RUN_ID STRING, INPUT_COHORT_TABLE STRING, OBJECT_PREFIX STRING,
-      STATE STRING, UPDATED_AT TIMESTAMP)"))
+      STATE STRING, CODELIST_WAIVERS STRING, UPDATED_AT TIMESTAMP)"))
   db_exec(con, glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"))
+  waivers <- paste(codelist_waivers(), collapse = "|")
   db_exec(con, glue("
     INSERT INTO {tbl} VALUES ('{run_id}', '{cfg$input_cohort_table}',
-      '{cfg$object_prefix}', '{state}', current_timestamp())"))
+      '{cfg$object_prefix}', '{state}', '{waivers}', current_timestamp())"))
   log_msg("Build status: ", state, " (run ", run_id, ")")
+  invisible(TRUE)
+}
+
+# The QC phase reports these and carries on - it prints "** BUG **" and the run
+# still finishes. They are not judgement calls: each one is impossible unless
+# something upstream is wrong, so re-run them here where a breach stops the
+# build. The distributions and coverage tables in phase_qc stay informational.
+LOT1_INVARIANTS <- list(
+  list(name = "MAP ends before it starts",
+       sql = "SELECT count(*) AS n FROM map_stacked WHERE MAP_END_DT < MAP_START_DT"),
+  list(name = "MAP end is not the later runout",
+       sql = "SELECT count(*) AS n FROM map_stacked
+              WHERE MAP_END_DT <> greatest(
+                coalesce(MAP_RX_RUNOUT_DT, cast('1900-01-01' as date)),
+                coalesce(MAP_MED_RUNOUT_DT, cast('1900-01-01' as date)))
+                AND MAP_END_DT IS NOT NULL"),
+  list(name = "LOT1 ends after observation",
+       sql = "SELECT count(*) AS n FROM lot1_base_end lb
+              INNER JOIN lot_patient_input p ON lb.PATID = p.PATID
+              WHERE lb.LOT1_BASE_END_DT > p.OBS_END_DT"),
+  list(name = "AUTO transplant both tandem and single",
+       sql = "SELECT count(*) AS n FROM lot1_sct
+              WHERE LOT1_SCT_AUTO_TAND_FLG = 1 AND LOT1_SCT_AUTO_SING_FLG = 1"),
+  list(name = "AUTO transplant before LOT1 started",
+       sql = "SELECT count(*) AS n FROM lot1_sct sct
+              INNER JOIN lot1_base lb ON sct.PATID = lb.PATID
+              WHERE sct.LOT1_TX_AUTO_DT_1 IS NOT NULL
+                AND sct.LOT1_TX_AUTO_DT_1 < lb.LOT1_START_DT")
+)
+
+check_lot1_invariants <- function(con, cfg) {
+  bad <- character(0)
+  for (iv in LOT1_INVARIANTS) {
+    # No tryCatch: a check that cannot run is not a check that passed.
+    n <- db_q(con, iv$sql)$n
+    if (is.na(n) || n > 0) bad <- c(bad, paste0(iv$name, ": ", n))
+  }
+  if (length(bad))
+    stop("LOT1 is internally inconsistent:\n  ", paste(bad, collapse = "\n  "),
+         call. = FALSE)
+  log_msg("LOT1 invariants OK (", length(LOT1_INVARIANTS), " checked)")
+  invisible(TRUE)
+}
+
+# 08_persist.R writes the metadata and QC summary inside a tryCatch, so a
+# failure there only logs a warning. Rather than edit the ported file, check
+# the row actually arrived - a run with no record of how it was configured is
+# not a run anyone can validate later.
+check_run_recorded <- function(con, cfg) {
+  for (t in c("LOT_RUN_METADATA", "LOT_QC_SUMMARY")) {
+    n <- tryCatch(db_q(con, glue(
+           "SELECT count(*) AS n FROM {lot_out(t)} WHERE RUN_ID = '{run_id}'"))$n,
+         error = function(e) 0L)
+    if (is.na(n) || n < 1)
+      stop("This run left no row in ", lot_out(t), ". The outputs exist but ",
+           "nothing records how they were built.", call. = FALSE)
+  }
+  log_msg("Run recorded in LOT_RUN_METADATA and LOT_QC_SUMMARY")
   invisible(TRUE)
 }
 
@@ -334,10 +451,15 @@ phase_line_criteria <- function(con, cfg) {
            line_criteria_flags_sql(cfg, "lot_long", "lot_long_allflags"))
   run_step(con, "L41_lot_long_final",
            line_criteria_final_sql(cfg, "lot_long_allflags", "lot_long_final"))
+  # With no criteria declared both are copies of LOT_LONG, so write them as
+  # views: downstream always resolves them, without two full table writes for
+  # no difference. A declared criterion makes them real tables.
+  as_table <- length(LINE_CRITERIA) > 0
   for (v in list(list(view = "lot_long_allflags", name = "LOT_LONG_ALLFLAGS"),
                  list(view = "lot_long_final",    name = "LOT_LONG_FINAL"))) {
+    kind <- if (as_table) "TABLE" else "VIEW"
     run_step(con, paste0("L42_persist_", tolower(v$name)),
-             glue("CREATE OR REPLACE TABLE {lot_out(v$name)} AS SELECT * FROM {v$view}"),
+             glue("CREATE OR REPLACE {kind} {lot_out(v$name)} AS SELECT * FROM {v$view}"),
              qc = glue("SELECT count(*) AS n_rows FROM {lot_out(v$name)}"))
   }
   invisible(TRUE)

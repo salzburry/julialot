@@ -61,23 +61,100 @@ body_of <- function(lines) {
   keep
 }
 
+# What the approved deviations may do, stated as a property rather than a list
+# of expected lines - a list goes stale and hides the next real change.
+#
+#   1. the code-list consistency block in 01_codelists.R was rewritten to fail
+#      closed. It is spliced back to the source text before comparing.
+#   2. two SELECT became SELECT DISTINCT.
+#   3. guards and their comments were ADDED.
+#
+# So: after undoing (1) and (2), every remaining source line must still be
+# present, in order. Anything removed or edited fails - which is what
+# "differs, and the guards are there" could not catch.
+CONSISTENCY_FROM <- "  # Code list vs rollup consistency."
+CONSISTENCY_TO   <- "  # Minimum code list coverage."
+SRC_FROM         <- "  # Codelist <-> Rollup consistency QC"
+
+undeviate <- function(lines) {
+  a <- which(lines == CONSISTENCY_FROM); b <- which(lines == CONSISTENCY_TO)
+  if (length(a) == 1 && length(b) == 1 && b > a) {
+    sa <- which(src == SRC_FROM); sb <- which(src == "  # H4 fix: Codelist minimum-coverage validation (fail-loud)")
+    lines <- c(lines[seq_len(a - 1)], src[sa:(sb - 1)], lines[b:length(lines)])
+  }
+  sub("^(\\s*)SELECT DISTINCT$", "\\1SELECT", lines)
+}
+
+# Comments do not execute, so they are compared out. That is what lets the
+# copied review-diary comments be tidied without weakening this test: the
+# executable R and SQL still has to match exactly. Whole-line comments only -
+# stripping trailing ones would mangle a "#" inside a SQL string.
+code_only <- function(lines) {
+  # A trailing "--" or "#" is a comment only when it is outside quotes; an odd
+  # number of quotes before it means the marker sits inside a string literal.
+  # If that guess were ever wrong the comparison below would fail, loudly.
+  drop_trailing <- function(l) {
+    at <- sort(c(gregexpr("--", l, fixed = TRUE)[[1]],
+                 gregexpr("#", l, fixed = TRUE)[[1]]))
+    at <- at[at > 0]
+    for (i in at) {
+      head <- substr(l, 1, i - 1)
+      if (nchar(gsub("[^\\'\"]", "", head)) %% 2 == 0) return(substr(l, 1, i - 1))
+    }
+    l
+  }
+  keep <- !grepl("^\\s*(#|--)", lines) & nzchar(trimws(lines))
+  trimws(vapply(lines[keep], drop_trailing, character(1), USE.NAMES = FALSE))
+}
+
+# Every element of `want` appears in `got`, in order. Returns the first source
+# line that does not, or NA.
+first_missing <- function(got, want) {
+  i <- 1L
+  for (k in seq_along(want)) {
+    hit <- FALSE
+    while (i <= length(got)) {
+      if (identical(got[i], want[k])) { i <- i + 1L; hit <- TRUE; break }
+      i <- i + 1L
+    }
+    if (!hit) return(k)
+  }
+  NA_integer_
+}
+
 # Files that deliberately differ, and why. The source drops code-list rows on
 # the RAW value while storing the NORMALIZED one, so a punctuation-only code
 # survives as "" - and the claim side coalesces a missing code to "" too. That
 # is a silent false match, not a rule, so the port fixes it. Each guard is
 # asserted by name below; "differs" on its own would let one go missing.
 CHANGED <- c("01_codelists.R", "03_mma_map.R", "05_sct.R")
+# Same for the whole-file copy: it builds mma_rollup the same way S00 does, so
+# the steroid filter has to go in both or a fresh-session LOT2-5 run would see
+# a different rollup from the one LOT1 used.
+CHANGED_WHOLE <- c("09_lot2_5_inputs.R")
 
 cat("\n-- every phase is the source, line for line --\n")
 for (p in PHASES) {
   f <- file.path(ROOT, "R", "steps", p$file)
   if (!file.exists(f)) { ok(FALSE, paste0(p$file, ": missing")); next }
-  got  <- unport(body_of(readLines(f, warn = FALSE)))
-  want <- src[p$from:p$to]
-  while (length(want) && !nzchar(trimws(want[length(want)]))) want <- want[-length(want)]
+  raw  <- unport(body_of(readLines(f, warn = FALSE)))
+  if (p$file %in% CHANGED) raw <- undeviate(raw)
+  got  <- code_only(raw)
+  want <- code_only(src[p$from:p$to])
   same <- identical(got, want)
   if (p$file %in% CHANGED) {
-    ok(!same, paste0(p$file, ": differs from the source, as intended"))
+    # "differs, and the guards are there" would let an unrelated clinical
+    # change ride along. Undo the approved deviations and require the rest to
+    # be identical, so anything else shows up as a real difference.
+    miss <- first_missing(got, want)
+    if (!is.na(miss)) {
+      ok(FALSE, paste0(p$file, ": a source line was changed or removed, at ",
+                       "source line ", p$from + miss - 1,
+                       "\n           source: ", want[miss]))
+    } else {
+      ok(TRUE, paste0(p$file, ": every source code line survives; ",
+                      length(got) - length(want), " guard line(s) added"))
+    }
     next
   }
   if (!same) {
@@ -88,7 +165,7 @@ for (p in PHASES) {
                      p$from + d - 1, "\n           source: ", w[d],
                      "\n           ported: ", g[d]))
   } else {
-    ok(TRUE, paste0(p$file, ": identical to 02_lot1.R lines ", p$from, "-", p$to,
+    ok(TRUE, paste0(p$file, ": same code as 02_lot1.R lines ", p$from, "-", p$to,
                     " (", length(want), " lines)"))
   }
 }
@@ -115,6 +192,11 @@ mm <- sql_of("03_mma_map.R")
 n_ndc <- length(gregexpr("AND regexp_replace(c.CL_CODE, '[^0-9]', '') <> ''",
                          mm, fixed = TRUE)[[1]])
 ok(n_ndc == 2, paste0("both NDC joins require digits in the code (", n_ndc, ")"))
+# Both rollup builders, or a fresh-session run would disagree with LOT1.
+for (f in c("01_codelists.R", "09_lot2_5_inputs.R"))
+  ok(grepl("WHERE upper(coalesce(CL_MED_CLASS, '')) <> 'STEROID'",
+           sql_of(f), fixed = TRUE),
+     paste0(f, ": the rollup drops steroids"))
 # The unchanged files must still be untouched.
 for (f in setdiff(vapply(PHASES, `[[`, character(1), "file"), CHANGED))
   ok(!grepl("regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''", sql_of(f), fixed = TRUE),
@@ -131,8 +213,17 @@ for (p in WHOLE) {
   f  <- file.path(ROOT, "R", "steps", p$file)
   sf <- file.path(dirname(SRC), p$src)
   if (!file.exists(f) || !file.exists(sf)) { ok(FALSE, paste0(p$file, ": missing")); next }
-  got  <- unport(readLines(f, warn = FALSE))
-  want <- readLines(sf, warn = FALSE)
+  got  <- code_only(unport(readLines(f, warn = FALSE)))
+  want <- code_only(readLines(sf, warn = FALSE))
+  if (p$file %in% CHANGED_WHOLE) {
+    miss <- first_missing(got, want)
+    ok(is.na(miss), if (is.na(miss))
+         paste0(p$file, ": every source code line survives; ",
+                length(got) - length(want), " guard line(s) added")
+       else paste0(p$file, ": a source line was changed or removed, at line ",
+                   miss, "\n           source: ", want[miss]))
+    next
+  }
   same <- identical(got, want)
   if (!same) {
     n <- max(length(got), length(want))
@@ -141,7 +232,7 @@ for (p in WHOLE) {
     ok(FALSE, paste0(p$file, ": differs from ", p$src, " at line ", d,
                      "\n           source: ", w[d], "\n           ported: ", g[d]))
   } else {
-    ok(TRUE, paste0(p$file, ": identical to ", p$src, " (", length(want), " lines)"))
+    ok(TRUE, paste0(p$file, ": same code as ", p$src, " (", length(want), " lines)"))
   }
 }
 

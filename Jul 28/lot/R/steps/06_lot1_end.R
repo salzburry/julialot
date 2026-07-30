@@ -303,6 +303,5 @@ phase_lot1_end <- function(con, ctx) {
     ORDER BY LOT1_BASE_END_REASON")
 
 
-  # NDC Format QC (Fix #5 from review)
-  # Validates NDC length match between codelist and claims
+  # NDC format QC: do the code list and the claims agree on length?
 }

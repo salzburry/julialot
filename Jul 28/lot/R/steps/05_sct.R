@@ -55,6 +55,23 @@ phase_sct <- function(con, ctx) {
       AND SCT_TYPE IS NOT NULL AND trim(SCT_TYPE) <> ''
   "), qc = "SELECT SCT_TYPE, CL_CODE_TYPE, count(*) AS n_codes FROM sct_codelist GROUP BY SCT_TYPE, CL_CODE_TYPE ORDER BY SCT_TYPE, CL_CODE_TYPE")
 
+  # DISTINCT includes SCT_TYPE, so one code can still name both AUTO and ALLO -
+  # and the claim extraction keeps a row per type, turning one claim into two
+  # transplants.
+  sct_dup <- db_q(con, "
+    SELECT CL_CODE_TYPE, CL_CODE, concat_ws(', ', collect_set(SCT_TYPE)) AS types
+    FROM sct_codelist
+    GROUP BY CL_CODE_TYPE, CL_CODE
+    HAVING count(DISTINCT SCT_TYPE) > 1
+  ")
+  if (nrow(sct_dup) > 0) {
+    print(sct_dup)
+    stop("SCT codes naming more than one transplant type: ",
+         paste(sct_dup$CL_CODE, collapse = ", "),
+         " - one claim would become several transplants.", call. = FALSE)
+  }
+  log_msg("  OK: Each SCT code names exactly one transplant type.")
+
   # S12: Extract raw SCT claims from MEDICAL + MED_PROCEDURE
   run_step(con, "S12_sct_claims_raw", glue("
     CREATE OR REPLACE TEMPORARY VIEW sct_claims_raw AS
