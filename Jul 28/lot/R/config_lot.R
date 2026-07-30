@@ -40,8 +40,13 @@ cfg <- list(
   use_quarterly_tables = as.logical(Sys.getenv("USE_QUARTERLY_TABLES", unset = "TRUE")),
   study_end            = Sys.getenv("STUDY_END", unset = "2025-06-30"),
 
-  # Cohort input (Part 1 output)
-  input_cohort_table = Sys.getenv("INPUT_COHORT_TABLE", unset = "ELIG_COH_FINAL"),
+  # Cohort input (the cohort build's output). One LOT run per cohort:
+  #   INPUT_COHORT_TABLE=OVERALL_COH_FINAL  ATTRITION_TABLE=overall_attrition_report
+  #   INPUT_COHORT_TABLE=NDMM_COH_FINAL     ATTRITION_TABLE=ndmm_attrition_report
+  input_cohort_table = Sys.getenv("INPUT_COHORT_TABLE", unset = "OVERALL_COH_FINAL"),
+
+  # The cohort build prefixes this per cohort; the dashboards read it back.
+  attrition_table = Sys.getenv("ATTRITION_TABLE", unset = "overall_attrition_report"),
 
   # Part 2 parameters
   # NOTE: There is only ONE 90-day discontinuation rule - the per-drug MAP-level one

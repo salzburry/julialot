@@ -1,10 +1,12 @@
 # Cohort runner for ndmm/. build.R calls build_cohort(<this folder>).
 
-build_cohort <- function(cohort_dir, root = cohort_dir, expect_table = NULL) {
+build_cohort <- function(cohort_dir, root = cohort_dir, expect_table = NULL,
+                         expect_prefix = NULL) {
+  check_settings()
   user_cfg    <- prompt_user_options(cfg_defaults)
   ie_criteria <- prompt_ie_criteria(cfg_defaults)
   cfg         <- pin_output_schema(finalize_cfg(cfg_defaults, user_cfg, ie_criteria))
-  check_output_contract(cfg, expect_table)
+  check_output_contract(cfg, expect_table, expect_prefix)
 
   log_msg("=", SEP_59)
   log_msg("COHORT BUILD - ", basename(cohort_dir), " - run_id: ", run_id)
@@ -22,6 +24,17 @@ build_cohort <- function(cohort_dir, root = cohort_dir, expect_table = NULL) {
   if (!interactive()) {
     on.exit({ if (!is.null(conn$con)) try(DBI::dbDisconnect(conn$con), silent = TRUE) },
             add = TRUE)
+  }
+
+  write_build_status(conn, cfg, "started")
+  # Any failure past this point leaves half the tables from this run and half
+  # from the last one. Record that rather than leaving it to be discovered.
+  if (!interactive()) {
+    on.exit({
+      st <- get0(".build_state", ifnotfound = "failed")
+      if (!identical(st, "complete"))
+        try(write_build_status(conn, cfg, "failed"), silent = TRUE)
+    }, add = TRUE, after = FALSE)
   }
 
   load_csv_codelists(conn, cfg)
@@ -54,6 +67,7 @@ build_cohort <- function(cohort_dir, root = cohort_dir, expect_table = NULL) {
     if (is_ckpt) {
       ok <- materialize_to_personal_schema(conn$con, view_name, cfg,
                                            mat_tables, replace = TRUE)
+      if (isTRUE(ok)) check_normalized_codelist(conn, cfg, view_name, mat_tables)
       if (!isTRUE(ok)) {
         stop("'", view_name, "' failed to materialize to '",
              cfg$personal_schema, "'. See the WARN above.")
@@ -80,20 +94,31 @@ build_cohort <- function(cohort_dir, root = cohort_dir, expect_table = NULL) {
   rows <- run_attrition_report(catalog, cfg, conn, h$work_tbl)
   if (isTRUE(cfg$persist_to_schema)) persist_attrition_table(rows, cfg, conn)
   print_cohort_characteristics(cfg, conn, h$work_tbl)
+
+  .build_state <<- "complete"
+  write_build_status(conn, cfg, "complete")
   log_msg("=", SEP_59)
 
   invisible(list(cfg = cfg, conn = conn, mat_tables = mat_tables))
 }
 
-# A cohort folder states the table it must write; anything else is a mistake.
-# config.csv only fills FINAL_TABLE_NAME when it is unset, so an ambient
-# FINAL_TABLE_NAME=ELIG_COH_FINAL would quietly send this build at the legacy
-# table. PERSIST_TO_SCHEMA=FALSE is worse: the run looks complete but the
-# cohort only ever existed as a temp view.
-check_output_contract <- function(cfg, expect_table) {
+# What this build must write. config.csv only fills a variable when it is
+# unset, so an ambient value wins over the committed one - the table name, the
+# prefix and the checkpoint set all have to be checked, not just defaulted.
+check_output_contract <- function(cfg, expect_table, expect_prefix = NULL) {
   if (!is.null(expect_table) && !identical(cfg$final_table_name, expect_table)) {
     stop("This build writes ", expect_table, ", but FINAL_TABLE_NAME is '",
          cfg$final_table_name, "'. Unset it, or fix config.csv.", call. = FALSE)
+  }
+  if (!is.null(expect_prefix) && !identical(cfg$object_prefix, expect_prefix)) {
+    stop("This build prefixes its tables '", expect_prefix,
+         "', but OBJECT_PREFIX is '", cfg$object_prefix,
+         "'. Wrong prefix overwrites the other cohort.", call. = FALSE)
+  }
+  if (!identical(resolve_checkpoints(), "*")) {
+    stop("CHECKPOINT_STEPS must be '*' so every step is written to the schema. ",
+         "It is '", paste(resolve_checkpoints(), collapse = "|"), "'.",
+         call. = FALSE)
   }
   if (!isTRUE(cfg$persist_to_schema)) {
     stop("PERSIST_TO_SCHEMA is FALSE, so nothing would be written. ",
@@ -102,10 +127,52 @@ check_output_contract <- function(cfg, expect_table) {
   invisible(TRUE)
 }
 
-# The five cohort code lists. An empty one doesn't error - it makes an empty
-# view, and the build runs to completion with a wrong cohort: no MM dx list
-# gives no patients, no therapy list drops everyone at Step 6, an empty
-# exclusion list passes everyone.
+# The Apr 30 config fails open: as.logical("Y") is NA and isTRUE(NA) is FALSE,
+# so a typo silently drops a criterion; validate_outpatient_window() silently
+# substitutes 90. Environment wins over config.csv, so a committed file does
+# not protect against either. Check the raw values before anything runs.
+BOOL_SETTINGS <- c("APPLY_AGE_INCL", "APPLY_CE_B_INCL", "APPLY_CE_F_INCL",
+                   "APPLY_NO_BL_AGENTS_INCL", "APPLY_FU_AGENTS_INCL",
+                   "APPLY_BASELINE_MM_EXCL", "APPLY_OTHER_MALIG_EXCL",
+                   "APPLY_PREGNANCY_EXCL", "APPLY_CLINTRIAL_EXCL",
+                   "USE_CSV_CODELISTS", "USE_QUARTERLY_TABLES",
+                   "CENSOR_AT_DISENROLLMENT", "PERSIST_TO_SCHEMA")
+
+check_settings <- function() {
+  bad <- character(0)
+  for (v in BOOL_SETTINGS) {
+    x <- Sys.getenv(v, unset = "")
+    if (nzchar(x) && !(toupper(x) %in% c("TRUE", "FALSE")))
+      bad <- c(bad, paste0(v, "='", x, "' (want TRUE or FALSE)"))
+  }
+  w <- Sys.getenv("OUTPATIENT_WINDOW", unset = "")
+  if (nzchar(w) && !(w %in% c("30", "60", "90")))
+    bad <- c(bad, paste0("OUTPATIENT_WINDOW='", w, "' (want 30, 60 or 90)"))
+
+  a <- Sys.getenv("MIN_AGE", unset = "")
+  if (nzchar(a) && is.na(suppressWarnings(as.integer(a))))
+    bad <- c(bad, paste0("MIN_AGE='", a, "' (want a whole number)"))
+
+  # as.Date("30-06-2025", "%Y-%m-%d") returns year 30 rather than failing, so
+  # check the shape first.
+  for (v in c("STUDY_START", "STUDY_END", "ID_START", "ID_END")) {
+    x <- Sys.getenv(v, unset = "")
+    if (!nzchar(x)) next
+    if (!grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", x) ||
+        is.na(suppressWarnings(as.Date(x, "%Y-%m-%d"))))
+      bad <- c(bad, paste0(v, "='", x, "' (want YYYY-MM-DD)"))
+  }
+  for (v in c("PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME")) {
+    x <- Sys.getenv(v, unset = "")
+    if (grepl(".", x, fixed = TRUE))
+      bad <- c(bad, paste0(v, "='", x, "' (a schema name, not catalog.schema)"))
+  }
+  if (length(bad))
+    stop("Bad settings:\n  ", paste(bad, collapse = "\n  "), call. = FALSE)
+  invisible(TRUE)
+}
+
+# Stop when a required code list has no rows.
 check_codelists_not_empty <- function(conn, cfg) {
   required <- c(cfg$cl_mm_dx, cfg$cl_mm_therapy, cfg$cl_preg,
                 cfg$cl_clintrial, cfg$cl_other_malig)
@@ -182,9 +249,12 @@ is_checkpoint <- function(view_name, ckpt_steps, cfg) {
 load_cohort_modules <- function(root) {
   d <- file.path(root, "R")
   source(file.path(d, "load_inputs.R"))
-  if (file.exists(file.path(root, "config.csv")))
-    load_pipeline_inputs(root, filename = "config.csv")
-  load_pipeline_inputs(c(root, dirname(root)))
+  if (!file.exists(file.path(root, "config.csv")))
+    stop("No config.csv in ", root, call. = FALSE)
+  load_pipeline_inputs(root, filename = "config.csv")
+  if (!isTRUE(load_pipeline_inputs(c(root, dirname(root)))))
+    stop("No pipeline_inputs.csv in ", root, " or ", dirname(root),
+         ". Running on code defaults would be silently wrong.", call. = FALSE)
   for (f in c("config_prompts.R", "db_utils.R", "codelists.R",
               "criteria_attrition.R", "pipeline_steps.R"))
     source(file.path(d, f))

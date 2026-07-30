@@ -4,8 +4,9 @@
 #
 #   DATABRICKS_PWD=... Rscript "Jul 28/overall/build.R"
 #
-# Self-contained: R/ holds this cohort's helpers and IE steps, config.csv its
-# switches. It reads the CDM directly and writes OVERALL_COH_FINAL to
+# R/ holds this cohort's helpers and IE steps, config.csv its switches. Shared
+# defaults still come from ../pipeline_inputs.csv; the build stops if neither
+# that nor a local copy is found. It reads the CDM directly and writes OVERALL_COH_FINAL to
 # <catalog>.<schema>, along with every intermediate step as a real table.
 # Nothing here depends on another cohort.
 # =============================================================================
@@ -17,4 +18,4 @@ here <- local({
 library(DBI); library(odbc); library(glue)
 source(file.path(here, "R", "build_cohort.R"))
 load_cohort_modules(here)
-if (!interactive()) build_cohort(here, expect_table = "OVERALL_COH_FINAL")
+if (!interactive()) build_cohort(here, expect_table = "OVERALL_COH_FINAL", expect_prefix = "overall_")
