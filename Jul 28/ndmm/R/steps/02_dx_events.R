@@ -17,14 +17,18 @@ phase_dx_events <- function(cfg, h, ctx) {
         -- not unique: it is a plan-assigned sequence number, so the same value can
         -- legitimately repeat across plan changes, service dates, or service-line
         -- locations. Grouping on only (PATID, CLMID) silently merges genuinely
-        -- distinct claims and corrupts the inpatient_flg (which is then driven by
-        -- max(POS) / max(TOS_CD) / max(CONF_ID) across the merged rows). This
-        -- 5-column key matches the GSK house convention used elsewhere (e.g.
-        -- vax_300081 R/02_codes/005_outcomes.Rmd).
+        -- distinct claims. This 5-column key matches the GSK house convention
+        -- used elsewhere (e.g. vax_300081 R/02_codes/005_outcomes.Rmd).
+        -- Test each line, then aggregate the flag. max(POS) picks the highest
+        -- string, so a claim with lines at POS 21 and 81 collapses to 81 and the
+        -- inpatient signal is gone. max(POS)/max(TOS_CD) are kept as columns.
         SELECT PATID, PAT_PLANID, CLMID, FST_DT, LOC_CD,
                max(CONF_ID) AS CONF_ID,
                max(POS)     AS POS,
-               max(TOS_CD)  AS TOS_CD
+               max(TOS_CD)  AS TOS_CD,
+               max(CASE WHEN POS IN ('21', '51', '61')
+                          OR TOS_CD IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF')
+                        THEN 1 ELSE 0 END) AS line_inpatient
         FROM {cdm_src(cfg$tbl_medical)}
         WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         GROUP BY PATID, PAT_PLANID, CLMID, FST_DT, LOC_CD
@@ -85,14 +89,12 @@ phase_dx_events <- function(cfg, h, ctx) {
           -- Inpatient = Approach 1 (POS/TOS) OR Approach 2 (CONF_ID validated)
           -- Approach 1: POS 21/51/61; TOS_CD IN (FAC_IP.ACUTE, FAC_IP.REHSNF, PROF.INPVIS, FAC_IP.SNF)
           -- Approach 2: CONF_ID exists in T_CONFINEMENT with valid dates
-          CASE WHEN h.POS IN ('21', '51', '61')
-                 OR h.TOS_CD IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF')
-                 OR cf.CONF_ID IS NOT NULL
+          CASE WHEN h.line_inpatient = 1 OR cf.CONF_ID IS NOT NULL
                THEN 1 ELSE 0 END AS inpatient_flg,
-          -- Outpatient: NOT identified as inpatient by either approach
-          CASE WHEN NOT (h.POS IN ('21', '51', '61')
-                      OR h.TOS_CD IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF')
-                      OR cf.CONF_ID IS NOT NULL)
+          -- Outpatient: NOT identified as inpatient by either approach.
+          -- Both operands are TRUE/FALSE, never NULL, so this can't fall through
+          -- to 0 on a claim with no POS and no TOS_CD.
+          CASE WHEN NOT (h.line_inpatient = 1 OR cf.CONF_ID IS NOT NULL)
                THEN 1 ELSE 0 END AS outpatient_flg,
           -- STRICT MM dx flag: 203.0x / C90.0x only (for inpatient qualifying + baseline evidence)
           -- BROAD codes (203.x / C90.x) are used for Step 0 base and outpatient qualifying
@@ -103,7 +105,7 @@ phase_dx_events <- function(cfg, h, ctx) {
                THEN 1 ELSE 0 END AS mm_dx_strict_flg,
           -- QC flags for each approach
           CASE WHEN cf.CONF_ID IS NOT NULL THEN 1 ELSE 0 END AS conf_validated,
-          CASE WHEN h.POS IN ('21', '51', '61') OR h.TOS_CD IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF') THEN 1 ELSE 0 END AS pos_tos_inpatient
+          h.line_inpatient AS pos_tos_inpatient
         FROM {cdm_src(cfg$tbl_med_diag)} d
         INNER JOIN {work('med_claim_header')} h
           -- PAT_PLANID and LOC_CD can be NULL on some Optum claim lines; use

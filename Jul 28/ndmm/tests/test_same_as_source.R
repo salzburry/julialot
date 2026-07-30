@@ -95,12 +95,40 @@ if (length(a) == length(b)) {
   ok(identical(vapply(a, `[[`, character(1), "name"),
                vapply(b, `[[`, character(1), "name")),
      "same step names, in the same order")
+  # Two steps deliberately differ from apr_30_2026. med_claim_header collapsed
+  # claim lines with max(POS) / max(TOS_CD) and then tested the collapsed value,
+  # so a claim with lines at POS 21 and 81 came out 81 and stopped being
+  # inpatient. Measured on 2025q2: 519 MM claims, 348 patients mislabelled,
+  # 7 of whom would have been dropped from the cohort. The flag is now built per
+  # line and then aggregated.
+  CHANGED <- c("07a_med_claim_header", "08a_mm_dx_events_all")
   for (i in seq_along(a)) {
-    ok(identical(as.character(a[[i]]$sql), as.character(b[[i]]$sql)),
-       paste0(a[[i]]$name, ": SQL identical"))
+    same_sql <- identical(as.character(a[[i]]$sql), as.character(b[[i]]$sql))
+    if (a[[i]]$name %in% CHANGED) {
+      ok(!same_sql, paste0(a[[i]]$name, ": differs from source, as intended"))
+    } else {
+      ok(same_sql, paste0(a[[i]]$name, ": SQL identical"))
+    }
     ok(identical(as.character(a[[i]]$qc), as.character(b[[i]]$qc)),
        paste0(a[[i]]$name, ": QC identical"))
   }
+
+  # ...and they differ in the intended way, not some other way.
+  hdr <- as.character(b[[match("07a_med_claim_header",
+                               vapply(b, `[[`, character(1), "name"))]]$sql)
+  ev  <- as.character(b[[match("08a_mm_dx_events_all",
+                               vapply(b, `[[`, character(1), "name"))]]$sql)
+  ok(grepl("AS line_inpatient", hdr, fixed = TRUE),
+     "med_claim_header flags each line before aggregating")
+  ok(grepl("h.line_inpatient = 1 OR cf.CONF_ID IS NOT NULL", ev, fixed = TRUE),
+     "inpatient_flg reads the aggregated line flag")
+  ok(!grepl("h.POS IN ('21', '51', '61')", ev, fixed = TRUE),
+     "no step tests a collapsed max(POS) any more")
+  # Both operands are 0/1 or IS NOT NULL, so NOT(...) can never be NULL and a
+  # claim can no longer end up neither inpatient nor outpatient.
+  ok(grepl("CASE WHEN NOT (h.line_inpatient = 1 OR cf.CONF_ID IS NOT NULL)",
+           ev, fixed = TRUE),
+     "outpatient_flg cannot evaluate to NULL")
 }
 
 # These helper files are copies, so they must not have drifted.
