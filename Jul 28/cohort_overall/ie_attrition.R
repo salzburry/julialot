@@ -91,10 +91,13 @@ ie_print_attrition <- function(rows, cfg) {
 # before the filter, or over the wrong order, the first three checks could pass
 # while patients carried the wrong index date -- and every LOT number downstream
 # is computed from that date.
-ie_reconcile <- function(con, funnel, cum_where) {
+# final_tbl defaults to the published cohort. The runner passes the STAGED table,
+# so the build is checked before it is published under the real name.
+ie_reconcile <- function(con, funnel, cum_where,
+                         final_tbl = funnel$h$work(funnel$cfg$final_table_name)) {
   cfg <- funnel$cfg; h <- funnel$h
   flags <- h$work(cfg$flags_view)
-  final <- h$work(cfg$final_table_name)
+  final <- final_tbl
   q <- function(sql) DBI::dbGetQuery(con, sql)
   out <- list()
   add <- function(name, ok, detail)
@@ -188,4 +191,76 @@ ie_persist_attrition <- function(con, rows, funnel) {
   }, error = function(e)
     message("WARN: could not write ", tbl, ": ", conditionMessage(e)))
   invisible(tbl)
+}
+
+# ---- run status, staging, cleanup -------------------------------------------
+# This build has been run many times against the same personal schema, so the
+# controls below are about telling one run's output from another's and not
+# leaving a half-built or stale cohort looking current.
+
+# A run id: DOMINO_RUN_ID if set, else a timestamp. Passed in, because a
+# timestamp read here would differ between the "started" and "complete" rows.
+ie_run_id <- function()
+  Sys.getenv("DOMINO_RUN_ID",
+             unset = format(Sys.time(), "%Y%m%d_%H%M%S"))
+
+# One row per build attempt, overwritten each run. It records who wrote the
+# current tables and whether the run finished, so a reader can tell whether
+# ovr_ELIG_COH_FINAL belongs to a completed build or an abandoned one.
+ie_write_status <- function(con, funnel, run_id, state, n_final = NA,
+                            started = "") {
+  cfg <- funnel$cfg; h <- funnel$h
+  tbl <- h$work("RUN_STATUS")
+  q <- function(x) paste0("'", gsub("'", "''", as.character(x)), "'")
+  now <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+  n <- if (is.na(n_final)) "NULL" else
+    format(as.integer(n_final), scientific = FALSE, trim = TRUE)
+  sql <- paste0(
+    "CREATE OR REPLACE TABLE ", tbl, " AS SELECT ",
+    q(run_id), " AS run_id, ", q(state), " AS state, ",
+    q(if (nzchar(started)) started else now), " AS started_at, ",
+    q(now), " AS updated_at, ", q(h$work(cfg$final_table_name)), " AS cohort_table, ",
+    q(cfg$out_schema), " AS out_schema, ", q(cfg$study_start), " AS study_start, ",
+    q(cfg$study_end), " AS study_end, ", q(cfg$id_start), " AS id_start, ",
+    q(cfg$id_end), " AS id_end, ", cfg$outpatient_window, " AS outpatient_window, ",
+    cfg$min_age, " AS min_age, ", n, " AS n_final")
+  tryCatch(DBI::dbExecute(con, sql),
+           error = function(e)
+             message("WARN: could not write ", tbl, ": ", conditionMessage(e)))
+  invisible(tbl)
+}
+
+# Publish the staged cohort under its real name, then drop the staging table.
+# Only called after reconciliation passes, so the published cohort is only ever
+# replaced by a reconciled build.
+ie_publish_final <- function(con, funnel) {
+  h <- funnel$h; cfg <- funnel$cfg
+  final <- h$work(cfg$final_table_name)
+  stg   <- paste0(final, "__stg")
+  DBI::dbExecute(con, paste0("CREATE OR REPLACE TABLE ", final,
+                             " AS SELECT * FROM ", stg))
+  try(DBI::dbExecute(con, paste0("DROP TABLE IF EXISTS ", stg)), silent = TRUE)
+  log_msg("published ", final)
+  invisible(final)
+}
+
+# Drop the intermediate tables after a clean build. Deliverables stay. Set
+# IE_KEEP_INTERMEDIATE=TRUE to keep them for debugging.
+ie_cleanup_intermediates <- function(con, funnel) {
+  if (identical(toupper(Sys.getenv("IE_KEEP_INTERMEDIATE", unset = "FALSE")),
+                "TRUE")) {
+    message("IE_KEEP_INTERMEDIATE=TRUE; leaving intermediates in place")
+    return(invisible(NULL))
+  }
+  cfg <- funnel$cfg; h <- funnel$h
+  keep <- IE_DELIVERABLES(cfg)
+  dropped <- 0L
+  for (v in funnel$views) {
+    if (v$name %in% keep) next
+    try({ DBI::dbExecute(con, paste0("DROP TABLE IF EXISTS ", h$work(v$name)))
+          dropped <- dropped + 1L }, silent = TRUE)
+  }
+  log_msg("dropped ", dropped, " intermediate table(s); kept ",
+          paste(paste0(cfg$obj_prefix, keep), collapse = ", "))
+  invisible(dropped)
 }

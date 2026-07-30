@@ -4,18 +4,16 @@
 #   step 7  MM_baseline_diag = 0
 #
 # >=1 strict MM diagnosis (203.0x / C90.0x) in index-183 .. index-1 excludes.
-# Step 5 said the patient was not already being treated; this says they were not
-# already diagnosed. Both are needed for "newly diagnosed" -- a diagnosis can
-# predate the first MM-agent claim by months.
+# If enabled, this adds a no-prior-diagnosis requirement on top of step 5's
+# no-prior-treatment one. It is OFF in the current Overall config, so it does not
+# affect the count -- the flag is still computed.
 #
 # Note the asymmetry: step 1 admits on 2 broad outpatient claims, but only a
-# strict claim in baseline excludes. Broad-code history disqualifies nobody, on
-# purpose -- broad codes cover MM-adjacent conditions that are not prior MM.
+# strict claim in baseline excludes -- broad codes cover MM-adjacent conditions
+# that are not prior MM.
 #
 # Reads mm_dx_events_all, not mm_dx_events_id: the point is to look before the
 # identification period, and the ID-period table has already been cut to it.
-#
-# Ships off (APPLY_BASELINE_MM_EXCL=FALSE). The flag is still computed.
 # =============================================================================
 
 ie_step_baseline_mm <- function(cfg, h) {

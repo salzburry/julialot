@@ -5,14 +5,13 @@ follow-up. Built from the Optum CDM, so it does not need `01_cohort.R` to have
 run first.
 
 ```sh
-Rscript "Jul 28/cohort_overall/build_overall.R" --funnel    # the funnel
-Rscript "Jul 28/cohort_overall/build_overall.R" --dry-run   # the SQL
-Rscript "Jul 28/cohort_overall/tests/test_cohort_overall.R" # 154 checks
-
-DATABRICKS_PWD=... Rscript "Jul 28/cohort_overall/build_overall.R"
+# shape the cohort: edit cohort_config.csv (the nine IE switches)
+DATABRICKS_PWD=... Rscript "Jul 28/cohort_overall/build_overall.R"   # build
+Rscript "Jul 28/cohort_overall/tests/test_cohort_overall.R"          # offline checks
 ```
 
-Those are the only modes.
+The builder takes no options — it builds. It prints the funnel it is about to
+run, so you can see which criteria are on before it starts.
 
 > **Not "1L-treated."** Step 6 wants an MM-agent claim of any class, not a LOT1
 > regimen, so steroid-only follow-up passes. This cohort is a **superset** of the
@@ -20,40 +19,71 @@ Those are the only modes.
 
 > ⚠️ **Not yet compared to the legacy cohort.** The SQL and every criterion are
 > compared against `pipeline_steps.R` and `criteria_attrition.R`, which is a
-> statement about text. `tests/verify_cohort_overall.R` is the one that compares
-> patients, and it needs a warehouse.
+> statement about text. `tests/verify_cohort_overall.R` compares patients, and it
+> needs a warehouse.
+
+## Turning criteria on and off
+
+`cohort_config.csv` is the operator surface — the nine `APPLY_*` switches plus the
+window, min age and output settings. `TRUE` applies a criterion, `FALSE` drops it;
+step 1 has no switch. It wins over `../pipeline_inputs.csv`, and an exported env
+var wins over both. The funnel the build prints reflects your edits.
 
 ## Output
 
-27 tables in your **personal schema** (`DOMINO_USER_NAME`, falling back to
-`PROJECT_WORK_SCHEMA`), all prefixed `ovr_`:
+Writes to your **personal schema** (`DOMINO_USER_NAME`), everything prefixed
+`ovr_`. The build **refuses to run** if the output resolves to the shared work
+schema (i.e. `DOMINO_USER_NAME` unset) unless you name it explicitly with
+`IE_OUT_SCHEMA` or set `IE_ALLOW_WORK_SCHEMA=TRUE`. `IE_REQUIRE_SCHEMA=osk` makes
+it write only to `osk` and stop otherwise.
+
+Kept after a successful build:
 
 | table | |
 |---|---|
-| `ovr_ELIG_COH_ALLFLAGS` | one row per (PATID, candidate index date), every criterion as a column |
 | `ovr_ELIG_COH_FINAL` | **the cohort** — one row per PATID |
+| `ovr_ELIG_COH_ALLFLAGS` | one row per (PATID, candidate index date), every criterion as a column |
 | `ovr_ATTRITION_REPORT` | the attrition table |
-| the other 24 | code lists, claim events, enrolment spans, per-criterion flags |
+| `ovr_RUN_STATUS` | one row: run id, config, start, completion state, final count |
 
-Real tables, not views: a Databricks SQL warehouse re-runs a view's definition on
-every read, so a chain of views re-scans the claims tables once per reader.
+The ~23 intermediate tables (code lists, claim events, spans, per-criterion flags)
+are **dropped** after a clean build (`IE_KEEP_INTERMEDIATE=TRUE` keeps them). Real
+tables, not views — a Databricks SQL warehouse re-runs a view's definition on
+every read.
 
-The legacy `ELIG_COH_FINAL` is never written. The prefix is what guarantees that.
+Because this build has been run against the same schema many times, it also:
+
+- **stages** the final cohort as `ovr_ELIG_COH_FINAL__stg` and publishes it to
+  the real name **only after reconciliation passes** — so a failed run leaves the
+  previous cohort intact rather than a half-built one looking current;
+- writes **`ovr_RUN_STATUS`** at start and finish, so you can tell which run the
+  current tables belong to and whether it completed.
+
+The legacy `ELIG_COH_FINAL` is never written.
+
+### Handing off to the LOT build
+
+The LOT programs read `INPUT_COHORT_TABLE`, which defaults to the legacy
+`ELIG_COH_FINAL`. Building this cohort does **not** repoint them. After the
+warehouse comparison passes, set `INPUT_COHORT_TABLE=ovr_ELIG_COH_FINAL`
+explicitly.
 
 ## Layout
 
 ```
-ie_config.R      config, naming, {expr} formatter, follow-up cap
-ie_criteria.R    load steps, order the funnel, validate it
-ie_attrition.R   attrition table + reconciliation
-ie_runner.R      connect, build, report
-build_overall.R  entry point
-steps/           one file per table, in build order
-tests/           test_cohort_overall.R (offline), verify_cohort_overall.R (warehouse)
+cohort_config.csv  the IE switches (operator edits this)
+ie_config.R        config, naming, {expr} formatter, follow-up cap
+ie_criteria.R      load steps, order the funnel, validate it
+ie_codelists.R     load the five cohort code lists (no glue dependency)
+ie_attrition.R     attrition table, reconciliation, run status, staging, cleanup
+ie_runner.R        connect, build, report
+build_overall.R    entry point
+steps/             one file per table, in build order
+tests/             test_cohort_overall.R (offline), verify_cohort_overall.R (warehouse)
 ```
 
 Nothing outside `Jul 28` is read at run time — plumbing is `../lib`, config is
-`../pipeline_inputs.csv`.
+`cohort_config.csv` + `../pipeline_inputs.csv`.
 
 ---
 
@@ -151,29 +181,25 @@ that makes one impossible (every name from `work()`, every `CREATE` from
 
 ## Configuration
 
-`../pipeline_inputs.csv` and the environment. Which parameters actually reach the
-build matters, because `cfg_defaults` hardcodes some:
+The IE switches and cohort parameters are in **`cohort_config.csv`** (above).
+Everything else — connection, schemas, CDM source, code-list dir — is in
+`../pipeline_inputs.csv`.
 
-- **Reachable:** `OUTPATIENT_WINDOW`, `MIN_AGE`, the nine `APPLY_*`,
-  `CENSOR_AT_DISENROLLMENT`, schemas, catalog, DSN, `USE_QUARTERLY_TABLES`,
-  `CODELIST_DIR`
-- **Hardcoded as literals:** `study_start`, `study_end`, `id_start`, `id_end`,
-  `baseline_days`, `gap_days`, `dx_window_30/60/90`
-
-`pipeline_inputs.csv`'s `STUDY_START` row says so itself: it feeds the NDMM
-pregnancy scan, not the study window. Setting `STUDY_END` there logs "applied" and
-reaches nothing — and since quarterly source tables resolve off `study_end`, a new
-data vintage would keep reading the old tables.
-
-So the working names here are `IE_STUDY_START`, `IE_STUDY_END`, `IE_ID_START`,
-`IE_ID_END` (ISO dates, and the window must be in order). Setting a dead name to
-something that disagrees is an error that names the working one.
+One wrinkle: `cfg_defaults` hardcodes the study window (`study_start`,
+`study_end`, `id_start`, `id_end`, `baseline_days`, `gap_days`) as literals, so
+`STUDY_END` and friends do nothing. To change them use `IE_STUDY_START`,
+`IE_STUDY_END`, `IE_ID_START`, `IE_ID_END` (ISO dates, window must be in order).
+Setting a dead name to something that disagrees is an error that names the
+working one. This matters for a new data vintage, since quarterly source tables
+resolve off `study_end`.
 
 | Var | |
 |---|---|
+| `IE_OUT_SCHEMA` | output schema; defaults to `DOMINO_USER_NAME`; may not be the CDM schema |
+| `IE_REQUIRE_SCHEMA` | if set, the build writes only to this schema and stops otherwise |
+| `IE_ALLOW_WORK_SCHEMA` | `TRUE` to allow the shared work-schema fallback when `DOMINO_USER_NAME` is unset |
+| `IE_KEEP_INTERMEDIATE` | `TRUE` to keep the intermediate tables after a build |
 | `IE_OBJ_PREFIX` | `ovr_`; letters, digits, underscore |
-| `IE_OUT_SCHEMA` | defaults to `DOMINO_USER_NAME`, then `PROJECT_WORK_SCHEMA`; may not be the CDM schema |
-| `IE_FLAGS_TABLE` | `ELIG_COH_ALLFLAGS` base name; the prefix is added |
 | `IE_CONNECT_FN` | a connect function already in the session |
 | `IE_ROOT_DIR` | the `Jul 28` folder, if auto-detection is wrong |
 
@@ -183,6 +209,9 @@ Each of these has a matching way to fail *quietly*:
 
 | check | what it would otherwise do |
 |---|---|
+| output resolves to a personal schema | scatter the outputs into the shared work schema |
+| `IE_REQUIRE_SCHEMA` matches | write to the wrong schema on a scheduled run |
+| `PERSIST_TO_SCHEMA` is TRUE | look like an off switch that does nothing |
 | `OUTPATIENT_WINDOW` is 30/60/90 | silently becomes 90 |
 | `APPLY_*` is `TRUE`/`FALSE` | `as.logical("Y")` is NA, read as FALSE, so a gate never applies and the cohort is larger |
 | `MIN_AGE` parses | an NA comparison drops everyone |
@@ -193,8 +222,7 @@ Each of these has a matching way to fail *quietly*:
 | steps 1–10, none duplicated | a criterion lost in a refactor |
 | every object prefixed and qualified | collides with the legacy pipeline's object |
 | no step writes its own `CREATE` | the create/reference mismatch that broke the earlier checkpoint |
-| unknown CLI option | a typo that builds nothing |
-| reconciliation | a cohort table that does not match its funnel |
+| reconciliation before publish | a stale or half-built cohort under the real name |
 
 ## The second copy
 

@@ -88,8 +88,10 @@ ie_step_index <- function(cfg, h) {
     ),
 
     # One row per (PATID, candidate index date). If a date qualifies both ways,
-    # inpatient wins -- outpt_qual is forced to 0 -- so the two paths never
-    # double-count.
+    # index_source is set to INPATIENT. outpt_qual is NOT forced to 0 -- the
+    # inpatient row contributes 0 but an outpatient row for the same date can
+    # still make max() = 1. That does not change membership, because step 1 gates
+    # on (inpt_qual = 1 OR outpt2_<window> = 1).
     ie_view(
       name = "mm_qualifying",
       legacy = "12_mm_qualifying",

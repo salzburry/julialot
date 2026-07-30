@@ -8,19 +8,15 @@
 #   ovr_ELIG_COH_FINAL     apply the active criteria, then take each patient's
 #                          earliest surviving index date. This is the cohort.
 #
-# Filter first, rank second. Swap those and the cohort changes:
-#   rank-then-filter  take the earliest candidate, drop the patient if it fails
-#   filter-then-rank  drop the failing candidates, keep the earliest survivor
+# Filter first, rank second -- apply the criteria, THEN take the earliest
+# surviving candidate. Ranking first would drop a patient whose earliest
+# candidate fails a later gate even when a later candidate passes, so the index
+# date a patient ends up with depends on which gates are on. Turning a gate off
+# can move patients to an earlier index date, not just in or out; counts alone
+# will not show that.
 #
-# A patient whose earliest qualifying diagnosis predates their enrolment, or who
-# had an MM agent in the baseline of that candidate but not of a later one, is in
-# under filter-then-rank and out under rank-then-filter. So the index date depends
-# on which gates are on: turn one off and some patients move to an earlier date,
-# not just in or out. Counts alone will not show that.
-#
-# Keeping every flag as a column makes a sensitivity analysis a WHERE clause
-# instead of a rebuild, and lets the four gates that ship off still be computed
-# and re-applied downstream at a different anchor.
+# Every flag is kept as a column, so a sensitivity analysis is a WHERE clause and
+# the gates that ship off are still computed for downstream re-use.
 #
 # Derived here, not criteria (carried for the LOT build):
 #   AGE_INDEX_YR  year(INDEX_DATE) - YRDOB      <- step 2 reads this
@@ -142,6 +138,7 @@ ie_step_assemble <- function(cfg, h, criteria) {
     ie_view(
       name = cfg$final_table_name,
       legacy = "24_ELIG_COH_FINAL",
+      stage = TRUE,   # built as __stg, published by the runner after reconcile
       description = fmt("FINAL COHORT ({work(cfg$final_table_name)}): Apply IE criteria then select EARLIEST qualifying index_date per patient"),
       select = fmt("
         -- First apply IE criteria, then select the EARLIEST qualifying index_date per patient
@@ -162,7 +159,10 @@ ie_step_assemble <- function(cfg, h, criteria) {
         )
         SELECT * FROM ranked WHERE rn = 1
       "),
-      qc = fmt("SELECT count(*) AS n_final_cohort FROM {work(cfg$final_table_name)}")
+      # No QC here: this step writes the staged table, and {work(final)} is the
+      # published name, which does not exist on a first run. Reconciliation
+      # counts the staged cohort instead.
+      qc = NULL
     )
   )
 

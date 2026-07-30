@@ -119,15 +119,17 @@ ie_validate <- function(funnel) {
          call. = FALSE)
 
   # Every object must be the prefixed, qualified name, and nothing may create a
-  # view. An unprefixed name would collide with the legacy pipeline's object.
+  # view. An unprefixed name would collide with the legacy pipeline's object. A
+  # staged step writes work(name)__stg -- the runner publishes it to work(name).
   for (v in views) {
     stmt <- ie_stmt(v, cfg, h)
     target <- sub("^CREATE OR REPLACE TABLE\\s+", "",
                   regmatches(stmt, regexpr("CREATE OR REPLACE TABLE\\s+\\S+",
                                            stmt)))
-    if (!identical(target, h$work(v$name)))
-      stop("step '", v$name, "' would create ", target, ", not ",
-           h$work(v$name), call. = FALSE)
+    want <- if (isTRUE(v$stage)) paste0(h$work(v$name), "__stg") else h$work(v$name)
+    if (!identical(target, want))
+      stop("step '", v$name, "' would create ", target, ", not ", want,
+           call. = FALSE)
     if (!grepl(cfg$obj_prefix, target, fixed = TRUE))
       stop("step '", v$name, "' creates ", target, " without the '",
            cfg$obj_prefix, "' prefix.", call. = FALSE)
@@ -177,6 +179,7 @@ ie_print_funnel <- function(funnel) {
         paste(vapply(off, function(c) c$id, character(1)), collapse = ", "),
         "\n  Their flags are still computed, as columns on ",
         funnel$h$work(cfg$flags_view), ".\n", sep = "")
+  cat("  Turn criteria on/off in cohort_overall/cohort_config.csv.\n")
   cat(strrep("=", 78), "\n\n", sep = "")
   invisible(funnel)
 }

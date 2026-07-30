@@ -411,3 +411,57 @@ templates it is compared against.
 The suggestion to reuse `build_steps()` instead of a second copy was not taken:
 `Jul 28` is the deployable folder and must not read `apr_30_2026` at run time. The
 copy is the price, and it is drift-tested while both are present.
+
+---
+
+# Third review round — `cohort_overall`
+
+Two runtime blockers, an output-schema gap, and leanness/comment items. Plus two
+user asks: make the IE criteria switchable, and drop the redundant run modes.
+
+| # | Finding | Status |
+|---|---|---|
+| 1 | **P1** `glue` used by the copied CSV loader but never declared -- a clean session could stop before the first table | fixed: own scoped loader, no glue |
+| 2 | **P1** `ie_main` kept using the pre-reconnect connection for attrition/reconcile/disconnect | fixed: single mutable conn env |
+| 3 | **P1** output could silently fall back to the shared work schema | fixed: refuses unless a personal schema resolves |
+| 4 | **P2** every step a permanent table (~27 objects, no run id) | intermediates dropped on success; RUN_STATUS added |
+| 5 | **P2** a failed run left a stale final cohort looking current | final staged, published only after reconcile |
+| 6 | **P2** `PERSIST_TO_SCHEMA` exposed but ignored | rejected if FALSE |
+| 7 | **P2** LOT input not repointed to the new cohort | documented as an explicit post-validation step |
+| 8 | comment factually wrong (`outpt_qual` forced to 0) | corrected |
+| 9 | comments overstate intent / too long | trimmed; intent claims removed |
+
+## Blocker 1 -- glue
+
+`lib/db_utils.R`'s `load_csv_codelists()` calls `glue()`, which nothing here
+declares. Replaced with `ie_codelists.R`: it loads only the five cohort code
+lists and uses no glue, so the build has no undeclared dependency and does not
+iterate the LOT/dashboard code lists.
+
+## Blocker 2 -- reconnection
+
+`run_step()` replaces `conn$con` on a reconnect. The runner now holds one mutable
+`conn` env for the whole build, reads `conn$con` for every later step, and closes
+`conn$con` in `on.exit` -- so a reconnect mid-build no longer leaves attrition and
+reconciliation on a dead handle.
+
+## Blocker 3 -- schema
+
+`ie_require_output()` runs before connecting. It refuses to fall back to the
+shared work schema when `DOMINO_USER_NAME` is unset (override with `IE_OUT_SCHEMA`
+or `IE_ALLOW_WORK_SCHEMA=TRUE`), and `IE_REQUIRE_SCHEMA=osk` pins the target.
+
+## Repeated-run controls (4, 5, 6)
+
+The build has run against the same personal schema many times, so: the final
+cohort is staged and published only after reconciliation; `ovr_RUN_STATUS`
+records run id, config, start, completion and count; intermediates are dropped on
+success; and `PERSIST_TO_SCHEMA=FALSE` is rejected rather than silently ignored.
+
+## User asks
+
+- **Switchable criteria.** `cohort_config.csv` is the operator surface: the nine
+  `APPLY_*` switches plus window/age/output, winning over `pipeline_inputs.csv`.
+  Edit it, run, and the printed funnel shows each step ON/off.
+- **Fewer modes.** `--funnel` and `--dry-run` removed from the builder; it builds.
+  The offline suite covers SQL/funnel inspection without a warehouse.

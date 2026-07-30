@@ -32,6 +32,11 @@
 # A pass means this build reproduces the legacy cohort on the data as it stands.
 # It does not mean the study definition is right. Both sides share the
 # unknown-care-setting behaviour described in steps/00_inputs.R.
+#
+# For the comparison to mean anything, the legacy table (OLD) must have been built
+# with the SAME source quarter, code lists, IE switches and dates as this build.
+# Rebuild it immediately before this one, or point LEGACY_COHORT_TABLE at a table
+# whose vintage you have recorded.
 # =============================================================================
 
 .here <- local({

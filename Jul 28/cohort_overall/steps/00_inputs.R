@@ -16,7 +16,7 @@
 ie_step_inputs <- function(cfg, h) {
   work <- h$work; cdm_src <- h$cdm_src; ref <- h$ref
 
-  # Code lists come from temp views that load_csv_codelists() has already pushed
+  # Code lists come from temp views that ie_load_codelists() has already pushed
   # from each cl_*.csv (USE_CSV_CODELISTS=TRUE, the default), or from reference
   # tables. They stay views because they are tiny.
   if (isTRUE(cfg$use_csv_codelists)) {
@@ -167,23 +167,11 @@ ie_step_inputs <- function(cfg, h) {
       qc = fmt("SELECT count(*) AS n_confinements FROM {work('confinement')}")
     ),
 
-    # Inpatient = approach 1 (POS/TOS) or approach 2 (validated CONF_ID).
-    # Outpatient is the negation, so the two never overlap.
-    #
-    # But they do not cover everything. If POS and TOS_CD are both NULL and there
-    # is no confinement, the condition is NULL, and NOT NULL is still NULL, so
-    # both CASEs fall to ELSE 0:
-    #
-    #     inpatient_flg = 0
-    #     outpatient_flg = 0     <- neither
-    #
-    # That claim cannot qualify a patient at step 1 by either path. Step 1 is on,
-    # so this is live.
-    #
-    # Copied as-is from pipeline_steps.R, so the legacy comparison cannot show it
-    # -- both sides behave the same. Not changed here: that would change the
-    # cohort, which is the study team's call. qc_extra below counts the affected
-    # claims. 06_other_malig.R handles the same case differently.
+    # Inpatient = approach 1 (POS/TOS) or approach 2 (validated CONF_ID);
+    # outpatient is the negation. If POS, TOS_CD and confinement are all missing,
+    # both flags are 0 -- the claim is neither, so it cannot qualify at step 1.
+    # Matches the legacy cohort; qc_extra reports how often it happens.
+    # 06_other_malig.R treats the same claim as outpatient.
     ie_view(
       name = "mm_dx_events_all",
       legacy = "08a_mm_dx_events_all",

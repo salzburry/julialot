@@ -15,8 +15,7 @@
 #      window to 60 or 90 changes step 1 and leaves this at 30.
 #   3. The confirming claim may fall after index. Only first_dt has to be in
 #      baseline, so a patient can be excluded on a claim that post-dates their
-#      index date. Intended -- the pair confirms a cancer already present in
-#      baseline -- but it means this is not purely a baseline-window gate.
+#      index date -- this is not purely a baseline-window gate.
 #   4. Unknown care setting counts as OUTPATIENT here. This step writes
 #      inpatient_flg with ELSE 0 and treats everything non-inpatient as
 #      outpatient; step 1 writes the negation and gets neither. So the same claim

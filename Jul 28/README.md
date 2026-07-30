@@ -33,12 +33,15 @@ lib/             the shared plumbing, so this folder ships on its own
 pipeline_inputs.csv   the configuration these entry points read
 ```
 
-`overall/` and `ndmm/` are the **selection** layer: flags in, cohorts out. They
-read `ELIG_COH_ALLFLAGS`, which the legacy pipeline produces.
-**[`cohort_overall/`](cohort_overall/README.md)** is the other half — it builds
-the ten index-anchored IE criteria from the raw CDM, one file per table, so
-Overall can be built without `01_cohort.R` running first. It writes real tables to
-your personal schema, prefixed `ovr_`.
+**To build the Overall cohort, run
+[`cohort_overall/`](cohort_overall/README.md).** It builds the ten
+index-anchored IE criteria from the raw CDM, writing real tables to your personal
+schema prefixed `ovr_`, and does not need `01_cohort.R` to have run. Edit its
+`cohort_config.csv` to turn criteria on and off.
+
+`overall/`, `ndmm/` and `engine/` are a different, older approach — a **selection
+layer** that reads a pre-built `ELIG_COH_ALLFLAGS` and applies a gate list. Keep
+them for the NDMM path; for building Overall from the CDM, use `cohort_overall/`.
 
 ## This folder ships on its own
 
@@ -55,25 +58,15 @@ that keeps it honest: never edit those files, layer behaviour on top in the
 caller.
 
 ```sh
-Rscript "Jul 28/run_all_tests.R"                    # 398 assertions, 5 suites
+Rscript "Jul 28/run_all_tests.R"                          # every offline suite
 
-# The one that settles equivalence -- needs a warehouse:
-Rscript "Jul 28/tests/verify_against_legacy.R" --dry-run     # see the SQL
-DATABRICKS_PWD=... Rscript "Jul 28/tests/verify_against_legacy.R"
+# Build the Overall cohort (edit cohort_overall/cohort_config.csv first):
+DATABRICKS_PWD=... Rscript "Jul 28/cohort_overall/build_overall.R"
+# Compare it to the legacy cohort on patients (needs a warehouse):
+DATABRICKS_PWD=... Rscript "Jul 28/cohort_overall/tests/verify_cohort_overall.R"
 
-
-Rscript "Jul 28/cohort_overall/build_overall.R" --funnel  # Overall's IE funnel
-Rscript "Jul 28/cohort_overall/build_overall.R" --dry-run # ...and its 27 statements
-
-# The one that settles equivalence for that build -- needs a warehouse:
-Rscript "Jul 28/cohort_overall/tests/verify_cohort_overall.R" --dry-run
-
-Rscript "Jul 28/overall/build.R" --dry-run
-Rscript "Jul 28/ndmm/build.R" --dry-run
-Rscript "Jul 28/ndmm/build.R" --index-only --dry-run # stop at the LOT-build input
-Rscript "Jul 28/build_both.R" --dry-run              # both + the shared PLD
-
-DATABRICKS_PWD=... Rscript "Jul 28/ndmm/build.R"     # execute
+# The selection-layer path (NDMM etc.):
+DATABRICKS_PWD=... Rscript "Jul 28/ndmm/build.R"
 ```
 
 Connects via `DATABRICKS_DSN` (from `pipeline_inputs.csv`) + `DATABRICKS_PWD`,

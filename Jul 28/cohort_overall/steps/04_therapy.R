@@ -8,8 +8,9 @@
 # running.
 #
 # Step 6 is NOT "has a LOT1 regimen". It is one claim for any MM agent, any drug
-# class, from the same code list the LOT build uses. Steroid-only follow-up passes
-# step 6, while the LOT build excludes steroid-only starts when it defines LOT1.
+# class, from the same code list the LOT build uses. Steroid-only follow-up can
+# pass step 6 if those steroid codes are in the configured MM-agent codelist,
+# while the LOT build excludes steroid-only starts when it defines LOT1.
 # So this cohort is a superset of the 1L-regimen population, and the difference is
 # real patients. Reading step 6 as "LOT1 exists" is the usual mistake.
 #
