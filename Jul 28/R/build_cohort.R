@@ -9,12 +9,6 @@
 # =============================================================================
 
 build_cohort <- function(cohort_dir, root = dirname(cohort_dir)) {
-  # The cohort's own config wins, because it is read first and
-  # load_pipeline_inputs() only fills variables that are still unset.
-  cfg_csv <- file.path(cohort_dir, "config.csv")
-  if (file.exists(cfg_csv)) load_pipeline_inputs(cohort_dir, filename = "config.csv")
-  load_pipeline_inputs(root)
-
   user_cfg    <- prompt_user_options(cfg_defaults)
   ie_criteria <- prompt_ie_criteria(cfg_defaults)
   cfg         <- finalize_cfg(cfg_defaults, user_cfg, ie_criteria)
@@ -90,9 +84,22 @@ build_cohort <- function(cohort_dir, root = dirname(cohort_dir)) {
 }
 
 # Source the shared modules. Call before build_cohort().
-load_cohort_modules <- function(root) {
+#
+# Order matters and is the same order 01_cohort.R uses: the config CSVs are
+# applied BEFORE config_prompts.R is sourced, because cfg_defaults reads
+# Sys.getenv() at source time. Source it first and the CSV values never reach
+# it -- the build silently runs on code defaults.
+#
+# The cohort's own config.csv is read before the shared pipeline_inputs.csv,
+# and load_pipeline_inputs() only fills variables that are still unset, so the
+# cohort's value wins. A real env var, set before either, wins over both.
+load_cohort_modules <- function(root, cohort_dir = NULL) {
   d <- file.path(root, "R")
-  for (f in c("load_inputs.R", "config_prompts.R", "db_utils.R", "codelists.R",
+  source(file.path(d, "load_inputs.R"))
+  if (!is.null(cohort_dir) && file.exists(file.path(cohort_dir, "config.csv")))
+    load_pipeline_inputs(cohort_dir, filename = "config.csv")
+  load_pipeline_inputs(root)
+  for (f in c("config_prompts.R", "db_utils.R", "codelists.R",
               "criteria_attrition.R", "pipeline_steps.R"))
     source(file.path(d, f))
   invisible(TRUE)

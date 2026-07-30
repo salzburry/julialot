@@ -15,5 +15,5 @@ here <- local({
 root <- dirname(here)
 library(DBI); library(odbc); library(glue)
 source(file.path(root, "R", "build_cohort.R"))
-load_cohort_modules(root)
+load_cohort_modules(root, here)
 if (!interactive()) build_cohort(here, root)
