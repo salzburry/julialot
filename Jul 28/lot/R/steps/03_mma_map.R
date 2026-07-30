@@ -69,6 +69,9 @@ phase_mma_map <- function(con, ctx) {
       INNER JOIN codelist c
         ON c.CL_CODE_TYPE = 'NDC'
        -- Normalize both sides to NDC11 (lpad stripped value to 11 digits with zeros)
+       -- Without this a codelist NDC with no digits pads to eleven zeros, and
+       -- so does a claim with no NDC: every such claim becomes a treatment.
+       AND regexp_replace(c.CL_CODE, '[^0-9]', '') <> ''
        AND lpad(regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', ''), 11, '0')
          = lpad(regexp_replace(c.CL_CODE, '[^0-9]', ''), 11, '0')
       WHERE cast(m.NDC as string) IS NOT NULL AND trim(cast(m.NDC as string)) <> ''
@@ -97,6 +100,9 @@ phase_mma_map <- function(con, ctx) {
       INNER JOIN codelist c
         ON c.CL_CODE_TYPE = 'NDC'
        -- Normalize both sides to NDC11 (lpad stripped value to 11 digits with zeros)
+       -- Same guard as the medical NDC join above. The Rx path has no other
+       -- claim-side filter, so an unguarded blank code reaches every fill.
+       AND regexp_replace(c.CL_CODE, '[^0-9]', '') <> ''
        AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', ''), 11, '0')
          = lpad(regexp_replace(c.CL_CODE, '[^0-9]', ''), 11, '0')
       WHERE cast(r.FILL_DT AS date) >= p.INDEX_DATE

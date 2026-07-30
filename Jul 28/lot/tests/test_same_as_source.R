@@ -61,6 +61,13 @@ body_of <- function(lines) {
   keep
 }
 
+# Files that deliberately differ, and why. The source drops code-list rows on
+# the RAW value while storing the NORMALIZED one, so a punctuation-only code
+# survives as "" - and the claim side coalesces a missing code to "" too. That
+# is a silent false match, not a rule, so the port fixes it. Each guard is
+# asserted by name below; "differs" on its own would let one go missing.
+CHANGED <- c("01_codelists.R", "03_mma_map.R", "05_sct.R")
+
 cat("\n-- every phase is the source, line for line --\n")
 for (p in PHASES) {
   f <- file.path(ROOT, "R", "steps", p$file)
@@ -69,6 +76,10 @@ for (p in PHASES) {
   want <- src[p$from:p$to]
   while (length(want) && !nzchar(trimws(want[length(want)]))) want <- want[-length(want)]
   same <- identical(got, want)
+  if (p$file %in% CHANGED) {
+    ok(!same, paste0(p$file, ": differs from the source, as intended"))
+    next
+  }
   if (!same) {
     n <- max(length(got), length(want))
     g <- c(got, rep(NA, n - length(got))); w <- c(want, rep(NA, n - length(want)))
@@ -81,6 +92,33 @@ for (p in PHASES) {
                     " (", length(want), " lines)"))
   }
 }
+
+cat("\n-- ...and they differ only in the guards, nothing else --\n")
+sql_of <- function(f) paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE),
+                            collapse = "\n")
+GUARDS <- list(
+  list(f = "01_codelists.R",
+       pat = "AND regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''",
+       what = "the MM code list drops codes that normalize to blank"),
+  list(f = "01_codelists.R", pat = "SELECT DISTINCT",
+       what = "the MM code list is de-duplicated"),
+  list(f = "05_sct.R",
+       pat = "AND regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''",
+       what = "the SCT code list drops codes that normalize to blank"),
+  list(f = "05_sct.R", pat = "SELECT DISTINCT",
+       what = "the SCT code list is de-duplicated")
+)
+for (g in GUARDS) ok(grepl(g$pat, sql_of(g$f), fixed = TRUE), g$what)
+# Both NDC joins, medical and Rx. Asserting one would have let the other ship
+# unguarded - that is exactly how it happened in the cohort build.
+mm <- sql_of("03_mma_map.R")
+n_ndc <- length(gregexpr("AND regexp_replace(c.CL_CODE, '[^0-9]', '') <> ''",
+                         mm, fixed = TRUE)[[1]])
+ok(n_ndc == 2, paste0("both NDC joins require digits in the code (", n_ndc, ")"))
+# The unchanged files must still be untouched.
+for (f in setdiff(vapply(PHASES, `[[`, character(1), "file"), CHANGED))
+  ok(!grepl("regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''", sql_of(f), fixed = TRUE),
+     paste0(f, ": no stray guard added"))
 
 cat("\n-- LOT2-5 and LOT_LONG are whole-file copies --\n")
 # These two were already function-structured in the source, so they are copied
