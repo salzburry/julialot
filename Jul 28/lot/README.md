@@ -2,11 +2,23 @@
 
 Lines of therapy, built once and run per cohort.
 
-The folder is self-contained: copy it into another project and it works. The
-only outside dependencies are the R packages `DBI`, `odbc` and `glue`.
-`tests/test_selfcontained.R` checks this, so it cannot quietly stop being true.
+## Status: not runnable yet
 
-## Run it
+This is the shell, not the implementation. `R/steps/` is empty and
+`build_lot()` is not written, so `build.R` stops on an undefined function. The
+LOT rules still have to be ported from the validated source. Two assertions in
+`tests/test_selfcontained.R` fail on purpose until that is done - they are the
+status, not a bug to silence.
+
+What is here and tested: the cohort input and prefix handling, the settings
+contract, the code-list loader, and the per-line criteria layer. Nothing below
+produces a table yet.
+
+The folder is self-contained - the only outside dependencies are the R
+packages `DBI`, `odbc` and `glue`, and no file resolves a path outside it.
+`tests/test_selfcontained.R` checks that, so it cannot quietly stop being true.
+
+## Running it, once the rules are ported
 
 ```
 DATABRICKS_PWD=... Rscript build.R <COHORT_TABLE> <prefix_>
@@ -37,8 +49,10 @@ rejected rather than allowed to overwrite another one.
 `PATID`, `INDEX_DATE`, `ENDDATE`, `ENDDATE_CE`, `DEATH_DT`, `GDR_CD`, `YRDOB`,
 `AGE_INDEX_YR`, `FU_DAYS`, `FU_DAYS_CE`.
 
-The build checks the real table for these before it starts, and names any that
-are missing.
+The build checks the real table before it starts: the columns, and also one row
+per patient, no null `PATID`/`INDEX_DATE`/`ENDDATE`, and `ENDDATE` on or after
+`INDEX_DATE`. The rules read this table row for row, so a repeated patient
+would multiply their claims and their lines. `ENDDATE_CE` may be null.
 
 ## Extra criteria on a line
 
@@ -57,9 +71,11 @@ list(
 )
 ```
 
-Then turn it on with `APPLY_L2_STARTED_ON_MED,TRUE` in `config.csv`.
+Then turn it on with `APPLY_L2_STARTED_ON_MED,TRUE` in `config.csv`. Any value
+other than `TRUE` or `FALSE` stops the build rather than quietly leaving the
+criterion off.
 
-Two tables come out:
+Two tables will come out, once `lot_long` is being built:
 
 - `<prefix>LOT_LONG_ALLFLAGS` - every criterion as a 0/1 column, computed
   whether or not it is enabled. Check what a criterion would cost before
@@ -70,15 +86,14 @@ Two tables come out:
 
 | value | effect |
 |---|---|
-| `flag` | column only, nothing removed |
-| `drop_line` | that line goes |
+| `flag` | column only, nothing removed - a true no-op |
 | `truncate` | that line and every later line for the patient go |
-| `drop_patient` | the patient goes entirely |
 
-`flag` is the default, so a new criterion cannot change a result until someone
-deliberately chooses otherwise. `truncate` exists because LOT N is defined
-against LOT N-1: dropping a middle line would leave L1 and L3 with nothing
-between them.
+`flag` is the default and may be left out, so a new criterion cannot change a
+result until someone deliberately chooses otherwise. `truncate` is the only
+removal mode offered, because LOT N is defined against LOT N-1: dropping a
+middle line would leave L1 next to L3. Anything more is left until a real
+criterion needs it.
 
 Two rules worth knowing:
 

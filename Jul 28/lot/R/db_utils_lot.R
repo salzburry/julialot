@@ -41,17 +41,34 @@ stop_if_blank <- function(x, msg) {
   if (!nzchar(x)) stop(msg)
 }
 
+# The ported rules call wrk() and cdm_src() with no cfg argument, so the config
+# is shared state. set_lot_config() makes that explicit and says so when it is
+# missing, instead of failing with "object 'cfg' not found" deep in a step.
+set_lot_config <- function(x) {
+  assign("cfg", x, envir = globalenv())
+  invisible(x)
+}
+
+lot_config <- function() {
+  if (!exists("cfg", envir = globalenv()))
+    stop("No LOT config. build_lot() calls set_lot_config() before any step.",
+         call. = FALSE)
+  get("cfg", envir = globalenv())
+}
+
 full_name <- function(schema, object) {
+  cfg <- lot_config()
   paste0(cfg$catalog, ".", schema, ".", object)
 }
 
-cdm <- function(tbl) full_name(cfg$cdm_schema, tbl)
-wrk <- function(tbl) full_name(cfg$work_schema, tbl)
+cdm <- function(tbl) full_name(lot_config()$cdm_schema, tbl)
+wrk <- function(tbl) full_name(lot_config()$work_schema, tbl)
 
 # LOT's own outputs carry the cohort's prefix, so two cohorts can be built into
 # one schema without the second overwriting the first. The cohort table itself
 # goes through wrk(): it is named by the cohort build, not by us.
 lot_out <- function(tbl) {
+  cfg <- lot_config()
   prefix <- if (is.null(cfg$object_prefix)) "" else cfg$object_prefix
   full_name(cfg$work_schema, paste0(prefix, tbl))
 }
@@ -72,14 +89,14 @@ get_quarter_suffix <- function(end_date) {
   }
   if (is.na(dt) || is.na(yr) || yr < 1900) {
     stop("get_quarter_suffix: cannot parse STUDY_END=\"", end_date,
-         "\". Use YYYY-MM-DD. (Excel may have reformatted it in ",
-         "pipeline_inputs.csv - re-enter it as 2025-06-30.)")
+         "\". Use YYYY-MM-DD - Excel may have reformatted it in config.csv.")
   }
   qtr <- ceiling(as.integer(format(dt, "%m")) / 3)
   sprintf("%dq%d", yr, qtr)
 }
 
 cdm_src <- function(base_tbl) {
+  cfg <- lot_config()
   if (isTRUE(cfg$use_quarterly_tables)) {
     qsuffix <- get_quarter_suffix(cfg$study_end)
     cdm(paste0("t_", base_tbl, "_", qsuffix))
@@ -88,14 +105,10 @@ cdm_src <- function(base_tbl) {
   }
 }
 
-with_retry <- function(fn, max_retries = cfg$max_retries, base_sleep = cfg$base_sleep) {
-  # Permanent (non-retryable) error patterns. Mix of Databricks/Spark
-  # internal class names (e.g. AnalysisException, TABLE_OR_VIEW_NOT_FOUND)
-  # and user-visible ODBC messages (e.g. "Table or view not found") -
-  # both forms appear depending on how the driver surfaces the error.
-  # The space-separated forms were added after observing the ATTRITION
-  # tab's missing-table probe eat 35s of retry backoff because only the
-  # underscore form was listed.
+with_retry <- function(fn, max_retries = lot_config()$max_retries,
+                       base_sleep = lot_config()$base_sleep) {
+  # Errors worth no retry. Both the Spark class name and the ODBC wording
+  # appear, depending on how the driver surfaces it, so list both.
   permanent_error_patterns <- c(
     "AnalysisException", "AMBIGUOUS_REFERENCE", "AMBIGUOUS REFERENCE",
     "ParseException", "Syntax error",

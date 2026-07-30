@@ -1,6 +1,6 @@
-# Settings for the LOT build. Values come from cohorts/<cohort>.csv and
-# config.csv; the environment wins over both. build_lot.R checks them against
-# CONTRACT before anything runs.
+# Settings for the LOT build. Values come from config.csv; the environment
+# wins over it. build_lot.R checks them against CONTRACT before anything runs.
+# The cohort table and prefix are not here - the caller passes those.
 
 cfg_defaults <- list(
   # ---- Connection ----

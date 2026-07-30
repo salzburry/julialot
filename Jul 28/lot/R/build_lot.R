@@ -15,6 +15,9 @@ CONTRACT <- list(
   cdm_schema                  = "clnprw_optum",
   codelist_dir                = "/mnt/code/codelist",
   use_quarterly_tables        = TRUE,
+  # Picks the quarterly CDM tables, so a different date is different source
+  # data for every read.
+  study_end                   = "2025-06-30",
   censor_at_disenrollment     = FALSE,
   induction_window_days       = 60L,
   lot_n_induction_window_days = 30L,
@@ -82,6 +85,10 @@ pin_output_schema <- function(cfg) {
   if (!nzchar(schema))
     stop("No output schema. Set DOMINO_USER_NAME to your personal schema ",
          "(e.g. osk02156), or PROJECT_WORK_SCHEMA to override.", call. = FALSE)
+  # It goes straight into table names, so check the value we resolved rather
+  # than each variable it could have come from.
+  if (!grepl("^[A-Za-z_][A-Za-z0-9_]*$", schema))
+    stop("Output schema '", schema, "' is not a schema name.", call. = FALSE)
   cfg$work_schema <- schema
   cfg
 }
@@ -121,6 +128,32 @@ check_cohort_input <- function(con, cfg) {
   if (length(miss))
     stop(tbl, " cannot drive LOT. Missing: ", paste(miss, collapse = ", "),
          call. = FALSE)
+
+  # The rules read this table row for row - no DISTINCT, no ranking. A repeated
+  # patient would multiply their claims and their lines, so check the shape too,
+  # not just the column names. ENDDATE_CE may be null: the primary branch uses
+  # ENDDATE and the sensitivity branch falls back to it.
+  q <- db_q(con, glue("
+    SELECT count(*) AS n_rows,
+           count(DISTINCT PATID) AS n_patients,
+           sum(CASE WHEN PATID IS NULL THEN 1 ELSE 0 END) AS n_null_patid,
+           sum(CASE WHEN INDEX_DATE IS NULL THEN 1 ELSE 0 END) AS n_null_index,
+           sum(CASE WHEN ENDDATE IS NULL THEN 1 ELSE 0 END) AS n_null_end,
+           sum(CASE WHEN ENDDATE < INDEX_DATE THEN 1 ELSE 0 END) AS n_end_before_index
+    FROM {tbl}"))
+  bad <- character(0)
+  if (q$n_rows == 0)            bad <- c(bad, "it is empty")
+  if (q$n_null_patid > 0)       bad <- c(bad, paste0(q$n_null_patid, " rows have no PATID"))
+  if (q$n_null_index > 0)       bad <- c(bad, paste0(q$n_null_index, " rows have no INDEX_DATE"))
+  if (q$n_null_end > 0)         bad <- c(bad, paste0(q$n_null_end, " rows have no ENDDATE"))
+  if (q$n_end_before_index > 0) bad <- c(bad, paste0(q$n_end_before_index,
+                                                     " rows end before they start"))
+  if (q$n_rows != q$n_patients)
+    bad <- c(bad, paste0(q$n_rows, " rows for ", q$n_patients,
+                         " patients - one index per patient is required"))
+  if (length(bad))
+    stop(tbl, " cannot drive LOT: ", paste(bad, collapse = "; "), call. = FALSE)
+  log_msg("  Cohort input OK: ", q$n_patients, " patients")
   invisible(TRUE)
 }
 

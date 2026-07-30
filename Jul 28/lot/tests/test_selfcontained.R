@@ -69,24 +69,18 @@ ok(length(extra) == 0,
    paste0("packages used: ", paste(sort(used), collapse = ", "),
           if (length(extra)) paste0(" -- undeclared: ", paste(extra, collapse = ", ")) else ""))
 
-cat("\n-- the package names no cohort of its own --\n")
-# A standalone LOT knows nothing about the studies that use it. The caller
-# passes the cohort table and prefix; the moment a study name is baked in
-# here, copying the folder stops being enough.
-docs <- list.files(ROOT, pattern = "\\.(R|csv|md)$", recursive = TRUE,
-                   full.names = TRUE)
-docs <- docs[!grepl("tests/test_selfcontained\\.R$", docs)]
-COHORT_NAMES <- c("OVERALL_COH_FINAL", "ELIG_COH_FINAL", "NDMM", "ndmm",
-                  "overall_", "NNDM", "nndm")
-for (f in docs) {
-  nm <- sub(paste0("^", ROOT, "/"), "", f)
-  txt <- readLines(f, warn = FALSE)
-  hits <- unlist(lapply(COHORT_NAMES, function(cn)
-    grep(cn, txt, fixed = TRUE, value = TRUE)))
-  ok(length(hits) == 0,
-     paste0(nm, ": names no cohort",
-            if (length(hits)) paste0(" (", trimws(hits[1]), ")") else ""))
-}
+cat("\n-- the package registers no cohort --\n")
+# Neutrality is structural, not a list of banned words: there is nowhere for a
+# cohort to be registered, so the caller has to supply one. A blacklist of
+# study names could not prove this, and would have put those names in here.
+bl <- readLines(file.path(ROOT, "R", "build_lot.R"), warn = FALSE)
+ok(!any(grepl("^COHORTS\\s*<-", bl)), "there is no cohort registry to fall out of date")
+ok(any(grepl("pin_cohort <- function\\(cfg, cohort_table, prefix\\)", bl)),
+   "the cohort table and prefix are arguments")
+bd <- readLines(file.path(ROOT, "build.R"), warn = FALSE)
+ok(any(grepl("commandArgs\\(trailingOnly = TRUE\\)", bd)) &&
+     any(grepl("INPUT_COHORT_TABLE", bd)),
+   "the entry point takes them from the caller or the environment")
 
 cat("\n-- the pieces a copy needs are all present --\n")
 NEED <- c("build.R", "config.csv", "R/build_lot.R", "R/config_lot.R",
@@ -94,5 +88,32 @@ NEED <- c("build.R", "config.csv", "R/build_lot.R", "R/config_lot.R",
           "R/load_inputs.R", "tests/testutil.R")
 for (f in NEED)
   ok(file.exists(file.path(ROOT, f)), paste0(f, " is in the folder"))
+
+cat("\n-- the entry point can actually run --\n")
+# These fail until the rules are ported. That is the honest state: the previous
+# version of this file checked only that files existed, so it passed a package
+# whose entry point dies on an undefined function.
+mod <- new.env(parent = globalenv())
+for (f in c("R/load_inputs.R", "R/build_lot.R", "R/config_lot.R",
+            "R/db_utils_lot.R", "R/codelists_lot.R", "R/line_criteria.R"))
+  try(sys.source(file.path(ROOT, f), envir = mod), silent = TRUE)
+steps_dir <- file.path(ROOT, "R", "steps")
+step_files <- if (dir.exists(steps_dir)) list.files(steps_dir, "\\.R$") else character(0)
+for (f in file.path(steps_dir, step_files)) try(sys.source(f, envir = mod), silent = TRUE)
+
+ok(length(step_files) > 0, paste0("R/steps has the rules (", length(step_files), " files)"))
+
+# Every bare call in build.R has to resolve, or the run dies at the first one.
+src <- paste(readLines(file.path(ROOT, "build.R"), warn = FALSE), collapse = "\n")
+src <- gsub('"[^"]*"', '""', src)
+src <- gsub("'[^']*'", "''", src)
+src <- gsub("#[^\n]*", "", src)
+called <- unique(sub("\\($", "", regmatches(src,
+  gregexpr("(?<![$:\\w.])[A-Za-z_][A-Za-z0-9_.]*\\(", src, perl = TRUE))[[1]]))
+unresolved <- Filter(function(f) !exists(f, envir = mod) && !exists(f), called)
+ok(length(unresolved) == 0,
+   if (length(unresolved)) paste0("build.R calls undefined: ",
+                                  paste(unresolved, collapse = ", "))
+   else paste0("all ", length(called), " calls in build.R resolve"))
 
 report()
