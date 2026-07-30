@@ -1,21 +1,25 @@
 #!/usr/bin/env Rscript
 # Build LOT for one cohort.
 #
-#   DATABRICKS_PWD=... Rscript "Jul 28/lot/build.R" overall
+#   DATABRICKS_PWD=... Rscript build.R <COHORT_TABLE> <prefix_>
+#   DATABRICKS_PWD=... Rscript build.R MY_COH_FINAL mystudy_
 #
-# The rules are the same for every cohort. R/build_lot.R's COHORTS list says
-# which cohort table to read and what to call that cohort's outputs.
+# Or set INPUT_COHORT_TABLE and OBJECT_PREFIX instead of passing them.
+#
+# The cohort table is read as named; every LOT output gets the prefix, so two
+# cohorts can be built into one schema without overwriting each other. This
+# folder holds no cohort names of its own.
 
 here <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
   if (!length(a)) getwd()
   else dirname(normalizePath(gsub("~+~", " ", sub("^--file=", "", a[1]), fixed = TRUE)))
 })
-cohort <- local({
-  a <- commandArgs(trailingOnly = TRUE)
-  if (length(a)) trimws(a[1]) else Sys.getenv("LOT_COHORT", unset = "")
-})
+argv         <- commandArgs(trailingOnly = TRUE)
+cohort_table <- if (length(argv) >= 1) argv[1] else Sys.getenv("INPUT_COHORT_TABLE", unset = "")
+prefix       <- if (length(argv) >= 2) argv[2] else Sys.getenv("OBJECT_PREFIX", unset = "")
+
 library(DBI); library(odbc); library(glue)
 source(file.path(here, "R", "build_lot.R"))
 load_lot_modules(here)
-if (!interactive()) build_lot(here, cohort)
+if (!interactive()) build_lot(here, cohort_table, prefix)

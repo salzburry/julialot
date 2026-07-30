@@ -9,36 +9,36 @@ only outside dependencies are the R packages `DBI`, `odbc` and `glue`.
 ## Run it
 
 ```
-DATABRICKS_PWD=... Rscript build.R overall
+DATABRICKS_PWD=... Rscript build.R <COHORT_TABLE> <prefix_>
+DATABRICKS_PWD=... Rscript build.R MY_COH_FINAL mystudy_
 ```
 
-## Adding a cohort
+Or set `INPUT_COHORT_TABLE` and `OBJECT_PREFIX` instead of passing them.
 
-A cohort is two facts: which table to read, and what to call the outputs. Both
-live in `COHORTS` in `R/build_lot.R`:
+## Running it for another cohort
 
-```r
-COHORTS <- list(
-  overall = list(input_cohort_table = "OVERALL_COH_FINAL", object_prefix = "overall_"),
-  ndmm    = list(input_cohort_table = "NDMM_COH_FINAL",    object_prefix = "ndmm_")
-)
+Point it at a different table with a different prefix. Nothing in the folder
+changes - it names no cohort of its own, and `tests/test_selfcontained.R`
+keeps it that way.
+
+```
+Rscript build.R STUDY_A_FINAL study_a_
+Rscript build.R STUDY_B_FINAL study_b_
 ```
 
-That is the only change. The rules are the same for every cohort.
-
-The prefix is what keeps cohorts apart: LOT's own outputs go through
-`lot_out()`, which prepends it, so `overall_LOT1_BASE` and `ndmm_LOT1_BASE` sit
-side by side in one schema. The cohort table itself goes through `wrk()`
-unprefixed, because the cohort build already named it. A cohort with no prefix
-is rejected rather than allowed to overwrite another one.
-
-An unknown cohort name stops with the list of known ones. It is a typo, not a
-new cohort.
+The prefix is what keeps the two apart: LOT's own outputs go through
+`lot_out()`, which prepends it, so `study_a_LOT1_BASE` and `study_b_LOT1_BASE`
+sit side by side in one schema. The cohort table itself goes through `wrk()`
+unprefixed, because the cohort build already named it. A run with no prefix is
+rejected rather than allowed to overwrite another one.
 
 ### What a cohort table has to provide
 
 `PATID`, `INDEX_DATE`, `ENDDATE`, `ENDDATE_CE`, `DEATH_DT`, `GDR_CD`, `YRDOB`,
 `AGE_INDEX_YR`, `FU_DAYS`, `FU_DAYS_CE`.
+
+The build checks the real table for these before it starts, and names any that
+are missing.
 
 ## Extra criteria on a line
 
@@ -92,7 +92,7 @@ Two rules worth knowing:
 ```
 Rscript tests/test_runner.R          # cohort switch, contract, settings
 Rscript tests/test_line_criteria.R   # the per-line criteria layer
-Rscript tests/test_selfcontained.R   # nothing reaches outside this folder
+Rscript tests/test_selfcontained.R   # no outside paths, no cohort names
 ```
 
 No warehouse needed. They run offline; `glue` is stubbed if absent.
@@ -100,9 +100,9 @@ No warehouse needed. They run offline; `glue` is stubbed if absent.
 ## Layout
 
 ```
-build.R              entry point, takes a cohort name
+build.R              entry point, takes a cohort table and prefix
 config.csv           pinned settings, no cohort named here
-R/build_lot.R        CONTRACT, COHORTS, guards
+R/build_lot.R        CONTRACT, cohort input, guards
 R/config_lot.R       settings
 R/db_utils_lot.R     logging, retry, naming (wrk / lot_out)
 R/codelists_lot.R    code list loading

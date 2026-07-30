@@ -1,9 +1,11 @@
-# Runner for the LOT build. One module, run once per cohort.
+# Runner for the LOT build. Standalone: one module, pointed at a cohort table.
 #
-# The rules are the same for every cohort. What changes per run is which cohort
-# table is read and which prefix the outputs carry - both come from
-# cohorts/<cohort>.csv. Everything else is pinned below and checked before the
-# first query.
+# The rules are the same for every cohort. What changes per run is which table
+# is read and which prefix the outputs carry, and the caller supplies both.
+# No cohort is named anywhere in this folder. Everything else is pinned below
+# and checked before the first query.
+
+`%||%` <- function(a, b) if (is.null(a)) b else a
 
 # Settings that decide what a LOT run means. A different value here is a
 # different result, so they are checked rather than defaulted. Change a value
@@ -29,12 +31,12 @@ CONTRACT <- list(
   tbl_rx                      = "rx"
 )
 
-# The cohorts this build knows how to run, and what each one reads and writes.
-# A cohort has to be declared here before it can be built: an unknown name is
-# a typo, not a new cohort.
-COHORTS <- list(
-  overall = list(input_cohort_table = "OVERALL_COH_FINAL", object_prefix = "overall_")
-)
+# The columns LOT reads off whatever cohort table it is pointed at. Checked
+# against the real table before any work starts, so a cohort that cannot drive
+# LOT says so immediately instead of failing somewhere in the middle.
+REQUIRED_COHORT_COLS <- c("PATID", "INDEX_DATE", "ENDDATE", "ENDDATE_CE",
+                          "DEATH_DT", "GDR_CD", "YRDOB", "AGE_INDEX_YR",
+                          "FU_DAYS", "FU_DAYS_CE")
 
 # Bad values fail open: as.logical("Y") is NA, which reads as FALSE. An
 # integer setting that will not parse becomes NA and silently widens a window.
@@ -84,21 +86,42 @@ pin_output_schema <- function(cfg) {
   cfg
 }
 
-# The cohort decides only what is read and what the outputs are called. It
-# cannot reach the rules.
-pin_cohort <- function(cfg, cohort) {
-  if (!nzchar(cohort))
-    stop("No cohort. Run: Rscript \"Jul 28/lot/build.R\" <",
-         paste(names(COHORTS), collapse = "|"), ">", call. = FALSE)
-  if (!cohort %in% names(COHORTS))
-    stop("Unknown cohort '", cohort, "'. This build knows: ",
-         paste(names(COHORTS), collapse = ", "),
-         ". Add it to COHORTS in R/build_lot.R first.", call. = FALSE)
-  c_def <- COHORTS[[cohort]]
-  cfg$cohort             <- cohort
-  cfg$input_cohort_table <- c_def$input_cohort_table
-  cfg$object_prefix      <- c_def$object_prefix
+# The caller says which table to read and what to call the outputs. This folder
+# holds no cohort names of its own - that is what keeps it a package rather
+# than part of one study.
+pin_cohort <- function(cfg, cohort_table, prefix) {
+  cohort_table <- trimws(as.character(cohort_table %||% ""))
+  prefix       <- trimws(as.character(prefix %||% ""))
+  if (!nzchar(cohort_table) || !nzchar(prefix))
+    stop("LOT needs a cohort table and an output prefix.\n",
+         "  Rscript build.R <COHORT_TABLE> <prefix_>\n",
+         "  or set INPUT_COHORT_TABLE and OBJECT_PREFIX.", call. = FALSE)
+  # Both end up in SQL identifiers, so keep them to what an identifier allows.
+  if (!grepl("^[A-Za-z_][A-Za-z0-9_]*$", cohort_table))
+    stop("Cohort table '", cohort_table, "' is not a table name. Give the ",
+         "table only - the catalog and schema come from the settings.",
+         call. = FALSE)
+  if (!grepl("^[A-Za-z][A-Za-z0-9_]*_$", prefix))
+    stop("Prefix '", prefix, "' should be a name ending in '_', e.g. mystudy_.",
+         call. = FALSE)
+  cfg$input_cohort_table <- cohort_table
+  cfg$object_prefix      <- prefix
   cfg
+}
+
+# A cohort table missing a column LOT needs would fail deep into the build, so
+# ask the table up front.
+check_cohort_input <- function(con, cfg) {
+  tbl  <- wrk(cfg$input_cohort_table)
+  cols <- tryCatch(toupper(db_q(con, glue("DESCRIBE {tbl}"))[[1]]),
+                   error = function(e)
+                     stop("Cannot read the cohort table ", tbl, ": ",
+                          conditionMessage(e), call. = FALSE))
+  miss <- setdiff(REQUIRED_COHORT_COLS, cols)
+  if (length(miss))
+    stop(tbl, " cannot drive LOT. Missing: ", paste(miss, collapse = ", "),
+         call. = FALSE)
+  invisible(TRUE)
 }
 
 check_lot_contract <- function(cfg) {
@@ -110,13 +133,13 @@ check_lot_contract <- function(cfg) {
   if (length(wrong))
     stop("This build is defined as:\n  ", paste(unlist(wrong), collapse = "\n  "),
          call. = FALSE)
-  # Without a prefix every cohort writes the same table names, so a second run
+  # Without a prefix every run writes the same table names, so a second cohort
   # would overwrite the first instead of sitting beside it.
   if (!nzchar(cfg$object_prefix))
-    stop("No object_prefix for cohort '", cfg$cohort,
-         "'. LOT outputs would collide with another cohort's.", call. = FALSE)
+    stop("No output prefix. LOT outputs would collide with another cohort's.",
+         call. = FALSE)
   if (!nzchar(cfg$input_cohort_table))
-    stop("No input_cohort_table for cohort '", cfg$cohort, "'.", call. = FALSE)
+    stop("No cohort table to read.", call. = FALSE)
   if (!isTRUE(cfg$persist_to_schema))
     stop("PERSIST_TO_SCHEMA is FALSE, so nothing would be written. ",
          "Set it TRUE to build LOT.", call. = FALSE)

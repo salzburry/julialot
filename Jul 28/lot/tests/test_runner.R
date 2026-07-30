@@ -17,7 +17,6 @@ env <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "build_lot.R"), envir = env)
 for (f in ls(env)) assign(f, get(f, envir = env), envir = globalenv())
 CONTRACT <- get("CONTRACT", envir = env)
-COHORTS  <- get("COHORTS",  envir = env)
 
 SETTINGS <- c("USE_QUARTERLY_TABLES", "CENSOR_AT_DISENROLLMENT", "PERSIST_TO_SCHEMA",
               "INDUCTION_WINDOW_DAYS", "INDUCTION_WINDOW_DAYS_LOT_N",
@@ -27,70 +26,89 @@ SETTINGS <- c("USE_QUARTERLY_TABLES", "CENSOR_AT_DISENROLLMENT", "PERSIST_TO_SCH
               "STUDY_END", "INPUT_COHORT_TABLE", "OBJECT_PREFIX")
 clear <- function() for (v in SETTINGS) Sys.unsetenv(v)
 
-cat("\n-- the cohort switch --\n")
+# Stand-in names. The package knows no real cohort, so the tests must not
+# smuggle one in either.
+TBL_A <- "COH_A_FINAL"; PFX_A <- "coh_a_"
+TBL_B <- "COH_B_FINAL"; PFX_B <- "coh_b_"
+
+cat("\n-- the caller supplies the cohort, the package holds none --\n")
 clear()
 base <- modifyList(list(persist_to_schema = TRUE), CONTRACT)
-for (nm in names(COHORTS)) {
-  cfg <- pin_cohort(base, nm)
-  ok(identical(cfg$input_cohort_table, COHORTS[[nm]]$input_cohort_table) &&
-       identical(cfg$object_prefix, COHORTS[[nm]]$object_prefix),
-     paste0(nm, ": reads ", COHORTS[[nm]]$input_cohort_table,
-            ", writes ", COHORTS[[nm]]$object_prefix, "*"))
-  runs(check_lot_contract(cfg), paste0(nm, ": passes the contract"))
-}
-stops(pin_cohort(base, "ndmm"), "an undeclared cohort is rejected, not invented")
-stops(pin_cohort(base, ""), "no cohort argument is rejected")
+cfg <- pin_cohort(base, TBL_A, PFX_A)
+ok(identical(cfg$input_cohort_table, TBL_A) && identical(cfg$object_prefix, PFX_A),
+   "a cohort table and prefix are taken as given")
+runs(check_lot_contract(cfg), "and pass the contract")
+ok(!exists("COHORTS", envir = env),
+   "there is no built-in cohort list to fall out of date")
+
+cat("\n-- a cohort has to be named properly --\n")
+stops(pin_cohort(base, "", PFX_A), "no cohort table")
+stops(pin_cohort(base, TBL_A, ""), "no prefix")
+stops(pin_cohort(base, NULL, NULL), "neither")
+stops(pin_cohort(base, "sch.COH_A_FINAL", PFX_A),
+      "a qualified name - schema comes from the settings")
+stops(pin_cohort(base, "COH_A; DROP TABLE x", PFX_A), "anything not a table name")
+stops(pin_cohort(base, TBL_A, "coh a "), "a prefix that is not a name")
+stops(pin_cohort(base, TBL_A, "coh_a"), "a prefix with no trailing underscore")
+runs(pin_cohort(base, TBL_A, "s3_"), "digits are fine inside a prefix")
 
 cat("\n-- two cohorts cannot collide --\n")
-# This is the whole point of the module: same rules, different output names.
-# Without a distinct prefix the second cohort would overwrite the first.
-prefixes <- vapply(COHORTS, `[[`, character(1), "object_prefix")
-inputs   <- vapply(COHORTS, `[[`, character(1), "input_cohort_table")
-ok(!anyDuplicated(prefixes), "every cohort has its own output prefix")
-ok(!anyDuplicated(inputs), "every cohort reads its own table")
-ok(all(nzchar(prefixes)), "no cohort writes unprefixed")
-stops(check_lot_contract(modifyList(pin_cohort(base, "overall"),
-                                    list(object_prefix = ""))),
+# The point of the module: same rules, different output names.
+stops(check_lot_contract(modifyList(cfg, list(object_prefix = ""))),
       "a blank prefix is rejected, so outputs cannot collide")
-stops(check_lot_contract(modifyList(pin_cohort(base, "overall"),
-                                    list(input_cohort_table = ""))),
+stops(check_lot_contract(modifyList(cfg, list(input_cohort_table = ""))),
       "a blank cohort table is rejected")
 
 cat("\n-- lot_out() prefixes LOT's outputs, wrk() leaves the cohort alone --\n")
 # The cohort table is named by the cohort build; prefixing it here would look
-# for overall_OVERALL_COH_FINAL.
-cfg <- pin_cohort(modifyList(base, list(work_schema = "osk02156")), "overall")
+# for coh_a_COH_A_FINAL.
+cfg <- pin_cohort(modifyList(base, list(work_schema = "osk02156")), TBL_A, PFX_A)
 assign("cfg", cfg, envir = globalenv())
 sys.source(file.path(ROOT, "R", "db_utils_lot.R"), envir = globalenv())
-ok(identical(lot_out("LOT1_BASE"), "hive_metastore.osk02156.overall_LOT1_BASE"),
-   "lot_out() carries the cohort prefix")
-ok(identical(wrk(cfg$input_cohort_table), "hive_metastore.osk02156.OVERALL_COH_FINAL"),
+ok(identical(lot_out("LOT1_BASE"), paste0("hive_metastore.osk02156.", PFX_A, "LOT1_BASE")),
+   "lot_out() carries the prefix")
+ok(identical(wrk(cfg$input_cohort_table), paste0("hive_metastore.osk02156.", TBL_A)),
    "wrk() reads the cohort table as the cohort named it")
 
-# With one cohort registered, "prefixes are unique" cannot fail. Run a second
-# one through the same code to show the outputs really do separate - this is
-# what the module exists for, so it is tested on the mechanism, not the list.
 OUTPUTS <- c("MAP_STACKED", "LOT1_BASE", "LOT1_SCT", "LOT1_BASE_END",
              "LOT_RUN_METADATA", "LOT_QC_SUMMARY")
 names_for <- function(prefix) {
   assign("cfg", modifyList(cfg, list(object_prefix = prefix)), envir = globalenv())
   vapply(OUTPUTS, lot_out, character(1))
 }
-a <- names_for("overall_"); b <- names_for("ndmm_")
+a <- names_for(PFX_A); b <- names_for(PFX_B)
 ok(!any(a %in% b), "a second cohort writes none of the first cohort's tables")
-ok(all(grepl("\\.ndmm_", b)), "every output of the second cohort is prefixed")
+ok(all(grepl(paste0("\\.", PFX_B), b)), "every output of the second cohort is prefixed")
 assign("cfg", cfg, envir = globalenv())
+
+cat("\n-- the cohort table is checked before any work --\n")
+# A missing column would otherwise surface deep into the build.
+fake_con <- structure(list(), class = "fakecon")
+with_cols <- function(cols) {
+  assign("db_q", function(con, sql) data.frame(col_name = cols,
+                                               stringsAsFactors = FALSE),
+         envir = globalenv())
+}
+with_cols(REQUIRED_COHORT_COLS)
+runs(check_cohort_input(fake_con, cfg), "a table with every column is accepted")
+with_cols(tolower(REQUIRED_COHORT_COLS))
+runs(check_cohort_input(fake_con, cfg), "column case does not matter")
+with_cols(setdiff(REQUIRED_COHORT_COLS, "ENDDATE_CE"))
+stops(check_cohort_input(fake_con, cfg), "a missing column is named, not ignored")
+with_cols(character(0))
+stops(check_cohort_input(fake_con, cfg), "an empty table cannot drive LOT")
+rm("db_q", envir = globalenv())
 
 cat("\n-- the contract rejects every value that changes a LOT --\n")
 clear()
 for (k in names(CONTRACT)) {
   v <- CONTRACT[[k]]
   other <- if (is.logical(v)) !v else if (is.numeric(v)) v + 1 else paste0(v, "x")
-  stops(check_lot_contract(modifyList(pin_cohort(base, "overall"),
+  stops(check_lot_contract(modifyList(pin_cohort(base, TBL_A, PFX_A),
                                       setNames(list(other), k))),
         paste0("rejects ", k, " = ", format(other)))
 }
-stops(check_lot_contract(modifyList(pin_cohort(base, "overall"),
+stops(check_lot_contract(modifyList(pin_cohort(base, TBL_A, PFX_A),
                                     list(persist_to_schema = FALSE))),
       "rejects PERSIST_TO_SCHEMA=FALSE")
 

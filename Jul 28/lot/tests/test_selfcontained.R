@@ -69,6 +69,25 @@ ok(length(extra) == 0,
    paste0("packages used: ", paste(sort(used), collapse = ", "),
           if (length(extra)) paste0(" -- undeclared: ", paste(extra, collapse = ", ")) else ""))
 
+cat("\n-- the package names no cohort of its own --\n")
+# A standalone LOT knows nothing about the studies that use it. The caller
+# passes the cohort table and prefix; the moment a study name is baked in
+# here, copying the folder stops being enough.
+docs <- list.files(ROOT, pattern = "\\.(R|csv|md)$", recursive = TRUE,
+                   full.names = TRUE)
+docs <- docs[!grepl("tests/test_selfcontained\\.R$", docs)]
+COHORT_NAMES <- c("OVERALL_COH_FINAL", "ELIG_COH_FINAL", "NDMM", "ndmm",
+                  "overall_", "NNDM", "nndm")
+for (f in docs) {
+  nm <- sub(paste0("^", ROOT, "/"), "", f)
+  txt <- readLines(f, warn = FALSE)
+  hits <- unlist(lapply(COHORT_NAMES, function(cn)
+    grep(cn, txt, fixed = TRUE, value = TRUE)))
+  ok(length(hits) == 0,
+     paste0(nm, ": names no cohort",
+            if (length(hits)) paste0(" (", trimws(hits[1]), ")") else ""))
+}
+
 cat("\n-- the pieces a copy needs are all present --\n")
 NEED <- c("build.R", "config.csv", "R/build_lot.R", "R/config_lot.R",
           "R/db_utils_lot.R", "R/codelists_lot.R", "R/line_criteria.R",
