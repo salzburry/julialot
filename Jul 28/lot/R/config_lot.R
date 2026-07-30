@@ -47,6 +47,11 @@ cfg_defaults <- list(
   # New agents within this window of a CAR-T are consolidation, not a med add.
   cart_consolidation_days = as.integer(Sys.getenv("CART_CONSOLIDATION_DAYS", unset = "45")),
 
+  # ---- LOT2 and later ----
+  # single_day: an ALLO line spans only the transplant date.
+  allo_lot_span = Sys.getenv("ALLO_LOT_SPAN", unset = "single_day"),
+  max_lot       = as.integer(Sys.getenv("MAX_LOT", unset = "5")),
+
   # ---- Observation end ----
   # FALSE (primary): OBS_END_DT = ENDDATE = min(death, study_end), so a
   # disenrolled patient keeps contributing follow-up.

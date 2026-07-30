@@ -2,19 +2,19 @@
 
 Lines of therapy, built once and run per cohort.
 
-## Status: LOT1 ported, not yet run
+## Status: ported, not yet run
 
-`R/steps/` holds LOT1 - MMA claims, MAP, LOT1 base, SCT, LOT1 end - ported
-line for line from the validated source. `tests/test_same_as_source.R` proves
-that: every phase is compared against `apr_30_2026/02_lot1.R` and must match
-exactly, apart from the one change the port is allowed to make (LOT's outputs
-carry the cohort prefix).
+`R/steps/` holds the whole build - LOT1 (MMA claims, MAP, base regimen, SCT,
+end date) and LOT2 onwards up to `LOT_LONG`, one row per patient per line.
+All of it ported line for line from the validated source.
+
+`tests/test_same_as_source.R` proves that: every phase is compared against
+`apr_30_2026/02_lot1.R`, `lot2_5_inputs.R` and `lot2_5_base.R`, and must match
+exactly apart from the one change the port is allowed to make - LOT's outputs
+carry the cohort prefix.
 
 It has never been run against Databricks. Nothing here is validated output
 until it has been, and compared with the source build patient for patient.
-
-LOT2-5 and `LOT_LONG` are not ported yet, so the line-criteria layer has no
-`lot_long` to act on.
 
 The folder is self-contained - the only outside dependencies are the R
 packages `DBI`, `odbc` and `glue`, and no file resolves a path outside it.
@@ -77,7 +77,7 @@ Then turn it on with `APPLY_L2_STARTED_ON_MED,TRUE` in `config.csv`. Any value
 other than `TRUE` or `FALSE` stops the build rather than quietly leaving the
 criterion off.
 
-Two tables will come out, once `lot_long` is being built:
+Two tables come out:
 
 - `<prefix>LOT_LONG_ALLFLAGS` - every criterion as a 0/1 column, computed
   whether or not it is enabled. Check what a criterion would cost before
@@ -136,5 +136,7 @@ R/steps/             the rules, in order:
   05_sct.R             transplant: AUTO, ALLO, CAR-T
   06_lot1_end.R        LOT1 end date and reason
   07_qc.R              QC counts
-  08_persist.R         write the outputs, all prefixed
+  08_persist.R         write the LOT1 outputs, all prefixed
+  09_lot2_5_inputs.R   rebuild the views LOT2-5 reads
+  10_lot2_5_base.R     LOT2 onwards, and LOT_LONG
 ```

@@ -55,7 +55,7 @@ body_of <- function(lines) {
   end <- max(which(keep == "}"))
   keep <- keep[seq_len(end - 1)]
   # the return list this phase adds, if any
-  ret <- grep("^  list\\(sct_src = sct_src", keep)
+  ret <- grep("^  list\\(rollup_src = rollup_src", keep)
   if (length(ret)) keep <- keep[seq_len(ret - 1)]
   while (length(keep) && !nzchar(trimws(keep[length(keep)]))) keep <- keep[-length(keep)]
   keep
@@ -82,6 +82,31 @@ for (p in PHASES) {
   }
 }
 
+cat("\n-- LOT2-5 and LOT_LONG are whole-file copies --\n")
+# These two were already function-structured in the source, so they are copied
+# entire rather than cut into phases. Same rule: identical once unported.
+WHOLE <- list(
+  list(file = "09_lot2_5_inputs.R", src = "R/lot2_5_inputs.R"),
+  list(file = "10_lot2_5_base.R",   src = "R/lot2_5_base.R")
+)
+for (p in WHOLE) {
+  f  <- file.path(ROOT, "R", "steps", p$file)
+  sf <- file.path(dirname(SRC), p$src)
+  if (!file.exists(f) || !file.exists(sf)) { ok(FALSE, paste0(p$file, ": missing")); next }
+  got  <- unport(readLines(f, warn = FALSE))
+  want <- readLines(sf, warn = FALSE)
+  same <- identical(got, want)
+  if (!same) {
+    n <- max(length(got), length(want))
+    g <- c(got, rep(NA, n - length(got))); w <- c(want, rep(NA, n - length(want)))
+    d <- which(is.na(g) | is.na(w) | g != w)[1]
+    ok(FALSE, paste0(p$file, ": differs from ", p$src, " at line ", d,
+                     "\n           source: ", w[d], "\n           ported: ", g[d]))
+  } else {
+    ok(TRUE, paste0(p$file, ": identical to ", p$src, " (", length(want), " lines)"))
+  }
+}
+
 cat("\n-- the port covers the whole of main(), with nothing dropped silently --\n")
 covered <- unlist(lapply(PHASES, function(p) p$from:p$to))
 # Named, so nothing can be dropped without saying why:
@@ -105,9 +130,13 @@ ok(any(grepl("generate_descriptives", src[1810:1818])),
 cat("\n-- LOT's outputs are prefixed, the cohort table is not --\n")
 steps <- list.files(file.path(ROOT, "R", "steps"), "\\.R$", full.names = TRUE)
 all_lines <- unlist(lapply(steps, readLines, warn = FALSE))
-w <- grep("wrk(", all_lines, fixed = TRUE, value = TRUE)
-ok(length(w) == 1 && grepl("cfg$input_cohort_table", w[1], fixed = TRUE),
-   "wrk() is used once, for the cohort table")
+# Count is brittle - LOT1 and the LOT2-5 rebuild both read the cohort. What
+# matters is that every unprefixed name IS the cohort table.
+w <- grep("(?<!lot_)wrk\\(", all_lines, perl = TRUE, value = TRUE)
+stray <- w[!grepl("cfg$input_cohort_table", w, fixed = TRUE)]
+ok(length(stray) == 0,
+   if (length(stray)) paste0("unprefixed table name: ", trimws(stray[1]))
+   else paste0("all ", length(w), " uses of wrk() are the cohort table"))
 n_out <- length(grep("lot_out(", all_lines, fixed = TRUE))
 ok(n_out >= 12, paste0("every other table name goes through lot_out() (", n_out, ")"))
 # A CREATE TABLE that skipped lot_out() would overwrite another cohort's.

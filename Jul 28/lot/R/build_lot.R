@@ -27,6 +27,8 @@ CONTRACT <- list(
   sct_auto_gap_days           = 60L,
   sct_tandem_days             = 180L,
   cart_consolidation_days     = 45L,
+  allo_lot_span               = "single_day",
+  max_lot                     = 5L,
   dsn                         = "RWDE",
   tbl_medical                 = "medical",
   tbl_med_proc                = "med_procedure",
@@ -48,7 +50,7 @@ BOOL_SETTINGS <- c("USE_QUARTERLY_TABLES", "CENSOR_AT_DISENROLLMENT",
 INT_SETTINGS  <- c("INDUCTION_WINDOW_DAYS", "INDUCTION_WINDOW_DAYS_LOT_N",
                    "MAP_DISCON_GAP_DAYS", "MEDICAL_DAY_SUPPLY",
                    "SCT_AUTO_WINDOW_DAYS", "SCT_AUTO_GAP_DAYS",
-                   "SCT_TANDEM_DAYS", "CART_CONSOLIDATION_DAYS")
+                   "SCT_TANDEM_DAYS", "CART_CONSOLIDATION_DAYS", "MAX_LOT")
 
 check_settings <- function() {
   bad <- character(0)
@@ -69,6 +71,10 @@ check_settings <- function() {
   e <- Sys.getenv("STUDY_END", unset = "")
   if (nzchar(e) && !grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", e))
     bad <- c(bad, paste0("STUDY_END='", e, "' (want YYYY-MM-DD)"))
+  a <- Sys.getenv("ALLO_LOT_SPAN", unset = "")
+  if (nzchar(a) && !a %in% c("single_day", "extend_to_next"))
+    bad <- c(bad, paste0("ALLO_LOT_SPAN='", a,
+                         "' (want single_day or extend_to_next)"))
 
   if (length(bad))
     stop("Settings that would build a different LOT:\n  ",
@@ -226,8 +232,21 @@ build_lot <- function(here, cohort_table, prefix) {
   phase_qc(con, ctx)
   phase_persist(con, ctx)
 
+  # LOT2 onwards reads what phase_persist just wrote, so it runs after it.
+  # prepare_lot_inputs() rebuilds the session views the builder needs; in one
+  # process LOT1 already made them, but it is idempotent and keeps this phase
+  # correct on its own.
+  prepare_lot_inputs(con, rollup_src = ctx$rollup_src, subs_src = ctx$subs_src,
+                     sct_src = ctx$sct_src)
+  build_lot2_5(con,
+               induction_window_days   = cfg$lot_n_induction_window_days,
+               cart_consolidation_days = cfg$cart_consolidation_days,
+               sct_tandem_days         = cfg$sct_tandem_days,
+               allo_lot_span           = cfg$allo_lot_span,
+               max_lot                 = cfg$max_lot)
+
   log_msg(SEP)
-  log_msg("LOT1 complete for ", cfg$input_cohort_table, " -> ", cfg$object_prefix, "*")
+  log_msg("LOT complete for ", cfg$input_cohort_table, " -> ", cfg$object_prefix, "*")
   log_msg(SEP)
   invisible(TRUE)
 }

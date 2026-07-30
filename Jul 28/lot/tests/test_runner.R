@@ -70,8 +70,20 @@ ok(identical(lot_out("LOT1_BASE"), paste0("hive_metastore.osk02156.", PFX_A, "LO
 ok(identical(wrk(cfg$input_cohort_table), paste0("hive_metastore.osk02156.", TBL_A)),
    "wrk() reads the cohort table as the cohort named it")
 
-OUTPUTS <- c("MAP_STACKED", "LOT1_BASE", "LOT1_SCT", "LOT1_BASE_END",
-             "LOT_RUN_METADATA", "LOT_QC_SUMMARY")
+# Read the real output names out of the ported steps rather than listing them
+# by hand - a hand list goes stale the moment a step adds a table, which is
+# exactly when a collision would slip through.
+step_src <- unlist(lapply(list.files(file.path(ROOT, "R", "steps"), "\\.R$",
+                                     full.names = TRUE), readLines, warn = FALSE))
+step_src <- step_src[!grepl("^\\s*(#|--)", step_src)]
+lits <- unlist(regmatches(step_src, gregexpr("lot_out\\((\'|\")[A-Z_0-9]+(\'|\")\\)",
+                                             step_src, perl = TRUE)))
+OUTPUTS <- unique(gsub("lot_out\\(|\'|\"|\\)", "", lits))
+ok(length(OUTPUTS) >= 6,
+   paste0("found ", length(OUTPUTS), " named outputs in the steps: ",
+          paste(sort(OUTPUTS), collapse = ", ")))
+ok(all(c("LOT_LONG", "LOT_RUN_METADATA") %in% OUTPUTS),
+   "including LOT_LONG, the table LOT2-5 exists to build")
 names_for <- function(prefix) {
   assign("cfg", modifyList(cfg, list(object_prefix = prefix)), envir = globalenv())
   vapply(OUTPUTS, lot_out, character(1))

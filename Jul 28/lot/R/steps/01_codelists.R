@@ -170,7 +170,7 @@ phase_codelists <- function(con) {
     collapse = ",\n      "
   )
 
-  list(sct_src = sct_src, meds = meds, classes = classes,
-       sanitize_col = sanitize_col, med_flag_exprs = med_flag_exprs,
-       class_flag_exprs = class_flag_exprs)
+  list(rollup_src = rollup_src, subs_src = subs_src, sct_src = sct_src,
+       meds = meds, classes = classes, sanitize_col = sanitize_col,
+       med_flag_exprs = med_flag_exprs, class_flag_exprs = class_flag_exprs)
 }

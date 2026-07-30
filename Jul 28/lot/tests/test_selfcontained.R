@@ -24,8 +24,9 @@ SELF <- "tests/test_selfcontained.R"; EQUIV <- "tests/test_same_as_source.R"
 keep  <- !rel %in% c(SELF, EQUIV)
 files <- files[keep]; rel <- rel[keep]
 code  <- setNames(lapply(files, readLines, warn = FALSE), rel)
-# Comments talk about apr_30_2026 and the cohort build; only code matters here.
-live  <- lapply(code, function(l) l[!grepl("^\\s*#", l)])
+# Only code matters. Strip R comments and the SQL "--" comments inside the
+# glue strings - those discuss other files by name and are not dependencies.
+live  <- lapply(code, function(l) l[!grepl("^\\s*(#|--)", l)])
 
 cat("\n-- nothing points outside this folder --\n")
 ok(length(files) > 0, paste0("found ", length(files), " R files"))
