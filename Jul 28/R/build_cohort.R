@@ -1,10 +1,12 @@
 # Shared cohort runner. Each cohort folder supplies its own config.csv and
 # calls build_cohort(<its own folder>).
 
-build_cohort <- function(cohort_dir, root = dirname(cohort_dir)) {
+build_cohort <- function(cohort_dir, root = dirname(cohort_dir),
+                         expect_table = NULL) {
   user_cfg    <- prompt_user_options(cfg_defaults)
   ie_criteria <- prompt_ie_criteria(cfg_defaults)
   cfg         <- pin_output_schema(finalize_cfg(cfg_defaults, user_cfg, ie_criteria))
+  check_output_contract(cfg, expect_table)
 
   log_msg("=", SEP_59)
   log_msg("COHORT BUILD - ", basename(cohort_dir), " - run_id: ", run_id)
@@ -25,6 +27,7 @@ build_cohort <- function(cohort_dir, root = dirname(cohort_dir)) {
   }
 
   load_csv_codelists(conn, cfg)
+  check_codelists_not_empty(conn, cfg)
 
   mat_tables <- new.env()
   ckpt_steps <- resolve_checkpoints()
@@ -74,6 +77,41 @@ build_cohort <- function(cohort_dir, root = dirname(cohort_dir)) {
   log_msg("=", SEP_59)
 
   invisible(list(cfg = cfg, conn = conn, mat_tables = mat_tables))
+}
+
+# A cohort folder states the table it must write; anything else is a mistake.
+# config.csv only fills FINAL_TABLE_NAME when it is unset, so an ambient
+# FINAL_TABLE_NAME=ELIG_COH_FINAL would quietly send this build at the legacy
+# table. PERSIST_TO_SCHEMA=FALSE is worse: the run looks complete but the
+# cohort only ever existed as a temp view.
+check_output_contract <- function(cfg, expect_table) {
+  if (!is.null(expect_table) && !identical(cfg$final_table_name, expect_table)) {
+    stop("This build writes ", expect_table, ", but FINAL_TABLE_NAME is '",
+         cfg$final_table_name, "'. Unset it, or fix config.csv.", call. = FALSE)
+  }
+  if (!isTRUE(cfg$persist_to_schema)) {
+    stop("PERSIST_TO_SCHEMA is FALSE, so nothing would be written. ",
+         "Set it TRUE to build a cohort.", call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
+# The five cohort code lists. An empty one doesn't error - it makes an empty
+# view, and the build runs to completion with a wrong cohort: no MM dx list
+# gives no patients, no therapy list drops everyone at Step 6, an empty
+# exclusion list passes everyone.
+check_codelists_not_empty <- function(conn, cfg) {
+  required <- c(cfg$cl_mm_dx, cfg$cl_mm_therapy, cfg$cl_preg,
+                cfg$cl_clintrial, cfg$cl_other_malig)
+  for (tbl in required) {
+    src <- if (isTRUE(cfg$use_csv_codelists)) tbl else
+      paste0(if (nzchar(cfg$catalog)) paste0(cfg$catalog, ".") else "",
+             cfg$ref_schema, ".", tbl)
+    n <- DBI::dbGetQuery(conn$con, paste0("SELECT count(*) AS n FROM ", src))$n
+    if (is.na(n) || n == 0) stop("Code list '", src, "' is empty.", call. = FALSE)
+    log_msg("  code list ", tbl, ": ", format(n, big.mark = ","), " rows")
+  }
+  invisible(TRUE)
 }
 
 # One schema for everything this build writes - checkpoints, the final cohort,

@@ -1529,11 +1529,11 @@ prepare_overall_cohort <- function(con) {
 }
 
 # Cohort-attrition card for the WHOLE (parent) cohort. Reads the
-# attrition_report table that 01_cohort.R / persist_attrition_table() writes
+# attrition_report table that overall/build.R / persist_attrition_table() writes
 # at the end of Stage 1, picks the OP-confirmation window from
 # cfg$outpatient_window, and emits BOTH a table card and a horizontal
 # waterfall chart so reviewers can see each parent IE rule applied
-# step-by-step (the same step list 01_cohort.R prints to the log).
+# step-by-step (the same step list overall/build.R prints to the log).
 #
 # Degrades gracefully: if the attrition_report table is missing (e.g.
 # Stage 1 was skipped or PERSIST_TO_SCHEMA=FALSE), an amber HTML card
@@ -1557,7 +1557,7 @@ build_overall_attrition <- function(con, section = "OVERVIEW",
       'background:#fff3cd;border:1px solid #d9a800;border-radius:6px;',
       'color:#5a4500"><b>Overall cohort attrition unavailable.</b><br>',
       'This card reads <code>', attrition_tbl, '</code>, written by ',
-      '<code>01_cohort.R</code> (Stage 1 of <code>run_pipeline.R</code>) via ',
+      '<code>overall/build.R</code> via ',
       '<code>persist_attrition_table()</code>. Run Stage 1 against the ',
       'same <code>PROJECT_WORK_SCHEMA</code> (and keep ',
       '<code>PERSIST_TO_SCHEMA=TRUE</code>), then rebuild this dashboard.',
