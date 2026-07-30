@@ -426,6 +426,21 @@ check_lot_long <- function(con, cfg) {
   d <- db_q(con, glue("
     SELECT count(*) AS n FROM (
       SELECT PATID, LOT_NUM FROM {t} GROUP BY PATID, LOT_NUM HAVING count(*) > 1)"))$n
+  # A line has to start after the previous one ended. Every LOT_N candidate is
+  # taken strictly after PREV_END_DT, so anything else means the chain broke.
+  seq_bad <- db_q(con, glue("
+    SELECT count(*) AS n FROM (
+      SELECT LOT_START_DT,
+             lag(LOT_BASE_END_DT) OVER (PARTITION BY PATID ORDER BY LOT_NUM) AS prev_end
+      FROM {t})
+    WHERE prev_end IS NOT NULL AND LOT_START_DT <= prev_end"))$n
+  # And no line may run past the patient's observation. Every branch of the
+  # end-date rule is bounded by OBS_END_DT, so a breach is a real defect.
+  past_obs <- db_q(con, glue("
+    SELECT count(*) AS n
+    FROM {t} l
+    INNER JOIN lot_patient_input p ON l.PATID = p.PATID
+    WHERE l.LOT_BASE_END_DT > p.OBS_END_DT"))$n
   g <- db_q(con, glue("
     SELECT count(*) AS n FROM (
       SELECT PATID, min(LOT_NUM) AS lo, max(LOT_NUM) AS hi, count(DISTINCT LOT_NUM) AS k
@@ -436,6 +451,8 @@ check_lot_long <- function(con, cfg) {
   if (q$n_end_before_start > 0) bad <- c(bad, paste0(q$n_end_before_start, " lines end before they start"))
   if (q$n_bad_lot_num > 0)     bad <- c(bad, paste0(q$n_bad_lot_num, " lines outside 1..", cfg$max_lot))
   if (g > 0)                   bad <- c(bad, paste0(g, " patients whose lines do not run 1..n"))
+  if (seq_bad > 0)             bad <- c(bad, paste0(seq_bad, " lines starting on or before the previous line's end"))
+  if (past_obs > 0)            bad <- c(bad, paste0(past_obs, " lines ending after the patient's observation"))
   if (length(bad))
     stop(t, " is not usable: ", paste(bad, collapse = "; "), call. = FALSE)
   log_msg("LOT_LONG OK: ", q$n_rows, " lines for ", q$n_patients, " patients")

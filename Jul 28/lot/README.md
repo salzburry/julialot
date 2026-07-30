@@ -242,10 +242,24 @@ transplant flagged both tandem and single, and an AUTO before LOT1 began. The
 QC phase reports these and carries on; these stop the build.
 
 `LOT_LONG` is checked before anything is derived from it and before the run is
-called complete - no duplicate
-`(PATID, LOT_NUM)`, no line ending before it starts, no line number outside
-`1..MAX_LOT`, and every patient's lines running `1..n` with no gaps. These are
-structural, so a breach stops the build rather than printing a warning.
+called complete:
+
+- no duplicate `(PATID, LOT_NUM)`
+- no line ending before it starts
+- no line number outside `1..MAX_LOT`
+- every patient's lines running `1..n` with no gaps
+- each line starting strictly after the previous one ended
+- no line ending after the patient's observation
+
+The last two are the chain the iterative builder is supposed to produce: every
+LOT N candidate is taken strictly after the previous line's end, and every
+branch of the end-date rule is bounded by `OBS_END_DT`. So neither can fail
+unless something went wrong upstream. All of them stop the build rather than
+printing a warning.
+
+`LOT_LONG_FINAL` inherits these: `truncate` is the only removal mode, and it
+drops a trailing run of lines per patient, so what is left is a prefix of a
+chain that already passed.
 
 ## Tests
 

@@ -357,6 +357,50 @@ assign("db_q", function(con, sql) stop("no such command"), envir = pe)
 ok(!isTRUE(pe$lot_inputs_present(NULL)),
    "and if the catalogue cannot answer, it rebuilds rather than assumes")
 
+cat("\n-- LOT_LONG has to be chronologically possible --\n")
+# The lines form a chain: each starts strictly after the previous one ended,
+# and none runs past the patient's observation. Both are re-derivable, so a
+# breach means the iterative builder went wrong - it should stop, not report.
+le <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_lot.R"), envir = le)
+assign("log_msg", function(...) invisible(NULL), envir = le)
+assign("lot_out", function(x) x, envir = le)
+assign("glue", function(..., .envir = parent.frame()) {
+  t <- paste0(..., collapse = "")
+  for (v in c("t")) t <- gsub("\\{t\\}", "LOT_LONG", t)
+  gsub("\\{cfg\\$max_lot\\}", "5", t)
+}, envir = le)
+LL_OK <- list(n_rows = 100, n_patients = 40, n_end_before_start = 0, n_bad_lot_num = 0)
+ll_stub <- function(shape = list(), dup = 0, gaps = 0, seq_bad = 0, past_obs = 0) {
+  sh <- modifyList(LL_OK, shape)
+  assign("db_q", function(con, sql) {
+    if (grepl("HAVING count(*) > 1", sql, fixed = TRUE)) return(data.frame(n = dup))
+    if (grepl("lag(LOT_BASE_END_DT)", sql, fixed = TRUE)) return(data.frame(n = seq_bad))
+    if (grepl("l.LOT_BASE_END_DT > p.OBS_END_DT", sql, fixed = TRUE)) return(data.frame(n = past_obs))
+    if (grepl("HAVING lo <> 1", sql, fixed = TRUE)) return(data.frame(n = gaps))
+    as.data.frame(sh)
+  }, envir = le)
+}
+cfg_ll <- list(max_lot = 5L)
+ll_stub()
+ok(!inherits(tryCatch(le$check_lot_long(NULL, cfg_ll), error = function(e) e), "error"),
+   "a sound LOT_LONG passes")
+ll_stub(seq_bad = 3)
+ok(inherits(tryCatch(le$check_lot_long(NULL, cfg_ll), error = function(e) e), "error"),
+   "a line starting on or before the previous line's end stops the build")
+ll_stub(past_obs = 2)
+ok(inherits(tryCatch(le$check_lot_long(NULL, cfg_ll), error = function(e) e), "error"),
+   "a line ending after the patient's observation stops the build")
+ll_stub(dup = 1)
+ok(inherits(tryCatch(le$check_lot_long(NULL, cfg_ll), error = function(e) e), "error"),
+   "a duplicate (PATID, LOT_NUM) still stops the build")
+ll_stub(gaps = 4)
+ok(inherits(tryCatch(le$check_lot_long(NULL, cfg_ll), error = function(e) e), "error"),
+   "lines that do not run 1..n still stop the build")
+ll_stub(shape = list(n_end_before_start = 1))
+ok(inherits(tryCatch(le$check_lot_long(NULL, cfg_ll), error = function(e) e), "error"),
+   "a line ending before it starts still stops the build")
+
 cat("\n-- the checks group by the key extraction actually joins on --\n")
 # The NDC join pads to eleven digits, so '123456789' and '0123456789' are one
 # key there. Grouping by the stored code would call them two, and a code
