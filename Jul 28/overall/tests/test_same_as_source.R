@@ -1,17 +1,9 @@
 #!/usr/bin/env Rscript
-# =============================================================================
-# test_same_as_source.R -- is overall/R/steps identical to apr_30_2026?
-# -----------------------------------------------------------------------------
+# Same steps, same order, same SQL as apr_30_2026 - compared as exact strings.
+# Two steps deliberately differ; see CHANGED below. Skips when apr_30_2026 is
+# absent, which is normal in prod.
+#
 #   Rscript "Jul 28/overall/tests/test_same_as_source.R"
-#
-# This is a refactor, so there is exactly one thing to prove: the steps this
-# folder builds are the same steps, in the same order, with the same SQL, as
-# apr_30_2026/R/pipeline_steps.R builds from the same config.
-#
-# Not normalised, not whitespace-collapsed. Identical strings.
-#
-# It skips when apr_30_2026 is absent, which is the normal state in prod.
-# =============================================================================
 
 here <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -95,24 +87,42 @@ if (length(a) == length(b)) {
   ok(identical(vapply(a, `[[`, character(1), "name"),
                vapply(b, `[[`, character(1), "name")),
      "same step names, in the same order")
+  # These two differ on purpose. med_claim_header used to collapse lines with
+  # max(POS) and then test it, so POS 21 + 81 came out 81 and stopped being
+  # inpatient - 348 patients mislabelled, 7 dropped. Flagged per line now.
+  CHANGED <- c("07a_med_claim_header", "08a_mm_dx_events_all")
   for (i in seq_along(a)) {
-    ok(identical(as.character(a[[i]]$sql), as.character(b[[i]]$sql)),
-       paste0(a[[i]]$name, ": SQL identical"))
+    same_sql <- identical(as.character(a[[i]]$sql), as.character(b[[i]]$sql))
+    if (a[[i]]$name %in% CHANGED) {
+      ok(!same_sql, paste0(a[[i]]$name, ": differs from source, as intended"))
+    } else {
+      ok(same_sql, paste0(a[[i]]$name, ": SQL identical"))
+    }
     ok(identical(as.character(a[[i]]$qc), as.character(b[[i]]$qc)),
        paste0(a[[i]]$name, ": QC identical"))
   }
+
+  # ...and they differ in the intended way, not some other way.
+  hdr <- as.character(b[[match("07a_med_claim_header",
+                               vapply(b, `[[`, character(1), "name"))]]$sql)
+  ev  <- as.character(b[[match("08a_mm_dx_events_all",
+                               vapply(b, `[[`, character(1), "name"))]]$sql)
+  ok(grepl("AS line_inpatient", hdr, fixed = TRUE),
+     "med_claim_header flags each line before aggregating")
+  ok(grepl("h.line_inpatient = 1 OR cf.CONF_ID IS NOT NULL", ev, fixed = TRUE),
+     "inpatient_flg reads the aggregated line flag")
+  ok(!grepl("h.POS IN ('21', '51', '61')", ev, fixed = TRUE),
+     "no step tests a collapsed max(POS) any more")
+  # Both operands are 0/1 or IS NOT NULL, so NOT(...) can never be NULL and a
+  # claim can no longer end up neither inpatient nor outpatient.
+  ok(grepl("CASE WHEN NOT (h.line_inpatient = 1 OR cf.CONF_ID IS NOT NULL)",
+           ev, fixed = TRUE),
+     "outpatient_flg cannot evaluate to NULL")
 }
 
-# These helper files are copies, so they must not have drifted.
-#
-# criteria_attrition.R and db_utils.R are deliberately NOT in this list:
-#   criteria_attrition.R  final row names its window and reads the count off
-#                         the cohort table; a failed persist stops the run;
-#                         attrition_report is prefixed per cohort
-#   db_utils.R            materialized tables are prefixed per cohort; a lost
-#                         connection stops the run instead of reconnecting into
-#                         a session with none of the views
-# Neither touches build_steps(), so the step SQL compared above is unaffected.
+# Copies, so they must not have drifted. criteria_attrition.R and db_utils.R
+# are left out - both carry fixes the source doesn't have, and neither touches
+# build_steps().
 for (f in c("config_prompts.R", "codelists.R", "load_inputs.R"))
   ok(identical(readLines(file.path(ROOT, "R", f), warn = FALSE),
                readLines(file.path(APR, "R", f), warn = FALSE)),

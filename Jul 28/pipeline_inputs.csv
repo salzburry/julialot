@@ -8,7 +8,8 @@ PROJECT_WORK_SCHEMA,,Schema LOT1/LOT2-5 read & write (blank = use env / DOMINO_U
 DOMINO_USER_NAME,,Personal schema; blank = Domino-injected value is used
 OPTUM_CDM_SCHEMA,clnprw_optum,Optum CDM source schema
 FINAL_TABLE_NAME,ELIG_COH_FINAL,Cohort attrition output table
-INPUT_COHORT_TABLE,ELIG_COH_FINAL,Cohort table LOT pipelines read
+INPUT_COHORT_TABLE,OVERALL_COH_FINAL,Cohort table LOT + analytics read
+ATTRITION_TABLE,overall_attrition_report,Attrition table the dashboards read
 # --- Study window & paths --- (dates auto-normalized to YYYY-MM-DD even if Excel reformats them),,
 STUDY_END,2025-06-30,Study end date YYYY-MM-DD (Excel may rewrite this; the loader fixes it back)
 STUDY_START,2015-07-01,NDMM pregnancy-scan lower bound ONLY (read by 06 via Sys.getenv); the parent study window is set in config_prompts.R and is NOT driven by this row - change both if you shift the window

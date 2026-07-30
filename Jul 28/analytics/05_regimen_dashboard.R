@@ -1541,9 +1541,9 @@ prepare_overall_cohort <- function(con) {
 build_overall_attrition <- function(con, section = "OVERVIEW",
                                     title_prefix = "") {
   attrition_tbl <- if (nzchar(cfg$catalog))
-    paste0(cfg$catalog, ".", cfg$work_schema, ".attrition_report")
+    paste0(cfg$catalog, ".", cfg$work_schema, ".", cfg$attrition_table)
   else
-    paste0(cfg$work_schema, ".attrition_report")
+    paste0(cfg$work_schema, ".", cfg$attrition_table)
 
   df <- tryCatch(db_q(con, glue("
     SELECT row_order, step_id, description, n_30, n_60, n_90

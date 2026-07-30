@@ -236,9 +236,9 @@ print_descriptives <- function(con) {
   # we emit a placeholder card instead of failing.
   tryCatch({
     attrition_tbl <- if (nzchar(cfg$catalog)) {
-      paste0(cfg$catalog, ".", cfg$work_schema, ".attrition_report")
+      paste0(cfg$catalog, ".", cfg$work_schema, ".", cfg$attrition_table)
     } else {
-      paste0(cfg$work_schema, ".attrition_report")
+      paste0(cfg$work_schema, ".", cfg$attrition_table)
     }
 
     # Local fallback for outpatient_window - belt-and-suspenders in case

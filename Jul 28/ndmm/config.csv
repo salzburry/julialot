@@ -2,7 +2,8 @@ name,value,description
 # ---------------------------------------------------------------------------
 # NDMM cohort, index-anchored base. TRUE applies a criterion, FALSE drops it.
 # Step 1 (qualifying MM dx) has no switch -- without it there is no index date.
-# This file wins over ../pipeline_inputs.csv.
+# Wins over ../pipeline_inputs.csv. An environment variable wins over both,
+# so build.R rechecks the settings that matter.
 # NDMM's own criteria are LOT1-anchored and live in ndmm_flags.R, after the LOT build.
 # ---------------------------------------------------------------------------
 FINAL_TABLE_NAME,NDMM_COH_FINAL,Cohort table this build writes
@@ -23,3 +24,6 @@ OUTPATIENT_WINDOW,90,Two-outpatient confirmation window (30/60/90)
 INPUT_COHORT_TABLE,NDMM_COH_FINAL,Cohort table the LOT run reads
 CHECKPOINT_STEPS,*,Write every step to the schema; no temp views left behind
 OBJECT_PREFIX,ndmm_,Prefix for this cohort's tables so the two builds don't collide
+ATTRITION_TABLE,ndmm_attrition_report,Attrition table this build writes and the dashboards read
+USE_CSV_CODELISTS,TRUE,Read the prod codelist CSVs rather than reference tables
+CODELIST_DIR,/mnt/code/codelist,Where the prod codelists live

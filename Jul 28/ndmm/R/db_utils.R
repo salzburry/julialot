@@ -154,6 +154,9 @@ with_retry <- function(fn, max_retries = 3L, base_sleep = 5) {
   repeat {
     result <- tryCatch(fn(), error = function(e) e)
     if (!inherits(result, "error")) return(result)
+    # Some failures cannot be retried - retrying a dead session just repeats
+    # the same error against the same connection.
+    if (inherits(result, "fatal_error")) stop(result)
     if (attempt >= max_retries) stop(result)
     sleep_s <- base_sleep * (2^(attempt - 1))
     log_msg("Retryable failure: ", conditionMessage(result))
@@ -211,13 +214,9 @@ materialize_to_personal_schema <- function(con, view_name, cfg, mat_tables, repl
     }))
   }
 
-  # Staging / atomic-publish (structural fix for DELTA_METADATA_CHANGED):
-  # the heavy SELECT lands in a BRAND-NEW staging table (no existing
-  # table metadata -> minimal Delta OCC surface for the long write),
-  # then a fast CREATE OR REPLACE from that already-materialized
-  # staging table swaps it into the final name in seconds (tiny OCC
-  # window). This is the same pattern used for LOT_LONG. The 5-column
-  # claim grain / null-safe joins are deliberately left unchanged.
+  # Write to a new staging table, then publish it to the final name.
+  # The long write touches no existing table metadata, so a concurrent
+  # commit can't collide with it; the swap itself takes seconds.
   for (attempt in seq_len(max_attempts)) {
     t0 <- Sys.time()
     stg <- paste0(full_table_name, "__stg_",
@@ -294,7 +293,7 @@ run_qc <- function(con, qc_sql) {
 }
 
 # ---- Step runner ----
-# conn is a mutable environment with conn$con (reference semantics for reconnect)
+# conn is a mutable environment holding conn$con
 run_step <- function(step_name, sql, conn, cfg, qc_sql = NULL, description = NULL,
                      step_num = NULL, total_steps = NULL, source_tables = NULL) {
   started_at <- Sys.time()
@@ -319,8 +318,9 @@ run_step <- function(step_name, sql, conn, cfg, qc_sql = NULL, description = NUL
     # session-scoped -- a new session has none of them, so the retry fails on a
     # missing view and the real cause is buried. Stop and let the run restart.
     if (!db_ping(conn$con)) {
-      stop("Lost the Databricks connection. The session's views are gone; ",
-           "rerun the build.", call. = FALSE)
+      stop(errorCondition(
+        "Lost the Databricks connection. The session's views are gone; rerun the build.",
+        class = c("fatal_error", "error", "condition")))
     }
 
     DBI::dbExecute(conn$con, sql)

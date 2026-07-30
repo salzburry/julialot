@@ -1,10 +1,12 @@
 # Cohort runner for overall/. build.R calls build_cohort(<this folder>).
 
-build_cohort <- function(cohort_dir, root = cohort_dir, expect_table = NULL) {
+build_cohort <- function(cohort_dir, root = cohort_dir, expect_table = NULL,
+                         expect_prefix = NULL) {
+  check_settings()
   user_cfg    <- prompt_user_options(cfg_defaults)
   ie_criteria <- prompt_ie_criteria(cfg_defaults)
   cfg         <- pin_output_schema(finalize_cfg(cfg_defaults, user_cfg, ie_criteria))
-  check_output_contract(cfg, expect_table)
+  check_output_contract(cfg, expect_table, expect_prefix)
 
   log_msg("=", SEP_59)
   log_msg("COHORT BUILD - ", basename(cohort_dir), " - run_id: ", run_id)
@@ -24,8 +26,18 @@ build_cohort <- function(cohort_dir, root = cohort_dir, expect_table = NULL) {
             add = TRUE)
   }
 
+  write_build_status(conn, cfg, "started")
+  # Any failure past this point leaves half the tables from this run and half
+  # from the last one. Record that rather than leaving it to be discovered.
+  if (!interactive()) {
+    on.exit({
+      st <- get0(".build_state", ifnotfound = "failed")
+      if (!identical(st, "complete"))
+        try(write_build_status(conn, cfg, "failed"), silent = TRUE)
+    }, add = TRUE, after = FALSE)
+  }
+
   load_csv_codelists(conn, cfg)
-  check_codelists_not_empty(conn, cfg)
 
   mat_tables <- new.env()
   ckpt_steps <- resolve_checkpoints()
@@ -54,6 +66,7 @@ build_cohort <- function(cohort_dir, root = cohort_dir, expect_table = NULL) {
     if (is_ckpt) {
       ok <- materialize_to_personal_schema(conn$con, view_name, cfg,
                                            mat_tables, replace = TRUE)
+      if (isTRUE(ok)) check_normalized_codelist(conn, cfg, view_name, mat_tables)
       if (!isTRUE(ok)) {
         stop("'", view_name, "' failed to materialize to '",
              cfg$personal_schema, "'. See the WARN above.")
@@ -80,20 +93,29 @@ build_cohort <- function(cohort_dir, root = cohort_dir, expect_table = NULL) {
   rows <- run_attrition_report(catalog, cfg, conn, h$work_tbl)
   if (isTRUE(cfg$persist_to_schema)) persist_attrition_table(rows, cfg, conn)
   print_cohort_characteristics(cfg, conn, h$work_tbl)
+
+  .build_state <<- "complete"
+  write_build_status(conn, cfg, "complete")
   log_msg("=", SEP_59)
 
   invisible(list(cfg = cfg, conn = conn, mat_tables = mat_tables))
 }
 
-# A cohort folder states the table it must write; anything else is a mistake.
-# config.csv only fills FINAL_TABLE_NAME when it is unset, so an ambient
-# FINAL_TABLE_NAME=ELIG_COH_FINAL would quietly send this build at the legacy
-# table. PERSIST_TO_SCHEMA=FALSE is worse: the run looks complete but the
-# cohort only ever existed as a temp view.
-check_output_contract <- function(cfg, expect_table) {
+# An env var beats config.csv, so check what we got - don't just default it.
+check_output_contract <- function(cfg, expect_table, expect_prefix = NULL) {
   if (!is.null(expect_table) && !identical(cfg$final_table_name, expect_table)) {
     stop("This build writes ", expect_table, ", but FINAL_TABLE_NAME is '",
          cfg$final_table_name, "'. Unset it, or fix config.csv.", call. = FALSE)
+  }
+  if (!is.null(expect_prefix) && !identical(cfg$object_prefix, expect_prefix)) {
+    stop("This build prefixes its tables '", expect_prefix,
+         "', but OBJECT_PREFIX is '", cfg$object_prefix,
+         "'. Wrong prefix overwrites the other cohort.", call. = FALSE)
+  }
+  if (!identical(resolve_checkpoints(), "*")) {
+    stop("CHECKPOINT_STEPS must be '*' so every step is written to the schema. ",
+         "It is '", paste(resolve_checkpoints(), collapse = "|"), "'.",
+         call. = FALSE)
   }
   if (!isTRUE(cfg$persist_to_schema)) {
     stop("PERSIST_TO_SCHEMA is FALSE, so nothing would be written. ",
@@ -102,30 +124,86 @@ check_output_contract <- function(cfg, expect_table) {
   invisible(TRUE)
 }
 
-# The five cohort code lists. An empty one doesn't error - it makes an empty
-# view, and the build runs to completion with a wrong cohort: no MM dx list
-# gives no patients, no therapy list drops everyone at Step 6, an empty
-# exclusion list passes everyone.
-check_codelists_not_empty <- function(conn, cfg) {
-  required <- c(cfg$cl_mm_dx, cfg$cl_mm_therapy, cfg$cl_preg,
-                cfg$cl_clintrial, cfg$cl_other_malig)
-  for (tbl in required) {
-    src <- if (isTRUE(cfg$use_csv_codelists)) tbl else
-      paste0(if (nzchar(cfg$catalog)) paste0(cfg$catalog, ".") else "",
-             cfg$ref_schema, ".", tbl)
-    n <- DBI::dbGetQuery(conn$con, paste0("SELECT count(*) AS n FROM ", src))$n
-    if (is.na(n) || n == 0) stop("Code list '", src, "' is empty.", call. = FALSE)
-    log_msg("  code list ", tbl, ": ", format(n, big.mark = ","), " rows")
+# Bad values fail open: as.logical("Y") is NA, which reads as FALSE and drops a
+# criterion. An invalid window silently becomes 90. Catch both up front.
+BOOL_SETTINGS <- c("APPLY_AGE_INCL", "APPLY_CE_B_INCL", "APPLY_CE_F_INCL",
+                   "APPLY_NO_BL_AGENTS_INCL", "APPLY_FU_AGENTS_INCL",
+                   "APPLY_BASELINE_MM_EXCL", "APPLY_OTHER_MALIG_EXCL",
+                   "APPLY_PREGNANCY_EXCL", "APPLY_CLINTRIAL_EXCL",
+                   "USE_CSV_CODELISTS", "USE_QUARTERLY_TABLES",
+                   "CENSOR_AT_DISENROLLMENT", "PERSIST_TO_SCHEMA")
+
+check_settings <- function() {
+  bad <- character(0)
+  for (v in BOOL_SETTINGS) {
+    x <- Sys.getenv(v, unset = "")
+    if (nzchar(x) && !(toupper(x) %in% c("TRUE", "FALSE")))
+      bad <- c(bad, paste0(v, "='", x, "' (want TRUE or FALSE)"))
   }
+  w <- Sys.getenv("OUTPATIENT_WINDOW", unset = "")
+  if (nzchar(w) && !(w %in% c("30", "60", "90")))
+    bad <- c(bad, paste0("OUTPATIENT_WINDOW='", w, "' (want 30, 60 or 90)"))
+
+  a <- Sys.getenv("MIN_AGE", unset = "")
+  if (nzchar(a) && is.na(suppressWarnings(as.integer(a))))
+    bad <- c(bad, paste0("MIN_AGE='", a, "' (want a whole number)"))
+
+  # as.Date("30-06-2025", "%Y-%m-%d") returns year 30 rather than failing, so
+  # check the shape first.
+  for (v in c("STUDY_START", "STUDY_END", "ID_START", "ID_END")) {
+    x <- Sys.getenv(v, unset = "")
+    if (!nzchar(x)) next
+    if (!grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", x) ||
+        is.na(suppressWarnings(as.Date(x, "%Y-%m-%d"))))
+      bad <- c(bad, paste0(v, "='", x, "' (want YYYY-MM-DD)"))
+  }
+  for (v in c("PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME")) {
+    x <- Sys.getenv(v, unset = "")
+    if (grepl(".", x, fixed = TRUE))
+      bad <- c(bad, paste0(v, "='", x, "' (a schema name, not catalog.schema)"))
+  }
+  if (length(bad))
+    stop("Bad settings:\n  ", paste(bad, collapse = "\n  "), call. = FALSE)
   invisible(TRUE)
 }
 
-# Where this build writes: one schema for everything - every step, the final
-# cohort, attrition_report - as <catalog>.<schema>, e.g. hive_metastore.osk02156.
-# config_prompts.R resolves work_schema and personal_schema separately and
-# personal_schema can come back empty, which silently skips writing the cohort.
-#
-# OBJECT_PREFIX keeps the two cohorts apart in that one schema.
+# How the last run ended. A run that dies halfway leaves some tables from this
+# run and some from the one before, and nothing else says so.
+write_build_status <- function(conn, cfg, state) {
+  obj <- paste0(tolower(cfg$object_prefix), "build_status")
+  tbl <- if (nzchar(cfg$catalog))
+    paste0(cfg$catalog, ".", cfg$work_schema, ".", obj) else
+    paste0(cfg$work_schema, ".", obj)
+  q <- function(x) paste0("'", gsub("'", "''", as.character(x)), "'")
+  DBI::dbExecute(conn$con, paste0(
+    "CREATE OR REPLACE TABLE ", tbl, " AS SELECT ",
+    q(get0("run_id", ifnotfound = "")), " AS run_id, ",
+    q(state), " AS state, ",
+    q(cfg$final_table_name), " AS final_table_name, ",
+    q(format(Sys.time(), "%Y-%m-%d %H:%M:%S")), " AS updated_at"))
+  log_msg("Build status: ", state, " (", tbl, ")")
+  invisible(TRUE)
+}
+
+# Normalization drops blanks and bad rows, so a file with rows can still end up
+# with no usable codes.
+NORMALIZED_CODELISTS <- c("mm_dx_codes", "mm_therapy_codes", "preg_codes",
+                          "clintrial_codes", "other_malig_codes")
+
+check_normalized_codelist <- function(conn, cfg, view_name, mat_tables) {
+  if (!(view_name %in% NORMALIZED_CODELISTS)) return(invisible(TRUE))
+  n <- DBI::dbGetQuery(conn$con, paste0(
+    "SELECT count(*) AS n FROM ", get(view_name, envir = mat_tables)))$n
+  if (is.na(n) || n == 0)
+    stop("Code list '", view_name, "' has no usable codes.", call. = FALSE)
+  log_msg("  code list ", view_name, ": ", format(n, big.mark = ","), " codes")
+  invisible(TRUE)
+}
+
+# One schema for everything: <catalog>.<schema>, e.g. hive_metastore.osk02156.
+# config_prompts.R resolves work and personal schema separately, and an empty
+# personal schema silently skips writing the cohort. OBJECT_PREFIX keeps the
+# two cohorts apart.
 pin_output_schema <- function(cfg) {
   schema <- Sys.getenv("PROJECT_WORK_SCHEMA",
               unset = Sys.getenv("DOMINO_USER_NAME",
@@ -140,13 +218,8 @@ pin_output_schema <- function(cfg) {
   cfg
 }
 
-# Which views get written to the schema. "*" means every step, which is what
-# the cohort configs use -- nothing then depends on a temp view surviving, and
-# every table is there to query after the run. Set per cohort in config.csv,
-# pipe-separated, or name specific steps:
-#
-#   CHECKPOINT_STEPS,*
-#   CHECKPOINT_STEPS,mm_dx_events_all|mm_qualifying|ELIG_COH_ALLFLAGS
+# Which views get written to the schema. "*" is every step, which is what the
+# cohort configs use. Or name them, pipe-separated, in config.csv.
 resolve_checkpoints <- function() {
   v <- Sys.getenv("CHECKPOINT_STEPS", unset = "")
   if (!nzchar(v)) return(CHECKPOINT_STEPS)
@@ -154,10 +227,9 @@ resolve_checkpoints <- function() {
   s[nzchar(s)]
 }
 
-# The view a step creates. Not the same as the step name: 24_ELIG_COH_FINAL
-# creates the view named by FINAL_TABLE_NAME, and 06c_validate_rvnu_cd creates
-# rvnu_cd_check. Materializing by step name would look for a view that isn't
-# there. NA when the step writes a real table rather than a view (24b).
+# The view a step creates - not its name. 24_ELIG_COH_FINAL creates the view
+# named by FINAL_TABLE_NAME; 06c_validate_rvnu_cd creates rvnu_cd_check.
+# NA when the step writes a table (24b).
 step_view_name <- function(sql) {
   m <- regmatches(sql, regexpr("CREATE OR REPLACE TEMPORARY VIEW +[^ \n]+",
                                sql, ignore.case = TRUE))
@@ -165,8 +237,7 @@ step_view_name <- function(sql) {
   sub("CREATE OR REPLACE TEMPORARY VIEW +", "", m[1], ignore.case = TRUE)
 }
 
-# The final cohort view is skipped: step 24b already writes it as a permanent
-# table under its own name, which is what LOT reads.
+# Skip the final cohort view - 24b writes that table already.
 is_checkpoint <- function(view_name, ckpt_steps, cfg) {
   if (is.na(view_name)) return(FALSE)
   if (identical(view_name, cfg$final_table_name)) return(FALSE)
@@ -174,17 +245,17 @@ is_checkpoint <- function(view_name, ckpt_steps, cfg) {
 }
 
 # Source this folder's modules. Call before build_cohort().
-#
-# Order matters: cfg_defaults reads Sys.getenv() at source time, so the config
-# has to be applied before config_prompts.R is sourced. config.csv is read
-# first and wins; pipeline_inputs.csv (this folder, else Jul 28/) fills the
-# rest. A real env var set before either wins over both.
+# Order matters: cfg_defaults reads Sys.getenv() when sourced, so the config
+# files have to be applied first. config.csv wins, then pipeline_inputs.csv.
 load_cohort_modules <- function(root) {
   d <- file.path(root, "R")
   source(file.path(d, "load_inputs.R"))
-  if (file.exists(file.path(root, "config.csv")))
-    load_pipeline_inputs(root, filename = "config.csv")
-  load_pipeline_inputs(c(root, dirname(root)))
+  if (!file.exists(file.path(root, "config.csv")))
+    stop("No config.csv in ", root, call. = FALSE)
+  load_pipeline_inputs(root, filename = "config.csv")
+  if (!isTRUE(load_pipeline_inputs(c(root, dirname(root)))))
+    stop("No pipeline_inputs.csv in ", root, " or ", dirname(root),
+         ". Running on code defaults would be silently wrong.", call. = FALSE)
   for (f in c("config_prompts.R", "db_utils.R", "codelists.R",
               "criteria_attrition.R", "pipeline_steps.R"))
     source(file.path(d, f))

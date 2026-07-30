@@ -2,7 +2,11 @@
 
 phase_codelists <- function(cfg, h, ctx) {
   ref <- h$ref; work <- h$work; cdm_src <- h$cdm_src
-  mm_dx_source <- ctx$mm_dx_source; mm_therapy_source <- ctx$mm_therapy_source; preg_source <- ctx$preg_source; clintrial_source <- ctx$clintrial_source; other_malig_source <- ctx$other_malig_source
+  mm_dx_source       <- ctx$mm_dx_source
+  mm_therapy_source  <- ctx$mm_therapy_source
+  preg_source        <- ctx$preg_source
+  clintrial_source   <- ctx$clintrial_source
+  other_malig_source <- ctx$other_malig_source
 
   list(
     # ---- Phase 1: normalize the code lists (small, run once) ----
