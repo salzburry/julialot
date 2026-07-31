@@ -1584,21 +1584,61 @@ sys.source(file.path(ROOT, "R", "config_lot.R"), envir = cp)
 ok(identical(get("cfg_defaults", envir = cp)$work_schema, ""),
    "schema default is blank, not a shared fallback")
 
-cat("\n-- the shipped config.csv, not a sample --\n")
+cat("\n-- config.csv and CONTRACT say the same thing --\n")
+# These were compared against a third copy of the values kept in this file, so
+# CONTRACT could drift from both and nothing said so - changing max_lot to 6L
+# in CONTRACT alone passed the whole suite. Loaded the way build.R loads it and
+# handed to the real check_lot_contract instead: one place holds the values,
+# and the comparison is the production one rather than a restatement of it.
 rows <- read.csv(file.path(ROOT, "config.csv"), stringsAsFactors = FALSE,
                  comment.char = "#")
 shipped <- setNames(trimws(as.character(rows$value)), trimws(rows$name))
-EXPECT <- c(DATABRICKS_DSN = "RWDE", DATABRICKS_CATALOG = "hive_metastore",
-            OPTUM_CDM_SCHEMA = "clnprw_optum", USE_QUARTERLY_TABLES = "TRUE",
-            STUDY_END = "2025-06-30", CODELIST_DIR = "/mnt/code/codelist",
-            PERSIST_TO_SCHEMA = "TRUE", CENSOR_AT_DISENROLLMENT = "FALSE",
-            INDUCTION_WINDOW_DAYS = "60", INDUCTION_WINDOW_DAYS_LOT_N = "30",
-            MAP_DISCON_GAP_DAYS = "90", MEDICAL_DAY_SUPPLY = "28",
-            SCT_AUTO_WINDOW_DAYS = "13", SCT_AUTO_GAP_DAYS = "60",
-            SCT_TANDEM_DAYS = "180", CART_CONSOLIDATION_DAYS = "45",
-            ALLO_LOT_SPAN = "single_day", MAX_LOT = "5")
-for (k in names(EXPECT))
-  ok(identical(shipped[[k]], EXPECT[[k]]), paste0("config.csv ", k, " = ", EXPECT[[k]]))
+cnames <- names(shipped)[nzchar(names(shipped)) & !startsWith(names(shipped), "#")]
+# The environment wins over the file, so anything already set would mask it.
+# Cleared for the load and put back afterwards, whatever this shell had.
+was <- Sys.getenv(cnames, unset = NA_character_, names = TRUE)
+for (n in cnames) Sys.unsetenv(n)
+cc <- new.env(parent = globalenv())
+suppressMessages({
+  sys.source(file.path(ROOT, "R", "load_inputs.R"), envir = cc)
+  cc$load_pipeline_inputs(ROOT, "config.csv")
+  sys.source(file.path(ROOT, "R", "config_lot.R"), envir = cc)
+})
+for (n in cnames)
+  if (is.na(was[[n]])) Sys.unsetenv(n) else do.call(Sys.setenv, setNames(list(was[[n]]), n))
+loaded <- get("cfg_defaults", envir = cc)
+# Only the cohort and prefix are supplied, because the caller supplies those.
+# persist_to_schema is left as the file set it, so a file saying FALSE fails.
+cres <- tryCatch({ check_lot_contract(modifyList(loaded,
+          list(object_prefix = "x_", input_cohort_table = "T"))); NULL },
+        error = conditionMessage)
+ok(is.null(cres),
+   paste0("config.csv, loaded as build.R loads it, satisfies CONTRACT",
+          if (!is.null(cres)) paste0(" -- ", gsub("\n", " ", cres)) else ""))
+# ...and it is the file being read, not defaults that happen to agree: every
+# CONTRACT value the file carries has to have arrived from the file.
+from_file <- intersect(names(CONTRACT),
+                       c("dsn", "catalog", "cdm_schema", "use_quarterly_tables",
+                         "study_end", "codelist_dir", "censor_at_disenrollment",
+                         "induction_window_days", "lot_n_induction_window_days",
+                         "map_discon_gap_days", "medical_day_supply",
+                         "sct_auto_window_days", "sct_auto_gap_days",
+                         "sct_tandem_days", "cart_consolidation_days",
+                         "allo_lot_span", "max_lot"))
+ok(length(from_file) == 17L &&
+     all(vapply(from_file, function(k) isTRUE(all.equal(loaded[[k]], CONTRACT[[k]])),
+                logical(1))),
+   paste0("all ", length(from_file), " settings the file carries match CONTRACT"))
+# A misspelled name sets an environment variable nothing reads, so the setting
+# silently keeps its default and the contract still passes.
+clsrc <- paste(readLines(file.path(ROOT, "R", "config_lot.R"), warn = FALSE),
+               collapse = "\n")
+unread <- Filter(function(n) !grepl(paste0('Sys.getenv("', n, '"'), clsrc, fixed = TRUE),
+                 cnames)
+ok(length(unread) == 0,
+   if (length(unread)) paste0("config.csv names settings nothing reads: ",
+                              paste(unread, collapse = ", "))
+   else paste0("every one of the ", length(cnames), " names in config.csv is read"))
 # The caller passes the cohort, so config.csv must not pin one.
 ok(!any(c("INPUT_COHORT_TABLE", "OBJECT_PREFIX") %in% names(shipped)),
    "config.csv does not name a cohort")
