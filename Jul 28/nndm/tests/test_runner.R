@@ -765,6 +765,71 @@ ok(grepl("more than one", m, fixed = TRUE) && grepl("NDC:1 -> BEL/CAR", m, fixed
 ok(grepl("not waivable", m, fixed = TRUE),
    "...and says so, because a waiver would not resolve the ambiguity")
 
+cat("\n-- the review tables are not the production path --\n")
+# They cost a pass each, change nothing, and are read once by somebody deciding
+# something. A permanent production build should not carry a decision workflow
+# that has already happened.
+rte <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = rte)
+ok(setequal(rte$DELIVERABLES, c(rte$CORE_DELIVERABLES, rte$REVIEW_TABLES)) &&
+     length(intersect(rte$CORE_DELIVERABLES, rte$REVIEW_TABLES)) == 0,
+   paste0("every deliverable is core (", length(rte$CORE_DELIVERABLES),
+          ") or review (", length(rte$REVIEW_TABLES), "), and none is both"))
+# The six a run always writes: the cohort, the funnel, the flags behind it, and
+# what produced it. Nothing here is a diagnostic.
+ok(setequal(rte$CORE_DELIVERABLES,
+            c("NDMM_COHORT", "NDMM_ATTRITION", "NDMM_FLAGS_ALL",
+              "NDMM_RUN_METADATA", "NDMM_CODELIST_METADATA", "NDMM_BUILD_STATUS")),
+   "...and the core is the cohort, its funnel, its flags and its provenance")
+Sys.unsetenv("NDMM_REVIEW_TABLES")
+ok(!rte$review_tables_on(), "off unless asked - the production default")
+Sys.setenv(NDMM_REVIEW_TABLES = "true")
+ok(rte$review_tables_on(), "...and on however it is spelled")
+Sys.unsetenv("NDMM_REVIEW_TABLES")
+# Derived from the runner body: every review table has to be built behind the
+# flag, and no core one may be.
+gated <- vapply(REVIEW_BUILDERS <- c(
+    "build_ndmm_index_agents", "build_ndmm_mm_adjacent_groups",
+    "build_ndmm_mm_adjacent_codes", "build_ndmm_other_malig_groups",
+    "build_ndmm_other_malig_grain", "build_ndmm_fu_ce_counts",
+    "build_ndmm_belantamab_scope_counts", "build_ndmm_belantamab_reconcile"),
+  # Against the file text, not the parsed body: deparse() reflows an if with a
+  # single call onto its own lines, so the one-line form never appears there.
+  function(f) grepl(paste0("if (review_tables_on()) ", f, "(con, cfg)"),
+                    bl, fixed = TRUE), logical(1))
+ok(all(gated),
+   if (!all(gated)) paste0("built unconditionally: ",
+                           paste(REVIEW_BUILDERS[!gated], collapse = ", "))
+   else paste0("all ", length(REVIEW_BUILDERS),
+               " review tables are built only when the flag is set"))
+ok(!grepl("if (review_tables_on()) build_ndmm_cohort_table", bl, fixed = TRUE) &&
+     !grepl("if (review_tables_on()) write_attrition", bl, fixed = TRUE) &&
+     grepl("  build_ndmm_cohort_table(con, cfg)", bl, fixed = TRUE),
+   "...and nothing the cohort depends on is behind it")
+# The banner is the part that must not be switchable off: turning the tables
+# off must not also turn off being told what is open.
+ok(grepl("  report_pending_decisions(cfg)", bl, fixed = TRUE) &&
+     !grepl("if (review_tables_on()) report_pending_decisions", bl, fixed = TRUE),
+   "a run with the tables off still says what it did not settle")
+# Driven, not read: the message has to actually fire when the flag is off, and
+# not fire when it is on. Reading `bl` for the string only proves it is written
+# down somewhere.
+DELOG <- character(0)
+Sys.unsetenv("NDMM_REVIEW_TABLES")
+rte_cfg <- list(fu_ce_days = 0L, belantamab_scope = "study_period",
+                eligible_1l_csv = "", mm_adjacent_csv = "", primary_groups_csv = "")
+assign("log_msg", function(...) DELOG <<- c(DELOG, paste0(...)), envir = rte)
+rte$report_pending_decisions(rte_cfg)
+ok(any(grepl("were NOT built", DELOG, fixed = TRUE)),
+   "...and says the numbers it points at were not produced")
+DELOG <- character(0)
+Sys.setenv(NDMM_REVIEW_TABLES = "TRUE")
+rte$report_pending_decisions(rte_cfg)
+ok(any(grepl("NOT SETTLED", DELOG, fixed = TRUE)) &&
+     !any(grepl("were NOT built", DELOG, fixed = TRUE)),
+   "...and does not say it when they were")
+Sys.unsetenv("NDMM_REVIEW_TABLES")
+
 cat("\n-- what a run did not settle --\n")
 # Five criteria cannot be closed from this repository and every one defaults to
 # the source's behaviour, so a run with none of them settled produces a cohort

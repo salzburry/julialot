@@ -122,14 +122,31 @@ CHECKPOINTS <- c("NDMM_FLAGS_ALL", "NDMM_MM_DX_CODES",
                  "NDMM_INDEX_TX", "NDMM_BELANTAMAB_TX", "NDMM_PATIDS",
                  "NDMM_INDEX_INELIGIBLE")
 
-# What the run writes. All prefixed, so two cohorts sit side by side.
-DELIVERABLES <- c("NDMM_COHORT", "NDMM_ATTRITION", "NDMM_INDEX_AGENTS",
-                  "NDMM_BELANTAMAB_SCOPE_COUNTS", "NDMM_MM_ADJACENT_GROUPS",
-                  "NDMM_MM_ADJACENT_CODES", "NDMM_FU_CE_COUNTS",
-                  "NDMM_OTHER_MALIG_GROUPS", "NDMM_OTHER_MALIG_GRAIN",
-                  "NDMM_BELANTAMAB_RECONCILE",
-                  "NDMM_CODELIST_METADATA", "NDMM_RUN_METADATA",
-                  "NDMM_BUILD_STATUS")
+# The cohort and what made it. Every run writes these, and nothing else is
+# needed to hand the cohort on or to say what produced it.
+CORE_DELIVERABLES <- c("NDMM_COHORT", "NDMM_ATTRITION", "NDMM_FLAGS_ALL",
+                       "NDMM_RUN_METADATA", "NDMM_CODELIST_METADATA",
+                       "NDMM_BUILD_STATUS")
+
+# The numbers the open criterion decisions get made against. They cost a pass
+# each and none of them changes the cohort - they exist to be read once, by
+# somebody deciding something. Off by default, because the permanent production
+# path should not carry a decision workflow that has already happened.
+#
+# The decisions banner at the end of every run does NOT depend on this: a run
+# with review tables off still says what it did not settle, and says that the
+# numbers are one re-run away.
+REVIEW_TABLES <- c("NDMM_INDEX_AGENTS", "NDMM_MM_ADJACENT_GROUPS",
+                   "NDMM_MM_ADJACENT_CODES", "NDMM_OTHER_MALIG_GROUPS",
+                   "NDMM_OTHER_MALIG_GRAIN", "NDMM_FU_CE_COUNTS",
+                   "NDMM_BELANTAMAB_SCOPE_COUNTS", "NDMM_BELANTAMAB_RECONCILE")
+
+review_tables_on <- function()
+  identical(toupper(Sys.getenv("NDMM_REVIEW_TABLES", unset = "")), "TRUE")
+
+# Everything this package can write, which is what the output checks and the
+# README are held to. What a given run writes is CORE plus, if asked, REVIEW.
+DELIVERABLES <- c(CORE_DELIVERABLES, REVIEW_TABLES)
 OUTPUTS <- c(DELIVERABLES, CHECKPOINTS)
 
 # Conditions the study team can accept for a given data set. Nothing else can
@@ -246,6 +263,12 @@ report_pending_decisions <- function(cfg) {
   for (i in seq_along(p)) log_msg("  ", i, ". ", p[[i]])
   log_msg("Recorded in NDMM_RUN_METADATA.DECISIONS_PENDING. Set ",
           "NDMM_REQUIRE_DECISIONS=TRUE to refuse a run instead of reporting it.")
+  # The messages above name tables this run may not have built. Say so, rather
+  # than sending someone to look for one that is not there.
+  if (!review_tables_on())
+    log_msg("The tables named above were NOT built: NDMM_REVIEW_TABLES is off. ",
+            "Re-run with NDMM_REVIEW_TABLES=TRUE to produce the numbers these ",
+            "decisions get made against.")
   log_msg(SEP)
   invisible(p)
 }
@@ -1074,6 +1097,9 @@ build_nndm <- function(here, prefix) {
   log_msg("  1L start on or after: ", cfg$lot1_from)
   log_msg("  Baseline / CE before index: ", cfg$pre_lot1_days, " days")
   log_msg("  Follow-up CE: ", cfg$fu_ce_days, " day(s) after index")
+  log_msg("  Review tables: ", if (review_tables_on())
+            paste0("on (", length(REVIEW_TABLES), " extra)") else
+            "off (NDMM_REVIEW_TABLES=TRUE to build them)")
   log_msg(SEP)
 
   # First, and before this run writes anything at all: one query, against a
@@ -1131,7 +1157,7 @@ build_nndm <- function(here, prefix) {
   # NDMM_INDEX_TX is checkpointed inside the step, before LOT1_STARTS is
   # defined over it - see build_ndmm_lot1_index().
   checkpoint(con, "NDMM_LOT1_STARTS")
-  build_ndmm_index_agents(con, cfg)
+  if (review_tables_on()) build_ndmm_index_agents(con, cfg)
 
   log_msg("MM therapy in the ", NDMM_PRE_LOT1_DAYS, " days before 1L")
   build_ndmm_therapy_pre_lot1(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))
@@ -1140,14 +1166,14 @@ build_nndm <- function(here, prefix) {
   build_ndmm_other_malig_codes(con)
   checkpoint(con, "NDMM_OTHER_MALIG_CODES")
   check_decision_files(con, cfg)
-  build_ndmm_mm_adjacent_groups(con, cfg)
-  build_ndmm_mm_adjacent_codes(con, cfg)
-  build_ndmm_other_malig_groups(con, cfg)
+  if (review_tables_on()) build_ndmm_mm_adjacent_groups(con, cfg)
+  if (review_tables_on()) build_ndmm_mm_adjacent_codes(con, cfg)
+  if (review_tables_on()) build_ndmm_other_malig_groups(con, cfg)
   build_ndmm_med_claim_header_and_confinement(con, cdm_src(cfg$tbl_medical),
                                               cdm_src(cfg$tbl_confinement))
   build_ndmm_other_malig_pre_lot1(con, cdm_src(cfg$tbl_med_diag))
   checkpoint(con, "NDMM_OTHER_MALIG_EVENTS")
-  build_ndmm_other_malig_grain(con, cfg)
+  if (review_tables_on()) build_ndmm_other_malig_grain(con, cfg)
 
   log_msg("Pregnancy across the study period")
   build_ndmm_preg_codes(con)
@@ -1169,8 +1195,8 @@ build_nndm <- function(here, prefix) {
   checkpoint(con, "NDMM_PATIDS")
   # After the flags: each scope is costed against the whole conjunction, so it
   # needs every other criterion already decided.
-  build_ndmm_belantamab_scope_counts(con, cfg)
-  build_ndmm_fu_ce_counts(con, cfg)
+  if (review_tables_on()) build_ndmm_belantamab_scope_counts(con, cfg)
+  if (review_tables_on()) build_ndmm_fu_ce_counts(con, cfg)
   # build_lot_long_filtered() is not called. It joins LOT_LONG to the cohort for
   # the April dashboard's KPI, gallery and LOT-detail views; neither the cohort
   # nor the attrition reads it, and this package builds only those two. The
@@ -1185,7 +1211,7 @@ build_nndm <- function(here, prefix) {
 
   build_ndmm_cohort_table(con, cfg)
   check_ndmm_cohort(con, cfg, counts$ndmm_final)
-  build_ndmm_belantamab_reconcile(con, cfg)
+  if (review_tables_on()) build_ndmm_belantamab_reconcile(con, cfg)
   write_attrition(con, cfg, counts)
   write_codelist_metadata(con, cfg)
   write_run_metadata(con, cfg, here, counts$ndmm_final)

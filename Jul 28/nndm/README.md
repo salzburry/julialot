@@ -145,12 +145,26 @@ All prefixed, so two cohorts sit side by side in one schema.
 | `NDMM_CODELIST_METADATA` | the md5 and row count of every code list and fill-in file read |
 | `NDMM_BUILD_STATUS` | started / complete / failed, per run and prefix — what `check_no_active_run()` reads |
 
-### The review tables
+### The review tables — **off by default**
+
+```
+NDMM_REVIEW_TABLES=TRUE
+```
 
 **Eight tables, for five open questions** — two of them get both a "what is
 it" table and a "what does it cost" table. Each exists because the protocol is
 silent, a code list cannot answer, or the answer needs a build that has not run
 yet.
+
+None of them changes the cohort, each costs a pass, and they exist to be read
+**once**, by somebody deciding something. So the permanent production path does
+not carry them: a default run writes the six above and nothing else. Turn them
+on for the controlled run the decisions get made from, and off again afterwards.
+
+**The decisions banner does not depend on this flag.** A run with the review
+tables off still ends by naming every criterion it did not settle — it just
+adds that the numbers are one re-run away. You cannot turn the tables off and
+stop being told what is open.
 None of them changes the cohort — they are what the decision gets made
 *against*, so nobody has to guess and nobody has to re-run to find out.
 
@@ -982,6 +996,7 @@ is pinned to its default** — the review tables exist to be acted on.
 | `NDMM_PRIMARY_GROUPS_CSV` | `codelists/primary_tumor_groups.csv` | |
 | `NDMM_IGNORE_ACTIVE_RUN` | *(unset)* | `TRUE` gets past a `started` row a killed process left behind. Use it only once the named run is known to be dead — see **One run per prefix at a time** |
 | `NDMM_REQUIRE_DECISIONS` | *(unset)* | `TRUE` refuses to start while a criterion decision is open — see **Readiness for IE sign-off** |
+| `NDMM_REVIEW_TABLES` | *(unset)* | `TRUE` also builds the eight review tables. Off is the production path — see **The review tables** |
 
 `FINAL_TABLE_NAME` is read into `NDMM_FINAL_TABLE_NAME` by the ported constants
 and used by nothing: it named the parent cohort table this build no longer
@@ -999,7 +1014,7 @@ them settled comes out looking exactly like a finished one.
 Every run therefore ends with what it did **not** settle, and writes the same
 list to `NDMM_RUN_METADATA.DECISIONS_PENDING` beside the count — so a number
 that reaches a slide can be traced back to what was still open when it was
-made.
+made. That happens whether or not `NDMM_REVIEW_TABLES` is on.
 
 | open | effect on the cohort as built | close it with |
 |---|---|---|
