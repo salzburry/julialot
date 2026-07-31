@@ -110,7 +110,14 @@ one, and these are built from temp views.
 - `<prefix>LOT_LONG_ALLFLAGS` - every criterion as a 0/1 column, computed
   whether or not it is enabled. Check what a criterion would cost before
   turning it on.
-- `<prefix>LOT_LONG_FINAL` - the enabled ones applied.
+- `<prefix>LOT_LONG_FINAL` - the enabled ones applied. This is the table to
+  read. It is checked in its own right, not assumed to be sound because
+  `LOT_LONG` was: it must be non-empty, and each patient's lines must still run
+  `1..n`. With no criterion declared it is a copy of `LOT_LONG` and both are
+  free; with a `truncate` criterion they catch a criterion that removes every
+  line, or one that takes a line out of the middle instead of the tail.
+  `LOT_LONG_ALLFLAGS` needs no equivalent - the layer only adds columns to it,
+  so its rows are `LOT_LONG`'s whatever is declared.
 
 `on_fail` decides what a failing line does:
 
@@ -469,9 +476,13 @@ what it did.
 writes it before LOT2-5 exists, so its own counts stop at LOT1 - cohort, MMA
 claims, MAPs, LOT1 patients. `N_LOT_LONG_ROWS`, `N_LOT_LONG_PATIENTS` and
 `LOT_LONG_BY_LINE` (`1:900|2:400|3:120`) are filled in after `LOT_LONG` has
-passed its checks, so they describe a table already found usable. A run whose
-metadata row has no `LOT_LONG` counts is not called complete: a row on its own
-only says LOT1 ran.
+passed its checks, so they describe a table already found usable.
+`N_LOT_FINAL_ROWS` and `N_LOT_FINAL_PATIENTS` record `LOT_LONG_FINAL` beside
+them, because that is the table downstream reads and a `truncate` criterion
+makes it a different one - recording only `LOT_LONG`'s counts would describe a
+table nobody reads while nothing said how big the one they do read was. A run
+whose metadata row is missing either set of counts is not called complete: a
+row on its own only says LOT1 ran.
 
 `<prefix>LOT_CODELIST_METADATA`: `RUN_ID`, `CODELIST_FILE`, `MD5`, `N_ROWS`,
 `RECORDED_AT` - four rows per run, described above. `RECORDED_AT` is the

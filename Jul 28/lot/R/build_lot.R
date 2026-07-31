@@ -310,8 +310,11 @@ build_lot <- function(here, cohort_table, prefix) {
   # statements, not one nested call - R would not force the promise until after
   # record_final_counts had altered the table.
   lot_long <- check_lot_long(con, cfg)
-  record_final_counts(con, cfg, lot_long)
   phase_line_criteria(con, cfg)
+  # After the criteria layer, not before it: LOT_LONG_FINAL is what downstream
+  # reads, and with a truncate criterion it is not LOT_LONG.
+  final <- check_lot_final(con, cfg)
+  record_final_counts(con, cfg, lot_long, final)
   check_run_recorded(con, cfg)
   write_build_status(con, cfg, "complete")
   # Only after the write succeeded. Setting it first meant a failed write left
@@ -611,7 +614,8 @@ check_run_recorded <- function(con, cfg) {
   # says only that LOT1 ran. record_final_counts fills the rest in.
   n <- tryCatch(db_q(con, glue(
          "SELECT count(*) AS n FROM {lot_out('LOT_RUN_METADATA')}
-          WHERE RUN_ID = '{run_id}' AND N_LOT_LONG_ROWS IS NOT NULL"))$n,
+          WHERE RUN_ID = '{run_id}' AND N_LOT_LONG_ROWS IS NOT NULL
+            AND N_LOT_FINAL_ROWS IS NOT NULL"))$n,
        error = function(e) 0L)
   if (is.na(n) || n < 1)
     stop("The metadata row for this run has no LOT_LONG counts. It describes ",
@@ -657,9 +661,11 @@ record_codelist_hashes <- function(con, cfg) {
 # found usable, and are not scanned for twice.
 FINAL_METADATA_COLS <- c(N_LOT_LONG_ROWS = "BIGINT",
                          N_LOT_LONG_PATIENTS = "BIGINT",
-                         LOT_LONG_BY_LINE = "STRING")
+                         LOT_LONG_BY_LINE = "STRING",
+                         N_LOT_FINAL_ROWS = "BIGINT",
+                         N_LOT_FINAL_PATIENTS = "BIGINT")
 
-record_final_counts <- function(con, cfg, counts) {
+record_final_counts <- function(con, cfg, counts, final) {
   tbl <- lot_out("LOT_RUN_METADATA")
   have <- tryCatch({
     d  <- db_q(con, glue("DESCRIBE {tbl}"))
@@ -687,10 +693,13 @@ record_final_counts <- function(con, cfg, counts) {
     UPDATE {tbl}
        SET N_LOT_LONG_ROWS = {counts$n_rows},
            N_LOT_LONG_PATIENTS = {counts$n_patients},
-           LOT_LONG_BY_LINE = '{dist}'
+           LOT_LONG_BY_LINE = '{dist}',
+           N_LOT_FINAL_ROWS = {final$n_rows},
+           N_LOT_FINAL_PATIENTS = {final$n_patients}
      WHERE RUN_ID = '{run_id}'"))
   log_msg("Recorded LOT_LONG: ", counts$n_rows, " lines for ",
-          counts$n_patients, " patients (", dist, ")")
+          counts$n_patients, " patients (", dist, "); LOT_LONG_FINAL: ",
+          final$n_rows, " lines for ", final$n_patients, " patients")
   invisible(TRUE)
 }
 
@@ -749,6 +758,40 @@ check_lot_long <- function(con, cfg) {
     stop(t, " is not usable: ", paste(bad, collapse = "; "), call. = FALSE)
   log_msg("LOT_LONG OK: ", q$n_rows, " lines for ", q$n_patients, " patients")
   # Handed to record_final_counts rather than counted again.
+  invisible(list(n_rows = q$n_rows, n_patients = q$n_patients))
+}
+
+# LOT_LONG_FINAL is the table downstream reads, and nothing looked at it:
+# check_lot_long ran on LOT_LONG, and the count beside the write is printed,
+# not checked. With no criteria declared the two are the same table and this
+# costs two aggregates. With a truncate criterion they are not, and a criterion
+# that fails everyone at LOT 1 would leave an empty deliverable behind a run
+# that still reached "complete".
+#
+# LOT_LONG_ALLFLAGS needs no equivalent: the criteria layer only adds columns
+# to it, so its rows are LOT_LONG's whatever is declared.
+check_lot_final <- function(con, cfg) {
+  t <- lot_out("LOT_LONG_FINAL")
+  q <- db_q(con, glue("
+    SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients FROM {t}"))
+  if (q$n_rows == 0)
+    stop(t, " is empty, so the run produced no lines to read. LOT_LONG has ",
+         "rows, so a truncate criterion has removed every one of them - check ",
+         "the criterion's SQL and its APPLY_ switch.", call. = FALSE)
+  # truncate drops the first failing line and every later one, so what is left
+  # always runs 1..n. A gap means it took a line out of the middle, which is
+  # the one thing the mode is defined not to do.
+  g <- db_q(con, glue("
+    SELECT count(*) AS n FROM (
+      SELECT PATID, min(LOT_NUM) AS lo, max(LOT_NUM) AS hi,
+             count(DISTINCT LOT_NUM) AS k
+      FROM {t} GROUP BY PATID HAVING lo <> 1 OR k <> hi - lo + 1)"))$n
+  if (g > 0)
+    stop(t, " is not usable: ", g, " patients whose lines do not run 1..n. ",
+         "truncate removes a failing line and every later one, so a gap means ",
+         "the removal is not doing that.", call. = FALSE)
+  log_msg("LOT_LONG_FINAL OK: ", q$n_rows, " lines for ", q$n_patients,
+          " patients")
   invisible(list(n_rows = q$n_rows, n_patients = q$n_patients))
 }
 

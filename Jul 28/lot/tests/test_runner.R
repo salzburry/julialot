@@ -160,8 +160,8 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_cohort",
            "phase_lot1_end", "phase_qc",
            "check_lot1_invariants", "phase_persist", "materialize_sct_views",
            "build_lot2_5",
-           "check_lot_long", "record_final_counts", "phase_line_criteria",
-           "check_run_recorded")
+           "check_lot_long", "phase_line_criteria", "check_lot_final",
+           "record_final_counts", "check_run_recorded")
 at <- vapply(ORDER, function(f) {
   m <- regexpr(paste0("(?<![A-Za-z0-9_.])", f, "\\("), body, perl = TRUE)
   if (m == -1) NA_integer_ else as.integer(m)
@@ -575,7 +575,8 @@ drive_fm <- function(have) {
     data.frame(LOT_NUM = 1:3, n = c(900, 400, 120))
   }, envir = fe)
   tryCatch({ fe$record_final_counts(NULL, list(),
-                                    list(n_rows = 1420, n_patients = 900)); NULL },
+                                    list(n_rows = 1420, n_patients = 900),
+                                    list(n_rows = 1300, n_patients = 870)); NULL },
            error = conditionMessage)
 }
 base_cols <- c("RUN_ID", "N_COHORT_PATIENTS", "N_LOT1_PATIENTS")
@@ -594,6 +595,13 @@ ok(any(grepl("LOT_LONG_BY_LINE = '1:900|2:400|3:120'", FSQL, fixed = TRUE)),
    "the line distribution is recorded, not just a total")
 ok(any(grepl("WHERE RUN_ID = 'R1'", FSQL, fixed = TRUE)),
    "against this run's row, not every row in the table")
+# LOT_LONG_FINAL is what downstream reads. While no criterion is declared it is
+# a copy of LOT_LONG and the two numbers agree; the moment a truncate criterion
+# lands they do not, and recording only LOT_LONG's would describe a table
+# nobody reads while nothing recorded the size of the one they do.
+ok(any(grepl("N_LOT_FINAL_ROWS = 1300", FSQL, fixed = TRUE)) &&
+     any(grepl("N_LOT_FINAL_PATIENTS = 870", FSQL, fixed = TRUE)),
+   "the criteria table's own counts are recorded beside LOT_LONG's")
 ok(is.null(drive_fm(c(base_cols, names(get("FINAL_METADATA_COLS", envir = fe))))) &&
      !any(grepl("ALTER", FSQL)),
    "a later run finds them and alters nothing")
@@ -606,6 +614,13 @@ ok(regexpr("check_lot_long(", body, fixed = TRUE) <
    "the counts are taken after LOT_LONG has passed its checks")
 ok(grepl("N_LOT_LONG_ROWS IS NOT NULL", bl, fixed = TRUE),
    "and a run with a LOT1-only metadata row is not called complete")
+ok(regexpr("phase_line_criteria(", body, fixed = TRUE) <
+     regexpr("check_lot_final(", body, fixed = TRUE) &&
+     regexpr("check_lot_final(", body, fixed = TRUE) <
+     regexpr("record_final_counts(", body, fixed = TRUE),
+   "...counted after the criteria layer has built it, not before")
+ok(grepl("N_LOT_FINAL_ROWS IS NOT NULL", bl, fixed = TRUE),
+   "and a run that never reached the criteria layer is not called complete")
 
 cat("\n-- the outputs say which code lists built them --\n")
 # The hashes are logged as the files are read, but a log is a separate artefact
@@ -958,6 +973,30 @@ ll_stub(shape = list(n_null_start = 1))
 ok(grepl("no start date", tryCatch({ le$check_lot_long(NULL, cfg_ll); "" },
                                    error = conditionMessage), fixed = TRUE),
    "and says so, rather than reporting a downstream symptom")
+
+cat("\n-- ...and so does the table downstream actually reads --\n")
+# check_lot_long ran on LOT_LONG. LOT_LONG_FINAL is what the study reads, and
+# a truncate criterion makes it a different table - one nothing was looking at.
+lf_stub <- function(n_rows = 90, n_patients = 40, gaps = 0) {
+  assign("db_q", function(con, sql) {
+    if (grepl("HAVING lo <> 1", sql, fixed = TRUE)) return(data.frame(n = gaps))
+    data.frame(n_rows = n_rows, n_patients = n_patients)
+  }, envir = le)
+}
+lf_stub()
+ok(!inherits(tryCatch(le$check_lot_final(NULL, cfg_ll), error = function(e) e), "error"),
+   "a sound LOT_LONG_FINAL passes")
+lf_stub(n_rows = 0, n_patients = 0)
+ok(grepl("removed every one of them",
+         tryCatch({ le$check_lot_final(NULL, cfg_ll); "" }, error = conditionMessage),
+         fixed = TRUE),
+   "a criterion that truncates every patient at LOT 1 stops the run, and says why")
+lf_stub(gaps = 7)
+ok(inherits(tryCatch(le$check_lot_final(NULL, cfg_ll), error = function(e) e), "error"),
+   "a removal that takes a line out of the middle stops the build")
+lf_stub()
+ok(identical(le$check_lot_final(NULL, cfg_ll), list(n_rows = 90, n_patients = 40)),
+   "and its counts are handed to record_final_counts rather than scanned for twice")
 
 cat("\n-- an empty table says it is empty, not 'missing value' --\n")
 # sum() over no rows is SQL NULL, so every count above arrives as NA and the
