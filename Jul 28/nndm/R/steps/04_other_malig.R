@@ -11,27 +11,39 @@ build_ndmm_other_malig_codes <- function(con) {
                   collapse = ", ")
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_OTHER_MALIG_CODES} AS
-    SELECT
-      upper(tumor_group) AS tumor_group,
-      CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
-      upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', '')) AS dx,
-      -- The criterion is another cancer, meaning other than the index MM, and
-      -- this code list is the study's generic one: it carries MM's own codes.
-      -- Anything on the diagnosis code list is the index disease by
-      -- definition - the same file decides who is an MM patient - so it cannot
-      -- also make them an other-cancer patient, whatever its wording says
-      -- about remission or relapse. The label list covers what is adjacent to
-      -- MM without being on it.
-      CASE WHEN upper(trim(tumor_group)) IN ({ovr_in})
-                 OR EXISTS (SELECT 1 FROM {NDMM_MM_DX_CODES} m
-                            WHERE m.dx = upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', ''))
-                              AND m.icd_family = CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END)
+    -- Normalised first, then joined. Every column reference below is
+    -- qualified, and both sides of the join are already normalised, so no name
+    -- can bind to the wrong relation.
+    --
+    -- This was a correlated EXISTS whose inner relation carries columns called
+    -- dx and icd_family too. Unqualified, those bound to the inner ones, the
+    -- predicate compared each MM code to itself, and every other-cancer code
+    -- came back overridden - which switched the whole exclusion off.
+    WITH om AS (
+      SELECT upper(tumor_group) AS tumor_group,
+             CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
+             upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', '')) AS dx
+      FROM {src}
+      WHERE dx IS NOT NULL AND tumor_group IS NOT NULL
+        -- And non-blank once normalised: '---' would otherwise match every
+        -- diagnosis claim with a missing code. See 03_prior_therapy.R.
+        AND regexp_replace(trim(dx), '[^A-Za-z0-9]', '') <> ''
+    )
+    SELECT om.tumor_group,
+           om.icd_family,
+           om.dx,
+           -- The criterion is another cancer, meaning other than the index MM,
+           -- and this code list is the study's generic one: it carries MM's
+           -- own codes. Anything on the diagnosis code list is the index
+           -- disease by definition - the same file decides who is an MM
+           -- patient - so it cannot also make them an other-cancer patient,
+           -- whatever its wording says about remission or relapse. The label
+           -- list covers what is adjacent to MM without being on it.
+           CASE WHEN trim(om.tumor_group) IN ({ovr_in}) OR m.dx IS NOT NULL
                 THEN 1 ELSE 0 END AS is_mm_adjacent_override
-    FROM {src}
-    WHERE dx IS NOT NULL AND tumor_group IS NOT NULL
-      -- And non-blank once normalised: '---' would otherwise match every
-      -- diagnosis claim with a missing code. See 03_prior_therapy.R.
-      AND regexp_replace(trim(dx), '[^A-Za-z0-9]', '') <> ''
+    FROM om
+    LEFT JOIN {NDMM_MM_DX_CODES} m
+           ON m.dx = om.dx AND m.icd_family = om.icd_family
   "))
   # Only the five required labels are counted. The remission variants are a
   # proposal, not a contract with the code list, so their absence is reported
@@ -102,8 +114,7 @@ build_ndmm_med_claim_header_and_confinement <- function(con, medical_tbl,
 #
 #   - Path A: >=1 inpatient claim for a tumor group in baseline
 #   - Path B: >=2 outpatient claims on separate days within 30d for
-#            the same tumor group, where the FIRST falls in baseline
-#            (the second can fall after LOT1 start, matching parent)
+#            the same tumor group, BOTH inside the baseline window
 #
 # IP/OP classification uses the same POS/TOS/CONF_ID predicate as the
 # parent. Tumor-group grain is preserved end-to-end.

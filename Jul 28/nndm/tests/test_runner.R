@@ -49,7 +49,7 @@ clear()
 
 cat("\n-- the runner calls its phases, in order --\n")
 ORDER <- c("check_settings", "pin_output_schema", "pin_prefix", "check_contract",
-           "check_constants", "set_lot_config", "check_upstream", "write_build_status",
+           "check_choices", "check_constants", "set_lot_config", "check_upstream", "write_build_status",
            "build_ndmm_mm_dx_codes", "build_ndmm_mm_claim_header",
            "build_ndmm_mm_dx_events", "build_ndmm_mm_qualifying",
            "build_ndmm_demographics", "build_ndmm_base_cohort",
@@ -302,6 +302,13 @@ assign("run_id", "R1", envir = me)
 MSQL <- character(0)
 assign("db_exec", function(con, s) { MSQL <<- c(MSQL, s); TRUE }, envir = me)
 assign("db_replace", function(con, ...) { MSQL <<- c(MSQL, c(...)); TRUE }, envir = me)
+# The loader above recorded other_malig.csv for real; the rest are stubbed so
+# the completeness check passes and the write can be inspected.
+real <- getOption("nndm_codelist_md5", list())
+options(nndm_codelist_md5 = modifyList(
+  setNames(lapply(CODELIST_FILES, function(f) list(md5 = strrep("b", 32), n_rows = 1L)),
+           CODELIST_FILES), real))
+MSQL <- character(0)
 m <- tryCatch({ me$write_codelist_metadata(NULL, list()); "" }, error = conditionMessage)
 ins <- grep("INSERT", MSQL, value = TRUE)[1]
 ok(!is.na(ins) && grepl("'other_malig.csv'", ins, fixed = TRUE),
@@ -309,10 +316,27 @@ ok(!is.na(ins) && grepl("'other_malig.csv'", ins, fixed = TRUE),
 ok(!is.na(ins) && grepl(unname(tools::md5sum(file.path(tmp, "other_malig.csv"))),
                         ins, fixed = TRUE),
    "...with the md5 of the file that was actually read")
+# All four, not merely some: three of four would still have been published.
+full <- setNames(lapply(CODELIST_FILES, function(f)
+  list(md5 = strrep("a", 32), n_rows = 5L)), CODELIST_FILES)
+options(nndm_codelist_md5 = full)
+MSQL <- character(0)
+ok(identical(tryCatch({ me$write_codelist_metadata(NULL, list()); "" },
+                      error = conditionMessage), ""),
+   "all four code lists recorded is what a complete run looks like")
+options(nndm_codelist_md5 = full[-2])
+m <- tryCatch({ me$write_codelist_metadata(NULL, list()); "" }, error = conditionMessage)
+ok(grepl(CODELIST_FILES[2], m, fixed = TRUE) && grepl("not reproducible", m, fixed = TRUE),
+   "one missing stops the run, naming the file")
+options(nndm_codelist_md5 = modifyList(full, setNames(list(list(md5 = "nope", n_rows = 1L)),
+                                                      CODELIST_FILES[1])))
+m <- tryCatch({ me$write_codelist_metadata(NULL, list()); "" }, error = conditionMessage)
+ok(grepl("not usable", m, fixed = TRUE),
+   "...and a hash that is not a hash is not a record of anything")
 options(nndm_codelist_md5 = list())
 MSQL <- character(0)
 m <- tryCatch({ me$write_codelist_metadata(NULL, list()); "" }, error = conditionMessage)
-ok(grepl("cannot be traced", m, fixed = TRUE),
+ok(grepl("not reproducible", m, fixed = TRUE),
    "and a run that recorded no hashes stops rather than publishing untraceable counts")
 unlink(tmp, recursive = TRUE)
 
@@ -551,14 +575,94 @@ cat("\n-- a plasma-cell disorder in remission is not another cancer --\n")
 # is an MM patient.
 oc0 <- paste(readLines(file.path(ROOT, "R", "steps", "04_other_malig.R"), warn = FALSE),
              collapse = "\n")
-ok(grepl("EXISTS (SELECT 1 FROM {NDMM_MM_DX_CODES} m", oc0, fixed = TRUE),
+ok(grepl("LEFT JOIN {NDMM_MM_DX_CODES} m", oc0, fixed = TRUE) &&
+     grepl("ON m.dx = om.dx AND m.icd_family = om.icd_family", oc0, fixed = TRUE),
    "a code on the MM diagnosis list is never also another cancer")
-ok(grepl("m.dx = upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', ''))", oc0, fixed = TRUE) &&
-     grepl("m.icd_family = CASE WHEN upper(icd_family)", oc0, fixed = TRUE),
-   "...matched on code and family the same way the diagnosis scan matches them")
-ok(regexpr("VIEW {NDMM_MM_DX_CODES}", bl_steps <- paste(unlist(lapply(step_files, readLines,
+# The rule that matters is not which SQL construct is used but that no column
+# name can bind to the wrong relation. The first version put this in a
+# correlated EXISTS whose inner relation has columns called dx and icd_family
+# too; unqualified, they bound to the inner ones, the predicate compared each
+# MM code to itself, and every other-cancer code came back overridden - the
+# exclusion switched off entirely, and the test asserted the text of it.
+#
+# So: from the point the two relations are both in scope, every reference to a
+# name they share has to carry an alias.
+shared <- c("dx", "icd_family", "tumor_group")
+# The final SELECT onward: from there both relations are visible. Inside the om
+# CTE only {src} is in scope, so bare names there are unambiguous.
+outer <- sub("(?s).*?(SELECT om[.]tumor_group)", "\\1", oc0, perl = TRUE)
+outer <- sub('(?s)"\\)\\).*', "", outer, perl = TRUE)
+bare <- Filter(function(k)
+  grepl(paste0("(?<![A-Za-z0-9_.'])", k, "(?![A-Za-z0-9_(])"), outer, perl = TRUE),
+  shared)
+ok(nchar(outer) > 0 && grepl("LEFT JOIN", outer, fixed = TRUE),
+   "the join and the flag are read back out of the statement")
+ok(length(bare) == 0,
+   if (length(bare))
+     paste0("unqualified where both relations are in scope, so it can bind to ",
+            "the wrong one: ", paste(bare, collapse = ", "))
+   else paste0("every one of ", paste(shared, collapse = "/"),
+               " is alias-qualified once both relations are in scope"))
+ok(grepl("m.dx = om.dx", oc0, fixed = TRUE),
+   "and the join compares normalised values on both sides, not expressions")
+# The join has to reach the flag. A LEFT JOIN nothing reads is just a slower
+# query with the exclusion still wrong.
+ok(grepl("IN ({ovr_in}) OR m.dx IS NOT NULL", oc0, fixed = TRUE),
+   "the flag is set by the join as well as by the label list")
+ok(grepl("AND regexp_replace(trim(dx), '[^A-Za-z0-9]', '') <> ''", oc0, fixed = TRUE),
+   "and a code that is blank once normalised is still dropped before any of it")
+
+cat("\n-- a run choice is a choice, not a redefinition of the cohort --\n")
+# CONTRACT is what the cohort is; these are where the protocol is silent or the
+# data has to answer. Pinning them in CONTRACT was a contradiction - the README
+# told the analyst to set them and check_contract() refused the run.
+ok(length(intersect(names(CHOICES), names(CONTRACT))) == 0,
+   "no setting is both a contract term and a choice")
+base_ch <- modifyList(cfg_defaults, list(work_schema = "wk", object_prefix = "p_"))
+ok(identical(tryCatch({ check_contract(base_ch); "" }, error = conditionMessage), "") &&
+     identical(tryCatch({ check_choices(base_ch); "" }, error = conditionMessage), ""),
+   "the shipped settings satisfy both")
+for (k in c("belantamab_scope", "mm_adjacent_states")) {
+  alt <- setdiff(CHOICES[[k]], base_ch[[k]])[1]
+  ok(identical(tryCatch({ check_choices(modifyList(base_ch, setNames(list(alt), k))); "" },
+                        error = conditionMessage), ""),
+     paste0(k, "='", alt, "' is allowed, so the README's rerun works"))
+  m <- tryCatch({ check_choices(modifyList(base_ch, setNames(list("nonsense"), k))); "" },
+                error = conditionMessage)
+  ok(grepl(k, m, fixed = TRUE) && grepl("nonsense", m, fixed = TRUE),
+     paste0("...and a value ", k, " may not take is refused, named"))
+}
+ok(identical(tryCatch({ check_choices(modifyList(base_ch,
+       list(index_excluded_abbrs = "CART,TALQ"))); "" }, error = conditionMessage), ""),
+   "naming agents to exclude is allowed - that is what the review table is for")
+m <- tryCatch({ check_choices(modifyList(base_ch,
+       list(index_excluded_codes = "J9999'; DROP TABLE x; --"))); "" },
+     error = conditionMessage)
+ok(grepl("would not survive", m, fixed = TRUE),
+   "but not something that would not survive being put in a query")
+# The allowed values have to be the values the code handles. A list that says
+# yes to something the switch says no to is a run that passes its own check and
+# then stops inside a step.
+for (v in CHOICES$mm_adjacent_states) {
+  assign("NDMM_MM_ADJACENT_STATES", v, envir = se)
+  # error = conditionMessage would hand back a character string too, which is
+  # how this assertion first passed for a value the switch rejects.
+  got <- tryCatch(se$ndmm_mm_adjacent_groups(), error = function(e) e)
+  ok(!inherits(got, "error") && length(got) >= length(se$NDMM_MM_ADJACENT_OVERRIDE),
+     paste0("mm_adjacent_states='", v, "' is one the code actually handles"))
+}
+assign("NDMM_MM_ADJACENT_STATES", "override", envir = se)
+for (v in CHOICES$belantamab_scope) {
+  assign("NDMM_BELANTAMAB_SCOPE", v, envir = se)
+  SSQL <- character(0)
+  ok(identical(tryCatch({ se$build_ndmm_belantamab_patids(NULL, "m", "r"); "" },
+                        error = conditionMessage), ""),
+     paste0("belantamab_scope='", v, "' is one the code actually handles"))
+}
+assign("NDMM_BELANTAMAB_SCOPE", "study_period", envir = se)
+ok(regexpr("VIEW {NDMM_MM_DX_CODES}", paste(unlist(lapply(step_files, readLines,
              warn = FALSE)), collapse = "\n"), fixed = TRUE) > 0,
-   "and that list is built by this package, not assumed to exist")
+   "that list is built by this package, not assumed to exist")
 
 ok(identical(cfg_defaults$mm_adjacent_states, "override"),
    "by default remission variants are overridden too, like their counterparts")
@@ -642,6 +746,16 @@ ok(grepl(paste0("b.bel_dt >= date('", se$NDMM_STUDY_START, "')"), r$pat, fixed =
    "and by default bounded below at the start of it - lines exist nowhere else")
 ok(grepl("INNER JOIN _ndmm_lot1_starts", r$pat, fixed = TRUE),
    "scoped to the 1L candidates, so it excludes from this cohort and not at large")
+# Each source only matches the code types it can carry. Without it a PROC_CD
+# matches an NDC row once both are stripped to alphanumerics, and an NDC
+# matches an HCPCS row once both are stripped to digits - excluding a patient
+# for a belantamab claim they never had. The other scans always did this.
+ok(length(gregexpr("c.code_type", r$tx, fixed = TRUE)[[1]]) == 4L,
+   "every belantamab arm constrains the code type, as the other scans do")
+ok(grepl("c.code_type IN ('HCPCS','CPT')", r$tx, fixed = TRUE) &&
+     grepl("c.code_type IN ('HCPCS')", r$tx, fixed = TRUE) &&
+     length(gregexpr("c.code_type = 'NDC'", r$tx, fixed = TRUE)[[1]]) == 2L,
+   "PROC_CD to HCPCS/CPT, BILL_PROC_CD to HCPCS, both NDC columns to NDC")
 r <- drive_bel("from_index")
 ok(grepl("b.bel_dt >= l1.LOT1_START_DT", r$pat, fixed = TRUE),
    "from_index reads it strictly: on or after the date the patient's lines start")
@@ -934,7 +1048,13 @@ ok(length(NSQL) == 3L &&
    "both claim sources and the code list are profiled, not just the claims")
 ok(any(grepl("_ndmm_base_cohort", NSQL, fixed = TRUE)) &&
      any(grepl("date_sub(b.MM_DX_DT, 365)", NSQL, fixed = TRUE)),
-   "scoped to the base cohort and a window covering every NDC scan that follows")
+   "scoped to the base cohort and back to a year before each diagnosis")
+# The belantamab exclusion runs over the whole study period by default, so a
+# patient diagnosed in 2025 can have a 2016 NDC the exclusion reads. A profile
+# anchored only at the diagnosis would never look at it.
+ok(any(grepl("least(date('", NSQL, fixed = TRUE)) &&
+     any(grepl("date_sub(b.MM_DX_DT", NSQL, fixed = TRUE)),
+   "...or the start of the study if that is earlier, which the exclusion reaches back to")
 ok(all(grepl("trim(cast(t.NDC as string)) <> ''", NSQL[1:2], fixed = TRUE)),
    "and every non-blank value is counted, including ones that cannot join")
 m <- drive_ndc(rx = row("rx", n10 = 3L, n11 = 7L))
@@ -989,6 +1109,17 @@ ok(!is.na(ins) && grepl("lot1_from=2017-01-01", ins, fixed = TRUE) &&
    "...and the settings, so a cohort can be matched to a build not guessed at")
 ok(!is.na(ins) && grepl("'BEL%'", ins, fixed = TRUE),
    "...and how it recognised belantamab, which is a code-list assumption")
+# Every run choice reaches the row, or a cohort cannot say which choices made
+# it - which is the whole reason they are allowed to vary.
+for (k in names(CHOICES)) {
+  v <- as.character(cfg_defaults[[k]])
+  ok(grepl(if (nzchar(v)) paste0("'", v, "'") else "''", ins, fixed = TRUE) ||
+       grepl("NULL", ins, fixed = TRUE),
+     paste0(k, " is recorded on the run"))
+}
+ok(!is.na(ins) && grepl("'study_period'", ins, fixed = TRUE) &&
+     grepl("'override'", ins, fixed = TRUE),
+   "...the two named choices by their value, not as a blank")
 ok(!is.na(ins) && grepl("'claim_ndc_short,codelist_ndc_short'", ins, fixed = TRUE) &&
      grepl("'claim_ndc_short'", ins, fixed = TRUE),
    "waivers asked for and waivers that fired are recorded apart")

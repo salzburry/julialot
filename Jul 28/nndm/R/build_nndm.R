@@ -36,10 +36,6 @@ CONTRACT <- list(
   outpatient_window    = 90L,
   min_age              = 18L,
   belantamab_abbr      = "BEL%",
-  index_excluded_abbrs = "",
-  index_excluded_codes = "",
-  belantamab_scope     = "study_period",
-  mm_adjacent_states = "override",
   tbl_medical          = "medical",
   tbl_med_proc         = "med_procedure",
   tbl_med_diag         = "med_diagnosis",
@@ -49,6 +45,47 @@ CONTRACT <- list(
   tbl_member_elig      = "member_cont_enrollment",
   tbl_dod              = "dod"
 )
+
+# Decisions a run may make differently, and what each may be set to.
+#
+# CONTRACT is what the cohort IS - change one of those and it is a different
+# cohort, so they are rejected. These are choices where the protocol is silent
+# or the data has to answer, and the build writes a review table for each one.
+# Pinning them there was a contradiction: the README told the analyst to set
+# them and check_contract() refused the run before it connected.
+#
+# They are not unguarded. Each is checked against the values it may take, and
+# every one is recorded in NDMM_RUN_METADATA, so a cohort still says which
+# choices produced it.
+CHOICES <- list(
+  belantamab_scope     = c("study_period", "from_index"),
+  mm_adjacent_states   = c("override", "exclude"),
+  # Free text: names and codes, validated against the code list at run time by
+  # build_ndmm_index_ineligible_codes(), which stops on one that matches
+  # nothing. Shape only here.
+  index_excluded_abbrs = NULL,
+  index_excluded_codes = NULL
+)
+
+check_choices <- function(cfg) {
+  bad <- character(0)
+  for (k in names(CHOICES)) {
+    v <- as.character(cfg[[k]] %||% "")
+    allowed <- CHOICES[[k]]
+    if (is.null(allowed)) {
+      if (grepl("[^A-Za-z0-9_,:|%. -]", v))
+        bad <- c(bad, paste0(k, " = '", v, "' has characters that would not ",
+                             "survive being put in a query"))
+    } else if (!(v %in% allowed)) {
+      bad <- c(bad, paste0(k, " = '", v, "' (one of: ",
+                           paste(allowed, collapse = ", "), ")"))
+    }
+  }
+  if (length(bad))
+    stop("Run choices that are not choices:\n  ", paste(bad, collapse = "\n  "),
+         call. = FALSE)
+  invisible(TRUE)
+}
 
 # Tables produced by another build in this repository. There are none: this
 # package reads raw CDM and its code lists and nothing else, which is what lets
@@ -243,13 +280,13 @@ CONSTANT_SETTINGS <- list(
   list(const = "NDMM_MIN_AGE",                 cfg = "min_age",            note = ""),
   # Which agents may not set the index. Empty by default; a value here shrinks
   # the cohort, so it is pinned like any other thing that does.
+  # The run choices are here too. Not to pin them to a default - CHOICES does
+  # the allowing - but because the SQL reads the constants, so the value cfg
+  # was checked for has to be the value the query gets.
   list(const = "NDMM_INDEX_EXCLUDED_ABBRS",   cfg = "index_excluded_abbrs", note = ""),
   list(const = "NDMM_INDEX_EXCLUDED_CODES",   cfg = "index_excluded_codes", note = ""),
-  # Which reading of "in any LOT" the belantamab exclusion uses. A proxy for
-  # something this build cannot see, and it changes the count.
   list(const = "NDMM_BELANTAMAB_SCOPE",       cfg = "belantamab_scope",   note = ""),
-  # Whether a plasma-cell disorder in remission still counts as another cancer.
-  list(const = "NDMM_MM_ADJACENT_STATES", cfg = "mm_adjacent_states", note = ""),
+  list(const = "NDMM_MM_ADJACENT_STATES",     cfg = "mm_adjacent_states", note = ""),
   # Not a cohort window but a code-list assumption, and just as able to change
   # the count: it is what identifies belantamab, and belantamab is exclusion 4.
   list(const = "NDMM_BELANTAMAB_ABBR",        cfg = "belantamab_abbr",    note = "")
@@ -350,10 +387,14 @@ check_attrition_monotonic <- function(counts) {
 # Scoped to the base cohort rather than to the 1L starts. The starts do not
 # exist yet - the scan that builds them matches NDCs itself, so the profile has
 # to come first, and reading NDMM_LOT1_STARTS here made the build stop with a
-# missing view. The window runs from a year before each patient's diagnosis to
-# the end of the study, which covers both the index scan and the baseline scan:
-# the index is on or after the diagnosis, so the baseline never starts earlier
-# than a year before it.
+# missing view.
+#
+# The window is the whole study period, or a year before the patient's
+# diagnosis if that is earlier. That covers every NDC any scan in this build
+# matches: the index scan and the baseline scan sit inside the year-before
+# window, and the belantamab exclusion runs over the study period - a patient
+# diagnosed in 2025 can have a 2016 belantamab NDC that the exclusion reads and
+# a diagnosis-anchored profile would never have looked at.
 check_ndc_shape <- function(con, cfg) {
   log_msg("Checking NDC shape...")
   # Every non-blank value, including ones that cannot join. A profile that
@@ -379,7 +420,8 @@ check_ndc_shape <- function(con, cfg) {
           WHERE cast(t.NDC as string) IS NOT NULL
             AND trim(cast(t.NDC as string)) <> ''
             AND cast(t.{dt} AS date)
-                  BETWEEN date_sub(b.MM_DX_DT, {NDMM_PRE_LOT1_DAYS})
+                  BETWEEN least(date('{NDMM_STUDY_START}'),
+                                date_sub(b.MM_DX_DT, {NDMM_PRE_LOT1_DAYS}))
                       AND date('{cfg$study_end}'))))")
   codelist_sql <- glue("
     SELECT 'codelist' AS SOURCE, {shape_cols}
@@ -647,10 +689,20 @@ CODELIST_METADATA_COLS <- c(RUN_ID = "STRING", CSV_NAME = "STRING",
 # here, so the outputs say which code lists built them.
 write_codelist_metadata <- function(con, cfg) {
   seen <- getOption("nndm_codelist_md5", list())
-  if (!length(seen))
-    stop("No codelist hashes to record. Every run reads ",
-         length(CODELIST_FILES), " code lists; this one recorded none, so the ",
-         "cohort cannot be traced to the files that built it.", call. = FALSE)
+  # All of them, not merely some. "None recorded" was the only thing this
+  # stopped on, so a run that read three of the four would have published a
+  # cohort traceable to three.
+  miss <- setdiff(CODELIST_FILES, names(seen))
+  if (length(miss))
+    stop("No hash recorded for ", paste(miss, collapse = ", "),
+         ". Every run reads all ", length(CODELIST_FILES), " code lists, and a ",
+         "cohort that cannot be traced to each of them is not reproducible.",
+         call. = FALSE)
+  bad <- names(seen)[!vapply(seen, function(x)
+    is.character(x$md5) && grepl("^[0-9a-f]{32}$", x$md5), logical(1))]
+  if (length(bad))
+    stop("Hash not usable for ", paste(bad, collapse = ", "),
+         ". It is what says which version of the file was read.", call. = FALSE)
   tbl  <- wrk("NDMM_CODELIST_METADATA")
   cols <- names(CODELIST_METADATA_COLS)
   db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
@@ -701,6 +753,7 @@ build_nndm <- function(here, prefix) {
   cfg <- pin_output_schema(cfg_defaults)
   cfg <- pin_prefix(cfg, prefix)
   check_contract(cfg)
+  check_choices(cfg)
   check_constants(cfg)
   set_lot_config(cfg)
 

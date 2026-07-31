@@ -62,9 +62,10 @@ is repointed at the table, so each later read is a table scan. The steps are
 untouched — they still name the view:
 
 ```
-NDMM_FLAGS_ALL      NDMM_MM_DX_EVENTS      NDMM_MM_QUALIFYING
-NDMM_BASE_COHORT    NDMM_ENROLL_SPANS      NDMM_MMA_CODELIST
-NDMM_BELANTAMAB_CODES  NDMM_LOT1_STARTS    NDMM_OTHER_MALIG_CODES
+NDMM_FLAGS_ALL         NDMM_MM_DX_CODES       NDMM_MM_DX_EVENTS
+NDMM_MM_QUALIFYING     NDMM_BASE_COHORT       NDMM_ENROLL_SPANS
+NDMM_MMA_CODELIST      NDMM_BELANTAMAB_CODES  NDMM_INDEX_TX
+NDMM_LOT1_STARTS       NDMM_OTHER_MALIG_CODES NDMM_BELANTAMAB_TX
 NDMM_BELANTAMAB_PATIDS NDMM_PATIDS
 ```
 
@@ -462,9 +463,25 @@ different cohort stops the run.
 | `PRE_LOT1_DAYS` | `365` | CE and baseline window before index |
 | `FU_CE_DAYS` | `0` | days after index the follow-up CE must cover |
 | `GAP_DAYS` | `30` | gaps this size or smaller are still continuous |
-| `STUDY_END` | `2025-06-30` | study period end; picks the quarterly CDM tables |
-| `STUDY_START` | `2015-07-01` | lower bound of the pregnancy scan |
-| `CODELIST_DIR` | `/mnt/code/codelist` | `cl_mma_codelist.csv`, `pregnancy.csv` |
+| `STUDY_END` | `2026-03-31` | study period end; picks the quarterly CDM tables |
+| `STUDY_START` | `2016-01-01` | study period start; the pregnancy and belantamab scans |
+| `OUTPATIENT_WINDOW` | `90` | two outpatient MM claims within this many days confirm a diagnosis |
+| `MIN_AGE` | `18` | minimum age in the MM-diagnosis year |
+| `CODELIST_DIR` | `/mnt/code/codelist` | `mm_dx.csv`, `cl_mma_codelist.csv`, `other_malig.csv`, `pregnancy.csv` |
+
+Those are the **contract** — change one and it is a different cohort, so
+`check_contract()` refuses the run. The settings below are **run choices**:
+places the protocol is silent or the data has to answer. Each is validated
+against the values it may take and recorded in `NDMM_RUN_METADATA`, but none is
+pinned to its default — the review tables exist to be acted on.
+
+| choice | default | may be |
+|---|---|---|
+| `NDMM_BELANTAMAB_SCOPE` | `study_period` | `study_period`, `from_index` |
+| `NDMM_MM_ADJACENT_STATES` | `override` | `override`, `exclude` |
+| `NDMM_INDEX_EXCLUDED_ABBRS` | *(empty)* | comma-separated `CL_MED_ABBR` patterns |
+| `NDMM_INDEX_EXCLUDED_CODES` | *(empty)* | comma-separated `TYPE:CODE` or bare codes |
+| `NDMM_WAIVERS` | *(empty)* | the four NDC-shape checks, by name |
 
 ## Status
 

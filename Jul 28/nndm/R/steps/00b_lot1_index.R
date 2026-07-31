@@ -200,11 +200,18 @@ build_ndmm_index_agents <- function(con, cfg) {
 # claims proxy, and every claim is kept here with its date so the proxy can be
 # applied, and so all of them can be counted for review.
 build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl) {
-  txt_match <- function(col) paste0(
-    "upper(regexp_replace(coalesce(cast(t.", col, " as string),''), '[^A-Za-z0-9]', '')) = c.code",
+  # Each source only matches the code types it can carry, the same way the
+  # prior-therapy and index scans do. Without it a PROC_CD could match an NDC
+  # row once both are stripped to alphanumerics, and an NDC could match an
+  # HCPCS row once both are stripped to digits - either way excluding a patient
+  # for a belantamab claim they never had.
+  txt_match <- function(col, types) paste0(
+    "c.code_type IN (", types, ")",
+    "\n       AND upper(regexp_replace(coalesce(cast(t.", col, " as string),''), '[^A-Za-z0-9]', '')) = c.code",
     "\n       AND regexp_replace(coalesce(cast(t.", col, " as string),''), '[^A-Za-z0-9]', '') <> ''")
   ndc_match <- function(col) paste0(
-    "lpad(regexp_replace(coalesce(cast(t.", col, " as string),''), '[^0-9]', ''), 11, '0')",
+    "c.code_type = 'NDC'",
+    "\n       AND lpad(regexp_replace(coalesce(cast(t.", col, " as string),''), '[^0-9]', ''), 11, '0')",
     "\n         = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')",
     "\n       AND regexp_replace(coalesce(cast(t.", col, " as string),''), '[^0-9]', '') <> ''")
   arm <- function(tbl, dt, match_sql) glue("
@@ -215,8 +222,8 @@ build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl) {
       WHERE cast(t.{dt} as date) <= date('{cfg$study_end}')")
   db_exec(con, paste0(glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_BELANTAMAB_TX} AS"),
-    arm(medical_tbl, "FST_DT",  txt_match("PROC_CD")),      "\n      UNION\n",
-    arm(medical_tbl, "FST_DT",  txt_match("BILL_PROC_CD")), "\n      UNION\n",
+    arm(medical_tbl, "FST_DT",  txt_match("PROC_CD", "'HCPCS','CPT'")), "\n      UNION\n",
+    arm(medical_tbl, "FST_DT",  txt_match("BILL_PROC_CD", "'HCPCS'")),  "\n      UNION\n",
     arm(medical_tbl, "FST_DT",  ndc_match("NDC")),          "\n      UNION\n",
     arm(rx_tbl,      "FILL_DT", ndc_match("NDC"))))
 

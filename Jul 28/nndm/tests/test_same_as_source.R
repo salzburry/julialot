@@ -59,9 +59,6 @@ SUBST <- list(
   "R/steps/04_other_malig.R" = list(
     list(from = "ovr_in <- paste(sprintf(\"'%s'\", gsub(\"'\", \"''\", ndmm_mm_adjacent_groups())),",
          to   = "ovr_in <- paste(sprintf(\"'%s'\", gsub(\"'\", \"''\", NDMM_MM_ADJACENT_OVERRIDE)),",
-         n = 1L),
-    list(from = "CASE WHEN upper(trim(tumor_group)) IN ({ovr_in})",
-         to   = "CASE WHEN upper(trim(tumor_group)) IN ({ovr_in}) THEN 1 ELSE 0 END AS is_mm_adjacent_override",
          n = 1L)),
   "R/steps/06_flags.R" = list(
     list(from = "AND s.cov_end   >= least(date_add(ec_l1.LOT1_START_DT, {NDMM_FU_CE_DAYS}),",
@@ -97,22 +94,12 @@ ADDED <- list(
     "AND regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '') <> ''" = 1L,
     "AND regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') <> ''" = 1L),
   "R/steps/04_other_malig.R" = c(
-    "AND regexp_replace(trim(dx), '[^A-Za-z0-9]', '') <> ''" = 1L,
     # The required-match count is now against the five labels the code list
     # must carry, not against every group the override reaches - the remission
     # variants are a proposal and their absence is reported, not fatal.
     "req    <- gsub(\"'\", \"''\", NDMM_MM_ADJACENT_OVERRIDE)" = 1L,
     "req_in <- paste(sprintf(\"'%s'\", req), collapse = \", \")" = 1L,
     "AND upper(trim(tumor_group)) IN ({req_in})" = 1L,
-    # The other-cancer code list is the study's generic one and carries MM's
-    # own codes. Anything on the diagnosis code list is the index disease by
-    # definition, so it cannot also be another cancer - derived from that file
-    # rather than from a list of labels, which is what let the plasma-cell
-    # triples be split by wording.
-    "OR EXISTS (SELECT 1 FROM {NDMM_MM_DX_CODES} m" = 1L,
-    "WHERE m.dx = upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', ''))" = 1L,
-    "AND m.icd_family = CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END)" = 1L,
-    "THEN 1 ELSE 0 END AS is_mm_adjacent_override" = 1L,
     # The third clinical change. The other-cancer rule is >=1 inpatient claim
     # or >=2 outpatient claims within 30 days of each other, in the 12-month
     # 1L baseline. The source bounded only the first of the outpatient pair, so
@@ -166,7 +153,17 @@ SPLICE <- list(
   # so a patient whose only other cancer is MM-adjacent is excluded as having
   # another cancer. The source's own comment calls that a run-review blocker.
   # This stops instead.
+  # The codelist statement. Two changes: the blank-after-normalising guard, and
+  # the join that marks a code as the index disease when it is on mm_dx.csv.
+  # It is a rewrite rather than added lines because the whole statement moved
+  # to a CTE - the first version put that test in a correlated EXISTS whose
+  # inner relation has columns called dx and icd_family too, so the unqualified
+  # names bound to the inner ones and every other-cancer code came back
+  # overridden. Normalise, then join, and qualify everything.
   "R/steps/04_other_malig.R" = list(
+    list(from = "CREATE OR REPLACE TEMPORARY VIEW {NDMM_OTHER_MALIG_CODES} AS",
+         to   = "ON m.dx = om.dx AND m.icd_family = om.icd_family",
+         src_from = 325L, src_to = 332L),
     list(from = "if (is.na(n_matched) || n_matched < n_exp)",
          to   = "\" expected MM-adjacent tumor_group labels\")",
          src_from = 340L, src_to = 348L)
