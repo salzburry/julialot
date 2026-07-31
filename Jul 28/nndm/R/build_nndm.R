@@ -54,10 +54,30 @@ upstream_tables <- function(cfg) {
 
 # What the run writes. All prefixed, so two cohorts sit side by side.
 OUTPUTS <- c("NDMM_FLAGS_ALL", "NDMM_LOT_LONG_FILT", "NDMM_COHORT",
-             "NDMM_ATTRITION", "NDMM_CODELIST_METADATA", "NDMM_BUILD_STATUS")
+             "NDMM_ATTRITION", "NDMM_CODELIST_METADATA", "NDMM_RUN_METADATA",
+             "NDMM_BUILD_STATUS")
+
+# Conditions the study team can accept for a given data set. Nothing else can
+# be waived, and a waiver naming something not here is a typo, not a decision.
+WAIVABLE_CHECKS <- c("claim_ndc_shape", "claim_ndc_short",
+                     "codelist_ndc_shape", "codelist_ndc_short")
+
+waivers_named <- function() {
+  v <- trimws(strsplit(Sys.getenv("NDMM_WAIVERS", unset = ""), "[,|]")[[1]])
+  v[nzchar(v)]
+}
+
+# Never hands back something outside the waivable set, whatever the environment
+# says, so a bypassed check_settings cannot widen it.
+waivers <- function() intersect(waivers_named(), WAIVABLE_CHECKS)
 
 check_settings <- function() {
   bad <- character(0)
+  unknown <- setdiff(waivers_named(), WAIVABLE_CHECKS)
+  if (length(unknown))
+    bad <- c(bad, paste0("NDMM_WAIVERS names no such check: ",
+                         paste(unknown, collapse = ", "),
+                         " (waivable: ", paste(WAIVABLE_CHECKS, collapse = ", "), ")"))
   for (v in c("STUDY_END", "LOT1_FROM", "STUDY_START")) {
     x <- trimws(Sys.getenv(v, unset = ""))
     if (nzchar(x) && !grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", x))
@@ -254,6 +274,167 @@ check_attrition_monotonic <- function(counts) {
   invisible(TRUE)
 }
 
+# The prior-therapy scan matches an NDC by stripping non-digits and left-padding
+# to eleven. That is the 4-4-2 layout; 5-3-2 and 5-4-1 ten-digit NDCs pad to a
+# different key, so a genuine prior therapy can be missed or the wrong drug
+# matched - and the patient's inclusion turns on it. Nothing downstream can see
+# that happen, so profile the values first and say what is there.
+#
+# Both sides, because the join pads both: a ten-digit code list has the same
+# problem as a ten-digit claim. Scoped to the NDMM candidates and the baseline
+# window the scan actually reads, not the whole of medical.
+check_ndc_shape <- function(con, cfg) {
+  log_msg("Checking NDC shape...")
+  # Every non-blank value, including ones that cannot join. A profile that
+  # skipped them would report "all eleven digits" without having looked.
+  shape_cols <- "
+           count(*) AS n_ndc,
+           sum(CASE WHEN d = 11 THEN 1 ELSE 0 END) AS n_11,
+           sum(CASE WHEN d = 10 THEN 1 ELSE 0 END) AS n_10,
+           sum(CASE WHEN d NOT IN (10, 11) THEN 1 ELSE 0 END) AS n_other,
+           sum(CASE WHEN v RLIKE '[A-Za-z]' THEN 1 ELSE 0 END) AS n_alpha,
+           sum(CASE WHEN d = 0 THEN 1 ELSE 0 END) AS n_nodigit,
+           sum(CASE WHEN d > 0 AND digits RLIKE '^0+$' THEN 1 ELSE 0 END) AS n_zero"
+  claim_sql <- function(src, tbl, dt) glue("
+    SELECT '{src}' AS SOURCE, {shape_cols}
+    FROM (
+      SELECT v, digits, length(digits) AS d
+      FROM (
+        SELECT v, regexp_replace(v, '[^0-9]', '') AS digits
+        FROM (
+          SELECT cast(t.NDC as string) AS v
+          FROM {tbl} t
+          INNER JOIN {NDMM_LOT1_STARTS} l1 ON cast(t.PATID as string) = l1.PATID
+          WHERE cast(t.NDC as string) IS NOT NULL
+            AND trim(cast(t.NDC as string)) <> ''
+            AND cast(t.{dt} AS date)
+                  BETWEEN date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS})
+                      AND date_sub(l1.LOT1_START_DT, 1))))")
+  codelist_sql <- glue("
+    SELECT 'codelist' AS SOURCE, {shape_cols}
+    FROM (
+      SELECT v, digits, length(digits) AS d
+      FROM (
+        SELECT v, regexp_replace(v, '[^0-9]', '') AS digits
+        FROM (
+          SELECT code AS v FROM {NDMM_MMA_CODELIST}
+          WHERE code_type = 'NDC' AND code IS NOT NULL AND trim(code) <> '')))")
+  prof <- rbind(db_q(con, claim_sql("medical", cdm_src(cfg$tbl_medical), "FST_DT")),
+                db_q(con, claim_sql("rx",      cdm_src(cfg$tbl_rx),      "FILL_DT")),
+                db_q(con, codelist_sql))
+  print(prof)
+
+  detail <- function(d) paste(vapply(seq_len(nrow(d)), function(i) with(d[i, ],
+    paste0(SOURCE, ": ", n_ndc, " NDCs, ", n_11, " eleven-digit, ", n_10,
+           " ten-digit, ", n_other, " other length, ", n_alpha, " with letters, ",
+           n_nodigit, " with no digits, ", n_zero, " all zeros")),
+    character(1)), collapse = "; ")
+
+  # Four conditions, split claim side from code list side. Accepting one does
+  # not accept the others, and the two sides have different remedies: a bad
+  # code list can be corrected, the CDM's own values cannot.
+  decide <- function(d, name, msg) {
+    if (nrow(d) == 0) return(invisible(FALSE))
+    if (!(name %in% waivers())) stop(msg, call. = FALSE)
+    log_msg("WAIVED (", name, "): ", detail(d))
+    options(nndm_waivers_applied = union(getOption("nndm_waivers_applied",
+                                                   character(0)), name))
+    invisible(TRUE)
+  }
+  is_cl  <- prof$SOURCE == "codelist"
+  bad    <- prof$n_ndc > 0 & (prof$n_alpha > 0 | prof$n_other > 0 | prof$n_zero > 0)
+  ten    <- prof$n_ndc > 0 & prof$n_10 > 0
+
+  d <- prof[!is_cl & bad, , drop = FALSE]
+  decide(d, "claim_ndc_shape",
+         paste0("Claim NDCs that cannot be an NDC: ", detail(d),
+                ".\nThe join strips non-digits and pads to eleven, so ABC123 ",
+                "arrives as 00000000123 and can match a real code - and this ",
+                "build would read that patient as previously treated and drop ",
+                "them. If the CDM really carries these, the join has to ",
+                "exclude them or the study team has to accept the risk: ",
+                "NDMM_WAIVERS=claim_ndc_shape."))
+  d <- prof[!is_cl & ten, , drop = FALSE]
+  decide(d, "claim_ndc_short",
+         paste0("Ten-digit claim NDCs: ", detail(d),
+                ".\nLeft-padding to eleven is right only for the 4-4-2 layout; ",
+                "a 5-3-2 or 5-4-1 code pads to a different key, so genuine ",
+                "prior therapy can be missed or the wrong drug matched. ",
+                "Confirm how this CDM represents NDC, or convert with an ",
+                "approved NDC10-to-NDC11 crosswalk. Once the study team has ",
+                "established the padding is right for this data: ",
+                "NDMM_WAIVERS=claim_ndc_short."))
+  d <- prof[is_cl & bad, , drop = FALSE]
+  decide(d, "codelist_ndc_shape",
+         paste0("Code list NDCs that cannot be an NDC: ", detail(d),
+                ".\nThis one is fixable at source - correct ",
+                "cl_mma_codelist.csv. NDMM_WAIVERS=codelist_ndc_shape to ",
+                "proceed without."))
+  d <- prof[is_cl & ten, , drop = FALSE]
+  decide(d, "codelist_ndc_short",
+         paste0("Ten-digit code list NDCs: ", detail(d),
+                ".\nThe join pads these the same way it pads claims, so they ",
+                "match only claims written in the same layout. Write them as ",
+                "NDC11 in cl_mma_codelist.csv, or ",
+                "NDMM_WAIVERS=codelist_ndc_short."))
+
+  if (!any(bad) && !any(ten))
+    log_msg("  OK: every NDC, on both sides, is eleven digits.")
+  invisible(TRUE)
+}
+
+# The md5 of every R file this package ships, so two runs can be told apart by
+# the code that made them. Radix sort, not the default: character collation is
+# locale-dependent and a hash meaning "the same code" must not be.
+code_fingerprint <- function(here) {
+  fs <- sort(c(list.files(file.path(here, "R"), "\\.R$", full.names = TRUE,
+                          recursive = TRUE),
+               file.path(here, "build.R")), method = "radix")
+  fs <- fs[file.exists(fs)]
+  if (!length(fs)) return(NA_character_)
+  tmp <- tempfile(); on.exit(unlink(tmp), add = TRUE)
+  writeLines(unlist(lapply(fs, readLines, warn = FALSE)), tmp)
+  unname(tools::md5sum(tmp))
+}
+
+# Sorted, so two runs with the same settings produce the same string and it can
+# be compared as one value.
+contract_settings <- function() {
+  k <- sort(names(CONTRACT), method = "radix")
+  paste(paste0(k, "=", vapply(CONTRACT[k], function(v) as.character(v)[1],
+                              character(1))), collapse = "|")
+}
+
+RUN_METADATA_COLS <- c(RUN_ID = "STRING", OBJECT_PREFIX = "STRING",
+                       COHORT_TABLE = "STRING", CODE_MD5 = "STRING",
+                       CONTRACT_SETTINGS = "STRING",
+                       WAIVERS_REQUESTED = "STRING", WAIVERS_APPLIED = "STRING",
+                       N_NDMM = "BIGINT", RECORDED_AT = "TIMESTAMP")
+
+# What made this cohort, beside the cohort. NDMM_BUILD_STATUS says a run
+# finished; this says which code and which settings finished it, so an
+# NDMM_COHORT found later can be matched to a build rather than guessed at.
+# REQUESTED is what the run was given, APPLIED what actually fired - a run can
+# ask for a waiver on a condition that never occurs.
+write_run_metadata <- function(con, cfg, here, n) {
+  tbl  <- wrk("NDMM_RUN_METADATA")
+  cols <- names(RUN_METADATA_COLS)
+  db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
+                    paste(cols, RUN_METADATA_COLS, collapse = ", "), ")"))
+  db_replace(con,
+    glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"),
+    glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES (",
+         "{sql_text(run_id)}, {sql_text(cfg$object_prefix)}, ",
+         "{sql_text(cfg$cohort_table)}, {sql_text(code_fingerprint(here))}, ",
+         "{sql_text(contract_settings())}, ",
+         "{sql_text(paste(sort(waivers_named(), method = 'radix'), collapse = ','))}, ",
+         "{sql_text(paste(sort(getOption('nndm_waivers_applied', character(0)), ",
+         "method = 'radix'), collapse = ','))}, ",
+         "{sql_count(n)}, current_timestamp())"))
+  log_msg("Run recorded in ", tbl)
+  invisible(TRUE)
+}
+
 CODELIST_METADATA_COLS <- c(RUN_ID = "STRING", CSV_NAME = "STRING",
                             MD5 = "STRING", N_ROWS = "BIGINT",
                             RECORDED_AT = "TIMESTAMP")
@@ -338,7 +519,8 @@ build_nndm <- function(here, prefix) {
   on.exit(if (!isTRUE(getOption("nndm_complete", FALSE)))
             try(write_build_status(con, cfg, "failed"), silent = TRUE),
           add = TRUE, after = FALSE)
-  options(nndm_complete = FALSE, nndm_codelist_md5 = list())
+  options(nndm_complete = FALSE, nndm_codelist_md5 = list(),
+          nndm_waivers_applied = character(0))
 
   lot_long       <- wrk("LOT_LONG")
   map_stacked    <- wrk("MAP_STACKED")
@@ -353,6 +535,7 @@ build_nndm <- function(here, prefix) {
 
   log_msg("MM therapy in the ", NDMM_PRE_LOT1_DAYS, " days before 1L")
   db_exec(con, build_ndmm_mma_codelist())
+  check_ndc_shape(con, cfg)
   build_ndmm_therapy_pre_lot1(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))
 
   log_msg("Other cancer in the ", NDMM_PRE_LOT1_DAYS, " days before 1L")
@@ -383,6 +566,7 @@ build_nndm <- function(here, prefix) {
     qc = glue("SELECT count(*) AS n_patients FROM {wrk('NDMM_COHORT')}"))
   write_attrition(con, cfg, counts)
   write_codelist_metadata(con, cfg)
+  write_run_metadata(con, cfg, here, counts$ndmm_final)
 
   write_build_status(con, cfg, "complete", counts$ndmm_final)
   options(nndm_complete = TRUE)

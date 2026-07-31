@@ -36,7 +36,13 @@ The cohort table's name is a setting (`FINAL_TABLE_NAME`), because
 
 Outputs, all prefixed: `NDMM_COHORT` (the PATIDs), `NDMM_ATTRITION` (the nine
 rows below), `NDMM_FLAGS_ALL` (one row per candidate with every filter's
-verdict), `NDMM_LOT_LONG_FILT`, `NDMM_CODELIST_METADATA`, `NDMM_BUILD_STATUS`.
+verdict), `NDMM_LOT_LONG_FILT`, `NDMM_CODELIST_METADATA`, `NDMM_RUN_METADATA`,
+`NDMM_BUILD_STATUS`.
+
+`NDMM_RUN_METADATA` carries the md5 of every R file this package ships, the
+contract as one sorted string, the parent cohort table it read, the waivers
+asked for and the waivers that fired, and the final count — so an
+`NDMM_COHORT` found later can be matched to a build rather than guessed at.
 
 Every input above is read once before any work, and a missing one names itself
 and the build that makes it. Every setting is checked twice: against
@@ -149,6 +155,34 @@ wrong; the values below are what the **images** show, and what this build uses.
 | other cancer | `>1 IP or >2 OP` | **`≥1 IP or ≥2 OP`** |
 | adult age | `> 18` | **`≥18`** |
 | outpatient MM diagnosis | `> 2 claims` | **`≥2 claims`** |
+
+### NDC matching, and what has to be checked before the first run
+
+The prior-therapy scan matches an NDC by stripping non-digits and left-padding
+to eleven. That is the **4-4-2** layout. A ten-digit NDC written 5-3-2 or 5-4-1
+pads to a different key, so `50242-040-62` — canonically `50242004062` —
+becomes `05024204062`: a real prior therapy missed, or the wrong drug matched.
+The patient's inclusion turns on it and nothing downstream can see it happen.
+
+`check_ndc_shape()` profiles the values before the scan runs, on both sides of
+the join and scoped to the NDMM candidates and the baseline window, and stops
+on any of four conditions:
+
+| check | what it found |
+|---|---|
+| `claim_ndc_shape` | a claim NDC that cannot be an NDC — letters, wrong length, or all zeros |
+| `claim_ndc_short` | a ten-digit claim NDC, where the padding is only right for 4-4-2 |
+| `codelist_ndc_shape` | the same on the code list side — fixable at source |
+| `codelist_ndc_short` | a ten-digit code on the code list — write it as NDC11 |
+
+Each is accepted separately, and only once the study team has looked:
+`NDMM_WAIVERS=claim_ndc_short`. Nothing outside those four names can be waived,
+and a waiver naming something else stops the build as a typo. What was asked
+for and what actually fired are recorded apart in `NDMM_RUN_METADATA` — a run
+can ask for a waiver on a condition that never occurs.
+
+**Run the first production build with no waivers set** and read the profile it
+prints. That is the point of it.
 
 ## The attrition
 

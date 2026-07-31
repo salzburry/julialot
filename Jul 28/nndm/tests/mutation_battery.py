@@ -6,6 +6,14 @@
 #
 # Attrition labels are deliberately not pinned: they are prose on the delivered
 # table and are meant to be editable without a test change.
+#
+# Two mutations are deliberately absent: dropping method = "radix" from the
+# sorts in code_fingerprint() and contract_settings(). Radix buys
+# locale-independence, and telling it from the default needs a collation that
+# differs from C. This container ships only C locales, so both mutations would
+# survive here for want of a machine to fail on rather than for want of a test.
+# test_runner.R runs the real comparison when a differing locale exists and
+# says plainly when it did not.
 import os, shutil, subprocess, sys, tempfile
 # The package is the parent of tests/, wherever this file happens to live, and
 # the scratch copy goes wherever the platform puts temporary directories. Both
@@ -40,6 +48,22 @@ M = [
  ("upstream built tables","R/build_nndm.R","  for (t in names(up)) {","  for (t in names(up)[0]) {"),
  ("upstream owner","R/build_nndm.R",'setNames(list("Jul 28/lot", "Jul 28/lot", "Jul 28/overall"),','setNames(list("Jul 28/lot", "Jul 28/lot", "Jul 28/lot"),'),
  ("attrition key typo","R/build_nndm.R",'list(key = "noother_nopreg",','list(key = "noother_nopreg2",'),
+ ("ndc profile dropped","R/build_nndm.R","  check_ndc_shape(con, cfg)\n","  "),
+ ("ndc profile after the scan","R/build_nndm.R","  check_ndc_shape(con, cfg)\n  build_ndmm_therapy_pre_lot1(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))","  build_ndmm_therapy_pre_lot1(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))\n  check_ndc_shape(con, cfg)"),
+ ("ndc ten-digit ignored","R/build_nndm.R","  ten    <- prof$n_ndc > 0 & prof$n_10 > 0","  ten    <- rep(FALSE, nrow(prof))"),
+ ("ndc bad shape ignored","R/build_nndm.R","  bad    <- prof$n_ndc > 0 & (prof$n_alpha > 0 | prof$n_other > 0 | prof$n_zero > 0)","  bad    <- rep(FALSE, nrow(prof))"),
+ ("ndc all-zero ignored","R/build_nndm.R","prof$n_alpha > 0 | prof$n_other > 0 | prof$n_zero > 0)","prof$n_alpha > 0 | prof$n_other > 0)"),
+ ("ndc never stops","R/build_nndm.R","    if (!(name %in% waivers())) stop(msg, call. = FALSE)","    if (FALSE) stop(msg, call. = FALSE)"),
+ ("ndc one waiver waives all","R/build_nndm.R","    if (!(name %in% waivers())) stop(msg, call. = FALSE)","    if (!length(waivers())) stop(msg, call. = FALSE)"),
+ ("ndc codelist side unprofiled","R/build_nndm.R","                db_q(con, codelist_sql))","                db_q(con, codelist_sql)[0, ])"),
+ ("ndc window unscoped","R/build_nndm.R","            AND cast(t.{dt} AS date)\n                  BETWEEN date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS})\n                      AND date_sub(l1.LOT1_START_DT, 1))))\")","            AND cast(t.{dt} AS date) >= date('1900-01-01'))))\")"),
+ ("waiver allowlist off","R/build_nndm.R","waivers <- function() intersect(waivers_named(), WAIVABLE_CHECKS)","waivers <- function() waivers_named()"),
+ ("unknown waiver accepted","R/build_nndm.R","  unknown <- setdiff(waivers_named(), WAIVABLE_CHECKS)","  unknown <- character(0)"),
+ ("run metadata dropped","R/build_nndm.R","  write_run_metadata(con, cfg, here, counts$ndmm_final)\n","  "),
+ ("run metadata no code md5","R/build_nndm.R","{sql_text(code_fingerprint(here))}, ","NULL, "),
+ ("run metadata no settings","R/build_nndm.R","         \"{sql_text(contract_settings())}, \"","         \"NULL, \""),
+ ("run metadata waivers merged","R/build_nndm.R","         \"{sql_text(paste(sort(waivers_named(), method = 'radix'), collapse = ','))}, \"","         \"NULL, \""),
+ ("run metadata not replaced","R/build_nndm.R","    glue(\"DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'\"),\n    glue(\"INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES (\",\n         \"{sql_text(run_id)}, {sql_text(cfg$object_prefix)}, \"","    glue(\"SELECT 1\"),\n    glue(\"INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES (\",\n         \"{sql_text(run_id)}, {sql_text(cfg$object_prefix)}, \""),
  ("codelist allowlist short","R/codelists.R",'CODELIST_FILES <- c("cl_mma_codelist.csv", "other_malig.csv", "pregnancy.csv")','CODELIST_FILES <- c("cl_mma_codelist.csv", "pregnancy.csv")'),
  ("codelist allowlist off","R/codelists.R","  if (!csv_name %in% CODELIST_FILES)","  if (FALSE)"),
  ("codelist hashes dropped","R/build_nndm.R","  write_codelist_metadata(con, cfg)\n","  "),
@@ -65,7 +89,7 @@ M = [
  ("db_replace atomicity","R/db_utils.R","  with_retry(function() for (s in sqls) db_exec_once(con, s))","  for (s in sqls) with_retry(function() db_exec_once(con, s))"),
  ("status size unquoted","R/build_nndm.R","{sql_count(n)}, ","{n}, "),
  ("failed status ordering","R/build_nndm.R","          add = TRUE, after = FALSE)","          add = TRUE)"),
- ("outputs list","R/build_nndm.R",'OUTPUTS <- c("NDMM_FLAGS_ALL", "NDMM_LOT_LONG_FILT", "NDMM_COHORT",\n             "NDMM_ATTRITION", "NDMM_CODELIST_METADATA", "NDMM_BUILD_STATUS")','OUTPUTS <- c("NDMM_FLAGS_ALL", "NDMM_LOT_LONG_FILT", "NDMM_COHORT")'),
+ ("outputs list","R/build_nndm.R",'OUTPUTS <- c("NDMM_FLAGS_ALL", "NDMM_LOT_LONG_FILT", "NDMM_COHORT",\n             "NDMM_ATTRITION", "NDMM_CODELIST_METADATA", "NDMM_RUN_METADATA",\n             "NDMM_BUILD_STATUS")','OUTPUTS <- c("NDMM_FLAGS_ALL", "NDMM_LOT_LONG_FILT", "NDMM_COHORT")'),
  ("ported fu ce constant","R/nndm_constants.R","NDMM_FU_CE_DAYS          <- 0L","NDMM_FU_CE_DAYS          <- 90L"),
  ("ported flags sql","R/steps/06_flags.R","      AND CE_lot1_fu              = 1","      AND 1 = 1"),
  ("cohort sql outside the rewrite","R/steps/07_cohort.R","            ON cast(l.PATID as string) = a.PATID","            ON cast(l.PATID as string) = a.PATIDX"),

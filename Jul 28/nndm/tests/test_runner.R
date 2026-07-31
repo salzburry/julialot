@@ -35,14 +35,15 @@ cat("\n-- the runner calls its phases, in order --\n")
 ORDER <- c("check_settings", "pin_output_schema", "pin_prefix", "check_contract",
            "check_constants", "set_lot_config", "check_upstream", "write_build_status",
            "build_enrollment_spans_ndmm", "build_lot1_starts_ndmm",
-           "build_ndmm_mma_codelist", "build_ndmm_therapy_pre_lot1",
+           "build_ndmm_mma_codelist", "check_ndc_shape",
+           "build_ndmm_therapy_pre_lot1",
            "build_ndmm_other_malig_codes",
            "build_ndmm_med_claim_header_and_confinement",
            "build_ndmm_other_malig_pre_lot1", "build_ndmm_preg_codes",
            "build_ndmm_pregnancy_patids", "build_ndmm_flags",
            "build_lot_long_filtered", "ndmm_counts",
            "check_attrition_monotonic", "write_attrition",
-           "write_codelist_metadata")
+           "write_codelist_metadata", "write_run_metadata")
 at <- vapply(ORDER, function(f) {
   m <- regexpr(paste0("(?<![A-Za-z0-9_.])", f, "\\("), body, perl = TRUE)
   if (m == -1) NA_integer_ else as.integer(m)
@@ -59,6 +60,11 @@ ok(at[["check_upstream"]] < at[["build_enrollment_spans_ndmm"]],
 # The funnel is checked before it is written, so a fan-out is not published.
 ok(at[["check_attrition_monotonic"]] < at[["write_attrition"]],
    "and the attrition is checked before it is written")
+# The NDC profile has to see the codelist view and the LOT1 starts it scopes
+# to, and has to run before the scan whose matching it is about.
+ok(at[["build_ndmm_mma_codelist"]] < at[["check_ndc_shape"]] &&
+     at[["check_ndc_shape"]] < at[["build_ndmm_therapy_pre_lot1"]],
+   "the NDC shape is profiled after its inputs exist and before the scan uses them")
 
 cat("\n-- settings that would build a different cohort --\n")
 for (bad in c("2025/06/30", "30-06-2025", "nonsense")) {
@@ -439,6 +445,132 @@ ok(sum(grepl("DELETE", SENT, fixed = TRUE)) == 2L,
    "...and its DELETE goes with it, so the second attempt starts from empty")
 ok(identical(SENT[3], "DELETE FROM t WHERE RUN_ID = 'R1'"),
    "the retry replays the pair in order, DELETE before INSERT")
+
+cat("\n-- NDCs that the padding would get wrong --\n")
+# The prior-therapy join strips non-digits and left-pads to eleven. That is the
+# 4-4-2 layout only; a 5-3-2 or 5-4-1 ten-digit code pads to a different key, so
+# a real prior therapy is missed or the wrong drug matched - and the patient's
+# inclusion turns on it. Driven with a stub profile, because there is no
+# warehouse here and what matters is which shapes stop the run.
+ne <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = ne)
+assign("log_msg", function(...) invisible(NULL), envir = ne)
+assign("cdm_src", function(x) paste0("cdm.t_", x), envir = ne)
+assign("NDMM_LOT1_STARTS", "_l1", envir = ne)
+assign("NDMM_MMA_CODELIST", "_cl", envir = ne)
+assign("NDMM_PRE_LOT1_DAYS", 365L, envir = ne)
+row <- function(src, n = 10L, n11 = 10L, n10 = 0L, oth = 0L, alpha = 0L,
+                nodig = 0L, zero = 0L)
+  data.frame(SOURCE = src, n_ndc = n, n_11 = n11, n_10 = n10, n_other = oth,
+             n_alpha = alpha, n_nodigit = nodig, n_zero = zero,
+             stringsAsFactors = FALSE)
+NSQL <- character(0)
+drive_ndc <- function(med = row("medical"), rx = row("rx"), cl = row("codelist"),
+                      waive = "") {
+  Sys.setenv(NDMM_WAIVERS = waive)
+  i <- 0L
+  assign("db_q", function(con, sql) {
+    NSQL <<- c(NSQL, sql); i <<- i + 1L; list(med, rx, cl)[[i]]
+  }, envir = ne)
+  out <- tryCatch({ ne$check_ndc_shape(NULL, cfg_defaults); "" }, error = conditionMessage)
+  Sys.unsetenv("NDMM_WAIVERS")
+  out
+}
+NSQL <- character(0)
+ok(identical(drive_ndc(), ""), "eleven digits everywhere lets the run go on")
+ok(length(NSQL) == 3L &&
+     any(grepl("cdm.t_medical", NSQL, fixed = TRUE)) &&
+     any(grepl("cdm.t_rx", NSQL, fixed = TRUE)) &&
+     any(grepl("_cl", NSQL, fixed = TRUE)),
+   "both claim sources and the code list are profiled, not just the claims")
+ok(any(grepl("_l1", NSQL, fixed = TRUE)) &&
+     any(grepl("date_sub(l1.LOT1_START_DT, 365)", NSQL, fixed = TRUE)),
+   "scoped to the candidates and the baseline window the scan reads")
+ok(all(grepl("trim(cast(t.NDC as string)) <> ''", NSQL[1:2], fixed = TRUE)),
+   "and every non-blank value is counted, including ones that cannot join")
+m <- drive_ndc(rx = row("rx", n10 = 3L, n11 = 7L))
+ok(grepl("Ten-digit claim NDCs", m, fixed = TRUE) && grepl("4-4-2", m, fixed = TRUE),
+   "a ten-digit claim NDC stops the run, naming the layout the padding assumes")
+ok(grepl("claim_ndc_short", m, fixed = TRUE),
+   "...and says how the study team can accept it once they have checked")
+ok(identical(drive_ndc(rx = row("rx", n10 = 3L, n11 = 7L), waive = "claim_ndc_short"), ""),
+   "the waiver lets that one through")
+m <- drive_ndc(med = row("medical", alpha = 2L), waive = "claim_ndc_short")
+ok(grepl("cannot be an NDC", m, fixed = TRUE),
+   "and waiving the short check does not waive the shape check")
+m <- drive_ndc(cl = row("codelist", n10 = 4L))
+ok(grepl("Ten-digit code list NDCs", m, fixed = TRUE) &&
+     grepl("cl_mma_codelist.csv", m, fixed = TRUE),
+   "a ten-digit code on the code list side stops it too, and that one is fixable")
+m <- drive_ndc(med = row("medical", zero = 1L))
+ok(grepl("cannot be an NDC", m, fixed = TRUE),
+   "an all-zero NDC is caught though it is eleven digits - it is the key a missing value makes")
+m <- drive_ndc(med = row("medical", oth = 5L))
+ok(grepl("cannot be an NDC", m, fixed = TRUE), "so is an under- or over-length one")
+Sys.setenv(NDMM_WAIVERS = "claim_ndc_short,not_a_check")
+m <- tryCatch({ check_settings(); "" }, error = conditionMessage)
+ok(grepl("no such check", m, fixed = TRUE) && grepl("not_a_check", m, fixed = TRUE),
+   "a waiver naming nothing real is a typo, and is refused before the run starts")
+Sys.setenv(NDMM_WAIVERS = "codelist_ndc_short")
+ok(identical(waivers(), "codelist_ndc_short"), "a real waiver is honoured")
+Sys.setenv(NDMM_WAIVERS = "check_upstream")
+ok(length(waivers()) == 0L,
+   "and nothing outside the waivable set is ever honoured, whatever is set")
+Sys.unsetenv("NDMM_WAIVERS")
+
+cat("\n-- what made this cohort, beside the cohort --\n")
+re <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = re)
+assign("log_msg", function(...) invisible(NULL), envir = re)
+assign("wrk", function(x) paste0("wk.p_", x), envir = re)
+assign("run_id", "R1", envir = re)
+RSQL <- character(0)
+assign("db_exec", function(con, s) { RSQL <<- c(RSQL, s); TRUE }, envir = re)
+assign("db_replace", function(con, ...) { RSQL <<- c(RSQL, c(...)); TRUE }, envir = re)
+options(nndm_waivers_applied = "claim_ndc_short")
+Sys.setenv(NDMM_WAIVERS = "claim_ndc_short,codelist_ndc_short")
+re$write_run_metadata(NULL, modifyList(cfg_defaults, list(object_prefix = "p_")),
+                      ROOT, 1234)
+Sys.unsetenv("NDMM_WAIVERS"); options(nndm_waivers_applied = character(0))
+ins <- grep("INSERT", RSQL, value = TRUE)[1]
+ok(!is.na(ins) && grepl(code_fingerprint(ROOT), ins, fixed = TRUE),
+   "the run records the md5 of the code that made it")
+ok(!is.na(ins) && grepl("lot1_from=2017-01-01", ins, fixed = TRUE) &&
+     grepl("fu_ce_days=0", ins, fixed = TRUE),
+   "...and the settings, so a cohort can be matched to a build not guessed at")
+ok(!is.na(ins) && grepl("'OVERALL_COH_FINAL'", ins, fixed = TRUE),
+   "...and which parent cohort table it read")
+ok(!is.na(ins) && grepl("'claim_ndc_short,codelist_ndc_short'", ins, fixed = TRUE) &&
+     grepl("'claim_ndc_short'", ins, fixed = TRUE),
+   "waivers asked for and waivers that fired are recorded apart")
+ok(!is.na(ins) && grepl(", 1234,", ins, fixed = TRUE), "with the cohort size")
+ok(any(vapply(RSQL, function(g) grepl("DELETE", g, fixed = TRUE), logical(1))),
+   "and the run's own row is cleared first, so a re-run does not stack")
+# Two runs of the same code and settings must agree, or the value says nothing.
+ok(identical(code_fingerprint(ROOT), code_fingerprint(ROOT)) &&
+     identical(contract_settings(), contract_settings()),
+   "the fingerprint and the settings string are stable across calls")
+# And across machines: both sort with method = "radix" because the default is
+# collation-sensitive, so the same code would hash differently under a
+# different locale. Needs a collation that differs from C to exercise - many
+# containers ship only C locales, in which case this says so rather than
+# passing on nothing.
+keep_lc <- Sys.getlocale("LC_COLLATE")
+alt <- Filter(function(l) nzchar(suppressWarnings(Sys.setlocale("LC_COLLATE", l))),
+              c("en_US.UTF-8", "en_US.utf8", "en_GB.UTF-8", "de_DE.UTF-8"))
+Sys.setlocale("LC_COLLATE", keep_lc)
+if (length(alt)) {
+  a <- code_fingerprint(ROOT); b <- contract_settings()
+  Sys.setlocale("LC_COLLATE", alt[1])
+  same <- identical(code_fingerprint(ROOT), a) && identical(contract_settings(), b)
+  Sys.setlocale("LC_COLLATE", keep_lc)
+  ok(same, paste0("and unchanged under ", alt[1], " - the same code hashes the same ",
+                  "whatever the machine's collation"))
+} else {
+  cat("  ---- no collation differing from C on this machine; the locale ",
+      "independence of code_fingerprint()/contract_settings() was NOT ",
+      "exercised\n", sep = "")
+}
 
 cat("\n-- the outputs are all prefixed, and all declared --\n")
 assign("cfg", pin_prefix(base, "p_"), envir = globalenv())
