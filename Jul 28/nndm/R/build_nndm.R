@@ -53,8 +53,8 @@ upstream_tables <- function(cfg) {
 }
 
 # What the run writes. All prefixed, so two cohorts sit side by side.
-OUTPUTS <- c("NDMM_FLAGS_ALL", "NDMM_LOT_LONG_FILT", "NDMM_COHORT",
-             "NDMM_ATTRITION", "NDMM_CODELIST_METADATA", "NDMM_RUN_METADATA",
+OUTPUTS <- c("NDMM_FLAGS_ALL", "NDMM_COHORT", "NDMM_ATTRITION",
+             "NDMM_CODELIST_METADATA", "NDMM_RUN_METADATA",
              "NDMM_BUILD_STATUS")
 
 # Conditions the study team can accept for a given data set. Nothing else can
@@ -551,7 +551,10 @@ build_nndm <- function(here, prefix) {
 
   log_msg("Per-patient filter flags")
   build_ndmm_flags(con, elig_coh_final, map_stacked, TRUE, TRUE, TRUE, TRUE)
-  build_lot_long_filtered(con, lot_long)
+  # build_lot_long_filtered() is not called. It joins LOT_LONG to the cohort for
+  # the April dashboard's KPI, gallery and LOT-detail views; neither the cohort
+  # nor the attrition reads it, and this package builds only those two. The
+  # function stays in 07_cohort.R so that file remains the source line for line.
 
   counts <- ndmm_counts(con, lot_long, elig_coh_final)
   for (i in seq_along(ATTRITION_STEPS))

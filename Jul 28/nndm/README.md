@@ -36,8 +36,13 @@ The cohort table's name is a setting (`FINAL_TABLE_NAME`), because
 
 Outputs, all prefixed: `NDMM_COHORT` (the PATIDs), `NDMM_ATTRITION` (the nine
 rows below), `NDMM_FLAGS_ALL` (one row per candidate with every filter's
-verdict), `NDMM_LOT_LONG_FILT`, `NDMM_CODELIST_METADATA`, `NDMM_RUN_METADATA`,
-`NDMM_BUILD_STATUS`.
+verdict), `NDMM_CODELIST_METADATA`, `NDMM_RUN_METADATA`, `NDMM_BUILD_STATUS`.
+
+`07_cohort.R` still carries `build_lot_long_filtered()`, which joins `LOT_LONG`
+to the cohort for the April dashboard's KPI, gallery and LOT-detail views. The
+runner does not call it: neither the cohort nor the attrition reads it, and
+those two are all this package builds. The function stays in the file so
+`07_cohort.R` remains the source line for line.
 
 `NDMM_RUN_METADATA` carries the md5 of every R file this package ships, the
 contract as one sorted string, the parent cohort table it read, the waivers

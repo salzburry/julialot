@@ -23,7 +23,16 @@ sys.source(file.path(ROOT, "R", "codelists.R"), envir = globalenv())
 # them against cfg. Loaded here the same way load_nndm_modules() loads them.
 sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = globalenv())
 bl   <- paste(readLines(file.path(ROOT, "R", "build_nndm.R"), warn = FALSE), collapse = "\n")
-body <- sub(".*build_nndm <- function\\([^)]*\\) \\{", "", bl)
+# The parsed body, not the file text: a call named only in a comment is not a
+# call, and matching raw text counted one. parse() drops comments outright.
+body <- local({
+  fn <- NULL
+  for (e in parse(file.path(ROOT, "R", "build_nndm.R"), keep.source = FALSE))
+    if (is.call(e) && identical(as.character(e[[1]]), "<-") &&
+        identical(as.character(e[[2]]), "build_nndm")) fn <- e[[3]]
+  if (is.null(fn)) stop("build_nndm() not found")
+  paste(deparse(fn), collapse = "\n")
+})
 
 SETTINGS <- c("STUDY_END", "LOT1_FROM", "STUDY_START", "PRE_LOT1_DAYS",
               "FU_CE_DAYS", "GAP_DAYS", "DOMINO_RUN_ID", "PROJECT_WORK_SCHEMA",
@@ -41,7 +50,7 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_prefix", "check_contract"
            "build_ndmm_med_claim_header_and_confinement",
            "build_ndmm_other_malig_pre_lot1", "build_ndmm_preg_codes",
            "build_ndmm_pregnancy_patids", "build_ndmm_flags",
-           "build_lot_long_filtered", "ndmm_counts",
+           "ndmm_counts",
            "check_attrition_monotonic", "write_attrition",
            "write_codelist_metadata", "write_run_metadata")
 at <- vapply(ORDER, function(f) {
@@ -622,30 +631,61 @@ assign("cfg", pin_prefix(base, "p_"), envir = globalenv())
 for (t in OUTPUTS)
   ok(grepl(paste0(".p_", t), wrk(t), fixed = TRUE),
      paste0(t, " is written under the cohort prefix"))
-# Every table this package names, across the runner and the ported steps, and
-# whether it was written as a literal or through a constant. A step that starts
-# writing a table nobody declared is the failure this is here for: OUTPUTS is
-# what tells the next build which tables belong to this cohort.
+# Every table the run names, whether written as a literal or through a
+# constant - and only from code the run reaches. 07_cohort.R still carries
+# build_lot_long_filtered(), which the runner no longer calls; scanning the
+# whole file would credit this package with a table nothing writes.
 consts <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = consts)
-srcs <- c(file.path(ROOT, "R", "build_nndm.R"),
-          list.files(file.path(ROOT, "R", "steps"), "\\.R$", full.names = TRUE))
-args <- unique(unlist(lapply(srcs, function(f) {
-  s <- paste(readLines(f, warn = FALSE), collapse = "\n")
-  unlist(regmatches(s, gregexpr("(?<=wrk\\()[^)]+(?=\\))", s, perl = TRUE)))
-})))
+# The bodies of the step functions the runner calls, plus the runner itself.
+# Derived from the runner's own body, not from ORDER: a call added back to the
+# runner has to show up here, or the scan would not follow it and the table it
+# writes would go unnoticed.
+step_fns <- unlist(lapply(step_files, function(f)
+  ls(local({ e <- new.env(); suppressWarnings(try(sys.source(f, envir = e), silent = TRUE)); e }))))
+called <- Filter(function(nm)
+  regexpr(paste0("(?<![A-Za-z0-9_.])", nm, "\\("), body, perl = TRUE) != -1, step_fns)
+# And ORDER has to name every one of them, so the phase list cannot fall behind
+# the runner it describes.
+extra <- setdiff(called, ORDER)
+ok(length(extra) == 0,
+   if (length(extra)) paste0("the runner calls step functions ORDER does not name: ",
+                             paste(extra, collapse = ", "))
+   else "ORDER names every step function the runner calls")
+body_of_fn <- function(f, nm) {
+  ln <- readLines(f, warn = FALSE)
+  i <- grep(paste0("^", nm, " <- function"), ln)
+  if (!length(i)) return(character(0))
+  j <- grep("^}", ln); j <- j[j > i[1]]
+  if (!length(j)) return(character(0))
+  ln[i[1]:j[1]]
+}
+reached <- c(readLines(file.path(ROOT, "R", "build_nndm.R"), warn = FALSE),
+             unlist(lapply(step_files, function(f)
+               unlist(lapply(called, function(nm) body_of_fn(f, nm))))))
+txt  <- paste(reached, collapse = "\n")
+args <- unique(unlist(regmatches(txt, gregexpr("(?<=wrk\\()[^)]+(?=\\))", txt, perl = TRUE))))
 named <- unique(unlist(lapply(args, function(a) {
   a <- trimws(a)
   if (grepl("^['\"].*['\"]$", a)) gsub("^['\"]|['\"]$", "", a)
   else if (exists(a, envir = consts, inherits = FALSE)) get(a, envir = consts)
   else NULL                       # wrk(t), the loop variable in check_upstream
 })))
-ok(length(named) >= length(OUTPUTS),
-   paste0("the scan finds every named table, not a subset (", length(named), ")"))
-undeclared <- setdiff(named, c(OUTPUTS, names(upstream_tables(cfg_defaults))))
+inputs <- names(upstream_tables(cfg_defaults))
+ok(length(called) > 0,
+   paste0("the scan follows the ", length(called), " step functions the runner calls"))
+undeclared <- setdiff(named, c(OUTPUTS, inputs))
 ok(length(undeclared) == 0,
    if (length(undeclared)) paste0("tables written but not declared: ",
                                   paste(undeclared, collapse = ", "))
-   else "every table named is declared as an output or as an upstream input")
+   else "every table the run names is declared as an output or as an upstream input")
+# And the other way. A declared output nothing writes is the same failure seen
+# from the other side: the run reports complete and the table is not there.
+unwritten <- setdiff(OUTPUTS, named)
+ok(length(unwritten) == 0,
+   if (length(unwritten)) paste0("declared as an output but nothing the run ",
+                                 "reaches writes it: ", paste(unwritten, collapse = ", "))
+   else paste0("and every one of the ", length(OUTPUTS),
+               " declared outputs is written by code the run reaches"))
 clear()
 report()
