@@ -41,7 +41,7 @@ These are applied by `Jul 28/overall` and enter here through
 
 | # | criterion | as applied |
 |---|---|---|
-| 1 | **MM diagnosis** | ≥1 inpatient medical claim with an MM diagnosis in any position (ICD-9-CM `203.0x` or ICD-10-CM `C90.0x`), **or** ≥2 outpatient medical claims for MM in any position on separate days within the outpatient window, during the study period |
+| 1 | **MM diagnosis** | ≥1 inpatient medical claim with an MM diagnosis in any position (ICD-9-CM `203.0x` or ICD-10-CM `C90.0x`), **or** ≥2 outpatient medical claims for MM in any position on separate days **within 90 days**, during the study period. §6.2.1.1 fixes the window at 90; `Jul 28/overall`'s `OUTPATIENT_WINDOW` is `90`. |
 | 2 | **Adult age** | ≥18 years in the index year |
 
 The parent's own follow-up-CE and baseline-therapy steps are configured off for
@@ -121,15 +121,22 @@ not.
 
 | # | step | protocol |
 |---|---|---|
-| 1 | Patients in `LOT_LONG` | — |
-| 2 | + in `ELIG_COH_FINAL` (parent IE) | parent cohort |
-| 3 | + 1L start on or after `LOT1_FROM` | §6.2.1.1 |
-| 4 | + 12-month CE before index | §6.2.1.1 |
-| 5 | + CE during follow-up | §6.2.1.1 |
+| 1 | Patients in `LOT_LONG` | — (starting population) |
+| 2 | + in `ELIG_COH_FINAL` (parent IE) | §6.2.1.1 incl. 1 **and** 2 |
+| 3 | + 1L start on or after `LOT1_FROM` | §6.2.1.1 incl. 3 |
+| 4 | + 12-month CE before index | §6.2.1.1 incl. 4 |
+| 5 | + CE during follow-up | §6.2.1.1 incl. 5 |
 | 6 | + no MM oncology therapy in 12-month baseline | §6.2.1.2, excl. 1 |
 | 7 | + no other cancer in 12-month baseline | §6.2.1.2, excl. 2 |
 | 8 | + no pregnancy in study period | §6.2.1.2, excl. 3 |
 | 9 | + no belantamab in any LOT — **the 1L NDMM cohort** | §6.2.1.2, excl. 4 |
+
+**Step 2 carries two protocol criteria, not one.** §6.2.1.1's MM diagnosis and
+adult age are both applied by `Jul 28/overall` and arrive here already
+combined, inside `ELIG_COH_FINAL`. Splitting them into separate rows is not
+possible from this build — by the time it reads that table both filters have
+run. `Jul 28/overall`'s own attrition has them as separate steps, and that is
+where to read them.
 
 **Step 9 is not a baseline criterion.** Every other step is anchored to the 1L
 index date; this one is "in any LOT", with no date bound at all, so a patient
