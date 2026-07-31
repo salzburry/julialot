@@ -385,9 +385,12 @@ mk_db_q <- function(problem) function(con, sql) {
   if (grepl("count\\(DISTINCT CL_MED_ABBR\\) AS n FROM mma_rollup", sql)) return(data.frame(n = 28))
   if (grepl("count\\(\\*\\) AS n FROM mma_codelist", sql)) return(data.frame(n = 500))
   if (grepl("SELECT DISTINCT CL_MED_ABBR FROM mma_rollup", sql, fixed = TRUE))
-    return(data.frame(CL_MED_ABBR = c("LEN", "BOR")))
+    return(data.frame(CL_MED_ABBR = switch(problem,
+      collide = c("CAR-T", "CAR T"), quoted = c("LEN", "O'BRIEN"),
+      c("LEN", "BOR"))))
   if (grepl("SELECT DISTINCT CL_MED_CLASS FROM mma_rollup", sql, fixed = TRUE))
-    return(data.frame(CL_MED_CLASS = c("IMID", "PI")))
+    return(data.frame(CL_MED_CLASS = switch(problem,
+      collide_class = c("ANTI-CD38", "ANTI CD38"), c("IMID", "PI"))))
   data.frame()
 }
 ce <- new.env(parent = globalenv())
@@ -425,6 +428,63 @@ assign("db_q", mk_db_q("code_to_med"), envir = ce)
 ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
    "and still stops on a code naming two medications")
 Sys.unsetenv("CODELIST_WAIVERS")
+
+cat("\n-- the checks ask about rows extraction can reach --\n")
+# Every join in 03_mma_map is ON c.CL_CODE_TYPE = 'NDC' or 'HCPCS'. A check
+# counting a row of any other type answers about a row the build never reads:
+# a medication coded only as ICD looked coded while producing nothing, and an
+# unused ICD code naming two drugs failed the build over a row nothing joins.
+ok(grepl("SELECT * FROM mma_codelist WHERE CL_CODE_TYPE IN ('NDC', 'HCPCS')",
+         cd, fixed = TRUE),
+   "there is one view of the rows extraction reaches")
+ok(identical(sort(unique(gsub(".*= '|'.*", "",
+     regmatches(mmx, gregexpr("c\\.CL_CODE_TYPE = '[A-Z]+'", mmx))[[1]]))),
+     c("HCPCS", "NDC")),
+   "...and those are the types 03_mma_map actually joins on")
+# Every query keyed on a medication abbreviation must read that view. Scanning
+# each query separately, because the file still names the full list on purpose
+# for code_types, and for the two NDC checks that filter the type themselves.
+qs <- strsplit(cd, "db_q(con, \"", fixed = TRUE)[[1]][-1]
+qs <- vapply(qs, function(q) sub("\").*", "", q), character(1), USE.NAMES = FALSE)
+# A query is scoped if it reads the view, or filters CL_CODE_TYPE itself as the
+# two NDC checks do. The load-sanity count names neither and is not a
+# per-medication check, so it is not caught by this and does not need to be.
+unscoped <- Filter(function(q)
+  grepl("CL_MED_ABBR", q) && !grepl("CL_CODE_TYPE", q) &&
+    grepl("mma_codelist", gsub("mma_extractable_codelist", "", q)), qs)
+ok(length(unscoped) == 0,
+   if (length(unscoped)) paste0("a check keyed on the abbreviation reads the ",
+                                "full list: ", substr(trimws(unscoped[1]), 1, 60))
+   else paste0("all ", sum(grepl("CL_MED_ABBR", qs) & !grepl("CL_CODE_TYPE", qs)),
+               " abbreviation-keyed checks read the extractable view"))
+ok(any(grepl("GROUP BY CL_CODE_TYPE", qs, fixed = TRUE) &
+         !grepl("extractable", qs, fixed = TRUE)),
+   "code_types still reports over the whole list - that is its job")
+
+cat("\n-- the generated column names have to be usable --\n")
+# sanitize_col maps punctuation and spaces to '_', and the value itself goes
+# into a SQL string literal unescaped. Neither was checked, here or in LOT2-5,
+# which discovers its meds and classes from the same rollup.
+for (p in list(list(k = "collide", what = "two medications making one column"),
+               list(k = "collide_class", what = "two classes making one column"),
+               list(k = "quoted", what = "a name that would close the literal"))) {
+  assign("db_q", mk_db_q(p$k), envir = ce)
+  err <- tryCatch({ ce$phase_codelists(NULL); "" }, error = conditionMessage)
+  ok(nzchar(err), paste0(p$what, " stops the build"))
+}
+assign("db_q", mk_db_q("collide"), envir = ce)
+err <- tryCatch({ ce$phase_codelists(NULL); "" }, error = conditionMessage)
+ok(grepl("CAR_T", err, fixed = TRUE) && grepl("CAR-T", err, fixed = TRUE) &&
+     grepl("CAR T", err, fixed = TRUE),
+   "...naming the column and both values that produce it")
+# The check calls sanitize_col rather than repeating its expression, so it
+# cannot drift from the generator it is guarding.
+ok(grepl("san <- sanitize_col(nm$v)", cd, fixed = TRUE),
+   "and it asks sanitize_col itself, not a copy of what sanitize_col does")
+lb <- paste(readLines(file.path(ROOT, "R", "steps", "10_lot2_5_base.R"), warn = FALSE),
+            collapse = "\n")
+ok(grepl("FROM mma_rollup", lb, fixed = TRUE),
+   "LOT2-5 draws its meds and classes from the same rollup, so this covers it")
 
 cat("\n-- some conditions have no reading worth accepting --\n")
 # A code counted twice, a code matching every claim with no NDC, a medication

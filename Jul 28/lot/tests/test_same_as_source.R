@@ -82,6 +82,11 @@ SPLICE <- list(
 
 # Blocks that are pure additions: cut, replace with nothing.
 CUT <- list(
+  # The consistency block itself is SPLICEd; this one sits after it, among the
+  # source's own flag-expression code, so it is cut by name like the SCT ones.
+  "01_codelists.R" = list(
+    c(from = "for (nm in list(list(v = meds, what = \"medication\"),",
+      to   = "log_msg(\"  OK: Every medication and class makes one distinct column name.\")")),
   "05_sct.R" = list(
     c(from = "sct_dup <- db_q(con, \"",
       to   = "log_msg(\"  OK: Each SCT code names exactly one transplant type.\")"),

@@ -154,6 +154,13 @@ Three consistency checks are reviewable - they stop the build unless named in
 | a rollup med with no codes | never matched, so patients on it look untreated |
 | a code type other than NDC or HCPCS | sits in the list and matches nothing |
 
+All of these ask only about rows extraction can reach. Every join in
+`03_mma_map` is `ON c.CL_CODE_TYPE = 'NDC'` or `'HCPCS'`, so the checks read a
+view of the code list filtered to those two. A medication coded only as ICD
+otherwise looked coded while producing nothing, and an unused ICD code naming
+two drugs failed the build over a row nothing joins. `code_types` keeps the
+whole list - reporting the unread types is its job.
+
 These stop the build outright, because `DISTINCT` cannot see them and none has
 a reading worth accepting:
 
@@ -167,6 +174,11 @@ a reading worth accepting:
   two rows for one drug that disagree on a flag both survive, and the
   enrichment joins on the abbreviation alone
 - a blank medication or class, which would make the checks above meaningless
+- a medication or class whose name would not survive being turned into a column:
+  `sanitize_col` maps punctuation and spaces to `_`, so `CAR-T` and `CAR T`
+  produce one column between them, and the value goes into a SQL string literal
+  as it stands, so an apostrophe closes it early. LOT2-5 builds its columns the
+  same way from the same rollup, so one check covers both.
 
 Each check groups by the key extraction actually joins on, not the stored one.
 That matters for NDC: the join pads to eleven digits, so `123456789` and
