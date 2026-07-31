@@ -31,26 +31,28 @@ CONTRACT <- list(
   # excluded. It reaches the SQL through NDMM_STUDY_START, which reads the same
   # environment variable.
   study_start          = "2015-07-01",
-  # What Jul 28/overall writes. Its config.csv sets FINAL_TABLE_NAME to this;
-  # the name is pinned here because reading the wrong table would build a
-  # different cohort, not fail.
-  cohort_table         = "OVERALL_COH_FINAL",
+  # Two outpatient MM claims within this many days confirm a diagnosis, and
+  # this is the age the diagnosis year is measured against. Both are S6.2.1.1.
+  outpatient_window    = 90L,
+  min_age              = 18L,
+  belantamab_abbr      = "BEL%",
   tbl_medical          = "medical",
   tbl_med_proc         = "med_procedure",
   tbl_med_diag         = "med_diagnosis",
   tbl_rx               = "rx",
   tbl_confinement      = "confinement",
-  tbl_member_enroll    = "member_enrollment"
+  tbl_member_enroll    = "member_enrollment",
+  tbl_member_elig      = "member_cont_enrollment",
+  tbl_dod              = "dod"
 )
 
-# The upstream tables this build reads, and which build writes each. It cannot
-# make any of them, so it says which one is missing rather than failing inside
-# a join twenty statements later. The cohort table is named by cfg, because
-# Jul 28/overall's own config decides what it is called.
-upstream_tables <- function(cfg) {
-  setNames(list("Jul 28/lot", "Jul 28/lot", "Jul 28/overall"),
-           c("LOT_LONG", "MAP_STACKED", cfg$cohort_table))
-}
+# Tables produced by another build in this repository. There are none: this
+# package reads raw CDM and its code lists and nothing else, which is what lets
+# it be handed to someone on its own. It used to read OVERALL_COH_FINAL,
+# LOT_LONG and MAP_STACKED - the MM diagnosis and demographics are ported in
+# from Jul 28/overall now, the 1L index is derived from claims, and belantamab
+# is read off the code list.
+upstream_tables <- function(cfg) list()
 
 # What the run writes. All prefixed, so two cohorts sit side by side.
 OUTPUTS <- c("NDMM_FLAGS_ALL", "NDMM_COHORT", "NDMM_ATTRITION",
@@ -142,7 +144,7 @@ check_contract <- function(cfg) {
 # so the preflight passed and the run then failed inside phase one.
 raw_tables <- function(cfg) {
   c(cfg$tbl_medical, cfg$tbl_rx, cfg$tbl_med_diag, cfg$tbl_med_proc,
-    cfg$tbl_confinement, cfg$tbl_member_enroll)
+    cfg$tbl_confinement, cfg$tbl_member_enroll, cfg$tbl_member_elig, cfg$tbl_dod)
 }
 
 # Every upstream table, before any work. The source skipped a filter whose
@@ -188,7 +190,12 @@ CONSTANT_SETTINGS <- list(
   # Table names are settings too: an ambient TBL_CONFINEMENT changes what the
   # other-cancer rule reads while cfg, and so the contract, is unmoved.
   list(const = "NDMM_TBL_CONFINEMENT",       cfg = "tbl_confinement",   note = ""),
-  list(const = "NDMM_TBL_MEMBER_ENROLLMENT", cfg = "tbl_member_enroll", note = "")
+  list(const = "NDMM_TBL_MEMBER_ENROLLMENT", cfg = "tbl_member_enroll", note = ""),
+  list(const = "NDMM_OUTPATIENT_WINDOW",       cfg = "outpatient_window",  note = ""),
+  list(const = "NDMM_MIN_AGE",                 cfg = "min_age",            note = ""),
+  # Not a cohort window but a code-list assumption, and just as able to change
+  # the count: it is what identifies belantamab, and belantamab is exclusion 4.
+  list(const = "NDMM_BELANTAMAB_ABBR",        cfg = "belantamab_abbr",    note = "")
   # NDMM_FINAL_TABLE_NAME is defined in the ported constants and read by
   # nothing - the runner passes the cohort table in. Nothing to check, because
   # nothing uses it; the test below only requires constants the steps read.
@@ -220,9 +227,9 @@ check_constants <- function(cfg) {
 # them, belantamab last. Names are the criterion, not the column, because this
 # table is what gets read.
 ATTRITION_STEPS <- list(
-  list(key = "whole",          label = "Patients in LOT_LONG"),
-  list(key = "elig",           label = "+ in ELIG_COH_FINAL (parent IE)"),
-  list(key = "elig_lot1",      label = "+ 1L start on or after LOT1_FROM"),
+  list(key = "whole",          label = "Patients with a qualifying MM diagnosis"),
+  list(key = "elig",           label = "+ aged 18 or over at diagnosis"),
+  list(key = "elig_lot1",      label = "+ eligible 1L treatment on or after LOT1_FROM"),
   list(key = "ce12",           label = "+ 12-month CE before index"),
   list(key = "ce12_fuce",      label = "+ CE during follow-up"),
   list(key = "fuce_nopriortx", label = "+ no MM oncology therapy in 12-month baseline"),
@@ -406,7 +413,7 @@ contract_settings <- function() {
 }
 
 RUN_METADATA_COLS <- c(RUN_ID = "STRING", OBJECT_PREFIX = "STRING",
-                       COHORT_TABLE = "STRING", CODE_MD5 = "STRING",
+                       BELANTAMAB_ABBR = "STRING", CODE_MD5 = "STRING",
                        CONTRACT_SETTINGS = "STRING",
                        WAIVERS_REQUESTED = "STRING", WAIVERS_APPLIED = "STRING",
                        N_NDMM = "BIGINT", RECORDED_AT = "TIMESTAMP")
@@ -425,7 +432,7 @@ write_run_metadata <- function(con, cfg, here, n) {
     glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"),
     glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES (",
          "{sql_text(run_id)}, {sql_text(cfg$object_prefix)}, ",
-         "{sql_text(cfg$cohort_table)}, {sql_text(code_fingerprint(here))}, ",
+         "{sql_text(NDMM_BELANTAMAB_ABBR)}, {sql_text(code_fingerprint(here))}, ",
          "{sql_text(contract_settings())}, ",
          "{sql_text(paste(sort(waivers_named(), method = 'radix'), collapse = ','))}, ",
          "{sql_text(paste(sort(getOption('nndm_waivers_applied', character(0)), ",
@@ -450,7 +457,7 @@ NDMM_COHORT_COLS <- c("PATID", "INDEX_DATE", "ENDDATE", "ENDDATE_CE",
 # MM-diagnosis index, and a LOT run over this table would measure its lines
 # from the wrong day. Only the demographics are inherited, because a patient's
 # sex, birth year and date of death do not move with an anchor.
-build_ndmm_cohort_table <- function(con, cfg, elig_coh_final) {
+build_ndmm_cohort_table <- function(con, cfg) {
   se <- glue("date('{cfg$study_end}')")
   run_step(con, "N90_ndmm_cohort", glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_COHORT')} AS
@@ -473,7 +480,7 @@ build_ndmm_cohort_table <- function(con, cfg, elig_coh_final) {
     ),
     dem AS (
       SELECT cast(PATID as string) AS PATID, GDR_CD, YRDOB, DEATH_DT
-      FROM {elig_coh_final}
+      FROM {NDMM_BASE_COHORT}
     )
     SELECT i.PATID,
            i.INDEX_DATE,
@@ -581,7 +588,8 @@ write_build_status <- function(con, cfg, state, n = NA) {
 load_nndm_modules <- function(here) {
   source(file.path(here, "R", "load_inputs.R"))
   load_pipeline_inputs(here, "config.csv")
-  for (f in c("config.R", "db_utils.R", "codelists.R", "nndm_constants.R"))
+  for (f in c("config.R", "db_utils.R", "codelists.R", "nndm_constants.R",
+              "standalone_constants.R"))
     source(file.path(here, "R", f))
   for (f in sort(list.files(file.path(here, "R", "steps"), "\\.R$", full.names = TRUE)))
     source(f)
@@ -617,20 +625,29 @@ build_nndm <- function(here, prefix) {
   options(nndm_complete = FALSE, nndm_codelist_md5 = list(),
           nndm_waivers_applied = character(0))
 
-  lot_long       <- wrk("LOT_LONG")
-  map_stacked    <- wrk("MAP_STACKED")
-  elig_coh_final <- wrk(cfg$cohort_table)
+  log_msg("MM diagnosis over the study period, and who is old enough")
+  build_ndmm_mm_dx_codes(con)
+  build_ndmm_mm_claim_header(con, cdm_src(cfg$tbl_medical),
+                             cdm_src(cfg$tbl_confinement))
+  build_ndmm_mm_dx_events(con, cdm_src(cfg$tbl_med_diag))
+  build_ndmm_mm_qualifying(con)
+  build_ndmm_demographics(con, cdm_src(cfg$tbl_member_elig), cdm_src(cfg$tbl_dod))
+  build_ndmm_base_cohort(con)
 
   log_msg("Enrollment spans (gap_days=", cfg$gap_days, ", and a no-gap set)")
   build_enrollment_spans_ndmm(con)
   build_enrollment_spans_ndmm(con, NDMM_ENROLL_SPANS_STRICT, 0L)
 
-  log_msg("1L starts on or after ", NDMM_LOT1_FROM, " from ", lot_long)
-  build_lot1_starts_ndmm(con, lot_long)
-
-  log_msg("MM therapy in the ", NDMM_PRE_LOT1_DAYS, " days before 1L")
+  log_msg("MM therapy code list, and the belantamab rows of it")
   db_exec(con, build_ndmm_mma_codelist())
   check_ndc_shape(con, cfg)
+  build_ndmm_belantamab_codes(con)
+
+  log_msg("1L index: first eligible MM treatment claim on or after ",
+          NDMM_LOT1_FROM)
+  build_ndmm_lot1_index(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))
+
+  log_msg("MM therapy in the ", NDMM_PRE_LOT1_DAYS, " days before 1L")
   build_ndmm_therapy_pre_lot1(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))
 
   log_msg("Other cancer in the ", NDMM_PRE_LOT1_DAYS, " days before 1L")
@@ -644,21 +661,29 @@ build_nndm <- function(here, prefix) {
   build_ndmm_pregnancy_patids(con, cdm_src(cfg$tbl_med_diag),
                               cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_med_proc))
 
+  log_msg("Belantamab in any line, from claims")
+  build_ndmm_belantamab_patids(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))
+
   log_msg("Per-patient filter flags")
-  build_ndmm_flags(con, elig_coh_final, map_stacked, TRUE, TRUE, TRUE, TRUE)
+  # The ported flags step takes the cohort and the belantamab source as
+  # parameters, so it needs no change: the base cohort answers for
+  # ELIG_COH_FINAL (it carries PATID and DEATH_DT, which is all that step
+  # reads), and the belantamab view answers in MAP_STACKED's shape.
+  build_ndmm_flags(con, NDMM_BASE_COHORT, NDMM_BELANTAMAB_PATIDS,
+                   TRUE, TRUE, TRUE, TRUE)
   # build_lot_long_filtered() is not called. It joins LOT_LONG to the cohort for
   # the April dashboard's KPI, gallery and LOT-detail views; neither the cohort
   # nor the attrition reads it, and this package builds only those two. The
   # function stays in 07_cohort.R so that file remains the source line for line.
 
-  counts <- ndmm_counts(con, lot_long, elig_coh_final)
+  counts <- ndmm_counts(con, NDMM_MM_QUALIFYING, NDMM_BASE_COHORT)
   for (i in seq_along(ATTRITION_STEPS))
     log_msg("  ", i, ". ", ATTRITION_STEPS[[i]]$label, ": ",
             format(counts[[ATTRITION_STEPS[[i]]$key]], big.mark = ","))
   # Before it is written, so a fanned-out funnel is not published as a count.
   check_attrition_monotonic(counts)
 
-  build_ndmm_cohort_table(con, cfg, elig_coh_final)
+  build_ndmm_cohort_table(con, cfg)
   check_ndmm_cohort(con, cfg, counts$ndmm_final)
   write_attrition(con, cfg, counts)
   write_codelist_metadata(con, cfg)

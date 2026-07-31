@@ -1,13 +1,15 @@
 # CSV-only codelist loading, carried over from Jul 28/lot/R/codelists_lot.R.
 # The CSV in cfg$codelist_dir is required; there is no embedded fallback.
 
-# The three files this build reads: cl_mma_codelist.csv drives the
+# The four files this build reads: mm_dx.csv identifies the MM diagnosis
+# that defines the population, cl_mma_codelist.csv drives the
 # prior-MM-therapy scan, other_malig.csv the other-cancer exclusion, and
 # pregnancy.csv the pregnancy exclusion. Anything else is a typo, not a code
 # list. tests/test_runner.R reads the load_codelist_csv() calls out of R/ and
 # requires every file they name to be here - this list was short by
 # other_malig.csv, which made every production run fail inside step 4.
-CODELIST_FILES <- c("cl_mma_codelist.csv", "other_malig.csv", "pregnancy.csv")
+CODELIST_FILES <- c("cl_mma_codelist.csv", "mm_dx.csv", "other_malig.csv",
+                    "pregnancy.csv")
 
 load_codelist_csv <- function(csv_name, col_spec) {
   cfg <- nndm_config()

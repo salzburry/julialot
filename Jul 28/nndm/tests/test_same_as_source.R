@@ -112,9 +112,13 @@ ADDED <- list(
 # is the deliverable.
 SPLICE <- list(
   "R/steps/07_cohort.R" = list(
-    list(from = "ce12_fuce <- db_q(con, glue(",
+    # Widened: whole/elig/elig_lot1 are rewritten too. This package no longer
+    # reads LOT_LONG or a parent cohort table, so the first three rows of the
+    # funnel are a qualifying MM diagnosis, then age, then an eligible 1L
+    # treatment - derived here rather than inherited.
+    list(from = "ndmm_counts <- function(con, mm_qualifying, base_cohort) {",
          to   = "ndmm_final = ndmm_final)",
-         src_from = 814L, src_to = 837L)
+         src_from = 795L, src_to = 837L)
   ),
   # The MM-adjacent override. The source logged how many of the expected
   # tumour-group labels matched the production codelist and carried on; an

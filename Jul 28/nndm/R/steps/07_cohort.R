@@ -42,22 +42,17 @@ build_lot_long_filtered <- function(con, lot_long) {
 # ELIG_COH_FINAL + LOT1 are CUMULATIVE - each row applies all previous
 # NDMM filters plus the new one, so the table reads top-to-bottom as
 # the funnel a clinical reviewer would expect.
-ndmm_counts <- function(con, lot_long, elig_coh_final) {
+ndmm_counts <- function(con, mm_qualifying, base_cohort) {
+  # whole/elig/elig_lot1 replaced: the population is no longer "patients in
+  # LOT_LONG" filtered by a parent cohort. It is everyone with a qualifying MM
+  # diagnosis, then those old enough, then those with an eligible 1L treatment.
+  # Registered as a rewritten block in tests/test_same_as_source.R.
   whole <- db_q(con, glue(
-    "SELECT count(DISTINCT PATID) AS n FROM {lot_long}"))$n
-  # ELIG_COH_FINAL intersected with LOT_LONG so the funnel is monotonic
-  # (the parent cohort can contain PATIDs that never enter LOT_LONG; the
-  # bare ELIG_COH_FINAL count could otherwise exceed the row above).
+    "SELECT count(DISTINCT PATID) AS n FROM {mm_qualifying}"))$n
   elig <- db_q(con, glue(
-    "SELECT count(DISTINCT ec.PATID) AS n
-     FROM {elig_coh_final} ec
-     INNER JOIN (SELECT DISTINCT cast(PATID as string) AS PATID FROM {lot_long}) ll
-             ON cast(ec.PATID as string) = ll.PATID"))$n
+    "SELECT count(DISTINCT PATID) AS n FROM {base_cohort}"))$n
   elig_lot1 <- db_q(con, glue(
-    "SELECT count(DISTINCT ec.PATID) AS n
-     FROM {elig_coh_final} ec
-     INNER JOIN {NDMM_LOT1_STARTS} l1
-             ON cast(ec.PATID as string) = l1.PATID"))$n
+    "SELECT count(DISTINCT PATID) AS n FROM {NDMM_LOT1_STARTS}"))$n
   ce12 <- db_q(con, glue(
     "SELECT count(DISTINCT PATID) AS n FROM {NDMM_FLAGS_ALL}
      WHERE CE_pre_lot1_12mo = 1"))$n

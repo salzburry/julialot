@@ -22,8 +22,17 @@ cfg_defaults <- list(
   # touches. Same environment variable nndm_constants.R uses for it.
   tbl_member_enroll = Sys.getenv("TBL_MEMBER_ENROLLMENT", unset = "member_enrollment"),
 
-  # What Jul 28/overall writes; its config.csv sets FINAL_TABLE_NAME to this.
-  cohort_table = Sys.getenv("FINAL_TABLE_NAME", unset = "OVERALL_COH_FINAL"),
+  # Read by the demographics step: sex and birth year, and date of death.
+  tbl_member_elig = Sys.getenv("TBL_MEMBER_ELIG", unset = "member_cont_enrollment"),
+  tbl_dod         = Sys.getenv("TBL_DOD", unset = "dod"),
+
+  # Two outpatient MM claims within this many days confirm a diagnosis; this is
+  # the age their year is measured against. Both S6.2.1.1.
+  outpatient_window = as.integer(Sys.getenv("OUTPATIENT_WINDOW", unset = "90")),
+  min_age           = as.integer(Sys.getenv("MIN_AGE", unset = "18")),
+  # How belantamab is recognised on cl_mma_codelist.csv; see
+  # standalone_constants.R. Pinned because it is exclusion 4.
+  belantamab_abbr   = Sys.getenv("NDMM_BELANTAMAB_ABBR", unset = "BEL%"),
 
   use_quarterly_tables = as.logical(Sys.getenv("USE_QUARTERLY_TABLES", unset = "TRUE")),
   study_end            = Sys.getenv("STUDY_END", unset = "2025-06-30"),

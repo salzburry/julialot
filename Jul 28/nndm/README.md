@@ -9,109 +9,100 @@ DATABRICKS_PWD=... Rscript build.R mystudy_
 
 Only the **1L cohort** is built. The 2L/3L subset cohorts are out of scope.
 
-## What this reads, and what has to run first
+## What this reads
 
-This build makes none of its inputs. It stops before doing any work if any is
-missing, naming the table and the build that produces it.
+Standalone. It reads the raw Optum CDM and the production code lists, and no
+table produced by another build. Every input is checked before any work starts,
+and a missing one is named.
 
-| input | produced by |
+| input | what it is for |
 |---|---|
-| `<prefix>OVERALL_COH_FINAL` | `Jul 28/overall` |
-| `<prefix>LOT_LONG` | `Jul 28/lot` |
-| `<prefix>MAP_STACKED` | `Jul 28/lot` |
-| `medical`, `rx`, `med_diagnosis`, `med_procedure`, `confinement`, `member_enrollment` | Optum CDM |
+| `medical`, `med_diagnosis`, `confinement` | the MM diagnosis, and the other-cancer rule |
+| `member_cont_enrollment` | sex and birth year |
+| `dod` | date of death |
+| `member_enrollment` | continuous-enrolment spans |
+| `rx`, `med_procedure` | treatment and pregnancy claims |
 
-Code lists, all read from `CODELIST_DIR`: `cl_mma_codelist.csv` (prior MM
-therapy), `other_malig.csv` (other cancer), `pregnancy.csv`. The md5 of each is
-written to `<prefix>NDMM_CODELIST_METADATA`, so a cohort can be traced to the
-files that built it.
+Code lists, all from `CODELIST_DIR`: `mm_dx.csv` (the diagnosis that defines
+the population), `cl_mma_codelist.csv` (MM therapy, and belantamab within it),
+`other_malig.csv`, `pregnancy.csv`. The md5 of each is written to
+`<prefix>NDMM_CODELIST_METADATA`, so a cohort can be traced to the files that
+built it.
 
-So the order is **`overall` → `lot` → `nndm`**. The NDMM index date is the 1L
-start, which comes out of `LOT_LONG`, so this cannot run first even though it
-is wanted first.
+### It used to need three tables from other builds
 
-The cohort table's name is a setting (`FINAL_TABLE_NAME`), because
-`Jul 28/overall`'s own config decides what it is called; both default to
-`OVERALL_COH_FINAL`.
+`OVERALL_COH_FINAL`, `LOT_LONG` and `MAP_STACKED`. None of them now:
+
+- **MM diagnosis, age and demographics** are ported in from `Jul 28/overall`
+  (`R/steps/00_mm_cohort.R`). Only the two criteria §6.2.1.1 inherits are
+  applied — a qualifying diagnosis, and age ≥18 in its calendar year. That
+  build has switches for six more; none is an NDMM criterion, and applying them
+  would drop patients this funnel never accounts for.
+  `tests/test_same_as_overall.R` holds the port to it.
+- **The 1L index** is derived from claims (`R/steps/00b_lot1_index.R`) — see
+  below.
+- **Belantamab** is read off `cl_mma_codelist.csv` rather than `MAP_STACKED`.
 
 Outputs, all prefixed: `NDMM_COHORT` (the cohort, written as a table
-`Jul 28/lot` can be pointed at — see below), `NDMM_ATTRITION` (the nine
-rows below), `NDMM_FLAGS_ALL` (one row per candidate with every filter's
-verdict), `NDMM_CODELIST_METADATA`, `NDMM_RUN_METADATA`, `NDMM_BUILD_STATUS`.
+`Jul 28/lot` can be pointed at — see below), `NDMM_ATTRITION` (the nine rows
+below), `NDMM_FLAGS_ALL` (one row per candidate with every filter's verdict),
+`NDMM_CODELIST_METADATA`, `NDMM_RUN_METADATA`, `NDMM_BUILD_STATUS`.
 
-`07_cohort.R` still carries `build_lot_long_filtered()`, which joins `LOT_LONG`
-to the cohort for the April dashboard's KPI, gallery and LOT-detail views. The
-runner does not call it: neither the cohort nor the attrition reads it, and
-those two are all this package builds. The function stays in the file so
-`07_cohort.R` remains the source line for line.
+`07_cohort.R` still carries `build_lot_long_filtered()`, and `02_lot1_starts.R`
+still carries `build_lot1_starts_ndmm()`. The runner calls neither: the first
+served the April dashboard, the second read the index date out of `LOT_LONG`.
+Both stay in their files so those files remain the source line for line.
 
 `NDMM_RUN_METADATA` carries the md5 of every R file this package ships, the
-contract as one sorted string, the parent cohort table it read, the waivers
-asked for and the waivers that fired, and the final count — so an
-`NDMM_COHORT` found later can be matched to a build rather than guessed at.
+contract as one sorted string, how belantamab was recognised, the waivers asked
+for and the waivers that fired, and the final count.
 
-Every input above is read once before any work, and a missing one names itself
-and the build that makes it. Every setting is checked twice: against
-`CONTRACT`, and then against the `NDMM_*` constants the SQL actually
-interpolates - those have their own environment variables (`NDMM_LOT1_FROM` is
-not `LOT1_FROM`), so a contract checked against `cfg` alone would not speak for
-the query that runs.
+Every setting is checked twice: against `CONTRACT`, and then against the
+`NDMM_*` constants the SQL actually interpolates — those have their own
+environment variables (`NDMM_LOT1_FROM` is not `LOT1_FROM`), so a contract
+checked against `cfg` alone would not speak for the query that runs.
 
 ## The criteria as applied
 
 This section is written from the code, not from the protocol. Where the two
 differ it says so. Compare it against the protocol when either changes.
 
-### Inherited from the parent cohort
+### Derived here, from the parent build's rules
 
-These are applied by `Jul 28/overall` and enter here through
-`OVERALL_COH_FINAL`. Read from `Jul 28/overall/config.csv`, which is what
-governs the table this build reads: steps 1-6 are on, the four exclusions off.
+`R/steps/00_mm_cohort.R` is a port of `Jul 28/overall`'s MM-diagnosis,
+index-qualification and demographics SQL. Two criteria are applied — the two
+§6.2.1.1 names — and no more.
 
-| step | criterion | as applied |
-|---|---|---|
-| 1 | **MM diagnosis** | ≥1 inpatient medical claim with an MM diagnosis in any position (ICD-9-CM `203.0x` or ICD-10-CM `C90.0x`), **or** ≥2 outpatient medical claims for MM in any position on separate days **within 90 days**, during the study period. §6.2.1.1 fixes the window at 90; `OUTPATIENT_WINDOW` is `90`. No switch — without it there is no index date. |
-| 2 | **Adult age** | ≥18 at the MM-diagnosis index (`MIN_AGE`) |
-| 3 | **6-month baseline CE** | `APPLY_CE_B_INCL` |
-| 4 | **Enrolled on the index date** | `APPLY_CE_F_INCL` |
-| 5 | **No MM agent in baseline** | `APPLY_NO_BL_AGENTS_INCL` |
-| 6 | **≥1 MM agent in follow-up** | `APPLY_FU_AGENTS_INCL` |
-| 7–10 | baseline MM dx, other malignancy, pregnancy, clinical trial | **off** — NDMM applies its own |
+| # | criterion | as applied | source |
+|---|---|---|---|
+| 1 | **MM diagnosis** | ≥1 inpatient medical claim with a **strict** MM code in any position (ICD-9-CM `203.0x` / ICD-10-CM `C90.0x`), **or** ≥2 outpatient MM claims on separate days **within 90 days**, during the study period. Inpatient means a place-of-service or type-of-service line flag, or a valid confinement. | `00_mm_cohort.R` |
+| 2 | **Adult age** | **≥18** in the calendar year of that diagnosis. Applied *before* the earliest qualifying date is chosen, so a patient who is 17 at their first qualifying date and 18 at the next is kept. | `00_mm_cohort.R` |
 
-**Steps 3–6 are anchored at the MM diagnosis; this build re-applies CE and
-baseline therapy at the 1L start.** Both anchors are in §6.2.1.1, so a patient
-must satisfy each rule at each anchor. It does mean attrition step 2 carries
-six criteria rather than the two a reader might expect, and that a patient
-dropped by the parent's six-month baseline never reaches this build's
-twelve-month one. If the study team wants the 1L criteria applied to a parent
-cohort filtered on diagnosis and age alone, steps 3–6 belong off in
-`Jul 28/overall/config.csv` — that is a change there, not here.
-
-**This build cannot tell which settings produced the table it reads.**
-`check_upstream()` proves `OVERALL_COH_FINAL` is readable, nothing more.
-`Jul 28/overall` persists no run metadata for it to check against, so a cohort
-built with different `APPLY_*` switches is indistinguishable from this one.
-Closing that needs a metadata table written by `Jul 28/overall`.
+**The parent's other four inclusion criteria are deliberately not here** —
+six-month baseline CE, enrolment on the diagnosis date, no MM agent in
+baseline, ≥1 MM agent in follow-up. They are switches in
+`Jul 28/overall/config.csv`, not protocol criteria for this cohort, and NDMM
+re-applies CE and baseline therapy at the 1L anchor instead.
+`tests/test_same_as_overall.R` fails if any of their columns appears in the
+port.
 
 ### Applied here
 
 | # | criterion | as applied | source |
 |---|---|---|---|
-| 3 | **Eligible 1L treatment** | `LOT_NUM = 1` in `LOT_LONG` with `LOT_START_DT >= LOT1_FROM` (**2017-01-01**). The index date is that `LOT_START_DT`. | `02_lot1_starts.R` |
+| 3 | **Eligible 1L treatment** | the **first** claim for an MM therapy on or after that patient's MM diagnosis and on or after `LOT1_FROM` (**2017-01-01**), scanned from raw `medical` and `rx` against `cl_mma_codelist.csv`. **Belantamab cannot set it** — §6.2.1.1 says the eligible 1L treatment is one "other than belantamab". Steroids cannot either: the code list has them dropped. That date is the NDMM index. | `00b_lot1_index.R` |
 | 4 | **12-month CE before index** | an enrollment span covering `[index − 365, index − 1]` in full, gaps of **≤30 days** treated as continuous | `01_enrollment.R`, `06_flags.R` |
 | 5 | **Follow-up CE** | a **no-gap** span covering `[index, index + FU_CE_DAYS]`, where `FU_CE_DAYS = 0` — **one day: the index date itself** | `06_flags.R` |
 | 6 | **No MM oncology therapy in the 12-month baseline** | no medical or pharmacy claim for an MM therapy in `[index − 365, index − 1]`, scanned from raw `medical` and `rx` against `cl_mma_codelist.csv`. **Steroids are excluded from this scan** (`DEX`, `DEXA`, `DEXAMETHASONE`, `PRED`, `PREDNISONE`) — a steroid claim alone does not make a patient previously treated. | `03_prior_therapy.R` |
 | 7 | **No other cancer in the 12-month baseline** | excluded on **≥1 inpatient** claim, **or ≥2 outpatient** claims **within 30 days of each other**, for the same tumour group — **both claims inside** `[index − 365, index − 1]`. Inpatient is established from the confinement table and the claim header, not from a place-of-service code. | `04_other_malig.R` |
 | 8 | **No pregnancy** | excluded on ≥1 medical claim with a diagnosis, procedure or revenue code indicating pregnancy or childbirth, anywhere in `[STUDY_START, STUDY_END]` — the **study period**, not the baseline | `05_pregnancy.R` |
-| 9 | **No belantamab in any LOT** | no belantamab row for the patient in `MAP_STACKED` (`MAP_MED_TYPE LIKE 'BEL%'`), any line, **no date bound** — see the attrition note below | `06_flags.R` |
+| 9 | **No belantamab in any LOT** | any claim for a belantamab code from `cl_mma_codelist.csv`, in `medical` or `rx`, at any time and in any line — **no date bound**; see the attrition note below | `00b_lot1_index.R`, `06_flags.R` |
 
 **Not applied: clinical-trial participation.** The attrition spreadsheet in
 `NNDM E/attritom.pdf` lists it as Step 10, but that sheet is the parent MM
 cohort's funnel — six-month CE, age 18, the MM diagnosis steps — and protocol
 Rev Round 2 §6.2.1.2 has four exclusions, this not among them.
-`Jul 28/overall/config.csv` has `APPLY_CLINTRIAL_EXCL,FALSE`, so neither build
-applies it. If the study team wants it back, it is a new step here or a switch
-there, not something this build can toggle.
+If the study team wants it back it is a new step, not a toggle.
 
 **On belantamab being matched by drug and not by class.** §6.2.1.2 writes the
 exclusion as "Received belantamab mafodotin (i.e., an ADC) in any LOT" and
@@ -120,7 +111,17 @@ attaches a note:
 > at the time of study belantamab mafodotin was the only ADC in use for MM
 
 So "(i.e., an ADC)" names what the drug is; it does not widen the criterion to
-the class. `MAP_MED_TYPE LIKE 'BEL%'` is the criterion as written.
+the class.
+
+**How belantamab is recognised is an assumption this package cannot check.**
+`apr_30_2026` matched `MAP_MED_TYPE LIKE 'BEL%'` in `MAP_STACKED`, a table this
+build no longer reads. Reading `cl_mma_codelist.csv` directly, the same token
+is the medication abbreviation — `NDMM_BELANTAMAB_ABBR`, default `BEL%`. The
+production CSV is not visible from here, so `build_ndmm_belantamab_codes()`
+**stops the run** if it matches no row: otherwise exclusion 4 would quietly do
+nothing and belantamab claims could set the 1L index date. The value used is
+recorded in `NDMM_RUN_METADATA`. **Confirm it against the production code list
+before the first run.**
 
 ### Where this departs from the protocol
 
@@ -237,9 +238,9 @@ not.
 
 | # | step | protocol |
 |---|---|---|
-| 1 | Patients in `LOT_LONG` | — (starting population) |
-| 2 | + in `OVERALL_COH_FINAL` (parent IE) | §6.2.1.1, six criteria |
-| 3 | + 1L start on or after `LOT1_FROM` | §6.2.1.1 incl. 3 |
+| 1 | Patients with a qualifying MM diagnosis | §6.2.1.1 incl. 1 |
+| 2 | + aged 18 or over at diagnosis | §6.2.1.1 incl. 2 |
+| 3 | + eligible 1L treatment on or after `LOT1_FROM` | §6.2.1.1 incl. 3 |
 | 4 | + 12-month CE before index | §6.2.1.1 incl. 4 |
 | 5 | + CE during follow-up | §6.2.1.1 incl. 5 |
 | 6 | + no MM oncology therapy in 12-month baseline | §6.2.1.2, excl. 1 |
@@ -247,25 +248,18 @@ not.
 | 8 | + no pregnancy in study period | §6.2.1.2, excl. 3 |
 | 9 | + no belantamab in any LOT — **the 1L NDMM cohort** | §6.2.1.2, excl. 4 |
 
-**Step 2 carries six protocol criteria, not one.** `Jul 28/overall` applies MM
-diagnosis, adult age, six-month baseline CE, enrolment on the index date, no MM
-agent in baseline, and at least one MM agent in follow-up — all at the
-MM-diagnosis anchor — and they arrive here already combined inside
-`OVERALL_COH_FINAL`. Splitting them into separate rows is not possible from
-this build; by the time it reads that table every one of them has run. See the
-parent-criteria table above, and `Jul 28/overall`'s own attrition for the
-per-step counts.
+**Every step is this build's own.** Nothing arrives pre-filtered, so each row
+of the funnel is a criterion the protocol names and the count beside it is
+reproducible from this folder alone.
 
 **Step 9 is not a baseline criterion.** Every other step is anchored to the 1L
 index date; this one is "in any LOT", with no date bound at all, so a patient
 can be removed for a belantamab claim years *after* their 1L index. That is
-what §6.2.1.2 says, and it is what `06_flags.R` does — the whole of
-`MAP_STACKED`, not a window — but it means the 1L cohort depends on follow-up
-data and cannot be built from baseline alone.
+what §6.2.1.2 says, and it is what the scan does — every belantamab claim in
+`medical` and `rx`, not a window — but it means the 1L cohort depends on
+follow-up data and cannot be built from baseline alone.
 
-Step 2 is intersected with `LOT_LONG` so the funnel is monotonic: the parent
-cohort contains patients who never enter `LOT_LONG`, and a bare
-`ELIG_COH_FINAL` count would exceed step 1. The build checks that each step is
+The build checks that each step is
 no larger than the one above it and stops if it is not — a funnel that grows is
 a fan-out, not a count — and stops if the final cohort is empty.
 

@@ -22,6 +22,7 @@ sys.source(file.path(ROOT, "R", "codelists.R"), envir = globalenv())
 # The NDMM_* constants are what the SQL reads, and check_constants() compares
 # them against cfg. Loaded here the same way load_nndm_modules() loads them.
 sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = globalenv())
+sys.source(file.path(ROOT, "R", "standalone_constants.R"), envir = globalenv())
 bl   <- paste(readLines(file.path(ROOT, "R", "build_nndm.R"), warn = FALSE), collapse = "\n")
 # The parsed body, not the file text: a call named only in a comment is not a
 # call, and matching raw text counted one. parse() drops comments outright.
@@ -43,13 +44,18 @@ clear()
 cat("\n-- the runner calls its phases, in order --\n")
 ORDER <- c("check_settings", "pin_output_schema", "pin_prefix", "check_contract",
            "check_constants", "set_lot_config", "check_upstream", "write_build_status",
-           "build_enrollment_spans_ndmm", "build_lot1_starts_ndmm",
+           "build_ndmm_mm_dx_codes", "build_ndmm_mm_claim_header",
+           "build_ndmm_mm_dx_events", "build_ndmm_mm_qualifying",
+           "build_ndmm_demographics", "build_ndmm_base_cohort",
+           "build_enrollment_spans_ndmm",
            "build_ndmm_mma_codelist", "check_ndc_shape",
+           "build_ndmm_belantamab_codes", "build_ndmm_lot1_index",
            "build_ndmm_therapy_pre_lot1",
            "build_ndmm_other_malig_codes",
            "build_ndmm_med_claim_header_and_confinement",
            "build_ndmm_other_malig_pre_lot1", "build_ndmm_preg_codes",
-           "build_ndmm_pregnancy_patids", "build_ndmm_flags",
+           "build_ndmm_pregnancy_patids", "build_ndmm_belantamab_patids",
+           "build_ndmm_flags",
            "ndmm_counts",
            "check_attrition_monotonic", "build_ndmm_cohort_table",
            "check_ndmm_cohort", "write_attrition",
@@ -141,7 +147,7 @@ assign("cdm_src", function(x) paste0("cdm.t_", x), envir = ue)
 UCFG <- list(tbl_medical = "medical", tbl_rx = "rx", tbl_med_diag = "med_diagnosis",
              tbl_med_proc = "med_procedure", tbl_confinement = "confinement",
              tbl_member_enroll = "member_enrollment",
-             cohort_table = "OVERALL_COH_FINAL")
+             tbl_member_elig = "member_cont_enrollment", tbl_dod = "dod")
 drive_up <- function(unreadable = character(0)) {
   assign("db_q", function(con, sql) {
     for (u in unreadable) if (grepl(u, sql, fixed = TRUE)) stop("cannot read")
@@ -149,22 +155,25 @@ drive_up <- function(unreadable = character(0)) {
   }, envir = ue)
   tryCatch({ ue$check_upstream(NULL, UCFG); NULL }, error = conditionMessage)
 }
-ok(is.null(drive_up()), "all nine inputs readable lets the run start")
-msg <- drive_up("wk.p_LOT_LONG")
-ok(!is.null(msg) && grepl("wk.p_LOT_LONG", msg, fixed = TRUE) &&
-     grepl("Jul 28/lot", msg, fixed = TRUE),
-   "a missing built table is named, with the build that makes it")
-msg <- drive_up("wk.p_OVERALL_COH_FINAL")
-ok(!is.null(msg) && grepl("Jul 28/overall", msg, fixed = TRUE),
-   "...and the cohort table points at the cohort build, not the LOT build")
+ok(is.null(drive_up()), "all eight raw inputs readable lets the run start")
+# There are no built inputs any more: this package reads raw CDM and its code
+# lists, which is what lets it be handed to someone on its own.
+ok(length(upstream_tables(cfg_defaults)) == 0L,
+   "the build depends on no table another build in this repository makes")
+msg <- drive_up("cdm.t_dod")
+ok(!is.null(msg) && grepl("dod", msg, fixed = TRUE),
+   "the death table is preflighted - the demographics step needs it")
+msg <- drive_up("cdm.t_member_cont_enrollment")
+ok(!is.null(msg) && grepl("member_cont_enrollment", msg, fixed = TRUE),
+   "...and the eligibility table, which carries sex and birth year")
 msg <- drive_up("cdm.t_member_enrollment")
 ok(!is.null(msg) && grepl("member_enrollment", msg, fixed = TRUE),
    "member_enrollment too - the first table the run reads")
 msg <- drive_up("cdm.t_confinement")
 ok(!is.null(msg) && grepl("confinement", msg, fixed = TRUE),
    "a missing raw CDM table stops it too - the other-cancer rule needs it")
-msg <- drive_up(c("wk.p_MAP_STACKED", "cdm.t_rx"))
-ok(!is.null(msg) && grepl("MAP_STACKED", msg, fixed = TRUE) &&
+msg <- drive_up(c("cdm.t_member_enrollment", "cdm.t_rx"))
+ok(!is.null(msg) && grepl("member_enrollment", msg, fixed = TRUE) &&
      grepl("rx", msg, fixed = TRUE),
    "and two missing inputs are both reported, not just the first")
 
@@ -175,6 +184,7 @@ cat("\n-- the preflight covers every table a step actually reads --\n")
 # trusting the list.
 consts0 <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = consts0)
+sys.source(file.path(ROOT, "R", "standalone_constants.R"), envir = consts0)
 step_files <- list.files(file.path(ROOT, "R", "steps"), "\\.R$", full.names = TRUE)
 read_raw <- unique(unlist(lapply(step_files, function(f) {
   s <- paste(readLines(f, warn = FALSE), collapse = "\n")
@@ -219,7 +229,8 @@ for (s in CONSTANT_SETTINGS) {
 # the environment is a knob someone can turn without touching config.csv, so
 # each one must be pinned - derived from the file rather than listed by hand,
 # because listing by hand is how NDMM_LOT1_FROM went unnoticed.
-kl <- readLines(file.path(ROOT, "R", "nndm_constants.R"), warn = FALSE)
+kl <- c(readLines(file.path(ROOT, "R", "nndm_constants.R"), warn = FALSE),
+        readLines(file.path(ROOT, "R", "standalone_constants.R"), warn = FALSE))
 env_consts <- unique(sub("^\\s*([A-Za-z_.][A-Za-z0-9_.]*)\\s*<-.*", "\\1",
                          grep("^\\s*[A-Za-z_.][A-Za-z0-9_.]*\\s*<-.*Sys\\.getenv",
                               kl, value = TRUE)))
@@ -392,8 +403,8 @@ ae$write_attrition(NULL, list(), mk(c(1000,900,800,700,600,500,400,300,250)))
 ins <- grep("INSERT", ASQL, value = TRUE)[1]
 ok(!is.na(ins) && length(gregexpr("('R1',", ins, fixed = TRUE)[[1]]) == 9L,
    "nine rows, one per step")
-ok(grepl("'Patients in LOT_LONG'", ins, fixed = TRUE) &&
-     grepl("no pregnancy in study period", ins, fixed = TRUE),
+ok(grepl("'Patients with a qualifying MM diagnosis'", ins, fixed = TRUE) &&
+     grepl("no belantamab in any LOT", ins, fixed = TRUE),
    "labelled by criterion, so the table reads without the code")
 ok(grepl(", 250,", ins, fixed = TRUE) && grepl(", 25,", ins, fixed = TRUE),
    "with the count and its percentage of the starting population")
@@ -456,6 +467,77 @@ ok(sum(grepl("DELETE", SENT, fixed = TRUE)) == 2L,
 ok(identical(SENT[3], "DELETE FROM t WHERE RUN_ID = 'R1'"),
    "the retry replays the pair in order, DELETE before INSERT")
 
+cat("\n-- the population this build derives for itself --\n")
+# No parent cohort table any more. The MM diagnosis, the age gate and the 1L
+# index are all derived here, so they are driven here. No database, so the SQL
+# the real functions emit is read back.
+se <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = se)
+sys.source(file.path(ROOT, "R", "standalone_constants.R"), envir = se)
+sys.source(file.path(ROOT, "R", "steps", "00_mm_cohort.R"), envir = se)
+sys.source(file.path(ROOT, "R", "steps", "00b_lot1_index.R"), envir = se)
+assign("log_msg", function(...) invisible(NULL), envir = se)
+assign("cfg", cfg_defaults, envir = se)
+SSQL <- character(0)
+assign("db_exec", function(con, s) { SSQL <<- c(SSQL, s); TRUE }, envir = se)
+assign("load_codelist_csv", function(...) "(SELECT 1) src", envir = se)
+
+SSQL <- character(0); se$build_ndmm_mm_qualifying(NULL)
+q <- SSQL[1]
+ok(grepl("WHERE inpatient_flg = 1", q, fixed = TRUE) &&
+     grepl("AND mm_dx_strict_flg = 1", q, fixed = TRUE),
+   "one inpatient claim qualifies, and only a strict 203.0x/C90.0x code does")
+ok(grepl(paste0("datediff(next_dt, svc_dt) <= ", se$NDMM_OUTPATIENT_WINDOW), q, fixed = TRUE),
+   paste0("two outpatient claims qualify within ", se$NDMM_OUTPATIENT_WINDOW,
+          " days, the window S6.2.1.1 fixes"))
+ok(grepl("WHERE outpatient_flg = 1", q, fixed = TRUE),
+   "...and the pair is built from outpatient claims only")
+
+SSQL <- character(0); se$build_ndmm_base_cohort(NULL)
+b <- SSQL[1]
+ok(grepl(paste0("(year(q.MM_DX_DT) - m.YRDOB) >= ", se$NDMM_MIN_AGE), b, fixed = TRUE),
+   paste0("age is ", se$NDMM_MIN_AGE, " or over in the diagnosis year, by calendar year"))
+# The age gate sits in the CTE that the ranking reads, not after it. A patient
+# who is 17 at their first qualifying date and 18 at the next is in the cohort,
+# and ranking first would lose them.
+filt <- sub("\\),\\s*ranked AS.*", "", sub(".*WITH filtered AS \\(", "", b))
+ok(grepl("YRDOB) >=", filt, fixed = TRUE),
+   "and it is applied before the earliest qualifying date is picked, not after")
+ok(grepl("ORDER BY MM_DX_DT) AS rn", b, fixed = TRUE) &&
+     grepl("WHERE rn = 1", b, fixed = TRUE),
+   "the earliest date that passes is the diagnosis date, not the latest")
+
+SSQL <- character(0)
+se$build_ndmm_lot1_index(NULL, "cdm.medical", "cdm.rx")
+x <- SSQL[1]
+n_arms <- length(gregexpr("INNER JOIN _ndmm_base_cohort b", x, fixed = TRUE)[[1]])
+ok(n_arms == 4L,
+   paste0("the index is looked for in all four claim sources (", n_arms, ")"))
+ok(length(gregexpr(">= b.MM_DX_DT", x, fixed = TRUE)[[1]]) == 4L,
+   "every one of them requires the treatment to be on or after the diagnosis")
+ok(length(gregexpr(paste0(">= date('", se$NDMM_LOT1_FROM, "')"), x, fixed = TRUE)[[1]]) == 4L,
+   "...and on or after the eligible-treatment cutoff")
+ok(length(gregexpr("<= date('2025-06-30')", x, fixed = TRUE)[[1]]) == 4L,
+   "...and inside the study period")
+ok(length(gregexpr("WHERE bl.code IS NULL", x, fixed = TRUE)[[1]]) == 4L,
+   "belantamab cannot set the index - S6.2.1.1 says the 1L treatment is other than it")
+ok(grepl("min(tx_dt) AS LOT1_START_DT", x, fixed = TRUE),
+   "the index is the first such claim, which is what S6.2.1.1 defines it as")
+ok(grepl("_ndmm_mma_codelist", x, fixed = TRUE),
+   "and MM treatment means the same code list the prior-therapy scan uses")
+
+# Belantamab is how exclusion 4 is applied and how the index scan knows what to
+# skip. If the abbreviation matches nothing, both silently stop working.
+assign("db_q", function(con, sql) data.frame(n = 0L), envir = se)
+m <- tryCatch({ se$build_ndmm_belantamab_codes(NULL); "" }, error = conditionMessage)
+ok(grepl("No row of cl_mma_codelist.csv", m, fixed = TRUE) &&
+     grepl(se$NDMM_BELANTAMAB_ABBR, m, fixed = TRUE),
+   "a belantamab abbreviation that matches nothing stops the run, named")
+assign("db_q", function(con, sql) data.frame(n = 7L), envir = se)
+ok(identical(tryCatch({ se$build_ndmm_belantamab_codes(NULL); "" },
+                      error = conditionMessage), ""),
+   "...and one that matches lets it go on")
+
 cat("\n-- the cohort is a cohort the LOT build can be pointed at --\n")
 # The next stage runs the LOT algorithm over these patients, so this table is
 # its input. Jul 28/lot reads ten columns off whatever cohort it is given, and
@@ -487,7 +569,8 @@ assign("wrk", function(x) paste0("wk.p_", x), envir = be)
 BSQL <- character(0)
 assign("run_step", function(con, name, sql, qc = NULL) { BSQL <<- c(BSQL, sql); TRUE },
        envir = be)
-be$build_ndmm_cohort_table(NULL, cfg_defaults, "wk.p_OVERALL_COH_FINAL")
+assign("NDMM_BASE_COHORT", "_ndmm_base_cohort", envir = be)
+be$build_ndmm_cohort_table(NULL, cfg_defaults)
 csql <- BSQL[1]
 ok(!is.na(csql) && grepl("l1.LOT1_START_DT AS INDEX_DATE", csql, fixed = TRUE),
    "the index date is the 1L start, not the parent's MM-diagnosis index")
@@ -508,8 +591,8 @@ ok(grepl("s.cov_start <= i.INDEX_DATE", csql, fixed = TRUE) &&
      grepl("s.cov_end   >= i.INDEX_DATE", csql, fixed = TRUE),
    "the CE end is the span covering the 1L index, so it moves with the anchor too")
 ok(grepl("GDR_CD, YRDOB, DEATH_DT", csql, fixed = TRUE) &&
-     grepl("wk.p_OVERALL_COH_FINAL", csql, fixed = TRUE),
-   "only the demographics are inherited - they do not depend on an anchor")
+     grepl("_ndmm_base_cohort", csql, fixed = TRUE),
+   "only the demographics are carried across - they do not depend on an anchor")
 
 cat("\n-- and it is checked before anyone is handed it --\n")
 ce2 <- new.env(parent = globalenv())
@@ -678,8 +761,8 @@ ok(!is.na(ins) && grepl(code_fingerprint(ROOT), ins, fixed = TRUE),
 ok(!is.na(ins) && grepl("lot1_from=2017-01-01", ins, fixed = TRUE) &&
      grepl("fu_ce_days=0", ins, fixed = TRUE),
    "...and the settings, so a cohort can be matched to a build not guessed at")
-ok(!is.na(ins) && grepl("'OVERALL_COH_FINAL'", ins, fixed = TRUE),
-   "...and which parent cohort table it read")
+ok(!is.na(ins) && grepl("'BEL%'", ins, fixed = TRUE),
+   "...and how it recognised belantamab, which is a code-list assumption")
 ok(!is.na(ins) && grepl("'claim_ndc_short,codelist_ndc_short'", ins, fixed = TRUE) &&
      grepl("'claim_ndc_short'", ins, fixed = TRUE),
    "waivers asked for and waivers that fired are recorded apart")
@@ -723,6 +806,7 @@ for (t in OUTPUTS)
 # whole file would credit this package with a table nothing writes.
 consts <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = consts)
+sys.source(file.path(ROOT, "R", "standalone_constants.R"), envir = consts)
 # The bodies of the step functions the runner calls, plus the runner itself.
 # Derived from the runner's own body, not from ORDER: a call added back to the
 # runner has to show up here, or the scan would not follow it and the table it

@@ -11,5 +11,8 @@ FU_CE_DAYS,0,Days after index the follow-up CE must cover; 0 is one day
 GAP_DAYS,30,Enrollment gaps of this many days or fewer are still continuous
 TBL_CONFINEMENT,confinement,Inpatient confinement table
 TBL_MEMBER_ENROLLMENT,member_enrollment,Enrollment spans table
-FINAL_TABLE_NAME,OVERALL_COH_FINAL,Cohort table Jul 28/overall writes and this build reads
+TBL_MEMBER_ELIG,member_cont_enrollment,Sex and birth year
+TBL_DOD,dod,Date of death
+OUTPATIENT_WINDOW,90,Two outpatient MM claims within this many days confirm a diagnosis
+MIN_AGE,18,Minimum age in the MM-diagnosis year
 CODELIST_DIR,/mnt/code/codelist,Where the production code lists live

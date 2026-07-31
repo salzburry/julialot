@@ -1,0 +1,177 @@
+#!/usr/bin/env Rscript
+# R/steps/00_mm_cohort.R is a port of the MM-diagnosis, index-qualification and
+# demographics SQL from Jul 28/overall. This holds it to that build.
+#
+# What it does NOT do is compare line for line, the way
+# test_same_as_source.R holds the apr_30_2026 port. That is not possible here
+# and saying otherwise would be a lie: the parent's steps are entries in a
+# phase-runner list, they carry columns only its own attrition reads, and its
+# inpatient / outpatient / qualifying steps are three views where this build
+# needs one. The shape genuinely differs.
+#
+# What it does instead is take the clinically decisive expressions out of the
+# parent's own files, rename its views to ours, and require each to appear here
+# verbatim. Those are the parts where a difference changes who is in the
+# cohort: what counts as inpatient, which codes qualify an inpatient claim, how
+# the diagnosis claim is joined to its header, the outpatient window, how a
+# partial death date is resolved, and which eligibility row wins. Change one of
+# them here and this fails; change one in the parent and this fails too, which
+# is the drift worth catching.
+#
+#   Rscript "Jul 28/nndm/tests/test_same_as_overall.R"
+
+ROOT <- local({
+  a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
+  d <- if (length(a)) dirname(normalizePath(gsub("~+~", " ", sub("^--file=", "", a[1]),
+                                                 fixed = TRUE))) else getwd()
+  dirname(d)
+})
+source(file.path(ROOT, "tests", "testutil.R"))
+
+SRC_DIR <- file.path(dirname(ROOT), "overall", "R", "steps")
+if (!dir.exists(SRC_DIR)) {
+  cat("Jul 28/overall not beside this folder -- nothing to compare against. Skipping.\n")
+  quit(status = 0L)
+}
+ours <- paste(readLines(file.path(ROOT, "R", "steps", "00_mm_cohort.R"), warn = FALSE),
+              collapse = "\n")
+
+read_src <- function(f) paste(readLines(file.path(SRC_DIR, f), warn = FALSE), collapse = "\n")
+
+# The parent's names for the views, and ours. Applied to the parent's text
+# before comparing, so a renamed view is not mistaken for a changed rule.
+RENAME <- c(
+  "{work('mm_dx_codes')}"       = "{NDMM_MM_DX_CODES}",
+  "{work('med_claim_header')}"  = "{NDMM_MM_CLAIM_HEADER}",
+  "{work('confinement')}"       = "{NDMM_MM_CONFINEMENT}",
+  "{work('mm_dx_events_all')}"  = "{NDMM_MM_DX_EVENTS}",
+  "{work('mm_dx_events_id')}"   = "{NDMM_MM_DX_EVENTS}",
+  "{work('mm_qualifying')}"     = "{NDMM_MM_QUALIFYING}",
+  "{work('member_demo')}"       = "{NDMM_MEMBER_DEMO}",
+  "{work('death_dt')}"          = "{NDMM_DEATH_DT}",
+  "{cdm_src(cfg$tbl_medical)}"  = "{medical_tbl}",
+  "{cdm_src(cfg$tbl_confinement)}" = "{confinement_tbl}",
+  "{cdm_src(cfg$tbl_med_diag)}" = "{med_diag_tbl}",
+  "{cdm_src(cfg$tbl_member_elig)}" = "{member_elig_tbl}",
+  "{cdm_src(cfg$tbl_dod)}"      = "{dod_tbl}",
+  "{cfg$study_start}"           = "{NDMM_STUDY_START}",
+  "{cfg$dx_window_90}"          = "{NDMM_OUTPATIENT_WINDOW}",
+  # The parent keeps every candidate index date and calls it index_date; here
+  # the same column is the MM diagnosis date, because the NDMM index is the 1L
+  # start and the two must not be confused.
+  "q.index_date"                = "q.MM_DX_DT",
+  "index_date"                  = "MM_DX_DT"
+)
+rename <- function(x) {
+  for (k in names(RENAME)) x <- gsub(k, RENAME[[k]], x, fixed = TRUE)
+  x
+}
+# Indentation is layout, not rule: the parent's SQL sits inside a phase list and
+# this one inside a function, so it is reindented. Comparing token sequences
+# rather than lines keeps the check on what the SQL says.
+squash <- function(x) trimws(gsub("[[:space:]]+", " ", x))
+
+# Pull the text between two anchors out of the parent, inclusive.
+between <- function(txt, from, to) {
+  i <- regexpr(from, txt, fixed = TRUE)
+  if (i == -1) return(NA_character_)
+  rest <- substring(txt, i)
+  j <- regexpr(to, rest, fixed = TRUE)
+  if (j == -1) return(NA_character_)
+  substring(rest, 1, j + nchar(to) - 1)
+}
+
+RULES <- list(
+  list(name = "what counts as an inpatient claim line",
+       file = "02_dx_events.R",
+       from = "max(CASE WHEN POS IN",
+       to   = "AS line_inpatient"),
+  list(name = "the claim grain headers are grouped to",
+       file = "02_dx_events.R",
+       from = "GROUP BY PATID, PAT_PLANID, CLMID, FST_DT, LOC_CD",
+       to   = "GROUP BY PATID, PAT_PLANID, CLMID, FST_DT, LOC_CD"),
+  list(name = "which confinements are usable",
+       file = "02_dx_events.R",
+       from = "WHERE CONF_ID IS NOT NULL",
+       to   = "AND DISCH_DATE IS NOT NULL"),
+  list(name = "inpatient means a line flag or a confinement",
+       file = "02_dx_events.R",
+       from = "CASE WHEN h.line_inpatient = 1 OR cf.CONF_ID IS NOT NULL",
+       to   = "THEN 1 ELSE 0 END AS inpatient_flg"),
+  list(name = "the strict 203.0x / C90.0x test",
+       file = "02_dx_events.R",
+       from = "CASE WHEN (CASE WHEN upper(d.ICD_FLAG)",
+       to   = "THEN 1 ELSE 0 END AS mm_dx_strict_flg"),
+  list(name = "how a diagnosis is joined to its claim header",
+       file = "02_dx_events.R",
+       from = "ON d.PATID      =   h.PATID",
+       to   = "AND d.LOC_CD     <=> h.LOC_CD"),
+  list(name = "how a diagnosis is matched to the code list",
+       file = "02_dx_events.R",
+       from = "ON upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) = c.dx",
+       to   = "= c.icd_family"),
+  list(name = "which claim qualifies an inpatient index date",
+       file = "03_index_date.R",
+       from = "WHERE inpatient_flg = 1",
+       to   = "AND mm_dx_strict_flg = 1"),
+  list(name = "how outpatient dates are paired",
+       file = "03_index_date.R",
+       from = "lead(svc_dt) OVER (PARTITION BY PATID ORDER BY svc_dt) AS next_dt",
+       to   = "lead(svc_dt) OVER (PARTITION BY PATID ORDER BY svc_dt) AS next_dt"),
+  list(name = "which eligibility row gives sex and birth year",
+       file = "05_demographics.R",
+       from = "row_number() OVER (PARTITION BY PATID",
+       to   = "cast(ELIGEND as date) DESC) AS rn"),
+  list(name = "how a partial death date is read",
+       file = "05_demographics.R",
+       from = "cast(SUBSTR(YMDOD, 1, 4) as int) AS death_yr",
+       to   = "ELSE NULL"),
+  list(name = "how a month-only death date is resolved",
+       file = "05_demographics.R",
+       from = "WHEN year(q.MM_DX_DT) = b.death_yr",
+       to   = "ELSE make_date(b.death_yr, b.death_mo, 15)"),
+  list(name = "how a year-only death date is resolved",
+       file = "05_demographics.R",
+       from = "THEN make_date(b.death_yr, 12, 31)",
+       to   = "ELSE make_date(b.death_yr, 7, 15)"),
+  list(name = "the clamp that keeps death on or after the anchor",
+       file = "05_demographics.R",
+       from = "WHEN death_raw IS NOT NULL AND death_raw < MM_DX_DT THEN MM_DX_DT",
+       to   = "WHEN death_raw IS NOT NULL AND death_raw < MM_DX_DT THEN MM_DX_DT")
+)
+
+cat("\n-- every rule that decides who is in the population is the parent's --\n")
+for (r in RULES) {
+  txt <- rename(read_src(r$file))
+  want <- between(txt, r$from, r$to)
+  if (is.na(want)) {
+    ok(FALSE, paste0(r$name, ": not found in Jul 28/overall/R/steps/", r$file,
+                     " -- the parent changed, so this port is unverified"))
+    next
+  }
+  ok(grepl(squash(want), squash(ours), fixed = TRUE),
+     paste0(r$name, " (", length(strsplit(want, "\n")[[1]]), " lines from ",
+            r$file, ")"))
+}
+
+cat("\n-- and the criteria the parent applies that this build must not --\n")
+# The parent has switches for six criteria; S6.2.1.1 inherits two. If the port
+# had brought the others across, a patient would be dropped before the NDMM
+# funnel ever counted them, and the attrition would not say so.
+NOT_HERE <- c("CE_b", "CE_f", "CE_3mosf", "MM_bl_agents", "MM_FU_agents",
+              "MM_baseline_diag", "CLINTRIAL", "PREGNANT_FLAG",
+              "OTHER_MALIGN_FLAG")
+brought <- Filter(function(k) grepl(paste0("\\b", k, "\\b"), ours, perl = TRUE), NOT_HERE)
+ok(length(brought) == 0,
+   if (length(brought)) paste0("the parent's own criteria leaked into this port: ",
+                               paste(brought, collapse = ", "))
+   else paste0("none of the parent's ", length(NOT_HERE),
+               " other criteria columns appear here"))
+# The two that are applied, and nothing else standing between the population
+# and the 1L index.
+ok(grepl("NDMM_MIN_AGE", ours, fixed = TRUE),
+   "age is applied here, at the diagnosis year")
+ok(grepl("inpt_qual = 1 OR q.outpt_qual = 1", squash(ours), fixed = TRUE),
+   "and the diagnosis has to qualify, by one inpatient claim or two outpatient")
+
+report()
