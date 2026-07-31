@@ -42,7 +42,7 @@ CONTRACT <- list(
 # These have a reading a study team can accept: a medication deliberately kept
 # in a separate file, a code type unused by this study, a substitution left
 # inactive, a ten-digit NDC in a documented layout.
-WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types", "multi_class",
+WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types",
                      "subs_substitute", "subs_original", "ndc_short")
 
 # These do not. Each one means a claim counted twice, a code matching every
@@ -51,7 +51,7 @@ WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types", "multi_class",
 # rather than merely absent, so a waiver naming one is told why it is refused
 # instead of "no such check".
 FATAL_CHECKS <- c("code_to_med", "bad_ndc", "rollup_defs", "blank_keys",
-                  "ndc_shape", "class_agreement")
+                  "ndc_shape", "multi_class", "class_agreement")
 
 ALL_CHECKS <- c(WAIVABLE_CHECKS, FATAL_CHECKS)
 

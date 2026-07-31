@@ -135,6 +135,35 @@ phase_sct <- function(con, ctx) {
   }
   log_msg("  OK: Every SCT code type is one an extraction branch reads.")
 
+  # Accepted is not the same as right. The '%PROC%' arm sits after the exact
+  # ICD9PROC test, so ICD9PROCEDURE, ICD-9-PROC and ICD9 PROC all come out as
+  # ICD10PROC - a real type, which the check above accepts. The claim join then
+  # reads ICD-10 columns for an ICD-9 code and the transplant is never found.
+  #
+  # Asked of the raw value rather than by repeating the CASE, which would drift
+  # from it: these are the only spellings the CASE turns into an ICD-9 type, so
+  # anything else naming 9 will be read as ICD-10.
+  sct_version <- db_q(con, glue("
+    SELECT trim(CL_CODE_TYPE) AS CL_CODE_TYPE, count(*) AS n_codes
+    FROM {sct_src}
+    WHERE regexp_replace(coalesce(CL_CODE_TYPE, ''), '[^0-9]', '') LIKE '%9%'
+      AND regexp_replace(coalesce(CL_CODE_TYPE, ''), '[^0-9]', '') NOT LIKE '%10%'
+      AND upper(trim(CL_CODE_TYPE)) NOT IN
+            ('ICD9PROC', 'ICD9DIAG', 'ICD9DX', 'ICD9', 'DIAG9')
+      AND upper(trim(CL_CODE_TYPE)) NOT LIKE 'ICD%9%DIAG%'
+    GROUP BY trim(CL_CODE_TYPE)
+    ORDER BY CL_CODE_TYPE
+  "))
+  if (nrow(sct_version) > 0) {
+    print(sct_version)
+    stop("SCT code type(s) naming ICD-9 that the build will read as ICD-10: ",
+         paste(sct_version$CL_CODE_TYPE, collapse = ", "),
+         " - spell them ICD9PROC or ICD9DIAG in the code list. Left alone the ",
+         "claim join looks in the ICD-10 columns and finds nothing.",
+         call. = FALSE)
+  }
+  log_msg("  OK: Every ICD-9 SCT code type is read as ICD-9.")
+
   # S12: Extract raw SCT claims from MEDICAL + MED_PROCEDURE
   run_step(con, "S12_sct_claims_raw", glue("
     CREATE OR REPLACE TEMPORARY VIEW sct_claims_raw AS

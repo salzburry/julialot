@@ -88,7 +88,9 @@ CUT <- list(
     c(from = "sct_unmapped <- db_q(con, \"",
       to   = "log_msg(\"  OK: Every SCT_TYPE is one the build reads.\")"),
     c(from = "sct_code_type <- db_q(con, \"",
-      to   = "log_msg(\"  OK: Every SCT code type is one an extraction branch reads.\")"))
+      to   = "log_msg(\"  OK: Every SCT code type is one an extraction branch reads.\")"),
+    c(from = "sct_version <- db_q(con, glue(\"",
+      to   = "log_msg(\"  OK: Every ICD-9 SCT code type is read as ICD-9.\")"))
 )
 
 # Lines that were EDITED rather than added, and how many of each. Counted like

@@ -301,12 +301,14 @@ ok(grepl('check = "ndc_short"', cd, fixed = TRUE) &&
 # from the rollup's classes, so a disagreement is an always-zero column.
 ok(grepl("INNER JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR", cd, fixed = TRUE),
    "class agreement joins the code list to the rollup")
-# Each check owns one failure mode. Reporting a within-file disagreement here
-# too would mean waiving multi_class - an accepted condition - also had to
-# waive this, losing the cross-file check for every other medication.
-ok(grepl("HAVING count(DISTINCT c.CL_MED_CLASS) = 1", cd, fixed = TRUE) &&
-     grepl("AND count(DISTINCT r.CL_MED_CLASS) = 1", cd, fixed = TRUE),
-   "and only where each file is itself unambiguous, so it cannot double-report")
+# Compared as sets, so a med one file classes two ways is compared rather than
+# skipped. Requiring each file to be unambiguous first - which is what this did
+# - left such a med checked by neither whenever multi_class was waived.
+ok(grepl("concat_ws(',', sort_array(collect_set(c.CL_MED_CLASS)))", cd, fixed = TRUE) &&
+     !grepl("count(DISTINCT c.CL_MED_CLASS) = 1", cd, fixed = TRUE),
+   "class agreement compares the whole set, skipping no medication")
+ok("multi_class" %in% FATAL_CHECKS,
+   "...and multi_class is fatal, so min() never picks a class silently")
 mmx <- paste(readLines(file.path(ROOT, "R", "steps", "03_mma_map.R"), warn = FALSE),
              collapse = "\n")
 ok(grepl("c.CL_MED_CLASS AS MED_CLASS", mmx, fixed = TRUE) &&
@@ -570,7 +572,7 @@ assign("run_step", function(...) invisible(TRUE), envir = se2)
 assign("glue", function(..., .envir = parent.frame()) paste0(..., collapse = ""),
        envir = se2)
 sys.source(file.path(ROOT, "R", "steps", "05_sct.R"), envir = se2)
-sct_db_q <- function(bad, bad_type = NULL) function(con, sql) {
+sct_db_q <- function(bad, bad_type = NULL, bad_ver = NULL) function(con, sql) {
   if (grepl("NOT IN ('AUTO', 'ALLO', 'CART', 'UNKNOWN')", sql, fixed = TRUE))
     return(if (is.null(bad)) data.frame(SCT_TYPE = character(0), n_codes = integer(0))
            else data.frame(SCT_TYPE = bad, n_codes = 4L))
@@ -578,10 +580,14 @@ sct_db_q <- function(bad, bad_type = NULL) function(con, sql) {
     return(if (is.null(bad_type))
              data.frame(CL_CODE_TYPE = character(0), n_codes = integer(0))
            else data.frame(CL_CODE_TYPE = bad_type, n_codes = 7L))
+  if (grepl("NOT LIKE 'ICD%9%DIAG%'", sql, fixed = TRUE))
+    return(if (is.null(bad_ver))
+             data.frame(CL_CODE_TYPE = character(0), n_codes = integer(0))
+           else data.frame(CL_CODE_TYPE = bad_ver, n_codes = 5L))
   data.frame()
 }
-run_sct <- function(bad, bad_type = NULL) {
-  assign("db_q", sct_db_q(bad, bad_type), envir = se2)
+run_sct <- function(bad, bad_type = NULL, bad_ver = NULL) {
+  assign("db_q", sct_db_q(bad, bad_type, bad_ver), envir = se2)
   tryCatch({ se2$phase_sct(NULL, list(sct_src = "src")); NULL },
            error = function(e) conditionMessage(e))
 }
@@ -627,6 +633,23 @@ accepted <- quoted(regmatches(flat,
 ok(setequal(accepted, reads) && length(reads) == 5,
    paste0("the accepted code types are exactly the ", length(reads),
           " an extraction branch reads: ", paste(reads, collapse = ", ")))
+
+# Accepted is not right. The '%PROC%' arm sits after the exact ICD9PROC test,
+# so ICD9PROCEDURE and ICD-9-PROC become ICD10PROC - which the check above
+# accepts, because ICD10PROC is a real type. The claim join then reads ICD-10
+# columns for an ICD-9 code.
+ok(grepl("WHEN upper(trim(CL_CODE_TYPE)) LIKE '%PROC%'", sc2, fixed = TRUE),
+   "the '%PROC%' arm is still there, after the exact ICD9PROC test")
+badver <- run_sct(NULL, NULL, "ICD-9-PROC")
+ok(!is.null(badver), "an ICD-9 spelling that maps to ICD-10 stops the build")
+ok(grepl("ICD-9-PROC", badver, fixed = TRUE) && grepl("read as ICD-10", badver, fixed = TRUE),
+   "and says which spelling and what would happen to it")
+# The exact spellings the CASE does turn into an ICD-9 type. Asked of the raw
+# value rather than by repeating the CASE, so this list is the contract.
+for (sp in c("'ICD9PROC', 'ICD9DIAG', 'ICD9DX', 'ICD9', 'DIAG9'",
+             "NOT LIKE 'ICD%9%DIAG%'"))
+  ok(grepl(sp, sc2, fixed = TRUE),
+     paste0("the ICD-9 spellings it accepts are named: ", sp))
 ok(grepl("AS n_defs", cd2, fixed = TRUE),
    "one rollup medication, one definition - DISTINCT only removes identical rows")
 ok(grepl("AS n_rollup", cd2, fixed = TRUE),

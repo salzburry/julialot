@@ -303,10 +303,14 @@ phase_codelists <- function(con) {
   # are named from the rollup's classes, so a med the two spell differently
   # gets a column that is always zero.
   #
-  # Only meds each file classes one way: two classes inside one file is
-  # multi_class or rollup_defs, and reporting it here too would tie their
-  # waivers together. INNER JOIN because a med in only one file is orphan_meds
-  # or uncoded_meds, and steroids are absent from the rollup by design.
+  # The classes are compared as sets, so a med that one file classes two ways
+  # is compared rather than skipped. An earlier version required each file to
+  # be unambiguous first, to keep this check and multi_class from sharing a
+  # waiver - but that left a med checked by neither whenever multi_class was
+  # waived, which is why multi_class is now fatal instead.
+  #
+  # INNER JOIN because a med in only one file is orphan_meds or uncoded_meds,
+  # and steroids are absent from the rollup by design.
   class_agreement <- db_q(con, "
     SELECT c.CL_MED_ABBR,
            concat_ws(', ', collect_set(c.CL_MED_CLASS)) AS codelist_class,
@@ -314,9 +318,8 @@ phase_codelists <- function(con) {
     FROM mma_codelist c
     INNER JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR
     GROUP BY c.CL_MED_ABBR
-    HAVING count(DISTINCT c.CL_MED_CLASS) = 1
-       AND count(DISTINCT r.CL_MED_CLASS) = 1
-       AND min(c.CL_MED_CLASS) <> min(r.CL_MED_CLASS)
+    HAVING concat_ws(',', sort_array(collect_set(c.CL_MED_CLASS)))
+        <> concat_ws(',', sort_array(collect_set(r.CL_MED_CLASS)))
     ORDER BY c.CL_MED_ABBR
   ")
   if (nrow(class_agreement) > 0) {
