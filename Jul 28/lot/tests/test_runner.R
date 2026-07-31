@@ -1125,11 +1125,10 @@ le <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "build_lot.R"), envir = le)
 assign("log_msg", function(...) invisible(NULL), envir = le)
 assign("lot_out", function(x) x, envir = le)
-assign("glue", function(..., .envir = parent.frame()) {
-  t <- paste0(..., collapse = "")
-  for (v in c("t")) t <- gsub("\\{t\\}", "LOT_LONG", t)
-  gsub("\\{cfg\\$max_lot\\}", "5", t)
-}, envir = le)
+# No hand-rolled substitution here: testutil.R's stand-in interpolates for
+# real, so {tbl} and {cfg$max_lot} resolve from the calling frame the way glue
+# would. The stub this replaces rewrote a fixed {t} and would have gone quietly
+# inert the moment that variable was renamed - which is exactly what happened.
 LL_OK <- list(n_rows = 100, n_patients = 40, n_null_start = 0, n_null_end = 0,
               n_end_before_start = 0, n_bad_lot_num = 0)
 ll_stub <- function(shape = list(), dup = 0, gaps = 0, seq_bad = 0, past_obs = 0) {
@@ -1177,8 +1176,11 @@ ok(grepl("no start date", tryCatch({ le$check_lot_long(NULL, cfg_ll); "" },
 cat("\n-- ...and so does the table downstream actually reads --\n")
 # check_lot_long ran on LOT_LONG. LOT_LONG_FINAL is what the study reads, and
 # a truncate criterion makes it a different table - one nothing was looking at.
+LFSQL <- character(0)
 lf_stub <- function(n_rows = 90, n_patients = 40, gaps = 0) {
+  LFSQL <<- character(0)
   assign("db_q", function(con, sql) {
+    LFSQL <<- c(LFSQL, sql)
     if (grepl("HAVING lo <> 1", sql, fixed = TRUE)) return(data.frame(n = gaps))
     data.frame(n_rows = n_rows, n_patients = n_patients)
   }, envir = le)
@@ -1197,6 +1199,13 @@ ok(inherits(tryCatch(le$check_lot_final(NULL, cfg_ll), error = function(e) e), "
 lf_stub()
 ok(identical(le$check_lot_final(NULL, cfg_ll), list(n_rows = 90, n_patients = 40)),
    "and its counts are handed to record_final_counts rather than scanned for twice")
+# Both queries name LOT_LONG_FINAL, not LOT_LONG. check_lot_long already passed
+# on the latter, so a check_lot_final that read it would agree with itself and
+# report nothing. It also proves the name is really interpolated rather than
+# left as a literal {tbl}, which is what the hand-rolled glue stub above used
+# to hide.
+ok(length(LFSQL) == 2 && all(grepl("LOT_LONG_FINAL", LFSQL, fixed = TRUE)),
+   paste0("it asks about LOT_LONG_FINAL, in both queries (", length(LFSQL), ")"))
 
 cat("\n-- an empty table says it is empty, not 'missing value' --\n")
 # sum() over no rows is SQL NULL, so every count above arrives as NA and the
