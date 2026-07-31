@@ -110,7 +110,14 @@ one, and these are built from temp views.
 - `<prefix>LOT_LONG_ALLFLAGS` - every criterion as a 0/1 column, computed
   whether or not it is enabled. Check what a criterion would cost before
   turning it on.
-- `<prefix>LOT_LONG_FINAL` - the enabled ones applied.
+- `<prefix>LOT_LONG_FINAL` - the enabled ones applied. This is the table to
+  read. It is checked in its own right, not assumed to be sound because
+  `LOT_LONG` was: it must be non-empty, and each patient's lines must still run
+  `1..n`. With no criterion declared it is a copy of `LOT_LONG` and both are
+  free; with a `truncate` criterion they catch a criterion that removes every
+  line, or one that takes a line out of the middle instead of the tail.
+  `LOT_LONG_ALLFLAGS` needs no equivalent - the layer only adds columns to it,
+  so its rows are `LOT_LONG`'s whatever is declared.
 
 `on_fail` decides what a failing line does:
 
@@ -352,10 +359,14 @@ waiving the reviewed ten-digit case cannot let `ABC123` through with it, and
 each is recorded in `CODELIST_WAIVERS_APPLIED` under its own name. A ten-digit *claim* has exactly the layout problem a ten-digit
 *code* has, so a canonical code can miss a real claim.
 
-The NDC QC in `phase_qc` does not cover this and is not a substitute: it
-profiles `rx` only, measures a different normalization from the one the join
-uses, warns only when the two length sets are wholly disjoint - so any overlap
-silences it - swallows its own errors, and runs after LOT1 is already built.
+`phase_qc` used to print an NDC length distribution. It has been removed rather
+than kept as background: it profiled `rx` only, compared raw code-list lengths
+against alnum-stripped claim lengths - neither being the length the join uses,
+so its one warning could fire on a code list that is fine and stay quiet on one
+that is not - warned only when the two length sets were wholly disjoint,
+swallowed its own errors, and ran after LOT1 was already built. `check_claim_ndc`
+asks the real question of both claim tables before LOT1 starts, and `ndc_shape`,
+`ndc_short` and `bad_ndc` cover the code-list side.
 
 Both are reviewable so that a first run reports the distribution instead of
 blocking on a shape nobody has seen. Waive once the study team has established
@@ -465,12 +476,19 @@ what it did.
 writes it before LOT2-5 exists, so its own counts stop at LOT1 - cohort, MMA
 claims, MAPs, LOT1 patients. `N_LOT_LONG_ROWS`, `N_LOT_LONG_PATIENTS` and
 `LOT_LONG_BY_LINE` (`1:900|2:400|3:120`) are filled in after `LOT_LONG` has
-passed its checks, so they describe a table already found usable. A run whose
-metadata row has no `LOT_LONG` counts is not called complete: a row on its own
-only says LOT1 ran.
+passed its checks, so they describe a table already found usable.
+`N_LOT_FINAL_ROWS` and `N_LOT_FINAL_PATIENTS` record `LOT_LONG_FINAL` beside
+them, because that is the table downstream reads and a `truncate` criterion
+makes it a different one - recording only `LOT_LONG`'s counts would describe a
+table nobody reads while nothing said how big the one they do read was. A run
+whose metadata row is missing either set of counts is not called complete: a
+row on its own only says LOT1 ran.
 
 `<prefix>LOT_CODELIST_METADATA`: `RUN_ID`, `CODELIST_FILE`, `MD5`, `N_ROWS`,
-`READ_AT` - four rows per run, described above.
+`RECORDED_AT` - four rows per run, described above. `RECORDED_AT` is the
+warehouse clock when the row was written, seconds after the file was read. A
+file whose hash cannot be taken stops the run rather than being recorded as
+`NA`.
 
 `<prefix>LOT_BUILD_STATUS`: `started` once preflight has passed, then
 `complete`, or `failed` if it stops after that. Read it before trusting a set
@@ -479,6 +497,12 @@ of tables.
 Preflight - the settings, the contract, the connection, the cohort table -
 runs before the first status row, so a run that fails there leaves no row at
 all rather than a `failed` one. Nothing has been written by then.
+
+`failed` is written on the way out, before the connection closes. R fires
+`on.exit` handlers in the order they were registered and the disconnect is
+registered first, so the status handler asks for `after = FALSE` - without it
+the write reaches a closed connection and is swallowed by its own `try()`,
+leaving a crashed run marked `started` for ever.
 
 LOT1 is checked too, before LOT2-5 starts: MAP ending before it starts, a MAP
 end that is not the later runout, LOT1 ending after observation, an AUTO

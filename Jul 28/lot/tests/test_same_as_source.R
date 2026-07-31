@@ -101,6 +101,19 @@ CUT <- list(
       to   = "log_msg(\"  OK: Every ICD-9 SCT code type is read as ICD-9.\")"))
 )
 
+# Blocks the port REMOVED. The only class that deletes ported code instead of
+# adding to it, so the entry names what replaced the block. Undone against the
+# comment-stripped source: the block goes back in front of `at` and the two
+# sides then have to match like everything else, so re-adding it to the port
+# duplicates it and shows up as a difference.
+RESTORE <- list(
+  "07_qc.R" = list(list(
+    at   = "log_msg(\"Running validation QC suite...\")",
+    from = "log_msg(\"Running NDC format QC...\")",
+    to   = "})",
+    why  = "check_claim_ndc and the code-list NDC checks"))
+)
+
 # Lines that were EDITED rather than added, and how many of each. Counted like
 # the rest: a blanket regex here would also hide an unapproved DISTINCT.
 SUBST <- list(
@@ -153,6 +166,27 @@ undeviate <- function(lines, file) {
     }
   }
   lines <- code_only(lines)
+  # Put back what the port removed, before anything else is undone. Reported
+  # like the rest: a stale entry here would otherwise reinsert a block that is
+  # no longer missing, or quietly do nothing.
+  scode <- code_only(src)
+  for (rb in RESTORE[[file]]) {
+    a  <- which(lines == rb$at)
+    sa <- which(scode == rb$from)
+    # `to` closes a tryCatch and is not unique on its own, so take the first
+    # one after the opening anchor rather than the first in the file.
+    sb <- if (length(sa) == 1)
+      sa - 1 + which(scode[sa:length(scode)] == rb$to)[1] else NA_integer_
+    if (length(a) != 1 || length(sa) != 1 || is.na(sb)) {
+      short <- c(short, paste0(rb$from, " ... ", rb$to,
+        " (removed block cannot be put back: ",
+        if (length(a) != 1) "the port no longer has the line it was removed from"
+        else if (length(sa) != 1) "the opening line is not in the source"
+        else "no closing line after it", ")"))
+      next
+    }
+    lines <- append(lines, scode[sa:sb], after = a - 1)
+  }
   # Reported like the rest. A CUT block is a pure addition, so deleting the
   # whole of it - both anchors with it - would leave nothing to cut and a port
   # that matches the source exactly, which is how a safety check could be
@@ -215,7 +249,7 @@ code_only <- function(lines) {
 # survives as "" - and the claim side coalesces a missing code to "" too. That
 # is a silent false match, not a rule, so the port fixes it. Each guard is
 # asserted by name below; "differs" on its own would let one go missing.
-CHANGED <- c("01_codelists.R", "03_mma_map.R", "05_sct.R", "08_persist.R")
+CHANGED <- c("01_codelists.R", "03_mma_map.R", "05_sct.R", "07_qc.R", "08_persist.R")
 
 cat("\n-- every phase is the source, line for line --\n")
 for (p in PHASES) {
@@ -292,6 +326,16 @@ ok(grepl("upper(trim(coalesce(CL_MED_CLASS, ''))) <> 'STEROID'",
 ok(grepl("FROM mma_extractable_codelist c LEFT JOIN mma_rollup r",
          sql_of("08_persist.R"), fixed = TRUE),
    "the persisted orphan count reads the same population as the live check")
+# The one removal, asserted from the other side too. RESTORE proves the rest of
+# the phase is untouched; this proves the block went away because something
+# else does the job, not because it was dropped.
+blr <- paste(readLines(file.path(ROOT, "R", "build_lot.R"), warn = FALSE), collapse = "\n")
+# On the two variable names, not on a phrase from the log: the comment that
+# replaced the block quotes the log line, so a phrase match would find itself.
+ok(!grepl("ndc_qc_rx", sql_of("07_qc.R"), fixed = TRUE) &&
+     !grepl("ndc_qc_codelist", sql_of("07_qc.R"), fixed = TRUE) &&
+     grepl("check_claim_ndc(con, cfg)", blr, fixed = TRUE),
+   "the NDC profile left phase_qc, and check_claim_ndc runs in its place")
 # The unchanged files must still be untouched.
 for (f in setdiff(vapply(PHASES, `[[`, character(1), "file"), CHANGED))
   ok(!grepl("regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''", sql_of(f), fixed = TRUE),

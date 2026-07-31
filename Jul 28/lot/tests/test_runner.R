@@ -160,8 +160,8 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_cohort",
            "phase_lot1_end", "phase_qc",
            "check_lot1_invariants", "phase_persist", "materialize_sct_views",
            "build_lot2_5",
-           "check_lot_long", "record_final_counts", "phase_line_criteria",
-           "check_run_recorded")
+           "check_lot_long", "phase_line_criteria", "check_lot_final",
+           "record_final_counts", "check_run_recorded")
 at <- vapply(ORDER, function(f) {
   m <- regexpr(paste0("(?<![A-Za-z0-9_.])", f, "\\("), body, perl = TRUE)
   if (m == -1) NA_integer_ else as.integer(m)
@@ -192,6 +192,66 @@ ok(all(c("CODELIST_WAIVERS_REQUESTED", "CODELIST_WAIVERS_APPLIED") %in%
 # 08_persist writes metadata inside a tryCatch, so confirm the row arrived.
 ok(grepl("check_run_recorded", bl, fixed = TRUE),
    "a run with no metadata row is not called complete")
+
+# ...and 'failed' has to be reachable, not merely written down. R fires on.exit
+# handlers in registration order, and the disconnect is registered first, so
+# without after = FALSE the status write goes to a closed connection and its own
+# try() swallows the failure - a crashed run would sit at 'started' for ever.
+# Grepping for the string could not see that, so run the real registrations:
+# both statements are lifted verbatim from build_lot.R and only their payloads
+# are swapped for a recorder, leaving the on.exit arguments under test.
+bl_lines <- readLines(file.path(ROOT, "R", "build_lot.R"), warn = FALSE)
+stmt_at <- function(i) {           # grow the slice until it is a whole statement
+  for (j in i:min(i + 8L, length(bl_lines))) {
+    s <- paste(bl_lines[i:j], collapse = "\n")
+    if (!inherits(tryCatch(parse(text = s), error = function(e) e), "error")) return(s)
+  }
+  NA_character_
+}
+# Located by what each handler does, not by how it is written: matching the
+# guard text would lose the handler the moment the guard changed, and this test
+# would then report "not found" for a run that had quietly stopped guarding.
+i_all <- grep("^\\s*on\\.exit\\(", bl_lines)
+stmts <- vapply(i_all, stmt_at, character(1))
+i_dis <- i_all[which(grepl("dbDisconnect", stmts, fixed = TRUE))[1]]
+i_sta <- i_all[which(grepl("write_build_status", stmts, fixed = TRUE))[1]]
+found <- !is.na(i_dis) && !is.na(i_sta)
+ok(found, "both on.exit handlers are where this test can find them")
+if (!found) {
+  # Report the rest rather than dying on the missing anchor: an error here
+  # would take every assertion after this block down with it.
+  for (w in c("both handler payloads were found and stubbed, so the run below proves something",
+              "a failed run writes its status before the connection closes",
+              "and a run that reached complete does not overwrite its own status on the way out"))
+    ok(FALSE, paste0(w, " -- handler not found, cannot run"))
+} else {
+# In source order, whichever that is: registering the disconnect last is an
+# equally good fix, and a test that demanded one arrangement would reject it.
+# What has to hold is the order they FIRE in, which the run below measures.
+idx  <- sort(c(i_dis, i_sta))
+code <- paste(stmt_at(idx[1]), stmt_at(idx[2]), sep = "\n")
+code2 <- gsub("try(DBI::dbDisconnect(con), silent = TRUE)", "rec('disconnect')",
+              code, fixed = TRUE)
+code2 <- gsub('try(write_build_status(con, cfg, "failed"), silent = TRUE)',
+              "rec('failed-status')", code2, fixed = TRUE)
+ok(!identical(code, code2) && !grepl("dbDisconnect", code2, fixed = TRUE) &&
+     !grepl("write_build_status", code2, fixed = TRUE),
+   "both handler payloads were found and stubbed, so the run below proves something")
+FIRED <- character(0)
+rec <- function(x) FIRED <<- c(FIRED, x)
+crash <- eval(parse(text = paste0("function() {\n", code2, "\n  stop('boom')\n}")))
+old_complete <- getOption("lot_complete")
+options(lot_complete = FALSE)
+FIRED <- character(0); try(crash(), silent = TRUE)
+ok(identical(FIRED, c("failed-status", "disconnect")),
+   paste0("a failed run writes its status before the connection closes (",
+          paste(FIRED, collapse = " then "), ")"))
+options(lot_complete = TRUE)
+FIRED <- character(0); try(crash(), silent = TRUE)
+ok(identical(FIRED, "disconnect"),
+   "and a run that reached complete does not overwrite its own status on the way out")
+options(lot_complete = old_complete)
+}
 
 cat("\n-- an older status table is upgraded, not written into blind --\n")
 # CREATE TABLE IF NOT EXISTS does nothing to a table an earlier version of this
@@ -298,6 +358,16 @@ sqltxt <- cle$load_codelist_csv("cl_mma_rollup.csv", "CL_CODE")
 ok(grepl("00093075601", sqltxt, fixed = TRUE),
    "leading zeros survive the read")
 unlink(f)
+# md5sum returns NA when it cannot open the path. Unguarded, the re-hash after
+# the read compares NA with NA and passes - so the swap check is off - and 'NA'
+# lands in the metadata table shaped like a hash. A directory is the reachable
+# case: file.exists says yes and the hash still fails.
+dir.create(f)
+e <- suppressWarnings(tryCatch(cle$load_codelist_csv("cl_mma_rollup.csv", "CL_CODE"),
+                               error = function(e) e))
+ok(inherits(e, "error") && grepl("could not hash", conditionMessage(e), fixed = TRUE),
+   "a code list whose hash cannot be taken stops the build")
+unlink(f, recursive = TRUE)
 
 cat("\n-- a bad code list stops the build, it does not warn and continue --\n")
 # All four checks used to print a warning inside a tryCatch that also
@@ -565,7 +635,8 @@ drive_fm <- function(have) {
     data.frame(LOT_NUM = 1:3, n = c(900, 400, 120))
   }, envir = fe)
   tryCatch({ fe$record_final_counts(NULL, list(),
-                                    list(n_rows = 1420, n_patients = 900)); NULL },
+                                    list(n_rows = 1420, n_patients = 900),
+                                    list(n_rows = 1300, n_patients = 870)); NULL },
            error = conditionMessage)
 }
 base_cols <- c("RUN_ID", "N_COHORT_PATIENTS", "N_LOT1_PATIENTS")
@@ -584,6 +655,13 @@ ok(any(grepl("LOT_LONG_BY_LINE = '1:900|2:400|3:120'", FSQL, fixed = TRUE)),
    "the line distribution is recorded, not just a total")
 ok(any(grepl("WHERE RUN_ID = 'R1'", FSQL, fixed = TRUE)),
    "against this run's row, not every row in the table")
+# LOT_LONG_FINAL is what downstream reads. While no criterion is declared it is
+# a copy of LOT_LONG and the two numbers agree; the moment a truncate criterion
+# lands they do not, and recording only LOT_LONG's would describe a table
+# nobody reads while nothing recorded the size of the one they do.
+ok(any(grepl("N_LOT_FINAL_ROWS = 1300", FSQL, fixed = TRUE)) &&
+     any(grepl("N_LOT_FINAL_PATIENTS = 870", FSQL, fixed = TRUE)),
+   "the criteria table's own counts are recorded beside LOT_LONG's")
 ok(is.null(drive_fm(c(base_cols, names(get("FINAL_METADATA_COLS", envir = fe))))) &&
      !any(grepl("ALTER", FSQL)),
    "a later run finds them and alters nothing")
@@ -596,6 +674,13 @@ ok(regexpr("check_lot_long(", body, fixed = TRUE) <
    "the counts are taken after LOT_LONG has passed its checks")
 ok(grepl("N_LOT_LONG_ROWS IS NOT NULL", bl, fixed = TRUE),
    "and a run with a LOT1-only metadata row is not called complete")
+ok(regexpr("phase_line_criteria(", body, fixed = TRUE) <
+     regexpr("check_lot_final(", body, fixed = TRUE) &&
+     regexpr("check_lot_final(", body, fixed = TRUE) <
+     regexpr("record_final_counts(", body, fixed = TRUE),
+   "...counted after the criteria layer has built it, not before")
+ok(grepl("N_LOT_FINAL_ROWS IS NOT NULL", bl, fixed = TRUE),
+   "and a run that never reached the criteria layer is not called complete")
 
 cat("\n-- the outputs say which code lists built them --\n")
 # The hashes are logged as the files are read, but a log is a separate artefact
@@ -623,6 +708,11 @@ for (f in CLF)
   ok(grepl(paste0("'", f, "'"), ins, fixed = TRUE), paste0(f, " is named in the row set"))
 ok(grepl("'00000000000000000000000000000001'", ins, fixed = TRUE),
    "with the md5 that was taken when the file was read")
+# current_timestamp() is the insert, not the read - seconds apart in the same
+# run, but the column has to say which it is.
+ok(grepl("RECORDED_AT = \"TIMESTAMP\"", bl, fixed = TRUE) &&
+     !grepl("READ_AT", bl, fixed = TRUE),
+   "the timestamp column is named for when it is written, not when the file was read")
 ok(any(grepl("DELETE FROM wk.p_LOT_CODELIST_METADATA WHERE RUN_ID = 'R1'",
              HSQL, fixed = TRUE)),
    "and a re-run replaces its own rows rather than doubling them")
@@ -648,11 +738,28 @@ cat("\n-- the cohort is pinned, not re-read --\n")
 # mid-run changes what LOT reads from there on. "Do not rebuild it" is not
 # enforceable for a package pointed at many cohorts, so the run takes its own
 # copy and reads that.
-ok(grepl("CREATE OR REPLACE TABLE {lot_out('LOT_PATIENT_INPUT')} AS", bl, fixed = TRUE),
+mci <- sub(".*materialize_cohort_input <- function\\(con, before\\) \\{", "", bl)
+mci <- sub("\n[a-zA-Z_]+ <- function.*", "", mci)
+ok(grepl('tbl <- lot_out("LOT_PATIENT_INPUT")', mci, fixed = TRUE) &&
+     grepl("CREATE OR REPLACE TABLE {tbl} AS SELECT * FROM lot_patient_input",
+           mci, fixed = TRUE),
    "the cohort input is written to a table of its own")
-ok(grepl("CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS\n    SELECT * FROM {lot_out('LOT_PATIENT_INPUT')}",
-         bl, fixed = TRUE),
+ok(grepl("CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS SELECT * FROM {tbl}",
+         mci, fixed = TRUE),
    "...and the view is repointed at it, so every later read hits the copy")
+# The first check ran before the code lists were read - four CSVs and around
+# two dozen queries earlier - so it says nothing about the rows copied here.
+ok(grepl("after <- check_cohort_input(con, tbl)", mci, fixed = TRUE),
+   "the snapshot is validated in its own right, not just the table it came from")
+ok(grepl("invisible(list(n_rows = q$n_rows, n_patients = q$n_patients))", bl,
+         fixed = TRUE) &&
+     grepl("cohort <- check_cohort_input(con, wrk(cfg$input_cohort_table))", bl,
+           fixed = TRUE) &&
+     grepl("materialize_cohort_input(con, cohort)", bl, fixed = TRUE),
+   "the first check hands its counts forward rather than throwing them away")
+ok(grepl("after$n_rows != before$n_rows", mci, fixed = TRUE) &&
+     grepl("after$n_patients != before$n_patients", mci, fixed = TRUE),
+   "...and a cohort that grew or shrank under the run stops it")
 ok("LOT_PATIENT_INPUT" %in% OUTPUTS,
    "it is a prefixed output, so two cohorts cannot share one snapshot")
 # Before anything reads the cohort. phase_patient_input defines the view;
@@ -926,6 +1033,30 @@ ll_stub(shape = list(n_null_start = 1))
 ok(grepl("no start date", tryCatch({ le$check_lot_long(NULL, cfg_ll); "" },
                                    error = conditionMessage), fixed = TRUE),
    "and says so, rather than reporting a downstream symptom")
+
+cat("\n-- ...and so does the table downstream actually reads --\n")
+# check_lot_long ran on LOT_LONG. LOT_LONG_FINAL is what the study reads, and
+# a truncate criterion makes it a different table - one nothing was looking at.
+lf_stub <- function(n_rows = 90, n_patients = 40, gaps = 0) {
+  assign("db_q", function(con, sql) {
+    if (grepl("HAVING lo <> 1", sql, fixed = TRUE)) return(data.frame(n = gaps))
+    data.frame(n_rows = n_rows, n_patients = n_patients)
+  }, envir = le)
+}
+lf_stub()
+ok(!inherits(tryCatch(le$check_lot_final(NULL, cfg_ll), error = function(e) e), "error"),
+   "a sound LOT_LONG_FINAL passes")
+lf_stub(n_rows = 0, n_patients = 0)
+ok(grepl("removed every one of them",
+         tryCatch({ le$check_lot_final(NULL, cfg_ll); "" }, error = conditionMessage),
+         fixed = TRUE),
+   "a criterion that truncates every patient at LOT 1 stops the run, and says why")
+lf_stub(gaps = 7)
+ok(inherits(tryCatch(le$check_lot_final(NULL, cfg_ll), error = function(e) e), "error"),
+   "a removal that takes a line out of the middle stops the build")
+lf_stub()
+ok(identical(le$check_lot_final(NULL, cfg_ll), list(n_rows = 90, n_patients = 40)),
+   "and its counts are handed to record_final_counts rather than scanned for twice")
 
 cat("\n-- an empty table says it is empty, not 'missing value' --\n")
 # sum() over no rows is SQL NULL, so every count above arrives as NA and the

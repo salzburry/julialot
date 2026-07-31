@@ -159,8 +159,7 @@ pin_cohort <- function(cfg, cohort_table, prefix) {
 
 # A cohort table missing a column LOT needs would fail deep into the build, so
 # ask the table up front.
-check_cohort_input <- function(con, cfg) {
-  tbl  <- wrk(cfg$input_cohort_table)
+check_cohort_input <- function(con, tbl) {
   cols <- tryCatch(toupper(db_q(con, glue("DESCRIBE {tbl}"))[[1]]),
                    error = function(e)
                      stop("Cannot read the cohort table ", tbl, ": ",
@@ -197,8 +196,9 @@ check_cohort_input <- function(con, cfg) {
                          " patients - one index per patient is required"))
   if (length(bad))
     stop(tbl, " cannot drive LOT: ", paste(bad, collapse = "; "), call. = FALSE)
-  log_msg("  Cohort input OK: ", q$n_patients, " patients")
-  invisible(TRUE)
+  log_msg("  Cohort input OK in ", tbl, ": ", q$n_patients, " patients")
+  # Returned so the pinned copy can be checked against the table it came from.
+  invisible(list(n_rows = q$n_rows, n_patients = q$n_patients))
 }
 
 check_lot_contract <- function(cfg) {
@@ -259,20 +259,26 @@ build_lot <- function(here, cohort_table, prefix) {
   log_msg("  Discon Gap (per-drug, MAP-level): ", cfg$map_discon_gap_days, " days")
   log_msg("  Medical Day Supply: ", cfg$medical_day_supply, " days")
 
-  check_cohort_input(con, cfg)
+  cohort <- check_cohort_input(con, wrk(cfg$input_cohort_table))
 
   # LOT1 is written before LOT_LONG, so track partial runs.
   # Cleared first, or a second run in one session inherits the first's.
   options(lot_waivers_applied = character(0), lot_codelist_md5 = list())
   write_build_status(con, cfg, "started")
+  # after = FALSE, or this never runs: R fires on.exit handlers in the order
+  # they were registered, the disconnect above was registered first, and the
+  # write would then go to a closed connection and be swallowed by its own
+  # try(). Registered here rather than beside the connection so a preflight
+  # failure still leaves no row at all, which is what the README promises.
   on.exit(if (!isTRUE(getOption("lot_complete", FALSE)))
-            try(write_build_status(con, cfg, "failed"), silent = TRUE), add = TRUE)
+            try(write_build_status(con, cfg, "failed"), silent = TRUE),
+          add = TRUE, after = FALSE)
   options(lot_complete = FALSE)
 
   ctx <- phase_codelists(con)
   record_codelist_hashes(con, cfg)
   phase_patient_input(con)
-  materialize_cohort_input(con)
+  materialize_cohort_input(con, cohort)
   check_claim_ndc(con, cfg)
   phase_mma_map(con, ctx)
   phase_lot1_base(con, ctx)
@@ -306,12 +312,15 @@ build_lot <- function(here, cohort_table, prefix) {
                max_lot                 = cfg$max_lot)
 
   # Validate before deriving: publishing the criteria tables first would leave
-  # them behind, built from a LOT_LONG that then failed its checks.
-  # Two statements, not a nested call: R would not force the promise until
-  # record_final_counts read it, which is after it has altered the table.
+  # them behind, built from a LOT_LONG that then failed its checks. Two
+  # statements, not one nested call - R would not force the promise until after
+  # record_final_counts had altered the table.
   lot_long <- check_lot_long(con, cfg)
-  record_final_counts(con, cfg, lot_long)
   phase_line_criteria(con, cfg)
+  # After the criteria layer, not before it: LOT_LONG_FINAL is what downstream
+  # reads, and with a truncate criterion it is not LOT_LONG.
+  final <- check_lot_final(con, cfg)
+  record_final_counts(con, cfg, lot_long, final)
   check_run_recorded(con, cfg)
   write_build_status(con, cfg, "complete")
   # Only after the write succeeded. Setting it first meant a failed write left
@@ -346,31 +355,28 @@ lot_inputs_present <- function(con) {
   all(tolower(LOT2_5_INPUT_VIEWS) %in% have)
 }
 
-# phase_patient_input leaves lot_patient_input a temporary view over the cohort
-# table, and a Spark view re-runs its query on every read - 26 of them across
-# the build. So the cohort is not one snapshot: a cohort job that rebuilds its
-# table mid-run changes what LOT reads from that point on, and the run still
-# reaches "complete". Telling operators not to rebuild is not a rule that holds
-# when the package exists to be pointed at many cohorts on their own schedules.
-#
-# Copied once into a prefixed table of its own, with the view repointed at it -
-# the same thing phase_lot1_end does for map_stacked and lot1_sct. Everything
-# downstream then reads a table that cannot move, and the snapshot is left
-# behind for inspection.
-#
-# The window this does not close: check_cohort_input validates the live table a
-# moment earlier. A change between that check and this copy would be snapshotted
-# unvalidated. It is one statement wide, against 26 reads over a long build.
-materialize_cohort_input <- function(con) {
+# Persist the cohort and repoint the session view, so every later phase reads
+# one fixed snapshot instead of a view that re-runs against a live table. Then
+# check the snapshot: the first check ran four CSVs and around two dozen
+# queries back, so the rows copied here are not necessarily the rows it passed.
+materialize_cohort_input <- function(con, before) {
+  tbl <- lot_out("LOT_PATIENT_INPUT")
   run_step(con, "S03b_materialize_cohort_input", glue("
-    CREATE OR REPLACE TABLE {lot_out('LOT_PATIENT_INPUT')} AS
-    SELECT * FROM lot_patient_input
-  "), qc = glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients
-                 FROM {lot_out('LOT_PATIENT_INPUT')}"))
+    CREATE OR REPLACE TABLE {tbl} AS SELECT * FROM lot_patient_input"),
+    qc = glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients
+               FROM {tbl}"))
   db_exec(con, glue("
-    CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS
-    SELECT * FROM {lot_out('LOT_PATIENT_INPUT')}"))
-  log_msg("Cohort input pinned to ", lot_out("LOT_PATIENT_INPUT"))
+    CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS SELECT * FROM {tbl}"))
+
+  after <- check_cohort_input(con, tbl)
+  # Shape alone would pass a different cohort that is also well formed, which
+  # is the likelier accident than one that is malformed.
+  if (after$n_rows != before$n_rows || after$n_patients != before$n_patients)
+    stop("The cohort changed between being checked and being pinned: ",
+         before$n_rows, " rows / ", before$n_patients, " patients at the ",
+         "check, ", after$n_rows, " / ", after$n_patients, " in ", tbl,
+         ". Re-run the build against a settled cohort.", call. = FALSE)
+  log_msg("Cohort input pinned to ", tbl, " and re-checked")
   invisible(TRUE)
 }
 
@@ -614,7 +620,8 @@ check_run_recorded <- function(con, cfg) {
   # says only that LOT1 ran. record_final_counts fills the rest in.
   n <- tryCatch(db_q(con, glue(
          "SELECT count(*) AS n FROM {lot_out('LOT_RUN_METADATA')}
-          WHERE RUN_ID = '{run_id}' AND N_LOT_LONG_ROWS IS NOT NULL"))$n,
+          WHERE RUN_ID = '{run_id}' AND N_LOT_LONG_ROWS IS NOT NULL
+            AND N_LOT_FINAL_ROWS IS NOT NULL"))$n,
        error = function(e) 0L)
   if (is.na(n) || n < 1)
     stop("The metadata row for this run has no LOT_LONG counts. It describes ",
@@ -623,17 +630,14 @@ check_run_recorded <- function(con, cfg) {
   invisible(TRUE)
 }
 
-# Which version of each code list built these tables. The hashes are logged as
-# the files are read, but a log is a separate artefact: filed away from the
-# tables, or lost, and the outputs no longer say what made them. One row per
-# file per run, so a question like "which runs used this md5" is answerable
-# from the warehouse.
-#
-# Written straight after the code lists are read, not at the end, so a run that
-# fails later still records what it was reading when it did.
+# Which version of each code list built these tables. The run log says so too,
+# but a log is a separate artefact - filed away from the tables, or lost. One
+# row per file per run, written as soon as the lists are read so a run that
+# fails later still records what it was reading. RECORDED_AT is the warehouse
+# clock at the insert, seconds after the read.
 CODELIST_METADATA_COLS <- c(RUN_ID = "STRING", CODELIST_FILE = "STRING",
                             MD5 = "STRING", N_ROWS = "BIGINT",
-                            READ_AT = "TIMESTAMP")
+                            RECORDED_AT = "TIMESTAMP")
 
 record_codelist_hashes <- function(con, cfg) {
   seen <- getOption("lot_codelist_md5", list())
@@ -663,9 +667,11 @@ record_codelist_hashes <- function(con, cfg) {
 # found usable, and are not scanned for twice.
 FINAL_METADATA_COLS <- c(N_LOT_LONG_ROWS = "BIGINT",
                          N_LOT_LONG_PATIENTS = "BIGINT",
-                         LOT_LONG_BY_LINE = "STRING")
+                         LOT_LONG_BY_LINE = "STRING",
+                         N_LOT_FINAL_ROWS = "BIGINT",
+                         N_LOT_FINAL_PATIENTS = "BIGINT")
 
-record_final_counts <- function(con, cfg, counts) {
+record_final_counts <- function(con, cfg, counts, final) {
   tbl <- lot_out("LOT_RUN_METADATA")
   have <- tryCatch({
     d  <- db_q(con, glue("DESCRIBE {tbl}"))
@@ -693,10 +699,13 @@ record_final_counts <- function(con, cfg, counts) {
     UPDATE {tbl}
        SET N_LOT_LONG_ROWS = {counts$n_rows},
            N_LOT_LONG_PATIENTS = {counts$n_patients},
-           LOT_LONG_BY_LINE = '{dist}'
+           LOT_LONG_BY_LINE = '{dist}',
+           N_LOT_FINAL_ROWS = {final$n_rows},
+           N_LOT_FINAL_PATIENTS = {final$n_patients}
      WHERE RUN_ID = '{run_id}'"))
   log_msg("Recorded LOT_LONG: ", counts$n_rows, " lines for ",
-          counts$n_patients, " patients (", dist, ")")
+          counts$n_patients, " patients (", dist, "); LOT_LONG_FINAL: ",
+          final$n_rows, " lines for ", final$n_patients, " patients")
   invisible(TRUE)
 }
 
@@ -755,6 +764,40 @@ check_lot_long <- function(con, cfg) {
     stop(t, " is not usable: ", paste(bad, collapse = "; "), call. = FALSE)
   log_msg("LOT_LONG OK: ", q$n_rows, " lines for ", q$n_patients, " patients")
   # Handed to record_final_counts rather than counted again.
+  invisible(list(n_rows = q$n_rows, n_patients = q$n_patients))
+}
+
+# LOT_LONG_FINAL is the table downstream reads, and nothing looked at it:
+# check_lot_long ran on LOT_LONG, and the count beside the write is printed,
+# not checked. With no criteria declared the two are the same table and this
+# costs two aggregates. With a truncate criterion they are not, and a criterion
+# that fails everyone at LOT 1 would leave an empty deliverable behind a run
+# that still reached "complete".
+#
+# LOT_LONG_ALLFLAGS needs no equivalent: the criteria layer only adds columns
+# to it, so its rows are LOT_LONG's whatever is declared.
+check_lot_final <- function(con, cfg) {
+  t <- lot_out("LOT_LONG_FINAL")
+  q <- db_q(con, glue("
+    SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients FROM {t}"))
+  if (q$n_rows == 0)
+    stop(t, " is empty, so the run produced no lines to read. LOT_LONG has ",
+         "rows, so a truncate criterion has removed every one of them - check ",
+         "the criterion's SQL and its APPLY_ switch.", call. = FALSE)
+  # truncate drops the first failing line and every later one, so what is left
+  # always runs 1..n. A gap means it took a line out of the middle, which is
+  # the one thing the mode is defined not to do.
+  g <- db_q(con, glue("
+    SELECT count(*) AS n FROM (
+      SELECT PATID, min(LOT_NUM) AS lo, max(LOT_NUM) AS hi,
+             count(DISTINCT LOT_NUM) AS k
+      FROM {t} GROUP BY PATID HAVING lo <> 1 OR k <> hi - lo + 1)"))$n
+  if (g > 0)
+    stop(t, " is not usable: ", g, " patients whose lines do not run 1..n. ",
+         "truncate removes a failing line and every later one, so a gap means ",
+         "the removal is not doing that.", call. = FALSE)
+  log_msg("LOT_LONG_FINAL OK: ", q$n_rows, " lines for ", q$n_patients,
+          " patients")
   invisible(list(n_rows = q$n_rows, n_patients = q$n_patients))
 }
 
