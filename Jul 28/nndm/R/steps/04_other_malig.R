@@ -9,6 +9,13 @@ build_ndmm_other_malig_codes <- function(con) {
     c("dx", "icd_family", "tumor_group"))
   ovr_in <- paste(sprintf("'%s'", gsub("'", "''", ndmm_mm_adjacent_groups())),
                   collapse = ", ")
+  # Per-code answers, where the tumour-group label cannot give one. NULL when
+  # the file is absent or empty, and then the join is not written at all: an
+  # empty VALUES list is not valid SQL, and a join that matches nothing would
+  # read as a file that had been consulted.
+  ovr_src  <- load_override_csv(nndm_config()$mm_adjacent_csv)
+  ovr_join <- if (is.null(ovr_src)) "" else glue("LEFT JOIN {ovr_src} ON ovr.dx = om.dx AND ovr.icd_family = om.icd_family")
+  ovr_case <- if (is.null(ovr_src)) "" else "WHEN ovr.override IS NOT NULL THEN ovr.override "
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_OTHER_MALIG_CODES} AS
     -- Normalised first, then joined. Every column reference below is
@@ -39,11 +46,16 @@ build_ndmm_other_malig_codes <- function(con) {
            -- patient - so it cannot also make them an other-cancer patient,
            -- whatever its wording says about remission or relapse. The label
            -- list covers what is adjacent to MM without being on it.
-           CASE WHEN trim(om.tumor_group) IN ({ovr_in}) OR m.dx IS NOT NULL
+           -- A row in mm_adjacent_overrides.csv wins over the label, both
+           -- ways: it is the only thing that can say this particular
+           -- C79.5x is myeloma bone disease and that one is a breast
+           -- primary. Absent, the labels decide, which is apr_30_2026.
+           CASE {ovr_case}WHEN trim(om.tumor_group) IN ({ovr_in}) OR m.dx IS NOT NULL
                 THEN 1 ELSE 0 END AS is_mm_adjacent_override
     FROM om
     LEFT JOIN {NDMM_MM_DX_CODES} m
            ON m.dx = om.dx AND m.icd_family = om.icd_family
+    {ovr_join}
   "))
   # Only the five required labels are counted. The remission variants are a
   # proposal, not a contract with the code list, so their absence is reported

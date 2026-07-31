@@ -312,6 +312,53 @@ no row of `cl_mma_codelist.csv` **stops the run** rather than reading as a
 restriction that applies to nothing. Both values are pinned in `CONTRACT` and
 recorded in `NDMM_RUN_METADATA`, because setting either changes the count.
 
+### Bone metastasis, and the codes you can decide yourself
+
+The other-cancer criterion is decided on `other_malig.csv`'s `tumor_group`
+label, and five groups are overridden — treated as the index disease rather
+than another cancer. Four of them the label settles: **monoclonal gammopathy**,
+**solitary plasmacytoma**, **plasma cell leukemia**, **extramedullary
+plasmacytoma** are plasma-cell disease.
+
+The fifth is not like the others. **`SECONDARY MALIGNANT NEOPLASM OF BONE`** —
+`C79.51`, `C79.52`, `198.5` — says a cancer spread to bone. It does not say
+*which* cancer. Myeloma bone disease is usually coded as MM with bone
+involvement, but it is miscoded here too, which is why `apr_30_2026` overrides
+the group. A breast or prostate primary metastatic to bone carries the same
+code. **The label cannot separate those. A code can.**
+
+So there is a file to fill in:
+
+```
+Jul 28/nndm/codelists/mm_adjacent_overrides.csv
+dx,icd_family,override,note
+C79.51,ICD10,0,metastasis - exclude as another cancer
+C90.02,ICD10,1,myeloma in remission - the index disease
+```
+
+| column | meaning |
+|---|---|
+| `dx` | the ICD code; punctuation is ignored, `C79.51` and `C7951` are the same |
+| `icd_family` | `ICD9` or `ICD10` (`9`/`10`/`ICD-10` also accepted) |
+| `override` | `1` = the index disease, do **not** exclude · `0` = another cancer, **do** exclude |
+| `note` | free text — why, for whoever reads this next |
+
+**A row here wins over the tumour-group label, in both directions.** The file
+ships empty, which means the labels decide everything, which is exactly
+`apr_30_2026`'s cohort — so nothing changes until you put something in it. Set
+`NDMM_MM_ADJACENT_CSV` to use a file somewhere else.
+
+Every run writes **`<prefix>NDMM_MM_ADJACENT_CODES`**: every code currently
+kept as the index disease, with its group, in these columns. That is the list
+to copy from — you should not have to go looking for the codes.
+
+Malformed rows **stop the run** rather than being skipped: an override that is
+not 0 or 1, an unrecognised `icd_family`, a `dx` that is blank once punctuation
+is stripped, one code given two answers, or missing columns. A row silently
+dropped from a file whose only purpose is to be exact would read as a decision
+somebody made. The file's md5 goes into `NDMM_CODELIST_METADATA` even when it
+is empty, so a cohort says which version of it was read.
+
 ### Where this departs from the protocol
 
 All protocol references are to `Questions/July 30 2026/Updated NNDM cohort.pdf`

@@ -122,6 +122,7 @@ CHECKPOINTS <- c("NDMM_FLAGS_ALL", "NDMM_MM_DX_CODES",
 # What the run writes. All prefixed, so two cohorts sit side by side.
 DELIVERABLES <- c("NDMM_COHORT", "NDMM_ATTRITION", "NDMM_INDEX_AGENTS",
                   "NDMM_BELANTAMAB_SCOPE_COUNTS", "NDMM_MM_ADJACENT_GROUPS",
+                  "NDMM_MM_ADJACENT_CODES",
                   "NDMM_CODELIST_METADATA", "NDMM_RUN_METADATA",
                   "NDMM_BUILD_STATUS")
 OUTPUTS <- c(DELIVERABLES, CHECKPOINTS)
@@ -200,6 +201,18 @@ pin_output_schema <- function(cfg) {
 
 # The caller says which cohort. Every table read and written carries the
 # prefix, so this folder names no cohort of its own.
+# Where the per-code MM-adjacent overrides live. The environment wins; failing
+# that it is the copy that ships beside this code, so a checkout has a file to
+# edit rather than a setting to find out about. The file need not exist - see
+# load_override_csv() - but the path is always recorded, so a run says which
+# file it looked for whether or not it found one.
+pin_override_csv <- function(cfg, here) {
+  p <- trimws(as.character(cfg$mm_adjacent_csv %||% ""))
+  cfg$mm_adjacent_csv <-
+    if (nzchar(p)) p else file.path(here, "codelists", "mm_adjacent_overrides.csv")
+  cfg
+}
+
 pin_prefix <- function(cfg, prefix) {
   prefix <- trimws(as.character(prefix %||% ""))
   if (!nzchar(prefix))
@@ -834,6 +847,7 @@ build_nndm <- function(here, prefix) {
   check_settings()
   cfg <- pin_output_schema(cfg_defaults)
   cfg <- pin_prefix(cfg, prefix)
+  cfg <- pin_override_csv(cfg, here)
   check_contract(cfg)
   check_choices(cfg)
   check_constants(cfg)
@@ -910,6 +924,7 @@ build_nndm <- function(here, prefix) {
   build_ndmm_other_malig_codes(con)
   checkpoint(con, "NDMM_OTHER_MALIG_CODES")
   build_ndmm_mm_adjacent_groups(con, cfg)
+  build_ndmm_mm_adjacent_codes(con, cfg)
   build_ndmm_med_claim_header_and_confinement(con, cdm_src(cfg$tbl_medical),
                                               cdm_src(cfg$tbl_confinement))
   build_ndmm_other_malig_pre_lot1(con, cdm_src(cfg$tbl_med_diag))

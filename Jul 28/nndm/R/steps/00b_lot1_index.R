@@ -277,6 +277,28 @@ build_ndmm_belantamab_scope_counts <- function(con, cfg) {
 # labels the production list actually stores is not visible from here, and the
 # remission wording is exactly where it is likely to differ - so the run writes
 # what it found rather than leaving the question to a comment.
+# Every code in an overridden group, in the shape mm_adjacent_overrides.csv
+# wants. The group table says which labels are kept; this says which codes that
+# actually is, so deciding one of them is a copy and an edit rather than a
+# research task. OVERRIDE is what this run did, so a filled-in CSV shows up here
+# as the value it set.
+build_ndmm_mm_adjacent_codes <- function(con, cfg) {
+  db_exec(con, glue("
+    CREATE OR REPLACE TABLE {wrk('NDMM_MM_ADJACENT_CODES')} AS
+    SELECT dx                       AS DX,
+           icd_family               AS ICD_FAMILY,
+           is_mm_adjacent_override  AS OVERRIDE,
+           tumor_group              AS TUMOR_GROUP
+    FROM {NDMM_OTHER_MALIG_CODES}
+    WHERE is_mm_adjacent_override = 1
+    ORDER BY TUMOR_GROUP, ICD_FAMILY, DX"))
+  n <- as.integer(db_q(con, glue(
+    "SELECT count(*) AS n FROM {wrk('NDMM_MM_ADJACENT_CODES')}"))$n)
+  log_msg("  ", n, " codes are kept as the index disease rather than another ",
+          "cancer -> ", wrk("NDMM_MM_ADJACENT_CODES"))
+  invisible(n)
+}
+
 build_ndmm_mm_adjacent_groups <- function(con, cfg) {
   db_exec(con, glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_MM_ADJACENT_GROUPS')} AS

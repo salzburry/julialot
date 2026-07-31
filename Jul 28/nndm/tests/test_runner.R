@@ -48,7 +48,8 @@ clear <- function() for (v in SETTINGS) Sys.unsetenv(v)
 clear()
 
 cat("\n-- the runner calls its phases, in order --\n")
-ORDER <- c("check_settings", "pin_output_schema", "pin_prefix", "check_contract",
+ORDER <- c("check_settings", "pin_output_schema", "pin_prefix",
+           "pin_override_csv", "check_contract",
            "check_choices", "check_constants", "set_lot_config",
            "check_no_active_run", "check_upstream", "write_build_status",
            "clear_run_rows",
@@ -61,6 +62,7 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_prefix", "check_contract"
            "build_ndmm_lot1_index", "build_ndmm_index_agents",
            "build_ndmm_therapy_pre_lot1",
            "build_ndmm_other_malig_codes", "build_ndmm_mm_adjacent_groups",
+           "build_ndmm_mm_adjacent_codes",
            "build_ndmm_med_claim_header_and_confinement",
            "build_ndmm_other_malig_pre_lot1", "build_ndmm_preg_codes",
            "build_ndmm_pregnancy_patids", "build_ndmm_belantamab_patids",
@@ -292,6 +294,52 @@ m <- tryCatch({ load_codelist_csv("not_a_codelist.csv", c("x", "y")); "" },
               error = conditionMessage)
 ok(grepl("not one of the files", m, fixed = TRUE),
    "and a file nobody declared is still refused, present or not")
+
+cat("\n-- the per-code answer a tumour-group label cannot give --\n")
+# SECONDARY MALIGNANT NEOPLASM OF BONE is overridden as MM bone disease, but
+# C79.51 is equally a breast primary metastatic to bone. The label cannot tell
+# them apart, so a row in mm_adjacent_overrides.csv decides the code. Driven
+# through the real loader, on real files: what it does with a malformed row is
+# the whole point of it.
+OVCSV <- file.path(tmp, "mm_adjacent_overrides.csv")
+drive_ov <- function(lines) {
+  writeLines(lines, OVCSV)
+  tryCatch(load_override_csv(OVCSV), error = conditionMessage)
+}
+ok(is.null(load_override_csv(file.path(tmp, "nope.csv"))),
+   "a file that is not there means the labels decide, and is not a failure")
+# Not by clearing the option: other_malig.csv's hash is already in it and the
+# metadata test below reads it. Named before and after instead, which also
+# proves this call is what added it.
+had_ov <- "mm_adjacent_overrides.csv" %in% names(getOption("nndm_codelist_md5", list()))
+ok(is.null(drive_ov("dx,icd_family,override,note")),
+   "...and neither is the empty file this package ships")
+# Absent and empty behave alike but are not alike, and only one is a decision.
+ok(!had_ov && "mm_adjacent_overrides.csv" %in% names(getOption("nndm_codelist_md5")),
+   "...though the empty one is hashed, so the run says it read it")
+got <- drive_ov(c("dx,icd_family,override,note",
+                  "C79.51,ICD10,0,breast primary in this cohort",
+                  "C9000,9,1,myeloma bone disease"))
+ok(is.character(got) && grepl("('C7951', 'ICD10', 0)", got, fixed = TRUE),
+   "a listed code reaches the SQL normalised, punctuation stripped")
+ok(is.character(got) && grepl("('C9000', 'ICD9', 1)", got, fixed = TRUE),
+   "...and its ICD family spelled however the file spelled it")
+# Each of these is a typo in a file whose only purpose is to be exact, so it
+# stops the run. A dropped row would read as a decision that had been made.
+ok(grepl("override must be 0 or 1", drive_ov(c("dx,icd_family,override,note",
+   "C7951,ICD10,yes,")), fixed = TRUE),
+   "an override that is not 0 or 1 stops the run")
+ok(grepl("must say ICD9 or ICD10", drive_ov(c("dx,icd_family,override,note",
+   "C7951,ICD11,1,")), fixed = TRUE),
+   "an ICD family nobody can act on stops the run")
+ok(grepl("blank once punctuation is stripped", drive_ov(c("dx,icd_family,override,note",
+   "---,ICD10,1,")), fixed = TRUE),
+   "a code that normalises to nothing stops the run, not matches every claim")
+ok(grepl("two answers for", drive_ov(c("dx,icd_family,override,note",
+   "C7951,ICD10,1,", "C79.51,ICD-10,0,")), fixed = TRUE),
+   "and one code given two answers stops the run rather than one winning")
+ok(grepl("missing", drive_ov(c("dx,icd_family", "C7951,ICD10")), fixed = TRUE),
+   "a file without the columns is refused, not read as empty")
 
 cat("\n-- which code lists built the cohort --\n")
 # The hashes were collected into an option and dropped. A cohort that cannot be
@@ -848,6 +896,66 @@ for (k in c("%REMISSION%", "%RELAPSE%", "%PLASMACYTOMA%", "%PLASMA CELL%",
   ok(grepl(k, g, fixed = TRUE), paste0("...including anything matching ", k))
 ok(grepl("max(is_mm_adjacent_override)", g, fixed = TRUE),
    "with whether the override reaches it, which is the question being asked")
+
+# And the codes themselves, in the shape mm_adjacent_overrides.csv wants, so
+# deciding one is a copy and an edit. Only the overridden ones: the whole
+# other-cancer code list is thousands of rows and would bury the question.
+SSQL <- character(0)
+assign("db_q", function(con, sql) data.frame(n = 7L), envir = se)
+se$build_ndmm_mm_adjacent_codes(NULL, cfg_defaults)
+ac <- SSQL[1]
+ok(grepl("NDMM_MM_ADJACENT_CODES", ac, fixed = TRUE) &&
+     grepl("WHERE is_mm_adjacent_override = 1", ac, fixed = TRUE),
+   "the codes kept as the index disease are written out, and only those")
+ok(all(vapply(c("DX", "ICD_FAMILY", "OVERRIDE"), function(c0)
+        grepl(paste0("AS ", c0), ac, fixed = TRUE), logical(1))),
+   "...under the column names the overrides CSV uses, so it pastes in")
+
+cat("\n-- the other-cancer code list, driven --\n")
+# Held here rather than only in test_same_as_source.R. The mm_dx join sits
+# inside a block that suite splices out wholesale before comparing, so once the
+# block grew to take in the overrides join, breaking the mm_dx join stopped
+# being noticed there. The battery found that. Driven, it cannot go quiet
+# again whatever the splice covers.
+oe2 <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = oe2)
+sys.source(file.path(ROOT, "R", "standalone_constants.R"), envir = oe2)
+sys.source(file.path(ROOT, "R", "steps", "04_other_malig.R"), envir = oe2)
+assign("log_msg", function(...) invisible(NULL), envir = oe2)
+assign("load_codelist_csv", function(...) "(SELECT 1) src", envir = oe2)
+assign("nndm_config", function() list(mm_adjacent_csv = "x.csv"), envir = oe2)
+assign("db_q", function(con, sql)
+  data.frame(n = length(oe2$NDMM_MM_ADJACENT_OVERRIDE)), envir = oe2)
+OSQL <- character(0)
+assign("db_exec", function(con, sql) { OSQL <<- c(OSQL, sql); invisible(TRUE) },
+       envir = oe2)
+drive_om <- function(frag) {
+  OSQL <<- character(0)
+  assign("load_override_csv", function(path) frag, envir = oe2)
+  oe2$build_ndmm_other_malig_codes(NULL)
+  OSQL[1]
+}
+o0 <- drive_om(NULL)
+# The join that says a code on mm_dx.csv is the index disease, not another
+# cancer. The ON clause has to end where it ends: " AND 1 = 0" appended to it
+# would leave every grep for the join itself passing.
+ok(grepl(paste0("LEFT JOIN ", oe2$NDMM_MM_DX_CODES,
+                " m\n           ON m.dx = om.dx AND m.icd_family = om.icd_family\n"),
+         o0, fixed = TRUE),
+   "a code on the MM diagnosis list cannot also make a patient an other-cancer case")
+# No file, no join: an empty VALUES list is not valid SQL, and a join matching
+# nothing would read as a file that had been consulted.
+ok(!grepl("ovr.override", o0, fixed = TRUE) &&
+     !grepl("LEFT JOIN (SELECT", o0, fixed = TRUE),
+   "with no overrides file, nothing about overrides reaches the query")
+o1 <- drive_om("(SELECT * FROM (VALUES ('C7951', 'ICD10', 0)) AS t(dx, icd_family, override)) ovr")
+ok(grepl("WHEN ovr.override IS NOT NULL THEN ovr.override ", o1, fixed = TRUE) &&
+     grepl("ON ovr.dx = om.dx AND ovr.icd_family = om.icd_family", o1, fixed = TRUE),
+   "and with one, the listed code is joined and asked first")
+# First, or the label would win and the file would be decoration.
+ok(regexpr("ovr.override IS NOT NULL", o1, fixed = TRUE) <
+     regexpr("trim(om.tumor_group) IN", o1, fixed = TRUE),
+   "...before the tumour-group label, which is the whole point of listing it")
 
 cat("\n-- what \"belantamab in any LOT\" is taken to mean --\n")
 # Lines of therapy do not exist when this runs - the LOT algorithm runs over
