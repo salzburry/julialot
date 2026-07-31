@@ -1864,4 +1864,27 @@ ok(length(unwritten) == 0,
    else paste0("and every one of the ", length(OUTPUTS),
                " declared outputs is written by code the run reaches"))
 clear()
+
+cat("\n-- the README names every table the run writes --\n")
+# The deliverables list grew from five to thirteen and the README kept saying
+# five, twice over. A reader who cannot see a table does not know to look at
+# it, and every review table exists precisely to be looked at. Derived from
+# OUTPUTS, so a table added later has to be written up or this fails.
+readme <- paste(readLines(file.path(ROOT, "README.md"), warn = FALSE),
+                collapse = "\n")
+unnamed <- Filter(function(k) !grepl(k, readme, fixed = TRUE), OUTPUTS)
+ok(length(unnamed) == 0,
+   if (length(unnamed))
+     paste0("written by the run but not named in the README: ",
+            paste(unnamed, collapse = ", "))
+   else paste0("all ", length(OUTPUTS), " outputs are named in the README"))
+# And the fill-in files, which are useless if nobody knows they exist.
+unnamed <- Filter(function(f) !grepl(f, readme, fixed = TRUE),
+                  list.files(file.path(ROOT, "codelists"), "\\.csv$"))
+ok(length(unnamed) == 0,
+   if (length(unnamed))
+     paste0("shipped for filling in but not named in the README: ",
+            paste(unnamed, collapse = ", "))
+   else "...as is every file this package ships to be filled in")
+
 report()

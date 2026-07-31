@@ -89,11 +89,12 @@ is repointed at the table, so each later read is a table scan. The steps are
 untouched — they still name the view:
 
 ```
-NDMM_FLAGS_ALL         NDMM_MM_DX_CODES       NDMM_MM_DX_EVENTS
-NDMM_MM_QUALIFYING     NDMM_BASE_COHORT       NDMM_ENROLL_SPANS
-NDMM_MMA_CODELIST      NDMM_BELANTAMAB_CODES  NDMM_INDEX_TX
-NDMM_LOT1_STARTS       NDMM_OTHER_MALIG_CODES NDMM_BELANTAMAB_TX
-NDMM_BELANTAMAB_PATIDS NDMM_PATIDS
+NDMM_FLAGS_ALL          NDMM_MM_DX_CODES         NDMM_MM_DX_EVENTS
+NDMM_MM_QUALIFYING      NDMM_BASE_COHORT         NDMM_ENROLL_SPANS
+NDMM_ENROLL_SPANS_STRICT NDMM_MMA_CODELIST       NDMM_BELANTAMAB_CODES
+NDMM_LOT1_STARTS        NDMM_OTHER_MALIG_CODES   NDMM_OTHER_MALIG_EVENTS
+NDMM_BELANTAMAB_PATIDS  NDMM_INDEX_TX            NDMM_BELANTAMAB_TX
+NDMM_PATIDS             NDMM_INDEX_INELIGIBLE
 ```
 
 The list is not maintained by hand: `tests/test_runner.R` counts the reads in
@@ -113,11 +114,7 @@ original query. It was the one materialization that still warned and carried
 on; it is the same one call as the other ten now, and it is a deliverable as
 well as a checkpoint.
 
-Deliverables, all prefixed: `NDMM_COHORT` (the cohort, written as a table
-`Jul 28/lot` can be pointed at — see below), `NDMM_ATTRITION` (the nine rows
-below), `NDMM_CODELIST_METADATA`, `NDMM_RUN_METADATA`, `NDMM_BUILD_STATUS`.
-`NDMM_FLAGS_ALL` — one row per candidate with every filter's verdict — is both
-a deliverable and a checkpoint. The other checkpoint tables are listed above.
+The deliverables are listed in **What every run writes**, below.
 
 `07_cohort.R` still carries `build_lot_long_filtered()`, and `02_lot1_starts.R`
 still carries `build_lot1_starts_ndmm()`. The runner calls neither: the first
@@ -132,6 +129,47 @@ Every setting is checked twice: against `CONTRACT`, and then against the
 `NDMM_*` constants the SQL actually interpolates — those have their own
 environment variables (`NDMM_LOT1_FROM` is not `LOT1_FROM`), so a contract
 checked against `cfg` alone would not speak for the query that runs.
+
+## What every run writes
+
+All prefixed, so two cohorts sit side by side in one schema.
+
+### The cohort, and what made it
+
+| table | what it is |
+|---|---|
+| `NDMM_COHORT` | the cohort — one row per patient, the ten columns `Jul 28/lot` needs |
+| `NDMM_ATTRITION` | the nine-step funnel, with counts and percentages |
+| `NDMM_FLAGS_ALL` | one row per 1L candidate with every filter's verdict (also a checkpoint) |
+| `NDMM_RUN_METADATA` | the md5 of every R file, the contract as one string, the run choices, the waivers asked for and the waivers that fired |
+| `NDMM_CODELIST_METADATA` | the md5 and row count of every code list and fill-in file read |
+| `NDMM_BUILD_STATUS` | started / complete / failed, per run and prefix — what `check_no_active_run()` reads |
+
+### The review tables
+
+**Six open questions, six tables.** Each exists because the protocol is silent,
+a code list cannot answer, or the answer needs a build that has not run yet.
+None of them changes the cohort — they are what the decision gets made
+*against*, so nobody has to guess and nobody has to re-run to find out.
+
+| table | the question it answers | what to do with it |
+|---|---|---|
+| `NDMM_INDEX_AGENTS` | which agents may set a 1L index — §6.2.1.1 names a list no document here contains | every `CL_MED_ABBR` on the code list, whether this run let it set an index, and how many it set. Fill in `codelists/eligible_1l_agents.csv` |
+| `NDMM_MM_ADJACENT_GROUPS` | which tumour groups are the index disease rather than another cancer | every plasma-cell-looking label, and whether the override reaches it |
+| `NDMM_MM_ADJACENT_CODES` | *which* `C79.5x` is myeloma bone disease and which is a breast primary — a label cannot say | every code kept as the index disease, in the columns `codelists/mm_adjacent_overrides.csv` uses. Copy, set the ones you want to `0`, paste |
+| `NDMM_OTHER_MALIG_GROUPS` | which code-list labels are one tumour type | every label with the group it pairs under. Anything whose `PRIMARY_GROUP` is still itself can only confirm itself. Fill in `codelists/primary_tumor_groups.csv` |
+| `NDMM_OTHER_MALIG_GRAIN` | is that grain actually costing anything? | criterion 7 counted at the finest, configured and coarsest grouping. **The gap between the first row and the last is the whole question** — if it is small, no map is needed |
+| `NDMM_FU_CE_COUNTS` | what the follow-up CE window costs — the one setting resting on a relay, not a document | `N_PASSING_CRITERION_5` and `N_COHORT` at 0 / 30 / 60 / 90 days and at an exact 3 months, with this run's row marked |
+| `NDMM_BELANTAMAB_SCOPE_COUNTS` | which claims proxy stands for "in any LOT" | `N_PATIENTS` and `N_COHORT` under each of the three readings, with this run's marked |
+| `NDMM_BELANTAMAB_RECONCILE` | **which patients the proxy could not settle** | the cohort's own belantamab claims, with dates. Join to `LOT_LONG` after `Jul 28/lot` runs — an empty result means the proxy was exact |
+
+Three of them pair with a file you fill in; those are covered in **Bone
+metastasis**, **Which agents may set the 1L index** and **One label per code is
+the wrong grain**. All three ship **empty**, so until somebody writes in one,
+this build produces `apr_30_2026`'s cohort and not a variation on it.
+
+`tests/test_runner.R` requires every declared output to be named here, so this
+list cannot fall behind the code — it had, twice, before that test existed.
 
 ## The criteria as applied
 

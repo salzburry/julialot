@@ -223,6 +223,8 @@ M = [
  ("active run warns instead","R/build_nndm.R","  stop(\"Run(s) \", who, \" are already building prefix \"","  log_msg(\"Run(s) \", who, \" are already building prefix \""),
  ("active run override always on","R/build_nndm.R","  if (identical(toupper(Sys.getenv(\"NDMM_IGNORE_ACTIVE_RUN\", unset = \"\")), \"TRUE\")) {","  if (TRUE) {"),
  ("active run drops the timestamp","R/build_nndm.R","  who <- paste(paste0(d$RUN_ID, \" (started \", d$UPDATED_AT, \")\"), collapse = \", \")","  who <- paste(d$RUN_ID, collapse = \", \")"),
+ ("readme drops a checkpoint","README.md","NDMM_ENROLL_SPANS_STRICT","NDMM_ENROLL_SPANS_LOOSE"),
+ ("readme drops a view","README.md","NDMM_INDEX_INELIGIBLE","NDMM_INDEX_UNELIGIBLE"),
  ("scope counts not costed","R/steps/00b_lot1_index.R","                                AND f.NO_PREGNANCY             = 1\n                               THEN f.PATID END) AS N_COHORT,","                               THEN f.PATID END) AS N_COHORT,"),
  ("scope counts this run unmarked","R/steps/00b_lot1_index.R","           max(CASE WHEN sp.SCOPE = '{NDMM_BELANTAMAB_SCOPE}' THEN 1 ELSE 0 END)","           max(1)"),
  ("scope counts drop a reading","R/steps/00b_lot1_index.R","    sp AS (SELECT * FROM (VALUES ('ever'), ('study_period'), ('from_index')) AS t(SCOPE))","    sp AS (SELECT * FROM (VALUES ('study_period'), ('from_index')) AS t(SCOPE))"),
