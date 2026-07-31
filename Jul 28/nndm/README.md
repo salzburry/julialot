@@ -53,16 +53,33 @@ differ it says so. Compare it against the protocol when either changes.
 ### Inherited from the parent cohort
 
 These are applied by `Jul 28/overall` and enter here through
-`OVERALL_COH_FINAL` - this build does not re-derive them.
+`OVERALL_COH_FINAL`. Read from `Jul 28/overall/config.csv`, which is what
+governs the table this build reads: steps 1-6 are on, the four exclusions off.
 
-| # | criterion | as applied |
+| step | criterion | as applied |
 |---|---|---|
-| 1 | **MM diagnosis** | ≥1 inpatient medical claim with an MM diagnosis in any position (ICD-9-CM `203.0x` or ICD-10-CM `C90.0x`), **or** ≥2 outpatient medical claims for MM in any position on separate days **within 90 days**, during the study period. §6.2.1.1 fixes the window at 90; `Jul 28/overall`'s `OUTPATIENT_WINDOW` is `90`. |
-| 2 | **Adult age** | ≥18 years in the index year |
+| 1 | **MM diagnosis** | ≥1 inpatient medical claim with an MM diagnosis in any position (ICD-9-CM `203.0x` or ICD-10-CM `C90.0x`), **or** ≥2 outpatient medical claims for MM in any position on separate days **within 90 days**, during the study period. §6.2.1.1 fixes the window at 90; `OUTPATIENT_WINDOW` is `90`. No switch — without it there is no index date. |
+| 2 | **Adult age** | ≥18 at the MM-diagnosis index (`MIN_AGE`) |
+| 3 | **6-month baseline CE** | `APPLY_CE_B_INCL` |
+| 4 | **Enrolled on the index date** | `APPLY_CE_F_INCL` |
+| 5 | **No MM agent in baseline** | `APPLY_NO_BL_AGENTS_INCL` |
+| 6 | **≥1 MM agent in follow-up** | `APPLY_FU_AGENTS_INCL` |
+| 7–10 | baseline MM dx, other malignancy, pregnancy, clinical trial | **off** — NDMM applies its own |
 
-The parent's own follow-up-CE and baseline-therapy steps are configured off for
-this study (`pipeline_inputs.csv`), because NDMM re-applies them at the 1L
-anchor rather than the MM-diagnosis anchor. That is the point of this build.
+**Steps 3–6 are anchored at the MM diagnosis; this build re-applies CE and
+baseline therapy at the 1L start.** Both anchors are in §6.2.1.1, so a patient
+must satisfy each rule at each anchor. It does mean attrition step 2 carries
+six criteria rather than the two a reader might expect, and that a patient
+dropped by the parent's six-month baseline never reaches this build's
+twelve-month one. If the study team wants the 1L criteria applied to a parent
+cohort filtered on diagnosis and age alone, steps 3–6 belong off in
+`Jul 28/overall/config.csv` — that is a change there, not here.
+
+**This build cannot tell which settings produced the table it reads.**
+`check_upstream()` proves `OVERALL_COH_FINAL` is readable, nothing more.
+`Jul 28/overall` persists no run metadata for it to check against, so a cohort
+built with different `APPLY_*` switches is indistinguishable from this one.
+Closing that needs a metadata table written by `Jul 28/overall`.
 
 ### Applied here
 
@@ -80,8 +97,9 @@ anchor rather than the MM-diagnosis anchor. That is the point of this build.
 `NNDM E/attritom.pdf` lists it as Step 10, but that sheet is the parent MM
 cohort's funnel — six-month CE, age 18, the MM diagnosis steps — and protocol
 Rev Round 2 §6.2.1.2 has four exclusions, this not among them.
-`pipeline_inputs.csv` says the same. If the study team wants it back, it is a
-new step, not a toggle.
+`Jul 28/overall/config.csv` has `APPLY_CLINTRIAL_EXCL,FALSE`, so neither build
+applies it. If the study team wants it back, it is a new step here or a switch
+there, not something this build can toggle.
 
 **On belantamab being matched by drug and not by class.** §6.2.1.2 writes the
 exclusion as "Received belantamab mafodotin (i.e., an ADC) in any LOT" and
@@ -146,7 +164,7 @@ not.
 | # | step | protocol |
 |---|---|---|
 | 1 | Patients in `LOT_LONG` | — (starting population) |
-| 2 | + in `OVERALL_COH_FINAL` (parent IE) | §6.2.1.1 incl. 1 **and** 2 |
+| 2 | + in `OVERALL_COH_FINAL` (parent IE) | §6.2.1.1, six criteria |
 | 3 | + 1L start on or after `LOT1_FROM` | §6.2.1.1 incl. 3 |
 | 4 | + 12-month CE before index | §6.2.1.1 incl. 4 |
 | 5 | + CE during follow-up | §6.2.1.1 incl. 5 |
@@ -155,12 +173,14 @@ not.
 | 8 | + no pregnancy in study period | §6.2.1.2, excl. 3 |
 | 9 | + no belantamab in any LOT — **the 1L NDMM cohort** | §6.2.1.2, excl. 4 |
 
-**Step 2 carries two protocol criteria, not one.** §6.2.1.1's MM diagnosis and
-adult age are both applied by `Jul 28/overall` and arrive here already
-combined, inside the parent cohort table. Splitting them into separate rows is not
-possible from this build — by the time it reads that table both filters have
-run. `Jul 28/overall`'s own attrition has them as separate steps, and that is
-where to read them.
+**Step 2 carries six protocol criteria, not one.** `Jul 28/overall` applies MM
+diagnosis, adult age, six-month baseline CE, enrolment on the index date, no MM
+agent in baseline, and at least one MM agent in follow-up — all at the
+MM-diagnosis anchor — and they arrive here already combined inside
+`OVERALL_COH_FINAL`. Splitting them into separate rows is not possible from
+this build; by the time it reads that table every one of them has run. See the
+parent-criteria table above, and `Jul 28/overall`'s own attrition for the
+per-step counts.
 
 **Step 9 is not a baseline criterion.** Every other step is anchored to the 1L
 index date; this one is "in any LOT", with no date bound at all, so a patient
