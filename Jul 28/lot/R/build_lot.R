@@ -41,13 +41,12 @@ CONTRACT <- list(
 # expected condition also waived the dangerous ones.
 WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types",
                      "subs_substitute", "subs_original", "ndc_short",
-                     "claim_ndc_short")
+                     "claim_ndc_short", "claim_ndc_shape")
 
 # Fatal checks: always stop the build. Named rather than merely absent, so a
 # waiver naming one is told why it is refused instead of "no such check".
 FATAL_CHECKS <- c("code_to_med", "bad_ndc", "rollup_defs", "blank_keys",
-                  "ndc_shape", "claim_ndc_shape", "multi_class",
-                  "class_agreement")
+                  "ndc_shape", "multi_class", "class_agreement")
 
 ALL_CHECKS <- c(WAIVABLE_CHECKS, FATAL_CHECKS)
 
@@ -406,38 +405,49 @@ check_claim_ndc <- function(con, cfg) {
            n_nodigit, " with no digits, ", n_zero, " all zeros")),
     character(1)), collapse = "; ")
 
-  # Two conditions, split the way the code side is. A ten-digit claim is a real
-  # NDC in a layout the pad has to guess, which the study team can review. The
-  # rest cannot be an NDC at all: 'ABC123' reaches the join as 00000000123 and
-  # can match a real code, and an underlength numeric does the same. All-zero
-  # has eleven digits, so only a count of its own catches it - it is the key a
-  # claim with no NDC produces, and bad_ndc is fatal on the code side.
+  # Two conditions, named apart the way the code side is. Both are reviewable:
+  # these are the CDM's tables, not ours, so there is no code list to correct
+  # and a run that could not proceed would have no remedy short of changing the
+  # join. What the split buys is that accepting one does not accept the other.
+  decide <- function(d, name, msg) {
+    if (nrow(d) == 0) return(invisible(FALSE))
+    if (!(name %in% codelist_waivers())) stop(msg, call. = FALSE)
+    log_msg("WAIVED (", name, "): ", detail(d))
+    options(lot_waivers_applied = union(getOption("lot_waivers_applied",
+                                                  character(0)), name))
+    invisible(TRUE)
+  }
+
+  # Cannot be an NDC in any form. 'ABC123' reaches the join as 00000000123 and
+  # can match a real code; an underlength numeric does the same. All-zero has
+  # eleven digits, so only a count of its own catches it - it is the key a
+  # claim with no NDC produces, and bad_ndc stops the same value on the code
+  # side.
   shape <- prof[prof$n_ndc > 0 & (prof$n_alpha > 0 | prof$n_other > 0 |
                                   prof$n_zero > 0), , drop = FALSE]
-  if (nrow(shape) > 0)
-    stop("Claim NDCs that cannot be an NDC: ", detail(shape),
-         ".\nThe join strips non-digits and pads to eleven, so a value like ",
-         "ABC123 arrives as 00000000123 and can match a real code. This is ",
-         "not waivable: nothing here can tell such a claim from a genuine ",
-         "one. If this CDM really carries them, the join has to exclude them ",
-         "before LOT can be trusted on it.", call. = FALSE)
+  decide(shape, "claim_ndc_shape",
+         paste0("Claim NDCs that cannot be an NDC: ", detail(shape),
+                ".\nThe join strips non-digits and pads to eleven, so a value ",
+                "like ABC123 arrives as 00000000123 and can match a real code, ",
+                "and nothing here can tell it from a genuine claim. If the CDM ",
+                "really carries these, either the join has to exclude them or ",
+                "the study team has to accept that they may match: waive with ",
+                "CODELIST_WAIVERS=claim_ndc_shape."))
 
+  # A real NDC in one of three layouts, and the pad only gets 4-4-2 right.
   short <- prof[prof$n_ndc > 0 & prof$n_10 > 0, , drop = FALSE]
-  if (nrow(short) > 0) {
-    if (!("claim_ndc_short" %in% codelist_waivers()))
-      stop("Ten-digit claim NDCs: ", detail(short),
-           ".\nThe join left-pads to eleven, which is right only for the ",
-           "4-4-2 layout, so a ten-digit claim can be read as a different ",
-           "drug's code or as none. Confirm how this CDM represents NDC, or ",
-           "convert with an approved NDC10-to-NDC11 crosswalk. Once the study ",
-           "team has established that the padding is right for this data, ",
-           "waive it with CODELIST_WAIVERS=claim_ndc_short.", call. = FALSE)
-    log_msg("WAIVED (claim_ndc_short): ", detail(short))
-    options(lot_waivers_applied = union(getOption("lot_waivers_applied",
-                                                  character(0)), "claim_ndc_short"))
-    return(invisible(TRUE))
-  }
-  log_msg("  OK: Every claim NDC is eleven digits.")
+  decide(short, "claim_ndc_short",
+         paste0("Ten-digit claim NDCs: ", detail(short),
+                ".\nThe join left-pads to eleven, which is right only for the ",
+                "4-4-2 layout, so a ten-digit claim can be read as a different ",
+                "drug's code or as none. Confirm how this CDM represents NDC, ",
+                "or convert with an approved NDC10-to-NDC11 crosswalk. Once ",
+                "the study team has established that the padding is right for ",
+                "this data, waive it with CODELIST_WAIVERS=claim_ndc_short."))
+
+  if (nrow(shape) == 0 && nrow(short) == 0)
+    log_msg("  OK: Every claim NDC is eleven digits.")
+  invisible(TRUE)
 }
 
 # One row per run saying whether its outputs belong together. Without it a

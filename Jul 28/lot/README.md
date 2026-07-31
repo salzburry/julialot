@@ -250,14 +250,14 @@ deliberately kept in a separate file, a code type this study does not use, a
 substitution left inactive, a ten-digit NDC in a documented layout:
 
 `orphan_meds`, `uncoded_meds`, `code_types`, `subs_substitute`,
-`subs_original`, `ndc_short`, `claim_ndc_short`.
+`subs_original`, `ndc_short`, `claim_ndc_short`, `claim_ndc_shape`.
 
 Not waivable, because each means a claim counted twice, a code matching every
 claim with no NDC, a medication with no class, or an output column that is
 always zero - conditions to correct in the code list, not to accept:
 
 `code_to_med`, `bad_ndc`, `rollup_defs`, `blank_keys`, `ndc_shape`,
-`multi_class`, `claim_ndc_shape`, `class_agreement`.
+`multi_class`, `class_agreement`.
 
 Naming one of the second group is refused before the build starts, and told
 why rather than "no such check". Refusing at startup is not enough on its own -
@@ -331,13 +331,17 @@ eleven digits, letter-free and not all zeros. Every nonblank value is counted,
 including the ones that cannot join: a profile that skipped those would report
 "all eleven digits" without having looked at them.
 
-Split the same way the code side is. `claim_ndc_short` is a ten-digit claim -
-a real NDC in a layout the pad has to guess, which the study team can review
-and waive. `claim_ndc_shape` is everything else: letters, another length,
-all zeros. Those cannot be an NDC at all, `ABC123` reaches the join as
-`00000000123` and can match a real code, and nothing here can tell such a
-claim from a genuine one - so it is fatal, and one name cannot accept it
-alongside the case that was actually reviewed. A ten-digit *claim* has exactly the layout problem a ten-digit
+Named apart the way the code side is. `claim_ndc_short` is a ten-digit claim -
+a real NDC in a layout the pad has to guess. `claim_ndc_shape` is everything
+else: letters, another length, all zeros. Those cannot be an NDC at all, and
+`ABC123` reaches the join as `00000000123` where it can match a real code.
+
+Both are reviewable rather than fatal, unlike their code-side counterparts.
+These are the CDM's tables, not ours: there is no code list to correct, so a
+check that could not be waived would leave no remedy short of changing the
+join. What the split buys is that accepting one does not accept the other -
+waiving the reviewed ten-digit case cannot let `ABC123` through with it, and
+each is recorded in `CODELIST_WAIVERS_APPLIED` under its own name. A ten-digit *claim* has exactly the layout problem a ten-digit
 *code* has, so a canonical code can miss a real claim.
 
 The NDC QC in `phase_qc` does not cover this and is not a substitute: it

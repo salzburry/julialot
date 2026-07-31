@@ -553,8 +553,9 @@ ok(!is.null(drive_ndc(prow("medical", 500, a = 500, alpha = 3), prow("rx", 10, a
 # guess - reviewable. Letters, wrong lengths and all-zero cannot be an NDC at
 # all, and one waiver covering both would accept ABC123 -> 00000000123 along
 # with the case that was actually reviewed.
-ok("claim_ndc_short" %in% WAIVABLE_CHECKS && "claim_ndc_shape" %in% FATAL_CHECKS,
-   "the two claim-NDC conditions have separate names, one of them fatal")
+ok(all(c("claim_ndc_short", "claim_ndc_shape") %in% WAIVABLE_CHECKS) &&
+     !any(c("claim_ndc_short", "claim_ndc_shape") %in% FATAL_CHECKS),
+   "the two claim-NDC conditions have separate names, both reviewable")
 Sys.setenv(CODELIST_WAIVERS = "claim_ndc_short")
 options(lot_waivers_applied = character(0))
 ok(is.null(drive_ndc(prow("medical", 500, a = 500), prow("rx", 9000, a = 8000, b = 1000))),
@@ -569,10 +570,28 @@ for (p2 in list(list(r = prow("medical", 500, a = 497, alpha = 3), w = "letters"
      paste0("...and does not let ", p2$w, " through with it"))
 }
 Sys.unsetenv("CODELIST_WAIVERS"); options(lot_waivers_applied = NULL)
-ok(inherits(tryCatch({ Sys.setenv(CODELIST_WAIVERS = "claim_ndc_shape")
-                       check_settings() }, error = function(e) e), "error"),
-   "and claim_ndc_shape cannot be waived at all")
-Sys.unsetenv("CODELIST_WAIVERS")
+# Reviewable, not fatal: these are the CDM's tables, so a run that could not
+# proceed would have no remedy short of changing the join. The split is what
+# matters - accepting one condition must not accept the other.
+Sys.setenv(CODELIST_WAIVERS = "claim_ndc_shape")
+options(lot_waivers_applied = character(0))
+ok(is.null(drive_ndc(prow("medical", 500, a = 497, alpha = 3), prow("rx", 10, a = 10))),
+   "waiving claim_ndc_shape lets a reviewed malformed distribution through")
+ok(identical(getOption("lot_waivers_applied"), "claim_ndc_shape"),
+   "...recorded as applied under its own name")
+tenner <- drive_ndc(prow("medical", 500, a = 500), prow("rx", 9000, a = 8000, b = 1000))
+ok(!is.null(tenner) && grepl("Ten-digit", tenner, fixed = TRUE),
+   "...and does not let ten-digit values through with it")
+Sys.unsetenv("CODELIST_WAIVERS"); options(lot_waivers_applied = NULL)
+# Both named together: each is reported under its own name, not merged.
+Sys.setenv(CODELIST_WAIVERS = "claim_ndc_shape,claim_ndc_short")
+options(lot_waivers_applied = character(0))
+ok(is.null(drive_ndc(prow("medical", 500, a = 497, alpha = 3),
+                     prow("rx", 9000, a = 8000, b = 1000))),
+   "naming both lets a run through that trips both")
+ok(setequal(getOption("lot_waivers_applied"), c("claim_ndc_shape", "claim_ndc_short")),
+   "...and records both as applied")
+Sys.unsetenv("CODELIST_WAIVERS"); options(lot_waivers_applied = NULL)
 # All zeros has eleven digits, so only a bucket of its own catches it. It is
 # the key a claim with no NDC produces, and bad_ndc treats the same value as
 # fatal on the code side.
@@ -583,7 +602,7 @@ nod <- drive_ndc(prow("medical", 500, a = 499, o = 1, nodig = 1), prow("rx", 10,
 ok(!is.null(nod) && grepl("1 with no digits", nod, fixed = TRUE),
    "a value with no digits at all is counted and reported")
 ok(grepl("cannot be an NDC", nod, fixed = TRUE),
-   "...and lands in the fatal branch, not the reviewable ten-digit one")
+   "...under claim_ndc_shape, not the ten-digit condition")
 # The stub decides what the counts are, so it cannot show that the query would
 # ever produce them. A value with no digits only reaches the profile because
 # the WHERE stopped excluding it - assert that on the SQL.
