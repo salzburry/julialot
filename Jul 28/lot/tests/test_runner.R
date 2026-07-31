@@ -152,7 +152,9 @@ bl <- paste(readLines(file.path(ROOT, "R", "build_lot.R"), warn = FALSE),
 body <- sub(".*build_lot <- function\\([^)]*\\) \\{", "", bl)
 ORDER <- c("check_settings", "pin_output_schema", "pin_cohort",
            "check_lot_contract", "set_lot_config", "check_cohort_input",
-           "phase_codelists", "phase_patient_input", "check_claim_ndc",
+           "phase_codelists", "record_codelist_hashes",
+           "phase_patient_input", "materialize_cohort_input",
+           "check_claim_ndc",
            "phase_mma_map",
            "phase_lot1_base", "phase_sct", "phase_lot1_sct",
            "phase_lot1_end", "phase_qc",
@@ -247,7 +249,8 @@ ins <- grep("INSERT", sql_for(names(BSC)), value = TRUE)[1]
 ok(grepl("'uncoded_meds|code_types', '', current", ins, fixed = TRUE),
    "nothing fired yet reads as empty, not as the requested list")
 # Cleared at the start of a run, or a second build in one session inherits it.
-ok(grepl("options(lot_waivers_applied = character(0))", bl, fixed = TRUE),
+ok(grepl("options(lot_waivers_applied = character(0), lot_codelist_md5 = list())",
+         bl, fixed = TRUE),
    "and it is cleared before the run writes 'started'")
 
 cat("\n-- the code lists are recorded and checked --\n")
@@ -279,6 +282,16 @@ ok(!inherits(tryCatch(cle$load_codelist_csv("cl_mma_rollup.csv", "CL_MED_ABBR"),
 ok(inherits(tryCatch(cle$load_codelist_csv("not_a_codelist.csv", "X"),
                      error = function(e) e), "error"),
    "an undeclared file name is refused")
+# The read is what captures the hash for LOT_CODELIST_METADATA; a test that set
+# that record itself would never notice the capture going away.
+options(lot_codelist_md5 = list())
+invisible(cle$load_codelist_csv("cl_mma_rollup.csv", "CL_MED_ABBR"))
+seen1 <- getOption("lot_codelist_md5")
+ok(identical(names(seen1), "cl_mma_rollup.csv") &&
+     identical(seen1[["cl_mma_rollup.csv"]]$md5, unname(tools::md5sum(f))) &&
+     identical(seen1[["cl_mma_rollup.csv"]]$n_rows, 1L),
+   "reading a code list records its md5 and row count for the metadata table")
+options(lot_codelist_md5 = NULL)
 # Leading zeros must survive, or an NDC silently becomes a different drug.
 writeLines(c("CL_CODE", "00093075601"), f)
 sqltxt <- cle$load_codelist_csv("cl_mma_rollup.csv", "CL_CODE")
@@ -518,6 +531,21 @@ lb <- paste(readLines(file.path(ROOT, "R", "steps", "10_lot2_5_base.R"), warn = 
 ok(grepl("FROM mma_rollup", lb, fixed = TRUE),
    "LOT2-5 draws its meds and classes from the same rollup, so this covers it")
 
+# phase_qc reports the SCT end date past observation as INVESTIGATE inside a
+# tryCatch, so a run could finish with it. The invariant is the fail-loud copy;
+# without it the comment in 07_qc.R claiming these are re-checked was wrong.
+inv <- get("LOT1_INVARIANTS", envir = env)
+inv_sql <- paste(vapply(inv, function(i) i$sql, character(1)), collapse = " ")
+ok(any(vapply(inv, function(i) identical(i$name, "SCT end date past observation"),
+              logical(1))),
+   "LOT1_TX_ENDDATE past observation is a fail-loud invariant, not only QC")
+ok(grepl("sct.LOT1_TX_ENDDATE > p.OBS_END_DT", inv_sql, fixed = TRUE),
+   "...on the column phase_qc reports, not a neighbouring one")
+qc7 <- paste(readLines(file.path(ROOT, "R", "steps", "07_qc.R"), warn = FALSE),
+             collapse = "\n")
+ok(grepl("LOT1_TX_ENDDATE > lb.OBS_END_DT", qc7, fixed = TRUE),
+   "and that is the condition 07_qc.R still reports")
+
 cat("\n-- the run says what it produced, not only what LOT1 saw --\n")
 # phase_persist writes LOT_RUN_METADATA before LOT2-5 exists, so its counts
 # stop at LOT1 and a row on its own says nothing about LOT_LONG.
@@ -526,22 +554,32 @@ sys.source(file.path(ROOT, "R", "build_lot.R"), envir = fe)
 assign("log_msg", function(...) invisible(NULL), envir = fe)
 assign("lot_out", function(x) paste0("wk.p_", x), envir = fe)
 assign("run_id", "R1", envir = fe)
-FSQL <- character(0)
+FSQL <- character(0); FQRY <- character(0)
 assign("db_exec", function(con, s) { FSQL <<- c(FSQL, s); TRUE }, envir = fe)
 drive_fm <- function(have) {
-  FSQL <<- character(0)
+  FSQL <<- character(0); FQRY <<- character(0)
   assign("db_q", function(con, s) {
+    FQRY <<- c(FQRY, s)
     if (grepl("DESCRIBE", s)) return(if (is.null(have)) stop("no")
                                      else data.frame(col_name = have))
-    if (grepl("GROUP BY LOT_NUM", s)) return(data.frame(LOT_NUM = 1:3, n = c(900, 400, 120)))
-    data.frame(n_rows = 1420, n_patients = 900)
+    data.frame(LOT_NUM = 1:3, n = c(900, 400, 120))
   }, envir = fe)
-  tryCatch({ fe$record_final_counts(NULL, list()); NULL }, error = conditionMessage)
+  tryCatch({ fe$record_final_counts(NULL, list(),
+                                    list(n_rows = 1420, n_patients = 900)); NULL },
+           error = conditionMessage)
 }
 base_cols <- c("RUN_ID", "N_COHORT_PATIENTS", "N_LOT1_PATIENTS")
 ok(is.null(drive_fm(base_cols)), "a metadata table without the columns gets them")
-ok(sum(grepl("ALTER", FSQL)) == length(get("FINAL_METADATA_COLS", envir = fe)),
-   "...one ALTER per column, since phase_persist creates the table without them")
+ok(sum(grepl("ALTER", FSQL)) == 1 &&
+     all(vapply(names(get("FINAL_METADATA_COLS", envir = fe)),
+                function(m) any(grepl(m, FSQL, fixed = TRUE)), logical(1))),
+   "...in one ALTER, since phase_persist creates the table without any of them")
+# The totals come from check_lot_long, which has just counted them, so the only
+# scan here is the one it does not do. FQRY is every db_q, not just the writes -
+# an earlier version watched db_exec and so proved nothing.
+reads <- Filter(function(q) !grepl("DESCRIBE", q), FQRY)
+ok(length(reads) == 1 && grepl("GROUP BY LOT_NUM", reads[1]),
+   paste0("and it scans once, for the line distribution only (", length(reads), ")"))
 ok(any(grepl("LOT_LONG_BY_LINE = '1:900|2:400|3:120'", FSQL, fixed = TRUE)),
    "the line distribution is recorded, not just a total")
 ok(any(grepl("WHERE RUN_ID = 'R1'", FSQL, fixed = TRUE)),
@@ -558,6 +596,72 @@ ok(regexpr("check_lot_long(", body, fixed = TRUE) <
    "the counts are taken after LOT_LONG has passed its checks")
 ok(grepl("N_LOT_LONG_ROWS IS NOT NULL", bl, fixed = TRUE),
    "and a run with a LOT1-only metadata row is not called complete")
+
+cat("\n-- the outputs say which code lists built them --\n")
+# The hashes are logged as the files are read, but a log is a separate artefact
+# - filed away from the tables, or lost, and the outputs no longer say what made
+# them. One row per file per run.
+he <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "codelists_lot.R"), envir = he)
+sys.source(file.path(ROOT, "R", "build_lot.R"), envir = he)
+assign("log_msg", function(...) invisible(NULL), envir = he)
+assign("lot_out", function(x) paste0("wk.p_", x), envir = he)
+assign("run_id", "R1", envir = he)
+HSQL <- character(0)
+assign("db_exec", function(con, s) { HSQL <<- c(HSQL, s); TRUE }, envir = he)
+CLF <- get("CODELIST_FILES", envir = he)
+drive_h <- function(files) {
+  HSQL <<- character(0)
+  options(lot_codelist_md5 = setNames(lapply(seq_along(files), function(i)
+    list(md5 = sprintf("%032d", i), n_rows = i * 100L)), files))
+  r <- tryCatch({ he$record_codelist_hashes(NULL, list()); NULL }, error = conditionMessage)
+  options(lot_codelist_md5 = NULL); r
+}
+ok(is.null(drive_h(CLF)), "every code list read leaves a row")
+ins <- grep("INSERT", HSQL, value = TRUE)[1]
+for (f in CLF)
+  ok(grepl(paste0("'", f, "'"), ins, fixed = TRUE), paste0(f, " is named in the row set"))
+ok(grepl("'00000000000000000000000000000001'", ins, fixed = TRUE),
+   "with the md5 that was taken when the file was read")
+ok(any(grepl("DELETE FROM wk.p_LOT_CODELIST_METADATA WHERE RUN_ID = 'R1'",
+             HSQL, fixed = TRUE)),
+   "and a re-run replaces its own rows rather than doubling them")
+# A file that was never read must not silently produce a row-less run.
+err <- drive_h(CLF[-length(CLF)])
+ok(!is.null(err) && grepl(CLF[length(CLF)], err, fixed = TRUE),
+   "a code list with no recorded hash stops the build, naming the file")
+# Recorded straight after the code lists are read, so a run that fails later
+# still says what it was reading - and completion requires the rows.
+ok(regexpr("phase_codelists(", body, fixed = TRUE) <
+     regexpr("record_codelist_hashes(", body, fixed = TRUE) &&
+     regexpr("record_codelist_hashes(", body, fixed = TRUE) <
+     regexpr("phase_patient_input(", body, fixed = TRUE),
+   "written as soon as the hashes are known, not at the end")
+ok(grepl('"LOT_CODELIST_METADATA"', bl, fixed = TRUE) &&
+     grepl('c("LOT_RUN_METADATA", "LOT_QC_SUMMARY", "LOT_CODELIST_METADATA")',
+           bl, fixed = TRUE),
+   "and a run with no hash rows is not called complete")
+
+cat("\n-- the cohort is pinned, not re-read --\n")
+# A Spark temporary view re-runs its query on every read, so lot_patient_input
+# over the cohort table is not a snapshot: a cohort job rebuilding that table
+# mid-run changes what LOT reads from there on. "Do not rebuild it" is not
+# enforceable for a package pointed at many cohorts, so the run takes its own
+# copy and reads that.
+ok(grepl("CREATE OR REPLACE TABLE {lot_out('LOT_PATIENT_INPUT')} AS", bl, fixed = TRUE),
+   "the cohort input is written to a table of its own")
+ok(grepl("CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS\n    SELECT * FROM {lot_out('LOT_PATIENT_INPUT')}",
+         bl, fixed = TRUE),
+   "...and the view is repointed at it, so every later read hits the copy")
+ok("LOT_PATIENT_INPUT" %in% OUTPUTS,
+   "it is a prefixed output, so two cohorts cannot share one snapshot")
+# Before anything reads the cohort. phase_patient_input defines the view;
+# nothing between that and the copy may consume it.
+pos <- function(f) regexpr(paste0("(?<![A-Za-z0-9_.])", f, "\\("), body, perl = TRUE)
+ok(pos("phase_patient_input") < pos("materialize_cohort_input") &&
+     pos("materialize_cohort_input") < pos("check_claim_ndc") &&
+     pos("materialize_cohort_input") < pos("phase_mma_map"),
+   "pinned before the first phase that joins it")
 
 cat("\n-- the claim side of the NDC contract --\n")
 # ndc_shape and ndc_short constrain the code list; both joins pad the CLAIM the
@@ -657,11 +761,8 @@ for (b in c("AS n_nodigit", "AS n_zero"))
 # shape nobody has seen yet - and what fired is recorded, not just requested.
 
 
-# Two writers, and the tests covered each alone. A run waiving both a codelist
-# check and claim_ndc calls phase_codelists, then check_claim_ndc, and then
-# phase_codelists AGAIN whenever lot_inputs_present() says no - which it does
-# when the catalogue cannot answer, not only in a LOT2-5-only session. Assigning
-# rather than unioning dropped claim_ndc on that path.
+# Two writers record applied waivers. Each was covered alone; this drives them
+# in sequence, so one cannot clobber what the other recorded.
 Sys.setenv(CODELIST_WAIVERS = "uncoded_meds,claim_ndc_short")
 options(lot_waivers_applied = character(0))
 assign("db_q", mk_db_q("uncoded"), envir = ce)
@@ -731,18 +832,28 @@ pe <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "build_lot.R"), envir = pe)
 assign("log_msg", function(...) invisible(NULL), envir = pe)
 asked <- character(0)
+vw <- function(names, temp = TRUE)
+  data.frame(viewName = names, isTemporary = temp, stringsAsFactors = FALSE)
 assign("db_q", function(con, sql) {
   asked <<- c(asked, sql)
-  data.frame(viewName = get("LOT2_5_INPUT_VIEWS", envir = pe),
-             stringsAsFactors = FALSE)
+  vw(get("LOT2_5_INPUT_VIEWS", envir = pe))
 }, envir = pe)
 ok(isTRUE(pe$lot_inputs_present(NULL)), "all ten present is detected")
 ok(length(asked) == 1 && grepl("SHOW VIEWS", asked[1], fixed = TRUE),
    "with one catalogue query, not ten reads")
-assign("db_q", function(con, sql)
-  data.frame(viewName = c("lot_patient_input", "mma_rollup"),
-             stringsAsFactors = FALSE), envir = pe)
+assign("db_q", function(con, sql) vw(c("lot_patient_input", "mma_rollup")), envir = pe)
 ok(!isTRUE(pe$lot_inputs_present(NULL)), "a missing view is detected")
+# SHOW VIEWS lists persistent views too. A persistent table of the same name
+# elsewhere in the schema is not the view LOT1 built, and answering yes to it
+# would be the false positive that stopping was meant to prevent.
+assign("db_q", function(con, sql)
+  vw(get("LOT2_5_INPUT_VIEWS", envir = pe), temp = FALSE), envir = pe)
+ok(!isTRUE(pe$lot_inputs_present(NULL)),
+   "persistent views of the same names do not count as present")
+assign("db_q", function(con, sql)
+  data.frame(viewName = get("LOT2_5_INPUT_VIEWS", envir = pe)), envir = pe)
+ok(!isTRUE(pe$lot_inputs_present(NULL)),
+   "and a catalogue with no isTemporary column cannot confirm them either")
 assign("db_q", function(con, sql) stop("no such command"), envir = pe)
 ok(!isTRUE(pe$lot_inputs_present(NULL)),
    "and a catalogue that cannot answer counts as absent, not as present")
@@ -756,8 +867,8 @@ ok(grepl("  if (!lot_inputs_present(con))\n    stop(", bl, fixed = TRUE),
 # The message names prepare_lot_inputs(); what must not appear is a CALL to it.
 ok(!grepl("prepare_lot_inputs(con)", bl, fixed = TRUE),
    "build_lot() never calls prepare_lot_inputs() - one run, one snapshot")
-ok(grepl("prepare_lot_inputs", bl, fixed = TRUE),
-   "...but the error still points at it for a deliberate LOT2-5 session")
+ok(!grepl("prepare_lot_inputs", bl, fixed = TRUE),
+   "...and the standalone rebuild is gone entirely, not merely unreferenced")
 
 cat("\n-- LOT_LONG has to be chronologically possible --\n")
 # The lines form a chain: each starts strictly after the previous one ended,

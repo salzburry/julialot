@@ -56,8 +56,7 @@ codelist_waivers_named <- function() {
 }
 
 # Never hands back a check that cannot be waived, whatever the environment
-# says. check_settings refuses those before the build starts, but LOT2-5 can be
-# run on its own and reach the code lists without it.
+# says, so the split holds even if check_settings is bypassed.
 codelist_waivers <- function() intersect(codelist_waivers_named(), WAIVABLE_CHECKS)
 
 # The columns LOT reads off whatever cohort table it is pointed at. Checked
@@ -264,14 +263,16 @@ build_lot <- function(here, cohort_table, prefix) {
 
   # LOT1 is written before LOT_LONG, so track partial runs.
   # Cleared first, or a second run in one session inherits the first's.
-  options(lot_waivers_applied = character(0))
+  options(lot_waivers_applied = character(0), lot_codelist_md5 = list())
   write_build_status(con, cfg, "started")
   on.exit(if (!isTRUE(getOption("lot_complete", FALSE)))
             try(write_build_status(con, cfg, "failed"), silent = TRUE), add = TRUE)
   options(lot_complete = FALSE)
 
   ctx <- phase_codelists(con)
+  record_codelist_hashes(con, cfg)
   phase_patient_input(con)
+  materialize_cohort_input(con)
   check_claim_ndc(con, cfg)
   phase_mma_map(con, ctx)
   phase_lot1_base(con, ctx)
@@ -294,8 +295,7 @@ build_lot <- function(here, cohort_table, prefix) {
          "dropped them or the connection has changed. Rebuilding them here ",
          "would read the code lists and the cohort table again with no ",
          "guarantee they still match what LOT1 used, so this run would mix ",
-         "two snapshots. Re-run the build, or continue LOT2-5 deliberately ",
-         "with prepare_lot_inputs() in a session of its own.", call. = FALSE)
+         "two snapshots. Re-run the build.", call. = FALSE)
   log_msg("Session views from LOT1 are still here.")
   materialize_sct_views(con)
   build_lot2_5(con,
@@ -307,8 +307,10 @@ build_lot <- function(here, cohort_table, prefix) {
 
   # Validate before deriving: publishing the criteria tables first would leave
   # them behind, built from a LOT_LONG that then failed its checks.
-  check_lot_long(con, cfg)
-  record_final_counts(con, cfg)
+  # Two statements, not a nested call: R would not force the promise until
+  # record_final_counts read it, which is after it has altered the table.
+  lot_long <- check_lot_long(con, cfg)
+  record_final_counts(con, cfg, lot_long)
   phase_line_criteria(con, cfg)
   check_run_recorded(con, cfg)
   write_build_status(con, cfg, "complete")
@@ -332,11 +334,44 @@ LOT2_5_INPUT_VIEWS <- c("lot_patient_input", "mma_rollup", "permissible_subs",
 # runs the view - and three of these are raw CDM scans, so the existence check
 # itself would have cost real time.
 lot_inputs_present <- function(con) {
-  have <- tryCatch(tolower(db_q(con, "SHOW VIEWS")$viewName),
-                   error = function(e) NULL)
-  # If the catalogue cannot answer, say no: rebuilding is slow but correct.
-  if (is.null(have)) return(FALSE)
+  d <- tryCatch(db_q(con, "SHOW VIEWS"), error = function(e) NULL)
+  # A catalogue error means the views cannot be confirmed, so say no.
+  if (is.null(d) || !all(c("viewName", "isTemporary") %in% names(d))) return(FALSE)
+  # SHOW VIEWS lists persistent views as well. LOT1 leaves temporary ones, so a
+  # persistent table of the same name elsewhere in the schema is not the view
+  # this run built - answering yes to it would be the false positive that
+  # stopping was meant to prevent.
+  temp <- as.character(d$isTemporary)
+  have <- tolower(d$viewName[toupper(temp) %in% c("TRUE", "T")])
   all(tolower(LOT2_5_INPUT_VIEWS) %in% have)
+}
+
+# phase_patient_input leaves lot_patient_input a temporary view over the cohort
+# table, and a Spark view re-runs its query on every read - 26 of them across
+# the build. So the cohort is not one snapshot: a cohort job that rebuilds its
+# table mid-run changes what LOT reads from that point on, and the run still
+# reaches "complete". Telling operators not to rebuild is not a rule that holds
+# when the package exists to be pointed at many cohorts on their own schedules.
+#
+# Copied once into a prefixed table of its own, with the view repointed at it -
+# the same thing phase_lot1_end does for map_stacked and lot1_sct. Everything
+# downstream then reads a table that cannot move, and the snapshot is left
+# behind for inspection.
+#
+# The window this does not close: check_cohort_input validates the live table a
+# moment earlier. A change between that check and this copy would be snapshotted
+# unvalidated. It is one statement wide, against 26 reads over a long build.
+materialize_cohort_input <- function(con) {
+  run_step(con, "S03b_materialize_cohort_input", glue("
+    CREATE OR REPLACE TABLE {lot_out('LOT_PATIENT_INPUT')} AS
+    SELECT * FROM lot_patient_input
+  "), qc = glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients
+                 FROM {lot_out('LOT_PATIENT_INPUT')}"))
+  db_exec(con, glue("
+    CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS
+    SELECT * FROM {lot_out('LOT_PATIENT_INPUT')}"))
+  log_msg("Cohort input pinned to ", lot_out("LOT_PATIENT_INPUT"))
+  invisible(TRUE)
 }
 
 # LOT1 leaves these three as views over the raw CDM, and LOT2-5 reads them
@@ -531,6 +566,13 @@ LOT1_INVARIANTS <- list(
        sql = "SELECT count(*) AS n FROM lot1_base_end lb
               INNER JOIN lot_patient_input p ON lb.PATID = p.PATID
               WHERE lb.LOT1_BASE_END_DT > p.OBS_END_DT"),
+  # phase_qc reports this one as INVESTIGATE inside a tryCatch, so a run could
+  # finish with it. Every end-date branch is bounded by OBS_END_DT, so it is
+  # impossible unless something upstream is wrong.
+  list(name = "SCT end date past observation",
+       sql = "SELECT count(*) AS n FROM lot1_sct sct
+              INNER JOIN lot_patient_input p ON sct.PATID = p.PATID
+              WHERE sct.LOT1_TX_ENDDATE > p.OBS_END_DT"),
   list(name = "AUTO transplant both tandem and single",
        sql = "SELECT count(*) AS n FROM lot1_sct
               WHERE LOT1_SCT_AUTO_TAND_FLG = 1 AND LOT1_SCT_AUTO_SING_FLG = 1"),
@@ -560,7 +602,7 @@ check_lot1_invariants <- function(con, cfg) {
 # the row actually arrived - a run with no record of how it was configured is
 # not a run anyone can validate later.
 check_run_recorded <- function(con, cfg) {
-  for (t in c("LOT_RUN_METADATA", "LOT_QC_SUMMARY")) {
+  for (t in c("LOT_RUN_METADATA", "LOT_QC_SUMMARY", "LOT_CODELIST_METADATA")) {
     n <- tryCatch(db_q(con, glue(
            "SELECT count(*) AS n FROM {lot_out(t)} WHERE RUN_ID = '{run_id}'"))$n,
          error = function(e) 0L)
@@ -581,15 +623,49 @@ check_run_recorded <- function(con, cfg) {
   invisible(TRUE)
 }
 
+# Which version of each code list built these tables. The hashes are logged as
+# the files are read, but a log is a separate artefact: filed away from the
+# tables, or lost, and the outputs no longer say what made them. One row per
+# file per run, so a question like "which runs used this md5" is answerable
+# from the warehouse.
+#
+# Written straight after the code lists are read, not at the end, so a run that
+# fails later still records what it was reading when it did.
+CODELIST_METADATA_COLS <- c(RUN_ID = "STRING", CODELIST_FILE = "STRING",
+                            MD5 = "STRING", N_ROWS = "BIGINT",
+                            READ_AT = "TIMESTAMP")
+
+record_codelist_hashes <- function(con, cfg) {
+  seen <- getOption("lot_codelist_md5", list())
+  missing <- setdiff(CODELIST_FILES, names(seen))
+  if (length(missing))
+    stop("No hash recorded for ", paste(missing, collapse = ", "),
+         ". Every code list this build reads has to be accounted for.",
+         call. = FALSE)
+  tbl  <- lot_out("LOT_CODELIST_METADATA")
+  cols <- names(CODELIST_METADATA_COLS)
+  db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
+                    paste(cols, CODELIST_METADATA_COLS, collapse = ", "), ")"))
+  db_exec(con, glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"))
+  vals <- vapply(CODELIST_FILES, function(f) glue(
+    "('{run_id}', '{f}', '{seen[[f]]$md5}', {seen[[f]]$n_rows}, current_timestamp())"),
+    character(1), USE.NAMES = FALSE)
+  db_exec(con, glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES ",
+                    paste(vals, collapse = ", ")))
+  log_msg("Recorded ", length(CODELIST_FILES), " code list hashes in ", tbl)
+  invisible(TRUE)
+}
+
 # LOT_RUN_METADATA is written by phase_persist, which runs before LOT2-5, so
 # its counts stop at LOT1: cohort, MMA claims, MAPs, LOT1 patients. Nothing
-# recorded what the run actually produced. These are added after check_lot_long
-# has passed, so the numbers describe a table already found usable.
+# recorded what the run actually produced. The totals come from check_lot_long,
+# which has just counted them and passed - so they describe a table already
+# found usable, and are not scanned for twice.
 FINAL_METADATA_COLS <- c(N_LOT_LONG_ROWS = "BIGINT",
                          N_LOT_LONG_PATIENTS = "BIGINT",
                          LOT_LONG_BY_LINE = "STRING")
 
-record_final_counts <- function(con, cfg) {
+record_final_counts <- function(con, cfg, counts) {
   tbl <- lot_out("LOT_RUN_METADATA")
   have <- tryCatch({
     d  <- db_q(con, glue("DESCRIBE {tbl}"))
@@ -602,25 +678,25 @@ record_final_counts <- function(con, cfg) {
   if (!length(have))
     stop("Cannot read the columns of ", tbl, ", so the LOT_LONG counts cannot ",
          "be recorded.", call. = FALSE)
-  for (m in setdiff(names(FINAL_METADATA_COLS), have)) {
-    db_exec(con, glue("ALTER TABLE {tbl} ADD COLUMNS ({m} {FINAL_METADATA_COLS[[m]]})"))
-    log_msg("  Metadata schema evolution: added ", m)
+  add <- setdiff(names(FINAL_METADATA_COLS), have)
+  if (length(add)) {
+    db_exec(con, glue("ALTER TABLE {tbl} ADD COLUMNS (",
+                      paste(add, FINAL_METADATA_COLS[add], collapse = ", "), ")"))
+    log_msg("  Metadata schema evolution: added ", paste(add, collapse = ", "))
   }
 
-  t <- lot_out("LOT_LONG")
-  q <- db_q(con, glue("
-    SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients FROM {t}"))
   by_line <- db_q(con, glue("
-    SELECT LOT_NUM, count(*) AS n FROM {t} GROUP BY LOT_NUM ORDER BY LOT_NUM"))
+    SELECT LOT_NUM, count(*) AS n FROM {lot_out('LOT_LONG')}
+    GROUP BY LOT_NUM ORDER BY LOT_NUM"))
   dist <- paste(paste0(by_line$LOT_NUM, ":", by_line$n), collapse = "|")
   db_exec(con, glue("
     UPDATE {tbl}
-       SET N_LOT_LONG_ROWS = {q$n_rows},
-           N_LOT_LONG_PATIENTS = {q$n_patients},
+       SET N_LOT_LONG_ROWS = {counts$n_rows},
+           N_LOT_LONG_PATIENTS = {counts$n_patients},
            LOT_LONG_BY_LINE = '{dist}'
      WHERE RUN_ID = '{run_id}'"))
-  log_msg("Recorded LOT_LONG: ", q$n_rows, " lines for ", q$n_patients,
-          " patients (", dist, ")")
+  log_msg("Recorded LOT_LONG: ", counts$n_rows, " lines for ",
+          counts$n_patients, " patients (", dist, ")")
   invisible(TRUE)
 }
 
@@ -678,7 +754,8 @@ check_lot_long <- function(con, cfg) {
   if (length(bad))
     stop(t, " is not usable: ", paste(bad, collapse = "; "), call. = FALSE)
   log_msg("LOT_LONG OK: ", q$n_rows, " lines for ", q$n_patients, " patients")
-  invisible(TRUE)
+  # Handed to record_final_counts rather than counted again.
+  invisible(list(n_rows = q$n_rows, n_patients = q$n_patients))
 }
 
 # The criteria layer, on top of LOT_LONG. With no criteria declared both

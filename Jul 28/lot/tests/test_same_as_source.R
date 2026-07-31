@@ -300,10 +300,9 @@ for (f in setdiff(vapply(PHASES, `[[`, character(1), "file"), CHANGED))
 cat("\n-- LOT2-5 and LOT_LONG are whole-file copies --\n")
 # These two were already function-structured in the source, so they are copied
 # entire rather than cut into phases. Same rule: identical once unported.
-# 09_lot2_5_inputs.R is deliberately no longer a copy: it carried its own
-# drifting duplicates of the code-list, cohort and SCT SQL, and now calls the
-# LOT1 phases instead. The SQL it used to hold is still compared - as part of
-# the phases it now calls.
+# The source's lot2_5_inputs.R has no counterpart here: it rebuilt the code
+# lists and the cohort for a standalone LOT2-5 session, which is a path this
+# package does not offer. Its SQL lives in the phases, and is compared there.
 WHOLE <- list(
   list(file = "10_lot2_5_base.R",   src = "R/lot2_5_base.R")
 )
