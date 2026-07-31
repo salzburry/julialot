@@ -549,6 +549,30 @@ ok(grepl("1000 ten-digit", tend, fixed = TRUE) && grepl("4-4-2", tend, fixed = T
    "...with the counts and why the pad is only right for one layout")
 ok(!is.null(drive_ndc(prow("medical", 500, a = 500, alpha = 3), prow("rx", 10, a = 10))),
    "letters in a claim NDC stop it too, even at eleven digits")
+# Split like the code side. Ten digits is a real NDC in a layout the pad has to
+# guess - reviewable. Letters, wrong lengths and all-zero cannot be an NDC at
+# all, and one waiver covering both would accept ABC123 -> 00000000123 along
+# with the case that was actually reviewed.
+ok("claim_ndc_short" %in% WAIVABLE_CHECKS && "claim_ndc_shape" %in% FATAL_CHECKS,
+   "the two claim-NDC conditions have separate names, one of them fatal")
+Sys.setenv(CODELIST_WAIVERS = "claim_ndc_short")
+options(lot_waivers_applied = character(0))
+ok(is.null(drive_ndc(prow("medical", 500, a = 500), prow("rx", 9000, a = 8000, b = 1000))),
+   "waiving claim_ndc_short lets a reviewed ten-digit distribution through")
+ok(identical(getOption("lot_waivers_applied"), "claim_ndc_short"),
+   "...recorded as applied under its own name")
+for (p2 in list(list(r = prow("medical", 500, a = 497, alpha = 3), w = "letters"),
+                list(r = prow("medical", 500, a = 499, o = 1), w = "another length"),
+                list(r = prow("medical", 500, a = 500, zero = 2), w = "all zeros"))) {
+  err <- drive_ndc(p2$r, prow("rx", 10, a = 10))
+  ok(!is.null(err) && grepl("cannot be an NDC", err, fixed = TRUE),
+     paste0("...and does not let ", p2$w, " through with it"))
+}
+Sys.unsetenv("CODELIST_WAIVERS"); options(lot_waivers_applied = NULL)
+ok(inherits(tryCatch({ Sys.setenv(CODELIST_WAIVERS = "claim_ndc_shape")
+                       check_settings() }, error = function(e) e), "error"),
+   "and claim_ndc_shape cannot be waived at all")
+Sys.unsetenv("CODELIST_WAIVERS")
 # All zeros has eleven digits, so only a bucket of its own catches it. It is
 # the key a claim with no NDC produces, and bad_ndc treats the same value as
 # fatal on the code side.
@@ -558,8 +582,8 @@ ok(grepl("2 all zeros", zed, fixed = TRUE), "...and is reported as its own count
 nod <- drive_ndc(prow("medical", 500, a = 499, o = 1, nodig = 1), prow("rx", 10, a = 10))
 ok(!is.null(nod) && grepl("1 with no digits", nod, fixed = TRUE),
    "a value with no digits at all is counted and reported")
-ok(grepl("cannot change a result on their own", nod, fixed = TRUE),
-   "...and the message says which buckets cannot affect matching")
+ok(grepl("cannot be an NDC", nod, fixed = TRUE),
+   "...and lands in the fatal branch, not the reviewable ten-digit one")
 # The stub decides what the counts are, so it cannot show that the query would
 # ever produce them. A value with no digits only reaches the profile because
 # the WHERE stopped excluding it - assert that on the SQL.
@@ -570,29 +594,21 @@ for (b in c("AS n_nodigit", "AS n_zero"))
   ok(all(grepl(b, NSQL, fixed = TRUE)), paste0("the profile counts ", b))
 # Waivable, so a first run reports the distribution rather than blocking on a
 # shape nobody has seen yet - and what fired is recorded, not just requested.
-Sys.setenv(CODELIST_WAIVERS = "claim_ndc")
-options(lot_waivers_applied = character(0))
-ok(is.null(drive_ndc(prow("medical", 500, a = 500), prow("rx", 9000, a = 8000, b = 1000))),
-   "waiving claim_ndc lets a reviewed distribution through")
-ok(identical(getOption("lot_waivers_applied"), "claim_ndc"),
-   "...and records it as applied, not merely requested")
-Sys.unsetenv("CODELIST_WAIVERS"); options(lot_waivers_applied = NULL)
-ok("claim_ndc" %in% WAIVABLE_CHECKS && !("claim_ndc" %in% FATAL_CHECKS),
-   "claim_ndc is reviewable, like ndc_short on the other side")
+
 
 # Two writers, and the tests covered each alone. A run waiving both a codelist
 # check and claim_ndc calls phase_codelists, then check_claim_ndc, and then
 # phase_codelists AGAIN whenever lot_inputs_present() says no - which it does
 # when the catalogue cannot answer, not only in a LOT2-5-only session. Assigning
 # rather than unioning dropped claim_ndc on that path.
-Sys.setenv(CODELIST_WAIVERS = "uncoded_meds,claim_ndc")
+Sys.setenv(CODELIST_WAIVERS = "uncoded_meds,claim_ndc_short")
 options(lot_waivers_applied = character(0))
 assign("db_q", mk_db_q("uncoded"), envir = ce)
 invisible(ce$phase_codelists(NULL))
 invisible(drive_ndc(prow("medical", 500, a = 500), prow("rx", 9000, a = 8000, b = 1000)))
 assign("db_q", mk_db_q("uncoded"), envir = ce)
 invisible(ce$phase_codelists(NULL))
-ok(setequal(getOption("lot_waivers_applied"), c("uncoded_meds", "claim_ndc")),
+ok(setequal(getOption("lot_waivers_applied"), c("uncoded_meds", "claim_ndc_short")),
    "both waivers survive phase_codelists running a second time")
 Sys.unsetenv("CODELIST_WAIVERS"); options(lot_waivers_applied = NULL)
 # It has to measure what the join measures, or it answers about another string.

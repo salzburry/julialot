@@ -98,7 +98,7 @@ phase_persist <- function(con, ctx) {
       qc_defs <- list(
         list(name = "CODELIST_ORPHAN_MEDS", sql = "
           SELECT count(DISTINCT c.CL_MED_ABBR) AS n
-          FROM mma_codelist c LEFT JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR
+          FROM mma_extractable_codelist c LEFT JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR
           WHERE r.CL_MED_ABBR IS NULL"),
         list(name = "MAP_END_BEFORE_START", sql = "
           SELECT count(*) AS n FROM map_stacked WHERE MAP_END_DT < MAP_START_DT"),

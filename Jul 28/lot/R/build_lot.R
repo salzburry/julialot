@@ -41,12 +41,13 @@ CONTRACT <- list(
 # expected condition also waived the dangerous ones.
 WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types",
                      "subs_substitute", "subs_original", "ndc_short",
-                     "claim_ndc")
+                     "claim_ndc_short")
 
 # Fatal checks: always stop the build. Named rather than merely absent, so a
 # waiver naming one is told why it is refused instead of "no such check".
 FATAL_CHECKS <- c("code_to_med", "bad_ndc", "rollup_defs", "blank_keys",
-                  "ndc_shape", "multi_class", "class_agreement")
+                  "ndc_shape", "claim_ndc_shape", "multi_class",
+                  "class_agreement")
 
 ALL_CHECKS <- c(WAIVABLE_CHECKS, FATAL_CHECKS)
 
@@ -399,35 +400,44 @@ check_claim_ndc <- function(con, cfg) {
     db_q(con, profile_sql("rx",      cdm_src(cfg$tbl_rx),      "FILL_DT")))
   print(prof)
 
-  # All-zero has eleven digits, so it needs saying separately: it is the key a
-  # claim with no NDC produces, and bad_ndc treats the same value as fatal on
-  # the code side.
-  bad <- prof[prof$n_ndc > 0 & (prof$n_11 < prof$n_ndc | prof$n_alpha > 0 |
-                                prof$n_zero > 0), , drop = FALSE]
-  if (nrow(bad) == 0) {
-    log_msg("  OK: Every claim NDC is eleven digits.")
-    return(invisible(TRUE))
-  }
-  detail <- paste(vapply(seq_len(nrow(bad)), function(i) with(bad[i, ], paste0(
-    SOURCE, ": ", n_ndc, " NDCs, ", n_11, " eleven-digit, ", n_10, " ten-digit, ",
-    n_other, " other length, ", n_alpha, " with letters, ", n_nodigit,
-    " with no digits, ", n_zero, " all zeros")), character(1)),
-    collapse = "; ")
-  if ("claim_ndc" %in% codelist_waivers()) {
-    log_msg("WAIVED (claim_ndc): ", detail)
+  detail <- function(d) paste(vapply(seq_len(nrow(d)), function(i) with(d[i, ],
+    paste0(SOURCE, ": ", n_ndc, " NDCs, ", n_11, " eleven-digit, ", n_10,
+           " ten-digit, ", n_other, " other length, ", n_alpha, " with letters, ",
+           n_nodigit, " with no digits, ", n_zero, " all zeros")),
+    character(1)), collapse = "; ")
+
+  # Two conditions, split the way the code side is. A ten-digit claim is a real
+  # NDC in a layout the pad has to guess, which the study team can review. The
+  # rest cannot be an NDC at all: 'ABC123' reaches the join as 00000000123 and
+  # can match a real code, and an underlength numeric does the same. All-zero
+  # has eleven digits, so only a count of its own catches it - it is the key a
+  # claim with no NDC produces, and bad_ndc is fatal on the code side.
+  shape <- prof[prof$n_ndc > 0 & (prof$n_alpha > 0 | prof$n_other > 0 |
+                                  prof$n_zero > 0), , drop = FALSE]
+  if (nrow(shape) > 0)
+    stop("Claim NDCs that cannot be an NDC: ", detail(shape),
+         ".\nThe join strips non-digits and pads to eleven, so a value like ",
+         "ABC123 arrives as 00000000123 and can match a real code. This is ",
+         "not waivable: nothing here can tell such a claim from a genuine ",
+         "one. If this CDM really carries them, the join has to exclude them ",
+         "before LOT can be trusted on it.", call. = FALSE)
+
+  short <- prof[prof$n_ndc > 0 & prof$n_10 > 0, , drop = FALSE]
+  if (nrow(short) > 0) {
+    if (!("claim_ndc_short" %in% codelist_waivers()))
+      stop("Ten-digit claim NDCs: ", detail(short),
+           ".\nThe join left-pads to eleven, which is right only for the ",
+           "4-4-2 layout, so a ten-digit claim can be read as a different ",
+           "drug's code or as none. Confirm how this CDM represents NDC, or ",
+           "convert with an approved NDC10-to-NDC11 crosswalk. Once the study ",
+           "team has established that the padding is right for this data, ",
+           "waive it with CODELIST_WAIVERS=claim_ndc_short.", call. = FALSE)
+    log_msg("WAIVED (claim_ndc_short): ", detail(short))
     options(lot_waivers_applied = union(getOption("lot_waivers_applied",
-                                                  character(0)), "claim_ndc"))
+                                                  character(0)), "claim_ndc_short"))
     return(invisible(TRUE))
   }
-  stop("Claim NDCs are not all eleven digits: ", detail,
-       ".\nThe join left-pads to eleven, which is right only for the 4-4-2 ",
-       "layout, so a ten-digit claim can be read as a different drug's code ",
-       "or as none. Confirm how this CDM represents NDC, or convert with an ",
-       "approved NDC10-to-NDC11 crosswalk.\nThe no-digit and all-zero counts ",
-       "cannot change a result on their own - the joins drop a claim with no ",
-       "digits, and bad_ndc has already stopped any code that pads to eleven ",
-       "zeros - but they are reported so a waiver is an informed one. Waive ",
-       "with CODELIST_WAIVERS=claim_ndc.", call. = FALSE)
+  log_msg("  OK: Every claim NDC is eleven digits.")
 }
 
 # One row per run saying whether its outputs belong together. Without it a
