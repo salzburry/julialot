@@ -765,6 +765,42 @@ ok(grepl("more than one", m, fixed = TRUE) && grepl("NDC:1 -> BEL/CAR", m, fixed
 ok(grepl("not waivable", m, fixed = TRUE),
    "...and says so, because a waiver would not resolve the ambiguity")
 
+cat("\n-- the cohort is a LOT input, named the way LOT reads names --\n")
+# Jul 28/lot resolves a cohort table with its own wrk(), which does NOT prepend
+# a prefix - it reads the name it is given. This build's wrk() DOES prepend
+# one. So the command that hands the cohort over has to carry the prefix, and
+# the README said it did not: `build.R NDMM_COHORT ndmm_` looks for a table
+# this build never wrote.
+assign("cfg", modifyList(cfg_defaults, list(work_schema = "wk", object_prefix = "p_")),
+       envir = globalenv())
+ok(grepl("p_NDMM_COHORT", wrk("NDMM_COHORT"), fixed = TRUE),
+   "this build writes the cohort under the prefix")
+# readme is read further down for the drift checks; this block runs first.
+rdm <- paste(readLines(file.path(ROOT, "README.md"), warn = FALSE), collapse = "\n")
+# The command lines only. The prose below the block quotes the wrong form to
+# explain why it is wrong, and a whole-file grep cannot tell the two apart -
+# which is how this assertion first failed on the fix it was checking.
+cmds <- grep("^DATABRICKS_PWD=.*build[.]R ", strsplit(rdm, "\n")[[1]], value = TRUE)
+handover <- grep("NDMM_COHORT", cmds, value = TRUE)
+ok(length(handover) == 1L && grepl("build.R ndmm_NDMM_COHORT", handover, fixed = TRUE),
+   "...and the handover command in the README names it with the prefix on")
+# The ten columns LOT reads. Held here because this build is the one that has
+# to produce them; if LOT ever needs an eleventh, this fails and says so.
+LOT_COLS <- c("PATID", "INDEX_DATE", "ENDDATE", "ENDDATE_CE", "DEATH_DT",
+              "GDR_CD", "YRDOB", "AGE_INDEX_YR", "FU_DAYS", "FU_DAYS_CE")
+ok(setequal(NDMM_COHORT_COLS, LOT_COLS),
+   "and the cohort carries exactly the ten columns LOT requires")
+lot_src <- file.path(dirname(ROOT), "lot", "R", "build_lot.R")
+if (file.exists(lot_src)) {
+  lt <- paste(readLines(lot_src, warn = FALSE), collapse = "\n")
+  blk <- sub("(?s).*REQUIRED_COHORT_COLS <- c\\((.*?)\\).*", "\\1", lt, perl = TRUE)
+  want <- gsub('"', "", trimws(strsplit(blk, ",")[[1]]))
+  ok(setequal(want, NDMM_COHORT_COLS),
+     "...read out of Jul 28/lot itself, so its list and ours cannot drift apart")
+} else {
+  ok(TRUE, "(Jul 28/lot not beside this folder - its column list not compared)")
+}
+
 cat("\n-- the review tables are not the production path --\n")
 # They cost a pass each, change nothing, and are read once by somebody deciding
 # something. A permanent production build should not carry a decision workflow

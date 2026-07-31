@@ -703,17 +703,37 @@ if that is easier than writing into the checkout.
 ### NDMM_COHORT is a LOT input
 
 The next stage runs the LOT algorithm over these patients, so this table is
-written as a cohort `Jul 28/lot` can be pointed at directly:
+written as a cohort `Jul 28/lot` can be pointed at directly. From `Jul 28/lot`:
 
 ```
-DATABRICKS_PWD=... Rscript build.R NDMM_COHORT ndmm_
+DATABRICKS_PWD=... Rscript build.R ndmm_NDMM_COHORT ndmm_
 ```
+
+**Name the table with the prefix on it.** The two builds resolve names
+differently and it is easy to get wrong: this build's `wrk()` prepends the
+prefix, so the cohort lands at `<schema>.ndmm_NDMM_COHORT`, while `lot`'s
+`wrk()` does **not** prepend anything — it reads the cohort table by the exact
+name it is given. `Rscript build.R NDMM_COHORT ndmm_` therefore looks for
+`<schema>.NDMM_COHORT` and fails with "Cannot read the cohort table". The
+second argument is `lot`'s own output prefix and is independent; matching it to
+this build's prefix just keeps one cohort's tables together.
+
+Both must run against the same `DATABRICKS_CATALOG` and the same
+`PROJECT_WORK_SCHEMA` / `DOMINO_USER_NAME`, which is the default if you do not
+change either between the two runs.
 
 It carries the ten columns that build reads off whatever cohort it is given —
 `PATID`, `INDEX_DATE`, `ENDDATE`, `ENDDATE_CE`, `DEATH_DT`, `GDR_CD`, `YRDOB`,
 `AGE_INDEX_YR`, `FU_DAYS`, `FU_DAYS_CE` — and `check_ndmm_cohort()` verifies
 them, one row per patient, and that the count agrees with the attrition, before
 the run finishes.
+
+`lot` re-checks all of it before doing any work: the ten columns, one row per
+patient, no null `PATID`, `INDEX_DATE` or `ENDDATE`, and no row ending before
+it starts. Every one of those this build already guarantees — `ENDDATE` is
+`least(study end, death)` and so is never null, and `check_ndmm_cohort()`
+enforces the rest. **`FU_DAYS = 0` passes**: `lot` bounds on
+`ENDDATE < INDEX_DATE`, so a same-day window is a window to it too.
 
 **`INDEX_DATE` is the 1L start**, not the MM diagnosis date. Everything that
 depends on where the anchor sits is recomputed from it: age at index, both

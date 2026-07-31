@@ -228,6 +228,8 @@ M = [
  ("port deviation unregistered","tests/test_same_as_source.R",'    "AND regexp_replace(trim(code), \'[^A-Za-z0-9]\', \'\') <> \'\'" = 1L)','    "AND regexp_replace(trim(code), \'[^A-Za-z0-9]\', \'\') <> \'\'" = 2L)'),
  ("readme criteria drop one","README.md","| 8 | **No pregnancy** |","| 8b | **No pregnancy** |"),
  ("readme criteria lose the file","README.md","anywhere in `[2016-01-01, 2026-03-31]` \u2014 the **study period**, not the baseline | `05_pregnancy.R` |","anywhere in `[2016-01-01, 2026-03-31]` \u2014 the **study period**, not the baseline | |"),
+ ("readme handover unprefixed","README.md","Rscript build.R ndmm_NDMM_COHORT ndmm_","Rscript build.R NDMM_COHORT ndmm_"),
+ ("cohort column dropped","R/build_nndm.R",'NDMM_COHORT_COLS <- c("PATID", "INDEX_DATE", "ENDDATE", "ENDDATE_CE",','NDMM_COHORT_COLS <- c("PATID", "INDEX_DATE", "ENDDATE",'),
  ("readme funnel short a step","README.md","| 8 | + no pregnancy in study period | \u00a76.2.1.2, excl. 3 |\n","")
 ,("readme funnel miscounted","README.md","the nine-step funnel","the ten-step funnel"),
  ("readme drops a setting","R/db_utils.R",'  envf <- Sys.getenv("PIPELINE_LOG_FILE", unset = "")','  envf <- Sys.getenv("PIPELINE_LOGFILE", unset = "")'),
