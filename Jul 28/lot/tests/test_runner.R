@@ -1603,6 +1603,66 @@ for (k in names(EXPECT))
 ok(!any(c("INPUT_COHORT_TABLE", "OBJECT_PREFIX") %in% names(shipped)),
    "config.csv does not name a cohort")
 
+cat("\n-- the CDM vintage every read hits --\n")
+# get_quarter_suffix decides which quarterly tables the whole study reads, via
+# cdm_src at ten call sites, and had no test at all. CONTRACT pins STUDY_END so
+# the input is guaranteed; the arithmetic that turns it into a table name was
+# not. An off-by-one quarter names t_medical_2025q1, which exists, so it would
+# read real data from the wrong vintage and nothing would say so.
+qe <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "db_utils_lot.R"), envir = qe)
+assign("log_msg", function(...) invisible(NULL), envir = qe)
+QCFG <- list(catalog = "hive_metastore", cdm_schema = "clnprw_optum",
+             use_quarterly_tables = TRUE, study_end = "2025-06-30")
+assign("lot_config", function() QCFG, envir = qe)
+# Derived a different way than the code does - (m + 2) %/% 3 against its
+# ceiling(m / 3) - so this is a second opinion, not a restatement.
+want_q <- function(d) {
+  dt <- as.Date(d)
+  sprintf("%sq%d", format(dt, "%Y"), (as.integer(format(dt, "%m")) + 2L) %/% 3L)
+}
+# Every call goes through this: a mutation that makes the function stop would
+# otherwise propagate out of ok() and take the rest of the file with it.
+qs <- function(x) tryCatch(qe$get_quarter_suffix(x),
+                           error = function(e) paste("stopped:", conditionMessage(e)))
+months <- sprintf("2025-%02d-15", 1:12)
+got  <- vapply(months, qs, character(1), USE.NAMES = FALSE)
+ok(identical(got, vapply(months, want_q, character(1), USE.NAMES = FALSE)),
+   paste0("every month lands in the right quarter (", paste(unique(got), collapse = " "), ")"))
+# The boundaries are where an off-by-one shows: 03-31 and 04-01 must differ.
+ok(identical(qs("2025-03-31"), "2025q1") && identical(qs("2025-04-01"), "2025q2") &&
+     identical(qs("2025-12-31"), "2025q4"),
+   "and the quarter boundaries fall between the months, not across them")
+ok(identical(qs("2024-09-30"), "2024q3"),
+   "the year comes from the date, not from today")
+ok(identical(qs(CONTRACT$study_end), want_q(CONTRACT$study_end)),
+   paste0("the pinned STUDY_END resolves to ", want_q(CONTRACT$study_end)))
+# as.Date("30-06-2025") does not fail - it returns year 0030. Without the
+# year < 1900 guard that is accepted and the suffix becomes 30q2.
+ok(identical(qs("30-06-2025"), "2025q2"),
+   "an Excel-reformatted date is recovered, not read as the year 30")
+# All five layouts the recovery declares, not just the ones as.Date happens to
+# survive. It ERRORS rather than returning NA on a string it cannot read, so
+# the two month-first ones - what a US-locale Excel writes - never reached the
+# loop at all, and neither did the message below.
+EXCEL <- c("30-06-2025", "30/06/2025", "06/30/2025", "2025/06/30", "06-30-2025")
+got_x <- vapply(EXCEL, qs, character(1), USE.NAMES = FALSE)
+ok(all(got_x == "2025q2"),
+   paste0("every layout the recovery lists is recovered (",
+          paste(unique(got_x), collapse = " "), ")"))
+# No whitespace case: as.Date skips surrounding spaces itself, so an assertion
+# on "  2025-06-30  " passes with or without the trimws() it would be testing.
+msg <- tryCatch({ qe$get_quarter_suffix("nonsense"); "" }, error = conditionMessage)
+ok(grepl("STUDY_END", msg, fixed = TRUE) && grepl("YYYY-MM-DD", msg, fixed = TRUE),
+   "a date it cannot parse stops the build, naming the setting and the format")
+# The consumer: quarterly on appends the suffix, off reads the plain table.
+ok(identical(qe$cdm_src("medical"), "hive_metastore.clnprw_optum.t_medical_2025q2"),
+   "cdm_src builds the quarterly name from it")
+QCFG$use_quarterly_tables <- FALSE
+ok(identical(qe$cdm_src("medical"), "hive_metastore.clnprw_optum.medical"),
+   "...and reads the plain table when quarterly tables are off")
+QCFG$use_quarterly_tables <- TRUE
+
 cat("\n-- a count reaches SQL as digits --\n")
 sc <- get("sql_count", envir = globalenv())
 ok(identical(sc(1e5), "100000") && identical(sc(1e6), "1000000") &&

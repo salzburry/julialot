@@ -75,7 +75,12 @@ lot_out <- function(tbl) {
 
 get_quarter_suffix <- function(end_date) {
   v  <- trimws(as.character(end_date))
-  dt <- suppressWarnings(as.Date(v))                       # ISO first
+  # tryCatch, not just suppressWarnings: as.Date ERRORS on a string matching
+  # none of its standard formats rather than returning NA, so "06/30/2025"
+  # stopped here and never reached the recovery below - which meant two of the
+  # five layouts it lists, the US month-first ones, could not be recovered, and
+  # the message at the bottom naming STUDY_END could not be reached either.
+  dt <- tryCatch(suppressWarnings(as.Date(v)), error = function(e) NA)  # ISO first
   yr <- if (!is.na(dt)) as.integer(format(dt, "%Y")) else NA_integer_
   # as.Date("30-06-2025") does NOT return NA - it yields year 0030.
   # Treat an implausible year as a parse failure and retry the common
