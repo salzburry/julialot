@@ -373,7 +373,10 @@ phase_codelists <- function(con) {
         log_msg("WAIVED (", waived$check[i], "): ", waived$detail[i])
       # What actually fired, for LOT_BUILD_STATUS. The requested list says
       # nothing about the code lists; this says what was really in them.
-      options(lot_waivers_applied = waived$check)
+      # Union, not assign: check_claim_ndc has already recorded its own, and
+      # prepare_lot_inputs can call this a second time in the same run.
+      options(lot_waivers_applied = union(
+        getOption("lot_waivers_applied", character(0)), waived$check))
     }
     if (nrow(fatal))
       stop("The production code lists would change who counts as treated:\n  ",

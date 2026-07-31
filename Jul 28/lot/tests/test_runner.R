@@ -518,8 +518,9 @@ sys.source(file.path(ROOT, "R", "build_lot.R"), envir = ne)
 for (nm in c("log_msg", "print")) assign(nm, function(...) invisible(NULL), envir = ne)
 assign("cdm_src", function(t) paste0("cdm.", t), envir = ne)
 cfg_ndc <- list(tbl_medical = "medical", tbl_rx = "rx")
-prow <- function(src, n, a = 0, b = 0, o = 0, alpha = 0)
-  data.frame(SOURCE = src, n_ndc = n, n_11 = a, n_10 = b, n_other = o, n_alpha = alpha)
+prow <- function(src, n, a = 0, b = 0, o = 0, alpha = 0, nodig = 0, zero = 0)
+  data.frame(SOURCE = src, n_ndc = n, n_11 = a, n_10 = b, n_other = o,
+             n_alpha = alpha, n_nodigit = nodig, n_zero = zero)
 NSQL <- character(0)
 drive_ndc <- function(med, rx) {
   i <- 0
@@ -537,6 +538,25 @@ ok(grepl("1000 ten-digit", tend, fixed = TRUE) && grepl("4-4-2", tend, fixed = T
    "...with the counts and why the pad is only right for one layout")
 ok(!is.null(drive_ndc(prow("medical", 500, a = 500, alpha = 3), prow("rx", 10, a = 10))),
    "letters in a claim NDC stop it too, even at eleven digits")
+# All zeros has eleven digits, so only a bucket of its own catches it. It is
+# the key a claim with no NDC produces, and bad_ndc treats the same value as
+# fatal on the code side.
+zed <- drive_ndc(prow("medical", 500, a = 500, zero = 2), prow("rx", 10, a = 10))
+ok(!is.null(zed), "an all-zero claim NDC stops it despite being eleven digits")
+ok(grepl("2 all zeros", zed, fixed = TRUE), "...and is reported as its own count")
+nod <- drive_ndc(prow("medical", 500, a = 499, o = 1, nodig = 1), prow("rx", 10, a = 10))
+ok(!is.null(nod) && grepl("1 with no digits", nod, fixed = TRUE),
+   "a value with no digits at all is counted and reported")
+ok(grepl("cannot change a result on their own", nod, fixed = TRUE),
+   "...and the message says which buckets cannot affect matching")
+# The stub decides what the counts are, so it cannot show that the query would
+# ever produce them. A value with no digits only reaches the profile because
+# the WHERE stopped excluding it - assert that on the SQL.
+ok(!any(grepl("AND regexp_replace(cast(t.NDC as string), \'[^0-9]\', \'\') <> \'\'",
+              NSQL, fixed = TRUE)),
+   "the profile no longer drops the values it is meant to report")
+for (b in c("AS n_nodigit", "AS n_zero"))
+  ok(all(grepl(b, NSQL, fixed = TRUE)), paste0("the profile counts ", b))
 # Waivable, so a first run reports the distribution rather than blocking on a
 # shape nobody has seen yet - and what fired is recorded, not just requested.
 Sys.setenv(CODELIST_WAIVERS = "claim_ndc")
@@ -548,9 +568,25 @@ ok(identical(getOption("lot_waivers_applied"), "claim_ndc"),
 Sys.unsetenv("CODELIST_WAIVERS"); options(lot_waivers_applied = NULL)
 ok("claim_ndc" %in% WAIVABLE_CHECKS && !("claim_ndc" %in% FATAL_CHECKS),
    "claim_ndc is reviewable, like ndc_short on the other side")
+
+# Two writers, and the tests covered each alone. A run waiving both a codelist
+# check and claim_ndc calls phase_codelists, then check_claim_ndc, and then
+# phase_codelists AGAIN whenever lot_inputs_present() says no - which it does
+# when the catalogue cannot answer, not only in a LOT2-5-only session. Assigning
+# rather than unioning dropped claim_ndc on that path.
+Sys.setenv(CODELIST_WAIVERS = "uncoded_meds,claim_ndc")
+options(lot_waivers_applied = character(0))
+assign("db_q", mk_db_q("uncoded"), envir = ce)
+invisible(ce$phase_codelists(NULL))
+invisible(drive_ndc(prow("medical", 500, a = 500), prow("rx", 9000, a = 8000, b = 1000)))
+assign("db_q", mk_db_q("uncoded"), envir = ce)
+invisible(ce$phase_codelists(NULL))
+ok(setequal(getOption("lot_waivers_applied"), c("uncoded_meds", "claim_ndc")),
+   "both waivers survive phase_codelists running a second time")
+Sys.unsetenv("CODELIST_WAIVERS"); options(lot_waivers_applied = NULL)
 # It has to measure what the join measures, or it answers about another string.
-join_norm <- "regexp_replace(cast(t.NDC as string), '[^0-9]', '')"
-ok(all(grepl(join_norm, NSQL, fixed = TRUE)), "the profile strips to digits, as the join does")
+ok(all(grepl("regexp_replace(v, '[^0-9]', '') AS digits", NSQL, fixed = TRUE)),
+   "the profile strips to digits, as the join does")
 ok(any(grepl("cdm.medical", NSQL, fixed = TRUE)) && any(grepl("cdm.rx", NSQL, fixed = TRUE)),
    "and covers medical as well as rx - phase_qc never looked at medical")
 ok(all(grepl("INNER JOIN lot_patient_input p ON t.PATID = p.PATID", NSQL, fixed = TRUE)),

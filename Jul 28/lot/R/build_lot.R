@@ -366,34 +366,47 @@ check_claim_ndc <- function(con, cfg) {
   log_msg("Checking claim NDC shape...")
   # Scoped to the cohort and its observation window, like the joins - a whole
   # scan of medical is not worth a shape check.
+  # Every nonblank value, including the ones that cannot join: a profile that
+  # skipped them would report "all eleven digits" without having looked.
   profile_sql <- function(src, tbl, dt) glue("
     SELECT '{src}' AS SOURCE,
            count(*) AS n_ndc,
-           sum(CASE WHEN length(regexp_replace(v, '[^0-9]', '')) = 11 THEN 1 ELSE 0 END) AS n_11,
-           sum(CASE WHEN length(regexp_replace(v, '[^0-9]', '')) = 10 THEN 1 ELSE 0 END) AS n_10,
-           sum(CASE WHEN length(regexp_replace(v, '[^0-9]', '')) NOT IN (10, 11) THEN 1 ELSE 0 END) AS n_other,
-           sum(CASE WHEN v RLIKE '[A-Za-z]' THEN 1 ELSE 0 END) AS n_alpha
+           sum(CASE WHEN d = 11 THEN 1 ELSE 0 END) AS n_11,
+           sum(CASE WHEN d = 10 THEN 1 ELSE 0 END) AS n_10,
+           sum(CASE WHEN d NOT IN (10, 11) THEN 1 ELSE 0 END) AS n_other,
+           sum(CASE WHEN v RLIKE '[A-Za-z]' THEN 1 ELSE 0 END) AS n_alpha,
+           sum(CASE WHEN d = 0 THEN 1 ELSE 0 END) AS n_nodigit,
+           sum(CASE WHEN d > 0 AND digits RLIKE '^0+$' THEN 1 ELSE 0 END) AS n_zero
     FROM (
-      SELECT cast(t.NDC as string) AS v
-      FROM {tbl} t
-      INNER JOIN lot_patient_input p ON t.PATID = p.PATID
-      WHERE cast(t.NDC as string) IS NOT NULL AND trim(cast(t.NDC as string)) <> ''
-        AND regexp_replace(cast(t.NDC as string), '[^0-9]', '') <> ''
-        AND cast(t.{dt} AS date) >= p.INDEX_DATE
-        AND cast(t.{dt} AS date) <= p.OBS_END_DT)")
+      SELECT v, digits, length(digits) AS d
+      FROM (
+        SELECT v, regexp_replace(v, '[^0-9]', '') AS digits
+        FROM (
+          SELECT cast(t.NDC as string) AS v
+          FROM {tbl} t
+          INNER JOIN lot_patient_input p ON t.PATID = p.PATID
+          WHERE cast(t.NDC as string) IS NOT NULL
+            AND trim(cast(t.NDC as string)) <> ''
+            AND cast(t.{dt} AS date) >= p.INDEX_DATE
+            AND cast(t.{dt} AS date) <= p.OBS_END_DT)))")
   prof <- rbind(
     db_q(con, profile_sql("medical", cdm_src(cfg$tbl_medical), "FST_DT")),
     db_q(con, profile_sql("rx",      cdm_src(cfg$tbl_rx),      "FILL_DT")))
   print(prof)
 
-  bad <- prof[prof$n_ndc > 0 & (prof$n_11 < prof$n_ndc | prof$n_alpha > 0), , drop = FALSE]
+  # All-zero has eleven digits, so it needs saying separately: it is the key a
+  # claim with no NDC produces, and bad_ndc treats the same value as fatal on
+  # the code side.
+  bad <- prof[prof$n_ndc > 0 & (prof$n_11 < prof$n_ndc | prof$n_alpha > 0 |
+                                prof$n_zero > 0), , drop = FALSE]
   if (nrow(bad) == 0) {
     log_msg("  OK: Every claim NDC is eleven digits.")
     return(invisible(TRUE))
   }
   detail <- paste(vapply(seq_len(nrow(bad)), function(i) with(bad[i, ], paste0(
     SOURCE, ": ", n_ndc, " NDCs, ", n_11, " eleven-digit, ", n_10, " ten-digit, ",
-    n_other, " other length, ", n_alpha, " with letters")), character(1)),
+    n_other, " other length, ", n_alpha, " with letters, ", n_nodigit,
+    " with no digits, ", n_zero, " all zeros")), character(1)),
     collapse = "; ")
   if ("claim_ndc" %in% codelist_waivers()) {
     log_msg("WAIVED (claim_ndc): ", detail)
@@ -405,9 +418,11 @@ check_claim_ndc <- function(con, cfg) {
        ".\nThe join left-pads to eleven, which is right only for the 4-4-2 ",
        "layout, so a ten-digit claim can be read as a different drug's code ",
        "or as none. Confirm how this CDM represents NDC, or convert with an ",
-       "approved NDC10-to-NDC11 crosswalk. Once the study team has ",
-       "established that the padding is right for this data, waive it with ",
-       "CODELIST_WAIVERS=claim_ndc.", call. = FALSE)
+       "approved NDC10-to-NDC11 crosswalk.\nThe no-digit and all-zero counts ",
+       "cannot change a result on their own - the joins drop a claim with no ",
+       "digits, and bad_ndc has already stopped any code that pads to eleven ",
+       "zeros - but they are reported so a waiver is an informed one. Waive ",
+       "with CODELIST_WAIVERS=claim_ndc.", call. = FALSE)
 }
 
 # One row per run saying whether its outputs belong together. Without it a

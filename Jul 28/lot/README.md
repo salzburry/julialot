@@ -325,7 +325,12 @@ does not also accept `ABC123`.
 Both sides of the join need the contract, not just the code list. `claim_ndc`
 profiles the claim NDCs before any claim is read - `medical` and `rx`, scoped
 to the cohort and its observation window - and stops unless every one is
-eleven digits. A ten-digit *claim* has exactly the layout problem a ten-digit
+eleven digits, letter-free and not all zeros. Every nonblank value is counted,
+including the ones that cannot join: a profile that skipped those would report
+"all eleven digits" without having looked at them. The no-digit and all-zero
+counts cannot change a result on their own - the joins drop a claim with no
+digits, and `bad_ndc` has already stopped any code that pads to eleven zeros -
+but they are reported so that waiving is an informed choice. A ten-digit *claim* has exactly the layout problem a ten-digit
 *code* has, so a canonical code can miss a real claim.
 
 The NDC QC in `phase_qc` does not cover this and is not a substitute: it
