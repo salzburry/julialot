@@ -43,8 +43,9 @@ phase_qc <- function(con, ctx) {
     log_msg("  WARNING: NDC QC failed: ", e$message)
   })
 
-  # Validation QC suite.
-  # Must-run validations for MAP + LOT correctness
+  # Validation QC suite: reporting on MAP and LOT, not gating. The whole block
+  # is wrapped below, so a failure here prints and the run carries on. The
+  # same conditions are re-checked fail-loud in check_lot1_invariants().
   log_msg("Running validation QC suite...")
   tryCatch({
     # A) MMA_MED coverage by source

@@ -154,9 +154,9 @@ Three consistency checks are reviewable - they stop the build unless named in
 | a rollup med with no extractable NDC/HCPCS code | never matched, so patients on it look untreated |
 | a code type other than NDC or HCPCS | sits in the list and matches nothing |
 
-All of these ask only about rows extraction can reach. Every join in
-`03_mma_map` is `ON c.CL_CODE_TYPE = 'NDC'` or `'HCPCS'`, so the checks read a
-view of the code list filtered to those two. A medication coded only as ICD
+The medication-based checks ask only about rows extraction can reach. Every
+join in `03_mma_map` is `ON c.CL_CODE_TYPE = 'NDC'` or `'HCPCS'`, so they read
+a view of the code list filtered to those two. A medication coded only as ICD
 otherwise looked coded while producing nothing, and an unused ICD code naming
 two drugs failed the build over a row nothing joins. `code_types` keeps the
 whole list - reporting the unread types is its job.
@@ -174,6 +174,8 @@ a reading worth accepting:
   two rows for one drug that disagree on a flag both survive, and the
   enrichment joins on the abbreviation alone
 - a blank medication or class, which would make the checks above meaningless
+- a medication abbreviated `CNT`, which would generate `LOT1_MED_CNT` - already
+  the fixed count of induction medications, at every line
 - a medication or class whose name would not survive being turned into a column:
   `sanitize_col` maps punctuation and spaces to `_`, so `CAR-T` and `CAR T`
   produce one column between them, and the value goes into a SQL string literal
@@ -248,7 +250,7 @@ deliberately kept in a separate file, a code type this study does not use, a
 substitution left inactive, a ten-digit NDC in a documented layout:
 
 `orphan_meds`, `uncoded_meds`, `code_types`, `subs_substitute`,
-`subs_original`, `ndc_short`, `claim_ndc`.
+`subs_original`, `ndc_short`, `claim_ndc_short`, `claim_ndc_shape`.
 
 Not waivable, because each means a claim counted twice, a code matching every
 claim with no NDC, a medication with no class, or an output column that is
@@ -327,10 +329,19 @@ profiles the claim NDCs before any claim is read - `medical` and `rx`, scoped
 to the cohort and its observation window - and stops unless every one is
 eleven digits, letter-free and not all zeros. Every nonblank value is counted,
 including the ones that cannot join: a profile that skipped those would report
-"all eleven digits" without having looked at them. The no-digit and all-zero
-counts cannot change a result on their own - the joins drop a claim with no
-digits, and `bad_ndc` has already stopped any code that pads to eleven zeros -
-but they are reported so that waiving is an informed choice. A ten-digit *claim* has exactly the layout problem a ten-digit
+"all eleven digits" without having looked at them.
+
+Named apart the way the code side is. `claim_ndc_short` is a ten-digit claim -
+a real NDC in a layout the pad has to guess. `claim_ndc_shape` is everything
+else: letters, another length, all zeros. Those cannot be an NDC at all, and
+`ABC123` reaches the join as `00000000123` where it can match a real code.
+
+Both are reviewable rather than fatal, unlike their code-side counterparts.
+These are the CDM's tables, not ours: there is no code list to correct, so a
+check that could not be waived would leave no remedy short of changing the
+join. What the split buys is that accepting one does not accept the other -
+waiving the reviewed ten-digit case cannot let `ABC123` through with it, and
+each is recorded in `CODELIST_WAIVERS_APPLIED` under its own name. A ten-digit *claim* has exactly the layout problem a ten-digit
 *code* has, so a canonical code can miss a real claim.
 
 The NDC QC in `phase_qc` does not cover this and is not a substitute: it
@@ -384,7 +395,13 @@ worth carrying on through.
 ## Running LOT2-5 on its own
 
 `prepare_lot_inputs()` rebuilds what LOT2-5 needs in a session where LOT1 did
-not run. It used to hold its own copies of the code-list, cohort and SCT SQL -
+not run. **A combined run never calls it.** If the views are missing after
+LOT1 - or the catalogue cannot be asked - the build stops. Rebuilding there
+would re-read the code lists and the cohort table, and the loader compares a
+file's hash across one read, not across two phases: LOT1 could be built from
+one snapshot and `LOT_LONG` from another, with the run still reaching
+`complete`. One run, one snapshot. Continue LOT2-5 deliberately in a session
+of its own if that is what you want. It used to hold its own copies of the code-list, cohort and SCT SQL -
 "the same SQL LOT1 uses", except the copies drifted: the code-list guards never
 reached them, and its cohort view ignored `censor_at_disenrollment` entirely.
 
@@ -421,6 +438,14 @@ actually costs rather than leaving it an assumption.
 
 LOT1's tables are replaced before LOT2-5 starts, so a failure in between would
 leave new LOT1 output beside an older `LOT_LONG`. Every run therefore writes
+`<prefix>LOT_RUN_METADATA` carries the settings and the counts. `phase_persist`
+writes it before LOT2-5 exists, so its own counts stop at LOT1 - cohort, MMA
+claims, MAPs, LOT1 patients. `N_LOT_LONG_ROWS`, `N_LOT_LONG_PATIENTS` and
+`LOT_LONG_BY_LINE` (`1:900|2:400|3:120`) are filled in after `LOT_LONG` has
+passed its checks, so they describe a table already found usable. A run whose
+metadata row has no `LOT_LONG` counts is not called complete: a row on its own
+only says LOT1 ran.
+
 `<prefix>LOT_BUILD_STATUS`: `started` once preflight has passed, then
 `complete`, or `failed` if it stops after that. Read it before trusting a set
 of tables.

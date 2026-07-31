@@ -439,6 +439,14 @@ phase_codelists <- function(con) {
            " - they are written into SQL string literals as they stand.",
            call. = FALSE)
   }
+  # LOT1_MED_CNT, LOT{n}_MED_CNT and LOT_MED_CNT are fixed columns - the count
+  # of induction medications - so an abbreviation of CNT generates a second
+  # column of that name at every line.
+  if ("CNT" %in% sanitize_col(meds))
+    stop("Medication abbreviation ",
+         paste(meds[sanitize_col(meds) == "CNT"], collapse = ", "),
+         " would generate LOT1_MED_CNT, which is already the induction ",
+         "medication count. Rename it in the rollup.", call. = FALSE)
   log_msg("  OK: Every medication and class makes one distinct column name.")
 
   med_flag_exprs <- paste0(

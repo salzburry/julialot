@@ -158,7 +158,8 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_cohort",
            "phase_lot1_end", "phase_qc",
            "check_lot1_invariants", "phase_persist", "materialize_sct_views",
            "build_lot2_5",
-           "check_lot_long", "phase_line_criteria", "check_run_recorded")
+           "check_lot_long", "record_final_counts", "phase_line_criteria",
+           "check_run_recorded")
 at <- vapply(ORDER, function(f) {
   m <- regexpr(paste0("(?<![A-Za-z0-9_.])", f, "\\("), body, perl = TRUE)
   if (m == -1) NA_integer_ else as.integer(m)
@@ -407,6 +408,7 @@ mk_db_q <- function(problem) function(con, sql) {
   if (grepl("SELECT DISTINCT CL_MED_ABBR FROM mma_rollup", sql, fixed = TRUE))
     return(data.frame(CL_MED_ABBR = switch(problem,
       collide = c("CAR-T", "CAR T"), quoted = c("LEN", "O'BRIEN"),
+      cnt = c("LEN", "CNT"),
       c("LEN", "BOR"))))
   if (grepl("SELECT DISTINCT CL_MED_CLASS FROM mma_rollup", sql, fixed = TRUE))
     return(data.frame(CL_MED_CLASS = switch(problem,
@@ -437,13 +439,13 @@ for (prob in c("orphan", "uncoded", "type", "class", "code_to_med", "bad_ndc",
   ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
      paste0("'", prob, "' stops the build"))
 }
-# A waiver names one check. The study team keeps steroids in a separate file,
-# so the rollup has meds with no codes - an expected condition. Waiving that
-# must NOT also waive a code naming two different drugs.
+# A waiver names one check. A medication deliberately left without extractable
+# codes is an expected condition a study may accept; waiving it must NOT also
+# waive a code naming two different drugs.
 Sys.setenv(CODELIST_WAIVERS = "uncoded_meds")
 assign("db_q", mk_db_q("uncoded"), envir = ce)
 ok(!inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
-   "waiving uncoded_meds lets the expected steroid case through")
+   "waiving uncoded_meds lets a deliberately uncoded medication through")
 assign("db_q", mk_db_q("code_to_med"), envir = ce)
 ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
    "and still stops on a code naming two medications")
@@ -497,6 +499,16 @@ err <- tryCatch({ ce$phase_codelists(NULL); "" }, error = conditionMessage)
 ok(grepl("CAR_T", err, fixed = TRUE) && grepl("CAR-T", err, fixed = TRUE) &&
      grepl("CAR T", err, fixed = TRUE),
    "...naming the column and both values that produce it")
+# LOT1_MED_CNT is a fixed column - the induction medication count - so a
+# medication abbreviated CNT generates a second column of that name.
+assign("db_q", mk_db_q("cnt"), envir = ce)
+cerr <- tryCatch({ ce$phase_codelists(NULL); "" }, error = conditionMessage)
+ok(grepl("LOT1_MED_CNT", cerr, fixed = TRUE),
+   "an abbreviation of CNT collides with the fixed count column and stops it")
+ok(any(grepl("count(DISTINCT im.MED_ABBR) AS LOT1_MED_CNT",
+             readLines(file.path(ROOT, "R", "steps", "04_lot1_base.R"), warn = FALSE),
+             fixed = TRUE)),
+   "...and that column really is fixed, not merely assumed to be")
 # The check calls sanitize_col rather than repeating its expression, so it
 # cannot drift from the generator it is guarding.
 ok(grepl("san <- sanitize_col(nm$v)", cd, fixed = TRUE),
@@ -505,6 +517,47 @@ lb <- paste(readLines(file.path(ROOT, "R", "steps", "10_lot2_5_base.R"), warn = 
             collapse = "\n")
 ok(grepl("FROM mma_rollup", lb, fixed = TRUE),
    "LOT2-5 draws its meds and classes from the same rollup, so this covers it")
+
+cat("\n-- the run says what it produced, not only what LOT1 saw --\n")
+# phase_persist writes LOT_RUN_METADATA before LOT2-5 exists, so its counts
+# stop at LOT1 and a row on its own says nothing about LOT_LONG.
+fe <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_lot.R"), envir = fe)
+assign("log_msg", function(...) invisible(NULL), envir = fe)
+assign("lot_out", function(x) paste0("wk.p_", x), envir = fe)
+assign("run_id", "R1", envir = fe)
+FSQL <- character(0)
+assign("db_exec", function(con, s) { FSQL <<- c(FSQL, s); TRUE }, envir = fe)
+drive_fm <- function(have) {
+  FSQL <<- character(0)
+  assign("db_q", function(con, s) {
+    if (grepl("DESCRIBE", s)) return(if (is.null(have)) stop("no")
+                                     else data.frame(col_name = have))
+    if (grepl("GROUP BY LOT_NUM", s)) return(data.frame(LOT_NUM = 1:3, n = c(900, 400, 120)))
+    data.frame(n_rows = 1420, n_patients = 900)
+  }, envir = fe)
+  tryCatch({ fe$record_final_counts(NULL, list()); NULL }, error = conditionMessage)
+}
+base_cols <- c("RUN_ID", "N_COHORT_PATIENTS", "N_LOT1_PATIENTS")
+ok(is.null(drive_fm(base_cols)), "a metadata table without the columns gets them")
+ok(sum(grepl("ALTER", FSQL)) == length(get("FINAL_METADATA_COLS", envir = fe)),
+   "...one ALTER per column, since phase_persist creates the table without them")
+ok(any(grepl("LOT_LONG_BY_LINE = '1:900|2:400|3:120'", FSQL, fixed = TRUE)),
+   "the line distribution is recorded, not just a total")
+ok(any(grepl("WHERE RUN_ID = 'R1'", FSQL, fixed = TRUE)),
+   "against this run's row, not every row in the table")
+ok(is.null(drive_fm(c(base_cols, names(get("FINAL_METADATA_COLS", envir = fe))))) &&
+     !any(grepl("ALTER", FSQL)),
+   "a later run finds them and alters nothing")
+ok(!is.null(drive_fm(NULL)),
+   "a DESCRIBE that cannot answer stops rather than adding columns blind")
+# Recorded after check_lot_long, so the numbers describe a table already found
+# usable - and check_run_recorded now asks for them, not merely for a row.
+ok(regexpr("check_lot_long(", body, fixed = TRUE) <
+     regexpr("record_final_counts(", body, fixed = TRUE),
+   "the counts are taken after LOT_LONG has passed its checks")
+ok(grepl("N_LOT_LONG_ROWS IS NOT NULL", bl, fixed = TRUE),
+   "and a run with a LOT1-only metadata row is not called complete")
 
 cat("\n-- the claim side of the NDC contract --\n")
 # ndc_shape and ndc_short constrain the code list; both joins pad the CLAIM the
@@ -538,6 +591,49 @@ ok(grepl("1000 ten-digit", tend, fixed = TRUE) && grepl("4-4-2", tend, fixed = T
    "...with the counts and why the pad is only right for one layout")
 ok(!is.null(drive_ndc(prow("medical", 500, a = 500, alpha = 3), prow("rx", 10, a = 10))),
    "letters in a claim NDC stop it too, even at eleven digits")
+# Split like the code side. Ten digits is a real NDC in a layout the pad has to
+# guess - reviewable. Letters, wrong lengths and all-zero cannot be an NDC at
+# all, and one waiver covering both would accept ABC123 -> 00000000123 along
+# with the case that was actually reviewed.
+ok(all(c("claim_ndc_short", "claim_ndc_shape") %in% WAIVABLE_CHECKS) &&
+     !any(c("claim_ndc_short", "claim_ndc_shape") %in% FATAL_CHECKS),
+   "the two claim-NDC conditions have separate names, both reviewable")
+Sys.setenv(CODELIST_WAIVERS = "claim_ndc_short")
+options(lot_waivers_applied = character(0))
+ok(is.null(drive_ndc(prow("medical", 500, a = 500), prow("rx", 9000, a = 8000, b = 1000))),
+   "waiving claim_ndc_short lets a reviewed ten-digit distribution through")
+ok(identical(getOption("lot_waivers_applied"), "claim_ndc_short"),
+   "...recorded as applied under its own name")
+for (p2 in list(list(r = prow("medical", 500, a = 497, alpha = 3), w = "letters"),
+                list(r = prow("medical", 500, a = 499, o = 1), w = "another length"),
+                list(r = prow("medical", 500, a = 500, zero = 2), w = "all zeros"))) {
+  err <- drive_ndc(p2$r, prow("rx", 10, a = 10))
+  ok(!is.null(err) && grepl("cannot be an NDC", err, fixed = TRUE),
+     paste0("...and does not let ", p2$w, " through with it"))
+}
+Sys.unsetenv("CODELIST_WAIVERS"); options(lot_waivers_applied = NULL)
+# Reviewable, not fatal: these are the CDM's tables, so a run that could not
+# proceed would have no remedy short of changing the join. The split is what
+# matters - accepting one condition must not accept the other.
+Sys.setenv(CODELIST_WAIVERS = "claim_ndc_shape")
+options(lot_waivers_applied = character(0))
+ok(is.null(drive_ndc(prow("medical", 500, a = 497, alpha = 3), prow("rx", 10, a = 10))),
+   "waiving claim_ndc_shape lets a reviewed malformed distribution through")
+ok(identical(getOption("lot_waivers_applied"), "claim_ndc_shape"),
+   "...recorded as applied under its own name")
+tenner <- drive_ndc(prow("medical", 500, a = 500), prow("rx", 9000, a = 8000, b = 1000))
+ok(!is.null(tenner) && grepl("Ten-digit", tenner, fixed = TRUE),
+   "...and does not let ten-digit values through with it")
+Sys.unsetenv("CODELIST_WAIVERS"); options(lot_waivers_applied = NULL)
+# Both named together: each is reported under its own name, not merged.
+Sys.setenv(CODELIST_WAIVERS = "claim_ndc_shape,claim_ndc_short")
+options(lot_waivers_applied = character(0))
+ok(is.null(drive_ndc(prow("medical", 500, a = 497, alpha = 3),
+                     prow("rx", 9000, a = 8000, b = 1000))),
+   "naming both lets a run through that trips both")
+ok(setequal(getOption("lot_waivers_applied"), c("claim_ndc_shape", "claim_ndc_short")),
+   "...and records both as applied")
+Sys.unsetenv("CODELIST_WAIVERS"); options(lot_waivers_applied = NULL)
 # All zeros has eleven digits, so only a bucket of its own catches it. It is
 # the key a claim with no NDC produces, and bad_ndc treats the same value as
 # fatal on the code side.
@@ -547,8 +643,8 @@ ok(grepl("2 all zeros", zed, fixed = TRUE), "...and is reported as its own count
 nod <- drive_ndc(prow("medical", 500, a = 499, o = 1, nodig = 1), prow("rx", 10, a = 10))
 ok(!is.null(nod) && grepl("1 with no digits", nod, fixed = TRUE),
    "a value with no digits at all is counted and reported")
-ok(grepl("cannot change a result on their own", nod, fixed = TRUE),
-   "...and the message says which buckets cannot affect matching")
+ok(grepl("cannot be an NDC", nod, fixed = TRUE),
+   "...under claim_ndc_shape, not the ten-digit condition")
 # The stub decides what the counts are, so it cannot show that the query would
 # ever produce them. A value with no digits only reaches the profile because
 # the WHERE stopped excluding it - assert that on the SQL.
@@ -559,29 +655,21 @@ for (b in c("AS n_nodigit", "AS n_zero"))
   ok(all(grepl(b, NSQL, fixed = TRUE)), paste0("the profile counts ", b))
 # Waivable, so a first run reports the distribution rather than blocking on a
 # shape nobody has seen yet - and what fired is recorded, not just requested.
-Sys.setenv(CODELIST_WAIVERS = "claim_ndc")
-options(lot_waivers_applied = character(0))
-ok(is.null(drive_ndc(prow("medical", 500, a = 500), prow("rx", 9000, a = 8000, b = 1000))),
-   "waiving claim_ndc lets a reviewed distribution through")
-ok(identical(getOption("lot_waivers_applied"), "claim_ndc"),
-   "...and records it as applied, not merely requested")
-Sys.unsetenv("CODELIST_WAIVERS"); options(lot_waivers_applied = NULL)
-ok("claim_ndc" %in% WAIVABLE_CHECKS && !("claim_ndc" %in% FATAL_CHECKS),
-   "claim_ndc is reviewable, like ndc_short on the other side")
+
 
 # Two writers, and the tests covered each alone. A run waiving both a codelist
 # check and claim_ndc calls phase_codelists, then check_claim_ndc, and then
 # phase_codelists AGAIN whenever lot_inputs_present() says no - which it does
 # when the catalogue cannot answer, not only in a LOT2-5-only session. Assigning
 # rather than unioning dropped claim_ndc on that path.
-Sys.setenv(CODELIST_WAIVERS = "uncoded_meds,claim_ndc")
+Sys.setenv(CODELIST_WAIVERS = "uncoded_meds,claim_ndc_short")
 options(lot_waivers_applied = character(0))
 assign("db_q", mk_db_q("uncoded"), envir = ce)
 invisible(ce$phase_codelists(NULL))
 invisible(drive_ndc(prow("medical", 500, a = 500), prow("rx", 9000, a = 8000, b = 1000)))
 assign("db_q", mk_db_q("uncoded"), envir = ce)
 invisible(ce$phase_codelists(NULL))
-ok(setequal(getOption("lot_waivers_applied"), c("uncoded_meds", "claim_ndc")),
+ok(setequal(getOption("lot_waivers_applied"), c("uncoded_meds", "claim_ndc_short")),
    "both waivers survive phase_codelists running a second time")
 Sys.unsetenv("CODELIST_WAIVERS"); options(lot_waivers_applied = NULL)
 # It has to measure what the join measures, or it answers about another string.
@@ -657,7 +745,19 @@ assign("db_q", function(con, sql)
 ok(!isTRUE(pe$lot_inputs_present(NULL)), "a missing view is detected")
 assign("db_q", function(con, sql) stop("no such command"), envir = pe)
 ok(!isTRUE(pe$lot_inputs_present(NULL)),
-   "and if the catalogue cannot answer, it rebuilds rather than assumes")
+   "and a catalogue that cannot answer counts as absent, not as present")
+# What build_lot() does about it. Rebuilding would re-read the code lists and
+# the cohort table, and the loader compares a file's hash across one read, not
+# across two phases - so the run could finish "complete" with LOT1 built from
+# one snapshot and LOT_LONG from another. It stops instead, and
+# prepare_lot_inputs() is left for a LOT2-5 session entered deliberately.
+ok(grepl("  if (!lot_inputs_present(con))\n    stop(", bl, fixed = TRUE),
+   "a missing session view stops the run rather than rebuilding it")
+# The message names prepare_lot_inputs(); what must not appear is a CALL to it.
+ok(!grepl("prepare_lot_inputs(con)", bl, fixed = TRUE),
+   "build_lot() never calls prepare_lot_inputs() - one run, one snapshot")
+ok(grepl("prepare_lot_inputs", bl, fixed = TRUE),
+   "...but the error still points at it for a deliberate LOT2-5 session")
 
 cat("\n-- LOT_LONG has to be chronologically possible --\n")
 # The lines form a chain: each starts strictly after the previous one ended,

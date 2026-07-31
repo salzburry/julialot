@@ -105,7 +105,13 @@ CUT <- list(
 # the rest: a blanket regex here would also hide an unapproved DISTINCT.
 SUBST <- list(
   "01_codelists.R" = list(list(from = "SELECT DISTINCT", to = "SELECT", n = 2L)),
-  "05_sct.R"       = list(list(from = "SELECT DISTINCT", to = "SELECT", n = 1L))
+  "05_sct.R"       = list(list(from = "SELECT DISTINCT", to = "SELECT", n = 1L)),
+  # The persisted orphan count has to ask what the main check asks, or
+  # LOT_QC_SUMMARY reports an orphan the build deliberately ignored.
+  "08_persist.R"   = list(list(
+    from = "FROM mma_extractable_codelist c LEFT JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR",
+    to   = "FROM mma_codelist c LEFT JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR",
+    n    = 1L))
 )
 
 # Single added code lines, and how many of each.
@@ -133,10 +139,11 @@ undeviate <- function(lines, file) {
       sa <- which(src == sp$src); sb <- which(src == sp$src_to)
       lines <- c(lines[seq_len(a - 1)], src[sa:(sb - 1)], lines[b:length(lines)])
     } else {
-      # Reported, like the rest. These anchors are exact whole-line matches on
-      # comments, so tidying one silently stops the splice and the file then
-      # differs everywhere - which reads as a rewritten block rather than a
-      # moved anchor. It has happened.
+      # Reported, like the rest. Both anchors are exact whole-line matches,
+      # and a missed one silently stops the splice - the file then differs
+      # everywhere, which reads as a rewritten block rather than a moved
+      # anchor. The opening one is a code line for that reason; the closing
+      # one is still a comment.
       short <- c(short, paste0(sp$from, " ... ", sp$to,
                                " (anchor not found: ",
                                if (!length(a) && !length(b)) "neither line"
@@ -208,7 +215,7 @@ code_only <- function(lines) {
 # survives as "" - and the claim side coalesces a missing code to "" too. That
 # is a silent false match, not a rule, so the port fixes it. Each guard is
 # asserted by name below; "differs" on its own would let one go missing.
-CHANGED <- c("01_codelists.R", "03_mma_map.R", "05_sct.R")
+CHANGED <- c("01_codelists.R", "03_mma_map.R", "05_sct.R", "08_persist.R")
 
 cat("\n-- every phase is the source, line for line --\n")
 for (p in PHASES) {
@@ -282,6 +289,9 @@ ok(n_ndc == 2, paste0("both NDC joins require digits in the code (", n_ndc, ")")
 ok(grepl("upper(trim(coalesce(CL_MED_CLASS, ''))) <> 'STEROID'",
          sql_of("01_codelists.R"), fixed = TRUE),
    "the rollup drops steroids - once, now that both paths share it")
+ok(grepl("FROM mma_extractable_codelist c LEFT JOIN mma_rollup r",
+         sql_of("08_persist.R"), fixed = TRUE),
+   "the persisted orphan count reads the same population as the live check")
 # The unchanged files must still be untouched.
 for (f in setdiff(vapply(PHASES, `[[`, character(1), "file"), CHANGED))
   ok(!grepl("regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''", sql_of(f), fixed = TRUE),

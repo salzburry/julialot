@@ -41,7 +41,7 @@ CONTRACT <- list(
 # expected condition also waived the dangerous ones.
 WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types",
                      "subs_substitute", "subs_original", "ndc_short",
-                     "claim_ndc")
+                     "claim_ndc_short", "claim_ndc_shape")
 
 # Fatal checks: always stop the build. Named rather than merely absent, so a
 # waiver naming one is told why it is refused instead of "no such check".
@@ -282,17 +282,22 @@ build_lot <- function(here, cohort_table, prefix) {
   check_lot1_invariants(con, cfg)
   phase_persist(con, ctx)
 
-  # prepare_lot_inputs() exists to rebuild the session views when LOT2-5 runs
-  # on its own. LOT1 has just built them here, and rebuilding means re-scanning
-  # medical, procedure and diagnosis for SCT all over again - so only do it if
-  # something is actually missing.
-  if (!lot_inputs_present(con)) {
-    log_msg("Session views missing; rebuilding them for LOT2-5.")
-    prepare_lot_inputs(con)
-  } else {
-    log_msg("Session views from LOT1 are still here; not rebuilding them.")
-    materialize_sct_views(con)
-  }
+  # LOT1 built these moments ago. Rebuilding them here would re-read the code
+  # lists and the cohort table, and nothing establishes that those still hold
+  # what LOT1 used - the loader compares a file's hash across one read, not
+  # across two phases. LOT2-5 would then be built from a different snapshot
+  # than the LOT1 tables beside it, and the run would still reach "complete".
+  # One run, one snapshot: stop instead.
+  if (!lot_inputs_present(con))
+    stop("The views LOT2-5 reads are missing, or the catalogue could not be ",
+         "asked. LOT1 built them earlier in this run, so something has ",
+         "dropped them or the connection has changed. Rebuilding them here ",
+         "would read the code lists and the cohort table again with no ",
+         "guarantee they still match what LOT1 used, so this run would mix ",
+         "two snapshots. Re-run the build, or continue LOT2-5 deliberately ",
+         "with prepare_lot_inputs() in a session of its own.", call. = FALSE)
+  log_msg("Session views from LOT1 are still here.")
+  materialize_sct_views(con)
   build_lot2_5(con,
                induction_window_days   = cfg$lot_n_induction_window_days,
                cart_consolidation_days = cfg$cart_consolidation_days,
@@ -303,6 +308,7 @@ build_lot <- function(here, cohort_table, prefix) {
   # Validate before deriving: publishing the criteria tables first would leave
   # them behind, built from a LOT_LONG that then failed its checks.
   check_lot_long(con, cfg)
+  record_final_counts(con, cfg)
   phase_line_criteria(con, cfg)
   check_run_recorded(con, cfg)
   write_build_status(con, cfg, "complete")
@@ -394,35 +400,55 @@ check_claim_ndc <- function(con, cfg) {
     db_q(con, profile_sql("rx",      cdm_src(cfg$tbl_rx),      "FILL_DT")))
   print(prof)
 
-  # All-zero has eleven digits, so it needs saying separately: it is the key a
-  # claim with no NDC produces, and bad_ndc treats the same value as fatal on
-  # the code side.
-  bad <- prof[prof$n_ndc > 0 & (prof$n_11 < prof$n_ndc | prof$n_alpha > 0 |
-                                prof$n_zero > 0), , drop = FALSE]
-  if (nrow(bad) == 0) {
-    log_msg("  OK: Every claim NDC is eleven digits.")
-    return(invisible(TRUE))
-  }
-  detail <- paste(vapply(seq_len(nrow(bad)), function(i) with(bad[i, ], paste0(
-    SOURCE, ": ", n_ndc, " NDCs, ", n_11, " eleven-digit, ", n_10, " ten-digit, ",
-    n_other, " other length, ", n_alpha, " with letters, ", n_nodigit,
-    " with no digits, ", n_zero, " all zeros")), character(1)),
-    collapse = "; ")
-  if ("claim_ndc" %in% codelist_waivers()) {
-    log_msg("WAIVED (claim_ndc): ", detail)
+  detail <- function(d) paste(vapply(seq_len(nrow(d)), function(i) with(d[i, ],
+    paste0(SOURCE, ": ", n_ndc, " NDCs, ", n_11, " eleven-digit, ", n_10,
+           " ten-digit, ", n_other, " other length, ", n_alpha, " with letters, ",
+           n_nodigit, " with no digits, ", n_zero, " all zeros")),
+    character(1)), collapse = "; ")
+
+  # Two conditions, named apart the way the code side is. Both are reviewable:
+  # these are the CDM's tables, not ours, so there is no code list to correct
+  # and a run that could not proceed would have no remedy short of changing the
+  # join. What the split buys is that accepting one does not accept the other.
+  decide <- function(d, name, msg) {
+    if (nrow(d) == 0) return(invisible(FALSE))
+    if (!(name %in% codelist_waivers())) stop(msg, call. = FALSE)
+    log_msg("WAIVED (", name, "): ", detail(d))
     options(lot_waivers_applied = union(getOption("lot_waivers_applied",
-                                                  character(0)), "claim_ndc"))
-    return(invisible(TRUE))
+                                                  character(0)), name))
+    invisible(TRUE)
   }
-  stop("Claim NDCs are not all eleven digits: ", detail,
-       ".\nThe join left-pads to eleven, which is right only for the 4-4-2 ",
-       "layout, so a ten-digit claim can be read as a different drug's code ",
-       "or as none. Confirm how this CDM represents NDC, or convert with an ",
-       "approved NDC10-to-NDC11 crosswalk.\nThe no-digit and all-zero counts ",
-       "cannot change a result on their own - the joins drop a claim with no ",
-       "digits, and bad_ndc has already stopped any code that pads to eleven ",
-       "zeros - but they are reported so a waiver is an informed one. Waive ",
-       "with CODELIST_WAIVERS=claim_ndc.", call. = FALSE)
+
+  # Cannot be an NDC in any form. 'ABC123' reaches the join as 00000000123 and
+  # can match a real code; an underlength numeric does the same. All-zero has
+  # eleven digits, so only a count of its own catches it - it is the key a
+  # claim with no NDC produces, and bad_ndc stops the same value on the code
+  # side.
+  shape <- prof[prof$n_ndc > 0 & (prof$n_alpha > 0 | prof$n_other > 0 |
+                                  prof$n_zero > 0), , drop = FALSE]
+  decide(shape, "claim_ndc_shape",
+         paste0("Claim NDCs that cannot be an NDC: ", detail(shape),
+                ".\nThe join strips non-digits and pads to eleven, so a value ",
+                "like ABC123 arrives as 00000000123 and can match a real code, ",
+                "and nothing here can tell it from a genuine claim. If the CDM ",
+                "really carries these, either the join has to exclude them or ",
+                "the study team has to accept that they may match: waive with ",
+                "CODELIST_WAIVERS=claim_ndc_shape."))
+
+  # A real NDC in one of three layouts, and the pad only gets 4-4-2 right.
+  short <- prof[prof$n_ndc > 0 & prof$n_10 > 0, , drop = FALSE]
+  decide(short, "claim_ndc_short",
+         paste0("Ten-digit claim NDCs: ", detail(short),
+                ".\nThe join left-pads to eleven, which is right only for the ",
+                "4-4-2 layout, so a ten-digit claim can be read as a different ",
+                "drug's code or as none. Confirm how this CDM represents NDC, ",
+                "or convert with an approved NDC10-to-NDC11 crosswalk. Once ",
+                "the study team has established that the padding is right for ",
+                "this data, waive it with CODELIST_WAIVERS=claim_ndc_short."))
+
+  if (nrow(shape) == 0 && nrow(short) == 0)
+    log_msg("  OK: Every claim NDC is eleven digits.")
+  invisible(TRUE)
 }
 
 # One row per run saying whether its outputs belong together. Without it a
@@ -542,7 +568,59 @@ check_run_recorded <- function(con, cfg) {
       stop("This run left no row in ", lot_out(t), ". The outputs exist but ",
            "nothing records how they were built.", call. = FALSE)
   }
+  # The row is written by phase_persist, before LOT2-5 exists, so a row alone
+  # says only that LOT1 ran. record_final_counts fills the rest in.
+  n <- tryCatch(db_q(con, glue(
+         "SELECT count(*) AS n FROM {lot_out('LOT_RUN_METADATA')}
+          WHERE RUN_ID = '{run_id}' AND N_LOT_LONG_ROWS IS NOT NULL"))$n,
+       error = function(e) 0L)
+  if (is.na(n) || n < 1)
+    stop("The metadata row for this run has no LOT_LONG counts. It describes ",
+         "LOT1 only, so nothing records what LOT2-5 produced.", call. = FALSE)
   log_msg("Run recorded in LOT_RUN_METADATA and LOT_QC_SUMMARY")
+  invisible(TRUE)
+}
+
+# LOT_RUN_METADATA is written by phase_persist, which runs before LOT2-5, so
+# its counts stop at LOT1: cohort, MMA claims, MAPs, LOT1 patients. Nothing
+# recorded what the run actually produced. These are added after check_lot_long
+# has passed, so the numbers describe a table already found usable.
+FINAL_METADATA_COLS <- c(N_LOT_LONG_ROWS = "BIGINT",
+                         N_LOT_LONG_PATIENTS = "BIGINT",
+                         LOT_LONG_BY_LINE = "STRING")
+
+record_final_counts <- function(con, cfg) {
+  tbl <- lot_out("LOT_RUN_METADATA")
+  have <- tryCatch({
+    d  <- db_q(con, glue("DESCRIBE {tbl}"))
+    cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
+    if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else character(0)
+  }, error = function(e) character(0))
+  # phase_persist creates the table without these, so the first run on a given
+  # schema adds them and later ones find them. No answer means DESCRIBE failed,
+  # not an empty table - adding blind would error on the first column.
+  if (!length(have))
+    stop("Cannot read the columns of ", tbl, ", so the LOT_LONG counts cannot ",
+         "be recorded.", call. = FALSE)
+  for (m in setdiff(names(FINAL_METADATA_COLS), have)) {
+    db_exec(con, glue("ALTER TABLE {tbl} ADD COLUMNS ({m} {FINAL_METADATA_COLS[[m]]})"))
+    log_msg("  Metadata schema evolution: added ", m)
+  }
+
+  t <- lot_out("LOT_LONG")
+  q <- db_q(con, glue("
+    SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients FROM {t}"))
+  by_line <- db_q(con, glue("
+    SELECT LOT_NUM, count(*) AS n FROM {t} GROUP BY LOT_NUM ORDER BY LOT_NUM"))
+  dist <- paste(paste0(by_line$LOT_NUM, ":", by_line$n), collapse = "|")
+  db_exec(con, glue("
+    UPDATE {tbl}
+       SET N_LOT_LONG_ROWS = {q$n_rows},
+           N_LOT_LONG_PATIENTS = {q$n_patients},
+           LOT_LONG_BY_LINE = '{dist}'
+     WHERE RUN_ID = '{run_id}'"))
+  log_msg("Recorded LOT_LONG: ", q$n_rows, " lines for ", q$n_patients,
+          " patients (", dist, ")")
   invisible(TRUE)
 }
 
