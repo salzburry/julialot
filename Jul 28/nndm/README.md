@@ -34,7 +34,8 @@ The cohort table's name is a setting (`FINAL_TABLE_NAME`), because
 `Jul 28/overall`'s own config decides what it is called; both default to
 `OVERALL_COH_FINAL`.
 
-Outputs, all prefixed: `NDMM_COHORT` (the PATIDs), `NDMM_ATTRITION` (the nine
+Outputs, all prefixed: `NDMM_COHORT` (the cohort, written as a table
+`Jul 28/lot` can be pointed at — see below), `NDMM_ATTRITION` (the nine
 rows below), `NDMM_FLAGS_ALL` (one row per candidate with every filter's
 verdict), `NDMM_CODELIST_METADATA`, `NDMM_RUN_METADATA`, `NDMM_BUILD_STATUS`.
 
@@ -199,6 +200,29 @@ can ask for a waiver on a condition that never occurs.
 
 **Run the first production build with no waivers set** and read the profile it
 prints. That is the point of it.
+
+### NDMM_COHORT is a LOT input
+
+The next stage runs the LOT algorithm over these patients, so this table is
+written as a cohort `Jul 28/lot` can be pointed at directly:
+
+```
+DATABRICKS_PWD=... Rscript build.R NDMM_COHORT ndmm_
+```
+
+It carries the ten columns that build reads off whatever cohort it is given —
+`PATID`, `INDEX_DATE`, `ENDDATE`, `ENDDATE_CE`, `DEATH_DT`, `GDR_CD`, `YRDOB`,
+`AGE_INDEX_YR`, `FU_DAYS`, `FU_DAYS_CE` — and `check_ndmm_cohort()` verifies
+them, one row per patient, and that the count agrees with the attrition, before
+the run finishes.
+
+**`INDEX_DATE` is the 1L start.** Everything that depends on where the anchor
+sits is recomputed from it: age at index, both follow-up lengths, and where
+continuous enrollment ends. Only sex, birth year and date of death are
+inherited from the parent cohort, because those do not move with an anchor.
+Carrying the parent's `AGE_INDEX_YR` or `FU_DAYS` instead would describe the
+MM-diagnosis index, and a LOT run over this table would measure its lines from
+the wrong day.
 
 ## The attrition
 

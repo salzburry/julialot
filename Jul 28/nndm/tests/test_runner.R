@@ -51,7 +51,8 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_prefix", "check_contract"
            "build_ndmm_other_malig_pre_lot1", "build_ndmm_preg_codes",
            "build_ndmm_pregnancy_patids", "build_ndmm_flags",
            "ndmm_counts",
-           "check_attrition_monotonic", "write_attrition",
+           "check_attrition_monotonic", "build_ndmm_cohort_table",
+           "check_ndmm_cohort", "write_attrition",
            "write_codelist_metadata", "write_run_metadata")
 at <- vapply(ORDER, function(f) {
   m <- regexpr(paste0("(?<![A-Za-z0-9_.])", f, "\\("), body, perl = TRUE)
@@ -454,6 +455,91 @@ ok(sum(grepl("DELETE", SENT, fixed = TRUE)) == 2L,
    "...and its DELETE goes with it, so the second attempt starts from empty")
 ok(identical(SENT[3], "DELETE FROM t WHERE RUN_ID = 'R1'"),
    "the retry replays the pair in order, DELETE before INSERT")
+
+cat("\n-- the cohort is a cohort the LOT build can be pointed at --\n")
+# The next stage runs the LOT algorithm over these patients, so this table is
+# its input. Jul 28/lot reads ten columns off whatever cohort it is given, and
+# NDMM_COHORT was PATID alone - that build would have stopped at its own input
+# check before doing anything.
+lot_req <- local({
+  f <- file.path(dirname(ROOT), "lot", "R", "build_lot.R")
+  if (!file.exists(f)) return(NULL)
+  e <- new.env(); eval(parse(text = paste(
+    grep("^REQUIRED_COHORT_COLS", readLines(f, warn = FALSE)), collapse = "")), e)
+  ln <- readLines(f, warn = FALSE)
+  i <- grep("^REQUIRED_COHORT_COLS <- ", ln)
+  if (!length(i)) return(NULL)
+  j <- i; while (!grepl("\\)\\s*$", ln[j])) j <- j + 1L
+  eval(parse(text = paste(ln[i:j], collapse = "\n")))
+})
+if (is.null(lot_req)) {
+  cat("  ---- Jul 28/lot is not beside this folder; its column list was NOT read\n")
+} else {
+  ok(setequal(NDMM_COHORT_COLS, lot_req),
+     paste0("NDMM_COHORT declares exactly what Jul 28/lot requires (",
+            length(lot_req), " columns), read from that build not copied"))
+}
+be <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = be)
+sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = be)
+assign("log_msg", function(...) invisible(NULL), envir = be)
+assign("wrk", function(x) paste0("wk.p_", x), envir = be)
+BSQL <- character(0)
+assign("run_step", function(con, name, sql, qc = NULL) { BSQL <<- c(BSQL, sql); TRUE },
+       envir = be)
+be$build_ndmm_cohort_table(NULL, cfg_defaults, "wk.p_OVERALL_COH_FINAL")
+csql <- BSQL[1]
+ok(!is.na(csql) && grepl("l1.LOT1_START_DT AS INDEX_DATE", csql, fixed = TRUE),
+   "the index date is the 1L start, not the parent's MM-diagnosis index")
+# The outer SELECT only. Every one of these names also appears in a CTE, so
+# checking the whole statement would pass on a column the table never gets.
+sel <- sub("\\s*FROM idx i.*", "", sub("(?s).*\\n\\s*SELECT i\\.PATID", "SELECT i.PATID",
+                                     csql, perl = TRUE))
+for (c in setdiff(NDMM_COHORT_COLS, "PATID"))
+  ok(grepl(paste0("(AS +", c, "|[. ]", c, ")(?![_A-Za-z0-9])"), sel, perl = TRUE),
+     paste0(c, " is a column of the table, not just a name inside a CTE"))
+# Anything that depends on where the anchor sits has to be recomputed at it.
+ok(grepl("year(i.INDEX_DATE) - d.YRDOB", csql, fixed = TRUE),
+   "age is computed at the 1L index, not inherited from the MM-diagnosis one")
+ok(grepl("date_add(i.INDEX_DATE, 1)", csql, fixed = TRUE) &&
+     length(gregexpr("date_add(i.INDEX_DATE, 1)", csql, fixed = TRUE)[[1]]) == 2L,
+   "and both follow-up lengths run from it")
+ok(grepl("s.cov_start <= i.INDEX_DATE", csql, fixed = TRUE) &&
+     grepl("s.cov_end   >= i.INDEX_DATE", csql, fixed = TRUE),
+   "the CE end is the span covering the 1L index, so it moves with the anchor too")
+ok(grepl("GDR_CD, YRDOB, DEATH_DT", csql, fixed = TRUE) &&
+     grepl("wk.p_OVERALL_COH_FINAL", csql, fixed = TRUE),
+   "only the demographics are inherited - they do not depend on an anchor")
+
+cat("\n-- and it is checked before anyone is handed it --\n")
+ce2 <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = ce2)
+assign("log_msg", function(...) invisible(NULL), envir = ce2)
+assign("wrk", function(x) paste0("wk.p_", x), envir = ce2)
+drive_chk <- function(cols = NDMM_COHORT_COLS, pat = 10L, rows = pat, noidx = 0L,
+                      expect = pat) {
+  assign("db_q", function(con, sql) {
+    if (grepl("DESCRIBE", sql, fixed = TRUE)) data.frame(col_name = cols)
+    else data.frame(n_rows = rows, n_pat = pat, n_noidx = noidx)
+  }, envir = ce2)
+  tryCatch({ ce2$check_ndmm_cohort(NULL, list(), expect); "" }, error = conditionMessage)
+}
+ok(identical(drive_chk(), ""), "a well-formed cohort passes")
+m <- drive_chk(cols = setdiff(NDMM_COHORT_COLS, c("INDEX_DATE", "FU_DAYS_CE")))
+ok(grepl("INDEX_DATE", m, fixed = TRUE) && grepl("FU_DAYS_CE", m, fixed = TRUE),
+   "a missing column is named here, not at the far end of the next build")
+ok(grepl("Jul 28/lot", m, fixed = TRUE), "...and so is who needs it")
+m <- drive_chk(rows = 12L, pat = 10L)
+ok(grepl("fans out", m, fixed = TRUE),
+   "a repeated PATID stops it - it would multiply every join a LOT run makes")
+m <- drive_chk(noidx = 3L)
+ok(grepl("no INDEX_DATE", m, fixed = TRUE),
+   "so does a row with no index date, which is the day every window runs from")
+m <- drive_chk(pat = 9L, expect = 10L)  # rows follows pat, so this is not a fan-out
+ok(grepl("attrition ends at", m, fixed = TRUE),
+   "and a cohort that disagrees with its own funnel is not published")
+ok(identical(drive_chk(expect = NA_integer_), ""),
+   "an unknown expected count is not treated as a mismatch")
 
 cat("\n-- the other-cancer pair has to sit in the baseline --\n")
 # The criterion is >=1 inpatient claim, or >=2 outpatient claims within 30 days

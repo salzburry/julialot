@@ -435,6 +435,101 @@ write_run_metadata <- function(con, cfg, here, n) {
   invisible(TRUE)
 }
 
+# NDMM_COHORT is written to be a cohort Jul 28/lot can be pointed at, so the
+# LOT algorithm can be run over the NDMM patients without anything in between.
+# These are the columns that build reads off whatever cohort it is given
+# (its REQUIRED_COHORT_COLS); NDMM_COHORT used to be PATID alone, which stopped
+# that build at its own input check.
+NDMM_COHORT_COLS <- c("PATID", "INDEX_DATE", "ENDDATE", "ENDDATE_CE",
+                      "DEATH_DT", "GDR_CD", "YRDOB", "AGE_INDEX_YR",
+                      "FU_DAYS", "FU_DAYS_CE")
+
+# INDEX_DATE is LOT1_START_DT - the NDMM index. Everything that depends on an
+# anchor is re-derived from it: age at index, follow-up, and where continuous
+# enrollment ends. Carrying the parent's values instead would describe the
+# MM-diagnosis index, and a LOT run over this table would measure its lines
+# from the wrong day. Only the demographics are inherited, because a patient's
+# sex, birth year and date of death do not move with an anchor.
+build_ndmm_cohort_table <- function(con, cfg, elig_coh_final) {
+  se <- glue("date('{cfg$study_end}')")
+  run_step(con, "N90_ndmm_cohort", glue("
+    CREATE OR REPLACE TABLE {wrk('NDMM_COHORT')} AS
+    WITH idx AS (
+      SELECT DISTINCT cast(p.PATID as string) AS PATID, l1.LOT1_START_DT AS INDEX_DATE
+      FROM {NDMM_PATIDS} p
+      INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = cast(p.PATID as string)
+    ),
+    -- Where continuous enrollment ends: the end of the span covering the index
+    -- date, with the same gap allowance the 12-month baseline CE uses. This is
+    -- the quantity the parent calls ENDDATE_CE, measured at the NDMM anchor.
+    ce AS (
+      SELECT i.PATID, max(s.cov_end) AS ENDDATE_CE
+      FROM idx i
+      INNER JOIN {NDMM_ENROLL_SPANS} s
+              ON s.PATID = i.PATID
+             AND s.cov_start <= i.INDEX_DATE
+             AND s.cov_end   >= i.INDEX_DATE
+      GROUP BY i.PATID
+    ),
+    dem AS (
+      SELECT cast(PATID as string) AS PATID, GDR_CD, YRDOB, DEATH_DT
+      FROM {elig_coh_final}
+    )
+    SELECT i.PATID,
+           i.INDEX_DATE,
+           least({se}, coalesce(d.DEATH_DT, {se}))                    AS ENDDATE,
+           least({se}, coalesce(d.DEATH_DT, {se}),
+                 coalesce(ce.ENDDATE_CE, {se}))                       AS ENDDATE_CE,
+           d.DEATH_DT,
+           d.GDR_CD,
+           d.YRDOB,
+           (year(i.INDEX_DATE) - d.YRDOB)                             AS AGE_INDEX_YR,
+           datediff(least({se}, coalesce(d.DEATH_DT, {se})),
+                    date_add(i.INDEX_DATE, 1)) + 1                    AS FU_DAYS,
+           datediff(least({se}, coalesce(d.DEATH_DT, {se}),
+                          coalesce(ce.ENDDATE_CE, {se})),
+                    date_add(i.INDEX_DATE, 1)) + 1                    AS FU_DAYS_CE
+    FROM idx i
+    LEFT JOIN dem d  ON d.PATID  = i.PATID
+    LEFT JOIN ce     ON ce.PATID = i.PATID"),
+    qc = glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients ",
+              "FROM {wrk('NDMM_COHORT')}"))
+  invisible(TRUE)
+}
+
+# The table that gets handed on, checked before anything reads it. One row per
+# patient, because a cohort with a duplicated PATID fans out every join a LOT
+# build makes over it; the same count the attrition published, because a cohort
+# that disagrees with its own funnel is not a cohort; and every column that
+# build needs, so a missing one is named here rather than at the far end.
+check_ndmm_cohort <- function(con, cfg, n_expected) {
+  tbl  <- wrk("NDMM_COHORT")
+  d    <- db_q(con, glue("DESCRIBE {tbl}"))
+  cn   <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
+  cols <- if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else character(0)
+  miss <- setdiff(NDMM_COHORT_COLS, cols)
+  if (length(miss))
+    stop(tbl, " is missing ", paste(miss, collapse = ", "),
+         ".\nIt is written to be a cohort Jul 28/lot can be pointed at, and ",
+         "that build reads these columns off whatever cohort it is given.",
+         call. = FALSE)
+  q <- db_q(con, glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_pat, ",
+                      "sum(CASE WHEN INDEX_DATE IS NULL THEN 1 ELSE 0 END) AS n_noidx ",
+                      "FROM {tbl}"))
+  if (q$n_rows != q$n_pat)
+    stop(tbl, " has ", q$n_rows, " rows for ", q$n_pat, " patients. A cohort ",
+         "with a repeated PATID fans out every join made over it.", call. = FALSE)
+  if (isTRUE(q$n_noidx > 0))
+    stop(q$n_noidx, " rows in ", tbl, " have no INDEX_DATE. It is the 1L start, ",
+         "and every window a LOT build measures runs from it.", call. = FALSE)
+  if (!is.na(n_expected) && q$n_pat != n_expected)
+    stop(tbl, " holds ", q$n_pat, " patients but the attrition ends at ",
+         n_expected, ". The cohort and the funnel that reaches it must agree.",
+         call. = FALSE)
+  log_msg("  ", tbl, ": ", q$n_pat, " patients, indexed at the 1L start")
+  invisible(TRUE)
+}
+
 CODELIST_METADATA_COLS <- c(RUN_ID = "STRING", CSV_NAME = "STRING",
                             MD5 = "STRING", N_ROWS = "BIGINT",
                             RECORDED_AT = "TIMESTAMP")
@@ -563,10 +658,8 @@ build_nndm <- function(here, prefix) {
   # Before it is written, so a fanned-out funnel is not published as a count.
   check_attrition_monotonic(counts)
 
-  run_step(con, "N90_ndmm_cohort", glue("
-    CREATE OR REPLACE TABLE {wrk('NDMM_COHORT')} AS
-    SELECT DISTINCT PATID FROM {NDMM_PATIDS}"),
-    qc = glue("SELECT count(*) AS n_patients FROM {wrk('NDMM_COHORT')}"))
+  build_ndmm_cohort_table(con, cfg, elig_coh_final)
+  check_ndmm_cohort(con, cfg, counts$ndmm_final)
   write_attrition(con, cfg, counts)
   write_codelist_metadata(con, cfg)
   write_run_metadata(con, cfg, here, counts$ndmm_final)
