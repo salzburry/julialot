@@ -67,11 +67,12 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_prefix",
            "build_ndmm_other_malig_pre_lot1", "build_ndmm_other_malig_grain",
            "build_ndmm_preg_codes",
            "build_ndmm_pregnancy_patids", "build_ndmm_belantamab_patids",
-           "build_ndmm_belantamab_scope_counts",
-           "build_ndmm_flags", "build_ndmm_fu_ce_counts",
+           "build_ndmm_flags", "build_ndmm_belantamab_scope_counts",
+           "build_ndmm_fu_ce_counts",
            "ndmm_counts",
            "check_attrition_monotonic", "build_ndmm_cohort_table",
-           "check_ndmm_cohort", "write_attrition",
+           "check_ndmm_cohort", "build_ndmm_belantamab_reconcile",
+           "write_attrition",
            "write_codelist_metadata", "write_run_metadata")
 at <- vapply(ORDER, function(f) {
   m <- regexpr(paste0("(?<![A-Za-z0-9_.])", f, "\\("), body, perl = TRUE)
@@ -1209,15 +1210,49 @@ ok(grepl("cast(t.{dt} as date) AS bel_dt", r$tx, fixed = TRUE) ||
    "each belantamab claim keeps its date, which is what makes the comparison possible")
 SSQL <- character(0)
 assign("db_q", function(con, sql) data.frame(SCOPE = c("ever", "study_period", "from_index"),
-                                             N_PATIENTS = c(120L, 118L, 90L)), envir = se)
+                                             N_PATIENTS = c(120L, 118L, 90L),
+                                             N_COHORT = c(400L, 402L, 430L),
+                                             IS_THIS_RUN = c(0L, 1L, 0L)), envir = se)
 se$build_ndmm_belantamab_scope_counts(NULL, cfg_defaults)
 sc <- SSQL[1]
 ok(grepl("NDMM_BELANTAMAB_SCOPE_COUNTS", sc, fixed = TRUE),
    "the three readings are counted into a table every run")
+# Against the row list, not the whole statement: every reading also appears in
+# the CTE that builds the sets, so grepping the statement would pass with a
+# reading dropped from what is actually reported.
+sp_line <- grep("sp AS (SELECT", strsplit(sc, "\n")[[1]], fixed = TRUE, value = TRUE)[1]
 for (k in c("'ever'", "'study_period'", "'from_index'"))
-  ok(grepl(k, sc, fixed = TRUE), paste0("...including ", k))
-ok(length(gregexpr("count(DISTINCT b.PATID)", sc, fixed = TRUE)[[1]]) == 3L,
+  ok(!is.na(sp_line) && grepl(k, sp_line, fixed = TRUE),
+     paste0("...including ", k))
+ok(length(gregexpr("SELECT 'ever' AS SCOPE, b.PATID", sc, fixed = TRUE)[[1]]) == 1L &&
+     grepl("count(DISTINCT scd.PATID)", sc, fixed = TRUE),
    "by patients, so the numbers can be compared against the attrition")
+# A claim count alone does not say what the choice costs: some of the patients
+# a wider proxy catches were already gone on another criterion.
+ok(grepl("AND f.NO_PREGNANCY             = 1", sc, fixed = TRUE) &&
+     grepl("AS N_COHORT", sc, fixed = TRUE) &&
+     grepl("_ndmm_flags_all", sc, fixed = TRUE),
+   "...and the whole conjunction beside it, so each row is a cohort size")
+ok(grepl(paste0("sp.SCOPE = '", se$NDMM_BELANTAMAB_SCOPE, "'"), sc, fixed = TRUE),
+   "with the reading this run applied marked, so the table reads alone")
+
+# "In any LOT" is exact only once lines exist, which is after this build. So
+# the run emits what the reconciliation needs rather than claiming to be exact.
+SSQL <- character(0)
+assign("db_q", function(con, sql) data.frame(n_pat = 3L, n_claims = 7L), envir = se)
+se$build_ndmm_belantamab_reconcile(NULL, cfg_defaults)
+rc <- SSQL[1]
+ok(grepl("NDMM_BELANTAMAB_RECONCILE", rc, fixed = TRUE) &&
+     grepl("NDMM_COHORT", rc, fixed = TRUE) &&
+     grepl("_ndmm_belantamab_tx", rc, fixed = TRUE),
+   "the patients still to adjudicate are the cohort's own belantamab claims")
+# Only the cohort: a patient the proxy already excluded is gone, and one with
+# no belantamab claim cannot have had it in a line. An INNER JOIN both ways.
+ok(grepl("INNER JOIN", rc, fixed = TRUE) && !grepl("LEFT JOIN", rc, fixed = TRUE),
+   "...only those two, so the table is what has to be looked at and no more")
+ok(grepl("b.bel_dt", rc, fixed = TRUE) &&
+     grepl("datediff(b.bel_dt, c.INDEX_DATE)", rc, fixed = TRUE),
+   "with the claim date and its offset from index, which is what places it in a line")
 
 cat("\n-- which agents may set the index, and which set one --\n")
 # S6.2.1.1 says the eligible treatments exclude "those restricted to later LOTs

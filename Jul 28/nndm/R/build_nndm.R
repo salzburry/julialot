@@ -127,6 +127,7 @@ DELIVERABLES <- c("NDMM_COHORT", "NDMM_ATTRITION", "NDMM_INDEX_AGENTS",
                   "NDMM_BELANTAMAB_SCOPE_COUNTS", "NDMM_MM_ADJACENT_GROUPS",
                   "NDMM_MM_ADJACENT_CODES", "NDMM_FU_CE_COUNTS",
                   "NDMM_OTHER_MALIG_GROUPS", "NDMM_OTHER_MALIG_GRAIN",
+                  "NDMM_BELANTAMAB_RECONCILE",
                   "NDMM_CODELIST_METADATA", "NDMM_RUN_METADATA",
                   "NDMM_BUILD_STATUS")
 OUTPUTS <- c(DELIVERABLES, CHECKPOINTS)
@@ -951,7 +952,6 @@ build_nndm <- function(here, prefix) {
   build_ndmm_belantamab_patids(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))
   checkpoint(con, "NDMM_BELANTAMAB_TX")
   checkpoint(con, "NDMM_BELANTAMAB_PATIDS")
-  build_ndmm_belantamab_scope_counts(con, cfg)
 
   log_msg("Per-patient filter flags")
   # The ported flags step takes the cohort and the belantamab source as
@@ -961,6 +961,9 @@ build_nndm <- function(here, prefix) {
   build_ndmm_flags(con, NDMM_BASE_COHORT, NDMM_BELANTAMAB_PATIDS,
                    TRUE, TRUE, TRUE, TRUE)
   checkpoint(con, "NDMM_PATIDS")
+  # After the flags: each scope is costed against the whole conjunction, so it
+  # needs every other criterion already decided.
+  build_ndmm_belantamab_scope_counts(con, cfg)
   build_ndmm_fu_ce_counts(con, cfg)
   # build_lot_long_filtered() is not called. It joins LOT_LONG to the cohort for
   # the April dashboard's KPI, gallery and LOT-detail views; neither the cohort
@@ -976,6 +979,7 @@ build_nndm <- function(here, prefix) {
 
   build_ndmm_cohort_table(con, cfg)
   check_ndmm_cohort(con, cfg, counts$ndmm_final)
+  build_ndmm_belantamab_reconcile(con, cfg)
   write_attrition(con, cfg, counts)
   write_codelist_metadata(con, cfg)
   write_run_metadata(con, cfg, here, counts$ndmm_final)

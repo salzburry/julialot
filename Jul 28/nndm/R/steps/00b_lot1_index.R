@@ -476,27 +476,90 @@ build_ndmm_fu_ce_counts <- function(con, cfg) {
 }
 
 build_ndmm_belantamab_scope_counts <- function(con, cfg) {
+  # Each proxy as a set of patients, then the whole conjunction against each -
+  # so a row is a cohort size, not one criterion's count. The claim count alone
+  # says how many the proxy catches; it does not say how many of those the
+  # other criteria had already removed, which is the number that matters.
   db_exec(con, glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_BELANTAMAB_SCOPE_COUNTS')} AS
-    SELECT 'ever'         AS SCOPE, count(DISTINCT b.PATID) AS N_PATIENTS
-    FROM {NDMM_BELANTAMAB_TX} b
-    INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = b.PATID
-    UNION ALL
-    SELECT 'study_period', count(DISTINCT b.PATID)
-    FROM {NDMM_BELANTAMAB_TX} b
-    INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = b.PATID
-    WHERE b.bel_dt >= date('{NDMM_STUDY_START}')
-    UNION ALL
-    SELECT 'from_index', count(DISTINCT b.PATID)
-    FROM {NDMM_BELANTAMAB_TX} b
-    INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = b.PATID
-    WHERE b.bel_dt >= l1.LOT1_START_DT"))
+    WITH sc AS (
+      SELECT 'ever' AS SCOPE, b.PATID
+      FROM {NDMM_BELANTAMAB_TX} b
+      INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = b.PATID
+      UNION ALL
+      SELECT 'study_period', b.PATID
+      FROM {NDMM_BELANTAMAB_TX} b
+      INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = b.PATID
+      WHERE b.bel_dt >= date('{NDMM_STUDY_START}')
+      UNION ALL
+      SELECT 'from_index', b.PATID
+      FROM {NDMM_BELANTAMAB_TX} b
+      INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = b.PATID
+      WHERE b.bel_dt >= l1.LOT1_START_DT
+    ),
+    scd AS (SELECT DISTINCT SCOPE, PATID FROM sc),
+    sp AS (SELECT * FROM (VALUES ('ever'), ('study_period'), ('from_index')) AS t(SCOPE))
+    SELECT sp.SCOPE                             AS SCOPE,
+           count(DISTINCT scd.PATID)            AS N_PATIENTS,
+           count(DISTINCT CASE WHEN scd.PATID IS NULL
+                                AND f.CE_pre_lot1_12mo         = 1
+                                AND f.CE_lot1_fu               = 1
+                                AND f.NO_PRIOR_MM_TX           = 1
+                                AND f.NO_OTHER_CANCER_PRE_LOT1 = 1
+                                AND f.NO_PREGNANCY             = 1
+                               THEN f.PATID END) AS N_COHORT,
+           max(CASE WHEN sp.SCOPE = '{NDMM_BELANTAMAB_SCOPE}' THEN 1 ELSE 0 END)
+                                                AS IS_THIS_RUN
+    FROM sp
+    CROSS JOIN {NDMM_FLAGS_ALL} f
+    LEFT JOIN scd ON scd.SCOPE = sp.SCOPE AND scd.PATID = f.PATID
+    GROUP BY sp.SCOPE
+    ORDER BY N_COHORT DESC"))
   got <- db_q(con, glue("SELECT * FROM {wrk('NDMM_BELANTAMAB_SCOPE_COUNTS')}"))
   log_msg("Belantamab exclusion, by reading of \"in any LOT\" (applied: ",
           NDMM_BELANTAMAB_SCOPE, ")")
   for (i in seq_len(nrow(got)))
-    log_msg("    ", got$SCOPE[i], ": ", format(got$N_PATIENTS[i], big.mark = ","),
-            " of the 1L candidates")
+    log_msg("    ", if (got$IS_THIS_RUN[i] == 1L) "->" else "  ", " ",
+            got$SCOPE[i], ": ", format(got$N_PATIENTS[i], big.mark = ","),
+            " of the 1L candidates excluded, cohort ",
+            format(got$N_COHORT[i], big.mark = ","))
+  invisible(got)
+}
+
+# What the LOT run has to adjudicate before this exclusion is exact.
+#
+# S6.2.1.2 excludes a patient who received belantamab in ANY line of therapy.
+# Lines do not exist when this runs - the LOT algorithm runs over the cohort
+# this build produces - so the exclusion is a claims proxy, and no proxy is the
+# criterion. The exact answer needs the lines, which means it can only be
+# settled after the LOT run, by reconciliation.
+#
+# This is the input to it: every patient who is IN the cohort and has a
+# belantamab claim anyway - kept because their claim falls outside the proxy
+# window. Nobody else can need adjudicating; a patient the proxy excluded is
+# already gone, and a patient with no belantamab claim cannot have had it in a
+# line. Usually a short table, and the README says what to join it to.
+build_ndmm_belantamab_reconcile <- function(con, cfg) {
+  db_exec(con, glue("
+    CREATE OR REPLACE TABLE {wrk('NDMM_BELANTAMAB_RECONCILE')} AS
+    SELECT c.PATID                            AS PATID,
+           c.INDEX_DATE                       AS INDEX_DATE,
+           b.bel_dt                           AS BEL_DT,
+           datediff(b.bel_dt, c.INDEX_DATE)   AS DAYS_FROM_INDEX
+    FROM {wrk('NDMM_COHORT')} c
+    INNER JOIN {NDMM_BELANTAMAB_TX} b ON b.PATID = c.PATID
+    ORDER BY PATID, BEL_DT"))
+  got <- db_q(con, glue("
+    SELECT count(DISTINCT PATID) AS n_pat, count(*) AS n_claims
+    FROM {wrk('NDMM_BELANTAMAB_RECONCILE')}"))
+  log_msg("Belantamab still to adjudicate: ", format(got$n_pat, big.mark = ","),
+          " patient(s) in the cohort have a belantamab claim (",
+          format(got$n_claims, big.mark = ","), " claim(s)) outside the '",
+          NDMM_BELANTAMAB_SCOPE, "' window -> ", wrk("NDMM_BELANTAMAB_RECONCILE"))
+  if (isTRUE(got$n_pat > 0))
+    log_msg("  \"In any LOT\" is exact only once lines exist. After the LOT run, ",
+            "join these to LOT_LONG and drop any patient whose BEL_DT falls in a ",
+            "line. See README.")
   invisible(got)
 }
 

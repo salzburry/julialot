@@ -619,10 +619,43 @@ and is the defect this fixes.
 Neither scope is LOT membership. **Only running the LOT algorithm over the
 cohort and checking which line a belantamab claim landed in is exact** — that
 is a reconciliation pass after `Jul 28/lot`, not something this build can do.
-Until then, every run writes `<prefix>NDMM_BELANTAMAB_SCOPE_COUNTS`: how many
-1L candidates each of the three readings — `ever`, `study_period`, `from_index`
-— would exclude, so the choice can be made against real numbers. The scope in
-force is pinned in `CONTRACT` and recorded in `NDMM_RUN_METADATA`.
+So it does the two things it can: cost the choice, and emit what the
+reconciliation needs.
+
+**`<prefix>NDMM_BELANTAMAB_SCOPE_COUNTS`** — for each reading, how many 1L
+candidates it excludes *and* the resulting cohort size:
+
+| `SCOPE` | `N_PATIENTS` | `N_COHORT` | `IS_THIS_RUN` |
+|---|---|---|---|
+| ever | … | … | 0 |
+| study_period | … | … | 1 |
+| from_index | … | … | 0 |
+
+`N_COHORT` is the whole conjunction, because a claim count alone overstates the
+choice: some of the patients a wider proxy catches were already gone on another
+criterion. The scope in force is pinned in `CONTRACT` and recorded in
+`NDMM_RUN_METADATA`.
+
+**`<prefix>NDMM_BELANTAMAB_RECONCILE`** — the patients still to adjudicate.
+One row per belantamab claim belonging to a patient who is **in the cohort**,
+with `INDEX_DATE`, `BEL_DT` and `DAYS_FROM_INDEX`. Nobody else can need
+adjudicating: a patient the proxy excluded is already gone, and a patient with
+no belantamab claim cannot have had it in a line. Usually a short table.
+
+After `Jul 28/lot` has run, that table closes the criterion:
+
+```sql
+SELECT DISTINCT r.PATID
+FROM   <prefix>NDMM_BELANTAMAB_RECONCILE r
+JOIN   <prefix>LOT_LONG l ON l.PATID = r.PATID
+WHERE  r.BEL_DT BETWEEN l.LOT_START_DT AND coalesce(l.LOT_END_DT, r.BEL_DT)
+```
+
+Every `PATID` it returns received belantamab **in a line** and should have been
+excluded under §6.2.1.2 but was not, because the claims proxy did not reach it.
+Remove them from the cohort and note the count against attrition step 9. An
+empty result means the proxy was exact for this data — which is the answer to
+the open question, not a guess at it.
 
 The build checks that each step is
 no larger than the one above it and stops if it is not — a funnel that grows is
