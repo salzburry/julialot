@@ -498,6 +498,12 @@ Preflight - the settings, the contract, the connection, the cohort table -
 runs before the first status row, so a run that fails there leaves no row at
 all rather than a `failed` one. Nothing has been written by then.
 
+`failed` is written on the way out, before the connection closes. R fires
+`on.exit` handlers in the order they were registered and the disconnect is
+registered first, so the status handler asks for `after = FALSE` - without it
+the write reaches a closed connection and is swallowed by its own `try()`,
+leaving a crashed run marked `started` for ever.
+
 LOT1 is checked too, before LOT2-5 starts: MAP ending before it starts, a MAP
 end that is not the later runout, LOT1 ending after observation, an AUTO
 transplant flagged both tandem and single, and an AUTO before LOT1 began. The

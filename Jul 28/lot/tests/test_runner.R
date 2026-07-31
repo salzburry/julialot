@@ -193,6 +193,66 @@ ok(all(c("CODELIST_WAIVERS_REQUESTED", "CODELIST_WAIVERS_APPLIED") %in%
 ok(grepl("check_run_recorded", bl, fixed = TRUE),
    "a run with no metadata row is not called complete")
 
+# ...and 'failed' has to be reachable, not merely written down. R fires on.exit
+# handlers in registration order, and the disconnect is registered first, so
+# without after = FALSE the status write goes to a closed connection and its own
+# try() swallows the failure - a crashed run would sit at 'started' for ever.
+# Grepping for the string could not see that, so run the real registrations:
+# both statements are lifted verbatim from build_lot.R and only their payloads
+# are swapped for a recorder, leaving the on.exit arguments under test.
+bl_lines <- readLines(file.path(ROOT, "R", "build_lot.R"), warn = FALSE)
+stmt_at <- function(i) {           # grow the slice until it is a whole statement
+  for (j in i:min(i + 8L, length(bl_lines))) {
+    s <- paste(bl_lines[i:j], collapse = "\n")
+    if (!inherits(tryCatch(parse(text = s), error = function(e) e), "error")) return(s)
+  }
+  NA_character_
+}
+# Located by what each handler does, not by how it is written: matching the
+# guard text would lose the handler the moment the guard changed, and this test
+# would then report "not found" for a run that had quietly stopped guarding.
+i_all <- grep("^\\s*on\\.exit\\(", bl_lines)
+stmts <- vapply(i_all, stmt_at, character(1))
+i_dis <- i_all[which(grepl("dbDisconnect", stmts, fixed = TRUE))[1]]
+i_sta <- i_all[which(grepl("write_build_status", stmts, fixed = TRUE))[1]]
+found <- !is.na(i_dis) && !is.na(i_sta)
+ok(found, "both on.exit handlers are where this test can find them")
+if (!found) {
+  # Report the rest rather than dying on the missing anchor: an error here
+  # would take every assertion after this block down with it.
+  for (w in c("both handler payloads were found and stubbed, so the run below proves something",
+              "a failed run writes its status before the connection closes",
+              "and a run that reached complete does not overwrite its own status on the way out"))
+    ok(FALSE, paste0(w, " -- handler not found, cannot run"))
+} else {
+# In source order, whichever that is: registering the disconnect last is an
+# equally good fix, and a test that demanded one arrangement would reject it.
+# What has to hold is the order they FIRE in, which the run below measures.
+idx  <- sort(c(i_dis, i_sta))
+code <- paste(stmt_at(idx[1]), stmt_at(idx[2]), sep = "\n")
+code2 <- gsub("try(DBI::dbDisconnect(con), silent = TRUE)", "rec('disconnect')",
+              code, fixed = TRUE)
+code2 <- gsub('try(write_build_status(con, cfg, "failed"), silent = TRUE)',
+              "rec('failed-status')", code2, fixed = TRUE)
+ok(!identical(code, code2) && !grepl("dbDisconnect", code2, fixed = TRUE) &&
+     !grepl("write_build_status", code2, fixed = TRUE),
+   "both handler payloads were found and stubbed, so the run below proves something")
+FIRED <- character(0)
+rec <- function(x) FIRED <<- c(FIRED, x)
+crash <- eval(parse(text = paste0("function() {\n", code2, "\n  stop('boom')\n}")))
+old_complete <- getOption("lot_complete")
+options(lot_complete = FALSE)
+FIRED <- character(0); try(crash(), silent = TRUE)
+ok(identical(FIRED, c("failed-status", "disconnect")),
+   paste0("a failed run writes its status before the connection closes (",
+          paste(FIRED, collapse = " then "), ")"))
+options(lot_complete = TRUE)
+FIRED <- character(0); try(crash(), silent = TRUE)
+ok(identical(FIRED, "disconnect"),
+   "and a run that reached complete does not overwrite its own status on the way out")
+options(lot_complete = old_complete)
+}
+
 cat("\n-- an older status table is upgraded, not written into blind --\n")
 # CREATE TABLE IF NOT EXISTS does nothing to a table an earlier version of this
 # package left behind, so a run after a column was added would INSERT a column

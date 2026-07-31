@@ -265,8 +265,14 @@ build_lot <- function(here, cohort_table, prefix) {
   # Cleared first, or a second run in one session inherits the first's.
   options(lot_waivers_applied = character(0), lot_codelist_md5 = list())
   write_build_status(con, cfg, "started")
+  # after = FALSE, or this never runs: R fires on.exit handlers in the order
+  # they were registered, the disconnect above was registered first, and the
+  # write would then go to a closed connection and be swallowed by its own
+  # try(). Registered here rather than beside the connection so a preflight
+  # failure still leaves no row at all, which is what the README promises.
   on.exit(if (!isTRUE(getOption("lot_complete", FALSE)))
-            try(write_build_status(con, cfg, "failed"), silent = TRUE), add = TRUE)
+            try(write_build_status(con, cfg, "failed"), silent = TRUE),
+          add = TRUE, after = FALSE)
   options(lot_complete = FALSE)
 
   ctx <- phase_codelists(con)
