@@ -279,6 +279,7 @@ build_ndmm_mm_adjacent_groups <- function(con, cfg) {
     FROM {NDMM_OTHER_MALIG_CODES}
     WHERE is_mm_adjacent_override = 1
        OR upper(tumor_group) LIKE '%REMISSION%'
+       OR upper(tumor_group) LIKE '%RELAPSE%'
        OR upper(tumor_group) LIKE '%PLASMACYTOMA%'
        OR upper(tumor_group) LIKE '%PLASMA CELL%'
        OR upper(tumor_group) LIKE '%GAMMOPATHY%'
@@ -287,11 +288,11 @@ build_ndmm_mm_adjacent_groups <- function(con, cfg) {
     ORDER BY OVERRIDDEN DESC, TUMOR_GROUP"))
   got <- db_q(con, glue("SELECT * FROM {wrk('NDMM_MM_ADJACENT_GROUPS')}"))
   log_msg("MM-adjacent tumour groups on the code list (remission handling: ",
-          NDMM_MM_ADJACENT_REMISSION, ")")
+          NDMM_MM_ADJACENT_STATES, ")")
   for (i in seq_len(nrow(got)))
     log_msg("    ", if (got$OVERRIDDEN[i] == 1L) "kept    " else "EXCLUDES",
             "  ", got$TUMOR_GROUP[i], " (", got$N_CODES[i], " codes)")
-  miss <- setdiff(toupper(NDMM_MM_ADJACENT_REMISSION_LABELS),
+  miss <- setdiff(toupper(NDMM_MM_ADJACENT_STATE_LABELS),
                   toupper(got$TUMOR_GROUP))
   if (length(miss))
     log_msg("  Not on this code list, so nothing to override: ",

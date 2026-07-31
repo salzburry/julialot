@@ -39,7 +39,7 @@ CONTRACT <- list(
   index_excluded_abbrs = "",
   index_excluded_codes = "",
   belantamab_scope     = "study_period",
-  mm_adjacent_remission = "override",
+  mm_adjacent_states = "override",
   tbl_medical          = "medical",
   tbl_med_proc         = "med_procedure",
   tbl_med_diag         = "med_diagnosis",
@@ -249,7 +249,7 @@ CONSTANT_SETTINGS <- list(
   # something this build cannot see, and it changes the count.
   list(const = "NDMM_BELANTAMAB_SCOPE",       cfg = "belantamab_scope",   note = ""),
   # Whether a plasma-cell disorder in remission still counts as another cancer.
-  list(const = "NDMM_MM_ADJACENT_REMISSION", cfg = "mm_adjacent_remission", note = ""),
+  list(const = "NDMM_MM_ADJACENT_STATES", cfg = "mm_adjacent_states", note = ""),
   # Not a cohort window but a code-list assumption, and just as able to change
   # the count: it is what identifies belantamab, and belantamab is exclusion 4.
   list(const = "NDMM_BELANTAMAB_ABBR",        cfg = "belantamab_abbr",    note = "")
@@ -480,7 +480,7 @@ RUN_METADATA_COLS <- c(RUN_ID = "STRING", OBJECT_PREFIX = "STRING",
                        BELANTAMAB_ABBR = "STRING", INDEX_EXCLUDED = "STRING",
                        INDEX_EXCLUDED_CODES = "STRING",
                        BELANTAMAB_SCOPE = "STRING",
-                       MM_ADJACENT_REMISSION = "STRING",
+                       MM_ADJACENT_STATES = "STRING",
                        CODE_MD5 = "STRING",
                        CONTRACT_SETTINGS = "STRING",
                        WAIVERS_REQUESTED = "STRING", WAIVERS_APPLIED = "STRING",
@@ -502,7 +502,7 @@ write_run_metadata <- function(con, cfg, here, n) {
          "{sql_text(run_id)}, {sql_text(cfg$object_prefix)}, ",
          "{sql_text(NDMM_BELANTAMAB_ABBR)}, {sql_text(NDMM_INDEX_EXCLUDED_ABBRS)}, ",
          "{sql_text(NDMM_INDEX_EXCLUDED_CODES)}, {sql_text(NDMM_BELANTAMAB_SCOPE)}, ",
-         "{sql_text(NDMM_MM_ADJACENT_REMISSION)}, ",
+         "{sql_text(NDMM_MM_ADJACENT_STATES)}, ",
          "{sql_text(code_fingerprint(here))}, ",
          "{sql_text(contract_settings())}, ",
          "{sql_text(paste(sort(waivers_named(), method = 'radix'), collapse = ','))}, ",

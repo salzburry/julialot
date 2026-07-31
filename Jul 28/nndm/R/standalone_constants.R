@@ -90,39 +90,53 @@ NDMM_BELANTAMAB_SCOPE <- Sys.getenv("NDMM_BELANTAMAB_SCOPE", unset = "study_peri
 
 NDMM_BELANTAMAB_TX        <- "_ndmm_belantamab_tx"
 
-# The remission halves of the MM-adjacent override.
+# The other disease states of the MM-adjacent conditions.
 #
 # nndm_constants.R lists five tumour groups the other-cancer rule must not
 # exclude on, because they are the index MM itself or its precursor rather than
-# another cancer. Three of them are worded "NOT HAVING ACHIEVED REMISSION", and
-# its own comment says the "in remission" variants "are left in the filter
-# pending confirmation".
+# another cancer. Three of them are the "not having achieved remission" state
+# of a plasma-cell disorder, and apr_30_2026's comment says the others "are
+# left in the filter pending confirmation".
 #
-# Leaving them there is not neutral. It says a patient is excluded for having
-# another cancer because their plasma cell leukemia is in remission, while an
-# identical patient whose plasma cell leukemia is not in remission is kept.
-# Remission cannot make a plasma-cell disorder more like a different cancer, so
-# the default here overrides them too, and NDMM_MM_ADJACENT_REMISSION=exclude
-# restores apr_30_2026's behaviour for anyone who wants to compare.
+# other_malig.csv, read on the warehouse 2026-07-30, carries each of those
+# three conditions in three states:
 #
-# Unlike the five, these are not required to exist: absence just means this
-# code list does not carry the wording, and the override has nothing to
-# override. NDMM_MM_ADJACENT_GROUPS records what was found either way.
-NDMM_MM_ADJACENT_REMISSION <- Sys.getenv("NDMM_MM_ADJACENT_REMISSION",
-                                         unset = "override")
-NDMM_MM_ADJACENT_REMISSION_LABELS <- c(
-  "SOLITARY PLASMACYTOMA IN REMISSION",
+#   C9010 / C9011 / C9012  Plasma cell leukemia        not achieved / in remission / in relapse
+#   C9020 / C9021 / C9022  Extramedullary plasmacytoma not achieved / in remission / in relapse
+#   C9030 / C9031 / C9032  Solitary plasmacytoma       not achieved / in remission / in relapse
+#
+# Only the first of each three was overridden. So a patient was excluded for
+# having another cancer because their plasma cell leukemia was in remission or
+# in relapse, while an identical patient whose plasma cell leukemia had not
+# achieved remission was kept. A disease state cannot make a plasma-cell
+# disorder into a different cancer - relapse least of all.
+#
+# tumour_group in that file is one label per ICD code, not a grouping, so these
+# really are separate groups to the rule that reads it.
+#
+# The default overrides all six. NDMM_MM_ADJACENT_STATES=exclude restores
+# apr_30_2026's behaviour for anyone who wants to compare.
+#
+# Unlike the five, these are not required to exist: absence would just mean the
+# code list stopped carrying the wording. NDMM_MM_ADJACENT_GROUPS records what
+# was found either way.
+NDMM_MM_ADJACENT_STATES <- Sys.getenv("NDMM_MM_ADJACENT_STATES", unset = "override")
+NDMM_MM_ADJACENT_STATE_LABELS <- c(
   "PLASMA CELL LEUKEMIA IN REMISSION",
-  "EXTRAMEDULLARY PLASMACYTOMA IN REMISSION"
+  "PLASMA CELL LEUKEMIA IN RELAPSE",
+  "EXTRAMEDULLARY PLASMACYTOMA IN REMISSION",
+  "EXTRAMEDULLARY PLASMACYTOMA IN RELAPSE",
+  "SOLITARY PLASMACYTOMA IN REMISSION",
+  "SOLITARY PLASMACYTOMA IN RELAPSE"
 )
 
 # Every tumour group the override applies to, given the setting. The ported
 # step reads this instead of the constant, so the two lists stay in one place.
 ndmm_mm_adjacent_groups <- function() {
-  switch(NDMM_MM_ADJACENT_REMISSION,
-    override = c(NDMM_MM_ADJACENT_OVERRIDE, NDMM_MM_ADJACENT_REMISSION_LABELS),
+  switch(NDMM_MM_ADJACENT_STATES,
+    override = c(NDMM_MM_ADJACENT_OVERRIDE, NDMM_MM_ADJACENT_STATE_LABELS),
     exclude  = NDMM_MM_ADJACENT_OVERRIDE,
-    stop("NDMM_MM_ADJACENT_REMISSION='", NDMM_MM_ADJACENT_REMISSION,
+    stop("NDMM_MM_ADJACENT_STATES='", NDMM_MM_ADJACENT_STATES,
          "' is not a setting. Use override or exclude; see ",
          "standalone_constants.R.", call. = FALSE))
 }

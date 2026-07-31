@@ -173,35 +173,46 @@ plasma-cell tumour groups are overridden — the disease itself (plasma cell
 leukemia, solitary and extramedullary plasmacytoma), its precursor (monoclonal
 gammopathy), and MM bone disease.
 
-Three of those five are worded *"not having achieved remission"*, and
-`apr_30_2026` left the *"in remission"* variants excluding, its own comment
-saying they were "left in the filter pending confirmation". That is not a
-neutral default: it means a patient is dropped for having another cancer
-because their plasma cell leukemia is **in** remission, while an identical
-patient whose plasma cell leukemia is **not** in remission is kept. Remission
-cannot make a plasma-cell disorder more like a different cancer.
+`other_malig.csv`, read on the warehouse **2026-07-30**, carries each of those
+plasma-cell conditions in **three states**, each its own `tumor_group`:
 
-So the default here overrides the remission variants too:
+| condition | not achieved remission | in remission | in relapse |
+|---|---|---|---|
+| Plasma cell leukemia | `C9010` | `C9011` | `C9012` |
+| Extramedullary plasmacytoma | `C9020` | `C9021` | `C9022` |
+| Solitary plasmacytoma | `C9030` | `C9031` | `C9032` |
+
+`apr_30_2026` overrode **only the first column**. So a patient was excluded for
+having another cancer because their plasma cell leukemia was in remission or in
+relapse, while an identical patient whose plasma cell leukemia had not achieved
+remission was kept. A disease state cannot make a plasma-cell disorder into a
+different cancer — relapse least of all.
+
+All six are overridden by default:
 
 ```
-NDMM_MM_ADJACENT_REMISSION=override   # default
-NDMM_MM_ADJACENT_REMISSION=exclude    # apr_30_2026's behaviour, to compare
+NDMM_MM_ADJACENT_STATES=override   # default
+NDMM_MM_ADJACENT_STATES=exclude    # apr_30_2026's behaviour, to compare
 ```
 
-This makes the cohort **larger** than `apr_30_2026`'s, and the difference lands
-on attrition step 7.
+This makes the cohort **larger**, and the difference lands on attrition step 7.
+
+Note that `tumor_group` in that file is **one label per ICD code**, not a
+grouping — so "≥2 outpatient claims for the same tumour group" means the same
+exact diagnosis description, and the three states above are three different
+groups to the rule that reads it. That is inherited from the parent build and
+has not been changed here.
 
 The five original labels stay **required**: if the code list does not carry one,
 the run stops, because the override would silently fail and patients would be
-excluded for an MM-adjacent condition. The three remission labels are **not**
-required — their absence just means this code list does not use that wording,
-and there is nothing to override.
+excluded for an MM-adjacent condition. The six state labels are **not**
+required — their absence would just mean the wording changed.
 
 Every run writes `<prefix>NDMM_MM_ADJACENT_GROUPS`: every tumour group on the
 code list that looks plasma-cell related — anything matching `%REMISSION%`,
-`%PLASMACYTOMA%`, `%PLASMA CELL%`, `%GAMMOPATHY%` or `%MYELOMA%` — with whether
-the override reaches it and how many codes it carries. Anything in it marked
-`EXCLUDES` is the open question, named in the log.
+`%RELAPSE%`, `%PLASMACYTOMA%`, `%PLASMA CELL%`, `%GAMMOPATHY%` or `%MYELOMA%` —
+with whether the override reaches it and how many codes it carries. Anything in
+it marked `EXCLUDES` is the open question, named in the log.
 
 ### Which agents may set the 1L index
 

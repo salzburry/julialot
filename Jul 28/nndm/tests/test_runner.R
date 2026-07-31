@@ -543,29 +543,45 @@ cat("\n-- a plasma-cell disorder in remission is not another cancer --\n")
 # having achieved remission", and apr_30_2026 left the "in remission" variants
 # excluding - so an identical patient was kept or dropped depending on whether
 # their plasma cell leukemia was in remission.
-ok(identical(cfg_defaults$mm_adjacent_remission, "override"),
+ok(identical(cfg_defaults$mm_adjacent_states, "override"),
    "by default remission variants are overridden too, like their counterparts")
-ok(all(grepl("REMISSION", se$NDMM_MM_ADJACENT_REMISSION_LABELS, fixed = TRUE)),
-   paste0("the ", length(se$NDMM_MM_ADJACENT_REMISSION_LABELS),
+ok(all(grepl("IN REMISSION|IN RELAPSE", se$NDMM_MM_ADJACENT_STATE_LABELS)),
+   paste0("the ", length(se$NDMM_MM_ADJACENT_STATE_LABELS),
           " of them are named, not matched by a pattern that could catch more"))
-# Each remission label is the counterpart of one that is already overridden.
-stem <- function(x) trimws(sub("(NOT HAVING ACHIEVED REMISSION|IN REMISSION)$", "", x))
-ok(all(stem(se$NDMM_MM_ADJACENT_REMISSION_LABELS) %in%
+# other_malig.csv carries each plasma-cell condition in three states. Every one
+# named here is another state of a condition the override already covers, so
+# nothing new is being exempted - only the same disease in a different phase.
+stem <- function(x)
+  trimws(sub("(NOT HAVING ACHIEVED REMISSION|IN REMISSION|IN RELAPSE)$", "", x))
+ok(all(stem(se$NDMM_MM_ADJACENT_STATE_LABELS) %in%
          stem(se$NDMM_MM_ADJACENT_OVERRIDE)),
-   "and each names a condition the override already covers in its other state")
-assign("NDMM_MM_ADJACENT_REMISSION", "override", envir = se)
+   "and each names a condition the override already covers in another state")
+# The invariant, not a count: a condition overridden in one state is overridden
+# in all of them. Half a triple is how the original list came to exclude a
+# plasma cell leukemia for being in remission while keeping one that was not.
+staged <- se$NDMM_MM_ADJACENT_OVERRIDE[
+  grepl("NOT HAVING ACHIEVED REMISSION", se$NDMM_MM_ADJACENT_OVERRIDE, fixed = TRUE)]
+missing_state <- unlist(lapply(stem(staged), function(k)
+  setdiff(paste(k, c("IN REMISSION", "IN RELAPSE")),
+          se$NDMM_MM_ADJACENT_STATE_LABELS)))
+ok(length(missing_state) == 0,
+   if (length(missing_state)) paste0("overridden in one state but not another: ",
+                                     paste(missing_state, collapse = "; "))
+   else paste0("every one of the ", length(staged),
+               " conditions is overridden in all three of its states"))
+assign("NDMM_MM_ADJACENT_STATES", "override", envir = se)
 ok(setequal(se$ndmm_mm_adjacent_groups(),
-            c(se$NDMM_MM_ADJACENT_OVERRIDE, se$NDMM_MM_ADJACENT_REMISSION_LABELS)),
+            c(se$NDMM_MM_ADJACENT_OVERRIDE, se$NDMM_MM_ADJACENT_STATE_LABELS)),
    "override covers both halves")
-assign("NDMM_MM_ADJACENT_REMISSION", "exclude", envir = se)
+assign("NDMM_MM_ADJACENT_STATES", "exclude", envir = se)
 ok(setequal(se$ndmm_mm_adjacent_groups(), se$NDMM_MM_ADJACENT_OVERRIDE),
    "exclude restores apr_30_2026's five, so the two can be compared")
-assign("NDMM_MM_ADJACENT_REMISSION", "sometimes", envir = se)
+assign("NDMM_MM_ADJACENT_STATES", "sometimes", envir = se)
 ok(grepl("is not a setting",
          tryCatch({ se$ndmm_mm_adjacent_groups(); "" }, error = conditionMessage),
          fixed = TRUE),
    "and anything else stops the run rather than silently overriding nothing")
-assign("NDMM_MM_ADJACENT_REMISSION", "override", envir = se)
+assign("NDMM_MM_ADJACENT_STATES", "override", envir = se)
 # The five stay required; the remission ones do not. Absence of the five means
 # the override silently fails, absence of a remission label just means this
 # code list does not carry the wording.
@@ -583,7 +599,8 @@ se$build_ndmm_mm_adjacent_groups(NULL, cfg_defaults)
 g <- SSQL[1]
 ok(grepl("NDMM_MM_ADJACENT_GROUPS", g, fixed = TRUE),
    "every plasma-cell-looking group on the code list is written out for review")
-for (k in c("%REMISSION%", "%PLASMACYTOMA%", "%PLASMA CELL%", "%GAMMOPATHY%", "%MYELOMA%"))
+for (k in c("%REMISSION%", "%RELAPSE%", "%PLASMACYTOMA%", "%PLASMA CELL%",
+            "%GAMMOPATHY%", "%MYELOMA%"))
   ok(grepl(k, g, fixed = TRUE), paste0("...including anything matching ", k))
 ok(grepl("max(is_mm_adjacent_override)", g, fixed = TRUE),
    "with whether the override reaches it, which is the question being asked")
