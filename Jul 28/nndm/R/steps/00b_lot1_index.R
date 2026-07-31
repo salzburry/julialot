@@ -65,7 +65,11 @@ build_ndmm_index_ineligible_codes <- function(con) {
   norm <- function(x) toupper(gsub("[^A-Za-z0-9]", "", x))
   sq   <- function(x) gsub("'", "''", x, fixed = TRUE)
 
-  abbrs <- split_setting(NDMM_INDEX_EXCLUDED_ABBRS)
+  # eligible_1l_agents.csv, if the study team has written one. Its deny rows
+  # are the same thing as NDMM_INDEX_EXCLUDED_ABBRS and join them; its allow
+  # rows turn the whole thing round - see below.
+  el    <- load_eligible_agents_csv(nndm_config()$eligible_1l_csv)
+  abbrs <- c(split_setting(NDMM_INDEX_EXCLUDED_ABBRS), el$deny)
   codes <- split_setting(NDMM_INDEX_EXCLUDED_CODES)
 
   # Each entry becomes one predicate, and one thing to check matched something.
@@ -87,13 +91,50 @@ build_ndmm_index_ineligible_codes <- function(con) {
         sql  = sprintf("code = '%s'", sq(norm(parts[1]))))
   }
 
+  # An allowlist is the same view read the other way round: everything NOT
+  # named is ineligible. One predicate, and the four-arm scan below needs no
+  # change - it already anti-joins this view. Added last so the checks above
+  # still run over the named terms one at a time.
+  allow_term <- NULL
+  if (length(el$allow)) {
+    allow_in <- paste(sprintf("'%s'", sq(el$allow)), collapse = ", ")
+    allow_term <- list(
+      what = paste0("the allowlist (", length(el$allow), " agents)"),
+      sql  = sprintf("upper(trim(med_abbr)) NOT IN (%s)", allow_in))
+  }
+
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_INDEX_INELIGIBLE} AS
     SELECT DISTINCT code_type, code
     FROM {NDMM_MMA_CODELIST}
-    WHERE ", paste(vapply(terms, function(t) t$sql, character(1)),
+    WHERE ", paste(vapply(c(terms, list(allow_term)[!is.null(allow_term)]),
+                          function(t) t$sql, character(1)),
                    collapse = "\n       OR "), "
   "))
+
+  # Each allowed agent has to exist, and for the same reason the others do: an
+  # abbreviation that matches nothing is not a permission, it is a typo, and
+  # under an allowlist a typo does not read as a restriction that applies to
+  # nothing - it silently bars an agent that should have been let through.
+  for (a in el$allow) {
+    n <- as.integer(db_q(con, glue(
+      "SELECT count(*) AS n FROM {NDMM_MMA_CODELIST}
+       WHERE upper(trim(med_abbr)) = '{sq(a)}'"))$n)
+    if (is.na(n) || n == 0)
+      stop("The eligible-1L agent list allows '", a, "', which matches no row ",
+           "of cl_mma_codelist.csv. Under an allowlist that is not a ",
+           "restriction applying to nothing - it is an agent that should set ",
+           "an index and cannot, so its patients leave the cohort at attrition ",
+           "step 3. Check it against 'SELECT DISTINCT med_abbr FROM ",
+           NDMM_MMA_CODELIST, "'.", call. = FALSE)
+  }
+  if (!is.null(allow_term)) {
+    n_barred <- as.integer(db_q(con, glue(
+      "SELECT count(DISTINCT med_abbr) AS n FROM {NDMM_MMA_CODELIST}
+       WHERE {allow_term$sql}"))$n)
+    log_msg("  Allowlist in force: ", n_barred, " agent(s) on the code list ",
+            "cannot set a 1L index")
+  }
 
   # Every entry after belantamab has to match something. Left unchecked, a name
   # or a code that is not on the list reads as an applied restriction and
@@ -165,9 +206,10 @@ build_ndmm_lot1_index <- function(con, medical_tbl, rx_tbl) {
 # This is the list S6.2.1.1 gestures at and no document in this repository
 # contains. Annex 2 is "categorization of SOC regimens", which S6.2.2 calls an
 # exemplary list that may be recategorized - an analysis grouping, not an
-# eligibility rule - and it is a stand-alone document. So rather than invent an
-# allowlist, the build reports what actually set an index. If a later-line-only
-# agent appears here, name it in NDMM_INDEX_EXCLUDED_ABBRS and re-run.
+# eligibility rule - and it is a stand-alone document. So this build does not
+# invent an allowlist. It writes the sheet one would be built from: every agent
+# on the code list, whether this run let it set an index, and how many it set.
+# Fill in codelists/eligible_1l_agents.csv from this and re-run.
 build_ndmm_index_agents <- function(con, cfg) {
   db_exec(con, glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_INDEX_AGENTS')} AS
@@ -176,18 +218,41 @@ build_ndmm_index_agents <- function(con, cfg) {
       FROM {NDMM_INDEX_TX} tx
       INNER JOIN {NDMM_LOT1_STARTS} l1
               ON l1.PATID = tx.PATID AND tx.tx_dt = l1.LOT1_START_DT
+    ),
+    -- Every agent on the code list, not only the ones that won a date. Under
+    -- an allowlist the winners are by definition the allowed ones, so a table
+    -- of winners could not be used to build the allowlist - which is what this
+    -- table is for. ELIGIBLE says what this run treated each as.
+    universe AS (
+      SELECT DISTINCT upper(trim(c.med_abbr)) AS med_abbr
+      FROM {NDMM_MMA_CODELIST} c
+      WHERE c.med_abbr IS NOT NULL AND trim(c.med_abbr) <> ''
+    ),
+    barred AS (
+      SELECT DISTINCT upper(trim(c.med_abbr)) AS med_abbr
+      FROM {NDMM_MMA_CODELIST} c
+      INNER JOIN {NDMM_INDEX_INELIGIBLE} i
+              ON i.code_type = c.code_type AND i.code = c.code
     )
-    SELECT coalesce(med_abbr, '(none)') AS MED_ABBR,
-           count(DISTINCT PATID)        AS N_PATIENTS
-    FROM on_index
-    GROUP BY coalesce(med_abbr, '(none)')
-    ORDER BY N_PATIENTS DESC"))
+    SELECT u.med_abbr                              AS MED_ABBR,
+           CASE WHEN b.med_abbr IS NULL THEN 1 ELSE 0 END AS ELIGIBLE,
+           coalesce(n.N_PATIENTS, 0)               AS N_PATIENTS
+    FROM universe u
+    LEFT JOIN barred b ON b.med_abbr = u.med_abbr
+    LEFT JOIN (SELECT coalesce(upper(trim(med_abbr)), '(none)') AS med_abbr,
+                      count(DISTINCT PATID) AS N_PATIENTS
+               FROM on_index
+               GROUP BY coalesce(upper(trim(med_abbr)), '(none)')) n
+           ON n.med_abbr = u.med_abbr
+    ORDER BY N_PATIENTS DESC, MED_ABBR"))
   got <- db_q(con, glue("SELECT * FROM {wrk('NDMM_INDEX_AGENTS')}"))
-  log_msg("Agents that set a 1L index date (", nrow(got), "):")
+  log_msg("MM agents on the code list (", nrow(got), "), and the indexes they set:")
   for (i in seq_len(nrow(got)))
-    log_msg("    ", got$MED_ABBR[i], ": ", format(got$N_PATIENTS[i], big.mark = ","))
+    log_msg("    ", if (got$ELIGIBLE[i] == 1L) "may set " else "BARRED  ", " ",
+            got$MED_ABBR[i], ": ", format(got$N_PATIENTS[i], big.mark = ","))
   log_msg("  Review these against S6.2.1.1. Anything restricted to later lines ",
-          "belongs in NDMM_INDEX_EXCLUDED_ABBRS.")
+          "belongs in codelists/eligible_1l_agents.csv with eligible=0, or ",
+          "list the eligible ones with eligible=1 to turn it into an allowlist.")
   invisible(got)
 }
 
@@ -200,11 +265,18 @@ build_ndmm_index_agents <- function(con, cfg) {
 # claims proxy, and every claim is kept here with its date so the proxy can be
 # applied, and so all of them can be counted for review.
 build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl) {
-  txt_match <- function(col) paste0(
-    "upper(regexp_replace(coalesce(cast(t.", col, " as string),''), '[^A-Za-z0-9]', '')) = c.code",
+  # Each source only matches the code types it can carry, the same way the
+  # prior-therapy and index scans do. Without it a PROC_CD could match an NDC
+  # row once both are stripped to alphanumerics, and an NDC could match an
+  # HCPCS row once both are stripped to digits - either way excluding a patient
+  # for a belantamab claim they never had.
+  txt_match <- function(col, types) paste0(
+    "c.code_type IN (", types, ")",
+    "\n       AND upper(regexp_replace(coalesce(cast(t.", col, " as string),''), '[^A-Za-z0-9]', '')) = c.code",
     "\n       AND regexp_replace(coalesce(cast(t.", col, " as string),''), '[^A-Za-z0-9]', '') <> ''")
   ndc_match <- function(col) paste0(
-    "lpad(regexp_replace(coalesce(cast(t.", col, " as string),''), '[^0-9]', ''), 11, '0')",
+    "c.code_type = 'NDC'",
+    "\n       AND lpad(regexp_replace(coalesce(cast(t.", col, " as string),''), '[^0-9]', ''), 11, '0')",
     "\n         = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')",
     "\n       AND regexp_replace(coalesce(cast(t.", col, " as string),''), '[^0-9]', '') <> ''")
   arm <- function(tbl, dt, match_sql) glue("
@@ -215,8 +287,8 @@ build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl) {
       WHERE cast(t.{dt} as date) <= date('{cfg$study_end}')")
   db_exec(con, paste0(glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_BELANTAMAB_TX} AS"),
-    arm(medical_tbl, "FST_DT",  txt_match("PROC_CD")),      "\n      UNION\n",
-    arm(medical_tbl, "FST_DT",  txt_match("BILL_PROC_CD")), "\n      UNION\n",
+    arm(medical_tbl, "FST_DT",  txt_match("PROC_CD", "'HCPCS','CPT'")), "\n      UNION\n",
+    arm(medical_tbl, "FST_DT",  txt_match("BILL_PROC_CD", "'HCPCS'")),  "\n      UNION\n",
     arm(medical_tbl, "FST_DT",  ndc_match("NDC")),          "\n      UNION\n",
     arm(rx_tbl,      "FILL_DT", ndc_match("NDC"))))
 
@@ -237,28 +309,257 @@ build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl) {
 # How many patients each reading of "in any LOT" would exclude. The scope is a
 # proxy for something this build cannot see, so the run says what the choice
 # costs rather than leaving it to be guessed at.
+# Every label on the other-cancer code list, and the group this run pairs it
+# under. The sheet primary_tumor_groups.csv is filled in from: anything whose
+# PRIMARY_GROUP is still its own label is a label that can only confirm itself.
+build_ndmm_other_malig_groups <- function(con, cfg) {
+  db_exec(con, glue("
+    CREATE OR REPLACE TABLE {wrk('NDMM_OTHER_MALIG_GROUPS')} AS
+    SELECT tumor_group                   AS TUMOR_GROUP,
+           max(primary_group)            AS PRIMARY_GROUP,
+           count(*)                      AS N_CODES,
+           max(is_mm_adjacent_override)  AS OVERRIDDEN
+    FROM {NDMM_OTHER_MALIG_CODES}
+    GROUP BY tumor_group
+    ORDER BY PRIMARY_GROUP, TUMOR_GROUP"))
+  got <- db_q(con, glue("
+    SELECT count(*) AS n_labels, count(DISTINCT PRIMARY_GROUP) AS n_groups,
+           sum(CASE WHEN OVERRIDDEN = 0 AND PRIMARY_GROUP = TUMOR_GROUP
+                    THEN 1 ELSE 0 END) AS n_alone
+    FROM {wrk('NDMM_OTHER_MALIG_GROUPS')}"))
+  log_msg("Other-cancer labels: ", got$n_labels, " on the code list, pairing as ",
+          got$n_groups, " group(s); ", got$n_alone,
+          " exclusionary label(s) can only confirm themselves -> ",
+          wrk("NDMM_OTHER_MALIG_GROUPS"))
+  invisible(got)
+}
+
+# What the pairing grain is costing, without needing a map to exist first.
+#
+# Criterion 7 Path B is two outpatient claims within 30 days for the same
+# cancer. "Same" is a code-list label here, and a label is a code description:
+# one cancer at two subsites, or one coded in remission and once not, is two
+# labels, and the claims never pair. So the criterion under-detects and the
+# cohort is too large.
+#
+# The map fixes it, but nobody can size the problem from an empty map. These
+# three rows can be computed with no map at all, off the events view the
+# criterion itself reads, so the claim scan does not run again:
+#
+#   same code-list label - the finest grain, and what apr_30_2026 does
+#   as configured        - the same until primary_tumor_groups.csv says otherwise
+#   any label at all     - the coarsest, and the upper bound on what a perfect
+#                          map could add
+#
+# The gap between the first row and the last is the whole question. If it is
+# small the grain does not matter; if it is large the map is worth writing.
+build_ndmm_other_malig_grain <- function(con, cfg) {
+  by <- function(label, grp) glue("
+    SELECT '{label}' AS GRAIN, count(DISTINCT l1.PATID) AS N_EXCLUDED
+    FROM {NDMM_LOT1_STARTS} l1
+    LEFT JOIN (SELECT DISTINCT PATID, event_dt
+               FROM {NDMM_OTHER_MALIG_EVENTS} WHERE inpatient_flg = 1) ip
+           ON cast(ip.PATID as string) = cast(l1.PATID as string)
+          AND ip.event_dt BETWEEN date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS})
+                              AND date_sub(l1.LOT1_START_DT, 1)
+    LEFT JOIN (SELECT PATID, event_dt AS first_dt, next_dt
+               FROM (SELECT PATID, event_dt,
+                            lead(event_dt) OVER (PARTITION BY PATID{grp}
+                                                 ORDER BY event_dt) AS next_dt
+                     FROM (SELECT DISTINCT PATID, {if (nzchar(grp)) sub('^, ', '', grp) else '1 AS one'}, event_dt
+                           FROM {NDMM_OTHER_MALIG_EVENTS} WHERE inpatient_flg = 0))
+               WHERE next_dt IS NOT NULL AND datediff(next_dt, event_dt) <= 30) op
+           ON cast(op.PATID as string) = cast(l1.PATID as string)
+          AND op.first_dt BETWEEN date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS})
+                              AND date_sub(l1.LOT1_START_DT, 1)
+          AND op.next_dt  BETWEEN date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS})
+                              AND date_sub(l1.LOT1_START_DT, 1)
+    WHERE ip.PATID IS NOT NULL OR op.PATID IS NOT NULL")
+  db_exec(con, paste0(glue("CREATE OR REPLACE TABLE {wrk('NDMM_OTHER_MALIG_GRAIN')} AS\n"),
+    by("same code-list label", ", tumor_group"), "\n    UNION ALL\n",
+    by("as configured",        ", primary_group"), "\n    UNION ALL\n",
+    by("any label at all",     "")))
+  got <- db_q(con, glue("SELECT * FROM {wrk('NDMM_OTHER_MALIG_GRAIN')}"))
+  log_msg("Other cancer (criterion 7), by pairing grain:")
+  for (i in seq_len(nrow(got)))
+    log_msg("    ", got$GRAIN[i], ": ",
+            format(got$N_EXCLUDED[i], big.mark = ","), " excluded")
+  log_msg("  The gap between the first and the last is what a primary-tumour-",
+          "group map could add. See README.")
+  invisible(got)
+}
+
+# What criterion 5 costs at each reading of it.
+#
+# Protocol Rev Round 2 S6.2.1.1 asks for continuous enrollment "from index date
+# until the earliest of 3-months post index or death, with no gaps". This build
+# uses one day - the index date itself - because the study team said so in the
+# build request. That is a relay, not a controlled document, and it is the one
+# setting in this package resting on one. Nobody can sign it off against a
+# number nobody has, so this is the number: how many patients pass criterion 5
+# at each window, and how many reach the final cohort there.
+#
+# One pass over the strict spans, cross-joined to the windows, so the whole
+# table costs about what the flag itself costs. It does not change the cohort:
+# the run still applies NDMM_FU_CE_DAYS.
+#
+# The windows are derived, not listed: whatever NDMM_FU_CE_DAYS is set to is in
+# the table beside the protocol's 90, so the table always contains the row this
+# run actually used.
+ndmm_fu_ce_windows <- function() sort(unique(c(NDMM_FU_CE_DAYS, 0L, 30L, 60L, 90L)))
+
+build_ndmm_fu_ce_counts <- function(con, cfg) {
+  days <- ndmm_fu_ce_windows()
+  # 90 days is how "3 months" is applied, because NDMM_FU_CE_DAYS is a day
+  # count. add_months(.., 3) is the exact reading, and it lands 0-2 days later.
+  # Reported so the difference is a number rather than an assumption - this
+  # build cannot currently be set to it, which the README says.
+  rows <- c(sprintf("(%d, '%d days', cast(NULL as int))", days, days),
+            "(9999, '3 months (exact)', 3)")
+  db_exec(con, glue("
+    CREATE OR REPLACE TABLE {wrk('NDMM_FU_CE_COUNTS')} AS
+    WITH idx AS (
+      SELECT l1.PATID, l1.LOT1_START_DT, b.DEATH_DT
+      FROM {NDMM_LOT1_STARTS} l1
+      INNER JOIN {NDMM_BASE_COHORT} b ON b.PATID = l1.PATID
+    ),
+    w AS (SELECT * FROM (VALUES\n      ", paste(rows, collapse = ",\n      "), "
+    ) AS t(sort_key, rule, months)),
+    want AS (
+      SELECT idx.PATID, w.sort_key, w.rule,
+             least(CASE WHEN w.months IS NULL
+                        THEN date_add(idx.LOT1_START_DT, w.sort_key)
+                        ELSE add_months(idx.LOT1_START_DT, w.months) END,
+                   date('{cfg$study_end}'),
+                   coalesce(idx.DEATH_DT, date('{cfg$study_end}'))) AS want_end,
+             idx.LOT1_START_DT
+      FROM idx CROSS JOIN w
+    ),
+    cov AS (
+      SELECT want.PATID, want.sort_key, want.rule,
+             max(CASE WHEN s.cov_start <= want.LOT1_START_DT
+                       AND s.cov_end   >= want.want_end
+                      THEN 1 ELSE 0 END) AS CE_fu
+      FROM want
+      LEFT JOIN {NDMM_ENROLL_SPANS_STRICT} s ON s.PATID = want.PATID
+      GROUP BY want.PATID, want.sort_key, want.rule
+    )
+    SELECT cov.rule                                        AS FU_CE_RULE,
+           count(DISTINCT CASE WHEN cov.CE_fu = 1 THEN cov.PATID END)
+                                                           AS N_PASSING_CRITERION_5,
+           -- The whole conjunction, so this is the cohort size at that window
+           -- rather than one criterion's count.
+           count(DISTINCT CASE WHEN cov.CE_fu = 1
+                                AND f.CE_pre_lot1_12mo         = 1
+                                AND f.NO_PRIOR_MM_TX           = 1
+                                AND f.NO_OTHER_CANCER_PRE_LOT1 = 1
+                                AND f.NO_PREGNANCY             = 1
+                                AND f.NO_BELANTAMAB            = 1
+                               THEN cov.PATID END)         AS N_COHORT,
+           max(CASE WHEN cov.sort_key = {NDMM_FU_CE_DAYS} THEN 1 ELSE 0 END)
+                                                           AS IS_THIS_RUN
+    FROM cov
+    INNER JOIN {NDMM_FLAGS_ALL} f ON f.PATID = cov.PATID
+    GROUP BY cov.rule, cov.sort_key
+    ORDER BY cov.sort_key"))
+  got <- db_q(con, glue("SELECT * FROM {wrk('NDMM_FU_CE_COUNTS')}"))
+  log_msg("Follow-up CE (criterion 5), by window. This run applies ",
+          NDMM_FU_CE_DAYS, " day(s); the protocol asks for 3 months.")
+  for (i in seq_len(nrow(got)))
+    log_msg("    ", if (got$IS_THIS_RUN[i] == 1L) "->" else "  ", " ",
+            got$FU_CE_RULE[i], ": ",
+            format(got$N_PASSING_CRITERION_5[i], big.mark = ","),
+            " pass, cohort ", format(got$N_COHORT[i], big.mark = ","))
+  log_msg("  FU_CE_DAYS=", NDMM_FU_CE_DAYS, " comes from the study team via the ",
+          "build request and is not written in any controlled document. See README.")
+  invisible(got)
+}
+
 build_ndmm_belantamab_scope_counts <- function(con, cfg) {
+  # Each proxy as a set of patients, then the whole conjunction against each -
+  # so a row is a cohort size, not one criterion's count. The claim count alone
+  # says how many the proxy catches; it does not say how many of those the
+  # other criteria had already removed, which is the number that matters.
   db_exec(con, glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_BELANTAMAB_SCOPE_COUNTS')} AS
-    SELECT 'ever'         AS SCOPE, count(DISTINCT b.PATID) AS N_PATIENTS
-    FROM {NDMM_BELANTAMAB_TX} b
-    INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = b.PATID
-    UNION ALL
-    SELECT 'study_period', count(DISTINCT b.PATID)
-    FROM {NDMM_BELANTAMAB_TX} b
-    INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = b.PATID
-    WHERE b.bel_dt >= date('{NDMM_STUDY_START}')
-    UNION ALL
-    SELECT 'from_index', count(DISTINCT b.PATID)
-    FROM {NDMM_BELANTAMAB_TX} b
-    INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = b.PATID
-    WHERE b.bel_dt >= l1.LOT1_START_DT"))
+    WITH sc AS (
+      SELECT 'ever' AS SCOPE, b.PATID
+      FROM {NDMM_BELANTAMAB_TX} b
+      INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = b.PATID
+      UNION ALL
+      SELECT 'study_period', b.PATID
+      FROM {NDMM_BELANTAMAB_TX} b
+      INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = b.PATID
+      WHERE b.bel_dt >= date('{NDMM_STUDY_START}')
+      UNION ALL
+      SELECT 'from_index', b.PATID
+      FROM {NDMM_BELANTAMAB_TX} b
+      INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = b.PATID
+      WHERE b.bel_dt >= l1.LOT1_START_DT
+    ),
+    scd AS (SELECT DISTINCT SCOPE, PATID FROM sc),
+    sp AS (SELECT * FROM (VALUES ('ever'), ('study_period'), ('from_index')) AS t(SCOPE))
+    SELECT sp.SCOPE                             AS SCOPE,
+           count(DISTINCT scd.PATID)            AS N_PATIENTS,
+           count(DISTINCT CASE WHEN scd.PATID IS NULL
+                                AND f.CE_pre_lot1_12mo         = 1
+                                AND f.CE_lot1_fu               = 1
+                                AND f.NO_PRIOR_MM_TX           = 1
+                                AND f.NO_OTHER_CANCER_PRE_LOT1 = 1
+                                AND f.NO_PREGNANCY             = 1
+                               THEN f.PATID END) AS N_COHORT,
+           max(CASE WHEN sp.SCOPE = '{NDMM_BELANTAMAB_SCOPE}' THEN 1 ELSE 0 END)
+                                                AS IS_THIS_RUN
+    FROM sp
+    CROSS JOIN {NDMM_FLAGS_ALL} f
+    LEFT JOIN scd ON scd.SCOPE = sp.SCOPE AND scd.PATID = f.PATID
+    GROUP BY sp.SCOPE
+    ORDER BY N_COHORT DESC"))
   got <- db_q(con, glue("SELECT * FROM {wrk('NDMM_BELANTAMAB_SCOPE_COUNTS')}"))
   log_msg("Belantamab exclusion, by reading of \"in any LOT\" (applied: ",
           NDMM_BELANTAMAB_SCOPE, ")")
   for (i in seq_len(nrow(got)))
-    log_msg("    ", got$SCOPE[i], ": ", format(got$N_PATIENTS[i], big.mark = ","),
-            " of the 1L candidates")
+    log_msg("    ", if (got$IS_THIS_RUN[i] == 1L) "->" else "  ", " ",
+            got$SCOPE[i], ": ", format(got$N_PATIENTS[i], big.mark = ","),
+            " of the 1L candidates excluded, cohort ",
+            format(got$N_COHORT[i], big.mark = ","))
+  invisible(got)
+}
+
+# What the LOT run has to adjudicate before this exclusion is exact.
+#
+# S6.2.1.2 excludes a patient who received belantamab in ANY line of therapy.
+# Lines do not exist when this runs - the LOT algorithm runs over the cohort
+# this build produces - so the exclusion is a claims proxy, and no proxy is the
+# criterion. The exact answer needs the lines, which means it can only be
+# settled after the LOT run, by reconciliation.
+#
+# This is the input to it: every patient who is IN the cohort and has a
+# belantamab claim anyway - kept because their claim falls outside the proxy
+# window. Nobody else can need adjudicating; a patient the proxy excluded is
+# already gone, and a patient with no belantamab claim cannot have had it in a
+# line. Usually a short table, and the README says what to join it to.
+build_ndmm_belantamab_reconcile <- function(con, cfg) {
+  db_exec(con, glue("
+    CREATE OR REPLACE TABLE {wrk('NDMM_BELANTAMAB_RECONCILE')} AS
+    SELECT c.PATID                            AS PATID,
+           c.INDEX_DATE                       AS INDEX_DATE,
+           b.bel_dt                           AS BEL_DT,
+           datediff(b.bel_dt, c.INDEX_DATE)   AS DAYS_FROM_INDEX
+    FROM {wrk('NDMM_COHORT')} c
+    INNER JOIN {NDMM_BELANTAMAB_TX} b ON b.PATID = c.PATID
+    ORDER BY PATID, BEL_DT"))
+  got <- db_q(con, glue("
+    SELECT count(DISTINCT PATID) AS n_pat, count(*) AS n_claims
+    FROM {wrk('NDMM_BELANTAMAB_RECONCILE')}"))
+  log_msg("Belantamab still to adjudicate: ", format(got$n_pat, big.mark = ","),
+          " patient(s) in the cohort have a belantamab claim (",
+          format(got$n_claims, big.mark = ","), " claim(s)) outside the '",
+          NDMM_BELANTAMAB_SCOPE, "' window -> ", wrk("NDMM_BELANTAMAB_RECONCILE"))
+  if (isTRUE(got$n_pat > 0))
+    log_msg("  \"In any LOT\" is exact only once lines exist. After the LOT run, ",
+            "join these to LOT_LONG and drop any patient whose BEL_DT falls in a ",
+            "line. See README.")
   invisible(got)
 }
 
@@ -270,6 +571,28 @@ build_ndmm_belantamab_scope_counts <- function(con, cfg) {
 # labels the production list actually stores is not visible from here, and the
 # remission wording is exactly where it is likely to differ - so the run writes
 # what it found rather than leaving the question to a comment.
+# Every code in an overridden group, in the shape mm_adjacent_overrides.csv
+# wants. The group table says which labels are kept; this says which codes that
+# actually is, so deciding one of them is a copy and an edit rather than a
+# research task. OVERRIDE is what this run did, so a filled-in CSV shows up here
+# as the value it set.
+build_ndmm_mm_adjacent_codes <- function(con, cfg) {
+  db_exec(con, glue("
+    CREATE OR REPLACE TABLE {wrk('NDMM_MM_ADJACENT_CODES')} AS
+    SELECT dx                       AS DX,
+           icd_family               AS ICD_FAMILY,
+           is_mm_adjacent_override  AS OVERRIDE,
+           tumor_group              AS TUMOR_GROUP
+    FROM {NDMM_OTHER_MALIG_CODES}
+    WHERE is_mm_adjacent_override = 1
+    ORDER BY TUMOR_GROUP, ICD_FAMILY, DX"))
+  n <- as.integer(db_q(con, glue(
+    "SELECT count(*) AS n FROM {wrk('NDMM_MM_ADJACENT_CODES')}"))$n)
+  log_msg("  ", n, " codes are kept as the index disease rather than another ",
+          "cancer -> ", wrk("NDMM_MM_ADJACENT_CODES"))
+  invisible(n)
+}
+
 build_ndmm_mm_adjacent_groups <- function(con, cfg) {
   db_exec(con, glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_MM_ADJACENT_GROUPS')} AS

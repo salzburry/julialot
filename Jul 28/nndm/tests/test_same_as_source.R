@@ -60,9 +60,22 @@ SUBST <- list(
     list(from = "ovr_in <- paste(sprintf(\"'%s'\", gsub(\"'\", \"''\", ndmm_mm_adjacent_groups())),",
          to   = "ovr_in <- paste(sprintf(\"'%s'\", gsub(\"'\", \"''\", NDMM_MM_ADJACENT_OVERRIDE)),",
          n = 1L),
-    list(from = "CASE WHEN upper(trim(tumor_group)) IN ({ovr_in})",
-         to   = "CASE WHEN upper(trim(tumor_group)) IN ({ovr_in}) THEN 1 ELSE 0 END AS is_mm_adjacent_override",
-         n = 1L)),
+    # Path B pairs on the mapped primary group instead of the raw label. Both
+    # DISTINCT lines were identical in the source; the outpatient one is
+    # renamed so this can name it without touching the inpatient one.
+    list(from = "SELECT DISTINCT PATID, primary_group AS grp, event_dt",
+         to   = "SELECT DISTINCT PATID, tumor_group, event_dt", n = 2L),
+    list(from = "SELECT PATID, grp, event_dt,",
+         to   = "SELECT PATID, tumor_group, event_dt,", n = 1L),
+    list(from = "lead(event_dt) OVER (PARTITION BY PATID, grp ORDER BY event_dt) AS next_dt",
+         to   = "lead(event_dt) OVER (PARTITION BY PATID, tumor_group ORDER BY event_dt) AS next_dt",
+         n = 1L),
+    list(from = "SELECT PATID, grp, event_dt AS first_dt, next_dt,",
+         to   = "SELECT PATID, tumor_group, event_dt AS first_dt, next_dt,", n = 1L),
+    list(from = "FROM {NDMM_OTHER_MALIG_EVENTS} WHERE inpatient_flg = 1",
+         to   = "FROM dx_with_setting WHERE inpatient_flg = 1", n = 1L),
+    list(from = "FROM {NDMM_OTHER_MALIG_EVENTS} WHERE inpatient_flg = 0",
+         to   = "FROM dx_with_setting WHERE inpatient_flg = 0", n = 1L)),
   "R/steps/06_flags.R" = list(
     list(from = "AND s.cov_end   >= least(date_add(ec_l1.LOT1_START_DT, {NDMM_FU_CE_DAYS}),",
          to   = "AND s.cov_end   >= least(date_add(ec_l1.LOT1_START_DT, 90),", n = 1L),
@@ -97,22 +110,12 @@ ADDED <- list(
     "AND regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '') <> ''" = 1L,
     "AND regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') <> ''" = 1L),
   "R/steps/04_other_malig.R" = c(
-    "AND regexp_replace(trim(dx), '[^A-Za-z0-9]', '') <> ''" = 1L,
     # The required-match count is now against the five labels the code list
     # must carry, not against every group the override reaches - the remission
     # variants are a proposal and their absence is reported, not fatal.
     "req    <- gsub(\"'\", \"''\", NDMM_MM_ADJACENT_OVERRIDE)" = 1L,
     "req_in <- paste(sprintf(\"'%s'\", req), collapse = \", \")" = 1L,
     "AND upper(trim(tumor_group)) IN ({req_in})" = 1L,
-    # The other-cancer code list is the study's generic one and carries MM's
-    # own codes. Anything on the diagnosis code list is the index disease by
-    # definition, so it cannot also be another cancer - derived from that file
-    # rather than from a list of labels, which is what let the plasma-cell
-    # triples be split by wording.
-    "OR EXISTS (SELECT 1 FROM {NDMM_MM_DX_CODES} m" = 1L,
-    "WHERE m.dx = upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', ''))" = 1L,
-    "AND m.icd_family = CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END)" = 1L,
-    "THEN 1 ELSE 0 END AS is_mm_adjacent_override" = 1L,
     # The third clinical change. The other-cancer rule is >=1 inpatient claim
     # or >=2 outpatient claims within 30 days of each other, in the 12-month
     # 1L baseline. The source bounded only the first of the outpatient pair, so
@@ -120,7 +123,29 @@ ADDED <- list(
     # excluded the patient on a single baseline claim. This bounds the second
     # claim too, so both fall in the baseline the criterion names. It can only
     # remove exclusions, so the cohort it builds is larger than apr_30_2026's.
-    "AND op.next_dt  BETWEEN l1.pre_lot1_start AND l1.pre_lot1_end" = 1L),
+    "AND op.next_dt  BETWEEN l1.pre_lot1_start AND l1.pre_lot1_end" = 1L,
+    # The fourth clinical change, and the only one the source could not have
+    # made: a per-code answer where the tumour-group label cannot give one.
+    # SECONDARY MALIGNANT NEOPLASM OF BONE is overridden as MM bone disease,
+    # but C79.51 is equally a breast or prostate primary metastatic to bone,
+    # and the label cannot tell them apart. These three lines read
+    # mm_adjacent_overrides.csv and let a row in it decide that code. The file
+    # ships empty, so with nothing filled in they are inert and the cohort is
+    # the source's.
+    "ovr_src  <- load_override_csv(nndm_config()$mm_adjacent_csv)" = 1L,
+    "ovr_join <- if (is.null(ovr_src)) \"\" else glue(\"LEFT JOIN {ovr_src} ON ovr.dx = om.dx AND ovr.icd_family = om.icd_family\")" = 1L,
+    "ovr_case <- if (is.null(ovr_src)) \"\" else \"WHEN ovr.override IS NOT NULL THEN ovr.override \"" = 1L,
+    # The fifth clinical change. Path B pairs two outpatient claims on a
+    # code-list label, and a label is one ICD code's description: a cancer at
+    # two subsites, or one coded in remission and once not, is two labels, so
+    # the claims never confirm each other and the patient is not excluded. The
+    # criterion under-detects and the cohort is too large. These read
+    # primary_tumor_groups.csv and pair on the mapped group instead. The file
+    # ships empty and an unmapped label stays its own group, so with nothing
+    # filled in this is the source's rule exactly.
+    "pg_src   <- load_primary_groups_csv(nndm_config()$primary_groups_csv)" = 1L,
+    "pg_join  <- if (is.null(pg_src)) \"\" else glue(\"LEFT JOIN {pg_src} ON pg.pg_label = trim(om.tumor_group)\")" = 1L,
+    "pg_col   <- if (is.null(pg_src)) \"om.tumor_group\" else \"coalesce(pg.pg_primary, om.tumor_group)\"" = 1L),
   "R/steps/05_pregnancy.R" = c(
     "AND regexp_replace(trim(code), '[^A-Za-z0-9]', '') <> ''" = 1L)
 )
@@ -166,10 +191,29 @@ SPLICE <- list(
   # so a patient whose only other cancer is MM-adjacent is excluded as having
   # another cancer. The source's own comment calls that a run-review blocker.
   # This stops instead.
+  # The codelist statement. Two changes: the blank-after-normalising guard, and
+  # the join that marks a code as the index disease when it is on mm_dx.csv.
+  # It is a rewrite rather than added lines because the whole statement moved
+  # to a CTE - the first version put that test in a correlated EXISTS whose
+  # inner relation has columns called dx and icd_family too, so the unqualified
+  # names bound to the inner ones and every other-cancer code came back
+  # overridden. Normalise, then join, and qualify everything.
   "R/steps/04_other_malig.R" = list(
+    # Ends at {ovr_join} now, not at the mm_dx join: the overrides join is the
+    # last line of the same statement.
+    list(from = "CREATE OR REPLACE TEMPORARY VIEW {NDMM_OTHER_MALIG_CODES} AS",
+         to   = "{pg_join}",
+         src_from = 325L, src_to = 332L),
     list(from = "if (is.na(n_matched) || n_matched < n_exp)",
          to   = "\" expected MM-adjacent tumor_group labels\")",
-         src_from = 340L, src_to = 348L)
+         src_from = 340L, src_to = 348L),
+    # The claim scan split from the rule it feeds. One statement became two so
+    # NDMM_OTHER_MALIG_GRAIN can ask what the pairing grain costs without
+    # scanning med_diagnosis a second time. Same scan, same rule; the seam is
+    # new, and a seam is not something SUBST can express.
+    list(from = "CREATE OR REPLACE TEMPORARY VIEW {NDMM_OTHER_MALIG_EVENTS} AS",
+         to   = "WITH inpatient_flag AS (",
+         src_from = 400L, src_to = 438L)
   )
 )
 

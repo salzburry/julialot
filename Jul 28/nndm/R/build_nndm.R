@@ -36,10 +36,6 @@ CONTRACT <- list(
   outpatient_window    = 90L,
   min_age              = 18L,
   belantamab_abbr      = "BEL%",
-  index_excluded_abbrs = "",
-  index_excluded_codes = "",
-  belantamab_scope     = "study_period",
-  mm_adjacent_states = "override",
   tbl_medical          = "medical",
   tbl_med_proc         = "med_procedure",
   tbl_med_diag         = "med_diagnosis",
@@ -49,6 +45,47 @@ CONTRACT <- list(
   tbl_member_elig      = "member_cont_enrollment",
   tbl_dod              = "dod"
 )
+
+# Decisions a run may make differently, and what each may be set to.
+#
+# CONTRACT is what the cohort IS - change one of those and it is a different
+# cohort, so they are rejected. These are choices where the protocol is silent
+# or the data has to answer, and the build writes a review table for each one.
+# Pinning them there was a contradiction: the README told the analyst to set
+# them and check_contract() refused the run before it connected.
+#
+# They are not unguarded. Each is checked against the values it may take, and
+# every one is recorded in NDMM_RUN_METADATA, so a cohort still says which
+# choices produced it.
+CHOICES <- list(
+  belantamab_scope     = c("study_period", "from_index"),
+  mm_adjacent_states   = c("override", "exclude"),
+  # Free text: names and codes, validated against the code list at run time by
+  # build_ndmm_index_ineligible_codes(), which stops on one that matches
+  # nothing. Shape only here.
+  index_excluded_abbrs = NULL,
+  index_excluded_codes = NULL
+)
+
+check_choices <- function(cfg) {
+  bad <- character(0)
+  for (k in names(CHOICES)) {
+    v <- as.character(cfg[[k]] %||% "")
+    allowed <- CHOICES[[k]]
+    if (is.null(allowed)) {
+      if (grepl("[^A-Za-z0-9_,:|%. -]", v))
+        bad <- c(bad, paste0(k, " = '", v, "' has characters that would not ",
+                             "survive being put in a query"))
+    } else if (!(v %in% allowed)) {
+      bad <- c(bad, paste0(k, " = '", v, "' (one of: ",
+                           paste(allowed, collapse = ", "), ")"))
+    }
+  }
+  if (length(bad))
+    stop("Run choices that are not choices:\n  ", paste(bad, collapse = "\n  "),
+         call. = FALSE)
+  invisible(TRUE)
+}
 
 # Tables produced by another build in this repository. There are none: this
 # package reads raw CDM and its code lists and nothing else, which is what lets
@@ -77,14 +114,20 @@ upstream_tables <- function(cfg) list()
 # old query. It is a deliverable as well as a checkpoint.
 CHECKPOINTS <- c("NDMM_FLAGS_ALL", "NDMM_MM_DX_CODES",
                  "NDMM_MM_DX_EVENTS", "NDMM_MM_QUALIFYING", "NDMM_BASE_COHORT",
-                 "NDMM_ENROLL_SPANS", "NDMM_MMA_CODELIST",
+                 "NDMM_ENROLL_SPANS", "NDMM_ENROLL_SPANS_STRICT",
+                 "NDMM_MMA_CODELIST",
                  "NDMM_BELANTAMAB_CODES", "NDMM_LOT1_STARTS",
-                 "NDMM_OTHER_MALIG_CODES", "NDMM_BELANTAMAB_PATIDS",
-                 "NDMM_INDEX_TX", "NDMM_BELANTAMAB_TX", "NDMM_PATIDS")
+                 "NDMM_OTHER_MALIG_CODES", "NDMM_OTHER_MALIG_EVENTS",
+                 "NDMM_BELANTAMAB_PATIDS",
+                 "NDMM_INDEX_TX", "NDMM_BELANTAMAB_TX", "NDMM_PATIDS",
+                 "NDMM_INDEX_INELIGIBLE")
 
 # What the run writes. All prefixed, so two cohorts sit side by side.
 DELIVERABLES <- c("NDMM_COHORT", "NDMM_ATTRITION", "NDMM_INDEX_AGENTS",
                   "NDMM_BELANTAMAB_SCOPE_COUNTS", "NDMM_MM_ADJACENT_GROUPS",
+                  "NDMM_MM_ADJACENT_CODES", "NDMM_FU_CE_COUNTS",
+                  "NDMM_OTHER_MALIG_GROUPS", "NDMM_OTHER_MALIG_GRAIN",
+                  "NDMM_BELANTAMAB_RECONCILE",
                   "NDMM_CODELIST_METADATA", "NDMM_RUN_METADATA",
                   "NDMM_BUILD_STATUS")
 OUTPUTS <- c(DELIVERABLES, CHECKPOINTS)
@@ -163,6 +206,22 @@ pin_output_schema <- function(cfg) {
 
 # The caller says which cohort. Every table read and written carries the
 # prefix, so this folder names no cohort of its own.
+# Where the two fill-in files live. The environment wins; failing
+# that it is the copy that ships beside this code, so a checkout has a file to
+# edit rather than a setting to find out about. The file need not exist - see
+# load_override_csv() - but the path is always recorded, so a run says which
+# file it looked for whether or not it found one.
+pin_override_csv <- function(cfg, here) {
+  fill <- function(v, name) {
+    p <- trimws(as.character(v %||% ""))
+    if (nzchar(p)) p else file.path(here, "codelists", name)
+  }
+  cfg$mm_adjacent_csv <- fill(cfg$mm_adjacent_csv, "mm_adjacent_overrides.csv")
+  cfg$eligible_1l_csv <- fill(cfg$eligible_1l_csv, "eligible_1l_agents.csv")
+  cfg$primary_groups_csv <- fill(cfg$primary_groups_csv, "primary_tumor_groups.csv")
+  cfg
+}
+
 pin_prefix <- function(cfg, prefix) {
   prefix <- trimws(as.character(prefix %||% ""))
   if (!nzchar(prefix))
@@ -243,13 +302,13 @@ CONSTANT_SETTINGS <- list(
   list(const = "NDMM_MIN_AGE",                 cfg = "min_age",            note = ""),
   # Which agents may not set the index. Empty by default; a value here shrinks
   # the cohort, so it is pinned like any other thing that does.
+  # The run choices are here too. Not to pin them to a default - CHOICES does
+  # the allowing - but because the SQL reads the constants, so the value cfg
+  # was checked for has to be the value the query gets.
   list(const = "NDMM_INDEX_EXCLUDED_ABBRS",   cfg = "index_excluded_abbrs", note = ""),
   list(const = "NDMM_INDEX_EXCLUDED_CODES",   cfg = "index_excluded_codes", note = ""),
-  # Which reading of "in any LOT" the belantamab exclusion uses. A proxy for
-  # something this build cannot see, and it changes the count.
   list(const = "NDMM_BELANTAMAB_SCOPE",       cfg = "belantamab_scope",   note = ""),
-  # Whether a plasma-cell disorder in remission still counts as another cancer.
-  list(const = "NDMM_MM_ADJACENT_STATES", cfg = "mm_adjacent_states", note = ""),
+  list(const = "NDMM_MM_ADJACENT_STATES",     cfg = "mm_adjacent_states", note = ""),
   # Not a cohort window but a code-list assumption, and just as able to change
   # the count: it is what identifies belantamab, and belantamab is exclusion 4.
   list(const = "NDMM_BELANTAMAB_ABBR",        cfg = "belantamab_abbr",    note = "")
@@ -350,10 +409,14 @@ check_attrition_monotonic <- function(counts) {
 # Scoped to the base cohort rather than to the 1L starts. The starts do not
 # exist yet - the scan that builds them matches NDCs itself, so the profile has
 # to come first, and reading NDMM_LOT1_STARTS here made the build stop with a
-# missing view. The window runs from a year before each patient's diagnosis to
-# the end of the study, which covers both the index scan and the baseline scan:
-# the index is on or after the diagnosis, so the baseline never starts earlier
-# than a year before it.
+# missing view.
+#
+# The window is the whole study period, or a year before the patient's
+# diagnosis if that is earlier. That covers every NDC any scan in this build
+# matches: the index scan and the baseline scan sit inside the year-before
+# window, and the belantamab exclusion runs over the study period - a patient
+# diagnosed in 2025 can have a 2016 belantamab NDC that the exclusion reads and
+# a diagnosis-anchored profile would never have looked at.
 check_ndc_shape <- function(con, cfg) {
   log_msg("Checking NDC shape...")
   # Every non-blank value, including ones that cannot join. A profile that
@@ -379,7 +442,8 @@ check_ndc_shape <- function(con, cfg) {
           WHERE cast(t.NDC as string) IS NOT NULL
             AND trim(cast(t.NDC as string)) <> ''
             AND cast(t.{dt} AS date)
-                  BETWEEN date_sub(b.MM_DX_DT, {NDMM_PRE_LOT1_DAYS})
+                  BETWEEN least(date('{NDMM_STUDY_START}'),
+                                date_sub(b.MM_DX_DT, {NDMM_PRE_LOT1_DAYS}))
                       AND date('{cfg$study_end}'))))")
   codelist_sql <- glue("
     SELECT 'codelist' AS SOURCE, {shape_cols}
@@ -647,10 +711,20 @@ CODELIST_METADATA_COLS <- c(RUN_ID = "STRING", CSV_NAME = "STRING",
 # here, so the outputs say which code lists built them.
 write_codelist_metadata <- function(con, cfg) {
   seen <- getOption("nndm_codelist_md5", list())
-  if (!length(seen))
-    stop("No codelist hashes to record. Every run reads ",
-         length(CODELIST_FILES), " code lists; this one recorded none, so the ",
-         "cohort cannot be traced to the files that built it.", call. = FALSE)
+  # All of them, not merely some. "None recorded" was the only thing this
+  # stopped on, so a run that read three of the four would have published a
+  # cohort traceable to three.
+  miss <- setdiff(CODELIST_FILES, names(seen))
+  if (length(miss))
+    stop("No hash recorded for ", paste(miss, collapse = ", "),
+         ". Every run reads all ", length(CODELIST_FILES), " code lists, and a ",
+         "cohort that cannot be traced to each of them is not reproducible.",
+         call. = FALSE)
+  bad <- names(seen)[!vapply(seen, function(x)
+    is.character(x$md5) && grepl("^[0-9a-f]{32}$", x$md5), logical(1))]
+  if (length(bad))
+    stop("Hash not usable for ", paste(bad, collapse = ", "),
+         ". It is what says which version of the file was read.", call. = FALSE)
   tbl  <- wrk("NDMM_CODELIST_METADATA")
   cols <- names(CODELIST_METADATA_COLS)
   db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
@@ -685,6 +759,88 @@ write_build_status <- function(con, cfg, state, n = NA) {
   invisible(TRUE)
 }
 
+# Every output name is work schema + prefix + table, with no run id in it - see
+# wrk(). checkpoint() then repoints each session view at the prefixed table it
+# has just replaced, so from that moment a run reads its own intermediate
+# results out of shared storage: NDMM_BASE_COHORT is literally
+# "SELECT * FROM <schema>.<prefix>NDMM_BASE_COHORT". Two runs on one prefix
+# therefore interleave. The second replaces a table the first has already
+# pointed a view at, and the first reads the second's rows from there on -
+# through fourteen checkpoints and five deliverables. Both can still reach
+# "complete", each having published a cohort that is partly the other's.
+#
+# Different prefixes are safe, and that is how two cohorts are meant to run at
+# once. This refuses the same-prefix case.
+#
+# A check, not a lock: two runs starting in the same moment can both pass it,
+# because there is nothing here that could hold a lock. It catches the case
+# worth catching - starting a second run while one is going - and says so.
+check_no_active_run <- function(con, cfg) {
+  d <- tryCatch(db_q(con, glue("
+    SELECT RUN_ID, UPDATED_AT FROM {wrk('NDMM_BUILD_STATUS')}
+    WHERE OBJECT_PREFIX = '{cfg$object_prefix}' AND STATE = 'started'
+      AND RUN_ID <> '{run_id}'")), error = function(e) NULL)
+  # No table yet on a first run, and nothing to collide with.
+  if (is.null(d) || !nrow(d)) return(invisible(TRUE))
+  # When each started, so the operator can tell a run that is going from one a
+  # killed process left behind months ago.
+  who <- paste(paste0(d$RUN_ID, " (started ", d$UPDATED_AT, ")"), collapse = ", ")
+  if (identical(toupper(Sys.getenv("NDMM_IGNORE_ACTIVE_RUN", unset = "")), "TRUE")) {
+    log_msg("WARNING: run(s) ", who, " are marked started on prefix ",
+            cfg$object_prefix, " and NDMM_IGNORE_ACTIVE_RUN is set. If they ",
+            "are still running, both cohorts will be wrong.")
+    return(invisible(TRUE))
+  }
+  stop("Run(s) ", who, " are already building prefix ", cfg$object_prefix,
+       ". Every output name is the prefix plus the table, so two runs would ",
+       "replace each other's tables while the other is reading them, and both ",
+       "could still finish. Use a different prefix, or wait. If those runs are ",
+       "not actually running - a killed process leaves 'started' behind - set ",
+       "NDMM_IGNORE_ACTIVE_RUN=TRUE.", call. = FALSE)
+}
+
+# A re-run in the same session keeps run_id - it is fixed when config.R is
+# sourced, and DOMINO_RUN_ID pins it across sessions besides - so a second
+# attempt writes under the first attempt's id. Each writer clears its own rows,
+# but only when it is reached: an attempt that fails before write_run_metadata
+# leaves the first attempt's row saying which code and which code lists built
+# this cohort, which by then they did not. That is the one claim these tables
+# exist to make, and NDMM_BUILD_STATUS marking the run failed does not unmake
+# it - the rows are still there, under an id that now means something else.
+# Cleared up front instead, so nothing under this run's id describes work this
+# run did not do.
+#
+# NDMM_BUILD_STATUS is deliberately not here. Its row for this run is written
+# immediately before this runs, so nothing stale can survive in it, and
+# clearing it would delete the "started" row check_no_active_run shows to the
+# next run - turning the concurrency check off for exactly as long as the build
+# takes. NDMM_COHORT is not here either: it is replaced whole, not appended to.
+#
+# The tables need not exist yet, and on a first run they do not, so a delete
+# that cannot find its table is not a failure. TABLE_OR_VIEW_NOT_FOUND is one
+# of with_retry's permanent errors, so this does not sit through four attempts.
+# Anything else is said out loud rather than swallowed: a DELETE that was
+# refused leaves exactly the rows this exists to remove, and a silent try()
+# would let the run publish them as its own.
+RUN_SCOPED_TABLES <- c("NDMM_ATTRITION", "NDMM_RUN_METADATA",
+                       "NDMM_CODELIST_METADATA")
+
+clear_run_rows <- function(con, cfg) {
+  for (t in RUN_SCOPED_TABLES) {
+    tbl <- wrk(t)
+    err <- tryCatch({
+      db_exec(con, glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'")); NULL
+    }, error = function(e) conditionMessage(e))
+    if (!is.null(err) &&
+        !grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found", err,
+               ignore.case = TRUE))
+      log_msg("WARNING: could not clear ", tbl, " of run ", run_id, ": ", err,
+              " - if an earlier attempt wrote rows under this run id, they are ",
+              "still there and this run will not have written them.")
+  }
+  invisible(TRUE)
+}
+
 load_nndm_modules <- function(here) {
   source(file.path(here, "R", "load_inputs.R"))
   load_pipeline_inputs(here, "config.csv")
@@ -700,7 +856,9 @@ build_nndm <- function(here, prefix) {
   check_settings()
   cfg <- pin_output_schema(cfg_defaults)
   cfg <- pin_prefix(cfg, prefix)
+  cfg <- pin_override_csv(cfg, here)
   check_contract(cfg)
+  check_choices(cfg)
   check_constants(cfg)
   set_lot_config(cfg)
 
@@ -715,8 +873,18 @@ build_nndm <- function(here, prefix) {
   log_msg("  Follow-up CE: ", cfg$fu_ce_days, " day(s) after index")
   log_msg(SEP)
 
+  # First, and before this run writes anything at all: one query, against a
+  # table check_upstream does not look at, and a refused run leaves the prefix
+  # exactly as it found it. The query excludes this run's own id, so it would
+  # give the same answer later - it just would not be true any more that
+  # nothing had been written, nor that nothing had been waited for.
+  check_no_active_run(con, cfg)
   check_upstream(con, cfg)
   write_build_status(con, cfg, "started")
+  # After the status row, so a run is marked started whatever this does, and
+  # before the first step, so no writer can be reached with the previous
+  # attempt's rows still under this run's id.
+  clear_run_rows(con, cfg)
   # after = FALSE, or this fires after the disconnect above and writes to a
   # closed connection.
   on.exit(if (!isTRUE(getOption("nndm_complete", FALSE)))
@@ -742,6 +910,7 @@ build_nndm <- function(here, prefix) {
   build_enrollment_spans_ndmm(con)
   build_enrollment_spans_ndmm(con, NDMM_ENROLL_SPANS_STRICT, 0L)
   checkpoint(con, "NDMM_ENROLL_SPANS")
+  checkpoint(con, "NDMM_ENROLL_SPANS_STRICT")
 
   log_msg("MM therapy code list, and the belantamab rows of it")
   db_exec(con, build_ndmm_mma_codelist())
@@ -750,6 +919,7 @@ build_nndm <- function(here, prefix) {
   build_ndmm_belantamab_codes(con)
   checkpoint(con, "NDMM_BELANTAMAB_CODES")
   build_ndmm_index_ineligible_codes(con)
+  checkpoint(con, "NDMM_INDEX_INELIGIBLE")
 
   log_msg("1L index: first eligible MM treatment claim on or after ",
           NDMM_LOT1_FROM)
@@ -765,9 +935,13 @@ build_nndm <- function(here, prefix) {
   build_ndmm_other_malig_codes(con)
   checkpoint(con, "NDMM_OTHER_MALIG_CODES")
   build_ndmm_mm_adjacent_groups(con, cfg)
+  build_ndmm_mm_adjacent_codes(con, cfg)
+  build_ndmm_other_malig_groups(con, cfg)
   build_ndmm_med_claim_header_and_confinement(con, cdm_src(cfg$tbl_medical),
                                               cdm_src(cfg$tbl_confinement))
   build_ndmm_other_malig_pre_lot1(con, cdm_src(cfg$tbl_med_diag))
+  checkpoint(con, "NDMM_OTHER_MALIG_EVENTS")
+  build_ndmm_other_malig_grain(con, cfg)
 
   log_msg("Pregnancy across the study period")
   build_ndmm_preg_codes(con)
@@ -778,7 +952,6 @@ build_nndm <- function(here, prefix) {
   build_ndmm_belantamab_patids(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))
   checkpoint(con, "NDMM_BELANTAMAB_TX")
   checkpoint(con, "NDMM_BELANTAMAB_PATIDS")
-  build_ndmm_belantamab_scope_counts(con, cfg)
 
   log_msg("Per-patient filter flags")
   # The ported flags step takes the cohort and the belantamab source as
@@ -788,6 +961,10 @@ build_nndm <- function(here, prefix) {
   build_ndmm_flags(con, NDMM_BASE_COHORT, NDMM_BELANTAMAB_PATIDS,
                    TRUE, TRUE, TRUE, TRUE)
   checkpoint(con, "NDMM_PATIDS")
+  # After the flags: each scope is costed against the whole conjunction, so it
+  # needs every other criterion already decided.
+  build_ndmm_belantamab_scope_counts(con, cfg)
+  build_ndmm_fu_ce_counts(con, cfg)
   # build_lot_long_filtered() is not called. It joins LOT_LONG to the cohort for
   # the April dashboard's KPI, gallery and LOT-detail views; neither the cohort
   # nor the attrition reads it, and this package builds only those two. The
@@ -802,6 +979,7 @@ build_nndm <- function(here, prefix) {
 
   build_ndmm_cohort_table(con, cfg)
   check_ndmm_cohort(con, cfg, counts$ndmm_final)
+  build_ndmm_belantamab_reconcile(con, cfg)
   write_attrition(con, cfg, counts)
   write_codelist_metadata(con, cfg)
   write_run_metadata(con, cfg, here, counts$ndmm_final)
