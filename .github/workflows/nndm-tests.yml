@@ -1,0 +1,64 @@
+name: Jul 28 nndm unit tests
+
+# Runs the NDMM package's pure-R suites and its mutation battery, so the counts
+# the README quotes are CI-recorded rather than an author's local run. Scoped to
+# changes under "Jul 28/nndm/". No warehouse is contacted: DBI and odbc are
+# call-time only and the suites drive the SQL builders against stubs.
+#
+# glue IS installed here on purpose. tests/testutil.R falls back to a small
+# stand-in when glue is absent, which is what makes the suites runnable offline
+# - but production interpolates with the real package, so a run that never sees
+# it is not testing the templating the warehouse gets.
+on:
+  push:
+    paths: ['Jul 28/nndm/**', 'apr_30_2026/**', 'Jul 28/overall/**',
+            '.github/workflows/nndm-tests.yml']
+  pull_request:
+    paths: ['Jul 28/nndm/**', 'apr_30_2026/**', 'Jul 28/overall/**',
+            '.github/workflows/nndm-tests.yml']
+
+jobs:
+  rtests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: 'Jul 28/nndm'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - name: Install R dependencies
+        run: Rscript -e 'install.packages("glue")'
+      # Each suite separately, so a failure names itself.
+      - name: Runner suite
+        run: Rscript tests/test_runner.R
+      # These two compare against apr_30_2026 and Jul 28/overall. Both are in
+      # the checkout; each suite skips with status 0 if its source is absent, so
+      # the step below fails the job if either skipped rather than ran.
+      - name: Equivalence with apr_30_2026
+        run: |
+          out=$(Rscript tests/test_same_as_source.R); echo "$out"
+          echo "$out" | grep -q Skipping && exit 1 || true
+      - name: Equivalence with Jul 28/overall
+        run: |
+          out=$(Rscript tests/test_same_as_overall.R); echo "$out"
+          echo "$out" | grep -q Skipping && exit 1 || true
+
+  mutation:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: 'Jul 28/nndm'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - name: Install R dependencies
+        run: Rscript -e 'install.packages("glue")'
+      # --all, not the changed-files default: on a runner the checkout is clean,
+      # which already selects everything, but --all says so rather than relying
+      # on that.
+      - name: Mutation battery
+        run: python3 tests/mutation_battery.py --all

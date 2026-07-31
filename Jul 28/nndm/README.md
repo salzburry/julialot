@@ -1038,6 +1038,26 @@ The last one cannot be closed by this build at all: it needs the LOT run, so
 
 ## Status
 
-Never run against Databricks. Nothing here is validated output until it has
+**Never run against Databricks.** Nothing here is validated output until it has
 been, and the count compared against the source implementation patient by
 patient. **No count from this package has been produced, let alone reviewed.**
+
+What *is* checked, on every push under `Jul 28/nndm/`
+(`.github/workflows/nndm-tests.yml`):
+
+| | |
+|---|---|
+| `tests/test_runner.R` | the runner, the checks and every SQL builder, driven against stubs |
+| `tests/test_same_as_source.R` | each ported file against `apr_30_2026`, deviations undone first |
+| `tests/test_same_as_overall.R` | `00_mm_cohort.R` against `Jul 28/overall` |
+| `tests/mutation_battery.py` | every assertion broken in turn, and required to be noticed |
+
+CI installs **real `glue`**. `tests/testutil.R` falls back to a small stand-in
+when it is absent, which is what makes the suites runnable offline — but
+production interpolates with the real package, so a run that never sees it is
+not testing the templating the warehouse gets. Locally the fallback is in use
+unless `glue` is installed.
+
+None of that touches a warehouse. `DBI` and `odbc` are call-time only and no
+suite opens a connection, so **everything verified here is a claim about what
+the code does, not about the data**.
