@@ -281,9 +281,15 @@ assign("codelist_waivers", function() "code_types", envir = se)
 assign("run_id", "TESTRUN", envir = se)
 BSC <- get("BUILD_STATUS_COLS", envir = se)
 # `present` is what DESCRIBE answers; NULL means it could not answer at all.
+# UNITS records the call boundaries, not only the SQL: a DELETE and an INSERT
+# issued as two db_exec calls are retried separately, and look identical to a
+# flat list of statements. Which call each arrived in is the difference.
+UNITS <- list()
 sql_for <- function(present) {
-  out <- character(0)
-  assign("db_exec", function(con, s) { out <<- c(out, s); invisible(TRUE) }, envir = se)
+  out <- character(0); UNITS <<- list()
+  keep <- function(g) { out <<- c(out, g); UNITS[[length(UNITS) + 1L]] <<- g; invisible(TRUE) }
+  assign("db_exec", function(con, s) keep(s), envir = se)
+  assign("db_replace", function(con, ...) keep(c(...)), envir = se)
   assign("db_q", if (is.null(present)) function(con, s) stop("no such table")
          else function(con, s) data.frame(col_name = present, stringsAsFactors = FALSE),
          envir = se)
@@ -291,6 +297,14 @@ sql_for <- function(present) {
                                    object_prefix = "p_"), "started")
   out
 }
+# A retried INSERT on its own would leave the run two status rows: the DELETE
+# meant to clear the first has already run.
+paired <- function(units) any(vapply(units, function(g)
+  any(grepl("DELETE", g, fixed = TRUE)) && any(grepl("INSERT", g, fixed = TRUE)),
+  logical(1)))
+invisible(sql_for(names(BSC)))
+ok(paired(UNITS), "the status DELETE and its INSERT go to the warehouse as one unit")
+
 old <- sql_for(setdiff(names(BSC), "CODELIST_WAIVERS_APPLIED"))
 ok(any(grepl(paste0("ALTER TABLE wk.p_LOT_BUILD_STATUS ADD COLUMNS ",
                     "(CODELIST_WAIVERS_APPLIED STRING)"), old, fixed = TRUE)),
@@ -707,11 +721,14 @@ assign("log_msg", function(...) invisible(NULL), envir = he)
 assign("lot_out", function(x) paste0("wk.p_", x), envir = he)
 assign("run_id", "R1", envir = he)
 HSQL <- character(0)
-assign("db_exec", function(con, s) { HSQL <<- c(HSQL, s); TRUE }, envir = he)
+HUNITS <- list()
+hkeep <- function(g) { HSQL <<- c(HSQL, g); HUNITS[[length(HUNITS) + 1L]] <<- g; TRUE }
+assign("db_exec", function(con, s) hkeep(s), envir = he)
+assign("db_replace", function(con, ...) hkeep(c(...)), envir = he)
 CLF <- get("CODELIST_FILES", envir = he)
 CLM_COLS <- names(get("CODELIST_METADATA_COLS", envir = he))
 drive_h <- function(files, have = CLM_COLS) {
-  HSQL <<- character(0)
+  HSQL <<- character(0); HUNITS <<- list()
   assign("db_q", function(con, s) if (is.null(have)) stop("no")
                                   else data.frame(col_name = have), envir = he)
   options(lot_codelist_md5 = setNames(lapply(seq_along(files), function(i)
@@ -735,6 +752,8 @@ ok(any(grepl("DELETE FROM wk.p_LOT_CODELIST_METADATA WHERE RUN_ID = 'R1'",
    "and a re-run replaces its own rows rather than doubling them")
 ok(!any(grepl("ALTER", HSQL)),
    "a table that already has the columns is not altered")
+ok(paired(HUNITS),
+   "the hash DELETE and its INSERT go as one unit too, so a retry cannot double them")
 # CREATE TABLE IF NOT EXISTS does nothing to a table an earlier version left,
 # and the INSERT names its columns - so a renamed one would stop every schema
 # that had run the older build. The other two metadata tables already migrate.
@@ -758,16 +777,33 @@ ok(regexpr("phase_codelists(", body, fixed = TRUE) <
 # Not "at least one row": the build reads four lists and all four have to be
 # accounted for, or a partial write passes the gate. Driven rather than
 # grepped - the string is present either way, and it is the count that decides.
-drive_rr <- function(n_files) {
-  assign("db_q", function(con, s) data.frame(
-    n = if (grepl("CODELIST_FILE", s, fixed = TRUE)) n_files else 1L), envir = he)
+drive_rr <- function(files_k = length(CLF), files_n = files_k,
+                     meta = 1L, qc_n = 4L, qc_k = 4L) {
+  assign("db_q", function(con, s) {
+    if (grepl("CODELIST_FILE", s, fixed = TRUE)) return(data.frame(n = files_n, k = files_k))
+    if (grepl("CHECK_NAME", s, fixed = TRUE))    return(data.frame(n = qc_n, k = qc_k))
+    data.frame(n = meta)
+  }, envir = he)
   tryCatch({ he$check_run_recorded(NULL, list()); NULL }, error = conditionMessage)
 }
-ok(is.null(drive_rr(length(CLF))), "all four recorded lets the run finish")
-msg <- drive_rr(length(CLF) - 1L)
+ok(is.null(drive_rr()), "all four recorded lets the run finish")
+msg <- drive_rr(files_k = length(CLF) - 1L)
 ok(!is.null(msg) && grepl(paste0(length(CLF) - 1L, " of ", length(CLF)), msg, fixed = TRUE),
    "and one short is not called complete, saying how many arrived")
-ok(!is.null(drive_rr(0L)), "nor is a run that recorded none")
+ok(!is.null(drive_rr(files_k = 0L)), "nor is a run that recorded none")
+
+# The other side of the same coin. 08_persist writes its two tables with a
+# DELETE and an INSERT as separately retried statements, so a lost answer to
+# the INSERT leaves this run two copies. That file is the ported source, so the
+# doubling is caught here rather than edited there.
+ok(!is.null(drive_rr(meta = 2L)) &&
+     grepl("2 rows for this run", drive_rr(meta = 2L), fixed = TRUE),
+   "two metadata rows for one run stop it - which one describes the outputs?")
+ok(!is.null(drive_rr(qc_n = 8L, qc_k = 4L)),
+   "a QC summary with every check twice stops it")
+ok(!is.null(drive_rr(files_n = 8L, files_k = length(CLF))),
+   "and so does a code list recorded twice")
+ok(!is.null(drive_rr(meta = 0L)), "a missing metadata row still stops it")
 
 cat("\n-- the cohort is pinned, not re-read --\n")
 # A Spark temporary view re-runs its query on every read, so lot_patient_input
@@ -1347,6 +1383,35 @@ for (k in names(EXPECT))
 # The caller passes the cohort, so config.csv must not pin one.
 ok(!any(c("INPUT_COHORT_TABLE", "OBJECT_PREFIX") %in% names(shipped)),
    "config.csv does not name a cohort")
+
+cat("\n-- a DELETE and its INSERT are retried together --\n")
+# with_retry wraps the whole call, so what it retries has to be safe to run
+# twice. Two db_exec calls are retried separately: if the INSERT reaches the
+# warehouse but the answer is lost, the retry inserts a second copy and the
+# DELETE that would have cleared it has already run. Driven against a
+# connection that fails once, so the re-run is observed rather than assumed.
+de <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "db_utils_lot.R"), envir = de)
+assign("log_msg", function(...) invisible(NULL), envir = de)
+# base_sleep 0, or this test waits five seconds to prove a retry happened.
+assign("lot_config", function() list(max_retries = 4L, base_sleep = 0),
+       envir = de)
+RAN <- character(0); fail_on <- NULL
+assign("db_exec_once", function(con, sql) {
+  RAN <<- c(RAN, sql)
+  if (!is.null(fail_on) && sql == fail_on && sum(RAN == sql) == 1L)
+    stop("connection reset by peer")
+  invisible(1L)
+}, envir = de)
+
+RAN <- character(0); fail_on <- NULL
+de$db_replace(NULL, "DEL", "INS")
+ok(identical(RAN, c("DEL", "INS")), "a clean call runs each statement once")
+
+RAN <- character(0); fail_on <- "INS"
+de$db_replace(NULL, "DEL", "INS")
+ok(identical(RAN, c("DEL", "INS", "DEL", "INS")),
+   "and a lost answer to the INSERT re-runs the DELETE, so the rows land once")
 
 cat("\n-- the README still describes this build --\n")
 # Prose cannot be checked, but these two lists can, and both had gone stale.

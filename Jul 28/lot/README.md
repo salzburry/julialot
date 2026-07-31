@@ -513,6 +513,16 @@ Preflight - the settings, the contract, the connection, the cohort table -
 runs before the first status row, so a run that fails there leaves no row at
 all rather than a `failed` one. Nothing has been written by then.
 
+Every write that is a DELETE of this run's rows followed by an INSERT goes
+through `db_replace()`, which retries the pair rather than each statement.
+`with_retry` wraps the whole call, so what it retries has to be safe to run
+twice: an INSERT that reached the warehouse with its answer lost would
+otherwise be retried on its own, and the DELETE that should have cleared the
+first copy has already run. `08_persist.R` still writes `LOT_RUN_METADATA` and
+`LOT_QC_SUMMARY` as two statements - it is the ported source - so
+`check_run_recorded()` requires exactly one metadata row and one row per check
+name, and refuses a doubled write instead.
+
 `failed` is written on the way out, before the connection closes. R fires
 `on.exit` handlers in the order they were registered and the disconnect is
 registered first, so the status handler asks for `after = FALSE` - without it

@@ -530,7 +530,6 @@ write_build_status <- function(con, cfg, state) {
     })
   }
 
-  db_exec(con, glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"))
   requested <- paste(codelist_waivers(), collapse = "|")
   # Set by phase_codelists when it waives something. Empty at "started", and on
   # a failure before the code lists ran.
@@ -546,8 +545,11 @@ write_build_status <- function(con, cfg, state) {
   # cannot drift apart again - a column added to BUILD_STATUS_COLS with no
   # value here stops the build rather than reaching the warehouse.
   stopifnot(identical(names(vals), cols))
-  db_exec(con, glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) ",
-                    "VALUES ({paste(vals, collapse = ', ')})"))
+  # One unit: retrying the INSERT alone would leave this run two status rows.
+  db_replace(con,
+    glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"),
+    glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) ",
+         "VALUES ({paste(vals, collapse = ', ')})"))
   log_msg("Build status: ", state, " (run ", run_id, ")")
   invisible(TRUE)
 }
@@ -605,28 +607,53 @@ check_lot1_invariants <- function(con, cfg) {
 # the row actually arrived - a run with no record of how it was configured is
 # not a run anyone can validate later.
 check_run_recorded <- function(con, cfg) {
-  for (t in c("LOT_RUN_METADATA", "LOT_QC_SUMMARY")) {
-    n <- tryCatch(db_q(con, glue(
-           "SELECT count(*) AS n FROM {lot_out(t)} WHERE RUN_ID = '{run_id}'"))$n,
-         error = function(e) 0L)
-    if (is.na(n) || n < 1)
-      stop("This run left no row in ", lot_out(t), ". The outputs exist but ",
-           "nothing records how they were built.", call. = FALSE)
-  }
+  # Exactly one row, not at least one. 08_persist writes this table with a
+  # DELETE and an INSERT as separately retried statements, so an INSERT that
+  # reached the warehouse with its answer lost leaves two rows. That file is
+  # the ported source, so the duplicate is caught here rather than edited there.
+  t <- lot_out("LOT_RUN_METADATA")
+  n <- tryCatch(db_q(con, glue(
+         "SELECT count(*) AS n FROM {t} WHERE RUN_ID = '{run_id}'"))$n,
+       error = function(e) 0L)
+  if (is.na(n) || n < 1)
+    stop("This run left no row in ", t, ". The outputs exist but nothing ",
+         "records how they were built.", call. = FALSE)
+  if (n > 1)
+    stop(t, " has ", n, " rows for this run, so which one describes these ",
+         "outputs is not decidable. A retried INSERT has doubled them.",
+         call. = FALSE)
+
+  # The same fixed set of checks runs every time, so a CHECK_NAME appearing
+  # twice is a doubled write rather than a second finding.
+  t <- lot_out("LOT_QC_SUMMARY")
+  q <- tryCatch(db_q(con, glue(
+         "SELECT count(*) AS n, count(DISTINCT CHECK_NAME) AS k
+          FROM {t} WHERE RUN_ID = '{run_id}'")),
+       error = function(e) data.frame(n = 0L, k = 0L))
+  if (is.na(q$n) || q$n < 1)
+    stop("This run left no row in ", t, ". The outputs exist but nothing ",
+         "records how they were built.", call. = FALSE)
+  if (q$n != q$k)
+    stop(t, " has ", q$n, " rows for ", q$k, " checks in this run. A retried ",
+         "INSERT has doubled them.", call. = FALSE)
   # One row is not the contract: the build reads four code lists and every one
   # has to be accounted for. "At least one row" would pass a run that recorded
   # a single file, which is the shape a partial write leaves behind.
-  k <- tryCatch(db_q(con, glue(
-         "SELECT count(DISTINCT CODELIST_FILE) AS n
-          FROM {lot_out('LOT_CODELIST_METADATA')}
+  t <- lot_out("LOT_CODELIST_METADATA")
+  c4 <- tryCatch(db_q(con, glue(
+         "SELECT count(*) AS n, count(DISTINCT CODELIST_FILE) AS k
+          FROM {t}
           WHERE RUN_ID = '{run_id}' AND MD5 RLIKE '^[0-9a-f]{{32}}$'
-            AND CODELIST_FILE IN ({paste0(\"'\", CODELIST_FILES, \"'\", collapse = ', ')})"))$n,
-       error = function(e) 0L)
-  if (is.na(k) || k != length(CODELIST_FILES))
-    stop("This run recorded ", if (is.na(k)) 0 else k, " of ",
-         length(CODELIST_FILES), " code lists in ", lot_out("LOT_CODELIST_METADATA"),
+            AND CODELIST_FILE IN ({paste0(\"'\", CODELIST_FILES, \"'\", collapse = ', ')})")),
+       error = function(e) data.frame(n = 0L, k = 0L))
+  if (is.na(c4$k) || c4$k != length(CODELIST_FILES))
+    stop("This run recorded ", if (is.na(c4$k)) 0 else c4$k, " of ",
+         length(CODELIST_FILES), " code lists in ", t,
          ". The outputs exist but nothing says in full which lists built them.",
          call. = FALSE)
+  if (c4$n != c4$k)
+    stop(t, " has ", c4$n, " rows for ", c4$k, " code lists in this run. A ",
+         "retried INSERT has doubled them.", call. = FALSE)
 
   # The row is written by phase_persist, before LOT2-5 exists, so a row alone
   # says only that LOT1 ran. record_final_counts fills the rest in.
@@ -683,12 +710,14 @@ record_codelist_hashes <- function(con, cfg) {
     log_msg("  Codelist metadata schema evolution: added ", paste(add, collapse = ", "))
   }
 
-  db_exec(con, glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"))
   vals <- vapply(CODELIST_FILES, function(f) glue(
     "('{run_id}', '{f}', '{seen[[f]]$md5}', {seen[[f]]$n_rows}, current_timestamp())"),
     character(1), USE.NAMES = FALSE)
-  db_exec(con, glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES ",
-                    paste(vals, collapse = ", ")))
+  # One unit: retrying the INSERT alone would record each file twice.
+  db_replace(con,
+    glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"),
+    glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES ",
+         paste(vals, collapse = ", ")))
   log_msg("Recorded ", length(CODELIST_FILES), " code list hashes in ", tbl)
   invisible(TRUE)
 }

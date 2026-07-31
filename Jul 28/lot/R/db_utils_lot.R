@@ -136,8 +136,23 @@ with_retry <- function(fn, max_retries = lot_config()$max_retries,
   }
 }
 
+# The retry is around the whole call, so what it retries has to be safe to run
+# twice. One CREATE OR REPLACE or one DELETE is; an INSERT on its own is not.
+db_exec_once <- function(con, sql) DBI::dbExecute(con, sql)
+
 db_exec <- function(con, sql) {
-  with_retry(function() DBI::dbExecute(con, sql))
+  with_retry(function() db_exec_once(con, sql))
+}
+
+# Statements that only make sense together, retried together. Written as two
+# db_exec calls, a DELETE and an INSERT are retried separately: if the INSERT
+# reaches the warehouse but the answer is lost, the retry inserts a second copy
+# and the DELETE that would have cleared it has already run. Retrying the pair
+# re-runs the DELETE first, so a second attempt lands the same rows once.
+db_replace <- function(con, ...) {
+  sqls <- c(...)
+  with_retry(function() for (s in sqls) db_exec_once(con, s))
+  invisible(TRUE)
 }
 
 db_q <- function(con, sql) {
