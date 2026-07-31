@@ -282,17 +282,22 @@ build_lot <- function(here, cohort_table, prefix) {
   check_lot1_invariants(con, cfg)
   phase_persist(con, ctx)
 
-  # prepare_lot_inputs() exists to rebuild the session views when LOT2-5 runs
-  # on its own. LOT1 has just built them here, and rebuilding means re-scanning
-  # medical, procedure and diagnosis for SCT all over again - so only do it if
-  # something is actually missing.
-  if (!lot_inputs_present(con)) {
-    log_msg("Session views missing; rebuilding them for LOT2-5.")
-    prepare_lot_inputs(con)
-  } else {
-    log_msg("Session views from LOT1 are still here; not rebuilding them.")
-    materialize_sct_views(con)
-  }
+  # LOT1 built these moments ago. Rebuilding them here would re-read the code
+  # lists and the cohort table, and nothing establishes that those still hold
+  # what LOT1 used - the loader compares a file's hash across one read, not
+  # across two phases. LOT2-5 would then be built from a different snapshot
+  # than the LOT1 tables beside it, and the run would still reach "complete".
+  # One run, one snapshot: stop instead.
+  if (!lot_inputs_present(con))
+    stop("The views LOT2-5 reads are missing, or the catalogue could not be ",
+         "asked. LOT1 built them earlier in this run, so something has ",
+         "dropped them or the connection has changed. Rebuilding them here ",
+         "would read the code lists and the cohort table again with no ",
+         "guarantee they still match what LOT1 used, so this run would mix ",
+         "two snapshots. Re-run the build, or continue LOT2-5 deliberately ",
+         "with prepare_lot_inputs() in a session of its own.", call. = FALSE)
+  log_msg("Session views from LOT1 are still here.")
+  materialize_sct_views(con)
   build_lot2_5(con,
                induction_window_days   = cfg$lot_n_induction_window_days,
                cart_consolidation_days = cfg$cart_consolidation_days,

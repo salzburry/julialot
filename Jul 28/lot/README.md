@@ -174,6 +174,8 @@ a reading worth accepting:
   two rows for one drug that disagree on a flag both survive, and the
   enrichment joins on the abbreviation alone
 - a blank medication or class, which would make the checks above meaningless
+- a medication abbreviated `CNT`, which would generate `LOT1_MED_CNT` - already
+  the fixed count of induction medications, at every line
 - a medication or class whose name would not survive being turned into a column:
   `sanitize_col` maps punctuation and spaces to `_`, so `CAR-T` and `CAR T`
   produce one column between them, and the value goes into a SQL string literal
@@ -384,7 +386,13 @@ worth carrying on through.
 ## Running LOT2-5 on its own
 
 `prepare_lot_inputs()` rebuilds what LOT2-5 needs in a session where LOT1 did
-not run. It used to hold its own copies of the code-list, cohort and SCT SQL -
+not run. **A combined run never calls it.** If the views are missing after
+LOT1 - or the catalogue cannot be asked - the build stops. Rebuilding there
+would re-read the code lists and the cohort table, and the loader compares a
+file's hash across one read, not across two phases: LOT1 could be built from
+one snapshot and `LOT_LONG` from another, with the run still reaching
+`complete`. One run, one snapshot. Continue LOT2-5 deliberately in a session
+of its own if that is what you want. It used to hold its own copies of the code-list, cohort and SCT SQL -
 "the same SQL LOT1 uses", except the copies drifted: the code-list guards never
 reached them, and its cohort view ignored `censor_at_disenrollment` entirely.
 

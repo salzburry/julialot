@@ -407,6 +407,7 @@ mk_db_q <- function(problem) function(con, sql) {
   if (grepl("SELECT DISTINCT CL_MED_ABBR FROM mma_rollup", sql, fixed = TRUE))
     return(data.frame(CL_MED_ABBR = switch(problem,
       collide = c("CAR-T", "CAR T"), quoted = c("LEN", "O'BRIEN"),
+      cnt = c("LEN", "CNT"),
       c("LEN", "BOR"))))
   if (grepl("SELECT DISTINCT CL_MED_CLASS FROM mma_rollup", sql, fixed = TRUE))
     return(data.frame(CL_MED_CLASS = switch(problem,
@@ -497,6 +498,16 @@ err <- tryCatch({ ce$phase_codelists(NULL); "" }, error = conditionMessage)
 ok(grepl("CAR_T", err, fixed = TRUE) && grepl("CAR-T", err, fixed = TRUE) &&
      grepl("CAR T", err, fixed = TRUE),
    "...naming the column and both values that produce it")
+# LOT1_MED_CNT is a fixed column - the induction medication count - so a
+# medication abbreviated CNT generates a second column of that name.
+assign("db_q", mk_db_q("cnt"), envir = ce)
+cerr <- tryCatch({ ce$phase_codelists(NULL); "" }, error = conditionMessage)
+ok(grepl("LOT1_MED_CNT", cerr, fixed = TRUE),
+   "an abbreviation of CNT collides with the fixed count column and stops it")
+ok(any(grepl("count(DISTINCT im.MED_ABBR) AS LOT1_MED_CNT",
+             readLines(file.path(ROOT, "R", "steps", "04_lot1_base.R"), warn = FALSE),
+             fixed = TRUE)),
+   "...and that column really is fixed, not merely assumed to be")
 # The check calls sanitize_col rather than repeating its expression, so it
 # cannot drift from the generator it is guarding.
 ok(grepl("san <- sanitize_col(nm$v)", cd, fixed = TRUE),
@@ -657,7 +668,19 @@ assign("db_q", function(con, sql)
 ok(!isTRUE(pe$lot_inputs_present(NULL)), "a missing view is detected")
 assign("db_q", function(con, sql) stop("no such command"), envir = pe)
 ok(!isTRUE(pe$lot_inputs_present(NULL)),
-   "and if the catalogue cannot answer, it rebuilds rather than assumes")
+   "and a catalogue that cannot answer counts as absent, not as present")
+# What build_lot() does about it. Rebuilding would re-read the code lists and
+# the cohort table, and the loader compares a file's hash across one read, not
+# across two phases - so the run could finish "complete" with LOT1 built from
+# one snapshot and LOT_LONG from another. It stops instead, and
+# prepare_lot_inputs() is left for a LOT2-5 session entered deliberately.
+ok(grepl("  if (!lot_inputs_present(con))\n    stop(", bl, fixed = TRUE),
+   "a missing session view stops the run rather than rebuilding it")
+# The message names prepare_lot_inputs(); what must not appear is a CALL to it.
+ok(!grepl("prepare_lot_inputs(con)", bl, fixed = TRUE),
+   "build_lot() never calls prepare_lot_inputs() - one run, one snapshot")
+ok(grepl("prepare_lot_inputs", bl, fixed = TRUE),
+   "...but the error still points at it for a deliberate LOT2-5 session")
 
 cat("\n-- LOT_LONG has to be chronologically possible --\n")
 # The lines form a chain: each starts strictly after the previous one ended,
