@@ -250,6 +250,109 @@ report_pending_decisions <- function(cfg) {
   invisible(p)
 }
 
+# A row in a fill-in file that matches no production row is a typo, and a typo
+# here is silent: the join finds nothing, the cohort is unchanged, and whoever
+# wrote the row believes a decision was applied. eligible_1l_agents.csv has
+# always been held to the code list this way; the other two were not, which
+# contradicted what the README promises about all three.
+#
+# Run after NDMM_OTHER_MALIG_CODES exists, because that is what they are held
+# against.
+check_decision_files <- function(con, cfg) {
+  ovr <- getOption("nndm_override_src", NULL)
+  pg  <- getOption("nndm_primary_groups_src", NULL)
+  if (!is.null(ovr)) {
+    n <- as.integer(db_q(con, glue("
+      SELECT count(*) AS n FROM {ovr}
+      LEFT JOIN {NDMM_OTHER_MALIG_CODES} o
+             ON o.dx = ovr.dx AND o.icd_family = ovr.icd_family
+      WHERE o.dx IS NULL"))$n)
+    if (isTRUE(n > 0))
+      stop(n, " row(s) of mm_adjacent_overrides.csv name a code that is not on ",
+           "other_malig.csv. They decide nothing, and a decision that decides ",
+           "nothing reads as one that was applied. Check them against 'SELECT ",
+           "DISTINCT dx, icd_family FROM ", NDMM_OTHER_MALIG_CODES, "'.",
+           call. = FALSE)
+    # override = 0 on an MM diagnosis code would exclude the cohort's own
+    # disease as another cancer. The file wins over the derived "this is the
+    # index disease" rule, so this is the one way a row here empties the cohort.
+    n <- as.integer(db_q(con, glue("
+      SELECT count(*) AS n FROM {ovr}
+      INNER JOIN {NDMM_MM_DX_CODES} m
+              ON m.dx = ovr.dx AND m.icd_family = ovr.icd_family
+      WHERE ovr.override = 0"))$n)
+    if (isTRUE(n > 0))
+      stop(n, " row(s) of mm_adjacent_overrides.csv set override = 0 on a code ",
+           "that is on mm_dx.csv. That code is what makes a patient an MM ",
+           "patient, so excluding them for having it would empty the cohort.",
+           call. = FALSE)
+  }
+  if (!is.null(pg)) {
+    n <- as.integer(db_q(con, glue("
+      SELECT count(*) AS n FROM {pg}
+      LEFT JOIN (SELECT DISTINCT trim(tumor_group) AS tumor_group
+                 FROM {NDMM_OTHER_MALIG_CODES}) o
+             ON o.tumor_group = pg.pg_label
+      WHERE o.tumor_group IS NULL"))$n)
+    if (isTRUE(n > 0))
+      stop(n, " row(s) of primary_tumor_groups.csv name a tumor_group that is ",
+           "not on other_malig.csv. They group nothing, so the outpatient ",
+           "pairing stays at label grain while looking as though it does not. ",
+           "Check them against 'SELECT DISTINCT tumor_group FROM ",
+           NDMM_OTHER_MALIG_CODES, "'.", call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
+# The therapy code list decides three criteria, and this package reads it
+# directly rather than through a parent build - so what it assumes about the
+# file has to be checked against the file.
+#
+# The code columns are already guarded inside the view: blank raw, blank once
+# normalised, and blank once stripped to digits for an NDC. Two things are not.
+#
+# A blank CL_MED_ABBR: such a row can still set a 1L index, but no abbreviation
+# names it, so it cannot be barred by eligible_1l_agents.csv and does not
+# appear in NDMM_INDEX_AGENTS - an agent outside every review this build
+# offers.
+#
+# One (code_type, code) carrying two abbreviations: then barring one agent bars
+# the other, and a code shared with belantamab makes the other agent
+# belantamab. Both silently, and both change who is in the cohort.
+#
+# Not waivable. A waiver is for a data shape the study team has looked at and
+# accepted; this is an ambiguity that makes the other checks mean something
+# different from what they say.
+check_mma_codelist <- function(con, cfg) {
+  q <- db_q(con, glue("
+    SELECT sum(CASE WHEN med_abbr IS NULL OR trim(med_abbr) = '' THEN 1 ELSE 0 END)
+             AS n_noabbr
+    FROM {NDMM_MMA_CODELIST}"))
+  if (isTRUE(q$n_noabbr > 0))
+    stop(q$n_noabbr, " row(s) of cl_mma_codelist.csv have no CL_MED_ABBR. Such ",
+         "a code can set a 1L index but cannot be named in ",
+         "eligible_1l_agents.csv or appear in NDMM_INDEX_AGENTS, so it is an ",
+         "agent outside every review this build offers.", call. = FALSE)
+  d <- db_q(con, glue("
+    SELECT code_type, code, count(DISTINCT med_abbr) AS n_abbr,
+           concat_ws('/', sort_array(collect_set(med_abbr))) AS abbrs
+    FROM {NDMM_MMA_CODELIST}
+    GROUP BY code_type, code
+    HAVING count(DISTINCT med_abbr) > 1
+    ORDER BY n_abbr DESC
+    LIMIT 10"))
+  if (nrow(d) > 0)
+    stop(nrow(d), "+ code(s) on cl_mma_codelist.csv carry more than one ",
+         "CL_MED_ABBR, e.g. ",
+         paste(paste0(d$code_type, ":", d$code, " -> ", d$abbrs),
+               collapse = "; "),
+         ".\nBarring one of those agents bars the others, and a code shared ",
+         "with belantamab makes the other agent belantamab. Resolve it on the ",
+         "code list; this is not waivable.", call. = FALSE)
+  log_msg("  cl_mma_codelist.csv: every code names exactly one agent")
+  invisible(TRUE)
+}
+
 check_settings <- function() {
   bad <- character(0)
   unknown <- setdiff(waivers_named(), WAIVABLE_CHECKS)
@@ -759,7 +862,7 @@ check_ndmm_cohort <- function(con, cfg, n_expected) {
   q <- db_q(con, glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_pat, ",
                       "sum(CASE WHEN INDEX_DATE IS NULL THEN 1 ELSE 0 END) AS n_noidx, ",
                       "sum(CASE WHEN ENDDATE < INDEX_DATE THEN 1 ELSE 0 END) AS n_backwards, ",
-                      "sum(CASE WHEN FU_DAYS < 1 THEN 1 ELSE 0 END) AS n_nofu ",
+                      "sum(CASE WHEN FU_DAYS < 0 THEN 1 ELSE 0 END) AS n_nofu ",
                       "FROM {tbl}"))
   if (q$n_rows != q$n_pat)
     stop(tbl, " has ", q$n_rows, " rows for ", q$n_pat, " patients. A cohort ",
@@ -777,10 +880,16 @@ check_ndmm_cohort <- function(con, cfg, n_expected) {
          "the index is the 1L start, so a partial death date between the two ",
          "does this. build_ndmm_cohort_table() re-clamps it at the index; if ",
          "this fires, that clamp is not working.", call. = FALSE)
+  # FU_DAYS = 0 is the index date and nothing after it, which is a real window
+  # and the one FU_CE_DAYS = 0 admits: criterion 5 asks for coverage ON the
+  # index. Rejecting it made the delivered cohort contradict the criterion that
+  # built it, and would have stopped a run over data containing one such
+  # patient. ENDDATE < INDEX_DATE is caught above; this catches a FU_DAYS
+  # formula that has gone negative some other way.
   if (isTRUE(q$n_nofu > 0))
-    stop(q$n_nofu, " rows in ", tbl, " have no follow-up at all (FU_DAYS < 1). ",
-         "A LOT run over this cohort would measure lines in a window that does ",
-         "not exist.", call. = FALSE)
+    stop(q$n_nofu, " rows in ", tbl, " have a negative FU_DAYS. ENDDATE is not ",
+         "before INDEX_DATE - that is checked above - so the arithmetic in ",
+         "build_ndmm_cohort_table() is wrong.", call. = FALSE)
   if (!is.na(n_expected) && q$n_pat != n_expected)
     stop(tbl, " holds ", q$n_pat, " patients but the attrition ends at ",
          n_expected, ". The cohort and the funnel that reaches it must agree.",
@@ -1009,6 +1118,7 @@ build_nndm <- function(here, prefix) {
   log_msg("MM therapy code list, and the belantamab rows of it")
   db_exec(con, build_ndmm_mma_codelist())
   checkpoint(con, "NDMM_MMA_CODELIST")
+  check_mma_codelist(con, cfg)
   check_ndc_shape(con, cfg)
   build_ndmm_belantamab_codes(con)
   checkpoint(con, "NDMM_BELANTAMAB_CODES")
@@ -1018,7 +1128,8 @@ build_nndm <- function(here, prefix) {
   log_msg("1L index: first eligible MM treatment claim on or after ",
           NDMM_LOT1_FROM)
   build_ndmm_lot1_index(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))
-  checkpoint(con, "NDMM_INDEX_TX")
+  # NDMM_INDEX_TX is checkpointed inside the step, before LOT1_STARTS is
+  # defined over it - see build_ndmm_lot1_index().
   checkpoint(con, "NDMM_LOT1_STARTS")
   build_ndmm_index_agents(con, cfg)
 
@@ -1028,6 +1139,7 @@ build_nndm <- function(here, prefix) {
   log_msg("Other cancer in the ", NDMM_PRE_LOT1_DAYS, " days before 1L")
   build_ndmm_other_malig_codes(con)
   checkpoint(con, "NDMM_OTHER_MALIG_CODES")
+  check_decision_files(con, cfg)
   build_ndmm_mm_adjacent_groups(con, cfg)
   build_ndmm_mm_adjacent_codes(con, cfg)
   build_ndmm_other_malig_groups(con, cfg)
@@ -1044,7 +1156,7 @@ build_nndm <- function(here, prefix) {
 
   log_msg("Belantamab in any line, from claims")
   build_ndmm_belantamab_patids(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))
-  checkpoint(con, "NDMM_BELANTAMAB_TX")
+  # NDMM_BELANTAMAB_TX likewise.
   checkpoint(con, "NDMM_BELANTAMAB_PATIDS")
 
   log_msg("Per-patient filter flags")

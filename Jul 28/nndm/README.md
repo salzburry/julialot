@@ -147,8 +147,10 @@ All prefixed, so two cohorts sit side by side in one schema.
 
 ### The review tables
 
-**Six open questions, six tables.** Each exists because the protocol is silent,
-a code list cannot answer, or the answer needs a build that has not run yet.
+**Eight tables, for five open questions** — two of them get both a "what is
+it" table and a "what does it cost" table. Each exists because the protocol is
+silent, a code list cannot answer, or the answer needs a build that has not run
+yet.
 None of them changes the cohort — they are what the decision gets made
 *against*, so nobody has to guess and nobody has to re-run to find out.
 
@@ -183,10 +185,16 @@ So the package ships three CSVs in `codelists/`, **all empty**:
 | `eligible_1l_agents.csv` | `CL_MED_ABBR` | `med_abbr, eligible, note` | `eligible=0` bars an agent from setting the 1L index. **Any** `eligible=1` turns the file into an allowlist — only those agents may set it |
 | `primary_tumor_groups.csv` | code-list label | `tumor_group, primary_tumor_group, note` | labels sharing a `primary_tumor_group` pair together for the two-outpatient-claim rule |
 
-**Empty means the source's cohort.** An unlisted code keeps its label's verdict,
-an unlisted agent can still set an index, an unmapped label stays its own group.
-So a checkout with nothing filled in produces `apr_30_2026`'s cohort, not a
-variation on it. Nothing here changes until you write in one of these.
+**Empty means these three files make no additional decision** — an unlisted
+code keeps its label's verdict, an unlisted agent can still set an index, an
+unmapped label stays its own group. Nothing here changes until you write in one
+of them.
+
+It does **not** mean the run reproduces `apr_30_2026`. Seven registered
+deviations apply whatever these files contain — the one-day follow-up CE, the
+blank-code guards, both outpatient claims bounded to the baseline, the death
+re-clamp before criterion 5, and the per-line inpatient flag. See **The port**
+for the list and the direction each moves the count.
 
 **Each has a table to fill it in from**, so it is a copy and an edit rather than
 a research task:
@@ -864,9 +872,9 @@ comments compared out and code required to be identical. It is not a
 similarity check — it undoes the approved deviations first and then demands
 equality, so anything unapproved survives the undo and breaks it.
 
-The port differs from its source in **36 places, and no others**: 12 replaced
-lines, 19 added lines, and 5 blocks rewritten wholesale and named by their
-first and last line. Each is registered with the reason, and five of them
+The port differs from its source in **43 places, and no others**: 14 replaced
+lines, 24 added lines, and 5 blocks rewritten wholesale and named by their
+first and last line. Each is registered with the reason, and seven of them
 change who is in the cohort:
 
 | change | direction |
@@ -876,6 +884,8 @@ change who is in the cohort:
 | both outpatient claims must fall in the baseline, not just the first | **larger** |
 | `mm_adjacent_overrides.csv` can decide a code the tumour-group label cannot | either way, and **nothing** until the file is filled in |
 | outpatient claims pair on a mapped tumour type, not on a code description | **smaller**, and **nothing** until the map is filled in |
+| the death date is re-clamped at the 1L index before criterion 5, not only on the way out | **smaller** — a patient not enrolled on their own index date no longer passes |
+| each claim line is flagged inpatient before the aggregate, so `max(POS)` cannot hide it | **smaller** — an inpatient other-cancer claim is no longer read as outpatient |
 
 A deviation that is *deleted* is reported by name rather than reading as a
 perfect match — a registry entry with nothing left to undo is a shortfall, not

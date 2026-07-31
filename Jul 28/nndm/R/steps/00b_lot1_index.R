@@ -248,6 +248,11 @@ build_ndmm_lot1_index <- function(con, medical_tbl, rx_tbl) {
     arm(medical_tbl, "FST_DT",  bill_match), "\n      UNION ALL\n",
     arm(medical_tbl, "FST_DT",  ndc_match),  "\n      UNION ALL\n",
     arm(rx_tbl,      "FILL_DT", ndc_match)))
+  # Between the producer and its consumer, not after both. Spark inlines a
+  # temporary view's plan, so repointing NDMM_INDEX_TX once NDMM_LOT1_STARTS is
+  # already defined over it leaves that view on the original query - and the
+  # four-arm claim scan then runs again for every read of it.
+  checkpoint(con, "NDMM_INDEX_TX")
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_LOT1_STARTS} AS
     SELECT PATID, min(tx_dt) AS LOT1_START_DT
@@ -346,6 +351,8 @@ build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl) {
     arm(medical_tbl, "FST_DT",  ndc_match("NDC")),          "\n      UNION\n",
     arm(rx_tbl,      "FILL_DT", ndc_match("NDC"))))
 
+  # Same reason as NDMM_INDEX_TX above.
+  checkpoint(con, "NDMM_BELANTAMAB_TX")
   scope <- switch(NDMM_BELANTAMAB_SCOPE,
     study_period = glue("b.bel_dt >= date('{NDMM_STUDY_START}')"),
     from_index   = "b.bel_dt >= l1.LOT1_START_DT",
@@ -473,7 +480,12 @@ build_ndmm_fu_ce_counts <- function(con, cfg) {
   db_exec(con, glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_FU_CE_COUNTS')} AS
     WITH idx AS (
-      SELECT l1.PATID, l1.LOT1_START_DT, b.DEATH_DT
+      -- Same clamp as 06_flags.R: DEATH_DT arrives anchored at the diagnosis
+      -- and can precede the 1L start, which would put the CE target before the
+      -- index. This table has to answer the same question the criterion does.
+      SELECT l1.PATID, l1.LOT1_START_DT,
+             CASE WHEN b.DEATH_DT IS NULL THEN NULL
+                  ELSE greatest(b.DEATH_DT, l1.LOT1_START_DT) END AS DEATH_DT
       FROM {NDMM_LOT1_STARTS} l1
       INNER JOIN {NDMM_BASE_COHORT} b ON b.PATID = l1.PATID
     ),

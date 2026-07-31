@@ -32,13 +32,20 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
       SELECT cast(ec.PATID as string) AS PATID, l1.LOT1_START_DT,
              date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS}) AS pre_lot1_start,
              date_sub(l1.LOT1_START_DT, 1)                  AS pre_lot1_end,
-             -- DEATH_DT is carried forward from the parent ELIG_COH_FINAL so
-             -- the 3-month follow-up CE below can be re-derived ANCHORED AT
-             -- LOT1 (the NDMM index); the parent CE_3mosf is anchored at the
-             -- MM-dx index and so is NOT reused for it. Pregnancy is NOT carried
-             -- from the parent flag - it is re-scanned from pregnancy.csv over
-             -- the study period (NDMM_PREGNANCY_PATIDS).
-             cast(ec.DEATH_DT as date)     AS DEATH_DT
+             -- DEATH_DT re-clamped at the 1L index, which is the anchor the
+             -- follow-up CE below measures from. It arrives clamped at the
+             -- DIAGNOSIS: a partial death date coarsened to the 15th or to
+             -- Jul 15 can land after the diagnosis and before the 1L start.
+             -- Unclamped, least(index + FU_CE_DAYS, study_end, DEATH_DT) is
+             -- then EARLIER than the index, and a span ending before the index
+             -- satisfies it - a patient not enrolled on their own index date
+             -- passes criterion 5. The cohort table re-clamps too, but that is
+             -- after this, and an output clamp cannot repair a criterion
+             -- already applied. Null stays null: greatest() alone would turn a
+             -- patient with no death date into one who dies at index.
+             CASE WHEN ec.DEATH_DT IS NULL THEN NULL
+                  ELSE greatest(cast(ec.DEATH_DT as date), l1.LOT1_START_DT)
+             END                           AS DEATH_DT
       FROM {elig_coh_final} ec
       INNER JOIN {NDMM_LOT1_STARTS} l1
               ON cast(ec.PATID as string) = l1.PATID

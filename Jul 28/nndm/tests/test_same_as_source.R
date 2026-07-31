@@ -75,8 +75,28 @@ SUBST <- list(
     list(from = "FROM {NDMM_OTHER_MALIG_EVENTS} WHERE inpatient_flg = 1",
          to   = "FROM dx_with_setting WHERE inpatient_flg = 1", n = 1L),
     list(from = "FROM {NDMM_OTHER_MALIG_EVENTS} WHERE inpatient_flg = 0",
-         to   = "FROM dx_with_setting WHERE inpatient_flg = 0", n = 1L)),
+         to   = "FROM dx_with_setting WHERE inpatient_flg = 0", n = 1L),
+    # The seventh clinical change. The header aggregated max(POS) and max(TOS)
+    # and decided inpatient downstream from those, so a claim with an inpatient
+    # POS on one line and a lexically larger POS on another reported the larger
+    # one and the inpatient evidence was gone - an inpatient other-cancer
+    # diagnosis read as outpatient, and the patient not excluded on it. Each
+    # line is flagged before the aggregate now, which is what the MM-diagnosis
+    # header has always done. It can only add exclusions.
+    # The downstream CASE that reads it is inside the rewritten block below,
+    # so it is undone by SPLICE rather than named here.
+    list(from = "max(TOS_CD)  AS TOS_CD,",
+         to   = "max(TOS_CD)  AS TOS_CD", n = 1L)),
   "R/steps/06_flags.R" = list(
+    # The sixth clinical change. DEATH_DT arrives clamped at the DIAGNOSIS, and
+    # the follow-up CE below is anchored at the 1L START. A partial death date
+    # coarsened to the 15th can fall between the two, which put the CE target
+    # before the index and let a span ending before the index satisfy
+    # criterion 5 - a patient not enrolled on their own index date passing it.
+    # Re-clamped here, where the criterion is applied; the cohort table's clamp
+    # is downstream of this and cannot repair it.
+    list(from = "CASE WHEN ec.DEATH_DT IS NULL THEN NULL",
+         to   = "cast(ec.DEATH_DT as date)     AS DEATH_DT", n = 1L),
     list(from = "AND s.cov_end   >= least(date_add(ec_l1.LOT1_START_DT, {NDMM_FU_CE_DAYS}),",
          to   = "AND s.cov_end   >= least(date_add(ec_l1.LOT1_START_DT, 90),", n = 1L),
     list(from = "THEN 1 ELSE 0 END) AS CE_fu",
@@ -145,9 +165,17 @@ ADDED <- list(
     # filled in this is the source's rule exactly.
     "pg_src   <- load_primary_groups_csv(nndm_config()$primary_groups_csv)" = 1L,
     "pg_join  <- if (is.null(pg_src)) \"\" else glue(\"LEFT JOIN {pg_src} ON pg.pg_label = trim(om.tumor_group)\")" = 1L,
-    "pg_col   <- if (is.null(pg_src)) \"om.tumor_group\" else \"coalesce(pg.pg_primary, om.tumor_group)\"" = 1L),
+    "pg_col   <- if (is.null(pg_src)) \"om.tumor_group\" else \"coalesce(pg.pg_primary, om.tumor_group)\"" = 1L,
+    # The per-line inpatient flag the header now carries.
+    "max(CASE WHEN POS IN ('21', '51', '61')" = 1L,
+    "OR TOS_CD IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF')" = 1L,
+    "THEN 1 ELSE 0 END) AS line_inpatient" = 1L),
   "R/steps/05_pregnancy.R" = c(
-    "AND regexp_replace(trim(code), '[^A-Za-z0-9]', '') <> ''" = 1L)
+    "AND regexp_replace(trim(code), '[^A-Za-z0-9]', '') <> ''" = 1L),
+  # The two lines the death re-clamp adds; its first line is a SUBST above.
+  "R/steps/06_flags.R" = c(
+    "ELSE greatest(cast(ec.DEATH_DT as date), l1.LOT1_START_DT)" = 1L,
+    "END                           AS DEATH_DT" = 1L)
 )
 
 # Blocks the port rewrote rather than edited. Patching these back line by line

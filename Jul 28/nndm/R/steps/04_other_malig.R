@@ -109,7 +109,17 @@ build_ndmm_med_claim_header_and_confinement <- function(con, medical_tbl,
     SELECT PATID, PAT_PLANID, CLMID, FST_DT, LOC_CD,
            max(CONF_ID) AS CONF_ID,
            max(POS)     AS POS,
-           max(TOS_CD)  AS TOS_CD
+           max(TOS_CD)  AS TOS_CD,
+           -- Flag each line before the aggregate can hide it. max(POS) is a
+           -- lexical maximum over the claim's lines: a claim with POS '21' on
+           -- one line and '81' on another reports '81', the inpatient evidence
+           -- is gone, and an inpatient other-cancer diagnosis is read as
+           -- outpatient - so the patient is not excluded on one IP claim and
+           -- has to find two OP claims instead. The MM-diagnosis header has
+           -- always done it this way; this one did not.
+           max(CASE WHEN POS IN ('21', '51', '61')
+                      OR TOS_CD IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF')
+                    THEN 1 ELSE 0 END) AS line_inpatient
     FROM {medical_tbl}
     WHERE FST_DT BETWEEN {lower} AND {upper}
     GROUP BY PATID, PAT_PLANID, CLMID, FST_DT, LOC_CD
@@ -170,9 +180,8 @@ build_ndmm_other_malig_pre_lot1 <- function(con, med_diag_tbl) {
     ),
     dx_with_setting AS (
       SELECT dm.PATID, dm.CLMID, dm.event_dt, dm.tumor_group, dm.primary_group,
-             CASE WHEN h.POS IN ('21', '51', '61')
-                    OR h.TOS_CD IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF')
-                    OR cf.CONF_ID IS NOT NULL
+             -- line_inpatient is 0/1, so a missing POS/TOS stays null-safe.
+             CASE WHEN h.line_inpatient = 1 OR cf.CONF_ID IS NOT NULL
                   THEN 1 ELSE 0 END AS inpatient_flg
       FROM dx_mapped dm
       INNER JOIN {NDMM_MED_CLAIM_HEADER} h

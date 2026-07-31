@@ -58,11 +58,12 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_prefix",
            "build_ndmm_mm_dx_events", "build_ndmm_mm_qualifying",
            "build_ndmm_demographics", "build_ndmm_base_cohort",
            "build_enrollment_spans_ndmm",
-           "build_ndmm_mma_codelist", "check_ndc_shape",
+           "build_ndmm_mma_codelist", "check_mma_codelist", "check_ndc_shape",
            "build_ndmm_belantamab_codes", "build_ndmm_index_ineligible_codes",
            "build_ndmm_lot1_index", "build_ndmm_index_agents",
            "build_ndmm_therapy_pre_lot1",
-           "build_ndmm_other_malig_codes", "build_ndmm_mm_adjacent_groups",
+           "build_ndmm_other_malig_codes", "check_decision_files",
+           "build_ndmm_mm_adjacent_groups",
            "build_ndmm_mm_adjacent_codes", "build_ndmm_other_malig_groups",
            "build_ndmm_med_claim_header_and_confinement",
            "build_ndmm_other_malig_pre_lot1", "build_ndmm_other_malig_grain",
@@ -687,6 +688,83 @@ i_st  <- regexpr("nndm_complete", bl, fixed = TRUE)
 ok(i_dis > 0 && i_st > i_dis && grepl("add = TRUE, after = FALSE", bl, fixed = TRUE),
    "the failed status is written before the connection closes")
 
+cat("\n-- a fill-in row that matches nothing decides nothing --\n")
+# eligible_1l_agents.csv has always been held to the code list. The other two
+# were not: a misspelled code or label simply joined to nothing, the cohort was
+# unchanged, and whoever wrote the row believed a decision had been applied.
+dfe <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = dfe)
+assign("log_msg", function(...) invisible(NULL), envir = dfe)
+DFSQL <- character(0)
+drive_df <- function(n_unmatched, opts) {
+  old <- options(opts); on.exit(options(old))
+  DFSQL <<- character(0)
+  assign("db_q", function(con, sql) { DFSQL <<- c(DFSQL, sql)
+                                      data.frame(n = n_unmatched) }, envir = dfe)
+  tryCatch({ dfe$check_decision_files(NULL, list()); "" }, error = conditionMessage)
+}
+ok(identical(drive_df(0L, list(nndm_override_src = NULL,
+                               nndm_primary_groups_src = NULL)), ""),
+   "no fill-in file, nothing to hold to the code list")
+ok(grepl("name a code that is not on other_malig.csv",
+         drive_df(2L, list(nndm_override_src = "(x) ovr",
+                           nndm_primary_groups_src = NULL)), fixed = TRUE),
+   "an override naming a code the code list does not carry stops the run")
+ok(grepl("name a tumor_group that is not",
+         drive_df(1L, list(nndm_override_src = NULL,
+                           nndm_primary_groups_src = "(x) pg")), fixed = TRUE),
+   "...and so does a map naming a label it does not carry")
+# What the counts are counts OF. A stub answers whatever it is asked, so
+# without this the predicate could be dropped and the driven checks above would
+# still pass on the number the stub hands back.
+ok(any(grepl("WHERE o.tumor_group IS NULL", DFSQL, fixed = TRUE)),
+   "...the map check counting labels that joined to nothing")
+invisible(drive_df(0L, list(nndm_override_src = "(x) ovr",
+                            nndm_primary_groups_src = NULL)))
+ok(any(grepl("WHERE o.dx IS NULL", DFSQL, fixed = TRUE)) &&
+     any(grepl("WHERE ovr.override = 0", DFSQL, fixed = TRUE)),
+   "...and the override check counting codes that joined to nothing, and MM codes set to 0")
+# The one way a row here can empty the cohort: the file wins over the derived
+# "any code on mm_dx.csv is the index disease" rule.
+assign("db_q", function(con, sql)
+  # The view name is interpolated, so key on the predicate, not the constant.
+  data.frame(n = if (grepl("ovr.override = 0", sql, fixed = TRUE)) 3L else 0L),
+  envir = dfe)
+local({
+  old <- options(nndm_override_src = "(x) ovr", nndm_primary_groups_src = NULL)
+  on.exit(options(old))
+  m <- tryCatch({ dfe$check_decision_files(NULL, list()); "" },
+                error = conditionMessage)
+  ok(grepl("would empty the cohort", m, fixed = TRUE),
+     "override = 0 on an MM diagnosis code stops the run before it does that")
+})
+
+cat("\n-- one code, one agent --\n")
+# The package reads cl_mma_codelist.csv directly now, so what it assumes about
+# the file is its own to check. A blank abbreviation can set an index and be
+# named by nothing; a code carrying two abbreviations makes barring one bar the
+# other, and a code shared with belantamab makes the other agent belantamab.
+me2 <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = me2)
+assign("log_msg", function(...) invisible(NULL), envir = me2)
+drive_mma <- function(n_noabbr, dup) {
+  assign("db_q", function(con, sql)
+    if (grepl("n_noabbr", sql, fixed = TRUE)) data.frame(n_noabbr = n_noabbr) else dup,
+    envir = me2)
+  tryCatch({ me2$check_mma_codelist(NULL, list()); "" }, error = conditionMessage)
+}
+none <- data.frame(code_type = character(0), code = character(0),
+                   n_abbr = integer(0), abbrs = character(0))
+ok(identical(drive_mma(0L, none), ""), "a clean code list passes")
+ok(grepl("no CL_MED_ABBR", drive_mma(4L, none), fixed = TRUE),
+   "a code with no agent name stops the run - nothing could bar or report it")
+m <- drive_mma(0L, data.frame(code_type = "NDC", code = "1", n_abbr = 2L,
+                              abbrs = "BEL/CAR"))
+ok(grepl("more than one", m, fixed = TRUE) && grepl("NDC:1 -> BEL/CAR", m, fixed = TRUE),
+   "...and a code naming two agents stops it, naming them")
+ok(grepl("not waivable", m, fixed = TRUE),
+   "...and says so, because a waiver would not resolve the ambiguity")
+
 cat("\n-- what a run did not settle --\n")
 # Five criteria cannot be closed from this repository and every one defaults to
 # the source's behaviour, so a run with none of them settled produces a cohort
@@ -1178,6 +1256,26 @@ ok(grepl(paste0("LEFT JOIN ", oe2$NDMM_MM_DX_CODES,
 ok(!grepl("ovr.override", o0, fixed = TRUE) &&
      !grepl("LEFT JOIN (SELECT", o0, fixed = TRUE),
    "with no overrides file, nothing about overrides reaches the query")
+# The claim scan, not the codes view: inpatient has to be read off the flag the
+# header computes per line, never off max(POS). This lives inside a block
+# test_same_as_source.R splices out, so it can only be held here.
+OSQL2 <- character(0)
+assign("db_exec", function(con, sql) { OSQL2 <<- c(OSQL2, sql); invisible(TRUE) },
+       envir = oe2)
+assign("cfg", cfg_defaults, envir = oe2)
+oe2$build_ndmm_med_claim_header_and_confinement(NULL, "cdm.medical", "cdm.conf")
+oe2$build_ndmm_other_malig_pre_lot1(NULL, "cdm.med_diagnosis")
+hdr <- grep("line_inpatient", OSQL2, fixed = TRUE, value = TRUE)[1]
+ok(!is.na(hdr) && grepl("max(CASE WHEN POS IN ('21', '51', '61')", hdr, fixed = TRUE),
+   "each claim line is flagged inpatient before the aggregate can hide it")
+ev <- grep("inpatient_flg", OSQL2, fixed = TRUE, value = TRUE)[1]
+ok(!is.na(ev) && grepl("CASE WHEN h.line_inpatient = 1 OR cf.CONF_ID IS NOT NULL",
+                       ev, fixed = TRUE) &&
+     !grepl("h.POS IN", ev, fixed = TRUE),
+   "...and the events read that flag, not max(POS), which is lexical")
+assign("db_exec", function(con, sql) { OSQL <<- c(OSQL, sql); invisible(TRUE) },
+       envir = oe2)
+
 o1 <- drive_om("(SELECT * FROM (VALUES ('C7951', 'ICD10', 0)) AS t(dx, icd_family, override)) ovr")
 ok(grepl("WHEN ovr.override IS NOT NULL THEN ovr.override ", o1, fixed = TRUE) &&
      grepl("ON ovr.dx = om.dx AND ovr.icd_family = om.icd_family", o1, fixed = TRUE),
@@ -1221,6 +1319,12 @@ ok(grepl("least(CASE WHEN w.months IS NULL", fc, fixed = TRUE) &&
      grepl("coalesce(idx.DEATH_DT", fc, fixed = TRUE) &&
      grepl("_ndmm_enroll_spans_strict", fc, fixed = TRUE),
    "bounded by death and the study end, on no-gap spans, as criterion 5 is")
+# ...and by a death date re-clamped at the index, like the criterion. Unclamped
+# it comes anchored at the diagnosis and can precede the 1L start, putting the
+# CE target before the index - so this table would inherit the same defect it
+# exists to measure.
+ok(grepl("greatest(b.DEATH_DT, l1.LOT1_START_DT)", fc, fixed = TRUE),
+   "...and on a death date re-clamped at the index, as the criterion now is")
 # A criterion count alone would not say what the choice costs the cohort.
 ok(grepl("AND f.NO_BELANTAMAB            = 1", fc, fixed = TRUE) &&
      grepl("AS N_COHORT", fc, fixed = TRUE),
@@ -1508,8 +1612,14 @@ m <- drive_chk(backwards = 2L)
 ok(grepl("end before they begin", m, fixed = TRUE),
    "a cohort row whose follow-up ends before the index stops the build")
 m <- drive_chk(nofu = 4L)
-ok(grepl("no follow-up at all", m, fixed = TRUE),
-   "...and so does one with no follow-up window for a LOT run to measure")
+ok(grepl("negative FU_DAYS", m, fixed = TRUE),
+   "...and so does a negative FU_DAYS, which the arithmetic should never give")
+# FU_DAYS = 0 is the index date and nothing after it. That is the window
+# FU_CE_DAYS = 0 admits - criterion 5 asks for coverage ON the index - so
+# rejecting it made the delivered cohort contradict the criterion that built
+# it, and one such patient would have stopped the run.
+ok(grepl("FU_DAYS < 0", bl, fixed = TRUE) && !grepl("FU_DAYS < 1", bl, fixed = TRUE),
+   "a same-day follow-up window is a window, and is not rejected")
 m <- drive_chk(pat = 9L, expect = 10L)  # rows follows pat, so this is not a fan-out
 ok(grepl("attrition ends at", m, fixed = TRUE),
    "and a cohort that disagrees with its own funnel is not published")
@@ -1864,7 +1974,24 @@ ok(regexpr('checkpoint(con, "NDMM_FLAGS_ALL")', fl_txt, fixed = TRUE) > 0 &&
    "NDMM_FLAGS_ALL is written before NDMM_PATIDS is defined over it")
 ok(!grepl("could not materialize", fl_txt, fixed = TRUE),
    "and a write it cannot do is not warned past - it is a declared output")
-for (k in setdiff(CHECKPOINTS, "NDMM_FLAGS_ALL")) {
+# The same ordering, for the two pairs in 00b_lot1_index.R. Each producer is
+# checkpointed before the view defined over it is created, or the checkpoint
+# buys nothing and the claim scan runs twice.
+ix_txt <- paste(readLines(file.path(ROOT, "R", "steps", "00b_lot1_index.R"),
+                          warn = FALSE), collapse = "\n")
+for (pair in list(c("NDMM_INDEX_TX", "NDMM_LOT1_STARTS"),
+                  c("NDMM_BELANTAMAB_TX", "NDMM_BELANTAMAB_PATIDS"))) {
+  i <- regexpr(paste0('checkpoint(con, "', pair[1], '")'), ix_txt, fixed = TRUE)
+  j <- regexpr(paste0("VIEW {", pair[2], "}"), ix_txt, fixed = TRUE)
+  ok(i > 0 && j > 0 && i < j,
+     paste0(pair[1], " is written before ", pair[2], " is defined over it"))
+}
+# Checkpointed inside the step that builds them, before the view defined over
+# them exists. Spark inlines a temporary view's plan, so a checkpoint after the
+# consumer is created leaves that consumer on the original query - and the scan
+# underneath runs again. Held by their own assertions below.
+IN_STEP <- c("NDMM_FLAGS_ALL", "NDMM_INDEX_TX", "NDMM_BELANTAMAB_TX")
+for (k in setdiff(CHECKPOINTS, IN_STEP)) {
   i <- regexpr(paste0('checkpoint(con, "', k, '")'), body, fixed = TRUE)
   j <- if (is.null(builds[[k]])) -1L else
     regexpr(paste0("(?<![A-Za-z0-9_.])", builds[[k]], "\\("), body, perl = TRUE)

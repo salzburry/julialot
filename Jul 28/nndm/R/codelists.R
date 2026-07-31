@@ -110,8 +110,12 @@ load_override_csv <- function(path) {
           sum(ov == "1"), " kept as the index disease, ", sum(ov == "0"),
           " excluded as another cancer), md5 ", md5)
   rows <- sprintf("('%s', '%s', %s)", dx, fam, ov)
-  paste0("(SELECT * FROM (VALUES\n  ", paste(rows, collapse = ",\n  "),
-         "\n) AS t(dx, icd_family, override)) ovr")
+  # Kept so check_decision_files() can hold these rows to the production code
+  # list once it exists. A row that matches nothing decides nothing.
+  out <- paste0("(SELECT * FROM (VALUES\n  ", paste(rows, collapse = ",\n  "),
+                "\n) AS t(dx, icd_family, override)) ovr")
+  options(nndm_override_src = out)
+  out
 }
 
 # Which agents may set the 1L index. The list S6.2.1.1 gestures at and no
