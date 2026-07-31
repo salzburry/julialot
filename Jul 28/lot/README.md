@@ -470,7 +470,10 @@ metadata row has no `LOT_LONG` counts is not called complete: a row on its own
 only says LOT1 ran.
 
 `<prefix>LOT_CODELIST_METADATA`: `RUN_ID`, `CODELIST_FILE`, `MD5`, `N_ROWS`,
-`READ_AT` - four rows per run, described above.
+`RECORDED_AT` - four rows per run, described above. `RECORDED_AT` is the
+warehouse clock when the row was written, seconds after the file was read. A
+file whose hash cannot be taken stops the run rather than being recorded as
+`NA`.
 
 `<prefix>LOT_BUILD_STATUS`: `started` once preflight has passed, then
 `complete`, or `failed` if it stops after that. Read it before trusting a set

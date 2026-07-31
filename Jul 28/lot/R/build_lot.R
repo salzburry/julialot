@@ -159,8 +159,7 @@ pin_cohort <- function(cfg, cohort_table, prefix) {
 
 # A cohort table missing a column LOT needs would fail deep into the build, so
 # ask the table up front.
-check_cohort_input <- function(con, cfg) {
-  tbl  <- wrk(cfg$input_cohort_table)
+check_cohort_input <- function(con, tbl) {
   cols <- tryCatch(toupper(db_q(con, glue("DESCRIBE {tbl}"))[[1]]),
                    error = function(e)
                      stop("Cannot read the cohort table ", tbl, ": ",
@@ -197,8 +196,9 @@ check_cohort_input <- function(con, cfg) {
                          " patients - one index per patient is required"))
   if (length(bad))
     stop(tbl, " cannot drive LOT: ", paste(bad, collapse = "; "), call. = FALSE)
-  log_msg("  Cohort input OK: ", q$n_patients, " patients")
-  invisible(TRUE)
+  log_msg("  Cohort input OK in ", tbl, ": ", q$n_patients, " patients")
+  # Returned so the pinned copy can be checked against the table it came from.
+  invisible(list(n_rows = q$n_rows, n_patients = q$n_patients))
 }
 
 check_lot_contract <- function(cfg) {
@@ -259,7 +259,7 @@ build_lot <- function(here, cohort_table, prefix) {
   log_msg("  Discon Gap (per-drug, MAP-level): ", cfg$map_discon_gap_days, " days")
   log_msg("  Medical Day Supply: ", cfg$medical_day_supply, " days")
 
-  check_cohort_input(con, cfg)
+  cohort <- check_cohort_input(con, wrk(cfg$input_cohort_table))
 
   # LOT1 is written before LOT_LONG, so track partial runs.
   # Cleared first, or a second run in one session inherits the first's.
@@ -272,7 +272,7 @@ build_lot <- function(here, cohort_table, prefix) {
   ctx <- phase_codelists(con)
   record_codelist_hashes(con, cfg)
   phase_patient_input(con)
-  materialize_cohort_input(con)
+  materialize_cohort_input(con, cohort)
   check_claim_ndc(con, cfg)
   phase_mma_map(con, ctx)
   phase_lot1_base(con, ctx)
@@ -306,9 +306,9 @@ build_lot <- function(here, cohort_table, prefix) {
                max_lot                 = cfg$max_lot)
 
   # Validate before deriving: publishing the criteria tables first would leave
-  # them behind, built from a LOT_LONG that then failed its checks.
-  # Two statements, not a nested call: R would not force the promise until
-  # record_final_counts read it, which is after it has altered the table.
+  # them behind, built from a LOT_LONG that then failed its checks. Two
+  # statements, not one nested call - R would not force the promise until after
+  # record_final_counts had altered the table.
   lot_long <- check_lot_long(con, cfg)
   record_final_counts(con, cfg, lot_long)
   phase_line_criteria(con, cfg)
@@ -346,31 +346,28 @@ lot_inputs_present <- function(con) {
   all(tolower(LOT2_5_INPUT_VIEWS) %in% have)
 }
 
-# phase_patient_input leaves lot_patient_input a temporary view over the cohort
-# table, and a Spark view re-runs its query on every read - 26 of them across
-# the build. So the cohort is not one snapshot: a cohort job that rebuilds its
-# table mid-run changes what LOT reads from that point on, and the run still
-# reaches "complete". Telling operators not to rebuild is not a rule that holds
-# when the package exists to be pointed at many cohorts on their own schedules.
-#
-# Copied once into a prefixed table of its own, with the view repointed at it -
-# the same thing phase_lot1_end does for map_stacked and lot1_sct. Everything
-# downstream then reads a table that cannot move, and the snapshot is left
-# behind for inspection.
-#
-# The window this does not close: check_cohort_input validates the live table a
-# moment earlier. A change between that check and this copy would be snapshotted
-# unvalidated. It is one statement wide, against 26 reads over a long build.
-materialize_cohort_input <- function(con) {
+# Persist the cohort and repoint the session view, so every later phase reads
+# one fixed snapshot instead of a view that re-runs against a live table. Then
+# check the snapshot: the first check ran four CSVs and around two dozen
+# queries back, so the rows copied here are not necessarily the rows it passed.
+materialize_cohort_input <- function(con, before) {
+  tbl <- lot_out("LOT_PATIENT_INPUT")
   run_step(con, "S03b_materialize_cohort_input", glue("
-    CREATE OR REPLACE TABLE {lot_out('LOT_PATIENT_INPUT')} AS
-    SELECT * FROM lot_patient_input
-  "), qc = glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients
-                 FROM {lot_out('LOT_PATIENT_INPUT')}"))
+    CREATE OR REPLACE TABLE {tbl} AS SELECT * FROM lot_patient_input"),
+    qc = glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients
+               FROM {tbl}"))
   db_exec(con, glue("
-    CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS
-    SELECT * FROM {lot_out('LOT_PATIENT_INPUT')}"))
-  log_msg("Cohort input pinned to ", lot_out("LOT_PATIENT_INPUT"))
+    CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS SELECT * FROM {tbl}"))
+
+  after <- check_cohort_input(con, tbl)
+  # Shape alone would pass a different cohort that is also well formed, which
+  # is the likelier accident than one that is malformed.
+  if (after$n_rows != before$n_rows || after$n_patients != before$n_patients)
+    stop("The cohort changed between being checked and being pinned: ",
+         before$n_rows, " rows / ", before$n_patients, " patients at the ",
+         "check, ", after$n_rows, " / ", after$n_patients, " in ", tbl,
+         ". Re-run the build against a settled cohort.", call. = FALSE)
+  log_msg("Cohort input pinned to ", tbl, " and re-checked")
   invisible(TRUE)
 }
 
@@ -623,17 +620,14 @@ check_run_recorded <- function(con, cfg) {
   invisible(TRUE)
 }
 
-# Which version of each code list built these tables. The hashes are logged as
-# the files are read, but a log is a separate artefact: filed away from the
-# tables, or lost, and the outputs no longer say what made them. One row per
-# file per run, so a question like "which runs used this md5" is answerable
-# from the warehouse.
-#
-# Written straight after the code lists are read, not at the end, so a run that
-# fails later still records what it was reading when it did.
+# Which version of each code list built these tables. The run log says so too,
+# but a log is a separate artefact - filed away from the tables, or lost. One
+# row per file per run, written as soon as the lists are read so a run that
+# fails later still records what it was reading. RECORDED_AT is the warehouse
+# clock at the insert, seconds after the read.
 CODELIST_METADATA_COLS <- c(RUN_ID = "STRING", CODELIST_FILE = "STRING",
                             MD5 = "STRING", N_ROWS = "BIGINT",
-                            READ_AT = "TIMESTAMP")
+                            RECORDED_AT = "TIMESTAMP")
 
 record_codelist_hashes <- function(con, cfg) {
   seen <- getOption("lot_codelist_md5", list())

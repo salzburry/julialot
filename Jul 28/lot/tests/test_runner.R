@@ -298,6 +298,16 @@ sqltxt <- cle$load_codelist_csv("cl_mma_rollup.csv", "CL_CODE")
 ok(grepl("00093075601", sqltxt, fixed = TRUE),
    "leading zeros survive the read")
 unlink(f)
+# md5sum returns NA when it cannot open the path. Unguarded, the re-hash after
+# the read compares NA with NA and passes - so the swap check is off - and 'NA'
+# lands in the metadata table shaped like a hash. A directory is the reachable
+# case: file.exists says yes and the hash still fails.
+dir.create(f)
+e <- suppressWarnings(tryCatch(cle$load_codelist_csv("cl_mma_rollup.csv", "CL_CODE"),
+                               error = function(e) e))
+ok(inherits(e, "error") && grepl("could not hash", conditionMessage(e), fixed = TRUE),
+   "a code list whose hash cannot be taken stops the build")
+unlink(f, recursive = TRUE)
 
 cat("\n-- a bad code list stops the build, it does not warn and continue --\n")
 # All four checks used to print a warning inside a tryCatch that also
@@ -623,6 +633,11 @@ for (f in CLF)
   ok(grepl(paste0("'", f, "'"), ins, fixed = TRUE), paste0(f, " is named in the row set"))
 ok(grepl("'00000000000000000000000000000001'", ins, fixed = TRUE),
    "with the md5 that was taken when the file was read")
+# current_timestamp() is the insert, not the read - seconds apart in the same
+# run, but the column has to say which it is.
+ok(grepl("RECORDED_AT = \"TIMESTAMP\"", bl, fixed = TRUE) &&
+     !grepl("READ_AT", bl, fixed = TRUE),
+   "the timestamp column is named for when it is written, not when the file was read")
 ok(any(grepl("DELETE FROM wk.p_LOT_CODELIST_METADATA WHERE RUN_ID = 'R1'",
              HSQL, fixed = TRUE)),
    "and a re-run replaces its own rows rather than doubling them")
@@ -648,11 +663,28 @@ cat("\n-- the cohort is pinned, not re-read --\n")
 # mid-run changes what LOT reads from there on. "Do not rebuild it" is not
 # enforceable for a package pointed at many cohorts, so the run takes its own
 # copy and reads that.
-ok(grepl("CREATE OR REPLACE TABLE {lot_out('LOT_PATIENT_INPUT')} AS", bl, fixed = TRUE),
+mci <- sub(".*materialize_cohort_input <- function\\(con, before\\) \\{", "", bl)
+mci <- sub("\n[a-zA-Z_]+ <- function.*", "", mci)
+ok(grepl('tbl <- lot_out("LOT_PATIENT_INPUT")', mci, fixed = TRUE) &&
+     grepl("CREATE OR REPLACE TABLE {tbl} AS SELECT * FROM lot_patient_input",
+           mci, fixed = TRUE),
    "the cohort input is written to a table of its own")
-ok(grepl("CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS\n    SELECT * FROM {lot_out('LOT_PATIENT_INPUT')}",
-         bl, fixed = TRUE),
+ok(grepl("CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS SELECT * FROM {tbl}",
+         mci, fixed = TRUE),
    "...and the view is repointed at it, so every later read hits the copy")
+# The first check ran before the code lists were read - four CSVs and around
+# two dozen queries earlier - so it says nothing about the rows copied here.
+ok(grepl("after <- check_cohort_input(con, tbl)", mci, fixed = TRUE),
+   "the snapshot is validated in its own right, not just the table it came from")
+ok(grepl("invisible(list(n_rows = q$n_rows, n_patients = q$n_patients))", bl,
+         fixed = TRUE) &&
+     grepl("cohort <- check_cohort_input(con, wrk(cfg$input_cohort_table))", bl,
+           fixed = TRUE) &&
+     grepl("materialize_cohort_input(con, cohort)", bl, fixed = TRUE),
+   "the first check hands its counts forward rather than throwing them away")
+ok(grepl("after$n_rows != before$n_rows", mci, fixed = TRUE) &&
+     grepl("after$n_patients != before$n_patients", mci, fixed = TRUE),
+   "...and a cohort that grew or shrank under the run stops it")
 ok("LOT_PATIENT_INPUT" %in% OUTPUTS,
    "it is a prefixed output, so two cohorts cannot share one snapshot")
 # Before anything reads the cohort. phase_patient_input defines the view;

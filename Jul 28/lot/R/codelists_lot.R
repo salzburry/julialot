@@ -21,6 +21,13 @@ load_codelist_csv <- function(csv_name, col_spec) {
   # version a run used. Hash it, and hash it again after the read: if it were
   # swapped mid-read the logged hash would describe a file we did not load.
   md5 <- unname(tools::md5sum(csv_path))
+  # NA when the file could not be opened for hashing. Left alone, the re-hash
+  # below would compare NA with NA and pass - so the swap check would be
+  # silently off - and 'NA' would be written to LOT_CODELIST_METADATA in the
+  # shape of a hash. grepl is FALSE on NA, so this covers both.
+  if (!grepl("^[0-9a-f]{32}$", md5))
+    stop("CODELIST ERROR: could not hash ", csv_name, ", so this run cannot ",
+         "record or re-check which version of it was read", call. = FALSE)
   # colClasses: without it R reads an NDC as a number and drops leading zeros.
   df <- read.csv(csv_path, stringsAsFactors = FALSE, na.strings = c("", "NA", "NaN"),
                  colClasses = "character")
@@ -44,13 +51,11 @@ load_codelist_csv <- function(csv_name, col_spec) {
   rows <- apply(df, 1, function(r) paste0("(", paste(vapply(r, esc, character(1)), collapse = ", "), ")"))
   sql <- paste0("SELECT * FROM (VALUES\n  ", paste(rows, collapse = ",\n  "), "\n) AS t(",
                 paste(col_spec, collapse = ", "), ")")
-  # Kept for LOT_CODELIST_METADATA. The run log records this too, but a log is
-  # a separate artefact that has to be filed beside the tables to be any use;
-  # the outputs should say for themselves which version built them.
+  # Kept for LOT_CODELIST_METADATA, so the outputs say which version built them.
   seen <- getOption("lot_codelist_md5", list())
   seen[[csv_name]] <- list(md5 = md5, n_rows = nrow(df))
   options(lot_codelist_md5 = seen)
   log_msg("Loaded codelist from CSV: ", csv_path, " (", nrow(df), " rows, md5 ",
-          if (is.na(md5)) "unavailable" else md5, ")")
+          md5, ")")
   paste0("(", sql, ") src")
 }
