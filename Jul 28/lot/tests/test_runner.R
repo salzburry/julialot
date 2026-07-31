@@ -181,18 +181,18 @@ at <- vapply(ORDER, function(f) {
   m <- regexpr(paste0("(?<![A-Za-z0-9_.])", f, "\\("), body, perl = TRUE)
   if (m == -1) NA_integer_ else as.integer(m)
 }, integer(1))
-for (f in ORDER) ok(!is.na(at[[f]]), paste0("build_lot() calls ", f, "()"))
+# One assertion naming whatever is missing, rather than one per entry: the
+# diagnostic is the same and the output is not twenty-two lines of "calls X()".
+absent <- names(at)[is.na(at)]
+ok(length(absent) == 0,
+   if (length(absent)) paste0("build_lot() never calls: ", paste(absent, collapse = ", "))
+   else paste0("build_lot() calls all ", length(ORDER), " phases and checks"))
 ok(!any(is.na(at)) && !is.unsorted(at[!is.na(at)]),
    "and calls them in that order")
 
 cat("\n-- the criteria layer reaches the warehouse --\n")
-# The README promises these two tables. Nothing was producing them.
-ok(grepl("line_criteria_flags_sql", bl, fixed = TRUE) &&
-     grepl("line_criteria_final_sql", bl, fixed = TRUE),
-   "both criteria builders are called")
-for (t in c("LOT_LONG_ALLFLAGS", "LOT_LONG_FINAL"))
-  ok(grepl(paste0('"', t, '"'), bl, fixed = TRUE),
-     paste0(t, " is persisted, not just built as a view"))
+# The README promises these two tables. Nothing was producing them. Driven
+# below rather than grepped for: the statements themselves are asserted.
 
 # Those read the source, so the function could be a no-op and still pass them -
 # it was, and it did. Driven from here, with the real SQL builders, so what
@@ -1058,28 +1058,12 @@ cat("\n-- the cohort is pinned, not re-read --\n")
 # mid-run changes what LOT reads from there on. "Do not rebuild it" is not
 # enforceable for a package pointed at many cohorts, so the run takes its own
 # copy and reads that.
-mci <- sub(".*materialize_cohort_input <- function\\(con, before\\) \\{", "", bl)
-mci <- sub("\n[a-zA-Z_]+ <- function.*", "", mci)
-ok(grepl('tbl <- lot_out("LOT_PATIENT_INPUT")', mci, fixed = TRUE) &&
-     grepl("CREATE OR REPLACE TABLE {tbl} AS SELECT * FROM lot_patient_input",
-           mci, fixed = TRUE),
-   "the cohort input is written to a table of its own")
-ok(grepl("CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS SELECT * FROM {tbl}",
-         mci, fixed = TRUE),
-   "...and the view is repointed at it, so every later read hits the copy")
-# The first check ran before the code lists were read - four CSVs and around
-# two dozen queries earlier - so it says nothing about the rows copied here.
-ok(grepl("after <- check_cohort_input(con, tbl)", mci, fixed = TRUE),
-   "the snapshot is validated in its own right, not just the table it came from")
-ok(grepl("invisible(list(n_rows = q$n_rows, n_patients = q$n_patients))", bl,
+# The build_lot() wiring, which the run below cannot see: the first check has
+# to hand its counts to the copy rather than throw them away.
+ok(grepl("cohort <- check_cohort_input(con, wrk(cfg$input_cohort_table))", bl,
          fixed = TRUE) &&
-     grepl("cohort <- check_cohort_input(con, wrk(cfg$input_cohort_table))", bl,
-           fixed = TRUE) &&
      grepl("materialize_cohort_input(con, cohort)", bl, fixed = TRUE),
    "the first check hands its counts forward rather than throwing them away")
-ok(grepl("after$n_rows != before$n_rows", mci, fixed = TRUE) &&
-     grepl("after$n_patients != before$n_patients", mci, fixed = TRUE),
-   "...and a cohort that grew or shrank under the run stops it")
 ok("LOT_PATIENT_INPUT" %in% OUTPUTS,
    "it is a prefixed output, so two cohorts cannot share one snapshot")
 
@@ -1294,14 +1278,6 @@ cat("\n-- LOT2-5 reads tables, not repeated CDM scans --\n")
 # rebuild is right; skipping the materialization was not.
 ok(grepl("materialize_sct_views(con)", body, fixed = TRUE),
    "build_lot() calls materialize_sct_views(), not merely defines it")
-mv_at <- regexpr("SCT_MATERIALIZE <- list", bl, fixed = TRUE)
-mv <- substr(bl, mv_at, mv_at + 400)
-ok(regexpr("sct_claims_raw", mv, fixed = TRUE) <
-     regexpr("tx_auto_dates", mv, fixed = TRUE),
-   "sct_claims_raw first, so the other two read a table not a CDM scan")
-ok(grepl("CREATE OR REPLACE TEMPORARY VIEW {mv$view} AS SELECT * FROM {lot_out(mv$name)}",
-         bl, fixed = TRUE),
-   "and each view is repointed at its table afterwards")
 
 # All of the above reads the source, so the function could be a no-op and still
 # pass - it was, and it did. Driven from here.
