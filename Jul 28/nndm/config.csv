@@ -1,0 +1,12 @@
+name,value,description
+DATABRICKS_DSN,RWDE,ODBC DSN
+DATABRICKS_CATALOG,hive_metastore,Catalog for all reads and writes
+OPTUM_CDM_SCHEMA,clnprw_optum,Optum CDM schema
+USE_QUARTERLY_TABLES,TRUE,Read the cumulative quarterly CDM tables
+STUDY_END,2025-06-30,Study period end; picks the quarterly table suffix
+LOT1_FROM,2017-01-01,1L eligible-treatment period opens here
+PRE_LOT1_DAYS,365,CE and baseline window before the 1L index date
+FU_CE_DAYS,0,Days after index the follow-up CE must cover; 0 is one day
+GAP_DAYS,30,Enrollment gaps of this many days or fewer are still continuous
+TBL_CONFINEMENT,confinement,Inpatient confinement table
+CODELIST_DIR,/mnt/code/codelist,Where the production code lists live
