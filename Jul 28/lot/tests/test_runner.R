@@ -193,6 +193,62 @@ for (t in c("LOT_LONG_ALLFLAGS", "LOT_LONG_FINAL"))
   ok(grepl(paste0('"', t, '"'), bl, fixed = TRUE),
      paste0(t, " is persisted, not just built as a view"))
 
+# Those read the source, so the function could be a no-op and still pass them -
+# it was, and it did. Driven from here, with the real SQL builders, so what
+# reaches the warehouse is the wiring rather than a description of it.
+pe <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "line_criteria.R"), envir = pe)
+sys.source(file.path(ROOT, "R", "build_lot.R"), envir = pe)
+assign("log_msg", function(...) invisible(NULL), envir = pe)
+assign("lot_out", function(x) paste0("wk.p_", x), envir = pe)
+PSQL <- character(0)
+assign("run_step", function(con, name, sql, qc = NULL) {
+  PSQL <<- c(PSQL, sql); invisible(TRUE) }, envir = pe)
+drive_plc <- function(crit = list()) {
+  PSQL <<- character(0)
+  assign("LINE_CRITERIA", crit, envir = pe)
+  tryCatch({ pe$phase_line_criteria(NULL, list()); NULL }, error = conditionMessage)
+}
+has_sql <- function(x) any(grepl(x, PSQL, fixed = TRUE))
+# Whole statement, not substring: "FROM lot_long" is a prefix of "FROM
+# lot_long_final", so a substring match accepts a stage wired to the wrong
+# source. It did, until this was exact.
+is_sql <- function(x) any(trimws(PSQL) == x)
+src_of <- function(v) any(grepl(paste0("FROM ", v, "$"), trimws(PSQL)))
+ok(is.null(drive_plc()) && length(PSQL) == 4L,
+   paste0("four statements: two views and the two tables (", length(PSQL), ")"))
+# The chain: each stage reads the one before it. A stage pointed at the wrong
+# source would still build something, and it would be wrong quietly.
+ok(is_sql("CREATE OR REPLACE TEMPORARY VIEW lot_long_allflags AS SELECT * FROM lot_long"),
+   "allflags is built from lot_long")
+ok(is_sql("CREATE OR REPLACE TEMPORARY VIEW lot_long_final AS SELECT * FROM lot_long_allflags"),
+   "final is built from allflags, not from lot_long again")
+ok(is_sql("CREATE OR REPLACE TABLE wk.p_LOT_LONG_ALLFLAGS AS SELECT * FROM lot_long_allflags") &&
+     is_sql("CREATE OR REPLACE TABLE wk.p_LOT_LONG_FINAL AS SELECT * FROM lot_long_final"),
+   "and each table is written from its own view, both prefixed")
+# TABLE, not VIEW: Spark refuses a persistent view over a temporary one.
+ok(!any(grepl("CREATE OR REPLACE VIEW", PSQL, fixed = TRUE)),
+   "persisted as tables - a persistent view over a temp view is refused")
+i_v <- which(grepl("TEMPORARY VIEW lot_long_final", PSQL, fixed = TRUE))[1]
+i_t <- which(grepl("TABLE wk.p_LOT_LONG_FINAL", PSQL, fixed = TRUE))[1]
+ok(!is.na(i_v) && !is.na(i_t) && i_v < i_t,
+   "the view exists before the table that selects from it")
+
+# With a criterion declared, so the chain is carrying something. Empty is the
+# shipped state and every stage is SELECT * there - a mis-wired source would
+# look identical.
+CRIT <- list(list(name = "t_crit", label = "t", lines = "*", flag = "T_FLAG",
+                  sql = "LOT_START_TYPE = 'MED'", on_fail = "truncate"))
+old_env <- Sys.getenv("APPLY_T_CRIT", unset = NA)
+Sys.setenv(APPLY_T_CRIT = "TRUE")
+ok(is.null(drive_plc(CRIT)) && has_sql("AS T_FLAG") && src_of("lot_long"),
+   "a declared criterion becomes a flag column on the allflags view")
+ok(has_sql("first_failed_lot") && has_sql("T_FLAG = 0"),
+   "...and an enabled truncate reaches the final view as a removal")
+ok(is_sql("CREATE OR REPLACE TABLE wk.p_LOT_LONG_FINAL AS SELECT * FROM lot_long_final"),
+   "with the persisted table still written from it")
+if (is.na(old_env)) Sys.unsetenv("APPLY_T_CRIT") else Sys.setenv(APPLY_T_CRIT = old_env)
+
 cat("\n-- a run says whether its outputs belong together --\n")
 # LOT1 tables are replaced before LOT2-5 runs; a failure between them would
 # otherwise leave new LOT1 output beside an old LOT_LONG, looking complete.
