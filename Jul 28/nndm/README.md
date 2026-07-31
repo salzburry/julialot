@@ -147,7 +147,18 @@ index-qualification and demographics SQL. Two criteria are applied — the two
 | # | criterion | as applied | source |
 |---|---|---|---|
 | 1 | **MM diagnosis** | ≥1 inpatient medical claim with a **strict** MM code in any position (ICD-9-CM `203.0x` / ICD-10-CM `C90.0x`), **or** ≥2 outpatient MM claims on separate days **within 90 days**, during the study period. Inpatient means a place-of-service or type-of-service line flag, or a valid confinement. | `00_mm_cohort.R` |
-| 2 | **Adult age** | **≥18** in the calendar year of that diagnosis. Applied *before* the earliest qualifying date is chosen, so a patient who is 17 at their first qualifying date and 18 at the next is kept. | `00_mm_cohort.R` |
+| 2 | **Adult age** | **≥18** in the calendar year of that diagnosis. Applied *after* the earliest qualifying date is chosen, so it can only drop a patient — never move their diagnosis date. A patient who qualifies at 17 and again at 18 is **excluded**. See below. | `00_mm_cohort.R` |
+
+**Why age comes after the ranking.** It used to come before: the qualifying
+dates were filtered by age and the earliest survivor became `MM_DX_DT`. That
+kept the 17-then-18 patient, by moving their diagnosis date to the later one —
+and `MM_DX_DT` is not a demographic here, it gates the 1L index, which is the
+*first* MM therapy claim on or after it. Advancing it lets a later therapy
+claim be recorded as first line for someone whose real first line was at 17.
+`Jul 28/overall` never did this: its age rule is `AND AGE_INDEX_YR >= min_age`
+applied to an index date already chosen, which drops the patient. This build
+now matches it. The change makes the cohort **smaller**, and the difference
+lands entirely on attrition step 2.
 
 **The parent's other four inclusion criteria are deliberately not here** —
 six-month baseline CE, enrolment on the diagnosis date, no MM agent in

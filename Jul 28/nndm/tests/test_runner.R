@@ -643,17 +643,24 @@ ok(grepl("WHERE outpatient_flg = 1", q, fixed = TRUE),
 
 SSQL <- character(0); se$build_ndmm_base_cohort(NULL)
 b <- SSQL[1]
-ok(grepl(paste0("(year(q.MM_DX_DT) - m.YRDOB) >= ", se$NDMM_MIN_AGE), b, fixed = TRUE),
+ok(grepl(paste0("(year(f.MM_DX_DT) - m.YRDOB) >= ", se$NDMM_MIN_AGE), b, fixed = TRUE),
    paste0("age is ", se$NDMM_MIN_AGE, " or over in the diagnosis year, by calendar year"))
-# The age gate sits in the CTE that the ranking reads, not after it. A patient
-# who is 17 at their first qualifying date and 18 at the next is in the cohort,
-# and ranking first would lose them.
-filt <- sub("\\),\\s*ranked AS.*", "", sub(".*WITH filtered AS \\(", "", b))
-ok(grepl("YRDOB) >=", filt, fixed = TRUE),
-   "and it is applied before the earliest qualifying date is picked, not after")
-ok(grepl("ORDER BY MM_DX_DT) AS rn", b, fixed = TRUE) &&
+ok(grepl("ORDER BY q.MM_DX_DT) AS rn", b, fixed = TRUE) &&
      grepl("WHERE rn = 1", b, fixed = TRUE),
-   "the earliest date that passes is the diagnosis date, not the latest")
+   "the earliest qualifying date is the diagnosis date, not the latest")
+# The ranking runs first and cannot see age. It used to be the other way round,
+# and what said so was `sub(".*WITH filtered AS \\(", "", b)` - an extraction
+# anchored on a CTE name. Rename the CTE and sub() matches nothing and hands
+# back the whole query, which contains the age test wherever it sits, so the
+# assertion passed under either behaviour. The split has to have found
+# something now, and that is its own assertion rather than a silent fallback.
+i_fd <- regexpr("first_dx AS (", b, fixed = TRUE)
+ok(i_fd > 0, "the earliest diagnosis is chosen in a step of its own")
+pre <- if (i_fd > 0) substring(b, 1, i_fd - 1) else b
+ok(i_fd > 0 && grepl("row_number()", pre, fixed = TRUE) &&
+     !grepl("YRDOB", pre, fixed = TRUE) &&
+     !grepl(se$NDMM_MEMBER_DEMO, pre, fixed = TRUE),
+   "...and it is picked before age is known, so 17-then-18 is dropped, not moved")
 
 SSQL <- character(0)
 se$build_ndmm_lot1_index(NULL, "cdm.medical", "cdm.rx")

@@ -213,31 +213,47 @@ build_ndmm_demographics <- function(con, member_elig_tbl, dod_tbl) {
   "))
 }
 
-# The base population: a qualifying diagnosis date and age >= 18 in its
-# calendar year, then the earliest date that satisfies both. Ranking after the
-# age filter, not before it, is what keeps the 17-then-18 patient.
+# The base population: each patient's EARLIEST qualifying diagnosis, and then
+# age >= 18 in that date's calendar year.
+#
+# That order is the whole point, and it used to be the other way round - age
+# filtered first, earliest date chosen from what survived. A patient qualifying
+# at 17 and again at 18 was then kept, with MM_DX_DT moved to the later date.
+# Two things are wrong with that. It is not what Jul 28/overall does: there age
+# is `AND AGE_INDEX_YR >= min_age` applied to a chosen index date, which drops
+# the patient and never moves the date, and a standalone package that disagrees
+# with the parent on who is in the cohort is worse than one that is merely
+# stricter. And MM_DX_DT is not a demographic here - it gates the 1L index, via
+# "first MM therapy claim on or after MM_DX_DT". Advancing it to the second
+# qualifying date lets a later therapy claim be recorded as first line for a
+# patient whose real first line was at 17. "Newly diagnosed" is the earliest
+# diagnosis; the second qualifying date is more claims for the same disease,
+# not a new one.
+#
+# So the ranking cannot see age at all: it runs on NDMM_MM_QUALIFYING alone.
+# The demographics join and the age test come after, on the one surviving row,
+# where they can only drop a patient.
 build_ndmm_base_cohort <- function(con) {
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_BASE_COHORT} AS
-    WITH filtered AS (
+    WITH ranked AS (
       SELECT q.PATID, q.MM_DX_DT, q.index_source,
-             m.GDR_CD, m.YRDOB,
-             (year(q.MM_DX_DT) - m.YRDOB) AS AGE_DX_YR,
-             dd.DEATH_DT
+             row_number() OVER (PARTITION BY q.PATID ORDER BY q.MM_DX_DT) AS rn
       FROM {NDMM_MM_QUALIFYING} q
-      INNER JOIN {NDMM_MEMBER_DEMO} m ON m.PATID = q.PATID
-      LEFT JOIN {NDMM_DEATH_DT} dd
-             ON dd.PATID = q.PATID AND dd.MM_DX_DT = q.MM_DX_DT
-      WHERE (q.inpt_qual = 1 OR q.outpt_qual = 1)
-        AND m.YRDOB IS NOT NULL
-        AND (year(q.MM_DX_DT) - m.YRDOB) >= {NDMM_MIN_AGE}
+      WHERE q.inpt_qual = 1 OR q.outpt_qual = 1
     ),
-    ranked AS (
-      SELECT *, row_number() OVER (PARTITION BY PATID ORDER BY MM_DX_DT) AS rn
-      FROM filtered
+    first_dx AS (
+      SELECT PATID, MM_DX_DT, index_source FROM ranked WHERE rn = 1
     )
-    SELECT cast(PATID as string) AS PATID, MM_DX_DT, index_source,
-           GDR_CD, YRDOB, AGE_DX_YR, DEATH_DT
-    FROM ranked WHERE rn = 1
+    SELECT cast(f.PATID as string) AS PATID, f.MM_DX_DT, f.index_source,
+           m.GDR_CD, m.YRDOB,
+           (year(f.MM_DX_DT) - m.YRDOB) AS AGE_DX_YR,
+           dd.DEATH_DT
+    FROM first_dx f
+    INNER JOIN {NDMM_MEMBER_DEMO} m ON m.PATID = f.PATID
+    LEFT JOIN {NDMM_DEATH_DT} dd
+           ON dd.PATID = f.PATID AND dd.MM_DX_DT = f.MM_DX_DT
+    WHERE m.YRDOB IS NOT NULL
+      AND (year(f.MM_DX_DT) - m.YRDOB) >= {NDMM_MIN_AGE}
   "))
 }

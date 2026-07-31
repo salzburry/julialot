@@ -174,4 +174,43 @@ ok(grepl("NDMM_MIN_AGE", ours, fixed = TRUE),
 ok(grepl("inpt_qual = 1 OR q.outpt_qual = 1", squash(ours), fixed = TRUE),
    "and the diagnosis has to qualify, by one inpatient claim or two outpatient")
 
+cat("\n-- and age drops a patient, the way the parent's does, not their date --\n")
+# The parent applies age as a filter on an index date it has already chosen,
+# so it can only remove a patient. This build once filtered the qualifying
+# dates by age and then took the earliest survivor, which kept a patient who
+# qualified at 17 and again at 18 and moved their MM_DX_DT to the later date -
+# and MM_DX_DT gates the 1L index, so a later therapy claim became "first
+# line". Read from the parent, not asserted about it, so this fails if the
+# parent ever stops doing it this way.
+PAR_AGE <- local({
+  f <- file.path(dirname(ROOT), "overall", "R", "criteria_attrition.R")
+  if (!file.exists(f)) NA_character_
+  else paste(readLines(f, warn = FALSE), collapse = "\n")
+})
+ok(!is.na(PAR_AGE) &&
+     grepl("AND AGE_INDEX_YR >= {cfg$min_age}", PAR_AGE, fixed = TRUE),
+   "the parent's age rule is a filter on an already-chosen index date")
+
+# The function only: the comment above it argues for this, and an assertion
+# that a comment can satisfy is not an assertion.
+BC <- local({
+  ln <- readLines(file.path(ROOT, "R", "steps", "00_mm_cohort.R"), warn = FALSE)
+  i <- grep("^build_ndmm_base_cohort <- function", ln)
+  j <- grep("^}", ln); j <- j[j > i[1]][1]
+  if (!length(i) || is.na(j)) NA_character_ else paste(ln[i[1]:j], collapse = "\n")
+})
+i_fd <- if (is.na(BC)) -1L else regexpr("first_dx AS (", BC, fixed = TRUE)
+PRE  <- if (i_fd > 0) substring(BC, 1, i_fd - 1) else ""
+# The property, not its wording: whatever the ranking reads, age is not in it.
+ok(i_fd > 0 && grepl("row_number() OVER", PRE, fixed = TRUE) &&
+     grepl("NDMM_MM_QUALIFYING", PRE, fixed = TRUE) &&
+     !grepl("NDMM_MIN_AGE", PRE, fixed = TRUE) &&
+     !grepl("NDMM_MEMBER_DEMO", PRE, fixed = TRUE) &&
+     !grepl("YRDOB", PRE, fixed = TRUE),
+   "the earliest qualifying diagnosis is chosen without age or demographics in reach")
+i_rn <- if (is.na(BC)) -1L else regexpr("WHERE rn = 1", BC, fixed = TRUE)
+i_ag <- if (is.na(BC)) -1L else regexpr("NDMM_MIN_AGE", BC, fixed = TRUE)
+ok(i_rn > 0 && i_ag > 0 && i_rn < i_ag,
+   "...and age is tested on that one date, so 17-then-18 is dropped, not moved")
+
 report()
