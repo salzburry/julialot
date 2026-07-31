@@ -123,13 +123,16 @@ dup <- names(defs)[vapply(defs, length, integer(1)) > 1]
 ok(length(dup) == 0,
    if (length(dup)) paste0("step defined more than once: ", paste(dup, collapse = ", "))
    else paste0("all ", length(defs), " steps are defined exactly once"))
-fresh <- readLines(file.path(ROOT, "R", "steps", "09_lot2_5_inputs.R"), warn = FALSE)
-ok(!any(grepl("CREATE OR REPLACE TEMPORARY VIEW (mma_rollup|sct_codelist|lot_patient_input)",
-               fresh)),
-   "the fresh-session path defines no code-list or cohort view of its own")
-ok(all(vapply(c("phase_codelists", "phase_patient_input", "phase_sct"),
-              function(f) any(grepl(paste0(f, "(con"), fresh, fixed = TRUE)), logical(1))),
-   "it calls the LOT1 phases instead")
+# One code-list and cohort definition, in the phases. The fresh-session
+# rebuild used to hold a second, drifting copy; it is gone, and so is the path
+# that could pair a re-read code list with LOT1 tables built from another.
+step_paths <- list.files(file.path(ROOT, "R", "steps"), "\\.R$", full.names = TRUE)
+defs_of <- function(pat) Filter(function(f)
+  any(grepl(pat, readLines(f, warn = FALSE))), step_paths)
+for (v in c("mma_rollup", "lot_patient_input", "sct_codelist")) {
+  n <- length(defs_of(paste0("CREATE OR REPLACE TEMPORARY VIEW ", v, "\\b")))
+  ok(n == 1, paste0(v, " is defined in exactly one place (", n, ")"))
+}
 
 cat("\n-- the entry point can actually run --\n")
 # These fail until the rules are ported. That is the honest state: the previous

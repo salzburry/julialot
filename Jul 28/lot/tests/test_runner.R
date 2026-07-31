@@ -518,6 +518,21 @@ lb <- paste(readLines(file.path(ROOT, "R", "steps", "10_lot2_5_base.R"), warn = 
 ok(grepl("FROM mma_rollup", lb, fixed = TRUE),
    "LOT2-5 draws its meds and classes from the same rollup, so this covers it")
 
+# phase_qc reports the SCT end date past observation as INVESTIGATE inside a
+# tryCatch, so a run could finish with it. The invariant is the fail-loud copy;
+# without it the comment in 07_qc.R claiming these are re-checked was wrong.
+inv <- get("LOT1_INVARIANTS", envir = env)
+inv_sql <- paste(vapply(inv, function(i) i$sql, character(1)), collapse = " ")
+ok(any(vapply(inv, function(i) identical(i$name, "SCT end date past observation"),
+              logical(1))),
+   "LOT1_TX_ENDDATE past observation is a fail-loud invariant, not only QC")
+ok(grepl("sct.LOT1_TX_ENDDATE > p.OBS_END_DT", inv_sql, fixed = TRUE),
+   "...on the column phase_qc reports, not a neighbouring one")
+qc7 <- paste(readLines(file.path(ROOT, "R", "steps", "07_qc.R"), warn = FALSE),
+             collapse = "\n")
+ok(grepl("LOT1_TX_ENDDATE > lb.OBS_END_DT", qc7, fixed = TRUE),
+   "and that is the condition 07_qc.R still reports")
+
 cat("\n-- the run says what it produced, not only what LOT1 saw --\n")
 # phase_persist writes LOT_RUN_METADATA before LOT2-5 exists, so its counts
 # stop at LOT1 and a row on its own says nothing about LOT_LONG.
@@ -657,11 +672,8 @@ for (b in c("AS n_nodigit", "AS n_zero"))
 # shape nobody has seen yet - and what fired is recorded, not just requested.
 
 
-# Two writers, and the tests covered each alone. A run waiving both a codelist
-# check and claim_ndc calls phase_codelists, then check_claim_ndc, and then
-# phase_codelists AGAIN whenever lot_inputs_present() says no - which it does
-# when the catalogue cannot answer, not only in a LOT2-5-only session. Assigning
-# rather than unioning dropped claim_ndc on that path.
+# Two writers record applied waivers. Each was covered alone; this drives them
+# in sequence, so one cannot clobber what the other recorded.
 Sys.setenv(CODELIST_WAIVERS = "uncoded_meds,claim_ndc_short")
 options(lot_waivers_applied = character(0))
 assign("db_q", mk_db_q("uncoded"), envir = ce)
@@ -731,18 +743,28 @@ pe <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "build_lot.R"), envir = pe)
 assign("log_msg", function(...) invisible(NULL), envir = pe)
 asked <- character(0)
+vw <- function(names, temp = TRUE)
+  data.frame(viewName = names, isTemporary = temp, stringsAsFactors = FALSE)
 assign("db_q", function(con, sql) {
   asked <<- c(asked, sql)
-  data.frame(viewName = get("LOT2_5_INPUT_VIEWS", envir = pe),
-             stringsAsFactors = FALSE)
+  vw(get("LOT2_5_INPUT_VIEWS", envir = pe))
 }, envir = pe)
 ok(isTRUE(pe$lot_inputs_present(NULL)), "all ten present is detected")
 ok(length(asked) == 1 && grepl("SHOW VIEWS", asked[1], fixed = TRUE),
    "with one catalogue query, not ten reads")
-assign("db_q", function(con, sql)
-  data.frame(viewName = c("lot_patient_input", "mma_rollup"),
-             stringsAsFactors = FALSE), envir = pe)
+assign("db_q", function(con, sql) vw(c("lot_patient_input", "mma_rollup")), envir = pe)
 ok(!isTRUE(pe$lot_inputs_present(NULL)), "a missing view is detected")
+# SHOW VIEWS lists persistent views too. A persistent table of the same name
+# elsewhere in the schema is not the view LOT1 built, and answering yes to it
+# would be the false positive that stopping was meant to prevent.
+assign("db_q", function(con, sql)
+  vw(get("LOT2_5_INPUT_VIEWS", envir = pe), temp = FALSE), envir = pe)
+ok(!isTRUE(pe$lot_inputs_present(NULL)),
+   "persistent views of the same names do not count as present")
+assign("db_q", function(con, sql)
+  data.frame(viewName = get("LOT2_5_INPUT_VIEWS", envir = pe)), envir = pe)
+ok(!isTRUE(pe$lot_inputs_present(NULL)),
+   "and a catalogue with no isTemporary column cannot confirm them either")
 assign("db_q", function(con, sql) stop("no such command"), envir = pe)
 ok(!isTRUE(pe$lot_inputs_present(NULL)),
    "and a catalogue that cannot answer counts as absent, not as present")
@@ -756,8 +778,8 @@ ok(grepl("  if (!lot_inputs_present(con))\n    stop(", bl, fixed = TRUE),
 # The message names prepare_lot_inputs(); what must not appear is a CALL to it.
 ok(!grepl("prepare_lot_inputs(con)", bl, fixed = TRUE),
    "build_lot() never calls prepare_lot_inputs() - one run, one snapshot")
-ok(grepl("prepare_lot_inputs", bl, fixed = TRUE),
-   "...but the error still points at it for a deliberate LOT2-5 session")
+ok(!grepl("prepare_lot_inputs", bl, fixed = TRUE),
+   "...and the standalone rebuild is gone entirely, not merely unreferenced")
 
 cat("\n-- LOT_LONG has to be chronologically possible --\n")
 # The lines form a chain: each starts strictly after the previous one ended,

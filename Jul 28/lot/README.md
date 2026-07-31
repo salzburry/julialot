@@ -14,9 +14,9 @@ the whole of `lot2_5_base.R`. The executable R and SQL must match exactly.
 
 One deviation is allowed everywhere - LOT's own outputs carry the cohort
 prefix - and beyond that three files carry named safety guards, described
-below. `09_lot2_5_inputs.R` is deliberately not compared: it no longer holds a
-copy of the source's SQL, it calls the LOT1 phases, so what it used to carry is
-checked as part of those.
+below. The source's `lot2_5_inputs.R` has no counterpart here - it rebuilt the
+code lists and the cohort for a standalone LOT2-5 session, a path this package
+does not offer - and the SQL it held is compared as part of the phases.
 
 Comments are compared out, so the copied review-diary comments could be tidied
 without weakening the check. Change a code line and it fails; change a comment
@@ -392,26 +392,27 @@ None of these is waivable: a code type no branch reads, or one read as the
 wrong ICD version, cannot produce a transplant, so there is no version of it
 worth carrying on through.
 
-## Running LOT2-5 on its own
+## One run, one snapshot
 
-`prepare_lot_inputs()` rebuilds what LOT2-5 needs in a session where LOT1 did
-not run. **A combined run never calls it.** If the views are missing after
-LOT1 - or the catalogue cannot be asked - the build stops. Rebuilding there
-would re-read the code lists and the cohort table, and the loader compares a
-file's hash across one read, not across two phases: LOT1 could be built from
-one snapshot and `LOT_LONG` from another, with the run still reaching
-`complete`. One run, one snapshot. Continue LOT2-5 deliberately in a session
-of its own if that is what you want. It used to hold its own copies of the code-list, cohort and SCT SQL -
-"the same SQL LOT1 uses", except the copies drifted: the code-list guards never
-reached them, and its cohort view ignored `censor_at_disenrollment` entirely.
+There is one way to run this: `build.R`, start to finish. LOT2-5 cannot be
+continued in a session of its own, and if the views it needs are missing after
+LOT1 - or the catalogue cannot be asked - the build stops rather than rebuild
+them.
 
-It calls the LOT1 phases now, and holds only what is genuinely different -
-rebinding the tables LOT1 persisted, and materializing the SCT views. Every
-step is defined exactly once, and `tests/test_selfcontained.R` fails if that
-stops being true.
+Rebuilding would re-read the code lists and the cohort table. The loader
+compares a file's hash across one read, not across two phases, so LOT1 could
+be built from one version and `LOT_LONG` from another with the run still
+reaching `complete`. The source had a `lot2_5_inputs.R` for that purpose and
+this package deliberately has no counterpart: one execution path, one set of
+inputs. After a failure, re-run the whole build.
 
-`phase_sct()` stops at the SCT date views; LOT1's own `lot1_sct` summary is
-`phase_lot1_sct()`, which needs `lot1_base` and so is not part of the rebuild.
+Every step is defined exactly once, and `tests/test_selfcontained.R` fails if
+that stops being true.
+
+Note what this does *not* pin. The code lists are read into R and embedded as
+SQL literals, so they are fixed for the run. `lot_patient_input` is a view over
+the cohort table, so the cohort is not frozen inside the run - do not rebuild
+or replace it while LOT is running.
 
 ## Why the run materializes the SCT views
 
@@ -420,16 +421,16 @@ over raw medical, procedure and diagnosis. LOT2-5 reads them once per line, so
 left alone Spark re-runs those scans every time - the source puts it at roughly
 8 AUTO aggregates and 20 SCT scans across LOT2..LOT5.
 
-`prepare_lot_inputs()` exists for a fresh session: it rebuilds those views and
-then materializes them. In a combined run the rebuild is work LOT1 already did,
-so the run does only the half that matters - materialize what is already there
-and repoint the views at the tables. `sct_claims_raw` goes first, so the other
-two write from a table instead of re-running the CDM scan.
+LOT1 has already built them, so the run materializes what is there and
+repoints the views at the tables. `sct_claims_raw` goes first, so the other two
+write from a table instead of re-running the CDM scan.
 
 Whether the views exist is asked of the catalogue (`SHOW VIEWS`), not by
 selecting from them: a `SELECT 1` on a lazy view runs the view, which is the
-cost being avoided. If the catalogue cannot answer, the run rebuilds - slower,
-but never wrong.
+cost being avoided. `SHOW VIEWS` lists persistent views as well, so only the
+temporary ones count - a persistent table of the same name is not the view LOT1
+built. If the catalogue cannot answer, the views cannot be confirmed and the
+run stops.
 
 Each materialization logs its own duration, so the first run says what this
 actually costs rather than leaving it an assumption.
@@ -519,6 +520,5 @@ R/steps/             the rules, in order:
   06_lot1_end.R        LOT1 end date and reason
   07_qc.R              QC counts
   08_persist.R         write the LOT1 outputs, all prefixed
-  09_lot2_5_inputs.R   rebuild for a fresh-session LOT2-5 run
   10_lot2_5_base.R     LOT2 onwards, and LOT_LONG
 ```

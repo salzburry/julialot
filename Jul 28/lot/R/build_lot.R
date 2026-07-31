@@ -56,8 +56,7 @@ codelist_waivers_named <- function() {
 }
 
 # Never hands back a check that cannot be waived, whatever the environment
-# says. check_settings refuses those before the build starts, but LOT2-5 can be
-# run on its own and reach the code lists without it.
+# says, so the split holds even if check_settings is bypassed.
 codelist_waivers <- function() intersect(codelist_waivers_named(), WAIVABLE_CHECKS)
 
 # The columns LOT reads off whatever cohort table it is pointed at. Checked
@@ -294,8 +293,7 @@ build_lot <- function(here, cohort_table, prefix) {
          "dropped them or the connection has changed. Rebuilding them here ",
          "would read the code lists and the cohort table again with no ",
          "guarantee they still match what LOT1 used, so this run would mix ",
-         "two snapshots. Re-run the build, or continue LOT2-5 deliberately ",
-         "with prepare_lot_inputs() in a session of its own.", call. = FALSE)
+         "two snapshots. Re-run the build.", call. = FALSE)
   log_msg("Session views from LOT1 are still here.")
   materialize_sct_views(con)
   build_lot2_5(con,
@@ -332,10 +330,15 @@ LOT2_5_INPUT_VIEWS <- c("lot_patient_input", "mma_rollup", "permissible_subs",
 # runs the view - and three of these are raw CDM scans, so the existence check
 # itself would have cost real time.
 lot_inputs_present <- function(con) {
-  have <- tryCatch(tolower(db_q(con, "SHOW VIEWS")$viewName),
-                   error = function(e) NULL)
-  # If the catalogue cannot answer, say no: rebuilding is slow but correct.
-  if (is.null(have)) return(FALSE)
+  d <- tryCatch(db_q(con, "SHOW VIEWS"), error = function(e) NULL)
+  # A catalogue error means the views cannot be confirmed, so say no.
+  if (is.null(d) || !all(c("viewName", "isTemporary") %in% names(d))) return(FALSE)
+  # SHOW VIEWS lists persistent views as well. LOT1 leaves temporary ones, so a
+  # persistent table of the same name elsewhere in the schema is not the view
+  # this run built - answering yes to it would be the false positive that
+  # stopping was meant to prevent.
+  temp <- as.character(d$isTemporary)
+  have <- tolower(d$viewName[toupper(temp) %in% c("TRUE", "T")])
   all(tolower(LOT2_5_INPUT_VIEWS) %in% have)
 }
 
@@ -531,6 +534,13 @@ LOT1_INVARIANTS <- list(
        sql = "SELECT count(*) AS n FROM lot1_base_end lb
               INNER JOIN lot_patient_input p ON lb.PATID = p.PATID
               WHERE lb.LOT1_BASE_END_DT > p.OBS_END_DT"),
+  # phase_qc reports this one as INVESTIGATE inside a tryCatch, so a run could
+  # finish with it. Every end-date branch is bounded by OBS_END_DT, so it is
+  # impossible unless something upstream is wrong.
+  list(name = "SCT end date past observation",
+       sql = "SELECT count(*) AS n FROM lot1_sct sct
+              INNER JOIN lot_patient_input p ON sct.PATID = p.PATID
+              WHERE sct.LOT1_TX_ENDDATE > p.OBS_END_DT"),
   list(name = "AUTO transplant both tandem and single",
        sql = "SELECT count(*) AS n FROM lot1_sct
               WHERE LOT1_SCT_AUTO_TAND_FLG = 1 AND LOT1_SCT_AUTO_SING_FLG = 1"),
