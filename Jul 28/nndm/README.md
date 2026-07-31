@@ -95,7 +95,7 @@ Closing that needs a metadata table written by `Jul 28/overall`.
 | 4 | **12-month CE before index** | an enrollment span covering `[index − 365, index − 1]` in full, gaps of **≤30 days** treated as continuous | `01_enrollment.R`, `06_flags.R` |
 | 5 | **Follow-up CE** | a **no-gap** span covering `[index, index + FU_CE_DAYS]`, where `FU_CE_DAYS = 0` — **one day: the index date itself** | `06_flags.R` |
 | 6 | **No MM oncology therapy in the 12-month baseline** | no medical or pharmacy claim for an MM therapy in `[index − 365, index − 1]`, scanned from raw `medical` and `rx` against `cl_mma_codelist.csv`. **Steroids are excluded from this scan** (`DEX`, `DEXA`, `DEXAMETHASONE`, `PRED`, `PREDNISONE`) — a steroid claim alone does not make a patient previously treated. | `03_prior_therapy.R` |
-| 7 | **No other cancer in the 12-month baseline** | excluded on **≥1 inpatient** claim, **or ≥2 outpatient** claims **within 30 days of each other**, for the same tumour group, in `[index − 365, index − 1]`. Inpatient is established from the confinement table and the claim header, not from a place-of-service code. | `04_other_malig.R` |
+| 7 | **No other cancer in the 12-month baseline** | excluded on **≥1 inpatient** claim, **or ≥2 outpatient** claims **within 30 days of each other**, for the same tumour group — **both claims inside** `[index − 365, index − 1]`. Inpatient is established from the confinement table and the claim header, not from a place-of-service code. | `04_other_malig.R` |
 | 8 | **No pregnancy** | excluded on ≥1 medical claim with a diagnosis, procedure or revenue code indicating pregnancy or childbirth, anywhere in `[STUDY_START, STUDY_END]` — the **study period**, not the baseline | `05_pregnancy.R` |
 | 9 | **No belantamab in any LOT** | no belantamab row for the patient in `MAP_STACKED` (`MAP_MED_TYPE LIKE 'BEL%'`), any line, **no date bound** — see the attrition note below | `06_flags.R` |
 
@@ -155,6 +155,17 @@ wrong; the values below are what the **images** show, and what this build uses.
 | other cancer | `>1 IP or >2 OP` | **`≥1 IP or ≥2 OP`** |
 | adult age | `> 18` | **`≥18`** |
 | outpatient MM diagnosis | `> 2 claims` | **`≥2 claims`** |
+
+**Other cancer — criterion 7.** `apr_30_2026` bounded only the *first* of the
+two outpatient claims to the baseline. A claim the day before the index and its
+confirmation a month after it therefore excluded the patient, on a single
+baseline claim, when the criterion asks for two in the baseline. Both are
+bounded here.
+
+This can only remove exclusions, so the cohort is **larger** than the one
+`apr_30_2026` builds, and the difference lands on attrition step 7. Registered
+as a named deviation. If the study team means a post-index claim to be allowed
+to confirm baseline disease, this is the line to take back out.
 
 ### NDC matching, and what has to be checked before the first run
 

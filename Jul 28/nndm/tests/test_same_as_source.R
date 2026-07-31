@@ -85,7 +85,15 @@ ADDED <- list(
     "AND regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '') <> ''" = 1L,
     "AND regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') <> ''" = 1L),
   "R/steps/04_other_malig.R" = c(
-    "AND regexp_replace(trim(dx), '[^A-Za-z0-9]', '') <> ''" = 1L),
+    "AND regexp_replace(trim(dx), '[^A-Za-z0-9]', '') <> ''" = 1L,
+    # The third clinical change. The other-cancer rule is >=1 inpatient claim
+    # or >=2 outpatient claims within 30 days of each other, in the 12-month
+    # 1L baseline. The source bounded only the first of the outpatient pair, so
+    # a claim on the day before the index and its confirmation a month after it
+    # excluded the patient on a single baseline claim. This bounds the second
+    # claim too, so both fall in the baseline the criterion names. It can only
+    # remove exclusions, so the cohort it builds is larger than apr_30_2026's.
+    "AND op.next_dt  BETWEEN l1.pre_lot1_start AND l1.pre_lot1_end" = 1L),
   "R/steps/05_pregnancy.R" = c(
     "AND regexp_replace(trim(code), '[^A-Za-z0-9]', '') <> ''" = 1L)
 )

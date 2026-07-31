@@ -446,6 +446,51 @@ ok(sum(grepl("DELETE", SENT, fixed = TRUE)) == 2L,
 ok(identical(SENT[3], "DELETE FROM t WHERE RUN_ID = 'R1'"),
    "the retry replays the pair in order, DELETE before INSERT")
 
+cat("\n-- the other-cancer pair has to sit in the baseline --\n")
+# The criterion is >=1 inpatient claim, or >=2 outpatient claims within 30 days
+# of each other, IN the 12-month 1L baseline. The source bounded only the first
+# of the outpatient pair, so a claim the day before the index and its
+# confirmation a month after it excluded the patient on one baseline claim.
+#
+# There is no database here, so this reads the SQL the real function emits
+# rather than running it: for every date column the outpatient pair exposes,
+# the join must bound it. Derived rather than matched, so a new unbounded date
+# column fails the same way removing this one does.
+oe <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = oe)
+sys.source(file.path(ROOT, "R", "steps", "04_other_malig.R"), envir = oe)
+assign("log_msg", function(...) invisible(NULL), envir = oe)
+assign("cfg", cfg_defaults, envir = oe)
+OSQL <- character(0)
+assign("db_exec", function(con, s) { OSQL <<- c(OSQL, s); TRUE }, envir = oe)
+oe$build_ndmm_other_malig_pre_lot1(NULL, "cdm.med_diagnosis")
+sql <- OSQL[1]
+ok(!is.na(sql) && grepl("outpatient_pairs", sql, fixed = TRUE),
+   "the real function emitted the other-cancer SQL")
+cte  <- sub(".*outpatient_pairs AS \\(", "", sql); cte <- sub("FROM with_next.*", "", cte)
+join <- sub(".*LEFT JOIN outpatient_pairs op", "", sql); join <- sub("WHERE .*", "", join)
+pair_dates <- unique(unlist(regmatches(cte, gregexpr("(?<=AS )[a-z_]+_dt|(?<![A-Za-z_.])next_dt",
+                                                     cte, perl = TRUE))))
+ok(setequal(pair_dates, c("first_dt", "next_dt")),
+   paste0("the pair exposes exactly the two claim dates (",
+          paste(sort(pair_dates), collapse = ", "), ")"))
+unbounded <- Filter(function(d)
+  !grepl(paste0("op.", d, "\\s+BETWEEN l1.pre_lot1_start AND l1.pre_lot1_end"),
+         join, perl = TRUE), pair_dates)
+ok(length(unbounded) == 0,
+   if (length(unbounded)) paste0("outpatient claim dates the join leaves outside ",
+                                 "the baseline: ", paste(unbounded, collapse = ", "))
+   else "and the join requires both of them to fall in the 12-month baseline")
+ok(grepl("op.diff_days <= 30", join, fixed = TRUE),
+   "within 30 days of each other, as the protocol writes it")
+# The inpatient arm is one claim, so it has one date and it is bounded too.
+ipj <- sub(".*LEFT JOIN inpatient_flag ip", "", sql); ipj <- sub("LEFT JOIN outpatient_pairs.*", "", ipj)
+ok(grepl("ip.event_dt BETWEEN l1.pre_lot1_start AND l1.pre_lot1_end", ipj, fixed = TRUE),
+   "the single inpatient claim is bounded by the same window")
+ok(grepl("date_sub(LOT1_START_DT, 365) AS pre_lot1_start", sql, fixed = TRUE) &&
+     grepl("date_sub(LOT1_START_DT, 1)", sql, fixed = TRUE),
+   "and that window is [index - 365, index - 1] - it ends before the index date")
+
 cat("\n-- NDCs that the padding would get wrong --\n")
 # The prior-therapy join strips non-digits and left-pads to eleven. That is the
 # 4-4-2 layout only; a 5-3-2 or 5-4-1 ten-digit code pads to a different key, so

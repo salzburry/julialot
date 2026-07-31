@@ -166,6 +166,13 @@ build_ndmm_other_malig_pre_lot1 <- function(con, med_diag_tbl) {
              ON cast(op.PATID as string) = l1.PATID
             AND op.diff_days <= 30
             AND op.first_dt BETWEEN l1.pre_lot1_start AND l1.pre_lot1_end
+            -- Both claims in the baseline, not just the first. The source
+            -- bounded first_dt alone, so a claim the day before the index and
+            -- its confirmation a month after it excluded the patient on one
+            -- baseline claim - and the criterion is other cancer IN the 1L
+            -- baseline. next_dt is always after first_dt, so the lower bound
+            -- is redundant; it is written out so the pair reads as a pair.
+            AND op.next_dt  BETWEEN l1.pre_lot1_start AND l1.pre_lot1_end
       WHERE ip.PATID IS NOT NULL OR op.PATID IS NOT NULL
     )
     SELECT PATID FROM hits
