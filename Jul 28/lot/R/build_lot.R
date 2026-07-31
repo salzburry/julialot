@@ -265,11 +265,9 @@ build_lot <- function(here, cohort_table, prefix) {
   # Cleared first, or a second run in one session inherits the first's.
   options(lot_waivers_applied = character(0), lot_codelist_md5 = list())
   write_build_status(con, cfg, "started")
-  # after = FALSE, or this never runs: R fires on.exit handlers in the order
-  # they were registered, the disconnect above was registered first, and the
-  # write would then go to a closed connection and be swallowed by its own
-  # try(). Registered here rather than beside the connection so a preflight
-  # failure still leaves no row at all, which is what the README promises.
+  # after = FALSE, or this fires after the disconnect above and writes to a
+  # closed connection. Registered here, not beside the connection, so a
+  # preflight failure still leaves no status row at all.
   on.exit(if (!isTRUE(getOption("lot_complete", FALSE)))
             try(write_build_status(con, cfg, "failed"), silent = TRUE),
           add = TRUE, after = FALSE)
@@ -356,9 +354,8 @@ lot_inputs_present <- function(con) {
 }
 
 # Persist the cohort and repoint the session view, so every later phase reads
-# one fixed snapshot instead of a view that re-runs against a live table. Then
-# check the snapshot: the first check ran four CSVs and around two dozen
-# queries back, so the rows copied here are not necessarily the rows it passed.
+# one fixed snapshot rather than a view that re-runs against a live table.
+# Then validate the snapshot itself, not just the table it came from.
 materialize_cohort_input <- function(con, before) {
   tbl <- lot_out("LOT_PATIENT_INPUT")
   run_step(con, "S03b_materialize_cohort_input", glue("
@@ -369,10 +366,10 @@ materialize_cohort_input <- function(con, before) {
     CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS SELECT * FROM {tbl}"))
 
   after <- check_cohort_input(con, tbl)
-  # Shape alone would pass a different cohort that is also well formed, which
-  # is the likelier accident than one that is malformed.
+  # A count change, not proof of identity - a same-size swap passes. The
+  # validated snapshot is what makes the run sound; these counts came free.
   if (after$n_rows != before$n_rows || after$n_patients != before$n_patients)
-    stop("The cohort changed between being checked and being pinned: ",
+    stop("The cohort changed size between being checked and being pinned: ",
          before$n_rows, " rows / ", before$n_patients, " patients at the ",
          "check, ", after$n_rows, " / ", after$n_patients, " in ", tbl,
          ". Re-run the build against a settled cohort.", call. = FALSE)
@@ -533,7 +530,6 @@ write_build_status <- function(con, cfg, state) {
     })
   }
 
-  db_exec(con, glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"))
   requested <- paste(codelist_waivers(), collapse = "|")
   # Set by phase_codelists when it waives something. Empty at "started", and on
   # a failure before the code lists ran.
@@ -549,8 +545,11 @@ write_build_status <- function(con, cfg, state) {
   # cannot drift apart again - a column added to BUILD_STATUS_COLS with no
   # value here stops the build rather than reaching the warehouse.
   stopifnot(identical(names(vals), cols))
-  db_exec(con, glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) ",
-                    "VALUES ({paste(vals, collapse = ', ')})"))
+  # One unit: retrying the INSERT alone would leave this run two status rows.
+  db_replace(con,
+    glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"),
+    glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) ",
+         "VALUES ({paste(vals, collapse = ', ')})"))
   log_msg("Build status: ", state, " (run ", run_id, ")")
   invisible(TRUE)
 }
@@ -608,18 +607,58 @@ check_lot1_invariants <- function(con, cfg) {
 # the row actually arrived - a run with no record of how it was configured is
 # not a run anyone can validate later.
 check_run_recorded <- function(con, cfg) {
-  for (t in c("LOT_RUN_METADATA", "LOT_QC_SUMMARY", "LOT_CODELIST_METADATA")) {
-    n <- tryCatch(db_q(con, glue(
-           "SELECT count(*) AS n FROM {lot_out(t)} WHERE RUN_ID = '{run_id}'"))$n,
-         error = function(e) 0L)
-    if (is.na(n) || n < 1)
-      stop("This run left no row in ", lot_out(t), ". The outputs exist but ",
-           "nothing records how they were built.", call. = FALSE)
-  }
+  # Exactly one row, not at least one. 08_persist writes this table with a
+  # DELETE and an INSERT as separately retried statements, so an INSERT that
+  # reached the warehouse with its answer lost leaves two rows. That file is
+  # the ported source, so the duplicate is caught here rather than edited there.
+  meta_tbl <- lot_out("LOT_RUN_METADATA")
+  n <- tryCatch(db_q(con, glue(
+         "SELECT count(*) AS n FROM {meta_tbl} WHERE RUN_ID = '{run_id}'"))$n,
+       error = function(e) 0L)
+  if (is.na(n) || n < 1)
+    stop("This run left no row in ", meta_tbl, ". The outputs exist but ",
+         "nothing records how they were built.", call. = FALSE)
+  if (n > 1)
+    stop(meta_tbl, " has ", n, " rows for this run, so which one describes these ",
+         "outputs is not decidable. A retried INSERT has doubled them.",
+         call. = FALSE)
+
+  # The same fixed set of checks runs every time, so a CHECK_NAME appearing
+  # twice is a doubled write rather than a second finding.
+  qc_tbl <- lot_out("LOT_QC_SUMMARY")
+  q <- tryCatch(db_q(con, glue(
+         "SELECT count(*) AS n, count(DISTINCT CHECK_NAME) AS k
+          FROM {qc_tbl} WHERE RUN_ID = '{run_id}'")),
+       error = function(e) data.frame(n = 0L, k = 0L))
+  if (is.na(q$n) || q$n < 1)
+    stop("This run left no row in ", qc_tbl, ". The outputs exist but ",
+         "nothing records how they were built.", call. = FALSE)
+  if (q$n != q$k)
+    stop(qc_tbl, " has ", q$n, " rows for ", q$k, " checks in this run. A retried ",
+         "INSERT has doubled them.", call. = FALSE)
+  # One row is not the contract: the build reads four code lists and every one
+  # has to be accounted for. "At least one row" would pass a run that recorded
+  # a single file, which is the shape a partial write leaves behind.
+  cl_tbl <- lot_out("LOT_CODELIST_METADATA")
+  c4 <- tryCatch(db_q(con, glue(
+         "SELECT count(*) AS n, count(DISTINCT CODELIST_FILE) AS k
+          FROM {cl_tbl}
+          WHERE RUN_ID = '{run_id}' AND MD5 RLIKE '^[0-9a-f]{{32}}$'
+            AND CODELIST_FILE IN ({paste0(\"'\", CODELIST_FILES, \"'\", collapse = ', ')})")),
+       error = function(e) data.frame(n = 0L, k = 0L))
+  if (is.na(c4$k) || c4$k != length(CODELIST_FILES))
+    stop("This run recorded ", if (is.na(c4$k)) 0 else c4$k, " of ",
+         length(CODELIST_FILES), " code lists in ", cl_tbl,
+         ". The outputs exist but nothing says in full which lists built them.",
+         call. = FALSE)
+  if (c4$n != c4$k)
+    stop(cl_tbl, " has ", c4$n, " rows for ", c4$k, " code lists in this run. A ",
+         "retried INSERT has doubled them.", call. = FALSE)
+
   # The row is written by phase_persist, before LOT2-5 exists, so a row alone
   # says only that LOT1 ran. record_final_counts fills the rest in.
   n <- tryCatch(db_q(con, glue(
-         "SELECT count(*) AS n FROM {lot_out('LOT_RUN_METADATA')}
+         "SELECT count(*) AS n FROM {meta_tbl}
           WHERE RUN_ID = '{run_id}' AND N_LOT_LONG_ROWS IS NOT NULL
             AND N_LOT_FINAL_ROWS IS NOT NULL"))$n,
        error = function(e) 0L)
@@ -650,12 +689,35 @@ record_codelist_hashes <- function(con, cfg) {
   cols <- names(CODELIST_METADATA_COLS)
   db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
                     paste(cols, CODELIST_METADATA_COLS, collapse = ", "), ")"))
-  db_exec(con, glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"))
+
+  # CREATE TABLE IF NOT EXISTS does nothing to a table an earlier version left
+  # behind, and the INSERT below names its columns - so one this table lacks
+  # fails the run rather than being filled positionally. The other two metadata
+  # tables already migrate; this one did not, and the first column to be renamed
+  # or added would have stopped every schema that had run the older version.
+  have <- tryCatch({
+    d  <- db_q(con, glue("DESCRIBE {tbl}"))
+    cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
+    if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else character(0)
+  }, error = function(e) character(0))
+  if (!length(have))
+    stop("Cannot read the columns of ", tbl, ", so the code list hashes cannot ",
+         "be recorded.", call. = FALSE)
+  add <- setdiff(cols, have)
+  if (length(add)) {
+    db_exec(con, glue("ALTER TABLE {tbl} ADD COLUMNS (",
+                      paste(add, CODELIST_METADATA_COLS[add], collapse = ", "), ")"))
+    log_msg("  Codelist metadata schema evolution: added ", paste(add, collapse = ", "))
+  }
+
   vals <- vapply(CODELIST_FILES, function(f) glue(
     "('{run_id}', '{f}', '{seen[[f]]$md5}', {seen[[f]]$n_rows}, current_timestamp())"),
     character(1), USE.NAMES = FALSE)
-  db_exec(con, glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES ",
-                    paste(vals, collapse = ", ")))
+  # One unit: retrying the INSERT alone would record each file twice.
+  db_replace(con,
+    glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"),
+    glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES ",
+         paste(vals, collapse = ", ")))
   log_msg("Recorded ", length(CODELIST_FILES), " code list hashes in ", tbl)
   invisible(TRUE)
 }
@@ -694,14 +756,15 @@ record_final_counts <- function(con, cfg, counts, final) {
   by_line <- db_q(con, glue("
     SELECT LOT_NUM, count(*) AS n FROM {lot_out('LOT_LONG')}
     GROUP BY LOT_NUM ORDER BY LOT_NUM"))
-  dist <- paste(paste0(by_line$LOT_NUM, ":", by_line$n), collapse = "|")
+  dist <- paste(paste0(by_line$LOT_NUM, ":",
+                       vapply(by_line$n, sql_count, character(1))), collapse = "|")
   db_exec(con, glue("
     UPDATE {tbl}
-       SET N_LOT_LONG_ROWS = {counts$n_rows},
-           N_LOT_LONG_PATIENTS = {counts$n_patients},
+       SET N_LOT_LONG_ROWS = {sql_count(counts$n_rows)},
+           N_LOT_LONG_PATIENTS = {sql_count(counts$n_patients)},
            LOT_LONG_BY_LINE = '{dist}',
-           N_LOT_FINAL_ROWS = {final$n_rows},
-           N_LOT_FINAL_PATIENTS = {final$n_patients}
+           N_LOT_FINAL_ROWS = {sql_count(final$n_rows)},
+           N_LOT_FINAL_PATIENTS = {sql_count(final$n_patients)}
      WHERE RUN_ID = '{run_id}'"))
   log_msg("Recorded LOT_LONG: ", counts$n_rows, " lines for ",
           counts$n_patients, " patients (", dist, "); LOT_LONG_FINAL: ",
@@ -712,7 +775,7 @@ record_final_counts <- function(con, cfg, counts, final) {
 # LOT_LONG invariants. These are structural, not judgement calls, so a breach
 # stops the build rather than printing INVESTIGATE.
 check_lot_long <- function(con, cfg) {
-  t <- lot_out("LOT_LONG")
+  tbl <- lot_out("LOT_LONG")
   # SUM is NULL on an empty table. Coalesce the validation counts.
   q <- db_q(con, glue("
     SELECT count(*) AS n_rows,
@@ -721,33 +784,33 @@ check_lot_long <- function(con, cfg) {
            coalesce(sum(CASE WHEN LOT_BASE_END_DT IS NULL THEN 1 ELSE 0 END), 0) AS n_null_end,
            coalesce(sum(CASE WHEN LOT_BASE_END_DT < LOT_START_DT THEN 1 ELSE 0 END), 0) AS n_end_before_start,
            coalesce(sum(CASE WHEN LOT_NUM < 1 OR LOT_NUM > {cfg$max_lot} THEN 1 ELSE 0 END), 0) AS n_bad_lot_num
-    FROM {t}"))
+    FROM {tbl}"))
   # Nothing else is worth saying about an empty table, and stopping here means
   # neither the four queries below nor the counts above run on one - so a lost
   # coalesce cannot turn this into an R error either.
-  if (q$n_rows == 0) stop(t, " is not usable: it is empty", call. = FALSE)
+  if (q$n_rows == 0) stop(tbl, " is not usable: it is empty", call. = FALSE)
   d <- db_q(con, glue("
     SELECT count(*) AS n FROM (
-      SELECT PATID, LOT_NUM FROM {t} GROUP BY PATID, LOT_NUM HAVING count(*) > 1)"))$n
+      SELECT PATID, LOT_NUM FROM {tbl} GROUP BY PATID, LOT_NUM HAVING count(*) > 1)"))$n
   # A line has to start after the previous one ended. Every LOT_N candidate is
   # taken strictly after PREV_END_DT, so anything else means the chain broke.
   seq_bad <- db_q(con, glue("
     SELECT count(*) AS n FROM (
       SELECT LOT_START_DT,
              lag(LOT_BASE_END_DT) OVER (PARTITION BY PATID ORDER BY LOT_NUM) AS prev_end
-      FROM {t})
+      FROM {tbl})
     WHERE prev_end IS NOT NULL AND LOT_START_DT <= prev_end"))$n
   # And no line may run past the patient's observation. Every branch of the
   # end-date rule is bounded by OBS_END_DT, so a breach is a real defect.
   past_obs <- db_q(con, glue("
     SELECT count(*) AS n
-    FROM {t} l
+    FROM {tbl} l
     INNER JOIN lot_patient_input p ON l.PATID = p.PATID
     WHERE l.LOT_BASE_END_DT > p.OBS_END_DT"))$n
   g <- db_q(con, glue("
     SELECT count(*) AS n FROM (
       SELECT PATID, min(LOT_NUM) AS lo, max(LOT_NUM) AS hi, count(DISTINCT LOT_NUM) AS k
-      FROM {t} GROUP BY PATID HAVING lo <> 1 OR k <> hi - lo + 1)"))$n
+      FROM {tbl} GROUP BY PATID HAVING lo <> 1 OR k <> hi - lo + 1)"))$n
   bad <- character(0)
   if (d > 0)                   bad <- c(bad, paste0(d, " duplicate (PATID, LOT_NUM)"))
   # First, because a null date is why every other check here would pass. All
@@ -761,27 +824,21 @@ check_lot_long <- function(con, cfg) {
   if (seq_bad > 0)             bad <- c(bad, paste0(seq_bad, " lines starting on or before the previous line's end"))
   if (past_obs > 0)            bad <- c(bad, paste0(past_obs, " lines ending after the patient's observation"))
   if (length(bad))
-    stop(t, " is not usable: ", paste(bad, collapse = "; "), call. = FALSE)
+    stop(tbl, " is not usable: ", paste(bad, collapse = "; "), call. = FALSE)
   log_msg("LOT_LONG OK: ", q$n_rows, " lines for ", q$n_patients, " patients")
   # Handed to record_final_counts rather than counted again.
   invisible(list(n_rows = q$n_rows, n_patients = q$n_patients))
 }
 
-# LOT_LONG_FINAL is the table downstream reads, and nothing looked at it:
-# check_lot_long ran on LOT_LONG, and the count beside the write is printed,
-# not checked. With no criteria declared the two are the same table and this
-# costs two aggregates. With a truncate criterion they are not, and a criterion
-# that fails everyone at LOT 1 would leave an empty deliverable behind a run
-# that still reached "complete".
-#
-# LOT_LONG_ALLFLAGS needs no equivalent: the criteria layer only adds columns
-# to it, so its rows are LOT_LONG's whatever is declared.
+# Validate the table downstream reads. check_lot_long ran on LOT_LONG, which is
+# a different table once a truncate criterion is declared. LOT_LONG_ALLFLAGS
+# needs no equivalent: the layer only adds columns, so its rows are LOT_LONG's.
 check_lot_final <- function(con, cfg) {
-  t <- lot_out("LOT_LONG_FINAL")
+  tbl <- lot_out("LOT_LONG_FINAL")
   q <- db_q(con, glue("
-    SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients FROM {t}"))
+    SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients FROM {tbl}"))
   if (q$n_rows == 0)
-    stop(t, " is empty, so the run produced no lines to read. LOT_LONG has ",
+    stop(tbl, " is empty, so the run produced no lines to read. LOT_LONG has ",
          "rows, so a truncate criterion has removed every one of them - check ",
          "the criterion's SQL and its APPLY_ switch.", call. = FALSE)
   # truncate drops the first failing line and every later one, so what is left
@@ -791,9 +848,9 @@ check_lot_final <- function(con, cfg) {
     SELECT count(*) AS n FROM (
       SELECT PATID, min(LOT_NUM) AS lo, max(LOT_NUM) AS hi,
              count(DISTINCT LOT_NUM) AS k
-      FROM {t} GROUP BY PATID HAVING lo <> 1 OR k <> hi - lo + 1)"))$n
+      FROM {tbl} GROUP BY PATID HAVING lo <> 1 OR k <> hi - lo + 1)"))$n
   if (g > 0)
-    stop(t, " is not usable: ", g, " patients whose lines do not run 1..n. ",
+    stop(tbl, " is not usable: ", g, " patients whose lines do not run 1..n. ",
          "truncate removes a failing line and every later one, so a gap means ",
          "the removal is not doing that.", call. = FALSE)
   log_msg("LOT_LONG_FINAL OK: ", q$n_rows, " lines for ", q$n_patients,

@@ -75,7 +75,12 @@ lot_out <- function(tbl) {
 
 get_quarter_suffix <- function(end_date) {
   v  <- trimws(as.character(end_date))
-  dt <- suppressWarnings(as.Date(v))                       # ISO first
+  # tryCatch, not just suppressWarnings: as.Date ERRORS on a string matching
+  # none of its standard formats rather than returning NA, so "06/30/2025"
+  # stopped here and never reached the recovery below - which meant two of the
+  # five layouts it lists, the US month-first ones, could not be recovered, and
+  # the message at the bottom naming STUDY_END could not be reached either.
+  dt <- tryCatch(suppressWarnings(as.Date(v)), error = function(e) NA)  # ISO first
   yr <- if (!is.na(dt)) as.integer(format(dt, "%Y")) else NA_integer_
   # as.Date("30-06-2025") does NOT return NA - it yields year 0030.
   # Treat an implausible year as a parse failure and retry the common
@@ -136,8 +141,35 @@ with_retry <- function(fn, max_retries = lot_config()$max_retries,
   }
 }
 
+# The retry is around the whole call, so what it retries has to be safe to run
+# twice. One CREATE OR REPLACE or one DELETE is; an INSERT on its own is not.
+db_exec_once <- function(con, sql) DBI::dbExecute(con, sql)
+
 db_exec <- function(con, sql) {
-  with_retry(function() DBI::dbExecute(con, sql))
+  with_retry(function() db_exec_once(con, sql))
+}
+
+# A count, as SQL rather than as R prints it. as.character(1e5) is "1e+05" -
+# R uses scientific notation whenever it is shorter, which for a whole number
+# means any exact power of ten from 100000 up. Interpolated into an INSERT that
+# is a DOUBLE literal going into a BIGINT column, which Spark's ANSI store
+# assignment refuses; interpolated into a string column it is simply recorded
+# wrong. Rare - the count has to land on the power of ten exactly - and glue
+# and paste0 both take the as.character route, so counts go through here.
+sql_count <- function(x) {
+  if (length(x) != 1L || is.na(x)) return("NULL")
+  format(x, scientific = FALSE, trim = TRUE)
+}
+
+# Statements that only make sense together, retried together. Written as two
+# db_exec calls, a DELETE and an INSERT are retried separately: if the INSERT
+# reaches the warehouse but the answer is lost, the retry inserts a second copy
+# and the DELETE that would have cleared it has already run. Retrying the pair
+# re-runs the DELETE first, so a second attempt lands the same rows once.
+db_replace <- function(con, ...) {
+  sqls <- c(...)
+  with_retry(function() for (s in sqls) db_exec_once(con, s))
+  invisible(TRUE)
 }
 
 db_q <- function(con, sql) {

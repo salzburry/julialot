@@ -161,41 +161,83 @@ ok(length(unresolved) == 0,
                                   paste(unresolved, collapse = ", "))
    else paste0("all ", length(called), " calls in build.R resolve"))
 
-# Every step has to parse. A syntax error here would only surface mid-run,
-# after the connection is open and the earlier phases have already written.
-for (f in file.path(steps_dir, step_files)) {
+# Every file the build sources, not only the steps. build_lot.R is the largest
+# hand-written file here and its call graph was never checked: a name that
+# exists nowhere would have surfaced at run time, on whichever branch reached
+# it, and several of its functions are only driven by tests through a stub.
+PKG_R <- c(list.files(file.path(ROOT, "R"), "\\.R$", full.names = TRUE),
+           file.path(steps_dir, step_files))
+
+# Everything has to parse. A syntax error would only surface mid-run, after the
+# connection is open and the earlier phases have already written.
+for (f in PKG_R) {
   e <- tryCatch({ parse(f); NULL }, error = function(e) e)
   ok(is.null(e), paste0(basename(f), ": parses",
                         if (!is.null(e)) paste0(" -- ", conditionMessage(e)) else ""))
 }
 
-# ...and every function the steps call has to exist. glue comes from the
-# package build.R loads, so it resolves at run time even when absent here.
-sraw <- paste(unlist(lapply(file.path(steps_dir, step_files), readLines, warn = FALSE)),
-              collapse = "\n")
-ssrc <- gsub("#[^\n]*", "", sraw)
-ssrc <- gsub('"[^"]*"', '""', ssrc)
-ssrc <- gsub("'[^']*'", "''", ssrc)
-scalled <- unique(sub("\\($", "", regmatches(ssrc,
-  gregexpr("(?<![$:\\w.])[A-Za-z_][A-Za-z0-9_.]*\\(", ssrc, perl = TRUE))[[1]]))
+# ...and every function any of them calls has to exist. Read from the parse
+# tree, not from the text. The old scanner collapsed quoted spans and stripped
+# comments so that SQL would not read as R, and it could be defeated from
+# either side: an apostrophe in a comment shifts every quote pair after it, and
+# so does a '#' inside a string - load_inputs.R tests startsWith(nm, "#"), and
+# cutting the line there drops the closing quote. Either way a span of real
+# code is blanked out, or a page of SQL stops being quoted and its function
+# names come out as undefined calls. The parser has neither problem.
+scan_r <- function(f) {
+  calls <- character(0); formals_seen <- character(0); defs <- character(0)
+  walk <- function(e) {
+    if (!is.call(e)) return(invisible(NULL))
+    h <- e[[1]]
+    if (is.name(h)) calls <<- c(calls, as.character(h))
+    hn <- as.character(h)[1]
+    # A parameter can be called: with_retry(fn) calls fn().
+    if (identical(hn, "function") && length(e) >= 2 && is.pairlist(e[[2]]))
+      formals_seen <<- c(formals_seen, names(e[[2]]))
+    # name <- function(...), at any depth: sanitize_col is defined inside
+    # phase_codelists and handed to later phases through ctx.
+    if (hn %in% c("<-", "=", "<<-") && length(e) == 3L && is.name(e[[2]]) &&
+        is.call(e[[3]]) && identical(as.character(e[[3]][[1]])[1], "function"))
+      defs <<- c(defs, as.character(e[[2]]))
+    # glue templates are string literals to the parser, and they are how this
+    # package writes SQL: lot_out() and sql_count() are called inside them.
+    # Parse each {...} span and walk that too, or a typo there is invisible
+    # here and only shows up if some test happens to drive that line.
+    if (identical(hn, "glue")) {
+      for (i in seq_along(e)) {
+        a <- e[i][[1]]
+        if (!is.character(a) || length(a) != 1L) next
+        for (sp in regmatches(a, gregexpr("\\{[^{}]*\\}", a))[[1]]) {
+          inner <- substr(sp, 2L, nchar(sp) - 1L)
+          ex <- tryCatch(parse(text = inner), error = function(err) NULL)
+          if (!is.null(ex)) for (q in ex) walk(q)
+        }
+      }
+    }
+    for (i in seq_along(e)) {
+      # A formal with no default is the empty symbol. Binding it to a name
+      # first makes the name missing, and testing it then errors - so index
+      # and test in one expression.
+      x <- e[i]
+      if (is.call(x[[1]]) || is.name(x[[1]])) walk(x[[1]])
+    }
+  }
+  for (ex in parse(f)) walk(ex)
+  list(calls = unique(calls), known = unique(c(formals_seen, defs)))
+}
+seen    <- lapply(PKG_R, scan_r)
+scalled <- unique(unlist(lapply(seen, `[[`, "calls")))
+sknown  <- unique(unlist(lapply(seen, `[[`, "known")))
+# glue comes from the package build.R loads, so it resolves at run time even
+# when absent here.
 FROM_PKG <- c("glue")
-# Functions assigned inside another one - sanitize_col lives in the middle of
-# phase_codelists - are not visible in `mod`, so collect them from the source.
-# Looser than scoping, but this check exists to catch a name that exists
-# nowhere, and R itself catches one called out of scope.
-#
-# From the comment-stripped source, not the quote-collapsed one: an apostrophe
-# in a comment shifts every quote pairing after it, and a span of real code
-# then gets blanked out. That is why comments are stripped first above.
-sdefs <- gsub("#[^\n]*", "", sraw)
-slocal <- trimws(sub("\\s*<-.*", "", regmatches(sdefs,
-  gregexpr("(?m)^\\s*[A-Za-z_][A-Za-z0-9_.]*\\s*<- function\\(",
-           sdefs, perl = TRUE))[[1]]))
 sbad <- Filter(function(f) !exists(f, envir = mod) && !exists(f) &&
-                 !f %in% FROM_PKG && !f %in% slocal,
+                 !f %in% FROM_PKG && !f %in% sknown,
                scalled)
 ok(length(sbad) == 0,
-   if (length(sbad)) paste0("steps call undefined: ", paste(sbad, collapse = ", "))
-   else paste0("all ", length(scalled), " calls in the steps resolve"))
+   if (length(sbad)) paste0("the package calls undefined: ",
+                            paste(sbad, collapse = ", "))
+   else paste0("all ", length(scalled), " calls across the ", length(PKG_R),
+               " sourced files resolve"))
 
 report()
