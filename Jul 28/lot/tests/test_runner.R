@@ -654,17 +654,17 @@ assign("lot_out", function(x) paste0("wk.p_", x), envir = fe)
 assign("run_id", "R1", envir = fe)
 FSQL <- character(0); FQRY <- character(0)
 assign("db_exec", function(con, s) { FSQL <<- c(FSQL, s); TRUE }, envir = fe)
-drive_fm <- function(have) {
+drive_fm <- function(have, counts = list(n_rows = 1420, n_patients = 900),
+                     final = list(n_rows = 1300, n_patients = 870),
+                     by_line = c(900, 400, 120)) {
   FSQL <<- character(0); FQRY <<- character(0)
   assign("db_q", function(con, s) {
     FQRY <<- c(FQRY, s)
     if (grepl("DESCRIBE", s)) return(if (is.null(have)) stop("no")
                                      else data.frame(col_name = have))
-    data.frame(LOT_NUM = 1:3, n = c(900, 400, 120))
+    data.frame(LOT_NUM = seq_along(by_line), n = by_line)
   }, envir = fe)
-  tryCatch({ fe$record_final_counts(NULL, list(),
-                                    list(n_rows = 1420, n_patients = 900),
-                                    list(n_rows = 1300, n_patients = 870)); NULL },
+  tryCatch({ fe$record_final_counts(NULL, list(), counts, final); NULL },
            error = conditionMessage)
 }
 base_cols <- c("RUN_ID", "N_COHORT_PATIENTS", "N_LOT1_PATIENTS")
@@ -695,6 +695,25 @@ ok(is.null(drive_fm(c(base_cols, names(get("FINAL_METADATA_COLS", envir = fe))))
    "a later run finds them and alters nothing")
 ok(!is.null(drive_fm(NULL)),
    "a DESCRIBE that cannot answer stops rather than adding columns blind")
+# R prints a whole number in scientific notation whenever that is shorter, so
+# any exact power of ten from 100000 up: as.character(1e6) is "1e+06". glue and
+# paste0 both take that route. In the UPDATE it is a DOUBLE literal going into
+# a BIGINT column; in LOT_LONG_BY_LINE it is simply recorded wrong, and nothing
+# would have complained. Driven with the counts that trigger it.
+all_cols <- c(base_cols, names(get("FINAL_METADATA_COLS", envir = fe)))
+ok(is.null(drive_fm(all_cols,
+                    counts  = list(n_rows = 1e6, n_patients = 1e5),
+                    final   = list(n_rows = 1e6, n_patients = 1e5),
+                    by_line = c(1e5, 400))),
+   "a run whose counts land on a power of ten still records them")
+u <- grep("UPDATE", FSQL, value = TRUE)[1]
+ok(grepl("N_LOT_LONG_ROWS = 1000000", u, fixed = TRUE) &&
+     grepl("N_LOT_LONG_PATIENTS = 100000", u, fixed = TRUE) &&
+     grepl("N_LOT_FINAL_ROWS = 1000000", u, fixed = TRUE),
+   "as digits, not as 1e+06 - which is a double literal for a BIGINT column")
+ok(grepl("LOT_LONG_BY_LINE = '1:100000|2:400'", u, fixed = TRUE),
+   "and the line distribution too, where it would have been recorded wrong in silence")
+ok(!grepl("e+0", u, fixed = TRUE), "no scientific notation reaches the statement")
 # Recorded after check_lot_long, so the numbers describe a table already found
 # usable - and check_run_recorded now asks for them, not merely for a row.
 ok(regexpr("check_lot_long(", body, fixed = TRUE) <
@@ -1383,6 +1402,18 @@ for (k in names(EXPECT))
 # The caller passes the cohort, so config.csv must not pin one.
 ok(!any(c("INPUT_COHORT_TABLE", "OBJECT_PREFIX") %in% names(shipped)),
    "config.csv does not name a cohort")
+
+cat("\n-- a count reaches SQL as digits --\n")
+sc <- get("sql_count", envir = globalenv())
+ok(identical(sc(1e5), "100000") && identical(sc(1e6), "1000000") &&
+     identical(sc(2^40), "1099511627776"),
+   "powers of ten, which as.character() would render 1e+05")
+ok(identical(sc(123456), "123456") && identical(sc(100000L), "100000"),
+   "and ordinary values and integers are unchanged")
+# A count that came back NULL is not a count of zero, and 'NA' in the statement
+# would be a column name to Spark.
+ok(identical(sc(NA_real_), "NULL") && identical(sc(NULL), "NULL"),
+   "a missing count is NULL, not the text NA")
 
 cat("\n-- a DELETE and its INSERT are retried together --\n")
 # with_retry wraps the whole call, so what it retries has to be safe to run

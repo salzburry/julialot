@@ -513,6 +513,16 @@ Preflight - the settings, the contract, the connection, the cohort table -
 runs before the first status row, so a run that fails there leaves no row at
 all rather than a `failed` one. Nothing has been written by then.
 
+Counts go into SQL through `sql_count()`. `as.character(1e6)` is `"1e+06"` - R
+uses scientific notation whenever it is shorter, which for a whole number means
+any exact power of ten from 100000 up, and both `glue` and `paste0` take that
+route. In an `UPDATE` that is a double literal going into a `BIGINT` column,
+which Spark's ANSI store assignment refuses; in `LOT_LONG_BY_LINE` it is a
+string column, so it would simply have been recorded wrong with nothing
+complaining. `08_persist.R` writes its four LOT1 counts the same way and is the
+ported source, so it is unchanged - there the failure is loud, and
+`check_run_recorded()` stops the run.
+
 Every write that is a DELETE of this run's rows followed by an INSERT goes
 through `db_replace()`, which retries the pair rather than each statement.
 `with_retry` wraps the whole call, so what it retries has to be safe to run

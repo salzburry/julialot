@@ -144,6 +144,18 @@ db_exec <- function(con, sql) {
   with_retry(function() db_exec_once(con, sql))
 }
 
+# A count, as SQL rather than as R prints it. as.character(1e5) is "1e+05" -
+# R uses scientific notation whenever it is shorter, which for a whole number
+# means any exact power of ten from 100000 up. Interpolated into an INSERT that
+# is a DOUBLE literal going into a BIGINT column, which Spark's ANSI store
+# assignment refuses; interpolated into a string column it is simply recorded
+# wrong. Rare - the count has to land on the power of ten exactly - and glue
+# and paste0 both take the as.character route, so counts go through here.
+sql_count <- function(x) {
+  if (length(x) != 1L || is.na(x)) return("NULL")
+  format(x, scientific = FALSE, trim = TRUE)
+}
+
 # Statements that only make sense together, retried together. Written as two
 # db_exec calls, a DELETE and an INSERT are retried separately: if the INSERT
 # reaches the warehouse but the answer is lost, the retry inserts a second copy

@@ -756,14 +756,15 @@ record_final_counts <- function(con, cfg, counts, final) {
   by_line <- db_q(con, glue("
     SELECT LOT_NUM, count(*) AS n FROM {lot_out('LOT_LONG')}
     GROUP BY LOT_NUM ORDER BY LOT_NUM"))
-  dist <- paste(paste0(by_line$LOT_NUM, ":", by_line$n), collapse = "|")
+  dist <- paste(paste0(by_line$LOT_NUM, ":",
+                       vapply(by_line$n, sql_count, character(1))), collapse = "|")
   db_exec(con, glue("
     UPDATE {tbl}
-       SET N_LOT_LONG_ROWS = {counts$n_rows},
-           N_LOT_LONG_PATIENTS = {counts$n_patients},
+       SET N_LOT_LONG_ROWS = {sql_count(counts$n_rows)},
+           N_LOT_LONG_PATIENTS = {sql_count(counts$n_patients)},
            LOT_LONG_BY_LINE = '{dist}',
-           N_LOT_FINAL_ROWS = {final$n_rows},
-           N_LOT_FINAL_PATIENTS = {final$n_patients}
+           N_LOT_FINAL_ROWS = {sql_count(final$n_rows)},
+           N_LOT_FINAL_PATIENTS = {sql_count(final$n_patients)}
      WHERE RUN_ID = '{run_id}'"))
   log_msg("Recorded LOT_LONG: ", counts$n_rows, " lines for ",
           counts$n_patients, " patients (", dist, "); LOT_LONG_FINAL: ",
