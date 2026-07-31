@@ -168,15 +168,28 @@ for (f in file.path(steps_dir, step_files)) {
 
 # ...and every function the steps call has to exist. glue comes from the
 # package build.R loads, so it resolves at run time even when absent here.
-ssrc <- paste(unlist(lapply(file.path(steps_dir, step_files), readLines, warn = FALSE)),
+sraw <- paste(unlist(lapply(file.path(steps_dir, step_files), readLines, warn = FALSE)),
               collapse = "\n")
+ssrc <- gsub("#[^\n]*", "", sraw)
 ssrc <- gsub('"[^"]*"', '""', ssrc)
 ssrc <- gsub("'[^']*'", "''", ssrc)
-ssrc <- gsub("#[^\n]*", "", ssrc)
 scalled <- unique(sub("\\($", "", regmatches(ssrc,
   gregexpr("(?<![$:\\w.])[A-Za-z_][A-Za-z0-9_.]*\\(", ssrc, perl = TRUE))[[1]]))
 FROM_PKG <- c("glue")
-sbad <- Filter(function(f) !exists(f, envir = mod) && !exists(f) && !f %in% FROM_PKG,
+# Functions assigned inside another one - sanitize_col lives in the middle of
+# phase_codelists - are not visible in `mod`, so collect them from the source.
+# Looser than scoping, but this check exists to catch a name that exists
+# nowhere, and R itself catches one called out of scope.
+#
+# From the comment-stripped source, not the quote-collapsed one: an apostrophe
+# in a comment shifts every quote pairing after it, and a span of real code
+# then gets blanked out. That is why comments are stripped first above.
+sdefs <- gsub("#[^\n]*", "", sraw)
+slocal <- trimws(sub("\\s*<-.*", "", regmatches(sdefs,
+  gregexpr("(?m)^\\s*[A-Za-z_][A-Za-z0-9_.]*\\s*<- function\\(",
+           sdefs, perl = TRUE))[[1]]))
+sbad <- Filter(function(f) !exists(f, envir = mod) && !exists(f) &&
+                 !f %in% FROM_PKG && !f %in% slocal,
                scalled)
 ok(length(sbad) == 0,
    if (length(sbad)) paste0("steps call undefined: ", paste(sbad, collapse = ", "))

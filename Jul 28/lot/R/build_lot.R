@@ -36,22 +36,16 @@ CONTRACT <- list(
   tbl_rx                      = "rx"
 )
 
-# Code-list checks a run may waive by name. A single switch for all of them
-# meant waiving one expected condition also waived the dangerous ones.
-#
-# These have a reading a study team can accept: a medication deliberately kept
-# in a separate file, a code type unused by this study, a substitution left
-# inactive, a ten-digit NDC in a documented layout.
-WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types", "multi_class",
+# Reviewable code-list checks: each has a reading a study team can accept.
+# Named individually, because one switch for all of them meant waiving an
+# expected condition also waived the dangerous ones.
+WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types",
                      "subs_substitute", "subs_original", "ndc_short")
 
-# These do not. Each one means a claim counted twice, a code matching every
-# claim with no NDC, a medication with no class, or an output column that is
-# always zero - conditions to correct in the code list, not to accept. Named
-# rather than merely absent, so a waiver naming one is told why it is refused
-# instead of "no such check".
+# Fatal checks: always stop the build. Named rather than merely absent, so a
+# waiver naming one is told why it is refused instead of "no such check".
 FATAL_CHECKS <- c("code_to_med", "bad_ndc", "rollup_defs", "blank_keys",
-                  "ndc_shape", "class_agreement")
+                  "ndc_shape", "multi_class", "class_agreement")
 
 ALL_CHECKS <- c(WAIVABLE_CHECKS, FATAL_CHECKS)
 
@@ -180,16 +174,21 @@ check_cohort_input <- function(con, cfg) {
   # patient would multiply their claims and their lines, so check the shape too,
   # not just the column names. ENDDATE_CE may be null: the primary branch uses
   # ENDDATE and the sensitivity branch falls back to it.
+  # coalesce on every sum: over no rows sum() is NULL, which arrives as NA and
+  # turns the comparisons below into "missing value where TRUE/FALSE needed" -
+  # an R error in place of the reason.
   q <- db_q(con, glue("
     SELECT count(*) AS n_rows,
            count(DISTINCT PATID) AS n_patients,
-           sum(CASE WHEN PATID IS NULL THEN 1 ELSE 0 END) AS n_null_patid,
-           sum(CASE WHEN INDEX_DATE IS NULL THEN 1 ELSE 0 END) AS n_null_index,
-           sum(CASE WHEN ENDDATE IS NULL THEN 1 ELSE 0 END) AS n_null_end,
-           sum(CASE WHEN ENDDATE < INDEX_DATE THEN 1 ELSE 0 END) AS n_end_before_index
+           coalesce(sum(CASE WHEN PATID IS NULL THEN 1 ELSE 0 END), 0) AS n_null_patid,
+           coalesce(sum(CASE WHEN INDEX_DATE IS NULL THEN 1 ELSE 0 END), 0) AS n_null_index,
+           coalesce(sum(CASE WHEN ENDDATE IS NULL THEN 1 ELSE 0 END), 0) AS n_null_end,
+           coalesce(sum(CASE WHEN ENDDATE < INDEX_DATE THEN 1 ELSE 0 END), 0) AS n_end_before_index
     FROM {tbl}"))
+  # Nothing else is worth saying about an empty table, and stopping here means
+  # the counts above are never compared even if a coalesce is lost later.
+  if (q$n_rows == 0) stop(tbl, " cannot drive LOT: it is empty", call. = FALSE)
   bad <- character(0)
-  if (q$n_rows == 0)            bad <- c(bad, "it is empty")
   if (q$n_null_patid > 0)       bad <- c(bad, paste0(q$n_null_patid, " rows have no PATID"))
   if (q$n_null_index > 0)       bad <- c(bad, paste0(q$n_null_index, " rows have no INDEX_DATE"))
   if (q$n_null_end > 0)         bad <- c(bad, paste0(q$n_null_end, " rows have no ENDDATE"))
@@ -268,6 +267,8 @@ build_lot <- function(here, cohort_table, prefix) {
   # new LOT1 output beside an older LOT_LONG. Splitting the persist step would
   # break the line-for-line port, so instead every run says what state it is
   # in: nothing here is complete until the last line below says so.
+  # Cleared first, or a second run in one session inherits the first's.
+  options(lot_waivers_applied = character(0))
   write_build_status(con, cfg, "started")
   on.exit(if (!isTRUE(getOption("lot_complete", FALSE)))
             try(write_build_status(con, cfg, "failed"), silent = TRUE), add = TRUE)
@@ -362,9 +363,13 @@ materialize_sct_views <- function(con) {
 
 # One row per run saying whether its outputs belong together. Without it a
 # failed run leaves tables that look complete.
+# REQUESTED is what the run was given; APPLIED is what actually fired and was
+# waived, which is the one that says something about the code lists. A run can
+# request a waiver for a condition that never occurs.
 BUILD_STATUS_COLS <- c(
   RUN_ID = "STRING", INPUT_COHORT_TABLE = "STRING", OBJECT_PREFIX = "STRING",
-  STATE = "STRING", CODELIST_WAIVERS = "STRING", UPDATED_AT = "TIMESTAMP")
+  STATE = "STRING", CODELIST_WAIVERS_REQUESTED = "STRING",
+  CODELIST_WAIVERS_APPLIED = "STRING", UPDATED_AT = "TIMESTAMP")
 
 write_build_status <- function(con, cfg, state) {
   tbl  <- lot_out("LOT_BUILD_STATUS")
@@ -398,13 +403,17 @@ write_build_status <- function(con, cfg, state) {
   }
 
   db_exec(con, glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"))
-  waivers <- paste(codelist_waivers(), collapse = "|")
-  vals <- c(RUN_ID             = glue("'{run_id}'"),
-            INPUT_COHORT_TABLE = glue("'{cfg$input_cohort_table}'"),
-            OBJECT_PREFIX      = glue("'{cfg$object_prefix}'"),
-            STATE              = glue("'{state}'"),
-            CODELIST_WAIVERS   = glue("'{waivers}'"),
-            UPDATED_AT         = "current_timestamp()")
+  requested <- paste(codelist_waivers(), collapse = "|")
+  # Set by phase_codelists when it waives something. Empty at "started", and on
+  # a failure before the code lists ran.
+  applied <- paste(getOption("lot_waivers_applied", character(0)), collapse = "|")
+  vals <- c(RUN_ID                     = glue("'{run_id}'"),
+            INPUT_COHORT_TABLE         = glue("'{cfg$input_cohort_table}'"),
+            OBJECT_PREFIX              = glue("'{cfg$object_prefix}'"),
+            STATE                      = glue("'{state}'"),
+            CODELIST_WAIVERS_REQUESTED = glue("'{requested}'"),
+            CODELIST_WAIVERS_APPLIED   = glue("'{applied}'"),
+            UPDATED_AT                 = "current_timestamp()")
   # One declaration drives the CREATE, the upgrade and the INSERT, so they
   # cannot drift apart again - a column added to BUILD_STATUS_COLS with no
   # value here stops the build rather than reaching the warehouse.
@@ -477,14 +486,21 @@ check_run_recorded <- function(con, cfg) {
 # stops the build rather than printing INVESTIGATE.
 check_lot_long <- function(con, cfg) {
   t <- lot_out("LOT_LONG")
+  # coalesce on every sum: over no rows sum() is NULL, which arrives as NA and
+  # turns the comparisons below into "missing value where TRUE/FALSE needed" -
+  # an R error in place of the reason.
   q <- db_q(con, glue("
     SELECT count(*) AS n_rows,
            count(DISTINCT PATID) AS n_patients,
-           sum(CASE WHEN LOT_START_DT IS NULL THEN 1 ELSE 0 END) AS n_null_start,
-           sum(CASE WHEN LOT_BASE_END_DT IS NULL THEN 1 ELSE 0 END) AS n_null_end,
-           sum(CASE WHEN LOT_BASE_END_DT < LOT_START_DT THEN 1 ELSE 0 END) AS n_end_before_start,
-           sum(CASE WHEN LOT_NUM < 1 OR LOT_NUM > {cfg$max_lot} THEN 1 ELSE 0 END) AS n_bad_lot_num
+           coalesce(sum(CASE WHEN LOT_START_DT IS NULL THEN 1 ELSE 0 END), 0) AS n_null_start,
+           coalesce(sum(CASE WHEN LOT_BASE_END_DT IS NULL THEN 1 ELSE 0 END), 0) AS n_null_end,
+           coalesce(sum(CASE WHEN LOT_BASE_END_DT < LOT_START_DT THEN 1 ELSE 0 END), 0) AS n_end_before_start,
+           coalesce(sum(CASE WHEN LOT_NUM < 1 OR LOT_NUM > {cfg$max_lot} THEN 1 ELSE 0 END), 0) AS n_bad_lot_num
     FROM {t}"))
+  # Nothing else is worth saying about an empty table, and stopping here means
+  # neither the four queries below nor the counts above run on one - so a lost
+  # coalesce cannot turn this into an R error either.
+  if (q$n_rows == 0) stop(t, " is not usable: it is empty", call. = FALSE)
   d <- db_q(con, glue("
     SELECT count(*) AS n FROM (
       SELECT PATID, LOT_NUM FROM {t} GROUP BY PATID, LOT_NUM HAVING count(*) > 1)"))$n
@@ -508,7 +524,6 @@ check_lot_long <- function(con, cfg) {
       SELECT PATID, min(LOT_NUM) AS lo, max(LOT_NUM) AS hi, count(DISTINCT LOT_NUM) AS k
       FROM {t} GROUP BY PATID HAVING lo <> 1 OR k <> hi - lo + 1)"))$n
   bad <- character(0)
-  if (q$n_rows == 0)           bad <- c(bad, "it is empty")
   if (d > 0)                   bad <- c(bad, paste0(d, " duplicate (PATID, LOT_NUM)"))
   # First, because a null date is why every other check here would pass. All
   # of them compare dates, and a comparison with NULL is unknown rather than

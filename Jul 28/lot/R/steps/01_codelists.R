@@ -73,29 +73,36 @@ phase_codelists <- function(con) {
   "), qc = "SELECT count(*) AS n_rows, count(DISTINCT original_med) AS n_orig_meds FROM permissible_subs")
 
   # Code list vs rollup consistency.
-  #
-  # These were warnings inside a tryCatch, so a bad code list printed a line
-  # and the build carried on - and a QC query that itself failed was swallowed
-  # whole. Each of these silently changes who counts as treated, so they stop
-  # the build. CODELIST_WAIVERS names the ones a run may skip, for something
-  # the study team has looked at and accepted.
+  # Each silently changes who counts as treated, so they stop the build;
+  # CODELIST_WAIVERS names the reviewable ones. They were warnings inside a
+  # tryCatch that also swallowed query errors.
   log_msg("Checking codelist <-> rollup consistency...")
   problems <- data.frame(check = character(0), detail = character(0),
                          stringsAsFactors = FALSE)
+
+  # The rows extraction can reach: every join in 03_mma_map is on one of these
+  # two types, so a check counting any other row answers about a row the build
+  # never reads. code_types keeps the full list - the unread types are its
+  # subject.
+  run_step(con, "S01b_mma_extractable_codelist", "
+    CREATE OR REPLACE TEMPORARY VIEW mma_extractable_codelist AS
+    SELECT * FROM mma_codelist WHERE CL_CODE_TYPE IN ('NDC', 'HCPCS')
+  ", qc = "SELECT count(*) AS n_rows, count(DISTINCT CL_MED_ABBR) AS n_meds
+           FROM mma_extractable_codelist")
 
   # A code list med with no rollup row is still extracted and still carries its
   # class - that comes from the code list. What it has no values for are the
   # rollup flags, so no rule keyed on one of those applies to it.
   orphan_meds <- db_q(con, "
     SELECT c.CL_MED_ABBR, count(*) AS n_codes
-    FROM mma_codelist c
+    FROM mma_extractable_codelist c
     LEFT JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR
     WHERE r.CL_MED_ABBR IS NULL
     GROUP BY c.CL_MED_ABBR
     ORDER BY n_codes DESC
   ")
   if (nrow(orphan_meds) > 0) {
-    log_msg("  Codelist meds NOT in rollup (no class, no flags):")
+    log_msg("  Codelist meds NOT in rollup (no rollup flags):")
     print(orphan_meds)
     problems <- rbind(problems, data.frame(check = "orphan_meds", detail = paste0(
       nrow(orphan_meds), " codelist med(s) missing from the rollup: ",
@@ -109,7 +116,7 @@ phase_codelists <- function(con) {
   uncoded_meds <- db_q(con, "
     SELECT r.CL_MED_ABBR, r.CL_MED_CLASS
     FROM mma_rollup r
-    LEFT JOIN mma_codelist c ON r.CL_MED_ABBR = c.CL_MED_ABBR
+    LEFT JOIN mma_extractable_codelist c ON r.CL_MED_ABBR = c.CL_MED_ABBR
     WHERE c.CL_MED_ABBR IS NULL
     ORDER BY r.CL_MED_CLASS, r.CL_MED_ABBR
   ")
@@ -155,7 +162,7 @@ phase_codelists <- function(con) {
              CASE WHEN CL_CODE_TYPE = 'NDC'
                   THEN lpad(regexp_replace(CL_CODE, '[^0-9]', ''), 11, '0')
                   ELSE CL_CODE END AS join_key
-      FROM mma_codelist
+      FROM mma_extractable_codelist
     )
     GROUP BY CL_CODE_TYPE, join_key
     HAVING count(DISTINCT CL_MED_ABBR) > 1
@@ -177,7 +184,10 @@ phase_codelists <- function(con) {
     SELECT CL_CODE, CL_MED_ABBR
     FROM mma_codelist
     WHERE CL_CODE_TYPE = 'NDC'
-      AND cast(regexp_replace(CL_CODE, '[^0-9]', '') AS bigint) = 0
+      -- String, not a cast: 'ABC' strips to '' and a very long code overflows,
+      -- and either raises a bare conversion error here, before ndc_shape below
+      -- gets to say what is actually wrong with the row.
+      AND regexp_replace(CL_CODE, '[^0-9]', '') RLIKE '^0+$'
   ")
   if (nrow(bad_ndc) > 0) {
     log_msg("  NDC rows that are all zeros:")
@@ -189,17 +199,11 @@ phase_codelists <- function(con) {
     log_msg("  OK: No all-zero NDC rows.")
   }
 
-  # The code list has to carry canonical eleven-digit NDCs. Anything else the
-  # join pads to eleven anyway, silently, and bad_ndc only catches the all-zero
-  # result. Two conditions, because they need different answers:
-  #
-  #   malformed  letters ('ABC123' joins as 00000000123), over eleven digits,
-  #              under ten. None of these can be an NDC in any form.
-  #   ten digits a real FDA form, but one of 4-4-2, 5-3-2 or 5-4-1, and which
-  #              cannot be told once the separators are stripped at S01. The
-  #              zero belongs in the short segment, so only 4-4-2 comes out
-  #              right: 50242-040-62 is 50242004062, not 05024204062. Every
-  #              other layout joins as a different drug's key, or none.
+  # NDCs must be canonical eleven-digit values; the join pads anything else
+  # without complaining. Two names because they need different answers:
+  # ndc_shape cannot be an NDC at all, ndc_short is a real ten-digit form whose
+  # 4-4-2 / 5-3-2 / 5-4-1 layout the pad has to guess. README has the
+  # arithmetic.
   ndc_shape <- db_q(con, "
     SELECT CL_CODE, CL_MED_ABBR, n_digits,
            CASE
@@ -268,7 +272,7 @@ phase_codelists <- function(con) {
       (SELECT count(*) FROM mma_rollup
        WHERE CL_MED_ABBR IS NULL OR trim(CL_MED_ABBR) = ''
           OR CL_MED_CLASS IS NULL OR trim(CL_MED_CLASS) = '') AS n_rollup,
-      (SELECT count(*) FROM mma_codelist
+      (SELECT count(*) FROM mma_extractable_codelist
        WHERE CL_MED_ABBR IS NULL OR trim(CL_MED_ABBR) = ''
           OR CL_MED_CLASS IS NULL OR trim(CL_MED_CLASS) = '') AS n_codelist
   ")
@@ -284,7 +288,7 @@ phase_codelists <- function(con) {
   multi_class <- db_q(con, "
     SELECT CL_MED_ABBR, count(DISTINCT CL_MED_CLASS) AS n_classes,
            concat_ws(', ', collect_set(CL_MED_CLASS)) AS classes
-    FROM mma_codelist
+    FROM mma_extractable_codelist
     GROUP BY CL_MED_ABBR
     HAVING count(DISTINCT CL_MED_CLASS) > 1
   ")
@@ -298,25 +302,20 @@ phase_codelists <- function(con) {
     log_msg("  OK: Each MED_ABBR maps to exactly one class.")
   }
 
-  # multi_class looks inside one file; the two also have to agree. Claims take
-  # MED_CLASS from the code list (03_mma_map) while the LOT1_CLASS_<x> columns
-  # are named from the rollup's classes, so a med the two spell differently
-  # gets a column that is always zero.
-  #
-  # Only meds each file classes one way: two classes inside one file is
-  # multi_class or rollup_defs, and reporting it here too would tie their
-  # waivers together. INNER JOIN because a med in only one file is orphan_meds
-  # or uncoded_meds, and steroids are absent from the rollup by design.
+  # Claims take MED_CLASS from the code list; the LOT1_CLASS_<x> columns are
+  # named from the rollup's. The two must agree, or the column is always zero.
+  # Compared as sets, so a med one file classes two ways is compared rather
+  # than skipped. INNER JOIN because a med in only one file is orphan_meds or
+  # uncoded_meds, and steroids are absent from the rollup by design.
   class_agreement <- db_q(con, "
     SELECT c.CL_MED_ABBR,
            concat_ws(', ', collect_set(c.CL_MED_CLASS)) AS codelist_class,
            concat_ws(', ', collect_set(r.CL_MED_CLASS)) AS rollup_class
-    FROM mma_codelist c
+    FROM mma_extractable_codelist c
     INNER JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR
     GROUP BY c.CL_MED_ABBR
-    HAVING count(DISTINCT c.CL_MED_CLASS) = 1
-       AND count(DISTINCT r.CL_MED_CLASS) = 1
-       AND min(c.CL_MED_CLASS) <> min(r.CL_MED_CLASS)
+    HAVING concat_ws(',', sort_array(collect_set(c.CL_MED_CLASS)))
+        <> concat_ws(',', sort_array(collect_set(r.CL_MED_CLASS)))
     ORDER BY c.CL_MED_ABBR
   ")
   if (nrow(class_agreement) > 0) {
@@ -342,7 +341,7 @@ phase_codelists <- function(con) {
     SELECT DISTINCT p.substitute_med AS med
     FROM permissible_subs p
     WHERE NOT EXISTS (
-      SELECT 1 FROM mma_codelist c WHERE c.CL_MED_ABBR = p.substitute_med)
+      SELECT 1 FROM mma_extractable_codelist c WHERE c.CL_MED_ABBR = p.substitute_med)
     ORDER BY med
   ")
   if (nrow(subs_sub) > 0) {
@@ -362,7 +361,7 @@ phase_codelists <- function(con) {
     SELECT DISTINCT p.original_med AS med
     FROM permissible_subs p
     WHERE NOT EXISTS (
-      SELECT 1 FROM mma_codelist c WHERE c.CL_MED_ABBR = p.original_med)
+      SELECT 1 FROM mma_extractable_codelist c WHERE c.CL_MED_ABBR = p.original_med)
     ORDER BY med
   ")
   if (nrow(subs_orig) > 0) {
@@ -378,9 +377,13 @@ phase_codelists <- function(con) {
   if (nrow(problems)) {
     waived <- problems[problems$check %in% codelist_waivers(), , drop = FALSE]
     fatal  <- problems[!problems$check %in% codelist_waivers(), , drop = FALSE]
-    if (nrow(waived))
+    if (nrow(waived)) {
       for (i in seq_len(nrow(waived)))
         log_msg("WAIVED (", waived$check[i], "): ", waived$detail[i])
+      # What actually fired, for LOT_BUILD_STATUS. The requested list says
+      # nothing about the code lists; this says what was really in them.
+      options(lot_waivers_applied = waived$check)
+    }
     if (nrow(fatal))
       stop("The production code lists would change who counts as treated:\n  ",
            paste0(fatal$check, ": ", fatal$detail, collapse = "\n  "),
@@ -420,6 +423,36 @@ phase_codelists <- function(con) {
   # Dynamic flag expressions
   # Sanitize both med abbreviations and class names for safe SQL column names
   sanitize_col <- function(x) gsub("[^A-Za-z0-9]+", "_", toupper(x))
+
+  # Two things the generator below assumes about these values and never checks.
+  # LOT2-5 discovers its meds and classes from the same mma_rollup and builds
+  # its columns the same way, so checking them here covers both.
+  #
+  # Punctuation and spaces all become '_', so 'CAR-T' and 'CAR T' produce one
+  # column name between them - a SELECT with the column twice.
+  #
+  # And the value itself goes into a SQL string literal unescaped, so an
+  # apostrophe closes the literal early: MED_ABBR = 'O'BRIEN'.
+  for (nm in list(list(v = meds, what = "medication"),
+                  list(v = classes, what = "class"))) {
+    san <- sanitize_col(nm$v)
+    dup <- unique(san[duplicated(san)])
+    if (length(dup) > 0)
+      stop(length(dup), " ", nm$what, " column name(s) would be generated more ",
+           "than once: ",
+           paste(vapply(dup, function(d)
+                    paste0(d, " from ", paste(nm$v[san == d], collapse = " and ")),
+                  character(1)), collapse = "; "),
+           " - punctuation and spaces both become '_'.", call. = FALSE)
+    quoted <- nm$v[grepl("['\\\\]", nm$v)]
+    if (length(quoted) > 0)
+      stop(nm$what, " name(s) carrying a quote or backslash: ",
+           paste(quoted, collapse = ", "),
+           " - they are written into SQL string literals as they stand.",
+           call. = FALSE)
+  }
+  log_msg("  OK: Every medication and class makes one distinct column name.")
+
   med_flag_exprs <- paste0(
     vapply(meds, function(m) glue("max(case when im.MED_ABBR = '{m}' then 1 else 0 end) as LOT1_MED_{sanitize_col(m)}"), character(1)),
     collapse = ",\n      "

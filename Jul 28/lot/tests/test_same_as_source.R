@@ -82,13 +82,20 @@ SPLICE <- list(
 
 # Blocks that are pure additions: cut, replace with nothing.
 CUT <- list(
+  # The consistency block itself is SPLICEd; this one sits after it, among the
+  # source's own flag-expression code, so it is cut by name like the SCT ones.
+  "01_codelists.R" = list(
+    c(from = "for (nm in list(list(v = meds, what = \"medication\"),",
+      to   = "log_msg(\"  OK: Every medication and class makes one distinct column name.\")")),
   "05_sct.R" = list(
     c(from = "sct_dup <- db_q(con, \"",
       to   = "log_msg(\"  OK: Each SCT code names exactly one transplant type.\")"),
     c(from = "sct_unmapped <- db_q(con, \"",
       to   = "log_msg(\"  OK: Every SCT_TYPE is one the build reads.\")"),
     c(from = "sct_code_type <- db_q(con, \"",
-      to   = "log_msg(\"  OK: Every SCT code type is one an extraction branch reads.\")"))
+      to   = "log_msg(\"  OK: Every SCT code type is one an extraction branch reads.\")"),
+    c(from = "sct_version <- db_q(con, glue(\"",
+      to   = "log_msg(\"  OK: Every ICD-9 SCT code type is read as ICD-9.\")"))
 )
 
 # Lines that were EDITED rather than added, and how many of each. Counted like
@@ -115,16 +122,27 @@ DROP <- list(
 undo_report <- new.env()
 
 undeviate <- function(lines, file) {
+  short <- character(0)
   sp <- SPLICE[[file]]
   if (!is.null(sp)) {
     a <- which(lines == sp$from); b <- which(lines == sp$to)
     if (length(a) == 1 && length(b) == 1 && b > a) {
       sa <- which(src == sp$src); sb <- which(src == sp$src_to)
       lines <- c(lines[seq_len(a - 1)], src[sa:(sb - 1)], lines[b:length(lines)])
+    } else {
+      # Reported, like the rest. These anchors are exact whole-line matches on
+      # comments, so tidying one silently stops the splice and the file then
+      # differs everywhere - which reads as a rewritten block rather than a
+      # moved anchor. It has happened.
+      short <- c(short, paste0(sp$from, " ... ", sp$to,
+                               " (anchor not found: ",
+                               if (!length(a) && !length(b)) "neither line"
+                               else if (!length(a)) "the opening line"
+                               else if (!length(b)) "the closing line"
+                               else "they are not in order", ")"))
     }
   }
   lines <- code_only(lines)
-  short <- character(0)
   # Reported like the rest. A CUT block is a pure addition, so deleting the
   # whole of it - both anchors with it - would leave nothing to cut and a port
   # that matches the source exactly, which is how a safety check could be

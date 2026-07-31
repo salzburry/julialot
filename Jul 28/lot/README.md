@@ -145,17 +145,27 @@ md5 goes in the run log. That is the only record of which version built a given
 set of tables - keep the log with the results. A file that changes mid-read
 stops the build rather than being recorded under the wrong hash.
 
-Four consistency checks stop the build, because each one silently changes who
-counts as treated:
+Three consistency checks are reviewable - they stop the build unless named in
+`CODELIST_WAIVERS`, because each has a reading a study team can accept:
 
 | check | what it would do |
 |---|---|
-| a code-list med with no rollup row | extracted with no class, so the steroid and maintenance rules miss it |
+| a code-list med with no rollup row | extracted, and classed, but with no rollup flags, so the maintenance and conditioning rules miss it |
 | a rollup med with no codes | never matched, so patients on it look untreated |
 | a code type other than NDC or HCPCS | sits in the list and matches nothing |
-| one abbreviation with two classes | `min()` picks one without saying so |
 
-Four more stop the build because `DISTINCT` cannot see them:
+All of these ask only about rows extraction can reach. Every join in
+`03_mma_map` is `ON c.CL_CODE_TYPE = 'NDC'` or `'HCPCS'`, so the checks read a
+view of the code list filtered to those two. A medication coded only as ICD
+otherwise looked coded while producing nothing, and an unused ICD code naming
+two drugs failed the build over a row nothing joins. `code_types` keeps the
+whole list - reporting the unread types is its job.
+
+These stop the build outright, because `DISTINCT` cannot see them and none has
+a reading worth accepting:
+
+- one abbreviation with two classes - `min()` picks one lexically, and nothing
+  downstream says which
 
 - a code naming more than one medication - extraction joins on the code alone,
   so one claim becomes two treatments
@@ -164,6 +174,11 @@ Four more stop the build because `DISTINCT` cannot see them:
   two rows for one drug that disagree on a flag both survive, and the
   enrichment joins on the abbreviation alone
 - a blank medication or class, which would make the checks above meaningless
+- a medication or class whose name would not survive being turned into a column:
+  `sanitize_col` maps punctuation and spaces to `_`, so `CAR-T` and `CAR T`
+  produce one column between them, and the value goes into a SQL string literal
+  as it stands, so an apostrophe closes it early. LOT2-5 builds its columns the
+  same way from the same rollup, so one check covers both.
 
 Each check groups by the key extraction actually joins on, not the stored one.
 That matters for NDC: the join pads to eleven digits, so `123456789` and
@@ -232,7 +247,7 @@ Waivable, because each has a reading the study team can accept - a medication
 deliberately kept in a separate file, a code type this study does not use, a
 substitution left inactive, a ten-digit NDC in a documented layout:
 
-`orphan_meds`, `uncoded_meds`, `code_types`, `multi_class`, `subs_substitute`,
+`orphan_meds`, `uncoded_meds`, `code_types`, `subs_substitute`,
 `subs_original`, `ndc_short`.
 
 Not waivable, because each means a claim counted twice, a code matching every
@@ -240,18 +255,25 @@ claim with no NDC, a medication with no class, or an output column that is
 always zero - conditions to correct in the code list, not to accept:
 
 `code_to_med`, `bad_ndc`, `rollup_defs`, `blank_keys`, `ndc_shape`,
-`class_agreement`.
+`multi_class`, `class_agreement`.
 
 Naming one of the second group is refused before the build starts, and told
 why rather than "no such check". Refusing at startup is not enough on its own -
 LOT2-5 can be run in a session of its own and reach the code lists without
 that check - so the waiver list itself drops them too. Unknown names are
-rejected, and whatever was waived is recorded in `LOT_BUILD_STATUS`.
+rejected. `LOT_BUILD_STATUS` records both `CODELIST_WAIVERS_REQUESTED`, the
+list the run was given, and `CODELIST_WAIVERS_APPLIED`, the checks that
+actually fired and were waived - a run can ask for a waiver on a condition the
+code lists do not have, and only the second says what was really in them.
 
-`multi_class` is the arguable one. A medication with two classes inside the
-code list has `min()` pick one silently, which is close to the second group;
-it is here because a study may knowingly carry a drug that two sources class
-differently. Move it if that turns out not to be so.
+`multi_class` was briefly reviewable and is not. `min(MED_CLASS)` in
+`03_mma_map` picks lexically, not clinically, and the choice reaches the class
+flags and the steroid exclusion. Worse, `class_agreement` used to skip
+medications that were internally ambiguous - so waiving `multi_class` left such
+a medication checked by neither. `class_agreement` now compares the whole set
+and skips nothing, and `multi_class` is fatal, so the gap is closed from both
+sides. A study that genuinely needs two classes for one drug needs a stated
+priority rule, not a waiver around `min()`.
 
 The SCT checks in `05_sct.R` are on neither list. They stop the build
 outright, because each one means a transplant is being counted twice or not at
@@ -324,8 +346,18 @@ The same `CASE` has the same hole on `CL_CODE_TYPE`, and it is checked the same
 way. The claim joins read exactly `HCPCS`, `ICD10PROC`, `ICD9PROC`,
 `ICD10DIAG` and `ICD9DIAG`; anything else - including a blank type, which the
 MM code list filters out and this one does not - sits in the view matching
-nothing. Neither check is waivable: a code type no branch reads cannot produce
-a transplant, so there is no version of it worth carrying on through.
+nothing.
+
+Accepted is not the same as right. The `'%PROC%'` arm sits *after* the exact
+`ICD9PROC` test, so `ICD9PROCEDURE`, `ICD-9-PROC` and `ICD9 PROC` all come out
+as `ICD10PROC` - which the check above accepts, because `ICD10PROC` is a real
+type - and the claim join then reads ICD-10 columns for an ICD-9 code. A third
+check asks the raw value instead: a code type naming 9 that is not one of the
+spellings the `CASE` turns into an ICD-9 type stops the build.
+
+None of these is waivable: a code type no branch reads, or one read as the
+wrong ICD version, cannot produce a transplant, so there is no version of it
+worth carrying on through.
 
 ## Running LOT2-5 on its own
 

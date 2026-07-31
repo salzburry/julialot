@@ -182,8 +182,9 @@ for (st in c("started", "complete", "failed"))
   ok(grepl(paste0('"', st, '"'), bl, fixed = TRUE),
      paste0("build status records '", st, "'"))
 ok(grepl("LOT_BUILD_STATUS", bl, fixed = TRUE), "into its own prefixed table")
-ok("CODELIST_WAIVERS" %in% names(BUILD_STATUS_COLS),
-   "and the status row records which checks were waived")
+ok(all(c("CODELIST_WAIVERS_REQUESTED", "CODELIST_WAIVERS_APPLIED") %in%
+         names(BUILD_STATUS_COLS)),
+   "the status row separates the waivers asked for from the ones that fired")
 # 08_persist writes metadata inside a tryCatch, so confirm the row arrived.
 ok(grepl("check_run_recorded", bl, fixed = TRUE),
    "a run with no metadata row is not called complete")
@@ -212,10 +213,10 @@ sql_for <- function(present) {
                                    object_prefix = "p_"), "started")
   out
 }
-old <- sql_for(setdiff(names(BSC), "CODELIST_WAIVERS"))
-ok(any(grepl("ALTER TABLE wk.p_LOT_BUILD_STATUS ADD COLUMNS (CODELIST_WAIVERS STRING)",
-             old, fixed = TRUE)),
-   "a five-column table gets the column it is missing")
+old <- sql_for(setdiff(names(BSC), "CODELIST_WAIVERS_APPLIED"))
+ok(any(grepl(paste0("ALTER TABLE wk.p_LOT_BUILD_STATUS ADD COLUMNS ",
+                    "(CODELIST_WAIVERS_APPLIED STRING)"), old, fixed = TRUE)),
+   "a table left by an earlier version gets the column it is missing")
 ok(which(grepl("ALTER", old))[1] < which(grepl("INSERT", old))[1],
    "added before the insert that needs it, not after")
 cur <- sql_for(names(BSC))
@@ -228,6 +229,24 @@ ok(any(grepl(paste(paste(names(BSC), BSC), collapse = ", "), cur, fixed = TRUE))
 # Adding all six to a table that has them would error on the first.
 ok(!any(grepl("ALTER", sql_for(NULL))),
    "a DESCRIBE that cannot answer adds nothing")
+
+# Requested is what the run was given; applied is what phase_codelists actually
+# waived. A run can ask for a waiver on a condition that never occurs, and
+# recording that as "waived" would say something false about the code lists.
+assign("codelist_waivers", function() c("uncoded_meds", "code_types"), envir = se)
+options(lot_waivers_applied = "code_types")
+ins <- grep("INSERT", sql_for(names(BSC)), value = TRUE)[1]
+ok(grepl("'uncoded_meds|code_types'", ins, fixed = TRUE),
+   "the row records both waivers the run asked for")
+ok(grepl("'code_types', current_timestamp()", ins, fixed = TRUE),
+   "...and only the one that actually fired as applied")
+options(lot_waivers_applied = NULL)
+ins <- grep("INSERT", sql_for(names(BSC)), value = TRUE)[1]
+ok(grepl("'uncoded_meds|code_types', '', current", ins, fixed = TRUE),
+   "nothing fired yet reads as empty, not as the requested list")
+# Cleared at the start of a run, or a second build in one session inherits it.
+ok(grepl("options(lot_waivers_applied = character(0))", bl, fixed = TRUE),
+   "and it is cleared before the run writes 'started'")
 
 cat("\n-- the code lists are recorded and checked --\n")
 # They live outside git, so the run log is the only record of which version
@@ -286,6 +305,12 @@ for (w in c("orphan_meds", "uncoded_meds", "unexpected_types", "multi_class",
 # different eleven-digit key. The contract is canonical eleven digits.
 ok(grepl("WHERE CL_CODE_TYPE = 'NDC' AND (has_alpha OR n_digits <> 11)", cd, fixed = TRUE),
    "the code list has to carry eleven-digit NDCs, not merely plausible ones")
+# bad_ndc runs first. Casting the stripped code to a number raises a bare
+# conversion error on 'ABC' (strips to '') or on an overlong value, before
+# ndc_shape can say what is wrong with the row.
+ok(grepl("RLIKE '^0+$'", cd, fixed = TRUE) &&
+     !grepl("AS bigint) = 0", cd, fixed = TRUE),
+   "the all-zero test is string logic, so a malformed code reaches ndc_shape")
 for (shape in c("WHEN has_alpha      THEN 'non-digits'",
                 "WHEN n_digits > 11  THEN 'over eleven digits'",
                 "WHEN n_digits = 10  THEN 'ten digits'"))
@@ -301,12 +326,14 @@ ok(grepl('check = "ndc_short"', cd, fixed = TRUE) &&
 # from the rollup's classes, so a disagreement is an always-zero column.
 ok(grepl("INNER JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR", cd, fixed = TRUE),
    "class agreement joins the code list to the rollup")
-# Each check owns one failure mode. Reporting a within-file disagreement here
-# too would mean waiving multi_class - an accepted condition - also had to
-# waive this, losing the cross-file check for every other medication.
-ok(grepl("HAVING count(DISTINCT c.CL_MED_CLASS) = 1", cd, fixed = TRUE) &&
-     grepl("AND count(DISTINCT r.CL_MED_CLASS) = 1", cd, fixed = TRUE),
-   "and only where each file is itself unambiguous, so it cannot double-report")
+# Compared as sets, so a med one file classes two ways is compared rather than
+# skipped. Requiring each file to be unambiguous first - which is what this did
+# - left such a med checked by neither whenever multi_class was waived.
+ok(grepl("concat_ws(',', sort_array(collect_set(c.CL_MED_CLASS)))", cd, fixed = TRUE) &&
+     !grepl("count(DISTINCT c.CL_MED_CLASS) = 1", cd, fixed = TRUE),
+   "class agreement compares the whole set, skipping no medication")
+ok("multi_class" %in% FATAL_CHECKS,
+   "...and multi_class is fatal, so min() never picks a class silently")
 mmx <- paste(readLines(file.path(ROOT, "R", "steps", "03_mma_map.R"), warn = FALSE),
              collapse = "\n")
 ok(grepl("c.CL_MED_CLASS AS MED_CLASS", mmx, fixed = TRUE) &&
@@ -352,7 +379,7 @@ mk_db_q <- function(problem) function(con, sql) {
   if (grepl("AS n_rollup", sql))
     return(data.frame(n_rollup = if (problem == "blank_keys") 2 else 0,
                       n_codelist = 0))
-  if (grepl("AS bigint\\) = 0", sql))
+  if (grepl("RLIKE '^0+$'", sql, fixed = TRUE))
     return(if (problem == "bad_ndc") data.frame(CL_CODE = "00000000000", CL_MED_ABBR = "X")
            else data.frame(CL_CODE = character(0), CL_MED_ABBR = character(0)))
   if (grepl("AS why", sql, fixed = TRUE))
@@ -377,9 +404,12 @@ mk_db_q <- function(problem) function(con, sql) {
   if (grepl("count\\(DISTINCT CL_MED_ABBR\\) AS n FROM mma_rollup", sql)) return(data.frame(n = 28))
   if (grepl("count\\(\\*\\) AS n FROM mma_codelist", sql)) return(data.frame(n = 500))
   if (grepl("SELECT DISTINCT CL_MED_ABBR FROM mma_rollup", sql, fixed = TRUE))
-    return(data.frame(CL_MED_ABBR = c("LEN", "BOR")))
+    return(data.frame(CL_MED_ABBR = switch(problem,
+      collide = c("CAR-T", "CAR T"), quoted = c("LEN", "O'BRIEN"),
+      c("LEN", "BOR"))))
   if (grepl("SELECT DISTINCT CL_MED_CLASS FROM mma_rollup", sql, fixed = TRUE))
-    return(data.frame(CL_MED_CLASS = c("IMID", "PI")))
+    return(data.frame(CL_MED_CLASS = switch(problem,
+      collide_class = c("ANTI-CD38", "ANTI CD38"), c("IMID", "PI"))))
   data.frame()
 }
 ce <- new.env(parent = globalenv())
@@ -417,6 +447,63 @@ assign("db_q", mk_db_q("code_to_med"), envir = ce)
 ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
    "and still stops on a code naming two medications")
 Sys.unsetenv("CODELIST_WAIVERS")
+
+cat("\n-- the checks ask about rows extraction can reach --\n")
+# Every join in 03_mma_map is ON c.CL_CODE_TYPE = 'NDC' or 'HCPCS'. A check
+# counting a row of any other type answers about a row the build never reads:
+# a medication coded only as ICD looked coded while producing nothing, and an
+# unused ICD code naming two drugs failed the build over a row nothing joins.
+ok(grepl("SELECT * FROM mma_codelist WHERE CL_CODE_TYPE IN ('NDC', 'HCPCS')",
+         cd, fixed = TRUE),
+   "there is one view of the rows extraction reaches")
+ok(identical(sort(unique(gsub(".*= '|'.*", "",
+     regmatches(mmx, gregexpr("c\\.CL_CODE_TYPE = '[A-Z]+'", mmx))[[1]]))),
+     c("HCPCS", "NDC")),
+   "...and those are the types 03_mma_map actually joins on")
+# Every query keyed on a medication abbreviation must read that view. Scanning
+# each query separately, because the file still names the full list on purpose
+# for code_types, and for the two NDC checks that filter the type themselves.
+qs <- strsplit(cd, "db_q(con, \"", fixed = TRUE)[[1]][-1]
+qs <- vapply(qs, function(q) sub("\").*", "", q), character(1), USE.NAMES = FALSE)
+# A query is scoped if it reads the view, or filters CL_CODE_TYPE itself as the
+# two NDC checks do. The load-sanity count names neither and is not a
+# per-medication check, so it is not caught by this and does not need to be.
+unscoped <- Filter(function(q)
+  grepl("CL_MED_ABBR", q) && !grepl("CL_CODE_TYPE", q) &&
+    grepl("mma_codelist", gsub("mma_extractable_codelist", "", q)), qs)
+ok(length(unscoped) == 0,
+   if (length(unscoped)) paste0("a check keyed on the abbreviation reads the ",
+                                "full list: ", substr(trimws(unscoped[1]), 1, 60))
+   else paste0("all ", sum(grepl("CL_MED_ABBR", qs) & !grepl("CL_CODE_TYPE", qs)),
+               " abbreviation-keyed checks read the extractable view"))
+ok(any(grepl("GROUP BY CL_CODE_TYPE", qs, fixed = TRUE) &
+         !grepl("extractable", qs, fixed = TRUE)),
+   "code_types still reports over the whole list - that is its job")
+
+cat("\n-- the generated column names have to be usable --\n")
+# sanitize_col maps punctuation and spaces to '_', and the value itself goes
+# into a SQL string literal unescaped. Neither was checked, here or in LOT2-5,
+# which discovers its meds and classes from the same rollup.
+for (p in list(list(k = "collide", what = "two medications making one column"),
+               list(k = "collide_class", what = "two classes making one column"),
+               list(k = "quoted", what = "a name that would close the literal"))) {
+  assign("db_q", mk_db_q(p$k), envir = ce)
+  err <- tryCatch({ ce$phase_codelists(NULL); "" }, error = conditionMessage)
+  ok(nzchar(err), paste0(p$what, " stops the build"))
+}
+assign("db_q", mk_db_q("collide"), envir = ce)
+err <- tryCatch({ ce$phase_codelists(NULL); "" }, error = conditionMessage)
+ok(grepl("CAR_T", err, fixed = TRUE) && grepl("CAR-T", err, fixed = TRUE) &&
+     grepl("CAR T", err, fixed = TRUE),
+   "...naming the column and both values that produce it")
+# The check calls sanitize_col rather than repeating its expression, so it
+# cannot drift from the generator it is guarding.
+ok(grepl("san <- sanitize_col(nm$v)", cd, fixed = TRUE),
+   "and it asks sanitize_col itself, not a copy of what sanitize_col does")
+lb <- paste(readLines(file.path(ROOT, "R", "steps", "10_lot2_5_base.R"), warn = FALSE),
+            collapse = "\n")
+ok(grepl("FROM mma_rollup", lb, fixed = TRUE),
+   "LOT2-5 draws its meds and classes from the same rollup, so this covers it")
 
 cat("\n-- some conditions have no reading worth accepting --\n")
 # A code counted twice, a code matching every claim with no NDC, a medication
@@ -542,6 +629,32 @@ ok(grepl("no start date", tryCatch({ le$check_lot_long(NULL, cfg_ll); "" },
                                    error = conditionMessage), fixed = TRUE),
    "and says so, rather than reporting a downstream symptom")
 
+cat("\n-- an empty table says it is empty, not 'missing value' --\n")
+# sum() over no rows is SQL NULL, so every count above arrives as NA and the
+# comparisons become "missing value where TRUE/FALSE needed". The queries
+# coalesce, and the empty case stops before any of them is read - a stub
+# feeding zeros would prove neither.
+for (f in c("check_lot_long", "check_cohort_input")) {
+  src <- paste(readLines(file.path(ROOT, "R", "build_lot.R"), warn = FALSE),
+               collapse = "\n")
+  body <- sub(paste0(".*", f, " <- function"), "", src)
+  body <- sub("\n[a-zA-Z_]+ <- function.*", "", body)
+  sums <- gregexpr("sum(CASE WHEN", body, fixed = TRUE)[[1]]
+  cosums <- gregexpr("coalesce(sum(CASE WHEN", body, fixed = TRUE)[[1]]
+  ok(length(sums[sums > 0]) == length(cosums[cosums > 0]) && length(cosums[cosums > 0]) > 0,
+     paste0(f, ": every aggregate is coalesced (", length(cosums[cosums > 0]), ")"))
+}
+# And it stops on empty before reading them, so a lost coalesce still cannot
+# turn this into an R error.
+ll_stub(shape = list(n_rows = 0, n_null_start = NA_integer_,
+                     n_null_end = NA_integer_, n_end_before_start = NA_integer_,
+                     n_bad_lot_num = NA_integer_))
+msg <- tryCatch({ le$check_lot_long(NULL, cfg_ll); "" }, error = conditionMessage)
+ok(grepl("it is empty", msg, fixed = TRUE),
+   "an empty LOT_LONG reports being empty")
+ok(!grepl("missing value", msg, fixed = TRUE),
+   "...even when the counts come back NA, as they would without the coalesce")
+
 cat("\n-- the checks group by the key extraction actually joins on --\n")
 # The NDC join pads to eleven digits, so '123456789' and '0123456789' are one
 # key there. Grouping by the stored code would call them two, and a code
@@ -570,7 +683,7 @@ assign("run_step", function(...) invisible(TRUE), envir = se2)
 assign("glue", function(..., .envir = parent.frame()) paste0(..., collapse = ""),
        envir = se2)
 sys.source(file.path(ROOT, "R", "steps", "05_sct.R"), envir = se2)
-sct_db_q <- function(bad, bad_type = NULL) function(con, sql) {
+sct_db_q <- function(bad, bad_type = NULL, bad_ver = NULL) function(con, sql) {
   if (grepl("NOT IN ('AUTO', 'ALLO', 'CART', 'UNKNOWN')", sql, fixed = TRUE))
     return(if (is.null(bad)) data.frame(SCT_TYPE = character(0), n_codes = integer(0))
            else data.frame(SCT_TYPE = bad, n_codes = 4L))
@@ -578,10 +691,14 @@ sct_db_q <- function(bad, bad_type = NULL) function(con, sql) {
     return(if (is.null(bad_type))
              data.frame(CL_CODE_TYPE = character(0), n_codes = integer(0))
            else data.frame(CL_CODE_TYPE = bad_type, n_codes = 7L))
+  if (grepl("NOT LIKE 'ICD%9%DIAG%'", sql, fixed = TRUE))
+    return(if (is.null(bad_ver))
+             data.frame(CL_CODE_TYPE = character(0), n_codes = integer(0))
+           else data.frame(CL_CODE_TYPE = bad_ver, n_codes = 5L))
   data.frame()
 }
-run_sct <- function(bad, bad_type = NULL) {
-  assign("db_q", sct_db_q(bad, bad_type), envir = se2)
+run_sct <- function(bad, bad_type = NULL, bad_ver = NULL) {
+  assign("db_q", sct_db_q(bad, bad_type, bad_ver), envir = se2)
   tryCatch({ se2$phase_sct(NULL, list(sct_src = "src")); NULL },
            error = function(e) conditionMessage(e))
 }
@@ -627,6 +744,23 @@ accepted <- quoted(regmatches(flat,
 ok(setequal(accepted, reads) && length(reads) == 5,
    paste0("the accepted code types are exactly the ", length(reads),
           " an extraction branch reads: ", paste(reads, collapse = ", ")))
+
+# Accepted is not right. The '%PROC%' arm sits after the exact ICD9PROC test,
+# so ICD9PROCEDURE and ICD-9-PROC become ICD10PROC - which the check above
+# accepts, because ICD10PROC is a real type. The claim join then reads ICD-10
+# columns for an ICD-9 code.
+ok(grepl("WHEN upper(trim(CL_CODE_TYPE)) LIKE '%PROC%'", sc2, fixed = TRUE),
+   "the '%PROC%' arm is still there, after the exact ICD9PROC test")
+badver <- run_sct(NULL, NULL, "ICD-9-PROC")
+ok(!is.null(badver), "an ICD-9 spelling that maps to ICD-10 stops the build")
+ok(grepl("ICD-9-PROC", badver, fixed = TRUE) && grepl("read as ICD-10", badver, fixed = TRUE),
+   "and says which spelling and what would happen to it")
+# The exact spellings the CASE does turn into an ICD-9 type. Asked of the raw
+# value rather than by repeating the CASE, so this list is the contract.
+for (sp in c("'ICD9PROC', 'ICD9DIAG', 'ICD9DX', 'ICD9', 'DIAG9'",
+             "NOT LIKE 'ICD%9%DIAG%'"))
+  ok(grepl(sp, sc2, fixed = TRUE),
+     paste0("the ICD-9 spellings it accepts are named: ", sp))
 ok(grepl("AS n_defs", cd2, fixed = TRUE),
    "one rollup medication, one definition - DISTINCT only removes identical rows")
 ok(grepl("AS n_rollup", cd2, fixed = TRUE),
