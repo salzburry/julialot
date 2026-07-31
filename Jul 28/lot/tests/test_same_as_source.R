@@ -139,10 +139,11 @@ undeviate <- function(lines, file) {
       sa <- which(src == sp$src); sb <- which(src == sp$src_to)
       lines <- c(lines[seq_len(a - 1)], src[sa:(sb - 1)], lines[b:length(lines)])
     } else {
-      # Reported, like the rest. These anchors are exact whole-line matches on
-      # comments, so tidying one silently stops the splice and the file then
-      # differs everywhere - which reads as a rewritten block rather than a
-      # moved anchor. It has happened.
+      # Reported, like the rest. Both anchors are exact whole-line matches,
+      # and a missed one silently stops the splice - the file then differs
+      # everywhere, which reads as a rewritten block rather than a moved
+      # anchor. The opening one is a code line for that reason; the closing
+      # one is still a comment.
       short <- c(short, paste0(sp$from, " ... ", sp$to,
                                " (anchor not found: ",
                                if (!length(a) && !length(b)) "neither line"

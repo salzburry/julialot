@@ -438,13 +438,13 @@ for (prob in c("orphan", "uncoded", "type", "class", "code_to_med", "bad_ndc",
   ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
      paste0("'", prob, "' stops the build"))
 }
-# A waiver names one check. The study team keeps steroids in a separate file,
-# so the rollup has meds with no codes - an expected condition. Waiving that
-# must NOT also waive a code naming two different drugs.
+# A waiver names one check. A medication deliberately left without extractable
+# codes is an expected condition a study may accept; waiving it must NOT also
+# waive a code naming two different drugs.
 Sys.setenv(CODELIST_WAIVERS = "uncoded_meds")
 assign("db_q", mk_db_q("uncoded"), envir = ce)
 ok(!inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
-   "waiving uncoded_meds lets the expected steroid case through")
+   "waiving uncoded_meds lets a deliberately uncoded medication through")
 assign("db_q", mk_db_q("code_to_med"), envir = ce)
 ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),
    "and still stops on a code naming two medications")

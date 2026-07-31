@@ -154,9 +154,9 @@ Three consistency checks are reviewable - they stop the build unless named in
 | a rollup med with no extractable NDC/HCPCS code | never matched, so patients on it look untreated |
 | a code type other than NDC or HCPCS | sits in the list and matches nothing |
 
-All of these ask only about rows extraction can reach. Every join in
-`03_mma_map` is `ON c.CL_CODE_TYPE = 'NDC'` or `'HCPCS'`, so the checks read a
-view of the code list filtered to those two. A medication coded only as ICD
+The medication-based checks ask only about rows extraction can reach. Every
+join in `03_mma_map` is `ON c.CL_CODE_TYPE = 'NDC'` or `'HCPCS'`, so they read
+a view of the code list filtered to those two. A medication coded only as ICD
 otherwise looked coded while producing nothing, and an unused ICD code naming
 two drugs failed the build over a row nothing joins. `code_types` keeps the
 whole list - reporting the unread types is its job.
