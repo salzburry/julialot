@@ -73,24 +73,17 @@ phase_codelists <- function(con) {
   "), qc = "SELECT count(*) AS n_rows, count(DISTINCT original_med) AS n_orig_meds FROM permissible_subs")
 
   # Code list vs rollup consistency.
-  #
-  # These were warnings inside a tryCatch, so a bad code list printed a line
-  # and the build carried on - and a QC query that itself failed was swallowed
-  # whole. Each of these silently changes who counts as treated, so they stop
-  # the build. CODELIST_WAIVERS names the ones a run may skip, for something
-  # the study team has looked at and accepted.
+  # Each silently changes who counts as treated, so they stop the build;
+  # CODELIST_WAIVERS names the reviewable ones. They were warnings inside a
+  # tryCatch that also swallowed query errors.
   log_msg("Checking codelist <-> rollup consistency...")
   problems <- data.frame(check = character(0), detail = character(0),
                          stringsAsFactors = FALSE)
 
-  # The rows extraction can actually reach. Every join in 03_mma_map is
-  # ON c.CL_CODE_TYPE = 'NDC' or 'HCPCS', so a row of any other type produces
-  # no claim - and a check counting it would answer about a row the build
-  # never reads. That cuts both ways: a medication whose only codes are ICD
-  # would look coded while producing nothing, and an unused ICD code naming two
-  # drugs would fail the build over a row nothing joins.
-  #
-  # code_types below keeps the full list: reporting the unread types is its job.
+  # The rows extraction can reach: every join in 03_mma_map is on one of these
+  # two types, so a check counting any other row answers about a row the build
+  # never reads. code_types keeps the full list - the unread types are its
+  # subject.
   run_step(con, "S01b_mma_extractable_codelist", "
     CREATE OR REPLACE TEMPORARY VIEW mma_extractable_codelist AS
     SELECT * FROM mma_codelist WHERE CL_CODE_TYPE IN ('NDC', 'HCPCS')
@@ -206,17 +199,11 @@ phase_codelists <- function(con) {
     log_msg("  OK: No all-zero NDC rows.")
   }
 
-  # The code list has to carry canonical eleven-digit NDCs. Anything else the
-  # join pads to eleven anyway, silently, and bad_ndc only catches the all-zero
-  # result. Two conditions, because they need different answers:
-  #
-  #   malformed  letters ('ABC123' joins as 00000000123), over eleven digits,
-  #              under ten. None of these can be an NDC in any form.
-  #   ten digits a real FDA form, but one of 4-4-2, 5-3-2 or 5-4-1, and which
-  #              cannot be told once the separators are stripped at S01. The
-  #              zero belongs in the short segment, so only 4-4-2 comes out
-  #              right: 50242-040-62 is 50242004062, not 05024204062. Every
-  #              other layout joins as a different drug's key, or none.
+  # NDCs must be canonical eleven-digit values; the join pads anything else
+  # without complaining. Two names because they need different answers:
+  # ndc_shape cannot be an NDC at all, ndc_short is a real ten-digit form whose
+  # 4-4-2 / 5-3-2 / 5-4-1 layout the pad has to guess. README has the
+  # arithmetic.
   ndc_shape <- db_q(con, "
     SELECT CL_CODE, CL_MED_ABBR, n_digits,
            CASE
@@ -315,19 +302,11 @@ phase_codelists <- function(con) {
     log_msg("  OK: Each MED_ABBR maps to exactly one class.")
   }
 
-  # multi_class looks inside one file; the two also have to agree. Claims take
-  # MED_CLASS from the code list (03_mma_map) while the LOT1_CLASS_<x> columns
-  # are named from the rollup's classes, so a med the two spell differently
-  # gets a column that is always zero.
-  #
-  # The classes are compared as sets, so a med that one file classes two ways
-  # is compared rather than skipped. An earlier version required each file to
-  # be unambiguous first, to keep this check and multi_class from sharing a
-  # waiver - but that left a med checked by neither whenever multi_class was
-  # waived, which is why multi_class is now fatal instead.
-  #
-  # INNER JOIN because a med in only one file is orphan_meds or uncoded_meds,
-  # and steroids are absent from the rollup by design.
+  # Claims take MED_CLASS from the code list; the LOT1_CLASS_<x> columns are
+  # named from the rollup's. The two must agree, or the column is always zero.
+  # Compared as sets, so a med one file classes two ways is compared rather
+  # than skipped. INNER JOIN because a med in only one file is orphan_meds or
+  # uncoded_meds, and steroids are absent from the rollup by design.
   class_agreement <- db_q(con, "
     SELECT c.CL_MED_ABBR,
            concat_ws(', ', collect_set(c.CL_MED_CLASS)) AS codelist_class,
@@ -398,9 +377,13 @@ phase_codelists <- function(con) {
   if (nrow(problems)) {
     waived <- problems[problems$check %in% codelist_waivers(), , drop = FALSE]
     fatal  <- problems[!problems$check %in% codelist_waivers(), , drop = FALSE]
-    if (nrow(waived))
+    if (nrow(waived)) {
       for (i in seq_len(nrow(waived)))
         log_msg("WAIVED (", waived$check[i], "): ", waived$detail[i])
+      # What actually fired, for LOT_BUILD_STATUS. The requested list says
+      # nothing about the code lists; this says what was really in them.
+      options(lot_waivers_applied = waived$check)
+    }
     if (nrow(fatal))
       stop("The production code lists would change who counts as treated:\n  ",
            paste0(fatal$check, ": ", fatal$detail, collapse = "\n  "),

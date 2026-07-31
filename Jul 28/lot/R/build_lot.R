@@ -36,20 +36,14 @@ CONTRACT <- list(
   tbl_rx                      = "rx"
 )
 
-# Code-list checks a run may waive by name. A single switch for all of them
-# meant waiving one expected condition also waived the dangerous ones.
-#
-# These have a reading a study team can accept: a medication deliberately kept
-# in a separate file, a code type unused by this study, a substitution left
-# inactive, a ten-digit NDC in a documented layout.
+# Reviewable code-list checks: each has a reading a study team can accept.
+# Named individually, because one switch for all of them meant waiving an
+# expected condition also waived the dangerous ones.
 WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types",
                      "subs_substitute", "subs_original", "ndc_short")
 
-# These do not. Each one means a claim counted twice, a code matching every
-# claim with no NDC, a medication with no class, or an output column that is
-# always zero - conditions to correct in the code list, not to accept. Named
-# rather than merely absent, so a waiver naming one is told why it is refused
-# instead of "no such check".
+# Fatal checks: always stop the build. Named rather than merely absent, so a
+# waiver naming one is told why it is refused instead of "no such check".
 FATAL_CHECKS <- c("code_to_med", "bad_ndc", "rollup_defs", "blank_keys",
                   "ndc_shape", "multi_class", "class_agreement")
 
@@ -273,6 +267,8 @@ build_lot <- function(here, cohort_table, prefix) {
   # new LOT1 output beside an older LOT_LONG. Splitting the persist step would
   # break the line-for-line port, so instead every run says what state it is
   # in: nothing here is complete until the last line below says so.
+  # Cleared first, or a second run in one session inherits the first's.
+  options(lot_waivers_applied = character(0))
   write_build_status(con, cfg, "started")
   on.exit(if (!isTRUE(getOption("lot_complete", FALSE)))
             try(write_build_status(con, cfg, "failed"), silent = TRUE), add = TRUE)
@@ -367,9 +363,13 @@ materialize_sct_views <- function(con) {
 
 # One row per run saying whether its outputs belong together. Without it a
 # failed run leaves tables that look complete.
+# REQUESTED is what the run was given; APPLIED is what actually fired and was
+# waived, which is the one that says something about the code lists. A run can
+# request a waiver for a condition that never occurs.
 BUILD_STATUS_COLS <- c(
   RUN_ID = "STRING", INPUT_COHORT_TABLE = "STRING", OBJECT_PREFIX = "STRING",
-  STATE = "STRING", CODELIST_WAIVERS = "STRING", UPDATED_AT = "TIMESTAMP")
+  STATE = "STRING", CODELIST_WAIVERS_REQUESTED = "STRING",
+  CODELIST_WAIVERS_APPLIED = "STRING", UPDATED_AT = "TIMESTAMP")
 
 write_build_status <- function(con, cfg, state) {
   tbl  <- lot_out("LOT_BUILD_STATUS")
@@ -403,13 +403,17 @@ write_build_status <- function(con, cfg, state) {
   }
 
   db_exec(con, glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"))
-  waivers <- paste(codelist_waivers(), collapse = "|")
-  vals <- c(RUN_ID             = glue("'{run_id}'"),
-            INPUT_COHORT_TABLE = glue("'{cfg$input_cohort_table}'"),
-            OBJECT_PREFIX      = glue("'{cfg$object_prefix}'"),
-            STATE              = glue("'{state}'"),
-            CODELIST_WAIVERS   = glue("'{waivers}'"),
-            UPDATED_AT         = "current_timestamp()")
+  requested <- paste(codelist_waivers(), collapse = "|")
+  # Set by phase_codelists when it waives something. Empty at "started", and on
+  # a failure before the code lists ran.
+  applied <- paste(getOption("lot_waivers_applied", character(0)), collapse = "|")
+  vals <- c(RUN_ID                     = glue("'{run_id}'"),
+            INPUT_COHORT_TABLE         = glue("'{cfg$input_cohort_table}'"),
+            OBJECT_PREFIX              = glue("'{cfg$object_prefix}'"),
+            STATE                      = glue("'{state}'"),
+            CODELIST_WAIVERS_REQUESTED = glue("'{requested}'"),
+            CODELIST_WAIVERS_APPLIED   = glue("'{applied}'"),
+            UPDATED_AT                 = "current_timestamp()")
   # One declaration drives the CREATE, the upgrade and the INSERT, so they
   # cannot drift apart again - a column added to BUILD_STATUS_COLS with no
   # value here stops the build rather than reaching the warehouse.

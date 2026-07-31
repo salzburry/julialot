@@ -261,7 +261,10 @@ Naming one of the second group is refused before the build starts, and told
 why rather than "no such check". Refusing at startup is not enough on its own -
 LOT2-5 can be run in a session of its own and reach the code lists without
 that check - so the waiver list itself drops them too. Unknown names are
-rejected, and whatever was waived is recorded in `LOT_BUILD_STATUS`.
+rejected. `LOT_BUILD_STATUS` records both `CODELIST_WAIVERS_REQUESTED`, the
+list the run was given, and `CODELIST_WAIVERS_APPLIED`, the checks that
+actually fired and were waived - a run can ask for a waiver on a condition the
+code lists do not have, and only the second says what was really in them.
 
 `multi_class` was briefly reviewable and is not. `min(MED_CLASS)` in
 `03_mma_map` picks lexically, not clinically, and the choice reaches the class

@@ -122,16 +122,27 @@ DROP <- list(
 undo_report <- new.env()
 
 undeviate <- function(lines, file) {
+  short <- character(0)
   sp <- SPLICE[[file]]
   if (!is.null(sp)) {
     a <- which(lines == sp$from); b <- which(lines == sp$to)
     if (length(a) == 1 && length(b) == 1 && b > a) {
       sa <- which(src == sp$src); sb <- which(src == sp$src_to)
       lines <- c(lines[seq_len(a - 1)], src[sa:(sb - 1)], lines[b:length(lines)])
+    } else {
+      # Reported, like the rest. These anchors are exact whole-line matches on
+      # comments, so tidying one silently stops the splice and the file then
+      # differs everywhere - which reads as a rewritten block rather than a
+      # moved anchor. It has happened.
+      short <- c(short, paste0(sp$from, " ... ", sp$to,
+                               " (anchor not found: ",
+                               if (!length(a) && !length(b)) "neither line"
+                               else if (!length(a)) "the opening line"
+                               else if (!length(b)) "the closing line"
+                               else "they are not in order", ")"))
     }
   }
   lines <- code_only(lines)
-  short <- character(0)
   # Reported like the rest. A CUT block is a pure addition, so deleting the
   # whole of it - both anchors with it - would leave nothing to cut and a port
   # that matches the source exactly, which is how a safety check could be

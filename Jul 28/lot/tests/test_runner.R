@@ -182,8 +182,9 @@ for (st in c("started", "complete", "failed"))
   ok(grepl(paste0('"', st, '"'), bl, fixed = TRUE),
      paste0("build status records '", st, "'"))
 ok(grepl("LOT_BUILD_STATUS", bl, fixed = TRUE), "into its own prefixed table")
-ok("CODELIST_WAIVERS" %in% names(BUILD_STATUS_COLS),
-   "and the status row records which checks were waived")
+ok(all(c("CODELIST_WAIVERS_REQUESTED", "CODELIST_WAIVERS_APPLIED") %in%
+         names(BUILD_STATUS_COLS)),
+   "the status row separates the waivers asked for from the ones that fired")
 # 08_persist writes metadata inside a tryCatch, so confirm the row arrived.
 ok(grepl("check_run_recorded", bl, fixed = TRUE),
    "a run with no metadata row is not called complete")
@@ -212,10 +213,10 @@ sql_for <- function(present) {
                                    object_prefix = "p_"), "started")
   out
 }
-old <- sql_for(setdiff(names(BSC), "CODELIST_WAIVERS"))
-ok(any(grepl("ALTER TABLE wk.p_LOT_BUILD_STATUS ADD COLUMNS (CODELIST_WAIVERS STRING)",
-             old, fixed = TRUE)),
-   "a five-column table gets the column it is missing")
+old <- sql_for(setdiff(names(BSC), "CODELIST_WAIVERS_APPLIED"))
+ok(any(grepl(paste0("ALTER TABLE wk.p_LOT_BUILD_STATUS ADD COLUMNS ",
+                    "(CODELIST_WAIVERS_APPLIED STRING)"), old, fixed = TRUE)),
+   "a table left by an earlier version gets the column it is missing")
 ok(which(grepl("ALTER", old))[1] < which(grepl("INSERT", old))[1],
    "added before the insert that needs it, not after")
 cur <- sql_for(names(BSC))
@@ -228,6 +229,24 @@ ok(any(grepl(paste(paste(names(BSC), BSC), collapse = ", "), cur, fixed = TRUE))
 # Adding all six to a table that has them would error on the first.
 ok(!any(grepl("ALTER", sql_for(NULL))),
    "a DESCRIBE that cannot answer adds nothing")
+
+# Requested is what the run was given; applied is what phase_codelists actually
+# waived. A run can ask for a waiver on a condition that never occurs, and
+# recording that as "waived" would say something false about the code lists.
+assign("codelist_waivers", function() c("uncoded_meds", "code_types"), envir = se)
+options(lot_waivers_applied = "code_types")
+ins <- grep("INSERT", sql_for(names(BSC)), value = TRUE)[1]
+ok(grepl("'uncoded_meds|code_types'", ins, fixed = TRUE),
+   "the row records both waivers the run asked for")
+ok(grepl("'code_types', current_timestamp()", ins, fixed = TRUE),
+   "...and only the one that actually fired as applied")
+options(lot_waivers_applied = NULL)
+ins <- grep("INSERT", sql_for(names(BSC)), value = TRUE)[1]
+ok(grepl("'uncoded_meds|code_types', '', current", ins, fixed = TRUE),
+   "nothing fired yet reads as empty, not as the requested list")
+# Cleared at the start of a run, or a second build in one session inherits it.
+ok(grepl("options(lot_waivers_applied = character(0))", bl, fixed = TRUE),
+   "and it is cleared before the run writes 'started'")
 
 cat("\n-- the code lists are recorded and checked --\n")
 # They live outside git, so the run log is the only record of which version
