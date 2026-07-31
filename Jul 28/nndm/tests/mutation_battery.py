@@ -6,9 +6,21 @@
 #
 # Attrition labels are deliberately not pinned: they are prose on the delivered
 # table and are meant to be editable without a test change.
-import os, shutil, subprocess
-SRC = "/home/user/julialot/Jul 28/nndm"
-WORK = "/tmp/claude-0/-home-user-julialot/548affc2-dd45-5731-a3cd-a13a48e1a7b2/scratchpad/nbat"
+import os, shutil, subprocess, sys, tempfile
+# The package is the parent of tests/, wherever this file happens to live, and
+# the scratch copy goes wherever the platform puts temporary directories. Both
+# were absolute paths from the machine this was written on, which meant the
+# battery could not run from any other checkout.
+SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# test_same_as_source.R looks for apr_30_2026 two levels above the package, and
+# skips with status 0 when it is not there. A scratch copy at a flat temp path
+# therefore silently drops that whole suite - which is how a stale anchor read
+# as a pass once before. So the copy keeps the repository shape and apr_30_2026
+# is linked in beside it, and the run below refuses to proceed if the suite
+# reports a skip anyway.
+ROOT = os.path.dirname(os.path.dirname(SRC))
+BASE = os.path.join(tempfile.gettempdir(), "nndm_mutation_battery")
+WORK = os.path.join(BASE, os.path.basename(os.path.dirname(SRC)), os.path.basename(SRC))
 M = [
  ("upstream check dropped","R/build_nndm.R","  check_upstream(con, cfg)\n","  "),
  ("upstream after the build","R/build_nndm.R","  check_upstream(con, cfg)\n  write_build_status(con, cfg, \"started\")","  write_build_status(con, cfg, \"started\")\n  check_upstream(con, cfg)"),
@@ -23,11 +35,28 @@ M = [
  ("contract never raises","R/build_nndm.R","  if (length(wrong))\n    stop(\"This cohort is defined as","  if (FALSE)\n    stop(\"This cohort is defined as"),
  ("contract first key only","R/build_nndm.R","lapply(names(CONTRACT), function(k) {","lapply(names(CONTRACT)[1], function(k) {"),
  ("contract fu_ce_days","R/build_nndm.R","  fu_ce_days           = 0L,","  fu_ce_days           = 90L,"),
- ("upstream raw tables","R/build_nndm.R","  raw <- c(cfg$tbl_medical, cfg$tbl_rx, cfg$tbl_med_diag, cfg$tbl_med_proc,\n           cfg$tbl_confinement)","  raw <- c(cfg$tbl_medical)"),
+ ("upstream raw tables","R/build_nndm.R","  c(cfg$tbl_medical, cfg$tbl_rx, cfg$tbl_med_diag, cfg$tbl_med_proc,\n    cfg$tbl_confinement, cfg$tbl_member_enroll)","  c(cfg$tbl_medical)"),
  ("upstream first miss only","R/build_nndm.R",'    stop("Cannot read:\\n  ", paste(missing, collapse = "\\n  "),','    stop("Cannot read:\\n  ", missing[1],'),
- ("upstream built tables","R/build_nndm.R","  for (t in names(UPSTREAM)) {","  for (t in names(UPSTREAM)[0]) {"),
- ("upstream owner","R/build_nndm.R",'  ELIG_COH_FINAL = "Jul 28/overall"','  ELIG_COH_FINAL = "Jul 28/lot"'),
+ ("upstream built tables","R/build_nndm.R","  for (t in names(up)) {","  for (t in names(up)[0]) {"),
+ ("upstream owner","R/build_nndm.R",'setNames(list("Jul 28/lot", "Jul 28/lot", "Jul 28/overall"),','setNames(list("Jul 28/lot", "Jul 28/lot", "Jul 28/lot"),'),
  ("attrition key typo","R/build_nndm.R",'list(key = "noother_nopreg",','list(key = "noother_nopreg2",'),
+ ("codelist allowlist short","R/codelists.R",'CODELIST_FILES <- c("cl_mma_codelist.csv", "other_malig.csv", "pregnancy.csv")','CODELIST_FILES <- c("cl_mma_codelist.csv", "pregnancy.csv")'),
+ ("codelist allowlist off","R/codelists.R","  if (!csv_name %in% CODELIST_FILES)","  if (FALSE)"),
+ ("codelist hashes dropped","R/build_nndm.R","  write_codelist_metadata(con, cfg)\n","  "),
+ ("codelist hash empty ok","R/build_nndm.R","  if (!length(seen))","  if (FALSE)"),
+ ("member_enrollment unpreflighted","R/build_nndm.R","    cfg$tbl_confinement, cfg$tbl_member_enroll)","    cfg$tbl_confinement)"),
+ ("cohort table hardcoded","R/build_nndm.R",'           c("LOT_LONG", "MAP_STACKED", cfg$cohort_table))','           c("LOT_LONG", "MAP_STACKED", "ELIG_COH_FINAL"))'),
+ ("constants unchecked","R/build_nndm.R","  check_constants(cfg)\n","  "),
+ ("constants never raise","R/build_nndm.R",'    stop("The SQL would not use the settings this run checked','    warning("The SQL would not use the settings this run checked'),
+ ("lot1_from constant unchecked","R/build_nndm.R",'  list(const = "NDMM_LOT1_FROM",     cfg = "lot1_from",\n       note = "set by NDMM_LOT1_FROM, not LOT1_FROM"),',''),
+ ("study_start constant unchecked","R/build_nndm.R",'  list(const = "NDMM_STUDY_START",   cfg = "study_start",\n       note = "set by STUDY_START"),\n',''),
+ ("mma blank code guard","R/steps/03_prior_therapy.R","      AND regexp_replace(trim(CL_CODE), '[^A-Za-z0-9]', '') <> ''\n",""),
+ ("mma ndc digit guard","R/steps/03_prior_therapy.R","      AND (upper(trim(CL_CODE_TYPE)) <> 'NDC'\n           OR regexp_replace(CL_CODE, '[^0-9]', '') <> '')\n",""),
+ ("claim proc blank guard","R/steps/03_prior_therapy.R","       AND regexp_replace(coalesce(cast(m.PROC_CD as string),''), '[^A-Za-z0-9]', '') <> ''\n",""),
+ ("claim rx ndc blank guard","R/steps/03_prior_therapy.R","       AND regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') <> ''\n",""),
+ ("other malig blank guard","R/steps/04_other_malig.R","      AND regexp_replace(trim(dx), '[^A-Za-z0-9]', '') <> ''\n",""),
+ ("pregnancy blank guard","R/steps/05_pregnancy.R","      AND regexp_replace(trim(code), '[^A-Za-z0-9]', '') <> ''\n",""),
+ ("override warns again","R/steps/04_other_malig.R","  if (is.na(n_matched) || n_matched < n_exp)\n    stop(","  if (FALSE)\n    stop("),
  ("attrition step dropped","R/build_nndm.R",'  list(key = "noother",        label = "+ no other cancer in 12-month baseline"),\n',''),
  ("monotonic never raises","R/build_nndm.R","  bad <- which(n[-1] > n[-length(n)])","  bad <- integer(0)"),
  ("monotonic empty cohort","R/build_nndm.R","  if (n[length(n)] == 0)","  if (FALSE)"),
@@ -36,7 +65,7 @@ M = [
  ("db_replace atomicity","R/db_utils.R","  with_retry(function() for (s in sqls) db_exec_once(con, s))","  for (s in sqls) with_retry(function() db_exec_once(con, s))"),
  ("status size unquoted","R/build_nndm.R","{sql_count(n)}, ","{n}, "),
  ("failed status ordering","R/build_nndm.R","          add = TRUE, after = FALSE)","          add = TRUE)"),
- ("outputs list","R/build_nndm.R",'OUTPUTS <- c("NDMM_FLAGS_ALL", "NDMM_LOT_LONG_FILT", "NDMM_COHORT",\n             "NDMM_ATTRITION", "NDMM_BUILD_STATUS")','OUTPUTS <- c("NDMM_FLAGS_ALL", "NDMM_LOT_LONG_FILT", "NDMM_COHORT")'),
+ ("outputs list","R/build_nndm.R",'OUTPUTS <- c("NDMM_FLAGS_ALL", "NDMM_LOT_LONG_FILT", "NDMM_COHORT",\n             "NDMM_ATTRITION", "NDMM_CODELIST_METADATA", "NDMM_BUILD_STATUS")','OUTPUTS <- c("NDMM_FLAGS_ALL", "NDMM_LOT_LONG_FILT", "NDMM_COHORT")'),
  ("ported fu ce constant","R/nndm_constants.R","NDMM_FU_CE_DAYS          <- 0L","NDMM_FU_CE_DAYS          <- 90L"),
  ("ported flags sql","R/steps/06_flags.R","      AND CE_lot1_fu              = 1","      AND 1 = 1"),
  ("cohort sql outside the rewrite","R/steps/07_cohort.R","            ON cast(l.PATID as string) = a.PATID","            ON cast(l.PATID as string) = a.PATIDX"),
@@ -46,9 +75,25 @@ M = [
 ]
 TESTS = ["tests/test_runner.R", "tests/test_same_as_source.R"]
 miss = []
-for name, f, a, b in M:
-    if os.path.exists(WORK): shutil.rmtree(WORK)
+def stage():
+    if os.path.exists(BASE): shutil.rmtree(BASE)
+    os.makedirs(os.path.dirname(WORK))
     shutil.copytree(SRC, WORK)
+    link = os.path.join(BASE, "apr_30_2026")
+    real = os.path.join(ROOT, "apr_30_2026")
+    if os.path.isdir(real):
+        try: os.symlink(real, link)
+        except (OSError, NotImplementedError): shutil.copytree(real, link)
+
+stage()
+probe = subprocess.run(["Rscript", "tests/test_same_as_source.R"], cwd=WORK,
+                       capture_output=True, text=True)
+if "Skipping" in probe.stdout or probe.returncode != 0:
+    sys.exit("equivalence suite does not run against the staged copy:\n" +
+             probe.stdout + probe.stderr)
+
+for name, f, a, b in M:
+    stage()
     p = os.path.join(WORK, f); s = open(p).read()
     if a not in s:
         miss.append((name, "ANCHOR GONE")); continue

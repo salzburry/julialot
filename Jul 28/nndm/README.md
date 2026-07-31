@@ -16,18 +16,34 @@ missing, naming the table and the build that produces it.
 
 | input | produced by |
 |---|---|
-| `<prefix>ELIG_COH_FINAL` | `Jul 28/overall` |
+| `<prefix>OVERALL_COH_FINAL` | `Jul 28/overall` |
 | `<prefix>LOT_LONG` | `Jul 28/lot` |
 | `<prefix>MAP_STACKED` | `Jul 28/lot` |
-| `medical`, `rx`, `med_diagnosis`, `med_procedure`, `confinement` | Optum CDM |
+| `medical`, `rx`, `med_diagnosis`, `med_procedure`, `confinement`, `member_enrollment` | Optum CDM |
+
+Code lists, all read from `CODELIST_DIR`: `cl_mma_codelist.csv` (prior MM
+therapy), `other_malig.csv` (other cancer), `pregnancy.csv`. The md5 of each is
+written to `<prefix>NDMM_CODELIST_METADATA`, so a cohort can be traced to the
+files that built it.
 
 So the order is **`overall` → `lot` → `nndm`**. The NDMM index date is the 1L
 start, which comes out of `LOT_LONG`, so this cannot run first even though it
 is wanted first.
 
+The cohort table's name is a setting (`FINAL_TABLE_NAME`), because
+`Jul 28/overall`'s own config decides what it is called; both default to
+`OVERALL_COH_FINAL`.
+
 Outputs, all prefixed: `NDMM_COHORT` (the PATIDs), `NDMM_ATTRITION` (the nine
 rows below), `NDMM_FLAGS_ALL` (one row per candidate with every filter's
-verdict), `NDMM_LOT_LONG_FILT`, `NDMM_BUILD_STATUS`.
+verdict), `NDMM_LOT_LONG_FILT`, `NDMM_CODELIST_METADATA`, `NDMM_BUILD_STATUS`.
+
+Every input above is read once before any work, and a missing one names itself
+and the build that makes it. Every setting is checked twice: against
+`CONTRACT`, and then against the `NDMM_*` constants the SQL actually
+interpolates - those have their own environment variables (`NDMM_LOT1_FROM` is
+not `LOT1_FROM`), so a contract checked against `cfg` alone would not speak for
+the query that runs.
 
 ## The criteria as applied
 
@@ -37,7 +53,7 @@ differ it says so. Compare it against the protocol when either changes.
 ### Inherited from the parent cohort
 
 These are applied by `Jul 28/overall` and enter here through
-`ELIG_COH_FINAL` - this build does not re-derive them.
+`OVERALL_COH_FINAL` - this build does not re-derive them.
 
 | # | criterion | as applied |
 |---|---|---|
@@ -78,6 +94,11 @@ the class. `MAP_MED_TYPE LIKE 'BEL%'` is the criterion as written.
 
 ### Where this departs from the protocol
 
+All protocol references are to `Questions/July 30 2026/Updated NNDM cohort.pdf`
+(*Rev Round 2, June 16 2026*), 58 pages. `docs/june_22_2026/NNDM/nmdmprotocol.pdf`
+is an earlier draft — its own title bar reads `OLD DO NOT USE` — and its
+eligibility text differs. Check the newer file.
+
 **Follow-up CE — criterion 5.** Protocol Rev Round 2 §6.2.1.1 reads:
 
 > CE during follow-up: CE from index date until the earliest of 3-months post
@@ -93,8 +114,11 @@ named deviation in `tests/test_same_as_source.R` — reverting it to 90 fails th
 suite. The 2L/3L bullet in the protocol still asks for three months and carries
 no change bar, so if those cohorts are built later they do **not** inherit this.
 
-Two comments are anchored to that bullet in the protocol PDF and are not in the
-rendered page. They have not been read.
+The one-day rule comes from the study team, relayed in the build request. It is
+not written in any document in this repository, and two comments anchored to
+that bullet in the protocol PDF are not in the rendered page and have not been
+read. Until the decision exists in a controlled source, `FU_CE_DAYS = 0` rests
+on that relay alone — worth getting in writing before anyone signs the count.
 
 ### Thresholds worth double-checking
 
@@ -122,7 +146,7 @@ not.
 | # | step | protocol |
 |---|---|---|
 | 1 | Patients in `LOT_LONG` | — (starting population) |
-| 2 | + in `ELIG_COH_FINAL` (parent IE) | §6.2.1.1 incl. 1 **and** 2 |
+| 2 | + in `OVERALL_COH_FINAL` (parent IE) | §6.2.1.1 incl. 1 **and** 2 |
 | 3 | + 1L start on or after `LOT1_FROM` | §6.2.1.1 incl. 3 |
 | 4 | + 12-month CE before index | §6.2.1.1 incl. 4 |
 | 5 | + CE during follow-up | §6.2.1.1 incl. 5 |
@@ -133,7 +157,7 @@ not.
 
 **Step 2 carries two protocol criteria, not one.** §6.2.1.1's MM diagnosis and
 adult age are both applied by `Jul 28/overall` and arrive here already
-combined, inside `ELIG_COH_FINAL`. Splitting them into separate rows is not
+combined, inside the parent cohort table. Splitting them into separate rows is not
 possible from this build — by the time it reads that table both filters have
 run. `Jul 28/overall`'s own attrition has them as separate steps, and that is
 where to read them.

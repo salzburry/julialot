@@ -18,6 +18,10 @@ sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = env)
 for (f in ls(env)) assign(f, get(f, envir = env), envir = globalenv())
 sys.source(file.path(ROOT, "R", "config.R"), envir = globalenv())
 sys.source(file.path(ROOT, "R", "db_utils.R"), envir = globalenv())
+sys.source(file.path(ROOT, "R", "codelists.R"), envir = globalenv())
+# The NDMM_* constants are what the SQL reads, and check_constants() compares
+# them against cfg. Loaded here the same way load_nndm_modules() loads them.
+sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = globalenv())
 bl   <- paste(readLines(file.path(ROOT, "R", "build_nndm.R"), warn = FALSE), collapse = "\n")
 body <- sub(".*build_nndm <- function\\([^)]*\\) \\{", "", bl)
 
@@ -29,7 +33,7 @@ clear()
 
 cat("\n-- the runner calls its phases, in order --\n")
 ORDER <- c("check_settings", "pin_output_schema", "pin_prefix", "check_contract",
-           "set_lot_config", "check_upstream", "write_build_status",
+           "check_constants", "set_lot_config", "check_upstream", "write_build_status",
            "build_enrollment_spans_ndmm", "build_lot1_starts_ndmm",
            "build_ndmm_mma_codelist", "build_ndmm_therapy_pre_lot1",
            "build_ndmm_other_malig_codes",
@@ -37,7 +41,8 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_prefix", "check_contract"
            "build_ndmm_other_malig_pre_lot1", "build_ndmm_preg_codes",
            "build_ndmm_pregnancy_patids", "build_ndmm_flags",
            "build_lot_long_filtered", "ndmm_counts",
-           "check_attrition_monotonic", "write_attrition")
+           "check_attrition_monotonic", "write_attrition",
+           "write_codelist_metadata")
 at <- vapply(ORDER, function(f) {
   m <- regexpr(paste0("(?<![A-Za-z0-9_.])", f, "\\("), body, perl = TRUE)
   if (m == -1) NA_integer_ else as.integer(m)
@@ -118,7 +123,9 @@ assign("log_msg", function(...) invisible(NULL), envir = ue)
 assign("wrk", function(x) paste0("wk.p_", x), envir = ue)
 assign("cdm_src", function(x) paste0("cdm.t_", x), envir = ue)
 UCFG <- list(tbl_medical = "medical", tbl_rx = "rx", tbl_med_diag = "med_diagnosis",
-             tbl_med_proc = "med_procedure", tbl_confinement = "confinement")
+             tbl_med_proc = "med_procedure", tbl_confinement = "confinement",
+             tbl_member_enroll = "member_enrollment",
+             cohort_table = "OVERALL_COH_FINAL")
 drive_up <- function(unreadable = character(0)) {
   assign("db_q", function(con, sql) {
     for (u in unreadable) if (grepl(u, sql, fixed = TRUE)) stop("cannot read")
@@ -126,14 +133,17 @@ drive_up <- function(unreadable = character(0)) {
   }, envir = ue)
   tryCatch({ ue$check_upstream(NULL, UCFG); NULL }, error = conditionMessage)
 }
-ok(is.null(drive_up()), "all eight inputs readable lets the run start")
+ok(is.null(drive_up()), "all nine inputs readable lets the run start")
 msg <- drive_up("wk.p_LOT_LONG")
 ok(!is.null(msg) && grepl("wk.p_LOT_LONG", msg, fixed = TRUE) &&
      grepl("Jul 28/lot", msg, fixed = TRUE),
    "a missing built table is named, with the build that makes it")
-msg <- drive_up("wk.p_ELIG_COH_FINAL")
+msg <- drive_up("wk.p_OVERALL_COH_FINAL")
 ok(!is.null(msg) && grepl("Jul 28/overall", msg, fixed = TRUE),
-   "...and ELIG_COH_FINAL points at the cohort build, not the LOT build")
+   "...and the cohort table points at the cohort build, not the LOT build")
+msg <- drive_up("cdm.t_member_enrollment")
+ok(!is.null(msg) && grepl("member_enrollment", msg, fixed = TRUE),
+   "member_enrollment too - the first table the run reads")
 msg <- drive_up("cdm.t_confinement")
 ok(!is.null(msg) && grepl("confinement", msg, fixed = TRUE),
    "a missing raw CDM table stops it too - the other-cancer rule needs it")
@@ -141,6 +151,135 @@ msg <- drive_up(c("wk.p_MAP_STACKED", "cdm.t_rx"))
 ok(!is.null(msg) && grepl("MAP_STACKED", msg, fixed = TRUE) &&
      grepl("rx", msg, fixed = TRUE),
    "and two missing inputs are both reported, not just the first")
+
+cat("\n-- the preflight covers every table a step actually reads --\n")
+# The list of raw tables was hand-maintained and had drifted: member_enrollment
+# feeds both enrollment-span builds, was not in it, and so the preflight passed
+# and the run died in phase one. Read the tables out of the steps instead of
+# trusting the list.
+consts0 <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = consts0)
+step_files <- list.files(file.path(ROOT, "R", "steps"), "\\.R$", full.names = TRUE)
+read_raw <- unique(unlist(lapply(step_files, function(f) {
+  s <- paste(readLines(f, warn = FALSE), collapse = "\n")
+  a <- unlist(regmatches(s, gregexpr("(?<=cdm_src\\()[^)]+(?=\\))", s, perl = TRUE)))
+  unlist(lapply(trimws(a), function(x) {
+    if (grepl("^['\"].*['\"]$", x)) gsub("^['\"]|['\"]$", "", x)
+    else if (grepl("^cfg\\$", x)) cfg_defaults[[sub("^cfg\\$", "", x)]]
+    else if (exists(x, envir = consts0, inherits = FALSE)) get(x, envir = consts0)
+    else NULL
+  }))
+})))
+declared <- raw_tables(cfg_defaults)
+ok(length(read_raw) > 0, paste0("the steps name ", length(read_raw), " raw CDM tables"))
+undeclared <- setdiff(read_raw, declared)
+ok(length(undeclared) == 0,
+   if (length(undeclared)) paste0("read by a step but never preflighted: ",
+                                  paste(undeclared, collapse = ", "))
+   else "and check_upstream() checks every one of them before phase one")
+ok("member_enrollment" %in% declared,
+   "member_enrollment among them - the first table the run touches")
+
+cat("\n-- the settings the SQL uses, not the ones cfg holds --\n")
+# check_contract() reads cfg. The queries read the NDMM_* constants, which have
+# their own environment variables - NDMM_LOT1_FROM is not LOT1_FROM. Setting it
+# moved the 1L cutoff with the contract still passing.
+ce0 <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = ce0)
+base_cfg <- modifyList(cfg_defaults, list(work_schema = "wk", object_prefix = "p_"))
+ok(identical(tryCatch({ check_constants(base_cfg); "" }, error = conditionMessage), ""),
+   "the shipped constants match the contract they are checked against")
+for (s in CONSTANT_SETTINGS) {
+  keep <- get(s$const, envir = globalenv())
+  assign(s$const, if (is.numeric(keep)) keep + 1L else "1999-01-01",
+         envir = globalenv())
+  m <- tryCatch({ check_constants(base_cfg); "" }, error = conditionMessage)
+  assign(s$const, keep, envir = globalenv())
+  ok(grepl(s$const, m, fixed = TRUE),
+     paste0(s$const, " drifting from ", s$cfg, " stops the build, named"))
+}
+
+# And the list has to be complete. Every constant nndm_constants.R reads from
+# the environment is a knob someone can turn without touching config.csv, so
+# each one must be pinned - derived from the file rather than listed by hand,
+# because listing by hand is how NDMM_LOT1_FROM went unnoticed.
+kl <- readLines(file.path(ROOT, "R", "nndm_constants.R"), warn = FALSE)
+env_consts <- unique(sub("^\\s*([A-Za-z_.][A-Za-z0-9_.]*)\\s*<-.*", "\\1",
+                         grep("^\\s*[A-Za-z_.][A-Za-z0-9_.]*\\s*<-.*Sys\\.getenv",
+                              kl, value = TRUE)))
+# Only the ones a step reads: a constant nothing uses cannot move the cohort.
+steps_txt <- paste(unlist(lapply(step_files, readLines, warn = FALSE)), collapse = "\n")
+env_consts <- env_consts[vapply(env_consts, function(k)
+  grepl(paste0("(?<![A-Za-z0-9_.])", k, "(?![A-Za-z0-9_.])"), steps_txt, perl = TRUE),
+  logical(1))]
+pinned <- vapply(CONSTANT_SETTINGS, function(s) s$const, character(1))
+unpinned <- setdiff(env_consts, pinned)
+ok(length(env_consts) > 0,
+   paste0("nndm_constants.R takes ", length(env_consts), " values from the environment"))
+ok(length(unpinned) == 0,
+   if (length(unpinned)) paste0("settable from the environment but never checked: ",
+                                paste(unpinned, collapse = ", "))
+   else "and every one of them is checked against the contract")
+ok("NDMM_LOT1_FROM" %in% pinned,
+   "NDMM_LOT1_FROM among them - its variable is not LOT1_FROM")
+
+cat("\n-- the codelist allowlist, executed rather than described --\n")
+# CODELIST_FILES named two files while the steps asked for three, so every
+# production run died inside build_ndmm_other_malig_codes(). Nothing executed
+# that path. Read the requested names out of the steps, and drive the real
+# loader for each.
+asked <- unique(unlist(lapply(step_files, function(f) {
+  s <- paste(readLines(f, warn = FALSE), collapse = "\n")
+  m <- unlist(regmatches(s, gregexpr('load_codelist_csv\\(\\s*"[^"]+"', s, perl = TRUE)))
+  sub('.*"([^"]+)"', "\\1", m)
+})))
+ok(length(asked) > 0, paste0("the steps load ", length(asked), " code lists"))
+notallowed <- setdiff(asked, CODELIST_FILES)
+ok(length(notallowed) == 0,
+   if (length(notallowed)) paste0("requested but not in CODELIST_FILES: ",
+                                  paste(notallowed, collapse = ", "))
+   else "and every one of them is a file this build is defined on")
+tmp <- file.path(tempdir(), paste0("cl", as.integer(Sys.time())))
+dir.create(tmp, showWarnings = FALSE, recursive = TRUE)
+assign("cfg", modifyList(cfg_defaults, list(codelist_dir = tmp)), envir = globalenv())
+options(nndm_codelist_md5 = list())
+writeLines(c("dx,icd_family,tumor_group", "C349,ICD10,LUNG"),
+           file.path(tmp, "other_malig.csv"))
+got <- tryCatch(load_codelist_csv("other_malig.csv", c("dx", "icd_family", "tumor_group")),
+                error = conditionMessage)
+ok(is.character(got) && grepl("VALUES", got, fixed = TRUE),
+   "the other-cancer codelist loads - the allowlist no longer rejects it")
+ok(grepl("'C349'", got, fixed = TRUE), "...with its rows in the SQL fragment")
+writeLines("x,y", file.path(tmp, "not_a_codelist.csv"))
+m <- tryCatch({ load_codelist_csv("not_a_codelist.csv", c("x", "y")); "" },
+              error = conditionMessage)
+ok(grepl("not one of the files", m, fixed = TRUE),
+   "and a file nobody declared is still refused, present or not")
+
+cat("\n-- which code lists built the cohort --\n")
+# The hashes were collected into an option and dropped. A cohort that cannot be
+# traced to the files that built it is not reproducible.
+me <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = me)
+assign("log_msg", function(...) invisible(NULL), envir = me)
+assign("wrk", function(x) paste0("wk.p_", x), envir = me)
+assign("run_id", "R1", envir = me)
+MSQL <- character(0)
+assign("db_exec", function(con, s) { MSQL <<- c(MSQL, s); TRUE }, envir = me)
+assign("db_replace", function(con, ...) { MSQL <<- c(MSQL, c(...)); TRUE }, envir = me)
+m <- tryCatch({ me$write_codelist_metadata(NULL, list()); "" }, error = conditionMessage)
+ins <- grep("INSERT", MSQL, value = TRUE)[1]
+ok(!is.na(ins) && grepl("'other_malig.csv'", ins, fixed = TRUE),
+   "every codelist read is written out by name")
+ok(!is.na(ins) && grepl(unname(tools::md5sum(file.path(tmp, "other_malig.csv"))),
+                        ins, fixed = TRUE),
+   "...with the md5 of the file that was actually read")
+options(nndm_codelist_md5 = list())
+MSQL <- character(0)
+m <- tryCatch({ me$write_codelist_metadata(NULL, list()); "" }, error = conditionMessage)
+ok(grepl("cannot be traced", m, fixed = TRUE),
+   "and a run that recorded no hashes stops rather than publishing untraceable counts")
+unlink(tmp, recursive = TRUE)
 
 cat("\n-- the attrition steps match what the counts return --\n")
 # The labels are read off ATTRITION_STEPS but the numbers come from
@@ -326,7 +465,7 @@ named <- unique(unlist(lapply(args, function(a) {
 })))
 ok(length(named) >= length(OUTPUTS),
    paste0("the scan finds every named table, not a subset (", length(named), ")"))
-undeclared <- setdiff(named, c(OUTPUTS, names(UPSTREAM)))
+undeclared <- setdiff(named, c(OUTPUTS, names(upstream_tables(cfg_defaults))))
 ok(length(undeclared) == 0,
    if (length(undeclared)) paste0("tables written but not declared: ",
                                   paste(undeclared, collapse = ", "))

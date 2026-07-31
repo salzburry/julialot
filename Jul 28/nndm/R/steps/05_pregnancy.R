@@ -12,6 +12,9 @@ build_ndmm_preg_codes <- function(con) {
     FROM {src}
     WHERE code IS NOT NULL AND trim(code) <> ''
       AND code_type IS NOT NULL AND trim(code_type) <> ''
+      -- Blank after normalising too, or a punctuation-only row matches every
+      -- claim whose code is missing. See 03_prior_therapy.R.
+      AND regexp_replace(trim(code), '[^A-Za-z0-9]', '') <> ''
   "))
 }
 

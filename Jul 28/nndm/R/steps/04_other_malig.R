@@ -18,6 +18,9 @@ build_ndmm_other_malig_codes <- function(con) {
       CASE WHEN upper(trim(tumor_group)) IN ({ovr_in}) THEN 1 ELSE 0 END AS is_mm_adjacent_override
     FROM {src}
     WHERE dx IS NOT NULL AND tumor_group IS NOT NULL
+      -- And non-blank once normalised: '---' would otherwise match every
+      -- diagnosis claim with a missing code. See 03_prior_therapy.R.
+      AND regexp_replace(trim(dx), '[^A-Za-z0-9]', '') <> ''
   "))
   n_exp     <- length(NDMM_MM_ADJACENT_OVERRIDE)
   n_matched <- tryCatch(as.integer(db_q(con, glue("
@@ -25,15 +28,21 @@ build_ndmm_other_malig_codes <- function(con) {
     FROM {NDMM_OTHER_MALIG_CODES}
     WHERE is_mm_adjacent_override = 1
   "))$n), error = function(e) NA_integer_)
-  log_msg("  NDMM other-cancer override: matched ",
-          if (is.na(n_matched)) "?" else n_matched, " of ", n_exp,
-          " expected MM-adjacent tumor_group labels",
-          if (is.na(n_matched) || n_matched < n_exp)
-            paste0(" - WARNING: < expected. Inspect 'SELECT DISTINCT ",
-                   "tumor_group FROM ", NDMM_OTHER_MALIG_CODES, "' on the ",
-                   "warehouse and align NDMM_MM_ADJACENT_OVERRIDE to the ",
-                   "stored labels before trusting the NDMM count.")
-          else "")
+  # The source logged this and carried on. An unmatched label means the
+  # override is a silent no-op for that tumour group, so patients whose only
+  # other cancer is MM-adjacent are excluded as having another cancer - a
+  # smaller cohort, with nothing in the attrition saying why. Its own comment
+  # calls that a run-review blocker, so stop rather than warn.
+  if (is.na(n_matched) || n_matched < n_exp)
+    stop("NDMM other-cancer override: matched ",
+         if (is.na(n_matched)) "no" else n_matched, " of ", n_exp,
+         " expected MM-adjacent tumor_group labels. The unmatched ones are ",
+         "not overridden, so patients would be excluded for an MM-adjacent ",
+         "condition. Run 'SELECT DISTINCT tumor_group FROM ",
+         NDMM_OTHER_MALIG_CODES, "' on the warehouse and align ",
+         "NDMM_MM_ADJACENT_OVERRIDE to the stored labels.", call. = FALSE)
+  log_msg("  NDMM other-cancer override: matched all ", n_exp,
+          " expected MM-adjacent tumor_group labels")
   invisible(n_matched)
 }
 

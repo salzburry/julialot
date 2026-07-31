@@ -16,6 +16,14 @@ build_ndmm_mma_codelist <- function() {
     FROM {codelist_src}
     WHERE CL_CODE      IS NOT NULL AND trim(CL_CODE)      <> ''
       AND CL_CODE_TYPE IS NOT NULL AND trim(CL_CODE_TYPE) <> ''
+      -- The two blank checks above read the raw value. A CL_CODE of '---'
+      -- passes them and normalises to '', which is what a claim with a NULL
+      -- PROC_CD also normalises to - so every such claim would read as prior
+      -- MM therapy and the patient would be excluded. The NDC branches are
+      -- worse: both sides pad to 00000000000. Check the normalised value too.
+      AND regexp_replace(trim(CL_CODE), '[^A-Za-z0-9]', '') <> ''
+      AND (upper(trim(CL_CODE_TYPE)) <> 'NDC'
+           OR regexp_replace(CL_CODE, '[^0-9]', '') <> '')
       AND upper(coalesce(CL_MED_ABBR, '')) NOT IN ({ster_in})
   ")
 }
@@ -43,6 +51,7 @@ build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl) {
       INNER JOIN {NDMM_MMA_CODELIST} c
         ON c.code_type IN ('HCPCS','CPT')
        AND upper(regexp_replace(coalesce(cast(m.PROC_CD as string),''), '[^A-Za-z0-9]', '')) = c.code
+       AND regexp_replace(coalesce(cast(m.PROC_CD as string),''), '[^A-Za-z0-9]', '') <> ''
       WHERE cast(m.FST_DT as date)
               BETWEEN date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS})
                   AND date_sub(l1.LOT1_START_DT, 1)
@@ -54,6 +63,7 @@ build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl) {
       INNER JOIN {NDMM_MMA_CODELIST} c
         ON c.code_type = 'HCPCS'
        AND upper(regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''), '[^A-Za-z0-9]', '')) = c.code
+       AND regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''), '[^A-Za-z0-9]', '') <> ''
       WHERE cast(m.FST_DT as date)
               BETWEEN date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS})
                   AND date_sub(l1.LOT1_START_DT, 1)
@@ -66,6 +76,7 @@ build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl) {
         ON c.code_type = 'NDC'
        AND lpad(regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', ''), 11, '0')
          = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')
+       AND regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '') <> ''
       WHERE cast(m.FST_DT as date)
               BETWEEN date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS})
                   AND date_sub(l1.LOT1_START_DT, 1)
@@ -78,6 +89,7 @@ build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl) {
         ON c.code_type = 'NDC'
        AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', ''), 11, '0')
          = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')
+       AND regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') <> ''
       WHERE cast(r.FILL_DT as date)
               BETWEEN date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS})
                   AND date_sub(l1.LOT1_START_DT, 1)

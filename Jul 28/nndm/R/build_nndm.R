@@ -27,31 +27,34 @@ CONTRACT <- list(
   # overriding the protocol's three months. See README.
   fu_ce_days           = 0L,
   gap_days             = 30L,
+  # The pregnancy scan runs over [study_start, study_end], so this moves who is
+  # excluded. It reaches the SQL through NDMM_STUDY_START, which reads the same
+  # environment variable.
+  study_start          = "2015-07-01",
+  # What Jul 28/overall writes. Its config.csv sets FINAL_TABLE_NAME to this;
+  # the name is pinned here because reading the wrong table would build a
+  # different cohort, not fail.
+  cohort_table         = "OVERALL_COH_FINAL",
   tbl_medical          = "medical",
   tbl_med_proc         = "med_procedure",
   tbl_med_diag         = "med_diagnosis",
   tbl_rx               = "rx",
-  tbl_confinement      = "confinement"
+  tbl_confinement      = "confinement",
+  tbl_member_enroll    = "member_enrollment"
 )
 
 # The upstream tables this build reads, and which build writes each. It cannot
 # make any of them, so it says which one is missing rather than failing inside
-# a join twenty statements later.
-UPSTREAM <- list(
-  LOT_LONG       = "Jul 28/lot",
-  MAP_STACKED    = "Jul 28/lot",
-  ELIG_COH_FINAL = "Jul 28/overall"
-)
+# a join twenty statements later. The cohort table is named by cfg, because
+# Jul 28/overall's own config decides what it is called.
+upstream_tables <- function(cfg) {
+  setNames(list("Jul 28/lot", "Jul 28/lot", "Jul 28/overall"),
+           c("LOT_LONG", "MAP_STACKED", cfg$cohort_table))
+}
 
 # What the run writes. All prefixed, so two cohorts sit side by side.
 OUTPUTS <- c("NDMM_FLAGS_ALL", "NDMM_LOT_LONG_FILT", "NDMM_COHORT",
-             "NDMM_ATTRITION", "NDMM_BUILD_STATUS")
-
-check_lot1_from <- function(x) {
-  if (!grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", x))
-    stop("LOT1_FROM='", x, "' (want YYYY-MM-DD)", call. = FALSE)
-  invisible(TRUE)
-}
+             "NDMM_ATTRITION", "NDMM_CODELIST_METADATA", "NDMM_BUILD_STATUS")
 
 check_settings <- function() {
   bad <- character(0)
@@ -114,18 +117,26 @@ check_contract <- function(cfg) {
   invisible(TRUE)
 }
 
+# Every raw CDM table a step reads. member_enrollment is the first one used -
+# both enrollment-span builds sit on it - and it was missing from this list,
+# so the preflight passed and the run then failed inside phase one.
+raw_tables <- function(cfg) {
+  c(cfg$tbl_medical, cfg$tbl_rx, cfg$tbl_med_diag, cfg$tbl_med_proc,
+    cfg$tbl_confinement, cfg$tbl_member_enroll)
+}
+
 # Every upstream table, before any work. The source skipped a filter whose
 # inputs it could not read and carried on, which produces a cohort that is
 # smaller than it should be with nothing in the output saying so.
 check_upstream <- function(con, cfg) {
   missing <- character(0)
-  for (t in names(UPSTREAM)) {
+  up <- upstream_tables(cfg)
+  for (t in names(up)) {
     got <- tryCatch({ db_q(con, glue("SELECT 1 FROM {wrk(t)} LIMIT 1")); TRUE },
                     error = function(e) FALSE)
-    if (!got) missing <- c(missing, paste0(wrk(t), " (built by ", UPSTREAM[[t]], ")"))
+    if (!got) missing <- c(missing, paste0(wrk(t), " (built by ", up[[t]], ")"))
   }
-  raw <- c(cfg$tbl_medical, cfg$tbl_rx, cfg$tbl_med_diag, cfg$tbl_med_proc,
-           cfg$tbl_confinement)
+  raw <- raw_tables(cfg)
   for (t in raw) {
     got <- tryCatch({ db_q(con, glue("SELECT 1 FROM {cdm_src(t)} LIMIT 1")); TRUE },
                     error = function(e) FALSE)
@@ -136,8 +147,51 @@ check_upstream <- function(con, cfg) {
          "\nEvery NDMM filter needs its input. Skipping one would drop patients ",
          "the criteria do not exclude, and the attrition would not say so.",
          call. = FALSE)
-  log_msg("Upstream inputs present (", length(UPSTREAM), " built, ",
+  log_msg("Upstream inputs present (", length(up), " built, ",
           length(raw), " raw)")
+  invisible(TRUE)
+}
+
+# The SQL does not read cfg. It reads the NDMM_* constants in
+# nndm_constants.R, which is ported code with its own environment variables -
+# NDMM_LOT1_FROM among them. So a contract checked against cfg proves nothing
+# about the query that runs. This compares the constants themselves, after the
+# modules are loaded, and is the only check that speaks for the SQL.
+CONSTANT_SETTINGS <- list(
+  list(const = "NDMM_LOT1_FROM",     cfg = "lot1_from",
+       note = "set by NDMM_LOT1_FROM, not LOT1_FROM"),
+  list(const = "NDMM_PRE_LOT1_DAYS", cfg = "pre_lot1_days", note = ""),
+  list(const = "NDMM_FU_CE_DAYS",    cfg = "fu_ce_days",    note = ""),
+  list(const = "NDMM_GAP_DAYS",      cfg = "gap_days",      note = ""),
+  list(const = "NDMM_STUDY_START",   cfg = "study_start",
+       note = "set by STUDY_START"),
+  # Table names are settings too: an ambient TBL_CONFINEMENT changes what the
+  # other-cancer rule reads while cfg, and so the contract, is unmoved.
+  list(const = "NDMM_TBL_CONFINEMENT",       cfg = "tbl_confinement",   note = ""),
+  list(const = "NDMM_TBL_MEMBER_ENROLLMENT", cfg = "tbl_member_enroll", note = "")
+  # NDMM_FINAL_TABLE_NAME is defined in the ported constants and read by
+  # nothing - the runner passes the cohort table in. Nothing to check, because
+  # nothing uses it; the test below only requires constants the steps read.
+
+)
+
+check_constants <- function(cfg) {
+  wrong <- character(0)
+  for (s in CONSTANT_SETTINGS) {
+    if (!exists(s$const, envir = globalenv()))
+      stop("Module constant ", s$const, " is not loaded; the modules must be ",
+           "sourced before the settings can be checked.", call. = FALSE)
+    got <- get(s$const, envir = globalenv())
+    if (!isTRUE(all.equal(as.character(got), as.character(cfg[[s$cfg]]))))
+      wrong <- c(wrong, paste0(s$const, " = ", format(got), " but ", s$cfg,
+                               " = ", format(cfg[[s$cfg]]),
+                               if (nzchar(s$note)) paste0(" (", s$note, ")") else ""))
+  }
+  if (length(wrong))
+    stop("The SQL would not use the settings this run checked:\n  ",
+         paste(wrong, collapse = "\n  "),
+         "\nThese constants are what the queries read. A cohort built from ",
+         "them is not the cohort the contract describes.", call. = FALSE)
   invisible(TRUE)
 }
 
@@ -200,6 +254,36 @@ check_attrition_monotonic <- function(counts) {
   invisible(TRUE)
 }
 
+CODELIST_METADATA_COLS <- c(RUN_ID = "STRING", CSV_NAME = "STRING",
+                            MD5 = "STRING", N_ROWS = "BIGINT",
+                            RECORDED_AT = "TIMESTAMP")
+
+# load_codelist_csv() hashes every CSV it reads, because the code lists live
+# outside git and the file name alone does not say which version a run used.
+# Those hashes were being collected into an option and then dropped. Written
+# here, so the outputs say which code lists built them.
+write_codelist_metadata <- function(con, cfg) {
+  seen <- getOption("nndm_codelist_md5", list())
+  if (!length(seen))
+    stop("No codelist hashes to record. Every run reads ",
+         length(CODELIST_FILES), " code lists; this one recorded none, so the ",
+         "cohort cannot be traced to the files that built it.", call. = FALSE)
+  tbl  <- wrk("NDMM_CODELIST_METADATA")
+  cols <- names(CODELIST_METADATA_COLS)
+  db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
+                    paste(cols, CODELIST_METADATA_COLS, collapse = ", "), ")"))
+  vals <- vapply(names(seen), function(nm)
+    glue("('{run_id}', {sql_text(nm)}, {sql_text(seen[[nm]]$md5)}, ",
+         "{sql_count(seen[[nm]]$n_rows)}, current_timestamp())"),
+    character(1), USE.NAMES = FALSE)
+  db_replace(con,
+    glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"),
+    glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES ",
+         paste(vals, collapse = ", ")))
+  log_msg("Codelist versions written to ", tbl, " (", length(seen), ")")
+  invisible(TRUE)
+}
+
 BUILD_STATUS_COLS <- c(RUN_ID = "STRING", OBJECT_PREFIX = "STRING",
                        STATE = "STRING", N_NDMM = "BIGINT",
                        UPDATED_AT = "TIMESTAMP")
@@ -233,6 +317,7 @@ build_nndm <- function(here, prefix) {
   cfg <- pin_output_schema(cfg_defaults)
   cfg <- pin_prefix(cfg, prefix)
   check_contract(cfg)
+  check_constants(cfg)
   set_lot_config(cfg)
 
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
@@ -257,7 +342,7 @@ build_nndm <- function(here, prefix) {
 
   lot_long       <- wrk("LOT_LONG")
   map_stacked    <- wrk("MAP_STACKED")
-  elig_coh_final <- wrk("ELIG_COH_FINAL")
+  elig_coh_final <- wrk(cfg$cohort_table)
 
   log_msg("Enrollment spans (gap_days=", cfg$gap_days, ", and a no-gap set)")
   build_enrollment_spans_ndmm(con)
@@ -297,6 +382,7 @@ build_nndm <- function(here, prefix) {
     SELECT DISTINCT PATID FROM {NDMM_PATIDS}"),
     qc = glue("SELECT count(*) AS n_patients FROM {wrk('NDMM_COHORT')}"))
   write_attrition(con, cfg, counts)
+  write_codelist_metadata(con, cfg)
 
   write_build_status(con, cfg, "complete", counts$ndmm_final)
   options(nndm_complete = TRUE)

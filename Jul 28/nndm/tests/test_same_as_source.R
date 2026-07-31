@@ -65,8 +65,29 @@ SUBST <- list(
 )
 
 # Lines the port adds that the source has no counterpart for, and how many.
+#
+# The <> '' guards are the second clinical change. Every codelist and claim
+# value is normalised by stripping punctuation, and the source only checked the
+# raw value for blankness: a CL_CODE of '---' survives that check, normalises
+# to '', and then equals the normalised form of any claim whose code is
+# missing. In the NDC branches both sides pad to 00000000000. The result is a
+# patient excluded as previously treated, or as having another cancer, on the
+# strength of a claim with no code in it. These add the check on the normalised
+# value; they can only ever remove matches the source should not have made.
 ADDED <- list(
-  "R/nndm_constants.R" = c("NDMM_FU_CE_DAYS          <- 0L" = 1L)
+  "R/nndm_constants.R" = c("NDMM_FU_CE_DAYS          <- 0L" = 1L),
+  "R/steps/03_prior_therapy.R" = c(
+    "AND regexp_replace(trim(CL_CODE), '[^A-Za-z0-9]', '') <> ''" = 1L,
+    "AND (upper(trim(CL_CODE_TYPE)) <> 'NDC'" = 1L,
+    "OR regexp_replace(CL_CODE, '[^0-9]', '') <> '')" = 1L,
+    "AND regexp_replace(coalesce(cast(m.PROC_CD as string),''), '[^A-Za-z0-9]', '') <> ''" = 1L,
+    "AND regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''), '[^A-Za-z0-9]', '') <> ''" = 1L,
+    "AND regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '') <> ''" = 1L,
+    "AND regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') <> ''" = 1L),
+  "R/steps/04_other_malig.R" = c(
+    "AND regexp_replace(trim(dx), '[^A-Za-z0-9]', '') <> ''" = 1L),
+  "R/steps/05_pregnancy.R" = c(
+    "AND regexp_replace(trim(code), '[^A-Za-z0-9]', '') <> ''" = 1L)
 )
 
 # Blocks the port rewrote rather than edited. Patching these back line by line
@@ -86,6 +107,17 @@ SPLICE <- list(
     list(from = "ce12_fuce <- db_q(con, glue(",
          to   = "ndmm_final = ndmm_final)",
          src_from = 814L, src_to = 837L)
+  ),
+  # The MM-adjacent override. The source logged how many of the expected
+  # tumour-group labels matched the production codelist and carried on; an
+  # unmatched label means the override silently does nothing for that group,
+  # so a patient whose only other cancer is MM-adjacent is excluded as having
+  # another cancer. The source's own comment calls that a run-review blocker.
+  # This stops instead.
+  "R/steps/04_other_malig.R" = list(
+    list(from = "if (is.na(n_matched) || n_matched < n_exp)",
+         to   = "\" expected MM-adjacent tumor_group labels\")",
+         src_from = 340L, src_to = 348L)
   )
 )
 
@@ -120,7 +152,9 @@ undeviate <- function(lines, file) {
   lines
 }
 
-CHANGED <- c("R/nndm_constants.R", "R/steps/06_flags.R", "R/steps/07_cohort.R")
+CHANGED <- c("R/nndm_constants.R", "R/steps/03_prior_therapy.R",
+             "R/steps/04_other_malig.R", "R/steps/05_pregnancy.R",
+             "R/steps/06_flags.R", "R/steps/07_cohort.R")
 
 # Comments are compared out, so the copied comments can be tidied without
 # weakening the check. Change a code line and it fails; change a comment and it
