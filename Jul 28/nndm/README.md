@@ -686,6 +686,38 @@ not.
 of the funnel is a criterion the protocol names and the count beside it is
 reproducible from this folder alone.
 
+### The table
+
+| column | |
+|---|---|
+| `RUN_ID` | which run wrote the row; cleared and rewritten as one unit, so a retried insert cannot double it |
+| `STEP_NUM` | 1–9, the order above |
+| `CRITERION` | the step's label — prose, and meant to be editable |
+| `N_PATIENTS` | distinct patients still in at that step |
+| `PCT_OF_START` | percentage of step 1, to two decimals |
+| `RECORDED_AT` | when |
+
+Counts are distinct patients, never claims, and every step after the third is
+one more `AND` on the same `NDMM_FLAGS_ALL` row — a widening conjunction over a
+fixed population, not a re-scan. So the funnel can only narrow, and each row is
+comparable with the one above it.
+
+Counts reach SQL as digits rather than as R prints them. `as.character(1e5)`
+is `"1e+05"`, which a warehouse reads as a double, and a cohort of exactly
+100,000 would have been written as one.
+
+### What stops the build
+
+- **A step larger than the one above it.** The funnel only narrows; a step that
+  grows means a join fanned out or a filter hit the wrong population. Checked
+  **before** the table is written, so a fanned-out funnel is never published.
+- **An empty final cohort.** A count of zero is not a result to ship.
+- **A cohort table whose row count disagrees with step 9.** `check_ndmm_cohort()`
+  compares the two and stops if they differ, so the delivered table and the
+  funnel that describes it cannot drift apart.
+
+### Step 9 is not like the others
+
 **Step 9 is not a baseline criterion.** Every other step is anchored to the 1L
 index date; this one is "in any LOT", so a patient can be removed for a
 belantamab claim years *after* their 1L index. That is what §6.2.1.2 says, but
@@ -746,10 +778,6 @@ excluded under §6.2.1.2 but was not, because the claims proxy did not reach it.
 Remove them from the cohort and note the count against attrition step 9. An
 empty result means the proxy was exact for this data — which is the answer to
 the open question, not a guess at it.
-
-The build checks that each step is
-no larger than the one above it and stops if it is not — a funnel that grows is
-a fan-out, not a count — and stops if the final cohort is empty.
 
 ## The port
 

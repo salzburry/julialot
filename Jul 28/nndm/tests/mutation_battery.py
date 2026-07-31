@@ -223,6 +223,8 @@ M = [
  ("active run warns instead","R/build_nndm.R","  stop(\"Run(s) \", who, \" are already building prefix \"","  log_msg(\"Run(s) \", who, \" are already building prefix \""),
  ("active run override always on","R/build_nndm.R","  if (identical(toupper(Sys.getenv(\"NDMM_IGNORE_ACTIVE_RUN\", unset = \"\")), \"TRUE\")) {","  if (TRUE) {"),
  ("active run drops the timestamp","R/build_nndm.R","  who <- paste(paste0(d$RUN_ID, \" (started \", d$UPDATED_AT, \")\"), collapse = \", \")","  who <- paste(d$RUN_ID, collapse = \", \")"),
+ ("readme funnel short a step","README.md","| 8 | + no pregnancy in study period | \u00a76.2.1.2, excl. 3 |\n","")
+,("readme funnel miscounted","README.md","the nine-step funnel","the ten-step funnel"),
  ("readme drops a setting","R/db_utils.R",'  envf <- Sys.getenv("PIPELINE_LOG_FILE", unset = "")','  envf <- Sys.getenv("PIPELINE_LOGFILE", unset = "")'),
  ("readme drops a csv setting","R/config.R",'  primary_groups_csv = Sys.getenv("NDMM_PRIMARY_GROUPS_CSV", unset = ""),','  primary_groups_csv = Sys.getenv("NDMM_PRIMARY_GROUP_CSV", unset = ""),'),
  ("readme drops a checkpoint","README.md","NDMM_ENROLL_SPANS_STRICT","NDMM_ENROLL_SPANS_LOOSE"),

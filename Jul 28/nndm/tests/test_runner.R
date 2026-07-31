@@ -1919,5 +1919,25 @@ ok(length(env_vars) > 20 && length(unnamed) == 0,
             paste(unnamed, collapse = ", "))
    else paste0("every one of the ", length(env_vars),
                " settings the package reads is documented"))
+# The funnel is the deliverable, so the README's version of it has to have as
+# many steps as the build does. Rows, not labels: the labels are prose on a
+# delivered table and are meant to be editable without a test change, which is
+# also why the battery does not pin them. Adding or dropping a step is not
+# prose, and this catches that.
+att <- sub("(?s)\n## .*", "", sub("(?s).*## The attrition", "", readme, perl = TRUE),
+           perl = TRUE)
+steps_doc <- grep("^[|] [0-9]+ [|]", strsplit(att, "\n")[[1]])
+ok(length(steps_doc) == length(ATTRITION_STEPS),
+   paste0("the README's funnel has all ", length(ATTRITION_STEPS),
+          " steps (found ", length(steps_doc), ")"))
+# And the count written out in prose, which is where a number goes stale first.
+WORDS <- c("one", "two", "three", "four", "five", "six", "seven", "eight",
+           "nine", "ten", "eleven", "twelve")
+wrong <- Filter(function(w) grepl(paste0(w, "-step"), readme, fixed = TRUE),
+                setdiff(WORDS, WORDS[length(ATTRITION_STEPS)]))
+ok(length(wrong) == 0,
+   if (length(wrong)) paste0("the README calls it a ", wrong[1],
+                             "-step funnel and it has ", length(ATTRITION_STEPS))
+   else paste0("...and calls it a ", WORDS[length(ATTRITION_STEPS)], "-step funnel"))
 
 report()
