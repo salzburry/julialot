@@ -309,6 +309,86 @@ build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl) {
 # How many patients each reading of "in any LOT" would exclude. The scope is a
 # proxy for something this build cannot see, so the run says what the choice
 # costs rather than leaving it to be guessed at.
+# Every label on the other-cancer code list, and the group this run pairs it
+# under. The sheet primary_tumor_groups.csv is filled in from: anything whose
+# PRIMARY_GROUP is still its own label is a label that can only confirm itself.
+build_ndmm_other_malig_groups <- function(con, cfg) {
+  db_exec(con, glue("
+    CREATE OR REPLACE TABLE {wrk('NDMM_OTHER_MALIG_GROUPS')} AS
+    SELECT tumor_group                   AS TUMOR_GROUP,
+           max(primary_group)            AS PRIMARY_GROUP,
+           count(*)                      AS N_CODES,
+           max(is_mm_adjacent_override)  AS OVERRIDDEN
+    FROM {NDMM_OTHER_MALIG_CODES}
+    GROUP BY tumor_group
+    ORDER BY PRIMARY_GROUP, TUMOR_GROUP"))
+  got <- db_q(con, glue("
+    SELECT count(*) AS n_labels, count(DISTINCT PRIMARY_GROUP) AS n_groups,
+           sum(CASE WHEN OVERRIDDEN = 0 AND PRIMARY_GROUP = TUMOR_GROUP
+                    THEN 1 ELSE 0 END) AS n_alone
+    FROM {wrk('NDMM_OTHER_MALIG_GROUPS')}"))
+  log_msg("Other-cancer labels: ", got$n_labels, " on the code list, pairing as ",
+          got$n_groups, " group(s); ", got$n_alone,
+          " exclusionary label(s) can only confirm themselves -> ",
+          wrk("NDMM_OTHER_MALIG_GROUPS"))
+  invisible(got)
+}
+
+# What the pairing grain is costing, without needing a map to exist first.
+#
+# Criterion 7 Path B is two outpatient claims within 30 days for the same
+# cancer. "Same" is a code-list label here, and a label is a code description:
+# one cancer at two subsites, or one coded in remission and once not, is two
+# labels, and the claims never pair. So the criterion under-detects and the
+# cohort is too large.
+#
+# The map fixes it, but nobody can size the problem from an empty map. These
+# three rows can be computed with no map at all, off the events view the
+# criterion itself reads, so the claim scan does not run again:
+#
+#   same code-list label - the finest grain, and what apr_30_2026 does
+#   as configured        - the same until primary_tumor_groups.csv says otherwise
+#   any label at all     - the coarsest, and the upper bound on what a perfect
+#                          map could add
+#
+# The gap between the first row and the last is the whole question. If it is
+# small the grain does not matter; if it is large the map is worth writing.
+build_ndmm_other_malig_grain <- function(con, cfg) {
+  by <- function(label, grp) glue("
+    SELECT '{label}' AS GRAIN, count(DISTINCT l1.PATID) AS N_EXCLUDED
+    FROM {NDMM_LOT1_STARTS} l1
+    LEFT JOIN (SELECT DISTINCT PATID, event_dt
+               FROM {NDMM_OTHER_MALIG_EVENTS} WHERE inpatient_flg = 1) ip
+           ON cast(ip.PATID as string) = cast(l1.PATID as string)
+          AND ip.event_dt BETWEEN date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS})
+                              AND date_sub(l1.LOT1_START_DT, 1)
+    LEFT JOIN (SELECT PATID, event_dt AS first_dt, next_dt
+               FROM (SELECT PATID, event_dt,
+                            lead(event_dt) OVER (PARTITION BY PATID{grp}
+                                                 ORDER BY event_dt) AS next_dt
+                     FROM (SELECT DISTINCT PATID, {if (nzchar(grp)) sub('^, ', '', grp) else '1 AS one'}, event_dt
+                           FROM {NDMM_OTHER_MALIG_EVENTS} WHERE inpatient_flg = 0))
+               WHERE next_dt IS NOT NULL AND datediff(next_dt, event_dt) <= 30) op
+           ON cast(op.PATID as string) = cast(l1.PATID as string)
+          AND op.first_dt BETWEEN date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS})
+                              AND date_sub(l1.LOT1_START_DT, 1)
+          AND op.next_dt  BETWEEN date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS})
+                              AND date_sub(l1.LOT1_START_DT, 1)
+    WHERE ip.PATID IS NOT NULL OR op.PATID IS NOT NULL")
+  db_exec(con, paste0(glue("CREATE OR REPLACE TABLE {wrk('NDMM_OTHER_MALIG_GRAIN')} AS\n"),
+    by("same code-list label", ", tumor_group"), "\n    UNION ALL\n",
+    by("as configured",        ", primary_group"), "\n    UNION ALL\n",
+    by("any label at all",     "")))
+  got <- db_q(con, glue("SELECT * FROM {wrk('NDMM_OTHER_MALIG_GRAIN')}"))
+  log_msg("Other cancer (criterion 7), by pairing grain:")
+  for (i in seq_len(nrow(got)))
+    log_msg("    ", got$GRAIN[i], ": ",
+            format(got$N_EXCLUDED[i], big.mark = ","), " excluded")
+  log_msg("  The gap between the first and the last is what a primary-tumour-",
+          "group map could add. See README.")
+  invisible(got)
+}
+
 # What criterion 5 costs at each reading of it.
 #
 # Protocol Rev Round 2 S6.2.1.1 asks for continuous enrollment "from index date

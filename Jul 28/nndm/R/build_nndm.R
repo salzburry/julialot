@@ -117,7 +117,8 @@ CHECKPOINTS <- c("NDMM_FLAGS_ALL", "NDMM_MM_DX_CODES",
                  "NDMM_ENROLL_SPANS", "NDMM_ENROLL_SPANS_STRICT",
                  "NDMM_MMA_CODELIST",
                  "NDMM_BELANTAMAB_CODES", "NDMM_LOT1_STARTS",
-                 "NDMM_OTHER_MALIG_CODES", "NDMM_BELANTAMAB_PATIDS",
+                 "NDMM_OTHER_MALIG_CODES", "NDMM_OTHER_MALIG_EVENTS",
+                 "NDMM_BELANTAMAB_PATIDS",
                  "NDMM_INDEX_TX", "NDMM_BELANTAMAB_TX", "NDMM_PATIDS",
                  "NDMM_INDEX_INELIGIBLE")
 
@@ -125,6 +126,7 @@ CHECKPOINTS <- c("NDMM_FLAGS_ALL", "NDMM_MM_DX_CODES",
 DELIVERABLES <- c("NDMM_COHORT", "NDMM_ATTRITION", "NDMM_INDEX_AGENTS",
                   "NDMM_BELANTAMAB_SCOPE_COUNTS", "NDMM_MM_ADJACENT_GROUPS",
                   "NDMM_MM_ADJACENT_CODES", "NDMM_FU_CE_COUNTS",
+                  "NDMM_OTHER_MALIG_GROUPS", "NDMM_OTHER_MALIG_GRAIN",
                   "NDMM_CODELIST_METADATA", "NDMM_RUN_METADATA",
                   "NDMM_BUILD_STATUS")
 OUTPUTS <- c(DELIVERABLES, CHECKPOINTS)
@@ -215,6 +217,7 @@ pin_override_csv <- function(cfg, here) {
   }
   cfg$mm_adjacent_csv <- fill(cfg$mm_adjacent_csv, "mm_adjacent_overrides.csv")
   cfg$eligible_1l_csv <- fill(cfg$eligible_1l_csv, "eligible_1l_agents.csv")
+  cfg$primary_groups_csv <- fill(cfg$primary_groups_csv, "primary_tumor_groups.csv")
   cfg
 }
 
@@ -932,9 +935,12 @@ build_nndm <- function(here, prefix) {
   checkpoint(con, "NDMM_OTHER_MALIG_CODES")
   build_ndmm_mm_adjacent_groups(con, cfg)
   build_ndmm_mm_adjacent_codes(con, cfg)
+  build_ndmm_other_malig_groups(con, cfg)
   build_ndmm_med_claim_header_and_confinement(con, cdm_src(cfg$tbl_medical),
                                               cdm_src(cfg$tbl_confinement))
   build_ndmm_other_malig_pre_lot1(con, cdm_src(cfg$tbl_med_diag))
+  checkpoint(con, "NDMM_OTHER_MALIG_EVENTS")
+  build_ndmm_other_malig_grain(con, cfg)
 
   log_msg("Pregnancy across the study period")
   build_ndmm_preg_codes(con)

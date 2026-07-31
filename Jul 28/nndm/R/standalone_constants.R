@@ -142,5 +142,6 @@ ndmm_mm_adjacent_groups <- function() {
 }
 
 # Views built by the index-agent profile.
+NDMM_OTHER_MALIG_EVENTS   <- "_ndmm_other_malig_events"
 NDMM_INDEX_TX             <- "_ndmm_index_tx"
 NDMM_INDEX_INELIGIBLE     <- "_ndmm_index_ineligible"

@@ -174,6 +174,53 @@ load_eligible_agents_csv <- function(path) {
   out
 }
 
+# One label per ICD code is the wrong grain for "another cancer".
+#
+# Criterion 7 Path B is two outpatient claims within 30 days for the same
+# cancer, and this build pairs them on other_malig.csv's tumor_group. That
+# column carries one label per ICD code, and a label is a code description, not
+# a tumour type - "PLASMA CELL LEUKEMIA IN REMISSION" and "PLASMA CELL LEUKEMIA
+# NOT HAVING ACHIEVED REMISSION" are two labels for one disease, and a solid
+# tumour coded at two subsites is two more. Claims that should confirm each
+# other land in different labels, never pair, and the patient is not excluded.
+# The criterion under-detects, so the cohort is too LARGE - which is the
+# direction that puts patients in a study they do not belong in.
+#
+# The real fix is a primary_tumor_group column on the production code list.
+# Until there is one: tumor_group, primary_tumor_group, note. Every label
+# mapped to the same primary_tumor_group pairs together. Anything unmapped
+# stays its own group, so an empty file is the rule the source runs.
+#
+# NDMM_OTHER_MALIG_GROUPS lists every label on the code list to map from, and
+# NDMM_OTHER_MALIG_GRAIN says what the grain is currently costing.
+PRIMARY_GROUP_CSV_COLS <- c("tumor_group", "primary_tumor_group", "note")
+
+load_primary_groups_csv <- function(path) {
+  df <- read_optional_csv(path, PRIMARY_GROUP_CSV_COLS,
+    "No primary-tumour-group map; outpatient pairs must share one code-list label",
+    "Primary-tumour-group map: no rows, so each label is its own group")
+  if (is.null(df)) return(NULL)
+  from <- toupper(trimws(df$tumor_group))
+  to   <- toupper(trimws(df$primary_tumor_group))
+  bad <- which(is.na(from) | !nzchar(from) | is.na(to) | !nzchar(to))
+  if (length(bad))
+    stop("CODELIST ERROR: ", path, " row(s) ", paste(bad, collapse = ", "),
+         ": tumor_group and primary_tumor_group must both be filled in",
+         call. = FALSE)
+  dup <- unique(from[duplicated(from)])
+  if (length(dup))
+    stop("CODELIST ERROR: ", path, " maps ", paste(dup, collapse = ", "),
+         " to two primary groups. One row per label.", call. = FALSE)
+  log_msg("  Primary-tumour-group map: ", length(from), " label(s) into ",
+          length(unique(to)), " group(s), md5 ", attr(df, "md5"))
+  rows <- sprintf("('%s', '%s')", gsub("'", "''", from), gsub("'", "''", to))
+  # Alias columns named so nothing bare matches the code list's own column
+  # names: an unqualified tumor_group with both relations in scope is the
+  # correlated-subquery bug this file already had once.
+  paste0("(SELECT * FROM (VALUES\n  ", paste(rows, collapse = ",\n  "),
+         "\n) AS t(pg_label, pg_primary)) pg")
+}
+
 load_codelist_csv <- function(csv_name, col_spec) {
   cfg <- nndm_config()
   if (!dir.exists(cfg$codelist_dir)) {

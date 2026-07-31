@@ -62,9 +62,10 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_prefix",
            "build_ndmm_lot1_index", "build_ndmm_index_agents",
            "build_ndmm_therapy_pre_lot1",
            "build_ndmm_other_malig_codes", "build_ndmm_mm_adjacent_groups",
-           "build_ndmm_mm_adjacent_codes",
+           "build_ndmm_mm_adjacent_codes", "build_ndmm_other_malig_groups",
            "build_ndmm_med_claim_header_and_confinement",
-           "build_ndmm_other_malig_pre_lot1", "build_ndmm_preg_codes",
+           "build_ndmm_other_malig_pre_lot1", "build_ndmm_other_malig_grain",
+           "build_ndmm_preg_codes",
            "build_ndmm_pregnancy_patids", "build_ndmm_belantamab_patids",
            "build_ndmm_belantamab_scope_counts",
            "build_ndmm_flags", "build_ndmm_fu_ce_counts",
@@ -301,7 +302,8 @@ cat("\n-- the two files this package ships for filling in --\n")
 # an unpinned path reads as a file that is not there - which is also what an
 # empty file means, so nothing downstream would notice.
 FILLINS <- c(mm_adjacent_csv = "mm_adjacent_overrides.csv",
-             eligible_1l_csv = "eligible_1l_agents.csv")
+             eligible_1l_csv = "eligible_1l_agents.csv",
+             primary_groups_csv = "primary_tumor_groups.csv")
 pp <- ce0$pin_override_csv(setNames(as.list(rep("", length(FILLINS))), names(FILLINS)),
                            "/pkg")
 ok(all(vapply(names(FILLINS), function(k)
@@ -365,6 +367,73 @@ ok(grepl("two answers for", drive_ov(c("dx,icd_family,override,note",
    "and one code given two answers stops the run rather than one winning")
 ok(grepl("missing", drive_ov(c("dx,icd_family", "C7951,ICD10")), fixed = TRUE),
    "a file without the columns is refused, not read as empty")
+
+cat("\n-- one label per code is the wrong grain for \"another cancer\" --\n")
+# Path B pairs two outpatient claims on a code-list label, and a label is one
+# ICD code's description. A cancer at two subsites, or one coded in remission
+# and once not, is two labels and never pairs - so the criterion under-detects
+# and the cohort is too large, which is the direction that puts patients in a
+# study they do not belong in.
+PGCSV <- file.path(tmp, "primary_tumor_groups.csv")
+drive_pg <- function(lines) {
+  writeLines(lines, PGCSV)
+  tryCatch(load_primary_groups_csv(PGCSV), error = conditionMessage)
+}
+ok(is.null(load_primary_groups_csv(file.path(tmp, "nope3.csv"))),
+   "no map means each label is its own group, and is not a failure")
+ok(is.null(drive_pg("tumor_group,primary_tumor_group,note")),
+   "...and neither is the empty file this package ships")
+got <- drive_pg(c("tumor_group,primary_tumor_group,note",
+                  "breast ca upper outer,BREAST,subsite",
+                  "BREAST CA NOS,breast,"))
+ok(is.character(got) && grepl("('BREAST CA UPPER OUTER', 'BREAST')", got, fixed = TRUE) &&
+     grepl("('BREAST CA NOS', 'BREAST')", got, fixed = TRUE),
+   "two labels map onto one group, upper-cased so both sides match")
+# The alias columns must not be named after the code list's own, or an
+# unqualified reference could bind to the wrong relation - the bug this file
+# already had once.
+ok(is.character(got) && grepl("AS t(pg_label, pg_primary)", got, fixed = TRUE),
+   "...under names nothing in the code list shares")
+ok(grepl("must both be filled in", drive_pg(c("tumor_group,primary_tumor_group,note",
+   "BREAST, ,")), fixed = TRUE),
+   "a half-filled row stops the run rather than mapping a label to nothing")
+ok(grepl("two primary groups", drive_pg(c("tumor_group,primary_tumor_group,note",
+   "BREAST,A,", "breast,B,")), fixed = TRUE),
+   "and one label mapped twice stops the run")
+
+# The grain question is answerable with no map at all, which is the point: an
+# empty map cannot size its own absence.
+ge <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = ge)
+sys.source(file.path(ROOT, "R", "standalone_constants.R"), envir = ge)
+sys.source(file.path(ROOT, "R", "steps", "00b_lot1_index.R"), envir = ge)
+assign("log_msg", function(...) invisible(NULL), envir = ge)
+assign("wrk", function(x) paste0("wk.p_", x), envir = ge)
+GSQL <- character(0)
+assign("db_exec", function(con, sql) { GSQL <<- c(GSQL, sql); invisible(TRUE) },
+       envir = ge)
+assign("db_q", function(con, sql) data.frame(
+  GRAIN = c("same code-list label", "as configured", "any label at all"),
+  N_EXCLUDED = c(100L, 100L, 140L)), envir = ge)
+ge$build_ndmm_other_malig_grain(NULL, cfg_defaults)
+gr <- GSQL[1]
+ok(grepl("NDMM_OTHER_MALIG_GRAIN", gr, fixed = TRUE) &&
+     grepl("'same code-list label'", gr, fixed = TRUE) &&
+     grepl("'as configured'", gr, fixed = TRUE) &&
+     grepl("'any label at all'", gr, fixed = TRUE),
+   "the grain is costed at the finest, the configured and the coarsest grouping")
+ok(length(gregexpr("PARTITION BY PATID", gr, fixed = TRUE)[[1]]) == 3L &&
+     grepl("PARTITION BY PATID, tumor_group", gr, fixed = TRUE) &&
+     grepl("PARTITION BY PATID, primary_group", gr, fixed = TRUE),
+   "...each pairing on its own grouping, and the coarsest on none")
+# Off the events view, or this would scan med_diagnosis three more times.
+ok(!grepl("med_diagnosis", gr, fixed = TRUE) &&
+     length(gregexpr("_ndmm_other_malig_events", gr, fixed = TRUE)[[1]]) == 6L,
+   "read off the materialised events, not by scanning the claims again")
+# The same baseline bounds the criterion uses, or it answers a different question.
+ok(length(gregexpr("op.next_dt  BETWEEN", gr, fixed = TRUE)[[1]]) == 3L &&
+     grepl("datediff(next_dt, event_dt) <= 30", gr, fixed = TRUE),
+   "bounded by the same baseline and the same 30 days as criterion 7")
 
 cat("\n-- which agents may set the 1L index --\n")
 # S6.2.1.1 names an eligible-treatment list; Annex 2 is an analysis grouping
@@ -855,6 +924,11 @@ shared <- c("dx", "icd_family", "tumor_group")
 # CTE only {src} is in scope, so bare names there are unambiguous.
 outer <- sub("(?s).*?(SELECT om[.]tumor_group)", "\\1", oc0, perl = TRUE)
 outer <- sub('(?s)"\\)\\).*', "", outer, perl = TRUE)
+# Comment lines out first. A name in a comment binds to nothing, and leaving
+# them in made this fail for prose that explains the very rule it checks -
+# which trains people to reword comments instead of qualifying columns.
+outer <- paste(grep("^\\s*--", strsplit(outer, "\n")[[1]], value = TRUE,
+                    invert = TRUE), collapse = "\n")
 bare <- Filter(function(k)
   grepl(paste0("(?<![A-Za-z0-9_.'])", k, "(?![A-Za-z0-9_(])"), outer, perl = TRUE),
   shared)
@@ -1015,7 +1089,8 @@ sys.source(file.path(ROOT, "R", "standalone_constants.R"), envir = oe2)
 sys.source(file.path(ROOT, "R", "steps", "04_other_malig.R"), envir = oe2)
 assign("log_msg", function(...) invisible(NULL), envir = oe2)
 assign("load_codelist_csv", function(...) "(SELECT 1) src", envir = oe2)
-assign("nndm_config", function() list(mm_adjacent_csv = "x.csv"), envir = oe2)
+assign("nndm_config", function()
+  list(mm_adjacent_csv = "x.csv", primary_groups_csv = ""), envir = oe2)
 assign("db_q", function(con, sql)
   data.frame(n = length(oe2$NDMM_MM_ADJACENT_OVERRIDE)), envir = oe2)
 OSQL <- character(0)
@@ -1355,7 +1430,10 @@ assign("cfg", cfg_defaults, envir = oe)
 OSQL <- character(0)
 assign("db_exec", function(con, s) { OSQL <<- c(OSQL, s); TRUE }, envir = oe)
 oe$build_ndmm_other_malig_pre_lot1(NULL, "cdm.med_diagnosis")
-sql <- OSQL[1]
+# Two statements now: the claim scan, and the rule over it. Picked by what it
+# creates rather than by position, so splitting it again does not silently
+# point this at the wrong one.
+sql <- grep("outpatient_pairs", OSQL, fixed = TRUE, value = TRUE)[1]
 ok(!is.na(sql) && grepl("outpatient_pairs", sql, fixed = TRUE),
    "the real function emitted the other-cancer SQL")
 cte  <- sub(".*outpatient_pairs AS \\(", "", sql); cte <- sub("FROM with_next.*", "", cte)
@@ -1657,6 +1735,7 @@ builds <- list(NDMM_MM_DX_CODES = "build_ndmm_mm_dx_codes",
                NDMM_LOT1_STARTS = "build_ndmm_lot1_index",
                NDMM_INDEX_TX = "build_ndmm_lot1_index",
                NDMM_ENROLL_SPANS_STRICT = "build_enrollment_spans_ndmm",
+               NDMM_OTHER_MALIG_EVENTS = "build_ndmm_other_malig_pre_lot1",
                NDMM_INDEX_INELIGIBLE = "build_ndmm_index_ineligible_codes",
                NDMM_OTHER_MALIG_CODES = "build_ndmm_other_malig_codes",
                NDMM_BELANTAMAB_PATIDS = "build_ndmm_belantamab_patids",

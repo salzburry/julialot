@@ -392,6 +392,51 @@ dropped from a file whose only purpose is to be exact would read as a decision
 somebody made. The file's md5 goes into `NDMM_CODELIST_METADATA` even when it
 is empty, so a cohort says which version of it was read.
 
+### One label per code is the wrong grain for "another cancer"
+
+Criterion 7 Path B is **two outpatient claims within 30 days for the same
+cancer**. "Same" is decided on `other_malig.csv`'s `tumor_group` — and that
+column carries **one label per ICD code**. A label is a code description, not a
+tumour type:
+
+- `PLASMA CELL LEUKEMIA IN REMISSION` and `PLASMA CELL LEUKEMIA NOT HAVING
+  ACHIEVED REMISSION` are two labels for one disease
+- a solid tumour coded at two subsites is two more
+
+Two claims that should confirm each other land in different labels, never pair,
+and the patient is **not excluded**. The criterion under-detects, so the cohort
+is **too large** — the direction that puts patients into a study they don't
+belong in.
+
+**The real fix is a `primary_tumor_group` column on the production code list.**
+Until there is one, `codelists/primary_tumor_groups.csv`:
+
+```
+tumor_group,primary_tumor_group,note
+PLASMA CELL LEUKEMIA IN REMISSION,PLASMA CELL LEUKEMIA,same disease
+PLASMA CELL LEUKEMIA NOT HAVING ACHIEVED REMISSION,PLASMA CELL LEUKEMIA,
+```
+
+Every label mapped to the same `primary_tumor_group` pairs together. Anything
+unmapped stays its own group, so **the empty file that ships is exactly the rule
+`apr_30_2026` runs**. `NDMM_OTHER_MALIG_GROUPS` lists every label on the code
+list to map from — anything whose `PRIMARY_GROUP` is still its own label can
+only confirm itself. Set `NDMM_PRIMARY_GROUPS_CSV` for a file elsewhere.
+
+**You do not need the map to find out whether it is worth writing.** Every run
+writes **`<prefix>NDMM_OTHER_MALIG_GRAIN`**:
+
+| `GRAIN` | `N_EXCLUDED` |
+|---|---|
+| same code-list label | … ← the finest grain, and what `apr_30_2026` does |
+| as configured | … ← the same until the map says otherwise |
+| any label at all | … ← the coarsest, and the upper bound |
+
+**The gap between the first row and the last is the whole question.** If it is
+small the grain does not matter; if it is large the map is worth writing. All
+three are computed off `NDMM_OTHER_MALIG_EVENTS` — the claim scan is split out
+from the rule it feeds, so `med_diagnosis` is read once, not four times.
+
 ### Where this departs from the protocol
 
 All protocol references are to `Questions/July 30 2026/Updated NNDM cohort.pdf`

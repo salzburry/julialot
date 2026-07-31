@@ -16,6 +16,9 @@ build_ndmm_other_malig_codes <- function(con) {
   ovr_src  <- load_override_csv(nndm_config()$mm_adjacent_csv)
   ovr_join <- if (is.null(ovr_src)) "" else glue("LEFT JOIN {ovr_src} ON ovr.dx = om.dx AND ovr.icd_family = om.icd_family")
   ovr_case <- if (is.null(ovr_src)) "" else "WHEN ovr.override IS NOT NULL THEN ovr.override "
+  pg_src   <- load_primary_groups_csv(nndm_config()$primary_groups_csv)
+  pg_join  <- if (is.null(pg_src)) "" else glue("LEFT JOIN {pg_src} ON pg.pg_label = trim(om.tumor_group)")
+  pg_col   <- if (is.null(pg_src)) "om.tumor_group" else "coalesce(pg.pg_primary, om.tumor_group)"
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_OTHER_MALIG_CODES} AS
     -- Normalised first, then joined. Every column reference below is
@@ -51,11 +54,15 @@ build_ndmm_other_malig_codes <- function(con) {
            -- C79.5x is myeloma bone disease and that one is a breast
            -- primary. Absent, the labels decide, which is apr_30_2026.
            CASE {ovr_case}WHEN trim(om.tumor_group) IN ({ovr_in}) OR m.dx IS NOT NULL
-                THEN 1 ELSE 0 END AS is_mm_adjacent_override
+                THEN 1 ELSE 0 END AS is_mm_adjacent_override,
+           -- The label two outpatient claims must share to confirm each other.
+           -- tumor_group unless primary_tumor_groups.csv coarsens it.
+           {pg_col} AS primary_group
     FROM om
     LEFT JOIN {NDMM_MM_DX_CODES} m
            ON m.dx = om.dx AND m.icd_family = om.icd_family
     {ovr_join}
+    {pg_join}
   "))
   # Only the five required labels are counted. The remission variants are a
   # proposal, not a contract with the code list, so their absence is reported
@@ -133,8 +140,13 @@ build_ndmm_med_claim_header_and_confinement <- function(con, medical_tbl,
 build_ndmm_other_malig_pre_lot1 <- function(con, med_diag_tbl) {
   lower <- glue("date_sub(date('{NDMM_LOT1_FROM}'), {NDMM_PRE_LOT1_DAYS})")
   upper <- glue("date('{cfg$study_end}')")
+  # The claim scan is split out from the rule it feeds. It reads med_diagnosis
+  # over the whole baseline window and joins the claim header and confinement,
+  # which is the expensive part of this file; the rule over it is arithmetic.
+  # Separated so NDMM_OTHER_MALIG_GRAIN can ask what the grouping grain costs
+  # without scanning the claims a second time.
   db_exec(con, glue("
-    CREATE OR REPLACE TEMPORARY VIEW {NDMM_OTHER_MALIG_PATIDS} AS
+    CREATE OR REPLACE TEMPORARY VIEW {NDMM_OTHER_MALIG_EVENTS} AS
     WITH dx AS (
       SELECT d.PATID, d.PAT_PLANID, d.CLMID, d.FST_DT, d.LOC_CD,
              cast(d.FST_DT as date) AS event_dt,
@@ -150,14 +162,14 @@ build_ndmm_other_malig_pre_lot1 <- function(con, med_diag_tbl) {
       -- predicate so the overridden groups still show in the breakdown.
       SELECT /*+ BROADCAST(o) */
              dx.PATID, dx.PAT_PLANID, dx.CLMID, dx.FST_DT, dx.LOC_CD,
-             dx.event_dt, o.tumor_group
+             dx.event_dt, o.tumor_group, o.primary_group
       FROM dx
       INNER JOIN {NDMM_OTHER_MALIG_CODES} o
               ON dx.dx = o.dx AND dx.icd_family = o.icd_family
              AND o.is_mm_adjacent_override = 0
     ),
     dx_with_setting AS (
-      SELECT dm.PATID, dm.CLMID, dm.event_dt, dm.tumor_group,
+      SELECT dm.PATID, dm.CLMID, dm.event_dt, dm.tumor_group, dm.primary_group,
              CASE WHEN h.POS IN ('21', '51', '61')
                     OR h.TOS_CD IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF')
                     OR cf.CONF_ID IS NOT NULL
@@ -171,22 +183,34 @@ build_ndmm_other_malig_pre_lot1 <- function(con, med_diag_tbl) {
            AND dm.LOC_CD     <=> h.LOC_CD
       LEFT JOIN {NDMM_CONFINEMENT} cf
         ON h.PATID = cf.PATID AND h.CONF_ID = cf.CONF_ID
-    ),
-    inpatient_flag AS (
-      SELECT DISTINCT PATID, tumor_group, event_dt
-      FROM dx_with_setting WHERE inpatient_flg = 1
+    )
+    SELECT PATID, tumor_group, primary_group, event_dt, inpatient_flg
+    FROM dx_with_setting"))
+
+  # The rule, over that. Path B pairs on primary_group, not on tumor_group:
+  # other_malig.csv carries one label per ICD code, so two outpatient claims
+  # for one cancer coded at different subsites - or one \"in remission\" and one
+  # \"not having achieved remission\" - sit in different labels and never pair,
+  # and the patient is not excluded. primary_group is tumor_group unless
+  # primary_tumor_groups.csv maps it, so with nothing filled in this is the
+  # same rule the source runs.
+  db_exec(con, glue("
+    CREATE OR REPLACE TEMPORARY VIEW {NDMM_OTHER_MALIG_PATIDS} AS
+    WITH inpatient_flag AS (
+      SELECT DISTINCT PATID, primary_group AS grp, event_dt
+      FROM {NDMM_OTHER_MALIG_EVENTS} WHERE inpatient_flg = 1
     ),
     outpatient_dates AS (
-      SELECT DISTINCT PATID, tumor_group, event_dt
-      FROM dx_with_setting WHERE inpatient_flg = 0
+      SELECT DISTINCT PATID, primary_group AS grp, event_dt
+      FROM {NDMM_OTHER_MALIG_EVENTS} WHERE inpatient_flg = 0
     ),
     with_next AS (
-      SELECT PATID, tumor_group, event_dt,
-             lead(event_dt) OVER (PARTITION BY PATID, tumor_group ORDER BY event_dt) AS next_dt
+      SELECT PATID, grp, event_dt,
+             lead(event_dt) OVER (PARTITION BY PATID, grp ORDER BY event_dt) AS next_dt
       FROM outpatient_dates
     ),
     outpatient_pairs AS (
-      SELECT PATID, tumor_group, event_dt AS first_dt, next_dt,
+      SELECT PATID, grp, event_dt AS first_dt, next_dt,
              datediff(next_dt, event_dt) AS diff_days
       FROM with_next WHERE next_dt IS NOT NULL
     ),
