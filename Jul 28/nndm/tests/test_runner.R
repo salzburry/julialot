@@ -1982,4 +1982,30 @@ for (k in names(dev)) {
 ok(grepl(paste0("\\b", sum(dev), " places\\b"), readme_flat, perl = TRUE),
    paste0("...and the total it says the port differs in, ", sum(dev)))
 
+cat("\n-- the criteria section covers every criterion --\n")
+# The section a reviewer holds against the protocol. One numbered row per
+# attrition step, across its two tables - the two inherited from the parent and
+# the seven applied here - because a criterion missing from the write-up is one
+# nobody checks against S6.2.1.
+crit <- sub("(?s)\n## .*", "",
+            sub("(?s).*## The criteria as applied", "", readme, perl = TRUE),
+            perl = TRUE)
+nums <- as.integer(sub("^[|] ([0-9]+) [|].*", "\\1",
+                       grep("^[|] [0-9]+ [|]", strsplit(crit, "\n")[[1]],
+                            value = TRUE)))
+ok(identical(sort(unique(nums)), seq_along(ATTRITION_STEPS)),
+   if (!identical(sort(unique(nums)), seq_along(ATTRITION_STEPS)))
+     paste0("the criteria tables describe steps ",
+            paste(sort(unique(nums)), collapse = ","), " of ",
+            length(ATTRITION_STEPS))
+   else paste0("all ", length(ATTRITION_STEPS),
+               " criteria are written up, numbered as the funnel numbers them"))
+# Each one says which file applies it, so a reader can go and read the SQL.
+rows <- grep("^[|] [0-9]+ [|]", strsplit(crit, "\n")[[1]], value = TRUE)
+noref <- Filter(function(r) !grepl("[.]R`", r), rows)
+ok(length(noref) == 0,
+   if (length(noref)) paste0(length(noref),
+                             " criteria do not say which file applies them")
+   else "...each naming the file that applies it")
+
 report()
