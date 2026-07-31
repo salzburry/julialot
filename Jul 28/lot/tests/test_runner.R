@@ -644,6 +644,54 @@ qc7 <- paste(readLines(file.path(ROOT, "R", "steps", "07_qc.R"), warn = FALSE),
 ok(grepl("LOT1_TX_ENDDATE > lb.OBS_END_DT", qc7, fixed = TRUE),
    "and that is the condition 07_qc.R still reports")
 
+cat("\n-- ...and the invariants are actually asked, every one of them --\n")
+# Nothing ran this function. The assertions above are about the contents of the
+# list, so check_lot1_invariants() could have been turned into a no-op - or made
+# to check only the first entry - with the whole suite still green. Both were
+# tried; both passed. Driven now, one query at a time.
+assign("log_msg", function(...) invisible(NULL), envir = env)
+ISQL <- character(0)
+# Answers are matched back to the invariant by its own SQL, not by call order,
+# so "only the last one breached" means that one and cannot mean another.
+drive_inv <- function(counts = rep(0L, length(inv))) {
+  ISQL <<- character(0)
+  assign("db_q", function(con, sql) {
+    ISQL <<- c(ISQL, sql)
+    j <- which(vapply(inv, function(v) identical(v$sql, sql), logical(1)))
+    data.frame(n = if (length(j) == 1L) counts[[j]] else NA_integer_)
+  }, envir = env)
+  tryCatch({ env$check_lot1_invariants(NULL, list()); NULL }, error = conditionMessage)
+}
+ok(is.null(drive_inv()), "a LOT1 that breaches nothing passes")
+ok(length(ISQL) == length(inv) && length(unique(ISQL)) == length(inv),
+   paste0("every invariant is a query of its own (", length(ISQL), " of ",
+          length(inv), ")"))
+# One at a time, so a loop that stopped after the first would fail on the rest.
+for (i in seq_along(inv)) {
+  breach <- rep(0L, length(inv)); breach[i] <- 3L
+  msg <- drive_inv(breach)
+  ok(!is.null(msg) && grepl(inv[[i]]$name, msg, fixed = TRUE),
+     paste0("a breach of '", inv[[i]]$name, "' stops the build, named"))
+}
+# A count that comes back NULL is not a count of zero: the query could not
+# answer, and a check that cannot run is not a check that passed.
+na_breach <- rep(0L, length(inv)); na_breach[2] <- NA_integer_
+ok(!is.null(drive_inv(na_breach)), "an invariant that answers NA stops it too")
+two <- rep(0L, length(inv)); two[c(1, length(inv))] <- 5L
+msg <- drive_inv(two)
+ok(!is.null(msg) && grepl(inv[[1]]$name, msg, fixed = TRUE) &&
+     grepl(inv[[length(inv)]]$name, msg, fixed = TRUE),
+   "and two breaches are both reported, not just the first")
+# No tryCatch in the loop, by design. A connection error has to surface as
+# itself rather than as "LOT1 is internally inconsistent".
+assign("db_q", function(con, sql) stop("connection reset by peer"), envir = env)
+msg <- tryCatch({ env$check_lot1_invariants(NULL, list()); NULL },
+                error = conditionMessage)
+ok(!is.null(msg) && grepl("connection reset", msg, fixed = TRUE) &&
+     !grepl("internally inconsistent", msg, fixed = TRUE),
+   "a query that cannot run surfaces as itself, not as a LOT1 defect")
+rm("db_q", envir = env)
+
 cat("\n-- the run says what it produced, not only what LOT1 saw --\n")
 # phase_persist writes LOT_RUN_METADATA before LOT2-5 exists, so its counts
 # stop at LOT1 and a row on its own says nothing about LOT_LONG.
