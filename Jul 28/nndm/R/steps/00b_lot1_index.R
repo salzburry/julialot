@@ -51,6 +51,70 @@ build_ndmm_belantamab_codes <- function(con) {
   invisible(n)
 }
 
+# Agents that may not set the index: belantamab always, plus anything named in
+# NDMM_INDEX_EXCLUDED_ABBRS. Empty by default - S6.2.1.1 routes "excluding those
+# restricted to later LOTs" through the exclusion criteria, and S6.2.1.2 names
+# only belantamab, so the protocol as written restricts nothing else.
+build_ndmm_index_ineligible_codes <- function(con) {
+  split_setting <- function(x) {
+    v <- trimws(strsplit(x, "[,|]")[[1]])
+    v[nzchar(v)]
+  }
+  # The code list's own normalisation, so a hyphenated NDC or a lowercase
+  # HCPCS matches what is stored.
+  norm <- function(x) toupper(gsub("[^A-Za-z0-9]", "", x))
+  sq   <- function(x) gsub("'", "''", x, fixed = TRUE)
+
+  abbrs <- split_setting(NDMM_INDEX_EXCLUDED_ABBRS)
+  codes <- split_setting(NDMM_INDEX_EXCLUDED_CODES)
+
+  # Each entry becomes one predicate, and one thing to check matched something.
+  terms <- list()
+  for (a in c(NDMM_BELANTAMAB_ABBR, abbrs))
+    terms[[length(terms) + 1L]] <- list(
+      what = paste0("abbreviation '", a, "'"),
+      sql  = sprintf("upper(trim(med_abbr)) LIKE '%s'", sq(toupper(a))))
+  for (cd in codes) {
+    parts <- strsplit(cd, ":", fixed = TRUE)[[1]]
+    if (length(parts) >= 2L)
+      terms[[length(terms) + 1L]] <- list(
+        what = paste0("code ", cd),
+        sql  = sprintf("(code_type = '%s' AND code = '%s')",
+                       sq(toupper(trimws(parts[1]))), sq(norm(parts[2]))))
+    else
+      terms[[length(terms) + 1L]] <- list(
+        what = paste0("code ", cd, " (any type)"),
+        sql  = sprintf("code = '%s'", sq(norm(parts[1]))))
+  }
+
+  db_exec(con, glue("
+    CREATE OR REPLACE TEMPORARY VIEW {NDMM_INDEX_INELIGIBLE} AS
+    SELECT DISTINCT code_type, code
+    FROM {NDMM_MMA_CODELIST}
+    WHERE ", paste(vapply(terms, function(t) t$sql, character(1)),
+                   collapse = "\n       OR "), "
+  "))
+
+  # Every entry after belantamab has to match something. Left unchecked, a name
+  # or a code that is not on the list reads as an applied restriction and
+  # applies to nothing - the failure the belantamab check already guards.
+  for (t in terms[-1]) {
+    n <- as.integer(db_q(con, glue(
+      "SELECT count(*) AS n FROM {NDMM_MMA_CODELIST} WHERE {t$sql}"))$n)
+    if (is.na(n) || n == 0)
+      stop("The 1L index exclusions name ", t$what, ", which matches no row of ",
+           "cl_mma_codelist.csv. It would read as a restriction on which agents ",
+           "can set the index and apply to nothing. Check it against 'SELECT ",
+           "DISTINCT code_type, med_abbr, code FROM ", NDMM_MMA_CODELIST, "'.",
+           call. = FALSE)
+  }
+  if (length(terms) > 1L)
+    log_msg("  Barred from setting the index, beyond belantamab: ",
+            paste(vapply(terms[-1], function(t) t$what, character(1)),
+                  collapse = ", "))
+  invisible(TRUE)
+}
+
 # The first eligible MM treatment claim on or after the MM diagnosis and on or
 # after the eligible-treatment cutoff. That date is the NDMM index.
 build_ndmm_lot1_index <- function(con, medical_tbl, rx_tbl) {
@@ -59,11 +123,12 @@ build_ndmm_lot1_index <- function(con, medical_tbl, rx_tbl) {
   # out by the anti-join: S6.2.1.1 says the eligible 1L treatment is one "other
   # than belantamab", so a belantamab claim cannot be what sets the index.
   arm <- function(tbl, dt, match_sql) glue("
-      SELECT cast(t.PATID as string) AS PATID, cast(t.{dt} as date) AS tx_dt
+      SELECT cast(t.PATID as string) AS PATID, cast(t.{dt} as date) AS tx_dt,
+             c.med_abbr
       FROM {tbl} t
       INNER JOIN {NDMM_BASE_COHORT} b ON cast(t.PATID as string) = b.PATID
       INNER JOIN {NDMM_MMA_CODELIST} c ON {match_sql}
-      LEFT JOIN {NDMM_BELANTAMAB_CODES} bl
+      LEFT JOIN {NDMM_INDEX_INELIGIBLE} bl
              ON bl.code_type = c.code_type AND bl.code = c.code
       WHERE bl.code IS NULL
         AND cast(t.{dt} as date) >= b.MM_DX_DT
@@ -79,18 +144,51 @@ build_ndmm_lot1_index <- function(con, medical_tbl, rx_tbl) {
        AND lpad(regexp_replace(coalesce(cast(t.NDC as string),''), '[^0-9]', ''), 11, '0')
          = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')
        AND regexp_replace(coalesce(cast(t.NDC as string),''), '[^0-9]', '') <> ''"
+  # One scan, kept: the index date comes out of it, and so does which agent set
+  # that date. The second is what NDMM_INDEX_AGENTS reports, and re-running the
+  # four arms to get it would double the most expensive step in the build.
   db_exec(con, paste0(glue("
-    CREATE OR REPLACE TEMPORARY VIEW {NDMM_LOT1_STARTS} AS
-    WITH tx AS ("),
+    CREATE OR REPLACE TEMPORARY VIEW {NDMM_INDEX_TX} AS"),
     arm(medical_tbl, "FST_DT",  proc_match), "\n      UNION ALL\n",
     arm(medical_tbl, "FST_DT",  bill_match), "\n      UNION ALL\n",
     arm(medical_tbl, "FST_DT",  ndc_match),  "\n      UNION ALL\n",
-    arm(rx_tbl,      "FILL_DT", ndc_match),
-    glue("
-    )
+    arm(rx_tbl,      "FILL_DT", ndc_match)))
+  db_exec(con, glue("
+    CREATE OR REPLACE TEMPORARY VIEW {NDMM_LOT1_STARTS} AS
     SELECT PATID, min(tx_dt) AS LOT1_START_DT
-    FROM tx
-    GROUP BY PATID")))
+    FROM {NDMM_INDEX_TX}
+    GROUP BY PATID"))
+}
+
+# Which agent set each patient's index, and how many indexes each agent set.
+#
+# This is the list S6.2.1.1 gestures at and no document in this repository
+# contains. Annex 2 is "categorization of SOC regimens", which S6.2.2 calls an
+# exemplary list that may be recategorized - an analysis grouping, not an
+# eligibility rule - and it is a stand-alone document. So rather than invent an
+# allowlist, the build reports what actually set an index. If a later-line-only
+# agent appears here, name it in NDMM_INDEX_EXCLUDED_ABBRS and re-run.
+build_ndmm_index_agents <- function(con, cfg) {
+  db_exec(con, glue("
+    CREATE OR REPLACE TABLE {wrk('NDMM_INDEX_AGENTS')} AS
+    WITH on_index AS (
+      SELECT DISTINCT tx.PATID, tx.med_abbr
+      FROM {NDMM_INDEX_TX} tx
+      INNER JOIN {NDMM_LOT1_STARTS} l1
+              ON l1.PATID = tx.PATID AND tx.tx_dt = l1.LOT1_START_DT
+    )
+    SELECT coalesce(med_abbr, '(none)') AS MED_ABBR,
+           count(DISTINCT PATID)        AS N_PATIENTS
+    FROM on_index
+    GROUP BY coalesce(med_abbr, '(none)')
+    ORDER BY N_PATIENTS DESC"))
+  got <- db_q(con, glue("SELECT * FROM {wrk('NDMM_INDEX_AGENTS')}"))
+  log_msg("Agents that set a 1L index date (", nrow(got), "):")
+  for (i in seq_len(nrow(got)))
+    log_msg("    ", got$MED_ABBR[i], ": ", format(got$N_PATIENTS[i], big.mark = ","))
+  log_msg("  Review these against S6.2.1.1. Anything restricted to later lines ",
+          "belongs in NDMM_INDEX_EXCLUDED_ABBRS.")
+  invisible(got)
 }
 
 # MAP_STACKED is a LOT-build table this package no longer reads. The ported

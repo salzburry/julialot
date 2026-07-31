@@ -37,3 +37,38 @@ NDMM_MIN_AGE <- as.integer(Sys.getenv("MIN_AGE", unset = "18"))
 # the run if it matches nothing rather than letting the exclusion the study
 # turns on quietly do nothing.
 NDMM_BELANTAMAB_ABBR <- Sys.getenv("NDMM_BELANTAMAB_ABBR", unset = "BEL%")
+
+# Agents that may not set the 1L index date, beyond belantamab. S6.2.1.1 says
+# the eligible treatments are "MM regimens commonly used in the first line
+# setting, excluding those restricted to later LOTs (see exclusion criteria)" -
+# and the exclusion criteria in S6.2.1.2 name one therapy, belantamab. So the
+# protocol as written restricts nothing else, and this is empty by default:
+# adding a name here shrinks the cohort by a rule the protocol does not state,
+# and that has to be a study-team decision made against real data.
+#
+# NDMM_INDEX_AGENTS is written on every run for exactly that decision: it is
+# every agent that actually set an index date, with how many patients it set
+# one for. Read it after the first run and, if a later-line-only agent is in
+# it, name it here - patterns are matched against CL_MED_ABBR the same way
+# NDMM_BELANTAMAB_ABBR is, comma-separated.
+NDMM_INDEX_EXCLUDED_ABBRS <- Sys.getenv("NDMM_INDEX_EXCLUDED_ABBRS", unset = "")
+
+# The same thing by code rather than by abbreviation, for when the study team
+# has the HCPCS or NDC to hand and not the code list's own naming. Entries are
+# comma-separated, either TYPE:CODE or a bare CODE that bars every type:
+#
+#   NDMM_INDEX_EXCLUDED_CODES=HCPCS:J9999,NDC:12345678901
+#   NDMM_INDEX_EXCLUDED_CODES=J9999
+#
+# Punctuation is stripped and letters uppercased - the same normalisation the
+# code list itself gets, so a hyphenated NDC works. Stripped, not padded to
+# eleven: the code list stores its codes stripped too and the padding happens
+# at the join, so padding here would stop a ten-digit entry matching the
+# ten-digit code someone typed. A code that matches no row of
+# cl_mma_codelist.csv stops the run: it is not a therapy this build would have
+# matched anyway, so barring it does nothing while reading as though it did.
+NDMM_INDEX_EXCLUDED_CODES <- Sys.getenv("NDMM_INDEX_EXCLUDED_CODES", unset = "")
+
+# Views built by the index-agent profile.
+NDMM_INDEX_TX             <- "_ndmm_index_tx"
+NDMM_INDEX_INELIGIBLE     <- "_ndmm_index_ineligible"

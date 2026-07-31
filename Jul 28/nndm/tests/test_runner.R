@@ -55,7 +55,8 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_prefix", "check_contract"
            "build_ndmm_demographics", "build_ndmm_base_cohort",
            "build_enrollment_spans_ndmm",
            "build_ndmm_mma_codelist", "check_ndc_shape",
-           "build_ndmm_belantamab_codes", "build_ndmm_lot1_index",
+           "build_ndmm_belantamab_codes", "build_ndmm_index_ineligible_codes",
+           "build_ndmm_lot1_index", "build_ndmm_index_agents",
            "build_ndmm_therapy_pre_lot1",
            "build_ndmm_other_malig_codes",
            "build_ndmm_med_claim_header_and_confinement",
@@ -527,11 +528,89 @@ ok(length(gregexpr(paste0("<= date('", cfg_defaults$study_end, "')"), x,
                    fixed = TRUE)[[1]]) == 4L,
    "...and inside the study period")
 ok(length(gregexpr("WHERE bl.code IS NULL", x, fixed = TRUE)[[1]]) == 4L,
-   "belantamab cannot set the index - S6.2.1.1 says the 1L treatment is other than it")
-ok(grepl("min(tx_dt) AS LOT1_START_DT", x, fixed = TRUE),
+   "an ineligible agent cannot set the index, on every one of the four arms")
+ok(grepl("_ndmm_index_ineligible", x, fixed = TRUE),
+   "...and the ineligible set is the one build_ndmm_index_ineligible_codes builds")
+ok(any(grepl("min(tx_dt) AS LOT1_START_DT", SSQL, fixed = TRUE)),
    "the index is the first such claim, which is what S6.2.1.1 defines it as")
 ok(grepl("_ndmm_mma_codelist", x, fixed = TRUE),
    "and MM treatment means the same code list the prior-therapy scan uses")
+
+cat("\n-- which agents may set the index, and which set one --\n")
+# S6.2.1.1 says the eligible treatments exclude "those restricted to later LOTs
+# (see exclusion criteria)", and S6.2.1.2 names one therapy: belantamab. So the
+# default restricts nothing else. A name added here shrinks the cohort by a
+# rule the protocol does not state, which is why it is pinned and recorded.
+ok(identical(cfg_defaults$index_excluded_abbrs, "") &&
+     identical(cfg_defaults$index_excluded_codes, ""),
+   "nothing beyond belantamab is barred from setting the index by default")
+ok("NDMM_INDEX_EXCLUDED_ABBRS" %in% vapply(CONSTANT_SETTINGS, function(s) s$const,
+                                           character(1)),
+   "and if something is barred, the setting is pinned like anything that moves the count")
+drive_inel <- function(extra = "", codes = "", matches = 3L) {
+  assign("NDMM_INDEX_EXCLUDED_ABBRS", extra, envir = se)
+  assign("NDMM_INDEX_EXCLUDED_CODES", codes, envir = se)
+  SSQL <<- character(0)
+  assign("db_q", function(con, sql) data.frame(n = matches), envir = se)
+  m <- tryCatch({ se$build_ndmm_index_ineligible_codes(NULL); "" }, error = conditionMessage)
+  list(msg = m, sql = SSQL[1])
+}
+r <- drive_inel("")
+ok(identical(r$msg, "") && grepl(se$NDMM_BELANTAMAB_ABBR, r$sql, fixed = TRUE),
+   "with nothing named, belantamab alone is ineligible")
+ok(length(gregexpr("LIKE '", r$sql, fixed = TRUE)[[1]]) == 1L,
+   "...one pattern, not a wider net than the protocol asks for")
+r <- drive_inel("CART,TALQ")
+ok(grepl("'CART'", r$sql, fixed = TRUE) && grepl("'TALQ'", r$sql, fixed = TRUE) &&
+     grepl(se$NDMM_BELANTAMAB_ABBR, r$sql, fixed = TRUE),
+   "named agents join belantamab, and belantamab is never dropped")
+r <- drive_inel("NOSUCHAGENT", matches = 0L)
+ok(grepl("matches no row", r$msg, fixed = TRUE) &&
+     grepl("NOSUCHAGENT", r$msg, fixed = TRUE),
+   "a name that matches no code stops the run - it would read as a restriction and do nothing")
+# By code as well as by name: the study team may have the HCPCS or the NDC and
+# not the code list's own abbreviation.
+r <- drive_inel(codes = "HCPCS:J9999")
+ok(grepl("code_type = 'HCPCS'", r$sql, fixed = TRUE) &&
+     grepl("code = 'J9999'", r$sql, fixed = TRUE),
+   "a TYPE:CODE entry bars that code of that type")
+r <- drive_inel(codes = "J9999")
+ok(grepl("code = 'J9999'", r$sql, fixed = TRUE) &&
+     !grepl("code_type = ", r$sql, fixed = TRUE),
+   "...and a bare code bars it whatever the type")
+# Stripped, not padded: the code list stores its codes stripped too, and the
+# eleven-digit padding happens at the join. Padding here would stop a
+# ten-digit code list entry matching the ten-digit code someone typed.
+r <- drive_inel(codes = "ndc:50242-040-62")
+ok(grepl("code_type = 'NDC'", r$sql, fixed = TRUE) &&
+     grepl("code = '5024204062'", r$sql, fixed = TRUE),
+   "punctuation is stripped and the type uppercased, the same as the code list")
+r <- drive_inel(codes = "HCPCS:J0000", matches = 0L)
+ok(grepl("matches no row", r$msg, fixed = TRUE) && grepl("J0000", r$msg, fixed = TRUE),
+   "a code not on the therapy list stops the run too - barring it would do nothing")
+r <- drive_inel("CART", "HCPCS:J9999")
+ok(grepl("'CART'", r$sql, fixed = TRUE) && grepl("J9999", r$sql, fixed = TRUE) &&
+     grepl(se$NDMM_BELANTAMAB_ABBR, r$sql, fixed = TRUE),
+   "names and codes combine, and belantamab survives both")
+assign("NDMM_INDEX_EXCLUDED_ABBRS", "", envir = se)
+assign("NDMM_INDEX_EXCLUDED_CODES", "", envir = se)
+
+# The list the protocol gestures at and no document here contains: what the
+# data says actually set an index.
+SSQL <- character(0)
+assign("db_q", function(con, sql) data.frame(MED_ABBR = c("LEN", "BOR"),
+                                             N_PATIENTS = c(900L, 700L)), envir = se)
+se$build_ndmm_index_agents(NULL, cfg_defaults)
+a <- SSQL[1]
+ok(grepl("CREATE OR REPLACE TABLE", a, fixed = TRUE) &&
+     grepl("NDMM_INDEX_AGENTS", a, fixed = TRUE),
+   "the agents that set an index are written to a table, not only logged")
+ok(grepl("tx.tx_dt = l1.LOT1_START_DT", a, fixed = TRUE),
+   "counted on the index date itself, so it is what set the index and not any later claim")
+ok(grepl("count(DISTINCT PATID)", a, fixed = TRUE),
+   "...by patients, so one agent's many claims do not read as many patients")
+ok(grepl("_ndmm_index_tx", a, fixed = TRUE),
+   "and read off the scan the index came from, not a second pass over the claims")
 
 # Belantamab is how exclusion 4 is applied and how the index scan knows what to
 # skip. If the abbreviation matches nothing, both silently stop working.
@@ -941,6 +1020,7 @@ builds <- list(NDMM_MM_DX_EVENTS = "build_ndmm_mm_dx_events",
                NDMM_MMA_CODELIST = "build_ndmm_mma_codelist",
                NDMM_BELANTAMAB_CODES = "build_ndmm_belantamab_codes",
                NDMM_LOT1_STARTS = "build_ndmm_lot1_index",
+               NDMM_INDEX_TX = "build_ndmm_lot1_index",
                NDMM_OTHER_MALIG_CODES = "build_ndmm_other_malig_codes",
                NDMM_BELANTAMAB_PATIDS = "build_ndmm_belantamab_patids",
                NDMM_PATIDS = "build_ndmm_flags")

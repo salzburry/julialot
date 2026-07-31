@@ -36,6 +36,8 @@ CONTRACT <- list(
   outpatient_window    = 90L,
   min_age              = 18L,
   belantamab_abbr      = "BEL%",
+  index_excluded_abbrs = "",
+  index_excluded_codes = "",
   tbl_medical          = "medical",
   tbl_med_proc         = "med_procedure",
   tbl_med_diag         = "med_diagnosis",
@@ -76,10 +78,10 @@ CHECKPOINTS <- c("NDMM_FLAGS_ALL",
                  "NDMM_ENROLL_SPANS", "NDMM_MMA_CODELIST",
                  "NDMM_BELANTAMAB_CODES", "NDMM_LOT1_STARTS",
                  "NDMM_OTHER_MALIG_CODES", "NDMM_BELANTAMAB_PATIDS",
-                 "NDMM_PATIDS")
+                 "NDMM_INDEX_TX", "NDMM_PATIDS")
 
 # What the run writes. All prefixed, so two cohorts sit side by side.
-DELIVERABLES <- c("NDMM_COHORT", "NDMM_ATTRITION",
+DELIVERABLES <- c("NDMM_COHORT", "NDMM_ATTRITION", "NDMM_INDEX_AGENTS",
                   "NDMM_CODELIST_METADATA", "NDMM_RUN_METADATA",
                   "NDMM_BUILD_STATUS")
 OUTPUTS <- c(DELIVERABLES, CHECKPOINTS)
@@ -236,6 +238,10 @@ CONSTANT_SETTINGS <- list(
   list(const = "NDMM_TBL_MEMBER_ENROLLMENT", cfg = "tbl_member_enroll", note = ""),
   list(const = "NDMM_OUTPATIENT_WINDOW",       cfg = "outpatient_window",  note = ""),
   list(const = "NDMM_MIN_AGE",                 cfg = "min_age",            note = ""),
+  # Which agents may not set the index. Empty by default; a value here shrinks
+  # the cohort, so it is pinned like any other thing that does.
+  list(const = "NDMM_INDEX_EXCLUDED_ABBRS",   cfg = "index_excluded_abbrs", note = ""),
+  list(const = "NDMM_INDEX_EXCLUDED_CODES",   cfg = "index_excluded_codes", note = ""),
   # Not a cohort window but a code-list assumption, and just as able to change
   # the count: it is what identifies belantamab, and belantamab is exclusion 4.
   list(const = "NDMM_BELANTAMAB_ABBR",        cfg = "belantamab_abbr",    note = "")
@@ -463,7 +469,9 @@ contract_settings <- function() {
 }
 
 RUN_METADATA_COLS <- c(RUN_ID = "STRING", OBJECT_PREFIX = "STRING",
-                       BELANTAMAB_ABBR = "STRING", CODE_MD5 = "STRING",
+                       BELANTAMAB_ABBR = "STRING", INDEX_EXCLUDED = "STRING",
+                       INDEX_EXCLUDED_CODES = "STRING",
+                       CODE_MD5 = "STRING",
                        CONTRACT_SETTINGS = "STRING",
                        WAIVERS_REQUESTED = "STRING", WAIVERS_APPLIED = "STRING",
                        N_NDMM = "BIGINT", RECORDED_AT = "TIMESTAMP")
@@ -482,7 +490,9 @@ write_run_metadata <- function(con, cfg, here, n) {
     glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"),
     glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES (",
          "{sql_text(run_id)}, {sql_text(cfg$object_prefix)}, ",
-         "{sql_text(NDMM_BELANTAMAB_ABBR)}, {sql_text(code_fingerprint(here))}, ",
+         "{sql_text(NDMM_BELANTAMAB_ABBR)}, {sql_text(NDMM_INDEX_EXCLUDED_ABBRS)}, ",
+         "{sql_text(NDMM_INDEX_EXCLUDED_CODES)}, ",
+         "{sql_text(code_fingerprint(here))}, ",
          "{sql_text(contract_settings())}, ",
          "{sql_text(paste(sort(waivers_named(), method = 'radix'), collapse = ','))}, ",
          "{sql_text(paste(sort(getOption('nndm_waivers_applied', character(0)), ",
@@ -727,11 +737,14 @@ build_nndm <- function(here, prefix) {
   check_ndc_shape(con, cfg)
   build_ndmm_belantamab_codes(con)
   checkpoint(con, "NDMM_BELANTAMAB_CODES")
+  build_ndmm_index_ineligible_codes(con)
 
   log_msg("1L index: first eligible MM treatment claim on or after ",
           NDMM_LOT1_FROM)
   build_ndmm_lot1_index(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))
+  checkpoint(con, "NDMM_INDEX_TX")
   checkpoint(con, "NDMM_LOT1_STARTS")
+  build_ndmm_index_agents(con, cfg)
 
   log_msg("MM therapy in the ", NDMM_PRE_LOT1_DAYS, " days before 1L")
   build_ndmm_therapy_pre_lot1(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))

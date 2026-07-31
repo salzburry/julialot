@@ -33,6 +33,11 @@ cfg_defaults <- list(
   # How belantamab is recognised on cl_mma_codelist.csv; see
   # standalone_constants.R. Pinned because it is exclusion 4.
   belantamab_abbr   = Sys.getenv("NDMM_BELANTAMAB_ABBR", unset = "BEL%"),
+  # Agents barred from setting the 1L index beyond belantamab. Empty unless the
+  # study team names one; see standalone_constants.R and NDMM_INDEX_AGENTS.
+  index_excluded_abbrs = Sys.getenv("NDMM_INDEX_EXCLUDED_ABBRS", unset = ""),
+  # The same, by HCPCS or NDC rather than by the code list's own abbreviation.
+  index_excluded_codes = Sys.getenv("NDMM_INDEX_EXCLUDED_CODES", unset = ""),
 
   use_quarterly_tables = as.logical(Sys.getenv("USE_QUARTERLY_TABLES", unset = "TRUE")),
   study_end            = Sys.getenv("STUDY_END", unset = "2026-03-31"),

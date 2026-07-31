@@ -133,7 +133,7 @@ port.
 
 | # | criterion | as applied | source |
 |---|---|---|---|
-| 3 | **Eligible 1L treatment** | the **first** claim for an MM therapy on or after that patient's MM diagnosis and on or after `LOT1_FROM` (**2017-01-01**), scanned from raw `medical` and `rx` against `cl_mma_codelist.csv`. **Belantamab cannot set it** — §6.2.1.1 says the eligible 1L treatment is one "other than belantamab". Steroids cannot either: the code list has them dropped. That date is the NDMM index. | `00b_lot1_index.R` |
+| 3 | **Eligible 1L treatment** | the **first** claim for an MM therapy on or after that patient's MM diagnosis and on or after `LOT1_FROM` (**2017-01-01**), scanned from raw `medical` and `rx` against `cl_mma_codelist.csv`. **Belantamab cannot set it** — §6.2.1.1 says the eligible 1L treatment is one "other than belantamab". Steroids cannot either: the code list has them dropped. That date is the NDMM index. See the note below on which other agents may set it. | `00b_lot1_index.R` |
 | 4 | **12-month CE before index** | an enrollment span covering `[index − 365, index − 1]` in full, gaps of **≤30 days** treated as continuous | `01_enrollment.R`, `06_flags.R` |
 | 5 | **Follow-up CE** | a **no-gap** span covering `[index, index + FU_CE_DAYS]`, where `FU_CE_DAYS = 0` — **one day: the index date itself** | `06_flags.R` |
 | 6 | **No MM oncology therapy in the 12-month baseline** | no medical or pharmacy claim for an MM therapy in `[index − 365, index − 1]`, scanned from raw `medical` and `rx` against `cl_mma_codelist.csv`. **Steroids are excluded from this scan** (`DEX`, `DEXA`, `DEXAMETHASONE`, `PRED`, `PREDNISONE`) — a steroid claim alone does not make a patient previously treated. | `03_prior_therapy.R` |
@@ -165,6 +165,50 @@ production CSV is not visible from here, so `build_ndmm_belantamab_codes()`
 nothing and belantamab claims could set the 1L index date. The value used is
 recorded in `NDMM_RUN_METADATA`. **Confirm it against the production code list
 before the first run.**
+
+### Which agents may set the 1L index
+
+§6.2.1.1 says the eligible treatments are
+
+> MM regimens commonly used in the first line setting, **excluding those
+> restricted to later LOTs (see exclusion criteria)**
+
+and §6.2.1.2's exclusion criteria name exactly one therapy: belantamab. So the
+protocol as written restricts nothing else, and this build restricts nothing
+else — anything on `cl_mma_codelist.csv` that is not belantamab and not a
+steroid can set the index.
+
+**Annex 2 is not that list.** It is *"Categorization of SOC Regimens"*, which
+§6.2.2 describes as "an exemplary list of potential treatment combinations…
+Final treatment groupings may depend on data availability… and may be
+recategorized". It is an analysis grouping, and a stand-alone document not
+included in the protocol PDF.
+
+Rather than invent an allowlist — which would shrink the cohort by a rule
+nobody could reproduce from the document — every run writes
+**`<prefix>NDMM_INDEX_AGENTS`**: each `CL_MED_ABBR` that actually set an index
+date, and how many patients it set one for, counted on the index date itself
+off the same scan the index came from. That is the list to review.
+
+If a later-line-only agent appears in it, name it — by the code list's own
+abbreviation, or by HCPCS/NDC if that is what you have:
+
+```
+NDMM_INDEX_EXCLUDED_ABBRS=CART,TALQ
+NDMM_INDEX_EXCLUDED_CODES=HCPCS:J9999,NDC:12345678901
+NDMM_INDEX_EXCLUDED_CODES=J9999            # bare code, any type
+```
+
+Abbreviations match `CL_MED_ABBR` the way `NDMM_BELANTAMAB_ABBR` does. Codes are
+stripped of punctuation and uppercased, the same normalisation the code list
+gets — **stripped, not padded to eleven**, because the code list stores its
+codes stripped too and the padding happens at the join, so padding here would
+stop a ten-digit entry matching the ten-digit code you typed.
+
+Belantamab is always barred whatever is set. An abbreviation or code matching
+no row of `cl_mma_codelist.csv` **stops the run** rather than reading as a
+restriction that applies to nothing. Both values are pinned in `CONTRACT` and
+recorded in `NDMM_RUN_METADATA`, because setting either changes the count.
 
 ### Where this departs from the protocol
 
