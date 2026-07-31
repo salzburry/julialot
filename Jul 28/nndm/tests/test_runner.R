@@ -67,7 +67,7 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_prefix",
            "build_ndmm_other_malig_pre_lot1", "build_ndmm_preg_codes",
            "build_ndmm_pregnancy_patids", "build_ndmm_belantamab_patids",
            "build_ndmm_belantamab_scope_counts",
-           "build_ndmm_flags",
+           "build_ndmm_flags", "build_ndmm_fu_ce_counts",
            "ndmm_counts",
            "check_attrition_monotonic", "build_ndmm_cohort_table",
            "check_ndmm_cohort", "write_attrition",
@@ -1049,6 +1049,47 @@ ok(regexpr("ovr.override IS NOT NULL", o1, fixed = TRUE) <
      regexpr("trim(om.tumor_group) IN", o1, fixed = TRUE),
    "...before the tumour-group label, which is the whole point of listing it")
 
+cat("\n-- what the follow-up CE window costs, at each reading of it --\n")
+# FU_CE_DAYS=0 is the one setting here resting on a relay rather than a
+# document. Nobody can sign it off against a number nobody has, so the run
+# produces the number. The windows are derived from the configured value, so
+# the table always contains the row this run used, whatever it is set to.
+for (d in c(0L, 45L, 90L)) {
+  assign("NDMM_FU_CE_DAYS", d, envir = se)
+  w <- se$ndmm_fu_ce_windows()
+  ok(d %in% w && all(c(0L, 90L) %in% w) && !is.unsorted(w) && !any(duplicated(w)),
+     paste0("with FU_CE_DAYS=", d, " the windows are ", paste(w, collapse = "/"),
+            " - this run's and the protocol's, once each"))
+}
+assign("NDMM_FU_CE_DAYS", 0L, envir = se)
+SSQL <- character(0)
+assign("db_q", function(con, sql) data.frame(
+  FU_CE_RULE = c("0 days", "90 days"), N_PASSING_CRITERION_5 = c(900L, 700L),
+  N_COHORT = c(500L, 400L), IS_THIS_RUN = c(1L, 0L)), envir = se)
+se$build_ndmm_fu_ce_counts(NULL, cfg_defaults)
+fc <- SSQL[1]
+ok(grepl("NDMM_FU_CE_COUNTS", fc, fixed = TRUE) &&
+     grepl("(0, '0 days', cast(NULL as int))", fc, fixed = TRUE) &&
+     grepl("(90, '90 days', cast(NULL as int))", fc, fixed = TRUE),
+   "every window is counted in one pass, including the protocol's")
+# The build takes a day count, so "3 months" is applied as 90 days. The exact
+# reading lands 0-2 days later, and the difference should be a number.
+ok(grepl("add_months(idx.LOT1_START_DT, w.months)", fc, fixed = TRUE) &&
+     grepl("'3 months (exact)'", fc, fixed = TRUE),
+   "...and the exact 3-month reading beside it, which days cannot express")
+# The same three bounds the flag itself uses, or this would answer a different
+# question from the criterion it is about.
+ok(grepl("least(CASE WHEN w.months IS NULL", fc, fixed = TRUE) &&
+     grepl("coalesce(idx.DEATH_DT", fc, fixed = TRUE) &&
+     grepl("_ndmm_enroll_spans_strict", fc, fixed = TRUE),
+   "bounded by death and the study end, on no-gap spans, as criterion 5 is")
+# A criterion count alone would not say what the choice costs the cohort.
+ok(grepl("AND f.NO_BELANTAMAB            = 1", fc, fixed = TRUE) &&
+     grepl("AS N_COHORT", fc, fixed = TRUE),
+   "and the whole conjunction, so each row is a cohort size not a criterion count")
+ok(grepl(paste0("cov.sort_key = ", se$NDMM_FU_CE_DAYS), fc, fixed = TRUE),
+   "with the row this run actually applied marked, so the table reads alone")
+
 cat("\n-- what \"belantamab in any LOT\" is taken to mean --\n")
 # Lines of therapy do not exist when this runs - the LOT algorithm runs over
 # the cohort this build produces - so the exclusion is a claims proxy, and
@@ -1615,6 +1656,7 @@ builds <- list(NDMM_MM_DX_CODES = "build_ndmm_mm_dx_codes",
                NDMM_BELANTAMAB_CODES = "build_ndmm_belantamab_codes",
                NDMM_LOT1_STARTS = "build_ndmm_lot1_index",
                NDMM_INDEX_TX = "build_ndmm_lot1_index",
+               NDMM_ENROLL_SPANS_STRICT = "build_enrollment_spans_ndmm",
                NDMM_INDEX_INELIGIBLE = "build_ndmm_index_ineligible_codes",
                NDMM_OTHER_MALIG_CODES = "build_ndmm_other_malig_codes",
                NDMM_BELANTAMAB_PATIDS = "build_ndmm_belantamab_patids",

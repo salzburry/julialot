@@ -418,7 +418,37 @@ The one-day rule comes from the study team, relayed in the build request. It is
 not written in any document in this repository, and two comments anchored to
 that bullet in the protocol PDF are not in the rendered page and have not been
 read. Until the decision exists in a controlled source, `FU_CE_DAYS = 0` rests
-on that relay alone — worth getting in writing before anyone signs the count.
+on that relay alone — **this is the only setting in this package that does**.
+
+**So the run produces the number the decision should be made against.** Nobody
+can sign off a deviation from the protocol against a difference nobody has
+measured, so every run writes **`<prefix>NDMM_FU_CE_COUNTS`**:
+
+| `FU_CE_RULE` | `N_PASSING_CRITERION_5` | `N_COHORT` | `IS_THIS_RUN` |
+|---|---|---|---|
+| 0 days | … | … | 1 |
+| 30 days | … | … | 0 |
+| 60 days | … | … | 0 |
+| 90 days | … | … | 0 |
+| 3 months (exact) | … | … | 0 |
+
+`N_COHORT` is the **whole conjunction** at that window — the cohort size you
+would ship, not one criterion's count. So the row marked `IS_THIS_RUN` against
+the `90 days` row is exactly what the deviation costs, in patients. It is one
+extra pass over the no-gap spans, bounded by death and the study end the same
+way the flag itself is, and it does **not** change the cohort: the run still
+applies `NDMM_FU_CE_DAYS`.
+
+The windows are derived from the configured value, so whatever
+`NDMM_FU_CE_DAYS` is set to has a row — the table always contains the run that
+produced it.
+
+**"3 months" is applied as 90 days**, because `NDMM_FU_CE_DAYS` is a day count.
+`add_months(index, 3)` is the exact reading and lands 0–2 days later; it is in
+the table as its own row so the difference is a number rather than an
+assumption. This build **cannot currently be set to** the exact-months rule — if
+the study team picks it, that is a code change, and the table says first whether
+it is worth one.
 
 ### Thresholds worth double-checking
 

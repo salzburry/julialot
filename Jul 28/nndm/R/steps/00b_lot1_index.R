@@ -309,6 +309,92 @@ build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl) {
 # How many patients each reading of "in any LOT" would exclude. The scope is a
 # proxy for something this build cannot see, so the run says what the choice
 # costs rather than leaving it to be guessed at.
+# What criterion 5 costs at each reading of it.
+#
+# Protocol Rev Round 2 S6.2.1.1 asks for continuous enrollment "from index date
+# until the earliest of 3-months post index or death, with no gaps". This build
+# uses one day - the index date itself - because the study team said so in the
+# build request. That is a relay, not a controlled document, and it is the one
+# setting in this package resting on one. Nobody can sign it off against a
+# number nobody has, so this is the number: how many patients pass criterion 5
+# at each window, and how many reach the final cohort there.
+#
+# One pass over the strict spans, cross-joined to the windows, so the whole
+# table costs about what the flag itself costs. It does not change the cohort:
+# the run still applies NDMM_FU_CE_DAYS.
+#
+# The windows are derived, not listed: whatever NDMM_FU_CE_DAYS is set to is in
+# the table beside the protocol's 90, so the table always contains the row this
+# run actually used.
+ndmm_fu_ce_windows <- function() sort(unique(c(NDMM_FU_CE_DAYS, 0L, 30L, 60L, 90L)))
+
+build_ndmm_fu_ce_counts <- function(con, cfg) {
+  days <- ndmm_fu_ce_windows()
+  # 90 days is how "3 months" is applied, because NDMM_FU_CE_DAYS is a day
+  # count. add_months(.., 3) is the exact reading, and it lands 0-2 days later.
+  # Reported so the difference is a number rather than an assumption - this
+  # build cannot currently be set to it, which the README says.
+  rows <- c(sprintf("(%d, '%d days', cast(NULL as int))", days, days),
+            "(9999, '3 months (exact)', 3)")
+  db_exec(con, glue("
+    CREATE OR REPLACE TABLE {wrk('NDMM_FU_CE_COUNTS')} AS
+    WITH idx AS (
+      SELECT l1.PATID, l1.LOT1_START_DT, b.DEATH_DT
+      FROM {NDMM_LOT1_STARTS} l1
+      INNER JOIN {NDMM_BASE_COHORT} b ON b.PATID = l1.PATID
+    ),
+    w AS (SELECT * FROM (VALUES\n      ", paste(rows, collapse = ",\n      "), "
+    ) AS t(sort_key, rule, months)),
+    want AS (
+      SELECT idx.PATID, w.sort_key, w.rule,
+             least(CASE WHEN w.months IS NULL
+                        THEN date_add(idx.LOT1_START_DT, w.sort_key)
+                        ELSE add_months(idx.LOT1_START_DT, w.months) END,
+                   date('{cfg$study_end}'),
+                   coalesce(idx.DEATH_DT, date('{cfg$study_end}'))) AS want_end,
+             idx.LOT1_START_DT
+      FROM idx CROSS JOIN w
+    ),
+    cov AS (
+      SELECT want.PATID, want.sort_key, want.rule,
+             max(CASE WHEN s.cov_start <= want.LOT1_START_DT
+                       AND s.cov_end   >= want.want_end
+                      THEN 1 ELSE 0 END) AS CE_fu
+      FROM want
+      LEFT JOIN {NDMM_ENROLL_SPANS_STRICT} s ON s.PATID = want.PATID
+      GROUP BY want.PATID, want.sort_key, want.rule
+    )
+    SELECT cov.rule                                        AS FU_CE_RULE,
+           count(DISTINCT CASE WHEN cov.CE_fu = 1 THEN cov.PATID END)
+                                                           AS N_PASSING_CRITERION_5,
+           -- The whole conjunction, so this is the cohort size at that window
+           -- rather than one criterion's count.
+           count(DISTINCT CASE WHEN cov.CE_fu = 1
+                                AND f.CE_pre_lot1_12mo         = 1
+                                AND f.NO_PRIOR_MM_TX           = 1
+                                AND f.NO_OTHER_CANCER_PRE_LOT1 = 1
+                                AND f.NO_PREGNANCY             = 1
+                                AND f.NO_BELANTAMAB            = 1
+                               THEN cov.PATID END)         AS N_COHORT,
+           max(CASE WHEN cov.sort_key = {NDMM_FU_CE_DAYS} THEN 1 ELSE 0 END)
+                                                           AS IS_THIS_RUN
+    FROM cov
+    INNER JOIN {NDMM_FLAGS_ALL} f ON f.PATID = cov.PATID
+    GROUP BY cov.rule, cov.sort_key
+    ORDER BY cov.sort_key"))
+  got <- db_q(con, glue("SELECT * FROM {wrk('NDMM_FU_CE_COUNTS')}"))
+  log_msg("Follow-up CE (criterion 5), by window. This run applies ",
+          NDMM_FU_CE_DAYS, " day(s); the protocol asks for 3 months.")
+  for (i in seq_len(nrow(got)))
+    log_msg("    ", if (got$IS_THIS_RUN[i] == 1L) "->" else "  ", " ",
+            got$FU_CE_RULE[i], ": ",
+            format(got$N_PASSING_CRITERION_5[i], big.mark = ","),
+            " pass, cohort ", format(got$N_COHORT[i], big.mark = ","))
+  log_msg("  FU_CE_DAYS=", NDMM_FU_CE_DAYS, " comes from the study team via the ",
+          "build request and is not written in any controlled document. See README.")
+  invisible(got)
+}
+
 build_ndmm_belantamab_scope_counts <- function(con, cfg) {
   db_exec(con, glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_BELANTAMAB_SCOPE_COUNTS')} AS

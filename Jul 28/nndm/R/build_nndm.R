@@ -114,7 +114,8 @@ upstream_tables <- function(cfg) list()
 # old query. It is a deliverable as well as a checkpoint.
 CHECKPOINTS <- c("NDMM_FLAGS_ALL", "NDMM_MM_DX_CODES",
                  "NDMM_MM_DX_EVENTS", "NDMM_MM_QUALIFYING", "NDMM_BASE_COHORT",
-                 "NDMM_ENROLL_SPANS", "NDMM_MMA_CODELIST",
+                 "NDMM_ENROLL_SPANS", "NDMM_ENROLL_SPANS_STRICT",
+                 "NDMM_MMA_CODELIST",
                  "NDMM_BELANTAMAB_CODES", "NDMM_LOT1_STARTS",
                  "NDMM_OTHER_MALIG_CODES", "NDMM_BELANTAMAB_PATIDS",
                  "NDMM_INDEX_TX", "NDMM_BELANTAMAB_TX", "NDMM_PATIDS",
@@ -123,7 +124,7 @@ CHECKPOINTS <- c("NDMM_FLAGS_ALL", "NDMM_MM_DX_CODES",
 # What the run writes. All prefixed, so two cohorts sit side by side.
 DELIVERABLES <- c("NDMM_COHORT", "NDMM_ATTRITION", "NDMM_INDEX_AGENTS",
                   "NDMM_BELANTAMAB_SCOPE_COUNTS", "NDMM_MM_ADJACENT_GROUPS",
-                  "NDMM_MM_ADJACENT_CODES",
+                  "NDMM_MM_ADJACENT_CODES", "NDMM_FU_CE_COUNTS",
                   "NDMM_CODELIST_METADATA", "NDMM_RUN_METADATA",
                   "NDMM_BUILD_STATUS")
 OUTPUTS <- c(DELIVERABLES, CHECKPOINTS)
@@ -905,6 +906,7 @@ build_nndm <- function(here, prefix) {
   build_enrollment_spans_ndmm(con)
   build_enrollment_spans_ndmm(con, NDMM_ENROLL_SPANS_STRICT, 0L)
   checkpoint(con, "NDMM_ENROLL_SPANS")
+  checkpoint(con, "NDMM_ENROLL_SPANS_STRICT")
 
   log_msg("MM therapy code list, and the belantamab rows of it")
   db_exec(con, build_ndmm_mma_codelist())
@@ -953,6 +955,7 @@ build_nndm <- function(here, prefix) {
   build_ndmm_flags(con, NDMM_BASE_COHORT, NDMM_BELANTAMAB_PATIDS,
                    TRUE, TRUE, TRUE, TRUE)
   checkpoint(con, "NDMM_PATIDS")
+  build_ndmm_fu_ce_counts(con, cfg)
   # build_lot_long_filtered() is not called. It joins LOT_LONG to the cohort for
   # the April dashboard's KPI, gallery and LOT-detail views; neither the cohort
   # nor the attrition reads it, and this package builds only those two. The
