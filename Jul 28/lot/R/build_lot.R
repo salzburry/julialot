@@ -175,9 +175,7 @@ check_cohort_input <- function(con, cfg) {
   # patient would multiply their claims and their lines, so check the shape too,
   # not just the column names. ENDDATE_CE may be null: the primary branch uses
   # ENDDATE and the sensitivity branch falls back to it.
-  # coalesce on every sum: over no rows sum() is NULL, which arrives as NA and
-  # turns the comparisons below into "missing value where TRUE/FALSE needed" -
-  # an R error in place of the reason.
+  # SUM is NULL on an empty table. Coalesce the validation counts.
   q <- db_q(con, glue("
     SELECT count(*) AS n_rows,
            count(DISTINCT PATID) AS n_patients,
@@ -264,10 +262,7 @@ build_lot <- function(here, cohort_table, prefix) {
 
   check_cohort_input(con, cfg)
 
-  # LOT1 tables are replaced before LOT2-5 runs, so a failure in between leaves
-  # new LOT1 output beside an older LOT_LONG. Splitting the persist step would
-  # break the line-for-line port, so instead every run says what state it is
-  # in: nothing here is complete until the last line below says so.
+  # LOT1 is written before LOT_LONG, so track partial runs.
   # Cleared first, or a second run in one session inherits the first's.
   options(lot_waivers_applied = character(0))
   write_build_status(con, cfg, "started")
@@ -363,18 +358,9 @@ materialize_sct_views <- function(con) {
   invisible(TRUE)
 }
 
-# ndc_shape and ndc_short put a contract on the code list; this is the other
-# side of the same equality. Both NDC joins compare
-#   lpad(regexp_replace(<value>, '[^0-9]', ''), 11, '0')
-# on the claim as well as the code, so a ten-digit claim NDC has the layout
-# problem a ten-digit code has: 4-4-2, 5-3-2 or 5-4-1, and only 4-4-2 survives
-# a left pad. A canonical code then misses a real claim.
-#
-# The NDC QC in phase_qc does not cover this. It profiles pharmacy only, never
-# medical; it measures a different normalization from the join; it warns only
-# when the two length sets are wholly disjoint, so any overlap silences it; it
-# swallows its own errors; and it runs after LOT1 is already built.
-#
+# The claim side of the NDC contract that ndc_shape and ndc_short put on the
+# code list. Both joins pad the claim to eleven the same way, so a ten-digit
+# claim NDC has the same layout problem and a canonical code misses it.
 # Measured the way the join measures, before any claim is read.
 check_claim_ndc <- function(con, cfg) {
   log_msg("Checking claim NDC shape...")
@@ -450,7 +436,7 @@ write_build_status <- function(con, cfg, state) {
     if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else character(0)
   }, error = function(e) character(0))
   # No answer means DESCRIBE failed, not that the table has no columns. Acting
-  # on that would try to add all six to a table that already has them.
+  # on that would try to add every column to a table that already has them.
   for (m in if (length(have)) setdiff(cols, have) else character(0)) {
     tryCatch({
       db_exec(con, glue("ALTER TABLE {tbl} ADD COLUMNS ({m} {BUILD_STATUS_COLS[[m]]})"))
@@ -549,9 +535,7 @@ check_run_recorded <- function(con, cfg) {
 # stops the build rather than printing INVESTIGATE.
 check_lot_long <- function(con, cfg) {
   t <- lot_out("LOT_LONG")
-  # coalesce on every sum: over no rows sum() is NULL, which arrives as NA and
-  # turns the comparisons below into "missing value where TRUE/FALSE needed" -
-  # an R error in place of the reason.
+  # SUM is NULL on an empty table. Coalesce the validation counts.
   q <- db_q(con, glue("
     SELECT count(*) AS n_rows,
            count(DISTINCT PATID) AS n_patients,

@@ -1,16 +1,9 @@
-# Reads config.csv (columns name,value,description) into the environment.
+# Reads config.csv (name,value,description) into the environment as defaults.
 #
 # The environment wins: a row is applied only when that variable is unset, so
-# the file is editable defaults and never overrides a shell export or a value
-# Domino injected.
-#
-#   - already set        -> row ignored
-#   - unset, has a value -> Sys.setenv
-#   - blank value        -> skipped, the code default stands
-#   - name blank or '#'  -> comment row
-#   - DATABRICKS_PWD     -> never read from the file; secrets stay in env
-#
-# Must be sourced before config_lot.R reads Sys.getenv().
+# the file never overrides a shell export or a value Domino injected. A blank
+# value, a blank name or a '#' name is skipped, and DATABRICKS_PWD is never
+# read from the file. Source before config_lot.R reads Sys.getenv().
 
 # Coerce a date string to YYYY-MM-DD. Accepts ISO (pass-through) plus
 # the common Excel reformats (DD-MM-YYYY, DD/MM/YYYY, MM/DD/YYYY,

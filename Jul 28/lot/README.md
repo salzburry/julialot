@@ -151,7 +151,7 @@ Three consistency checks are reviewable - they stop the build unless named in
 | check | what it would do |
 |---|---|
 | a code-list med with no rollup row | extracted, and classed, but with no rollup flags, so the maintenance and conditioning rules miss it |
-| a rollup med with no codes | never matched, so patients on it look untreated |
+| a rollup med with no extractable NDC/HCPCS code | never matched, so patients on it look untreated |
 | a code type other than NDC or HCPCS | sits in the list and matches nothing |
 
 All of these ask only about rows extraction can reach. Every join in
@@ -416,8 +416,13 @@ actually costs rather than leaving it an assumption.
 
 LOT1's tables are replaced before LOT2-5 starts, so a failure in between would
 leave new LOT1 output beside an older `LOT_LONG`. Every run therefore writes
-`<prefix>LOT_BUILD_STATUS`: `started` at the beginning, then `complete`, or
-`failed` if it stops anywhere. Read that before trusting a set of tables.
+`<prefix>LOT_BUILD_STATUS`: `started` once preflight has passed, then
+`complete`, or `failed` if it stops after that. Read it before trusting a set
+of tables.
+
+Preflight - the settings, the contract, the connection, the cohort table -
+runs before the first status row, so a run that fails there leaves no row at
+all rather than a `failed` one. Nothing has been written by then.
 
 LOT1 is checked too, before LOT2-5 starts: MAP ending before it starts, a MAP
 end that is not the later runout, LOT1 ending after observation, an AUTO

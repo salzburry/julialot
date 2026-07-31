@@ -73,10 +73,13 @@ body_of <- function(lines) {
 # read as a perfect match.
 
 # Blocks that replace source text: cut ours, put the source's back.
+# The opening anchor is a code line, identical on both sides, so tidying the
+# comment above it cannot silently stop the splice - which is what happened
+# when it was the comment.
 SPLICE <- list(
-  "01_codelists.R" = list(from = "  # Code list vs rollup consistency.",
+  "01_codelists.R" = list(from = "  log_msg(\"Checking codelist <-> rollup consistency...\")",
                           to   = "  # Minimum code list coverage.",
-                          src  = "  # Codelist <-> Rollup consistency QC",
+                          src  = "  log_msg(\"Checking codelist <-> rollup consistency...\")",
                           src_to = "  # H4 fix: Codelist minimum-coverage validation (fail-loud)")
 )
 
