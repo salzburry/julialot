@@ -54,10 +54,29 @@ CONTRACT <- list(
 # is read off the code list.
 upstream_tables <- function(cfg) list()
 
+# A temporary view is a query, not a result: Spark re-runs it on every read.
+# These are read more than once, and they sit on top of each other - every one
+# of the thirteen reads of NDMM_LOT1_STARTS would re-run the whole
+# MM-diagnosis chain underneath it, twice over the raw claim tables. Each is
+# written to the work schema once and the view is repointed at the table, so
+# every later read is a table scan. The steps are untouched: they still name
+# the view.
+#
+# tests/test_runner.R counts the reads in the SQL and fails if anything read
+# more than once is missing from here. Two entries the count cannot see are
+# BASE_COHORT and BELANTAMAB_PATIDS - the flags step takes those as parameters,
+# so they reach the SQL as {elig_coh_final} and {map_stacked}.
+CHECKPOINTS <- c("NDMM_MM_DX_EVENTS", "NDMM_MM_QUALIFYING", "NDMM_BASE_COHORT",
+                 "NDMM_ENROLL_SPANS", "NDMM_MMA_CODELIST",
+                 "NDMM_BELANTAMAB_CODES", "NDMM_LOT1_STARTS",
+                 "NDMM_OTHER_MALIG_CODES", "NDMM_BELANTAMAB_PATIDS",
+                 "NDMM_PATIDS")
+
 # What the run writes. All prefixed, so two cohorts sit side by side.
-OUTPUTS <- c("NDMM_FLAGS_ALL", "NDMM_COHORT", "NDMM_ATTRITION",
-             "NDMM_CODELIST_METADATA", "NDMM_RUN_METADATA",
-             "NDMM_BUILD_STATUS")
+DELIVERABLES <- c("NDMM_FLAGS_ALL", "NDMM_COHORT", "NDMM_ATTRITION",
+                  "NDMM_CODELIST_METADATA", "NDMM_RUN_METADATA",
+                  "NDMM_BUILD_STATUS")
+OUTPUTS <- c(DELIVERABLES, CHECKPOINTS)
 
 # Conditions the study team can accept for a given data set. Nothing else can
 # be waived, and a waiver naming something not here is a typo, not a decision.
@@ -72,6 +91,24 @@ waivers_named <- function() {
 # Never hands back something outside the waivable set, whatever the environment
 # says, so a bypassed check_settings cannot widen it.
 waivers <- function() intersect(waivers_named(), WAIVABLE_CHECKS)
+
+# Write a view's rows to the schema, then point the view at the table. Nothing
+# that reads it has to know: the name is unchanged, and every read after this
+# is a scan of a table rather than a re-run of the query.
+#
+# No fallback. The source degraded to the in-place view on a write failure,
+# which is correct but can turn minutes into hours without saying so, and a
+# table this build declares as an output would then not be there.
+checkpoint <- function(con, name) {
+  view <- get(name, envir = globalenv())
+  tbl  <- wrk(name)
+  t0   <- proc.time()
+  db_exec(con, glue("CREATE OR REPLACE TABLE {tbl} AS SELECT * FROM {view}"))
+  db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW {view} AS SELECT * FROM {tbl}"))
+  log_msg("  checkpoint ", name, " -> ", tbl, " (",
+          round((proc.time() - t0)[["elapsed"]], 1), "s)")
+  invisible(TRUE)
+}
 
 check_settings <- function() {
   bad <- character(0)
@@ -630,28 +667,36 @@ build_nndm <- function(here, prefix) {
   build_ndmm_mm_claim_header(con, cdm_src(cfg$tbl_medical),
                              cdm_src(cfg$tbl_confinement))
   build_ndmm_mm_dx_events(con, cdm_src(cfg$tbl_med_diag))
+  checkpoint(con, "NDMM_MM_DX_EVENTS")
   build_ndmm_mm_qualifying(con)
+  checkpoint(con, "NDMM_MM_QUALIFYING")
   build_ndmm_demographics(con, cdm_src(cfg$tbl_member_elig), cdm_src(cfg$tbl_dod))
   build_ndmm_base_cohort(con)
+  checkpoint(con, "NDMM_BASE_COHORT")
 
   log_msg("Enrollment spans (gap_days=", cfg$gap_days, ", and a no-gap set)")
   build_enrollment_spans_ndmm(con)
   build_enrollment_spans_ndmm(con, NDMM_ENROLL_SPANS_STRICT, 0L)
+  checkpoint(con, "NDMM_ENROLL_SPANS")
 
   log_msg("MM therapy code list, and the belantamab rows of it")
   db_exec(con, build_ndmm_mma_codelist())
+  checkpoint(con, "NDMM_MMA_CODELIST")
   check_ndc_shape(con, cfg)
   build_ndmm_belantamab_codes(con)
+  checkpoint(con, "NDMM_BELANTAMAB_CODES")
 
   log_msg("1L index: first eligible MM treatment claim on or after ",
           NDMM_LOT1_FROM)
   build_ndmm_lot1_index(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))
+  checkpoint(con, "NDMM_LOT1_STARTS")
 
   log_msg("MM therapy in the ", NDMM_PRE_LOT1_DAYS, " days before 1L")
   build_ndmm_therapy_pre_lot1(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))
 
   log_msg("Other cancer in the ", NDMM_PRE_LOT1_DAYS, " days before 1L")
   build_ndmm_other_malig_codes(con)
+  checkpoint(con, "NDMM_OTHER_MALIG_CODES")
   build_ndmm_med_claim_header_and_confinement(con, cdm_src(cfg$tbl_medical),
                                               cdm_src(cfg$tbl_confinement))
   build_ndmm_other_malig_pre_lot1(con, cdm_src(cfg$tbl_med_diag))
@@ -663,6 +708,7 @@ build_nndm <- function(here, prefix) {
 
   log_msg("Belantamab in any line, from claims")
   build_ndmm_belantamab_patids(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))
+  checkpoint(con, "NDMM_BELANTAMAB_PATIDS")
 
   log_msg("Per-patient filter flags")
   # The ported flags step takes the cohort and the belantamab source as
@@ -671,6 +717,7 @@ build_nndm <- function(here, prefix) {
   # reads), and the belantamab view answers in MAP_STACKED's shape.
   build_ndmm_flags(con, NDMM_BASE_COHORT, NDMM_BELANTAMAB_PATIDS,
                    TRUE, TRUE, TRUE, TRUE)
+  checkpoint(con, "NDMM_PATIDS")
   # build_lot_long_filtered() is not called. It joins LOT_LONG to the cohort for
   # the April dashboard's KPI, gallery and LOT-detail views; neither the cohort
   # nor the attrition reads it, and this package builds only those two. The

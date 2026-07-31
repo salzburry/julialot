@@ -43,6 +43,34 @@ built it.
   below.
 - **Belantamab** is read off `cl_mma_codelist.csv` rather than `MAP_STACKED`.
 
+### Nothing is left as a temporary view that is read twice
+
+A temporary view is a query, not a result — Spark re-runs it on every read. The
+views here sit on top of each other, so a second read of `NDMM_LOT1_STARTS` is
+a second run of the whole MM-diagnosis chain beneath it, across the raw claim
+tables. It is read **thirteen** times.
+
+Every view read more than once is written to the work schema once and the view
+is repointed at the table, so each later read is a table scan. The steps are
+untouched — they still name the view:
+
+```
+NDMM_MM_DX_EVENTS   NDMM_MM_QUALIFYING     NDMM_BASE_COHORT
+NDMM_ENROLL_SPANS   NDMM_MMA_CODELIST      NDMM_BELANTAMAB_CODES
+NDMM_LOT1_STARTS    NDMM_OTHER_MALIG_CODES NDMM_BELANTAMAB_PATIDS
+NDMM_PATIDS
+```
+
+The list is not maintained by hand: `tests/test_runner.R` counts the reads in
+the SQL and fails if anything read more than once is missing from it. Two
+entries the count cannot see are `NDMM_BASE_COHORT` and
+`NDMM_BELANTAMAB_PATIDS`, which reach the flags step as parameters.
+
+A checkpoint that cannot be written **stops the build**. The April code
+degraded to the in-place view on a write failure — correct, but it can turn
+minutes into hours without saying so, and a table declared as an output would
+then not be there.
+
 Outputs, all prefixed: `NDMM_COHORT` (the cohort, written as a table
 `Jul 28/lot` can be pointed at — see below), `NDMM_ATTRITION` (the nine rows
 below), `NDMM_FLAGS_ALL` (one row per candidate with every filter's verdict),

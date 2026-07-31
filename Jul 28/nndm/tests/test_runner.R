@@ -795,6 +795,93 @@ if (length(alt)) {
       "exercised\n", sep = "")
 }
 
+cat("\n-- a view read twice is a query run twice --\n")
+# Spark re-runs a temporary view on every read. These views sit on top of each
+# other, so a second read of NDMM_LOT1_STARTS is a second run of the whole
+# MM-diagnosis chain beneath it, over the raw claim tables. The list of what
+# gets written to the schema is derived from the SQL rather than maintained by
+# hand: count the reads, and anything read more than once has to be on it.
+sql_txt <- paste(c(unlist(lapply(step_files, readLines, warn = FALSE)),
+                   readLines(file.path(ROOT, "R", "build_nndm.R"), warn = FALSE)),
+                 collapse = "\n")
+view_consts <- Filter(function(k) {
+  v <- get(k, envir = consts0, inherits = FALSE)
+  is.character(v) && length(v) == 1L && grepl("^_", v)
+}, ls(consts0))
+reads <- vapply(view_consts, function(k) {
+  n  <- length(gregexpr(paste0("{", k, "}"), sql_txt, fixed = TRUE)[[1]])
+  n  <- if (regexpr(paste0("{", k, "}"), sql_txt, fixed = TRUE) == -1) 0L else n
+  cr <- length(gregexpr(paste0("VIEW {", k, "}"), sql_txt, fixed = TRUE)[[1]])
+  cr <- if (regexpr(paste0("VIEW {", k, "}"), sql_txt, fixed = TRUE) == -1) 0L else cr
+  as.integer(n - cr)
+}, integer(1))
+hot <- names(reads)[reads > 1L]
+# NDMM_FLAGS_ALL is materialized by the ported step that builds it, and
+# NDMM_LOT_LONG_FILT is not built at all.
+hot <- setdiff(hot, c("NDMM_FLAGS_ALL", "NDMM_LOT_LONG_FILT"))
+ok(length(hot) > 0, paste0("the SQL reads ", length(hot), " views more than once"))
+unwritten <- setdiff(hot, CHECKPOINTS)
+ok(length(unwritten) == 0,
+   if (length(unwritten)) paste0("read more than once but re-run every time: ",
+                                 paste(unwritten, collapse = ", "))
+   else "and every one of them is written to the schema once instead")
+ok("NDMM_LOT1_STARTS" %in% CHECKPOINTS && reads[["NDMM_LOT1_STARTS"]] >= 10L,
+   paste0("NDMM_LOT1_STARTS among them - it is read ",
+          reads[["NDMM_LOT1_STARTS"]], " times"))
+# The two the count cannot see, because the flags step takes them as arguments.
+ok(all(c("NDMM_BASE_COHORT", "NDMM_BELANTAMAB_PATIDS") %in% CHECKPOINTS),
+   "and the two passed to a step as parameters, which the count cannot see")
+ok(all(CHECKPOINTS %in% OUTPUTS),
+   "each is declared an output, because each is a table the run leaves behind")
+
+# Driven: the write, then the repoint, in that order and against the same name.
+ke <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = ke)
+assign("log_msg", function(...) invisible(NULL), envir = ke)
+assign("wrk", function(x) paste0("wk.p_", x), envir = ke)
+assign("NDMM_LOT1_STARTS", "_ndmm_lot1_starts", envir = ke)
+KSQL <- character(0)
+assign("db_exec", function(con, s) { KSQL <<- c(KSQL, s); TRUE }, envir = ke)
+ke$checkpoint(NULL, "NDMM_LOT1_STARTS")
+ok(length(KSQL) == 2L, "a checkpoint is two statements")
+ok(grepl("CREATE OR REPLACE TABLE wk.p_NDMM_LOT1_STARTS AS SELECT * FROM _ndmm_lot1_starts",
+         KSQL[1], fixed = TRUE),
+   "the rows are written to a prefixed table in the work schema")
+ok(grepl("CREATE OR REPLACE TEMPORARY VIEW _ndmm_lot1_starts AS SELECT * FROM wk.p_NDMM_LOT1_STARTS",
+         KSQL[2], fixed = TRUE),
+   "...and the view is repointed at it, so no step has to know")
+# db_exec stops on failure, so a checkpoint that cannot be written stops the
+# run rather than degrading to the view and taking hours without saying so.
+# Fails only on the write, so this is about the write propagating and not
+# about the repoint that follows it.
+assign("db_exec", function(con, s)
+  if (grepl("CREATE OR REPLACE TABLE", s, fixed = TRUE)) stop("write refused")
+  else TRUE, envir = ke)
+ok(grepl("write refused",
+         tryCatch({ ke$checkpoint(NULL, "NDMM_LOT1_STARTS"); "" }, error = conditionMessage),
+         fixed = TRUE),
+   "a checkpoint that cannot be written stops the build")
+# Every checkpoint is taken, and after the step that builds the view it names -
+# checkpointing first would write an empty table and repoint the view at it,
+# and the step would then rebuild the view and undo the whole thing.
+builds <- list(NDMM_MM_DX_EVENTS = "build_ndmm_mm_dx_events",
+               NDMM_MM_QUALIFYING = "build_ndmm_mm_qualifying",
+               NDMM_BASE_COHORT = "build_ndmm_base_cohort",
+               NDMM_ENROLL_SPANS = "build_enrollment_spans_ndmm",
+               NDMM_MMA_CODELIST = "build_ndmm_mma_codelist",
+               NDMM_BELANTAMAB_CODES = "build_ndmm_belantamab_codes",
+               NDMM_LOT1_STARTS = "build_ndmm_lot1_index",
+               NDMM_OTHER_MALIG_CODES = "build_ndmm_other_malig_codes",
+               NDMM_BELANTAMAB_PATIDS = "build_ndmm_belantamab_patids",
+               NDMM_PATIDS = "build_ndmm_flags")
+for (k in CHECKPOINTS) {
+  i <- regexpr(paste0('checkpoint(con, "', k, '")'), body, fixed = TRUE)
+  j <- if (is.null(builds[[k]])) -1L else
+    regexpr(paste0("(?<![A-Za-z0-9_.])", builds[[k]], "\\("), body, perl = TRUE)
+  ok(i > 0 && j > 0 && j < i,
+     paste0(k, " is checkpointed, after ", builds[[k]], "() has built it"))
+}
+
 cat("\n-- the outputs are all prefixed, and all declared --\n")
 assign("cfg", pin_prefix(base, "p_"), envir = globalenv())
 for (t in OUTPUTS)
@@ -851,7 +938,12 @@ ok(length(undeclared) == 0,
    else "every table the run names is declared as an output or as an upstream input")
 # And the other way. A declared output nothing writes is the same failure seen
 # from the other side: the run reports complete and the table is not there.
-unwritten <- setdiff(OUTPUTS, named)
+# checkpoint() writes wrk(name) with the name in a variable, so the scan above
+# cannot see those. They are covered instead by the loop that requires a
+# checkpoint(con, "<name>") call in the runner for every one of them.
+checkpointed <- Filter(function(k)
+  regexpr(paste0('checkpoint(con, "', k, '")'), body, fixed = TRUE) > 0, CHECKPOINTS)
+unwritten <- setdiff(OUTPUTS, c(named, checkpointed))
 ok(length(unwritten) == 0,
    if (length(unwritten)) paste0("declared as an output but nothing the run ",
                                  "reaches writes it: ", paste(unwritten, collapse = ", "))
