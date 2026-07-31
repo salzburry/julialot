@@ -843,7 +843,7 @@ FSQL <- character(0); FQRY <- character(0)
 assign("db_exec", function(con, s) { FSQL <<- c(FSQL, s); TRUE }, envir = fe)
 drive_fm <- function(have, counts = list(n_rows = 1420, n_patients = 900),
                      final = list(n_rows = 1300, n_patients = 870),
-                     by_line = c(900, 400, 120)) {
+                     by_line = c(900, 400, 120), cfg = list(code_md5 = "abc123")) {
   FSQL <<- character(0); FQRY <<- character(0)
   assign("db_q", function(con, s) {
     FQRY <<- c(FQRY, s)
@@ -851,7 +851,7 @@ drive_fm <- function(have, counts = list(n_rows = 1420, n_patients = 900),
                                      else data.frame(col_name = have))
     data.frame(LOT_NUM = seq_along(by_line), n = by_line)
   }, envir = fe)
-  tryCatch({ fe$record_final_counts(NULL, list(code_md5 = "abc123"), counts, final); NULL },
+  tryCatch({ fe$record_final_counts(NULL, cfg, counts, final); NULL },
            error = conditionMessage)
 }
 base_cols <- c("RUN_ID", "N_COHORT_PATIENTS", "N_LOT1_PATIENTS")
@@ -888,6 +888,19 @@ ok(identical(cs, get("contract_settings", envir = fe)()) &&
 # into Domino, where there may be no repository to ask.
 fp <- get("code_fingerprint", envir = fe)(ROOT)
 ok(grepl("^[0-9a-f]{32}$", fp), "the fingerprint is a real hash of the sources")
+# code_fingerprint sorts with method = "radix" so the hash cannot depend on the
+# machine's collation. There is no assertion for it: for names of the shape it
+# will ever see - *.R under one root - the locale order and byte order agree in
+# every case that could be built here, so any test would pass whichever sort
+# was used. The argument is kept because it costs nothing and removes the
+# question; an assertion that could not fail would only look like cover.
+# Nothing to hash gives NA, and 'NA' in a STRING column is a hash-shaped lie -
+# the same thing refused for the code list md5s.
+st <- get("sql_text", envir = globalenv())
+ok(identical(st(NA_character_), "NULL") && identical(st(NULL), "NULL"),
+   "a fingerprint that could not be taken is NULL, not the text NA")
+ok(identical(st("a'b"), "'a''b'") && identical(st("x"), "'x'"),
+   "...and a quote in a value is doubled rather than closing the literal")
 ok(!identical(fp, get("code_fingerprint", envir = fe)(tempdir())),
    "...and it changes with the sources, rather than being a constant")
 
@@ -922,6 +935,13 @@ ok(grepl("N_LOT_LONG_ROWS = 1000000", u, fixed = TRUE) &&
 ok(grepl("LOT_LONG_BY_LINE = '1:100000|2:400'", u, fixed = TRUE),
    "and the line distribution too, where it would have been recorded wrong in silence")
 ok(!grepl("e+0", u, fixed = TRUE), "no scientific notation reaches the statement")
+# Driven, not just the helper: interpolating inside quotes writes 'NA' either
+# way for a real hash, so only the missing case shows which form was used.
+invisible(drive_fm(all_cols, cfg = list(code_md5 = NA_character_)))
+u2 <- grep("UPDATE", FSQL, value = TRUE)[1]
+ok(grepl("CODE_MD5 = NULL", u2, fixed = TRUE) &&
+     !grepl("CODE_MD5 = 'NA'", u2, fixed = TRUE),
+   "a run whose fingerprint could not be taken records NULL, not a hash-shaped NA")
 # Recorded after check_lot_long, so the numbers describe a table already found
 # usable - and check_run_recorded now asks for them, not merely for a row.
 ok(regexpr("check_lot_long(", body, fixed = TRUE) <
@@ -1658,6 +1678,16 @@ Sys.setenv(INDUCTION_WINDOW_DAYS = "60")
 ok(identical(tryCatch({ check_settings(); "" }, error = conditionMessage), ""),
    "...and a whole number is still accepted")
 Sys.unsetenv("INDUCTION_WINDOW_DAYS")
+# run_id goes into fifteen SQL string literals, and every other identifier that
+# reaches SQL is checked. An apostrophe in it closes the literal early.
+Sys.setenv(DOMINO_RUN_ID = "R1'; DROP TABLE x; --")
+ok(grepl("DOMINO_RUN_ID", tryCatch({ check_settings(); "" }, error = conditionMessage),
+         fixed = TRUE),
+   "a run id that would not survive being quoted is refused")
+Sys.setenv(DOMINO_RUN_ID = "run-2026.07.31_01")
+ok(identical(tryCatch({ check_settings(); "" }, error = conditionMessage), ""),
+   "...and the shapes a platform actually issues are accepted")
+Sys.unsetenv("DOMINO_RUN_ID")
 clear()
 runs(check_settings(), "unset is fine")
 Sys.setenv(CENSOR_AT_DISENROLLMENT = "Y")

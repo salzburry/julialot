@@ -109,6 +109,14 @@ check_settings <- function() {
     bad <- c(bad, paste0("CODELIST_WAIVERS names no such check: ",
                          paste(unknown, collapse = ", "), " (choose from ",
                          paste(WAIVABLE_CHECKS, collapse = ", "), ")"))
+  # run_id reaches SQL as a string literal at fifteen sites, and every other
+  # identifier that does is checked - schema, cohort table, prefix. The platform
+  # sets this one, so it is consistency rather than defence against anybody; an
+  # apostrophe in it would fail somewhere deep instead of here.
+  r <- Sys.getenv("DOMINO_RUN_ID", unset = "")
+  if (nzchar(r) && !grepl("^[A-Za-z0-9_.-]+$", r))
+    bad <- c(bad, paste0("DOMINO_RUN_ID='", r,
+                         "' (want letters, digits, underscore, dot or dash)"))
   a <- Sys.getenv("ALLO_LOT_SPAN", unset = "")
   if (nzchar(a) && !a %in% c("single_day", "extend_to_next"))
     bad <- c(bad, paste0("ALLO_LOT_SPAN='", a,
@@ -798,9 +806,11 @@ record_codelist_hashes <- function(con, cfg) {
 # Domino to run, where there may be no repository to ask, and the hash
 # describes the code that actually executed either way.
 code_fingerprint <- function(here) {
+  # radix, not the default: character sort is collation-sensitive, and a hash
+  # meant to say "the same code" must not depend on the machine's locale.
   fs <- sort(c(list.files(file.path(here, "R"), "\\.R$", full.names = TRUE,
                           recursive = TRUE),
-               file.path(here, "build.R")))
+               file.path(here, "build.R")), method = "radix")
   fs <- fs[file.exists(fs)]
   if (!length(fs)) return(NA_character_)
   tmp <- tempfile(); on.exit(unlink(tmp), add = TRUE)
@@ -811,7 +821,7 @@ code_fingerprint <- function(here) {
 # Sorted, so two runs with the same settings produce the same string and it can
 # be compared as one value.
 contract_settings <- function() {
-  k <- sort(names(CONTRACT))
+  k <- sort(names(CONTRACT), method = "radix")
   paste(paste0(k, "=", vapply(CONTRACT[k], function(v) as.character(v)[1],
                               character(1))), collapse = "|")
 }
@@ -855,8 +865,8 @@ record_final_counts <- function(con, cfg, counts, final) {
            LOT_LONG_BY_LINE = '{dist}',
            N_LOT_FINAL_ROWS = {sql_count(final$n_rows)},
            N_LOT_FINAL_PATIENTS = {sql_count(final$n_patients)},
-           CODE_MD5 = '{cfg$code_md5}',
-           CONTRACT_SETTINGS = '{contract_settings()}'
+           CODE_MD5 = {sql_text(cfg$code_md5)},
+           CONTRACT_SETTINGS = {sql_text(contract_settings())}
      WHERE RUN_ID = '{run_id}'"))
   log_msg("Recorded LOT_LONG: ", counts$n_rows, " lines for ",
           counts$n_patients, " patients (", dist, "); LOT_LONG_FINAL: ",

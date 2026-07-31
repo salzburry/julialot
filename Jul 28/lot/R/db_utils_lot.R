@@ -167,6 +167,13 @@ sql_count <- function(x) {
   format(x, scientific = FALSE, trim = TRUE)
 }
 
+# A string as a SQL literal: quoted, quotes doubled, and NULL rather than 'NA'
+# when there is nothing to write. sql_count's counterpart for text columns.
+sql_text <- function(x) {
+  if (length(x) != 1L || is.na(x)) return("NULL")
+  paste0("'", gsub("'", "''", as.character(x), fixed = TRUE), "'")
+}
+
 # Retry a DELETE and its INSERT together, so the write stays idempotent.
 # Retried apart, an INSERT whose answer was lost is sent twice and the DELETE
 # that would have cleared the first has already run.
