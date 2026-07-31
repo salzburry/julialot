@@ -356,10 +356,12 @@ NDMM_MM_ADJACENT_STATES=exclude    # apr_30_2026's behaviour, to compare
 This makes the cohort **larger**, and the difference lands on attrition step 7.
 
 Note that `tumor_group` in that file is **one label per ICD code**, not a
-grouping — so "≥2 outpatient claims for the same tumour group" means the same
-exact diagnosis description, and the three states above are three different
-groups to the rule that reads it. That is inherited from the parent build and
-has not been changed here.
+grouping — so on its own, "≥2 outpatient claims for the same tumour group"
+means the same exact diagnosis description, and the three states above are
+three different groups to the rule that reads it. That is inherited from the
+parent build; **`primary_tumor_groups.csv` is what fixes it**, and
+`NDMM_OTHER_MALIG_GRAIN` says whether it is worth fixing for this data. See
+**One label per code is the wrong grain**.
 
 The five original labels stay **required**: if the code list does not carry one,
 the run stops, because the override would silently fail and patients would be
@@ -624,15 +626,24 @@ to confirm baseline disease, this is the line to take back out.
 
 ### NDC matching, and what has to be checked before the first run
 
-The prior-therapy scan matches an NDC by stripping non-digits and left-padding
-to eleven. That is the **4-4-2** layout. A ten-digit NDC written 5-3-2 or 5-4-1
-pads to a different key, so `50242-040-62` — canonically `50242004062` —
-becomes `05024204062`: a real prior therapy missed, or the wrong drug matched.
-The patient's inclusion turns on it and nothing downstream can see it happen.
+Every NDC match in this build strips non-digits and left-pads to eleven. That
+is the **4-4-2** layout. A ten-digit NDC written 5-3-2 or 5-4-1 pads to a
+different key, so `50242-040-62` — canonically `50242004062` — becomes
+`05024204062`: a real match missed, or the wrong drug matched. Nothing
+downstream can see it happen.
 
-`check_ndc_shape()` profiles the values before the scan runs, on both sides of
-the join and scoped to the NDMM candidates and the baseline window, and stops
-on any of four conditions:
+**Three criteria turn on it**, not one: the 1L index (#3) and the belantamab
+exclusion (#9) in `00b_lot1_index.R`, and the baseline-therapy exclusion (#6)
+in `03_prior_therapy.R`. A mis-padded NDC can therefore move a patient's index
+date, keep a previously-treated patient in, or fail to exclude one who had
+belantamab.
+
+`check_ndc_shape()` profiles the values before any of those scans run, on both
+sides of the join. The claim side is scoped to the NDMM candidates and to
+`[least(study start, earliest diagnosis − 365), study end]` — **wider than the
+1L baseline on purpose**, because the belantamab scan reaches across the whole
+study period and profiling only the baseline would miss the values it matches
+on. It stops on any of four conditions:
 
 | check | what it found |
 |---|---|
@@ -665,13 +676,16 @@ It carries the ten columns that build reads off whatever cohort it is given —
 them, one row per patient, and that the count agrees with the attrition, before
 the run finishes.
 
-**`INDEX_DATE` is the 1L start.** Everything that depends on where the anchor
-sits is recomputed from it: age at index, both follow-up lengths, and where
-continuous enrollment ends. Only sex, birth year and date of death are
-inherited from the parent cohort, because those do not move with an anchor.
-Carrying the parent's `AGE_INDEX_YR` or `FU_DAYS` instead would describe the
-MM-diagnosis index, and a LOT run over this table would measure its lines from
-the wrong day.
+**`INDEX_DATE` is the 1L start**, not the MM diagnosis date. Everything that
+depends on where the anchor sits is recomputed from it: age at index, both
+follow-up lengths, and where continuous enrollment ends. Only sex, birth year
+and date of death are carried across unchanged — read from
+`member_cont_enrollment` and `dod` by `00_mm_cohort.R` — because those do not
+move with an anchor. `DEATH_DT` is re-clamped at the index, since a partial
+death date coarsened against the diagnosis can otherwise land before the 1L
+start. Computing `AGE_INDEX_YR` or `FU_DAYS` at the diagnosis instead would
+describe the wrong anchor, and a LOT run over this table would measure its
+lines from the wrong day.
 
 ## The attrition
 
