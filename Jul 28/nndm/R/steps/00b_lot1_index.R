@@ -261,3 +261,46 @@ build_ndmm_belantamab_scope_counts <- function(con, cfg) {
             " of the 1L candidates")
   invisible(got)
 }
+
+# Every plasma-cell-looking tumour group the other-cancer code list carries,
+# and whether the override covers it.
+#
+# The override exists because the criterion is another cancer "distinct from
+# the index MM", and these are the index disease or its precursor. Which
+# labels the production list actually stores is not visible from here, and the
+# remission wording is exactly where it is likely to differ - so the run writes
+# what it found rather than leaving the question to a comment.
+build_ndmm_mm_adjacent_groups <- function(con, cfg) {
+  db_exec(con, glue("
+    CREATE OR REPLACE TABLE {wrk('NDMM_MM_ADJACENT_GROUPS')} AS
+    SELECT tumor_group                    AS TUMOR_GROUP,
+           max(is_mm_adjacent_override)   AS OVERRIDDEN,
+           count(*)                       AS N_CODES
+    FROM {NDMM_OTHER_MALIG_CODES}
+    WHERE is_mm_adjacent_override = 1
+       OR upper(tumor_group) LIKE '%REMISSION%'
+       OR upper(tumor_group) LIKE '%PLASMACYTOMA%'
+       OR upper(tumor_group) LIKE '%PLASMA CELL%'
+       OR upper(tumor_group) LIKE '%GAMMOPATHY%'
+       OR upper(tumor_group) LIKE '%MYELOMA%'
+    GROUP BY tumor_group
+    ORDER BY OVERRIDDEN DESC, TUMOR_GROUP"))
+  got <- db_q(con, glue("SELECT * FROM {wrk('NDMM_MM_ADJACENT_GROUPS')}"))
+  log_msg("MM-adjacent tumour groups on the code list (remission handling: ",
+          NDMM_MM_ADJACENT_REMISSION, ")")
+  for (i in seq_len(nrow(got)))
+    log_msg("    ", if (got$OVERRIDDEN[i] == 1L) "kept    " else "EXCLUDES",
+            "  ", got$TUMOR_GROUP[i], " (", got$N_CODES[i], " codes)")
+  miss <- setdiff(toupper(NDMM_MM_ADJACENT_REMISSION_LABELS),
+                  toupper(got$TUMOR_GROUP))
+  if (length(miss))
+    log_msg("  Not on this code list, so nothing to override: ",
+            paste(miss, collapse = "; "))
+  # Anything left excluding that reads as the index disease is the open
+  # question, and this is where it surfaces.
+  still <- got$TUMOR_GROUP[got$OVERRIDDEN == 0L]
+  if (length(still))
+    log_msg("  Review: these still exclude a patient as having another cancer - ",
+            paste(still, collapse = "; "))
+  invisible(got)
+}

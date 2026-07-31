@@ -51,6 +51,15 @@ PARTS <- list(
 # deliberate override of the written spec and is spelled out rather than
 # absorbed - the numbers it produces are not the numbers apr_30_2026 produces.
 SUBST <- list(
+  # The override now covers the remission variants of the plasma-cell groups as
+  # well - the criterion is another cancer distinct from the index MM, and
+  # remission cannot make a plasma-cell disorder more like a different one. The
+  # list moves behind ndmm_mm_adjacent_groups() so the setting that decides it
+  # lives in one place.
+  "R/steps/04_other_malig.R" = list(
+    list(from = "ovr_in <- paste(sprintf(\"'%s'\", gsub(\"'\", \"''\", ndmm_mm_adjacent_groups())),",
+         to   = "ovr_in <- paste(sprintf(\"'%s'\", gsub(\"'\", \"''\", NDMM_MM_ADJACENT_OVERRIDE)),",
+         n = 1L)),
   "R/steps/06_flags.R" = list(
     list(from = "AND s.cov_end   >= least(date_add(ec_l1.LOT1_START_DT, {NDMM_FU_CE_DAYS}),",
          to   = "AND s.cov_end   >= least(date_add(ec_l1.LOT1_START_DT, 90),", n = 1L),
@@ -86,6 +95,12 @@ ADDED <- list(
     "AND regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') <> ''" = 1L),
   "R/steps/04_other_malig.R" = c(
     "AND regexp_replace(trim(dx), '[^A-Za-z0-9]', '') <> ''" = 1L,
+    # The required-match count is now against the five labels the code list
+    # must carry, not against every group the override reaches - the remission
+    # variants are a proposal and their absence is reported, not fatal.
+    "req    <- gsub(\"'\", \"''\", NDMM_MM_ADJACENT_OVERRIDE)" = 1L,
+    "req_in <- paste(sprintf(\"'%s'\", req), collapse = \", \")" = 1L,
+    "AND upper(trim(tumor_group)) IN ({req_in})" = 1L,
     # The third clinical change. The other-cancer rule is >=1 inpatient claim
     # or >=2 outpatient claims within 30 days of each other, in the 12-month
     # 1L baseline. The source bounded only the first of the outpatient pair, so

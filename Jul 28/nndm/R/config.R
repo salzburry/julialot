@@ -41,6 +41,9 @@ cfg_defaults <- list(
   # Which claims proxy stands for "belantamab in any LOT"; see
   # standalone_constants.R and NDMM_BELANTAMAB_SCOPE_COUNTS.
   belantamab_scope     = Sys.getenv("NDMM_BELANTAMAB_SCOPE", unset = "study_period"),
+  # Whether a plasma-cell disorder in remission still excludes as another
+  # cancer; see standalone_constants.R and NDMM_MM_ADJACENT_GROUPS.
+  mm_adjacent_remission = Sys.getenv("NDMM_MM_ADJACENT_REMISSION", unset = "override"),
 
   use_quarterly_tables = as.logical(Sys.getenv("USE_QUARTERLY_TABLES", unset = "TRUE")),
   study_end            = Sys.getenv("STUDY_END", unset = "2026-03-31"),

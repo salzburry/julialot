@@ -58,7 +58,7 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_prefix", "check_contract"
            "build_ndmm_belantamab_codes", "build_ndmm_index_ineligible_codes",
            "build_ndmm_lot1_index", "build_ndmm_index_agents",
            "build_ndmm_therapy_pre_lot1",
-           "build_ndmm_other_malig_codes",
+           "build_ndmm_other_malig_codes", "build_ndmm_mm_adjacent_groups",
            "build_ndmm_med_claim_header_and_confinement",
            "build_ndmm_other_malig_pre_lot1", "build_ndmm_preg_codes",
            "build_ndmm_pregnancy_patids", "build_ndmm_belantamab_patids",
@@ -536,6 +536,57 @@ ok(any(grepl("min(tx_dt) AS LOT1_START_DT", SSQL, fixed = TRUE)),
    "the index is the first such claim, which is what S6.2.1.1 defines it as")
 ok(grepl("_ndmm_mma_codelist", x, fixed = TRUE),
    "and MM treatment means the same code list the prior-therapy scan uses")
+
+cat("\n-- a plasma-cell disorder in remission is not another cancer --\n")
+# The other-cancer criterion targets a cancer distinct from the index MM, which
+# is why five plasma-cell tumour groups are overridden. Three are worded "not
+# having achieved remission", and apr_30_2026 left the "in remission" variants
+# excluding - so an identical patient was kept or dropped depending on whether
+# their plasma cell leukemia was in remission.
+ok(identical(cfg_defaults$mm_adjacent_remission, "override"),
+   "by default remission variants are overridden too, like their counterparts")
+ok(all(grepl("REMISSION", se$NDMM_MM_ADJACENT_REMISSION_LABELS, fixed = TRUE)),
+   paste0("the ", length(se$NDMM_MM_ADJACENT_REMISSION_LABELS),
+          " of them are named, not matched by a pattern that could catch more"))
+# Each remission label is the counterpart of one that is already overridden.
+stem <- function(x) trimws(sub("(NOT HAVING ACHIEVED REMISSION|IN REMISSION)$", "", x))
+ok(all(stem(se$NDMM_MM_ADJACENT_REMISSION_LABELS) %in%
+         stem(se$NDMM_MM_ADJACENT_OVERRIDE)),
+   "and each names a condition the override already covers in its other state")
+assign("NDMM_MM_ADJACENT_REMISSION", "override", envir = se)
+ok(setequal(se$ndmm_mm_adjacent_groups(),
+            c(se$NDMM_MM_ADJACENT_OVERRIDE, se$NDMM_MM_ADJACENT_REMISSION_LABELS)),
+   "override covers both halves")
+assign("NDMM_MM_ADJACENT_REMISSION", "exclude", envir = se)
+ok(setequal(se$ndmm_mm_adjacent_groups(), se$NDMM_MM_ADJACENT_OVERRIDE),
+   "exclude restores apr_30_2026's five, so the two can be compared")
+assign("NDMM_MM_ADJACENT_REMISSION", "sometimes", envir = se)
+ok(grepl("is not a setting",
+         tryCatch({ se$ndmm_mm_adjacent_groups(); "" }, error = conditionMessage),
+         fixed = TRUE),
+   "and anything else stops the run rather than silently overriding nothing")
+assign("NDMM_MM_ADJACENT_REMISSION", "override", envir = se)
+# The five stay required; the remission ones do not. Absence of the five means
+# the override silently fails, absence of a remission label just means this
+# code list does not carry the wording.
+oc <- paste(readLines(file.path(ROOT, "R", "steps", "04_other_malig.R"), warn = FALSE),
+            collapse = "\n")
+ok(grepl("IN ({req_in})", oc, fixed = TRUE) &&
+     grepl("req    <- gsub(\"'\", \"''\", NDMM_MM_ADJACENT_OVERRIDE)", oc, fixed = TRUE),
+   "the fail-loud count is against the five required labels, not the proposal")
+# The list the study team has to look at.
+SSQL <- character(0)
+assign("db_q", function(con, sql) data.frame(
+  TUMOR_GROUP = c("PLASMA CELL LEUKEMIA IN REMISSION", "AMYLOIDOSIS"),
+  OVERRIDDEN = c(1L, 0L), N_CODES = c(4L, 9L)), envir = se)
+se$build_ndmm_mm_adjacent_groups(NULL, cfg_defaults)
+g <- SSQL[1]
+ok(grepl("NDMM_MM_ADJACENT_GROUPS", g, fixed = TRUE),
+   "every plasma-cell-looking group on the code list is written out for review")
+for (k in c("%REMISSION%", "%PLASMACYTOMA%", "%PLASMA CELL%", "%GAMMOPATHY%", "%MYELOMA%"))
+  ok(grepl(k, g, fixed = TRUE), paste0("...including anything matching ", k))
+ok(grepl("max(is_mm_adjacent_override)", g, fixed = TRUE),
+   "with whether the override reaches it, which is the question being asked")
 
 cat("\n-- what \"belantamab in any LOT\" is taken to mean --\n")
 # Lines of therapy do not exist when this runs - the LOT algorithm runs over

@@ -39,6 +39,7 @@ CONTRACT <- list(
   index_excluded_abbrs = "",
   index_excluded_codes = "",
   belantamab_scope     = "study_period",
+  mm_adjacent_remission = "override",
   tbl_medical          = "medical",
   tbl_med_proc         = "med_procedure",
   tbl_med_diag         = "med_diagnosis",
@@ -83,7 +84,7 @@ CHECKPOINTS <- c("NDMM_FLAGS_ALL",
 
 # What the run writes. All prefixed, so two cohorts sit side by side.
 DELIVERABLES <- c("NDMM_COHORT", "NDMM_ATTRITION", "NDMM_INDEX_AGENTS",
-                  "NDMM_BELANTAMAB_SCOPE_COUNTS",
+                  "NDMM_BELANTAMAB_SCOPE_COUNTS", "NDMM_MM_ADJACENT_GROUPS",
                   "NDMM_CODELIST_METADATA", "NDMM_RUN_METADATA",
                   "NDMM_BUILD_STATUS")
 OUTPUTS <- c(DELIVERABLES, CHECKPOINTS)
@@ -247,6 +248,8 @@ CONSTANT_SETTINGS <- list(
   # Which reading of "in any LOT" the belantamab exclusion uses. A proxy for
   # something this build cannot see, and it changes the count.
   list(const = "NDMM_BELANTAMAB_SCOPE",       cfg = "belantamab_scope",   note = ""),
+  # Whether a plasma-cell disorder in remission still counts as another cancer.
+  list(const = "NDMM_MM_ADJACENT_REMISSION", cfg = "mm_adjacent_remission", note = ""),
   # Not a cohort window but a code-list assumption, and just as able to change
   # the count: it is what identifies belantamab, and belantamab is exclusion 4.
   list(const = "NDMM_BELANTAMAB_ABBR",        cfg = "belantamab_abbr",    note = "")
@@ -477,6 +480,7 @@ RUN_METADATA_COLS <- c(RUN_ID = "STRING", OBJECT_PREFIX = "STRING",
                        BELANTAMAB_ABBR = "STRING", INDEX_EXCLUDED = "STRING",
                        INDEX_EXCLUDED_CODES = "STRING",
                        BELANTAMAB_SCOPE = "STRING",
+                       MM_ADJACENT_REMISSION = "STRING",
                        CODE_MD5 = "STRING",
                        CONTRACT_SETTINGS = "STRING",
                        WAIVERS_REQUESTED = "STRING", WAIVERS_APPLIED = "STRING",
@@ -498,6 +502,7 @@ write_run_metadata <- function(con, cfg, here, n) {
          "{sql_text(run_id)}, {sql_text(cfg$object_prefix)}, ",
          "{sql_text(NDMM_BELANTAMAB_ABBR)}, {sql_text(NDMM_INDEX_EXCLUDED_ABBRS)}, ",
          "{sql_text(NDMM_INDEX_EXCLUDED_CODES)}, {sql_text(NDMM_BELANTAMAB_SCOPE)}, ",
+         "{sql_text(NDMM_MM_ADJACENT_REMISSION)}, ",
          "{sql_text(code_fingerprint(here))}, ",
          "{sql_text(contract_settings())}, ",
          "{sql_text(paste(sort(waivers_named(), method = 'radix'), collapse = ','))}, ",
@@ -758,6 +763,7 @@ build_nndm <- function(here, prefix) {
   log_msg("Other cancer in the ", NDMM_PRE_LOT1_DAYS, " days before 1L")
   build_ndmm_other_malig_codes(con)
   checkpoint(con, "NDMM_OTHER_MALIG_CODES")
+  build_ndmm_mm_adjacent_groups(con, cfg)
   build_ndmm_med_claim_header_and_confinement(con, cdm_src(cfg$tbl_medical),
                                               cdm_src(cfg$tbl_confinement))
   build_ndmm_other_malig_pre_lot1(con, cdm_src(cfg$tbl_med_diag))
