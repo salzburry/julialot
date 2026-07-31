@@ -1584,6 +1584,78 @@ sys.source(file.path(ROOT, "R", "config_lot.R"), envir = cp)
 ok(identical(get("cfg_defaults", envir = cp)$work_schema, ""),
    "schema default is blank, not a shared fallback")
 
+cat("\n-- the lists whose contents are the safety property --\n")
+# Each of these is a constant vector, and what makes it right is its contents,
+# not the code that reads them. Dropping an entry passed the whole suite:
+# REQUIRED_COHORT_COLS losing a column means a cohort missing it clears
+# preflight and fails deep in the build, LOT2_5_INPUT_VIEWS losing one means
+# the presence check answers yes when it is absent. So each is derived from the
+# thing that decides it, rather than restated here as a fourth copy.
+
+# 1. The columns LOT reads off the cohort table are the ones phase_patient_input
+#    selects from it. OBS_END_DT is the exception: it is derived, not read.
+pin <- readLines(file.path(ROOT, "R", "steps", "02_patient_input.R"), warn = FALSE)
+sel <- pin[(grep("^\\s*SELECT\\s*$", pin)[1] + 1):(grep("FROM \\{wrk\\(", pin)[1] - 1)]
+sel <- sel[!grepl("^\\s*--", sel)]
+selcols <- setdiff(unique(unlist(regmatches(sel, gregexpr("[A-Z][A-Z0-9_]{2,}", sel)))),
+                   c("AS", "DATE", "CASE", "WHEN", "THEN", "ELSE", "END", "NULL",
+                     "SELECT", "FROM", "OBS_END_DT"))
+ok(setequal(selcols, REQUIRED_COHORT_COLS),
+   paste0("every cohort column the build reads is one preflight requires (",
+          length(REQUIRED_COHORT_COLS), ")"))
+
+# 2. Waiting on a view nobody creates never ends, and a view LOT2-5 reads that
+#    is not listed is a hole in the check. Both directions, plus the three
+#    materialize_sct_views needs immediately afterwards.
+L25_FILE   <- file.path(ROOT, "R", "steps", "10_lot2_5_base.R")
+lot1_files <- setdiff(list.files(file.path(ROOT, "R", "steps"), "\\.R$", full.names = TRUE),
+                      L25_FILE)
+views_in <- function(x) unique(unlist(regmatches(x,
+  gregexpr("(?<=CREATE OR REPLACE TEMPORARY VIEW )[a-z_0-9]+", x, perl = TRUE))))
+src_25   <- readLines(L25_FILE, warn = FALSE)
+made_1   <- views_in(unlist(lapply(lot1_files, readLines, warn = FALSE)))
+made_25  <- views_in(src_25)
+ok(all(LOT2_5_INPUT_VIEWS %in% made_1),
+   "every view the presence check waits for is one a LOT1 step creates")
+# Only the ones LOT1 leaves behind. LOT2-5 also reads lot_long and lot, which
+# it builds itself as it goes, and requiring those up front would never pass.
+l25  <- paste(src_25, collapse = "\n")
+need <- Filter(function(v) grepl(paste0("(FROM|JOIN)\\s+", v, "\\b"), l25),
+               setdiff(made_1, made_25))
+ok(all(need %in% LOT2_5_INPUT_VIEWS),
+   paste0("and every view LOT1 leaves that LOT2-5 reads is listed (", length(need), ")"))
+ok(all(vapply(SCT_MATERIALIZE, function(m) m$view %in% LOT2_5_INPUT_VIEWS, logical(1))),
+   "including the three materialized right after the check")
+
+step_src <- unlist(lapply(list.files(file.path(ROOT, "R", "steps"), "\\.R$",
+                                     full.names = TRUE), readLines, warn = FALSE))
+# 3. A check name the code raises but neither list carries would be reported and
+#    then fall through unclassified; one listed but never raised is a waiver
+#    offered for a condition nothing tests.
+# A PCRE lookbehind has to be fixed length, so the decide() calls are matched
+# whole and trimmed rather than looked behind.
+dec <- regmatches(bl, gregexpr('decide\\([a-z]+, "[^"]+"', bl))[[1]]
+used <- unique(c(unlist(regmatches(step_src, gregexpr('(?<=check = ")[^"]+',
+                                                      step_src, perl = TRUE))),
+                 sub('"$', "", sub('^decide\\([a-z]+, "', "", dec))))
+ok(setequal(used, ALL_CHECKS),
+   paste0("every check the code raises is classified waivable or fatal (",
+          length(ALL_CHECKS), ")"))
+ok(length(intersect(WAIVABLE_CHECKS, FATAL_CHECKS)) == 0,
+   "and none is in both lists, which would make a fatal check waivable")
+
+# 4. A file loaded but not declared is refused at load; a file declared but not
+#    loaded stops the run at record_codelist_hashes, which wants all four.
+loaded_files <- unique(unlist(regmatches(step_src,
+  gregexpr('(?<=load_codelist_csv\\(")[^"]+', step_src, perl = TRUE))))
+# Read here rather than relying on an environment set up further down the file.
+cl_env <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "codelists_lot.R"), envir = cl_env)
+CLFILES <- get("CODELIST_FILES", envir = cl_env)
+ok(setequal(loaded_files, CLFILES),
+   paste0("the declared code lists are exactly the ones read (",
+          length(CLFILES), ")"))
+
 cat("\n-- config.csv and CONTRACT say the same thing --\n")
 # These were compared against a third copy of the values kept in this file, so
 # CONTRACT could drift from both and nothing said so - changing max_lot to 6L
