@@ -177,7 +177,10 @@ phase_codelists <- function(con) {
     SELECT CL_CODE, CL_MED_ABBR
     FROM mma_codelist
     WHERE CL_CODE_TYPE = 'NDC'
-      AND cast(regexp_replace(CL_CODE, '[^0-9]', '') AS bigint) = 0
+      -- String, not a cast: 'ABC' strips to '' and a very long code overflows,
+      -- and either raises a bare conversion error here, before ndc_shape below
+      -- gets to say what is actually wrong with the row.
+      AND regexp_replace(CL_CODE, '[^0-9]', '') RLIKE '^0+$'
   ")
   if (nrow(bad_ndc) > 0) {
     log_msg("  NDC rows that are all zeros:")

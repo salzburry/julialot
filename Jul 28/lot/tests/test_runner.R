@@ -286,6 +286,12 @@ for (w in c("orphan_meds", "uncoded_meds", "unexpected_types", "multi_class",
 # different eleven-digit key. The contract is canonical eleven digits.
 ok(grepl("WHERE CL_CODE_TYPE = 'NDC' AND (has_alpha OR n_digits <> 11)", cd, fixed = TRUE),
    "the code list has to carry eleven-digit NDCs, not merely plausible ones")
+# bad_ndc runs first. Casting the stripped code to a number raises a bare
+# conversion error on 'ABC' (strips to '') or on an overlong value, before
+# ndc_shape can say what is wrong with the row.
+ok(grepl("RLIKE '^0+$'", cd, fixed = TRUE) &&
+     !grepl("AS bigint) = 0", cd, fixed = TRUE),
+   "the all-zero test is string logic, so a malformed code reaches ndc_shape")
 for (shape in c("WHEN has_alpha      THEN 'non-digits'",
                 "WHEN n_digits > 11  THEN 'over eleven digits'",
                 "WHEN n_digits = 10  THEN 'ten digits'"))
@@ -354,7 +360,7 @@ mk_db_q <- function(problem) function(con, sql) {
   if (grepl("AS n_rollup", sql))
     return(data.frame(n_rollup = if (problem == "blank_keys") 2 else 0,
                       n_codelist = 0))
-  if (grepl("AS bigint\\) = 0", sql))
+  if (grepl("RLIKE '^0+$'", sql, fixed = TRUE))
     return(if (problem == "bad_ndc") data.frame(CL_CODE = "00000000000", CL_MED_ABBR = "X")
            else data.frame(CL_CODE = character(0), CL_MED_ABBR = character(0)))
   if (grepl("AS why", sql, fixed = TRUE))
@@ -543,6 +549,32 @@ ll_stub(shape = list(n_null_start = 1))
 ok(grepl("no start date", tryCatch({ le$check_lot_long(NULL, cfg_ll); "" },
                                    error = conditionMessage), fixed = TRUE),
    "and says so, rather than reporting a downstream symptom")
+
+cat("\n-- an empty table says it is empty, not 'missing value' --\n")
+# sum() over no rows is SQL NULL, so every count above arrives as NA and the
+# comparisons become "missing value where TRUE/FALSE needed". The queries
+# coalesce, and the empty case stops before any of them is read - a stub
+# feeding zeros would prove neither.
+for (f in c("check_lot_long", "check_cohort_input")) {
+  src <- paste(readLines(file.path(ROOT, "R", "build_lot.R"), warn = FALSE),
+               collapse = "\n")
+  body <- sub(paste0(".*", f, " <- function"), "", src)
+  body <- sub("\n[a-zA-Z_]+ <- function.*", "", body)
+  sums <- gregexpr("sum(CASE WHEN", body, fixed = TRUE)[[1]]
+  cosums <- gregexpr("coalesce(sum(CASE WHEN", body, fixed = TRUE)[[1]]
+  ok(length(sums[sums > 0]) == length(cosums[cosums > 0]) && length(cosums[cosums > 0]) > 0,
+     paste0(f, ": every aggregate is coalesced (", length(cosums[cosums > 0]), ")"))
+}
+# And it stops on empty before reading them, so a lost coalesce still cannot
+# turn this into an R error.
+ll_stub(shape = list(n_rows = 0, n_null_start = NA_integer_,
+                     n_null_end = NA_integer_, n_end_before_start = NA_integer_,
+                     n_bad_lot_num = NA_integer_))
+msg <- tryCatch({ le$check_lot_long(NULL, cfg_ll); "" }, error = conditionMessage)
+ok(grepl("it is empty", msg, fixed = TRUE),
+   "an empty LOT_LONG reports being empty")
+ok(!grepl("missing value", msg, fixed = TRUE),
+   "...even when the counts come back NA, as they would without the coalesce")
 
 cat("\n-- the checks group by the key extraction actually joins on --\n")
 # The NDC join pads to eleven digits, so '123456789' and '0123456789' are one

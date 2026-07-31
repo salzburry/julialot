@@ -180,16 +180,21 @@ check_cohort_input <- function(con, cfg) {
   # patient would multiply their claims and their lines, so check the shape too,
   # not just the column names. ENDDATE_CE may be null: the primary branch uses
   # ENDDATE and the sensitivity branch falls back to it.
+  # coalesce on every sum: over no rows sum() is NULL, which arrives as NA and
+  # turns the comparisons below into "missing value where TRUE/FALSE needed" -
+  # an R error in place of the reason.
   q <- db_q(con, glue("
     SELECT count(*) AS n_rows,
            count(DISTINCT PATID) AS n_patients,
-           sum(CASE WHEN PATID IS NULL THEN 1 ELSE 0 END) AS n_null_patid,
-           sum(CASE WHEN INDEX_DATE IS NULL THEN 1 ELSE 0 END) AS n_null_index,
-           sum(CASE WHEN ENDDATE IS NULL THEN 1 ELSE 0 END) AS n_null_end,
-           sum(CASE WHEN ENDDATE < INDEX_DATE THEN 1 ELSE 0 END) AS n_end_before_index
+           coalesce(sum(CASE WHEN PATID IS NULL THEN 1 ELSE 0 END), 0) AS n_null_patid,
+           coalesce(sum(CASE WHEN INDEX_DATE IS NULL THEN 1 ELSE 0 END), 0) AS n_null_index,
+           coalesce(sum(CASE WHEN ENDDATE IS NULL THEN 1 ELSE 0 END), 0) AS n_null_end,
+           coalesce(sum(CASE WHEN ENDDATE < INDEX_DATE THEN 1 ELSE 0 END), 0) AS n_end_before_index
     FROM {tbl}"))
+  # Nothing else is worth saying about an empty table, and stopping here means
+  # the counts above are never compared even if a coalesce is lost later.
+  if (q$n_rows == 0) stop(tbl, " cannot drive LOT: it is empty", call. = FALSE)
   bad <- character(0)
-  if (q$n_rows == 0)            bad <- c(bad, "it is empty")
   if (q$n_null_patid > 0)       bad <- c(bad, paste0(q$n_null_patid, " rows have no PATID"))
   if (q$n_null_index > 0)       bad <- c(bad, paste0(q$n_null_index, " rows have no INDEX_DATE"))
   if (q$n_null_end > 0)         bad <- c(bad, paste0(q$n_null_end, " rows have no ENDDATE"))
@@ -477,14 +482,21 @@ check_run_recorded <- function(con, cfg) {
 # stops the build rather than printing INVESTIGATE.
 check_lot_long <- function(con, cfg) {
   t <- lot_out("LOT_LONG")
+  # coalesce on every sum: over no rows sum() is NULL, which arrives as NA and
+  # turns the comparisons below into "missing value where TRUE/FALSE needed" -
+  # an R error in place of the reason.
   q <- db_q(con, glue("
     SELECT count(*) AS n_rows,
            count(DISTINCT PATID) AS n_patients,
-           sum(CASE WHEN LOT_START_DT IS NULL THEN 1 ELSE 0 END) AS n_null_start,
-           sum(CASE WHEN LOT_BASE_END_DT IS NULL THEN 1 ELSE 0 END) AS n_null_end,
-           sum(CASE WHEN LOT_BASE_END_DT < LOT_START_DT THEN 1 ELSE 0 END) AS n_end_before_start,
-           sum(CASE WHEN LOT_NUM < 1 OR LOT_NUM > {cfg$max_lot} THEN 1 ELSE 0 END) AS n_bad_lot_num
+           coalesce(sum(CASE WHEN LOT_START_DT IS NULL THEN 1 ELSE 0 END), 0) AS n_null_start,
+           coalesce(sum(CASE WHEN LOT_BASE_END_DT IS NULL THEN 1 ELSE 0 END), 0) AS n_null_end,
+           coalesce(sum(CASE WHEN LOT_BASE_END_DT < LOT_START_DT THEN 1 ELSE 0 END), 0) AS n_end_before_start,
+           coalesce(sum(CASE WHEN LOT_NUM < 1 OR LOT_NUM > {cfg$max_lot} THEN 1 ELSE 0 END), 0) AS n_bad_lot_num
     FROM {t}"))
+  # Nothing else is worth saying about an empty table, and stopping here means
+  # neither the four queries below nor the counts above run on one - so a lost
+  # coalesce cannot turn this into an R error either.
+  if (q$n_rows == 0) stop(t, " is not usable: it is empty", call. = FALSE)
   d <- db_q(con, glue("
     SELECT count(*) AS n FROM (
       SELECT PATID, LOT_NUM FROM {t} GROUP BY PATID, LOT_NUM HAVING count(*) > 1)"))$n
@@ -508,7 +520,6 @@ check_lot_long <- function(con, cfg) {
       SELECT PATID, min(LOT_NUM) AS lo, max(LOT_NUM) AS hi, count(DISTINCT LOT_NUM) AS k
       FROM {t} GROUP BY PATID HAVING lo <> 1 OR k <> hi - lo + 1)"))$n
   bad <- character(0)
-  if (q$n_rows == 0)           bad <- c(bad, "it is empty")
   if (d > 0)                   bad <- c(bad, paste0(d, " duplicate (PATID, LOT_NUM)"))
   # First, because a null date is why every other check here would pass. All
   # of them compare dates, and a comparison with NULL is unknown rather than
