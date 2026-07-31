@@ -83,10 +83,10 @@ phase_persist <- function(con, ctx) {
           {cfg$lot_n_induction_window_days},
           {cfg$map_discon_gap_days},
           {cfg$medical_day_supply},
-          {cohort_n},
-          {mma_n},
-          {map_n},
-          {lot1_n}
+          {sql_count(cohort_n)},
+          {sql_count(mma_n)},
+          {sql_count(map_n)},
+          {sql_count(lot1_n)}
       "))
     }, error = function(e) {
       log_msg("  WARNING: Run metadata persist failed: ", conditionMessage(e))
@@ -112,7 +112,7 @@ phase_persist <- function(con, ctx) {
       qc_rows <- vapply(qc_defs, function(qd) {
         val <- tryCatch(as.numeric(db_q(con, qd$sql)$n), error = function(e) NA)
         status <- if (is.na(val)) "ERROR" else if (val == 0) "PASS" else "WARN"
-        glue("SELECT '{qd$name}' AS CHECK_NAME, {if (is.na(val)) 'NULL' else val} AS CHECK_VALUE, '{status}' AS CHECK_STATUS, '{run_id}' AS RUN_ID")
+        glue("SELECT '{qd$name}' AS CHECK_NAME, {sql_count(val)} AS CHECK_VALUE, '{status}' AS CHECK_STATUS, '{run_id}' AS RUN_ID")
       }, character(1))
 
       qc_union <- paste(qc_rows, collapse = "\n        UNION ALL\n        ")

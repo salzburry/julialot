@@ -166,7 +166,7 @@ bl <- paste(readLines(file.path(ROOT, "R", "build_lot.R"), warn = FALSE),
 body <- sub(".*build_lot <- function\\([^)]*\\) \\{", "", bl)
 ORDER <- c("check_settings", "pin_output_schema", "pin_cohort",
            "check_lot_contract", "set_lot_config", "check_cohort_input",
-           "clear_run_rows",
+           "check_no_active_run", "clear_run_rows",
            "phase_codelists", "record_codelist_hashes",
            "phase_patient_input", "materialize_cohort_input",
            "check_claim_ndc",
@@ -345,6 +345,41 @@ ok(identical(FIRED, "disconnect"),
    "and a run that reached complete does not overwrite its own status on the way out")
 options(lot_complete = old_complete)
 }
+
+# Two runs on one prefix replace each other's tables while the other is reading
+# them, because no output name carries the run id.
+na <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_lot.R"), envir = na)
+assign("log_msg", function(...) invisible(NULL), envir = na)
+assign("lot_out", function(x) paste0("wk.p_", x), envir = na)
+assign("run_id", "R2", envir = na)
+NAQ <- character(0)
+drive_na <- function(rows) {
+  NAQ <<- character(0)
+  assign("db_q", function(con, s) { NAQ <<- c(NAQ, s); rows }, envir = na)
+  tryCatch({ na$check_no_active_run(NULL, list(object_prefix = "p_")); NULL },
+           error = conditionMessage)
+}
+ok(is.null(drive_na(data.frame(RUN_ID = character(0), UPDATED_AT = character(0)))),
+   "a prefix nobody else is building is fine")
+ok(any(grepl("STATE = 'started'", NAQ, fixed = TRUE)) &&
+     any(grepl("OBJECT_PREFIX = 'p_'", NAQ, fixed = TRUE)) &&
+     any(grepl("RUN_ID <> 'R2'", NAQ, fixed = TRUE)),
+   "...asked of started runs on this prefix, excluding this one")
+msg <- drive_na(data.frame(RUN_ID = "R1", UPDATED_AT = "x"))
+ok(!is.null(msg) && grepl("R1", msg, fixed = TRUE) &&
+     grepl("LOT_IGNORE_ACTIVE_RUN", msg, fixed = TRUE),
+   "another run on the same prefix stops it, named, with the way out")
+# A killed process leaves 'started' behind for ever, so there has to be one.
+Sys.setenv(LOT_IGNORE_ACTIVE_RUN = "TRUE")
+ok(is.null(drive_na(data.frame(RUN_ID = "R1", UPDATED_AT = "x"))),
+   "...and the override lets a run past a row a dead process left")
+Sys.unsetenv("LOT_IGNORE_ACTIVE_RUN")
+# No table on a first run, and nothing to collide with.
+assign("db_q", function(con, s) stop("TABLE_OR_VIEW_NOT_FOUND"), envir = na)
+ok(!inherits(tryCatch(na$check_no_active_run(NULL, list(object_prefix = "p_")),
+                      error = function(e) e), "error"),
+   "and a first run, with no status table yet, is not blocked by its absence")
 
 # Called is not the same as clearing anything. A re-run in the same session
 # keeps run_id, so an attempt that fails before a writer is reached would leave
@@ -816,7 +851,7 @@ drive_fm <- function(have, counts = list(n_rows = 1420, n_patients = 900),
                                      else data.frame(col_name = have))
     data.frame(LOT_NUM = seq_along(by_line), n = by_line)
   }, envir = fe)
-  tryCatch({ fe$record_final_counts(NULL, list(), counts, final); NULL },
+  tryCatch({ fe$record_final_counts(NULL, list(code_md5 = "abc123"), counts, final); NULL },
            error = conditionMessage)
 }
 base_cols <- c("RUN_ID", "N_COHORT_PATIENTS", "N_LOT1_PATIENTS")
@@ -835,6 +870,27 @@ ok(any(grepl("LOT_LONG_BY_LINE = '1:900|2:400|3:120'", FSQL, fixed = TRUE)),
    "the line distribution is recorded, not just a total")
 ok(any(grepl("WHERE RUN_ID = 'R1'", FSQL, fixed = TRUE)),
    "against this run's row, not every row in the table")
+# The ported LOT_RUN_METADATA records seven of CONTRACT's twenty-one settings
+# and nothing about the code, so an old run's outputs could not say what made
+# them. Two columns carry the rest.
+ok(any(grepl("CODE_MD5 = 'abc123'", FSQL, fixed = TRUE)),
+   "the run records a fingerprint of the code that produced it")
+cs <- get("contract_settings", envir = fe)()
+ok(any(grepl(paste0("CONTRACT_SETTINGS = '", cs, "'"), FSQL, fixed = TRUE)) &&
+     grepl("max_lot=5", cs, fixed = TRUE) && grepl("study_end=2025-06-30", cs, fixed = TRUE),
+   paste0("...and every setting CONTRACT pins, not the seven the ported row has (",
+          length(get("CONTRACT", envir = fe)), ")"))
+ok(identical(cs, get("contract_settings", envir = fe)()) &&
+     identical(strsplit(cs, "|", fixed = TRUE)[[1]],
+               strsplit(cs, "|", fixed = TRUE)[[1]][order(strsplit(cs, "|", fixed = TRUE)[[1]])]),
+   "recorded in a fixed order, so two runs with one contract give one string")
+# The fingerprint is of the R that ran, not a git sha: this folder is copied
+# into Domino, where there may be no repository to ask.
+fp <- get("code_fingerprint", envir = fe)(ROOT)
+ok(grepl("^[0-9a-f]{32}$", fp), "the fingerprint is a real hash of the sources")
+ok(!identical(fp, get("code_fingerprint", envir = fe)(tempdir())),
+   "...and it changes with the sources, rather than being a constant")
+
 # LOT_LONG_FINAL is what downstream reads. While no criterion is declared it is
 # a copy of LOT_LONG and the two numbers agree; the moment a truncate criterion
 # lands they do not, and recording only LOT_LONG's would describe a table
@@ -1590,6 +1646,18 @@ stops(check_lot_contract(modifyList(pin_cohort(base, TBL_A, PFX_A),
       "rejects PERSIST_TO_SCHEMA=FALSE")
 
 cat("\n-- settings that used to fail open --\n")
+# as.integer("60.5") is 60, so the NA test accepted it and the run used 60
+# while the operator had asked for 60.5. Their setting was ignored, silently.
+for (bad_int in c("60.5", "6e1", "-5", " 60.0 ")) {
+  Sys.setenv(INDUCTION_WINDOW_DAYS = bad_int)
+  m <- tryCatch({ check_settings(); "" }, error = conditionMessage)
+  ok(grepl("want a whole number", m, fixed = TRUE),
+     paste0("INDUCTION_WINDOW_DAYS='", bad_int, "' is refused, not truncated"))
+}
+Sys.setenv(INDUCTION_WINDOW_DAYS = "60")
+ok(identical(tryCatch({ check_settings(); "" }, error = conditionMessage), ""),
+   "...and a whole number is still accepted")
+Sys.unsetenv("INDUCTION_WINDOW_DAYS")
 clear()
 runs(check_settings(), "unset is fine")
 Sys.setenv(CENSOR_AT_DISENROLLMENT = "Y")

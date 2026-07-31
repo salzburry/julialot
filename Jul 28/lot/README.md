@@ -72,6 +72,19 @@ sit side by side in one schema. The cohort table itself goes through `wrk()`
 unprefixed, because the cohort build already named it. A run with no prefix is
 rejected rather than allowed to overwrite another one.
 
+**One run per prefix at a time.** Two cohorts at once is fine; the same prefix
+twice at once is not. No output name carries the run id, and several phases
+repoint a session view at a prefixed table they have just replaced -
+`LOT_PATIENT_INPUT`, the three SCT tables, the `LOT_LONG` stage. The second run
+replaces a table the first has already pointed a view at, and the first reads
+the second's rows from there on; both can still reach `complete` with the
+outputs mixed. `check_no_active_run()` refuses to start when another run is
+marked `started` on the prefix. It is a check and not a lock - two runs
+starting in the same instant can both pass it - so it catches starting a second
+run while one is going, which is the case worth catching. A killed process
+leaves `started` behind for ever; `LOT_IGNORE_ACTIVE_RUN=TRUE` gets past that,
+and says in the log what it is ignoring.
+
 ### What a cohort table has to provide
 
 `PATID`, `INDEX_DATE`, `ENDDATE`, `ENDDATE_CE`, `DEATH_DT`, `GDR_CD`, `YRDOB`,
@@ -484,7 +497,13 @@ LOT1's tables are replaced before LOT2-5 starts, so a failure in between would
 leave new LOT1 output beside an older `LOT_LONG`. Every run therefore records
 what it did.
 
-`<prefix>LOT_RUN_METADATA` carries the settings and the counts. `phase_persist`
+`<prefix>LOT_RUN_METADATA` carries the counts and, in `CODE_MD5` and
+`CONTRACT_SETTINGS`, what produced them: an md5 of this folder's R sources and
+every setting `CONTRACT` pins. The ported row itself records seven of those
+settings and nothing about the code, which is not enough to say later which
+version and which contract made an old set of tables. A source hash rather than
+a git commit, because the folder is copied into Domino to run and there may be
+no repository to ask. `phase_persist`
 writes it before LOT2-5 exists, so its own counts stop at LOT1 - cohort, MMA
 claims, MAPs, LOT1 patients. `N_LOT_LONG_ROWS`, `N_LOT_LONG_PATIENTS` and
 `LOT_LONG_BY_LINE` (`1:900|2:400|3:120`) are filled in after `LOT_LONG` has
@@ -521,8 +540,8 @@ nothing complaining - the certain case, and the reason the helper exists. In a
 numeric column it arrives as a floating point literal, and whether the
 warehouse stores, truncates or refuses it depends on its store-assignment
 policy; that has not been tested here, so nothing is claimed about it. Sending
-digits removes the question. `08_persist.R` writes its four LOT1 counts the
-same way and is the ported source, so it is unchanged.
+digits removes the question. `08_persist.R`'s four LOT1 counts and its QC values go
+through it too, registered as named deviations from the source.
 
 Every write that is a DELETE of this run's rows followed by an INSERT goes
 through `db_replace()`, which retries the pair rather than each statement.

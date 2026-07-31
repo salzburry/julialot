@@ -120,11 +120,20 @@ SUBST <- list(
   "01_codelists.R" = list(list(from = "SELECT DISTINCT", to = "SELECT", n = 2L)),
   "05_sct.R"       = list(list(from = "SELECT DISTINCT", to = "SELECT", n = 1L)),
   # The persisted orphan count has to ask what the main check asks, or
-  # LOT_QC_SUMMARY reports an orphan the build deliberately ignored.
-  "08_persist.R"   = list(list(
-    from = "FROM mma_extractable_codelist c LEFT JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR",
-    to   = "FROM mma_codelist c LEFT JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR",
-    n    = 1L))
+  # LOT_QC_SUMMARY reports an orphan the build deliberately ignored. The five
+  # counts go through sql_count() because as.character() renders an exact power
+  # of ten as 1e+05, and these reach SQL by interpolation like the rest.
+  "08_persist.R"   = list(
+    list(from = "FROM mma_extractable_codelist c LEFT JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR",
+         to   = "FROM mma_codelist c LEFT JOIN mma_rollup r ON c.CL_MED_ABBR = r.CL_MED_ABBR",
+         n    = 1L),
+    list(from = "{sql_count(cohort_n)},", to = "{cohort_n},", n = 1L),
+    list(from = "{sql_count(mma_n)},",    to = "{mma_n},",    n = 1L),
+    list(from = "{sql_count(map_n)},",    to = "{map_n},",    n = 1L),
+    list(from = "{sql_count(lot1_n)}",    to = "{lot1_n}",    n = 1L),
+    list(from = "glue(\"SELECT '{qd$name}' AS CHECK_NAME, {sql_count(val)} AS CHECK_VALUE, '{status}' AS CHECK_STATUS, '{run_id}' AS RUN_ID\")",
+         to   = "glue(\"SELECT '{qd$name}' AS CHECK_NAME, {if (is.na(val)) 'NULL' else val} AS CHECK_VALUE, '{status}' AS CHECK_STATUS, '{run_id}' AS RUN_ID\")",
+         n    = 1L))
 )
 
 # Single added code lines, and how many of each.

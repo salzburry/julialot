@@ -83,8 +83,11 @@ check_settings <- function() {
       bad <- c(bad, paste0(v, "='", x, "' (want TRUE or FALSE)"))
   }
   for (v in INT_SETTINGS) {
-    x <- Sys.getenv(v, unset = "")
-    if (nzchar(x) && is.na(suppressWarnings(as.integer(x))))
+    x <- trimws(Sys.getenv(v, unset = ""))
+    # The text, not what coercion makes of it: as.integer("60.5") is 60, not
+    # NA, so a decimal passed this and was silently truncated - the run used 60
+    # while the operator had asked for 60.5. "6e1" is the same story.
+    if (nzchar(x) && !grepl("^[0-9]+$", x))
       bad <- c(bad, paste0(v, "='", x, "' (want a whole number)"))
   }
   s <- Sys.getenv("PROJECT_WORK_SCHEMA", unset = "")
@@ -240,6 +243,7 @@ build_lot <- function(here, cohort_table, prefix) {
   check_settings()
   cfg <- pin_output_schema(cfg_defaults)
   cfg <- pin_cohort(cfg, cohort_table, prefix)
+  cfg$code_md5 <- code_fingerprint(here)
   check_lot_contract(cfg)
   # Every helper reads the config, so publish it before anything runs.
   set_lot_config(cfg)
@@ -264,6 +268,7 @@ build_lot <- function(here, cohort_table, prefix) {
   # LOT1 is written before LOT_LONG, so track partial runs.
   # Cleared first, or a second run in one session inherits the first's.
   options(lot_waivers_applied = character(0), lot_codelist_md5 = list())
+  check_no_active_run(con, cfg)
   write_build_status(con, cfg, "started")
   clear_run_rows(con, cfg)
   # after = FALSE, or this fires after the disconnect above and writes to a
@@ -574,6 +579,41 @@ clear_run_rows <- function(con, cfg) {
   invisible(TRUE)
 }
 
+# Output names are work schema + prefix + table, with no run id in them, and
+# several phases repoint a session view at a shared prefixed table they have
+# just replaced - LOT_PATIENT_INPUT, the three SCT tables, the LOT_LONG stage.
+# Two runs on one prefix therefore interleave: the second replaces a table the
+# first has already pointed a view at, and the first reads the second's rows
+# from there on. Both can still reach "complete", with the outputs mixed.
+#
+# Different prefixes are safe, and that is how two cohorts are meant to run at
+# once. This refuses the same-prefix case.
+#
+# A check, not a lock: two runs starting at the same moment can both pass it,
+# because there is nothing here that could hold a lock. It catches the case
+# worth catching - starting a second run while one is going - and says so.
+check_no_active_run <- function(con, cfg) {
+  d <- tryCatch(db_q(con, glue("
+    SELECT RUN_ID, UPDATED_AT FROM {lot_out('LOT_BUILD_STATUS')}
+    WHERE OBJECT_PREFIX = '{cfg$object_prefix}' AND STATE = 'started'
+      AND RUN_ID <> '{run_id}'")), error = function(e) NULL)
+  # No table yet on a first run, and nothing to collide with.
+  if (is.null(d) || !nrow(d)) return(invisible(TRUE))
+  who <- paste(d$RUN_ID, collapse = ", ")
+  if (identical(toupper(Sys.getenv("LOT_IGNORE_ACTIVE_RUN", unset = "")), "TRUE")) {
+    log_msg("WARNING: run(s) ", who, " are marked started on prefix ",
+            cfg$object_prefix, " and LOT_IGNORE_ACTIVE_RUN is set. If they are ",
+            "still running, both sets of outputs will be wrong.")
+    return(invisible(TRUE))
+  }
+  stop("Run(s) ", who, " are already building prefix ", cfg$object_prefix,
+       ". Every output name is the prefix plus the table, so two runs would ",
+       "replace each other's tables while the other is reading them, and both ",
+       "could still finish. Use a different prefix, or wait. If those runs are ",
+       "not actually running - a killed process leaves 'started' behind - set ",
+       "LOT_IGNORE_ACTIVE_RUN=TRUE.", call. = FALSE)
+}
+
 # The QC phase reports these and carries on - it prints "** BUG **" and the run
 # still finishes. They are not judgement calls: each one is impossible unless
 # something upstream is wrong, so re-run them here where a breach stops the
@@ -748,11 +788,40 @@ record_codelist_hashes <- function(con, cfg) {
 # recorded what the run actually produced. The totals come from check_lot_long,
 # which has just counted them and passed - so they describe a table already
 # found usable, and are not scanned for twice.
+# What produced these tables, beyond the counts. LOT_RUN_METADATA is the ported
+# source's and records seven of the twenty-one settings CONTRACT pins, and
+# nothing about the code - so an old run's outputs could not say which version
+# or which full contract made them. Two columns rather than one per setting:
+# CODE_MD5 fingerprints the R that ran, and CONTRACT_SETTINGS carries the lot.
+#
+# A hash of the sources rather than a git sha: this folder is copied into
+# Domino to run, where there may be no repository to ask, and the hash
+# describes the code that actually executed either way.
+code_fingerprint <- function(here) {
+  fs <- sort(c(list.files(file.path(here, "R"), "\\.R$", full.names = TRUE,
+                          recursive = TRUE),
+               file.path(here, "build.R")))
+  fs <- fs[file.exists(fs)]
+  if (!length(fs)) return(NA_character_)
+  tmp <- tempfile(); on.exit(unlink(tmp), add = TRUE)
+  writeLines(unlist(lapply(fs, readLines, warn = FALSE)), tmp)
+  unname(tools::md5sum(tmp))
+}
+
+# Sorted, so two runs with the same settings produce the same string and it can
+# be compared as one value.
+contract_settings <- function() {
+  k <- sort(names(CONTRACT))
+  paste(paste0(k, "=", vapply(CONTRACT[k], function(v) as.character(v)[1],
+                              character(1))), collapse = "|")
+}
+
 FINAL_METADATA_COLS <- c(N_LOT_LONG_ROWS = "BIGINT",
                          N_LOT_LONG_PATIENTS = "BIGINT",
                          LOT_LONG_BY_LINE = "STRING",
                          N_LOT_FINAL_ROWS = "BIGINT",
-                         N_LOT_FINAL_PATIENTS = "BIGINT")
+                         N_LOT_FINAL_PATIENTS = "BIGINT",
+                         CODE_MD5 = "STRING", CONTRACT_SETTINGS = "STRING")
 
 record_final_counts <- function(con, cfg, counts, final) {
   tbl <- lot_out("LOT_RUN_METADATA")
@@ -785,7 +854,9 @@ record_final_counts <- function(con, cfg, counts, final) {
            N_LOT_LONG_PATIENTS = {sql_count(counts$n_patients)},
            LOT_LONG_BY_LINE = '{dist}',
            N_LOT_FINAL_ROWS = {sql_count(final$n_rows)},
-           N_LOT_FINAL_PATIENTS = {sql_count(final$n_patients)}
+           N_LOT_FINAL_PATIENTS = {sql_count(final$n_patients)},
+           CODE_MD5 = '{cfg$code_md5}',
+           CONTRACT_SETTINGS = '{contract_settings()}'
      WHERE RUN_ID = '{run_id}'"))
   log_msg("Recorded LOT_LONG: ", counts$n_rows, " lines for ",
           counts$n_patients, " patients (", dist, "); LOT_LONG_FINAL: ",
