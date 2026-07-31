@@ -265,11 +265,9 @@ build_lot <- function(here, cohort_table, prefix) {
   # Cleared first, or a second run in one session inherits the first's.
   options(lot_waivers_applied = character(0), lot_codelist_md5 = list())
   write_build_status(con, cfg, "started")
-  # after = FALSE, or this never runs: R fires on.exit handlers in the order
-  # they were registered, the disconnect above was registered first, and the
-  # write would then go to a closed connection and be swallowed by its own
-  # try(). Registered here rather than beside the connection so a preflight
-  # failure still leaves no row at all, which is what the README promises.
+  # after = FALSE, or this fires after the disconnect above and writes to a
+  # closed connection. Registered here, not beside the connection, so a
+  # preflight failure still leaves no status row at all.
   on.exit(if (!isTRUE(getOption("lot_complete", FALSE)))
             try(write_build_status(con, cfg, "failed"), silent = TRUE),
           add = TRUE, after = FALSE)
@@ -356,9 +354,8 @@ lot_inputs_present <- function(con) {
 }
 
 # Persist the cohort and repoint the session view, so every later phase reads
-# one fixed snapshot instead of a view that re-runs against a live table. Then
-# check the snapshot: the first check ran four CSVs and around two dozen
-# queries back, so the rows copied here are not necessarily the rows it passed.
+# one fixed snapshot rather than a view that re-runs against a live table.
+# Then validate the snapshot itself, not just the table it came from.
 materialize_cohort_input <- function(con, before) {
   tbl <- lot_out("LOT_PATIENT_INPUT")
   run_step(con, "S03b_materialize_cohort_input", glue("
@@ -369,10 +366,10 @@ materialize_cohort_input <- function(con, before) {
     CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS SELECT * FROM {tbl}"))
 
   after <- check_cohort_input(con, tbl)
-  # Shape alone would pass a different cohort that is also well formed, which
-  # is the likelier accident than one that is malformed.
+  # A count change, not proof of identity - a same-size swap passes. The
+  # validated snapshot is what makes the run sound; these counts came free.
   if (after$n_rows != before$n_rows || after$n_patients != before$n_patients)
-    stop("The cohort changed between being checked and being pinned: ",
+    stop("The cohort changed size between being checked and being pinned: ",
          before$n_rows, " rows / ", before$n_patients, " patients at the ",
          "check, ", after$n_rows, " / ", after$n_patients, " in ", tbl,
          ". Re-run the build against a settled cohort.", call. = FALSE)
@@ -608,7 +605,7 @@ check_lot1_invariants <- function(con, cfg) {
 # the row actually arrived - a run with no record of how it was configured is
 # not a run anyone can validate later.
 check_run_recorded <- function(con, cfg) {
-  for (t in c("LOT_RUN_METADATA", "LOT_QC_SUMMARY", "LOT_CODELIST_METADATA")) {
+  for (t in c("LOT_RUN_METADATA", "LOT_QC_SUMMARY")) {
     n <- tryCatch(db_q(con, glue(
            "SELECT count(*) AS n FROM {lot_out(t)} WHERE RUN_ID = '{run_id}'"))$n,
          error = function(e) 0L)
@@ -616,6 +613,21 @@ check_run_recorded <- function(con, cfg) {
       stop("This run left no row in ", lot_out(t), ". The outputs exist but ",
            "nothing records how they were built.", call. = FALSE)
   }
+  # One row is not the contract: the build reads four code lists and every one
+  # has to be accounted for. "At least one row" would pass a run that recorded
+  # a single file, which is the shape a partial write leaves behind.
+  k <- tryCatch(db_q(con, glue(
+         "SELECT count(DISTINCT CODELIST_FILE) AS n
+          FROM {lot_out('LOT_CODELIST_METADATA')}
+          WHERE RUN_ID = '{run_id}' AND MD5 RLIKE '^[0-9a-f]{{32}}$'
+            AND CODELIST_FILE IN ({paste0(\"'\", CODELIST_FILES, \"'\", collapse = ', ')})"))$n,
+       error = function(e) 0L)
+  if (is.na(k) || k != length(CODELIST_FILES))
+    stop("This run recorded ", if (is.na(k)) 0 else k, " of ",
+         length(CODELIST_FILES), " code lists in ", lot_out("LOT_CODELIST_METADATA"),
+         ". The outputs exist but nothing says in full which lists built them.",
+         call. = FALSE)
+
   # The row is written by phase_persist, before LOT2-5 exists, so a row alone
   # says only that LOT1 ran. record_final_counts fills the rest in.
   n <- tryCatch(db_q(con, glue(
@@ -650,6 +662,27 @@ record_codelist_hashes <- function(con, cfg) {
   cols <- names(CODELIST_METADATA_COLS)
   db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
                     paste(cols, CODELIST_METADATA_COLS, collapse = ", "), ")"))
+
+  # CREATE TABLE IF NOT EXISTS does nothing to a table an earlier version left
+  # behind, and the INSERT below names its columns - so one this table lacks
+  # fails the run rather than being filled positionally. The other two metadata
+  # tables already migrate; this one did not, and the first column to be renamed
+  # or added would have stopped every schema that had run the older version.
+  have <- tryCatch({
+    d  <- db_q(con, glue("DESCRIBE {tbl}"))
+    cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
+    if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else character(0)
+  }, error = function(e) character(0))
+  if (!length(have))
+    stop("Cannot read the columns of ", tbl, ", so the code list hashes cannot ",
+         "be recorded.", call. = FALSE)
+  add <- setdiff(cols, have)
+  if (length(add)) {
+    db_exec(con, glue("ALTER TABLE {tbl} ADD COLUMNS (",
+                      paste(add, CODELIST_METADATA_COLS[add], collapse = ", "), ")"))
+    log_msg("  Codelist metadata schema evolution: added ", paste(add, collapse = ", "))
+  }
+
   db_exec(con, glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"))
   vals <- vapply(CODELIST_FILES, function(f) glue(
     "('{run_id}', '{f}', '{seen[[f]]$md5}', {seen[[f]]$n_rows}, current_timestamp())"),
@@ -767,15 +800,9 @@ check_lot_long <- function(con, cfg) {
   invisible(list(n_rows = q$n_rows, n_patients = q$n_patients))
 }
 
-# LOT_LONG_FINAL is the table downstream reads, and nothing looked at it:
-# check_lot_long ran on LOT_LONG, and the count beside the write is printed,
-# not checked. With no criteria declared the two are the same table and this
-# costs two aggregates. With a truncate criterion they are not, and a criterion
-# that fails everyone at LOT 1 would leave an empty deliverable behind a run
-# that still reached "complete".
-#
-# LOT_LONG_ALLFLAGS needs no equivalent: the criteria layer only adds columns
-# to it, so its rows are LOT_LONG's whatever is declared.
+# Validate the table downstream reads. check_lot_long ran on LOT_LONG, which is
+# a different table once a truncate criterion is declared. LOT_LONG_ALLFLAGS
+# needs no equivalent: the layer only adds columns, so its rows are LOT_LONG's.
 check_lot_final <- function(con, cfg) {
   t <- lot_out("LOT_LONG_FINAL")
   q <- db_q(con, glue("

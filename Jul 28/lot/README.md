@@ -13,7 +13,7 @@ against line ranges of `apr_30_2026/02_lot1.R`, and `10_lot2_5_base.R` against
 the whole of `lot2_5_base.R`. The executable R and SQL must match exactly.
 
 One deviation is allowed everywhere - LOT's own outputs carry the cohort
-prefix - and beyond that three files carry named safety guards, described
+prefix - and beyond that five files carry named deviations, described
 below. The source's `lot2_5_inputs.R` has no counterpart here - it rebuilt the
 code lists and the cohort for a standalone LOT2-5 session, a path this package
 does not offer - and the SQL it held is compared as part of the phases.
@@ -22,7 +22,7 @@ Comments are compared out, so the copied review-diary comments could be tidied
 without weakening the check. Change a code line and it fails; change a comment
 and it does not.
 
-For the three files that carry safety guards, each approved deviation is named
+For the five files that carry deviations, each approved deviation is named
 and undone one at a time - then the two sides must be **identical**. Adding an
 unapproved line fails, and deleting an approved deviation - a guard line, an
 edited line, or a whole added block - leaves its entry with nothing to remove,
@@ -113,9 +113,10 @@ one, and these are built from temp views.
 - `<prefix>LOT_LONG_FINAL` - the enabled ones applied. This is the table to
   read. It is checked in its own right, not assumed to be sound because
   `LOT_LONG` was: it must be non-empty, and each patient's lines must still run
-  `1..n`. With no criterion declared it is a copy of `LOT_LONG` and both are
-  free; with a `truncate` criterion they catch a criterion that removes every
-  line, or one that takes a line out of the middle instead of the tail.
+  `1..n`. With no criterion declared it is a copy of `LOT_LONG` and the two
+  checks are a pair of aggregates. With a `truncate` criterion they catch one
+  that removes every line, or one that takes a line out of the middle rather
+  than the tail.
   `LOT_LONG_ALLFLAGS` needs no equivalent - the layer only adds columns to it,
   so its rows are `LOT_LONG`'s whatever is declared.
 
@@ -139,6 +140,14 @@ Two rules worth knowing:
 - A predicate that evaluates to NULL **fails**. Unknown is not evidence the
   line qualifies.
 
+Two things the validator does not check, because `LINE_CRITERIA` is empty and a
+check for an empty list proves nothing. Whoever writes the first criterion owns
+them: `flag` must not name a column `LOT_LONG` already has - the generated SQL
+is `SELECT *, <expr> AS <flag>`, so a collision makes the column ambiguous
+rather than failing - and `lines` above `MAX_LOT` matches nothing, so the
+criterion silently passes every row. Add both to `validate_line_criteria()`
+when the first real criterion arrives.
+
 ## The production code lists
 
 Four files, read from `CODELIST_DIR`, named in `R/codelists_lot.R`:
@@ -155,9 +164,10 @@ The hashes go in the run log and into `<prefix>LOT_CODELIST_METADATA` - one row
 per file per run, with the md5 and the row count. A log is a separate artefact:
 filed away from the tables, or lost, and the outputs no longer say what built
 them. The table makes them self-describing, and answers the reverse question
-too ("which runs used this md5"). It is written as soon as the files are read,
-so a run that fails later still records what it was reading, and a run with no
-rows there is not called complete.
+too ("which runs used this md5"). The rows go in once the code lists have
+passed their checks and before any claim is read, so a run that fails later
+still records what it was reading. A run that fails inside those checks records
+nothing. A run that did not record all four is not called complete.
 
 Three consistency checks are reviewable - they stop the build unless named in
 `CODELIST_WAIVERS`, because each has a reading a study team can accept:
@@ -274,9 +284,9 @@ always zero - conditions to correct in the code list, not to accept:
 `multi_class`, `class_agreement`.
 
 Naming one of the second group is refused before the build starts, and told
-why rather than "no such check". Refusing at startup is not enough on its own -
-LOT2-5 can be run in a session of its own and reach the code lists without
-that check - so the waiver list itself drops them too. Unknown names are
+why rather than "no such check". Refusing at startup is not enough on its own,
+so `codelist_waivers()` filters the list as well: a fatal name cannot be
+honoured even if the startup check were bypassed. Unknown names are
 rejected. `LOT_BUILD_STATUS` records both `CODELIST_WAIVERS_REQUESTED`, the
 list the run was given, and `CODELIST_WAIVERS_APPLIED`, the checks that
 actually fired and were waived - a run can ask for a waiver on a condition the
@@ -442,8 +452,10 @@ to be pointed at many cohorts on their own schedules. The snapshot is prefixed
 like every other output, so two cohorts cannot share one, and it stays behind
 for inspection afterwards.
 
-One window remains open: the cohort table is validated a statement earlier than
-it is copied, so a change in between would be snapshotted unvalidated.
+The copy is validated in its own right once it is written, so what every later
+phase reads has passed the checks - not merely the table it came from. The row
+and patient counts are compared with the first check too; that catches a cohort
+that changed size, not one swapped for another of the same size.
 
 ## Why the run materializes the SCT views
 
@@ -485,8 +497,11 @@ whose metadata row is missing either set of counts is not called complete: a
 row on its own only says LOT1 ran.
 
 `<prefix>LOT_CODELIST_METADATA`: `RUN_ID`, `CODELIST_FILE`, `MD5`, `N_ROWS`,
-`RECORDED_AT` - four rows per run, described above. `RECORDED_AT` is the
-warehouse clock when the row was written, seconds after the file was read. A
+`RECORDED_AT` - four rows per run, described above. The rows are written once
+the code lists have passed their checks and before any claim is read, so a run
+that fails later still records what it was reading; a run that fails *inside*
+the code-list checks records nothing, and the hashes are in the run log only.
+`RECORDED_AT` is the warehouse clock when the row was written. A
 file whose hash cannot be taken stops the run rather than being recorded as
 `NA`.
 
@@ -505,8 +520,9 @@ the write reaches a closed connection and is swallowed by its own `try()`,
 leaving a crashed run marked `started` for ever.
 
 LOT1 is checked too, before LOT2-5 starts: MAP ending before it starts, a MAP
-end that is not the later runout, LOT1 ending after observation, an AUTO
-transplant flagged both tandem and single, and an AUTO before LOT1 began. The
+end that is not the later runout, LOT1 ending after observation, an SCT end
+date past observation, an AUTO transplant flagged both tandem and single, and
+an AUTO before LOT1 began. The
 QC phase reports these and carries on; these stop the build.
 
 `LOT_LONG` is checked before anything is derived from it and before the run is

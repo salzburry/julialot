@@ -111,9 +111,12 @@ fake_con <- structure(list(), class = "fakecon")
 GOOD <- list(n_rows = 10, n_patients = 10, n_null_patid = 0, n_null_index = 0,
              n_null_end = 0, n_end_before_index = 0)
 # DESCRIBE answers with columns; the shape query answers with counts.
+CSQL <- character(0)
 stub <- function(cols = REQUIRED_COHORT_COLS, shape = list()) {
   sh <- modifyList(GOOD, shape)
+  CSQL <<- character(0)
   assign("db_q", function(con, sql) {
+    CSQL <<- c(CSQL, sql)
     if (grepl("DESCRIBE", sql)) data.frame(col_name = cols, stringsAsFactors = FALSE)
     else as.data.frame(sh)
   }, envir = globalenv())
@@ -121,27 +124,38 @@ stub <- function(cols = REQUIRED_COHORT_COLS, shape = list()) {
 assign("log_msg", function(...) invisible(NULL), envir = globalenv())
 
 stub()
-runs(check_cohort_input(fake_con, cfg), "a sound cohort table is accepted")
+runs(check_cohort_input(fake_con, "wk.COH"), "a sound cohort table is accepted")
 stub(cols = tolower(REQUIRED_COHORT_COLS))
-runs(check_cohort_input(fake_con, cfg), "column case does not matter")
+runs(check_cohort_input(fake_con, "wk.COH"), "column case does not matter")
 stub(cols = setdiff(REQUIRED_COHORT_COLS, "ENDDATE_CE"))
-stops(check_cohort_input(fake_con, cfg), "a missing column is named, not ignored")
+stops(check_cohort_input(fake_con, "wk.COH"), "a missing column is named, not ignored")
 
 cat("\n-- and for shape, not just column names --\n")
 # The rules read this table row for row: no DISTINCT, no ranking. A repeated
 # patient would multiply their claims and their lines.
 stub(shape = list(n_rows = 12, n_patients = 10))
-stops(check_cohort_input(fake_con, cfg), "more rows than patients is rejected")
+stops(check_cohort_input(fake_con, "wk.COH"), "more rows than patients is rejected")
 stub(shape = list(n_rows = 0, n_patients = 0))
-stops(check_cohort_input(fake_con, cfg), "an empty table cannot drive LOT")
+stops(check_cohort_input(fake_con, "wk.COH"), "an empty table cannot drive LOT")
 stub(shape = list(n_null_patid = 1))
-stops(check_cohort_input(fake_con, cfg), "a null PATID is rejected")
+stops(check_cohort_input(fake_con, "wk.COH"), "a null PATID is rejected")
 stub(shape = list(n_null_index = 3))
-stops(check_cohort_input(fake_con, cfg), "a null INDEX_DATE is rejected")
+stops(check_cohort_input(fake_con, "wk.COH"), "a null INDEX_DATE is rejected")
 stub(shape = list(n_null_end = 2))
-stops(check_cohort_input(fake_con, cfg), "a null ENDDATE is rejected")
+stops(check_cohort_input(fake_con, "wk.COH"), "a null ENDDATE is rejected")
 stub(shape = list(n_end_before_index = 1))
-stops(check_cohort_input(fake_con, cfg), "an ENDDATE before INDEX_DATE is rejected")
+stops(check_cohort_input(fake_con, "wk.COH"), "an ENDDATE before INDEX_DATE is rejected")
+
+# The table is an argument now, so it has to reach the SQL. Passing cfg and
+# letting the stub ignore it - which is what these tests used to do - would
+# pass just as well against a function that re-checked the source table and
+# called the pinned copy sound.
+stub()
+got <- check_cohort_input(fake_con, "wk.SNAP")
+ok(length(CSQL) == 2 && all(grepl("wk.SNAP", CSQL, fixed = TRUE)),
+   "it asks about the table it was given, in both queries")
+ok(identical(got, list(n_rows = 10, n_patients = 10)),
+   "and hands back the counts materialize_cohort_input compares")
 rm("db_q", "log_msg", envir = globalenv())
 
 cat("\n-- build_lot() actually runs the phases, in order --\n")
@@ -695,8 +709,11 @@ assign("run_id", "R1", envir = he)
 HSQL <- character(0)
 assign("db_exec", function(con, s) { HSQL <<- c(HSQL, s); TRUE }, envir = he)
 CLF <- get("CODELIST_FILES", envir = he)
-drive_h <- function(files) {
+CLM_COLS <- names(get("CODELIST_METADATA_COLS", envir = he))
+drive_h <- function(files, have = CLM_COLS) {
   HSQL <<- character(0)
+  assign("db_q", function(con, s) if (is.null(have)) stop("no")
+                                  else data.frame(col_name = have), envir = he)
   options(lot_codelist_md5 = setNames(lapply(seq_along(files), function(i)
     list(md5 = sprintf("%032d", i), n_rows = i * 100L)), files))
   r <- tryCatch({ he$record_codelist_hashes(NULL, list()); NULL }, error = conditionMessage)
@@ -716,6 +733,17 @@ ok(grepl("RECORDED_AT = \"TIMESTAMP\"", bl, fixed = TRUE) &&
 ok(any(grepl("DELETE FROM wk.p_LOT_CODELIST_METADATA WHERE RUN_ID = 'R1'",
              HSQL, fixed = TRUE)),
    "and a re-run replaces its own rows rather than doubling them")
+ok(!any(grepl("ALTER", HSQL)),
+   "a table that already has the columns is not altered")
+# CREATE TABLE IF NOT EXISTS does nothing to a table an earlier version left,
+# and the INSERT names its columns - so a renamed one would stop every schema
+# that had run the older build. The other two metadata tables already migrate.
+old <- sub("RECORDED_AT", "READ_AT", CLM_COLS, fixed = TRUE)
+ok(is.null(drive_h(CLF, have = old)) &&
+     any(grepl("ADD COLUMNS (RECORDED_AT TIMESTAMP)", HSQL, fixed = TRUE)),
+   "a table left with the old column name is upgraded, not written into blind")
+ok(!is.null(drive_h(CLF, have = NULL)),
+   "and a DESCRIBE that cannot answer stops rather than adding columns blind")
 # A file that was never read must not silently produce a row-less run.
 err <- drive_h(CLF[-length(CLF)])
 ok(!is.null(err) && grepl(CLF[length(CLF)], err, fixed = TRUE),
@@ -726,11 +754,20 @@ ok(regexpr("phase_codelists(", body, fixed = TRUE) <
      regexpr("record_codelist_hashes(", body, fixed = TRUE) &&
      regexpr("record_codelist_hashes(", body, fixed = TRUE) <
      regexpr("phase_patient_input(", body, fixed = TRUE),
-   "written as soon as the hashes are known, not at the end")
-ok(grepl('"LOT_CODELIST_METADATA"', bl, fixed = TRUE) &&
-     grepl('c("LOT_RUN_METADATA", "LOT_QC_SUMMARY", "LOT_CODELIST_METADATA")',
-           bl, fixed = TRUE),
-   "and a run with no hash rows is not called complete")
+   "written once the code lists have passed, before any claim is read")
+# Not "at least one row": the build reads four lists and all four have to be
+# accounted for, or a partial write passes the gate. Driven rather than
+# grepped - the string is present either way, and it is the count that decides.
+drive_rr <- function(n_files) {
+  assign("db_q", function(con, s) data.frame(
+    n = if (grepl("CODELIST_FILE", s, fixed = TRUE)) n_files else 1L), envir = he)
+  tryCatch({ he$check_run_recorded(NULL, list()); NULL }, error = conditionMessage)
+}
+ok(is.null(drive_rr(length(CLF))), "all four recorded lets the run finish")
+msg <- drive_rr(length(CLF) - 1L)
+ok(!is.null(msg) && grepl(paste0(length(CLF) - 1L, " of ", length(CLF)), msg, fixed = TRUE),
+   "and one short is not called complete, saying how many arrived")
+ok(!is.null(drive_rr(0L)), "nor is a run that recorded none")
 
 cat("\n-- the cohort is pinned, not re-read --\n")
 # A Spark temporary view re-runs its query on every read, so lot_patient_input

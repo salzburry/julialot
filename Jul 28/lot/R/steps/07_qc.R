@@ -3,14 +3,9 @@
 phase_qc <- function(con, ctx) {
   meds <- ctx$meds
 
-  # The NDC format QC that ran here is gone. It profiled rx only, and it
-  # compared raw code-list lengths against alnum-stripped claim lengths -
-  # neither of which is the length the join uses, so its one warning could fire
-  # on a code list that is fine and stay quiet on one that is not.
-  # check_claim_ndc asks the real question of both claim tables, with the
-  # join's own normalization, before LOT1 builds anything; ndc_shape, ndc_short
-  # and bad_ndc do the code-list side. Removed rather than left informational:
-  # a log line headed "NDC length distribution" reads as coverage.
+  # The NDC format QC that ran here is gone: it measured lengths the join does
+  # not use. check_claim_ndc covers both claim tables and ndc_shape, ndc_short
+  # and bad_ndc cover the code list, both before extraction. See the README.
 
   # Validation QC suite: reporting on MAP and LOT, not gating. The whole block
   # is wrapped below, so a failure here prints and the run carries on. The
