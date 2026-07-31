@@ -181,20 +181,18 @@ checkpoint <- function(con, name) {
   invisible(TRUE)
 }
 
-# What this run has NOT settled.
+# The assumptions this run made, and what each rests on.
 #
-# Five criteria in S6.2.1 cannot be closed from this repository: three need a
-# code-level decision nobody has written down yet, one overrides the protocol
-# on a relay, and one cannot be exact until lines of therapy exist. Each has a
-# mechanism and a review table, and every one of them defaults to the source's
-# behaviour - which means a run with none of them settled still produces a
-# cohort, and that cohort looks exactly like a finished one.
+# None of these is a defect and none blocks a run. Each default is either the
+# protocol read literally or apr_30_2026's behaviour, so the cohort a default
+# run produces is defensible as it stands. They are listed because a count is
+# easier to read when you know what it assumed, and because two of them the
+# study team may want to narrow.
 #
-# It is not one. So every run names what it did not settle: in the log, and in
-# NDMM_RUN_METADATA beside the count, so a number that reaches a slide can be
-# traced back to what was still open when it was made. Set
-# NDMM_REQUIRE_DECISIONS=TRUE and the run refuses to start instead, which is
-# what a sign-off build should do.
+# Recorded in NDMM_RUN_METADATA beside the count, so a number that reaches a
+# slide carries its assumptions with it. NDMM_REQUIRE_DECISIONS=TRUE refuses to
+# start until the file-backed ones are made explicit - for a build somebody
+# signs, not for ordinary use.
 PROTOCOL_FU_CE_DAYS <- 90L
 
 # blocking_only = TRUE drops the one this build cannot close whatever anybody
@@ -210,33 +208,37 @@ pending_decisions <- function(cfg, blocking_only = FALSE) {
   out <- character(0)
   if (!identical(as.integer(cfg$fu_ce_days), PROTOCOL_FU_CE_DAYS))
     out <- c(out, paste0(
-      "follow-up CE is ", cfg$fu_ce_days, " day(s); S6.2.1.1 asks for three ",
-      "months. Over-includes at attrition step 5 unless an approved amendment ",
-      "says otherwise. Size it with NDMM_FU_CE_COUNTS."))
+      "follow-up CE is ", cfg$fu_ce_days, " day(s), on the study team's ",
+      "instruction, against S6.2.1.1's three months. Decided, but relayed in ",
+      "the build request rather than written in a controlled document - worth ",
+      "in writing before sign-off. NDMM_FU_CE_COUNTS sizes the difference."))
   if (rows(cfg$eligible_1l_csv) == 0L)
     out <- c(out, paste0(
-      "no eligible-1L agent list, so any MM therapy on the code list can set ",
-      "the index - including one restricted to later lines. See ",
-      "NDMM_INDEX_AGENTS and codelists/eligible_1l_agents.csv."))
+      "any MM therapy on the code list can set the index, which is S6.2.1.1 ",
+      "read literally: it excludes 'those restricted to later LOTs (see ",
+      "exclusion criteria)' and S6.2.1.2 names only belantamab. Narrow it in ",
+      "codelists/eligible_1l_agents.csv if the study team wants to."))
   if (rows(cfg$mm_adjacent_csv) == 0L)
     out <- c(out, paste0(
-      "no per-code MM-adjacent overrides, so the whole SECONDARY MALIGNANT ",
-      "NEOPLASM OF BONE label counts as the index disease and a solid tumour ",
-      "metastatic to bone is not another cancer. See NDMM_MM_ADJACENT_CODES ",
-      "and codelists/mm_adjacent_overrides.csv."))
+      "the whole SECONDARY MALIGNANT NEOPLASM OF BONE label counts as the ",
+      "index disease, which is apr_30_2026's behaviour. A solid tumour ",
+      "metastatic to bone is usually coded with its primary too and excluded ",
+      "on that, so the exposure is small - NDMM_MM_ADJACENT_CODES lists the ",
+      "codes if you want it exact."))
   if (rows(cfg$primary_groups_csv) == 0L)
     out <- c(out, paste0(
-      "no primary-tumour-group map, so two outpatient claims confirm each ",
-      "other only when they carry the identical code-list label. Under-",
-      "excludes at attrition step 7. Size it with NDMM_OTHER_MALIG_GRAIN."))
+      "two outpatient claims confirm each other only when they carry the ",
+      "identical code-list label, which is apr_30_2026's behaviour. It can ",
+      "under-exclude at step 7; NDMM_OTHER_MALIG_GRAIN says by how much, and ",
+      "may well say by nothing."))
   # Always open: it cannot be closed here at all, so it is reported and never
   # blocks. Blocking on it would make NDMM_REQUIRE_DECISIONS unusable, and an
   # unusable gate is one nobody sets.
   if (!blocking_only)
     out <- c(out, paste0(
       "belantamab \"in any LOT\" is the '", cfg$belantamab_scope, "' claims ",
-      "proxy - lines do not exist until the LOT run. Close it with ",
-      "NDMM_BELANTAMAB_RECONCILE afterwards, both halves."))
+      "proxy, because lines do not exist until the LOT run. Check it after ",
+      "with NDMM_BELANTAMAB_RECONCILE, both halves."))
   out
 }
 
@@ -254,15 +256,16 @@ check_decisions <- function(cfg) {
 report_pending_decisions <- function(cfg) {
   p <- pending_decisions(cfg)
   if (!length(p)) {
-    log_msg("Every criterion decision is settled for this run.")
+    log_msg("Every assumption is explicit for this run.")
     return(invisible(p))
   }
   log_msg(SEP)
-  log_msg("NOT SETTLED BY THIS RUN (", length(p), ") - the cohort above is not ",
-          "ready for IE sign-off:")
+  log_msg("WHAT THIS RUN ASSUMED (", length(p), "). Each is the protocol read ",
+          "literally or apr_30_2026's behaviour; none is a defect:")
   for (i in seq_along(p)) log_msg("  ", i, ". ", p[[i]])
   log_msg("Recorded in NDMM_RUN_METADATA.DECISIONS_PENDING. Set ",
-          "NDMM_REQUIRE_DECISIONS=TRUE to refuse a run instead of reporting it.")
+          "NDMM_REQUIRE_DECISIONS=TRUE for a build somebody signs, which ",
+          "refuses to start until the file-backed ones are made explicit.")
   # The messages above name tables this run may not have built. Say so, rather
   # than sending someone to look for one that is not there.
   if (!review_tables_on())

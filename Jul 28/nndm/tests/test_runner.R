@@ -825,7 +825,7 @@ ok(any(grepl("were NOT built", DELOG, fixed = TRUE)),
 DELOG <- character(0)
 Sys.setenv(NDMM_REVIEW_TABLES = "TRUE")
 rte$report_pending_decisions(rte_cfg)
-ok(any(grepl("NOT SETTLED", DELOG, fixed = TRUE)) &&
+ok(any(grepl("WHAT THIS RUN ASSUMED", DELOG, fixed = TRUE)) &&
      !any(grepl("were NOT built", DELOG, fixed = TRUE)),
    "...and does not say it when they were")
 Sys.unsetenv("NDMM_REVIEW_TABLES")
@@ -845,15 +845,16 @@ p_all <- de$pending_decisions(dcfg())
 ok(length(p_all) == 5, paste0("all five open decisions are named (",
                               length(p_all), ")"))
 ok(any(grepl("three months", p_all, fixed = TRUE)) &&
-     any(grepl("eligible-1L agent list", p_all, fixed = TRUE)) &&
+     any(grepl("set the index", p_all, fixed = TRUE)) &&
      any(grepl("SECONDARY MALIGNANT", p_all, fixed = TRUE)) &&
-     any(grepl("primary-tumour-group map", p_all, fixed = TRUE)) &&
+     any(grepl("identical code-list label", p_all, fixed = TRUE)) &&
      any(grepl("in any LOT", p_all, fixed = TRUE)),
-   "...each by what is open, not by a setting name")
-# Each says which way it moves the cohort, or the reader cannot judge it.
-ok(any(grepl("over-include", p_all, ignore.case = TRUE)) &&
-     any(grepl("under-exclude", p_all, ignore.case = TRUE)),
-   "...and which way the cohort is wrong because of it")
+   "...each by what it assumed, not by a setting name")
+# Each says what the default rests on, or a reader cannot tell an assumption
+# from a defect - and these are assumptions. Both references are named.
+ok(sum(grepl("apr_30_2026", p_all, fixed = TRUE)) == 2L &&
+     any(grepl("S6.2.1.1", p_all, fixed = TRUE)),
+   "...and what each default rests on: the protocol, or apr_30_2026")
 # Settle them and they go, so this is not a banner that always prints.
 tmpf <- file.path(tempdir(), "ndmm_filled_probe.csv")
 hdrf <- file.path(tempdir(), "ndmm_header_probe.csv")
@@ -873,17 +874,16 @@ ok(identical(tryCatch({ de$check_decisions(dcfg()); "" }, error = conditionMessa
 Sys.setenv(NDMM_REQUIRE_DECISIONS = "TRUE")
 m <- tryCatch({ de$check_decisions(dcfg()); "" }, error = conditionMessage)
 ok(grepl("REQUIRE_DECISIONS", m, fixed = TRUE) &&
-     grepl("eligible-1L agent list", m, fixed = TRUE),
-   "...and NDMM_REQUIRE_DECISIONS refuses to start, naming every open one")
+     grepl("set the index", m, fixed = TRUE),
+   "...and NDMM_REQUIRE_DECISIONS refuses to start, naming every one")
 ok(identical(tryCatch({ de$check_decisions(dcfg(fu_ce_days = 90L,
        eligible_1l_csv = tmpf, mm_adjacent_csv = tmpf,
        primary_groups_csv = tmpf)); "" }, error = conditionMessage), ""),
    "...but not for the one this build cannot close, which would block for ever")
 Sys.unsetenv("NDMM_REQUIRE_DECISIONS")
 DELOG <- character(0); de$report_pending_decisions(dcfg())
-ok(any(grepl("NOT SETTLED BY THIS RUN", DELOG, fixed = TRUE)) &&
-     any(grepl("not ", DELOG, fixed = TRUE)),
-   "and every run says at the end what it did not settle")
+ok(any(grepl("WHAT THIS RUN ASSUMED", DELOG, fixed = TRUE)),
+   "and every run says at the end what it assumed")
 # Recorded, not only logged: a log is not beside the count on a slide.
 ok("DECISIONS_PENDING" %in% names(de$RUN_METADATA_COLS) &&
      grepl("pending_decisions(cfg)", bl, fixed = TRUE),

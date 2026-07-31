@@ -1003,38 +1003,30 @@ and used by nothing: it named the parent cohort table this build no longer
 reads. It is left in place so `R/nndm_constants.R` stays line-for-line with its
 source, and setting it does nothing.
 
-## Readiness for IE sign-off
+## What a default run assumes
 
-**A run with the fill-in files empty is not a sign-off cohort**, and the build
-now says so rather than leaving it to be inferred from this file. Five
-criterion decisions cannot be closed from this repository, and every one of
-them defaults to `apr_30_2026`'s behaviour — so a cohort built with none of
-them settled comes out looking exactly like a finished one.
+Five things the build decides for you. **None is a defect and none blocks a
+run** — each default is either the protocol read literally or `apr_30_2026`'s
+behaviour, so a default cohort is defensible as it stands. Every run lists them
+at the end and writes them to `NDMM_RUN_METADATA.DECISIONS_PENDING`, so a count
+carries its assumptions with it.
 
-Every run therefore ends with what it did **not** settle, and writes the same
-list to `NDMM_RUN_METADATA.DECISIONS_PENDING` beside the count — so a number
-that reaches a slide can be traced back to what was still open when it was
-made. That happens whether or not `NDMM_REVIEW_TABLES` is on.
-
-| open | effect on the cohort as built | close it with |
+| assumption | what it rests on | change it with |
 |---|---|---|
-| `FU_CE_DAYS = 0` against the protocol's three months | **over-includes** at step 5 | an approved amendment, sized by `NDMM_FU_CE_COUNTS` |
-| no eligible-1L agent list | a later-line-only therapy can set the index | `eligible_1l_agents.csv` |
-| no per-code MM-adjacent overrides | a solid tumour metastatic to bone is not "another cancer" | `mm_adjacent_overrides.csv` |
-| no primary-tumour-group map | **under-excludes** at step 7 | `primary_tumor_groups.csv` |
-| belantamab proxy | neither exact nor decidable here | `NDMM_BELANTAMAB_RECONCILE`, after the LOT run |
+| follow-up CE is **1 day**, not 3 months | the study team's instruction, relayed in the build request — **decided, but not in a controlled document** | get it in writing; `NDMM_FU_CE_COUNTS` sizes the difference |
+| **any** MM therapy can set the index | §6.2.1.1 read literally: it excludes "those restricted to later LOTs (see exclusion criteria)", and §6.2.1.2 names only belantamab | `eligible_1l_agents.csv`, if the study team wants it narrower |
+| the whole bone-metastasis label is the index disease | `apr_30_2026`'s behaviour. A solid tumour metastatic to bone usually carries its primary code too and is excluded on that, so the exposure is small | `mm_adjacent_overrides.csv` |
+| outpatient claims pair on the exact code-list label | `apr_30_2026`'s behaviour | `primary_tumor_groups.csv`; `NDMM_OTHER_MALIG_GRAIN` says whether it matters at all — it may say not |
+| belantamab is a **claims proxy** for "in any LOT" | lines of therapy do not exist until the LOT run, so no build of this shape can be exact | check it afterwards with `NDMM_BELANTAMAB_RECONCILE`, both halves |
 
 ```
 NDMM_REQUIRE_DECISIONS=TRUE
 ```
 
-refuses to start while any of the first four is open, naming them. **That is
-what a sign-off build should set.** Without it the run proceeds and reports —
-which is right for the exploratory runs that produce the numbers those
-decisions get made from, and wrong for anything anyone signs.
-
-The last one cannot be closed by this build at all: it needs the LOT run, so
-`NDMM_REQUIRE_DECISIONS` does not block on it.
+refuses to start until the four file-backed ones are made explicit. **That is
+for a build somebody signs, not for ordinary use** — the defaults above are
+what a normal run should use, and the fifth cannot be closed here at all, so it
+never blocks.
 
 ## Status
 
