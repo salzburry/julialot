@@ -40,7 +40,8 @@ CONTRACT <- list(
 # Named individually, because one switch for all of them meant waiving an
 # expected condition also waived the dangerous ones.
 WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types",
-                     "subs_substitute", "subs_original", "ndc_short")
+                     "subs_substitute", "subs_original", "ndc_short",
+                     "claim_ndc")
 
 # Fatal checks: always stop the build. Named rather than merely absent, so a
 # waiver naming one is told why it is refused instead of "no such check".
@@ -276,6 +277,7 @@ build_lot <- function(here, cohort_table, prefix) {
 
   ctx <- phase_codelists(con)
   phase_patient_input(con)
+  check_claim_ndc(con, cfg)
   phase_mma_map(con, ctx)
   phase_lot1_base(con, ctx)
   phase_sct(con, ctx)
@@ -359,6 +361,67 @@ materialize_sct_views <- function(con) {
   }
   log_msg("SCT views materialized; LOT2-5 reads tables, not CDM scans.")
   invisible(TRUE)
+}
+
+# ndc_shape and ndc_short put a contract on the code list; this is the other
+# side of the same equality. Both NDC joins compare
+#   lpad(regexp_replace(<value>, '[^0-9]', ''), 11, '0')
+# on the claim as well as the code, so a ten-digit claim NDC has the layout
+# problem a ten-digit code has: 4-4-2, 5-3-2 or 5-4-1, and only 4-4-2 survives
+# a left pad. A canonical code then misses a real claim.
+#
+# The NDC QC in phase_qc does not cover this. It profiles pharmacy only, never
+# medical; it measures a different normalization from the join; it warns only
+# when the two length sets are wholly disjoint, so any overlap silences it; it
+# swallows its own errors; and it runs after LOT1 is already built.
+#
+# Measured the way the join measures, before any claim is read.
+check_claim_ndc <- function(con, cfg) {
+  log_msg("Checking claim NDC shape...")
+  # Scoped to the cohort and its observation window, like the joins - a whole
+  # scan of medical is not worth a shape check.
+  profile_sql <- function(src, tbl, dt) glue("
+    SELECT '{src}' AS SOURCE,
+           count(*) AS n_ndc,
+           sum(CASE WHEN length(regexp_replace(v, '[^0-9]', '')) = 11 THEN 1 ELSE 0 END) AS n_11,
+           sum(CASE WHEN length(regexp_replace(v, '[^0-9]', '')) = 10 THEN 1 ELSE 0 END) AS n_10,
+           sum(CASE WHEN length(regexp_replace(v, '[^0-9]', '')) NOT IN (10, 11) THEN 1 ELSE 0 END) AS n_other,
+           sum(CASE WHEN v RLIKE '[A-Za-z]' THEN 1 ELSE 0 END) AS n_alpha
+    FROM (
+      SELECT cast(t.NDC as string) AS v
+      FROM {tbl} t
+      INNER JOIN lot_patient_input p ON t.PATID = p.PATID
+      WHERE cast(t.NDC as string) IS NOT NULL AND trim(cast(t.NDC as string)) <> ''
+        AND regexp_replace(cast(t.NDC as string), '[^0-9]', '') <> ''
+        AND cast(t.{dt} AS date) >= p.INDEX_DATE
+        AND cast(t.{dt} AS date) <= p.OBS_END_DT)")
+  prof <- rbind(
+    db_q(con, profile_sql("medical", cdm_src(cfg$tbl_medical), "FST_DT")),
+    db_q(con, profile_sql("rx",      cdm_src(cfg$tbl_rx),      "FILL_DT")))
+  print(prof)
+
+  bad <- prof[prof$n_ndc > 0 & (prof$n_11 < prof$n_ndc | prof$n_alpha > 0), , drop = FALSE]
+  if (nrow(bad) == 0) {
+    log_msg("  OK: Every claim NDC is eleven digits.")
+    return(invisible(TRUE))
+  }
+  detail <- paste(vapply(seq_len(nrow(bad)), function(i) with(bad[i, ], paste0(
+    SOURCE, ": ", n_ndc, " NDCs, ", n_11, " eleven-digit, ", n_10, " ten-digit, ",
+    n_other, " other length, ", n_alpha, " with letters")), character(1)),
+    collapse = "; ")
+  if ("claim_ndc" %in% codelist_waivers()) {
+    log_msg("WAIVED (claim_ndc): ", detail)
+    options(lot_waivers_applied = union(getOption("lot_waivers_applied",
+                                                  character(0)), "claim_ndc"))
+    return(invisible(TRUE))
+  }
+  stop("Claim NDCs are not all eleven digits: ", detail,
+       ".\nThe join left-pads to eleven, which is right only for the 4-4-2 ",
+       "layout, so a ten-digit claim can be read as a different drug's code ",
+       "or as none. Confirm how this CDM represents NDC, or convert with an ",
+       "approved NDC10-to-NDC11 crosswalk. Once the study team has ",
+       "established that the padding is right for this data, waive it with ",
+       "CODELIST_WAIVERS=claim_ndc.", call. = FALSE)
 }
 
 # One row per run saying whether its outputs belong together. Without it a
