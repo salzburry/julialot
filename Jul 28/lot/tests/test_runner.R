@@ -166,6 +166,7 @@ bl <- paste(readLines(file.path(ROOT, "R", "build_lot.R"), warn = FALSE),
 body <- sub(".*build_lot <- function\\([^)]*\\) \\{", "", bl)
 ORDER <- c("check_settings", "pin_output_schema", "pin_cohort",
            "check_lot_contract", "set_lot_config", "check_cohort_input",
+           "check_no_active_run", "clear_run_rows",
            "phase_codelists", "record_codelist_hashes",
            "phase_patient_input", "materialize_cohort_input",
            "check_claim_ndc",
@@ -180,18 +181,18 @@ at <- vapply(ORDER, function(f) {
   m <- regexpr(paste0("(?<![A-Za-z0-9_.])", f, "\\("), body, perl = TRUE)
   if (m == -1) NA_integer_ else as.integer(m)
 }, integer(1))
-for (f in ORDER) ok(!is.na(at[[f]]), paste0("build_lot() calls ", f, "()"))
+# One assertion naming whatever is missing, rather than one per entry: the
+# diagnostic is the same and the output is not twenty-two lines of "calls X()".
+absent <- names(at)[is.na(at)]
+ok(length(absent) == 0,
+   if (length(absent)) paste0("build_lot() never calls: ", paste(absent, collapse = ", "))
+   else paste0("build_lot() calls all ", length(ORDER), " phases and checks"))
 ok(!any(is.na(at)) && !is.unsorted(at[!is.na(at)]),
    "and calls them in that order")
 
 cat("\n-- the criteria layer reaches the warehouse --\n")
-# The README promises these two tables. Nothing was producing them.
-ok(grepl("line_criteria_flags_sql", bl, fixed = TRUE) &&
-     grepl("line_criteria_final_sql", bl, fixed = TRUE),
-   "both criteria builders are called")
-for (t in c("LOT_LONG_ALLFLAGS", "LOT_LONG_FINAL"))
-  ok(grepl(paste0('"', t, '"'), bl, fixed = TRUE),
-     paste0(t, " is persisted, not just built as a view"))
+# The README promises these two tables. Nothing was producing them. Driven
+# below rather than grepped for: the statements themselves are asserted.
 
 # Those read the source, so the function could be a no-op and still pass them -
 # it was, and it did. Driven from here, with the real SQL builders, so what
@@ -204,10 +205,13 @@ assign("lot_out", function(x) paste0("wk.p_", x), envir = pe)
 PSQL <- character(0)
 assign("run_step", function(con, name, sql, qc = NULL) {
   PSQL <<- c(PSQL, sql); invisible(TRUE) }, envir = pe)
-drive_plc <- function(crit = list()) {
+LL_COLS <- c("PATID", "LOT_NUM", "LOT_START_DT", "LOT_BASE_END_DT",
+             "LOT_START_TYPE", "END_REASON")
+drive_plc <- function(crit = list(), cfg = list(max_lot = 5L), cols = LL_COLS) {
   PSQL <<- character(0)
   assign("LINE_CRITERIA", crit, envir = pe)
-  tryCatch({ pe$phase_line_criteria(NULL, list()); NULL }, error = conditionMessage)
+  assign("db_q", function(con, sql) data.frame(col_name = cols), envir = pe)
+  tryCatch({ pe$phase_line_criteria(NULL, cfg); NULL }, error = conditionMessage)
 }
 has_sql <- function(x) any(grepl(x, PSQL, fixed = TRUE))
 # Whole statement, not substring: "FROM lot_long" is a prefix of "FROM
@@ -247,6 +251,25 @@ ok(has_sql("first_failed_lot") && has_sql("T_FLAG = 0"),
    "...and an enabled truncate reaches the final view as a removal")
 ok(is_sql("CREATE OR REPLACE TABLE wk.p_LOT_LONG_FINAL AS SELECT * FROM lot_long_final"),
    "with the persisted table still written from it")
+
+# A flag that names a column LOT_LONG already has does not fail - the view ends
+# up carrying the name twice - so it is asked of the table before building.
+CLASH <- list(modifyList(CRIT[[1]], list(flag = "LOT_NUM")))
+msg <- drive_plc(CLASH)
+ok(!is.null(msg) && grepl("already a LOT_LONG column", msg, fixed = TRUE) &&
+     grepl("LOT_NUM", msg, fixed = TRUE),
+   "a flag colliding with an existing LOT_LONG column stops the build, named")
+ok(is.null(drive_plc(CRIT)),
+   "...and a flag that does not collide is unaffected")
+# A criterion aimed above MAX_LOT is asked of no line, so every row passes it -
+# which reads as satisfied rather than as never run.
+HIGH <- list(modifyList(CRIT[[1]], list(lines = 6L)))
+msg <- drive_plc(HIGH, cfg = list(max_lot = 5L))
+ok(!is.null(msg) && grepl("above MAX_LOT", msg, fixed = TRUE),
+   "a criterion aimed above MAX_LOT stops the build rather than passing every row")
+ok(is.null(drive_plc(list(modifyList(CRIT[[1]], list(lines = 5L))),
+                     cfg = list(max_lot = 5L))),
+   "...and one aimed at the highest line is fine")
 if (is.na(old_env)) Sys.unsetenv("APPLY_T_CRIT") else Sys.setenv(APPLY_T_CRIT = old_env)
 
 cat("\n-- a run says whether its outputs belong together --\n")
@@ -322,6 +345,66 @@ ok(identical(FIRED, "disconnect"),
    "and a run that reached complete does not overwrite its own status on the way out")
 options(lot_complete = old_complete)
 }
+
+# Two runs on one prefix replace each other's tables while the other is reading
+# them, because no output name carries the run id.
+na <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_lot.R"), envir = na)
+assign("log_msg", function(...) invisible(NULL), envir = na)
+assign("lot_out", function(x) paste0("wk.p_", x), envir = na)
+assign("run_id", "R2", envir = na)
+NAQ <- character(0)
+drive_na <- function(rows) {
+  NAQ <<- character(0)
+  assign("db_q", function(con, s) { NAQ <<- c(NAQ, s); rows }, envir = na)
+  tryCatch({ na$check_no_active_run(NULL, list(object_prefix = "p_")); NULL },
+           error = conditionMessage)
+}
+ok(is.null(drive_na(data.frame(RUN_ID = character(0), UPDATED_AT = character(0)))),
+   "a prefix nobody else is building is fine")
+ok(any(grepl("STATE = 'started'", NAQ, fixed = TRUE)) &&
+     any(grepl("OBJECT_PREFIX = 'p_'", NAQ, fixed = TRUE)) &&
+     any(grepl("RUN_ID <> 'R2'", NAQ, fixed = TRUE)),
+   "...asked of started runs on this prefix, excluding this one")
+msg <- drive_na(data.frame(RUN_ID = "R1", UPDATED_AT = "x"))
+ok(!is.null(msg) && grepl("R1", msg, fixed = TRUE) &&
+     grepl("LOT_IGNORE_ACTIVE_RUN", msg, fixed = TRUE),
+   "another run on the same prefix stops it, named, with the way out")
+# A killed process leaves 'started' behind for ever, so there has to be one.
+Sys.setenv(LOT_IGNORE_ACTIVE_RUN = "TRUE")
+ok(is.null(drive_na(data.frame(RUN_ID = "R1", UPDATED_AT = "x"))),
+   "...and the override lets a run past a row a dead process left")
+Sys.unsetenv("LOT_IGNORE_ACTIVE_RUN")
+# No table on a first run, and nothing to collide with.
+assign("db_q", function(con, s) stop("TABLE_OR_VIEW_NOT_FOUND"), envir = na)
+ok(!inherits(tryCatch(na$check_no_active_run(NULL, list(object_prefix = "p_")),
+                      error = function(e) e), "error"),
+   "and a first run, with no status table yet, is not blocked by its absence")
+
+# Called is not the same as clearing anything. A re-run in the same session
+# keeps run_id, so an attempt that fails before a writer is reached would leave
+# the previous attempt's rows under this run's id.
+cr <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_lot.R"), envir = cr)
+assign("log_msg", function(...) invisible(NULL), envir = cr)
+assign("lot_out", function(x) paste0("wk.p_", x), envir = cr)
+assign("run_id", "R1", envir = cr)
+CRSQL <- character(0)
+assign("db_exec", function(con, s) { CRSQL <<- c(CRSQL, s); TRUE }, envir = cr)
+cr$clear_run_rows(NULL, list())
+RST <- get("RUN_SCOPED_TABLES", envir = cr)
+ok(length(CRSQL) == length(RST) &&
+     all(vapply(c("LOT_RUN_METADATA", "LOT_QC_SUMMARY", "LOT_CODELIST_METADATA"),
+                function(t) any(grepl(paste0("DELETE FROM wk.p_", t,
+                                             " WHERE RUN_ID = 'R1'"),
+                                      CRSQL, fixed = TRUE)), logical(1))),
+   paste0("and it clears this run's rows from every metadata table (",
+          length(CRSQL), ")"))
+# On a first run none of them exists yet, so a delete that cannot find its
+# table is not a failure.
+assign("db_exec", function(con, s) stop("TABLE_OR_VIEW_NOT_FOUND"), envir = cr)
+ok(!inherits(tryCatch(cr$clear_run_rows(NULL, list()), error = function(e) e), "error"),
+   "...and a table that does not exist yet does not stop the run")
 
 cat("\n-- an older status table is upgraded, not written into blind --\n")
 # CREATE TABLE IF NOT EXISTS does nothing to a table an earlier version of this
@@ -760,7 +843,7 @@ FSQL <- character(0); FQRY <- character(0)
 assign("db_exec", function(con, s) { FSQL <<- c(FSQL, s); TRUE }, envir = fe)
 drive_fm <- function(have, counts = list(n_rows = 1420, n_patients = 900),
                      final = list(n_rows = 1300, n_patients = 870),
-                     by_line = c(900, 400, 120)) {
+                     by_line = c(900, 400, 120), cfg = list(code_md5 = "abc123")) {
   FSQL <<- character(0); FQRY <<- character(0)
   assign("db_q", function(con, s) {
     FQRY <<- c(FQRY, s)
@@ -768,7 +851,7 @@ drive_fm <- function(have, counts = list(n_rows = 1420, n_patients = 900),
                                      else data.frame(col_name = have))
     data.frame(LOT_NUM = seq_along(by_line), n = by_line)
   }, envir = fe)
-  tryCatch({ fe$record_final_counts(NULL, list(), counts, final); NULL },
+  tryCatch({ fe$record_final_counts(NULL, cfg, counts, final); NULL },
            error = conditionMessage)
 }
 base_cols <- c("RUN_ID", "N_COHORT_PATIENTS", "N_LOT1_PATIENTS")
@@ -787,6 +870,40 @@ ok(any(grepl("LOT_LONG_BY_LINE = '1:900|2:400|3:120'", FSQL, fixed = TRUE)),
    "the line distribution is recorded, not just a total")
 ok(any(grepl("WHERE RUN_ID = 'R1'", FSQL, fixed = TRUE)),
    "against this run's row, not every row in the table")
+# The ported LOT_RUN_METADATA records seven of CONTRACT's twenty-one settings
+# and nothing about the code, so an old run's outputs could not say what made
+# them. Two columns carry the rest.
+ok(any(grepl("CODE_MD5 = 'abc123'", FSQL, fixed = TRUE)),
+   "the run records a fingerprint of the code that produced it")
+cs <- get("contract_settings", envir = fe)()
+ok(any(grepl(paste0("CONTRACT_SETTINGS = '", cs, "'"), FSQL, fixed = TRUE)) &&
+     grepl("max_lot=5", cs, fixed = TRUE) && grepl("study_end=2025-06-30", cs, fixed = TRUE),
+   paste0("...and every setting CONTRACT pins, not the seven the ported row has (",
+          length(get("CONTRACT", envir = fe)), ")"))
+ok(identical(cs, get("contract_settings", envir = fe)()) &&
+     identical(strsplit(cs, "|", fixed = TRUE)[[1]],
+               strsplit(cs, "|", fixed = TRUE)[[1]][order(strsplit(cs, "|", fixed = TRUE)[[1]])]),
+   "recorded in a fixed order, so two runs with one contract give one string")
+# The fingerprint is of the R that ran, not a git sha: this folder is copied
+# into Domino, where there may be no repository to ask.
+fp <- get("code_fingerprint", envir = fe)(ROOT)
+ok(grepl("^[0-9a-f]{32}$", fp), "the fingerprint is a real hash of the sources")
+# code_fingerprint sorts with method = "radix" so the hash cannot depend on the
+# machine's collation. There is no assertion for it: for names of the shape it
+# will ever see - *.R under one root - the locale order and byte order agree in
+# every case that could be built here, so any test would pass whichever sort
+# was used. The argument is kept because it costs nothing and removes the
+# question; an assertion that could not fail would only look like cover.
+# Nothing to hash gives NA, and 'NA' in a STRING column is a hash-shaped lie -
+# the same thing refused for the code list md5s.
+st <- get("sql_text", envir = globalenv())
+ok(identical(st(NA_character_), "NULL") && identical(st(NULL), "NULL"),
+   "a fingerprint that could not be taken is NULL, not the text NA")
+ok(identical(st("a'b"), "'a''b'") && identical(st("x"), "'x'"),
+   "...and a quote in a value is doubled rather than closing the literal")
+ok(!identical(fp, get("code_fingerprint", envir = fe)(tempdir())),
+   "...and it changes with the sources, rather than being a constant")
+
 # LOT_LONG_FINAL is what downstream reads. While no criterion is declared it is
 # a copy of LOT_LONG and the two numbers agree; the moment a truncate criterion
 # lands they do not, and recording only LOT_LONG's would describe a table
@@ -818,6 +935,13 @@ ok(grepl("N_LOT_LONG_ROWS = 1000000", u, fixed = TRUE) &&
 ok(grepl("LOT_LONG_BY_LINE = '1:100000|2:400'", u, fixed = TRUE),
    "and the line distribution too, where it would have been recorded wrong in silence")
 ok(!grepl("e+0", u, fixed = TRUE), "no scientific notation reaches the statement")
+# Driven, not just the helper: interpolating inside quotes writes 'NA' either
+# way for a real hash, so only the missing case shows which form was used.
+invisible(drive_fm(all_cols, cfg = list(code_md5 = NA_character_)))
+u2 <- grep("UPDATE", FSQL, value = TRUE)[1]
+ok(grepl("CODE_MD5 = NULL", u2, fixed = TRUE) &&
+     !grepl("CODE_MD5 = 'NA'", u2, fixed = TRUE),
+   "a run whose fingerprint could not be taken records NULL, not a hash-shaped NA")
 # Recorded after check_lot_long, so the numbers describe a table already found
 # usable - and check_run_recorded now asks for them, not merely for a row.
 ok(regexpr("check_lot_long(", body, fixed = TRUE) <
@@ -934,28 +1058,12 @@ cat("\n-- the cohort is pinned, not re-read --\n")
 # mid-run changes what LOT reads from there on. "Do not rebuild it" is not
 # enforceable for a package pointed at many cohorts, so the run takes its own
 # copy and reads that.
-mci <- sub(".*materialize_cohort_input <- function\\(con, before\\) \\{", "", bl)
-mci <- sub("\n[a-zA-Z_]+ <- function.*", "", mci)
-ok(grepl('tbl <- lot_out("LOT_PATIENT_INPUT")', mci, fixed = TRUE) &&
-     grepl("CREATE OR REPLACE TABLE {tbl} AS SELECT * FROM lot_patient_input",
-           mci, fixed = TRUE),
-   "the cohort input is written to a table of its own")
-ok(grepl("CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS SELECT * FROM {tbl}",
-         mci, fixed = TRUE),
-   "...and the view is repointed at it, so every later read hits the copy")
-# The first check ran before the code lists were read - four CSVs and around
-# two dozen queries earlier - so it says nothing about the rows copied here.
-ok(grepl("after <- check_cohort_input(con, tbl)", mci, fixed = TRUE),
-   "the snapshot is validated in its own right, not just the table it came from")
-ok(grepl("invisible(list(n_rows = q$n_rows, n_patients = q$n_patients))", bl,
+# The build_lot() wiring, which the run below cannot see: the first check has
+# to hand its counts to the copy rather than throw them away.
+ok(grepl("cohort <- check_cohort_input(con, wrk(cfg$input_cohort_table))", bl,
          fixed = TRUE) &&
-     grepl("cohort <- check_cohort_input(con, wrk(cfg$input_cohort_table))", bl,
-           fixed = TRUE) &&
      grepl("materialize_cohort_input(con, cohort)", bl, fixed = TRUE),
    "the first check hands its counts forward rather than throwing them away")
-ok(grepl("after$n_rows != before$n_rows", mci, fixed = TRUE) &&
-     grepl("after$n_patients != before$n_patients", mci, fixed = TRUE),
-   "...and a cohort that grew or shrank under the run stops it")
 ok("LOT_PATIENT_INPUT" %in% OUTPUTS,
    "it is a prefixed output, so two cohorts cannot share one snapshot")
 
@@ -1170,14 +1278,6 @@ cat("\n-- LOT2-5 reads tables, not repeated CDM scans --\n")
 # rebuild is right; skipping the materialization was not.
 ok(grepl("materialize_sct_views(con)", body, fixed = TRUE),
    "build_lot() calls materialize_sct_views(), not merely defines it")
-mv_at <- regexpr("SCT_MATERIALIZE <- list", bl, fixed = TRUE)
-mv <- substr(bl, mv_at, mv_at + 400)
-ok(regexpr("sct_claims_raw", mv, fixed = TRUE) <
-     regexpr("tx_auto_dates", mv, fixed = TRUE),
-   "sct_claims_raw first, so the other two read a table not a CDM scan")
-ok(grepl("CREATE OR REPLACE TEMPORARY VIEW {mv$view} AS SELECT * FROM {lot_out(mv$name)}",
-         bl, fixed = TRUE),
-   "and each view is repointed at its table afterwards")
 
 # All of the above reads the source, so the function could be a no-op and still
 # pass - it was, and it did. Driven from here.
@@ -1542,6 +1642,28 @@ stops(check_lot_contract(modifyList(pin_cohort(base, TBL_A, PFX_A),
       "rejects PERSIST_TO_SCHEMA=FALSE")
 
 cat("\n-- settings that used to fail open --\n")
+# as.integer("60.5") is 60, so the NA test accepted it and the run used 60
+# while the operator had asked for 60.5. Their setting was ignored, silently.
+for (bad_int in c("60.5", "6e1", "-5", " 60.0 ")) {
+  Sys.setenv(INDUCTION_WINDOW_DAYS = bad_int)
+  m <- tryCatch({ check_settings(); "" }, error = conditionMessage)
+  ok(grepl("want a whole number", m, fixed = TRUE),
+     paste0("INDUCTION_WINDOW_DAYS='", bad_int, "' is refused, not truncated"))
+}
+Sys.setenv(INDUCTION_WINDOW_DAYS = "60")
+ok(identical(tryCatch({ check_settings(); "" }, error = conditionMessage), ""),
+   "...and a whole number is still accepted")
+Sys.unsetenv("INDUCTION_WINDOW_DAYS")
+# run_id goes into fifteen SQL string literals, and every other identifier that
+# reaches SQL is checked. An apostrophe in it closes the literal early.
+Sys.setenv(DOMINO_RUN_ID = "R1'; DROP TABLE x; --")
+ok(grepl("DOMINO_RUN_ID", tryCatch({ check_settings(); "" }, error = conditionMessage),
+         fixed = TRUE),
+   "a run id that would not survive being quoted is refused")
+Sys.setenv(DOMINO_RUN_ID = "run-2026.07.31_01")
+ok(identical(tryCatch({ check_settings(); "" }, error = conditionMessage), ""),
+   "...and the shapes a platform actually issues are accepted")
+Sys.unsetenv("DOMINO_RUN_ID")
 clear()
 runs(check_settings(), "unset is fine")
 Sys.setenv(CENSOR_AT_DISENROLLMENT = "Y")
@@ -1626,6 +1748,37 @@ ok(all(need %in% LOT2_5_INPUT_VIEWS),
    paste0("and every view LOT1 leaves that LOT2-5 reads is listed (", length(need), ")"))
 ok(all(vapply(SCT_MATERIALIZE, function(m) m$view %in% LOT2_5_INPUT_VIEWS, logical(1))),
    "including the three materialized right after the check")
+# Both checks above start from views something creates, so a reference to one
+# nothing defines is invisible to them - it would surface as
+# TABLE_OR_VIEW_NOT_FOUND partway through a run. Read every FROM and JOIN
+# instead, and require each name to be a view a step creates or a CTE in the
+# same file. Comments first: "INNER JOIN because a med in only one file..."
+# is prose, and reads as a reference to a table called "because".
+uncomment <- function(lines)
+  vapply(lines, function(l) {
+    at <- sort(c(gregexpr("--", l, fixed = TRUE)[[1]], gregexpr("#", l, fixed = TRUE)[[1]]))
+    at <- at[at > 0]
+    for (i in at) {
+      h <- substr(l, 1, i - 1)
+      if (nchar(gsub("[^\"']", "", h)) %% 2 == 0) return(substr(l, 1, i - 1))
+    }
+    l
+  }, character(1), USE.NAMES = FALSE)
+step_files_all <- list.files(file.path(ROOT, "R", "steps"), "\\.R$", full.names = TRUE)
+all_made <- views_in(unlist(lapply(step_files_all, readLines, warn = FALSE)))
+dangling <- unlist(lapply(step_files_all, function(f) {
+  txt  <- paste(uncomment(readLines(f, warn = FALSE)), collapse = "\n")
+  refs <- unique(unlist(regmatches(txt,
+    gregexpr("(?<=\\bFROM |\\bJOIN )[a-z_][a-z_0-9]*", txt, perl = TRUE))))
+  ctes <- unique(unlist(regmatches(txt,
+    gregexpr("[a-z_][a-z_0-9]*(?=\\s+AS\\s*\\()", txt, perl = TRUE))))
+  d <- setdiff(refs, c(all_made, ctes))
+  if (length(d)) paste0(basename(f), ": ", paste(d, collapse = ", ")) else NULL
+}))
+ok(length(dangling) == 0,
+   if (length(dangling)) paste0("a step reads something nothing creates -- ",
+                                paste(dangling, collapse = "; "))
+   else "every view a step reads is one a step creates, or a CTE beside it")
 
 step_src <- unlist(lapply(list.files(file.path(ROOT, "R", "steps"), "\\.R$",
                                      full.names = TRUE), readLines, warn = FALSE))
@@ -1687,30 +1840,37 @@ cres <- tryCatch({ check_lot_contract(modifyList(loaded,
 ok(is.null(cres),
    paste0("config.csv, loaded as build.R loads it, satisfies CONTRACT",
           if (!is.null(cres)) paste0(" -- ", gsub("\n", " ", cres)) else ""))
-# ...and it is the file being read, not defaults that happen to agree: every
-# CONTRACT value the file carries has to have arrived from the file.
-from_file <- intersect(names(CONTRACT),
-                       c("dsn", "catalog", "cdm_schema", "use_quarterly_tables",
-                         "study_end", "codelist_dir", "censor_at_disenrollment",
-                         "induction_window_days", "lot_n_induction_window_days",
-                         "map_discon_gap_days", "medical_day_supply",
-                         "sct_auto_window_days", "sct_auto_gap_days",
-                         "sct_tandem_days", "cart_consolidation_days",
-                         "allo_lot_span", "max_lot"))
-ok(length(from_file) == 17L &&
-     all(vapply(from_file, function(k) isTRUE(all.equal(loaded[[k]], CONTRACT[[k]])),
-                logical(1))),
-   paste0("all ", length(from_file), " settings the file carries match CONTRACT"))
+# Which cfg setting each config.csv name feeds, read out of config_lot.R rather
+# than listed here. Listing them was a fourth copy of the values this section
+# exists to de-duplicate, and it could not see a new setting at all: absent from
+# the list, it was absent from the comparison and the count still matched.
+cl_lines <- readLines(file.path(ROOT, "R", "config_lot.R"), warn = FALSE)
+maps <- regmatches(cl_lines, regexec('^\\s*([A-Za-z_.][A-Za-z0-9_.]*)\\s*=.*Sys\\.getenv\\("([A-Z0-9_]+)"',
+                                     cl_lines))
+maps <- Filter(function(m) length(m) == 3L, maps)
+ENV2CFG <- setNames(vapply(maps, `[`, character(1), 2), vapply(maps, `[`, character(1), 3))
 # A misspelled name sets an environment variable nothing reads, so the setting
 # silently keeps its default and the contract still passes.
-clsrc <- paste(readLines(file.path(ROOT, "R", "config_lot.R"), warn = FALSE),
-               collapse = "\n")
-unread <- Filter(function(n) !grepl(paste0('Sys.getenv("', n, '"'), clsrc, fixed = TRUE),
-                 cnames)
+unread <- setdiff(cnames, names(ENV2CFG))
 ok(length(unread) == 0,
    if (length(unread)) paste0("config.csv names settings nothing reads: ",
                               paste(unread, collapse = ", "))
    else paste0("every one of the ", length(cnames), " names in config.csv is read"))
+# Every setting the file carries is either pinned by CONTRACT or named here as
+# deliberately not pinned. A new one is caught by being neither.
+NOT_PINNED <- c("persist_to_schema")   # check_lot_contract requires it TRUE
+keys <- unname(ENV2CFG[intersect(cnames, names(ENV2CFG))])
+loose <- setdiff(keys, c(names(CONTRACT), NOT_PINNED))
+ok(length(loose) == 0,
+   if (length(loose)) paste0("config.csv settings neither pinned nor excused: ",
+                             paste(loose, collapse = ", "))
+   else paste0("every one of the ", length(keys), " settings is pinned or excused"))
+# ...and it is the file being read, not defaults that happen to agree.
+pinned <- intersect(keys, names(CONTRACT))
+ok(length(pinned) > 0 &&
+     all(vapply(pinned, function(k) isTRUE(all.equal(loaded[[k]], CONTRACT[[k]])),
+                logical(1))),
+   paste0("all ", length(pinned), " settings the file carries match CONTRACT"))
 # The caller passes the cohort, so config.csv must not pin one.
 ok(!any(c("INPUT_COHORT_TABLE", "OBJECT_PREFIX") %in% names(shipped)),
    "config.csv does not name a cohort")
@@ -1764,6 +1924,22 @@ ok(all(got_x == "2025q2"),
           paste(unique(got_x), collapse = " "), ")"))
 # No whitespace case: as.Date skips surrounding spaces itself, so an assertion
 # on "  2025-06-30  " passes with or without the trimws() it would be testing.
+# 03/04/2025 is 3 April day-first and 4 March month-first, and those fall in
+# different quarters - a different set of CDM tables for the whole study.
+# Nothing in the string says which was meant, so it is refused rather than
+# guessed; the unambiguous layouts above still recover.
+amb <- qs("03/04/2025")
+ok(grepl("ambiguous", amb, fixed = TRUE) && grepl("2025-04-03", amb, fixed = TRUE) &&
+     grepl("2025-03-04", amb, fixed = TRUE),
+   "an ambiguous date is refused, naming both readings")
+lni <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "load_inputs.R"), envir = lni)
+ok(inherits(tryCatch(suppressMessages(lni$.normalize_iso_date("03/04/2025", "STUDY_END")),
+                     error = function(e) e), "error"),
+   "and the config loader refuses it too, before it reaches the settings")
+ok(identical(suppressMessages(lni$.normalize_iso_date("30-06-2025", "STUDY_END")),
+             "2025-06-30"),
+   "...while an unambiguous Excel date still normalizes")
 msg <- tryCatch({ qe$get_quarter_suffix("nonsense"); "" }, error = conditionMessage)
 ok(grepl("STUDY_END", msg, fixed = TRUE) && grepl("YYYY-MM-DD", msg, fixed = TRUE),
    "a date it cannot parse stops the build, naming the setting and the format")

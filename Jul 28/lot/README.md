@@ -72,6 +72,19 @@ sit side by side in one schema. The cohort table itself goes through `wrk()`
 unprefixed, because the cohort build already named it. A run with no prefix is
 rejected rather than allowed to overwrite another one.
 
+**One run per prefix at a time.** Two cohorts at once is fine; the same prefix
+twice at once is not. No output name carries the run id, and several phases
+repoint a session view at a prefixed table they have just replaced -
+`LOT_PATIENT_INPUT`, the three SCT tables, the `LOT_LONG` stage. The second run
+replaces a table the first has already pointed a view at, and the first reads
+the second's rows from there on; both can still reach `complete` with the
+outputs mixed. `check_no_active_run()` refuses to start when another run is
+marked `started` on the prefix. It is a check and not a lock - two runs
+starting in the same instant can both pass it - so it catches starting a second
+run while one is going, which is the case worth catching. A killed process
+leaves `started` behind for ever; `LOT_IGNORE_ACTIVE_RUN=TRUE` gets past that,
+and says in the log what it is ignoring.
+
 ### What a cohort table has to provide
 
 `PATID`, `INDEX_DATE`, `ENDDATE`, `ENDDATE_CE`, `DEATH_DT`, `GDR_CD`, `YRDOB`,
@@ -140,13 +153,13 @@ Two rules worth knowing:
 - A predicate that evaluates to NULL **fails**. Unknown is not evidence the
   line qualifies.
 
-Two things the validator does not check, because `LINE_CRITERIA` is empty and a
-check for an empty list proves nothing. Whoever writes the first criterion owns
-them: `flag` must not name a column `LOT_LONG` already has - the generated SQL
-is `SELECT *, <expr> AS <flag>`, so a collision makes the column ambiguous
-rather than failing - and `lines` above `MAX_LOT` matches nothing, so the
-criterion silently passes every row. Add both to `validate_line_criteria()`
-when the first real criterion arrives.
+Two mistakes a criterion can make that do not announce themselves, both now
+refused. A `flag` naming a column `LOT_LONG` already has does not fail - the
+generated SQL is `SELECT *, <expr> AS <flag>`, so the result carries the name
+twice - so `phase_line_criteria` asks the table for its columns and stops on a
+collision. And `lines` above `MAX_LOT` matches no line, so every row passes a
+criterion that never ran; `validate_line_criteria()` takes `MAX_LOT` and
+refuses it.
 
 ## The production code lists
 
@@ -484,7 +497,13 @@ LOT1's tables are replaced before LOT2-5 starts, so a failure in between would
 leave new LOT1 output beside an older `LOT_LONG`. Every run therefore records
 what it did.
 
-`<prefix>LOT_RUN_METADATA` carries the settings and the counts. `phase_persist`
+`<prefix>LOT_RUN_METADATA` carries the counts and, in `CODE_MD5` and
+`CONTRACT_SETTINGS`, what produced them: an md5 of this folder's R sources and
+every setting `CONTRACT` pins. The ported row itself records seven of those
+settings and nothing about the code, which is not enough to say later which
+version and which contract made an old set of tables. A source hash rather than
+a git commit, because the folder is copied into Domino to run and there may be
+no repository to ask. `phase_persist`
 writes it before LOT2-5 exists, so its own counts stop at LOT1 - cohort, MMA
 claims, MAPs, LOT1 patients. `N_LOT_LONG_ROWS`, `N_LOT_LONG_PATIENTS` and
 `LOT_LONG_BY_LINE` (`1:900|2:400|3:120`) are filled in after `LOT_LONG` has
@@ -516,12 +535,13 @@ all rather than a `failed` one. Nothing has been written by then.
 Counts go into SQL through `sql_count()`. `as.character(1e6)` is `"1e+06"` - R
 uses scientific notation whenever it is shorter, which for a whole number means
 any exact power of ten from 100000 up, and both `glue` and `paste0` take that
-route. In an `UPDATE` that is a double literal going into a `BIGINT` column,
-which Spark's ANSI store assignment refuses; in `LOT_LONG_BY_LINE` it is a
-string column, so it would simply have been recorded wrong with nothing
-complaining. `08_persist.R` writes its four LOT1 counts the same way and is the
-ported source, so it is unchanged - there the failure is loud, and
-`check_run_recorded()` stops the run.
+route. In `LOT_LONG_BY_LINE`, a string column, that is recorded wrong with
+nothing complaining - the certain case, and the reason the helper exists. In a
+numeric column it arrives as a floating point literal, and whether the
+warehouse stores, truncates or refuses it depends on its store-assignment
+policy; that has not been tested here, so nothing is claimed about it. Sending
+digits removes the question. `08_persist.R`'s four LOT1 counts and its QC values go
+through it too, registered as named deviations from the source.
 
 Every write that is a DELETE of this run's rows followed by an INSERT goes
 through `db_replace()`, which retries the pair rather than each statement.

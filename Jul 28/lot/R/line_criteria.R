@@ -22,7 +22,7 @@ normalize_criterion <- function(c_i) {
 
 # A malformed criterion that quietly builds the wrong SQL is the failure worth
 # spending code on, so check every field before anything runs.
-validate_line_criteria <- function(crit = LINE_CRITERIA) {
+validate_line_criteria <- function(crit = LINE_CRITERIA, max_lot = NULL) {
   bad <- character(0)
   names_seen <- character(0); flags_seen <- character(0)
   for (i in seq_along(crit)) {
@@ -54,6 +54,13 @@ validate_line_criteria <- function(crit = LINE_CRITERIA) {
              all(ln >= 1) && all(ln == as.integer(ln))
       if (!isTRUE(okl))
         bad <- c(bad, paste0(at, ": lines must be \"*\" or whole LOT_NUM values >= 1"))
+      # A line above MAX_LOT matches nothing, so the criterion is asked of no
+      # row and every row passes it. That reads as "the criterion is satisfied"
+      # rather than "the criterion never ran".
+      if (isTRUE(okl) && !is.null(max_lot) && any(ln > max_lot))
+        bad <- c(bad, paste0(at, ": lines ", paste(ln[ln > max_lot], collapse = ", "),
+                             " are above MAX_LOT (", max_lot,
+                             "), so the criterion would match no line at all"))
     }
 
     # The switch is APPLY_<NAME> and Spark folds identifier case, so names and
@@ -105,7 +112,7 @@ line_flag_sql <- function(c_i, cfg) {
 
 # Every criterion, enabled or not, as its own column.
 line_criteria_flags_sql <- function(cfg, src, out, crit = LINE_CRITERIA) {
-  validate_line_criteria(crit)
+  validate_line_criteria(crit, cfg$max_lot)
   crit <- lapply(crit, normalize_criterion)
   if (!length(crit))
     return(glue("CREATE OR REPLACE TEMPORARY VIEW {out} AS SELECT * FROM {src}"))
@@ -117,7 +124,7 @@ line_criteria_flags_sql <- function(cfg, src, out, crit = LINE_CRITERIA) {
 # Only criteria that actually remove rows build anything. A flag-only criterion
 # is a true no-op: same rows, same columns, no window scan.
 line_criteria_final_sql <- function(cfg, src, out, crit = LINE_CRITERIA) {
-  validate_line_criteria(crit)
+  validate_line_criteria(crit, cfg$max_lot)
   on <- Filter(function(c_i) identical(c_i$on_fail, "truncate"),
                enabled_line_criteria(crit))
   if (!length(on))

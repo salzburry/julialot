@@ -75,21 +75,31 @@ lot_out <- function(tbl) {
 
 get_quarter_suffix <- function(end_date) {
   v  <- trimws(as.character(end_date))
-  # tryCatch, not just suppressWarnings: as.Date ERRORS on a string matching
-  # none of its standard formats rather than returning NA, so "06/30/2025"
-  # stopped here and never reached the recovery below - which meant two of the
-  # five layouts it lists, the US month-first ones, could not be recovered, and
-  # the message at the bottom naming STUDY_END could not be reached either.
-  dt <- tryCatch(suppressWarnings(as.Date(v)), error = function(e) NA)  # ISO first
+  # ISO first. tryCatch because as.Date errors, rather than returning NA, on a
+  # string matching none of its standard formats - which would skip the
+  # recovery below.
+  dt <- tryCatch(suppressWarnings(as.Date(v)), error = function(e) NA)
   yr <- if (!is.na(dt)) as.integer(format(dt, "%Y")) else NA_integer_
   # as.Date("30-06-2025") does NOT return NA - it yields year 0030.
   # Treat an implausible year as a parse failure and retry the common
   # non-ISO (Excel) layouts so a reformatted STUDY_END still works.
   if (is.na(dt) || is.na(yr) || yr < 1900) {
-    for (fmt in c("%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d", "%m-%d-%Y")) {
-      d2 <- tryCatch(as.Date(v, format = fmt), error = function(e) NA)
-      if (!is.na(d2) && as.integer(format(d2, "%Y")) >= 1900) { dt <- d2; break }
-    }
+    cand <- Filter(Negate(is.na), lapply(
+      c("%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d", "%m-%d-%Y"),
+      function(fmt) {
+        d2 <- tryCatch(as.Date(v, format = fmt), error = function(e) NA)
+        if (!is.na(d2) && as.integer(format(d2, "%Y")) >= 1900) d2 else NA
+      }))
+    # 03/04/2025 is 3 April day-first and 4 March month-first, and nothing in
+    # the string says which was meant. Taking the first format that parses
+    # picks one silently, and the two fall in different quarters - a different
+    # set of CDM tables for the whole study. Refuse instead.
+    if (length(unique(vapply(cand, format, character(1)))) > 1L)
+      stop("get_quarter_suffix: STUDY_END=\"", end_date, "\" is ambiguous - it ",
+           "reads as ", paste(unique(vapply(cand, format, character(1))),
+                              collapse = " or "),
+           ". Write it as YYYY-MM-DD.", call. = FALSE)
+    if (length(cand)) dt <- cand[[1]]
     yr <- if (!is.na(dt)) as.integer(format(dt, "%Y")) else NA_integer_
   }
   if (is.na(dt) || is.na(yr) || yr < 1900) {
@@ -141,31 +151,32 @@ with_retry <- function(fn, max_retries = lot_config()$max_retries,
   }
 }
 
-# The retry is around the whole call, so what it retries has to be safe to run
-# twice. One CREATE OR REPLACE or one DELETE is; an INSERT on its own is not.
+# The retry wraps the whole call, so what it retries must be safe to run twice.
+# One CREATE OR REPLACE or DELETE is; an INSERT on its own is not.
 db_exec_once <- function(con, sql) DBI::dbExecute(con, sql)
 
 db_exec <- function(con, sql) {
   with_retry(function() db_exec_once(con, sql))
 }
 
-# A count, as SQL rather than as R prints it. as.character(1e5) is "1e+05" -
-# R uses scientific notation whenever it is shorter, which for a whole number
-# means any exact power of ten from 100000 up. Interpolated into an INSERT that
-# is a DOUBLE literal going into a BIGINT column, which Spark's ANSI store
-# assignment refuses; interpolated into a string column it is simply recorded
-# wrong. Rare - the count has to land on the power of ten exactly - and glue
-# and paste0 both take the as.character route, so counts go through here.
+# A count as plain digits. as.character(1e5) is "1e+05", and glue and paste0
+# both take that route - in LOT_LONG_BY_LINE that is recorded verbatim and
+# wrong. See the README for the numeric-column case.
 sql_count <- function(x) {
   if (length(x) != 1L || is.na(x)) return("NULL")
   format(x, scientific = FALSE, trim = TRUE)
 }
 
-# Statements that only make sense together, retried together. Written as two
-# db_exec calls, a DELETE and an INSERT are retried separately: if the INSERT
-# reaches the warehouse but the answer is lost, the retry inserts a second copy
-# and the DELETE that would have cleared it has already run. Retrying the pair
-# re-runs the DELETE first, so a second attempt lands the same rows once.
+# A string as a SQL literal: quoted, quotes doubled, and NULL rather than 'NA'
+# when there is nothing to write. sql_count's counterpart for text columns.
+sql_text <- function(x) {
+  if (length(x) != 1L || is.na(x)) return("NULL")
+  paste0("'", gsub("'", "''", as.character(x), fixed = TRUE), "'")
+}
+
+# Retry a DELETE and its INSERT together, so the write stays idempotent.
+# Retried apart, an INSERT whose answer was lost is sent twice and the DELETE
+# that would have cleared the first has already run.
 db_replace <- function(con, ...) {
   sqls <- c(...)
   with_retry(function() for (s in sqls) db_exec_once(con, s))

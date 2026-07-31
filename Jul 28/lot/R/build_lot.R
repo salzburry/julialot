@@ -83,8 +83,11 @@ check_settings <- function() {
       bad <- c(bad, paste0(v, "='", x, "' (want TRUE or FALSE)"))
   }
   for (v in INT_SETTINGS) {
-    x <- Sys.getenv(v, unset = "")
-    if (nzchar(x) && is.na(suppressWarnings(as.integer(x))))
+    x <- trimws(Sys.getenv(v, unset = ""))
+    # The text, not what coercion makes of it: as.integer("60.5") is 60, not
+    # NA, so a decimal passed this and was silently truncated - the run used 60
+    # while the operator had asked for 60.5. "6e1" is the same story.
+    if (nzchar(x) && !grepl("^[0-9]+$", x))
       bad <- c(bad, paste0(v, "='", x, "' (want a whole number)"))
   }
   s <- Sys.getenv("PROJECT_WORK_SCHEMA", unset = "")
@@ -106,6 +109,14 @@ check_settings <- function() {
     bad <- c(bad, paste0("CODELIST_WAIVERS names no such check: ",
                          paste(unknown, collapse = ", "), " (choose from ",
                          paste(WAIVABLE_CHECKS, collapse = ", "), ")"))
+  # run_id reaches SQL as a string literal at fifteen sites, and every other
+  # identifier that does is checked - schema, cohort table, prefix. The platform
+  # sets this one, so it is consistency rather than defence against anybody; an
+  # apostrophe in it would fail somewhere deep instead of here.
+  r <- Sys.getenv("DOMINO_RUN_ID", unset = "")
+  if (nzchar(r) && !grepl("^[A-Za-z0-9_.-]+$", r))
+    bad <- c(bad, paste0("DOMINO_RUN_ID='", r,
+                         "' (want letters, digits, underscore, dot or dash)"))
   a <- Sys.getenv("ALLO_LOT_SPAN", unset = "")
   if (nzchar(a) && !a %in% c("single_day", "extend_to_next"))
     bad <- c(bad, paste0("ALLO_LOT_SPAN='", a,
@@ -240,6 +251,7 @@ build_lot <- function(here, cohort_table, prefix) {
   check_settings()
   cfg <- pin_output_schema(cfg_defaults)
   cfg <- pin_cohort(cfg, cohort_table, prefix)
+  cfg$code_md5 <- code_fingerprint(here)
   check_lot_contract(cfg)
   # Every helper reads the config, so publish it before anything runs.
   set_lot_config(cfg)
@@ -264,7 +276,9 @@ build_lot <- function(here, cohort_table, prefix) {
   # LOT1 is written before LOT_LONG, so track partial runs.
   # Cleared first, or a second run in one session inherits the first's.
   options(lot_waivers_applied = character(0), lot_codelist_md5 = list())
+  check_no_active_run(con, cfg)
   write_build_status(con, cfg, "started")
+  clear_run_rows(con, cfg)
   # after = FALSE, or this fires after the disconnect above and writes to a
   # closed connection. Registered here, not beside the connection, so a
   # preflight failure still leaves no status row at all.
@@ -554,6 +568,60 @@ write_build_status <- function(con, cfg, state) {
   invisible(TRUE)
 }
 
+# A re-run in the same session keeps run_id - it is fixed when config_lot.R is
+# sourced - so an earlier attempt's rows would stay under this run's id and
+# describe work this run did not do. Each writer clears its own rows, but only
+# when it is reached: a run that fails before one of them leaves the previous
+# attempt's rows looking like this one's. Cleared up front instead.
+#
+# The tables need not exist yet, and on a first run they do not, so a delete
+# that cannot find its table is not a failure. TABLE_OR_VIEW_NOT_FOUND is one
+# of with_retry's permanent errors, so this does not sit through four attempts.
+RUN_SCOPED_TABLES <- c("LOT_RUN_METADATA", "LOT_QC_SUMMARY",
+                       "LOT_CODELIST_METADATA")
+
+clear_run_rows <- function(con, cfg) {
+  for (t in RUN_SCOPED_TABLES)
+    try(db_exec(con, glue("DELETE FROM {lot_out(t)} WHERE RUN_ID = '{run_id}'")),
+        silent = TRUE)
+  invisible(TRUE)
+}
+
+# Output names are work schema + prefix + table, with no run id in them, and
+# several phases repoint a session view at a shared prefixed table they have
+# just replaced - LOT_PATIENT_INPUT, the three SCT tables, the LOT_LONG stage.
+# Two runs on one prefix therefore interleave: the second replaces a table the
+# first has already pointed a view at, and the first reads the second's rows
+# from there on. Both can still reach "complete", with the outputs mixed.
+#
+# Different prefixes are safe, and that is how two cohorts are meant to run at
+# once. This refuses the same-prefix case.
+#
+# A check, not a lock: two runs starting at the same moment can both pass it,
+# because there is nothing here that could hold a lock. It catches the case
+# worth catching - starting a second run while one is going - and says so.
+check_no_active_run <- function(con, cfg) {
+  d <- tryCatch(db_q(con, glue("
+    SELECT RUN_ID, UPDATED_AT FROM {lot_out('LOT_BUILD_STATUS')}
+    WHERE OBJECT_PREFIX = '{cfg$object_prefix}' AND STATE = 'started'
+      AND RUN_ID <> '{run_id}'")), error = function(e) NULL)
+  # No table yet on a first run, and nothing to collide with.
+  if (is.null(d) || !nrow(d)) return(invisible(TRUE))
+  who <- paste(d$RUN_ID, collapse = ", ")
+  if (identical(toupper(Sys.getenv("LOT_IGNORE_ACTIVE_RUN", unset = "")), "TRUE")) {
+    log_msg("WARNING: run(s) ", who, " are marked started on prefix ",
+            cfg$object_prefix, " and LOT_IGNORE_ACTIVE_RUN is set. If they are ",
+            "still running, both sets of outputs will be wrong.")
+    return(invisible(TRUE))
+  }
+  stop("Run(s) ", who, " are already building prefix ", cfg$object_prefix,
+       ". Every output name is the prefix plus the table, so two runs would ",
+       "replace each other's tables while the other is reading them, and both ",
+       "could still finish. Use a different prefix, or wait. If those runs are ",
+       "not actually running - a killed process leaves 'started' behind - set ",
+       "LOT_IGNORE_ACTIVE_RUN=TRUE.", call. = FALSE)
+}
+
 # The QC phase reports these and carries on - it prints "** BUG **" and the run
 # still finishes. They are not judgement calls: each one is impossible unless
 # something upstream is wrong, so re-run them here where a breach stops the
@@ -671,9 +739,10 @@ check_run_recorded <- function(con, cfg) {
 
 # Which version of each code list built these tables. The run log says so too,
 # but a log is a separate artefact - filed away from the tables, or lost. One
-# row per file per run, written as soon as the lists are read so a run that
-# fails later still records what it was reading. RECORDED_AT is the warehouse
-# clock at the insert, seconds after the read.
+# row per file per run, written once the lists have passed their checks and
+# before any claim is read - so a run that fails later still records what it
+# was reading, and one that fails inside those checks records nothing.
+# RECORDED_AT is the warehouse clock at the insert.
 CODELIST_METADATA_COLS <- c(RUN_ID = "STRING", CODELIST_FILE = "STRING",
                             MD5 = "STRING", N_ROWS = "BIGINT",
                             RECORDED_AT = "TIMESTAMP")
@@ -727,11 +796,42 @@ record_codelist_hashes <- function(con, cfg) {
 # recorded what the run actually produced. The totals come from check_lot_long,
 # which has just counted them and passed - so they describe a table already
 # found usable, and are not scanned for twice.
+# What produced these tables, beyond the counts. LOT_RUN_METADATA is the ported
+# source's and records seven of the twenty-one settings CONTRACT pins, and
+# nothing about the code - so an old run's outputs could not say which version
+# or which full contract made them. Two columns rather than one per setting:
+# CODE_MD5 fingerprints the R that ran, and CONTRACT_SETTINGS carries the lot.
+#
+# A hash of the sources rather than a git sha: this folder is copied into
+# Domino to run, where there may be no repository to ask, and the hash
+# describes the code that actually executed either way.
+code_fingerprint <- function(here) {
+  # radix, not the default: character sort is collation-sensitive, and a hash
+  # meant to say "the same code" must not depend on the machine's locale.
+  fs <- sort(c(list.files(file.path(here, "R"), "\\.R$", full.names = TRUE,
+                          recursive = TRUE),
+               file.path(here, "build.R")), method = "radix")
+  fs <- fs[file.exists(fs)]
+  if (!length(fs)) return(NA_character_)
+  tmp <- tempfile(); on.exit(unlink(tmp), add = TRUE)
+  writeLines(unlist(lapply(fs, readLines, warn = FALSE)), tmp)
+  unname(tools::md5sum(tmp))
+}
+
+# Sorted, so two runs with the same settings produce the same string and it can
+# be compared as one value.
+contract_settings <- function() {
+  k <- sort(names(CONTRACT), method = "radix")
+  paste(paste0(k, "=", vapply(CONTRACT[k], function(v) as.character(v)[1],
+                              character(1))), collapse = "|")
+}
+
 FINAL_METADATA_COLS <- c(N_LOT_LONG_ROWS = "BIGINT",
                          N_LOT_LONG_PATIENTS = "BIGINT",
                          LOT_LONG_BY_LINE = "STRING",
                          N_LOT_FINAL_ROWS = "BIGINT",
-                         N_LOT_FINAL_PATIENTS = "BIGINT")
+                         N_LOT_FINAL_PATIENTS = "BIGINT",
+                         CODE_MD5 = "STRING", CONTRACT_SETTINGS = "STRING")
 
 record_final_counts <- function(con, cfg, counts, final) {
   tbl <- lot_out("LOT_RUN_METADATA")
@@ -764,7 +864,9 @@ record_final_counts <- function(con, cfg, counts, final) {
            N_LOT_LONG_PATIENTS = {sql_count(counts$n_patients)},
            LOT_LONG_BY_LINE = '{dist}',
            N_LOT_FINAL_ROWS = {sql_count(final$n_rows)},
-           N_LOT_FINAL_PATIENTS = {sql_count(final$n_patients)}
+           N_LOT_FINAL_PATIENTS = {sql_count(final$n_patients)},
+           CODE_MD5 = {sql_text(cfg$code_md5)},
+           CONTRACT_SETTINGS = {sql_text(contract_settings())}
      WHERE RUN_ID = '{run_id}'"))
   log_msg("Recorded LOT_LONG: ", counts$n_rows, " lines for ",
           counts$n_patients, " patients (", dist, "); LOT_LONG_FINAL: ",
@@ -861,6 +963,21 @@ check_lot_final <- function(con, cfg) {
 # The criteria layer, on top of LOT_LONG. With no criteria declared both
 # tables are copies, so downstream can always read them.
 phase_line_criteria <- function(con, cfg) {
+  # A flag naming a column LOT_LONG already has does not fail: the generated
+  # SQL is SELECT *, <expr> AS <flag>, so the result carries the name twice and
+  # which one a later reference means is Spark's choice. Asked of the table
+  # rather than assumed, because what LOT_LONG carries depends on the code list.
+  crit <- lapply(LINE_CRITERIA, normalize_criterion)
+  if (length(crit)) {
+    have  <- toupper(trimws(as.character(db_q(con, "DESCRIBE lot_long")[[1]])))
+    clash <- Filter(function(c_i) toupper(c_i$flag) %in% have, crit)
+    if (length(clash))
+      stop("Line criteria whose flag is already a LOT_LONG column: ",
+           paste(vapply(clash, function(c_i) paste0(c_i$name, " -> ", c_i$flag),
+                        character(1)), collapse = ", "),
+           ". Rename the flag; the column would otherwise appear twice.",
+           call. = FALSE)
+  }
   run_step(con, "L40_lot_long_allflags",
            line_criteria_flags_sql(cfg, "lot_long", "lot_long_allflags"))
   run_step(con, "L41_lot_long_final",
