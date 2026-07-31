@@ -35,7 +35,7 @@ cfg_defaults <- list(
   belantamab_abbr   = Sys.getenv("NDMM_BELANTAMAB_ABBR", unset = "BEL%"),
 
   use_quarterly_tables = as.logical(Sys.getenv("USE_QUARTERLY_TABLES", unset = "TRUE")),
-  study_end            = Sys.getenv("STUDY_END", unset = "2025-06-30"),
+  study_end            = Sys.getenv("STUDY_END", unset = "2026-03-31"),
 
   # The 1L eligible-treatment period opens here (protocol S6.2.1.1).
   lot1_from     = Sys.getenv("LOT1_FROM", unset = "2017-01-01"),
@@ -49,7 +49,7 @@ cfg_defaults <- list(
   gap_days      = as.integer(Sys.getenv("GAP_DAYS", unset = "30")),
   # The pregnancy exclusion scans [study_start, study_end]. Same environment
   # variable nndm_constants.R reads for NDMM_STUDY_START.
-  study_start   = Sys.getenv("STUDY_START", unset = "2015-07-01"),
+  study_start   = Sys.getenv("STUDY_START", unset = "2016-01-01"),
 
   codelist_dir = Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist"),
   output_dir   = Sys.getenv("OUTPUT_DIR", unset = "/mnt/artifacts/results"),

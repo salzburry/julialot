@@ -13,6 +13,12 @@ ROOT <- local({
 })
 source(file.path(ROOT, "tests", "testutil.R"))
 
+# config.csv the way the build applies it, so the constants and cfg_defaults
+# below see the same settings a real run does. Both read the environment when
+# they are sourced.
+sys.source(file.path(ROOT, "R", "load_inputs.R"), envir = globalenv())
+load_pipeline_inputs(ROOT, "config.csv")
+
 env <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = env)
 for (f in ls(env)) assign(f, get(f, envir = env), envir = globalenv())
@@ -517,7 +523,8 @@ ok(length(gregexpr(">= b.MM_DX_DT", x, fixed = TRUE)[[1]]) == 4L,
    "every one of them requires the treatment to be on or after the diagnosis")
 ok(length(gregexpr(paste0(">= date('", se$NDMM_LOT1_FROM, "')"), x, fixed = TRUE)[[1]]) == 4L,
    "...and on or after the eligible-treatment cutoff")
-ok(length(gregexpr("<= date('2025-06-30')", x, fixed = TRUE)[[1]]) == 4L,
+ok(length(gregexpr(paste0("<= date('", cfg_defaults$study_end, "')"), x,
+                   fixed = TRUE)[[1]]) == 4L,
    "...and inside the study period")
 ok(length(gregexpr("WHERE bl.code IS NULL", x, fixed = TRUE)[[1]]) == 4L,
    "belantamab cannot set the index - S6.2.1.1 says the 1L treatment is other than it")
@@ -587,10 +594,13 @@ ok(grepl("year(i.INDEX_DATE) - d.YRDOB", csql, fixed = TRUE),
 ok(grepl("date_add(i.INDEX_DATE, 1)", csql, fixed = TRUE) &&
      length(gregexpr("date_add(i.INDEX_DATE, 1)", csql, fixed = TRUE)[[1]]) == 2L,
    "and both follow-up lengths run from it")
+ok(grepl("b.DEATH_DT < i.INDEX_DATE", csql, fixed = TRUE) &&
+     grepl("THEN i.INDEX_DATE ELSE b.DEATH_DT", csql, fixed = TRUE),
+   "an imputed death between the diagnosis and the 1L index is re-clamped at the index")
 ok(grepl("s.cov_start <= i.INDEX_DATE", csql, fixed = TRUE) &&
      grepl("s.cov_end   >= i.INDEX_DATE", csql, fixed = TRUE),
    "the CE end is the span covering the 1L index, so it moves with the anchor too")
-ok(grepl("GDR_CD, YRDOB, DEATH_DT", csql, fixed = TRUE) &&
+ok(grepl("GDR_CD, YRDOB", csql, fixed = TRUE) &&
      grepl("_ndmm_base_cohort", csql, fixed = TRUE),
    "only the demographics are carried across - they do not depend on an anchor")
 
@@ -600,10 +610,11 @@ sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = ce2)
 assign("log_msg", function(...) invisible(NULL), envir = ce2)
 assign("wrk", function(x) paste0("wk.p_", x), envir = ce2)
 drive_chk <- function(cols = NDMM_COHORT_COLS, pat = 10L, rows = pat, noidx = 0L,
-                      expect = pat) {
+                      expect = pat, backwards = 0L, nofu = 0L) {
   assign("db_q", function(con, sql) {
     if (grepl("DESCRIBE", sql, fixed = TRUE)) data.frame(col_name = cols)
-    else data.frame(n_rows = rows, n_pat = pat, n_noidx = noidx)
+    else data.frame(n_rows = rows, n_pat = pat, n_noidx = noidx,
+                    n_backwards = backwards, n_nofu = nofu)
   }, envir = ce2)
   tryCatch({ ce2$check_ndmm_cohort(NULL, list(), expect); "" }, error = conditionMessage)
 }
@@ -618,6 +629,12 @@ ok(grepl("fans out", m, fixed = TRUE),
 m <- drive_chk(noidx = 3L)
 ok(grepl("no INDEX_DATE", m, fixed = TRUE),
    "so does a row with no index date, which is the day every window runs from")
+m <- drive_chk(backwards = 2L)
+ok(grepl("end before they begin", m, fixed = TRUE),
+   "a cohort row whose follow-up ends before the index stops the build")
+m <- drive_chk(nofu = 4L)
+ok(grepl("no follow-up at all", m, fixed = TRUE),
+   "...and so does one with no follow-up window for a LOT run to measure")
 m <- drive_chk(pat = 9L, expect = 10L)  # rows follows pat, so this is not a fan-out
 ok(grepl("attrition ends at", m, fixed = TRUE),
    "and a cohort that disagrees with its own funnel is not published")
@@ -679,7 +696,7 @@ ne <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = ne)
 assign("log_msg", function(...) invisible(NULL), envir = ne)
 assign("cdm_src", function(x) paste0("cdm.t_", x), envir = ne)
-assign("NDMM_LOT1_STARTS", "_l1", envir = ne)
+assign("NDMM_BASE_COHORT", "_ndmm_base_cohort", envir = ne)
 assign("NDMM_MMA_CODELIST", "_cl", envir = ne)
 assign("NDMM_PRE_LOT1_DAYS", 365L, envir = ne)
 row <- function(src, n = 10L, n11 = 10L, n10 = 0L, oth = 0L, alpha = 0L,
@@ -706,9 +723,9 @@ ok(length(NSQL) == 3L &&
      any(grepl("cdm.t_rx", NSQL, fixed = TRUE)) &&
      any(grepl("_cl", NSQL, fixed = TRUE)),
    "both claim sources and the code list are profiled, not just the claims")
-ok(any(grepl("_l1", NSQL, fixed = TRUE)) &&
-     any(grepl("date_sub(l1.LOT1_START_DT, 365)", NSQL, fixed = TRUE)),
-   "scoped to the candidates and the baseline window the scan reads")
+ok(any(grepl("_ndmm_base_cohort", NSQL, fixed = TRUE)) &&
+     any(grepl("date_sub(b.MM_DX_DT, 365)", NSQL, fixed = TRUE)),
+   "scoped to the base cohort and a window covering every NDC scan that follows")
 ok(all(grepl("trim(cast(t.NDC as string)) <> ''", NSQL[1:2], fixed = TRUE)),
    "and every non-blank value is counted, including ones that cannot join")
 m <- drive_ndc(rx = row("rx", n10 = 3L, n11 = 7L))
@@ -795,6 +812,64 @@ if (length(alt)) {
       "exercised\n", sep = "")
 }
 
+cat("\n-- nothing is read before the step that builds it --\n")
+# check_ndc_shape() joined NDMM_LOT1_STARTS and was called before the step that
+# creates it. Nothing caught that: the phase list pins a handful of pairs by
+# hand, and this was not one of them. So derive it - for every view any called
+# function reads, the function that creates it has to be called earlier.
+view_consts <- Filter(function(k) {
+  v <- get(k, envir = consts0, inherits = FALSE)
+  is.character(v) && length(v) == 1L && grepl("^_", v)
+}, ls(consts0))
+fn_bodies <- local({
+  out <- list()
+  for (f in c(step_files, file.path(ROOT, "R", "build_nndm.R"))) {
+    ln <- readLines(f, warn = FALSE)
+    starts <- grep("^([A-Za-z_.][A-Za-z0-9_.]*) <- function", ln)
+    for (i in starts) {
+      nm <- sub(" <- function.*", "", ln[i])
+      e  <- grep("^}", ln); e <- e[e > i]
+      if (length(e)) out[[nm]] <- ln[i:e[1]]
+    }
+  }
+  out
+})
+view_names <- setNames(vapply(view_consts, function(k)
+  get(k, envir = consts0, inherits = FALSE), character(1)), view_consts)
+pos <- function(fn) {
+  m <- regexpr(paste0("(?<![A-Za-z0-9_.])", fn, "\\("), body, perl = TRUE)
+  if (m == -1) NA_integer_ else as.integer(m)
+}
+creates <- list(); readers <- list()
+for (nm in names(fn_bodies)) {
+  txt <- paste(fn_bodies[[nm]], collapse = "\n")
+  for (k in view_consts) {
+    tok <- paste0("{", k, "}")
+    if (regexpr(tok, txt, fixed = TRUE) == -1) next
+    if (regexpr(paste0("VIEW ", tok), txt, fixed = TRUE) > 0) creates[[k]] <- nm
+    else readers[[k]] <- unique(c(readers[[k]], nm))
+  }
+}
+too_early <- character(0)
+for (k in names(readers)) {
+  cr <- creates[[k]]
+  if (is.null(cr)) next
+  pc <- pos(cr)
+  if (is.na(pc)) next
+  for (rd in readers[[k]]) {
+    pr <- pos(rd)
+    if (!is.na(pr) && pr < pc)
+      too_early <- c(too_early, paste0(rd, "() reads ", k, " before ", cr,
+                                       "() builds it"))
+  }
+}
+ok(length(creates) > 0,
+   paste0("the runner's calls resolve to ", length(creates), " views with a builder"))
+ok(length(too_early) == 0,
+   if (length(too_early)) paste0("read before it exists -- ",
+                                 paste(too_early, collapse = "; "))
+   else "every view a called step reads is built by an earlier call")
+
 cat("\n-- a view read twice is a query run twice --\n")
 # Spark re-runs a temporary view on every read. These views sit on top of each
 # other, so a second read of NDMM_LOT1_STARTS is a second run of the whole
@@ -804,10 +879,6 @@ cat("\n-- a view read twice is a query run twice --\n")
 sql_txt <- paste(c(unlist(lapply(step_files, readLines, warn = FALSE)),
                    readLines(file.path(ROOT, "R", "build_nndm.R"), warn = FALSE)),
                  collapse = "\n")
-view_consts <- Filter(function(k) {
-  v <- get(k, envir = consts0, inherits = FALSE)
-  is.character(v) && length(v) == 1L && grepl("^_", v)
-}, ls(consts0))
 reads <- vapply(view_consts, function(k) {
   n  <- length(gregexpr(paste0("{", k, "}"), sql_txt, fixed = TRUE)[[1]])
   n  <- if (regexpr(paste0("{", k, "}"), sql_txt, fixed = TRUE) == -1) 0L else n

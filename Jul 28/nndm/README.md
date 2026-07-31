@@ -43,6 +43,13 @@ built it.
   below.
 - **Belantamab** is read off `cl_mma_codelist.csv` rather than `MAP_STACKED`.
 
+### The study period
+
+**01 Jan 2016 through 31 Mar 2026**, from protocol §6.1 ("the study period is
+defined as 01 Jan 2016 through 31 Mar 2026"). It sets the pregnancy window, the
+MM-diagnosis window, and — through `USE_QUARTERLY_TABLES` — which cumulative
+Optum tables are read (`2026q1`).
+
 ### Nothing is left as a temporary view that is read twice
 
 A temporary view is a query, not a result — Spark re-runs it on every read. The
@@ -123,7 +130,7 @@ port.
 | 5 | **Follow-up CE** | a **no-gap** span covering `[index, index + FU_CE_DAYS]`, where `FU_CE_DAYS = 0` — **one day: the index date itself** | `06_flags.R` |
 | 6 | **No MM oncology therapy in the 12-month baseline** | no medical or pharmacy claim for an MM therapy in `[index − 365, index − 1]`, scanned from raw `medical` and `rx` against `cl_mma_codelist.csv`. **Steroids are excluded from this scan** (`DEX`, `DEXA`, `DEXAMETHASONE`, `PRED`, `PREDNISONE`) — a steroid claim alone does not make a patient previously treated. | `03_prior_therapy.R` |
 | 7 | **No other cancer in the 12-month baseline** | excluded on **≥1 inpatient** claim, **or ≥2 outpatient** claims **within 30 days of each other**, for the same tumour group — **both claims inside** `[index − 365, index − 1]`. Inpatient is established from the confinement table and the claim header, not from a place-of-service code. | `04_other_malig.R` |
-| 8 | **No pregnancy** | excluded on ≥1 medical claim with a diagnosis, procedure or revenue code indicating pregnancy or childbirth, anywhere in `[STUDY_START, STUDY_END]` — the **study period**, not the baseline | `05_pregnancy.R` |
+| 8 | **No pregnancy** | excluded on ≥1 medical claim with a diagnosis, procedure or revenue code indicating pregnancy or childbirth, anywhere in `[2016-01-01, 2026-03-31]` — the **study period**, not the baseline | `05_pregnancy.R` |
 | 9 | **No belantamab in any LOT** | any claim for a belantamab code from `cl_mma_codelist.csv`, in `medical` or `rx`, at any time and in any line — **no date bound**; see the attrition note below | `00b_lot1_index.R`, `06_flags.R` |
 
 **Not applied: clinical-trial participation.** The attrition spreadsheet in

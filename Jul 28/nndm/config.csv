@@ -3,8 +3,8 @@ DATABRICKS_DSN,RWDE,ODBC DSN
 DATABRICKS_CATALOG,hive_metastore,Catalog for all reads and writes
 OPTUM_CDM_SCHEMA,clnprw_optum,Optum CDM schema
 USE_QUARTERLY_TABLES,TRUE,Read the cumulative quarterly CDM tables
-STUDY_START,2015-07-01,Study period start; the pregnancy scan runs from here
-STUDY_END,2025-06-30,Study period end; picks the quarterly table suffix
+STUDY_START,2016-01-01,Study period start (protocol S6.1)
+STUDY_END,2026-03-31,Study period end (protocol S6.1); picks the quarterly table suffix
 LOT1_FROM,2017-01-01,1L eligible-treatment period opens here
 PRE_LOT1_DAYS,365,CE and baseline window before the 1L index date
 FU_CE_DAYS,0,Days after index the follow-up CE must cover; 0 is one day

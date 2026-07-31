@@ -17,7 +17,7 @@ CONTRACT <- list(
   cdm_schema           = "clnprw_optum",
   codelist_dir         = "/mnt/code/codelist",
   use_quarterly_tables = TRUE,
-  study_end            = "2025-06-30",
+  study_end            = "2026-03-31",
   # The 1L eligible-treatment period opens here (protocol S6.2.1.1).
   lot1_from            = "2017-01-01",
   # 12 months of CE and of baseline before the 1L index date.
@@ -30,7 +30,7 @@ CONTRACT <- list(
   # The pregnancy scan runs over [study_start, study_end], so this moves who is
   # excluded. It reaches the SQL through NDMM_STUDY_START, which reads the same
   # environment variable.
-  study_start          = "2015-07-01",
+  study_start          = "2016-01-01",
   # Two outpatient MM claims within this many days confirm a diagnosis, and
   # this is the age the diagnosis year is measured against. Both are S6.2.1.1.
   outpatient_window    = 90L,
@@ -325,8 +325,15 @@ check_attrition_monotonic <- function(counts) {
 # that happen, so profile the values first and say what is there.
 #
 # Both sides, because the join pads both: a ten-digit code list has the same
-# problem as a ten-digit claim. Scoped to the NDMM candidates and the baseline
-# window the scan actually reads, not the whole of medical.
+# problem as a ten-digit claim.
+#
+# Scoped to the base cohort rather than to the 1L starts. The starts do not
+# exist yet - the scan that builds them matches NDCs itself, so the profile has
+# to come first, and reading NDMM_LOT1_STARTS here made the build stop with a
+# missing view. The window runs from a year before each patient's diagnosis to
+# the end of the study, which covers both the index scan and the baseline scan:
+# the index is on or after the diagnosis, so the baseline never starts earlier
+# than a year before it.
 check_ndc_shape <- function(con, cfg) {
   log_msg("Checking NDC shape...")
   # Every non-blank value, including ones that cannot join. A profile that
@@ -348,12 +355,12 @@ check_ndc_shape <- function(con, cfg) {
         FROM (
           SELECT cast(t.NDC as string) AS v
           FROM {tbl} t
-          INNER JOIN {NDMM_LOT1_STARTS} l1 ON cast(t.PATID as string) = l1.PATID
+          INNER JOIN {NDMM_BASE_COHORT} b ON cast(t.PATID as string) = b.PATID
           WHERE cast(t.NDC as string) IS NOT NULL
             AND trim(cast(t.NDC as string)) <> ''
             AND cast(t.{dt} AS date)
-                  BETWEEN date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS})
-                      AND date_sub(l1.LOT1_START_DT, 1))))")
+                  BETWEEN date_sub(b.MM_DX_DT, {NDMM_PRE_LOT1_DAYS})
+                      AND date('{cfg$study_end}'))))")
   codelist_sql <- glue("
     SELECT 'codelist' AS SOURCE, {shape_cols}
     FROM (
@@ -516,25 +523,38 @@ build_ndmm_cohort_table <- function(con, cfg) {
       GROUP BY i.PATID
     ),
     dem AS (
-      SELECT cast(PATID as string) AS PATID, GDR_CD, YRDOB, DEATH_DT
+      SELECT cast(PATID as string) AS PATID, GDR_CD, YRDOB
       FROM {NDMM_BASE_COHORT}
+    ),
+    -- The death date was imputed against the MM diagnosis, and the cohort is
+    -- anchored at the 1L start, which is later. A month-only or year-only
+    -- death that lands between the two would give an ENDDATE before the index
+    -- and a negative FU_DAYS. Re-clamp at the anchor that is actually used -
+    -- the same rule the parent applies, applied to the right date.
+    dth AS (
+      SELECT b.PATID,
+             CASE WHEN b.DEATH_DT IS NOT NULL AND b.DEATH_DT < i.INDEX_DATE
+                  THEN i.INDEX_DATE ELSE b.DEATH_DT END AS DEATH_DT
+      FROM idx i
+      INNER JOIN {NDMM_BASE_COHORT} b ON b.PATID = i.PATID
     )
     SELECT i.PATID,
            i.INDEX_DATE,
-           least({se}, coalesce(d.DEATH_DT, {se}))                    AS ENDDATE,
-           least({se}, coalesce(d.DEATH_DT, {se}),
+           least({se}, coalesce(dd.DEATH_DT, {se}))                   AS ENDDATE,
+           least({se}, coalesce(dd.DEATH_DT, {se}),
                  coalesce(ce.ENDDATE_CE, {se}))                       AS ENDDATE_CE,
-           d.DEATH_DT,
+           dd.DEATH_DT,
            d.GDR_CD,
            d.YRDOB,
            (year(i.INDEX_DATE) - d.YRDOB)                             AS AGE_INDEX_YR,
-           datediff(least({se}, coalesce(d.DEATH_DT, {se})),
+           datediff(least({se}, coalesce(dd.DEATH_DT, {se})),
                     date_add(i.INDEX_DATE, 1)) + 1                    AS FU_DAYS,
-           datediff(least({se}, coalesce(d.DEATH_DT, {se}),
+           datediff(least({se}, coalesce(dd.DEATH_DT, {se}),
                           coalesce(ce.ENDDATE_CE, {se})),
                     date_add(i.INDEX_DATE, 1)) + 1                    AS FU_DAYS_CE
     FROM idx i
     LEFT JOIN dem d  ON d.PATID  = i.PATID
+    LEFT JOIN dth dd ON dd.PATID = i.PATID
     LEFT JOIN ce     ON ce.PATID = i.PATID"),
     qc = glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients ",
               "FROM {wrk('NDMM_COHORT')}"))
@@ -558,7 +578,9 @@ check_ndmm_cohort <- function(con, cfg, n_expected) {
          "that build reads these columns off whatever cohort it is given.",
          call. = FALSE)
   q <- db_q(con, glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_pat, ",
-                      "sum(CASE WHEN INDEX_DATE IS NULL THEN 1 ELSE 0 END) AS n_noidx ",
+                      "sum(CASE WHEN INDEX_DATE IS NULL THEN 1 ELSE 0 END) AS n_noidx, ",
+                      "sum(CASE WHEN ENDDATE < INDEX_DATE THEN 1 ELSE 0 END) AS n_backwards, ",
+                      "sum(CASE WHEN FU_DAYS < 1 THEN 1 ELSE 0 END) AS n_nofu ",
                       "FROM {tbl}"))
   if (q$n_rows != q$n_pat)
     stop(tbl, " has ", q$n_rows, " rows for ", q$n_pat, " patients. A cohort ",
@@ -566,6 +588,20 @@ check_ndmm_cohort <- function(con, cfg, n_expected) {
   if (isTRUE(q$n_noidx > 0))
     stop(q$n_noidx, " rows in ", tbl, " have no INDEX_DATE. It is the 1L start, ",
          "and every window a LOT build measures runs from it.", call. = FALSE)
+  # Death dates are imputed - a month-only date becomes the 15th, a year-only
+  # one July 15 - and the cohort is anchored at the 1L start, which is later
+  # than the diagnosis they were imputed against. A death that lands between
+  # the two would end follow-up before it began.
+  if (isTRUE(q$n_backwards > 0))
+    stop(q$n_backwards, " rows in ", tbl, " end before they begin: ENDDATE is ",
+         "earlier than INDEX_DATE. Death is imputed against the diagnosis and ",
+         "the index is the 1L start, so a partial death date between the two ",
+         "does this. build_ndmm_cohort_table() re-clamps it at the index; if ",
+         "this fires, that clamp is not working.", call. = FALSE)
+  if (isTRUE(q$n_nofu > 0))
+    stop(q$n_nofu, " rows in ", tbl, " have no follow-up at all (FU_DAYS < 1). ",
+         "A LOT run over this cohort would measure lines in a window that does ",
+         "not exist.", call. = FALSE)
   if (!is.na(n_expected) && q$n_pat != n_expected)
     stop(tbl, " holds ", q$n_pat, " patients but the attrition ends at ",
          n_expected, ". The cohort and the funnel that reaches it must agree.",
