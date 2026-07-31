@@ -15,7 +15,18 @@ build_ndmm_other_malig_codes <- function(con) {
       upper(tumor_group) AS tumor_group,
       CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
       upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', '')) AS dx,
-      CASE WHEN upper(trim(tumor_group)) IN ({ovr_in}) THEN 1 ELSE 0 END AS is_mm_adjacent_override
+      -- The criterion is another cancer, meaning other than the index MM, and
+      -- this code list is the study's generic one: it carries MM's own codes.
+      -- Anything on the diagnosis code list is the index disease by
+      -- definition - the same file decides who is an MM patient - so it cannot
+      -- also make them an other-cancer patient, whatever its wording says
+      -- about remission or relapse. The label list covers what is adjacent to
+      -- MM without being on it.
+      CASE WHEN upper(trim(tumor_group)) IN ({ovr_in})
+                 OR EXISTS (SELECT 1 FROM {NDMM_MM_DX_CODES} m
+                            WHERE m.dx = upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', ''))
+                              AND m.icd_family = CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END)
+                THEN 1 ELSE 0 END AS is_mm_adjacent_override
     FROM {src}
     WHERE dx IS NOT NULL AND tumor_group IS NOT NULL
       -- And non-blank once normalised: '---' would otherwise match every

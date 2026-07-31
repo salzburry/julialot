@@ -543,6 +543,23 @@ cat("\n-- a plasma-cell disorder in remission is not another cancer --\n")
 # having achieved remission", and apr_30_2026 left the "in remission" variants
 # excluding - so an identical patient was kept or dropped depending on whether
 # their plasma cell leukemia was in remission.
+# The protocol says nothing about remission. It says "another cancer" - other
+# than the index MM - and other_malig.csv is the study's generic code list, so
+# it carries MM's own codes. The override is what makes the criterion mean what
+# it says, and the surest form of it is derived: anything on the diagnosis code
+# list is the index disease by definition, because that same file decides who
+# is an MM patient.
+oc0 <- paste(readLines(file.path(ROOT, "R", "steps", "04_other_malig.R"), warn = FALSE),
+             collapse = "\n")
+ok(grepl("EXISTS (SELECT 1 FROM {NDMM_MM_DX_CODES} m", oc0, fixed = TRUE),
+   "a code on the MM diagnosis list is never also another cancer")
+ok(grepl("m.dx = upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', ''))", oc0, fixed = TRUE) &&
+     grepl("m.icd_family = CASE WHEN upper(icd_family)", oc0, fixed = TRUE),
+   "...matched on code and family the same way the diagnosis scan matches them")
+ok(regexpr("VIEW {NDMM_MM_DX_CODES}", bl_steps <- paste(unlist(lapply(step_files, readLines,
+             warn = FALSE)), collapse = "\n"), fixed = TRUE) > 0,
+   "and that list is built by this package, not assumed to exist")
+
 ok(identical(cfg_defaults$mm_adjacent_states, "override"),
    "by default remission variants are overridden too, like their counterparts")
 ok(all(grepl("IN REMISSION|IN RELAPSE", se$NDMM_MM_ADJACENT_STATE_LABELS)),
@@ -1126,7 +1143,8 @@ ok(grepl("write refused",
 # Every checkpoint is taken, and after the step that builds the view it names -
 # checkpointing first would write an empty table and repoint the view at it,
 # and the step would then rebuild the view and undo the whole thing.
-builds <- list(NDMM_MM_DX_EVENTS = "build_ndmm_mm_dx_events",
+builds <- list(NDMM_MM_DX_CODES = "build_ndmm_mm_dx_codes",
+               NDMM_MM_DX_EVENTS = "build_ndmm_mm_dx_events",
                NDMM_MM_QUALIFYING = "build_ndmm_mm_qualifying",
                NDMM_BASE_COHORT = "build_ndmm_base_cohort",
                NDMM_ENROLL_SPANS = "build_enrollment_spans_ndmm",

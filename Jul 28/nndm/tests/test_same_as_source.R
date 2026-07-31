@@ -59,6 +59,9 @@ SUBST <- list(
   "R/steps/04_other_malig.R" = list(
     list(from = "ovr_in <- paste(sprintf(\"'%s'\", gsub(\"'\", \"''\", ndmm_mm_adjacent_groups())),",
          to   = "ovr_in <- paste(sprintf(\"'%s'\", gsub(\"'\", \"''\", NDMM_MM_ADJACENT_OVERRIDE)),",
+         n = 1L),
+    list(from = "CASE WHEN upper(trim(tumor_group)) IN ({ovr_in})",
+         to   = "CASE WHEN upper(trim(tumor_group)) IN ({ovr_in}) THEN 1 ELSE 0 END AS is_mm_adjacent_override",
          n = 1L)),
   "R/steps/06_flags.R" = list(
     list(from = "AND s.cov_end   >= least(date_add(ec_l1.LOT1_START_DT, {NDMM_FU_CE_DAYS}),",
@@ -101,6 +104,15 @@ ADDED <- list(
     "req    <- gsub(\"'\", \"''\", NDMM_MM_ADJACENT_OVERRIDE)" = 1L,
     "req_in <- paste(sprintf(\"'%s'\", req), collapse = \", \")" = 1L,
     "AND upper(trim(tumor_group)) IN ({req_in})" = 1L,
+    # The other-cancer code list is the study's generic one and carries MM's
+    # own codes. Anything on the diagnosis code list is the index disease by
+    # definition, so it cannot also be another cancer - derived from that file
+    # rather than from a list of labels, which is what let the plasma-cell
+    # triples be split by wording.
+    "OR EXISTS (SELECT 1 FROM {NDMM_MM_DX_CODES} m" = 1L,
+    "WHERE m.dx = upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', ''))" = 1L,
+    "AND m.icd_family = CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END)" = 1L,
+    "THEN 1 ELSE 0 END AS is_mm_adjacent_override" = 1L,
     # The third clinical change. The other-cancer rule is >=1 inpatient claim
     # or >=2 outpatient claims within 30 days of each other, in the 12-month
     # 1L baseline. The source bounded only the first of the outpatient pair, so

@@ -75,7 +75,7 @@ upstream_tables <- function(cfg) list()
 # NDMM_PATIDS is defined over it in the same function and Spark inlines a temp
 # view's plan: repointing after NDMM_PATIDS exists would leave that view on the
 # old query. It is a deliverable as well as a checkpoint.
-CHECKPOINTS <- c("NDMM_FLAGS_ALL",
+CHECKPOINTS <- c("NDMM_FLAGS_ALL", "NDMM_MM_DX_CODES",
                  "NDMM_MM_DX_EVENTS", "NDMM_MM_QUALIFYING", "NDMM_BASE_COHORT",
                  "NDMM_ENROLL_SPANS", "NDMM_MMA_CODELIST",
                  "NDMM_BELANTAMAB_CODES", "NDMM_LOT1_STARTS",
@@ -727,6 +727,7 @@ build_nndm <- function(here, prefix) {
 
   log_msg("MM diagnosis over the study period, and who is old enough")
   build_ndmm_mm_dx_codes(con)
+  checkpoint(con, "NDMM_MM_DX_CODES")
   build_ndmm_mm_claim_header(con, cdm_src(cfg$tbl_medical),
                              cdm_src(cfg$tbl_confinement))
   build_ndmm_mm_dx_events(con, cdm_src(cfg$tbl_med_diag))

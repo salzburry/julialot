@@ -168,10 +168,25 @@ before the first run.**
 
 ### What counts as "another cancer"
 
-The criterion is another cancer **distinct from the index MM**, so five
-plasma-cell tumour groups are overridden — the disease itself (plasma cell
-leukemia, solitary and extramedullary plasmacytoma), its precursor (monoclonal
-gammopathy), and MM bone disease.
+**The protocol says nothing about remission.** §6.2.1.2 says another cancer:
+≥1 inpatient or ≥2 outpatient codes for the same primary tumour type. No
+states, no exemptions.
+
+The override is not a departure from that criterion — it is what makes it mean
+what it says. `other_malig.csv` is the study's **generic** other-cancer code
+list and it carries myeloma's own codes, so without an override every NDMM
+patient would be excluded for having the disease that put them in the cohort.
+
+So the question is never "is this in remission?" but **"is this the index
+disease?"**, and it is answered two ways:
+
+1. **Derived.** Any code on `mm_dx.csv` is the index disease by definition —
+   that same file decides who is an MM patient — so it can never also make them
+   an other-cancer patient, whatever its description says. This is the rule that
+   matters, and it needs no list to maintain.
+2. **Listed.** Five tumour groups that are adjacent to MM without being on the
+   diagnosis list: plasma cell leukemia, solitary and extramedullary
+   plasmacytoma, monoclonal gammopathy (the precursor), and MM bone disease.
 
 `other_malig.csv`, read on the warehouse **2026-07-30**, carries each of those
 plasma-cell conditions in **three states**, each its own `tumor_group`:
@@ -182,11 +197,11 @@ plasma-cell conditions in **three states**, each its own `tumor_group`:
 | Extramedullary plasmacytoma | `C9020` | `C9021` | `C9022` |
 | Solitary plasmacytoma | `C9030` | `C9031` | `C9032` |
 
-`apr_30_2026` overrode **only the first column**. So a patient was excluded for
-having another cancer because their plasma cell leukemia was in remission or in
-relapse, while an identical patient whose plasma cell leukemia had not achieved
-remission was kept. A disease state cannot make a plasma-cell disorder into a
-different cancer — relapse least of all.
+`apr_30_2026` overrode **only the first column** — it anchored on the wording
+and split each triple. So a patient was excluded for having another cancer
+because their plasma cell leukemia was in remission or in relapse, while an
+identical patient whose plasma cell leukemia had not achieved remission was
+kept. The disease state was never the question.
 
 All six are overridden by default:
 
