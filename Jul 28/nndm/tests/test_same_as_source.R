@@ -120,6 +120,19 @@ SPLICE <- list(
          to   = "ndmm_final = ndmm_final)",
          src_from = 795L, src_to = 837L)
   ),
+  # The materialization of NDMM_FLAGS_ALL. The source wrapped it in tryCatch and
+  # warned on failure, keeping the in-place view: correct arithmetic, but this
+  # package declares that table an output, so the run would report complete with
+  # it missing - and every later read would re-run the whole scan DAG. It is one
+  # call to checkpoint() now, which is what every other materialization in this
+  # package uses and which stops if the write fails. It stays inside this
+  # function because NDMM_PATIDS is defined over the view a few lines below and
+  # Spark inlines a temp view's plan.
+  "R/steps/06_flags.R" = list(
+    list(from = 'checkpoint(con, "NDMM_FLAGS_ALL")',
+         to   = 'checkpoint(con, "NDMM_FLAGS_ALL")',
+         src_from = 727L, src_to = 741L)
+  ),
   # The MM-adjacent override. The source logged how many of the expected
   # tumour-group labels matched the production codelist and carried on; an
   # unmatched label means the override silently does nothing for that group,

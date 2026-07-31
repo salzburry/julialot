@@ -887,9 +887,8 @@ reads <- vapply(view_consts, function(k) {
   as.integer(n - cr)
 }, integer(1))
 hot <- names(reads)[reads > 1L]
-# NDMM_FLAGS_ALL is materialized by the ported step that builds it, and
 # NDMM_LOT_LONG_FILT is not built at all.
-hot <- setdiff(hot, c("NDMM_FLAGS_ALL", "NDMM_LOT_LONG_FILT"))
+hot <- setdiff(hot, "NDMM_LOT_LONG_FILT")
 ok(length(hot) > 0, paste0("the SQL reads ", length(hot), " views more than once"))
 unwritten <- setdiff(hot, CHECKPOINTS)
 ok(length(unwritten) == 0,
@@ -945,7 +944,17 @@ builds <- list(NDMM_MM_DX_EVENTS = "build_ndmm_mm_dx_events",
                NDMM_OTHER_MALIG_CODES = "build_ndmm_other_malig_codes",
                NDMM_BELANTAMAB_PATIDS = "build_ndmm_belantamab_patids",
                NDMM_PATIDS = "build_ndmm_flags")
-for (k in CHECKPOINTS) {
+# NDMM_FLAGS_ALL is checkpointed inside the step that builds it, not by the
+# runner - NDMM_PATIDS is defined over it there and Spark inlines the plan.
+fl_txt <- paste(readLines(file.path(ROOT, "R", "steps", "06_flags.R"), warn = FALSE),
+                collapse = "\n")
+ok(regexpr('checkpoint(con, "NDMM_FLAGS_ALL")', fl_txt, fixed = TRUE) > 0 &&
+     regexpr('checkpoint(con, "NDMM_FLAGS_ALL")', fl_txt, fixed = TRUE) <
+       regexpr("VIEW {NDMM_PATIDS}", fl_txt, fixed = TRUE),
+   "NDMM_FLAGS_ALL is written before NDMM_PATIDS is defined over it")
+ok(!grepl("could not materialize", fl_txt, fixed = TRUE),
+   "and a write it cannot do is not warned past - it is a declared output")
+for (k in setdiff(CHECKPOINTS, "NDMM_FLAGS_ALL")) {
   i <- regexpr(paste0('checkpoint(con, "', k, '")'), body, fixed = TRUE)
   j <- if (is.null(builds[[k]])) -1L else
     regexpr(paste0("(?<![A-Za-z0-9_.])", builds[[k]], "\\("), body, perl = TRUE)
@@ -1012,8 +1021,10 @@ ok(length(undeclared) == 0,
 # checkpoint() writes wrk(name) with the name in a variable, so the scan above
 # cannot see those. They are covered instead by the loop that requires a
 # checkpoint(con, "<name>") call in the runner for every one of them.
+ck_txt <- paste(c(body, unlist(lapply(step_files, readLines, warn = FALSE))),
+                collapse = "\n")
 checkpointed <- Filter(function(k)
-  regexpr(paste0('checkpoint(con, "', k, '")'), body, fixed = TRUE) > 0, CHECKPOINTS)
+  regexpr(paste0('checkpoint(con, "', k, '")'), ck_txt, fixed = TRUE) > 0, CHECKPOINTS)
 unwritten <- setdiff(OUTPUTS, c(named, checkpointed))
 ok(length(unwritten) == 0,
    if (length(unwritten)) paste0("declared as an output but nothing the run ",

@@ -66,14 +66,20 @@ upstream_tables <- function(cfg) list()
 # more than once is missing from here. Two entries the count cannot see are
 # BASE_COHORT and BELANTAMAB_PATIDS - the flags step takes those as parameters,
 # so they reach the SQL as {elig_coh_final} and {map_stacked}.
-CHECKPOINTS <- c("NDMM_MM_DX_EVENTS", "NDMM_MM_QUALIFYING", "NDMM_BASE_COHORT",
+#
+# NDMM_FLAGS_ALL is checkpointed inside 06_flags.R rather than here, because
+# NDMM_PATIDS is defined over it in the same function and Spark inlines a temp
+# view's plan: repointing after NDMM_PATIDS exists would leave that view on the
+# old query. It is a deliverable as well as a checkpoint.
+CHECKPOINTS <- c("NDMM_FLAGS_ALL",
+                 "NDMM_MM_DX_EVENTS", "NDMM_MM_QUALIFYING", "NDMM_BASE_COHORT",
                  "NDMM_ENROLL_SPANS", "NDMM_MMA_CODELIST",
                  "NDMM_BELANTAMAB_CODES", "NDMM_LOT1_STARTS",
                  "NDMM_OTHER_MALIG_CODES", "NDMM_BELANTAMAB_PATIDS",
                  "NDMM_PATIDS")
 
 # What the run writes. All prefixed, so two cohorts sit side by side.
-DELIVERABLES <- c("NDMM_FLAGS_ALL", "NDMM_COHORT", "NDMM_ATTRITION",
+DELIVERABLES <- c("NDMM_COHORT", "NDMM_ATTRITION",
                   "NDMM_CODELIST_METADATA", "NDMM_RUN_METADATA",
                   "NDMM_BUILD_STATUS")
 OUTPUTS <- c(DELIVERABLES, CHECKPOINTS)

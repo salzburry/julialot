@@ -27,7 +27,10 @@ SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # is linked in beside it, and the run below refuses to proceed if the suite
 # reports a skip anyway.
 ROOT = os.path.dirname(os.path.dirname(SRC))
-BASE = os.path.join(tempfile.gettempdir(), "nndm_mutation_battery")
+# Per-process, so two runs of this file cannot collide on the same staging
+# directory - which they did, and shutil.copytree then failed rather than
+# reporting a mutation.
+BASE = os.path.join(tempfile.gettempdir(), "nndm_mutation_battery_%d" % os.getpid())
 WORK = os.path.join(BASE, os.path.basename(os.path.dirname(SRC)), os.path.basename(SRC))
 M = [
  ("upstream check dropped","R/build_nndm.R","  check_upstream(con, cfg)\n","  "),
@@ -103,6 +106,10 @@ M = [
  ("death not re-clamped at the index","R/build_nndm.R","             CASE WHEN b.DEATH_DT IS NOT NULL AND b.DEATH_DT < i.INDEX_DATE\n                  THEN i.INDEX_DATE ELSE b.DEATH_DT END AS DEATH_DT","             b.DEATH_DT AS DEATH_DT"),
  ("backwards follow-up allowed","R/build_nndm.R","  if (isTRUE(q$n_backwards > 0))","  if (FALSE)"),
  ("empty follow-up allowed","R/build_nndm.R","  if (isTRUE(q$n_nofu > 0))","  if (FALSE)"),
+ ("flags materialization warns again","R/steps/06_flags.R",'  checkpoint(con, "NDMM_FLAGS_ALL")','  tryCatch(checkpoint(con, "NDMM_FLAGS_ALL"), error = function(e) log_msg("WARN: could not materialize"))'),
+ ("flags not materialized at all","R/steps/06_flags.R",'  checkpoint(con, "NDMM_FLAGS_ALL")\n\n',''),
+ ("flags checkpoint after patids","R/steps/06_flags.R",'  checkpoint(con, "NDMM_FLAGS_ALL")\n\n  db_exec(con, glue("\n    CREATE OR REPLACE TEMPORARY VIEW {NDMM_PATIDS} AS','  db_exec(con, glue("\n    CREATE OR REPLACE TEMPORARY VIEW {NDMM_PATIDS} AS'),
+ ("flags dropped from checkpoints","R/build_nndm.R",'CHECKPOINTS <- c("NDMM_FLAGS_ALL",\n                 "NDMM_MM_DX_EVENTS"','CHECKPOINTS <- c("NDMM_MM_DX_EVENTS"'),
  ("hot view left as a query","R/build_nndm.R",'                 "NDMM_BELANTAMAB_CODES", "NDMM_LOT1_STARTS",','                 "NDMM_BELANTAMAB_CODES",'),
  ("checkpoint call dropped","R/build_nndm.R",'  checkpoint(con, "NDMM_LOT1_STARTS")\n',''),
  ("checkpoint before its view","R/build_nndm.R",'  build_ndmm_lot1_index(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))\n  checkpoint(con, "NDMM_LOT1_STARTS")','  checkpoint(con, "NDMM_LOT1_STARTS")\n  build_ndmm_lot1_index(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))'),
@@ -110,7 +117,7 @@ M = [
  ("checkpoint writes nothing","R/build_nndm.R",'  db_exec(con, glue("CREATE OR REPLACE TABLE {tbl} AS SELECT * FROM {view}"))\n',''),
  ("checkpoint degrades quietly","R/build_nndm.R",'  db_exec(con, glue("CREATE OR REPLACE TABLE {tbl} AS SELECT * FROM {view}"))','  try(db_exec(con, glue("CREATE OR REPLACE TABLE {tbl} AS SELECT * FROM {view}")), silent = TRUE)'),
  ("checkpoints undeclared","R/build_nndm.R","OUTPUTS <- c(DELIVERABLES, CHECKPOINTS)","OUTPUTS <- DELIVERABLES"),
- ("output declared but unwritten","R/build_nndm.R",'DELIVERABLES <- c("NDMM_FLAGS_ALL",','DELIVERABLES <- c("NDMM_LOT_LONG_FILT", "NDMM_FLAGS_ALL",'),
+ ("output declared but unwritten","R/build_nndm.R",'DELIVERABLES <- c("NDMM_COHORT",','DELIVERABLES <- c("NDMM_LOT_LONG_FILT", "NDMM_COHORT",'),
  ("dashboard table built again","R/build_nndm.R","  # build_lot_long_filtered() is not called.","  build_lot_long_filtered(con, lot_long)\n  # build_lot_long_filtered() is not called."),
  ("codelist allowlist short","R/codelists.R",'"pregnancy.csv")','")'),
  ("codelist allowlist off","R/codelists.R","  if (!csv_name %in% CODELIST_FILES)","  if (FALSE)"),
@@ -142,7 +149,7 @@ M = [
  ("db_replace atomicity","R/db_utils.R","  with_retry(function() for (s in sqls) db_exec_once(con, s))","  for (s in sqls) with_retry(function() db_exec_once(con, s))"),
  ("status size unquoted","R/build_nndm.R","{sql_count(n)}, ","{n}, "),
  ("failed status ordering","R/build_nndm.R","          add = TRUE, after = FALSE)","          add = TRUE)"),
- ("outputs list","R/build_nndm.R",'DELIVERABLES <- c("NDMM_FLAGS_ALL", "NDMM_COHORT", "NDMM_ATTRITION",\n                  "NDMM_CODELIST_METADATA", "NDMM_RUN_METADATA",\n                  "NDMM_BUILD_STATUS")','DELIVERABLES <- c("NDMM_FLAGS_ALL", "NDMM_COHORT", "NDMM_ATTRITION")'),
+ ("outputs list","R/build_nndm.R",'DELIVERABLES <- c("NDMM_COHORT", "NDMM_ATTRITION",\n                  "NDMM_CODELIST_METADATA", "NDMM_RUN_METADATA",\n                  "NDMM_BUILD_STATUS")','DELIVERABLES <- c("NDMM_COHORT", "NDMM_ATTRITION")'),
  ("ported fu ce constant","R/nndm_constants.R","NDMM_FU_CE_DAYS          <- 0L","NDMM_FU_CE_DAYS          <- 90L"),
  ("ported flags sql","R/steps/06_flags.R","      AND CE_lot1_fu              = 1","      AND 1 = 1"),
  ("cohort sql outside the rewrite","R/steps/07_cohort.R","            ON cast(l.PATID as string) = a.PATID","            ON cast(l.PATID as string) = a.PATIDX"),
@@ -180,6 +187,7 @@ for name, f, a, b in M:
     open(p, 'w').write(s.replace(a, b, 1))
     caught = any(subprocess.run(["Rscript", t], cwd=WORK, capture_output=True).returncode != 0 for t in TESTS)
     if not caught: miss.append((name, "NOT CAUGHT"))
+shutil.rmtree(BASE, ignore_errors=True)
 print("battery size:", len(M))
 print("problems:", len(miss))
 for n, w in miss: print("   ", n, "->", w)

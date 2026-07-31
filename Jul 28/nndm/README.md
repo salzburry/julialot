@@ -62,10 +62,10 @@ is repointed at the table, so each later read is a table scan. The steps are
 untouched — they still name the view:
 
 ```
-NDMM_MM_DX_EVENTS   NDMM_MM_QUALIFYING     NDMM_BASE_COHORT
-NDMM_ENROLL_SPANS   NDMM_MMA_CODELIST      NDMM_BELANTAMAB_CODES
-NDMM_LOT1_STARTS    NDMM_OTHER_MALIG_CODES NDMM_BELANTAMAB_PATIDS
-NDMM_PATIDS
+NDMM_FLAGS_ALL      NDMM_MM_DX_EVENTS      NDMM_MM_QUALIFYING
+NDMM_BASE_COHORT    NDMM_ENROLL_SPANS      NDMM_MMA_CODELIST
+NDMM_BELANTAMAB_CODES  NDMM_LOT1_STARTS    NDMM_OTHER_MALIG_CODES
+NDMM_BELANTAMAB_PATIDS NDMM_PATIDS
 ```
 
 The list is not maintained by hand: `tests/test_runner.R` counts the reads in
@@ -74,14 +74,22 @@ entries the count cannot see are `NDMM_BASE_COHORT` and
 `NDMM_BELANTAMAB_PATIDS`, which reach the flags step as parameters.
 
 A checkpoint that cannot be written **stops the build**. The April code
-degraded to the in-place view on a write failure — correct, but it can turn
-minutes into hours without saying so, and a table declared as an output would
-then not be there.
+degraded to the in-place view on a write failure — correct arithmetic, but it
+can turn minutes into hours without saying so, and a table declared as an
+output would then not be there.
 
-Outputs, all prefixed: `NDMM_COHORT` (the cohort, written as a table
+`NDMM_FLAGS_ALL` is checkpointed **inside** `06_flags.R` rather than by the
+runner. `NDMM_PATIDS` is defined over it a few lines below, and Spark inlines a
+temporary view's plan — repointing after that view exists would leave it on the
+original query. It was the one materialization that still warned and carried
+on; it is the same one call as the other ten now, and it is a deliverable as
+well as a checkpoint.
+
+Deliverables, all prefixed: `NDMM_COHORT` (the cohort, written as a table
 `Jul 28/lot` can be pointed at — see below), `NDMM_ATTRITION` (the nine rows
-below), `NDMM_FLAGS_ALL` (one row per candidate with every filter's verdict),
-`NDMM_CODELIST_METADATA`, `NDMM_RUN_METADATA`, `NDMM_BUILD_STATUS`.
+below), `NDMM_CODELIST_METADATA`, `NDMM_RUN_METADATA`, `NDMM_BUILD_STATUS`.
+`NDMM_FLAGS_ALL` — one row per candidate with every filter's verdict — is both
+a deliverable and a checkpoint. The other checkpoint tables are listed above.
 
 `07_cohort.R` still carries `build_lot_long_filtered()`, and `02_lot1_starts.R`
 still carries `build_lot1_starts_ndmm()`. The runner calls neither: the first
