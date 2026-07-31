@@ -769,9 +769,28 @@ modified.
 
 ## Settings
 
-`config.csv`; the environment wins over it. `R/build_nndm.R` checks them all
-against `CONTRACT` before the first query, so a value that would build a
-different cohort stops the run.
+`config.csv`; the environment wins over it. Everything below is read by name —
+`tests/test_runner.R` requires each one to appear here, so this list cannot
+fall behind the code.
+
+### To run at all
+
+| setting | default | |
+|---|---|---|
+| `DATABRICKS_PWD` | *(none)* | **required** — the build stops without it |
+| `DATABRICKS_DSN` | `RWDE` | ODBC data source |
+| `DATABRICKS_CATALOG` | `hive_metastore` | catalog for both schemas |
+| `OPTUM_CDM_SCHEMA` | `clnprw_optum` | where the raw CDM lives |
+| `PROJECT_WORK_SCHEMA` | *(none)* | where output goes. Falls back to `DOMINO_USER_NAME`, then `DOMINO_STARTING_USERNAME`; **no default**, so a build that skipped this stops rather than writing somewhere shared |
+| `OBJECT_PREFIX` | *(none)* | the cohort prefix, or pass it to `build.R`. Must end in `_` |
+| `DOMINO_RUN_ID` | a timestamp | identifies the run in every metadata table |
+| `OUTPUT_DIR` | `/mnt/artifacts/results` | artifacts |
+| `PIPELINE_LOG_FILE` | a dated file | the run log |
+
+### The contract
+
+Change one and it is a different cohort, so `check_contract()` **refuses the
+run** rather than building something the name no longer describes.
 
 | setting | default | effect |
 |---|---|---|
@@ -783,13 +802,24 @@ different cohort stops the run.
 | `STUDY_START` | `2016-01-01` | study period start; the pregnancy and belantamab scans |
 | `OUTPATIENT_WINDOW` | `90` | two outpatient MM claims within this many days confirm a diagnosis |
 | `MIN_AGE` | `18` | minimum age in the MM-diagnosis year |
+| `NDMM_BELANTAMAB_ABBR` | `BEL%` | how belantamab is recognised on the code list — it is exclusion 4, so it is pinned |
+| `USE_QUARTERLY_TABLES` | `TRUE` | read the quarterly CDM tables for the study end |
 | `CODELIST_DIR` | `/mnt/code/codelist` | `mm_dx.csv`, `cl_mma_codelist.csv`, `other_malig.csv`, `pregnancy.csv` |
+| `TBL_CONFINEMENT` | `confinement` | inpatient stays |
+| `TBL_MEMBER_ENROLLMENT` | `member_enrollment` | enrolment spans |
+| `TBL_MEMBER_ELIG` | `member_cont_enrollment` | sex and birth year |
+| `TBL_DOD` | `dod` | date of death |
 
-Those are the **contract** — change one and it is a different cohort, so
-`check_contract()` refuses the run. The settings below are **run choices**:
-places the protocol is silent or the data has to answer. Each is validated
-against the values it may take and recorded in `NDMM_RUN_METADATA`, but none is
-pinned to its default — the review tables exist to be acted on.
+Every one is checked **twice** — against `CONTRACT`, and then against the
+`NDMM_*` constants the SQL actually interpolates. Those have their own
+environment variables (`NDMM_LOT1_FROM` is not `LOT1_FROM`), so a contract
+checked against `cfg` alone would not speak for the query that runs.
+
+### Run choices
+
+Places the protocol is silent or the data has to answer. Each is validated
+against the values it may take and recorded in `NDMM_RUN_METADATA`, and **none
+is pinned to its default** — the review tables exist to be acted on.
 
 | choice | default | may be |
 |---|---|---|
@@ -798,6 +828,20 @@ pinned to its default — the review tables exist to be acted on.
 | `NDMM_INDEX_EXCLUDED_ABBRS` | *(empty)* | comma-separated `CL_MED_ABBR` patterns |
 | `NDMM_INDEX_EXCLUDED_CODES` | *(empty)* | comma-separated `TYPE:CODE` or bare codes |
 | `NDMM_WAIVERS` | *(empty)* | the four NDC-shape checks, by name |
+
+### Where the fill-in files are, and one way out
+
+| setting | default | |
+|---|---|---|
+| `NDMM_MM_ADJACENT_CSV` | `codelists/mm_adjacent_overrides.csv` | see **The files you fill in** |
+| `NDMM_ELIGIBLE_1L_CSV` | `codelists/eligible_1l_agents.csv` | |
+| `NDMM_PRIMARY_GROUPS_CSV` | `codelists/primary_tumor_groups.csv` | |
+| `NDMM_IGNORE_ACTIVE_RUN` | *(unset)* | `TRUE` gets past a `started` row a killed process left behind. Use it only once the named run is known to be dead — see **One run per prefix at a time** |
+
+`FINAL_TABLE_NAME` is read into `NDMM_FINAL_TABLE_NAME` by the ported constants
+and used by nothing: it named the parent cohort table this build no longer
+reads. It is left in place so `R/nndm_constants.R` stays line-for-line with its
+source, and setting it does nothing.
 
 ## Status
 

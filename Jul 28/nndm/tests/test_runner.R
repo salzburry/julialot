@@ -1900,5 +1900,24 @@ ok(length(csv_vars) > 0 && length(unnamed) == 0,
             paste(unnamed, collapse = ", "))
    else paste0("...and all ", length(csv_vars),
                " settings that relocate one are named too"))
+# Every setting the package reads at all. Nine of thirty-seven were undocumented
+# - the connection, the output schema, the raw table names - and a setting a
+# reader cannot see is one they cannot set, so the default is not a default,
+# it is the only value. Derived from the Sys.getenv calls, so a setting added
+# later has to be written up.
+env_files <- c("R/config.R", "R/nndm_constants.R", "R/standalone_constants.R",
+               "R/build_nndm.R", "R/db_utils.R", "R/codelists.R")
+env_vars <- sort(unique(unlist(lapply(env_files, function(f) {
+  txt <- paste(readLines(file.path(ROOT, f), warn = FALSE), collapse = "\n")
+  sub('.*"([A-Z0-9_]+)".*', "\\1",
+      unlist(regmatches(txt, gregexpr('Sys[.]getenv[(]"[A-Z0-9_]+"', txt, perl = TRUE))))
+}))))
+unnamed <- Filter(function(v) !grepl(v, readme, fixed = TRUE), env_vars)
+ok(length(env_vars) > 20 && length(unnamed) == 0,
+   if (length(unnamed))
+     paste0("read from the environment but not in the README: ",
+            paste(unnamed, collapse = ", "))
+   else paste0("every one of the ", length(env_vars),
+               " settings the package reads is documented"))
 
 report()
