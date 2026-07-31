@@ -324,8 +324,8 @@ unrecoverable - the conversion has to happen in the file, not here. Waive
 The two are separate names so that accepting a documented short representation
 does not also accept `ABC123`.
 
-Both sides of the join need the contract, not just the code list. `claim_ndc`
-profiles the claim NDCs before any claim is read - `medical` and `rx`, scoped
+Both sides of the join need the contract, not just the code list. The claim
+preflight profiles the claim NDCs before any claim is read - `medical` and `rx`, scoped
 to the cohort and its observation window - and stops unless every one is
 eleven digits, letter-free and not all zeros. Every nonblank value is counted,
 including the ones that cannot join: a profile that skipped those would report
@@ -336,10 +336,11 @@ a real NDC in a layout the pad has to guess. `claim_ndc_shape` is everything
 else: letters, another length, all zeros. Those cannot be an NDC at all, and
 `ABC123` reaches the join as `00000000123` where it can match a real code.
 
-Both are reviewable rather than fatal, unlike their code-side counterparts.
-These are the CDM's tables, not ours: there is no code list to correct, so a
-check that could not be waived would leave no remedy short of changing the
-join. What the split buys is that accepting one does not accept the other -
+`claim_ndc_short` is reviewable, exactly like `ndc_short` on the code side.
+`claim_ndc_shape` is reviewable where `ndc_shape` is fatal, and that is the one
+real difference: these are the CDM's tables, not ours, so there is no code list
+to correct and a check that could not be waived would leave no remedy short of
+changing the join. What the split buys is that accepting one does not accept the other -
 waiving the reviewed ten-digit case cannot let `ABC123` through with it, and
 each is recorded in `CODELIST_WAIVERS_APPLIED` under its own name. A ten-digit *claim* has exactly the layout problem a ten-digit
 *code* has, so a canonical code can miss a real claim.
@@ -349,11 +350,12 @@ profiles `rx` only, measures a different normalization from the one the join
 uses, warns only when the two length sets are wholly disjoint - so any overlap
 silences it - swallows its own errors, and runs after LOT1 is already built.
 
-`claim_ndc` is reviewable rather than fatal so that a first run reports the
-distribution instead of blocking on a shape nobody has seen. Waive it once the
-study team has established how this CDM represents NDC, or convert with an
-approved NDC10-to-NDC11 crosswalk - not by inferring the layout after the
-separators are gone.
+Both are reviewable so that a first run reports the distribution instead of
+blocking on a shape nobody has seen. Waive once the study team has established
+how this CDM represents NDC, or convert with an approved NDC10-to-NDC11
+crosswalk - not by inferring the layout after the separators are gone.
+`claim_ndc_shape` deserves the higher bar of the two: it can let a value match
+a code that is not the drug it came from.
 
 ### Class agreement
 
@@ -438,7 +440,9 @@ actually costs rather than leaving it an assumption.
 ## Knowing a run finished
 
 LOT1's tables are replaced before LOT2-5 starts, so a failure in between would
-leave new LOT1 output beside an older `LOT_LONG`. Every run therefore writes
+leave new LOT1 output beside an older `LOT_LONG`. Every run therefore records
+what it did.
+
 `<prefix>LOT_RUN_METADATA` carries the settings and the counts. `phase_persist`
 writes it before LOT2-5 exists, so its own counts stop at LOT1 - cohort, MMA
 claims, MAPs, LOT1 patients. `N_LOT_LONG_ROWS`, `N_LOT_LONG_PATIENTS` and

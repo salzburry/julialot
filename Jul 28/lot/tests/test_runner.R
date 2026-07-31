@@ -541,22 +541,32 @@ sys.source(file.path(ROOT, "R", "build_lot.R"), envir = fe)
 assign("log_msg", function(...) invisible(NULL), envir = fe)
 assign("lot_out", function(x) paste0("wk.p_", x), envir = fe)
 assign("run_id", "R1", envir = fe)
-FSQL <- character(0)
+FSQL <- character(0); FQRY <- character(0)
 assign("db_exec", function(con, s) { FSQL <<- c(FSQL, s); TRUE }, envir = fe)
 drive_fm <- function(have) {
-  FSQL <<- character(0)
+  FSQL <<- character(0); FQRY <<- character(0)
   assign("db_q", function(con, s) {
+    FQRY <<- c(FQRY, s)
     if (grepl("DESCRIBE", s)) return(if (is.null(have)) stop("no")
                                      else data.frame(col_name = have))
-    if (grepl("GROUP BY LOT_NUM", s)) return(data.frame(LOT_NUM = 1:3, n = c(900, 400, 120)))
-    data.frame(n_rows = 1420, n_patients = 900)
+    data.frame(LOT_NUM = 1:3, n = c(900, 400, 120))
   }, envir = fe)
-  tryCatch({ fe$record_final_counts(NULL, list()); NULL }, error = conditionMessage)
+  tryCatch({ fe$record_final_counts(NULL, list(),
+                                    list(n_rows = 1420, n_patients = 900)); NULL },
+           error = conditionMessage)
 }
 base_cols <- c("RUN_ID", "N_COHORT_PATIENTS", "N_LOT1_PATIENTS")
 ok(is.null(drive_fm(base_cols)), "a metadata table without the columns gets them")
-ok(sum(grepl("ALTER", FSQL)) == length(get("FINAL_METADATA_COLS", envir = fe)),
-   "...one ALTER per column, since phase_persist creates the table without them")
+ok(sum(grepl("ALTER", FSQL)) == 1 &&
+     all(vapply(names(get("FINAL_METADATA_COLS", envir = fe)),
+                function(m) any(grepl(m, FSQL, fixed = TRUE)), logical(1))),
+   "...in one ALTER, since phase_persist creates the table without any of them")
+# The totals come from check_lot_long, which has just counted them, so the only
+# scan here is the one it does not do. FQRY is every db_q, not just the writes -
+# an earlier version watched db_exec and so proved nothing.
+reads <- Filter(function(q) !grepl("DESCRIBE", q), FQRY)
+ok(length(reads) == 1 && grepl("GROUP BY LOT_NUM", reads[1]),
+   paste0("and it scans once, for the line distribution only (", length(reads), ")"))
 ok(any(grepl("LOT_LONG_BY_LINE = '1:900|2:400|3:120'", FSQL, fixed = TRUE)),
    "the line distribution is recorded, not just a total")
 ok(any(grepl("WHERE RUN_ID = 'R1'", FSQL, fixed = TRUE)),

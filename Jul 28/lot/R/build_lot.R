@@ -305,8 +305,10 @@ build_lot <- function(here, cohort_table, prefix) {
 
   # Validate before deriving: publishing the criteria tables first would leave
   # them behind, built from a LOT_LONG that then failed its checks.
-  check_lot_long(con, cfg)
-  record_final_counts(con, cfg)
+  # Two statements, not a nested call: R would not force the promise until
+  # record_final_counts read it, which is after it has altered the table.
+  lot_long <- check_lot_long(con, cfg)
+  record_final_counts(con, cfg, lot_long)
   phase_line_criteria(con, cfg)
   check_run_recorded(con, cfg)
   write_build_status(con, cfg, "complete")
@@ -593,13 +595,14 @@ check_run_recorded <- function(con, cfg) {
 
 # LOT_RUN_METADATA is written by phase_persist, which runs before LOT2-5, so
 # its counts stop at LOT1: cohort, MMA claims, MAPs, LOT1 patients. Nothing
-# recorded what the run actually produced. These are added after check_lot_long
-# has passed, so the numbers describe a table already found usable.
+# recorded what the run actually produced. The totals come from check_lot_long,
+# which has just counted them and passed - so they describe a table already
+# found usable, and are not scanned for twice.
 FINAL_METADATA_COLS <- c(N_LOT_LONG_ROWS = "BIGINT",
                          N_LOT_LONG_PATIENTS = "BIGINT",
                          LOT_LONG_BY_LINE = "STRING")
 
-record_final_counts <- function(con, cfg) {
+record_final_counts <- function(con, cfg, counts) {
   tbl <- lot_out("LOT_RUN_METADATA")
   have <- tryCatch({
     d  <- db_q(con, glue("DESCRIBE {tbl}"))
@@ -612,25 +615,25 @@ record_final_counts <- function(con, cfg) {
   if (!length(have))
     stop("Cannot read the columns of ", tbl, ", so the LOT_LONG counts cannot ",
          "be recorded.", call. = FALSE)
-  for (m in setdiff(names(FINAL_METADATA_COLS), have)) {
-    db_exec(con, glue("ALTER TABLE {tbl} ADD COLUMNS ({m} {FINAL_METADATA_COLS[[m]]})"))
-    log_msg("  Metadata schema evolution: added ", m)
+  add <- setdiff(names(FINAL_METADATA_COLS), have)
+  if (length(add)) {
+    db_exec(con, glue("ALTER TABLE {tbl} ADD COLUMNS (",
+                      paste(add, FINAL_METADATA_COLS[add], collapse = ", "), ")"))
+    log_msg("  Metadata schema evolution: added ", paste(add, collapse = ", "))
   }
 
-  t <- lot_out("LOT_LONG")
-  q <- db_q(con, glue("
-    SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients FROM {t}"))
   by_line <- db_q(con, glue("
-    SELECT LOT_NUM, count(*) AS n FROM {t} GROUP BY LOT_NUM ORDER BY LOT_NUM"))
+    SELECT LOT_NUM, count(*) AS n FROM {lot_out('LOT_LONG')}
+    GROUP BY LOT_NUM ORDER BY LOT_NUM"))
   dist <- paste(paste0(by_line$LOT_NUM, ":", by_line$n), collapse = "|")
   db_exec(con, glue("
     UPDATE {tbl}
-       SET N_LOT_LONG_ROWS = {q$n_rows},
-           N_LOT_LONG_PATIENTS = {q$n_patients},
+       SET N_LOT_LONG_ROWS = {counts$n_rows},
+           N_LOT_LONG_PATIENTS = {counts$n_patients},
            LOT_LONG_BY_LINE = '{dist}'
      WHERE RUN_ID = '{run_id}'"))
-  log_msg("Recorded LOT_LONG: ", q$n_rows, " lines for ", q$n_patients,
-          " patients (", dist, ")")
+  log_msg("Recorded LOT_LONG: ", counts$n_rows, " lines for ",
+          counts$n_patients, " patients (", dist, ")")
   invisible(TRUE)
 }
 
@@ -688,7 +691,8 @@ check_lot_long <- function(con, cfg) {
   if (length(bad))
     stop(t, " is not usable: ", paste(bad, collapse = "; "), call. = FALSE)
   log_msg("LOT_LONG OK: ", q$n_rows, " lines for ", q$n_patients, " patients")
-  invisible(TRUE)
+  # Handed to record_final_counts rather than counted again.
+  invisible(list(n_rows = q$n_rows, n_patients = q$n_patients))
 }
 
 # The criteria layer, on top of LOT_LONG. With no criteria declared both
