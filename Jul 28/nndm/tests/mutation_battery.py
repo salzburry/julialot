@@ -2,11 +2,20 @@
 # notice. A mutation that survives means the assertion for it reads the source
 # rather than running it. Run from anywhere:
 #
-#   python3 "Jul 28/nndm/tests/mutation_battery.py"          changed files only
-#   python3 "Jul 28/nndm/tests/mutation_battery.py" --all     all of them
+#   python3 ".../mutation_battery.py"                    changed files only
+#   python3 ".../mutation_battery.py" --all              all of them
+#   python3 ".../mutation_battery.py" --only "clear run" the ones named that
 #
 # Every anchor is verified before the first mutation runs, and a run says which
 # files it skipped. A clean tree runs everything, which is the release check.
+#
+# --only takes a substring of a mutation's name, repeatable and comma-separated,
+# and matched case-insensitively. It is for iterating on a mutation you are
+# writing: editing tests/ re-judges every mutation, so the changed-files rule
+# above cannot narrow anything while the suite itself is being edited, and the
+# full sweep is four and a half minutes. It is NOT a check - it says so on
+# every run - because the mutations it skips are exactly the ones a test edit
+# might have stopped catching. Nothing ships on an --only run.
 #
 # Attrition labels are deliberately not pinned: they are prose on the delivered
 # table and are meant to be editable without a test change.
@@ -272,9 +281,38 @@ def changed_files():
     rel = os.path.relpath(SRC, ROOT).replace(os.sep, "/") + "/"
     return sorted({p[len(rel):] for p in out if p.startswith(rel)})
 
+# --only NAME, --only=NAME, and comma-separated within either. Parsed rather
+# than grepped out of sys.argv so that a value which happens to start with a
+# dash - or a --only with nothing after it - is a usage error rather than a
+# pattern that silently matches nothing.
+def only_patterns(argv):
+    pats, i = [], 0
+    while i < len(argv):
+        a = argv[i]
+        if a.startswith("--only="):
+            v = a[len("--only="):]; i += 1
+        elif a == "--only":
+            if i + 1 >= len(argv): sys.exit("--only needs a mutation name")
+            v = argv[i + 1]; i += 2
+        else:
+            i += 1; continue
+        pats += [p.strip().lower() for p in v.split(",") if p.strip()]
+    if any(a == "--only" or a.startswith("--only=") for a in argv) and not pats:
+        sys.exit("--only was given nothing to match")
+    return pats
+
+only = only_patterns(sys.argv[1:])
 run_all = "--all" in sys.argv
-touched = None if run_all else changed_files()
-if touched is None:
+touched = None if (only or run_all) else changed_files()
+if only:
+    selected = [m for m in M if any(p in m[0].lower() for p in only)]
+    why = "--only " + ", ".join(repr(p) for p in only)
+    # A typo would otherwise run nothing and report no problems, which is the
+    # one answer this must never give for free.
+    if not selected:
+        sys.exit("no mutation name contains %s - nothing ran"
+                 % " or ".join(repr(p) for p in only))
+elif touched is None:
     selected, why = M, "--all" if run_all else "not a git checkout"
 elif not touched:
     selected, why = M, "no local changes"
@@ -287,7 +325,13 @@ else:
 skipped = len(M) - len(selected)
 print("battery size: %d (running %d, skipping %d)" % (len(M), len(selected), skipped))
 print("selection:", why)
-if skipped:
+if only:
+    # Named one by one: with --only the whole point is that you chose these, so
+    # the run has to show you what it understood you to mean.
+    for name, f, _, _ in selected: print("    running:", name, "->", f)
+    print("    NOT A CHECK: %d mutations were not run. Re-run with --all before"
+          " committing." % skipped)
+elif skipped:
     # Named, not silently dropped: a run that says "0 problems" has to say what
     # it did not look at.
     for f in sorted({m[1] for m in M if m not in selected}):
