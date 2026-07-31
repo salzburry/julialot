@@ -40,7 +40,8 @@ CONTRACT <- list(
 # Named individually, because one switch for all of them meant waiving an
 # expected condition also waived the dangerous ones.
 WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types",
-                     "subs_substitute", "subs_original", "ndc_short")
+                     "subs_substitute", "subs_original", "ndc_short",
+                     "claim_ndc")
 
 # Fatal checks: always stop the build. Named rather than merely absent, so a
 # waiver naming one is told why it is refused instead of "no such check".
@@ -174,9 +175,7 @@ check_cohort_input <- function(con, cfg) {
   # patient would multiply their claims and their lines, so check the shape too,
   # not just the column names. ENDDATE_CE may be null: the primary branch uses
   # ENDDATE and the sensitivity branch falls back to it.
-  # coalesce on every sum: over no rows sum() is NULL, which arrives as NA and
-  # turns the comparisons below into "missing value where TRUE/FALSE needed" -
-  # an R error in place of the reason.
+  # SUM is NULL on an empty table. Coalesce the validation counts.
   q <- db_q(con, glue("
     SELECT count(*) AS n_rows,
            count(DISTINCT PATID) AS n_patients,
@@ -263,10 +262,7 @@ build_lot <- function(here, cohort_table, prefix) {
 
   check_cohort_input(con, cfg)
 
-  # LOT1 tables are replaced before LOT2-5 runs, so a failure in between leaves
-  # new LOT1 output beside an older LOT_LONG. Splitting the persist step would
-  # break the line-for-line port, so instead every run says what state it is
-  # in: nothing here is complete until the last line below says so.
+  # LOT1 is written before LOT_LONG, so track partial runs.
   # Cleared first, or a second run in one session inherits the first's.
   options(lot_waivers_applied = character(0))
   write_build_status(con, cfg, "started")
@@ -276,6 +272,7 @@ build_lot <- function(here, cohort_table, prefix) {
 
   ctx <- phase_codelists(con)
   phase_patient_input(con)
+  check_claim_ndc(con, cfg)
   phase_mma_map(con, ctx)
   phase_lot1_base(con, ctx)
   phase_sct(con, ctx)
@@ -361,6 +358,58 @@ materialize_sct_views <- function(con) {
   invisible(TRUE)
 }
 
+# The claim side of the NDC contract that ndc_shape and ndc_short put on the
+# code list. Both joins pad the claim to eleven the same way, so a ten-digit
+# claim NDC has the same layout problem and a canonical code misses it.
+# Measured the way the join measures, before any claim is read.
+check_claim_ndc <- function(con, cfg) {
+  log_msg("Checking claim NDC shape...")
+  # Scoped to the cohort and its observation window, like the joins - a whole
+  # scan of medical is not worth a shape check.
+  profile_sql <- function(src, tbl, dt) glue("
+    SELECT '{src}' AS SOURCE,
+           count(*) AS n_ndc,
+           sum(CASE WHEN length(regexp_replace(v, '[^0-9]', '')) = 11 THEN 1 ELSE 0 END) AS n_11,
+           sum(CASE WHEN length(regexp_replace(v, '[^0-9]', '')) = 10 THEN 1 ELSE 0 END) AS n_10,
+           sum(CASE WHEN length(regexp_replace(v, '[^0-9]', '')) NOT IN (10, 11) THEN 1 ELSE 0 END) AS n_other,
+           sum(CASE WHEN v RLIKE '[A-Za-z]' THEN 1 ELSE 0 END) AS n_alpha
+    FROM (
+      SELECT cast(t.NDC as string) AS v
+      FROM {tbl} t
+      INNER JOIN lot_patient_input p ON t.PATID = p.PATID
+      WHERE cast(t.NDC as string) IS NOT NULL AND trim(cast(t.NDC as string)) <> ''
+        AND regexp_replace(cast(t.NDC as string), '[^0-9]', '') <> ''
+        AND cast(t.{dt} AS date) >= p.INDEX_DATE
+        AND cast(t.{dt} AS date) <= p.OBS_END_DT)")
+  prof <- rbind(
+    db_q(con, profile_sql("medical", cdm_src(cfg$tbl_medical), "FST_DT")),
+    db_q(con, profile_sql("rx",      cdm_src(cfg$tbl_rx),      "FILL_DT")))
+  print(prof)
+
+  bad <- prof[prof$n_ndc > 0 & (prof$n_11 < prof$n_ndc | prof$n_alpha > 0), , drop = FALSE]
+  if (nrow(bad) == 0) {
+    log_msg("  OK: Every claim NDC is eleven digits.")
+    return(invisible(TRUE))
+  }
+  detail <- paste(vapply(seq_len(nrow(bad)), function(i) with(bad[i, ], paste0(
+    SOURCE, ": ", n_ndc, " NDCs, ", n_11, " eleven-digit, ", n_10, " ten-digit, ",
+    n_other, " other length, ", n_alpha, " with letters")), character(1)),
+    collapse = "; ")
+  if ("claim_ndc" %in% codelist_waivers()) {
+    log_msg("WAIVED (claim_ndc): ", detail)
+    options(lot_waivers_applied = union(getOption("lot_waivers_applied",
+                                                  character(0)), "claim_ndc"))
+    return(invisible(TRUE))
+  }
+  stop("Claim NDCs are not all eleven digits: ", detail,
+       ".\nThe join left-pads to eleven, which is right only for the 4-4-2 ",
+       "layout, so a ten-digit claim can be read as a different drug's code ",
+       "or as none. Confirm how this CDM represents NDC, or convert with an ",
+       "approved NDC10-to-NDC11 crosswalk. Once the study team has ",
+       "established that the padding is right for this data, waive it with ",
+       "CODELIST_WAIVERS=claim_ndc.", call. = FALSE)
+}
+
 # One row per run saying whether its outputs belong together. Without it a
 # failed run leaves tables that look complete.
 # REQUESTED is what the run was given; APPLIED is what actually fired and was
@@ -387,7 +436,7 @@ write_build_status <- function(con, cfg, state) {
     if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else character(0)
   }, error = function(e) character(0))
   # No answer means DESCRIBE failed, not that the table has no columns. Acting
-  # on that would try to add all six to a table that already has them.
+  # on that would try to add every column to a table that already has them.
   for (m in if (length(have)) setdiff(cols, have) else character(0)) {
     tryCatch({
       db_exec(con, glue("ALTER TABLE {tbl} ADD COLUMNS ({m} {BUILD_STATUS_COLS[[m]]})"))
@@ -486,9 +535,7 @@ check_run_recorded <- function(con, cfg) {
 # stops the build rather than printing INVESTIGATE.
 check_lot_long <- function(con, cfg) {
   t <- lot_out("LOT_LONG")
-  # coalesce on every sum: over no rows sum() is NULL, which arrives as NA and
-  # turns the comparisons below into "missing value where TRUE/FALSE needed" -
-  # an R error in place of the reason.
+  # SUM is NULL on an empty table. Coalesce the validation counts.
   q <- db_q(con, glue("
     SELECT count(*) AS n_rows,
            count(DISTINCT PATID) AS n_patients,

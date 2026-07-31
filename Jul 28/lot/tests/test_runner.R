@@ -152,7 +152,8 @@ bl <- paste(readLines(file.path(ROOT, "R", "build_lot.R"), warn = FALSE),
 body <- sub(".*build_lot <- function\\([^)]*\\) \\{", "", bl)
 ORDER <- c("check_settings", "pin_output_schema", "pin_cohort",
            "check_lot_contract", "set_lot_config", "check_cohort_input",
-           "phase_codelists", "phase_patient_input", "phase_mma_map",
+           "phase_codelists", "phase_patient_input", "check_claim_ndc",
+           "phase_mma_map",
            "phase_lot1_base", "phase_sct", "phase_lot1_sct",
            "phase_lot1_end", "phase_qc",
            "check_lot1_invariants", "phase_persist", "materialize_sct_views",
@@ -504,6 +505,56 @@ lb <- paste(readLines(file.path(ROOT, "R", "steps", "10_lot2_5_base.R"), warn = 
             collapse = "\n")
 ok(grepl("FROM mma_rollup", lb, fixed = TRUE),
    "LOT2-5 draws its meds and classes from the same rollup, so this covers it")
+
+cat("\n-- the claim side of the NDC contract --\n")
+# ndc_shape and ndc_short constrain the code list; both joins pad the CLAIM the
+# same way, so a ten-digit claim NDC has the same layout problem and a
+# canonical code then misses a real claim. phase_qc does not cover this: it
+# profiles rx only, measures a different normalization from the join, warns
+# only when the two length sets are wholly disjoint, swallows its errors, and
+# runs after LOT1 is built.
+ne <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_lot.R"), envir = ne)
+for (nm in c("log_msg", "print")) assign(nm, function(...) invisible(NULL), envir = ne)
+assign("cdm_src", function(t) paste0("cdm.", t), envir = ne)
+cfg_ndc <- list(tbl_medical = "medical", tbl_rx = "rx")
+prow <- function(src, n, a = 0, b = 0, o = 0, alpha = 0)
+  data.frame(SOURCE = src, n_ndc = n, n_11 = a, n_10 = b, n_other = o, n_alpha = alpha)
+NSQL <- character(0)
+drive_ndc <- function(med, rx) {
+  i <- 0
+  assign("db_q", function(con, sql) { NSQL <<- c(NSQL, sql); i <<- i + 1
+                                      if (i == 1) med else rx }, envir = ne)
+  tryCatch({ ne$check_claim_ndc(NULL, cfg_ndc); NULL }, error = conditionMessage)
+}
+ok(is.null(drive_ndc(prow("medical", 500, a = 500), prow("rx", 9000, a = 9000))),
+   "all eleven-digit claim NDCs pass")
+ok(is.null(drive_ndc(prow("medical", 0), prow("rx", 9000, a = 9000))),
+   "a source with no NDCs at all has nothing to mis-pad")
+tend <- drive_ndc(prow("medical", 500, a = 500), prow("rx", 9000, a = 8000, b = 1000))
+ok(!is.null(tend), "a ten-digit claim NDC stops the build")
+ok(grepl("1000 ten-digit", tend, fixed = TRUE) && grepl("4-4-2", tend, fixed = TRUE),
+   "...with the counts and why the pad is only right for one layout")
+ok(!is.null(drive_ndc(prow("medical", 500, a = 500, alpha = 3), prow("rx", 10, a = 10))),
+   "letters in a claim NDC stop it too, even at eleven digits")
+# Waivable, so a first run reports the distribution rather than blocking on a
+# shape nobody has seen yet - and what fired is recorded, not just requested.
+Sys.setenv(CODELIST_WAIVERS = "claim_ndc")
+options(lot_waivers_applied = character(0))
+ok(is.null(drive_ndc(prow("medical", 500, a = 500), prow("rx", 9000, a = 8000, b = 1000))),
+   "waiving claim_ndc lets a reviewed distribution through")
+ok(identical(getOption("lot_waivers_applied"), "claim_ndc"),
+   "...and records it as applied, not merely requested")
+Sys.unsetenv("CODELIST_WAIVERS"); options(lot_waivers_applied = NULL)
+ok("claim_ndc" %in% WAIVABLE_CHECKS && !("claim_ndc" %in% FATAL_CHECKS),
+   "claim_ndc is reviewable, like ndc_short on the other side")
+# It has to measure what the join measures, or it answers about another string.
+join_norm <- "regexp_replace(cast(t.NDC as string), '[^0-9]', '')"
+ok(all(grepl(join_norm, NSQL, fixed = TRUE)), "the profile strips to digits, as the join does")
+ok(any(grepl("cdm.medical", NSQL, fixed = TRUE)) && any(grepl("cdm.rx", NSQL, fixed = TRUE)),
+   "and covers medical as well as rx - phase_qc never looked at medical")
+ok(all(grepl("INNER JOIN lot_patient_input p ON t.PATID = p.PATID", NSQL, fixed = TRUE)),
+   "scoped to the cohort, so it is not a whole scan of medical")
 
 cat("\n-- some conditions have no reading worth accepting --\n")
 # A code counted twice, a code matching every claim with no NDC, a medication

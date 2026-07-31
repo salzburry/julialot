@@ -135,14 +135,10 @@ phase_sct <- function(con, ctx) {
   }
   log_msg("  OK: Every SCT code type is one an extraction branch reads.")
 
-  # Accepted is not the same as right. The '%PROC%' arm sits after the exact
-  # ICD9PROC test, so ICD9PROCEDURE, ICD-9-PROC and ICD9 PROC all come out as
-  # ICD10PROC - a real type, which the check above accepts. The claim join then
-  # reads ICD-10 columns for an ICD-9 code and the transplant is never found.
-  #
-  # Asked of the raw value rather than by repeating the CASE, which would drift
-  # from it: these are the only spellings the CASE turns into an ICD-9 type, so
-  # anything else naming 9 will be read as ICD-10.
+  # An ICD-9 code type has to be read as ICD-9. The '%PROC%' arm above catches
+  # spellings the exact ICD9PROC test misses, so they arrive as ICD10PROC and
+  # the check above accepts them. Asked of the raw value: these are the only
+  # spellings the CASE turns into an ICD-9 type.
   sct_version <- db_q(con, glue("
     SELECT trim(CL_CODE_TYPE) AS CL_CODE_TYPE, count(*) AS n_codes
     FROM {sct_src}

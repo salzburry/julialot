@@ -151,7 +151,7 @@ Three consistency checks are reviewable - they stop the build unless named in
 | check | what it would do |
 |---|---|
 | a code-list med with no rollup row | extracted, and classed, but with no rollup flags, so the maintenance and conditioning rules miss it |
-| a rollup med with no codes | never matched, so patients on it look untreated |
+| a rollup med with no extractable NDC/HCPCS code | never matched, so patients on it look untreated |
 | a code type other than NDC or HCPCS | sits in the list and matches nothing |
 
 All of these ask only about rows extraction can reach. Every join in
@@ -248,7 +248,7 @@ deliberately kept in a separate file, a code type this study does not use, a
 substitution left inactive, a ten-digit NDC in a documented layout:
 
 `orphan_meds`, `uncoded_meds`, `code_types`, `subs_substitute`,
-`subs_original`, `ndc_short`.
+`subs_original`, `ndc_short`, `claim_ndc`.
 
 Not waivable, because each means a claim counted twice, a code matching every
 claim with no NDC, a medication with no class, or an output column that is
@@ -321,6 +321,23 @@ unrecoverable - the conversion has to happen in the file, not here. Waive
 
 The two are separate names so that accepting a documented short representation
 does not also accept `ABC123`.
+
+Both sides of the join need the contract, not just the code list. `claim_ndc`
+profiles the claim NDCs before any claim is read - `medical` and `rx`, scoped
+to the cohort and its observation window - and stops unless every one is
+eleven digits. A ten-digit *claim* has exactly the layout problem a ten-digit
+*code* has, so a canonical code can miss a real claim.
+
+The NDC QC in `phase_qc` does not cover this and is not a substitute: it
+profiles `rx` only, measures a different normalization from the one the join
+uses, warns only when the two length sets are wholly disjoint - so any overlap
+silences it - swallows its own errors, and runs after LOT1 is already built.
+
+`claim_ndc` is reviewable rather than fatal so that a first run reports the
+distribution instead of blocking on a shape nobody has seen. Waive it once the
+study team has established how this CDM represents NDC, or convert with an
+approved NDC10-to-NDC11 crosswalk - not by inferring the layout after the
+separators are gone.
 
 ### Class agreement
 
@@ -399,8 +416,13 @@ actually costs rather than leaving it an assumption.
 
 LOT1's tables are replaced before LOT2-5 starts, so a failure in between would
 leave new LOT1 output beside an older `LOT_LONG`. Every run therefore writes
-`<prefix>LOT_BUILD_STATUS`: `started` at the beginning, then `complete`, or
-`failed` if it stops anywhere. Read that before trusting a set of tables.
+`<prefix>LOT_BUILD_STATUS`: `started` once preflight has passed, then
+`complete`, or `failed` if it stops after that. Read it before trusting a set
+of tables.
+
+Preflight - the settings, the contract, the connection, the cohort table -
+runs before the first status row, so a run that fails there leaves no row at
+all rather than a `failed` one. Nothing has been written by then.
 
 LOT1 is checked too, before LOT2-5 starts: MAP ending before it starts, a MAP
 end that is not the later runout, LOT1 ending after observation, an AUTO

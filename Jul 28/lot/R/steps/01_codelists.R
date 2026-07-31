@@ -72,10 +72,8 @@ phase_codelists <- function(con) {
     WHERE original_med IS NOT NULL AND substitute_med IS NOT NULL
   "), qc = "SELECT count(*) AS n_rows, count(DISTINCT original_med) AS n_orig_meds FROM permissible_subs")
 
-  # Code list vs rollup consistency.
-  # Each silently changes who counts as treated, so they stop the build;
-  # CODELIST_WAIVERS names the reviewable ones. They were warnings inside a
-  # tryCatch that also swallowed query errors.
+  # Validate the code lists before treatment extraction.
+  # Reviewable findings need a named waiver; the rest always stop the build.
   log_msg("Checking codelist <-> rollup consistency...")
   problems <- data.frame(check = character(0), detail = character(0),
                          stringsAsFactors = FALSE)
@@ -111,8 +109,8 @@ phase_codelists <- function(con) {
     log_msg("  OK: All codelist meds found in rollup.")
   }
 
-  # A rollup med with no codes can never be seen in a claim, so patients on it
-  # look untreated.
+  # A rollup med with no NDC or HCPCS code can never be seen in a claim, so
+  # patients on it look untreated. It may still have ICD rows.
   uncoded_meds <- db_q(con, "
     SELECT r.CL_MED_ABBR, r.CL_MED_CLASS
     FROM mma_rollup r
@@ -121,13 +119,13 @@ phase_codelists <- function(con) {
     ORDER BY r.CL_MED_CLASS, r.CL_MED_ABBR
   ")
   if (nrow(uncoded_meds) > 0) {
-    log_msg("  Rollup meds with ZERO codes (never extractable):")
+    log_msg("  Rollup meds with no extractable NDC/HCPCS code:")
     print(uncoded_meds)
     problems <- rbind(problems, data.frame(check = "uncoded_meds", detail = paste0(
-      nrow(uncoded_meds), " rollup med(s) with no codes: ",
+      nrow(uncoded_meds), " rollup med(s) with no extractable NDC/HCPCS code: ",
       paste(uncoded_meds$CL_MED_ABBR, collapse = ", ")), stringsAsFactors = FALSE))
   } else {
-    log_msg("  OK: All rollup meds have at least one code in codelist.")
+    log_msg("  OK: Every rollup med has an extractable NDC/HCPCS code.")
   }
 
   # Only these two are ever joined on, in 03_mma_map. A code of any other type
@@ -184,9 +182,7 @@ phase_codelists <- function(con) {
     SELECT CL_CODE, CL_MED_ABBR
     FROM mma_codelist
     WHERE CL_CODE_TYPE = 'NDC'
-      -- String, not a cast: 'ABC' strips to '' and a very long code overflows,
-      -- and either raises a bare conversion error here, before ndc_shape below
-      -- gets to say what is actually wrong with the row.
+      -- String logic lets a malformed value reach ndc_shape below.
       AND regexp_replace(CL_CODE, '[^0-9]', '') RLIKE '^0+$'
   ")
   if (nrow(bad_ndc) > 0) {
@@ -329,14 +325,9 @@ phase_codelists <- function(con) {
     log_msg("  OK: The code list and the rollup agree on every class.")
   }
 
-  # A substitution names two medications by abbreviation and nothing else
-  # checks either one. The substitute is unioned straight into the regimen and
-  # then matched against map_stacked on MED_ABBR, so an abbreviation the code
-  # list never produces matches nothing: the rule quietly does not fire. A
-  # typo on that side is indistinguishable from a drug with no claims.
-  #
-  # NOT EXISTS rather than NOT IN: a single NULL CL_MED_ABBR would make NOT IN
-  # return no rows at all, and the check would pass by being unanswerable.
+  # Both abbreviations in a substitution have to be ones the code list
+  # produces, or the rule matches nothing and never fires. NOT EXISTS, not
+  # NOT IN: one NULL CL_MED_ABBR makes NOT IN return nothing at all.
   subs_sub <- db_q(con, "
     SELECT DISTINCT p.substitute_med AS med
     FROM permissible_subs p
@@ -424,15 +415,9 @@ phase_codelists <- function(con) {
   # Sanitize both med abbreviations and class names for safe SQL column names
   sanitize_col <- function(x) gsub("[^A-Za-z0-9]+", "_", toupper(x))
 
-  # Two things the generator below assumes about these values and never checks.
-  # LOT2-5 discovers its meds and classes from the same mma_rollup and builds
-  # its columns the same way, so checking them here covers both.
-  #
-  # Punctuation and spaces all become '_', so 'CAR-T' and 'CAR T' produce one
-  # column name between them - a SELECT with the column twice.
-  #
-  # And the value itself goes into a SQL string literal unescaped, so an
-  # apostrophe closes the literal early: MED_ABBR = 'O'BRIEN'.
+  # Generated aliases must be unique, and the values must be safe inside a SQL
+  # string literal. LOT2-5 builds its columns the same way from the same
+  # rollup, so checking here covers both.
   for (nm in list(list(v = meds, what = "medication"),
                   list(v = classes, what = "class"))) {
     san <- sanitize_col(nm$v)
