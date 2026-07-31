@@ -1886,5 +1886,19 @@ ok(length(unnamed) == 0,
      paste0("shipped for filling in but not named in the README: ",
             paste(unnamed, collapse = ", "))
    else "...as is every file this package ships to be filled in")
+# And the setting that points each of them somewhere else. A file nobody can
+# relocate is a file that has to be edited in place in a checkout, which is how
+# a decision ends up living only on one person's disk.
+cfg_txt <- paste(readLines(file.path(ROOT, "R", "config.R"), warn = FALSE),
+                 collapse = "\n")
+csv_vars <- unique(unlist(regmatches(cfg_txt,
+  gregexpr('NDMM_[A-Z0-9_]*CSV', cfg_txt, perl = TRUE))))
+unnamed <- Filter(function(v) !grepl(v, readme, fixed = TRUE), csv_vars)
+ok(length(csv_vars) > 0 && length(unnamed) == 0,
+   if (length(unnamed))
+     paste0("reads a path from the environment but the README does not say so: ",
+            paste(unnamed, collapse = ", "))
+   else paste0("...and all ", length(csv_vars),
+               " settings that relocate one are named too"))
 
 report()

@@ -163,13 +163,65 @@ None of them changes the cohort — they are what the decision gets made
 | `NDMM_BELANTAMAB_SCOPE_COUNTS` | which claims proxy stands for "in any LOT" | `N_PATIENTS` and `N_COHORT` under each of the three readings, with this run's marked |
 | `NDMM_BELANTAMAB_RECONCILE` | **which patients the proxy could not settle** | the cohort's own belantamab claims, with dates. Join to `LOT_LONG` after `Jul 28/lot` runs — an empty result means the proxy was exact |
 
-Three of them pair with a file you fill in; those are covered in **Bone
-metastasis**, **Which agents may set the 1L index** and **One label per code is
-the wrong grain**. All three ship **empty**, so until somebody writes in one,
-this build produces `apr_30_2026`'s cohort and not a variation on it.
-
 `tests/test_runner.R` requires every declared output to be named here, so this
 list cannot fall behind the code — it had, twice, before that test existed.
+
+## The files you fill in
+
+Three questions cannot be answered from this repository. A tumour-group label
+cannot say whether a `C79.5x` is myeloma bone disease or a breast primary; no
+document here lists the eligible 1L treatments; and one label per ICD code is
+the wrong grain for "the same cancer". Each is a **code-level** decision, and
+code-level decisions belong in a file somebody can review, not in a setting
+somebody has to discover.
+
+So the package ships three CSVs in `codelists/`, **all empty**:
+
+| file | one row per | the columns | what it decides |
+|---|---|---|---|
+| `mm_adjacent_overrides.csv` | ICD code | `dx, icd_family, override, note` | `override=1` treats the code as the index disease (do **not** exclude); `0` treats it as another cancer (**do** exclude). Wins over the tumour-group label **both ways** |
+| `eligible_1l_agents.csv` | `CL_MED_ABBR` | `med_abbr, eligible, note` | `eligible=0` bars an agent from setting the 1L index. **Any** `eligible=1` turns the file into an allowlist — only those agents may set it |
+| `primary_tumor_groups.csv` | code-list label | `tumor_group, primary_tumor_group, note` | labels sharing a `primary_tumor_group` pair together for the two-outpatient-claim rule |
+
+**Empty means the source's cohort.** An unlisted code keeps its label's verdict,
+an unlisted agent can still set an index, an unmapped label stays its own group.
+So a checkout with nothing filled in produces `apr_30_2026`'s cohort, not a
+variation on it. Nothing here changes until you write in one of these.
+
+**Each has a table to fill it in from**, so it is a copy and an edit rather than
+a research task:
+
+| the file | fill it in from |
+|---|---|
+| `mm_adjacent_overrides.csv` | `NDMM_MM_ADJACENT_CODES` — the codes currently kept, in these columns |
+| `eligible_1l_agents.csv` | `NDMM_INDEX_AGENTS` — every agent, and how many indexes it set |
+| `primary_tumor_groups.csv` | `NDMM_OTHER_MALIG_GROUPS` — every label and the group it pairs under |
+
+### What they all do
+
+- **Absent is the same as empty**, and neither is a failure. A checkout that
+  deleted them, or a run pointed elsewhere, still builds.
+- **A malformed row stops the run.** A blank code, an `override` that is not 0
+  or 1, an `icd_family` nobody can act on, one key given two answers, a missing
+  column. Skipping a bad row would let a file whose only purpose is to be exact
+  quietly decide something nobody chose.
+- **A named thing that matches nothing stops the run** when it would otherwise
+  read as a rule doing nothing — an allowed `med_abbr` that is on no code list
+  is not a permission, it is an agent silently barred, and its patients leave at
+  attrition step 3.
+- **The md5 goes into `NDMM_CODELIST_METADATA` even when the file is empty**,
+  because "read it, no rows" and "never looked" are different, and only one of
+  them is a decision.
+- Values are normalised the way the code lists are — punctuation stripped from
+  codes, everything upper-cased — so `C79.51` and `C7951`, `ICD-10` and `10`,
+  `bor` and `BOR` all match.
+- **Point elsewhere** with `NDMM_MM_ADJACENT_CSV`, `NDMM_ELIGIBLE_1L_CSV`,
+  `NDMM_PRIMARY_GROUPS_CSV`. The path is recorded whether or not a file is
+  found there.
+
+The detail for each is in **Bone metastasis, and the codes you can decide
+yourself**, **Which agents may set the 1L index**, and **One label per code is
+the wrong grain for "another cancer"**.
 
 ## The criteria as applied
 
