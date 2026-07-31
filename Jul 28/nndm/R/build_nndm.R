@@ -117,7 +117,8 @@ CHECKPOINTS <- c("NDMM_FLAGS_ALL", "NDMM_MM_DX_CODES",
                  "NDMM_ENROLL_SPANS", "NDMM_MMA_CODELIST",
                  "NDMM_BELANTAMAB_CODES", "NDMM_LOT1_STARTS",
                  "NDMM_OTHER_MALIG_CODES", "NDMM_BELANTAMAB_PATIDS",
-                 "NDMM_INDEX_TX", "NDMM_BELANTAMAB_TX", "NDMM_PATIDS")
+                 "NDMM_INDEX_TX", "NDMM_BELANTAMAB_TX", "NDMM_PATIDS",
+                 "NDMM_INDEX_INELIGIBLE")
 
 # What the run writes. All prefixed, so two cohorts sit side by side.
 DELIVERABLES <- c("NDMM_COHORT", "NDMM_ATTRITION", "NDMM_INDEX_AGENTS",
@@ -201,15 +202,18 @@ pin_output_schema <- function(cfg) {
 
 # The caller says which cohort. Every table read and written carries the
 # prefix, so this folder names no cohort of its own.
-# Where the per-code MM-adjacent overrides live. The environment wins; failing
+# Where the two fill-in files live. The environment wins; failing
 # that it is the copy that ships beside this code, so a checkout has a file to
 # edit rather than a setting to find out about. The file need not exist - see
 # load_override_csv() - but the path is always recorded, so a run says which
 # file it looked for whether or not it found one.
 pin_override_csv <- function(cfg, here) {
-  p <- trimws(as.character(cfg$mm_adjacent_csv %||% ""))
-  cfg$mm_adjacent_csv <-
-    if (nzchar(p)) p else file.path(here, "codelists", "mm_adjacent_overrides.csv")
+  fill <- function(v, name) {
+    p <- trimws(as.character(v %||% ""))
+    if (nzchar(p)) p else file.path(here, "codelists", name)
+  }
+  cfg$mm_adjacent_csv <- fill(cfg$mm_adjacent_csv, "mm_adjacent_overrides.csv")
+  cfg$eligible_1l_csv <- fill(cfg$eligible_1l_csv, "eligible_1l_agents.csv")
   cfg
 }
 
@@ -909,6 +913,7 @@ build_nndm <- function(here, prefix) {
   build_ndmm_belantamab_codes(con)
   checkpoint(con, "NDMM_BELANTAMAB_CODES")
   build_ndmm_index_ineligible_codes(con)
+  checkpoint(con, "NDMM_INDEX_INELIGIBLE")
 
   log_msg("1L index: first eligible MM treatment claim on or after ",
           NDMM_LOT1_FROM)

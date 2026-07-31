@@ -65,7 +65,11 @@ build_ndmm_index_ineligible_codes <- function(con) {
   norm <- function(x) toupper(gsub("[^A-Za-z0-9]", "", x))
   sq   <- function(x) gsub("'", "''", x, fixed = TRUE)
 
-  abbrs <- split_setting(NDMM_INDEX_EXCLUDED_ABBRS)
+  # eligible_1l_agents.csv, if the study team has written one. Its deny rows
+  # are the same thing as NDMM_INDEX_EXCLUDED_ABBRS and join them; its allow
+  # rows turn the whole thing round - see below.
+  el    <- load_eligible_agents_csv(nndm_config()$eligible_1l_csv)
+  abbrs <- c(split_setting(NDMM_INDEX_EXCLUDED_ABBRS), el$deny)
   codes <- split_setting(NDMM_INDEX_EXCLUDED_CODES)
 
   # Each entry becomes one predicate, and one thing to check matched something.
@@ -87,13 +91,50 @@ build_ndmm_index_ineligible_codes <- function(con) {
         sql  = sprintf("code = '%s'", sq(norm(parts[1]))))
   }
 
+  # An allowlist is the same view read the other way round: everything NOT
+  # named is ineligible. One predicate, and the four-arm scan below needs no
+  # change - it already anti-joins this view. Added last so the checks above
+  # still run over the named terms one at a time.
+  allow_term <- NULL
+  if (length(el$allow)) {
+    allow_in <- paste(sprintf("'%s'", sq(el$allow)), collapse = ", ")
+    allow_term <- list(
+      what = paste0("the allowlist (", length(el$allow), " agents)"),
+      sql  = sprintf("upper(trim(med_abbr)) NOT IN (%s)", allow_in))
+  }
+
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_INDEX_INELIGIBLE} AS
     SELECT DISTINCT code_type, code
     FROM {NDMM_MMA_CODELIST}
-    WHERE ", paste(vapply(terms, function(t) t$sql, character(1)),
+    WHERE ", paste(vapply(c(terms, list(allow_term)[!is.null(allow_term)]),
+                          function(t) t$sql, character(1)),
                    collapse = "\n       OR "), "
   "))
+
+  # Each allowed agent has to exist, and for the same reason the others do: an
+  # abbreviation that matches nothing is not a permission, it is a typo, and
+  # under an allowlist a typo does not read as a restriction that applies to
+  # nothing - it silently bars an agent that should have been let through.
+  for (a in el$allow) {
+    n <- as.integer(db_q(con, glue(
+      "SELECT count(*) AS n FROM {NDMM_MMA_CODELIST}
+       WHERE upper(trim(med_abbr)) = '{sq(a)}'"))$n)
+    if (is.na(n) || n == 0)
+      stop("The eligible-1L agent list allows '", a, "', which matches no row ",
+           "of cl_mma_codelist.csv. Under an allowlist that is not a ",
+           "restriction applying to nothing - it is an agent that should set ",
+           "an index and cannot, so its patients leave the cohort at attrition ",
+           "step 3. Check it against 'SELECT DISTINCT med_abbr FROM ",
+           NDMM_MMA_CODELIST, "'.", call. = FALSE)
+  }
+  if (!is.null(allow_term)) {
+    n_barred <- as.integer(db_q(con, glue(
+      "SELECT count(DISTINCT med_abbr) AS n FROM {NDMM_MMA_CODELIST}
+       WHERE {allow_term$sql}"))$n)
+    log_msg("  Allowlist in force: ", n_barred, " agent(s) on the code list ",
+            "cannot set a 1L index")
+  }
 
   # Every entry after belantamab has to match something. Left unchecked, a name
   # or a code that is not on the list reads as an applied restriction and
@@ -165,9 +206,10 @@ build_ndmm_lot1_index <- function(con, medical_tbl, rx_tbl) {
 # This is the list S6.2.1.1 gestures at and no document in this repository
 # contains. Annex 2 is "categorization of SOC regimens", which S6.2.2 calls an
 # exemplary list that may be recategorized - an analysis grouping, not an
-# eligibility rule - and it is a stand-alone document. So rather than invent an
-# allowlist, the build reports what actually set an index. If a later-line-only
-# agent appears here, name it in NDMM_INDEX_EXCLUDED_ABBRS and re-run.
+# eligibility rule - and it is a stand-alone document. So this build does not
+# invent an allowlist. It writes the sheet one would be built from: every agent
+# on the code list, whether this run let it set an index, and how many it set.
+# Fill in codelists/eligible_1l_agents.csv from this and re-run.
 build_ndmm_index_agents <- function(con, cfg) {
   db_exec(con, glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_INDEX_AGENTS')} AS
@@ -176,18 +218,41 @@ build_ndmm_index_agents <- function(con, cfg) {
       FROM {NDMM_INDEX_TX} tx
       INNER JOIN {NDMM_LOT1_STARTS} l1
               ON l1.PATID = tx.PATID AND tx.tx_dt = l1.LOT1_START_DT
+    ),
+    -- Every agent on the code list, not only the ones that won a date. Under
+    -- an allowlist the winners are by definition the allowed ones, so a table
+    -- of winners could not be used to build the allowlist - which is what this
+    -- table is for. ELIGIBLE says what this run treated each as.
+    universe AS (
+      SELECT DISTINCT upper(trim(c.med_abbr)) AS med_abbr
+      FROM {NDMM_MMA_CODELIST} c
+      WHERE c.med_abbr IS NOT NULL AND trim(c.med_abbr) <> ''
+    ),
+    barred AS (
+      SELECT DISTINCT upper(trim(c.med_abbr)) AS med_abbr
+      FROM {NDMM_MMA_CODELIST} c
+      INNER JOIN {NDMM_INDEX_INELIGIBLE} i
+              ON i.code_type = c.code_type AND i.code = c.code
     )
-    SELECT coalesce(med_abbr, '(none)') AS MED_ABBR,
-           count(DISTINCT PATID)        AS N_PATIENTS
-    FROM on_index
-    GROUP BY coalesce(med_abbr, '(none)')
-    ORDER BY N_PATIENTS DESC"))
+    SELECT u.med_abbr                              AS MED_ABBR,
+           CASE WHEN b.med_abbr IS NULL THEN 1 ELSE 0 END AS ELIGIBLE,
+           coalesce(n.N_PATIENTS, 0)               AS N_PATIENTS
+    FROM universe u
+    LEFT JOIN barred b ON b.med_abbr = u.med_abbr
+    LEFT JOIN (SELECT coalesce(upper(trim(med_abbr)), '(none)') AS med_abbr,
+                      count(DISTINCT PATID) AS N_PATIENTS
+               FROM on_index
+               GROUP BY coalesce(upper(trim(med_abbr)), '(none)')) n
+           ON n.med_abbr = u.med_abbr
+    ORDER BY N_PATIENTS DESC, MED_ABBR"))
   got <- db_q(con, glue("SELECT * FROM {wrk('NDMM_INDEX_AGENTS')}"))
-  log_msg("Agents that set a 1L index date (", nrow(got), "):")
+  log_msg("MM agents on the code list (", nrow(got), "), and the indexes they set:")
   for (i in seq_len(nrow(got)))
-    log_msg("    ", got$MED_ABBR[i], ": ", format(got$N_PATIENTS[i], big.mark = ","))
+    log_msg("    ", if (got$ELIGIBLE[i] == 1L) "may set " else "BARRED  ", " ",
+            got$MED_ABBR[i], ": ", format(got$N_PATIENTS[i], big.mark = ","))
   log_msg("  Review these against S6.2.1.1. Anything restricted to later lines ",
-          "belongs in NDMM_INDEX_EXCLUDED_ABBRS.")
+          "belongs in codelists/eligible_1l_agents.csv with eligible=0, or ",
+          "list the eligible ones with eligible=1 to turn it into an allowlist.")
   invisible(got)
 }
 

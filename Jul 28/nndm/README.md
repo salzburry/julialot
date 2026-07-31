@@ -286,11 +286,44 @@ Final treatment groupings may depend on data availability… and may be
 recategorized". It is an analysis grouping, and a stand-alone document not
 included in the protocol PDF.
 
-Rather than invent an allowlist — which would shrink the cohort by a rule
-nobody could reproduce from the document — every run writes
-**`<prefix>NDMM_INDEX_AGENTS`**: each `CL_MED_ABBR` that actually set an index
-date, and how many patients it set one for, counted on the index date itself
-off the same scan the index came from. That is the list to review.
+So this build does not invent an allowlist — that would shrink the cohort by a
+rule nobody could reproduce from the document. It reads one if you write it
+down, and writes the sheet to build it from.
+
+**`<prefix>NDMM_INDEX_AGENTS`** — every `CL_MED_ABBR` on the code list, whether
+this run would let it set an index (`ELIGIBLE`), and how many patients it
+actually set one for (`N_PATIENTS`, counted on the index date itself, off the
+same scan the index came from). Every agent, not only the ones that won a date:
+under an allowlist the winners are by definition the allowed ones, so a table
+of winners could only ever confirm itself.
+
+**`codelists/eligible_1l_agents.csv`** — one row per agent, and three modes:
+
+```
+med_abbr,eligible,note
+BOR,1,bortezomib - SOC first line
+LEN,1,lenalidomide
+CART,0,later lines only
+```
+
+| what is in the file | what happens |
+|---|---|
+| **no rows** (what ships) | no allowlist — any MM therapy sets the index, which is the current cohort |
+| **only `eligible=0`** | a deny list — those agents are barred, everything else still sets the index |
+| **any `eligible=1`** | an **allowlist** — only those agents set the index, every other agent on the code list is barred |
+
+`eligible=0` is the same thing as naming an agent in
+`NDMM_INDEX_EXCLUDED_ABBRS`, in a file rather than an environment variable; the
+two combine. Belantamab stays barred whatever the file says. Set
+`NDMM_ELIGIBLE_1L_CSV` to use a file elsewhere.
+
+**The allowlist mode is the dangerous one, so it is loud.** An agent left off
+does not fail — it silently takes its patients out of the cohort at attrition
+step 3. So an allowed `med_abbr` that matches no row of `cl_mma_codelist.csv`
+**stops the run** (a typo there is not a restriction applying to nothing, it is
+an agent that should have been let through and was not), and the run logs how
+many agents the allowlist barred. Malformed rows stop the run for the same
+reasons the other fill-in file's do.
 
 If a later-line-only agent appears in it, name it — by the code list's own
 abbreviation, or by HCPCS/NDC if that is what you have:

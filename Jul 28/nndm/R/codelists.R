@@ -36,34 +36,47 @@ CODELIST_FILES <- c("cl_mma_codelist.csv", "mm_dx.csv", "other_malig.csv",
 # change who is in the cohort with nothing saying so.
 OVERRIDE_CSV_COLS <- c("dx", "icd_family", "override", "note")
 
-load_override_csv <- function(path) {
+# The read that both fill-in files share: absent means the shipped default,
+# present means hashed, checked for its columns, and recorded whether or not it
+# had rows. Hands back NULL for "nothing to apply" and a data frame otherwise,
+# so each caller only writes the validation that is its own.
+read_optional_csv <- function(path, cols, absent_msg, empty_msg) {
   if (!nzchar(path) || !file.exists(path)) {
-    log_msg("  No per-code MM-adjacent overrides (", path, " not present); ",
-            "tumour-group labels decide the other-cancer criterion")
+    log_msg("  ", absent_msg, " (", path, " not present)")
     return(NULL)
   }
   md5 <- unname(tools::md5sum(path))
   if (!grepl("^[0-9a-f]{32}$", md5))
     stop("CODELIST ERROR: could not hash ", path, ", so this run cannot record ",
-         "which version of the overrides it read", call. = FALSE)
+         "which version of it was read", call. = FALSE)
   df <- read.csv(path, stringsAsFactors = FALSE, na.strings = c("", "NA", "NaN"),
                  colClasses = "character")
   if (!identical(md5, unname(tools::md5sum(path))))
     stop("CODELIST ERROR: ", path, " changed while it was being read", call. = FALSE)
-  miss <- setdiff(OVERRIDE_CSV_COLS, names(df))
+  miss <- setdiff(cols, names(df))
   if (length(miss))
     stop("CODELIST ERROR: ", path, " is missing ", paste(miss, collapse = ", "),
-         ". Columns are: ", paste(OVERRIDE_CSV_COLS, collapse = ", "), call. = FALSE)
-  df <- df[, OVERRIDE_CSV_COLS, drop = FALSE]
+         ". Columns are: ", paste(cols, collapse = ", "), call. = FALSE)
+  df <- df[, cols, drop = FALSE]
   # Recorded even when empty: "this run read the file and it had no rows" and
   # "this run never looked" are different, and only one of them is a decision.
   seen <- getOption("nndm_codelist_md5", list())
   seen[[basename(path)]] <- list(md5 = md5, n_rows = nrow(df))
   options(nndm_codelist_md5 = seen)
   if (nrow(df) == 0) {
-    log_msg("  Per-code MM-adjacent overrides: none listed (md5 ", md5, ")")
+    log_msg("  ", empty_msg, " (md5 ", md5, ")")
     return(NULL)
   }
+  attr(df, "md5") <- md5
+  df
+}
+
+load_override_csv <- function(path) {
+  df <- read_optional_csv(path, OVERRIDE_CSV_COLS,
+    "No per-code MM-adjacent overrides; tumour-group labels decide the other-cancer criterion",
+    "Per-code MM-adjacent overrides: none listed")
+  if (is.null(df)) return(NULL)
+  md5 <- attr(df, "md5")
   # Every field checked before any of it reaches SQL. A row nobody can act on
   # is a typo in a file whose whole purpose is to be exact, so it stops the run
   # rather than being dropped - a dropped row reads as a decision that was made.
@@ -99,6 +112,66 @@ load_override_csv <- function(path) {
   rows <- sprintf("('%s', '%s', %s)", dx, fam, ov)
   paste0("(SELECT * FROM (VALUES\n  ", paste(rows, collapse = ",\n  "),
          "\n) AS t(dx, icd_family, override)) ovr")
+}
+
+# Which agents may set the 1L index. The list S6.2.1.1 gestures at and no
+# document in this repository contains.
+#
+# The protocol says the 1L index is the first claim for an "eligible or
+# expected treatment for MM ... other than belantamab". Annex 2 is the
+# categorization of SOC regimens, which S6.2.2 calls exemplary and open to
+# recategorization - an analysis grouping, not an eligibility rule - and it is
+# a stand-alone document. So this build does not invent an allowlist. It reads
+# one if the study team writes it down, and until then any MM therapy on
+# cl_mma_codelist.csv can set the index, steroids and belantamab aside.
+#
+# One row per CL_MED_ABBR. eligible = 1 puts the agent on the allowlist,
+# eligible = 0 bars it - the same effect as naming it in
+# NDMM_INDEX_EXCLUDED_ABBRS, in a file rather than an environment variable.
+#
+# The modes, and the difference matters:
+#   no rows          - no allowlist. Any MM therapy sets the index. This is
+#                      what ships, and it is the current cohort.
+#   only eligible=0  - a deny list. Everything else still sets the index.
+#   any eligible=1   - an ALLOWLIST. Only those agents set the index, and every
+#                      other agent on the code list is barred. An agent left
+#                      off silently takes its patients out of the cohort at
+#                      attrition step 3, so the run says how many it barred.
+#
+# NDMM_INDEX_AGENTS lists every agent on the code list with how many indexes it
+# set, which is the sheet to build this from.
+ELIGIBLE_CSV_COLS <- c("med_abbr", "eligible", "note")
+
+load_eligible_agents_csv <- function(path) {
+  df <- read_optional_csv(path, ELIGIBLE_CSV_COLS,
+    "No eligible-1L agent list; any MM therapy on the code list can set the index",
+    "Eligible-1L agent list: no rows, so any MM therapy can set the index")
+  if (is.null(df)) return(NULL)
+  el <- trimws(df$eligible)
+  bad <- which(!(el %in% c("0", "1")))
+  if (length(bad))
+    stop("CODELIST ERROR: ", path, " row(s) ", paste(bad, collapse = ", "),
+         ": eligible must be 0 or 1, got ",
+         paste(unique(el[bad]), collapse = ", "), call. = FALSE)
+  ab <- toupper(trimws(df$med_abbr))
+  bad <- which(is.na(ab) | !nzchar(ab))
+  if (length(bad))
+    stop("CODELIST ERROR: ", path, " row(s) ", paste(bad, collapse = ", "),
+         ": med_abbr is blank", call. = FALSE)
+  dup <- unique(ab[duplicated(ab)])
+  if (length(dup))
+    stop("CODELIST ERROR: ", path, " gives two answers for ",
+         paste(dup, collapse = ", "), ". One row per agent.", call. = FALSE)
+  out <- list(allow = ab[el == "1"], deny = ab[el == "0"])
+  log_msg("  Eligible-1L agent list: ", length(out$allow), " allowed, ",
+          length(out$deny), " barred (md5 ", attr(df, "md5"), ")")
+  if (length(out$allow))
+    log_msg("  ALLOWLIST IN FORCE: only these agents can set a 1L index - ",
+            paste(out$allow, collapse = ", "),
+            ". Every other agent on cl_mma_codelist.csv is barred, and a ",
+            "patient whose only MM therapy is one of those has no index and ",
+            "leaves the cohort at attrition step 3.")
+  out
 }
 
 load_codelist_csv <- function(csv_name, col_spec) {
