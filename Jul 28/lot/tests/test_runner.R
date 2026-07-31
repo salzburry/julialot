@@ -1178,6 +1178,41 @@ ok(regexpr("sct_claims_raw", mv, fixed = TRUE) <
 ok(grepl("CREATE OR REPLACE TEMPORARY VIEW {mv$view} AS SELECT * FROM {lot_out(mv$name)}",
          bl, fixed = TRUE),
    "and each view is repointed at its table afterwards")
+
+# All of the above reads the source, so the function could be a no-op and still
+# pass - it was, and it did. Driven from here.
+sv <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_lot.R"), envir = sv)
+assign("log_msg", function(...) invisible(NULL), envir = sv)
+assign("lot_out", function(x) paste0("wk.p_", x), envir = sv)
+VSQL <- character(0)
+assign("run_step", function(con, name, sql, qc = NULL) {
+  VSQL <<- c(VSQL, sql); invisible(TRUE) }, envir = sv)
+assign("db_exec", function(con, sql) { VSQL <<- c(VSQL, sql); invisible(TRUE) }, envir = sv)
+MVL <- get("SCT_MATERIALIZE", envir = sv)
+VSQL <- character(0)
+vres <- tryCatch({ sv$materialize_sct_views(NULL); NULL }, error = conditionMessage)
+ok(is.null(vres) && length(VSQL) == 2L * length(MVL),
+   paste0("a table and a repointed view for each of the three (", length(VSQL), ")"))
+# Whole statements: "FROM tx_auto_dates" is a prefix of nothing here, but
+# "FROM lot_long" was a prefix of "FROM lot_long_final" one section up, and
+# that mistake cost a mutation that should have failed.
+for (m in MVL) {
+  i_t <- which(trimws(VSQL) == paste0("CREATE OR REPLACE TABLE wk.p_", m$name,
+                                      " AS SELECT * FROM ", m$view))[1]
+  i_v <- which(trimws(VSQL) == paste0("CREATE OR REPLACE TEMPORARY VIEW ", m$view,
+                                      " AS SELECT * FROM wk.p_", m$name))[1]
+  # Table then view, and both naming the same pair. A crossed pair would hand
+  # LOT2-5 one view's rows under another's name, and nothing downstream could
+  # tell - this is the reason the step is not merely a speed-up.
+  ok(!is.na(i_t) && !is.na(i_v) && i_t < i_v,
+     paste0(m$view, " is written to ", m$name, ", then repointed at it"))
+}
+ok(all(vapply(MVL, function(m) identical(toupper(m$view), m$name), logical(1))),
+   "each table is its own view's name, so no entry pairs two different things")
+ok(identical(MVL[[1]]$view, "sct_claims_raw") &&
+     which(grepl("FROM sct_claims_raw$", trimws(VSQL)))[1] == 1L,
+   "and sct_claims_raw is materialized first, so the other two read a table")
 # The probe must not be the expensive thing it is checking for.
 ok(grepl("SHOW VIEWS", bl, fixed = TRUE) &&
      !grepl("SELECT 1 FROM {v} LIMIT 1", bl, fixed = TRUE),
