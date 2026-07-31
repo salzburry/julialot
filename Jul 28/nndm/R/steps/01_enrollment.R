@@ -1,13 +1,8 @@
 # Enrollment spans, with the gap semantics the parent's CE_b/CE_f use.
 #
-# Ported from apr_30_2026/06_ndmm_dashboard.R lines 143-198.
+# Ported from apr_30_2026/06_ndmm_dashboard.R lines 148-198.
 # tests/test_same_as_source.R compares this against that range.
 
-                                       unset = "member_enrollment")
-NDMM_GAP_DAYS              <- as.integer(Sys.getenv("GAP_DAYS",
-                                                  unset = "30"))
-NDMM_FINAL_TABLE_NAME      <- Sys.getenv("FINAL_TABLE_NAME",
-                                       unset = "ELIG_COH_FINAL")
 
 # Build enrollment_spans (with NDMM_GAP_DAYS allowance) directly from
 # member_enrollment - the parent's temp view isn't persisted, so we

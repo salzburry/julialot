@@ -1,6 +1,6 @@
 # The NDMM cohort's own names, windows and code-list overrides.
 #
-# Ported from apr_30_2026/06_ndmm_dashboard.R lines 62-142.
+# Ported from apr_30_2026/06_ndmm_dashboard.R lines 62-147.
 # tests/test_same_as_source.R compares this against that range.
 
 # concurrently with 05_regimen_dashboard.R without clobbering its temp views.
@@ -90,3 +90,8 @@ NDMM_STEROID_ABBRS <- c("DEX","DEXA","DEXAMETHASONE","PRED","PREDNISONE")
 # TBL_MEMBER_ENROLLMENT / GAP_DAYS / FINAL_TABLE_NAME for the parent
 # cohort run picks up the same values here.
 NDMM_TBL_MEMBER_ENROLLMENT <- Sys.getenv("TBL_MEMBER_ENROLLMENT",
+                                       unset = "member_enrollment")
+NDMM_GAP_DAYS              <- as.integer(Sys.getenv("GAP_DAYS",
+                                                  unset = "30"))
+NDMM_FINAL_TABLE_NAME      <- Sys.getenv("FINAL_TABLE_NAME",
+                                       unset = "ELIG_COH_FINAL")

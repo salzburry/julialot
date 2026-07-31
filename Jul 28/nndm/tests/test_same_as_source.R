@@ -29,8 +29,8 @@ src <- readLines(SRC, warn = FALSE)
 # together they are the cohort half of the source - asserted below, so a range
 # that is quietly narrowed cannot drop code without saying so.
 PARTS <- list(
-  list(file = "R/nndm_constants.R",      from = 62,  to = 142),
-  list(file = "R/steps/01_enrollment.R",  from = 143, to = 198),
+  list(file = "R/nndm_constants.R",      from = 62,  to = 147),
+  list(file = "R/steps/01_enrollment.R",  from = 148, to = 198),
   list(file = "R/steps/02_lot1_starts.R", from = 199, to = 216),
   list(file = "R/steps/03_prior_therapy.R", from = 217, to = 317),
   list(file = "R/steps/04_other_malig.R", from = 318, to = 533),
@@ -133,6 +133,17 @@ for (p in PARTS) {
                      "\n           source: ", if (is.na(w[d])) "<nothing>" else w[d],
                      "\n           ported: ", if (is.na(g[d])) "<nothing>" else g[d]))
   }
+}
+
+cat("\n-- and every ported file parses --\n")
+# Line-for-line equality does not imply this: a range that ends mid-statement
+# compares clean and then fails to source. It did, between the constants and
+# the enrollment step.
+for (p in PARTS) {
+  f <- file.path(ROOT, p$file)
+  e <- tryCatch({ parse(f); NULL }, error = function(e) e)
+  ok(is.null(e), paste0(p$file, ": parses",
+                        if (!is.null(e)) paste0(" -- ", conditionMessage(e)) else ""))
 }
 
 cat("\n-- and the ranges account for the whole cohort half --\n")
