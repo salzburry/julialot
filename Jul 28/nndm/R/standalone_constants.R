@@ -69,6 +69,27 @@ NDMM_INDEX_EXCLUDED_ABBRS <- Sys.getenv("NDMM_INDEX_EXCLUDED_ABBRS", unset = "")
 # matched anyway, so barring it does nothing while reading as though it did.
 NDMM_INDEX_EXCLUDED_CODES <- Sys.getenv("NDMM_INDEX_EXCLUDED_CODES", unset = "")
 
+# What "in any LOT" is taken to mean for the belantamab exclusion (S6.2.1.2).
+# Lines of therapy do not exist when this build runs - the LOT algorithm runs
+# over the cohort it produces - so this is a claims proxy for LOT membership,
+# and which proxy changes the count:
+#
+#   study_period  any belantamab claim in [STUDY_START, STUDY_END]. Lines are
+#                 only ever built over the study period, so a claim outside it
+#                 is in no LOT. This is the default.
+#   from_index    on or after the patient's own 1L index. Lines are numbered
+#                 from that date, so this is the strictest reading of "in any
+#                 LOT" - and the narrowest, excluding fewest patients.
+#
+# Neither is LOT membership. Only running the LOT algorithm and checking which
+# line a belantamab claim landed in is exact; see the README.
+#
+# apr_30_2026 bounded neither end but the upper one, so a claim from before the
+# study period excluded the patient. That is wrong under any reading.
+NDMM_BELANTAMAB_SCOPE <- Sys.getenv("NDMM_BELANTAMAB_SCOPE", unset = "study_period")
+
+NDMM_BELANTAMAB_TX        <- "_ndmm_belantamab_tx"
+
 # Views built by the index-agent profile.
 NDMM_INDEX_TX             <- "_ndmm_index_tx"
 NDMM_INDEX_INELIGIBLE     <- "_ndmm_index_ineligible"

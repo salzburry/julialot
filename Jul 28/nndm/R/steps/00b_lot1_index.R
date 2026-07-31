@@ -193,28 +193,71 @@ build_ndmm_index_agents <- function(con, cfg) {
 
 # MAP_STACKED is a LOT-build table this package no longer reads. The ported
 # flags step takes its belantamab source as a parameter and looks for
-# MAP_MED_TYPE LIKE 'BEL%', so this view answers in that shape from raw claims:
-# one row per patient with any belantamab claim, at any time, in any line.
+# MAP_MED_TYPE LIKE 'BEL%', so this answers in that shape from raw claims.
+#
+# S6.2.1.2 says "in any LOT". Lines do not exist yet - the LOT algorithm runs
+# over the cohort this build produces - so NDMM_BELANTAMAB_SCOPE picks the
+# claims proxy, and every claim is kept here with its date so the proxy can be
+# applied, and so all of them can be counted for review.
 build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl) {
-  arm <- function(tbl, dt, col, numeric_only) glue("
-      SELECT DISTINCT cast(t.PATID as string) AS PATID
+  txt_match <- function(col) paste0(
+    "upper(regexp_replace(coalesce(cast(t.", col, " as string),''), '[^A-Za-z0-9]', '')) = c.code",
+    "\n       AND regexp_replace(coalesce(cast(t.", col, " as string),''), '[^A-Za-z0-9]', '') <> ''")
+  ndc_match <- function(col) paste0(
+    "lpad(regexp_replace(coalesce(cast(t.", col, " as string),''), '[^0-9]', ''), 11, '0')",
+    "\n         = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')",
+    "\n       AND regexp_replace(coalesce(cast(t.", col, " as string),''), '[^0-9]', '') <> ''")
+  arm <- function(tbl, dt, match_sql) glue("
+      SELECT DISTINCT cast(t.PATID as string) AS PATID,
+             cast(t.{dt} as date) AS bel_dt
       FROM {tbl} t
-      INNER JOIN {NDMM_BELANTAMAB_CODES} c
-        ON {if (numeric_only)
-              paste0(\"lpad(regexp_replace(coalesce(cast(t.\", col, \" as string),''), '[^0-9]', ''), 11, '0') = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')\",
-                     \" AND regexp_replace(coalesce(cast(t.\", col, \" as string),''), '[^0-9]', '') <> ''\")
-            else
-              paste0(\"upper(regexp_replace(coalesce(cast(t.\", col, \" as string),''), '[^A-Za-z0-9]', '')) = c.code\",
-                     \" AND regexp_replace(coalesce(cast(t.\", col, \" as string),''), '[^A-Za-z0-9]', '') <> ''\")}
+      INNER JOIN {NDMM_BELANTAMAB_CODES} c ON {match_sql}
       WHERE cast(t.{dt} as date) <= date('{cfg$study_end}')")
   db_exec(con, paste0(glue("
+    CREATE OR REPLACE TEMPORARY VIEW {NDMM_BELANTAMAB_TX} AS"),
+    arm(medical_tbl, "FST_DT",  txt_match("PROC_CD")),      "\n      UNION\n",
+    arm(medical_tbl, "FST_DT",  txt_match("BILL_PROC_CD")), "\n      UNION\n",
+    arm(medical_tbl, "FST_DT",  ndc_match("NDC")),          "\n      UNION\n",
+    arm(rx_tbl,      "FILL_DT", ndc_match("NDC"))))
+
+  scope <- switch(NDMM_BELANTAMAB_SCOPE,
+    study_period = glue("b.bel_dt >= date('{NDMM_STUDY_START}')"),
+    from_index   = "b.bel_dt >= l1.LOT1_START_DT",
+    stop("NDMM_BELANTAMAB_SCOPE='", NDMM_BELANTAMAB_SCOPE, "' is not a scope. ",
+         "Use study_period or from_index; see standalone_constants.R.",
+         call. = FALSE))
+  db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_BELANTAMAB_PATIDS} AS
-    WITH hits AS ("),
-    arm(medical_tbl, "FST_DT",  "PROC_CD",      FALSE), "\n      UNION\n",
-    arm(medical_tbl, "FST_DT",  "BILL_PROC_CD", FALSE), "\n      UNION\n",
-    arm(medical_tbl, "FST_DT",  "NDC",          TRUE),  "\n      UNION\n",
-    arm(rx_tbl,      "FILL_DT", "NDC",          TRUE),
-    glue("
-    )
-    SELECT PATID, 'BEL' AS MAP_MED_TYPE FROM hits")))
+    SELECT DISTINCT b.PATID, 'BEL' AS MAP_MED_TYPE
+    FROM {NDMM_BELANTAMAB_TX} b
+    INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = b.PATID
+    WHERE {scope}"))
+}
+
+# How many patients each reading of "in any LOT" would exclude. The scope is a
+# proxy for something this build cannot see, so the run says what the choice
+# costs rather than leaving it to be guessed at.
+build_ndmm_belantamab_scope_counts <- function(con, cfg) {
+  db_exec(con, glue("
+    CREATE OR REPLACE TABLE {wrk('NDMM_BELANTAMAB_SCOPE_COUNTS')} AS
+    SELECT 'ever'         AS SCOPE, count(DISTINCT b.PATID) AS N_PATIENTS
+    FROM {NDMM_BELANTAMAB_TX} b
+    INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = b.PATID
+    UNION ALL
+    SELECT 'study_period', count(DISTINCT b.PATID)
+    FROM {NDMM_BELANTAMAB_TX} b
+    INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = b.PATID
+    WHERE b.bel_dt >= date('{NDMM_STUDY_START}')
+    UNION ALL
+    SELECT 'from_index', count(DISTINCT b.PATID)
+    FROM {NDMM_BELANTAMAB_TX} b
+    INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = b.PATID
+    WHERE b.bel_dt >= l1.LOT1_START_DT"))
+  got <- db_q(con, glue("SELECT * FROM {wrk('NDMM_BELANTAMAB_SCOPE_COUNTS')}"))
+  log_msg("Belantamab exclusion, by reading of \"in any LOT\" (applied: ",
+          NDMM_BELANTAMAB_SCOPE, ")")
+  for (i in seq_len(nrow(got)))
+    log_msg("    ", got$SCOPE[i], ": ", format(got$N_PATIENTS[i], big.mark = ","),
+            " of the 1L candidates")
+  invisible(got)
 }

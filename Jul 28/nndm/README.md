@@ -139,7 +139,7 @@ port.
 | 6 | **No MM oncology therapy in the 12-month baseline** | no medical or pharmacy claim for an MM therapy in `[index − 365, index − 1]`, scanned from raw `medical` and `rx` against `cl_mma_codelist.csv`. **Steroids are excluded from this scan** (`DEX`, `DEXA`, `DEXAMETHASONE`, `PRED`, `PREDNISONE`) — a steroid claim alone does not make a patient previously treated. | `03_prior_therapy.R` |
 | 7 | **No other cancer in the 12-month baseline** | excluded on **≥1 inpatient** claim, **or ≥2 outpatient** claims **within 30 days of each other**, for the same tumour group — **both claims inside** `[index − 365, index − 1]`. Inpatient is established from the confinement table and the claim header, not from a place-of-service code. | `04_other_malig.R` |
 | 8 | **No pregnancy** | excluded on ≥1 medical claim with a diagnosis, procedure or revenue code indicating pregnancy or childbirth, anywhere in `[2016-01-01, 2026-03-31]` — the **study period**, not the baseline | `05_pregnancy.R` |
-| 9 | **No belantamab in any LOT** | any claim for a belantamab code from `cl_mma_codelist.csv`, in `medical` or `rx`, at any time and in any line — **no date bound**; see the attrition note below | `00b_lot1_index.R`, `06_flags.R` |
+| 9 | **No belantamab in any LOT** | any claim for a belantamab code from `cl_mma_codelist.csv`, in `medical` or `rx`, **within the study period** — a claims proxy for LOT membership; see below | `00b_lot1_index.R`, `06_flags.R` |
 
 **Not applied: clinical-trial participation.** The attrition spreadsheet in
 `NNDM E/attritom.pdf` lists it as Step 10, but that sheet is the parent MM
@@ -340,11 +340,32 @@ of the funnel is a criterion the protocol names and the count beside it is
 reproducible from this folder alone.
 
 **Step 9 is not a baseline criterion.** Every other step is anchored to the 1L
-index date; this one is "in any LOT", with no date bound at all, so a patient
-can be removed for a belantamab claim years *after* their 1L index. That is
-what §6.2.1.2 says, and it is what the scan does — every belantamab claim in
-`medical` and `rx`, not a window — but it means the 1L cohort depends on
-follow-up data and cannot be built from baseline alone.
+index date; this one is "in any LOT", so a patient can be removed for a
+belantamab claim years *after* their 1L index. That is what §6.2.1.2 says, but
+it means the 1L cohort depends on follow-up data and cannot be built from
+baseline alone.
+
+**And "in any LOT" cannot be applied exactly here.** Lines of therapy do not
+exist when this build runs — the LOT algorithm runs over the cohort it
+produces. So the exclusion is a claims proxy, chosen by
+`NDMM_BELANTAMAB_SCOPE`:
+
+| scope | a patient is excluded if they have a belantamab claim… |
+|---|---|
+| `study_period` *(default)* | anywhere in `[2016-01-01, 2026-03-31]`. Lines are only ever built over the study period, so a claim outside it is in no LOT. |
+| `from_index` | on or after their own 1L index. Lines are numbered from that date, so this is the strictest reading — and excludes fewest patients. |
+
+`apr_30_2026` bounded neither end but the upper one, so a claim from **before
+the study period** excluded the patient. That is wrong under either reading,
+and is the defect this fixes.
+
+Neither scope is LOT membership. **Only running the LOT algorithm over the
+cohort and checking which line a belantamab claim landed in is exact** — that
+is a reconciliation pass after `Jul 28/lot`, not something this build can do.
+Until then, every run writes `<prefix>NDMM_BELANTAMAB_SCOPE_COUNTS`: how many
+1L candidates each of the three readings — `ever`, `study_period`, `from_index`
+— would exclude, so the choice can be made against real numbers. The scope in
+force is pinned in `CONTRACT` and recorded in `NDMM_RUN_METADATA`.
 
 The build checks that each step is
 no larger than the one above it and stops if it is not — a funnel that grows is

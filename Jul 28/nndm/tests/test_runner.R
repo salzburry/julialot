@@ -62,6 +62,7 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_prefix", "check_contract"
            "build_ndmm_med_claim_header_and_confinement",
            "build_ndmm_other_malig_pre_lot1", "build_ndmm_preg_codes",
            "build_ndmm_pregnancy_patids", "build_ndmm_belantamab_patids",
+           "build_ndmm_belantamab_scope_counts",
            "build_ndmm_flags",
            "ndmm_counts",
            "check_attrition_monotonic", "build_ndmm_cohort_table",
@@ -535,6 +536,50 @@ ok(any(grepl("min(tx_dt) AS LOT1_START_DT", SSQL, fixed = TRUE)),
    "the index is the first such claim, which is what S6.2.1.1 defines it as")
 ok(grepl("_ndmm_mma_codelist", x, fixed = TRUE),
    "and MM treatment means the same code list the prior-therapy scan uses")
+
+cat("\n-- what \"belantamab in any LOT\" is taken to mean --\n")
+# Lines of therapy do not exist when this runs - the LOT algorithm runs over
+# the cohort this build produces - so the exclusion is a claims proxy, and
+# apr_30_2026's proxy had no lower bound at all: a claim from before the study
+# period excluded the patient, which is wrong under any reading of "any LOT".
+drive_bel <- function(scope = "study_period") {
+  assign("NDMM_BELANTAMAB_SCOPE", scope, envir = se)
+  SSQL <<- character(0)
+  m <- tryCatch({ se$build_ndmm_belantamab_patids(NULL, "cdm.medical", "cdm.rx"); "" },
+                error = conditionMessage)
+  list(msg = m, tx = SSQL[1], pat = SSQL[2])
+}
+r <- drive_bel()
+ok(identical(r$msg, ""), "the default scope builds")
+ok(length(gregexpr("<= date('", r$tx, fixed = TRUE)[[1]]) == 4L,
+   "every claim arm is bounded above by the end of the study period")
+ok(grepl(paste0("b.bel_dt >= date('", se$NDMM_STUDY_START, "')"), r$pat, fixed = TRUE),
+   "and by default bounded below at the start of it - lines exist nowhere else")
+ok(grepl("INNER JOIN _ndmm_lot1_starts", r$pat, fixed = TRUE),
+   "scoped to the 1L candidates, so it excludes from this cohort and not at large")
+r <- drive_bel("from_index")
+ok(grepl("b.bel_dt >= l1.LOT1_START_DT", r$pat, fixed = TRUE),
+   "from_index reads it strictly: on or after the date the patient's lines start")
+r <- drive_bel("whenever")
+ok(grepl("is not a scope", r$msg, fixed = TRUE),
+   "a scope nobody defined stops the run rather than quietly excluding everyone")
+assign("NDMM_BELANTAMAB_SCOPE", "study_period", envir = se)
+# The dates are kept on the claims so all three readings can be counted, and
+# the run reports what the choice costs instead of leaving it to be guessed.
+ok(grepl("cast(t.{dt} as date) AS bel_dt", r$tx, fixed = TRUE) ||
+     grepl("AS bel_dt", r$tx, fixed = TRUE),
+   "each belantamab claim keeps its date, which is what makes the comparison possible")
+SSQL <- character(0)
+assign("db_q", function(con, sql) data.frame(SCOPE = c("ever", "study_period", "from_index"),
+                                             N_PATIENTS = c(120L, 118L, 90L)), envir = se)
+se$build_ndmm_belantamab_scope_counts(NULL, cfg_defaults)
+sc <- SSQL[1]
+ok(grepl("NDMM_BELANTAMAB_SCOPE_COUNTS", sc, fixed = TRUE),
+   "the three readings are counted into a table every run")
+for (k in c("'ever'", "'study_period'", "'from_index'"))
+  ok(grepl(k, sc, fixed = TRUE), paste0("...including ", k))
+ok(length(gregexpr("count(DISTINCT b.PATID)", sc, fixed = TRUE)[[1]]) == 3L,
+   "by patients, so the numbers can be compared against the attrition")
 
 cat("\n-- which agents may set the index, and which set one --\n")
 # S6.2.1.1 says the eligible treatments exclude "those restricted to later LOTs
@@ -1023,6 +1068,7 @@ builds <- list(NDMM_MM_DX_EVENTS = "build_ndmm_mm_dx_events",
                NDMM_INDEX_TX = "build_ndmm_lot1_index",
                NDMM_OTHER_MALIG_CODES = "build_ndmm_other_malig_codes",
                NDMM_BELANTAMAB_PATIDS = "build_ndmm_belantamab_patids",
+               NDMM_BELANTAMAB_TX = "build_ndmm_belantamab_patids",
                NDMM_PATIDS = "build_ndmm_flags")
 # NDMM_FLAGS_ALL is checkpointed inside the step that builds it, not by the
 # runner - NDMM_PATIDS is defined over it there and Spark inlines the plan.

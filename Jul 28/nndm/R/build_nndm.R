@@ -38,6 +38,7 @@ CONTRACT <- list(
   belantamab_abbr      = "BEL%",
   index_excluded_abbrs = "",
   index_excluded_codes = "",
+  belantamab_scope     = "study_period",
   tbl_medical          = "medical",
   tbl_med_proc         = "med_procedure",
   tbl_med_diag         = "med_diagnosis",
@@ -78,10 +79,11 @@ CHECKPOINTS <- c("NDMM_FLAGS_ALL",
                  "NDMM_ENROLL_SPANS", "NDMM_MMA_CODELIST",
                  "NDMM_BELANTAMAB_CODES", "NDMM_LOT1_STARTS",
                  "NDMM_OTHER_MALIG_CODES", "NDMM_BELANTAMAB_PATIDS",
-                 "NDMM_INDEX_TX", "NDMM_PATIDS")
+                 "NDMM_INDEX_TX", "NDMM_BELANTAMAB_TX", "NDMM_PATIDS")
 
 # What the run writes. All prefixed, so two cohorts sit side by side.
 DELIVERABLES <- c("NDMM_COHORT", "NDMM_ATTRITION", "NDMM_INDEX_AGENTS",
+                  "NDMM_BELANTAMAB_SCOPE_COUNTS",
                   "NDMM_CODELIST_METADATA", "NDMM_RUN_METADATA",
                   "NDMM_BUILD_STATUS")
 OUTPUTS <- c(DELIVERABLES, CHECKPOINTS)
@@ -242,6 +244,9 @@ CONSTANT_SETTINGS <- list(
   # the cohort, so it is pinned like any other thing that does.
   list(const = "NDMM_INDEX_EXCLUDED_ABBRS",   cfg = "index_excluded_abbrs", note = ""),
   list(const = "NDMM_INDEX_EXCLUDED_CODES",   cfg = "index_excluded_codes", note = ""),
+  # Which reading of "in any LOT" the belantamab exclusion uses. A proxy for
+  # something this build cannot see, and it changes the count.
+  list(const = "NDMM_BELANTAMAB_SCOPE",       cfg = "belantamab_scope",   note = ""),
   # Not a cohort window but a code-list assumption, and just as able to change
   # the count: it is what identifies belantamab, and belantamab is exclusion 4.
   list(const = "NDMM_BELANTAMAB_ABBR",        cfg = "belantamab_abbr",    note = "")
@@ -471,6 +476,7 @@ contract_settings <- function() {
 RUN_METADATA_COLS <- c(RUN_ID = "STRING", OBJECT_PREFIX = "STRING",
                        BELANTAMAB_ABBR = "STRING", INDEX_EXCLUDED = "STRING",
                        INDEX_EXCLUDED_CODES = "STRING",
+                       BELANTAMAB_SCOPE = "STRING",
                        CODE_MD5 = "STRING",
                        CONTRACT_SETTINGS = "STRING",
                        WAIVERS_REQUESTED = "STRING", WAIVERS_APPLIED = "STRING",
@@ -491,7 +497,7 @@ write_run_metadata <- function(con, cfg, here, n) {
     glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES (",
          "{sql_text(run_id)}, {sql_text(cfg$object_prefix)}, ",
          "{sql_text(NDMM_BELANTAMAB_ABBR)}, {sql_text(NDMM_INDEX_EXCLUDED_ABBRS)}, ",
-         "{sql_text(NDMM_INDEX_EXCLUDED_CODES)}, ",
+         "{sql_text(NDMM_INDEX_EXCLUDED_CODES)}, {sql_text(NDMM_BELANTAMAB_SCOPE)}, ",
          "{sql_text(code_fingerprint(here))}, ",
          "{sql_text(contract_settings())}, ",
          "{sql_text(paste(sort(waivers_named(), method = 'radix'), collapse = ','))}, ",
@@ -763,7 +769,9 @@ build_nndm <- function(here, prefix) {
 
   log_msg("Belantamab in any line, from claims")
   build_ndmm_belantamab_patids(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))
+  checkpoint(con, "NDMM_BELANTAMAB_TX")
   checkpoint(con, "NDMM_BELANTAMAB_PATIDS")
+  build_ndmm_belantamab_scope_counts(con, cfg)
 
   log_msg("Per-patient filter flags")
   # The ported flags step takes the cohort and the belantamab source as
