@@ -9,6 +9,25 @@ DATABRICKS_PWD=... Rscript build.R mystudy_
 
 Only the **1L cohort** is built. The 2L/3L subset cohorts are out of scope.
 
+### One run per prefix at a time
+
+Every table this writes is named work schema + prefix + table, with no run id
+in it, and each checkpoint repoints its session view at the prefixed table it
+has just replaced. So two runs on the *same* prefix do not produce two cohorts:
+the second replaces tables the first is reading through, and both can still
+finish and report "complete", each having published something partly the
+other's. `check_no_active_run()` refuses the second before it writes anything,
+naming the run that holds the prefix and when it started.
+
+Two runs on *different* prefixes are safe, and that is how two cohorts are
+meant to be built at once.
+
+It is a check, not a lock — nothing here can hold one — so two runs starting in
+the same moment can both pass it. It catches the case worth catching: starting
+a second run while one is going. A killed process leaves its `started` row
+behind for ever, so `NDMM_IGNORE_ACTIVE_RUN=TRUE` gets past one; use it only
+once the named run is known to be dead.
+
 ## What this reads
 
 Standalone. It reads the raw Optum CDM and the production code lists, and no

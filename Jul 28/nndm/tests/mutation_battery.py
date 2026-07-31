@@ -206,6 +206,14 @@ M = [
  ("ported cohort sql","R/steps/07_cohort.R","     WHERE CE_pre_lot1_12mo = 1 AND CE_lot1_fu = 1\"))$n","     WHERE CE_pre_lot1_12mo = 1\"))$n"),
  ("attrition order","R/build_nndm.R",'  list(key = "ce12_fuce",      label = "+ CE during follow-up"),\n  list(key = "fuce_nopriortx", label = "+ no MM oncology therapy in 12-month baseline"),','  list(key = "fuce_nopriortx", label = "+ no MM oncology therapy in 12-month baseline"),\n  list(key = "ce12_fuce",      label = "+ CE during follow-up"),'),
  ("belantamab last","R/steps/07_cohort.R","       AND NO_PREGNANCY = 1\"))$n","       AND NO_BELANTAMAB = 1\"))$n"),
+ ("active run check dropped","R/build_nndm.R","  check_no_active_run(con, cfg)\n","  "),
+ ("active run checked too late","R/build_nndm.R","  check_no_active_run(con, cfg)\n  check_upstream(con, cfg)","  check_upstream(con, cfg)\n  check_no_active_run(con, cfg)"),
+ ("active run ignores prefix","R/build_nndm.R","    WHERE OBJECT_PREFIX = '{cfg$object_prefix}' AND STATE = 'started'","    WHERE STATE = 'started'"),
+ ("active run counts itself","R/build_nndm.R","\n      AND RUN_ID <> '{run_id}'","\n      AND 1 = 1"),
+ ("active run warns instead","R/build_nndm.R","  stop(\"Run(s) \", who, \" are already building prefix \"","  log_msg(\"Run(s) \", who, \" are already building prefix \""),
+ ("active run override always on","R/build_nndm.R","  if (identical(toupper(Sys.getenv(\"NDMM_IGNORE_ACTIVE_RUN\", unset = \"\")), \"TRUE\")) {","  if (TRUE) {"),
+ ("active run drops the timestamp","R/build_nndm.R","  who <- paste(paste0(d$RUN_ID, \" (started \", d$UPDATED_AT, \")\"), collapse = \", \")","  who <- paste(d$RUN_ID, collapse = \", \")"),
+ ("active run blocks a first run","R/build_nndm.R","      AND RUN_ID <> '{run_id}'\")), error = function(e) NULL)","      AND RUN_ID <> '{run_id}'\")), error = function(e) data.frame(RUN_ID = \"?\", UPDATED_AT = \"?\"))"),
 ]
 TESTS = ["tests/test_runner.R", "tests/test_same_as_source.R",
          "tests/test_same_as_overall.R"]

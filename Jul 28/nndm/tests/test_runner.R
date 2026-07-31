@@ -49,7 +49,8 @@ clear()
 
 cat("\n-- the runner calls its phases, in order --\n")
 ORDER <- c("check_settings", "pin_output_schema", "pin_prefix", "check_contract",
-           "check_choices", "check_constants", "set_lot_config", "check_upstream", "write_build_status",
+           "check_choices", "check_constants", "set_lot_config",
+           "check_no_active_run", "check_upstream", "write_build_status",
            "build_ndmm_mm_dx_codes", "build_ndmm_mm_claim_header",
            "build_ndmm_mm_dx_events", "build_ndmm_mm_qualifying",
            "build_ndmm_demographics", "build_ndmm_base_cohort",
@@ -472,6 +473,61 @@ i_dis <- regexpr("on.exit(try(DBI::dbDisconnect", bl, fixed = TRUE)
 i_st  <- regexpr("nndm_complete", bl, fixed = TRUE)
 ok(i_dis > 0 && i_st > i_dis && grepl("add = TRUE, after = FALSE", bl, fixed = TRUE),
    "the failed status is written before the connection closes")
+
+cat("\n-- two runs on one prefix would overwrite each other --\n")
+# Not a theoretical hazard: checkpoint() repoints every session view at the
+# prefixed table it just replaced, so a second run replaces tables the first is
+# reading through. Driven, not read: the whole point is what the function does
+# with the rows it gets back.
+na <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = na)
+assign("log_msg", function(...) invisible(NULL), envir = na)
+assign("wrk", function(x) paste0("wk.p_", x), envir = na)
+assign("run_id", "R2", envir = na)
+NAQ <- character(0)
+drive_na <- function(rows) {
+  NAQ <<- character(0)
+  assign("db_q", function(con, s) { NAQ <<- c(NAQ, s); rows }, envir = na)
+  tryCatch({ na$check_no_active_run(NULL, list(object_prefix = "p_")); NULL },
+           error = conditionMessage)
+}
+ok(is.null(drive_na(data.frame(RUN_ID = character(0), UPDATED_AT = character(0)))),
+   "a prefix nobody else is building is fine")
+ok(any(grepl("STATE = 'started'", NAQ, fixed = TRUE)) &&
+     any(grepl("OBJECT_PREFIX = 'p_'", NAQ, fixed = TRUE)) &&
+     any(grepl("RUN_ID <> 'R2'", NAQ, fixed = TRUE)) &&
+     any(grepl("wk.p_NDMM_BUILD_STATUS", NAQ, fixed = TRUE)),
+   "...asked of started runs on this prefix, excluding this one")
+msg <- drive_na(data.frame(RUN_ID = "R1", UPDATED_AT = "2026-07-30 09:00:00"))
+ok(!is.null(msg) && grepl("R1", msg, fixed = TRUE) &&
+     grepl("NDMM_IGNORE_ACTIVE_RUN", msg, fixed = TRUE),
+   "another run on the same prefix stops it, named, with the way out")
+# A months-old timestamp is how an operator tells a live run from a corpse.
+ok(!is.null(msg) && grepl("2026-07-30 09:00:00", msg, fixed = TRUE),
+   "...and says when that run started, not just that it did")
+# A killed process leaves 'started' behind for ever, so there has to be one.
+Sys.setenv(NDMM_IGNORE_ACTIVE_RUN = "TRUE")
+ok(is.null(drive_na(data.frame(RUN_ID = "R1", UPDATED_AT = "x"))),
+   "...and the override lets a run past a row a dead process left")
+Sys.unsetenv("NDMM_IGNORE_ACTIVE_RUN")
+ok(!is.null(drive_na(data.frame(RUN_ID = "R1", UPDATED_AT = "x"))),
+   "which holds only while it is set")
+# No table on a first run, and nothing to collide with.
+assign("db_q", function(con, s) stop("TABLE_OR_VIEW_NOT_FOUND"), envir = na)
+ok(!inherits(tryCatch(na$check_no_active_run(NULL, list(object_prefix = "p_")),
+                      error = function(e) e), "error"),
+   "and a first run, with no status table yet, is not blocked by its absence")
+# The first thing the run asks the warehouse, and so before it writes its own
+# row: a refused run leaves the prefix as it found it, and does not sit through
+# twenty upstream probes first. Against the parsed body rather than ORDER, so
+# it holds even if ORDER is reordered to match a runner that no longer does
+# this, and against the parsed body rather than the file text, so a mention in
+# a comment is not read as a call.
+i_na <- regexpr("check_no_active_run(con, cfg)", body, fixed = TRUE)
+i_up <- regexpr("check_upstream(con, cfg)", body, fixed = TRUE)
+i_bs <- regexpr('write_build_status(con, cfg, "started")', body, fixed = TRUE)
+ok(i_na > 0 && i_up > 0 && i_bs > 0 && i_na < i_up && i_na < i_bs,
+   "the check runs before this run reads or writes anything else")
 
 cat("\n-- a retried write does not double the rows --\n")
 # write_attrition and write_build_status both clear and rewrite their run's

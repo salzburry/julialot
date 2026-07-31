@@ -737,6 +737,46 @@ write_build_status <- function(con, cfg, state, n = NA) {
   invisible(TRUE)
 }
 
+# Every output name is work schema + prefix + table, with no run id in it - see
+# wrk(). checkpoint() then repoints each session view at the prefixed table it
+# has just replaced, so from that moment a run reads its own intermediate
+# results out of shared storage: NDMM_BASE_COHORT is literally
+# "SELECT * FROM <schema>.<prefix>NDMM_BASE_COHORT". Two runs on one prefix
+# therefore interleave. The second replaces a table the first has already
+# pointed a view at, and the first reads the second's rows from there on -
+# through fourteen checkpoints and five deliverables. Both can still reach
+# "complete", each having published a cohort that is partly the other's.
+#
+# Different prefixes are safe, and that is how two cohorts are meant to run at
+# once. This refuses the same-prefix case.
+#
+# A check, not a lock: two runs starting in the same moment can both pass it,
+# because there is nothing here that could hold a lock. It catches the case
+# worth catching - starting a second run while one is going - and says so.
+check_no_active_run <- function(con, cfg) {
+  d <- tryCatch(db_q(con, glue("
+    SELECT RUN_ID, UPDATED_AT FROM {wrk('NDMM_BUILD_STATUS')}
+    WHERE OBJECT_PREFIX = '{cfg$object_prefix}' AND STATE = 'started'
+      AND RUN_ID <> '{run_id}'")), error = function(e) NULL)
+  # No table yet on a first run, and nothing to collide with.
+  if (is.null(d) || !nrow(d)) return(invisible(TRUE))
+  # When each started, so the operator can tell a run that is going from one a
+  # killed process left behind months ago.
+  who <- paste(paste0(d$RUN_ID, " (started ", d$UPDATED_AT, ")"), collapse = ", ")
+  if (identical(toupper(Sys.getenv("NDMM_IGNORE_ACTIVE_RUN", unset = "")), "TRUE")) {
+    log_msg("WARNING: run(s) ", who, " are marked started on prefix ",
+            cfg$object_prefix, " and NDMM_IGNORE_ACTIVE_RUN is set. If they ",
+            "are still running, both cohorts will be wrong.")
+    return(invisible(TRUE))
+  }
+  stop("Run(s) ", who, " are already building prefix ", cfg$object_prefix,
+       ". Every output name is the prefix plus the table, so two runs would ",
+       "replace each other's tables while the other is reading them, and both ",
+       "could still finish. Use a different prefix, or wait. If those runs are ",
+       "not actually running - a killed process leaves 'started' behind - set ",
+       "NDMM_IGNORE_ACTIVE_RUN=TRUE.", call. = FALSE)
+}
+
 load_nndm_modules <- function(here) {
   source(file.path(here, "R", "load_inputs.R"))
   load_pipeline_inputs(here, "config.csv")
@@ -768,6 +808,12 @@ build_nndm <- function(here, prefix) {
   log_msg("  Follow-up CE: ", cfg$fu_ce_days, " day(s) after index")
   log_msg(SEP)
 
+  # First, and before this run writes anything at all: one query, against a
+  # table check_upstream does not look at, and a refused run leaves the prefix
+  # exactly as it found it. The query excludes this run's own id, so it would
+  # give the same answer later - it just would not be true any more that
+  # nothing had been written, nor that nothing had been waited for.
+  check_no_active_run(con, cfg)
   check_upstream(con, cfg)
   write_build_status(con, cfg, "started")
   # after = FALSE, or this fires after the disconnect above and writes to a
