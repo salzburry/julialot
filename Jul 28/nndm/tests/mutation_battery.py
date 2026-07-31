@@ -2,7 +2,11 @@
 # notice. A mutation that survives means the assertion for it reads the source
 # rather than running it. Run from anywhere:
 #
-#   python3 "Jul 28/nndm/tests/mutation_battery.py"
+#   python3 "Jul 28/nndm/tests/mutation_battery.py"          changed files only
+#   python3 "Jul 28/nndm/tests/mutation_battery.py" --all     all of them
+#
+# Every anchor is verified before the first mutation runs, and a run says which
+# files it skipped. A clean tree runs everything, which is the release check.
 #
 # Attrition labels are deliberately not pinned: they are prose on the delivered
 # table and are meant to be editable without a test change.
@@ -205,7 +209,6 @@ M = [
 ]
 TESTS = ["tests/test_runner.R", "tests/test_same_as_source.R",
          "tests/test_same_as_overall.R"]
-miss = []
 def stage():
     if os.path.exists(BASE): shutil.rmtree(BASE)
     os.makedirs(os.path.dirname(WORK))
@@ -219,21 +222,71 @@ def stage():
         except (OSError, NotImplementedError): shutil.copytree(real, link)
 
 stage()
+
+# --- anchors first ---------------------------------------------------------
+# Every anchor is checked against the pristine copy before a single mutation
+# runs. A stale one used to surface eight minutes in, after the run it belonged
+# to had already been paid for; six runs in a row went that way. This costs one
+# file read each and reports them all at once.
+stale = [(name, f) for name, f, a, _ in M if a not in open(os.path.join(WORK, f)).read()]
+if stale:
+    print("stale anchors:", len(stale))
+    for n, f in stale: print("   ", n, "->", f)
+    sys.exit(1)
+
 for t in ("tests/test_same_as_source.R", "tests/test_same_as_overall.R"):
     probe = subprocess.run(["Rscript", t], cwd=WORK, capture_output=True, text=True)
     if "Skipping" in probe.stdout or probe.returncode != 0:
         sys.exit("%s does not run against the staged copy:\n%s%s"
                  % (t, probe.stdout, probe.stderr))
 
-for name, f, a, b in M:
+# --- what to run -----------------------------------------------------------
+# Only the mutations whose file this working tree has changed. The suites do
+# not vary by mutation, so a file nobody touched cannot have started surviving.
+# Anything under tests/ changes what every mutation is judged against, so a
+# change there runs the lot - as does --all, and as does a clean tree, which is
+# what a release check looks like.
+def changed_files():
+    out = []
+    for cmd in (["git", "diff", "--name-only", "HEAD", "--", SRC],
+                ["git", "ls-files", "--others", "--exclude-standard", "--", SRC]):
+        r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+        if r.returncode: return None            # not a git tree; run everything
+        out += [l for l in r.stdout.splitlines() if l.strip()]
+    rel = os.path.relpath(SRC, ROOT).replace(os.sep, "/") + "/"
+    return sorted({p[len(rel):] for p in out if p.startswith(rel)})
+
+run_all = "--all" in sys.argv
+touched = None if run_all else changed_files()
+if touched is None:
+    selected, why = M, "--all" if run_all else "not a git checkout"
+elif not touched:
+    selected, why = M, "no local changes"
+elif any(t.startswith("tests/") for t in touched):
+    selected, why = M, "tests/ changed, so every mutation is judged differently"
+else:
+    selected = [m for m in M if m[1] in touched]
+    why = "changed: " + ", ".join(touched)
+
+skipped = len(M) - len(selected)
+print("battery size: %d (running %d, skipping %d)" % (len(M), len(selected), skipped))
+print("selection:", why)
+if skipped:
+    # Named, not silently dropped: a run that says "0 problems" has to say what
+    # it did not look at.
+    for f in sorted({m[1] for m in M if m not in selected}):
+        print("    skipped, unchanged:", f,
+              "(%d)" % len([m for m in M if m[1] == f]))
+
+miss = []
+for name, f, a, b in selected:
     stage()
     p = os.path.join(WORK, f); s = open(p).read()
-    if a not in s:
-        miss.append((name, "ANCHOR GONE")); continue
     open(p, 'w').write(s.replace(a, b, 1))
-    caught = any(subprocess.run(["Rscript", t], cwd=WORK, capture_output=True).returncode != 0 for t in TESTS)
+    caught = any(subprocess.run(["Rscript", t], cwd=WORK, capture_output=True).returncode != 0
+                 for t in TESTS)
     if not caught: miss.append((name, "NOT CAUGHT"))
 shutil.rmtree(BASE, ignore_errors=True)
-print("battery size:", len(M))
 print("problems:", len(miss))
 for n, w in miss: print("   ", n, "->", w)
+sys.exit(1 if miss else 0)
