@@ -59,10 +59,9 @@ SUBST <- list(
     list(from = "coalesce(fuce.CE_fu, 0)                              AS CE_lot1_fu,",
          to   = "coalesce(fuce.CE_lot1_3mo, 0)                        AS CE_lot1_3mo_fu,", n = 1L),
     list(from = "AND CE_lot1_fu              = 1",
-         to   = "AND CE_lot1_3mo_fu          = 1", n = 1L)),
-  "R/steps/07_cohort.R" = list(
-    list(from = "AND CE_lot1_fu = 1\"))$n",
-         to   = "AND CE_lot1_3mo_fu = 1\"))$n", n = 1L))
+         to   = "AND CE_lot1_3mo_fu          = 1", n = 1L))
+  # 07_cohort.R's CE_lot1_fu reference lives inside the rewritten block below,
+  # so it is undone by SPLICE rather than named here.
 )
 
 # Lines the port adds that the source has no counterpart for, and how many.
@@ -70,10 +69,40 @@ ADDED <- list(
   "R/nndm_constants.R" = c("NDMM_FU_CE_DAYS          <- 0L" = 1L)
 )
 
+# Blocks the port rewrote rather than edited. Patching these back line by line
+# would take twenty SUBST entries and would not be readable by anyone checking
+# what changed; instead the block is named by its first and last line and
+# swapped for the source's own lines before the comparison. Everything outside
+# it is still held to the source exactly, and markers that stop matching are
+# reported - so deleting the rewrite does not read as a perfect match.
+#
+# ndmm_counts(): the attrition follows protocol Rev Round 2 S6.2.1.1 then
+# S6.2.1.2 in the order those sections list the criteria. The source applies
+# belantamab first and follow-up CE second-to-last. Same final cohort - it is
+# one conjunction either way - but different per-step counts, and the attrition
+# is the deliverable.
+SPLICE <- list(
+  "R/steps/07_cohort.R" = list(
+    list(from = "ce12_fuce <- db_q(con, glue(",
+         to   = "ndmm_final = ndmm_final)",
+         src_from = 814L, src_to = 837L)
+  )
+)
+
 undo_report <- new.env()
 
 undeviate <- function(lines, file) {
   short <- character(0)
+  for (sp in SPLICE[[file]]) {
+    i <- which(lines == sp$from); j <- which(lines == sp$to)
+    if (length(i) != 1L || length(j) != 1L || j[1] < i[1]) {
+      short <- c(short, paste0("rewritten block ", sp$from, " ... ", sp$to,
+                               " (found ", length(i), " start, ", length(j), " end)"))
+      next
+    }
+    lines <- append(lines[-(i[1]:j[1])], code_only(src[sp$src_from:sp$src_to]),
+                    after = i[1] - 1L)
+  }
   for (sb in SUBST[[file]]) {
     hit <- which(lines == sb$from)
     if (length(hit) != sb$n)

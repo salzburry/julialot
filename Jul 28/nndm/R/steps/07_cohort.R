@@ -61,28 +61,37 @@ ndmm_counts <- function(con, lot_long, elig_coh_final) {
   ce12 <- db_q(con, glue(
     "SELECT count(DISTINCT PATID) AS n FROM {NDMM_FLAGS_ALL}
      WHERE CE_pre_lot1_12mo = 1"))$n
-  ce12_nobela <- db_q(con, glue(
+  # From here the funnel follows the protocol's own order: S6.2.1.1's remaining
+  # inclusion (CE during follow-up), then S6.2.1.2's four exclusions as it
+  # lists them - prior MM therapy, other cancer, pregnancy, and belantamab
+  # last. apr_30_2026 applied belantamab first and follow-up CE second-to-last.
+  # The final cohort is the same conjunction either way, but the per-step
+  # numbers are not, and the attrition is what gets read against the protocol.
+  # Registered as a rewritten block in tests/test_same_as_source.R.
+  ce12_fuce <- db_q(con, glue(
     "SELECT count(DISTINCT PATID) AS n FROM {NDMM_FLAGS_ALL}
-     WHERE CE_pre_lot1_12mo = 1 AND NO_BELANTAMAB = 1"))$n
-  ce12_nobela_nopriortx <- db_q(con, glue(
+     WHERE CE_pre_lot1_12mo = 1 AND CE_lot1_fu = 1"))$n
+  fuce_nopriortx <- db_q(con, glue(
     "SELECT count(DISTINCT PATID) AS n FROM {NDMM_FLAGS_ALL}
      WHERE CE_pre_lot1_12mo = 1
-       AND NO_BELANTAMAB    = 1
+       AND CE_lot1_fu       = 1
        AND NO_PRIOR_MM_TX   = 1"))$n
   noother <- db_q(con, glue(
     "SELECT count(DISTINCT PATID) AS n FROM {NDMM_FLAGS_ALL}
-     WHERE CE_pre_lot1_12mo = 1 AND NO_BELANTAMAB = 1
+     WHERE CE_pre_lot1_12mo = 1 AND CE_lot1_fu = 1
        AND NO_PRIOR_MM_TX = 1 AND NO_OTHER_CANCER_PRE_LOT1 = 1"))$n
-  noother_fuce <- db_q(con, glue(
+  noother_nopreg <- db_q(con, glue(
     "SELECT count(DISTINCT PATID) AS n FROM {NDMM_FLAGS_ALL}
-     WHERE CE_pre_lot1_12mo = 1 AND NO_BELANTAMAB = 1
+     WHERE CE_pre_lot1_12mo = 1 AND CE_lot1_fu = 1
        AND NO_PRIOR_MM_TX = 1 AND NO_OTHER_CANCER_PRE_LOT1 = 1
-       AND CE_lot1_fu = 1"))$n
+       AND NO_PREGNANCY = 1"))$n
+  # The last step adds NO_BELANTAMAB, which is every flag NDMM_PATIDS applies,
+  # so this reads the cohort view rather than repeating the conjunction.
   ndmm_final <- db_q(con, glue(
     "SELECT count(DISTINCT PATID) AS n FROM {NDMM_PATIDS}"))$n
   list(whole = whole, elig = elig, elig_lot1 = elig_lot1,
-       ce12 = ce12, ce12_nobela = ce12_nobela,
-       ce12_nobela_nopriortx = ce12_nobela_nopriortx,
-       noother = noother, noother_fuce = noother_fuce,
+       ce12 = ce12, ce12_fuce = ce12_fuce,
+       fuce_nopriortx = fuce_nopriortx,
+       noother = noother, noother_nopreg = noother_nopreg,
        ndmm_final = ndmm_final)
 }

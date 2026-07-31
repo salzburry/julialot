@@ -55,15 +55,26 @@ anchor rather than the MM-diagnosis anchor. That is the point of this build.
 | 3 | **Eligible 1L treatment** | `LOT_NUM = 1` in `LOT_LONG` with `LOT_START_DT >= LOT1_FROM` (**2017-01-01**). The index date is that `LOT_START_DT`. | `02_lot1_starts.R` |
 | 4 | **12-month CE before index** | an enrollment span covering `[index − 365, index − 1]` in full, gaps of **≤30 days** treated as continuous | `01_enrollment.R`, `06_flags.R` |
 | 5 | **Follow-up CE** | a **no-gap** span covering `[index, index + FU_CE_DAYS]`, where `FU_CE_DAYS = 0` — **one day: the index date itself** | `06_flags.R` |
-| 6 | **No belantamab in any LOT** | no belantamab row for the patient in `MAP_STACKED`, any line | `06_flags.R` |
-| 7 | **No MM oncology therapy in the 12-month baseline** | no medical or pharmacy claim for an MM therapy in `[index − 365, index − 1]`, scanned from raw `medical` and `rx` against `cl_mma_codelist.csv`. **Steroids are excluded from this scan** (`DEX`, `DEXA`, `DEXAMETHASONE`, `PRED`, `PREDNISONE`) — a steroid claim alone does not make a patient previously treated. | `03_prior_therapy.R` |
-| 8 | **No other cancer in the 12-month baseline** | excluded on **≥1 inpatient** claim, **or ≥2 outpatient** claims **within 30 days of each other**, for the same tumour group, in `[index − 365, index − 1]`. Inpatient is established from the confinement table and the claim header, not from a place-of-service code. | `04_other_malig.R` |
-| 9 | **No pregnancy** | excluded on ≥1 medical claim with a diagnosis, procedure or revenue code indicating pregnancy or childbirth, anywhere in `[STUDY_START, STUDY_END]` — the **study period**, not the baseline | `05_pregnancy.R` |
+| 6 | **No MM oncology therapy in the 12-month baseline** | no medical or pharmacy claim for an MM therapy in `[index − 365, index − 1]`, scanned from raw `medical` and `rx` against `cl_mma_codelist.csv`. **Steroids are excluded from this scan** (`DEX`, `DEXA`, `DEXAMETHASONE`, `PRED`, `PREDNISONE`) — a steroid claim alone does not make a patient previously treated. | `03_prior_therapy.R` |
+| 7 | **No other cancer in the 12-month baseline** | excluded on **≥1 inpatient** claim, **or ≥2 outpatient** claims **within 30 days of each other**, for the same tumour group, in `[index − 365, index − 1]`. Inpatient is established from the confinement table and the claim header, not from a place-of-service code. | `04_other_malig.R` |
+| 8 | **No pregnancy** | excluded on ≥1 medical claim with a diagnosis, procedure or revenue code indicating pregnancy or childbirth, anywhere in `[STUDY_START, STUDY_END]` — the **study period**, not the baseline | `05_pregnancy.R` |
+| 9 | **No belantamab in any LOT** | no belantamab row for the patient in `MAP_STACKED` (`MAP_MED_TYPE LIKE 'BEL%'`), any line, **no date bound** — see the attrition note below | `06_flags.R` |
 
 **Not applied: clinical-trial participation.** The attrition spreadsheet in
-`NNDM E/attritom.pdf` lists it as Step 10, but protocol Rev Round 2 §6.2.1.2
-has four exclusions and this is not one of them. `pipeline_inputs.csv` says the
-same. If the study team wants it back, it is a new step, not a toggle.
+`NNDM E/attritom.pdf` lists it as Step 10, but that sheet is the parent MM
+cohort's funnel — six-month CE, age 18, the MM diagnosis steps — and protocol
+Rev Round 2 §6.2.1.2 has four exclusions, this not among them.
+`pipeline_inputs.csv` says the same. If the study team wants it back, it is a
+new step, not a toggle.
+
+**On belantamab being matched by drug and not by class.** §6.2.1.2 writes the
+exclusion as "Received belantamab mafodotin (i.e., an ADC) in any LOT" and
+attaches a note:
+
+> at the time of study belantamab mafodotin was the only ADC in use for MM
+
+So "(i.e., an ADC)" names what the drug is; it does not widen the criterion to
+the class. `MAP_MED_TYPE LIKE 'BEL%'` is the criterion as written.
 
 ### Where this departs from the protocol
 
@@ -75,7 +86,7 @@ same. If the study team wants it back, it is a new step, not a toggle.
 The study team confirmed **one day** of follow-up CE for the 1L cohort, which
 overrides that text. `apr_30_2026` implements the three-month rule, so this
 build produces a **larger** cohort than that code does, and the difference lands
-entirely on attrition step 8.
+entirely on attrition step 5.
 
 The window is `NDMM_FU_CE_DAYS`, set to `0`, and the change is registered as a
 named deviation in `tests/test_same_as_source.R` — reverting it to 90 fails the
@@ -102,17 +113,30 @@ wrong; the values below are what the **images** show, and what this build uses.
 `<prefix>NDMM_ATTRITION`, one row per step, with the count and the percentage
 of the starting population.
 
-| # | step |
-|---|---|
-| 1 | Patients in `LOT_LONG` |
-| 2 | + in `ELIG_COH_FINAL` (parent IE) |
-| 3 | + 1L start on or after `LOT1_FROM` |
-| 4 | + 12-month CE before index |
-| 5 | + no belantamab in any LOT |
-| 6 | + no MM oncology therapy in 12-month baseline |
-| 7 | + no other cancer in 12-month baseline |
-| 8 | + follow-up CE |
-| 9 | + no pregnancy in study period — **the 1L NDMM cohort** |
+The steps follow the protocol's own order: §6.2.1.1's inclusions, then
+§6.2.1.2's four exclusions as that section lists them, belantamab last.
+`apr_30_2026` applied belantamab first and follow-up CE second-to-last; the
+final cohort is the same conjunction either way, but the per-step counts are
+not.
+
+| # | step | protocol |
+|---|---|---|
+| 1 | Patients in `LOT_LONG` | — |
+| 2 | + in `ELIG_COH_FINAL` (parent IE) | parent cohort |
+| 3 | + 1L start on or after `LOT1_FROM` | §6.2.1.1 |
+| 4 | + 12-month CE before index | §6.2.1.1 |
+| 5 | + CE during follow-up | §6.2.1.1 |
+| 6 | + no MM oncology therapy in 12-month baseline | §6.2.1.2, excl. 1 |
+| 7 | + no other cancer in 12-month baseline | §6.2.1.2, excl. 2 |
+| 8 | + no pregnancy in study period | §6.2.1.2, excl. 3 |
+| 9 | + no belantamab in any LOT — **the 1L NDMM cohort** | §6.2.1.2, excl. 4 |
+
+**Step 9 is not a baseline criterion.** Every other step is anchored to the 1L
+index date; this one is "in any LOT", with no date bound at all, so a patient
+can be removed for a belantamab claim years *after* their 1L index. That is
+what §6.2.1.2 says, and it is what `06_flags.R` does — the whole of
+`MAP_STACKED`, not a window — but it means the 1L cohort depends on follow-up
+data and cannot be built from baseline alone.
 
 Step 2 is intersected with `LOT_LONG` so the funnel is monotonic: the parent
 cohort contains patients who never enter `LOT_LONG`, and a bare

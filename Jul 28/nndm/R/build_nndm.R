@@ -141,18 +141,20 @@ check_upstream <- function(con, cfg) {
   invisible(TRUE)
 }
 
-# The nine rows of the attrition, in the order the criteria apply. Names are
-# the criterion, not the column, because this table is what gets read.
+# The nine rows of the attrition, in the order the protocol applies the
+# criteria: S6.2.1.1's inclusions, then S6.2.1.2's four exclusions as it lists
+# them, belantamab last. Names are the criterion, not the column, because this
+# table is what gets read.
 ATTRITION_STEPS <- list(
-  list(key = "whole",                 label = "Patients in LOT_LONG"),
-  list(key = "elig",                  label = "+ in ELIG_COH_FINAL (parent IE)"),
-  list(key = "elig_lot1",             label = "+ 1L start on or after LOT1_FROM"),
-  list(key = "ce12",                  label = "+ 12-month CE before index"),
-  list(key = "ce12_nobela",           label = "+ no belantamab in any LOT"),
-  list(key = "ce12_nobela_nopriortx", label = "+ no MM oncology therapy in 12-month baseline"),
-  list(key = "noother",               label = "+ no other cancer in 12-month baseline"),
-  list(key = "noother_fuce",          label = "+ follow-up CE"),
-  list(key = "ndmm_final",            label = "+ no pregnancy in study period (NDMM 1L cohort)")
+  list(key = "whole",          label = "Patients in LOT_LONG"),
+  list(key = "elig",           label = "+ in ELIG_COH_FINAL (parent IE)"),
+  list(key = "elig_lot1",      label = "+ 1L start on or after LOT1_FROM"),
+  list(key = "ce12",           label = "+ 12-month CE before index"),
+  list(key = "ce12_fuce",      label = "+ CE during follow-up"),
+  list(key = "fuce_nopriortx", label = "+ no MM oncology therapy in 12-month baseline"),
+  list(key = "noother",        label = "+ no other cancer in 12-month baseline"),
+  list(key = "noother_nopreg", label = "+ no pregnancy in study period"),
+  list(key = "ndmm_final",     label = "+ no belantamab in any LOT (NDMM 1L cohort)")
 )
 
 ATTRITION_COLS <- c(RUN_ID = "STRING", STEP_NUM = "INT", CRITERION = "STRING",

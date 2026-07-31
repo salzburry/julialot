@@ -27,8 +27,8 @@ M = [
  ("upstream first miss only","R/build_nndm.R",'    stop("Cannot read:\\n  ", paste(missing, collapse = "\\n  "),','    stop("Cannot read:\\n  ", missing[1],'),
  ("upstream built tables","R/build_nndm.R","  for (t in names(UPSTREAM)) {","  for (t in names(UPSTREAM)[0]) {"),
  ("upstream owner","R/build_nndm.R",'  ELIG_COH_FINAL = "Jul 28/overall"','  ELIG_COH_FINAL = "Jul 28/lot"'),
- ("attrition key typo","R/build_nndm.R",'list(key = "noother_fuce",','list(key = "noother_fu",'),
- ("attrition step dropped","R/build_nndm.R",'  list(key = "noother",               label = "+ no other cancer in 12-month baseline"),\n',''),
+ ("attrition key typo","R/build_nndm.R",'list(key = "noother_nopreg",','list(key = "noother_nopreg2",'),
+ ("attrition step dropped","R/build_nndm.R",'  list(key = "noother",        label = "+ no other cancer in 12-month baseline"),\n',''),
  ("monotonic never raises","R/build_nndm.R","  bad <- which(n[-1] > n[-length(n)])","  bad <- integer(0)"),
  ("monotonic empty cohort","R/build_nndm.R","  if (n[length(n)] == 0)","  if (FALSE)"),
  ("attrition scientific notation","R/db_utils.R","  format(x, scientific = FALSE, trim = TRUE)","  as.character(x)"),
@@ -39,7 +39,10 @@ M = [
  ("outputs list","R/build_nndm.R",'OUTPUTS <- c("NDMM_FLAGS_ALL", "NDMM_LOT_LONG_FILT", "NDMM_COHORT",\n             "NDMM_ATTRITION", "NDMM_BUILD_STATUS")','OUTPUTS <- c("NDMM_FLAGS_ALL", "NDMM_LOT_LONG_FILT", "NDMM_COHORT")'),
  ("ported fu ce constant","R/nndm_constants.R","NDMM_FU_CE_DAYS          <- 0L","NDMM_FU_CE_DAYS          <- 90L"),
  ("ported flags sql","R/steps/06_flags.R","      AND CE_lot1_fu              = 1","      AND 1 = 1"),
- ("ported cohort sql","R/steps/07_cohort.R","       AND CE_lot1_fu = 1","       AND 1 = 1"),
+ ("cohort sql outside the rewrite","R/steps/07_cohort.R","            ON cast(l.PATID as string) = a.PATID","            ON cast(l.PATID as string) = a.PATIDX"),
+ ("ported cohort sql","R/steps/07_cohort.R","     WHERE CE_pre_lot1_12mo = 1 AND CE_lot1_fu = 1\"))$n","     WHERE CE_pre_lot1_12mo = 1\"))$n"),
+ ("attrition order","R/build_nndm.R",'  list(key = "ce12_fuce",      label = "+ CE during follow-up"),\n  list(key = "fuce_nopriortx", label = "+ no MM oncology therapy in 12-month baseline"),','  list(key = "fuce_nopriortx", label = "+ no MM oncology therapy in 12-month baseline"),\n  list(key = "ce12_fuce",      label = "+ CE during follow-up"),'),
+ ("belantamab last","R/steps/07_cohort.R","       AND NO_PREGNANCY = 1\"))$n","       AND NO_BELANTAMAB = 1\"))$n"),
 ]
 TESTS = ["tests/test_runner.R", "tests/test_same_as_source.R"]
 miss = []

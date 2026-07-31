@@ -153,9 +153,10 @@ assign("log_msg", function(...) invisible(NULL), envir = ce)
 assign("wrk", function(x) paste0("wk.", x), envir = ce)
 assign("run_step", function(...) invisible(TRUE), envir = ce)
 assign("db_exec", function(...) invisible(TRUE), envir = ce)
-n_seen <- 0L
-assign("db_q", function(con, sql) { n_seen <<- n_seen + 1L; data.frame(n = 100L - n_seen) },
-       envir = ce)
+n_seen <- 0L; CSQL <- character(0)
+assign("db_q", function(con, sql) {
+  n_seen <<- n_seen + 1L; CSQL <<- c(CSQL, sql); data.frame(n = 100L - n_seen)
+}, envir = ce)
 got <- ce$ndmm_counts(NULL, "LL", "EC")
 keys <- vapply(ATTRITION_STEPS, function(s) s$key, character(1))
 ok(all(keys %in% names(got)),
@@ -163,7 +164,45 @@ ok(all(keys %in% names(got)),
           length(keys), ")"))
 ok(setequal(keys, names(got)),
    "and every count produced appears in the attrition, none dropped")
+ok(identical(keys, names(got)),
+   "in the same order, so the labels sit against the counts they describe")
 ok(length(keys) == 9L, paste0("nine steps, one per criterion (", length(keys), ")"))
+
+cat("\n-- the funnel adds the criteria in the protocol's order --\n")
+# ndmm_counts() is the one block this package rewrote rather than ported, so
+# test_same_as_source.R swaps the source's version back in and holds nothing
+# here. What holds it is this: each step's SQL is read back and must be the
+# step above it plus exactly one flag, in the order Rev Round 2 S6.2.1.1 and
+# then S6.2.1.2 list the criteria.
+FLAGS <- c("CE_pre_lot1_12mo", "CE_lot1_fu", "NO_PRIOR_MM_TX",
+           "NO_OTHER_CANCER_PRE_LOT1", "NO_PREGNANCY", "NO_BELANTAMAB")
+flags_in <- function(s) FLAGS[vapply(FLAGS, grepl, logical(1), x = s, fixed = TRUE)]
+sets <- lapply(CSQL, flags_in)
+ok(length(CSQL) == 9L, paste0("one query per attrition row (", length(CSQL), ")"))
+grew <- vapply(5:8, function(i)
+  all(sets[[i - 1]] %in% sets[[i]]) && length(setdiff(sets[[i]], sets[[i - 1]])) == 1L,
+  logical(1))
+ok(all(grew),
+   "each step is the step above it plus exactly one criterion, never a new set")
+added <- c(sets[[4]], vapply(5:8, function(i) setdiff(sets[[i]], sets[[i - 1]]),
+                             character(1)))
+want <- c("CE_pre_lot1_12mo", "CE_lot1_fu", "NO_PRIOR_MM_TX",
+          "NO_OTHER_CANCER_PRE_LOT1", "NO_PREGNANCY")
+ok(identical(added, want),
+   if (identical(added, want)) "and they arrive in protocol order, pregnancy eighth"
+   else paste0("the criteria arrive as ", paste(added, collapse = " -> ")))
+# Belantamab is the last exclusion S6.2.1.2 lists, so it must not narrow any
+# earlier row - it enters only through NDMM_PATIDS, which the final step reads.
+ok(!any(vapply(sets[1:8], function(s) "NO_BELANTAMAB" %in% s, logical(1))),
+   "belantamab narrows no step before the last")
+ok(grepl(ce$NDMM_PATIDS, CSQL[9], fixed = TRUE),
+   "and the last step reads the cohort view rather than repeating the conjunction")
+fl <- paste(readLines(file.path(ROOT, "R", "steps", "06_flags.R"), warn = FALSE),
+            collapse = "\n")
+patids <- sub(".*TEMPORARY VIEW \\{NDMM_PATIDS\\} AS", "", fl)
+ok(all(vapply(FLAGS, grepl, logical(1), x = patids, fixed = TRUE)),
+   paste0("which applies all ", length(FLAGS),
+          " flags, so the last row really is the one above it plus belantamab"))
 
 cat("\n-- a funnel that grows is not a count --\n")
 mk <- function(v) setNames(as.list(v), keys)
@@ -172,7 +211,8 @@ ok(is.null(tryCatch({ check_attrition_monotonic(mk(c(100,90,80,70,60,50,40,30,20
    "a funnel that only narrows passes")
 msg <- tryCatch({ check_attrition_monotonic(mk(c(100,90,80,70,60,50,40,45,20))); "" },
                 error = conditionMessage)
-ok(grepl("grows at step 8", msg, fixed = TRUE) && grepl("follow-up CE", msg, fixed = TRUE),
+ok(grepl("grows at step 8", msg, fixed = TRUE) &&
+     grepl(ATTRITION_STEPS[[8]]$label, msg, fixed = TRUE),
    "a step larger than the one above it stops the build, naming the step")
 msg <- tryCatch({ check_attrition_monotonic(mk(c(100,90,80,70,60,50,40,30,0))); "" },
                 error = conditionMessage)
