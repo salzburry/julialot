@@ -265,6 +265,7 @@ build_lot <- function(here, cohort_table, prefix) {
   # Cleared first, or a second run in one session inherits the first's.
   options(lot_waivers_applied = character(0), lot_codelist_md5 = list())
   write_build_status(con, cfg, "started")
+  clear_run_rows(con, cfg)
   # after = FALSE, or this fires after the disconnect above and writes to a
   # closed connection. Registered here, not beside the connection, so a
   # preflight failure still leaves no status row at all.
@@ -554,6 +555,25 @@ write_build_status <- function(con, cfg, state) {
   invisible(TRUE)
 }
 
+# A re-run in the same session keeps run_id - it is fixed when config_lot.R is
+# sourced - so an earlier attempt's rows would stay under this run's id and
+# describe work this run did not do. Each writer clears its own rows, but only
+# when it is reached: a run that fails before one of them leaves the previous
+# attempt's rows looking like this one's. Cleared up front instead.
+#
+# The tables need not exist yet, and on a first run they do not, so a delete
+# that cannot find its table is not a failure. TABLE_OR_VIEW_NOT_FOUND is one
+# of with_retry's permanent errors, so this does not sit through four attempts.
+RUN_SCOPED_TABLES <- c("LOT_RUN_METADATA", "LOT_QC_SUMMARY",
+                       "LOT_CODELIST_METADATA")
+
+clear_run_rows <- function(con, cfg) {
+  for (t in RUN_SCOPED_TABLES)
+    try(db_exec(con, glue("DELETE FROM {lot_out(t)} WHERE RUN_ID = '{run_id}'")),
+        silent = TRUE)
+  invisible(TRUE)
+}
+
 # The QC phase reports these and carries on - it prints "** BUG **" and the run
 # still finishes. They are not judgement calls: each one is impossible unless
 # something upstream is wrong, so re-run them here where a breach stops the
@@ -671,9 +691,10 @@ check_run_recorded <- function(con, cfg) {
 
 # Which version of each code list built these tables. The run log says so too,
 # but a log is a separate artefact - filed away from the tables, or lost. One
-# row per file per run, written as soon as the lists are read so a run that
-# fails later still records what it was reading. RECORDED_AT is the warehouse
-# clock at the insert, seconds after the read.
+# row per file per run, written once the lists have passed their checks and
+# before any claim is read - so a run that fails later still records what it
+# was reading, and one that fails inside those checks records nothing.
+# RECORDED_AT is the warehouse clock at the insert.
 CODELIST_METADATA_COLS <- c(RUN_ID = "STRING", CODELIST_FILE = "STRING",
                             MD5 = "STRING", N_ROWS = "BIGINT",
                             RECORDED_AT = "TIMESTAMP")
@@ -861,6 +882,21 @@ check_lot_final <- function(con, cfg) {
 # The criteria layer, on top of LOT_LONG. With no criteria declared both
 # tables are copies, so downstream can always read them.
 phase_line_criteria <- function(con, cfg) {
+  # A flag naming a column LOT_LONG already has does not fail: the generated
+  # SQL is SELECT *, <expr> AS <flag>, so the result carries the name twice and
+  # which one a later reference means is Spark's choice. Asked of the table
+  # rather than assumed, because what LOT_LONG carries depends on the code list.
+  crit <- lapply(LINE_CRITERIA, normalize_criterion)
+  if (length(crit)) {
+    have  <- toupper(trimws(as.character(db_q(con, "DESCRIBE lot_long")[[1]])))
+    clash <- Filter(function(c_i) toupper(c_i$flag) %in% have, crit)
+    if (length(clash))
+      stop("Line criteria whose flag is already a LOT_LONG column: ",
+           paste(vapply(clash, function(c_i) paste0(c_i$name, " -> ", c_i$flag),
+                        character(1)), collapse = ", "),
+           ". Rename the flag; the column would otherwise appear twice.",
+           call. = FALSE)
+  }
   run_step(con, "L40_lot_long_allflags",
            line_criteria_flags_sql(cfg, "lot_long", "lot_long_allflags"))
   run_step(con, "L41_lot_long_final",

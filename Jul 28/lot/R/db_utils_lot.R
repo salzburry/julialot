@@ -86,10 +86,22 @@ get_quarter_suffix <- function(end_date) {
   # Treat an implausible year as a parse failure and retry the common
   # non-ISO (Excel) layouts so a reformatted STUDY_END still works.
   if (is.na(dt) || is.na(yr) || yr < 1900) {
-    for (fmt in c("%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d", "%m-%d-%Y")) {
-      d2 <- tryCatch(as.Date(v, format = fmt), error = function(e) NA)
-      if (!is.na(d2) && as.integer(format(d2, "%Y")) >= 1900) { dt <- d2; break }
-    }
+    cand <- Filter(Negate(is.na), lapply(
+      c("%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d", "%m-%d-%Y"),
+      function(fmt) {
+        d2 <- tryCatch(as.Date(v, format = fmt), error = function(e) NA)
+        if (!is.na(d2) && as.integer(format(d2, "%Y")) >= 1900) d2 else NA
+      }))
+    # 03/04/2025 is 3 April day-first and 4 March month-first, and nothing in
+    # the string says which was meant. Taking the first format that parses
+    # picks one silently, and the two fall in different quarters - a different
+    # set of CDM tables for the whole study. Refuse instead.
+    if (length(unique(vapply(cand, format, character(1)))) > 1L)
+      stop("get_quarter_suffix: STUDY_END=\"", end_date, "\" is ambiguous - it ",
+           "reads as ", paste(unique(vapply(cand, format, character(1))),
+                              collapse = " or "),
+           ". Write it as YYYY-MM-DD.", call. = FALSE)
+    if (length(cand)) dt <- cand[[1]]
     yr <- if (!is.na(dt)) as.integer(format(dt, "%Y")) else NA_integer_
   }
   if (is.na(dt) || is.na(yr) || yr < 1900) {
@@ -151,11 +163,15 @@ db_exec <- function(con, sql) {
 
 # A count, as SQL rather than as R prints it. as.character(1e5) is "1e+05" -
 # R uses scientific notation whenever it is shorter, which for a whole number
-# means any exact power of ten from 100000 up. Interpolated into an INSERT that
-# is a DOUBLE literal going into a BIGINT column, which Spark's ANSI store
-# assignment refuses; interpolated into a string column it is simply recorded
-# wrong. Rare - the count has to land on the power of ten exactly - and glue
-# and paste0 both take the as.character route, so counts go through here.
+# means any exact power of ten from 100000 up, and glue and paste0 both take
+# that route.
+#
+# In a string column that is simply recorded wrong: LOT_LONG_BY_LINE would
+# carry "1:1e+05" and nothing would object. That is the certain case, and the
+# reason this exists. In a numeric column it reaches an INSERT as a floating
+# point literal; whether that is stored, refused or truncated is a question
+# about the warehouse's store-assignment policy, which has not been tested
+# here, so no claim is made about it. Sending digits removes the question.
 sql_count <- function(x) {
   if (length(x) != 1L || is.na(x)) return("NULL")
   format(x, scientific = FALSE, trim = TRUE)

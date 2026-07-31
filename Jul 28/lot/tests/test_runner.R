@@ -166,6 +166,7 @@ bl <- paste(readLines(file.path(ROOT, "R", "build_lot.R"), warn = FALSE),
 body <- sub(".*build_lot <- function\\([^)]*\\) \\{", "", bl)
 ORDER <- c("check_settings", "pin_output_schema", "pin_cohort",
            "check_lot_contract", "set_lot_config", "check_cohort_input",
+           "clear_run_rows",
            "phase_codelists", "record_codelist_hashes",
            "phase_patient_input", "materialize_cohort_input",
            "check_claim_ndc",
@@ -204,10 +205,13 @@ assign("lot_out", function(x) paste0("wk.p_", x), envir = pe)
 PSQL <- character(0)
 assign("run_step", function(con, name, sql, qc = NULL) {
   PSQL <<- c(PSQL, sql); invisible(TRUE) }, envir = pe)
-drive_plc <- function(crit = list()) {
+LL_COLS <- c("PATID", "LOT_NUM", "LOT_START_DT", "LOT_BASE_END_DT",
+             "LOT_START_TYPE", "END_REASON")
+drive_plc <- function(crit = list(), cfg = list(max_lot = 5L), cols = LL_COLS) {
   PSQL <<- character(0)
   assign("LINE_CRITERIA", crit, envir = pe)
-  tryCatch({ pe$phase_line_criteria(NULL, list()); NULL }, error = conditionMessage)
+  assign("db_q", function(con, sql) data.frame(col_name = cols), envir = pe)
+  tryCatch({ pe$phase_line_criteria(NULL, cfg); NULL }, error = conditionMessage)
 }
 has_sql <- function(x) any(grepl(x, PSQL, fixed = TRUE))
 # Whole statement, not substring: "FROM lot_long" is a prefix of "FROM
@@ -247,6 +251,25 @@ ok(has_sql("first_failed_lot") && has_sql("T_FLAG = 0"),
    "...and an enabled truncate reaches the final view as a removal")
 ok(is_sql("CREATE OR REPLACE TABLE wk.p_LOT_LONG_FINAL AS SELECT * FROM lot_long_final"),
    "with the persisted table still written from it")
+
+# A flag that names a column LOT_LONG already has does not fail - the view ends
+# up carrying the name twice - so it is asked of the table before building.
+CLASH <- list(modifyList(CRIT[[1]], list(flag = "LOT_NUM")))
+msg <- drive_plc(CLASH)
+ok(!is.null(msg) && grepl("already a LOT_LONG column", msg, fixed = TRUE) &&
+     grepl("LOT_NUM", msg, fixed = TRUE),
+   "a flag colliding with an existing LOT_LONG column stops the build, named")
+ok(is.null(drive_plc(CRIT)),
+   "...and a flag that does not collide is unaffected")
+# A criterion aimed above MAX_LOT is asked of no line, so every row passes it -
+# which reads as satisfied rather than as never run.
+HIGH <- list(modifyList(CRIT[[1]], list(lines = 6L)))
+msg <- drive_plc(HIGH, cfg = list(max_lot = 5L))
+ok(!is.null(msg) && grepl("above MAX_LOT", msg, fixed = TRUE),
+   "a criterion aimed above MAX_LOT stops the build rather than passing every row")
+ok(is.null(drive_plc(list(modifyList(CRIT[[1]], list(lines = 5L))),
+                     cfg = list(max_lot = 5L))),
+   "...and one aimed at the highest line is fine")
 if (is.na(old_env)) Sys.unsetenv("APPLY_T_CRIT") else Sys.setenv(APPLY_T_CRIT = old_env)
 
 cat("\n-- a run says whether its outputs belong together --\n")
@@ -322,6 +345,31 @@ ok(identical(FIRED, "disconnect"),
    "and a run that reached complete does not overwrite its own status on the way out")
 options(lot_complete = old_complete)
 }
+
+# Called is not the same as clearing anything. A re-run in the same session
+# keeps run_id, so an attempt that fails before a writer is reached would leave
+# the previous attempt's rows under this run's id.
+cr <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_lot.R"), envir = cr)
+assign("log_msg", function(...) invisible(NULL), envir = cr)
+assign("lot_out", function(x) paste0("wk.p_", x), envir = cr)
+assign("run_id", "R1", envir = cr)
+CRSQL <- character(0)
+assign("db_exec", function(con, s) { CRSQL <<- c(CRSQL, s); TRUE }, envir = cr)
+cr$clear_run_rows(NULL, list())
+RST <- get("RUN_SCOPED_TABLES", envir = cr)
+ok(length(CRSQL) == length(RST) &&
+     all(vapply(c("LOT_RUN_METADATA", "LOT_QC_SUMMARY", "LOT_CODELIST_METADATA"),
+                function(t) any(grepl(paste0("DELETE FROM wk.p_", t,
+                                             " WHERE RUN_ID = 'R1'"),
+                                      CRSQL, fixed = TRUE)), logical(1))),
+   paste0("and it clears this run's rows from every metadata table (",
+          length(CRSQL), ")"))
+# On a first run none of them exists yet, so a delete that cannot find its
+# table is not a failure.
+assign("db_exec", function(con, s) stop("TABLE_OR_VIEW_NOT_FOUND"), envir = cr)
+ok(!inherits(tryCatch(cr$clear_run_rows(NULL, list()), error = function(e) e), "error"),
+   "...and a table that does not exist yet does not stop the run")
 
 cat("\n-- an older status table is upgraded, not written into blind --\n")
 # CREATE TABLE IF NOT EXISTS does nothing to a table an earlier version of this
@@ -1626,6 +1674,37 @@ ok(all(need %in% LOT2_5_INPUT_VIEWS),
    paste0("and every view LOT1 leaves that LOT2-5 reads is listed (", length(need), ")"))
 ok(all(vapply(SCT_MATERIALIZE, function(m) m$view %in% LOT2_5_INPUT_VIEWS, logical(1))),
    "including the three materialized right after the check")
+# Both checks above start from views something creates, so a reference to one
+# nothing defines is invisible to them - it would surface as
+# TABLE_OR_VIEW_NOT_FOUND partway through a run. Read every FROM and JOIN
+# instead, and require each name to be a view a step creates or a CTE in the
+# same file. Comments first: "INNER JOIN because a med in only one file..."
+# is prose, and reads as a reference to a table called "because".
+uncomment <- function(lines)
+  vapply(lines, function(l) {
+    at <- sort(c(gregexpr("--", l, fixed = TRUE)[[1]], gregexpr("#", l, fixed = TRUE)[[1]]))
+    at <- at[at > 0]
+    for (i in at) {
+      h <- substr(l, 1, i - 1)
+      if (nchar(gsub("[^\"']", "", h)) %% 2 == 0) return(substr(l, 1, i - 1))
+    }
+    l
+  }, character(1), USE.NAMES = FALSE)
+step_files_all <- list.files(file.path(ROOT, "R", "steps"), "\\.R$", full.names = TRUE)
+all_made <- views_in(unlist(lapply(step_files_all, readLines, warn = FALSE)))
+dangling <- unlist(lapply(step_files_all, function(f) {
+  txt  <- paste(uncomment(readLines(f, warn = FALSE)), collapse = "\n")
+  refs <- unique(unlist(regmatches(txt,
+    gregexpr("(?<=\\bFROM |\\bJOIN )[a-z_][a-z_0-9]*", txt, perl = TRUE))))
+  ctes <- unique(unlist(regmatches(txt,
+    gregexpr("[a-z_][a-z_0-9]*(?=\\s+AS\\s*\\()", txt, perl = TRUE))))
+  d <- setdiff(refs, c(all_made, ctes))
+  if (length(d)) paste0(basename(f), ": ", paste(d, collapse = ", ")) else NULL
+}))
+ok(length(dangling) == 0,
+   if (length(dangling)) paste0("a step reads something nothing creates -- ",
+                                paste(dangling, collapse = "; "))
+   else "every view a step reads is one a step creates, or a CTE beside it")
 
 step_src <- unlist(lapply(list.files(file.path(ROOT, "R", "steps"), "\\.R$",
                                      full.names = TRUE), readLines, warn = FALSE))
@@ -1687,30 +1766,37 @@ cres <- tryCatch({ check_lot_contract(modifyList(loaded,
 ok(is.null(cres),
    paste0("config.csv, loaded as build.R loads it, satisfies CONTRACT",
           if (!is.null(cres)) paste0(" -- ", gsub("\n", " ", cres)) else ""))
-# ...and it is the file being read, not defaults that happen to agree: every
-# CONTRACT value the file carries has to have arrived from the file.
-from_file <- intersect(names(CONTRACT),
-                       c("dsn", "catalog", "cdm_schema", "use_quarterly_tables",
-                         "study_end", "codelist_dir", "censor_at_disenrollment",
-                         "induction_window_days", "lot_n_induction_window_days",
-                         "map_discon_gap_days", "medical_day_supply",
-                         "sct_auto_window_days", "sct_auto_gap_days",
-                         "sct_tandem_days", "cart_consolidation_days",
-                         "allo_lot_span", "max_lot"))
-ok(length(from_file) == 17L &&
-     all(vapply(from_file, function(k) isTRUE(all.equal(loaded[[k]], CONTRACT[[k]])),
-                logical(1))),
-   paste0("all ", length(from_file), " settings the file carries match CONTRACT"))
+# Which cfg setting each config.csv name feeds, read out of config_lot.R rather
+# than listed here. Listing them was a fourth copy of the values this section
+# exists to de-duplicate, and it could not see a new setting at all: absent from
+# the list, it was absent from the comparison and the count still matched.
+cl_lines <- readLines(file.path(ROOT, "R", "config_lot.R"), warn = FALSE)
+maps <- regmatches(cl_lines, regexec('^\\s*([A-Za-z_.][A-Za-z0-9_.]*)\\s*=.*Sys\\.getenv\\("([A-Z0-9_]+)"',
+                                     cl_lines))
+maps <- Filter(function(m) length(m) == 3L, maps)
+ENV2CFG <- setNames(vapply(maps, `[`, character(1), 2), vapply(maps, `[`, character(1), 3))
 # A misspelled name sets an environment variable nothing reads, so the setting
 # silently keeps its default and the contract still passes.
-clsrc <- paste(readLines(file.path(ROOT, "R", "config_lot.R"), warn = FALSE),
-               collapse = "\n")
-unread <- Filter(function(n) !grepl(paste0('Sys.getenv("', n, '"'), clsrc, fixed = TRUE),
-                 cnames)
+unread <- setdiff(cnames, names(ENV2CFG))
 ok(length(unread) == 0,
    if (length(unread)) paste0("config.csv names settings nothing reads: ",
                               paste(unread, collapse = ", "))
    else paste0("every one of the ", length(cnames), " names in config.csv is read"))
+# Every setting the file carries is either pinned by CONTRACT or named here as
+# deliberately not pinned. A new one is caught by being neither.
+NOT_PINNED <- c("persist_to_schema")   # check_lot_contract requires it TRUE
+keys <- unname(ENV2CFG[intersect(cnames, names(ENV2CFG))])
+loose <- setdiff(keys, c(names(CONTRACT), NOT_PINNED))
+ok(length(loose) == 0,
+   if (length(loose)) paste0("config.csv settings neither pinned nor excused: ",
+                             paste(loose, collapse = ", "))
+   else paste0("every one of the ", length(keys), " settings is pinned or excused"))
+# ...and it is the file being read, not defaults that happen to agree.
+pinned <- intersect(keys, names(CONTRACT))
+ok(length(pinned) > 0 &&
+     all(vapply(pinned, function(k) isTRUE(all.equal(loaded[[k]], CONTRACT[[k]])),
+                logical(1))),
+   paste0("all ", length(pinned), " settings the file carries match CONTRACT"))
 # The caller passes the cohort, so config.csv must not pin one.
 ok(!any(c("INPUT_COHORT_TABLE", "OBJECT_PREFIX") %in% names(shipped)),
    "config.csv does not name a cohort")
@@ -1764,6 +1850,22 @@ ok(all(got_x == "2025q2"),
           paste(unique(got_x), collapse = " "), ")"))
 # No whitespace case: as.Date skips surrounding spaces itself, so an assertion
 # on "  2025-06-30  " passes with or without the trimws() it would be testing.
+# 03/04/2025 is 3 April day-first and 4 March month-first, and those fall in
+# different quarters - a different set of CDM tables for the whole study.
+# Nothing in the string says which was meant, so it is refused rather than
+# guessed; the unambiguous layouts above still recover.
+amb <- qs("03/04/2025")
+ok(grepl("ambiguous", amb, fixed = TRUE) && grepl("2025-04-03", amb, fixed = TRUE) &&
+     grepl("2025-03-04", amb, fixed = TRUE),
+   "an ambiguous date is refused, naming both readings")
+lni <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "load_inputs.R"), envir = lni)
+ok(inherits(tryCatch(suppressMessages(lni$.normalize_iso_date("03/04/2025", "STUDY_END")),
+                     error = function(e) e), "error"),
+   "and the config loader refuses it too, before it reaches the settings")
+ok(identical(suppressMessages(lni$.normalize_iso_date("30-06-2025", "STUDY_END")),
+             "2025-06-30"),
+   "...while an unambiguous Excel date still normalizes")
 msg <- tryCatch({ qe$get_quarter_suffix("nonsense"); "" }, error = conditionMessage)
 ok(grepl("STUDY_END", msg, fixed = TRUE) && grepl("YYYY-MM-DD", msg, fixed = TRUE),
    "a date it cannot parse stops the build, naming the setting and the format")

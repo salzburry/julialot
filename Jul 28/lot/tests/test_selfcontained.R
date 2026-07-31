@@ -223,21 +223,31 @@ scan_r <- function(f) {
     }
   }
   for (ex in parse(f)) walk(ex)
-  list(calls = unique(calls), known = unique(c(formals_seen, defs)))
+  # Kept apart: a local function is reachable from another file - sanitize_col
+  # travels through ctx - but a parameter is not. Pooling both meant every
+  # parameter name in the package (con, sql, name, x) counted as defined
+  # everywhere, so a typo'd call to any of them resolved.
+  list(calls = unique(calls), formals = unique(formals_seen), defs = unique(defs))
 }
 seen    <- lapply(PKG_R, scan_r)
 scalled <- unique(unlist(lapply(seen, `[[`, "calls")))
-sknown  <- unique(unlist(lapply(seen, `[[`, "known")))
+alldefs <- unique(unlist(lapply(seen, `[[`, "defs")))
 # glue comes from the package build.R loads, so it resolves at run time even
 # when absent here.
 FROM_PKG <- c("glue")
-sbad <- Filter(function(f) !exists(f, envir = mod) && !exists(f) &&
-                 !f %in% FROM_PKG && !f %in% sknown,
-               scalled)
+# Per file, so a parameter only counts where it is declared.
+sbad <- unique(unlist(lapply(seen, function(x)
+  Filter(function(f) !exists(f, envir = mod) && !exists(f) &&
+           !f %in% FROM_PKG && !f %in% alldefs && !f %in% x$formals,
+         x$calls))))
 ok(length(sbad) == 0,
    if (length(sbad)) paste0("the package calls undefined: ",
                             paste(sbad, collapse = ", "))
    else paste0("all ", length(scalled), " calls across the ", length(PKG_R),
-               " sourced files resolve"))
+               " sourced files resolve to something"))
+# What that does and does not say: a local function counts as defined anywhere,
+# because sanitize_col really does travel between files through ctx. So this
+# catches a name that exists nowhere, not one called out of scope - R catches
+# that itself, at the call.
 
 report()

@@ -12,14 +12,24 @@
 # surfaces clearly rather than being silently wrong.
 .normalize_iso_date <- function(v, nm = "") {
   if (grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", v)) return(v)
-  for (fmt in c("%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d", "%m-%d-%Y")) {
-    d <- tryCatch(as.Date(v, format = fmt), error = function(e) NA)
-    if (!is.na(d) && as.integer(format(d, "%Y")) >= 1900) {
-      iso <- format(d, "%Y-%m-%d")
-      message("[load_inputs] normalized ", nm, " '", v, "' -> ", iso,
-              " (Excel likely reformatted the date)")
-      return(iso)
-    }
+  cand <- Filter(Negate(is.na), lapply(
+    c("%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d", "%m-%d-%Y"),
+    function(fmt) {
+      d <- tryCatch(as.Date(v, format = fmt), error = function(e) NA)
+      if (!is.na(d) && as.integer(format(d, "%Y")) >= 1900) d else NA
+    }))
+  iso <- unique(vapply(cand, format, character(1)))
+  # 03/04/2025 is 3 April read day-first and 4 March read month-first. Taking
+  # the first format that parses picks one silently; for STUDY_END the two fall
+  # in different quarters, which is a different set of CDM tables.
+  if (length(iso) > 1L)
+    stop("[load_inputs] ", nm, " '", v, "' is ambiguous - it reads as ",
+         paste(iso, collapse = " or "), ". Write it as YYYY-MM-DD.",
+         call. = FALSE)
+  if (length(iso) == 1L) {
+    message("[load_inputs] normalized ", nm, " '", v, "' -> ", iso,
+            " (Excel likely reformatted the date)")
+    return(iso)
   }
   message("[load_inputs] WARN: could not normalize ", nm, " '", v,
           "' to YYYY-MM-DD; passing through.")

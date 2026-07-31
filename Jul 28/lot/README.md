@@ -140,13 +140,13 @@ Two rules worth knowing:
 - A predicate that evaluates to NULL **fails**. Unknown is not evidence the
   line qualifies.
 
-Two things the validator does not check, because `LINE_CRITERIA` is empty and a
-check for an empty list proves nothing. Whoever writes the first criterion owns
-them: `flag` must not name a column `LOT_LONG` already has - the generated SQL
-is `SELECT *, <expr> AS <flag>`, so a collision makes the column ambiguous
-rather than failing - and `lines` above `MAX_LOT` matches nothing, so the
-criterion silently passes every row. Add both to `validate_line_criteria()`
-when the first real criterion arrives.
+Two mistakes a criterion can make that do not announce themselves, both now
+refused. A `flag` naming a column `LOT_LONG` already has does not fail - the
+generated SQL is `SELECT *, <expr> AS <flag>`, so the result carries the name
+twice - so `phase_line_criteria` asks the table for its columns and stops on a
+collision. And `lines` above `MAX_LOT` matches no line, so every row passes a
+criterion that never ran; `validate_line_criteria()` takes `MAX_LOT` and
+refuses it.
 
 ## The production code lists
 
@@ -516,12 +516,13 @@ all rather than a `failed` one. Nothing has been written by then.
 Counts go into SQL through `sql_count()`. `as.character(1e6)` is `"1e+06"` - R
 uses scientific notation whenever it is shorter, which for a whole number means
 any exact power of ten from 100000 up, and both `glue` and `paste0` take that
-route. In an `UPDATE` that is a double literal going into a `BIGINT` column,
-which Spark's ANSI store assignment refuses; in `LOT_LONG_BY_LINE` it is a
-string column, so it would simply have been recorded wrong with nothing
-complaining. `08_persist.R` writes its four LOT1 counts the same way and is the
-ported source, so it is unchanged - there the failure is loud, and
-`check_run_recorded()` stops the run.
+route. In `LOT_LONG_BY_LINE`, a string column, that is recorded wrong with
+nothing complaining - the certain case, and the reason the helper exists. In a
+numeric column it arrives as a floating point literal, and whether the
+warehouse stores, truncates or refuses it depends on its store-assignment
+policy; that has not been tested here, so nothing is claimed about it. Sending
+digits removes the question. `08_persist.R` writes its four LOT1 counts the
+same way and is the ported source, so it is unchanged.
 
 Every write that is a DELETE of this run's rows followed by an INSERT goes
 through `db_replace()`, which retries the pair rather than each statement.
