@@ -51,6 +51,7 @@ cat("\n-- the runner calls its phases, in order --\n")
 ORDER <- c("check_settings", "pin_output_schema", "pin_prefix", "check_contract",
            "check_choices", "check_constants", "set_lot_config",
            "check_no_active_run", "check_upstream", "write_build_status",
+           "clear_run_rows",
            "build_ndmm_mm_dx_codes", "build_ndmm_mm_claim_header",
            "build_ndmm_mm_dx_events", "build_ndmm_mm_qualifying",
            "build_ndmm_demographics", "build_ndmm_base_cohort",
@@ -528,6 +529,65 @@ i_up <- regexpr("check_upstream(con, cfg)", body, fixed = TRUE)
 i_bs <- regexpr('write_build_status(con, cfg, "started")', body, fixed = TRUE)
 ok(i_na > 0 && i_up > 0 && i_bs > 0 && i_na < i_up && i_na < i_bs,
    "the check runs before this run reads or writes anything else")
+
+cat("\n-- a second attempt does not inherit the first's rows --\n")
+# run_id is fixed when config.R is sourced, so a re-run in one session writes
+# under the same id. Every writer clears its own rows, but only if reached.
+# Which tables those are is derived, not restated: each *_COLS declaring a
+# RUN_ID column is a run-scoped table, and the run has to clear all of them.
+cr <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = cr)
+assign("log_msg", function(...) CRLOG <<- c(CRLOG, paste0(...)), envir = cr)
+assign("wrk", function(x) paste0("wk.p_", x), envir = cr)
+assign("run_id", "R1", envir = cr)
+colsets <- grep("_COLS$", ls(cr), value = TRUE)
+scoped  <- vapply(colsets, function(nm) "RUN_ID" %in% names(get(nm, envir = cr)),
+                  logical(1))
+derived <- paste0("NDMM_", sub("_COLS$", "", colsets[scoped]))
+# The name convention is asserted, not assumed: if a *_COLS stops mapping onto
+# a declared output, this says so rather than deriving a table nobody writes.
+ok(length(derived) >= 4 && all(derived %in% DELIVERABLES),
+   "every run-scoped table declares its columns and is a declared deliverable")
+# Everything but the status table, whose row for this run is rewritten just
+# before this runs - and clearing which would delete the "started" row that
+# stops the next run colliding with this one.
+ok(setequal(cr$RUN_SCOPED_TABLES, setdiff(derived, "NDMM_BUILD_STATUS")),
+   "and every one of them is cleared up front, bar the status row itself")
+
+CRLOG <- character(0); CRSQL <- character(0)
+assign("db_exec", function(con, s) { CRSQL <<- c(CRSQL, s); invisible(TRUE) },
+       envir = cr)
+cr$clear_run_rows(NULL, list())
+ok(length(CRSQL) == length(cr$RUN_SCOPED_TABLES) &&
+     all(vapply(cr$RUN_SCOPED_TABLES, function(t)
+       any(grepl(paste0("DELETE FROM wk.p_", t, " WHERE RUN_ID = 'R1'"),
+                 CRSQL, fixed = TRUE)), logical(1))),
+   "one delete per table, scoped to this run and nobody else's")
+
+# A first run has none of these tables, and that is not a failure.
+CRLOG <- character(0)
+assign("db_exec", function(con, s) stop("TABLE_OR_VIEW_NOT_FOUND"), envir = cr)
+ok(!inherits(tryCatch(cr$clear_run_rows(NULL, list()), error = function(e) e),
+             "error") && length(CRLOG) == 0,
+   "a table that does not exist yet is not a failure, and not a warning either")
+
+# But a delete that was refused leaves exactly the rows this exists to remove.
+CRLOG <- character(0)
+assign("db_exec", function(con, s) stop("PERMISSION_DENIED"), envir = cr)
+ok(!inherits(tryCatch(cr$clear_run_rows(NULL, list()), error = function(e) e),
+             "error"),
+   "any other failure does not stop the build")
+ok(length(CRLOG) == length(cr$RUN_SCOPED_TABLES) &&
+     all(grepl("WARNING", CRLOG, fixed = TRUE)) &&
+     any(grepl("PERMISSION_DENIED", CRLOG, fixed = TRUE)),
+   "...but it is said out loud, once per table, rather than swallowed")
+
+# After the status row, so the run is marked started whatever the clear does,
+# and before the first step, so no writer is reached with stale rows in place.
+i_cr <- regexpr("clear_run_rows(con, cfg)", body, fixed = TRUE)
+i_p1 <- regexpr("build_ndmm_mm_dx_codes(con)", body, fixed = TRUE)
+ok(i_cr > 0 && i_p1 > 0 && i_bs < i_cr && i_cr < i_p1,
+   "cleared after the status row and before the first phase")
 
 cat("\n-- a retried write does not double the rows --\n")
 # write_attrition and write_build_status both clear and rewrite their run's

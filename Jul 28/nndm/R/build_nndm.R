@@ -777,6 +777,48 @@ check_no_active_run <- function(con, cfg) {
        "NDMM_IGNORE_ACTIVE_RUN=TRUE.", call. = FALSE)
 }
 
+# A re-run in the same session keeps run_id - it is fixed when config.R is
+# sourced, and DOMINO_RUN_ID pins it across sessions besides - so a second
+# attempt writes under the first attempt's id. Each writer clears its own rows,
+# but only when it is reached: an attempt that fails before write_run_metadata
+# leaves the first attempt's row saying which code and which code lists built
+# this cohort, which by then they did not. That is the one claim these tables
+# exist to make, and NDMM_BUILD_STATUS marking the run failed does not unmake
+# it - the rows are still there, under an id that now means something else.
+# Cleared up front instead, so nothing under this run's id describes work this
+# run did not do.
+#
+# NDMM_BUILD_STATUS is deliberately not here. Its row for this run is written
+# immediately before this runs, so nothing stale can survive in it, and
+# clearing it would delete the "started" row check_no_active_run shows to the
+# next run - turning the concurrency check off for exactly as long as the build
+# takes. NDMM_COHORT is not here either: it is replaced whole, not appended to.
+#
+# The tables need not exist yet, and on a first run they do not, so a delete
+# that cannot find its table is not a failure. TABLE_OR_VIEW_NOT_FOUND is one
+# of with_retry's permanent errors, so this does not sit through four attempts.
+# Anything else is said out loud rather than swallowed: a DELETE that was
+# refused leaves exactly the rows this exists to remove, and a silent try()
+# would let the run publish them as its own.
+RUN_SCOPED_TABLES <- c("NDMM_ATTRITION", "NDMM_RUN_METADATA",
+                       "NDMM_CODELIST_METADATA")
+
+clear_run_rows <- function(con, cfg) {
+  for (t in RUN_SCOPED_TABLES) {
+    tbl <- wrk(t)
+    err <- tryCatch({
+      db_exec(con, glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'")); NULL
+    }, error = function(e) conditionMessage(e))
+    if (!is.null(err) &&
+        !grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found", err,
+               ignore.case = TRUE))
+      log_msg("WARNING: could not clear ", tbl, " of run ", run_id, ": ", err,
+              " - if an earlier attempt wrote rows under this run id, they are ",
+              "still there and this run will not have written them.")
+  }
+  invisible(TRUE)
+}
+
 load_nndm_modules <- function(here) {
   source(file.path(here, "R", "load_inputs.R"))
   load_pipeline_inputs(here, "config.csv")
@@ -816,6 +858,10 @@ build_nndm <- function(here, prefix) {
   check_no_active_run(con, cfg)
   check_upstream(con, cfg)
   write_build_status(con, cfg, "started")
+  # After the status row, so a run is marked started whatever this does, and
+  # before the first step, so no writer can be reached with the previous
+  # attempt's rows still under this run's id.
+  clear_run_rows(con, cfg)
   # after = FALSE, or this fires after the disconnect above and writes to a
   # closed connection.
   on.exit(if (!isTRUE(getOption("nndm_complete", FALSE)))

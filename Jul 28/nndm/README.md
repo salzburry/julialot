@@ -22,6 +22,14 @@ naming the run that holds the prefix and when it started.
 Two runs on *different* prefixes are safe, and that is how two cohorts are
 meant to be built at once.
 
+A **re-run keeps its run id** — `DOMINO_RUN_ID` pins it, and so does re-running
+in one R session. So `NDMM_ATTRITION`, `NDMM_RUN_METADATA` and
+`NDMM_CODELIST_METADATA` are cleared of this run's rows before the first step:
+each writer clears its own, but only once reached, and an attempt that fails
+before `write_run_metadata` would otherwise leave the previous attempt's row
+naming the code and the code lists that built a cohort this attempt did not
+build.
+
 It is a check, not a lock — nothing here can hold one — so two runs starting in
 the same moment can both pass it. It catches the case worth catching: starting
 a second run while one is going. A killed process leaves its `started` row
