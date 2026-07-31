@@ -3,45 +3,14 @@
 phase_qc <- function(con, ctx) {
   meds <- ctx$meds
 
-  log_msg("Running NDC format QC...")
-  tryCatch({
-    ndc_qc_codelist <- db_q(con, "
-      SELECT length(CL_CODE) AS ndc_len, count(*) AS n
-      FROM mma_codelist
-      WHERE CL_CODE_TYPE = 'NDC'
-      GROUP BY length(CL_CODE)
-      ORDER BY length(CL_CODE)
-    ")
-    log_msg("  NDC length distribution in codelist:")
-    print(ndc_qc_codelist)
-
-    # Restrict to cohort PATIDs + date window to avoid full RX scan
-    ndc_qc_rx <- db_q(con, glue("
-      SELECT length(upper(regexp_replace(coalesce(cast(r.NDC as string),''), '[^A-Za-z0-9]', ''))) AS ndc_len,
-             count(*) AS n
-      FROM {cdm_src(cfg$tbl_rx)} r
-      INNER JOIN lot_patient_input p ON r.PATID = p.PATID
-      WHERE cast(r.NDC as string) IS NOT NULL AND trim(cast(r.NDC as string)) <> ''
-        AND cast(r.FILL_DT AS date) >= p.INDEX_DATE
-        AND cast(r.FILL_DT AS date) <= p.OBS_END_DT
-      GROUP BY length(upper(regexp_replace(coalesce(cast(r.NDC as string),''), '[^A-Za-z0-9]', '')))
-      ORDER BY ndc_len
-    "))
-    log_msg("  NDC length distribution in RX claims:")
-    print(ndc_qc_rx)
-
-    # Check for mismatches
-    codelist_lens <- ndc_qc_codelist$ndc_len
-    rx_lens <- ndc_qc_rx$ndc_len
-    if (length(intersect(codelist_lens, rx_lens)) == 0 && length(codelist_lens) > 0 && length(rx_lens) > 0) {
-      log_msg("  WARNING: NDC lengths in codelist and RX table DO NOT OVERLAP!")
-      log_msg("  This may cause silent misses in pharmacy claim matching.")
-      log_msg("  Codelist lengths: ", paste(codelist_lens, collapse = ", "))
-      log_msg("  RX table lengths: ", paste(rx_lens, collapse = ", "))
-    }
-  }, error = function(e) {
-    log_msg("  WARNING: NDC QC failed: ", e$message)
-  })
+  # The NDC format QC that ran here is gone. It profiled rx only, and it
+  # compared raw code-list lengths against alnum-stripped claim lengths -
+  # neither of which is the length the join uses, so its one warning could fire
+  # on a code list that is fine and stay quiet on one that is not.
+  # check_claim_ndc asks the real question of both claim tables, with the
+  # join's own normalization, before LOT1 builds anything; ndc_shape, ndc_short
+  # and bad_ndc do the code-list side. Removed rather than left informational:
+  # a log line headed "NDC length distribution" reads as coverage.
 
   # Validation QC suite: reporting on MAP and LOT, not gating. The whole block
   # is wrapped below, so a failure here prints and the run carries on. The

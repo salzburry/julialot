@@ -352,10 +352,14 @@ waiving the reviewed ten-digit case cannot let `ABC123` through with it, and
 each is recorded in `CODELIST_WAIVERS_APPLIED` under its own name. A ten-digit *claim* has exactly the layout problem a ten-digit
 *code* has, so a canonical code can miss a real claim.
 
-The NDC QC in `phase_qc` does not cover this and is not a substitute: it
-profiles `rx` only, measures a different normalization from the one the join
-uses, warns only when the two length sets are wholly disjoint - so any overlap
-silences it - swallows its own errors, and runs after LOT1 is already built.
+`phase_qc` used to print an NDC length distribution. It has been removed rather
+than kept as background: it profiled `rx` only, compared raw code-list lengths
+against alnum-stripped claim lengths - neither being the length the join uses,
+so its one warning could fire on a code list that is fine and stay quiet on one
+that is not - warned only when the two length sets were wholly disjoint,
+swallowed its own errors, and ran after LOT1 was already built. `check_claim_ndc`
+asks the real question of both claim tables before LOT1 starts, and `ndc_shape`,
+`ndc_short` and `bad_ndc` cover the code-list side.
 
 Both are reviewable so that a first run reports the distribution instead of
 blocking on a shape nobody has seen. Waive once the study team has established
