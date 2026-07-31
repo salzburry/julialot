@@ -1,3 +1,57 @@
+# What the LOT run has to adjudicate, in both directions.
+#
+# S6.2.1.2 excludes a patient who received belantamab in ANY line of therapy.
+# Lines do not exist when this runs - the LOT algorithm runs over the cohort
+# this build produces - so the exclusion is a claims proxy, and no proxy is the
+# criterion. The exact answer needs the lines, which means it can only be
+# settled after the LOT run, by reconciliation.
+#
+# This covers every 1L candidate with a belantamab claim, not only the ones who
+# survived, because the proxy can be wrong both ways and a table of survivors
+# can only ever show one of them:
+#
+#   IN_COHORT = 1  kept despite a belantamab claim, because it fell outside the
+#                  proxy window. If it turns out to be in a line, the patient
+#                  should have been excluded - a FALSE NEGATIVE.
+#   IN_COHORT = 0  excluded by the proxy. If the claim is in no line, the
+#                  patient should have been kept - a FALSE POSITIVE, and one
+#                  that a survivors-only table cannot see at all.
+#
+# So an empty half means nothing on its own, and the README says what each half
+# being empty does and does not prove.
+build_ndmm_belantamab_reconcile <- function(con, cfg) {
+  db_exec(con, glue("
+    CREATE OR REPLACE TABLE {wrk('NDMM_BELANTAMAB_RECONCILE')} AS
+    SELECT cast(l1.PATID as string)             AS PATID,
+           l1.LOT1_START_DT                     AS INDEX_DATE,
+           b.bel_dt                             AS BEL_DT,
+           datediff(b.bel_dt, l1.LOT1_START_DT) AS DAYS_FROM_INDEX,
+           CASE WHEN c.PATID IS NULL THEN 0 ELSE 1 END AS IN_COHORT
+    FROM {NDMM_LOT1_STARTS} l1
+    INNER JOIN {NDMM_BELANTAMAB_TX} b
+            ON cast(b.PATID as string) = cast(l1.PATID as string)
+    LEFT JOIN {wrk('NDMM_COHORT')} c
+           ON cast(c.PATID as string) = cast(l1.PATID as string)
+    ORDER BY IN_COHORT, PATID, BEL_DT"))
+  got <- db_q(con, glue("
+    SELECT sum(CASE WHEN IN_COHORT = 1 THEN 1 ELSE 0 END) AS n_kept_claims,
+           sum(CASE WHEN IN_COHORT = 0 THEN 1 ELSE 0 END) AS n_dropped_claims,
+           count(DISTINCT CASE WHEN IN_COHORT = 1 THEN PATID END) AS n_kept,
+           count(DISTINCT CASE WHEN IN_COHORT = 0 THEN PATID END) AS n_dropped
+    FROM {wrk('NDMM_BELANTAMAB_RECONCILE')}"))
+  log_msg("Belantamab still to adjudicate -> ", wrk("NDMM_BELANTAMAB_RECONCILE"))
+  log_msg("    kept despite a claim:  ", format(got$n_kept, big.mark = ","),
+          " patient(s), ", format(got$n_kept_claims, big.mark = ","),
+          " claim(s) - any in a line should have been excluded")
+  log_msg("    excluded by the proxy: ", format(got$n_dropped, big.mark = ","),
+          " patient(s), ", format(got$n_dropped_claims, big.mark = ","),
+          " claim(s) - any in NO line should have been kept")
+  log_msg("  \"In any LOT\" is exact only once lines exist. After the LOT run, ",
+          "join both halves to LOT_LONG; neither half being empty settles the ",
+          "other. See README.")
+  invisible(got)
+}
+
 # The 1L index date, from claims.
 #
 # Not a port. Protocol Rev Round 2 S6.2.1.1 defines it directly:
@@ -523,43 +577,6 @@ build_ndmm_belantamab_scope_counts <- function(con, cfg) {
             got$SCOPE[i], ": ", format(got$N_PATIENTS[i], big.mark = ","),
             " of the 1L candidates excluded, cohort ",
             format(got$N_COHORT[i], big.mark = ","))
-  invisible(got)
-}
-
-# What the LOT run has to adjudicate before this exclusion is exact.
-#
-# S6.2.1.2 excludes a patient who received belantamab in ANY line of therapy.
-# Lines do not exist when this runs - the LOT algorithm runs over the cohort
-# this build produces - so the exclusion is a claims proxy, and no proxy is the
-# criterion. The exact answer needs the lines, which means it can only be
-# settled after the LOT run, by reconciliation.
-#
-# This is the input to it: every patient who is IN the cohort and has a
-# belantamab claim anyway - kept because their claim falls outside the proxy
-# window. Nobody else can need adjudicating; a patient the proxy excluded is
-# already gone, and a patient with no belantamab claim cannot have had it in a
-# line. Usually a short table, and the README says what to join it to.
-build_ndmm_belantamab_reconcile <- function(con, cfg) {
-  db_exec(con, glue("
-    CREATE OR REPLACE TABLE {wrk('NDMM_BELANTAMAB_RECONCILE')} AS
-    SELECT c.PATID                            AS PATID,
-           c.INDEX_DATE                       AS INDEX_DATE,
-           b.bel_dt                           AS BEL_DT,
-           datediff(b.bel_dt, c.INDEX_DATE)   AS DAYS_FROM_INDEX
-    FROM {wrk('NDMM_COHORT')} c
-    INNER JOIN {NDMM_BELANTAMAB_TX} b ON b.PATID = c.PATID
-    ORDER BY PATID, BEL_DT"))
-  got <- db_q(con, glue("
-    SELECT count(DISTINCT PATID) AS n_pat, count(*) AS n_claims
-    FROM {wrk('NDMM_BELANTAMAB_RECONCILE')}"))
-  log_msg("Belantamab still to adjudicate: ", format(got$n_pat, big.mark = ","),
-          " patient(s) in the cohort have a belantamab claim (",
-          format(got$n_claims, big.mark = ","), " claim(s)) outside the '",
-          NDMM_BELANTAMAB_SCOPE, "' window -> ", wrk("NDMM_BELANTAMAB_RECONCILE"))
-  if (isTRUE(got$n_pat > 0))
-    log_msg("  \"In any LOT\" is exact only once lines exist. After the LOT run, ",
-            "join these to LOT_LONG and drop any patient whose BEL_DT falls in a ",
-            "line. See README.")
   invisible(got)
 }
 

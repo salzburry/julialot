@@ -161,7 +161,7 @@ None of them changes the cohort — they are what the decision gets made
 | `NDMM_OTHER_MALIG_GRAIN` | is that grain actually costing anything? | criterion 7 counted at the finest, configured and coarsest grouping. **The gap between the first row and the last is the whole question** — if it is small, no map is needed |
 | `NDMM_FU_CE_COUNTS` | what the follow-up CE window costs — the one setting resting on a relay, not a document | `N_PASSING_CRITERION_5` and `N_COHORT` at 0 / 30 / 60 / 90 days and at an exact 3 months, with this run's row marked |
 | `NDMM_BELANTAMAB_SCOPE_COUNTS` | which claims proxy stands for "in any LOT" | `N_PATIENTS` and `N_COHORT` under each of the three readings, with this run's marked |
-| `NDMM_BELANTAMAB_RECONCILE` | **which patients the proxy could not settle** | the cohort's own belantamab claims, with dates. Join to `LOT_LONG` after `Jul 28/lot` runs — an empty result means the proxy was exact |
+| `NDMM_BELANTAMAB_RECONCILE` | **which patients the proxy could not settle** | every 1L candidate with a belantamab claim, `IN_COHORT` saying which way the proxy went. Join **both halves** to `LOT_LONG` after `Jul 28/lot` runs |
 
 `tests/test_runner.R` requires every declared output to be named here, so this
 list cannot fall behind the code — it had, twice, before that test existed.
@@ -658,8 +658,25 @@ and a waiver naming something else stops the build as a typo. What was asked
 for and what actually fired are recorded apart in `NDMM_RUN_METADATA` — a run
 can ask for a waiver on a condition that never occurs.
 
+**A waiver suppresses the stop. It does not repair the matching.** Waiving
+`claim_ndc_short` does not make a ten-digit NDC match correctly — it makes the
+build proceed with the mismatch. Left-padding is right only for **4-4-2**;
+**5-3-2** and **5-4-1** need format-aware NDC11 conversion or an approved
+crosswalk, neither of which is in this package. So a ten-digit finding is a
+reason to fix the input or add a conversion, never a reason to waive and carry
+on.
+
 **Run the first production build with no waivers set** and read the profile it
-prints. That is the point of it.
+prints. That is the point of it. If both the claims and `cl_mma_codelist.csv`
+carry valid eleven-digit NDCs, the matching as written is correct and nothing
+needs waiving.
+
+**The package reads CSV, not `.xlsx`.** A code list prepared in Excel has to be
+exported to the CSV shape the loader expects — the columns named in **What this
+reads** for the four production lists, and the columns in **The files you fill
+in** for the three fill-in files. `NDMM_MM_ADJACENT_CSV`,
+`NDMM_ELIGIBLE_1L_CSV` and `NDMM_PRIMARY_GROUPS_CSV` point at a file elsewhere
+if that is easier than writing into the checkout.
 
 ### NDMM_COHORT is a LOT input
 
@@ -786,26 +803,37 @@ choice: some of the patients a wider proxy catches were already gone on another
 criterion. The scope in force is pinned in `CONTRACT` and recorded in
 `NDMM_RUN_METADATA`.
 
-**`<prefix>NDMM_BELANTAMAB_RECONCILE`** — the patients still to adjudicate.
-One row per belantamab claim belonging to a patient who is **in the cohort**,
-with `INDEX_DATE`, `BEL_DT` and `DAYS_FROM_INDEX`. Nobody else can need
-adjudicating: a patient the proxy excluded is already gone, and a patient with
-no belantamab claim cannot have had it in a line. Usually a short table.
+**`<prefix>NDMM_BELANTAMAB_RECONCILE`** — the patients still to adjudicate,
+**both ways**. One row per belantamab claim for every 1L candidate who has one,
+with `INDEX_DATE`, `BEL_DT`, `DAYS_FROM_INDEX` and `IN_COHORT`.
 
-After `Jul 28/lot` has run, that table closes the criterion:
+A proxy can be wrong in two directions and a table of survivors only shows one
+of them:
+
+| `IN_COHORT` | what it means | what the LOT run can find |
+|---|---|---|
+| `1` | kept — the claim fell outside the proxy window | a claim **in** a line → should have been excluded (**false negative**) |
+| `0` | excluded by the proxy | a claim in **no** line → should have been kept (**false positive**) |
+
+After `Jul 28/lot` has run, both halves are one join:
 
 ```sql
-SELECT DISTINCT r.PATID
+SELECT r.PATID, r.IN_COHORT,
+       max(CASE WHEN l.PATID IS NOT NULL THEN 1 ELSE 0 END) AS BEL_IN_A_LINE
 FROM   <prefix>NDMM_BELANTAMAB_RECONCILE r
-JOIN   <prefix>LOT_LONG l ON l.PATID = r.PATID
-WHERE  r.BEL_DT BETWEEN l.LOT_START_DT AND coalesce(l.LOT_END_DT, r.BEL_DT)
+LEFT JOIN <prefix>LOT_LONG l
+       ON l.PATID = r.PATID
+      AND r.BEL_DT BETWEEN l.LOT_START_DT AND coalesce(l.LOT_END_DT, r.BEL_DT)
+GROUP BY r.PATID, r.IN_COHORT
 ```
 
-Every `PATID` it returns received belantamab **in a line** and should have been
-excluded under §6.2.1.2 but was not, because the claims proxy did not reach it.
-Remove them from the cohort and note the count against attrition step 9. An
-empty result means the proxy was exact for this data — which is the answer to
-the open question, not a guess at it.
+`IN_COHORT = 1 AND BEL_IN_A_LINE = 1` should have been excluded — remove them
+and note the count against attrition step 9. `IN_COHORT = 0 AND BEL_IN_A_LINE
+= 0` should have been kept — they were wrongly dropped.
+
+**An empty half proves nothing about the other.** No false negatives does not
+make the proxy exact; it only means it did not miss anyone. Until both halves
+come back clean, the proxy is a proxy.
 
 ## The port
 
@@ -943,14 +971,48 @@ is pinned to its default** — the review tables exist to be acted on.
 | `NDMM_ELIGIBLE_1L_CSV` | `codelists/eligible_1l_agents.csv` | |
 | `NDMM_PRIMARY_GROUPS_CSV` | `codelists/primary_tumor_groups.csv` | |
 | `NDMM_IGNORE_ACTIVE_RUN` | *(unset)* | `TRUE` gets past a `started` row a killed process left behind. Use it only once the named run is known to be dead — see **One run per prefix at a time** |
+| `NDMM_REQUIRE_DECISIONS` | *(unset)* | `TRUE` refuses to start while a criterion decision is open — see **Readiness for IE sign-off** |
 
 `FINAL_TABLE_NAME` is read into `NDMM_FINAL_TABLE_NAME` by the ported constants
 and used by nothing: it named the parent cohort table this build no longer
 reads. It is left in place so `R/nndm_constants.R` stays line-for-line with its
 source, and setting it does nothing.
 
+## Readiness for IE sign-off
+
+**A run with the fill-in files empty is not a sign-off cohort**, and the build
+now says so rather than leaving it to be inferred from this file. Five
+criterion decisions cannot be closed from this repository, and every one of
+them defaults to `apr_30_2026`'s behaviour — so a cohort built with none of
+them settled comes out looking exactly like a finished one.
+
+Every run therefore ends with what it did **not** settle, and writes the same
+list to `NDMM_RUN_METADATA.DECISIONS_PENDING` beside the count — so a number
+that reaches a slide can be traced back to what was still open when it was
+made.
+
+| open | effect on the cohort as built | close it with |
+|---|---|---|
+| `FU_CE_DAYS = 0` against the protocol's three months | **over-includes** at step 5 | an approved amendment, sized by `NDMM_FU_CE_COUNTS` |
+| no eligible-1L agent list | a later-line-only therapy can set the index | `eligible_1l_agents.csv` |
+| no per-code MM-adjacent overrides | a solid tumour metastatic to bone is not "another cancer" | `mm_adjacent_overrides.csv` |
+| no primary-tumour-group map | **under-excludes** at step 7 | `primary_tumor_groups.csv` |
+| belantamab proxy | neither exact nor decidable here | `NDMM_BELANTAMAB_RECONCILE`, after the LOT run |
+
+```
+NDMM_REQUIRE_DECISIONS=TRUE
+```
+
+refuses to start while any of the first four is open, naming them. **That is
+what a sign-off build should set.** Without it the run proceeds and reports —
+which is right for the exploratory runs that produce the numbers those
+decisions get made from, and wrong for anything anyone signs.
+
+The last one cannot be closed by this build at all: it needs the LOT run, so
+`NDMM_REQUIRE_DECISIONS` does not block on it.
+
 ## Status
 
 Never run against Databricks. Nothing here is validated output until it has
 been, and the count compared against the source implementation patient by
-patient.
+patient. **No count from this package has been produced, let alone reviewed.**

@@ -278,12 +278,15 @@ build_ndmm_other_malig_pre_lot1 <- function(con, med_diag_tbl) {
 #                             which uses 6-mo pre-MM-dx. IP/OP same-tumor-
 #                             group logic mirrors parent step 22.)
 #
-#   CE_lot1_3mo_fu          : 3-month follow-up CE re-derived ANCHORED AT
-#                             LOT1 (the NDMM index): a span covers
-#                             [LOT1_START, least(LOT1_START + 90, study_end,
+#   CE_lot1_fu              : follow-up CE re-derived ANCHORED AT LOT1 (the
+#                             NDMM index): a span covers [LOT1_START,
+#                             least(LOT1_START + NDMM_FU_CE_DAYS, study_end,
 #                             death)]. No-gap spans (NDMM_ENROLL_SPANS_STRICT)
-#                             plus carried-forward DEATH_DT
-#                             (>=3-mo CE during follow-up or death, NO gaps).
+#                             plus carried-forward DEATH_DT. The source hard-
+#                             coded 90 and called the column CE_lot1_3mo_fu;
+#                             NDMM_FU_CE_DAYS is 0 here, which is one day. The
+#                             protocol asks for three months - see README and
+#                             NDMM_FU_CE_COUNTS.
 #
 #   NO_PREGNANCY            : re-scanned from pregnancy.csv (dx / HCPCS / ICD
 #                             procedure / revenue codes) over the study period,

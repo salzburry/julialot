@@ -50,7 +50,8 @@ clear()
 cat("\n-- the runner calls its phases, in order --\n")
 ORDER <- c("check_settings", "pin_output_schema", "pin_prefix",
            "pin_override_csv", "check_contract",
-           "check_choices", "check_constants", "set_lot_config",
+           "check_choices", "check_decisions", "check_constants",
+           "set_lot_config",
            "check_no_active_run", "check_upstream", "write_build_status",
            "clear_run_rows",
            "build_ndmm_mm_dx_codes", "build_ndmm_mm_claim_header",
@@ -73,7 +74,8 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_prefix",
            "check_attrition_monotonic", "build_ndmm_cohort_table",
            "check_ndmm_cohort", "build_ndmm_belantamab_reconcile",
            "write_attrition",
-           "write_codelist_metadata", "write_run_metadata")
+           "write_codelist_metadata", "write_run_metadata",
+           "report_pending_decisions")
 at <- vapply(ORDER, function(f) {
   m <- regexpr(paste0("(?<![A-Za-z0-9_.])", f, "\\("), body, perl = TRUE)
   if (m == -1) NA_integer_ else as.integer(m)
@@ -685,6 +687,65 @@ i_st  <- regexpr("nndm_complete", bl, fixed = TRUE)
 ok(i_dis > 0 && i_st > i_dis && grepl("add = TRUE, after = FALSE", bl, fixed = TRUE),
    "the failed status is written before the connection closes")
 
+cat("\n-- what a run did not settle --\n")
+# Five criteria cannot be closed from this repository and every one defaults to
+# the source's behaviour, so a run with none of them settled produces a cohort
+# that looks finished. Driven on real files, because "the file is empty" is the
+# condition being detected.
+de <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = de)
+assign("log_msg", function(...) DELOG <<- c(DELOG, paste0(...)), envir = de)
+dcfg <- function(...) modifyList(list(
+  fu_ce_days = 0L, belantamab_scope = "study_period",
+  eligible_1l_csv = "", mm_adjacent_csv = "", primary_groups_csv = ""), list(...))
+p_all <- de$pending_decisions(dcfg())
+ok(length(p_all) == 5, paste0("all five open decisions are named (",
+                              length(p_all), ")"))
+ok(any(grepl("three months", p_all, fixed = TRUE)) &&
+     any(grepl("eligible-1L agent list", p_all, fixed = TRUE)) &&
+     any(grepl("SECONDARY MALIGNANT", p_all, fixed = TRUE)) &&
+     any(grepl("primary-tumour-group map", p_all, fixed = TRUE)) &&
+     any(grepl("in any LOT", p_all, fixed = TRUE)),
+   "...each by what is open, not by a setting name")
+# Each says which way it moves the cohort, or the reader cannot judge it.
+ok(any(grepl("over-include", p_all, ignore.case = TRUE)) &&
+     any(grepl("under-exclude", p_all, ignore.case = TRUE)),
+   "...and which way the cohort is wrong because of it")
+# Settle them and they go, so this is not a banner that always prints.
+tmpf <- file.path(tempdir(), "ndmm_filled_probe.csv")
+hdrf <- file.path(tempdir(), "ndmm_header_probe.csv")
+writeLines(c("a,b", "1,2"), tmpf); writeLines("a,b", hdrf)
+p_none <- de$pending_decisions(dcfg(fu_ce_days = 90L, eligible_1l_csv = tmpf,
+                                    mm_adjacent_csv = tmpf,
+                                    primary_groups_csv = tmpf))
+ok(length(p_none) == 1 && grepl("in any LOT", p_none[[1]], fixed = TRUE),
+   "settling the four that can be settled leaves only the one that cannot")
+# A file that exists but has only a header is not settled.
+ok(length(de$pending_decisions(dcfg(eligible_1l_csv = hdrf))) == 5,
+   "a header-only file is open, the same as a missing one")
+# The gate.
+DELOG <- character(0)
+ok(identical(tryCatch({ de$check_decisions(dcfg()); "" }, error = conditionMessage), ""),
+   "by default the run proceeds and reports")
+Sys.setenv(NDMM_REQUIRE_DECISIONS = "TRUE")
+m <- tryCatch({ de$check_decisions(dcfg()); "" }, error = conditionMessage)
+ok(grepl("REQUIRE_DECISIONS", m, fixed = TRUE) &&
+     grepl("eligible-1L agent list", m, fixed = TRUE),
+   "...and NDMM_REQUIRE_DECISIONS refuses to start, naming every open one")
+ok(identical(tryCatch({ de$check_decisions(dcfg(fu_ce_days = 90L,
+       eligible_1l_csv = tmpf, mm_adjacent_csv = tmpf,
+       primary_groups_csv = tmpf)); "" }, error = conditionMessage), ""),
+   "...but not for the one this build cannot close, which would block for ever")
+Sys.unsetenv("NDMM_REQUIRE_DECISIONS")
+DELOG <- character(0); de$report_pending_decisions(dcfg())
+ok(any(grepl("NOT SETTLED BY THIS RUN", DELOG, fixed = TRUE)) &&
+     any(grepl("not ", DELOG, fixed = TRUE)),
+   "and every run says at the end what it did not settle")
+# Recorded, not only logged: a log is not beside the count on a slide.
+ok("DECISIONS_PENDING" %in% names(de$RUN_METADATA_COLS) &&
+     grepl("pending_decisions(cfg)", bl, fixed = TRUE),
+   "...and written to NDMM_RUN_METADATA beside the count")
+
 cat("\n-- two runs on one prefix would overwrite each other --\n")
 # Not a theoretical hazard: checkpoint() repoints every session view at the
 # prefixed table it just replaced, so a second run replaces tables the first is
@@ -781,16 +842,17 @@ ok(!inherits(tryCatch(cr$clear_run_rows(NULL, list()), error = function(e) e),
              "error") && length(CRLOG) == 0,
    "a table that does not exist yet is not a failure, and not a warning either")
 
-# But a delete that was refused leaves exactly the rows this exists to remove.
+# A delete that was refused leaves exactly the rows this exists to remove, so
+# the run must not go on to publish a cohort described by metadata it did not
+# write. This warned and carried on once, which was half a fix: the warning
+# went to a log nobody reads afterwards and the cohort shipped anyway.
 CRLOG <- character(0)
 assign("db_exec", function(con, s) stop("PERMISSION_DENIED"), envir = cr)
-ok(!inherits(tryCatch(cr$clear_run_rows(NULL, list()), error = function(e) e),
-             "error"),
-   "any other failure does not stop the build")
-ok(length(CRLOG) == length(cr$RUN_SCOPED_TABLES) &&
-     all(grepl("WARNING", CRLOG, fixed = TRUE)) &&
-     any(grepl("PERMISSION_DENIED", CRLOG, fixed = TRUE)),
-   "...but it is said out loud, once per table, rather than swallowed")
+m <- tryCatch({ cr$clear_run_rows(NULL, list()); "" }, error = conditionMessage)
+ok(!identical(m, ""), "any other failure stops the build rather than warning")
+ok(grepl("PERMISSION_DENIED", m, fixed = TRUE) &&
+     grepl("metadata it did not", m, fixed = TRUE),
+   "...naming the failure and what would otherwise be published")
 
 # After the status row, so the run is marked started whatever the clear does,
 # and before the first step, so no writer is reached with stale rows in place.
@@ -1239,19 +1301,26 @@ ok(grepl(paste0("sp.SCOPE = '", se$NDMM_BELANTAMAB_SCOPE, "'"), sc, fixed = TRUE
 # "In any LOT" is exact only once lines exist, which is after this build. So
 # the run emits what the reconciliation needs rather than claiming to be exact.
 SSQL <- character(0)
-assign("db_q", function(con, sql) data.frame(n_pat = 3L, n_claims = 7L), envir = se)
+assign("db_q", function(con, sql) data.frame(n_kept = 3L, n_dropped = 2L,
+  n_kept_claims = 7L, n_dropped_claims = 4L), envir = se)
 se$build_ndmm_belantamab_reconcile(NULL, cfg_defaults)
 rc <- SSQL[1]
 ok(grepl("NDMM_BELANTAMAB_RECONCILE", rc, fixed = TRUE) &&
-     grepl("NDMM_COHORT", rc, fixed = TRUE) &&
-     grepl("_ndmm_belantamab_tx", rc, fixed = TRUE),
-   "the patients still to adjudicate are the cohort's own belantamab claims")
-# Only the cohort: a patient the proxy already excluded is gone, and one with
-# no belantamab claim cannot have had it in a line. An INNER JOIN both ways.
-ok(grepl("INNER JOIN", rc, fixed = TRUE) && !grepl("LEFT JOIN", rc, fixed = TRUE),
-   "...only those two, so the table is what has to be looked at and no more")
+     grepl(se$NDMM_LOT1_STARTS, rc, fixed = TRUE) &&
+     grepl(se$NDMM_BELANTAMAB_TX, rc, fixed = TRUE),
+   "every 1L candidate with a belantamab claim is here to adjudicate")
+# The whole point. Scoping this to the cohort - an INNER JOIN to NDMM_COHORT -
+# shows only the patients the proxy KEPT, so it can find a claim that turns out
+# to be in a line (a false negative) and cannot see a patient the proxy dropped
+# whose claim is in no line (a false positive) at all. The join to the cohort
+# has to be a LEFT JOIN, and which side each patient fell has to be a column.
+ok(grepl("LEFT JOIN [^\n]*NDMM_COHORT", rc, perl = TRUE),
+   "...the cohort is joined, not filtered on, so the ones it dropped stay")
+ok(grepl("CASE WHEN c.PATID IS NULL THEN 0 ELSE 1 END AS IN_COHORT",
+         rc, fixed = TRUE),
+   "...each row saying which way the proxy went, which is what makes it two-sided")
 ok(grepl("b.bel_dt", rc, fixed = TRUE) &&
-     grepl("datediff(b.bel_dt, c.INDEX_DATE)", rc, fixed = TRUE),
+     grepl("datediff(b.bel_dt, l1.LOT1_START_DT)", rc, fixed = TRUE),
    "with the claim date and its offset from index, which is what places it in a line")
 
 cat("\n-- which agents may set the index, and which set one --\n")
@@ -1597,14 +1666,23 @@ ok(!is.na(ins) && grepl("'BEL%'", ins, fixed = TRUE),
    "...and how it recognised belantamab, which is a code-list assumption")
 # Every run choice reaches the row, or a cohort cannot say which choices made
 # it - which is the whole reason they are allowed to vary.
+# As its own value, comma-delimited - not merely present somewhere in the row.
+# DECISIONS_PENDING quotes the scope inside its prose, so a loose match found
+# it there and a mutation that stopped recording the column survived. sql_text
+# doubles the quotes inside that string, so ", 'x', " cannot match within it.
+#
+# The escape hatch this replaces was worse: `|| grepl("NULL", ins)` passed
+# every iteration as soon as any one value was NULL, which an empty choice
+# always makes true.
 for (k in names(CHOICES)) {
   v <- as.character(cfg_defaults[[k]])
-  ok(grepl(if (nzchar(v)) paste0("'", v, "'") else "''", ins, fixed = TRUE) ||
-       grepl("NULL", ins, fixed = TRUE),
-     paste0(k, " is recorded on the run"))
+  # sql_text renders an empty choice as '' rather than NULL.
+  want <- paste0(", '", v, "', ")
+  ok(!is.na(ins) && grepl(want, ins, fixed = TRUE),
+     paste0(k, " is recorded on the run, as its own column"))
 }
-ok(!is.na(ins) && grepl("'study_period'", ins, fixed = TRUE) &&
-     grepl("'override'", ins, fixed = TRUE),
+ok(!is.na(ins) && grepl(", 'study_period', ", ins, fixed = TRUE) &&
+     grepl(", 'override', ", ins, fixed = TRUE),
    "...the two named choices by their value, not as a blank")
 ok(!is.na(ins) && grepl("'claim_ndc_short,codelist_ndc_short'", ins, fixed = TRUE) &&
      grepl("'claim_ndc_short'", ins, fixed = TRUE),

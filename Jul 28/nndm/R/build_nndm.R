@@ -164,6 +164,92 @@ checkpoint <- function(con, name) {
   invisible(TRUE)
 }
 
+# What this run has NOT settled.
+#
+# Five criteria in S6.2.1 cannot be closed from this repository: three need a
+# code-level decision nobody has written down yet, one overrides the protocol
+# on a relay, and one cannot be exact until lines of therapy exist. Each has a
+# mechanism and a review table, and every one of them defaults to the source's
+# behaviour - which means a run with none of them settled still produces a
+# cohort, and that cohort looks exactly like a finished one.
+#
+# It is not one. So every run names what it did not settle: in the log, and in
+# NDMM_RUN_METADATA beside the count, so a number that reaches a slide can be
+# traced back to what was still open when it was made. Set
+# NDMM_REQUIRE_DECISIONS=TRUE and the run refuses to start instead, which is
+# what a sign-off build should do.
+PROTOCOL_FU_CE_DAYS <- 90L
+
+# blocking_only = TRUE drops the one this build cannot close whatever anybody
+# writes down, so NDMM_REQUIRE_DECISIONS refuses a run that could be made ready
+# rather than refusing every run for ever.
+pending_decisions <- function(cfg, blocking_only = FALSE) {
+  # Rows, not contents: an empty fill-in file and a missing one mean the same
+  # thing here - nobody has decided.
+  rows <- function(p) {
+    if (!nzchar(p %||% "") || !file.exists(p)) return(0L)
+    max(0L, length(readLines(p, warn = FALSE)) - 1L)
+  }
+  out <- character(0)
+  if (!identical(as.integer(cfg$fu_ce_days), PROTOCOL_FU_CE_DAYS))
+    out <- c(out, paste0(
+      "follow-up CE is ", cfg$fu_ce_days, " day(s); S6.2.1.1 asks for three ",
+      "months. Over-includes at attrition step 5 unless an approved amendment ",
+      "says otherwise. Size it with NDMM_FU_CE_COUNTS."))
+  if (rows(cfg$eligible_1l_csv) == 0L)
+    out <- c(out, paste0(
+      "no eligible-1L agent list, so any MM therapy on the code list can set ",
+      "the index - including one restricted to later lines. See ",
+      "NDMM_INDEX_AGENTS and codelists/eligible_1l_agents.csv."))
+  if (rows(cfg$mm_adjacent_csv) == 0L)
+    out <- c(out, paste0(
+      "no per-code MM-adjacent overrides, so the whole SECONDARY MALIGNANT ",
+      "NEOPLASM OF BONE label counts as the index disease and a solid tumour ",
+      "metastatic to bone is not another cancer. See NDMM_MM_ADJACENT_CODES ",
+      "and codelists/mm_adjacent_overrides.csv."))
+  if (rows(cfg$primary_groups_csv) == 0L)
+    out <- c(out, paste0(
+      "no primary-tumour-group map, so two outpatient claims confirm each ",
+      "other only when they carry the identical code-list label. Under-",
+      "excludes at attrition step 7. Size it with NDMM_OTHER_MALIG_GRAIN."))
+  # Always open: it cannot be closed here at all, so it is reported and never
+  # blocks. Blocking on it would make NDMM_REQUIRE_DECISIONS unusable, and an
+  # unusable gate is one nobody sets.
+  if (!blocking_only)
+    out <- c(out, paste0(
+      "belantamab \"in any LOT\" is the '", cfg$belantamab_scope, "' claims ",
+      "proxy - lines do not exist until the LOT run. Close it with ",
+      "NDMM_BELANTAMAB_RECONCILE afterwards, both halves."))
+  out
+}
+
+check_decisions <- function(cfg) {
+  p <- pending_decisions(cfg, blocking_only = TRUE)
+  if (identical(toupper(Sys.getenv("NDMM_REQUIRE_DECISIONS", unset = "")), "TRUE") &&
+      length(p))
+    stop("NDMM_REQUIRE_DECISIONS is set and ", length(p), " decision(s) are ",
+         "open:\n  - ", paste(p, collapse = "\n  - "),
+         "\nEach defaults to the source's behaviour, so the cohort this would ",
+         "build is not the protocol's.", call. = FALSE)
+  invisible(p)
+}
+
+report_pending_decisions <- function(cfg) {
+  p <- pending_decisions(cfg)
+  if (!length(p)) {
+    log_msg("Every criterion decision is settled for this run.")
+    return(invisible(p))
+  }
+  log_msg(SEP)
+  log_msg("NOT SETTLED BY THIS RUN (", length(p), ") - the cohort above is not ",
+          "ready for IE sign-off:")
+  for (i in seq_along(p)) log_msg("  ", i, ". ", p[[i]])
+  log_msg("Recorded in NDMM_RUN_METADATA.DECISIONS_PENDING. Set ",
+          "NDMM_REQUIRE_DECISIONS=TRUE to refuse a run instead of reporting it.")
+  log_msg(SEP)
+  invisible(p)
+}
+
 check_settings <- function() {
   bad <- character(0)
   unknown <- setdiff(waivers_named(), WAIVABLE_CHECKS)
@@ -548,6 +634,7 @@ RUN_METADATA_COLS <- c(RUN_ID = "STRING", OBJECT_PREFIX = "STRING",
                        CODE_MD5 = "STRING",
                        CONTRACT_SETTINGS = "STRING",
                        WAIVERS_REQUESTED = "STRING", WAIVERS_APPLIED = "STRING",
+                       DECISIONS_PENDING = "STRING",
                        N_NDMM = "BIGINT", RECORDED_AT = "TIMESTAMP")
 
 # What made this cohort, beside the cohort. NDMM_BUILD_STATUS says a run
@@ -572,6 +659,7 @@ write_run_metadata <- function(con, cfg, here, n) {
          "{sql_text(paste(sort(waivers_named(), method = 'radix'), collapse = ','))}, ",
          "{sql_text(paste(sort(getOption('nndm_waivers_applied', character(0)), ",
          "method = 'radix'), collapse = ','))}, ",
+         "{sql_text(paste(pending_decisions(cfg), collapse = ' | '))}, ",
          "{sql_count(n)}, current_timestamp())"))
   log_msg("Run recorded in ", tbl)
   invisible(TRUE)
@@ -819,9 +907,12 @@ check_no_active_run <- function(con, cfg) {
 # The tables need not exist yet, and on a first run they do not, so a delete
 # that cannot find its table is not a failure. TABLE_OR_VIEW_NOT_FOUND is one
 # of with_retry's permanent errors, so this does not sit through four attempts.
-# Anything else is said out loud rather than swallowed: a DELETE that was
-# refused leaves exactly the rows this exists to remove, and a silent try()
-# would let the run publish them as its own.
+# Anything else STOPS the run. It used to warn and carry on, which was half a
+# fix: the warning made the failure visible in a log nobody reads afterwards,
+# and the run still went on to publish a cohort whose NDMM_RUN_METADATA row
+# might be the previous attempt's - naming the code and the code lists that
+# built something else, under this run's id. That is exactly the guarantee this
+# function exists to make, so failing to make it is not a warning.
 RUN_SCOPED_TABLES <- c("NDMM_ATTRITION", "NDMM_RUN_METADATA",
                        "NDMM_CODELIST_METADATA")
 
@@ -834,9 +925,11 @@ clear_run_rows <- function(con, cfg) {
     if (!is.null(err) &&
         !grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found", err,
                ignore.case = TRUE))
-      log_msg("WARNING: could not clear ", tbl, " of run ", run_id, ": ", err,
-              " - if an earlier attempt wrote rows under this run id, they are ",
-              "still there and this run will not have written them.")
+      stop("Could not clear ", tbl, " of run ", run_id, ": ", err,
+           "\nRows an earlier attempt wrote under this run id would stay, and ",
+           "this run would publish a cohort described by metadata it did not ",
+           "write. Fix the permission or delete them by hand, then re-run.",
+           call. = FALSE)
   }
   invisible(TRUE)
 }
@@ -859,6 +952,7 @@ build_nndm <- function(here, prefix) {
   cfg <- pin_override_csv(cfg, here)
   check_contract(cfg)
   check_choices(cfg)
+  check_decisions(cfg)
   check_constants(cfg)
   set_lot_config(cfg)
 
@@ -987,6 +1081,7 @@ build_nndm <- function(here, prefix) {
   write_build_status(con, cfg, "complete", counts$ndmm_final)
   options(nndm_complete = TRUE)
   log_msg(SEP)
+  report_pending_decisions(cfg)
   log_msg("NDMM 1L cohort: ", format(counts$ndmm_final, big.mark = ","),
           " patients -> ", wrk("NDMM_COHORT"))
   log_msg(SEP)
