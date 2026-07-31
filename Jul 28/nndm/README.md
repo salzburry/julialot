@@ -781,19 +781,69 @@ the open question, not a guess at it.
 
 ## The port
 
-`R/steps/` and `R/nndm_constants.R` are a line-for-line port of the cohort half
-of `apr_30_2026/06_ndmm_dashboard.R`, source lines 62-839. The remaining ~640
-lines of that file render a dashboard and are not here.
+Nine step files, and they do not all come from the same place. Saying "this is
+a port" of all of them would be wrong about two of them.
 
-`tests/test_same_as_source.R` compares every ported file against the range it
-came from, with comments compared out and code required to be identical; undoes
-the named deviations first, and reports one that has gone missing rather than
-letting it read as a match; checks the ranges are contiguous, so narrowing one
-leaves a gap it names; and parses every file, because line-for-line equality
-does not catch a range that ends mid-statement. It did not, once.
+| file | where it comes from |
+|---|---|
+| `R/nndm_constants.R` | `apr_30_2026/06_ndmm_dashboard.R` 62–147 |
+| `R/steps/01_enrollment.R` | 148–198 |
+| `R/steps/02_lot1_starts.R` | 199–216 |
+| `R/steps/03_prior_therapy.R` | 217–317 |
+| `R/steps/04_other_malig.R` | 318–533 |
+| `R/steps/05_pregnancy.R` | 534–621 |
+| `R/steps/06_flags.R` | 622–755 |
+| `R/steps/07_cohort.R` | 756–839 |
+| `R/steps/00_mm_cohort.R` | **`Jul 28/overall`**, not `apr_30_2026` — the MM diagnosis, qualification and demographics |
+| `R/steps/00b_lot1_index.R` | **nothing.** The 1L index is derived from claims here; `apr_30_2026` read it out of `LOT_LONG`, which this build no longer has |
 
-The runner, helpers and this README are not ports. `apr_30_2026` is never
-modified.
+The runner, the helpers, the tests and this README are not ports either. Source
+lines 1–61 and 840–1479 render a dashboard and are not here. **`apr_30_2026` is
+never modified.**
+
+### Held to the source, deviation by deviation
+
+`tests/test_same_as_source.R` compares each ported file against its range with
+comments compared out and code required to be identical. It is not a
+similarity check — it undoes the approved deviations first and then demands
+equality, so anything unapproved survives the undo and breaks it.
+
+The port differs from its source in **36 places, and no others**: 12 replaced
+lines, 19 added lines, and 5 blocks rewritten wholesale and named by their
+first and last line. Each is registered with the reason, and five of them
+change who is in the cohort:
+
+| change | direction |
+|---|---|
+| follow-up CE is one day, not three months (§6.2.1.1 says three; the study team said one) | **larger** cohort |
+| a code list value that normalises to blank no longer matches a claim with no code | **larger** — it can only remove matches the source should not have made |
+| both outpatient claims must fall in the baseline, not just the first | **larger** |
+| `mm_adjacent_overrides.csv` can decide a code the tumour-group label cannot | either way, and **nothing** until the file is filled in |
+| outpatient claims pair on a mapped tumour type, not on a code description | **smaller**, and **nothing** until the map is filled in |
+
+A deviation that is *deleted* is reported by name rather than reading as a
+perfect match — a registry entry with nothing left to undo is a shortfall, not
+a success. The ranges are checked to be contiguous, so narrowing one leaves a
+gap it names, and every file is parsed, because line-for-line equality does not
+catch a range that ends mid-statement. It did not, once.
+
+### And to the parent, where line-for-line is impossible
+
+`tests/test_same_as_overall.R` holds `00_mm_cohort.R` to `Jul 28/overall`, and
+deliberately **does not** compare line for line — the parent's steps are
+entries in a phase-runner list, they carry columns only its own attrition
+reads, and its inpatient / outpatient / qualifying steps are three views where
+this build needs one. Saying otherwise would be a lie about what is checked.
+
+Instead it lifts the clinically decisive expressions out of the parent's own
+files, renames its views to ours, and requires each to appear here verbatim:
+what counts as inpatient, which codes qualify an inpatient claim, how a
+diagnosis claim joins its header, the outpatient window, how a partial death
+date resolves, which eligibility row wins. Change one here and it fails;
+change one in the parent and it fails too, which is the drift worth catching.
+It also fails if any of the parent's *other* criteria leak in — this build
+applies two of its six, and a patient dropped by a seventh would never appear
+in the funnel.
 
 ## Settings
 

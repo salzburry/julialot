@@ -1940,4 +1940,46 @@ ok(length(wrong) == 0,
                              "-step funnel and it has ", length(ATTRITION_STEPS))
    else paste0("...and calls it a ", WORDS[length(ATTRITION_STEPS)], "-step funnel"))
 
+cat("\n-- the README's account of the port matches the port --\n")
+# Every step file is named, whatever it came from. The section used to say
+# R/steps/ was a line-for-line port of apr_30_2026, which was wrong about two
+# of the nine - one comes from Jul 28/overall and one is not a port at all.
+steps_on_disk <- basename(list.files(file.path(ROOT, "R", "steps"), "\\.R$"))
+unnamed <- Filter(function(f) !grepl(f, readme, fixed = TRUE), steps_on_disk)
+ok(length(steps_on_disk) > 0 && length(unnamed) == 0,
+   if (length(unnamed)) paste0("a step file the README does not account for: ",
+                               paste(unnamed, collapse = ", "))
+   else paste0("all ", length(steps_on_disk), " step files are accounted for"))
+# The deviation counts. They are the claim "and no others" rests on, and a
+# claim with a stale number beside it is worse than no number: the reader
+# checks the count, not the registry.
+# The README is hard-wrapped, so any phrase of more than a word or two spans a
+# newline. Matched against a whitespace-flattened copy, or these would pass or
+# fail on where the paragraph happened to break.
+readme_flat <- gsub("[[:space:]]+", " ", readme)
+dev <- local({
+  code <- paste(readLines(file.path(ROOT, "tests", "test_same_as_source.R"),
+                          warn = FALSE), collapse = "\n")
+  e <- new.env()
+  for (nm in c("SUBST", "ADDED", "SPLICE"))
+    eval(parse(text = sub(paste0("(?s).*?\n(", nm, " <- .*?\n\\))\n.*"), "\\1",
+                          code, perl = TRUE)), envir = e)
+  c(subst  = sum(vapply(e$SUBST, function(x)
+                   sum(vapply(x, function(y) y$n, integer(1))), integer(1))),
+    added  = sum(vapply(e$ADDED, sum, integer(1))),
+    splice = sum(vapply(e$SPLICE, length, integer(1))))
+})
+# Each against the phrase that states it, not against the bare number: "12"
+# also appears in "12-month CE", so a loose match would pass whatever the
+# registry held. That is the assertion-reads-the-source trap in a new costume.
+PHRASE <- c(subst = "%d replaced lines", added = "%d added lines",
+            splice = "%d blocks rewritten")
+for (k in names(dev)) {
+  want <- sprintf(PHRASE[[k]], dev[[k]])
+  ok(grepl(want, readme_flat, fixed = TRUE),
+     paste0("the README says \"", want, "\""))
+}
+ok(grepl(paste0("\\b", sum(dev), " places\\b"), readme_flat, perl = TRUE),
+   paste0("...and the total it says the port differs in, ", sum(dev)))
+
 report()
