@@ -44,6 +44,12 @@ load_codelist_csv <- function(csv_name, col_spec) {
   rows <- apply(df, 1, function(r) paste0("(", paste(vapply(r, esc, character(1)), collapse = ", "), ")"))
   sql <- paste0("SELECT * FROM (VALUES\n  ", paste(rows, collapse = ",\n  "), "\n) AS t(",
                 paste(col_spec, collapse = ", "), ")")
+  # Kept for LOT_CODELIST_METADATA. The run log records this too, but a log is
+  # a separate artefact that has to be filed beside the tables to be any use;
+  # the outputs should say for themselves which version built them.
+  seen <- getOption("lot_codelist_md5", list())
+  seen[[csv_name]] <- list(md5 = md5, n_rows = nrow(df))
+  options(lot_codelist_md5 = seen)
   log_msg("Loaded codelist from CSV: ", csv_path, " (", nrow(df), " rows, md5 ",
           if (is.na(md5)) "unavailable" else md5, ")")
   paste0("(", sql, ") src")

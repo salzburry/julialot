@@ -152,7 +152,8 @@ bl <- paste(readLines(file.path(ROOT, "R", "build_lot.R"), warn = FALSE),
 body <- sub(".*build_lot <- function\\([^)]*\\) \\{", "", bl)
 ORDER <- c("check_settings", "pin_output_schema", "pin_cohort",
            "check_lot_contract", "set_lot_config", "check_cohort_input",
-           "phase_codelists", "phase_patient_input", "materialize_cohort_input",
+           "phase_codelists", "record_codelist_hashes",
+           "phase_patient_input", "materialize_cohort_input",
            "check_claim_ndc",
            "phase_mma_map",
            "phase_lot1_base", "phase_sct", "phase_lot1_sct",
@@ -248,7 +249,8 @@ ins <- grep("INSERT", sql_for(names(BSC)), value = TRUE)[1]
 ok(grepl("'uncoded_meds|code_types', '', current", ins, fixed = TRUE),
    "nothing fired yet reads as empty, not as the requested list")
 # Cleared at the start of a run, or a second build in one session inherits it.
-ok(grepl("options(lot_waivers_applied = character(0))", bl, fixed = TRUE),
+ok(grepl("options(lot_waivers_applied = character(0), lot_codelist_md5 = list())",
+         bl, fixed = TRUE),
    "and it is cleared before the run writes 'started'")
 
 cat("\n-- the code lists are recorded and checked --\n")
@@ -280,6 +282,16 @@ ok(!inherits(tryCatch(cle$load_codelist_csv("cl_mma_rollup.csv", "CL_MED_ABBR"),
 ok(inherits(tryCatch(cle$load_codelist_csv("not_a_codelist.csv", "X"),
                      error = function(e) e), "error"),
    "an undeclared file name is refused")
+# The read is what captures the hash for LOT_CODELIST_METADATA; a test that set
+# that record itself would never notice the capture going away.
+options(lot_codelist_md5 = list())
+invisible(cle$load_codelist_csv("cl_mma_rollup.csv", "CL_MED_ABBR"))
+seen1 <- getOption("lot_codelist_md5")
+ok(identical(names(seen1), "cl_mma_rollup.csv") &&
+     identical(seen1[["cl_mma_rollup.csv"]]$md5, unname(tools::md5sum(f))) &&
+     identical(seen1[["cl_mma_rollup.csv"]]$n_rows, 1L),
+   "reading a code list records its md5 and row count for the metadata table")
+options(lot_codelist_md5 = NULL)
 # Leading zeros must survive, or an NDC silently becomes a different drug.
 writeLines(c("CL_CODE", "00093075601"), f)
 sqltxt <- cle$load_codelist_csv("cl_mma_rollup.csv", "CL_CODE")
@@ -584,6 +596,51 @@ ok(regexpr("check_lot_long(", body, fixed = TRUE) <
    "the counts are taken after LOT_LONG has passed its checks")
 ok(grepl("N_LOT_LONG_ROWS IS NOT NULL", bl, fixed = TRUE),
    "and a run with a LOT1-only metadata row is not called complete")
+
+cat("\n-- the outputs say which code lists built them --\n")
+# The hashes are logged as the files are read, but a log is a separate artefact
+# - filed away from the tables, or lost, and the outputs no longer say what made
+# them. One row per file per run.
+he <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "codelists_lot.R"), envir = he)
+sys.source(file.path(ROOT, "R", "build_lot.R"), envir = he)
+assign("log_msg", function(...) invisible(NULL), envir = he)
+assign("lot_out", function(x) paste0("wk.p_", x), envir = he)
+assign("run_id", "R1", envir = he)
+HSQL <- character(0)
+assign("db_exec", function(con, s) { HSQL <<- c(HSQL, s); TRUE }, envir = he)
+CLF <- get("CODELIST_FILES", envir = he)
+drive_h <- function(files) {
+  HSQL <<- character(0)
+  options(lot_codelist_md5 = setNames(lapply(seq_along(files), function(i)
+    list(md5 = sprintf("%032d", i), n_rows = i * 100L)), files))
+  r <- tryCatch({ he$record_codelist_hashes(NULL, list()); NULL }, error = conditionMessage)
+  options(lot_codelist_md5 = NULL); r
+}
+ok(is.null(drive_h(CLF)), "every code list read leaves a row")
+ins <- grep("INSERT", HSQL, value = TRUE)[1]
+for (f in CLF)
+  ok(grepl(paste0("'", f, "'"), ins, fixed = TRUE), paste0(f, " is named in the row set"))
+ok(grepl("'00000000000000000000000000000001'", ins, fixed = TRUE),
+   "with the md5 that was taken when the file was read")
+ok(any(grepl("DELETE FROM wk.p_LOT_CODELIST_METADATA WHERE RUN_ID = 'R1'",
+             HSQL, fixed = TRUE)),
+   "and a re-run replaces its own rows rather than doubling them")
+# A file that was never read must not silently produce a row-less run.
+err <- drive_h(CLF[-length(CLF)])
+ok(!is.null(err) && grepl(CLF[length(CLF)], err, fixed = TRUE),
+   "a code list with no recorded hash stops the build, naming the file")
+# Recorded straight after the code lists are read, so a run that fails later
+# still says what it was reading - and completion requires the rows.
+ok(regexpr("phase_codelists(", body, fixed = TRUE) <
+     regexpr("record_codelist_hashes(", body, fixed = TRUE) &&
+     regexpr("record_codelist_hashes(", body, fixed = TRUE) <
+     regexpr("phase_patient_input(", body, fixed = TRUE),
+   "written as soon as the hashes are known, not at the end")
+ok(grepl('"LOT_CODELIST_METADATA"', bl, fixed = TRUE) &&
+     grepl('c("LOT_RUN_METADATA", "LOT_QC_SUMMARY", "LOT_CODELIST_METADATA")',
+           bl, fixed = TRUE),
+   "and a run with no hash rows is not called complete")
 
 cat("\n-- the cohort is pinned, not re-read --\n")
 # A Spark temporary view re-runs its query on every read, so lot_patient_input

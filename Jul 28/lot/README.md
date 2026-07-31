@@ -140,10 +140,17 @@ Four files, read from `CODELIST_DIR`, named in `R/codelists_lot.R`:
 cl_mma_rollup.csv  cl_mma_codelist.csv  permissible_subs.csv  cl_sct_codelist.csv
 ```
 
-They live outside git, so each is hashed before and after being read and the
-md5 goes in the run log. That is the only record of which version built a given
-set of tables - keep the log with the results. A file that changes mid-read
-stops the build rather than being recorded under the wrong hash.
+They live outside git, so each is hashed before and after being read. A file
+that changes mid-read stops the build rather than being recorded under the
+wrong hash.
+
+The hashes go in the run log and into `<prefix>LOT_CODELIST_METADATA` - one row
+per file per run, with the md5 and the row count. A log is a separate artefact:
+filed away from the tables, or lost, and the outputs no longer say what built
+them. The table makes them self-describing, and answers the reverse question
+too ("which runs used this md5"). It is written as soon as the files are read,
+so a run that fails later still records what it was reading, and a run with no
+rows there is not called complete.
 
 Three consistency checks are reviewable - they stop the build unless named in
 `CODELIST_WAIVERS`, because each has a reading a study team can accept:
@@ -461,6 +468,9 @@ claims, MAPs, LOT1 patients. `N_LOT_LONG_ROWS`, `N_LOT_LONG_PATIENTS` and
 passed its checks, so they describe a table already found usable. A run whose
 metadata row has no `LOT_LONG` counts is not called complete: a row on its own
 only says LOT1 ran.
+
+`<prefix>LOT_CODELIST_METADATA`: `RUN_ID`, `CODELIST_FILE`, `MD5`, `N_ROWS`,
+`READ_AT` - four rows per run, described above.
 
 `<prefix>LOT_BUILD_STATUS`: `started` once preflight has passed, then
 `complete`, or `failed` if it stops after that. Read it before trusting a set

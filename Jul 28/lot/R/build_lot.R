@@ -263,13 +263,14 @@ build_lot <- function(here, cohort_table, prefix) {
 
   # LOT1 is written before LOT_LONG, so track partial runs.
   # Cleared first, or a second run in one session inherits the first's.
-  options(lot_waivers_applied = character(0))
+  options(lot_waivers_applied = character(0), lot_codelist_md5 = list())
   write_build_status(con, cfg, "started")
   on.exit(if (!isTRUE(getOption("lot_complete", FALSE)))
             try(write_build_status(con, cfg, "failed"), silent = TRUE), add = TRUE)
   options(lot_complete = FALSE)
 
   ctx <- phase_codelists(con)
+  record_codelist_hashes(con, cfg)
   phase_patient_input(con)
   materialize_cohort_input(con)
   check_claim_ndc(con, cfg)
@@ -601,7 +602,7 @@ check_lot1_invariants <- function(con, cfg) {
 # the row actually arrived - a run with no record of how it was configured is
 # not a run anyone can validate later.
 check_run_recorded <- function(con, cfg) {
-  for (t in c("LOT_RUN_METADATA", "LOT_QC_SUMMARY")) {
+  for (t in c("LOT_RUN_METADATA", "LOT_QC_SUMMARY", "LOT_CODELIST_METADATA")) {
     n <- tryCatch(db_q(con, glue(
            "SELECT count(*) AS n FROM {lot_out(t)} WHERE RUN_ID = '{run_id}'"))$n,
          error = function(e) 0L)
@@ -619,6 +620,39 @@ check_run_recorded <- function(con, cfg) {
     stop("The metadata row for this run has no LOT_LONG counts. It describes ",
          "LOT1 only, so nothing records what LOT2-5 produced.", call. = FALSE)
   log_msg("Run recorded in LOT_RUN_METADATA and LOT_QC_SUMMARY")
+  invisible(TRUE)
+}
+
+# Which version of each code list built these tables. The hashes are logged as
+# the files are read, but a log is a separate artefact: filed away from the
+# tables, or lost, and the outputs no longer say what made them. One row per
+# file per run, so a question like "which runs used this md5" is answerable
+# from the warehouse.
+#
+# Written straight after the code lists are read, not at the end, so a run that
+# fails later still records what it was reading when it did.
+CODELIST_METADATA_COLS <- c(RUN_ID = "STRING", CODELIST_FILE = "STRING",
+                            MD5 = "STRING", N_ROWS = "BIGINT",
+                            READ_AT = "TIMESTAMP")
+
+record_codelist_hashes <- function(con, cfg) {
+  seen <- getOption("lot_codelist_md5", list())
+  missing <- setdiff(CODELIST_FILES, names(seen))
+  if (length(missing))
+    stop("No hash recorded for ", paste(missing, collapse = ", "),
+         ". Every code list this build reads has to be accounted for.",
+         call. = FALSE)
+  tbl  <- lot_out("LOT_CODELIST_METADATA")
+  cols <- names(CODELIST_METADATA_COLS)
+  db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
+                    paste(cols, CODELIST_METADATA_COLS, collapse = ", "), ")"))
+  db_exec(con, glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"))
+  vals <- vapply(CODELIST_FILES, function(f) glue(
+    "('{run_id}', '{f}', '{seen[[f]]$md5}', {seen[[f]]$n_rows}, current_timestamp())"),
+    character(1), USE.NAMES = FALSE)
+  db_exec(con, glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES ",
+                    paste(vals, collapse = ", ")))
+  log_msg("Recorded ", length(CODELIST_FILES), " code list hashes in ", tbl)
   invisible(TRUE)
 }
 
