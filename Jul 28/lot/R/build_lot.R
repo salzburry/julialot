@@ -308,6 +308,7 @@ build_lot <- function(here, cohort_table, prefix) {
   # Validate before deriving: publishing the criteria tables first would leave
   # them behind, built from a LOT_LONG that then failed its checks.
   check_lot_long(con, cfg)
+  record_final_counts(con, cfg)
   phase_line_criteria(con, cfg)
   check_run_recorded(con, cfg)
   write_build_status(con, cfg, "complete")
@@ -567,7 +568,59 @@ check_run_recorded <- function(con, cfg) {
       stop("This run left no row in ", lot_out(t), ". The outputs exist but ",
            "nothing records how they were built.", call. = FALSE)
   }
+  # The row is written by phase_persist, before LOT2-5 exists, so a row alone
+  # says only that LOT1 ran. record_final_counts fills the rest in.
+  n <- tryCatch(db_q(con, glue(
+         "SELECT count(*) AS n FROM {lot_out('LOT_RUN_METADATA')}
+          WHERE RUN_ID = '{run_id}' AND N_LOT_LONG_ROWS IS NOT NULL"))$n,
+       error = function(e) 0L)
+  if (is.na(n) || n < 1)
+    stop("The metadata row for this run has no LOT_LONG counts. It describes ",
+         "LOT1 only, so nothing records what LOT2-5 produced.", call. = FALSE)
   log_msg("Run recorded in LOT_RUN_METADATA and LOT_QC_SUMMARY")
+  invisible(TRUE)
+}
+
+# LOT_RUN_METADATA is written by phase_persist, which runs before LOT2-5, so
+# its counts stop at LOT1: cohort, MMA claims, MAPs, LOT1 patients. Nothing
+# recorded what the run actually produced. These are added after check_lot_long
+# has passed, so the numbers describe a table already found usable.
+FINAL_METADATA_COLS <- c(N_LOT_LONG_ROWS = "BIGINT",
+                         N_LOT_LONG_PATIENTS = "BIGINT",
+                         LOT_LONG_BY_LINE = "STRING")
+
+record_final_counts <- function(con, cfg) {
+  tbl <- lot_out("LOT_RUN_METADATA")
+  have <- tryCatch({
+    d  <- db_q(con, glue("DESCRIBE {tbl}"))
+    cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
+    if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else character(0)
+  }, error = function(e) character(0))
+  # phase_persist creates the table without these, so the first run on a given
+  # schema adds them and later ones find them. No answer means DESCRIBE failed,
+  # not an empty table - adding blind would error on the first column.
+  if (!length(have))
+    stop("Cannot read the columns of ", tbl, ", so the LOT_LONG counts cannot ",
+         "be recorded.", call. = FALSE)
+  for (m in setdiff(names(FINAL_METADATA_COLS), have)) {
+    db_exec(con, glue("ALTER TABLE {tbl} ADD COLUMNS ({m} {FINAL_METADATA_COLS[[m]]})"))
+    log_msg("  Metadata schema evolution: added ", m)
+  }
+
+  t <- lot_out("LOT_LONG")
+  q <- db_q(con, glue("
+    SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients FROM {t}"))
+  by_line <- db_q(con, glue("
+    SELECT LOT_NUM, count(*) AS n FROM {t} GROUP BY LOT_NUM ORDER BY LOT_NUM"))
+  dist <- paste(paste0(by_line$LOT_NUM, ":", by_line$n), collapse = "|")
+  db_exec(con, glue("
+    UPDATE {tbl}
+       SET N_LOT_LONG_ROWS = {q$n_rows},
+           N_LOT_LONG_PATIENTS = {q$n_patients},
+           LOT_LONG_BY_LINE = '{dist}'
+     WHERE RUN_ID = '{run_id}'"))
+  log_msg("Recorded LOT_LONG: ", q$n_rows, " lines for ", q$n_patients,
+          " patients (", dist, ")")
   invisible(TRUE)
 }
 

@@ -438,6 +438,14 @@ actually costs rather than leaving it an assumption.
 
 LOT1's tables are replaced before LOT2-5 starts, so a failure in between would
 leave new LOT1 output beside an older `LOT_LONG`. Every run therefore writes
+`<prefix>LOT_RUN_METADATA` carries the settings and the counts. `phase_persist`
+writes it before LOT2-5 exists, so its own counts stop at LOT1 - cohort, MMA
+claims, MAPs, LOT1 patients. `N_LOT_LONG_ROWS`, `N_LOT_LONG_PATIENTS` and
+`LOT_LONG_BY_LINE` (`1:900|2:400|3:120`) are filled in after `LOT_LONG` has
+passed its checks, so they describe a table already found usable. A run whose
+metadata row has no `LOT_LONG` counts is not called complete: a row on its own
+only says LOT1 ran.
+
 `<prefix>LOT_BUILD_STATUS`: `started` once preflight has passed, then
 `complete`, or `failed` if it stops after that. Read it before trusting a set
 of tables.

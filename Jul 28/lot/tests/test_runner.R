@@ -158,7 +158,8 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_cohort",
            "phase_lot1_end", "phase_qc",
            "check_lot1_invariants", "phase_persist", "materialize_sct_views",
            "build_lot2_5",
-           "check_lot_long", "phase_line_criteria", "check_run_recorded")
+           "check_lot_long", "record_final_counts", "phase_line_criteria",
+           "check_run_recorded")
 at <- vapply(ORDER, function(f) {
   m <- regexpr(paste0("(?<![A-Za-z0-9_.])", f, "\\("), body, perl = TRUE)
   if (m == -1) NA_integer_ else as.integer(m)
@@ -516,6 +517,47 @@ lb <- paste(readLines(file.path(ROOT, "R", "steps", "10_lot2_5_base.R"), warn = 
             collapse = "\n")
 ok(grepl("FROM mma_rollup", lb, fixed = TRUE),
    "LOT2-5 draws its meds and classes from the same rollup, so this covers it")
+
+cat("\n-- the run says what it produced, not only what LOT1 saw --\n")
+# phase_persist writes LOT_RUN_METADATA before LOT2-5 exists, so its counts
+# stop at LOT1 and a row on its own says nothing about LOT_LONG.
+fe <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_lot.R"), envir = fe)
+assign("log_msg", function(...) invisible(NULL), envir = fe)
+assign("lot_out", function(x) paste0("wk.p_", x), envir = fe)
+assign("run_id", "R1", envir = fe)
+FSQL <- character(0)
+assign("db_exec", function(con, s) { FSQL <<- c(FSQL, s); TRUE }, envir = fe)
+drive_fm <- function(have) {
+  FSQL <<- character(0)
+  assign("db_q", function(con, s) {
+    if (grepl("DESCRIBE", s)) return(if (is.null(have)) stop("no")
+                                     else data.frame(col_name = have))
+    if (grepl("GROUP BY LOT_NUM", s)) return(data.frame(LOT_NUM = 1:3, n = c(900, 400, 120)))
+    data.frame(n_rows = 1420, n_patients = 900)
+  }, envir = fe)
+  tryCatch({ fe$record_final_counts(NULL, list()); NULL }, error = conditionMessage)
+}
+base_cols <- c("RUN_ID", "N_COHORT_PATIENTS", "N_LOT1_PATIENTS")
+ok(is.null(drive_fm(base_cols)), "a metadata table without the columns gets them")
+ok(sum(grepl("ALTER", FSQL)) == length(get("FINAL_METADATA_COLS", envir = fe)),
+   "...one ALTER per column, since phase_persist creates the table without them")
+ok(any(grepl("LOT_LONG_BY_LINE = '1:900|2:400|3:120'", FSQL, fixed = TRUE)),
+   "the line distribution is recorded, not just a total")
+ok(any(grepl("WHERE RUN_ID = 'R1'", FSQL, fixed = TRUE)),
+   "against this run's row, not every row in the table")
+ok(is.null(drive_fm(c(base_cols, names(get("FINAL_METADATA_COLS", envir = fe))))) &&
+     !any(grepl("ALTER", FSQL)),
+   "a later run finds them and alters nothing")
+ok(!is.null(drive_fm(NULL)),
+   "a DESCRIBE that cannot answer stops rather than adding columns blind")
+# Recorded after check_lot_long, so the numbers describe a table already found
+# usable - and check_run_recorded now asks for them, not merely for a row.
+ok(regexpr("check_lot_long(", body, fixed = TRUE) <
+     regexpr("record_final_counts(", body, fixed = TRUE),
+   "the counts are taken after LOT_LONG has passed its checks")
+ok(grepl("N_LOT_LONG_ROWS IS NOT NULL", bl, fixed = TRUE),
+   "and a run with a LOT1-only metadata row is not called complete")
 
 cat("\n-- the claim side of the NDC contract --\n")
 # ndc_shape and ndc_short constrain the code list; both joins pad the CLAIM the
