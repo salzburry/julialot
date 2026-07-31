@@ -39,6 +39,60 @@ PARTS <- list(
   list(file = "R/steps/07_cohort.R",      from = 756, to = 839)
 )
 
+# The port is allowed to differ from the source in exactly the ways named here,
+# and in no others. Each deviation is undone before the comparison, so an
+# unapproved change survives and breaks equality; and a deviation that gets
+# deleted leaves its entry with nothing to undo, which is reported rather than
+# reading as a perfect match.
+#
+# All of these are the one clinical change the study team confirmed: the 1L
+# follow-up CE is one day of enrollment on the index date, not three months.
+# The protocol text (Rev Round 2, S6.2.1.1) says three months, so this is a
+# deliberate override of the written spec and is spelled out rather than
+# absorbed - the numbers it produces are not the numbers apr_30_2026 produces.
+SUBST <- list(
+  "R/steps/06_flags.R" = list(
+    list(from = "AND s.cov_end   >= least(date_add(ec_l1.LOT1_START_DT, {NDMM_FU_CE_DAYS}),",
+         to   = "AND s.cov_end   >= least(date_add(ec_l1.LOT1_START_DT, 90),", n = 1L),
+    list(from = "THEN 1 ELSE 0 END) AS CE_fu",
+         to   = "THEN 1 ELSE 0 END) AS CE_lot1_3mo", n = 1L),
+    list(from = "coalesce(fuce.CE_fu, 0)                              AS CE_lot1_fu,",
+         to   = "coalesce(fuce.CE_lot1_3mo, 0)                        AS CE_lot1_3mo_fu,", n = 1L),
+    list(from = "AND CE_lot1_fu              = 1",
+         to   = "AND CE_lot1_3mo_fu          = 1", n = 1L)),
+  "R/steps/07_cohort.R" = list(
+    list(from = "AND CE_lot1_fu = 1\"))$n",
+         to   = "AND CE_lot1_3mo_fu = 1\"))$n", n = 1L))
+)
+
+# Lines the port adds that the source has no counterpart for, and how many.
+ADDED <- list(
+  "R/nndm_constants.R" = c("NDMM_FU_CE_DAYS          <- 0L" = 1L)
+)
+
+undo_report <- new.env()
+
+undeviate <- function(lines, file) {
+  short <- character(0)
+  for (sb in SUBST[[file]]) {
+    hit <- which(lines == sb$from)
+    if (length(hit) != sb$n)
+      short <- c(short, paste0(sb$from, " (expected ", sb$n, ", found ", length(hit), ")"))
+    if (length(hit)) lines[hit[seq_len(min(sb$n, length(hit)))]] <- sb$to
+  }
+  for (nm in names(ADDED[[file]])) {
+    want <- ADDED[[file]][[nm]]
+    hit  <- which(lines == nm)
+    if (length(hit) < want)
+      short <- c(short, paste0(nm, " (expected ", want, ", found ", length(hit), ")"))
+    if (length(hit)) lines <- lines[-hit[seq_len(min(want, length(hit)))]]
+  }
+  assign(file, short, envir = undo_report)
+  lines
+}
+
+CHANGED <- c("R/nndm_constants.R", "R/steps/06_flags.R", "R/steps/07_cohort.R")
+
 # Comments are compared out, so the copied comments can be tidied without
 # weakening the check. Change a code line and it fails; change a comment and it
 # does not. Whole-line comments only - stripping trailing ones would mangle a
@@ -59,10 +113,17 @@ cat("\n-- every ported file is the source, line for line --\n")
 for (p in PARTS) {
   f <- file.path(ROOT, p$file)
   if (!file.exists(f)) { ok(FALSE, paste0(p$file, ": missing")); next }
-  got  <- code_only(body_of(readLines(f, warn = FALSE)))
+  raw  <- code_only(body_of(readLines(f, warn = FALSE)))
+  got  <- if (p$file %in% CHANGED) undeviate(raw, p$file) else raw
   want <- code_only(src[p$from:p$to])
+  if (p$file %in% CHANGED) {
+    sh <- get(p$file, envir = undo_report)
+    if (length(sh)) { ok(FALSE, paste0(p$file, ": an approved deviation is missing -- ", sh[1])); next }
+  }
   if (identical(got, want)) {
-    ok(TRUE, paste0(p$file, ": same code as lines ", p$from, "-", p$to,
+    ok(TRUE, paste0(p$file, ": ",
+                    if (p$file %in% CHANGED) "identical once the approved deviations are undone"
+                    else paste0("same code as lines ", p$from, "-", p$to),
                     " (", length(want), " lines)"))
   } else {
     n <- max(length(got), length(want))

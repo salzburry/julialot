@@ -77,7 +77,7 @@ ndmm_counts <- function(con, lot_long, elig_coh_final) {
     "SELECT count(DISTINCT PATID) AS n FROM {NDMM_FLAGS_ALL}
      WHERE CE_pre_lot1_12mo = 1 AND NO_BELANTAMAB = 1
        AND NO_PRIOR_MM_TX = 1 AND NO_OTHER_CANCER_PRE_LOT1 = 1
-       AND CE_lot1_3mo_fu = 1"))$n
+       AND CE_lot1_fu = 1"))$n
   ndmm_final <- db_q(con, glue(
     "SELECT count(DISTINCT PATID) AS n FROM {NDMM_PATIDS}"))$n
   list(whole = whole, elig = elig, elig_lot1 = elig_lot1,

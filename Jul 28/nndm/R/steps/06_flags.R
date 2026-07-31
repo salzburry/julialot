@@ -52,18 +52,18 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
       LEFT JOIN {NDMM_ENROLL_SPANS} s ON s.PATID = ec_l1.PATID
       GROUP BY ec_l1.PATID
     ),
-    -- 3-month follow-up CE re-derived ANCHORED AT LOT1 (the NDMM index): a
-    -- span must cover [LOT1_START, least(LOT1_START + 90, study_end, death)].
+    -- Follow-up CE re-derived ANCHORED AT LOT1 (the NDMM index): a span must
+    -- cover [LOT1_START, least(LOT1_START + NDMM_FU_CE_DAYS, study_end, death)].
     -- Uses NDMM_ENROLL_SPANS_STRICT (no-gap spans, gap_days=0):
     -- 'no gaps in enrollment' for the follow-up CE, vs <30-day gaps allowed
     -- for the 12-mo pre-LOT1 CE. Plus the carried-forward DEATH_DT.
     fuce AS (
       SELECT ec_l1.PATID,
              max(CASE WHEN s.cov_start <= ec_l1.LOT1_START_DT
-                       AND s.cov_end   >= least(date_add(ec_l1.LOT1_START_DT, 90),
+                       AND s.cov_end   >= least(date_add(ec_l1.LOT1_START_DT, {NDMM_FU_CE_DAYS}),
                                                 date('{cfg$study_end}'),
                                                 coalesce(ec_l1.DEATH_DT, date('{cfg$study_end}')))
-                      THEN 1 ELSE 0 END) AS CE_lot1_3mo
+                      THEN 1 ELSE 0 END) AS CE_fu
       FROM ec_l1
       LEFT JOIN {NDMM_ENROLL_SPANS_STRICT} s ON s.PATID = ec_l1.PATID
       GROUP BY ec_l1.PATID
@@ -74,7 +74,7 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
     pregnancy AS ({pregnancy_expr})
     SELECT ec_l1.PATID,
            ce.CE_pre_lot1_12mo,
-           coalesce(fuce.CE_lot1_3mo, 0)                        AS CE_lot1_3mo_fu,
+           coalesce(fuce.CE_fu, 0)                              AS CE_lot1_fu,
            CASE WHEN bela.PATID         IS NULL THEN 1 ELSE 0 END AS NO_BELANTAMAB,
            CASE WHEN prior_tx.PATID     IS NULL THEN 1 ELSE 0 END AS NO_PRIOR_MM_TX,
            CASE WHEN other_cancer.PATID IS NULL THEN 1 ELSE 0 END AS NO_OTHER_CANCER_PRE_LOT1,
@@ -131,7 +131,7 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
       AND NO_BELANTAMAB           = 1
       AND NO_PRIOR_MM_TX          = 1
       AND NO_OTHER_CANCER_PRE_LOT1 = 1
-      AND CE_lot1_3mo_fu          = 1
+      AND CE_lot1_fu              = 1
       AND NO_PREGNANCY            = 1
   "))
 }
