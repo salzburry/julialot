@@ -152,7 +152,8 @@ bl <- paste(readLines(file.path(ROOT, "R", "build_lot.R"), warn = FALSE),
 body <- sub(".*build_lot <- function\\([^)]*\\) \\{", "", bl)
 ORDER <- c("check_settings", "pin_output_schema", "pin_cohort",
            "check_lot_contract", "set_lot_config", "check_cohort_input",
-           "phase_codelists", "phase_patient_input", "check_claim_ndc",
+           "phase_codelists", "phase_patient_input", "materialize_cohort_input",
+           "check_claim_ndc",
            "phase_mma_map",
            "phase_lot1_base", "phase_sct", "phase_lot1_sct",
            "phase_lot1_end", "phase_qc",
@@ -583,6 +584,27 @@ ok(regexpr("check_lot_long(", body, fixed = TRUE) <
    "the counts are taken after LOT_LONG has passed its checks")
 ok(grepl("N_LOT_LONG_ROWS IS NOT NULL", bl, fixed = TRUE),
    "and a run with a LOT1-only metadata row is not called complete")
+
+cat("\n-- the cohort is pinned, not re-read --\n")
+# A Spark temporary view re-runs its query on every read, so lot_patient_input
+# over the cohort table is not a snapshot: a cohort job rebuilding that table
+# mid-run changes what LOT reads from there on. "Do not rebuild it" is not
+# enforceable for a package pointed at many cohorts, so the run takes its own
+# copy and reads that.
+ok(grepl("CREATE OR REPLACE TABLE {lot_out('LOT_PATIENT_INPUT')} AS", bl, fixed = TRUE),
+   "the cohort input is written to a table of its own")
+ok(grepl("CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS\n    SELECT * FROM {lot_out('LOT_PATIENT_INPUT')}",
+         bl, fixed = TRUE),
+   "...and the view is repointed at it, so every later read hits the copy")
+ok("LOT_PATIENT_INPUT" %in% OUTPUTS,
+   "it is a prefixed output, so two cohorts cannot share one snapshot")
+# Before anything reads the cohort. phase_patient_input defines the view;
+# nothing between that and the copy may consume it.
+pos <- function(f) regexpr(paste0("(?<![A-Za-z0-9_.])", f, "\\("), body, perl = TRUE)
+ok(pos("phase_patient_input") < pos("materialize_cohort_input") &&
+     pos("materialize_cohort_input") < pos("check_claim_ndc") &&
+     pos("materialize_cohort_input") < pos("phase_mma_map"),
+   "pinned before the first phase that joins it")
 
 cat("\n-- the claim side of the NDC contract --\n")
 # ndc_shape and ndc_short constrain the code list; both joins pad the CLAIM the

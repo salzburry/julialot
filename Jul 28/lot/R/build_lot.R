@@ -271,6 +271,7 @@ build_lot <- function(here, cohort_table, prefix) {
 
   ctx <- phase_codelists(con)
   phase_patient_input(con)
+  materialize_cohort_input(con)
   check_claim_ndc(con, cfg)
   phase_mma_map(con, ctx)
   phase_lot1_base(con, ctx)
@@ -342,6 +343,34 @@ lot_inputs_present <- function(con) {
   temp <- as.character(d$isTemporary)
   have <- tolower(d$viewName[toupper(temp) %in% c("TRUE", "T")])
   all(tolower(LOT2_5_INPUT_VIEWS) %in% have)
+}
+
+# phase_patient_input leaves lot_patient_input a temporary view over the cohort
+# table, and a Spark view re-runs its query on every read - 26 of them across
+# the build. So the cohort is not one snapshot: a cohort job that rebuilds its
+# table mid-run changes what LOT reads from that point on, and the run still
+# reaches "complete". Telling operators not to rebuild is not a rule that holds
+# when the package exists to be pointed at many cohorts on their own schedules.
+#
+# Copied once into a prefixed table of its own, with the view repointed at it -
+# the same thing phase_lot1_end does for map_stacked and lot1_sct. Everything
+# downstream then reads a table that cannot move, and the snapshot is left
+# behind for inspection.
+#
+# The window this does not close: check_cohort_input validates the live table a
+# moment earlier. A change between that check and this copy would be snapshotted
+# unvalidated. It is one statement wide, against 26 reads over a long build.
+materialize_cohort_input <- function(con) {
+  run_step(con, "S03b_materialize_cohort_input", glue("
+    CREATE OR REPLACE TABLE {lot_out('LOT_PATIENT_INPUT')} AS
+    SELECT * FROM lot_patient_input
+  "), qc = glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients
+                 FROM {lot_out('LOT_PATIENT_INPUT')}"))
+  db_exec(con, glue("
+    CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS
+    SELECT * FROM {lot_out('LOT_PATIENT_INPUT')}"))
+  log_msg("Cohort input pinned to ", lot_out("LOT_PATIENT_INPUT"))
+  invisible(TRUE)
 }
 
 # LOT1 leaves these three as views over the raw CDM, and LOT2-5 reads them

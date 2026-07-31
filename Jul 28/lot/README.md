@@ -411,10 +411,21 @@ inputs. After a failure, re-run the whole build.
 Every step is defined exactly once, and `tests/test_selfcontained.R` fails if
 that stops being true.
 
-Note what this does *not* pin. The code lists are read into R and embedded as
-SQL literals, so they are fixed for the run. `lot_patient_input` is a view over
-the cohort table, so the cohort is not frozen inside the run - do not rebuild
-or replace it while LOT is running.
+Both inputs are pinned, not just assumed stable. The code lists are read into R
+and embedded as SQL literals, so they are fixed the moment they are read. The
+cohort is copied into `<prefix>LOT_PATIENT_INPUT` and the view repointed at
+that copy, so the 26 later reads hit a table that cannot move.
+
+That copy is the point: a Spark temporary view re-runs its query on every read,
+so a cohort job rebuilding its table half way through a LOT run would change
+what LOT sees from there on, and the run would still reach `complete`. "Do not
+rebuild the cohort while LOT runs" is not a rule that holds for a package meant
+to be pointed at many cohorts on their own schedules. The snapshot is prefixed
+like every other output, so two cohorts cannot share one, and it stays behind
+for inspection afterwards.
+
+One window remains open: the cohort table is validated a statement earlier than
+it is copied, so a change in between would be snapshotted unvalidated.
 
 ## Why the run materializes the SCT views
 
