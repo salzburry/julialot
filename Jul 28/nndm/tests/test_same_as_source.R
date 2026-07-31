@@ -51,6 +51,18 @@ PARTS <- list(
 # deliberate override of the written spec and is spelled out rather than
 # absorbed - the numbers it produces are not the numbers apr_30_2026 produces.
 SUBST <- list(
+  # The override now covers the remission variants of the plasma-cell groups as
+  # well - the criterion is another cancer distinct from the index MM, and
+  # remission cannot make a plasma-cell disorder more like a different one. The
+  # list moves behind ndmm_mm_adjacent_groups() so the setting that decides it
+  # lives in one place.
+  "R/steps/04_other_malig.R" = list(
+    list(from = "ovr_in <- paste(sprintf(\"'%s'\", gsub(\"'\", \"''\", ndmm_mm_adjacent_groups())),",
+         to   = "ovr_in <- paste(sprintf(\"'%s'\", gsub(\"'\", \"''\", NDMM_MM_ADJACENT_OVERRIDE)),",
+         n = 1L),
+    list(from = "CASE WHEN upper(trim(tumor_group)) IN ({ovr_in})",
+         to   = "CASE WHEN upper(trim(tumor_group)) IN ({ovr_in}) THEN 1 ELSE 0 END AS is_mm_adjacent_override",
+         n = 1L)),
   "R/steps/06_flags.R" = list(
     list(from = "AND s.cov_end   >= least(date_add(ec_l1.LOT1_START_DT, {NDMM_FU_CE_DAYS}),",
          to   = "AND s.cov_end   >= least(date_add(ec_l1.LOT1_START_DT, 90),", n = 1L),
@@ -86,6 +98,21 @@ ADDED <- list(
     "AND regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') <> ''" = 1L),
   "R/steps/04_other_malig.R" = c(
     "AND regexp_replace(trim(dx), '[^A-Za-z0-9]', '') <> ''" = 1L,
+    # The required-match count is now against the five labels the code list
+    # must carry, not against every group the override reaches - the remission
+    # variants are a proposal and their absence is reported, not fatal.
+    "req    <- gsub(\"'\", \"''\", NDMM_MM_ADJACENT_OVERRIDE)" = 1L,
+    "req_in <- paste(sprintf(\"'%s'\", req), collapse = \", \")" = 1L,
+    "AND upper(trim(tumor_group)) IN ({req_in})" = 1L,
+    # The other-cancer code list is the study's generic one and carries MM's
+    # own codes. Anything on the diagnosis code list is the index disease by
+    # definition, so it cannot also be another cancer - derived from that file
+    # rather than from a list of labels, which is what let the plasma-cell
+    # triples be split by wording.
+    "OR EXISTS (SELECT 1 FROM {NDMM_MM_DX_CODES} m" = 1L,
+    "WHERE m.dx = upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', ''))" = 1L,
+    "AND m.icd_family = CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END)" = 1L,
+    "THEN 1 ELSE 0 END AS is_mm_adjacent_override" = 1L,
     # The third clinical change. The other-cancer rule is >=1 inpatient claim
     # or >=2 outpatient claims within 30 days of each other, in the 12-month
     # 1L baseline. The source bounded only the first of the outpatient pair, so
@@ -119,6 +146,19 @@ SPLICE <- list(
     list(from = "ndmm_counts <- function(con, mm_qualifying, base_cohort) {",
          to   = "ndmm_final = ndmm_final)",
          src_from = 795L, src_to = 837L)
+  ),
+  # The materialization of NDMM_FLAGS_ALL. The source wrapped it in tryCatch and
+  # warned on failure, keeping the in-place view: correct arithmetic, but this
+  # package declares that table an output, so the run would report complete with
+  # it missing - and every later read would re-run the whole scan DAG. It is one
+  # call to checkpoint() now, which is what every other materialization in this
+  # package uses and which stops if the write fails. It stays inside this
+  # function because NDMM_PATIDS is defined over the view a few lines below and
+  # Spark inlines a temp view's plan.
+  "R/steps/06_flags.R" = list(
+    list(from = 'checkpoint(con, "NDMM_FLAGS_ALL")',
+         to   = 'checkpoint(con, "NDMM_FLAGS_ALL")',
+         src_from = 727L, src_to = 741L)
   ),
   # The MM-adjacent override. The source logged how many of the expected
   # tumour-group labels matched the production codelist and carried on; an

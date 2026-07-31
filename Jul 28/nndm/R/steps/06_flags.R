@@ -88,41 +88,22 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
     LEFT JOIN pregnancy    ON ec_l1.PATID = pregnancy.PATID
   "))
 
-  # Materialize NDMM_FLAGS_ALL once, then repoint the view at the physical
-  # work-schema table. As a bare TEMPORARY VIEW this re-runs the whole scan
-  # DAG (pregnancy + belantamab + prior-Tx + other-cancer over the study
-  # period, plus both enrollment-span builds) on EVERY read - and it is read
-  # heavily: ndmm_counts() alone issues six COUNT(DISTINCT) queries against
-  # it (one per funnel step), then NDMM_PATIDS, the dashboard sections and the
-  # validation drilldown read it again. Recomputing the scans six-plus times
-  # back-to-back is what makes the NDMM stage appear to hang right after the
-  # Overall attrition figure. Materializing collapses that to one computation;
-  # every later read (including NDMM_PATIDS below) hits the table. Mirrors the
-  # parent's S16 materialize-and-repoint (02_lot1.R); CACHE TABLE is not
-  # available on SQL warehouses. The write is unconditional (not gated on
-  # cfg$persist_to_schema, which governs the FINAL persist to the personal
-  # schema, not intermediate work-schema materializations - same as the
-  # parent's S16).
+  # Write NDMM_FLAGS_ALL to the schema and repoint the view at it. As a bare
+  # temporary view it re-runs the whole scan DAG on every read - pregnancy,
+  # belantamab, prior therapy and other cancer over the study period, plus both
+  # enrollment-span builds - and ndmm_counts() alone reads it six times, once
+  # per funnel step, before NDMM_PATIDS reads it again.
   #
-  # Fail-safe: the parent assumes a writable work schema; this is a dashboard,
-  # so if the CREATE TABLE is refused (e.g. a read-only work schema) we WARN
-  # and keep the in-place temp view rather than aborting. Downstream numbers
-  # are still correct - just recomputed on each read, i.e. slower.
-  tryCatch({
-    run_step(con, "S_ndmm_materialize_flags_all", glue("
-      CREATE OR REPLACE TABLE {wrk(NDMM_FLAGS_ALL_TBL)} AS
-      SELECT * FROM {NDMM_FLAGS_ALL}
-    "), qc = glue("SELECT count(*) AS n_rows FROM {wrk(NDMM_FLAGS_ALL_TBL)}"))
-    db_exec(con, glue("
-      CREATE OR REPLACE TEMPORARY VIEW {NDMM_FLAGS_ALL} AS
-      SELECT * FROM {wrk(NDMM_FLAGS_ALL_TBL)}
-    "))
-  }, error = function(e) {
-    log_msg("WARN: could not materialize ", wrk(NDMM_FLAGS_ALL_TBL), " (",
-            conditionMessage(e), "); keeping the in-place temp view - NDMM ",
-            "counts/dashboard stay correct but run slower (flag scans are ",
-            "recomputed on each read).")
-  })
+  # This is one call to checkpoint(), the same materialize-and-repoint the other
+  # ten views use, and it stops if the write fails. The source wrapped it in
+  # tryCatch and warned: correct arithmetic, but NDMM_FLAGS_ALL is a declared
+  # output, so the run would report complete with the table missing and every
+  # later read would re-run the DAG anyway.
+  #
+  # It stays here rather than moving to the runner because NDMM_PATIDS below is
+  # defined over this view, and Spark inlines a temporary view's plan -
+  # repointing after NDMM_PATIDS exists would leave that view on the old query.
+  checkpoint(con, "NDMM_FLAGS_ALL")
 
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_PATIDS} AS

@@ -27,7 +27,10 @@ SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # is linked in beside it, and the run below refuses to proceed if the suite
 # reports a skip anyway.
 ROOT = os.path.dirname(os.path.dirname(SRC))
-BASE = os.path.join(tempfile.gettempdir(), "nndm_mutation_battery")
+# Per-process, so two runs of this file cannot collide on the same staging
+# directory - which they did, and shutil.copytree then failed rather than
+# reporting a mutation.
+BASE = os.path.join(tempfile.gettempdir(), "nndm_mutation_battery_%d" % os.getpid())
 WORK = os.path.join(BASE, os.path.basename(os.path.dirname(SRC)), os.path.basename(SRC))
 M = [
  ("upstream check dropped","R/build_nndm.R","  check_upstream(con, cfg)\n","  "),
@@ -54,7 +57,7 @@ M = [
  ("ndc never stops","R/build_nndm.R","    if (!(name %in% waivers())) stop(msg, call. = FALSE)","    if (FALSE) stop(msg, call. = FALSE)"),
  ("ndc one waiver waives all","R/build_nndm.R","    if (!(name %in% waivers())) stop(msg, call. = FALSE)","    if (!length(waivers())) stop(msg, call. = FALSE)"),
  ("ndc codelist side unprofiled","R/build_nndm.R","                db_q(con, codelist_sql))","                db_q(con, codelist_sql)[0, ])"),
- ("ndc window unscoped","R/build_nndm.R","            AND cast(t.{dt} AS date)\n                  BETWEEN date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS})\n                      AND date_sub(l1.LOT1_START_DT, 1))))\")","            AND cast(t.{dt} AS date) >= date('1900-01-01'))))\")"),
+ ("ndc window unscoped","R/build_nndm.R","                  BETWEEN date_sub(b.MM_DX_DT, {NDMM_PRE_LOT1_DAYS})","                  BETWEEN date('1900-01-01')"),
  ("waiver allowlist off","R/build_nndm.R","waivers <- function() intersect(waivers_named(), WAIVABLE_CHECKS)","waivers <- function() waivers_named()"),
  ("unknown waiver accepted","R/build_nndm.R","  unknown <- setdiff(waivers_named(), WAIVABLE_CHECKS)","  unknown <- character(0)"),
  ("run metadata dropped","R/build_nndm.R","  write_run_metadata(con, cfg, here, counts$ndmm_final)\n","  "),
@@ -76,13 +79,47 @@ M = [
  ("latest qualifying date, not earliest","R/steps/00_mm_cohort.R","ORDER BY MM_DX_DT) AS rn","ORDER BY MM_DX_DT DESC) AS rn"),
  ("parent criterion leaks in","R/steps/00_mm_cohort.R","             m.GDR_CD, m.YRDOB,","             m.GDR_CD, m.YRDOB, 1 AS CE_b,"),
  ("belantamab abbr unchecked","R/steps/00b_lot1_index.R","  if (is.na(n) || n == 0)","  if (FALSE)"),
+ ("belantamab droppable from the index bar","R/steps/00b_lot1_index.R","  for (a in c(NDMM_BELANTAMAB_ABBR, abbrs))","  for (a in abbrs)"),
+ ("named agents not barred","R/steps/00b_lot1_index.R","  for (a in c(NDMM_BELANTAMAB_ABBR, abbrs))","  for (a in NDMM_BELANTAMAB_ABBR)"),
+ ("index disease can be another cancer","R/steps/04_other_malig.R","                 OR EXISTS (SELECT 1 FROM {NDMM_MM_DX_CODES} m\n","                 OR EXISTS (SELECT 1 FROM {NDMM_MM_DX_CODES} m WHERE 1 = 0 AND (\n"),
+ ("index disease match ignores family","R/steps/04_other_malig.R","                              AND m.icd_family = CASE WHEN upper(icd_family)","                              AND 'ICD10' = CASE WHEN upper(icd_family)"),
+ ("mm dx codes not checkpointed","R/build_nndm.R",'CHECKPOINTS <- c("NDMM_FLAGS_ALL", "NDMM_MM_DX_CODES",','CHECKPOINTS <- c("NDMM_FLAGS_ALL",'),
+ ("relapse states dropped","R/standalone_constants.R",'  "PLASMA CELL LEUKEMIA IN RELAPSE",\n',''),
+ ("remission variants excluded again","R/steps/04_other_malig.R","gsub(\"'\", \"''\", ndmm_mm_adjacent_groups())","gsub(\"'\", \"''\", NDMM_MM_ADJACENT_OVERRIDE)"),
+ ("remission override default off","R/build_nndm.R",'  mm_adjacent_states = "override",','  mm_adjacent_states = "exclude",'),
+ ("state labels dropped","R/standalone_constants.R",'  "PLASMA CELL LEUKEMIA IN REMISSION",\n',''),
+ ("remission setting unknown accepted","R/standalone_constants.R",'    stop("NDMM_MM_ADJACENT_STATES=\'", NDMM_MM_ADJACENT_STATES,','    NDMM_MM_ADJACENT_OVERRIDE) ; if (FALSE) stop("NDMM_MM_ADJACENT_STATES=\'", NDMM_MM_ADJACENT_STATES,'),
+ ("remission setting unpinned","R/build_nndm.R",'  list(const = "NDMM_MM_ADJACENT_STATES", cfg = "mm_adjacent_states", note = ""),\n',''),
+ ("required five widened","R/steps/04_other_malig.R","      AND upper(trim(tumor_group)) IN ({req_in})\n",""),
+ ("adjacent groups not written","R/build_nndm.R","  build_ndmm_mm_adjacent_groups(con, cfg)\n","  "),
+ ("adjacent groups miss remission","R/steps/00b_lot1_index.R","       OR upper(tumor_group) LIKE '%REMISSION%'\n",""),
+ ("belantamab unbounded below","R/steps/00b_lot1_index.R","    study_period = glue(\"b.bel_dt >= date('{NDMM_STUDY_START}')\"),","    study_period = \"1 = 1\","),
+ ("belantamab scope from_index","R/steps/00b_lot1_index.R","    from_index   = \"b.bel_dt >= l1.LOT1_START_DT\",","    from_index   = \"1 = 1\","),
+ ("belantamab unknown scope accepted","R/steps/00b_lot1_index.R","    stop(\"NDMM_BELANTAMAB_SCOPE='\", NDMM_BELANTAMAB_SCOPE, \"' is not a scope. \",","    \"1 = 1\") ; if (FALSE) stop(\"NDMM_BELANTAMAB_SCOPE='\", NDMM_BELANTAMAB_SCOPE, \"' is not a scope. \","),
+ ("belantamab not cohort-scoped","R/steps/00b_lot1_index.R","    INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = b.PATID\n    WHERE {scope}","    WHERE {scope}"),
+ ("belantamab scope counts dropped","R/build_nndm.R","  build_ndmm_belantamab_scope_counts(con, cfg)\n","  "),
+ ("belantamab scope count by claim","R/steps/00b_lot1_index.R","    SELECT 'ever'         AS SCOPE, count(DISTINCT b.PATID) AS N_PATIENTS","    SELECT 'ever'         AS SCOPE, count(*) AS N_PATIENTS"),
+ ("belantamab scope unpinned","R/build_nndm.R",'  list(const = "NDMM_BELANTAMAB_SCOPE",       cfg = "belantamab_scope",   note = ""),\n',''),
+ ("belantamab scope default","R/build_nndm.R",'  belantamab_scope     = "study_period",','  belantamab_scope     = "from_index",'),
+ ("excluded codes ignored","R/steps/00b_lot1_index.R","  codes <- split_setting(NDMM_INDEX_EXCLUDED_CODES)","  codes <- character(0)"),
+ ("excluded code type ignored","R/steps/00b_lot1_index.R",'        sql  = sprintf("(code_type = \'%s\' AND code = \'%s\')",','        sql  = sprintf("(code = \'%s\' AND code = \'%s\')",'),
+ ("excluded code not normalised","R/steps/00b_lot1_index.R",'  norm <- function(x) toupper(gsub("[^A-Za-z0-9]", "", x))','  norm <- function(x) x'),
+ ("excluded codes unpinned","R/build_nndm.R",'  list(const = "NDMM_INDEX_EXCLUDED_CODES",   cfg = "index_excluded_codes", note = ""),\n',''),
+ ("excluded codes default","R/build_nndm.R",'  index_excluded_codes = "",','  index_excluded_codes = "HCPCS:J9999",'),
+ ("unmatched exclusion accepted","R/steps/00b_lot1_index.R","    if (is.na(n) || n == 0)\n      stop(\"The 1L index exclusions name","    if (FALSE)\n      stop(\"The 1L index exclusions name"),
+ ("belantamab not checked for exclusions","R/steps/00b_lot1_index.R","  for (t in terms[-1]) {","  for (t in terms[0]) {"),
+ ("index agents not written","R/build_nndm.R","  build_ndmm_index_agents(con, cfg)\n","  "),
+ ("index agents counted off-date","R/steps/00b_lot1_index.R","              ON l1.PATID = tx.PATID AND tx.tx_dt = l1.LOT1_START_DT","              ON l1.PATID = tx.PATID"),
+ ("index agents counted by claim","R/steps/00b_lot1_index.R","           count(DISTINCT PATID)        AS N_PATIENTS","           count(*)                     AS N_PATIENTS"),
+ ("index exclusions unpinned","R/build_nndm.R",'  list(const = "NDMM_INDEX_EXCLUDED_ABBRS",   cfg = "index_excluded_abbrs", note = ""),\n',''),
+ ("index exclusions default","R/build_nndm.R",'  index_excluded_abbrs = "",','  index_excluded_abbrs = "CART",'),
  ("belantamab sets the index","R/steps/00b_lot1_index.R","      WHERE bl.code IS NULL\n","      WHERE 1 = 1\n"),
  ("index before diagnosis","R/steps/00b_lot1_index.R","        AND cast(t.{dt} as date) >= b.MM_DX_DT\n",""),
  ("index before the cutoff","R/steps/00b_lot1_index.R","        AND cast(t.{dt} as date) >= date('{NDMM_LOT1_FROM}')\n",""),
  ("index not the first claim","R/steps/00b_lot1_index.R","    SELECT PATID, min(tx_dt) AS LOT1_START_DT","    SELECT PATID, max(tx_dt) AS LOT1_START_DT"),
  ("belantamab abbr constant","R/standalone_constants.R",'NDMM_BELANTAMAB_ABBR <- Sys.getenv("NDMM_BELANTAMAB_ABBR", unset = "BEL%")','NDMM_BELANTAMAB_ABBR <- Sys.getenv("NDMM_BELANTAMAB_ABBR", unset = "BELX%")'),
- ("outpatient window constant","R/standalone_constants.R",'NDMM_OUTPATIENT_WINDOW <- as.integer(Sys.getenv("OUTPATIENT_WINDOW", unset = "90"))','NDMM_OUTPATIENT_WINDOW <- as.integer(Sys.getenv("OUTPATIENT_WINDOW", unset = "30"))'),
- ("min age constant","R/standalone_constants.R",'NDMM_MIN_AGE <- as.integer(Sys.getenv("MIN_AGE", unset = "18"))','NDMM_MIN_AGE <- as.integer(Sys.getenv("MIN_AGE", unset = "21"))'),
+ ("outpatient window setting","config.csv","OUTPATIENT_WINDOW,90","OUTPATIENT_WINDOW,30"),
+ ("min age setting","config.csv","MIN_AGE,18","MIN_AGE,21"),
  ("mm_dx codelist undeclared","R/codelists.R",'CODELIST_FILES <- c("cl_mma_codelist.csv", "mm_dx.csv", "other_malig.csv",\n                    "pregnancy.csv")','CODELIST_FILES <- c("cl_mma_codelist.csv", "other_malig.csv",\n                    "pregnancy.csv")'),
  ("dod unpreflighted","R/build_nndm.R","    cfg$tbl_confinement, cfg$tbl_member_enroll, cfg$tbl_member_elig, cfg$tbl_dod)","    cfg$tbl_confinement, cfg$tbl_member_enroll, cfg$tbl_member_elig)"),
  ("cohort index from the diagnosis","R/build_nndm.R","      SELECT DISTINCT cast(p.PATID as string) AS PATID, l1.LOT1_START_DT AS INDEX_DATE","      SELECT DISTINCT cast(p.PATID as string) AS PATID, b0.MM_DX_DT AS INDEX_DATE"),
@@ -96,14 +133,25 @@ M = [
  ("cohort null index allowed","R/build_nndm.R","  if (isTRUE(q$n_noidx > 0))","  if (FALSE)"),
  ("cohort count unreconciled","R/build_nndm.R","  if (!is.na(n_expected) && q$n_pat != n_expected)","  if (FALSE)"),
  ("cohort col list short","R/build_nndm.R",'NDMM_COHORT_COLS <- c("PATID", "INDEX_DATE", "ENDDATE", "ENDDATE_CE",\n                      "DEATH_DT", "GDR_CD", "YRDOB", "AGE_INDEX_YR",\n                      "FU_DAYS", "FU_DAYS_CE")','NDMM_COHORT_COLS <- c("PATID", "INDEX_DATE")'),
+ ("ndc profile reads a later view","R/build_nndm.R","          INNER JOIN {NDMM_BASE_COHORT} b ON cast(t.PATID as string) = b.PATID","          INNER JOIN {NDMM_LOT1_STARTS} b ON cast(t.PATID as string) = b.PATID"),
+ ("study period start","R/build_nndm.R",'  study_start          = "2016-01-01",','  study_start          = "2015-07-01",'),
+ ("study period end","R/build_nndm.R",'  study_end            = "2026-03-31",','  study_end            = "2025-06-30",'),
+ ("study period in config","config.csv","STUDY_END,2026-03-31","STUDY_END,2025-06-30"),
+ ("death not re-clamped at the index","R/build_nndm.R","             CASE WHEN b.DEATH_DT IS NOT NULL AND b.DEATH_DT < i.INDEX_DATE\n                  THEN i.INDEX_DATE ELSE b.DEATH_DT END AS DEATH_DT","             b.DEATH_DT AS DEATH_DT"),
+ ("backwards follow-up allowed","R/build_nndm.R","  if (isTRUE(q$n_backwards > 0))","  if (FALSE)"),
+ ("empty follow-up allowed","R/build_nndm.R","  if (isTRUE(q$n_nofu > 0))","  if (FALSE)"),
+ ("flags materialization warns again","R/steps/06_flags.R",'  checkpoint(con, "NDMM_FLAGS_ALL")','  tryCatch(checkpoint(con, "NDMM_FLAGS_ALL"), error = function(e) log_msg("WARN: could not materialize"))'),
+ ("flags not materialized at all","R/steps/06_flags.R",'  checkpoint(con, "NDMM_FLAGS_ALL")\n\n',''),
+ ("flags checkpoint after patids","R/steps/06_flags.R",'  checkpoint(con, "NDMM_FLAGS_ALL")\n\n  db_exec(con, glue("\n    CREATE OR REPLACE TEMPORARY VIEW {NDMM_PATIDS} AS','  db_exec(con, glue("\n    CREATE OR REPLACE TEMPORARY VIEW {NDMM_PATIDS} AS'),
+ ("flags dropped from checkpoints","R/build_nndm.R",'CHECKPOINTS <- c("NDMM_FLAGS_ALL", "NDMM_MM_DX_CODES",','CHECKPOINTS <- c("NDMM_MM_DX_CODES",'),
  ("hot view left as a query","R/build_nndm.R",'                 "NDMM_BELANTAMAB_CODES", "NDMM_LOT1_STARTS",','                 "NDMM_BELANTAMAB_CODES",'),
  ("checkpoint call dropped","R/build_nndm.R",'  checkpoint(con, "NDMM_LOT1_STARTS")\n',''),
- ("checkpoint before its view","R/build_nndm.R",'  build_ndmm_lot1_index(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))\n  checkpoint(con, "NDMM_LOT1_STARTS")','  checkpoint(con, "NDMM_LOT1_STARTS")\n  build_ndmm_lot1_index(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))'),
+ ("checkpoint before its view","R/build_nndm.R",'  build_ndmm_lot1_index(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))\n  checkpoint(con, "NDMM_INDEX_TX")','  checkpoint(con, "NDMM_INDEX_TX")\n  build_ndmm_lot1_index(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))'),
  ("checkpoint does not repoint","R/build_nndm.R",'  db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW {view} AS SELECT * FROM {tbl}"))\n',''),
  ("checkpoint writes nothing","R/build_nndm.R",'  db_exec(con, glue("CREATE OR REPLACE TABLE {tbl} AS SELECT * FROM {view}"))\n',''),
  ("checkpoint degrades quietly","R/build_nndm.R",'  db_exec(con, glue("CREATE OR REPLACE TABLE {tbl} AS SELECT * FROM {view}"))','  try(db_exec(con, glue("CREATE OR REPLACE TABLE {tbl} AS SELECT * FROM {view}")), silent = TRUE)'),
  ("checkpoints undeclared","R/build_nndm.R","OUTPUTS <- c(DELIVERABLES, CHECKPOINTS)","OUTPUTS <- DELIVERABLES"),
- ("output declared but unwritten","R/build_nndm.R",'DELIVERABLES <- c("NDMM_FLAGS_ALL",','DELIVERABLES <- c("NDMM_LOT_LONG_FILT", "NDMM_FLAGS_ALL",'),
+ ("output declared but unwritten","R/build_nndm.R",'DELIVERABLES <- c("NDMM_COHORT",','DELIVERABLES <- c("NDMM_LOT_LONG_FILT", "NDMM_COHORT",'),
  ("dashboard table built again","R/build_nndm.R","  # build_lot_long_filtered() is not called.","  build_lot_long_filtered(con, lot_long)\n  # build_lot_long_filtered() is not called."),
  ("codelist allowlist short","R/codelists.R",'"pregnancy.csv")','")'),
  ("codelist allowlist off","R/codelists.R","  if (!csv_name %in% CODELIST_FILES)","  if (FALSE)"),
@@ -135,7 +183,7 @@ M = [
  ("db_replace atomicity","R/db_utils.R","  with_retry(function() for (s in sqls) db_exec_once(con, s))","  for (s in sqls) with_retry(function() db_exec_once(con, s))"),
  ("status size unquoted","R/build_nndm.R","{sql_count(n)}, ","{n}, "),
  ("failed status ordering","R/build_nndm.R","          add = TRUE, after = FALSE)","          add = TRUE)"),
- ("outputs list","R/build_nndm.R",'DELIVERABLES <- c("NDMM_FLAGS_ALL", "NDMM_COHORT", "NDMM_ATTRITION",\n                  "NDMM_CODELIST_METADATA", "NDMM_RUN_METADATA",\n                  "NDMM_BUILD_STATUS")','DELIVERABLES <- c("NDMM_FLAGS_ALL", "NDMM_COHORT", "NDMM_ATTRITION")'),
+ ("outputs list","R/build_nndm.R",'DELIVERABLES <- c("NDMM_COHORT", "NDMM_ATTRITION", "NDMM_INDEX_AGENTS",','DELIVERABLES <- c("NDMM_COHORT",'),
  ("ported fu ce constant","R/nndm_constants.R","NDMM_FU_CE_DAYS          <- 0L","NDMM_FU_CE_DAYS          <- 90L"),
  ("ported flags sql","R/steps/06_flags.R","      AND CE_lot1_fu              = 1","      AND 1 = 1"),
  ("cohort sql outside the rewrite","R/steps/07_cohort.R","            ON cast(l.PATID as string) = a.PATID","            ON cast(l.PATID as string) = a.PATIDX"),
@@ -173,6 +221,7 @@ for name, f, a, b in M:
     open(p, 'w').write(s.replace(a, b, 1))
     caught = any(subprocess.run(["Rscript", t], cwd=WORK, capture_output=True).returncode != 0 for t in TESTS)
     if not caught: miss.append((name, "NOT CAUGHT"))
+shutil.rmtree(BASE, ignore_errors=True)
 print("battery size:", len(M))
 print("problems:", len(miss))
 for n, w in miss: print("   ", n, "->", w)

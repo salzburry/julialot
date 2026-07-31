@@ -7,7 +7,7 @@ build_ndmm_other_malig_codes <- function(con) {
   src <- load_codelist_csv(
     "other_malig.csv",
     c("dx", "icd_family", "tumor_group"))
-  ovr_in <- paste(sprintf("'%s'", gsub("'", "''", NDMM_MM_ADJACENT_OVERRIDE)),
+  ovr_in <- paste(sprintf("'%s'", gsub("'", "''", ndmm_mm_adjacent_groups())),
                   collapse = ", ")
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_OTHER_MALIG_CODES} AS
@@ -15,18 +15,35 @@ build_ndmm_other_malig_codes <- function(con) {
       upper(tumor_group) AS tumor_group,
       CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
       upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', '')) AS dx,
-      CASE WHEN upper(trim(tumor_group)) IN ({ovr_in}) THEN 1 ELSE 0 END AS is_mm_adjacent_override
+      -- The criterion is another cancer, meaning other than the index MM, and
+      -- this code list is the study's generic one: it carries MM's own codes.
+      -- Anything on the diagnosis code list is the index disease by
+      -- definition - the same file decides who is an MM patient - so it cannot
+      -- also make them an other-cancer patient, whatever its wording says
+      -- about remission or relapse. The label list covers what is adjacent to
+      -- MM without being on it.
+      CASE WHEN upper(trim(tumor_group)) IN ({ovr_in})
+                 OR EXISTS (SELECT 1 FROM {NDMM_MM_DX_CODES} m
+                            WHERE m.dx = upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', ''))
+                              AND m.icd_family = CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END)
+                THEN 1 ELSE 0 END AS is_mm_adjacent_override
     FROM {src}
     WHERE dx IS NOT NULL AND tumor_group IS NOT NULL
       -- And non-blank once normalised: '---' would otherwise match every
       -- diagnosis claim with a missing code. See 03_prior_therapy.R.
       AND regexp_replace(trim(dx), '[^A-Za-z0-9]', '') <> ''
   "))
+  # Only the five required labels are counted. The remission variants are a
+  # proposal, not a contract with the code list, so their absence is reported
+  # rather than fatal - see build_ndmm_mm_adjacent_groups().
+  req    <- gsub("'", "''", NDMM_MM_ADJACENT_OVERRIDE)
+  req_in <- paste(sprintf("'%s'", req), collapse = ", ")
   n_exp     <- length(NDMM_MM_ADJACENT_OVERRIDE)
   n_matched <- tryCatch(as.integer(db_q(con, glue("
     SELECT count(DISTINCT tumor_group) AS n
     FROM {NDMM_OTHER_MALIG_CODES}
     WHERE is_mm_adjacent_override = 1
+      AND upper(trim(tumor_group)) IN ({req_in})
   "))$n), error = function(e) NA_integer_)
   # The source logged this and carried on. An unmatched label means the
   # override is a silent no-op for that tumour group, so patients whose only

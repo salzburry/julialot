@@ -13,6 +13,12 @@ ROOT <- local({
 })
 source(file.path(ROOT, "tests", "testutil.R"))
 
+# config.csv the way the build applies it, so the constants and cfg_defaults
+# below see the same settings a real run does. Both read the environment when
+# they are sourced.
+sys.source(file.path(ROOT, "R", "load_inputs.R"), envir = globalenv())
+load_pipeline_inputs(ROOT, "config.csv")
+
 env <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = env)
 for (f in ls(env)) assign(f, get(f, envir = env), envir = globalenv())
@@ -49,12 +55,14 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_prefix", "check_contract"
            "build_ndmm_demographics", "build_ndmm_base_cohort",
            "build_enrollment_spans_ndmm",
            "build_ndmm_mma_codelist", "check_ndc_shape",
-           "build_ndmm_belantamab_codes", "build_ndmm_lot1_index",
+           "build_ndmm_belantamab_codes", "build_ndmm_index_ineligible_codes",
+           "build_ndmm_lot1_index", "build_ndmm_index_agents",
            "build_ndmm_therapy_pre_lot1",
-           "build_ndmm_other_malig_codes",
+           "build_ndmm_other_malig_codes", "build_ndmm_mm_adjacent_groups",
            "build_ndmm_med_claim_header_and_confinement",
            "build_ndmm_other_malig_pre_lot1", "build_ndmm_preg_codes",
            "build_ndmm_pregnancy_patids", "build_ndmm_belantamab_patids",
+           "build_ndmm_belantamab_scope_counts",
            "build_ndmm_flags",
            "ndmm_counts",
            "check_attrition_monotonic", "build_ndmm_cohort_table",
@@ -517,14 +525,222 @@ ok(length(gregexpr(">= b.MM_DX_DT", x, fixed = TRUE)[[1]]) == 4L,
    "every one of them requires the treatment to be on or after the diagnosis")
 ok(length(gregexpr(paste0(">= date('", se$NDMM_LOT1_FROM, "')"), x, fixed = TRUE)[[1]]) == 4L,
    "...and on or after the eligible-treatment cutoff")
-ok(length(gregexpr("<= date('2025-06-30')", x, fixed = TRUE)[[1]]) == 4L,
+ok(length(gregexpr(paste0("<= date('", cfg_defaults$study_end, "')"), x,
+                   fixed = TRUE)[[1]]) == 4L,
    "...and inside the study period")
 ok(length(gregexpr("WHERE bl.code IS NULL", x, fixed = TRUE)[[1]]) == 4L,
-   "belantamab cannot set the index - S6.2.1.1 says the 1L treatment is other than it")
-ok(grepl("min(tx_dt) AS LOT1_START_DT", x, fixed = TRUE),
+   "an ineligible agent cannot set the index, on every one of the four arms")
+ok(grepl("_ndmm_index_ineligible", x, fixed = TRUE),
+   "...and the ineligible set is the one build_ndmm_index_ineligible_codes builds")
+ok(any(grepl("min(tx_dt) AS LOT1_START_DT", SSQL, fixed = TRUE)),
    "the index is the first such claim, which is what S6.2.1.1 defines it as")
 ok(grepl("_ndmm_mma_codelist", x, fixed = TRUE),
    "and MM treatment means the same code list the prior-therapy scan uses")
+
+cat("\n-- a plasma-cell disorder in remission is not another cancer --\n")
+# The other-cancer criterion targets a cancer distinct from the index MM, which
+# is why five plasma-cell tumour groups are overridden. Three are worded "not
+# having achieved remission", and apr_30_2026 left the "in remission" variants
+# excluding - so an identical patient was kept or dropped depending on whether
+# their plasma cell leukemia was in remission.
+# The protocol says nothing about remission. It says "another cancer" - other
+# than the index MM - and other_malig.csv is the study's generic code list, so
+# it carries MM's own codes. The override is what makes the criterion mean what
+# it says, and the surest form of it is derived: anything on the diagnosis code
+# list is the index disease by definition, because that same file decides who
+# is an MM patient.
+oc0 <- paste(readLines(file.path(ROOT, "R", "steps", "04_other_malig.R"), warn = FALSE),
+             collapse = "\n")
+ok(grepl("EXISTS (SELECT 1 FROM {NDMM_MM_DX_CODES} m", oc0, fixed = TRUE),
+   "a code on the MM diagnosis list is never also another cancer")
+ok(grepl("m.dx = upper(regexp_replace(trim(dx), '[^A-Za-z0-9]', ''))", oc0, fixed = TRUE) &&
+     grepl("m.icd_family = CASE WHEN upper(icd_family)", oc0, fixed = TRUE),
+   "...matched on code and family the same way the diagnosis scan matches them")
+ok(regexpr("VIEW {NDMM_MM_DX_CODES}", bl_steps <- paste(unlist(lapply(step_files, readLines,
+             warn = FALSE)), collapse = "\n"), fixed = TRUE) > 0,
+   "and that list is built by this package, not assumed to exist")
+
+ok(identical(cfg_defaults$mm_adjacent_states, "override"),
+   "by default remission variants are overridden too, like their counterparts")
+ok(all(grepl("IN REMISSION|IN RELAPSE", se$NDMM_MM_ADJACENT_STATE_LABELS)),
+   paste0("the ", length(se$NDMM_MM_ADJACENT_STATE_LABELS),
+          " of them are named, not matched by a pattern that could catch more"))
+# other_malig.csv carries each plasma-cell condition in three states. Every one
+# named here is another state of a condition the override already covers, so
+# nothing new is being exempted - only the same disease in a different phase.
+stem <- function(x)
+  trimws(sub("(NOT HAVING ACHIEVED REMISSION|IN REMISSION|IN RELAPSE)$", "", x))
+ok(all(stem(se$NDMM_MM_ADJACENT_STATE_LABELS) %in%
+         stem(se$NDMM_MM_ADJACENT_OVERRIDE)),
+   "and each names a condition the override already covers in another state")
+# The invariant, not a count: a condition overridden in one state is overridden
+# in all of them. Half a triple is how the original list came to exclude a
+# plasma cell leukemia for being in remission while keeping one that was not.
+staged <- se$NDMM_MM_ADJACENT_OVERRIDE[
+  grepl("NOT HAVING ACHIEVED REMISSION", se$NDMM_MM_ADJACENT_OVERRIDE, fixed = TRUE)]
+missing_state <- unlist(lapply(stem(staged), function(k)
+  setdiff(paste(k, c("IN REMISSION", "IN RELAPSE")),
+          se$NDMM_MM_ADJACENT_STATE_LABELS)))
+ok(length(missing_state) == 0,
+   if (length(missing_state)) paste0("overridden in one state but not another: ",
+                                     paste(missing_state, collapse = "; "))
+   else paste0("every one of the ", length(staged),
+               " conditions is overridden in all three of its states"))
+assign("NDMM_MM_ADJACENT_STATES", "override", envir = se)
+ok(setequal(se$ndmm_mm_adjacent_groups(),
+            c(se$NDMM_MM_ADJACENT_OVERRIDE, se$NDMM_MM_ADJACENT_STATE_LABELS)),
+   "override covers both halves")
+assign("NDMM_MM_ADJACENT_STATES", "exclude", envir = se)
+ok(setequal(se$ndmm_mm_adjacent_groups(), se$NDMM_MM_ADJACENT_OVERRIDE),
+   "exclude restores apr_30_2026's five, so the two can be compared")
+assign("NDMM_MM_ADJACENT_STATES", "sometimes", envir = se)
+ok(grepl("is not a setting",
+         tryCatch({ se$ndmm_mm_adjacent_groups(); "" }, error = conditionMessage),
+         fixed = TRUE),
+   "and anything else stops the run rather than silently overriding nothing")
+assign("NDMM_MM_ADJACENT_STATES", "override", envir = se)
+# The five stay required; the remission ones do not. Absence of the five means
+# the override silently fails, absence of a remission label just means this
+# code list does not carry the wording.
+oc <- paste(readLines(file.path(ROOT, "R", "steps", "04_other_malig.R"), warn = FALSE),
+            collapse = "\n")
+ok(grepl("IN ({req_in})", oc, fixed = TRUE) &&
+     grepl("req    <- gsub(\"'\", \"''\", NDMM_MM_ADJACENT_OVERRIDE)", oc, fixed = TRUE),
+   "the fail-loud count is against the five required labels, not the proposal")
+# The list the study team has to look at.
+SSQL <- character(0)
+assign("db_q", function(con, sql) data.frame(
+  TUMOR_GROUP = c("PLASMA CELL LEUKEMIA IN REMISSION", "AMYLOIDOSIS"),
+  OVERRIDDEN = c(1L, 0L), N_CODES = c(4L, 9L)), envir = se)
+se$build_ndmm_mm_adjacent_groups(NULL, cfg_defaults)
+g <- SSQL[1]
+ok(grepl("NDMM_MM_ADJACENT_GROUPS", g, fixed = TRUE),
+   "every plasma-cell-looking group on the code list is written out for review")
+for (k in c("%REMISSION%", "%RELAPSE%", "%PLASMACYTOMA%", "%PLASMA CELL%",
+            "%GAMMOPATHY%", "%MYELOMA%"))
+  ok(grepl(k, g, fixed = TRUE), paste0("...including anything matching ", k))
+ok(grepl("max(is_mm_adjacent_override)", g, fixed = TRUE),
+   "with whether the override reaches it, which is the question being asked")
+
+cat("\n-- what \"belantamab in any LOT\" is taken to mean --\n")
+# Lines of therapy do not exist when this runs - the LOT algorithm runs over
+# the cohort this build produces - so the exclusion is a claims proxy, and
+# apr_30_2026's proxy had no lower bound at all: a claim from before the study
+# period excluded the patient, which is wrong under any reading of "any LOT".
+drive_bel <- function(scope = "study_period") {
+  assign("NDMM_BELANTAMAB_SCOPE", scope, envir = se)
+  SSQL <<- character(0)
+  m <- tryCatch({ se$build_ndmm_belantamab_patids(NULL, "cdm.medical", "cdm.rx"); "" },
+                error = conditionMessage)
+  list(msg = m, tx = SSQL[1], pat = SSQL[2])
+}
+r <- drive_bel()
+ok(identical(r$msg, ""), "the default scope builds")
+ok(length(gregexpr("<= date('", r$tx, fixed = TRUE)[[1]]) == 4L,
+   "every claim arm is bounded above by the end of the study period")
+ok(grepl(paste0("b.bel_dt >= date('", se$NDMM_STUDY_START, "')"), r$pat, fixed = TRUE),
+   "and by default bounded below at the start of it - lines exist nowhere else")
+ok(grepl("INNER JOIN _ndmm_lot1_starts", r$pat, fixed = TRUE),
+   "scoped to the 1L candidates, so it excludes from this cohort and not at large")
+r <- drive_bel("from_index")
+ok(grepl("b.bel_dt >= l1.LOT1_START_DT", r$pat, fixed = TRUE),
+   "from_index reads it strictly: on or after the date the patient's lines start")
+r <- drive_bel("whenever")
+ok(grepl("is not a scope", r$msg, fixed = TRUE),
+   "a scope nobody defined stops the run rather than quietly excluding everyone")
+assign("NDMM_BELANTAMAB_SCOPE", "study_period", envir = se)
+# The dates are kept on the claims so all three readings can be counted, and
+# the run reports what the choice costs instead of leaving it to be guessed.
+ok(grepl("cast(t.{dt} as date) AS bel_dt", r$tx, fixed = TRUE) ||
+     grepl("AS bel_dt", r$tx, fixed = TRUE),
+   "each belantamab claim keeps its date, which is what makes the comparison possible")
+SSQL <- character(0)
+assign("db_q", function(con, sql) data.frame(SCOPE = c("ever", "study_period", "from_index"),
+                                             N_PATIENTS = c(120L, 118L, 90L)), envir = se)
+se$build_ndmm_belantamab_scope_counts(NULL, cfg_defaults)
+sc <- SSQL[1]
+ok(grepl("NDMM_BELANTAMAB_SCOPE_COUNTS", sc, fixed = TRUE),
+   "the three readings are counted into a table every run")
+for (k in c("'ever'", "'study_period'", "'from_index'"))
+  ok(grepl(k, sc, fixed = TRUE), paste0("...including ", k))
+ok(length(gregexpr("count(DISTINCT b.PATID)", sc, fixed = TRUE)[[1]]) == 3L,
+   "by patients, so the numbers can be compared against the attrition")
+
+cat("\n-- which agents may set the index, and which set one --\n")
+# S6.2.1.1 says the eligible treatments exclude "those restricted to later LOTs
+# (see exclusion criteria)", and S6.2.1.2 names one therapy: belantamab. So the
+# default restricts nothing else. A name added here shrinks the cohort by a
+# rule the protocol does not state, which is why it is pinned and recorded.
+ok(identical(cfg_defaults$index_excluded_abbrs, "") &&
+     identical(cfg_defaults$index_excluded_codes, ""),
+   "nothing beyond belantamab is barred from setting the index by default")
+ok("NDMM_INDEX_EXCLUDED_ABBRS" %in% vapply(CONSTANT_SETTINGS, function(s) s$const,
+                                           character(1)),
+   "and if something is barred, the setting is pinned like anything that moves the count")
+drive_inel <- function(extra = "", codes = "", matches = 3L) {
+  assign("NDMM_INDEX_EXCLUDED_ABBRS", extra, envir = se)
+  assign("NDMM_INDEX_EXCLUDED_CODES", codes, envir = se)
+  SSQL <<- character(0)
+  assign("db_q", function(con, sql) data.frame(n = matches), envir = se)
+  m <- tryCatch({ se$build_ndmm_index_ineligible_codes(NULL); "" }, error = conditionMessage)
+  list(msg = m, sql = SSQL[1])
+}
+r <- drive_inel("")
+ok(identical(r$msg, "") && grepl(se$NDMM_BELANTAMAB_ABBR, r$sql, fixed = TRUE),
+   "with nothing named, belantamab alone is ineligible")
+ok(length(gregexpr("LIKE '", r$sql, fixed = TRUE)[[1]]) == 1L,
+   "...one pattern, not a wider net than the protocol asks for")
+r <- drive_inel("CART,TALQ")
+ok(grepl("'CART'", r$sql, fixed = TRUE) && grepl("'TALQ'", r$sql, fixed = TRUE) &&
+     grepl(se$NDMM_BELANTAMAB_ABBR, r$sql, fixed = TRUE),
+   "named agents join belantamab, and belantamab is never dropped")
+r <- drive_inel("NOSUCHAGENT", matches = 0L)
+ok(grepl("matches no row", r$msg, fixed = TRUE) &&
+     grepl("NOSUCHAGENT", r$msg, fixed = TRUE),
+   "a name that matches no code stops the run - it would read as a restriction and do nothing")
+# By code as well as by name: the study team may have the HCPCS or the NDC and
+# not the code list's own abbreviation.
+r <- drive_inel(codes = "HCPCS:J9999")
+ok(grepl("code_type = 'HCPCS'", r$sql, fixed = TRUE) &&
+     grepl("code = 'J9999'", r$sql, fixed = TRUE),
+   "a TYPE:CODE entry bars that code of that type")
+r <- drive_inel(codes = "J9999")
+ok(grepl("code = 'J9999'", r$sql, fixed = TRUE) &&
+     !grepl("code_type = ", r$sql, fixed = TRUE),
+   "...and a bare code bars it whatever the type")
+# Stripped, not padded: the code list stores its codes stripped too, and the
+# eleven-digit padding happens at the join. Padding here would stop a
+# ten-digit code list entry matching the ten-digit code someone typed.
+r <- drive_inel(codes = "ndc:50242-040-62")
+ok(grepl("code_type = 'NDC'", r$sql, fixed = TRUE) &&
+     grepl("code = '5024204062'", r$sql, fixed = TRUE),
+   "punctuation is stripped and the type uppercased, the same as the code list")
+r <- drive_inel(codes = "HCPCS:J0000", matches = 0L)
+ok(grepl("matches no row", r$msg, fixed = TRUE) && grepl("J0000", r$msg, fixed = TRUE),
+   "a code not on the therapy list stops the run too - barring it would do nothing")
+r <- drive_inel("CART", "HCPCS:J9999")
+ok(grepl("'CART'", r$sql, fixed = TRUE) && grepl("J9999", r$sql, fixed = TRUE) &&
+     grepl(se$NDMM_BELANTAMAB_ABBR, r$sql, fixed = TRUE),
+   "names and codes combine, and belantamab survives both")
+assign("NDMM_INDEX_EXCLUDED_ABBRS", "", envir = se)
+assign("NDMM_INDEX_EXCLUDED_CODES", "", envir = se)
+
+# The list the protocol gestures at and no document here contains: what the
+# data says actually set an index.
+SSQL <- character(0)
+assign("db_q", function(con, sql) data.frame(MED_ABBR = c("LEN", "BOR"),
+                                             N_PATIENTS = c(900L, 700L)), envir = se)
+se$build_ndmm_index_agents(NULL, cfg_defaults)
+a <- SSQL[1]
+ok(grepl("CREATE OR REPLACE TABLE", a, fixed = TRUE) &&
+     grepl("NDMM_INDEX_AGENTS", a, fixed = TRUE),
+   "the agents that set an index are written to a table, not only logged")
+ok(grepl("tx.tx_dt = l1.LOT1_START_DT", a, fixed = TRUE),
+   "counted on the index date itself, so it is what set the index and not any later claim")
+ok(grepl("count(DISTINCT PATID)", a, fixed = TRUE),
+   "...by patients, so one agent's many claims do not read as many patients")
+ok(grepl("_ndmm_index_tx", a, fixed = TRUE),
+   "and read off the scan the index came from, not a second pass over the claims")
 
 # Belantamab is how exclusion 4 is applied and how the index scan knows what to
 # skip. If the abbreviation matches nothing, both silently stop working.
@@ -587,10 +803,13 @@ ok(grepl("year(i.INDEX_DATE) - d.YRDOB", csql, fixed = TRUE),
 ok(grepl("date_add(i.INDEX_DATE, 1)", csql, fixed = TRUE) &&
      length(gregexpr("date_add(i.INDEX_DATE, 1)", csql, fixed = TRUE)[[1]]) == 2L,
    "and both follow-up lengths run from it")
+ok(grepl("b.DEATH_DT < i.INDEX_DATE", csql, fixed = TRUE) &&
+     grepl("THEN i.INDEX_DATE ELSE b.DEATH_DT", csql, fixed = TRUE),
+   "an imputed death between the diagnosis and the 1L index is re-clamped at the index")
 ok(grepl("s.cov_start <= i.INDEX_DATE", csql, fixed = TRUE) &&
      grepl("s.cov_end   >= i.INDEX_DATE", csql, fixed = TRUE),
    "the CE end is the span covering the 1L index, so it moves with the anchor too")
-ok(grepl("GDR_CD, YRDOB, DEATH_DT", csql, fixed = TRUE) &&
+ok(grepl("GDR_CD, YRDOB", csql, fixed = TRUE) &&
      grepl("_ndmm_base_cohort", csql, fixed = TRUE),
    "only the demographics are carried across - they do not depend on an anchor")
 
@@ -600,10 +819,11 @@ sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = ce2)
 assign("log_msg", function(...) invisible(NULL), envir = ce2)
 assign("wrk", function(x) paste0("wk.p_", x), envir = ce2)
 drive_chk <- function(cols = NDMM_COHORT_COLS, pat = 10L, rows = pat, noidx = 0L,
-                      expect = pat) {
+                      expect = pat, backwards = 0L, nofu = 0L) {
   assign("db_q", function(con, sql) {
     if (grepl("DESCRIBE", sql, fixed = TRUE)) data.frame(col_name = cols)
-    else data.frame(n_rows = rows, n_pat = pat, n_noidx = noidx)
+    else data.frame(n_rows = rows, n_pat = pat, n_noidx = noidx,
+                    n_backwards = backwards, n_nofu = nofu)
   }, envir = ce2)
   tryCatch({ ce2$check_ndmm_cohort(NULL, list(), expect); "" }, error = conditionMessage)
 }
@@ -618,6 +838,12 @@ ok(grepl("fans out", m, fixed = TRUE),
 m <- drive_chk(noidx = 3L)
 ok(grepl("no INDEX_DATE", m, fixed = TRUE),
    "so does a row with no index date, which is the day every window runs from")
+m <- drive_chk(backwards = 2L)
+ok(grepl("end before they begin", m, fixed = TRUE),
+   "a cohort row whose follow-up ends before the index stops the build")
+m <- drive_chk(nofu = 4L)
+ok(grepl("no follow-up at all", m, fixed = TRUE),
+   "...and so does one with no follow-up window for a LOT run to measure")
 m <- drive_chk(pat = 9L, expect = 10L)  # rows follows pat, so this is not a fan-out
 ok(grepl("attrition ends at", m, fixed = TRUE),
    "and a cohort that disagrees with its own funnel is not published")
@@ -679,7 +905,7 @@ ne <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = ne)
 assign("log_msg", function(...) invisible(NULL), envir = ne)
 assign("cdm_src", function(x) paste0("cdm.t_", x), envir = ne)
-assign("NDMM_LOT1_STARTS", "_l1", envir = ne)
+assign("NDMM_BASE_COHORT", "_ndmm_base_cohort", envir = ne)
 assign("NDMM_MMA_CODELIST", "_cl", envir = ne)
 assign("NDMM_PRE_LOT1_DAYS", 365L, envir = ne)
 row <- function(src, n = 10L, n11 = 10L, n10 = 0L, oth = 0L, alpha = 0L,
@@ -706,9 +932,9 @@ ok(length(NSQL) == 3L &&
      any(grepl("cdm.t_rx", NSQL, fixed = TRUE)) &&
      any(grepl("_cl", NSQL, fixed = TRUE)),
    "both claim sources and the code list are profiled, not just the claims")
-ok(any(grepl("_l1", NSQL, fixed = TRUE)) &&
-     any(grepl("date_sub(l1.LOT1_START_DT, 365)", NSQL, fixed = TRUE)),
-   "scoped to the candidates and the baseline window the scan reads")
+ok(any(grepl("_ndmm_base_cohort", NSQL, fixed = TRUE)) &&
+     any(grepl("date_sub(b.MM_DX_DT, 365)", NSQL, fixed = TRUE)),
+   "scoped to the base cohort and a window covering every NDC scan that follows")
 ok(all(grepl("trim(cast(t.NDC as string)) <> ''", NSQL[1:2], fixed = TRUE)),
    "and every non-blank value is counted, including ones that cannot join")
 m <- drive_ndc(rx = row("rx", n10 = 3L, n11 = 7L))
@@ -795,6 +1021,64 @@ if (length(alt)) {
       "exercised\n", sep = "")
 }
 
+cat("\n-- nothing is read before the step that builds it --\n")
+# check_ndc_shape() joined NDMM_LOT1_STARTS and was called before the step that
+# creates it. Nothing caught that: the phase list pins a handful of pairs by
+# hand, and this was not one of them. So derive it - for every view any called
+# function reads, the function that creates it has to be called earlier.
+view_consts <- Filter(function(k) {
+  v <- get(k, envir = consts0, inherits = FALSE)
+  is.character(v) && length(v) == 1L && grepl("^_", v)
+}, ls(consts0))
+fn_bodies <- local({
+  out <- list()
+  for (f in c(step_files, file.path(ROOT, "R", "build_nndm.R"))) {
+    ln <- readLines(f, warn = FALSE)
+    starts <- grep("^([A-Za-z_.][A-Za-z0-9_.]*) <- function", ln)
+    for (i in starts) {
+      nm <- sub(" <- function.*", "", ln[i])
+      e  <- grep("^}", ln); e <- e[e > i]
+      if (length(e)) out[[nm]] <- ln[i:e[1]]
+    }
+  }
+  out
+})
+view_names <- setNames(vapply(view_consts, function(k)
+  get(k, envir = consts0, inherits = FALSE), character(1)), view_consts)
+pos <- function(fn) {
+  m <- regexpr(paste0("(?<![A-Za-z0-9_.])", fn, "\\("), body, perl = TRUE)
+  if (m == -1) NA_integer_ else as.integer(m)
+}
+creates <- list(); readers <- list()
+for (nm in names(fn_bodies)) {
+  txt <- paste(fn_bodies[[nm]], collapse = "\n")
+  for (k in view_consts) {
+    tok <- paste0("{", k, "}")
+    if (regexpr(tok, txt, fixed = TRUE) == -1) next
+    if (regexpr(paste0("VIEW ", tok), txt, fixed = TRUE) > 0) creates[[k]] <- nm
+    else readers[[k]] <- unique(c(readers[[k]], nm))
+  }
+}
+too_early <- character(0)
+for (k in names(readers)) {
+  cr <- creates[[k]]
+  if (is.null(cr)) next
+  pc <- pos(cr)
+  if (is.na(pc)) next
+  for (rd in readers[[k]]) {
+    pr <- pos(rd)
+    if (!is.na(pr) && pr < pc)
+      too_early <- c(too_early, paste0(rd, "() reads ", k, " before ", cr,
+                                       "() builds it"))
+  }
+}
+ok(length(creates) > 0,
+   paste0("the runner's calls resolve to ", length(creates), " views with a builder"))
+ok(length(too_early) == 0,
+   if (length(too_early)) paste0("read before it exists -- ",
+                                 paste(too_early, collapse = "; "))
+   else "every view a called step reads is built by an earlier call")
+
 cat("\n-- a view read twice is a query run twice --\n")
 # Spark re-runs a temporary view on every read. These views sit on top of each
 # other, so a second read of NDMM_LOT1_STARTS is a second run of the whole
@@ -804,10 +1088,6 @@ cat("\n-- a view read twice is a query run twice --\n")
 sql_txt <- paste(c(unlist(lapply(step_files, readLines, warn = FALSE)),
                    readLines(file.path(ROOT, "R", "build_nndm.R"), warn = FALSE)),
                  collapse = "\n")
-view_consts <- Filter(function(k) {
-  v <- get(k, envir = consts0, inherits = FALSE)
-  is.character(v) && length(v) == 1L && grepl("^_", v)
-}, ls(consts0))
 reads <- vapply(view_consts, function(k) {
   n  <- length(gregexpr(paste0("{", k, "}"), sql_txt, fixed = TRUE)[[1]])
   n  <- if (regexpr(paste0("{", k, "}"), sql_txt, fixed = TRUE) == -1) 0L else n
@@ -816,9 +1096,8 @@ reads <- vapply(view_consts, function(k) {
   as.integer(n - cr)
 }, integer(1))
 hot <- names(reads)[reads > 1L]
-# NDMM_FLAGS_ALL is materialized by the ported step that builds it, and
 # NDMM_LOT_LONG_FILT is not built at all.
-hot <- setdiff(hot, c("NDMM_FLAGS_ALL", "NDMM_LOT_LONG_FILT"))
+hot <- setdiff(hot, "NDMM_LOT_LONG_FILT")
 ok(length(hot) > 0, paste0("the SQL reads ", length(hot), " views more than once"))
 unwritten <- setdiff(hot, CHECKPOINTS)
 ok(length(unwritten) == 0,
@@ -864,17 +1143,30 @@ ok(grepl("write refused",
 # Every checkpoint is taken, and after the step that builds the view it names -
 # checkpointing first would write an empty table and repoint the view at it,
 # and the step would then rebuild the view and undo the whole thing.
-builds <- list(NDMM_MM_DX_EVENTS = "build_ndmm_mm_dx_events",
+builds <- list(NDMM_MM_DX_CODES = "build_ndmm_mm_dx_codes",
+               NDMM_MM_DX_EVENTS = "build_ndmm_mm_dx_events",
                NDMM_MM_QUALIFYING = "build_ndmm_mm_qualifying",
                NDMM_BASE_COHORT = "build_ndmm_base_cohort",
                NDMM_ENROLL_SPANS = "build_enrollment_spans_ndmm",
                NDMM_MMA_CODELIST = "build_ndmm_mma_codelist",
                NDMM_BELANTAMAB_CODES = "build_ndmm_belantamab_codes",
                NDMM_LOT1_STARTS = "build_ndmm_lot1_index",
+               NDMM_INDEX_TX = "build_ndmm_lot1_index",
                NDMM_OTHER_MALIG_CODES = "build_ndmm_other_malig_codes",
                NDMM_BELANTAMAB_PATIDS = "build_ndmm_belantamab_patids",
+               NDMM_BELANTAMAB_TX = "build_ndmm_belantamab_patids",
                NDMM_PATIDS = "build_ndmm_flags")
-for (k in CHECKPOINTS) {
+# NDMM_FLAGS_ALL is checkpointed inside the step that builds it, not by the
+# runner - NDMM_PATIDS is defined over it there and Spark inlines the plan.
+fl_txt <- paste(readLines(file.path(ROOT, "R", "steps", "06_flags.R"), warn = FALSE),
+                collapse = "\n")
+ok(regexpr('checkpoint(con, "NDMM_FLAGS_ALL")', fl_txt, fixed = TRUE) > 0 &&
+     regexpr('checkpoint(con, "NDMM_FLAGS_ALL")', fl_txt, fixed = TRUE) <
+       regexpr("VIEW {NDMM_PATIDS}", fl_txt, fixed = TRUE),
+   "NDMM_FLAGS_ALL is written before NDMM_PATIDS is defined over it")
+ok(!grepl("could not materialize", fl_txt, fixed = TRUE),
+   "and a write it cannot do is not warned past - it is a declared output")
+for (k in setdiff(CHECKPOINTS, "NDMM_FLAGS_ALL")) {
   i <- regexpr(paste0('checkpoint(con, "', k, '")'), body, fixed = TRUE)
   j <- if (is.null(builds[[k]])) -1L else
     regexpr(paste0("(?<![A-Za-z0-9_.])", builds[[k]], "\\("), body, perl = TRUE)
@@ -941,8 +1233,10 @@ ok(length(undeclared) == 0,
 # checkpoint() writes wrk(name) with the name in a variable, so the scan above
 # cannot see those. They are covered instead by the loop that requires a
 # checkpoint(con, "<name>") call in the runner for every one of them.
+ck_txt <- paste(c(body, unlist(lapply(step_files, readLines, warn = FALSE))),
+                collapse = "\n")
 checkpointed <- Filter(function(k)
-  regexpr(paste0('checkpoint(con, "', k, '")'), body, fixed = TRUE) > 0, CHECKPOINTS)
+  regexpr(paste0('checkpoint(con, "', k, '")'), ck_txt, fixed = TRUE) > 0, CHECKPOINTS)
 unwritten <- setdiff(OUTPUTS, c(named, checkpointed))
 ok(length(unwritten) == 0,
    if (length(unwritten)) paste0("declared as an output but nothing the run ",

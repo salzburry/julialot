@@ -33,9 +33,20 @@ cfg_defaults <- list(
   # How belantamab is recognised on cl_mma_codelist.csv; see
   # standalone_constants.R. Pinned because it is exclusion 4.
   belantamab_abbr   = Sys.getenv("NDMM_BELANTAMAB_ABBR", unset = "BEL%"),
+  # Agents barred from setting the 1L index beyond belantamab. Empty unless the
+  # study team names one; see standalone_constants.R and NDMM_INDEX_AGENTS.
+  index_excluded_abbrs = Sys.getenv("NDMM_INDEX_EXCLUDED_ABBRS", unset = ""),
+  # The same, by HCPCS or NDC rather than by the code list's own abbreviation.
+  index_excluded_codes = Sys.getenv("NDMM_INDEX_EXCLUDED_CODES", unset = ""),
+  # Which claims proxy stands for "belantamab in any LOT"; see
+  # standalone_constants.R and NDMM_BELANTAMAB_SCOPE_COUNTS.
+  belantamab_scope     = Sys.getenv("NDMM_BELANTAMAB_SCOPE", unset = "study_period"),
+  # Whether a plasma-cell disorder in remission still excludes as another
+  # cancer; see standalone_constants.R and NDMM_MM_ADJACENT_GROUPS.
+  mm_adjacent_states = Sys.getenv("NDMM_MM_ADJACENT_STATES", unset = "override"),
 
   use_quarterly_tables = as.logical(Sys.getenv("USE_QUARTERLY_TABLES", unset = "TRUE")),
-  study_end            = Sys.getenv("STUDY_END", unset = "2025-06-30"),
+  study_end            = Sys.getenv("STUDY_END", unset = "2026-03-31"),
 
   # The 1L eligible-treatment period opens here (protocol S6.2.1.1).
   lot1_from     = Sys.getenv("LOT1_FROM", unset = "2017-01-01"),
@@ -49,7 +60,7 @@ cfg_defaults <- list(
   gap_days      = as.integer(Sys.getenv("GAP_DAYS", unset = "30")),
   # The pregnancy exclusion scans [study_start, study_end]. Same environment
   # variable nndm_constants.R reads for NDMM_STUDY_START.
-  study_start   = Sys.getenv("STUDY_START", unset = "2015-07-01"),
+  study_start   = Sys.getenv("STUDY_START", unset = "2016-01-01"),
 
   codelist_dir = Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist"),
   output_dir   = Sys.getenv("OUTPUT_DIR", unset = "/mnt/artifacts/results"),

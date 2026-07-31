@@ -17,7 +17,7 @@ CONTRACT <- list(
   cdm_schema           = "clnprw_optum",
   codelist_dir         = "/mnt/code/codelist",
   use_quarterly_tables = TRUE,
-  study_end            = "2025-06-30",
+  study_end            = "2026-03-31",
   # The 1L eligible-treatment period opens here (protocol S6.2.1.1).
   lot1_from            = "2017-01-01",
   # 12 months of CE and of baseline before the 1L index date.
@@ -30,12 +30,16 @@ CONTRACT <- list(
   # The pregnancy scan runs over [study_start, study_end], so this moves who is
   # excluded. It reaches the SQL through NDMM_STUDY_START, which reads the same
   # environment variable.
-  study_start          = "2015-07-01",
+  study_start          = "2016-01-01",
   # Two outpatient MM claims within this many days confirm a diagnosis, and
   # this is the age the diagnosis year is measured against. Both are S6.2.1.1.
   outpatient_window    = 90L,
   min_age              = 18L,
   belantamab_abbr      = "BEL%",
+  index_excluded_abbrs = "",
+  index_excluded_codes = "",
+  belantamab_scope     = "study_period",
+  mm_adjacent_states = "override",
   tbl_medical          = "medical",
   tbl_med_proc         = "med_procedure",
   tbl_med_diag         = "med_diagnosis",
@@ -66,14 +70,21 @@ upstream_tables <- function(cfg) list()
 # more than once is missing from here. Two entries the count cannot see are
 # BASE_COHORT and BELANTAMAB_PATIDS - the flags step takes those as parameters,
 # so they reach the SQL as {elig_coh_final} and {map_stacked}.
-CHECKPOINTS <- c("NDMM_MM_DX_EVENTS", "NDMM_MM_QUALIFYING", "NDMM_BASE_COHORT",
+#
+# NDMM_FLAGS_ALL is checkpointed inside 06_flags.R rather than here, because
+# NDMM_PATIDS is defined over it in the same function and Spark inlines a temp
+# view's plan: repointing after NDMM_PATIDS exists would leave that view on the
+# old query. It is a deliverable as well as a checkpoint.
+CHECKPOINTS <- c("NDMM_FLAGS_ALL", "NDMM_MM_DX_CODES",
+                 "NDMM_MM_DX_EVENTS", "NDMM_MM_QUALIFYING", "NDMM_BASE_COHORT",
                  "NDMM_ENROLL_SPANS", "NDMM_MMA_CODELIST",
                  "NDMM_BELANTAMAB_CODES", "NDMM_LOT1_STARTS",
                  "NDMM_OTHER_MALIG_CODES", "NDMM_BELANTAMAB_PATIDS",
-                 "NDMM_PATIDS")
+                 "NDMM_INDEX_TX", "NDMM_BELANTAMAB_TX", "NDMM_PATIDS")
 
 # What the run writes. All prefixed, so two cohorts sit side by side.
-DELIVERABLES <- c("NDMM_FLAGS_ALL", "NDMM_COHORT", "NDMM_ATTRITION",
+DELIVERABLES <- c("NDMM_COHORT", "NDMM_ATTRITION", "NDMM_INDEX_AGENTS",
+                  "NDMM_BELANTAMAB_SCOPE_COUNTS", "NDMM_MM_ADJACENT_GROUPS",
                   "NDMM_CODELIST_METADATA", "NDMM_RUN_METADATA",
                   "NDMM_BUILD_STATUS")
 OUTPUTS <- c(DELIVERABLES, CHECKPOINTS)
@@ -230,6 +241,15 @@ CONSTANT_SETTINGS <- list(
   list(const = "NDMM_TBL_MEMBER_ENROLLMENT", cfg = "tbl_member_enroll", note = ""),
   list(const = "NDMM_OUTPATIENT_WINDOW",       cfg = "outpatient_window",  note = ""),
   list(const = "NDMM_MIN_AGE",                 cfg = "min_age",            note = ""),
+  # Which agents may not set the index. Empty by default; a value here shrinks
+  # the cohort, so it is pinned like any other thing that does.
+  list(const = "NDMM_INDEX_EXCLUDED_ABBRS",   cfg = "index_excluded_abbrs", note = ""),
+  list(const = "NDMM_INDEX_EXCLUDED_CODES",   cfg = "index_excluded_codes", note = ""),
+  # Which reading of "in any LOT" the belantamab exclusion uses. A proxy for
+  # something this build cannot see, and it changes the count.
+  list(const = "NDMM_BELANTAMAB_SCOPE",       cfg = "belantamab_scope",   note = ""),
+  # Whether a plasma-cell disorder in remission still counts as another cancer.
+  list(const = "NDMM_MM_ADJACENT_STATES", cfg = "mm_adjacent_states", note = ""),
   # Not a cohort window but a code-list assumption, and just as able to change
   # the count: it is what identifies belantamab, and belantamab is exclusion 4.
   list(const = "NDMM_BELANTAMAB_ABBR",        cfg = "belantamab_abbr",    note = "")
@@ -325,8 +345,15 @@ check_attrition_monotonic <- function(counts) {
 # that happen, so profile the values first and say what is there.
 #
 # Both sides, because the join pads both: a ten-digit code list has the same
-# problem as a ten-digit claim. Scoped to the NDMM candidates and the baseline
-# window the scan actually reads, not the whole of medical.
+# problem as a ten-digit claim.
+#
+# Scoped to the base cohort rather than to the 1L starts. The starts do not
+# exist yet - the scan that builds them matches NDCs itself, so the profile has
+# to come first, and reading NDMM_LOT1_STARTS here made the build stop with a
+# missing view. The window runs from a year before each patient's diagnosis to
+# the end of the study, which covers both the index scan and the baseline scan:
+# the index is on or after the diagnosis, so the baseline never starts earlier
+# than a year before it.
 check_ndc_shape <- function(con, cfg) {
   log_msg("Checking NDC shape...")
   # Every non-blank value, including ones that cannot join. A profile that
@@ -348,12 +375,12 @@ check_ndc_shape <- function(con, cfg) {
         FROM (
           SELECT cast(t.NDC as string) AS v
           FROM {tbl} t
-          INNER JOIN {NDMM_LOT1_STARTS} l1 ON cast(t.PATID as string) = l1.PATID
+          INNER JOIN {NDMM_BASE_COHORT} b ON cast(t.PATID as string) = b.PATID
           WHERE cast(t.NDC as string) IS NOT NULL
             AND trim(cast(t.NDC as string)) <> ''
             AND cast(t.{dt} AS date)
-                  BETWEEN date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS})
-                      AND date_sub(l1.LOT1_START_DT, 1))))")
+                  BETWEEN date_sub(b.MM_DX_DT, {NDMM_PRE_LOT1_DAYS})
+                      AND date('{cfg$study_end}'))))")
   codelist_sql <- glue("
     SELECT 'codelist' AS SOURCE, {shape_cols}
     FROM (
@@ -450,7 +477,11 @@ contract_settings <- function() {
 }
 
 RUN_METADATA_COLS <- c(RUN_ID = "STRING", OBJECT_PREFIX = "STRING",
-                       BELANTAMAB_ABBR = "STRING", CODE_MD5 = "STRING",
+                       BELANTAMAB_ABBR = "STRING", INDEX_EXCLUDED = "STRING",
+                       INDEX_EXCLUDED_CODES = "STRING",
+                       BELANTAMAB_SCOPE = "STRING",
+                       MM_ADJACENT_STATES = "STRING",
+                       CODE_MD5 = "STRING",
                        CONTRACT_SETTINGS = "STRING",
                        WAIVERS_REQUESTED = "STRING", WAIVERS_APPLIED = "STRING",
                        N_NDMM = "BIGINT", RECORDED_AT = "TIMESTAMP")
@@ -469,7 +500,10 @@ write_run_metadata <- function(con, cfg, here, n) {
     glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"),
     glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES (",
          "{sql_text(run_id)}, {sql_text(cfg$object_prefix)}, ",
-         "{sql_text(NDMM_BELANTAMAB_ABBR)}, {sql_text(code_fingerprint(here))}, ",
+         "{sql_text(NDMM_BELANTAMAB_ABBR)}, {sql_text(NDMM_INDEX_EXCLUDED_ABBRS)}, ",
+         "{sql_text(NDMM_INDEX_EXCLUDED_CODES)}, {sql_text(NDMM_BELANTAMAB_SCOPE)}, ",
+         "{sql_text(NDMM_MM_ADJACENT_STATES)}, ",
+         "{sql_text(code_fingerprint(here))}, ",
          "{sql_text(contract_settings())}, ",
          "{sql_text(paste(sort(waivers_named(), method = 'radix'), collapse = ','))}, ",
          "{sql_text(paste(sort(getOption('nndm_waivers_applied', character(0)), ",
@@ -516,25 +550,38 @@ build_ndmm_cohort_table <- function(con, cfg) {
       GROUP BY i.PATID
     ),
     dem AS (
-      SELECT cast(PATID as string) AS PATID, GDR_CD, YRDOB, DEATH_DT
+      SELECT cast(PATID as string) AS PATID, GDR_CD, YRDOB
       FROM {NDMM_BASE_COHORT}
+    ),
+    -- The death date was imputed against the MM diagnosis, and the cohort is
+    -- anchored at the 1L start, which is later. A month-only or year-only
+    -- death that lands between the two would give an ENDDATE before the index
+    -- and a negative FU_DAYS. Re-clamp at the anchor that is actually used -
+    -- the same rule the parent applies, applied to the right date.
+    dth AS (
+      SELECT b.PATID,
+             CASE WHEN b.DEATH_DT IS NOT NULL AND b.DEATH_DT < i.INDEX_DATE
+                  THEN i.INDEX_DATE ELSE b.DEATH_DT END AS DEATH_DT
+      FROM idx i
+      INNER JOIN {NDMM_BASE_COHORT} b ON b.PATID = i.PATID
     )
     SELECT i.PATID,
            i.INDEX_DATE,
-           least({se}, coalesce(d.DEATH_DT, {se}))                    AS ENDDATE,
-           least({se}, coalesce(d.DEATH_DT, {se}),
+           least({se}, coalesce(dd.DEATH_DT, {se}))                   AS ENDDATE,
+           least({se}, coalesce(dd.DEATH_DT, {se}),
                  coalesce(ce.ENDDATE_CE, {se}))                       AS ENDDATE_CE,
-           d.DEATH_DT,
+           dd.DEATH_DT,
            d.GDR_CD,
            d.YRDOB,
            (year(i.INDEX_DATE) - d.YRDOB)                             AS AGE_INDEX_YR,
-           datediff(least({se}, coalesce(d.DEATH_DT, {se})),
+           datediff(least({se}, coalesce(dd.DEATH_DT, {se})),
                     date_add(i.INDEX_DATE, 1)) + 1                    AS FU_DAYS,
-           datediff(least({se}, coalesce(d.DEATH_DT, {se}),
+           datediff(least({se}, coalesce(dd.DEATH_DT, {se}),
                           coalesce(ce.ENDDATE_CE, {se})),
                     date_add(i.INDEX_DATE, 1)) + 1                    AS FU_DAYS_CE
     FROM idx i
     LEFT JOIN dem d  ON d.PATID  = i.PATID
+    LEFT JOIN dth dd ON dd.PATID = i.PATID
     LEFT JOIN ce     ON ce.PATID = i.PATID"),
     qc = glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients ",
               "FROM {wrk('NDMM_COHORT')}"))
@@ -558,7 +605,9 @@ check_ndmm_cohort <- function(con, cfg, n_expected) {
          "that build reads these columns off whatever cohort it is given.",
          call. = FALSE)
   q <- db_q(con, glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_pat, ",
-                      "sum(CASE WHEN INDEX_DATE IS NULL THEN 1 ELSE 0 END) AS n_noidx ",
+                      "sum(CASE WHEN INDEX_DATE IS NULL THEN 1 ELSE 0 END) AS n_noidx, ",
+                      "sum(CASE WHEN ENDDATE < INDEX_DATE THEN 1 ELSE 0 END) AS n_backwards, ",
+                      "sum(CASE WHEN FU_DAYS < 1 THEN 1 ELSE 0 END) AS n_nofu ",
                       "FROM {tbl}"))
   if (q$n_rows != q$n_pat)
     stop(tbl, " has ", q$n_rows, " rows for ", q$n_pat, " patients. A cohort ",
@@ -566,6 +615,20 @@ check_ndmm_cohort <- function(con, cfg, n_expected) {
   if (isTRUE(q$n_noidx > 0))
     stop(q$n_noidx, " rows in ", tbl, " have no INDEX_DATE. It is the 1L start, ",
          "and every window a LOT build measures runs from it.", call. = FALSE)
+  # Death dates are imputed - a month-only date becomes the 15th, a year-only
+  # one July 15 - and the cohort is anchored at the 1L start, which is later
+  # than the diagnosis they were imputed against. A death that lands between
+  # the two would end follow-up before it began.
+  if (isTRUE(q$n_backwards > 0))
+    stop(q$n_backwards, " rows in ", tbl, " end before they begin: ENDDATE is ",
+         "earlier than INDEX_DATE. Death is imputed against the diagnosis and ",
+         "the index is the 1L start, so a partial death date between the two ",
+         "does this. build_ndmm_cohort_table() re-clamps it at the index; if ",
+         "this fires, that clamp is not working.", call. = FALSE)
+  if (isTRUE(q$n_nofu > 0))
+    stop(q$n_nofu, " rows in ", tbl, " have no follow-up at all (FU_DAYS < 1). ",
+         "A LOT run over this cohort would measure lines in a window that does ",
+         "not exist.", call. = FALSE)
   if (!is.na(n_expected) && q$n_pat != n_expected)
     stop(tbl, " holds ", q$n_pat, " patients but the attrition ends at ",
          n_expected, ". The cohort and the funnel that reaches it must agree.",
@@ -664,6 +727,7 @@ build_nndm <- function(here, prefix) {
 
   log_msg("MM diagnosis over the study period, and who is old enough")
   build_ndmm_mm_dx_codes(con)
+  checkpoint(con, "NDMM_MM_DX_CODES")
   build_ndmm_mm_claim_header(con, cdm_src(cfg$tbl_medical),
                              cdm_src(cfg$tbl_confinement))
   build_ndmm_mm_dx_events(con, cdm_src(cfg$tbl_med_diag))
@@ -685,11 +749,14 @@ build_nndm <- function(here, prefix) {
   check_ndc_shape(con, cfg)
   build_ndmm_belantamab_codes(con)
   checkpoint(con, "NDMM_BELANTAMAB_CODES")
+  build_ndmm_index_ineligible_codes(con)
 
   log_msg("1L index: first eligible MM treatment claim on or after ",
           NDMM_LOT1_FROM)
   build_ndmm_lot1_index(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))
+  checkpoint(con, "NDMM_INDEX_TX")
   checkpoint(con, "NDMM_LOT1_STARTS")
+  build_ndmm_index_agents(con, cfg)
 
   log_msg("MM therapy in the ", NDMM_PRE_LOT1_DAYS, " days before 1L")
   build_ndmm_therapy_pre_lot1(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))
@@ -697,6 +764,7 @@ build_nndm <- function(here, prefix) {
   log_msg("Other cancer in the ", NDMM_PRE_LOT1_DAYS, " days before 1L")
   build_ndmm_other_malig_codes(con)
   checkpoint(con, "NDMM_OTHER_MALIG_CODES")
+  build_ndmm_mm_adjacent_groups(con, cfg)
   build_ndmm_med_claim_header_and_confinement(con, cdm_src(cfg$tbl_medical),
                                               cdm_src(cfg$tbl_confinement))
   build_ndmm_other_malig_pre_lot1(con, cdm_src(cfg$tbl_med_diag))
@@ -708,7 +776,9 @@ build_nndm <- function(here, prefix) {
 
   log_msg("Belantamab in any line, from claims")
   build_ndmm_belantamab_patids(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))
+  checkpoint(con, "NDMM_BELANTAMAB_TX")
   checkpoint(con, "NDMM_BELANTAMAB_PATIDS")
+  build_ndmm_belantamab_scope_counts(con, cfg)
 
   log_msg("Per-patient filter flags")
   # The ported flags step takes the cohort and the belantamab source as

@@ -37,3 +37,110 @@ NDMM_MIN_AGE <- as.integer(Sys.getenv("MIN_AGE", unset = "18"))
 # the run if it matches nothing rather than letting the exclusion the study
 # turns on quietly do nothing.
 NDMM_BELANTAMAB_ABBR <- Sys.getenv("NDMM_BELANTAMAB_ABBR", unset = "BEL%")
+
+# Agents that may not set the 1L index date, beyond belantamab. S6.2.1.1 says
+# the eligible treatments are "MM regimens commonly used in the first line
+# setting, excluding those restricted to later LOTs (see exclusion criteria)" -
+# and the exclusion criteria in S6.2.1.2 name one therapy, belantamab. So the
+# protocol as written restricts nothing else, and this is empty by default:
+# adding a name here shrinks the cohort by a rule the protocol does not state,
+# and that has to be a study-team decision made against real data.
+#
+# NDMM_INDEX_AGENTS is written on every run for exactly that decision: it is
+# every agent that actually set an index date, with how many patients it set
+# one for. Read it after the first run and, if a later-line-only agent is in
+# it, name it here - patterns are matched against CL_MED_ABBR the same way
+# NDMM_BELANTAMAB_ABBR is, comma-separated.
+NDMM_INDEX_EXCLUDED_ABBRS <- Sys.getenv("NDMM_INDEX_EXCLUDED_ABBRS", unset = "")
+
+# The same thing by code rather than by abbreviation, for when the study team
+# has the HCPCS or NDC to hand and not the code list's own naming. Entries are
+# comma-separated, either TYPE:CODE or a bare CODE that bars every type:
+#
+#   NDMM_INDEX_EXCLUDED_CODES=HCPCS:J9999,NDC:12345678901
+#   NDMM_INDEX_EXCLUDED_CODES=J9999
+#
+# Punctuation is stripped and letters uppercased - the same normalisation the
+# code list itself gets, so a hyphenated NDC works. Stripped, not padded to
+# eleven: the code list stores its codes stripped too and the padding happens
+# at the join, so padding here would stop a ten-digit entry matching the
+# ten-digit code someone typed. A code that matches no row of
+# cl_mma_codelist.csv stops the run: it is not a therapy this build would have
+# matched anyway, so barring it does nothing while reading as though it did.
+NDMM_INDEX_EXCLUDED_CODES <- Sys.getenv("NDMM_INDEX_EXCLUDED_CODES", unset = "")
+
+# What "in any LOT" is taken to mean for the belantamab exclusion (S6.2.1.2).
+# Lines of therapy do not exist when this build runs - the LOT algorithm runs
+# over the cohort it produces - so this is a claims proxy for LOT membership,
+# and which proxy changes the count:
+#
+#   study_period  any belantamab claim in [STUDY_START, STUDY_END]. Lines are
+#                 only ever built over the study period, so a claim outside it
+#                 is in no LOT. This is the default.
+#   from_index    on or after the patient's own 1L index. Lines are numbered
+#                 from that date, so this is the strictest reading of "in any
+#                 LOT" - and the narrowest, excluding fewest patients.
+#
+# Neither is LOT membership. Only running the LOT algorithm and checking which
+# line a belantamab claim landed in is exact; see the README.
+#
+# apr_30_2026 bounded neither end but the upper one, so a claim from before the
+# study period excluded the patient. That is wrong under any reading.
+NDMM_BELANTAMAB_SCOPE <- Sys.getenv("NDMM_BELANTAMAB_SCOPE", unset = "study_period")
+
+NDMM_BELANTAMAB_TX        <- "_ndmm_belantamab_tx"
+
+# The other disease states of the MM-adjacent conditions.
+#
+# nndm_constants.R lists five tumour groups the other-cancer rule must not
+# exclude on, because they are the index MM itself or its precursor rather than
+# another cancer. Three of them are the "not having achieved remission" state
+# of a plasma-cell disorder, and apr_30_2026's comment says the others "are
+# left in the filter pending confirmation".
+#
+# other_malig.csv, read on the warehouse 2026-07-30, carries each of those
+# three conditions in three states:
+#
+#   C9010 / C9011 / C9012  Plasma cell leukemia        not achieved / in remission / in relapse
+#   C9020 / C9021 / C9022  Extramedullary plasmacytoma not achieved / in remission / in relapse
+#   C9030 / C9031 / C9032  Solitary plasmacytoma       not achieved / in remission / in relapse
+#
+# Only the first of each three was overridden. So a patient was excluded for
+# having another cancer because their plasma cell leukemia was in remission or
+# in relapse, while an identical patient whose plasma cell leukemia had not
+# achieved remission was kept. A disease state cannot make a plasma-cell
+# disorder into a different cancer - relapse least of all.
+#
+# tumour_group in that file is one label per ICD code, not a grouping, so these
+# really are separate groups to the rule that reads it.
+#
+# The default overrides all six. NDMM_MM_ADJACENT_STATES=exclude restores
+# apr_30_2026's behaviour for anyone who wants to compare.
+#
+# Unlike the five, these are not required to exist: absence would just mean the
+# code list stopped carrying the wording. NDMM_MM_ADJACENT_GROUPS records what
+# was found either way.
+NDMM_MM_ADJACENT_STATES <- Sys.getenv("NDMM_MM_ADJACENT_STATES", unset = "override")
+NDMM_MM_ADJACENT_STATE_LABELS <- c(
+  "PLASMA CELL LEUKEMIA IN REMISSION",
+  "PLASMA CELL LEUKEMIA IN RELAPSE",
+  "EXTRAMEDULLARY PLASMACYTOMA IN REMISSION",
+  "EXTRAMEDULLARY PLASMACYTOMA IN RELAPSE",
+  "SOLITARY PLASMACYTOMA IN REMISSION",
+  "SOLITARY PLASMACYTOMA IN RELAPSE"
+)
+
+# Every tumour group the override applies to, given the setting. The ported
+# step reads this instead of the constant, so the two lists stay in one place.
+ndmm_mm_adjacent_groups <- function() {
+  switch(NDMM_MM_ADJACENT_STATES,
+    override = c(NDMM_MM_ADJACENT_OVERRIDE, NDMM_MM_ADJACENT_STATE_LABELS),
+    exclude  = NDMM_MM_ADJACENT_OVERRIDE,
+    stop("NDMM_MM_ADJACENT_STATES='", NDMM_MM_ADJACENT_STATES,
+         "' is not a setting. Use override or exclude; see ",
+         "standalone_constants.R.", call. = FALSE))
+}
+
+# Views built by the index-agent profile.
+NDMM_INDEX_TX             <- "_ndmm_index_tx"
+NDMM_INDEX_INELIGIBLE     <- "_ndmm_index_ineligible"
