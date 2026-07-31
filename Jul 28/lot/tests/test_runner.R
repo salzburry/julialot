@@ -902,6 +902,58 @@ ok(grepl("after$n_rows != before$n_rows", mci, fixed = TRUE) &&
    "...and a cohort that grew or shrank under the run stops it")
 ok("LOT_PATIENT_INPUT" %in% OUTPUTS,
    "it is a prefixed output, so two cohorts cannot share one snapshot")
+
+# Everything above reads the source. An early return leaves all of those lines
+# in place, so the whole function could be made a no-op - no snapshot written,
+# the view still on the live cohort table, the re-check never run - with every
+# assertion still passing. It was, and they did. Driven from here down, and
+# check_cohort_input is the real one so the re-validation actually happens.
+me <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_lot.R"), envir = me)
+assign("log_msg", function(...) invisible(NULL), envir = me)
+assign("lot_out", function(x) paste0("wk.p_", x), envir = me)
+MSQL <- character(0); MQRY <- character(0)
+assign("run_step", function(con, name, sql, qc = NULL) {
+  MSQL <<- c(MSQL, sql); invisible(TRUE) }, envir = me)
+assign("db_exec", function(con, sql) { MSQL <<- c(MSQL, sql); invisible(TRUE) }, envir = me)
+MGOOD <- list(n_rows = 10, n_patients = 10, n_null_patid = 0, n_null_index = 0,
+              n_null_end = 0, n_end_before_index = 0)
+drive_mci <- function(before = list(n_rows = 10, n_patients = 10), shape = list()) {
+  MSQL <<- character(0); MQRY <<- character(0)
+  sh <- modifyList(MGOOD, shape)
+  assign("db_q", function(con, sql) {
+    MQRY <<- c(MQRY, sql)
+    if (grepl("DESCRIBE", sql, fixed = TRUE))
+      return(data.frame(col_name = REQUIRED_COHORT_COLS, stringsAsFactors = FALSE))
+    as.data.frame(sh)
+  }, envir = me)
+  tryCatch({ me$materialize_cohort_input(NULL, before); NULL }, error = conditionMessage)
+}
+ok(is.null(drive_mci()), "a cohort that has not moved is pinned and passes")
+i_tbl <- which(grepl("CREATE OR REPLACE TABLE wk.p_LOT_PATIENT_INPUT AS SELECT * FROM lot_patient_input",
+                     MSQL, fixed = TRUE))[1]
+i_vw  <- which(grepl("CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS SELECT * FROM wk.p_LOT_PATIENT_INPUT",
+                     MSQL, fixed = TRUE))[1]
+ok(!is.na(i_tbl), "the snapshot table is written from the session view")
+ok(!is.na(i_vw), "...and the session view is repointed at the table")
+# The other order would define the view from itself.
+ok(!is.na(i_tbl) && !is.na(i_vw) && i_tbl < i_vw,
+   "in that order, so the view is never defined from itself")
+# Against the snapshot, not the table it came from: re-checking the source
+# would pass on rows that were never copied.
+ok(any(grepl("DESCRIBE wk.p_LOT_PATIENT_INPUT", MQRY, fixed = TRUE)) &&
+     any(grepl("FROM wk.p_LOT_PATIENT_INPUT", MQRY, fixed = TRUE)),
+   "the re-check asks about the snapshot, not the cohort table")
+# The full check, not just the counts: a snapshot with a repeated patient is
+# refused even though nothing about its size changed.
+msg <- drive_mci(before = list(n_rows = 10, n_patients = 9),
+                 shape = list(n_patients = 9))
+ok(!is.null(msg) && grepl("one index per patient", msg, fixed = TRUE),
+   "a snapshot that is malformed is refused, counts or no counts")
+msg <- drive_mci(before = list(n_rows = 12, n_patients = 12))
+ok(!is.null(msg) && grepl("changed size", msg, fixed = TRUE) &&
+     grepl("12 rows", msg, fixed = TRUE) && grepl("10", msg, fixed = TRUE),
+   "and a cohort that changed size stops the run, with both counts")
 # Before anything reads the cohort. phase_patient_input defines the view;
 # nothing between that and the copy may consume it.
 pos <- function(f) regexpr(paste0("(?<![A-Za-z0-9_.])", f, "\\("), body, perl = TRUE)
