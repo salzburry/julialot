@@ -620,17 +620,22 @@ fl <- paste(readLines(file.path(ROOT, "R", "steps", "06_flags.R"), warn = FALSE)
             collapse = "\n")
 ok(grepl("WHERE {ndmm_criteria_where()}", fl, fixed = TRUE),
    "the cohort view takes its conjunction from that list, not a written-out one")
-# The counts take it from the same list. A hand-written "<flag> = 1" in a step
-# file would be a second copy of the rule that decides who is in the cohort -
-# which is what this leaves no room for.
-step_txt <- unlist(lapply(list.files(file.path(ROOT, "R", "steps"), "[.]R$",
-                                     full.names = TRUE), readLines, warn = FALSE))
-dup <- FLAGS[vapply(FLAGS, function(f)
-  any(grepl(paste0(f, "[[:space:]]*=[[:space:]]*1"), step_txt)), logical(1))]
-ok(length(dup) == 0,
-   if (length(dup)) paste0("a step writes the conjunction out again: ",
-                           paste(dup, collapse = ", "))
-   else "and no step file spells a flag predicate out for itself")
+# The counts take it from the same list. What must not come back is a step file
+# writing the conjunction out for itself - two or more criteria tested together
+# is a second copy of the rule that decides who is in the cohort. One flag on
+# its own is not that: the belantamab reconciliation reads NO_BELANTAMAB to say
+# which way the proxy went on each row, which is a label, not a criterion.
+step_files <- list.files(file.path(ROOT, "R", "steps"), "[.]R$", full.names = TRUE)
+conj <- Filter(Negate(is.null), lapply(step_files, function(p) {
+  txt <- paste(readLines(p, warn = FALSE), collapse = "\n")
+  hit <- FLAGS[vapply(FLAGS, function(f)
+    grepl(paste0(f, "[[:space:]]*=[[:space:]]*[01]"), txt), logical(1))]
+  if (length(hit) >= 2L) paste0(basename(p), ": ", paste(hit, collapse = ", "))
+}))
+ok(length(conj) == 0,
+   if (length(conj)) paste0("a step writes the conjunction out again -- ",
+                            paste(unlist(conj), collapse = "; "))
+   else "and no step file tests two criteria flags together for itself")
 
 cat("\n-- a funnel that grows is not a count --\n")
 mk <- function(v) setNames(as.list(v), keys)
@@ -1272,19 +1277,31 @@ ok(grepl(paste0("sp.SCOPE = '", se$NDMM_BELANTAMAB_SCOPE, "'"), sc, fixed = TRUE
 # "In any LOT" is exact only once lines exist, which is after this build. So
 # the run emits what the reconciliation needs rather than claiming to be exact.
 SSQL <- character(0)
-assign("db_q", function(con, sql) data.frame(n_pat = 3L, n_claims = 7L), envir = se)
+assign("db_q", function(con, sql) data.frame(n_kept = 3L, n_dropped = 2L,
+                                             n_pat = 5L, n_claims = 7L), envir = se)
 se$build_ndmm_belantamab_reconcile(NULL, cfg_defaults)
 rc <- SSQL[1]
 ok(grepl("NDMM_BELANTAMAB_RECONCILE", rc, fixed = TRUE) &&
-     grepl("NDMM_COHORT", rc, fixed = TRUE) &&
      grepl("_ndmm_belantamab_tx", rc, fixed = TRUE),
-   "the patients still to adjudicate are the cohort's own belantamab claims")
-# Only the cohort: a patient the proxy already excluded is gone, and one with
-# no belantamab claim cannot have had it in a line. An INNER JOIN both ways.
+   "the patients still to adjudicate carry their own belantamab claims")
+# Read off the flags, not the cohort. The cohort is what the proxy let through,
+# so a table built from it cannot show a patient the proxy removed - and
+# over-exclusion is the error that costs patients. Both sides have to be here or
+# an empty result reads as "exact" when it only means "nobody kept has a claim".
+ok(grepl("_ndmm_flags_all", rc, fixed = TRUE) &&
+     !grepl("NDMM_COHORT", rc, fixed = TRUE),
+   "read off the flags, so a patient the proxy excluded can still appear")
+ok(grepl("AS EXCLUDED_BY_PROXY", rc, fixed = TRUE),
+   "...and each row says which way the proxy went, so the two are told apart")
+# Every other criterion passing, or the table fills with patients a second
+# criterion had already removed - whose belantamab claim decides nothing.
+ok(grepl(ndmm_criteria_where(except = "NO_BELANTAMAB", alias = "f."), rc,
+         fixed = TRUE),
+   "...scoped to patients whose membership turns on this decision alone")
 ok(grepl("INNER JOIN", rc, fixed = TRUE) && !grepl("LEFT JOIN", rc, fixed = TRUE),
-   "...only those two, so the table is what has to be looked at and no more")
+   "joined, not outer-joined, so the table is what has to be looked at and no more")
 ok(grepl("b.bel_dt", rc, fixed = TRUE) &&
-     grepl("datediff(b.bel_dt, c.INDEX_DATE)", rc, fixed = TRUE),
+     grepl("datediff(b.bel_dt, l1.LOT1_START_DT)", rc, fixed = TRUE),
    "with the claim date and its offset from index, which is what places it in a line")
 
 cat("\n-- which agents may set the index, and which set one --\n")

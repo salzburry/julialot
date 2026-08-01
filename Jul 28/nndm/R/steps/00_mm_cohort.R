@@ -98,9 +98,10 @@ build_ndmm_mm_dx_events <- function(con, med_diag_tbl) {
 
 # Every candidate diagnosis date: one inpatient claim carrying a strict code,
 # or two outpatient claims on separate days within the window. Every candidate
-# is kept, not just the earliest - a patient who is 17 at their first
-# qualifying date and 18 at the next is in the cohort, and picking the earliest
-# before applying age would lose them.
+# date is recorded here; build_ndmm_base_cohort() picks the earliest and only
+# then applies age. So a patient who is 17 at their earliest qualifying date is
+# dropped - not advanced to a later date at which they are 18. That order is
+# deliberate and the reasoning is with build_ndmm_base_cohort() below.
 build_ndmm_mm_qualifying <- function(con) {
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_MM_QUALIFYING} AS

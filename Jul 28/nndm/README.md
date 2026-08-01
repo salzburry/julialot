@@ -148,8 +148,8 @@ All prefixed, so two cohorts sit side by side in one schema.
 
 ### The review tables
 
-**Six open questions, six tables.** Each exists because the protocol is silent,
-a code list cannot answer, or the answer needs a build that has not run yet.
+**Eight review tables.** Each exists because the protocol is silent, a code
+list cannot answer, or the answer needs a build that has not run yet.
 None of them changes the cohort — they are what the decision gets made
 *against*, so nobody has to guess and nobody has to re-run to find out.
 
@@ -162,7 +162,7 @@ None of them changes the cohort — they are what the decision gets made
 | `NDMM_OTHER_MALIG_GRAIN` | is that grain actually costing anything? | criterion 7 counted at the finest, configured and coarsest grouping. **The gap between the first row and the last is the whole question** — if it is small, no map is needed |
 | `NDMM_FU_CE_COUNTS` | what the follow-up CE window costs — the one setting resting on a relay, not a document | `N_PASSING_CRITERION_5` and `N_COHORT` at 0 / 30 / 60 / 90 days and at an exact 3 months, with this run's row marked |
 | `NDMM_BELANTAMAB_SCOPE_COUNTS` | which claims proxy stands for "in any LOT" | `N_PATIENTS` and `N_COHORT` under each of the three readings, with this run's marked |
-| `NDMM_BELANTAMAB_RECONCILE` | **which patients the proxy could not settle** | the cohort's own belantamab claims, with dates. Join to `LOT_LONG` after the lot build runs — an empty result means the proxy was exact |
+| `NDMM_BELANTAMAB_RECONCILE` | **which patients the proxy could not settle** | every belantamab claim belonging to a patient whose membership turns on this criterion alone, both those the proxy kept and those it excluded, with dates and which way it went. Join to `LOT_LONG` after the lot build runs |
 
 `tests/test_runner.R` requires every declared output to be named here, so this
 list cannot fall behind the code — it had, twice, before that test existed.
@@ -633,8 +633,9 @@ becomes `05024204062`: a real prior therapy missed, or the wrong drug matched.
 The patient's inclusion turns on it and nothing downstream can see it happen.
 
 `check_ndc_shape()` profiles the values before the scan runs, on both sides of
-the join and scoped to the NDMM candidates and the baseline window, and stops
-on any of four conditions:
+the join and scoped to the NDMM candidates — from the earlier of the study
+start and twelve months before each patient's diagnosis, through the study end
+— and stops on any of four conditions:
 
 | check | what it found |
 |---|---|
@@ -775,12 +776,18 @@ criterion. The scope in force is pinned in `CONTRACT` and recorded in
 `NDMM_RUN_METADATA`.
 
 **`<prefix>NDMM_BELANTAMAB_RECONCILE`** — the patients still to adjudicate.
-One row per belantamab claim belonging to a patient who is **in the cohort**,
-with `INDEX_DATE`, `BEL_DT` and `DAYS_FROM_INDEX`. Nobody else can need
-adjudicating: a patient the proxy excluded is already gone, and a patient with
-no belantamab claim cannot have had it in a line. Usually a short table.
+One row per belantamab claim belonging to a patient who passes every *other*
+criterion, so the belantamab decision is the only thing that moves them in or
+out, with `INDEX_DATE`, `BEL_DT`, `DAYS_FROM_INDEX` and `EXCLUDED_BY_PROXY`.
 
-After the lot build has run, that table closes the criterion:
+Both directions are in it, and that is the point. `EXCLUDED_BY_PROXY = 0` is a
+patient the proxy kept who carries a claim it did not count; `= 1` is one it
+removed. A table built from the cohort alone could only ever show the first
+kind — the patients the proxy excluded are not in the cohort to be looked at —
+and over-exclusion is the error that costs patients.
+
+After the lot build has run, that table closes the criterion in both
+directions:
 
 ```sql
 SELECT DISTINCT r.PATID
@@ -789,11 +796,18 @@ JOIN   <prefix>LOT_LONG l ON l.PATID = r.PATID
 WHERE  r.BEL_DT BETWEEN l.LOT_START_DT AND coalesce(l.LOT_END_DT, r.BEL_DT)
 ```
 
-Every `PATID` it returns received belantamab **in a line** and should have been
-excluded under §6.2.1.2 but was not, because the claims proxy did not reach it.
-Remove them from the cohort and note the count against attrition step 9. An
-empty result means the proxy was exact for this data — which is the answer to
-the open question, not a guess at it.
+Run it over the `EXCLUDED_BY_PROXY = 0` rows and every `PATID` returned
+received belantamab **in a line**: it should have been excluded under §6.2.1.2
+and was not, because the claims proxy did not reach it. Remove those and note
+the count against attrition step 9.
+
+Run it over the `EXCLUDED_BY_PROXY = 1` rows and the answer is the other way
+round: a `PATID` it does **not** return has no belantamab claim inside any
+line, so the proxy removed a patient §6.2.1.2 does not exclude. Those belong
+back in the cohort.
+
+The proxy was exact for this data only when both passes come back empty. One
+empty pass answers half the question.
 
 ## The step files
 

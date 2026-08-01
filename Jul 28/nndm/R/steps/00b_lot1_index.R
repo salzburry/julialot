@@ -539,26 +539,46 @@ build_ndmm_belantamab_scope_counts <- function(con, cfg) {
 # already gone, and a patient with no belantamab claim cannot have had it in a
 # line. Usually a short table, and the README says what to join it to.
 build_ndmm_belantamab_reconcile <- function(con, cfg) {
+  # Both directions, which means reading NDMM_FLAGS_ALL rather than the cohort.
+  # The cohort is what the proxy let through, so a table built from it can only
+  # ever show claims it missed - the patients it removed are not in it to be
+  # looked at, and an empty result would read as "the proxy was exact" when it
+  # only says "nobody it kept has a stray claim". Over-exclusion is the error
+  # that costs patients, and it was the one that could not appear.
+  #
+  # Scoped to patients whose membership turns on this decision alone: every
+  # other criterion passing, from NDMM_CRITERIA, so the set does not fill with
+  # patients a second criterion had already removed. NDMM_BELANTAMAB_TX is every
+  # belantamab claim, not the in-scope ones, so both sides carry their dates.
   db_exec(con, glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_BELANTAMAB_RECONCILE')} AS
-    SELECT c.PATID                            AS PATID,
-           c.INDEX_DATE                       AS INDEX_DATE,
-           b.bel_dt                           AS BEL_DT,
-           datediff(b.bel_dt, c.INDEX_DATE)   AS DAYS_FROM_INDEX
-    FROM {wrk('NDMM_COHORT')} c
-    INNER JOIN {NDMM_BELANTAMAB_TX} b ON b.PATID = c.PATID
-    ORDER BY PATID, BEL_DT"))
+    SELECT f.PATID                              AS PATID,
+           l1.LOT1_START_DT                     AS INDEX_DATE,
+           b.bel_dt                             AS BEL_DT,
+           datediff(b.bel_dt, l1.LOT1_START_DT) AS DAYS_FROM_INDEX,
+           CASE WHEN f.NO_BELANTAMAB = 1 THEN 0 ELSE 1 END AS EXCLUDED_BY_PROXY
+    FROM {NDMM_FLAGS_ALL} f
+    INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = f.PATID
+    INNER JOIN {NDMM_BELANTAMAB_TX} b ON b.PATID = f.PATID
+    WHERE {ndmm_criteria_where(except = 'NO_BELANTAMAB', alias = 'f.')}
+    ORDER BY EXCLUDED_BY_PROXY DESC, PATID, BEL_DT"))
   got <- db_q(con, glue("
-    SELECT count(DISTINCT PATID) AS n_pat, count(*) AS n_claims
+    SELECT count(DISTINCT CASE WHEN EXCLUDED_BY_PROXY = 0 THEN PATID END) AS n_kept,
+           count(DISTINCT CASE WHEN EXCLUDED_BY_PROXY = 1 THEN PATID END) AS n_dropped,
+           count(DISTINCT PATID) AS n_pat,
+           count(*)              AS n_claims
     FROM {wrk('NDMM_BELANTAMAB_RECONCILE')}"))
   log_msg("Belantamab still to adjudicate: ", format(got$n_pat, big.mark = ","),
-          " patient(s) in the cohort have a belantamab claim (",
-          format(got$n_claims, big.mark = ","), " claim(s)) outside the '",
-          NDMM_BELANTAMAB_SCOPE, "' window -> ", wrk("NDMM_BELANTAMAB_RECONCILE"))
+          " patient(s), ", format(got$n_claims, big.mark = ","),
+          " claim(s) -> ", wrk("NDMM_BELANTAMAB_RECONCILE"))
+  log_msg("  ", format(got$n_kept, big.mark = ","),
+          " in the cohort carrying a claim the '", NDMM_BELANTAMAB_SCOPE,
+          "' reading did not count, and ", format(got$n_dropped, big.mark = ","),
+          " it excluded who pass every other criterion.")
   if (isTRUE(got$n_pat > 0))
     log_msg("  \"In any LOT\" is exact only once lines exist. After the LOT run, ",
-            "join these to LOT_LONG and drop any patient whose BEL_DT falls in a ",
-            "line. See README.")
+            "join these to LOT_LONG: a claim inside a line confirms the ",
+            "exclusion, one outside every line reverses it. See README.")
   invisible(got)
 }
 
