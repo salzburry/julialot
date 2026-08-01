@@ -2,6 +2,7 @@
 
 phase_dx_events <- function(cfg, h, ctx) {
   work <- h$work; cdm_src <- h$cdm_src
+  icd_family_sql <- ctx$icd_fam
 
   list(
     # ---- Phase 2: MM diagnosis events ----
@@ -66,7 +67,7 @@ phase_dx_events <- function(cfg, h, ctx) {
           d.LOC_CD,
           cast(d.FST_DT as date) AS svc_dt,
           upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) AS diag,
-          CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family,
+          {icd_family_sql('d.ICD_FLAG')} AS icd_family,
           h.CONF_ID,
           h.POS,
           h.TOS_CD,
@@ -79,9 +80,9 @@ phase_dx_events <- function(cfg, h, ctx) {
           -- The code list decides which codes are in scope at all. This flag
           -- marks the 203.0x / C90.0x subset, which inpatient qualifying and
           -- the baseline rule additionally require.
-          CASE WHEN (CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END) = 'ICD9'
+          CASE WHEN ({icd_family_sql('d.ICD_FLAG')}) = 'ICD9'
                       AND upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) LIKE '2030%'
-                 OR (CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END) = 'ICD10'
+                 OR ({icd_family_sql('d.ICD_FLAG')}) = 'ICD10'
                       AND upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) LIKE 'C900%'
                THEN 1 ELSE 0 END AS mm_dx_strict_flg,
           -- QC flags for each approach
@@ -97,7 +98,7 @@ phase_dx_events <- function(cfg, h, ctx) {
          AND d.LOC_CD     <=> h.LOC_CD
         INNER JOIN {work('mm_dx_codes')} c
           ON upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) = c.dx
-          AND (CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END) = c.icd_family
+          AND ({icd_family_sql('d.ICD_FLAG')}) = c.icd_family
         LEFT JOIN {work('confinement')} cf
           ON h.PATID = cf.PATID AND h.CONF_ID = cf.CONF_ID
         WHERE cast(d.FST_DT as date) BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')

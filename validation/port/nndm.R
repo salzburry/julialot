@@ -55,6 +55,18 @@ PARTS <- list(
 # deliberate override of the written spec and is spelled out rather than
 # absorbed - the numbers it produces are not the numbers apr_30_2026 produces.
 SUBST <- list(
+  # The sixth clinical change, and it is a fail-open rather than a rule: the
+  # source read any ICD_FLAG that was not an ICD-9 spelling as ICD-10, so a
+  # blank or unexpected flag on a genuine ICD-9 claim was mis-classed and then
+  # matched no code. Both families are named now and anything else is NULL,
+  # which matches neither. It can only remove matches the source should not
+  # have made, and the same change is in the overall build so the two still
+  # agree - tests/test_same_as_overall.R holds that.
+  "R/steps/05_pregnancy.R" = list(
+    list(from = "{icd_family_sql('d.ICD_FLAG', 'ICD9DIAG', 'ICD10DIAG')} AS code_type,",
+         to   = "CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9DIAG' ELSE 'ICD10DIAG' END AS code_type,", n = 1L),
+    list(from = "{icd_family_sql('p.ICD_FLAG', 'ICD9PROC', 'ICD10PROC')} AS code_type,",
+         to   = "CASE WHEN upper(p.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9PROC' ELSE 'ICD10PROC' END AS code_type,", n = 1L)),
   # The override now covers the remission variants of the plasma-cell groups as
   # well - the criterion is another cancer distinct from the index MM, and
   # remission cannot make a plasma-cell disorder more like a different one. The

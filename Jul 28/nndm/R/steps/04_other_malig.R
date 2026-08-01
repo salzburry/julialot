@@ -149,7 +149,7 @@ build_ndmm_other_malig_pre_lot1 <- function(con, med_diag_tbl) {
       SELECT d.PATID, d.PAT_PLANID, d.CLMID, d.FST_DT, d.LOC_CD,
              cast(d.FST_DT as date) AS event_dt,
              upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) AS dx,
-             CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family
+             {icd_family_sql('d.ICD_FLAG')} AS icd_family
       FROM {med_diag_tbl} d
       WHERE FST_DT BETWEEN {lower} AND {upper}
     ),

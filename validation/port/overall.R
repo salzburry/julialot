@@ -90,6 +90,8 @@ if (length(a) == length(b)) {
   # These steps now use the line-level inpatient flag.
   CHANGED <- c("07a_med_claim_header", "08a_mm_dx_events_all",
                "22_other_malig_flag",
+               # raw ICD_FLAG now yields NULL rather than defaulting to ICD-10
+               "20_pregnancy_flag", "21_clintrial_flag",
                # a code that is only punctuation normalizes to "" and would
                # match blank claim values - for NDC, every claim with no NDC
                "01_mm_dx_codes", "03_mm_therapy_codes", "04_preg_codes",

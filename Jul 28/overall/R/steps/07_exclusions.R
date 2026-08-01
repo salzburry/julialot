@@ -3,6 +3,7 @@
 phase_exclusions <- function(cfg, h, ctx) {
   work <- h$work; cdm_src <- h$cdm_src
   fu_cap_expr <- ctx$fu_cap_expr; ce_join_for_fu_cap <- ctx$ce_join_for_fu_cap
+  icd_family_sql <- ctx$icd_fam
 
   list(
     # ---- Phase 9: exclusion flags (Steps 8-10) ----
@@ -17,7 +18,7 @@ phase_exclusions <- function(cfg, h, ctx) {
         CREATE OR REPLACE TEMPORARY VIEW {work('pregnancy_flag')} AS
         WITH dx AS (
           SELECT PATID, cast(FST_DT as date) AS event_dt,
-                 CASE WHEN upper(ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9DIAG' ELSE 'ICD10DIAG' END AS code_type,
+                 {icd_family_sql('ICD_FLAG', 'ICD9DIAG', 'ICD10DIAG')} AS code_type,
                  upper(regexp_replace(DIAG, '[^A-Za-z0-9]', '')) AS code
           FROM {cdm_src(cfg$tbl_med_diag)}
           WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
@@ -31,7 +32,7 @@ phase_exclusions <- function(cfg, h, ctx) {
         ),
         icd_proc AS (
           SELECT PATID, cast(FST_DT as date) AS event_dt,
-                 CASE WHEN upper(ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9PROC' ELSE 'ICD10PROC' END AS code_type,
+                 {icd_family_sql('ICD_FLAG', 'ICD9PROC', 'ICD10PROC')} AS code_type,
                  upper(regexp_replace(PROC, '[^A-Za-z0-9]', '')) AS code
           FROM {cdm_src(cfg$tbl_med_proc)}
           WHERE PROC IS NOT NULL
@@ -78,7 +79,7 @@ phase_exclusions <- function(cfg, h, ctx) {
         CREATE OR REPLACE TEMPORARY VIEW {work('clintrial_flag')} AS
         WITH dx AS (
           SELECT PATID, cast(FST_DT as date) AS event_dt,
-                 CASE WHEN upper(ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9DIAG' ELSE 'ICD10DIAG' END AS code_type,
+                 {icd_family_sql('ICD_FLAG', 'ICD9DIAG', 'ICD10DIAG')} AS code_type,
                  upper(regexp_replace(DIAG, '[^A-Za-z0-9]', '')) AS code
           FROM {cdm_src(cfg$tbl_med_diag)}
           WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
@@ -92,7 +93,7 @@ phase_exclusions <- function(cfg, h, ctx) {
         ),
         icd_proc AS (
           SELECT PATID, cast(FST_DT as date) AS event_dt,
-                 CASE WHEN upper(ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9PROC' ELSE 'ICD10PROC' END AS code_type,
+                 {icd_family_sql('ICD_FLAG', 'ICD9PROC', 'ICD10PROC')} AS code_type,
                  upper(regexp_replace(PROC, '[^A-Za-z0-9]', '')) AS code
           FROM {cdm_src(cfg$tbl_med_proc)}
           WHERE PROC IS NOT NULL
@@ -144,7 +145,7 @@ phase_exclusions <- function(cfg, h, ctx) {
           SELECT d.PATID, d.PAT_PLANID, d.CLMID, d.FST_DT, d.LOC_CD,
                  cast(d.FST_DT as date) AS event_dt,
                  upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) AS dx,
-                 CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END AS icd_family
+                 {icd_family_sql('d.ICD_FLAG')} AS icd_family
           FROM {cdm_src(cfg$tbl_med_diag)} d
           WHERE FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
