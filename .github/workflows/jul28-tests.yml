@@ -1,0 +1,80 @@
+name: Jul 28 tests
+
+# Runs the Jul 28 packages' own suites and the validation suites beside them,
+# so the counts their READMEs and commit messages claim are CI-recorded rather
+# than an author's local run. Same reason as the jun_21_2026 workflow.
+#
+# Two jobs, because they cost very different amounts:
+#
+#   suites    ~1 minute. Every push and PR that touches the packages or the
+#             validation directory. This is the gate.
+#   mutation  ~40 minutes for both batteries. Manual, and on a PR carrying the
+#             'release-check' label. It stages a copy of a package per mutation
+#             and re-runs the suites against it, so it is a release check, not
+#             a per-push one - and a job nobody can afford to wait for is a job
+#             that gets switched off.
+#
+# The production pipeline is never built or run here: no warehouse, no
+# credentials. These suites are offline by construction.
+on:
+  push:
+    paths: ['Jul 28/**', 'validation/**', '.github/workflows/jul28-tests.yml']
+  pull_request:
+    paths: ['Jul 28/**', 'validation/**', '.github/workflows/jul28-tests.yml']
+  workflow_dispatch:
+
+jobs:
+  suites:
+    name: R suites
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      # glue is the only package the suites need at test time. DBI and odbc are
+      # call-time only - nothing here opens a connection. Installed rather than
+      # left to the stand-in in testutil.R so CI exercises the real templating,
+      # which is what a real run uses and where the two once differed.
+      - name: Install R dependencies
+        run: Rscript -e 'install.packages("glue")'
+
+      - name: Package suites
+        run: |
+          set -e
+          for t in "Jul 28"/*/tests/test_*.R; do
+            echo "== $t"
+            Rscript "$t"
+          done
+
+      # Exits non-zero on a failure AND on a skip: a suite that could not find
+      # the package or the baseline proved nothing, and a release check that
+      # quietly ran nothing is the failure that directory exists to prevent.
+      - name: Validation suites
+        run: Rscript validation/run_all.R
+
+  mutation:
+    name: Mutation batteries (release check)
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'release-check')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - name: Install R dependencies
+        run: Rscript -e 'install.packages("glue")'
+
+      # Run bare, never piped. A pipeline's exit status is the last command's,
+      # so piping into tail reports success while the summary says problems: 1.
+      # Both batteries verify every anchor before mutating anything and exit 1
+      # on a stale one, so a mutation pointing at code that moved fails here
+      # rather than silently testing nothing.
+      - name: LOT battery
+        run: python3 validation/mutation/lot_battery.py
+
+      - name: NDMM battery (--all)
+        run: python3 validation/mutation/nndm_battery.py --all
