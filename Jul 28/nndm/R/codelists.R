@@ -221,6 +221,54 @@ load_primary_groups_csv <- function(path) {
          "\n) AS t(pg_label, pg_primary)) pg")
 }
 
+# What the icd_family column may say, both ways round.
+#
+# The normalising CASE has no third branch: anything that is not one of the
+# ICD-9 spellings becomes ICD10. Both code lists carrying this column are
+# joined to claims on family as well as on code, so a row whose family is
+# blank, NULL, or spelled some way nobody anticipated is classed ICD10 and then
+# matches no ICD-9 claim. It does not error and it does not warn - it quietly
+# stops doing anything. On mm_dx.csv that is a diagnosis code that qualifies
+# nobody; on other_malig.csv it is a cancer code that excludes nobody, which
+# leaves patients in the cohort who should not be. Nothing downstream can see
+# either. So the accepted values are named both ways and checked, rather than
+# one list and a catch-all.
+ICD_FAMILY_9  <- c("9", "ICD9", "ICD-9", "ICD9DIAG")
+ICD_FAMILY_10 <- c("10", "ICD10", "ICD-10", "ICD10DIAG")
+
+# Checked in R as the file is read, before a row of it reaches SQL: it is
+# cheaper than a round trip, it fails before anything is built, and every list
+# carrying the column gets it without a second call site to remember.
+#
+# Rows the build drops anyway are not an alarm, so where the file has a dx
+# column this looks only at rows carrying one - the same rows the normalising
+# SELECT keeps.
+check_icd_family <- function(df, csv_name) {
+  if (!"icd_family" %in% names(df)) return(invisible(TRUE))
+  keep <- if ("dx" %in% names(df))
+    !is.na(df$dx) & nzchar(gsub("[^A-Za-z0-9]", "", as.character(df$dx)))
+  else rep(TRUE, nrow(df))
+  raw  <- trimws(as.character(df$icd_family))
+  # read.csv maps "" to NA here, so a blank column and a missing one look alike.
+  bad  <- keep & (is.na(raw) | !nzchar(raw) |
+                  !(toupper(raw) %in% toupper(c(ICD_FAMILY_9, ICD_FAMILY_10))))
+  if (any(bad)) {
+    shown <- unique(ifelse(is.na(raw) | !nzchar(raw), "<blank>", raw)[bad])
+    stop("CODELIST ERROR: ", csv_name, " has ", sum(bad),
+         " row(s) whose icd_family this build does not recognise: ",
+         paste(shown, collapse = ", "),
+         ".\nAn unrecognised family reads as ICD10, and the code lists are ",
+         "joined to claims on family as well as code - so an ICD-9 row spelled ",
+         "this way would match no claim and silently stop qualifying or ",
+         "excluding anyone. Spell it one of: ",
+         paste(c(ICD_FAMILY_9, ICD_FAMILY_10), collapse = ", "), ".",
+         call. = FALSE)
+  }
+  log_msg("  ", csv_name, ": icd_family recognised on all ", sum(keep),
+          " row(s) that are kept")
+  invisible(TRUE)
+}
+
 load_codelist_csv <- function(csv_name, col_spec) {
   cfg <- nndm_config()
   if (!dir.exists(cfg$codelist_dir)) {
@@ -259,6 +307,9 @@ load_codelist_csv <- function(csv_name, col_spec) {
   if (nrow(df) == 0) {
     stop(glue("CODELIST ERROR: CSV {csv_name} has no data rows"))
   }
+  # Before a row reaches the normalising CASE downstream, whose ELSE is a
+  # catch-all that would class an unrecognised family as ICD10.
+  check_icd_family(df, csv_name)
   esc <- function(x) {
     if (is.na(x) || is.null(x) || x == "") return("NULL")
     x <- gsub("'", "''", as.character(x))
