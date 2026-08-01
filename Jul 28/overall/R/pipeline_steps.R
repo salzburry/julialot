@@ -48,6 +48,12 @@ build_steps <- function(cfg, mat_tables) {
   # The Step 24 filter, built from the criteria catalog.
   ctx$criteria_sql <- build_criteria_sql(build_criteria_catalog(cfg), cfg)
 
+  # Step 1's gate, from the same function run_attrition_report() counts with.
+  # Passed through ctx rather than read as a global: the step files see only
+  # their arguments, which is what lets test_same_as_source.R source this tree
+  # and apr_30_2026's into separate environments and compare them.
+  ctx$step1_sql <- qualifying_sql(cfg$outpatient_window)
+
   # Follow-up cap, used by therapy / pregnancy / clintrial so the IE window
   # ends at death or study end.
   #   primary      least(study_end, death)

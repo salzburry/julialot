@@ -3,6 +3,7 @@
 phase_assembly <- function(cfg, h, ctx) {
   full_name <- h$full_name; work <- h$work
   criteria_sql <- ctx$criteria_sql
+  step1_sql    <- ctx$step1_sql
 
   list(
     # ---- Phase 10: assemble all flags, then apply the IE funnel ----
@@ -112,7 +113,7 @@ phase_assembly <- function(cfg, h, ctx) {
           FROM {work('ELIG_COH_ALLFLAGS')}
           WHERE 1=1
             -- Step 1: Index date must qualify via IP (strict) or OP in configured window
-            AND (inpt_qual = 1 OR outpt2_{cfg$outpatient_window} = 1)
+            AND {step1_sql}
             {criteria_sql}
         ),
         ranked AS (

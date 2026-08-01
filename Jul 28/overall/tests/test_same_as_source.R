@@ -33,8 +33,13 @@ if (!file.exists(file.path(APR, "R", "pipeline_steps.R"))) {
 }
 
 # glue is not installed everywhere; the templates only use {expr}, so a small
-# stand-in keeps this runnable offline.
-if (!requireNamespace("glue", quietly = TRUE)) {
+# stand-in keeps this runnable offline. Where the real package is present it has
+# to be attached rather than merely loadable: env_of() sys.source()s each file
+# into an environment whose parent is globalenv, so glue() is found on the
+# search path or not at all.
+if (requireNamespace("glue", quietly = TRUE)) {
+  library(glue)
+} else {
   glue <- function(..., .envir = parent.frame()) {
     t <- paste0(..., collapse = "")
     m <- gregexpr("\\{[^{}]+\\}", t)[[1]]
@@ -154,6 +159,23 @@ if (length(a) == length(b)) {
   ok(lengths(regmatches(te, gregexpr("regexp_replace(c.code, '[^0-9]', '') <> ''",
                                      te, fixed = TRUE))) == 2,
      "both NDC joins require digits in the code (medical and Rx)")
+
+  # Step 1 is the one criterion with no catalog entry, so it is the one that can
+  # be written twice - once in the Step 24 filter and once in the attrition. It
+  # was. Both now render qualifying_sql(), and the literal appears only inside
+  # that function: a second copy would let the cohort table and the funnel's
+  # Step 1 row describe different patients, and nothing else would say so.
+  ok(grepl(new$qualifying_sql(cfg$outpatient_window),
+           sql_of("24_ELIG_COH_FINAL"), fixed = TRUE),
+     "24_ELIG_COH_FINAL gates on qualifying_sql(configured window)")
+  srcs <- c(list.files(file.path(ROOT, "R"), "[.]R$", full.names = TRUE),
+            list.files(file.path(ROOT, "R", "steps"), "[.]R$", full.names = TRUE))
+  n_lit <- sum(vapply(srcs, function(f)
+    sum(grepl("(inpt_qual = 1 OR outpt2_", readLines(f, warn = FALSE),
+              fixed = TRUE)), integer(1)))
+  ok(n_lit == 1L,
+     paste0("the Step 1 predicate is written once, in qualifying_sql() (found ",
+            n_lit, ")"))
 }
 
 # Copies, so they must not have drifted. Local comments may differ.
