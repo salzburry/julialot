@@ -71,8 +71,8 @@ the rule.
 
 | | mutations | state |
 |---|---|---|
-| `lot_battery.py` | 37 | every anchor valid; full sweep run, 0 problems |
-| `nndm_battery.py` | 244 | every anchor valid; the 18 touched by the re-anchoring run, 0 problems |
+| `lot_battery.py` | 37 | every anchor valid; full sweep, 0 problems |
+| `nndm_battery.py` | 244 | every anchor valid; full sweep, 0 problems |
 
 Each mutation edits one exact string in the source and the suites must notice.
 A mutation that survives means the assertion for it reads the source rather
