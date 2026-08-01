@@ -494,6 +494,11 @@ ok(grepl("LIKE 'KYP'", i1, fixed = TRUE) && !grepl("NOT IN", i1, fixed = TRUE),
 i2 <- drive_ie(list(allow = c("BOR", "LEN"), deny = character(0)))
 ok(grepl("upper(trim(med_abbr)) NOT IN ('BOR', 'LEN')", i2, fixed = TRUE),
    "an allow list makes every agent it does not name ineligible")
+# NULL NOT IN (...) is unknown, not true, so a code with no abbreviation would
+# not be selected as ineligible - and the scan anti-joins this view, so it would
+# stay eligible and could set an index under a list that names only some agents.
+ok(grepl("med_abbr IS NULL OR trim(med_abbr) = ''", i2, fixed = TRUE),
+   "...including a code carrying no abbreviation at all, which SQL alone leaves out")
 ok(grepl("LIKE 'BEL%'", i2, fixed = TRUE),
    "...and belantamab stays barred whatever the list says")
 # An allowed agent that is not on the code list bars itself, silently, and its

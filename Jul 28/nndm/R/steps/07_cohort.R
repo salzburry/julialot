@@ -73,6 +73,10 @@ ndmm_counts <- function(con, mm_qualifying, base_cohort) {
   # then the cohort's own, not a recount that has to agree with it.
   ndmm_final <- n_of(glue(
     "SELECT count(DISTINCT PATID) AS n FROM {NDMM_PATIDS}"))
+  # Keyed off the last criterion rather than repeating its name. The three at
+  # the front are this function's own - they count off their own tables - but
+  # the final row is the last entry of NDMM_CRITERIA, and writing its key here
+  # as well was the one place two lists still had to agree by hand.
   c(list(whole = whole, elig = elig, elig_lot1 = elig_lot1), cum,
-    list(ndmm_final = ndmm_final))
+    setNames(list(ndmm_final), NDMM_CRITERIA[[length(NDMM_CRITERIA)]]$key))
 }

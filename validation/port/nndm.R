@@ -173,7 +173,7 @@ SPLICE <- list(
     # funnel are a qualifying MM diagnosis, then age, then an eligible 1L
     # treatment - derived here rather than inherited.
     list(from = "ndmm_counts <- function(con, mm_qualifying, base_cohort) {",
-         to   = "list(ndmm_final = ndmm_final))",
+         to   = "setNames(list(ndmm_final), NDMM_CRITERIA[[length(NDMM_CRITERIA)]]$key))",
          src_from = 795L, src_to = 837L)
   ),
   # The materialization of NDMM_FLAGS_ALL. The source wrapped it in tryCatch and
