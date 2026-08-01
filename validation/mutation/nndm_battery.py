@@ -63,7 +63,7 @@ M = [
  ("contract fu_ce_days","R/build_nndm.R","  fu_ce_days           = 0L,","  fu_ce_days           = 90L,"),
  ("upstream raw tables","R/build_nndm.R","  c(cfg$tbl_medical, cfg$tbl_rx, cfg$tbl_med_diag, cfg$tbl_med_proc,\n    cfg$tbl_confinement, cfg$tbl_member_enroll, cfg$tbl_member_elig, cfg$tbl_dod)","  c(cfg$tbl_medical)"),
  ("upstream first miss only","R/build_nndm.R",'    stop("Cannot read:\\n  ", paste(missing, collapse = "\\n  "),','    stop("Cannot read:\\n  ", missing[1],'),
- ("attrition key typo","R/build_nndm.R",'  list(key = "ndmm_final",     flag = "NO_BELANTAMAB",','  list(key = "ndmm_final2",    flag = "NO_BELANTAMAB",'),
+ ("attrition key typo","R/build_nndm.R",'    list(key = "elig_lot1", label = "+ eligible 1L treatment on or after LOT1_FROM")),','    list(key = "elig_lot12", label = "+ eligible 1L treatment on or after LOT1_FROM")),'),
  ("ndc profile dropped","R/build_nndm.R","  check_ndc_shape(con, cfg)\n","  "),
  ("ndc profile after the scan","R/build_nndm.R","  check_ndc_shape(con, cfg)\n  build_ndmm_belantamab_codes(con)","  build_ndmm_belantamab_codes(con)\n  check_ndc_shape(con, cfg)"),
  ("ndc ten-digit ignored","R/build_nndm.R","  ten    <- prof$n_ndc > 0 & prof$n_10 > 0","  ten    <- rep(FALSE, nrow(prof))"),
