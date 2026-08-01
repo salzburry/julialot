@@ -31,7 +31,7 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
              date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS}) AS pre_lot1_start,
              date_sub(l1.LOT1_START_DT, 1)                  AS pre_lot1_end,
              -- DEATH_DT is carried forward from the parent ELIG_COH_FINAL so
-             -- the 3-month follow-up CE below can be re-derived ANCHORED AT
+             -- the follow-up CE below can be re-derived ANCHORED AT
              -- LOT1 (the NDMM index); the parent CE_3mosf is anchored at the
              -- MM-dx index and so is NOT reused for it. Pregnancy is NOT carried
              -- from the parent flag - it is re-scanned from pregnancy.csv over

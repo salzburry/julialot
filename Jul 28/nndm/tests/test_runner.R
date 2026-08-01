@@ -73,7 +73,8 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_prefix",
            "check_attrition_monotonic", "build_ndmm_cohort_table",
            "check_ndmm_cohort", "build_ndmm_belantamab_reconcile",
            "write_attrition",
-           "write_codelist_metadata", "write_run_metadata")
+           "write_codelist_metadata", "write_run_metadata",
+           "report_fillins")
 at <- vapply(ORDER, function(f) {
   m <- regexpr(paste0("(?<![A-Za-z0-9_.])", f, "\\("), body, perl = TRUE)
   if (m == -1) NA_integer_ else as.integer(m)
@@ -552,6 +553,57 @@ ok(grepl("not reproducible", m, fixed = TRUE),
    "and a run that recorded no hashes stops rather than publishing untraceable counts")
 unlink(tmp, recursive = TRUE)
 
+cat("\n-- the run says which rule fill-ins it had --\n")
+# Each fill-in already says at the point it is read that it was empty, but that
+# is three lines in the middle of a long log, and an empty file reads exactly
+# like a path that was never set. A deploy that pointed CODELIST_DIR at
+# production and missed these three env vars is the case worth catching.
+fe <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = fe)
+assign("wrk", function(x) paste0("wk.p_", x), envir = fe)
+FLOG <- character(0)
+assign("log_msg", function(...) FLOG <<- c(FLOG, paste0(...)), envir = fe)
+drive_fill <- function(opt) {
+  options(nndm_codelist_md5 = opt); FLOG <<- character(0)
+  r <- fe$report_fillins(list()); list(r = r, log = paste(FLOG, collapse = "\n"))
+}
+ok(length(fe$FILLIN_FILES) == 3 &&
+     all(c("eligible_1l_agents.csv", "mm_adjacent_overrides.csv",
+           "primary_tumor_groups.csv") %in% names(fe$FILLIN_FILES)),
+   "the three files that decide an open rule are the three it reports on")
+
+all_in <- drive_fill(list(
+  eligible_1l_agents.csv    = list(md5 = "aa11", n_rows = 42L),
+  mm_adjacent_overrides.csv = list(md5 = "bb22", n_rows = 7L),
+  primary_tumor_groups.csv  = list(md5 = "cc33", n_rows = 310L)))
+ok(length(all_in$r$empty) == 0 && length(all_in$r$used) == 3 &&
+     grepl("3 supplied, 0 empty", all_in$log, fixed = TRUE),
+   "a run with all three supplied says so, with each row count and hash")
+ok(!grepl(">", all_in$log, fixed = TRUE),
+   "...and raises nothing, so the marker means something when it appears")
+
+none_in <- drive_fill(list(
+  eligible_1l_agents.csv    = list(md5 = "d41d8", n_rows = 0L),
+  mm_adjacent_overrides.csv = list(md5 = "d41d8", n_rows = 0L),
+  primary_tumor_groups.csv  = list(md5 = "d41d8", n_rows = 0L)))
+ok(length(none_in$r$empty) == 3 &&
+     grepl("0 supplied, 3 empty", none_in$log, fixed = TRUE),
+   "a run on the shipped placeholders says that, once, at the end")
+ok(all(vapply(unname(unlist(fe$FILLIN_FILES)), grepl, logical(1),
+              x = none_in$log, fixed = TRUE)),
+   "...naming what each empty file leaves the build doing instead")
+ok(grepl("NDMM_CODELIST_METADATA", none_in$log, fixed = TRUE),
+   "...and where to check the paths it actually read")
+
+# Read-and-empty is a decision; never-read is a deploy that did not reach the
+# file. write_codelist_metadata() stops on the second, so this says which.
+mixed <- drive_fill(list(eligible_1l_agents.csv = list(md5 = "aa11", n_rows = 42L),
+                         mm_adjacent_overrides.csv = list(md5 = "d41d8", n_rows = 0L)))
+ok(grepl("1 supplied, 2 empty", mixed$log, fixed = TRUE) &&
+     grepl("primary_tumor_groups.csv: NOT READ", mixed$log, fixed = TRUE) &&
+     grepl("mm_adjacent_overrides.csv: empty", mixed$log, fixed = TRUE),
+   "and a file never read is told apart from one read and empty")
+
 cat("\n-- the attrition steps match what the counts return --\n")
 # The labels are read off ATTRITION_STEPS but the numbers come from
 # ndmm_counts(), so a key that does not exist there yields NULL and a row with
@@ -620,17 +672,22 @@ fl <- paste(readLines(file.path(ROOT, "R", "steps", "06_flags.R"), warn = FALSE)
             collapse = "\n")
 ok(grepl("WHERE {ndmm_criteria_where()}", fl, fixed = TRUE),
    "the cohort view takes its conjunction from that list, not a written-out one")
-# The counts take it from the same list. A hand-written "<flag> = 1" in a step
-# file would be a second copy of the rule that decides who is in the cohort -
-# which is what this leaves no room for.
-step_txt <- unlist(lapply(list.files(file.path(ROOT, "R", "steps"), "[.]R$",
-                                     full.names = TRUE), readLines, warn = FALSE))
-dup <- FLAGS[vapply(FLAGS, function(f)
-  any(grepl(paste0(f, "[[:space:]]*=[[:space:]]*1"), step_txt)), logical(1))]
-ok(length(dup) == 0,
-   if (length(dup)) paste0("a step writes the conjunction out again: ",
-                           paste(dup, collapse = ", "))
-   else "and no step file spells a flag predicate out for itself")
+# The counts take it from the same list. What must not come back is a step file
+# writing the conjunction out for itself - two or more criteria tested together
+# is a second copy of the rule that decides who is in the cohort. One flag on
+# its own is not that: the belantamab reconciliation reads NO_BELANTAMAB to say
+# which way the proxy went on each row, which is a label, not a criterion.
+step_files <- list.files(file.path(ROOT, "R", "steps"), "[.]R$", full.names = TRUE)
+conj <- Filter(Negate(is.null), lapply(step_files, function(p) {
+  txt <- paste(readLines(p, warn = FALSE), collapse = "\n")
+  hit <- FLAGS[vapply(FLAGS, function(f)
+    grepl(paste0(f, "[[:space:]]*=[[:space:]]*[01]"), txt), logical(1))]
+  if (length(hit) >= 2L) paste0(basename(p), ": ", paste(hit, collapse = ", "))
+}))
+ok(length(conj) == 0,
+   if (length(conj)) paste0("a step writes the conjunction out again -- ",
+                            paste(unlist(conj), collapse = "; "))
+   else "and no step file tests two criteria flags together for itself")
 
 cat("\n-- a funnel that grows is not a count --\n")
 mk <- function(v) setNames(as.list(v), keys)
@@ -799,16 +856,18 @@ ok(!inherits(tryCatch(cr$clear_run_rows(NULL, list()), error = function(e) e),
              "error") && length(CRLOG) == 0,
    "a table that does not exist yet is not a failure, and not a warning either")
 
-# But a delete that was refused leaves exactly the rows this exists to remove.
+# But a delete that was refused leaves exactly the rows this exists to remove,
+# under this run's id, describing a cohort this run did not build. Warning and
+# carrying on published them.
 CRLOG <- character(0)
 assign("db_exec", function(con, s) stop("PERMISSION_DENIED"), envir = cr)
-ok(!inherits(tryCatch(cr$clear_run_rows(NULL, list()), error = function(e) e),
-             "error"),
-   "any other failure does not stop the build")
-ok(length(CRLOG) == length(cr$RUN_SCOPED_TABLES) &&
-     all(grepl("WARNING", CRLOG, fixed = TRUE)) &&
-     any(grepl("PERMISSION_DENIED", CRLOG, fixed = TRUE)),
-   "...but it is said out loud, once per table, rather than swallowed")
+m <- tryCatch({ cr$clear_run_rows(NULL, list()); "" }, error = conditionMessage)
+ok(nzchar(m), "any other failure stops the build rather than warning past it")
+ok(length(gregexpr("PERMISSION_DENIED", m, fixed = TRUE)[[1]]) ==
+     length(cr$RUN_SCOPED_TABLES) &&
+     all(vapply(cr$RUN_SCOPED_TABLES, function(t)
+       grepl(paste0("wk.p_", t), m, fixed = TRUE), logical(1))),
+   "...naming every table it could not clear, not the first one it hit")
 
 # After the status row, so the run is marked started whatever the clear does,
 # and before the first step, so no writer is reached with stale rows in place.
@@ -816,6 +875,12 @@ i_cr <- regexpr("clear_run_rows(con, cfg)", body, fixed = TRUE)
 i_p1 <- regexpr("build_ndmm_mm_dx_codes(con)", body, fixed = TRUE)
 ok(i_cr > 0 && i_p1 > 0 && i_bs < i_cr && i_cr < i_p1,
    "cleared after the status row and before the first phase")
+# And the failed-status handler is registered before it, or a stop in the clear
+# would leave the status at "started" for ever and check_no_active_run() would
+# refuse every later run on the prefix.
+i_oe <- regexpr("nndm_complete", body, fixed = TRUE)
+ok(i_oe > 0 && i_bs < i_oe && i_oe < i_cr,
+   "...with the failed-status handler armed before the clear can stop")
 
 cat("\n-- a retried write does not double the rows --\n")
 # write_attrition and write_build_status both clear and rewrite their run's
@@ -1272,19 +1337,31 @@ ok(grepl(paste0("sp.SCOPE = '", se$NDMM_BELANTAMAB_SCOPE, "'"), sc, fixed = TRUE
 # "In any LOT" is exact only once lines exist, which is after this build. So
 # the run emits what the reconciliation needs rather than claiming to be exact.
 SSQL <- character(0)
-assign("db_q", function(con, sql) data.frame(n_pat = 3L, n_claims = 7L), envir = se)
+assign("db_q", function(con, sql) data.frame(n_kept = 3L, n_dropped = 2L,
+                                             n_pat = 5L, n_claims = 7L), envir = se)
 se$build_ndmm_belantamab_reconcile(NULL, cfg_defaults)
 rc <- SSQL[1]
 ok(grepl("NDMM_BELANTAMAB_RECONCILE", rc, fixed = TRUE) &&
-     grepl("NDMM_COHORT", rc, fixed = TRUE) &&
      grepl("_ndmm_belantamab_tx", rc, fixed = TRUE),
-   "the patients still to adjudicate are the cohort's own belantamab claims")
-# Only the cohort: a patient the proxy already excluded is gone, and one with
-# no belantamab claim cannot have had it in a line. An INNER JOIN both ways.
+   "the patients still to adjudicate carry their own belantamab claims")
+# Read off the flags, not the cohort. The cohort is what the proxy let through,
+# so a table built from it cannot show a patient the proxy removed - and
+# over-exclusion is the error that costs patients. Both sides have to be here or
+# an empty result reads as "exact" when it only means "nobody kept has a claim".
+ok(grepl("_ndmm_flags_all", rc, fixed = TRUE) &&
+     !grepl("NDMM_COHORT", rc, fixed = TRUE),
+   "read off the flags, so a patient the proxy excluded can still appear")
+ok(grepl("AS EXCLUDED_BY_PROXY", rc, fixed = TRUE),
+   "...and each row says which way the proxy went, so the two are told apart")
+# Every other criterion passing, or the table fills with patients a second
+# criterion had already removed - whose belantamab claim decides nothing.
+ok(grepl(ndmm_criteria_where(except = "NO_BELANTAMAB", alias = "f."), rc,
+         fixed = TRUE),
+   "...scoped to patients whose membership turns on this decision alone")
 ok(grepl("INNER JOIN", rc, fixed = TRUE) && !grepl("LEFT JOIN", rc, fixed = TRUE),
-   "...only those two, so the table is what has to be looked at and no more")
+   "joined, not outer-joined, so the table is what has to be looked at and no more")
 ok(grepl("b.bel_dt", rc, fixed = TRUE) &&
-     grepl("datediff(b.bel_dt, c.INDEX_DATE)", rc, fixed = TRUE),
+     grepl("datediff(b.bel_dt, l1.LOT1_START_DT)", rc, fixed = TRUE),
    "with the claim date and its offset from index, which is what places it in a line")
 
 cat("\n-- which agents may set the index, and which set one --\n")

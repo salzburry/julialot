@@ -866,19 +866,72 @@ check_no_active_run <- function(con, cfg) {
 RUN_SCOPED_TABLES <- c("NDMM_ATTRITION", "NDMM_RUN_METADATA",
                        "NDMM_CODELIST_METADATA")
 
+# The three files that decide rules the protocol leaves open, and what the
+# build does when each is empty. Empty is a legitimate run - the rule falls
+# back to the source's behaviour, and every one of them says so where it is
+# read. It is also exactly what a deploy that set CODELIST_DIR and missed
+# NDMM_ELIGIBLE_1L_CSV and its two siblings looks like, and those three lines
+# sit in the middle of a long log. This says it once, at the end, beside the
+# count they shaped.
+FILLIN_FILES <- list(
+  eligible_1l_agents.csv    = "any MM therapy on the code list can set the 1L index",
+  mm_adjacent_overrides.csv = "tumour-group labels alone decide the other-cancer criterion",
+  primary_tumor_groups.csv  = "outpatient pairs must share one code-list label")
+
+report_fillins <- function(cfg) {
+  seen <- getOption("nndm_codelist_md5", list())
+  empty <- character(0); used <- character(0)
+  for (f in names(FILLIN_FILES)) {
+    e <- seen[[f]]
+    # Never read at all is not the same as read and empty, and only the second
+    # is a decision. write_codelist_metadata() stops on a missing hash, so this
+    # says which one it was rather than leaving that to the failure.
+    if (is.null(e))
+      empty <- c(empty, paste0(f, ": NOT READ - ", FILLIN_FILES[[f]]))
+    else if (isTRUE(as.numeric(e$n_rows) == 0))
+      empty <- c(empty, paste0(f, ": empty (md5 ", e$md5, ") - ",
+                               FILLIN_FILES[[f]]))
+    else
+      used <- c(used, paste0(f, ": ", format(e$n_rows, big.mark = ","),
+                             " row(s) (md5 ", e$md5, ")"))
+  }
+  log_msg("Rule fill-ins: ", length(used), " supplied, ", length(empty), " empty")
+  for (u in used)   log_msg("    ", u)
+  for (e in empty)  log_msg("  > ", e)
+  if (length(empty))
+    log_msg("  > An empty file is a run without that rule, and reads the same ",
+            "as one whose path was never set. Check the paths against ",
+            wrk("NDMM_CODELIST_METADATA"), " before this cohort is used.")
+  invisible(list(used = used, empty = empty))
+}
+
 clear_run_rows <- function(con, cfg) {
+  bad <- character(0)
   for (t in RUN_SCOPED_TABLES) {
     tbl <- wrk(t)
     err <- tryCatch({
       db_exec(con, glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'")); NULL
     }, error = function(e) conditionMessage(e))
+    # A table that is not there yet is the first run on this prefix. There is
+    # nothing under this run id to leave behind, so it is not a failure.
     if (!is.null(err) &&
         !grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found", err,
                ignore.case = TRUE))
-      log_msg("WARNING: could not clear ", tbl, " of run ", run_id, ": ", err,
-              " - if an earlier attempt wrote rows under this run id, they are ",
-              "still there and this run will not have written them.")
+      bad <- c(bad, paste0(tbl, ": ", err))
   }
+  # All of them, then stop once: a permission or a lock that stopped one delete
+  # has usually stopped the others, and naming one at a time would take three
+  # runs to find out.
+  if (length(bad))
+    stop("Could not clear run ", run_id, " from:\n  ",
+         paste(bad, collapse = "\n  "),
+         "\nA re-run keeps its run id, so rows an earlier attempt wrote under ",
+         "it are still there. Each writer clears its own rows before it ",
+         "writes, so a run that reaches all of them would republish correctly ",
+         "- but one that stops before a writer leaves that attempt's rows ",
+         "standing under this run's id, describing a cohort this run did not ",
+         "build, and nothing downstream can tell them apart. Fix the ",
+         "permission or the lock and start again.", call. = FALSE)
   invisible(TRUE)
 }
 
@@ -922,10 +975,11 @@ build_nndm <- function(here, prefix) {
   check_no_active_run(con, cfg)
   check_upstream(con, cfg)
   write_build_status(con, cfg, "started")
-  # After the status row, so a run is marked started whatever this does, and
-  # before the first step, so no writer can be reached with the previous
-  # attempt's rows still under this run's id.
-  clear_run_rows(con, cfg)
+  # Registered the moment the run is marked started, and before anything that
+  # can stop - clear_run_rows() does. A stop between the two would leave the
+  # status at "started" for ever, and check_no_active_run() would then refuse
+  # every later run on this prefix until someone overrode it by hand.
+  #
   # after = FALSE, or this fires after the disconnect above and writes to a
   # closed connection.
   on.exit(if (!isTRUE(getOption("nndm_complete", FALSE)))
@@ -933,6 +987,10 @@ build_nndm <- function(here, prefix) {
           add = TRUE, after = FALSE)
   options(nndm_complete = FALSE, nndm_codelist_md5 = list(),
           nndm_waivers_applied = character(0))
+  # After the status row, so a run is marked started whatever this does, and
+  # before the first step, so no writer can be reached with the previous
+  # attempt's rows still under this run's id.
+  clear_run_rows(con, cfg)
 
   log_msg("MM diagnosis over the study period, and who is old enough")
   build_ndmm_mm_dx_codes(con)
@@ -1030,6 +1088,8 @@ build_nndm <- function(here, prefix) {
   log_msg(SEP)
   log_msg("NDMM 1L cohort: ", format(counts$ndmm_final, big.mark = ","),
           " patients -> ", wrk("NDMM_COHORT"))
+  # After the count, because which of these were supplied is part of reading it.
+  report_fillins(cfg)
   log_msg(SEP)
   invisible(counts)
 }
