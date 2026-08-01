@@ -13,6 +13,12 @@ python3 validation/mutation/nndm_battery.py       minutes; --all before a releas
 A battery run with no arguments covers only the mutations whose file this tree
 has changed, and says so. `--all` is the release check.
 
+**Do not pipe a battery into `tail` or `head`.** A pipeline's exit status is the
+last command's, so `python3 nndm_battery.py --all | tail -30` reports 0 even
+when a mutation survived — the summary line says `problems: 1` and the shell
+says success. Run it bare, or capture with `PIPESTATUS`. A CI job written the
+first way passes through a surviving mutation.
+
 ## Why they are outside the packages
 
 They used to sit in `Jul 28/<pkg>/tests/`. They name the baseline the packages
@@ -103,3 +109,23 @@ Two were **retired**: `readme port count stale` and `readme port total stale`
 pinned a deviation-count paragraph that left the README with the scrub, along
 with the assertion that read it. README coverage is carried by the funnel and
 criteria mutations, which are anchored and run.
+
+### One more the anchors could not have told us
+
+`attrition key typo` had a valid anchor and still **survived** the first full
+sweep — which is the case only a full run finds. It renamed a criterion's key
+in the middle of the list. That used to break the join between the labels and
+the counts, because each side kept its own list. Both sides read `NDMM_CRITERIA`
+now, so a renamed key moves on both at once, they still agree, and nothing is
+wrong: the published table keys off `label`, and the key is internal.
+
+That is single-sourcing working — there is no longer a disagreement to detect —
+but it left the mutation testing nothing. It is re-pointed at the one key that
+is still two-sided: `ndmm_final` is derived into `ATTRITION_STEPS` from the
+list, while `ndmm_counts()` returns it as a literal, because the last row reads
+the cohort view rather than a prefix. A typo there still breaks the join, and
+is caught.
+
+A surviving mutation is not always a bug in the code. Here it was a mutation
+that had stopped meaning anything, and the fix was to aim it at the seam that
+still exists.
