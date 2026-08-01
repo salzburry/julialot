@@ -100,7 +100,7 @@ NDMM_MM_QUALIFYING      NDMM_BASE_COHORT         NDMM_ENROLL_SPANS
 NDMM_ENROLL_SPANS_STRICT NDMM_MMA_CODELIST       NDMM_BELANTAMAB_CODES
 NDMM_LOT1_STARTS        NDMM_OTHER_MALIG_CODES   NDMM_OTHER_MALIG_EVENTS
 NDMM_BELANTAMAB_PATIDS  NDMM_INDEX_TX            NDMM_BELANTAMAB_TX
-NDMM_PATIDS             NDMM_INDEX_INELIGIBLE
+NDMM_PATIDS             NDMM_INDEX_INELIGIBLE    NDMM_PREG_CODES
 ```
 
 The list is not maintained by hand: `tests/test_runner.R` counts the reads in
@@ -959,7 +959,7 @@ is pinned to its default** — the review tables exist to be acted on.
 | `NDMM_MM_ADJACENT_STATES` | `override` | `override`, `exclude` |
 | `NDMM_INDEX_EXCLUDED_ABBRS` | *(empty)* | comma-separated `CL_MED_ABBR` patterns |
 | `NDMM_INDEX_EXCLUDED_CODES` | *(empty)* | comma-separated `TYPE:CODE` or bare codes |
-| `NDMM_WAIVERS` | *(empty)* | the four NDC-shape checks, by name |
+| `NDMM_WAIVERS` | *(empty)* | the four NDC-shape checks and `raw_icd_flag`, by name |
 
 ### Where the fill-in files are, and one way out
 
