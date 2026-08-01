@@ -804,16 +804,18 @@ ok(!inherits(tryCatch(cr$clear_run_rows(NULL, list()), error = function(e) e),
              "error") && length(CRLOG) == 0,
    "a table that does not exist yet is not a failure, and not a warning either")
 
-# But a delete that was refused leaves exactly the rows this exists to remove.
+# But a delete that was refused leaves exactly the rows this exists to remove,
+# under this run's id, describing a cohort this run did not build. Warning and
+# carrying on published them.
 CRLOG <- character(0)
 assign("db_exec", function(con, s) stop("PERMISSION_DENIED"), envir = cr)
-ok(!inherits(tryCatch(cr$clear_run_rows(NULL, list()), error = function(e) e),
-             "error"),
-   "any other failure does not stop the build")
-ok(length(CRLOG) == length(cr$RUN_SCOPED_TABLES) &&
-     all(grepl("WARNING", CRLOG, fixed = TRUE)) &&
-     any(grepl("PERMISSION_DENIED", CRLOG, fixed = TRUE)),
-   "...but it is said out loud, once per table, rather than swallowed")
+m <- tryCatch({ cr$clear_run_rows(NULL, list()); "" }, error = conditionMessage)
+ok(nzchar(m), "any other failure stops the build rather than warning past it")
+ok(length(gregexpr("PERMISSION_DENIED", m, fixed = TRUE)[[1]]) ==
+     length(cr$RUN_SCOPED_TABLES) &&
+     all(vapply(cr$RUN_SCOPED_TABLES, function(t)
+       grepl(paste0("wk.p_", t), m, fixed = TRUE), logical(1))),
+   "...naming every table it could not clear, not the first one it hit")
 
 # After the status row, so the run is marked started whatever the clear does,
 # and before the first step, so no writer is reached with stale rows in place.
@@ -821,6 +823,12 @@ i_cr <- regexpr("clear_run_rows(con, cfg)", body, fixed = TRUE)
 i_p1 <- regexpr("build_ndmm_mm_dx_codes(con)", body, fixed = TRUE)
 ok(i_cr > 0 && i_p1 > 0 && i_bs < i_cr && i_cr < i_p1,
    "cleared after the status row and before the first phase")
+# And the failed-status handler is registered before it, or a stop in the clear
+# would leave the status at "started" for ever and check_no_active_run() would
+# refuse every later run on the prefix.
+i_oe <- regexpr("nndm_complete", body, fixed = TRUE)
+ok(i_oe > 0 && i_bs < i_oe && i_oe < i_cr,
+   "...with the failed-status handler armed before the clear can stop")
 
 cat("\n-- a retried write does not double the rows --\n")
 # write_attrition and write_build_status both clear and rewrite their run's

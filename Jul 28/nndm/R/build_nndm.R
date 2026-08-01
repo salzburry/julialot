@@ -867,18 +867,32 @@ RUN_SCOPED_TABLES <- c("NDMM_ATTRITION", "NDMM_RUN_METADATA",
                        "NDMM_CODELIST_METADATA")
 
 clear_run_rows <- function(con, cfg) {
+  bad <- character(0)
   for (t in RUN_SCOPED_TABLES) {
     tbl <- wrk(t)
     err <- tryCatch({
       db_exec(con, glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'")); NULL
     }, error = function(e) conditionMessage(e))
+    # A table that is not there yet is the first run on this prefix. There is
+    # nothing under this run id to leave behind, so it is not a failure.
     if (!is.null(err) &&
         !grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found", err,
                ignore.case = TRUE))
-      log_msg("WARNING: could not clear ", tbl, " of run ", run_id, ": ", err,
-              " - if an earlier attempt wrote rows under this run id, they are ",
-              "still there and this run will not have written them.")
+      bad <- c(bad, paste0(tbl, ": ", err))
   }
+  # All of them, then stop once: a permission or a lock that stopped one delete
+  # has usually stopped the others, and naming one at a time would take three
+  # runs to find out.
+  if (length(bad))
+    stop("Could not clear run ", run_id, " from:\n  ",
+         paste(bad, collapse = "\n  "),
+         "\nA re-run keeps its run id, so rows an earlier attempt wrote under ",
+         "it are still there. Each writer clears its own rows before it ",
+         "writes, so a run that reaches all of them would republish correctly ",
+         "- but one that stops before a writer leaves that attempt's rows ",
+         "standing under this run's id, describing a cohort this run did not ",
+         "build, and nothing downstream can tell them apart. Fix the ",
+         "permission or the lock and start again.", call. = FALSE)
   invisible(TRUE)
 }
 
@@ -922,10 +936,11 @@ build_nndm <- function(here, prefix) {
   check_no_active_run(con, cfg)
   check_upstream(con, cfg)
   write_build_status(con, cfg, "started")
-  # After the status row, so a run is marked started whatever this does, and
-  # before the first step, so no writer can be reached with the previous
-  # attempt's rows still under this run's id.
-  clear_run_rows(con, cfg)
+  # Registered the moment the run is marked started, and before anything that
+  # can stop - clear_run_rows() does. A stop between the two would leave the
+  # status at "started" for ever, and check_no_active_run() would then refuse
+  # every later run on this prefix until someone overrode it by hand.
+  #
   # after = FALSE, or this fires after the disconnect above and writes to a
   # closed connection.
   on.exit(if (!isTRUE(getOption("nndm_complete", FALSE)))
@@ -933,6 +948,10 @@ build_nndm <- function(here, prefix) {
           add = TRUE, after = FALSE)
   options(nndm_complete = FALSE, nndm_codelist_md5 = list(),
           nndm_waivers_applied = character(0))
+  # After the status row, so a run is marked started whatever this does, and
+  # before the first step, so no writer can be reached with the previous
+  # attempt's rows still under this run's id.
+  clear_run_rows(con, cfg)
 
   log_msg("MM diagnosis over the study period, and who is old enough")
   build_ndmm_mm_dx_codes(con)

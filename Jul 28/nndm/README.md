@@ -30,6 +30,12 @@ before `write_run_metadata` would otherwise leave the previous attempt's row
 naming the code and the code lists that built a cohort this attempt did not
 build.
 
+A clear that is **refused** stops the run, naming every table it could not
+clear. Tables that do not exist yet are the first run on a prefix and are not a
+failure; a permission or a lock is, because carrying on would publish this
+run's rows beside an earlier attempt's under one run id, with nothing
+downstream able to tell them apart.
+
 It is a check, not a lock — nothing here can hold one — so two runs starting in
 the same moment can both pass it. It catches the case worth catching: starting
 a second run while one is going. A killed process leaves its `started` row
