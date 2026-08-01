@@ -264,7 +264,7 @@ M = [
  ("eligible list never read","R/steps/00b_lot1_index.R","  el    <- load_eligible_agents_csv(nndm_config()$eligible_1l_csv)","  el    <- NULL"),
  ("eligible deny rows ignored","R/steps/00b_lot1_index.R","  abbrs <- c(split_setting(NDMM_INDEX_EXCLUDED_ABBRS), el$deny)","  abbrs <- split_setting(NDMM_INDEX_EXCLUDED_ABBRS)"),
  ("allowlist not applied","R/steps/00b_lot1_index.R","  if (length(el$allow)) {\n    allow_in","  if (FALSE) {\n    allow_in"),
- ("allowlist inverted","R/steps/00b_lot1_index.R",'      sql  = sprintf("upper(trim(med_abbr)) NOT IN (%s)", allow_in))','      sql  = sprintf("upper(trim(med_abbr)) IN (%s)", allow_in))'),
+ ("allowlist inverted","R/steps/00b_lot1_index.R",'                           "OR upper(trim(med_abbr)) NOT IN (%s))"), allow_in))','                           "OR upper(trim(med_abbr)) IN (%s))"), allow_in))'),
  ("allowlist agent unchecked","R/steps/00b_lot1_index.R","  for (a in el$allow) {","  for (a in character(0)) {"),
  ("eligible csv path not pinned","R/build_nndm.R",'  cfg$eligible_1l_csv <- fill(cfg$eligible_1l_csv, "eligible_1l_agents.csv")\n',"  "),
  ("eligible bad value accepted","R/codelists.R",'  bad <- which(!(el %in% c("0", "1")))',"  bad <- integer(0)"),

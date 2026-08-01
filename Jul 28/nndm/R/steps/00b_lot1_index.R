@@ -95,12 +95,23 @@ build_ndmm_index_ineligible_codes <- function(con) {
   # named is ineligible. One predicate, and the four-arm scan below needs no
   # change - it already anti-joins this view. Added last so the checks above
   # still run over the named terms one at a time.
+  #
+  # A row with no abbreviation has to be named ineligible explicitly. NULL NOT
+  # IN (...) is unknown, not true, so such a row would not be selected here, and
+  # the scan anti-joins this view - it would stay eligible and its code could
+  # set an index under a list that names only some agents. That is the failure
+  # an allowlist exists to prevent, and nothing downstream would show it: the
+  # agent report builds its universe from non-blank abbreviations, so the row
+  # would not appear there either. cl_mma_codelist.csv requires a code and a
+  # code type to be non-blank but not an abbreviation, and blanks are read as
+  # NA, so this is reachable from a real file.
   allow_term <- NULL
   if (length(el$allow)) {
     allow_in <- paste(sprintf("'%s'", sq(el$allow)), collapse = ", ")
     allow_term <- list(
       what = paste0("the allowlist (", length(el$allow), " agents)"),
-      sql  = sprintf("upper(trim(med_abbr)) NOT IN (%s)", allow_in))
+      sql  = sprintf(paste("(med_abbr IS NULL OR trim(med_abbr) = ''",
+                           "OR upper(trim(med_abbr)) NOT IN (%s))"), allow_in))
   }
 
   db_exec(con, glue("
@@ -129,11 +140,32 @@ build_ndmm_index_ineligible_codes <- function(con) {
            NDMM_MMA_CODELIST, "'.", call. = FALSE)
   }
   if (!is.null(allow_term)) {
-    n_barred <- as.integer(db_q(con, glue(
-      "SELECT count(DISTINCT med_abbr) AS n FROM {NDMM_MMA_CODELIST}
-       WHERE {allow_term$sql}"))$n)
-    log_msg("  Allowlist in force: ", n_barred, " agent(s) on the code list ",
-            "cannot set a 1L index")
+    # Counted separately, because count(DISTINCT med_abbr) does not count NULL:
+    # the rows with no abbreviation are exactly the ones that used to slip
+    # through, so reporting them as agents would hide them again. They are
+    # codes, not agents - there is no name to report - so they are counted as
+    # codes and called unmapped.
+    got <- db_q(con, glue(
+      "SELECT count(DISTINCT med_abbr) AS n_named,
+              sum(CASE WHEN med_abbr IS NULL OR trim(med_abbr) = ''
+                       THEN 1 ELSE 0 END) AS n_unmapped
+       FROM {NDMM_MMA_CODELIST}
+       WHERE {allow_term$sql}"))
+    # A column the query did not return is length zero, and length zero in an
+    # if() is an error rather than a FALSE. This is a log line; it must not be
+    # what stops a build.
+    n_of <- function(x) {
+      v <- suppressWarnings(as.integer(x))
+      if (length(v) != 1L || is.na(v)) NA_integer_ else v
+    }
+    log_msg("  Allowlist in force: ", n_of(got$n_named),
+            " named agent(s) on the code list cannot set a 1L index")
+    n_un <- n_of(got$n_unmapped)
+    if (!is.na(n_un) && n_un > 0)
+      log_msg("  ...and ", n_un, " code(s) with no CL_MED_ABBR, barred as ",
+              "UNMAPPED. An allowlist names the agents that may set an index, ",
+              "so a code that names none cannot be one of them. Fill in ",
+              "CL_MED_ABBR for these if any of them should be eligible.")
   }
 
   # Every entry after belantamab has to match something. Left unchecked, a name
