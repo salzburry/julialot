@@ -265,7 +265,7 @@ check_normalized_codelist <- function(conn, cfg, view_name, mat_tables) {
   invisible(TRUE)
 }
 
-# One schema for everything: <catalog>.<schema>, e.g. hive_metastore.osk02156.
+# One schema for everything: <catalog>.<schema>, e.g. hive_metastore.usr00000.
 # work and personal schema are set together, and no schema is an error rather
 # than a silently skipped write.
 pin_output_schema <- function(cfg) {
@@ -274,7 +274,7 @@ pin_output_schema <- function(cfg) {
                 unset = Sys.getenv("DOMINO_STARTING_USERNAME", unset = "")))
   if (!nzchar(schema)) {
     stop("No output schema. Set DOMINO_USER_NAME to your personal schema ",
-         "(e.g. osk02156), or PROJECT_WORK_SCHEMA to override.", call. = FALSE)
+         "(e.g. usr00000), or PROJECT_WORK_SCHEMA to override.", call. = FALSE)
   }
   cfg$work_schema     <- schema
   cfg$personal_schema <- schema

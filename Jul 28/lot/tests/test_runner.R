@@ -2,7 +2,7 @@
 # Checks on the LOT runner: the cohort switch, the contract, and the setting
 # validators. No warehouse needed.
 #
-#   Rscript "Jul 28/lot/tests/test_runner.R"
+#   Rscript "lot/tests/test_runner.R"
 
 ROOT <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -63,12 +63,12 @@ stops(check_lot_contract(modifyList(cfg, list(input_cohort_table = ""))),
 cat("\n-- lot_out() prefixes LOT's outputs, wrk() leaves the cohort alone --\n")
 # The cohort table is named by the cohort build; prefixing it here would look
 # for coh_a_COH_A_FINAL.
-cfg <- pin_cohort(modifyList(base, list(work_schema = "osk02156")), TBL_A, PFX_A)
+cfg <- pin_cohort(modifyList(base, list(work_schema = "usr00000")), TBL_A, PFX_A)
 assign("cfg", cfg, envir = globalenv())
 sys.source(file.path(ROOT, "R", "db_utils_lot.R"), envir = globalenv())
-ok(identical(lot_out("LOT1_BASE"), paste0("hive_metastore.osk02156.", PFX_A, "LOT1_BASE")),
+ok(identical(lot_out("LOT1_BASE"), paste0("hive_metastore.usr00000.", PFX_A, "LOT1_BASE")),
    "lot_out() carries the prefix")
-ok(identical(wrk(cfg$input_cohort_table), paste0("hive_metastore.osk02156.", TBL_A)),
+ok(identical(wrk(cfg$input_cohort_table), paste0("hive_metastore.usr00000.", TBL_A)),
    "wrk() reads the cohort table as the cohort named it")
 
 # Read the real output names out of the ported steps rather than listing them
@@ -1675,7 +1675,7 @@ clear()
 Sys.setenv(STUDY_END = "30-06-2025")
 stops(check_settings(), "an Excel-reformatted STUDY_END")
 clear()
-Sys.setenv(PROJECT_WORK_SCHEMA = "hive_metastore.osk02156")
+Sys.setenv(PROJECT_WORK_SCHEMA = "hive_metastore.usr00000")
 stops(check_settings(), "catalog.schema where a schema name belongs")
 clear()
 Sys.setenv(ALLO_LOT_SPAN = "whole_lot")
@@ -1695,8 +1695,8 @@ stops(check_settings(), "one reviewable name plus one that cannot be waived")
 clear()
 
 cat("\n-- pin_output_schema --\n")
-Sys.setenv(DOMINO_USER_NAME = "osk02156")
-ok(identical(pin_output_schema(list(catalog = "hive_metastore"))$work_schema, "osk02156"),
+Sys.setenv(DOMINO_USER_NAME = "usr00000")
+ok(identical(pin_output_schema(list(catalog = "hive_metastore"))$work_schema, "usr00000"),
    "schema pinned from the environment")
 clear()
 stops(pin_output_schema(list(catalog = "hive_metastore")),

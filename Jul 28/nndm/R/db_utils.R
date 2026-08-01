@@ -1,5 +1,5 @@
 # Logging, DB helpers, naming, and the step runner for the NDMM cohort build.
-# Carried over from Jul 28/lot/R/db_utils_lot.R, which is the same job; the one
+# Carried over from lot/R/db_utils_lot.R, which is the same job; the one
 # difference is wrk(), below.
 
 SEP   <- strrep("=", 70)

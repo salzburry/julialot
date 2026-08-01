@@ -1,7 +1,5 @@
 # The NDMM cohort's own names, windows and code-list overrides.
 #
-# Ported from apr_30_2026/06_ndmm_dashboard.R lines 62-147.
-# tests/test_same_as_source.R compares this against that range.
 
 # concurrently with 05_regimen_dashboard.R without clobbering its temp views.
 NDMM_LOT_LONG_FILT       <- "_ndmm_lot_long"

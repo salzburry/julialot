@@ -1,7 +1,5 @@
 # MM oncology therapy in the 12 months before LOT1.
 #
-# Ported from apr_30_2026/06_ndmm_dashboard.R lines 217-317.
-# tests/test_same_as_source.R compares this against that range.
 
 build_ndmm_mma_codelist <- function() {
   codelist_src <- load_codelist_csv(

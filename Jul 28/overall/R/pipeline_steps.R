@@ -1,6 +1,5 @@
 # The ordered list of CREATE-VIEW steps. One file per phase under steps/, so
-# the IE criteria can be read a step at a time. test_same_as_source.R checks
-# the SQL still matches apr_30_2026.
+# the IE criteria can be read a step at a time.
 
 PHASE_FILES <- c(
   codelists      = "01_codelists.R",
@@ -47,6 +46,11 @@ build_steps <- function(cfg, mat_tables) {
 
   # The Step 24 filter, built from the criteria catalog.
   ctx$criteria_sql <- build_criteria_sql(build_criteria_catalog(cfg), cfg)
+
+  # Step 1's gate, from the same function run_attrition_report() counts with.
+  # Passed through ctx rather than read as a global: the step files see only
+  # their arguments, so a step can be sourced and driven on its own.
+  ctx$step1_sql <- qualifying_sql(cfg$outpatient_window)
 
   # Follow-up cap, used by therapy / pregnancy / clintrial so the IE window
   # ends at death or study end.

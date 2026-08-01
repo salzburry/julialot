@@ -1,9 +1,9 @@
 # Runner for the NDMM (1L newly-diagnosed) cohort. Standalone: one module,
 # pointed at a cohort prefix.
 #
-# The rules in R/steps are a port of the cohort half of
-# apr_30_2026/06_ndmm_dashboard.R. What is here is the runner around them,
-# which is not a port of anything: the source's prepare_ndmm_cohort() is
+# The rules in R/steps are a port of the cohort half of the source build's
+# NDMM dashboard script. What is here is the runner around them, which is not
+# a port of anything: the source's prepare_ndmm_cohort() is
 # entangled with the dashboard it feeds, and skips a filter whose inputs it
 # cannot read. This build stops instead - a count nobody can reproduce is
 # worse than no count.
@@ -91,7 +91,7 @@ check_choices <- function(cfg) {
 # package reads raw CDM and its code lists and nothing else, which is what lets
 # it be handed to someone on its own. It used to read OVERALL_COH_FINAL,
 # LOT_LONG and MAP_STACKED - the MM diagnosis and demographics are ported in
-# from Jul 28/overall now, the 1L index is derived from claims, and belantamab
+# from the overall build now, the 1L index is derived from claims, and belantamab
 # is read off the code list.
 upstream_tables <- function(cfg) list()
 
@@ -338,21 +338,62 @@ check_constants <- function(cfg) {
   invisible(TRUE)
 }
 
-# The nine rows of the attrition, in the order the protocol applies the
-# criteria: S6.2.1.1's inclusions, then S6.2.1.2's four exclusions as it lists
-# them, belantamab last. Names are the criterion, not the column, because this
-# table is what gets read.
-ATTRITION_STEPS <- list(
-  list(key = "whole",          label = "Patients with a qualifying MM diagnosis"),
-  list(key = "elig",           label = "+ aged 18 or over at diagnosis"),
-  list(key = "elig_lot1",      label = "+ eligible 1L treatment on or after LOT1_FROM"),
-  list(key = "ce12",           label = "+ 12-month CE before index"),
-  list(key = "ce12_fuce",      label = "+ CE during follow-up"),
-  list(key = "fuce_nopriortx", label = "+ no MM oncology therapy in 12-month baseline"),
-  list(key = "noother",        label = "+ no other cancer in 12-month baseline"),
-  list(key = "noother_nopreg", label = "+ no pregnancy in study period"),
-  list(key = "ndmm_final",     label = "+ no belantamab in any LOT (NDMM 1L cohort)")
+# The six flag criteria, in the order the protocol applies them: S6.2.1.1's CE
+# inclusions, then S6.2.1.2's four exclusions as it lists them, belantamab last.
+# Don't reorder it - this is the funnel's order.
+#
+# One list, three readers. NDMM_PATIDS ANDs the whole set, ndmm_counts() walks a
+# prefix of it per funnel row, and ATTRITION_STEPS below takes the labels. Each
+# reader used to spell the predicates out for itself: six flags in the view and
+# fifteen more in the counts, kept in step by hand. Nothing said when they
+# stopped agreeing, and a flag added to the view alone would drop the last row
+# of the funnel under a label that named a different criterion.
+NDMM_CRITERIA <- list(
+  list(key = "ce12",           flag = "CE_pre_lot1_12mo",
+       label = "+ 12-month CE before index"),
+  list(key = "ce12_fuce",      flag = "CE_lot1_fu",
+       label = "+ CE during follow-up"),
+  list(key = "fuce_nopriortx", flag = "NO_PRIOR_MM_TX",
+       label = "+ no MM oncology therapy in 12-month baseline"),
+  list(key = "noother",        flag = "NO_OTHER_CANCER_PRE_LOT1",
+       label = "+ no other cancer in 12-month baseline"),
+  list(key = "noother_nopreg", flag = "NO_PREGNANCY",
+       label = "+ no pregnancy in study period"),
+  list(key = "ndmm_final",     flag = "NO_BELANTAMAB",
+       label = "+ no belantamab in any LOT (NDMM 1L cohort)")
 )
+
+# The first n criteria as a WHERE body, in the funnel's order.
+#
+#   all of them          the cohort itself, which is what NDMM_PATIDS asks for
+#   a prefix (n)         one row of the funnel, which is what ndmm_counts() asks
+#   one dropped (except) a sensitivity report, which recomputes that criterion
+#                        its own way and ANDs the rest - so the row it prints is
+#                        a cohort size and not one criterion's count
+#
+# alias qualifies the columns where the flags arrive through a join. except is
+# checked rather than filtered: a mistyped flag would silently leave the
+# criterion in, and the report would then say the cohort is bigger than it is.
+ndmm_criteria_where <- function(n = length(NDMM_CRITERIA), except = character(0),
+                                alias = "") {
+  flags <- vapply(NDMM_CRITERIA[seq_len(n)], function(cr) cr$flag, character(1))
+  unknown <- setdiff(except, flags)
+  if (length(unknown))
+    stop("Not a criterion of this cohort: ", paste(unknown, collapse = ", "),
+         ". The flags are ", paste(flags, collapse = ", "), ".", call. = FALSE)
+  paste(paste0(alias, setdiff(flags, except), " = 1"), collapse = " AND ")
+}
+
+# The nine rows of the attrition. The first three count off their own tables -
+# a qualifying MM diagnosis, then age, then an eligible 1L treatment - so they
+# are named here; the rest are the flag criteria above. Names are the criterion,
+# not the column, because this table is what gets read.
+ATTRITION_STEPS <- c(
+  list(
+    list(key = "whole",     label = "Patients with a qualifying MM diagnosis"),
+    list(key = "elig",      label = "+ aged 18 or over at diagnosis"),
+    list(key = "elig_lot1", label = "+ eligible 1L treatment on or after LOT1_FROM")),
+  lapply(NDMM_CRITERIA, function(cr) list(key = cr$key, label = cr$label)))
 
 ATTRITION_COLS <- c(RUN_ID = "STRING", STEP_NUM = "INT", CRITERION = "STRING",
                     N_PATIENTS = "BIGINT", PCT_OF_START = "DOUBLE",
@@ -577,7 +618,7 @@ write_run_metadata <- function(con, cfg, here, n) {
   invisible(TRUE)
 }
 
-# NDMM_COHORT is written to be a cohort Jul 28/lot can be pointed at, so the
+# NDMM_COHORT is written to be a cohort the lot build can be pointed at, so the
 # LOT algorithm can be run over the NDMM patients without anything in between.
 # These are the columns that build reads off whatever cohort it is given
 # (its REQUIRED_COHORT_COLS); NDMM_COHORT used to be PATID alone, which stopped
@@ -665,7 +706,7 @@ check_ndmm_cohort <- function(con, cfg, n_expected) {
   miss <- setdiff(NDMM_COHORT_COLS, cols)
   if (length(miss))
     stop(tbl, " is missing ", paste(miss, collapse = ", "),
-         ".\nIt is written to be a cohort Jul 28/lot can be pointed at, and ",
+         ".\nIt is written to be a cohort the lot build can be pointed at, and ",
          "that build reads these columns off whatever cohort it is given.",
          call. = FALSE)
   q <- db_q(con, glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_pat, ",
@@ -966,7 +1007,7 @@ build_nndm <- function(here, prefix) {
   build_ndmm_belantamab_scope_counts(con, cfg)
   build_ndmm_fu_ce_counts(con, cfg)
   # build_lot_long_filtered() is not called. It joins LOT_LONG to the cohort for
-  # the April dashboard's KPI, gallery and LOT-detail views; neither the cohort
+  # the source's dashboard KPI, gallery and LOT-detail views; neither the cohort
   # nor the attrition reads it, and this package builds only those two. The
   # function stays in 07_cohort.R so that file remains the source line for line.
 

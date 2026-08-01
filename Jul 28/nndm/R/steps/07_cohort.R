@@ -1,7 +1,5 @@
 # The filtered cohort, and the counts the attrition is read from.
 #
-# Ported from apr_30_2026/06_ndmm_dashboard.R lines 756-839.
-# tests/test_same_as_source.R compares this against that range.
 
 build_lot_long_filtered <- function(con, lot_long) {
   db_exec(con, glue("
@@ -43,50 +41,38 @@ build_lot_long_filtered <- function(con, lot_long) {
 # NDMM filters plus the new one, so the table reads top-to-bottom as
 # the funnel a clinical reviewer would expect.
 ndmm_counts <- function(con, mm_qualifying, base_cohort) {
+  n_of <- function(sql) db_q(con, sql)$n
   # whole/elig/elig_lot1 replaced: the population is no longer "patients in
   # LOT_LONG" filtered by a parent cohort. It is everyone with a qualifying MM
   # diagnosis, then those old enough, then those with an eligible 1L treatment.
-  # Registered as a rewritten block in tests/test_same_as_source.R.
-  whole <- db_q(con, glue(
-    "SELECT count(DISTINCT PATID) AS n FROM {mm_qualifying}"))$n
-  elig <- db_q(con, glue(
-    "SELECT count(DISTINCT PATID) AS n FROM {base_cohort}"))$n
-  elig_lot1 <- db_q(con, glue(
-    "SELECT count(DISTINCT PATID) AS n FROM {NDMM_LOT1_STARTS}"))$n
-  ce12 <- db_q(con, glue(
-    "SELECT count(DISTINCT PATID) AS n FROM {NDMM_FLAGS_ALL}
-     WHERE CE_pre_lot1_12mo = 1"))$n
+  # These three count off their own tables rather than off a flag.
+  whole <- n_of(glue(
+    "SELECT count(DISTINCT PATID) AS n FROM {mm_qualifying}"))
+  elig <- n_of(glue(
+    "SELECT count(DISTINCT PATID) AS n FROM {base_cohort}"))
+  elig_lot1 <- n_of(glue(
+    "SELECT count(DISTINCT PATID) AS n FROM {NDMM_LOT1_STARTS}"))
+
   # From here the funnel follows the protocol's own order: S6.2.1.1's remaining
   # inclusion (CE during follow-up), then S6.2.1.2's four exclusions as it
   # lists them - prior MM therapy, other cancer, pregnancy, and belantamab
-  # last. apr_30_2026 applied belantamab first and follow-up CE second-to-last.
+  # last. The source applied belantamab first and follow-up CE second-to-last.
   # The final cohort is the same conjunction either way, but the per-step
   # numbers are not, and the attrition is what gets read against the protocol.
-  # Registered as a rewritten block in tests/test_same_as_source.R.
-  ce12_fuce <- db_q(con, glue(
-    "SELECT count(DISTINCT PATID) AS n FROM {NDMM_FLAGS_ALL}
-     WHERE CE_pre_lot1_12mo = 1 AND CE_lot1_fu = 1"))$n
-  fuce_nopriortx <- db_q(con, glue(
-    "SELECT count(DISTINCT PATID) AS n FROM {NDMM_FLAGS_ALL}
-     WHERE CE_pre_lot1_12mo = 1
-       AND CE_lot1_fu       = 1
-       AND NO_PRIOR_MM_TX   = 1"))$n
-  noother <- db_q(con, glue(
-    "SELECT count(DISTINCT PATID) AS n FROM {NDMM_FLAGS_ALL}
-     WHERE CE_pre_lot1_12mo = 1 AND CE_lot1_fu = 1
-       AND NO_PRIOR_MM_TX = 1 AND NO_OTHER_CANCER_PRE_LOT1 = 1"))$n
-  noother_nopreg <- db_q(con, glue(
-    "SELECT count(DISTINCT PATID) AS n FROM {NDMM_FLAGS_ALL}
-     WHERE CE_pre_lot1_12mo = 1 AND CE_lot1_fu = 1
-       AND NO_PRIOR_MM_TX = 1 AND NO_OTHER_CANCER_PRE_LOT1 = 1
-       AND NO_PREGNANCY = 1"))$n
-  # The last step adds NO_BELANTAMAB, which is every flag NDMM_PATIDS applies,
-  # so this reads the cohort view rather than repeating the conjunction.
-  ndmm_final <- db_q(con, glue(
-    "SELECT count(DISTINCT PATID) AS n FROM {NDMM_PATIDS}"))$n
-  list(whole = whole, elig = elig, elig_lot1 = elig_lot1,
-       ce12 = ce12, ce12_fuce = ce12_fuce,
-       fuce_nopriortx = fuce_nopriortx,
-       noother = noother, noother_nopreg = noother_nopreg,
-       ndmm_final = ndmm_final)
+  #
+  # Each row is NDMM_CRITERIA's first i criteria, so a row is the row above it
+  # plus exactly one - that shape is the list's, not something restated here.
+  cum <- list()
+  for (i in seq_len(length(NDMM_CRITERIA) - 1L))
+    cum[[NDMM_CRITERIA[[i]]$key]] <- n_of(glue(
+      "SELECT count(DISTINCT PATID) AS n FROM {NDMM_FLAGS_ALL}
+       WHERE {ndmm_criteria_where(i)}"))
+
+  # The last criterion completes the conjunction NDMM_PATIDS is defined on, so
+  # this row reads that view rather than repeating it - the published number is
+  # then the cohort's own, not a recount that has to agree with it.
+  ndmm_final <- n_of(glue(
+    "SELECT count(DISTINCT PATID) AS n FROM {NDMM_PATIDS}"))
+  c(list(whole = whole, elig = elig, elig_lot1 = elig_lot1), cum,
+    list(ndmm_final = ndmm_final))
 }

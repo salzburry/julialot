@@ -8,7 +8,7 @@
 #
 # Standalone: reads the raw Optum CDM and the production code lists, and no
 # table another build makes. Writes <prefix>NDMM_COHORT - which is a cohort
-# Jul 28/lot can then be pointed at - and <prefix>NDMM_ATTRITION. This folder
+# the lot build can then be pointed at - and <prefix>NDMM_ATTRITION. This folder
 # holds no cohort names of its own.
 
 here <- local({

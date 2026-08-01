@@ -1,8 +1,8 @@
 #!/usr/bin/env Rscript
 # Remove steroid rows from the production MMA rollup.
 #
-#   Rscript "Jul 28/tools/remove_steroids_from_rollup.R"            # report only
-#   Rscript "Jul 28/tools/remove_steroids_from_rollup.R" --write    # make the edit
+#   Rscript "tools/remove_steroids_from_rollup.R"            # report only
+#   Rscript "tools/remove_steroids_from_rollup.R" --write    # make the edit
 #
 # Steroid codes are maintained in a separate file, so the rollup should not
 # list them either. Report only by default; --write builds a checked
@@ -10,8 +10,8 @@
 #
 # It refuses rather than guesses: the premise is verified against
 # cl_mma_codelist.csv, and both files' md5s are re-checked before the rename.
-# Kept rows go back byte for byte. Jul 28/lot/README.md has the reasoning, and
-# Jul 28/tools/tests/ has the checks.
+# Kept rows go back byte for byte. lot/README.md has the reasoning, and
+# tools/tests/ has the checks.
 
 argv     <- commandArgs(trailingOnly = TRUE)
 do_write <- "--write" %in% argv

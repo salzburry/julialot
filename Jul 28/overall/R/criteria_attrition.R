@@ -5,6 +5,16 @@
 # Steps 0-1 are counted in run_attrition_report(); their SQL differs per
 # 30/60/90-day window. Steps 2-10 are below.
 
+# Step 1's gate: an index date qualifies via one strict inpatient dx or two
+# outpatient dx inside the window. Not a catalog entry - it has no on/off
+# switch, and its column name depends on the window, where the cohort filter
+# takes the configured one and the attrition counts all three. A function
+# rather than a string per call site, so the table and the funnel cannot
+# disagree about what qualified.
+qualifying_sql <- function(window) {
+  glue("(inpt_qual = 1 OR outpt2_{window} = 1)")
+}
+
 build_criteria_catalog <- function(cfg) {
   list(
     # Step 2 - include: old enough at index
@@ -181,9 +191,9 @@ run_attrition_report <- function(catalog, cfg, conn, work_tbl_fn) {
   }
 
   tbl <- work_tbl_fn("ELIG_COH_ALLFLAGS")
-  qual_30 <- "(inpt_qual = 1 OR outpt2_30 = 1)"
-  qual_60 <- "(inpt_qual = 1 OR outpt2_60 = 1)"
-  qual_90 <- "(inpt_qual = 1 OR outpt2_90 = 1)"
+  qual_30 <- qualifying_sql(30)
+  qual_60 <- qualifying_sql(60)
+  qual_90 <- qualifying_sql(90)
 
   # Single query returns all three window counts at once
   count_3w <- function(w30, w60, w90, from_tbl = tbl) {

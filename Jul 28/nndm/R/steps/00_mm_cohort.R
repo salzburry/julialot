@@ -1,6 +1,6 @@
 # The MM-diagnosed adult population this cohort is drawn from.
 #
-# Ported from Jul 28/overall - the SQL is copied from steps 01_codelists.R,
+# Ported from the overall build - the SQL is copied from steps 01_codelists.R,
 # 02_dx_events.R, 03_index_date.R, 05_demographics.R and 08_assembly.R of that
 # build. tests/test_same_as_overall.R compares each statement against it.
 #
@@ -219,7 +219,7 @@ build_ndmm_demographics <- function(con, member_elig_tbl, dod_tbl) {
 # That order is the whole point, and it used to be the other way round - age
 # filtered first, earliest date chosen from what survived. A patient qualifying
 # at 17 and again at 18 was then kept, with MM_DX_DT moved to the later date.
-# Two things are wrong with that. It is not what Jul 28/overall does: there age
+# Two things are wrong with that. It is not what the overall build does: there age
 # is `AND AGE_INDEX_YR >= min_age` applied to a chosen index date, which drops
 # the patient and never moves the date, and a standalone package that disagrees
 # with the parent on who is in the cohort is worse than one that is merely

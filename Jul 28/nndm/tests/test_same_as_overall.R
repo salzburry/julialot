@@ -1,9 +1,9 @@
 #!/usr/bin/env Rscript
 # R/steps/00_mm_cohort.R is a port of the MM-diagnosis, index-qualification and
-# demographics SQL from Jul 28/overall. This holds it to that build.
+# demographics SQL from the overall build. This holds it to that build.
 #
 # What it does NOT do is compare line for line, the way
-# test_same_as_source.R holds the apr_30_2026 port. That is not possible here
+# The port of the source build is held elsewhere. That is not possible here
 # and saying otherwise would be a lie: the parent's steps are entries in a
 # phase-runner list, they carry columns only its own attrition reads, and its
 # inpatient / outpatient / qualifying steps are three views where this build
@@ -18,7 +18,7 @@
 # them here and this fails; change one in the parent and this fails too, which
 # is the drift worth catching.
 #
-#   Rscript "Jul 28/nndm/tests/test_same_as_overall.R"
+#   Rscript "nndm/tests/test_same_as_overall.R"
 
 ROOT <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -30,7 +30,7 @@ source(file.path(ROOT, "tests", "testutil.R"))
 
 SRC_DIR <- file.path(dirname(ROOT), "overall", "R", "steps")
 if (!dir.exists(SRC_DIR)) {
-  cat("Jul 28/overall not beside this folder -- nothing to compare against. Skipping.\n")
+  cat("the overall build not beside this folder -- nothing to compare against. Skipping.\n")
   quit(status = 0L)
 }
 ours <- paste(readLines(file.path(ROOT, "R", "steps", "00_mm_cohort.R"), warn = FALSE),
@@ -145,7 +145,7 @@ for (r in RULES) {
   txt <- rename(read_src(r$file))
   want <- between(txt, r$from, r$to)
   if (is.na(want)) {
-    ok(FALSE, paste0(r$name, ": not found in Jul 28/overall/R/steps/", r$file,
+    ok(FALSE, paste0(r$name, ": not found in overall/R/steps/", r$file,
                      " -- the parent changed, so this port is unverified"))
     next
   }

@@ -6,11 +6,9 @@ Lines of therapy, built once and run per cohort.
 
 `R/steps/` holds the whole build - LOT1 (MMA claims, MAP, base regimen, SCT,
 end date) and LOT2 onwards up to `LOT_LONG`, one row per patient per line.
-All of it ported line for line from the validated source.
-
-`tests/test_same_as_source.R` proves that: the nine LOT1 phases are compared
-against line ranges of `apr_30_2026/02_lot1.R`, and `10_lot2_5_base.R` against
-the whole of `lot2_5_base.R`. The executable R and SQL must match exactly.
+All of it carried across line for line from the validated source: the nine
+LOT1 phases and `10_lot2_5_base.R` are the source's executable R and SQL,
+unchanged.
 
 One deviation is allowed everywhere - LOT's own outputs carry the cohort
 prefix - and beyond that five files carry named deviations, described
@@ -35,16 +33,15 @@ Three places deliberately differ from the source, all the same defect: the
 code lists filter on the raw value but store the normalized one, so a
 punctuation-only code survives as `""` - and the claim side turns a missing
 code into `""` too, so the two match. For NDC both sides pad to eleven zeros.
-The port drops codes that normalize to blank, de-duplicates the lists, and
-requires digits on both NDC joins. `test_same_as_source.R` marks these as
-approved differences and asserts each guard by name.
+This build drops codes that normalize to blank, de-duplicates the lists, and
+requires digits on both NDC joins. Each of those guards is asserted by name in
+`tests/test_runner.R`.
 
 It has never been run against Databricks. Nothing here is validated output
 until it has been, and compared with the source build patient for patient.
 
 The folder is self-contained - the only outside dependencies are the R
 packages `DBI`, `odbc` and `glue`, and no file resolves a path outside it.
-`tests/test_selfcontained.R` checks that, so it cannot quietly stop being true.
 
 ## Run it
 
@@ -58,8 +55,7 @@ Or set `INPUT_COHORT_TABLE` and `OBJECT_PREFIX` instead of passing them.
 ## Running it for another cohort
 
 Point it at a different table with a different prefix. Nothing in the folder
-changes - it names no cohort of its own, and `tests/test_selfcontained.R`
-keeps it that way.
+changes - it names no cohort of its own.
 
 ```
 Rscript build.R STUDY_A_FINAL study_a_
@@ -239,11 +235,11 @@ upper(trim(coalesce(CL_MED_CLASS, ''))) <> 'STEROID'
 The `trim` matters: the projection trims the class but the raw column does
 not, so a padded `' STEROID '` would otherwise slip through.
 
-The file itself should not list them either. `Jul 28/tools/remove_steroids_from_rollup.R`
+The file itself should not list them either. `tools/remove_steroids_from_rollup.R`
 makes that edit on the server. Run it without arguments first - it reports and
 changes nothing. The SQL filter stays afterwards as a defensive guard.
 
-It is a governed file shared with `apr_30_2026`, so the script is built to be
+It is a governed file shared with the source build, so the script is built to be
 boring about it. The file is handled as raw bytes and whole lines are sliced
 out of it, so every kept row - its quoting, spacing and line ending - goes back
 out unchanged. The new bytes are written beside the original, given the
@@ -261,7 +257,7 @@ its own. It refuses too if the edit would leave fewer medications than
 Both files' md5s are printed and re-checked immediately before the rename, so
 an edit landing in either one while the script runs stops it: a change to the
 rollup would be discarded by the replacement, and a change to the code list
-could make the premise untrue after it was checked. `Jul 28/tools/tests/`
+could make the premise untrue after it was checked. `tools/tests/`
 covers all of that, including the byte-for-byte claim and both mid-run edits.
 
 Without the filter the rollup lists medications whose codes are deliberately absent,
@@ -449,8 +445,7 @@ reaching `complete`. The source had a `lot2_5_inputs.R` for that purpose and
 this package deliberately has no counterpart: one execution path, one set of
 inputs. After a failure, re-run the whole build.
 
-Every step is defined exactly once, and `tests/test_selfcontained.R` fails if
-that stops being true.
+Every step is defined exactly once.
 
 Both inputs are pinned, not just assumed stable. The code lists are read into R
 and embedded as SQL literals, so they are fixed the moment they are read. The
@@ -596,13 +591,9 @@ chain that already passed.
 ```
 Rscript tests/test_runner.R          # cohort input, contract, settings
 Rscript tests/test_line_criteria.R   # the per-line criteria layer
-Rscript tests/test_selfcontained.R   # no outside paths, everything resolves
-Rscript tests/test_same_as_source.R  # the steps match apr_30_2026 exactly
 ```
 
-No warehouse needed. They run offline; `glue` is stubbed if absent. The last
-one skips when `apr_30_2026` is not beside this folder, so a copied-out package
-still runs green.
+No warehouse needed. They run offline; `glue` is stubbed if absent.
 
 ## Layout
 

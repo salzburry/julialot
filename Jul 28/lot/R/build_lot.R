@@ -136,7 +136,7 @@ pin_output_schema <- function(cfg) {
                 unset = Sys.getenv("DOMINO_STARTING_USERNAME", unset = "")))
   if (!nzchar(schema))
     stop("No output schema. Set DOMINO_USER_NAME to your personal schema ",
-         "(e.g. osk02156), or PROJECT_WORK_SCHEMA to override.", call. = FALSE)
+         "(e.g. usr00000), or PROJECT_WORK_SCHEMA to override.", call. = FALSE)
   # It goes straight into table names, so check the value we resolved rather
   # than each variable it could have come from.
   if (!grepl("^[A-Za-z_][A-Za-z0-9_]*$", schema))

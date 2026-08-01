@@ -8,7 +8,7 @@
 #   The 1L cohort index date is the date of the first claim for MM treatment
 #   within the identification period.
 #
-# apr_30_2026 took it from LOT_LONG instead - the start of line 1 as the LOT
+# The source took it from LOT_LONG instead - the start of line 1 as the LOT
 # algorithm computes it. That is a different thing: LOT_LONG only exists for
 # patients who already passed the parent build's criteria, and the line start
 # is an output of the line-building rules rather than a claim date. Reading it
@@ -346,7 +346,7 @@ build_ndmm_other_malig_groups <- function(con, cfg) {
 # three rows can be computed with no map at all, off the events view the
 # criterion itself reads, so the claim scan does not run again:
 #
-#   same code-list label - the finest grain, and what apr_30_2026 does
+#   same code-list label - the finest grain, and what the source build does
 #   as configured        - the same until primary_tumor_groups.csv says otherwise
 #   any label at all     - the coarsest, and the upper bound on what a perfect
 #                          map could add
@@ -448,13 +448,13 @@ build_ndmm_fu_ce_counts <- function(con, cfg) {
            count(DISTINCT CASE WHEN cov.CE_fu = 1 THEN cov.PATID END)
                                                            AS N_PASSING_CRITERION_5,
            -- The whole conjunction, so this is the cohort size at that window
-           -- rather than one criterion's count.
+           -- rather than one criterion's count. Every criterion but the one
+           -- this table varies: cov.CE_fu is the follow-up CE recomputed per
+           -- window, so it stands in for CE_lot1_fu and the rest come from
+           -- NDMM_CRITERIA. Add a criterion to the cohort and it lands here
+           -- too, rather than leaving this row quietly too large.
            count(DISTINCT CASE WHEN cov.CE_fu = 1
-                                AND f.CE_pre_lot1_12mo         = 1
-                                AND f.NO_PRIOR_MM_TX           = 1
-                                AND f.NO_OTHER_CANCER_PRE_LOT1 = 1
-                                AND f.NO_PREGNANCY             = 1
-                                AND f.NO_BELANTAMAB            = 1
+                                AND {ndmm_criteria_where(except = 'CE_lot1_fu', alias = 'f.')}
                                THEN cov.PATID END)         AS N_COHORT,
            max(CASE WHEN cov.sort_key = {NDMM_FU_CE_DAYS} THEN 1 ELSE 0 END)
                                                            AS IS_THIS_RUN
@@ -501,12 +501,11 @@ build_ndmm_belantamab_scope_counts <- function(con, cfg) {
     sp AS (SELECT * FROM (VALUES ('ever'), ('study_period'), ('from_index')) AS t(SCOPE))
     SELECT sp.SCOPE                             AS SCOPE,
            count(DISTINCT scd.PATID)            AS N_PATIENTS,
+           -- Every criterion but belantamab, which scd.PATID IS NULL is this
+           -- row's own reading of. From NDMM_CRITERIA for the same reason as
+           -- the follow-up CE table above.
            count(DISTINCT CASE WHEN scd.PATID IS NULL
-                                AND f.CE_pre_lot1_12mo         = 1
-                                AND f.CE_lot1_fu               = 1
-                                AND f.NO_PRIOR_MM_TX           = 1
-                                AND f.NO_OTHER_CANCER_PRE_LOT1 = 1
-                                AND f.NO_PREGNANCY             = 1
+                                AND {ndmm_criteria_where(except = 'NO_BELANTAMAB', alias = 'f.')}
                                THEN f.PATID END) AS N_COHORT,
            max(CASE WHEN sp.SCOPE = '{NDMM_BELANTAMAB_SCOPE}' THEN 1 ELSE 0 END)
                                                 AS IS_THIS_RUN

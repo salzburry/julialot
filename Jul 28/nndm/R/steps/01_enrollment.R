@@ -1,7 +1,5 @@
 # Enrollment spans, with the gap semantics the parent's CE_b/CE_f use.
 #
-# Ported from apr_30_2026/06_ndmm_dashboard.R lines 148-198.
-# tests/test_same_as_source.R compares this against that range.
 
 
 # Build enrollment_spans (with NDMM_GAP_DAYS allowance) directly from

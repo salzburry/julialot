@@ -1,7 +1,5 @@
 # Pregnancy or childbirth anywhere in the study period.
 #
-# Ported from apr_30_2026/06_ndmm_dashboard.R lines 534-621.
-# tests/test_same_as_source.R compares this against that range.
 
 build_ndmm_preg_codes <- function(con) {
   src <- load_codelist_csv("pregnancy.csv", c("code_type", "code"))

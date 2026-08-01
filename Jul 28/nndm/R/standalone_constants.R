@@ -1,6 +1,6 @@
 # Names and settings for the steps that make this package standalone.
 #
-# nndm_constants.R is a port and is held to apr_30_2026 line for line, so
+# nndm_constants.R is a port and is held to the source line for line, so
 # nothing new goes in it. These are the views and values the MM-diagnosis,
 # demographics and 1L-index steps need - none of which exist in that source,
 # because there the cohort and the index date both arrived from other builds.
@@ -31,7 +31,7 @@ NDMM_OUTPATIENT_WINDOW <- as.integer(Sys.getenv("OUTPATIENT_WINDOW", unset = "90
 NDMM_MIN_AGE <- as.integer(Sys.getenv("MIN_AGE", unset = "18"))
 
 # How belantamab is recognised on cl_mma_codelist.csv. MAP_STACKED carried a
-# MAP_MED_TYPE and apr_30_2026 matched 'BEL%' against it; reading the code list
+# MAP_MED_TYPE and the source matched 'BEL%' against it; reading the code list
 # directly, the same token is the medication abbreviation. This package cannot
 # see the production CSV to confirm it, so build_ndmm_belantamab_codes() stops
 # the run if it matches nothing rather than letting the exclusion the study
@@ -84,7 +84,7 @@ NDMM_INDEX_EXCLUDED_CODES <- Sys.getenv("NDMM_INDEX_EXCLUDED_CODES", unset = "")
 # Neither is LOT membership. Only running the LOT algorithm and checking which
 # line a belantamab claim landed in is exact; see the README.
 #
-# apr_30_2026 bounded neither end but the upper one, so a claim from before the
+# The source bounded neither end but the upper one, so a claim from before the
 # study period excluded the patient. That is wrong under any reading.
 NDMM_BELANTAMAB_SCOPE <- Sys.getenv("NDMM_BELANTAMAB_SCOPE", unset = "study_period")
 
@@ -95,7 +95,7 @@ NDMM_BELANTAMAB_TX        <- "_ndmm_belantamab_tx"
 # nndm_constants.R lists five tumour groups the other-cancer rule must not
 # exclude on, because they are the index MM itself or its precursor rather than
 # another cancer. Three of them are the "not having achieved remission" state
-# of a plasma-cell disorder, and apr_30_2026's comment says the others "are
+# of a plasma-cell disorder, and the source build's comment says the others "are
 # left in the filter pending confirmation".
 #
 # other_malig.csv, read on the warehouse 2026-07-30, carries each of those
@@ -115,7 +115,7 @@ NDMM_BELANTAMAB_TX        <- "_ndmm_belantamab_tx"
 # really are separate groups to the rule that reads it.
 #
 # The default overrides all six. NDMM_MM_ADJACENT_STATES=exclude restores
-# apr_30_2026's behaviour for anyone who wants to compare.
+# the source build's behaviour for anyone who wants to compare.
 #
 # Unlike the five, these are not required to exist: absence would just mean the
 # code list stopped carrying the wording. NDMM_MM_ADJACENT_GROUPS records what
