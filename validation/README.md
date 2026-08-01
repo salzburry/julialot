@@ -7,7 +7,7 @@ that is the whole reason they live here.
 ```
 Rscript validation/run_all.R                      the R suites, one summary
 python3 validation/mutation/lot_battery.py        minutes; before a release
-python3 validation/mutation/nndm_battery.py
+python3 validation/mutation/nndm_battery.py       currently red -- see below
 ```
 
 ## Why they are outside the packages
@@ -58,9 +58,18 @@ out two files — itself, and the port comparison that reads the baseline on
 purpose. Both are here now, so every file left inside the package is held to
 the rule.
 
-## Known gap: 14 stale anchors in the NDMM battery
+## Known gap: the NDMM battery does not currently run
 
-`nndm_battery.py` has 246 mutations. **232 are anchored and run; 14 are not.**
+`nndm_battery.py` has 246 mutations. 232 anchors are still valid and 14 are
+not — but the anchor check gates the **whole** run: it verifies every anchor
+before mutating anything and exits 1 on any stale one. So the battery provides
+**no coverage at all** today, not 232 mutations' worth. That is deliberate and
+right — a stale anchor once read as a pass, which is worse than no run — but it
+means this battery is currently a red check, not a partial one.
+
+`lot_battery.py` is unaffected: 37 mutations, every anchor valid, and it has
+been run end to end against the relocated suites — 0 problems.
+
 Each mutation edits an exact string in the source, and these 14 name regions
 that have since been rewritten:
 
