@@ -7,8 +7,11 @@ that is the whole reason they live here.
 ```
 Rscript validation/run_all.R                      the R suites, one summary
 python3 validation/mutation/lot_battery.py        minutes; before a release
-python3 validation/mutation/nndm_battery.py       currently red -- see below
+python3 validation/mutation/nndm_battery.py       minutes; --all before a release
 ```
+
+A battery run with no arguments covers only the mutations whose file this tree
+has changed, and says so. `--all` is the release check.
 
 ## Why they are outside the packages
 
@@ -58,37 +61,45 @@ out two files — itself, and the port comparison that reads the baseline on
 purpose. Both are here now, so every file left inside the package is held to
 the rule.
 
-## Known gap: the NDMM battery does not currently run
+## The batteries
 
-`nndm_battery.py` has 246 mutations. 232 anchors are still valid and 14 are
-not — but the anchor check gates the **whole** run: it verifies every anchor
-before mutating anything and exits 1 on any stale one. So the battery provides
-**no coverage at all** today, not 232 mutations' worth. That is deliberate and
-right — a stale anchor once read as a pass, which is worse than no run — but it
-means this battery is currently a red check, not a partial one.
+| | mutations | state |
+|---|---|---|
+| `lot_battery.py` | 37 | every anchor valid; full sweep run, 0 problems |
+| `nndm_battery.py` | 244 | every anchor valid; the 18 touched by the re-anchoring run, 0 problems |
 
-`lot_battery.py` is unaffected: 37 mutations, every anchor valid, and it has
-been run end to end against the relocated suites — 0 problems.
+Each mutation edits one exact string in the source and the suites must notice.
+A mutation that survives means the assertion for it reads the source rather
+than running it.
 
-Each mutation edits an exact string in the source, and these 14 name regions
-that have since been rewritten:
+The anchor check is a **gate on the whole run**: every anchor is verified before
+anything is mutated, and one stale anchor exits 1 without running any mutation.
+That is deliberate — a stale anchor read as a pass once, which is worse than no
+run — but it means a stale anchor makes this a red check, not a partial one.
+Fourteen went stale when the criteria were centralised and had to be re-derived
+before the battery would run again.
 
-| mutation | why its anchor is gone |
+### What changed when the criteria moved into one list
+
+Twelve mutations were re-pointed. The properties they break are unchanged; the
+strings that express them moved:
+
+| mutation | now breaks |
 |---|---|
-| `ported flags sql`, `flags checkpoint after patids` | `NDMM_PATIDS` builds its conjunction from `NDMM_CRITERIA` now |
-| `ported cohort sql`, `belantamab last` | `ndmm_counts()` walks that list instead of writing predicates out |
-| `attrition step dropped`, `attrition order` | `ATTRITION_STEPS` is derived from the same list |
-| `scope counts not costed`, `fu ce criterion count only` | the sensitivity tables derive all-but-their-own criterion |
-| `reconcile beyond the cohort`, `reconcile drops the date` | the reconciliation reads `NDMM_FLAGS_ALL`, not the cohort |
-| `clear run rows stops the build`, `clear run rows before the status` | it stops now, and the failed-status handler is armed before it |
-| `readme port count stale`, `readme port total stale` | the deviation-count paragraph left the README with the scrub |
+| `criteria where drops all but one` | `ndmm_criteria_where()` renders only the first criterion |
+| `funnel rows not cumulative` | the funnel asks for prefix 1 every row instead of `i` |
+| `belantamab narrows an earlier row` | the funnel loop runs one further, so belantamab enters early |
+| `attrition step dropped`, `attrition order` | an `NDMM_CRITERIA` entry is removed or two are swapped |
+| `scope counts not costed`, `fu ce criterion count only` | a sensitivity table gets a prefix instead of all-but-its-own |
+| `reconcile beyond the cohort`, `reconcile drops the date` | the reconciliation's join and date column, under the new alias |
+| `flags checkpoint dropped` | the checkpoint no longer precedes `NDMM_PATIDS` |
+| `clear run rows before the status` | the clear runs before the run is marked started |
 
-Several are **obsolete rather than merely stale**: they mutate a behaviour into
-one the code now has deliberately. `clear run rows stops the build` turns a
-warning into a stop, which is what it does. `reconcile beyond the cohort` makes
-the reconciliation look past the cohort, which is the fix. Those need retiring
-or inverting, not re-pointing, and that is a judgement per mutation rather than
-a find-and-replace.
+One was **inverted**. `clear run rows stops the build` used to turn a warning
+into a stop; the build stops now, so `clear run rows warns instead of stopping`
+turns the stop back into a no-op.
 
-The battery checks every anchor before it mutates anything and exits 1 listing
-the stale ones, so this fails loudly. It does not silently pass.
+Two were **retired**: `readme port count stale` and `readme port total stale`
+pinned a deviation-count paragraph that left the README with the scrub, along
+with the assertion that read it. README coverage is carried by the funnel and
+criteria mutations, which are anchored and run.
