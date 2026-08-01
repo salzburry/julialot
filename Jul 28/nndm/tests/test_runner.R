@@ -607,12 +607,30 @@ ok(!any(vapply(sets[1:8], function(s) "NO_BELANTAMAB" %in% s, logical(1))),
    "belantamab narrows no step before the last")
 ok(grepl(ce$NDMM_PATIDS, CSQL[9], fixed = TRUE),
    "and the last step reads the cohort view rather than repeating the conjunction")
-fl <- paste(readLines(file.path(ROOT, "R", "steps", "06_flags.R"), warn = FALSE),
-            collapse = "\n")
-patids <- sub(".*TEMPORARY VIEW \\{NDMM_PATIDS\\} AS", "", fl)
-ok(all(vapply(FLAGS, grepl, logical(1), x = patids, fixed = TRUE)),
+# NDMM_PATIDS's WHERE is generated now, so read the clause rather than the file.
+# What the cohort applies is what NDMM_CRITERIA says, and that is what has to
+# carry all six flags for the last row to be the one above it plus belantamab.
+where <- ndmm_criteria_where()
+ok(all(vapply(FLAGS, grepl, logical(1), x = where, fixed = TRUE)),
    paste0("which applies all ", length(FLAGS),
           " flags, so the last row really is the one above it plus belantamab"))
+ok(identical(vapply(NDMM_CRITERIA, function(cr) cr$flag, character(1)), FLAGS),
+   "and NDMM_CRITERIA holds those flags, in the order the funnel adds them")
+fl <- paste(readLines(file.path(ROOT, "R", "steps", "06_flags.R"), warn = FALSE),
+            collapse = "\n")
+ok(grepl("WHERE {ndmm_criteria_where()}", fl, fixed = TRUE),
+   "the cohort view takes its conjunction from that list, not a written-out one")
+# The counts take it from the same list. A hand-written "<flag> = 1" in a step
+# file would be a second copy of the rule that decides who is in the cohort -
+# which is what this leaves no room for.
+step_txt <- unlist(lapply(list.files(file.path(ROOT, "R", "steps"), "[.]R$",
+                                     full.names = TRUE), readLines, warn = FALSE))
+dup <- FLAGS[vapply(FLAGS, function(f)
+  any(grepl(paste0(f, "[[:space:]]*=[[:space:]]*1"), step_txt)), logical(1))]
+ok(length(dup) == 0,
+   if (length(dup)) paste0("a step writes the conjunction out again: ",
+                           paste(dup, collapse = ", "))
+   else "and no step file spells a flag predicate out for itself")
 
 cat("\n-- a funnel that grows is not a count --\n")
 mk <- function(v) setNames(as.list(v), keys)
@@ -1107,9 +1125,15 @@ o0 <- drive_om(NULL)
 # The join that says a code on mm_dx.csv is the index disease, not another
 # cancer. The ON clause has to end where it ends: " AND 1 = 0" appended to it
 # would leave every grep for the join itself passing.
+# Written against the indentation rather than fixed to it: glue() dedents a
+# template by its common leading whitespace, so how far in the ON clause sits
+# says nothing about the join. What matters is unchanged - the clause is those
+# two conditions and ends there, so " AND 1 = 0" appended to it would still
+# break this while leaving a grep for the join itself passing.
 ok(grepl(paste0("LEFT JOIN ", oe2$NDMM_MM_DX_CODES,
-                " m\n           ON m.dx = om.dx AND m.icd_family = om.icd_family\n"),
-         o0, fixed = TRUE),
+                " m[ \t]*\n[ \t]*ON m\\.dx = om\\.dx",
+                " AND m\\.icd_family = om\\.icd_family[ \t]*\n"),
+         o0),
    "a code on the MM diagnosis list cannot also make a patient an other-cancer case")
 # No file, no join: an empty VALUES list is not valid SQL, and a join matching
 # nothing would read as a file that had been consulted.
@@ -1159,10 +1183,16 @@ ok(grepl("least(CASE WHEN w.months IS NULL", fc, fixed = TRUE) &&
      grepl("coalesce(idx.DEATH_DT", fc, fixed = TRUE) &&
      grepl("_ndmm_enroll_spans_strict", fc, fixed = TRUE),
    "bounded by death and the study end, on no-gap spans, as criterion 5 is")
-# A criterion count alone would not say what the choice costs the cohort.
-ok(grepl("AND f.NO_BELANTAMAB            = 1", fc, fixed = TRUE) &&
+# A criterion count alone would not say what the choice costs the cohort. Every
+# criterion but the one this table varies has to be in that conjunction, and it
+# comes from NDMM_CRITERIA - so a criterion added to the cohort lands here too
+# instead of leaving the row too large.
+ok(grepl(ndmm_criteria_where(except = "CE_lot1_fu", alias = "f."), fc,
+         fixed = TRUE) &&
      grepl("AS N_COHORT", fc, fixed = TRUE),
    "and the whole conjunction, so each row is a cohort size not a criterion count")
+ok(!grepl("f.CE_lot1_fu", fc, fixed = TRUE),
+   "...with the follow-up CE taken from cov.CE_fu, the window this row is about")
 ok(grepl(paste0("cov.sort_key = ", se$NDMM_FU_CE_DAYS), fc, fixed = TRUE),
    "with the row this run actually applied marked, so the table reads alone")
 
@@ -1229,10 +1259,13 @@ ok(length(gregexpr("SELECT 'ever' AS SCOPE, b.PATID", sc, fixed = TRUE)[[1]]) ==
    "by patients, so the numbers can be compared against the attrition")
 # A claim count alone does not say what the choice costs: some of the patients
 # a wider proxy catches were already gone on another criterion.
-ok(grepl("AND f.NO_PREGNANCY             = 1", sc, fixed = TRUE) &&
+ok(grepl(ndmm_criteria_where(except = "NO_BELANTAMAB", alias = "f."), sc,
+         fixed = TRUE) &&
      grepl("AS N_COHORT", sc, fixed = TRUE) &&
      grepl("_ndmm_flags_all", sc, fixed = TRUE),
    "...and the whole conjunction beside it, so each row is a cohort size")
+ok(!grepl("f.NO_BELANTAMAB", sc, fixed = TRUE),
+   "...with belantamab taken from this row's own reading, not the flag")
 ok(grepl(paste0("sp.SCOPE = '", se$NDMM_BELANTAMAB_SCOPE, "'"), sc, fixed = TRUE),
    "with the reading this run applied marked, so the table reads alone")
 

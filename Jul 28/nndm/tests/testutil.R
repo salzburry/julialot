@@ -17,8 +17,14 @@ report <- function() {
 }
 
 # glue is not installed everywhere; the templates only use {expr}, so a small
-# stand-in keeps the tests runnable offline.
-if (!requireNamespace("glue", quietly = TRUE)) {
+# stand-in keeps the tests runnable offline. Where the real package is present
+# it has to be attached rather than merely loadable: the suites sys.source()
+# each file into environments parented on globalenv, so glue() is found on the
+# search path or not at all, and requireNamespace() alone does not put it
+# there. Loadable-but-not-attached is why these ran only where glue was absent.
+if (requireNamespace("glue", quietly = TRUE)) {
+  library(glue)
+} else {
   glue <- function(..., .envir = parent.frame()) {
     t <- paste0(..., collapse = "")
     m <- gregexpr("\\{[^{}]+\\}", t)[[1]]

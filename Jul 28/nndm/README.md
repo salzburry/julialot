@@ -822,8 +822,8 @@ comments compared out and code required to be identical. It is not a
 similarity check — it undoes the approved deviations first and then demands
 equality, so anything unapproved survives the undo and breaks it.
 
-The port differs from its source in **36 places, and no others**: 12 replaced
-lines, 19 added lines, and 5 blocks rewritten wholesale and named by their
+The port differs from its source in **36 places, and no others**: 11 replaced
+lines, 19 added lines, and 6 blocks rewritten wholesale and named by their
 first and last line. Each is registered with the reason, and five of them
 change who is in the cohort:
 

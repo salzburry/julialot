@@ -82,11 +82,11 @@ SUBST <- list(
     list(from = "THEN 1 ELSE 0 END) AS CE_fu",
          to   = "THEN 1 ELSE 0 END) AS CE_lot1_3mo", n = 1L),
     list(from = "coalesce(fuce.CE_fu, 0)                              AS CE_lot1_fu,",
-         to   = "coalesce(fuce.CE_lot1_3mo, 0)                        AS CE_lot1_3mo_fu,", n = 1L),
-    list(from = "AND CE_lot1_fu              = 1",
-         to   = "AND CE_lot1_3mo_fu          = 1", n = 1L))
-  # 07_cohort.R's CE_lot1_fu reference lives inside the rewritten block below,
-  # so it is undone by SPLICE rather than named here.
+         to   = "coalesce(fuce.CE_lot1_3mo, 0)                        AS CE_lot1_3mo_fu,", n = 1L))
+  # 06_flags.R's fourth CE_lot1_fu reference was the one in NDMM_PATIDS's WHERE.
+  # That clause is now generated, so the line it renamed no longer exists and
+  # the whole clause is undone by SPLICE below instead. 07_cohort.R's reference
+  # is inside its own rewritten block, and is undone the same way.
 )
 
 # Lines the port adds that the source has no counterpart for, and how many.
@@ -169,7 +169,7 @@ SPLICE <- list(
     # funnel are a qualifying MM diagnosis, then age, then an eligible 1L
     # treatment - derived here rather than inherited.
     list(from = "ndmm_counts <- function(con, mm_qualifying, base_cohort) {",
-         to   = "ndmm_final = ndmm_final)",
+         to   = "list(ndmm_final = ndmm_final))",
          src_from = 795L, src_to = 837L)
   ),
   # The materialization of NDMM_FLAGS_ALL. The source wrapped it in tryCatch and
@@ -180,10 +180,20 @@ SPLICE <- list(
   # package uses and which stops if the write fails. It stays inside this
   # function because NDMM_PATIDS is defined over the view a few lines below and
   # Spark inlines a temp view's plan.
+  # The cohort's own conjunction. The source wrote the six flags out in
+  # NDMM_PATIDS's WHERE, and ndmm_counts() wrote fifteen more predicates over
+  # the same flags for the funnel - two hand-maintained copies of the rule that
+  # says who is in the cohort. Both now render NDMM_CRITERIA, so the view and
+  # the attrition are the same six criteria by construction. The clause the
+  # source wrote is swapped back in here; the flags and their order are held by
+  # test_runner.R, which reads the generated clause rather than the file.
   "R/steps/06_flags.R" = list(
     list(from = 'checkpoint(con, "NDMM_FLAGS_ALL")',
          to   = 'checkpoint(con, "NDMM_FLAGS_ALL")',
-         src_from = 727L, src_to = 741L)
+         src_from = 727L, src_to = 741L),
+    list(from = "CREATE OR REPLACE TEMPORARY VIEW {NDMM_PATIDS} AS",
+         to   = "WHERE {ndmm_criteria_where()}",
+         src_from = 744L, src_to = 751L)
   ),
   # The MM-adjacent override. The source logged how many of the expected
   # tumour-group labels matched the production codelist and carried on; an

@@ -338,21 +338,62 @@ check_constants <- function(cfg) {
   invisible(TRUE)
 }
 
-# The nine rows of the attrition, in the order the protocol applies the
-# criteria: S6.2.1.1's inclusions, then S6.2.1.2's four exclusions as it lists
-# them, belantamab last. Names are the criterion, not the column, because this
-# table is what gets read.
-ATTRITION_STEPS <- list(
-  list(key = "whole",          label = "Patients with a qualifying MM diagnosis"),
-  list(key = "elig",           label = "+ aged 18 or over at diagnosis"),
-  list(key = "elig_lot1",      label = "+ eligible 1L treatment on or after LOT1_FROM"),
-  list(key = "ce12",           label = "+ 12-month CE before index"),
-  list(key = "ce12_fuce",      label = "+ CE during follow-up"),
-  list(key = "fuce_nopriortx", label = "+ no MM oncology therapy in 12-month baseline"),
-  list(key = "noother",        label = "+ no other cancer in 12-month baseline"),
-  list(key = "noother_nopreg", label = "+ no pregnancy in study period"),
-  list(key = "ndmm_final",     label = "+ no belantamab in any LOT (NDMM 1L cohort)")
+# The six flag criteria, in the order the protocol applies them: S6.2.1.1's CE
+# inclusions, then S6.2.1.2's four exclusions as it lists them, belantamab last.
+# Don't reorder it - this is the funnel's order.
+#
+# One list, three readers. NDMM_PATIDS ANDs the whole set, ndmm_counts() walks a
+# prefix of it per funnel row, and ATTRITION_STEPS below takes the labels. Each
+# reader used to spell the predicates out for itself: six flags in the view and
+# fifteen more in the counts, kept in step by hand. Nothing said when they
+# stopped agreeing, and a flag added to the view alone would drop the last row
+# of the funnel under a label that named a different criterion.
+NDMM_CRITERIA <- list(
+  list(key = "ce12",           flag = "CE_pre_lot1_12mo",
+       label = "+ 12-month CE before index"),
+  list(key = "ce12_fuce",      flag = "CE_lot1_fu",
+       label = "+ CE during follow-up"),
+  list(key = "fuce_nopriortx", flag = "NO_PRIOR_MM_TX",
+       label = "+ no MM oncology therapy in 12-month baseline"),
+  list(key = "noother",        flag = "NO_OTHER_CANCER_PRE_LOT1",
+       label = "+ no other cancer in 12-month baseline"),
+  list(key = "noother_nopreg", flag = "NO_PREGNANCY",
+       label = "+ no pregnancy in study period"),
+  list(key = "ndmm_final",     flag = "NO_BELANTAMAB",
+       label = "+ no belantamab in any LOT (NDMM 1L cohort)")
 )
+
+# The first n criteria as a WHERE body, in the funnel's order.
+#
+#   all of them          the cohort itself, which is what NDMM_PATIDS asks for
+#   a prefix (n)         one row of the funnel, which is what ndmm_counts() asks
+#   one dropped (except) a sensitivity report, which recomputes that criterion
+#                        its own way and ANDs the rest - so the row it prints is
+#                        a cohort size and not one criterion's count
+#
+# alias qualifies the columns where the flags arrive through a join. except is
+# checked rather than filtered: a mistyped flag would silently leave the
+# criterion in, and the report would then say the cohort is bigger than it is.
+ndmm_criteria_where <- function(n = length(NDMM_CRITERIA), except = character(0),
+                                alias = "") {
+  flags <- vapply(NDMM_CRITERIA[seq_len(n)], function(cr) cr$flag, character(1))
+  unknown <- setdiff(except, flags)
+  if (length(unknown))
+    stop("Not a criterion of this cohort: ", paste(unknown, collapse = ", "),
+         ". The flags are ", paste(flags, collapse = ", "), ".", call. = FALSE)
+  paste(paste0(alias, setdiff(flags, except), " = 1"), collapse = " AND ")
+}
+
+# The nine rows of the attrition. The first three count off their own tables -
+# a qualifying MM diagnosis, then age, then an eligible 1L treatment - so they
+# are named here; the rest are the flag criteria above. Names are the criterion,
+# not the column, because this table is what gets read.
+ATTRITION_STEPS <- c(
+  list(
+    list(key = "whole",     label = "Patients with a qualifying MM diagnosis"),
+    list(key = "elig",      label = "+ aged 18 or over at diagnosis"),
+    list(key = "elig_lot1", label = "+ eligible 1L treatment on or after LOT1_FROM")),
+  lapply(NDMM_CRITERIA, function(cr) list(key = cr$key, label = cr$label)))
 
 ATTRITION_COLS <- c(RUN_ID = "STRING", STEP_NUM = "INT", CRITERION = "STRING",
                     N_PATIENTS = "BIGINT", PCT_OF_START = "DOUBLE",
