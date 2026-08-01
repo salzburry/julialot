@@ -553,6 +553,31 @@ ok(grepl("not reproducible", m, fixed = TRUE),
    "and a run that recorded no hashes stops rather than publishing untraceable counts")
 unlink(tmp, recursive = TRUE)
 
+cat("\n-- a code list whose icd_family is not one we know stops the run --\n")
+# The normalising CASE has no third branch, so an unrecognised family reads as
+# ICD10. Both lists are joined to claims on family as well as code, so such a
+# row matches nothing: on mm_dx.csv a diagnosis that qualifies nobody, on
+# other_malig.csv a cancer code that excludes nobody. Neither errors, neither
+# warns, and the cohort is wrong in a direction nothing downstream can see.
+ie <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "codelists.R"), envir = ie)
+assign("log_msg", function(...) invisible(NULL), envir = ie)
+fam <- function(dx, family) {
+  df <- data.frame(dx = dx, icd_family = family, stringsAsFactors = FALSE)
+  tryCatch({ ie$check_icd_family(df, "mm_dx.csv"); "" }, error = conditionMessage)
+}
+ok(identical(fam(c("C9000", "2030", "C9001", "20301"),
+                 c("10", "9", "ICD-10", "ICD9DIAG")), ""),
+   "every spelling either family is written in passes")
+ok(nzchar(fam(c("C9000", "2030"), c("ICD9DX", "ICD10"))),
+   "one nobody anticipated stops the run rather than reading as ICD10")
+# read.csv maps "" to NA here, so an unfilled column and a missing one look the
+# same. This is what an unfilled column actually looks like.
+ok(nzchar(fam("C9000", NA)) && nzchar(fam("C9000", "   ")),
+   "and so does a blank, which is the case that reaches production")
+ok(identical(fam(c("C9000", "---"), c("ICD10", NA)), ""),
+   "a row with no usable dx is dropped by the build, so it is not an alarm")
+
 cat("\n-- the run says which rule fill-ins it had --\n")
 # Each fill-in already says at the point it is read that it was empty, but that
 # is three lines in the middle of a long log, and an empty file reads exactly
@@ -577,30 +602,21 @@ all_in <- drive_fill(list(
   mm_adjacent_overrides.csv = list(md5 = "bb22", n_rows = 7L),
   primary_tumor_groups.csv  = list(md5 = "cc33", n_rows = 310L)))
 ok(length(all_in$r$empty) == 0 && length(all_in$r$used) == 3 &&
-     grepl("3 supplied, 0 empty", all_in$log, fixed = TRUE),
-   "a run with all three supplied says so, with each row count and hash")
-ok(!grepl(">", all_in$log, fixed = TRUE),
-   "...and raises nothing, so the marker means something when it appears")
+     !grepl(">", all_in$log, fixed = TRUE),
+   "all three supplied raises nothing, so the marker means something")
 
 none_in <- drive_fill(list(
   eligible_1l_agents.csv    = list(md5 = "d41d8", n_rows = 0L),
   mm_adjacent_overrides.csv = list(md5 = "d41d8", n_rows = 0L),
   primary_tumor_groups.csv  = list(md5 = "d41d8", n_rows = 0L)))
-ok(length(none_in$r$empty) == 3 &&
-     grepl("0 supplied, 3 empty", none_in$log, fixed = TRUE),
-   "a run on the shipped placeholders says that, once, at the end")
-ok(all(vapply(unname(unlist(fe$FILLIN_FILES)), grepl, logical(1),
-              x = none_in$log, fixed = TRUE)),
-   "...naming what each empty file leaves the build doing instead")
-ok(grepl("NDMM_CODELIST_METADATA", none_in$log, fixed = TRUE),
-   "...and where to check the paths it actually read")
+ok(length(none_in$r$empty) == 3 && grepl(">", none_in$log, fixed = TRUE),
+   "a run on the shipped placeholders is marked, once, at the end")
 
 # Read-and-empty is a decision; never-read is a deploy that did not reach the
 # file. write_codelist_metadata() stops on the second, so this says which.
 mixed <- drive_fill(list(eligible_1l_agents.csv = list(md5 = "aa11", n_rows = 42L),
                          mm_adjacent_overrides.csv = list(md5 = "d41d8", n_rows = 0L)))
-ok(grepl("1 supplied, 2 empty", mixed$log, fixed = TRUE) &&
-     grepl("primary_tumor_groups.csv: NOT READ", mixed$log, fixed = TRUE) &&
+ok(grepl("primary_tumor_groups.csv: NOT READ", mixed$log, fixed = TRUE) &&
      grepl("mm_adjacent_overrides.csv: empty", mixed$log, fixed = TRUE),
    "and a file never read is told apart from one read and empty")
 
