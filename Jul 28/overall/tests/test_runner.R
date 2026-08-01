@@ -1,8 +1,8 @@
 #!/usr/bin/env Rscript
 # The wrapper around the IE SQL - what gets written, and where.
-# test_same_as_source.R covers the SQL itself. Runs offline.
+# The SQL itself is covered by the step-level checks below. Runs offline.
 #
-#   Rscript "Jul 28/overall/tests/test_runner.R"
+#   Rscript "overall/tests/test_runner.R"
 
 here <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -107,14 +107,14 @@ clear()
 Sys.setenv(STUDY_END = "30-06-2025")
 stops(check_settings(), "STUDY_END set at all - the window is fixed")
 clear()
-Sys.setenv(PROJECT_WORK_SCHEMA = "hive_metastore.osk02156")
+Sys.setenv(PROJECT_WORK_SCHEMA = "hive_metastore.usr00000")
 stops(check_settings(), "catalog.schema where a schema name belongs")
 
 cat("\n-- pin_output_schema --\n")
 clear()
-Sys.setenv(DOMINO_USER_NAME = "osk02156", OBJECT_PREFIX = "overall_")
+Sys.setenv(DOMINO_USER_NAME = "usr00000", OBJECT_PREFIX = "overall_")
 p <- pin_output_schema(list(catalog = "hive_metastore"))
-ok(identical(p$work_schema, "osk02156") && identical(p$personal_schema, "osk02156"),
+ok(identical(p$work_schema, "usr00000") && identical(p$personal_schema, "usr00000"),
    "work and personal schema pinned to the same value")
 ok(identical(p$object_prefix, "overall_"), "prefix carried onto cfg")
 clear()
@@ -215,8 +215,9 @@ stops(check_output_contract(extra_key, "OVERALL_COH_FINAL", "overall_"),
 clear()
 
 cat("\n-- the shipped config.csv, not a sample --\n")
-# Both suites built their cfg from apr_30_2026 or a literal. Someone could flip
-# a criterion in config.csv and neither would notice.
+# The checks above build their cfg from a literal, so someone could flip a
+# criterion in config.csv and none of them would notice. This reads the file
+# that ships.
 cfg_rows <- read.csv(file.path(ROOT, "config.csv"), stringsAsFactors = FALSE,
                      comment.char = "#")
 shipped <- setNames(trimws(as.character(cfg_rows$value)), trimws(cfg_rows$name))

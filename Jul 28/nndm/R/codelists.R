@@ -1,4 +1,4 @@
-# CSV-only codelist loading, carried over from Jul 28/lot/R/codelists_lot.R.
+# CSV-only codelist loading, carried over from lot/R/codelists_lot.R.
 # The CSV in cfg$codelist_dir is required; there is no embedded fallback.
 
 # The four files this build reads: mm_dx.csv identifies the MM diagnosis
@@ -20,14 +20,14 @@ CODELIST_FILES <- c("cl_mma_codelist.csv", "mm_dx.csv", "other_malig.csv",
 # the index disease and not another cancer. SECONDARY MALIGNANT NEOPLASM OF
 # BONE is not like the others: C79.51 / C79.52 / 198.5 say a cancer spread to
 # bone, not which cancer. Myeloma bone disease is usually coded as MM with bone
-# involvement, but it is also miscoded here, which is why apr_30_2026
+# involvement, but it is also miscoded here, which is why the source build
 # overrides the group - and a breast or prostate primary metastatic to bone
 # carries the same code. The label cannot separate those. A code can.
 #
 # So: one row per ICD code, override = 1 to treat it as the index disease (do
 # not exclude) or 0 to treat it as another cancer (do exclude). A row here wins
 # over the tumour-group label in both directions. The file ships empty, which
-# means the labels decide everything, which is apr_30_2026's behaviour.
+# means the labels decide everything, which is the source build's behaviour.
 # NDMM_MM_ADJACENT_CODES lists every code in an overridden group, ready to
 # paste in.
 #

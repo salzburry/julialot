@@ -2,7 +2,7 @@
 # Checks on the per-line criteria layer. The shipped registry is empty, so the
 # fixtures below are what exercise the builders.
 #
-#   Rscript "Jul 28/lot/tests/test_line_criteria.R"
+#   Rscript "lot/tests/test_line_criteria.R"
 
 ROOT <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)

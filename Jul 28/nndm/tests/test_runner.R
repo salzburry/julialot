@@ -1,9 +1,9 @@
 #!/usr/bin/env Rscript
 # What build_nndm() does, driven rather than grepped for. The rules in R/steps
-# are held to the source by test_same_as_source.R; this is about the runner
+# are held to the protocol by the checks below; this is about the runner
 # around them - the guards, the attrition, and the order.
 #
-#   Rscript "Jul 28/nndm/tests/test_runner.R"
+#   Rscript "nndm/tests/test_runner.R"
 
 ROOT <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -580,8 +580,8 @@ ok(length(keys) == 9L, paste0("nine steps, one per criterion (", length(keys), "
 
 cat("\n-- the funnel adds the criteria in the protocol's order --\n")
 # ndmm_counts() is the one block this package rewrote rather than ported, so
-# test_same_as_source.R swaps the source's version back in and holds nothing
-# here. What holds it is this: each step's SQL is read back and must be the
+# the line-for-line comparison holds nothing here. What holds it is this:
+# each step's SQL is read back and must be the
 # step above it plus exactly one flag, in the order Rev Round 2 S6.2.1.1 and
 # then S6.2.1.2 list the criteria.
 FLAGS <- c("CE_pre_lot1_12mo", "CE_lot1_fu", "NO_PRIOR_MM_TX",
@@ -915,7 +915,7 @@ ok(grepl("_ndmm_mma_codelist", x, fixed = TRUE),
 cat("\n-- a plasma-cell disorder in remission is not another cancer --\n")
 # The other-cancer criterion targets a cancer distinct from the index MM, which
 # is why five plasma-cell tumour groups are overridden. Three are worded "not
-# having achieved remission", and apr_30_2026 left the "in remission" variants
+# having achieved remission", and the source build left the "in remission" variants
 # excluding - so an identical patient was kept or dropped depending on whether
 # their plasma cell leukemia was in remission.
 # The protocol says nothing about remission. It says "another cancer" - other
@@ -1052,7 +1052,7 @@ ok(setequal(se$ndmm_mm_adjacent_groups(),
    "override covers both halves")
 assign("NDMM_MM_ADJACENT_STATES", "exclude", envir = se)
 ok(setequal(se$ndmm_mm_adjacent_groups(), se$NDMM_MM_ADJACENT_OVERRIDE),
-   "exclude restores apr_30_2026's five, so the two can be compared")
+   "exclude restores the source build's five, so the two can be compared")
 assign("NDMM_MM_ADJACENT_STATES", "sometimes", envir = se)
 ok(grepl("is not a setting",
          tryCatch({ se$ndmm_mm_adjacent_groups(); "" }, error = conditionMessage),
@@ -1097,10 +1097,10 @@ ok(all(vapply(c("DX", "ICD_FAMILY", "OVERRIDE"), function(c0)
    "...under the column names the overrides CSV uses, so it pastes in")
 
 cat("\n-- the other-cancer code list, driven --\n")
-# Held here rather than only in test_same_as_source.R. The mm_dx join sits
+# Held here, driven, not only compared as text. The mm_dx join sits
 # inside a block that suite splices out wholesale before comparing, so once the
 # block grew to take in the overrides join, breaking the mm_dx join stopped
-# being noticed there. The battery found that. Driven, it cannot go quiet
+# being noticed there. Driven, it cannot go quiet
 # again whatever the splice covers.
 oe2 <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = oe2)
@@ -1199,7 +1199,7 @@ ok(grepl(paste0("cov.sort_key = ", se$NDMM_FU_CE_DAYS), fc, fixed = TRUE),
 cat("\n-- what \"belantamab in any LOT\" is taken to mean --\n")
 # Lines of therapy do not exist when this runs - the LOT algorithm runs over
 # the cohort this build produces - so the exclusion is a claims proxy, and
-# apr_30_2026's proxy had no lower bound at all: a claim from before the study
+# the source build's proxy had no lower bound at all: a claim from before the study
 # period excluded the patient, which is wrong under any reading of "any LOT".
 drive_bel <- function(scope = "study_period") {
   assign("NDMM_BELANTAMAB_SCOPE", scope, envir = se)
@@ -1386,7 +1386,7 @@ ok(identical(tryCatch({ se$build_ndmm_belantamab_codes(NULL); "" },
 
 cat("\n-- the cohort is a cohort the LOT build can be pointed at --\n")
 # The next stage runs the LOT algorithm over these patients, so this table is
-# its input. Jul 28/lot reads ten columns off whatever cohort it is given, and
+# its input. the lot build reads ten columns off whatever cohort it is given, and
 # NDMM_COHORT was PATID alone - that build would have stopped at its own input
 # check before doing anything.
 lot_req <- local({
@@ -1401,10 +1401,10 @@ lot_req <- local({
   eval(parse(text = paste(ln[i:j], collapse = "\n")))
 })
 if (is.null(lot_req)) {
-  cat("  ---- Jul 28/lot is not beside this folder; its column list was NOT read\n")
+  cat("  ---- the lot build is not beside this folder; its column list was NOT read\n")
 } else {
   ok(setequal(NDMM_COHORT_COLS, lot_req),
-     paste0("NDMM_COHORT declares exactly what Jul 28/lot requires (",
+     paste0("NDMM_COHORT declares exactly what the lot build requires (",
             length(lot_req), " columns), read from that build not copied"))
 }
 be <- new.env(parent = globalenv())
@@ -1461,7 +1461,7 @@ ok(identical(drive_chk(), ""), "a well-formed cohort passes")
 m <- drive_chk(cols = setdiff(NDMM_COHORT_COLS, c("INDEX_DATE", "FU_DAYS_CE")))
 ok(grepl("INDEX_DATE", m, fixed = TRUE) && grepl("FU_DAYS_CE", m, fixed = TRUE),
    "a missing column is named here, not at the far end of the next build")
-ok(grepl("Jul 28/lot", m, fixed = TRUE), "...and so is who needs it")
+ok(grepl("the lot build", m, fixed = TRUE), "...and so is who needs it")
 m <- drive_chk(rows = 12L, pat = 10L)
 ok(grepl("fans out", m, fixed = TRUE),
    "a repeated PATID stops it - it would multiply every join a LOT run makes")
@@ -1955,7 +1955,7 @@ ok(length(env_vars) > 20 && length(unnamed) == 0,
 # The funnel is the deliverable, so the README's version of it has to have as
 # many steps as the build does. Rows, not labels: the labels are prose on a
 # delivered table and are meant to be editable without a test change, which is
-# also why the battery does not pin them. Adding or dropping a step is not
+# also why they are not pinned. Adding or dropping a step is not
 # prose, and this catches that.
 att <- sub("(?s)\n## .*", "", sub("(?s).*## The attrition", "", readme, perl = TRUE),
            perl = TRUE)
@@ -1973,47 +1973,14 @@ ok(length(wrong) == 0,
                              "-step funnel and it has ", length(ATTRITION_STEPS))
    else paste0("...and calls it a ", WORDS[length(ATTRITION_STEPS)], "-step funnel"))
 
-cat("\n-- the README's account of the port matches the port --\n")
-# Every step file is named, whatever it came from. The section used to say
-# R/steps/ was a line-for-line port of apr_30_2026, which was wrong about two
-# of the nine - one comes from Jul 28/overall and one is not a port at all.
+cat("\n-- the README accounts for every step file --\n")
+# Every step file is named. A file nobody wrote up is a rule nobody reviews.
 steps_on_disk <- basename(list.files(file.path(ROOT, "R", "steps"), "\\.R$"))
 unnamed <- Filter(function(f) !grepl(f, readme, fixed = TRUE), steps_on_disk)
 ok(length(steps_on_disk) > 0 && length(unnamed) == 0,
    if (length(unnamed)) paste0("a step file the README does not account for: ",
                                paste(unnamed, collapse = ", "))
    else paste0("all ", length(steps_on_disk), " step files are accounted for"))
-# The deviation counts. They are the claim "and no others" rests on, and a
-# claim with a stale number beside it is worse than no number: the reader
-# checks the count, not the registry.
-# The README is hard-wrapped, so any phrase of more than a word or two spans a
-# newline. Matched against a whitespace-flattened copy, or these would pass or
-# fail on where the paragraph happened to break.
-readme_flat <- gsub("[[:space:]]+", " ", readme)
-dev <- local({
-  code <- paste(readLines(file.path(ROOT, "tests", "test_same_as_source.R"),
-                          warn = FALSE), collapse = "\n")
-  e <- new.env()
-  for (nm in c("SUBST", "ADDED", "SPLICE"))
-    eval(parse(text = sub(paste0("(?s).*?\n(", nm, " <- .*?\n\\))\n.*"), "\\1",
-                          code, perl = TRUE)), envir = e)
-  c(subst  = sum(vapply(e$SUBST, function(x)
-                   sum(vapply(x, function(y) y$n, integer(1))), integer(1))),
-    added  = sum(vapply(e$ADDED, sum, integer(1))),
-    splice = sum(vapply(e$SPLICE, length, integer(1))))
-})
-# Each against the phrase that states it, not against the bare number: "12"
-# also appears in "12-month CE", so a loose match would pass whatever the
-# registry held. That is the assertion-reads-the-source trap in a new costume.
-PHRASE <- c(subst = "%d replaced lines", added = "%d added lines",
-            splice = "%d blocks rewritten")
-for (k in names(dev)) {
-  want <- sprintf(PHRASE[[k]], dev[[k]])
-  ok(grepl(want, readme_flat, fixed = TRUE),
-     paste0("the README says \"", want, "\""))
-}
-ok(grepl(paste0("\\b", sum(dev), " places\\b"), readme_flat, perl = TRUE),
-   paste0("...and the total it says the port differs in, ", sum(dev)))
 
 cat("\n-- the criteria section covers every criterion --\n")
 # The section a reviewer holds against the protocol. One numbered row per

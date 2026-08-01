@@ -1,7 +1,5 @@
 # LOT1 start dates, the anchor every NDMM window is measured from.
 #
-# Ported from apr_30_2026/06_ndmm_dashboard.R lines 199-216.
-# tests/test_same_as_source.R compares this against that range.
 
 build_lot1_starts_ndmm <- function(con, lot_long) {
   db_exec(con, glue("

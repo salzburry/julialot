@@ -1,9 +1,9 @@
 # Runner for the NDMM (1L newly-diagnosed) cohort. Standalone: one module,
 # pointed at a cohort prefix.
 #
-# The rules in R/steps are a port of the cohort half of
-# apr_30_2026/06_ndmm_dashboard.R. What is here is the runner around them,
-# which is not a port of anything: the source's prepare_ndmm_cohort() is
+# The rules in R/steps are a port of the cohort half of the source build's
+# NDMM dashboard script. What is here is the runner around them, which is not
+# a port of anything: the source's prepare_ndmm_cohort() is
 # entangled with the dashboard it feeds, and skips a filter whose inputs it
 # cannot read. This build stops instead - a count nobody can reproduce is
 # worse than no count.
@@ -91,7 +91,7 @@ check_choices <- function(cfg) {
 # package reads raw CDM and its code lists and nothing else, which is what lets
 # it be handed to someone on its own. It used to read OVERALL_COH_FINAL,
 # LOT_LONG and MAP_STACKED - the MM diagnosis and demographics are ported in
-# from Jul 28/overall now, the 1L index is derived from claims, and belantamab
+# from the overall build now, the 1L index is derived from claims, and belantamab
 # is read off the code list.
 upstream_tables <- function(cfg) list()
 
@@ -618,7 +618,7 @@ write_run_metadata <- function(con, cfg, here, n) {
   invisible(TRUE)
 }
 
-# NDMM_COHORT is written to be a cohort Jul 28/lot can be pointed at, so the
+# NDMM_COHORT is written to be a cohort the lot build can be pointed at, so the
 # LOT algorithm can be run over the NDMM patients without anything in between.
 # These are the columns that build reads off whatever cohort it is given
 # (its REQUIRED_COHORT_COLS); NDMM_COHORT used to be PATID alone, which stopped
@@ -706,7 +706,7 @@ check_ndmm_cohort <- function(con, cfg, n_expected) {
   miss <- setdiff(NDMM_COHORT_COLS, cols)
   if (length(miss))
     stop(tbl, " is missing ", paste(miss, collapse = ", "),
-         ".\nIt is written to be a cohort Jul 28/lot can be pointed at, and ",
+         ".\nIt is written to be a cohort the lot build can be pointed at, and ",
          "that build reads these columns off whatever cohort it is given.",
          call. = FALSE)
   q <- db_q(con, glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_pat, ",
@@ -1007,7 +1007,7 @@ build_nndm <- function(here, prefix) {
   build_ndmm_belantamab_scope_counts(con, cfg)
   build_ndmm_fu_ce_counts(con, cfg)
   # build_lot_long_filtered() is not called. It joins LOT_LONG to the cohort for
-  # the April dashboard's KPI, gallery and LOT-detail views; neither the cohort
+  # the source's dashboard KPI, gallery and LOT-detail views; neither the cohort
   # nor the attrition reads it, and this package builds only those two. The
   # function stays in 07_cohort.R so that file remains the source line for line.
 

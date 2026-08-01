@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 # Build the Overall cohort. Writes OVERALL_COH_FINAL.
 #
-#   DATABRICKS_PWD=... Rscript "Jul 28/overall/build.R"
+#   DATABRICKS_PWD=... Rscript "overall/build.R"
 #
 # R/ holds the helpers and IE steps, config.csv everything else.
 

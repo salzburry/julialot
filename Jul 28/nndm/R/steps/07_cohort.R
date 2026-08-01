@@ -1,7 +1,5 @@
 # The filtered cohort, and the counts the attrition is read from.
 #
-# Ported from apr_30_2026/06_ndmm_dashboard.R lines 756-839.
-# tests/test_same_as_source.R compares this against that range.
 
 build_lot_long_filtered <- function(con, lot_long) {
   db_exec(con, glue("
@@ -48,7 +46,6 @@ ndmm_counts <- function(con, mm_qualifying, base_cohort) {
   # LOT_LONG" filtered by a parent cohort. It is everyone with a qualifying MM
   # diagnosis, then those old enough, then those with an eligible 1L treatment.
   # These three count off their own tables rather than off a flag.
-  # Registered as a rewritten block in tests/test_same_as_source.R.
   whole <- n_of(glue(
     "SELECT count(DISTINCT PATID) AS n FROM {mm_qualifying}"))
   elig <- n_of(glue(
@@ -59,7 +56,7 @@ ndmm_counts <- function(con, mm_qualifying, base_cohort) {
   # From here the funnel follows the protocol's own order: S6.2.1.1's remaining
   # inclusion (CE during follow-up), then S6.2.1.2's four exclusions as it
   # lists them - prior MM therapy, other cancer, pregnancy, and belantamab
-  # last. apr_30_2026 applied belantamab first and follow-up CE second-to-last.
+  # last. The source applied belantamab first and follow-up CE second-to-last.
   # The final cohort is the same conjunction either way, but the per-step
   # numbers are not, and the attrition is what gets read against the protocol.
   #

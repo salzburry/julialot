@@ -1,7 +1,5 @@
 # Another active cancer in the 12 months before LOT1.
 #
-# Ported from apr_30_2026/06_ndmm_dashboard.R lines 318-533.
-# tests/test_same_as_source.R compares this against that range.
 
 build_ndmm_other_malig_codes <- function(con) {
   src <- load_codelist_csv(
@@ -52,7 +50,7 @@ build_ndmm_other_malig_codes <- function(con) {
            -- A row in mm_adjacent_overrides.csv wins over the label, both
            -- ways: it is the only thing that can say this particular
            -- C79.5x is myeloma bone disease and that one is a breast
-           -- primary. Absent, the labels decide, which is apr_30_2026.
+           -- primary. Absent, the labels decide, as the source does.
            CASE {ovr_case}WHEN trim(om.tumor_group) IN ({ovr_in}) OR m.dx IS NOT NULL
                 THEN 1 ELSE 0 END AS is_mm_adjacent_override,
            -- The label two outpatient claims must share to confirm each other.

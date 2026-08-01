@@ -8,7 +8,7 @@
 #   The 1L cohort index date is the date of the first claim for MM treatment
 #   within the identification period.
 #
-# apr_30_2026 took it from LOT_LONG instead - the start of line 1 as the LOT
+# The source took it from LOT_LONG instead - the start of line 1 as the LOT
 # algorithm computes it. That is a different thing: LOT_LONG only exists for
 # patients who already passed the parent build's criteria, and the line start
 # is an output of the line-building rules rather than a claim date. Reading it
@@ -346,7 +346,7 @@ build_ndmm_other_malig_groups <- function(con, cfg) {
 # three rows can be computed with no map at all, off the events view the
 # criterion itself reads, so the claim scan does not run again:
 #
-#   same code-list label - the finest grain, and what apr_30_2026 does
+#   same code-list label - the finest grain, and what the source build does
 #   as configured        - the same until primary_tumor_groups.csv says otherwise
 #   any label at all     - the coarsest, and the upper bound on what a perfect
 #                          map could add

@@ -1,7 +1,5 @@
 # One row per patient carrying every filter's verdict.
 #
-# Ported from apr_30_2026/06_ndmm_dashboard.R lines 622-755.
-# tests/test_same_as_source.R compares this against that range.
 
 build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
                            q2_ok_belantamab, q2_ok_priortx,

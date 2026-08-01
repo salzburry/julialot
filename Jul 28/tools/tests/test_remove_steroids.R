@@ -1,9 +1,9 @@
 #!/usr/bin/env Rscript
-# The rollup is a governed file shared with apr_30_2026, and the script edits
+# The rollup is a governed file shared with the source build, and the script edits
 # it in place, so the things that matter are: it removes exactly the steroid
 # rows, it leaves every other byte alone, and it refuses rather than guesses.
 #
-#   Rscript "Jul 28/tools/tests/test_remove_steroids.R"
+#   Rscript "tools/tests/test_remove_steroids.R"
 
 ROOT <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
