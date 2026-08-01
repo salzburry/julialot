@@ -195,6 +195,28 @@ an unlisted agent can still set an index, an unmapped label stays its own group.
 So a checkout with nothing filled in produces the source build's cohort, not a
 variation on it. Nothing here changes until you write in one of these.
 
+**In production these three are configured separately** from the four core code
+lists. Those come from `CODELIST_DIR`; these come from `NDMM_ELIGIBLE_1L_CSV`,
+`NDMM_MM_ADJACENT_CSV` and `NDMM_PRIMARY_GROUPS_CSV`, and each falls back to
+the empty file shipped in `codelists/` when its variable is unset. A deploy
+that points `CODELIST_DIR` at production and misses these three runs green on
+the placeholders.
+
+So every run ends with a line saying which it had:
+
+```
+Rule fill-ins: 0 supplied, 3 empty
+  > eligible_1l_agents.csv: empty (md5 d41d8...) - any MM therapy on the code
+    list can set the 1L index
+  > An empty file is a run without that rule, and reads the same as one whose
+    path was never set. Check the paths against <prefix>NDMM_CODELIST_METADATA
+    before this cohort is used.
+```
+
+A supplied file is listed with its row count and md5 instead. Both are also in
+`<prefix>NDMM_CODELIST_METADATA`, so a finished cohort can be checked without
+the log — a shipped placeholder is a known md5 with `n_rows = 0`.
+
 **Each has a table to fill it in from**, so it is a copy and an edit rather than
 a research task:
 

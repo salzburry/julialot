@@ -73,7 +73,8 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_prefix",
            "check_attrition_monotonic", "build_ndmm_cohort_table",
            "check_ndmm_cohort", "build_ndmm_belantamab_reconcile",
            "write_attrition",
-           "write_codelist_metadata", "write_run_metadata")
+           "write_codelist_metadata", "write_run_metadata",
+           "report_fillins")
 at <- vapply(ORDER, function(f) {
   m <- regexpr(paste0("(?<![A-Za-z0-9_.])", f, "\\("), body, perl = TRUE)
   if (m == -1) NA_integer_ else as.integer(m)
@@ -551,6 +552,57 @@ m <- tryCatch({ me$write_codelist_metadata(NULL, list()); "" }, error = conditio
 ok(grepl("not reproducible", m, fixed = TRUE),
    "and a run that recorded no hashes stops rather than publishing untraceable counts")
 unlink(tmp, recursive = TRUE)
+
+cat("\n-- the run says which rule fill-ins it had --\n")
+# Each fill-in already says at the point it is read that it was empty, but that
+# is three lines in the middle of a long log, and an empty file reads exactly
+# like a path that was never set. A deploy that pointed CODELIST_DIR at
+# production and missed these three env vars is the case worth catching.
+fe <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = fe)
+assign("wrk", function(x) paste0("wk.p_", x), envir = fe)
+FLOG <- character(0)
+assign("log_msg", function(...) FLOG <<- c(FLOG, paste0(...)), envir = fe)
+drive_fill <- function(opt) {
+  options(nndm_codelist_md5 = opt); FLOG <<- character(0)
+  r <- fe$report_fillins(list()); list(r = r, log = paste(FLOG, collapse = "\n"))
+}
+ok(length(fe$FILLIN_FILES) == 3 &&
+     all(c("eligible_1l_agents.csv", "mm_adjacent_overrides.csv",
+           "primary_tumor_groups.csv") %in% names(fe$FILLIN_FILES)),
+   "the three files that decide an open rule are the three it reports on")
+
+all_in <- drive_fill(list(
+  eligible_1l_agents.csv    = list(md5 = "aa11", n_rows = 42L),
+  mm_adjacent_overrides.csv = list(md5 = "bb22", n_rows = 7L),
+  primary_tumor_groups.csv  = list(md5 = "cc33", n_rows = 310L)))
+ok(length(all_in$r$empty) == 0 && length(all_in$r$used) == 3 &&
+     grepl("3 supplied, 0 empty", all_in$log, fixed = TRUE),
+   "a run with all three supplied says so, with each row count and hash")
+ok(!grepl(">", all_in$log, fixed = TRUE),
+   "...and raises nothing, so the marker means something when it appears")
+
+none_in <- drive_fill(list(
+  eligible_1l_agents.csv    = list(md5 = "d41d8", n_rows = 0L),
+  mm_adjacent_overrides.csv = list(md5 = "d41d8", n_rows = 0L),
+  primary_tumor_groups.csv  = list(md5 = "d41d8", n_rows = 0L)))
+ok(length(none_in$r$empty) == 3 &&
+     grepl("0 supplied, 3 empty", none_in$log, fixed = TRUE),
+   "a run on the shipped placeholders says that, once, at the end")
+ok(all(vapply(unname(unlist(fe$FILLIN_FILES)), grepl, logical(1),
+              x = none_in$log, fixed = TRUE)),
+   "...naming what each empty file leaves the build doing instead")
+ok(grepl("NDMM_CODELIST_METADATA", none_in$log, fixed = TRUE),
+   "...and where to check the paths it actually read")
+
+# Read-and-empty is a decision; never-read is a deploy that did not reach the
+# file. write_codelist_metadata() stops on the second, so this says which.
+mixed <- drive_fill(list(eligible_1l_agents.csv = list(md5 = "aa11", n_rows = 42L),
+                         mm_adjacent_overrides.csv = list(md5 = "d41d8", n_rows = 0L)))
+ok(grepl("1 supplied, 2 empty", mixed$log, fixed = TRUE) &&
+     grepl("primary_tumor_groups.csv: NOT READ", mixed$log, fixed = TRUE) &&
+     grepl("mm_adjacent_overrides.csv: empty", mixed$log, fixed = TRUE),
+   "and a file never read is told apart from one read and empty")
 
 cat("\n-- the attrition steps match what the counts return --\n")
 # The labels are read off ATTRITION_STEPS but the numbers come from

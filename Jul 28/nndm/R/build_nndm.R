@@ -866,6 +866,45 @@ check_no_active_run <- function(con, cfg) {
 RUN_SCOPED_TABLES <- c("NDMM_ATTRITION", "NDMM_RUN_METADATA",
                        "NDMM_CODELIST_METADATA")
 
+# The three files that decide rules the protocol leaves open, and what the
+# build does when each is empty. Empty is a legitimate run - the rule falls
+# back to the source's behaviour, and every one of them says so where it is
+# read. It is also exactly what a deploy that set CODELIST_DIR and missed
+# NDMM_ELIGIBLE_1L_CSV and its two siblings looks like, and those three lines
+# sit in the middle of a long log. This says it once, at the end, beside the
+# count they shaped.
+FILLIN_FILES <- list(
+  eligible_1l_agents.csv    = "any MM therapy on the code list can set the 1L index",
+  mm_adjacent_overrides.csv = "tumour-group labels alone decide the other-cancer criterion",
+  primary_tumor_groups.csv  = "outpatient pairs must share one code-list label")
+
+report_fillins <- function(cfg) {
+  seen <- getOption("nndm_codelist_md5", list())
+  empty <- character(0); used <- character(0)
+  for (f in names(FILLIN_FILES)) {
+    e <- seen[[f]]
+    # Never read at all is not the same as read and empty, and only the second
+    # is a decision. write_codelist_metadata() stops on a missing hash, so this
+    # says which one it was rather than leaving that to the failure.
+    if (is.null(e))
+      empty <- c(empty, paste0(f, ": NOT READ - ", FILLIN_FILES[[f]]))
+    else if (isTRUE(as.numeric(e$n_rows) == 0))
+      empty <- c(empty, paste0(f, ": empty (md5 ", e$md5, ") - ",
+                               FILLIN_FILES[[f]]))
+    else
+      used <- c(used, paste0(f, ": ", format(e$n_rows, big.mark = ","),
+                             " row(s) (md5 ", e$md5, ")"))
+  }
+  log_msg("Rule fill-ins: ", length(used), " supplied, ", length(empty), " empty")
+  for (u in used)   log_msg("    ", u)
+  for (e in empty)  log_msg("  > ", e)
+  if (length(empty))
+    log_msg("  > An empty file is a run without that rule, and reads the same ",
+            "as one whose path was never set. Check the paths against ",
+            wrk("NDMM_CODELIST_METADATA"), " before this cohort is used.")
+  invisible(list(used = used, empty = empty))
+}
+
 clear_run_rows <- function(con, cfg) {
   bad <- character(0)
   for (t in RUN_SCOPED_TABLES) {
@@ -1049,6 +1088,8 @@ build_nndm <- function(here, prefix) {
   log_msg(SEP)
   log_msg("NDMM 1L cohort: ", format(counts$ndmm_final, big.mark = ","),
           " patients -> ", wrk("NDMM_COHORT"))
+  # After the count, because which of these were supplied is part of reading it.
+  report_fillins(cfg)
   log_msg(SEP)
   invisible(counts)
 }
