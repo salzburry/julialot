@@ -110,22 +110,26 @@ pinned a deviation-count paragraph that left the README with the scrub, along
 with the assertion that read it. README coverage is carried by the funnel and
 criteria mutations, which are anchored and run.
 
-### One more the anchors could not have told us
+### One the anchors could not have told us, twice
 
-`attrition key typo` had a valid anchor and still **survived** the first full
-sweep — which is the case only a full run finds. It renamed a criterion's key
-in the middle of the list. That used to break the join between the labels and
-the counts, because each side kept its own list. Both sides read `NDMM_CRITERIA`
-now, so a renamed key moves on both at once, they still agree, and nothing is
-wrong: the published table keys off `label`, and the key is internal.
+`attrition key typo` renames a criterion's key and expects the labels and the
+counts to stop agreeing. It has now survived a full sweep twice, and both times
+the anchor was valid — only an `--all` run could see it.
 
-That is single-sourcing working — there is no longer a disagreement to detect —
-but it left the mutation testing nothing. It is re-pointed at the one key that
-is still two-sided: `ndmm_final` is derived into `ATTRITION_STEPS` from the
-list, while `ndmm_counts()` returns it as a literal, because the last row reads
-the cohort view rather than a prefix. A typo there still breaks the join, and
-is caught.
+The first time, single-sourcing had removed the disagreement it detected: both
+sides read `NDMM_CRITERIA`, so a renamed key moved on both at once. It was
+re-aimed at `ndmm_final`, then the last key written on both sides.
 
-A surviving mutation is not always a bug in the code. Here it was a mutation
-that had stopped meaning anything, and the fix was to aim it at the seam that
-still exists.
+The second time, a later commit closed *that* seam by deriving `ndmm_final`
+too — and its message claimed the mutation was "retired by the fix", which was
+untrue: it was neither retired nor re-pointed, and went on reporting a pass
+while testing nothing.
+
+It now targets `elig_lot1`, which is still hand-written twice: `ATTRITION_STEPS`
+in `build_nndm.R`, and the list `ndmm_counts()` returns in `07_cohort.R`.
+
+The general lesson, since it cost two sweeps: **a mutation aimed at a seam is
+only as good as the seam.** Close a duplication and the mutation guarding it
+silently stops testing anything — the anchor still resolves, so nothing
+complains. A commit that removes a seam has to re-run the mutations that
+guarded it rather than assert they are handled.
