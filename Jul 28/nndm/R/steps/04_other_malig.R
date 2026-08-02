@@ -6,6 +6,7 @@ build_ndmm_other_malig_codes <- function(con) {
     "other_malig.csv",
     c("dx", "icd_family", "tumor_group"))
   met_pred <- ndmm_metastatic_sql("om.dx")
+  met_own  <- ndmm_metastatic_own_group_sql("om.dx")
   ovr_in <- paste(sprintf("'%s'", gsub("'", "''", ndmm_mm_adjacent_groups())),
                   collapse = ", ")
   db_exec(con, glue("
@@ -14,7 +15,7 @@ build_ndmm_other_malig_codes <- function(con) {
     -- qualified, and both sides of the join are already normalised, so no name
     -- can bind to the wrong relation.
     --
-    -- This was a correlated EXISTS whose inner relation carries columns called
+    -- Not a correlated EXISTS: its inner relation carries columns called
     -- dx and icd_family too. Unqualified, those bound to the inner ones, the
     -- predicate compared each MM code to itself, and every other-cancer code
     -- came back overridden - which switched the whole exclusion off.
@@ -61,9 +62,14 @@ build_ndmm_other_malig_codes <- function(con) {
            -- does, so the two families cannot collide in one group.
            CASE WHEN {met_pred} THEN 'MET'
                 ELSE substr(om.dx, 1, 3) END AS primary_group,
-           -- The same without the metastatic collapse, carried only so
-           -- NDMM_OTHER_MALIG_GRAIN can price what that collapse costs.
-           substr(om.dx, 1, 3) AS category_group
+           -- The counterfactual for NDMM_OTHER_MALIG_GRAIN: metastatic codes
+           -- kept apart by the prefix each matched, instead of collapsed. Not
+           -- substr(dx, 1, 3) - that would put C800 back with C80.1 and C80.2,
+           -- which are deliberately outside the group, and the difference
+           -- would net a pair the collapse adds against one it removes.
+           {met_own} AS category_group,
+           -- Which prefix claimed it, so the report can attribute by tier.
+           CASE WHEN {met_pred} THEN {met_own} END AS met_prefix
     FROM om
     LEFT JOIN {NDMM_MM_DX_CODES} m
            ON m.dx = om.dx AND m.icd_family = om.icd_family
@@ -82,7 +88,7 @@ build_ndmm_other_malig_codes <- function(con) {
     WHERE is_mm_adjacent_override = 1
       AND upper(trim(tumor_group)) IN ({req_in})
   "))$n), error = function(e) NA_integer_)
-  # The source logged this and carried on. An unmatched label means the
+  # Stopping rather than logging. An unmatched label means the
   # override is a silent no-op for that tumour group, so patients whose only
   # other cancer is MM-adjacent are excluded as having another cancer - a
   # smaller cohort, with nothing in the attrition saying why. Its own comment
@@ -202,7 +208,7 @@ build_ndmm_other_malig_pre_lot1 <- function(con, med_diag_tbl) {
   # not on tumor_group. Two outpatient claims for one cancer coded at different
   # subsites, or one \"in remission\" and one \"not having achieved remission\",
   # are one primary tumour type and now confirm each other. Pairing on the
-  # label, as the source does, means pairing on the identical code.
+  # label means pairing on the identical code.
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_OTHER_MALIG_PATIDS} AS
     WITH inpatient_flag AS (

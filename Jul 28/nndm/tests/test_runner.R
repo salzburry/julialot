@@ -1501,10 +1501,19 @@ ok(any(grepl("THEN 'MET'", om, fixed = TRUE)),
    "metastatic codes collapse to one group")
 ok(any(grepl("ELSE substr(om.dx, 1, 3) END AS primary_group", om, fixed = TRUE)),
    "...and everything else still pairs on the ICD category")
-# Carried so the grain table can price the collapse. Without it there is no way
-# to say what grouping mets cost.
-ok(any(grepl("substr(om.dx, 1, 3) AS category_group", om, fixed = TRUE)),
-   "the ungrouped category is carried alongside, for the review table")
+# The counterfactual has to keep the metastatic codes apart by the prefix each
+# matched. Plain substr(dx,1,3) would put C800 back with C80.1 and C80.2 -
+# deliberately outside the group - so the difference would net a pair the
+# collapse ADDS against one it REMOVES and report them as one number.
+ok(any(grepl("{met_own} AS category_group", om, fixed = TRUE)),
+   "the counterfactual keeps met codes apart by prefix, not by ICD category")
+own <- ndmm_metastatic_own_group_sql("om.dx")
+ok(grepl("WHEN om.dx LIKE 'C800%' THEN 'C800'", own, fixed = TRUE),
+   "...so C800 stays its own group rather than falling back to C80")
+ok(grepl("ELSE substr(om.dx, 1, 3) END", own, fixed = TRUE),
+   "...and everything else still falls back to the ICD category")
+ok(any(grepl("AS met_prefix", om, fixed = TRUE)),
+   "the matched prefix is kept, so the report can attribute by tier")
 li <- readLines(file.path(ROOT, "R", "steps", "00b_lot1_index.R"), warn = FALSE)
 ok(any(grepl("ICD category, mets ungrouped", li, fixed = TRUE)),
    "...and the grain table reports both, so the difference is a number")

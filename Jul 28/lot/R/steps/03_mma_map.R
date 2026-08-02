@@ -85,7 +85,7 @@ phase_mma_map <- function(con, ctx) {
     -- 4) med_procedure is not a drug source: its PROC column holds ICD
     -- procedure codes, and the MMA code list is HCPCS and NDC.
     --
-    -- Measured, because the program spec names T_MED_PROCEDURE (PROC) among
+    -- Measured, because med_procedure.PROC is named among
     -- the tables joined to CL_MMA_CODELIST and Optum's business rules say PROC
     -- can carry a drug given as a procedure under HCPCS/CPT. Neither holds
     -- here. Profiling PROC over the study period returns 43.1M of ~43.2M rows

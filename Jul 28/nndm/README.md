@@ -167,8 +167,8 @@ columns appears here.
 | 3 | **Eligible 1L treatment** | the **first** claim for an MM therapy on or after that patient's MM diagnosis, on or after `LOT1_FROM` (**2017-01-01**) and on or before the study end. Five arms over raw claims — `PROC_CD`, `BILL_PROC_CD` and `NDC` in `medical`, `NDC` in `rx`, `PROC` in `med_procedure` — each matched against `cl_mma_codelist.csv` and only against the code types that source can carry. **Belantamab cannot set it** — an eligible 1L treatment is one other than belantamab; steroids cannot either, being dropped from the code list. That date is the NDMM index. | `00b_lot1_index.R` |
 | 4 | **12-month CE before index** | an enrollment span covering `[index − 365, index − 1]` in full, gaps of **≤30 days** treated as continuous | `01_enrollment.R`, `06_flags.R` |
 | 5 | **Follow-up CE** | a **no-gap** span covering `[index, index + FU_CE_DAYS]`, where `FU_CE_DAYS = 0` — **one day: the index date itself** | `06_flags.R` |
-| 6 | **No MM oncology therapy in the 12-month baseline** | no medical or pharmacy claim for an MM therapy in `[index − 365, index − 1]`, read from raw `medical` and `rx` against `cl_mma_codelist.csv`. **Steroids are excluded** (`DEX`, `DEXA`, `DEXAMETHASONE`, `PRED`, `PREDNISONE`) — a steroid claim alone does not make a patient previously treated. | `03_prior_therapy.R` |
-| 7 | **No other cancer in the 12-month baseline** | excluded on **≥1 inpatient** claim, **or ≥2 outpatient** claims **within 30 days of each other** for the same cancer — **both claims inside** `[index − 365, index − 1]`. Inpatient is established from the confinement table and the claim header, not from a place-of-service code. Plasma-cell tumour groups are the index disease and do not count; what "the same cancer" means is a code-list label unless a map says otherwise — both below. | `04_other_malig.R` |
+| 6 | **No MM oncology therapy in the 12-month baseline** | no claim for an MM therapy in `[index − 365, index − 1]`, read from raw claims against `cl_mma_codelist.csv` over five sources — `PROC_CD`, `BILL_PROC_CD` and `NDC` in `medical`, `NDC` in `rx`, `PROC` in `med_procedure`. **Steroids are excluded** (`DEX`, `DEXA`, `DEXAMETHASONE`, `PRED`, `PREDNISONE`) — a steroid claim alone does not make a patient previously treated. | `03_prior_therapy.R` |
+| 7 | **No other cancer in the 12-month baseline** | excluded on **≥1 inpatient** claim, **or ≥2 outpatient** claims **within 30 days of each other** for the same cancer — **both claims inside** `[index − 365, index − 1]`. Inpatient is established from the confinement table and the claim header, not from a place-of-service code. Plasma-cell tumour groups are the index disease and do not count. "The same cancer" is the **three-character ICD category** for a primary, and **one shared group for metastatic codes**, which pair with each other whatever the site — both below. | `04_other_malig.R` |
 | 8 | **No pregnancy** | excluded on ≥1 medical claim with a diagnosis, procedure or revenue code indicating pregnancy or childbirth, anywhere in `[2016-01-01, 2026-03-31]` — the **study period**, not the baseline | `05_pregnancy.R` |
 | 9 | **No belantamab before the 1L index** | any claim for a belantamab code from `cl_mma_codelist.csv`, in `medical`, `rx` or `med_procedure`, dated **strictly before the index**. This is half of the belantamab exclusion — the half `lot` cannot see, because the claims it reads start at the index. The other half, belantamab from the index onward, is `lot`'s `no_belantamab` line criterion. Overlaps #6 by design: that one already removes belantamab inside the 12-month baseline, so this one's incremental drop is the patients whose belantamab predates it | `00b_lot1_index.R`, `06_flags.R` |
 
@@ -422,8 +422,13 @@ The next stage runs the LOT algorithm over these patients, so this table is
 written as a cohort the lot build can be pointed at directly:
 
 ```
-DATABRICKS_PWD=... Rscript build.R NDMM_COHORT ndmm_
+DATABRICKS_PWD=... Rscript build.R ndmm_NDMM_COHORT ndmm_
 ```
+
+The cohort table is named **with its prefix**. This build prefixes everything it
+writes, so `OBJECT_PREFIX=ndmm_` makes the table `ndmm_NDMM_COHORT`; `lot` adds
+its prefix only to its own outputs and reads the cohort name exactly as given.
+Pass the bare name and preflight will stop, saying the table does not exist.
 
 It carries the ten columns that build reads off whatever cohort it is given —
 `PATID`, `INDEX_DATE`, `ENDDATE`, `ENDDATE_CE`, `DEATH_DT`, `GDR_CD`, `YRDOB`,
