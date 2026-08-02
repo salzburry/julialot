@@ -120,3 +120,53 @@ ndmm_mm_adjacent_groups <- function() {
 NDMM_OTHER_MALIG_EVENTS   <- "_ndmm_other_malig_events"
 NDMM_INDEX_TX             <- "_ndmm_index_tx"
 NDMM_INDEX_INELIGIBLE     <- "_ndmm_index_ineligible"
+
+# Metastatic (secondary) neoplasm codes, matched as prefixes on the
+# punctuation-stripped code - so "C78" covers C78.00 and C78.7.
+#
+# These form one group rather than pairing by ICD category. Two outpatient
+# claims for metastases at different sites are still metastatic cancer, which
+# the rule excludes on in its own right; pairing them on site would ask for the
+# same metastasis twice. Primaries keep the category rule.
+#
+# C80.0 is disseminated disease and is here. C80.1 (primary site unknown) and
+# C80.2 are not secondary, so the prefix is C800 rather than C80 - the same
+# reason 1990 is listed rather than 199.
+#
+# Only codes already on other_malig.csv are affected: this regroups what the
+# exclusion already reads and adds nothing to it. build_ndmm_other_malig_codes()
+# reports which of these prefixes actually matched, so one that matches nothing
+# is visible rather than silently doing nothing.
+NDMM_METASTATIC_PREFIXES <- c(
+  # ICD-10. Lymph nodes; respiratory and digestive; other and unspecified
+  # sites; secondary neuroendocrine; disseminated.
+  "C77", "C78", "C79", "C7B", "C800",
+  # ICD-9, the same ranges.
+  "196", "197", "198", "1990"
+)
+
+# The SQL predicate for the above, over a column holding a stripped code.
+ndmm_metastatic_sql <- function(col = "om.dx") {
+  paste(sprintf("%s LIKE '%s%%'", col, NDMM_METASTATIC_PREFIXES), collapse = "\n             OR ")
+}
+
+# How many codes the metastatic group actually claimed. A prefix that matches
+# nothing is doing nothing, and saying so is cheaper than finding out from a
+# count that did not move.
+report_metastatic_group <- function(con) {
+  n <- tryCatch(db_q(con, glue("
+    SELECT count(*) AS n FROM {NDMM_OTHER_MALIG_CODES}
+    WHERE primary_group = 'MET'"))$n, error = function(e) NA_integer_)
+  if (is.na(n)) {
+    log_msg("  Metastatic group: could not be counted.")
+    return(invisible(NA_integer_))
+  }
+  log_msg("  Metastatic group: ", format(n, big.mark = ","),
+          " code(s) on the list, from ", length(NDMM_METASTATIC_PREFIXES),
+          " prefixes")
+  if (n == 0L)
+    log_msg("  WARNING: no code on other_malig.csv matches any prefix in ",
+            "NDMM_METASTATIC_PREFIXES, so every code pairs by ICD category ",
+            "and the metastatic group does nothing.")
+  invisible(n)
+}

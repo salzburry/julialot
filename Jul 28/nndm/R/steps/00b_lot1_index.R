@@ -392,6 +392,10 @@ build_ndmm_other_malig_grain <- function(con, cfg) {
   db_exec(con, paste0(glue("CREATE OR REPLACE TABLE {wrk('NDMM_OTHER_MALIG_GRAIN')} AS\n"),
     by("same code-list label", ", tumor_group"), "\n    UNION ALL\n",
     by("as configured",        ", primary_group"), "\n    UNION ALL\n",
+    # Same categories, metastatic codes NOT collapsed. The gap between this row
+    # and "as configured" is what the metastatic group costs, and it is the
+    # only number that says whether grouping mets was worth doing.
+    by("ICD category, mets ungrouped", ", category_group"), "\n    UNION ALL\n",
     by("any label at all",     "")))
   got <- db_q(con, glue("SELECT * FROM {wrk('NDMM_OTHER_MALIG_GRAIN')}"))
   log_msg("Other cancer (criterion 7), by pairing grain:")

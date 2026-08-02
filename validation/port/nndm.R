@@ -165,6 +165,12 @@ ADDED <- list(
     "),  -- end mproc" = 1L,
     "UNION SELECT DISTINCT PATID FROM mproc" = 1L),
   "R/steps/04_other_malig.R" = c(
+    # Metastatic codes group together instead of pairing by ICD category: two
+    # outpatient claims for metastases at different sites are still metastatic
+    # cancer, which the rule excludes on in its own right. The CASE that does
+    # it is inside the spliced view; these two lines sit outside it.
+    "met_pred <- ndmm_metastatic_sql(\"om.dx\")" = 1L,
+    "report_metastatic_group(con)" = 1L,
     # The required-match count is now against the five labels the code list
     # must carry, not against every group the override reaches - the remission
     # variants are a proposal and their absence is reported, not fatal.

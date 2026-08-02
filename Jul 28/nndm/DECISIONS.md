@@ -165,7 +165,61 @@ metastases. That concern is real; the decision is that the stated rule governs.
 `<prefix>NDMM_MM_ADJACENT_CODES` lists what the four labels still keep, and
 attrition step 7 is where the change lands.
 
-**Status: decided and implemented.**
+### Metastatic codes group together
+
+The category rule works for primaries — every `C34.x` is lung — but not for
+metastases. `C78.7` (liver) and `C79.51` (bone) are different categories, so two
+outpatient claims documenting metastases at two sites never confirmed each
+other, and the patient stayed in the cohort.
+
+That is the wrong question to ask of them. The rule excludes on the same primary
+tumour type **or metastatic cancer**, and metastatic cancer qualifies in its own
+right — pairing two mets on site asks for the same metastasis twice.
+
+**Code:** `NDMM_METASTATIC_PREFIXES` in `standalone_constants.R`. Codes matching
+any prefix collapse to one group `MET`; everything else keeps the ICD category.
+
+| in the group | | |
+|---|---|---|
+| `C77` | secondary and unspecified neoplasm of lymph nodes | `196` |
+| `C78` | secondary neoplasm of respiratory and digestive organs | `197` |
+| `C79` | secondary neoplasm of other and unspecified sites | `198` |
+| `C7B` | secondary neuroendocrine tumours | — |
+| `C800` | disseminated malignant neoplasm, unspecified | `1990` |
+
+`C800` and `1990`, not `C80` and `199`: `C80.1` is a primary of unknown site and
+`C80.2` a transplant case, and neither is secondary. They keep the category
+rule.
+
+**What it does not do:** add anything to the exclusion. This regroups codes
+already on `other_malig.csv` — a code not on that file was never in scope.
+`report_metastatic_group()` logs how many codes the group actually claimed and
+warns if that is zero, so a prefix matching nothing is visible.
+
+**Two things to watch on the first run.**
+
+`C79.51` and `C79.52` are in this group, per the decision above, so a myeloma
+patient whose bone lesions are coded that way now pairs with any metastatic
+code rather than only another `C79`. Myeloma does not usually produce nodal or
+visceral secondaries, so this should be small — but it is not zero and it falls
+on patients the study wants to keep.
+
+`C77` is "secondary **and unspecified**" neoplasm of lymph nodes, and `C800` is
+used when nothing is localised. Both are weaker evidence than a sited
+metastasis. If the numbers below show either doing real work, they are the two
+to reconsider.
+
+**Measured:** `<prefix>NDMM_OTHER_MALIG_GRAIN` now has a row for the ICD
+category with metastatic codes **ungrouped**. The gap between that and the
+configured row is exactly what this decision costs.
+
+**One assumption, untested.** Coding guidance says a secondary neoplasm is
+reported alongside its primary where the primary is known. If that holds in this
+extract, most metastatic patients are already reachable through their primary
+code and this group adds little. Whether it holds in Optum claims is not
+something this package has checked.
+
+**Status: decided and implemented; magnitude pending the first run.**
 
 ---
 
