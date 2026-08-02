@@ -241,14 +241,32 @@ Read off *Belantamab_Optum LoT_Unmet_Need_CoAuth Rev Round 2 (June 16 2026)*,
 §6.1, §6.2.1.1 and §6.2.1.2. These are unrecorded gaps, listed so they are not
 found again from scratch.
 
-**Continuous enrolment does not check benefit type.** §6.2.1.1 asks for "CE of
-at least 12-months with **medical and pharmacy** benefits before the 1L cohort
-index date". `build_enrollment_spans_ndmm()` reads only `ELIGEFF` / `ELIGEND`
-from `member_enrollment` and applies no benefit-type filter, so a medical-only
-enrollee counts as continuously enrolled. Their oral therapy — lenalidomide,
-pomalidomide, ixazomib, thalidomide, selinexor, venetoclax on the code list —
-would never appear, which is the reason the protocol asks for both. The parent
-build's `CE_b` / `CE_f` have the same gap.
+**Continuous enrolment with medical *and* pharmacy benefits — satisfied by
+construction, nothing to implement.** §6.2.1.1 asks for "CE of at least
+12-months with medical and pharmacy benefits before the 1L cohort index date",
+and `build_enrollment_spans_ndmm()` filters on no benefit type. That is correct
+here: the Optum extract does not separate them. `member_enrollment` has 27
+columns and none is a benefit indicator —
+
+```
+PATID  PAT_PLANID  ASO  BUS  CDHP
+ELIGEFF  ELIGEFF_DAY  ELIGEFF_MONTH  ELIGEFF_YEAR  ELIGEFF_SASDT
+ELIGEND  ELIGEND_DAY  ELIGEND_MONTH  ELIGEND_YEAR  ELIGEND_SASDT
+FAMILY_ID  GDR_CD  GROUP_NBR  HEALTH_EXCH  PRODUCT
+RACE  STATE  YRDOB  EXTRACT_YM  VERSION  ETHNICITY  RACE_SOURCE
+```
+
+— `ASO`, `BUS`, `CDHP`, `PRODUCT`, `HEALTH_EXCH` and `GROUP_NBR` are plan
+structure and funding, not coverage type. A span carries both benefits, so
+`ELIGEFF` / `ELIGEND` already express the protocol's requirement and adding a
+predicate would filter on nothing. Source: `docs/optum enrolment.pdf`, which is
+a `DESCRIBE` of the same table. The parent build's `CE_b` / `CE_f` are correct
+for the same reason.
+
+Do not re-derive this from claims. A count of enrolled patients with no
+pharmacy fill looks like a coverage signal and is not one: it is dominated by
+short enrolment spans and by patients whose only MM code is a rule-out. The
+column list is the answer and it is in `docs/`.
 
 **The study period was never wrong, but its defaults disagreed.** §6.1's design
 figure gives study start **01 Jan 2016**, 1L from 01 Jan 2017, end of data
