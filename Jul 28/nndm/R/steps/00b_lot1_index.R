@@ -173,8 +173,7 @@ build_ndmm_lot1_index <- function(con, medical_tbl, rx_tbl, med_proc_tbl) {
        AND lpad(regexp_replace(coalesce(cast(t.NDC as string),''), '[^0-9]', ''), 11, '0')
          = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')
        AND regexp_replace(coalesce(cast(t.NDC as string),''), '[^0-9]', '') <> ''"
-  # med_procedure.PROC, per the program spec, which names T_MED_PROCEDURE (PROC)
-  # among the tables joined to CL_MMA_CODELIST, and Optum business rule 5, which
+  # med_procedure.PROC, which
   # says PROC finds a drug given as a procedure under a HCPCS or CPT code.
   # No ICD_FLAG condition, as 05_sct.R does for HCPCS: a J-code carrying an
   # unexpected flag would otherwise be dropped. The join is self-limiting -
@@ -185,7 +184,7 @@ build_ndmm_lot1_index <- function(con, medical_tbl, rx_tbl, med_proc_tbl) {
        AND regexp_replace(coalesce(cast(t.PROC as string),''), '[^A-Za-z0-9]', '') <> ''"
   # One scan, kept: the index date comes out of it, and so does which agent set
   # that date. The second is what NDMM_INDEX_AGENTS reports, and re-running the
-  # four arms to get it would double the most expensive step in the build.
+  # five arms to get it would double the most expensive step in the build.
   db_exec(con, paste0(glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_INDEX_TX} AS"),
     arm(medical_tbl, "FST_DT",  proc_match), "\n      UNION ALL\n",

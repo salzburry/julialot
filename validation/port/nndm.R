@@ -170,6 +170,7 @@ ADDED <- list(
     # cancer, which the rule excludes on in its own right. The CASE that does
     # it is inside the spliced view; these two lines sit outside it.
     "met_pred <- ndmm_metastatic_sql(\"om.dx\")" = 1L,
+    "met_own  <- ndmm_metastatic_own_group_sql(\"om.dx\")" = 1L,
     "report_metastatic_group(con)" = 1L,
     # The required-match count is now against the five labels the code list
     # must carry, not against every group the override reaches - the remission

@@ -150,6 +150,19 @@ ndmm_metastatic_sql <- function(col = "om.dx") {
   paste(sprintf("%s LIKE '%s%%'", col, NDMM_METASTATIC_PREFIXES), collapse = "\n             OR ")
 }
 
+# The same codes grouped by the prefix each one matched, rather than collapsed
+# into MET. This is the counterfactual the review table needs: plain
+# substr(dx, 1, 3) is not, because C800 would fall back to C80 and rejoin
+# C80.1 and C80.2 - codes deliberately kept out of the metastatic group. The
+# difference would then net a pair the collapse ADDS against a pair it REMOVES,
+# and report the two as one number.
+ndmm_metastatic_own_group_sql <- function(col = "om.dx") {
+  arms <- sprintf("WHEN %s LIKE '%s%%' THEN '%s'", col,
+                  NDMM_METASTATIC_PREFIXES, NDMM_METASTATIC_PREFIXES)
+  paste0("CASE ", paste(arms, collapse = "\n                "),
+         "\n                ELSE substr(", col, ", 1, 3) END")
+}
+
 # How many codes the metastatic group actually claimed. A prefix that matches
 # nothing is doing nothing, and saying so is cheaper than finding out from a
 # count that did not move.
@@ -164,6 +177,17 @@ report_metastatic_group <- function(con) {
   log_msg("  Metastatic group: ", format(n, big.mark = ","),
           " code(s) on the list, from ", length(NDMM_METASTATIC_PREFIXES),
           " prefixes")
+  # Per prefix, so a tier that matches nothing is named and one doing all the
+  # work is visible. "How many matched" cannot say which.
+  per <- tryCatch(db_q(con, glue("
+    SELECT met_prefix AS P, count(*) AS n FROM {NDMM_OTHER_MALIG_CODES}
+    WHERE primary_group = 'MET' GROUP BY 1")), error = function(e) NULL)
+  hit <- if (is.null(per)) character(0) else as.character(per$P)
+  for (px in NDMM_METASTATIC_PREFIXES) {
+    i <- match(px, hit)
+    log_msg("    ", px, ": ", if (is.na(i)) "no codes on the list"
+                              else format(per$n[i], big.mark = ","))
+  }
   if (n == 0L)
     log_msg("  WARNING: no code on other_malig.csv matches any prefix in ",
             "NDMM_METASTATIC_PREFIXES, so every code pairs by ICD category ",

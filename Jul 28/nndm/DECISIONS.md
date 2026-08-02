@@ -209,9 +209,19 @@ used when nothing is localised. Both are weaker evidence than a sited
 metastasis. If the numbers below show either doing real work, they are the two
 to reconsider.
 
-**Measured:** `<prefix>NDMM_OTHER_MALIG_GRAIN` now has a row for the ICD
-category with metastatic codes **ungrouped**. The gap between that and the
-configured row is exactly what this decision costs.
+**Measured:** `<prefix>NDMM_OTHER_MALIG_GRAIN` has a row where metastatic codes
+are kept apart by the prefix each matched instead of collapsed. The gap between
+that row and the configured one is exactly what this decision costs.
+
+It is *not* plain `substr(dx, 1, 3)` for that row, which would be the obvious
+thing to write and would be wrong: `C800` would fall back to `C80` and rejoin
+`C80.1` and `C80.2`, which are deliberately outside the group. The difference
+would then net a pair the collapse **adds** against one it **removes** and
+report the two as a single number.
+
+`report_metastatic_group()` also logs the code count per prefix, so a tier
+matching nothing is named and one doing all the work is visible — "nine
+prefixes matched" cannot say which.
 
 **One assumption, untested.** Coding guidance says a secondary neoplasm is
 reported alongside its primary where the primary is known. If that holds in this
@@ -234,8 +244,8 @@ there is a different algorithm. The window is not that: the algorithm is
 unchanged and the dates belong to the cohort.
 
 ```
-Rscript build.R NDMM_COHORT ndmm_ 2016-01-01 2026-03-31
-Rscript build.R MM_COH_FINAL mm_   2015-07-01 2025-06-30
+Rscript build.R ndmm_NDMM_COHORT ndmm_ 2016-01-01 2026-03-31
+Rscript build.R MM_COH_FINAL       mm_   2015-07-01 2025-06-30
 ```
 
 Both dates go to `LOT_RUN_METADATA`, so an output says which window, and
