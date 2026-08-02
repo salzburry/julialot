@@ -19,6 +19,12 @@ cfg_defaults <- list(
   # a second thing to remember.
   cohort_prefix      = Sys.getenv("COHORT_PREFIX", unset = ""),
 
+  # What the cohort build calls its attrition table, before the prefix. nndm
+  # writes NDMM_ATTRITION; a different cohort build writes a different name, or
+  # none - in which case the panel is skipped and says so. The columns it must
+  # carry are RUN_ID, STEP_NUM, CRITERION, N_PATIENTS and RECORDED_AT.
+  attrition_table = Sys.getenv("ATTRITION_TABLE", unset = "NDMM_ATTRITION"),
+
   # Where the HTML goes, and what it is called.
   output_dir  = Sys.getenv("OUTPUT_DIR",  unset = "/mnt/artifacts/dashboard"),
   output_file = Sys.getenv("OUTPUT_FILE", unset = "dashboard.html"),

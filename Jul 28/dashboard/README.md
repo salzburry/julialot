@@ -25,12 +25,29 @@ built from the prefix you pass.
 
 | placeholder | table | used for |
 |---|---|---|
-| `{lot_final}` | `<lot_prefix>LOT_LONG_FINAL` | **every clinical panel** — this is the study population |
+| `{lot_final}` | `<lot_prefix>LOT_LONG_FINAL` | **every clinical panel** — this is the study population, and the run stops without it |
 | `{lot_long}` | `<lot_prefix>LOT_LONG` | the Validation tab only, where the before/after comparison is the point |
 | `{patients}` | `<lot_prefix>LOT_PATIENT_INPUT` | demographics and follow-up, **restricted to PATIDs still in `{lot_final}`** |
 | `{run_meta}` | `<lot_prefix>LOT_RUN_METADATA` | which window and which code produced the numbers |
-| `{attrition}` | `<cohort_prefix>NDMM_ATTRITION` | the cohort funnel |
+| `{attrition}` | `<cohort_prefix><ATTRITION_TABLE>` | the cohort funnel |
 | `{cohort}` | the table you passed | available to sections that want it |
+
+### The attrition table belongs to the cohort build
+
+`nndm` calls it `NDMM_ATTRITION`. A different cohort build calls it something
+else, or writes none — so the name is `ATTRITION_TABLE` in `config.csv` rather
+than a constant in a package that is meant to name no study of its own. The
+cohort prefix still applies, and the columns the panel needs are `RUN_ID`,
+`STEP_NUM`, `CRITERION`, `N_PATIENTS` and `RECORDED_AT`. A table without them
+fails its own panel and leaves the rest of the dashboard alone.
+
+Both `ATTRITION_TABLE` and `LOT_RUN_METADATA` are **history**: each build
+deletes and re-inserts only its own `RUN_ID`, so previous runs stay. The two
+panels that read them take the **latest run** — by `RECORDED_AT` and
+`RUN_TIMESTAMP` — because the dashboard runs afterwards, in a different session,
+and cannot know the run id. Without that, a reused prefix returns several
+funnels interleaved by `STEP_NUM`, and the bar takes its denominator from
+whichever row came back first.
 
 ### Which population a panel describes
 
@@ -49,7 +66,11 @@ The NDMM attrition panel is the cohort build's funnel and **ends before** the
 LOT-side belantamab criterion — its label says so, and `criteria_impact` on the
 same tab shows what that criterion removed.
 
-Only `LOT_LONG` is required. Anything else missing turns its sections into a
+**`LOT_LONG_FINAL` is required** — it is the study population and every clinical
+panel reads it. It is also written *last*, in the line-criteria phase, so a LOT
+run that failed in between leaves `LOT_LONG` behind and no final table; the
+dashboard stops rather than producing a file that looks finished with nearly
+every panel saying "not shown". Anything else missing turns its sections into a
 panel that says which table is absent — a study that ran LOT but not the cohort
 build still gets a dashboard, minus the funnel.
 
@@ -141,11 +162,12 @@ panel that tells you whether an empty scenario means "none in this cohort" or
 `<OUTPUT_DIR>/<CSV_DIR>/<section_name>.csv`. So `patient_journeys.csv`,
 `attrition.csv` and so on, alongside the HTML.
 
-**The folder is one run.** Existing `.csv` files there are cleared first — a
-panel switched off, a query that failed, a panel that came back empty, or the
-same `OUTPUT_DIR` reused for another cohort would otherwise leave a file that
-reads as current, since the names carry no cohort, prefix or run id. Nothing but
-`.csv` in that folder is touched.
+**The folder is one run**, including when `EXPORT_CSV=FALSE` — the folder is
+cleared either way. A panel switched off, a query that failed, a panel that came
+back empty, the same `OUTPUT_DIR` reused for another cohort, or the export
+turned off entirely would otherwise leave a file that reads as current, since
+the names carry no cohort, prefix or run id. Nothing but `.csv` in that folder
+is touched.
 
 The frames come from the panels, not from a second pass at the warehouse — the
 CSV is the numbers on the page rather than a re-query that could disagree with
