@@ -329,38 +329,49 @@ facility detail records bundled into it. That is what makes
 which is what §6.2.1.2 asks for. `RVNU_CD` is unstacked from `medical` in the
 same pass as `PROC_CD`.
 
-**`med_procedure` is not a drug source — measured, after the documentation
-suggested otherwise.** The program spec names the tables joined to
-`CL_MMA_CODELIST` as `T_MEDICAL` (`PROC_CD`, `BILL_PROC_CD`, `NDC`, `FST_DT`),
-`T_RX` (`NDC`, `FILL_DT`, `DAYS_SUPPLY`) **and `T_MED_PROCEDURE` (`PROC`)**, and
-Optum's rule 5 says `PROC` finds a drug given as a procedure under a HCPCS or
-CPT code. No MM-therapy scan reads it — not `nndm`, not `overall`, not `lot`'s
-MMA/MAP pipeline, not the baseline.
+**`med_procedure.PROC` is now read as a medication source in `overall` and
+`nndm`.** The program spec names the tables joined to `CL_MMA_CODELIST` as
+`T_MEDICAL` (`PROC_CD`, `BILL_PROC_CD`, `NDC`, `FST_DT`), `T_RX` (`NDC`,
+`FILL_DT`, `DAYS_SUPPLY`) **and `T_MED_PROCEDURE` (`PROC`)**, and Optum's
+business rule 5 says `PROC` finds a drug given as a procedure under a HCPCS or
+CPT code. Neither package read it, nor does the baseline.
 
-That looked like a gap. It is not. Profiling `PROC` over the study period:
+The scan now has **five** arms, not four. Optum names four sources, three of
+which the build already had; the fourth is `med_procedure`. The build also
+reads `BILL_PROC_CD`, which Optum does not name. Three shared, plus one each
+way, is five.
 
-| `ICD_FLAG` | length | rows | |
-|---|---|---|---|
-| 10 | 7 | 43,137,224 | ICD-10-PCS — 99.9% of the table |
-| 10 | 5 | 14,598 | e.g. `00002` |
-| 10 | 5 | 366 | e.g. `ERHOS` |
-| — | other | < 1,300 combined | malformed |
+**Measured first, and the count is small.** Profiling `PROC` over the study
+period gives 43,137,224 of ~43.2M rows at `ICD_FLAG='10'` and seven characters
+— ICD-10-PCS. The five-character tail, the only shape a HCPCS or CPT code could
+occupy, is about 15,000 rows: 0.035%. So this is expected to add very few
+therapy events. It was added because the spec calls for it and because the
+failure it guards against is asymmetric — a therapy the scan cannot see lets a
+patient pass the no-prior-therapy criterion on missing data, and can move the
+1L index date later than it belongs.
 
-The five-character tail is 0.035% and its values are zero-padded numbers and
-text fragments, not `J9999` or `38241`. There is no HCPCS/CPT population, so
-reading the table would add no MM therapy claim. **The exclusion is correct and
-the documentation is aspirational on this point.** Data over spec over vendor
-guidance, in that order.
+**Where it went:** `overall`'s `18_therapy_events` (fifth `UNION ALL`, source
+`MED_PROCEDURE_PROC`, counted in the step's QC), and `nndm`'s three scans — the
+1L index (`00_lot1_index.R`), the belantamab scan, and the 12-month prior-
+therapy scan (`03_prior_therapy.R`). `lot`'s MMA/MAP pipeline is unchanged.
 
-**What the same profile does show is a dead branch in the SCT scan.**
-`lot/R/steps/05_sct.R` joins `CL_CODE_TYPE = 'HCPCS'` against `mp.PROC` with no
-`ICD_FLAG` condition and calls it a "HCPCS safety net". Against a column with no
-HCPCS in it, that branch matches nothing. Every HCPCS SCT code — CPT
-`38240`/`38241`, `S2150`, and CAR-T `Q2042`/`Q2054`/`Q2055`/`Q2056` — is found
-through `MEDICAL` alone. Results are unaffected, because `MEDICAL` is where
-those codes belong; what was wrong was the belief that a second source was
-backing it up. The comment now says so. The join is kept in case a later
-extract carries them.
+No `ICD_FLAG` condition, matching how `05_sct.R` reads the same column for
+HCPCS: a J-code carrying an unexpected flag would otherwise be dropped. The
+join is self-limiting anyway — ICD-10-PCS is seven characters and ICD-9
+procedures three or four, so only a five-character `PROC` can equal a HCPCS or
+CPT code on the list.
+
+**The direction is one-way.** Adding a source can only add therapy events, so
+the cohort can only get smaller: more patients excluded for prior therapy, and
+index dates that can move earlier but never later. Read
+`<prefix>NDMM_INDEX_AGENTS` and the attrition against a run without this arm to
+size it.
+
+**It also explains the SCT branch.** `lot/R/steps/05_sct.R` joins
+`CL_CODE_TYPE = 'HCPCS'` against `mp.PROC` and calls it a "HCPCS safety net".
+Given the profile above that branch matches little or nothing, so the HCPCS SCT
+codes — CPT `38240`/`38241`, `S2150`, CAR-T `Q2042`/`Q2054`/`Q2055`/`Q2056` —
+are found through `MEDICAL` in practice. Left in place, comment corrected.
 
 **Still assumed, not documented:** that NDCs match once both sides are stripped
 to digits and left-padded to 11. The documentation says nothing about NDC

@@ -1025,13 +1025,15 @@ build_nndm <- function(here, prefix) {
 
   log_msg("1L index: first eligible MM treatment claim on or after ",
           NDMM_LOT1_FROM)
-  build_ndmm_lot1_index(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))
+  build_ndmm_lot1_index(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx),
+                        cdm_src(cfg$tbl_med_proc))
   checkpoint(con, "NDMM_INDEX_TX")
   checkpoint(con, "NDMM_LOT1_STARTS")
   build_ndmm_index_agents(con, cfg)
 
   log_msg("MM therapy in the ", NDMM_PRE_LOT1_DAYS, " days before 1L")
-  build_ndmm_therapy_pre_lot1(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))
+  build_ndmm_therapy_pre_lot1(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx),
+                              cdm_src(cfg$tbl_med_proc))
 
   log_msg("Other cancer in the ", NDMM_PRE_LOT1_DAYS, " days before 1L")
   build_ndmm_other_malig_codes(con)
@@ -1053,7 +1055,8 @@ build_nndm <- function(here, prefix) {
                               cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_med_proc))
 
   log_msg("Belantamab in any line, from claims")
-  build_ndmm_belantamab_patids(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))
+  build_ndmm_belantamab_patids(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx),
+                               cdm_src(cfg$tbl_med_proc))
   checkpoint(con, "NDMM_BELANTAMAB_TX")
   checkpoint(con, "NDMM_BELANTAMAB_PATIDS")
 

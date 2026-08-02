@@ -123,7 +123,7 @@ build_ndmm_index_ineligible_codes <- function(con) {
 
 # The first eligible MM treatment claim on or after the MM diagnosis and on or
 # after the eligible-treatment cutoff. That date is the NDMM index.
-build_ndmm_lot1_index <- function(con, medical_tbl, rx_tbl) {
+build_ndmm_lot1_index <- function(con, medical_tbl, rx_tbl, med_proc_tbl) {
   # Every branch is scoped to the base cohort, dated on or after that patient's
   # own diagnosis, and inside the eligible-treatment period. Belantamab is left
   # out by the anti-join: S6.2.1.1 says the eligible 1L treatment is one "other
@@ -150,6 +150,16 @@ build_ndmm_lot1_index <- function(con, medical_tbl, rx_tbl) {
        AND lpad(regexp_replace(coalesce(cast(t.NDC as string),''), '[^0-9]', ''), 11, '0')
          = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')
        AND regexp_replace(coalesce(cast(t.NDC as string),''), '[^0-9]', '') <> ''"
+  # med_procedure.PROC, per the program spec, which names T_MED_PROCEDURE (PROC)
+  # among the tables joined to CL_MMA_CODELIST, and Optum business rule 5, which
+  # says PROC finds a drug given as a procedure under a HCPCS or CPT code.
+  # No ICD_FLAG condition, as 05_sct.R does for HCPCS: a J-code carrying an
+  # unexpected flag would otherwise be dropped. The join is self-limiting -
+  # ICD-10-PCS is seven characters and ICD-9 procedures three or four, so only
+  # a five-character PROC can equal a HCPCS or CPT code on the list.
+  mproc_match <- "c.code_type IN ('HCPCS','CPT')
+       AND upper(regexp_replace(coalesce(cast(t.PROC as string),''), '[^A-Za-z0-9]', '')) = c.code
+       AND regexp_replace(coalesce(cast(t.PROC as string),''), '[^A-Za-z0-9]', '') <> ''"
   # One scan, kept: the index date comes out of it, and so does which agent set
   # that date. The second is what NDMM_INDEX_AGENTS reports, and re-running the
   # four arms to get it would double the most expensive step in the build.
@@ -158,7 +168,8 @@ build_ndmm_lot1_index <- function(con, medical_tbl, rx_tbl) {
     arm(medical_tbl, "FST_DT",  proc_match), "\n      UNION ALL\n",
     arm(medical_tbl, "FST_DT",  bill_match), "\n      UNION ALL\n",
     arm(medical_tbl, "FST_DT",  ndc_match),  "\n      UNION ALL\n",
-    arm(rx_tbl,      "FILL_DT", ndc_match)))
+    arm(rx_tbl,      "FILL_DT", ndc_match),   "\n      UNION ALL\n",
+    arm(med_proc_tbl, "FST_DT", mproc_match)))
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_LOT1_STARTS} AS
     SELECT PATID, min(tx_dt) AS LOT1_START_DT
@@ -230,7 +241,7 @@ build_ndmm_index_agents <- function(con, cfg) {
 # over the cohort this build produces - so NDMM_BELANTAMAB_SCOPE picks the
 # claims proxy, and every claim is kept here with its date so the proxy can be
 # applied, and so all of them can be counted for review.
-build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl) {
+build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl, med_proc_tbl) {
   # Each source only matches the code types it can carry, the same way the
   # prior-therapy and index scans do. Without it a PROC_CD could match an NDC
   # row once both are stripped to alphanumerics, and an NDC could match an
@@ -256,7 +267,8 @@ build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl) {
     arm(medical_tbl, "FST_DT",  txt_match("PROC_CD", "'HCPCS','CPT'")), "\n      UNION\n",
     arm(medical_tbl, "FST_DT",  txt_match("BILL_PROC_CD", "'HCPCS'")),  "\n      UNION\n",
     arm(medical_tbl, "FST_DT",  ndc_match("NDC")),          "\n      UNION\n",
-    arm(rx_tbl,      "FILL_DT", ndc_match("NDC"))))
+    arm(rx_tbl,      "FILL_DT", ndc_match("NDC")),           "\n      UNION\n",
+    arm(med_proc_tbl, "FST_DT", txt_match("PROC", "'HCPCS','CPT'"))))
 
   scope <- switch(NDMM_BELANTAMAB_SCOPE,
     study_period = glue("b.bel_dt >= date('{NDMM_STUDY_START}')"),

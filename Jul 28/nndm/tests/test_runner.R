@@ -652,20 +652,26 @@ ok(i_fd > 0 && grepl("row_number()", pre, fixed = TRUE) &&
    "...and it is picked before age is known, so 17-then-18 is dropped, not moved")
 
 SSQL <- character(0)
-se$build_ndmm_lot1_index(NULL, "cdm.medical", "cdm.rx")
+se$build_ndmm_lot1_index(NULL, "cdm.medical", "cdm.rx", "cdm.med_procedure")
 x <- SSQL[1]
+# Five sources: medical PROC_CD, medical BILL_PROC_CD, medical NDC, rx NDC and
+# med_procedure PROC. The last is the program spec's T_MED_PROCEDURE (PROC)
+# join to CL_MMA_CODELIST, added so a drug given as a procedure is not missed.
 n_arms <- length(gregexpr("INNER JOIN _ndmm_base_cohort b", x, fixed = TRUE)[[1]])
-ok(n_arms == 4L,
-   paste0("the index is looked for in all four claim sources (", n_arms, ")"))
-ok(length(gregexpr(">= b.MM_DX_DT", x, fixed = TRUE)[[1]]) == 4L,
+ok(n_arms == 5L,
+   paste0("the index is looked for in all five claim sources (", n_arms, ")"))
+ok(grepl("cdm.med_procedure t", x, fixed = TRUE) &&
+     grepl("cast(t.PROC as string)", x, fixed = TRUE),
+   "...including med_procedure, on its PROC column")
+ok(length(gregexpr(">= b.MM_DX_DT", x, fixed = TRUE)[[1]]) == 5L,
    "every one of them requires the treatment to be on or after the diagnosis")
-ok(length(gregexpr(paste0(">= date('", se$NDMM_LOT1_FROM, "')"), x, fixed = TRUE)[[1]]) == 4L,
+ok(length(gregexpr(paste0(">= date('", se$NDMM_LOT1_FROM, "')"), x, fixed = TRUE)[[1]]) == 5L,
    "...and on or after the eligible-treatment cutoff")
 ok(length(gregexpr(paste0("<= date('", cfg_defaults$study_end, "')"), x,
-                   fixed = TRUE)[[1]]) == 4L,
+                   fixed = TRUE)[[1]]) == 5L,
    "...and inside the study period")
-ok(length(gregexpr("WHERE bl.code IS NULL", x, fixed = TRUE)[[1]]) == 4L,
-   "an ineligible agent cannot set the index, on every one of the four arms")
+ok(length(gregexpr("WHERE bl.code IS NULL", x, fixed = TRUE)[[1]]) == 5L,
+   "an ineligible agent cannot set the index, on every one of the five arms")
 ok(grepl("_ndmm_index_ineligible", x, fixed = TRUE),
    "...and the ineligible set is the one build_ndmm_index_ineligible_codes builds")
 ok(any(grepl("min(tx_dt) AS LOT1_START_DT", SSQL, fixed = TRUE)),
@@ -772,7 +778,7 @@ assign("NDMM_MM_ADJACENT_STATES", "override", envir = se)
 for (v in CHOICES$belantamab_scope) {
   assign("NDMM_BELANTAMAB_SCOPE", v, envir = se)
   SSQL <- character(0)
-  ok(identical(tryCatch({ se$build_ndmm_belantamab_patids(NULL, "m", "r"); "" },
+  ok(identical(tryCatch({ se$build_ndmm_belantamab_patids(NULL, "m", "r", "mp"); "" },
                         error = conditionMessage), ""),
      paste0("belantamab_scope='", v, "' is one the code actually handles"))
 }

@@ -72,6 +72,11 @@ SUBST <- list(
   # which matches neither. It can only remove matches the source should not
   # have made, and the same change is in the overall build so the two still
   # agree - tests/test_same_as_overall.R holds that.
+  # The scan gained a fifth source, so the builder gained the table to read it
+  # from. See the ADDED entry for the mproc CTE below.
+  "R/steps/03_prior_therapy.R" = list(
+    list(from = "build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl, med_proc_tbl) {",
+         to   = "build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl) {", n = 1L)),
   "R/steps/05_pregnancy.R" = list(
     list(from = "{icd_family_sql('d.ICD_FLAG', 'ICD9DIAG', 'ICD10DIAG')} AS code_type,",
          to   = "CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9DIAG' ELSE 'ICD10DIAG' END AS code_type,", n = 1L),
@@ -134,7 +139,25 @@ ADDED <- list(
     "AND regexp_replace(coalesce(cast(m.PROC_CD as string),''), '[^A-Za-z0-9]', '') <> ''" = 1L,
     "AND regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''), '[^A-Za-z0-9]', '') <> ''" = 1L,
     "AND regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '') <> ''" = 1L,
-    "AND regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') <> ''" = 1L),
+    "AND regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') <> ''" = 1L,
+    # The fifth clinical change. The program spec names T_MED_PROCEDURE (PROC)
+    # among the CDM tables joined to CL_MMA_CODELIST, and Optum business rule 5
+    # says PROC finds a drug given as a procedure under a HCPCS or CPT code. The
+    # source reads four sources and not that one, so a therapy administered and
+    # coded that way is invisible to it - which would let a patient pass the
+    # no-prior-therapy criterion on missing data. This adds the arm. It can only
+    # add exclusions, so the cohort is smaller than apr_30_2026's.
+    "mproc AS (" = 1L,
+    "SELECT /*+ BROADCAST(c) */ cast(mp.PATID as string) AS PATID" = 1L,
+    "FROM {med_proc_tbl} mp" = 1L,
+    "INNER JOIN {NDMM_LOT1_STARTS} l1 ON cast(mp.PATID as string) = l1.PATID" = 1L,
+    "INNER JOIN {NDMM_MMA_CODELIST} c ON c.code_type IN ('HCPCS','CPT')" = 1L,
+    "AND upper(regexp_replace(coalesce(cast(mp.PROC as string),''), '[^A-Za-z0-9]', '')) = c.code" = 1L,
+    "AND regexp_replace(coalesce(cast(mp.PROC as string),''), '[^A-Za-z0-9]', '') <> ''" = 1L,
+    "WHERE cast(mp.FST_DT as date) >= date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS})" = 1L,
+    "AND cast(mp.FST_DT as date) <= date_sub(l1.LOT1_START_DT, 1)" = 1L,
+    "),  -- end mproc" = 1L,
+    "UNION SELECT DISTINCT PATID FROM mproc" = 1L),
   "R/steps/04_other_malig.R" = c(
     # The required-match count is now against the five labels the code list
     # must carry, not against every group the override reaches - the remission
