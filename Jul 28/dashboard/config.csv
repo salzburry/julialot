@@ -1,0 +1,23 @@
+name,value,description
+DATABRICKS_DSN,RWDE,ODBC DSN
+DATABRICKS_CATALOG,hive_metastore,Catalog the cohort and LOT builds wrote into
+OUTPUT_DIR,/mnt/artifacts/dashboard,Where the HTML file is written
+OUTPUT_FILE,dashboard.html,Name of the HTML file
+TOP_N,10,Rows shown by the top-N sections
+SHOW_RUN_PROVENANCE,TRUE,Overview - which window and which code produced these numbers
+SHOW_HEADLINE,TRUE,Overview - cohort and line counts
+SHOW_ATTRITION,TRUE,Overview - the cohort funnel
+SHOW_DEMOGRAPHICS,TRUE,Cohort - age band by sex
+SHOW_AGE_STATS,TRUE,Cohort - age distribution
+SHOW_INDEX_BY_YEAR,TRUE,Cohort - index dates by year
+SHOW_FOLLOWUP,TRUE,Cohort - follow-up and death
+SHOW_LINES_PER_PATIENT,TRUE,Lines - highest line reached
+SHOW_START_TYPE,TRUE,Lines - how each line started
+SHOW_END_REASON,TRUE,Lines - why each line ended
+SHOW_LINE_LENGTH,TRUE,Lines - line length in days
+SHOW_MED_COUNT,TRUE,Lines - drugs in the base regimen
+SHOW_TOP_REGIMENS,TRUE,Regimens - most common base regimens by line
+SHOW_FIRST_ADDED_MED,TRUE,Regimens - first drug added after the base regimen
+SHOW_SCT,TRUE,Transplant - ALLO / CAR-T / AUTO lines
+SHOW_CRITERIA_IMPACT,TRUE,Validation - what the line criteria removed
+SHOW_LINE_INTEGRITY,TRUE,Validation - lines that should not exist

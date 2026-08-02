@@ -1,0 +1,205 @@
+# Runner for the dashboard build. Standalone: one module, pointed at a cohort
+# table and the prefix the LOT run wrote under.
+#
+# It runs after the cohort build and the LOT build, reads what they produced,
+# and writes one HTML file. It creates no warehouse table and changes no
+# number - which is what lets it be re-run against a finished study as often as
+# anyone wants without touching the study.
+#
+# Nothing here names a cohort, and nothing here decides what the dashboard
+# shows: that is sections.R.
+
+`%||%` <- function(a, b) if (is.null(a)) b else a
+
+# Settings that decide what a dashboard run means. Everything that varies per
+# run - the cohort, the prefixes, where the file goes - is an argument instead.
+CONTRACT <- list(
+  catalog = "hive_metastore",
+  dsn     = "RWDE",
+  top_n   = 10L
+)
+
+BOOL_SETTINGS <- character(0)
+INT_SETTINGS  <- c("TOP_N", "MAX_RETRIES")
+
+check_settings <- function() {
+  bad <- character(0)
+  for (v in INT_SETTINGS) {
+    x <- trimws(Sys.getenv(v, unset = ""))
+    # The text, not what coercion makes of it: as.integer("10.5") is 10, so a
+    # decimal would pass and the run would use a number nobody asked for.
+    if (nzchar(x) && !grepl("^[0-9]+$", x))
+      bad <- c(bad, paste0(v, "='", x, "' (want a whole number)"))
+  }
+  s <- Sys.getenv("PROJECT_WORK_SCHEMA", unset = "")
+  if (grepl(".", s, fixed = TRUE))
+    bad <- c(bad, paste0("PROJECT_WORK_SCHEMA='", s,
+                         "' is catalog.schema; it wants a schema name"))
+  # Every SHOW_<NAME> is read as TRUE/FALSE and a third value stops the build.
+  # A dashboard with a panel silently missing is worse than one that refuses to
+  # build, because the gap is invisible in the output.
+  for (sec in DASHBOARD_SECTIONS) {
+    x <- Sys.getenv(paste0("SHOW_", toupper(sec$name)), unset = "")
+    if (nzchar(x) && !(toupper(x) %in% c("TRUE", "FALSE")))
+      bad <- c(bad, paste0("SHOW_", toupper(sec$name), "='", x,
+                           "' (want TRUE or FALSE)"))
+  }
+  if (length(bad))
+    stop("Settings that would build a different dashboard:\n  ",
+         paste(bad, collapse = "\n  "), call. = FALSE)
+  invisible(TRUE)
+}
+
+pin_output_schema <- function(cfg) {
+  schema <- Sys.getenv("PROJECT_WORK_SCHEMA",
+              unset = Sys.getenv("DOMINO_USER_NAME",
+                unset = Sys.getenv("DOMINO_STARTING_USERNAME", unset = "")))
+  if (!nzchar(schema))
+    stop("No schema to read from. Set DOMINO_USER_NAME to the schema the ",
+         "cohort and LOT builds wrote into, or PROJECT_WORK_SCHEMA to override.",
+         call. = FALSE)
+  if (!grepl("^[A-Za-z_][A-Za-z0-9_]*$", schema))
+    stop("Schema '", schema, "' is not a schema name.", call. = FALSE)
+  cfg$work_schema <- schema
+  cfg
+}
+
+# The caller says which cohort and which prefix. Both end up in SQL identifiers,
+# so both are held to what an identifier allows - the same check lot makes,
+# for the same reason.
+pin_target <- function(cfg, cohort_table, lot_prefix, cohort_prefix = NULL) {
+  cohort_table <- trimws(as.character(cohort_table %||% ""))
+  lot_prefix   <- trimws(as.character(lot_prefix %||% ""))
+  cohort_prefix <- trimws(as.character(cohort_prefix %||% ""))
+  if (!nzchar(cohort_table)) cohort_table <- cfg$input_cohort_table %||% ""
+  if (!nzchar(lot_prefix))   lot_prefix   <- cfg$lot_prefix %||% ""
+  if (!nzchar(cohort_prefix)) cohort_prefix <- cfg$cohort_prefix %||% ""
+  if (!nzchar(cohort_table) || !nzchar(lot_prefix))
+    stop("The dashboard needs a cohort table and the prefix the LOT run used.\n",
+         "  Rscript build.R <COHORT_TABLE> <lot_prefix_> [<cohort_prefix_>]\n",
+         "  or set INPUT_COHORT_TABLE and LOT_PREFIX.", call. = FALSE)
+  if (!grepl("^[A-Za-z_][A-Za-z0-9_]*$", cohort_table))
+    stop("Cohort table '", cohort_table, "' is not a table name. Give the ",
+         "table only - the catalog and schema come from the settings.",
+         call. = FALSE)
+  for (p in list(c("LOT prefix", lot_prefix),
+                 c("cohort prefix", cohort_prefix)))
+    if (nzchar(p[2]) && !grepl("^[A-Za-z][A-Za-z0-9_]*_$", p[2]))
+      stop(p[1], " '", p[2], "' should be a name ending in '_', e.g. mystudy_.",
+           call. = FALSE)
+  cfg$input_cohort_table <- cohort_table
+  cfg$lot_prefix         <- lot_prefix
+  cfg$cohort_prefix      <- cohort_prefix
+  cfg
+}
+
+check_dash_contract <- function(cfg) {
+  wrong <- Filter(Negate(is.null), lapply(names(CONTRACT), function(k) {
+    if (isTRUE(all.equal(cfg[[k]], CONTRACT[[k]]))) NULL
+    else paste0(k, " = ", format(cfg[[k]]), " (want ", format(CONTRACT[[k]]), ")")
+  }))
+  if (length(wrong))
+    stop("This dashboard is defined as:\n  ", paste(unlist(wrong), collapse = "\n  "),
+         call. = FALSE)
+  if (!nzchar(cfg$output_dir %||% ""))
+    stop("No output directory, so the dashboard would have nowhere to go.",
+         call. = FALSE)
+  invisible(TRUE)
+}
+
+load_dash_modules <- function(here) {
+  source(file.path(here, "R", "load_inputs.R"))
+  load_pipeline_inputs(here, "config.csv")
+  for (f in c("config_dash.R", "db_utils_dash.R", "sections.R", "render.R"))
+    source(file.path(here, "R", f))
+  invisible(TRUE)
+}
+
+# Fill a section's {placeholders} from the resolved input names. Deliberately
+# not glue(): a section's SQL is data, and the only names it may reach are the
+# ones handed to it here - not whatever happens to be in scope.
+fill_sql <- function(sql, inputs, cfg) {
+  vals <- c(inputs, list(top_n = as.integer(cfg$top_n)))
+  for (nm in names(vals))
+    sql <- gsub(paste0("{", nm, "}"), as.character(vals[[nm]]), sql, fixed = TRUE)
+  left <- regmatches(sql, gregexpr("\\{[A-Za-z_][A-Za-z0-9_]*\\}", sql))[[1]]
+  if (length(left))
+    stop("A section names something that is not an input: ",
+         paste(unique(left), collapse = ", "),
+         ". Add it to dashboard_inputs() or correct the section.", call. = FALSE)
+  sql
+}
+
+# One panel. A section whose query fails does not take the dashboard with it -
+# the other panels are still true, and a panel that says why it is missing is
+# more use than a run that produced no file. The message goes in the panel and
+# in the log, so it cannot be missed by reading only one of them.
+build_panel <- function(con, sec, inputs, have, cfg) {
+  missing <- sec$needs[!have[sec$needs]]
+  if (length(missing)) {
+    log_msg("  skip  ", sec$name, " - no ", paste(missing, collapse = ", "))
+    return(list(tab = sec$tab, label = sec$label,
+                html = paste0('<p class="skip">Not shown: this run has no ',
+                              paste(missing, collapse = ", "), " table.</p>")))
+  }
+  df <- tryCatch(db_q(con, fill_sql(sec$sql, inputs, cfg)),
+                 error = function(e) e)
+  if (inherits(df, "error")) {
+    log_msg("  FAIL  ", sec$name, " - ", conditionMessage(df))
+    return(list(tab = sec$tab, label = sec$label,
+                html = paste0('<p class="skip">Not shown: the query failed. ',
+                              .h(conditionMessage(df)), "</p>")))
+  }
+  log_msg("  ok    ", sec$name, " (", nrow(df), " row(s))")
+  list(tab = sec$tab, label = sec$label, html = render_panel(sec$render, df))
+}
+
+build_dashboard_run <- function(here, cohort_table, lot_prefix,
+                                cohort_prefix = NULL) {
+  check_settings()
+  cfg <- pin_output_schema(cfg_defaults)
+  cfg <- pin_target(cfg, cohort_table, lot_prefix, cohort_prefix)
+  check_dash_contract(cfg)
+  set_dash_config(cfg)
+
+  secs <- enabled_sections()
+  if (!length(secs))
+    stop("Every section is switched off, so the dashboard would be empty. ",
+         "Turn at least one SHOW_* on in config.csv.", call. = FALSE)
+
+  stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
+  con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+
+  log_msg(SEP)
+  log_msg("Dashboard for ", cfg$input_cohort_table, " / ", cfg$lot_prefix, "*")
+  log_msg("  Work schema:  ", cfg$work_schema)
+  log_msg("  Sections:     ", length(secs), " of ", length(DASHBOARD_SECTIONS))
+
+  inputs <- dashboard_inputs(cfg)
+  validate_sections(DASHBOARD_SECTIONS, inputs)
+  have <- probe_inputs(con, inputs)
+  for (nm in names(inputs))
+    log_msg("  ", if (have[[nm]]) "found  " else "MISSING", nm, ": ", inputs[[nm]])
+  # LOT_LONG is the one nothing works without: every tab but the cohort one
+  # reads it, and a dashboard of two panels is not worth writing.
+  if (!isTRUE(have[["lot_long"]]))
+    stop("No ", inputs$lot_long, ". The dashboard reads what the LOT build ",
+         "produced, so it cannot run before that build has. Check the prefix.",
+         call. = FALSE)
+
+  panels <- lapply(secs, build_panel, con = con, inputs = inputs,
+                   have = have, cfg = cfg)
+
+  dir.create(cfg$output_dir, showWarnings = FALSE, recursive = TRUE)
+  path <- file.path(cfg$output_dir, cfg$output_file)
+  writeLines(render_document(
+    panels,
+    title = paste0(cfg$input_cohort_table, " - lines of therapy"),
+    subtitle = paste0(length(panels), " panels | schema ", cfg$work_schema,
+                      " | prefix ", cfg$lot_prefix, " | run ", run_id,
+                      " | built ", format(Sys.time(), "%Y-%m-%d %H:%M"))), path)
+  log_msg("Dashboard written: ", path)
+  log_msg(SEP)
+  invisible(path)
+}
