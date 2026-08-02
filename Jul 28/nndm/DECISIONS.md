@@ -71,9 +71,13 @@ reading — `study_period` (default) or `from_index`.
 26 distinct `CL_MED_ABBR` values and belantamab is `BELA`, the only one
 beginning `BEL`. So `NDMM_BELANTAMAB_ABBR = 'BEL%'` resolves to exactly
 belantamab, and the run-stopping guard in `00_lot1_index.R` — which fires if
-that pattern matches no row — will not fire. The exclusion flag itself is built
-from `MAP_MED_TYPE` on the stacked map, a different source; that side is still
-unverified.
+that pattern matches no row — will not fire.
+
+The exclusion flag is built from the same scan, not from a second source.
+`06_flags.R` still reads `MAP_MED_TYPE LIKE 'BEL%'` because it is ported code,
+but what it reads is `NDMM_BELANTAMAB_PATIDS` — a view this package builds from
+raw claims against the code list and labels `'BEL' AS MAP_MED_TYPE` so the
+ported step needs no edit. `MAP_STACKED` is not read.
 
 **What it costs, measured:** `<prefix>NDMM_BELANTAMAB_SCOPE_COUNTS` gives the
 cohort size under each reading. `<prefix>NDMM_BELANTAMAB_RECONCILE` lists every
