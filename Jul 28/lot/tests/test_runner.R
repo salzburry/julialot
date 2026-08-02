@@ -393,11 +393,13 @@ ok(is.null(drive_plc(list(modifyList(CRIT[[1]], list(lines = 5L))),
 cat("\n-- and the run records which criteria it applied, and what they cost --\n")
 # Driven through phase_line_criteria, not called directly: a reporter nothing
 # invokes records nothing, which is the state this replaced.
-options(lot_line_criteria = NULL, lot_max_lot_ceiling = NULL)
+options(lot_line_criteria = NULL, lot_max_lot_next_line = NULL,
+        lot_max_lot_discontinued = NULL)
 invisible(drive_plc(CRIT))
 ok(identical(getOption("lot_line_criteria"), "t_crit=on:truncate:NA"),
    "phase_line_criteria reports the criteria itself")
-ok(!is.null(getOption("lot_max_lot_ceiling")),
+ok(!is.null(getOption("lot_max_lot_next_line")) &&
+     !is.null(getOption("lot_max_lot_discontinued")),
    "...and the ceiling, so neither depends on the caller remembering to ask")
 # The only thing in this package that removes patients, and nothing recorded it.
 # "No patient had belantamab", "the criterion was off" and "this is not that
@@ -437,19 +439,46 @@ ok(identical(tryCatch(pe$report_line_criteria(NULL, list(max_lot = 5L)),
 
 cat("\n-- and how far the MAX_LOT ceiling bit --\n")
 # "Any LOT" means the lines this build constructs. A LOT5 that ended because a
-# further line started has a line the run never built - so the criterion was not
-# asked of it. The bound stays; what was missing is its size.
-assign("db_q", function(con, sql) { PSQL <<- c(PSQL, sql); data.frame(n = 12L) },
+# further line's trigger fired has a line the run never built - so the criterion
+# was not asked of it. The bound stays; what was missing is its size.
+#
+# Two numbers, because the end reason does not settle every case. The first
+# version of this counted every reason but DEATH and STUDY_END and called the
+# result exact, which it was not: it swept in runouts that were terminal, and
+# two branches of the end-reason CASE that assign from the line's START type.
+SPFX <- list(max_lot = 5L, allo_lot_span = "single_day")
+assign("db_q", function(con, sql) { PSQL <<- c(PSQL, sql)
+                                    data.frame(n_certain = 12L, n_discon = 5L) },
        envir = pe)
 PSQL <- character(0)
-ok(identical(pe$report_max_lot_ceiling(NULL, list(max_lot = 5L)), 12L),
-   "patients with a line beyond the ceiling are counted")
-ok(any(grepl("LOT_NUM = 5", PSQL, fixed = TRUE)) &&
-     any(grepl("NOT IN ('DEATH', 'STUDY_END')", PSQL, fixed = TRUE)),
-   "asked at the configured ceiling, and only of lines a further one followed")
+got <- pe$report_max_lot_ceiling(NULL, SPFX)
+ok(identical(unname(got), c(12L, 5L)),
+   "the certain count and the undecidable one come back separately")
+ok(identical(getOption("lot_max_lot_next_line"), 12L) &&
+     identical(getOption("lot_max_lot_discontinued"), 5L),
+   "...and both reach the options record_final_counts writes from")
+ok(any(grepl("LOT_NUM = 5", PSQL, fixed = TRUE)),
+   "asked at the configured ceiling")
+# The two start-type branches. A single-day ALLO line and a CAR-T line with no
+# consolidation both end on their own start date and emit the same strings the
+# trigger branches emit, so the reason alone cannot tell them apart. Excluded on
+# the columns that decide them instead.
+ok(any(grepl("LOT_START_TYPE = 'SCT_ALLO' OR", PSQL, fixed = TRUE)) &&
+     any(grepl("(LOT_START_TYPE = 'CART' AND LOT_MED_CNT = 0)", PSQL, fixed = TRUE)),
+   "a single-day ALLO line and an unconsolidated CAR-T line are not counted")
+ok(any(grepl("'DISCONTINUATION'", PSQL, fixed = TRUE)) &&
+     !any(grepl("NOT IN ('DEATH', 'STUDY_END')", PSQL, fixed = TRUE)),
+   "a runout is counted apart, not as evidence of a further line")
+# extend_to_next changes what an ALLO-started line's end reason means: it is no
+# longer a start-type artifact, it is a later ALLO, which IS a trigger.
+PSQL <- character(0)
+invisible(pe$report_max_lot_ceiling(NULL, modifyList(SPFX,
+                                     list(allo_lot_span = "extend_to_next"))))
+ok(!any(grepl("LOT_START_TYPE = 'SCT_ALLO' OR", PSQL, fixed = TRUE)),
+   "...and under extend_to_next the ALLO exclusion is dropped, since it is a trigger then")
 assign("db_q", function(con, sql) stop("no table"), envir = pe)
-ok(is.na(tryCatch(pe$report_max_lot_ceiling(NULL, list(max_lot = 5L)),
-                  error = function(e) "STOPPED")),
+ok(all(is.na(tryCatch(pe$report_max_lot_ceiling(NULL, SPFX),
+                      error = function(e) "STOPPED"))),
    "and a ceiling that cannot be counted is unknown, not fatal")
 
 if (is.na(old_env)) Sys.unsetenv("APPLY_T_CRIT") else Sys.setenv(APPLY_T_CRIT = old_env)

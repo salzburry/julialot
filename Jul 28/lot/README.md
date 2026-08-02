@@ -234,18 +234,43 @@ narrow gap: a patient whose LOT5 ended because a sixth line started, whose
 belantamab is in that sixth line, and who has none in lines 1–5 nor as LOT5's
 first added med, is not excluded.
 
-The gap is bounded but it was not measured, so every run now counts it:
+The gap is bounded but it was not measured, so every run now counts it — as two
+numbers, because the end reason does not settle every case:
 
 ```
-  MAX_LOT ceiling (5): 12 patient(s) have a LOT5 that ended because a further
-  line started. That line was not built, so any criterion asked of every LOT
-  was not asked of it.
+  MAX_LOT ceiling (5): 3 patient(s) certainly have a further line, which was
+  not built. A further 9 ran out at LOT5; whether they restarted is not
+  decidable from LOT_LONG, so the upper bound is 12.
 ```
 
-recorded as `N_AT_MAX_LOT_CEILING`. Lines ending in `DEATH` or `STUDY_END` are
-terminal and leave nothing unbuilt, so they are not counted. A zero means "any
-LOT" was literally satisfied for this cohort; a large number means `MAX_LOT`
-should be raised before the result is used.
+recorded as `N_MAX_LOT_NEXT_LINE` and `N_MAX_LOT_DISCONTINUED`.
+
+| `LOT_BASE_END_REASON` at `MAX_LOT` | counted as |
+|---|---|
+| `MED_ADD`, `CART_INIT`, `SCT_AUTO`, `SCT_ALLO`, `SCT_CART`, `SCT` | **certain** — the trigger that ends this line is what starts the next one |
+| `DISCONTINUATION` | **undecidable** — the regimen ran out; whether anything followed is not on `LOT_LONG` |
+| `DEATH`, `STUDY_END` | terminal, nothing unbuilt |
+
+Two cases look like triggers and are not, so they are excluded before the reason
+is read. The first two branches of the end-reason `CASE` assign from the line's
+*start* type: a single-day `ALLO` line and a CAR-T line with no consolidation
+each end on their own start date, and each emits one of the same strings a real
+trigger emits. They are identified by `LOT_START_TYPE` and `LOT_MED_CNT`, which
+are the columns that actually decide them. Under `ALLO_LOT_SPAN=extend_to_next`
+the ALLO exclusion does not apply — an `ALLO`-started line reaching `SCT_ALLO`
+there took a *later* transplant, which is a genuine trigger.
+
+The undecidable column is genuinely undecidable from this table:
+`build_lot_n()` computes `POST_RUNOUT_TRIGGER_FLG` for exactly this question
+when it chooses between `DEATH` and `DISCONTINUATION`, but does not carry it
+into `LOT_LONG`. Settling those patients means looking at their claims after
+`LOT_BASE_END_DT`, not reading this number.
+
+**Read it as a range.** Both zero means "any LOT" was literally satisfied for
+this cohort and the `MAX_LOT` caveat is moot. A non-zero `N_MAX_LOT_NEXT_LINE`
+proves the gap is real and `MAX_LOT` should be raised before the result is used.
+A zero there with a large `N_MAX_LOT_DISCONTINUED` means the answer depends on
+how many of those patients restarted, which this diagnostic does not know.
 
 ## The production code lists
 

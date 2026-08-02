@@ -326,12 +326,30 @@ This remains a design bound rather than a defect — raising `MAX_LOT` costs run
 time on every patient, and in a 1L newly-diagnosed cohort followed from index
 few patients reach five lines at all. **But the bound was unmeasured**, which
 was a defect: nobody could say whether it bit for three patients or three
-thousand. `report_max_lot_ceiling()` now counts patients whose LOT5 ended
-because a further line started — `MED_ADD`, `CART_INIT` or a transplant, since
-`DEATH` and `STUDY_END` leave nothing unbuilt — logs it and records it as
-`N_AT_MAX_LOT_CEILING`. Read it on the production run: zero means "any LOT" was
-literally satisfied and this entry is moot; a large number means `MAX_LOT`
-should be raised before the result is used.
+thousand. `report_max_lot_ceiling()` now measures it.
+
+It reports **two** numbers, not one. The first version of this counted every
+LOT5 whose end reason was not `DEATH` or `STUDY_END` and called that exact; it
+was not, and the overcount was in three directions. `DISCONTINUATION` is
+assigned to a plain runout, which need not be followed by anything. And the
+first two branches of the end-reason `CASE` assign from the line's *start* type
+— a single-day `ALLO` line and a CAR-T line with no consolidation each end on
+their own start date — while emitting `SCT_ALLO` and `SCT_CART`, the same
+strings a real trigger emits.
+
+So: `N_MAX_LOT_NEXT_LINE` counts LOT5s that ended on a genuine trigger, with the
+two start-type cases excluded on `LOT_START_TYPE` and `LOT_MED_CNT` rather than
+on the reason string. `N_MAX_LOT_DISCONTINUED` counts the runouts separately,
+because whether they restarted is decided by `POST_RUNOUT_TRIGGER_FLG`, which
+`build_lot_n()` computes for the `DEATH`-vs-`DISCONTINUATION` choice and does not
+carry into `LOT_LONG`.
+
+Read it as a range on the production run. Both zero means "any LOT" was
+literally satisfied and this entry is moot. A non-zero first number proves the
+gap is real and `MAX_LOT` should be raised before the result is used. A zero
+first number with a large second means the answer turns on how many of those
+patients restarted, which needs their claims after `LOT_BASE_END_DT` and not
+this diagnostic.
 
 **The shipped line criterion is this study's, and it is on by default.**
 `APPLY_NO_BELANTAMAB=TRUE` in `lot/config.csv` is right for `NDMM_COHORT` and
