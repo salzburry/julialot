@@ -64,6 +64,14 @@ cannot be applied exactly at the time it has to be applied.
 configured scope excludes the patient. `NDMM_BELANTAMAB_SCOPE` selects the
 reading — `study_period` (default) or `from_index`.
 
+**Confirmed against the production code list:** `cl_mma_codelist.csv` carries
+26 distinct `CL_MED_ABBR` values and belantamab is `BELA`, the only one
+beginning `BEL`. So `NDMM_BELANTAMAB_ABBR = 'BEL%'` resolves to exactly
+belantamab, and the run-stopping guard in `00_lot1_index.R` — which fires if
+that pattern matches no row — will not fire. The exclusion flag itself is built
+from `MAP_MED_TYPE` on the stacked map, a different source; that side is still
+unverified.
+
 **What it costs, measured:** `<prefix>NDMM_BELANTAMAB_SCOPE_COUNTS` gives the
 cohort size under each reading. `<prefix>NDMM_BELANTAMAB_RECONCILE` lists every
 patient whose membership turns on this criterion alone — both those the proxy
@@ -96,6 +104,12 @@ five mutations that guarded it. `NDMM_INDEX_EXCLUDED_ABBRS` remains for barring
 a named agent operationally - empty by default, and every entry is still
 checked against the code list so a name that matches nothing stops the run.
 
+**What that resolves to, on the production file:** 26 agents on the code list,
+so the eligible-1L set is the 25 that are not belantamab. The steroid drop
+removes nothing — none of `DEX`, `DEXA`, `DEXAMETHASONE`, `PRED`, `PREDNISONE`
+appears in `CL_MED_ABBR`, so `NDMM_STEROID_ABBRS` is a no-op here. It stays in
+place as a guard against a later code list that does carry them.
+
 **What it gives up:** narrowing the index-setting set to a named subset now
 needs code rather than a file. That is the point of the decision: the code list
 is authoritative.
@@ -116,6 +130,14 @@ label. With `primary_tumor_groups.csv` empty, the label is the code list's own
 grouping — so one cancer written two ways does not confirm itself and the
 criterion under-detects. `<prefix>NDMM_OTHER_MALIG_GRAIN` measures what the
 grain costs.
+
+**Measured on the production file:** `other_malig.csv` has 1,643 code rows and
+1,618 distinct `tumor_group` values. The label is therefore one per code, not a
+grouping, and the two-outpatient-claims rule reduces in practice to *the same
+diagnosis code twice*. The direction is known — the cohort is larger than a
+per-primary reading would give. `primary_tumor_groups.csv` is the lever, and on
+this file it is not optional polish: leaving it empty is itself a choice about
+how the criterion reads.
 
 *Bone metastasis.* `C79.51`, `C79.52` and `198.5` say a cancer spread to bone,
 not which cancer. Treating them all as myeloma bone disease keeps patients
