@@ -219,9 +219,18 @@ thing to write and would be wrong: `C800` would fall back to `C80` and rejoin
 would then net a pair the collapse **adds** against one it **removes** and
 report the two as a single number.
 
-`report_metastatic_group()` also logs the code count per prefix, so a tier
-matching nothing is named and one doing all the work is visible — "nine
-prefixes matched" cannot say which.
+`report_metastatic_group()` logs the code count per prefix, which says whether
+a tier is represented on the code list at all — a prefix matching nothing is
+named rather than silently inert. It does **not** say whether that tier
+excluded anybody; a code count cannot.
+
+For that, the grain table holds each watch-list tier out of the collapse while
+the rest stays configured: `collapse without C77/196` and
+`collapse without C800/1990`. The gap between either and the configured row is
+that tier's own contribution, in patients. Those two because they are the ones
+this record says to watch; `C78`/`C79`/`C7B` and their ICD-9 equivalents are
+not in question, and a row each would be four more scans for a number nobody
+is going to act on.
 
 **One assumption, untested.** Coding guidance says a secondary neoplasm is
 reported alongside its primary where the primary is known. If that holds in this

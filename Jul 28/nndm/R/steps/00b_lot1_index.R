@@ -391,10 +391,16 @@ build_ndmm_other_malig_grain <- function(con, cfg) {
   db_exec(con, paste0(glue("CREATE OR REPLACE TABLE {wrk('NDMM_OTHER_MALIG_GRAIN')} AS\n"),
     by("same code-list label", ", tumor_group"), "\n    UNION ALL\n",
     by("as configured",        ", primary_group"), "\n    UNION ALL\n",
-    # Same categories, metastatic codes NOT collapsed. The gap between this row
-    # and "as configured" is what the metastatic group costs, and it is the
-    # only number that says whether grouping mets was worth doing.
-    by("ICD category, mets ungrouped", ", category_group"), "\n    UNION ALL\n",
+    # Metastatic codes kept apart by the prefix each matched, everything else
+    # as configured. The gap against "as configured" is exactly what collapsing
+    # them costs - the only difference between the two rows is the collapse.
+    by("mets kept apart by prefix", ", category_group"), "\n    UNION ALL\n",
+    # The two tiers the decision record says to watch, each held out of the
+    # collapse while the rest stays configured. The gap against "as configured"
+    # is that tier's own contribution. A code count cannot give this: it says
+    # a prefix is represented, not that it excluded anybody.
+    by("collapse without C77/196",   ", grp_wo_nodal"),  "\n    UNION ALL\n",
+    by("collapse without C800/1990", ", grp_wo_dissem"), "\n    UNION ALL\n",
     by("any label at all",     "")))
   got <- db_q(con, glue("SELECT * FROM {wrk('NDMM_OTHER_MALIG_GRAIN')}"))
   log_msg("Other cancer (criterion 7), by pairing grain:")

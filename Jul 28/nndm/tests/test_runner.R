@@ -1515,7 +1515,16 @@ ok(grepl("ELSE substr(om.dx, 1, 3) END", own, fixed = TRUE),
 ok(any(grepl("AS met_prefix", om, fixed = TRUE)),
    "the matched prefix is kept, so the report can attribute by tier")
 li <- readLines(file.path(ROOT, "R", "steps", "00b_lot1_index.R"), warn = FALSE)
-ok(any(grepl("ICD category, mets ungrouped", li, fixed = TRUE)),
+ok(any(grepl("mets kept apart by prefix", li, fixed = TRUE)),
    "...and the grain table reports both, so the difference is a number")
+# A code count says a prefix is represented on the list, not that it excluded
+# anybody. These hold one tier out of the collapse and leave the rest
+# configured, so the gap is that tier's own contribution in patients.
+ok(any(grepl("collapse without C77/196", li, fixed = TRUE)) &&
+     any(grepl("collapse without C800/1990", li, fixed = TRUE)),
+   "the two watch-list tiers are priced in patients, not just in codes")
+ok(any(grepl("grp_wo_nodal", om, fixed = TRUE)) &&
+     any(grepl("grp_wo_dissem", om, fixed = TRUE)),
+   "...off columns carried for the purpose, so no extra scan of the claims")
 
 report()

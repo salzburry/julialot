@@ -33,15 +33,14 @@ phase_clinical_flags <- function(cfg, h, ctx) {
     ),
 
     # ---- Phase 8: MM therapy events + flags (Steps 5-6) ----
-    # Four sources:
+    # Five sources:
     #   (1) medical PROC_CD (HCPCS/CPT)   -> MEDICAL_PROC_CD
     #   (2) medical BILL_PROC_CD (HCPCS)  -> MEDICAL_BILL_PROC_CD
     #   (3) medical NDC                   -> MEDICAL_NDC
     #   (4) Rx NDC                        -> RX
     #   (5) med_procedure PROC (HCPCS/CPT) -> MED_PROCEDURE_PROC
-    # (5) is the program spec's T_MED_PROCEDURE (PROC) join to CL_MMA_CODELIST,
-    # and Optum business rule 5's "drug given as a procedure under a HCPCS or
-    # CPT code". No ICD_FLAG condition: a J-code carrying an unexpected flag
+    # (5) finds a drug given as a procedure under a HCPCS or CPT code.
+    # No ICD_FLAG condition: a J-code carrying an unexpected flag
     # would otherwise be dropped, and the join is self-limiting anyway because
     # ICD-10-PCS is seven characters and ICD-9 procedures three or four.
     list(
