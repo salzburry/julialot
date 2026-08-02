@@ -791,6 +791,49 @@ SSQL <- character(0)
 ok(identical(tryCatch({ se$build_ndmm_belantamab_patids(NULL, "m", "r", "mp"); "" },
                       error = conditionMessage), ""),
    "the belantamab scan still builds, for the advisory flag and the reconcile list")
+
+cat("\n-- belantamab is one whole abbreviation, the same one lot matches --\n")
+# It used to be the prefix 'BEL%' here and a whole value in lot, so the two
+# packages recognised the same drug two different ways. Both are exact now,
+# which agrees - and which makes a second spelling on the code list invisible,
+# so the builder asks for the neighbours rather than assuming there are none.
+be <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "standalone_constants.R"), envir = be)
+sys.source(file.path(ROOT, "R", "steps", "00b_lot1_index.R"), envir = be)
+for (nm in c("NDMM_MMA_CODELIST", "NDMM_BELANTAMAB_CODES"))
+  assign(nm, nm, envir = be)
+assign("log_msg", function(...) invisible(NULL), envir = be)
+BSQL <- character(0)
+# The CREATE goes through db_exec and the checks through db_q, and the
+# whole-abbreviation match is in the CREATE - so both have to be recorded or
+# the assertion below reads an empty set and passes on nothing.
+assign("db_exec", function(con, sql) { BSQL <<- c(BSQL, sql); invisible(TRUE) },
+       envir = be)
+mk_bela_q <- function(n_codes, others) function(con, sql) {
+  BSQL <<- c(BSQL, sql)
+  if (grepl("count(*)", sql, fixed = TRUE)) data.frame(n = n_codes)
+  else data.frame(med_abbr = others)
+}
+assign("db_q", mk_bela_q(4L, character(0)), envir = be)
+ok(identical(tryCatch({ be$build_ndmm_belantamab_codes(NULL); "" },
+                      error = conditionMessage), ""),
+   "one abbreviation with codes under it, and nothing else BEL*, is accepted")
+ok(any(grepl("upper(trim(med_abbr)) = 'BELA'", BSQL, fixed = TRUE)) &&
+     !any(grepl("upper(trim(med_abbr)) LIKE 'BELA'", BSQL, fixed = TRUE)),
+   "...matched as a whole abbreviation, not as a pattern")
+assign("db_q", mk_bela_q(0L, character(0)), envir = be)
+msg <- tryCatch({ be$build_ndmm_belantamab_codes(NULL); "" }, error = conditionMessage)
+ok(grepl("No row of cl_mma_codelist.csv has CL_MED_ABBR = 'BELA'", msg, fixed = TRUE),
+   "an abbreviation matching no code stops the build, as before")
+# The case the exact match introduces: BELA is on the list AND so is another
+# spelling. Every row under the other one falls outside S6.2.1.2 entirely, and
+# both packages agree with each other while both miss it.
+assign("db_q", mk_bela_q(4L, c("BELAMAF")), envir = be)
+msg <- tryCatch({ be$build_ndmm_belantamab_codes(NULL); "" }, error = conditionMessage)
+ok(grepl("'BELAMAF'", msg, fixed = TRUE) && grepl("BELANTAMAB_MED_ABBR", msg, fixed = TRUE),
+   "a second BEL* abbreviation stops the build, naming it and lot's setting")
+ok(identical(be$NDMM_BELANTAMAB_ABBR, "BELA"),
+   "and the default is BELA, which is what lot's CONTRACT pins")
 ok(regexpr("VIEW {NDMM_MM_DX_CODES}", paste(unlist(lapply(step_files, readLines,
              warn = FALSE)), collapse = "\n"), fixed = TRUE) > 0,
    "that list is built by this package, not assumed to exist")

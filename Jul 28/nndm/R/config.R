@@ -32,7 +32,7 @@ cfg_defaults <- list(
   min_age           = as.integer(Sys.getenv("MIN_AGE", unset = "18")),
   # How belantamab is recognised on cl_mma_codelist.csv; see
   # standalone_constants.R. Pinned because it is exclusion 4.
-  belantamab_abbr   = Sys.getenv("NDMM_BELANTAMAB_ABBR", unset = "BEL%"),
+  belantamab_abbr   = Sys.getenv("NDMM_BELANTAMAB_ABBR", unset = "BELA"),
   # Agents barred from setting the 1L index beyond belantamab. Empty unless the
   # study team names one; see standalone_constants.R and NDMM_INDEX_AGENTS.
   index_excluded_abbrs = Sys.getenv("NDMM_INDEX_EXCLUDED_ABBRS", unset = ""),

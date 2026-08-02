@@ -206,11 +206,18 @@ So "(i.e., an ADC)" names what the drug is; it does not widen the criterion to
 the class.
 
 **How belantamab is recognised is an assumption this package cannot check.**
-the source build matched `MAP_MED_TYPE LIKE 'BEL%'` in `MAP_STACKED`, a table this
+The source build matched `MAP_MED_TYPE LIKE 'BEL%'` in `MAP_STACKED`, a table this
 build no longer reads. Reading `cl_mma_codelist.csv` directly, the same token
-is the medication abbreviation — `NDMM_BELANTAMAB_ABBR`, default `BEL%`. The
-production CSV is not visible from here, so `build_ndmm_belantamab_codes()`
-**stops the run** if it matches no row: otherwise exclusion 4 would quietly do
+is the medication abbreviation — `NDMM_BELANTAMAB_ABBR`, default **`BELA`**,
+matched as a **whole abbreviation** rather than as a prefix. That is how `lot`
+matches it too: the two packages have to recognise the same drug the same way,
+or a code list carrying more than one `BEL*` spelling would have this build take
+them all and `lot` take only its own.
+
+The production CSV is not visible from here, so `build_ndmm_belantamab_codes()`
+**stops the run** on either failure — if the abbreviation matches no row, or if
+the list carries another `BEL*` abbreviation this one does not name, which is
+the case an exact match would otherwise miss in silence. On the first: otherwise exclusion 4 would quietly do
 nothing and belantamab claims could set the 1L index date. The value used is
 recorded in `NDMM_RUN_METADATA`. **Confirm it against the production code list
 before the first run.**
@@ -630,7 +637,7 @@ run** rather than building something the name no longer describes.
 | `STUDY_START` | `2016-01-01` | study period start; the pregnancy and belantamab scans |
 | `OUTPATIENT_WINDOW` | `90` | two outpatient MM claims within this many days confirm a diagnosis |
 | `MIN_AGE` | `18` | minimum age in the MM-diagnosis year |
-| `NDMM_BELANTAMAB_ABBR` | `BEL%` | how belantamab is recognised on the code list — it is exclusion 4, so it is pinned |
+| `NDMM_BELANTAMAB_ABBR` | `BELA` | how belantamab is recognised on the code list, as a whole abbreviation — it is exclusion 4, so it is pinned. Must equal `lot`'s `BELANTAMAB_MED_ABBR` |
 | `USE_QUARTERLY_TABLES` | `TRUE` | read the quarterly CDM tables for the study end |
 | `CODELIST_DIR` | `/mnt/code/codelist` | `mm_dx.csv`, `cl_mma_codelist.csv`, `other_malig.csv`, `pregnancy.csv` |
 | `TBL_CONFINEMENT` | `confinement` | inpatient stays |

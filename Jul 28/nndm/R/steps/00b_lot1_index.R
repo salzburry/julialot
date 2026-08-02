@@ -28,7 +28,7 @@ build_ndmm_belantamab_codes <- function(con) {
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_BELANTAMAB_CODES} AS
     SELECT DISTINCT code_type, code
     FROM {NDMM_MMA_CODELIST}
-    WHERE upper(trim(med_abbr)) LIKE '{NDMM_BELANTAMAB_ABBR}'
+    WHERE upper(trim(med_abbr)) = '{NDMM_BELANTAMAB_ABBR}'
   "))
   # The abbreviation is how belantamab is recognised on the code list, and this
   # package cannot see the production CSV. If it matches nothing, the exclusion
@@ -39,15 +39,36 @@ build_ndmm_belantamab_codes <- function(con) {
     "SELECT count(*) AS n FROM {NDMM_BELANTAMAB_CODES}"))$n),
     error = function(e) NA_integer_)
   if (is.na(n) || n == 0)
-    stop("No row of cl_mma_codelist.csv has CL_MED_ABBR like '",
+    stop("No row of cl_mma_codelist.csv has CL_MED_ABBR = '",
          NDMM_BELANTAMAB_ABBR, "'.\nThat is how this build recognises ",
          "belantamab, and without it the exclusion in S6.2.1.2 does nothing ",
          "and belantamab claims could set the 1L index date. Run 'SELECT ",
          "DISTINCT med_abbr FROM ", NDMM_MMA_CODELIST, "' on the warehouse ",
          "and set NDMM_BELANTAMAB_ABBR to the abbreviation it uses.",
          call. = FALSE)
-  log_msg("  Belantamab code list: ", n, " codes matched '",
-          NDMM_BELANTAMAB_ABBR, "'")
+  # The match is exact now, which is what makes it agree with lot - and what
+  # makes a second spelling invisible. A code list carrying both BELA and, say,
+  # BELAMAF would have every BELAMAF row silently fall outside the exclusion,
+  # and this build and lot would still agree with each other while both missed
+  # it. Ask for the neighbours rather than assume there are none.
+  others <- tryCatch(
+    db_q(con, glue("
+      SELECT DISTINCT upper(trim(med_abbr)) AS med_abbr
+      FROM {NDMM_MMA_CODELIST}
+      WHERE upper(trim(med_abbr)) LIKE 'BEL%'
+        AND upper(trim(med_abbr)) <> '{NDMM_BELANTAMAB_ABBR}'"))$med_abbr,
+    error = function(e) character(0))
+  if (length(others))
+    stop("cl_mma_codelist.csv carries CL_MED_ABBR = '", NDMM_BELANTAMAB_ABBR,
+         "' and also ", paste0("'", others, "'", collapse = ", "),
+         ".\nBelantamab is matched as a whole abbreviation, here and in the lot ",
+         "package, so rows under the other spelling(s) would be outside ",
+         "S6.2.1.2 entirely and nothing would say so. Decide which one names ",
+         "belantamab: set NDMM_BELANTAMAB_ABBR and lot's BELANTAMAB_MED_ABBR to ",
+         "it, or have the code list use one abbreviation for the drug.",
+         call. = FALSE)
+  log_msg("  Belantamab code list: ", n, " codes under CL_MED_ABBR = '",
+          NDMM_BELANTAMAB_ABBR, "', and no other BEL* abbreviation")
   invisible(n)
 }
 
@@ -76,9 +97,17 @@ build_ndmm_index_ineligible_codes <- function(con) {
 
   # Each entry becomes one predicate, and one thing to check matched something.
   terms <- list()
-  for (a in c(NDMM_BELANTAMAB_ABBR, abbrs))
+  # Belantamab exactly, the way build_ndmm_belantamab_codes() and lot both match
+  # it, so the agent barred from setting the index is the same agent the
+  # exclusion removes. The operational entries below stay patterns: they are a
+  # study-team override typed by hand, and a prefix is useful there.
+  terms[[1L]] <- list(
+    what = paste0("abbreviation '", NDMM_BELANTAMAB_ABBR, "'"),
+    sql  = sprintf("upper(trim(med_abbr)) = '%s'",
+                   sq(toupper(NDMM_BELANTAMAB_ABBR))))
+  for (a in abbrs)
     terms[[length(terms) + 1L]] <- list(
-      what = paste0("abbreviation '", a, "'"),
+      what = paste0("abbreviation pattern '", a, "'"),
       sql  = sprintf("upper(trim(med_abbr)) LIKE '%s'", sq(toupper(a))))
   for (cd in codes) {
     parts <- strsplit(cd, ":", fixed = TRUE)[[1]]
