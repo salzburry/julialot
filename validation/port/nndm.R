@@ -78,6 +78,9 @@ SUBST <- list(
     list(from = "build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl, med_proc_tbl) {",
          to   = "build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl) {", n = 1L)),
   "R/steps/05_pregnancy.R" = list(
+    list(from = "SELECT cast(m.PATID as string) AS PATID, m.PROC_CD, m.BILL_PROC_CD, m.RVNU_CD",
+         to   = "SELECT cast(m.PATID as string) AS PATID, m.PROC_CD, m.RVNU_CD", n = 1L),
+    list(from = "LATERAL VIEW stack(3,", to = "LATERAL VIEW stack(2,", n = 1L),
     list(from = "{icd_family_sql('d.ICD_FLAG', 'ICD9DIAG', 'ICD10DIAG')} AS code_type,",
          to   = "CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9DIAG' ELSE 'ICD10DIAG' END AS code_type,", n = 1L),
     list(from = "{icd_family_sql('p.ICD_FLAG', 'ICD9PROC', 'ICD10PROC')} AS code_type,",
@@ -173,8 +176,15 @@ ADDED <- list(
     # claim too, so both fall in the baseline the criterion names. It can only
     # remove exclusions, so the cohort it builds is larger than apr_30_2026's.
     "AND op.next_dt  BETWEEN l1.pre_lot1_start AND l1.pre_lot1_end" = 1L),
+  # The blank-after-normalising guard now sits inside the spliced builder, so
+  # it is undone there rather than counted here.
   "R/steps/05_pregnancy.R" = c(
-    "AND regexp_replace(trim(code), '[^A-Za-z0-9]', '') <> ''" = 1L),
+    # BILL_PROC_CD, the facility-claim procedure code. S6.2.1.2 asks for a
+    # diagnosis, procedure or revenue code, and the therapy and SCT scans
+    # already read this column - pregnancy did not, so a code populated only
+    # there kept the patient. It can only add exclusions.
+    "'HCPCS', CASE WHEN s.BILL_PROC_CD IS NOT NULL" = 1L,
+    "THEN upper(regexp_replace(s.BILL_PROC_CD, '[^A-Za-z0-9]', '')) END," = 1L),
   # The funnel's last row, read by key rather than named literally in the
   # runner. Added because the last criterion is no longer ndmm_final:
   # S6.2.1.2's belantamab exclusion moved to the lot package, so this package's
@@ -208,6 +218,16 @@ SPLICE <- list(
     list(from = "NDMM_MM_ADJACENT_OVERRIDE <- c(",
          to   = "\"EXTRAMEDULLARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION\"",
          src_from = 109L, src_to = 114L)),
+  # The pregnancy code list gained a guard: a code_type no claim source emits
+  # matches nothing, so the exclusion keeps those patients silently. Every other
+  # named thing in this package already stops when it matches nothing; this list
+  # was the exemption. Whole builder spliced - the guard is most of it.
+  "R/steps/05_pregnancy.R" = list(
+    list(from = "NDMM_PREG_CODE_TYPES <- c(\"ICD9DIAG\", \"ICD10DIAG\", \"ICD9PROC\", \"ICD10PROC\",",
+         to   = "invisible(TRUE)",
+         # Through the statement, not the closing brace: the port block ends at
+         # invisible(TRUE) and its own } closes the restored function.
+         src_from = 534L, src_to = 543L)),
   "R/steps/07_cohort.R" = list(
     # Widened: whole/elig/elig_lot1 are rewritten too. This package no longer
     # reads LOT_LONG or a parent cohort table, so the first three rows of the

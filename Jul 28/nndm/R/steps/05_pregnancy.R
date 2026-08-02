@@ -1,6 +1,12 @@
 # Pregnancy or childbirth anywhere in the study period.
 #
 
+# Every code_type the claim scan below can emit. A pregnancy.csv row typed
+# anything else is loaded, joined, and matches nothing - the patient is kept and
+# no error is raised. Named here so the guard and the scan cannot drift apart.
+NDMM_PREG_CODE_TYPES <- c("ICD9DIAG", "ICD10DIAG", "ICD9PROC", "ICD10PROC",
+                          "HCPCS", "REV")
+
 build_ndmm_preg_codes <- function(con) {
   src <- load_codelist_csv("pregnancy.csv", c("code_type", "code"))
   db_exec(con, glue("
@@ -14,6 +20,31 @@ build_ndmm_preg_codes <- function(con) {
       -- claim whose code is missing. See 03_prior_therapy.R.
       AND regexp_replace(trim(code), '[^A-Za-z0-9]', '') <> ''
   "))
+  # A code type no source produces is a rule that cannot fire. Every other named
+  # thing in this package stops the run when it matches nothing - the belantamab
+  # abbreviation, the index-excluded agents, the MM-adjacent labels - and this
+  # code list was the one exemption. Read on the warehouse 2026-08-02 the file
+  # carries only the six below, so this passes; it is here because the file is
+  # production and can be re-issued, and a CPT-typed delivery code would
+  # otherwise be silent.
+  want <- paste(sprintf("'%s'", NDMM_PREG_CODE_TYPES), collapse = ", ")
+  bad <- tryCatch(db_q(con, glue("
+    SELECT code_type, count(*) AS n
+    FROM {NDMM_PREG_CODES}
+    WHERE code_type NOT IN ({want})
+    GROUP BY code_type ORDER BY code_type")), error = function(e) NULL)
+  if (is.null(bad))
+    stop("Could not check the code types in pregnancy.csv, so this run cannot ",
+         "say whether every pregnancy code is reachable.", call. = FALSE)
+  if (nrow(bad))
+    stop("pregnancy.csv carries code type(s) no claim source produces: ",
+         paste0(bad$code_type, " (", bad$n, " code(s))", collapse = ", "),
+         ".\nThey would match nothing and the exclusion would keep those ",
+         "patients silently. The scan emits ",
+         paste(NDMM_PREG_CODE_TYPES, collapse = ", "),
+         "; either retype the rows or add the source that reads them.",
+         call. = FALSE)
+  invisible(TRUE)
 }
 
 # Distinct NDMM-candidate PATIDs with a pregnancy/childbirth claim (dx,
@@ -53,14 +84,21 @@ build_ndmm_pregnancy_patids <- function(con, med_diag_tbl, medical_tbl, med_proc
     med AS (
       SELECT s.PATID, t.code_type, t.code
       FROM (
-        SELECT cast(m.PATID as string) AS PATID, m.PROC_CD, m.RVNU_CD
+        SELECT cast(m.PATID as string) AS PATID, m.PROC_CD, m.BILL_PROC_CD, m.RVNU_CD
         FROM {medical_tbl} m
         INNER JOIN {NDMM_LOT1_STARTS} l1 ON cast(m.PATID as string) = l1.PATID
         WHERE cast(m.FST_DT as date) BETWEEN date('{NDMM_STUDY_START}') AND date('{cfg$study_end}')
       ) s
-      LATERAL VIEW stack(2,
+      LATERAL VIEW stack(3,
         'HCPCS', CASE WHEN s.PROC_CD IS NOT NULL
                       THEN upper(regexp_replace(s.PROC_CD, '[^A-Za-z0-9]', '')) END,
+        -- BILL_PROC_CD is the facility-claim procedure code, and S6.2.1.2 asks
+        -- for a diagnosis, procedure, or revenue code. The therapy and SCT
+        -- scans in this repo already read it as an HCPCS source; pregnancy did
+        -- not, so a pregnancy HCPCS code populated only there kept the patient.
+        -- Typed HCPCS, not CPT, matching how those scans treat the column.
+        'HCPCS', CASE WHEN s.BILL_PROC_CD IS NOT NULL
+                      THEN upper(regexp_replace(s.BILL_PROC_CD, '[^A-Za-z0-9]', '')) END,
         'REV',   CASE WHEN s.RVNU_CD IS NOT NULL AND trim(s.RVNU_CD) <> ''
                       THEN upper(trim(s.RVNU_CD)) END
       ) t AS code_type, code
