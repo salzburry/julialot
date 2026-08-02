@@ -304,7 +304,6 @@ cat("\n-- the two files this package ships for filling in --\n")
 # an unpinned path reads as a file that is not there - which is also what an
 # empty file means, so nothing downstream would notice.
 FILLINS <- c(mm_adjacent_csv = "mm_adjacent_overrides.csv",
-             eligible_1l_csv = "eligible_1l_agents.csv",
              primary_groups_csv = "primary_tumor_groups.csv")
 pp <- ce0$pin_override_csv(setNames(as.list(rep("", length(FILLINS))), names(FILLINS)),
                            "/pkg")
@@ -437,38 +436,10 @@ ok(length(gregexpr("op.next_dt  BETWEEN", gr, fixed = TRUE)[[1]]) == 3L &&
      grepl("datediff(next_dt, event_dt) <= 30", gr, fixed = TRUE),
    "bounded by the same baseline and the same 30 days as criterion 7")
 
-cat("\n-- which agents may set the 1L index --\n")
-# S6.2.1.1 names an eligible-treatment list; Annex 2 is an analysis grouping
-# and a stand-alone document, so this build reads one if it is written down and
-# otherwise lets any MM therapy set the index.
-ELCSV <- file.path(tmp, "eligible_1l_agents.csv")
-drive_el <- function(lines) {
-  writeLines(lines, ELCSV)
-  tryCatch(load_eligible_agents_csv(ELCSV), error = conditionMessage)
-}
-ok(is.null(load_eligible_agents_csv(file.path(tmp, "nope2.csv"))),
-   "no file means any MM therapy can set the index, and is not a failure")
-ok(is.null(drive_el("med_abbr,eligible,note")),
-   "...and neither is the empty file this package ships")
-got <- drive_el(c("med_abbr,eligible,note", "kyp,0,later lines only"))
-ok(is.list(got) && identical(got$deny, "KYP") && length(got$allow) == 0,
-   "a row of 0 bars an agent and leaves everything else able to set the index")
-got <- drive_el(c("med_abbr,eligible,note", "BOR,1,", "len,1,", "KYP,0,"))
-ok(is.list(got) && identical(got$allow, c("BOR", "LEN")) &&
-     identical(got$deny, "KYP"),
-   "...and any row of 1 turns it into an allowlist, upper-cased to match")
-ok(grepl("eligible must be 0 or 1", drive_el(c("med_abbr,eligible,note",
-   "BOR,maybe,")), fixed = TRUE),
-   "an eligible that is not 0 or 1 stops the run")
-ok(grepl("med_abbr is blank", drive_el(c("med_abbr,eligible,note",
-   " ,1,")), fixed = TRUE),
-   "a blank agent stops the run rather than allowing nothing")
-ok(grepl("two answers for", drive_el(c("med_abbr,eligible,note",
-   "BOR,1,", "bor,0,")), fixed = TRUE),
-   "and one agent listed twice stops the run")
-
-# The allowlist is the ineligible view read the other way round, so the scan
-# needs no change. Driven, because "only these agents" is the claim.
+cat("\n-- which agents may not set the 1L index --\n")
+# cl_mma_codelist.csv is the eligible set, less steroids and less belantamab.
+# What remains is barring a named agent operationally, and that it is driven
+# rather than grepped because "cannot set an index" is the claim.
 ie <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = ie)
 sys.source(file.path(ROOT, "R", "standalone_constants.R"), envir = ie)
@@ -478,36 +449,29 @@ assign("db_q", function(con, sql) data.frame(n = 3L), envir = ie)
 IESQL <- character(0)
 assign("db_exec", function(con, sql) { IESQL <<- c(IESQL, sql); invisible(TRUE) },
        envir = ie)
-drive_ie <- function(el) {
+drive_ie <- function(excluded = "") {
   IESQL <<- character(0)
-  assign("nndm_config", function() list(eligible_1l_csv = "x.csv"), envir = ie)
-  assign("load_eligible_agents_csv", function(p) el, envir = ie)
+  old <- Sys.getenv("NDMM_INDEX_EXCLUDED_ABBRS", unset = NA)
+  assign("NDMM_INDEX_EXCLUDED_ABBRS", excluded, envir = ie)
+  on.exit(if (!is.na(old)) Sys.setenv(NDMM_INDEX_EXCLUDED_ABBRS = old))
   tryCatch({ ie$build_ndmm_index_ineligible_codes(NULL); IESQL[1] },
            error = conditionMessage)
 }
-i0 <- drive_ie(NULL)
-ok(grepl("LIKE 'BEL%'", i0, fixed = TRUE) && !grepl("NOT IN", i0, fixed = TRUE),
-   "with no list, only belantamab is barred and nothing is an allowlist")
-i1 <- drive_ie(list(allow = character(0), deny = "KYP"))
-ok(grepl("LIKE 'KYP'", i1, fixed = TRUE) && !grepl("NOT IN", i1, fixed = TRUE),
-   "a deny row bars that agent, the same as the environment variable does")
-i2 <- drive_ie(list(allow = c("BOR", "LEN"), deny = character(0)))
-ok(grepl("upper(trim(med_abbr)) NOT IN ('BOR', 'LEN')", i2, fixed = TRUE),
-   "an allow list makes every agent it does not name ineligible")
-# NULL NOT IN (...) is unknown, not true, so a code with no abbreviation would
-# not be selected as ineligible - and the scan anti-joins this view, so it would
-# stay eligible and could set an index under a list that names only some agents.
-ok(grepl("med_abbr IS NULL OR trim(med_abbr) = ''", i2, fixed = TRUE),
-   "...including a code carrying no abbreviation at all, which SQL alone leaves out")
-ok(grepl("LIKE 'BEL%'", i2, fixed = TRUE),
-   "...and belantamab stays barred whatever the list says")
-# An allowed agent that is not on the code list bars itself, silently, and its
-# patients leave at step 3. That is the opposite failure to the deny case.
+i0 <- drive_ie("")
+ok(grepl("LIKE 'BEL%'", i0, fixed = TRUE),
+   "belantamab is barred from setting the index, always")
+ok(!grepl("NOT IN", i0, fixed = TRUE),
+   "...and nothing else is: the code list is the eligible set")
+i1 <- drive_ie("KYP")
+ok(grepl("LIKE 'KYP'", i1, fixed = TRUE) && grepl("LIKE 'BEL%'", i1, fixed = TRUE),
+   "a named agent can still be barred operationally, belantamab as well")
+# A name that is on nothing reads as an applied restriction and applies to
+# nothing, which is the failure the belantamab check already guards against.
 assign("db_q", function(con, sql) data.frame(n = 0L), envir = ie)
-m <- drive_ie(list(allow = "NOSUCH", deny = character(0)))
-ok(is.character(m) && grepl("matches no row", m, fixed = TRUE) &&
-     grepl("attrition", m, fixed = TRUE),
-   "an allowed agent that is not on the code list stops the run, and says why")
+m <- drive_ie("NOSUCH")
+ok(is.character(m) && grepl("matches no row", m, fixed = TRUE),
+   "and one that matches no row of the code list stops the run, saying so")
+assign("db_q", function(con, sql) data.frame(n = 3L), envir = ie)
 
 cat("\n-- which code lists built the cohort --\n")
 # The hashes were collected into an option and dropped. A cohort that cannot be
@@ -597,30 +561,27 @@ drive_fill <- function(opt) {
   options(nndm_codelist_md5 = opt); FLOG <<- character(0)
   r <- fe$report_fillins(list()); list(r = r, log = paste(FLOG, collapse = "\n"))
 }
-ok(length(fe$FILLIN_FILES) == 3 &&
-     all(c("eligible_1l_agents.csv", "mm_adjacent_overrides.csv",
+ok(length(fe$FILLIN_FILES) == 2 &&
+     all(c("mm_adjacent_overrides.csv",
            "primary_tumor_groups.csv") %in% names(fe$FILLIN_FILES)),
    "the three files that decide an open rule are the three it reports on")
 
 all_in <- drive_fill(list(
-  eligible_1l_agents.csv    = list(md5 = "aa11", n_rows = 42L),
   mm_adjacent_overrides.csv = list(md5 = "bb22", n_rows = 7L),
   primary_tumor_groups.csv  = list(md5 = "cc33", n_rows = 310L)))
-ok(length(all_in$r$empty) == 0 && length(all_in$r$used) == 3 &&
+ok(length(all_in$r$empty) == 0 && length(all_in$r$used) == 2 &&
      !grepl(">", all_in$log, fixed = TRUE),
-   "all three supplied raises nothing, so the marker means something")
+   "both supplied raises nothing, so the marker means something")
 
 none_in <- drive_fill(list(
-  eligible_1l_agents.csv    = list(md5 = "d41d8", n_rows = 0L),
   mm_adjacent_overrides.csv = list(md5 = "d41d8", n_rows = 0L),
   primary_tumor_groups.csv  = list(md5 = "d41d8", n_rows = 0L)))
-ok(length(none_in$r$empty) == 3 && grepl(">", none_in$log, fixed = TRUE),
+ok(length(none_in$r$empty) == 2 && grepl(">", none_in$log, fixed = TRUE),
    "a run on the shipped placeholders is marked, once, at the end")
 
 # Read-and-empty is a decision; never-read is a deploy that did not reach the
 # file. write_codelist_metadata() stops on the second, so this says which.
-mixed <- drive_fill(list(eligible_1l_agents.csv = list(md5 = "aa11", n_rows = 42L),
-                         mm_adjacent_overrides.csv = list(md5 = "d41d8", n_rows = 0L)))
+mixed <- drive_fill(list(mm_adjacent_overrides.csv = list(md5 = "d41d8", n_rows = 0L)))
 ok(grepl("primary_tumor_groups.csv: NOT READ", mixed$log, fixed = TRUE) &&
      grepl("mm_adjacent_overrides.csv: empty", mixed$log, fixed = TRUE),
    "and a file never read is told apart from one read and empty")

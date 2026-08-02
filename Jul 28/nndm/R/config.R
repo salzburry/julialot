@@ -70,7 +70,6 @@ cfg_defaults <- list(
   # Which agents may set the 1L index - see codelists.R and NDMM_INDEX_AGENTS.
   # Blank means the copy that ships with this package; pin_override_csv()
   # fills it in. Empty file means any MM therapy can set the index.
-  eligible_1l_csv = Sys.getenv("NDMM_ELIGIBLE_1L_CSV", unset = ""),
   # Which code-list labels are one tumour type, for the two-outpatient-claim
   # rule - see codelists.R and NDMM_OTHER_MALIG_GROUPS. Blank means the copy
   # that ships with this package. Empty file means each label is its own group.

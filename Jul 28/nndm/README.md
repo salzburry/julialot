@@ -161,7 +161,7 @@ None of them changes the cohort — they are what the decision gets made
 
 | table | the question it answers | what to do with it |
 |---|---|---|
-| `NDMM_INDEX_AGENTS` | which agents may set a 1L index — §6.2.1.1 names a list no document here contains | every `CL_MED_ABBR` on the code list, whether this run let it set an index, and how many it set. Fill in `codelists/eligible_1l_agents.csv` |
+| `NDMM_INDEX_AGENTS` | which agents actually set a 1L index | every `CL_MED_ABBR` on the code list, whether this run let it set an index, and how many it set. Review it; bar one with `NDMM_INDEX_EXCLUDED_ABBRS` if it should not have |
 | `NDMM_MM_ADJACENT_GROUPS` | which tumour groups are the index disease rather than another cancer | every plasma-cell-looking label, and whether the override reaches it |
 | `NDMM_MM_ADJACENT_CODES` | *which* `C79.5x` is myeloma bone disease and which is a breast primary — a label cannot say | every code kept as the index disease, in the columns `codelists/mm_adjacent_overrides.csv` uses. Copy, set the ones you want to `0`, paste |
 | `NDMM_OTHER_MALIG_GROUPS` | which code-list labels are one tumour type | every label with the group it pairs under. Anything whose `PRIMARY_GROUP` is still itself can only confirm itself. Fill in `codelists/primary_tumor_groups.csv` |
@@ -175,19 +175,18 @@ list cannot fall behind the code — it had, twice, before that test existed.
 
 ## The files you fill in
 
-Three questions cannot be answered from this repository. A tumour-group label
+Two questions cannot be answered from this repository. A tumour-group label
 cannot say whether a `C79.5x` is myeloma bone disease or a breast primary; no
 document here lists the eligible 1L treatments; and one label per ICD code is
 the wrong grain for "the same cancer". Each is a **code-level** decision, and
 code-level decisions belong in a file somebody can review, not in a setting
 somebody has to discover.
 
-So the package ships three CSVs in `codelists/`, **all empty**:
+So the package ships two CSVs in `codelists/`, **both empty**:
 
 | file | one row per | the columns | what it decides |
 |---|---|---|---|
 | `mm_adjacent_overrides.csv` | ICD code | `dx, icd_family, override, note` | `override=1` treats the code as the index disease (do **not** exclude); `0` treats it as another cancer (**do** exclude). Wins over the tumour-group label **both ways** |
-| `eligible_1l_agents.csv` | `CL_MED_ABBR` | `med_abbr, eligible, note` | `eligible=0` bars an agent from setting the 1L index. **Any** `eligible=1` turns the file into an allowlist — only those agents may set it |
 | `primary_tumor_groups.csv` | code-list label | `tumor_group, primary_tumor_group, note` | labels sharing a `primary_tumor_group` pair together for the two-outpatient-claim rule |
 
 **Empty means the source's cohort.** An unlisted code keeps its label's verdict,
@@ -196,8 +195,7 @@ So a checkout with nothing filled in produces the source build's cohort, not a
 variation on it. Nothing here changes until you write in one of these.
 
 **In production these three are configured separately** from the four core code
-lists. Those come from `CODELIST_DIR`; these come from `NDMM_ELIGIBLE_1L_CSV`,
-`NDMM_MM_ADJACENT_CSV` and `NDMM_PRIMARY_GROUPS_CSV`, and each falls back to
+lists. Those come from `CODELIST_DIR`; these come from `NDMM_MM_ADJACENT_CSV` and `NDMM_PRIMARY_GROUPS_CSV`, and each falls back to
 the empty file shipped in `codelists/` when its variable is unset. A deploy
 that points `CODELIST_DIR` at production and misses these three runs green on
 the placeholders.
@@ -205,9 +203,9 @@ the placeholders.
 So every run ends with a line saying which it had:
 
 ```
-Rule fill-ins: 0 supplied, 3 empty
-  > eligible_1l_agents.csv: empty (md5 d41d8...) - any MM therapy on the code
-    list can set the 1L index
+Rule fill-ins: 0 supplied, 2 empty
+  > mm_adjacent_overrides.csv: empty (md5 d41d8...) - tumour-group labels
+    alone decide the other-cancer criterion
   > An empty file is a run without that rule, and reads the same as one whose
     path was never set. Check the paths against <prefix>NDMM_CODELIST_METADATA
     before this cohort is used.
@@ -223,7 +221,6 @@ a research task:
 | the file | fill it in from |
 |---|---|
 | `mm_adjacent_overrides.csv` | `NDMM_MM_ADJACENT_CODES` — the codes currently kept, in these columns |
-| `eligible_1l_agents.csv` | `NDMM_INDEX_AGENTS` — every agent, and how many indexes it set |
 | `primary_tumor_groups.csv` | `NDMM_OTHER_MALIG_GROUPS` — every label and the group it pairs under |
 
 ### What they all do
@@ -244,8 +241,7 @@ a research task:
 - Values are normalised the way the code lists are — punctuation stripped from
   codes, everything upper-cased — so `C79.51` and `C7951`, `ICD-10` and `10`,
   `bor` and `BOR` all match.
-- **Point elsewhere** with `NDMM_MM_ADJACENT_CSV`, `NDMM_ELIGIBLE_1L_CSV`,
-  `NDMM_PRIMARY_GROUPS_CSV`. The path is recorded whether or not a file is
+- **Point elsewhere** with `NDMM_MM_ADJACENT_CSV`,   `NDMM_PRIMARY_GROUPS_CSV`. The path is recorded whether or not a file is
   found there.
 
 The detail for each is in **Bone metastasis, and the codes you can decide
@@ -304,7 +300,7 @@ than a note saying so:
 
 | criterion | what is undecided | decide it with |
 |---|---|---|
-| #3 | which agents may set the index — §6.2.1.1 names a list no document here contains | `NDMM_INDEX_AGENTS` → `codelists/eligible_1l_agents.csv` |
+| #3 | which agents actually set the index — the code list is the eligible set, so this is a review rather than a decision | `NDMM_INDEX_AGENTS` |
 | #5 | one day of follow-up CE against the protocol's three months | `NDMM_FU_CE_COUNTS` |
 | #7 | whether a `C79.5x` is myeloma bone disease or a metastasis | `NDMM_MM_ADJACENT_CODES` → `codelists/mm_adjacent_overrides.csv` |
 | #7 | whether two labels are one cancer | `NDMM_OTHER_MALIG_GRAIN`, `NDMM_OTHER_MALIG_GROUPS` → `codelists/primary_tumor_groups.csv` |
@@ -430,53 +426,6 @@ same scan the index came from). Every agent, not only the ones that won a date:
 under an allowlist the winners are by definition the allowed ones, so a table
 of winners could only ever confirm itself.
 
-**`codelists/eligible_1l_agents.csv`** — one row per agent, and three modes:
-
-```
-med_abbr,eligible,note
-BOR,1,bortezomib - SOC first line
-LEN,1,lenalidomide
-CART,0,later lines only
-```
-
-| what is in the file | what happens |
-|---|---|
-| **no rows** (what ships) | no allowlist — any MM therapy sets the index, which is the current cohort |
-| **only `eligible=0`** | a deny list — those agents are barred, everything else still sets the index |
-| **any `eligible=1`** | an **allowlist** — only those agents set the index, every other agent on the code list is barred |
-
-`eligible=0` is the same thing as naming an agent in
-`NDMM_INDEX_EXCLUDED_ABBRS`, in a file rather than an environment variable; the
-two combine. Belantamab stays barred whatever the file says. Set
-`NDMM_ELIGIBLE_1L_CSV` to use a file elsewhere.
-
-**The allowlist mode is the dangerous one, so it is loud.** An agent left off
-does not fail — it silently takes its patients out of the cohort at attrition
-step 3. So an allowed `med_abbr` that matches no row of `cl_mma_codelist.csv`
-**stops the run** (a typo there is not a restriction applying to nothing, it is
-an agent that should have been let through and was not), and the run logs how
-many agents the allowlist barred. Malformed rows stop the run for the same
-reasons the other fill-in file's do.
-
-If a later-line-only agent appears in it, name it — by the code list's own
-abbreviation, or by HCPCS/NDC if that is what you have:
-
-```
-NDMM_INDEX_EXCLUDED_ABBRS=CART,TALQ
-NDMM_INDEX_EXCLUDED_CODES=HCPCS:J9999,NDC:12345678901
-NDMM_INDEX_EXCLUDED_CODES=J9999            # bare code, any type
-```
-
-Abbreviations match `CL_MED_ABBR` the way `NDMM_BELANTAMAB_ABBR` does. Codes are
-stripped of punctuation and uppercased, the same normalisation the code list
-gets — **stripped, not padded to eleven**, because the code list stores its
-codes stripped too and the padding happens at the join, so padding here would
-stop a ten-digit entry matching the ten-digit code you typed.
-
-Belantamab is always barred whatever is set. An abbreviation or code matching
-no row of `cl_mma_codelist.csv` **stops the run** rather than reading as a
-restriction that applies to nothing. Both values are pinned in `CONTRACT` and
-recorded in `NDMM_RUN_METADATA`, because setting either changes the count.
 
 ### Bone metastasis, and the codes you can decide yourself
 
@@ -966,7 +915,6 @@ is pinned to its default** — the review tables exist to be acted on.
 | setting | default | |
 |---|---|---|
 | `NDMM_MM_ADJACENT_CSV` | `codelists/mm_adjacent_overrides.csv` | see **The files you fill in** |
-| `NDMM_ELIGIBLE_1L_CSV` | `codelists/eligible_1l_agents.csv` | |
 | `NDMM_PRIMARY_GROUPS_CSV` | `codelists/primary_tumor_groups.csv` | |
 | `NDMM_IGNORE_ACTIVE_RUN` | *(unset)* | `TRUE` gets past a `started` row a killed process left behind. Use it only once the named run is known to be dead — see **One run per prefix at a time** |
 

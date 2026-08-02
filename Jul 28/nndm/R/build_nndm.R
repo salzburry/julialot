@@ -219,7 +219,6 @@ pin_override_csv <- function(cfg, here) {
     if (nzchar(p)) p else file.path(here, "codelists", name)
   }
   cfg$mm_adjacent_csv <- fill(cfg$mm_adjacent_csv, "mm_adjacent_overrides.csv")
-  cfg$eligible_1l_csv <- fill(cfg$eligible_1l_csv, "eligible_1l_agents.csv")
   cfg$primary_groups_csv <- fill(cfg$primary_groups_csv, "primary_tumor_groups.csv")
   cfg
 }
@@ -929,11 +928,10 @@ RUN_SCOPED_TABLES <- c("NDMM_ATTRITION", "NDMM_RUN_METADATA",
 # build does when each is empty. Empty is a legitimate run - the rule falls
 # back to the source's behaviour, and every one of them says so where it is
 # read. It is also exactly what a deploy that set CODELIST_DIR and missed
-# NDMM_ELIGIBLE_1L_CSV and its two siblings looks like, and those three lines
+# NDMM_MM_ADJACENT_CSV and its sibling looks like, and those two lines
 # sit in the middle of a long log. This says it once, at the end, beside the
 # count they shaped.
 FILLIN_FILES <- list(
-  eligible_1l_agents.csv    = "any MM therapy on the code list can set the 1L index",
   mm_adjacent_overrides.csv = "tumour-group labels alone decide the other-cancer criterion",
   primary_tumor_groups.csv  = "outpatient pairs must share one code-list label")
 

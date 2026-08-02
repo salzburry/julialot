@@ -114,85 +114,13 @@ load_override_csv <- function(path) {
          "\n) AS t(dx, icd_family, override)) ovr")
 }
 
-# Which agents may set the 1L index. The list S6.2.1.1 gestures at and no
-# document in this repository contains.
+# The label two outpatient claims must share to confirm each other. The code
+# list's tumor_group is a diagnosis description, not a primary-tumour grouping,
+# so one cancer written two ways never confirms itself and the criterion
+# under-detects. One row per label, naming the group it belongs to.
 #
-# The protocol says the 1L index is the first claim for an "eligible or
-# expected treatment for MM ... other than belantamab". Annex 2 is the
-# categorization of SOC regimens, which S6.2.2 calls exemplary and open to
-# recategorization - an analysis grouping, not an eligibility rule - and it is
-# a stand-alone document. So this build does not invent an allowlist. It reads
-# one if the study team writes it down, and until then any MM therapy on
-# cl_mma_codelist.csv can set the index, steroids and belantamab aside.
-#
-# One row per CL_MED_ABBR. eligible = 1 puts the agent on the allowlist,
-# eligible = 0 bars it - the same effect as naming it in
-# NDMM_INDEX_EXCLUDED_ABBRS, in a file rather than an environment variable.
-#
-# The modes, and the difference matters:
-#   no rows          - no allowlist. Any MM therapy sets the index. This is
-#                      what ships, and it is the current cohort.
-#   only eligible=0  - a deny list. Everything else still sets the index.
-#   any eligible=1   - an ALLOWLIST. Only those agents set the index, and every
-#                      other agent on the code list is barred. An agent left
-#                      off silently takes its patients out of the cohort at
-#                      attrition step 3, so the run says how many it barred.
-#
-# NDMM_INDEX_AGENTS lists every agent on the code list with how many indexes it
-# set, which is the sheet to build this from.
-ELIGIBLE_CSV_COLS <- c("med_abbr", "eligible", "note")
-
-load_eligible_agents_csv <- function(path) {
-  df <- read_optional_csv(path, ELIGIBLE_CSV_COLS,
-    "No eligible-1L agent list; any MM therapy on the code list can set the index",
-    "Eligible-1L agent list: no rows, so any MM therapy can set the index")
-  if (is.null(df)) return(NULL)
-  el <- trimws(df$eligible)
-  bad <- which(!(el %in% c("0", "1")))
-  if (length(bad))
-    stop("CODELIST ERROR: ", path, " row(s) ", paste(bad, collapse = ", "),
-         ": eligible must be 0 or 1, got ",
-         paste(unique(el[bad]), collapse = ", "), call. = FALSE)
-  ab <- toupper(trimws(df$med_abbr))
-  bad <- which(is.na(ab) | !nzchar(ab))
-  if (length(bad))
-    stop("CODELIST ERROR: ", path, " row(s) ", paste(bad, collapse = ", "),
-         ": med_abbr is blank", call. = FALSE)
-  dup <- unique(ab[duplicated(ab)])
-  if (length(dup))
-    stop("CODELIST ERROR: ", path, " gives two answers for ",
-         paste(dup, collapse = ", "), ". One row per agent.", call. = FALSE)
-  out <- list(allow = ab[el == "1"], deny = ab[el == "0"])
-  log_msg("  Eligible-1L agent list: ", length(out$allow), " allowed, ",
-          length(out$deny), " barred (md5 ", attr(df, "md5"), ")")
-  if (length(out$allow))
-    log_msg("  ALLOWLIST IN FORCE: only these agents can set a 1L index - ",
-            paste(out$allow, collapse = ", "),
-            ". Every other agent on cl_mma_codelist.csv is barred, and a ",
-            "patient whose only MM therapy is one of those has no index and ",
-            "leaves the cohort at attrition step 3.")
-  out
-}
-
-# One label per ICD code is the wrong grain for "another cancer".
-#
-# Criterion 7 Path B is two outpatient claims within 30 days for the same
-# cancer, and this build pairs them on other_malig.csv's tumor_group. That
-# column carries one label per ICD code, and a label is a code description, not
-# a tumour type - "PLASMA CELL LEUKEMIA IN REMISSION" and "PLASMA CELL LEUKEMIA
-# NOT HAVING ACHIEVED REMISSION" are two labels for one disease, and a solid
-# tumour coded at two subsites is two more. Claims that should confirm each
-# other land in different labels, never pair, and the patient is not excluded.
-# The criterion under-detects, so the cohort is too LARGE - which is the
-# direction that puts patients in a study they do not belong in.
-#
-# The real fix is a primary_tumor_group column on the production code list.
-# Until there is one: tumor_group, primary_tumor_group, note. Every label
-# mapped to the same primary_tumor_group pairs together. Anything unmapped
-# stays its own group, so an empty file is the rule the source runs.
-#
-# NDMM_OTHER_MALIG_GROUPS lists every label on the code list to map from, and
-# NDMM_OTHER_MALIG_GRAIN says what the grain is currently costing.
+# Ships empty, which means each label is its own group - the source build's
+# behaviour. NDMM_OTHER_MALIG_GROUPS lists every label to build it from.
 PRIMARY_GROUP_CSV_COLS <- c("tumor_group", "primary_tumor_group", "note")
 
 load_primary_groups_csv <- function(path) {

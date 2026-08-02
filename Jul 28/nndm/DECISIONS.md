@@ -80,29 +80,29 @@ check.
 
 ---
 
-## 3. Eligible 1L agents
+## 3. Eligible 1L agents — the code list is the list
 
-**Decided:** not yet.
+**Decided:** `cl_mma_codelist.csv` is the study's definition of MM therapy, so
+it is the eligible-1L set. No separate eligibility file.
 
-**What the code does:** with `eligible_1l_agents.csv` empty — as it ships —
-any MM therapy on `cl_mma_codelist.csv` can set the 1L index, except
-belantamab and steroids. A file with any `eligible = 1` row turns it into an
-allowlist: only the named agents may set an index, and a code carrying no
-`CL_MED_ABBR` is barred as unmapped.
+**What the code does:** any agent on that code list may set the 1L index, less
+steroids (dropped where `NDMM_MMA_CODELIST` is built) and less belantamab
+(barred always, per §6.2.1.1's "other than belantamab"). The earliest such
+claim on or after the MM diagnosis and on or after `LOT1_FROM` is the index.
 
-**What it costs, measured:** `<prefix>NDMM_INDEX_AGENTS` lists every agent and
-how many indexes it set — the sheet to build the list from.
+**What was removed:** `codelists/eligible_1l_agents.csv`, its loader and
+validation, the allowlist branch, its `NDMM_ELIGIBLE_1L_CSV` setting, and the
+five mutations that guarded it. `NDMM_INDEX_EXCLUDED_ABBRS` remains for barring
+a named agent operationally - empty by default, and every entry is still
+checked against the code list so a name that matches nothing stops the run.
 
-**Open question worth resolving first:** `cl_mma_rollup.csv`, already governed
-and already read by the LOT build, carries `MONOMAINTENANCE`, `CONDITIONING`
-and `DUALMAINTENANCEWITH` per `CL_MED_ABBR`. Those describe an agent's role in
-a line. If eligibility for setting a 1L index can be derived from them, this
-fill-in file is redundant and should be deleted rather than filled in. See the
-implementation thread; this has not been decided.
+**What it gives up:** narrowing the index-setting set to a named subset now
+needs code rather than a file. That is the point of the decision: the code list
+is authoritative.
 
-**Status: pending decision.**
+**Recorded by:** the study team, in the implementation thread of 2026-08-02.
 
----
+**Status: decided and implemented.**
 
 ## 4. Other malignancy — grouping and bone metastasis
 
