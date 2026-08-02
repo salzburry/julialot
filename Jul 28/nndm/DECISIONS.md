@@ -147,8 +147,55 @@ today the tumour-group label decides for all of them.
 `<prefix>NDMM_MM_ADJACENT_CODES` lists every affected code in the shape that
 file wants.
 
+**What the production file actually says.** Three rows carry these codes, and
+none of their labels is in the MM-adjacent set:
+
+| icd_family | dx | tumor_group |
+|---|---|---|
+| ICD9DIAG | 1985 | Secondary malignant neoplasm of bone and bone marrow |
+| ICD10DIAG | C7951 | Secondary malignant neoplasm of bone |
+| ICD10DIAG | C7952 | Secondary malignant neoplasm of bone marrow |
+
+So the current behaviour is settled, not open: **all three exclude.** One
+inpatient claim carrying `C79.51` in the 12 months before the 1L index removes
+that patient as having another cancer. Lytic bone disease is a defining feature
+of myeloma and `C79.51` is commonly coded for it, so this is expected to remove
+genuine NDMM patients at a rate worth measuring before anyone accepts it. Note
+also that `C79.51` and `C79.52` sit in different labels, so two outpatient
+claims split across the two do not pair — only the inpatient path and
+same-code pairs fire.
+
+**The recommendation, for a clinician to accept or reject:** set `override = 1`
+for all three in `codelists/mm_adjacent_overrides.csv`, i.e. stop treating
+secondary neoplasm of bone as another cancer in this cohort. The argument is
+that a patient with a solid tumour metastatic to bone almost always also
+carries that primary's own code, which is on this same list and excludes them
+anyway — so the `C79.5x` rows add little detection and cost a lot of true MM
+patients. The argument against is that they are not free: a metastatic patient
+whose primary was never coded in the baseline window would be kept.
+
+`pin_override_csv()` already points the build at the packaged copy, so filling
+in those three rows is the whole change — no setting, no code.
+
 **This one needs clinical judgement.** No file in this repository can answer
 which primary a `C79.5x` belongs to. It is the only one of the four that
 cannot be resolved by deriving from something already governed.
 
-**Status: pending decision.**
+**Status: pending decision.** Highest-impact of the four, and the only one
+whose current default is expected to move the cohort in the wrong direction.
+
+---
+
+## Note on code lengths in `other_malig.csv`
+
+Matching is exact equality on the punctuation-stripped code, both sides. The
+ICD-10 rows are 3/4/5/6 characters (14 / 318 / 672 / 82), which is the normal
+spread for billable ICD-10-CM and needs nothing.
+
+The ICD-9 rows are a different story: they are truncated to the three-character
+category while keeping the *first child's* description — `141` is labelled
+"Malignant neoplasm of base of tongue", which is `141.0`. A claim coded `1410`
+therefore matches nothing. This is harmless here only because of the window:
+the other-cancer scan reads claims from `2017-01-01` less the 12-month baseline
+— `2016-01-01` — and US claims stopped carrying ICD-9 in October 2015. Worth
+re-checking if the study period is ever moved earlier.
