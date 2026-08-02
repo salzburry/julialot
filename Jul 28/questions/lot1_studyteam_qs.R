@@ -50,8 +50,6 @@
 
 source(file.path(.script_dir, "_setup.R"))
 qs_setup(.script_dir)
-source_dir <- normalizePath(file.path(.script_dir, "..", "lot", "R"),
-                           mustWork = FALSE)
 
 POMA_TOKEN  <- Sys.getenv("POMA_MED_ABBR", unset = "POMA")
 MED_CNT_LO  <- 6L
@@ -91,8 +89,8 @@ main <- function() {
     unique(cn)
   }
 
-  lot_long <- wrk("LOT_LONG")
-  allflags <- wrk("ELIG_COH_ALLFLAGS")
+  lot_long <- qs_tbl("LOT_LONG")
+  allflags <- qs_tbl("ELIG_COH_ALLFLAGS")
 
   log_msg("LOT1 study-team questions - reading ", lot_long)
   if (!readable(lot_long)) {
@@ -134,7 +132,7 @@ main <- function() {
   poma_ids <- if (have_poma)
     paste(sprintf("'%s'", unique(poma$PATID)), collapse = ",") else "''"
 
-  final_tbl <- wrk(cfg$input_cohort_table)
+  final_tbl <- qs_tbl(cfg$input_cohort_table)
   have_final <- readable(final_tbl)
   if (!have_final) {
     log_msg("WARNING: ", final_tbl, " not readable. ELIG_COH_FINAL holds the ",
@@ -384,7 +382,7 @@ main <- function() {
   # token is detected from the data (class like BCMA, abbr starting
   # BEL) rather than
   # hard-coded, so a codelist abbreviation change does not break it.
-  map_tbl <- wrk("MAP_STACKED")
+  map_tbl <- qs_tbl("MAP_STACKED")
   if (!readable(map_tbl)) {
     log_msg("  Q4: ", map_tbl, " not readable - anti-BCMA / Blenrep ",
             "availability skipped (rebuild via 02_lot1.R).")

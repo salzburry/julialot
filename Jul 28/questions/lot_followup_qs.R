@@ -45,8 +45,6 @@
 
 source(file.path(.script_dir, "_setup.R"))
 qs_setup(.script_dir)
-source_dir <- normalizePath(file.path(.script_dir, "..", "lot", "R"),
-                           mustWork = FALSE)
 source(file.path(.script_dir, "validation_qs.R"))        # vqs_* helpers (shared)
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
@@ -739,15 +737,15 @@ main <- function() {
   # LOT_COHORT=FULL uses the whole LOT cohort.
   cohort_mode <- toupper(Sys.getenv("LOT_COHORT", unset = "NDMM"))
   if (cohort_mode == "FULL") {
-    lot_long <- wrk("LOT_LONG")
+    lot_long <- qs_tbl("LOT_LONG")
     cohort_label <- "full LOT cohort (all LOT1 patients)"
   } else {
     cohort_mode <- "NDMM"
-    lot_long <- wrk("NDMM_LOT_LONG_FILT")
+    lot_long <- qs_tbl("NDMM_LOT_LONG_FILT")
     cohort_label <- "NDMM newly-diagnosed 1L study cohort"
   }
-  map_tbl <- wrk("MAP_STACKED")
-  sct_tbl <- wrk("LOT1_SCT")
+  map_tbl <- qs_tbl("MAP_STACKED")
+  sct_tbl <- qs_tbl("LOT1_SCT")
 
   log_msg(SEP); log_msg("LOT follow-up study-team questions [", cohort_label, "] -> single Excel workbook"); log_msg(SEP)
   if (!vqs_readable(con, lot_long)) {

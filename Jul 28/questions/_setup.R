@@ -1,39 +1,68 @@
 # Shared setup for the question scripts in this folder.
 #
-# They read the same warehouse tables the lot build writes, so they use the lot
-# package's own modules rather than a second copy of them - one definition of
-# wrk(), cdm_src() and the code-list loaders.
-#
-# The one thing that needs bridging: lot's config_lot.R defines cfg_defaults and
-# leaves the build to pin a config, so sourcing it alone leaves no `cfg` and the
-# first wrk() call stops with "No LOT config". This does what the build does -
-# resolves the work schema, then pins it - and set_lot_config() puts `cfg` in
-# the global environment, which is where these scripts read it from.
+# They read what the cohort and LOT builds wrote, so they use the lot package's
+# own modules rather than a second copy - one definition of cdm_src(), the
+# code-list loaders and the naming helpers.
 
-.qs_root <- normalizePath(file.path(
-  dirname(sys.frame(1)$ofile %||% "."), ".."), mustWork = FALSE)
-
+# Order matters. config_lot.R builds cfg_defaults out of environment variables
+# at the moment it is sourced, so config.csv has to be loaded FIRST or every
+# setting silently falls back to its hardcoded default and these scripts
+# describe a run configured differently from the one they are reading. The
+# build loads them in this order for the same reason.
 qs_setup <- function(script_dir) {
-  lot_r <- normalizePath(file.path(script_dir, "..", "lot", "R"), mustWork = TRUE)
-  for (f in c("load_inputs.R", "config_lot.R", "codelists_lot.R", "db_utils_lot.R"))
+  lot_root <- normalizePath(file.path(script_dir, "..", "lot"), mustWork = TRUE)
+  lot_r    <- file.path(lot_root, "R")
+
+  source(file.path(lot_r, "load_inputs.R"))
+  load_pipeline_inputs(lot_root, "config.csv")
+  for (f in c("config_lot.R", "db_utils_lot.R", "codelists_lot.R"))
     source(file.path(lot_r, f))
-  # config.csv sits beside the lot package, the same way the build reads it.
-  if (exists("load_pipeline_inputs"))
-    try(load_pipeline_inputs(dirname(lot_r), "config.csv"), silent = TRUE)
 
   cfg <- get("cfg_defaults", envir = globalenv())
+
   schema <- Sys.getenv("PROJECT_WORK_SCHEMA",
               unset = Sys.getenv("DOMINO_USER_NAME",
                 unset = Sys.getenv("DOMINO_STARTING_USERNAME", unset = "")))
   if (!nzchar(schema))
-    stop("No work schema. Set DOMINO_USER_NAME to the schema the LOT build ",
-         "wrote into, or PROJECT_WORK_SCHEMA to override.", call. = FALSE)
+    stop("No work schema. Set DOMINO_USER_NAME to the schema the builds wrote ",
+         "into, or PROJECT_WORK_SCHEMA to override.", call. = FALSE)
   if (!grepl("^[A-Za-z_][A-Za-z0-9_]*$", schema))
     stop("Work schema '", schema, "' is not a schema name.", call. = FALSE)
   cfg$work_schema <- schema
 
-  # These read what a run produced, so the prefix is the one that run used.
-  cfg$object_prefix <- Sys.getenv("OBJECT_PREFIX", unset = cfg$object_prefix %||% "")
+  # The prefix says WHICH run these answers are about, and every table below is
+  # named with it. Blank would silently ask for unprefixed tables - which
+  # usually do not exist, but if some older ones do, these scripts would read
+  # them and give a confident answer about the wrong study. So it is required,
+  # and a run that genuinely had no prefix has to say so.
+  pfx <- trimws(Sys.getenv("OBJECT_PREFIX", unset = ""))
+  if (!nzchar(pfx) &&
+      !identical(toupper(Sys.getenv("QS_ALLOW_NO_PREFIX", unset = "")), "TRUE"))
+    stop("No OBJECT_PREFIX. These scripts read one run's tables and the prefix ",
+         "is what names them, so a blank prefix asks for unprefixed tables and ",
+         "would answer about whatever happens to be there. Set OBJECT_PREFIX to ",
+         "the prefix that run used, or QS_ALLOW_NO_PREFIX=TRUE if it truly had ",
+         "none.", call. = FALSE)
+  if (nzchar(pfx) && !grepl("^[A-Za-z][A-Za-z0-9_]*_$", pfx))
+    stop("OBJECT_PREFIX '", pfx, "' should be a name ending in '_', e.g. ndmm_.",
+         call. = FALSE)
+  cfg$object_prefix <- pfx
+
   set_lot_config(cfg)
   invisible(cfg)
 }
+
+# A prefixed output table, from either build.
+#
+# NOT wrk(). In this package wrk() resolves catalog.schema.table with no
+# prefix - the cohort table is named by whoever built it, so the caller passes
+# the whole name. Every table these scripts read is a build's own output and
+# carries that build's prefix: LOT_LONG and MAP_STACKED from lot, NDMM_FLAGS_ALL
+# and ELIG_COH_ALLFLAGS from the cohort build, which share the prefix when one
+# study is built under one prefix.
+#
+# Using wrk() here asks for the unprefixed name. That usually fails to find a
+# table, which is survivable - but if an unprefixed table from some older run
+# is sitting in the schema it succeeds, and the answer is about a different
+# study with nothing to say so.
+qs_tbl <- function(tbl) lot_out(tbl)
