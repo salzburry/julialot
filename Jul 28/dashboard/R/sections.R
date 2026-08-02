@@ -13,17 +13,36 @@
 # renders and nobody can see what is missing from it.
 #
 # Placeholders a section may use:
-#   {lot_long}      <prefix>LOT_LONG        every line the build produced
 #   {lot_final}     <prefix>LOT_LONG_FINAL  after the line criteria
+#   {lot_long}      <prefix>LOT_LONG        before them
 #   {patients}      <prefix>LOT_PATIENT_INPUT  the cohort as LOT read it
 #   {attrition}     <cohort_prefix>NDMM_ATTRITION, when there is one
 #   {run_meta}      <prefix>LOT_RUN_METADATA
 #   {cohort}        the cohort table the run was pointed at
+#
+# Describe the study population, which is {lot_final}. LOT_LONG is that table
+# before the line criteria, and with a patient-level truncate criterion such as
+# no_belantamab the two hold different PATIENTS, not merely different lines. A
+# panel drawn on LOT_LONG therefore describes people the study excluded, with
+# nothing on the page saying so.
+#
+# {lot_long} belongs on the Validation tab, where the comparison is the point,
+# and nowhere else. {patients} is the cohort LOT was handed, so a panel over it
+# restricts to the PATIDs that survived.
 
 # How a section's rows are drawn. Deliberately few: a dashboard nobody can read
 # is not better than a table, and every one of these renders without a
 # JavaScript library or a plotting package - see render.R.
 RENDER_TYPES <- c("table", "kpi", "bar", "sankey")
+
+# What the percentage beside a bar is a percentage OF. There is no answer right
+# for every chart, and assuming one is how a number comes to mean something
+# nobody intended - a share of the first bar, on a chart whose first bar is
+# simply the largest category, is arithmetic without a claim behind it.
+#   first  of the first bar - a funnel, where row one IS the denominator
+#   total  of all bars      - a partition, where the bars sum to the whole
+#   none   no percentage    - overlapping or merely ranked categories
+BAR_PCT <- c("first", "total", "none")
 
 # Which patients the journey section shows. Examples, not a sample: a random
 # three patients are three LOT1-only patients, because most patients are. Each
@@ -33,7 +52,7 @@ RENDER_TYPES <- c("table", "kpi", "bar", "sankey")
 #
 # Predicates are over the per-patient columns the section derives below:
 #   max_lot  lot1_start_type  lot1_end_reason
-#   any_cart_init  any_sct_auto  any_sct_allo
+#   any_cart  any_sct_auto  any_sct_allo
 JOURNEY_CATEGORIES <- list(
   list(label = "LOT1 to LOT2 progressor, drug-started",
        pred  = "max_lot >= 2 AND lot1_start_type = 'MED'"),
@@ -41,7 +60,11 @@ JOURNEY_CATEGORIES <- list(
        pred  = "max_lot = 1 AND lot1_end_reason = 'DISCONTINUATION'"),
   list(label = "Reached LOT4 or beyond",
        pred  = "max_lot >= 4"),
-  list(label = "CAR-T",             pred = "any_cart_init = 1"),
+  # The CAR-T line itself, not a previous line ending because CAR-T began. A
+  # patient whose LOT1 IS the CAR-T has no preceding line to carry CART_INIT, so
+  # keying on that alone left them out of the examples while the transplant
+  # panel counted them - two panels disagreeing about the same patients.
+  list(label = "CAR-T",             pred = "any_cart = 1"),
   list(label = "Autologous transplant", pred = "any_sct_auto = 1"),
   list(label = "Allogeneic transplant", pred = "any_sct_allo = 1"),
   list(label = "Died on LOT1",      pred = "lot1_end_reason = 'DEATH'"),
@@ -67,10 +90,12 @@ JOURNEY_CATEGORIES <- list(
              max(LOT_NUM)                                            AS max_lot,
              max(CASE WHEN LOT_NUM = 1 THEN LOT_START_TYPE END)      AS lot1_start_type,
              max(CASE WHEN LOT_NUM = 1 THEN LOT_BASE_END_REASON END) AS lot1_end_reason,
-             max(CASE WHEN LOT_BASE_END_REASON = 'CART_INIT' THEN 1 ELSE 0 END) AS any_cart_init,
+             max(CASE WHEN LOT_CART_LOT_FLG = 1 OR LOT_START_TYPE = 'CART'
+                           OR LOT_BASE_END_REASON = 'CART_INIT'
+                      THEN 1 ELSE 0 END)                                  AS any_cart,
              max(CASE WHEN LOT_START_TYPE = 'SCT_AUTO' THEN 1 ELSE 0 END)       AS any_sct_auto,
              max(CASE WHEN LOT_START_TYPE = 'SCT_ALLO' THEN 1 ELSE 0 END)       AS any_sct_allo
-      FROM {lot_long}
+      FROM {lot_final}
       GROUP BY PATID
     ),
     picked AS (\n", paste(arms, collapse = "\n      UNION ALL\n"), "\n    )
@@ -85,7 +110,7 @@ JOURNEY_CATEGORIES <- list(
            coalesce(l.LOT_BASE_1ST_ADD_MED, '')             AS `First add`,
            l.LOT_BASE_END_REASON                            AS `Ended by`
     FROM picked p
-    INNER JOIN {lot_long} l ON cast(l.PATID as string) = p.PATID
+    INNER JOIN {lot_final} l ON cast(l.PATID as string) = p.PATID
     WHERE p.rn <= {journeys_per_category}
     ORDER BY `Example`, `Patient`, `Line`")
 }
@@ -97,17 +122,17 @@ JOURNEY_CATEGORIES <- list(
   name  = paste0("lot", a, "_to_lot", b),
   tab   = "Transitions",
   label = paste0("LOT", a, " to LOT", b, " by regimen (progressors only)"),
-  needs = "lot_long", render = "sankey",
+  needs = "lot_final", render = "sankey",
   sql = paste0("
     WITH a AS (
       SELECT cast(PATID as string) AS PATID, LOT_BASE_MEDS AS reg
-      FROM {lot_long}
+      FROM {lot_final}
       WHERE LOT_NUM = ", a, " AND LOT_BASE_MEDS IS NOT NULL
         AND trim(LOT_BASE_MEDS) <> ''
     ),
     b AS (
       SELECT cast(PATID as string) AS PATID, LOT_BASE_MEDS AS reg
-      FROM {lot_long}
+      FROM {lot_final}
       WHERE LOT_NUM = ", b, " AND LOT_BASE_MEDS IS NOT NULL
         AND trim(LOT_BASE_MEDS) <> ''
     ),
@@ -156,8 +181,8 @@ DASHBOARD_SECTIONS <- list(
                 (SELECT count(DISTINCT PATID) FROM {lot_final})       AS `Patients after criteria`"),
 
   list(name = "attrition", tab = "Overview",
-       label = "Cohort attrition",
-       needs = "attrition", render = "bar",
+       label = "Cohort attrition (ends before the LOT belantamab criterion)",
+       needs = "attrition", render = "bar", pct = "first",
        # The funnel the cohort build wrote, read rather than recomputed - two
        # copies of an attrition is how the funnel and the cohort stop agreeing.
        sql = "
@@ -168,7 +193,7 @@ DASHBOARD_SECTIONS <- list(
 
   list(name = "demographics", tab = "Cohort",
        label = "Age at index and sex",
-       needs = "patients", render = "table",
+       needs = c("patients", "lot_final"), render = "table",
        sql = "
          SELECT CASE WHEN AGE_INDEX_YR < 65 THEN '18-64'
                      WHEN AGE_INDEX_YR < 75 THEN '65-74'
@@ -177,11 +202,12 @@ DASHBOARD_SECTIONS <- list(
                 upper(coalesce(GDR_CD, 'U'))              AS `Sex`,
                 count(*)                                  AS `Patients`
          FROM {patients}
+         WHERE PATID IN (SELECT DISTINCT PATID FROM {lot_final})
          GROUP BY 1, 2 ORDER BY 1, 2"),
 
   list(name = "age_stats", tab = "Cohort",
        label = "Age at index, distribution",
-       needs = "patients", render = "table",
+       needs = c("patients", "lot_final"), render = "table",
        sql = "
          SELECT count(*)                                              AS `Patients`,
                 round(avg(AGE_INDEX_YR), 1)                           AS `Mean`,
@@ -190,18 +216,21 @@ DASHBOARD_SECTIONS <- list(
                 percentile_approx(AGE_INDEX_YR, 0.75)                 AS `P75`,
                 min(AGE_INDEX_YR)                                     AS `Min`,
                 max(AGE_INDEX_YR)                                     AS `Max`
-         FROM {patients}"),
+         FROM {patients}
+         WHERE PATID IN (SELECT DISTINCT PATID FROM {lot_final})"),
 
   list(name = "index_by_year", tab = "Cohort",
        label = "Index dates by year",
-       needs = "patients", render = "bar",
+       needs = c("patients", "lot_final"), render = "bar", pct = "total",
        sql = "
          SELECT cast(year(INDEX_DATE) as string) AS label, count(*) AS n
-         FROM {patients} GROUP BY 1 ORDER BY 1"),
+         FROM {patients}
+         WHERE PATID IN (SELECT DISTINCT PATID FROM {lot_final})
+         GROUP BY 1 ORDER BY 1"),
 
   list(name = "followup", tab = "Cohort",
        label = "Follow-up and death",
-       needs = "patients", render = "table",
+       needs = c("patients", "lot_final"), render = "table",
        sql = "
          SELECT count(*)                                              AS `Patients`,
                 sum(CASE WHEN DEATH_DT IS NOT NULL THEN 1 ELSE 0 END) AS `Died in window`,
@@ -209,57 +238,58 @@ DASHBOARD_SECTIONS <- list(
                 percentile_approx(FU_DAYS, 0.5)                       AS `Median FU days`,
                 percentile_approx(FU_DAYS, 0.25)                      AS `P25`,
                 percentile_approx(FU_DAYS, 0.75)                      AS `P75`
-         FROM {patients}"),
+         FROM {patients}
+         WHERE PATID IN (SELECT DISTINCT PATID FROM {lot_final})"),
 
   # ---- LINES ---------------------------------------------------------------
 
   list(name = "lines_per_patient", tab = "Lines",
        label = "Highest line reached",
-       needs = "lot_long", render = "bar",
+       needs = "lot_final", render = "bar", pct = "total",
        sql = "
          SELECT concat('LOT', cast(hi as string)) AS label, count(*) AS n
-         FROM (SELECT PATID, max(LOT_NUM) AS hi FROM {lot_long} GROUP BY PATID)
+         FROM (SELECT PATID, max(LOT_NUM) AS hi FROM {lot_final} GROUP BY PATID)
          GROUP BY 1 ORDER BY 1"),
 
   list(name = "start_type", tab = "Lines",
        label = "How each line started",
-       needs = "lot_long", render = "table",
+       needs = "lot_final", render = "table",
        sql = "
          SELECT LOT_NUM AS `Line`, LOT_START_TYPE AS `Start type`,
                 count(*) AS `Lines`
-         FROM {lot_long} GROUP BY 1, 2 ORDER BY 1, 2"),
+         FROM {lot_final} GROUP BY 1, 2 ORDER BY 1, 2"),
 
   list(name = "end_reason", tab = "Lines",
        label = "Why each line ended",
-       needs = "lot_long", render = "table",
+       needs = "lot_final", render = "table",
        sql = "
          SELECT LOT_NUM AS `Line`, LOT_BASE_END_REASON AS `End reason`,
                 count(*) AS `Lines`
-         FROM {lot_long} GROUP BY 1, 2 ORDER BY 1, 2"),
+         FROM {lot_final} GROUP BY 1, 2 ORDER BY 1, 2"),
 
   list(name = "line_length", tab = "Lines",
        label = "Line length in days",
-       needs = "lot_long", render = "table",
+       needs = "lot_final", render = "table",
        sql = "
          SELECT LOT_NUM                                               AS `Line`,
                 count(*)                                              AS `Lines`,
                 percentile_approx(datediff(LOT_BASE_END_DT, LOT_START_DT), 0.25) AS `P25`,
                 percentile_approx(datediff(LOT_BASE_END_DT, LOT_START_DT), 0.5)  AS `Median`,
                 percentile_approx(datediff(LOT_BASE_END_DT, LOT_START_DT), 0.75) AS `P75`
-         FROM {lot_long} GROUP BY 1 ORDER BY 1"),
+         FROM {lot_final} GROUP BY 1 ORDER BY 1"),
 
   list(name = "med_count", tab = "Lines",
        label = "Drugs in the base regimen",
-       needs = "lot_long", render = "table",
+       needs = "lot_final", render = "table",
        sql = "
          SELECT LOT_NUM AS `Line`, LOT_MED_CNT AS `Drugs`, count(*) AS `Lines`
-         FROM {lot_long} GROUP BY 1, 2 ORDER BY 1, 2"),
+         FROM {lot_final} GROUP BY 1, 2 ORDER BY 1, 2"),
 
   # ---- REGIMENS ------------------------------------------------------------
 
   list(name = "top_regimens", tab = "Regimens",
        label = "Most common base regimens, by line",
-       needs = "lot_long", render = "table",
+       needs = "lot_final", render = "table",
        # Ranked within line, so line 1's long tail does not crowd out line 4.
        sql = "
          SELECT `Line`, `Regimen`, `Patients` FROM (
@@ -267,12 +297,12 @@ DASHBOARD_SECTIONS <- list(
                   count(DISTINCT PATID) AS `Patients`,
                   row_number() OVER (PARTITION BY LOT_NUM
                                      ORDER BY count(DISTINCT PATID) DESC) AS rn
-           FROM {lot_long} GROUP BY LOT_NUM, LOT_BASE_MEDS)
+           FROM {lot_final} GROUP BY LOT_NUM, LOT_BASE_MEDS)
          WHERE rn <= {top_n} ORDER BY `Line`, `Patients` DESC"),
 
   list(name = "first_added_med", tab = "Regimens",
        label = "First drug added after the base regimen",
-       needs = "lot_long", render = "table",
+       needs = "lot_final", render = "table",
        sql = "
          SELECT `Line`, `Added`, `Lines` FROM (
            SELECT LOT_NUM AS `Line`,
@@ -280,21 +310,21 @@ DASHBOARD_SECTIONS <- list(
                   count(*) AS `Lines`,
                   row_number() OVER (PARTITION BY LOT_NUM
                                      ORDER BY count(*) DESC) AS rn
-           FROM {lot_long} GROUP BY LOT_NUM, LOT_BASE_1ST_ADD_MED)
+           FROM {lot_final} GROUP BY LOT_NUM, LOT_BASE_1ST_ADD_MED)
          WHERE rn <= {top_n} ORDER BY `Line`, `Lines` DESC"),
 
   # ---- TRANSPLANT ----------------------------------------------------------
 
   list(name = "sct", tab = "Transplant",
        label = "Lines that are a transplant or CAR-T",
-       needs = "lot_long", render = "table",
+       needs = "lot_final", render = "table",
        sql = "
          SELECT LOT_NUM                                                AS `Line`,
                 sum(CASE WHEN LOT_ALLO_LOT_FLG = 1 THEN 1 ELSE 0 END)  AS `ALLO`,
                 sum(CASE WHEN LOT_CART_LOT_FLG = 1 THEN 1 ELSE 0 END)  AS `CAR-T`,
                 sum(CASE WHEN LOT_START_TYPE = 'SCT_AUTO' THEN 1 ELSE 0 END) AS `AUTO start`,
                 count(*)                                               AS `Lines`
-         FROM {lot_long} GROUP BY 1 ORDER BY 1"),
+         FROM {lot_final} GROUP BY 1 ORDER BY 1"),
 
   # ---- TRANSITIONS ---------------------------------------------------------
 
@@ -311,31 +341,38 @@ DASHBOARD_SECTIONS <- list(
   .transition_section(1, 2),
   .transition_section(2, 3),
   .transition_section(3, 4),
+  .transition_section(4, 5),
 
   # ---- PATIENT EXAMPLES ----------------------------------------------------
 
   list(name = "patient_journeys", tab = "Patient examples",
        label = "Line-by-line journeys, a few patients per scenario",
-       needs = "lot_long", render = "table",
+       needs = "lot_final", render = "table",
        sql = .journey_sql()),
 
   list(name = "journey_coverage", tab = "Patient examples",
        label = "Scenarios, and how many patients each one has",
-       needs = "lot_long", render = "bar",
+       needs = "lot_final", render = "bar", pct = "none",
        # The denominator behind the gallery. A scenario with no patients is the
        # interesting case - it means either the cohort has none or a rule is not
        # firing - and without this the reader cannot tell which of the two the
        # missing panel above is.
+       #
+       # No percentage: a patient can be in several scenarios at once, so the
+       # bars do not partition anything and any denominator would invite a
+       # reader to add them up.
        sql = paste0("
          WITH pat AS (
            SELECT cast(PATID as string) AS PATID,
                   max(LOT_NUM)                                            AS max_lot,
                   max(CASE WHEN LOT_NUM = 1 THEN LOT_START_TYPE END)      AS lot1_start_type,
                   max(CASE WHEN LOT_NUM = 1 THEN LOT_BASE_END_REASON END) AS lot1_end_reason,
-                  max(CASE WHEN LOT_BASE_END_REASON = 'CART_INIT' THEN 1 ELSE 0 END) AS any_cart_init,
+                  max(CASE WHEN LOT_CART_LOT_FLG = 1 OR LOT_START_TYPE = 'CART'
+                           OR LOT_BASE_END_REASON = 'CART_INIT'
+                      THEN 1 ELSE 0 END)                                  AS any_cart,
                   max(CASE WHEN LOT_START_TYPE = 'SCT_AUTO' THEN 1 ELSE 0 END)       AS any_sct_auto,
                   max(CASE WHEN LOT_START_TYPE = 'SCT_ALLO' THEN 1 ELSE 0 END)       AS any_sct_allo
-           FROM {lot_long} GROUP BY PATID
+           FROM {lot_final} GROUP BY PATID
          )
          SELECT label, n FROM (\n",
          paste(vapply(JOURNEY_CATEGORIES, function(c_i) paste0(
@@ -401,6 +438,13 @@ validate_sections <- function(secs = DASHBOARD_SECTIONS, inputs = NULL) {
     if (!.is_str(s$render) || !s$render %in% RENDER_TYPES)
       bad <- c(bad, paste0(at, ": render must be one of ",
                            paste(RENDER_TYPES, collapse = ", ")))
+    if (identical(s$render, "bar")) {
+      if (is.null(s$pct) || !.is_str(s$pct) || !s$pct %in% BAR_PCT)
+        bad <- c(bad, paste0(at, ": a bar must say what its percentage is of - ",
+                             paste(BAR_PCT, collapse = ", ")))
+    } else if (!is.null(s$pct)) {
+      bad <- c(bad, paste0(at, ": pct means nothing to a ", s$render))
+    }
     if (!is.character(s$needs) || !length(s$needs))
       bad <- c(bad, paste0(at, ": needs must name at least one input"))
     else if (!is.null(inputs)) {

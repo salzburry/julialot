@@ -171,7 +171,7 @@ build_panel <- function(con, sec, inputs, have, cfg) {
   # has to be the numbers on the page, or the two are a comparison waiting to
   # go wrong.
   list(name = sec$name, tab = sec$tab, label = sec$label, data = df,
-       html = render_panel(sec$render, df))
+       html = render_panel(sec$render, df, sec$pct %||% "none"))
 }
 
 # One CSV per panel that produced rows, beside the HTML. Same numbers, because
@@ -184,6 +184,18 @@ build_panel <- function(con, sec, inputs, have, cfg) {
 write_csv_exports <- function(panels, cfg) {
   dir <- file.path(cfg$output_dir, cfg$csv_dir)
   dir.create(dir, showWarnings = FALSE, recursive = TRUE)
+  # The folder is one run, not an accumulation. A panel switched off, a query
+  # that failed, a panel that came back empty, or the same OUTPUT_DIR reused for
+  # another cohort all leave a file from last time that looks current - the
+  # names carry no cohort, prefix or run id to tell it apart. Clear first, so
+  # what is here is what is on the page.
+  #
+  # Only .csv, and only this folder, which the dashboard created and owns.
+  old <- list.files(dir, pattern = "[.]csv$", full.names = TRUE)
+  if (length(old)) {
+    unlink(old)
+    log_msg("CSV export: cleared ", length(old), " file(s) from the previous run")
+  }
   written <- 0L
   for (p in panels) {
     if (is.null(p$data) || !nrow(p$data)) next

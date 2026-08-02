@@ -202,6 +202,8 @@ ok(grepl("substr(p.PATID", jsql, fixed = TRUE) && grepl("concat('...'", jsql, fi
    "PATID is masked in the SQL, so the identifier never reaches HTML or CSV")
 ok(!grepl("p.PATID  *AS `Patient`", jsql) && !grepl("SELECT p.PATID,", jsql, fixed = TRUE),
    "...and no raw identifier is selected beside it")
+ok(grepl("LOT_CART_LOT_FLG = 1 OR LOT_START_TYPE = \'CART\'", jsql, fixed = TRUE),
+   "CAR-T is the CAR-T line itself, not only a prior line ending on CART_INIT")
 ok(length(gregexpr("UNION ALL", jsql, fixed = TRUE)[[1]]) ==
      length(JOURNEY_CATEGORIES) - 1L,
    paste0("one arm per scenario (", length(JOURNEY_CATEGORIES), ")"))
@@ -227,6 +229,17 @@ panels <- list(
 assign("log_msg", function(...) invisible(NULL), envir = env)
 n <- write_csv_exports(panels, ecfg)
 ok(identical(n, 1L), "a panel with rows is written; an empty or skipped one is not")
+# The folder is one run. A file from a previous run - a panel since switched
+# off, or another cohort into the same OUTPUT_DIR - carries no cohort or run id
+# in its name, so it reads as current. It has to go.
+stale <- file.path(tmp, "csv", "was_on_last_time.csv")
+writeLines("x", stale)
+write_csv_exports(panels, ecfg)
+ok(!file.exists(stale), "a CSV left by a previous run is cleared, not left looking current")
+ok(file.exists(file.path(tmp, "csv", "a.csv")), "...while this run's files are written")
+keep <- file.path(tmp, "csv", "notes.txt"); writeLines("x", keep)
+write_csv_exports(panels, ecfg)
+ok(file.exists(keep), "and only .csv is touched")
 ok(file.exists(file.path(tmp, "csv", "a.csv")) &&
      !file.exists(file.path(tmp, "csv", "b.csv")),
    "...and the file is named after the section")
@@ -242,10 +255,77 @@ Sys.setenv(JOURNEYS_PER_CATEGORY = "3.5")
 stops(check_settings(), "a fractional number of examples is refused")
 clear()
 
+cat("\n-- the study panels describe the study population --\n")
+# LOT_LONG_FINAL is the population; LOT_LONG is that table before the line
+# criteria, and a patient-level truncate criterion makes the two hold different
+# PATIENTS. A clinical panel on LOT_LONG describes people the study excluded,
+# with nothing on the page saying so.
+VALIDATION_ONLY <- c("criteria_impact", "line_integrity", "headline")
+pre <- Filter(function(s) grepl("{lot_long}", s$sql, fixed = TRUE) &&
+                !(s$name %in% VALIDATION_ONLY), DASHBOARD_SECTIONS)
+ok(!length(pre),
+   if (length(pre)) paste0("panels still on the pre-criteria table: ",
+                           paste(vapply(pre, `[[`, character(1), "name"), collapse = ", "))
+   else "no clinical panel reads LOT_LONG - only the validation ones do")
+# And a cohort-level panel has to restrict to the survivors, or it counts
+# patients whose lines were all removed.
+coh <- Filter(function(s) grepl("{patients}", s$sql, fixed = TRUE) &&
+                !(s$name %in% VALIDATION_ONLY), DASHBOARD_SECTIONS)
+ok(length(coh) > 0 && all(vapply(coh, function(s)
+     grepl("PATID IN (SELECT DISTINCT PATID FROM {lot_final})", s$sql, fixed = TRUE),
+     logical(1))),
+   paste0("every cohort panel restricts to patients still in LOT_LONG_FINAL (",
+          length(coh), ")"))
+# needs has to name what the SQL reads, or probe_inputs cannot skip the panel
+# when its table is missing and the query fails instead.
+mism <- Filter(function(s) {
+  u <- gsub("[{}]", "", unique(regmatches(s$sql,
+         gregexpr("\\{(lot_long|lot_final|patients|attrition|run_meta|cohort)\\}",
+                  s$sql))[[1]]))
+  !all(u %in% s$needs)
+}, DASHBOARD_SECTIONS)
+ok(!length(mism),
+   if (length(mism)) paste0("needs does not match what the SQL reads: ",
+                            paste(vapply(mism, `[[`, character(1), "name"), collapse = ", "))
+   else "every section declares the inputs its SQL actually reads")
+
+cat("\n-- a bar says what its percentage is of --\n")
+bars <- Filter(function(s) identical(s$render, "bar"), DASHBOARD_SECTIONS)
+ok(all(vapply(bars, function(s) !is.null(s$pct) && s$pct %in% BAR_PCT, logical(1))),
+   paste0("every bar declares a denominator (", length(bars), ")"))
+stops(validate_sections(list(modifyList(
+        Filter(function(s) identical(s$render, "bar"), DASHBOARD_SECTIONS)[[1]],
+        list(pct = NULL)))),
+      "a bar that declares none is refused rather than assuming one")
+getp <- function(nm) Filter(function(s) identical(s$name, nm), DASHBOARD_SECTIONS)[[1]]$pct
+ok(identical(getp("attrition"), "first"),
+   "the funnel is a share of its first row, which is the cohort it started from")
+ok(identical(getp("index_by_year"), "total") &&
+     identical(getp("lines_per_patient"), "total"),
+   "a partition is a share of the whole")
+ok(identical(getp("journey_coverage"), "none"),
+   "and overlapping scenarios get no percentage at all")
+d <- data.frame(label = c("a", "b", "c"), n = c(50L, 30L, 20L), stringsAsFactors = FALSE)
+ok(grepl("60.0%", render_bar(d, "first"), fixed = TRUE),
+   "first: the second bar is 60% of the first")
+ok(grepl("30.0%", render_bar(d, "total"), fixed = TRUE),
+   "total: the second bar is 30% of all three")
+# bpct is the span the percentage lives in. The width: style carries a % of its
+# own, so the test has to look for the span rather than for the character.
+ok(!grepl("bpct", render_bar(d, "none"), fixed = TRUE) &&
+     grepl("bpct", render_bar(d, "first"), fixed = TRUE),
+   "none: no percentage is printed, where first prints one")
+
 cat("\n-- transitions render as an SVG sankey --\n")
 tr <- Filter(function(s) identical(s$name, "lot1_to_lot2"), DASHBOARD_SECTIONS)[[1]]
 ok(identical(tr$render, "sankey") && identical(tr$tab, "Transitions"),
    "LOT1 to LOT2 is a sankey on the Transitions tab")
+# Through MAX_LOT, which is 5 - stopping at LOT4 would leave the last
+# transition the build produces undrawn.
+trs <- vapply(Filter(function(s) identical(s$tab, "Transitions"), DASHBOARD_SECTIONS),
+              `[[`, character(1), "name")
+ok(setequal(trs, c("lot1_to_lot2", "lot2_to_lot3", "lot3_to_lot4", "lot4_to_lot5")),
+   paste0("every consecutive pair up to MAX_LOT is drawn (", length(trs), ")"))
 tsql <- fill_sql(tr$sql, INPUTS, cfg)
 ok(grepl("INNER JOIN b ON a.PATID = b.PATID", tsql, fixed = TRUE),
    "an inner join, so non-progressors are not a flow")
