@@ -185,7 +185,6 @@ than a note saying so:
 | #5 | one day of follow-up CE against the protocol's three months | `NDMM_FU_CE_COUNTS` |
 | #7 | which codes stay the index disease rather than another cancer | `NDMM_MM_ADJACENT_CODES` → `NDMM_MM_ADJACENT_OVERRIDE` in `nndm_constants.R` |
 | #7 | whether the ICD category is the right unit for "same primary tumour type" | `NDMM_OTHER_MALIG_GRAIN`, `NDMM_OTHER_MALIG_GROUPS` |
-| #9 | nothing — both halves of the exclusion now run. `NDMM_BELANTAMAB_RECONCILE` remains the list to read | `NDMM_BELANTAMAB_RECONCILE`, then `lot`'s `no_belantamab` |
 
 **None of them changes anything until somebody acts.** Every file ships empty
 and every default is the source's, so the criteria above are what runs today.

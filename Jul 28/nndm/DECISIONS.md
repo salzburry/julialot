@@ -349,13 +349,12 @@ which is what lets the same algorithm run over the parent MM cohort — frozen a
 `LOT_RUN_METADATA`, so an output says which window and therefore which vintage
 produced it.
 
-**What this still needs before the production run:** `lot` has only ever been
-validated against `2025q2`. Reading `2026q1` is reading tables nobody in this
-repo has run it over. The quarterly tables are cumulative, so this is a wider
-read rather than a different one, but a claim restated between vintages would
-change a line. Confirm `t_medical_2026q1`, `t_rx_2026q1`, `t_med_procedure_2026q1`
-and `t_med_diagnosis_2026q1` exist and that the row counts move the way a
-three-quarter extension should.
+**The vintage was checked and is not a risk.** `lot` had only ever been run
+against `2025q2`, so reading `2026q1` was reading tables nobody here had used.
+Confirmed by the study team on 2026-08-02: `2026q1` is the same tables and the
+same column names as `2025q2`, with data extended through 2026-03-31. So it is
+a wider read of the same structures rather than a different one, and there is
+nothing to re-validate before the run.
 
 **"Any LOT" is now literal — the criterion asks the claims, not the constructed
 lines. Closed.** It used to read `LOT_BASE_MEDS` and `LOT_BASE_1ST_ADD_MED` off
