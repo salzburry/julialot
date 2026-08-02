@@ -342,17 +342,35 @@ NDMM_CRITERIA <- list(
   list(key = "noother",        flag = "NO_OTHER_CANCER_PRE_LOT1",
        label = "+ no other cancer in 12-month baseline"),
   list(key = "noother_nopreg", flag = "NO_PREGNANCY",
-       label = "+ no pregnancy in study period")
+       label = "+ no pregnancy in study period"),
+  list(key = "nopreg_nobela",  flag = "NO_BELANTAMAB_PRE_LOT1",
+       label = "+ no belantamab before the 1L index")
 )
-# S6.2.1.2's fourth exclusion - belantamab in any LOT - is deliberately NOT
-# here. Lines do not exist when this build runs, so applying it at this point
-# could only ever be a claims proxy, and one whose over-exclusions could never
-# be checked: a patient removed here never reaches the LOT run. It is applied
-# in the lot package as a line criterion, where LOT membership is known and the
-# criterion is exact. NO_BELANTAMAB is still computed and still ships on the
-# cohort table, as the proxy's opinion; nothing filters on it. So this table is
-# the NDMM cohort pending that one exclusion, and the funnel has eight steps
-# rather than nine. See DECISIONS.md #2.
+# S6.2.1.2's fourth exclusion - belantamab in any LOT - is split, because no one
+# package can see the whole of it.
+#
+# The half that is here is belantamab BEFORE the 1L index. The lot package
+# cannot see it at any price: map_stacked is built from claims on or after the
+# cohort's INDEX_DATE, so a belantamab treatment earlier in the patient's
+# history is not in the data lot reads. It is also not a proxy for anything -
+# a belantamab claim before the index is a belantamab line before the index -
+# so the objection that removed the old cohort-time rule does not apply.
+#
+# The half that is not here is belantamab from the index onward, which is the
+# no_belantamab line criterion in lot, asked of map_stacked over the patient's
+# whole LOT span. Together the two halves are the protocol's sentence.
+#
+# Note this criterion overlaps NO_PRIOR_MM_TX, deliberately: that one already
+# removes any MM oncology therapy in the 12-month baseline, belantamab
+# included. Its incremental drop in the attrition is therefore exactly the
+# patients whose belantamab predates the baseline - the window nothing covered.
+# S6.2.1.2 scopes its other three exclusions explicitly and scopes this one only
+# as "in any LOT"; read as post-index it would do nothing the first bullet had
+# not already done for the window they share. See DECISIONS.md #2.
+#
+# NO_BELANTAMAB - the whole-study-period flag - is still computed and still
+# ships on the cohort table as an advisory; nothing filters on it. So this table
+# is the NDMM cohort pending only lot's half, and the funnel has nine steps.
 
 # The first n criteria as a WHERE body, in the funnel's order.
 #

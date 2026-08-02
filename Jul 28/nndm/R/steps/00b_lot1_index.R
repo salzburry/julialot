@@ -271,17 +271,34 @@ build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl, med_proc_tbl)
     arm(rx_tbl,      "FILL_DT", ndc_match("NDC")),           "\n      UNION\n",
     arm(med_proc_tbl, "FST_DT", txt_match("PROC", "'HCPCS','CPT'"))))
 
-  # The study period, always. This flag no longer decides membership - the
-  # exclusion is a line criterion in the lot package, where LOT membership is
-  # known - so there is no scope to choose. Widest net, because its only job now
-  # is to say which patients carry a belantamab claim at all.
+  # The study period, always. Widest net, because this view answers two
+  # questions and one of them is a criterion.
+  #
+  # PRE_LOT1 marks a belantamab claim STRICTLY BEFORE the 1L index. That half of
+  # S6.2.1.2's belantamab exclusion has to be settled here, because the lot
+  # package cannot see it: map_stacked is built from claims on or after the
+  # cohort's INDEX_DATE, so a belantamab treatment before the index is not in
+  # the data lot reads at all. The other half - belantamab from the index
+  # onward - is the line criterion there, over lines this package cannot know.
+  #
+  # The two halves are disjoint and together they are the protocol's sentence.
+  # Note S6.2.1.2 scopes its other three exclusions explicitly - "during the
+  # 12-month 1L baseline period", "in the 1L baseline period", "during the study
+  # period" - and scopes this one only as "in any LOT". The 12-month prior-
+  # therapy exclusion already removes belantamab inside the baseline, so reading
+  # this one as post-index too would leave it doing nothing the first bullet did
+  # not already do, for the window they share. It is unbounded because it is
+  # meant to be: a belantamab line at any point in the patient's history
+  # disqualifies them.
   scope <- glue("b.bel_dt >= date('{NDMM_STUDY_START}')")
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_BELANTAMAB_PATIDS} AS
-    SELECT DISTINCT b.PATID, 'BEL' AS MAP_MED_TYPE
+    SELECT b.PATID, 'BEL' AS MAP_MED_TYPE,
+           max(CASE WHEN b.bel_dt < l1.LOT1_START_DT THEN 1 ELSE 0 END) AS PRE_LOT1
     FROM {NDMM_BELANTAMAB_TX} b
     INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = b.PATID
-    WHERE {scope}"))
+    WHERE {scope}
+    GROUP BY b.PATID"))
 }
 
 # Every ICD category the other-cancer code list resolves to, and how many

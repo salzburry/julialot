@@ -54,23 +54,57 @@ difference. `<prefix>NDMM_FU_CE_COUNTS` gives both numbers on every run.
 
 ---
 
-## 2. Belantamab "in any LOT" — applied over lines, not here
+## 2. Belantamab "in any LOT" — split across the two packages
 
-**Decided:** this build does **not** apply §6.2.1.2's belantamab exclusion. It
-is a line criterion in the `lot` package, applied after `LOT_LONG` exists.
+**Decided:** §6.2.1.2's belantamab exclusion runs in two halves, because no one
+package can see the whole of it.
 
-**Why the proxy went.** §6.2.1.2 excludes a patient who received belantamab in
-any line of therapy. Lines do not exist when this cohort is built — the LOT
-algorithm runs *over* it — so anything applied here could only ever be a claims
-proxy standing in for LOT membership. Worse, its errors were asymmetric and
-one of them was permanently unauditable: a patient the proxy wrongly removed
-never reached the LOT run, so nobody could ever check whether they really had
-belantamab in a line.
+| half | where | why it has to be there |
+|---|---|---|
+| belantamab **before** the 1L index | here, criterion 9 (`NO_BELANTAMAB_PRE_LOT1`) | `lot` cannot see it at any price — `map_stacked` is built from claims on or after the cohort's `INDEX_DATE` |
+| belantamab **from the index onward** | `lot`, criterion `no_belantamab` | this package has no lines, and the criterion is asked over the patient's whole LOT span |
 
-Deferring it removes both problems at once. Every candidate gets lines, the
-criterion is evaluated against actual LOT membership, and it is the protocol's
-sentence rather than an approximation of it. Nothing needs approving, because
-there is no longer an operational definition to approve.
+Together they are the protocol's sentence. Neither is a proxy: a belantamab
+claim before the index *is* a belantamab line before the index, and a
+belantamab MAP after it *is* belantamab in a LOT.
+
+**Why the pre-index half exists.** Read the exclusion bullets in §6.2.1.2 beside
+each other and the scoping is deliberate:
+
+> - Evidence of an MM oncology therapy **during the 12-month 1L baseline period**
+> - Evidence of another cancer **in the 1L baseline period**
+> - Evidence of pregnancy … **during the study period**
+> - Received belantamab mafodotin (i.e., an ADC) **in any LOT**
+
+Three carry a period. The fourth does not. Confirmed against the source PDF page
+24 rather than the OCR text, which mangles enough of that page (`occu1Ting`,
+`penod`, `ehg1ble`) not to be trusted on a point this fine — the bullet is
+complete and there is no period clause missing from it.
+
+And reading it as post-index makes it redundant: the first bullet already
+removes any MM oncology therapy, belantamab included, throughout the 12-month
+baseline. A post-index-only belantamab rule would add nothing for the window the
+two share. It is unbounded because it is meant to be — a belantamab line at any
+point in the patient's history disqualifies them.
+
+The gap this closed: belantamab **more than 365 days before the index**. Such a
+patient was not indexed on the belantamab (§6.2.1.1 bars it from setting the
+index), passed the 12-month prior-therapy criterion, and then reached `lot` with
+the claim invisible. Criterion 9 overlaps `NO_PRIOR_MM_TX` deliberately, so its
+incremental drop in the attrition is exactly that population.
+
+**Why a whole-cohort proxy went.** Lines do not exist when this cohort is
+built — the LOT algorithm runs *over* it — so a rule applied here that tried to
+stand in for LOT membership could only ever be an approximation. Its errors were
+asymmetric and one was permanently unauditable: a patient it wrongly removed
+never reached the LOT run, so nobody could check whether they really had
+belantamab in a line. That is why the index-onward half is deferred, and why the
+pre-index half is not an instance of the same problem — it asks about a date,
+not about a line.
+
+Deferring the index-onward half removes both problems. Every candidate gets
+lines, that half is evaluated against actual LOT membership, and there is no
+operational definition left to approve.
 
 **What the cohort build still does:**
 
@@ -105,10 +139,11 @@ criterion and stops if it matches no row, which is the same shape as
 
 **What this changes downstream, and it matters:**
 
-- **`<prefix>NDMM_COHORT` is the NDMM cohort pending one exclusion**, not the
-  final study population. Anything reading it as the final N is wrong.
-- **The attrition has eight steps, not nine**, and its last row is not the
-  study's N. The ninth step now lives in the LOT build's own reporting.
+- **`<prefix>NDMM_COHORT` is the NDMM cohort pending half of one exclusion**,
+  not the final study population. Anything reading it as the final N is wrong.
+- **The attrition has nine steps** and its last row is still not the study's N.
+  Criterion 9 is the pre-index half; the index-onward half is applied in the LOT
+  build and reported there.
 - The LOT run processes slightly more patients. Belantamab is a later-line ADC,
   so in a 1L newly-diagnosed cohort this should be very few.
 - **The two packages must now agree on the study window and on how many lines
@@ -336,6 +371,11 @@ diagnostic is needed to bound it.
 `MAX_LOT` still bounds `LOT_LONG` itself, and `LOT_LONG_BY_LINE` in
 `LOT_RUN_METADATA` already reports how many patients reach each line. It no
 longer bounds this exclusion.
+
+**The other boundary — before the index — is closed in `nndm`, not here.**
+`map_stacked` is built from claims on or after the cohort's `INDEX_DATE`, so
+`lot` cannot see a belantamab line earlier in the patient's history whatever
+this criterion does. That half is criterion 9 of the NDMM funnel; see §2.
 
 **The shipped line criterion is this study's, and it is on by default.**
 `APPLY_NO_BELANTAMAB=TRUE` in `lot/config.csv` is right for `NDMM_COHORT` and

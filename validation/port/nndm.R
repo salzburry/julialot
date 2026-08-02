@@ -188,6 +188,14 @@ ADDED <- list(
     "max(CASE WHEN POS IN ('21', '51', '61')" = 1L,
     "OR TOS_CD IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF')" = 1L,
     "THEN 1 ELSE 0 END) AS line_inpatient" = 1L),
+  # The rest of the pre-index belantamab criterion: the CTE, the flag and the
+  # join. Each line is unique, so these are counted rather than spliced; the
+  # expression that builds them is undone by the SPLICE above. See the comment
+  # there for why the criterion exists.
+  "R/steps/06_flags.R" = c(
+    "bela_pre AS ({bela_pre_expr})," = 1L,
+    "CASE WHEN bela_pre.PATID     IS NULL THEN 1 ELSE 0 END AS NO_BELANTAMAB_PRE_LOT1," = 1L,
+    "LEFT JOIN bela_pre     ON ec_l1.PATID = bela_pre.PATID" = 1L),
   # The blank-after-normalising guard now sits inside the spliced builder, so
   # it is undone there rather than counted here.
   "R/steps/05_pregnancy.R" = c(
@@ -264,7 +272,26 @@ SPLICE <- list(
   # the attrition are the same six criteria by construction. The clause the
   # source wrote is swapped back in here; the flags and their order are held by
   # test_runner.R, which reads the generated clause rather than the file.
+  # The seventh clinical change, and the second the protocol dictates rather
+  # than permits. S6.2.1.2 excludes belantamab "in any LOT" and, unlike the
+  # three exclusions beside it - "during the 12-month 1L baseline period", "in
+  # the 1L baseline period", "during the study period" - gives that one no
+  # period at all. So a belantamab line earlier in the patient's history
+  # disqualifies them too. The lot package cannot see that: map_stacked is built
+  # from claims on or after the cohort's INDEX_DATE. So the pre-index half is
+  # decided here and lot keeps the half from the index onward.
+  #
+  # Spliced rather than counted: bela_pre_expr is bela_expr with one predicate
+  # added, so two of its lines are the same text as two of bela_expr's and
+  # removing "the first occurrence" would take the wrong one out.
   "R/steps/06_flags.R" = list(
+    # Ends on the added predicate, which is the only unique line in the block:
+    # the `") else "SELECT ... WHERE 1 = 0"` that closes it closes all five of
+    # these CTEs. The port's own copy of that line then lines up with the
+    # source's, so the splice restores bela_expr's first four lines only.
+    list(from = "bela_expr <- if (q2_ok_belantamab) glue(\"",
+         to   = "WHERE upper(MAP_MED_TYPE) LIKE 'BEL%' AND PRE_LOT1 = 1",
+         src_from = 627L, src_to = 630L),
     list(from = 'checkpoint(con, "NDMM_FLAGS_ALL")',
          to   = 'checkpoint(con, "NDMM_FLAGS_ALL")',
          src_from = 727L, src_to = 741L),

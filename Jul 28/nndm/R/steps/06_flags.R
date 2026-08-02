@@ -12,6 +12,18 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
         WHERE upper(MAP_MED_TYPE) LIKE 'BEL%'
   ") else "SELECT cast(NULL as string) AS PATID WHERE 1 = 0"
 
+  # Belantamab before the 1L index. S6.2.1.2 excludes it in any LOT and gives
+  # that exclusion no period, unlike the three beside it - so a belantamab line
+  # earlier in the patient's history disqualifies them even though the 12-month
+  # prior-therapy window cannot reach it. The lot package settles the other
+  # half, from the index onward; it cannot settle this one, because the claims
+  # it reads start at the index.
+  bela_pre_expr <- if (q2_ok_belantamab) glue("
+        SELECT DISTINCT cast(PATID as string) AS PATID
+        FROM {map_stacked}
+        WHERE upper(MAP_MED_TYPE) LIKE 'BEL%' AND PRE_LOT1 = 1
+  ") else "SELECT cast(NULL as string) AS PATID WHERE 1 = 0"
+
   prior_tx_expr <- if (q2_ok_priortx) glue("
         SELECT DISTINCT PATID FROM {NDMM_THERAPY_PRE_LOT1}
   ") else "SELECT cast(NULL as string) AS PATID WHERE 1 = 0"
@@ -67,6 +79,7 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
       GROUP BY ec_l1.PATID
     ),
     bela AS ({bela_expr}),
+    bela_pre AS ({bela_pre_expr}),
     prior_tx AS ({prior_tx_expr}),
     other_cancer AS ({other_cancer_expr}),
     pregnancy AS ({pregnancy_expr})
@@ -74,6 +87,7 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
            ce.CE_pre_lot1_12mo,
            coalesce(fuce.CE_fu, 0)                              AS CE_lot1_fu,
            CASE WHEN bela.PATID         IS NULL THEN 1 ELSE 0 END AS NO_BELANTAMAB,
+           CASE WHEN bela_pre.PATID     IS NULL THEN 1 ELSE 0 END AS NO_BELANTAMAB_PRE_LOT1,
            CASE WHEN prior_tx.PATID     IS NULL THEN 1 ELSE 0 END AS NO_PRIOR_MM_TX,
            CASE WHEN other_cancer.PATID IS NULL THEN 1 ELSE 0 END AS NO_OTHER_CANCER_PRE_LOT1,
            CASE WHEN pregnancy.PATID    IS NULL THEN 1 ELSE 0 END AS NO_PREGNANCY
@@ -81,6 +95,7 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
     LEFT JOIN ce           ON ec_l1.PATID = ce.PATID
     LEFT JOIN fuce         ON ec_l1.PATID = fuce.PATID
     LEFT JOIN bela         ON ec_l1.PATID = bela.PATID
+    LEFT JOIN bela_pre     ON ec_l1.PATID = bela_pre.PATID
     LEFT JOIN prior_tx     ON ec_l1.PATID = prior_tx.PATID
     LEFT JOIN other_cancer ON ec_l1.PATID = other_cancer.PATID
     LEFT JOIN pregnancy    ON ec_l1.PATID = pregnancy.PATID
