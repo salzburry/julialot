@@ -143,7 +143,7 @@ criterion off.
 criterion — it removes the whole patient. That is the NDMM cohort's belantamab
 exclusion, and it is correct for `NDMM_COHORT`. It is **not** automatically
 correct for a broader MM cohort, a sensitivity cohort, or any other study whose
-study definition has no such exclusion, and passing a different cohort, prefix and window
+cohort has no such exclusion, and passing a different cohort, prefix and window
 does not change it: the switch is `APPLY_NO_BELANTAMAB`, and it has to be set
 `FALSE` deliberately.
 
@@ -225,7 +225,7 @@ with `truncate` that silently removes every patient.
 
 This is how `no_belantamab` is exact. "Received belantamab in any LOT" cannot
 mean "in any of the lines the build got round to constructing", and reading
-`LOT_BASE_MEDS` / `LOT_BASE_1ST_ADD_MED` — which is what it used to do — meant
+`LOT_BASE_MEDS` / `LOT_BASE_1ST_ADD_MED` would mean
 exactly that: bounded by `MAX_LOT`, and bounded again by whether the drug was a
 base med or the *first* addition rather than the second. It asks `map_stacked`
 instead, over the span from the patient's first line to the end of their
@@ -388,7 +388,7 @@ code lists do not have, and only the second says what was really in them.
 
 `multi_class` was briefly reviewable and is not. `min(MED_CLASS)` in
 `03_mma_map` picks lexically, not clinically, and the choice reaches the class
-flags and the steroid exclusion. Worse, `class_agreement` used to skip
+flags and the steroid exclusion. `class_agreement` must not skip
 medications that were internally ambiguous - so waiving `multi_class` left such
 a medication checked by neither. `class_agreement` now compares the whole set
 and skips nothing, and `multi_class` is fatal, so the gap is closed from both
@@ -463,7 +463,7 @@ waiving the reviewed ten-digit case cannot let `ABC123` through with it, and
 each is recorded in `CODELIST_WAIVERS_APPLIED` under its own name. A ten-digit *claim* has exactly the layout problem a ten-digit
 *code* has, so a canonical code can miss a real claim.
 
-`phase_qc` used to print an NDC length distribution. It has been removed rather
+`phase_qc` prints no NDC length distribution. That was removed rather
 than kept as background: it profiled `rx` only, compared raw code-list lengths
 against alnum-stripped claim lengths - neither being the length the join uses,
 so its one warning could fire on a code list that is fine and stay quiet on one

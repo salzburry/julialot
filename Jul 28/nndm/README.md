@@ -50,12 +50,12 @@ built it.
 
 ### It needs no table from another build
 
-`OVERALL_COH_FINAL`, `LOT_LONG` and `MAP_STACKED` were once required; none is
-now. MM diagnosis, age and demographics use the same rules as the `overall`
-package (`R/steps/00_mm_cohort.R`), applying only two criteria — a qualifying
-diagnosis, and age ≥18 in its calendar year;
-`tests/test_same_as_overall.R` holds the two together. The 1L index is derived
-from claims (`R/steps/00b_lot1_index.R`). Belantamab is read off
+It reads raw CDM and its own code lists, nothing else. MM diagnosis, age and
+demographics use the same rules as the `overall` package
+(`R/steps/00_mm_cohort.R`), applying two criteria — a qualifying diagnosis, and
+age ≥18 in its calendar year — and `tests/test_same_as_overall.R` holds the two
+packages together. The 1L index comes from claims
+(`R/steps/00b_lot1_index.R`), and belantamab is read off
 `cl_mma_codelist.csv`.
 
 ### The study period
@@ -131,30 +131,27 @@ holds *that* to what the run actually writes; read it if the two disagree.
 
 ## The criteria as applied
 
-This section is written from the code, not from the study definition. Where the two
-differ it says so. Compare it against the study definition when either changes.
+Written from the code. Where it differs from the study's own wording it says
+so.
 
 ### Shared with the `overall` package
 
 `R/steps/00_mm_cohort.R` uses the same MM-diagnosis, index-qualification and
 demographics SQL as the `overall` package, and
-`tests/test_same_as_overall.R` holds the two together. Two criteria are applied
-here — the two the inclusion criteria name — and no more.
+`tests/test_same_as_overall.R` holds the two together. Two criteria are applied here, and no more.
 
 | # | criterion | as applied | source |
 |---|---|---|---|
 | 1 | **MM diagnosis** | ≥1 inpatient claim with a **strict** MM code (ICD-9-CM `203.0x` / ICD-10-CM `C90.0x`), **or** ≥2 outpatient claims on separate days **within 90 days**. The two arms do not use the same codes: **strict is required only of the inpatient arm**, and the outpatient pair accepts any code on `mm_dx.csv`. Any position on the claim. Inpatient means a place-of-service or type-of-service line flag, or a valid confinement. Claims are bounded to the study period. | `00_mm_cohort.R` |
 | 2 | **Adult age** | **≥18** in the calendar year of that diagnosis. Applied *after* the earliest qualifying date is chosen, so it can only drop a patient — never move their diagnosis date. A patient who qualifies at 17 and again at 18 is **excluded**. See below. | `00_mm_cohort.R` |
 
-**Why age comes after the ranking.** It used to come before: the qualifying
-dates were filtered by age and the earliest survivor became `MM_DX_DT`. That
-kept the 17-then-18 patient, by moving their diagnosis date to the later one —
-and `MM_DX_DT` is not a demographic here, it gates the 1L index, which is the
-*first* MM therapy claim on or after it. Advancing it lets a later therapy
+**Why age comes after the ranking.** Filtering the qualifying dates by age
+first would keep the 17-then-18 patient by moving their diagnosis to the later
+date. `MM_DX_DT` is not a demographic here — it gates the 1L index, which is
+the first MM therapy claim on or after it — so advancing it would let a later
 claim be recorded as first line for someone whose real first line was at 17.
-`overall` never did this: its age rule is applied to an index date already
-chosen, which drops the patient. This build matches it. The change makes the
-cohort **smaller**, and the difference lands entirely on attrition step 2.
+Applied after the ranking it can only drop the patient. `overall` does the
+same. Attrition step 2 is where the difference lands.
 
 **`overall`'s other four inclusion criteria are deliberately not here** —
 six-month baseline CE, enrolment on the diagnosis date, no MM agent in
@@ -167,13 +164,13 @@ columns appears here.
 
 | # | criterion | as applied | source |
 |---|---|---|---|
-| 3 | **Eligible 1L treatment** | the **first** claim for an MM therapy on or after that patient's MM diagnosis, on or after `LOT1_FROM` (**2017-01-01**) and on or before the study end. Five arms over raw claims — `PROC_CD`, `BILL_PROC_CD` and `NDC` in `medical`, `NDC` in `rx`, `PROC` in `med_procedure` — each matched against `cl_mma_codelist.csv` and only against the code types that source can carry. **Belantamab cannot set it** (the inclusion criteria: an eligible 1L treatment is one "other than belantamab"); steroids cannot either, being dropped from the code list. That date is the NDMM index. | `00b_lot1_index.R` |
+| 3 | **Eligible 1L treatment** | the **first** claim for an MM therapy on or after that patient's MM diagnosis, on or after `LOT1_FROM` (**2017-01-01**) and on or before the study end. Five arms over raw claims — `PROC_CD`, `BILL_PROC_CD` and `NDC` in `medical`, `NDC` in `rx`, `PROC` in `med_procedure` — each matched against `cl_mma_codelist.csv` and only against the code types that source can carry. **Belantamab cannot set it** — an eligible 1L treatment is one other than belantamab; steroids cannot either, being dropped from the code list. That date is the NDMM index. | `00b_lot1_index.R` |
 | 4 | **12-month CE before index** | an enrollment span covering `[index − 365, index − 1]` in full, gaps of **≤30 days** treated as continuous | `01_enrollment.R`, `06_flags.R` |
 | 5 | **Follow-up CE** | a **no-gap** span covering `[index, index + FU_CE_DAYS]`, where `FU_CE_DAYS = 0` — **one day: the index date itself** | `06_flags.R` |
 | 6 | **No MM oncology therapy in the 12-month baseline** | no medical or pharmacy claim for an MM therapy in `[index − 365, index − 1]`, read from raw `medical` and `rx` against `cl_mma_codelist.csv`. **Steroids are excluded** (`DEX`, `DEXA`, `DEXAMETHASONE`, `PRED`, `PREDNISONE`) — a steroid claim alone does not make a patient previously treated. | `03_prior_therapy.R` |
 | 7 | **No other cancer in the 12-month baseline** | excluded on **≥1 inpatient** claim, **or ≥2 outpatient** claims **within 30 days of each other** for the same cancer — **both claims inside** `[index − 365, index − 1]`. Inpatient is established from the confinement table and the claim header, not from a place-of-service code. Plasma-cell tumour groups are the index disease and do not count; what "the same cancer" means is a code-list label unless a map says otherwise — both below. | `04_other_malig.R` |
 | 8 | **No pregnancy** | excluded on ≥1 medical claim with a diagnosis, procedure or revenue code indicating pregnancy or childbirth, anywhere in `[2016-01-01, 2026-03-31]` — the **study period**, not the baseline | `05_pregnancy.R` |
-| 9 | **No belantamab before the 1L index** | any claim for a belantamab code from `cl_mma_codelist.csv`, in `medical`, `rx` or `med_procedure`, dated **strictly before the index**. This is half of the exclusion criteria's belantamab exclusion — the half `lot` cannot see, because the claims it reads start at the index. The other half, belantamab from the index onward, is `lot`'s `no_belantamab` line criterion. Overlaps #6 by design: that one already removes belantamab inside the 12-month baseline, so this one's incremental drop is the patients whose belantamab predates it | `00b_lot1_index.R`, `06_flags.R` |
+| 9 | **No belantamab before the 1L index** | any claim for a belantamab code from `cl_mma_codelist.csv`, in `medical`, `rx` or `med_procedure`, dated **strictly before the index**. This is half of the belantamab exclusion — the half `lot` cannot see, because the claims it reads start at the index. The other half, belantamab from the index onward, is `lot`'s `no_belantamab` line criterion. Overlaps #6 by design: that one already removes belantamab inside the 12-month baseline, so this one's incremental drop is the patients whose belantamab predates it | `00b_lot1_index.R`, `06_flags.R` |
 
 **Four of the nine need a number from a real run before anyone can sign them
 off.** Each is decided and implemented - `DECISIONS.md` is the record - and each
@@ -190,29 +187,20 @@ rather than a rewrite:
 **None of them changes anything until somebody acts.** Every file ships empty
 and every default is unchanged, so the criteria above are what runs today.
 
-**Not applied: clinical-trial participation.** The attrition sheet supplied
-with the study lists it as Step 10, but that sheet is the broader MM cohort's
-funnel — six-month CE, age 18, the MM diagnosis steps — and this cohort has
-four exclusions, with this not among them. If the study team wants it back it
-is a new step, not a toggle.
+**Not applied: clinical-trial participation.** It belongs to the broader MM
+cohort's funnel, not to this one's four exclusions. Putting it back is a new
+step, not a toggle.
 
-**On belantamab being matched by drug and not by class.** the exclusion criteria writes the
-exclusion as "Received belantamab mafodotin (i.e., an ADC) in any LOT" and
-attaches a note:
+**Belantamab is matched by drug, not by class.** The exclusion names belantamab
+and calls it an ADC because it was the only ADC in use for MM at the time. That
+describes the drug; it does not widen the criterion to the class.
 
-> at the time of study belantamab mafodotin was the only ADC in use for MM
-
-So "(i.e., an ADC)" names what the drug is; it does not widen the criterion to
-the class.
-
-**How belantamab is recognised is an assumption this package cannot check.**
-An earlier approach matched `MAP_MED_TYPE LIKE 'BEL%'` in `MAP_STACKED`, a table this
-build no longer reads. Reading `cl_mma_codelist.csv` directly, the same token
-is the medication abbreviation — `NDMM_BELANTAMAB_ABBR`, default **`BELA`**,
-matched as a **whole abbreviation** rather than as a prefix. That is how `lot`
-matches it too: the two packages have to recognise the same drug the same way,
-or a code list carrying more than one `BEL*` spelling would have this build take
-them all and `lot` take only its own.
+**How belantamab is spelled is an assumption this package cannot check.**
+`NDMM_BELANTAMAB_ABBR`, default **`BELA`**, matched as a whole `CL_MED_ABBR`
+rather than as a prefix. `lot` matches it the same way — the two have to
+recognise the same drug identically, or a code list carrying more than one
+`BEL*` spelling would have this build take them all and `lot` take only its
+own.
 
 The production CSV is not visible from here, so `build_ndmm_belantamab_codes()`
 **stops the run** on either failure — if the abbreviation matches no row, or if
@@ -224,9 +212,9 @@ before the first run.**
 
 ### What counts as "another cancer"
 
-**The study definition says nothing about remission.** the exclusion criteria says another cancer:
-≥1 inpatient or ≥2 outpatient codes for the same primary tumour type. No
-states, no exemptions.
+**Remission does not come into it.** The rule is another cancer: ≥1 inpatient
+or ≥2 outpatient codes for the same primary tumour type. No states, no
+exemptions.
 
 The override is not a departure from that criterion — it is what makes it mean
 what it says. `other_malig.csv` is the study's **generic** other-cancer code
@@ -281,10 +269,10 @@ it marked `EXCLUDES` is the open question, named in the log.
 
 ### Which agents may set the 1L index
 
-the inclusion criteria says the eligible treatments are "MM regimens commonly used in the
+The eligible treatments are the MM regimens commonly used in the
 first line setting, **excluding those restricted to later LOTs (see exclusion
-criteria)**", and the exclusion criteria's exclusion criteria name exactly one therapy:
-belantamab. So the study definition restricts nothing else, and neither does this build
+first-line setting, less those restricted to later lines — and the exclusions
+name exactly one therapy: belantamab. So nothing else is restricted, and neither does this build
 — anything on `cl_mma_codelist.csv` that is not belantamab and not a steroid
 can set the index. On the production file that is 25 of 26 agents; see
 `DECISIONS.md` section 3.
@@ -326,7 +314,7 @@ the index disease, with the label that kept it. Four labels now, not five.
 ### Two outpatient claims pair on the ICD category
 
 Criterion 7 Path B is **two outpatient claims within 30 days for the same
-cancer**, and the exclusion criteria says "the same primary tumor type **and/or metastatic
+cancer**, and the rule is "the same primary tumor type **and/or metastatic
 cancer**".
 
 `other_malig.csv` cannot express that through its labels: it carries 1,618
@@ -348,25 +336,18 @@ against the old per-label grain and against pairing on any label at all.
 
 Where the category over-groups: `C44` (skin), `C76` and `C80` (ill-defined and
 unspecified sites) are broad. In each case both claims are still the same broad
-cancer type, which is the unit the study definition names.
+cancer type, which is the unit the rule names.
 
-### Where this departs from the study definition
+### The one place this differs from the written rule
 
-All study definition references are to the current document (*June 16
-2026*), 58 pages. An earlier draft is also in circulation — its own title bar
-reads `OLD DO NOT USE` — and its eligibility text differs. Check the revision
-before reading a criterion off it.
+**Follow-up enrolment — criterion 5.** The written rule asks for three months;
+the study team confirmed **one day** for this cohort. So the cohort is
+**larger** than three months would give, and the difference lands entirely on
+attrition step 5. The window is `NDMM_FU_CE_DAYS = 0`, named in the contract
+rather than written into the SQL. Other cohorts keep three months.
 
-**Follow-up CE — criterion 5** is the one departure. the inclusion criteria asks for three
-months; the study team confirmed **one day** for the 1L cohort. So this build
-produces a **larger** cohort than the source does, and the difference lands
-entirely on attrition step 5. The window is `NDMM_FU_CE_DAYS = 0`, named in the
-contract rather than written into the SQL. The 2L/3L bullet still asks for
-three months and carries no change bar, so those cohorts do not inherit this.
-
-It rests on a request rather than a formal record — the only setting in this
-package that does. `DECISIONS.md` section 1 says what still needs a
-signature.
+It rests on a request rather than a signed record — the only setting here that
+does. `DECISIONS.md` section 1 says what is still needed.
 
 **So the run produces the number the decision should be made against.** Every
 run writes **`<prefix>NDMM_FU_CE_COUNTS`**: the cohort size at 0, 30, 60 and 90
@@ -463,26 +444,26 @@ the wrong day.
 `<prefix>NDMM_ATTRITION`, one row per step, with the count and the percentage
 of the starting population.
 
-The steps follow the study's own order: the inclusion criteria's inclusions, then
-the exclusion criteria's four exclusions as that section lists them, belantamab last.
+The steps follow the study's own order: the inclusions, then the four
+exclusions as they are listed, belantamab last.
 an earlier ordering applied belantamab first and follow-up CE second-to-last; the
 final cohort is the same conjunction either way, but the per-step counts are
 not.
 
-| # | step | study definition |
+| # | step | criterion |
 |---|---|---|
-| 1 | Patients with a qualifying MM diagnosis | the inclusion criteria incl. 1 |
-| 2 | + aged 18 or over at diagnosis | the inclusion criteria incl. 2 |
-| 3 | + eligible 1L treatment on or after `LOT1_FROM` | the inclusion criteria incl. 3 |
-| 4 | + 12-month CE before index | the inclusion criteria incl. 4 |
-| 5 | + CE during follow-up | the inclusion criteria incl. 5 |
-| 6 | + no MM oncology therapy in 12-month baseline | the exclusion criteria, excl. 1 |
-| 7 | + no other cancer in 12-month baseline | the exclusion criteria, excl. 2 |
-| 8 | + no pregnancy in study period | the exclusion criteria, excl. 3 |
-| 9 | + no belantamab in any LOT — **the 1L NDMM cohort** | the exclusion criteria, excl. 4 |
+| 1 | Patients with a qualifying MM diagnosis | inclusion 1 |
+| 2 | + aged 18 or over at diagnosis | inclusion 2 |
+| 3 | + eligible 1L treatment on or after `LOT1_FROM` | inclusion 3 |
+| 4 | + 12-month CE before index | inclusion 4 |
+| 5 | + CE during follow-up | inclusion 5 |
+| 6 | + no MM oncology therapy in 12-month baseline | exclusion 1 |
+| 7 | + no other cancer in 12-month baseline | exclusion 2 |
+| 8 | + no pregnancy in study period | exclusion 3 |
+| 9 | + no belantamab in any LOT — **the 1L NDMM cohort** | exclusion 4 |
 
 **Every step is this build's own.** Nothing arrives pre-filtered, so each row
-of the funnel is a criterion the study definition names and the count beside it is
+of the funnel is a named criterion and the count beside it is
 reproducible from this folder alone.
 
 ### The table
@@ -517,7 +498,7 @@ is `"1e+05"`, which a warehouse reads as a double, and a cohort of exactly
 
 ### Why the funnel stops at nine, and what `lot` still adds
 
-**the exclusion criteria's fourth exclusion is split, because no one package can see all of
+**The belantamab exclusion is split, because no one package can see all of
 it.** It removes a patient who received belantamab "in any LOT" — and unlike the
 three exclusions beside it, that bullet carries no period.
 
@@ -540,7 +521,7 @@ whole study period, since its only job is to say who carries a claim at all.
 And **`<prefix>NDMM_BELANTAMAB_RECONCILE`** lists every cohort member with a
 belantamab claim and its dates, which is the handover.
 
-**the inclusion criteria's "other than belantamab" is a different rule and stays here.**
+**"Other than belantamab" is a different rule and stays here.**
 Belantamab cannot *set* the 1L index date, and the index is what LOT1 is
 anchored on, so that has to be settled before the LOT run. It is enforced by the
 anti-join in `00_lot1_index.R`.
@@ -556,7 +537,7 @@ turns on lives in exactly one of them.
 
 | file | what it defines |
 |---|---|
-| `R/steps/00_mm_cohort.R` | the MM diagnosis, its qualification, and demographics — the two criteria the inclusion criteria inherits |
+| `R/steps/00_mm_cohort.R` | the MM diagnosis, its qualification, and demographics — two criteria |
 | `R/steps/00b_lot1_index.R` | the 1L index date, derived from claims, and the two sensitivity tables beside it |
 | `R/steps/01_enrollment.R` | continuous-enrolment spans, with and without gaps |
 | `R/steps/02_lot1_starts.R` | the 1L starts the funnel counts from |
@@ -573,7 +554,7 @@ holds the order, the contract, the criteria list and the attrition, and
 ### The criteria are one list
 
 `NDMM_CRITERIA` in `R/build_nndm.R` is the cohort definition: one entry per
-criterion, in the order the study definition applies them, each carrying the flag it
+criterion, in the order the study applies them, each carrying the flag it
 tests and the label the attrition prints. Three readers render it —
 `NDMM_PATIDS` ANDs all of it, the funnel walks a prefix of it per row, and the
 two sensitivity tables take all-but-the-one they vary. Nothing writes the
@@ -586,7 +567,7 @@ Five, each deliberate and each recorded:
 
 | change | direction |
 |---|---|
-| follow-up CE is one day, not three months (the inclusion criteria says three; the study team said one) | **larger** cohort |
+| follow-up enrolment is one day, not three months | **larger** cohort |
 | a code list value that normalises to blank no longer matches a claim with no code | **larger** — it can only remove matches that should not have been made |
 | both outpatient claims must fall in the baseline, not just the first | **larger** |
 | outpatient claims pair on a mapped tumour type, not on a code description | **smaller**, and **nothing** until the map is filled in |
@@ -655,7 +636,7 @@ checked against `cfg` alone would not speak for the query that runs.
 
 ### Run choices
 
-Places the study definition is silent or the data has to answer. Each is validated
+Places nothing is settled, or the data has to answer. Each is validated
 against the values it may take and recorded in `NDMM_RUN_METADATA`, and **none
 is pinned to its default** — the review tables exist to be acted on.
 
