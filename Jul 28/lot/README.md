@@ -124,6 +124,17 @@ protocol's §6.1 study period, 2016-01-01 to 2026-03-31, which resolves to the
 this folder has to change. Both dates land in `LOT_RUN_METADATA`, so an output
 says which window and therefore which vintage produced it.
 
+**What the check can and cannot prove.** It proves containment: no patient is
+indexed before the start, none observed past the end. It cannot prove the window
+you passed is the one the cohort was *built* to, because nothing in a cohort
+table records that. A cohort built from `2025q2` passes against a `2026q1`
+window if its patient dates happen to fit, and the run then reads the newer
+cumulative delivery — the same claims plus three quarters, but also any claim
+restated in between. Passing the wrong-but-wider window is therefore possible
+and would not be caught here. What makes it recoverable is that the window used
+is on the run's own record: compare `STUDY_START`/`STUDY_END` in
+`LOT_RUN_METADATA` against the cohort build's, rather than trusting the invocation.
+
 ## Extra criteria on a line
 
 LOT is defined by the rules in `R/steps`. If a study needs to require something
@@ -144,6 +155,30 @@ list(
 Then turn it on with `APPLY_L2_STARTED_ON_MED,TRUE` in `config.csv`. Any value
 other than `TRUE` or `FALSE` stops the build rather than quietly leaving the
 criterion off.
+
+### The shipped criterion is this study's, and it is on
+
+`APPLY_NO_BELANTAMAB` ships `TRUE`, and `no_belantamab` is a `truncate`
+criterion — it removes the whole patient. That is the NNDM protocol's §6.2.1.2
+exclusion, and it is correct for `NDMM_COHORT`. It is **not** automatically
+correct for the parent MM cohort, a sensitivity cohort, or any other study whose
+protocol has no such exclusion, and passing a different cohort, prefix and window
+does not change it: the switch is `APPLY_NO_BELANTAMAB`, and it has to be set
+`FALSE` deliberately.
+
+So every run says what it applied. The log names each criterion, whether it was
+applied, and how many patients fail it — the disabled ones too, since
+`LOT_LONG_ALLFLAGS` computes every criterion regardless:
+
+```
+  APPLIED no_belantamab (truncate): 37 patient(s) fail it - removed
+```
+
+and the same is written to `LINE_CRITERIA_APPLIED` in `LOT_RUN_METADATA` as
+`no_belantamab=on:truncate:37`. Without it, "no patient had belantamab", "the
+criterion was switched off" and "this is not that study's cohort" all produce
+the same `LOT_LONG_FINAL`, and a row-count difference against `LOT_LONG` says
+only that something was removed, not what.
 
 Two tables come out of every run, whether or not any criterion is declared.
 Both are real tables: Spark will not create a persistent view over a temporary
@@ -189,6 +224,28 @@ twice - so `phase_line_criteria` asks the table for its columns and stops on a
 collision. And `lines` above `MAX_LOT` matches no line, so every row passes a
 criterion that never ran; `validate_line_criteria()` takes `MAX_LOT` and
 refuses it.
+
+### `lines = "*"` means every line this build makes, which is `MAX_LOT` of them
+
+`MAX_LOT` is 5, and it is in `CONTRACT` — raising it is a deliberate edit, not a
+config change, because it is part of what a LOT run means. So a criterion over
+`"*"` is asked of lines 1–5 and no further. For `no_belantamab` that leaves a
+narrow gap: a patient whose LOT5 ended because a sixth line started, whose
+belantamab is in that sixth line, and who has none in lines 1–5 nor as LOT5's
+first added med, is not excluded.
+
+The gap is bounded but it was not measured, so every run now counts it:
+
+```
+  MAX_LOT ceiling (5): 12 patient(s) have a LOT5 that ended because a further
+  line started. That line was not built, so any criterion asked of every LOT
+  was not asked of it.
+```
+
+recorded as `N_AT_MAX_LOT_CEILING`. Lines ending in `DEATH` or `STUDY_END` are
+terminal and leave nothing unbuilt, so they are not counted. A zero means "any
+LOT" was literally satisfied for this cohort; a large number means `MAX_LOT`
+should be raised before the result is used.
 
 ## The production code lists
 
