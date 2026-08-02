@@ -15,5 +15,4 @@ TBL_MEMBER_ELIG,member_cont_enrollment,Sex and birth year
 TBL_DOD,dod,Date of death
 OUTPATIENT_WINDOW,90,Two outpatient MM claims within this many days confirm a diagnosis
 MIN_AGE,18,Minimum age in the MM-diagnosis year
-NDMM_BELANTAMAB_SCOPE,study_period,Claims proxy for 'belantamab in any LOT' (study_period or from_index)
 CODELIST_DIR,/mnt/code/codelist,Where the production code lists live
