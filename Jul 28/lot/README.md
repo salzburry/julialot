@@ -46,20 +46,24 @@ packages `DBI`, `odbc` and `glue`, and no file resolves a path outside it.
 ## Run it
 
 ```
-DATABRICKS_PWD=... Rscript build.R <COHORT_TABLE> <prefix_>
+DATABRICKS_PWD=... Rscript build.R <COHORT_TABLE> <prefix_> [<study_start> <study_end>]
 DATABRICKS_PWD=... Rscript build.R MY_COH_FINAL mystudy_
+DATABRICKS_PWD=... Rscript build.R MY_COH_FINAL mystudy_ 2016-01-01 2026-03-31
 ```
 
-Or set `INPUT_COHORT_TABLE` and `OBJECT_PREFIX` instead of passing them.
+Or set `INPUT_COHORT_TABLE`, `OBJECT_PREFIX`, `STUDY_START` and `STUDY_END`
+instead of passing them. The window defaults to `config.csv`; pass it when the
+cohort was built to a different one.
 
 ## Running it for another cohort
 
-Point it at a different table with a different prefix. Nothing in the folder
-changes - it names no cohort of its own.
+Point it at a different table with a different prefix, and at the window that
+cohort was built to. Nothing in the folder changes - it names no cohort of its
+own and pins no study's dates.
 
 ```
-Rscript build.R STUDY_A_FINAL study_a_
-Rscript build.R STUDY_B_FINAL study_b_
+Rscript build.R STUDY_A_FINAL study_a_ 2016-01-01 2026-03-31
+Rscript build.R STUDY_B_FINAL study_b_ 2015-07-01 2025-06-30
 ```
 
 The prefix is what keeps the two apart: LOT's own outputs go through
@@ -100,11 +104,25 @@ on, the read is pinned to one vintage: a cohort whose `ENDDATE` runs past
 MAPs that end early, discontinuations that never happened, and LOT end reasons
 of `STUDY_END` — all wrong, all plausible, none visible in any count.
 
-So `STUDY_START` and `STUDY_END` in `config.csv` are the window this run is
-entitled to see, and a cohort outside them stops the build. Point them at the
-same window the cohort was built to. This matters in practice: the NDMM cohort's
-own `STUDY_END` is 2026-03-31 and this package defaults to 2025-06-30, which is
-a different quarterly vintage — see `nndm/DECISIONS.md` §5.
+So `STUDY_START` and `STUDY_END` are the window this run is entitled to see, and
+a cohort outside them stops the build. They have to be the window the cohort was
+built to.
+
+The window is a **per-run argument**, not a pinned setting. `CONTRACT` fixes what
+a LOT run *means* — induction windows, gap days, transplant rules — and a
+different value there is a different algorithm. The study window is not that: the
+algorithm is the same, the dates are the cohort's, and different cohorts have
+different ones. So it is passed like the cohort table and the prefix:
+
+```
+Rscript build.R MY_COH_FINAL mystudy_ 2016-01-01 2026-03-31
+```
+
+`config.csv` supplies the default when no argument is given — currently the NNDM
+protocol's §6.1 study period, 2016-01-01 to 2026-03-31, which resolves to the
+`2026q1` CDM tables. A cohort built to another window passes its own; nothing in
+this folder has to change. Both dates land in `LOT_RUN_METADATA`, so an output
+says which window and therefore which vintage produced it.
 
 ## Extra criteria on a line
 

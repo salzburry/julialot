@@ -1,8 +1,9 @@
 # Runner for the LOT build. Standalone: one module, pointed at a cohort table.
 #
 # The rules are the same for every cohort. What changes per run is which table
-# is read and which prefix the outputs carry, and the caller supplies both.
-# No cohort is named anywhere in this folder. Everything else is pinned below
+# is read, which prefix the outputs carry, and which study window the run
+# covers - the caller supplies all four. No cohort is named anywhere in this
+# folder, and no study's dates are pinned in it. Everything else is fixed below
 # and checked before the first query.
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
@@ -10,16 +11,18 @@
 # Settings that decide what a LOT run means. A different value here is a
 # different result, so they are checked rather than defaulted. Change a value
 # here and in config.csv together, deliberately.
+#
+# The study window is deliberately NOT here. It has to track the cohort being
+# built, and different cohorts have different windows - the NDMM cohort runs to
+# 2026-03-31, the parent MM cohort to 2025-06-30 - so pinning it would mean
+# editing this file to run the same algorithm against a different study. It is a
+# per-run argument, like the cohort table and the output prefix, validated by
+# pin_study_window() and recorded in LOT_RUN_METADATA.
 CONTRACT <- list(
   catalog                     = "hive_metastore",
   cdm_schema                  = "clnprw_optum",
   codelist_dir                = "/mnt/code/codelist",
   use_quarterly_tables        = TRUE,
-  # The study window. study_end picks the quarterly CDM tables, so a different
-  # date is different source data for every read; study_start is the other end
-  # of the same window and is what check_cohort_window() holds the cohort to.
-  study_start                 = "2016-01-01",
-  study_end                   = "2025-06-30",
   censor_at_disenrollment     = FALSE,
   induction_window_days       = 60L,
   lot_n_induction_window_days = 30L,
@@ -181,6 +184,48 @@ pin_cohort <- function(cfg, cohort_table, prefix) {
   cfg
 }
 
+# The study window this run covers. Passed rather than pinned: the algorithm is
+# the same for every study, but the dates are the cohort's, and a run against a
+# cohort with a different window has to be possible without editing this folder.
+#
+# study_end also selects the quarterly CDM tables, so it is not merely a label -
+# a different value is different source data for every read. That is why it is
+# checked here as strictly as the settings that are pinned, rather than taken on
+# trust because it arrived as an argument: check_settings() only sees the
+# environment, and these can come from the command line instead.
+pin_study_window <- function(cfg, study_start, study_end) {
+  start <- trimws(as.character(study_start %||% ""))
+  end   <- trimws(as.character(study_end   %||% ""))
+  if (!nzchar(start)) start <- cfg$study_start %||% ""
+  if (!nzchar(end))   end   <- cfg$study_end   %||% ""
+  bad <- character(0)
+  if (!nzchar(start) || !nzchar(end))
+    stop("LOT needs a study window.\n",
+         "  Rscript build.R <COHORT_TABLE> <prefix_> <study_start> <study_end>\n",
+         "  or set STUDY_START and STUDY_END (config.csv supplies both).",
+         call. = FALSE)
+  # tryCatch because as.Date errors, rather than returning NA, on a string
+  # matching none of its standard formats - "2026-13-31" is ISO-shaped and not a
+  # date, and without this it stops with R's own message instead of one naming
+  # the setting.
+  real_date <- function(x)
+    !is.na(tryCatch(suppressWarnings(as.Date(x)), error = function(e) NA))
+  for (p in list(c("study_start", start), c("study_end", end)))
+    if (!grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", p[2]) || !real_date(p[2]))
+      bad <- c(bad, paste0(p[1], "='", p[2], "' (want a real date, YYYY-MM-DD)"))
+  # String comparison is the date comparison for ISO dates, and both have just
+  # been checked to be ISO.
+  if (!length(bad) && start >= end)
+    bad <- c(bad, paste0("study_start='", start, "' is not before study_end='",
+                         end, "'"))
+  if (length(bad))
+    stop("The study window would not build a LOT:\n  ",
+         paste(bad, collapse = "\n  "), call. = FALSE)
+  cfg$study_start <- start
+  cfg$study_end   <- end
+  cfg
+}
+
 # A cohort table missing a column LOT needs would fail deep into the build, so
 # ask the table up front.
 check_cohort_input <- function(con, tbl) {
@@ -289,6 +334,11 @@ check_lot_contract <- function(cfg) {
          call. = FALSE)
   if (!nzchar(cfg$input_cohort_table))
     stop("No cohort table to read.", call. = FALSE)
+  # Not in CONTRACT, so say so here rather than letting an empty window reach
+  # get_quarter_suffix() and fail as an unparseable date.
+  if (!nzchar(cfg$study_start %||% "") || !nzchar(cfg$study_end %||% ""))
+    stop("No study window. LOT reads the quarterly CDM tables that study_end ",
+         "selects, so it cannot start without one.", call. = FALSE)
   if (!isTRUE(cfg$persist_to_schema))
     stop("PERSIST_TO_SCHEMA is FALSE, so nothing would be written. ",
          "Set it TRUE to build LOT.", call. = FALSE)
@@ -308,10 +358,14 @@ load_lot_modules <- function(here) {
 }
 
 # The run. Phases in order, each one leaving temp views the next reads.
-build_lot <- function(here, cohort_table, prefix) {
+# study_start/study_end default to whatever config.csv put in the environment,
+# so the common case passes two arguments and the cross-study case passes four.
+build_lot <- function(here, cohort_table, prefix,
+                      study_start = NULL, study_end = NULL) {
   check_settings()
   cfg <- pin_output_schema(cfg_defaults)
   cfg <- pin_cohort(cfg, cohort_table, prefix)
+  cfg <- pin_study_window(cfg, study_start, study_end)
   cfg$code_md5 <- code_fingerprint(here)
   check_lot_contract(cfg)
   # Every helper reads the config, so publish it before anything runs.
@@ -327,6 +381,9 @@ build_lot <- function(here, cohort_table, prefix) {
   log_msg("  Work Schema:       ", cfg$work_schema)
   log_msg("  Input Cohort:      ", cfg$input_cohort_table)
   log_msg("  Output Prefix:     ", cfg$object_prefix)
+  log_msg("  Study Window:      ", cfg$study_start, " .. ", cfg$study_end,
+          if (isTRUE(cfg$use_quarterly_tables))
+            paste0(" (", get_quarter_suffix(cfg$study_end), " CDM tables)") else "")
   log_msg("  Induction Window (LOT1):   ", cfg$induction_window_days, " days")
   log_msg("  Induction Window (LOT2-5): ", cfg$lot_n_induction_window_days, " days")
   log_msg("  Discon Gap (per-drug, MAP-level): ", cfg$map_discon_gap_days, " days")
@@ -888,12 +945,17 @@ contract_settings <- function() {
                               character(1))), collapse = "|")
 }
 
+# STUDY_START and STUDY_END are columns of their own because they are no longer
+# in CONTRACT, so CONTRACT_SETTINGS does not carry them - and the window decides
+# which quarterly tables the run read, which is the first thing anyone comparing
+# two runs needs to know.
 FINAL_METADATA_COLS <- c(N_LOT_LONG_ROWS = "BIGINT",
                          N_LOT_LONG_PATIENTS = "BIGINT",
                          LOT_LONG_BY_LINE = "STRING",
                          N_LOT_FINAL_ROWS = "BIGINT",
                          N_LOT_FINAL_PATIENTS = "BIGINT",
-                         CODE_MD5 = "STRING", CONTRACT_SETTINGS = "STRING")
+                         CODE_MD5 = "STRING", CONTRACT_SETTINGS = "STRING",
+                         STUDY_START = "STRING", STUDY_END = "STRING")
 
 record_final_counts <- function(con, cfg, counts, final) {
   tbl <- lot_out("LOT_RUN_METADATA")
@@ -928,7 +990,9 @@ record_final_counts <- function(con, cfg, counts, final) {
            N_LOT_FINAL_ROWS = {sql_count(final$n_rows)},
            N_LOT_FINAL_PATIENTS = {sql_count(final$n_patients)},
            CODE_MD5 = {sql_text(cfg$code_md5)},
-           CONTRACT_SETTINGS = {sql_text(contract_settings())}
+           CONTRACT_SETTINGS = {sql_text(contract_settings())},
+           STUDY_START = {sql_text(cfg$study_start)},
+           STUDY_END = {sql_text(cfg$study_end)}
      WHERE RUN_ID = '{run_id}'"))
   log_msg("Recorded LOT_LONG: ", counts$n_rows, " lines for ",
           counts$n_patients, " patients (", dist, "); LOT_LONG_FINAL: ",

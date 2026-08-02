@@ -111,7 +111,9 @@ criterion and stops if it matches no row, which is the same shape as
 - The LOT run processes slightly more patients. Belantamab is a later-line ADC,
   so in a 1L newly-diagnosed cohort this should be very few.
 - **The two packages must now agree on the study window and on how many lines
-  are built.** Neither is a code question, and both are open — see §5.
+  are built.** The window is settled — `lot` takes it as a run argument and
+  defaults to this protocol's, so both read `2026q1`. `MAX_LOT` is still a
+  stated bound. See §5.
 
 **Recorded by:** the study team, 2026-08-02.
 
@@ -273,23 +275,42 @@ discontinue where the patient was still being treated, and the end reason comes
 out `STUDY_END`. Nothing errors and no count looks wrong.
 
 **Made fatal rather than silent.** `check_cohort_window()` in `lot` reads the
-cohort's actual `INDEX_DATE` / `ENDDATE` range and stops if it falls outside
-`STUDY_START` .. `STUDY_END`, naming the count, the date and the CDM vintage it
-would have read. `lot/config.csv` now carries both ends of the window, and
-`check_settings()` rejects one that runs backwards. Pointing the current `nndm`
-cohort at the current `lot` config therefore fails at preflight instead of
-producing a plausible wrong answer.
+cohort's actual `INDEX_DATE` / `ENDDATE` range and stops if it falls outside the
+window the run was given, naming the count, the date and the CDM vintage it
+would have read. `check_settings()` rejects a window that runs backwards, and
+`pin_study_window()` rejects one whose dates will not parse. A mismatched pair
+now fails at preflight instead of producing a plausible wrong answer.
 
-Which window to use is still a study decision — the packages are parameterised
-and either is a legitimate configuration. It needs settling before the
-production run, one of:
+**Decided: `lot` follows the NNDM protocol, and the window is a run argument.**
+`lot/config.csv` defaults to §6.1's study period — `STUDY_START=2016-01-01`,
+`STUDY_END=2026-03-31` — which is the same window `nndm` uses and resolves to the
+same `2026q1` CDM tables. The NDMM cohort and the LOT build over it therefore
+see one vintage, and the belantamab exclusion is evaluated over the whole of the
+cohort's window.
 
-- run all three on `2025q2` (consistent, but drops nine months of follow-up the
-  protocol's §6.1 window includes), or
-- run all three on `2026q1` (the protocol's window; needs `lot` re-validated
-  against the newer vintage), or
-- keep them apart deliberately and state in the SAP that the belantamab
-  exclusion is evaluated only through 2025-06-30.
+The window is no longer in `CONTRACT`. `CONTRACT` fixes what a LOT run *means* —
+induction windows, gap days, transplant rules — and a different value there is a
+different algorithm. The study window is not that: the algorithm is unchanged and
+the dates belong to the cohort. So it is passed like the cohort table and the
+prefix:
+
+```
+Rscript build.R NDMM_COHORT ndmm_ 2016-01-01 2026-03-31
+Rscript build.R MM_COH_FINAL mm_   2015-07-01 2025-06-30
+```
+
+which is what lets the same algorithm run over the parent MM cohort — frozen at
+2015-07-01 .. 2025-06-30 — without editing the package. Both dates are written to
+`LOT_RUN_METADATA`, so an output says which window and therefore which vintage
+produced it.
+
+**What this still needs before the production run:** `lot` has only ever been
+validated against `2025q2`. Reading `2026q1` is reading tables nobody in this
+repo has run it over. The quarterly tables are cumulative, so this is a wider
+read rather than a different one, but a claim restated between vintages would
+change a line. Confirm `t_medical_2026q1`, `t_rx_2026q1`, `t_med_procedure_2026q1`
+and `t_med_diagnosis_2026q1` exist and that the row counts move the way a
+three-quarter extension should.
 
 **"Any LOT" means the lines the LOT build produces, which is `MAX_LOT` of
 them.** `lot` builds up to `MAX_LOT` lines per patient (5 by default); the
