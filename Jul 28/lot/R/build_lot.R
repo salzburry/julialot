@@ -394,7 +394,8 @@ build_lot <- function(here, cohort_table, prefix,
 
   # LOT1 is written before LOT_LONG, so track partial runs.
   # Cleared first, or a second run in one session inherits the first's.
-  options(lot_waivers_applied = character(0), lot_codelist_md5 = list())
+  options(lot_waivers_applied = character(0), lot_codelist_md5 = list(),
+          lot_line_criteria = "", lot_max_lot_ceiling = NA_integer_)
   check_no_active_run(con, cfg)
   write_build_status(con, cfg, "started")
   clear_run_rows(con, cfg)
@@ -955,7 +956,9 @@ FINAL_METADATA_COLS <- c(N_LOT_LONG_ROWS = "BIGINT",
                          N_LOT_FINAL_ROWS = "BIGINT",
                          N_LOT_FINAL_PATIENTS = "BIGINT",
                          CODE_MD5 = "STRING", CONTRACT_SETTINGS = "STRING",
-                         STUDY_START = "STRING", STUDY_END = "STRING")
+                         STUDY_START = "STRING", STUDY_END = "STRING",
+                         LINE_CRITERIA_APPLIED = "STRING",
+                         N_AT_MAX_LOT_CEILING = "BIGINT")
 
 record_final_counts <- function(con, cfg, counts, final) {
   tbl <- lot_out("LOT_RUN_METADATA")
@@ -992,7 +995,9 @@ record_final_counts <- function(con, cfg, counts, final) {
            CODE_MD5 = {sql_text(cfg$code_md5)},
            CONTRACT_SETTINGS = {sql_text(contract_settings())},
            STUDY_START = {sql_text(cfg$study_start)},
-           STUDY_END = {sql_text(cfg$study_end)}
+           STUDY_END = {sql_text(cfg$study_end)},
+           LINE_CRITERIA_APPLIED = {sql_text(getOption('lot_line_criteria', ''))},
+           N_AT_MAX_LOT_CEILING = {sql_count(getOption('lot_max_lot_ceiling', NA))}
      WHERE RUN_ID = '{run_id}'"))
   log_msg("Recorded LOT_LONG: ", counts$n_rows, " lines for ",
           counts$n_patients, " patients (", dist, "); LOT_LONG_FINAL: ",
@@ -1116,6 +1121,100 @@ check_belantamab_abbr <- function(con, cfg) {
   invisible(n)
 }
 
+# Which line criteria this run applied, and what each one costs.
+#
+# Every other consequential input to a run is recorded: the code lists and their
+# hashes, the waivers requested and the waivers that actually fired, the
+# contract, the study window. The line criteria were not - and they are the only
+# thing in this package that removes patients. A set of outputs could not say
+# whether the belantamab exclusion had been applied to it, and "no patient had
+# belantamab", "the criterion was switched off" and "this is not that study's
+# cohort" all produce the same LOT_LONG_FINAL.
+#
+# That matters most for the case this package advertises: the same algorithm run
+# over another cohort. APPLY_NO_BELANTAMAB ships TRUE because the NDMM protocol
+# needs it, and a run for a cohort with no such exclusion would apply it anyway
+# unless the operator knew to turn it off. It still would - this does not change
+# what runs - but the outputs now say so, and the number of patients it costs is
+# on the record rather than inferable only from a row-count difference.
+#
+# LOT_LONG_ALLFLAGS carries every criterion as a column whether it is enabled or
+# not, so the disabled ones are counted too: that is what makes leaving one off
+# a decision someone can review rather than a silence.
+# One integer or NA, whatever came back. These two are diagnostics: a count that
+# cannot be read is worth reporting as unknown, never worth failing a build that
+# is otherwise sound. A bare d[[col]] on a frame without that column yields
+# integer(0), and if (is.na(integer(0))) is an error, not FALSE.
+.one_int <- function(d, col) {
+  if (is.null(d) || !is.data.frame(d) || !(col %in% names(d))) return(NA_integer_)
+  v <- suppressWarnings(as.integer(d[[col]]))
+  if (length(v) != 1L) NA_integer_ else v
+}
+
+report_line_criteria <- function(con, cfg, tbl = "lot_long_allflags") {
+  crit <- lapply(LINE_CRITERIA, normalize_criterion)
+  if (!length(crit)) {
+    log_msg("Line criteria: none declared")
+    options(lot_line_criteria = "")
+    return(invisible(""))
+  }
+  # count(DISTINCT ... ) over a CASE, so a patient failing on several lines
+  # counts once - the criterion removes patients, so patients is the unit.
+  sel <- paste(vapply(crit, function(c_i)
+    paste0("count(DISTINCT CASE WHEN ", c_i$flag, " = 0 THEN PATID END) AS ",
+           c_i$flag), character(1)), collapse = ", ")
+  n <- tryCatch(db_q(con, glue("SELECT {sel} FROM {tbl}")),
+                error = function(e) NULL)
+  parts <- character(0)
+  for (c_i in crit) {
+    on  <- criterion_enabled(c_i)
+    hit <- .one_int(n, c_i$flag)
+    log_msg("  ", if (on) "APPLIED " else "off     ", c_i$name,
+            " (", c_i$on_fail, "): ",
+            if (is.na(hit)) "count unavailable" else paste0(hit, " patient(s) fail it"),
+            if (on && identical(c_i$on_fail, "truncate")) " - removed" else "")
+    parts <- c(parts, paste0(c_i$name, "=", if (on) "on" else "off", ":",
+                             c_i$on_fail, ":", if (is.na(hit)) "NA" else hit))
+  }
+  applied <- paste(parts, collapse = "|")
+  options(lot_line_criteria = applied)
+  invisible(applied)
+}
+
+# "Any LOT" means the lines this build constructs, and it constructs max_lot of
+# them. A patient whose highest built line ended BECAUSE a new one started -
+# MED_ADD, CART_INIT or a transplant - has a line the run never built, so a
+# criterion asked of "every LOT" was not asked of that line. DEATH and STUDY_END
+# are terminal and leave nothing unbuilt.
+#
+# The bound is a design decision and stays one; what was missing is its size.
+# Counted rather than assumed: an exclusion that removes patients deserves a
+# number, not a caveat, and nobody could previously say whether the ceiling bit
+# for three patients or three thousand.
+MAX_LOT_TERMINAL_REASONS <- c("DEATH", "STUDY_END")
+
+report_max_lot_ceiling <- function(con, cfg) {
+  reasons <- paste0("'", MAX_LOT_TERMINAL_REASONS, "'", collapse = ", ")
+  n <- .one_int(tryCatch(db_q(con, glue("
+    SELECT count(DISTINCT PATID) AS n FROM {lot_out('LOT_LONG')}
+    WHERE LOT_NUM = {cfg$max_lot}
+      AND LOT_BASE_END_REASON NOT IN ({reasons})")),
+    error = function(e) NULL), "n")
+  if (is.na(n)) {
+    log_msg("  MAX_LOT ceiling: could not be counted")
+  } else if (n == 0L) {
+    log_msg("  MAX_LOT ceiling (", cfg$max_lot, "): no patient has a line ",
+            "beyond it, so 'any LOT' criteria saw every line")
+  } else {
+    log_msg("  MAX_LOT ceiling (", cfg$max_lot, "): ", n, " patient(s) have a ",
+            "LOT", cfg$max_lot, " that ended because a further line started. ",
+            "That line was not built, so any criterion asked of every LOT was ",
+            "not asked of it.")
+  }
+  options(lot_max_lot_ceiling = n)
+  invisible(n)
+}
+
 phase_line_criteria <- function(con, cfg) {
   # A flag naming a column LOT_LONG already has does not fail: the generated
   # SQL is SELECT *, <expr> AS <flag>, so the result carries the name twice and
@@ -1135,6 +1234,10 @@ phase_line_criteria <- function(con, cfg) {
   check_belantamab_abbr(con, cfg)
   run_step(con, "L40_lot_long_allflags",
            line_criteria_flags_sql(cfg, "lot_long", "lot_long_allflags"))
+  # Before the truncate: allflags still has every line, so the counts are of
+  # patients the criteria catch rather than of the ones that survived them.
+  report_line_criteria(con, cfg)
+  report_max_lot_ceiling(con, cfg)
   run_step(con, "L41_lot_long_final",
            line_criteria_final_sql(cfg, "lot_long_allflags", "lot_long_final"))
   # Persisted, not views: both are built from temporary views, and Spark

@@ -313,12 +313,36 @@ and `t_med_diagnosis_2026q1` exist and that the row counts move the way a
 three-quarter extension should.
 
 **"Any LOT" means the lines the LOT build produces, which is `MAX_LOT` of
-them.** `lot` builds up to `MAX_LOT` lines per patient (5 by default); the
-criterion is applied across all of them. A patient whose only belantamab
-exposure is in a sixth line is not excluded. In a 1L newly-diagnosed cohort
-followed from index this is a narrow gap, and raising `MAX_LOT` costs run time
-on every patient — so it is a bound to state, not silently a rule. Also a
-configuration decision rather than a defect.
+them.** `lot` builds up to `MAX_LOT` lines per patient (5, and pinned in
+`CONTRACT`, so raising it is a deliberate edit); the criterion is applied across
+all of them. The gap is narrower than "a sixth line is not checked": the
+criterion reads `LOT_BASE_MEDS` **and** `LOT_BASE_1ST_ADD_MED`, so belantamab
+that ends LOT5 by starting a sixth line is caught as LOT5's first added med.
+What is left uncaught is a patient where some *other* agent is LOT5's first
+addition, belantamab appears only in the unbuilt sixth line or beyond, and
+lines 1–5 carry none.
+
+This remains a design bound rather than a defect — raising `MAX_LOT` costs run
+time on every patient, and in a 1L newly-diagnosed cohort followed from index
+few patients reach five lines at all. **But the bound was unmeasured**, which
+was a defect: nobody could say whether it bit for three patients or three
+thousand. `report_max_lot_ceiling()` now counts patients whose LOT5 ended
+because a further line started — `MED_ADD`, `CART_INIT` or a transplant, since
+`DEATH` and `STUDY_END` leave nothing unbuilt — logs it and records it as
+`N_AT_MAX_LOT_CEILING`. Read it on the production run: zero means "any LOT" was
+literally satisfied and this entry is moot; a large number means `MAX_LOT`
+should be raised before the result is used.
+
+**The shipped line criterion is this study's, and it is on by default.**
+`APPLY_NO_BELANTAMAB=TRUE` in `lot/config.csv` is right for `NDMM_COHORT` and
+wrong for any cohort whose protocol has no such exclusion — and passing a
+different cohort, prefix and window does not change it. That default is a study
+decision and stays; what was a defect is that nothing recorded it.
+`report_line_criteria()` now logs and records every criterion, applied or not,
+with the number of patients it catches (`LINE_CRITERIA_APPLIED`, e.g.
+`no_belantamab=on:truncate:37`). Without it, "no patient had belantamab", "the
+criterion was switched off" and "this is not that study's cohort" all produced
+the same `LOT_LONG_FINAL`.
 
 **Annex 2 is cited both ways.** §6.2.1.1 says "For a full list of
 eligible/expected MM therapies, see Annex 2"; §6.2.2 says "Annex 2 contains an

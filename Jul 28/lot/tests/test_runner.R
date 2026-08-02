@@ -389,6 +389,69 @@ ok(!is.null(msg) && grepl("above MAX_LOT", msg, fixed = TRUE),
 ok(is.null(drive_plc(list(modifyList(CRIT[[1]], list(lines = 5L))),
                      cfg = list(max_lot = 5L))),
    "...and one aimed at the highest line is fine")
+
+cat("\n-- and the run records which criteria it applied, and what they cost --\n")
+# Driven through phase_line_criteria, not called directly: a reporter nothing
+# invokes records nothing, which is the state this replaced.
+options(lot_line_criteria = NULL, lot_max_lot_ceiling = NULL)
+invisible(drive_plc(CRIT))
+ok(identical(getOption("lot_line_criteria"), "t_crit=on:truncate:NA"),
+   "phase_line_criteria reports the criteria itself")
+ok(!is.null(getOption("lot_max_lot_ceiling")),
+   "...and the ceiling, so neither depends on the caller remembering to ask")
+# The only thing in this package that removes patients, and nothing recorded it.
+# "No patient had belantamab", "the criterion was off" and "this is not that
+# study's cohort" all produce the same LOT_LONG_FINAL, so a set of outputs could
+# not say which of the three it was.
+assign("db_q", function(con, sql)
+  if (grepl("DESCRIBE", sql)) data.frame(col_name = LL_COLS)
+  else data.frame(T_FLAG = 37L, n = 4L), envir = pe)
+assign("LINE_CRITERIA", CRIT, envir = pe)
+Sys.setenv(APPLY_T_CRIT = "TRUE")
+got <- pe$report_line_criteria(NULL, list(max_lot = 5L))
+ok(identical(got, "t_crit=on:truncate:37"),
+   paste0("an applied criterion is recorded with its mode and its cost (", got, ")"))
+Sys.setenv(APPLY_T_CRIT = "FALSE")
+got <- pe$report_line_criteria(NULL, list(max_lot = 5L))
+ok(identical(got, "t_crit=off:truncate:37"),
+   paste0("a criterion left off is recorded too, with what it would have cost (",
+          got, ")"))
+Sys.setenv(APPLY_T_CRIT = "TRUE")
+ok(identical(getOption("lot_line_criteria"), "t_crit=on:truncate:37") ||
+     identical({pe$report_line_criteria(NULL, list(max_lot = 5L))
+                getOption("lot_line_criteria")}, "t_crit=on:truncate:37"),
+   "and it reaches the option record_final_counts writes from")
+# A count that cannot be read is unknown, never a reason to fail a build that is
+# otherwise sound. A bare d[[col]] on a frame without the column gives
+# integer(0), and if (is.na(integer(0))) is an error rather than FALSE - which
+# would have taken the whole run down over a diagnostic.
+assign("db_q", function(con, sql) stop("no such table"), envir = pe)
+got <- tryCatch(pe$report_line_criteria(NULL, list(max_lot = 5L)),
+                error = function(e) paste("STOPPED:", conditionMessage(e)))
+ok(identical(got, "t_crit=on:truncate:NA"),
+   paste0("a count that cannot be read is reported unknown, not fatal (", got, ")"))
+assign("db_q", function(con, sql) data.frame(something_else = 1L), envir = pe)
+ok(identical(tryCatch(pe$report_line_criteria(NULL, list(max_lot = 5L)),
+                      error = function(e) "STOPPED"), "t_crit=on:truncate:NA"),
+   "...and so is an answer that does not carry the column")
+
+cat("\n-- and how far the MAX_LOT ceiling bit --\n")
+# "Any LOT" means the lines this build constructs. A LOT5 that ended because a
+# further line started has a line the run never built - so the criterion was not
+# asked of it. The bound stays; what was missing is its size.
+assign("db_q", function(con, sql) { PSQL <<- c(PSQL, sql); data.frame(n = 12L) },
+       envir = pe)
+PSQL <- character(0)
+ok(identical(pe$report_max_lot_ceiling(NULL, list(max_lot = 5L)), 12L),
+   "patients with a line beyond the ceiling are counted")
+ok(any(grepl("LOT_NUM = 5", PSQL, fixed = TRUE)) &&
+     any(grepl("NOT IN ('DEATH', 'STUDY_END')", PSQL, fixed = TRUE)),
+   "asked at the configured ceiling, and only of lines a further one followed")
+assign("db_q", function(con, sql) stop("no table"), envir = pe)
+ok(is.na(tryCatch(pe$report_max_lot_ceiling(NULL, list(max_lot = 5L)),
+                  error = function(e) "STOPPED")),
+   "and a ceiling that cannot be counted is unknown, not fatal")
+
 if (is.na(old_env)) Sys.unsetenv("APPLY_T_CRIT") else Sys.setenv(APPLY_T_CRIT = old_env)
 
 cat("\n-- a bad code list stops the build, it does not warn and continue --\n")
