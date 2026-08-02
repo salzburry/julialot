@@ -102,6 +102,15 @@ resolve_owner_run <- function(con, inputs, have, cfg) {
       "SELECT 1 FROM ", inputs$run_meta, " WHERE RUN_ID = '", rid,
       "' AND N_LOT_FINAL_ROWS IS NOT NULL"))) > 0, error = function(e) FALSE))
 
+  # Which cohort run LOT read. Recorded by lot at the moment it checked the
+  # cohort build, so it is a fact about this LOT run rather than a guess from
+  # timestamps. NA on an older lot that did not record it.
+  cohort_of <- function(rid) tryCatch({
+    d <- db_q(con, paste0("SELECT COHORT_RUN_ID FROM ", inputs$run_meta,
+                          " WHERE RUN_ID = '", rid, "'"))
+    if (!nrow(d)) NA_character_ else as.character(d[[1]][1])
+  }, error = function(e) NA_character_)
+
   if (isTRUE(have[["build_st"]])) {
     d <- tryCatch(db_q(con, paste0(
       "SELECT RUN_ID, STATE, UPDATED_AT FROM ", inputs$build_st,
@@ -119,7 +128,8 @@ resolve_owner_run <- function(con, inputs, have, cfg) {
                ". Those two are written seconds apart at the end of the same ",
                "build, so one of them has been edited or partly restored. ",
                "Nothing here can say what produced these tables.", call. = FALSE)
-        return(list(run_id = rid, ts = d$UPDATED_AT[1], exact = TRUE))
+        return(list(run_id = rid, ts = d$UPDATED_AT[1], exact = TRUE,
+                    cohort_run = cohort_of(rid)))
       }
       # Not complete. The tables on disk may be this run's, and nothing here
       # can tell. Stop, unless the operator says they know it failed early.
@@ -146,6 +156,9 @@ resolve_owner_run <- function(con, inputs, have, cfg) {
     " WHERE N_LOT_FINAL_ROWS IS NOT NULL ORDER BY RUN_TIMESTAMP DESC LIMIT 1")),
     error = function(e) NULL)
   if (is.null(d) || !nrow(d))
-    return(list(run_id = NA_character_, ts = NA, exact = FALSE))
-  list(run_id = as.character(d$RUN_ID[1]), ts = d$RUN_TIMESTAMP[1], exact = FALSE)
+    return(list(run_id = NA_character_, ts = NA, exact = FALSE,
+                cohort_run = NA_character_))
+  rid <- as.character(d$RUN_ID[1])
+  list(run_id = rid, ts = d$RUN_TIMESTAMP[1], exact = FALSE,
+       cohort_run = cohort_of(rid))
 }

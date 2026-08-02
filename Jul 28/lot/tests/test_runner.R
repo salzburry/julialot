@@ -1379,7 +1379,11 @@ NOT_PINNED <- c("persist_to_schema",   # check_lot_contract requires it TRUE
                 # The study window is the cohort's, not the algorithm's, so it
                 # is a per-run argument. pin_study_window() validates it and
                 # check_lot_contract() still refuses an empty one.
-                "study_start", "study_end")
+                "study_start", "study_end",
+                # Whatever the cohort build calls its status table. Empty means
+                # try the usual names, so pinning it would tie this algorithm
+                # to one cohort build's naming.
+                "cohort_status_table")
 keys <- unname(ENV2CFG[intersect(cnames, names(ENV2CFG))])
 loose <- setdiff(keys, c(names(CONTRACT), NOT_PINNED))
 ok(length(loose) == 0,
@@ -1516,5 +1520,48 @@ de$db_replace(NULL, "DEL", "INS")
 ok(identical(RAN, c("DEL", "INS", "DEL", "INS")),
    "and a lost answer to the INSERT re-runs the DELETE, so the rows land once")
 
+
+cat("\n-- LOT will not build on a cohort whose own build did not finish --\n")
+# Both cohort builds publish the physical cohort table BEFORE they are marked
+# complete - they validate it, write attrition and record metadata afterwards.
+# So a failed cohort build leaves a readable, well-formed table that passes
+# every shape check below it, because those ask whether the table looks right,
+# not whether anyone stood behind it.
+src <- readLines(file.path(ROOT, "R", "build_lot.R"), warn = FALSE)
+ok(any(grepl("check_cohort_build", src, fixed = TRUE)),
+   "the cohort's build status is checked, not just the cohort's shape")
+bodyf <- function(nm) {
+  i <- grep(paste0("^", nm, " <- function"), src)
+  if (!length(i)) return(character(0))
+  j <- grep("^}", src); src[i[1]:min(j[j > i[1]])]
+}
+cb <- bodyf("check_cohort_build")
+ok(any(grepl('identical\\(state, "complete"\\)', cb)),
+   "...and only 'complete' is accepted")
+ok(any(grepl("LOT_IGNORE_COHORT_STATE", cb, fixed = TRUE)),
+   "...with one named override, the way the other run-state guards have one")
+ok(any(grepl("COHORT_RUN_ID", src, fixed = TRUE)),
+   "the cohort run id is recorded, so the lines can be tied to their cohort")
+# Before the cohort is pinned or read, not after.
+run <- bodyf("build_lot_run")
+if (!length(run)) run <- src
+ib <- grep("check_cohort_build", run)[1]
+ip <- grep("phase_patient_input|materialize_cohort_input", run)[1]
+ok(!is.na(ib) && !is.na(ip) && ib < ip,
+   "...checked before anything is pinned or built from it")
+
+cat("\n-- a run's own metadata rows are cleared, or the run stops --\n")
+# A re-run keeps its run id, so rows an earlier attempt left under it would be
+# read as this run's. A missing table is the first run and fine; a permission
+# or a lock is not, and swallowing it leaves stale metadata looking current.
+cr <- bodyf("clear_run_rows")
+ok(!any(grepl("try\\(db_exec", cr)),
+   "a failed delete is not swallowed by try()")
+ok(any(grepl("TABLE_OR_VIEW_NOT_FOUND", cr, fixed = TRUE)),
+   "...a table that does not exist yet is still fine")
+ok(any(grepl("^\\s*stop\\(", cr)),
+   "...and anything else stops the run")
+ok(sum(grepl("bad <- c\\(bad", cr)) >= 1 && any(grepl("collapse", cr)),
+   "...naming every table it could not clear, not just the first")
 
 report()

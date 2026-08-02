@@ -430,16 +430,36 @@ amb <- local({
 ok(!length(amb), if (length(amb)) paste("layouts overlap:", paste(amb, collapse = "; "))
                  else paste0("no layout's columns contain another's, so detection ",
                              "cannot pick by registry order (", length(ATTRITION_LAYOUTS), ")"))
-# Nothing keys a cohort run to a LOT run - they share a prefix, not a run id.
-# But a funnel recorded AFTER the LOT run started cannot be the funnel of the
-# cohort LOT read, and that much is decidable.
-own <- list(run_id = "run-a", ts = "2026-01-02 10:00:00", exact = TRUE)
-s <- lay(NDMM_COLS, own, stamp = "2026-01-03 10:00:00")
-ok(grepl("RECORDED AFTER THE LOT RUN", s$label, fixed = TRUE),
-   "a funnel newer than the LOT run below it is called out on the panel")
-s <- lay(NDMM_COLS, own, stamp = "2026-01-01 10:00:00")
-ok(!grepl("RECORDED AFTER", s$label, fixed = TRUE),
-   "...and one recorded before it is not - that is all the timestamps can say")
+# lot records COHORT_RUN_ID - the cohort build it verified before pinning its
+# input - so the funnel can be checked against it exactly. Timestamps could not
+# do this: the only LOT time available is when the run FINISHED, and a cohort
+# rebuilt while LOT was still running is newer than the cohort LOT read but
+# older than that, so a timestamp test would pass it.
+lay2 <- function(cols, owner, funnel_run) {
+  stub(function(con, sql)
+    if (grepl("^DESCRIBE", trimws(sql))) data.frame(col_name = cols)
+    else data.frame(RUN_ID = funnel_run))
+  asec(resolve_attrition(DASHBOARD_SECTIONS, NULL, ai, ahave, acfg, owner))
+}
+own <- list(run_id = "lot-1", ts = "2026-01-02 10:00:00", exact = TRUE,
+            cohort_run = "coh-a")
+s <- lay2(NDMM_COLS, own, "coh-b")
+ok(grepl("COHORT RUN coh-b", s$label, fixed = TRUE) &&
+     grepl("LOT read coh-a", s$label, fixed = TRUE),
+   "a funnel from a different cohort run than LOT read is called out, by run id")
+s <- lay2(NDMM_COLS, own, "coh-a")
+ok(!grepl("COHORT RUN", s$label, fixed = TRUE),
+   "...and the funnel LOT actually read is not")
+# The mid-run rebuild a timestamp test cannot catch: cohort B is written while
+# LOT is still going, so its funnel is OLDER than LOT's completion time.
+s <- lay2(NDMM_COLS, list(run_id = "lot-1", ts = "2026-01-09 23:00:00",
+                          exact = TRUE, cohort_run = "coh-a"), "coh-b")
+ok(grepl("COHORT RUN coh-b", s$label, fixed = TRUE),
+   "...including a cohort rebuilt WHILE lot ran, which no timestamp test sees")
+s <- lay2(NDMM_COLS, list(run_id = "lot-1", ts = NA, exact = FALSE,
+                          cohort_run = NA_character_), "coh-b")
+ok(!grepl("COHORT RUN", s$label, fixed = TRUE),
+   "an older lot that recorded no cohort run id makes no claim either way")
 
 cat("\n-- the panels name no study, in their labels either --\n")
 # The attrition table belongs to whichever cohort build wrote it, so the panel

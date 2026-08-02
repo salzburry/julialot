@@ -174,12 +174,13 @@ fill_sql <- function(sql, inputs, cfg) {
 # table, match its columns against ATTRITION_LAYOUTS - rather than being a
 # second setting that can disagree with the warehouse.
 #
-# Also the one honest check available on cohort/LOT alignment. Nothing keys a
-# cohort run to a LOT run: they share a prefix, not a run id, and neither table
-# records the other's. But a funnel recorded AFTER the LOT run started cannot
-# be the funnel of the cohort LOT read, and that is decidable from the two
-# timestamps. It is a detector, not a link - a funnel recorded earlier is not
-# thereby proved to be the right one.
+# Also where the funnel is checked against the cohort LOT actually read.
+#
+# lot records COHORT_RUN_ID - the run id of the cohort build it verified before
+# pinning its input - so this is an exact comparison against the funnel's own
+# RUN_ID, not a guess from timestamps. Timestamps could not answer it: the only
+# LOT time available is when the run finished, and a cohort rebuilt WHILE LOT
+# was running is newer than the cohort LOT read but older than that.
 resolve_attrition <- function(secs, con, inputs, have, cfg, owner) {
   i <- which(vapply(secs, function(s) identical(s$name, "attrition"), logical(1)))
   if (!length(i) || !isTRUE(have[["attrition"]])) return(secs)
@@ -215,19 +216,21 @@ resolve_attrition <- function(secs, con, inputs, have, cfg, owner) {
     sec$label <- paste0(sec$label, " - ", cfg$attrition_window,
                         "-day outpatient window")
 
-  # Was the funnel written after the LOT run that owns these tables began?
-  if (!is.na(owner$run_id) && !is.na(owner$ts)) {
-    a <- tryCatch(db_q(con, paste0("SELECT max(", L$stamp, ") AS ATTR_AT FROM ",
-                                   inputs$attrition)), error = function(e) NULL)
-    stale <- isTRUE(tryCatch(
-      as.POSIXct(as.character(a$ATTR_AT[1]), tz = "UTC") >
-        as.POSIXct(as.character(owner$ts), tz = "UTC"),
-      error = function(e) FALSE, warning = function(w) FALSE))
-    if (!is.null(a) && stale) {
-      log_msg("  WARNING: the cohort funnel is newer than the LOT run below it.")
-      sec$label <- paste0(sec$label, " - RECORDED AFTER THE LOT RUN, so it is ",
-                          "a later cohort refresh than the one LOT read")
+  # Is this funnel the one belonging to the cohort LOT read?
+  cr <- owner$cohort_run
+  if (!is.null(cr) && !is.na(cr) && nzchar(cr)) {
+    a <- tryCatch(db_q(con, paste0("SELECT RUN_ID FROM ", inputs$attrition,
+                                   " ORDER BY ", L$stamp, " DESC LIMIT 1")),
+                  error = function(e) NULL)
+    fr <- if (is.null(a) || !nrow(a)) NA_character_ else as.character(a[[1]][1])
+    if (!is.na(fr) && !identical(fr, cr)) {
+      log_msg("  WARNING: this funnel is cohort run ", fr, "; LOT read ", cr, ".")
+      sec$label <- paste0(sec$label, " - COHORT RUN ", fr, ", but LOT read ",
+                          cr, ", so this funnel is a different cohort refresh")
     }
+  } else {
+    log_msg("  Note: LOT recorded no cohort run id, so this funnel cannot be ",
+            "tied to the cohort behind the numbers.")
   }
   secs[[i]] <- sec
   secs

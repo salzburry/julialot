@@ -18,5 +18,6 @@ SCT_TANDEM_DAYS,180,Tandem transplant window
 CART_CONSOLIDATION_DAYS,45,New agents within this of CAR-T are consolidation
 ALLO_LOT_SPAN,single_day,An ALLO line spans only the transplant date
 MAX_LOT,5,Highest line number built
+COHORT_STATUS_TABLE,,What the cohort build calls its run-status table (blank = try the usual names)
 APPLY_NO_BELANTAMAB,TRUE,Drop patients with belantamab in any LOT
 BELANTAMAB_MED_ABBR,BELA,How belantamab is named in MED_ABBR
