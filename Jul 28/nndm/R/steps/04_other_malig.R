@@ -7,13 +7,6 @@ build_ndmm_other_malig_codes <- function(con) {
     c("dx", "icd_family", "tumor_group"))
   ovr_in <- paste(sprintf("'%s'", gsub("'", "''", ndmm_mm_adjacent_groups())),
                   collapse = ", ")
-  # Per-code answers, where the tumour-group label cannot give one. NULL when
-  # the file is absent or empty, and then the join is not written at all: an
-  # empty VALUES list is not valid SQL, and a join that matches nothing would
-  # read as a file that had been consulted.
-  ovr_src  <- load_override_csv(nndm_config()$mm_adjacent_csv)
-  ovr_join <- if (is.null(ovr_src)) "" else glue("LEFT JOIN {ovr_src} ON ovr.dx = om.dx AND ovr.icd_family = om.icd_family")
-  ovr_case <- if (is.null(ovr_src)) "" else "WHEN ovr.override IS NOT NULL THEN ovr.override "
   pg_src   <- load_primary_groups_csv(nndm_config()$primary_groups_csv)
   pg_join  <- if (is.null(pg_src)) "" else glue("LEFT JOIN {pg_src} ON pg.pg_label = trim(om.tumor_group)")
   pg_col   <- if (is.null(pg_src)) "om.tumor_group" else "coalesce(pg.pg_primary, om.tumor_group)"
@@ -47,11 +40,14 @@ build_ndmm_other_malig_codes <- function(con) {
            -- patient - so it cannot also make them an other-cancer patient,
            -- whatever its wording says about remission or relapse. The label
            -- list covers what is adjacent to MM without being on it.
-           -- A row in mm_adjacent_overrides.csv wins over the label, both
-           -- ways: it is the only thing that can say this particular
-           -- C79.5x is myeloma bone disease and that one is a breast
-           -- primary. Absent, the labels decide, as the source does.
-           CASE {ovr_case}WHEN trim(om.tumor_group) IN ({ovr_in}) OR m.dx IS NOT NULL
+           --
+           -- The label is per code here: other_malig.csv carries 1,618
+           -- distinct tumor_group values over 1,643 codes, so naming a label
+           -- in NDMM_MM_ADJACENT_OVERRIDE picks out a code. That is why there
+           -- is no separate per-code file - there is nothing it could say that
+           -- the label list cannot. C79.51 and C79.52 are different labels and
+           -- are decided separately; see DECISIONS.md.
+           CASE WHEN trim(om.tumor_group) IN ({ovr_in}) OR m.dx IS NOT NULL
                 THEN 1 ELSE 0 END AS is_mm_adjacent_override,
            -- The label two outpatient claims must share to confirm each other.
            -- tumor_group unless primary_tumor_groups.csv coarsens it.
@@ -59,7 +55,6 @@ build_ndmm_other_malig_codes <- function(con) {
     FROM om
     LEFT JOIN {NDMM_MM_DX_CODES} m
            ON m.dx = om.dx AND m.icd_family = om.icd_family
-    {ovr_join}
     {pg_join}
   "))
   # Only the five required labels are counted. The remission variants are a

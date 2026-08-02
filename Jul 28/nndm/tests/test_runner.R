@@ -49,7 +49,7 @@ clear()
 
 cat("\n-- the runner calls its phases, in order --\n")
 ORDER <- c("check_settings", "pin_output_schema", "pin_prefix",
-           "pin_override_csv", "check_contract",
+           "pin_optional_csv", "check_contract",
            "check_choices", "check_constants", "set_lot_config",
            "check_no_active_run", "check_upstream", "write_build_status",
            "clear_run_rows",
@@ -298,19 +298,18 @@ m <- tryCatch({ load_codelist_csv("not_a_codelist.csv", c("x", "y")); "" },
 ok(grepl("not one of the files", m, fixed = TRUE),
    "and a file nobody declared is still refused, present or not")
 
-cat("\n-- the two files this package ships for filling in --\n")
-# Both default to the copy beside the code, so a checkout has a file to edit
-# rather than a setting to find out about. Left unpinned they would be "", and
-# an unpinned path reads as a file that is not there - which is also what an
-# empty file means, so nothing downstream would notice.
-FILLINS <- c(mm_adjacent_csv = "mm_adjacent_overrides.csv",
-             primary_groups_csv = "primary_tumor_groups.csv")
-pp <- ce0$pin_override_csv(setNames(as.list(rep("", length(FILLINS))), names(FILLINS)),
+cat("\n-- the file this package ships for filling in --\n")
+# Defaults to the copy beside the code, so a checkout has a file to edit rather
+# than a setting to find out about. Left unpinned it would be "", and an
+# unpinned path reads as a file that is not there - which is also what an empty
+# file means, so nothing downstream would notice.
+FILLINS <- c(primary_groups_csv = "primary_tumor_groups.csv")
+pp <- ce0$pin_optional_csv(setNames(as.list(rep("", length(FILLINS))), names(FILLINS)),
                            "/pkg")
 ok(all(vapply(names(FILLINS), function(k)
         identical(pp[[k]], file.path("/pkg", "codelists", FILLINS[[k]])), logical(1))),
    paste0("all ", length(FILLINS), " fill-in files default to the copy beside the code"))
-pp2 <- ce0$pin_override_csv(setNames(as.list(paste0("/x/", names(FILLINS), ".csv")),
+pp2 <- ce0$pin_optional_csv(setNames(as.list(paste0("/x/", names(FILLINS), ".csv")),
                                      names(FILLINS)), "/pkg")
 ok(all(vapply(names(FILLINS), function(k)
         identical(pp2[[k]], paste0("/x/", k, ".csv")), logical(1))),
@@ -322,52 +321,6 @@ ok(all(vapply(FILLINS, function(f)
         length(readLines(file.path(ROOT, "codelists", f), warn = FALSE)) == 1L,
         logical(1))),
    "shipped with a header and no rows, so nothing changes until someone fills one in")
-
-cat("\n-- the per-code answer a tumour-group label cannot give --\n")
-# SECONDARY MALIGNANT NEOPLASM OF BONE is overridden as MM bone disease, but
-# C79.51 is equally a breast primary metastatic to bone. The label cannot tell
-# them apart, so a row in mm_adjacent_overrides.csv decides the code. Driven
-# through the real loader, on real files: what it does with a malformed row is
-# the whole point of it.
-OVCSV <- file.path(tmp, "mm_adjacent_overrides.csv")
-drive_ov <- function(lines) {
-  writeLines(lines, OVCSV)
-  tryCatch(load_override_csv(OVCSV), error = conditionMessage)
-}
-ok(is.null(load_override_csv(file.path(tmp, "nope.csv"))),
-   "a file that is not there means the labels decide, and is not a failure")
-# Not by clearing the option: other_malig.csv's hash is already in it and the
-# metadata test below reads it. Named before and after instead, which also
-# proves this call is what added it.
-had_ov <- "mm_adjacent_overrides.csv" %in% names(getOption("nndm_codelist_md5", list()))
-ok(is.null(drive_ov("dx,icd_family,override,note")),
-   "...and neither is the empty file this package ships")
-# Absent and empty behave alike but are not alike, and only one is a decision.
-ok(!had_ov && "mm_adjacent_overrides.csv" %in% names(getOption("nndm_codelist_md5")),
-   "...though the empty one is hashed, so the run says it read it")
-got <- drive_ov(c("dx,icd_family,override,note",
-                  "C79.51,ICD10,0,breast primary in this cohort",
-                  "C9000,9,1,myeloma bone disease"))
-ok(is.character(got) && grepl("('C7951', 'ICD10', 0)", got, fixed = TRUE),
-   "a listed code reaches the SQL normalised, punctuation stripped")
-ok(is.character(got) && grepl("('C9000', 'ICD9', 1)", got, fixed = TRUE),
-   "...and its ICD family spelled however the file spelled it")
-# Each of these is a typo in a file whose only purpose is to be exact, so it
-# stops the run. A dropped row would read as a decision that had been made.
-ok(grepl("override must be 0 or 1", drive_ov(c("dx,icd_family,override,note",
-   "C7951,ICD10,yes,")), fixed = TRUE),
-   "an override that is not 0 or 1 stops the run")
-ok(grepl("must say ICD9 or ICD10", drive_ov(c("dx,icd_family,override,note",
-   "C7951,ICD11,1,")), fixed = TRUE),
-   "an ICD family nobody can act on stops the run")
-ok(grepl("blank once punctuation is stripped", drive_ov(c("dx,icd_family,override,note",
-   "---,ICD10,1,")), fixed = TRUE),
-   "a code that normalises to nothing stops the run, not matches every claim")
-ok(grepl("two answers for", drive_ov(c("dx,icd_family,override,note",
-   "C7951,ICD10,1,", "C79.51,ICD-10,0,")), fixed = TRUE),
-   "and one code given two answers stops the run rather than one winning")
-ok(grepl("missing", drive_ov(c("dx,icd_family", "C7951,ICD10")), fixed = TRUE),
-   "a file without the columns is refused, not read as empty")
 
 cat("\n-- one label per code is the wrong grain for \"another cancer\" --\n")
 # Path B pairs two outpatient claims on a code-list label, and a label is one
@@ -561,29 +514,25 @@ drive_fill <- function(opt) {
   options(nndm_codelist_md5 = opt); FLOG <<- character(0)
   r <- fe$report_fillins(list()); list(r = r, log = paste(FLOG, collapse = "\n"))
 }
-ok(length(fe$FILLIN_FILES) == 2 &&
-     all(c("mm_adjacent_overrides.csv",
-           "primary_tumor_groups.csv") %in% names(fe$FILLIN_FILES)),
-   "the three files that decide an open rule are the three it reports on")
+ok(length(fe$FILLIN_FILES) == 1 &&
+     "primary_tumor_groups.csv" %in% names(fe$FILLIN_FILES),
+   "the file that decides an open rule is the one it reports on")
 
 all_in <- drive_fill(list(
-  mm_adjacent_overrides.csv = list(md5 = "bb22", n_rows = 7L),
-  primary_tumor_groups.csv  = list(md5 = "cc33", n_rows = 310L)))
-ok(length(all_in$r$empty) == 0 && length(all_in$r$used) == 2 &&
+  primary_tumor_groups.csv = list(md5 = "cc33", n_rows = 310L)))
+ok(length(all_in$r$empty) == 0 && length(all_in$r$used) == 1 &&
      !grepl(">", all_in$log, fixed = TRUE),
-   "both supplied raises nothing, so the marker means something")
+   "supplied raises nothing, so the marker means something")
 
 none_in <- drive_fill(list(
-  mm_adjacent_overrides.csv = list(md5 = "d41d8", n_rows = 0L),
-  primary_tumor_groups.csv  = list(md5 = "d41d8", n_rows = 0L)))
-ok(length(none_in$r$empty) == 2 && grepl(">", none_in$log, fixed = TRUE),
-   "a run on the shipped placeholders is marked, once, at the end")
+  primary_tumor_groups.csv = list(md5 = "d41d8", n_rows = 0L)))
+ok(length(none_in$r$empty) == 1 && grepl(">", none_in$log, fixed = TRUE),
+   "a run on the shipped placeholder is marked, once, at the end")
 
 # Read-and-empty is a decision; never-read is a deploy that did not reach the
 # file. write_codelist_metadata() stops on the second, so this says which.
-mixed <- drive_fill(list(mm_adjacent_overrides.csv = list(md5 = "d41d8", n_rows = 0L)))
-ok(grepl("primary_tumor_groups.csv: NOT READ", mixed$log, fixed = TRUE) &&
-     grepl("mm_adjacent_overrides.csv: empty", mixed$log, fixed = TRUE),
+ok(grepl("primary_tumor_groups.csv: NOT READ",
+         drive_fill(list())$log, fixed = TRUE),
    "and a file never read is told apart from one read and empty")
 
 cat("\n-- the attrition steps match what the counts return --\n")
@@ -1129,9 +1078,9 @@ for (k in c("%REMISSION%", "%RELAPSE%", "%PLASMACYTOMA%", "%PLASMA CELL%",
 ok(grepl("max(is_mm_adjacent_override)", g, fixed = TRUE),
    "with whether the override reaches it, which is the question being asked")
 
-# And the codes themselves, in the shape mm_adjacent_overrides.csv wants, so
-# deciding one is a copy and an edit. Only the overridden ones: the whole
-# other-cancer code list is thousands of rows and would bury the question.
+# And the codes themselves, so deciding one is reading a table rather than a
+# research task. Only the overridden ones: the whole other-cancer code list is
+# thousands of rows and would bury the question.
 SSQL <- character(0)
 assign("db_q", function(con, sql) data.frame(n = 7L), envir = se)
 se$build_ndmm_mm_adjacent_codes(NULL, cfg_defaults)
@@ -1139,36 +1088,33 @@ ac <- SSQL[1]
 ok(grepl("NDMM_MM_ADJACENT_CODES", ac, fixed = TRUE) &&
      grepl("WHERE is_mm_adjacent_override = 1", ac, fixed = TRUE),
    "the codes kept as the index disease are written out, and only those")
-ok(all(vapply(c("DX", "ICD_FAMILY", "OVERRIDE"), function(c0)
+ok(all(vapply(c("DX", "ICD_FAMILY", "OVERRIDE", "TUMOR_GROUP"), function(c0)
         grepl(paste0("AS ", c0), ac, fixed = TRUE), logical(1))),
-   "...under the column names the overrides CSV uses, so it pastes in")
+   "...naming the label that kept each one, which is what decides the next")
 
 cat("\n-- the other-cancer code list, driven --\n")
-# Held here, driven, not only compared as text. The mm_dx join sits
-# inside a block that suite splices out wholesale before comparing, so once the
-# block grew to take in the overrides join, breaking the mm_dx join stopped
-# being noticed there. Driven, it cannot go quiet
-# again whatever the splice covers.
+# Held here, driven, not only compared as text. The mm_dx join sits inside a
+# block that suite splices out wholesale before comparing, so breaking it
+# stopped being noticed there. Driven, it cannot go quiet again whatever the
+# splice covers.
 oe2 <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = oe2)
 sys.source(file.path(ROOT, "R", "standalone_constants.R"), envir = oe2)
 sys.source(file.path(ROOT, "R", "steps", "04_other_malig.R"), envir = oe2)
 assign("log_msg", function(...) invisible(NULL), envir = oe2)
 assign("load_codelist_csv", function(...) "(SELECT 1) src", envir = oe2)
-assign("nndm_config", function()
-  list(mm_adjacent_csv = "x.csv", primary_groups_csv = ""), envir = oe2)
+assign("nndm_config", function() list(primary_groups_csv = ""), envir = oe2)
 assign("db_q", function(con, sql)
   data.frame(n = length(oe2$NDMM_MM_ADJACENT_OVERRIDE)), envir = oe2)
 OSQL <- character(0)
 assign("db_exec", function(con, sql) { OSQL <<- c(OSQL, sql); invisible(TRUE) },
        envir = oe2)
-drive_om <- function(frag) {
+drive_om <- function() {
   OSQL <<- character(0)
-  assign("load_override_csv", function(path) frag, envir = oe2)
   oe2$build_ndmm_other_malig_codes(NULL)
   OSQL[1]
 }
-o0 <- drive_om(NULL)
+o0 <- drive_om()
 # The join that says a code on mm_dx.csv is the index disease, not another
 # cancer. The ON clause has to end where it ends: " AND 1 = 0" appended to it
 # would leave every grep for the join itself passing.
@@ -1182,19 +1128,17 @@ ok(grepl(paste0("LEFT JOIN ", oe2$NDMM_MM_DX_CODES,
                 " AND m\\.icd_family = om\\.icd_family[ \t]*\n"),
          o0),
    "a code on the MM diagnosis list cannot also make a patient an other-cancer case")
-# No file, no join: an empty VALUES list is not valid SQL, and a join matching
-# nothing would read as a file that had been consulted.
-ok(!grepl("ovr.override", o0, fixed = TRUE) &&
-     !grepl("LEFT JOIN (SELECT", o0, fixed = TRUE),
-   "with no overrides file, nothing about overrides reaches the query")
-o1 <- drive_om("(SELECT * FROM (VALUES ('C7951', 'ICD10', 0)) AS t(dx, icd_family, override)) ovr")
-ok(grepl("WHEN ovr.override IS NOT NULL THEN ovr.override ", o1, fixed = TRUE) &&
-     grepl("ON ovr.dx = om.dx AND ovr.icd_family = om.icd_family", o1, fixed = TRUE),
-   "and with one, the listed code is joined and asked first")
-# First, or the label would win and the file would be decoration.
-ok(regexpr("ovr.override IS NOT NULL", o1, fixed = TRUE) <
-     regexpr("trim(om.tumor_group) IN", o1, fixed = TRUE),
-   "...before the tumour-group label, which is the whole point of listing it")
+# The label list is the only thing that decides this, so every label in it has
+# to reach the query. other_malig.csv carries 1,618 labels over 1,643 codes, so
+# naming one picks out a code and a per-code file would say nothing more.
+for (lbl in oe2$ndmm_mm_adjacent_groups())
+  ok(grepl(paste0("'", lbl, "'"), o0, fixed = TRUE),
+     paste0("kept as the index disease: ", lbl))
+# Whole-string, not a prefix: SECONDARY MALIGNANT NEOPLASM OF BONE keeps C79.51
+# and must not reach C79.52, whose label ends OF BONE MARROW. See DECISIONS.md.
+ok(grepl("trim(om.tumor_group) IN (", o0, fixed = TRUE) &&
+     !grepl("om.tumor_group LIKE", o0, fixed = TRUE),
+   "matched whole, so a longer label naming a different code is not swept in")
 
 cat("\n-- what the follow-up CE window costs, at each reading of it --\n")
 # FU_CE_DAYS=0 is the one setting here resting on a relay rather than a

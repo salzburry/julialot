@@ -140,18 +140,7 @@ ADDED <- list(
     # claim too, so both fall in the baseline the criterion names. It can only
     # remove exclusions, so the cohort it builds is larger than apr_30_2026's.
     "AND op.next_dt  BETWEEN l1.pre_lot1_start AND l1.pre_lot1_end" = 1L,
-    # The fourth clinical change, and the only one the source could not have
-    # made: a per-code answer where the tumour-group label cannot give one.
-    # SECONDARY MALIGNANT NEOPLASM OF BONE is overridden as MM bone disease,
-    # but C79.51 is equally a breast or prostate primary metastatic to bone,
-    # and the label cannot tell them apart. These three lines read
-    # mm_adjacent_overrides.csv and let a row in it decide that code. The file
-    # ships empty, so with nothing filled in they are inert and the cohort is
-    # the source's.
-    "ovr_src  <- load_override_csv(nndm_config()$mm_adjacent_csv)" = 1L,
-    "ovr_join <- if (is.null(ovr_src)) \"\" else glue(\"LEFT JOIN {ovr_src} ON ovr.dx = om.dx AND ovr.icd_family = om.icd_family\")" = 1L,
-    "ovr_case <- if (is.null(ovr_src)) \"\" else \"WHEN ovr.override IS NOT NULL THEN ovr.override \"" = 1L,
-    # The fifth clinical change. Path B pairs two outpatient claims on a
+    # The fourth clinical change. Path B pairs two outpatient claims on a
     # code-list label, and a label is one ICD code's description: a cancer at
     # two subsites, or one coded in remission and once not, is two labels, so
     # the claims never confirm each other and the patient is not excluded. The
@@ -225,7 +214,7 @@ SPLICE <- list(
   # names bound to the inner ones and every other-cancer code came back
   # overridden. Normalise, then join, and qualify everything.
   "R/steps/04_other_malig.R" = list(
-    # Ends at {ovr_join} now, not at the mm_dx join: the overrides join is the
+    # Ends at {pg_join}, not at the mm_dx join: the primary-groups join is the
     # last line of the same statement.
     list(from = "CREATE OR REPLACE TEMPORARY VIEW {NDMM_OTHER_MALIG_CODES} AS",
          to   = "{pg_join}",

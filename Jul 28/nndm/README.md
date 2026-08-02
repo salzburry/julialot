@@ -163,7 +163,7 @@ None of them changes the cohort — they are what the decision gets made
 |---|---|---|
 | `NDMM_INDEX_AGENTS` | which agents actually set a 1L index | every `CL_MED_ABBR` on the code list, whether this run let it set an index, and how many it set. Review it; bar one with `NDMM_INDEX_EXCLUDED_ABBRS` if it should not have |
 | `NDMM_MM_ADJACENT_GROUPS` | which tumour groups are the index disease rather than another cancer | every plasma-cell-looking label, and whether the override reaches it |
-| `NDMM_MM_ADJACENT_CODES` | *which* `C79.5x` is myeloma bone disease and which is a breast primary — a label cannot say | every code kept as the index disease, in the columns `codelists/mm_adjacent_overrides.csv` uses. Copy, set the ones you want to `0`, paste |
+| `NDMM_MM_ADJACENT_CODES` | *which* `C79.5x` is treated as myeloma bone disease | every code kept as the index disease, with the label that kept it. `C79.51` is in; `C79.52` is not, because its label ends `OF BONE MARROW` |
 | `NDMM_OTHER_MALIG_GROUPS` | which code-list labels are one tumour type | every label with the group it pairs under. Anything whose `PRIMARY_GROUP` is still itself can only confirm itself. Fill in `codelists/primary_tumor_groups.csv` |
 | `NDMM_OTHER_MALIG_GRAIN` | is that grain actually costing anything? | criterion 7 counted at the finest, configured and coarsest grouping. **The gap between the first row and the last is the whole question** — if it is small, no map is needed |
 | `NDMM_FU_CE_COUNTS` | what the follow-up CE window costs — the one setting resting on a relay, not a document | `N_PASSING_CRITERION_5` and `N_COHORT` at 0 / 30 / 60 / 90 days and at an exact 3 months, with this run's row marked |
@@ -182,30 +182,28 @@ the wrong grain for "the same cancer". Each is a **code-level** decision, and
 code-level decisions belong in a file somebody can review, not in a setting
 somebody has to discover.
 
-So the package ships two CSVs in `codelists/`, **both empty**:
+So the package ships one CSV in `codelists/`, **empty**:
 
 | file | one row per | the columns | what it decides |
 |---|---|---|---|
-| `mm_adjacent_overrides.csv` | ICD code | `dx, icd_family, override, note` | `override=1` treats the code as the index disease (do **not** exclude); `0` treats it as another cancer (**do** exclude). Wins over the tumour-group label **both ways** |
 | `primary_tumor_groups.csv` | code-list label | `tumor_group, primary_tumor_group, note` | labels sharing a `primary_tumor_group` pair together for the two-outpatient-claim rule |
 
-**Empty means the source's cohort.** An unlisted code keeps its label's verdict,
-an unlisted agent can still set an index, an unmapped label stays its own group.
-So a checkout with nothing filled in produces the source build's cohort, not a
-variation on it. Nothing here changes until you write in one of these.
+**Empty means the source's cohort.** An unmapped label stays its own group, so a
+checkout with nothing filled in produces the source build's cohort, not a
+variation on it. Nothing here changes until you write in it.
 
-**In production these three are configured separately** from the four core code
-lists. Those come from `CODELIST_DIR`; these come from `NDMM_MM_ADJACENT_CSV` and `NDMM_PRIMARY_GROUPS_CSV`, and each falls back to
-the empty file shipped in `codelists/` when its variable is unset. A deploy
-that points `CODELIST_DIR` at production and misses these three runs green on
-the placeholders.
+**In production it is configured separately** from the four core code lists.
+Those come from `CODELIST_DIR`; this comes from `NDMM_PRIMARY_GROUPS_CSV`, and
+falls back to the empty file shipped in `codelists/` when that variable is
+unset. A deploy that points `CODELIST_DIR` at production and misses it runs
+green on the placeholder.
 
 So every run ends with a line saying which it had:
 
 ```
-Rule fill-ins: 0 supplied, 2 empty
-  > mm_adjacent_overrides.csv: empty (md5 d41d8...) - tumour-group labels
-    alone decide the other-cancer criterion
+Rule fill-ins: 0 supplied, 1 empty
+  > primary_tumor_groups.csv: empty (md5 d41d8...) - outpatient pairs must
+    share one code-list label
   > An empty file is a run without that rule, and reads the same as one whose
     path was never set. Check the paths against <prefix>NDMM_CODELIST_METADATA
     before this cohort is used.
@@ -215,22 +213,17 @@ A supplied file is listed with its row count and md5 instead. Both are also in
 `<prefix>NDMM_CODELIST_METADATA`, so a finished cohort can be checked without
 the log — a shipped placeholder is a known md5 with `n_rows = 0`.
 
-**Each has a table to fill it in from**, so it is a copy and an edit rather than
-a research task:
+**It has a table to fill it in from**, so it is a copy and an edit rather than a
+research task: `NDMM_OTHER_MALIG_GROUPS`, every label and the group it pairs
+under.
 
-| the file | fill it in from |
-|---|---|
-| `mm_adjacent_overrides.csv` | `NDMM_MM_ADJACENT_CODES` — the codes currently kept, in these columns |
-| `primary_tumor_groups.csv` | `NDMM_OTHER_MALIG_GROUPS` — every label and the group it pairs under |
-
-### What they all do
+### What it does
 
 - **Absent is the same as empty**, and neither is a failure. A checkout that
-  deleted them, or a run pointed elsewhere, still builds.
-- **A malformed row stops the run.** A blank code, an `override` that is not 0
-  or 1, an `icd_family` nobody can act on, one key given two answers, a missing
-  column. Skipping a bad row would let a file whose only purpose is to be exact
-  quietly decide something nobody chose.
+  deleted it, or a run pointed elsewhere, still builds.
+- **A malformed row stops the run.** A half-filled row, a missing column.
+  Skipping a bad row would let a file whose only purpose is to be exact quietly
+  decide something nobody chose.
 - **A named thing that matches nothing stops the run** when it would otherwise
   read as a rule doing nothing — an allowed `med_abbr` that is on no code list
   is not a permission, it is an agent silently barred, and its patients leave at
@@ -241,12 +234,11 @@ a research task:
 - Values are normalised the way the code lists are — punctuation stripped from
   codes, everything upper-cased — so `C79.51` and `C7951`, `ICD-10` and `10`,
   `bor` and `BOR` all match.
-- **Point elsewhere** with `NDMM_MM_ADJACENT_CSV`,   `NDMM_PRIMARY_GROUPS_CSV`. The path is recorded whether or not a file is
-  found there.
+- **Point elsewhere** with `NDMM_PRIMARY_GROUPS_CSV`. The path is recorded
+  whether or not a file is found there.
 
-The detail for each is in **Bone metastasis, and the codes you can decide
-yourself**, **Which agents may set the 1L index**, and **One label per code is
-the wrong grain for "another cancer"**.
+The detail is in **One label per code is the wrong grain for "another
+cancer"**.
 
 ## The criteria as applied
 
@@ -302,7 +294,7 @@ than a note saying so:
 |---|---|---|
 | #3 | which agents actually set the index — the code list is the eligible set, so this is a review rather than a decision | `NDMM_INDEX_AGENTS` |
 | #5 | one day of follow-up CE against the protocol's three months | `NDMM_FU_CE_COUNTS` |
-| #7 | whether a `C79.5x` is myeloma bone disease or a metastasis | `NDMM_MM_ADJACENT_CODES` → `codelists/mm_adjacent_overrides.csv` |
+| #7 | whether a `C79.5x` is myeloma bone disease or a metastasis | `NDMM_MM_ADJACENT_CODES` → `NDMM_MM_ADJACENT_OVERRIDE` in `nndm_constants.R` |
 | #7 | whether two labels are one cancer | `NDMM_OTHER_MALIG_GRAIN`, `NDMM_OTHER_MALIG_GROUPS` → `codelists/primary_tumor_groups.csv` |
 | #9 | which claims proxy stands for "in any LOT" | `NDMM_BELANTAMAB_SCOPE_COUNTS`, `NDMM_BELANTAMAB_RECONCILE` |
 
@@ -427,7 +419,7 @@ under an allowlist the winners are by definition the allowed ones, so a table
 of winners could only ever confirm itself.
 
 
-### Bone metastasis, and the codes you can decide yourself
+### Bone metastasis, and which codes it actually reaches
 
 The other-cancer criterion is decided on `other_malig.csv`'s `tumor_group`
 label, and five groups are overridden — treated as the index disease rather
@@ -435,44 +427,32 @@ than another cancer. Four of them the label settles: **monoclonal gammopathy**,
 **solitary plasmacytoma**, **plasma cell leukemia**, **extramedullary
 plasmacytoma** are plasma-cell disease.
 
-The fifth is not like the others. **`SECONDARY MALIGNANT NEOPLASM OF BONE`** —
-`C79.51`, `C79.52`, `198.5` — says a cancer spread to bone. It does not say
-*which* cancer. Myeloma bone disease is usually coded as MM with bone
-involvement, but it is miscoded here too, which is why the source build overrides
-the group. A breast or prostate primary metastatic to bone carries the same
-code. **The label cannot separate those. A code can.**
+The fifth is not like the others. **`SECONDARY MALIGNANT NEOPLASM OF BONE`**
+says a cancer spread to bone. It does not say *which* cancer. Myeloma bone
+disease is usually coded as MM with bone involvement, but it is miscoded here
+too, which is why the source build overrides the group — and a breast or
+prostate primary metastatic to bone carries the same code.
 
-So there is a file to fill in:
+**The label is per code here, and it is matched whole.** `other_malig.csv`
+carries 1,618 distinct `tumor_group` values over 1,643 codes, so a label picks
+out a code, and naming one in `NDMM_MM_ADJACENT_OVERRIDE` decides that code.
+Which means the three bone codes do not land together:
 
-```
-nndm/codelists/mm_adjacent_overrides.csv
-dx,icd_family,override,note
-C79.51,ICD10,0,metastasis - exclude as another cancer
-C90.02,ICD10,1,myeloma in remission - the index disease
-```
+| dx | label | |
+|---|---|---|
+| `C7951` | `SECONDARY MALIGNANT NEOPLASM OF BONE` | in the list — **kept** |
+| `C7952` | `SECONDARY MALIGNANT NEOPLASM OF BONE MARROW` | not in the list — **excludes** |
+| `1985` | `SECONDARY MALIGNANT NEOPLASM OF BONE AND BONE MARROW` | not in the list — **excludes**, but ICD-9 predates the scan window |
 
-| column | meaning |
-|---|---|
-| `dx` | the ICD code; punctuation is ignored, `C79.51` and `C7951` are the same |
-| `icd_family` | `ICD9` or `ICD10` (`9`/`10`/`ICD-10` also accepted) |
-| `override` | `1` = the index disease, do **not** exclude · `0` = another cancer, **do** exclude |
-| `note` | free text — why, for whoever reads this next |
+So `C79.51` is already handled and `C79.52` is not. Whether that is right is
+open — see `DECISIONS.md` §4. Closing it is two strings appended to
+`NDMM_MM_ADJACENT_OVERRIDE` in `nndm_constants.R`, exactly as the remission and
+relapse states were added; there is no per-code file, because with one label per
+code there is nothing such a file could say that the label list cannot.
 
-**A row here wins over the tumour-group label, in both directions.** The file
-ships empty, which means the labels decide everything, which is exactly
-the source build's cohort — so nothing changes until you put something in it. Set
-`NDMM_MM_ADJACENT_CSV` to use a file somewhere else.
-
-Every run writes **`<prefix>NDMM_MM_ADJACENT_CODES`**: every code currently
-kept as the index disease, with its group, in these columns. That is the list
-to copy from — you should not have to go looking for the codes.
-
-Malformed rows **stop the run** rather than being skipped: an override that is
-not 0 or 1, an unrecognised `icd_family`, a `dx` that is blank once punctuation
-is stripped, one code given two answers, or missing columns. A row silently
-dropped from a file whose only purpose is to be exact would read as a decision
-somebody made. The file's md5 goes into `NDMM_CODELIST_METADATA` even when it
-is empty, so a cohort says which version of it was read.
+Every run writes **`<prefix>NDMM_MM_ADJACENT_CODES`**: every code currently kept
+as the index disease, with the label that kept it. That table is where the split
+above is visible, and it is the one to read before deciding.
 
 ### One label per code is the wrong grain for "another cancer"
 
@@ -826,7 +806,6 @@ Five, each deliberate and each recorded:
 | follow-up CE is one day, not three months (§6.2.1.1 says three; the study team said one) | **larger** cohort |
 | a code list value that normalises to blank no longer matches a claim with no code | **larger** — it can only remove matches that should not have been made |
 | both outpatient claims must fall in the baseline, not just the first | **larger** |
-| `mm_adjacent_overrides.csv` can decide a code the tumour-group label cannot | either way, and **nothing** until the file is filled in |
 | outpatient claims pair on a mapped tumour type, not on a code description | **smaller**, and **nothing** until the map is filled in |
 
 
@@ -914,7 +893,6 @@ is pinned to its default** — the review tables exist to be acted on.
 
 | setting | default | |
 |---|---|---|
-| `NDMM_MM_ADJACENT_CSV` | `codelists/mm_adjacent_overrides.csv` | see **The files you fill in** |
 | `NDMM_PRIMARY_GROUPS_CSV` | `codelists/primary_tumor_groups.csv` | |
 | `NDMM_IGNORE_ACTIVE_RUN` | *(unset)* | `TRUE` gets past a `started` row a killed process left behind. Use it only once the named run is known to be dead — see **One run per prefix at a time** |
 

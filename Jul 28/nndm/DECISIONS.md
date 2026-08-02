@@ -99,8 +99,7 @@ steroids (dropped where `NDMM_MMA_CODELIST` is built) and less belantamab
 claim on or after the MM diagnosis and on or after `LOT1_FROM` is the index.
 
 **What was removed:** `codelists/eligible_1l_agents.csv`, its loader and
-validation, the allowlist branch, its `NDMM_ELIGIBLE_1L_CSV` setting, and the
-five mutations that guarded it. `NDMM_INDEX_EXCLUDED_ABBRS` remains for barring
+validation, the allowlist branch, and its `NDMM_ELIGIBLE_1L_CSV` setting. `NDMM_INDEX_EXCLUDED_ABBRS` remains for barring
 a named agent operationally - empty by default, and every entry is still
 checked against the code list so a name that matches nothing stops the run.
 
@@ -142,10 +141,9 @@ how the criterion reads.
 *Bone metastasis.* `C79.51`, `C79.52` and `198.5` say a cancer spread to bone,
 not which cancer. Treating them all as myeloma bone disease keeps patients
 with another primary; treating them all as another cancer removes genuine MM
-patients. `mm_adjacent_overrides.csv` decides it per code and ships empty, so
-today the tumour-group label decides for all of them.
-`<prefix>NDMM_MM_ADJACENT_CODES` lists every affected code in the shape that
-file wants.
+patients. The tumour-group label decides it, and because the label is per code
+it decides each of the three separately. `<prefix>NDMM_MM_ADJACENT_CODES` lists
+every code the label list currently keeps.
 
 **What the production file actually says.** Three rows carry these codes, and
 they do not all land the same way:

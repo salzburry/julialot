@@ -556,11 +556,12 @@ build_ndmm_belantamab_reconcile <- function(con, cfg) {
 # labels the production list actually stores is not visible from here, and the
 # remission wording is exactly where it is likely to differ - so the run writes
 # what it found rather than leaving the question to a comment.
-# Every code in an overridden group, in the shape mm_adjacent_overrides.csv
-# wants. The group table says which labels are kept; this says which codes that
-# actually is, so deciding one of them is a copy and an edit rather than a
-# research task. OVERRIDE is what this run did, so a filled-in CSV shows up here
-# as the value it set.
+# Every code in an overridden group. The group table says which labels are
+# kept; this says which codes that actually is. Worth reading before deciding
+# one of them: the labels in other_malig.csv are one per code and the match is
+# on the whole string, so SECONDARY MALIGNANT NEOPLASM OF BONE keeps C79.51 and
+# leaves C79.52, whose label ends OF BONE MARROW, to be excluded. That is
+# visible here and nowhere else.
 build_ndmm_mm_adjacent_codes <- function(con, cfg) {
   db_exec(con, glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_MM_ADJACENT_CODES')} AS

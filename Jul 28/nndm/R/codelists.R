@@ -11,31 +11,6 @@
 CODELIST_FILES <- c("cl_mma_codelist.csv", "mm_dx.csv", "other_malig.csv",
                     "pregnancy.csv")
 
-# The per-code answer to a question a tumour-group label cannot answer.
-#
-# other_malig.csv tags each ICD code with a tumor_group, and the other-cancer
-# criterion is decided on that label. For four of the overridden groups the
-# label settles it - monoclonal gammopathy, solitary plasmacytoma, plasma cell
-# leukemia, extramedullary plasmacytoma are plasma-cell disease, so they are
-# the index disease and not another cancer. SECONDARY MALIGNANT NEOPLASM OF
-# BONE is not like the others: C79.51 / C79.52 / 198.5 say a cancer spread to
-# bone, not which cancer. Myeloma bone disease is usually coded as MM with bone
-# involvement, but it is also miscoded here, which is why the source build
-# overrides the group - and a breast or prostate primary metastatic to bone
-# carries the same code. The label cannot separate those. A code can.
-#
-# So: one row per ICD code, override = 1 to treat it as the index disease (do
-# not exclude) or 0 to treat it as another cancer (do exclude). A row here wins
-# over the tumour-group label in both directions. The file ships empty, which
-# means the labels decide everything, which is the source build's behaviour.
-# NDMM_MM_ADJACENT_CODES lists every code in an overridden group, ready to
-# paste in.
-#
-# Absent is allowed and means the same as empty; unreadable or malformed is
-# not, because a file that was meant to be read and silently was not would
-# change who is in the cohort with nothing saying so.
-OVERRIDE_CSV_COLS <- c("dx", "icd_family", "override", "note")
-
 # The read that both fill-in files share: absent means the shipped default,
 # present means hashed, checked for its columns, and recorded whether or not it
 # had rows. Hands back NULL for "nothing to apply" and a data frame otherwise,
@@ -69,49 +44,6 @@ read_optional_csv <- function(path, cols, absent_msg, empty_msg) {
   }
   attr(df, "md5") <- md5
   df
-}
-
-load_override_csv <- function(path) {
-  df <- read_optional_csv(path, OVERRIDE_CSV_COLS,
-    "No per-code MM-adjacent overrides; tumour-group labels decide the other-cancer criterion",
-    "Per-code MM-adjacent overrides: none listed")
-  if (is.null(df)) return(NULL)
-  md5 <- attr(df, "md5")
-  # Every field checked before any of it reaches SQL. A row nobody can act on
-  # is a typo in a file whose whole purpose is to be exact, so it stops the run
-  # rather than being dropped - a dropped row reads as a decision that was made.
-  ov <- trimws(df$override)
-  bad <- which(!(ov %in% c("0", "1")))
-  if (length(bad))
-    stop("CODELIST ERROR: ", path, " row(s) ", paste(bad, collapse = ", "),
-         ": override must be 0 or 1, got ",
-         paste(unique(ov[bad]), collapse = ", "), call. = FALSE)
-  fam <- toupper(trimws(df$icd_family))
-  fam[fam %in% c("9", "ICD9", "ICD-9", "ICD9DIAG")]  <- "ICD9"
-  fam[fam %in% c("10", "ICD10", "ICD-10", "ICD10DIAG")] <- "ICD10"
-  bad <- which(!(fam %in% c("ICD9", "ICD10")))
-  if (length(bad))
-    stop("CODELIST ERROR: ", path, " row(s) ", paste(bad, collapse = ", "),
-         ": icd_family must say ICD9 or ICD10, got ",
-         paste(unique(df$icd_family[bad]), collapse = ", "), call. = FALSE)
-  # Normalised the same way both sides of the join are, and blank after that is
-  # the '---' problem: it would match every claim with no diagnosis code.
-  dx <- toupper(gsub("[^A-Za-z0-9]", "", trimws(df$dx)))
-  bad <- which(is.na(dx) | !nzchar(dx))
-  if (length(bad))
-    stop("CODELIST ERROR: ", path, " row(s) ", paste(bad, collapse = ", "),
-         ": dx is blank once punctuation is stripped", call. = FALSE)
-  key <- paste(dx, fam)
-  dup <- unique(key[duplicated(key)])
-  if (length(dup))
-    stop("CODELIST ERROR: ", path, " gives two answers for ",
-         paste(dup, collapse = ", "), ". One row per code.", call. = FALSE)
-  log_msg("  Per-code MM-adjacent overrides: ", nrow(df), " (",
-          sum(ov == "1"), " kept as the index disease, ", sum(ov == "0"),
-          " excluded as another cancer), md5 ", md5)
-  rows <- sprintf("('%s', '%s', %s)", dx, fam, ov)
-  paste0("(SELECT * FROM (VALUES\n  ", paste(rows, collapse = ",\n  "),
-         "\n) AS t(dx, icd_family, override)) ovr")
 }
 
 # The label two outpatient claims must share to confirm each other. The code
