@@ -119,7 +119,8 @@ is authoritative.
 
 ## 4. Other malignancy — grouping and bone metastasis
 
-**Decided:** not yet.
+**Decided:** not yet. Both parts are gaps against §6.2.1.2, not open design
+questions — see the protocol quote below.
 
 **Two separate questions.**
 
@@ -168,29 +169,40 @@ bone marrow was not. Myeloma is a plasma-cell malignancy *of the bone marrow*,
 so if `C79.51` is miscoded myeloma often enough to warrant an override,
 `C79.52` is at least as likely to be.
 
-**The recommendation, for a clinician to accept or reject:** add the two
-remaining labels to the same list, exactly as the remission and relapse states
-were added:
+**The protocol answers this, and it answers against the override.** §6.2.1.2
+excludes on
 
-```r
-"SECONDARY MALIGNANT NEOPLASM OF BONE MARROW",
-"SECONDARY MALIGNANT NEOPLASM OF BONE AND BONE MARROW"
-```
+> ≥1 inpatient or ≥2 outpatient ICD-9-CM or ICD-10-CM codes on separate days,
+> within 30 days, for the same primary tumor type **and/or metastatic cancer**
 
-Both exist on the code list, so the required-label check in `04_other_malig.R`
-passes. The ICD-9 one changes nothing on its own — see the code-length note
-below — and is there so the two families agree.
+Metastatic cancer is named as exclusionary in its own right. `C79.51`, `C79.52`
+and `198.5` are secondary — metastatic — neoplasms. So the protocol says all
+three should exclude, and the entry already in `NDMM_MM_ADJACENT_OVERRIDE`
+keeping `C79.51` is a **deviation from it**.
 
-The argument for is consistency with the `C79.51` entry that is already there
-and with the states fix. The argument against is that these are not free: a
-patient with a solid tumour metastatic to bone marrow, whose primary was never
-coded in the baseline window, would be kept.
+An earlier revision of this file recommended adding the other two labels to the
+override. That was written before the protocol text was read and it is
+withdrawn: it would have widened a deviation rather than closed one.
+
+**So the question is the reverse one:** should `SECONDARY MALIGNANT NEOPLASM OF
+BONE` come *out* of `NDMM_MM_ADJACENT_OVERRIDE`, bringing the build back to the
+protocol? The clinical argument for keeping it is real — myeloma bone disease
+is commonly miscoded as `C79.51`, and the source build overrode the group for
+that reason — but it is an argument for a documented deviation, not for silence.
+Today the deviation is neither in the protocol nor recorded as a departure from
+it.
 
 **This one needs clinical judgement.** No file in this repository can answer
 which primary a `C79.5x` belongs to. It is the only one of the four that
 cannot be resolved by deriving from something already governed.
 
-**Status: pending decision**, on `C79.52` only. `C79.51` needs nothing.
+**Status: pending decision**, and the decision is whether to keep a deviation
+the protocol does not authorise, on all three codes — not whether to extend it.
+
+The grain question is settled by the same sentence: the protocol pairs on
+**"the same primary tumor type"**, and the build pairs on a per-code label. That
+is not a design preference to weigh, it is a gap against the text, and
+`primary_tumor_groups.csv` is what closes it.
 
 ---
 
@@ -207,3 +219,36 @@ therefore matches nothing. This is harmless here only because of the window:
 the other-cancer scan reads claims from `2017-01-01` less the 12-month baseline
 — `2016-01-01` — and US claims stopped carrying ICD-9 in October 2015. Worth
 re-checking if the study period is ever moved earlier.
+
+---
+
+## 5. Open against the protocol, not yet decided
+
+Read off *Belantamab_Optum LoT_Unmet_Need_CoAuth Rev Round 2 (June 16 2026)*,
+§6.1, §6.2.1.1 and §6.2.1.2. These are unrecorded gaps, listed so they are not
+found again from scratch.
+
+**Continuous enrolment does not check benefit type.** §6.2.1.1 asks for "CE of
+at least 12-months with **medical and pharmacy** benefits before the 1L cohort
+index date". `build_enrollment_spans_ndmm()` reads only `ELIGEFF` / `ELIGEND`
+from `member_enrollment` and applies no benefit-type filter, so a medical-only
+enrollee counts as continuously enrolled. Their oral therapy — lenalidomide,
+pomalidomide, ixazomib, thalidomide, selinexor, venetoclax on the code list —
+would never appear, which is the reason the protocol asks for both. The parent
+build's `CE_b` / `CE_f` have the same gap.
+
+**The study period starts six months early.** §6.1's design figure gives study
+start **01 Jan 2016**, 1L initiation from 01 Jan 2017, end of data 31 Mar 2026.
+`NDMM_STUDY_START` defaults to `2015-07-01`. Every step reads that constant;
+`cfg$study_start`, which defaults the *same* environment variable to
+`2016-01-01`, is read by nothing — and its comment claims the pregnancy scan
+uses it, which it does not. So pregnancy ("during the study period") and the MM
+diagnosis scan both run six months wider than the protocol defines. Two
+defaults for one variable is the underlying fault.
+
+**Annex 2 is cited both ways.** §6.2.1.1 says "For a full list of
+eligible/expected MM therapies, see Annex 2"; §6.2.2 says "Annex 2 contains an
+**exemplary** list of potential treatment combinations… may be recategorized".
+Decision #3 took the code list as authoritative, which is the permissive
+reading. That remains defensible, but the README's claim that Annex 2 "is not
+that list" overstates it: §6.2.1.1 does point at Annex 2 for eligibility.
