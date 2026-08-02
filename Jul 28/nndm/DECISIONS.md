@@ -329,59 +329,38 @@ facility detail records bundled into it. That is what makes
 which is what §6.2.1.2 asks for. `RVNU_CD` is unstacked from `medical` in the
 same pass as `PROC_CD`.
 
-**One documented source no package reads, and the reason given for it is
-contradicted.** The *program spec* names the CDM tables joined to
-`CL_MMA_CODELIST` for medication identification as **`T_MEDICAL`
-(`PROC_CD`, `BILL_PROC_CD`, `NDC`, `FST_DT`), `T_RX` (`NDC`, `FILL_DT`,
-`DAYS_SUPPLY`) and `T_MED_PROCEDURE` (`PROC`)**. The business rules' rule 5,
-*"Finding the patients who took the drug of interest"*, names four sources:
+**`med_procedure` is not a drug source — measured, after the documentation
+suggested otherwise.** The program spec names the tables joined to
+`CL_MMA_CODELIST` as `T_MEDICAL` (`PROC_CD`, `BILL_PROC_CD`, `NDC`, `FST_DT`),
+`T_RX` (`NDC`, `FILL_DT`, `DAYS_SUPPLY`) **and `T_MED_PROCEDURE` (`PROC`)**, and
+Optum's rule 5 says `PROC` finds a drug given as a procedure under a HCPCS or
+CPT code. No MM-therapy scan reads it — not `nndm`, not `overall`, not `lot`'s
+MMA/MAP pipeline, not the baseline.
 
-| | Optum names | this build reads |
-|---|---|---|
-| 1 | `NDC` + `FILL_DT` from `t_rx` | yes |
-| 2 | `NDC` + `FST_DT` from `t_medical` | yes |
-| 3 | `PROC_CD` + `FST_DT` from `t_medical` | yes |
-| 4 | `PROC` + `FST_DT` from `t_med_procedure` — *"taking [a] particular drug as procedure using HCPCS/CPT code"* | **no** |
+That looked like a gap. It is not. Profiling `PROC` over the study period:
 
-`med_procedure` is read only for the pregnancy and clinical-trial scans, on ICD
-procedure codes. No MM-therapy scan reads it — not `nndm`, not `overall`, not
-`lot`'s MMA/MAP pipeline, and not the baseline — so this is inherited, not
-something the port dropped. The build also reads `BILL_PROC_CD`, which Optum
-does not name, so the coverage is three of four plus one extra rather than a
-straight subset.
+| `ICD_FLAG` | length | rows | |
+|---|---|---|---|
+| 10 | 7 | 43,137,224 | ICD-10-PCS — 99.9% of the table |
+| 10 | 5 | 14,598 | e.g. `00002` |
+| 10 | 5 | 366 | e.g. `ERHOS` |
+| — | other | < 1,300 combined | malformed |
 
-**The stated reason for excluding it is wrong.** `lot/R/steps/03_mma_map.R`
-said `med_procedure` "is not a drug source: its PROC column holds ICD procedure
-codes, and the MMA code list is HCPCS and NDC". Three things contradict that:
-the program spec names the table for exactly this join; Optum's rule 5 says
-`PROC` finds a drug given *as a procedure under a HCPCS or CPT code*; and
-`lot/R/steps/05_sct.R`, in the same package, joins HCPCS against `mp.PROC` and
-calls it a "HCPCS safety net". Both cannot be true of one column. The comment
-has been corrected to record the omission as open rather than settled; the
-behaviour is unchanged, because changing it moves index dates.
+The five-character tail is 0.035% and its values are zero-padded numbers and
+text fragments, not `J9999` or `38241`. There is no HCPCS/CPT population, so
+reading the table would add no MM therapy claim. **The exclusion is correct and
+the documentation is aspirational on this point.** Data over spec over vendor
+guidance, in that order.
 
-Whether it matters turns on how far `medical.PROC_CD` and `med_procedure.PROC`
-overlap. If every administration code appears on both, nothing is missed; if
-some claims populate only `med_procedure`, then a patient whose sole record of
-an administered agent sits there is invisible — which moves the 1L index date
-or keeps them out of the cohort entirely, and weakens the prior-therapy
-exclusion the same way. Measure it before deciding:
-
-```sql
-SELECT count(DISTINCT p.PATID) AS n_patients_only_in_med_procedure
-FROM   <cdm>.t_med_procedure_2026q1 p
-INNER JOIN <work>.mma_codelist c
-        ON upper(regexp_replace(p.PROC, '[^A-Za-z0-9]', '')) = c.code
-       AND c.code_type IN ('HCPCS','CPT')
-LEFT  JOIN <cdm>.t_medical_2026q1 m
-        ON m.PATID = p.PATID AND m.FST_DT = p.FST_DT
-       AND upper(regexp_replace(coalesce(cast(m.PROC_CD as string),''),
-                                '[^A-Za-z0-9]', '')) = c.code
-WHERE  m.PATID IS NULL;
-```
-
-Zero means the two sources agree and the omission costs nothing. Anything else
-is patients the therapy scan cannot see.
+**What the same profile does show is a dead branch in the SCT scan.**
+`lot/R/steps/05_sct.R` joins `CL_CODE_TYPE = 'HCPCS'` against `mp.PROC` with no
+`ICD_FLAG` condition and calls it a "HCPCS safety net". Against a column with no
+HCPCS in it, that branch matches nothing. Every HCPCS SCT code — CPT
+`38240`/`38241`, `S2150`, and CAR-T `Q2042`/`Q2054`/`Q2055`/`Q2056` — is found
+through `MEDICAL` alone. Results are unaffected, because `MEDICAL` is where
+those codes belong; what was wrong was the belief that a second source was
+backing it up. The comment now says so. The join is kept in case a later
+extract carries them.
 
 **Still assumed, not documented:** that NDCs match once both sides are stripped
 to digits and left-padded to 11. The documentation says nothing about NDC
