@@ -575,7 +575,6 @@ contract_settings <- function() {
 RUN_METADATA_COLS <- c(RUN_ID = "STRING", OBJECT_PREFIX = "STRING",
                        BELANTAMAB_ABBR = "STRING", INDEX_EXCLUDED = "STRING",
                        INDEX_EXCLUDED_CODES = "STRING",
-                       BELANTAMAB_SCOPE = "STRING",
                        MM_ADJACENT_STATES = "STRING",
                        CODE_MD5 = "STRING",
                        CONTRACT_SETTINGS = "STRING",
@@ -703,7 +702,7 @@ check_ndmm_cohort <- function(con, cfg, n_expected) {
   q <- db_q(con, glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_pat, ",
                       "sum(CASE WHEN INDEX_DATE IS NULL THEN 1 ELSE 0 END) AS n_noidx, ",
                       "sum(CASE WHEN ENDDATE < INDEX_DATE THEN 1 ELSE 0 END) AS n_backwards, ",
-                      "sum(CASE WHEN FU_DAYS < 1 THEN 1 ELSE 0 END) AS n_nofu ",
+                      "sum(CASE WHEN FU_DAYS < {NDMM_FU_CE_DAYS} THEN 1 ELSE 0 END) AS n_nofu ",
                       "FROM {tbl}"))
   if (q$n_rows != q$n_pat)
     stop(tbl, " has ", q$n_rows, " rows for ", q$n_pat, " patients. A cohort ",
@@ -721,10 +720,18 @@ check_ndmm_cohort <- function(con, cfg, n_expected) {
          "the index is the 1L start, so a partial death date between the two ",
          "does this. build_ndmm_cohort_table() re-clamps it at the index; if ",
          "this fires, that clamp is not working.", call. = FALSE)
+  # The floor is NDMM_FU_CE_DAYS, not 1. FU_DAYS counts days after the index,
+  # and criterion 5 requires enrolment through index + NDMM_FU_CE_DAYS, so a
+  # patient who passes it has at least that many. Hard-coding 1 contradicted
+  # the one-day rule: with FU_CE_DAYS = 0 the index date alone is enough
+  # follow-up, but a patient whose ENDDATE lands on the index - death clamped
+  # there, or an index on the study end - has FU_DAYS = 0 and stopped the run
+  # after passing every criterion.
   if (isTRUE(q$n_nofu > 0))
-    stop(q$n_nofu, " rows in ", tbl, " have no follow-up at all (FU_DAYS < 1). ",
-         "A LOT run over this cohort would measure lines in a window that does ",
-         "not exist.", call. = FALSE)
+    stop(q$n_nofu, " rows in ", tbl, " have less follow-up than criterion 5 ",
+         "requires (FU_DAYS < ", NDMM_FU_CE_DAYS, "). A LOT run over this ",
+         "cohort would measure lines in a window that does not exist.",
+         call. = FALSE)
   if (!is.na(n_expected) && q$n_pat != n_expected)
     stop(tbl, " holds ", q$n_pat, " patients but the attrition ends at ",
          n_expected, ". The cohort and the funnel that reaches it must agree.",

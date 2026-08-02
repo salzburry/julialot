@@ -1004,9 +1004,15 @@ ok(grepl("no INDEX_DATE", m, fixed = TRUE),
 m <- drive_chk(backwards = 2L)
 ok(grepl("end before they begin", m, fixed = TRUE),
    "a cohort row whose follow-up ends before the index stops the build")
+# The floor is NDMM_FU_CE_DAYS, not 1. Criterion 5 requires enrolment through
+# index + FU_CE_DAYS, so a patient who passed it has at least that much
+# follow-up; a hard-coded 1 stopped the run on a patient the one-day rule
+# admits - ENDDATE on the index, from a clamped death or an index on the study
+# end. The two definitions of "one day of follow-up" have to be the same one.
 m <- drive_chk(nofu = 4L)
-ok(grepl("no follow-up at all", m, fixed = TRUE),
-   "...and so does one with no follow-up window for a LOT run to measure")
+ok(grepl("less follow-up than criterion 5", m, fixed = TRUE) &&
+     grepl(paste0("FU_DAYS < ", se$NDMM_FU_CE_DAYS), m, fixed = TRUE),
+   "...and so does one with less follow-up than criterion 5 asked for")
 m <- drive_chk(pat = 9L, expect = 10L)  # rows follows pat, so this is not a fan-out
 ok(grepl("attrition ends at", m, fixed = TRUE),
    "and a cohort that disagrees with its own funnel is not published")
@@ -1320,5 +1326,30 @@ ok(grepl("cannot", tryCatch({ pe$build_ndmm_preg_codes(NULL); "" },
 ok(setequal(pe$NDMM_PREG_CODE_TYPES,
             c("ICD9DIAG", "ICD10DIAG", "ICD9PROC", "ICD10PROC", "HCPCS", "REV")),
    "the six types the guard allows are the six the scan emits")
+
+cat("\n-- the run-metadata INSERT names as many columns as it supplies --\n")
+# A column list and a VALUES list that disagree is a SQL error at the very end
+# of a run - after the cohort and the attrition are written, before the run is
+# marked complete. Nothing here caught it when BELANTAMAB_SCOPE was removed
+# from the values and left in the column list, so count them.
+me <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = me)
+sys.source(file.path(ROOT, "R", "standalone_constants.R"), envir = me)
+for (nm in c("run_id", "cfg")) assign(nm, if (nm == "cfg") cfg_defaults else "R1", envir = me)
+bl <- readLines(file.path(ROOT, "R", "build_nndm.R"), warn = FALSE)
+i <- grep("^RUN_METADATA_COLS <- c\\(", bl)
+j <- i + which(grepl("\\)\\s*$", bl[i:length(bl)]))[1] - 1L
+eval(parse(text = paste(bl[i:j], collapse = "\n")), envir = me)
+k <- grep("^write_run_metadata <- function", bl)
+l <- k + which(bl[k:length(bl)] == "}")[1] - 1L
+body_txt <- paste(bl[k:l], collapse = "\n")
+# The VALUES list is the glue string; count its top-level {...} interpolations
+vals <- regmatches(body_txt, gregexpr("\\{sql_(text|count)\\(", body_txt))[[1]]
+ok(length(me$RUN_METADATA_COLS) == length(vals) + 1L,
+   paste0("the INSERT supplies one value per column (", length(vals),
+          " interpolated + current_timestamp() vs ",
+          length(me$RUN_METADATA_COLS), " columns)"))
+ok(!any(grepl("BELANTAMAB_SCOPE", names(me$RUN_METADATA_COLS), fixed = TRUE)),
+   "and the scope column went with the setting that fed it")
 
 report()

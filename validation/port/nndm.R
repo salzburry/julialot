@@ -91,6 +91,9 @@ SUBST <- list(
   # list moves behind ndmm_mm_adjacent_groups() so the setting that decides it
   # lives in one place.
   "R/steps/04_other_malig.R" = list(
+    # The comma the line-level inpatient flag needed after the column it now
+    # follows. The flag itself is in the ADDED entry below.
+    list(from = "max(TOS_CD)  AS TOS_CD,", to = "max(TOS_CD)  AS TOS_CD", n = 1L),
     list(from = "ovr_in <- paste(sprintf(\"'%s'\", gsub(\"'\", \"''\", ndmm_mm_adjacent_groups())),",
          to   = "ovr_in <- paste(sprintf(\"'%s'\", gsub(\"'\", \"''\", NDMM_MM_ADJACENT_OVERRIDE)),",
          n = 1L),
@@ -175,7 +178,16 @@ ADDED <- list(
     # excluded the patient on a single baseline claim. This bounds the second
     # claim too, so both fall in the baseline the criterion names. It can only
     # remove exclusions, so the cohort it builds is larger than apr_30_2026's.
-    "AND op.next_dt  BETWEEN l1.pre_lot1_start AND l1.pre_lot1_end" = 1L),
+    "AND op.next_dt  BETWEEN l1.pre_lot1_start AND l1.pre_lot1_end" = 1L,
+    # The line-level inpatient flag, and the classification reading it. The
+    # source classified from max(POS)/max(TOS_CD), so a claim with an inpatient
+    # line and a lexically larger non-inpatient one read as outpatient - and one
+    # inpatient other-cancer claim excludes on its own while an outpatient one
+    # needs a second. 00_mm_cohort.R already flagged per line, with a comment
+    # saying why; this view did not. It can only add exclusions.
+    "max(CASE WHEN POS IN ('21', '51', '61')" = 1L,
+    "OR TOS_CD IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF')" = 1L,
+    "THEN 1 ELSE 0 END) AS line_inpatient" = 1L),
   # The blank-after-normalising guard now sits inside the spliced builder, so
   # it is undone there rather than counted here.
   "R/steps/05_pregnancy.R" = c(

@@ -34,7 +34,10 @@ TBL_B <- "COH_B_FINAL"; PFX_B <- "coh_b_"
 
 cat("\n-- the caller supplies the cohort, the package holds none --\n")
 clear()
-base <- modifyList(list(persist_to_schema = TRUE), CONTRACT)
+# The study window is not in CONTRACT - it is a per-run argument - so the base
+# config a contract check runs against has to carry one.
+WIN <- list(study_start = "2016-01-01", study_end = "2026-03-31")
+base <- modifyList(modifyList(list(persist_to_schema = TRUE), CONTRACT), WIN)
 cfg <- pin_cohort(base, TBL_A, PFX_A)
 ok(identical(cfg$input_cohort_table, TBL_A) && identical(cfg$object_prefix, PFX_A),
    "a cohort table and prefix are taken as given")
@@ -52,6 +55,75 @@ stops(pin_cohort(base, "COH_A; DROP TABLE x", PFX_A), "anything not a table name
 stops(pin_cohort(base, TBL_A, "coh a "), "a prefix that is not a name")
 stops(pin_cohort(base, TBL_A, "coh_a"), "a prefix with no trailing underscore")
 runs(pin_cohort(base, TBL_A, "s3_"), "digits are fine inside a prefix")
+
+cat("\n-- and the study window is the caller's too --\n")
+# Not in CONTRACT: the algorithm is one thing, the window it is run over is the
+# cohort's. Pinning it meant editing this folder to run the same rules against a
+# study with different dates.
+ok(!any(c("study_start", "study_end") %in% names(CONTRACT)),
+   "the window is not pinned by CONTRACT")
+w <- pin_study_window(base, "2016-01-01", "2026-03-31")
+ok(identical(w$study_start, "2016-01-01") && identical(w$study_end, "2026-03-31"),
+   "a window passed as an argument is taken as given")
+# The common case passes two arguments, not four, and gets config.csv's window.
+w2 <- pin_study_window(modifyList(base, list(study_start = "2016-01-01",
+                                             study_end = "2025-06-30")), NULL, NULL)
+ok(identical(w2$study_end, "2025-06-30"),
+   "and no argument falls back to the configured one, rather than blank")
+w3 <- pin_study_window(modifyList(base, list(study_end = "2025-06-30")),
+                       NULL, "2026-03-31")
+ok(identical(w3$study_end, "2026-03-31"),
+   "an argument beats the configured value, so a run need not edit config.csv")
+# check_settings() only sees the environment, so an argument has to be checked
+# here or a command-line date reaches get_quarter_suffix() unvalidated.
+stops(pin_study_window(base, "2016-01-01", "30-06-2025"),
+      "an Excel-reformatted date passed as an argument")
+stops(pin_study_window(base, "2016-01-01", "2026-13-31"),
+      "a date that is ISO-shaped but not a date")
+# as.Date() errors rather than returning NA on a string it cannot parse, so
+# without a tryCatch this stopped with R's message instead of one naming the
+# setting - which is the difference between a fixable error and a puzzle.
+ok(grepl("study_end='2026-13-31'",
+         tryCatch(pin_study_window(base, "2016-01-01", "2026-13-31"),
+                  error = conditionMessage), fixed = TRUE),
+   "...and the message names the setting and the value, not R's date parser")
+stops(pin_study_window(base, "2026-03-31", "2016-01-01"),
+      "a window that runs backwards")
+stops(pin_study_window(modifyList(base, list(study_start = "", study_end = "")),
+                       NULL, NULL),
+      "no window at all, from either source")
+stops(check_lot_contract(modifyList(cfg, list(study_end = ""))),
+      "and the contract refuses an empty window even though it does not pin one")
+
+cat("\n-- and the run records which window built it --\n")
+# FINAL_METADATA_COLS drives the ALTER that adds these columns; the UPDATE sets
+# them. Two lists of the same names, and nothing held them together: a column
+# added to one and not the other is either a column that is created and stays
+# NULL forever, or an UPDATE naming a column the table does not have. Read out
+# of the file rather than restated, so this cannot drift either.
+rfc <- local({
+  b <- paste(readLines(file.path(ROOT, "R", "build_lot.R"), warn = FALSE),
+             collapse = "\n")
+  # Lazy, and anchored on both ends of the one statement: WHERE RUN_ID appears
+  # in several other queries in this file, so a greedy cut lands in the wrong
+  # one and the comparison then reads every column name in the file.
+  m <- regmatches(b, regexpr("(?s)UPDATE \\{tbl\\}\\s*SET .*?WHERE RUN_ID", b,
+                             perl = TRUE))
+  if (!length(m)) "" else m
+})
+set_cols <- unique(regmatches(rfc, gregexpr("[A-Z][A-Z0-9_]+(?= =)", rfc,
+                                            perl = TRUE))[[1]])
+ok(setequal(set_cols, names(FINAL_METADATA_COLS)),
+   paste0("the UPDATE sets exactly the columns FINAL_METADATA_COLS adds (",
+          length(set_cols), " vs ", length(FINAL_METADATA_COLS), ")",
+          if (!setequal(set_cols, names(FINAL_METADATA_COLS)))
+            paste0(" -- only in one: ",
+                   paste(union(setdiff(set_cols, names(FINAL_METADATA_COLS)),
+                               setdiff(names(FINAL_METADATA_COLS), set_cols)),
+                         collapse = ", ")) else ""))
+ok(all(c("STUDY_START", "STUDY_END") %in% names(FINAL_METADATA_COLS)),
+   paste0("and the window is among them - it left CONTRACT, so ",
+          "CONTRACT_SETTINGS no longer carries it"))
 
 cat("\n-- two cohorts cannot collide --\n")
 # The point of the module: same rules, different output names.
@@ -158,6 +230,52 @@ ok(identical(got, list(n_rows = 10, n_patients = 10)),
    "and hands back the counts materialize_cohort_input compares")
 rm("db_q", "log_msg", envir = globalenv())
 
+cat("\n-- and the cohort has to fit the window this run reads --\n")
+# LOT bounds every claim scan by the cohort's own dates, so a cohort built to a
+# wider window than the CDM vintage produces early line ends and invented
+# discontinuations with nothing in the output to say so. The NDMM cohort ends
+# 2026-03-31 and this build defaults to 2025-06-30, so it is the live case.
+WSQL <- character(0)
+wstub <- function(...) {
+  w <- modifyList(list(min_index = "2017-02-01", max_index = "2024-11-30",
+                       max_end = "2025-06-30", n_past_end = 0, n_before_start = 0),
+                  list(...))
+  WSQL <<- character(0)
+  assign("db_q", function(con, sql) { WSQL <<- c(WSQL, sql); as.data.frame(w) },
+         envir = globalenv())
+}
+assign("log_msg", function(...) invisible(NULL), envir = globalenv())
+wcfg <- modifyList(cfg, list(study_start = "2016-01-01", study_end = "2025-06-30",
+                             use_quarterly_tables = TRUE))
+
+wstub()
+runs(check_cohort_window(fake_con, "wk.COH", wcfg),
+     "a cohort inside the window is accepted")
+ok(grepl("date('2025-06-30')", WSQL[1], fixed = TRUE) &&
+     grepl("date('2016-01-01')", WSQL[1], fixed = TRUE),
+   "both ends of the configured window reach the query")
+
+wstub(n_past_end = 412, max_end = "2026-03-31")
+stops(check_cohort_window(fake_con, "wk.COH", wcfg),
+      "a cohort observed past STUDY_END is refused, not silently truncated")
+msg <- tryCatch(check_cohort_window(fake_con, "wk.COH", wcfg),
+                error = conditionMessage)
+ok(grepl("412", msg, fixed = TRUE) && grepl("2026-03-31", msg, fixed = TRUE) &&
+     grepl("2025q2", msg, fixed = TRUE),
+   "and the message names the count, the date and the vintage it would read")
+
+wstub(n_before_start = 7, min_index = "2015-08-14")
+stops(check_cohort_window(fake_con, "wk.COH", wcfg),
+      "so is one indexed before STUDY_START")
+
+# Without quarterly tables there is no vintage to name, but the window still
+# bounds what the cohort may claim.
+wstub(n_past_end = 1)
+stops(check_cohort_window(fake_con, "wk.COH",
+                          modifyList(wcfg, list(use_quarterly_tables = FALSE))),
+      "the check does not depend on quarterly tables being on")
+rm("db_q", "log_msg", envir = globalenv())
+
 cat("\n-- build_lot() actually runs the phases, in order --\n")
 # Every step file passing its own test proved nothing about whether build_lot()
 # calls it. The line-criteria layer shipped complete, tested, and never invoked.
@@ -165,7 +283,8 @@ bl <- paste(readLines(file.path(ROOT, "R", "build_lot.R"), warn = FALSE),
             collapse = "\n")
 body <- sub(".*build_lot <- function\\([^)]*\\) \\{", "", bl)
 ORDER <- c("check_settings", "pin_output_schema", "pin_cohort",
-           "check_lot_contract", "set_lot_config", "check_cohort_input",
+           "pin_study_window", "check_lot_contract", "set_lot_config",
+           "check_cohort_input", "check_cohort_window",
            "check_no_active_run", "clear_run_rows",
            "phase_codelists", "record_codelist_hashes",
            "phase_patient_input", "materialize_cohort_input",
@@ -1026,6 +1145,17 @@ clear()
 Sys.setenv(STUDY_END = "30-06-2025")
 stops(check_settings(), "an Excel-reformatted STUDY_END")
 clear()
+Sys.setenv(STUDY_START = "01-01-2016")
+stops(check_settings(), "...and an Excel-reformatted STUDY_START, same rule")
+clear()
+# Both parse, in the wrong order. Each passes its own format check, and the
+# result would be a window no cohort can satisfy.
+Sys.setenv(STUDY_START = "2026-01-01", STUDY_END = "2025-06-30")
+stops(check_settings(), "a study window that runs backwards")
+clear()
+Sys.setenv(STUDY_START = "2016-01-01", STUDY_END = "2025-06-30")
+runs(check_settings(), "and the configured window is accepted")
+clear()
 Sys.setenv(PROJECT_WORK_SCHEMA = "hive_metastore.usr00000")
 stops(check_settings(), "catalog.schema where a schema name belongs")
 clear()
@@ -1201,7 +1331,11 @@ ok(length(unread) == 0,
    else paste0("every one of the ", length(cnames), " names in config.csv is read"))
 # Every setting the file carries is either pinned by CONTRACT or named here as
 # deliberately not pinned. A new one is caught by being neither.
-NOT_PINNED <- c("persist_to_schema")   # check_lot_contract requires it TRUE
+NOT_PINNED <- c("persist_to_schema",   # check_lot_contract requires it TRUE
+                # The study window is the cohort's, not the algorithm's, so it
+                # is a per-run argument. pin_study_window() validates it and
+                # check_lot_contract() still refuses an empty one.
+                "study_start", "study_end")
 keys <- unname(ENV2CFG[intersect(cnames, names(ENV2CFG))])
 loose <- setdiff(keys, c(names(CONTRACT), NOT_PINNED))
 ok(length(loose) == 0,
@@ -1250,8 +1384,11 @@ ok(identical(qs("2025-03-31"), "2025q1") && identical(qs("2025-04-01"), "2025q2"
    "and the quarter boundaries fall between the months, not across them")
 ok(identical(qs("2024-09-30"), "2024q3"),
    "the year comes from the date, not from today")
-ok(identical(qs(CONTRACT$study_end), want_q(CONTRACT$study_end)),
-   paste0("the pinned STUDY_END resolves to ", want_q(CONTRACT$study_end)))
+# config.csv's value, not a CONTRACT entry - the window is passed per run now.
+# `loaded` is that file read the way build.R reads it, so this is the vintage a
+# production run hits when the caller passes no window of its own.
+ok(identical(qs(loaded$study_end), want_q(loaded$study_end)),
+   paste0("the configured STUDY_END resolves to ", want_q(loaded$study_end)))
 # as.Date("30-06-2025") does not fail - it returns year 0030. Without the
 # year < 1900 guard that is accepted and the suffix becomes 30q2.
 ok(identical(qs("30-06-2025"), "2025q2"),

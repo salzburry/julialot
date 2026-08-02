@@ -118,8 +118,11 @@ RESTORE <- list(
     why  = "check_claim_ndc and the code-list NDC checks"))
 )
 
-# Lines that were EDITED rather than added, and how many of each. Counted like
+# Runs that were EDITED rather than added, and how many of each. Counted like
 # the rest: a blanket regex here would also hide an unapproved DISTINCT.
+# `from` and `to` may be several lines, matched as a contiguous run - so an edit
+# that splits or joins lines is expressible, and a run opening on a line as
+# common as SELECT DISTINCT is still located by what follows it.
 SUBST <- list(
   "01_codelists.R" = list(list(from = "SELECT DISTINCT", to = "SELECT", n = 2L)),
   "05_sct.R"       = list(list(from = "SELECT DISTINCT", to = "SELECT", n = 1L)),
@@ -140,21 +143,57 @@ SUBST <- list(
          n    = 1L))
 )
 
-# Single added code lines, and how many of each.
-DROP <- list(
-  "01_codelists.R" = c(
-    "AND regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''" = 1L,
-    "WHERE upper(trim(coalesce(CL_MED_CLASS, ''))) <> 'STEROID'" = 1L),
-  "03_mma_map.R" = c(
-    "AND regexp_replace(c.CL_CODE, '[^0-9]', '') <> ''" = 2L,
-    "AND regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '') <> ''" = 1L,
-    "AND regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') <> ''" = 1L),
-  "05_sct.R" = c(
-    "AND regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''" = 1L)
+# Runs the port ADDS that the source has no counterpart for, and how many of
+# each. Matched as contiguous runs and counted exactly, both ways: too few means
+# a guard has been deleted, too many means one was added without being
+# registered. The source drops code-list rows on the RAW value while storing the
+# NORMALIZED one, so a punctuation-only code survives as "" - and the claim side
+# coalesces a missing code to "" too. That is a silent false match, not a rule.
+ADDED <- list(
+  "01_codelists.R" = list(
+    list(run = "AND regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''", n = 1L),
+    # Both rollup builders, or a fresh-session run would disagree with LOT1.
+    # trim matters: the projection trims and the raw column does not, so
+    # ' STEROID ' would otherwise survive.
+    list(run = "WHERE upper(trim(coalesce(CL_MED_CLASS, ''))) <> 'STEROID'", n = 1L)),
+  "03_mma_map.R" = list(
+    # Both NDC joins, medical and Rx. Registering one would have let the other
+    # ship unguarded - that is exactly how it happened in the cohort build.
+    list(run = "AND regexp_replace(c.CL_CODE, '[^0-9]', '') <> ''", n = 2L),
+    list(run = "AND regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '') <> ''", n = 1L),
+    list(run = "AND regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') <> ''", n = 1L)),
+  "05_sct.R" = list(
+    list(run = "AND regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''", n = 1L))
 )
 
 # Reported so a stale entry cannot hide a deleted guard.
 undo_report <- new.env()
+
+# Where does this run of lines start? Sequence match, so a run whose first line
+# is shared with other code is still located by what follows it, and removing
+# one occurrence cannot take a line out from under another.
+run_starts <- function(lines, run) {
+  k <- length(run)
+  if (!k || length(lines) < k) return(integer(0))
+  Filter(function(i) identical(lines[i:(i + k - 1L)], run),
+         seq_len(length(lines) - k + 1L))
+}
+
+# A multi-line run that no longer matches is named by its first line, which says
+# nothing about where it went wrong. Report how far the closest occurrence got.
+near_miss <- function(lines, run) {
+  if (length(run) < 2L) return(character(0))
+  best <- 0L; at <- 0L
+  for (i in seq_along(lines)) {
+    k <- 0L
+    while (k < length(run) && i + k <= length(lines) && lines[i + k] == run[k + 1L])
+      k <- k + 1L
+    if (k > best) { best <- k; at <- i }
+  }
+  if (!best) return(" -- no part of the run appears at all")
+  paste0(" -- closest run matched ", best, " of ", length(run),
+         " lines, expected next: ", run[best + 1L])
+}
 
 undeviate <- function(lines, file) {
   short <- character(0)
@@ -204,32 +243,49 @@ undeviate <- function(lines, file) {
   # whole of it - both anchors with it - would leave nothing to cut and a port
   # that matches the source exactly, which is how a safety check could be
   # removed with every suite still green.
+  #
+  # Whole-line anchors, and each has to be the only one. grep() took the first
+  # substring match anywhere in the file: an anchor that also occurs earlier - in
+  # a comment quoting it, or in a second copy of the block - cut a range that
+  # started in the wrong place, and the failure then read as a rewritten phase
+  # rather than an ambiguous anchor.
   for (cb in CUT[[file]]) {
-    a <- grep(cb[["from"]], lines, fixed = TRUE)[1]
-    b <- grep(cb[["to"]],   lines, fixed = TRUE)[1]
-    if (is.na(a) || is.na(b) || b < a) {
+    a <- which(lines == cb[["from"]])
+    b <- which(lines == cb[["to"]])
+    b <- b[b >= a[1]][1]
+    if (length(a) != 1L || is.na(b)) {
       short <- c(short, paste0(cb[["from"]], " ... ", cb[["to"]],
                                " (added block gone: ",
-                               if (is.na(a) && is.na(b)) "neither anchor found"
-                               else if (is.na(a)) "opening anchor not found"
-                               else if (is.na(b)) "closing anchor not found"
-                               else "anchors out of order", ")"))
+                               if (!length(a)) "opening anchor not found"
+                               else if (length(a) > 1L)
+                                 paste0("opening anchor is not unique (", length(a), ")")
+                               else "no closing anchor after it", ")"))
       next
     }
     lines <- lines[-(a:b)]
   }
   for (sb in SUBST[[file]]) {
-    hit <- which(lines == sb$from)
-    if (length(hit) != sb$n)
-      short <- c(short, paste0(sb$from, " (expected ", sb$n, ", found ", length(hit), ")"))
-    if (length(hit)) lines[hit[seq_len(min(sb$n, length(hit)))]] <- sb$to
+    hit <- run_starts(lines, sb$from)
+    if (length(hit) != sb$n) {
+      short <- c(short, paste0(sb$from[1], " (expected ", sb$n, ", found ",
+                               length(hit), ")", near_miss(lines, sb$from)))
+      next
+    }
+    for (h in rev(hit))
+      lines <- append(lines[-(h:(h + length(sb$from) - 1L))], sb$to, after = h - 1L)
   }
-  for (nm in names(DROP[[file]])) {
-    want_n <- DROP[[file]][[nm]]
-    hit <- which(lines == nm)
-    if (length(hit) < want_n)
-      short <- c(short, paste0(nm, " (expected ", want_n, ", found ", length(hit), ")"))
-    if (length(hit)) lines <- lines[-hit[seq_len(min(want_n, length(hit)))]]
+  # Exactly the registered count, not at least it. "At least" let an unregistered
+  # second copy of a guard ride along: one was removed, the other was left, and
+  # the comparison below saw a file the source did not have and blamed the line
+  # after it.
+  for (ab in ADDED[[file]]) {
+    hit <- run_starts(lines, ab$run)
+    if (length(hit) != ab$n) {
+      short <- c(short, paste0(ab$run[1], " (expected ", ab$n, ", found ",
+                               length(hit), ")", near_miss(lines, ab$run)))
+      next
+    }
+    for (h in rev(hit)) lines <- lines[-(h:(h + length(ab$run) - 1L))]
   }
   assign(file, short, envir = undo_report)
   lines
@@ -307,41 +363,38 @@ for (p in PHASES) {
   }
 }
 
-cat("\n-- ...and they differ only in the guards, nothing else --\n")
+cat("\n-- ...and the registry describing them is not stale --\n")
 sql_of <- function(f) paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE),
                             collapse = "\n")
-GUARDS <- list(
-  list(f = "01_codelists.R",
-       pat = "AND regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''",
-       what = "the MM code list drops codes that normalize to blank"),
-  list(f = "01_codelists.R", pat = "SELECT DISTINCT",
-       what = "the MM code list is de-duplicated"),
-  list(f = "05_sct.R",
-       pat = "AND regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''",
-       what = "the SCT code list drops codes that normalize to blank"),
-  list(f = "05_sct.R", pat = "SELECT DISTINCT",
-       what = "the SCT code list is de-duplicated")
-)
-for (g in GUARDS) ok(grepl(g$pat, sql_of(g$f), fixed = TRUE), g$what)
-# Both NDC joins, medical and Rx. Asserting one would have let the other ship
-# unguarded - that is exactly how it happened in the cohort build.
-mm <- sql_of("03_mma_map.R")
-n_ndc <- length(gregexpr("AND regexp_replace(c.CL_CODE, '[^0-9]', '') <> ''",
-                         mm, fixed = TRUE)[[1]])
-ok(n_ndc == 2, paste0("both NDC joins require digits in the code (", n_ndc, ")"))
-# Both rollup builders, or a fresh-session run would disagree with LOT1.
-# One builder puts it in a new WHERE, the other in an existing one, so match
-# the predicate rather than the clause. trim matters: the projection trims and
-# the raw column does not, so ' STEROID ' would otherwise survive.
-ok(grepl("upper(trim(coalesce(CL_MED_CLASS, ''))) <> 'STEROID'",
-         sql_of("01_codelists.R"), fixed = TRUE),
-   "the rollup drops steroids - once, now that both paths share it")
-ok(grepl("FROM mma_extractable_codelist c LEFT JOIN mma_rollup r",
-         sql_of("08_persist.R"), fixed = TRUE),
-   "the persisted orphan count reads the same population as the live check")
+# A run of greps used to sit here, asserting each guard was present and each
+# unchanged file was free of it. Every one of those is now decided by the
+# comparison above: an entry counted exactly and then undone proves the guard is
+# there, in the registered number, and identity proves nothing else moved. What
+# a grep still buys is the two cases the comparison cannot see.
+#
+# A registry entry naming a file that is no longer a phase is a deviation nobody
+# is checking - the undo runs against nothing and the file it was meant for is
+# compared as if unchanged.
+phase_files <- vapply(PHASES, `[[`, character(1), "file")
+stale <- setdiff(unique(c(names(SPLICE), names(CUT), names(RESTORE),
+                          names(SUBST), names(ADDED), CHANGED)), phase_files)
+ok(!length(stale),
+   if (length(stale)) paste0("registry names a file that is not a phase: ",
+                             paste(stale, collapse = ", "))
+   else "every registered deviation names a phase that exists")
+# And a file listed as CHANGED with nothing registered against it is compared
+# strictly anyway, so the entry says something untrue about the port.
+declared <- unique(c(names(SPLICE), names(CUT), names(RESTORE), names(SUBST),
+                     names(ADDED)))
+idle <- setdiff(CHANGED, declared)
+ok(!length(idle),
+   if (length(idle)) paste0("listed as changed but nothing is registered: ",
+                            paste(idle, collapse = ", "))
+   else paste0("all ", length(CHANGED), " changed phases have registered deviations"))
 # The one removal, asserted from the other side too. RESTORE proves the rest of
 # the phase is untouched; this proves the block went away because something
-# else does the job, not because it was dropped.
+# else does the job, not because it was dropped. build_lot.R is not ported code,
+# so nothing above reads it.
 blr <- paste(readLines(file.path(ROOT, "R", "build_lot.R"), warn = FALSE), collapse = "\n")
 # On the two variable names, not on a phrase from the log: the comment that
 # replaced the block quotes the log line, so a phrase match would find itself.
@@ -349,10 +402,6 @@ ok(!grepl("ndc_qc_rx", sql_of("07_qc.R"), fixed = TRUE) &&
      !grepl("ndc_qc_codelist", sql_of("07_qc.R"), fixed = TRUE) &&
      grepl("check_claim_ndc(con, cfg)", blr, fixed = TRUE),
    "the NDC profile left phase_qc, and check_claim_ndc runs in its place")
-# The unchanged files must still be untouched.
-for (f in setdiff(vapply(PHASES, `[[`, character(1), "file"), CHANGED))
-  ok(!grepl("regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''", sql_of(f), fixed = TRUE),
-     paste0(f, ": no stray guard added"))
 
 cat("\n-- LOT2-5 and LOT_LONG are whole-file copies --\n")
 # These two were already function-structured in the source, so they are copied

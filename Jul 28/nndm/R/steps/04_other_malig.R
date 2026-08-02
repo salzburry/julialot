@@ -105,10 +105,19 @@ build_ndmm_med_claim_header_and_confinement <- function(con, medical_tbl,
   upper <- glue("date('{cfg$study_end}')")
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_MED_CLAIM_HEADER} AS
+    -- Flag each line before max(POS) can hide an inpatient code. A claim with
+    -- an inpatient line (POS 21) and a lexically larger non-inpatient one (81)
+    -- has max(POS) = 81, so classifying from the maxima alone reads it as
+    -- outpatient. One inpatient other-cancer claim excludes on its own, while
+    -- an outpatient one needs a second within 30 days - so that patient stayed
+    -- in the cohort. 00_mm_cohort.R has always done this; this view did not.
     SELECT PATID, PAT_PLANID, CLMID, FST_DT, LOC_CD,
            max(CONF_ID) AS CONF_ID,
            max(POS)     AS POS,
-           max(TOS_CD)  AS TOS_CD
+           max(TOS_CD)  AS TOS_CD,
+           max(CASE WHEN POS IN ('21', '51', '61')
+                      OR TOS_CD IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF')
+                    THEN 1 ELSE 0 END) AS line_inpatient
     FROM {medical_tbl}
     WHERE FST_DT BETWEEN {lower} AND {upper}
     GROUP BY PATID, PAT_PLANID, CLMID, FST_DT, LOC_CD
@@ -169,9 +178,8 @@ build_ndmm_other_malig_pre_lot1 <- function(con, med_diag_tbl) {
     ),
     dx_with_setting AS (
       SELECT dm.PATID, dm.CLMID, dm.event_dt, dm.tumor_group, dm.primary_group,
-             CASE WHEN h.POS IN ('21', '51', '61')
-                    OR h.TOS_CD IN ('FAC_IP.ACUTE', 'FAC_IP.REHSNF', 'PROF.INPVIS', 'FAC_IP.SNF')
-                    OR cf.CONF_ID IS NOT NULL
+             -- line_inpatient is 0/1, so a missing POS/TOS stays null-safe.
+             CASE WHEN h.line_inpatient = 1 OR cf.CONF_ID IS NOT NULL
                   THEN 1 ELSE 0 END AS inpatient_flg
       FROM dx_mapped dm
       INNER JOIN {NDMM_MED_CLAIM_HEADER} h

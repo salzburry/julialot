@@ -29,7 +29,21 @@ cfg_defaults <- list(
   tbl_rx       = "rx",
 
   use_quarterly_tables = as.logical(Sys.getenv("USE_QUARTERLY_TABLES", unset = "TRUE")),
-  study_end            = Sys.getenv("STUDY_END", unset = "2025-06-30"),
+  # The study window this run covers, and the default for it. build_lot() takes
+  # it as an argument, so these are what a run uses when none is passed.
+  #
+  # LOT bounds every claim scan by the cohort's own INDEX_DATE and OBS_END_DT
+  # rather than by these dates, so they do not filter anything directly - what
+  # they do is say which data this build is entitled to see, and study_end also
+  # picks the quarterly CDM tables. A cohort built to a wider window than these
+  # would have its follow-up silently truncated at the vintage;
+  # check_cohort_window() stops instead.
+  #
+  # The dates are the NNDM protocol's S6.1 study period, which is the cohort
+  # this build is run for. Another cohort with another window passes its own -
+  # nothing here has to change.
+  study_start          = Sys.getenv("STUDY_START", unset = "2016-01-01"),
+  study_end            = Sys.getenv("STUDY_END", unset = "2026-03-31"),
 
   # ---- LOT parameters ----
   # One 90-day discontinuation rule only, at MAP level per drug. There is no

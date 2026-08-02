@@ -110,6 +110,10 @@ criterion and stops if it matches no row, which is the same shape as
   study's N. The ninth step now lives in the LOT build's own reporting.
 - The LOT run processes slightly more patients. Belantamab is a later-line ADC,
   so in a 1L newly-diagnosed cohort this should be very few.
+- **The two packages must now agree on the study window and on how many lines
+  are built.** The window is settled — `lot` takes it as a run argument and
+  defaults to this protocol's, so both read `2026q1`. `MAX_LOT` is still a
+  stated bound. See §5.
 
 **Recorded by:** the study team, 2026-08-02.
 
@@ -251,6 +255,70 @@ disagreed — `NDMM_STUDY_START` fell back to `2015-07-01`, `cfg$study_start` to
 build. **Fixed:** both defaults are now `2016-01-01`, so a missing `config.csv`
 cannot widen the pregnancy and MM-diagnosis scans, and the comment on
 `cfg$study_start` no longer claims the pregnancy scan reads it.
+
+**The two packages read different data vintages, and it is worse than the
+belantamab case.** `nndm/config.csv` ends the study at **2026-03-31**, which is
+§6.1's end of data, so its scans resolve to the `2026q1` CDM tables.
+`lot/config.csv` ends at **2025-06-30** and resolves to `2025q2` — the window
+`overall` was built and run on.
+
+The belantamab consequence is the obvious one: since #2 the exclusion is
+evaluated in `lot`, so a belantamab claim after 2025-06-30 is in the cohort's
+window and not in the LOT build's, cannot trigger the exclusion, and the patient
+stays. The cohort's own `NDMM_BELANTAMAB_RECONCILE` list would show them.
+
+But the same mismatch damages **every** line, not just belantamab's. LOT bounds
+each claim scan by the cohort's `INDEX_DATE` and `OBS_END_DT`, which come from
+the cohort table — so with a 2026-03-31 cohort against `2025q2` tables, nine
+months of every patient's follow-up is simply absent. Lines end early, MAPs
+discontinue where the patient was still being treated, and the end reason comes
+out `STUDY_END`. Nothing errors and no count looks wrong.
+
+**Made fatal rather than silent.** `check_cohort_window()` in `lot` reads the
+cohort's actual `INDEX_DATE` / `ENDDATE` range and stops if it falls outside the
+window the run was given, naming the count, the date and the CDM vintage it
+would have read. `check_settings()` rejects a window that runs backwards, and
+`pin_study_window()` rejects one whose dates will not parse. A mismatched pair
+now fails at preflight instead of producing a plausible wrong answer.
+
+**Decided: `lot` follows the NNDM protocol, and the window is a run argument.**
+`lot/config.csv` defaults to §6.1's study period — `STUDY_START=2016-01-01`,
+`STUDY_END=2026-03-31` — which is the same window `nndm` uses and resolves to the
+same `2026q1` CDM tables. The NDMM cohort and the LOT build over it therefore
+see one vintage, and the belantamab exclusion is evaluated over the whole of the
+cohort's window.
+
+The window is no longer in `CONTRACT`. `CONTRACT` fixes what a LOT run *means* —
+induction windows, gap days, transplant rules — and a different value there is a
+different algorithm. The study window is not that: the algorithm is unchanged and
+the dates belong to the cohort. So it is passed like the cohort table and the
+prefix:
+
+```
+Rscript build.R NDMM_COHORT ndmm_ 2016-01-01 2026-03-31
+Rscript build.R MM_COH_FINAL mm_   2015-07-01 2025-06-30
+```
+
+which is what lets the same algorithm run over the parent MM cohort — frozen at
+2015-07-01 .. 2025-06-30 — without editing the package. Both dates are written to
+`LOT_RUN_METADATA`, so an output says which window and therefore which vintage
+produced it.
+
+**What this still needs before the production run:** `lot` has only ever been
+validated against `2025q2`. Reading `2026q1` is reading tables nobody in this
+repo has run it over. The quarterly tables are cumulative, so this is a wider
+read rather than a different one, but a claim restated between vintages would
+change a line. Confirm `t_medical_2026q1`, `t_rx_2026q1`, `t_med_procedure_2026q1`
+and `t_med_diagnosis_2026q1` exist and that the row counts move the way a
+three-quarter extension should.
+
+**"Any LOT" means the lines the LOT build produces, which is `MAX_LOT` of
+them.** `lot` builds up to `MAX_LOT` lines per patient (5 by default); the
+criterion is applied across all of them. A patient whose only belantamab
+exposure is in a sixth line is not excluded. In a 1L newly-diagnosed cohort
+followed from index this is a narrow gap, and raising `MAX_LOT` costs run time
+on every patient — so it is a bound to state, not silently a rule. Also a
+configuration decision rather than a defect.
 
 **Annex 2 is cited both ways.** §6.2.1.1 says "For a full list of
 eligible/expected MM therapies, see Annex 2"; §6.2.2 says "Annex 2 contains an
