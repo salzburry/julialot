@@ -39,7 +39,9 @@ else, or writes none — so the name is `ATTRITION_TABLE` in `config.csv` rather
 than a constant in a package that is meant to name no study of its own. The
 cohort prefix still applies, and the columns the panel needs are `RUN_ID`,
 `STEP_NUM`, `CRITERION`, `N_PATIENTS` and `RECORDED_AT`. A table without them
-fails its own panel and leaves the rest of the dashboard alone.
+fails its own panel and leaves the rest of the dashboard alone. The name is
+validated the same way `INPUT_COHORT_TABLE` is — a bare table name, no schema —
+because it reaches a query the same way.
 
 Both `ATTRITION_TABLE` and `LOT_RUN_METADATA` are **history**: each build
 deletes and re-inserts only its own `RUN_ID`, so previous runs stay. The two
@@ -48,6 +50,15 @@ panels that read them take the **latest run** — by `RECORDED_AT` and
 and cannot know the run id. Without that, a reused prefix returns several
 funnels interleaved by `STEP_NUM`, and the bar takes its denominator from
 whichever row came back first.
+
+Latest is not enough for provenance. The metadata row is created **early**, in
+the persistence phase, and `record_final_counts()` fills in the fingerprint, the
+window, the applied criteria and the counts at the **end** — so a later attempt
+that died in between leaves the newest row half empty, and the panel would show
+blank provenance beside tables an earlier run actually built. The panel filters
+on `N_LOT_FINAL_ROWS IS NOT NULL`, which is not a heuristic: it is the same
+predicate `lot`'s own `check_run_recorded` uses to decide a run recorded itself,
+asked of the history rather than of the current run.
 
 ### Which population a panel describes
 
@@ -62,9 +73,15 @@ excluded, with nothing on the page saying so — so only `criteria_impact` and
 restrict to `PATID IN (SELECT DISTINCT PATID FROM {lot_final})`. A test asserts
 both rules, and that every section's `needs` names the tables its SQL reads.
 
-The NDMM attrition panel is the cohort build's funnel and **ends before** the
-LOT-side belantamab criterion — its label says so, and `criteria_impact` on the
-same tab shows what that criterion removed.
+The attrition panel is the **cohort build's** funnel, read rather than
+recomputed, and its label says only that. Where it ends is that build's
+business: `nndm` stops before the LOT-side belantamab criterion, another cohort
+build stops somewhere else, and nothing in the warehouse keys a cohort run to a
+LOT run — the two tables share a prefix, not a run id. A label naming one
+build's criteria would be false on every other cohort, and there is nothing this
+package could read to make it true. `criteria_impact` on the Validation tab
+shows what the LOT-side criteria removed, which *is* a number this package can
+stand behind.
 
 **`LOT_LONG_FINAL` is required** — it is the study population and every clinical
 panel reads it. It is also written *last*, in the line-criteria phase, so a LOT
