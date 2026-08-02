@@ -530,6 +530,32 @@ reaching `complete`. So there is no separate entry point that rebuilds them:
 one execution path, one set of inputs. After a failure, re-run the whole
 build.
 
+## Face validity
+
+The invariants ask whether the output is internally consistent. `LOT_FACE_VALIDITY`
+asks whether it looks like myeloma — a run can pass every structural check with
+transplants landing in late lines, CAR-T in first line, or a median line lasting
+three days, and nothing else here would notice.
+
+| check | expects |
+|---|---|
+| autologous transplant lines that are LOT1–2 | ≥ 50% |
+| CAR-T lines at LOT3 or later | ≥ 50% |
+| patients with any allogeneic line | ≤ 5% |
+| LOT1 lines started by a medication | ≥ 80% |
+| median LOT1 length in days | 30–1500 |
+| LOT1 patients covered by the ten commonest regimens | ≥ 25% |
+
+**The number is the point, not the verdict.** Every check records what it found
+whether or not it passed. The bands are wide deliberately: they catch gross
+failure — an end-date rule firing on the start date, a code list matching the
+wrong thing — and none of them is a published benchmark. Narrow them once there
+is a run to narrow them against.
+
+Reported, not fatal. An unusual cohort can legitimately fail one, and stopping a
+build on a plausibility judgement would be wrong. `FACE_VALIDITY_FATAL=TRUE`
+makes them stop.
+
 Every step is defined exactly once.
 
 Both inputs are pinned, not just assumed stable. The code lists are read into R

@@ -1383,7 +1383,10 @@ NOT_PINNED <- c("persist_to_schema",   # check_lot_contract requires it TRUE
                 # Whatever the cohort build calls its status table. Empty means
                 # try the usual names, so pinning it would tie this algorithm
                 # to one cohort build's naming.
-                "cohort_status_table", "cohort_prefix")
+                "cohort_status_table", "cohort_prefix",
+                # A run choice, not part of what a LOT run means: it changes
+                # whether a plausibility warning stops the build, not the lines.
+                "face_validity_fatal")
 keys <- unname(ENV2CFG[intersect(cnames, names(ENV2CFG))])
 loose <- setdiff(keys, c(names(CONTRACT), NOT_PINNED))
 ok(length(loose) == 0,
@@ -1604,5 +1607,49 @@ ok(any(grepl("^\\s*stop\\(", cr)),
    "...and anything else stops the run")
 ok(sum(grepl("bad <- c\\(bad", cr)) >= 1 && any(grepl("collapse", cr)),
    "...naming every table it could not clear, not just the first")
+
+cat("\n-- face validity: does the output look like myeloma --\n")
+# The invariants ask whether the output is internally consistent. These ask
+# whether it is clinically plausible - a run can pass every structural check
+# with transplants in late lines or a median line lasting three days, and
+# nothing else here would notice.
+ok(exists("FACE_VALIDITY") && length(FACE_VALIDITY) >= 5,
+   paste0("face-validity checks ship (", length(FACE_VALIDITY), ")"))
+fvn <- vapply(FACE_VALIDITY, `[[`, character(1), "name")
+ok(!anyDuplicated(fvn), "each has its own name, so a row identifies a check")
+ok(all(vapply(FACE_VALIDITY, function(f)
+        all(c("name","what","lo","hi","sql") %in% names(f)), logical(1))),
+   "...and each declares what it measures and the band it expects")
+ok(all(vapply(FACE_VALIDITY, function(f) f$lo <= f$hi, logical(1))),
+   "no band is inverted")
+ok(all(vapply(FACE_VALIDITY, function(f) grepl("{t}", f$sql, fixed = TRUE), logical(1))),
+   "every check reads the final table through the placeholder, not a fixed name")
+# The study population, not LOT_LONG. A criterion that truncates a patient
+# changes who is in the cohort, so plausibility has to be asked of what ships.
+fvb <- bodyf("run_face_validity")
+ok(any(grepl('lot_out("LOT_LONG_FINAL")', fvb, fixed = TRUE)),
+   "asked of LOT_LONG_FINAL - the population that ships, not the pre-criteria one")
+# Reported, not fatal. An unusual cohort can legitimately fail one, and
+# stopping a build on a plausibility judgement would be wrong.
+ok(any(grepl("cfg$face_validity_fatal", fvb, fixed = TRUE)),
+   "out-of-band is a warning by default, fatal only when asked for")
+ok(all(c("VALUE", "EXPECT_LO", "EXPECT_HI", "VERDICT") %in%
+         names(FACE_VALIDITY_COLS)),
+   "the band is recorded beside the value, so a reader can judge both")
+# The number matters more than the verdict: a wrong band should not hide a
+# figure somebody needs to see.
+ok(any(grepl("VALUE = \"DOUBLE\"", paste(fvb, collapse = " "), fixed = TRUE)) ||
+     "VALUE" %in% names(FACE_VALIDITY_COLS),
+   "every check records what it found, whether or not it passed")
+# Clinically the direction of each of these is not in question, even if the
+# threshold is: transplant early, CAR-T late, allo rare.
+ok(all(c("auto_sct_is_early", "cart_is_late", "allo_sct_is_rare") %in% fvn),
+   "the three whose clinical direction is uncontroversial are among them")
+ok(any(grepl("run_face_validity(con, cfg)", src, fixed = TRUE)),
+   "and the build runs them")
+ifv <- grep("run_face_validity\\(con, cfg\\)", run)[1]
+icf <- grep("check_lot_final\\(con, cfg\\)", run)[1]
+ok(!is.na(ifv) && !is.na(icf) && ifv > icf,
+   "...after the final table has been checked, so it is asking about real output")
 
 report()
