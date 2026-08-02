@@ -123,7 +123,7 @@ None of them changes the cohort — they are what the decision gets made
 | `NDMM_OTHER_MALIG_GROUPS` | what counts as one tumour type | every ICD category the code list resolves to, with its code and label counts. A category holding one code can only confirm itself |
 | `NDMM_OTHER_MALIG_GRAIN` | is that grain actually costing anything? | criterion 7 counted at the finest, configured and coarsest grouping. **The gap between the first row and the last is the whole question** — if it is small, no map is needed |
 | `NDMM_FU_CE_COUNTS` | what the follow-up CE window costs — the one setting resting on a relay, not a document | `N_PASSING_CRITERION_5` and `N_COHORT` at 0 / 30 / 60 / 90 days and at an exact 3 months, with this run's row marked |
-| `NDMM_BELANTAMAB_RECONCILE` | **which patients the proxy could not settle** | every belantamab claim belonging to a patient whose membership turns on this criterion alone, both those the proxy kept and those it excluded, with dates and which way it went. Join to `LOT_LONG` after the lot build runs |
+| `NDMM_BELANTAMAB_RECONCILE` | **which cohort members `lot` will remove** | every belantamab claim belonging to a patient who passed all nine criteria here, with dates. All of them are on or after the index — the pre-index half is criterion 9 — so `lot`'s `no_belantamab` removes every patient listed. Nothing here needs adjudicating |
 
 This list is maintained by hand and has fallen behind the code before. The
 build's own declaration is `OUTPUTS` in `build_nndm.R`, and `tests/test_runner.R`
@@ -206,11 +206,18 @@ So "(i.e., an ADC)" names what the drug is; it does not widen the criterion to
 the class.
 
 **How belantamab is recognised is an assumption this package cannot check.**
-the source build matched `MAP_MED_TYPE LIKE 'BEL%'` in `MAP_STACKED`, a table this
+The source build matched `MAP_MED_TYPE LIKE 'BEL%'` in `MAP_STACKED`, a table this
 build no longer reads. Reading `cl_mma_codelist.csv` directly, the same token
-is the medication abbreviation — `NDMM_BELANTAMAB_ABBR`, default `BEL%`. The
-production CSV is not visible from here, so `build_ndmm_belantamab_codes()`
-**stops the run** if it matches no row: otherwise exclusion 4 would quietly do
+is the medication abbreviation — `NDMM_BELANTAMAB_ABBR`, default **`BELA`**,
+matched as a **whole abbreviation** rather than as a prefix. That is how `lot`
+matches it too: the two packages have to recognise the same drug the same way,
+or a code list carrying more than one `BEL*` spelling would have this build take
+them all and `lot` take only its own.
+
+The production CSV is not visible from here, so `build_ndmm_belantamab_codes()`
+**stops the run** on either failure — if the abbreviation matches no row, or if
+the list carries another `BEL*` abbreviation this one does not name, which is
+the case an exact match would otherwise miss in silence. On the first: otherwise exclusion 4 would quietly do
 nothing and belantamab claims could set the 1L index date. The value used is
 recorded in `NDMM_RUN_METADATA`. **Confirm it against the production code list
 before the first run.**
@@ -505,18 +512,24 @@ is `"1e+05"`, which a warehouse reads as a double, and a cohort of exactly
   compares the two and stops if they differ, so the delivered table and the
   funnel that describes it cannot drift apart.
 
-### Why the funnel stops at eight
+### Why the funnel stops at nine, and what `lot` still adds
 
-**§6.2.1.2's fourth exclusion is not applied here.** It removes a patient who
-received belantamab "in any LOT", and lines do not exist when this build runs —
-the LOT algorithm runs *over* the cohort it produces. Anything applied at this
-point could only be a claims proxy standing in for LOT membership, and its
-over-exclusions would be permanently unauditable: a patient removed here never
-gets lines, so nobody could check whether the removal was right.
+**§6.2.1.2's fourth exclusion is split, because no one package can see all of
+it.** It removes a patient who received belantamab "in any LOT" — and unlike the
+three exclusions beside it, that bullet carries no period.
 
-So it is applied where the lines are: `lot/R/line_criteria.R`, criterion
-`no_belantamab`, switched on by `APPLY_NO_BELANTAMAB`. There it is the
-protocol's sentence rather than an approximation of it.
+The half applied here is belantamab **before the 1L index**, criterion 9.
+`lot` cannot see it at any price: the claims it reads start at the cohort's
+`INDEX_DATE`, so a belantamab line earlier in the patient's history is not in
+its data at all. It is not a proxy for anything either — a belantamab claim
+before the index *is* a belantamab line before the index.
+
+The half applied in `lot` is belantamab **from the index onward**:
+`lot/R/line_criteria.R`, criterion `no_belantamab`, switched on by
+`APPLY_NO_BELANTAMAB`. It reads `map_stacked` over the patient's whole LOT span,
+so it is not bounded by `MAX_LOT` or by where in a regimen the drug sat.
+
+Together the two halves are the protocol's sentence. See `DECISIONS.md` #2.
 
 **What this build still does about belantamab.** `NO_BELANTAMAB` is computed and
 ships on the cohort table as an advisory flag — nothing filters on it — over the
@@ -624,7 +637,7 @@ run** rather than building something the name no longer describes.
 | `STUDY_START` | `2016-01-01` | study period start; the pregnancy and belantamab scans |
 | `OUTPATIENT_WINDOW` | `90` | two outpatient MM claims within this many days confirm a diagnosis |
 | `MIN_AGE` | `18` | minimum age in the MM-diagnosis year |
-| `NDMM_BELANTAMAB_ABBR` | `BEL%` | how belantamab is recognised on the code list — it is exclusion 4, so it is pinned |
+| `NDMM_BELANTAMAB_ABBR` | `BELA` | how belantamab is recognised on the code list, as a whole abbreviation — it is exclusion 4, so it is pinned. Must equal `lot`'s `BELANTAMAB_MED_ABBR` |
 | `USE_QUARTERLY_TABLES` | `TRUE` | read the quarterly CDM tables for the study end |
 | `CODELIST_DIR` | `/mnt/code/codelist` | `mm_dx.csv`, `cl_mma_codelist.csv`, `other_malig.csv`, `pregnancy.csv` |
 | `TBL_CONFINEMENT` | `confinement` | inpatient stays |

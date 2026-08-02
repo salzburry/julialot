@@ -35,7 +35,7 @@ CONTRACT <- list(
   # this is the age the diagnosis year is measured against. Both are S6.2.1.1.
   outpatient_window    = 90L,
   min_age              = 18L,
-  belantamab_abbr      = "BEL%",
+  belantamab_abbr      = "BELA",
   tbl_medical          = "medical",
   tbl_med_proc         = "med_procedure",
   tbl_med_diag         = "med_diagnosis",

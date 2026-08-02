@@ -30,13 +30,20 @@ NDMM_OUTPATIENT_WINDOW <- as.integer(Sys.getenv("OUTPATIENT_WINDOW", unset = "90
 # (S6.2.1.1). Calendar year, so it is year(diagnosis) - YRDOB, not a birthday.
 NDMM_MIN_AGE <- as.integer(Sys.getenv("MIN_AGE", unset = "18"))
 
-# How belantamab is recognised on cl_mma_codelist.csv. MAP_STACKED carried a
-# MAP_MED_TYPE and the source matched 'BEL%' against it; reading the code list
-# directly, the same token is the medication abbreviation. This package cannot
-# see the production CSV to confirm it, so build_ndmm_belantamab_codes() stops
-# the run if it matches nothing rather than letting the exclusion the study
-# turns on quietly do nothing.
-NDMM_BELANTAMAB_ABBR <- Sys.getenv("NDMM_BELANTAMAB_ABBR", unset = "BEL%")
+# How belantamab is recognised on cl_mma_codelist.csv - a whole CL_MED_ABBR,
+# matched exactly.
+#
+# This was 'BEL%', a prefix, inherited from the source's MAP_MED_TYPE LIKE
+# 'BEL%' against MAP_STACKED. The lot package matches the same drug as a whole
+# value, so the two packages identified it two different ways and could disagree
+# on a code list carrying more than one BEL* abbreviation: this one would take
+# them all, lot only its own. Same drug, same rule, both exact.
+#
+# This package cannot see the production CSV to confirm the spelling, so
+# build_ndmm_belantamab_codes() stops the run if it matches nothing - and also
+# if the list carries another BEL* abbreviation this does not name, which is the
+# case an exact match would otherwise miss in silence.
+NDMM_BELANTAMAB_ABBR <- Sys.getenv("NDMM_BELANTAMAB_ABBR", unset = "BELA")
 
 # Agents that may not set the 1L index date, beyond belantamab. S6.2.1.1 says
 # the eligible treatments are "MM regimens commonly used in the first line
@@ -49,8 +56,9 @@ NDMM_BELANTAMAB_ABBR <- Sys.getenv("NDMM_BELANTAMAB_ABBR", unset = "BEL%")
 # NDMM_INDEX_AGENTS is written on every run for exactly that decision: it is
 # every agent that actually set an index date, with how many patients it set
 # one for. Read it after the first run and, if a later-line-only agent is in
-# it, name it here - patterns are matched against CL_MED_ABBR the same way
-# NDMM_BELANTAMAB_ABBR is, comma-separated.
+# it, name it here - comma-separated, and matched against CL_MED_ABBR as LIKE
+# patterns, so a prefix works. Belantamab itself is matched exactly rather than
+# as a pattern, because lot has to recognise the same drug the same way.
 NDMM_INDEX_EXCLUDED_ABBRS <- Sys.getenv("NDMM_INDEX_EXCLUDED_ABBRS", unset = "")
 
 # The same thing by code rather than by abbreviation, for when the study team

@@ -28,7 +28,7 @@ build_ndmm_belantamab_codes <- function(con) {
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_BELANTAMAB_CODES} AS
     SELECT DISTINCT code_type, code
     FROM {NDMM_MMA_CODELIST}
-    WHERE upper(trim(med_abbr)) LIKE '{NDMM_BELANTAMAB_ABBR}'
+    WHERE upper(trim(med_abbr)) = '{NDMM_BELANTAMAB_ABBR}'
   "))
   # The abbreviation is how belantamab is recognised on the code list, and this
   # package cannot see the production CSV. If it matches nothing, the exclusion
@@ -39,15 +39,36 @@ build_ndmm_belantamab_codes <- function(con) {
     "SELECT count(*) AS n FROM {NDMM_BELANTAMAB_CODES}"))$n),
     error = function(e) NA_integer_)
   if (is.na(n) || n == 0)
-    stop("No row of cl_mma_codelist.csv has CL_MED_ABBR like '",
+    stop("No row of cl_mma_codelist.csv has CL_MED_ABBR = '",
          NDMM_BELANTAMAB_ABBR, "'.\nThat is how this build recognises ",
          "belantamab, and without it the exclusion in S6.2.1.2 does nothing ",
          "and belantamab claims could set the 1L index date. Run 'SELECT ",
          "DISTINCT med_abbr FROM ", NDMM_MMA_CODELIST, "' on the warehouse ",
          "and set NDMM_BELANTAMAB_ABBR to the abbreviation it uses.",
          call. = FALSE)
-  log_msg("  Belantamab code list: ", n, " codes matched '",
-          NDMM_BELANTAMAB_ABBR, "'")
+  # The match is exact now, which is what makes it agree with lot - and what
+  # makes a second spelling invisible. A code list carrying both BELA and, say,
+  # BELAMAF would have every BELAMAF row silently fall outside the exclusion,
+  # and this build and lot would still agree with each other while both missed
+  # it. Ask for the neighbours rather than assume there are none.
+  others <- tryCatch(
+    db_q(con, glue("
+      SELECT DISTINCT upper(trim(med_abbr)) AS med_abbr
+      FROM {NDMM_MMA_CODELIST}
+      WHERE upper(trim(med_abbr)) LIKE 'BEL%'
+        AND upper(trim(med_abbr)) <> '{NDMM_BELANTAMAB_ABBR}'"))$med_abbr,
+    error = function(e) character(0))
+  if (length(others))
+    stop("cl_mma_codelist.csv carries CL_MED_ABBR = '", NDMM_BELANTAMAB_ABBR,
+         "' and also ", paste0("'", others, "'", collapse = ", "),
+         ".\nBelantamab is matched as a whole abbreviation, here and in the lot ",
+         "package, so rows under the other spelling(s) would be outside ",
+         "S6.2.1.2 entirely and nothing would say so. Decide which one names ",
+         "belantamab: set NDMM_BELANTAMAB_ABBR and lot's BELANTAMAB_MED_ABBR to ",
+         "it, or have the code list use one abbreviation for the drug.",
+         call. = FALSE)
+  log_msg("  Belantamab code list: ", n, " codes under CL_MED_ABBR = '",
+          NDMM_BELANTAMAB_ABBR, "', and no other BEL* abbreviation")
   invisible(n)
 }
 
@@ -76,9 +97,17 @@ build_ndmm_index_ineligible_codes <- function(con) {
 
   # Each entry becomes one predicate, and one thing to check matched something.
   terms <- list()
-  for (a in c(NDMM_BELANTAMAB_ABBR, abbrs))
+  # Belantamab exactly, the way build_ndmm_belantamab_codes() and lot both match
+  # it, so the agent barred from setting the index is the same agent the
+  # exclusion removes. The operational entries below stay patterns: they are a
+  # study-team override typed by hand, and a prefix is useful there.
+  terms[[1L]] <- list(
+    what = paste0("abbreviation '", NDMM_BELANTAMAB_ABBR, "'"),
+    sql  = sprintf("upper(trim(med_abbr)) = '%s'",
+                   sq(toupper(NDMM_BELANTAMAB_ABBR))))
+  for (a in abbrs)
     terms[[length(terms) + 1L]] <- list(
-      what = paste0("abbreviation '", a, "'"),
+      what = paste0("abbreviation pattern '", a, "'"),
       sql  = sprintf("upper(trim(med_abbr)) LIKE '%s'", sq(toupper(a))))
   for (cd in codes) {
     parts <- strsplit(cd, ":", fixed = TRUE)[[1]]
@@ -469,58 +498,58 @@ build_ndmm_fu_ce_counts <- function(con, cfg) {
   invisible(got)
 }
 
-# What the LOT run has to adjudicate before this exclusion is exact.
+# The handover list: cohort members carrying a belantamab claim.
 #
-# S6.2.1.2 excludes a patient who received belantamab in ANY line of therapy.
-# Lines do not exist when this runs - the LOT algorithm runs over the cohort
-# this build produces - so the exclusion is a claims proxy, and no proxy is the
-# criterion. The exact answer needs the lines, which means it can only be
-# settled after the LOT run, by reconciliation.
+# This used to be a two-direction adjudication table, from when S6.2.1.2 was a
+# claims proxy applied here and the exact answer needed the lines. Neither is
+# true now. The pre-index half is criterion 9 of this funnel, so a patient with
+# in-study belantamab before their index is already gone; the index-onward half
+# is lot's no_belantamab, asked of map_stacked over the whole LOT span rather
+# than of the constructed rows. There is nothing left to adjudicate and nothing
+# to reverse: every patient here is one lot will remove.
 #
-# This is the input to it: every patient who is IN the cohort and has a
-# belantamab claim anyway - kept because their claim falls outside the proxy
-# window. Nobody else can need adjudicating; a patient the proxy excluded is
-# already gone, and a patient with no belantamab claim cannot have had it in a
-# line. Usually a short table, and the README says what to join it to.
+# So it lists them, and that is all it claims to do. EXCLUDED_BY_PROXY is gone -
+# it named a proxy that no longer exists, and with the pre-index criterion in
+# the WHERE it could only ever have read 1. DAYS_FROM_INDEX carries what is
+# actually left to see: it is >= 0 for every claim the exclusion acts on, and
+# negative only for a claim outside the study period, which is out of scope for
+# every criterion in this build.
 build_ndmm_belantamab_reconcile <- function(con, cfg) {
-  # Both directions, which means reading NDMM_FLAGS_ALL rather than the cohort.
-  # The cohort is what the proxy let through, so a table built from it can only
-  # ever show claims it missed - the patients it removed are not in it to be
-  # looked at, and an empty result would read as "the proxy was exact" when it
-  # only says "nobody it kept has a stray claim". Over-exclusion is the error
-  # that costs patients, and it was the one that could not appear.
-  #
-  # Scoped to patients whose membership turns on this decision alone: every
-  # other criterion passing, from NDMM_CRITERIA, so the set does not fill with
-  # patients a second criterion had already removed. NDMM_BELANTAMAB_TX is every
-  # belantamab claim, not the in-scope ones, so both sides carry their dates.
+  # Read off NDMM_FLAGS_ALL rather than the cohort table, and scoped by
+  # ndmm_criteria_where() - so the set is patients who pass every criterion,
+  # not patients a second criterion had already removed. NDMM_BELANTAMAB_TX is
+  # every belantamab claim the scan found, so the dates come with it.
   db_exec(con, glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_BELANTAMAB_RECONCILE')} AS
     SELECT f.PATID                              AS PATID,
            l1.LOT1_START_DT                     AS INDEX_DATE,
            b.bel_dt                             AS BEL_DT,
-           datediff(b.bel_dt, l1.LOT1_START_DT) AS DAYS_FROM_INDEX,
-           CASE WHEN f.NO_BELANTAMAB = 1 THEN 0 ELSE 1 END AS EXCLUDED_BY_PROXY
+           datediff(b.bel_dt, l1.LOT1_START_DT) AS DAYS_FROM_INDEX
     FROM {NDMM_FLAGS_ALL} f
     INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = f.PATID
     INNER JOIN {NDMM_BELANTAMAB_TX} b ON b.PATID = f.PATID
     WHERE {ndmm_criteria_where(alias = 'f.')}
-    ORDER BY EXCLUDED_BY_PROXY DESC, PATID, BEL_DT"))
+    ORDER BY PATID, BEL_DT"))
   got <- db_q(con, glue("
-    SELECT count(DISTINCT CASE WHEN EXCLUDED_BY_PROXY = 0 THEN PATID END) AS n_kept,
-           count(DISTINCT CASE WHEN EXCLUDED_BY_PROXY = 1 THEN PATID END) AS n_dropped,
-           count(DISTINCT PATID) AS n_pat,
-           count(*)              AS n_claims
+    SELECT count(DISTINCT PATID) AS n_pat,
+           count(*)              AS n_claims,
+           count(DISTINCT CASE WHEN DAYS_FROM_INDEX < 0 THEN PATID END) AS n_out_of_period
     FROM {wrk('NDMM_BELANTAMAB_RECONCILE')}"))
-  log_msg("Belantamab still to adjudicate: ", format(got$n_pat, big.mark = ","),
-          " patient(s), ", format(got$n_claims, big.mark = ","),
-          " claim(s) -> ", wrk("NDMM_BELANTAMAB_RECONCILE"))
-  log_msg("  All of them are in the cohort this build writes: S6.2.1.2 is ",
-          "applied over lines, in the lot package, not here.")
-  if (isTRUE(got$n_pat > 0))
-    log_msg("  \"In any LOT\" is exact only once lines exist. After the LOT run, ",
-            "join these to LOT_LONG: a claim inside a line confirms the ",
-            "exclusion, one outside every line reverses it. See README.")
+  log_msg("Belantamab in the cohort this build writes: ",
+          format(got$n_pat, big.mark = ","), " patient(s), ",
+          format(got$n_claims, big.mark = ","), " claim(s) -> ",
+          wrk("NDMM_BELANTAMAB_RECONCILE"))
+  log_msg("  Every claim here is on or after the index - the pre-index half of ",
+          "S6.2.1.2 is criterion 9 of this funnel. lot's no_belantamab removes ",
+          "these patients, so expect the LOT population to be smaller by them.")
+  # Belantamab was not in use before 2020 and the study period opens in 2016, so
+  # this should be zero. If it is not, the scan is reading claims from outside
+  # the window every criterion in this build is scoped to, and that is worth
+  # knowing rather than silently carrying.
+  if (isTRUE(got$n_out_of_period > 0))
+    log_msg("  ", got$n_out_of_period, " patient(s) have a belantamab claim ",
+            "before the study period. No criterion acts on those - they are ",
+            "outside the window S6.1 defines - but they are listed here.")
   invisible(got)
 }
 

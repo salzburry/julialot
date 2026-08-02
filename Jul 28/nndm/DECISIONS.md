@@ -128,10 +128,19 @@ the patient's treatment episodes in `map_stacked`, not a substring, so an
 abbreviation that merely contains `BELA` cannot match — and asking the claims
 rather than `LOT_LONG`'s columns is what keeps "any LOT" literal. See §5.
 
-**Both packages now guard the abbreviation.** The criterion turns on
-belantamab being spelled `BELA` in `CL_MED_ABBR`, and if the code list ever used
-something else it would exclude nobody — silently, because "no patient had
-belantamab" and "the abbreviation is wrong" produce the same empty result.
+**Both packages recognise belantamab the same way, and both guard it.** It is
+one whole `CL_MED_ABBR`, matched exactly — `BELA` by default in each. This build
+used to match the prefix `BEL%` while `lot` matched a whole value, so the two
+could disagree on a code list carrying more than one `BEL*` spelling: this one
+would take them all, `lot` only its own. Same drug, same rule.
+
+Exactness introduces its own blind spot, so it is guarded too:
+`build_ndmm_belantamab_codes()` stops if the list carries another `BEL*`
+abbreviation it does not name, because every row under that spelling would fall
+outside §6.2.1.2 entirely while both packages agreed with each other. And if the
+configured abbreviation matches nothing at all, it stops for the older reason —
+silently, "no patient had belantamab" and "the abbreviation is wrong" produce
+the same empty result.
 `check_belantamab_abbr()` in `lot` asks the code list before applying the
 criterion and stops if it matches no row, which is the same shape as
 `build_ndmm_belantamab_codes()` on the cohort side. It only asks when
