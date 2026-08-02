@@ -25,12 +25,29 @@ built from the prefix you pass.
 
 | placeholder | table | used for |
 |---|---|---|
-| `{patients}` | `<lot_prefix>LOT_PATIENT_INPUT` | demographics, follow-up — the cohort **as LOT read it** |
-| `{lot_long}` | `<lot_prefix>LOT_LONG` | every line the build produced |
-| `{lot_final}` | `<lot_prefix>LOT_LONG_FINAL` | after the line criteria |
+| `{lot_final}` | `<lot_prefix>LOT_LONG_FINAL` | **every clinical panel** — this is the study population |
+| `{lot_long}` | `<lot_prefix>LOT_LONG` | the Validation tab only, where the before/after comparison is the point |
+| `{patients}` | `<lot_prefix>LOT_PATIENT_INPUT` | demographics and follow-up, **restricted to PATIDs still in `{lot_final}`** |
 | `{run_meta}` | `<lot_prefix>LOT_RUN_METADATA` | which window and which code produced the numbers |
 | `{attrition}` | `<cohort_prefix>NDMM_ATTRITION` | the cohort funnel |
 | `{cohort}` | the table you passed | available to sections that want it |
+
+### Which population a panel describes
+
+`LOT_LONG_FINAL`, everywhere it is a study number. `LOT_LONG` is the same table
+*before* the line criteria, and with a patient-level `truncate` criterion such
+as `no_belantamab` the two hold **different patients**, not merely different
+lines. A panel drawn on `LOT_LONG` therefore describes people the study
+excluded, with nothing on the page saying so — so only `criteria_impact` and
+`line_integrity` read it, on the Validation tab.
+
+`LOT_PATIENT_INPUT` is the cohort LOT was *handed*, so the cohort panels
+restrict to `PATID IN (SELECT DISTINCT PATID FROM {lot_final})`. A test asserts
+both rules, and that every section's `needs` names the tables its SQL reads.
+
+The NDMM attrition panel is the cohort build's funnel and **ends before** the
+LOT-side belantamab criterion — its label says so, and `criteria_impact` on the
+same tab shows what that criterion removed.
 
 Only `LOT_LONG` is required. Anything else missing turns its sections into a
 panel that says which table is absent — a study that ran LOT but not the cohort
@@ -54,13 +71,27 @@ build: a dashboard renders happily with a panel missing, and nobody can see the
 gap from the output.
 
 `render` is one of `table`, `kpi` (one row of big numbers, one tile per column),
-`bar` (needs `label` and `n`, sized against the first row) or `sankey` (needs
-`source`, `target` and `n`).
+`bar` (needs `label` and `n`) or `sankey` (needs `source`, `target` and `n`).
+
+A `bar` must also declare `pct` — what the percentage beside each bar is a
+percentage **of**. There is no answer right for every chart:
+
+| `pct` | meaning | used by |
+|---|---|---|
+| `first` | of the first bar | the attrition funnel, where row one *is* the denominator |
+| `total` | of all bars | a partition — index year, highest line reached |
+| `none` | no percentage | overlapping or merely ranked categories — journey coverage |
+
+Assuming one is how a number comes to mean something nobody intended: a share
+of the first bar, on a chart whose first bar is simply the largest category, is
+arithmetic without a claim behind it. `validate_sections()` refuses a bar that
+declares no `pct`.
 
 ## Transitions
 
-One Sankey per consecutive LOT pair — `LOT1 to LOT2`, `LOT2 to LOT3`,
-`LOT3 to LOT4` — showing which regimen patients moved to.
+One Sankey per consecutive LOT pair — `LOT1 to LOT2` through `LOT4 to LOT5`,
+which is every pair the build produces at `MAX_LOT=5` — showing which regimen
+patients moved to.
 
 `INNER JOIN`, so a patient who never reached the next line is not a flow: the
 chart is about what progressors switched to, and carrying non-progressors would
@@ -73,8 +104,8 @@ bundle, and it prints, which a canvas chart does not. Every ribbon carries its
 count as a hover tooltip, and a one-patient flow is floored at a hairline rather
 than rounded to nothing.
 
-Adding `LOT4 to LOT5` is one line: `.transition_section(4, 5)` plus its
-`SHOW_LOT4_TO_LOT5` row.
+Raising `MAX_LOT` means one more line: `.transition_section(5, 6)` plus its
+`SHOW_LOT5_TO_LOT6` row.
 
 ## Patient journeys
 
@@ -82,7 +113,13 @@ Adding `LOT4 to LOT5` is one line: `.transition_section(4, 5)` plus its
 end, days, what started the line, the regimen, the first drug added, what ended
 it. Scenarios are `JOURNEY_CATEGORIES` in `R/sections.R`; add one by adding a
 label and a predicate over `max_lot`, `lot1_start_type`, `lot1_end_reason`,
-`any_cart_init`, `any_sct_auto`, `any_sct_allo`.
+`any_cart`, `any_sct_auto`, `any_sct_allo`.
+
+`any_cart` is the CAR-T **line** — `LOT_CART_LOT_FLG`, `LOT_START_TYPE = 'CART'`
+or a prior line ending on `CART_INIT`. Keying on `CART_INIT` alone missed a
+patient whose LOT1 *is* the CAR-T, because there is no preceding line to carry
+that end reason, and the transplant panel counted them while the examples did
+not.
 
 Examples, not a sample: three random patients are three LOT1-only patients,
 because most patients are. `JOURNEYS_PER_CATEGORY` (default 3) sets how many
@@ -103,6 +140,12 @@ panel that tells you whether an empty scenario means "none in this cohort" or
 `EXPORT_CSV` (default `TRUE`) writes one CSV per panel that produced rows, into
 `<OUTPUT_DIR>/<CSV_DIR>/<section_name>.csv`. So `patient_journeys.csv`,
 `attrition.csv` and so on, alongside the HTML.
+
+**The folder is one run.** Existing `.csv` files there are cleared first — a
+panel switched off, a query that failed, a panel that came back empty, or the
+same `OUTPUT_DIR` reused for another cohort would otherwise leave a file that
+reads as current, since the names carry no cohort, prefix or run id. Nothing but
+`.csv` in that folder is touched.
 
 The frames come from the panels, not from a second pass at the warehouse — the
 CSV is the numbers on the page rather than a re-query that could disagree with

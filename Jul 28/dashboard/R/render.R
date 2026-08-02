@@ -61,21 +61,25 @@ render_kpi <- function(df) {
 }
 
 # A bar per row, width proportional to the largest. Needs `label` and `n`.
-render_bar <- function(df) {
+#
+# `pct` says what the percentage beside each bar is a percentage OF, and the
+# section has to declare it - see BAR_PCT in sections.R. This used to be the
+# first row always, which is right for a funnel and wrong for everything else:
+# on a chart of overlapping scenarios it read "CAR-T 5%" where 5% was of the
+# largest scenario, not of the cohort, and nothing on the page said so.
+render_bar <- function(df, pct = "none") {
   if (is.null(df) || !nrow(df))
     return('<p class="empty">No rows.</p>')
   if (!all(c("label", "n") %in% names(df)))
     return(render_table(df))
   n <- suppressWarnings(as.numeric(df$n)); n[is.na(n)] <- 0
   top <- max(n, 0)
-  pct <- if (top > 0) 100 * n / top else rep(0, length(n))
-  # Of the first bar, not of the cohort: the first row of an attrition is the
-  # denominator anyone reading it has in mind.
-  base <- if (length(n)) n[1] else 0
+  w <- if (top > 0) 100 * n / top else rep(0, length(n))
+  base <- switch(pct, first = if (length(n)) n[1] else 0, total = sum(n), 0)
   rows <- vapply(seq_len(nrow(df)), function(i)
     paste0('<div class="brow"><div class="blab">', .h(df$label[i]),
            '</div><div class="btrack"><div class="bfill" style="width:',
-           sprintf("%.1f", pct[i]), '%"></div></div><div class="bval">',
+           sprintf("%.1f", w[i]), '%"></div></div><div class="bval">',
            .h(.fmt(n[i])),
            if (base > 0) paste0(' <span class="bpct">',
                                 sprintf("%.1f%%", 100 * n[i] / base), "</span>") else "",
@@ -160,9 +164,9 @@ render_sankey <- function(df, width = 940, node_w = 16, gap = 7,
          '</svg></div>')
 }
 
-render_panel <- function(kind, df) {
+render_panel <- function(kind, df, pct = "none") {
   switch(kind, table = render_table(df), kpi = render_kpi(df),
-         bar = render_bar(df), sankey = render_sankey(df), render_table(df))
+         bar = render_bar(df, pct), sankey = render_sankey(df), render_table(df))
 }
 
 # GSK colours, in one place. Swapping the palette is editing this block - every
