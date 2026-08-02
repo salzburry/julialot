@@ -6,24 +6,22 @@ code does about it, and what still needs a counter-signature.
 
 This file is the record. It is not the authority: a decision here is only as
 good as the person who made it, and the "recorded by" line says who that was.
-Anything marked **pending sign-off** has been implemented and reported but not
-yet confirmed in a controlled study document.
+Anything marked **pending sign-off** has been implemented and reported but is
+still waiting on a formal record.
 
 ---
 
 ## 1. Follow-up continuous enrolment — one day, LOT1 only
 
 **Decided:** the 1L follow-up CE requirement is **one day** — the enrolment
-span must cover the 1L index date itself. It is *not* the three months the
-study definition text asks for.
+span must cover the 1L index date itself. It is *not* the three months named
+elsewhere for this study.
 
-**Scope:** the LOT1 / 1L NDMM cohort only. The 2L/3L cohorts keep the
-study definition's three months unless changed separately.
+**Scope:** the LOT1 / 1L NDMM cohort only. Other cohorts keep three months
+unless changed separately.
 
-**Study definition text it overrides** — the inclusion criteria:
-
-> CE during follow-up: CE from index date until the earliest of 3-months post
-> index or death, with no gaps in enrollment.
+**What it replaces:** the follow-up enrolment requirement of three months from
+the index date, or death if sooner, with no gaps.
 
 **What the code does:** `NDMM_FU_CE_DAYS = 0`, pinned in `CONTRACT` so changing
 it is a deliberate contract edit rather than a setting anyone can pass. Zero
@@ -41,12 +39,11 @@ calendar months, with the applied row marked. That table is the evidence for
 this decision, not a justification of it — read it on the first production run
 and confirm the number is the one intended.
 
-**Recorded by:** the study team, relayed through the build request, and
-re-confirmed on 2026-08-02 against the study definition PDF in
-`Questions/July 30 2026/` — one day is the intended rule and the three-month
-sentence in the inclusion criteria is **superseded**, not overridden by accident.
+**Recorded by:** the study team, through the build request, and re-confirmed
+on 2026-08-02 — one day is the intended rule, and the three-month figure is
+**superseded** rather than overridden by accident.
 
-**Status: confirmed, pending a controlled record.** The rule is the one
+**Status: confirmed, pending a formal record.** The rule is the one
 intended and the code implements it. What is still missing is a study decision
 record naming the approver and the date, because the inclusion criteria as circulated still
 reads three months and anyone checking the build against that text will find a
@@ -195,8 +192,10 @@ is authoritative.
 
 ## 4. Other malignancy — grouping and bone metastasis
 
-**Decided:** not yet. Both parts are gaps against the exclusion criteria, not open design
-questions — see the study definition quote below.
+**Decided:** both parts, below. Neither was an open design question - each was
+a gap against the stated rule, so the decision was which reading of the rule to
+implement, and both are implemented. What remains is data-dependent: the review
+tables say how much each one moved, and that is read after the first run.
 
 **Two separate questions.**
 
@@ -354,7 +353,7 @@ a wider read of the same structures rather than a different one, and there is
 nothing to re-validate before the run.
 
 **"Any LOT" is now literal — the criterion asks the claims, not the constructed
-lines. Closed.** It used to read `LOT_BASE_MEDS` and `LOT_BASE_1ST_ADD_MED` off
+lines. Closed.** Reading `LOT_BASE_MEDS` and `LOT_BASE_1ST_ADD_MED` off
 `LOT_LONG`, which bounded it twice over: by `MAX_LOT`, since the build makes five
 lines, and by position within a line, since a belantamab given as a line's
 *second* addition is in neither column. "Any LOT" then meant "any of the first

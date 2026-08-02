@@ -148,7 +148,8 @@ fill_sql <- function(sql, inputs, cfg) {
   vals <- c(inputs, list(top_n = cfg$top_n,
                          journeys_per_category = cfg$journeys_per_category,
                          attrition_window = cfg$attrition_window,
-                         owner_run = cfg$owner_run))
+                         owner_run = cfg$owner_run,
+                         cohort_run = cfg$cohort_run))
   for (nm in names(vals)) {
     v <- vals[[nm]]
     # A setting that is absent leaves its placeholder in place, so it comes out
@@ -216,22 +217,35 @@ resolve_attrition <- function(secs, con, inputs, have, cfg, owner) {
     sec$label <- paste0(sec$label, " - ", cfg$attrition_window,
                         "-day outpatient window")
 
-  # Is this funnel the one belonging to the cohort LOT read?
+  # Show the funnel belonging to the cohort LOT read, or show none.
+  #
+  # Warning text over the wrong rows is not enough: the numbers on the panel
+  # are still a different cohort refresh, and a funnel is read as the funnel
+  # for the study beside it. So the query is pinned to the recorded cohort run
+  # when we know it, and the panel is skipped when that run's rows are gone.
   cr <- owner$cohort_run
-  if (!is.null(cr) && !is.na(cr) && nzchar(cr)) {
-    a <- tryCatch(db_q(con, paste0("SELECT RUN_ID FROM ", inputs$attrition,
-                                   " ORDER BY ", L$stamp, " DESC LIMIT 1")),
-                  error = function(e) NULL)
-    fr <- if (is.null(a) || !nrow(a)) NA_character_ else as.character(a[[1]][1])
-    if (!is.na(fr) && !identical(fr, cr)) {
-      log_msg("  WARNING: this funnel is cohort run ", fr, "; LOT read ", cr, ".")
-      sec$label <- paste0(sec$label, " - COHORT RUN ", fr, ", but LOT read ",
-                          cr, ", so this funnel is a different cohort refresh")
-    }
-  } else {
-    log_msg("  Note: LOT recorded no cohort run id, so this funnel cannot be ",
-            "tied to the cohort behind the numbers.")
+  if (is.null(cr) || is.na(cr) || !nzchar(cr)) {
+    # Nothing recorded the link. Say so on the panel rather than in a log
+    # nobody reading the HTML will see.
+    sec$label <- paste0(sec$label, " - not tied to the LOT run below it")
+    log_msg("  Note: no cohort run id recorded, so this funnel cannot be tied ",
+            "to the cohort behind the numbers.")
+    secs[[i]] <- sec; return(secs)
   }
+  n <- tryCatch(db_q(con, paste0(
+         "SELECT count(*) AS n FROM ", inputs$attrition,
+         " WHERE ", L$run_col, " = '", cr, "'"))$n, error = function(e) NA)
+  if (is.na(n) || n < 1) {
+    sec$skip <- paste0(
+      "the cohort funnel for run ", cr, " - the cohort LOT read - is not in ",
+      inputs$attrition, " any more. The newest funnel there describes a ",
+      "different cohort refresh, so showing it beside these lines would be a ",
+      "funnel for one cohort above the numbers for another.")
+    log_msg("  skip  attrition - no rows for cohort run ", cr)
+    secs[[i]] <- sec; return(secs)
+  }
+  sec$sql   <- L$sql_run
+  sec$label <- paste0(sec$label, " - cohort run ", cr)
   secs[[i]] <- sec
   secs
 }
@@ -360,7 +374,8 @@ build_dashboard_run <- function(here, cohort_table, lot_prefix,
   # Which run these tables belong to, before anything reads them: this stops
   # the run outright when the last LOT build on the prefix did not finish.
   owner <- resolve_owner_run(con, inputs, have, cfg)
-  cfg$owner_run <- owner$run_id
+  cfg$owner_run  <- owner$run_id
+  cfg$cohort_run <- owner$cohort_run
   set_dash_config(cfg)
   log_msg("  Owned by run: ", owner$run_id, if (owner$exact) " (LOT_BUILD_STATUS)"
           else paste0(" (newest completed metadata row - no ", inputs$build_st,

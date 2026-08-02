@@ -2,7 +2,7 @@
 # Raw claim ICD_FLAG, normalised. Both families are named and anything else is
 # NULL - not the other family by default.
 #
-# Every site used to read "not one of the ICD-9 spellings" as ICD-10, so a NULL
+# Reading "not one of the ICD-9 spellings" as ICD-10 means a NULL
 # or unexpected flag on a genuine ICD-9 claim was classed ICD-10 and then failed
 # the family join silently: a missed MM diagnosis, or an exclusion claim that
 # stopped excluding the patient it should. The codelist column is checked and

@@ -71,8 +71,12 @@ cfg_defaults <- list(
 
   # What the cohort build calls its run-status table, before the prefix. Empty
   # means try the names the cohort builds in this folder use. The check refuses
-  # a cohort whose own build did not finish.
+  # a cohort whose own build did not finish - and refuses the run outright if
+  # this names a table that cannot be read.
   cohort_status_table = trimws(Sys.getenv("COHORT_STATUS_TABLE", unset = "")),
+  # The cohort build's prefix, for that table. Defaults to this run's own -
+  # one study, one prefix - so it is only set when the two differ.
+  cohort_prefix       = trimws(Sys.getenv("COHORT_PREFIX", unset = "")),
 
   # ---- Observation end ----
   # FALSE (primary): OBS_END_DT = ENDDATE = min(death, study_end), so a

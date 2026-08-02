@@ -645,7 +645,7 @@ ok(grepl(paste0("(year(f.MM_DX_DT) - m.YRDOB) >= ", se$NDMM_MIN_AGE), b, fixed =
 ok(grepl("ORDER BY q.MM_DX_DT) AS rn", b, fixed = TRUE) &&
      grepl("WHERE rn = 1", b, fixed = TRUE),
    "the earliest qualifying date is the diagnosis date, not the latest")
-# The ranking runs first and cannot see age. It used to be the other way round,
+# The ranking runs first and cannot see age. The other way round,
 # and what said so was `sub(".*WITH filtered AS \\(", "", b)` - an extraction
 # anchored on a CTE name. Rename the CTE and sub() matches nothing and hands
 # back the whole query, which contains the age test wherever it sits, so the
@@ -793,7 +793,7 @@ ok(identical(tryCatch({ se$build_ndmm_belantamab_patids(NULL, "m", "r", "mp"); "
    "the belantamab scan still builds, for the advisory flag and the reconcile list")
 
 cat("\n-- belantamab is one whole abbreviation, the same one lot matches --\n")
-# It used to be the prefix 'BEL%' here and a whole value in lot, so the two
+# A prefix 'BEL%' here and a whole value in lot would let the two
 # packages recognised the same drug two different ways. Both are exact now,
 # which agrees - and which makes a second spelling on the code list invisible,
 # so the builder asks for the neighbours rather than assuming there are none.
@@ -1066,7 +1066,7 @@ ok(grepl("s.cov_start <= i.INDEX_DATE", csql, fixed = TRUE) &&
    "the CE end is the span covering the 1L index, so it moves with the anchor too")
 ok(grepl("GDR_CD, YRDOB", csql, fixed = TRUE) &&
      grepl("_ndmm_base_cohort", csql, fixed = TRUE),
-   "only the demographics are carried across - they do not depend on an anchor")
+   "only the demographics come over unchanged - they do not move with an anchor")
 
 cat("\n-- and it is checked before anyone is handed it --\n")
 ce2 <- new.env(parent = globalenv())

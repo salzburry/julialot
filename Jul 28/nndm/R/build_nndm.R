@@ -621,7 +621,7 @@ write_run_metadata <- function(con, cfg, here, n) {
 # NDMM_COHORT is written to be a cohort the lot build can be pointed at, so the
 # LOT algorithm can be run over the NDMM patients without anything in between.
 # These are the columns that build reads off whatever cohort it is given
-# (its REQUIRED_COHORT_COLS); NDMM_COHORT used to be PATID alone, which stopped
+# (its REQUIRED_COHORT_COLS). PATID alone would stop
 # that build at its own input check.
 NDMM_COHORT_COLS <- c("PATID", "INDEX_DATE", "ENDDATE", "ENDDATE_CE",
                       "DEATH_DT", "GDR_CD", "YRDOB", "AGE_INDEX_YR",

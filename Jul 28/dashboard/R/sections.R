@@ -182,6 +182,13 @@ ATTRITION_LAYOUTS <- list(
   list(name  = "nndm",
        cols  = c("RUN_ID", "STEP_NUM", "CRITERION", "N_PATIENTS", "RECORDED_AT"),
        stamp = "RECORDED_AT",
+       run_col = "RUN_ID",
+       # Same query, pinned to one run id instead of to the newest.
+       sql_run = "
+         SELECT a.CRITERION AS label, a.N_PATIENTS AS n
+         FROM {attrition} a
+         WHERE a.RUN_ID = '{cohort_run}'
+         ORDER BY a.STEP_NUM",
        # History: the build deletes and re-inserts only its own RUN_ID, so
        # previous runs stay and an unfiltered read interleaves several funnels
        # by STEP_NUM - with the bar taking its denominator from the first row.
@@ -200,6 +207,12 @@ ATTRITION_LAYOUTS <- list(
        cols  = c("row_order", "run_id", "created_at", "step_id", "description",
                  "n_30", "n_60", "n_90"),
        stamp = "created_at",
+       run_col = "run_id",
+       sql_run = "
+         SELECT description AS label, n_{attrition_window} AS n
+         FROM {attrition}
+         WHERE run_id = '{cohort_run}'
+         ORDER BY row_order",
        # CREATE OR REPLACE, not an append - so this table holds one run and
        # needs no latest-run filter. That is the build's choice, not an
        # assumption made here.

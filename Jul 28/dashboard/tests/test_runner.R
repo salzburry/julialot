@@ -392,7 +392,7 @@ OVERALL_COLS <- c("ROW_ORDER", "RUN_ID", "FINAL_TABLE_NAME", "CREATED_AT",
                   "STEP_ID", "DESCRIPTION", "N_30", "N_60", "N_90")
 ai <- list(attrition = "wk.FUNNEL")
 ahave <- c(attrition = TRUE)
-acfg <- list(attrition_window = 60L)
+acfg <- list(attrition_window = 60L, cohort_run = "coh-a")
 noowner <- list(run_id = NA_character_, ts = NA, exact = FALSE)
 asec <- function(secs) Filter(function(s) identical(s$name, "attrition"), secs)[[1]]
 lay <- function(cols, owner = noowner, stamp = "2026-01-01 09:00:00") {
@@ -431,35 +431,38 @@ ok(!length(amb), if (length(amb)) paste("layouts overlap:", paste(amb, collapse 
                  else paste0("no layout's columns contain another's, so detection ",
                              "cannot pick by registry order (", length(ATTRITION_LAYOUTS), ")"))
 # lot records COHORT_RUN_ID - the cohort build it verified before pinning its
-# input - so the funnel can be checked against it exactly. Timestamps could not
-# do this: the only LOT time available is when the run FINISHED, and a cohort
-# rebuilt while LOT was still running is newer than the cohort LOT read but
-# older than that, so a timestamp test would pass it.
-lay2 <- function(cols, owner, funnel_run) {
+# input - so the funnel shown is the one belonging to that cohort. Warning text
+# over the wrong rows is not enough: a funnel is read as the funnel for the
+# study beside it, so the query is pinned to the recorded run, and the panel is
+# skipped when that run's rows are gone.
+lay2 <- function(cols, owner, n_rows) {
   stub(function(con, sql)
     if (grepl("^DESCRIBE", trimws(sql))) data.frame(col_name = cols)
-    else data.frame(RUN_ID = funnel_run))
+    else data.frame(n = n_rows))
   asec(resolve_attrition(DASHBOARD_SECTIONS, NULL, ai, ahave, acfg, owner))
 }
 own <- list(run_id = "lot-1", ts = "2026-01-02 10:00:00", exact = TRUE,
             cohort_run = "coh-a")
-s <- lay2(NDMM_COLS, own, "coh-b")
-ok(grepl("COHORT RUN coh-b", s$label, fixed = TRUE) &&
-     grepl("LOT read coh-a", s$label, fixed = TRUE),
-   "a funnel from a different cohort run than LOT read is called out, by run id")
-s <- lay2(NDMM_COLS, own, "coh-a")
-ok(!grepl("COHORT RUN", s$label, fixed = TRUE),
-   "...and the funnel LOT actually read is not")
-# The mid-run rebuild a timestamp test cannot catch: cohort B is written while
-# LOT is still going, so its funnel is OLDER than LOT's completion time.
-s <- lay2(NDMM_COLS, list(run_id = "lot-1", ts = "2026-01-09 23:00:00",
-                          exact = TRUE, cohort_run = "coh-a"), "coh-b")
-ok(grepl("COHORT RUN coh-b", s$label, fixed = TRUE),
-   "...including a cohort rebuilt WHILE lot ran, which no timestamp test sees")
+s <- lay2(NDMM_COLS, own, 8L)
+ok(grepl("a.RUN_ID = '{cohort_run}'", s$sql, fixed = TRUE) && is.null(s$skip),
+   "the funnel is pinned to the cohort run LOT read, not to the newest one")
+ok(grepl("RUN_ID = 'coh-a'", fill_sql(s$sql, ai, acfg), fixed = TRUE),
+   "...and that run id reaches the query")
+ok(grepl("cohort run coh-a", s$label, fixed = TRUE),
+   "...with the panel saying which cohort run it is showing")
+s <- lay2(OVERALL_COLS, own, 8L)
+ok(grepl("run_id = '{cohort_run}'", s$sql, fixed = TRUE),
+   "both layouts pin to the run, each by its own column name")
+# The cohort was rebuilt and its funnel replaced, so the matching rows are gone.
+# Showing the newer one would put one cohort's funnel above another's numbers.
+s <- lay2(NDMM_COLS, own, 0L)
+ok(!is.null(s$skip) && grepl("coh-a", s$skip, fixed = TRUE),
+   "a funnel whose matching run is gone is skipped, not shown with a warning")
+# An older lot recorded no link. Say so on the panel, not only in a log.
 s <- lay2(NDMM_COLS, list(run_id = "lot-1", ts = NA, exact = FALSE,
-                          cohort_run = NA_character_), "coh-b")
-ok(!grepl("COHORT RUN", s$label, fixed = TRUE),
-   "an older lot that recorded no cohort run id makes no claim either way")
+                          cohort_run = NA_character_), 8L)
+ok(is.null(s$skip) && grepl("not tied to the LOT run", s$label, fixed = TRUE),
+   "with no recorded link the funnel is still shown, and says it is not tied")
 
 cat("\n-- the panels name no study, in their labels either --\n")
 # The attrition table belongs to whichever cohort build wrote it, so the panel
