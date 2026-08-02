@@ -40,15 +40,11 @@
   getwd()
 })
 
-source_dir <- file.path(.script_dir, "R")
-if (file.exists(file.path(source_dir, "load_inputs.R"))) {
-  source(file.path(source_dir, "load_inputs.R"))
-  load_pipeline_inputs(c(.script_dir, dirname(.script_dir)))
-}
-source(file.path(source_dir, "config_lot.R"))
-source(file.path(source_dir, "db_utils_lot.R"))
-source(file.path(source_dir, "codelists_lot.R"))         # load_codelist_csv
-source(file.path(source_dir, "validation_qs.R"))   # vqs_* logic
+source(file.path(.script_dir, "_setup.R"))
+qs_setup(.script_dir)
+source_dir <- normalizePath(file.path(.script_dir, "..", "lot", "R"),
+                           mustWork = FALSE)
+source(file.path(.script_dir, "validation_qs.R"))   # vqs_* logic
 
 main <- function() {
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")

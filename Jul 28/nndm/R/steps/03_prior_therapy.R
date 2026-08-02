@@ -28,8 +28,8 @@ build_ndmm_mma_codelist <- function() {
 
 # Distinct PATIDs with any MM oncology therapy claim in
 # Window is [LOT1_START - NDMM_PRE_LOT1_DAYS, LOT1_START - 1], per patient.
-# Four sources: medical PROC_CD, medical BILL_PROC_CD, medical NDC, rx NDC,
-# with NDC11 normalisation.
+# Five sources: medical PROC_CD, medical BILL_PROC_CD, medical NDC, rx NDC and
+# med_procedure PROC, with NDC11 normalisation.
 #
 # Read from raw claims rather than a prepared table. Those are anchored at the
 # MM diagnosis, so they cannot see claims before it - and part of the baseline

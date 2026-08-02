@@ -177,7 +177,7 @@ off.** Each is decided and implemented - `DECISIONS.md` is the record - and each
 writes a review table saying what it cost, so the confirmation is a reading
 rather than a rewrite:
 
-| criterion | what is undecided | decide it with |
+| criterion | what the run has to settle | read it from |
 |---|---|---|
 | #3 | which agents actually set the index — the code list is the eligible set, so this is a review rather than a decision | `NDMM_INDEX_AGENTS` |
 | #5 | one day of follow-up CE against the study's three months | `NDMM_FU_CE_COUNTS` |
@@ -228,9 +228,11 @@ disease?"**, and it is answered two ways:
    that same file decides who is an MM patient — so it can never also make them
    an other-cancer patient, whatever its description says. This is the rule that
    matters, and it needs no list to maintain.
-2. **Listed.** Five tumour groups that are adjacent to MM without being on the
+2. **Listed.** Four tumour groups that are adjacent to MM without being on the
    diagnosis list: plasma cell leukemia, solitary and extramedullary
-   plasmacytoma, monoclonal gammopathy (the precursor), and MM bone disease.
+   plasmacytoma, and monoclonal gammopathy (the precursor). MM bone disease is
+   **not** among them — `C79.51`, `C79.52` and `198.5` are metastatic cancers
+   and exclude anyway; see below and `DECISIONS.md` section 4.
 
 `other_malig.csv` carries each of those plasma-cell conditions in **three
 states**, each its own `tumor_group`:
@@ -256,7 +258,7 @@ NDMM_MM_ADJACENT_STATES=exclude    # keep them in the filter, to compare
 
 This makes the cohort **larger**, and the difference lands on attrition step 7.
 
-The five original labels stay **required**: if the code list does not carry one,
+The four labels stay **required**: if the code list does not carry one,
 the run stops, because the override would silently fail and patients would be
 excluded for an MM-adjacent condition. The six state labels are **not**
 required — their absence would just mean the wording changed.
