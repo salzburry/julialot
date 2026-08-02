@@ -208,18 +208,16 @@ pin_output_schema <- function(cfg) {
 
 # The caller says which cohort. Every table read and written carries the
 # prefix, so this folder names no cohort of its own.
-# Where the two fill-in files live. The environment wins; failing
-# that it is the copy that ships beside this code, so a checkout has a file to
-# edit rather than a setting to find out about. The file need not exist - see
-# load_override_csv() - but the path is always recorded, so a run says which
+# Where the fill-in file lives. The environment wins; failing that it is the
+# copy that ships beside this code, so a checkout has a file to edit rather
+# than a setting to find out about. The file need not exist - see
+# read_optional_csv() - but the path is always recorded, so a run says which
 # file it looked for whether or not it found one.
-pin_override_csv <- function(cfg, here) {
+pin_optional_csv <- function(cfg, here) {
   fill <- function(v, name) {
     p <- trimws(as.character(v %||% ""))
     if (nzchar(p)) p else file.path(here, "codelists", name)
   }
-  cfg$mm_adjacent_csv <- fill(cfg$mm_adjacent_csv, "mm_adjacent_overrides.csv")
-  cfg$eligible_1l_csv <- fill(cfg$eligible_1l_csv, "eligible_1l_agents.csv")
   cfg$primary_groups_csv <- fill(cfg$primary_groups_csv, "primary_tumor_groups.csv")
   cfg
 }
@@ -925,16 +923,13 @@ check_no_active_run <- function(con, cfg) {
 RUN_SCOPED_TABLES <- c("NDMM_ATTRITION", "NDMM_RUN_METADATA",
                        "NDMM_CODELIST_METADATA")
 
-# The three files that decide rules the protocol leaves open, and what the
-# build does when each is empty. Empty is a legitimate run - the rule falls
-# back to the source's behaviour, and every one of them says so where it is
-# read. It is also exactly what a deploy that set CODELIST_DIR and missed
-# NDMM_ELIGIBLE_1L_CSV and its two siblings looks like, and those three lines
-# sit in the middle of a long log. This says it once, at the end, beside the
-# count they shaped.
+# The file that decides a rule the protocol leaves open, and what the build
+# does when it is empty. Empty is a legitimate run - the rule falls back to the
+# source's behaviour, and it says so where it is read. It is also exactly what
+# a deploy that set CODELIST_DIR and missed NDMM_PRIMARY_GROUPS_CSV looks like,
+# and that line sits in the middle of a long log. This says it once, at the
+# end, beside the count it shaped.
 FILLIN_FILES <- list(
-  eligible_1l_agents.csv    = "any MM therapy on the code list can set the 1L index",
-  mm_adjacent_overrides.csv = "tumour-group labels alone decide the other-cancer criterion",
   primary_tumor_groups.csv  = "outpatient pairs must share one code-list label")
 
 report_fillins <- function(cfg) {
@@ -1009,7 +1004,7 @@ build_nndm <- function(here, prefix) {
   check_settings()
   cfg <- pin_output_schema(cfg_defaults)
   cfg <- pin_prefix(cfg, prefix)
-  cfg <- pin_override_csv(cfg, here)
+  cfg <- pin_optional_csv(cfg, here)
   check_contract(cfg)
   check_choices(cfg)
   check_constants(cfg)

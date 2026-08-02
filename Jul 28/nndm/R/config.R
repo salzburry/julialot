@@ -63,17 +63,10 @@ cfg_defaults <- list(
   study_start   = Sys.getenv("STUDY_START", unset = "2016-01-01"),
 
   codelist_dir = Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist"),
-  # Per-code answers for the other-cancer criterion, where a tumour-group label
-  # cannot give one - see codelists.R and NDMM_MM_ADJACENT_CODES. Blank means
-  # the copy that ships with this package; pin_override_csv() fills it in.
-  mm_adjacent_csv = Sys.getenv("NDMM_MM_ADJACENT_CSV", unset = ""),
-  # Which agents may set the 1L index - see codelists.R and NDMM_INDEX_AGENTS.
-  # Blank means the copy that ships with this package; pin_override_csv()
-  # fills it in. Empty file means any MM therapy can set the index.
-  eligible_1l_csv = Sys.getenv("NDMM_ELIGIBLE_1L_CSV", unset = ""),
   # Which code-list labels are one tumour type, for the two-outpatient-claim
   # rule - see codelists.R and NDMM_OTHER_MALIG_GROUPS. Blank means the copy
-  # that ships with this package. Empty file means each label is its own group.
+  # that ships with this package; pin_optional_csv() fills it in. Empty file
+  # means each label is its own group.
   primary_groups_csv = Sys.getenv("NDMM_PRIMARY_GROUPS_CSV", unset = ""),
   output_dir   = Sys.getenv("OUTPUT_DIR", unset = "/mnt/artifacts/results"),
 

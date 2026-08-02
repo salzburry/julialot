@@ -64,6 +64,14 @@ cannot be applied exactly at the time it has to be applied.
 configured scope excludes the patient. `NDMM_BELANTAMAB_SCOPE` selects the
 reading — `study_period` (default) or `from_index`.
 
+**Confirmed against the production code list:** `cl_mma_codelist.csv` carries
+26 distinct `CL_MED_ABBR` values and belantamab is `BELA`, the only one
+beginning `BEL`. So `NDMM_BELANTAMAB_ABBR = 'BEL%'` resolves to exactly
+belantamab, and the run-stopping guard in `00_lot1_index.R` — which fires if
+that pattern matches no row — will not fire. The exclusion flag itself is built
+from `MAP_MED_TYPE` on the stacked map, a different source; that side is still
+unverified.
+
 **What it costs, measured:** `<prefix>NDMM_BELANTAMAB_SCOPE_COUNTS` gives the
 cohort size under each reading. `<prefix>NDMM_BELANTAMAB_RECONCILE` lists every
 patient whose membership turns on this criterion alone — both those the proxy
@@ -80,29 +88,34 @@ check.
 
 ---
 
-## 3. Eligible 1L agents
+## 3. Eligible 1L agents — the code list is the list
 
-**Decided:** not yet.
+**Decided:** `cl_mma_codelist.csv` is the study's definition of MM therapy, so
+it is the eligible-1L set. No separate eligibility file.
 
-**What the code does:** with `eligible_1l_agents.csv` empty — as it ships —
-any MM therapy on `cl_mma_codelist.csv` can set the 1L index, except
-belantamab and steroids. A file with any `eligible = 1` row turns it into an
-allowlist: only the named agents may set an index, and a code carrying no
-`CL_MED_ABBR` is barred as unmapped.
+**What the code does:** any agent on that code list may set the 1L index, less
+steroids (dropped where `NDMM_MMA_CODELIST` is built) and less belantamab
+(barred always, per §6.2.1.1's "other than belantamab"). The earliest such
+claim on or after the MM diagnosis and on or after `LOT1_FROM` is the index.
 
-**What it costs, measured:** `<prefix>NDMM_INDEX_AGENTS` lists every agent and
-how many indexes it set — the sheet to build the list from.
+**What was removed:** `codelists/eligible_1l_agents.csv`, its loader and
+validation, the allowlist branch, and its `NDMM_ELIGIBLE_1L_CSV` setting. `NDMM_INDEX_EXCLUDED_ABBRS` remains for barring
+a named agent operationally - empty by default, and every entry is still
+checked against the code list so a name that matches nothing stops the run.
 
-**Open question worth resolving first:** `cl_mma_rollup.csv`, already governed
-and already read by the LOT build, carries `MONOMAINTENANCE`, `CONDITIONING`
-and `DUALMAINTENANCEWITH` per `CL_MED_ABBR`. Those describe an agent's role in
-a line. If eligibility for setting a 1L index can be derived from them, this
-fill-in file is redundant and should be deleted rather than filled in. See the
-implementation thread; this has not been decided.
+**What that resolves to, on the production file:** 26 agents on the code list,
+so the eligible-1L set is the 25 that are not belantamab. The steroid drop
+removes nothing — none of `DEX`, `DEXA`, `DEXAMETHASONE`, `PRED`, `PREDNISONE`
+appears in `CL_MED_ABBR`, so `NDMM_STEROID_ABBRS` is a no-op here. It stays in
+place as a guard against a later code list that does carry them.
 
-**Status: pending decision.**
+**What it gives up:** narrowing the index-setting set to a named subset now
+needs code rather than a file. That is the point of the decision: the code list
+is authoritative.
 
----
+**Recorded by:** the study team, in the implementation thread of 2026-08-02.
+
+**Status: decided and implemented.**
 
 ## 4. Other malignancy — grouping and bone metastasis
 
@@ -117,16 +130,80 @@ grouping — so one cancer written two ways does not confirm itself and the
 criterion under-detects. `<prefix>NDMM_OTHER_MALIG_GRAIN` measures what the
 grain costs.
 
+**Measured on the production file:** `other_malig.csv` has 1,643 code rows and
+1,618 distinct `tumor_group` values. The label is therefore one per code, not a
+grouping, and the two-outpatient-claims rule reduces in practice to *the same
+diagnosis code twice*. The direction is known — the cohort is larger than a
+per-primary reading would give. `primary_tumor_groups.csv` is the lever, and on
+this file it is not optional polish: leaving it empty is itself a choice about
+how the criterion reads.
+
 *Bone metastasis.* `C79.51`, `C79.52` and `198.5` say a cancer spread to bone,
 not which cancer. Treating them all as myeloma bone disease keeps patients
 with another primary; treating them all as another cancer removes genuine MM
-patients. `mm_adjacent_overrides.csv` decides it per code and ships empty, so
-today the tumour-group label decides for all of them.
-`<prefix>NDMM_MM_ADJACENT_CODES` lists every affected code in the shape that
-file wants.
+patients. The tumour-group label decides it, and because the label is per code
+it decides each of the three separately. `<prefix>NDMM_MM_ADJACENT_CODES` lists
+every code the label list currently keeps.
+
+**What the production file actually says.** Three rows carry these codes, and
+they do not all land the same way:
+
+| icd_family | dx | tumor_group | in the override list? |
+|---|---|---|---|
+| ICD10DIAG | C7951 | Secondary malignant neoplasm of bone | **yes** — kept |
+| ICD10DIAG | C7952 | Secondary malignant neoplasm of bone marrow | no — excludes |
+| ICD9DIAG | 1985 | Secondary malignant neoplasm of bone and bone marrow | no — excludes |
+
+`NDMM_MM_ADJACENT_OVERRIDE` already carries `SECONDARY MALIGNANT NEOPLASM OF
+BONE`, so `C79.51` — the common myeloma-bone-disease miscode — is already
+treated as the index disease and does **not** exclude. The comparison is string
+equality on the whole label, so `… OF BONE MARROW` is a different label and is
+not reached by that entry.
+
+So the open part is narrower than it looked, and it has a shape this build has
+already seen once. The source overrode the first of the three plasma-cell
+states and not the other two, and that was corrected here as
+`NDMM_MM_ADJACENT_STATE_LABELS`. This is the same omission: bone was overridden,
+bone marrow was not. Myeloma is a plasma-cell malignancy *of the bone marrow*,
+so if `C79.51` is miscoded myeloma often enough to warrant an override,
+`C79.52` is at least as likely to be.
+
+**The recommendation, for a clinician to accept or reject:** add the two
+remaining labels to the same list, exactly as the remission and relapse states
+were added:
+
+```r
+"SECONDARY MALIGNANT NEOPLASM OF BONE MARROW",
+"SECONDARY MALIGNANT NEOPLASM OF BONE AND BONE MARROW"
+```
+
+Both exist on the code list, so the required-label check in `04_other_malig.R`
+passes. The ICD-9 one changes nothing on its own — see the code-length note
+below — and is there so the two families agree.
+
+The argument for is consistency with the `C79.51` entry that is already there
+and with the states fix. The argument against is that these are not free: a
+patient with a solid tumour metastatic to bone marrow, whose primary was never
+coded in the baseline window, would be kept.
 
 **This one needs clinical judgement.** No file in this repository can answer
 which primary a `C79.5x` belongs to. It is the only one of the four that
 cannot be resolved by deriving from something already governed.
 
-**Status: pending decision.**
+**Status: pending decision**, on `C79.52` only. `C79.51` needs nothing.
+
+---
+
+## Note on code lengths in `other_malig.csv`
+
+Matching is exact equality on the punctuation-stripped code, both sides. The
+ICD-10 rows are 3/4/5/6 characters (14 / 318 / 672 / 82), which is the normal
+spread for billable ICD-10-CM and needs nothing.
+
+The ICD-9 rows are a different story: they are truncated to the three-character
+category while keeping the *first child's* description — `141` is labelled
+"Malignant neoplasm of base of tongue", which is `141.0`. A claim coded `1410`
+therefore matches nothing. This is harmless here only because of the window:
+the other-cancer scan reads claims from `2017-01-01` less the 12-month baseline
+— `2016-01-01` — and US claims stopped carrying ICD-9 in October 2015. Worth
+re-checking if the study period is ever moved earlier.

@@ -60,8 +60,4 @@ if (skip > 0L)
   cat("  A skipped suite proved nothing. Point BASELINE_DIR / PKG_BASE at them.\n")
 cat(strrep("=", 64), "\n", sep = "")
 
-# The mutation batteries are not run here: they stage a copy per mutation and
-# take minutes. Run them before a release:
-#   python3 validation/mutation/lot_battery.py
-#   python3 validation/mutation/nndm_battery.py
 if (fail > 0L || skip > 0L) quit(status = 1L)

@@ -11,36 +11,22 @@ Only the **1L cohort** is built. The 2L/3L subset cohorts are out of scope.
 
 ### One run per prefix at a time
 
-Every table this writes is named work schema + prefix + table, with no run id
-in it, and each checkpoint repoints its session view at the prefixed table it
-has just replaced. So two runs on the *same* prefix do not produce two cohorts:
-the second replaces tables the first is reading through, and both can still
-finish and report "complete", each having published something partly the
-other's. `check_no_active_run()` refuses the second before it writes anything,
-naming the run that holds the prefix and when it started.
+Every table is named work schema + prefix + table, with no run id in it, so two
+runs on the *same* prefix would replace tables the other is reading through and
+both report "complete". `check_no_active_run()` refuses the second before it
+writes anything. Two runs on *different* prefixes are safe, and that is how two
+cohorts are built at once — and how a throwaway run is done without touching
+anything.
 
-Two runs on *different* prefixes are safe, and that is how two cohorts are
-meant to be built at once.
+It is a check, not a lock, so two runs starting in the same moment can both
+pass it. A killed process leaves its `started` row behind for ever;
+`NDMM_IGNORE_ACTIVE_RUN=TRUE` gets past one, and should be used only once the
+named run is known to be dead.
 
-A **re-run keeps its run id** — `DOMINO_RUN_ID` pins it, and so does re-running
-in one R session. So `NDMM_ATTRITION`, `NDMM_RUN_METADATA` and
-`NDMM_CODELIST_METADATA` are cleared of this run's rows before the first step:
-each writer clears its own, but only once reached, and an attempt that fails
-before `write_run_metadata` would otherwise leave the previous attempt's row
-naming the code and the code lists that built a cohort this attempt did not
-build.
-
-A clear that is **refused** stops the run, naming every table it could not
-clear. Tables that do not exist yet are the first run on a prefix and are not a
-failure; a permission or a lock is, because carrying on would publish this
-run's rows beside an earlier attempt's under one run id, with nothing
-downstream able to tell them apart.
-
-It is a check, not a lock — nothing here can hold one — so two runs starting in
-the same moment can both pass it. It catches the case worth catching: starting
-a second run while one is going. A killed process leaves its `started` row
-behind for ever, so `NDMM_IGNORE_ACTIVE_RUN=TRUE` gets past one; use it only
-once the named run is known to be dead.
+A **re-run keeps its run id**, so `NDMM_ATTRITION`, `NDMM_RUN_METADATA` and
+`NDMM_CODELIST_METADATA` are cleared of this run's rows before the first step —
+otherwise a failed attempt leaves a row naming the code that built a cohort
+this attempt did not build. A clear that is **refused** stops the run.
 
 ## What this reads
 
@@ -62,19 +48,15 @@ the population), `cl_mma_codelist.csv` (MM therapy, and belantamab within it),
 `<prefix>NDMM_CODELIST_METADATA`, so a cohort can be traced to the files that
 built it.
 
-### It used to need three tables from other builds
+### It needs no table from another build
 
-`OVERALL_COH_FINAL`, `LOT_LONG` and `MAP_STACKED`. None of them now:
-
-- **MM diagnosis, age and demographics** are ported in from the overall build
-  (`R/steps/00_mm_cohort.R`). Only the two criteria §6.2.1.1 inherits are
-  applied — a qualifying diagnosis, and age ≥18 in its calendar year. That
-  build has switches for six more; none is an NDMM criterion, and applying them
-  would drop patients this funnel never accounts for.
-  `tests/test_same_as_overall.R` holds the port to it.
-- **The 1L index** is derived from claims (`R/steps/00b_lot1_index.R`) — see
-  below.
-- **Belantamab** is read off `cl_mma_codelist.csv` rather than `MAP_STACKED`.
+`OVERALL_COH_FINAL`, `LOT_LONG` and `MAP_STACKED` were once required; none is
+now. MM diagnosis, age and demographics are ported in from the overall build
+(`R/steps/00_mm_cohort.R`), applying only the two criteria §6.2.1.1 inherits —
+a qualifying diagnosis, and age ≥18 in its calendar year;
+`tests/test_same_as_overall.R` holds the port to it. The 1L index is derived
+from claims (`R/steps/00b_lot1_index.R`). Belantamab is read off
+`cl_mma_codelist.csv`.
 
 ### The study period
 
@@ -83,59 +65,33 @@ defined as 01 Jan 2016 through 31 Mar 2026"). It sets the pregnancy window, the
 MM-diagnosis window, and — through `USE_QUARTERLY_TABLES` — which cumulative
 Optum tables are read (`2026q1`).
 
-### Nothing is left as a temporary view that is read twice
+### Views read more than once are checkpointed to tables
 
-A temporary view is a query, not a result — Spark re-runs it on every read. The
-views here sit on top of each other, so a second read of `NDMM_LOT1_STARTS` is
-a second run of the whole MM-diagnosis chain beneath it, across the raw claim
-tables. It is read **thirteen** times.
+A temporary view is a query, not a result — Spark re-runs it on every read, and
+these views sit on each other, so a second read of `NDMM_LOT1_STARTS` re-runs
+the whole MM-diagnosis chain beneath it across the raw claim tables. It is read
+thirteen times. Every view read more than once is written to the work schema
+once and the view repointed at the table; the steps are untouched and still
+name the view.
 
-Every view read more than once is written to the work schema once and the view
-is repointed at the table, so each later read is a table scan. The steps are
-untouched — they still name the view:
-
-```
-NDMM_FLAGS_ALL          NDMM_MM_DX_CODES         NDMM_MM_DX_EVENTS
-NDMM_MM_QUALIFYING      NDMM_BASE_COHORT         NDMM_ENROLL_SPANS
-NDMM_ENROLL_SPANS_STRICT NDMM_MMA_CODELIST       NDMM_BELANTAMAB_CODES
-NDMM_LOT1_STARTS        NDMM_OTHER_MALIG_CODES   NDMM_OTHER_MALIG_EVENTS
-NDMM_BELANTAMAB_PATIDS  NDMM_INDEX_TX            NDMM_BELANTAMAB_TX
-NDMM_PATIDS             NDMM_INDEX_INELIGIBLE    NDMM_PREG_CODES
-```
-
-The list is not maintained by hand: `tests/test_runner.R` counts the reads in
-the SQL and fails if anything read more than once is missing from it. Two
-entries the count cannot see are `NDMM_BASE_COHORT` and
-`NDMM_BELANTAMAB_PATIDS`, which reach the flags step as parameters.
-
-A checkpoint that cannot be written **stops the build**. The source
-degraded to the in-place view on a write failure — correct arithmetic, but it
-can turn minutes into hours without saying so, and a table declared as an
-output would then not be there.
+A checkpoint that cannot be written **stops the build**. The source degraded to
+the in-place view on a write failure — correct arithmetic, but it turns minutes
+into hours silently, and a table declared as an output would then not be there.
 
 `NDMM_FLAGS_ALL` is checkpointed **inside** `06_flags.R` rather than by the
-runner. `NDMM_PATIDS` is defined over it a few lines below, and Spark inlines a
-temporary view's plan — repointing after that view exists would leave it on the
-original query. It was the one materialization that still warned and carried
-on; it is the same one call as the other ten now, and it is a deliverable as
-well as a checkpoint.
+runner: `NDMM_PATIDS` is defined over it a few lines below and Spark inlines a
+temporary view's plan, so repointing after that view exists would leave it on
+the original query.
 
-The deliverables are listed in **What every run writes**, below.
+`07_cohort.R` still carries `build_lot_long_filtered()` and `02_lot1_starts.R`
+still carries `build_lot1_starts_ndmm()`. The runner calls neither; both stay
+where they are rather than being deleted piecemeal from files otherwise carried
+across whole.
 
-`07_cohort.R` still carries `build_lot_long_filtered()`, and `02_lot1_starts.R`
-still carries `build_lot1_starts_ndmm()`. The runner calls neither: the first
-served the source's dashboard, the second read the index date out of
-`LOT_LONG`. Both stay where they are rather than being deleted piecemeal from
-files that are otherwise carried across whole.
-
-`NDMM_RUN_METADATA` carries the md5 of every R file this package ships, the
-contract as one sorted string, how belantamab was recognised, the waivers asked
-for and the waivers that fired, and the final count.
-
-Every setting is checked twice: against `CONTRACT`, and then against the
-`NDMM_*` constants the SQL actually interpolates — those have their own
-environment variables (`NDMM_LOT1_FROM` is not `LOT1_FROM`), so a contract
-checked against `cfg` alone would not speak for the query that runs.
+Every setting is checked twice: against `CONTRACT`, and against the `NDMM_*`
+constants the SQL actually interpolates — those have their own environment
+variables (`NDMM_LOT1_FROM` is not `LOT1_FROM`), so a contract checked against
+`cfg` alone would not speak for the query that runs.
 
 ## What every run writes
 
@@ -161,96 +117,43 @@ None of them changes the cohort — they are what the decision gets made
 
 | table | the question it answers | what to do with it |
 |---|---|---|
-| `NDMM_INDEX_AGENTS` | which agents may set a 1L index — §6.2.1.1 names a list no document here contains | every `CL_MED_ABBR` on the code list, whether this run let it set an index, and how many it set. Fill in `codelists/eligible_1l_agents.csv` |
+| `NDMM_INDEX_AGENTS` | which agents actually set a 1L index | every `CL_MED_ABBR` on the code list, whether this run let it set an index, and how many it set. Review it; bar one with `NDMM_INDEX_EXCLUDED_ABBRS` if it should not have |
 | `NDMM_MM_ADJACENT_GROUPS` | which tumour groups are the index disease rather than another cancer | every plasma-cell-looking label, and whether the override reaches it |
-| `NDMM_MM_ADJACENT_CODES` | *which* `C79.5x` is myeloma bone disease and which is a breast primary — a label cannot say | every code kept as the index disease, in the columns `codelists/mm_adjacent_overrides.csv` uses. Copy, set the ones you want to `0`, paste |
+| `NDMM_MM_ADJACENT_CODES` | *which* `C79.5x` is treated as myeloma bone disease | every code kept as the index disease, with the label that kept it. `C79.51` is in; `C79.52` is not, because its label ends `OF BONE MARROW` |
 | `NDMM_OTHER_MALIG_GROUPS` | which code-list labels are one tumour type | every label with the group it pairs under. Anything whose `PRIMARY_GROUP` is still itself can only confirm itself. Fill in `codelists/primary_tumor_groups.csv` |
 | `NDMM_OTHER_MALIG_GRAIN` | is that grain actually costing anything? | criterion 7 counted at the finest, configured and coarsest grouping. **The gap between the first row and the last is the whole question** — if it is small, no map is needed |
 | `NDMM_FU_CE_COUNTS` | what the follow-up CE window costs — the one setting resting on a relay, not a document | `N_PASSING_CRITERION_5` and `N_COHORT` at 0 / 30 / 60 / 90 days and at an exact 3 months, with this run's row marked |
 | `NDMM_BELANTAMAB_SCOPE_COUNTS` | which claims proxy stands for "in any LOT" | `N_PATIENTS` and `N_COHORT` under each of the three readings, with this run's marked |
 | `NDMM_BELANTAMAB_RECONCILE` | **which patients the proxy could not settle** | every belantamab claim belonging to a patient whose membership turns on this criterion alone, both those the proxy kept and those it excluded, with dates and which way it went. Join to `LOT_LONG` after the lot build runs |
 
-`tests/test_runner.R` requires every declared output to be named here, so this
-list cannot fall behind the code — it had, twice, before that test existed.
+This list is maintained by hand and has fallen behind the code before. The
+build's own declaration is `OUTPUTS` in `build_nndm.R`, and `tests/test_runner.R`
+holds *that* to what the run actually writes; read it if the two disagree.
 
-## The files you fill in
+## The file you fill in
 
-Three questions cannot be answered from this repository. A tumour-group label
-cannot say whether a `C79.5x` is myeloma bone disease or a breast primary; no
-document here lists the eligible 1L treatments; and one label per ICD code is
-the wrong grain for "the same cancer". Each is a **code-level** decision, and
-code-level decisions belong in a file somebody can review, not in a setting
-somebody has to discover.
-
-So the package ships three CSVs in `codelists/`, **all empty**:
+The package ships one CSV in `codelists/`, **empty**:
 
 | file | one row per | the columns | what it decides |
 |---|---|---|---|
-| `mm_adjacent_overrides.csv` | ICD code | `dx, icd_family, override, note` | `override=1` treats the code as the index disease (do **not** exclude); `0` treats it as another cancer (**do** exclude). Wins over the tumour-group label **both ways** |
-| `eligible_1l_agents.csv` | `CL_MED_ABBR` | `med_abbr, eligible, note` | `eligible=0` bars an agent from setting the 1L index. **Any** `eligible=1` turns the file into an allowlist — only those agents may set it |
 | `primary_tumor_groups.csv` | code-list label | `tumor_group, primary_tumor_group, note` | labels sharing a `primary_tumor_group` pair together for the two-outpatient-claim rule |
 
-**Empty means the source's cohort.** An unlisted code keeps its label's verdict,
-an unlisted agent can still set an index, an unmapped label stays its own group.
-So a checkout with nothing filled in produces the source build's cohort, not a
-variation on it. Nothing here changes until you write in one of these.
+**Empty means the source's cohort** — an unmapped label stays its own group.
+Nothing changes until you write in it. A malformed row stops the run rather
+than being skipped, and the md5 goes into `NDMM_CODELIST_METADATA` even when
+the file is empty, because "read it, no rows" and "never looked" are different
+and only one is a decision. Values are normalised the way the code lists are:
+punctuation stripped, upper-cased.
 
-**In production these three are configured separately** from the four core code
-lists. Those come from `CODELIST_DIR`; these come from `NDMM_ELIGIBLE_1L_CSV`,
-`NDMM_MM_ADJACENT_CSV` and `NDMM_PRIMARY_GROUPS_CSV`, and each falls back to
-the empty file shipped in `codelists/` when its variable is unset. A deploy
-that points `CODELIST_DIR` at production and misses these three runs green on
-the placeholders.
+It is configured separately from the four core code lists — those come from
+`CODELIST_DIR`, this from `NDMM_PRIMARY_GROUPS_CSV`, falling back to the
+shipped empty file. A deploy that points `CODELIST_DIR` at production and
+misses this one runs green on the placeholder, so every run ends with a line
+saying which it had, and `NDMM_OTHER_MALIG_GROUPS` is the table to fill it in
+from.
 
-So every run ends with a line saying which it had:
-
-```
-Rule fill-ins: 0 supplied, 3 empty
-  > eligible_1l_agents.csv: empty (md5 d41d8...) - any MM therapy on the code
-    list can set the 1L index
-  > An empty file is a run without that rule, and reads the same as one whose
-    path was never set. Check the paths against <prefix>NDMM_CODELIST_METADATA
-    before this cohort is used.
-```
-
-A supplied file is listed with its row count and md5 instead. Both are also in
-`<prefix>NDMM_CODELIST_METADATA`, so a finished cohort can be checked without
-the log — a shipped placeholder is a known md5 with `n_rows = 0`.
-
-**Each has a table to fill it in from**, so it is a copy and an edit rather than
-a research task:
-
-| the file | fill it in from |
-|---|---|
-| `mm_adjacent_overrides.csv` | `NDMM_MM_ADJACENT_CODES` — the codes currently kept, in these columns |
-| `eligible_1l_agents.csv` | `NDMM_INDEX_AGENTS` — every agent, and how many indexes it set |
-| `primary_tumor_groups.csv` | `NDMM_OTHER_MALIG_GROUPS` — every label and the group it pairs under |
-
-### What they all do
-
-- **Absent is the same as empty**, and neither is a failure. A checkout that
-  deleted them, or a run pointed elsewhere, still builds.
-- **A malformed row stops the run.** A blank code, an `override` that is not 0
-  or 1, an `icd_family` nobody can act on, one key given two answers, a missing
-  column. Skipping a bad row would let a file whose only purpose is to be exact
-  quietly decide something nobody chose.
-- **A named thing that matches nothing stops the run** when it would otherwise
-  read as a rule doing nothing — an allowed `med_abbr` that is on no code list
-  is not a permission, it is an agent silently barred, and its patients leave at
-  attrition step 3.
-- **The md5 goes into `NDMM_CODELIST_METADATA` even when the file is empty**,
-  because "read it, no rows" and "never looked" are different, and only one of
-  them is a decision.
-- Values are normalised the way the code lists are — punctuation stripped from
-  codes, everything upper-cased — so `C79.51` and `C7951`, `ICD-10` and `10`,
-  `bor` and `BOR` all match.
-- **Point elsewhere** with `NDMM_MM_ADJACENT_CSV`, `NDMM_ELIGIBLE_1L_CSV`,
-  `NDMM_PRIMARY_GROUPS_CSV`. The path is recorded whether or not a file is
-  found there.
-
-The detail for each is in **Bone metastasis, and the codes you can decide
-yourself**, **Which agents may set the 1L index**, and **One label per code is
-the wrong grain for "another cancer"**.
+Why it matters is in **One label per code is the wrong grain for "another
+cancer"**.
 
 ## The criteria as applied
 
@@ -304,9 +207,9 @@ than a note saying so:
 
 | criterion | what is undecided | decide it with |
 |---|---|---|
-| #3 | which agents may set the index — §6.2.1.1 names a list no document here contains | `NDMM_INDEX_AGENTS` → `codelists/eligible_1l_agents.csv` |
+| #3 | which agents actually set the index — the code list is the eligible set, so this is a review rather than a decision | `NDMM_INDEX_AGENTS` |
 | #5 | one day of follow-up CE against the protocol's three months | `NDMM_FU_CE_COUNTS` |
-| #7 | whether a `C79.5x` is myeloma bone disease or a metastasis | `NDMM_MM_ADJACENT_CODES` → `codelists/mm_adjacent_overrides.csv` |
+| #7 | whether a `C79.5x` is myeloma bone disease or a metastasis | `NDMM_MM_ADJACENT_CODES` → `NDMM_MM_ADJACENT_OVERRIDE` in `nndm_constants.R` |
 | #7 | whether two labels are one cancer | `NDMM_OTHER_MALIG_GRAIN`, `NDMM_OTHER_MALIG_GROUPS` → `codelists/primary_tumor_groups.csv` |
 | #9 | which claims proxy stands for "in any LOT" | `NDMM_BELANTAMAB_SCOPE_COUNTS`, `NDMM_BELANTAMAB_RECONCILE` |
 
@@ -360,8 +263,8 @@ disease?"**, and it is answered two ways:
    diagnosis list: plasma cell leukemia, solitary and extramedullary
    plasmacytoma, monoclonal gammopathy (the precursor), and MM bone disease.
 
-`other_malig.csv`, read on the warehouse **2026-07-30**, carries each of those
-plasma-cell conditions in **three states**, each its own `tumor_group`:
+`other_malig.csv` carries each of those plasma-cell conditions in **three
+states**, each its own `tumor_group`:
 
 | condition | not achieved remission | in remission | in relapse |
 |---|---|---|---|
@@ -384,12 +287,6 @@ NDMM_MM_ADJACENT_STATES=exclude    # the source build's behaviour, to compare
 
 This makes the cohort **larger**, and the difference lands on attrition step 7.
 
-Note that `tumor_group` in that file is **one label per ICD code**, not a
-grouping — so "≥2 outpatient claims for the same tumour group" means the same
-exact diagnosis description, and the three states above are three different
-groups to the rule that reads it. That is inherited from the parent build and
-has not been changed here.
-
 The five original labels stay **required**: if the code list does not carry one,
 the run stops, because the override would silently fail and patients would be
 excluded for an MM-adjacent condition. The six state labels are **not**
@@ -403,82 +300,23 @@ it marked `EXCLUDES` is the open question, named in the log.
 
 ### Which agents may set the 1L index
 
-§6.2.1.1 says the eligible treatments are
+§6.2.1.1 says the eligible treatments are "MM regimens commonly used in the
+first line setting, **excluding those restricted to later LOTs (see exclusion
+criteria)**", and §6.2.1.2's exclusion criteria name exactly one therapy:
+belantamab. So the protocol restricts nothing else, and neither does this build
+— anything on `cl_mma_codelist.csv` that is not belantamab and not a steroid
+can set the index. On the production file that is 25 of 26 agents; see
+`DECISIONS.md` §3.
 
-> MM regimens commonly used in the first line setting, **excluding those
-> restricted to later LOTs (see exclusion criteria)**
-
-and §6.2.1.2's exclusion criteria name exactly one therapy: belantamab. So the
-protocol as written restricts nothing else, and this build restricts nothing
-else — anything on `cl_mma_codelist.csv` that is not belantamab and not a
-steroid can set the index.
-
-**Annex 2 is not that list.** It is *"Categorization of SOC Regimens"*, which
-§6.2.2 describes as "an exemplary list of potential treatment combinations…
-Final treatment groupings may depend on data availability… and may be
-recategorized". It is an analysis grouping, and a stand-alone document not
-included in the protocol PDF.
-
-So this build does not invent an allowlist — that would shrink the cohort by a
-rule nobody could reproduce from the document. It reads one if you write it
-down, and writes the sheet to build it from.
+Annex 2 is not that list. It is *"Categorization of SOC Regimens"*, which
+§6.2.2 calls "an exemplary list of potential treatment combinations… may be
+recategorized" — an analysis grouping. Inventing an allowlist from it would
+shrink the cohort by a rule nobody could reproduce from the document.
 
 **`<prefix>NDMM_INDEX_AGENTS`** — every `CL_MED_ABBR` on the code list, whether
-this run would let it set an index (`ELIGIBLE`), and how many patients it
-actually set one for (`N_PATIENTS`, counted on the index date itself, off the
-same scan the index came from). Every agent, not only the ones that won a date:
-under an allowlist the winners are by definition the allowed ones, so a table
-of winners could only ever confirm itself.
+this run would let it set an index, and how many patients it set one for.
 
-**`codelists/eligible_1l_agents.csv`** — one row per agent, and three modes:
-
-```
-med_abbr,eligible,note
-BOR,1,bortezomib - SOC first line
-LEN,1,lenalidomide
-CART,0,later lines only
-```
-
-| what is in the file | what happens |
-|---|---|
-| **no rows** (what ships) | no allowlist — any MM therapy sets the index, which is the current cohort |
-| **only `eligible=0`** | a deny list — those agents are barred, everything else still sets the index |
-| **any `eligible=1`** | an **allowlist** — only those agents set the index, every other agent on the code list is barred |
-
-`eligible=0` is the same thing as naming an agent in
-`NDMM_INDEX_EXCLUDED_ABBRS`, in a file rather than an environment variable; the
-two combine. Belantamab stays barred whatever the file says. Set
-`NDMM_ELIGIBLE_1L_CSV` to use a file elsewhere.
-
-**The allowlist mode is the dangerous one, so it is loud.** An agent left off
-does not fail — it silently takes its patients out of the cohort at attrition
-step 3. So an allowed `med_abbr` that matches no row of `cl_mma_codelist.csv`
-**stops the run** (a typo there is not a restriction applying to nothing, it is
-an agent that should have been let through and was not), and the run logs how
-many agents the allowlist barred. Malformed rows stop the run for the same
-reasons the other fill-in file's do.
-
-If a later-line-only agent appears in it, name it — by the code list's own
-abbreviation, or by HCPCS/NDC if that is what you have:
-
-```
-NDMM_INDEX_EXCLUDED_ABBRS=CART,TALQ
-NDMM_INDEX_EXCLUDED_CODES=HCPCS:J9999,NDC:12345678901
-NDMM_INDEX_EXCLUDED_CODES=J9999            # bare code, any type
-```
-
-Abbreviations match `CL_MED_ABBR` the way `NDMM_BELANTAMAB_ABBR` does. Codes are
-stripped of punctuation and uppercased, the same normalisation the code list
-gets — **stripped, not padded to eleven**, because the code list stores its
-codes stripped too and the padding happens at the join, so padding here would
-stop a ten-digit entry matching the ten-digit code you typed.
-
-Belantamab is always barred whatever is set. An abbreviation or code matching
-no row of `cl_mma_codelist.csv` **stops the run** rather than reading as a
-restriction that applies to nothing. Both values are pinned in `CONTRACT` and
-recorded in `NDMM_RUN_METADATA`, because setting either changes the count.
-
-### Bone metastasis, and the codes you can decide yourself
+### Bone metastasis, and which codes it actually reaches
 
 The other-cancer criterion is decided on `other_malig.csv`'s `tumor_group`
 label, and five groups are overridden — treated as the index disease rather
@@ -486,147 +324,88 @@ than another cancer. Four of them the label settles: **monoclonal gammopathy**,
 **solitary plasmacytoma**, **plasma cell leukemia**, **extramedullary
 plasmacytoma** are plasma-cell disease.
 
-The fifth is not like the others. **`SECONDARY MALIGNANT NEOPLASM OF BONE`** —
-`C79.51`, `C79.52`, `198.5` — says a cancer spread to bone. It does not say
-*which* cancer. Myeloma bone disease is usually coded as MM with bone
-involvement, but it is miscoded here too, which is why the source build overrides
-the group. A breast or prostate primary metastatic to bone carries the same
-code. **The label cannot separate those. A code can.**
+The fifth is not like the others. **`SECONDARY MALIGNANT NEOPLASM OF BONE`**
+says a cancer spread to bone. It does not say *which* cancer. Myeloma bone
+disease is usually coded as MM with bone involvement, but it is miscoded here
+too, which is why the source build overrides the group — and a breast or
+prostate primary metastatic to bone carries the same code.
 
-So there is a file to fill in:
+**The label is per code here, and it is matched whole.** `other_malig.csv`
+carries 1,618 distinct `tumor_group` values over 1,643 codes, so a label picks
+out a code, and naming one in `NDMM_MM_ADJACENT_OVERRIDE` decides that code.
+Which means the three bone codes do not land together:
 
-```
-nndm/codelists/mm_adjacent_overrides.csv
-dx,icd_family,override,note
-C79.51,ICD10,0,metastasis - exclude as another cancer
-C90.02,ICD10,1,myeloma in remission - the index disease
-```
+| dx | label | |
+|---|---|---|
+| `C7951` | `SECONDARY MALIGNANT NEOPLASM OF BONE` | in the list — **kept** |
+| `C7952` | `SECONDARY MALIGNANT NEOPLASM OF BONE MARROW` | not in the list — **excludes** |
+| `1985` | `SECONDARY MALIGNANT NEOPLASM OF BONE AND BONE MARROW` | not in the list — **excludes**, but ICD-9 predates the scan window |
 
-| column | meaning |
-|---|---|
-| `dx` | the ICD code; punctuation is ignored, `C79.51` and `C7951` are the same |
-| `icd_family` | `ICD9` or `ICD10` (`9`/`10`/`ICD-10` also accepted) |
-| `override` | `1` = the index disease, do **not** exclude · `0` = another cancer, **do** exclude |
-| `note` | free text — why, for whoever reads this next |
+So `C79.51` is already handled and `C79.52` is not. Whether that is right is
+open — see `DECISIONS.md` §4. Closing it is two strings appended to
+`NDMM_MM_ADJACENT_OVERRIDE` in `nndm_constants.R`, exactly as the remission and
+relapse states were added; there is no per-code file, because with one label per
+code there is nothing such a file could say that the label list cannot.
 
-**A row here wins over the tumour-group label, in both directions.** The file
-ships empty, which means the labels decide everything, which is exactly
-the source build's cohort — so nothing changes until you put something in it. Set
-`NDMM_MM_ADJACENT_CSV` to use a file somewhere else.
-
-Every run writes **`<prefix>NDMM_MM_ADJACENT_CODES`**: every code currently
-kept as the index disease, with its group, in these columns. That is the list
-to copy from — you should not have to go looking for the codes.
-
-Malformed rows **stop the run** rather than being skipped: an override that is
-not 0 or 1, an unrecognised `icd_family`, a `dx` that is blank once punctuation
-is stripped, one code given two answers, or missing columns. A row silently
-dropped from a file whose only purpose is to be exact would read as a decision
-somebody made. The file's md5 goes into `NDMM_CODELIST_METADATA` even when it
-is empty, so a cohort says which version of it was read.
+Every run writes **`<prefix>NDMM_MM_ADJACENT_CODES`**: every code currently kept
+as the index disease, with the label that kept it. That table is where the split
+above is visible, and it is the one to read before deciding.
 
 ### One label per code is the wrong grain for "another cancer"
 
 Criterion 7 Path B is **two outpatient claims within 30 days for the same
-cancer**. "Same" is decided on `other_malig.csv`'s `tumor_group` — and that
-column carries **one label per ICD code**. A label is a code description, not a
-tumour type:
+cancer**, and "same" is decided on `other_malig.csv`'s `tumor_group` — which
+carries **one label per ICD code**: 1,618 distinct labels over 1,643 codes. A
+label is a code description, not a tumour type, so `PLASMA CELL LEUKEMIA IN
+REMISSION` and `… NOT HAVING ACHIEVED REMISSION` are two labels for one
+disease, and a solid tumour coded at two subsites is two more. Claims that
+should confirm each other never pair, the criterion under-detects, and the
+cohort is **too large** — the direction that puts patients into a study they do
+not belong in.
 
-- `PLASMA CELL LEUKEMIA IN REMISSION` and `PLASMA CELL LEUKEMIA NOT HAVING
-  ACHIEVED REMISSION` are two labels for one disease
-- a solid tumour coded at two subsites is two more
-
-Two claims that should confirm each other land in different labels, never pair,
-and the patient is **not excluded**. The criterion under-detects, so the cohort
-is **too large** — the direction that puts patients into a study they don't
-belong in.
-
-**The real fix is a `primary_tumor_group` column on the production code list.**
-Until there is one, `codelists/primary_tumor_groups.csv`:
-
-```
-tumor_group,primary_tumor_group,note
-PLASMA CELL LEUKEMIA IN REMISSION,PLASMA CELL LEUKEMIA,same disease
-PLASMA CELL LEUKEMIA NOT HAVING ACHIEVED REMISSION,PLASMA CELL LEUKEMIA,
-```
-
-Every label mapped to the same `primary_tumor_group` pairs together. Anything
-unmapped stays its own group, so **the empty file that ships is exactly the rule
-the source build runs**. `NDMM_OTHER_MALIG_GROUPS` lists every label on the code
-list to map from — anything whose `PRIMARY_GROUP` is still its own label can
-only confirm itself. Set `NDMM_PRIMARY_GROUPS_CSV` for a file elsewhere.
+The real fix is a `primary_tumor_group` column on the production code list.
+Until then, map labels onto one group in `codelists/primary_tumor_groups.csv`;
+anything unmapped stays its own group, so the empty file that ships is exactly
+the rule the source build runs. `NDMM_OTHER_MALIG_GROUPS` lists every label to
+map from.
 
 **You do not need the map to find out whether it is worth writing.** Every run
-writes **`<prefix>NDMM_OTHER_MALIG_GRAIN`**:
-
-| `GRAIN` | `N_EXCLUDED` |
-|---|---|
-| same code-list label | … ← the finest grain, and what the source build does |
-| as configured | … ← the same until the map says otherwise |
-| any label at all | … ← the coarsest, and the upper bound |
-
-**The gap between the first row and the last is the whole question.** If it is
-small the grain does not matter; if it is large the map is worth writing. All
-three are computed off `NDMM_OTHER_MALIG_EVENTS` — the claim scan is split out
-from the rule it feeds, so `med_diagnosis` is read once, not four times.
+writes **`<prefix>NDMM_OTHER_MALIG_GRAIN`**, counting exclusions at the finest
+grain (the source's), as configured, and at the coarsest. The gap between the
+first and last is the whole question: small and the grain does not matter,
+large and the map is worth writing.
 
 ### Where this departs from the protocol
 
-All protocol references are to the current protocol document
-(*Rev Round 2, June 16 2026*), 58 pages. An earlier draft is also in
-circulation — its own title bar reads `OLD DO NOT USE` — and its eligibility
-text differs. Check the revision before reading a criterion off it.
+All protocol references are to the current document (*Rev Round 2, June 16
+2026*), 58 pages. An earlier draft is also in circulation — its own title bar
+reads `OLD DO NOT USE` — and its eligibility text differs. Check the revision
+before reading a criterion off it.
 
-**Follow-up CE — criterion 5.** Protocol Rev Round 2 §6.2.1.1 reads:
+**Follow-up CE — criterion 5** is the one departure. §6.2.1.1 asks for three
+months; the study team confirmed **one day** for the 1L cohort. So this build
+produces a **larger** cohort than the source does, and the difference lands
+entirely on attrition step 5. The window is `NDMM_FU_CE_DAYS = 0`, named in the
+contract rather than written into the SQL. The 2L/3L bullet still asks for
+three months and carries no change bar, so those cohorts do not inherit this.
 
-> CE during follow-up: CE from index date until the earliest of 3-months post
-> index or death, with no gaps in enrollment.
+It rests on a relay rather than a controlled document — the only setting in
+this package that does. `DECISIONS.md` §1 is the record and says what still
+needs a signature.
 
-The study team confirmed **one day** of follow-up CE for the 1L cohort, which
-overrides that text. The source implements the three-month rule, so this build
-produces a **larger** cohort than that code does, and the difference lands
-entirely on attrition step 5.
-
-The window is `NDMM_FU_CE_DAYS`, set to `0`, and it is named in the contract
-rather than written into the SQL, so changing it is a deliberate act and is
-recorded in the run metadata. The 2L/3L bullet in the protocol still asks for three months and carries
-no change bar, so if those cohorts are built later they do **not** inherit this.
-
-The one-day rule comes from the study team, relayed in the build request. It is
-not written in any document in this repository, and two comments anchored to
-that bullet in the protocol PDF are not in the rendered page and have not been
-read. Until the decision exists in a controlled source, `FU_CE_DAYS = 0` rests
-on that relay alone — **this is the only setting in this package that does**.
-
-**So the run produces the number the decision should be made against.** Nobody
-can sign off a deviation from the protocol against a difference nobody has
-measured, so every run writes **`<prefix>NDMM_FU_CE_COUNTS`**:
-
-| `FU_CE_RULE` | `N_PASSING_CRITERION_5` | `N_COHORT` | `IS_THIS_RUN` |
-|---|---|---|---|
-| 0 days | … | … | 1 |
-| 30 days | … | … | 0 |
-| 60 days | … | … | 0 |
-| 90 days | … | … | 0 |
-| 3 months (exact) | … | … | 0 |
-
-`N_COHORT` is the **whole conjunction** at that window — the cohort size you
-would ship, not one criterion's count. So the row marked `IS_THIS_RUN` against
-the `90 days` row is exactly what the deviation costs, in patients. It is one
-extra pass over the no-gap spans, bounded by death and the study end the same
-way the flag itself is, and it does **not** change the cohort: the run still
-applies `NDMM_FU_CE_DAYS`.
-
-The windows are derived from the configured value, so whatever
-`NDMM_FU_CE_DAYS` is set to has a row — the table always contains the run that
-produced it.
+**So the run produces the number the decision should be made against.** Every
+run writes **`<prefix>NDMM_FU_CE_COUNTS`**: the cohort size at 0, 30, 60 and 90
+days and at exactly three calendar months, with the applied row marked.
+`N_COHORT` is the whole conjunction at that window — the cohort you would ship,
+not one criterion's count — so the gap between this run's row and the `90 days`
+row is what the deviation costs, in patients. It does not change the cohort;
+the run still applies `NDMM_FU_CE_DAYS`, and whatever that is set to has a row.
 
 **"3 months" is applied as 90 days**, because `NDMM_FU_CE_DAYS` is a day count.
-`add_months(index, 3)` is the exact reading and lands 0–2 days later; it is in
-the table as its own row so the difference is a number rather than an
-assumption. This build **cannot currently be set to** the exact-months rule — if
-the study team picks it, that is a code change, and the table says first whether
-it is worth one.
+`add_months(index, 3)` is the exact reading and lands 0–2 days later; it is its
+own row so the difference is a number rather than an assumption. The build
+cannot currently be *set* to the exact-months rule — that would be a code
+change, and the table says first whether it is worth one.
 
 ### Thresholds worth double-checking
 
@@ -764,58 +543,34 @@ is `"1e+05"`, which a warehouse reads as a double, and a cohort of exactly
 ### Step 9 is not like the others
 
 **Step 9 is not a baseline criterion.** Every other step is anchored to the 1L
-index date; this one is "in any LOT", so a patient can be removed for a
-belantamab claim years *after* their 1L index. That is what §6.2.1.2 says, but
-it means the 1L cohort depends on follow-up data and cannot be built from
-baseline alone.
+index; this one is "in any LOT", so a patient can be removed for a belantamab
+claim years *after* their index. That is what §6.2.1.2 says, but it means the
+1L cohort depends on follow-up data and cannot be built from baseline alone.
 
-**And "in any LOT" cannot be applied exactly here.** Lines of therapy do not
-exist when this build runs — the LOT algorithm runs over the cohort it
-produces. So the exclusion is a claims proxy, chosen by
-`NDMM_BELANTAMAB_SCOPE`:
+**And "in any LOT" cannot be applied exactly here** — lines do not exist when
+this build runs, because the LOT algorithm runs over the cohort it produces. So
+the exclusion is a claims proxy selected by `NDMM_BELANTAMAB_SCOPE`:
+`study_period` (default, the whole study window — a claim outside it is in no
+LOT) or `from_index` (on or after the patient's own index, the strictest
+reading). The source bounded neither end but the upper one, so a claim from
+*before* the study period excluded the patient; that is the defect this fixes.
+`DECISIONS.md` §2 is the record; it is **pending decision**.
 
-| scope | a patient is excluded if they have a belantamab claim… |
-|---|---|
-| `study_period` *(default)* | anywhere in `[2016-01-01, 2026-03-31]`. Lines are only ever built over the study period, so a claim outside it is in no LOT. |
-| `from_index` | on or after their own 1L index. Lines are numbered from that date, so this is the strictest reading — and excludes fewest patients. |
+Neither scope is LOT membership, so the build does the two things it can: cost
+the choice, and emit what a later reconciliation needs.
+**`<prefix>NDMM_BELANTAMAB_SCOPE_COUNTS`** gives the cohort size under each
+reading — the whole conjunction, because a claim count alone overstates it:
+some patients a wider proxy catches were already gone on another criterion.
 
-the source build bounded neither end but the upper one, so a claim from **before
-the study period** excluded the patient. That is wrong under either reading,
-and is the defect this fixes.
+**`<prefix>NDMM_BELANTAMAB_RECONCILE`** is one row per belantamab claim
+belonging to a patient who passes every *other* criterion, so the belantamab
+decision alone moves them — with `INDEX_DATE`, `BEL_DT`, `DAYS_FROM_INDEX` and
+`EXCLUDED_BY_PROXY`. Both directions are in it, and that is the point:
+`EXCLUDED_BY_PROXY = 0` is a patient the proxy kept who carries a claim it did
+not count, `= 1` is one it removed. A table built from the cohort alone could
+only show the first kind, and over-exclusion is the error that costs patients.
 
-Neither scope is LOT membership. **Only running the LOT algorithm over the
-cohort and checking which line a belantamab claim landed in is exact** — that
-is a reconciliation pass after the lot build, not something this build can do.
-So it does the two things it can: cost the choice, and emit what the
-reconciliation needs.
-
-**`<prefix>NDMM_BELANTAMAB_SCOPE_COUNTS`** — for each reading, how many 1L
-candidates it excludes *and* the resulting cohort size:
-
-| `SCOPE` | `N_PATIENTS` | `N_COHORT` | `IS_THIS_RUN` |
-|---|---|---|---|
-| ever | … | … | 0 |
-| study_period | … | … | 1 |
-| from_index | … | … | 0 |
-
-`N_COHORT` is the whole conjunction, because a claim count alone overstates the
-choice: some of the patients a wider proxy catches were already gone on another
-criterion. The scope in force is pinned in `CONTRACT` and recorded in
-`NDMM_RUN_METADATA`.
-
-**`<prefix>NDMM_BELANTAMAB_RECONCILE`** — the patients still to adjudicate.
-One row per belantamab claim belonging to a patient who passes every *other*
-criterion, so the belantamab decision is the only thing that moves them in or
-out, with `INDEX_DATE`, `BEL_DT`, `DAYS_FROM_INDEX` and `EXCLUDED_BY_PROXY`.
-
-Both directions are in it, and that is the point. `EXCLUDED_BY_PROXY = 0` is a
-patient the proxy kept who carries a claim it did not count; `= 1` is one it
-removed. A table built from the cohort alone could only ever show the first
-kind — the patients the proxy excluded are not in the cohort to be looked at —
-and over-exclusion is the error that costs patients.
-
-After the lot build has run, that table closes the criterion in both
-directions:
+After the lot build has run, that table closes the criterion both ways:
 
 ```sql
 SELECT DISTINCT r.PATID
@@ -824,15 +579,12 @@ JOIN   <prefix>LOT_LONG l ON l.PATID = r.PATID
 WHERE  r.BEL_DT BETWEEN l.LOT_START_DT AND coalesce(l.LOT_END_DT, r.BEL_DT)
 ```
 
-Run it over the `EXCLUDED_BY_PROXY = 0` rows and every `PATID` returned
-received belantamab **in a line**: it should have been excluded under §6.2.1.2
-and was not, because the claims proxy did not reach it. Remove those and note
-the count against attrition step 9.
-
-Run it over the `EXCLUDED_BY_PROXY = 1` rows and the answer is the other way
-round: a `PATID` it does **not** return has no belantamab claim inside any
-line, so the proxy removed a patient §6.2.1.2 does not exclude. Those belong
-back in the cohort.
+Over the `EXCLUDED_BY_PROXY = 0` rows, every `PATID` returned received
+belantamab **in a line**: §6.2.1.2 excludes them and the proxy did not. Remove
+them and note the count against attrition step 9. Over the `= 1` rows it is the
+other way round — a `PATID` it does **not** return has no belantamab claim
+inside any line, so the proxy removed someone §6.2.1.2 keeps. Those belong back
+in.
 
 The proxy was exact for this data only when both passes come back empty. One
 empty pass answers half the question.
@@ -877,33 +629,27 @@ Five, each deliberate and each recorded:
 | follow-up CE is one day, not three months (§6.2.1.1 says three; the study team said one) | **larger** cohort |
 | a code list value that normalises to blank no longer matches a claim with no code | **larger** — it can only remove matches that should not have been made |
 | both outpatient claims must fall in the baseline, not just the first | **larger** |
-| `mm_adjacent_overrides.csv` can decide a code the tumour-group label cannot | either way, and **nothing** until the file is filled in |
 | outpatient claims pair on a mapped tumour type, not on a code description | **smaller**, and **nothing** until the map is filled in |
 
 
 ### And to the parent, where line-for-line is impossible
 
-`tests/test_same_as_overall.R` holds `00_mm_cohort.R` to the overall build, and
-deliberately **does not** compare line for line — the parent's steps are
-entries in a phase-runner list, they carry columns only its own attrition
-reads, and its inpatient / outpatient / qualifying steps are three views where
-this build needs one. Saying otherwise would be a lie about what is checked.
-
-Instead it lifts the clinically decisive expressions out of the parent's own
-files, renames its views to ours, and requires each to appear here verbatim:
-what counts as inpatient, which codes qualify an inpatient claim, how a
-diagnosis claim joins its header, the outpatient window, how a partial death
-date resolves, which eligibility row wins. Change one here and it fails;
-change one in the parent and it fails too, which is the drift worth catching.
-It also fails if any of the parent's *other* criteria leak in — this build
-applies two of its six, and a patient dropped by a seventh would never appear
-in the funnel.
+`tests/test_same_as_overall.R` holds `00_mm_cohort.R` to the overall build, but
+deliberately not line for line — the parent's steps are entries in a
+phase-runner list and its inpatient / outpatient / qualifying steps are three
+views where this build needs one. Instead it lifts the clinically decisive
+expressions out of the parent's files, renames its views to ours, and requires
+each verbatim: what counts as inpatient, which codes qualify an inpatient
+claim, how a diagnosis claim joins its header, the outpatient window, how a
+partial death date resolves, which eligibility row wins. Change one on either
+side and it fails. It also fails if any of the parent's *other* criteria leak
+in — this build applies two of its six.
 
 ## Settings
 
-`config.csv`; the environment wins over it. Everything below is read by name —
-`tests/test_runner.R` requires each one to appear here, so this list cannot
-fall behind the code.
+`config.csv`; the environment wins over it. Everything below is read by name.
+`CONTRACT` in `build_nndm.R` is the authority on which settings cannot be
+changed without changing the cohort; this list is a description of it.
 
 ### To run at all
 
@@ -961,12 +707,10 @@ is pinned to its default** — the review tables exist to be acted on.
 | `NDMM_INDEX_EXCLUDED_CODES` | *(empty)* | comma-separated `TYPE:CODE` or bare codes |
 | `NDMM_WAIVERS` | *(empty)* | the four NDC-shape checks and `raw_icd_flag`, by name |
 
-### Where the fill-in files are, and one way out
+### The fill-in file, and one way out
 
 | setting | default | |
 |---|---|---|
-| `NDMM_MM_ADJACENT_CSV` | `codelists/mm_adjacent_overrides.csv` | see **The files you fill in** |
-| `NDMM_ELIGIBLE_1L_CSV` | `codelists/eligible_1l_agents.csv` | |
 | `NDMM_PRIMARY_GROUPS_CSV` | `codelists/primary_tumor_groups.csv` | |
 | `NDMM_IGNORE_ACTIVE_RUN` | *(unset)* | `TRUE` gets past a `started` row a killed process left behind. Use it only once the named run is known to be dead — see **One run per prefix at a time** |
 

@@ -65,11 +65,13 @@ build_ndmm_index_ineligible_codes <- function(con) {
   norm <- function(x) toupper(gsub("[^A-Za-z0-9]", "", x))
   sq   <- function(x) gsub("'", "''", x, fixed = TRUE)
 
-  # eligible_1l_agents.csv, if the study team has written one. Its deny rows
-  # are the same thing as NDMM_INDEX_EXCLUDED_ABBRS and join them; its allow
-  # rows turn the whole thing round - see below.
-  el    <- load_eligible_agents_csv(nndm_config()$eligible_1l_csv)
-  abbrs <- c(split_setting(NDMM_INDEX_EXCLUDED_ABBRS), el$deny)
+  # cl_mma_codelist.csv is the study's definition of MM therapy, so it is the
+  # eligible-1L set: any agent on it may set the index, less steroids (dropped
+  # where NDMM_MMA_CODELIST is built) and less belantamab (barred below, per
+  # S6.2.1.1's "other than belantamab"). There is no separate eligibility file.
+  # NDMM_INDEX_EXCLUDED_ABBRS stays for barring a named agent operationally: it
+  # is empty by default, and every entry is checked against the code list below.
+  abbrs <- split_setting(NDMM_INDEX_EXCLUDED_ABBRS)
   codes <- split_setting(NDMM_INDEX_EXCLUDED_CODES)
 
   # Each entry becomes one predicate, and one thing to check matched something.
@@ -91,82 +93,13 @@ build_ndmm_index_ineligible_codes <- function(con) {
         sql  = sprintf("code = '%s'", sq(norm(parts[1]))))
   }
 
-  # An allowlist is the same view read the other way round: everything NOT
-  # named is ineligible. One predicate, and the four-arm scan below needs no
-  # change - it already anti-joins this view. Added last so the checks above
-  # still run over the named terms one at a time.
-  #
-  # A row with no abbreviation has to be named ineligible explicitly. NULL NOT
-  # IN (...) is unknown, not true, so such a row would not be selected here, and
-  # the scan anti-joins this view - it would stay eligible and its code could
-  # set an index under a list that names only some agents. That is the failure
-  # an allowlist exists to prevent, and nothing downstream would show it: the
-  # agent report builds its universe from non-blank abbreviations, so the row
-  # would not appear there either. cl_mma_codelist.csv requires a code and a
-  # code type to be non-blank but not an abbreviation, and blanks are read as
-  # NA, so this is reachable from a real file.
-  allow_term <- NULL
-  if (length(el$allow)) {
-    allow_in <- paste(sprintf("'%s'", sq(el$allow)), collapse = ", ")
-    allow_term <- list(
-      what = paste0("the allowlist (", length(el$allow), " agents)"),
-      sql  = sprintf(paste("(med_abbr IS NULL OR trim(med_abbr) = ''",
-                           "OR upper(trim(med_abbr)) NOT IN (%s))"), allow_in))
-  }
-
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_INDEX_INELIGIBLE} AS
     SELECT DISTINCT code_type, code
     FROM {NDMM_MMA_CODELIST}
-    WHERE ", paste(vapply(c(terms, list(allow_term)[!is.null(allow_term)]),
-                          function(t) t$sql, character(1)),
+    WHERE ", paste(vapply(terms, function(t) t$sql, character(1)),
                    collapse = "\n       OR "), "
   "))
-
-  # Each allowed agent has to exist, and for the same reason the others do: an
-  # abbreviation that matches nothing is not a permission, it is a typo, and
-  # under an allowlist a typo does not read as a restriction that applies to
-  # nothing - it silently bars an agent that should have been let through.
-  for (a in el$allow) {
-    n <- as.integer(db_q(con, glue(
-      "SELECT count(*) AS n FROM {NDMM_MMA_CODELIST}
-       WHERE upper(trim(med_abbr)) = '{sq(a)}'"))$n)
-    if (is.na(n) || n == 0)
-      stop("The eligible-1L agent list allows '", a, "', which matches no row ",
-           "of cl_mma_codelist.csv. Under an allowlist that is not a ",
-           "restriction applying to nothing - it is an agent that should set ",
-           "an index and cannot, so its patients leave the cohort at attrition ",
-           "step 3. Check it against 'SELECT DISTINCT med_abbr FROM ",
-           NDMM_MMA_CODELIST, "'.", call. = FALSE)
-  }
-  if (!is.null(allow_term)) {
-    # Counted separately, because count(DISTINCT med_abbr) does not count NULL:
-    # the rows with no abbreviation are exactly the ones that used to slip
-    # through, so reporting them as agents would hide them again. They are
-    # codes, not agents - there is no name to report - so they are counted as
-    # codes and called unmapped.
-    got <- db_q(con, glue(
-      "SELECT count(DISTINCT med_abbr) AS n_named,
-              sum(CASE WHEN med_abbr IS NULL OR trim(med_abbr) = ''
-                       THEN 1 ELSE 0 END) AS n_unmapped
-       FROM {NDMM_MMA_CODELIST}
-       WHERE {allow_term$sql}"))
-    # A column the query did not return is length zero, and length zero in an
-    # if() is an error rather than a FALSE. This is a log line; it must not be
-    # what stops a build.
-    n_of <- function(x) {
-      v <- suppressWarnings(as.integer(x))
-      if (length(v) != 1L || is.na(v)) NA_integer_ else v
-    }
-    log_msg("  Allowlist in force: ", n_of(got$n_named),
-            " named agent(s) on the code list cannot set a 1L index")
-    n_un <- n_of(got$n_unmapped)
-    if (!is.na(n_un) && n_un > 0)
-      log_msg("  ...and ", n_un, " code(s) with no CL_MED_ABBR, barred as ",
-              "UNMAPPED. An allowlist names the agents that may set an index, ",
-              "so a code that names none cannot be one of them. Fill in ",
-              "CL_MED_ABBR for these if any of them should be eligible.")
-  }
 
   # Every entry after belantamab has to match something. Left unchecked, a name
   # or a code that is not on the list reads as an applied restriction and
@@ -239,9 +172,10 @@ build_ndmm_lot1_index <- function(con, medical_tbl, rx_tbl) {
 # contains. Annex 2 is "categorization of SOC regimens", which S6.2.2 calls an
 # exemplary list that may be recategorized - an analysis grouping, not an
 # eligibility rule - and it is a stand-alone document. So this build does not
-# invent an allowlist. It writes the sheet one would be built from: every agent
+# narrow that set. It writes the sheet a decision would be made from: every agent
 # on the code list, whether this run let it set an index, and how many it set.
-# Fill in codelists/eligible_1l_agents.csv from this and re-run.
+# Bar one with NDMM_INDEX_EXCLUDED_ABBRS if an agent on the code list
+# should not set an index.
 build_ndmm_index_agents <- function(con, cfg) {
   db_exec(con, glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_INDEX_AGENTS')} AS
@@ -252,8 +186,8 @@ build_ndmm_index_agents <- function(con, cfg) {
               ON l1.PATID = tx.PATID AND tx.tx_dt = l1.LOT1_START_DT
     ),
     -- Every agent on the code list, not only the ones that won a date. Under
-    -- an allowlist the winners are by definition the allowed ones, so a table
-    -- of winners could not be used to build the allowlist - which is what this
+    -- a narrowed set the winners are by definition the allowed ones, so a table
+    -- of winners could not be used to decide the narrowing - which is what this
     -- table is for. ELIGIBLE says what this run treated each as.
     universe AS (
       SELECT DISTINCT upper(trim(c.med_abbr)) AS med_abbr
@@ -283,8 +217,8 @@ build_ndmm_index_agents <- function(con, cfg) {
     log_msg("    ", if (got$ELIGIBLE[i] == 1L) "may set " else "BARRED  ", " ",
             got$MED_ABBR[i], ": ", format(got$N_PATIENTS[i], big.mark = ","))
   log_msg("  Review these against S6.2.1.1. Anything restricted to later lines ",
-          "belongs in codelists/eligible_1l_agents.csv with eligible=0, or ",
-          "list the eligible ones with eligible=1 to turn it into an allowlist.")
+          "belongs in NDMM_INDEX_EXCLUDED_ABBRS, or ",
+          "bar one with NDMM_INDEX_EXCLUDED_ABBRS.")
   invisible(got)
 }
 
@@ -622,11 +556,12 @@ build_ndmm_belantamab_reconcile <- function(con, cfg) {
 # labels the production list actually stores is not visible from here, and the
 # remission wording is exactly where it is likely to differ - so the run writes
 # what it found rather than leaving the question to a comment.
-# Every code in an overridden group, in the shape mm_adjacent_overrides.csv
-# wants. The group table says which labels are kept; this says which codes that
-# actually is, so deciding one of them is a copy and an edit rather than a
-# research task. OVERRIDE is what this run did, so a filled-in CSV shows up here
-# as the value it set.
+# Every code in an overridden group. The group table says which labels are
+# kept; this says which codes that actually is. Worth reading before deciding
+# one of them: the labels in other_malig.csv are one per code and the match is
+# on the whole string, so SECONDARY MALIGNANT NEOPLASM OF BONE keeps C79.51 and
+# leaves C79.52, whose label ends OF BONE MARROW, to be excluded. That is
+# visible here and nowhere else.
 build_ndmm_mm_adjacent_codes <- function(con, cfg) {
   db_exec(con, glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_MM_ADJACENT_CODES')} AS
