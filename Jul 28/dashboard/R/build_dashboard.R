@@ -181,21 +181,31 @@ build_panel <- function(con, sec, inputs, have, cfg) {
 # Nothing here is un-masked: patient_journeys masks PATID in its own SQL, so
 # what reaches the file is what reaches the page. No section selects a raw
 # identifier, and a test holds that.
-write_csv_exports <- function(panels, cfg) {
+# The folder is one run, not an accumulation. A panel switched off, a query
+# that failed, a panel that came back empty, the same OUTPUT_DIR reused for
+# another cohort, or the export turned off entirely - each leaves a file from
+# last time that looks current, because the names carry no cohort, prefix or
+# run id to tell it apart.
+#
+# Only .csv, and only this folder, which the dashboard created and owns.
+clear_csv_exports <- function(cfg, why) {
   dir <- file.path(cfg$output_dir, cfg$csv_dir)
-  dir.create(dir, showWarnings = FALSE, recursive = TRUE)
-  # The folder is one run, not an accumulation. A panel switched off, a query
-  # that failed, a panel that came back empty, or the same OUTPUT_DIR reused for
-  # another cohort all leave a file from last time that looks current - the
-  # names carry no cohort, prefix or run id to tell it apart. Clear first, so
-  # what is here is what is on the page.
-  #
-  # Only .csv, and only this folder, which the dashboard created and owns.
+  if (!dir.exists(dir)) return(invisible(0L))
   old <- list.files(dir, pattern = "[.]csv$", full.names = TRUE)
   if (length(old)) {
     unlink(old)
-    log_msg("CSV export: cleared ", length(old), " file(s) from the previous run")
+    log_msg("CSV export: cleared ", length(old), " file(s) from a previous run (",
+            why, ")")
+  } else if (!identical(why, "replaced by this run")) {
+    log_msg("CSV export off (", why, ")")
   }
+  invisible(length(old))
+}
+
+write_csv_exports <- function(panels, cfg) {
+  dir <- file.path(cfg$output_dir, cfg$csv_dir)
+  dir.create(dir, showWarnings = FALSE, recursive = TRUE)
+  clear_csv_exports(cfg, "replaced by this run")
   written <- 0L
   for (p in panels) {
     if (is.null(p$data) || !nrow(p$data)) next
@@ -236,12 +246,18 @@ build_dashboard_run <- function(here, cohort_table, lot_prefix,
   have <- probe_inputs(con, inputs)
   for (nm in names(inputs))
     log_msg("  ", if (have[[nm]]) "found  " else "MISSING", nm, ": ", inputs[[nm]])
-  # LOT_LONG is the one nothing works without: every tab but the cohort one
-  # reads it, and a dashboard of two panels is not worth writing.
-  if (!isTRUE(have[["lot_long"]]))
-    stop("No ", inputs$lot_long, ". The dashboard reads what the LOT build ",
-         "produced, so it cannot run before that build has. Check the prefix.",
-         call. = FALSE)
+  # LOT_LONG_FINAL is the one nothing works without. It is the study
+  # population, every clinical panel reads it, and it is written LAST - in the
+  # line-criteria phase, after LOT_LONG. So a LOT run that died in between
+  # leaves LOT_LONG behind and no final table, and requiring only LOT_LONG
+  # would produce a file that looks like a finished dashboard while nearly
+  # every panel on it says "not shown".
+  if (!isTRUE(have[["lot_final"]]))
+    stop("No ", inputs$lot_final, ". That table is the study population and ",
+         "every clinical panel reads it. It is written after ", inputs$lot_long,
+         ", in the line-criteria phase, so a LOT run that failed in between ",
+         "leaves the one and not the other. Finish the LOT build, or check the ",
+         "prefix.", call. = FALSE)
 
   panels <- lapply(secs, build_panel, con = con, inputs = inputs,
                    have = have, cfg = cfg)
@@ -254,8 +270,12 @@ build_dashboard_run <- function(here, cohort_table, lot_prefix,
     subtitle = paste0(length(panels), " panels | schema ", cfg$work_schema,
                       " | prefix ", cfg$lot_prefix, " | run ", run_id,
                       " | built ", format(Sys.time(), "%Y-%m-%d %H:%M"))), path)
+  # Cleared either way. With the export off, last run's files would otherwise
+  # sit beside this run's HTML looking current - the names carry no cohort,
+  # prefix or run id to tell them apart, so "the CSV folder is this run" has to
+  # hold when the answer is "no files" as much as when it is nineteen.
   if (isTRUE(cfg$export_csv)) write_csv_exports(panels, cfg)
-  else log_msg("CSV export off (EXPORT_CSV=FALSE)")
+  else clear_csv_exports(cfg, "EXPORT_CSV is FALSE")
   log_msg("Dashboard written: ", path)
   log_msg(SEP)
   invisible(path)

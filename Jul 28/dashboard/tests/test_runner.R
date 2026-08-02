@@ -131,6 +131,18 @@ Sys.setenv(TOP_N = "ten")
 stops(check_settings(), "a top-N that will not parse")
 clear()
 
+cat("\n-- the run stops without the table the study numbers come from --\n")
+# LOT_LONG_FINAL is written LAST, in the line-criteria phase, after LOT_LONG.
+# So a LOT run that died in between leaves the one and not the other - and
+# requiring only LOT_LONG produced a file that looks like a finished dashboard
+# while nearly every panel on it says "not shown".
+runner <- paste(readLines(file.path(ROOT, "R", "build_dashboard.R"), warn = FALSE),
+                collapse = "\n")
+ok(grepl('if (!isTRUE(have[["lot_final"]]))', runner, fixed = TRUE),
+   "the runner requires LOT_LONG_FINAL, the study population")
+ok(!grepl('if (!isTRUE(have[["lot_long"]]))', runner, fixed = TRUE),
+   "...rather than LOT_LONG, which a half-finished LOT run also leaves behind")
+
 cat("\n-- the run reads, and only reads --\n")
 src <- paste(unlist(lapply(list.files(file.path(ROOT, "R"), "[.]R$",
                                       full.names = TRUE), readLines, warn = FALSE)),
@@ -219,6 +231,21 @@ ok(all(vapply(JOURNEY_CATEGORIES, function(c_i)
        grepl(gsub("'", "''", c_i$label, fixed = TRUE), csql, fixed = TRUE), logical(1))),
    "the coverage panel counts every scenario the gallery offers")
 
+cat("\n-- the attrition table is the cohort build's, so it is named per cohort --\n")
+# nndm calls it NDMM_ATTRITION. A different cohort build calls it something
+# else, or has none - so the name is a setting rather than a constant in a
+# package that is meant to name no study of its own.
+set_dash_config(modifyList(base, list(work_schema = "wk")))
+tt <- modifyList(t1, list(work_schema = "wk", cohort_prefix = "coh_",
+                          attrition_table = "MYSTUDY_FUNNEL"))
+ok(identical(dashboard_inputs(tt)$attrition, "hive_metastore.wk.coh_MYSTUDY_FUNNEL"),
+   "ATTRITION_TABLE names it, and the cohort prefix still applies")
+ok(identical(cfg_defaults$attrition_table, "NDMM_ATTRITION"),
+   "...defaulting to what nndm writes")
+ok(!any(grepl("NDMM_ATTRITION",
+              vapply(DASHBOARD_SECTIONS, `[[`, character(1), "sql"), fixed = TRUE)),
+   "and no section spells the name out for itself")
+
 cat("\n-- the CSV export is the numbers on the page --\n")
 tmp <- file.path(tempdir(), paste0("dashcsv", Sys.getpid()))
 ecfg <- list(output_dir = tmp, csv_dir = "csv")
@@ -246,6 +273,16 @@ ok(file.exists(file.path(tmp, "csv", "a.csv")) &&
 back <- read.csv(file.path(tmp, "csv", "a.csv"), stringsAsFactors = FALSE)
 ok(identical(back$x, 1:2) && identical(back$y, c("p", "q")),
    "the CSV round-trips the frame the panel rendered, not a second query")
+# With the export off the writer never ran, so last run's files sat beside this
+# run's HTML looking current. "The folder is this run" has to hold when the
+# answer is "no files" as much as when it is nineteen.
+ok(file.exists(file.path(tmp, "csv", "a.csv")), "a CSV is there to begin with")
+clear_csv_exports(ecfg, "EXPORT_CSV is FALSE")
+ok(!file.exists(file.path(tmp, "csv", "a.csv")) && file.exists(keep),
+   "turning the export off clears the folder too, and still only .csv")
+ok(identical(clear_csv_exports(list(output_dir = file.path(tmp, "nope"),
+                                    csv_dir = "csv"), "x"), 0L),
+   "and a folder that was never created is not an error")
 unlink(tmp, recursive = TRUE)
 clear()
 Sys.setenv(EXPORT_CSV = "Y")
@@ -254,6 +291,27 @@ clear()
 Sys.setenv(JOURNEYS_PER_CATEGORY = "3.5")
 stops(check_settings(), "a fractional number of examples is refused")
 clear()
+
+getsec <- function(nm) Filter(function(s) identical(s$name, nm), DASHBOARD_SECTIONS)[[1]]
+
+cat("\n-- the panels ask for columns that exist, and for one run --\n")
+# ATTRITION_COLS in nndm declares RUN_ID, STEP_NUM, CRITERION, N_PATIENTS,
+# PCT_OF_START, RECORDED_AT. This asked for STEP_LABEL, which is not one of
+# them - so on every real run the query failed, build_panel caught it, and the
+# HTML rendered with the cohort funnel replaced by a notice.
+asql <- fill_sql(getsec("attrition")$sql, INPUTS, cfg)
+ok(grepl("a.CRITERION AS label", asql, fixed = TRUE) &&
+     !grepl("STEP_LABEL", asql, fixed = TRUE),
+   "the attrition panel reads CRITERION, the column the cohort build writes")
+# Both tables are history: each build deletes and re-inserts only its own
+# RUN_ID. Unfiltered, a reused prefix returns several funnels interleaved by
+# STEP_NUM - and the bar takes its denominator from the first row.
+ok(grepl("ORDER BY RECORDED_AT DESC LIMIT 1", asql, fixed = TRUE) &&
+     grepl("a.RUN_ID = l.RUN_ID", asql, fixed = TRUE),
+   "...and only the latest run's rows, not every run the table has kept")
+psql <- fill_sql(getsec("run_provenance")$sql, INPUTS, cfg)
+ok(grepl("ORDER BY RUN_TIMESTAMP DESC LIMIT 1", psql, fixed = TRUE),
+   "provenance is the latest run, not every metadata row ever written")
 
 cat("\n-- the study panels describe the study population --\n")
 # LOT_LONG_FINAL is the population; LOT_LONG is that table before the line
@@ -297,7 +355,7 @@ stops(validate_sections(list(modifyList(
         Filter(function(s) identical(s$render, "bar"), DASHBOARD_SECTIONS)[[1]],
         list(pct = NULL)))),
       "a bar that declares none is refused rather than assuming one")
-getp <- function(nm) Filter(function(s) identical(s$name, nm), DASHBOARD_SECTIONS)[[1]]$pct
+getp <- function(nm) getsec(nm)$pct
 ok(identical(getp("attrition"), "first"),
    "the funnel is a share of its first row, which is the cohort it started from")
 ok(identical(getp("index_by_year"), "total") &&

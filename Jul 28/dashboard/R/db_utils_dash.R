@@ -45,7 +45,11 @@ dashboard_inputs <- function(cfg) {
     lot_long  = wrk(paste0(lp, "LOT_LONG")),
     lot_final = wrk(paste0(lp, "LOT_LONG_FINAL")),
     run_meta  = wrk(paste0(lp, "LOT_RUN_METADATA")),
-    attrition = wrk(paste0(cp, "NDMM_ATTRITION"))
+    # The attrition table is the COHORT build's, so its name belongs to that
+    # build and not to this one. nndm calls it NDMM_ATTRITION; another cohort
+    # will call it something else, or have none. Configurable, so this folder
+    # still names no study of its own - ATTRITION_TABLE in config.csv.
+    attrition = wrk(paste0(cp, cfg$attrition_table))
   )
 }
 

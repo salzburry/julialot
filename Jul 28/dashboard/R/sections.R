@@ -163,12 +163,17 @@ DASHBOARD_SECTIONS <- list(
   list(name = "run_provenance", tab = "Overview",
        label = "What produced these numbers",
        needs = "run_meta", render = "table",
-       # One row. Which window, which code, which criteria - so a dashboard
-       # filed away without its log still says what it describes.
+       # One row - the latest. LOT_RUN_METADATA is history: the writer deletes
+       # and re-inserts only its own RUN_ID, so every previous run is still
+       # there. Selecting the lot would show several runs with different
+       # settings, and an incomplete row from an attempt that failed before its
+       # counts were filled in, with nothing saying which describes the tables
+       # on the page.
        sql = "
-         SELECT RUN_ID, STUDY_START, STUDY_END, CODE_MD5,
+         SELECT RUN_ID, RUN_TIMESTAMP, STUDY_START, STUDY_END, CODE_MD5,
                 LINE_CRITERIA_APPLIED, LOT_LONG_BY_LINE
-         FROM {run_meta}"),
+         FROM {run_meta}
+         ORDER BY RUN_TIMESTAMP DESC LIMIT 1"),
 
   list(name = "headline", tab = "Overview",
        label = "Cohort and lines",
@@ -185,9 +190,24 @@ DASHBOARD_SECTIONS <- list(
        needs = "attrition", render = "bar", pct = "first",
        # The funnel the cohort build wrote, read rather than recomputed - two
        # copies of an attrition is how the funnel and the cohort stop agreeing.
+       #
+       # CRITERION, not STEP_LABEL: that is the column ATTRITION_COLS declares,
+       # and the name this asked for did not exist. The panel would have failed
+       # on every real run while the HTML still rendered around it.
+       #
+       # One run. The table is history - the cohort build deletes and inserts
+       # only its own RUN_ID - so without this a reused prefix returns several
+       # funnels interleaved by STEP_NUM, and the bar takes the first row as its
+       # denominator. Latest by RECORDED_AT, because the dashboard runs after
+       # the build and in a different session, so it cannot know the run id.
        sql = "
-         SELECT STEP_LABEL AS label, N_PATIENTS AS n
-         FROM {attrition} ORDER BY STEP_NUM"),
+         WITH latest AS (
+           SELECT RUN_ID FROM {attrition}
+           ORDER BY RECORDED_AT DESC LIMIT 1
+         )
+         SELECT a.CRITERION AS label, a.N_PATIENTS AS n
+         FROM {attrition} a INNER JOIN latest l ON a.RUN_ID = l.RUN_ID
+         ORDER BY a.STEP_NUM"),
 
   # ---- COHORT --------------------------------------------------------------
 
