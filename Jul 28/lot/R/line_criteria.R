@@ -3,6 +3,13 @@
 #   <prefix>LOT_LONG_ALLFLAGS  every criterion as a 0/1 column, always computed
 #   <prefix>LOT_LONG_FINAL     the enabled ones applied
 
+# A criterion may need patient-level facts lot_long does not carry. It declares
+# `patients`, SQL creating one row per PATID, which is LEFT JOINed into the
+# allflags view so the criterion's own sql can read its columns. The two names
+# are derived from the criterion's, so nothing has to be kept in step by hand.
+criterion_patients_view <- function(c_i) paste0("lc_", c_i$name, "_patients")
+criterion_alias         <- function(c_i) paste0("p_", c_i$name)
+
 # Protocol S6.2.1.2, the fourth NDMM exclusion: "Received belantamab mafodotin
 # (i.e., an ADC) in any LOT". It lives here rather than in the cohort build
 # because lines do not exist until this package has run - a cohort-time rule
@@ -10,15 +17,27 @@
 # unverifiable, because a patient it removed never got lines to check. Applied
 # here it is the criterion as written.
 #
+# Asked of the CLAIMS, not of the constructed lines, and that is what makes it
+# exact. Reading LOT_BASE_MEDS and LOT_BASE_1ST_ADD_MED - which is what this did
+# - bounds the question by what the build produced, and the build produces
+# max_lot lines: belantamab in a sixth line, or as a line's second added med,
+# was invisible. "Any LOT" then meant "any of the first five, and only as a base
+# med or the first addition", which is not the protocol's sentence.
+#
+# map_stacked is one row per (patient, drug, treatment episode), already bounded
+# to the patient's observation by 03_mma_map.R. A belantamab MAP overlapping the
+# patient's LOT-covered span therefore IS belantamab received in a line: inside
+# a built line it is that line's, and after the last built line it is a line the
+# build would have started, because a non-steroid drug that is not a permissible
+# substitute of a prior line's drug triggers the next LOT. Either way the answer
+# does not depend on max_lot, so nothing here is capped at five.
+#
 # Patient-level, not line-level. The predicate is false on EVERY line of an
 # affected patient, so first_failed_lot lands on their earliest line and the
 # truncate below leaves them with none - which is the exclusion.
 #
-# LOT_BASE_MEDS is concat_ws(' ', sort_array(collect_set(MED_ABBR))), so the
-# test is a whole-token match, not a LIKE: an abbreviation that merely contains
-# BELA would not match, and BELA as one of several meds does.
-# LOT_BASE_1ST_ADD_MED is checked too - a med added mid-line was still received
-# in it.
+# The MED_ABBR test is a whole-value match, not a LIKE: an abbreviation that
+# merely contains BELA cannot match.
 LINE_CRITERIA <- list(
   list(
     name    = "no_belantamab",
@@ -26,12 +45,26 @@ LINE_CRITERIA <- list(
     lines   = "*",
     flag    = "NO_BELANTAMAB_ANY_LOT",
     on_fail = "truncate",
-    sql     = paste0(
-      "max(CASE WHEN array_contains(split(coalesce(LOT_BASE_MEDS, \'\'), \' \'), ",
-      "\'{cfg$belantamab_med_abbr}\')",
-      " OR upper(trim(coalesce(LOT_BASE_1ST_ADD_MED, \'\'))) = ",
-      "\'{cfg$belantamab_med_abbr}\' THEN 1 ELSE 0 END)",
-      " OVER (PARTITION BY PATID) = 0")
+    # FIRST_LOT_DT rather than the cohort's INDEX_DATE: for this cohort they are
+    # the same date, but a cohort whose index precedes its first line would
+    # otherwise count pre-LOT therapy as received in a LOT.
+    patients = paste0(
+      "CREATE OR REPLACE TEMPORARY VIEW lc_no_belantamab_patients AS\n",
+      "WITH lot_span AS (\n",
+      "  SELECT PATID, min(LOT_START_DT) AS FIRST_LOT_DT FROM lot_long GROUP BY PATID\n",
+      ")\n",
+      "SELECT s.PATID,\n",
+      "       max(CASE WHEN upper(trim(coalesce(m.MAP_MED_TYPE, \'\'))) = ",
+      "\'{cfg$belantamab_med_abbr}\'\n",
+      "                THEN 1 ELSE 0 END) AS HAS_BELANTAMAB\n",
+      "FROM lot_span s\n",
+      "INNER JOIN lot_patient_input p ON p.PATID = s.PATID\n",
+      "LEFT JOIN map_stacked m\n",
+      "       ON m.PATID = s.PATID\n",
+      "      AND m.MAP_END_DT   >= s.FIRST_LOT_DT\n",
+      "      AND m.MAP_START_DT <= p.OBS_END_DT\n",
+      "GROUP BY s.PATID"),
+    sql = "coalesce(p_no_belantamab.HAS_BELANTAMAB, 0) = 0"
   )
 )
 
@@ -40,6 +73,7 @@ LINE_CRITERIA <- list(
 # leave L1 next to L3. Nothing else is offered until a real criterion needs it.
 ON_FAIL <- c("flag", "truncate")
 FIELDS  <- c("name", "label", "lines", "flag", "sql", "on_fail")
+# patients is optional, so it is not in FIELDS. Validated when present.
 
 .is_str <- function(x) is.character(x) && length(x) == 1L && !is.na(x) && nzchar(trimws(x))
 
@@ -92,6 +126,23 @@ validate_line_criteria <- function(crit = LINE_CRITERIA, max_lot = NULL) {
                              "), so the criterion would match no line at all"))
     }
 
+    # A patient-level view is wired in by name, and both names are derived from
+    # the criterion's. Written out in the criterion so the SQL reads as SQL, and
+    # checked here so a renamed criterion cannot leave the statement building a
+    # view nothing joins or the predicate reading an alias nothing defines -
+    # either of which is a criterion that matches nobody and looks satisfied.
+    if (!is.null(c_i$patients)) {
+      if (!.is_str(c_i$patients))
+        bad <- c(bad, paste0(at, ": patients must be one non-empty string"))
+      else if (!grepl(criterion_patients_view(c_i), c_i$patients, fixed = TRUE))
+        bad <- c(bad, paste0(at, ": patients must create the view ",
+                             criterion_patients_view(c_i)))
+      if (.is_str(c_i$sql) && !grepl(paste0(criterion_alias(c_i), "."),
+                                     c_i$sql, fixed = TRUE))
+        bad <- c(bad, paste0(at, ": sql declares patients but never reads ",
+                             criterion_alias(c_i)))
+    }
+
     # The switch is APPLY_<NAME> and Spark folds identifier case, so names and
     # flags that differ only in case are the same thing.
     if (.is_str(c_i$name)) {
@@ -139,6 +190,15 @@ line_flag_sql <- function(c_i, cfg) {
                    WHEN ({pred}) THEN 1 ELSE 0 END AS {c_i$flag}")
 }
 
+# The patient-level views a criterion declares, ready to run before the flags
+# view joins them.
+line_criteria_patient_sql <- function(cfg, crit = LINE_CRITERIA) {
+  crit <- Filter(function(c_i) !is.null(c_i$patients), lapply(crit, normalize_criterion))
+  lapply(crit, function(c_i) list(
+    name = criterion_patients_view(c_i),
+    sql  = glue(c_i$patients, .envir = list2env(list(cfg = cfg), parent = globalenv()))))
+}
+
 # Every criterion, enabled or not, as its own column.
 line_criteria_flags_sql <- function(cfg, src, out, crit = LINE_CRITERIA) {
   validate_line_criteria(crit, cfg$max_lot)
@@ -147,7 +207,16 @@ line_criteria_flags_sql <- function(cfg, src, out, crit = LINE_CRITERIA) {
     return(glue("CREATE OR REPLACE TEMPORARY VIEW {out} AS SELECT * FROM {src}"))
   cols <- paste(vapply(crit, line_flag_sql, character(1), cfg = cfg),
                 collapse = ",\n  ")
-  glue("CREATE OR REPLACE TEMPORARY VIEW {out} AS\nSELECT *,\n  {cols}\nFROM {src}")
+  join <- Filter(function(c_i) !is.null(c_i$patients), crit)
+  if (!length(join))
+    return(glue("CREATE OR REPLACE TEMPORARY VIEW {out} AS\nSELECT *,\n  {cols}\nFROM {src}"))
+  # s.*, not *: the joined views would otherwise add their columns to the
+  # output, and PATID would appear twice.
+  joins <- paste(vapply(join, function(c_i)
+    glue("LEFT JOIN {criterion_patients_view(c_i)} {criterion_alias(c_i)}",
+         " ON s.PATID = {criterion_alias(c_i)}.PATID"), character(1)),
+    collapse = "\n")
+  glue("CREATE OR REPLACE TEMPORARY VIEW {out} AS\nSELECT s.*,\n  {cols}\nFROM {src} s\n{joins}")
 }
 
 # Only criteria that actually remove rows build anything. A flag-only criterion

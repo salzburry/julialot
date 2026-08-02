@@ -395,8 +395,7 @@ build_lot <- function(here, cohort_table, prefix,
   # LOT1 is written before LOT_LONG, so track partial runs.
   # Cleared first, or a second run in one session inherits the first's.
   options(lot_waivers_applied = character(0), lot_codelist_md5 = list(),
-          lot_line_criteria = "", lot_max_lot_next_line = NA_integer_,
-          lot_max_lot_discontinued = NA_integer_)
+          lot_line_criteria = "")
   check_no_active_run(con, cfg)
   write_build_status(con, cfg, "started")
   clear_run_rows(con, cfg)
@@ -958,11 +957,7 @@ FINAL_METADATA_COLS <- c(N_LOT_LONG_ROWS = "BIGINT",
                          N_LOT_FINAL_PATIENTS = "BIGINT",
                          CODE_MD5 = "STRING", CONTRACT_SETTINGS = "STRING",
                          STUDY_START = "STRING", STUDY_END = "STRING",
-                         LINE_CRITERIA_APPLIED = "STRING",
-                         # Two columns because the end reason does not settle
-                         # every case; see report_max_lot_ceiling().
-                         N_MAX_LOT_NEXT_LINE = "BIGINT",
-                         N_MAX_LOT_DISCONTINUED = "BIGINT")
+                         LINE_CRITERIA_APPLIED = "STRING")
 
 record_final_counts <- function(con, cfg, counts, final) {
   tbl <- lot_out("LOT_RUN_METADATA")
@@ -1000,9 +995,7 @@ record_final_counts <- function(con, cfg, counts, final) {
            CONTRACT_SETTINGS = {sql_text(contract_settings())},
            STUDY_START = {sql_text(cfg$study_start)},
            STUDY_END = {sql_text(cfg$study_end)},
-           LINE_CRITERIA_APPLIED = {sql_text(getOption('lot_line_criteria', ''))},
-           N_MAX_LOT_NEXT_LINE = {sql_count(getOption('lot_max_lot_next_line', NA))},
-           N_MAX_LOT_DISCONTINUED = {sql_count(getOption('lot_max_lot_discontinued', NA))}
+           LINE_CRITERIA_APPLIED = {sql_text(getOption('lot_line_criteria', ''))}
      WHERE RUN_ID = '{run_id}'"))
   log_msg("Recorded LOT_LONG: ", counts$n_rows, " lines for ",
           counts$n_patients, " patients (", dist, "); LOT_LONG_FINAL: ",
@@ -1186,77 +1179,6 @@ report_line_criteria <- function(con, cfg, tbl = "lot_long_allflags") {
   invisible(applied)
 }
 
-# "Any LOT" means the lines this build constructs, and it constructs max_lot of
-# them. A patient whose highest built line ended because a further line's
-# trigger fired has a line the run never built, so a criterion asked of "every
-# LOT" was not asked of it. The bound is a design decision and stays one; what
-# was missing is its size.
-#
-# Two numbers, not one, because the end reason does not decide every case and
-# an earlier version of this pretended it did:
-#
-#   certain      the line ended on a trigger - a transplant, a CAR-T, or a med
-#                added after it started. Each of those is what starts the next
-#                line, so the next line exists and was not built.
-#   discontinued the regimen ran out. Whether anything followed is decided by
-#                POST_RUNOUT_TRIGGER_FLG, which build_lot_n() computes per line
-#                for the DEATH-vs-DISCONTINUATION choice and does not carry into
-#                LOT_LONG. So it cannot be settled from LOT_LONG alone: some of
-#                these restarted, the rest stopped for good.
-#
-# DEATH and STUDY_END are terminal and leave nothing unbuilt.
-#
-# The reasons that mean a trigger fired. Shared with two branches that do NOT
-# mean that, which is why the artifact test below runs first.
-MAX_LOT_TRIGGER_REASONS <- c("MED_ADD", "CART_INIT",
-                             "SCT_AUTO", "SCT_ALLO", "SCT_CART", "SCT")
-
-# The first two branches of the end-reason CASE assign from the line's START
-# type rather than from anything that follows it: a single-day ALLO line and a
-# CAR-T line with no consolidation each end on their own start date and mean
-# nothing about a sixth line. They emit 'SCT_ALLO' and 'SCT_CART', the same
-# strings the trigger branches emit, so the reason cannot tell them apart.
-# Reproduced here from the two columns that actually decide them - both are on
-# LOT_LONG - so they are excluded exactly rather than by reading the string.
-# The ALLO branch only fires under single_day; under extend_to_next an
-# ALLO-started line reaching 'SCT_ALLO' took a later ALLO, which is a trigger.
-max_lot_artifact_sql <- function(cfg) {
-  paste0("(", if (identical(cfg$allo_lot_span, "single_day"))
-                "LOT_START_TYPE = 'SCT_ALLO' OR " else "",
-         "(LOT_START_TYPE = 'CART' AND LOT_MED_CNT = 0))")
-}
-
-report_max_lot_ceiling <- function(con, cfg) {
-  trig <- paste0("'", MAX_LOT_TRIGGER_REASONS, "'", collapse = ", ")
-  # coalesce, because NOT NULL is NULL and would drop the row from the count
-  # rather than keep it - failing open on a column that should never be null.
-  art  <- paste0("NOT coalesce(", max_lot_artifact_sql(cfg), ", false)")
-  d <- tryCatch(db_q(con, glue("
-    SELECT count(DISTINCT CASE WHEN {art}
-                                AND LOT_BASE_END_REASON IN ({trig})
-                               THEN PATID END) AS n_certain,
-           count(DISTINCT CASE WHEN LOT_BASE_END_REASON = 'DISCONTINUATION'
-                               THEN PATID END) AS n_discon
-    FROM {lot_out('LOT_LONG')} WHERE LOT_NUM = {cfg$max_lot}")),
-    error = function(e) NULL)
-  certain <- .one_int(d, "n_certain"); discon <- .one_int(d, "n_discon")
-  if (is.na(certain) || is.na(discon)) {
-    log_msg("  MAX_LOT ceiling: could not be counted")
-  } else if (certain == 0L && discon == 0L) {
-    log_msg("  MAX_LOT ceiling (", cfg$max_lot, "): no LOT", cfg$max_lot,
-            " ended on a trigger or a runout, so no patient has an unbuilt ",
-            "line and 'any LOT' criteria saw every line")
-  } else {
-    log_msg("  MAX_LOT ceiling (", cfg$max_lot, "): ", certain,
-            " patient(s) certainly have a further line, which was not built. ",
-            "A further ", discon, " ran out at LOT", cfg$max_lot,
-            "; whether they restarted is not decidable from LOT_LONG, so the ",
-            "upper bound is ", certain + discon, ".")
-  }
-  options(lot_max_lot_next_line = certain, lot_max_lot_discontinued = discon)
-  invisible(c(certain = certain, discontinued = discon))
-}
-
 phase_line_criteria <- function(con, cfg) {
   # A flag naming a column LOT_LONG already has does not fail: the generated
   # SQL is SELECT *, <expr> AS <flag>, so the result carries the name twice and
@@ -1274,12 +1196,16 @@ phase_line_criteria <- function(con, cfg) {
            call. = FALSE)
   }
   check_belantamab_abbr(con, cfg)
+  # The patient-level facts a criterion asks of the claims rather than of
+  # lot_long. Built first: the flags view joins them.
+  for (pv in line_criteria_patient_sql(cfg))
+    run_step(con, paste0("L39_", tolower(pv$name)), pv$sql,
+             qc = glue("SELECT count(*) AS n_patients FROM {pv$name}"))
   run_step(con, "L40_lot_long_allflags",
            line_criteria_flags_sql(cfg, "lot_long", "lot_long_allflags"))
   # Before the truncate: allflags still has every line, so the counts are of
   # patients the criteria catch rather than of the ones that survived them.
   report_line_criteria(con, cfg)
-  report_max_lot_ceiling(con, cfg)
   run_step(con, "L41_lot_long_final",
            line_criteria_final_sql(cfg, "lot_long_allflags", "lot_long_final"))
   # Persisted, not views: both are built from temporary views, and Spark
