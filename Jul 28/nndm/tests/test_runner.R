@@ -1473,4 +1473,40 @@ ok(length(unread) == 0,
                               paste(unread, collapse = ", "))
    else paste0("all ", length(cnames), " settings in config.csv are read by R/"))
 
+cat("\n-- metastatic codes group together, primaries pair by category --\n")
+# Two outpatient claims for metastases at different sites are still metastatic
+# cancer, which the rule excludes on in its own right. Pairing them on site
+# would ask for the same metastasis twice, so C78.7 (liver) and C79.51 (bone)
+# would never confirm each other.
+ok(exists("NDMM_METASTATIC_PREFIXES") && length(NDMM_METASTATIC_PREFIXES) >= 8,
+   paste0("a named metastatic prefix list ships (", length(NDMM_METASTATIC_PREFIXES), ")"))
+ok(all(c("C77", "C78", "C79", "C7B") %in% NDMM_METASTATIC_PREFIXES),
+   "the ICD-10 secondary ranges are in it")
+ok(all(c("196", "197", "198") %in% NDMM_METASTATIC_PREFIXES),
+   "...and their ICD-9 equivalents")
+# C80.0 is disseminated disease; C80.1 is a primary of unknown site and C80.2 is
+# a transplant case. A bare "C80" prefix would take all three.
+ok("C800" %in% NDMM_METASTATIC_PREFIXES && !("C80" %in% NDMM_METASTATIC_PREFIXES),
+   "disseminated disease is C800, not C80 - the other two are not secondary")
+ok("1990" %in% NDMM_METASTATIC_PREFIXES && !("199" %in% NDMM_METASTATIC_PREFIXES),
+   "...and the same on the ICD-9 side")
+msql <- ndmm_metastatic_sql("om.dx")
+ok(grepl("om.dx LIKE 'C79%'", msql, fixed = TRUE) &&
+     grepl("om.dx LIKE 'C800%'", msql, fixed = TRUE),
+   "the predicate matches on prefixes of the stripped code")
+ok(length(gregexpr("LIKE", msql, fixed = TRUE)[[1]]) == length(NDMM_METASTATIC_PREFIXES),
+   "...one arm per prefix, so adding one to the list is the whole change")
+om <- readLines(file.path(ROOT, "R", "steps", "04_other_malig.R"), warn = FALSE)
+ok(any(grepl("THEN 'MET'", om, fixed = TRUE)),
+   "metastatic codes collapse to one group")
+ok(any(grepl("ELSE substr(om.dx, 1, 3) END AS primary_group", om, fixed = TRUE)),
+   "...and everything else still pairs on the ICD category")
+# Carried so the grain table can price the collapse. Without it there is no way
+# to say what grouping mets cost.
+ok(any(grepl("substr(om.dx, 1, 3) AS category_group", om, fixed = TRUE)),
+   "the ungrouped category is carried alongside, for the review table")
+li <- readLines(file.path(ROOT, "R", "steps", "00b_lot1_index.R"), warn = FALSE)
+ok(any(grepl("ICD category, mets ungrouped", li, fixed = TRUE)),
+   "...and the grain table reports both, so the difference is a number")
+
 report()

@@ -311,7 +311,7 @@ That cost is accepted — see `DECISIONS.md` section 4.
 Every run writes **`<prefix>NDMM_MM_ADJACENT_CODES`**: every code still kept as
 the index disease, with the label that kept it. Four labels now, not five.
 
-### Two outpatient claims pair on the ICD category
+### Two outpatient claims pair on the ICD category, or on being metastatic
 
 Criterion 7 Path B is **two outpatient claims within 30 days for the same
 cancer**, and the rule is "the same primary tumor type **and/or metastatic

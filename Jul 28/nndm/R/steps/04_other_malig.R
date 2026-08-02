@@ -5,6 +5,7 @@ build_ndmm_other_malig_codes <- function(con) {
   src <- load_codelist_csv(
     "other_malig.csv",
     c("dx", "icd_family", "tumor_group"))
+  met_pred <- ndmm_metastatic_sql("om.dx")
   ovr_in <- paste(sprintf("'%s'", gsub("'", "''", ndmm_mm_adjacent_groups())),
                   collapse = ", ")
   db_exec(con, glue("
@@ -58,11 +59,17 @@ build_ndmm_other_malig_codes <- function(con) {
            -- dx is already punctuation-stripped, so this is C7951 -> C79 and
            -- 1985 -> 198. ICD-10 always starts with a letter and ICD-9 never
            -- does, so the two families cannot collide in one group.
-           substr(om.dx, 1, 3) AS primary_group
+           CASE WHEN {met_pred} THEN 'MET'
+                ELSE substr(om.dx, 1, 3) END AS primary_group,
+           -- The same without the metastatic collapse, carried only so
+           -- NDMM_OTHER_MALIG_GRAIN can price what that collapse costs.
+           substr(om.dx, 1, 3) AS category_group
     FROM om
     LEFT JOIN {NDMM_MM_DX_CODES} m
            ON m.dx = om.dx AND m.icd_family = om.icd_family
   "))
+  report_metastatic_group(con)
+
   # Only the five required labels are counted. The remission variants are a
   # proposal, not a contract with the code list, so their absence is reported
   # rather than fatal - see build_ndmm_mm_adjacent_groups().
@@ -165,7 +172,7 @@ build_ndmm_other_malig_pre_lot1 <- function(con, med_diag_tbl) {
       -- predicate so the overridden groups still show in the breakdown.
       SELECT /*+ BROADCAST(o) */
              dx.PATID, dx.PAT_PLANID, dx.CLMID, dx.FST_DT, dx.LOC_CD,
-             dx.event_dt, o.tumor_group, o.primary_group
+             dx.event_dt, o.tumor_group, o.primary_group, o.category_group
       FROM dx
       INNER JOIN {NDMM_OTHER_MALIG_CODES} o
               ON dx.dx = o.dx AND dx.icd_family = o.icd_family
@@ -173,6 +180,7 @@ build_ndmm_other_malig_pre_lot1 <- function(con, med_diag_tbl) {
     ),
     dx_with_setting AS (
       SELECT dm.PATID, dm.CLMID, dm.event_dt, dm.tumor_group, dm.primary_group,
+             dm.category_group,
              -- line_inpatient is 0/1, so a missing POS/TOS stays null-safe.
              CASE WHEN h.line_inpatient = 1 OR cf.CONF_ID IS NOT NULL
                   THEN 1 ELSE 0 END AS inpatient_flg
@@ -186,7 +194,8 @@ build_ndmm_other_malig_pre_lot1 <- function(con, med_diag_tbl) {
       LEFT JOIN {NDMM_CONFINEMENT} cf
         ON h.PATID = cf.PATID AND h.CONF_ID = cf.CONF_ID
     )
-    SELECT PATID, tumor_group, primary_group, event_dt, inpatient_flg
+    SELECT PATID, tumor_group, primary_group, category_group, event_dt,
+           inpatient_flg
     FROM dx_with_setting"))
 
   # The rule, over that. Path B pairs on primary_group - the ICD category -
