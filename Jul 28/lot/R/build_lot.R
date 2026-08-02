@@ -324,7 +324,10 @@ check_cohort_build <- function(con, cfg) {
   named <- trimws(cfg$cohort_status_table %||% "")
   cp    <- cohort_prefix(cfg)
   cands <- if (nzchar(named)) named else COHORT_STATUS_TABLES
+  want  <- toupper(trimws(cfg$input_cohort_table))
   tried <- character(0)
+  found <- list()
+
   for (nm in cands) {
     tbl <- wrk(paste0(cp, nm))
     tried <- c(tried, tbl)
@@ -333,35 +336,71 @@ check_cohort_build <- function(con, cfg) {
          error = function(e) NULL)
     if (is.null(d) || !nrow(d)) next
     # Column case differs between the builds. Spark does not care; R does.
-    pick <- function(want) {
-      i <- match(tolower(want), tolower(names(d)))
+    pick <- function(w) {
+      i <- match(tolower(w), tolower(names(d)))
       if (is.na(i)) NA_character_ else as.character(d[[i]][1])
     }
-    state <- tolower(trimws(pick("state") %||% ""))
-    rid   <- pick("run_id")
+    # Does this row say which cohort it built? Some status tables carry the
+    # name and some do not, so this is "yes/no/it does not say" rather than a
+    # match test.
+    cohort_col <- pick("final_table_name")
+    names_it <- if (is.na(cohort_col)) NA
+                else identical(toupper(trimws(cohort_col)), want)
+    found[[length(found) + 1L]] <- list(
+      table = tbl, state = tolower(trimws(pick("state") %||% "")),
+      run_id = pick("run_id"), stamp = pick("updated_at"),
+      names_it = names_it, cohort = cohort_col)
+  }
+
+  # A row that names a DIFFERENT cohort is not this cohort's status, whatever
+  # its state. Drop it rather than letting table order decide.
+  wrong <- Filter(function(f) identical(f$names_it, FALSE), found)
+  found <- Filter(function(f) !identical(f$names_it, FALSE), found)
+  for (w in wrong)
+    log_msg("  Ignoring ", w$table, ": it is the status of ", w$cohort,
+            ", not of ", cfg$input_cohort_table, ".")
+
+  # More than one left and none of them says which cohort it built. Picking by
+  # the order they are listed in would be guessing, and a reused prefix is
+  # exactly when that guess is wrong.
+  if (length(found) > 1L && !any(vapply(found, function(f) isTRUE(f$names_it),
+                                        logical(1))))
+    stop("More than one cohort build-status table sits under prefix '", cp,
+         "': ", paste(vapply(found, `[[`, character(1), "table"), collapse = ", "),
+         ". None of them records which cohort it built, so which one describes ",
+         cfg$input_cohort_table, " cannot be decided here. Name it with ",
+         "COHORT_STATUS_TABLE, or give the cohort its own COHORT_PREFIX.",
+         call. = FALSE)
+
+  # Prefer the one that names this cohort, if any does.
+  ord <- order(!vapply(found, function(f) isTRUE(f$names_it), logical(1)))
+  for (f in found[ord]) {
     # The run id alone does not identify an ATTEMPT: a cohort re-run keeps its
     # run id and rewrites its rows under it. UPDATED_AT moves every time, so
     # the pair is what says "this attempt", and it is the pair that gets
     # recorded and re-checked.
-    got <- list(run_id = rid, stamp = pick("updated_at"), table = tbl)
-    if (identical(state, "complete")) {
-      log_msg("Cohort build ", rid, " completed (", tbl, ", ", got$stamp, ")")
+    got <- list(run_id = f$run_id, stamp = f$stamp, table = f$table)
+    if (identical(f$state, "complete")) {
+      log_msg("Cohort build ", f$run_id, " completed (", f$table, ", ",
+              f$stamp, ")")
       return(got)
     }
     if (identical(toupper(Sys.getenv("LOT_IGNORE_COHORT_STATE", unset = "")), "TRUE")) {
-      log_msg("WARNING: cohort build ", rid, " is marked '", state, "' in ", tbl,
-              " and LOT_IGNORE_COHORT_STATE is set. These lines may be built ",
-              "from a cohort its own build did not stand behind.")
+      log_msg("WARNING: cohort build ", f$run_id, " is marked '", f$state,
+              "' in ", f$table, " and LOT_IGNORE_COHORT_STATE is set. These ",
+              "lines may be built from a cohort its own build did not stand ",
+              "behind.")
       return(got)
     }
-    stop("The cohort build that last wrote ", tbl, " (run ", rid,
-         ") is marked '", state, "', not complete. Its cohort table is still ",
+    stop("The cohort build that last wrote ", f$table, " (run ", f$run_id,
+         ") is marked '", f$state, "', not complete. Its cohort table is still ",
          "readable and well formed - the build publishes it before it ",
          "validates it and records its attrition - so nothing further down ",
          "would notice. Re-run the cohort build. If that run is known to have ",
          "failed after the cohort was final, set LOT_IGNORE_COHORT_STATE=TRUE.",
          call. = FALSE)
   }
+
   # Named but unreadable is a mistake, not an absence. Carrying on would give
   # the run no cohort provenance while looking like it had been checked.
   if (nzchar(named))
