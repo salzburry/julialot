@@ -30,6 +30,15 @@ phase_exclusions <- function(cfg, h, ctx) {
           WHERE PROC_CD IS NOT NULL
             AND FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
+        -- Facility-claim procedure code. The therapy scan reads it as an HCPCS
+        -- source; this scan did not, so a code populated only here was missed.
+        bill_proc AS (
+          SELECT PATID, cast(FST_DT as date) AS event_dt, 'HCPCS' AS code_type,
+                 upper(regexp_replace(BILL_PROC_CD, '[^A-Za-z0-9]', '')) AS code
+          FROM {cdm_src(cfg$tbl_medical)}
+          WHERE BILL_PROC_CD IS NOT NULL
+            AND FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
+        ),
         icd_proc AS (
           SELECT PATID, cast(FST_DT as date) AS event_dt,
                  {icd_family_sql('ICD_FLAG', 'ICD9PROC', 'ICD10PROC')} AS code_type,
@@ -45,7 +54,7 @@ phase_exclusions <- function(cfg, h, ctx) {
           WHERE RVNU_CD IS NOT NULL AND TRIM(RVNU_CD) != ''
             AND FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
-        events AS (SELECT * FROM dx UNION ALL SELECT * FROM hcpcs_proc UNION ALL SELECT * FROM icd_proc UNION ALL SELECT * FROM rev),
+        events AS (SELECT * FROM dx UNION ALL SELECT * FROM hcpcs_proc UNION ALL SELECT * FROM bill_proc UNION ALL SELECT * FROM icd_proc UNION ALL SELECT * FROM rev),
         matched AS (
           SELECT /*+ BROADCAST(p) */ e.PATID, e.event_dt
           FROM events e
@@ -91,6 +100,15 @@ phase_exclusions <- function(cfg, h, ctx) {
           WHERE PROC_CD IS NOT NULL
             AND FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
+        -- Facility-claim procedure code. The therapy scan reads it as an HCPCS
+        -- source; this scan did not, so a code populated only here was missed.
+        bill_proc AS (
+          SELECT PATID, cast(FST_DT as date) AS event_dt, 'HCPCS' AS code_type,
+                 upper(regexp_replace(BILL_PROC_CD, '[^A-Za-z0-9]', '')) AS code
+          FROM {cdm_src(cfg$tbl_medical)}
+          WHERE BILL_PROC_CD IS NOT NULL
+            AND FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
+        ),
         icd_proc AS (
           SELECT PATID, cast(FST_DT as date) AS event_dt,
                  {icd_family_sql('ICD_FLAG', 'ICD9PROC', 'ICD10PROC')} AS code_type,
@@ -106,7 +124,7 @@ phase_exclusions <- function(cfg, h, ctx) {
           WHERE RVNU_CD IS NOT NULL AND TRIM(RVNU_CD) != ''
             AND FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         ),
-        events AS (SELECT * FROM dx UNION ALL SELECT * FROM hcpcs_proc UNION ALL SELECT * FROM icd_proc UNION ALL SELECT * FROM rev),
+        events AS (SELECT * FROM dx UNION ALL SELECT * FROM hcpcs_proc UNION ALL SELECT * FROM bill_proc UNION ALL SELECT * FROM icd_proc UNION ALL SELECT * FROM rev),
         matched AS (
           SELECT /*+ BROADCAST(c) */ e.PATID, e.event_dt
           FROM events e

@@ -163,6 +163,19 @@ if (length(a) == length(b)) {
   for (nm in names(BLANK))
     ok(grepl("SELECT DISTINCT", sql_of(nm), fixed = TRUE),
        paste0(nm, ": de-duplicates the code list"))
+  # A step in CHANGED is only asserted to differ, so once it is listed any
+  # further edit to it is invisible here. These pin what the difference is, the
+  # way the therapy and other-malignancy checks below already do.
+  for (nm in c("20_pregnancy_flag", "21_clintrial_flag")) {
+    px <- sql_of(nm)
+    ok(grepl("bill_proc AS (", px, fixed = TRUE) &&
+         grepl("upper(regexp_replace(BILL_PROC_CD, '[^A-Za-z0-9]', '')) AS code",
+               px, fixed = TRUE),
+       paste0(nm, ": reads BILL_PROC_CD, the facility procedure code"))
+    ok(grepl("UNION ALL SELECT * FROM bill_proc", px, fixed = TRUE),
+       paste0(nm, ": ...and unions it in, so the codes actually reach the join"))
+  }
+
   te <- sql_of("18_therapy_events")
   ok(lengths(regmatches(te, gregexpr("regexp_replace(c.code, '[^0-9]', '') <> ''",
                                      te, fixed = TRUE))) == 2,

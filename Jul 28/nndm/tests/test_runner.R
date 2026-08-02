@@ -1272,4 +1272,53 @@ ok(length(unwritten) == 0,
 clear()
 
 
+cat("\n-- pregnancy reads every column a code could be in --\n")
+# S6.2.1.2 asks for a diagnosis, procedure, or revenue code. BILL_PROC_CD is
+# the facility-claim procedure code, and the therapy and SCT scans in this repo
+# already read it - pregnancy did not, so a pregnancy HCPCS code populated only
+# there kept the patient. Driven, so the arm cannot quietly go away.
+pe <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = pe)
+sys.source(file.path(ROOT, "R", "standalone_constants.R"), envir = pe)
+sys.source(file.path(ROOT, "R", "steps", "05_pregnancy.R"), envir = pe)
+assign("icd_family_sql", function(col, nine, ten)
+  paste0("CASE ", col, " WHEN '9' THEN '", nine, "' ELSE '", ten, "' END"), envir = pe)
+assign("cfg", cfg_defaults, envir = pe)
+PSQL <- character(0)
+assign("db_exec", function(con, sql) { PSQL <<- c(PSQL, sql); invisible(TRUE) }, envir = pe)
+pe$build_ndmm_pregnancy_patids(NULL, "cdm.med_diagnosis", "cdm.medical", "cdm.med_procedure")
+px <- PSQL[1]
+ok(grepl("m.BILL_PROC_CD", px, fixed = TRUE) &&
+     grepl("s.BILL_PROC_CD", px, fixed = TRUE),
+   "the medical scan reads BILL_PROC_CD as well as PROC_CD")
+ok(grepl("stack(3,", px, fixed = TRUE),
+   "...as a third arm of the one medical pass, not a second scan")
+ok(length(gregexpr("'HCPCS',", px, fixed = TRUE)[[1]]) == 2L,
+   "...typed HCPCS, the way the therapy scan treats that column")
+
+cat("\n-- a pregnancy code type nothing reads stops the run --\n")
+# Every other named thing here stops when it matches nothing. This code list was
+# the exemption: a CPT-typed delivery code would load, join, and match zero.
+assign("load_codelist_csv", function(...) "(SELECT 1) src", envir = pe)
+assign("log_msg", function(...) invisible(NULL), envir = pe)
+drive_pc <- function(rows) {
+  assign("db_q", function(con, sql) rows, envir = pe)
+  tryCatch({ pe$build_ndmm_preg_codes(NULL); "" }, error = conditionMessage)
+}
+ok(identical(drive_pc(data.frame(code_type = character(0), n = integer(0))), ""),
+   "a file whose types the scan all emits passes")
+m <- drive_pc(data.frame(code_type = "CPT", n = 12L))
+ok(grepl("code type(s) no claim source produces", m, fixed = TRUE) &&
+     grepl("CPT", m, fixed = TRUE) && grepl("12", m, fixed = TRUE),
+   "one it does not stops the run, naming the type and the count")
+ok(grepl("keep those", m, fixed = TRUE),
+   "...and says the patients would be kept, which is the failure")
+assign("db_q", function(con, sql) stop("no such view"), envir = pe)
+ok(grepl("cannot", tryCatch({ pe$build_ndmm_preg_codes(NULL); "" },
+                            error = conditionMessage), fixed = TRUE),
+   "and a check that could not run is not read as a pass")
+ok(setequal(pe$NDMM_PREG_CODE_TYPES,
+            c("ICD9DIAG", "ICD10DIAG", "ICD9PROC", "ICD10PROC", "HCPCS", "REV")),
+   "the six types the guard allows are the six the scan emits")
+
 report()

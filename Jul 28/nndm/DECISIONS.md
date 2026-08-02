@@ -300,8 +300,23 @@ facility detail records bundled into it. That is what makes
 `cf.CONF_ID IS NOT NULL` a sound inpatient test.
 
 **Pregnancy reads diagnosis, procedure and revenue codes** in both packages,
-which is what §6.2.1.2 asks for. `RVNU_CD` is unstacked from `medical` in the
-same pass as `PROC_CD`.
+which is what §6.2.1.2 asks for. `RVNU_CD` and `BILL_PROC_CD` are unstacked from
+`medical` in the same pass as `PROC_CD`.
+
+`BILL_PROC_CD` was added on 2026-08-02. It is the facility-claim procedure code,
+and the therapy and SCT scans in this repo already read it — pregnancy did not,
+so a pregnancy HCPCS code populated only there kept the patient. Narrow: of the
+5,318 codes on `pregnancy.csv`, only the 185 typed `HCPCS` could ever appear in
+that column. One-way, since a source can only add exclusions.
+
+**`pregnancy.csv` now stops the run on a code type nothing reads.** The scan
+emits six — `ICD9DIAG`, `ICD10DIAG`, `ICD9PROC`, `ICD10PROC`, `HCPCS`, `REV` —
+and a row typed anything else loads, joins, and matches zero, keeping the
+patient with no error. Every other named thing here already stops when it
+matches nothing; this code list was the exemption. Read on the warehouse
+2026-08-02 the file carries exactly those six (3,049 / 1,549 / 447 / 69 / 185 /
+19), so the guard passes today. It is there because the file is production and
+can be re-issued, and a `CPT`-typed delivery code would otherwise be silent.
 
 **`med_procedure.PROC` is now read as a medication source in `overall` and
 `nndm`.** The program spec names the tables joined to `CL_MMA_CODELIST` as
