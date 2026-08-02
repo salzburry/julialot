@@ -284,3 +284,58 @@ eligible/expected MM therapies, see Annex 2"; §6.2.2 says "Annex 2 contains an
 Decision #3 took the code list as authoritative, which is the permissive
 reading. That remains defensible, but the README's claim that Annex 2 "is not
 that list" overstates it: §6.2.1.1 does point at Annex 2 for eligibility.
+
+---
+
+## 6. Checked against the Optum documentation
+
+`docs/` carries `optum business rules.pdf`, `optum data dict.pdf` and
+`optum enrolment.pdf`. Assumptions this build makes about the CDM, and what
+those say about them. Check here before asking the warehouse.
+
+**`ICD_FLAG` is `'9'` or `'10'`, and nothing else.** The business rules state it
+five times, and the column is `VARCHAR(2)`, so the longer spellings in
+`RAW_ICD9` / `RAW_ICD10` can never appear. They are harmless and left as a
+guard. What matters is that both real values are covered and anything else
+yields NULL, which matches no code list - the source read every non-ICD-9
+spelling as ICD-10, so a blank flag on a genuine ICD-9 claim was mis-classed.
+
+**Diagnosis position is not filtered, and should not be.** `DIAG_POSITION` runs
+1 to 25 with 1 as the primary diagnosis. §6.2.1.1 asks for an MM diagnosis "in
+any position", so no step reads that column. Confirmed absent from the whole
+package.
+
+**Enrolment spans are built from `member_enrollment`, not the rollup, and the
+documentation is a better reason than the one the code gave.**
+`member_cont_enrollment` is Optum's own rollup, one row per span of continuous
+enrolment at **"less than 30 day break in coverage"**. §6.2.1.1 says gaps "of
+**<= 30 days** are considered to be continuously enrolled". Those differ by a
+day at the boundary and Optum's is the stricter, so the prebuilt table would
+drop patients the protocol keeps. Building the spans here bridges `<= 30`,
+which is the protocol's rule - and only a raw build can reveal the true gaps
+`NDMM_ENROLL_SPANS_STRICT` needs.
+
+**The four-source therapy scan is necessary, not belt-and-braces.** `RX` holds
+"prescriptions filled on an outpatient basis" only, and `MEDICAL` holds both
+professional claims coded with CPT/HCPCS and facility claims. So an
+administered agent and a dispensed one arrive by different routes and both have
+to be read.
+
+**`CONFINEMENT` is one undeduplicated row per hospitalisation**, with the
+facility detail records bundled into it. That is what makes
+`cf.CONF_ID IS NOT NULL` a sound inpatient test.
+
+**Pregnancy reads diagnosis, procedure and revenue codes** in both packages,
+which is what §6.2.1.2 asks for. `RVNU_CD` is unstacked from `medical` in the
+same pass as `PROC_CD`.
+
+**Still assumed, not documented:** that NDCs match once both sides are stripped
+to digits and left-padded to 11. The documentation says nothing about NDC
+width. The join guards against the failure mode that matters - a code with no
+digits and a NULL `NDC` both pad to `00000000000` - by requiring digits on the
+code-list side, and `check_ndc_shape()` profiles it on every run.
+
+**`LOC_CD` identifies a facility versus a non-facility claim.** This build uses
+it only as part of the claim key, and classifies inpatient from `POS`, `TOS_CD`
+and `CONF_ID`. Changing that would change who is inpatient, so it is an
+observation rather than a finding.
