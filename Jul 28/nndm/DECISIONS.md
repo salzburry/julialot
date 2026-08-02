@@ -148,41 +148,51 @@ today the tumour-group label decides for all of them.
 file wants.
 
 **What the production file actually says.** Three rows carry these codes, and
-none of their labels is in the MM-adjacent set:
+they do not all land the same way:
 
-| icd_family | dx | tumor_group |
-|---|---|---|
-| ICD9DIAG | 1985 | Secondary malignant neoplasm of bone and bone marrow |
-| ICD10DIAG | C7951 | Secondary malignant neoplasm of bone |
-| ICD10DIAG | C7952 | Secondary malignant neoplasm of bone marrow |
+| icd_family | dx | tumor_group | in the override list? |
+|---|---|---|---|
+| ICD10DIAG | C7951 | Secondary malignant neoplasm of bone | **yes** — kept |
+| ICD10DIAG | C7952 | Secondary malignant neoplasm of bone marrow | no — excludes |
+| ICD9DIAG | 1985 | Secondary malignant neoplasm of bone and bone marrow | no — excludes |
 
-So the current behaviour is settled, not open: **all three exclude.** One
-inpatient claim carrying `C79.51` in the 12 months before the 1L index removes
-that patient as having another cancer. Lytic bone disease is a defining feature
-of myeloma and `C79.51` is commonly coded for it, so this is expected to remove
-genuine NDMM patients at a rate worth measuring before anyone accepts it. Note
-also that `C79.51` and `C79.52` sit in different labels, so two outpatient
-claims split across the two do not pair — only the inpatient path and
-same-code pairs fire.
+`NDMM_MM_ADJACENT_OVERRIDE` already carries `SECONDARY MALIGNANT NEOPLASM OF
+BONE`, so `C79.51` — the common myeloma-bone-disease miscode — is already
+treated as the index disease and does **not** exclude. The comparison is string
+equality on the whole label, so `… OF BONE MARROW` is a different label and is
+not reached by that entry.
 
-**The recommendation, for a clinician to accept or reject:** set `override = 1`
-for all three in `codelists/mm_adjacent_overrides.csv`, i.e. stop treating
-secondary neoplasm of bone as another cancer in this cohort. The argument is
-that a patient with a solid tumour metastatic to bone almost always also
-carries that primary's own code, which is on this same list and excludes them
-anyway — so the `C79.5x` rows add little detection and cost a lot of true MM
-patients. The argument against is that they are not free: a metastatic patient
-whose primary was never coded in the baseline window would be kept.
+So the open part is narrower than it looked, and it has a shape this build has
+already seen once. The source overrode the first of the three plasma-cell
+states and not the other two, and that was corrected here as
+`NDMM_MM_ADJACENT_STATE_LABELS`. This is the same omission: bone was overridden,
+bone marrow was not. Myeloma is a plasma-cell malignancy *of the bone marrow*,
+so if `C79.51` is miscoded myeloma often enough to warrant an override,
+`C79.52` is at least as likely to be.
 
-`pin_override_csv()` already points the build at the packaged copy, so filling
-in those three rows is the whole change — no setting, no code.
+**The recommendation, for a clinician to accept or reject:** add the two
+remaining labels to the same list, exactly as the remission and relapse states
+were added:
+
+```r
+"SECONDARY MALIGNANT NEOPLASM OF BONE MARROW",
+"SECONDARY MALIGNANT NEOPLASM OF BONE AND BONE MARROW"
+```
+
+Both exist on the code list, so the required-label check in `04_other_malig.R`
+passes. The ICD-9 one changes nothing on its own — see the code-length note
+below — and is there so the two families agree.
+
+The argument for is consistency with the `C79.51` entry that is already there
+and with the states fix. The argument against is that these are not free: a
+patient with a solid tumour metastatic to bone marrow, whose primary was never
+coded in the baseline window, would be kept.
 
 **This one needs clinical judgement.** No file in this repository can answer
 which primary a `C79.5x` belongs to. It is the only one of the four that
 cannot be resolved by deriving from something already governed.
 
-**Status: pending decision.** Highest-impact of the four, and the only one
-whose current default is expected to move the cohort in the wrong direction.
+**Status: pending decision**, on `C79.52` only. `C79.51` needs nothing.
 
 ---
 
