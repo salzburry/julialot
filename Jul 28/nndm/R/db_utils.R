@@ -1,6 +1,5 @@
 # Logging, DB helpers, naming, and the step runner for the NDMM cohort build.
-# Carried over from lot/R/db_utils_lot.R, which is the same job; the one
-# difference is wrk(), below.
+# wrk() differs from lot's: it adds the cohort prefix.
 
 SEP   <- strrep("=", 70)
 DASH  <- strrep("-", 70)

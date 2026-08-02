@@ -1383,7 +1383,7 @@ NOT_PINNED <- c("persist_to_schema",   # check_lot_contract requires it TRUE
                 # Whatever the cohort build calls its status table. Empty means
                 # try the usual names, so pinning it would tie this algorithm
                 # to one cohort build's naming.
-                "cohort_status_table")
+                "cohort_status_table", "cohort_prefix")
 keys <- unname(ENV2CFG[intersect(cnames, names(ENV2CFG))])
 loose <- setdiff(keys, c(names(CONTRACT), NOT_PINNED))
 ok(length(loose) == 0,
@@ -1540,6 +1540,18 @@ ok(any(grepl('identical\\(state, "complete"\\)', cb)),
    "...and only 'complete' is accepted")
 ok(any(grepl("LOT_IGNORE_COHORT_STATE", cb, fixed = TRUE)),
    "...with one named override, the way the other run-state guards have one")
+# wrk() here does NOT prefix - only lot_out() does, and only for our own
+# outputs. The cohort build's tables carry the cohort build's prefix, so
+# looking for a bare "NDMM_BUILD_STATUS" finds nothing on any real run.
+ok(any(grepl("paste0(cp, nm)", cb, fixed = TRUE)) &&
+     any(grepl("cohort_prefix(cfg)", cb, fixed = TRUE)),
+   "...looking for the PREFIXED name, since lot's wrk() adds no prefix")
+ok(any(grepl("nzchar(named)", cb, fixed = TRUE)) &&
+     sum(grepl("^\\s*stop\\(", cb)) >= 2,
+   "a COHORT_STATUS_TABLE that cannot be read stops the run rather than being skipped")
+cpf <- bodyf("cohort_prefix")
+ok(any(grepl("object_prefix", cpf, fixed = TRUE)),
+   "...and the cohort prefix defaults to this run's own")
 ok(any(grepl("COHORT_RUN_ID", src, fixed = TRUE)),
    "the cohort run id is recorded, so the lines can be tied to their cohort")
 # Before the cohort is pinned or read, not after.

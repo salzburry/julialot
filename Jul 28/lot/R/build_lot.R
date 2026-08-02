@@ -108,6 +108,15 @@ check_settings <- function() {
   }
   # Both parse, and in order. A window that runs backwards would pass every
   # per-setting check and then make check_cohort_window() reject every cohort.
+  # Reaches an identifier, so it is held to one - the same rule the cohort
+  # table and the prefixes get.
+  cst <- trimws(Sys.getenv("COHORT_STATUS_TABLE", unset = ""))
+  if (nzchar(cst) && !grepl("^[A-Za-z_][A-Za-z0-9_]*$", cst))
+    bad <- c(bad, paste0("COHORT_STATUS_TABLE='", cst, "' (want a table name ",
+                         "on its own, no schema and no prefix)"))
+  cp2 <- trimws(Sys.getenv("COHORT_PREFIX", unset = ""))
+  if (nzchar(cp2) && !grepl("^[A-Za-z][A-Za-z0-9_]*_$", cp2))
+    bad <- c(bad, paste0("COHORT_PREFIX='", cp2, "' (want a name ending in '_')"))
   s <- Sys.getenv("STUDY_START", unset = ""); e <- Sys.getenv("STUDY_END", unset = "")
   if (grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", s) &&
       grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", e) && s >= e)
@@ -283,31 +292,47 @@ check_cohort_input <- function(con, tbl) {
 # This is not hypothetical. The NDMM cohort's own study window ends 2026-03-31
 # while this build defaults to 2025-06-30, which is a different quarterly
 # vintage. Pointing one at the other is the exact case that reads clean.
-# Table names the cohort builds use for their run status. Probed in order, in
-# this run's own work schema and prefix - the cohort table is resolved the same
-# way, so the status table sits beside it.
+# Table names the cohort builds use for their run status, before the prefix.
 COHORT_STATUS_TABLES <- c("NDMM_BUILD_STATUS", "build_status")
+
+# The cohort build's prefix. Its tables carry it; ours carry ours. Usually the
+# same - one study, one prefix - so it defaults to ours rather than being a
+# second thing to remember.
+#
+# This matters more than it looks. wrk() here does NOT add a prefix: the cohort
+# table is named by the cohort build, so the caller passes the whole name. Only
+# lot_out() prefixes, and only for our own outputs. So a status table has to be
+# prefixed explicitly, and looking for a bare "NDMM_BUILD_STATUS" finds nothing
+# on any real run.
+cohort_prefix <- function(cfg) {
+  cp <- trimws(cfg$cohort_prefix %||% "")
+  if (nzchar(cp)) cp else (cfg$object_prefix %||% "")
+}
 
 # Refuse a cohort whose own build did not finish.
 #
 # Both cohort builds publish the physical cohort table before they are marked
-# complete, and validate, write attrition and record metadata afterwards. So a
-# cohort build can fail and still leave a readable, well-formed cohort table
+# complete, and validate it, write attrition and record metadata afterwards. So
+# a cohort build can fail and still leave a readable, well-formed cohort table
 # behind - one that passes every check below this, because those ask whether
 # the table is shaped right, not whether anyone stood behind it.
 #
-# Returns the cohort build's run id, or NA when no status table was found, so
-# the metadata row can record which cohort run these lines were built from.
+# Returns the cohort build's run id, or NA when no status table was found and
+# none was named, so the metadata row can record which cohort run these lines
+# were built from.
 check_cohort_build <- function(con, cfg) {
   named <- trimws(cfg$cohort_status_table %||% "")
+  cp    <- cohort_prefix(cfg)
   cands <- if (nzchar(named)) named else COHORT_STATUS_TABLES
+  tried <- character(0)
   for (nm in cands) {
-    tbl <- wrk(nm)
+    tbl <- wrk(paste0(cp, nm))
+    tried <- c(tried, tbl)
     d <- tryCatch(db_q(con, glue(
            "SELECT * FROM {tbl} ORDER BY UPDATED_AT DESC LIMIT 1")),
          error = function(e) NULL)
     if (is.null(d) || !nrow(d)) next
-    # Column case differs between the builds and Spark does not care; R does.
+    # Column case differs between the builds. Spark does not care; R does.
     pick <- function(want) {
       i <- match(tolower(want), tolower(names(d)))
       if (is.na(i)) NA_character_ else as.character(d[[i]][1])
@@ -332,11 +357,18 @@ check_cohort_build <- function(con, cfg) {
          "failed after the cohort was final, set LOT_IGNORE_COHORT_STATE=TRUE.",
          call. = FALSE)
   }
-  log_msg("WARNING: no cohort build-status table beside ",
-          wrk(cfg$input_cohort_table), " (looked for ",
-          paste(cands, collapse = ", "), "). Nothing here can say whether the ",
-          "build that wrote that cohort finished. Set COHORT_STATUS_TABLE if ",
-          "it is named something else.")
+  # Named but unreadable is a mistake, not an absence. Carrying on would give
+  # the run no cohort provenance while looking like it had been checked.
+  if (nzchar(named))
+    stop("COHORT_STATUS_TABLE names ", tried[1], ", which could not be read. ",
+         "Give the table name without the schema and without the cohort ",
+         "prefix - COHORT_PREFIX is added for you, and defaults to this run's ",
+         "own prefix.", call. = FALSE)
+  log_msg("WARNING: no cohort build-status table found (looked for ",
+          paste(tried, collapse = ", "), "). Nothing here can say whether the ",
+          "build that wrote ", wrk(cfg$input_cohort_table), " finished. Set ",
+          "COHORT_STATUS_TABLE, and COHORT_PREFIX if the cohort build used a ",
+          "different one.")
   NA_character_
 }
 

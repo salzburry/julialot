@@ -175,8 +175,10 @@ columns appears here.
 | 8 | **No pregnancy** | excluded on ≥1 medical claim with a diagnosis, procedure or revenue code indicating pregnancy or childbirth, anywhere in `[2016-01-01, 2026-03-31]` — the **study period**, not the baseline | `05_pregnancy.R` |
 | 9 | **No belantamab before the 1L index** | any claim for a belantamab code from `cl_mma_codelist.csv`, in `medical`, `rx` or `med_procedure`, dated **strictly before the index**. This is half of the exclusion criteria's belantamab exclusion — the half `lot` cannot see, because the claims it reads start at the index. The other half, belantamab from the index onward, is `lot`'s `no_belantamab` line criterion. Overlaps #6 by design: that one already removes belantamab inside the 12-month baseline, so this one's incremental drop is the patients whose belantamab predates it | `00b_lot1_index.R`, `06_flags.R` |
 
-**Four of the nine are open in some way**, and each has somewhere to go rather
-than a note saying so:
+**Four of the nine need a number from a real run before anyone can sign them
+off.** Each is decided and implemented - `DECISIONS.md` is the record - and each
+writes a review table saying what it cost, so the confirmation is a reading
+rather than a rewrite:
 
 | criterion | what is undecided | decide it with |
 |---|---|---|
@@ -307,7 +309,7 @@ plasma-cell disease, which is the index disease or its precursor.
 the exclusion criteria excludes on "the same primary tumor type **and/or metastatic cancer**",
 and `C79.51`, `C79.52` and `198.5` are metastatic cancers. An override
 overrode `SECONDARY MALIGNANT NEOPLASM OF BONE` because myeloma bone disease is
-commonly miscoded that way; this build follows the study definition text instead and
+commonly miscoded that way; this build follows the stated rule instead and
 lets all three exclude. They pair under ICD category `C79` with the rest of the
 secondary-neoplasm block.
 
@@ -359,9 +361,9 @@ entirely on attrition step 5. The window is `NDMM_FU_CE_DAYS = 0`, named in the
 contract rather than written into the SQL. The 2L/3L bullet still asks for
 three months and carries no change bar, so those cohorts do not inherit this.
 
-It rests on a relay rather than a controlled document — the only setting in
-this package that does. `DECISIONS.md` section 1 is the record and says what still
-needs a signature.
+It rests on a request rather than a formal record — the only setting in this
+package that does. `DECISIONS.md` section 1 says what still needs a
+signature.
 
 **So the run produces the number the decision should be made against.** Every
 run writes **`<prefix>NDMM_FU_CE_COUNTS`**: the cohort size at 0, 30, 60 and 90
@@ -379,11 +381,11 @@ change, and the table says first whether it is worth one.
 
 ### Thresholds worth double-checking
 
-The study definition document's extracted text renders four thresholds wrong. The
-values below are what the document itself states, and what this build uses.
-Check these four against the controlled copy before a production run.
+Four thresholds have been written down inconsistently in different places. The
+values below are the ones this build uses. Confirm them before a production
+run.
 
-| criterion | text layer | document, and this build |
+| criterion | sometimes written as | this build |
 |---|---|---|
 | enrollment gaps | `< 30 days` | **`≤ 30 days`** |
 | other cancer | `>1 IP or >2 OP` | **`≥1 IP or ≥2 OP`** |

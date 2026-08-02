@@ -35,8 +35,11 @@ cohort was built to a different one.
 ## Running it for another cohort
 
 Point it at a different table with a different prefix, and at the window that
-cohort was built to. Nothing in the folder changes - it names no cohort of its
-own and pins no study's dates.
+cohort was built to. No code changes - the algorithm pins no study's dates.
+The defaults are another matter: the study window, `APPLY_NO_BELANTAMAB=TRUE`
+and the cohort status-table names all ship set for the NDMM cohort, because
+that is what this is usually run for. Another cohort passes its own window and
+turns the belantamab criterion off unless it needs one.
 
 ```
 Rscript build.R STUDY_A_FINAL study_a_ 2016-01-01 2026-03-31

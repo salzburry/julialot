@@ -1,9 +1,8 @@
 # One self-contained HTML file, built from base R only.
 #
-# Other dashboards render through ggplot2, plotly, DT,
-# htmlwidgets, jsonlite and base64enc, and no-ops when any of them is missing:
-# build_dashboard() logs "skipping" and writes nothing. That is the wrong
-# failure for a deliverable - a run that reports complete and produces no
+# No plotting or widget packages. A dashboard that depends on them writes
+# nothing when one is missing, which is the wrong failure for a deliverable -
+# a run that reports complete and produces no
 # dashboard looks the same as a run nobody asked for one from. None of those
 # packages is guaranteed on the Domino image, and a dashboard is worth less than
 # the tables it describes, so it is not worth making the run depend on them.
@@ -63,7 +62,7 @@ render_kpi <- function(df) {
 # A bar per row, width proportional to the largest. Needs `label` and `n`.
 #
 # `pct` says what the percentage beside each bar is a percentage OF, and the
-# section has to declare it - see BAR_PCT in sections.R. This used to be the
+# section has to declare it - see BAR_PCT in sections.R. The
 # first row always, which is right for a funnel and wrong for everything else:
 # on a chart of overlapping scenarios it read "CAR-T 5%" where 5% was of the
 # largest scenario, not of the cohort, and nothing on the page said so.
