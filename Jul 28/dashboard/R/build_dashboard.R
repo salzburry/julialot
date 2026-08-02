@@ -95,6 +95,16 @@ pin_target <- function(cfg, cohort_table, lot_prefix, cohort_prefix = NULL) {
     if (nzchar(p[2]) && !grepl("^[A-Za-z][A-Za-z0-9_]*_$", p[2]))
       stop(p[1], " '", p[2], "' should be a name ending in '_', e.g. mystudy_.",
            call. = FALSE)
+  # ATTRITION_TABLE reaches SQL the same way the cohort table does - pasted
+  # after the prefix into an identifier - so it is held to the same rule. It was
+  # the one configurable name that was not, which would have turned a space or a
+  # dotted name into a malformed identifier and a panel that says the query
+  # failed, while every other bad name is refused up front.
+  at <- trimws(as.character(cfg$attrition_table %||% ""))
+  if (!nzchar(at) || !grepl("^[A-Za-z_][A-Za-z0-9_]*$", at))
+    stop("ATTRITION_TABLE '", at, "' is not a table name. Give the table only, ",
+         "without a schema - the prefix and schema are added for you.",
+         call. = FALSE)
   cfg$input_cohort_table <- cohort_table
   cfg$lot_prefix         <- lot_prefix
   cfg$cohort_prefix      <- cohort_prefix

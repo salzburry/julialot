@@ -111,6 +111,17 @@ stops(pin_target(base, "sch.NDMM_COHORT", "ndmm_"),
       "a qualified cohort name - schema comes from the settings")
 stops(pin_target(base, "COH; DROP TABLE x", "ndmm_"), "anything not a table name")
 stops(pin_target(base, "NDMM_COHORT", "ndmm"), "a prefix with no trailing underscore")
+# ATTRITION_TABLE reaches a query the same way the cohort table does, and it is
+# the one identifier that was taken on trust. Same guard as the rest.
+with_at <- function(v) modifyList(base, list(attrition_table = v))
+runs(pin_target(with_at("MYSTUDY_FUNNEL"), "NDMM_COHORT", "ndmm_"),
+     "a plain attrition table name is taken as given")
+stops(pin_target(with_at("wk.FUNNEL"), "NDMM_COHORT", "ndmm_"),
+      "a qualified attrition name - the schema is added for you")
+stops(pin_target(with_at("F; DROP TABLE x"), "NDMM_COHORT", "ndmm_"),
+      "...and anything that is not a table name at all")
+stops(pin_target(with_at(""), "NDMM_COHORT", "ndmm_"),
+      "an empty ATTRITION_TABLE, which would name the prefix alone")
 ok(!length(grep("NDMM|MM_COH", vapply(DASHBOARD_SECTIONS, `[[`, character(1), "sql"),
                 value = TRUE)),
    "no section names a cohort of its own")
@@ -312,6 +323,26 @@ ok(grepl("ORDER BY RECORDED_AT DESC LIMIT 1", asql, fixed = TRUE) &&
 psql <- fill_sql(getsec("run_provenance")$sql, INPUTS, cfg)
 ok(grepl("ORDER BY RUN_TIMESTAMP DESC LIMIT 1", psql, fixed = TRUE),
    "provenance is the latest run, not every metadata row ever written")
+# The metadata row is created early and completed at the end, so the newest row
+# is not necessarily a finished run: an attempt that died in between leaves the
+# window, the fingerprint and the counts empty. Without this the panel reports
+# blank provenance for tables an earlier run actually built.
+# Not a heuristic: N_LOT_FINAL_ROWS is the same column lot's own
+# check_run_recorded tests to decide whether a run recorded itself.
+ok(grepl("WHERE N_LOT_FINAL_ROWS IS NOT NULL", psql, fixed = TRUE),
+   "...the latest run that FINISHED - a half-written row is not the provenance")
+
+cat("\n-- the panels name no study, in their labels either --\n")
+# The attrition table belongs to whichever cohort build wrote it, so the panel
+# above it cannot describe that build's criteria. "ends before the LOT
+# belantamab criterion" was true of nndm and false of anything else; nothing in
+# the warehouse even keys a cohort run to a LOT run.
+labs <- vapply(DASHBOARD_SECTIONS, `[[`, character(1), "label")
+ok(!length(grep("NDMM|belantamab|myeloma|newly diagnosed", labs,
+                ignore.case = TRUE)),
+   "no label names a study, a drug or a criterion of one particular cohort")
+ok(identical(getsec("attrition")$label, "Cohort attrition, as the cohort build recorded it"),
+   "...the attrition panel says whose funnel it is showing, and no more")
 
 cat("\n-- the study panels describe the study population --\n")
 # LOT_LONG_FINAL is the population; LOT_LONG is that table before the line

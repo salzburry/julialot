@@ -163,16 +163,26 @@ DASHBOARD_SECTIONS <- list(
   list(name = "run_provenance", tab = "Overview",
        label = "What produced these numbers",
        needs = "run_meta", render = "table",
-       # One row - the latest. LOT_RUN_METADATA is history: the writer deletes
-       # and re-inserts only its own RUN_ID, so every previous run is still
-       # there. Selecting the lot would show several runs with different
-       # settings, and an incomplete row from an attempt that failed before its
-       # counts were filled in, with nothing saying which describes the tables
-       # on the page.
+       # One row - the latest run that FINISHED. LOT_RUN_METADATA is history:
+       # the writer deletes and re-inserts only its own RUN_ID, so previous runs
+       # stay.
+       #
+       # Latest by timestamp alone is not enough. The row is created early, in
+       # the persistence phase, and record_final_counts() fills in the code
+       # fingerprint, the study window, the applied criteria and the final
+       # counts at the very end. So a later attempt that died in between leaves
+       # the NEWEST row half empty, and this panel would show it - blank
+       # provenance attached to tables an earlier run built.
+       #
+       # N_LOT_FINAL_ROWS IS NOT NULL is exactly "reached the end": it is set by
+       # record_final_counts and is the same predicate lot own check_run_recorded
+       # uses to decide a run recorded itself. Not a heuristic - the same test,
+       # asked of the history rather than of the current run.
        sql = "
          SELECT RUN_ID, RUN_TIMESTAMP, STUDY_START, STUDY_END, CODE_MD5,
                 LINE_CRITERIA_APPLIED, LOT_LONG_BY_LINE
          FROM {run_meta}
+         WHERE N_LOT_FINAL_ROWS IS NOT NULL
          ORDER BY RUN_TIMESTAMP DESC LIMIT 1"),
 
   list(name = "headline", tab = "Overview",
@@ -186,7 +196,7 @@ DASHBOARD_SECTIONS <- list(
                 (SELECT count(DISTINCT PATID) FROM {lot_final})       AS `Patients after criteria`"),
 
   list(name = "attrition", tab = "Overview",
-       label = "Cohort attrition (ends before the LOT belantamab criterion)",
+       label = "Cohort attrition, as the cohort build recorded it",
        needs = "attrition", render = "bar", pct = "first",
        # The funnel the cohort build wrote, read rather than recomputed - two
        # copies of an attrition is how the funnel and the cohort stop agreeing.
