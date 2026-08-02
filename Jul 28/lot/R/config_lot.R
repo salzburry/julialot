@@ -51,6 +51,10 @@ cfg_defaults <- list(
   # single_day: an ALLO line spans only the transplant date.
   allo_lot_span = Sys.getenv("ALLO_LOT_SPAN", unset = "single_day"),
   max_lot       = as.integer(Sys.getenv("MAX_LOT", unset = "5")),
+  # How belantamab is named in MED_ABBR, for the S6.2.1.2 line criterion in
+  # line_criteria.R. Same abbreviation the NDMM build recognises it by on
+  # cl_mma_codelist.csv.
+  belantamab_med_abbr = toupper(trimws(Sys.getenv("BELANTAMAB_MED_ABBR", unset = "BELA"))),
 
   # ---- Observation end ----
   # FALSE (primary): OBS_END_DT = ENDDATE = min(death, study_end), so a

@@ -58,7 +58,6 @@ CONTRACT <- list(
 # every one is recorded in NDMM_RUN_METADATA, so a cohort still says which
 # choices produced it.
 CHOICES <- list(
-  belantamab_scope     = c("study_period", "from_index"),
   mm_adjacent_states   = c("override", "exclude"),
   # Free text: names and codes, validated against the code list at run time by
   # build_ndmm_index_ineligible_codes(), which stops on one that matches
@@ -125,7 +124,7 @@ CHECKPOINTS <- c("NDMM_FLAGS_ALL", "NDMM_MM_DX_CODES",
 
 # What the run writes. All prefixed, so two cohorts sit side by side.
 DELIVERABLES <- c("NDMM_COHORT", "NDMM_ATTRITION", "NDMM_INDEX_AGENTS",
-                  "NDMM_BELANTAMAB_SCOPE_COUNTS", "NDMM_MM_ADJACENT_GROUPS",
+                  "NDMM_MM_ADJACENT_GROUPS",
                   "NDMM_MM_ADJACENT_CODES", "NDMM_FU_CE_COUNTS",
                   "NDMM_OTHER_MALIG_GROUPS", "NDMM_OTHER_MALIG_GRAIN",
                   "NDMM_BELANTAMAB_RECONCILE",
@@ -208,20 +207,6 @@ pin_output_schema <- function(cfg) {
 
 # The caller says which cohort. Every table read and written carries the
 # prefix, so this folder names no cohort of its own.
-# Where the fill-in file lives. The environment wins; failing that it is the
-# copy that ships beside this code, so a checkout has a file to edit rather
-# than a setting to find out about. The file need not exist - see
-# read_optional_csv() - but the path is always recorded, so a run says which
-# file it looked for whether or not it found one.
-pin_optional_csv <- function(cfg, here) {
-  fill <- function(v, name) {
-    p <- trimws(as.character(v %||% ""))
-    if (nzchar(p)) p else file.path(here, "codelists", name)
-  }
-  cfg$primary_groups_csv <- fill(cfg$primary_groups_csv, "primary_tumor_groups.csv")
-  cfg
-}
-
 pin_prefix <- function(cfg, prefix) {
   prefix <- trimws(as.character(prefix %||% ""))
   if (!nzchar(prefix))
@@ -307,7 +292,6 @@ CONSTANT_SETTINGS <- list(
   # was checked for has to be the value the query gets.
   list(const = "NDMM_INDEX_EXCLUDED_ABBRS",   cfg = "index_excluded_abbrs", note = ""),
   list(const = "NDMM_INDEX_EXCLUDED_CODES",   cfg = "index_excluded_codes", note = ""),
-  list(const = "NDMM_BELANTAMAB_SCOPE",       cfg = "belantamab_scope",   note = ""),
   list(const = "NDMM_MM_ADJACENT_STATES",     cfg = "mm_adjacent_states", note = ""),
   # Not a cohort window but a code-list assumption, and just as able to change
   # the count: it is what identifies belantamab, and belantamab is exclusion 4.
@@ -358,10 +342,17 @@ NDMM_CRITERIA <- list(
   list(key = "noother",        flag = "NO_OTHER_CANCER_PRE_LOT1",
        label = "+ no other cancer in 12-month baseline"),
   list(key = "noother_nopreg", flag = "NO_PREGNANCY",
-       label = "+ no pregnancy in study period"),
-  list(key = "ndmm_final",     flag = "NO_BELANTAMAB",
-       label = "+ no belantamab in any LOT (NDMM 1L cohort)")
+       label = "+ no pregnancy in study period")
 )
+# S6.2.1.2's fourth exclusion - belantamab in any LOT - is deliberately NOT
+# here. Lines do not exist when this build runs, so applying it at this point
+# could only ever be a claims proxy, and one whose over-exclusions could never
+# be checked: a patient removed here never reaches the LOT run. It is applied
+# in the lot package as a line criterion, where LOT membership is known and the
+# criterion is exact. NO_BELANTAMAB is still computed and still ships on the
+# cohort table, as the proxy's opinion; nothing filters on it. So this table is
+# the NDMM cohort pending that one exclusion, and the funnel has eight steps
+# rather than nine. See DECISIONS.md #2.
 
 # The first n criteria as a WHERE body, in the funnel's order.
 #
@@ -606,7 +597,7 @@ write_run_metadata <- function(con, cfg, here, n) {
     glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES (",
          "{sql_text(run_id)}, {sql_text(cfg$object_prefix)}, ",
          "{sql_text(NDMM_BELANTAMAB_ABBR)}, {sql_text(NDMM_INDEX_EXCLUDED_ABBRS)}, ",
-         "{sql_text(NDMM_INDEX_EXCLUDED_CODES)}, {sql_text(NDMM_BELANTAMAB_SCOPE)}, ",
+         "{sql_text(NDMM_INDEX_EXCLUDED_CODES)}, ",
          "{sql_text(NDMM_MM_ADJACENT_STATES)}, ",
          "{sql_text(code_fingerprint(here))}, ",
          "{sql_text(contract_settings())}, ",
@@ -923,42 +914,6 @@ check_no_active_run <- function(con, cfg) {
 RUN_SCOPED_TABLES <- c("NDMM_ATTRITION", "NDMM_RUN_METADATA",
                        "NDMM_CODELIST_METADATA")
 
-# The file that decides a rule the protocol leaves open, and what the build
-# does when it is empty. Empty is a legitimate run - the rule falls back to the
-# source's behaviour, and it says so where it is read. It is also exactly what
-# a deploy that set CODELIST_DIR and missed NDMM_PRIMARY_GROUPS_CSV looks like,
-# and that line sits in the middle of a long log. This says it once, at the
-# end, beside the count it shaped.
-FILLIN_FILES <- list(
-  primary_tumor_groups.csv  = "outpatient pairs must share one code-list label")
-
-report_fillins <- function(cfg) {
-  seen <- getOption("nndm_codelist_md5", list())
-  empty <- character(0); used <- character(0)
-  for (f in names(FILLIN_FILES)) {
-    e <- seen[[f]]
-    # Never read at all is not the same as read and empty, and only the second
-    # is a decision. write_codelist_metadata() stops on a missing hash, so this
-    # says which one it was rather than leaving that to the failure.
-    if (is.null(e))
-      empty <- c(empty, paste0(f, ": NOT READ - ", FILLIN_FILES[[f]]))
-    else if (isTRUE(as.numeric(e$n_rows) == 0))
-      empty <- c(empty, paste0(f, ": empty (md5 ", e$md5, ") - ",
-                               FILLIN_FILES[[f]]))
-    else
-      used <- c(used, paste0(f, ": ", format(e$n_rows, big.mark = ","),
-                             " row(s) (md5 ", e$md5, ")"))
-  }
-  log_msg("Rule fill-ins: ", length(used), " supplied, ", length(empty), " empty")
-  for (u in used)   log_msg("    ", u)
-  for (e in empty)  log_msg("  > ", e)
-  if (length(empty))
-    log_msg("  > An empty file is a run without that rule, and reads the same ",
-            "as one whose path was never set. Check the paths against ",
-            wrk("NDMM_CODELIST_METADATA"), " before this cohort is used.")
-  invisible(list(used = used, empty = empty))
-}
-
 clear_run_rows <- function(con, cfg) {
   bad <- character(0)
   for (t in RUN_SCOPED_TABLES) {
@@ -1004,7 +959,6 @@ build_nndm <- function(here, prefix) {
   check_settings()
   cfg <- pin_output_schema(cfg_defaults)
   cfg <- pin_prefix(cfg, prefix)
-  cfg <- pin_optional_csv(cfg, here)
   check_contract(cfg)
   check_choices(cfg)
   check_constants(cfg)
@@ -1076,13 +1030,15 @@ build_nndm <- function(here, prefix) {
 
   log_msg("1L index: first eligible MM treatment claim on or after ",
           NDMM_LOT1_FROM)
-  build_ndmm_lot1_index(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))
+  build_ndmm_lot1_index(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx),
+                        cdm_src(cfg$tbl_med_proc))
   checkpoint(con, "NDMM_INDEX_TX")
   checkpoint(con, "NDMM_LOT1_STARTS")
   build_ndmm_index_agents(con, cfg)
 
   log_msg("MM therapy in the ", NDMM_PRE_LOT1_DAYS, " days before 1L")
-  build_ndmm_therapy_pre_lot1(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))
+  build_ndmm_therapy_pre_lot1(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx),
+                              cdm_src(cfg$tbl_med_proc))
 
   log_msg("Other cancer in the ", NDMM_PRE_LOT1_DAYS, " days before 1L")
   build_ndmm_other_malig_codes(con)
@@ -1104,7 +1060,8 @@ build_nndm <- function(here, prefix) {
                               cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_med_proc))
 
   log_msg("Belantamab in any line, from claims")
-  build_ndmm_belantamab_patids(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx))
+  build_ndmm_belantamab_patids(con, cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_rx),
+                               cdm_src(cfg$tbl_med_proc))
   checkpoint(con, "NDMM_BELANTAMAB_TX")
   checkpoint(con, "NDMM_BELANTAMAB_PATIDS")
 
@@ -1118,7 +1075,6 @@ build_nndm <- function(here, prefix) {
   checkpoint(con, "NDMM_PATIDS")
   # After the flags: each scope is costed against the whole conjunction, so it
   # needs every other criterion already decided.
-  build_ndmm_belantamab_scope_counts(con, cfg)
   build_ndmm_fu_ce_counts(con, cfg)
   # build_lot_long_filtered() is not called. It joins LOT_LONG to the cohort for
   # the source's dashboard KPI, gallery and LOT-detail views; neither the cohort
@@ -1133,19 +1089,18 @@ build_nndm <- function(here, prefix) {
   check_attrition_monotonic(counts)
 
   build_ndmm_cohort_table(con, cfg)
-  check_ndmm_cohort(con, cfg, counts$ndmm_final)
+  check_ndmm_cohort(con, cfg, ndmm_final_count(counts))
   build_ndmm_belantamab_reconcile(con, cfg)
   write_attrition(con, cfg, counts)
   write_codelist_metadata(con, cfg)
-  write_run_metadata(con, cfg, here, counts$ndmm_final)
+  write_run_metadata(con, cfg, here, ndmm_final_count(counts))
 
-  write_build_status(con, cfg, "complete", counts$ndmm_final)
+  write_build_status(con, cfg, "complete", ndmm_final_count(counts))
   options(nndm_complete = TRUE)
   log_msg(SEP)
-  log_msg("NDMM 1L cohort: ", format(counts$ndmm_final, big.mark = ","),
+  log_msg("NDMM 1L cohort: ", format(ndmm_final_count(counts), big.mark = ","),
           " patients -> ", wrk("NDMM_COHORT"))
   # After the count, because which of these were supplied is part of reading it.
-  report_fillins(cfg)
   log_msg(SEP)
   invisible(counts)
 }

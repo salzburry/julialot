@@ -27,7 +27,7 @@ NDMM_FLAGS_ALL_TBL       <- "NDMM_FLAGS_ALL"
 NDMM_PATIDS       <- "_ndmm_patids"
 NDMM_PREG_CODES          <- "_ndmm_preg_codes"
 NDMM_PREGNANCY_PATIDS    <- "_ndmm_pregnancy_patids"
-NDMM_STUDY_START         <- Sys.getenv("STUDY_START", unset = "2015-07-01")
+NDMM_STUDY_START         <- Sys.getenv("STUDY_START", unset = "2016-01-01")
 NDMM_PRE_LOT1_DAYS       <- 365L  # 12-mo CE/baseline before 1L index date
 # Days after the 1L index date that a no-gap span must cover for the follow-up
 # CE. 0 is the index date itself - one day of CE - which is what the study team
@@ -54,9 +54,13 @@ NDMM_FU_CE_DAYS          <- 0L
 # malig_codes() logs how many of these actually matched the codelist;
 # a match count < length(this) means the stored labels differ from the
 # wording below and is a run-review blocker.
+# SECONDARY MALIGNANT NEOPLASM OF BONE is NOT here. S6.2.1.2 excludes on
+# "the same primary tumor type and/or metastatic cancer", and C79.51 is a
+# metastatic cancer, so the protocol says it excludes. The source overrode it
+# because myeloma bone disease is often miscoded that way; following the
+# protocol is the decision on record. See DECISIONS.md #4.
 NDMM_MM_ADJACENT_OVERRIDE <- c(
   "MONOCLONAL GAMMOPATHY",
-  "SECONDARY MALIGNANT NEOPLASM OF BONE",
   "SOLITARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION",
   "PLASMA CELL LEUKEMIA NOT HAVING ACHIEVED REMISSION",
   "EXTRAMEDULLARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION"

@@ -6,6 +6,15 @@
 # member_enrollment - the parent's temp view isn't persisted, so we
 # rebuild it inside this script. SQL mirrors pipeline_steps.R:382-421
 # verbatim so the gap semantics stay identical to CE_b/CE_f.
+#
+# Not from member_cont_enrollment, and not only because that view is not
+# persisted. Optum's own rollup bridges a break of "less than 30 days"
+# (docs/optum business rules.pdf), where S6.2.1.1 says gaps "of <= 30 days are
+# considered to be continuously enrolled". The two differ by a day at the
+# boundary, and Optum's is the stricter one - so the prebuilt table would drop
+# patients the protocol keeps. The arithmetic below bridges <= NDMM_GAP_DAYS,
+# which is the protocol's rule. It also cannot reveal true gaps, which is what
+# NDMM_ENROLL_SPANS_STRICT needs.
 build_enrollment_spans_ndmm <- function(con, view = NDMM_ENROLL_SPANS,
                                         gap_days = NDMM_GAP_DAYS) {
   db_exec(con, glue("

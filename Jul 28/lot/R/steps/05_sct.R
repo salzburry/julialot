@@ -190,7 +190,13 @@ phase_sct <- function(con, ctx) {
       WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT
     ),
-    -- MED_PROCEDURE PROC (ICD-9/ICD-10 procedure codes + HCPCS safety net)
+    -- MED_PROCEDURE PROC. ICD-9/ICD-10 procedure codes only in practice: the
+    -- column profiles as 99.96% ICD-10-PCS over the study period, with no
+    -- HCPCS/CPT population. So the CL_CODE_TYPE='HCPCS' branch of the join
+    -- below matches nothing here, and every HCPCS SCT code - CPT 38240/38241,
+    -- S2150, CAR-T Q2042/Q2054/Q2055/Q2056 - is found through MEDICAL alone.
+    -- Kept because it is correct if a later extract carries them, but it is
+    -- not the safety net it reads as. See nndm/DECISIONS.md #6.
     medproc AS (
       SELECT mp.PATID, cast(mp.FST_DT AS date) AS DATE_SERVICE,
              s.SCT_TYPE, s.CL_CODE AS CODE, 'med_procedure' AS SRC

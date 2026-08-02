@@ -38,10 +38,16 @@ phase_clinical_flags <- function(cfg, h, ctx) {
     #   (2) medical BILL_PROC_CD (HCPCS)  -> MEDICAL_BILL_PROC_CD
     #   (3) medical NDC                   -> MEDICAL_NDC
     #   (4) Rx NDC                        -> RX
+    #   (5) med_procedure PROC (HCPCS/CPT) -> MED_PROCEDURE_PROC
+    # (5) is the program spec's T_MED_PROCEDURE (PROC) join to CL_MMA_CODELIST,
+    # and Optum business rule 5's "drug given as a procedure under a HCPCS or
+    # CPT code". No ICD_FLAG condition: a J-code carrying an unexpected flag
+    # would otherwise be dropped, and the join is self-limiting anyway because
+    # ICD-10-PCS is seven characters and ICD-9 procedures three or four.
     list(
       name = "18_therapy_events",
       description = "Identifying MM therapy events (medical PROC_CD + BILL_PROC_CD + NDC, Rx NDC)",
-      source_tables = c("medical", "rx"),
+      source_tables = c("medical", "rx", "med_procedure"),
       sql = glue("
         CREATE OR REPLACE TEMPORARY VIEW {work('therapy_events')} AS
         -- 1) Medical therapy via PROC_CD (HCPCS/CPT)
@@ -86,6 +92,16 @@ phase_clinical_flags <- function(cfg, h, ctx) {
           AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', ''), 11, '0')
             = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')
         WHERE r.FILL_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
+        UNION ALL
+        -- 5) Therapy given as a procedure, from med_procedure
+        SELECT /*+ BROADCAST(c) */
+          p.PATID, cast(p.FST_DT as date) AS event_dt, 'MED_PROCEDURE_PROC' AS source
+        FROM {cdm_src(cfg$tbl_med_proc)} p
+        INNER JOIN {work('mm_therapy_codes')} c
+          ON c.code_type IN ('HCPCS','CPT')
+          AND upper(regexp_replace(coalesce(cast(p.PROC as string),''), '[^A-Za-z0-9]', '')) = c.code
+          AND regexp_replace(coalesce(cast(p.PROC as string),''), '[^A-Za-z0-9]', '') <> ''
+        WHERE p.FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
       "),
       qc = glue("
         SELECT
@@ -93,7 +109,8 @@ phase_clinical_flags <- function(cfg, h, ctx) {
           sum(CASE WHEN source = 'MEDICAL_PROC_CD'      THEN 1 ELSE 0 END) AS n_med_proc_cd,
           sum(CASE WHEN source = 'MEDICAL_BILL_PROC_CD' THEN 1 ELSE 0 END) AS n_med_bill_proc_cd,
           sum(CASE WHEN source = 'MEDICAL_NDC'          THEN 1 ELSE 0 END) AS n_med_ndc,
-          sum(CASE WHEN source = 'RX'                   THEN 1 ELSE 0 END) AS n_rx_ndc
+          sum(CASE WHEN source = 'RX'                   THEN 1 ELSE 0 END) AS n_rx_ndc,
+          sum(CASE WHEN source = 'MED_PROCEDURE_PROC'   THEN 1 ELSE 0 END) AS n_med_procedure
         FROM {work('therapy_events')}")
     ),
 

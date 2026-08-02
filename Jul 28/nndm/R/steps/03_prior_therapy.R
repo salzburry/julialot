@@ -39,7 +39,7 @@ build_ndmm_mma_codelist <- function() {
 # cannot see any claims before the MM diagnosis, and would miss MM
 # therapy occurring in the [LOT1_START - 365, INDEX_DATE - 1] portion
 # of the 12-month 1L baseline.
-build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl) {
+build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl, med_proc_tbl) {
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_THERAPY_PRE_LOT1} AS
     WITH med_proc AS (
@@ -79,6 +79,22 @@ build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl) {
               BETWEEN date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS})
                   AND date_sub(l1.LOT1_START_DT, 1)
     ),
+    -- med_procedure.PROC: a drug given as a procedure under a HCPCS or CPT
+    -- code. Named by the program spec among the tables joined to
+    -- CL_MMA_CODELIST, and by Optum business rule 5. No ICD_FLAG condition,
+    -- matching how 05_sct.R reads the same column for HCPCS. Written so every
+    -- line is textually distinct from the four arms above, because the port
+    -- registry removes added lines by exact match.
+    mproc AS (
+      SELECT /*+ BROADCAST(c) */ cast(mp.PATID as string) AS PATID
+      FROM {med_proc_tbl} mp
+      INNER JOIN {NDMM_LOT1_STARTS} l1 ON cast(mp.PATID as string) = l1.PATID
+      INNER JOIN {NDMM_MMA_CODELIST} c ON c.code_type IN ('HCPCS','CPT')
+       AND upper(regexp_replace(coalesce(cast(mp.PROC as string),''), '[^A-Za-z0-9]', '')) = c.code
+       AND regexp_replace(coalesce(cast(mp.PROC as string),''), '[^A-Za-z0-9]', '') <> ''
+      WHERE cast(mp.FST_DT as date) >= date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS})
+        AND cast(mp.FST_DT as date) <= date_sub(l1.LOT1_START_DT, 1)
+    ),  -- end mproc
     rx_ndc AS (
       SELECT /*+ BROADCAST(c) */ cast(r.PATID as string) AS PATID
       FROM {rx_tbl} r
@@ -96,6 +112,7 @@ build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl) {
     UNION SELECT DISTINCT PATID FROM med_bill
     UNION SELECT DISTINCT PATID FROM med_ndc
     UNION SELECT DISTINCT PATID FROM rx_ndc
+    UNION SELECT DISTINCT PATID FROM mproc
   "))
 }
 

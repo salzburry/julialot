@@ -32,6 +32,9 @@ CONTRACT <- list(
   dsn                         = "RWDE",
   tbl_medical                 = "medical",
   tbl_med_proc                = "med_procedure",
+  # How belantamab is named in MED_ABBR, for the S6.2.1.2 line criterion. Same
+  # abbreviation the NDMM build recognises it by on cl_mma_codelist.csv.
+  belantamab_med_abbr         = "BELA",
   tbl_med_diag                = "med_diagnosis",
   tbl_rx                      = "rx"
 )
@@ -962,6 +965,34 @@ check_lot_final <- function(con, cfg) {
 
 # The criteria layer, on top of LOT_LONG. With no criteria declared both
 # tables are copies, so downstream can always read them.
+# The no_belantamab criterion tests LOT_BASE_MEDS for one MED_ABBR token, and
+# LOT_BASE_MEDS is built from cl_mma_codelist.csv. If the code list does not use
+# that abbreviation the criterion matches nothing and excludes nobody - silently,
+# because "no patient had belantamab" and "the abbreviation is wrong" produce the
+# same empty result. Checking the code list tells them apart: S6.2.1.2 names
+# belantamab, so the study's own MM therapy list must carry it.
+#
+# Only asked when the criterion is switched on. The NDMM build guards its own
+# side the same way, in build_ndmm_belantamab_codes().
+check_belantamab_abbr <- function(con, cfg) {
+  on <- Filter(function(c_i) identical(c_i$name, "no_belantamab"),
+               enabled_line_criteria())
+  if (!length(on)) return(invisible(NULL))
+  abbr <- cfg$belantamab_med_abbr
+  n <- tryCatch(as.integer(db_q(con, glue(
+    "SELECT count(*) AS n FROM mma_codelist WHERE CL_MED_ABBR = '{abbr}'"))$n),
+    error = function(e) NA_integer_)
+  if (is.na(n) || n == 0)
+    stop("APPLY_NO_BELANTAMAB is on, but no row of cl_mma_codelist.csv has ",
+         "CL_MED_ABBR = '", abbr, "'. The criterion would exclude nobody and ",
+         "the run would look clean. Check 'SELECT DISTINCT CL_MED_ABBR FROM ",
+         "mma_codelist' and set BELANTAMAB_MED_ABBR to what it uses.",
+         call. = FALSE)
+  log_msg("  Belantamab line criterion: '", abbr, "' matches ", n,
+          " code-list row(s)")
+  invisible(n)
+}
+
 phase_line_criteria <- function(con, cfg) {
   # A flag naming a column LOT_LONG already has does not fail: the generated
   # SQL is SELECT *, <expr> AS <flag>, so the result carries the name twice and
@@ -978,6 +1009,7 @@ phase_line_criteria <- function(con, cfg) {
            ". Rename the flag; the column would otherwise appear twice.",
            call. = FALSE)
   }
+  check_belantamab_abbr(con, cfg)
   run_step(con, "L40_lot_long_allflags",
            line_criteria_flags_sql(cfg, "lot_long", "lot_long_allflags"))
   run_step(con, "L41_lot_long_final",

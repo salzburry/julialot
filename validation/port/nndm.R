@@ -55,6 +55,16 @@ PARTS <- list(
 # deliberate override of the written spec and is spelled out rather than
 # absorbed - the numbers it produces are not the numbers apr_30_2026 produces.
 SUBST <- list(
+  # The study-period default. S6.1 gives 01 Jan 2016; the source defaulted to
+  # 2015-07-01, which is the overall build's window, not this one's. config.csv
+  # supplies STUDY_START in a real run so the effective date was already the
+  # protocol's - but cfg$study_start defaults the same variable to 2016-01-01,
+  # so without config.csv the two disagreed and check_constants() stopped the
+  # build. Both defaults are the protocol's date now, and a config.csv that
+  # goes missing no longer widens the pregnancy and MM-diagnosis scans.
+  "R/nndm_constants.R" = list(
+    list(from = "NDMM_STUDY_START         <- Sys.getenv(\"STUDY_START\", unset = \"2016-01-01\")",
+         to   = "NDMM_STUDY_START         <- Sys.getenv(\"STUDY_START\", unset = \"2015-07-01\")", n = 1L)),
   # The sixth clinical change, and it is a fail-open rather than a rule: the
   # source read any ICD_FLAG that was not an ICD-9 spelling as ICD-10, so a
   # blank or unexpected flag on a genuine ICD-9 claim was mis-classed and then
@@ -62,6 +72,11 @@ SUBST <- list(
   # which matches neither. It can only remove matches the source should not
   # have made, and the same change is in the overall build so the two still
   # agree - tests/test_same_as_overall.R holds that.
+  # The scan gained a fifth source, so the builder gained the table to read it
+  # from. See the ADDED entry for the mproc CTE below.
+  "R/steps/03_prior_therapy.R" = list(
+    list(from = "build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl, med_proc_tbl) {",
+         to   = "build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl) {", n = 1L)),
   "R/steps/05_pregnancy.R" = list(
     list(from = "{icd_family_sql('d.ICD_FLAG', 'ICD9DIAG', 'ICD10DIAG')} AS code_type,",
          to   = "CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9DIAG' ELSE 'ICD10DIAG' END AS code_type,", n = 1L),
@@ -124,7 +139,25 @@ ADDED <- list(
     "AND regexp_replace(coalesce(cast(m.PROC_CD as string),''), '[^A-Za-z0-9]', '') <> ''" = 1L,
     "AND regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''), '[^A-Za-z0-9]', '') <> ''" = 1L,
     "AND regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '') <> ''" = 1L,
-    "AND regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') <> ''" = 1L),
+    "AND regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') <> ''" = 1L,
+    # The fifth clinical change. The program spec names T_MED_PROCEDURE (PROC)
+    # among the CDM tables joined to CL_MMA_CODELIST, and Optum business rule 5
+    # says PROC finds a drug given as a procedure under a HCPCS or CPT code. The
+    # source reads four sources and not that one, so a therapy administered and
+    # coded that way is invisible to it - which would let a patient pass the
+    # no-prior-therapy criterion on missing data. This adds the arm. It can only
+    # add exclusions, so the cohort is smaller than apr_30_2026's.
+    "mproc AS (" = 1L,
+    "SELECT /*+ BROADCAST(c) */ cast(mp.PATID as string) AS PATID" = 1L,
+    "FROM {med_proc_tbl} mp" = 1L,
+    "INNER JOIN {NDMM_LOT1_STARTS} l1 ON cast(mp.PATID as string) = l1.PATID" = 1L,
+    "INNER JOIN {NDMM_MMA_CODELIST} c ON c.code_type IN ('HCPCS','CPT')" = 1L,
+    "AND upper(regexp_replace(coalesce(cast(mp.PROC as string),''), '[^A-Za-z0-9]', '')) = c.code" = 1L,
+    "AND regexp_replace(coalesce(cast(mp.PROC as string),''), '[^A-Za-z0-9]', '') <> ''" = 1L,
+    "WHERE cast(mp.FST_DT as date) >= date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS})" = 1L,
+    "AND cast(mp.FST_DT as date) <= date_sub(l1.LOT1_START_DT, 1)" = 1L,
+    "),  -- end mproc" = 1L,
+    "UNION SELECT DISTINCT PATID FROM mproc" = 1L),
   "R/steps/04_other_malig.R" = c(
     # The required-match count is now against the five labels the code list
     # must carry, not against every group the override reaches - the remission
@@ -139,20 +172,16 @@ ADDED <- list(
     # excluded the patient on a single baseline claim. This bounds the second
     # claim too, so both fall in the baseline the criterion names. It can only
     # remove exclusions, so the cohort it builds is larger than apr_30_2026's.
-    "AND op.next_dt  BETWEEN l1.pre_lot1_start AND l1.pre_lot1_end" = 1L,
-    # The fourth clinical change. Path B pairs two outpatient claims on a
-    # code-list label, and a label is one ICD code's description: a cancer at
-    # two subsites, or one coded in remission and once not, is two labels, so
-    # the claims never confirm each other and the patient is not excluded. The
-    # criterion under-detects and the cohort is too large. These read
-    # primary_tumor_groups.csv and pair on the mapped group instead. The file
-    # ships empty and an unmapped label stays its own group, so with nothing
-    # filled in this is the source's rule exactly.
-    "pg_src   <- load_primary_groups_csv(nndm_config()$primary_groups_csv)" = 1L,
-    "pg_join  <- if (is.null(pg_src)) \"\" else glue(\"LEFT JOIN {pg_src} ON pg.pg_label = trim(om.tumor_group)\")" = 1L,
-    "pg_col   <- if (is.null(pg_src)) \"om.tumor_group\" else \"coalesce(pg.pg_primary, om.tumor_group)\"" = 1L),
+    "AND op.next_dt  BETWEEN l1.pre_lot1_start AND l1.pre_lot1_end" = 1L),
   "R/steps/05_pregnancy.R" = c(
-    "AND regexp_replace(trim(code), '[^A-Za-z0-9]', '') <> ''" = 1L)
+    "AND regexp_replace(trim(code), '[^A-Za-z0-9]', '') <> ''" = 1L),
+  # The funnel's last row, read by key rather than named literally in the
+  # runner. Added because the last criterion is no longer ndmm_final:
+  # S6.2.1.2's belantamab exclusion moved to the lot package, so this package's
+  # funnel ends at pregnancy and the runner cannot hard-code the key.
+  "R/steps/07_cohort.R" = c(
+    "ndmm_final_count <- function(counts)" = 1L,
+    "counts[[NDMM_CRITERIA[[length(NDMM_CRITERIA)]]$key]]" = 1L)
 )
 
 # Blocks the port rewrote rather than edited. Patching these back line by line
@@ -168,6 +197,17 @@ ADDED <- list(
 # one conjunction either way - but different per-step counts, and the attrition
 # is the deliverable.
 SPLICE <- list(
+  # The sixth clinical change, and the one the protocol dictates rather than
+  # permits. S6.2.1.2 excludes on "the same primary tumor type and/or
+  # metastatic cancer". SECONDARY MALIGNANT NEOPLASM OF BONE is C79.51, a
+  # metastatic cancer, so the protocol says it excludes; the source overrode it
+  # because myeloma bone disease is often miscoded that way. Dropped from the
+  # override list, so it excludes as written. The cohort is smaller than
+  # apr_30_2026's. See nndm/DECISIONS.md #4.
+  "R/nndm_constants.R" = list(
+    list(from = "NDMM_MM_ADJACENT_OVERRIDE <- c(",
+         to   = "\"EXTRAMEDULLARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION\"",
+         src_from = 109L, src_to = 114L)),
   "R/steps/07_cohort.R" = list(
     # Widened: whole/elig/elig_lot1 are rewritten too. This package no longer
     # reads LOT_LONG or a parent cohort table, so the first three rows of the
@@ -214,10 +254,16 @@ SPLICE <- list(
   # names bound to the inner ones and every other-cancer code came back
   # overridden. Normalise, then join, and qualify everything.
   "R/steps/04_other_malig.R" = list(
-    # Ends at {pg_join}, not at the mm_dx join: the primary-groups join is the
-    # last line of the same statement.
+    # Ends at the mm_dx join, which is the last line of the statement.
+    # The fourth clinical change is inside it. S6.2.1.2 pairs two outpatient
+    # claims on the same primary tumor type and/or metastatic cancer. The source
+    # pairs on the code-list label, and a label is one ICD code's description -
+    # 1,618 over 1,643 codes - so pairing on it means pairing on the identical
+    # code, and a cancer at two subsites never confirms itself. This pairs on
+    # the ICD category, which is the protocol's unit. It can only add
+    # exclusions, so the cohort is smaller than apr_30_2026's.
     list(from = "CREATE OR REPLACE TEMPORARY VIEW {NDMM_OTHER_MALIG_CODES} AS",
-         to   = "{pg_join}",
+         to   = "ON m.dx = om.dx AND m.icd_family = om.icd_family",
          src_from = 325L, src_to = 332L),
     list(from = "if (is.na(n_matched) || n_matched < n_exp)",
          to   = "\" expected MM-adjacent tumor_group labels\")",

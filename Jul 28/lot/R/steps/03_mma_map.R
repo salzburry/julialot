@@ -5,7 +5,8 @@ phase_mma_map <- function(con, ctx) {
 
   # STEP 2 (5A): MMA_MED - Raw extraction
   # Sources: medical (PROC_CD, BILL_PROC_CD, NDC), rx (NDC)
-  # Note: med_procedure excluded - contains ICD procedure codes only, not HCPCS/NDC drug codes
+  # Note: med_procedure excluded - PROC holds ICD procedure codes, measured;
+  # see source (4) below
   run_step(con, "S04_mma_med_raw", glue("
     CREATE OR REPLACE TEMPORARY VIEW mma_med_raw AS
     WITH codelist AS (
@@ -82,8 +83,16 @@ phase_mma_map <- function(con, ctx) {
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT  -- ENDDATE primary; ENDDATE_CE under sensitivity flag
     ),
     -- 4) med_procedure is not a drug source: its PROC column holds ICD
-    -- procedure codes, and the MMA code list is HCPCS and NDC. SCT does read
-    -- it, against the SCT code list.
+    -- procedure codes, and the MMA code list is HCPCS and NDC.
+    --
+    -- Measured, because the program spec names T_MED_PROCEDURE (PROC) among
+    -- the tables joined to CL_MMA_CODELIST and Optum's business rules say PROC
+    -- can carry a drug given as a procedure under HCPCS/CPT. Neither holds
+    -- here. Profiling PROC over the study period returns 43.1M of ~43.2M rows
+    -- at ICD_FLAG=10 and seven characters, which is ICD-10-PCS. The whole
+    -- five-character tail is ~15k rows, 0.035%, and its values are things like
+    -- 00002 and ERHOS - malformed, not J-codes. Reading this table would add
+    -- no MM therapy claim.
     -- 5) Pharmacy (rx) claims (NDC)
     rx_claims AS (
       SELECT

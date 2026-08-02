@@ -80,3 +80,9 @@ ndmm_counts <- function(con, mm_qualifying, base_cohort) {
   c(list(whole = whole, elig = elig, elig_lot1 = elig_lot1), cum,
     setNames(list(ndmm_final), NDMM_CRITERIA[[length(NDMM_CRITERIA)]]$key))
 }
+
+# The final row of the funnel, whatever the last criterion happens to be called.
+# The runner used to name that key literally, which is the same two-lists-agree
+# problem ndmm_counts() removed one line above.
+ndmm_final_count <- function(counts)
+  counts[[NDMM_CRITERIA[[length(NDMM_CRITERIA)]]$key]]

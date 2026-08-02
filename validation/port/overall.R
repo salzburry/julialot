@@ -110,8 +110,18 @@ if (length(a) == length(b)) {
     } else {
       ok(same_sql, paste0(a[[i]]$name, ": SQL identical"))
     }
-    ok(identical(as.character(a[[i]]$qc), as.character(b[[i]]$qc)),
-       paste0(a[[i]]$name, ": QC identical"))
+    # 18_therapy_events gained a fifth source (med_procedure PROC), so its QC
+    # gained the count for it. Every other step's QC must be untouched.
+    if (identical(a[[i]]$name, "18_therapy_events")) {
+      ok(grepl("n_med_procedure", as.character(b[[i]]$qc), fixed = TRUE) &&
+           identical(sub("[,\n ]+sum\\(CASE WHEN source = 'MED_PROCEDURE_PROC'[^\n]*n_med_procedure", "",
+                         as.character(b[[i]]$qc)),
+                     as.character(a[[i]]$qc)),
+         paste0(a[[i]]$name, ": QC gained only the med_procedure count"))
+    } else {
+      ok(identical(as.character(a[[i]]$qc), as.character(b[[i]]$qc)),
+         paste0(a[[i]]$name, ": QC identical"))
+    }
   }
 
   # ...and they differ in the intended way, not some other way.

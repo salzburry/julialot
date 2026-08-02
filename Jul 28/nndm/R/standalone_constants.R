@@ -69,24 +69,16 @@ NDMM_INDEX_EXCLUDED_ABBRS <- Sys.getenv("NDMM_INDEX_EXCLUDED_ABBRS", unset = "")
 # matched anyway, so barring it does nothing while reading as though it did.
 NDMM_INDEX_EXCLUDED_CODES <- Sys.getenv("NDMM_INDEX_EXCLUDED_CODES", unset = "")
 
-# What "in any LOT" is taken to mean for the belantamab exclusion (S6.2.1.2).
-# Lines of therapy do not exist when this build runs - the LOT algorithm runs
-# over the cohort it produces - so this is a claims proxy for LOT membership,
-# and which proxy changes the count:
+# S6.2.1.2's belantamab exclusion is NOT applied in this package. It says "in
+# any LOT", and lines do not exist until the lot package has run over the
+# cohort this one produces - so anything here could only be a claims proxy, and
+# one whose over-exclusions nobody could check, because a patient removed here
+# never gets lines. It is a line criterion in lot/R/line_criteria.R instead,
+# where LOT membership is known and the criterion is exact.
 #
-#   study_period  any belantamab claim in [STUDY_START, STUDY_END]. Lines are
-#                 only ever built over the study period, so a claim outside it
-#                 is in no LOT. This is the default.
-#   from_index    on or after the patient's own 1L index. Lines are numbered
-#                 from that date, so this is the strictest reading of "in any
-#                 LOT" - and the narrowest, excluding fewest patients.
-#
-# Neither is LOT membership. Only running the LOT algorithm and checking which
-# line a belantamab claim landed in is exact; see the README.
-#
-# The source bounded neither end but the upper one, so a claim from before the
-# study period excluded the patient. That is wrong under any reading.
-NDMM_BELANTAMAB_SCOPE <- Sys.getenv("NDMM_BELANTAMAB_SCOPE", unset = "study_period")
+# NO_BELANTAMAB is still computed and still ships on the cohort table as the
+# proxy's opinion, over the whole study period - the widest net, since its only
+# job is to say who carries a belantamab claim at all. Nothing filters on it.
 
 NDMM_BELANTAMAB_TX        <- "_ndmm_belantamab_tx"
 
