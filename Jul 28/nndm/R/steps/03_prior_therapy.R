@@ -27,18 +27,13 @@ build_ndmm_mma_codelist <- function() {
 }
 
 # Distinct PATIDs with any MM oncology therapy claim in
-# [LOT1_START - NDMM_PRE_LOT1_DAYS, LOT1_START - 1]. Mirrors the parent's
-# pipeline_steps.R:646-696 therapy_events four-source pattern
-# (medical PROC_CD, medical BILL_PROC_CD, medical NDC, rx NDC) with
-# NDC11 normalisation, but with a per-PATID date window driven off
-# LOT1_START_DT instead of [study_start, study_end].
+# Window is [LOT1_START - NDMM_PRE_LOT1_DAYS, LOT1_START - 1], per patient.
+# Four sources: medical PROC_CD, medical BILL_PROC_CD, medical NDC, rx NDC,
+# with NDC11 normalisation.
 #
-# This raw-claim scan is necessary because the parent's persisted
-# MMA_MED_PROCESSED is built with `FST_DT >= INDEX_DATE` (MM-dx anchor)
-# on every source branch (02_lot1.R:316,336,359,386). It therefore
-# cannot see any claims before the MM diagnosis, and would miss MM
-# therapy occurring in the [LOT1_START - 365, INDEX_DATE - 1] portion
-# of the 12-month 1L baseline.
+# Read from raw claims rather than a prepared table. Those are anchored at the
+# MM diagnosis, so they cannot see claims before it - and part of the baseline
+# window falls there.
 build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl, med_proc_tbl) {
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_THERAPY_PRE_LOT1} AS
@@ -80,11 +75,8 @@ build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl, med_proc_tbl) 
                   AND date_sub(l1.LOT1_START_DT, 1)
     ),
     -- med_procedure.PROC: a drug given as a procedure under a HCPCS or CPT
-    -- code. Named by the program spec among the tables joined to
-    -- CL_MMA_CODELIST, and by Optum business rule 5. No ICD_FLAG condition,
-    -- matching how 05_sct.R reads the same column for HCPCS. Written so every
-    -- line is textually distinct from the four arms above, because the port
-    -- registry removes added lines by exact match.
+    -- code. No ICD_FLAG condition, matching how 05_sct.R reads the same
+    -- column for HCPCS.
     mproc AS (
       SELECT /*+ BROADCAST(c) */ cast(mp.PATID as string) AS PATID
       FROM {med_proc_tbl} mp
@@ -116,18 +108,11 @@ build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl, med_proc_tbl) 
   "))
 }
 
-# Other-malignancy codelist loaded from cl_other_malignancies CSV
-# (default file: other_malig.csv, per config_prompts.R:76). Same loader
-# and column normalisation as parent pipeline_steps.R step 06 (which
-# materialises work('other_malig_codes')). Built here so the NDMM IP/OP
-# scan does not depend on the parent leaving its temp view alive.
+# Other-malignancy code list, read from other_malig.csv. Built here so the
+# inpatient/outpatient scan does not depend on any other build.
 #
-# Tags each row with is_mm_adjacent_override (1 for the
-# NDMM_MM_ADJACENT_OVERRIDE tumor groups, else 0). The actual exclusion
-# scan (build_ndmm_other_malig_pre_lot1) reads only
-# is_mm_adjacent_override = 0 rows; the QC card reads all rows so the
-# overridden groups stay visible. Logs how many of the expected override
-# labels matched the codelist - a partial match means the stored labels
-# differ from NDMM_MM_ADJACENT_OVERRIDE and the override is a silent no-op
-# for the unmatched groups (run-review blocker). Takes con (was a pure
-# SQL-string builder) so it can run the post-create match-count probe.
+# Tags each row with is_mm_adjacent_override - 1 for the tumour groups that
+# must not exclude, else 0. The exclusion scan reads only the 0 rows; the QC
+# card reads all of them, so the overridden groups stay visible. Logs how many
+# override labels matched: a partial match means the stored wording differs and
+# the override quietly does nothing, which blocks the run review.

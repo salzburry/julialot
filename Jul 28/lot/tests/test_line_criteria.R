@@ -31,7 +31,7 @@ clear <- function() for (v in paste0("APPLY_", toupper(c("c1","c2","c3","c4"))))
 
 cat("\n-- the shipped registry --\n")
 runs(validate_line_criteria(), "the shipped registry validates")
-# One criterion ships: S6.2.1.2's belantamab exclusion, applied here because
+# One criterion ships: the belantamab exclusion, applied here because
 # lines do not exist when the NDMM cohort is built. See nndm/DECISIONS.md #2.
 ok(length(LINE_CRITERIA) == 1 &&
      identical(LINE_CRITERIA[[1]]$name, "no_belantamab"),
@@ -85,7 +85,7 @@ ok(grepl("SELECT s.*", fs, fixed = TRUE) && grepl("FROM lot_long s", fs, fixed =
 ok(!grepl("LEFT JOIN", line_criteria_flags_sql(cfg, "lot_long", "out", list(C_ANY)),
           fixed = TRUE),
    "a criterion that declares none is unchanged - no join, no alias")
-# Both names are derived from the criterion's, so a rename that touches one and
+# Both names are built from the criterion's, so a rename that touches one and
 # not the other builds a view nothing joins, or reads an alias nothing defines.
 # Either way the predicate is NULL, the flag is 0... and with truncate that
 # silently removes every patient. Caught rather than run.

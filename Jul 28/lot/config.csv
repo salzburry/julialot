@@ -3,8 +3,8 @@ DATABRICKS_DSN,RWDE,ODBC DSN
 DATABRICKS_CATALOG,hive_metastore,Catalog for all reads and writes
 OPTUM_CDM_SCHEMA,clnprw_optum,Optum CDM schema
 USE_QUARTERLY_TABLES,TRUE,Read the cumulative quarterly CDM tables
-STUDY_START,2016-01-01,Study period start (protocol S6.1); the cohort must not index before it
-STUDY_END,2026-03-31,Study period end (protocol S6.1); picks the quarterly table suffix and the cohort must not run past it
+STUDY_START,2016-01-01,Study period start; the cohort must not index before it
+STUDY_END,2026-03-31,Study period end; picks the quarterly table suffix and the cohort must not run past it
 CODELIST_DIR,/mnt/code/codelist,Where the production code lists live
 PERSIST_TO_SCHEMA,TRUE,Write the outputs to the schema
 CENSOR_AT_DISENROLLMENT,FALSE,Primary analysis - disenrollment does not cap follow-up
@@ -18,5 +18,6 @@ SCT_TANDEM_DAYS,180,Tandem transplant window
 CART_CONSOLIDATION_DAYS,45,New agents within this of CAR-T are consolidation
 ALLO_LOT_SPAN,single_day,An ALLO line spans only the transplant date
 MAX_LOT,5,Highest line number built
-APPLY_NO_BELANTAMAB,TRUE,Protocol S6.2.1.2 - drop patients with belantamab in any LOT
+COHORT_STATUS_TABLE,,What the cohort build calls its run-status table (blank = try the usual names)
+APPLY_NO_BELANTAMAB,TRUE,Drop patients with belantamab in any LOT
 BELANTAMAB_MED_ABBR,BELA,How belantamab is named in MED_ABBR

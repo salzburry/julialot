@@ -243,6 +243,39 @@ for (k in names(EXPECT))
 ok(all(names(EXPECT) %in% names(shipped)),
    "config.csv still declares every setting the build is pinned to")
 
+cat("\n-- two runs on one prefix would overwrite each other --\n")
+# Every output name is the prefix plus the table, with no run id in it, so two
+# runs on one prefix replace each other's checkpoints while the other is still
+# reading them - and both can reach "complete" with the final cohort and the
+# attrition built from different executions. nndm and lot both refuse this.
+bc <- readLines(file.path(ROOT, "R", "build_cohort.R"), warn = FALSE)
+ok(any(grepl("check_no_active_run_overall", bc, fixed = TRUE)),
+   "a run already building this prefix is refused")
+gi <- grep("check_no_active_run_overall(conn", bc, fixed = TRUE)
+wi <- grep('write_build_status(conn, cfg, "started")', bc, fixed = TRUE)
+ok(length(gi) && length(wi) && min(gi) < min(wi),
+   "...checked BEFORE the status row is written, which would overwrite it")
+ok(any(grepl("OVERALL_IGNORE_ACTIVE_RUN", bc, fixed = TRUE)),
+   "...with one named override for a run known to be dead")
+
+cat("\n-- settings that would change the cohort are refused, not coerced --\n")
+# as.integer("18.5") is 18, so checking the coerced value lets a decimal
+# through and the build quietly uses an age nobody asked for.
+Sys.setenv(MIN_AGE = "18.5")
+stops(check_settings(), "a fractional MIN_AGE is refused, not rounded")
+Sys.setenv(MIN_AGE = "18")
+runs(check_settings(), "...and a whole one is fine")
+Sys.unsetenv("MIN_AGE")
+# A schema name reaches every statement this build writes. "no dot" was not
+# enough - a space or a hyphen passed and failed later, less clearly.
+for (v in c("PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME", "DOMINO_STARTING_USERNAME")) {
+  do.call(Sys.setenv, setNames(list("my schema"), v))
+  stops(check_settings(), paste0(v, " with a space is refused"))
+  Sys.unsetenv(v)
+}
+ok(any(grepl("^[A-Za-z_][A-Za-z0-9_]*$", bc, fixed = TRUE)),
+   "...and the schema is held to an identifier where it is pinned, too")
+
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))
 if (fail > 0L) quit(status = 1L)

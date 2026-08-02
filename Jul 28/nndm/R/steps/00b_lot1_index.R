@@ -1,19 +1,13 @@
 # The 1L index date, from claims.
 #
-# Not a port. Protocol Rev Round 2 S6.2.1.1 defines it directly:
+# The index is the date of the first claim for an eligible MM treatment on or
+# after the MM diagnosis - anything but belantamab - and on or after
+# NDMM_LOT1_FROM.
 #
-#   Eligible 1L treatment: Received an eligible or expected treatment for MM on
-#   or after MM diagnosis (other than belantamab), occurring on or after
-#   01 Jan 2017 (eligible treatment period).
-#   The 1L cohort index date is the date of the first claim for MM treatment
-#   within the identification period.
-#
-# The source took it from LOT_LONG instead - the start of line 1 as the LOT
-# algorithm computes it. That is a different thing: LOT_LONG only exists for
-# patients who already passed the parent build's criteria, and the line start
-# is an output of the line-building rules rather than a claim date. Reading it
-# also made this build depend on a LOT run, when the plan is the reverse - the
-# LOT algorithm runs over the cohort this build produces.
+# It is read from claims, not from a built line. A line start is an output of
+# the line-building rules rather than a claim date, and reading one would make
+# this build wait on a LOT run when the order is the other way round: LOT runs
+# over the cohort this build produces.
 #
 # The scan is the same four sources as the prior-therapy scan, against the same
 # codelist view, so "MM treatment" means one thing in this package. That view
@@ -41,7 +35,7 @@ build_ndmm_belantamab_codes <- function(con) {
   if (is.na(n) || n == 0)
     stop("No row of cl_mma_codelist.csv has CL_MED_ABBR = '",
          NDMM_BELANTAMAB_ABBR, "'.\nThat is how this build recognises ",
-         "belantamab, and without it the exclusion in S6.2.1.2 does nothing ",
+         "belantamab, and without it the exclusion does nothing ",
          "and belantamab claims could set the 1L index date. Run 'SELECT ",
          "DISTINCT med_abbr FROM ", NDMM_MMA_CODELIST, "' on the warehouse ",
          "and set NDMM_BELANTAMAB_ABBR to the abbreviation it uses.",
@@ -62,8 +56,8 @@ build_ndmm_belantamab_codes <- function(con) {
     stop("cl_mma_codelist.csv carries CL_MED_ABBR = '", NDMM_BELANTAMAB_ABBR,
          "' and also ", paste0("'", others, "'", collapse = ", "),
          ".\nBelantamab is matched as a whole abbreviation, here and in the lot ",
-         "package, so rows under the other spelling(s) would be outside ",
-         "S6.2.1.2 entirely and nothing would say so. Decide which one names ",
+         "package, so rows under the other spelling(s) would be missed ",
+         "entirely and nothing would say so. Decide which one names ",
          "belantamab: set NDMM_BELANTAMAB_ABBR and lot's BELANTAMAB_MED_ABBR to ",
          "it, or have the code list use one abbreviation for the drug.",
          call. = FALSE)
@@ -73,9 +67,8 @@ build_ndmm_belantamab_codes <- function(con) {
 }
 
 # Agents that may not set the index: belantamab always, plus anything named in
-# NDMM_INDEX_EXCLUDED_ABBRS. Empty by default - S6.2.1.1 routes "excluding those
-# restricted to later LOTs" through the exclusion criteria, and S6.2.1.2 names
-# only belantamab, so the protocol as written restricts nothing else.
+# NDMM_INDEX_EXCLUDED_ABBRS. Empty by default, because belantamab is the only
+# therapy named as restricted to later lines.
 build_ndmm_index_ineligible_codes <- function(con) {
   split_setting <- function(x) {
     v <- trimws(strsplit(x, "[,|]")[[1]])
@@ -86,12 +79,12 @@ build_ndmm_index_ineligible_codes <- function(con) {
   norm <- function(x) toupper(gsub("[^A-Za-z0-9]", "", x))
   sq   <- function(x) gsub("'", "''", x, fixed = TRUE)
 
-  # cl_mma_codelist.csv is the study's definition of MM therapy, so it is the
-  # eligible-1L set: any agent on it may set the index, less steroids (dropped
-  # where NDMM_MMA_CODELIST is built) and less belantamab (barred below, per
-  # S6.2.1.1's "other than belantamab"). There is no separate eligibility file.
-  # NDMM_INDEX_EXCLUDED_ABBRS stays for barring a named agent operationally: it
-  # is empty by default, and every entry is checked against the code list below.
+  # cl_mma_codelist.csv is the study's definition of MM therapy, so it is also
+  # the eligible-1L set: any agent on it may set the index, less steroids
+  # (dropped where NDMM_MMA_CODELIST is built) and less belantamab (barred
+  # below). There is no separate eligibility file.
+  # NDMM_INDEX_EXCLUDED_ABBRS bars a named agent if the study team asks for it.
+  # Empty by default, and every entry is checked against the code list.
   abbrs <- split_setting(NDMM_INDEX_EXCLUDED_ABBRS)
   codes <- split_setting(NDMM_INDEX_EXCLUDED_CODES)
 
@@ -155,8 +148,8 @@ build_ndmm_index_ineligible_codes <- function(con) {
 build_ndmm_lot1_index <- function(con, medical_tbl, rx_tbl, med_proc_tbl) {
   # Every branch is scoped to the base cohort, dated on or after that patient's
   # own diagnosis, and inside the eligible-treatment period. Belantamab is left
-  # out by the anti-join: S6.2.1.1 says the eligible 1L treatment is one "other
-  # than belantamab", so a belantamab claim cannot be what sets the index.
+  # out by the anti-join: an eligible 1L treatment is one other than
+  # belantamab, so a belantamab claim cannot set the index.
   arm <- function(tbl, dt, match_sql) glue("
       SELECT cast(t.PATID as string) AS PATID, cast(t.{dt} as date) AS tx_dt,
              c.med_abbr
@@ -208,14 +201,10 @@ build_ndmm_lot1_index <- function(con, medical_tbl, rx_tbl, med_proc_tbl) {
 
 # Which agent set each patient's index, and how many indexes each agent set.
 #
-# This is the list S6.2.1.1 gestures at and no document in this repository
-# contains. Annex 2 is "categorization of SOC regimens", which S6.2.2 calls an
-# exemplary list that may be recategorized - an analysis grouping, not an
-# eligibility rule - and it is a stand-alone document. So this build does not
-# narrow that set. It writes the sheet a decision would be made from: every agent
-# on the code list, whether this run let it set an index, and how many it set.
-# Bar one with NDMM_INDEX_EXCLUDED_ABBRS if an agent on the code list
-# should not set an index.
+# Nobody has written down which agents count as first-line, so this build does
+# not narrow the set. It writes the sheet the decision would be made from:
+# every agent on the code list, whether this run let it set an index, and how
+# many it set. Bar one with NDMM_INDEX_EXCLUDED_ABBRS.
 build_ndmm_index_agents <- function(con, cfg) {
   db_exec(con, glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_INDEX_AGENTS')} AS
@@ -256,21 +245,18 @@ build_ndmm_index_agents <- function(con, cfg) {
   for (i in seq_len(nrow(got)))
     log_msg("    ", if (got$ELIGIBLE[i] == 1L) "may set " else "BARRED  ", " ",
             got$MED_ABBR[i], ": ", format(got$N_PATIENTS[i], big.mark = ","))
-  log_msg("  Review these against S6.2.1.1. Anything restricted to later lines ",
-          "belongs in NDMM_INDEX_EXCLUDED_ABBRS, or ",
-          "bar one with NDMM_INDEX_EXCLUDED_ABBRS.")
+  log_msg("  Review these. Anything restricted to later lines belongs in ",
+          "NDMM_INDEX_EXCLUDED_ABBRS.")
   invisible(got)
 }
 
-# MAP_STACKED is a LOT-build table this package no longer reads. The ported
-# flags step takes its belantamab source as a parameter and looks for
+# The flags step takes its belantamab source as a parameter and looks for
 # MAP_MED_TYPE LIKE 'BEL%', so this answers in that shape from raw claims.
 #
-# S6.2.1.2 says "in any LOT", and this build does not apply that exclusion -
-# lines do not exist until the lot package has run over the cohort it produces,
-# so it is a line criterion there. What this builds is the advisory flag and,
-# below, the list of cohort members carrying a belantamab claim, which is what
-# the LOT-side criterion adjudicates. Every claim is kept with its date.
+# The "in any LOT" exclusion is not applied here - lines do not exist until lot
+# has run over this cohort, so it is a line criterion there. What this builds
+# is the flag and, below, the list of cohort members carrying a belantamab
+# claim. Every claim is kept with its date.
 build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl, med_proc_tbl) {
   # Each source only matches the code types it can carry, the same way the
   # prior-therapy and index scans do. Without it a PROC_CD could match an NDC
@@ -287,12 +273,9 @@ build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl, med_proc_tbl)
     "\n         = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')",
     "\n       AND regexp_replace(coalesce(cast(t.", col, " as string),''), '[^0-9]', '') <> ''")
   # Both ends of the study period. The upper bound was always here; the lower
-  # one was not, and the CDM tables are cumulative back well past S6.1's
+  # one was not, and the CDM tables reach back well before the study start of
   # 2016-01-01 - so this view could return a claim from outside the window every
-  # other criterion in this build is scoped to. The pre-index criterion never
-  # counted those, because it reads NDMM_BELANTAMAB_PATIDS which bounds at the
-  # study start; the reconcile table joined the raw view and did. One scope for
-  # the drug, in one package.
+  # other criterion here is bounded to. One scope for the drug, one package.
   arm <- function(tbl, dt, match_sql) glue("
       SELECT DISTINCT cast(t.PATID as string) AS PATID,
              cast(t.{dt} as date) AS bel_dt
@@ -311,22 +294,15 @@ build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl, med_proc_tbl)
   # The study period, always. Widest net, because this view answers two
   # questions and one of them is a criterion.
   #
-  # PRE_LOT1 marks a belantamab claim STRICTLY BEFORE the 1L index. That half of
-  # S6.2.1.2's belantamab exclusion has to be settled here, because the lot
-  # package cannot see it: map_stacked is built from claims on or after the
-  # cohort's INDEX_DATE, so a belantamab treatment before the index is not in
-  # the data lot reads at all. The other half - belantamab from the index
-  # onward - is the line criterion there, over lines this package cannot know.
+  # PRE_LOT1 marks a belantamab claim strictly before the 1L index. That half
+  # has to be settled here, because lot cannot see it: map_stacked is built
+  # from claims on or after the cohort's INDEX_DATE, so belantamab before the
+  # index is not in the data lot reads. The other half - index onward - is the
+  # line criterion there.
   #
-  # The two halves are disjoint and together they are the protocol's sentence.
-  # Note S6.2.1.2 scopes its other three exclusions explicitly - "during the
-  # 12-month 1L baseline period", "in the 1L baseline period", "during the study
-  # period" - and scopes this one only as "in any LOT". The 12-month prior-
-  # therapy exclusion already removes belantamab inside the baseline, so reading
-  # this one as post-index too would leave it doing nothing the first bullet did
-  # not already do, for the window they share. It is unbounded because it is
-  # meant to be: a belantamab line at any point in the patient's history
-  # disqualifies them.
+  # The two halves do not overlap, and together they cover the whole rule. It
+  # carries no period of its own, unlike the exclusions beside it, so a
+  # belantamab line at any point in the patient's history disqualifies them.
   # No date predicate of its own: NDMM_BELANTAMAB_TX is the study period now, so
   # a second copy of that bound here would be one more place for the two to
   # drift apart.
@@ -423,29 +399,25 @@ build_ndmm_other_malig_grain <- function(con, cfg) {
 
 # What criterion 5 costs at each reading of it.
 #
-# Protocol Rev Round 2 S6.2.1.1 asks for continuous enrollment "from index date
-# until the earliest of 3-months post index or death, with no gaps". This build
-# uses one day - the index date itself - because the study team said so in the
-# build request. That is a relay, not a controlled document, and it is the one
-# setting in this package resting on one. Nobody can sign it off against a
-# number nobody has, so this is the number: how many patients pass criterion 5
-# at each window, and how many reach the final cohort there.
+# This build uses one day of follow-up enrollment - the index date itself -
+# because the study team asked for it. The wider study text says three months,
+# and nobody can sign one off against the other without a number. So here is
+# the number: how many patients pass criterion 5 at each window, and how many
+# reach the final cohort at each.
 #
 # One pass over the strict spans, cross-joined to the windows, so the whole
 # table costs about what the flag itself costs. It does not change the cohort:
 # the run still applies NDMM_FU_CE_DAYS.
 #
-# The windows are derived, not listed: whatever NDMM_FU_CE_DAYS is set to is in
-# the table beside the protocol's 90, so the table always contains the row this
-# run actually used.
+# The windows are worked out, not listed: whatever NDMM_FU_CE_DAYS is set to
+# appears beside 90, so the table always holds the row this run used.
 ndmm_fu_ce_windows <- function() sort(unique(c(NDMM_FU_CE_DAYS, 0L, 30L, 60L, 90L)))
 
 build_ndmm_fu_ce_counts <- function(con, cfg) {
   days <- ndmm_fu_ce_windows()
-  # 90 days is how "3 months" is applied, because NDMM_FU_CE_DAYS is a day
-  # count. add_months(.., 3) is the exact reading, and it lands 0-2 days later.
-  # Reported so the difference is a number rather than an assumption - this
-  # build cannot currently be set to it, which the README says.
+  # 90 days is how three months is applied, because NDMM_FU_CE_DAYS counts
+  # days. add_months(.., 3) is the exact reading and lands 0-2 days later.
+  # Reported so the gap is a number rather than an assumption.
   rows <- c(sprintf("(%d, '%d days', cast(NULL as int))", days, days),
             "(9999, '3 months (exact)', 3)")
   db_exec(con, glue("
@@ -496,26 +468,24 @@ build_ndmm_fu_ce_counts <- function(con, cfg) {
     ORDER BY cov.sort_key"))
   got <- db_q(con, glue("SELECT * FROM {wrk('NDMM_FU_CE_COUNTS')}"))
   log_msg("Follow-up CE (criterion 5), by window. This run applies ",
-          NDMM_FU_CE_DAYS, " day(s); the protocol asks for 3 months.")
+          NDMM_FU_CE_DAYS, " day(s); three months is the wider figure.")
   for (i in seq_len(nrow(got)))
     log_msg("    ", if (got$IS_THIS_RUN[i] == 1L) "->" else "  ", " ",
             got$FU_CE_RULE[i], ": ",
             format(got$N_PASSING_CRITERION_5[i], big.mark = ","),
             " pass, cohort ", format(got$N_COHORT[i], big.mark = ","))
-  log_msg("  FU_CE_DAYS=", NDMM_FU_CE_DAYS, " comes from the study team via the ",
-          "build request and is not written in any controlled document. See README.")
+  log_msg("  FU_CE_DAYS=", NDMM_FU_CE_DAYS, " comes from the study team and ",
+          "differs from the three months written elsewhere. See README.")
   invisible(got)
 }
 
 # The handover list: cohort members carrying a belantamab claim that lot will
 # act on.
 #
-# This used to be a two-direction adjudication table, from when S6.2.1.2 was a
-# claims proxy applied here and the exact answer needed the lines. Neither is
-# true now. The pre-index half is criterion 9 of this funnel, so a patient with
-# belantamab before their index is already gone; the index-onward half is lot's
-# no_belantamab, asked of map_stacked over the whole LOT span rather than of the
-# constructed rows. There is nothing left to adjudicate and nothing to reverse.
+# Nothing here is adjudicated. The pre-index half is criterion 9 of this
+# funnel, so a patient with belantamab before their index is already gone; the
+# index-onward half is lot's no_belantamab, asked of map_stacked over the whole
+# LOT span. This is only the handover list.
 #
 # Read off NDMM_COHORT, which is the qualifying set with its dates already on
 # it - so the claim is bounded by the patient's own ENDDATE and not just by the

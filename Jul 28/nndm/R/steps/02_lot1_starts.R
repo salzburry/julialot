@@ -1,5 +1,4 @@
-# LOT1 start dates, the anchor every NDMM window is measured from.
-#
+# LOT1 start dates - the anchor every window is measured from.
 
 build_lot1_starts_ndmm <- function(con, lot_long) {
   db_exec(con, glue("
@@ -13,9 +12,7 @@ build_lot1_starts_ndmm <- function(con, lot_long) {
   "))
 }
 
-# MMA codelist as a NDMM-side VALUES fragment. Same CSV (cl_mma_codelist.csv)
-# and same column normalisation as parent S01 / pipeline_steps.R step 03,
-# but materialised inside this script so the prior-MM-Tx scan does not
-# depend on the parent having left mma_codelist alive in the session.
+# MMA code list as a VALUES fragment, from cl_mma_codelist.csv. Built inside
+# this script so the prior-therapy scan depends on no other build.
 # Steroid MED_ABBR rows are dropped here, once, so every downstream query
 # inherits the steroid exclusion without having to repeat it.

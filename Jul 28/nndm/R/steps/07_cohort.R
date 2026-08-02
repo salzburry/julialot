@@ -11,14 +11,10 @@ build_lot_long_filtered <- function(con, lot_long) {
   "))
 
   # Materialize once, then repoint the view at the work-schema table. This
-  # filtered LOT_LONG is read ~20x downstream (NDMM augmentation, modal map,
-  # KPIs, gallery, validation, run-comparison, and ~13x inside the LOT1-5
-  # detail collector); as a bare TEMPORARY VIEW each read re-runs the LOT_LONG
-  # join. Materialize-and-repoint (same pattern as NDMM_FLAGS_ALL / LOT_LONG_AUG
-  # and the parent S16; CACHE TABLE is unavailable on SQL warehouses) so every
-  # downstream read hits the table. Fail-safe: a non-writable work schema
-  # WARN-degrades to the in-place view (correct, just slower). No change to
-  # which patients/LOT rows are included - identical rows, materialized once.
+  # The filtered LOT_LONG is read many times downstream, and as a bare view
+  # every read re-runs the join. Build it once and point the view at the table.
+  # A work schema we cannot write to falls back to the view - still correct,
+  # just slower. Same rows either way.
   tryCatch({
     run_step(con, "S_ndmm_materialize_lot_long_filt", glue("
       CREATE OR REPLACE TABLE {wrk(NDMM_LOT_LONG_FILT_TBL)} AS
@@ -42,10 +38,9 @@ build_lot_long_filtered <- function(con, lot_long) {
 # the funnel a clinical reviewer would expect.
 ndmm_counts <- function(con, mm_qualifying, base_cohort) {
   n_of <- function(sql) db_q(con, sql)$n
-  # whole/elig/elig_lot1 replaced: the population is no longer "patients in
-  # LOT_LONG" filtered by a parent cohort. It is everyone with a qualifying MM
-  # diagnosis, then those old enough, then those with an eligible 1L treatment.
-  # These three count off their own tables rather than off a flag.
+  # The population is everyone with a qualifying MM diagnosis, then those old
+  # enough, then those with an eligible 1L treatment. These three count off
+  # their own tables rather than off a flag.
   whole <- n_of(glue(
     "SELECT count(DISTINCT PATID) AS n FROM {mm_qualifying}"))
   elig <- n_of(glue(
@@ -53,12 +48,11 @@ ndmm_counts <- function(con, mm_qualifying, base_cohort) {
   elig_lot1 <- n_of(glue(
     "SELECT count(DISTINCT PATID) AS n FROM {NDMM_LOT1_STARTS}"))
 
-  # From here the funnel follows the protocol's own order: S6.2.1.1's remaining
-  # inclusion (CE during follow-up), then S6.2.1.2's four exclusions as it
-  # lists them - prior MM therapy, other cancer, pregnancy, and belantamab
-  # last. The source applied belantamab first and follow-up CE second-to-last.
-  # The final cohort is the same conjunction either way, but the per-step
-  # numbers are not, and the attrition is what gets read against the protocol.
+  # From here the funnel runs in the study's own order: the remaining inclusion
+  # (CE during follow-up), then the four exclusions as they are listed - prior
+  # MM therapy, other cancer, pregnancy, belantamab last. The final cohort is
+  # the same whichever order is used, but the per-step numbers are not, and the
+  # attrition is what people read.
   #
   # Each row is NDMM_CRITERIA's first i criteria, so a row is the row above it
   # plus exactly one - that shape is the list's, not something restated here.

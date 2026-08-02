@@ -41,9 +41,9 @@ stop_if_blank <- function(x, msg) {
   if (!nzchar(x)) stop(msg)
 }
 
-# The ported rules call wrk() and cdm_src() with no cfg argument, so the config
-# is shared state. set_lot_config() makes that explicit and says so when it is
-# missing, instead of failing with "object 'cfg' not found" deep in a step.
+# wrk() and cdm_src() take no cfg argument, so the config is shared state.
+# This makes that explicit and says so when it is missing, instead of failing
+# with "object 'cfg' not found" deep inside a step.
 set_lot_config <- function(x) {
   assign("cfg", x, envir = globalenv())
   invisible(x)

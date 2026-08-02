@@ -143,7 +143,7 @@ phase_lot1_base <- function(con, ctx) {
       bc.GDR_CD, bc.YRDOB, bc.AGE_INDEX_YR,
       bc.LOT1_START_DT, bc.LOT1_MED_CNT, bc.LOT1_BASE_MEDS,
       bc.LOT1_BASE_DISCON_DT,
-      -- M1 fix: LOT1_BASE_LENGTH moved to S16 where LOT1_BASE_END_DT is finalized.
+      -- LOT1_BASE_LENGTH is set in S16, where LOT1_BASE_END_DT is final.
       -- This uses the 2-way formula on the derived end date.
       {paste0('bc.', paste(c(paste0('LOT1_MED_', vapply(meds, sanitize_col, character(1))), paste0('LOT1_CLASS_', vapply(classes, sanitize_col, character(1)))), collapse = ', bc.'))},
       fa.LOT1_BASE_1ST_ADD_MED_DT,

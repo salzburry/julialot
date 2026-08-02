@@ -478,7 +478,7 @@ DASHBOARD_SECTIONS <- list(
   list(name = "line_integrity", tab = "Validation",
        label = "Lines that should not exist",
        needs = "lot_long", render = "table",
-       # Each of these is impossible unless something upstream is wrong. The lot
+       # Each of these is impossible unless something earlier is wrong. The lot
        # build stops on them; they are repeated here so a dashboard read on its
        # own still shows a zero rather than an absence.
        sql = "

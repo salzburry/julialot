@@ -1,6 +1,6 @@
 # One self-contained HTML file, built from base R only.
 #
-# apr_30_2026's dashboard machinery renders through ggplot2, plotly, DT,
+# Other dashboards render through ggplot2, plotly, DT,
 # htmlwidgets, jsonlite and base64enc, and no-ops when any of them is missing:
 # build_dashboard() logs "skipping" and writes nothing. That is the wrong
 # failure for a deliverable - a run that reports complete and produces no
@@ -89,7 +89,7 @@ render_bar <- function(df, pct = "none") {
 
 # A Sankey, as inline SVG. Needs `source`, `target` and `n`.
 #
-# apr_30_2026 drew these through plotly, which means a JavaScript bundle and a
+# Drawing these through plotly would mean a JavaScript bundle and a
 # package that may not be installed - and when it is not, its dashboard writes
 # no file at all. An SVG is a handful of bezier paths and needs neither. It
 # also prints, which a canvas-based chart does not.

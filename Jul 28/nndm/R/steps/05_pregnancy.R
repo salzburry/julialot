@@ -92,11 +92,11 @@ build_ndmm_pregnancy_patids <- function(con, med_diag_tbl, medical_tbl, med_proc
       LATERAL VIEW stack(3,
         'HCPCS', CASE WHEN s.PROC_CD IS NOT NULL
                       THEN upper(regexp_replace(s.PROC_CD, '[^A-Za-z0-9]', '')) END,
-        -- BILL_PROC_CD is the facility-claim procedure code, and S6.2.1.2 asks
-        -- for a diagnosis, procedure, or revenue code. The therapy and SCT
-        -- scans in this repo already read it as an HCPCS source; pregnancy did
-        -- not, so a pregnancy HCPCS code populated only there kept the patient.
-        -- Typed HCPCS, not CPT, matching how those scans treat the column.
+        -- BILL_PROC_CD is the facility-claim procedure code, and the rule
+        -- covers diagnosis, procedure and revenue codes. The therapy and SCT
+        -- scans already read it as an HCPCS source; pregnancy did not, so a
+        -- pregnancy code populated only there kept the patient. Typed HCPCS,
+        -- matching how those scans treat the column.
         'HCPCS', CASE WHEN s.BILL_PROC_CD IS NOT NULL
                       THEN upper(regexp_replace(s.BILL_PROC_CD, '[^A-Za-z0-9]', '')) END,
         'REV',   CASE WHEN s.RVNU_CD IS NOT NULL AND trim(s.RVNU_CD) <> ''

@@ -1,16 +1,11 @@
 # The MM-diagnosed adult population this cohort is drawn from.
 #
-# Ported from the overall build - the SQL is copied from steps 01_codelists.R,
-# 02_dx_events.R, 03_index_date.R, 05_demographics.R and 08_assembly.R of that
-# build. tests/test_same_as_overall.R compares each statement against it.
-#
-# Only two criteria are applied here, because only two are what S6.2.1.1
-# inherits: a qualifying MM diagnosis, and age >= 18 at that diagnosis. The
-# parent build has switches for six more - baseline CE, enrolment on the index,
-# no MM agent in baseline, at least one MM agent in follow-up. None of them is
-# an NDMM criterion, and NDMM re-applies CE and baseline therapy at the 1L
-# start instead. Applying them here would drop patients the NDMM funnel never
-# gets to account for.
+# Two criteria only: a qualifying MM diagnosis, and age 18 or over at that
+# diagnosis. Other builds also filter on baseline enrollment, enrollment on the
+# index date, and MM agents before and after it. None of those belong here -
+# this cohort re-applies enrollment and baseline therapy at the 1L start
+# instead, and filtering twice would drop patients the funnel never accounts
+# for.
 
 # Diagnosis codes. DISTINCT because a repeated CSV row would duplicate every
 # claim it matches.
@@ -27,9 +22,8 @@ build_ndmm_mm_dx_codes <- function(con) {
 }
 
 # Claim headers and confinements over the whole study period. 04_other_malig.R
-# builds the same two views over a narrower window for its own scan; these are
-# separate rather than widened so each stays a faithful copy of the build it
-# came from.
+# builds the same two views over a narrower window for its own scan. Kept
+# separate so neither step widens the other's window.
 build_ndmm_mm_claim_header <- function(con, medical_tbl, confinement_tbl) {
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_MM_CLAIM_HEADER} AS
@@ -220,11 +214,9 @@ build_ndmm_demographics <- function(con, member_elig_tbl, dod_tbl) {
 # That order is the whole point, and it used to be the other way round - age
 # filtered first, earliest date chosen from what survived. A patient qualifying
 # at 17 and again at 18 was then kept, with MM_DX_DT moved to the later date.
-# Two things are wrong with that. It is not what the overall build does: there age
-# is `AND AGE_INDEX_YR >= min_age` applied to a chosen index date, which drops
-# the patient and never moves the date, and a standalone package that disagrees
-# with the parent on who is in the cohort is worse than one that is merely
-# stricter. And MM_DX_DT is not a demographic here - it gates the 1L index, via
+# Two things are wrong with that. It is not what the overall package does -
+# there age drops the patient and never moves the date - and two packages that
+# disagree on who is in the cohort is worse than one being stricter. And MM_DX_DT is not a demographic here - it gates the 1L index, via
 # "first MM therapy claim on or after MM_DX_DT". Advancing it to the second
 # qualifying date lets a later therapy claim be recorded as first line for a
 # patient whose real first line was at 17. "Newly diagnosed" is the earliest

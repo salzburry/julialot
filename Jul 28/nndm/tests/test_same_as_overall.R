@@ -1,22 +1,18 @@
 #!/usr/bin/env Rscript
-# R/steps/00_mm_cohort.R is a port of the MM-diagnosis, index-qualification and
-# demographics SQL from the overall build. This holds it to that build.
+# R/steps/00_mm_cohort.R and the overall package must agree on who counts as
+# MM-diagnosed. This holds the two together.
 #
-# What it does NOT do is compare line for line, the way
-# The port of the source build is held elsewhere. That is not possible here
-# and saying otherwise would be a lie: the parent's steps are entries in a
-# phase-runner list, they carry columns only its own attrition reads, and its
-# inpatient / outpatient / qualifying steps are three views where this build
-# needs one. The shape genuinely differs.
+# Not line for line - the two are shaped differently. overall splits its
+# inpatient, outpatient and qualifying work across three views where this build
+# needs one, and it carries columns only its own attrition reads.
 #
-# What it does instead is take the clinically decisive expressions out of the
-# parent's own files, rename its views to ours, and require each to appear here
-# verbatim. Those are the parts where a difference changes who is in the
-# cohort: what counts as inpatient, which codes qualify an inpatient claim, how
-# the diagnosis claim is joined to its header, the outpatient window, how a
-# partial death date is resolved, and which eligibility row wins. Change one of
-# them here and this fails; change one in the parent and this fails too, which
-# is the drift worth catching.
+# Instead this takes the clinically decisive expressions out of overall's own
+# files, renames its views to ours, and requires each to appear here word for
+# word. Those are the parts where a difference changes who is in the cohort:
+# what counts as inpatient, which codes qualify an inpatient claim, how the
+# diagnosis claim is joined to its header, the outpatient window, how a partial
+# death date is resolved, and which eligibility row wins. Change one on either
+# side and this fails, which is the drift worth catching.
 #
 #   Rscript "nndm/tests/test_same_as_overall.R"
 
@@ -38,7 +34,7 @@ ours <- paste(readLines(file.path(ROOT, "R", "steps", "00_mm_cohort.R"), warn = 
 
 read_src <- function(f) paste(readLines(file.path(SRC_DIR, f), warn = FALSE), collapse = "\n")
 
-# The parent's names for the views, and ours. Applied to the parent's text
+# overall's names for the views, and ours. Applied to overall's text
 # before comparing, so a renamed view is not mistaken for a changed rule.
 RENAME <- c(
   "{work('mm_dx_codes')}"       = "{NDMM_MM_DX_CODES}",
@@ -56,7 +52,7 @@ RENAME <- c(
   "{cdm_src(cfg$tbl_dod)}"      = "{dod_tbl}",
   "{cfg$study_start}"           = "{NDMM_STUDY_START}",
   "{cfg$dx_window_90}"          = "{NDMM_OUTPATIENT_WINDOW}",
-  # The parent keeps every candidate index date and calls it index_date; here
+  # overall keeps every candidate index date and calls it index_date; here
   # the same column is the MM diagnosis date, because the NDMM index is the 1L
   # start and the two must not be confused.
   "q.index_date"                = "q.MM_DX_DT",
@@ -66,12 +62,12 @@ rename <- function(x) {
   for (k in names(RENAME)) x <- gsub(k, RENAME[[k]], x, fixed = TRUE)
   x
 }
-# Indentation is layout, not rule: the parent's SQL sits inside a phase list and
+# Indentation is layout, not rule: overall's SQL sits inside a phase list and
 # this one inside a function, so it is reindented. Comparing token sequences
 # rather than lines keeps the check on what the SQL says.
 squash <- function(x) trimws(gsub("[[:space:]]+", " ", x))
 
-# Pull the text between two anchors out of the parent, inclusive.
+# Pull the text between two anchors out of overall, inclusive.
 between <- function(txt, from, to) {
   i <- regexpr(from, txt, fixed = TRUE)
   if (i == -1) return(NA_character_)
@@ -140,13 +136,13 @@ RULES <- list(
        to   = "WHEN death_raw IS NOT NULL AND death_raw < MM_DX_DT THEN MM_DX_DT")
 )
 
-cat("\n-- every rule that decides who is in the population is the parent's --\n")
+cat("\n-- both packages use the same rule for who is in the population --\n")
 for (r in RULES) {
   txt <- rename(read_src(r$file))
   want <- between(txt, r$from, r$to)
   if (is.na(want)) {
     ok(FALSE, paste0(r$name, ": not found in overall/R/steps/", r$file,
-                     " -- the parent changed, so this port is unverified"))
+                     " -- overall changed, so the two are unverified"))
     next
   }
   ok(grepl(squash(want), squash(ours), fixed = TRUE),
@@ -154,8 +150,8 @@ for (r in RULES) {
             r$file, ")"))
 }
 
-cat("\n-- and the criteria the parent applies that this build must not --\n")
-# The parent has switches for six criteria; S6.2.1.1 inherits two. If the port
+cat("\n-- and the criteria overall applies that this build must not --\n")
+# overall has switches for six criteria; only two belong here. If this build
 # had brought the others across, a patient would be dropped before the NDMM
 # funnel ever counted them, and the attrition would not say so.
 NOT_HERE <- c("CE_b", "CE_f", "CE_3mosf", "MM_bl_agents", "MM_FU_agents",
@@ -163,9 +159,9 @@ NOT_HERE <- c("CE_b", "CE_f", "CE_3mosf", "MM_bl_agents", "MM_FU_agents",
               "OTHER_MALIGN_FLAG")
 brought <- Filter(function(k) grepl(paste0("\\b", k, "\\b"), ours, perl = TRUE), NOT_HERE)
 ok(length(brought) == 0,
-   if (length(brought)) paste0("the parent's own criteria leaked into this port: ",
+   if (length(brought)) paste0("overall's own criteria leaked in here: ",
                                paste(brought, collapse = ", "))
-   else paste0("none of the parent's ", length(NOT_HERE),
+   else paste0("none of overall's ", length(NOT_HERE),
                " other criteria columns appear here"))
 # The two that are applied, and nothing else standing between the population
 # and the 1L index.
@@ -174,14 +170,14 @@ ok(grepl("NDMM_MIN_AGE", ours, fixed = TRUE),
 ok(grepl("inpt_qual = 1 OR q.outpt_qual = 1", squash(ours), fixed = TRUE),
    "and the diagnosis has to qualify, by one inpatient claim or two outpatient")
 
-cat("\n-- and age drops a patient, the way the parent's does, not their date --\n")
-# The parent applies age as a filter on an index date it has already chosen,
+cat("\n-- and age drops a patient, the way overall does, not their date --\n")
+# overall applies age as a filter on an index date it has already chosen,
 # so it can only remove a patient. This build once filtered the qualifying
 # dates by age and then took the earliest survivor, which kept a patient who
 # qualified at 17 and again at 18 and moved their MM_DX_DT to the later date -
 # and MM_DX_DT gates the 1L index, so a later therapy claim became "first
-# line". Read from the parent, not asserted about it, so this fails if the
-# parent ever stops doing it this way.
+# line". Read from overall, not asserted about it, so this fails if overall
+# ever stops doing it this way.
 PAR_AGE <- local({
   f <- file.path(dirname(ROOT), "overall", "R", "criteria_attrition.R")
   if (!file.exists(f)) NA_character_
@@ -189,7 +185,7 @@ PAR_AGE <- local({
 })
 ok(!is.na(PAR_AGE) &&
      grepl("AND AGE_INDEX_YR >= {cfg$min_age}", PAR_AGE, fixed = TRUE),
-   "the parent's age rule is a filter on an already-chosen index date")
+   "overall's age rule is a filter on an already-chosen index date")
 
 # The function only: the comment above it argues for this, and an assertion
 # that a comment can satisfy is not an assertion.

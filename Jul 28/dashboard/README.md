@@ -263,8 +263,8 @@ else stops the build rather than reaching a name that happened to be in scope.
 
 ## Why it draws its own HTML
 
-`apr_30_2026`'s dashboards render through ggplot2, plotly, DT, htmlwidgets,
-jsonlite and base64enc, and `build_dashboard()` **no-ops when any is missing** —
+A dashboard built on ggplot2, plotly, DT, htmlwidgets, jsonlite and base64enc
+**no-ops when any of them is missing** —
 logging "skipping" and writing no file. That is the wrong failure for a
 deliverable: a run reports complete and produces nothing, which looks the same
 as a run nobody wanted a dashboard from.

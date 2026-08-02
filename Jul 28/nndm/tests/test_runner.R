@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # What build_nndm() does, driven rather than grepped for. The rules in R/steps
-# are held to the protocol by the checks below; this is about the runner
+# are held to the study rules by the checks below; this is about the runner
 # around them - the guards, the attrition, and the order.
 #
 #   Rscript "nndm/tests/test_runner.R"
@@ -83,7 +83,7 @@ ok(length(absent) == 0,
    if (length(absent)) paste0("build_nndm() never calls: ", paste(absent, collapse = ", "))
    else paste0("build_nndm() calls all ", length(ORDER), " phases and checks"))
 ok(!any(is.na(at)) && !is.unsorted(at[!is.na(at)]), "and calls them in that order")
-# Upstream is checked before anything is built, or the first missing input
+# Inputs are checked before anything is built, or the first missing one
 # surfaces as a failed join rather than as a named table.
 ok(at[["check_upstream"]] < at[["build_enrollment_spans_ndmm"]],
    "every input is checked before the first phase runs")
@@ -132,10 +132,10 @@ ok(grepl("build.R", tryCatch({ pin_prefix(base, NULL); "" }, error = conditionMe
 ok(identical(pin_prefix(base, "study_a_")$object_prefix, "study_a_"),
    "a name ending in _ is accepted")
 # Every table, read or written, carries it - that is what keeps two cohorts
-# apart, and what lets the ported steps call wrk() unchanged.
+# apart, and what lets the steps call wrk() without knowing the prefix.
 assign("cfg", pin_prefix(base, "study_a_"), envir = globalenv())
 ok(identical(wrk("LOT_LONG"), "hive_metastore.wk.study_a_LOT_LONG"),
-   "wrk() prefixes an upstream table")
+   "wrk() prefixes an input table")
 ok(identical(wrk("NDMM_COHORT"), "hive_metastore.wk.study_a_NDMM_COHORT"),
    "...and an output, so both belong to the same cohort")
 assign("cfg", pin_prefix(base, "study_b_"), envir = globalenv())
@@ -241,7 +241,7 @@ for (s in CONSTANT_SETTINGS) {
 
 # And the list has to be complete. Every constant nndm_constants.R reads from
 # the environment is a knob someone can turn without touching config.csv, so
-# each one must be pinned - derived from the file rather than listed by hand,
+# each one must be pinned - read from the file rather than listed by hand,
 # because listing by hand is how NDMM_LOT1_FROM went unnoticed.
 kl <- c(readLines(file.path(ROOT, "R", "nndm_constants.R"), warn = FALSE),
         readLines(file.path(ROOT, "R", "standalone_constants.R"), warn = FALSE))
@@ -346,17 +346,17 @@ ok(setequal(keys, names(got)),
    "and every count produced appears in the attrition, none dropped")
 ok(identical(keys, names(got)),
    "in the same order, so the labels sit against the counts they describe")
-# Nine: S6.2.1.2's belantamab exclusion is split, and the half this package can
+# Nine: the belantamab exclusion is split, and the half this package can
 # see - belantamab before the 1L index - is a step of this funnel. The other
 # half is applied over lines in lot. See DECISIONS.md #2.
 ok(length(keys) == 9L, paste0("nine steps, one per criterion (", length(keys), ")"))
 
-cat("\n-- the funnel adds the criteria in the protocol's order --\n")
-# ndmm_counts() is the one block this package rewrote rather than ported, so
+cat("\n-- the funnel adds the criteria in the study's order --\n")
+# ndmm_counts() decides the order the funnel reads in, so
 # the line-for-line comparison holds nothing here. What holds it is this:
 # each step's SQL is read back and must be the
-# step above it plus exactly one flag, in the order Rev Round 2 S6.2.1.1 and
-# then S6.2.1.2 list the criteria.
+# step above it plus exactly one flag, in the order the criteria are listed:
+# inclusions first, then exclusions.
 FLAGS <- c("CE_pre_lot1_12mo", "CE_lot1_fu", "NO_PRIOR_MM_TX",
            "NO_OTHER_CANCER_PRE_LOT1", "NO_PREGNANCY",
            "NO_BELANTAMAB_PRE_LOT1")
@@ -376,7 +376,7 @@ added <- c(sets[[4]], vapply(5:8, function(i) setdiff(sets[[i]], sets[[i - 1]]),
 want <- c("CE_pre_lot1_12mo", "CE_lot1_fu", "NO_PRIOR_MM_TX",
           "NO_OTHER_CANCER_PRE_LOT1", "NO_PREGNANCY")
 ok(identical(added, want),
-   if (identical(added, want)) "and they arrive in protocol order, pregnancy eighth"
+   if (identical(added, want)) "and they arrive in the listed order, pregnancy eighth"
    else paste0("the criteria arrive as ", paste(added, collapse = " -> ")))
 # The ADVISORY flag - belantamab anywhere in the study period - still decides
 # nothing. Matched with a boundary, or it would find NO_BELANTAMAB_PRE_LOT1,
@@ -509,7 +509,7 @@ ok(!inherits(tryCatch(na$check_no_active_run(NULL, list(object_prefix = "p_")),
    "and a first run, with no status table yet, is not blocked by its absence")
 # The first thing the run asks the warehouse, and so before it writes its own
 # row: a refused run leaves the prefix as it found it, and does not sit through
-# twenty upstream probes first. Against the parsed body rather than ORDER, so
+# twenty input probes first. Against the parsed body rather than ORDER, so
 # it holds even if ORDER is reordered to match a runner that no longer does
 # this, and against the parsed body rather than the file text, so a mention in
 # a comment is not read as a call.
@@ -613,7 +613,7 @@ ok(identical(SENT[3], "DELETE FROM t WHERE RUN_ID = 'R1'"),
    "the retry replays the pair in order, DELETE before INSERT")
 
 cat("\n-- the population this build derives for itself --\n")
-# No parent cohort table any more. The MM diagnosis, the age gate and the 1L
+# No cohort table from anywhere else. The MM diagnosis, the age gate and the 1L
 # index are all derived here, so they are driven here. No database, so the SQL
 # the real functions emit is read back.
 se <- new.env(parent = globalenv())
@@ -634,7 +634,7 @@ ok(grepl("WHERE inpatient_flg = 1", q, fixed = TRUE) &&
    "one inpatient claim qualifies, and only a strict 203.0x/C90.0x code does")
 ok(grepl(paste0("datediff(next_dt, svc_dt) <= ", se$NDMM_OUTPATIENT_WINDOW), q, fixed = TRUE),
    paste0("two outpatient claims qualify within ", se$NDMM_OUTPATIENT_WINDOW,
-          " days, the window S6.2.1.1 fixes"))
+          " days, the window the study fixes"))
 ok(grepl("WHERE outpatient_flg = 1", q, fixed = TRUE),
    "...and the pair is built from outpatient claims only")
 
@@ -683,7 +683,7 @@ ok(length(gregexpr("WHERE bl.code IS NULL", x, fixed = TRUE)[[1]]) == 5L,
 ok(grepl("_ndmm_index_ineligible", x, fixed = TRUE),
    "...and the ineligible set is the one build_ndmm_index_ineligible_codes builds")
 ok(any(grepl("min(tx_dt) AS LOT1_START_DT", SSQL, fixed = TRUE)),
-   "the index is the first such claim, which is what S6.2.1.1 defines it as")
+   "the index is the first such claim, which is how the index is defined")
 ok(grepl("_ndmm_mma_codelist", x, fixed = TRUE),
    "and MM treatment means the same code list the prior-therapy scan uses")
 
@@ -693,7 +693,7 @@ cat("\n-- a plasma-cell disorder in remission is not another cancer --\n")
 # having achieved remission", and the source build left the "in remission" variants
 # excluding - so an identical patient was kept or dropped depending on whether
 # their plasma cell leukemia was in remission.
-# The protocol says nothing about remission. It says "another cancer" - other
+# The rule says nothing about remission. It says "another cancer" - other
 # than the index MM - and other_malig.csv is the study's generic code list, so
 # it carries MM's own codes. The override is what makes the criterion mean what
 # it says, and the surest form of it is derived: anything on the diagnosis code
@@ -744,7 +744,7 @@ ok(grepl("AND regexp_replace(trim(dx), '[^A-Za-z0-9]', '') <> ''", oc0, fixed = 
    "and a code that is blank once normalised is still dropped before any of it")
 
 cat("\n-- a run choice is a choice, not a redefinition of the cohort --\n")
-# CONTRACT is what the cohort is; these are where the protocol is silent or the
+# CONTRACT is what the cohort is; these are where nothing is settled or the
 # data has to answer. Pinning them in CONTRACT was a contradiction - the README
 # told the analyst to set them and check_contract() refused the run.
 ok(length(intersect(names(CHOICES), names(CONTRACT))) == 0,
@@ -826,7 +826,7 @@ msg <- tryCatch({ be$build_ndmm_belantamab_codes(NULL); "" }, error = conditionM
 ok(grepl("No row of cl_mma_codelist.csv has CL_MED_ABBR = 'BELA'", msg, fixed = TRUE),
    "an abbreviation matching no code stops the build, as before")
 # The case the exact match introduces: BELA is on the list AND so is another
-# spelling. Every row under the other one falls outside S6.2.1.2 entirely, and
+# spelling. Every row under the other one is missed entirely, and
 # both packages agree with each other while both miss it.
 assign("db_q", mk_bela_q(4L, c("BELAMAF")), envir = be)
 msg <- tryCatch({ be$build_ndmm_belantamab_codes(NULL); "" }, error = conditionMessage)
@@ -1044,7 +1044,7 @@ assign("NDMM_BASE_COHORT", "_ndmm_base_cohort", envir = be)
 be$build_ndmm_cohort_table(NULL, cfg_defaults)
 csql <- BSQL[1]
 ok(!is.na(csql) && grepl("l1.LOT1_START_DT AS INDEX_DATE", csql, fixed = TRUE),
-   "the index date is the 1L start, not the parent's MM-diagnosis index")
+   "the index date is the 1L start, not the MM-diagnosis date")
 # The outer SELECT only. Every one of these names also appears in a CTE, so
 # checking the whole statement would pass on a column the table never gets.
 sel <- sub("\\s*FROM idx i.*", "", sub("(?s).*\\n\\s*SELECT i\\.PATID", "SELECT i.PATID",
@@ -1150,7 +1150,7 @@ ok(length(unbounded) == 0,
                                  "the baseline: ", paste(unbounded, collapse = ", "))
    else "and the join requires both of them to fall in the 12-month baseline")
 ok(grepl("op.diff_days <= 30", join, fixed = TRUE),
-   "within 30 days of each other, as the protocol writes it")
+   "within 30 days of each other, as the rule is written")
 # The inpatient arm is one claim, so it has one date and it is bounded too.
 ipj <- sub(".*LEFT JOIN inpatient_flag ip", "", sql); ipj <- sub("LEFT JOIN outpatient_pairs.*", "", ipj)
 ok(grepl("ip.event_dt BETWEEN l1.pre_lot1_start AND l1.pre_lot1_end", ipj, fixed = TRUE),
@@ -1308,7 +1308,7 @@ consts <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = consts)
 sys.source(file.path(ROOT, "R", "standalone_constants.R"), envir = consts)
 # The bodies of the step functions the runner calls, plus the runner itself.
-# Derived from the runner's own body, not from ORDER: a call added back to the
+# Read from the runner's own body, not from ORDER: a call added back to the
 # runner has to show up here, or the scan would not follow it and the table it
 # writes would go unnoticed.
 step_fns <- unlist(lapply(step_files, function(f)
@@ -1351,7 +1351,7 @@ undeclared <- setdiff(named, c(OUTPUTS, inputs))
 ok(length(undeclared) == 0,
    if (length(undeclared)) paste0("tables written but not declared: ",
                                   paste(undeclared, collapse = ", "))
-   else "every table the run names is declared as an output or as an upstream input")
+   else "every table the run names is declared as an output or as an input")
 # And the other way. A declared output nothing writes is the same failure seen
 # from the other side: the run reports complete and the table is not there.
 # checkpoint() writes wrk(name) with the name in a variable, so the scan above
@@ -1371,7 +1371,7 @@ clear()
 
 
 cat("\n-- pregnancy reads every column a code could be in --\n")
-# S6.2.1.2 asks for a diagnosis, procedure, or revenue code. BILL_PROC_CD is
+# The rule covers diagnosis, procedure and revenue codes. BILL_PROC_CD is
 # the facility-claim procedure code, and the therapy and SCT scans in this repo
 # already read it - pregnancy did not, so a pregnancy HCPCS code populated only
 # there kept the patient. Driven, so the arm cannot quietly go away.

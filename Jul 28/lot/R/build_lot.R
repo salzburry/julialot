@@ -12,11 +12,10 @@
 # different result, so they are checked rather than defaulted. Change a value
 # here and in config.csv together, deliberately.
 #
-# The study window is deliberately NOT here. It has to track the cohort being
-# built, and different cohorts have different windows - the NDMM cohort runs to
-# 2026-03-31, the parent MM cohort to 2025-06-30 - so pinning it would mean
-# editing this file to run the same algorithm against a different study. It is a
-# per-run argument, like the cohort table and the output prefix, validated by
+# The study window is deliberately NOT here. It follows the cohort being built,
+# and different cohorts have different windows, so pinning it would mean editing
+# this file to run the same algorithm against a different study. It is a per-run
+# argument, like the cohort table and the output prefix, checked by
 # pin_study_window() and recorded in LOT_RUN_METADATA.
 CONTRACT <- list(
   catalog                     = "hive_metastore",
@@ -37,8 +36,8 @@ CONTRACT <- list(
   dsn                         = "RWDE",
   tbl_medical                 = "medical",
   tbl_med_proc                = "med_procedure",
-  # How belantamab is named in MED_ABBR, for the S6.2.1.2 line criterion. Same
-  # abbreviation the NDMM build recognises it by on cl_mma_codelist.csv.
+  # How belantamab is spelled in MED_ABBR, for the line criterion. Same
+  # abbreviation the cohort build uses on cl_mma_codelist.csv.
   belantamab_med_abbr         = "BELA",
   tbl_med_diag                = "med_diagnosis",
   tbl_rx                      = "rx"
@@ -284,6 +283,63 @@ check_cohort_input <- function(con, tbl) {
 # This is not hypothetical. The NDMM cohort's own study window ends 2026-03-31
 # while this build defaults to 2025-06-30, which is a different quarterly
 # vintage. Pointing one at the other is the exact case that reads clean.
+# Table names the cohort builds use for their run status. Probed in order, in
+# this run's own work schema and prefix - the cohort table is resolved the same
+# way, so the status table sits beside it.
+COHORT_STATUS_TABLES <- c("NDMM_BUILD_STATUS", "build_status")
+
+# Refuse a cohort whose own build did not finish.
+#
+# Both cohort builds publish the physical cohort table before they are marked
+# complete, and validate, write attrition and record metadata afterwards. So a
+# cohort build can fail and still leave a readable, well-formed cohort table
+# behind - one that passes every check below this, because those ask whether
+# the table is shaped right, not whether anyone stood behind it.
+#
+# Returns the cohort build's run id, or NA when no status table was found, so
+# the metadata row can record which cohort run these lines were built from.
+check_cohort_build <- function(con, cfg) {
+  named <- trimws(cfg$cohort_status_table %||% "")
+  cands <- if (nzchar(named)) named else COHORT_STATUS_TABLES
+  for (nm in cands) {
+    tbl <- wrk(nm)
+    d <- tryCatch(db_q(con, glue(
+           "SELECT * FROM {tbl} ORDER BY UPDATED_AT DESC LIMIT 1")),
+         error = function(e) NULL)
+    if (is.null(d) || !nrow(d)) next
+    # Column case differs between the builds and Spark does not care; R does.
+    pick <- function(want) {
+      i <- match(tolower(want), tolower(names(d)))
+      if (is.na(i)) NA_character_ else as.character(d[[i]][1])
+    }
+    state <- tolower(trimws(pick("state") %||% ""))
+    rid   <- pick("run_id")
+    if (identical(state, "complete")) {
+      log_msg("Cohort build ", rid, " completed (", tbl, ")")
+      return(rid)
+    }
+    if (identical(toupper(Sys.getenv("LOT_IGNORE_COHORT_STATE", unset = "")), "TRUE")) {
+      log_msg("WARNING: cohort build ", rid, " is marked '", state, "' in ", tbl,
+              " and LOT_IGNORE_COHORT_STATE is set. These lines may be built ",
+              "from a cohort its own build did not stand behind.")
+      return(rid)
+    }
+    stop("The cohort build that last wrote ", tbl, " (run ", rid,
+         ") is marked '", state, "', not complete. Its cohort table is still ",
+         "readable and well formed - the build publishes it before it ",
+         "validates it and records its attrition - so nothing further down ",
+         "would notice. Re-run the cohort build. If that run is known to have ",
+         "failed after the cohort was final, set LOT_IGNORE_COHORT_STATE=TRUE.",
+         call. = FALSE)
+  }
+  log_msg("WARNING: no cohort build-status table beside ",
+          wrk(cfg$input_cohort_table), " (looked for ",
+          paste(cands, collapse = ", "), "). Nothing here can say whether the ",
+          "build that wrote that cohort finished. Set COHORT_STATUS_TABLE if ",
+          "it is named something else.")
+  NA_character_
+}
+
 check_cohort_window <- function(con, tbl, cfg) {
   q <- db_q(con, glue("
     SELECT cast(min(INDEX_DATE) as string) AS min_index,
@@ -391,6 +447,8 @@ build_lot <- function(here, cohort_table, prefix,
 
   cohort <- check_cohort_input(con, wrk(cfg$input_cohort_table))
   check_cohort_window(con, wrk(cfg$input_cohort_table), cfg)
+  # Before anything is pinned or built from it.
+  options(lot_cohort_run_id = check_cohort_build(con, cfg))
 
   # LOT1 is written before LOT_LONG, so track partial runs.
   # Cleared first, or a second run in one session inherits the first's.
@@ -639,7 +697,7 @@ write_build_status <- function(con, cfg, state) {
   db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
                     paste(cols, BUILD_STATUS_COLS, collapse = ", "), ")"))
 
-  # CREATE TABLE IF NOT EXISTS does nothing to a table an earlier version left
+  # CREATE TABLE IF NOT EXISTS does nothing to a table an earlier run left
   # behind, so add any column it lacks: naming the columns in the INSERT stops
   # a positional mis-fill but cannot supply a missing one. Look before adding -
   # adding a column that already exists is an error.
@@ -700,10 +758,31 @@ write_build_status <- function(con, cfg, state) {
 RUN_SCOPED_TABLES <- c("LOT_RUN_METADATA", "LOT_QC_SUMMARY",
                        "LOT_CODELIST_METADATA")
 
+# A missing table is fine. Anything else is not: a permission, a lock or a
+# malformed table stops the delete, and swallowing that leaves an earlier
+# attempt's rows under this run's id - a re-run keeps its run id - describing
+# work this run did not do. Whoever reads that metadata directly has nothing
+# telling them it is stale.
 clear_run_rows <- function(con, cfg) {
-  for (t in RUN_SCOPED_TABLES)
-    try(db_exec(con, glue("DELETE FROM {lot_out(t)} WHERE RUN_ID = '{run_id}'")),
-        silent = TRUE)
+  bad <- character(0)
+  for (t in RUN_SCOPED_TABLES) {
+    tbl <- lot_out(t)
+    err <- tryCatch({
+      db_exec(con, glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'")); NULL
+    }, error = function(e) conditionMessage(e))
+    if (!is.null(err) &&
+        !grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found", err,
+               ignore.case = TRUE))
+      bad <- c(bad, paste0(tbl, ": ", err))
+  }
+  # All of them, then stop once: whatever stopped one delete has usually
+  # stopped the others, and naming one at a time would take three runs to
+  # find out.
+  if (length(bad))
+    stop("Could not clear run ", run_id, " from:\n  ",
+         paste(bad, collapse = "\n  "),
+         "\nA re-run keeps its run id, so rows an earlier attempt wrote under ",
+         "it are still there and would be read as this run's.", call. = FALSE)
   invisible(TRUE)
 }
 
@@ -744,7 +823,7 @@ check_no_active_run <- function(con, cfg) {
 
 # The QC phase reports these and carries on - it prints "** BUG **" and the run
 # still finishes. They are not judgement calls: each one is impossible unless
-# something upstream is wrong, so re-run them here where a breach stops the
+# something earlier is wrong, so re-run them here where a breach stops the
 # build. The distributions and coverage tables in phase_qc stay informational.
 LOT1_INVARIANTS <- list(
   list(name = "MAP ends before it starts",
@@ -761,7 +840,7 @@ LOT1_INVARIANTS <- list(
               WHERE lb.LOT1_BASE_END_DT > p.OBS_END_DT"),
   # phase_qc reports this one as INVESTIGATE inside a tryCatch, so a run could
   # finish with it. Every end-date branch is bounded by OBS_END_DT, so it is
-  # impossible unless something upstream is wrong.
+  # impossible unless something earlier is wrong.
   list(name = "SCT end date past observation",
        sql = "SELECT count(*) AS n FROM lot1_sct sct
               INNER JOIN lot_patient_input p ON sct.PATID = p.PATID
@@ -791,14 +870,13 @@ check_lot1_invariants <- function(con, cfg) {
 }
 
 # 08_persist.R writes the metadata and QC summary inside a tryCatch, so a
-# failure there only logs a warning. Rather than edit the ported file, check
-# the row actually arrived - a run with no record of how it was configured is
-# not a run anyone can validate later.
+# failure there only logs a warning. Check the row actually arrived - a run
+# with no record of how it was configured cannot be validated later.
 check_run_recorded <- function(con, cfg) {
   # Exactly one row, not at least one. 08_persist writes this table with a
   # DELETE and an INSERT as separately retried statements, so an INSERT that
-  # reached the warehouse with its answer lost leaves two rows. That file is
-  # the ported source, so the duplicate is caught here rather than edited there.
+  # reached the warehouse with its answer lost leaves two rows. Caught here
+  # rather than in the writer.
   meta_tbl <- lot_out("LOT_RUN_METADATA")
   n <- tryCatch(db_q(con, glue(
          "SELECT count(*) AS n FROM {meta_tbl} WHERE RUN_ID = '{run_id}'"))$n,
@@ -879,7 +957,7 @@ record_codelist_hashes <- function(con, cfg) {
   db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
                     paste(cols, CODELIST_METADATA_COLS, collapse = ", "), ")"))
 
-  # CREATE TABLE IF NOT EXISTS does nothing to a table an earlier version left
+  # CREATE TABLE IF NOT EXISTS does nothing to a table an earlier run left
   # behind, and the INSERT below names its columns - so one this table lacks
   # fails the run rather than being filled positionally. The other two metadata
   # tables already migrate; this one did not, and the first column to be renamed
@@ -916,10 +994,10 @@ record_codelist_hashes <- function(con, cfg) {
 # recorded what the run actually produced. The totals come from check_lot_long,
 # which has just counted them and passed - so they describe a table already
 # found usable, and are not scanned for twice.
-# What produced these tables, beyond the counts. LOT_RUN_METADATA is the ported
-# source's and records seven of the twenty-one settings CONTRACT pins, and
-# nothing about the code - so an old run's outputs could not say which version
-# or which full contract made them. Two columns rather than one per setting:
+# What produced these tables, beyond the counts. LOT_RUN_METADATA records only
+# seven of the twenty-one settings CONTRACT pins and nothing about the code, so
+# on its own it cannot say which version or which contract made an output. Two
+# columns rather than one per setting:
 # CODE_MD5 fingerprints the R that ran, and CONTRACT_SETTINGS carries the lot.
 #
 # A hash of the sources rather than a git sha: this folder is copied into
@@ -957,7 +1035,12 @@ FINAL_METADATA_COLS <- c(N_LOT_LONG_ROWS = "BIGINT",
                          N_LOT_FINAL_PATIENTS = "BIGINT",
                          CODE_MD5 = "STRING", CONTRACT_SETTINGS = "STRING",
                          STUDY_START = "STRING", STUDY_END = "STRING",
-                         LINE_CRITERIA_APPLIED = "STRING")
+                         LINE_CRITERIA_APPLIED = "STRING",
+                         # Which cohort run these lines were built from. The
+                         # cohort table carries no run id, so this is the only
+                         # link between a set of lines and the cohort behind
+                         # them. NULL when no status table was found.
+                         COHORT_RUN_ID = "STRING")
 
 record_final_counts <- function(con, cfg, counts, final) {
   tbl <- lot_out("LOT_RUN_METADATA")
@@ -993,6 +1076,7 @@ record_final_counts <- function(con, cfg, counts, final) {
            N_LOT_FINAL_PATIENTS = {sql_count(final$n_patients)},
            CODE_MD5 = {sql_text(cfg$code_md5)},
            CONTRACT_SETTINGS = {sql_text(contract_settings())},
+           COHORT_RUN_ID = {sql_text(getOption('lot_cohort_run_id', NA_character_))},
            STUDY_START = {sql_text(cfg$study_start)},
            STUDY_END = {sql_text(cfg$study_end)},
            LINE_CRITERIA_APPLIED = {sql_text(getOption('lot_line_criteria', ''))}
@@ -1095,8 +1179,8 @@ check_lot_final <- function(con, cfg) {
 # map_stacked is built from cl_mma_codelist.csv. If the code list does not use
 # that abbreviation the criterion matches nothing and excludes nobody - silently,
 # because "no patient had belantamab" and "the abbreviation is wrong" produce the
-# same empty result. Checking the code list tells them apart: S6.2.1.2 names
-# belantamab, so the study's own MM therapy list must carry it.
+# same empty result. Checking the code list tells them apart: the criterion
+# names belantamab, so the study's own MM therapy list must carry it.
 #
 # Only asked when the criterion is switched on. The NDMM build guards its own
 # side the same way, in build_ndmm_belantamab_codes().
@@ -1130,7 +1214,7 @@ check_belantamab_abbr <- function(con, cfg) {
 # cohort" all produce the same LOT_LONG_FINAL.
 #
 # That matters most for the case this package advertises: the same algorithm run
-# over another cohort. APPLY_NO_BELANTAMAB ships TRUE because the NDMM protocol
+# over another cohort. APPLY_NO_BELANTAMAB ships TRUE because the NDMM cohort
 # needs it, and a run for a cohort with no such exclusion would apply it anyway
 # unless the operator knew to turn it off. It still would - this does not change
 # what runs - but the outputs now say so, and the number of patients it costs is

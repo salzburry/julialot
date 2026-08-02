@@ -25,6 +25,7 @@ build_cohort <- function(cohort_dir, root = cohort_dir, expect_table = NULL,
             add = TRUE)
   }
 
+  check_no_active_run_overall(conn, cfg)
   write_build_status(conn, cfg, "started")
   build_complete <- FALSE
   # Mark partial runs before the connection closes.
@@ -200,8 +201,11 @@ check_settings <- function() {
   if (nzchar(w) && !(w %in% c("30", "60", "90")))
     bad <- c(bad, paste0("OUTPATIENT_WINDOW='", w, "' (want 30, 60 or 90)"))
 
-  a <- Sys.getenv("MIN_AGE", unset = "")
-  if (nzchar(a) && is.na(suppressWarnings(as.integer(a))))
+  # The text, not what coercion makes of it: as.integer("18.5") is 18, so a
+  # decimal would pass here and the build would quietly use a different age
+  # than the one asked for.
+  a <- trimws(Sys.getenv("MIN_AGE", unset = ""))
+  if (nzchar(a) && !grepl("^[0-9]+$", a))
     bad <- c(bad, paste0("MIN_AGE='", a, "' (want a whole number)"))
 
   # The study window is fixed in config_prompts.R and nothing reads these.
@@ -210,23 +214,71 @@ check_settings <- function() {
     if (nzchar(Sys.getenv(v, unset = "")))
       bad <- c(bad, paste0(v, " is set but ignored - the study window is fixed"))
   }
-  for (v in c("PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME")) {
-    x <- Sys.getenv(v, unset = "")
-    if (grepl(".", x, fixed = TRUE))
-      bad <- c(bad, paste0(v, "='", x, "' (a schema name, not catalog.schema)"))
+  # A schema name reaches every statement this build writes, so it is checked
+  # the way the other packages check theirs - a bare identifier, not just "no
+  # dot". All three sources, because pin_output_schema falls through them.
+  for (v in c("PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME", "DOMINO_STARTING_USERNAME")) {
+    x <- trimws(Sys.getenv(v, unset = ""))
+    if (nzchar(x) && !grepl("^[A-Za-z_][A-Za-z0-9_]*$", x))
+      bad <- c(bad, paste0(v, "='", x, "' (want a schema name on its own, ",
+                           "letters, digits and underscores)"))
   }
   if (length(bad))
     stop("Bad settings:\n  ", paste(bad, collapse = "\n  "), call. = FALSE)
   invisible(TRUE)
 }
 
+# Refuse to start while another run is building this prefix.
+#
+# Every output name is the prefix plus the table, with no run id in it, so two
+# runs on one prefix replace each other's checkpoints while the other is still
+# reading them - and both can reach "complete" with the final cohort and the
+# attrition built from different executions. That is a population error, not
+# just untidy metadata.
+#
+# Read before the status row is written, because writing it destroys the
+# evidence: this table is CREATE OR REPLACE, so it holds one row, and the
+# second run's "started" overwrites the first's.
+#
+# A check, not a lock. Two runs starting in the same second can both pass it.
+# It catches the case worth catching - starting a second run while one is
+# going - and says so.
+check_no_active_run_overall <- function(conn, cfg) {
+  tbl <- build_status_table(cfg)
+  d <- tryCatch(DBI::dbGetQuery(conn$con, paste0(
+         "SELECT run_id, state, updated_at FROM ", tbl)),
+       error = function(e) NULL)
+  # No table yet on a first run, and nothing to collide with.
+  if (is.null(d) || !nrow(d)) return(invisible(TRUE))
+  me    <- get0("run_id", ifnotfound = "")
+  state <- tolower(trimws(as.character(d$state[1])))
+  who   <- as.character(d$run_id[1])
+  if (!identical(state, "started") || identical(who, me)) return(invisible(TRUE))
+  if (identical(toupper(Sys.getenv("OVERALL_IGNORE_ACTIVE_RUN", unset = "")), "TRUE")) {
+    log_msg("WARNING: run ", who, " is marked started on prefix '",
+            cfg$object_prefix, "' and OVERALL_IGNORE_ACTIVE_RUN is set. If it ",
+            "is still running, both sets of outputs will be wrong.")
+    return(invisible(TRUE))
+  }
+  stop("Run ", who, " is already building prefix '", cfg$object_prefix,
+       "' (started ", d$updated_at[1], "). Every output name is the prefix ",
+       "plus the table, so two runs would replace each other's tables while ",
+       "the other is reading them, and both could still finish. Use a ",
+       "different OBJECT_PREFIX, or wait. If that run is known to be dead, ",
+       "set OVERALL_IGNORE_ACTIVE_RUN=TRUE.", call. = FALSE)
+}
+
+build_status_table <- function(cfg) {
+  obj <- paste0(tolower(cfg$object_prefix), "build_status")
+  if (nzchar(cfg$catalog))
+    paste0(cfg$catalog, ".", cfg$work_schema, ".", obj)
+  else paste0(cfg$work_schema, ".", obj)
+}
+
 # How the last run ended. A run that dies halfway leaves some tables from this
 # run and some from the one before, and nothing else says so.
 write_build_status <- function(conn, cfg, state) {
-  obj <- paste0(tolower(cfg$object_prefix), "build_status")
-  tbl <- if (nzchar(cfg$catalog))
-    paste0(cfg$catalog, ".", cfg$work_schema, ".", obj) else
-    paste0(cfg$work_schema, ".", obj)
+  tbl <- build_status_table(cfg)
   q <- function(x) paste0("'", gsub("'", "''", as.character(x)), "'")
   DBI::dbExecute(conn$con, paste0(
     "CREATE OR REPLACE TABLE ", tbl, " AS SELECT ",
@@ -276,6 +328,10 @@ pin_output_schema <- function(cfg) {
     stop("No output schema. Set DOMINO_USER_NAME to your personal schema ",
          "(e.g. usr00000), or PROJECT_WORK_SCHEMA to override.", call. = FALSE)
   }
+  if (!grepl("^[A-Za-z_][A-Za-z0-9_]*$", trimws(schema)))
+    stop("Output schema '", schema, "' is not a schema name. Give the schema ",
+         "on its own - letters, digits and underscores - with no catalog and ",
+         "no punctuation.", call. = FALSE)
   cfg$work_schema     <- schema
   cfg$personal_schema <- schema
   cfg$object_prefix   <- Sys.getenv("OBJECT_PREFIX", unset = "")

@@ -1,6 +1,6 @@
 # NDMM cohort — recorded decisions
 
-Decisions that change who is in the cohort, where the protocol is silent,
+Decisions that change who is in the cohort, where the study definition is silent,
 ambiguous, or deliberately overridden. Each says what was decided, what the
 code does about it, and what still needs a counter-signature.
 
@@ -15,12 +15,12 @@ yet confirmed in a controlled study document.
 
 **Decided:** the 1L follow-up CE requirement is **one day** — the enrolment
 span must cover the 1L index date itself. It is *not* the three months the
-protocol text asks for.
+study definition text asks for.
 
 **Scope:** the LOT1 / 1L NDMM cohort only. The 2L/3L cohorts keep the
-protocol's three months unless changed separately.
+study definition's three months unless changed separately.
 
-**Protocol text it overrides** — Rev Round 2, §6.2.1.1:
+**Study definition text it overrides** — the inclusion criteria:
 
 > CE during follow-up: CE from index date until the earliest of 3-months post
 > index or death, with no gaps in enrollment.
@@ -42,13 +42,13 @@ this decision, not a justification of it — read it on the first production run
 and confirm the number is the one intended.
 
 **Recorded by:** the study team, relayed through the build request, and
-re-confirmed on 2026-08-02 against the protocol PDF in
+re-confirmed on 2026-08-02 against the study definition PDF in
 `Questions/July 30 2026/` — one day is the intended rule and the three-month
-sentence in §6.2.1.1 is **superseded**, not overridden by accident.
+sentence in the inclusion criteria is **superseded**, not overridden by accident.
 
 **Status: confirmed, pending a controlled record.** The rule is the one
 intended and the code implements it. What is still missing is a study decision
-record naming the approver and the date, because §6.2.1.1 as circulated still
+record naming the approver and the date, because the inclusion criteria as circulated still
 reads three months and anyone checking the build against that text will find a
 difference. `<prefix>NDMM_FU_CE_COUNTS` gives both numbers on every run.
 
@@ -56,7 +56,7 @@ difference. `<prefix>NDMM_FU_CE_COUNTS` gives both numbers on every run.
 
 ## 2. Belantamab "in any LOT" — split across the two packages
 
-**Decided:** §6.2.1.2's belantamab exclusion runs in two halves, because no one
+**Decided:** the exclusion criteria's belantamab exclusion runs in two halves, because no one
 package can see the whole of it.
 
 | half | where | why it has to be there |
@@ -64,11 +64,11 @@ package can see the whole of it.
 | belantamab **before** the 1L index | here, criterion 9 (`NO_BELANTAMAB_PRE_LOT1`) | `lot` cannot see it at any price — `map_stacked` is built from claims on or after the cohort's `INDEX_DATE` |
 | belantamab **from the index onward** | `lot`, criterion `no_belantamab` | this package has no lines, and the criterion is asked over the patient's whole LOT span |
 
-Together they are the protocol's sentence. Neither is a proxy: a belantamab
+Together they are the study's sentence. Neither is a proxy: a belantamab
 claim before the index *is* a belantamab line before the index, and a
 belantamab MAP after it *is* belantamab in a LOT.
 
-**Why the pre-index half exists.** Read the exclusion bullets in §6.2.1.2 beside
+**Why the pre-index half exists.** Read the exclusion bullets in the exclusion criteria beside
 each other and the scoping is deliberate:
 
 > - Evidence of an MM oncology therapy **during the 12-month 1L baseline period**
@@ -76,10 +76,8 @@ each other and the scoping is deliberate:
 > - Evidence of pregnancy … **during the study period**
 > - Received belantamab mafodotin (i.e., an ADC) **in any LOT**
 
-Three carry a period. The fourth does not. Confirmed against the source PDF page
-24 rather than the OCR text, which mangles enough of that page (`occu1Ting`,
-`penod`, `ehg1ble`) not to be trusted on a point this fine — the bullet is
-complete and there is no period clause missing from it.
+Three carry a period. The fourth does not, and the wording was checked
+carefully — the bullet is complete, with no period clause missing from it.
 
 And reading it as post-index makes it redundant: the first bullet already
 removes any MM oncology therapy, belantamab included, throughout the 12-month
@@ -88,7 +86,7 @@ two share. It is unbounded because it is meant to be — a belantamab line at an
 point in the patient's history disqualifies them.
 
 The gap this closed: belantamab **more than 365 days before the index**. Such a
-patient was not indexed on the belantamab (§6.2.1.1 bars it from setting the
+patient was not indexed on the belantamab (the inclusion criteria bars it from setting the
 index), passed the 12-month prior-therapy criterion, and then reached `lot` with
 the claim invisible. Criterion 9 overlaps `NO_PRIOR_MM_TX` deliberately, so its
 incremental drop in the attrition is exactly that population.
@@ -115,7 +113,7 @@ operational definition left to approve.
   choose.
 - **`<prefix>NDMM_BELANTAMAB_RECONCILE`** lists every cohort member with a
   belantamab claim, with dates. That is the handover list.
-- **§6.2.1.1's "other than belantamab" stays here**, and must. That is a
+- **the inclusion criteria's "other than belantamab" stays here**, and must. That is a
   different rule — belantamab cannot *set* the 1L index — and the index is what
   LOT1 is anchored on, so it has to be settled before the LOT run.
 
@@ -126,7 +124,7 @@ patient-level — false on *every* line of an affected patient — so
 leaves them with none, which is the exclusion. It matches a whole `MED_ABBR` on
 the patient's treatment episodes in `map_stacked`, not a substring, so an
 abbreviation that merely contains `BELA` cannot match — and asking the claims
-rather than `LOT_LONG`'s columns is what keeps "any LOT" literal. See §5.
+rather than `LOT_LONG`'s columns is what keeps "any LOT" literal. See section 5.
 
 **Both packages recognise belantamab the same way, and both guard it.** It is
 one whole `CL_MED_ABBR`, matched exactly — `BELA` by default in each. This build
@@ -137,7 +135,7 @@ would take them all, `lot` only its own. Same drug, same rule.
 Exactness introduces its own blind spot, so it is guarded too:
 `build_ndmm_belantamab_codes()` stops if the list carries another `BEL*`
 abbreviation it does not name, because every row under that spelling would fall
-outside §6.2.1.2 entirely while both packages agreed with each other. And if the
+outside the exclusion criteria entirely while both packages agreed with each other. And if the
 configured abbreviation matches nothing at all, it stops for the older reason —
 silently, "no patient had belantamab" and "the abbreviation is wrong" produce
 the same empty result.
@@ -157,8 +155,8 @@ criterion and stops if it matches no row, which is the same shape as
   so in a 1L newly-diagnosed cohort this should be very few.
 - **The two packages must now agree on the study window and on how many lines
   are built.** The window is settled — `lot` takes it as a run argument and
-  defaults to this protocol's, so both read `2026q1`. `MAX_LOT` is still a
-  stated bound. See §5.
+  defaults to this study definition's, so both read `2026q1`. `MAX_LOT` is still a
+  stated bound. See section 5.
 
 **Recorded by:** the study team, 2026-08-02.
 
@@ -173,7 +171,7 @@ it is the eligible-1L set. No separate eligibility file.
 
 **What the code does:** any agent on that code list may set the 1L index, less
 steroids (dropped where `NDMM_MMA_CODELIST` is built) and less belantamab
-(barred always, per §6.2.1.1's "other than belantamab"). The earliest such
+(barred always, per the inclusion criteria's "other than belantamab"). The earliest such
 claim on or after the MM diagnosis and on or after `LOT1_FROM` is the index.
 
 **What was removed:** `codelists/eligible_1l_agents.csv`, its loader and
@@ -197,8 +195,8 @@ is authoritative.
 
 ## 4. Other malignancy — grouping and bone metastasis
 
-**Decided:** not yet. Both parts are gaps against §6.2.1.2, not open design
-questions — see the protocol quote below.
+**Decided:** not yet. Both parts are gaps against the exclusion criteria, not open design
+questions — see the study definition quote below.
 
 **Two separate questions.**
 
@@ -215,7 +213,7 @@ grouping, and pairing on it reduced in practice to *the same diagnosis code
 twice*.
 
 **Resolved.** Outpatient claims now pair on the **ICD category** — the first
-three characters of the code — which is the protocol's "same primary tumor
+three characters of the code — which is the study's "same primary tumor
 type": every `C50.x` is breast, every `C34.x` lung, every `C79.x` a secondary
 neoplasm. `primary_tumor_groups.csv` and its loader are gone; there is nothing
 a hand-written map could say that the category does not, and leaving it empty
@@ -226,46 +224,46 @@ prices it against the old per-label grain.
 
 Where the category over-groups: `C44` (skin), `C76` and `C80` (ill-defined and
 unspecified sites) are broad. In each the two claims are still the same broad
-cancer type, which is the unit the protocol asks for.
+cancer type, which is the unit the study definition asks for.
 
-*Bone metastasis.* **Decided: follow the protocol.** §6.2.1.2 excludes on
+*Bone metastasis.* **Decided: follow the study definition.** the exclusion criteria excludes on
 
 > ≥1 inpatient or ≥2 outpatient ICD-9-CM or ICD-10-CM codes on separate days,
 > within 30 days, for the same primary tumor type **and/or metastatic cancer**
 
-`C79.51`, `C79.52` and `198.5` are metastatic cancers. The protocol names
+`C79.51`, `C79.52` and `198.5` are metastatic cancers. The study definition names
 metastatic cancer as exclusionary in its own right, so all three exclude.
 
 **What changed:** `SECONDARY MALIGNANT NEOPLASM OF BONE` is removed from
 `NDMM_MM_ADJACENT_OVERRIDE`, which is now four labels rather than five —
 monoclonal gammopathy and the three plasma-cell disorders. Those four stay
 because they are the index disease or its precursor, not *another* cancer;
-`C79.5x` is another cancer by the protocol's own wording. `C79.51` previously
+`C79.5x` is another cancer by the study's own wording. `C79.51` previously
 never reached the other-cancer scan; it does now, and pairs under ICD category
 `C79` alongside `C79.52` and the rest of the secondary-neoplasm block.
 
-**What it costs:** the source overrode the group because myeloma bone disease is
-commonly miscoded as `C79.51`, and that concern is real — some patients removed
-by this will be MM patients whose bone lesions were coded as metastases. The
-decision is that the protocol text governs. The cohort is **smaller** than both
-the source's and the previous build's. `<prefix>NDMM_MM_ADJACENT_CODES` lists
+**What it costs:** the group was once overridden because myeloma bone disease
+is commonly miscoded as `C79.51`, and that concern is real — some patients
+removed by this will be MM patients whose bone lesions were coded as
+metastases. The decision is that the study definition governs. The cohort is
+**smaller** either way. `<prefix>NDMM_MM_ADJACENT_CODES` lists
 what the four remaining labels still keep, and the attrition step 7 count is
 where the change lands.
 
-**Recorded by:** the study team, 2026-08-02 — "follow the protocol to the tee".
+**Recorded by:** the study team, 2026-08-02 — "follow the study definition to the tee".
 
 **Status: decided and implemented.**
 
 ---
 
-## 5. Open against the protocol, not yet decided
+## 5. Open against the study definition, not yet decided
 
-Read off *Belantamab_Optum LoT_Unmet_Need_CoAuth Rev Round 2 (June 16 2026)*,
-§6.1, §6.2.1.1 and §6.2.1.2. These are unrecorded gaps, listed so they are not
+Read off *Belantamab_Optum LoT_Unmet_Need_CoAuth (June 16 2026)*,
+the study period, the inclusion criteria and the exclusion criteria. These are unrecorded gaps, listed so they are not
 found again from scratch.
 
 **Continuous enrolment with medical *and* pharmacy benefits — satisfied by
-construction, nothing to implement.** §6.2.1.1 asks for "CE of at least
+construction, nothing to implement.** the inclusion criteria asks for "CE of at least
 12-months with medical and pharmacy benefits before the 1L cohort index date",
 and `build_enrollment_spans_ndmm()` filters on no benefit type. That is correct
 here: the Optum extract does not separate them. `member_enrollment` has 27
@@ -281,20 +279,19 @@ RACE  STATE  YRDOB  EXTRACT_YM  VERSION  ETHNICITY  RACE_SOURCE
 
 — `ASO`, `BUS`, `CDHP`, `PRODUCT`, `HEALTH_EXCH` and `GROUP_NBR` are plan
 structure and funding, not coverage type. A span carries both benefits, so
-`ELIGEFF` / `ELIGEND` already express the protocol's requirement and adding a
-predicate would filter on nothing. Source: `docs/optum enrolment.pdf`, which is
-a `DESCRIBE` of the same table. The parent build's `CE_b` / `CE_f` are correct
-for the same reason.
+`ELIGEFF` / `ELIGEND` already express the study's requirement and adding a
+predicate would filter on nothing. Confirmed against a `DESCRIBE` of the same
+table. The `overall` build's `CE_b` / `CE_f` are correct for the same reason.
 
 Do not re-derive this from claims. A count of enrolled patients with no
 pharmacy fill looks like a coverage signal and is not one: it is dominated by
 short enrolment spans and by patients whose only MM code is a rule-out. The
-column list is the answer and it is in `docs/`.
+column list is the answer.
 
-**The study period was never wrong, but its defaults disagreed.** §6.1's design
-figure gives study start **01 Jan 2016**, 1L from 01 Jan 2017, end of data
+**The study period was never wrong, but its defaults disagreed.** The study
+design gives study start **01 Jan 2016**, 1L from 01 Jan 2017, end of data
 31 Mar 2026. `config.csv` supplies `STUDY_START=2016-01-01` and is loaded before
-the constants, so a real run always used the protocol's date. The *defaults*
+the constants, so a real run always used the study's date. The *defaults*
 disagreed — `NDMM_STUDY_START` fell back to `2015-07-01`, `cfg$study_start` to
 `2016-01-01` — which `check_constants()` would have caught by stopping the
 build. **Fixed:** both defaults are now `2016-01-01`, so a missing `config.csv`
@@ -303,7 +300,7 @@ cannot widen the pregnancy and MM-diagnosis scans, and the comment on
 
 **The two packages read different data vintages, and it is worse than the
 belantamab case.** `nndm/config.csv` ends the study at **2026-03-31**, which is
-§6.1's end of data, so its scans resolve to the `2026q1` CDM tables.
+the study period's end of data, so its scans resolve to the `2026q1` CDM tables.
 `lot/config.csv` ends at **2025-06-30** and resolves to `2025q2` — the window
 `overall` was built and run on.
 
@@ -326,8 +323,8 @@ would have read. `check_settings()` rejects a window that runs backwards, and
 `pin_study_window()` rejects one whose dates will not parse. A mismatched pair
 now fails at preflight instead of producing a plausible wrong answer.
 
-**Decided: `lot` follows the NNDM protocol, and the window is a run argument.**
-`lot/config.csv` defaults to §6.1's study period — `STUDY_START=2016-01-01`,
+**Decided: `lot` follows the NNDM study definition, and the window is a run argument.**
+`lot/config.csv` defaults to the study period's study period — `STUDY_START=2016-01-01`,
 `STUDY_END=2026-03-31` — which is the same window `nndm` uses and resolves to the
 same `2026q1` CDM tables. The NDMM cohort and the LOT build over it therefore
 see one vintage, and the belantamab exclusion is evaluated over the whole of the
@@ -344,7 +341,7 @@ Rscript build.R NDMM_COHORT ndmm_ 2016-01-01 2026-03-31
 Rscript build.R MM_COH_FINAL mm_   2015-07-01 2025-06-30
 ```
 
-which is what lets the same algorithm run over the parent MM cohort — frozen at
+which is what lets the same algorithm run over the broader MM cohort — frozen at
 2015-07-01 .. 2025-06-30 — without editing the package. Both dates are written to
 `LOT_RUN_METADATA`, so an output says which window and therefore which vintage
 produced it.
@@ -361,7 +358,7 @@ lines. Closed.** It used to read `LOT_BASE_MEDS` and `LOT_BASE_1ST_ADD_MED` off
 `LOT_LONG`, which bounded it twice over: by `MAX_LOT`, since the build makes five
 lines, and by position within a line, since a belantamab given as a line's
 *second* addition is in neither column. "Any LOT" then meant "any of the first
-five, and only as a base med or the first addition", which is not §6.2.1.2's
+five, and only as a base med or the first addition", which is not the exclusion criteria's
 sentence.
 
 Two attempts to quantify that gap rather than close it — a count of LOT5s
@@ -383,11 +380,11 @@ longer bounds this exclusion.
 **The other boundary — before the index — is closed in `nndm`, not here.**
 `map_stacked` is built from claims on or after the cohort's `INDEX_DATE`, so
 `lot` cannot see a belantamab line earlier in the patient's history whatever
-this criterion does. That half is criterion 9 of the NDMM funnel; see §2.
+this criterion does. That half is criterion 9 of the NDMM funnel; see section 2.
 
 **The shipped line criterion is this study's, and it is on by default.**
 `APPLY_NO_BELANTAMAB=TRUE` in `lot/config.csv` is right for `NDMM_COHORT` and
-wrong for any cohort whose protocol has no such exclusion — and passing a
+wrong for any cohort whose study definition has no such exclusion — and passing a
 different cohort, prefix and window does not change it. That default is a study
 decision and stays; what was a defect is that nothing recorded it.
 `report_line_criteria()` now logs and records every criterion, applied or not,
@@ -396,20 +393,20 @@ with the number of patients it catches (`LINE_CRITERIA_APPLIED`, e.g.
 criterion was switched off" and "this is not that study's cohort" all produced
 the same `LOT_LONG_FINAL`.
 
-**Annex 2 is cited both ways.** §6.2.1.1 says "For a full list of
-eligible/expected MM therapies, see Annex 2"; §6.2.2 says "Annex 2 contains an
+**Annex 2 is cited both ways.** the inclusion criteria says "For a full list of
+eligible/expected MM therapies, see Annex 2"; the regimen categorisation says "Annex 2 contains an
 **exemplary** list of potential treatment combinations… may be recategorized".
 Decision #3 took the code list as authoritative, which is the permissive
 reading. That remains defensible, but the README's claim that Annex 2 "is not
-that list" overstates it: §6.2.1.1 does point at Annex 2 for eligibility.
+that list" overstates it: the inclusion criteria does point at Annex 2 for eligibility.
 
 ---
 
-## 6. Checked against the Optum documentation
+## 6. Checked against the Optum CDM documentation
 
-`docs/` carries `optum business rules.pdf`, `optum data dict.pdf` and
-`optum enrolment.pdf`. Assumptions this build makes about the CDM, and what
-those say about them. Check here before asking the warehouse.
+Assumptions this build makes about the CDM, and what the vendor's own data
+dictionary and business rules say about them. Check here before asking the
+warehouse.
 
 **`ICD_FLAG` is `'9'` or `'10'`, and nothing else.** The business rules state it
 five times, and the column is `VARCHAR(2)`, so the longer spellings in
@@ -419,18 +416,18 @@ yields NULL, which matches no code list - the source read every non-ICD-9
 spelling as ICD-10, so a blank flag on a genuine ICD-9 claim was mis-classed.
 
 **Diagnosis position is not filtered, and should not be.** `DIAG_POSITION` runs
-1 to 25 with 1 as the primary diagnosis. §6.2.1.1 asks for an MM diagnosis "in
+1 to 25 with 1 as the primary diagnosis. the inclusion criteria asks for an MM diagnosis "in
 any position", so no step reads that column. Confirmed absent from the whole
 package.
 
 **Enrolment spans are built from `member_enrollment`, not the rollup, and the
 documentation is a better reason than the one the code gave.**
 `member_cont_enrollment` is Optum's own rollup, one row per span of continuous
-enrolment at **"less than 30 day break in coverage"**. §6.2.1.1 says gaps "of
+enrolment at **"less than 30 day break in coverage"**. the inclusion criteria says gaps "of
 **<= 30 days** are considered to be continuously enrolled". Those differ by a
 day at the boundary and Optum's is the stricter, so the prebuilt table would
-drop patients the protocol keeps. Building the spans here bridges `<= 30`,
-which is the protocol's rule - and only a raw build can reveal the true gaps
+drop patients the study definition keeps. Building the spans here bridges `<= 30`,
+which is the study's rule - and only a raw build can reveal the true gaps
 `NDMM_ENROLL_SPANS_STRICT` needs.
 
 **The four-source therapy scan is necessary, not belt-and-braces.** `RX` holds
@@ -444,7 +441,7 @@ facility detail records bundled into it. That is what makes
 `cf.CONF_ID IS NOT NULL` a sound inpatient test.
 
 **Pregnancy reads diagnosis, procedure and revenue codes** in both packages,
-which is what §6.2.1.2 asks for. `RVNU_CD` and `BILL_PROC_CD` are unstacked from
+which is what the exclusion criteria asks for. `RVNU_CD` and `BILL_PROC_CD` are unstacked from
 `medical` in the same pass as `PROC_CD`.
 
 `BILL_PROC_CD` was added on 2026-08-02. It is the facility-claim procedure code,

@@ -43,9 +43,9 @@ stop_if_blank <- function(x, msg) {
   if (!nzchar(x)) stop(msg)
 }
 
-# The ported rules call wrk() and cdm_src() with no cfg argument, so the config
-# is shared state. set_lot_config() makes that explicit and says so when it is
-# missing, instead of failing with "object 'cfg' not found" deep in a step.
+# wrk() and cdm_src() take no cfg argument, so the config is shared state.
+# This makes that explicit and says so when it is missing, instead of failing
+# with "object 'cfg' not found" deep inside a step.
 set_lot_config <- function(x) {
   assign("cfg", x, envir = globalenv())
   invisible(x)
@@ -64,10 +64,9 @@ full_name <- function(schema, object) {
 }
 
 cdm <- function(tbl) full_name(nndm_config()$cdm_schema, tbl)
-# Every table this build touches carries the cohort prefix: the ones it reads
-# from the cohort and LOT builds as well as the ones it writes, because they all
-# belong to the same cohort. The ported steps call wrk() and get the prefix
-# without having to know it exists, which is why they needed no change.
+# Every table this build touches carries the cohort prefix - what it reads as
+# well as what it writes, since they all belong to one cohort. Steps call wrk()
+# and pick up the prefix without knowing it is there.
 wrk <- function(tbl) {
   cfg <- nndm_config()
   prefix <- if (is.null(cfg$object_prefix)) "" else cfg$object_prefix

@@ -39,9 +39,8 @@ cfg_defaults <- list(
   # would have its follow-up silently truncated at the vintage;
   # check_cohort_window() stops instead.
   #
-  # The dates are the NNDM protocol's S6.1 study period, which is the cohort
-  # this build is run for. Another cohort with another window passes its own -
-  # nothing here has to change.
+  # These dates are the study period of the cohort this build is usually run
+  # for. Another cohort passes its own window - nothing here has to change.
   study_start          = Sys.getenv("STUDY_START", unset = "2016-01-01"),
   study_end            = Sys.getenv("STUDY_END", unset = "2026-03-31"),
 
@@ -65,10 +64,15 @@ cfg_defaults <- list(
   # single_day: an ALLO line spans only the transplant date.
   allo_lot_span = Sys.getenv("ALLO_LOT_SPAN", unset = "single_day"),
   max_lot       = as.integer(Sys.getenv("MAX_LOT", unset = "5")),
-  # How belantamab is named in MED_ABBR, for the S6.2.1.2 line criterion in
-  # line_criteria.R. Same abbreviation the NDMM build recognises it by on
+  # How belantamab is spelled in MED_ABBR, for the line criterion in
+  # line_criteria.R. Same abbreviation the cohort build uses on
   # cl_mma_codelist.csv.
   belantamab_med_abbr = toupper(trimws(Sys.getenv("BELANTAMAB_MED_ABBR", unset = "BELA"))),
+
+  # What the cohort build calls its run-status table, before the prefix. Empty
+  # means try the names the cohort builds in this folder use. The check refuses
+  # a cohort whose own build did not finish.
+  cohort_status_table = trimws(Sys.getenv("COHORT_STATUS_TABLE", unset = "")),
 
   # ---- Observation end ----
   # FALSE (primary): OBS_END_DT = ENDDATE = min(death, study_end), so a
