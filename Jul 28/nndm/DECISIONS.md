@@ -110,6 +110,8 @@ criterion and stops if it matches no row, which is the same shape as
   study's N. The ninth step now lives in the LOT build's own reporting.
 - The LOT run processes slightly more patients. Belantamab is a later-line ADC,
   so in a 1L newly-diagnosed cohort this should be very few.
+- **The two packages must now agree on the study window and on how many lines
+  are built.** Neither is a code question, and both are open — see §5.
 
 **Recorded by:** the study team, 2026-08-02.
 
@@ -251,6 +253,36 @@ disagreed — `NDMM_STUDY_START` fell back to `2015-07-01`, `cfg$study_start` to
 build. **Fixed:** both defaults are now `2016-01-01`, so a missing `config.csv`
 cannot widen the pregnancy and MM-diagnosis scans, and the comment on
 `cfg$study_start` no longer claims the pregnancy scan reads it.
+
+**The two packages read different data vintages, and since #2 that matters.**
+`nndm/config.csv` ends the study at **2026-03-31**, which is §6.1's end of data,
+so its scans resolve to the `2026q1` CDM tables. `lot/config.csv` ends at
+**2025-06-30** and resolves to `2025q2` — the window `overall` was built and run
+on. Before #2 the two were independent and the mismatch was only a reporting
+inconsistency. Now the belantamab exclusion is evaluated in `lot`, so a
+belantamab claim after 2025-06-30 is in the cohort's window and not in the LOT
+build's: it cannot trigger the exclusion, and the patient stays. The cohort's
+own `NDMM_BELANTAMAB_RECONCILE` list would show them, which is the check that
+catches it.
+
+This is a study decision, not a defect — the packages are parameterised and
+either window is a legitimate configuration. It needs settling before the
+production run, one of:
+
+- run all three on `2025q2` (consistent, but drops nine months of follow-up the
+  protocol's §6.1 window includes), or
+- run all three on `2026q1` (the protocol's window; needs `lot` re-validated
+  against the newer vintage), or
+- keep them apart deliberately and state in the SAP that the belantamab
+  exclusion is evaluated only through 2025-06-30.
+
+**"Any LOT" means the lines the LOT build produces, which is `MAX_LOT` of
+them.** `lot` builds up to `MAX_LOT` lines per patient (5 by default); the
+criterion is applied across all of them. A patient whose only belantamab
+exposure is in a sixth line is not excluded. In a 1L newly-diagnosed cohort
+followed from index this is a narrow gap, and raising `MAX_LOT` costs run time
+on every patient — so it is a bound to state, not silently a rule. Also a
+configuration decision rather than a defect.
 
 **Annex 2 is cited both ways.** §6.2.1.1 says "For a full list of
 eligible/expected MM therapies, see Annex 2"; §6.2.2 says "Annex 2 contains an
