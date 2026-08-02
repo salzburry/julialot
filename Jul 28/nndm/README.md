@@ -184,7 +184,7 @@ than a note saying so:
 |---|---|---|
 | #3 | which agents actually set the index — the code list is the eligible set, so this is a review rather than a decision | `NDMM_INDEX_AGENTS` |
 | #5 | one day of follow-up CE against the protocol's three months | `NDMM_FU_CE_COUNTS` |
-| #7 | whether a `C79.5x` is myeloma bone disease or a metastasis | `NDMM_MM_ADJACENT_CODES` → `NDMM_MM_ADJACENT_OVERRIDE` in `nndm_constants.R` |
+| #7 | which codes stay the index disease rather than another cancer | `NDMM_MM_ADJACENT_CODES` → `NDMM_MM_ADJACENT_OVERRIDE` in `nndm_constants.R` |
 | #7 | whether the ICD category is the right unit for "same primary tumour type" | `NDMM_OTHER_MALIG_GRAIN`, `NDMM_OTHER_MALIG_GROUPS` |
 | #9 | which claims proxy stands for "in any LOT" | `NDMM_BELANTAMAB_SCOPE_COUNTS`, `NDMM_BELANTAMAB_RECONCILE` |
 
@@ -291,40 +291,28 @@ shrink the cohort by a rule nobody could reproduce from the document.
 **`<prefix>NDMM_INDEX_AGENTS`** — every `CL_MED_ABBR` on the code list, whether
 this run would let it set an index, and how many patients it set one for.
 
-### Bone metastasis, and which codes it actually reaches
+### Bone metastasis excludes, per the protocol
 
 The other-cancer criterion is decided on `other_malig.csv`'s `tumor_group`
-label, and five groups are overridden — treated as the index disease rather
-than another cancer. Four of them the label settles: **monoclonal gammopathy**,
-**solitary plasmacytoma**, **plasma cell leukemia**, **extramedullary
-plasmacytoma** are plasma-cell disease.
+label, and four groups are overridden — treated as the index disease rather
+than another cancer: **monoclonal gammopathy**, **solitary plasmacytoma**,
+**plasma cell leukemia**, **extramedullary plasmacytoma**. All four are
+plasma-cell disease, which is the index disease or its precursor.
 
-The fifth is not like the others. **`SECONDARY MALIGNANT NEOPLASM OF BONE`**
-says a cancer spread to bone. It does not say *which* cancer. Myeloma bone
-disease is usually coded as MM with bone involvement, but it is miscoded here
-too, which is why the source build overrides the group — and a breast or
-prostate primary metastatic to bone carries the same code.
+**Secondary neoplasm of bone is not among them, and that is deliberate.**
+§6.2.1.2 excludes on "the same primary tumor type **and/or metastatic cancer**",
+and `C79.51`, `C79.52` and `198.5` are metastatic cancers. The source build
+overrode `SECONDARY MALIGNANT NEOPLASM OF BONE` because myeloma bone disease is
+commonly miscoded that way; this build follows the protocol text instead and
+lets all three exclude. They pair under ICD category `C79` with the rest of the
+secondary-neoplasm block.
 
-**The label is per code here, and it is matched whole.** `other_malig.csv`
-carries 1,618 distinct `tumor_group` values over 1,643 codes, so a label picks
-out a code, and naming one in `NDMM_MM_ADJACENT_OVERRIDE` decides that code.
-Which means the three bone codes do not land together:
+That makes the cohort smaller than the source's, and some of the patients it
+removes will be myeloma patients whose bone lesions were coded as metastases.
+That cost is accepted — see `DECISIONS.md` §4.
 
-| dx | label | |
-|---|---|---|
-| `C7951` | `SECONDARY MALIGNANT NEOPLASM OF BONE` | in the list — **kept** |
-| `C7952` | `SECONDARY MALIGNANT NEOPLASM OF BONE MARROW` | not in the list — **excludes** |
-| `1985` | `SECONDARY MALIGNANT NEOPLASM OF BONE AND BONE MARROW` | not in the list — **excludes**, but ICD-9 predates the scan window |
-
-So `C79.51` is already handled and `C79.52` is not. Whether that is right is
-open — see `DECISIONS.md` §4. Closing it is two strings appended to
-`NDMM_MM_ADJACENT_OVERRIDE` in `nndm_constants.R`, exactly as the remission and
-relapse states were added; there is no per-code file, because with one label per
-code there is nothing such a file could say that the label list cannot.
-
-Every run writes **`<prefix>NDMM_MM_ADJACENT_CODES`**: every code currently kept
-as the index disease, with the label that kept it. That table is where the split
-above is visible, and it is the one to read before deciding.
+Every run writes **`<prefix>NDMM_MM_ADJACENT_CODES`**: every code still kept as
+the index disease, with the label that kept it. Four labels now, not five.
 
 ### Two outpatient claims pair on the ICD category
 

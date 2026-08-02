@@ -54,9 +54,13 @@ NDMM_FU_CE_DAYS          <- 0L
 # malig_codes() logs how many of these actually matched the codelist;
 # a match count < length(this) means the stored labels differ from the
 # wording below and is a run-review blocker.
+# SECONDARY MALIGNANT NEOPLASM OF BONE is NOT here. S6.2.1.2 excludes on
+# "the same primary tumor type and/or metastatic cancer", and C79.51 is a
+# metastatic cancer, so the protocol says it excludes. The source overrode it
+# because myeloma bone disease is often miscoded that way; following the
+# protocol is the decision on record. See DECISIONS.md #4.
 NDMM_MM_ADJACENT_OVERRIDE <- c(
   "MONOCLONAL GAMMOPATHY",
-  "SECONDARY MALIGNANT NEOPLASM OF BONE",
   "SOLITARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION",
   "PLASMA CELL LEUKEMIA NOT HAVING ACHIEVED REMISSION",
   "EXTRAMEDULLARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION"

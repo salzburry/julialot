@@ -190,6 +190,17 @@ ADDED <- list(
 # one conjunction either way - but different per-step counts, and the attrition
 # is the deliverable.
 SPLICE <- list(
+  # The sixth clinical change, and the one the protocol dictates rather than
+  # permits. S6.2.1.2 excludes on "the same primary tumor type and/or
+  # metastatic cancer". SECONDARY MALIGNANT NEOPLASM OF BONE is C79.51, a
+  # metastatic cancer, so the protocol says it excludes; the source overrode it
+  # because myeloma bone disease is often miscoded that way. Dropped from the
+  # override list, so it excludes as written. The cohort is smaller than
+  # apr_30_2026's. See nndm/DECISIONS.md #4.
+  "R/nndm_constants.R" = list(
+    list(from = "NDMM_MM_ADJACENT_OVERRIDE <- c(",
+         to   = "\"EXTRAMEDULLARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION\"",
+         src_from = 109L, src_to = 114L)),
   "R/steps/07_cohort.R" = list(
     # Widened: whole/elig/elig_lot1 are rewritten too. This package no longer
     # reads LOT_LONG or a parent cohort table, so the first three rows of the

@@ -157,85 +157,33 @@ Where the category over-groups: `C44` (skin), `C76` and `C80` (ill-defined and
 unspecified sites) are broad. In each the two claims are still the same broad
 cancer type, which is the unit the protocol asks for.
 
-*Bone metastasis.* `C79.51`, `C79.52` and `198.5` say a cancer spread to bone,
-not which cancer. Treating them all as myeloma bone disease keeps patients
-with another primary; treating them all as another cancer removes genuine MM
-patients. The tumour-group label decides it, and because the label is per code
-it decides each of the three separately. `<prefix>NDMM_MM_ADJACENT_CODES` lists
-every code the label list currently keeps.
-
-**What the production file actually says.** Three rows carry these codes, and
-they do not all land the same way:
-
-| icd_family | dx | tumor_group | in the override list? |
-|---|---|---|---|
-| ICD10DIAG | C7951 | Secondary malignant neoplasm of bone | **yes** — kept |
-| ICD10DIAG | C7952 | Secondary malignant neoplasm of bone marrow | no — excludes |
-| ICD9DIAG | 1985 | Secondary malignant neoplasm of bone and bone marrow | no — excludes |
-
-`NDMM_MM_ADJACENT_OVERRIDE` already carries `SECONDARY MALIGNANT NEOPLASM OF
-BONE`, so `C79.51` — the common myeloma-bone-disease miscode — is already
-treated as the index disease and does **not** exclude. The comparison is string
-equality on the whole label, so `… OF BONE MARROW` is a different label and is
-not reached by that entry.
-
-So the open part is narrower than it looked, and it has a shape this build has
-already seen once. The source overrode the first of the three plasma-cell
-states and not the other two, and that was corrected here as
-`NDMM_MM_ADJACENT_STATE_LABELS`. This is the same omission: bone was overridden,
-bone marrow was not. Myeloma is a plasma-cell malignancy *of the bone marrow*,
-so if `C79.51` is miscoded myeloma often enough to warrant an override,
-`C79.52` is at least as likely to be.
-
-**The protocol answers this, and it answers against the override.** §6.2.1.2
-excludes on
+*Bone metastasis.* **Decided: follow the protocol.** §6.2.1.2 excludes on
 
 > ≥1 inpatient or ≥2 outpatient ICD-9-CM or ICD-10-CM codes on separate days,
 > within 30 days, for the same primary tumor type **and/or metastatic cancer**
 
-Metastatic cancer is named as exclusionary in its own right. `C79.51`, `C79.52`
-and `198.5` are secondary — metastatic — neoplasms. So the protocol says all
-three should exclude, and the entry already in `NDMM_MM_ADJACENT_OVERRIDE`
-keeping `C79.51` is a **deviation from it**.
+`C79.51`, `C79.52` and `198.5` are metastatic cancers. The protocol names
+metastatic cancer as exclusionary in its own right, so all three exclude.
 
-An earlier revision of this file recommended adding the other two labels to the
-override. That was written before the protocol text was read and it is
-withdrawn: it would have widened a deviation rather than closed one.
+**What changed:** `SECONDARY MALIGNANT NEOPLASM OF BONE` is removed from
+`NDMM_MM_ADJACENT_OVERRIDE`, which is now four labels rather than five —
+monoclonal gammopathy and the three plasma-cell disorders. Those four stay
+because they are the index disease or its precursor, not *another* cancer;
+`C79.5x` is another cancer by the protocol's own wording. `C79.51` previously
+never reached the other-cancer scan; it does now, and pairs under ICD category
+`C79` alongside `C79.52` and the rest of the secondary-neoplasm block.
 
-**So the question is the reverse one:** should `SECONDARY MALIGNANT NEOPLASM OF
-BONE` come *out* of `NDMM_MM_ADJACENT_OVERRIDE`, bringing the build back to the
-protocol? The clinical argument for keeping it is real — myeloma bone disease
-is commonly miscoded as `C79.51`, and the source build overrode the group for
-that reason — but it is an argument for a documented deviation, not for silence.
-Today the deviation is neither in the protocol nor recorded as a departure from
-it.
+**What it costs:** the source overrode the group because myeloma bone disease is
+commonly miscoded as `C79.51`, and that concern is real — some patients removed
+by this will be MM patients whose bone lesions were coded as metastases. The
+decision is that the protocol text governs. The cohort is **smaller** than both
+the source's and the previous build's. `<prefix>NDMM_MM_ADJACENT_CODES` lists
+what the four remaining labels still keep, and the attrition step 7 count is
+where the change lands.
 
-**This one needs clinical judgement.** No file in this repository can answer
-which primary a `C79.5x` belongs to. It is the only one of the four that
-cannot be resolved by deriving from something already governed.
+**Recorded by:** the study team, 2026-08-02 — "follow the protocol to the tee".
 
-**Status: pending decision**, and the decision is whether to keep a deviation
-the protocol does not authorise, on all three codes — not whether to extend it.
-
-The grain half of this decision is closed — see *Resolved* above. What is left
-is the bone-metastasis half, and it is one question: keep an override the
-protocol does not authorise, or drop it.
-
----
-
-## Note on code lengths in `other_malig.csv`
-
-Matching is exact equality on the punctuation-stripped code, both sides. The
-ICD-10 rows are 3/4/5/6 characters (14 / 318 / 672 / 82), which is the normal
-spread for billable ICD-10-CM and needs nothing.
-
-The ICD-9 rows are a different story: they are truncated to the three-character
-category while keeping the *first child's* description — `141` is labelled
-"Malignant neoplasm of base of tongue", which is `141.0`. A claim coded `1410`
-therefore matches nothing. This is harmless here only because of the window:
-the other-cancer scan reads claims from `2017-01-01` less the 12-month baseline
-— `2016-01-01` — and US claims stopped carrying ICD-9 in October 2015. Worth
-re-checking if the study period is ever moved earlier.
+**Status: decided and implemented.**
 
 ---
 
