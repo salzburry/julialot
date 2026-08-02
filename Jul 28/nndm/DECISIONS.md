@@ -329,6 +329,45 @@ facility detail records bundled into it. That is what makes
 which is what §6.2.1.2 asks for. `RVNU_CD` is unstacked from `medical` in the
 same pass as `PROC_CD`.
 
+**One documented source neither package reads.** The business rules' rule 5,
+*"Finding the patients who took the drug of interest"*, names four:
+
+| | Optum names | this build reads |
+|---|---|---|
+| 1 | `NDC` + `FILL_DT` from `t_rx` | yes |
+| 2 | `NDC` + `FST_DT` from `t_medical` | yes |
+| 3 | `PROC_CD` + `FST_DT` from `t_medical` | yes |
+| 4 | `PROC` + `FST_DT` from `t_med_procedure` — *"taking [a] particular drug as procedure using HCPCS/CPT code"* | **no** |
+
+`med_procedure` is read only for the pregnancy and clinical-trial scans, on ICD
+procedure codes. The MM-therapy scan does not read it, in either package or in
+the baseline — so this is inherited, not something the port dropped. The build
+also reads `BILL_PROC_CD`, which Optum does not name, so the coverage is three
+of four plus one extra rather than a straight subset.
+
+Whether it matters turns on how far `medical.PROC_CD` and `med_procedure.PROC`
+overlap. If every administration code appears on both, nothing is missed; if
+some claims populate only `med_procedure`, then a patient whose sole record of
+an administered agent sits there is invisible — which moves the 1L index date
+or keeps them out of the cohort entirely, and weakens the prior-therapy
+exclusion the same way. Measure it before deciding:
+
+```sql
+SELECT count(DISTINCT p.PATID) AS n_patients_only_in_med_procedure
+FROM   <cdm>.t_med_procedure_2026q1 p
+INNER JOIN <work>.mma_codelist c
+        ON upper(regexp_replace(p.PROC, '[^A-Za-z0-9]', '')) = c.code
+       AND c.code_type IN ('HCPCS','CPT')
+LEFT  JOIN <cdm>.t_medical_2026q1 m
+        ON m.PATID = p.PATID AND m.FST_DT = p.FST_DT
+       AND upper(regexp_replace(coalesce(cast(m.PROC_CD as string),''),
+                                '[^A-Za-z0-9]', '')) = c.code
+WHERE  m.PATID IS NULL;
+```
+
+Zero means the two sources agree and the omission costs nothing. Anything else
+is patients the therapy scan cannot see.
+
 **Still assumed, not documented:** that NDCs match once both sides are stripped
 to digits and left-padded to 11. The documentation says nothing about NDC
 width. The join guards against the failure mode that matters - a code with no
