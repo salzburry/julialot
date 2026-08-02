@@ -15,8 +15,10 @@ CONTRACT <- list(
   cdm_schema                  = "clnprw_optum",
   codelist_dir                = "/mnt/code/codelist",
   use_quarterly_tables        = TRUE,
-  # Picks the quarterly CDM tables, so a different date is different source
-  # data for every read.
+  # The study window. study_end picks the quarterly CDM tables, so a different
+  # date is different source data for every read; study_start is the other end
+  # of the same window and is what check_cohort_window() holds the cohort to.
+  study_start                 = "2016-01-01",
   study_end                   = "2025-06-30",
   censor_at_disenrollment     = FALSE,
   induction_window_days       = 60L,
@@ -97,9 +99,17 @@ check_settings <- function() {
   if (grepl(".", s, fixed = TRUE))
     bad <- c(bad, paste0("PROJECT_WORK_SCHEMA='", s,
                          "' is catalog.schema; it wants a schema name"))
-  e <- Sys.getenv("STUDY_END", unset = "")
-  if (nzchar(e) && !grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", e))
-    bad <- c(bad, paste0("STUDY_END='", e, "' (want YYYY-MM-DD)"))
+  for (v in c("STUDY_START", "STUDY_END")) {
+    x <- Sys.getenv(v, unset = "")
+    if (nzchar(x) && !grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", x))
+      bad <- c(bad, paste0(v, "='", x, "' (want YYYY-MM-DD)"))
+  }
+  # Both parse, and in order. A window that runs backwards would pass every
+  # per-setting check and then make check_cohort_window() reject every cohort.
+  s <- Sys.getenv("STUDY_START", unset = ""); e <- Sys.getenv("STUDY_END", unset = "")
+  if (grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", s) &&
+      grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", e) && s >= e)
+    bad <- c(bad, paste0("STUDY_START='", s, "' is not before STUDY_END='", e, "'"))
   w <- codelist_waivers_named()
   refused <- intersect(w, FATAL_CHECKS)
   if (length(refused))
@@ -215,6 +225,54 @@ check_cohort_input <- function(con, tbl) {
   invisible(list(n_rows = q$n_rows, n_patients = q$n_patients))
 }
 
+# The cohort has to fit inside the window this build reads.
+#
+# Every claim scan here is bounded by the cohort's own INDEX_DATE and
+# OBS_END_DT, and those come from the cohort table - so LOT will happily ask for
+# follow-up the CDM tables it reads do not contain. With quarterly tables the
+# read is pinned to one vintage: a cohort whose ENDDATE runs past study_end
+# finds no claims after it, and the run does not fail. It produces MAPs that end
+# early, discontinuations that never happened, and LOT end reasons of
+# STUDY_END - all of them wrong, all of them plausible, and none of them visible
+# in any count.
+#
+# This is not hypothetical. The NDMM cohort's own study window ends 2026-03-31
+# while this build defaults to 2025-06-30, which is a different quarterly
+# vintage. Pointing one at the other is the exact case that reads clean.
+check_cohort_window <- function(con, tbl, cfg) {
+  q <- db_q(con, glue("
+    SELECT cast(min(INDEX_DATE) as string) AS min_index,
+           cast(max(INDEX_DATE) as string) AS max_index,
+           cast(max(ENDDATE)    as string) AS max_end,
+           coalesce(sum(CASE WHEN ENDDATE > date('{cfg$study_end}') THEN 1 ELSE 0 END), 0) AS n_past_end,
+           coalesce(sum(CASE WHEN INDEX_DATE < date('{cfg$study_start}') THEN 1 ELSE 0 END), 0) AS n_before_start
+    FROM {tbl}"))
+  vintage <- if (isTRUE(cfg$use_quarterly_tables))
+    paste0(" (the ", get_quarter_suffix(cfg$study_end), " CDM tables)") else ""
+  bad <- character(0)
+  if (q$n_past_end > 0)
+    bad <- c(bad, paste0(q$n_past_end, " patients are observed past STUDY_END=",
+                         cfg$study_end, vintage, " - the latest ENDDATE is ",
+                         q$max_end))
+  if (q$n_before_start > 0)
+    bad <- c(bad, paste0(q$n_before_start, " patients are indexed before ",
+                         "STUDY_START=", cfg$study_start,
+                         " - the earliest INDEX_DATE is ", q$min_index))
+  if (length(bad))
+    stop(tbl, " was built to a wider window than this LOT run reads:\n  ",
+         paste(bad, collapse = "\n  "),
+         "\nLOT bounds every claim scan by the cohort's own dates, so the ",
+         "claims outside this window are simply absent: lines would end early, ",
+         "discontinuations would be recorded that did not happen, and nothing ",
+         "in the output would say so. Either point STUDY_START/STUDY_END at ",
+         "the same window the cohort was built to, or rebuild the cohort to ",
+         "this one.", call. = FALSE)
+  log_msg("  Cohort window OK: indexed ", q$min_index, " to ", q$max_index,
+          ", observed to ", q$max_end, ", inside ", cfg$study_start, " .. ",
+          cfg$study_end, vintage)
+  invisible(TRUE)
+}
+
 check_lot_contract <- function(cfg) {
   wrong <- Filter(Negate(is.null), lapply(names(CONTRACT), function(k) {
     got <- cfg[[k]]
@@ -275,6 +333,7 @@ build_lot <- function(here, cohort_table, prefix) {
   log_msg("  Medical Day Supply: ", cfg$medical_day_supply, " days")
 
   cohort <- check_cohort_input(con, wrk(cfg$input_cohort_table))
+  check_cohort_window(con, wrk(cfg$input_cohort_table), cfg)
 
   # LOT1 is written before LOT_LONG, so track partial runs.
   # Cleared first, or a second run in one session inherits the first's.

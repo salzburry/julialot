@@ -91,6 +91,21 @@ per patient, no null `PATID`/`INDEX_DATE`/`ENDDATE`, and `ENDDATE` on or after
 `INDEX_DATE`. The rules read this table row for row, so a repeated patient
 would multiply their claims and their lines. `ENDDATE_CE` may be null.
 
+It also checks that the cohort fits the window this run reads. Every claim scan
+here is bounded by the cohort's own `INDEX_DATE` and `OBS_END_DT`, not by a date
+in this package — so LOT will ask for follow-up the CDM tables it reads do not
+contain, and get nothing back rather than an error. With `USE_QUARTERLY_TABLES`
+on, the read is pinned to one vintage: a cohort whose `ENDDATE` runs past
+`STUDY_END` finds no claims after it, and the run still finishes. It produces
+MAPs that end early, discontinuations that never happened, and LOT end reasons
+of `STUDY_END` — all wrong, all plausible, none visible in any count.
+
+So `STUDY_START` and `STUDY_END` in `config.csv` are the window this run is
+entitled to see, and a cohort outside them stops the build. Point them at the
+same window the cohort was built to. This matters in practice: the NDMM cohort's
+own `STUDY_END` is 2026-03-31 and this package defaults to 2025-06-30, which is
+a different quarterly vintage — see `nndm/DECISIONS.md` §5.
+
 ## Extra criteria on a line
 
 LOT is defined by the rules in `R/steps`. If a study needs to require something

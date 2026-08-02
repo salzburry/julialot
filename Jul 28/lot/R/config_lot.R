@@ -29,6 +29,13 @@ cfg_defaults <- list(
   tbl_rx       = "rx",
 
   use_quarterly_tables = as.logical(Sys.getenv("USE_QUARTERLY_TABLES", unset = "TRUE")),
+  # The study window this run covers. LOT bounds every claim scan by the
+  # cohort's own INDEX_DATE and OBS_END_DT rather than by these dates, so they
+  # do not filter anything directly - what they do is say which data this build
+  # is entitled to see, and study_end also picks the quarterly CDM tables. A
+  # cohort built to a wider window than these would have its follow-up silently
+  # truncated at the vintage; check_cohort_window() stops instead.
+  study_start          = Sys.getenv("STUDY_START", unset = "2016-01-01"),
   study_end            = Sys.getenv("STUDY_END", unset = "2025-06-30"),
 
   # ---- LOT parameters ----

@@ -254,19 +254,34 @@ build. **Fixed:** both defaults are now `2016-01-01`, so a missing `config.csv`
 cannot widen the pregnancy and MM-diagnosis scans, and the comment on
 `cfg$study_start` no longer claims the pregnancy scan reads it.
 
-**The two packages read different data vintages, and since #2 that matters.**
-`nndm/config.csv` ends the study at **2026-03-31**, which is §6.1's end of data,
-so its scans resolve to the `2026q1` CDM tables. `lot/config.csv` ends at
-**2025-06-30** and resolves to `2025q2` — the window `overall` was built and run
-on. Before #2 the two were independent and the mismatch was only a reporting
-inconsistency. Now the belantamab exclusion is evaluated in `lot`, so a
-belantamab claim after 2025-06-30 is in the cohort's window and not in the LOT
-build's: it cannot trigger the exclusion, and the patient stays. The cohort's
-own `NDMM_BELANTAMAB_RECONCILE` list would show them, which is the check that
-catches it.
+**The two packages read different data vintages, and it is worse than the
+belantamab case.** `nndm/config.csv` ends the study at **2026-03-31**, which is
+§6.1's end of data, so its scans resolve to the `2026q1` CDM tables.
+`lot/config.csv` ends at **2025-06-30** and resolves to `2025q2` — the window
+`overall` was built and run on.
 
-This is a study decision, not a defect — the packages are parameterised and
-either window is a legitimate configuration. It needs settling before the
+The belantamab consequence is the obvious one: since #2 the exclusion is
+evaluated in `lot`, so a belantamab claim after 2025-06-30 is in the cohort's
+window and not in the LOT build's, cannot trigger the exclusion, and the patient
+stays. The cohort's own `NDMM_BELANTAMAB_RECONCILE` list would show them.
+
+But the same mismatch damages **every** line, not just belantamab's. LOT bounds
+each claim scan by the cohort's `INDEX_DATE` and `OBS_END_DT`, which come from
+the cohort table — so with a 2026-03-31 cohort against `2025q2` tables, nine
+months of every patient's follow-up is simply absent. Lines end early, MAPs
+discontinue where the patient was still being treated, and the end reason comes
+out `STUDY_END`. Nothing errors and no count looks wrong.
+
+**Made fatal rather than silent.** `check_cohort_window()` in `lot` reads the
+cohort's actual `INDEX_DATE` / `ENDDATE` range and stops if it falls outside
+`STUDY_START` .. `STUDY_END`, naming the count, the date and the CDM vintage it
+would have read. `lot/config.csv` now carries both ends of the window, and
+`check_settings()` rejects one that runs backwards. Pointing the current `nndm`
+cohort at the current `lot` config therefore fails at preflight instead of
+producing a plausible wrong answer.
+
+Which window to use is still a study decision — the packages are parameterised
+and either is a legitimate configuration. It needs settling before the
 production run, one of:
 
 - run all three on `2025q2` (consistent, but drops nine months of follow-up the

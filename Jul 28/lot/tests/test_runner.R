@@ -158,6 +158,52 @@ ok(identical(got, list(n_rows = 10, n_patients = 10)),
    "and hands back the counts materialize_cohort_input compares")
 rm("db_q", "log_msg", envir = globalenv())
 
+cat("\n-- and the cohort has to fit the window this run reads --\n")
+# LOT bounds every claim scan by the cohort's own dates, so a cohort built to a
+# wider window than the CDM vintage produces early line ends and invented
+# discontinuations with nothing in the output to say so. The NDMM cohort ends
+# 2026-03-31 and this build defaults to 2025-06-30, so it is the live case.
+WSQL <- character(0)
+wstub <- function(...) {
+  w <- modifyList(list(min_index = "2017-02-01", max_index = "2024-11-30",
+                       max_end = "2025-06-30", n_past_end = 0, n_before_start = 0),
+                  list(...))
+  WSQL <<- character(0)
+  assign("db_q", function(con, sql) { WSQL <<- c(WSQL, sql); as.data.frame(w) },
+         envir = globalenv())
+}
+assign("log_msg", function(...) invisible(NULL), envir = globalenv())
+wcfg <- modifyList(cfg, list(study_start = "2016-01-01", study_end = "2025-06-30",
+                             use_quarterly_tables = TRUE))
+
+wstub()
+runs(check_cohort_window(fake_con, "wk.COH", wcfg),
+     "a cohort inside the window is accepted")
+ok(grepl("date('2025-06-30')", WSQL[1], fixed = TRUE) &&
+     grepl("date('2016-01-01')", WSQL[1], fixed = TRUE),
+   "both ends of the configured window reach the query")
+
+wstub(n_past_end = 412, max_end = "2026-03-31")
+stops(check_cohort_window(fake_con, "wk.COH", wcfg),
+      "a cohort observed past STUDY_END is refused, not silently truncated")
+msg <- tryCatch(check_cohort_window(fake_con, "wk.COH", wcfg),
+                error = conditionMessage)
+ok(grepl("412", msg, fixed = TRUE) && grepl("2026-03-31", msg, fixed = TRUE) &&
+     grepl("2025q2", msg, fixed = TRUE),
+   "and the message names the count, the date and the vintage it would read")
+
+wstub(n_before_start = 7, min_index = "2015-08-14")
+stops(check_cohort_window(fake_con, "wk.COH", wcfg),
+      "so is one indexed before STUDY_START")
+
+# Without quarterly tables there is no vintage to name, but the window still
+# bounds what the cohort may claim.
+wstub(n_past_end = 1)
+stops(check_cohort_window(fake_con, "wk.COH",
+                          modifyList(wcfg, list(use_quarterly_tables = FALSE))),
+      "the check does not depend on quarterly tables being on")
+rm("db_q", "log_msg", envir = globalenv())
+
 cat("\n-- build_lot() actually runs the phases, in order --\n")
 # Every step file passing its own test proved nothing about whether build_lot()
 # calls it. The line-criteria layer shipped complete, tested, and never invoked.
@@ -166,7 +212,7 @@ bl <- paste(readLines(file.path(ROOT, "R", "build_lot.R"), warn = FALSE),
 body <- sub(".*build_lot <- function\\([^)]*\\) \\{", "", bl)
 ORDER <- c("check_settings", "pin_output_schema", "pin_cohort",
            "check_lot_contract", "set_lot_config", "check_cohort_input",
-           "check_no_active_run", "clear_run_rows",
+           "check_cohort_window", "check_no_active_run", "clear_run_rows",
            "phase_codelists", "record_codelist_hashes",
            "phase_patient_input", "materialize_cohort_input",
            "check_claim_ndc",
@@ -1025,6 +1071,17 @@ stops(check_settings(), "a window that will not parse")
 clear()
 Sys.setenv(STUDY_END = "30-06-2025")
 stops(check_settings(), "an Excel-reformatted STUDY_END")
+clear()
+Sys.setenv(STUDY_START = "01-01-2016")
+stops(check_settings(), "...and an Excel-reformatted STUDY_START, same rule")
+clear()
+# Both parse, in the wrong order. Each passes its own format check, and the
+# result would be a window no cohort can satisfy.
+Sys.setenv(STUDY_START = "2026-01-01", STUDY_END = "2025-06-30")
+stops(check_settings(), "a study window that runs backwards")
+clear()
+Sys.setenv(STUDY_START = "2016-01-01", STUDY_END = "2025-06-30")
+runs(check_settings(), "and the configured window is accepted")
 clear()
 Sys.setenv(PROJECT_WORK_SCHEMA = "hive_metastore.usr00000")
 stops(check_settings(), "catalog.schema where a schema name belongs")
