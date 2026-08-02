@@ -83,9 +83,86 @@ render_bar <- function(df) {
   paste0('<div class="bars">', paste(rows, collapse = ""), "</div>")
 }
 
+# A Sankey, as inline SVG. Needs `source`, `target` and `n`.
+#
+# apr_30_2026 drew these through plotly, which means a JavaScript bundle and a
+# package that may not be installed - and when it is not, its dashboard writes
+# no file at all. An SVG is a handful of bezier paths and needs neither. It
+# also prints, which a canvas-based chart does not.
+#
+# Two columns: sources left, targets right, each node as tall as its share of
+# the patients and each ribbon as thick as the patients moving along it.
+# Ordered by size so the eye starts at the biggest flow.
+render_sankey <- function(df, width = 940, node_w = 16, gap = 7,
+                          height = NULL, pad = 6) {
+  if (is.null(df) || !nrow(df)) return('<p class="empty">No rows.</p>')
+  if (!all(c("source", "target", "n") %in% names(df))) return(render_table(df))
+  src <- as.character(df$source); tgt <- as.character(df$target)
+  n   <- suppressWarnings(as.numeric(df$n)); n[is.na(n)] <- 0
+  keep <- n > 0
+  if (!any(keep)) return('<p class="empty">No flows.</p>')
+  src <- src[keep]; tgt <- tgt[keep]; n <- n[keep]
+
+  ord <- function(k, v) { t <- tapply(v, k, sum); names(sort(t, decreasing = TRUE)) }
+  L <- ord(src, n); R <- ord(tgt, n)
+  Ltot <- tapply(n, src, sum); Rtot <- tapply(n, tgt, sum)
+  # "Other" is a bucket, not a regimen, so it sits at the bottom whatever its
+  # size - otherwise the largest flow on the page is the one that means least.
+  if ("Other" %in% R) R <- c(setdiff(R, "Other"), "Other")
+
+  if (is.null(height)) height <- max(220, 26 * max(length(L), length(R)))
+  span <- function(k, tot) {
+    total <- sum(tot[k]); gaps <- gap * max(length(k) - 1L, 0L)
+    avail <- height - gaps
+    h <- if (total > 0) avail * as.numeric(tot[k]) / total else rep(0, length(k))
+    # Nothing thinner than a hairline: a flow of one patient still has to be
+    # visible, or the chart quietly says it does not exist.
+    h <- pmax(h, 2)
+    y <- cumsum(c(0, head(h, -1) + gap))
+    list(h = setNames(h, k), y = setNames(y, k))
+  }
+  Ls <- span(L, Ltot); Rs <- span(R, Rtot)
+  x1 <- 0; x2 <- width - node_w
+  off_l <- setNames(rep(0, length(L)), L); off_r <- setNames(rep(0, length(R)), R)
+
+  # Widest flow first, so a thin ribbon is drawn over a thick one and stays
+  # findable where they overlap.
+  o <- order(n, decreasing = TRUE)
+  ribbons <- vapply(o, function(i) {
+    a <- src[i]; b <- tgt[i]
+    ha <- Ls$h[[a]] * n[i] / Ltot[[a]]; hb <- Rs$h[[b]] * n[i] / Rtot[[b]]
+    ya <- Ls$y[[a]] + off_l[[a]];       yb <- Rs$y[[b]] + off_r[[b]]
+    off_l[[a]] <<- off_l[[a]] + ha;     off_r[[b]] <<- off_r[[b]] + hb
+    xm <- (x1 + node_w + x2) / 2
+    d <- sprintf("M%.1f,%.2f C%.1f,%.2f %.1f,%.2f %.1f,%.2f L%.1f,%.2f C%.1f,%.2f %.1f,%.2f %.1f,%.2f Z",
+                 x1 + node_w, ya, xm, ya, xm, yb, x2, yb,
+                 x2, yb + hb, xm, yb + hb, xm, ya + ha, x1 + node_w, ya + ha)
+    paste0('<path d="', d, '" class="sk-f"><title>', .h(a), ' \u2192 ', .h(b),
+           ': ', .h(.fmt(n[i])), ' patients</title></path>')
+  }, character(1))
+
+  node <- function(k, sp, x, anchor, dx) paste0(vapply(k, function(v) paste0(
+    '<rect x="', x, '" y="', sprintf("%.2f", sp$y[[v]]), '" width="', node_w,
+    '" height="', sprintf("%.2f", sp$h[[v]]), '" class="sk-n"><title>', .h(v),
+    ': ', .h(.fmt(sp$h[[v]] * 0 + (if (anchor == "end") Ltot[[v]] else Rtot[[v]]))),
+    ' patients</title></rect>',
+    '<text x="', x + dx, '" y="', sprintf("%.2f", sp$y[[v]] + sp$h[[v]] / 2 + 4),
+    '" text-anchor="', anchor, '" class="sk-t">', .h(v), '</text>'),
+    character(1)), collapse = "")
+
+  # viewBox with room for the labels either side, and preserveAspectRatio left
+  # at its default so the whole thing scales into whatever width it is given.
+  vb <- paste(-300, -pad, width + 600, height + 2 * pad)
+  paste0('<div class="scroll"><svg class="sk" viewBox="', vb,
+         '" width="100%" height="', height + 2 * pad, '" role="img">',
+         paste(ribbons, collapse = ""),
+         node(L, Ls, x1, "end", -8), node(R, Rs, x2, "start", node_w + 8),
+         '</svg></div>')
+}
+
 render_panel <- function(kind, df) {
   switch(kind, table = render_table(df), kpi = render_kpi(df),
-         bar = render_bar(df), render_table(df))
+         bar = render_bar(df), sankey = render_sankey(df), render_table(df))
 }
 
 # GSK colours, in one place. Swapping the palette is editing this block - every
@@ -96,17 +173,14 @@ render_panel <- function(kind, df) {
 # chosen to sit with it; confirm them against the current brand guide before
 # this goes to anyone outside the team, and change them here if they differ.
 PALETTE <- c(
-  orange      = "#F36633",   # GSK primary - bars, accents, active nav
-  orange_dark = "#D14E1F",   # hover and the darker end of the bar fill
-  plum        = "#3D2352",   # header band
-  plum_light  = "#5B3A73",   # nav band
-  ink         = "#1B1B1B",   # body text
+  orange      = "#F36633",   # GSK primary - the header band, bars, accents
+  orange_dark = "#D14E1F",   # hover, and the darker end of a gradient
+  orange_pale = "#FDEDE6",   # the faintest wash of it, for table headers
+  paper       = "#FFFFFF",   # GSK's other colour: the page is white
+  ink         = "#1B1B1B",
   slate       = "#5A5A64",   # muted text
-  line        = "#E4E0E6",   # borders
-  wash        = "#FAF8F7",   # panel tint and page background
-  paper       = "#FFFFFF",
-  on_plum     = "#EFE7F3",   # nav text on the plum band
-  on_plum_dim = "#D9CFE2",   # the header's sub-line
+  line        = "#E6E6E6",   # borders
+  wash        = "#FBF9F8",   # a barely-there warm grey behind the panels
   alert_ink   = "#7A4A1C",   # a panel that could not be shown
   alert_bg    = "#FDF1E9",
   alert_line  = "#F6D8C4"
@@ -123,33 +197,32 @@ PALETTE <- c(
 .CSS <- local({
   p <- PALETTE
   paste0('
-:root{--o:', p[["orange"]], ';--od:', p[["orange_dark"]], ';--pl:', p[["plum"]],
-';--pll:', p[["plum_light"]], ';--ink:', p[["ink"]], ';--sl:', p[["slate"]],
+:root{--o:', p[["orange"]], ';--od:', p[["orange_dark"]], ';--ink:', p[["ink"]], ';--sl:', p[["slate"]],
 ';--ln:', p[["line"]], ';--wa:', p[["wash"]], ';--pa:', p[["paper"]],
-';--op:', p[["on_plum"]], ';--opd:', p[["on_plum_dim"]], ';--ai:', p[["alert_ink"]],
-';--ab:', p[["alert_bg"]], ';--al:', p[["alert_line"]], ';--oh:', .rgba(p[["orange"]], ".22"), '}
+';--opl:', p[["orange_pale"]], ';--ai:', p[["alert_ink"]],
+';--ab:', p[["alert_bg"]], ';--al:', p[["alert_line"]], ';--oh:', .rgba(p[["orange"]], ".12"), '}
 *{box-sizing:border-box} body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink);background:var(--wa)}
-header{background:var(--pl);color:var(--pa);padding:22px 28px;border-bottom:4px solid var(--o)}
+header{background:var(--o);color:var(--pa);padding:22px 28px}
 header h1{margin:0;font-size:20px;font-weight:600;letter-spacing:-.01em}
-header p{margin:5px 0 0;font-size:13px;color:var(--opd)}
-nav{display:flex;flex-wrap:wrap;gap:2px;background:var(--pll);padding:0 28px}
-nav a{color:var(--op);text-decoration:none;padding:11px 16px;font-size:13px;border-bottom:3px solid transparent}
-nav a:hover{background:var(--oh);color:var(--pa);border-bottom-color:var(--o)}
+header p{margin:5px 0 0;font-size:13px;color:var(--pa);opacity:.9}
+nav{display:flex;flex-wrap:wrap;gap:2px;background:var(--pa);padding:0 28px;border-bottom:1px solid var(--ln)}
+nav a{color:var(--ink);text-decoration:none;padding:11px 16px;font-size:13px;border-bottom:3px solid transparent}
+nav a:hover{background:var(--oh);border-bottom-color:var(--o)}
 main{padding:24px 28px 64px;max-width:1500px}
 section{margin-bottom:34px}
-section h2{font-size:14px;text-transform:uppercase;letter-spacing:.08em;color:var(--pl);margin:0 0 14px;padding-bottom:6px;border-bottom:2px solid var(--o)}
+section h2{font-size:14px;text-transform:uppercase;letter-spacing:.08em;color:var(--od);margin:0 0 14px;padding-bottom:6px;border-bottom:2px solid var(--o)}
 .panel{background:var(--pa);border:1px solid var(--ln);border-radius:6px;padding:16px 18px;margin-bottom:16px}
-.panel h3{margin:0 0 12px;font-size:14px;font-weight:600;color:var(--pl)}
+.panel h3{margin:0 0 12px;font-size:14px;font-weight:600;color:var(--ink)}
 .scroll{overflow-x:auto}
 table{border-collapse:collapse;width:100%;font-size:13px}
-th{text-align:left;background:var(--wa);color:var(--pl);font-weight:600;padding:7px 10px;border-bottom:2px solid var(--o);white-space:nowrap}
+th{text-align:left;background:var(--opl);color:var(--od);font-weight:600;padding:7px 10px;border-bottom:2px solid var(--o);white-space:nowrap}
 td{padding:6px 10px;border-bottom:1px solid var(--ln)}
 td.num{text-align:right;font-variant-numeric:tabular-nums}
 tr:last-child td{border-bottom:none}
 tbody tr:hover{background:var(--wa)}
 .kpis{display:flex;flex-wrap:wrap;gap:12px}
 .kpi{flex:1 1 150px;background:var(--wa);border:1px solid var(--ln);border-left:4px solid var(--o);border-radius:5px;padding:14px 16px}
-.kpi-n{font-size:24px;font-weight:600;color:var(--pl);font-variant-numeric:tabular-nums}
+.kpi-n{font-size:24px;font-weight:600;color:var(--od);font-variant-numeric:tabular-nums}
 .kpi-l{font-size:12px;color:var(--sl);margin-top:2px}
 .bars{display:flex;flex-direction:column;gap:6px}
 .brow{display:flex;align-items:center;gap:10px}
@@ -159,8 +232,13 @@ tbody tr:hover{background:var(--wa)}
 .bval{flex:0 0 130px;text-align:right;font-size:13px;font-variant-numeric:tabular-nums}
 .bpct{color:var(--sl);font-size:12px}
 .empty{color:var(--sl);font-style:italic;margin:0}
+.sk{display:block;min-width:900px}
+.sk-f{fill:var(--o);fill-opacity:.28}
+.sk-f:hover{fill-opacity:.62}
+.sk-n{fill:var(--od)}
+.sk-t{font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;fill:var(--ink)}
 .skip{color:var(--ai);background:var(--ab);border:1px solid var(--al);border-left:4px solid var(--o);border-radius:4px;padding:8px 10px;font-size:13px;margin:0}
-footer{padding:18px 28px;color:var(--sl);font-size:12px;border-top:2px solid var(--o);background:var(--pa)}
+footer{padding:18px 28px;color:var(--sl);font-size:12px;border-top:3px solid var(--o);background:var(--pa)}
 @media print{nav{display:none} .panel{break-inside:avoid}}
 ')
 })

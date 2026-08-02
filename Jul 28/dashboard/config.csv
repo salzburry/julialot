@@ -22,6 +22,9 @@ SHOW_MED_COUNT,TRUE,Lines - drugs in the base regimen
 SHOW_TOP_REGIMENS,TRUE,Regimens - most common base regimens by line
 SHOW_FIRST_ADDED_MED,TRUE,Regimens - first drug added after the base regimen
 SHOW_SCT,TRUE,Transplant - ALLO / CAR-T / AUTO lines
+SHOW_LOT1_TO_LOT2,TRUE,Transitions - LOT1 to LOT2 regimen Sankey
+SHOW_LOT2_TO_LOT3,TRUE,Transitions - LOT2 to LOT3 regimen Sankey
+SHOW_LOT3_TO_LOT4,TRUE,Transitions - LOT3 to LOT4 regimen Sankey
 SHOW_PATIENT_JOURNEYS,TRUE,Patient examples - line-by-line journeys per scenario
 SHOW_JOURNEY_COVERAGE,TRUE,Patient examples - how many patients each scenario has
 SHOW_CRITERIA_IMPACT,TRUE,Validation - what the line criteria removed

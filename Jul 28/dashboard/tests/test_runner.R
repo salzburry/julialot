@@ -242,10 +242,49 @@ Sys.setenv(JOURNEYS_PER_CATEGORY = "3.5")
 stops(check_settings(), "a fractional number of examples is refused")
 clear()
 
+cat("\n-- transitions render as an SVG sankey --\n")
+tr <- Filter(function(s) identical(s$name, "lot1_to_lot2"), DASHBOARD_SECTIONS)[[1]]
+ok(identical(tr$render, "sankey") && identical(tr$tab, "Transitions"),
+   "LOT1 to LOT2 is a sankey on the Transitions tab")
+tsql <- fill_sql(tr$sql, INPUTS, cfg)
+ok(grepl("INNER JOIN b ON a.PATID = b.PATID", tsql, fixed = TRUE),
+   "an inner join, so non-progressors are not a flow")
+ok(grepl("LIMIT 10", tsql, fixed = TRUE) && grepl("coalesce(t.tgt, \'Other\')", tsql, fixed = TRUE),
+   "top N sources, and everything else collapses to Other rather than vanishing")
+sk <- render_sankey(data.frame(
+  source = c("BORT DEX LEN", "BORT DEX LEN", "DARA LEN", "DARA LEN"),
+  target = c("CARF DEX", "POM DEX", "CARF DEX", "Other"),
+  n = c(400L, 120L, 90L, 30L), stringsAsFactors = FALSE))
+ok(grepl("<svg", sk, fixed = TRUE) && grepl("</svg>", sk, fixed = TRUE),
+   "it draws an SVG")
+ok(length(gregexpr("<path", sk, fixed = TRUE)[[1]]) == 4L,
+   "one ribbon per flow")
+ok(length(gregexpr("<rect", sk, fixed = TRUE)[[1]]) == 5L,
+   "...and one node per distinct regimen on either side (2 + 3)")
+# No plotly, no script, no fetch: the whole point of drawing it ourselves.
+ok(!grepl("<script", sk, fixed = TRUE) && !grepl("plotly", sk, fixed = TRUE),
+   "with no script tag and no plotting library")
+ok(grepl("<title>", sk, fixed = TRUE) && grepl("400 patients", sk, fixed = TRUE),
+   "and every ribbon carries its count as a tooltip")
+# A flow of one patient among thousands still has to be visible, or the chart
+# says it does not exist.
+thin <- render_sankey(data.frame(source = c("A", "B"), target = c("X", "Y"),
+                                 n = c(10000L, 1L), stringsAsFactors = FALSE))
+hs <- as.numeric(regmatches(thin, gregexpr('(?<=height=")[0-9.]+(?=")', thin, perl = TRUE))[[1]])
+ok(all(hs[hs < 50] >= 2), "a one-patient flow is still drawn, not rounded away")
+ok(grepl("No rows", render_sankey(NULL), fixed = TRUE),
+   "an empty result says so")
+ok(identical(render_sankey(data.frame(x = 1)), render_table(data.frame(x = 1))),
+   "and a frame without source/target/n falls back to a table")
+
 cat("\n-- the palette is in one place --\n")
 css <- get(".CSS", envir = env)
 PALETTE <- get("PALETTE", envir = env)
 ok(grepl("#F36633", css, fixed = TRUE), "GSK orange is the primary")
+# Orange and white. A third brand colour crept in when this was first written.
+ok(grepl("--pa:#FFFFFF", css, fixed = TRUE) &&
+     grepl("header{background:var(--o);color:var(--pa)", css, fixed = TRUE),
+   "...on a white page, with the header band the orange itself")
 ok(all(vapply(names(PALETTE), function(k) grepl(PALETTE[[k]], css, fixed = TRUE),
               logical(1))),
    paste0("every colour in the palette reaches the stylesheet (", length(PALETTE), ")"))

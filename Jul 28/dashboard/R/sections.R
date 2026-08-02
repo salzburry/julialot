@@ -23,7 +23,7 @@
 # How a section's rows are drawn. Deliberately few: a dashboard nobody can read
 # is not better than a table, and every one of these renders without a
 # JavaScript library or a plotting package - see render.R.
-RENDER_TYPES <- c("table", "kpi", "bar")
+RENDER_TYPES <- c("table", "kpi", "bar", "sankey")
 
 # Which patients the journey section shows. Examples, not a sample: a random
 # three patients are three LOT1-only patients, because most patients are. Each
@@ -89,6 +89,47 @@ JOURNEY_CATEGORIES <- list(
     WHERE p.rn <= {journeys_per_category}
     ORDER BY `Example`, `Patient`, `Line`")
 }
+
+# One Sankey section for the move from line `a` to line `b`. Generated rather
+# than written three times: the three differ only in two numbers, and three
+# copies of a query is three places for a fix to be applied twice.
+.transition_section <- function(a, b) list(
+  name  = paste0("lot", a, "_to_lot", b),
+  tab   = "Transitions",
+  label = paste0("LOT", a, " to LOT", b, " by regimen (progressors only)"),
+  needs = "lot_long", render = "sankey",
+  sql = paste0("
+    WITH a AS (
+      SELECT cast(PATID as string) AS PATID, LOT_BASE_MEDS AS reg
+      FROM {lot_long}
+      WHERE LOT_NUM = ", a, " AND LOT_BASE_MEDS IS NOT NULL
+        AND trim(LOT_BASE_MEDS) <> ''
+    ),
+    b AS (
+      SELECT cast(PATID as string) AS PATID, LOT_BASE_MEDS AS reg
+      FROM {lot_long}
+      WHERE LOT_NUM = ", b, " AND LOT_BASE_MEDS IS NOT NULL
+        AND trim(LOT_BASE_MEDS) <> ''
+    ),
+    j AS (
+      SELECT a.PATID, a.reg AS src, b.reg AS tgt
+      FROM a INNER JOIN b ON a.PATID = b.PATID
+    ),
+    top_src AS (
+      SELECT src FROM j GROUP BY src
+      ORDER BY count(DISTINCT PATID) DESC LIMIT {top_n}
+    ),
+    s AS (SELECT j.* FROM j INNER JOIN top_src t ON j.src = t.src),
+    top_tgt AS (
+      SELECT tgt FROM s GROUP BY tgt
+      ORDER BY count(DISTINCT PATID) DESC LIMIT {top_n}
+    )
+    SELECT s.src                                        AS source,
+           coalesce(t.tgt, 'Other')                     AS target,
+           count(DISTINCT s.PATID)                      AS n
+    FROM s LEFT JOIN top_tgt t ON s.tgt = t.tgt
+    GROUP BY 1, 2 ORDER BY n DESC")
+)
 
 DASHBOARD_SECTIONS <- list(
 
@@ -254,6 +295,22 @@ DASHBOARD_SECTIONS <- list(
                 sum(CASE WHEN LOT_START_TYPE = 'SCT_AUTO' THEN 1 ELSE 0 END) AS `AUTO start`,
                 count(*)                                               AS `Lines`
          FROM {lot_long} GROUP BY 1 ORDER BY 1"),
+
+  # ---- TRANSITIONS ---------------------------------------------------------
+
+  # Who moves from which regimen to which, one Sankey per consecutive pair.
+  #
+  # INNER JOIN, so a patient who never reached the next line is not in it: the
+  # chart is about what progressors switched to, and carrying non-progressors
+  # would put the biggest flow on a transition that never happened. The
+  # denominator is on the panel above it, in `lines_per_patient`.
+  #
+  # Top N sources; targets outside the top N collapse to "Other", so the chart
+  # stays readable and nothing is silently dropped - "Other" is drawn, and it
+  # sits at the bottom because it is a bucket rather than a regimen.
+  .transition_section(1, 2),
+  .transition_section(2, 3),
+  .transition_section(3, 4),
 
   # ---- PATIENT EXAMPLES ----------------------------------------------------
 

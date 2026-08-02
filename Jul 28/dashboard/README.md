@@ -53,8 +53,28 @@ file but off the page. A switch that is neither `TRUE` nor `FALSE` stops the
 build: a dashboard renders happily with a panel missing, and nobody can see the
 gap from the output.
 
-`render` is one of `table`, `kpi` (one row of big numbers, one tile per column)
-or `bar` (needs `label` and `n`, sized against the first row).
+`render` is one of `table`, `kpi` (one row of big numbers, one tile per column),
+`bar` (needs `label` and `n`, sized against the first row) or `sankey` (needs
+`source`, `target` and `n`).
+
+## Transitions
+
+One Sankey per consecutive LOT pair — `LOT1 to LOT2`, `LOT2 to LOT3`,
+`LOT3 to LOT4` — showing which regimen patients moved to.
+
+`INNER JOIN`, so a patient who never reached the next line is not a flow: the
+chart is about what progressors switched to, and carrying non-progressors would
+put the biggest ribbon on a transition that never happened. `TOP_N` sources;
+targets outside the top N collapse to **`Other`**, which is drawn rather than
+dropped and sits at the bottom because it is a bucket, not a regimen.
+
+Drawn as **inline SVG**, not plotly — a handful of bezier paths, no JavaScript
+bundle, and it prints, which a canvas chart does not. Every ribbon carries its
+count as a hover tooltip, and a one-patient flow is floored at a hairline rather
+than rounded to nothing.
+
+Adding `LOT4 to LOT5` is one line: `.transition_section(4, 5)` plus its
+`SHOW_LOT4_TO_LOT5` row.
 
 ## Patient journeys
 
@@ -90,14 +110,14 @@ it. Empty and skipped panels write nothing.
 
 ## Colours
 
-`PALETTE` at the top of `R/render.R` — GSK orange `#F36633` as the primary,
-with a plum header band and supporting neutrals. Every CSS rule refers to a
-variable, so changing the palette changes the page and a test asserts no rule
-carries a literal hex.
+GSK orange `#F36633` on white. The header band is the orange itself, the page
+is white, and the greys are there only to separate things — no third brand
+colour.
 
-**Check the plum and the neutrals against the current brand guide** before this
-goes outside the team. The orange is taken from the brand mark; the rest were
-chosen to sit with it.
+`PALETTE` at the top of `R/render.R` is the whole scheme. Every CSS rule refers
+to a variable, so changing the palette changes the page, and a test asserts no
+rule carries a literal hex — which is what stops a hard-coded tint surviving a
+swap and looking like a bug in the swap.
 
 Placeholders are filled only from the table above. A section naming anything
 else stops the build rather than reaching a name that happened to be in scope.
