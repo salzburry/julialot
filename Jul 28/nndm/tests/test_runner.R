@@ -780,14 +780,14 @@ for (v in CHOICES$mm_adjacent_states) {
      paste0("mm_adjacent_states='", v, "' is one the code actually handles"))
 }
 assign("NDMM_MM_ADJACENT_STATES", "override", envir = se)
-for (v in CHOICES$belantamab_scope) {
-  assign("NDMM_BELANTAMAB_SCOPE", v, envir = se)
-  SSQL <- character(0)
-  ok(identical(tryCatch({ se$build_ndmm_belantamab_patids(NULL, "m", "r", "mp"); "" },
-                        error = conditionMessage), ""),
-     paste0("belantamab_scope='", v, "' is one the code actually handles"))
-}
-assign("NDMM_BELANTAMAB_SCOPE", "study_period", envir = se)
+# This used to loop over CHOICES$belantamab_scope. That entry went when the
+# exclusion moved to the lot package, so the loop ran zero times and asserted
+# nothing while still reading as coverage. The builder itself is still live - it
+# feeds the advisory flag and the reconcile list - so it is exercised directly.
+SSQL <- character(0)
+ok(identical(tryCatch({ se$build_ndmm_belantamab_patids(NULL, "m", "r", "mp"); "" },
+                      error = conditionMessage), ""),
+   "the belantamab scan still builds, for the advisory flag and the reconcile list")
 ok(regexpr("VIEW {NDMM_MM_DX_CODES}", paste(unlist(lapply(step_files, readLines,
              warn = FALSE)), collapse = "\n"), fixed = TRUE) > 0,
    "that list is built by this package, not assumed to exist")
@@ -1351,5 +1351,34 @@ ok(length(me$RUN_METADATA_COLS) == length(vals) + 1L,
           length(me$RUN_METADATA_COLS), " columns)"))
 ok(!any(grepl("BELANTAMAB_SCOPE", names(me$RUN_METADATA_COLS), fixed = TRUE)),
    "and the scope column went with the setting that fed it")
+
+cat("\n-- every setting config.csv ships is one the code reads --\n")
+# NDMM_BELANTAMAB_SCOPE outlived the code that read it: the belantamab claims
+# proxy moved to the lot package, every reader went, and the row stayed - still
+# describing a proxy that decides nothing, still looking like a knob. Nothing
+# here noticed, because nothing compared the two. The lot package has had this
+# check; this one did not.
+#
+# One direction only. The platform supplies names this file has no business
+# carrying - DATABRICKS_PWD, the DOMINO_* variables - so a name read but not
+# shipped is normal. A name shipped but never read is not: it either does
+# nothing, or it is a typo for one that would have.
+cnames <- local({
+  rows <- read.csv(file.path(ROOT, "config.csv"), stringsAsFactors = FALSE,
+                   comment.char = "#")
+  n <- trimws(as.character(rows$name))
+  n[nzchar(n) & !startsWith(n, "#")]
+})
+read_env <- local({
+  fs <- list.files(file.path(ROOT, "R"), "[.]R$", full.names = TRUE, recursive = TRUE)
+  txt <- paste(unlist(lapply(fs, readLines, warn = FALSE)), collapse = "\n")
+  unique(gsub('^Sys\\.getenv\\("|"$', "",
+              regmatches(txt, gregexpr('Sys\\.getenv\\("[A-Z0-9_]+"', txt))[[1]]))
+})
+unread <- setdiff(cnames, read_env)
+ok(length(unread) == 0,
+   if (length(unread)) paste0("config.csv ships settings nothing reads: ",
+                              paste(unread, collapse = ", "))
+   else paste0("all ", length(cnames), " settings in config.csv are read by R/"))
 
 report()
