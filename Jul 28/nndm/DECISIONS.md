@@ -93,6 +93,15 @@ leaves them with none, which is the exclusion. It matches whole `MED_ABBR`
 tokens out of `LOT_BASE_MEDS` and `LOT_BASE_1ST_ADD_MED`, not a substring, so
 an abbreviation that merely contains `BELA` cannot match.
 
+**Both packages now guard the abbreviation.** The criterion turns on
+belantamab being spelled `BELA` in `CL_MED_ABBR`, and if the code list ever used
+something else it would exclude nobody — silently, because "no patient had
+belantamab" and "the abbreviation is wrong" produce the same empty result.
+`check_belantamab_abbr()` in `lot` asks the code list before applying the
+criterion and stops if it matches no row, which is the same shape as
+`build_ndmm_belantamab_codes()` on the cohort side. It only asks when
+`APPLY_NO_BELANTAMAB` is on.
+
 **What this changes downstream, and it matters:**
 
 - **`<prefix>NDMM_COHORT` is the NDMM cohort pending one exclusion**, not the
