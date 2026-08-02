@@ -1536,8 +1536,18 @@ bodyf <- function(nm) {
   j <- grep("^}", src); src[i[1]:min(j[j > i[1]])]
 }
 cb <- bodyf("check_cohort_build")
-ok(any(grepl('identical\\(state, "complete"\\)', cb)),
+ok(any(grepl('identical\\(f\\$state, "complete"\\)', cb)),
    "...and only 'complete' is accepted")
+# A reused prefix can leave two status tables side by side. Taking the first
+# readable one lets an earlier cohort's status be recorded as the owner of a
+# different cohort, so a row that names another cohort is dropped and an
+# undecidable tie stops the run.
+ok(any(grepl("final_table_name", cb, fixed = TRUE)),
+   "a status row that names its cohort is checked against the input cohort")
+ok(any(grepl("names_it, FALSE", cb, fixed = TRUE)),
+   "...and one naming a different cohort is not used")
+ok(any(grepl("More than one cohort build-status table", cb, fixed = TRUE)),
+   "...and two candidates that cannot be told apart stop the run")
 ok(any(grepl("LOT_IGNORE_COHORT_STATE", cb, fixed = TRUE)),
    "...with one named override, the way the other run-state guards have one")
 # wrk() here does NOT prefix - only lot_out() does, and only for our own

@@ -352,8 +352,8 @@ which is what lets the same algorithm run over the broader MM cohort — frozen 
 `LOT_RUN_METADATA`, so an output says which window and therefore which vintage
 produced it.
 
-**The vintage was checked and is not a risk.** `lot` had only ever been run
-against `2025q2`, so reading `2026q1` was reading tables nobody here had used.
+**The vintage was checked and is not a risk.** Earlier work on this algorithm
+read `2025q2` only, so `2026q1` is tables nobody here has used.
 Confirmed by the study team on 2026-08-02: `2026q1` is the same tables and the
 same column names as `2025q2`, with data extended through 2026-03-31. So it is
 a wider read of the same structures rather than a different one, and there is

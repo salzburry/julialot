@@ -110,7 +110,7 @@ All prefixed, so two cohorts sit side by side in one schema.
 
 ### The review tables
 
-**Eight review tables.** Each exists because the study definition is silent, a code
+**Seven review tables.** Each exists because a rule is silent, a code
 list cannot answer, or the answer needs a build that has not run yet.
 None of them changes the cohort — they are what the decision gets made
 *against*, so nobody has to guess and nobody has to re-run to find out.
@@ -119,7 +119,7 @@ None of them changes the cohort — they are what the decision gets made
 |---|---|---|
 | `NDMM_INDEX_AGENTS` | which agents actually set a 1L index | every `CL_MED_ABBR` on the code list, whether this run let it set an index, and how many it set. Review it; bar one with `NDMM_INDEX_EXCLUDED_ABBRS` if it should not have |
 | `NDMM_MM_ADJACENT_GROUPS` | which tumour groups are the index disease rather than another cancer | every plasma-cell-looking label, and whether the override reaches it |
-| `NDMM_MM_ADJACENT_CODES` | *which* `C79.5x` is treated as myeloma bone disease | every code kept as the index disease, with the label that kept it. `C79.51` is in; `C79.52` is not, because its label ends `OF BONE MARROW` |
+| `NDMM_MM_ADJACENT_CODES` | which codes are kept as the index disease rather than another cancer | every code the override keeps, with the label that kept it. No `C79.5x` is among them: `C79.51`, `C79.52` and `198.5` are metastatic cancers and exclude — see `DECISIONS.md` section 4 |
 | `NDMM_OTHER_MALIG_GROUPS` | what counts as one tumour type | every ICD category the code list resolves to, with its code and label counts. A category holding one code can only confirm itself |
 | `NDMM_OTHER_MALIG_GRAIN` | is that grain actually costing anything? | criterion 7 counted at the finest, configured and coarsest grouping. **The gap between the first row and the last is the whole question** — if it is small, no map is needed |
 | `NDMM_FU_CE_COUNTS` | what the follow-up CE window costs — the one setting resting on a relay, not a document | `N_PASSING_CRITERION_5` and `N_COHORT` at 0 / 30 / 60 / 90 days and at an exact 3 months, with this run's row marked |
@@ -167,7 +167,7 @@ columns appears here.
 
 | # | criterion | as applied | source |
 |---|---|---|---|
-| 3 | **Eligible 1L treatment** | the **first** claim for an MM therapy on or after that patient's MM diagnosis, on or after `LOT1_FROM` (**2017-01-01**) and on or before the study end. Four arms over raw claims — `PROC_CD` and `BILL_PROC_CD` and `NDC` in `medical`, `NDC` in `rx` — each matched against `cl_mma_codelist.csv` and only against the code types that source can carry. **Belantamab cannot set it** (the inclusion criteria: an eligible 1L treatment is one "other than belantamab"); steroids cannot either, being dropped from the code list. That date is the NDMM index. | `00b_lot1_index.R` |
+| 3 | **Eligible 1L treatment** | the **first** claim for an MM therapy on or after that patient's MM diagnosis, on or after `LOT1_FROM` (**2017-01-01**) and on or before the study end. Five arms over raw claims — `PROC_CD`, `BILL_PROC_CD` and `NDC` in `medical`, `NDC` in `rx`, `PROC` in `med_procedure` — each matched against `cl_mma_codelist.csv` and only against the code types that source can carry. **Belantamab cannot set it** (the inclusion criteria: an eligible 1L treatment is one "other than belantamab"); steroids cannot either, being dropped from the code list. That date is the NDMM index. | `00b_lot1_index.R` |
 | 4 | **12-month CE before index** | an enrollment span covering `[index − 365, index − 1]` in full, gaps of **≤30 days** treated as continuous | `01_enrollment.R`, `06_flags.R` |
 | 5 | **Follow-up CE** | a **no-gap** span covering `[index, index + FU_CE_DAYS]`, where `FU_CE_DAYS = 0` — **one day: the index date itself** | `06_flags.R` |
 | 6 | **No MM oncology therapy in the 12-month baseline** | no medical or pharmacy claim for an MM therapy in `[index − 365, index − 1]`, read from raw `medical` and `rx` against `cl_mma_codelist.csv`. **Steroids are excluded** (`DEX`, `DEXA`, `DEXAMETHASONE`, `PRED`, `PREDNISONE`) — a steroid claim alone does not make a patient previously treated. | `03_prior_therapy.R` |
@@ -297,18 +297,21 @@ shrink the cohort by a rule nobody could reproduce from the document.
 **`<prefix>NDMM_INDEX_AGENTS`** — every `CL_MED_ABBR` on the code list, whether
 this run would let it set an index, and how many patients it set one for.
 
-### Bone metastasis excludes, per the study definition
+### Bone metastasis excludes
 
-The other-cancer criterion is decided on `other_malig.csv`'s `tumor_group`
-label, and four groups are overridden — treated as the index disease rather
+Two outpatient claims confirm another cancer only if they are the same cancer,
+and they are paired on the **three-character ICD category** (`substr(dx, 1, 3)`)
+rather than on the code list's own label - a label is close to one code per
+row, so pairing on it would need the same code twice. Four `tumor_group`
+labels are overridden — treated as the index disease rather
 than another cancer: **monoclonal gammopathy**, **solitary plasmacytoma**,
 **plasma cell leukemia**, **extramedullary plasmacytoma**. All four are
 plasma-cell disease, which is the index disease or its precursor.
 
 **Secondary neoplasm of bone is not among them, and that is deliberate.**
-the exclusion criteria excludes on "the same primary tumor type **and/or metastatic cancer**",
-and `C79.51`, `C79.52` and `198.5` are metastatic cancers. An override
-overrode `SECONDARY MALIGNANT NEOPLASM OF BONE` because myeloma bone disease is
+The rule excludes on the same primary tumour type **or metastatic cancer**,
+and `C79.51`, `C79.52` and `198.5` are metastatic cancers. An earlier override
+kept `SECONDARY MALIGNANT NEOPLASM OF BONE` because myeloma bone disease is
 commonly miscoded that way; this build follows the stated rule instead and
 lets all three exclude. They pair under ICD category `C79` with the rest of the
 secondary-neoplasm block.

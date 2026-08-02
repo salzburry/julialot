@@ -14,8 +14,9 @@ both sides pad to eleven zeros. This build drops codes that normalise to blank,
 de-duplicates the lists, and requires digits on both NDC joins. Each guard is
 asserted by name in `tests/test_runner.R`.
 
-It has never been run against Databricks. Nothing here is validated output
-until it has been.
+This package has never been run against Databricks. Earlier work on the same
+algorithm was run against the `2025q2` tables, but nothing in this folder has
+produced a number, so nothing here is validated output until it has.
 
 The folder is self-contained - the only outside dependencies are the R
 packages `DBI`, `odbc` and `glue`, and no file resolves a path outside it.
