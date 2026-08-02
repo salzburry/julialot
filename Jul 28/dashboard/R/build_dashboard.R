@@ -244,6 +244,29 @@ resolve_attrition <- function(secs, con, inputs, have, cfg, owner) {
     log_msg("  skip  attrition - no rows for cohort run ", cr)
     secs[[i]] <- sec; return(secs)
   }
+  # Same run id is not the same attempt. A cohort re-run keeps its run id and
+  # rewrites its attrition under it, so the rows matching cr may belong to a
+  # LATER attempt than the one LOT read. The stamp LOT recorded is the status
+  # row's timestamp at that moment; a funnel written after it is a later
+  # attempt, whatever its run id says.
+  st <- owner$cohort_stamp
+  if (!is.null(st) && !is.na(st) && nzchar(st)) {
+    a <- tryCatch(db_q(con, paste0("SELECT max(", L$stamp, ") AS T FROM ",
+                                   inputs$attrition, " WHERE ", L$run_col,
+                                   " = '", cr, "'")), error = function(e) NULL)
+    newer <- isTRUE(tryCatch(
+      as.POSIXct(as.character(a$T[1]), tz = "UTC") >
+        as.POSIXct(as.character(st), tz = "UTC"),
+      error = function(e) FALSE, warning = function(w) FALSE))
+    if (newer) {
+      sec$skip <- paste0(
+        "the funnel under cohort run ", cr, " was rewritten after LOT read it, ",
+        "so it is a later attempt under the same run id. The cohort behind ",
+        "these lines no longer has a funnel in ", inputs$attrition, ".")
+      log_msg("  skip  attrition - run ", cr, " rewritten after LOT read it")
+      secs[[i]] <- sec; return(secs)
+    }
+  }
   sec$sql   <- L$sql_run
   sec$label <- paste0(sec$label, " - cohort run ", cr)
   secs[[i]] <- sec

@@ -105,11 +105,14 @@ resolve_owner_run <- function(con, inputs, have, cfg) {
   # Which cohort run LOT read. Recorded by lot at the moment it checked the
   # cohort build, so it is a fact about this LOT run rather than a guess from
   # timestamps. NA on an older lot that did not record it.
+  # The stamp comes with it: a cohort re-run keeps its run id and rewrites its
+  # rows under it, so the id alone cannot tell one attempt from the next.
   cohort_of <- function(rid) tryCatch({
-    d <- db_q(con, paste0("SELECT COHORT_RUN_ID FROM ", inputs$run_meta,
-                          " WHERE RUN_ID = '", rid, "'"))
-    if (!nrow(d)) NA_character_ else as.character(d[[1]][1])
-  }, error = function(e) NA_character_)
+    d <- db_q(con, paste0("SELECT COHORT_RUN_ID, COHORT_STAMP FROM ",
+                          inputs$run_meta, " WHERE RUN_ID = '", rid, "'"))
+    if (!nrow(d)) list(id = NA_character_, stamp = NA_character_)
+    else list(id = as.character(d[[1]][1]), stamp = as.character(d[[2]][1]))
+  }, error = function(e) list(id = NA_character_, stamp = NA_character_))
 
   if (isTRUE(have[["build_st"]])) {
     d <- tryCatch(db_q(con, paste0(
@@ -128,8 +131,9 @@ resolve_owner_run <- function(con, inputs, have, cfg) {
                ". Those two are written seconds apart at the end of the same ",
                "build, so one of them has been edited or partly restored. ",
                "Nothing here can say what produced these tables.", call. = FALSE)
+        co <- cohort_of(rid)
         return(list(run_id = rid, ts = d$UPDATED_AT[1], exact = TRUE,
-                    cohort_run = cohort_of(rid)))
+                    cohort_run = co$id, cohort_stamp = co$stamp))
       }
       # Not complete. The tables on disk may be this run's, and nothing here
       # can tell. Stop, unless the operator says they know it failed early.
@@ -157,8 +161,9 @@ resolve_owner_run <- function(con, inputs, have, cfg) {
     error = function(e) NULL)
   if (is.null(d) || !nrow(d))
     return(list(run_id = NA_character_, ts = NA, exact = FALSE,
-                cohort_run = NA_character_))
+                cohort_run = NA_character_, cohort_stamp = NA_character_))
   rid <- as.character(d$RUN_ID[1])
+  co  <- cohort_of(rid)
   list(run_id = rid, ts = d$RUN_TIMESTAMP[1], exact = FALSE,
-       cohort_run = cohort_of(rid))
+       cohort_run = co$id, cohort_stamp = co$stamp)
 }

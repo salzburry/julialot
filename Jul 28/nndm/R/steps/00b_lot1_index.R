@@ -9,7 +9,8 @@
 # this build wait on a LOT run when the order is the other way round: LOT runs
 # over the cohort this build produces.
 #
-# The scan is the same four sources as the prior-therapy scan, against the same
+# Five sources - medical PROC_CD, medical BILL_PROC_CD, medical NDC, rx NDC and
+# med_procedure PROC - against the same
 # codelist view, so "MM treatment" means one thing in this package. That view
 # already has steroids dropped: a steroid claim alone is supportive care, not
 # the start of a line.
@@ -302,7 +303,12 @@ build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl, med_proc_tbl)
   #
   # The two halves do not overlap, and together they cover the whole rule. It
   # carries no period of its own, unlike the exclusions beside it, so a
-  # belantamab line at any point in the patient's history disqualifies them.
+  # belantamab line anywhere in the study period disqualifies them.
+  #
+  # The study period, not all of history. The rule names no period, but the CDM
+  # tables reach back well before the study start, so an unbounded scan would
+  # act on claims outside the window every other criterion here is bounded to.
+  # Bounded, and the bound is stated - see DECISIONS.md.
   # No date predicate of its own: NDMM_BELANTAMAB_TX is the study period now, so
   # a second copy of that bound here would be one more place for the two to
   # drift apart.
