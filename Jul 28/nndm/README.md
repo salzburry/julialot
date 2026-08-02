@@ -102,7 +102,7 @@ All prefixed, so two cohorts sit side by side in one schema.
 | table | what it is |
 |---|---|
 | `NDMM_COHORT` | the cohort — one row per patient, the ten columns the lot build needs |
-| `NDMM_ATTRITION` | the eight-step funnel, with counts and percentages. The ninth criterion is applied in the LOT build |
+| `NDMM_ATTRITION` | the nine-step funnel, with counts and percentages. Belantamab from the index onward is applied in the LOT build |
 | `NDMM_FLAGS_ALL` | one row per 1L candidate with every filter's verdict (also a checkpoint) |
 | `NDMM_RUN_METADATA` | the md5 of every R file, the contract as one string, the run choices, the waivers asked for and the waivers that fired |
 | `NDMM_CODELIST_METADATA` | the md5 and row count of every code list read |
@@ -174,9 +174,9 @@ port.
 | 6 | **No MM oncology therapy in the 12-month baseline** | no medical or pharmacy claim for an MM therapy in `[index − 365, index − 1]`, scanned from raw `medical` and `rx` against `cl_mma_codelist.csv`. **Steroids are excluded from this scan** (`DEX`, `DEXA`, `DEXAMETHASONE`, `PRED`, `PREDNISONE`) — a steroid claim alone does not make a patient previously treated. | `03_prior_therapy.R` |
 | 7 | **No other cancer in the 12-month baseline** | excluded on **≥1 inpatient** claim, **or ≥2 outpatient** claims **within 30 days of each other** for the same cancer — **both claims inside** `[index − 365, index − 1]`. Inpatient is established from the confinement table and the claim header, not from a place-of-service code. Plasma-cell tumour groups are the index disease and do not count; what "the same cancer" means is a code-list label unless a map says otherwise — both below. | `04_other_malig.R` |
 | 8 | **No pregnancy** | excluded on ≥1 medical claim with a diagnosis, procedure or revenue code indicating pregnancy or childbirth, anywhere in `[2016-01-01, 2026-03-31]` — the **study period**, not the baseline | `05_pregnancy.R` |
-| 9 | **No belantamab in any LOT** | any claim for a belantamab code from `cl_mma_codelist.csv`, in `medical` or `rx`, **within the study period** — a claims proxy for LOT membership, because lines do not exist yet. Configurable, and not exact under any setting; see below | `00b_lot1_index.R`, `06_flags.R` |
+| 9 | **No belantamab before the 1L index** | any claim for a belantamab code from `cl_mma_codelist.csv`, in `medical`, `rx` or `med_procedure`, dated **strictly before the index**. This is half of §6.2.1.2's belantamab exclusion — the half `lot` cannot see, because the claims it reads start at the index. The other half, belantamab from the index onward, is `lot`'s `no_belantamab` line criterion. Overlaps #6 by design: that one already removes belantamab inside the 12-month baseline, so this one's incremental drop is the patients whose belantamab predates it | `00b_lot1_index.R`, `06_flags.R` |
 
-**Five of the nine are open in some way**, and each has somewhere to go rather
+**Four of the nine are open in some way**, and each has somewhere to go rather
 than a note saying so:
 
 | criterion | what is undecided | decide it with |
@@ -185,7 +185,7 @@ than a note saying so:
 | #5 | one day of follow-up CE against the protocol's three months | `NDMM_FU_CE_COUNTS` |
 | #7 | which codes stay the index disease rather than another cancer | `NDMM_MM_ADJACENT_CODES` → `NDMM_MM_ADJACENT_OVERRIDE` in `nndm_constants.R` |
 | #7 | whether the ICD category is the right unit for "same primary tumour type" | `NDMM_OTHER_MALIG_GRAIN`, `NDMM_OTHER_MALIG_GROUPS` |
-| #9 | belantamab in any LOT — not applied here | `NDMM_BELANTAMAB_RECONCILE` hands over to `lot`'s `no_belantamab` criterion |
+| #9 | nothing — both halves of the exclusion now run. `NDMM_BELANTAMAB_RECONCILE` remains the list to read | `NDMM_BELANTAMAB_RECONCILE`, then `lot`'s `no_belantamab` |
 
 **None of them changes anything until somebody acts.** Every file ships empty
 and every default is the source's, so the criteria above are what runs today.

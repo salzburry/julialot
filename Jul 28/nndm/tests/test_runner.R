@@ -346,9 +346,10 @@ ok(setequal(keys, names(got)),
    "and every count produced appears in the attrition, none dropped")
 ok(identical(keys, names(got)),
    "in the same order, so the labels sit against the counts they describe")
-# Eight, not nine: S6.2.1.2's belantamab exclusion is applied over lines, in
-# the lot package, so it is not a step of this funnel. See DECISIONS.md #2.
-ok(length(keys) == 8L, paste0("eight steps, one per criterion (", length(keys), ")"))
+# Nine: S6.2.1.2's belantamab exclusion is split, and the half this package can
+# see - belantamab before the 1L index - is a step of this funnel. The other
+# half is applied over lines in lot. See DECISIONS.md #2.
+ok(length(keys) == 9L, paste0("nine steps, one per criterion (", length(keys), ")"))
 
 cat("\n-- the funnel adds the criteria in the protocol's order --\n")
 # ndmm_counts() is the one block this package rewrote rather than ported, so
@@ -357,30 +358,32 @@ cat("\n-- the funnel adds the criteria in the protocol's order --\n")
 # step above it plus exactly one flag, in the order Rev Round 2 S6.2.1.1 and
 # then S6.2.1.2 list the criteria.
 FLAGS <- c("CE_pre_lot1_12mo", "CE_lot1_fu", "NO_PRIOR_MM_TX",
-           "NO_OTHER_CANCER_PRE_LOT1", "NO_PREGNANCY")
+           "NO_OTHER_CANCER_PRE_LOT1", "NO_PREGNANCY",
+           "NO_BELANTAMAB_PRE_LOT1")
 flags_in <- function(s) FLAGS[vapply(FLAGS, grepl, logical(1), x = s, fixed = TRUE)]
 sets <- lapply(CSQL, flags_in)
-ok(length(CSQL) == 8L, paste0("one query per attrition row (", length(CSQL), ")"))
-grew <- vapply(5:7, function(i)
+ok(length(CSQL) == 9L, paste0("one query per attrition row (", length(CSQL), ")"))
+grew <- vapply(5:8, function(i)
   all(sets[[i - 1]] %in% sets[[i]]) && length(setdiff(sets[[i]], sets[[i - 1]])) == 1L,
   logical(1))
 ok(all(grew),
    "each step is the step above it plus exactly one criterion, never a new set")
-added <- c(sets[[4]], vapply(5:7, function(i) setdiff(sets[[i]], sets[[i - 1]]),
+added <- c(sets[[4]], vapply(5:8, function(i) setdiff(sets[[i]], sets[[i - 1]]),
                              character(1)))
-# Four, not five: the cumulative loop stops one short of the last criterion,
-# and the final row reads NDMM_PATIDS rather than spelling the conjunction out.
-# So NO_PREGNANCY, now the last criterion, is checked by that row instead.
+# Five, not six: the cumulative loop stops one short of the last criterion, and
+# the final row reads NDMM_PATIDS rather than spelling the conjunction out. So
+# NO_BELANTAMAB_PRE_LOT1, the last criterion, is checked by that row instead.
 want <- c("CE_pre_lot1_12mo", "CE_lot1_fu", "NO_PRIOR_MM_TX",
-          "NO_OTHER_CANCER_PRE_LOT1")
+          "NO_OTHER_CANCER_PRE_LOT1", "NO_PREGNANCY")
 ok(identical(added, want),
    if (identical(added, want)) "and they arrive in protocol order, pregnancy eighth"
    else paste0("the criteria arrive as ", paste(added, collapse = " -> ")))
-# Belantamab is applied over lines, in the lot package, so it must narrow no
-# row of this funnel at all. See DECISIONS.md #2.
-ok(!any(vapply(sets, function(s) "NO_BELANTAMAB" %in% s, logical(1))),
-   "belantamab narrows no step of this funnel")
-ok(grepl(ce$NDMM_PATIDS, CSQL[8], fixed = TRUE),
+# The ADVISORY flag - belantamab anywhere in the study period - still decides
+# nothing. Matched with a boundary, or it would find NO_BELANTAMAB_PRE_LOT1,
+# which is a criterion and does narrow the last row. See DECISIONS.md #2.
+ok(!any(grepl("NO_BELANTAMAB(?!_PRE_LOT1)", CSQL, perl = TRUE)),
+   "the whole-study-period belantamab flag narrows no step of this funnel")
+ok(grepl(ce$NDMM_PATIDS, CSQL[9], fixed = TRUE),
    "and the last step reads the cohort view rather than repeating the conjunction")
 # NDMM_PATIDS's WHERE is generated now, so read the clause rather than the file.
 # What the cohort applies is what NDMM_CRITERIA says, and that is what has to
@@ -414,19 +417,19 @@ ok(length(conj) == 0,
 
 cat("\n-- a funnel that grows is not a count --\n")
 mk <- function(v) setNames(as.list(v), keys)
-ok(is.null(tryCatch({ check_attrition_monotonic(mk(c(100,90,80,70,60,50,40,30,20))); NULL },
+ok(is.null(tryCatch({ check_attrition_monotonic(mk(c(100,90,80,70,60,50,40,30,20,10))); NULL },
                     error = conditionMessage)),
    "a funnel that only narrows passes")
-msg <- tryCatch({ check_attrition_monotonic(mk(c(100,90,80,70,60,50,55,20))); "" },
+msg <- tryCatch({ check_attrition_monotonic(mk(c(100,90,80,70,60,50,55,20,10))); "" },
                 error = conditionMessage)
 ok(grepl("grows at step 7", msg, fixed = TRUE) &&
      grepl(ATTRITION_STEPS[[7]]$label, msg, fixed = TRUE),
    "a step larger than the one above it stops the build, naming the step")
-msg <- tryCatch({ check_attrition_monotonic(mk(c(100,90,80,70,60,50,40,0))); "" },
+msg <- tryCatch({ check_attrition_monotonic(mk(c(100,90,80,70,60,50,40,30,0))); "" },
                 error = conditionMessage)
 ok(grepl("empty", msg, fixed = TRUE),
    "and an empty final cohort is reported rather than published")
-ok(!is.null(tryCatch({ check_attrition_monotonic(mk(c(0,0,0,0,0,0,0,0,0))); NULL },
+ok(!is.null(tryCatch({ check_attrition_monotonic(mk(c(0,0,0,0,0,0,0,0,0,0))); NULL },
                      error = conditionMessage)),
    "a funnel that starts empty stops too, rather than reading as flat")
 
@@ -441,10 +444,10 @@ akeep <- function(g) { ASQL <<- c(ASQL, g); AUNITS[[length(AUNITS) + 1L]] <<- g;
 assign("db_exec", function(con, s) akeep(s), envir = ae)
 assign("db_replace", function(con, ...) akeep(c(...)), envir = ae)
 ASQL <- character(0); AUNITS <- list()
-ae$write_attrition(NULL, list(), mk(c(1000,900,800,700,600,500,400,300)))
+ae$write_attrition(NULL, list(), mk(c(1000,900,800,700,600,500,400,300,200)))
 ins <- grep("INSERT", ASQL, value = TRUE)[1]
-ok(!is.na(ins) && length(gregexpr("('R1',", ins, fixed = TRUE)[[1]]) == 8L,
-   "eight rows, one per step")
+ok(!is.na(ins) && length(gregexpr("('R1',", ins, fixed = TRUE)[[1]]) == 9L,
+   "nine rows, one per step")
 ok(grepl("'Patients with a qualifying MM diagnosis'", ins, fixed = TRUE) &&
      grepl("no pregnancy in study period", ins, fixed = TRUE),
    "labelled by criterion, so the table reads without the code")
@@ -456,7 +459,7 @@ ok(any(vapply(AUNITS, function(g) any(grepl("DELETE", g, fixed = TRUE)) &&
    "cleared and rewritten as one retried unit")
 # A count of exactly 100000 renders as 1e+05 through as.character.
 ASQL <- character(0); AUNITS <- list()
-ae$write_attrition(NULL, list(), mk(c(1e6,1e5,1e5,1e5,1e5,1e5,1e5,1e5,1e5)))
+ae$write_attrition(NULL, list(), mk(c(1e6,1e5,1e5,1e5,1e5,1e5,1e5,1e5,1e5,1e5)))
 ins <- grep("INSERT", ASQL, value = TRUE)[1]
 ok(!grepl("e+0", ins, fixed = TRUE) && grepl("1000000", ins, fixed = TRUE),
    "counts reach SQL as digits, not as R prints them")

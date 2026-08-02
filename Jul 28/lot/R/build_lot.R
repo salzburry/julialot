@@ -1091,8 +1091,8 @@ check_lot_final <- function(con, cfg) {
 
 # The criteria layer, on top of LOT_LONG. With no criteria declared both
 # tables are copies, so downstream can always read them.
-# The no_belantamab criterion tests LOT_BASE_MEDS for one MED_ABBR token, and
-# LOT_BASE_MEDS is built from cl_mma_codelist.csv. If the code list does not use
+# The no_belantamab criterion matches one MED_ABBR against map_stacked, and
+# map_stacked is built from cl_mma_codelist.csv. If the code list does not use
 # that abbreviation the criterion matches nothing and excludes nobody - silently,
 # because "no patient had belantamab" and "the abbreviation is wrong" produce the
 # same empty result. Checking the code list tells them apart: S6.2.1.2 names
