@@ -32,6 +32,9 @@ CONTRACT <- list(
   dsn                         = "RWDE",
   tbl_medical                 = "medical",
   tbl_med_proc                = "med_procedure",
+  # How belantamab is named in MED_ABBR, for the S6.2.1.2 line criterion. Same
+  # abbreviation the NDMM build recognises it by on cl_mma_codelist.csv.
+  belantamab_med_abbr         = "BELA",
   tbl_med_diag                = "med_diagnosis",
   tbl_rx                      = "rx"
 )

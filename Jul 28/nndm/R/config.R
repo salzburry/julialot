@@ -38,9 +38,6 @@ cfg_defaults <- list(
   index_excluded_abbrs = Sys.getenv("NDMM_INDEX_EXCLUDED_ABBRS", unset = ""),
   # The same, by HCPCS or NDC rather than by the code list's own abbreviation.
   index_excluded_codes = Sys.getenv("NDMM_INDEX_EXCLUDED_CODES", unset = ""),
-  # Which claims proxy stands for "belantamab in any LOT"; see
-  # standalone_constants.R and NDMM_BELANTAMAB_SCOPE_COUNTS.
-  belantamab_scope     = Sys.getenv("NDMM_BELANTAMAB_SCOPE", unset = "study_period"),
   # Whether a plasma-cell disorder in remission still excludes as another
   # cancer; see standalone_constants.R and NDMM_MM_ADJACENT_GROUPS.
   mm_adjacent_states = Sys.getenv("NDMM_MM_ADJACENT_STATES", unset = "override"),

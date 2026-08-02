@@ -54,44 +54,57 @@ difference. `<prefix>NDMM_FU_CE_COUNTS` gives both numbers on every run.
 
 ---
 
-## 2. Belantamab "in any LOT" — claims proxy
+## 2. Belantamab "in any LOT" — applied over lines, not here
 
-**Decided:** not yet.
+**Decided:** this build does **not** apply §6.2.1.2's belantamab exclusion. It
+is a line criterion in the `lot` package, applied after `LOT_LONG` exists.
 
-**The problem is sequencing, not data.** §6.2.1.2 excludes a patient who
-received belantamab in any line of therapy. Lines do not exist when this
-cohort is built — the LOT algorithm runs *over* this cohort. So the criterion
-cannot be applied exactly at the time it has to be applied.
+**Why the proxy went.** §6.2.1.2 excludes a patient who received belantamab in
+any line of therapy. Lines do not exist when this cohort is built — the LOT
+algorithm runs *over* it — so anything applied here could only ever be a claims
+proxy standing in for LOT membership. Worse, its errors were asymmetric and
+one of them was permanently unauditable: a patient the proxy wrongly removed
+never reached the LOT run, so nobody could ever check whether they really had
+belantamab in a line.
 
-**What the code does:** a claims-based proxy. Any belantamab claim within the
-configured scope excludes the patient. `NDMM_BELANTAMAB_SCOPE` selects the
-reading — `study_period` (default) or `from_index`.
+Deferring it removes both problems at once. Every candidate gets lines, the
+criterion is evaluated against actual LOT membership, and it is the protocol's
+sentence rather than an approximation of it. Nothing needs approving, because
+there is no longer an operational definition to approve.
 
-**Confirmed against the production code list:** `cl_mma_codelist.csv` carries
-26 distinct `CL_MED_ABBR` values and belantamab is `BELA`, the only one
-beginning `BEL`. So `NDMM_BELANTAMAB_ABBR = 'BEL%'` resolves to exactly
-belantamab, and the run-stopping guard in `00_lot1_index.R` — which fires if
-that pattern matches no row — will not fire.
+**What the cohort build still does:**
 
-The exclusion flag is built from the same scan, not from a second source.
-`06_flags.R` still reads `MAP_MED_TYPE LIKE 'BEL%'` because it is ported code,
-but what it reads is `NDMM_BELANTAMAB_PATIDS` — a view this package builds from
-raw claims against the code list and labels `'BEL' AS MAP_MED_TYPE` so the
-ported step needs no edit. `MAP_STACKED` is not read.
+- **`NO_BELANTAMAB` is still computed** and still ships on the cohort table, as
+  an advisory flag. Nothing filters on it. It is computed over the whole study
+  period — the widest net — because its only job now is to say who carries a
+  belantamab claim at all. `NDMM_BELANTAMAB_SCOPE` is gone; there is no scope to
+  choose.
+- **`<prefix>NDMM_BELANTAMAB_RECONCILE`** lists every cohort member with a
+  belantamab claim, with dates. That is the handover list.
+- **§6.2.1.1's "other than belantamab" stays here**, and must. That is a
+  different rule — belantamab cannot *set* the 1L index — and the index is what
+  LOT1 is anchored on, so it has to be settled before the LOT run.
 
-**What it costs, measured:** `<prefix>NDMM_BELANTAMAB_SCOPE_COUNTS` gives the
-cohort size under each reading. `<prefix>NDMM_BELANTAMAB_RECONCILE` lists every
-patient whose membership turns on this criterion alone — both those the proxy
-kept and those it excluded — with claim dates and which way it went.
+**Where it is applied:** `lot/R/line_criteria.R`, criterion `no_belantamab`,
+enabled by `APPLY_NO_BELANTAMAB` in `lot/config.csv`. The predicate is
+patient-level — false on *every* line of an affected patient — so
+`first_failed_lot` lands on their earliest line and `on_fail = "truncate"`
+leaves them with none, which is the exclusion. It matches whole `MED_ABBR`
+tokens out of `LOT_BASE_MEDS` and `LOT_BASE_1ST_ADD_MED`, not a substring, so
+an abbreviation that merely contains `BELA` cannot match.
 
-**Needs:** approval of the proxy as the operational implementation of the
-criterion, and of which scope. Note that a later `LOT_LONG` join can confirm
-the proxy's *misses* but cannot fully confirm its *over-exclusions*, because a
-patient the proxy removed never reaches the LOT run. Approving the proxy is
-therefore approving an operational definition, not deferring to a later exact
-check.
+**What this changes downstream, and it matters:**
 
-**Status: pending decision.**
+- **`<prefix>NDMM_COHORT` is the NDMM cohort pending one exclusion**, not the
+  final study population. Anything reading it as the final N is wrong.
+- **The attrition has eight steps, not nine**, and its last row is not the
+  study's N. The ninth step now lives in the LOT build's own reporting.
+- The LOT run processes slightly more patients. Belantamab is a later-line ADC,
+  so in a 1L newly-diagnosed cohort this should be very few.
+
+**Recorded by:** the study team, 2026-08-02.
+
+**Status: decided and implemented.**
 
 ---
 

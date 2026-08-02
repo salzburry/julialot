@@ -174,7 +174,14 @@ ADDED <- list(
     # remove exclusions, so the cohort it builds is larger than apr_30_2026's.
     "AND op.next_dt  BETWEEN l1.pre_lot1_start AND l1.pre_lot1_end" = 1L),
   "R/steps/05_pregnancy.R" = c(
-    "AND regexp_replace(trim(code), '[^A-Za-z0-9]', '') <> ''" = 1L)
+    "AND regexp_replace(trim(code), '[^A-Za-z0-9]', '') <> ''" = 1L),
+  # The funnel's last row, read by key rather than named literally in the
+  # runner. Added because the last criterion is no longer ndmm_final:
+  # S6.2.1.2's belantamab exclusion moved to the lot package, so this package's
+  # funnel ends at pregnancy and the runner cannot hard-code the key.
+  "R/steps/07_cohort.R" = c(
+    "ndmm_final_count <- function(counts)" = 1L,
+    "counts[[NDMM_CRITERIA[[length(NDMM_CRITERIA)]]$key]]" = 1L)
 )
 
 # Blocks the port rewrote rather than edited. Patching these back line by line

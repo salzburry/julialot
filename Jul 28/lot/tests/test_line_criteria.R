@@ -30,8 +30,24 @@ clear <- function() for (v in paste0("APPLY_", toupper(c("c1","c2","c3","c4"))))
   Sys.unsetenv(v)
 
 cat("\n-- the shipped registry --\n")
-runs(validate_line_criteria(), "the empty registry validates")
-ok(length(LINE_CRITERIA) == 0, "nothing ships enabled, so LOT is unchanged")
+runs(validate_line_criteria(), "the shipped registry validates")
+# One criterion ships: S6.2.1.2's belantamab exclusion, applied here because
+# lines do not exist when the NDMM cohort is built. See nndm/DECISIONS.md #2.
+ok(length(LINE_CRITERIA) == 1 &&
+     identical(LINE_CRITERIA[[1]]$name, "no_belantamab"),
+   "the belantamab exclusion is the one criterion shipped")
+ok(identical(LINE_CRITERIA[[1]]$on_fail, "truncate") &&
+     identical(LINE_CRITERIA[[1]]$lines, "*"),
+   "...asked of every line, and it removes rather than flags")
+# The predicate is patient-level: false on every line of an affected patient, so
+# first_failed_lot lands on their earliest and truncate leaves them with none.
+# A line-level predicate would strand their earlier lines in the cohort.
+ok(grepl("OVER (PARTITION BY PATID)", LINE_CRITERIA[[1]]$sql, fixed = TRUE),
+   "...and it is patient-level, so the patient goes, not just the line")
+# Whole-token, not LIKE: an abbreviation merely containing BELA must not match.
+ok(grepl("array_contains(split(", LINE_CRITERIA[[1]]$sql, fixed = TRUE) &&
+     !grepl("LIKE", LINE_CRITERIA[[1]]$sql, fixed = TRUE),
+   "...matching whole MED_ABBR tokens, not substrings")
 
 cat("\n-- a criterion has to be well formed --\n")
 runs(validate_line_criteria(list(C_ANY, C_L23)), "well-formed criteria pass")

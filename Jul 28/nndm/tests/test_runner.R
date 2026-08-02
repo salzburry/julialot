@@ -67,7 +67,7 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_prefix",
            "build_ndmm_other_malig_pre_lot1", "build_ndmm_other_malig_grain",
            "build_ndmm_preg_codes",
            "build_ndmm_pregnancy_patids", "build_ndmm_belantamab_patids",
-           "build_ndmm_flags", "build_ndmm_belantamab_scope_counts",
+           "build_ndmm_flags",
            "build_ndmm_fu_ce_counts",
            "ndmm_counts",
            "check_attrition_monotonic", "build_ndmm_cohort_table",
@@ -346,7 +346,9 @@ ok(setequal(keys, names(got)),
    "and every count produced appears in the attrition, none dropped")
 ok(identical(keys, names(got)),
    "in the same order, so the labels sit against the counts they describe")
-ok(length(keys) == 9L, paste0("nine steps, one per criterion (", length(keys), ")"))
+# Eight, not nine: S6.2.1.2's belantamab exclusion is applied over lines, in
+# the lot package, so it is not a step of this funnel. See DECISIONS.md #2.
+ok(length(keys) == 8L, paste0("eight steps, one per criterion (", length(keys), ")"))
 
 cat("\n-- the funnel adds the criteria in the protocol's order --\n")
 # ndmm_counts() is the one block this package rewrote rather than ported, so
@@ -355,27 +357,30 @@ cat("\n-- the funnel adds the criteria in the protocol's order --\n")
 # step above it plus exactly one flag, in the order Rev Round 2 S6.2.1.1 and
 # then S6.2.1.2 list the criteria.
 FLAGS <- c("CE_pre_lot1_12mo", "CE_lot1_fu", "NO_PRIOR_MM_TX",
-           "NO_OTHER_CANCER_PRE_LOT1", "NO_PREGNANCY", "NO_BELANTAMAB")
+           "NO_OTHER_CANCER_PRE_LOT1", "NO_PREGNANCY")
 flags_in <- function(s) FLAGS[vapply(FLAGS, grepl, logical(1), x = s, fixed = TRUE)]
 sets <- lapply(CSQL, flags_in)
-ok(length(CSQL) == 9L, paste0("one query per attrition row (", length(CSQL), ")"))
-grew <- vapply(5:8, function(i)
+ok(length(CSQL) == 8L, paste0("one query per attrition row (", length(CSQL), ")"))
+grew <- vapply(5:7, function(i)
   all(sets[[i - 1]] %in% sets[[i]]) && length(setdiff(sets[[i]], sets[[i - 1]])) == 1L,
   logical(1))
 ok(all(grew),
    "each step is the step above it plus exactly one criterion, never a new set")
-added <- c(sets[[4]], vapply(5:8, function(i) setdiff(sets[[i]], sets[[i - 1]]),
+added <- c(sets[[4]], vapply(5:7, function(i) setdiff(sets[[i]], sets[[i - 1]]),
                              character(1)))
+# Four, not five: the cumulative loop stops one short of the last criterion,
+# and the final row reads NDMM_PATIDS rather than spelling the conjunction out.
+# So NO_PREGNANCY, now the last criterion, is checked by that row instead.
 want <- c("CE_pre_lot1_12mo", "CE_lot1_fu", "NO_PRIOR_MM_TX",
-          "NO_OTHER_CANCER_PRE_LOT1", "NO_PREGNANCY")
+          "NO_OTHER_CANCER_PRE_LOT1")
 ok(identical(added, want),
    if (identical(added, want)) "and they arrive in protocol order, pregnancy eighth"
    else paste0("the criteria arrive as ", paste(added, collapse = " -> ")))
-# Belantamab is the last exclusion S6.2.1.2 lists, so it must not narrow any
-# earlier row - it enters only through NDMM_PATIDS, which the final step reads.
-ok(!any(vapply(sets[1:8], function(s) "NO_BELANTAMAB" %in% s, logical(1))),
-   "belantamab narrows no step before the last")
-ok(grepl(ce$NDMM_PATIDS, CSQL[9], fixed = TRUE),
+# Belantamab is applied over lines, in the lot package, so it must narrow no
+# row of this funnel at all. See DECISIONS.md #2.
+ok(!any(vapply(sets, function(s) "NO_BELANTAMAB" %in% s, logical(1))),
+   "belantamab narrows no step of this funnel")
+ok(grepl(ce$NDMM_PATIDS, CSQL[8], fixed = TRUE),
    "and the last step reads the cohort view rather than repeating the conjunction")
 # NDMM_PATIDS's WHERE is generated now, so read the clause rather than the file.
 # What the cohort applies is what NDMM_CRITERIA says, and that is what has to
@@ -412,12 +417,12 @@ mk <- function(v) setNames(as.list(v), keys)
 ok(is.null(tryCatch({ check_attrition_monotonic(mk(c(100,90,80,70,60,50,40,30,20))); NULL },
                     error = conditionMessage)),
    "a funnel that only narrows passes")
-msg <- tryCatch({ check_attrition_monotonic(mk(c(100,90,80,70,60,50,40,45,20))); "" },
+msg <- tryCatch({ check_attrition_monotonic(mk(c(100,90,80,70,60,50,55,20))); "" },
                 error = conditionMessage)
-ok(grepl("grows at step 8", msg, fixed = TRUE) &&
-     grepl(ATTRITION_STEPS[[8]]$label, msg, fixed = TRUE),
+ok(grepl("grows at step 7", msg, fixed = TRUE) &&
+     grepl(ATTRITION_STEPS[[7]]$label, msg, fixed = TRUE),
    "a step larger than the one above it stops the build, naming the step")
-msg <- tryCatch({ check_attrition_monotonic(mk(c(100,90,80,70,60,50,40,30,0))); "" },
+msg <- tryCatch({ check_attrition_monotonic(mk(c(100,90,80,70,60,50,40,0))); "" },
                 error = conditionMessage)
 ok(grepl("empty", msg, fixed = TRUE),
    "and an empty final cohort is reported rather than published")
@@ -436,14 +441,14 @@ akeep <- function(g) { ASQL <<- c(ASQL, g); AUNITS[[length(AUNITS) + 1L]] <<- g;
 assign("db_exec", function(con, s) akeep(s), envir = ae)
 assign("db_replace", function(con, ...) akeep(c(...)), envir = ae)
 ASQL <- character(0); AUNITS <- list()
-ae$write_attrition(NULL, list(), mk(c(1000,900,800,700,600,500,400,300,250)))
+ae$write_attrition(NULL, list(), mk(c(1000,900,800,700,600,500,400,300)))
 ins <- grep("INSERT", ASQL, value = TRUE)[1]
-ok(!is.na(ins) && length(gregexpr("('R1',", ins, fixed = TRUE)[[1]]) == 9L,
-   "nine rows, one per step")
+ok(!is.na(ins) && length(gregexpr("('R1',", ins, fixed = TRUE)[[1]]) == 8L,
+   "eight rows, one per step")
 ok(grepl("'Patients with a qualifying MM diagnosis'", ins, fixed = TRUE) &&
-     grepl("no belantamab in any LOT", ins, fixed = TRUE),
+     grepl("no pregnancy in study period", ins, fixed = TRUE),
    "labelled by criterion, so the table reads without the code")
-ok(grepl(", 250,", ins, fixed = TRUE) && grepl(", 25,", ins, fixed = TRUE),
+ok(grepl(", 300,", ins, fixed = TRUE) && grepl(", 30,", ins, fixed = TRUE),
    "with the count and its percentage of the starting population")
 # A DELETE and an INSERT retried apart would double the rows.
 ok(any(vapply(AUNITS, function(g) any(grepl("DELETE", g, fixed = TRUE)) &&
@@ -745,7 +750,7 @@ base_ch <- modifyList(cfg_defaults, list(work_schema = "wk", object_prefix = "p_
 ok(identical(tryCatch({ check_contract(base_ch); "" }, error = conditionMessage), "") &&
      identical(tryCatch({ check_choices(base_ch); "" }, error = conditionMessage), ""),
    "the shipped settings satisfy both")
-for (k in c("belantamab_scope", "mm_adjacent_states")) {
+for (k in c("mm_adjacent_states")) {
   alt <- setdiff(CHOICES[[k]], base_ch[[k]])[1]
   ok(identical(tryCatch({ check_choices(modifyList(base_ch, setNames(list(alt), k))); "" },
                         error = conditionMessage), ""),
@@ -1214,7 +1219,10 @@ called <- Filter(function(nm)
   regexpr(paste0("(?<![A-Za-z0-9_.])", nm, "\\("), body, perl = TRUE) != -1, step_fns)
 # And ORDER has to name every one of them, so the phase list cannot fall behind
 # the runner it describes.
-extra <- setdiff(called, ORDER)
+# ndmm_final_count() reads the funnel's last row out of what ndmm_counts()
+# returned. It lives beside it in 07_cohort.R but writes nothing, so ORDER -
+# which is the list of steps that build things - does not name it.
+extra <- setdiff(called, c(ORDER, "ndmm_final_count"))
 ok(length(extra) == 0,
    if (length(extra)) paste0("the runner calls step functions ORDER does not name: ",
                              paste(extra, collapse = ", "))

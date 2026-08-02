@@ -58,7 +58,6 @@ CONTRACT <- list(
 # every one is recorded in NDMM_RUN_METADATA, so a cohort still says which
 # choices produced it.
 CHOICES <- list(
-  belantamab_scope     = c("study_period", "from_index"),
   mm_adjacent_states   = c("override", "exclude"),
   # Free text: names and codes, validated against the code list at run time by
   # build_ndmm_index_ineligible_codes(), which stops on one that matches
@@ -125,7 +124,7 @@ CHECKPOINTS <- c("NDMM_FLAGS_ALL", "NDMM_MM_DX_CODES",
 
 # What the run writes. All prefixed, so two cohorts sit side by side.
 DELIVERABLES <- c("NDMM_COHORT", "NDMM_ATTRITION", "NDMM_INDEX_AGENTS",
-                  "NDMM_BELANTAMAB_SCOPE_COUNTS", "NDMM_MM_ADJACENT_GROUPS",
+                  "NDMM_MM_ADJACENT_GROUPS",
                   "NDMM_MM_ADJACENT_CODES", "NDMM_FU_CE_COUNTS",
                   "NDMM_OTHER_MALIG_GROUPS", "NDMM_OTHER_MALIG_GRAIN",
                   "NDMM_BELANTAMAB_RECONCILE",
@@ -293,7 +292,6 @@ CONSTANT_SETTINGS <- list(
   # was checked for has to be the value the query gets.
   list(const = "NDMM_INDEX_EXCLUDED_ABBRS",   cfg = "index_excluded_abbrs", note = ""),
   list(const = "NDMM_INDEX_EXCLUDED_CODES",   cfg = "index_excluded_codes", note = ""),
-  list(const = "NDMM_BELANTAMAB_SCOPE",       cfg = "belantamab_scope",   note = ""),
   list(const = "NDMM_MM_ADJACENT_STATES",     cfg = "mm_adjacent_states", note = ""),
   # Not a cohort window but a code-list assumption, and just as able to change
   # the count: it is what identifies belantamab, and belantamab is exclusion 4.
@@ -344,10 +342,17 @@ NDMM_CRITERIA <- list(
   list(key = "noother",        flag = "NO_OTHER_CANCER_PRE_LOT1",
        label = "+ no other cancer in 12-month baseline"),
   list(key = "noother_nopreg", flag = "NO_PREGNANCY",
-       label = "+ no pregnancy in study period"),
-  list(key = "ndmm_final",     flag = "NO_BELANTAMAB",
-       label = "+ no belantamab in any LOT (NDMM 1L cohort)")
+       label = "+ no pregnancy in study period")
 )
+# S6.2.1.2's fourth exclusion - belantamab in any LOT - is deliberately NOT
+# here. Lines do not exist when this build runs, so applying it at this point
+# could only ever be a claims proxy, and one whose over-exclusions could never
+# be checked: a patient removed here never reaches the LOT run. It is applied
+# in the lot package as a line criterion, where LOT membership is known and the
+# criterion is exact. NO_BELANTAMAB is still computed and still ships on the
+# cohort table, as the proxy's opinion; nothing filters on it. So this table is
+# the NDMM cohort pending that one exclusion, and the funnel has eight steps
+# rather than nine. See DECISIONS.md #2.
 
 # The first n criteria as a WHERE body, in the funnel's order.
 #
@@ -592,7 +597,7 @@ write_run_metadata <- function(con, cfg, here, n) {
     glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES (",
          "{sql_text(run_id)}, {sql_text(cfg$object_prefix)}, ",
          "{sql_text(NDMM_BELANTAMAB_ABBR)}, {sql_text(NDMM_INDEX_EXCLUDED_ABBRS)}, ",
-         "{sql_text(NDMM_INDEX_EXCLUDED_CODES)}, {sql_text(NDMM_BELANTAMAB_SCOPE)}, ",
+         "{sql_text(NDMM_INDEX_EXCLUDED_CODES)}, ",
          "{sql_text(NDMM_MM_ADJACENT_STATES)}, ",
          "{sql_text(code_fingerprint(here))}, ",
          "{sql_text(contract_settings())}, ",
@@ -1070,7 +1075,6 @@ build_nndm <- function(here, prefix) {
   checkpoint(con, "NDMM_PATIDS")
   # After the flags: each scope is costed against the whole conjunction, so it
   # needs every other criterion already decided.
-  build_ndmm_belantamab_scope_counts(con, cfg)
   build_ndmm_fu_ce_counts(con, cfg)
   # build_lot_long_filtered() is not called. It joins LOT_LONG to the cohort for
   # the source's dashboard KPI, gallery and LOT-detail views; neither the cohort
@@ -1085,16 +1089,16 @@ build_nndm <- function(here, prefix) {
   check_attrition_monotonic(counts)
 
   build_ndmm_cohort_table(con, cfg)
-  check_ndmm_cohort(con, cfg, counts$ndmm_final)
+  check_ndmm_cohort(con, cfg, ndmm_final_count(counts))
   build_ndmm_belantamab_reconcile(con, cfg)
   write_attrition(con, cfg, counts)
   write_codelist_metadata(con, cfg)
-  write_run_metadata(con, cfg, here, counts$ndmm_final)
+  write_run_metadata(con, cfg, here, ndmm_final_count(counts))
 
-  write_build_status(con, cfg, "complete", counts$ndmm_final)
+  write_build_status(con, cfg, "complete", ndmm_final_count(counts))
   options(nndm_complete = TRUE)
   log_msg(SEP)
-  log_msg("NDMM 1L cohort: ", format(counts$ndmm_final, big.mark = ","),
+  log_msg("NDMM 1L cohort: ", format(ndmm_final_count(counts), big.mark = ","),
           " patients -> ", wrk("NDMM_COHORT"))
   # After the count, because which of these were supplied is part of reading it.
   log_msg(SEP)

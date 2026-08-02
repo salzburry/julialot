@@ -3,8 +3,37 @@
 #   <prefix>LOT_LONG_ALLFLAGS  every criterion as a 0/1 column, always computed
 #   <prefix>LOT_LONG_FINAL     the enabled ones applied
 
-# None yet - the study team has not asked for any.
-LINE_CRITERIA <- list()
+# Protocol S6.2.1.2, the fourth NDMM exclusion: "Received belantamab mafodotin
+# (i.e., an ADC) in any LOT". It lives here rather than in the cohort build
+# because lines do not exist until this package has run - a cohort-time rule
+# could only ever be a claims proxy, and one whose over-exclusions were
+# unverifiable, because a patient it removed never got lines to check. Applied
+# here it is the criterion as written.
+#
+# Patient-level, not line-level. The predicate is false on EVERY line of an
+# affected patient, so first_failed_lot lands on their earliest line and the
+# truncate below leaves them with none - which is the exclusion.
+#
+# LOT_BASE_MEDS is concat_ws(' ', sort_array(collect_set(MED_ABBR))), so the
+# test is a whole-token match, not a LIKE: an abbreviation that merely contains
+# BELA would not match, and BELA as one of several meds does.
+# LOT_BASE_1ST_ADD_MED is checked too - a med added mid-line was still received
+# in it.
+LINE_CRITERIA <- list(
+  list(
+    name    = "no_belantamab",
+    label   = "No belantamab (ADC) in any LOT (protocol S6.2.1.2)",
+    lines   = "*",
+    flag    = "NO_BELANTAMAB_ANY_LOT",
+    on_fail = "truncate",
+    sql     = paste0(
+      "max(CASE WHEN array_contains(split(coalesce(LOT_BASE_MEDS, \'\'), \' \'), ",
+      "\'{cfg$belantamab_med_abbr}\')",
+      " OR upper(trim(coalesce(LOT_BASE_1ST_ADD_MED, \'\'))) = ",
+      "\'{cfg$belantamab_med_abbr}\' THEN 1 ELSE 0 END)",
+      " OVER (PARTITION BY PATID) = 0")
+  )
+)
 
 # flag changes nothing. truncate drops the failing line and every later one,
 # because LOT N is defined against LOT N-1 - removing a middle line would

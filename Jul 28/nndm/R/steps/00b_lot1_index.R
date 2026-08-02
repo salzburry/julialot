@@ -237,10 +237,11 @@ build_ndmm_index_agents <- function(con, cfg) {
 # flags step takes its belantamab source as a parameter and looks for
 # MAP_MED_TYPE LIKE 'BEL%', so this answers in that shape from raw claims.
 #
-# S6.2.1.2 says "in any LOT". Lines do not exist yet - the LOT algorithm runs
-# over the cohort this build produces - so NDMM_BELANTAMAB_SCOPE picks the
-# claims proxy, and every claim is kept here with its date so the proxy can be
-# applied, and so all of them can be counted for review.
+# S6.2.1.2 says "in any LOT", and this build does not apply that exclusion -
+# lines do not exist until the lot package has run over the cohort it produces,
+# so it is a line criterion there. What this builds is the advisory flag and,
+# below, the list of cohort members carrying a belantamab claim, which is what
+# the LOT-side criterion adjudicates. Every claim is kept with its date.
 build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl, med_proc_tbl) {
   # Each source only matches the code types it can carry, the same way the
   # prior-therapy and index scans do. Without it a PROC_CD could match an NDC
@@ -270,12 +271,11 @@ build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl, med_proc_tbl)
     arm(rx_tbl,      "FILL_DT", ndc_match("NDC")),           "\n      UNION\n",
     arm(med_proc_tbl, "FST_DT", txt_match("PROC", "'HCPCS','CPT'"))))
 
-  scope <- switch(NDMM_BELANTAMAB_SCOPE,
-    study_period = glue("b.bel_dt >= date('{NDMM_STUDY_START}')"),
-    from_index   = "b.bel_dt >= l1.LOT1_START_DT",
-    stop("NDMM_BELANTAMAB_SCOPE='", NDMM_BELANTAMAB_SCOPE, "' is not a scope. ",
-         "Use study_period or from_index; see standalone_constants.R.",
-         call. = FALSE))
+  # The study period, always. This flag no longer decides membership - the
+  # exclusion is a line criterion in the lot package, where LOT membership is
+  # known - so there is no scope to choose. Widest net, because its only job now
+  # is to say which patients carry a belantamab claim at all.
+  scope <- glue("b.bel_dt >= date('{NDMM_STUDY_START}')")
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_BELANTAMAB_PATIDS} AS
     SELECT DISTINCT b.PATID, 'BEL' AS MAP_MED_TYPE
@@ -284,9 +284,6 @@ build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl, med_proc_tbl)
     WHERE {scope}"))
 }
 
-# How many patients each reading of "in any LOT" would exclude. The scope is a
-# proxy for something this build cannot see, so the run says what the choice
-# costs rather than leaving it to be guessed at.
 # Every ICD category the other-cancer code list resolves to, and how many
 # labels and codes fall in each. This is what the two-outpatient-claim rule
 # pairs on, so it is where to check that a group is a primary tumour type and
@@ -455,56 +452,6 @@ build_ndmm_fu_ce_counts <- function(con, cfg) {
   invisible(got)
 }
 
-build_ndmm_belantamab_scope_counts <- function(con, cfg) {
-  # Each proxy as a set of patients, then the whole conjunction against each -
-  # so a row is a cohort size, not one criterion's count. The claim count alone
-  # says how many the proxy catches; it does not say how many of those the
-  # other criteria had already removed, which is the number that matters.
-  db_exec(con, glue("
-    CREATE OR REPLACE TABLE {wrk('NDMM_BELANTAMAB_SCOPE_COUNTS')} AS
-    WITH sc AS (
-      SELECT 'ever' AS SCOPE, b.PATID
-      FROM {NDMM_BELANTAMAB_TX} b
-      INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = b.PATID
-      UNION ALL
-      SELECT 'study_period', b.PATID
-      FROM {NDMM_BELANTAMAB_TX} b
-      INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = b.PATID
-      WHERE b.bel_dt >= date('{NDMM_STUDY_START}')
-      UNION ALL
-      SELECT 'from_index', b.PATID
-      FROM {NDMM_BELANTAMAB_TX} b
-      INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = b.PATID
-      WHERE b.bel_dt >= l1.LOT1_START_DT
-    ),
-    scd AS (SELECT DISTINCT SCOPE, PATID FROM sc),
-    sp AS (SELECT * FROM (VALUES ('ever'), ('study_period'), ('from_index')) AS t(SCOPE))
-    SELECT sp.SCOPE                             AS SCOPE,
-           count(DISTINCT scd.PATID)            AS N_PATIENTS,
-           -- Every criterion but belantamab, which scd.PATID IS NULL is this
-           -- row's own reading of. From NDMM_CRITERIA for the same reason as
-           -- the follow-up CE table above.
-           count(DISTINCT CASE WHEN scd.PATID IS NULL
-                                AND {ndmm_criteria_where(except = 'NO_BELANTAMAB', alias = 'f.')}
-                               THEN f.PATID END) AS N_COHORT,
-           max(CASE WHEN sp.SCOPE = '{NDMM_BELANTAMAB_SCOPE}' THEN 1 ELSE 0 END)
-                                                AS IS_THIS_RUN
-    FROM sp
-    CROSS JOIN {NDMM_FLAGS_ALL} f
-    LEFT JOIN scd ON scd.SCOPE = sp.SCOPE AND scd.PATID = f.PATID
-    GROUP BY sp.SCOPE
-    ORDER BY N_COHORT DESC"))
-  got <- db_q(con, glue("SELECT * FROM {wrk('NDMM_BELANTAMAB_SCOPE_COUNTS')}"))
-  log_msg("Belantamab exclusion, by reading of \"in any LOT\" (applied: ",
-          NDMM_BELANTAMAB_SCOPE, ")")
-  for (i in seq_len(nrow(got)))
-    log_msg("    ", if (got$IS_THIS_RUN[i] == 1L) "->" else "  ", " ",
-            got$SCOPE[i], ": ", format(got$N_PATIENTS[i], big.mark = ","),
-            " of the 1L candidates excluded, cohort ",
-            format(got$N_COHORT[i], big.mark = ","))
-  invisible(got)
-}
-
 # What the LOT run has to adjudicate before this exclusion is exact.
 #
 # S6.2.1.2 excludes a patient who received belantamab in ANY line of therapy.
@@ -540,7 +487,7 @@ build_ndmm_belantamab_reconcile <- function(con, cfg) {
     FROM {NDMM_FLAGS_ALL} f
     INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = f.PATID
     INNER JOIN {NDMM_BELANTAMAB_TX} b ON b.PATID = f.PATID
-    WHERE {ndmm_criteria_where(except = 'NO_BELANTAMAB', alias = 'f.')}
+    WHERE {ndmm_criteria_where(alias = 'f.')}
     ORDER BY EXCLUDED_BY_PROXY DESC, PATID, BEL_DT"))
   got <- db_q(con, glue("
     SELECT count(DISTINCT CASE WHEN EXCLUDED_BY_PROXY = 0 THEN PATID END) AS n_kept,
@@ -551,10 +498,8 @@ build_ndmm_belantamab_reconcile <- function(con, cfg) {
   log_msg("Belantamab still to adjudicate: ", format(got$n_pat, big.mark = ","),
           " patient(s), ", format(got$n_claims, big.mark = ","),
           " claim(s) -> ", wrk("NDMM_BELANTAMAB_RECONCILE"))
-  log_msg("  ", format(got$n_kept, big.mark = ","),
-          " in the cohort carrying a claim the '", NDMM_BELANTAMAB_SCOPE,
-          "' reading did not count, and ", format(got$n_dropped, big.mark = ","),
-          " it excluded who pass every other criterion.")
+  log_msg("  All of them are in the cohort this build writes: S6.2.1.2 is ",
+          "applied over lines, in the lot package, not here.")
   if (isTRUE(got$n_pat > 0))
     log_msg("  \"In any LOT\" is exact only once lines exist. After the LOT run, ",
             "join these to LOT_LONG: a claim inside a line confirms the ",
