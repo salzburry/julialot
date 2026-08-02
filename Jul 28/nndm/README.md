@@ -123,7 +123,7 @@ None of them changes the cohort — they are what the decision gets made
 | `NDMM_OTHER_MALIG_GROUPS` | what counts as one tumour type | every ICD category the code list resolves to, with its code and label counts. A category holding one code can only confirm itself |
 | `NDMM_OTHER_MALIG_GRAIN` | is that grain actually costing anything? | criterion 7 counted at the finest, configured and coarsest grouping. **The gap between the first row and the last is the whole question** — if it is small, no map is needed |
 | `NDMM_FU_CE_COUNTS` | what the follow-up CE window costs — the one setting resting on a relay, not a document | `N_PASSING_CRITERION_5` and `N_COHORT` at 0 / 30 / 60 / 90 days and at an exact 3 months, with this run's row marked |
-| `NDMM_BELANTAMAB_RECONCILE` | **which cohort members `lot` will remove** | every belantamab claim belonging to a patient who passed all nine criteria here, with dates. All of them are on or after the index — the pre-index half is criterion 9 — so `lot`'s `no_belantamab` removes every patient listed. Nothing here needs adjudicating |
+| `NDMM_BELANTAMAB_RECONCILE` | **which cohort members `lot` will remove** | every belantamab claim belonging to a patient who passed all nine criteria here, with dates. The scan is bounded to the study period and criterion 9 removes anyone whose claim precedes their index, so every row is on or after the index and `lot`'s `no_belantamab` removes every patient listed. Nothing here needs adjudicating |
 
 This list is maintained by hand and has fallen behind the code before. The
 build's own declaration is `OUTPUTS` in `build_nndm.R`, and `tests/test_runner.R`

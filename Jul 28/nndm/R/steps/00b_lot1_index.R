@@ -286,12 +286,20 @@ build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl, med_proc_tbl)
     "\n       AND lpad(regexp_replace(coalesce(cast(t.", col, " as string),''), '[^0-9]', ''), 11, '0')",
     "\n         = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')",
     "\n       AND regexp_replace(coalesce(cast(t.", col, " as string),''), '[^0-9]', '') <> ''")
+  # Both ends of the study period. The upper bound was always here; the lower
+  # one was not, and the CDM tables are cumulative back well past S6.1's
+  # 2016-01-01 - so this view could return a claim from outside the window every
+  # other criterion in this build is scoped to. The pre-index criterion never
+  # counted those, because it reads NDMM_BELANTAMAB_PATIDS which bounds at the
+  # study start; the reconcile table joined the raw view and did. One scope for
+  # the drug, in one package.
   arm <- function(tbl, dt, match_sql) glue("
       SELECT DISTINCT cast(t.PATID as string) AS PATID,
              cast(t.{dt} as date) AS bel_dt
       FROM {tbl} t
       INNER JOIN {NDMM_BELANTAMAB_CODES} c ON {match_sql}
-      WHERE cast(t.{dt} as date) <= date('{cfg$study_end}')")
+      WHERE cast(t.{dt} as date) >= date('{NDMM_STUDY_START}')
+        AND cast(t.{dt} as date) <= date('{cfg$study_end}')")
   db_exec(con, paste0(glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_BELANTAMAB_TX} AS"),
     arm(medical_tbl, "FST_DT",  txt_match("PROC_CD", "'HCPCS','CPT'")), "\n      UNION\n",
@@ -319,14 +327,15 @@ build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl, med_proc_tbl)
   # not already do, for the window they share. It is unbounded because it is
   # meant to be: a belantamab line at any point in the patient's history
   # disqualifies them.
-  scope <- glue("b.bel_dt >= date('{NDMM_STUDY_START}')")
+  # No date predicate of its own: NDMM_BELANTAMAB_TX is the study period now, so
+  # a second copy of that bound here would be one more place for the two to
+  # drift apart.
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_BELANTAMAB_PATIDS} AS
     SELECT b.PATID, 'BEL' AS MAP_MED_TYPE,
            max(CASE WHEN b.bel_dt < l1.LOT1_START_DT THEN 1 ELSE 0 END) AS PRE_LOT1
     FROM {NDMM_BELANTAMAB_TX} b
     INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = b.PATID
-    WHERE {scope}
     GROUP BY b.PATID"))
 }
 
@@ -510,10 +519,10 @@ build_ndmm_fu_ce_counts <- function(con, cfg) {
 #
 # So it lists them, and that is all it claims to do. EXCLUDED_BY_PROXY is gone -
 # it named a proxy that no longer exists, and with the pre-index criterion in
-# the WHERE it could only ever have read 1. DAYS_FROM_INDEX carries what is
-# actually left to see: it is >= 0 for every claim the exclusion acts on, and
-# negative only for a claim outside the study period, which is out of scope for
-# every criterion in this build.
+# the WHERE it could only ever have read 1. Every DAYS_FROM_INDEX here is >= 0:
+# an in-study claim before the index would have removed the patient at criterion
+# 9, and there are no out-of-study claims to find because the scan is bounded at
+# both ends of the study period.
 build_ndmm_belantamab_reconcile <- function(con, cfg) {
   # Read off NDMM_FLAGS_ALL rather than the cohort table, and scoped by
   # ndmm_criteria_where() - so the set is patients who pass every criterion,
@@ -531,9 +540,7 @@ build_ndmm_belantamab_reconcile <- function(con, cfg) {
     WHERE {ndmm_criteria_where(alias = 'f.')}
     ORDER BY PATID, BEL_DT"))
   got <- db_q(con, glue("
-    SELECT count(DISTINCT PATID) AS n_pat,
-           count(*)              AS n_claims,
-           count(DISTINCT CASE WHEN DAYS_FROM_INDEX < 0 THEN PATID END) AS n_out_of_period
+    SELECT count(DISTINCT PATID) AS n_pat, count(*) AS n_claims
     FROM {wrk('NDMM_BELANTAMAB_RECONCILE')}"))
   log_msg("Belantamab in the cohort this build writes: ",
           format(got$n_pat, big.mark = ","), " patient(s), ",
@@ -542,14 +549,6 @@ build_ndmm_belantamab_reconcile <- function(con, cfg) {
   log_msg("  Every claim here is on or after the index - the pre-index half of ",
           "S6.2.1.2 is criterion 9 of this funnel. lot's no_belantamab removes ",
           "these patients, so expect the LOT population to be smaller by them.")
-  # Belantamab was not in use before 2020 and the study period opens in 2016, so
-  # this should be zero. If it is not, the scan is reading claims from outside
-  # the window every criterion in this build is scoped to, and that is worth
-  # knowing rather than silently carrying.
-  if (isTRUE(got$n_out_of_period > 0))
-    log_msg("  ", got$n_out_of_period, " patient(s) have a belantamab claim ",
-            "before the study period. No criterion acts on those - they are ",
-            "outside the window S6.1 defines - but they are listed here.")
   invisible(got)
 }
 

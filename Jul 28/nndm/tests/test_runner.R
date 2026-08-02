@@ -834,6 +834,32 @@ ok(grepl("'BELAMAF'", msg, fixed = TRUE) && grepl("BELANTAMAB_MED_ABBR", msg, fi
    "a second BEL* abbreviation stops the build, naming it and lot's setting")
 ok(identical(be$NDMM_BELANTAMAB_ABBR, "BELA"),
    "and the default is BELA, which is what lot's CONTRACT pins")
+
+cat("\n-- the belantamab scan is the study period, both ends --\n")
+# The upper bound was always here; the lower one was not, and the CDM tables
+# are cumulative back well past 2016. So the raw view could return a claim from
+# outside the window every criterion in this build is scoped to. The pre-index
+# criterion never counted those - it reads NDMM_BELANTAMAB_PATIDS, which used to
+# carry its own bound - but the reconcile table joined the raw view and did,
+# which made "every patient listed is one lot removes" true only sometimes.
+for (nm in c("NDMM_BELANTAMAB_TX", "NDMM_BELANTAMAB_PATIDS", "NDMM_LOT1_STARTS"))
+  assign(nm, nm, envir = be)
+assign("NDMM_STUDY_START", "2016-01-01", envir = be)
+assign("cfg", list(study_end = "2026-03-31"), envir = be)
+BSQL <- character(0)
+be$build_ndmm_belantamab_patids(NULL, "med", "rx", "mp")
+scan_sql <- BSQL[1]; patids_sql <- BSQL[2]
+n_lo <- length(gregexpr("date('2016-01-01')", scan_sql, fixed = TRUE)[[1]])
+n_hi <- length(gregexpr("date('2026-03-31')", scan_sql, fixed = TRUE)[[1]])
+ok(n_lo == 5L && n_hi == 5L,
+   paste0("all five claim arms are bounded at both ends (", n_lo, " lower, ",
+          n_hi, " upper)"))
+# And exactly once, at the source. A second copy in the view that reads it is
+# one more place for the two to drift apart.
+ok(!grepl("2016-01-01", patids_sql, fixed = TRUE),
+   "the view over it does not repeat the bound")
+ok(grepl("b.bel_dt < l1.LOT1_START_DT", patids_sql, fixed = TRUE),
+   "...it only asks which side of the index the claim falls")
 ok(regexpr("VIEW {NDMM_MM_DX_CODES}", paste(unlist(lapply(step_files, readLines,
              warn = FALSE)), collapse = "\n"), fixed = TRUE) > 0,
    "that list is built by this package, not assumed to exist")
