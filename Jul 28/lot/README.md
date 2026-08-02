@@ -2,43 +2,20 @@
 
 Lines of therapy, built once and run per cohort.
 
-## Status: ported, not yet run
+## Status: not yet run
 
 `R/steps/` holds the whole build - LOT1 (MMA claims, MAP, base regimen, SCT,
 end date) and LOT2 onwards up to `LOT_LONG`, one row per patient per line.
-All of it carried across line for line from the validated source: the nine
-LOT1 phases and `10_lot2_5_base.R` are the source's executable R and SQL,
-unchanged.
 
-One deviation is allowed everywhere - LOT's own outputs carry the cohort
-prefix - and beyond that five files carry named deviations, described
-below. The source's `lot2_5_inputs.R` has no counterpart here - it rebuilt the
-code lists and the cohort for a standalone LOT2-5 session, a path this package
-does not offer - and the SQL it held is compared as part of the phases.
-
-Comments are compared out, so the copied review-diary comments could be tidied
-without weakening the check. Change a code line and it fails; change a comment
-and it does not.
-
-For the five files that carry deviations, each approved deviation is named
-and undone one at a time - then the two sides must be **identical**. Adding an
-unapproved line fails, and deleting an approved deviation - a guard line, an
-edited line, or a whole added block - leaves its entry with nothing to remove,
-which is reported. Both halves have been wrong before: an earlier version asked
-only that every source line still be present somewhere, which let an inserted
-second `WHERE` clause through, and the added blocks were not reported at all,
-so deleting one whole read as a perfect match.
-
-Three places deliberately differ from the source, all the same defect: the
-code lists filter on the raw value but store the normalized one, so a
-punctuation-only code survives as `""` - and the claim side turns a missing
-code into `""` too, so the two match. For NDC both sides pad to eleven zeros.
-This build drops codes that normalize to blank, de-duplicates the lists, and
-requires digits on both NDC joins. Each of those guards is asserted by name in
-`tests/test_runner.R`.
+Three guards were added where the code lists filter on the raw value but store
+the normalised one: a punctuation-only code survives as `""`, and a missing
+code on the claim side normalises to `""` too, so the two would match. For NDC
+both sides pad to eleven zeros. This build drops codes that normalise to blank,
+de-duplicates the lists, and requires digits on both NDC joins. Each guard is
+asserted by name in `tests/test_runner.R`.
 
 It has never been run against Databricks. Nothing here is validated output
-until it has been, and compared with the source build patient for patient.
+until it has been.
 
 The folder is self-contained - the only outside dependencies are the R
 packages `DBI`, `odbc` and `glue`, and no file resolves a path outside it.
@@ -119,7 +96,7 @@ Rscript build.R MY_COH_FINAL mystudy_ 2016-01-01 2026-03-31
 ```
 
 `config.csv` supplies the default when no argument is given — currently the NNDM
-protocol's §6.1 study period, 2016-01-01 to 2026-03-31, which resolves to the
+study definition's the study period study period, 2016-01-01 to 2026-03-31, which resolves to the
 `2026q1` CDM tables. A cohort built to another window passes its own; nothing in
 this folder has to change. Both dates land in `LOT_RUN_METADATA`, so an output
 says which window and therefore which vintage produced it.
@@ -159,10 +136,10 @@ criterion off.
 ### The shipped criterion is this study's, and it is on
 
 `APPLY_NO_BELANTAMAB` ships `TRUE`, and `no_belantamab` is a `truncate`
-criterion — it removes the whole patient. That is the NNDM protocol's §6.2.1.2
+criterion — it removes the whole patient. That is the NNDM study definition's the exclusion criteria
 exclusion, and it is correct for `NDMM_COHORT`. It is **not** automatically
-correct for the parent MM cohort, a sensitivity cohort, or any other study whose
-protocol has no such exclusion, and passing a different cohort, prefix and window
+correct for a broader MM cohort, a sensitivity cohort, or any other study whose
+study definition has no such exclusion, and passing a different cohort, prefix and window
 does not change it: the switch is `APPLY_NO_BELANTAMAB`, and it has to be set
 `FALSE` deliberately.
 
@@ -236,7 +213,7 @@ patients = "CREATE OR REPLACE TEMPORARY VIEW lc_<name>_patients AS ...",
 sql      = "coalesce(p_<name>.SOME_COL, 0) = 0"
 ```
 
-Both names are derived from the criterion's, and `validate_line_criteria()`
+Both names are built from the criterion's, and `validate_line_criteria()`
 checks the statement really creates `lc_<name>_patients` and the predicate
 really reads `p_<name>`. A rename that touches one and not the other would leave
 a predicate evaluating to NULL — which the framework reads as a failure, and
@@ -343,7 +320,7 @@ The file itself should not list them either. `tools/remove_steroids_from_rollup.
 makes that edit on the server. Run it without arguments first - it reports and
 changes nothing. The SQL filter stays afterwards as a defensive guard.
 
-It is a governed file shared with the source build, so the script is built to be
+It is a governed file shared across builds, so the script is built to be
 boring about it. The file is handled as raw bytes and whole lines are sliced
 out of it, so every kept row - its quoting, spacing and line ending - goes back
 out unchanged. The new bytes are written beside the original, given the
@@ -545,9 +522,9 @@ them.
 Rebuilding would re-read the code lists and the cohort table. The loader
 compares a file's hash across one read, not across two phases, so LOT1 could
 be built from one version and `LOT_LONG` from another with the run still
-reaching `complete`. The source had a `lot2_5_inputs.R` for that purpose and
-this package deliberately has no counterpart: one execution path, one set of
-inputs. After a failure, re-run the whole build.
+reaching `complete`. So there is no separate entry point that rebuilds them:
+one execution path, one set of inputs. After a failure, re-run the whole
+build.
 
 Every step is defined exactly once.
 
@@ -573,7 +550,7 @@ that changed size, not one swapped for another of the same size.
 
 LOT1 leaves `sct_claims_raw`, `tx_auto_dates` and `tx_allo_cart_dates` as views
 over raw medical, procedure and diagnosis. LOT2-5 reads them once per line, so
-left alone Spark re-runs those scans every time - the source puts it at roughly
+left alone Spark re-runs those scans every time - roughly
 8 AUTO aggregates and 20 SCT scans across LOT2..LOT5.
 
 LOT1 has already built them, so the run materializes what is there and
@@ -598,7 +575,7 @@ what it did.
 
 `<prefix>LOT_RUN_METADATA` carries the counts and, in `CODE_MD5` and
 `CONTRACT_SETTINGS`, what produced them: an md5 of this folder's R sources and
-every setting `CONTRACT` pins. The ported row itself records seven of those
+every setting `CONTRACT` pins. The metadata row itself records seven of those
 settings and nothing about the code, which is not enough to say later which
 version and which contract made an old set of tables. A source hash rather than
 a git commit, because the folder is copied into Domino to run and there may be
@@ -640,7 +617,7 @@ numeric column it arrives as a floating point literal, and whether the
 warehouse stores, truncates or refuses it depends on its store-assignment
 policy; that has not been tested here, so nothing is claimed about it. Sending
 digits removes the question. `08_persist.R`'s four LOT1 counts and its QC values go
-through it too, registered as named deviations from the source.
+through it too.
 
 Every write that is a DELETE of this run's rows followed by an INSERT goes
 through `db_replace()`, which retries the pair rather than each statement.
@@ -648,7 +625,7 @@ through `db_replace()`, which retries the pair rather than each statement.
 twice: an INSERT that reached the warehouse with its answer lost would
 otherwise be retried on its own, and the DELETE that should have cleared the
 first copy has already run. `08_persist.R` still writes `LOT_RUN_METADATA` and
-`LOT_QC_SUMMARY` as two statements - it is the ported source - so
+`LOT_QC_SUMMARY` as two statements, so
 `check_run_recorded()` requires exactly one metadata row and one row per check
 name, and refuses a doubled write instead.
 
@@ -683,7 +660,7 @@ passed all of them.
 The last two are the chain the iterative builder is supposed to produce: every
 LOT N candidate is taken strictly after the previous line's end, and every
 branch of the end-date rule is bounded by `OBS_END_DT`. So neither can fail
-unless something went wrong upstream. All of them stop the build rather than
+unless something went wrong earlier. All of them stop the build rather than
 printing a warning.
 
 `LOT_LONG_FINAL` inherits these: `truncate` is the only removal mode, and it

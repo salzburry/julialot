@@ -6,23 +6,21 @@
 # A criterion may need patient-level facts lot_long does not carry. It declares
 # `patients`, SQL creating one row per PATID, which is LEFT JOINed into the
 # allflags view so the criterion's own sql can read its columns. The two names
-# are derived from the criterion's, so nothing has to be kept in step by hand.
+# are built from the criterion's, so nothing has to be kept in step by hand.
 criterion_patients_view <- function(c_i) paste0("lc_", c_i$name, "_patients")
 criterion_alias         <- function(c_i) paste0("p_", c_i$name)
 
-# Protocol S6.2.1.2, the fourth NDMM exclusion: "Received belantamab mafodotin
-# (i.e., an ADC) in any LOT". It lives here rather than in the cohort build
-# because lines do not exist until this package has run - a cohort-time rule
-# could only ever be a claims proxy, and one whose over-exclusions were
-# unverifiable, because a patient it removed never got lines to check. Applied
-# here it is the criterion as written.
+# Belantamab (an ADC) received in any LOT. It lives here rather than in the
+# cohort build because lines do not exist until this package has run - a
+# cohort-time rule could only be a claims proxy, and one nobody could check,
+# because a patient it removed never got lines.
 #
-# Asked of the CLAIMS, not of the constructed lines, and that is what makes it
-# exact. Reading LOT_BASE_MEDS and LOT_BASE_1ST_ADD_MED - which is what this did
-# - bounds the question by what the build produced, and the build produces
-# max_lot lines: belantamab in a sixth line, or as a line's second added med,
-# was invisible. "Any LOT" then meant "any of the first five, and only as a base
-# med or the first addition", which is not the protocol's sentence.
+# Asked of the CLAIMS, not of the built lines, and that is what makes it exact.
+# Reading LOT_BASE_MEDS and LOT_BASE_1ST_ADD_MED would bound the question by
+# what the build produced, and the build produces max_lot lines: belantamab in
+# a sixth line, or as a line's second added med, would be invisible. "Any LOT"
+# would then mean "any of the first five, and only as a base med or the first
+# addition".
 #
 # map_stacked is one row per (patient, drug, treatment episode), already bounded
 # to the patient's observation by 03_mma_map.R. A belantamab MAP overlapping the
@@ -41,7 +39,7 @@ criterion_alias         <- function(c_i) paste0("p_", c_i$name)
 LINE_CRITERIA <- list(
   list(
     name    = "no_belantamab",
-    label   = "No belantamab (ADC) in any LOT (protocol S6.2.1.2)",
+    label   = "No belantamab (ADC) in any LOT",
     lines   = "*",
     flag    = "NO_BELANTAMAB_ANY_LOT",
     on_fail = "truncate",

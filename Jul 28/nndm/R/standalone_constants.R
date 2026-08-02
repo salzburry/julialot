@@ -1,12 +1,8 @@
-# Names and settings for the steps that make this package standalone.
-#
-# nndm_constants.R is a port and is held to the source line for line, so
-# nothing new goes in it. These are the views and values the MM-diagnosis,
-# demographics and 1L-index steps need - none of which exist in that source,
-# because there the cohort and the index date both arrived from other builds.
+# Names and settings for the MM-diagnosis, demographics and 1L-index steps.
+# Kept apart from nndm_constants.R, which is held to a fixed line count.
 
-# Views built by 00_mm_cohort.R. Leading underscore, like the ported views, so
-# they cannot collide with a table name.
+# Views built by 00_mm_cohort.R. Leading underscore so they cannot collide
+# with a table name.
 NDMM_MM_DX_CODES       <- "_ndmm_mm_dx_codes"
 NDMM_MM_CLAIM_HEADER   <- "_ndmm_mm_claim_header"
 NDMM_MM_CONFINEMENT    <- "_ndmm_mm_confinement"
@@ -20,86 +16,66 @@ NDMM_BASE_COHORT       <- "_ndmm_base_cohort"
 NDMM_BELANTAMAB_CODES  <- "_ndmm_belantamab_codes"
 NDMM_BELANTAMAB_PATIDS <- "_ndmm_belantamab_patids"
 
-# Two outpatient MM claims on separate days within this many days confirm a
-# diagnosis. Protocol S6.2.1.1 fixes it at 90; the attrition spreadsheet writes
-# it as "30/60/90" because the parent build reports all three as a sensitivity.
-# Only one of them is a cohort, and this is the one the protocol names.
+# Two outpatient MM claims on different days within this many days confirm a
+# diagnosis. 90 is the study's window. Other builds report 30/60/90 side by
+# side as a sensitivity, but only one of those is a cohort.
 NDMM_OUTPATIENT_WINDOW <- as.integer(Sys.getenv("OUTPATIENT_WINDOW", unset = "90"))
 
-# "Aged >=18 years at the time of MM diagnosis according to calendar year"
-# (S6.2.1.1). Calendar year, so it is year(diagnosis) - YRDOB, not a birthday.
+# Minimum age at diagnosis. Calendar year, so year(diagnosis) - YRDOB, not a
+# birthday.
 NDMM_MIN_AGE <- as.integer(Sys.getenv("MIN_AGE", unset = "18"))
 
-# How belantamab is recognised on cl_mma_codelist.csv - a whole CL_MED_ABBR,
-# matched exactly.
+# How belantamab is spelled in cl_mma_codelist.csv - a whole CL_MED_ABBR,
+# matched exactly. lot matches the same drug the same way, so the two packages
+# cannot disagree on a code list carrying more than one BEL* abbreviation.
 #
-# This was 'BEL%', a prefix, inherited from the source's MAP_MED_TYPE LIKE
-# 'BEL%' against MAP_STACKED. The lot package matches the same drug as a whole
-# value, so the two packages identified it two different ways and could disagree
-# on a code list carrying more than one BEL* abbreviation: this one would take
-# them all, lot only its own. Same drug, same rule, both exact.
-#
-# This package cannot see the production CSV to confirm the spelling, so
-# build_ndmm_belantamab_codes() stops the run if it matches nothing - and also
-# if the list carries another BEL* abbreviation this does not name, which is the
-# case an exact match would otherwise miss in silence.
+# Nothing here can see the real CSV, so build_ndmm_belantamab_codes() stops the
+# run if this matches nothing, and also if the list carries another BEL*
+# abbreviation this does not name.
 NDMM_BELANTAMAB_ABBR <- Sys.getenv("NDMM_BELANTAMAB_ABBR", unset = "BELA")
 
-# Agents that may not set the 1L index date, beyond belantamab. S6.2.1.1 says
-# the eligible treatments are "MM regimens commonly used in the first line
-# setting, excluding those restricted to later LOTs (see exclusion criteria)" -
-# and the exclusion criteria in S6.2.1.2 name one therapy, belantamab. So the
-# protocol as written restricts nothing else, and this is empty by default:
-# adding a name here shrinks the cohort by a rule the protocol does not state,
-# and that has to be a study-team decision made against real data.
+# Agents barred from setting the 1L index date, beyond belantamab. Empty by
+# default: only belantamab is named as a later-line therapy, and adding a name
+# here shrinks the cohort by a rule nobody has written down.
 #
-# NDMM_INDEX_AGENTS is written on every run for exactly that decision: it is
-# every agent that actually set an index date, with how many patients it set
-# one for. Read it after the first run and, if a later-line-only agent is in
-# it, name it here - comma-separated, and matched against CL_MED_ABBR as LIKE
-# patterns, so a prefix works. Belantamab itself is matched exactly rather than
-# as a pattern, because lot has to recognise the same drug the same way.
+# NDMM_INDEX_AGENTS is written on every run for this decision - every agent
+# that actually set an index date, and for how many patients. Read it after the
+# first run and name any later-line-only agent here. Comma-separated, matched
+# against CL_MED_ABBR as LIKE patterns, so a prefix works.
 NDMM_INDEX_EXCLUDED_ABBRS <- Sys.getenv("NDMM_INDEX_EXCLUDED_ABBRS", unset = "")
 
-# The same thing by code rather than by abbreviation, for when the study team
-# has the HCPCS or NDC to hand and not the code list's own naming. Entries are
-# comma-separated, either TYPE:CODE or a bare CODE that bars every type:
+# The same, by code instead of abbreviation, for when someone has the HCPCS or
+# NDC and not the code list's naming. Comma-separated, either TYPE:CODE or a
+# bare CODE that bars every type:
 #
 #   NDMM_INDEX_EXCLUDED_CODES=HCPCS:J9999,NDC:12345678901
 #   NDMM_INDEX_EXCLUDED_CODES=J9999
 #
-# Punctuation is stripped and letters uppercased - the same normalisation the
-# code list itself gets, so a hyphenated NDC works. Stripped, not padded to
-# eleven: the code list stores its codes stripped too and the padding happens
-# at the join, so padding here would stop a ten-digit entry matching the
-# ten-digit code someone typed. A code that matches no row of
-# cl_mma_codelist.csv stops the run: it is not a therapy this build would have
-# matched anyway, so barring it does nothing while reading as though it did.
+# Punctuation is stripped and letters uppercased, the same way the code list is
+# treated, so a hyphenated NDC works. Not padded to eleven - padding happens at
+# the join, so a ten-digit entry still matches. A code matching no row of
+# cl_mma_codelist.csv stops the run: barring it would do nothing while looking
+# as though it did.
 NDMM_INDEX_EXCLUDED_CODES <- Sys.getenv("NDMM_INDEX_EXCLUDED_CODES", unset = "")
 
-# S6.2.1.2's belantamab exclusion is NOT applied in this package. It says "in
-# any LOT", and lines do not exist until the lot package has run over the
-# cohort this one produces - so anything here could only be a claims proxy, and
-# one whose over-exclusions nobody could check, because a patient removed here
-# never gets lines. It is a line criterion in lot/R/line_criteria.R instead,
-# where LOT membership is known and the criterion is exact.
+# The "belantamab in any LOT" exclusion is not applied here. Lines do not exist
+# until lot has run over this cohort, so anything here would be a claims proxy
+# nobody could check - a patient dropped here never gets lines. It lives in
+# lot/R/line_criteria.R instead, where LOT membership is known.
 #
-# NO_BELANTAMAB is still computed and still ships on the cohort table as the
-# proxy's opinion, over the whole study period - the widest net, since its only
-# job is to say who carries a belantamab claim at all. Nothing filters on it.
+# NO_BELANTAMAB is still computed and still ships on the cohort table, over the
+# whole study period, as a record of who carries a belantamab claim at all.
+# Nothing filters on it.
 
 NDMM_BELANTAMAB_TX        <- "_ndmm_belantamab_tx"
 
-# The other disease states of the MM-adjacent conditions.
+# The other disease states of the same conditions.
 #
-# nndm_constants.R lists five tumour groups the other-cancer rule must not
-# exclude on, because they are the index MM itself or its precursor rather than
-# another cancer. Three of them are the "not having achieved remission" state
-# of a plasma-cell disorder, and the source build's comment says the others "are
-# left in the filter pending confirmation".
+# nndm_constants.R lists the tumour groups the other-cancer rule must not
+# exclude on. Three of them are the "not having achieved remission" state of a
+# plasma-cell disorder, and the remaining states were left in the filter.
 #
-# other_malig.csv, read on the warehouse 2026-07-30, carries each of those
-# three conditions in three states:
+# other_malig.csv carries each of those three conditions in three states:
 #
 #   C9010 / C9011 / C9012  Plasma cell leukemia        not achieved / in remission / in relapse
 #   C9020 / C9021 / C9022  Extramedullary plasmacytoma not achieved / in remission / in relapse
@@ -114,12 +90,11 @@ NDMM_BELANTAMAB_TX        <- "_ndmm_belantamab_tx"
 # tumour_group in that file is one label per ICD code, not a grouping, so these
 # really are separate groups to the rule that reads it.
 #
-# The default overrides all six. NDMM_MM_ADJACENT_STATES=exclude restores
-# the source build's behaviour for anyone who wants to compare.
+# The default overrides all six. Set NDMM_MM_ADJACENT_STATES=exclude to keep
+# them in the filter and compare.
 #
-# Unlike the five, these are not required to exist: absence would just mean the
-# code list stopped carrying the wording. NDMM_MM_ADJACENT_GROUPS records what
-# was found either way.
+# These are not required to exist - absence just means the code list stopped
+# carrying the wording. NDMM_MM_ADJACENT_GROUPS records what was found.
 NDMM_MM_ADJACENT_STATES <- Sys.getenv("NDMM_MM_ADJACENT_STATES", unset = "override")
 NDMM_MM_ADJACENT_STATE_LABELS <- c(
   "PLASMA CELL LEUKEMIA IN REMISSION",
@@ -130,8 +105,8 @@ NDMM_MM_ADJACENT_STATE_LABELS <- c(
   "SOLITARY PLASMACYTOMA IN RELAPSE"
 )
 
-# Every tumour group the override applies to, given the setting. The ported
-# step reads this instead of the constant, so the two lists stay in one place.
+# Every tumour group the override covers. The step reads this rather than the
+# constant, so both lists stay in one place.
 ndmm_mm_adjacent_groups <- function() {
   switch(NDMM_MM_ADJACENT_STATES,
     override = c(NDMM_MM_ADJACENT_OVERRIDE, NDMM_MM_ADJACENT_STATE_LABELS),

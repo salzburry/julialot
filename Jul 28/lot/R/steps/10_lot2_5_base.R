@@ -2,8 +2,8 @@
 # LOT 2 through LOT 5 base-period builder, implemented
 # as a standalone module; does not modify any LOT1 module.
 #
-# Assumes 02_lot1.R already produced these views/tables in the same
-# connection / work schema:
+# Assumes the LOT1 phases already produced these views and tables in the same
+# connection and work schema:
 #   - lot_patient_input    patient cohort + OBS_END_DT, ENDDATE_CE, etc.
 #   - map_stacked          medication-available periods per agent
 #   - permissible_subs     biosimilar substitution table
@@ -241,10 +241,9 @@ build_lot_n <- function(con, lot_num,
     --   (i) it falls inside the prior LOT's applicable window from PREV_START_DT
     --       (30d MED/AUTO-started, 1d ALLO-started, 45d CART-started), or
     --   (ii) the AUTO is on/before sct_tandem_days (180d) after the IMMEDIATELY
-    --        prior AUTO (planned tandem). Upstream tx_auto_dates already merges
-    --        AUTO claims < 60 d apart into a single event (sct_auto_gap_days),
-    --        so by the time this CTE sees an AUTO, the < 60 d case has already
-    --        been handled - tandem classification only needs the 180d upper bound.
+    --        prior AUTO (planned tandem). tx_auto_dates has already merged
+    --        AUTO claims < 60 d apart into one event, so by the time this CTE
+    --        sees an AUTO only the 180d upper bound is left to test.
     -- The PREV_AUTO_DT IS NOT NULL guard from the prior rule is dropped:
     -- first-ever AUTOs CAN trigger a new LOT (LOT2-5 only; LOT1 retains the
     -- convention that the first AUTO is part of induction).
@@ -267,10 +266,9 @@ build_lot_n <- function(con, lot_num,
                 WHEN 'CART'     THEN {cart_consolidation_days} - 1
                 ELSE                 {induction_window_days} - 1
               END)
-        -- (ii) not a planned tandem. tx_auto_dates upstream already groups
-        -- AUTO claims < 60 d apart into a single event, so tandem classification
-        -- only needs the <= sct_tandem_days (180d) upper bound here (matches
-        -- LOT1).
+        -- (ii) not a planned tandem. tx_auto_dates has already grouped AUTO
+        -- claims < 60 d apart into one event, so only the sct_tandem_days
+        -- upper bound is left to test here, as in LOT1.
         AND NOT (awp.PREV_AUTO_DT IS NOT NULL
                  AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {sct_tandem_days})
       GROUP BY pe.PATID

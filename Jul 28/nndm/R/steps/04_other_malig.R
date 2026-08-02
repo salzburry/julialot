@@ -47,7 +47,7 @@ build_ndmm_other_malig_codes <- function(con) {
            CASE WHEN trim(om.tumor_group) IN ({ovr_in}) OR m.dx IS NOT NULL
                 THEN 1 ELSE 0 END AS is_mm_adjacent_override,
            -- The group two outpatient claims must share to confirm each other.
-           -- S6.2.1.2 asks for the same primary tumor type, and the ICD
+           -- The rule is about the same primary tumour type, and the ICD
            -- category - the first three characters - is that: every C50.x is
            -- breast, every C34.x lung, every C79.x a secondary neoplasm, which
            -- is the and/or-metastatic-cancer half of the same sentence. The
@@ -93,12 +93,9 @@ build_ndmm_other_malig_codes <- function(con) {
   invisible(n_matched)
 }
 
-# 5-column claim-header view used for IP/OP classification of other-
-# cancer diagnoses. Mirror of parent step 07a (pipeline_steps.R:145-
-# 171) but with a wider lower date bound so the NDMM pre-LOT1 baseline
-# (which can extend back to NDMM_LOT1_FROM - 365 days, i.e. one year
-# before the cutoff) is fully visible. Upper bound is study_end.
-# Confinement view mirrors parent step 07b verbatim.
+# Claim-header view for telling inpatient from outpatient on other-cancer
+# diagnoses. The lower bound reaches back a year before NDMM_LOT1_FROM so the
+# whole baseline window is visible; the upper bound is study_end.
 build_ndmm_med_claim_header_and_confinement <- function(con, medical_tbl,
                                                       confinement_tbl) {
   lower <- glue("date_sub(date('{NDMM_LOT1_FROM}'), {NDMM_PRE_LOT1_DAYS})")
@@ -134,17 +131,15 @@ build_ndmm_med_claim_header_and_confinement <- function(con, medical_tbl,
   "))
 }
 
-# Distinct PATIDs with evidence of another active cancer in the
-# [LOT1_START - 365, LOT1_START - 1] window. Re-anchored from parent
-# step 22 (pipeline_steps.R:858-947) which uses [INDEX_DATE - 183,
-# INDEX_DATE - 1] (6-mo pre-MM-dx). Logic is identical:
+# Patients with another active cancer in [LOT1_START - 365, LOT1_START - 1].
+# Two ways to qualify:
 #
-#   - Path A: >=1 inpatient claim for a tumor group in baseline
-#   - Path B: >=2 outpatient claims on separate days within 30d for
-#            the same tumor group, BOTH inside the baseline window
+#   - one inpatient claim for a tumour group inside the window, or
+#   - two outpatient claims on different days within 30d for the same tumour
+#     group, both inside the window
 #
-# IP/OP classification uses the same POS/TOS/CONF_ID predicate as the
-# parent. Tumor-group grain is preserved end-to-end.
+# Tumour-group grain is kept end to end, so two different cancers do not
+# combine into one.
 build_ndmm_other_malig_pre_lot1 <- function(con, med_diag_tbl) {
   lower <- glue("date_sub(date('{NDMM_LOT1_FROM}'), {NDMM_PRE_LOT1_DAYS})")
   upper <- glue("date('{cfg$study_end}')")
@@ -248,61 +243,35 @@ build_ndmm_other_malig_pre_lot1 <- function(con, med_diag_tbl) {
   "))
 }
 
-# Per-PATID flag table for the six NDMM filters layered on top of
-# ELIG_COH_FINAL. Rows are restricted to (ELIG_COH_FINAL INNER JOIN
-# LOT1) - i.e. patients in the parent cohort who actually have a 1L
-# treatment in LOT_LONG that starts on/after NDMM_LOT1_FROM. Flags:
+# One row per patient, carrying the six filter flags. Restricted to patients
+# who have a 1L treatment starting on or after NDMM_LOT1_FROM. Flags:
 #
-#   CE_pre_lot1_12mo        : >=1 enrollment span covers
+#   CE_pre_lot1_12mo        : an enrollment span covers
 #                             [LOT1_START - NDMM_PRE_LOT1_DAYS, LOT1_START - 1]
-#                             (12-mo CE before 1L; same gap
-#                             semantics as parent CE_b/CE_f via
-#                             NDMM_ENROLL_SPANS)
 #
-#   NO_BELANTAMAB           : zero MAP_STACKED rows for the PATID where
-#                             MAP_MED_TYPE LIKE 'BEL%'. Narrower than the
-#                             lot1_studyteam_qs.R inventory predicate
-#                             (which adds MAP_MED_CLASS LIKE '%BCMA%' to
-#                             also catch bispecifics and CAR-T for
-#                             descriptive counting): the exclusion is
-#                             belantamab specifically, so we drop the
-#                             class match. Because MAP_STACKED only
-#                             contains agents on the parent's MMA
-#                             codelist, BEL* within MAP_STACKED reliably
-#                             means belantamab.
+#   NO_BELANTAMAB           : no belantamab row for the patient. Drug only, not
+#                             the wider BCMA class - the exclusion names the
+#                             one drug.
 #
-#   NO_PRIOR_MM_TX          : zero PATID rows in NDMM_THERAPY_PRE_LOT1 (the
-#                             raw-claim four-source scan over the full
-#                             pre-LOT1 window; see build_ndmm_therapy_pre_lot1
-#                             for why we cannot reuse MMA_MED_PROCESSED).
+#   NO_PRIOR_MM_TX          : no row in NDMM_THERAPY_PRE_LOT1, the four-source
+#                             raw-claim scan over the baseline window.
 #
-#   NO_OTHER_CANCER_PRE_LOT1: zero PATID rows in NDMM_OTHER_MALIG_PATIDS
-#                             ("Evidence of another active
-#                             cancer ... during the 1L baseline period";
-#                             re-anchored from parent OTHER_MALIGN_FLAG
-#                             which uses 6-mo pre-MM-dx. IP/OP same-tumor-
-#                             group logic mirrors parent step 22.)
+#   NO_OTHER_CANCER_PRE_LOT1: no row in NDMM_OTHER_MALIG_PATIDS - another
+#                             active cancer during the baseline.
 #
-#   CE_lot1_fu              : follow-up CE re-derived ANCHORED AT LOT1 (the
-#                             NDMM index): a span covers [LOT1_START,
-#                             least(LOT1_START + NDMM_FU_CE_DAYS, study_end,
-#                             death)]. No-gap spans (NDMM_ENROLL_SPANS_STRICT)
-#                             plus carried-forward DEATH_DT. NDMM_FU_CE_DAYS is
-#                             0 for this cohort - one day, the index date
-#                             itself - which the study team confirmed for 1L in
-#                             place of the protocol's three months. See README.
+#   CE_lot1_fu              : a no-gap span covers [LOT1_START, least(LOT1_START
+#                             + NDMM_FU_CE_DAYS, study_end, death)].
+#                             NDMM_FU_CE_DAYS is 0 here - one day, the index
+#                             date itself. See README.
 #
-#   NO_PREGNANCY            : re-scanned from pregnancy.csv (dx / HCPCS / ICD
-#                             procedure / revenue codes) over the study period,
-#                             restricted to NDMM LOT1 candidates - NOT the
-#                             parent PREGNANT_FLAG. NDMM exclusion.
+#   NO_PREGNANCY            : no pregnancy code - diagnosis, HCPCS, ICD
+#                             procedure or revenue - anywhere in the study
+#                             period.
 # Readability probe used by the pregnancy gate (the scan view may not exist
 # if its source claims tables are unavailable).
 .ndmm_table_ok <- function(con, tbl) isTRUE(tryCatch(
   nrow(db_q(con, glue("SELECT 1 FROM {tbl} LIMIT 1"))) >= 0,
   error = function(e) FALSE))
 
-# Pregnancy exclusion: re-scanned directly from pregnancy.csv
-# over the study period, NOT carried from the parent PREGNANT_FLAG - so it is
-# self-contained and uses the NDMM pregnancy codelist + an any-time-
-# in-study-period window.
+# Pregnancy exclusion, read straight from pregnancy.csv over the study period.
+# Self-contained, so it depends on no other build.

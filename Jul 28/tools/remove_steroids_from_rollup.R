@@ -4,14 +4,13 @@
 #   Rscript "tools/remove_steroids_from_rollup.R"            # report only
 #   Rscript "tools/remove_steroids_from_rollup.R" --write    # make the edit
 #
-# Steroid codes are maintained in a separate file, so the rollup should not
-# list them either. Report only by default; --write builds a checked
-# replacement beside the original, keeps a backup, and renames it into place.
+# Steroid codes live in their own file, so the rollup should not list them
+# too. Reports by default. --write makes a checked copy, keeps a backup, and
+# renames it into place.
 #
-# It refuses rather than guesses: the premise is verified against
-# cl_mma_codelist.csv, and both files' md5s are re-checked before the rename.
-# Kept rows go back byte for byte. lot/README.md has the reasoning, and
-# tools/tests/ has the checks.
+# It refuses rather than guesses: the premise is checked against
+# cl_mma_codelist.csv, and both md5s are re-checked before the rename. Kept
+# rows go back byte for byte.
 
 argv     <- commandArgs(trailingOnly = TRUE)
 do_write <- "--write" %in% argv
@@ -24,8 +23,8 @@ dir       <- Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist")
 path      <- file.path(dir, "cl_mma_rollup.csv")
 code_path <- file.path(dir, "cl_mma_codelist.csv")
 
-# 01_codelists.R stops the build below this many distinct rollup medications.
-# Keep the two in step; the tests check that they agree.
+# 01_codelists.R stops the build below this many rollup medications. The tests
+# check the two agree.
 MIN_ROLLUP_MEDS <- 20L
 
 say <- function(...) cat(..., "\n", sep = "")
@@ -39,8 +38,7 @@ md5_before <- unname(tools::md5sum(path))
 say("File : ", path)
 say("md5  : ", md5_before)
 
-# Whole lines, terminator included, so the bytes of a kept row are the bytes
-# that go back out. A file ending in a newline has no empty line after it.
+# Whole lines, newline included, so a kept row goes back out unchanged.
 bytes  <- readBin(path, "raw", file.size(path))
 nl     <- which(bytes == as.raw(0x0A))
 starts <- c(1L, nl + 1L)
@@ -51,9 +49,8 @@ lines_raw <- Map(function(a, b) bytes[a:b], starts[ok_ln], ends[ok_ln])
 df <- read.csv(path, stringsAsFactors = FALSE, colClasses = "character",
                check.names = FALSE)
 
-# Row i of the frame is line i+1 of the file. That only holds when no field
-# contains a newline; if it does not hold, stop rather than delete the wrong
-# lines.
+# Row i of the frame is line i+1 of the file, unless a field holds a newline.
+# Stop if the counts disagree - otherwise we delete the wrong lines.
 if (nrow(df) != length(lines_raw) - 1L)
   stop("This file has ", nrow(df), " rows but ", length(lines_raw) - 1L,
        " data lines - a field probably contains a newline. Edit it by hand.",
@@ -75,10 +72,9 @@ if (!any(is_steroid)) {
 gone <- sort(unique(toupper(trimws(abb[is_steroid]))))
 say("Removing: ", paste(gone, collapse = ", "))
 
-# The premise, checked rather than asserted. If the code list does carry codes
-# for one of these, deleting its rollup row DOES change who counts as treated:
-# the medication would still be extracted from claims and would then have no
-# class, no maintenance flag and no conditioning flag.
+# Check the premise, don't assume it. If the code list does carry codes for one
+# of these, dropping its rollup row changes who counts as treated: claims would
+# still pull the drug in, now with no class and no flags.
 if (!file.exists(code_path))
   stop("Cannot verify the premise: no code list at ", code_path,
        ". These rows are only safe to remove because a steroid has no codes.",
@@ -88,10 +84,8 @@ cdf <- read.csv(code_path, stringsAsFactors = FALSE, colClasses = "character",
                 check.names = FALSE)
 c_abb <- col(cdf, "CL_MED_ABBR")
 c_cls <- col(cdf, "CL_MED_CLASS")
-# Both, not just the abbreviation. The claim below is that the code list has no
-# steroids, and that cannot be shown without the class column - and 01_codelists
-# requires it of this same file anyway, so a code list without it would not
-# build.
+# Both columns. The claim is that the code list holds no steroids, and the
+# class column is the only way to show it.
 missing <- c("CL_MED_ABBR", "CL_MED_CLASS")[c(is.null(c_abb), is.null(c_cls))]
 if (length(missing))
   stop(code_path, " has no ", paste(missing, collapse = " or "),
@@ -111,8 +105,7 @@ say("Premise: none of these appear in cl_mma_codelist.csv, and it has no")
 say("         STEROID rows of its own.")
 say("         md5 ", code_md5_before)
 
-# The build refuses to run on a short rollup, so say now whether this edit
-# would produce one rather than discovering it on the next run.
+# The build refuses a short rollup. Say so now, not on the next run.
 kept_meds <- length(unique(toupper(trimws(abb[!is_steroid]))))
 say("Meds : ", kept_meds, " distinct medications would remain (minimum ",
     MIN_ROLLUP_MEDS, ")")
@@ -120,10 +113,9 @@ if (kept_meds < MIN_ROLLUP_MEDS)
   stop("That is below the minimum 01_codelists.R enforces, so the build would ",
        "stop on the result. Not editing.", call. = FALSE)
 
-# A surviving row may still name a steroid as its dual-maintenance partner.
-# That is harmless - the dual-maintenance rule needs BOTH drugs to be induction
-# meds, and a steroid has no codes so it can never be one - but say so, because
-# it looks like a dangling reference on inspection.
+# A kept row may still name a removed steroid as its dual-maintenance partner.
+# Harmless: that rule needs both drugs to be induction meds and a steroid never
+# is. Say so anyway, because it looks like a dangling reference.
 dual <- col(df, "DUALMAINTENANCEWITH")
 if (!is.null(dual)) {
   refs <- vapply(dual[!is_steroid], function(v) {
@@ -147,22 +139,19 @@ bak  <- paste0(path, ".bak.", format(Sys.time(), "%Y%m%d%H%M%S"))
 if (!file.copy(path, bak)) stop("Could not write a backup at ", bak, call. = FALSE)
 say("Backup: ", bak)
 
-# Beside the original, so the rename below stays on one filesystem and is
-# therefore atomic: the file is either the old one or the new one, never a
-# half-written one, whatever happens to this process.
+# Same folder, so the rename stays on one filesystem and is atomic. The file
+# is either the old one or the new one, never half-written.
 tmp <- paste0(path, ".tmp.", Sys.getpid())
 on.exit(if (file.exists(tmp)) unlink(tmp), add = TRUE)
 writeBin(unlist(lines_raw[keep]), tmp)
 
-# The rename replaces the inode, so the new file keeps the temporary file's
-# mode - umask, not the original's. On a shared file that quietly withdraws
-# group write. Only the mode bits: as an ordinary user this cannot restore the
-# owner, and POSIX ACLs beyond the mode are not visible here, so check those on
-# the server if the directory uses them.
+# The rename swaps the inode, so the new file would keep the temp file's mode
+# from umask. On a shared file that quietly drops group write. Mode bits only -
+# we cannot restore the owner, and ACLs are not visible here.
 mode <- file.info(path)$mode
 if (!is.na(mode)) Sys.chmod(tmp, mode, use_umask = FALSE)
 
-# The kept bytes are the original's bytes, so the sizes have to add up exactly.
+# Kept bytes are unchanged bytes, so the sizes must add up exactly.
 dropped <- sum(lengths(lines_raw[!keep]))
 if (file.size(tmp) != file.size(path) - dropped)
   stop("The new file is ", file.size(tmp), " bytes, expected ",
@@ -175,10 +164,8 @@ if (left > 0 || nrow(chk) != sum(!is_steroid))
   stop("Verification failed (", nrow(chk), " rows, ", left,
        " steroid). Nothing was replaced.", call. = FALSE)
 
-# Someone else may have written to either file while this ran. Replacing the
-# rollup now would discard an edit to it - or act on a premise that has since
-# stopped being true, if the code list gained codes for a medication about to
-# be removed.
+# Someone may have written to either file while this ran. Replacing now would
+# discard their edit, or act on a premise that has stopped being true.
 if (!identical(unname(tools::md5sum(path)), md5_before))
   stop("The rollup changed while this was running (md5 is no longer ",
        md5_before, "). Nothing was replaced - re-run and look at the diff.",

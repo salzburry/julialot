@@ -1,12 +1,9 @@
 # Runner for the NDMM (1L newly-diagnosed) cohort. Standalone: one module,
 # pointed at a cohort prefix.
 #
-# The rules in R/steps are a port of the cohort half of the source build's
-# NDMM dashboard script. What is here is the runner around them, which is not
-# a port of anything: the source's prepare_ndmm_cohort() is
-# entangled with the dashboard it feeds, and skips a filter whose inputs it
-# cannot read. This build stops instead - a count nobody can reproduce is
-# worse than no count.
+# R/steps holds the rules; this file is the runner around them. It stops when
+# an input is missing rather than skipping the filter that needed it - a count
+# nobody can reproduce is worse than no count.
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
@@ -18,13 +15,13 @@ CONTRACT <- list(
   codelist_dir         = "/mnt/code/codelist",
   use_quarterly_tables = TRUE,
   study_end            = "2026-03-31",
-  # The 1L eligible-treatment period opens here (protocol S6.2.1.1).
+  # Earliest date an eligible 1L treatment can count.
   lot1_from            = "2017-01-01",
   # 12 months of CE and of baseline before the 1L index date.
   pre_lot1_days        = 365L,
   # Days after index a no-gap span must cover for the follow-up CE. Zero is
   # the index date itself - one day - which the study team confirmed for 1L,
-  # overriding the protocol's three months. See README.
+  # rather than the three months written elsewhere. See README.
   fu_ce_days           = 0L,
   gap_days             = 30L,
   # The pregnancy scan runs over [study_start, study_end], so this moves who is
@@ -32,7 +29,7 @@ CONTRACT <- list(
   # environment variable.
   study_start          = "2016-01-01",
   # Two outpatient MM claims within this many days confirm a diagnosis, and
-  # this is the age the diagnosis year is measured against. Both are S6.2.1.1.
+  # and the minimum age at that diagnosis.
   outpatient_window    = 90L,
   min_age              = 18L,
   belantamab_abbr      = "BELA",
@@ -48,15 +45,13 @@ CONTRACT <- list(
 
 # Decisions a run may make differently, and what each may be set to.
 #
-# CONTRACT is what the cohort IS - change one of those and it is a different
-# cohort, so they are rejected. These are choices where the protocol is silent
-# or the data has to answer, and the build writes a review table for each one.
-# Pinning them there was a contradiction: the README told the analyst to set
-# them and check_contract() refused the run before it connected.
+# CONTRACT is what the cohort IS - change one and it is a different cohort, so
+# those are rejected. These are the choices nobody has settled, or that only
+# the data can answer, and the build writes a review table for each.
 #
-# They are not unguarded. Each is checked against the values it may take, and
-# every one is recorded in NDMM_RUN_METADATA, so a cohort still says which
-# choices produced it.
+# Still guarded: each is checked against the values it may take, and all of
+# them are recorded in NDMM_RUN_METADATA, so a cohort says which choices
+# produced it.
 CHOICES <- list(
   mm_adjacent_states   = c("override", "exclude"),
   # Free text: names and codes, validated against the code list at run time by
@@ -86,12 +81,9 @@ check_choices <- function(cfg) {
   invisible(TRUE)
 }
 
-# Tables produced by another build in this repository. There are none: this
-# package reads raw CDM and its code lists and nothing else, which is what lets
-# it be handed to someone on its own. It used to read OVERALL_COH_FINAL,
-# LOT_LONG and MAP_STACKED - the MM diagnosis and demographics are ported in
-# from the overall build now, the 1L index is derived from claims, and belantamab
-# is read off the code list.
+# Tables this build needs from elsewhere. There are none: it reads raw CDM and
+# its own code lists and nothing else, which is what lets it be handed over on
+# its own.
 upstream_tables <- function(cfg) list()
 
 # A temporary view is a query, not a result: Spark re-runs it on every read.
@@ -239,7 +231,7 @@ raw_tables <- function(cfg) {
     cfg$tbl_confinement, cfg$tbl_member_enroll, cfg$tbl_member_elig, cfg$tbl_dod)
 }
 
-# Every upstream table, before any work. The source skipped a filter whose
+# Every input table, before any work. Skipping a filter whose
 # inputs it could not read and carried on, which produces a cohort that is
 # smaller than it should be with nothing in the output saying so.
 check_upstream <- function(con, cfg) {
@@ -261,13 +253,13 @@ check_upstream <- function(con, cfg) {
          "\nEvery NDMM filter needs its input. Skipping one would drop patients ",
          "the criteria do not exclude, and the attrition would not say so.",
          call. = FALSE)
-  log_msg("Upstream inputs present (", length(up), " built, ",
+  log_msg("Inputs present (", length(up), " built, ",
           length(raw), " raw)")
   invisible(TRUE)
 }
 
 # The SQL does not read cfg. It reads the NDMM_* constants in
-# nndm_constants.R, which is ported code with its own environment variables -
+# nndm_constants.R, which carries its own environment variables -
 # NDMM_LOT1_FROM among them. So a contract checked against cfg proves nothing
 # about the query that runs. This compares the constants themselves, after the
 # modules are loaded, and is the only check that speaks for the SQL.
@@ -296,7 +288,7 @@ CONSTANT_SETTINGS <- list(
   # Not a cohort window but a code-list assumption, and just as able to change
   # the count: it is what identifies belantamab, and belantamab is exclusion 4.
   list(const = "NDMM_BELANTAMAB_ABBR",        cfg = "belantamab_abbr",    note = "")
-  # NDMM_FINAL_TABLE_NAME is defined in the ported constants and read by
+  # NDMM_FINAL_TABLE_NAME is defined in the constants file and read by
   # nothing - the runner passes the cohort table in. Nothing to check, because
   # nothing uses it; the test below only requires constants the steps read.
 
@@ -322,8 +314,8 @@ check_constants <- function(cfg) {
   invisible(TRUE)
 }
 
-# The six flag criteria, in the order the protocol applies them: S6.2.1.1's CE
-# inclusions, then S6.2.1.2's four exclusions as it lists them, belantamab last.
+# The six flag criteria, in the study's own order: the enrollment inclusions,
+# then the four exclusions as they are listed, belantamab last.
 # Don't reorder it - this is the funnel's order.
 #
 # One list, three readers. NDMM_PATIDS ANDs the whole set, ndmm_counts() walks a
@@ -346,7 +338,7 @@ NDMM_CRITERIA <- list(
   list(key = "nopreg_nobela",  flag = "NO_BELANTAMAB_PRE_LOT1",
        label = "+ no belantamab before the 1L index")
 )
-# S6.2.1.2's fourth exclusion - belantamab in any LOT - is split, because no one
+# The belantamab exclusion - "in any LOT" - is split, because no one
 # package can see the whole of it.
 #
 # The half that is here is belantamab BEFORE the 1L index. The lot package
@@ -358,13 +350,13 @@ NDMM_CRITERIA <- list(
 #
 # The half that is not here is belantamab from the index onward, which is the
 # no_belantamab line criterion in lot, asked of map_stacked over the patient's
-# whole LOT span. Together the two halves are the protocol's sentence.
+# whole LOT span. Together the two halves cover the whole rule.
 #
 # Note this criterion overlaps NO_PRIOR_MM_TX, deliberately: that one already
 # removes any MM oncology therapy in the 12-month baseline, belantamab
 # included. Its incremental drop in the attrition is therefore exactly the
 # patients whose belantamab predates the baseline - the window nothing covered.
-# S6.2.1.2 scopes its other three exclusions explicitly and scopes this one only
+# The other three exclusions name a period; this one names only
 # as "in any LOT"; read as post-index it would do nothing the first bullet had
 # not already done for the window they share. See DECISIONS.md #2.
 #
@@ -637,7 +629,7 @@ NDMM_COHORT_COLS <- c("PATID", "INDEX_DATE", "ENDDATE", "ENDDATE_CE",
 
 # INDEX_DATE is LOT1_START_DT - the NDMM index. Everything that depends on an
 # anchor is re-derived from it: age at index, follow-up, and where continuous
-# enrollment ends. Carrying the parent's values instead would describe the
+# enrollment ends. Carrying values measured elsewhere would describe the
 # MM-diagnosis index, and a LOT run over this table would measure its lines
 # from the wrong day. Only the demographics are inherited, because a patient's
 # sex, birth year and date of death do not move with an anchor.
@@ -652,7 +644,7 @@ build_ndmm_cohort_table <- function(con, cfg) {
     ),
     -- Where continuous enrollment ends: the end of the span covering the index
     -- date, with the same gap allowance the 12-month baseline CE uses. This is
-    -- the quantity the parent calls ENDDATE_CE, measured at the NDMM anchor.
+    -- ENDDATE_CE, measured at this cohort's own anchor.
     ce AS (
       SELECT i.PATID, max(s.cov_end) AS ENDDATE_CE
       FROM idx i
@@ -670,7 +662,7 @@ build_ndmm_cohort_table <- function(con, cfg) {
     -- anchored at the 1L start, which is later. A month-only or year-only
     -- death that lands between the two would give an ENDDATE before the index
     -- and a negative FU_DAYS. Re-clamp at the anchor that is actually used -
-    -- the same rule the parent applies, applied to the right date.
+    -- the same rule, applied to the right date.
     dth AS (
       SELECT b.PATID,
              CASE WHEN b.DEATH_DT IS NOT NULL AND b.DEATH_DT < i.INDEX_DATE
@@ -1091,7 +1083,7 @@ build_nndm <- function(here, prefix) {
   checkpoint(con, "NDMM_BELANTAMAB_PATIDS")
 
   log_msg("Per-patient filter flags")
-  # The ported flags step takes the cohort and the belantamab source as
+  # The flags step takes the cohort and the belantamab source as
   # parameters, so it needs no change: the base cohort answers for
   # ELIG_COH_FINAL (it carries PATID and DEATH_DT, which is all that step
   # reads), and the belantamab view answers in MAP_STACKED's shape.
@@ -1101,10 +1093,9 @@ build_nndm <- function(here, prefix) {
   # After the flags: each scope is costed against the whole conjunction, so it
   # needs every other criterion already decided.
   build_ndmm_fu_ce_counts(con, cfg)
-  # build_lot_long_filtered() is not called. It joins LOT_LONG to the cohort for
-  # the source's dashboard KPI, gallery and LOT-detail views; neither the cohort
-  # nor the attrition reads it, and this package builds only those two. The
-  # function stays in 07_cohort.R so that file remains the source line for line.
+  # build_lot_long_filtered() is not called. It joins LOT_LONG to the cohort
+  # for reporting views, and neither the cohort nor the attrition reads it.
+  # Left in 07_cohort.R for anyone who wants it.
 
   counts <- ndmm_counts(con, NDMM_MM_QUALIFYING, NDMM_BASE_COHORT)
   for (i in seq_along(ATTRITION_STEPS))

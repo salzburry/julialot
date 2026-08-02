@@ -62,10 +62,9 @@ phase_persist <- function(con, ctx) {
       run_step(con, "S22b_dedup_metadata", glue("
         DELETE FROM {lot_out('LOT_RUN_METADATA')} WHERE RUN_ID = '{run_id}'
       "))
-      # Explicit column list - robust against column ordering after ALTER
-      # TABLE on older schemas (new columns are appended, not inserted in
-      # the original position) and against extra legacy columns
-      # (e.g. LOT_DISCON_GAP_DAYS on tables created before its removal).
+      # Name the columns. ALTER TABLE appends new ones rather than putting
+      # them in place, and an older table may carry columns since removed, so
+      # position cannot be relied on.
       run_step(con, "S22c_insert_run_metadata", glue("
         INSERT INTO {lot_out('LOT_RUN_METADATA')} (
           RUN_ID, RUN_TIMESTAMP, CDM_SCHEMA, WORK_SCHEMA, INPUT_COHORT_TABLE,

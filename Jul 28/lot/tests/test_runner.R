@@ -143,7 +143,7 @@ ok(identical(lot_out("LOT1_BASE"), paste0("hive_metastore.usr00000.", PFX_A, "LO
 ok(identical(wrk(cfg$input_cohort_table), paste0("hive_metastore.usr00000.", TBL_A)),
    "wrk() reads the cohort table as the cohort named it")
 
-# Read the real output names out of the ported steps rather than listing them
+# Read the real output names out of the steps rather than listing them
 # by hand - a hand list goes stale the moment a step adds a table, which is
 # exactly when a collision would slip through.
 # build_lot.R too: the SCT materialization names live there now that the
@@ -1224,7 +1224,7 @@ cat("\n-- the lists whose contents are the safety property --\n")
 # not the code that reads them. Dropping an entry passed the whole suite:
 # REQUIRED_COHORT_COLS losing a column means a cohort missing it clears
 # preflight and fails deep in the build, LOT2_5_INPUT_VIEWS losing one means
-# the presence check answers yes when it is absent. So each is derived from the
+# the presence check answers yes when it is absent. So each is read from the
 # thing that decides it, rather than restated here as a fourth copy.
 
 # 1. The columns LOT reads off the cohort table are the ones phase_patient_input

@@ -26,12 +26,12 @@ cfg_defaults <- list(
   tbl_member_elig = Sys.getenv("TBL_MEMBER_ELIG", unset = "member_cont_enrollment"),
   tbl_dod         = Sys.getenv("TBL_DOD", unset = "dod"),
 
-  # Two outpatient MM claims within this many days confirm a diagnosis; this is
-  # the age their year is measured against. Both S6.2.1.1.
+  # Two outpatient MM claims within this many days confirm a diagnosis, and the
+  # minimum age at that diagnosis.
   outpatient_window = as.integer(Sys.getenv("OUTPATIENT_WINDOW", unset = "90")),
   min_age           = as.integer(Sys.getenv("MIN_AGE", unset = "18")),
-  # How belantamab is recognised on cl_mma_codelist.csv; see
-  # standalone_constants.R. Pinned because it is exclusion 4.
+  # How belantamab is spelled in cl_mma_codelist.csv; see
+  # standalone_constants.R. Pinned because a criterion turns on it.
   belantamab_abbr   = Sys.getenv("NDMM_BELANTAMAB_ABBR", unset = "BELA"),
   # Agents barred from setting the 1L index beyond belantamab. Empty unless the
   # study team names one; see standalone_constants.R and NDMM_INDEX_AGENTS.
@@ -45,13 +45,13 @@ cfg_defaults <- list(
   use_quarterly_tables = as.logical(Sys.getenv("USE_QUARTERLY_TABLES", unset = "TRUE")),
   study_end            = Sys.getenv("STUDY_END", unset = "2026-03-31"),
 
-  # The 1L eligible-treatment period opens here (protocol S6.2.1.1).
+  # Earliest date an eligible 1L treatment can count.
   lot1_from     = Sys.getenv("LOT1_FROM", unset = "2017-01-01"),
   # 12 months of CE and of baseline before the 1L index date.
   pre_lot1_days = as.integer(Sys.getenv("PRE_LOT1_DAYS", unset = "365")),
-  # Days after index a no-gap span must cover. Zero is the index date itself -
-  # one day - confirmed by the study team for 1L, overriding the protocol's
-  # three months. The 2L/3L cohorts keep three months; see README.
+  # Days after index a no-gap span must cover. Zero means the index date
+  # itself - one day - confirmed by the study team. Other cohorts use three
+  # months; see README.
   fu_ce_days    = as.integer(Sys.getenv("FU_CE_DAYS", unset = "0")),
   # Gaps of this many days or fewer still count as continuous enrollment.
   gap_days      = as.integer(Sys.getenv("GAP_DAYS", unset = "30")),

@@ -12,11 +12,10 @@
 # different result, so they are checked rather than defaulted. Change a value
 # here and in config.csv together, deliberately.
 #
-# The study window is deliberately NOT here. It has to track the cohort being
-# built, and different cohorts have different windows - the NDMM cohort runs to
-# 2026-03-31, the parent MM cohort to 2025-06-30 - so pinning it would mean
-# editing this file to run the same algorithm against a different study. It is a
-# per-run argument, like the cohort table and the output prefix, validated by
+# The study window is deliberately NOT here. It follows the cohort being built,
+# and different cohorts have different windows, so pinning it would mean editing
+# this file to run the same algorithm against a different study. It is a per-run
+# argument, like the cohort table and the output prefix, checked by
 # pin_study_window() and recorded in LOT_RUN_METADATA.
 CONTRACT <- list(
   catalog                     = "hive_metastore",
@@ -37,8 +36,8 @@ CONTRACT <- list(
   dsn                         = "RWDE",
   tbl_medical                 = "medical",
   tbl_med_proc                = "med_procedure",
-  # How belantamab is named in MED_ABBR, for the S6.2.1.2 line criterion. Same
-  # abbreviation the NDMM build recognises it by on cl_mma_codelist.csv.
+  # How belantamab is spelled in MED_ABBR, for the line criterion. Same
+  # abbreviation the cohort build uses on cl_mma_codelist.csv.
   belantamab_med_abbr         = "BELA",
   tbl_med_diag                = "med_diagnosis",
   tbl_rx                      = "rx"
@@ -639,7 +638,7 @@ write_build_status <- function(con, cfg, state) {
   db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
                     paste(cols, BUILD_STATUS_COLS, collapse = ", "), ")"))
 
-  # CREATE TABLE IF NOT EXISTS does nothing to a table an earlier version left
+  # CREATE TABLE IF NOT EXISTS does nothing to a table an earlier run left
   # behind, so add any column it lacks: naming the columns in the INSERT stops
   # a positional mis-fill but cannot supply a missing one. Look before adding -
   # adding a column that already exists is an error.
@@ -744,7 +743,7 @@ check_no_active_run <- function(con, cfg) {
 
 # The QC phase reports these and carries on - it prints "** BUG **" and the run
 # still finishes. They are not judgement calls: each one is impossible unless
-# something upstream is wrong, so re-run them here where a breach stops the
+# something earlier is wrong, so re-run them here where a breach stops the
 # build. The distributions and coverage tables in phase_qc stay informational.
 LOT1_INVARIANTS <- list(
   list(name = "MAP ends before it starts",
@@ -761,7 +760,7 @@ LOT1_INVARIANTS <- list(
               WHERE lb.LOT1_BASE_END_DT > p.OBS_END_DT"),
   # phase_qc reports this one as INVESTIGATE inside a tryCatch, so a run could
   # finish with it. Every end-date branch is bounded by OBS_END_DT, so it is
-  # impossible unless something upstream is wrong.
+  # impossible unless something earlier is wrong.
   list(name = "SCT end date past observation",
        sql = "SELECT count(*) AS n FROM lot1_sct sct
               INNER JOIN lot_patient_input p ON sct.PATID = p.PATID
@@ -791,14 +790,13 @@ check_lot1_invariants <- function(con, cfg) {
 }
 
 # 08_persist.R writes the metadata and QC summary inside a tryCatch, so a
-# failure there only logs a warning. Rather than edit the ported file, check
-# the row actually arrived - a run with no record of how it was configured is
-# not a run anyone can validate later.
+# failure there only logs a warning. Check the row actually arrived - a run
+# with no record of how it was configured cannot be validated later.
 check_run_recorded <- function(con, cfg) {
   # Exactly one row, not at least one. 08_persist writes this table with a
   # DELETE and an INSERT as separately retried statements, so an INSERT that
-  # reached the warehouse with its answer lost leaves two rows. That file is
-  # the ported source, so the duplicate is caught here rather than edited there.
+  # reached the warehouse with its answer lost leaves two rows. Caught here
+  # rather than in the writer.
   meta_tbl <- lot_out("LOT_RUN_METADATA")
   n <- tryCatch(db_q(con, glue(
          "SELECT count(*) AS n FROM {meta_tbl} WHERE RUN_ID = '{run_id}'"))$n,
@@ -879,7 +877,7 @@ record_codelist_hashes <- function(con, cfg) {
   db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
                     paste(cols, CODELIST_METADATA_COLS, collapse = ", "), ")"))
 
-  # CREATE TABLE IF NOT EXISTS does nothing to a table an earlier version left
+  # CREATE TABLE IF NOT EXISTS does nothing to a table an earlier run left
   # behind, and the INSERT below names its columns - so one this table lacks
   # fails the run rather than being filled positionally. The other two metadata
   # tables already migrate; this one did not, and the first column to be renamed
@@ -916,10 +914,10 @@ record_codelist_hashes <- function(con, cfg) {
 # recorded what the run actually produced. The totals come from check_lot_long,
 # which has just counted them and passed - so they describe a table already
 # found usable, and are not scanned for twice.
-# What produced these tables, beyond the counts. LOT_RUN_METADATA is the ported
-# source's and records seven of the twenty-one settings CONTRACT pins, and
-# nothing about the code - so an old run's outputs could not say which version
-# or which full contract made them. Two columns rather than one per setting:
+# What produced these tables, beyond the counts. LOT_RUN_METADATA records only
+# seven of the twenty-one settings CONTRACT pins and nothing about the code, so
+# on its own it cannot say which version or which contract made an output. Two
+# columns rather than one per setting:
 # CODE_MD5 fingerprints the R that ran, and CONTRACT_SETTINGS carries the lot.
 #
 # A hash of the sources rather than a git sha: this folder is copied into
@@ -1095,8 +1093,8 @@ check_lot_final <- function(con, cfg) {
 # map_stacked is built from cl_mma_codelist.csv. If the code list does not use
 # that abbreviation the criterion matches nothing and excludes nobody - silently,
 # because "no patient had belantamab" and "the abbreviation is wrong" produce the
-# same empty result. Checking the code list tells them apart: S6.2.1.2 names
-# belantamab, so the study's own MM therapy list must carry it.
+# same empty result. Checking the code list tells them apart: the criterion
+# names belantamab, so the study's own MM therapy list must carry it.
 #
 # Only asked when the criterion is switched on. The NDMM build guards its own
 # side the same way, in build_ndmm_belantamab_codes().
@@ -1130,7 +1128,7 @@ check_belantamab_abbr <- function(con, cfg) {
 # cohort" all produce the same LOT_LONG_FINAL.
 #
 # That matters most for the case this package advertises: the same algorithm run
-# over another cohort. APPLY_NO_BELANTAMAB ships TRUE because the NDMM protocol
+# over another cohort. APPLY_NO_BELANTAMAB ships TRUE because the NDMM cohort
 # needs it, and a run for a cohort with no such exclusion would apply it anyway
 # unless the operator knew to turn it off. It still would - this does not change
 # what runs - but the outputs now say so, and the number of patients it costs is

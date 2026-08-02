@@ -12,12 +12,11 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
         WHERE upper(MAP_MED_TYPE) LIKE 'BEL%'
   ") else "SELECT cast(NULL as string) AS PATID WHERE 1 = 0"
 
-  # Belantamab before the 1L index. S6.2.1.2 excludes it in any LOT and gives
-  # that exclusion no period, unlike the three beside it - so a belantamab line
-  # earlier in the patient's history disqualifies them even though the 12-month
-  # prior-therapy window cannot reach it. The lot package settles the other
-  # half, from the index onward; it cannot settle this one, because the claims
-  # it reads start at the index.
+  # Belantamab before the 1L index. The exclusion covers any LOT and names no
+  # period, so belantamab earlier in the patient's history disqualifies them
+  # even though the 12-month prior-therapy window cannot reach it. lot settles
+  # the other half, from the index onward - it cannot settle this one, because
+  # the claims it reads start at the index.
   bela_pre_expr <- if (q2_ok_belantamab) glue("
         SELECT DISTINCT cast(PATID as string) AS PATID
         FROM {map_stacked}
@@ -42,12 +41,10 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
       SELECT cast(ec.PATID as string) AS PATID, l1.LOT1_START_DT,
              date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS}) AS pre_lot1_start,
              date_sub(l1.LOT1_START_DT, 1)                  AS pre_lot1_end,
-             -- DEATH_DT is carried forward from the parent ELIG_COH_FINAL so
-             -- the follow-up CE below can be re-derived ANCHORED AT
-             -- LOT1 (the NDMM index); the parent CE_3mosf is anchored at the
-             -- MM-dx index and so is NOT reused for it. Pregnancy is NOT carried
-             -- from the parent flag - it is re-scanned from pregnancy.csv over
-             -- the study period (NDMM_PREGNANCY_PATIDS).
+             -- DEATH_DT is carried forward so the follow-up CE below can be
+             -- worked out from LOT1, the index used here. Pregnancy is not
+             -- carried at all - it is re-scanned from pregnancy.csv over the
+             -- study period.
              cast(ec.DEATH_DT as date)     AS DEATH_DT
       FROM {elig_coh_final} ec
       INNER JOIN {NDMM_LOT1_STARTS} l1
