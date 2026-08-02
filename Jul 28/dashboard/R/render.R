@@ -88,41 +88,82 @@ render_panel <- function(kind, df) {
          bar = render_bar(df), render_table(df))
 }
 
-.CSS <- '
-*{box-sizing:border-box} body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#1b1b1b;background:#f6f7f9}
-header{background:#12263f;color:#fff;padding:20px 28px}
-header h1{margin:0;font-size:20px;font-weight:600}
-header p{margin:4px 0 0;font-size:13px;color:#b8c4d4}
-nav{display:flex;flex-wrap:wrap;gap:2px;background:#1d3557;padding:0 28px}
-nav a{color:#cfd9e6;text-decoration:none;padding:10px 16px;font-size:13px;border-bottom:3px solid transparent}
-nav a:hover{background:#254672;color:#fff}
+# GSK colours, in one place. Swapping the palette is editing this block - every
+# rule below refers to a variable, none carries a literal.
+#
+# GSK orange (#F36633) is the primary and is the one value taken from the brand
+# mark itself. The plum used for the header bar and the supporting neutrals are
+# chosen to sit with it; confirm them against the current brand guide before
+# this goes to anyone outside the team, and change them here if they differ.
+PALETTE <- c(
+  orange      = "#F36633",   # GSK primary - bars, accents, active nav
+  orange_dark = "#D14E1F",   # hover and the darker end of the bar fill
+  plum        = "#3D2352",   # header band
+  plum_light  = "#5B3A73",   # nav band
+  ink         = "#1B1B1B",   # body text
+  slate       = "#5A5A64",   # muted text
+  line        = "#E4E0E6",   # borders
+  wash        = "#FAF8F7",   # panel tint and page background
+  paper       = "#FFFFFF",
+  on_plum     = "#EFE7F3",   # nav text on the plum band
+  on_plum_dim = "#D9CFE2",   # the header's sub-line
+  alert_ink   = "#7A4A1C",   # a panel that could not be shown
+  alert_bg    = "#FDF1E9",
+  alert_line  = "#F6D8C4"
+)
+
+# The orange at an alpha, for the nav hover. Derived rather than written out:
+# a second copy of the colour would survive a palette swap and then look like a
+# bug in the swap.
+.rgba <- function(hex, alpha) {
+  v <- strtoi(substring(gsub("#", "", hex, fixed = TRUE), c(1, 3, 5), c(2, 4, 6)), 16L)
+  sprintf("rgba(%d,%d,%d,%s)", v[1], v[2], v[3], alpha)
+}
+
+.CSS <- local({
+  p <- PALETTE
+  paste0('
+:root{--o:', p[["orange"]], ';--od:', p[["orange_dark"]], ';--pl:', p[["plum"]],
+';--pll:', p[["plum_light"]], ';--ink:', p[["ink"]], ';--sl:', p[["slate"]],
+';--ln:', p[["line"]], ';--wa:', p[["wash"]], ';--pa:', p[["paper"]],
+';--op:', p[["on_plum"]], ';--opd:', p[["on_plum_dim"]], ';--ai:', p[["alert_ink"]],
+';--ab:', p[["alert_bg"]], ';--al:', p[["alert_line"]], ';--oh:', .rgba(p[["orange"]], ".22"), '}
+*{box-sizing:border-box} body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink);background:var(--wa)}
+header{background:var(--pl);color:var(--pa);padding:22px 28px;border-bottom:4px solid var(--o)}
+header h1{margin:0;font-size:20px;font-weight:600;letter-spacing:-.01em}
+header p{margin:5px 0 0;font-size:13px;color:var(--opd)}
+nav{display:flex;flex-wrap:wrap;gap:2px;background:var(--pll);padding:0 28px}
+nav a{color:var(--op);text-decoration:none;padding:11px 16px;font-size:13px;border-bottom:3px solid transparent}
+nav a:hover{background:var(--oh);color:var(--pa);border-bottom-color:var(--o)}
 main{padding:24px 28px 64px;max-width:1500px}
 section{margin-bottom:34px}
-section h2{font-size:15px;text-transform:uppercase;letter-spacing:.06em;color:#5a6b82;margin:0 0 14px;padding-bottom:6px;border-bottom:1px solid #dde3ea}
-.panel{background:#fff;border:1px solid #e2e7ee;border-radius:6px;padding:16px 18px;margin-bottom:16px}
-.panel h3{margin:0 0 12px;font-size:14px;font-weight:600;color:#22303f}
+section h2{font-size:14px;text-transform:uppercase;letter-spacing:.08em;color:var(--pl);margin:0 0 14px;padding-bottom:6px;border-bottom:2px solid var(--o)}
+.panel{background:var(--pa);border:1px solid var(--ln);border-radius:6px;padding:16px 18px;margin-bottom:16px}
+.panel h3{margin:0 0 12px;font-size:14px;font-weight:600;color:var(--pl)}
 .scroll{overflow-x:auto}
 table{border-collapse:collapse;width:100%;font-size:13px}
-th{text-align:left;background:#f1f4f8;color:#3c4a5a;font-weight:600;padding:7px 10px;border-bottom:1px solid #dde3ea;white-space:nowrap}
-td{padding:6px 10px;border-bottom:1px solid #f0f3f7}
+th{text-align:left;background:var(--wa);color:var(--pl);font-weight:600;padding:7px 10px;border-bottom:2px solid var(--o);white-space:nowrap}
+td{padding:6px 10px;border-bottom:1px solid var(--ln)}
 td.num{text-align:right;font-variant-numeric:tabular-nums}
 tr:last-child td{border-bottom:none}
+tbody tr:hover{background:var(--wa)}
 .kpis{display:flex;flex-wrap:wrap;gap:12px}
-.kpi{flex:1 1 150px;background:#f7f9fc;border:1px solid #e4eaf2;border-radius:6px;padding:14px 16px}
-.kpi-n{font-size:24px;font-weight:600;color:#12263f;font-variant-numeric:tabular-nums}
-.kpi-l{font-size:12px;color:#6a7788;margin-top:2px}
+.kpi{flex:1 1 150px;background:var(--wa);border:1px solid var(--ln);border-left:4px solid var(--o);border-radius:5px;padding:14px 16px}
+.kpi-n{font-size:24px;font-weight:600;color:var(--pl);font-variant-numeric:tabular-nums}
+.kpi-l{font-size:12px;color:var(--sl);margin-top:2px}
 .bars{display:flex;flex-direction:column;gap:6px}
 .brow{display:flex;align-items:center;gap:10px}
-.blab{flex:0 0 clamp(140px,26%,340px);font-size:13px;color:#33404f}
-.btrack{flex:1 1 auto;background:#eef1f6;border-radius:3px;height:18px;overflow:hidden}
-.bfill{height:100%;background:#2f6fb5;border-radius:3px}
+.blab{flex:0 0 clamp(140px,26%,340px);font-size:13px;color:var(--ink)}
+.btrack{flex:1 1 auto;background:var(--ln);border-radius:3px;height:18px;overflow:hidden}
+.bfill{height:100%;background:linear-gradient(90deg,var(--o),var(--od));border-radius:3px}
 .bval{flex:0 0 130px;text-align:right;font-size:13px;font-variant-numeric:tabular-nums}
-.bpct{color:#7d8998;font-size:12px}
-.empty{color:#7d8998;font-style:italic;margin:0}
-.skip{color:#8a6d3b;background:#fcf8e3;border:1px solid #f3e6c0;border-radius:4px;padding:8px 10px;font-size:13px;margin:0}
-footer{padding:18px 28px;color:#7d8998;font-size:12px;border-top:1px solid #e2e7ee}
+.bpct{color:var(--sl);font-size:12px}
+.empty{color:var(--sl);font-style:italic;margin:0}
+.skip{color:var(--ai);background:var(--ab);border:1px solid var(--al);border-left:4px solid var(--o);border-radius:4px;padding:8px 10px;font-size:13px;margin:0}
+footer{padding:18px 28px;color:var(--sl);font-size:12px;border-top:2px solid var(--o);background:var(--pa)}
 @media print{nav{display:none} .panel{break-inside:avoid}}
-'
+')
+})
 
 # panels: list(tab, label, html). Order is the registry's order, so the file
 # reads the way sections.R reads.

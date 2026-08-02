@@ -81,11 +81,15 @@ stops(validate_sections(list(DASHBOARD_SECTIONS[[1]], DASHBOARD_SECTIONS[[1]])),
       "two sections with the same name are refused")
 
 cat("\n-- and every placeholder it writes is filled --\n")
-cfg <- list(top_n = 10L)
+cfg <- list(top_n = 10L, journeys_per_category = 3L)
 for (s in DASHBOARD_SECTIONS)
   runs(fill_sql(s$sql, INPUTS, cfg), paste0("'", s$name, "' resolves every {name}"))
 stops(fill_sql("SELECT * FROM {nosuch}", INPUTS, cfg),
       "a section naming something else stops the build rather than querying it")
+# A setting that is unset leaves its placeholder, and the same check catches it
+# by name - rather than gsub throwing on a zero-length replacement.
+stops(fill_sql("SELECT {top_n}", INPUTS, list(top_n = NULL)),
+      "...and so does a placeholder whose setting is missing")
 ok(!grepl("{", fill_sql(DASHBOARD_SECTIONS[[2]]$sql, INPUTS, cfg), fixed = TRUE),
    "...and a filled statement carries no leftover braces")
 
@@ -190,5 +194,66 @@ ok(!grepl("<script", doc, fixed = TRUE) && !grepl("http://", doc, fixed = TRUE) 
 ok(grepl('id="s-overview"', doc, fixed = TRUE) &&
      grepl('href="#s-overview"', doc, fixed = TRUE),
    "and every tab has a nav link that reaches it")
+
+cat("\n-- patient journeys are examples, and they are masked --\n")
+jr <- Filter(function(s) identical(s$name, "patient_journeys"), DASHBOARD_SECTIONS)[[1]]
+jsql <- fill_sql(jr$sql, INPUTS, cfg)
+ok(grepl("substr(p.PATID", jsql, fixed = TRUE) && grepl("concat('...'", jsql, fixed = TRUE),
+   "PATID is masked in the SQL, so the identifier never reaches HTML or CSV")
+ok(!grepl("p.PATID  *AS `Patient`", jsql) && !grepl("SELECT p.PATID,", jsql, fixed = TRUE),
+   "...and no raw identifier is selected beside it")
+ok(length(gregexpr("UNION ALL", jsql, fixed = TRUE)[[1]]) ==
+     length(JOURNEY_CATEGORIES) - 1L,
+   paste0("one arm per scenario (", length(JOURNEY_CATEGORIES), ")"))
+ok(grepl("rn <= 3", jsql, fixed = TRUE),
+   "JOURNEYS_PER_CATEGORY decides how many patients each scenario shows")
+ok(grepl("ORDER BY PATID", jsql, fixed = TRUE),
+   "picked in a fixed order, so the same cohort gives the same examples twice")
+# Every scenario in the gallery has a row in the coverage panel, so a scenario
+# that matched nobody reads as "none in this cohort" rather than as an omission.
+cov <- Filter(function(s) identical(s$name, "journey_coverage"), DASHBOARD_SECTIONS)[[1]]
+csql <- fill_sql(cov$sql, INPUTS, cfg)
+ok(all(vapply(JOURNEY_CATEGORIES, function(c_i)
+       grepl(gsub("'", "''", c_i$label, fixed = TRUE), csql, fixed = TRUE), logical(1))),
+   "the coverage panel counts every scenario the gallery offers")
+
+cat("\n-- the CSV export is the numbers on the page --\n")
+tmp <- file.path(tempdir(), paste0("dashcsv", Sys.getpid()))
+ecfg <- list(output_dir = tmp, csv_dir = "csv")
+panels <- list(
+  list(name = "a", data = data.frame(x = 1:2, y = c("p", "q"), stringsAsFactors = FALSE)),
+  list(name = "b", data = NULL),
+  list(name = "c", data = data.frame(x = integer(0))))
+assign("log_msg", function(...) invisible(NULL), envir = env)
+n <- write_csv_exports(panels, ecfg)
+ok(identical(n, 1L), "a panel with rows is written; an empty or skipped one is not")
+ok(file.exists(file.path(tmp, "csv", "a.csv")) &&
+     !file.exists(file.path(tmp, "csv", "b.csv")),
+   "...and the file is named after the section")
+back <- read.csv(file.path(tmp, "csv", "a.csv"), stringsAsFactors = FALSE)
+ok(identical(back$x, 1:2) && identical(back$y, c("p", "q")),
+   "the CSV round-trips the frame the panel rendered, not a second query")
+unlink(tmp, recursive = TRUE)
+clear()
+Sys.setenv(EXPORT_CSV = "Y")
+stops(check_settings(), "EXPORT_CSV='Y' is refused - as.logical('Y') is NA, which reads as off")
+clear()
+Sys.setenv(JOURNEYS_PER_CATEGORY = "3.5")
+stops(check_settings(), "a fractional number of examples is refused")
+clear()
+
+cat("\n-- the palette is in one place --\n")
+css <- get(".CSS", envir = env)
+PALETTE <- get("PALETTE", envir = env)
+ok(grepl("#F36633", css, fixed = TRUE), "GSK orange is the primary")
+ok(all(vapply(names(PALETTE), function(k) grepl(PALETTE[[k]], css, fixed = TRUE),
+              logical(1))),
+   paste0("every colour in the palette reaches the stylesheet (", length(PALETTE), ")"))
+# Every rule refers to a variable, so changing PALETTE changes the page. A
+# literal hex in the rules would survive the swap and look like a bug in it.
+rules <- sub("^.*\\}", "", css)
+ok(!grepl("#[0-9A-Fa-f]{6}", sub(":root\\{[^}]*\\}", "", css)) ||
+     length(gregexpr("#[0-9A-Fa-f]{6}", sub(":root\\{[^}]*\\}", "", css))[[1]]) <= 3,
+   "the rules use variables, not a scatter of literals")
 
 report()

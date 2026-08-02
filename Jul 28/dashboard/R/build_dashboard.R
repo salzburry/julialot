@@ -16,14 +16,22 @@
 CONTRACT <- list(
   catalog = "hive_metastore",
   dsn     = "RWDE",
-  top_n   = 10L
+  top_n   = 10L,
+  journeys_per_category = 3L
 )
 
-BOOL_SETTINGS <- character(0)
-INT_SETTINGS  <- c("TOP_N", "MAX_RETRIES")
+BOOL_SETTINGS <- "EXPORT_CSV"
+INT_SETTINGS  <- c("TOP_N", "MAX_RETRIES", "JOURNEYS_PER_CATEGORY")
 
 check_settings <- function() {
   bad <- character(0)
+  for (v in BOOL_SETTINGS) {
+    x <- Sys.getenv(v, unset = "")
+    # as.logical("Y") is NA, which reads as FALSE - so an operator who asked for
+    # the export in the wrong word would get no files and no complaint.
+    if (nzchar(x) && !(toupper(x) %in% c("TRUE", "FALSE")))
+      bad <- c(bad, paste0(v, "='", x, "' (want TRUE or FALSE)"))
+  }
   for (v in INT_SETTINGS) {
     x <- trimws(Sys.getenv(v, unset = ""))
     # The text, not what coercion makes of it: as.integer("10.5") is 10, so a
@@ -119,14 +127,22 @@ load_dash_modules <- function(here) {
 # not glue(): a section's SQL is data, and the only names it may reach are the
 # ones handed to it here - not whatever happens to be in scope.
 fill_sql <- function(sql, inputs, cfg) {
-  vals <- c(inputs, list(top_n = as.integer(cfg$top_n)))
-  for (nm in names(vals))
-    sql <- gsub(paste0("{", nm, "}"), as.character(vals[[nm]]), sql, fixed = TRUE)
+  vals <- c(inputs, list(top_n = cfg$top_n,
+                         journeys_per_category = cfg$journeys_per_category))
+  for (nm in names(vals)) {
+    v <- vals[[nm]]
+    # A setting that is absent leaves its placeholder in place, so it comes out
+    # of the check below by name. Substituting character(0) would instead throw
+    # somewhere inside gsub, naming nothing.
+    if (is.null(v) || !length(v) || is.na(v[1])) next
+    sql <- gsub(paste0("{", nm, "}"), as.character(v[1]), sql, fixed = TRUE)
+  }
   left <- regmatches(sql, gregexpr("\\{[A-Za-z_][A-Za-z0-9_]*\\}", sql))[[1]]
   if (length(left))
-    stop("A section names something that is not an input: ",
+    stop("A section names something the run cannot fill: ",
          paste(unique(left), collapse = ", "),
-         ". Add it to dashboard_inputs() or correct the section.", call. = FALSE)
+         ". Either it is not an input, or the setting behind it is unset.",
+         call. = FALSE)
   sql
 }
 
@@ -138,7 +154,7 @@ build_panel <- function(con, sec, inputs, have, cfg) {
   missing <- sec$needs[!have[sec$needs]]
   if (length(missing)) {
     log_msg("  skip  ", sec$name, " - no ", paste(missing, collapse = ", "))
-    return(list(tab = sec$tab, label = sec$label,
+    return(list(name = sec$name, tab = sec$tab, label = sec$label, data = NULL,
                 html = paste0('<p class="skip">Not shown: this run has no ',
                               paste(missing, collapse = ", "), " table.</p>")))
   }
@@ -146,12 +162,39 @@ build_panel <- function(con, sec, inputs, have, cfg) {
                  error = function(e) e)
   if (inherits(df, "error")) {
     log_msg("  FAIL  ", sec$name, " - ", conditionMessage(df))
-    return(list(tab = sec$tab, label = sec$label,
+    return(list(name = sec$name, tab = sec$tab, label = sec$label, data = NULL,
                 html = paste0('<p class="skip">Not shown: the query failed. ',
                               .h(conditionMessage(df)), "</p>")))
   }
   log_msg("  ok    ", sec$name, " (", nrow(df), " row(s))")
-  list(tab = sec$tab, label = sec$label, html = render_panel(sec$render, df))
+  # The frame is carried out beside the HTML, not re-queried: the CSV export
+  # has to be the numbers on the page, or the two are a comparison waiting to
+  # go wrong.
+  list(name = sec$name, tab = sec$tab, label = sec$label, data = df,
+       html = render_panel(sec$render, df))
+}
+
+# One CSV per panel that produced rows, beside the HTML. Same numbers, because
+# the frames come from the panels rather than from a second pass at the
+# warehouse - a re-query could disagree with the page if anything moved.
+#
+# Nothing here is un-masked: patient_journeys masks PATID in its own SQL, so
+# what reaches the file is what reaches the page. No section selects a raw
+# identifier, and a test holds that.
+write_csv_exports <- function(panels, cfg) {
+  dir <- file.path(cfg$output_dir, cfg$csv_dir)
+  dir.create(dir, showWarnings = FALSE, recursive = TRUE)
+  written <- 0L
+  for (p in panels) {
+    if (is.null(p$data) || !nrow(p$data)) next
+    path <- file.path(dir, paste0(p$name, ".csv"))
+    # na = "": an empty cell reads as absent in every spreadsheet, where the
+    # text NA reads as a value and sorts among the words.
+    utils::write.csv(p$data, path, row.names = FALSE, na = "")
+    written <- written + 1L
+  }
+  log_msg("CSV export: ", written, " file(s) -> ", dir)
+  invisible(written)
 }
 
 build_dashboard_run <- function(here, cohort_table, lot_prefix,
@@ -199,6 +242,8 @@ build_dashboard_run <- function(here, cohort_table, lot_prefix,
     subtitle = paste0(length(panels), " panels | schema ", cfg$work_schema,
                       " | prefix ", cfg$lot_prefix, " | run ", run_id,
                       " | built ", format(Sys.time(), "%Y-%m-%d %H:%M"))), path)
+  if (isTRUE(cfg$export_csv)) write_csv_exports(panels, cfg)
+  else log_msg("CSV export off (EXPORT_CSV=FALSE)")
   log_msg("Dashboard written: ", path)
   log_msg(SEP)
   invisible(path)

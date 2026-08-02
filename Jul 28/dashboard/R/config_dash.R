@@ -27,6 +27,16 @@ cfg_defaults <- list(
   # is a table, not a dashboard.
   top_n = as.integer(Sys.getenv("TOP_N", unset = "10")),
 
+  # How many patients each journey scenario shows. Examples, so a handful: a
+  # gallery of thirty is a table nobody reads line by line.
+  journeys_per_category = as.integer(Sys.getenv("JOURNEYS_PER_CATEGORY", unset = "3")),
+
+  # Every panel that produced rows, written beside the HTML as CSV. On by
+  # default - the numbers are wanted in a spreadsheet often enough that having
+  # to remember a switch is the wrong way round.
+  export_csv = as.logical(Sys.getenv("EXPORT_CSV", unset = "TRUE")),
+  csv_dir    = Sys.getenv("CSV_DIR", unset = "csv"),
+
   # Retry, same shape as the other packages.
   max_retries = as.integer(Sys.getenv("MAX_RETRIES", unset = "4")),
   base_sleep  = as.numeric(Sys.getenv("BASE_SLEEP",  unset = "2"))

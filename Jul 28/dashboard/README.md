@@ -56,6 +56,49 @@ gap from the output.
 `render` is one of `table`, `kpi` (one row of big numbers, one tile per column)
 or `bar` (needs `label` and `n`, sized against the first row).
 
+## Patient journeys
+
+`patient_journeys` shows a few patients per scenario, line by line — start,
+end, days, what started the line, the regimen, the first drug added, what ended
+it. Scenarios are `JOURNEY_CATEGORIES` in `R/sections.R`; add one by adding a
+label and a predicate over `max_lot`, `lot1_start_type`, `lot1_end_reason`,
+`any_cart_init`, `any_sct_auto`, `any_sct_allo`.
+
+Examples, not a sample: three random patients are three LOT1-only patients,
+because most patients are. `JOURNEYS_PER_CATEGORY` (default 3) sets how many
+each scenario shows, and patients are taken in `PATID` order — so the same
+cohort gives the same examples twice, which is what makes an example something
+two people can discuss.
+
+**`PATID` is masked to its last six characters in the SQL**, so the identifier
+reaches neither the HTML nor the CSV. No section selects a raw one, and a test
+holds that.
+
+`journey_coverage` counts how many patients each scenario has. That is the
+panel that tells you whether an empty scenario means "none in this cohort" or
+"a rule is not firing".
+
+## CSV export
+
+`EXPORT_CSV` (default `TRUE`) writes one CSV per panel that produced rows, into
+`<OUTPUT_DIR>/<CSV_DIR>/<section_name>.csv`. So `patient_journeys.csv`,
+`attrition.csv` and so on, alongside the HTML.
+
+The frames come from the panels, not from a second pass at the warehouse — the
+CSV is the numbers on the page rather than a re-query that could disagree with
+it. Empty and skipped panels write nothing.
+
+## Colours
+
+`PALETTE` at the top of `R/render.R` — GSK orange `#F36633` as the primary,
+with a plum header band and supporting neutrals. Every CSS rule refers to a
+variable, so changing the palette changes the page and a test asserts no rule
+carries a literal hex.
+
+**Check the plum and the neutrals against the current brand guide** before this
+goes outside the team. The orange is taken from the brand mark; the rest were
+chosen to sit with it.
+
 Placeholders are filled only from the table above. A section naming anything
 else stops the build rather than reaching a name that happened to be in scope.
 

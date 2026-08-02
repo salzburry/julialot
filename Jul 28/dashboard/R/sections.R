@@ -25,6 +25,71 @@
 # JavaScript library or a plotting package - see render.R.
 RENDER_TYPES <- c("table", "kpi", "bar")
 
+# Which patients the journey section shows. Examples, not a sample: a random
+# three patients are three LOT1-only patients, because most patients are. Each
+# category names a shape somebody wants to see the algorithm handle, and the
+# section reports the ones that matched nobody - so a category missing from the
+# output reads as "none in this cohort" rather than "nobody thought to check".
+#
+# Predicates are over the per-patient columns the section derives below:
+#   max_lot  lot1_start_type  lot1_end_reason
+#   any_cart_init  any_sct_auto  any_sct_allo
+JOURNEY_CATEGORIES <- list(
+  list(label = "LOT1 to LOT2 progressor, drug-started",
+       pred  = "max_lot >= 2 AND lot1_start_type = 'MED'"),
+  list(label = "LOT1 only, discontinued",
+       pred  = "max_lot = 1 AND lot1_end_reason = 'DISCONTINUATION'"),
+  list(label = "Reached LOT4 or beyond",
+       pred  = "max_lot >= 4"),
+  list(label = "CAR-T",             pred = "any_cart_init = 1"),
+  list(label = "Autologous transplant", pred = "any_sct_auto = 1"),
+  list(label = "Allogeneic transplant", pred = "any_sct_allo = 1"),
+  list(label = "Died on LOT1",      pred = "lot1_end_reason = 'DEATH'"),
+  list(label = "Still on LOT1 at study end", pred = "lot1_end_reason = 'STUDY_END'")
+)
+
+# One statement for the whole gallery: the per-patient flags, the first N
+# patients of each category, and their lines. Built from the list above so
+# adding a category is adding a line there.
+#
+# PATID is masked to its last six characters, here rather than after the fact,
+# so the identifier never reaches the HTML or the CSV export. `order by PATID`
+# rather than a random sample: the same cohort gives the same examples twice,
+# which is what makes an example something two people can discuss.
+.journey_sql <- function(cats = JOURNEY_CATEGORIES) {
+  arms <- vapply(cats, function(c_i) paste0(
+    "      SELECT PATID, '", gsub("'", "''", c_i$label), "' AS category,\n",
+    "             row_number() OVER (ORDER BY PATID) AS rn\n",
+    "      FROM pat WHERE ", c_i$pred), character(1))
+  paste0("
+    WITH pat AS (
+      SELECT cast(PATID as string) AS PATID,
+             max(LOT_NUM)                                            AS max_lot,
+             max(CASE WHEN LOT_NUM = 1 THEN LOT_START_TYPE END)      AS lot1_start_type,
+             max(CASE WHEN LOT_NUM = 1 THEN LOT_BASE_END_REASON END) AS lot1_end_reason,
+             max(CASE WHEN LOT_BASE_END_REASON = 'CART_INIT' THEN 1 ELSE 0 END) AS any_cart_init,
+             max(CASE WHEN LOT_START_TYPE = 'SCT_AUTO' THEN 1 ELSE 0 END)       AS any_sct_auto,
+             max(CASE WHEN LOT_START_TYPE = 'SCT_ALLO' THEN 1 ELSE 0 END)       AS any_sct_allo
+      FROM {lot_long}
+      GROUP BY PATID
+    ),
+    picked AS (\n", paste(arms, collapse = "\n      UNION ALL\n"), "\n    )
+    SELECT p.category                                       AS `Example`,
+           concat('...', lower(substr(p.PATID, greatest(length(p.PATID) - 5, 1)))) AS `Patient`,
+           l.LOT_NUM                                        AS `Line`,
+           l.LOT_START_DT                                   AS `Start`,
+           l.LOT_BASE_END_DT                                AS `End`,
+           datediff(l.LOT_BASE_END_DT, l.LOT_START_DT)      AS `Days`,
+           l.LOT_START_TYPE                                 AS `Started by`,
+           l.LOT_BASE_MEDS                                  AS `Regimen`,
+           coalesce(l.LOT_BASE_1ST_ADD_MED, '')             AS `First add`,
+           l.LOT_BASE_END_REASON                            AS `Ended by`
+    FROM picked p
+    INNER JOIN {lot_long} l ON cast(l.PATID as string) = p.PATID
+    WHERE p.rn <= {journeys_per_category}
+    ORDER BY `Example`, `Patient`, `Line`")
+}
+
 DASHBOARD_SECTIONS <- list(
 
   # ---- OVERVIEW ------------------------------------------------------------
@@ -189,6 +254,40 @@ DASHBOARD_SECTIONS <- list(
                 sum(CASE WHEN LOT_START_TYPE = 'SCT_AUTO' THEN 1 ELSE 0 END) AS `AUTO start`,
                 count(*)                                               AS `Lines`
          FROM {lot_long} GROUP BY 1 ORDER BY 1"),
+
+  # ---- PATIENT EXAMPLES ----------------------------------------------------
+
+  list(name = "patient_journeys", tab = "Patient examples",
+       label = "Line-by-line journeys, a few patients per scenario",
+       needs = "lot_long", render = "table",
+       sql = .journey_sql()),
+
+  list(name = "journey_coverage", tab = "Patient examples",
+       label = "Scenarios, and how many patients each one has",
+       needs = "lot_long", render = "bar",
+       # The denominator behind the gallery. A scenario with no patients is the
+       # interesting case - it means either the cohort has none or a rule is not
+       # firing - and without this the reader cannot tell which of the two the
+       # missing panel above is.
+       sql = paste0("
+         WITH pat AS (
+           SELECT cast(PATID as string) AS PATID,
+                  max(LOT_NUM)                                            AS max_lot,
+                  max(CASE WHEN LOT_NUM = 1 THEN LOT_START_TYPE END)      AS lot1_start_type,
+                  max(CASE WHEN LOT_NUM = 1 THEN LOT_BASE_END_REASON END) AS lot1_end_reason,
+                  max(CASE WHEN LOT_BASE_END_REASON = 'CART_INIT' THEN 1 ELSE 0 END) AS any_cart_init,
+                  max(CASE WHEN LOT_START_TYPE = 'SCT_AUTO' THEN 1 ELSE 0 END)       AS any_sct_auto,
+                  max(CASE WHEN LOT_START_TYPE = 'SCT_ALLO' THEN 1 ELSE 0 END)       AS any_sct_allo
+           FROM {lot_long} GROUP BY PATID
+         )
+         SELECT label, n FROM (\n",
+         paste(vapply(JOURNEY_CATEGORIES, function(c_i) paste0(
+           "           SELECT '", gsub("'", "''", c_i$label), "' AS label,",
+           " count(*) AS n, ", which(vapply(JOURNEY_CATEGORIES, function(x)
+             identical(x$label, c_i$label), logical(1)))[1], " AS ord",
+           " FROM pat WHERE ", c_i$pred), character(1)),
+           collapse = "\n           UNION ALL\n"),
+         "\n         ) ORDER BY ord")),
 
   # ---- VALIDATION ----------------------------------------------------------
 
