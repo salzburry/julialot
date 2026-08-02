@@ -507,38 +507,39 @@ build_ndmm_fu_ce_counts <- function(con, cfg) {
   invisible(got)
 }
 
-# The handover list: cohort members carrying a belantamab claim.
+# The handover list: cohort members carrying a belantamab claim that lot will
+# act on.
 #
 # This used to be a two-direction adjudication table, from when S6.2.1.2 was a
 # claims proxy applied here and the exact answer needed the lines. Neither is
 # true now. The pre-index half is criterion 9 of this funnel, so a patient with
-# in-study belantamab before their index is already gone; the index-onward half
-# is lot's no_belantamab, asked of map_stacked over the whole LOT span rather
-# than of the constructed rows. There is nothing left to adjudicate and nothing
-# to reverse: every patient here is one lot will remove.
+# belantamab before their index is already gone; the index-onward half is lot's
+# no_belantamab, asked of map_stacked over the whole LOT span rather than of the
+# constructed rows. There is nothing left to adjudicate and nothing to reverse.
 #
-# So it lists them, and that is all it claims to do. EXCLUDED_BY_PROXY is gone -
-# it named a proxy that no longer exists, and with the pre-index criterion in
-# the WHERE it could only ever have read 1. Every DAYS_FROM_INDEX here is >= 0:
-# an in-study claim before the index would have removed the patient at criterion
-# 9, and there are no out-of-study claims to find because the scan is bounded at
-# both ends of the study period.
+# Read off NDMM_COHORT, which is the qualifying set with its dates already on
+# it - so the claim is bounded by the patient's own ENDDATE and not just by the
+# study end. That bound is the point: lot reads claims up to OBS_END_DT, so a
+# belantamab claim after a patient died is in the study period, in this table if
+# nothing stopped it, and invisible to lot. Listing it would overstate what the
+# LOT run is going to remove.
+#
+# ENDDATE is lot's OBS_END_DT under the primary analysis
+# (CENSOR_AT_DISENROLLMENT=FALSE). Under the sensitivity setting lot narrows to
+# coalesce(ENDDATE_CE, ENDDATE), which this cannot know about - so on a
+# sensitivity run the count here is an upper bound rather than the number.
 build_ndmm_belantamab_reconcile <- function(con, cfg) {
-  # Read off NDMM_FLAGS_ALL rather than the cohort table, and scoped by
-  # ndmm_criteria_where() - so the set is patients who pass every criterion,
-  # not patients a second criterion had already removed. NDMM_BELANTAMAB_TX is
-  # every belantamab claim the scan found, so the dates come with it.
   db_exec(con, glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_BELANTAMAB_RECONCILE')} AS
-    SELECT f.PATID                              AS PATID,
-           l1.LOT1_START_DT                     AS INDEX_DATE,
-           b.bel_dt                             AS BEL_DT,
-           datediff(b.bel_dt, l1.LOT1_START_DT) AS DAYS_FROM_INDEX
-    FROM {NDMM_FLAGS_ALL} f
-    INNER JOIN {NDMM_LOT1_STARTS} l1 ON l1.PATID = f.PATID
-    INNER JOIN {NDMM_BELANTAMAB_TX} b ON b.PATID = f.PATID
-    WHERE {ndmm_criteria_where(alias = 'f.')}
-    ORDER BY PATID, BEL_DT"))
+    SELECT c.PATID                          AS PATID,
+           c.INDEX_DATE                     AS INDEX_DATE,
+           b.bel_dt                         AS BEL_DT,
+           datediff(b.bel_dt, c.INDEX_DATE) AS DAYS_FROM_INDEX
+    FROM {wrk('NDMM_COHORT')} c
+    INNER JOIN {NDMM_BELANTAMAB_TX} b
+            ON b.PATID = c.PATID
+           AND b.bel_dt <= c.ENDDATE
+    ORDER BY c.PATID, b.bel_dt"))
   got <- db_q(con, glue("
     SELECT count(DISTINCT PATID) AS n_pat, count(*) AS n_claims
     FROM {wrk('NDMM_BELANTAMAB_RECONCILE')}"))
@@ -546,9 +547,10 @@ build_ndmm_belantamab_reconcile <- function(con, cfg) {
           format(got$n_pat, big.mark = ","), " patient(s), ",
           format(got$n_claims, big.mark = ","), " claim(s) -> ",
           wrk("NDMM_BELANTAMAB_RECONCILE"))
-  log_msg("  Every claim here is on or after the index - the pre-index half of ",
-          "S6.2.1.2 is criterion 9 of this funnel. lot's no_belantamab removes ",
-          "these patients, so expect the LOT population to be smaller by them.")
+  log_msg("  Every claim here is on or after the index and inside the ",
+          "patient's follow-up, so lot's no_belantamab removes these patients: ",
+          "expect the LOT population smaller by ", format(got$n_pat, big.mark = ","),
+          ".")
   invisible(got)
 }
 

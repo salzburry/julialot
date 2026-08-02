@@ -860,6 +860,26 @@ ok(!grepl("2016-01-01", patids_sql, fixed = TRUE),
    "the view over it does not repeat the bound")
 ok(grepl("b.bel_dt < l1.LOT1_START_DT", patids_sql, fixed = TRUE),
    "...it only asks which side of the index the claim falls")
+
+cat("\n-- the handover list is bounded by the patient's own follow-up --\n")
+# The study period is not the window lot reads. lot bounds every claim by the
+# patient's OBS_END_DT, so a belantamab claim dated after they died is inside
+# the study period, would have been in this table, and is invisible to lot -
+# listing it overstates what the LOT run is going to remove. Read off
+# NDMM_COHORT, which carries ENDDATE, rather than off the flags view.
+assign("wrk", function(x) paste0("wk.", x), envir = be)
+BSQL <- character(0)
+be$build_ndmm_belantamab_reconcile(NULL, list())
+rec <- BSQL[1]
+ok(grepl("b.bel_dt <= c.ENDDATE", rec, fixed = TRUE),
+   "the claim has to fall on or before the patient's ENDDATE")
+ok(grepl("FROM wk.NDMM_COHORT c", rec, fixed = TRUE),
+   "...which it gets from the cohort table, already carrying its own dates")
+# The old shape: flags plus a written-out criteria conjunction. NDMM_COHORT is
+# that set with the dates on it, so the join does the same work with less.
+ok(!grepl("EXCLUDED_BY_PROXY", rec, fixed = TRUE) &&
+     !grepl("NDMM_FLAGS_ALL", rec, fixed = TRUE),
+   "and the proxy column and the flags join are both gone")
 ok(regexpr("VIEW {NDMM_MM_DX_CODES}", paste(unlist(lapply(step_files, readLines,
              warn = FALSE)), collapse = "\n"), fixed = TRUE) > 0,
    "that list is built by this package, not assumed to exist")
