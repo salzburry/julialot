@@ -18,6 +18,7 @@ SCT_TANDEM_DAYS,180,Tandem transplant window
 CART_CONSOLIDATION_DAYS,45,New agents within this of CAR-T are consolidation
 ALLO_LOT_SPAN,single_day,An ALLO line spans only the transplant date
 MAX_LOT,5,Highest line number built
+FACE_VALIDITY_FATAL,FALSE,Stop the build when a face-validity check falls outside its band (default: report only)
 COHORT_STATUS_TABLE,,What the cohort build calls its run-status table before the prefix (blank = try the usual names)
 COHORT_PREFIX,,The cohort build's prefix for that table (blank = this run's own prefix)
 APPLY_NO_BELANTAMAB,TRUE,Drop patients with belantamab in any LOT

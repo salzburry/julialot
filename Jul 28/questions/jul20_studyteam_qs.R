@@ -99,8 +99,6 @@
 
 source(file.path(.script_dir, "_setup.R"))
 qs_setup(.script_dir)
-source_dir <- normalizePath(file.path(.script_dir, "..", "lot", "R"),
-                           mustWork = FALSE)
 source(file.path(.script_dir, "validation_qs.R"))        # vqs_* helpers (shared)
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
@@ -1153,17 +1151,17 @@ main <- function() {
   cohort_mode <- toupper(Sys.getenv("LOT_COHORT", unset = "NDMM"))
   if (cohort_mode %in% c("FULL", "OVERALL")) {
     cohort_mode <- "FULL"
-    lot_long <- wrk("LOT_LONG")
+    lot_long <- qs_tbl("LOT_LONG")
     cohort_label <- "full LOT cohort (all LOT1 patients)"
   } else {
     cohort_mode <- "NDMM"
-    lot_long <- wrk("NDMM_LOT_LONG_FILT")
+    lot_long <- qs_tbl("NDMM_LOT_LONG_FILT")
     cohort_label <- "NDMM newly-diagnosed 1L study cohort"
   }
-  map_tbl <- wrk("MAP_STACKED")
-  sct_tbl <- wrk("LOT1_SCT")
-  mma_tbl <- wrk("MMA_MED_PROCESSED")
-  coh_tbl <- wrk(cfg$input_cohort_table)
+  map_tbl <- qs_tbl("MAP_STACKED")
+  sct_tbl <- qs_tbl("LOT1_SCT")
+  mma_tbl <- qs_tbl("MMA_MED_PROCESSED")
+  coh_tbl <- qs_tbl(cfg$input_cohort_table)
 
   log_msg(SEP)
   log_msg("July-20 study-team questions Q2+Q3 [", cohort_label, "] -> CSVs + summaries")

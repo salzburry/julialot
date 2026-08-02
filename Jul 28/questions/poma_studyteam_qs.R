@@ -69,8 +69,6 @@
 
 source(file.path(.script_dir, "_setup.R"))
 qs_setup(.script_dir)
-source_dir <- normalizePath(file.path(.script_dir, "..", "lot", "R"),
-                           mustWork = FALSE)
 source(file.path(.script_dir, "validation_qs.R"))        # vqs_* helpers (shared)
 
 # ===========================================================================
@@ -218,11 +216,11 @@ main <- function() {
   # a subset, joined by PATID (+INDEX_DATE), and the lot1/poma sets already restrict
   # to NDMM.
   cohort_label <- "NDMM newly-diagnosed 1L study cohort"
-  lot_long  <- wrk("NDMM_LOT_LONG_FILT")
-  map_tbl   <- wrk("MAP_STACKED")
-  sct_tbl   <- wrk("LOT1_SCT")
-  allflags  <- wrk("ELIG_COH_ALLFLAGS")
-  final_tbl <- wrk(cfg$input_cohort_table)
+  lot_long  <- qs_tbl("NDMM_LOT_LONG_FILT")
+  map_tbl   <- qs_tbl("MAP_STACKED")
+  sct_tbl   <- qs_tbl("LOT1_SCT")
+  allflags  <- qs_tbl("ELIG_COH_ALLFLAGS")
+  final_tbl <- qs_tbl(cfg$input_cohort_table)
 
   log_msg(SEP); log_msg("POMA-in-1L study-team questions [", cohort_label, "] -> single Excel workbook"); log_msg(SEP)
   if (!vqs_readable(con, lot_long))
@@ -480,7 +478,7 @@ main <- function() {
   # leukemia / MGUS / secondary bone - MM-spectrum, not a distinct second cancer).
   # Claim-presence basis - looser than the pipeline's confirmed >=1-IP-or->=2-OP
   # flag, so use it for the POMA-vs-other comparison and the MM-adjacent share.
-  overall_lot <- wrk("LOT_LONG")
+  overall_lot <- qs_tbl("LOT_LONG")
   bdays <- 183L  # mirrors config_prompts.R baseline_days (183L); the pipeline does not
                  # read an env var for this, so keep these two in sync if it ever changes.
   mm_adj_in <- paste(sprintf("'%s'", c(
@@ -528,7 +526,7 @@ main <- function() {
   # separately (missing_flag_rows), NOT coerced to clean, so a broken join surfaces
   # as its own signal - both n_other_cancer and missing_flag_rows must be 0.
   # Pipeline untouched.
-  ndmm_flags <- wrk("NDMM_FLAGS_ALL")
+  ndmm_flags <- qs_tbl("NDMM_FLAGS_ALL")
   q3_ndmm_df <- if (vqs_readable(con, ndmm_flags)) best_effort(db_q(con, glue("
       WITH poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
                       WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{poma}')),

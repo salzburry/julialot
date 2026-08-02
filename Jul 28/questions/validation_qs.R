@@ -42,8 +42,6 @@
 
 source(file.path(.script_dir, "_setup.R"))
 qs_setup(.script_dir)
-source_dir <- normalizePath(file.path(.script_dir, "..", "lot", "R"),
-                           mustWork = FALSE)
 source(file.path(.script_dir, "validation_qs.R"))   # vqs_* logic
 
 main <- function() {
@@ -63,9 +61,9 @@ main <- function() {
     log_msg("  wrote ", tag, " -> ", f, " (", nrow(df), " rows)")
   }
 
-  lot_long <- wrk("LOT_LONG")
-  map_tbl  <- wrk("MAP_STACKED")
-  sct_tbl  <- wrk("LOT1_SCT")
+  lot_long <- qs_tbl("LOT_LONG")
+  map_tbl  <- qs_tbl("MAP_STACKED")
+  sct_tbl  <- qs_tbl("LOT1_SCT")
 
   log_msg(SEP)
   log_msg("MM LOT Validation next steps - study-team questions")
@@ -89,7 +87,7 @@ main <- function() {
   # scoped to [INDEX_DATE, OBS_END_DT] like the pipeline's S04/S12 pulls.
   bounds <- vqs_obs_bounds_src(con)
   if (!bounds$available)
-    log_msg("WARNING: ", wrk(cfg$input_cohort_table), " not readable - raw-claim ",
+    log_msg("WARNING: ", qs_tbl(cfg$input_cohort_table), " not readable - raw-claim ",
             "examples will NOT be observation-window bounded, and 'CAR-T before ",
             "LOT1' (Q6) cannot be computed (needs the raw, bounded SCT scan).")
   # Cohort-wide raw CAR-T claim dates (observation-bounded) - the only way to
@@ -115,7 +113,7 @@ main <- function() {
   # of the parent - so the shared signal views built above on the parent
   # patient list (steroid claims, raw CAR-T dates) cover both cohorts; each
   # per-question query joins back to its own cohort lot_long.
-  ndmm_tbl <- wrk("NDMM_LOT_LONG_FILT")
+  ndmm_tbl <- qs_tbl("NDMM_LOT_LONG_FILT")
   cohorts  <- list(list(tag = "overall", label = "Overall", lot_long = lot_long))
   if (vqs_readable(con, ndmm_tbl)) {
     cohorts <- c(cohorts, list(list(tag = "ndmm", label = "NDMM", lot_long = ndmm_tbl)))

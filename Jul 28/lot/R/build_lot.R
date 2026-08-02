@@ -619,6 +619,7 @@ build_lot <- function(here, cohort_table, prefix,
   # After the criteria layer, not before it: LOT_LONG_FINAL is what downstream
   # reads, and with a truncate criterion it is not LOT_LONG.
   final <- check_lot_final(con, cfg)
+  run_face_validity(con, cfg)
   record_final_counts(con, cfg, lot_long, final)
   check_run_recorded(con, cfg)
   write_build_status(con, cfg, "complete")
@@ -981,6 +982,137 @@ check_lot1_invariants <- function(con, cfg) {
 # 08_persist.R writes the metadata and QC summary inside a tryCatch, so a
 # failure there only logs a warning. Check the row actually arrived - a run
 # with no record of how it was configured cannot be validated later.
+# ---- Face validity ----------------------------------------------------------
+#
+# The invariants above ask whether the output is internally consistent. These
+# ask a different question: does it look like myeloma?
+#
+# A run can pass every structural check and still be wrong in a way only a
+# clinician would notice - transplants landing in late lines, CAR-T in first
+# line, a median line lasting three days. Those come from a code list that
+# matched the wrong thing or a date rule that fired early, and nothing else
+# here would catch them.
+#
+# THE VALUE IS THE NUMBER, NOT THE VERDICT. Every check records what it found
+# whether or not it passed, because the reported figure is the thing a reviewer
+# reads. The bands are wide on purpose: they catch gross failure, not clinical
+# nuance, and none of them is a published benchmark. Narrow them once there is
+# a run to narrow them against.
+#
+# Reported, not fatal. An unusual cohort can legitimately fail one of these,
+# and stopping the build on a plausibility judgement would be wrong.
+# FACE_VALIDITY_FATAL=TRUE makes them stop, for a run that should not proceed
+# on a surprise.
+FACE_VALIDITY <- list(
+  list(name = "auto_sct_is_early",
+       what = "% of autologous transplant lines that are LOT1 or LOT2",
+       # Transplant is induction consolidation in newly-diagnosed myeloma. If
+       # most of them are late lines, the SCT dates or the line numbering are
+       # wrong.
+       lo = 50, hi = 100,
+       sql = "SELECT round(100.0 * sum(CASE WHEN LOT_NUM <= 2 THEN 1 ELSE 0 END)
+                           / nullif(count(*), 0), 1) AS v
+              FROM {t} WHERE LOT_START_TYPE = 'SCT_AUTO'"),
+
+  list(name = "cart_is_late",
+       what = "% of CAR-T lines that are LOT3 or later",
+       # CAR-T is a later-line therapy. In a first-line cohort it should be
+       # uncommon and late; CAR-T in LOT1 means the trigger fired on the wrong
+       # claim.
+       lo = 50, hi = 100,
+       sql = "SELECT round(100.0 * sum(CASE WHEN LOT_NUM >= 3 THEN 1 ELSE 0 END)
+                           / nullif(count(*), 0), 1) AS v
+              FROM {t}
+              WHERE LOT_START_TYPE = 'CART' OR LOT_CART_LOT_FLG = 1"),
+
+  list(name = "allo_sct_is_rare",
+       what = "% of patients with any allogeneic transplant line",
+       # Allogeneic transplant is uncommon in myeloma. A high share points at a
+       # code list matching something else.
+       lo = 0, hi = 5,
+       sql = "SELECT round(100.0 * count(DISTINCT CASE WHEN LOT_START_TYPE = 'SCT_ALLO'
+                                                       THEN PATID END)
+                           / nullif(count(DISTINCT PATID), 0), 2) AS v
+              FROM {t}"),
+
+  list(name = "lot1_starts_on_a_drug",
+       what = "% of LOT1 lines started by a medication rather than a procedure",
+       # Patients start treatment on a regimen. A transplant or CAR-T as the
+       # first line is possible but should be the exception.
+       lo = 80, hi = 100,
+       sql = "SELECT round(100.0 * sum(CASE WHEN LOT_START_TYPE = 'MED' THEN 1 ELSE 0 END)
+                           / nullif(count(*), 0), 1) AS v
+              FROM {t} WHERE LOT_NUM = 1"),
+
+  list(name = "lot1_duration_is_plausible",
+       what = "median LOT1 length in days",
+       # Wide on purpose. This catches an end-date rule firing on the start
+       # date, or never firing at all - not a view about how long myeloma
+       # treatment lasts.
+       lo = 30, hi = 1500,
+       sql = "SELECT percentile_approx(datediff(LOT_BASE_END_DT, LOT_START_DT), 0.5) AS v
+              FROM {t} WHERE LOT_NUM = 1 AND LOT_BASE_END_DT IS NOT NULL"),
+
+  list(name = "regimens_are_not_fragmented",
+       what = "% of LOT1 patients covered by the ten most common regimens",
+       # Myeloma first-line treatment is concentrated in a few regimens. If the
+       # top ten cover almost nobody, the regimen string is being built from
+       # too many parts and every patient looks unique.
+       lo = 25, hi = 100,
+       sql = "WITH top10 AS (
+                SELECT LOT_BASE_MEDS, count(DISTINCT PATID) AS n
+                FROM {t} WHERE LOT_NUM = 1 AND LOT_BASE_MEDS IS NOT NULL
+                GROUP BY LOT_BASE_MEDS ORDER BY n DESC LIMIT 10)
+              SELECT round(100.0 * (SELECT sum(n) FROM top10)
+                           / nullif((SELECT count(DISTINCT PATID) FROM {t}
+                                     WHERE LOT_NUM = 1), 0), 1) AS v")
+)
+
+FACE_VALIDITY_COLS <- c(RUN_ID = "STRING", CHECK_NAME = "STRING",
+                        WHAT = "STRING", VALUE = "DOUBLE",
+                        EXPECT_LO = "DOUBLE", EXPECT_HI = "DOUBLE",
+                        VERDICT = "STRING", RECORDED_AT = "TIMESTAMP")
+
+run_face_validity <- function(con, cfg) {
+  tbl <- lot_out("LOT_FACE_VALIDITY")
+  cols <- names(FACE_VALIDITY_COLS)
+  db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
+                    paste(cols, FACE_VALIDITY_COLS, collapse = ", "), ")"))
+  final <- lot_out("LOT_LONG_FINAL")
+  rows <- character(0)
+  off  <- character(0)
+  log_msg("Face validity (reported, not fatal):")
+  for (fv in FACE_VALIDITY) {
+    v <- tryCatch(as.numeric(db_q(con, gsub("{t}", final, fv$sql, fixed = TRUE))$v[1]),
+                  error = function(e) NA_real_)
+    verdict <- if (is.na(v)) "NO VALUE"
+               else if (v >= fv$lo && v <= fv$hi) "ok"
+               else "LOOK"
+    log_msg("  ", format(verdict, width = 8), fv$what, ": ",
+            if (is.na(v)) "no rows" else format(v, big.mark = ","),
+            "  (expect ", fv$lo, "-", fv$hi, ")")
+    if (identical(verdict, "LOOK")) off <- c(off, fv$name)
+    rows <- c(rows, glue("('{run_id}', '{fv$name}', {sql_text(fv$what)}, ",
+                         "{if (is.na(v)) 'NULL' else v}, {fv$lo}, {fv$hi}, ",
+                         "'{verdict}', current_timestamp())"))
+  }
+  db_replace(con,
+    glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"),
+    glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES ",
+         paste(rows, collapse = ", ")))
+  if (length(off)) {
+    msg <- paste0(length(off), " face-validity check(s) outside the expected ",
+                  "band: ", paste(off, collapse = ", "),
+                  ". These are plausibility bands, not published benchmarks - ",
+                  "read ", tbl, " and decide whether the number is wrong or the ",
+                  "band is.")
+    if (isTRUE(cfg$face_validity_fatal))
+      stop(msg, call. = FALSE)
+    log_msg("  WARNING: ", msg)
+  }
+  invisible(off)
+}
+
 check_run_recorded <- function(con, cfg) {
   # Exactly one row, not at least one. 08_persist writes this table with a
   # DELETE and an INSERT as separately retried statements, so an INSERT that
