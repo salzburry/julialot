@@ -156,6 +156,68 @@ JOURNEY_CATEGORIES <- list(
     GROUP BY 1, 2 ORDER BY n DESC")
 )
 
+# ---- The cohort funnel, whatever shape the cohort build wrote it in --------
+#
+# Making ATTRITION_TABLE a setting fixed the NAME. It did not fix the SHAPE,
+# and the two cohort builds in this folder do not agree on one:
+#
+#   nndm     NDMM_ATTRITION      RUN_ID, STEP_NUM, CRITERION, N_PATIENTS,
+#                                PCT_OF_START, RECORDED_AT
+#   overall  <prefix>attrition_report
+#                                row_order, run_id, final_table_name,
+#                                created_at, step_id, description,
+#                                n_30, n_60, n_90
+#
+# A single query against the nndm columns therefore fails outright on an
+# overall-built cohort - the panel is replaced by a query-failed notice while
+# the rest of the page renders, which reads as "this study has no funnel"
+# rather than "the dashboard cannot read this funnel".
+#
+# One spec per shape. `cols` is what identifies the layout - matched against
+# DESCRIBE, case-insensitively - and `stamp` is the column saying when the
+# funnel was recorded, used to catch a funnel newer than the LOT run below it.
+#
+# Add a shape by adding an entry. Nothing else changes.
+ATTRITION_LAYOUTS <- list(
+  list(name  = "nndm",
+       cols  = c("RUN_ID", "STEP_NUM", "CRITERION", "N_PATIENTS", "RECORDED_AT"),
+       stamp = "RECORDED_AT",
+       # History: the build deletes and re-inserts only its own RUN_ID, so
+       # previous runs stay and an unfiltered read interleaves several funnels
+       # by STEP_NUM - with the bar taking its denominator from the first row.
+       # Latest by RECORDED_AT, because the dashboard runs afterwards in a
+       # different session and cannot know the run id.
+       sql = "
+         WITH latest AS (
+           SELECT RUN_ID FROM {attrition}
+           ORDER BY RECORDED_AT DESC LIMIT 1
+         )
+         SELECT a.CRITERION AS label, a.N_PATIENTS AS n
+         FROM {attrition} a INNER JOIN latest l ON a.RUN_ID = l.RUN_ID
+         ORDER BY a.STEP_NUM"),
+
+  list(name  = "overall",
+       cols  = c("row_order", "run_id", "created_at", "step_id", "description",
+                 "n_30", "n_60", "n_90"),
+       stamp = "created_at",
+       # CREATE OR REPLACE, not an append - so this table holds one run and
+       # needs no latest-run filter. That is the build's choice, not an
+       # assumption made here.
+       #
+       # Three counts, one cohort. n_30/n_60/n_90 are the outpatient-window
+       # sensitivity, and only the column matching the window the build was
+       # configured with describes the cohort that was actually written; the
+       # other two describe cohorts no table exists for. overall's own printer
+       # marks the built column with a star and warns against reading the row
+       # left to right, so picking one here without saying which would be the
+       # same mistake in a different medium. ATTRITION_WINDOW names it and the
+       # panel label repeats it.
+       sql = "
+         SELECT description AS label, n_{attrition_window} AS n
+         FROM {attrition}
+         ORDER BY row_order")
+)
+
 DASHBOARD_SECTIONS <- list(
 
   # ---- OVERVIEW ------------------------------------------------------------
@@ -163,27 +225,27 @@ DASHBOARD_SECTIONS <- list(
   list(name = "run_provenance", tab = "Overview",
        label = "What produced these numbers",
        needs = "run_meta", render = "table",
-       # One row - the latest run that FINISHED. LOT_RUN_METADATA is history:
-       # the writer deletes and re-inserts only its own RUN_ID, so previous runs
-       # stay.
+       # The run that OWNS the tables on this prefix, resolved before any panel
+       # runs - see resolve_owner_run(). Not "the latest metadata row", and not
+       # "the latest completed metadata row" either.
        #
-       # Latest by timestamp alone is not enough. The row is created early, in
-       # the persistence phase, and record_final_counts() fills in the code
-       # fingerprint, the study window, the applied criteria and the final
-       # counts at the very end. So a later attempt that died in between leaves
-       # the NEWEST row half empty, and this panel would show it - blank
-       # provenance attached to tables an earlier run built.
+       # Completeness alone is not ownership. LOT writes LOT_LONG_FINAL with
+       # CREATE OR REPLACE in the line-criteria phase and only afterwards
+       # validates it, records the counts, and marks the build complete. So a
+       # rerun that replaced the table and then died leaves ITS table on disk
+       # with an incomplete metadata row - filtered out by any completeness
+       # test - while the previous run's complete row is still the newest one
+       # that passes. The page would then carry the failed run's numbers under
+       # the successful run's provenance, which is worse than either alone.
        #
-       # N_LOT_FINAL_ROWS IS NOT NULL is exactly "reached the end": it is set by
-       # record_final_counts and is the same predicate lot own check_run_recorded
-       # uses to decide a run recorded itself. Not a heuristic - the same test,
-       # asked of the history rather than of the current run.
+       # LOT_BUILD_STATUS settles it: one row per run, written "complete" last
+       # of all, so the latest row on the prefix is the run that last wrote
+       # these tables. {owner_run} is that run.
        sql = "
          SELECT RUN_ID, RUN_TIMESTAMP, STUDY_START, STUDY_END, CODE_MD5,
                 LINE_CRITERIA_APPLIED, LOT_LONG_BY_LINE
          FROM {run_meta}
-         WHERE N_LOT_FINAL_ROWS IS NOT NULL
-         ORDER BY RUN_TIMESTAMP DESC LIMIT 1"),
+         WHERE RUN_ID = '{owner_run}'"),
 
   list(name = "headline", tab = "Overview",
        label = "Cohort and lines",
@@ -195,29 +257,14 @@ DASHBOARD_SECTIONS <- list(
                 (SELECT count(*) FROM {lot_final})                    AS `Lines after criteria`,
                 (SELECT count(DISTINCT PATID) FROM {lot_final})       AS `Patients after criteria`"),
 
+  # The SQL here is a placeholder. Which query actually runs is decided at run
+  # time by resolve_attrition(), because the funnel's SHAPE differs by cohort
+  # build and not only its name - see ATTRITION_LAYOUTS below.
   list(name = "attrition", tab = "Overview",
        label = "Cohort attrition, as the cohort build recorded it",
        needs = "attrition", render = "bar", pct = "first",
-       # The funnel the cohort build wrote, read rather than recomputed - two
-       # copies of an attrition is how the funnel and the cohort stop agreeing.
-       #
-       # CRITERION, not STEP_LABEL: that is the column ATTRITION_COLS declares,
-       # and the name this asked for did not exist. The panel would have failed
-       # on every real run while the HTML still rendered around it.
-       #
-       # One run. The table is history - the cohort build deletes and inserts
-       # only its own RUN_ID - so without this a reused prefix returns several
-       # funnels interleaved by STEP_NUM, and the bar takes the first row as its
-       # denominator. Latest by RECORDED_AT, because the dashboard runs after
-       # the build and in a different session, so it cannot know the run id.
-       sql = "
-         WITH latest AS (
-           SELECT RUN_ID FROM {attrition}
-           ORDER BY RECORDED_AT DESC LIMIT 1
-         )
-         SELECT a.CRITERION AS label, a.N_PATIENTS AS n
-         FROM {attrition} a INNER JOIN latest l ON a.RUN_ID = l.RUN_ID
-         ORDER BY a.STEP_NUM"),
+       layouts = "ATTRITION_LAYOUTS",
+       sql = ATTRITION_LAYOUTS[[1]]$sql),
 
   # ---- COHORT --------------------------------------------------------------
 

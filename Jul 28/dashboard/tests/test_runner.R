@@ -68,7 +68,8 @@ ok(setequal(shows, want),
 cat("\n-- a section names only the inputs that exist --\n")
 INPUTS <- list(cohort = "wk.COH", patients = "wk.p_LOT_PATIENT_INPUT",
                lot_long = "wk.p_LOT_LONG", lot_final = "wk.p_LOT_LONG_FINAL",
-               run_meta = "wk.p_LOT_RUN_METADATA", attrition = "wk.c_NDMM_ATTRITION")
+               run_meta = "wk.p_LOT_RUN_METADATA", build_st = "wk.p_LOT_BUILD_STATUS",
+               attrition = "wk.c_NDMM_ATTRITION")
 runs(validate_sections(DASHBOARD_SECTIONS, INPUTS),
      "every section's `needs` is an input the run resolves")
 stops(validate_sections(list(modifyList(DASHBOARD_SECTIONS[[1]],
@@ -81,7 +82,8 @@ stops(validate_sections(list(DASHBOARD_SECTIONS[[1]], DASHBOARD_SECTIONS[[1]])),
       "two sections with the same name are refused")
 
 cat("\n-- and every placeholder it writes is filled --\n")
-cfg <- list(top_n = 10L, journeys_per_category = 3L)
+cfg <- list(top_n = 10L, journeys_per_category = 3L, attrition_window = 90L,
+            owner_run = "run-a")
 for (s in DASHBOARD_SECTIONS)
   runs(fill_sql(s$sql, INPUTS, cfg), paste0("'", s$name, "' resolves every {name}"))
 stops(fill_sql("SELECT * FROM {nosuch}", INPUTS, cfg),
@@ -166,7 +168,7 @@ ok(!any(grepl("dbExecute|db_exec", code)),
 
 cat("\n-- a missing input is a skipped panel, not a failed run --\n")
 have <- c(cohort = TRUE, patients = TRUE, lot_long = TRUE, lot_final = TRUE,
-          run_meta = TRUE, attrition = FALSE)
+          run_meta = TRUE, build_st = TRUE, attrition = FALSE)
 sec_attr <- Filter(function(s) identical(s$name, "attrition"), DASHBOARD_SECTIONS)[[1]]
 # Into `env`: the package functions close over it, so a stub in globalenv is
 # shadowed by the real db_q and the test passes on the wrong path.
@@ -321,16 +323,123 @@ ok(grepl("ORDER BY RECORDED_AT DESC LIMIT 1", asql, fixed = TRUE) &&
      grepl("a.RUN_ID = l.RUN_ID", asql, fixed = TRUE),
    "...and only the latest run's rows, not every run the table has kept")
 psql <- fill_sql(getsec("run_provenance")$sql, INPUTS, cfg)
-ok(grepl("ORDER BY RUN_TIMESTAMP DESC LIMIT 1", psql, fixed = TRUE),
-   "provenance is the latest run, not every metadata row ever written")
-# The metadata row is created early and completed at the end, so the newest row
-# is not necessarily a finished run: an attempt that died in between leaves the
-# window, the fingerprint and the counts empty. Without this the panel reports
-# blank provenance for tables an earlier run actually built.
-# Not a heuristic: N_LOT_FINAL_ROWS is the same column lot's own
-# check_run_recorded tests to decide whether a run recorded itself.
-ok(grepl("WHERE N_LOT_FINAL_ROWS IS NOT NULL", psql, fixed = TRUE),
-   "...the latest run that FINISHED - a half-written row is not the provenance")
+# Neither "latest" nor "latest completed": the run that OWNS these tables,
+# resolved before any panel runs. Completeness alone was not enough - see the
+# resolve_owner_run block below for the rerun case it still got wrong.
+ok(grepl("WHERE RUN_ID = 'run-a'", psql, fixed = TRUE),
+   "provenance is the run that wrote these tables, named before the panel runs")
+ok(!grepl("ORDER BY", psql, fixed = TRUE),
+   "...so the panel has nothing left to sort or choose between")
+
+cat("\n-- which run owns the tables, not which run finished --\n")
+# LOT writes LOT_LONG_FINAL with CREATE OR REPLACE in the line-criteria phase
+# and validates it AFTER. So a rerun that replaced the table and then died
+# leaves its own table on disk with an incomplete metadata row - and the
+# previous run's complete row is still the newest one any completeness test
+# accepts. Provenance from run A over numbers from run B.
+#
+# LOT_BUILD_STATUS settles it: "complete" is the last write of the build, so
+# the latest row on the prefix is the run that last wrote these tables.
+oi <- list(run_meta = "wk.META", build_st = "wk.ST")
+ohave <- c(run_meta = TRUE, build_st = TRUE)
+ocfg <- list(lot_prefix = "p_")
+stub <- function(f) assign("db_q", f, envir = env)
+# Run B replaced the tables and failed; run A completed earlier.
+stub(function(con, sql)
+  if (grepl("wk.ST", sql, fixed = TRUE))
+    data.frame(RUN_ID = "run-b", STATE = "failed", UPDATED_AT = "2026-01-02 10:00:00")
+  else data.frame(RUN_ID = "run-a", RUN_TIMESTAMP = "2026-01-01 10:00:00"))
+stops(resolve_owner_run(NULL, oi, ohave, ocfg),
+      "a last run that did not finish stops the dashboard, rather than showing the run before it as its provenance")
+Sys.setenv(DASH_IGNORE_BUILD_STATE = "TRUE")
+o <- resolve_owner_run(NULL, oi, ohave, ocfg)
+ok(identical(o$run_id, "run-a") && !isTRUE(o$exact),
+   "...unless the operator says they know it failed early, and then the claim is the weaker one")
+Sys.unsetenv("DASH_IGNORE_BUILD_STATE")
+# The ordinary case: the last run finished, so it owns them.
+stub(function(con, sql)
+  if (grepl("wk.ST", sql, fixed = TRUE))
+    data.frame(RUN_ID = "run-b", STATE = "complete", UPDATED_AT = "2026-01-02 10:00:00")
+  else data.frame(x = 1))
+o <- resolve_owner_run(NULL, oi, ohave, ocfg)
+ok(identical(o$run_id, "run-b") && isTRUE(o$exact),
+   "the last run, when it completed, is the run that owns the tables")
+# Complete in one table and absent from the other is a contradiction, not
+# something to fall back from: the two are written seconds apart.
+stub(function(con, sql)
+  if (grepl("wk.ST", sql, fixed = TRUE))
+    data.frame(RUN_ID = "run-b", STATE = "complete", UPDATED_AT = "2026-01-02 10:00:00")
+  else data.frame())
+stops(resolve_owner_run(NULL, oi, ohave, ocfg),
+      "complete in the status table but not in the metadata is refused, not papered over")
+# No status table at all - an older LOT build. Fall back, and say it is weaker.
+stub(function(con, sql) data.frame(RUN_ID = "run-a", RUN_TIMESTAMP = "2026-01-01 10:00:00"))
+o <- resolve_owner_run(NULL, oi, c(run_meta = TRUE, build_st = FALSE), ocfg)
+ok(identical(o$run_id, "run-a") && !isTRUE(o$exact),
+   "with no build status table it falls back to the newest completed run, flagged as the weaker claim")
+ok(any(grepl("N_LOT_FINAL_ROWS IS NOT NULL",
+             deparse(get("resolve_owner_run", envir = env)), fixed = TRUE)),
+   "...and that fallback still uses lot's own completeness predicate")
+
+cat("\n-- the funnel's shape differs by cohort build, not only its name --\n")
+# Making ATTRITION_TABLE a setting fixed the name. overall writes a different
+# SHAPE - row_order/step_id/description/n_30/n_60/n_90 against nndm's
+# STEP_NUM/CRITERION/N_PATIENTS - so one fixed query fails outright on it, and
+# the page reads as "this study has no funnel".
+NDMM_COLS <- c("RUN_ID", "STEP_NUM", "CRITERION", "N_PATIENTS", "PCT_OF_START",
+               "RECORDED_AT")
+OVERALL_COLS <- c("ROW_ORDER", "RUN_ID", "FINAL_TABLE_NAME", "CREATED_AT",
+                  "STEP_ID", "DESCRIPTION", "N_30", "N_60", "N_90")
+ai <- list(attrition = "wk.FUNNEL")
+ahave <- c(attrition = TRUE)
+acfg <- list(attrition_window = 60L)
+noowner <- list(run_id = NA_character_, ts = NA, exact = FALSE)
+asec <- function(secs) Filter(function(s) identical(s$name, "attrition"), secs)[[1]]
+lay <- function(cols, owner = noowner, stamp = "2026-01-01 09:00:00") {
+  stub(function(con, sql)
+    if (grepl("^DESCRIBE", trimws(sql))) data.frame(col_name = cols)
+    else data.frame(ATTR_AT = stamp))
+  asec(resolve_attrition(DASHBOARD_SECTIONS, NULL, ai, ahave, acfg, owner))
+}
+s <- lay(NDMM_COLS)
+ok(grepl("a.CRITERION AS label", s$sql, fixed = TRUE) && is.null(s$skip),
+   "an nndm-shaped funnel gets the nndm query")
+s <- lay(OVERALL_COLS)
+ok(grepl("description AS label", s$sql, fixed = TRUE) && is.null(s$skip),
+   "an overall-shaped funnel gets the overall query - the panel that used to fail outright")
+ok(grepl("n_60 AS n", fill_sql(s$sql, ai, acfg), fixed = TRUE),
+   "...reading the window the build was configured with, not whichever column came first")
+ok(grepl("60-day", s$label, fixed = TRUE),
+   "...and the label says which of the three it is showing")
+s <- lay(c("PATID", "SOMETHING"))
+ok(!is.null(s$skip) && grepl("PATID", s$skip, fixed = TRUE),
+   "a shape neither layout matches skips that panel and prints the columns it found")
+s <- lay(character(0))
+ok(!is.null(s$skip), "a table whose columns cannot be read skips it too")
+# Detection matches a layout when its columns are a SUBSET of the table's, so
+# two layouts where one's columns contain the other's would both match and the
+# choice between them would be the order they happen to be written in.
+amb <- local({
+  cs <- lapply(ATTRITION_LAYOUTS, function(L) toupper(L$cols))
+  ns <- vapply(ATTRITION_LAYOUTS, `[[`, character(1), "name")
+  out <- character(0)
+  for (i in seq_along(cs)) for (j in seq_along(cs))
+    if (i != j && all(cs[[i]] %in% cs[[j]])) out <- c(out, paste(ns[i], "in", ns[j]))
+  out
+})
+ok(!length(amb), if (length(amb)) paste("layouts overlap:", paste(amb, collapse = "; "))
+                 else paste0("no layout's columns contain another's, so detection ",
+                             "cannot pick by registry order (", length(ATTRITION_LAYOUTS), ")"))
+# Nothing keys a cohort run to a LOT run - they share a prefix, not a run id.
+# But a funnel recorded AFTER the LOT run started cannot be the funnel of the
+# cohort LOT read, and that much is decidable.
+own <- list(run_id = "run-a", ts = "2026-01-02 10:00:00", exact = TRUE)
+s <- lay(NDMM_COLS, own, stamp = "2026-01-03 10:00:00")
+ok(grepl("RECORDED AFTER THE LOT RUN", s$label, fixed = TRUE),
+   "a funnel newer than the LOT run below it is called out on the panel")
+s <- lay(NDMM_COLS, own, stamp = "2026-01-01 10:00:00")
+ok(!grepl("RECORDED AFTER", s$label, fixed = TRUE),
+   "...and one recorded before it is not - that is all the timestamps can say")
 
 cat("\n-- the panels name no study, in their labels either --\n")
 # The attrition table belongs to whichever cohort build wrote it, so the panel
