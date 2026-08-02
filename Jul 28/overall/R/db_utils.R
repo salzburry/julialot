@@ -1,3 +1,25 @@
+
+# Raw claim ICD_FLAG, normalised. Both families are named and anything else is
+# NULL - not the other family by default.
+#
+# Every site used to read "not one of the ICD-9 spellings" as ICD-10, so a NULL
+# or unexpected flag on a genuine ICD-9 claim was classed ICD-10 and then failed
+# the family join silently: a missed MM diagnosis, or an exclusion claim that
+# stopped excluding the patient it should. The codelist column is checked and
+# stops the build because that file can be corrected; the CDM's values cannot,
+# so this yields NULL, which matches neither family and is the honest answer for
+# a row whose family is unknown.
+#
+# nine/ten are the labels the caller wants: a family column, or the DIAG / PROC
+# code_type pairs.
+RAW_ICD9  <- c("9", "ICD9", "ICD-9")
+RAW_ICD10 <- c("10", "ICD10", "ICD-10")
+icd_family_sql <- function(col, nine = "ICD9", ten = "ICD10") {
+  q <- function(v) paste(sprintf("'%s'", v), collapse = ", ")
+  paste0("CASE WHEN upper(trim(", col, ")) IN (", q(RAW_ICD9), ") THEN '", nine, "'",
+         " WHEN upper(trim(", col, ")) IN (", q(RAW_ICD10), ") THEN '", ten, "'",
+         " ELSE NULL END")
+}
 # Connection, retry, naming and materialization. No module-level state -
 # build_cohort() creates it and passes it by argument.
 

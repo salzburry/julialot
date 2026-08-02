@@ -43,7 +43,7 @@ build_ndmm_pregnancy_patids <- function(con, med_diag_tbl, medical_tbl, med_proc
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_PREGNANCY_PATIDS} AS
     WITH dx AS (
       SELECT cast(d.PATID as string) AS PATID,
-             CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9DIAG' ELSE 'ICD10DIAG' END AS code_type,
+             {icd_family_sql('d.ICD_FLAG', 'ICD9DIAG', 'ICD10DIAG')} AS code_type,
              upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) AS code
       FROM {med_diag_tbl} d
       INNER JOIN {NDMM_LOT1_STARTS} l1 ON cast(d.PATID as string) = l1.PATID
@@ -68,7 +68,7 @@ build_ndmm_pregnancy_patids <- function(con, med_diag_tbl, medical_tbl, med_proc
     ),
     icd_proc AS (
       SELECT cast(p.PATID as string) AS PATID,
-             CASE WHEN upper(p.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9PROC' ELSE 'ICD10PROC' END AS code_type,
+             {icd_family_sql('p.ICD_FLAG', 'ICD9PROC', 'ICD10PROC')} AS code_type,
              upper(regexp_replace(p.PROC, '[^A-Za-z0-9]', '')) AS code
       FROM {med_proc_tbl} p
       INNER JOIN {NDMM_LOT1_STARTS} l1 ON cast(p.PATID as string) = l1.PATID

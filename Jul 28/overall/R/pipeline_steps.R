@@ -47,6 +47,10 @@ build_steps <- function(cfg, mat_tables) {
   # The Step 24 filter, built from the criteria catalog.
   ctx$criteria_sql <- build_criteria_sql(build_criteria_catalog(cfg), cfg)
 
+  # The raw-claim ICD family normaliser. Through ctx for the same reason as
+  # step1_sql: the step files see only their arguments.
+  ctx$icd_fam <- icd_family_sql
+
   # Step 1's gate, from the same function run_attrition_report() counts with.
   # Passed through ctx rather than read as a global: the step files see only
   # their arguments, so a step can be sourced and driven on its own.

@@ -1904,6 +1904,7 @@ builds <- list(NDMM_MM_DX_CODES = "build_ndmm_mm_dx_codes",
                NDMM_OTHER_MALIG_EVENTS = "build_ndmm_other_malig_pre_lot1",
                NDMM_INDEX_INELIGIBLE = "build_ndmm_index_ineligible_codes",
                NDMM_OTHER_MALIG_CODES = "build_ndmm_other_malig_codes",
+               NDMM_PREG_CODES = "build_ndmm_preg_codes",
                NDMM_BELANTAMAB_PATIDS = "build_ndmm_belantamab_patids",
                NDMM_BELANTAMAB_TX = "build_ndmm_belantamab_patids",
                NDMM_PATIDS = "build_ndmm_flags")

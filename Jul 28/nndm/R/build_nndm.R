@@ -118,6 +118,7 @@ CHECKPOINTS <- c("NDMM_FLAGS_ALL", "NDMM_MM_DX_CODES",
                  "NDMM_MMA_CODELIST",
                  "NDMM_BELANTAMAB_CODES", "NDMM_LOT1_STARTS",
                  "NDMM_OTHER_MALIG_CODES", "NDMM_OTHER_MALIG_EVENTS",
+                 "NDMM_PREG_CODES",
                  "NDMM_BELANTAMAB_PATIDS",
                  "NDMM_INDEX_TX", "NDMM_BELANTAMAB_TX", "NDMM_PATIDS",
                  "NDMM_INDEX_INELIGIBLE")
@@ -135,7 +136,8 @@ OUTPUTS <- c(DELIVERABLES, CHECKPOINTS)
 # Conditions the study team can accept for a given data set. Nothing else can
 # be waived, and a waiver naming something not here is a typo, not a decision.
 WAIVABLE_CHECKS <- c("claim_ndc_shape", "claim_ndc_short",
-                     "codelist_ndc_shape", "codelist_ndc_short")
+                     "codelist_ndc_shape", "codelist_ndc_short",
+                     "raw_icd_flag")
 
 waivers_named <- function() {
   v <- trimws(strsplit(Sys.getenv("NDMM_WAIVERS", unset = ""), "[,|]")[[1]])
@@ -816,6 +818,63 @@ write_build_status <- function(con, cfg, state, n = NA) {
 # A check, not a lock: two runs starting in the same moment can both pass it,
 # because there is nothing here that could hold a lock. It catches the case
 # worth catching - starting a second run while one is going - and says so.
+# Claims whose ICD_FLAG names neither family - restricted to the ones that could
+# matter. icd_family_sql() yields NULL for an unrecognised flag, so such a claim
+# now matches no code list entry instead of being mis-classed as ICD-10. That is
+# the safe direction, but it is still silent: this is what makes it visible.
+#
+# Relevant means the normalised code is on one of the three diagnosis lists, or
+# on the pregnancy procedure list. The CDM is full of claims this cohort never
+# reads, and a malformed flag on one of those is not this build's problem.
+#
+# Waivable like the NDC shape checks and for the same reason - the values are
+# the CDM's and cannot be corrected here. A waiver accepts that those rows match
+# nothing. It does not reclassify them: putting the ICD-10 guess back would
+# suppress the report and keep the error, which is the opposite of a decision.
+check_icd_flag <- function(con, cfg) {
+  fam <- icd_family_sql("t.ICD_FLAG")
+  probe <- function(tbl, code_col, lists) glue("
+    SELECT concat_ws(', ', collect_set(
+             coalesce(nullif(trim(t.ICD_FLAG), ''), '<blank>'))) AS vals,
+           count(*) AS n
+    FROM {tbl} t
+    WHERE ({fam}) IS NULL
+      AND upper(regexp_replace(t.{code_col}, '[^A-Za-z0-9]', '')) IN (
+        SELECT code FROM ({lists}))")
+  dx_lists <- glue("
+        SELECT dx AS code FROM {NDMM_MM_DX_CODES}
+        UNION SELECT dx FROM {NDMM_OTHER_MALIG_CODES}
+        UNION SELECT code FROM {NDMM_PREG_CODES} WHERE code_type LIKE '%DIAG'")
+  pr_lists <- glue("
+        SELECT code FROM {NDMM_PREG_CODES} WHERE code_type LIKE '%PROC'")
+  found <- character(0)
+  for (p in list(list(t = cdm_src(cfg$tbl_med_diag), c = "DIAG", l = dx_lists),
+                 list(t = cdm_src(cfg$tbl_med_proc), c = "PROC", l = pr_lists))) {
+    r <- db_q(con, probe(p$t, p$c, p$l))
+    n <- suppressWarnings(as.integer(r$n))
+    if (length(n) == 1L && !is.na(n) && n > 0)
+      found <- c(found, paste0(p$t, ": ", format(n, big.mark = ","),
+                               " row(s), ICD_FLAG in {", r$vals, "}"))
+  }
+  if (!length(found)) {
+    log_msg("  ICD_FLAG: every claim carrying a code this cohort reads names a family")
+    return(invisible(FALSE))
+  }
+  msg <- paste0("Claims carrying a code this cohort reads, whose ICD_FLAG names ",
+                "neither ICD-9 nor ICD-10:\n  ", paste(found, collapse = "\n  "),
+                "\nThose rows match no code list entry, so an MM diagnosis is ",
+                "missed, or an other-cancer or pregnancy claim stops excluding ",
+                "the patient it should. Profile the values and decide. To accept ",
+                "that they match nothing, set NDMM_WAIVERS=raw_icd_flag - they ",
+                "stay unmatched; nothing reclassifies them.")
+  if (!("raw_icd_flag" %in% waivers())) stop(msg, call. = FALSE)
+  log_msg("WAIVED (raw_icd_flag): ", paste(found, collapse = "; "))
+  options(nndm_waivers_applied = union(getOption("nndm_waivers_applied",
+                                                 character(0)), "raw_icd_flag"))
+  invisible(TRUE)
+}
+
+
 check_no_active_run <- function(con, cfg) {
   d <- tryCatch(db_q(con, glue("
     SELECT RUN_ID, UPDATED_AT FROM {wrk('NDMM_BUILD_STATUS')}
@@ -1044,6 +1103,8 @@ build_nndm <- function(here, prefix) {
 
   log_msg("Pregnancy across the study period")
   build_ndmm_preg_codes(con)
+  checkpoint(con, "NDMM_PREG_CODES")
+  check_icd_flag(con, cfg)
   build_ndmm_pregnancy_patids(con, cdm_src(cfg$tbl_med_diag),
                               cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_med_proc))
 

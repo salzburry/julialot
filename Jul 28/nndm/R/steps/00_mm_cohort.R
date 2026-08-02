@@ -74,9 +74,9 @@ build_ndmm_mm_dx_events <- function(con, med_diag_tbl) {
       -- The code list decides which codes are in scope at all. This flag
       -- marks the 203.0x / C90.0x subset, which inpatient qualifying
       -- additionally requires.
-      CASE WHEN (CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END) = 'ICD9'
+      CASE WHEN ({icd_family_sql('d.ICD_FLAG')}) = 'ICD9'
                   AND upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) LIKE '2030%'
-             OR (CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END) = 'ICD10'
+             OR ({icd_family_sql('d.ICD_FLAG')}) = 'ICD10'
                   AND upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) LIKE 'C900%'
            THEN 1 ELSE 0 END AS mm_dx_strict_flg
     FROM {med_diag_tbl} d
@@ -89,7 +89,7 @@ build_ndmm_mm_dx_events <- function(con, med_diag_tbl) {
      AND d.LOC_CD     <=> h.LOC_CD
     INNER JOIN {NDMM_MM_DX_CODES} c
       ON upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) = c.dx
-      AND (CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END) = c.icd_family
+      AND ({icd_family_sql('d.ICD_FLAG')}) = c.icd_family
     LEFT JOIN {NDMM_MM_CONFINEMENT} cf
       ON h.PATID = cf.PATID AND h.CONF_ID = cf.CONF_ID
     WHERE cast(d.FST_DT as date) BETWEEN date('{NDMM_STUDY_START}') AND date('{cfg$study_end}')
