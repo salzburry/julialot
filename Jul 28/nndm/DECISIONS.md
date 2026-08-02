@@ -79,12 +79,19 @@ carefully — the bullet is complete, with no period clause missing from it.
 And reading it as post-index makes it redundant: the first bullet already
 removes any MM oncology therapy, belantamab included, throughout the 12-month
 baseline. A post-index-only belantamab rule would add nothing for the window the
-two share. It is unbounded because it is meant to be — a belantamab line at any
-point in the patient's history disqualifies them.
+two share. It carries no period of its own — a belantamab line anywhere in the
+study period disqualifies them.
+
+**Bounded to the study period, deliberately.** The rule names no period, and
+read literally that would mean all of history. The CDM tables reach back well
+before the study start, so an unbounded scan would act on claims outside the
+window every other criterion in this build is bounded to — and `lot`, which
+settles the other half, cannot see outside it either. The scan runs from
+`NDMM_STUDY_START` to `study_end`. Anyone who wants the literal reading removes
+the lower bound in `build_ndmm_belantamab_tx()`; nothing else changes.
 
 The gap this closed: belantamab **more than 365 days before the index**. Such a
-patient was not indexed on the belantamab (the inclusion criteria bars it from setting the
-index), passed the 12-month prior-therapy criterion, and then reached `lot` with
+patient was not indexed on the belantamab (it cannot set the index), passed the 12-month prior-therapy criterion, and then reached `lot` with
 the claim invisible. Criterion 9 overlaps `NO_PRIOR_MM_TX` deliberately, so its
 incremental drop in the attrition is exactly that population.
 

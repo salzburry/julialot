@@ -1562,6 +1562,25 @@ ip <- grep("phase_patient_input|materialize_cohort_input", run)[1]
 ok(!is.na(ib) && !is.na(ip) && ib < ip,
    "...checked before anything is pinned or built from it")
 
+# check_cohort_build runs before the copy, and the code lists load in between.
+# A cohort rebuilt in that gap replaces the physical table, and the snapshot
+# check that follows compares only row and patient counts - which a same-size
+# rebuild passes. So it is asked again once the snapshot exists.
+ok(any(grepl("recheck_cohort_build", src, fixed = TRUE)),
+   "the cohort is checked again after it has been copied")
+ir <- grep("recheck_cohort_build\\(con, cfg, cohort_status\\)", run)[1]
+im <- grep("materialize_cohort_input", run)[1]
+ok(!is.na(ir) && !is.na(im) && ir > im,
+   "...after the snapshot exists, not before it")
+rc <- bodyf("recheck_cohort_build")
+ok(any(grepl("before$stamp", rc, fixed = TRUE)) &&
+     any(grepl("before$run_id", rc, fixed = TRUE)),
+   "...and the same ATTEMPT is required, not just the same run id")
+# A cohort re-run keeps its run id and rewrites its rows under it, so the id
+# alone does not name an attempt. The status row's timestamp moves every time.
+ok(any(grepl("COHORT_STAMP", src, fixed = TRUE)),
+   "the attempt's timestamp is recorded beside its run id")
+
 cat("\n-- a run's own metadata rows are cleared, or the run stops --\n")
 # A re-run keeps its run id, so rows an earlier attempt left under it would be
 # read as this run's. A missing table is the first run and fine; a permission

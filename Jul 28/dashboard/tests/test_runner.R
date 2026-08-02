@@ -435,14 +435,15 @@ ok(!length(amb), if (length(amb)) paste("layouts overlap:", paste(amb, collapse 
 # over the wrong rows is not enough: a funnel is read as the funnel for the
 # study beside it, so the query is pinned to the recorded run, and the panel is
 # skipped when that run's rows are gone.
-lay2 <- function(cols, owner, n_rows) {
+lay2 <- function(cols, owner, n_rows, funnel_at = "2026-01-01 09:00:00") {
   stub(function(con, sql)
     if (grepl("^DESCRIBE", trimws(sql))) data.frame(col_name = cols)
+    else if (grepl("max(", sql, fixed = TRUE)) data.frame(T = funnel_at)
     else data.frame(n = n_rows))
   asec(resolve_attrition(DASHBOARD_SECTIONS, NULL, ai, ahave, acfg, owner))
 }
 own <- list(run_id = "lot-1", ts = "2026-01-02 10:00:00", exact = TRUE,
-            cohort_run = "coh-a")
+            cohort_run = "coh-a", cohort_stamp = "2026-01-01 09:00:00")
 s <- lay2(NDMM_COLS, own, 8L)
 ok(grepl("a.RUN_ID = '{cohort_run}'", s$sql, fixed = TRUE) && is.null(s$skip),
    "the funnel is pinned to the cohort run LOT read, not to the newest one")
@@ -460,9 +461,19 @@ ok(!is.null(s$skip) && grepl("coh-a", s$skip, fixed = TRUE),
    "a funnel whose matching run is gone is skipped, not shown with a warning")
 # An older lot recorded no link. Say so on the panel, not only in a log.
 s <- lay2(NDMM_COLS, list(run_id = "lot-1", ts = NA, exact = FALSE,
-                          cohort_run = NA_character_), 8L)
+                          cohort_run = NA_character_,
+                          cohort_stamp = NA_character_), 8L)
 ok(is.null(s$skip) && grepl("not tied to the LOT run", s$label, fixed = TRUE),
    "with no recorded link the funnel is still shown, and says it is not tied")
+# A cohort re-run keeps its run id and rewrites its attrition under it, so
+# matching ids is not matching attempts. lot records the status row's timestamp
+# as well; a funnel written after it belongs to a later attempt.
+s <- lay2(NDMM_COLS, own, 8L, funnel_at = "2026-02-01 09:00:00")
+ok(!is.null(s$skip) && grepl("later attempt", s$skip, fixed = TRUE),
+   "a funnel rewritten under the same run id after LOT read it is skipped")
+s <- lay2(NDMM_COLS, own, 8L, funnel_at = "2026-01-01 09:00:00")
+ok(is.null(s$skip),
+   "...and the attempt LOT actually read is shown")
 
 cat("\n-- the panels name no study, in their labels either --\n")
 # The attrition table belongs to whichever cohort build wrote it, so the panel

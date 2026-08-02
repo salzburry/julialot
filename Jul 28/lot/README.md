@@ -99,7 +99,7 @@ Rscript build.R MY_COH_FINAL mystudy_ 2016-01-01 2026-03-31
 ```
 
 `config.csv` supplies the default when no argument is given — currently the NNDM
-study definition's the study period study period, 2016-01-01 to 2026-03-31, which resolves to the
+study period, 2016-01-01 to 2026-03-31, which resolves to the
 `2026q1` CDM tables. A cohort built to another window passes its own; nothing in
 this folder has to change. Both dates land in `LOT_RUN_METADATA`, so an output
 says which window and therefore which vintage produced it.
@@ -139,7 +139,7 @@ criterion off.
 ### The shipped criterion is this study's, and it is on
 
 `APPLY_NO_BELANTAMAB` ships `TRUE`, and `no_belantamab` is a `truncate`
-criterion — it removes the whole patient. That is the NNDM study definition's the exclusion criteria
+criterion — it removes the whole patient. That is the NDMM cohort's belantamab
 exclusion, and it is correct for `NDMM_COHORT`. It is **not** automatically
 correct for a broader MM cohort, a sensitivity cohort, or any other study whose
 study definition has no such exclusion, and passing a different cohort, prefix and window

@@ -60,7 +60,7 @@ from claims (`R/steps/00b_lot1_index.R`). Belantamab is read off
 
 ### The study period
 
-**01 Jan 2016 through 31 Mar 2026**, from study definition the study period ("the study period is
+**01 Jan 2016 through 31 Mar 2026** ("the study period is
 defined as 01 Jan 2016 through 31 Mar 2026"). It sets the pregnancy window, the
 MM-diagnosis window, and — through `USE_QUARTERLY_TABLES` — which cumulative
 Optum tables are read (`2026q1`).

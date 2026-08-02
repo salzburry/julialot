@@ -339,15 +339,20 @@ check_cohort_build <- function(con, cfg) {
     }
     state <- tolower(trimws(pick("state") %||% ""))
     rid   <- pick("run_id")
+    # The run id alone does not identify an ATTEMPT: a cohort re-run keeps its
+    # run id and rewrites its rows under it. UPDATED_AT moves every time, so
+    # the pair is what says "this attempt", and it is the pair that gets
+    # recorded and re-checked.
+    got <- list(run_id = rid, stamp = pick("updated_at"), table = tbl)
     if (identical(state, "complete")) {
-      log_msg("Cohort build ", rid, " completed (", tbl, ")")
-      return(rid)
+      log_msg("Cohort build ", rid, " completed (", tbl, ", ", got$stamp, ")")
+      return(got)
     }
     if (identical(toupper(Sys.getenv("LOT_IGNORE_COHORT_STATE", unset = "")), "TRUE")) {
       log_msg("WARNING: cohort build ", rid, " is marked '", state, "' in ", tbl,
               " and LOT_IGNORE_COHORT_STATE is set. These lines may be built ",
               "from a cohort its own build did not stand behind.")
-      return(rid)
+      return(got)
     }
     stop("The cohort build that last wrote ", tbl, " (run ", rid,
          ") is marked '", state, "', not complete. Its cohort table is still ",
@@ -369,7 +374,35 @@ check_cohort_build <- function(con, cfg) {
           "build that wrote ", wrk(cfg$input_cohort_table), " finished. Set ",
           "COHORT_STATUS_TABLE, and COHORT_PREFIX if the cohort build used a ",
           "different one.")
-  NA_character_
+  list(run_id = NA_character_, stamp = NA_character_, table = NA_character_)
+}
+
+# The cohort must not have moved while we were reading it.
+#
+# check_cohort_build() runs before the cohort is copied into
+# LOT_PATIENT_INPUT, and the code lists are loaded in between. A cohort rebuilt
+# in that gap replaces the physical table, and the snapshot check that follows
+# compares only row and patient counts - which a same-size rebuild passes. The
+# lines would then be built from one cohort while the metadata named another.
+#
+# Asked again after the snapshot exists, and the answer has to be the same
+# attempt: same run id AND same status timestamp, because a re-run keeps its
+# run id.
+recheck_cohort_build <- function(con, cfg, before) {
+  if (is.na(before$run_id)) return(invisible(TRUE))
+  after <- tryCatch(check_cohort_build(con, cfg), error = function(e) e)
+  if (inherits(after, "error"))
+    stop("The cohort build's status changed while LOT was reading it: ",
+         conditionMessage(after), call. = FALSE)
+  if (!identical(after$run_id, before$run_id) ||
+      !identical(as.character(after$stamp), as.character(before$stamp)))
+    stop("The cohort was rebuilt while this run was reading it. Before the ",
+         "copy it was run ", before$run_id, " (", before$stamp, "); after it ",
+         "is run ", after$run_id, " (", after$stamp, "). LOT_PATIENT_INPUT may ",
+         "hold either, and the snapshot check compares only row and patient ",
+         "counts, which a same-size rebuild passes. Re-run the LOT build.",
+         call. = FALSE)
+  invisible(TRUE)
 }
 
 check_cohort_window <- function(con, tbl, cfg) {
@@ -480,7 +513,9 @@ build_lot <- function(here, cohort_table, prefix,
   cohort <- check_cohort_input(con, wrk(cfg$input_cohort_table))
   check_cohort_window(con, wrk(cfg$input_cohort_table), cfg)
   # Before anything is pinned or built from it.
-  options(lot_cohort_run_id = check_cohort_build(con, cfg))
+  cohort_status <- check_cohort_build(con, cfg)
+  options(lot_cohort_run_id = cohort_status$run_id,
+          lot_cohort_stamp  = as.character(cohort_status$stamp))
 
   # LOT1 is written before LOT_LONG, so track partial runs.
   # Cleared first, or a second run in one session inherits the first's.
@@ -501,6 +536,9 @@ build_lot <- function(here, cohort_table, prefix,
   record_codelist_hashes(con, cfg)
   phase_patient_input(con)
   materialize_cohort_input(con, cohort)
+  # The snapshot exists now, so ask again: nothing may have replaced the cohort
+  # between the check above and this copy.
+  recheck_cohort_build(con, cfg, cohort_status)
   check_claim_ndc(con, cfg)
   phase_mma_map(con, ctx)
   phase_lot1_base(con, ctx)
@@ -1072,7 +1110,10 @@ FINAL_METADATA_COLS <- c(N_LOT_LONG_ROWS = "BIGINT",
                          # cohort table carries no run id, so this is the only
                          # link between a set of lines and the cohort behind
                          # them. NULL when no status table was found.
-                         COHORT_RUN_ID = "STRING")
+                         COHORT_RUN_ID = "STRING",
+                         # A re-run keeps its run id, so the id alone does not
+                         # name an attempt. This moves every time.
+                         COHORT_STAMP = "STRING")
 
 record_final_counts <- function(con, cfg, counts, final) {
   tbl <- lot_out("LOT_RUN_METADATA")
@@ -1109,6 +1150,7 @@ record_final_counts <- function(con, cfg, counts, final) {
            CODE_MD5 = {sql_text(cfg$code_md5)},
            CONTRACT_SETTINGS = {sql_text(contract_settings())},
            COHORT_RUN_ID = {sql_text(getOption('lot_cohort_run_id', NA_character_))},
+           COHORT_STAMP = {sql_text(getOption('lot_cohort_stamp', NA_character_))},
            STUDY_START = {sql_text(cfg$study_start)},
            STUDY_END = {sql_text(cfg$study_end)},
            LINE_CRITERIA_APPLIED = {sql_text(getOption('lot_line_criteria', ''))}
