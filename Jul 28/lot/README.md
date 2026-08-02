@@ -225,27 +225,41 @@ collision. And `lines` above `MAX_LOT` matches no line, so every row passes a
 criterion that never ran; `validate_line_criteria()` takes `MAX_LOT` and
 refuses it.
 
-### `lines = "*"` means every line this build makes, which is `MAX_LOT` of them
+### Patient-level facts: `patients`
 
-`MAX_LOT` is 5, and it is in `CONTRACT` — raising it is a deliberate edit, not a
-config change, because it is part of what a LOT run means. So a criterion over
-`"*"` is asked of lines 1–5 and no further. For `no_belantamab` that leaves a
-narrow gap: a patient whose LOT5 ended because a sixth line started, whose
-belantamab is in that sixth line, and who has none in lines 1–5 nor as LOT5's
-first added med, is not excluded.
+`lot_long` carries lines, not claims, so a criterion about a patient rather than
+a line has nothing to read. It can declare `patients` — SQL building one row per
+`PATID` — which is created before the flags view and `LEFT JOIN`ed into it:
 
-The gap is bounded but it was not measured, so every run now counts it:
-
-```
-  MAX_LOT ceiling (5): 12 patient(s) have a LOT5 that ended because a further
-  line started. That line was not built, so any criterion asked of every LOT
-  was not asked of it.
+```r
+patients = "CREATE OR REPLACE TEMPORARY VIEW lc_<name>_patients AS ...",
+sql      = "coalesce(p_<name>.SOME_COL, 0) = 0"
 ```
 
-recorded as `N_AT_MAX_LOT_CEILING`. Lines ending in `DEATH` or `STUDY_END` are
-terminal and leave nothing unbuilt, so they are not counted. A zero means "any
-LOT" was literally satisfied for this cohort; a large number means `MAX_LOT`
-should be raised before the result is used.
+Both names are derived from the criterion's, and `validate_line_criteria()`
+checks the statement really creates `lc_<name>_patients` and the predicate
+really reads `p_<name>`. A rename that touches one and not the other would leave
+a predicate evaluating to NULL — which the framework reads as a failure, and
+with `truncate` that silently removes every patient.
+
+This is how `no_belantamab` is exact. "Received belantamab in any LOT" cannot
+mean "in any of the lines the build got round to constructing", and reading
+`LOT_BASE_MEDS` / `LOT_BASE_1ST_ADD_MED` — which is what it used to do — meant
+exactly that: bounded by `MAX_LOT`, and bounded again by whether the drug was a
+base med or the *first* addition rather than the second. It asks `map_stacked`
+instead, over the span from the patient's first line to the end of their
+observation:
+
+- Inside a built line, a belantamab MAP is that line's, whatever position it
+  held in it.
+- After the last built line, it is a line the build *would* have started — a
+  non-steroid drug that is not a permissible substitute of a prior line's drug
+  triggers the next LOT.
+
+Either way the answer does not depend on `MAX_LOT`, so the five-line ceiling
+does not bound this criterion. `LOT_LONG_BY_LINE` in `LOT_RUN_METADATA` already
+reports how many patients reach each line if you want to know whether the
+ceiling was reached at all.
 
 ## The production code lists
 

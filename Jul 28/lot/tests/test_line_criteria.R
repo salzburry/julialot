@@ -41,13 +41,64 @@ ok(identical(LINE_CRITERIA[[1]]$on_fail, "truncate") &&
    "...asked of every line, and it removes rather than flags")
 # The predicate is patient-level: false on every line of an affected patient, so
 # first_failed_lot lands on their earliest and truncate leaves them with none.
-# A line-level predicate would strand their earlier lines in the cohort.
-ok(grepl("OVER (PARTITION BY PATID)", LINE_CRITERIA[[1]]$sql, fixed = TRUE),
+# A line-level predicate would strand their earlier lines in the cohort. It is
+# patient-level by construction now - the view it reads is one row per PATID.
+ok(grepl("GROUP BY s.PATID", LINE_CRITERIA[[1]]$patients, fixed = TRUE) &&
+     grepl("p_no_belantamab.", LINE_CRITERIA[[1]]$sql, fixed = TRUE),
    "...and it is patient-level, so the patient goes, not just the line")
-# Whole-token, not LIKE: an abbreviation merely containing BELA must not match.
-ok(grepl("array_contains(split(", LINE_CRITERIA[[1]]$sql, fixed = TRUE) &&
-     !grepl("LIKE", LINE_CRITERIA[[1]]$sql, fixed = TRUE),
-   "...matching whole MED_ABBR tokens, not substrings")
+# The point of the whole criterion: "any LOT" cannot mean "any LOT the build got
+# round to constructing". Reading LOT_BASE_MEDS or LOT_BASE_1ST_ADD_MED bounds
+# it by MAX_LOT and by which position in the line the drug held; asking the
+# claims does not.
+ok(!grepl("LOT_BASE_MEDS", LINE_CRITERIA[[1]]$sql, fixed = TRUE) &&
+     !grepl("LOT_BASE_1ST_ADD_MED", LINE_CRITERIA[[1]]$sql, fixed = TRUE) &&
+     grepl("map_stacked", LINE_CRITERIA[[1]]$patients, fixed = TRUE),
+   "...asked of the claims, so it is not bounded by MAX_LOT or by med position")
+# Bounded by the patient's own LOT span, not by the cohort index: a cohort whose
+# index precedes its first line would otherwise count pre-LOT therapy.
+ok(grepl("min(LOT_START_DT) AS FIRST_LOT_DT", LINE_CRITERIA[[1]]$patients, fixed = TRUE) &&
+     grepl("m.MAP_START_DT <= p.OBS_END_DT", LINE_CRITERIA[[1]]$patients, fixed = TRUE),
+   "...over the span from the first line to the end of observation")
+# Whole value, not LIKE: an abbreviation merely containing BELA must not match.
+ok(grepl("= '{cfg$belantamab_med_abbr}'", LINE_CRITERIA[[1]]$patients, fixed = TRUE) &&
+     !grepl("LIKE", LINE_CRITERIA[[1]]$patients, fixed = TRUE),
+   "...matching a whole MED_ABBR, not a substring")
+
+cat("\n-- patient-level facts a criterion asks of something other than lot_long --\n")
+# lot_long carries lines, not claims. A criterion needing a per-patient fact
+# declares `patients`; the view it builds is LEFT JOINed into allflags so the
+# predicate can read it.
+C_PAT <- crit(name = "cp", flag = "FP",
+              patients = paste0("CREATE OR REPLACE TEMPORARY VIEW lc_cp_patients",
+                                " AS SELECT PATID, 1 AS HAS FROM src"),
+              sql = "coalesce(p_cp.HAS, 0) = 0")
+runs(validate_line_criteria(list(C_PAT)), "a criterion may declare one")
+pv <- line_criteria_patient_sql(cfg, list(C_PAT))
+ok(length(pv) == 1 && identical(pv[[1]]$name, "lc_cp_patients"),
+   "its view is handed back for the phase to build first")
+fs <- line_criteria_flags_sql(cfg, "lot_long", "out", list(C_PAT))
+ok(grepl("LEFT JOIN lc_cp_patients p_cp ON s.PATID = p_cp.PATID", fs, fixed = TRUE),
+   "...and joined on PATID, under the alias the predicate reads")
+# s.*, or the joined view's columns land in the output and PATID appears twice.
+ok(grepl("SELECT s.*", fs, fixed = TRUE) && grepl("FROM lot_long s", fs, fixed = TRUE),
+   "the join projects the source's columns only")
+ok(!grepl("LEFT JOIN", line_criteria_flags_sql(cfg, "lot_long", "out", list(C_ANY)),
+          fixed = TRUE),
+   "a criterion that declares none is unchanged - no join, no alias")
+# Both names are derived from the criterion's, so a rename that touches one and
+# not the other builds a view nothing joins, or reads an alias nothing defines.
+# Either way the predicate is NULL, the flag is 0... and with truncate that
+# silently removes every patient. Caught rather than run.
+badmsg2 <- function(expr, want, what) {
+  e <- tryCatch(expr, error = function(e) e)
+  ok(inherits(e, "error") && grepl(want, conditionMessage(e), fixed = TRUE), what)
+}
+badmsg2(validate_line_criteria(list(modifyList(C_PAT, list(name = "cq")))),
+        "patients must create the view lc_cq_patients",
+        "a renamed criterion whose view name did not follow is refused")
+badmsg2(validate_line_criteria(list(modifyList(C_PAT, list(sql = "1 = 1")))),
+        "never reads p_cp",
+        "...and so is a predicate that never reads the view it asked for")
 
 cat("\n-- a criterion has to be well formed --\n")
 runs(validate_line_criteria(list(C_ANY, C_L23)), "well-formed criteria pass")

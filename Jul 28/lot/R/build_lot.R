@@ -395,7 +395,7 @@ build_lot <- function(here, cohort_table, prefix,
   # LOT1 is written before LOT_LONG, so track partial runs.
   # Cleared first, or a second run in one session inherits the first's.
   options(lot_waivers_applied = character(0), lot_codelist_md5 = list(),
-          lot_line_criteria = "", lot_max_lot_ceiling = NA_integer_)
+          lot_line_criteria = "")
   check_no_active_run(con, cfg)
   write_build_status(con, cfg, "started")
   clear_run_rows(con, cfg)
@@ -957,8 +957,7 @@ FINAL_METADATA_COLS <- c(N_LOT_LONG_ROWS = "BIGINT",
                          N_LOT_FINAL_PATIENTS = "BIGINT",
                          CODE_MD5 = "STRING", CONTRACT_SETTINGS = "STRING",
                          STUDY_START = "STRING", STUDY_END = "STRING",
-                         LINE_CRITERIA_APPLIED = "STRING",
-                         N_AT_MAX_LOT_CEILING = "BIGINT")
+                         LINE_CRITERIA_APPLIED = "STRING")
 
 record_final_counts <- function(con, cfg, counts, final) {
   tbl <- lot_out("LOT_RUN_METADATA")
@@ -996,8 +995,7 @@ record_final_counts <- function(con, cfg, counts, final) {
            CONTRACT_SETTINGS = {sql_text(contract_settings())},
            STUDY_START = {sql_text(cfg$study_start)},
            STUDY_END = {sql_text(cfg$study_end)},
-           LINE_CRITERIA_APPLIED = {sql_text(getOption('lot_line_criteria', ''))},
-           N_AT_MAX_LOT_CEILING = {sql_count(getOption('lot_max_lot_ceiling', NA))}
+           LINE_CRITERIA_APPLIED = {sql_text(getOption('lot_line_criteria', ''))}
      WHERE RUN_ID = '{run_id}'"))
   log_msg("Recorded LOT_LONG: ", counts$n_rows, " lines for ",
           counts$n_patients, " patients (", dist, "); LOT_LONG_FINAL: ",
@@ -1181,40 +1179,6 @@ report_line_criteria <- function(con, cfg, tbl = "lot_long_allflags") {
   invisible(applied)
 }
 
-# "Any LOT" means the lines this build constructs, and it constructs max_lot of
-# them. A patient whose highest built line ended BECAUSE a new one started -
-# MED_ADD, CART_INIT or a transplant - has a line the run never built, so a
-# criterion asked of "every LOT" was not asked of that line. DEATH and STUDY_END
-# are terminal and leave nothing unbuilt.
-#
-# The bound is a design decision and stays one; what was missing is its size.
-# Counted rather than assumed: an exclusion that removes patients deserves a
-# number, not a caveat, and nobody could previously say whether the ceiling bit
-# for three patients or three thousand.
-MAX_LOT_TERMINAL_REASONS <- c("DEATH", "STUDY_END")
-
-report_max_lot_ceiling <- function(con, cfg) {
-  reasons <- paste0("'", MAX_LOT_TERMINAL_REASONS, "'", collapse = ", ")
-  n <- .one_int(tryCatch(db_q(con, glue("
-    SELECT count(DISTINCT PATID) AS n FROM {lot_out('LOT_LONG')}
-    WHERE LOT_NUM = {cfg$max_lot}
-      AND LOT_BASE_END_REASON NOT IN ({reasons})")),
-    error = function(e) NULL), "n")
-  if (is.na(n)) {
-    log_msg("  MAX_LOT ceiling: could not be counted")
-  } else if (n == 0L) {
-    log_msg("  MAX_LOT ceiling (", cfg$max_lot, "): no patient has a line ",
-            "beyond it, so 'any LOT' criteria saw every line")
-  } else {
-    log_msg("  MAX_LOT ceiling (", cfg$max_lot, "): ", n, " patient(s) have a ",
-            "LOT", cfg$max_lot, " that ended because a further line started. ",
-            "That line was not built, so any criterion asked of every LOT was ",
-            "not asked of it.")
-  }
-  options(lot_max_lot_ceiling = n)
-  invisible(n)
-}
-
 phase_line_criteria <- function(con, cfg) {
   # A flag naming a column LOT_LONG already has does not fail: the generated
   # SQL is SELECT *, <expr> AS <flag>, so the result carries the name twice and
@@ -1232,12 +1196,16 @@ phase_line_criteria <- function(con, cfg) {
            call. = FALSE)
   }
   check_belantamab_abbr(con, cfg)
+  # The patient-level facts a criterion asks of the claims rather than of
+  # lot_long. Built first: the flags view joins them.
+  for (pv in line_criteria_patient_sql(cfg))
+    run_step(con, paste0("L39_", tolower(pv$name)), pv$sql,
+             qc = glue("SELECT count(*) AS n_patients FROM {pv$name}"))
   run_step(con, "L40_lot_long_allflags",
            line_criteria_flags_sql(cfg, "lot_long", "lot_long_allflags"))
   # Before the truncate: allflags still has every line, so the counts are of
   # patients the criteria catch rather than of the ones that survived them.
   report_line_criteria(con, cfg)
-  report_max_lot_ceiling(con, cfg)
   run_step(con, "L41_lot_long_final",
            line_criteria_final_sql(cfg, "lot_long_allflags", "lot_long_final"))
   # Persisted, not views: both are built from temporary views, and Spark

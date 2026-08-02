@@ -393,12 +393,10 @@ ok(is.null(drive_plc(list(modifyList(CRIT[[1]], list(lines = 5L))),
 cat("\n-- and the run records which criteria it applied, and what they cost --\n")
 # Driven through phase_line_criteria, not called directly: a reporter nothing
 # invokes records nothing, which is the state this replaced.
-options(lot_line_criteria = NULL, lot_max_lot_ceiling = NULL)
+options(lot_line_criteria = NULL)
 invisible(drive_plc(CRIT))
 ok(identical(getOption("lot_line_criteria"), "t_crit=on:truncate:NA"),
-   "phase_line_criteria reports the criteria itself")
-ok(!is.null(getOption("lot_max_lot_ceiling")),
-   "...and the ceiling, so neither depends on the caller remembering to ask")
+   "phase_line_criteria reports the criteria itself, not on request")
 # The only thing in this package that removes patients, and nothing recorded it.
 # "No patient had belantamab", "the criterion was off" and "this is not that
 # study's cohort" all produce the same LOT_LONG_FINAL, so a set of outputs could
@@ -434,23 +432,6 @@ assign("db_q", function(con, sql) data.frame(something_else = 1L), envir = pe)
 ok(identical(tryCatch(pe$report_line_criteria(NULL, list(max_lot = 5L)),
                       error = function(e) "STOPPED"), "t_crit=on:truncate:NA"),
    "...and so is an answer that does not carry the column")
-
-cat("\n-- and how far the MAX_LOT ceiling bit --\n")
-# "Any LOT" means the lines this build constructs. A LOT5 that ended because a
-# further line started has a line the run never built - so the criterion was not
-# asked of it. The bound stays; what was missing is its size.
-assign("db_q", function(con, sql) { PSQL <<- c(PSQL, sql); data.frame(n = 12L) },
-       envir = pe)
-PSQL <- character(0)
-ok(identical(pe$report_max_lot_ceiling(NULL, list(max_lot = 5L)), 12L),
-   "patients with a line beyond the ceiling are counted")
-ok(any(grepl("LOT_NUM = 5", PSQL, fixed = TRUE)) &&
-     any(grepl("NOT IN ('DEATH', 'STUDY_END')", PSQL, fixed = TRUE)),
-   "asked at the configured ceiling, and only of lines a further one followed")
-assign("db_q", function(con, sql) stop("no table"), envir = pe)
-ok(is.na(tryCatch(pe$report_max_lot_ceiling(NULL, list(max_lot = 5L)),
-                  error = function(e) "STOPPED")),
-   "and a ceiling that cannot be counted is unknown, not fatal")
 
 if (is.na(old_env)) Sys.unsetenv("APPLY_T_CRIT") else Sys.setenv(APPLY_T_CRIT = old_env)
 

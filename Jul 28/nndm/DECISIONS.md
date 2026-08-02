@@ -89,9 +89,10 @@ there is no longer an operational definition to approve.
 enabled by `APPLY_NO_BELANTAMAB` in `lot/config.csv`. The predicate is
 patient-level — false on *every* line of an affected patient — so
 `first_failed_lot` lands on their earliest line and `on_fail = "truncate"`
-leaves them with none, which is the exclusion. It matches whole `MED_ABBR`
-tokens out of `LOT_BASE_MEDS` and `LOT_BASE_1ST_ADD_MED`, not a substring, so
-an abbreviation that merely contains `BELA` cannot match.
+leaves them with none, which is the exclusion. It matches a whole `MED_ABBR` on
+the patient's treatment episodes in `map_stacked`, not a substring, so an
+abbreviation that merely contains `BELA` cannot match — and asking the claims
+rather than `LOT_LONG`'s columns is what keeps "any LOT" literal. See §5.
 
 **Both packages now guard the abbreviation.** The criterion turns on
 belantamab being spelled `BELA` in `CL_MED_ABBR`, and if the code list ever used
@@ -312,26 +313,29 @@ change a line. Confirm `t_medical_2026q1`, `t_rx_2026q1`, `t_med_procedure_2026q
 and `t_med_diagnosis_2026q1` exist and that the row counts move the way a
 three-quarter extension should.
 
-**"Any LOT" means the lines the LOT build produces, which is `MAX_LOT` of
-them.** `lot` builds up to `MAX_LOT` lines per patient (5, and pinned in
-`CONTRACT`, so raising it is a deliberate edit); the criterion is applied across
-all of them. The gap is narrower than "a sixth line is not checked": the
-criterion reads `LOT_BASE_MEDS` **and** `LOT_BASE_1ST_ADD_MED`, so belantamab
-that ends LOT5 by starting a sixth line is caught as LOT5's first added med.
-What is left uncaught is a patient where some *other* agent is LOT5's first
-addition, belantamab appears only in the unbuilt sixth line or beyond, and
-lines 1–5 carry none.
+**"Any LOT" is now literal — the criterion asks the claims, not the constructed
+lines. Closed.** It used to read `LOT_BASE_MEDS` and `LOT_BASE_1ST_ADD_MED` off
+`LOT_LONG`, which bounded it twice over: by `MAX_LOT`, since the build makes five
+lines, and by position within a line, since a belantamab given as a line's
+*second* addition is in neither column. "Any LOT" then meant "any of the first
+five, and only as a base med or the first addition", which is not §6.2.1.2's
+sentence.
 
-This remains a design bound rather than a defect — raising `MAX_LOT` costs run
-time on every patient, and in a 1L newly-diagnosed cohort followed from index
-few patients reach five lines at all. **But the bound was unmeasured**, which
-was a defect: nobody could say whether it bit for three patients or three
-thousand. `report_max_lot_ceiling()` now counts patients whose LOT5 ended
-because a further line started — `MED_ADD`, `CART_INIT` or a transplant, since
-`DEATH` and `STUDY_END` leave nothing unbuilt — logs it and records it as
-`N_AT_MAX_LOT_CEILING`. Read it on the production run: zero means "any LOT" was
-literally satisfied and this entry is moot; a large number means `MAX_LOT`
-should be raised before the result is used.
+Two attempts to quantify that gap rather than close it — a count of LOT5s
+ending on a non-terminal reason — were both wrong, the second still an
+approximation, and are gone.
+
+The criterion now reads `map_stacked`, the per-patient treatment episodes, over
+the span from the patient's first line to the end of their observation. A
+belantamab MAP inside a built line is that line's, whatever position it held;
+after the last built line it is a line the build *would* have started, because a
+non-steroid drug that is not a permissible substitute of a prior line's drug
+triggers the next LOT. So the answer does not depend on `MAX_LOT` at all, and no
+diagnostic is needed to bound it.
+
+`MAX_LOT` still bounds `LOT_LONG` itself, and `LOT_LONG_BY_LINE` in
+`LOT_RUN_METADATA` already reports how many patients reach each line. It no
+longer bounds this exclusion.
 
 **The shipped line criterion is this study's, and it is on by default.**
 `APPLY_NO_BELANTAMAB=TRUE` in `lot/config.csv` is right for `NDMM_COHORT` and
