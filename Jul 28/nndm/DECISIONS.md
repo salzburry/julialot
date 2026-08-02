@@ -41,13 +41,16 @@ calendar months, with the applied row marked. That table is the evidence for
 this decision, not a justification of it — read it on the first production run
 and confirm the number is the one intended.
 
-**Recorded by:** the study team, relayed through the build request and
-confirmed in the implementation thread of 2026-08-02. It is **not** written in
-any controlled document that this repository can see.
+**Recorded by:** the study team, relayed through the build request, and
+re-confirmed on 2026-08-02 against the protocol PDF in
+`Questions/July 30 2026/` — one day is the intended rule and the three-month
+sentence in §6.2.1.1 is **superseded**, not overridden by accident.
 
-**Status: pending sign-off.** Implemented and correct for the rule as stated.
-Needs a controlled study decision record naming the approver and the date,
-because the number it produces is not the number the protocol text produces.
+**Status: confirmed, pending a controlled record.** The rule is the one
+intended and the code implements it. What is still missing is a study decision
+record naming the approver and the date, because §6.2.1.1 as circulated still
+reads three months and anyone checking the build against that text will find a
+difference. `<prefix>NDMM_FU_CE_COUNTS` gives both numbers on every run.
 
 ---
 
@@ -133,11 +136,22 @@ grain costs.
 
 **Measured on the production file:** `other_malig.csv` has 1,643 code rows and
 1,618 distinct `tumor_group` values. The label is therefore one per code, not a
-grouping, and the two-outpatient-claims rule reduces in practice to *the same
-diagnosis code twice*. The direction is known — the cohort is larger than a
-per-primary reading would give. `primary_tumor_groups.csv` is the lever, and on
-this file it is not optional polish: leaving it empty is itself a choice about
-how the criterion reads.
+grouping, and pairing on it reduced in practice to *the same diagnosis code
+twice*.
+
+**Resolved.** Outpatient claims now pair on the **ICD category** — the first
+three characters of the code — which is the protocol's "same primary tumor
+type": every `C50.x` is breast, every `C34.x` lung, every `C79.x` a secondary
+neoplasm. `primary_tumor_groups.csv` and its loader are gone; there is nothing
+a hand-written map could say that the category does not, and leaving it empty
+was itself a choice about how the criterion read. The cohort gets **smaller** —
+claims that never paired now do. `<prefix>NDMM_OTHER_MALIG_GROUPS` lists every
+category with its code and label counts; `<prefix>NDMM_OTHER_MALIG_GRAIN`
+prices it against the old per-label grain.
+
+Where the category over-groups: `C44` (skin), `C76` and `C80` (ill-defined and
+unspecified sites) are broad. In each the two claims are still the same broad
+cancer type, which is the unit the protocol asks for.
 
 *Bone metastasis.* `C79.51`, `C79.52` and `198.5` say a cancer spread to bone,
 not which cancer. Treating them all as myeloma bone disease keeps patients
@@ -199,10 +213,9 @@ cannot be resolved by deriving from something already governed.
 **Status: pending decision**, and the decision is whether to keep a deviation
 the protocol does not authorise, on all three codes — not whether to extend it.
 
-The grain question is settled by the same sentence: the protocol pairs on
-**"the same primary tumor type"**, and the build pairs on a per-code label. That
-is not a design preference to weigh, it is a gap against the text, and
-`primary_tumor_groups.csv` is what closes it.
+The grain half of this decision is closed — see *Resolved* above. What is left
+is the bone-metastasis half, and it is one question: keep an override the
+protocol does not authorise, or drop it.
 
 ---
 
@@ -237,14 +250,15 @@ pomalidomide, ixazomib, thalidomide, selinexor, venetoclax on the code list —
 would never appear, which is the reason the protocol asks for both. The parent
 build's `CE_b` / `CE_f` have the same gap.
 
-**The study period starts six months early.** §6.1's design figure gives study
-start **01 Jan 2016**, 1L initiation from 01 Jan 2017, end of data 31 Mar 2026.
-`NDMM_STUDY_START` defaults to `2015-07-01`. Every step reads that constant;
-`cfg$study_start`, which defaults the *same* environment variable to
-`2016-01-01`, is read by nothing — and its comment claims the pregnancy scan
-uses it, which it does not. So pregnancy ("during the study period") and the MM
-diagnosis scan both run six months wider than the protocol defines. Two
-defaults for one variable is the underlying fault.
+**The study period was never wrong, but its defaults disagreed.** §6.1's design
+figure gives study start **01 Jan 2016**, 1L from 01 Jan 2017, end of data
+31 Mar 2026. `config.csv` supplies `STUDY_START=2016-01-01` and is loaded before
+the constants, so a real run always used the protocol's date. The *defaults*
+disagreed — `NDMM_STUDY_START` fell back to `2015-07-01`, `cfg$study_start` to
+`2016-01-01` — which `check_constants()` would have caught by stopping the
+build. **Fixed:** both defaults are now `2016-01-01`, so a missing `config.csv`
+cannot widen the pregnancy and MM-diagnosis scans, and the comment on
+`cfg$study_start` no longer claims the pregnancy scan reads it.
 
 **Annex 2 is cited both ways.** §6.2.1.1 says "For a full list of
 eligible/expected MM therapies, see Annex 2"; §6.2.2 says "Annex 2 contains an

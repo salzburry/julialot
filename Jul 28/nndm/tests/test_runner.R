@@ -49,7 +49,7 @@ clear()
 
 cat("\n-- the runner calls its phases, in order --\n")
 ORDER <- c("check_settings", "pin_output_schema", "pin_prefix",
-           "pin_optional_csv", "check_contract",
+           "check_contract",
            "check_choices", "check_constants", "set_lot_config",
            "check_no_active_run", "check_upstream", "write_build_status",
            "clear_run_rows",
@@ -73,8 +73,7 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_prefix",
            "check_attrition_monotonic", "build_ndmm_cohort_table",
            "check_ndmm_cohort", "build_ndmm_belantamab_reconcile",
            "write_attrition",
-           "write_codelist_metadata", "write_run_metadata",
-           "report_fillins")
+           "write_codelist_metadata", "write_run_metadata")
 at <- vapply(ORDER, function(f) {
   m <- regexpr(paste0("(?<![A-Za-z0-9_.])", f, "\\("), body, perl = TRUE)
   if (m == -1) NA_integer_ else as.integer(m)
@@ -888,10 +887,11 @@ o0 <- drive_om()
 # template by its common leading whitespace, so how far in the ON clause sits
 # says nothing about the join. What matters is unchanged - the clause is those
 # two conditions and ends there, so " AND 1 = 0" appended to it would still
-# break this while leaving a grep for the join itself passing.
+# break this while leaving a grep for the join itself passing. It is now the
+# last line of the statement, so end-of-string counts as ending there.
 ok(grepl(paste0("LEFT JOIN ", oe2$NDMM_MM_DX_CODES,
                 " m[ \t]*\n[ \t]*ON m\\.dx = om\\.dx",
-                " AND m\\.icd_family = om\\.icd_family[ \t]*\n"),
+                " AND m\\.icd_family = om\\.icd_family[ \t]*(\n|$)"),
          o0),
    "a code on the MM diagnosis list cannot also make a patient an other-cancer case")
 # The label list is the only thing that decides this, so every label in it has

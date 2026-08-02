@@ -55,6 +55,16 @@ PARTS <- list(
 # deliberate override of the written spec and is spelled out rather than
 # absorbed - the numbers it produces are not the numbers apr_30_2026 produces.
 SUBST <- list(
+  # The study-period default. S6.1 gives 01 Jan 2016; the source defaulted to
+  # 2015-07-01, which is the overall build's window, not this one's. config.csv
+  # supplies STUDY_START in a real run so the effective date was already the
+  # protocol's - but cfg$study_start defaults the same variable to 2016-01-01,
+  # so without config.csv the two disagreed and check_constants() stopped the
+  # build. Both defaults are the protocol's date now, and a config.csv that
+  # goes missing no longer widens the pregnancy and MM-diagnosis scans.
+  "R/nndm_constants.R" = list(
+    list(from = "NDMM_STUDY_START         <- Sys.getenv(\"STUDY_START\", unset = \"2016-01-01\")",
+         to   = "NDMM_STUDY_START         <- Sys.getenv(\"STUDY_START\", unset = \"2015-07-01\")", n = 1L)),
   # The sixth clinical change, and it is a fail-open rather than a rule: the
   # source read any ICD_FLAG that was not an ICD-9 spelling as ICD-10, so a
   # blank or unexpected flag on a genuine ICD-9 claim was mis-classed and then
@@ -139,18 +149,7 @@ ADDED <- list(
     # excluded the patient on a single baseline claim. This bounds the second
     # claim too, so both fall in the baseline the criterion names. It can only
     # remove exclusions, so the cohort it builds is larger than apr_30_2026's.
-    "AND op.next_dt  BETWEEN l1.pre_lot1_start AND l1.pre_lot1_end" = 1L,
-    # The fourth clinical change. Path B pairs two outpatient claims on a
-    # code-list label, and a label is one ICD code's description: a cancer at
-    # two subsites, or one coded in remission and once not, is two labels, so
-    # the claims never confirm each other and the patient is not excluded. The
-    # criterion under-detects and the cohort is too large. These read
-    # primary_tumor_groups.csv and pair on the mapped group instead. The file
-    # ships empty and an unmapped label stays its own group, so with nothing
-    # filled in this is the source's rule exactly.
-    "pg_src   <- load_primary_groups_csv(nndm_config()$primary_groups_csv)" = 1L,
-    "pg_join  <- if (is.null(pg_src)) \"\" else glue(\"LEFT JOIN {pg_src} ON pg.pg_label = trim(om.tumor_group)\")" = 1L,
-    "pg_col   <- if (is.null(pg_src)) \"om.tumor_group\" else \"coalesce(pg.pg_primary, om.tumor_group)\"" = 1L),
+    "AND op.next_dt  BETWEEN l1.pre_lot1_start AND l1.pre_lot1_end" = 1L),
   "R/steps/05_pregnancy.R" = c(
     "AND regexp_replace(trim(code), '[^A-Za-z0-9]', '') <> ''" = 1L)
 )
@@ -214,10 +213,16 @@ SPLICE <- list(
   # names bound to the inner ones and every other-cancer code came back
   # overridden. Normalise, then join, and qualify everything.
   "R/steps/04_other_malig.R" = list(
-    # Ends at {pg_join}, not at the mm_dx join: the primary-groups join is the
-    # last line of the same statement.
+    # Ends at the mm_dx join, which is the last line of the statement.
+    # The fourth clinical change is inside it. S6.2.1.2 pairs two outpatient
+    # claims on the same primary tumor type and/or metastatic cancer. The source
+    # pairs on the code-list label, and a label is one ICD code's description -
+    # 1,618 over 1,643 codes - so pairing on it means pairing on the identical
+    # code, and a cancer at two subsites never confirms itself. This pairs on
+    # the ICD category, which is the protocol's unit. It can only add
+    # exclusions, so the cohort is smaller than apr_30_2026's.
     list(from = "CREATE OR REPLACE TEMPORARY VIEW {NDMM_OTHER_MALIG_CODES} AS",
-         to   = "{pg_join}",
+         to   = "ON m.dx = om.dx AND m.icd_family = om.icd_family",
          src_from = 325L, src_to = 332L),
     list(from = "if (is.na(n_matched) || n_matched < n_exp)",
          to   = "\" expected MM-adjacent tumor_group labels\")",

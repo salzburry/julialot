@@ -105,7 +105,7 @@ All prefixed, so two cohorts sit side by side in one schema.
 | `NDMM_ATTRITION` | the nine-step funnel, with counts and percentages |
 | `NDMM_FLAGS_ALL` | one row per 1L candidate with every filter's verdict (also a checkpoint) |
 | `NDMM_RUN_METADATA` | the md5 of every R file, the contract as one string, the run choices, the waivers asked for and the waivers that fired |
-| `NDMM_CODELIST_METADATA` | the md5 and row count of every code list and fill-in file read |
+| `NDMM_CODELIST_METADATA` | the md5 and row count of every code list read |
 | `NDMM_BUILD_STATUS` | started / complete / failed, per run and prefix — what `check_no_active_run()` reads |
 
 ### The review tables
@@ -120,7 +120,7 @@ None of them changes the cohort — they are what the decision gets made
 | `NDMM_INDEX_AGENTS` | which agents actually set a 1L index | every `CL_MED_ABBR` on the code list, whether this run let it set an index, and how many it set. Review it; bar one with `NDMM_INDEX_EXCLUDED_ABBRS` if it should not have |
 | `NDMM_MM_ADJACENT_GROUPS` | which tumour groups are the index disease rather than another cancer | every plasma-cell-looking label, and whether the override reaches it |
 | `NDMM_MM_ADJACENT_CODES` | *which* `C79.5x` is treated as myeloma bone disease | every code kept as the index disease, with the label that kept it. `C79.51` is in; `C79.52` is not, because its label ends `OF BONE MARROW` |
-| `NDMM_OTHER_MALIG_GROUPS` | which code-list labels are one tumour type | every label with the group it pairs under. Anything whose `PRIMARY_GROUP` is still itself can only confirm itself. Fill in `codelists/primary_tumor_groups.csv` |
+| `NDMM_OTHER_MALIG_GROUPS` | what counts as one tumour type | every ICD category the code list resolves to, with its code and label counts. A category holding one code can only confirm itself |
 | `NDMM_OTHER_MALIG_GRAIN` | is that grain actually costing anything? | criterion 7 counted at the finest, configured and coarsest grouping. **The gap between the first row and the last is the whole question** — if it is small, no map is needed |
 | `NDMM_FU_CE_COUNTS` | what the follow-up CE window costs — the one setting resting on a relay, not a document | `N_PASSING_CRITERION_5` and `N_COHORT` at 0 / 30 / 60 / 90 days and at an exact 3 months, with this run's row marked |
 | `NDMM_BELANTAMAB_SCOPE_COUNTS` | which claims proxy stands for "in any LOT" | `N_PATIENTS` and `N_COHORT` under each of the three readings, with this run's marked |
@@ -129,31 +129,6 @@ None of them changes the cohort — they are what the decision gets made
 This list is maintained by hand and has fallen behind the code before. The
 build's own declaration is `OUTPUTS` in `build_nndm.R`, and `tests/test_runner.R`
 holds *that* to what the run actually writes; read it if the two disagree.
-
-## The file you fill in
-
-The package ships one CSV in `codelists/`, **empty**:
-
-| file | one row per | the columns | what it decides |
-|---|---|---|---|
-| `primary_tumor_groups.csv` | code-list label | `tumor_group, primary_tumor_group, note` | labels sharing a `primary_tumor_group` pair together for the two-outpatient-claim rule |
-
-**Empty means the source's cohort** — an unmapped label stays its own group.
-Nothing changes until you write in it. A malformed row stops the run rather
-than being skipped, and the md5 goes into `NDMM_CODELIST_METADATA` even when
-the file is empty, because "read it, no rows" and "never looked" are different
-and only one is a decision. Values are normalised the way the code lists are:
-punctuation stripped, upper-cased.
-
-It is configured separately from the four core code lists — those come from
-`CODELIST_DIR`, this from `NDMM_PRIMARY_GROUPS_CSV`, falling back to the
-shipped empty file. A deploy that points `CODELIST_DIR` at production and
-misses this one runs green on the placeholder, so every run ends with a line
-saying which it had, and `NDMM_OTHER_MALIG_GROUPS` is the table to fill it in
-from.
-
-Why it matters is in **One label per code is the wrong grain for "another
-cancer"**.
 
 ## The criteria as applied
 
@@ -210,7 +185,7 @@ than a note saying so:
 | #3 | which agents actually set the index — the code list is the eligible set, so this is a review rather than a decision | `NDMM_INDEX_AGENTS` |
 | #5 | one day of follow-up CE against the protocol's three months | `NDMM_FU_CE_COUNTS` |
 | #7 | whether a `C79.5x` is myeloma bone disease or a metastasis | `NDMM_MM_ADJACENT_CODES` → `NDMM_MM_ADJACENT_OVERRIDE` in `nndm_constants.R` |
-| #7 | whether two labels are one cancer | `NDMM_OTHER_MALIG_GRAIN`, `NDMM_OTHER_MALIG_GROUPS` → `codelists/primary_tumor_groups.csv` |
+| #7 | whether the ICD category is the right unit for "same primary tumour type" | `NDMM_OTHER_MALIG_GRAIN`, `NDMM_OTHER_MALIG_GROUPS` |
 | #9 | which claims proxy stands for "in any LOT" | `NDMM_BELANTAMAB_SCOPE_COUNTS`, `NDMM_BELANTAMAB_RECONCILE` |
 
 **None of them changes anything until somebody acts.** Every file ships empty
@@ -351,29 +326,32 @@ Every run writes **`<prefix>NDMM_MM_ADJACENT_CODES`**: every code currently kept
 as the index disease, with the label that kept it. That table is where the split
 above is visible, and it is the one to read before deciding.
 
-### One label per code is the wrong grain for "another cancer"
+### Two outpatient claims pair on the ICD category
 
 Criterion 7 Path B is **two outpatient claims within 30 days for the same
-cancer**, and "same" is decided on `other_malig.csv`'s `tumor_group` — which
-carries **one label per ICD code**: 1,618 distinct labels over 1,643 codes. A
-label is a code description, not a tumour type, so `PLASMA CELL LEUKEMIA IN
-REMISSION` and `… NOT HAVING ACHIEVED REMISSION` are two labels for one
-disease, and a solid tumour coded at two subsites is two more. Claims that
-should confirm each other never pair, the criterion under-detects, and the
-cohort is **too large** — the direction that puts patients into a study they do
-not belong in.
+cancer**, and §6.2.1.2 says "the same primary tumor type **and/or metastatic
+cancer**".
 
-The real fix is a `primary_tumor_group` column on the production code list.
-Until then, map labels onto one group in `codelists/primary_tumor_groups.csv`;
-anything unmapped stays its own group, so the empty file that ships is exactly
-the rule the source build runs. `NDMM_OTHER_MALIG_GROUPS` lists every label to
-map from.
+`other_malig.csv` cannot express that through its labels: it carries 1,618
+distinct `tumor_group` values over 1,643 codes, so a label *is* a code, and
+pairing on it means requiring the identical diagnosis code twice. A cancer
+coded at two subsites, or once "in remission" and once not, never confirms
+itself.
 
-**You do not need the map to find out whether it is worth writing.** Every run
-writes **`<prefix>NDMM_OTHER_MALIG_GRAIN`**, counting exclusions at the finest
-grain (the source's), as configured, and at the coarsest. The gap between the
-first and last is the whole question: small and the grain does not matter,
-large and the map is worth writing.
+So the pair is made on the **ICD category** — the first three characters, on the
+already-punctuation-stripped code. Every `C50.x` is breast, every `C34.x` lung,
+every `C79.x` a secondary neoplasm, which is the metastatic half of the same
+sentence. `C7951 → C79`, `1985 → 198`; ICD-10 always starts with a letter and
+ICD-9 never does, so the two families cannot land in one group.
+
+This makes the cohort **smaller** than the source's, because claims that never
+paired now do. `<prefix>NDMM_OTHER_MALIG_GROUPS` lists every category with its
+code and label counts, and `<prefix>NDMM_OTHER_MALIG_GRAIN` prices the category
+against the old per-label grain and against pairing on any label at all.
+
+Where the category over-groups: `C44` (skin), `C76` and `C80` (ill-defined and
+unspecified sites) are broad. In each case both claims are still the same broad
+cancer type, which is the unit the protocol names.
 
 ### Where this departs from the protocol
 
@@ -707,11 +685,10 @@ is pinned to its default** — the review tables exist to be acted on.
 | `NDMM_INDEX_EXCLUDED_CODES` | *(empty)* | comma-separated `TYPE:CODE` or bare codes |
 | `NDMM_WAIVERS` | *(empty)* | the four NDC-shape checks and `raw_icd_flag`, by name |
 
-### The fill-in file, and one way out
+### One way out
 
 | setting | default | |
 |---|---|---|
-| `NDMM_PRIMARY_GROUPS_CSV` | `codelists/primary_tumor_groups.csv` | |
 | `NDMM_IGNORE_ACTIVE_RUN` | *(unset)* | `TRUE` gets past a `started` row a killed process left behind. Use it only once the named run is known to be dead — see **One run per prefix at a time** |
 
 `FINAL_TABLE_NAME` is read into `NDMM_FINAL_TABLE_NAME` by the ported constants

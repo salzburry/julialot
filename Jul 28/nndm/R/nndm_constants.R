@@ -27,7 +27,7 @@ NDMM_FLAGS_ALL_TBL       <- "NDMM_FLAGS_ALL"
 NDMM_PATIDS       <- "_ndmm_patids"
 NDMM_PREG_CODES          <- "_ndmm_preg_codes"
 NDMM_PREGNANCY_PATIDS    <- "_ndmm_pregnancy_patids"
-NDMM_STUDY_START         <- Sys.getenv("STUDY_START", unset = "2015-07-01")
+NDMM_STUDY_START         <- Sys.getenv("STUDY_START", unset = "2016-01-01")
 NDMM_PRE_LOT1_DAYS       <- 365L  # 12-mo CE/baseline before 1L index date
 # Days after the 1L index date that a no-gap span must cover for the follow-up
 # CE. 0 is the index date itself - one day of CE - which is what the study team

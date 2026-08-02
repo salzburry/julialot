@@ -7,9 +7,6 @@ build_ndmm_other_malig_codes <- function(con) {
     c("dx", "icd_family", "tumor_group"))
   ovr_in <- paste(sprintf("'%s'", gsub("'", "''", ndmm_mm_adjacent_groups())),
                   collapse = ", ")
-  pg_src   <- load_primary_groups_csv(nndm_config()$primary_groups_csv)
-  pg_join  <- if (is.null(pg_src)) "" else glue("LEFT JOIN {pg_src} ON pg.pg_label = trim(om.tumor_group)")
-  pg_col   <- if (is.null(pg_src)) "om.tumor_group" else "coalesce(pg.pg_primary, om.tumor_group)"
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_OTHER_MALIG_CODES} AS
     -- Normalised first, then joined. Every column reference below is
@@ -49,13 +46,22 @@ build_ndmm_other_malig_codes <- function(con) {
            -- are decided separately; see DECISIONS.md.
            CASE WHEN trim(om.tumor_group) IN ({ovr_in}) OR m.dx IS NOT NULL
                 THEN 1 ELSE 0 END AS is_mm_adjacent_override,
-           -- The label two outpatient claims must share to confirm each other.
-           -- tumor_group unless primary_tumor_groups.csv coarsens it.
-           {pg_col} AS primary_group
+           -- The group two outpatient claims must share to confirm each other.
+           -- S6.2.1.2 asks for the same primary tumor type, and the ICD
+           -- category - the first three characters - is that: every C50.x is
+           -- breast, every C34.x lung, every C79.x a secondary neoplasm, which
+           -- is the and/or-metastatic-cancer half of the same sentence. The
+           -- label cannot do this: other_malig.csv carries 1,618 of them over
+           -- 1,643 codes, so pairing on it means pairing on the identical code
+           -- and one cancer written two ways never confirms itself.
+           --
+           -- dx is already punctuation-stripped, so this is C7951 -> C79 and
+           -- 1985 -> 198. ICD-10 always starts with a letter and ICD-9 never
+           -- does, so the two families cannot collide in one group.
+           substr(om.dx, 1, 3) AS primary_group
     FROM om
     LEFT JOIN {NDMM_MM_DX_CODES} m
            ON m.dx = om.dx AND m.icd_family = om.icd_family
-    {pg_join}
   "))
   # Only the five required labels are counted. The remission variants are a
   # proposal, not a contract with the code list, so their absence is reported
@@ -180,13 +186,11 @@ build_ndmm_other_malig_pre_lot1 <- function(con, med_diag_tbl) {
     SELECT PATID, tumor_group, primary_group, event_dt, inpatient_flg
     FROM dx_with_setting"))
 
-  # The rule, over that. Path B pairs on primary_group, not on tumor_group:
-  # other_malig.csv carries one label per ICD code, so two outpatient claims
-  # for one cancer coded at different subsites - or one \"in remission\" and one
-  # \"not having achieved remission\" - sit in different labels and never pair,
-  # and the patient is not excluded. primary_group is tumor_group unless
-  # primary_tumor_groups.csv maps it, so with nothing filled in this is the
-  # same rule the source runs.
+  # The rule, over that. Path B pairs on primary_group - the ICD category -
+  # not on tumor_group. Two outpatient claims for one cancer coded at different
+  # subsites, or one \"in remission\" and one \"not having achieved remission\",
+  # are one primary tumour type and now confirm each other. Pairing on the
+  # label, as the source does, means pairing on the identical code.
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_OTHER_MALIG_PATIDS} AS
     WITH inpatient_flag AS (

@@ -58,16 +58,13 @@ cfg_defaults <- list(
   fu_ce_days    = as.integer(Sys.getenv("FU_CE_DAYS", unset = "0")),
   # Gaps of this many days or fewer still count as continuous enrollment.
   gap_days      = as.integer(Sys.getenv("GAP_DAYS", unset = "30")),
-  # The pregnancy exclusion scans [study_start, study_end]. Same environment
-  # variable nndm_constants.R reads for NDMM_STUDY_START.
+  # The steps read NDMM_STUDY_START, not this. It is here so check_constants()
+  # has something to compare the constant against - same variable, same
+  # default, so a config.csv that goes missing stops the build rather than
+  # silently widening the pregnancy and MM-diagnosis scans.
   study_start   = Sys.getenv("STUDY_START", unset = "2016-01-01"),
 
   codelist_dir = Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist"),
-  # Which code-list labels are one tumour type, for the two-outpatient-claim
-  # rule - see codelists.R and NDMM_OTHER_MALIG_GROUPS. Blank means the copy
-  # that ships with this package; pin_optional_csv() fills it in. Empty file
-  # means each label is its own group.
-  primary_groups_csv = Sys.getenv("NDMM_PRIMARY_GROUPS_CSV", unset = ""),
   output_dir   = Sys.getenv("OUTPUT_DIR", unset = "/mnt/artifacts/results"),
 
   max_retries = 4,

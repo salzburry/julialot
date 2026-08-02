@@ -275,27 +275,29 @@ build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl) {
 # How many patients each reading of "in any LOT" would exclude. The scope is a
 # proxy for something this build cannot see, so the run says what the choice
 # costs rather than leaving it to be guessed at.
-# Every label on the other-cancer code list, and the group this run pairs it
-# under. The sheet primary_tumor_groups.csv is filled in from: anything whose
-# PRIMARY_GROUP is still its own label is a label that can only confirm itself.
+# Every ICD category the other-cancer code list resolves to, and how many
+# labels and codes fall in each. This is what the two-outpatient-claim rule
+# pairs on, so it is where to check that a group is a primary tumour type and
+# not something coarser.
 build_ndmm_other_malig_groups <- function(con, cfg) {
   db_exec(con, glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_OTHER_MALIG_GROUPS')} AS
-    SELECT tumor_group                   AS TUMOR_GROUP,
-           max(primary_group)            AS PRIMARY_GROUP,
+    SELECT primary_group                 AS PRIMARY_GROUP,
+           icd_family                    AS ICD_FAMILY,
            count(*)                      AS N_CODES,
-           max(is_mm_adjacent_override)  AS OVERRIDDEN
+           count(DISTINCT tumor_group)   AS N_LABELS,
+           max(is_mm_adjacent_override)  AS ANY_OVERRIDDEN,
+           min(tumor_group)              AS EXAMPLE_LABEL
     FROM {NDMM_OTHER_MALIG_CODES}
-    GROUP BY tumor_group
-    ORDER BY PRIMARY_GROUP, TUMOR_GROUP"))
+    GROUP BY primary_group, icd_family
+    ORDER BY ICD_FAMILY, PRIMARY_GROUP"))
   got <- db_q(con, glue("
-    SELECT count(*) AS n_labels, count(DISTINCT PRIMARY_GROUP) AS n_groups,
-           sum(CASE WHEN OVERRIDDEN = 0 AND PRIMARY_GROUP = TUMOR_GROUP
-                    THEN 1 ELSE 0 END) AS n_alone
+    SELECT count(*) AS n_groups, sum(N_CODES) AS n_codes,
+           sum(CASE WHEN N_CODES = 1 THEN 1 ELSE 0 END) AS n_alone
     FROM {wrk('NDMM_OTHER_MALIG_GROUPS')}"))
-  log_msg("Other-cancer labels: ", got$n_labels, " on the code list, pairing as ",
-          got$n_groups, " group(s); ", got$n_alone,
-          " exclusionary label(s) can only confirm themselves -> ",
+  log_msg("Other-cancer codes: ", got$n_codes, " on the code list, pairing as ",
+          got$n_groups, " ICD categor(ies); ", got$n_alone,
+          " categor(ies) hold one code and can only confirm themselves -> ",
           wrk("NDMM_OTHER_MALIG_GROUPS"))
   invisible(got)
 }
