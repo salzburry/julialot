@@ -5,7 +5,8 @@ phase_mma_map <- function(con, ctx) {
 
   # STEP 2 (5A): MMA_MED - Raw extraction
   # Sources: medical (PROC_CD, BILL_PROC_CD, NDC), rx (NDC)
-  # Note: med_procedure excluded - contains ICD procedure codes only, not HCPCS/NDC drug codes
+  # Note: med_procedure is not read here - see the note at source (4) below;
+  # it is an open omission rather than a settled exclusion
   run_step(con, "S04_mma_med_raw", glue("
     CREATE OR REPLACE TEMPORARY VIEW mma_med_raw AS
     WITH codelist AS (
@@ -81,9 +82,17 @@ phase_mma_map <- function(con, ctx) {
         AND cast(m.FST_DT AS date) >= p.INDEX_DATE
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT  -- ENDDATE primary; ENDDATE_CE under sensitivity flag
     ),
-    -- 4) med_procedure is not a drug source: its PROC column holds ICD
-    -- procedure codes, and the MMA code list is HCPCS and NDC. SCT does read
-    -- it, against the SCT code list.
+    -- 4) med_procedure is NOT read here, and the reason once given for that -
+    -- that its PROC column holds only ICD procedure codes - is contradicted by
+    -- three things. The program spec names T_MED_PROCEDURE (PROC) among the
+    -- CDM tables joined to CL_MMA_CODELIST for medication identification.
+    -- Optum's business rules say PROC identifies patients taking a particular
+    -- drug as a procedure under a HCPCS or CPT code. And 05_sct.R, in
+    -- this package, joins HCPCS against mp.PROC and calls it a safety net.
+    --
+    -- So this is an open omission, not a settled exclusion. It is inherited -
+    -- the baseline does not read it either - and adding it would move index
+    -- dates, so it is measured before it is changed. See nndm/DECISIONS.md #6.
     -- 5) Pharmacy (rx) claims (NDC)
     rx_claims AS (
       SELECT

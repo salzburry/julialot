@@ -329,8 +329,12 @@ facility detail records bundled into it. That is what makes
 which is what §6.2.1.2 asks for. `RVNU_CD` is unstacked from `medical` in the
 same pass as `PROC_CD`.
 
-**One documented source neither package reads.** The business rules' rule 5,
-*"Finding the patients who took the drug of interest"*, names four:
+**One documented source no package reads, and the reason given for it is
+contradicted.** The *program spec* names the CDM tables joined to
+`CL_MMA_CODELIST` for medication identification as **`T_MEDICAL`
+(`PROC_CD`, `BILL_PROC_CD`, `NDC`, `FST_DT`), `T_RX` (`NDC`, `FILL_DT`,
+`DAYS_SUPPLY`) and `T_MED_PROCEDURE` (`PROC`)**. The business rules' rule 5,
+*"Finding the patients who took the drug of interest"*, names four sources:
 
 | | Optum names | this build reads |
 |---|---|---|
@@ -340,10 +344,21 @@ same pass as `PROC_CD`.
 | 4 | `PROC` + `FST_DT` from `t_med_procedure` — *"taking [a] particular drug as procedure using HCPCS/CPT code"* | **no** |
 
 `med_procedure` is read only for the pregnancy and clinical-trial scans, on ICD
-procedure codes. The MM-therapy scan does not read it, in either package or in
-the baseline — so this is inherited, not something the port dropped. The build
-also reads `BILL_PROC_CD`, which Optum does not name, so the coverage is three
-of four plus one extra rather than a straight subset.
+procedure codes. No MM-therapy scan reads it — not `nndm`, not `overall`, not
+`lot`'s MMA/MAP pipeline, and not the baseline — so this is inherited, not
+something the port dropped. The build also reads `BILL_PROC_CD`, which Optum
+does not name, so the coverage is three of four plus one extra rather than a
+straight subset.
+
+**The stated reason for excluding it is wrong.** `lot/R/steps/03_mma_map.R`
+said `med_procedure` "is not a drug source: its PROC column holds ICD procedure
+codes, and the MMA code list is HCPCS and NDC". Three things contradict that:
+the program spec names the table for exactly this join; Optum's rule 5 says
+`PROC` finds a drug given *as a procedure under a HCPCS or CPT code*; and
+`lot/R/steps/05_sct.R`, in the same package, joins HCPCS against `mp.PROC` and
+calls it a "HCPCS safety net". Both cannot be true of one column. The comment
+has been corrected to record the omission as open rather than settled; the
+behaviour is unchanged, because changing it moves index dates.
 
 Whether it matters turns on how far `medical.PROC_CD` and `med_procedure.PROC`
 overlap. If every administration code appears on both, nothing is missed; if
