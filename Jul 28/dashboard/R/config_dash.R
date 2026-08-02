@@ -25,6 +25,13 @@ cfg_defaults <- list(
   # carry are RUN_ID, STEP_NUM, CRITERION, N_PATIENTS and RECORDED_AT.
   attrition_table = Sys.getenv("ATTRITION_TABLE", unset = "NDMM_ATTRITION"),
 
+  # Only for a funnel in the "overall" layout, which carries all three
+  # outpatient-window counts side by side and no record of which one the build
+  # was configured with. Only that column describes the cohort that was
+  # actually written; the other two are sensitivity, with no table behind them.
+  # Ignored by layouts that have one count column. 90 is overall's own default.
+  attrition_window = as.integer(Sys.getenv("ATTRITION_WINDOW", unset = "90")),
+
   # Where the HTML goes, and what it is called.
   output_dir  = Sys.getenv("OUTPUT_DIR",  unset = "/mnt/artifacts/dashboard"),
   output_file = Sys.getenv("OUTPUT_FILE", unset = "dashboard.html"),

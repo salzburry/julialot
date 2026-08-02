@@ -29,36 +29,93 @@ built from the prefix you pass.
 | `{lot_long}` | `<lot_prefix>LOT_LONG` | the Validation tab only, where the before/after comparison is the point |
 | `{patients}` | `<lot_prefix>LOT_PATIENT_INPUT` | demographics and follow-up, **restricted to PATIDs still in `{lot_final}`** |
 | `{run_meta}` | `<lot_prefix>LOT_RUN_METADATA` | which window and which code produced the numbers |
+| `{build_st}` | `<lot_prefix>LOT_BUILD_STATUS` | which run wrote the tables above — read before any panel, never by one |
 | `{attrition}` | `<cohort_prefix><ATTRITION_TABLE>` | the cohort funnel |
 | `{cohort}` | the table you passed | available to sections that want it |
 
-### The attrition table belongs to the cohort build
+### The attrition table belongs to the cohort build — name *and* shape
 
 `nndm` calls it `NDMM_ATTRITION`. A different cohort build calls it something
 else, or writes none — so the name is `ATTRITION_TABLE` in `config.csv` rather
-than a constant in a package that is meant to name no study of its own. The
-cohort prefix still applies, and the columns the panel needs are `RUN_ID`,
-`STEP_NUM`, `CRITERION`, `N_PATIENTS` and `RECORDED_AT`. A table without them
-fails its own panel and leaves the rest of the dashboard alone. The name is
-validated the same way `INPUT_COHORT_TABLE` is — a bare table name, no schema —
+than a constant in a package that is meant to name no study of its own. The name
+is validated the same way `INPUT_COHORT_TABLE` is (a bare table name, no schema),
 because it reaches a query the same way.
 
-Both `ATTRITION_TABLE` and `LOT_RUN_METADATA` are **history**: each build
-deletes and re-inserts only its own `RUN_ID`, so previous runs stay. The two
-panels that read them take the **latest run** — by `RECORDED_AT` and
-`RUN_TIMESTAMP` — because the dashboard runs afterwards, in a different session,
-and cannot know the run id. Without that, a reused prefix returns several
-funnels interleaved by `STEP_NUM`, and the bar takes its denominator from
-whichever row came back first.
+A configurable name is only half of it. The two cohort builds in this folder do
+not agree on a **shape**:
 
-Latest is not enough for provenance. The metadata row is created **early**, in
-the persistence phase, and `record_final_counts()` fills in the fingerprint, the
-window, the applied criteria and the counts at the **end** — so a later attempt
-that died in between leaves the newest row half empty, and the panel would show
-blank provenance beside tables an earlier run actually built. The panel filters
-on `N_LOT_FINAL_ROWS IS NOT NULL`, which is not a heuristic: it is the same
-predicate `lot`'s own `check_run_recorded` uses to decide a run recorded itself,
-asked of the history rather than of the current run.
+| build | table | columns |
+|---|---|---|
+| `nndm` | `NDMM_ATTRITION` | `RUN_ID`, `STEP_NUM`, `CRITERION`, `N_PATIENTS`, `PCT_OF_START`, `RECORDED_AT` |
+| `overall` | `<prefix>attrition_report` | `row_order`, `run_id`, `final_table_name`, `created_at`, `step_id`, `description`, `n_30`, `n_60`, `n_90` |
+
+One fixed query against the `nndm` columns fails outright on an `overall`-built
+cohort — the panel becomes a query-failed notice while the rest of the page
+renders, which reads as *this study has no funnel* rather than *this dashboard
+cannot read this funnel*. So `ATTRITION_LAYOUTS` in `sections.R` holds one spec
+per shape, and the layout is **detected** — `DESCRIBE` the table, match its
+columns — rather than being a second setting that can disagree with the
+warehouse. A shape matching neither skips that one panel and prints the columns
+it actually found. Adding a third cohort build means adding an entry.
+
+`overall` carries all three outpatient-window counts side by side and records
+nowhere which one the build was configured with. Only that column describes the
+cohort that was written; the other two are sensitivity, with no table behind
+them. `ATTRITION_WINDOW` (30/60/90, default 90) names it and the panel label
+repeats it — `overall`'s own printer stars the built column and warns against
+reading the row left to right, and picking one here silently would be the same
+mistake in a different medium.
+
+The `nndm` table is **history** — the build deletes and re-inserts only its own
+`RUN_ID`, so previous runs stay — and its query takes the latest by
+`RECORDED_AT`. Without that a reused prefix returns several funnels interleaved
+by `STEP_NUM`, with the bar taking its denominator from whichever row came back
+first. `overall` writes `CREATE OR REPLACE`, so its table holds one run and needs
+no such filter. Each layout says which it is.
+
+### Which LOT run these tables came from
+
+Not "the latest metadata row", and not "the latest **completed** metadata row"
+either. LOT writes `LOT_LONG_FINAL` with `CREATE OR REPLACE` in the
+line-criteria phase and validates it *afterwards*, then records the counts, then
+marks the build complete. So a rerun that replaced the table and then died
+leaves **its** table on disk with an incomplete metadata row — filtered out by
+any completeness test — while the previous run's complete row is still the
+newest one that passes. The page would carry the failed run's numbers under the
+successful run's provenance, which is worse than either alone.
+
+`LOT_BUILD_STATUS` settles it: one row per run, `STATE` written `complete` after
+every other write in the build, so the **latest row on the prefix is the run
+that last wrote these tables** — whatever state it reached. `resolve_owner_run()`
+reads it before any panel runs and:
+
+* latest row is `complete` → that run owns the tables; provenance is its row,
+  selected by `RUN_ID` with nothing left to sort or choose between;
+* latest row is anything else → **the run stops**, because the table on disk may
+  be that run's, built and unvalidated, and nothing here can tell those numbers
+  from good ones. `DASH_IGNORE_BUILD_STATE=TRUE` overrides it for an operator who
+  knows the run failed before it wrote anything;
+* `complete` but with no completed metadata row → stops. Those two are written
+  seconds apart at the end of the same build, so disagreeing means one has been
+  edited or partly restored;
+* no `LOT_BUILD_STATUS` at all (a study built by an older `lot`) → falls back to
+  the newest row with `N_LOT_FINAL_ROWS IS NOT NULL`, which is `lot`'s own
+  completeness predicate. The log says this is the weaker claim: it establishes
+  that a run finished, not that it wrote these tables.
+
+### What is *not* established: cohort ↔ LOT alignment
+
+Nothing keys a cohort run to a LOT run. They share a prefix, not a run id, and
+neither table records the other's — so a cohort rebuilt after LOT ran, with LOT
+not re-run, leaves the newest funnel describing a cohort the clinical panels
+were not built from.
+
+The dashboard cannot close that; it can only detect one direction of it. A
+funnel recorded **after** the owning LOT run's timestamp cannot be the funnel of
+the cohort LOT read, and the panel label says so when it happens. A funnel
+recorded earlier is *not* thereby proved to be the right one — it is a detector,
+not a link. Closing it properly needs the cohort build to stamp a run id that
+`lot` captures, which is a change to those two packages rather than to this one.
 
 ### Which population a panel describes
 

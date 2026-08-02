@@ -21,7 +21,8 @@ CONTRACT <- list(
 )
 
 BOOL_SETTINGS <- "EXPORT_CSV"
-INT_SETTINGS  <- c("TOP_N", "MAX_RETRIES", "JOURNEYS_PER_CATEGORY")
+INT_SETTINGS  <- c("TOP_N", "MAX_RETRIES", "JOURNEYS_PER_CATEGORY",
+                   "ATTRITION_WINDOW")
 
 check_settings <- function() {
   bad <- character(0)
@@ -39,6 +40,13 @@ check_settings <- function() {
     if (nzchar(x) && !grepl("^[0-9]+$", x))
       bad <- c(bad, paste0(v, "='", x, "' (want a whole number)"))
   }
+  # It becomes a column name - n_30, n_60, n_90 - so a fourth value names a
+  # column that does not exist and the panel fails with the warehouse's word
+  # for it rather than ours. Those three are the columns the overall build
+  # writes, and it computes no others.
+  w <- trimws(Sys.getenv("ATTRITION_WINDOW", unset = ""))
+  if (nzchar(w) && !(w %in% c("30", "60", "90")))
+    bad <- c(bad, paste0("ATTRITION_WINDOW='", w, "' (want 30, 60 or 90)"))
   s <- Sys.getenv("PROJECT_WORK_SCHEMA", unset = "")
   if (grepl(".", s, fixed = TRUE))
     bad <- c(bad, paste0("PROJECT_WORK_SCHEMA='", s,
@@ -138,7 +146,9 @@ load_dash_modules <- function(here) {
 # ones handed to it here - not whatever happens to be in scope.
 fill_sql <- function(sql, inputs, cfg) {
   vals <- c(inputs, list(top_n = cfg$top_n,
-                         journeys_per_category = cfg$journeys_per_category))
+                         journeys_per_category = cfg$journeys_per_category,
+                         attrition_window = cfg$attrition_window,
+                         owner_run = cfg$owner_run))
   for (nm in names(vals)) {
     v <- vals[[nm]]
     # A setting that is absent leaves its placeholder in place, so it comes out
@@ -156,11 +166,86 @@ fill_sql <- function(sql, inputs, cfg) {
   sql
 }
 
+# Point the attrition section at the funnel the cohort build actually wrote.
+#
+# ATTRITION_TABLE made the NAME configurable. The shape is not configurable and
+# should not be: it is whatever the cohort build chose, and this package can
+# either read it or say it cannot. So the layout is DETECTED - DESCRIBE the
+# table, match its columns against ATTRITION_LAYOUTS - rather than being a
+# second setting that can disagree with the warehouse.
+#
+# Also the one honest check available on cohort/LOT alignment. Nothing keys a
+# cohort run to a LOT run: they share a prefix, not a run id, and neither table
+# records the other's. But a funnel recorded AFTER the LOT run started cannot
+# be the funnel of the cohort LOT read, and that is decidable from the two
+# timestamps. It is a detector, not a link - a funnel recorded earlier is not
+# thereby proved to be the right one.
+resolve_attrition <- function(secs, con, inputs, have, cfg, owner) {
+  i <- which(vapply(secs, function(s) identical(s$name, "attrition"), logical(1)))
+  if (!length(i) || !isTRUE(have[["attrition"]])) return(secs)
+  sec <- secs[[i]]
+
+  cols <- table_cols(con, inputs$attrition)
+  if (!length(cols)) {
+    sec$skip <- paste0("the columns of ", inputs$attrition, " could not be read, ",
+                       "so which funnel layout it is cannot be decided.")
+    secs[[i]] <- sec; return(secs)
+  }
+  hit <- Filter(function(L) all(toupper(L$cols) %in% cols), ATTRITION_LAYOUTS)
+  if (!length(hit)) {
+    sec$skip <- paste0(
+      inputs$attrition, " is not a funnel shape this dashboard reads. It has: ",
+      paste(cols, collapse = ", "), ". Known layouts: ",
+      paste(vapply(ATTRITION_LAYOUTS, function(L)
+        paste0(L$name, " (", paste(L$cols, collapse = ", "), ")"),
+        character(1)), collapse = "; "), ".")
+    secs[[i]] <- sec; return(secs)
+  }
+  # More than one match would mean two layouts are not distinguishable by their
+  # columns, which is a registry bug rather than a warehouse one.
+  if (length(hit) > 1L)
+    stop("ATTRITION_LAYOUTS: ", paste(vapply(hit, `[[`, character(1), "name"),
+         collapse = " and "), " both match the columns of ", inputs$attrition,
+         ". Two layouts that cannot be told apart cannot be chosen between.",
+         call. = FALSE)
+  L <- hit[[1]]
+  sec$sql <- L$sql
+  log_msg("  Attrition layout: ", L$name, " (", inputs$attrition, ")")
+  if (identical(L$name, "overall"))
+    sec$label <- paste0(sec$label, " - ", cfg$attrition_window,
+                        "-day outpatient window")
+
+  # Was the funnel written after the LOT run that owns these tables began?
+  if (!is.na(owner$run_id) && !is.na(owner$ts)) {
+    a <- tryCatch(db_q(con, paste0("SELECT max(", L$stamp, ") AS ATTR_AT FROM ",
+                                   inputs$attrition)), error = function(e) NULL)
+    stale <- isTRUE(tryCatch(
+      as.POSIXct(as.character(a$ATTR_AT[1]), tz = "UTC") >
+        as.POSIXct(as.character(owner$ts), tz = "UTC"),
+      error = function(e) FALSE, warning = function(w) FALSE))
+    if (!is.null(a) && stale) {
+      log_msg("  WARNING: the cohort funnel is newer than the LOT run below it.")
+      sec$label <- paste0(sec$label, " - RECORDED AFTER THE LOT RUN, so it is ",
+                          "a later cohort refresh than the one LOT read")
+    }
+  }
+  secs[[i]] <- sec
+  secs
+}
+
 # One panel. A section whose query fails does not take the dashboard with it -
 # the other panels are still true, and a panel that says why it is missing is
 # more use than a run that produced no file. The message goes in the panel and
 # in the log, so it cannot be missed by reading only one of them.
 build_panel <- function(con, sec, inputs, have, cfg) {
+  # Set by resolve_attrition when the table is there but its shape is not one
+  # this package can read. Distinct from a missing table, and worth saying so:
+  # "no funnel" and "a funnel I cannot read" call for different fixes.
+  if (!is.null(sec$skip)) {
+    log_msg("  skip  ", sec$name, " - ", sec$skip)
+    return(list(name = sec$name, tab = sec$tab, label = sec$label, data = NULL,
+                html = paste0('<p class="skip">Not shown: ', .h(sec$skip), "</p>")))
+  }
   missing <- sec$needs[!have[sec$needs]]
   if (length(missing)) {
     log_msg("  skip  ", sec$name, " - no ", paste(missing, collapse = ", "))
@@ -269,6 +354,17 @@ build_dashboard_run <- function(here, cohort_table, lot_prefix,
          "leaves the one and not the other. Finish the LOT build, or check the ",
          "prefix.", call. = FALSE)
 
+  # Which run these tables belong to, before anything reads them: this stops
+  # the run outright when the last LOT build on the prefix did not finish.
+  owner <- resolve_owner_run(con, inputs, have, cfg)
+  cfg$owner_run <- owner$run_id
+  set_dash_config(cfg)
+  log_msg("  Owned by run: ", owner$run_id, if (owner$exact) " (LOT_BUILD_STATUS)"
+          else paste0(" (newest completed metadata row - no ", inputs$build_st,
+                      ", so this says a run finished, not that it wrote these",
+                      " tables)"))
+
+  secs <- resolve_attrition(secs, con, inputs, have, cfg, owner)
   panels <- lapply(secs, build_panel, con = con, inputs = inputs,
                    have = have, cfg = cfg)
 

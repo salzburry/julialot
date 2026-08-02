@@ -45,6 +45,9 @@ dashboard_inputs <- function(cfg) {
     lot_long  = wrk(paste0(lp, "LOT_LONG")),
     lot_final = wrk(paste0(lp, "LOT_LONG_FINAL")),
     run_meta  = wrk(paste0(lp, "LOT_RUN_METADATA")),
+    # One row per LOT run, STATE written "complete" last of all. This is what
+    # says which run the tables beside it came from.
+    build_st  = wrk(paste0(lp, "LOT_BUILD_STATUS")),
     # The attrition table is the COHORT build's, so its name belongs to that
     # build and not to this one. nndm calls it NDMM_ATTRITION; another cohort
     # will call it something else, or have none. Configurable, so this folder
@@ -61,4 +64,88 @@ probe_inputs <- function(con, inputs) {
     isTRUE(tryCatch({ db_q(con, paste0("SELECT 1 FROM ", tbl, " LIMIT 1")); TRUE },
                     error = function(e) FALSE)),
     logical(1))
+}
+
+# The column names of a table, upper-cased, or character(0) if it cannot be
+# asked. Empty means "no answer", never "no columns" - acting on the second
+# reading of an empty result is how the other packages' schema-evolution code
+# nearly added every column to tables that already had them.
+table_cols <- function(con, tbl) {
+  tryCatch({
+    d  <- db_q(con, paste0("DESCRIBE ", tbl))
+    cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
+    if (!length(cn)) return(character(0))
+    v <- toupper(trimws(as.character(d[[cn[1]]])))
+    # DESCRIBE appends a blank line and a partition block on some tables.
+    v[nzchar(v) & !startsWith(v, "#")]
+  }, error = function(e) character(0))
+}
+
+# Which run wrote the tables this dashboard is about to read.
+#
+# LOT_BUILD_STATUS is one row per run and its "complete" is written after every
+# other write in the build, so the LATEST row on the prefix is the run that
+# last touched these tables - whatever state it reached. That is ownership, and
+# it is what the provenance panel needs. A completed metadata row is not:
+# LOT_LONG_FINAL is replaced early in the line-criteria phase and validated
+# afterwards, so a rerun that replaced it and then failed leaves its own table
+# on disk with a metadata row no completeness test will accept, and the
+# previous run's complete row still looks like the newest good one.
+#
+# Returns list(run_id, ts, exact). exact = FALSE means the status table was
+# not there to ask and the answer is the newest completed metadata row - the
+# old behaviour, kept so a study built by an older LOT still renders, and
+# reported as the weaker claim it is.
+resolve_owner_run <- function(con, inputs, have, cfg) {
+  meta_complete <- function(rid)
+    isTRUE(tryCatch(nrow(db_q(con, paste0(
+      "SELECT 1 FROM ", inputs$run_meta, " WHERE RUN_ID = '", rid,
+      "' AND N_LOT_FINAL_ROWS IS NOT NULL"))) > 0, error = function(e) FALSE))
+
+  if (isTRUE(have[["build_st"]])) {
+    d <- tryCatch(db_q(con, paste0(
+      "SELECT RUN_ID, STATE, UPDATED_AT FROM ", inputs$build_st,
+      " ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) NULL)
+    if (!is.null(d) && nrow(d) == 1L) {
+      rid   <- as.character(d$RUN_ID[1])
+      state <- tolower(trimws(as.character(d$STATE[1])))
+      if (identical(state, "complete")) {
+        # Marked complete but with no completed metadata row is a contradiction
+        # in the warehouse, not something to paper over with a fallback: the
+        # two are written seconds apart at the end of the same build.
+        if (!meta_complete(rid))
+          stop("Run ", rid, " is marked complete in ", inputs$build_st,
+               " but has no completed row in ", inputs$run_meta,
+               ". Those two are written seconds apart at the end of the same ",
+               "build, so one of them has been edited or partly restored. ",
+               "Nothing here can say what produced these tables.", call. = FALSE)
+        return(list(run_id = rid, ts = d$UPDATED_AT[1], exact = TRUE))
+      }
+      # Not complete. The tables on disk may be this run's, and nothing here
+      # can tell. Stop, unless the operator says they know it failed early.
+      if (!identical(toupper(Sys.getenv("DASH_IGNORE_BUILD_STATE", unset = "")),
+                     "TRUE"))
+        stop("The last LOT run on prefix ", cfg$lot_prefix, " (", rid,
+             ") is marked '", state, "', so it is the run that last wrote ",
+             "these tables and it did not finish. LOT replaces LOT_LONG_FINAL ",
+             "early in the line-criteria phase and validates it afterwards, so ",
+             "the table on disk may be that run's - built, unvalidated, and ",
+             "left behind. A dashboard cannot tell those numbers from good ",
+             "ones. Re-run the LOT build. If you know that run failed before ",
+             "it wrote anything, set DASH_IGNORE_BUILD_STATE=TRUE and this ",
+             "falls back to the newest completed run.", call. = FALSE)
+      log_msg("WARNING: the last LOT run (", rid, ") is marked '", state,
+              "' and DASH_IGNORE_BUILD_STATE is set. If it got as far as ",
+              "replacing LOT_LONG_FINAL, the numbers on this page are that ",
+              "run's and the provenance below them is not.")
+    }
+  }
+
+  d <- tryCatch(db_q(con, paste0(
+    "SELECT RUN_ID, RUN_TIMESTAMP FROM ", inputs$run_meta,
+    " WHERE N_LOT_FINAL_ROWS IS NOT NULL ORDER BY RUN_TIMESTAMP DESC LIMIT 1")),
+    error = function(e) NULL)
+  if (is.null(d) || !nrow(d))
+    return(list(run_id = NA_character_, ts = NA, exact = FALSE))
+  list(run_id = as.character(d$RUN_ID[1]), ts = d$RUN_TIMESTAMP[1], exact = FALSE)
 }
