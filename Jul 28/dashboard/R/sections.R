@@ -125,26 +125,38 @@ JOURNEY_CATEGORIES <- list(
 # transition for - how many went on at all. They are now a terminal node, and
 # the ribbons leaving each regimen add up to that regimen's LOT{a} patients.
 #
+# A LINE, not a regimen string, decides whether the patient got there. An
+# SCT_ALLO line carries no regimen at all - 10_lot2_5_base.R suppresses the
+# induction rows for it, because an allogeneic singleton LOT contains no MM
+# therapy - so filtering on a non-blank LOT_BASE_MEDS threw those lines away and
+# the patient read as "No LOT{b}" when they had reached LOT{b}. As the SOURCE
+# line it removed them from the chart entirely. That is worse than the old
+# INNER JOIN: it invents attrition rather than omitting it. Blank regimens are
+# labelled by what started the line instead.
+#
+# Non-top-N sources become an "Other" source rather than being dropped, so the
+# chart really is every LOT{a} patient - it was not, while they were filtered
+# out, and the panel now claims it.
+#
 # The stopped node is ranked out of the top-N so it always survives. Ranking it
 # with the regimens would let the largest single answer - usually "stopped" -
 # be folded into "Other" on a cohort with many distinct regimens.
-.transition_section <- function(a, b) list(
+.transition_section <- function(a, b) {
+  line <- function(n) paste0("
+      SELECT cast(PATID as string) AS PATID,
+             coalesce(nullif(trim(LOT_BASE_MEDS), ''),
+                      concat(coalesce(LOT_START_TYPE, '?'), ' (no regimen)')) AS reg
+      FROM {lot_final}
+      WHERE LOT_NUM = ", n)
+  list(
   name  = paste0("lot", a, "_to_lot", b),
   tab   = "Transitions",
   label = paste0("LOT", a, " to LOT", b, " by regimen, with those who stopped"),
   needs = "lot_final", render = "sankey",
   sql = paste0("
-    WITH a AS (
-      SELECT cast(PATID as string) AS PATID, LOT_BASE_MEDS AS reg
-      FROM {lot_final}
-      WHERE LOT_NUM = ", a, " AND LOT_BASE_MEDS IS NOT NULL
-        AND trim(LOT_BASE_MEDS) <> ''
+    WITH a AS (", line(a), "
     ),
-    b AS (
-      SELECT cast(PATID as string) AS PATID, LOT_BASE_MEDS AS reg
-      FROM {lot_final}
-      WHERE LOT_NUM = ", b, " AND LOT_BASE_MEDS IS NOT NULL
-        AND trim(LOT_BASE_MEDS) <> ''
+    b AS (", line(b), "
     ),
     j AS (
       SELECT a.PATID, a.reg AS src,
@@ -156,7 +168,10 @@ JOURNEY_CATEGORIES <- list(
       SELECT src FROM j GROUP BY src
       ORDER BY count(DISTINCT PATID) DESC LIMIT {top_n}
     ),
-    s AS (SELECT j.* FROM j INNER JOIN top_src t ON j.src = t.src),
+    s AS (
+      SELECT j.PATID, coalesce(ts.src, 'Other') AS src, j.tgt, j.stopped
+      FROM j LEFT JOIN top_src ts ON j.src = ts.src
+    ),
     top_tgt AS (
       SELECT tgt FROM s WHERE stopped = 0 GROUP BY tgt
       ORDER BY count(DISTINCT PATID) DESC LIMIT {top_n}
@@ -166,8 +181,8 @@ JOURNEY_CATEGORIES <- list(
                 ELSE coalesce(t.tgt, 'Other') END             AS target,
            count(DISTINCT s.PATID)                            AS n
     FROM s LEFT JOIN top_tgt t ON s.tgt = t.tgt
-    GROUP BY 1, 2 ORDER BY n DESC")
-)
+    GROUP BY 1, 2 ORDER BY n DESC"))
+}
 
 # One per step of the ladder, to whatever height this run built. Hardcoding
 # four pairs was right only while MAX_LOT was five.
@@ -315,11 +330,21 @@ DASHBOARD_SECTIONS <- c(list(
   #
   # RUN_ID = {owner_run}: the rows are the LOT run's own, and owner_run is the
   # run that last wrote the tables this dashboard is reading.
+  # The label carries KIND, because the bar cannot. Two of these rows are not
+  # attrition at all - for a treatment-indexed cohort such as NDMM they
+  # re-derive a fact the cohort build already established, so a drop is the two
+  # scans disagreeing rather than patients the study lost. Under a heading that
+  # says "attrition", with nothing on the chart to tell them apart, a drop
+  # there reads as expected loss: the exact reading the LOT build was changed
+  # to prevent, reintroduced one layer up.
   list(name = "lot_attrition", tab = "Overview",
-       label = "LOT attrition, from the cohort to the study population",
+       label = "LOT: cohort to study population - [check] rows are not attrition",
        needs = "lot_attrition", render = "bar", pct = "first",
        sql = "
-         SELECT STEP AS label, N_PATIENTS AS n
+         SELECT CASE WHEN KIND = 'reconciliation' THEN concat('[check] ', STEP)
+                     WHEN KIND = 'criterion'      THEN concat('[removed] ', STEP)
+                     ELSE STEP END                AS label,
+                N_PATIENTS                        AS n
          FROM {lot_attrition}
          WHERE RUN_ID = '{owner_run}' AND KIND <> 'progression'
          ORDER BY STEP_NUM"),

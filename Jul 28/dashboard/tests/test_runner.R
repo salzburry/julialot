@@ -569,6 +569,19 @@ tsql <- fill_sql(tr$sql, INPUTS, cfg)
 ok(grepl("LEFT JOIN b ON a.PATID = b.PATID", tsql, fixed = TRUE) &&
      grepl("'No LOT2'", tsql, fixed = TRUE),
    "a left join, so those who stopped are drawn instead of vanishing")
+# An SCT_ALLO line carries no regimen - the induction rows are suppressed for
+# it - so filtering on a non-blank LOT_BASE_MEDS read a patient who DID reach
+# LOT2 as having stopped, and removed them entirely when it was the source
+# line. Inventing attrition is worse than omitting it.
+ok(!grepl("AND trim(LOT_BASE_MEDS) <> ''", tsql, fixed = TRUE),
+   "a line with no regimen string is still a line the patient reached")
+ok(grepl("concat(coalesce(LOT_START_TYPE, '?'), ' (no regimen)')", tsql, fixed = TRUE),
+   "...labelled by what started it, so an ALLO line is a node and not a gap")
+# Non-top-N sources were dropped outright, so "every LOT{a} patient" was not
+# true while the panel said it was.
+ok(grepl("coalesce(ts.src, 'Other') AS src", tsql, fixed = TRUE) &&
+     grepl("LEFT JOIN top_src ts", tsql, fixed = TRUE),
+   "...and a source outside the top N is bucketed, not dropped")
 # Ranked out of the top-N: on a cohort with many regimens the largest single
 # answer is usually "stopped", and ranking it with them would fold it into
 # "Other".
@@ -649,6 +662,15 @@ ok(!identical(la$needs, sec_by("attrition")$needs),
 ok(grepl("KIND <> 'progression'", la$sql, fixed = TRUE) &&
      grepl("KIND = 'progression'", lp$sql, fixed = TRUE),
    "...and progression is split off, since nobody was removed there")
+# Two of the funnel rows are not attrition: for a treatment-indexed cohort they
+# re-derive what the cohort build established, so a drop is two scans
+# disagreeing. A bar carries no KIND column, so it goes in the label - under a
+# heading saying "attrition" and with nothing to tell them apart, a drop there
+# reads as expected loss.
+ok(grepl("concat('[check] ', STEP)", la$sql, fixed = TRUE),
+   "the bar marks the reconciliation rows, which a KIND column cannot do there")
+ok(grepl("not attrition", la$label, fixed = TRUE),
+   "...and the panel heading does not call all of them attrition")
 # pct='first' over rows ordered by STEP_NUM: the funnel's first row is the
 # cohort handed over, and progression's first row is LOT1 - so each panel's
 # percentages are of the base that panel is about.
