@@ -279,6 +279,55 @@ DASHBOARD_SECTIONS <- list(
        layouts = "ATTRITION_LAYOUTS",
        sql = ATTRITION_LAYOUTS[[1]]$sql),
 
+  # The LOT build's funnel, which starts where the cohort build's ends. Its own
+  # panels, not rows appended to the one above: that funnel counts patients
+  # into the cohort, this one counts what happened to them afterwards, and a
+  # single bar chart running from one into the other would read as one
+  # narrowing when the populations and the reasons are different.
+  #
+  # Progression is split off for the same reason again. Nobody is removed
+  # there - a patient with no LOT3 did not progress, or their follow-up ended -
+  # so it belongs beside the funnel, not inside it. Split by KIND, which the
+  # LOT build writes for exactly this.
+  #
+  # RUN_ID = {owner_run}: the rows are the LOT run's own, and owner_run is the
+  # run that last wrote the tables this dashboard is reading.
+  list(name = "lot_attrition", tab = "Overview",
+       label = "LOT attrition, from the cohort to the study population",
+       needs = "lot_attrition", render = "bar", pct = "first",
+       sql = "
+         SELECT STEP AS label, N_PATIENTS AS n
+         FROM {lot_attrition}
+         WHERE RUN_ID = '{owner_run}' AND KIND <> 'progression'
+         ORDER BY STEP_NUM"),
+
+  list(name = "lot_progression", tab = "Overview",
+       label = "How far patients get - percentages are of LOT1",
+       needs = "lot_attrition", render = "bar", pct = "first",
+       sql = "
+         SELECT STEP AS label, N_PATIENTS AS n
+         FROM {lot_attrition}
+         WHERE RUN_ID = '{owner_run}' AND KIND = 'progression'
+         ORDER BY STEP_NUM"),
+
+  # The bars carry one number each. Lines, and the share of the row above -
+  # which for a criterion is its own cost and for a line is the share going on
+  # to the next - only fit in a table.
+  list(name = "lot_attrition_detail", tab = "Overview",
+       label = "The same funnel with lines and step-to-step percentages",
+       needs = "lot_attrition", render = "table",
+       sql = "
+         SELECT STEP_NUM                          AS `#`,
+                KIND                              AS `Kind`,
+                STEP                              AS `Step`,
+                N_PATIENTS                        AS `Patients`,
+                N_LINES                           AS `Lines`,
+                PCT_OF_START                      AS `% of first`,
+                PCT_OF_PREV                       AS `% of previous`
+         FROM {lot_attrition}
+         WHERE RUN_ID = '{owner_run}'
+         ORDER BY STEP_NUM"),
+
   # ---- COHORT --------------------------------------------------------------
 
   list(name = "demographics", tab = "Cohort",

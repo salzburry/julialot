@@ -69,7 +69,8 @@ cat("\n-- a section names only the inputs that exist --\n")
 INPUTS <- list(cohort = "wk.COH", patients = "wk.p_LOT_PATIENT_INPUT",
                lot_long = "wk.p_LOT_LONG", lot_final = "wk.p_LOT_LONG_FINAL",
                run_meta = "wk.p_LOT_RUN_METADATA", build_st = "wk.p_LOT_BUILD_STATUS",
-               attrition = "wk.c_NDMM_ATTRITION")
+               attrition = "wk.c_NDMM_ATTRITION",
+               lot_attrition = "wk.p_LOT_ATTRITION")
 runs(validate_sections(DASHBOARD_SECTIONS, INPUTS),
      "every section's `needs` is an input the run resolves")
 stops(validate_sections(list(modifyList(DASHBOARD_SECTIONS[[1]],
@@ -606,5 +607,38 @@ rules <- sub("^.*\\}", "", css)
 ok(!grepl("#[0-9A-Fa-f]{6}", sub(":root\\{[^}]*\\}", "", css)) ||
      length(gregexpr("#[0-9A-Fa-f]{6}", sub(":root\\{[^}]*\\}", "", css))[[1]]) <= 3,
    "the rules use variables, not a scatter of literals")
+
+cat("\n-- the LOT funnel is its own panel, not rows on the cohort's --\n")
+sec_by <- function(nm) Filter(function(s) identical(s$name, nm), DASHBOARD_SECTIONS)[[1]]
+la <- sec_by("lot_attrition"); lp <- sec_by("lot_progression")
+# The cohort funnel counts patients INTO the cohort; this one counts what
+# happened to them afterwards. One bar chart running from the end of the first
+# into the second would read as a single narrowing when the populations and the
+# reasons are different.
+ok(!identical(la$needs, sec_by("attrition")$needs),
+   "it reads the LOT build's own table, not the cohort build's")
+ok(grepl("KIND <> 'progression'", la$sql, fixed = TRUE) &&
+     grepl("KIND = 'progression'", lp$sql, fixed = TRUE),
+   "...and progression is split off, since nobody was removed there")
+# pct='first' over rows ordered by STEP_NUM: the funnel's first row is the
+# cohort handed over, and progression's first row is LOT1 - so each panel's
+# percentages are of the base that panel is about.
+ok(identical(la$pct, "first") && identical(lp$pct, "first") &&
+     grepl("ORDER BY STEP_NUM", la$sql, fixed = TRUE) &&
+     grepl("ORDER BY STEP_NUM", lp$sql, fixed = TRUE),
+   "...each panel's percentages are of its own first row")
+# A bar carries one number. Lines and the step-to-step share need a table.
+ok(identical(sec_by("lot_attrition_detail")$render, "table"),
+   "the lines and step-to-step shares get a table, which a bar cannot carry")
+# One run's funnel over another run's numbers is the failure worth naming.
+ok(all(grepl("RUN_ID = '{owner_run}'", c(la$sql, lp$sql,
+                                         sec_by("lot_attrition_detail")$sql),
+             fixed = TRUE)),
+   "every LOT panel is scoped to the run that wrote the tables on the page")
+bd <- readLines(file.path(ROOT, "R", "build_dashboard.R"), warn = FALSE)
+ok(any(grepl("resolve_lot_attrition(secs, con, inputs, have, cfg)", bd, fixed = TRUE)),
+   "...and rows belonging to some other LOT run skip the panels rather than render")
+ok(any(grepl("one run's funnel above another run's numbers", bd, fixed = TRUE)),
+   "...saying which run is missing rather than drawing an empty chart")
 
 report()

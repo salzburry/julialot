@@ -31,7 +31,39 @@ built from the prefix you pass.
 | `{run_meta}` | `<lot_prefix>LOT_RUN_METADATA` | which window and which code produced the numbers |
 | `{build_st}` | `<lot_prefix>LOT_BUILD_STATUS` | which run wrote the tables above — read before any panel, never by one |
 | `{attrition}` | `<cohort_prefix><ATTRITION_TABLE>` | the cohort funnel |
+| `{lot_attrition}` | `<lot_prefix>LOT_ATTRITION` | the LOT funnel, which starts where that one ends |
 | `{cohort}` | the table you passed | available to sections that want it |
+
+### Two funnels, two panels
+
+`{attrition}` counts patients **into** the cohort. `{lot_attrition}` counts
+what happened to them afterwards. They get their own panels rather than one
+chart running from the end of the first into the second, which would read as
+a single narrowing when the populations and the reasons are different.
+
+The LOT funnel's `KIND` splits it again. `input` / `reconciliation` /
+`criterion` / `final` are the funnel; `progression` — reached LOT1, LOT2, and
+on — is a separate panel, because nobody was removed there: a patient with no
+LOT3 did not progress, or their follow-up ended.
+
+Each panel's percentages are of **its own** first row, which is what
+`pct = "first"` over `ORDER BY STEP_NUM` gives: the funnel's base is the
+cohort handed to LOT, and progression's base is LOT1, so the second panel
+reads as line-to-line retention without a second render mode.
+
+A bar carries one number, so `N_LINES` and `PCT_OF_PREV` — a criterion's own
+cost, and the share of one line's patients going on to the next — get a table
+beneath them.
+
+Every LOT panel is scoped to `RUN_ID = {owner_run}`. Rows belonging to an
+older LOT run under this prefix skip the panels with a note naming the run,
+rather than drawing an empty chart or putting one run's funnel above another
+run's numbers. Unlike the cohort funnel this needs no stamp check: the rows
+are the LOT run's own, `clear_run_rows()` clears them before the build, and
+`resolve_owner_run()` has already refused a latest run that did not finish.
+
+Switches: `SHOW_LOT_ATTRITION`, `SHOW_LOT_PROGRESSION`,
+`SHOW_LOT_ATTRITION_DETAIL`.
 
 ### The attrition table belongs to the cohort build — name *and* shape
 

@@ -273,6 +273,36 @@ resolve_attrition <- function(secs, con, inputs, have, cfg, owner) {
   secs
 }
 
+# The LOT funnel belongs to one LOT run, and the dashboard reads one LOT run.
+#
+# Simpler than the cohort funnel above, because there is no second build in the
+# way: LOT_ATTRITION's RUN_ID is the LOT run's own, clear_run_rows() clears this
+# run's rows before the build starts, and resolve_owner_run() has already
+# refused a latest run that did not finish. So rows under owner_run are this
+# attempt's - no stamp indirection needed.
+#
+# What is left is the table existing with rows for some OTHER run: an older LOT
+# run under this prefix, whose tables have since been replaced. Rendering that
+# would put one run's funnel above another run's numbers, and an empty bar
+# chart would say nothing at all.
+resolve_lot_attrition <- function(secs, con, inputs, have, cfg) {
+  mine <- which(vapply(secs, function(s)
+    isTRUE(s$needs[1] == "lot_attrition"), logical(1)))
+  if (!length(mine) || !isTRUE(have[["lot_attrition"]])) return(secs)
+  n <- tryCatch(db_q(con, paste0("SELECT count(*) AS n FROM ",
+                                 inputs$lot_attrition, " WHERE RUN_ID = '",
+                                 cfg$owner_run, "'"))$n, error = function(e) NA)
+  if (!is.na(n) && n >= 1) return(secs)
+  why <- paste0(
+    "the LOT funnel for run ", cfg$owner_run, " - the run that wrote the ",
+    "tables on this page - is not in ", inputs$lot_attrition,
+    ". The rows there belong to a different LOT run, so showing them would be ",
+    "one run's funnel above another run's numbers.")
+  for (i in mine) secs[[i]]$skip <- why
+  log_msg("  skip  LOT attrition - no rows for run ", cfg$owner_run)
+  secs
+}
+
 # One panel. A section whose query fails does not take the dashboard with it -
 # the other panels are still true, and a panel that says why it is missing is
 # more use than a run that produced no file. The message goes in the panel and
@@ -406,6 +436,7 @@ build_dashboard_run <- function(here, cohort_table, lot_prefix,
                       " tables)"))
 
   secs <- resolve_attrition(secs, con, inputs, have, cfg, owner)
+  secs <- resolve_lot_attrition(secs, con, inputs, have, cfg)
   panels <- lapply(secs, build_panel, con = con, inputs = inputs,
                    have = have, cfg = cfg)
 
