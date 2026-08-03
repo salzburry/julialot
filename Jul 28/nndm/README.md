@@ -7,7 +7,9 @@ DATABRICKS_PWD=... Rscript build.R <prefix_>
 DATABRICKS_PWD=... Rscript build.R mystudy_
 ```
 
-Only the **1L cohort** is built. The 2L/3L subset cohorts are out of scope.
+`build.R` builds the **1L cohort** only. The 2L and 3L subset cohorts are a
+separate step, `build_subsequent_cohorts.R`, which runs after the LOT build —
+see "The 2L and 3L cohorts come after the LOT run" below.
 
 ### One run per prefix at a time
 

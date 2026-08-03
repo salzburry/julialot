@@ -56,7 +56,7 @@ ok(!has(SQL2, "add_months") && has(fl, "date_add(ec_l1.LOT1_START_DT"),
 # run past the data has not shown 3 months.
 ok(!has(SQL2, "study_end") && !has(SQL2, "2026-03-31"),
    "study end does NOT truncate it - a late line is not qualified by data ending")
-ok(has(SQL2, "WHERE coalesce(pre.CE_PRE_12MO, 0) = 1 AND coalesce(fu.CE_FU, 0) = 1"),
+ok(has(SQL2, "WHERE coalesce(pre.CE_PRE, 0) = 1 AND coalesce(fu.CE_FU, 0) = 1"),
    "failing either enrolment criterion keeps a patient out")
 
 cat("\n-- 1L -> 2L -> 3L: each cohort is drawn from the one before it --\n")
@@ -104,6 +104,10 @@ ok(has(S180, "date_sub(g.COHORT_INDEX_DATE, 180)") &&
 # settings is indistinguishable from the one before it.
 ok(has(S180, "180") && has(S180, "AS CE_PRE_DAYS") && has(S180, "AS CE_FU_DAYS"),
    "each cohort table records the two windows")
+# The flag is CE_PRE, not CE_PRE_12MO: at SUBSEQ_PRE_DAYS=180 the second name
+# would claim a window the column is not.
+ok(!has(S180, "12MO") && has(S180, "AS CE_PRE"),
+   "...and the flag does not name a window it may not be")
 ok(has(bs, "CE_PRE_DAYS, CE_FU_DAYS, SUBSEQ_RUN_ID"),
    "...and so does the attrition table")
 # The gap allowance is not one of these: it is baked into the span tables the
@@ -112,26 +116,54 @@ ok(!has(bs, 'Sys.getenv("GAP_DAYS'),
    "the gap allowance is not settable here - it belongs to the spans")
 
 cat("\n-- the lines have to come from a finished run over this cohort attempt --\n")
-STATUS <- list(RUN_ID = "L1", STATE = "complete", UPDATED_AT = "t2",
-               INPUT_COHORT_TABLE = "sch.ndmm_NDMM_COHORT",
-               CONTRACT_DEVIATIONS = "", COHORT_RUN_ID = "N1",
-               COHORT_STAMP = "s1")
+# The fakes carry EXACTLY the columns lot/ declares, read out of its source.
+# The first version of this suite invented a LOT_BUILD_STATUS with
+# COHORT_RUN_ID on it; the real table has no such column, so the guard read NA,
+# decided it had nothing to compare, and waved every run through - and the
+# tests all passed.
+LOTCOLS <- local({
+  bl <- readLines(file.path(dirname(ROOT), "lot", "R", "build_lot.R"), warn = FALSE)
+  grab <- function(first) {
+    i <- grep(first, bl)[1]
+    j <- i + which(grepl("\\)\\s*$", bl[i:length(bl)]))[1] - 1L
+    e <- new.env(); eval(parse(text = paste(bl[i:j], collapse = "\n")), envir = e)
+    names(get(ls(e)[1], envir = e))
+  }
+  list(status = grab("^BUILD_STATUS_COLS <- c\\("),
+       meta   = grab("^FINAL_METADATA_COLS <- c\\("))
+})
+ok(!any(c("COHORT_RUN_ID", "COHORT_STAMP") %in% LOTCOLS$status),
+   "LOT_BUILD_STATUS does not carry the cohort attempt")
+ok(all(c("COHORT_RUN_ID", "COHORT_STAMP") %in% LOTCOLS$meta),
+   "...LOT_RUN_METADATA does, so that is the table to read")
+ok(has(bs, 'wrk("LOT_RUN_METADATA")') &&
+     !grepl('COHORT_RUN_ID[^\\n]*LOT_BUILD_STATUS', bs),
+   "...and the guard reads it there")
+
+STATUS <- setNames(as.list(rep("", length(LOTCOLS$status))), LOTCOLS$status)
+STATUS[c("RUN_ID", "STATE", "UPDATED_AT", "INPUT_COHORT_TABLE")] <-
+  list("L1", "complete", "t2", "sch.ndmm_NDMM_COHORT")
+META <- setNames(as.list(rep("", length(LOTCOLS$meta))), LOTCOLS$meta)
+META[c("COHORT_RUN_ID", "COHORT_STAMP")] <- list("N1", "s1")
+META$RUN_ID <- "L1"
 NNDM <- list(RUN_ID = "N1", UPDATED_AT = "s1")
-mk <- function(lot = STATUS, nndm = NNDM) {
+
+mk <- function(lot = STATUS, meta = META, nndm = NNDM) {
   e <- new.env(parent = globalenv())
   assign("wrk", function(t) paste0("sch.ndmm_", t), envir = e)
   assign("log_msg", function(...) invisible(NULL), envir = e)
   assign("db_q", function(con, sql) {
-    if (grepl("NDMM_BUILD_STATUS", sql, fixed = TRUE)) {
-      if (is.null(nndm)) stop("TABLE_OR_VIEW_NOT_FOUND")
-      return(as.data.frame(nndm, stringsAsFactors = FALSE))
-    }
-    if (is.null(lot)) stop("TABLE_OR_VIEW_NOT_FOUND")
-    as.data.frame(lot, stringsAsFactors = FALSE)
+    hit <- function(t) grepl(t, sql, fixed = TRUE)
+    d <- if (hit("LOT_RUN_METADATA")) meta
+         else if (hit("NDMM_BUILD_STATUS")) nndm
+         else lot
+    if (is.null(d)) stop("TABLE_OR_VIEW_NOT_FOUND")
+    as.data.frame(d, stringsAsFactors = FALSE)
   }, envir = e)
+  for (fn in c("subseq_check_cohort_attempt", "subseq_row")) {
+    g <- get(fn); environment(g) <- e; assign(fn, g, envir = e)
+  }
   f <- subseq_check_lot_run; environment(f) <- e
-  g <- subseq_check_cohort_attempt; environment(g) <- e
-  assign("subseq_check_cohort_attempt", g, envir = e)
   f
 }
 # Refused FOR THE STATED REASON. A test that only asks "did it error" passes
@@ -155,8 +187,12 @@ refuses(mk(nndm = list(RUN_ID = "N2", UPDATED_AT = "s2")), "now holds run N2",
         "NNDM rerun after the LOT build is refused - lines from A, spans from B")
 refuses(mk(nndm = list(RUN_ID = "N1", UPDATED_AT = "s2")), "now holds run N1",
         "...and a same-id re-run is caught by the stamp")
-runs(mk(modifyList(STATUS, list(COHORT_RUN_ID = "")))(NULL, "ndmm_"),
-     "a LOT run predating those columns is not failed on a blank")
+# A complete LOT run always wrote its metadata row. Missing means something is
+# wrong with what is on disk, not that this is an older run.
+refuses(mk(meta = NULL), "has no row in",
+        "a complete run with no metadata row is refused, not waved through")
+runs(mk(meta = modifyList(META, list(COHORT_RUN_ID = "")))(NULL, "ndmm_"),
+     "a LOT run that recorded no attempt is reported, not failed on a blank")
 runs(mk(nndm = NULL)(NULL, "ndmm_"),
      "no NNDM status table is reported, not treated as a mismatch")
 

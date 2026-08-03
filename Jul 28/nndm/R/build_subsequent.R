@@ -100,21 +100,48 @@ subseq_check_lot_run <- function(con, prefix) {
   if (!is.na(dev) && nzchar(trimws(dev)))
     stop("That LOT run was built with LOT_CONTRACT_OVERRIDE (", dev,
          "), so its lines are an alternative algorithm's.", call. = FALSE)
-  subseq_check_cohort_attempt(con, pick("COHORT_RUN_ID"), pick("COHORT_STAMP"))
   log_msg("LOT run ", pick("RUN_ID"), " completed over ", pick("INPUT_COHORT_TABLE"))
+  # Which cohort attempt it read is NOT in the status table - it is in
+  # LOT_RUN_METADATA, on the row for this run.
+  subseq_check_cohort_attempt(con, pick("RUN_ID"))
   invisible(TRUE)
 }
 
 # The name of the cohort table is not enough. A re-run under the same prefix
 # replaces NDMM_COHORT and both span tables in place, so lines from attempt A
-# and enrollment from attempt B carry the same names. LOT records which attempt
-# it read as COHORT_RUN_ID and COHORT_STAMP; compare those to the attempt that
-# is on disk now.
-subseq_check_cohort_attempt <- function(con, lot_run_id, lot_stamp) {
+# and enrollment from attempt B carry the same names.
+#
+# LOT records which attempt it read as COHORT_RUN_ID and COHORT_STAMP - in
+# LOT_RUN_METADATA, not in LOT_BUILD_STATUS. They are two different tables and
+# reading the wrong one costs nothing visible: the columns are simply absent,
+# every value is NA, and the comparison quietly decides it has nothing to
+# compare. Hence subseq_row(), and a caller that stops when the row is absent.
+subseq_row <- function(con, tbl, where, order = "") {
+  ord <- if (nzchar(order)) paste0(" ORDER BY ", order) else ""
+  d <- tryCatch(db_q(con, glue("SELECT * FROM {tbl} WHERE {where}{ord} LIMIT 1")),
+                error = function(e) NULL)
+  if (is.null(d) || !nrow(d)) return(NULL)
+  d
+}
+
+subseq_check_cohort_attempt <- function(con, lot_run_id) {
+  meta <- wrk("LOT_RUN_METADATA")
+  m <- subseq_row(con, meta, glue("RUN_ID = {sql_text(lot_run_id)}"))
+  # A LOT run that reached "complete" always wrote this row, so its absence is
+  # not an old-run allowance - something is wrong with what is on disk.
+  if (is.null(m))
+    stop("LOT run ", lot_run_id, " is marked complete but has no row in ", meta,
+         ", so there is no record of which cohort attempt its lines were built ",
+         "over.", call. = FALSE)
+  mpick <- function(nm) {
+    i <- match(toupper(nm), toupper(names(m)))
+    if (is.na(i)) NA_character_ else as.character(m[[i]][1])
+  }
+  lot_cohort_id <- mpick("COHORT_RUN_ID"); lot_stamp <- mpick("COHORT_STAMP")
+
   tbl <- wrk("NDMM_BUILD_STATUS")
-  d <- tryCatch(db_q(con, glue(
-    "SELECT * FROM {tbl} ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) NULL)
-  if (is.null(d) || !nrow(d)) {
+  d <- subseq_row(con, tbl, "1 = 1", "UPDATED_AT DESC")
+  if (is.null(d)) {
     log_msg("  ", tbl, " has no row - the cohort attempt cannot be compared.")
     return(invisible(FALSE))
   }
@@ -123,13 +150,15 @@ subseq_check_cohort_attempt <- function(con, lot_run_id, lot_stamp) {
     if (is.na(i)) NA_character_ else as.character(d[[i]][1])
   }
   now_id <- pick("RUN_ID"); now_stamp <- pick("UPDATED_AT")
-  # An older LOT run may predate those columns. Nothing recorded is nothing to
-  # compare, and saying so is honest; inventing a match would not be.
-  if (is.na(lot_run_id) || !nzchar(trimws(lot_run_id))) {
-    log_msg("  That LOT run recorded no cohort attempt, so it cannot be ",
-            "compared to NNDM run ", now_id, ".")
+  # LOT writes NULL here when it could not find a cohort status table at all.
+  # Nothing recorded is nothing to compare, and saying so is honest; inventing
+  # a match would not be.
+  if (is.na(lot_cohort_id) || !nzchar(trimws(lot_cohort_id))) {
+    log_msg("  ", meta, " records no cohort attempt for run ", lot_run_id,
+            ", so it cannot be compared to NNDM run ", now_id, ".")
     return(invisible(FALSE))
   }
+  lot_run_id <- lot_cohort_id
   eq <- function(a, b) {
     a <- trimws(as.character(a)); b <- trimws(as.character(b))
     length(a) == 1L && length(b) == 1L && !is.na(a) && !is.na(b) && identical(a, b)
@@ -192,7 +221,7 @@ subseq_cohort_sql <- function(lot_num, from_tbl, out_tbl, pre_days, fu_days,
     ),
     pre AS (
       SELECT g.PATID,
-             {subseq_pre_expr('g.COHORT_INDEX_DATE', pre_days)} AS CE_PRE_12MO
+             {subseq_pre_expr('g.COHORT_INDEX_DATE', pre_days)} AS CE_PRE
       FROM got g LEFT JOIN {spans_tbl} s ON s.PATID = g.PATID
       GROUP BY g.PATID
     ),
@@ -204,7 +233,7 @@ subseq_cohort_sql <- function(lot_num, from_tbl, out_tbl, pre_days, fu_days,
     )
     SELECT g.PATID, g.COHORT_INDEX_DATE, g.DEATH_DT,
            {as.integer(lot_num)}        AS LOT_NUM,
-           coalesce(pre.CE_PRE_12MO, 0) AS CE_PRE_12MO,
+           coalesce(pre.CE_PRE, 0)      AS CE_PRE,
            coalesce(fu.CE_FU, 0)        AS CE_FU,
            {pre_days}                   AS CE_PRE_DAYS,
            {fu_days}                    AS CE_FU_DAYS,
@@ -213,7 +242,7 @@ subseq_cohort_sql <- function(lot_num, from_tbl, out_tbl, pre_days, fu_days,
     FROM got g
     LEFT JOIN pre ON pre.PATID = g.PATID
     LEFT JOIN fu  ON fu.PATID  = g.PATID
-    WHERE coalesce(pre.CE_PRE_12MO, 0) = 1 AND coalesce(fu.CE_FU, 0) = 1")
+    WHERE coalesce(pre.CE_PRE, 0) = 1 AND coalesce(fu.CE_FU, 0) = 1")
 }
 
 # What each criterion cost, counted off the same expressions the cohort uses.
