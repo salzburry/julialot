@@ -1658,9 +1658,30 @@ cat("\n-- the LOT funnel, and the two ways it can lie --\n")
 # patients for reasons that are not a criterion at all - no mapped therapy
 # episode, or episodes that never form a line - and without this table that
 # loss is only a row-count difference somebody has to notice.
-ok(all(c("RUN_ID", "STEP_NUM", "STEP", "N_PATIENTS", "N_LINES", "PCT_OF_START",
-         "RECORDED_AT") %in% names(LOT_ATTRITION_COLS)),
+ok(all(c("RUN_ID", "STEP_NUM", "KIND", "STEP", "N_PATIENTS", "N_LINES",
+         "PCT_OF_START", "RECORDED_AT") %in% names(LOT_ATTRITION_COLS)),
    "the funnel records patients AND lines per step")
+# Not every row is attrition. NDMM's index IS a treatment qualifier - its step
+# 3 is "eligible 1L treatment", and that claim's date becomes INDEX_DATE - so
+# every member already has a qualifying claim on the same cl_mma_codelist.csv
+# that lot maps. "Has a mapped episode" and "has LOT1" therefore derive a fact
+# the cohort already established: they should not move, and a drop is the two
+# scans disagreeing rather than patients the study lost.
+ok(any(grepl('kind = "reconciliation", step = "With a mapped MM therapy episode"',
+             src, fixed = TRUE)) &&
+     any(grepl('kind = "reconciliation", step = "With LOT1 built"', src, fixed = TRUE)),
+   "...and marks the two derive-it-again rows as reconciliation, not attrition")
+ok(any(grepl('kind = "criterion"', src, fixed = TRUE)),
+   "...leaving the criterion rows as the only real narrowing")
+# Read as attrition, a drop there looks like expected loss - the one reading
+# that lets a real discrepancy through.
+ok(any(grepl("attrition: it is that scan and this one disagreeing", src, fixed = TRUE)),
+   "a drop at a reconciliation row is called out as two scans disagreeing")
+# lot runs over cohorts it did not build. One indexed on a diagnosis or an
+# enrolment date has no such guarantee, so this warns rather than stops.
+ok(any(grepl("report_lot_reconciliation(steps)", src, fixed = TRUE)) &&
+     !any(grepl("report_lot_reconciliation <- function(steps) {\n  stop", src, fixed = TRUE)),
+   "...as a warning, since a cohort indexed on something else narrows here for real")
 # Both, because a truncating criterion drops the first failing line and every
 # later one - a patient can survive with fewer lines, and patients alone would
 # show nothing. no_belantamab is patient-level so today they move together.

@@ -182,19 +182,32 @@ one, and these are built from temp views.
 
 `<prefix>LOT_ATTRITION`, one row per step, patients and lines:
 
-| step | |
-|---|---|
-| 1 | cohort patients handed to LOT |
-| 2 | + with a mapped MM therapy episode |
-| 3 | + with at least one line built |
-| 4.. | + one row per enabled `truncate` criterion, cumulative |
-| last | the study population, `LOT_LONG_FINAL` |
+| step | `KIND` | |
+|---|---|---|
+| 1 | `input` | cohort patients handed to LOT |
+| 2 | `reconciliation` | with a mapped MM therapy episode |
+| 3 | `reconciliation` | with LOT1 built |
+| 4.. | `criterion` | one row per enabled `truncate` criterion, cumulative |
+| last | `final` | the study population, `LOT_LONG_FINAL` |
 
-The cohort build writes its own attrition and stops at the cohort. Steps 2 and
-3 are the gap that left: a cohort member with no mapped therapy episode, or
-with episodes that never form a line, is simply not in `LOT_LONG` — no
-criterion removed them, and without this table that loss is a row-count
-difference somebody has to notice.
+**Not every row is attrition, and `KIND` says which is which.**
+
+A cohort whose index is a *treatment* qualifier has already found the claim
+`lot` is about to find again. NDMM's is: its funnel step 3 is "eligible 1L
+treatment on or after `LOT1_FROM`", and that claim's date **becomes**
+`INDEX_DATE`. So every member already has a qualifying MM therapy claim on
+`cl_mma_codelist.csv` — the same file `map_stacked` is built from.
+
+Steps 2 and 3 therefore derive a fact the cohort build already established.
+They should equal step 1, and a drop is **the two scans disagreeing**, not
+patients the study lost. Shown as attrition they would read as expected loss,
+which is the one reading that lets a real discrepancy through — so they are
+labelled for what they are and a drop is reported as a discrepancy.
+
+A cohort indexed on something else — a diagnosis, an enrolment date — carries
+no such guarantee, and there the same rows are a genuine narrowing. That is why
+the check **warns rather than stops**: `lot` is meant to run over cohorts it did
+not build, and only the operator knows which kind this is.
 
 **Two counts, because a `truncate` criterion need not remove a patient.** It
 drops the first failing line and every later one, so a patient can survive with
