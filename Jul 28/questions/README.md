@@ -36,9 +36,10 @@ Nothing here writes to the warehouse.
 
 ## They use the `lot` package's modules, not their own
 
-`_setup.R` sources `load_inputs.R`, `config_lot.R`, `codelists_lot.R` and
-`db_utils_lot.R` from `../lot/R`, so `cdm_src()`, the naming helpers and the
-code-list loaders have one definition rather than a second copy that can drift.
+`_setup.R` sources `load_inputs.R`, `config_lot.R`, `codelists_lot.R`,
+`db_utils_lot.R` and `line_criteria.R` from `../lot/R`, so `cdm_src()`, the
+naming helpers, the code-list loaders and the line criteria have one definition
+rather than a second copy that can drift.
 
 Two things needed bridging.
 
@@ -97,12 +98,70 @@ answering it from this run would be near-zero by construction and mean nothing.
 Set `BROAD_PREFIX` to the prefix of a LOT run over the broad cohort. Without it
 that half is skipped and says so; the audit still runs.
 
+Its index dates come from that run's own `LOT_PATIENT_INPUT`, not from this
+cohort. Taking them from here would drop every broad patient the NDMM
+exclusions removed out of the index join — they would stay in the denominator
+and never match a diagnosis, reading as having no other cancer, which is the
+opposite of the population the question recovers.
+
+## The flag table depends on which build made the cohort
+
+The standalone cohort build writes `NDMM_FLAGS_ALL`; the broad build writes
+`ELIG_COH_ALLFLAGS`. `qs_flags_table()` defaults to the first and takes
+`FLAGS_TABLE` when the cohort came from the other.
+
+Asking for the wrong one is not a harmless miss: under a reused prefix an old
+`ELIG_COH_ALLFLAGS` can still be sitting there, with nothing linking it to this
+cohort or LOT run, and the flag breakdowns would come back full of confident
+numbers about another study.
+
+## A criterion that removes patients changes what a question can be asked of
+
+`MAP_STACKED` is built before the line criteria, so it still holds every
+patient's drug exposure. `no_belantamab` is patient-level and truncates, so
+`LOT_LONG_FINAL` holds **none** of an affected patient's lines.
+
+Ask the Blenrep question across both and the two halves disagree by
+construction: a count of exposed patients, and a by-line table that is empty.
+Read as "the exposure never joined a regimen" that is a mapping bug; the real
+reason is that the study removed those patients on purpose.
+
+So the by-line half reads `LOT_LONG_ALLFLAGS` — the same run before the
+truncate, with each criterion's flag alongside — and says how many patients
+were cut. `qs_truncating_criteria()` gets the criteria and their flag names
+from the `lot` package and this run's `APPLY_*` settings, so a renamed flag
+cannot leave a hardcoded string here matching nothing and reporting zero.
+
+## Q5's two anchors are one anchor
+
+The cohort sets `INDEX_DATE` to `LOT1_START_DT`. So POMA Q5's index-anchored
+columns sit on the same date as its LOT1-anchored ones: they are a **longer
+look-back on the same anchor**, running back to the start of the covering
+enrollment span, not a second window before the diagnosis.
+
+They used to be labelled as the latter. Two counts that look independent get
+added together, and a residual-blind-spot probe that overlaps the window it is
+supposed to reach past is not one. The columns are now named for what they
+measure — `ce_gt_6mo_pre_index`, `len_thal_gt_6mo_pre_index` — and the
+narrative says not to add them to the 12-month figures.
+
+The computation was always right; only the label was wrong. Keeping it has a
+second use: because the anchors are the same date,
+`poma_1l_with_index_span` diverging from `poma_1l_with_lot1_span` means the
+cohort's index and the LOT run's LOT1 start no longer agree.
+
 ## The steroid code list comes from production
 
 `steroid_codes.csv` is read from `CODELIST_DIR`, the same directory the LOT
 build reads its four from, and its md5 goes into the note beside every steroid
 answer — the file is production and can be re-issued, so a count quoted from it
 means little without the version that produced it.
+
+A hash that cannot be taken stops the steroid questions rather than recording
+`unknown` and answering anyway, and the file is hashed again after the read so
+a version re-issued mid-run is caught. That is what `codelists_lot.R` does for
+the four the build reads, and for the same reason: the count gets quoted either
+way.
 
 It is deliberately **not** added to `CODELIST_FILES`. That list drives
 `record_codelist_hashes()`, which stops the LOT build when a listed file has no

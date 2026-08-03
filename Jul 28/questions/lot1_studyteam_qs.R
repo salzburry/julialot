@@ -13,10 +13,12 @@
 #       6-9-meds-at-1L-induction patients from the Sankey (LOT1 Fig 9).
 #   Q4  anti-BCMA / Blenrep (belantamab) availability - all lines, not
 #       just 1L (epi follow-up: how many Blenrep-treated patients exist).
+#       Counted before the line criteria, since one of them removes the
+#       patients being counted.
 #
-# Reads only persisted work-schema tables (LOT_LONG, ELIG_COH_ALLFLAGS,
-# ELIG_COH_FINAL, MAP_STACKED) and the raw CDM; it builds nothing and is
-# safe to run any time.
+# Reads only persisted work-schema tables (LOT_LONG, LOT_LONG_ALLFLAGS,
+# ELIG_COH_ALLFLAGS, ELIG_COH_FINAL, MAP_STACKED) and the raw CDM; it builds
+# nothing and is safe to run any time.
 #
 # Three honest limits, surfaced in the output rather than hidden:
 #  - "Another cancer" (#8) and "clinical trial" (#10) are *exclusion*
@@ -90,7 +92,7 @@ main <- function() {
   }
 
   lot_long <- qs_population()$table
-  allflags <- qs_tbl("ELIG_COH_ALLFLAGS")
+  allflags <- qs_flags_table()
 
   log_msg("LOT1 study-team questions - reading ", lot_long)
   if (!readable(lot_long)) {
@@ -99,9 +101,9 @@ main <- function() {
   }
   have_flags <- readable(allflags)
   if (!have_flags) {
-    log_msg("WARNING: ", allflags, " not readable. It is a pipeline ",
-            "checkpoint - ensure the cohort pipeline materialized it to the ",
-            "work/personal schema. Q1a/Q1c flag breakdowns will be skipped.")
+    log_msg("WARNING: ", allflags, " not readable, so the Q1a/Q1c flag ",
+            "breakdowns are skipped. See qs_flags_table() - which table holds ",
+            "the per-patient flags depends on which build made this cohort.")
   }
 
   # ---- POMA-at-1L base set (delivered cohort) -------------------------
@@ -431,28 +433,68 @@ main <- function() {
       reg_preds <- paste(sprintf(
         "array_contains(split(LOT_BASE_MEDS, ' '), '%s')", bela_tokens),
         collapse = " OR ")
+
+      # The by-line table cannot come from the selected population when a
+      # criterion truncates. no_belantamab is patient-level: it fails on every
+      # line of an exposed patient, so LOT_LONG_FINAL holds none of their
+      # lines and this query returns nothing. Called "the exposure never
+      # joined a regimen", that reads as a mapping gap when the real reason is
+      # that the study removed those patients on purpose.
+      #
+      # LOT_LONG_ALLFLAGS is the same run before the truncate, with each
+      # criterion's flag alongside - the lines are still there, and the flag
+      # says how many patients were cut.
+      truncating  <- qs_truncating_criteria()
+      cut_names   <- vapply(truncating, function(c_i) c_i$name, character(1))
+      allflag_tbl <- qs_allflags_lines()
+      pre_cut     <- length(truncating) > 0 && readable(allflag_tbl)
+      by_lot_src  <- if (pre_cut) allflag_tbl else lot_long
       by_lot <- db_q(con, glue("
         SELECT LOT_NUM, count(DISTINCT PATID) AS n_patients
-        FROM {lot_long}
+        FROM {by_lot_src}
         WHERE LOT_BASE_MEDS IS NOT NULL AND ({reg_preds})
         GROUP BY LOT_NUM ORDER BY LOT_NUM
       "))
       write_out(by_lot, "q4_blenrep_by_lot")
 
+      cut_pred <- paste(sprintf("%s = 0",
+        vapply(truncating, function(c_i) c_i$flag, character(1))), collapse = " OR ")
+      n_cut <- if (pre_cut) num(db_q(con, glue("
+        SELECT count(DISTINCT PATID) AS n FROM {allflag_tbl} WHERE ({cut_pred})"))$n)
+        else NA_real_
+
       log_msg(sprintf(
-        "  Q4: Blenrep (token%s %s) - %s distinct patients with belantamab exposure (all lines, cohort-scoped).",
+        "  Q4: Blenrep (token%s %s) - %s distinct patients with belantamab exposure (all lines, cohort-scoped). %s is built before the line criteria, so this is everyone exposed, including patients the study later removed.",
         if (length(bela_tokens) > 1) "s" else "",
-        paste(bela_tokens, collapse = "/"), n_bela))
+        paste(bela_tokens, collapse = "/"), n_bela, map_tbl))
+      if (pre_cut) {
+        log_msg("  Q4: by-line counts read ", by_lot_src, " - the same run ",
+                "BEFORE ", paste(cut_names, collapse = ", "), " removed ",
+                if (is.na(n_cut)) "?" else n_cut, " patient(s). ",
+                "A truncating criterion drops every line of an affected ",
+                "patient, so ", lot_long, " would answer this with a blank.")
+      } else if (length(truncating) > 0) {
+        log_msg("  Q4: ", allflag_tbl, " is not readable, so the by-line ",
+                "counts fall back to ", lot_long, ". ",
+                paste(cut_names, collapse = ", "), " truncates, so any patient ",
+                "it removed has no lines there - read a blank below as that, ",
+                "not as an absent regimen.")
+      }
       if (nrow(by_lot) > 0) {
-        log_msg("  Q4: Blenrep appears in a 1L-5L regimen for these line ",
-                "counts - ",
+        log_msg("  Q4: Blenrep appears in a regimen at these lines - ",
                 paste(sprintf("LOT%s:%s", by_lot$LOT_NUM, by_lot$n_patients),
                       collapse = ", "),
                 " (LOT_BASE_MEDS match; a patient may give a J9037 claim ",
                 "without it joining a LOT regimen).")
+      } else if (pre_cut) {
+        log_msg("  Q4: belantamab exposure exists in ", map_tbl,
+                " but no line of ", by_lot_src, " carries it in ",
+                "LOT_BASE_MEDS. Those patients are still in that table, so ",
+                "this is a mapping gap between the claim and the regimen ",
+                "string, not the criterion.")
       } else {
-        log_msg("  Q4: belantamab exposure exists in MAP_STACKED but does ",
-                "not surface in any LOT_BASE_MEDS regimen string.")
+        log_msg("  Q4: belantamab exposure exists in ", map_tbl,
+                " but no line of ", by_lot_src, " carries it in LOT_BASE_MEDS.")
       }
     }
   }

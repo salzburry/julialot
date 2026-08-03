@@ -120,11 +120,31 @@ vqs_build_steroid_claims <- function(con, lot_long, ster_csv) {
   }
   # Which version answered the question. This file is production and can be
   # re-issued, so a number quoted from it means little without the md5 that
-  # produced it - the LOT build records the same thing for the four it reads.
-  ster_md5 <- tryCatch(unname(tools::md5sum(ster_csv)), error = function(e) NA_character_)
+  # produced it.
+  #
+  # Same rule the LOT build applies to the four it reads: a hash that cannot be
+  # taken is a stop, not an "unknown" printed beside a count. Recording
+  # "unknown" reads as a version that could not be looked up, when what really
+  # happened is that the file could not be opened - and the steroid answers
+  # would still be quoted. grepl is FALSE on NA, so this covers that too.
+  ster_hash <- function() tryCatch(unname(tools::md5sum(ster_csv)),
+                                   error = function(e) NA_character_)
+  ster_md5 <- ster_hash()
+  if (length(ster_md5) != 1L || !grepl("^[0-9a-f]{32}$", ster_md5)) {
+    out$note <- paste0("could not hash steroid_codes.csv (", ster_csv,
+                       "), so a steroid count from it could not say which ",
+                       "version produced it; Q3/Q4/Q5 skipped.")
+    return(out)
+  }
   df <- tryCatch(read.csv(ster_csv, stringsAsFactors = FALSE,
                           check.names = FALSE, comment.char = "#"),
                  error = function(e) NULL)
+  # Hashed again: the file is production and can be re-issued mid-run, and a
+  # swap between the two would leave the note describing a file we did not read.
+  if (!identical(ster_md5, ster_hash())) {
+    out$note <- "steroid_codes.csv changed while it was being read; Q3/Q4/Q5 skipped."
+    return(out)
+  }
   if (is.null(df) || nrow(df) == 0 ||
       !all(c("code", "code_type", "mapped_to") %in% names(df))) {
     out$note <- "steroid_codes.csv empty/unreadable or missing columns; Q3/Q4/Q5 skipped."
@@ -201,7 +221,7 @@ vqs_build_steroid_claims <- function(con, lot_long, ster_csv) {
     out$n_patients <- if (!is.null(qc)) as.numeric(qc$np[1]) else NA_real_
     out$note <- sprintf(
       "steroid signal = steroid_codes.csv [md5 %s] (%d codes: %d HCPCS, %d CPT, %d NDC) scanned on medical+rx -> %s matched claims for %s patients.%s%s",
-      ifelse(is.na(ster_md5), "unknown", ster_md5),
+      ster_md5,
       out$n_codes, out$n_hcpcs, out$n_cpt, out$n_ndc,
       ifelse(is.na(out$n_claims), "?", format(out$n_claims, big.mark = ",", scientific = FALSE)),
       ifelse(is.na(out$n_patients), "?", format(out$n_patients, big.mark = ",", scientific = FALSE)),

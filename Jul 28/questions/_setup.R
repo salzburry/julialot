@@ -17,7 +17,8 @@ qs_setup <- function(script_dir) {
 
   source(file.path(lot_r, "load_inputs.R"))
   load_pipeline_inputs(lot_root, "config.csv")
-  for (f in c("config_lot.R", "db_utils_lot.R", "codelists_lot.R"))
+  for (f in c("config_lot.R", "db_utils_lot.R", "codelists_lot.R",
+              "line_criteria.R"))
     source(file.path(lot_r, f))
 
   cfg <- get("cfg_defaults", envir = globalenv())
@@ -121,3 +122,42 @@ qs_population <- function() {
     list(mode = mode, table = qs_tbl("LOT_LONG"),
          label = "same run BEFORE the line criteria - includes patients the study removed")
 }
+
+# The per-patient flag table, whichever build made this cohort.
+#
+# The two builds do not agree on a name. The standalone cohort build writes
+# NDMM_FLAGS_ALL; the broad build writes ELIG_COH_ALLFLAGS. Asking for the
+# wrong one is not a missing table you can shrug at - under a reused prefix an
+# old ELIG_COH_ALLFLAGS from a retired flow can still be sitting there, and
+# nothing links it to the cohort or the LOT run being read, so the flag
+# breakdowns would come back full of confident numbers about another study.
+#
+# Named explicitly when it matters. Otherwise the caller is told which two
+# names were tried rather than being handed whichever turned up first.
+qs_flags_table <- function() {
+  named <- trimws(Sys.getenv("FLAGS_TABLE", unset = ""))
+  if (nzchar(named)) {
+    if (!grepl("^[A-Za-z_][A-Za-z0-9_]*$", named))
+      stop("FLAGS_TABLE '", named, "' is not a table name.", call. = FALSE)
+    return(qs_tbl(named))
+  }
+  qs_tbl("NDMM_FLAGS_ALL")
+}
+
+# The line criteria that REMOVED patients from this run, read from the lot
+# package's own declaration and the APPLY_* settings this run used.
+#
+# A question that counts a drug from MAP_STACKED and then looks for it in
+# LOT_LONG_FINAL has to know about these. MAP_STACKED is built before the
+# criteria, so it still holds the exposure; no_belantamab is patient-level and
+# truncates, so LOT_LONG_FINAL holds none of that patient's lines. Empty means
+# the study removed them, not that the drug never joined a regimen - and only
+# the criteria say which.
+qs_truncating_criteria <- function() {
+  Filter(function(c_i) identical(c_i$on_fail, "truncate"), enabled_line_criteria())
+}
+
+# The same run's lines BEFORE the truncate, each carrying every criterion's
+# flag as a column. Built whether or not a criterion is enabled, so it answers
+# "who did this catch" even for a run that left it off.
+qs_allflags_lines <- function() qs_tbl("LOT_LONG_ALLFLAGS")
