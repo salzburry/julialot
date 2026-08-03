@@ -26,7 +26,8 @@ stops <- function(expr, what) ok(!is.null(tryCatch({ expr; NULL },
                                  error = conditionMessage)), what)
 
 VARS <- c("PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME", "DOMINO_STARTING_USERNAME",
-          "OBJECT_PREFIX", "QS_ALLOW_NO_PREFIX")
+          "OBJECT_PREFIX", "QS_ALLOW_NO_PREFIX", "INPUT_COHORT_TABLE",
+          "LOT_POPULATION", "LOT_COHORT", "BROAD_PREFIX")
 clear <- function() for (v in VARS) Sys.unsetenv(v)
 
 cat("\n-- sourcing it is enough to break it, so source it --\n")
@@ -61,7 +62,14 @@ clear()
 
 cat("\n-- and then it resolves a real prefixed name --\n")
 Sys.setenv(DOMINO_USER_NAME = "usr00000", OBJECT_PREFIX = "ndmm_")
-runs(qs_setup(ROOT), "a named schema and prefix set the config up")
+# Several questions read the cohort for observation windows and index dates.
+# Blank resolves to a name that is only the schema, and those sections would
+# warn and run unbounded rather than stopping.
+stops(qs_setup(ROOT), "a blank INPUT_COHORT_TABLE is refused")
+Sys.setenv(INPUT_COHORT_TABLE = "sch.NDMM_COHORT")
+stops(qs_setup(ROOT), "...and a qualified one, since the schema comes from settings")
+Sys.setenv(INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT")
+runs(qs_setup(ROOT), "a named schema, prefix and cohort table set the config up")
 cfg <- qs_setup(ROOT)
 ok(identical(cfg$object_prefix, "ndmm_") && identical(cfg$work_schema, "usr00000"),
    "...with both pinned where the modules read them")
@@ -74,7 +82,8 @@ ok(grepl("ndmm_LOT_LONG$", qs_tbl("LOT_LONG")),
 ok(!grepl("ndmm_", wrk("LOT_LONG")),
    "...which wrk() does not do, which is why the scripts stopped using it")
 clear()
-Sys.setenv(DOMINO_USER_NAME = "usr00000", QS_ALLOW_NO_PREFIX = "TRUE")
+Sys.setenv(DOMINO_USER_NAME = "usr00000", QS_ALLOW_NO_PREFIX = "TRUE",
+           INPUT_COHORT_TABLE = "NDMM_COHORT")
 runs(qs_setup(ROOT), "a run that truly had no prefix can say so, explicitly")
 
 cat("\n-- no script asks for a table the unprefixed way --\n")
@@ -126,14 +135,28 @@ ok(!length(dbl),
    if (length(dbl)) paste0("prefixes the cohort table twice: ",
                            paste(basename(dbl), collapse = ", "))
    else "the cohort table goes through wrk(), not qs_tbl()")
-ok(file.exists(file.path(ROOT, "steroid_codes.csv")),
-   "the steroid code list the timing questions need is here")
+# NOT here. It is a governed production file, so a copy beside this script
+# would be a second version of it, drifting from the one the study uses.
+ok(!file.exists(file.path(ROOT, "steroid_codes.csv")),
+   "no local copy of the steroid code list to drift from production")
+vq <- readLines(file.path(ROOT, "validation_qs.R"), warn = FALSE)
+ok(any(grepl("file.path(cfg$codelist_dir, \"steroid_codes.csv\")", vq, fixed = TRUE)),
+   "...it is read from the production code-list directory")
+vh <- readLines(file.path(ROOT, "validation_helpers.R"), warn = FALSE)
+ok(any(grepl("md5sum(ster_csv)", vh, fixed = TRUE)),
+   "...and its md5 is recorded, so a number can be traced to a version")
+# CODELIST_FILES drives record_codelist_hashes(), which stops the LOT build
+# when a listed file has no hash - and the LOT build never loads steroids.
+cl <- readLines(file.path(dirname(ROOT), "lot", "R", "codelists_lot.R"), warn = FALSE)
+ok(!any(grepl("steroid_codes.csv", cl, fixed = TRUE)),
+   "...without being added to the LOT build's own code-list contract")
 
 cat("\n-- the questions run over the study population --\n")
 # LOT_LONG is the run before a truncating criterion removed anyone, so a
 # denominator taken from it counts patients the study excluded. LOT_LONG_FINAL
 # is what ships, and it is the default.
-clear(); Sys.setenv(DOMINO_USER_NAME = "usr00000", OBJECT_PREFIX = "ndmm_")
+clear(); Sys.setenv(DOMINO_USER_NAME = "usr00000", OBJECT_PREFIX = "ndmm_",
+           INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT")
 invisible(qs_setup(ROOT))
 ok(grepl("ndmm_LOT_LONG_FINAL$", qs_population()$table),
    "the default population is LOT_LONG_FINAL, not the pre-criteria table")
@@ -175,6 +198,13 @@ ok(!any(grepl("SECONDARY MALIGNANT NEOPLASM OF BONE", poma, fixed = TRUE)),
 # Loading the CSV would mean re-deriving the rule, which is what drifted.
 ok(!any(grepl("load_codelist_csv", poma, fixed = TRUE)),
    "and it does not rebuild the list from the CSV")
+# Q3's association is a BROAD-cohort question. One prefix is one cohort, and
+# this cohort already excluded patients with a qualifying other cancer - so
+# answering it from this run would be near-zero by construction.
+ok(any(grepl("BROAD_PREFIX", poma, fixed = TRUE)),
+   "Q3's broad-cohort association names the broad run explicitly")
+ok(any(grepl("Q3 association: skipped", poma, fixed = TRUE)),
+   "...and says it is skipped rather than answering from the study population")
 clear()
 
 cat("\n", strrep("-", 52), "\n", sep = "")

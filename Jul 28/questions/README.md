@@ -16,8 +16,15 @@ Every answer here was produced on the NDMM cohort.
 
 ```
 DATABRICKS_PWD=... DOMINO_USER_NAME=usr00000 OBJECT_PREFIX=ndmm_ \
+  INPUT_COHORT_TABLE=ndmm_NDMM_COHORT \
   Rscript questions/lot1_studyteam_qs.R
 ```
+
+`INPUT_COHORT_TABLE` is the **whole** physical name, prefix included — that is
+how LOT takes it, since the cohort is named by whoever built it. Several
+questions read it for observation windows, index dates and the raw-claim
+bounds, so it is required rather than defaulted; blank used to resolve to a
+name that was only the schema, and those sections warned and ran unbounded.
 
 `OBJECT_PREFIX` is **required** and names the run being asked about. Blank would
 ask for unprefixed tables — usually nothing, but if an older unprefixed table is
@@ -78,6 +85,29 @@ than being quietly reinterpreted.
 Pre-criteria is worth asking for when the question is what a criterion cost. It
 is not a cohort, and a denominator taken from it counts patients the study
 removed.
+
+## Q3's broad-cohort question needs a broad-cohort run
+
+`poma_studyteam_qs.R` Q3 has two halves. The NDMM audit runs on this cohort and
+must come back zero. The **association** — whether POMA use tracks with another
+cancer — is a broad-population question, and one prefix is one cohort: this
+cohort has already excluded patients with a qualifying other cancer, so
+answering it from this run would be near-zero by construction and mean nothing.
+
+Set `BROAD_PREFIX` to the prefix of a LOT run over the broad cohort. Without it
+that half is skipped and says so; the audit still runs.
+
+## The steroid code list comes from production
+
+`steroid_codes.csv` is read from `CODELIST_DIR`, the same directory the LOT
+build reads its four from, and its md5 goes into the note beside every steroid
+answer — the file is production and can be re-issued, so a count quoted from it
+means little without the version that produced it.
+
+It is deliberately **not** added to `CODELIST_FILES`. That list drives
+`record_codelist_hashes()`, which stops the LOT build when a listed file has no
+hash, and the LOT build never loads steroids — naming it there would break a
+build that has nothing to do with this question.
 
 ## Bone metastasis
 

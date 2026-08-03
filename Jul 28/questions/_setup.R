@@ -9,6 +9,8 @@
 # setting silently falls back to its hardcoded default and these scripts
 # describe a run configured differently from the one they are reading. The
 # build loads them in this order for the same reason.
+`%||%` <- function(a, b) if (is.null(a)) b else a
+
 qs_setup <- function(script_dir) {
   lot_root <- normalizePath(file.path(script_dir, "..", "lot"), mustWork = TRUE)
   lot_r    <- file.path(lot_root, "R")
@@ -47,6 +49,24 @@ qs_setup <- function(script_dir) {
     stop("OBJECT_PREFIX '", pfx, "' should be a name ending in '_', e.g. ndmm_.",
          call. = FALSE)
   cfg$object_prefix <- pfx
+
+  # Several questions read the cohort table for observation windows, index
+  # dates and the raw-claim bounds. config_lot.R defaults it to "", which
+  # resolves to a name that is only the schema - so those sections would warn
+  # and carry on with unbounded examples rather than stopping. Required here.
+  #
+  # The WHOLE physical name, prefix included, because that is how LOT takes it:
+  # the cohort is named by whoever built it, so wrk() adds nothing.
+  ct <- trimws(cfg$input_cohort_table %||% "")
+  if (!nzchar(ct))
+    stop("No INPUT_COHORT_TABLE. Several questions read the cohort for its ",
+         "observation windows and index dates, and without it they would skip ",
+         "or run unbounded. Give the whole table name including the prefix, ",
+         "e.g. ", pfx, "NDMM_COHORT.", call. = FALSE)
+  if (!grepl("^[A-Za-z_][A-Za-z0-9_]*$", ct))
+    stop("INPUT_COHORT_TABLE '", ct, "' is not a table name. Give the table ",
+         "only - the catalog and schema come from the settings.", call. = FALSE)
+  cfg$input_cohort_table <- ct
 
   set_lot_config(cfg)
   invisible(cfg)

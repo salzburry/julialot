@@ -475,7 +475,14 @@ main <- function() {
   # leukemia / MGUS / secondary bone - MM-spectrum, not a distinct second cancer).
   # Claim-presence basis - looser than the pipeline's confirmed >=1-IP-or->=2-OP
   # flag, so use it for the POMA-vs-other comparison and the MM-adjacent share.
-  overall_lot <- .pop$table
+  # Q3's association asks whether POMA use tracks with another cancer in the
+  # BROAD population. That cannot come from this run: one prefix is one cohort,
+  # and this cohort has already excluded patients with a qualifying other
+  # cancer - the answer would be near-zero by construction. It needs the broad
+  # cohort's own LOT run, named explicitly.
+  broad_pfx <- trimws(Sys.getenv("BROAD_PREFIX", unset = ""))
+  overall_lot <- if (nzchar(broad_pfx))
+    full_name(cfg$work_schema, paste0(broad_pfx, "LOT_LONG_FINAL")) else NA_character_
   bdays <- 183L  # mirrors config_prompts.R baseline_days (183L); the pipeline does not
                  # read an env var for this, so keep these two in sync if it ever changes.
   # The code list as the cohort build resolved it, not as this script would
@@ -487,7 +494,12 @@ main <- function() {
   # Reading it means there is one derivation of that rule instead of two, so
   # the two cannot disagree. Loading the CSV here would mean re-deciding it.
   om_codes <- qs_tbl("NDMM_OTHER_MALIG_CODES")
-  q3_elig_df <- if (have_final && vqs_readable(con, overall_lot) &&
+  if (is.na(overall_lot))
+    log_msg("Q3 association: skipped. It is a BROAD-cohort question and this ",
+            "run is one cohort - set BROAD_PREFIX to the prefix of a LOT run ",
+            "over the broad cohort. The NDMM audit below still runs.")
+  q3_elig_df <- if (have_final && !is.na(overall_lot) &&
+                    vqs_readable(con, overall_lot) &&
                     vqs_readable(con, om_codes)) best_effort({
     db_q(con, glue("
       WITH poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {overall_lot}

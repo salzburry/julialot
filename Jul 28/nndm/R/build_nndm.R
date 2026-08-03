@@ -1063,7 +1063,6 @@ build_nndm <- function(here, prefix) {
   checkpoint(con, "NDMM_OTHER_MALIG_CODES")
   build_ndmm_mm_adjacent_groups(con, cfg)
   build_ndmm_mm_adjacent_codes(con, cfg)
-  build_ndmm_other_malig_codes_table(con, cfg)
   build_ndmm_other_malig_groups(con, cfg)
   build_ndmm_med_claim_header_and_confinement(con, cdm_src(cfg$tbl_medical),
                                               cdm_src(cfg$tbl_confinement))

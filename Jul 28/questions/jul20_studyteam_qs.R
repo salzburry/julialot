@@ -13,7 +13,7 @@
 #
 # Population: the study population by default (LOT_LONG_FINAL), which is the
 # cohort Julia's question 2 names, and the same default as the sibling
-# jul20_refresh_dashboard.R. Set LOT_POPULATION=FINAL (or OVERALL - synonyms) for
+# jul20_refresh_dashboard.R. Set LOT_POPULATION=PRECRITERIA for
 # the whole LOT cohort. Run the pair with the cohort stated explicitly:
 #   LOT_POPULATION=FINAL Rscript jul20_refresh_dashboard.R
 #   LOT_POPULATION=FINAL Rscript jul20_studyteam_qs.R
@@ -1146,7 +1146,7 @@ main <- function() {
   # ---- Cohort selection --------------------------------------------------
   # NDMM by default - the cohort the July-20 questions name. Both July-20
   # scripts share this default and accept the same values (FULL and OVERALL
-  # are synonyms for the whole LOT cohort), so running the pair without env
+  # the same population), so running the pair without env
   # overrides always uses the same population.
   .pop         <- qs_population()
   cohort_mode  <- .pop$mode
