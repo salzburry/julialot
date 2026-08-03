@@ -9,12 +9,11 @@ What the study team asked, and the scripts that answered it.
 | `asked/` | the questions as they were sent, and the specs and comments that came with them |
 | `*_qs.R` | the scripts that answered them, against a finished LOT run |
 | `_setup.R` | shared setup — points the scripts at the `lot` package's modules |
+| `broad_studyteam_qs.R` | the two questions NDMM cannot answer, over a broad cohort |
 
-These were asked of the NDMM cohort, and that is what each script runs over.
-Two answers need a second run named explicitly — POMA Q3's association needs
-a broad-cohort LOT run, and the clinical-trial and other-cancer flags come from
-the build that wrote them. Both are covered below, and both say so rather than
-answering from the wrong place.
+Every script here is **NDMM-only** and reads one run's own tables — except
+`broad_studyteam_qs.R`, which exists precisely because two of the asks cannot be
+answered on this cohort at all.
 
 ## Running one
 
@@ -92,52 +91,36 @@ Pre-criteria is worth asking for when the question is what a criterion cost. It
 is not a cohort, and a denominator taken from it counts patients the study
 removed.
 
-## Q3's broad-cohort question needs a broad-cohort run
+## What NDMM cannot answer, and where it went
 
-`poma_studyteam_qs.R` Q3 has two halves. The NDMM audit runs on this cohort and
-must come back zero. The **association** — whether POMA use tracks with another
-cancer — is a broad-population question, and one prefix is one cohort: this
-cohort has already excluded patients with a qualifying other cancer, so
-answering it from this run would be near-zero by construction and mean nothing.
+Two of the asks need a population this cohort does not have. They are in
+`broad_studyteam_qs.R`, not as sections that skip inside a workbook about a
+different cohort.
 
-Set `BROAD_PREFIX` to the prefix of a LOT run over the broad cohort. Without it
-that half is skipped and says so; the audit still runs.
+**The other-cancer association.** "Does POMA use track with another cancer" needs
+patients who *have* another cancer. NDMM excluded them by construction, so
+measured here it is zero against zero — a tautology, not a finding. `NDMM_FLAGS_ALL`
+does carry `NO_OTHER_CANCER_PRE_LOT1`, but it is an exclusion criterion and is 1
+for everybody inside the cohort, so it is no substitute. What stays in
+`poma_studyteam_qs.R` is the **audit**: that rate must be 0, and a non-zero value
+is a build bug.
 
-Readable is not ownership there either. That run replaces `LOT_LONG_FINAL`
-before it validates it, so a rerun that replaced it and then failed leaves
-lines that read perfectly well and were never checked.
-`qs_broad_run_state()` reads its status the same way this run's is read — the
-latest row, whatever state — and an unfinished one skips the association rather
-than stopping the workbook, since the audit and every other tab are over this
-run's tables. `QS_IGNORE_BROAD_BUILD_STATE=TRUE` overrides.
+**The diagnosis-anchored trial flags**, and `OTHER_MALIGN_FLAG` with them. Those
+belong to the broad build's cohort and its own index. The prior-therapy question
+is answered on this cohort by `NDMM_CLINTRIAL_FLAGS` (below); the broad pair
+cannot answer it, and is kept only for `OTHER_MALIGN_FLAG`, which has no
+1L-anchored equivalent.
 
-The same row names the cohort that run was built from, and the Q3 tab prints
-it, so "the broad cohort" means a population rather than whatever happens to
-sit under the prefix.
+The split is what removes the cross-cohort overlap machinery. Each script now
+denominates on the population it is about, so there is no match rate to police
+inside either one.
 
-### And the vintage it read
+```
+BROAD_PREFIX=overall_ TRIAL_PREFIX=overall_ Rscript questions/broad_studyteam_qs.R
+```
 
-Q3 takes lines and index dates from the broad run, then scans the raw CDM
-**itself** for baseline diagnoses — and `cdm_src()` resolves the quarterly
-suffix from `cfg$study_end`, this run's setting, not that run's. The
-quarterlies are cumulative, so a later vintage carries corrections and
-late-arriving claims the broad run never saw.
-
-`LOT_BUILD_STATUS` now records `STUDY_END`, which is what makes that
-detectable rather than merely declarable. `qs_vintage_note()` compares it with
-the value these questions are configured for and, when they differ, says so —
-in the log for this run's own binding, and on the Q3 tab, where the mixed
-vintages actually meet.
-
-A sentence, not a refusal: the newer vintage is usually the better data. But a
-number that is not what that run would have produced should say so rather than
-be quoted as though it were.
-
-Its index dates come from that run's own `LOT_PATIENT_INPUT`, not from this
-cohort. Taking them from here would drop every broad patient the NDMM
-exclusions removed out of the index join — they would stay in the denominator
-and never match a diagnosis, reading as having no other cancer, which is the
-opposite of the population the question recovers.
+Without `BROAD_PREFIX` the association says so and skips; the rest of that script
+still runs. `tests/test_setup.R` fails if any other script reads the broad flags.
 
 ## The trial flags are not the cohort build's flags
 

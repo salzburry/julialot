@@ -5,9 +5,10 @@
 #
 # Answers, against the LOT1 (first-line MM) cohort:
 #   Q1  Patients whose 1L regimen contains POMA (pomalidomide):
-#       (a) how many have another cancer (+ best-effort type / Kaposi)
+#       (a) best-effort other-cancer type from a raw ICD scan (the flag
+#           itself needs a broad cohort - see broad_studyteam_qs.R)
 #       (b) payer source / Medicare Advantage (best-effort introspection)
-#       (c) clinical-trial participation (the study team's "IE criteria 10")
+#       (c) trial evidence around the 1L start, from NDMM_CLINTRIAL_FLAGS
 #   Q2  Top 25 1L regimens by calendar year.
 #   Q3  Whether the dashboard's auto patient-journey examples are the
 #       6-9-meds-at-1L-induction patients from the Sankey (LOT1 Fig 9).
@@ -16,17 +17,18 @@
 #       Counted before the line criteria, since one of them removes the
 #       patients being counted.
 #
-# Reads only persisted work-schema tables (LOT_LONG, LOT_LONG_ALLFLAGS,
-# ELIG_COH_ALLFLAGS, ELIG_COH_FINAL, MAP_STACKED) and the raw CDM; it builds
-# nothing and is safe to run any time.
+# NDMM only. Reads this run's own tables (LOT_LONG, LOT_LONG_ALLFLAGS,
+# MAP_STACKED, NDMM_CLINTRIAL_FLAGS) and the raw CDM; it builds nothing and is
+# safe to run any time. Anything needing a second cohort is in
+# broad_studyteam_qs.R.
 #
 # Three honest limits, surfaced in the output rather than hidden:
 #  - "Another cancer" (#8) and "clinical trial" (#10) are *exclusion*
 #    criteria, so the 1L regimen (LOT_LONG) only exists for patients who
 #    survived them. POMA-at-1L is therefore identifiable for delivered
 #    patients; for patients excluded on those criteria the 1L regimen
-#    cannot be reconstructed here (needs a pipeline re-run + codelists).
-#    That blind spot is quantified, not papered over.
+#    cannot be reconstructed from this cohort at all - that is what the
+#    broad script is for.
 #  - Payer/plan is never projected by the pipeline; member_enrollment is
 #    introspected at runtime and candidate plan columns are dumped for an
 #    analyst to map Medicare Advantage (no guessed column names).
@@ -99,25 +101,14 @@ main <- function() {
          ". Build the LOT1 stage (02_lot1.R) first.")
   }
   qs_check_run_binding(con)
-  # Checked for its COLUMNS, not just for being readable. The cohort build's
-  # NDMM_FLAGS_ALL is readable and carries none of OTHER_MALIGN_FLAG,
-  # CLINTRIAL_* or INDEX_DATE, so a readable() guard passes and the query below
-  # stops on an unresolved column instead of skipping.
-  trial      <- qs_trial_flags_ready(con)
-  allflags   <- trial$src$flags
-  trial_idx  <- trial$src$index
-  have_flags <- isTRUE(trial$ok)
-  if (!have_flags) log_msg("WARNING: ", trial$why)
-  # Q1c's trial answer comes from the cohort build's own 1L-anchored flag when
-  # it is there. Two scripts in one folder giving two different trial numbers
-  # for the same POMA-1L patients is the drift this package keeps guarding
-  # against - and the diagnosis-anchored pair cannot answer what Q1c is asked,
-  # since its baseline stops before that index and its follow-up runs past 1L.
+  # Q1c's trial answer comes from the cohort build's own 1L-anchored flag. The
+  # diagnosis-anchored pair cannot answer what Q1c is asked - its baseline stops
+  # before that index and its follow-up runs past 1L - and it belongs to a
+  # different cohort, which this script no longer reads. broad_studyteam_qs.R
+  # has it.
   ndmm_trial <- qs_ndmm_trial_flags(con)
   if (!isTRUE(ndmm_trial$ok))
-    log_msg("  Q1c: ", ndmm_trial$why,
-            " Falling back to the diagnosis-anchored flags, which cannot say ",
-            "whether the evidence preceded LOT1.")
+    log_msg("  Q1c: ", ndmm_trial$why, " The trial breakdown is skipped.")
 
   # ---- POMA-at-1L base set (delivered cohort) -------------------------
   poma <- db_q(con, glue("
@@ -147,20 +138,11 @@ main <- function() {
   poma_ids <- if (have_poma)
     paste(sprintf("'%s'", unique(poma$PATID)), collapse = ",") else "''"
 
-  # ---- Q1a / Q1c : pre-exclusion flags for the POMA-at-1L patients ----
-  # ELIG_COH_ALLFLAGS has one row per *candidate* index_date per patient;
-  # joining by PATID alone can read flags from a candidate that did NOT
-  # produce the LOT1 record. That build's own final cohort table - one row per
-  # patient with the index it selected - aligns the join.
-  #
-  # It has to be that build's final table. The NDMM cohort's INDEX_DATE is the
-  # LOT1 start, a different definition, so joining on it would match almost
-  # nothing and report the flags as absent.
-  #
-  # n_poma_in_allflags is the OVERLAP, not the denominator: the flag build is a
-  # different cohort with a different index, study end and criteria, so some
-  # POMA-1L patients are simply not in it. Reported against n_poma below so a
-  # small count reads as a small overlap rather than as a low flag rate.
+  # ---- Q1c : trial evidence for the POMA-at-1L patients ---------------
+  # One cohort, one prefix: these patients ARE this run's patients, so there is
+  # no overlap to report and no second index to align. n_poma_with_flag_row
+  # should equal n_poma, and a shortfall is a broken join rather than a
+  # population difference.
   if (have_poma && isTRUE(ndmm_trial$ok)) {
     tr <- db_q(con, glue("
       SELECT count(*)                                    AS n_poma_with_flag_row,
@@ -181,69 +163,16 @@ main <- function() {
       tr$n_trial_12mo_pre_lot1[1], tr$n_trial_pre_dx[1], tr$n_trial_post_lot1[1]))
   }
 
-  # The diagnosis-anchored view. Kept for OTHER_MALIGN_FLAG, which has no
-  # 1L-anchored equivalent, and as context for a cohort built before the flag
-  # existed - never as the trial answer when the 1L-anchored one is there.
-  if (have_poma && have_flags) {
-    flg <- db_q(con, glue("
-      WITH f AS (
-        SELECT cast(PATID as string) AS PATID, INDEX_DATE
-        FROM {trial_idx}
-        WHERE cast(PATID as string) IN ({poma_ids})
-      )
-      SELECT
-        count(DISTINCT a.PATID)                                            AS n_poma_in_allflags,
-        count(DISTINCT CASE WHEN a.OTHER_MALIGN_FLAG = 1 THEN a.PATID END)   AS n_other_malig,
-        count(DISTINCT CASE WHEN a.CLINTRIAL_BASELINE = 1 THEN a.PATID END)  AS n_clintrial_baseline,
-        count(DISTINCT CASE WHEN a.CLINTRIAL_FOLLOWUP = 1 THEN a.PATID END)  AS n_clintrial_followup,
-        count(DISTINCT CASE WHEN a.CLINTRIAL_BASELINE = 1
-                              OR a.CLINTRIAL_FOLLOWUP  = 1 THEN a.PATID END) AS n_clintrial_any
-      FROM {allflags} a
-      JOIN f ON cast(a.PATID as string) = f.PATID
-            AND a.INDEX_DATE             = f.INDEX_DATE
-    "))
-    write_out(flg, "q1ac_poma_flags")
-    log_msg(sprintf(
-      paste0("  Q1a (+ diagnosis-anchored trial, context): %s of %s POMA-1L patients are in %s. Of those - other-cancer %s, ",
-             "clinical-trial %s (BL %s / FU %s). Rates are over the %s matched, on that build's diagnosis-based index, NOT the ",
-             "LOT1 start: baseline stops before that index and follow-up runs past LOT1, so neither says whether evidence ",
-             "preceded LOT1. Read the 1L-anchored Q1c line above for that; other-cancer has no 1L-anchored equivalent."),
-      flg$n_poma_in_allflags[1], n_poma, allflags,
-      flg$n_other_malig[1], flg$n_clintrial_any[1],
-      flg$n_clintrial_baseline[1], flg$n_clintrial_followup[1],
-      flg$n_poma_in_allflags[1]))
-  }
-
-  # Blind-spot quantification: how many ALLFLAGS patients carry each
-  # exclusion flag at ANY candidate index date, and how many of those
-  # ever reach LOT_LONG (excluded patients have no 1L regimen -> not
-  # POMA-classifiable here). Patient-level distinct counts so the
-  # multi-candidate ALLFLAGS structure is collapsed correctly.
-  if (have_flags) {
-    blind <- db_q(con, glue("
-      WITH lot1 AS (SELECT DISTINCT cast(PATID as string) PATID
-                    FROM {lot_long} WHERE LOT_NUM = 1)
-      SELECT
-        count(DISTINCT a.PATID) AS allflags_total,
-        count(DISTINCT CASE WHEN a.OTHER_MALIGN_FLAG = 1 THEN a.PATID END)  AS allflags_other_malig,
-        count(DISTINCT CASE WHEN a.OTHER_MALIGN_FLAG = 1 AND l.PATID IS NOT NULL
-                            THEN a.PATID END)                               AS other_malig_with_lot1,
-        count(DISTINCT CASE WHEN (a.CLINTRIAL_BASELINE = 1
-                               OR a.CLINTRIAL_FOLLOWUP = 1) THEN a.PATID END) AS allflags_clintrial,
-        count(DISTINCT CASE WHEN (a.CLINTRIAL_BASELINE = 1
-                               OR a.CLINTRIAL_FOLLOWUP = 1) AND l.PATID IS NOT NULL
-                            THEN a.PATID END)                               AS clintrial_with_lot1
-      FROM {allflags} a
-      LEFT JOIN lot1 l ON l.PATID = cast(a.PATID as string)
-    "))
-    write_out(blind, "q1ac_exclusion_blindspot")
-    log_msg("  Blind spot - of patients ever flagged at any candidate index ",
-            "date, how many have a 1L regimen (POMA-classifiable): other-cancer ",
-            blind$other_malig_with_lot1[1], "/", blind$allflags_other_malig[1],
-            ", clinical-trial ", blind$clintrial_with_lot1[1], "/",
-            blind$allflags_clintrial[1],
-            " - the remainder were excluded and cannot be POMA-classified here.")
-  }
+  # Q1a's other-cancer flag and the exclusion blind-spot both came from the
+  # broad build's flag table. That is a different cohort with a different
+  # index, and this script is NDMM-only now, so both moved to
+  # broad_studyteam_qs.R rather than being answered from a population this
+  # workbook is not about.
+  #
+  # There is no NDMM-side substitute for them. NDMM_FLAGS_ALL carries
+  # NO_OTHER_CANCER_PRE_LOT1, but it is an exclusion criterion: inside this
+  # cohort it is 1 for everybody, so a POMA-vs-other comparison on it is zero
+  # against zero. The raw scan below is what remains, and it says what it is.
 
   # ---- Q1a detail : best-effort RAW cancer-code scan ------------------
   # NOT equivalent to the cohort's other_malig criterion, which uses the

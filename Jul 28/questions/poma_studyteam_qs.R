@@ -18,41 +18,40 @@
 #       allogeneic transplant or CAR-T that CLOSES the first line is the
 #       "not treatment-naive" signal; the same therapy on a later line is
 #       expected progression (context only).
-#   Q3  First an NDMM AUDIT: other-cancer rate MUST be 0 (NDMM excludes those
+#   Q3  An NDMM AUDIT: other-cancer rate MUST be 0 (NDMM excludes those
 #       patients by construction), so a non-zero value is an NDMM-build bug.
-#       Then the POMA-1L vs other-1L other-cancer association on the BROAD
-#       cohort, de-confounded IN THE WORKBOOK (MM-adjacent codes dropped;
-#       pipeline untouched) - the association question NDMM can't answer.
+#       The POMA-vs-other ASSOCIATION is not here - it needs a population that
+#       still contains those patients. See broad_studyteam_qs.R.
 #   Q4  Was there claims-based trial evidence before the POMA recorded at 1L?
 #       From this cohort's own NDMM_CLINTRIAL_FLAGS, whose windows are cut at
 #       the 1L start - the diagnosis-to-1L stretch is its own column. Evidence,
 #       not proof of therapy: a code identifies neither the study drug nor the
-#       condition treated. The broad build's diagnosis-anchored pair is kept
-#       beside it as context.
+#       condition treated.
 #   Q5  Do POMA-1L patients have continuous pharmacy benefit? Shows the NDMM
 #       LOT1-anchored 12-mo pre-LOT1 check (the study proof) plus a longer
 #       look-back on the cohort's own INDEX_DATE - the same anchor, not an
 #       earlier one, since INDEX_DATE is the 1L start.
 #
-# Runs on the NDMM newly-diagnosed 1L STUDY cohort. The POMA-in-1L questions are
-# most meaningful here: the other-cancer and prior-therapy confounders are already
-# EXCLUDED, so an anomaly that survives is a real one. Q3 (other cancer) first AUDITS
-# that exclusion (NDMM rate must be 0) and then reports the broad-cohort de-confounded
-# association as the question NDMM can't answer; Q4 (clinical trial) stays a LIVE
-# comparison because clinical-trial is not one of the NDMM post-filters.
+# Runs on the NDMM newly-diagnosed 1L STUDY cohort, and ONLY on it - every table
+# here comes from this run's own tables. The POMA-in-1L questions are most
+# meaningful here: the other-cancer and prior-therapy confounders are already
+# EXCLUDED, so an anomaly that survives is a real one. Q3 audits that exclusion
+# (NDMM rate must be 0); Q4 stays a live comparison because clinical trial is
+# not one of the NDMM post-filters.
+#
+# Anything needing a second cohort is in broad_studyteam_qs.R, so this script
+# has no second prefix to resolve and nothing to skip.
 #
 # Builds nothing persistent (only session TEMP views); safe to run any time. Reads
 # LOT_LONG_FINAL, the study population produced by the LOT run over the cohort,
-# plus MAP_STACKED, LOT1_SCT, the flag build's ELIG_COH_ALLFLAGS and its final
-# cohort table, and the raw CDM.
+# plus MAP_STACKED, LOT1_SCT, NDMM_CLINTRIAL_FLAGS, NDMM_FLAGS_ALL and the raw
+# CDM. All under this run's prefix.
 #
 # Honest limits, surfaced in the workbook rather than hidden:
-#  - Q4 reads CLINTRIAL_* from the flag build's ELIG_COH_ALLFLAGS, aligned to
-#    that build's own final cohort. That is a different cohort with a different
-#    index, so Q4 reports the overlap and its size, and says neither flag
-#    isolates the pre-LOT1 window. Q3 does NOT use OTHER_MALIGN_FLAG - it
-#    re-derives a de-confounded other-cancer rate from raw med_diagnosis + the
-#    other_malig codelist inside this script (pipeline untouched).
+#  - Q4 reads CLINTRIAL_* from this cohort's own NDMM_CLINTRIAL_FLAGS, whose
+#    windows are cut at the 1L start. Q3 is the audit only; the association and
+#    the broad build's OTHER_MALIGN_FLAG are in broad_studyteam_qs.R, because
+#    both need a population this cohort excluded.
 #  - Q2's LOT_LONG summary uses LOT1's END REASON (authoritative for "allo/CAR-T
 #    closed LOT1"); the full CAR-T-relative-to-LOT1 breakdown (incl. CAR-T
 #    BEFORE LOT1) reuses vqs_q6_cart on a POMA-filtered view.
@@ -235,14 +234,6 @@ main <- function() {
   have_map   <- vqs_readable(con, map_tbl)
   have_sct   <- vqs_readable(con, sct_tbl)
   have_final <- vqs_readable(con, final_tbl)
-  # The trial flags are checked for their COLUMNS, not just for being readable.
-  # NDMM_FLAGS_ALL is readable and carries none of them, so a readable() guard
-  # would pass and Q4 would stop Spark half way through the workbook.
-  trial      <- qs_trial_flags_ready(con)
-  allflags   <- trial$src$flags
-  trial_idx  <- trial$src$index
-  have_flags <- isTRUE(trial$ok)
-  if (!have_flags) log_msg("WARNING: ", trial$why)
   for (chk in list(c(have_map, map_tbl), c(have_sct, sct_tbl),
                    c(have_final, final_tbl)))
     if (!isTRUE(as.logical(chk[1])))
@@ -276,12 +267,12 @@ main <- function() {
   add_sheet(name = "Read Me", title = paste0("POMA-in-1L study-team questions - ", cohort_label),
     subtitle = paste0("Generated ", stamp, " by poma_studyteam_qs.R against ", cfg$work_schema),
     narrative = c(
-      "Q1/Q2/Q4/Q5 are computed on the NDMM newly-diagnosed 1L STUDY cohort (LOT_LONG_FINAL). Q3 first shows an NDMM audit (must be 0), then uses the BROAD cohort for the association (see the Q3 tab).",
+      "Every table here is computed on the NDMM newly-diagnosed 1L STUDY cohort (LOT_LONG_FINAL). Nothing reads a second cohort - see broad_studyteam_qs.R for the questions that need one.",
       sprintf("POMA-at-1L denominator: %d of %d LOT1 patients.", n_poma, n_lot1),
       "Q1 = real patient journeys (raw claims -> MAP -> assigned LOT, with dates).",
       "Q2 = POMA-1L split by transplant type and TIMING (autologous-at-1L vs allo/CAR-T that closed 1L vs later-line context).",
-      "Q3 = an NDMM audit (other-cancer rate must be 0, since NDMM excludes those patients by construction) PLUS a POMA-1L vs other-1L other-cancer association on the BROAD cohort, de-confounded in the workbook (MM-adjacent codes dropped; pipeline untouched).",
-      "Q4 = did trial therapy precede the 1L POMA? Read the FIRST table: windows cut at this cohort's own 1L start, with diagnosis-to-1L as its own column. The diagnosis-anchored table beside it is context and cannot answer that.",
+      "Q3 = an NDMM audit: other-cancer rate must be 0, since NDMM excludes those patients by construction. The POMA-vs-other association needs a broad cohort and is in broad_studyteam_qs.R.",
+      "Q4 = was there trial evidence before the 1L POMA? Windows cut at this cohort's own 1L start, with diagnosis-to-1L as its own column. Claims-based evidence, not proof of therapy.",
       "Q5 = LOT1-anchored NDMM proof (ce_ge_12mo_pre_lot1 / len_thal_in_12mo_pre_lot1, the 12-mo pre-LOT1 check) PLUS a longer LEN/THAL look-back on the cohort's INDEX_DATE, which is the same date (the cohort sets INDEX_DATE = LOT1_START_DT).",
       "Operational definitions are shared with R/validation_qs.R (single source of truth)."),
     tables = list())
@@ -385,8 +376,8 @@ main <- function() {
       q1_notes <- c(q1_notes,
                     sprintf("Example patients (%d): %s.", length(ids), paste(ids, collapse = ", ")),
                     "Chain: raw claims (routes above) -> MAP segments -> assigned LOT, all with dates.",
-                    if (!bounds$available) "Raw claims are NOT observation-window bounded (ELIG_COH_FINAL unavailable)." else
-                      "Raw claims scoped to [INDEX_DATE, OBS_END_DT] from ELIG_COH_FINAL.")
+                    if (!bounds$available) "Raw claims are NOT observation-window bounded (the cohort table is unavailable)." else
+                      "Raw claims scoped to [INDEX_DATE, OBS_END_DT] from the cohort table.")
     } else q1_notes <- c(q1_notes, "No example patients could be selected from LOT_LONG.")
   } else q1_notes <- paste0(map_tbl, " not readable - journeys skipped. Build MAP_STACKED (02_lot1.R).")
   add_sheet(name = "Q1 journeys", title = "Q1 - Patient journeys: raw claims -> assigned LOT",
@@ -449,146 +440,14 @@ main <- function() {
                       cohort_label, "."),
     narrative = q2_notes, tables = q2_tables)
 
-  # ---- Q3 + Q4: POMA-1L vs other-1L flag rates --------------------------
-  # Both sides of this join come from the trial build: ELIG_COH_ALLFLAGS has a
-  # row per candidate index date, ELIG_COH_FINAL says which one it selected.
-  # Joining the flags to the NDMM cohort instead would put that build's
-  # diagnosis-based candidate against NDMM_COHORT.INDEX_DATE, the LOT1 start -
-  # two different definitions of index, matching almost nothing, and reading as
-  # nobody being flagged. The LOT population still restricts it, by PATID.
-  assoc <- NULL
-  if (have_flags) {
-    assoc <- db_q(con, glue("
-      WITH poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
-                      WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{poma}')),
-      lot1 AS (SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long} WHERE LOT_NUM=1),
-      f AS (SELECT cast(a.PATID as string) PATID,
-                   coalesce(a.OTHER_MALIGN_FLAG,0)  AS OTHER_MALIGN_FLAG,
-                   coalesce(a.CLINTRIAL_BASELINE,0) AS CLINTRIAL_BASELINE,
-                   coalesce(a.CLINTRIAL_FOLLOWUP,0) AS CLINTRIAL_FOLLOWUP
-            FROM {allflags} a
-            JOIN {trial_idx} e ON cast(a.PATID as string)=cast(e.PATID as string)
-                              AND a.INDEX_DATE = e.INDEX_DATE)
-      -- LEFT JOIN to f, not INNER. The flag build is a different cohort with a
-      -- different index, study end and criteria, so some LOT1 patients have no
-      -- row in it. An inner join dropped them from the denominator silently,
-      -- and if that loss falls differently on POMA and other-1L the rates
-      -- compare selection into the second cohort rather than the two groups.
-      -- n_pts stays the full group; n_matched / pct_matched show the overlap,
-      -- and every rate is over n_matched so the denominator is the one that
-      -- could have carried a flag.
-      SELECT CASE WHEN p.PATID IS NOT NULL THEN 'POMA-1L' ELSE 'other-1L' END AS grp,
-             count(*)                                                          AS n_pts,
-             count(f.PATID)                                                    AS n_matched,
-             round(100.0*count(f.PATID)/nullif(count(*),0),1)                  AS pct_matched,
-             sum(coalesce(f.OTHER_MALIGN_FLAG,0))                              AS n_other_cancer,
-             round(100.0*sum(coalesce(f.OTHER_MALIGN_FLAG,0))/nullif(count(f.PATID),0),1)  AS pct_other_cancer,
-             sum(coalesce(f.CLINTRIAL_BASELINE,0))                             AS n_trial_baseline,
-             round(100.0*sum(coalesce(f.CLINTRIAL_BASELINE,0))/nullif(count(f.PATID),0),1) AS pct_trial_baseline,
-             sum(coalesce(f.CLINTRIAL_FOLLOWUP,0))                             AS n_trial_followup,
-             sum(CASE WHEN f.CLINTRIAL_BASELINE=1 OR f.CLINTRIAL_FOLLOWUP=1 THEN 1 ELSE 0 END) AS n_trial_any,
-             round(100.0*sum(CASE WHEN f.CLINTRIAL_BASELINE=1 OR f.CLINTRIAL_FOLLOWUP=1 THEN 1 ELSE 0 END)/nullif(count(f.PATID),0),1) AS pct_trial_any
-      FROM lot1 l LEFT JOIN f USING (PATID) LEFT JOIN poma1l p USING (PATID)
-      GROUP BY 1 ORDER BY 1"))
-  }
-  # Baseline (pre-index) trial evidence is THE signal for the prior-therapy
-  # hypothesis; follow-up / trial_any happen after index and are post-index context.
-  # Order the columns so the baseline count + rate lead. (Q4 only - Q3 no longer
-  # uses ELIG_COH_ALLFLAGS; it re-derives its own flag from raw claims below.)
-  q4_df <- if (!is.null(assoc)) assoc[, c("grp","n_pts","n_matched","pct_matched","n_trial_baseline","pct_trial_baseline","n_trial_followup","n_trial_any","pct_trial_any")] else NULL
-  # Scoped to the table it is about. On the documented NDMM command the broad
-  # flags are usually absent while the 1L-anchored table is present, so a bare
-  # "Q4 skipped" would sit directly above the answer to Q4.
-  q4_gap <- if (!have_flags)
-    paste0("The diagnosis-anchored table below is absent. ", trial$why) else NULL
-  # Q3 (other cancer) is a BROAD-cohort question ("cancers we ALLOW in baseline").
-  # NDMM excludes those patients, so the association is measured on the full cohort.
-  # The de-confounded rate is computed HERE IN THE WORKBOOK (the parent pipeline is
-  # NOT touched): fraction of LOT1 patients with a baseline (6-mo pre-index) other-
-  # cancer diagnosis CLAIM, shown BOTH including the MM-adjacent tumor groups
-  # (confounded) and excluding them (de-confounded: drop plasmacytoma /
-  # plasma-cell leukemia / MGUS - MM-spectrum, not a distinct second cancer.
-  # Secondary neoplasm of bone is NOT dropped; the build treats it as
-  # metastatic cancer - see below).
-  # Claim-presence basis - looser than the pipeline's confirmed >=1-IP-or->=2-OP
-  # flag, so use it for the POMA-vs-other comparison and the MM-adjacent share.
-  # Q3's association asks whether POMA use tracks with another cancer in the
-  # BROAD population. That cannot come from this run: one prefix is one cohort,
-  # and this cohort has already excluded patients with a qualifying other
-  # cancer - the answer would be near-zero by construction. It needs the broad
-  # cohort's own LOT run, named explicitly.
-  broad_pfx <- trimws(Sys.getenv("BROAD_PREFIX", unset = ""))
-  overall_lot <- if (nzchar(broad_pfx))
-    full_name(cfg$work_schema, paste0(broad_pfx, "LOT_LONG_FINAL")) else NA_character_
-  # The index dates have to come from the SAME run as the lines. Taking them
-  # from the NDMM cohort would drop every broad patient the NDMM exclusions
-  # removed out of the idx join - they stay in the denominator through the left
-  # join and can never match a diagnosis, so they read as having no other
-  # cancer. That is the exact opposite of the population this recovers.
+  # ---- Q3: other cancer, on this cohort -----------------------------------
   #
-  # LOT_PATIENT_INPUT is the broad run's own snapshot: its INDEX_DATE and its
-  # observation window, as that run used them.
-  broad_idx <- if (nzchar(broad_pfx))
-    full_name(cfg$work_schema, paste0(broad_pfx, "LOT_PATIENT_INPUT")) else NA_character_
-  bdays <- 183L  # mirrors config_prompts.R baseline_days (183L); the pipeline does not
-                 # read an env var for this, so keep these two in sync if it ever changes.
-  # The code list as the cohort build resolved it, not as this script would
-  # re-derive it. is_mm_adjacent_override is the build's own answer to which
-  # tumour groups are the index disease rather than another cancer - including
-  # that secondary neoplasm of bone is NOT one, because C79.51, C79.52 and
-  # 198.5 are metastatic cancer and exclude (nndm/DECISIONS.md section 4).
+  # The ASSOCIATION half of Q3 is not here. Whether POMA use tracks with another
+  # cancer is a broad-population question: this cohort excluded those patients
+  # by construction, so measured here it is zero against zero. It lives in
+  # broad_studyteam_qs.R, which runs over a broad cohort and says so.
   #
-  # Reading it means there is one derivation of that rule instead of two, so
-  # the two cannot disagree. Loading the CSV here would mean re-deciding it.
-  om_codes <- qs_tbl("NDMM_OTHER_MALIG_CODES")
-  # Readable is not ownership. That run replaces LOT_LONG_FINAL before it
-  # validates it, so a rerun that replaced it and then failed leaves lines on
-  # disk that read perfectly well and were never checked. Its own status row
-  # says which, and it names the cohort it was built from - so "the broad
-  # cohort" on the tab is that population rather than whatever sits under the
-  # prefix. Skips this half only; the audit and every other tab are unaffected.
-  broad <- if (nzchar(broad_pfx)) qs_broad_run_state(con, broad_pfx) else
-    list(ok = TRUE, why = NULL, cohort = NA_character_, vintage = NULL)
-  if (is.na(overall_lot))
-    log_msg("Q3 association: skipped. It is a BROAD-cohort question and this ",
-            "run is one cohort - set BROAD_PREFIX to the prefix of a LOT run ",
-            "over the broad cohort. The NDMM audit below still runs.")
-  else if (!isTRUE(broad$ok))
-    log_msg("Q3 association: skipped - ", broad$why,
-            " The NDMM audit below still runs.")
-  q3_elig_df <- if (!is.na(overall_lot) && isTRUE(broad$ok) &&
-                    vqs_readable(con, overall_lot) &&
-                    !is.na(broad_idx) && vqs_readable(con, broad_idx) &&
-                    vqs_readable(con, om_codes)) best_effort({
-    db_q(con, glue("
-      WITH poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {overall_lot}
-                      WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{poma}')),
-      lot1 AS (SELECT DISTINCT cast(PATID as string) PATID FROM {overall_lot} WHERE LOT_NUM=1),
-      idx AS (SELECT cast(PATID as string) PATID, cast(INDEX_DATE as date) index_date FROM {broad_idx}),
-      codes AS (SELECT dx, icd_family,
-                       is_mm_adjacent_override AS is_mm_adj
-                FROM {om_codes}
-                WHERE dx IS NOT NULL),
-      hits AS (SELECT cast(d.PATID as string) PATID,
-                      max(1)                                            has_any,
-                      max(CASE WHEN c.is_mm_adj = 0 THEN 1 ELSE 0 END)  has_nonadj
-               FROM {cdm_src(cfg$tbl_med_diag)} d
-               JOIN idx i ON cast(d.PATID as string) = i.PATID
-               JOIN codes c
-                 ON upper(regexp_replace(d.DIAG,'[^A-Za-z0-9]','')) = c.dx
-                AND ({qs_icd_family_sql('d.ICD_FLAG')}) = c.icd_family
-               WHERE cast(d.FST_DT as date) BETWEEN date_sub(i.index_date,{bdays}) AND date_sub(i.index_date,1)
-               GROUP BY cast(d.PATID as string))
-      SELECT CASE WHEN p.PATID IS NOT NULL THEN 'POMA-1L' ELSE 'other-1L' END  grp,
-             count(*)                                              n_pts,
-             sum(coalesce(h.has_any,0))                            n_incl_mm_adjacent,
-             round(100.0*sum(coalesce(h.has_any,0))/count(*),1)    pct_incl_mm_adjacent,
-             sum(coalesce(h.has_nonadj,0))                         n_other_cancer_deconf,
-             round(100.0*sum(coalesce(h.has_nonadj,0))/count(*),1) pct_other_cancer_deconf
-      FROM lot1 l LEFT JOIN poma1l p USING (PATID) LEFT JOIN hits h ON h.PATID = l.PATID
-      GROUP BY 1 ORDER BY 1"))
-  }, "broad-cohort de-confounded other-cancer") else NULL
-
+  # What is left is the audit, which is a question about THIS cohort.
   # NDMM cohort AUDIT: other cancer MUST be 0 here - NDMM_PATIDS is filtered to
   # NO_OTHER_CANCER_PRE_LOT1 = 1, so any non-zero is a genuine bug in the NDMM
   # build, not a real signal. Reads NDMM's OWN flag (12-mo pre-LOT1, de-confounded)
@@ -622,34 +481,18 @@ main <- function() {
         ndmm_flags), stringsAsFactors = FALSE)
     }
 
-  add_sheet(name = "Q3 POMA & other cancers", title = "Q3 - POMA-1L vs other-1L: other-cancer association",
-    subtitle = "First table = NDMM audit (must be 0). Second = broad-cohort association (de-confounded vs confounded). Computed in the workbook - pipeline untouched.",
+  add_sheet(name = "Q3 POMA & other cancers", title = "Q3 - other cancer in the NDMM cohort (audit)",
+    subtitle = "Must be 0. The POMA-vs-other ASSOCIATION is a broad-cohort question and is in broad_studyteam_qs.R.",
     narrative = c(
-      "NDMM AUDIT (first table): the NDMM study cohort excludes genuine other cancers by construction, so its other-cancer rate",
-      "MUST be 0. A non-zero value there is a BUG in the NDMM build, not a real signal. It uses NDMM's own 12-mo pre-LOT1 flag.",
+      "The NDMM study cohort excludes genuine other cancers by construction, so its other-cancer rate MUST be 0.",
+      "A non-zero value is a BUG in the NDMM build, not a real signal. It uses NDMM's own 12-mo pre-LOT1 flag.",
       "missing_flag_rows must also be 0: it counts NDMM 1L patients with NO row in NDMM_FLAGS_ALL (a broken join), not coerced to clean.",
-      if (!is.na(overall_lot))
-        paste0("BROAD RUN: lines and index dates from prefix '", broad_pfx, "'",
-               if (!is.na(broad$cohort) && nzchar(trimws(broad$cohort)))
-                 paste0(", which that run recorded building from ", broad$cohort, ".")
-               else ", whose cohort it did not record.",
-               if (!isTRUE(broad$ok)) " NOT USED - see the log; this table is absent." else "")
-      else NULL,
-      # The lines and index dates are that run's; the diagnosis scan beside them
-      # is at this run's vintage, and the quarterlies are cumulative.
-      if (!is.na(overall_lot) && !is.null(broad$vintage))
-        paste0("VINTAGE: ", broad$vintage) else NULL,
-      "BROAD COHORT (second table): the Q3 ask - is POMA-1L associated with the other cancers allowed in baseline? Only answerable",
-      "on the broad cohort, since NDMM already removed those patients. pct_other_cancer_deconf DROPS the MM-adjacent codes",
-      "(plasmacytoma, plasma-cell leukemia, MGUS - MM-spectrum, not a second cancer). Secondary neoplasm of bone is KEPT:",
-      "C79.51, C79.52 and 198.5 are metastatic cancer, and the cohort build excludes on them (nndm/DECISIONS.md section 4).",
-      "The list comes from the build's own NDMM_OTHER_MALIG_CODES, so it cannot drift from what the cohort did. pct_incl_mm_adjacent keeps",
-      "them (confounded). Compare POMA-1L vs other-1L on the DE-CONFOUNDED column.",
-      "Broad-cohort basis = a 6-mo pre-index diagnosis CLAIM - looser than the pipeline's confirmed >=1-IP-or->=2-OP flag, so it",
-      "runs higher; and it uses a different window than the NDMM audit, so the two tables are NOT directly comparable."),
+      "THE ASSOCIATION IS NOT HERE, and cannot be. 'Does POMA use track with another cancer' needs a population that still",
+      "contains those patients; this one removed them, so asking it here compares zero with zero. broad_studyteam_qs.R answers it",
+      "over a broad cohort, and names the run it used."),
     tables = list(
-      "NDMM cohort AUDIT - other cancer MUST be 0 (excluded by construction)" = q3_ndmm_df,
-      "Other-cancer by group - BROAD cohort (confounded vs de-confounded)"    = q3_elig_df))
+      "NDMM cohort AUDIT - other cancer MUST be 0 (excluded by construction)" = q3_ndmm_df))
+
   # The 1L-anchored answer, from this cohort's own build. One prefix, one
   # cohort: no overlap to report, no second index to reconcile, and the
   # diagnosis-to-1L window - the one the broad build's pair cannot isolate - is
@@ -683,22 +526,19 @@ main <- function() {
       GROUP BY 1 ORDER BY 1"))
   }, "1L-anchored clinical trial") else NULL
 
-  add_sheet(name = "Q4 POMA & clinical trials", title = "Q4 - POMA-1L vs other-1L: clinical-trial evidence",
+  add_sheet(name = "Q4 POMA & clinical trials", title = "Q4 - trial evidence before the 1L start",
     subtitle = if (isTRUE(ndmm_trial$ok))
-      paste0("FIRST table: claims-based trial evidence before the 1L start, on this cohort's own index - evidence to review, ",
-             "not proof of therapy. The second is the older diagnosis-anchored view, kept as context.")
+      "Claims-based trial evidence on this cohort's own 1L index - evidence to review, not proof of therapy."
     else
-      paste0("Claims-based trial evidence around the flag build's own index. Read n_matched first - this is the ",
-             "OVERLAP of two cohorts, not the NDMM cohort."),
-    narrative = c(q4_gap,
-      if (isTRUE(ndmm_trial$ok)) c(
-        paste0("1L-ANCHORED (first table, from ", ndmm_tr_tbl, "): every window is cut at this cohort's own 1L start, so there is",
-               " no second index and no overlap. This is the table to read for the prior-therapy question."),
+      paste0("Not available this run: ", ndmm_trial$why),
+    narrative = if (isTRUE(ndmm_trial$ok)) c(
+        paste0("From ", ndmm_tr_tbl, ": every window is cut at this cohort's own 1L start, so there is no second index",
+               " and no overlap with another cohort."),
         "WHAT IT IS: claims-based trial EVIDENCE - a trial diagnosis, procedure or revenue code. It does not identify the study drug,",
         "the condition treated, or whether a blinded agent was received, so it does not establish that a patient had MM therapy in",
         "that window, and a zero does not establish that they did not. Treat a positive as a patient to review, not as a proven line.",
         "HEADLINE n_dx_to_lot1 / pct_dx_to_lot1: trial evidence between the MM diagnosis and the day before LOT1. That is the",
-        "stretch a first line would have displaced, and the one the diagnosis-anchored flags below cannot see at all.",
+        "stretch a first line would have displaced.",
         "CAVEAT on comparing that column across groups: the diagnosis-to-1L interval is days for one patient and years for another,",
         "so the chance of catching a code differs per patient. n_12mo_pre_lot1 is a FIXED window and is the more comparable one",
         "between POMA-1L and other-1L; read the two together rather than either alone.",
@@ -708,25 +548,15 @@ main <- function() {
         "the timing describe one set of patients. It separates 'trial evidence, then POMA' from a trial code in the same week as 1L.",
         "n_post_lot1 is at-or-after LOT1: context, never evidence of a prior line.",
         "missing_flag_rows must be 0. It counts LOT1 patients with no row in the flag table - a broken join, not a clean patient.",
-        "Clinical trial does NOT filter this cohort. The flag is descriptive and is not one of the criteria, so nothing was removed for it.")
+        "Clinical trial does NOT filter this cohort. The flag is descriptive and is not one of the criteria, so nothing was removed for it.",
+        "Claims-based trial evidence is a lower bound (a fully masked study drug may carry no trial code).")
       else
         paste0("The 1L-anchored flag is not available: ", ndmm_trial$why,
-               " Only the diagnosis-anchored view below is shown, and it does not answer the prior-therapy question."),
-      paste0("DIAGNOSIS-ANCHORED (second table): both flags are relative to the index the flag build selected (", trial$src$flags,
-             " aligned to ", trial$src$index, "), a diagnosis-based candidate - NOT the LOT1 start."),
-      "NEITHER OF ITS FLAGS ISOLATES 'trial therapy before LOT1'. CLINTRIAL_BASELINE ends the day before that diagnosis index, so it",
-      "misses the whole diagnosis-to-LOT1 stretch. CLINTRIAL_FOLLOWUP starts ON that index and runs past LOT1, so it mixes the",
-      "pre-LOT1 period of interest with evidence after treatment started. It is a descriptive comparison around that index, no more.",
-      "WHICH PATIENTS: n_pts is the full NDMM group; n_matched is how many of them the flag build also has, and every rate is over",
-      "n_matched. The two cohorts differ in index, study end, baseline window and criteria, so the overlap is not the whole group.",
-      "If pct_matched differs much between POMA-1L and other-1L, those rates reflect selection into the second cohort as much",
-      "as anything about the groups - check that row before reading them.",
-      "Claims-based trial evidence is a lower bound (a fully masked study drug may carry no trial code)."),
-    tables = c(
-      if (isTRUE(ndmm_trial$ok))
-        list("Trial evidence before the 1L start - THIS COHORT (claims-based)" = q4_ndmm_df)
-      else list(),
-      list("Trial evidence around the broad build's diagnosis index (context)" = q4_df)))
+               " The cohort build writes it; re-run that build. The older diagnosis-anchored view is in broad_studyteam_qs.R,",
+               " and it cannot answer whether the evidence preceded LOT1."),
+    tables = if (isTRUE(ndmm_trial$ok))
+      list("Trial evidence before the 1L start - THIS COHORT (claims-based)" = q4_ndmm_df)
+      else list())
 
   # ---- Q5: pharmacy-benefit continuity + LEN/THAL look-back -------------
   q5_tables <- list(); q5_notes <- character()
@@ -777,7 +607,7 @@ main <- function() {
       -- LEFT JOIN so poma_1l_pts is the FULL POMA-1L denominator; a patient with no
       -- LOT1-/index-covering enrollment span is retained and shown by the *_with_*_span
       -- counts. Those SHOULD equal the denominator (the cohort enforces CE); a gap flags
-      -- a LOT_LONG / ELIG_COH_FINAL / enrollment mismatch to investigate, not a silent drop.
+      -- a LOT_LONG / cohort / enrollment mismatch to investigate, not a silent drop.
       SELECT count(*)                                                                    AS poma_1l_pts,
              -- LOT1-anchored NDMM check: CE mirrors filter #1; len_thal is the LEN/THAL
              -- SUBSET of filter #4's 12-mo pre-LOT1 window (filter #4 also scans medical
