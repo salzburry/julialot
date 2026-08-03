@@ -536,11 +536,29 @@ included on the data's account rather than the protocol's.
 
 The enrollment tests read `<prefix>NDMM_ENROLL_SPANS` and
 `<prefix>NDMM_ENROLL_SPANS_STRICT`, the two span tables this build already
-checkpointed, so no enrollment rule is written a second time. The follow-up
-window is three months here and one day at 1L — the 1L number is what the study
-team confirmed for that cohort — and both are named rather than written into
-the SQL (`NDMM_FU_CE_DAYS`, `SUBSEQ_FU_CE_MONTHS`). Neither is settable from
-the environment: for this study they are definitions, not options.
+checkpointed, so no enrollment rule is written a second time.
+
+Both windows are settings of these cohorts:
+
+| setting | default | |
+|---|---|---|
+| `SUBSEQ_PRE_DAYS` | 365 | days of CE before the cohort index date |
+| `SUBSEQ_FU_CE_MONTHS` | 3 | months of CE after it, or death, with no gaps |
+
+`SUBSEQ_PRE_DAYS` is deliberately **not** `PRE_LOT1_DAYS`. That one is pinned
+by `CONTRACT` to the value the 1L cohort was built with, so it cannot move
+without redefining that cohort; these are a separate question. The follow-up
+window is months rather than days because `add_months` keeps the month
+boundary and 90 days is a different rule — the 1L build's own sensitivity table
+put 90 days and three months seven patients apart. Whatever they are set to is
+written into all three outputs as `CE_PRE_DAYS` and `CE_FU_MONTHS`, so a cohort
+always says which windows made it.
+
+**The gap allowance is not settable here.** `GAP_DAYS = 30` is baked into the
+span tables the 1L build wrote, so changing it moves nothing until that build
+is re-run — and `CONTRACT` stops it being changed anyway. A gap longer than
+that splits the span, so a 40-day break anywhere inside the 365 days before a
+3L start means no single span covers the window and the patient is out.
 
 **Each cohort is drawn from the one before it** — 2L from the 1L cohort, 3L
 from the 2L cohort. The progression is 1L → 2L → 3L, and the study design note

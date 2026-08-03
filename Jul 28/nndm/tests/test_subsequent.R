@@ -74,9 +74,38 @@ ok(has(FUN2, "date_sub(g.ix, 365)") && has(FUN2, "add_months(g.ix, 3)") &&
      has(FUN2, "coalesce(g.DEATH_DT, add_months(g.ix, 3))"),
    "the funnel's two tests are the cohort's")
 
-cat("\n-- 1L and these cohorts follow up for different lengths --\n")
-ok(NDMM_FU_CE_DAYS == 0L && SUBSEQ_FU_CE_MONTHS == 3L,
-   "0 days at 1L by the study team's answer, 3 months here by the protocol")
+cat("\n-- both windows are settings, and every output records them --\n")
+ok(subseq_days("SUBSEQ_PRE_DAYS", 365L) == 365L &&
+     subseq_days("SUBSEQ_FU_CE_MONTHS", 3L) == 3L,
+   "365 days and 3 months by default - the protocol's 12 months and 3 months")
+withr <- function(v, val, f) {
+  old <- Sys.getenv(v, unset = NA)
+  do.call(Sys.setenv, setNames(list(val), v)); on.exit({
+    if (is.na(old)) Sys.unsetenv(v) else do.call(Sys.setenv, setNames(list(old), v))
+  })
+  f()
+}
+ok(withr("SUBSEQ_PRE_DAYS", "180", function() subseq_days("SUBSEQ_PRE_DAYS", 365L)) == 180L,
+   "...and the environment moves them")
+# The text, not what coercion makes of it: as.integer("60.5") is 60.
+ok(inherits(tryCatch(withr("SUBSEQ_PRE_DAYS", "365.5",
+     function() subseq_days("SUBSEQ_PRE_DAYS", 365L)), error = function(e) e), "error"),
+   "...a fractional number of days is refused, not truncated")
+S180 <- subseq_cohort_sql(2L, "s.c1", "s.c2", 180L, 6L, "s.LINES", "s.SPANS",
+                          "s.STRICT", "r9")
+ok(has(S180, "date_sub(g.COHORT_INDEX_DATE, 180)") &&
+     has(S180, "add_months(g.COHORT_INDEX_DATE, 6)"),
+   "...and the SQL uses what it is given, with nothing baked in")
+# A cohort has to say which windows made it, or a re-run under different
+# settings is indistinguishable from the one before it.
+ok(has(S180, "180") && has(S180, "AS CE_PRE_DAYS") && has(S180, "AS CE_FU_MONTHS"),
+   "each cohort table records the two windows")
+ok(has(bs, "CE_PRE_DAYS, CE_FU_MONTHS, SUBSEQ_RUN_ID"),
+   "...and so does the attrition table")
+# The gap allowance is not one of these: it is baked into the span tables the
+# 1L build wrote, so it cannot be changed from here.
+ok(!has(bs, 'Sys.getenv("GAP_DAYS'),
+   "the gap allowance is not settable here - it belongs to the spans")
 
 cat("\n-- the lines have to come from a finished run over this cohort attempt --\n")
 STATUS <- list(RUN_ID = "L1", STATE = "complete", UPDATED_AT = "t2",

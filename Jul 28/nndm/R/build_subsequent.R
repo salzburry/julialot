@@ -41,11 +41,29 @@
 # 1L build already checkpointed, so no enrollment rule is written twice.
 
 SUBSEQ_LINES <- c(2L, 3L)
-# Months of follow-up CE these cohorts need. Not an environment variable: for
-# this study three months is the protocol's definition, not a runtime choice.
-# The 1L cohort's window is NDMM_FU_CE_DAYS = 0, which is what the study team
-# confirmed for that cohort; two different numbers, so neither is a literal.
-SUBSEQ_FU_CE_MONTHS <- 3L
+
+# The two windows, as settings of their own rather than the 1L cohort's.
+#
+# SUBSEQ_PRE_DAYS is days of CE before the cohort index date - 365 for the
+# protocol's 12 months. It is NOT PRE_LOT1_DAYS: that one is pinned by
+# CONTRACT to the value the 1L cohort was built with, so it cannot be moved
+# without redefining that cohort. These are a separate question.
+#
+# SUBSEQ_FU_CE_MONTHS is calendar months of follow-up CE - 3 for the
+# protocol's 3 months. Months, not days: add_months keeps the month boundary,
+# and 90 days is a different rule (the 1L build's own sensitivity table put
+# 90 days and 3 months seven patients apart).
+#
+# Whatever they are set to is written into all three outputs, so a cohort
+# always says which windows made it.
+subseq_days <- function(v, default) {
+  x <- trimws(Sys.getenv(v, unset = ""))
+  if (!nzchar(x)) return(as.integer(default))
+  # The text, not what coercion makes of it: as.integer("60.5") is 60.
+  if (!grepl("^[0-9]+$", x))
+    stop(v, "='", x, "' (want a whole number)", call. = FALSE)
+  as.integer(x)
+}
 
 # The lines come from a LOT run, so that run has to have finished, to have been
 # built over THIS cohort, and to have been built over the cohort attempt that
@@ -151,6 +169,7 @@ subseq_fu_expr <- function(ix, months, death = "g.DEATH_DT") {
 # start, with both CE flags.
 subseq_cohort_sql <- function(lot_num, from_tbl, out_tbl, pre_days, months,
                               lines_tbl, spans_tbl, spans_strict_tbl, run_id) {
+  pre_days <- as.integer(pre_days); months <- as.integer(months)
   glue("
     CREATE OR REPLACE TABLE {out_tbl} AS
     WITH base AS (
@@ -184,6 +203,8 @@ subseq_cohort_sql <- function(lot_num, from_tbl, out_tbl, pre_days, months,
            {as.integer(lot_num)}        AS LOT_NUM,
            coalesce(pre.CE_PRE_12MO, 0) AS CE_PRE_12MO,
            coalesce(fu.CE_FU, 0)        AS CE_FU,
+           {pre_days}                   AS CE_PRE_DAYS,
+           {months}                     AS CE_FU_MONTHS,
            {sql_text(run_id)}           AS SUBSEQ_RUN_ID,
            current_timestamp()          AS BUILT_AT
     FROM got g
@@ -237,7 +258,9 @@ subseq_funnel_sql <- function(lot_num, from_tbl, pre_days, months, lines_tbl,
            (SELECT count(*) FROM kept) AS n_final")
 }
 
-build_subsequent <- function(here, prefix, months = SUBSEQ_FU_CE_MONTHS) {
+build_subsequent <- function(here, prefix,
+                             pre_days = subseq_days("SUBSEQ_PRE_DAYS", 365L),
+                             months   = subseq_days("SUBSEQ_FU_CE_MONTHS", 3L)) {
   # The same gates the 1L build runs. These cohorts are a subset of that one,
   # so they have to be built under the settings that defined it - a different
   # gap allowance or baseline window here would be a different study.
@@ -257,9 +280,14 @@ build_subsequent <- function(here, prefix, months = SUBSEQ_FU_CE_MONTHS) {
   log_msg(SEP)
   log_msg("Subsequent-line cohorts (protocol 6.2.1.1), prefix ", prefix)
   log_msg("  received that line")
-  log_msg("  ", cfg$pre_lot1_days, " days of CE before its start, gaps <= ",
+  log_msg("  ", pre_days, " days of CE before its start, gaps <= ",
           cfg$gap_days, " days")
   log_msg("  ", months, " months of CE after it, or death, no gaps")
+  # The gap allowance is not settable here. It is baked into the span tables
+  # the 1L build wrote, so changing GAP_DAYS moves nothing until that build is
+  # re-run - and CONTRACT stops it being changed anyway.
+  if (pre_days != as.integer(cfg$pre_lot1_days))
+    log_msg("  (the 1L cohort used ", cfg$pre_lot1_days, " days)")
   log_msg("  run ", run_id)
   log_msg(SEP)
   subseq_check_lot_run(con, prefix)
@@ -272,13 +300,13 @@ build_subsequent <- function(here, prefix, months = SUBSEQ_FU_CE_MONTHS) {
   for (n in SUBSEQ_LINES) {
     out <- wrk(paste0("NDMM_COHORT_", n, "L"))
     fun <- function(src) db_q(con, subseq_funnel_sql(
-      n, src, cfg$pre_lot1_days, months, lines, spans, strict))
+      n, src, pre_days, months, lines, spans, strict))
     f <- fun(from)
-    db_exec(con, subseq_cohort_sql(n, from, out, cfg$pre_lot1_days, months,
+    db_exec(con, subseq_cohort_sql(n, from, out, pre_days, months,
                                    lines, spans, strict, run_id))
     log_msg(n, "L: ", f$n_from, " in the ", if (n == 2L) "1L" else paste0(n - 1L, "L"),
             " cohort -> ", f$n_reached, " reached ", n, "L -> ", f$n_ce_pre,
-            " with ", cfg$pre_lot1_days, " days of CE before it -> ", f$n_final,
+            " with ", pre_days, " days of CE before it -> ", f$n_final,
             " with ", months, " months after it")
     # What the chain costs: patients who meet this cohort's own criteria off
     # the 1L cohort but are not in the cohort before it. Same query, wider
@@ -298,21 +326,23 @@ build_subsequent <- function(here, prefix, months = SUBSEQ_FU_CE_MONTHS) {
 
   att  <- do.call(rbind, rows)
   num  <- function(x) vapply(x, sql_count, "")
-  vals <- paste(sprintf("(%s, %s, %s, %s, %s, %s, %s, current_timestamp())",
+  vals <- paste(sprintf("(%s, %s, %s, %s, %s, %s, %s, %s, %s, current_timestamp())",
                         vapply(att$COHORT, sql_text, ""), num(att$N_FROM),
                         num(att$N_REACHED_LOT), num(att$N_CE_PRE),
                         num(att$N_FINAL), num(att$N_EXCLUDED_BY_PRIOR),
+                        sql_count(pre_days), sql_count(months),
                         sql_text(run_id)),
                 collapse = ", ")
   db_exec(con, glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_SUBSEQUENT_ATTRITION')} AS
     SELECT * FROM (VALUES {vals})
       AS t(COHORT, N_FROM, N_REACHED_LOT, N_CE_PRE, N_FINAL, N_EXCLUDED_BY_PRIOR,
-           SUBSEQ_RUN_ID, BUILT_AT)"))
+           CE_PRE_DAYS, CE_FU_MONTHS, SUBSEQ_RUN_ID, BUILT_AT)"))
   log_msg("Wrote ", wrk("NDMM_SUBSEQUENT_ATTRITION"))
   # All three outputs carry this run id. A run that died between them leaves
   # one table stamped with an older one, and the mismatch is the evidence.
-  log_msg("All three tables are stamped SUBSEQ_RUN_ID = ", run_id)
+  log_msg("All three tables are stamped SUBSEQ_RUN_ID = ", run_id,
+          ", CE_PRE_DAYS = ", pre_days, ", CE_FU_MONTHS = ", months)
   log_msg(SEP)
   invisible(TRUE)
 }
