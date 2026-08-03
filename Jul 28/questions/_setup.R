@@ -399,8 +399,7 @@ qs_trial_flags_ready <- function(con, src = qs_trial_flags()) {
 
 # Is INPUT_COHORT_TABLE the cohort this LOT run was actually built from?
 #
-# Checking the name as a name stopped the blank that used to resolve to just
-# the schema. It cannot stop a valid name for the wrong cohort, and the
+# Checking the name as a name stops a blank from resolving to just the schema. It cannot stop a valid name for the wrong cohort, and the
 # questions that read it - observation windows, index dates, raw-claim bounds -
 # would then bound this run's answers by a cohort it never saw. The LOT build
 # records what it was given, so ask it.

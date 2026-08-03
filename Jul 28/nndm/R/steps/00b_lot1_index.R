@@ -350,7 +350,7 @@ build_ndmm_other_malig_groups <- function(con, cfg) {
 # three rows need no map, and come off the events view the criterion itself
 # reads, so the claim scan does not run twice:
 #
-#   same code-list label - the finest grain, and what the source build does
+#   same code-list label - the finest grain, and what an empty map gives
 #   as configured        - the same until primary_tumor_groups.csv says otherwise
 #   any label at all     - the coarsest, and the upper bound on what a perfect
 #                          map could add

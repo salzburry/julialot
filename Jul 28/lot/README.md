@@ -2,21 +2,17 @@
 
 Lines of therapy, built once and run per cohort.
 
-## Status: not yet run
+## What this builds
 
 `R/steps/` holds the whole build - LOT1 (MMA claims, MAP, base regimen, SCT,
 end date) and LOT2 onwards up to `LOT_LONG`, one row per patient per line.
 
-Three guards were added where the code lists filter on the raw value but store
+Three guards sit where the code lists filter on the raw value but store
 the normalised one: a punctuation-only code survives as `""`, and a missing
 code on the claim side normalises to `""` too, so the two would match. For NDC
 both sides pad to eleven zeros. This build drops codes that normalise to blank,
 de-duplicates the lists, and requires digits on both NDC joins. Each guard is
 asserted by name in `tests/test_runner.R`.
-
-This package has never been run against Databricks. Earlier work on the same
-algorithm was run against the `2025q2` tables, but nothing in this folder has
-produced a number, so nothing here is validated output until it has.
 
 The folder is self-contained - the only outside dependencies are the R
 packages `DBI`, `odbc` and `glue`, and no file resolves a path outside it.
@@ -771,8 +767,8 @@ called complete:
 
 The null check comes first because it is what makes the others meaningful.
 Every one of them compares dates, and a comparison with `NULL` is unknown
-rather than true - so before it was added, a line with no start or no end
-passed all of them.
+rather than true - so without it, a line with no start or no end would pass
+all of them.
 
 The last two are the chain the iterative builder is supposed to produce: every
 LOT N candidate is taken strictly after the previous line's end, and every

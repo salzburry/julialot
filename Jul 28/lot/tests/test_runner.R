@@ -223,10 +223,9 @@ stops(check_cohort_input(fake_con, "wk.COH"), "a null ENDDATE is rejected")
 stub(shape = list(n_end_before_index = 1))
 stops(check_cohort_input(fake_con, "wk.COH"), "an ENDDATE before INDEX_DATE is rejected")
 
-# The table is an argument now, so it has to reach the SQL. Passing cfg and
-# letting the stub ignore it - which is what these tests used to do - would
-# pass just as well against a function that re-checked the source table and
-# called the pinned copy sound.
+# The table is an argument, so it has to reach the SQL. Passing cfg and letting
+# the stub ignore it would pass just as well against a function that re-checked
+# the source table and called the pinned copy sound.
 stub()
 got <- check_cohort_input(fake_con, "wk.SNAP")
 ok(length(CSQL) == 2 && all(grepl("wk.SNAP", CSQL, fixed = TRUE)),
@@ -442,9 +441,8 @@ ok(identical(tryCatch(pe$report_line_criteria(NULL, list(max_lot = 5L)),
 if (is.na(old_env)) Sys.unsetenv("APPLY_T_CRIT") else Sys.setenv(APPLY_T_CRIT = old_env)
 
 cat("\n-- a bad code list stops the build, it does not warn and continue --\n")
-# All four checks used to print a warning inside a tryCatch that also
-# swallowed query errors, so a code list that changed who counts as treated
-# went through silently.
+# A warning inside a tryCatch that also swallowed query errors would let a code
+# list that changed who counts as treated through silently.
 cd <- paste(readLines(file.path(ROOT, "R", "steps", "01_codelists.R"), warn = FALSE),
             collapse = "\n")
 ok(!grepl("WARNING: Codelist consistency QC failed", cd, fixed = TRUE),
@@ -501,8 +499,8 @@ ok(grepl("c.CL_MED_CLASS AS MED_CLASS", mmx, fixed = TRUE) &&
 ok(length(gregexpr("NOT EXISTS (", cd, fixed = TRUE)[[1]]) == 2 &&
      !grepl("NOT IN (SELECT", cd, fixed = TRUE),
    "the substitution checks cannot pass by being unanswerable")
-# Extraction only joins NDC and HCPCS; the source also accepted ICD, which
-# matches nothing.
+# Extraction only joins NDC and HCPCS. ICD is not among them: it would match
+# nothing.
 ok(grepl('EXTRACTED_CODE_TYPES <- c("NDC", "HCPCS")', cd, fixed = TRUE),
    "the accepted code types are the ones extraction actually reads")
 
@@ -1148,8 +1146,8 @@ ok(identical(getOption("lot_contract_deviations"), character(0)),
    "...and carries none of the previous run's deviations")
 ok("CONTRACT_DEVIATIONS" %in% names(BUILD_STATUS_COLS),
    "the status table has a column for them, so ownership and algorithm resolve together")
-# CONTRACT_SETTINGS used to be built from CONTRACT itself, so an overridden run
-# would have recorded the values it was SUPPOSED to use. The dashboard reads
+# Built from CONTRACT itself, CONTRACT_SETTINGS would record the values an
+# overridden run was SUPPOSED to use rather than the ones it used. The dashboard reads
 # max_lot out of that string to decide how many panels a run has.
 Sys.setenv(LOT_CONTRACT_OVERRIDE = "TRUE")
 ok(grepl("max_lot=8", contract_settings(alt), fixed = TRUE),
@@ -1158,7 +1156,7 @@ ok(grepl("max_lot=5", contract_settings(pin_cohort(base, TBL_A, PFX_A)), fixed =
    "...which is unchanged for a contract build, since the two agree there")
 clear()
 
-cat("\n-- settings that used to fail open --\n")
+cat("\n-- settings that would otherwise fail open --\n")
 # as.integer("60.5") is 60, so the NA test accepted it and the run used 60
 # while the operator had asked for 60.5. Their setting was ignored, silently.
 for (bad_int in c("60.5", "6e1", "-5", " 60.0 ")) {

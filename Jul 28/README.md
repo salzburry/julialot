@@ -81,12 +81,6 @@ that did not finish. The **latest** row wins, finished or not, because a build
 replaces its tables before it validates them — so a rerun that replaced them
 and then failed owns them, and the previous good row does not.
 
-## Nothing here has been run yet
-
-No package in this folder has executed against a warehouse. The tests check the
-code, not the numbers. Treat the first run of anything as a run to check, not a
-run to quote.
-
 ## Settings
 
 `config.csv` in each package holds the defaults. The environment wins over it.

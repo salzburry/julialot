@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# The rollup is a governed file shared with the source build, and the script edits
+# The rollup is a governed file shared with other builds, and the script edits
 # it in place, so the things that matter are: it removes exactly the steroid
 # rows, it leaves every other byte alone, and it refuses rather than guesses.
 #

@@ -25,8 +25,8 @@ DATABRICKS_PWD=... DOMINO_USER_NAME=usr00000 OBJECT_PREFIX=ndmm_ \
 `INPUT_COHORT_TABLE` is the **whole** physical name, prefix included — that is
 how LOT takes it, since the cohort is named by whoever built it. Several
 questions read it for observation windows, index dates and the raw-claim
-bounds, so it is required rather than defaulted; blank used to resolve to a
-name that was only the schema, and those sections warned and ran unbounded.
+bounds, so it is required rather than defaulted: a blank resolves to a name
+that is only the schema, and those sections would warn and run unbounded.
 
 `OBJECT_PREFIX` is **required** and names the run being asked about. Blank would
 ask for unprefixed tables — usually nothing, but if an older unprefixed table is
@@ -79,11 +79,10 @@ catalog and schema. `qs_tbl()` is what these scripts use, and it prefixes.
 LOT_POPULATION=PRECRITERIA   # the same run BEFORE the line criteria
 ```
 
-That is the only axis left. The scripts used to switch between two *cohorts* —
-a full LOT run and an NDMM-filtered copy persisted beside it — and that
-arrangement is gone: the LOT run is over the cohort already, so its output under
-this prefix **is** the study population, and a different cohort is a different
-prefix and a separate invocation. `LOT_COHORT` stops the run and says so rather
+That is the only axis. There is no second cohort to switch between: the LOT run
+is over the cohort already, so its output under this prefix **is** the study
+population, and a different cohort is a different prefix and a separate
+invocation. `LOT_COHORT` stops the run and says so rather
 than being quietly reinterpreted.
 
 Pre-criteria is worth asking for when the question is what a criterion cost. It
@@ -240,8 +239,8 @@ carry.
 
 ## The cohort table is checked against the run
 
-`INPUT_COHORT_TABLE` is validated as a name, which stops the blank that used to
-resolve to just the schema. That does not stop a valid name for the wrong
+`INPUT_COHORT_TABLE` is validated as a name, which stops a blank from resolving
+to just the schema. That does not stop a valid name for the wrong
 cohort, and the questions bound their answers by the cohort's observation
 windows and index dates — so the wrong one answers about a run it never saw.
 
@@ -288,9 +287,9 @@ columns sit on the same date as its LOT1-anchored ones: they are a **longer
 look-back on the same anchor**, running back to the start of the covering
 enrollment span, not a second window before the diagnosis.
 
-They used to be labelled as the latter. Two counts that look independent get
+Labelling them as the latter invites two counts that look independent being
 added together, and a residual-blind-spot probe that overlaps the window it is
-supposed to reach past is not one. The columns are now named for what they
+supposed to reach past is not one. The columns are named for what they
 measure — `ce_gt_6mo_pre_index`, `len_thal_gt_6mo_pre_index` — and the
 narrative says not to add them to the 12-month figures.
 
@@ -312,14 +311,13 @@ a version re-issued mid-run is caught. That is what `codelists_lot.R` does for
 the four the build reads, and for the same reason: the count gets quoted either
 way.
 
-**Nothing here tells anyone to edit it.** The follow-up workbook used to say
-that emptying `steroid_codes.csv` would drop steroids from the descriptive
-outputs. It is production — the same directory the LOT build reads its four
-from — so that edits what other studies read and what the recorded md5s mean,
-and it does not switch the displays off cleanly anyway: the steroid sections
-become *unavailable* rather than showing zero. The workbook now says so
-explicitly rather than just dropping the sentence, since the old instruction may
-already have been followed.
+**Nothing here tells anyone to edit it.** Emptying `steroid_codes.csv` would
+drop steroids from the descriptive outputs, but it is production — the same
+directory the LOT build reads its four from — so it edits what other studies
+read and what the recorded md5s mean, and it does not switch the displays off
+cleanly anyway: the steroid sections become *unavailable* rather than showing
+zero. The workbook says so explicitly, because anyone who has already done it
+needs to know what it did.
 
 It is deliberately **not** added to `CODELIST_FILES`. That list drives
 `record_codelist_hashes()`, which stops the LOT build when a listed file has no
@@ -332,9 +330,8 @@ build that has nothing to do with this question.
 do: `ICD9` for the ICD-9 spellings, `ICD10` for the ICD-10 ones, **NULL** for
 anything else — blank, missing, or a spelling nobody expected.
 
-Q3 used to read "not one of the ICD-9 spellings" as ICD-10. That classes a
-genuine ICD-9 claim with a blank flag as ICD-10, where it then fails the family
-join silently — so the workbook can count an other-cancer diagnosis the cohort
+Reading "not one of the ICD-9 spellings" as ICD-10 would class a genuine ICD-9
+claim with a blank flag as ICD-10, where it then fails the family join silently — so the workbook can count an other-cancer diagnosis the cohort
 build deliberately did not. `raw_icd_flag` is a **waivable** check in the cohort
 build, so a run can legitimately carry unrecognised flags, and that is exactly
 when the two rules disagree.
@@ -360,8 +357,6 @@ rule, which is exactly how the two came to disagree.
 ## Not verified against the warehouse
 
 `tests/test_setup.R` runs the setup and holds the population, the table names
-and the bone-metastasis list to what the build does. What it cannot check is
-whether the question SQL returns the same answers as before — nothing here has
-been executed against a warehouse.
-
-Treat the first run of each script as a run to check, not a run to quote.
+and the bone-metastasis list to what the build does. It checks the ground each
+question stands on, not the answers: what a question's SQL returns is not
+something a test without a warehouse can hold.

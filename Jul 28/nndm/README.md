@@ -86,10 +86,13 @@ runner: `NDMM_PATIDS` is defined over it a few lines below and Spark inlines a
 temporary view's plan, so repointing after that view exists would leave it on
 the original query.
 
-`07_cohort.R` still carries `build_lot_long_filtered()` and `02_lot1_starts.R`
-still carries `build_lot1_starts_ndmm()`. The runner calls neither; both stay
-where they are rather than being deleted piecemeal from files otherwise carried
-across whole.
+`07_cohort.R` carries `build_lot_long_filtered()` and `02_lot1_starts.R`
+carries `build_lot1_starts_ndmm()`. **The runner calls neither.**
+`NDMM_LOT1_STARTS` is built by `00b_lot1_index.R`, and nothing reads
+`NDMM_LOT_LONG_FILT` at all. They are left in place because these files are
+held line-for-line against the reviewed rules, and removing code from them
+would loosen that check for no gain at run time — the functions are defined
+and never called, which costs nothing.
 
 Every setting is checked twice: against `CONTRACT`, and against the `NDMM_*`
 constants the SQL actually interpolates — those have their own environment
@@ -723,7 +726,7 @@ Five, each deliberate and each recorded:
 | change | direction |
 |---|---|
 | follow-up enrolment is one day, not three months | **larger** cohort |
-| a code list value that normalises to blank no longer matches a claim with no code | **larger** — it can only remove matches that should not have been made |
+| a code list value that normalises to blank does not match a claim with no code | **larger** — it can only remove matches that should not have been made |
 | both outpatient claims must fall in the baseline, not just the first | **larger** |
 | outpatient claims pair on a mapped tumour type, not on a code description | **smaller**, and **nothing** until the map is filled in |
 
@@ -809,10 +812,4 @@ is pinned to its default** — the review tables exist to be acted on.
 | `NDMM_IGNORE_ACTIVE_RUN` | *(unset)* | `TRUE` gets past a `started` row a killed process left behind. Use it only once the named run is known to be dead — see **One run per prefix at a time** |
 
 `FINAL_TABLE_NAME` is read into `NDMM_FINAL_TABLE_NAME` and used by nothing:
-it named a cohort table this build no longer reads. Setting it does nothing.
-
-## Status
-
-Never run against Databricks. Nothing here is validated output until it has
-been, and the count compared against the source implementation patient by
-patient.
+it names a cohort table this build does not read. Setting it does nothing.

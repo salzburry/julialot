@@ -140,9 +140,9 @@ waivers <- function() intersect(waivers_named(), WAIVABLE_CHECKS)
 # that reads it has to know: the name is unchanged, and every read after this
 # is a scan of a table rather than a re-run of the query.
 #
-# No fallback. The source degraded to the in-place view on a write failure,
-# which is correct but can turn minutes into hours without saying so, and a
-# table this build declares as an output would then not be there.
+# No fallback. Degrading to the in-place view on a write failure is correct
+# arithmetic but can turn minutes into hours without saying so, and a table
+# this build declares as an output would then not be there.
 checkpoint <- function(con, name) {
   view <- get(name, envir = globalenv())
   tbl  <- wrk(name)
@@ -317,10 +317,10 @@ check_constants <- function(cfg) {
 #
 # One list, three readers. NDMM_PATIDS ANDs the whole set, ndmm_counts() walks a
 # prefix of it per funnel row, and ATTRITION_STEPS below takes the labels. Each
-# reader used to spell the predicates out for itself: six flags in the view and
-# fifteen more in the counts, kept in step by hand. Nothing said when they
-# stopped agreeing, and a flag added to the view alone would drop the last row
-# of the funnel under a label that named a different criterion.
+# reader spelling the predicates out for itself - six flags in the view and
+# fifteen more in the counts - would keep them in step by hand, with nothing to
+# say when they stopped agreeing, and a flag added to the view alone would drop
+# the last row of the funnel under a label that named a different criterion.
 NDMM_CRITERIA <- list(
   list(key = "ce12",           flag = "CE_pre_lot1_12mo",
        label = "+ 12-month CE before index"),

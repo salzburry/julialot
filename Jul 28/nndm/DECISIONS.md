@@ -272,10 +272,9 @@ stops if it falls outside the window the run was given, naming the count, the
 date and the CDM vintage it would have read. `check_settings()` rejects a window
 that runs backwards; `pin_study_window()` rejects dates that will not parse.
 
-**Vintage.** Earlier work on this algorithm read `2025q2` only. Confirmed on
-2026-08-02: `2026q1` is the same tables and column names with data extended
-through 2026-03-31 — a wider read of the same structures, so there is nothing to
-re-validate first.
+**Vintage.** `2026q1` is the same tables and column names as `2025q2` with data
+extended through 2026-03-31 — a wider read of the same structures, so a window
+that moves between them has nothing to re-validate first.
 
 **Line criteria are recorded, not just applied.** `APPLY_NO_BELANTAMAB=TRUE` is
 right for this cohort and wrong for one with no such exclusion, and passing a

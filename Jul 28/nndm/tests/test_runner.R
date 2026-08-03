@@ -780,10 +780,10 @@ for (v in CHOICES$mm_adjacent_states) {
      paste0("mm_adjacent_states='", v, "' is one the code actually handles"))
 }
 assign("NDMM_MM_ADJACENT_STATES", "override", envir = se)
-# This used to loop over CHOICES$belantamab_scope. That entry went when the
-# exclusion moved to the lot package, so the loop ran zero times and asserted
-# nothing while still reading as coverage. The builder itself is still live - it
-# feeds the advisory flag and the reconcile list - so it is exercised directly.
+# Not a loop over CHOICES$belantamab_scope: there is no such entry, the
+# exclusion being the lot package's, so the loop would run zero times and assert
+# nothing while still reading as coverage. The builder itself is live - it feeds
+# the advisory flag and the reconcile list - so it is exercised directly.
 SSQL <- character(0)
 ok(identical(tryCatch({ se$build_ndmm_belantamab_patids(NULL, "m", "r", "mp"); "" },
                       error = conditionMessage), ""),
@@ -913,7 +913,7 @@ ok(setequal(se$ndmm_mm_adjacent_groups(),
    "override covers both halves")
 assign("NDMM_MM_ADJACENT_STATES", "exclude", envir = se)
 ok(setequal(se$ndmm_mm_adjacent_groups(), se$NDMM_MM_ADJACENT_OVERRIDE),
-   "exclude restores the source build's five, so the two can be compared")
+   "exclude drops the state labels, leaving the five override groups")
 assign("NDMM_MM_ADJACENT_STATES", "sometimes", envir = se)
 ok(grepl("is not a setting",
          tryCatch({ se$ndmm_mm_adjacent_groups(); "" }, error = conditionMessage),
