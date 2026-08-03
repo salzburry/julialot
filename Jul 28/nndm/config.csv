@@ -9,6 +9,8 @@ LOT1_FROM,2017-01-01,1L eligible-treatment period opens here
 PRE_LOT1_DAYS,365,CE and baseline window before the 1L index date
 FU_CE_DAYS,0,Days after index the follow-up CE must cover; 0 is one day
 GAP_DAYS,30,Enrollment gaps of this many days or fewer are still continuous
+SUBSEQ_PRE_DAYS,365,2L/3L only: days of CE before the cohort index date
+SUBSEQ_FU_CE_DAYS,90,2L/3L only: days of CE after it (or death) with no gaps
 TBL_CONFINEMENT,confinement,Inpatient confinement table
 TBL_MEMBER_ENROLLMENT,member_enrollment,Enrollment spans table
 TBL_MEMBER_ELIG,member_cont_enrollment,Sex and birth year

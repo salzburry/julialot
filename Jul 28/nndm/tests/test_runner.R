@@ -1468,8 +1468,11 @@ cnames <- local({
 read_env <- local({
   fs <- list.files(file.path(ROOT, "R"), "[.]R$", full.names = TRUE, recursive = TRUE)
   txt <- paste(unlist(lapply(fs, readLines, warn = FALSE)), collapse = "\n")
-  unique(gsub('^Sys\\.getenv\\("|"$', "",
-              regmatches(txt, gregexpr('Sys\\.getenv\\("[A-Z0-9_]+"', txt))[[1]]))
+  # Sys.getenv() is how most of them are read. subseq_days() is the other way:
+  # it takes the name as an argument, so the Sys.getenv() call inside it
+  # carries a variable and the name appears only at the call site.
+  hit <- function(fn) regmatches(txt, gregexpr(paste0(fn, '\\("[A-Z0-9_]+"'), txt))[[1]]
+  unique(gsub('^[A-Za-z_.]+\\("|"$', "", c(hit("Sys\\.getenv"), hit("subseq_days"))))
 })
 unread <- setdiff(cnames, read_env)
 ok(length(unread) == 0,

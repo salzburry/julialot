@@ -524,30 +524,73 @@ DATABRICKS_PWD=... Rscript build_subsequent_cohorts.R ndmm_
 
 Three criteria, all the protocol's, and nothing else:
 
-1. a LOT 2 (or LOT 3) row in `<prefix>LOT_LONG_FINAL`
-2. continuous enrollment for the 12 months before that line's start, gaps of
-   30 days or fewer still continuous
-3. continuous enrollment for 3 months of follow-up from it, **no gaps**, or
-   death inside the window
+1. received that line - a LOT 2 (or LOT 3) row in `<prefix>LOT_LONG_FINAL`
+2. CE for the 12 months before that line's start, gaps of 30 days or fewer
+   still continuous
+3. CE for 90 days of follow-up from it, **no gaps**, or death in the window
+
+Death is the only stated alternative, so it is the only thing that shortens
+the window. The study end does not: a living patient whose window runs past the
+data has not shown the enrolment, and would be included on the data's account
+rather than the protocol's.
 
 The enrollment tests read `<prefix>NDMM_ENROLL_SPANS` and
 `<prefix>NDMM_ENROLL_SPANS_STRICT`, the two span tables this build already
-checkpointed, so no enrollment rule is written a second time. The follow-up
-window is three months here and one day at 1L — the 1L number is what the study
-team confirmed for that cohort, and both are named rather than written into the
-SQL (`NDMM_FU_CE_DAYS`, `SUBSEQ_FU_CE_MONTHS`).
+checkpointed, so no enrollment rule is written a second time.
 
-3L is drawn from the 2L cohort table, not from `NDMM_COHORT`: each line is a
-subset of the line before it, so a patient who fails at 2L cannot appear at 3L.
+Both windows are settings of these cohorts:
+
+| setting | default | |
+|---|---|---|
+| `SUBSEQ_PRE_DAYS` | 365 | days of CE before the cohort index date |
+| `SUBSEQ_FU_CE_DAYS` | 90 | days of CE after it, or death, with no gaps |
+
+`SUBSEQ_PRE_DAYS` is deliberately **not** `PRE_LOT1_DAYS`. That one is pinned
+by `CONTRACT` to the value the 1L cohort was built with, so it cannot move
+without redefining that cohort; these are a separate question.
+
+Both are counted in days, with `date_sub` and `date_add` — the same shape
+`06_flags.R` uses for the 1L windows, so the two follow-up rules differ only in
+their number. **"3 months" is applied as 90 days here for the same reason it is
+at 1L** (see "3 months is applied as 90 days" below): `add_months(index, 3)` is
+the exact reading and lands 0–2 days later, so 90 is the more permissive of the
+two. Unlike the 1L window, this one can simply be *set* — 92 for a stricter
+reading — because it is a setting rather than a constant.
+
+Whatever they are set to is written into all three outputs as `CE_PRE_DAYS` and
+`CE_FU_DAYS`, so a cohort always says which windows made it.
+
+**The gap allowance is not settable here.** `GAP_DAYS = 30` is baked into the
+span tables the 1L build wrote, so changing it moves nothing until that build
+is re-run — and `CONTRACT` stops it being changed anyway. A gap longer than
+that splits the span, so a 40-day break anywhere inside the 365 days before a
+3L start means no single span covers the window and the patient is out.
+
+**Each cohort is drawn from the one before it** — 2L from the 1L cohort, 3L
+from the 2L cohort. The progression is 1L → 2L → 3L, and the study design note
+says "each subsequent line is a subset of the prior line".
+
+Receiving the lines in order is guaranteed anyway: lines are numbered
+sequentially, so a LOT 3 row implies a LOT 2 row. What the chain adds is that
+the **2L cohort's enrolment windows** must also have been met. Those are not
+the same test — a patient can have a gap that fails the follow-up window after 2L
+and still be fully enrolled for the 365 days before 3L and the 90 after it. `N_EXCLUDED_BY_PRIOR` in the attrition counts them: patients who meet
+3L's own three criteria and are dropped only for not being in the 2L cohort.
+The funnel is run twice for 3L, once off each population, so that number is
+counted rather than inferred.
 
 Writes `<prefix>NDMM_COHORT_2L`, `<prefix>NDMM_COHORT_3L` and
 `<prefix>NDMM_SUBSEQUENT_ATTRITION` — a funnel per cohort, so what each
-criterion cost is on the record. It changes nothing else.
+criterion cost is on the record. All three carry `SUBSEQ_RUN_ID`, so a run that
+died between them leaves a mismatch rather than a silent mix. It changes
+nothing else.
 
 It refuses to run unless the newest `LOT_BUILD_STATUS` row is `complete`, was
-built from *this* cohort, and carries no `CONTRACT_DEVIATIONS`. A LOT run
-replaces `LOT_LONG_FINAL` before it validates it, so lines from an unfinished
-run would look like lines.
+built from *this* cohort, carries no `CONTRACT_DEVIATIONS`, and names the same
+cohort attempt (`COHORT_RUN_ID`, `COHORT_STAMP`) that `NDMM_BUILD_STATUS` holds
+now. That last one matters because a re-run under one prefix replaces the
+cohort and both span tables in place: without it, lines from one attempt and
+enrollment from another carry the same names.
 
 ## The attrition
 
