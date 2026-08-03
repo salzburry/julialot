@@ -182,8 +182,23 @@ db_replace <- function(con, ...) {
   invisible(TRUE)
 }
 
+# A BIGINT comes back from the driver as bit64::integer64, which stores a
+# 64-bit integer inside a double's bit pattern. paste0() and log_msg() then
+# render the BITS, so a count of 1780 prints as 8.794368e-321 - and any
+# arithmetic on it without bit64 attached is silently wrong.
+#
+# Converted once, here, rather than at each of the forty-odd call sites that
+# read a count. Every count this build takes is far below 2^53, so nothing is
+# lost; a value above that would lose precision, and there is none.
+.unint64 <- function(d) {
+  if (!is.data.frame(d) || !ncol(d)) return(d)
+  for (j in seq_along(d))
+    if (inherits(d[[j]], "integer64")) d[[j]] <- as.numeric(d[[j]])
+  d
+}
+
 db_q <- function(con, sql) {
-  with_retry(function() DBI::dbGetQuery(con, sql))
+  .unint64(with_retry(function() DBI::dbGetQuery(con, sql)))
 }
 
 run_step <- function(con, name, sql, qc = NULL) {

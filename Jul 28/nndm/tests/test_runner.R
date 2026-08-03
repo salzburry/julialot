@@ -1614,4 +1614,30 @@ ok(sum(grepl('AS"), "\\n"', ix, fixed = TRUE)) == 3L,
    paste0("the three assembled statements separate the keyword from the body (",
           sum(grepl('AS"), "\\n"', ix, fixed = TRUE)), ")"))
 
+cat("\n-- a BIGINT count is a number, not its bit pattern --\n")
+# The driver returns BIGINT as bit64::integer64: a 64-bit int stored inside a
+# double. paste0() then renders the BITS, so "1780 codes" logged as
+# 8.794368e-321 - and arithmetic on it without bit64 attached is wrong, not
+# just ugly. Converted once in db_q() rather than at each of the call sites
+# that read a count.
+ok(any(grepl(".unint64", readLines(file.path(ROOT, "R", "db_utils.R"),
+                                   warn = FALSE), fixed = TRUE)),
+   "db_q() converts an integer64 column on the way out")
+# Behaviour, not text: build the failure and show the conversion undoes it.
+if (requireNamespace("bit64", quietly = TRUE)) {
+  raw <- bit64::as.integer64(1780)
+  # The class carries the meaning. Lose it anywhere between the driver and the
+  # message and the double's bit pattern is what gets rendered - 1780 came out
+  # of a real run as exactly this.
+  ok(identical(format(unclass(raw)), "8.794368e-321"),
+     "...a count of 1780 with its class dropped renders as 8.794368e-321")
+  ok(identical(paste0(as.numeric(raw)), "1780"),
+     "...and as.numeric() reads the integer back, which is what db_q() does")
+} else {
+  ok(TRUE, "bit64 not installed here - the conversion is checked by reading db_q()")
+  ok(TRUE, "...")
+}
+# Every count in this build is far below 2^53, so the conversion is lossless.
+ok(2^53 > 1e15, "counts here are orders below the double's exact-integer limit")
+
 report()

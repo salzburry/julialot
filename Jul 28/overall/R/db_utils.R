@@ -72,6 +72,19 @@ get_quarterly_table <- function(base_table, date_str) {
   paste0("t_", base_table, "_", get_quarter_suffix(date_str))
 }
 
+# A BIGINT arrives as bit64::integer64 - a 64-bit int inside a double's bit
+# pattern - so paste0() renders the BITS (a count of 1780 prints as
+# 8.794368e-321) and arithmetic on it is silently wrong. Every count here is
+# far below 2^53, so converting loses nothing.
+unint64 <- function(d) {
+  if (is.data.frame(d)) {
+    for (j in seq_along(d))
+      if (inherits(d[[j]], "integer64")) d[[j]] <- as.numeric(d[[j]])
+    return(d)
+  }
+  if (inherits(d, "integer64")) as.numeric(d) else d
+}
+
 # ---- Naming helpers (closure factory) ----
 # Naming functions that close over cfg and mat_tables. The step files unpack
 # the ones they use. mat_tables is an environment, so what

@@ -21,7 +21,18 @@ with_retry <- function(fn, max_retries = dash_config()$max_retries,
   }
 }
 
-db_q <- function(con, sql) with_retry(function() DBI::dbGetQuery(con, sql))
+# A BIGINT arrives as bit64::integer64 - a 64-bit int inside a double's bit
+# pattern - so paste0() renders the BITS: a count of 1780 prints as
+# 8.794368e-321. Converted once here rather than at each call site. Every
+# count here is far below 2^53, so nothing is lost.
+.unint64 <- function(d) {
+  if (!is.data.frame(d) || !ncol(d)) return(d)
+  for (j in seq_along(d))
+    if (inherits(d[[j]], "integer64")) d[[j]] <- as.numeric(d[[j]])
+  d
+}
+
+db_q <- function(con, sql) .unint64(with_retry(function() DBI::dbGetQuery(con, sql)))
 
 # <catalog>.<schema>.<table>, or <schema>.<table> when no catalog is set. The
 # schema is the work schema the cohort and LOT builds wrote into.
