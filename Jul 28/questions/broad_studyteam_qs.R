@@ -22,6 +22,15 @@
 #             no 1L-anchored equivalent, and because the comparison around that
 #             index is worth having on the population it belongs to.
 #
+# BROAD_PREFIX and TRIAL_PREFIX are two names for what should be one study, and
+# the second question crosses them: it splits the flag build's patients by the
+# 1L regimen from the LOT run. So they are checked against each other - the LOT
+# run records the cohort it was built from, and that has to be the cohort the
+# flag build wrote. Two different broad populations would put every patient the
+# LOT run does not have into 'other', which reads the same as not having had
+# POMA. When they cannot be tied together the flags are still reported, over
+# their own population, with no split.
+#
 # Nothing here writes to the warehouse.
 
 .script_dir <- local({
@@ -170,15 +179,43 @@ main <- function() {
   } else {
     allflags  <- trial$src$flags
     trial_idx <- trial$src$index
+
+    # The POMA split crosses the two broad sources, and only here. The flags
+    # are the flag build's own; the regimen that splits them comes from the LOT
+    # run under BROAD_PREFIX. So the split runs only when both are usable AND
+    # they are the same cohort - otherwise the flags are still reported, over
+    # the population they belong to, ungrouped.
+    #
+    # Reporting them ungrouped rather than not at all: this half of the section
+    # is about that build's OTHER_MALIGN_FLAG and its trial windows, which do
+    # not need the LOT run. Only the split does.
+    pair <- qs_broad_pair_bound(broad$cohort, trial_idx)
+    poma_split <- nzchar(broad_pfx) && isTRUE(broad$ok) && isTRUE(pair$bound)
+    # Unverified is not the same as wrong: nothing said the two differ, so the
+    # split still runs and says it was not checked. A positive disagreement
+    # drops it - that one is known-wrong, and it is reported below beside the
+    # output it changed rather than here.
+    if (nzchar(broad_pfx) && isTRUE(broad$ok) && !isTRUE(pair$bound) &&
+        !isTRUE(pair$verified)) {
+      log_msg("  NOTE: ", pair$why, ", so the POMA split below is unverified.")
+      poma_split <- TRUE
+    }
+    poma_cte <- if (poma_split) glue("
+      , poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {broad_lot}
+                   WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{POMA_TOKEN}'))")
+                else ""
+    grp_expr <- if (poma_split)
+      "CASE WHEN p.PATID IS NOT NULL THEN 'POMA-1L' ELSE 'other' END" else "'all'"
+    poma_join <- if (poma_split)
+      "LEFT JOIN poma1l p ON p.PATID = cast(a.PATID as string)" else ""
     # Over that build's OWN population, not the NDMM one. Restricting to the
     # NDMM patients was what made the old version an overlap of two cohorts
     # with a match rate to police; here the denominator is the population the
     # flags belong to, and the question is about that population.
     flg <- best_effort(db_q(con, glue("
-      WITH f AS (SELECT cast(PATID as string) PATID, INDEX_DATE FROM {trial_idx}),
-      poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {broad_lot}
-                 WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{POMA_TOKEN}'))
-      SELECT CASE WHEN p.PATID IS NOT NULL THEN 'POMA-1L' ELSE 'other' END      AS grp,
+      WITH f AS (SELECT cast(PATID as string) PATID, INDEX_DATE FROM {trial_idx})
+      {poma_cte}
+      SELECT {grp_expr}                                                         AS grp,
              count(DISTINCT a.PATID)                                            AS n_pts,
              count(DISTINCT CASE WHEN a.OTHER_MALIGN_FLAG = 1 THEN a.PATID END) AS n_other_malig,
              count(DISTINCT CASE WHEN a.CLINTRIAL_BASELINE = 1 THEN a.PATID END)  AS n_trial_baseline,
@@ -187,17 +224,26 @@ main <- function() {
                                    OR a.CLINTRIAL_FOLLOWUP  = 1 THEN a.PATID END) AS n_trial_any
       FROM {allflags} a
       JOIN f ON cast(a.PATID as string) = f.PATID AND a.INDEX_DATE = f.INDEX_DATE
-      LEFT JOIN poma1l p ON p.PATID = cast(a.PATID as string)
-      GROUP BY 1 ORDER BY 1")), "diagnosis-anchored flags")
+      {poma_join}
+      -- The expression rather than the ordinal: without the split it is a
+      -- literal, and GROUP BY 1 on a constant is the one place the ordinal
+      -- shorthand is worth not relying on.
+      GROUP BY {grp_expr} ORDER BY 1")), "diagnosis-anchored flags")
     write_out(flg, "diagnosis_anchored_flags")
     log_msg("  Diagnosis-anchored flags from ", allflags, ", aligned to ",
             trial_idx, ". Both windows are relative to that build's own index: ",
             "baseline ends the day before it, follow-up starts on it and runs ",
             "past LOT1, so NEITHER isolates 'before LOT1'. For that, read ",
             "NDMM_CLINTRIAL_FLAGS in poma_studyteam_qs.R.")
-    if (!nzchar(broad_pfx))
-      log_msg("  NOTE: BROAD_PREFIX is unset, so the POMA split above is ",
-              "'other' for everyone - the regimen comes from the broad LOT run.")
+    if (!poma_split)
+      log_msg("  NOTE: one row, grp='all', with no POMA split - ",
+              if (!nzchar(broad_pfx))
+                paste0("BROAD_PREFIX is unset, and the 1L regimen that splits ",
+                       "these patients comes from a LOT run over this build's ",
+                       "own cohort.")
+              else if (!isTRUE(broad$ok))
+                "the broad LOT run behind that regimen is not usable this run."
+              else pair$why)
   }
 
   log_msg("Broad-cohort questions complete. CSVs in ", out_dir)

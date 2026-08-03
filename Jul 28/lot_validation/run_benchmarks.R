@@ -23,6 +23,7 @@
   if (length(a)) dirname(normalizePath(sub("^--file=", "", a[1]))) else getwd()
 })
 source(file.path(.script_dir, "R", "benchmarks.R"))
+source(file.path(.script_dir, "R", "run_binding.R"))
 
 LOT_ROOT <- normalizePath(file.path(.script_dir, "..", "lot"), mustWork = TRUE)
 env_flag <- function(nm) identical(toupper(trimws(Sys.getenv(nm, unset = ""))), "TRUE")
@@ -61,6 +62,16 @@ main <- function() {
   con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
+  # One run owns these tables, and it has to have finished. Every figure below
+  # is a distribution somebody will quote beside a published one, and "median
+  # 2.1 lines" carries nothing about where it came from - so the run is
+  # resolved before anything is measured and named in the output beside it.
+  run <- require_lot_run(con, cfg$object_prefix, "BENCH_IGNORE_BUILD_STATE")
+  cat("\nMeasuring run ", run$run, " (prefix '", cfg$object_prefix,
+      "'), built from ", run$cohort,
+      if (!is.na(run$study_end) && nzchar(trimws(run$study_end)))
+        paste0(", STUDY_END ", run$study_end) else "", ".\n", sep = "")
+
   final    <- lot_out("LOT_LONG_FINAL")
   patients <- lot_out("LOT_PATIENT_INPUT")
   top_n    <- suppressWarnings(as.integer(Sys.getenv("BENCH_TOP_N", unset = "5")))
@@ -90,6 +101,10 @@ main <- function() {
   if (is.null(obs) || !nrow(obs)) { cat("\nNo observations.\n"); return(invisible(NULL)) }
 
   res <- compare_benchmarks(obs, refs)
+  # The run travels with the numbers. A benchmark table is exactly the kind of
+  # output that outlives the session it was produced in.
+  res$run_id <- run$run
+  res$input_cohort_table <- run$cohort
   if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   f <- file.path(out_dir, "benchmarks_observed_vs_published.csv")
   write.csv(res, f, row.names = FALSE)

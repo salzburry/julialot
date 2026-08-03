@@ -42,16 +42,51 @@ for (want in c("sct_auto_is_a_line", "maintenance_is_a_line", "gap_ends_a_line")
   ok(want %in% ours$dimension_id,
      paste0("...including '", want, "', which the ask named"))
 
-cat("\n-- and the files it cites are really there, saying what it says --\n")
-missing <- character(0)
-for (i in seq_len(nrow(ours))) {
-  f <- sub("[: ].*$", "", ours$ours_at[i])
-  if (!file.exists(file.path(JUL28, f))) missing <- c(missing, ours$dimension_id[i])
+cat("\n-- and the citations are file AND line, to a line the file has --\n")
+# A citation naming only a file sends the reader to eight hundred lines of SQL
+# to find out whether one sentence is true, and a claim that expensive to check
+# does not get checked. The README says "file and line", so this holds it to it.
+#
+# Format: `path:line`, comma-separated, a bare `:line` continuing the path.
+cite_parts <- function(s) {
+  path <- NA_character_; out <- list()
+  for (b in trimws(strsplit(s, ",")[[1]])) {
+    if (grepl("^:[0-9]+$", b)) {
+      if (is.na(path)) return(NULL)
+      out[[length(out) + 1L]] <- list(file = path, line = as.integer(sub("^:", "", b)))
+    } else if (grepl("^[^ :]+:[0-9]+$", b)) {
+      path <- sub(":[0-9]+$", "", b)
+      out[[length(out) + 1L]] <- list(file = path, line = as.integer(sub("^.*:", "", b)))
+    } else return(NULL)
+  }
+  out
 }
+unlined <- character(0); missing <- character(0); past_end <- character(0)
+blank   <- character(0)
+for (i in seq_len(nrow(ours))) {
+  p <- cite_parts(ours$ours_at[i])
+  if (is.null(p) || !length(p)) { unlined <- c(unlined, ours$dimension_id[i]); next }
+  for (c_i in p) {
+    f <- file.path(JUL28, c_i$file)
+    if (!file.exists(f)) { missing <- c(missing, ours$dimension_id[i]); next }
+    txt <- readLines(f, warn = FALSE)
+    if (c_i$line > length(txt)) past_end <- c(past_end, ours$dimension_id[i])
+    else if (!nzchar(trimws(txt[c_i$line]))) blank <- c(blank, ours$dimension_id[i])
+  }
+}
+ok(!length(unlined),
+   if (length(unlined)) paste0("cites a file with no line: ",
+                               paste(unique(unlined), collapse = ", "))
+   else "every citation is file:line, so a reader can check one claim in one look")
 ok(!length(missing),
    if (length(missing)) paste0("cites a file that is not here: ",
-                               paste(missing, collapse = ", "))
-   else "every citation names a file that exists")
+                               paste(unique(missing), collapse = ", "))
+   else "...naming a file that exists")
+ok(!length(past_end) && !length(blank),
+   if (length(past_end) || length(blank))
+     paste0("cites a line the file does not have, or a blank one: ",
+            paste(unique(c(past_end, blank)), collapse = ", "))
+   else "...and a line that file actually has")
 # The two answers most likely to be wrong if the build changed under us.
 sct <- readLines(file.path(JUL28, "lot", "R", "steps", "05_sct.R"), warn = FALSE)
 ok(any(grepl("Maintenance is a descriptive flag only", sct, fixed = TRUE)),
@@ -59,6 +94,25 @@ ok(any(grepl("Maintenance is a descriptive flag only", sct, fixed = TRUE)),
 ok(any(grepl("Single AUTO allowed; tandem pair allowed; excess AUTO ends LOT1",
              sct, fixed = TRUE)),
    "...and so is the single-plus-tandem transplant rule")
+
+cat("\n-- the transplant answer covers later lines, not LOT1 alone --\n")
+# 05_sct.R is the LOT1 rule and reads like the whole answer. It is not: at LOT2
+# and later SCT_AUTO is a START TYPE, so a transplant beyond what the previous
+# line allowed becomes a line of its own - with no drug beside it. An answer
+# stopping at LOT1 says "never a separate line", which is the opposite of what
+# a protocol comparison would conclude.
+l25 <- readLines(file.path(JUL28, "lot", "R", "steps", "10_lot2_5_base.R"), warn = FALSE)
+ok(any(grepl("THEN 'SCT_AUTO'", l25, fixed = TRUE)),
+   "SCT_AUTO really is one of the start types a later line takes")
+auto <- ours[ours$dimension_id == "sct_auto_is_a_line", , drop = FALSE]
+ok(grepl("start type", auto$ours, fixed = TRUE) &&
+     grepl("line of its own", auto$ours, fixed = TRUE),
+   "...and our answer says so, instead of stopping at the LOT1 rule")
+cited <- cite_parts(auto$ours_at)
+ok(any(vapply(cited, function(c_i)
+       grepl("10_lot2_5_base", c_i$file, fixed = TRUE) &&
+         grepl("SCT_AUTO|d_AUTO", l25[c_i$line]), logical(1))),
+   "...citing the later-line code that decides it, not only the LOT1 comment")
 
 cat("\n-- the grid ships empty, and empty does not read as agreement --\n")
 runs(read_definition_sources(SRC), "the source grid loads")

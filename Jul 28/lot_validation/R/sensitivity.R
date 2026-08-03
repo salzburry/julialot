@@ -105,10 +105,16 @@ SENS_AXES <- list(
        values = c(3L, 8L),
        what = "highest line built",
        expect = list(n_lines = "up", n_patients = "none",
-                     pct_reaching_lot3 = "up"),
+                     pct_reaching_lot3 = "none"),
        confidence = "derived",
        why = paste0("Purely a cap. Raising it builds lines that were being ",
-                    "discarded; it cannot change who has a LOT1."))
+                    "discarded; it cannot change who has a LOT1 - the truncating ",
+                    "criterion is asked of the claims, not of the built lines ",
+                    "(line_criteria.R). Reaching LOT3 cannot move either: both ",
+                    "alternatives are at or above three, so LOT3 is built in ",
+                    "every cell and the same patients reach it. Only a value ",
+                    "below three would change that row, and then it would be ",
+                    "absent rather than lower."))
 )
 
 # What each cell is measured on. Read from the cell's OWN outputs, so a cell
@@ -202,6 +208,20 @@ check_sens_plan <- function(cells, study_prefix, cap = 24L) {
 # Compared as a SIGN, not a size. How far a threshold moves a number depends on
 # the cohort; which way it moves is a property of the algorithm, and that is
 # the part worth predicting.
+#
+# Four verdicts, and the distinction between the last two is the point:
+#
+#   as expected          moved the way the prediction said
+#   AGAINST EXPECTATION  moved the OTHER way, or moved when "none" was
+#                        predicted. This is the finding - the algorithm does
+#                        something we did not think it did.
+#   no movement          a direction was predicted and the number did not
+#                        change. NOT the opposite finding: whether anyone sits
+#                        near a threshold is a property of the cohort, and a
+#                        window nobody's claims straddle moves nothing however
+#                        it is set. Reported separately so it can be looked at
+#                        without being counted as a contradiction.
+#   recorded / no data   "unclear" was predicted, or the cell produced nothing.
 sens_compare <- function(results, axes = SENS_AXES, tol = 1e-9) {
   ref <- results[results$cell == "reference", , drop = FALSE]
   if (!nrow(ref)) stop("No reference cell in the results.", call. = FALSE)
@@ -227,9 +247,18 @@ sens_compare <- function(results, axes = SENS_AXES, tol = 1e-9) {
         expected = want, moved = moved,
         # "unclear" was recorded so the run could settle it - it is never a
         # miss, and scoring it as one would reward confident guesses.
+        #
+        # "none" against a predicted direction is its own verdict, not a miss.
+        # The prediction is about the algorithm; whether the cohort has anyone
+        # near the threshold is not, and a cell that moves nothing has not
+        # contradicted anything. Scoring it as AGAINST EXPECTATION reports a
+        # valid result as a failure, and a sweep full of them stops being read.
+        # Predicting "none" and getting movement IS a miss, and stays one.
         verdict = if (identical(want, "unclear")) "recorded"
                   else if (is.na(moved)) "no data"
-                  else if (identical(moved, want)) "as expected" else "AGAINST EXPECTATION",
+                  else if (identical(moved, want)) "as expected"
+                  else if (identical(moved, "none")) "no movement"
+                  else "AGAINST EXPECTATION",
         confidence = a$confidence,
         stringsAsFactors = FALSE)
     }

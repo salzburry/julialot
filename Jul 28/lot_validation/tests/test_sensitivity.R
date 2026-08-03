@@ -139,6 +139,49 @@ ok(identical(c6$verdict[c6$metric == "n_lines"], "no data"),
 stops(sens_compare(mk()[0, , drop = FALSE]),
       "a comparison with no reference cell stops rather than comparing to nothing")
 
+cat("\n-- and a number that did not move is not the opposite finding --\n")
+# The prediction is about the ALGORITHM. Whether anyone in the cohort sits near
+# the threshold is not, and a window nobody's claims straddle moves nothing
+# however it is set. Scoring that as AGAINST EXPECTATION reports a valid result
+# as a failure, and a sweep full of them stops being read.
+c7 <- sens_compare(mk(row("map_discon_gap_days_120", "MAP_DISCON_GAP_DAYS", 120, 90,
+                          n_lines = 1000)))
+ok(identical(c7$verdict[c7$metric == "n_lines"], "no movement"),
+   "a predicted direction that produced no change at all is its own verdict")
+ok(!identical(c7$verdict[c7$metric == "n_lines"], "AGAINST EXPECTATION"),
+   "...and specifically NOT against expectation, which would be a false failure")
+# The asymmetry is deliberate: predicting "none" and getting movement IS a miss.
+ok(identical(c3$verdict[c3$metric == "n_patients"], "AGAINST EXPECTATION"),
+   "...while movement where none was predicted stays a miss")
+# Both sides of the boundary still score, so nothing became unfalsifiable.
+ok(identical(c1$verdict[c1$metric == "n_lines"], "as expected") &&
+     identical(c2$verdict[c2$metric == "n_lines"], "AGAINST EXPECTATION"),
+   "...and a real move in either direction still scores as it did")
+ok(any(grepl("no movement", readLines(file.path(ROOT, "run_sensitivity.R"),
+                                      warn = FALSE), fixed = TRUE)),
+   "the runner reports them separately rather than burying them in the CSV")
+
+cat("\n-- a prediction that could not come true is not a prediction --\n")
+# MAX_LOT is the case: pct_reaching_lot3 cannot move between MAX_LOT 3 and 8,
+# because LOT3 is built at both. Predicting "up" there guarantees a permanent
+# false failure in every sweep.
+ml <- Filter(function(a) identical(a$param, "MAX_LOT"), SENS_AXES)[[1]]
+ok(identical(ml$expect$pct_reaching_lot3, "none"),
+   "MAX_LOT predicts no change in reaching LOT3, since every cell builds LOT3")
+ok(all(as.integer(ml$values) >= 3L),
+   "...which is only true because no cell caps below the line being measured")
+# The general form of it: a metric measuring line n cannot be predicted to move
+# by a cap that leaves line n built in every cell.
+capped <- Filter(function(a) {
+  if (!identical(a$param, "MAX_LOT")) return(FALSE)
+  ln <- as.integer(sub("^pct_reaching_lot", "", grep("^pct_reaching_lot",
+                                                     names(a$expect), value = TRUE)))
+  any(!is.na(ln) & ln <= min(as.integer(a$values)) &
+        unlist(a$expect[grep("^pct_reaching_lot", names(a$expect))]) != "none")
+}, SENS_AXES)
+ok(!length(capped),
+   "no cap axis predicts movement in a line every one of its cells still builds")
+
 cat("\n-- what the ask wanted that cannot be swept --\n")
 # Silently dropping two of the four axes would read as coverage.
 rs <- readLines(file.path(ROOT, "run_sensitivity.R"), warn = FALSE)
@@ -162,9 +205,12 @@ ok(any(grepl("EACH ONE IS A COMPLETE LOT BUILD", rs, fixed = TRUE)),
 ok(any(grepl("system2(\"Rscript\"", rs, fixed = TRUE)),
    "each cell runs as its own process rather than in this one")
 # LOT_ATTRITION is keyed by run id, and the cell's id is not this script's.
-ok(any(grepl("LOT_BUILD_STATUS", rs, fixed = TRUE)) &&
-     any(grepl("ORDER BY UPDATED_AT DESC LIMIT 1", rs, fixed = TRUE)),
+rb <- readLines(file.path(ROOT, "R", "run_binding.R"), warn = FALSE)
+ok(any(grepl("lot_run_row(con, c_i$prefix)", rs, fixed = TRUE)),
    "...and its metrics are read against that cell's own run id")
+ok(any(grepl("LOT_BUILD_STATUS", rb, fixed = TRUE)) &&
+     any(grepl("ORDER BY UPDATED_AT DESC LIMIT 1", rb, fixed = TRUE)),
+   "...resolved by the one helper both harnesses use, from the latest status row")
 ok(any(grepl('env_flag("SENS_DROP_AFTER")', rs, fixed = TRUE)),
    "dropping a cell's tables is opt-in, not what a measurement script does quietly")
 

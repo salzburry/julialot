@@ -27,6 +27,7 @@
   if (length(a)) dirname(normalizePath(sub("^--file=", "", a[1]))) else getwd()
 })
 source(file.path(.script_dir, "R", "sensitivity.R"))
+source(file.path(.script_dir, "R", "run_binding.R"))
 
 LOT_ROOT <- normalizePath(file.path(.script_dir, "..", "lot"), mustWork = TRUE)
 
@@ -109,19 +110,19 @@ main <- function() {
   for (c_i in cells) {
     if (!run_cell(c_i, cohort)) next
     # The cell's own run id, from the cell's own status table: LOT_ATTRITION is
-    # keyed by it, and taking this run's id would read the wrong funnel.
-    st <- tryCatch(db_q(con, paste0(
-      "SELECT RUN_ID, STATE FROM ", wrk(paste0(c_i$prefix, "LOT_BUILD_STATUS")),
-      " ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) NULL)
-    if (is.null(st) || !nrow(st) ||
-        !identical(tolower(trimws(as.character(st$STATE[1]))), "complete")) {
+    # keyed by it, and taking this run's id would read the wrong funnel. Same
+    # resolver the benchmarks use - one definition of which run owns a prefix's
+    # tables. A cell that did not finish is skipped rather than refused: it
+    # costs that cell and the sweep goes on.
+    st <- lot_run_row(con, c_i$prefix)
+    if (is.null(st) || !isTRUE(st$complete)) {
       cat("    cell ", c_i$id, " did not finish - skipped.\n", sep = "")
       next
     }
     m <- tryCatch(db_q(con, sens_metric_sql(
       wrk(paste0(c_i$prefix, "LOT_LONG_FINAL")),
       wrk(paste0(c_i$prefix, "LOT_ATTRITION")),
-      as.character(st$RUN_ID[1]))), error = function(e) NULL)
+      st$run)), error = function(e) NULL)
     if (is.null(m)) { cat("    metrics unavailable for ", c_i$id, "\n", sep = ""); next }
     rows[[length(rows) + 1L]] <- cbind(
       data.frame(cell = c_i$id, param = if (is.na(c_i$param)) "" else c_i$param,
@@ -146,7 +147,9 @@ main <- function() {
   if (!is.null(cmp)) {
     write.csv(cmp, file.path(out_dir, "sensitivity_vs_expected.csv"), row.names = FALSE)
     against <- cmp[cmp$verdict == "AGAINST EXPECTATION", , drop = FALSE]
-    cat("\n", nrow(cmp), " predictions, ", nrow(against), " against expectation.\n", sep = "")
+    flat    <- cmp[cmp$verdict == "no movement", , drop = FALSE]
+    cat("\n", nrow(cmp), " predictions, ", nrow(against), " against expectation, ",
+        nrow(flat), " with no movement at all.\n", sep = "")
     if (nrow(against))
       for (i in seq_len(nrow(against)))
         cat("  AGAINST: ", against$cell[i], " ", against$metric[i],
@@ -155,6 +158,16 @@ main <- function() {
     cat("A prediction against expectation is the finding here - either the ",
         "algorithm does something we did not think it did, or we read it wrong.\n",
         sep = "")
+    if (nrow(flat)) {
+      for (i in seq_len(nrow(flat)))
+        cat("  no movement: ", flat$cell[i], " ", flat$metric[i],
+            " expected ", flat$expected[i], ", unchanged at ", flat$reference[i],
+            "\n", sep = "")
+      cat("No movement is not the opposite finding. A threshold no patient sits ",
+          "near cannot move anything however it is set, and that is the cohort ",
+          "rather than the algorithm - worth looking at, not a contradiction.\n",
+          sep = "")
+    }
   }
   cat("\nWrote ", out_dir, "\n", sep = "")
 }
