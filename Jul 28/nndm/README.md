@@ -104,9 +104,50 @@ All prefixed, so two cohorts sit side by side in one schema.
 | `NDMM_COHORT` | the cohort — one row per patient, the ten columns the lot build needs |
 | `NDMM_ATTRITION` | the nine-step funnel, with counts and percentages. Belantamab from the index onward is applied in the LOT build |
 | `NDMM_FLAGS_ALL` | one row per 1L candidate with every filter's verdict (also a checkpoint) |
+| `NDMM_CLINTRIAL_FLAGS` | one row per 1L patient with trial evidence cut at the 1L start — **descriptive, not a filter** |
 | `NDMM_RUN_METADATA` | the md5 of every R file, the contract as one string, the run choices, the waivers asked for and the waivers that fired |
 | `NDMM_CODELIST_METADATA` | the md5 and row count of every code list read |
 | `NDMM_BUILD_STATUS` | started / complete / failed, per run and prefix — what `check_no_active_run()` reads |
+
+### Clinical trial, on this build's index
+
+The study team asked whether the POMA recorded at 1L really was first line, or
+whether trial therapy came before it. The broad build already flags clinical
+trial, but on **its** index — a diagnosis-based candidate — and its two flags
+each miss half the answer: `CLINTRIAL_BASELINE` ends the day before that index,
+so it never sees the diagnosis-to-1L stretch, while `CLINTRIAL_FOLLOWUP` starts
+there and runs past 1L, mixing that stretch with evidence from after treatment
+began. The window that matters is in neither.
+
+`NDMM_CLINTRIAL_FLAGS` cuts the windows at the 1L start instead:
+
+| column | window |
+|---|---|
+| `CLINTRIAL_PRE_DX` | before the MM diagnosis |
+| `CLINTRIAL_DX_TO_LOT1` | diagnosis to the day before 1L — **the one that was missing** |
+| `CLINTRIAL_POST_LOT1` | 1L onward — context, never evidence of a prior line |
+| `CLINTRIAL_PRE_LOT1_12MO` | the twelve months before 1L |
+| `CLINTRIAL_FIRST_PRE_LOT1_DT`, `CLINTRIAL_DAYS_BEFORE_LOT1` | when, not just whether |
+
+The first three partition the study period and can be added. The fourth
+**spans** the first two — it is there because it is the window criterion 3 uses
+for prior MM therapy, so the two read side by side; adding it to the others
+double-counts.
+
+**It is not a criterion and must not become one.** Clinical trial does not
+filter this cohort. It gets its own table rather than columns on
+`NDMM_FLAGS_ALL` because every column there is a criterion or feeds one, and
+`ndmm_criteria_where()` reads that table — a descriptive flag sitting among them
+invites being read as one. It is built after the flags and joins nothing into
+them, so the cohort is identical with it and without it, and
+`tests/test_runner.R` fails if a `CLINTRIAL` column reaches either the criteria
+list or `06_flags.R`.
+
+The codes come from `clintrial.csv`, the same file and the same normalisation
+the broad build uses, so a difference between the two cohorts is about the
+window rather than about the codes. That adds a fifth entry to
+`CODELIST_FILES`: the file is now **required**, and its md5 is recorded beside
+the other four.
 
 ### The review tables
 

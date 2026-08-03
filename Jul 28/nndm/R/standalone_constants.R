@@ -16,6 +16,11 @@ NDMM_BASE_COHORT       <- "_ndmm_base_cohort"
 NDMM_BELANTAMAB_CODES  <- "_ndmm_belantamab_codes"
 NDMM_BELANTAMAB_PATIDS <- "_ndmm_belantamab_patids"
 
+# Views built by 08_clintrial.R. A descriptive flag on its own table, kept off
+# NDMM_FLAGS_ALL so nothing reads it as a criterion.
+NDMM_CLINTRIAL_CODES   <- "_ndmm_clintrial_codes"
+NDMM_CLINTRIAL_FLAGS   <- "_ndmm_clintrial_flags"
+
 # Two outpatient MM claims on different days within this many days confirm a
 # diagnosis. 90 is the study's window. Other builds report 30/60/90 side by
 # side as a sensitivity, but only one of those is a cohort.

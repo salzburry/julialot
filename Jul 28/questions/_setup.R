@@ -202,6 +202,37 @@ QS_TRIAL_FLAG_COLS  <- c("PATID", "INDEX_DATE", "OTHER_MALIGN_FLAG",
                          "CLINTRIAL_BASELINE", "CLINTRIAL_FOLLOWUP")
 QS_TRIAL_INDEX_COLS <- c("PATID", "INDEX_DATE")
 
+# The cohort build's own trial flag, cut at the 1L index.
+#
+# This is the one that answers the question the study team actually asked -
+# did trial therapy come before the 1L start - because its windows are anchored
+# where the cohort's index is. The broad build's pair cannot: its baseline ends
+# before a diagnosis-based index and its follow-up starts there and runs past
+# LOT1, so the stretch in between is in neither.
+#
+# One cohort, one prefix, no overlap to report: every patient here is a patient
+# of this run. So when this table is present it is preferred, and the broad
+# flags are what is left for OTHER_MALIGN_FLAG and for a run built before it
+# existed.
+QS_NDMM_TRIAL_COLS <- c("PATID", "LOT1_START_DT", "MM_DX_DT",
+                        "CLINTRIAL_PRE_DX", "CLINTRIAL_DX_TO_LOT1",
+                        "CLINTRIAL_POST_LOT1", "CLINTRIAL_PRE_LOT1_12MO")
+
+qs_ndmm_trial_flags <- function(con) {
+  tbl  <- qs_tbl("NDMM_CLINTRIAL_FLAGS")
+  miss <- qs_missing_cols(con, tbl, QS_NDMM_TRIAL_COLS)
+  if (length(miss) == 1L && is.na(miss))
+    return(list(ok = FALSE, table = tbl, why = paste0(
+      tbl, " is not there. It is the cohort build's own trial flag, anchored ",
+      "on the 1L start; a cohort built before it existed does not have it, and ",
+      "the broad build's diagnosis-anchored flags are used instead.")))
+  if (length(miss))
+    return(list(ok = FALSE, table = tbl, why = paste0(
+      tbl, " has no ", paste(miss, collapse = ", "), ", so it is not the ",
+      "1L-anchored trial flag. Re-run the cohort build.")))
+  list(ok = TRUE, table = tbl, why = NULL)
+}
+
 # Which of cols the table does not have. character(0) when it has them all;
 # NA when it could not be described at all, which is a different problem from a
 # table of the wrong shape and gets a different message.

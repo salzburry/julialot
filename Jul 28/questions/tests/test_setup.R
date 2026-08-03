@@ -395,6 +395,32 @@ ok(any(grepl("qs_vintage_note", st, fixed = TRUE)),
 ok(any(grepl('paste0("VINTAGE: ", broad$vintage)', pm, fixed = TRUE)),
    "...with Q3 carrying the mismatch onto the tab, since that is where it bites")
 
+cat("\n-- the trial question is answered on this cohort's own index --\n")
+# The whole point of the nndm flag: its windows are cut at the 1L start, so
+# diagnosis-to-1L is a column rather than something split across two
+# diagnosis-anchored flags that each miss half of it.
+ct <- readLines(file.path(dirname(ROOT), "nndm", "R", "steps", "08_clintrial.R"),
+                warn = FALSE)
+ok(any(grepl("AS CLINTRIAL_DX_TO_LOT1", ct, fixed = TRUE)),
+   "the cohort build has a diagnosis-to-1L trial window")
+ok(any(grepl("qs_ndmm_trial_flags(con)", pm, fixed = TRUE)),
+   "...and Q4 reads it")
+ok(any(grepl("n_dx_to_lot1", pm, fixed = TRUE)) &&
+   any(grepl("median_days_before_lot1", pm, fixed = TRUE)),
+   "...headlining that window, with the timing beside it")
+# One prefix, one cohort: nothing to reconcile, so a missing row is a broken
+# join and is counted rather than read as a clean patient.
+ok(any(grepl("AS missing_flag_rows", pm, fixed = TRUE)),
+   "...and a LOT1 patient with no flag row is counted, not coerced to clean")
+# The overlapping window must not be added to the partition.
+ok(any(grepl("do NOT add it to n_pre_dx", pm, fixed = TRUE)),
+   "...with the 12-month window marked as spanning two of the others")
+# The old view stays, as context, and says what it cannot answer.
+ok(any(grepl("diagnosis index (context)", pm, fixed = TRUE)),
+   "the diagnosis-anchored table is kept beside it, labelled as context")
+ok(any(grepl("Clinical trial does NOT filter this cohort", pm, fixed = TRUE)),
+   "...and the tab says the flag is descriptive, not a criterion")
+
 cat("\n-- every script binds to its run, not just the two that read flags --\n")
 # The guard is worth nothing in the scripts that skip it. All five bound
 # raw-claim windows by INPUT_COHORT_TABLE, and all five read tables a newer

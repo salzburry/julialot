@@ -180,6 +180,22 @@ quietly: the broad build's index is a diagnosis-based candidate, while
 and read as nobody being flagged. So the flags join to their **own** final
 cohort table, and the LOT population restricts the result by `PATID`.
 
+### The question it could not answer, now answered elsewhere
+
+The diagnosis-anchored flags never could say whether trial therapy preceded the
+1L start — baseline ends before that index, follow-up starts there and runs past
+1L, and the stretch in between is in neither. So the cohort build now produces
+`NDMM_CLINTRIAL_FLAGS`, whose windows are cut at the 1L start and which carries
+`CLINTRIAL_DX_TO_LOT1` as its own column (`nndm/README.md`).
+
+Q4 reads it when it is there and headlines it, with the diagnosis-anchored
+table kept beside it as context. One prefix, one cohort — no overlap to report
+and no second index to reconcile, so a LOT1 patient with no row is a broken
+join and is counted as `missing_flag_rows` rather than read as a clean patient.
+
+A cohort built before that table existed still gets the old view, labelled for
+what it is. Everything below applies to that path.
+
 ### The build behind them has to have finished
 
 The flags and the final cohort are **separate writes**. A run that stopped
