@@ -43,9 +43,6 @@
 # here because it is the window filter #4 uses for prior MM therapy, so the two
 # can be read side by side. Adding it to the others double-counts, which is why
 # it is named for its window rather than for a position in a sequence.
-NDMM_CLINTRIAL_WINDOWS <- c("CLINTRIAL_PRE_DX", "CLINTRIAL_DX_TO_LOT1",
-                            "CLINTRIAL_POST_LOT1", "CLINTRIAL_PRE_LOT1_12MO")
-
 # clintrial.csv, in the shape the claim scan joins on. Same file and the same
 # normalisation the broad build uses, so "a trial claim" means one thing across
 # the two cohorts and a difference between them is about the window, not about

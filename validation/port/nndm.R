@@ -384,6 +384,42 @@ undeviate <- function(lines, file) {
   lines
 }
 
+# Definitions the port leaves behind: named here and dropped from the SOURCE
+# side before the comparison, which is the mirror of ADDED. Each is unreachable
+# in this build - nothing calls the two functions, and the three constants are
+# read only by them or by nobody - so dropping them changes no behaviour. A name
+# that is not found in the source is reported, so an entry cannot quietly rot.
+DROPPED <- list(
+  # checkpoint() names the table after the view variable, so the *_TBL twins the
+  # source needed have no reader here.
+  "R/nndm_constants.R"       = c("NDMM_LOT_LONG_FILT", "NDMM_LOT_LONG_FILT_TBL",
+                                 "NDMM_FLAGS_ALL_TBL"),
+  # NDMM_LOT1_STARTS is built by 00b_lot1_index.R from claims, not from LOT_LONG.
+  "R/steps/02_lot1_starts.R" = "build_lot1_starts_ndmm",
+  # Nothing reads NDMM_LOT_LONG_FILT: the LOT-detail views it fed are the
+  # dashboard package's, and that reads LOT_LONG_FINAL directly.
+  "R/steps/07_cohort.R"      = "build_lot_long_filtered"
+)
+
+# Remove each named definition from the source lines. A function runs to its
+# closing brace in column 0; a constant is the one line.
+undrop <- function(want, file) {
+  short <- character(0)
+  for (nm in DROPPED[[file]]) {
+    i <- grep(paste0("^", nm, "\\s*<-"), want)
+    if (!length(i)) { short <- c(short, paste0(nm, " (not in the source)")); next }
+    i <- i[1]
+    j <- i
+    if (grepl("function", want[i], fixed = TRUE)) {
+      k <- which(want[(i + 1L):length(want)] == "}")
+      if (!length(k)) { short <- c(short, paste0(nm, " (no closing brace)")); next }
+      j <- i + k[1]
+    }
+    want <- want[-(i:j)]
+  }
+  list(want = want, short = short)
+}
+
 CHANGED <- c("R/nndm_constants.R", "R/steps/03_prior_therapy.R",
              "R/steps/04_other_malig.R", "R/steps/05_pregnancy.R",
              "R/steps/06_flags.R", "R/steps/07_cohort.R")
@@ -411,9 +447,15 @@ for (p in PARTS) {
   raw  <- code_only(body_of(readLines(f, warn = FALSE)))
   got  <- if (p$file %in% CHANGED) undeviate(raw, p$file) else raw
   want <- code_only(src[p$from:p$to])
+  dropped <- character(0)
+  if (!is.null(DROPPED[[p$file]])) {
+    u <- undrop(want, p$file); want <- u$want; dropped <- u$short
+  }
   if (p$file %in% CHANGED) {
-    sh <- get(p$file, envir = undo_report)
+    sh <- c(get(p$file, envir = undo_report), dropped)
     if (length(sh)) { ok(FALSE, paste0(p$file, ": an approved deviation is missing -- ", sh[1])); next }
+  } else if (length(dropped)) {
+    ok(FALSE, paste0(p$file, ": an approved deviation is missing -- ", dropped[1])); next
   }
   if (identical(got, want)) {
     ok(TRUE, paste0(p$file, ": ",

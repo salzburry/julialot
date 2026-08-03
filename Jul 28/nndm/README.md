@@ -86,14 +86,6 @@ runner: `NDMM_PATIDS` is defined over it a few lines below and Spark inlines a
 temporary view's plan, so repointing after that view exists would leave it on
 the original query.
 
-`07_cohort.R` carries `build_lot_long_filtered()` and `02_lot1_starts.R`
-carries `build_lot1_starts_ndmm()`. **The runner calls neither.**
-`NDMM_LOT1_STARTS` is built by `00b_lot1_index.R`, and nothing reads
-`NDMM_LOT_LONG_FILT` at all. They are left in place because these files are
-held line-for-line against the reviewed rules, and removing code from them
-would loosen that check for no gain at run time — the functions are defined
-and never called, which costs nothing.
-
 Every setting is checked twice: against `CONTRACT`, and against the `NDMM_*`
 constants the SQL actually interpolates — those have their own environment
 variables (`NDMM_LOT1_FROM` is not `LOT1_FROM`), so a contract checked against

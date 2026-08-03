@@ -35,7 +35,7 @@ clear <- function() for (v in SETTINGS) Sys.unsetenv(v)
 # Stand-in names. The package knows no real cohort, so the tests must not
 # smuggle one in either.
 TBL_A <- "COH_A_FINAL"; PFX_A <- "coh_a_"
-TBL_B <- "COH_B_FINAL"; PFX_B <- "coh_b_"
+PFX_B <- "coh_b_"
 
 cat("\n-- the caller supplies the cohort, the package holds none --\n")
 clear()

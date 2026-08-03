@@ -1,37 +1,3 @@
-# The filtered cohort, and the counts the attrition is read from.
-#
-
-build_lot_long_filtered <- function(con, lot_long) {
-  db_exec(con, glue("
-    CREATE OR REPLACE TEMPORARY VIEW {NDMM_LOT_LONG_FILT} AS
-    SELECT l.*
-    FROM {lot_long} l
-    INNER JOIN {NDMM_PATIDS} a
-            ON cast(l.PATID as string) = a.PATID
-  "))
-
-  # Materialize once, then repoint the view at the work-schema table. This
-  # The filtered LOT_LONG is read many times downstream, and as a bare view
-  # every read re-runs the join. Build it once and point the view at the table.
-  # A work schema we cannot write to falls back to the view - still correct,
-  # just slower. Same rows either way.
-  tryCatch({
-    run_step(con, "S_ndmm_materialize_lot_long_filt", glue("
-      CREATE OR REPLACE TABLE {wrk(NDMM_LOT_LONG_FILT_TBL)} AS
-      SELECT * FROM {NDMM_LOT_LONG_FILT}
-    "), qc = glue("SELECT count(*) AS n_rows FROM {wrk(NDMM_LOT_LONG_FILT_TBL)}"))
-    db_exec(con, glue("
-      CREATE OR REPLACE TEMPORARY VIEW {NDMM_LOT_LONG_FILT} AS
-      SELECT * FROM {wrk(NDMM_LOT_LONG_FILT_TBL)}
-    "))
-  }, error = function(e) {
-    log_msg("WARN: could not materialize ", wrk(NDMM_LOT_LONG_FILT_TBL), " (",
-            conditionMessage(e), "); keeping the in-place temp view - NDMM ",
-            "LOT-detail views stay correct but run slower (the join is ",
-            "recomputed on each read).")
-  })
-}
-
 # Counts at each filter step for the attrition card. Steps after
 # ELIG_COH_FINAL + LOT1 are CUMULATIVE - each row applies all previous
 # NDMM filters plus the new one, so the table reads top-to-bottom as

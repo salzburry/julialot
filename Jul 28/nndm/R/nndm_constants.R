@@ -1,9 +1,5 @@
 # Names, windows and code-list overrides for this cohort.
 
-NDMM_LOT_LONG_FILT       <- "_ndmm_lot_long"
-# Table behind the view above. The view joins LOT_LONG to the cohort and is
-# read many times, so build it once and point the view at it.
-NDMM_LOT_LONG_FILT_TBL   <- "NDMM_LOT_LONG_FILT"
 NDMM_ENROLL_SPANS        <- "_ndmm_enroll_spans"
 NDMM_ENROLL_SPANS_STRICT <- "_ndmm_enroll_spans_strict"  # no-gap spans for the 3-mo FU CE
 NDMM_LOT1_STARTS         <- "_ndmm_lot1_starts"
@@ -14,10 +10,6 @@ NDMM_MED_CLAIM_HEADER    <- "_ndmm_med_claim_header"
 NDMM_CONFINEMENT         <- "_ndmm_confinement"
 NDMM_OTHER_MALIG_PATIDS  <- "_ndmm_other_malig_patids"
 NDMM_FLAGS_ALL           <- "_ndmm_flags_all"   # per-PATID filter flags (for attrition)
-# Table behind the view above. The view holds every raw-claim scan - pregnancy,
-# belantamab, prior therapy, other cancer - and is read many times. Build it
-# once and point the view at it.
-NDMM_FLAGS_ALL_TBL       <- "NDMM_FLAGS_ALL"
 NDMM_PATIDS       <- "_ndmm_patids"
 NDMM_PREG_CODES          <- "_ndmm_preg_codes"
 NDMM_PREGNANCY_PATIDS    <- "_ndmm_pregnancy_patids"
