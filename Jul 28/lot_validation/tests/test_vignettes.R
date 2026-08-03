@@ -15,7 +15,9 @@ ROOT <- local({
                                                  fixed = TRUE))) else getwd()
   dirname(d)
 })
-JUL28 <- dirname(ROOT)
+# The folder the packages sit in, resolved from this file rather than named:
+# it stays right whatever that folder is called.
+PARENT <- dirname(ROOT)
 
 pass <- 0L; fail <- 0L
 ok <- function(cond, what) {
@@ -31,7 +33,7 @@ source(file.path(ROOT, "R", "vignettes.R"))
 
 # The shipped settings, read the way the build reads them.
 P <- local({
-  lot_root <- file.path(JUL28, "lot")
+  lot_root <- file.path(PARENT, "lot")
   e <- new.env(parent = globalenv())
   sys.source(file.path(lot_root, "R", "load_inputs.R"), envir = e)
   e$load_pipeline_inputs(lot_root, "config.csv")
@@ -102,7 +104,7 @@ missing <- character(0)
 for (v in VIGNETTES) {
   f <- sub("[: ].*$", "", v$where)
   if (!nzchar(f) || identical(f, "nowhere")) next
-  if (!file.exists(file.path(JUL28, f))) missing <- c(missing, paste0(v$id, " -> ", f))
+  if (!file.exists(file.path(PARENT, f))) missing <- c(missing, paste0(v$id, " -> ", f))
 }
 ok(!length(missing),
    if (length(missing)) paste0("quotes a file that is not here: ",
@@ -110,10 +112,10 @@ ok(!length(missing),
    else "every quoted rule names a file that exists")
 # The two facts the catalogue leans on hardest, checked against the code rather
 # than trusted: an ALLO line has no regimen, and no_belantamab is patient-level.
-sct <- readLines(file.path(JUL28, "lot", "R", "steps", "10_lot2_5_base.R"), warn = FALSE)
+sct <- readLines(file.path(PARENT, "lot", "R", "steps", "10_lot2_5_base.R"), warn = FALSE)
 ok(any(grepl("ALLO singleton LOTs contain no MM therapies", sct, fixed = TRUE)),
    "...and the ALLO no-regimen case the catalogue describes is really in the build")
-lc <- readLines(file.path(JUL28, "lot", "R", "line_criteria.R"), warn = FALSE)
+lc <- readLines(file.path(PARENT, "lot", "R", "line_criteria.R"), warn = FALSE)
 ok(any(grepl('on_fail = "truncate"', lc, fixed = TRUE)) &&
      any(grepl("Patient-level, not line-level", lc, fixed = TRUE)),
    "...and so is the patient-level belantamab truncate")

@@ -322,7 +322,7 @@ Four files, read from `CODELIST_DIR`, named in `R/codelists_lot.R`:
 cl_mma_rollup.csv  cl_mma_codelist.csv  permissible_subs.csv  cl_sct_codelist.csv
 ```
 
-They live outside git, so each is hashed before and after being read. A file
+They live outside version control, so each is hashed before and after being read. A file
 that changes mid-read stops the build rather than being recorded under the
 wrong hash.
 
@@ -680,8 +680,8 @@ what it did.
 every setting `CONTRACT` pins. The metadata row itself records seven of those
 settings and nothing about the code, which is not enough to say later which
 version and which contract made an old set of tables. A source hash rather than
-a git commit, because the folder is copied into Domino to run and there may be
-no repository to ask. `phase_persist`
+a version-control revision, because the folder is copied into Domino to run and
+there may be nothing to ask. `phase_persist`
 writes it before LOT2-5 exists, so its own counts stop at LOT1 - cohort, MMA
 claims, MAPs, LOT1 patients. `N_LOT_LONG_ROWS`, `N_LOT_LONG_PATIENTS` and
 `LOT_LONG_BY_LINE` (`1:900|2:400|3:120`) are filled in after `LOT_LONG` has

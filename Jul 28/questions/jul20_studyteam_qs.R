@@ -12,7 +12,7 @@
 # file is modified.
 #
 # Population: the study population by default (LOT_LONG_FINAL), which is the
-# cohort Julia's question 2 names, and the same default as the sibling
+# cohort the study team's question 2 names, and the same default as the sibling
 # jul20_refresh_dashboard.R. Set LOT_POPULATION=PRECRITERIA for
 # the whole LOT cohort. Run the pair with the cohort stated explicitly:
 #   LOT_POPULATION=FINAL Rscript jul20_refresh_dashboard.R
@@ -1207,7 +1207,7 @@ main <- function() {
   if (!isTRUE(tok$resolved))
     gaps <- c(gaps,
       "Agent tokens could not be resolved from cl_mma_codelist.csv - fell back to defaults (DARA/BORT/MELP); every token-based answer is unverified")
-  # Julia's CAR-T rule names the 60-day induction window explicitly. The
+  # The July-20 CAR-T rule names the 60-day induction window explicitly. The
   # screen uses the environment's configured window (VQS_W1), so an override
   # must be surfaced rather than silently changing what the screen means.
   if (VQS_W1 != 60L)
@@ -1232,7 +1232,7 @@ main <- function() {
       log_msg("  CHECK FLAG: ", name, " - ", detail)
   }
 
-  # Central required-output gate: every answer Julia asked for must either
+  # Central required-output gate: every answer the study team asked for must either
   # produce real data or force the run INCOMPLETE. A best_effort() status
   # table anywhere in the required set registers a gap here, so "technically
   # complete" can never coexist with a failed required output.
@@ -1337,7 +1337,7 @@ main <- function() {
     write_out(best_effort(q2_region_candidates_report(con, describe_cols),
                           "region candidate columns"), "region_candidate_columns")
     # Opt-in state -> Census region rollup (REGION_MAP=CENSUS). Use it when the
-    # approved region source is a STATE field and Julia wants the 4 regions.
+    # approved region source is a STATE field and the ask wants the 4 regions.
     region_map_mode <- toupper(Sys.getenv("REGION_MAP", unset = ""))
     do_census <- region_map_mode %in% c("CENSUS", "CENSUS_REGION", "STATE_TO_CENSUS")
     reg_src <- q2_region_source_from_env(con, describe_cols)

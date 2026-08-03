@@ -15,7 +15,9 @@ ROOT <- local({
                                                  fixed = TRUE))) else getwd()
   dirname(d)
 })
-JUL28 <- dirname(ROOT)
+# The folder the packages sit in, resolved from this file rather than named:
+# it stays right whatever that folder is called.
+PARENT <- dirname(ROOT)
 
 pass <- 0L; fail <- 0L
 ok <- function(cond, what) {
@@ -67,7 +69,7 @@ for (i in seq_len(nrow(ours))) {
   p <- cite_parts(ours$ours_at[i])
   if (is.null(p) || !length(p)) { unlined <- c(unlined, ours$dimension_id[i]); next }
   for (c_i in p) {
-    f <- file.path(JUL28, c_i$file)
+    f <- file.path(PARENT, c_i$file)
     if (!file.exists(f)) { missing <- c(missing, ours$dimension_id[i]); next }
     txt <- readLines(f, warn = FALSE)
     if (c_i$line > length(txt)) past_end <- c(past_end, ours$dimension_id[i])
@@ -88,7 +90,7 @@ ok(!length(past_end) && !length(blank),
             paste(unique(c(past_end, blank)), collapse = ", "))
    else "...and a line that file actually has")
 # The two answers most likely to be wrong if the build changed under us.
-sct <- readLines(file.path(JUL28, "lot", "R", "steps", "05_sct.R"), warn = FALSE)
+sct <- readLines(file.path(PARENT, "lot", "R", "steps", "05_sct.R"), warn = FALSE)
 ok(any(grepl("Maintenance is a descriptive flag only", sct, fixed = TRUE)),
    "...and 'maintenance is never a line' is what the build actually says")
 ok(any(grepl("Single AUTO allowed; tandem pair allowed; excess AUTO ends LOT1",
@@ -101,7 +103,7 @@ cat("\n-- the transplant answer covers later lines, not LOT1 alone --\n")
 # line allowed becomes a line of its own - with no drug beside it. An answer
 # stopping at LOT1 says "never a separate line", which is the opposite of what
 # a protocol comparison would conclude.
-l25 <- readLines(file.path(JUL28, "lot", "R", "steps", "10_lot2_5_base.R"), warn = FALSE)
+l25 <- readLines(file.path(PARENT, "lot", "R", "steps", "10_lot2_5_base.R"), warn = FALSE)
 ok(any(grepl("THEN 'SCT_AUTO'", l25, fixed = TRUE)),
    "SCT_AUTO really is one of the start types a later line takes")
 auto <- ours[ours$dimension_id == "sct_auto_is_a_line", , drop = FALSE]
@@ -137,13 +139,12 @@ base <- src[1, , drop = FALSE]
 b <- base; b$answer <- "Counted as a separate line."
 stops(read_definition_sources(wr(b)),
       "an answer with no citation is refused")
-# The specific failure this file exists to prevent, and the one that was
-# actually available here: search works, fetching does not, and a search
-# summary reads exactly like a source.
+# The specific failure this file exists to prevent: a summary of a document
+# reads exactly like the document, and is far easier to come by.
 b <- base; b$answer <- "Counted as a separate line."; b$source_type <- "search_summary"
-b$citation <- "a web search result"
+b$citation <- "a summary somebody pasted"
 stops(read_definition_sources(wr(b)),
-      "...and a search summary is rejected by name, not merely discouraged")
+      "...and a summary of a document is rejected by name, not merely discouraged")
 b <- base; b$answer <- "x"; b$source_type <- "recollection"; b$citation <- "I remember"
 stops(read_definition_sources(wr(b)), "...as is something written from memory")
 b <- base; b$answer <- "x"; b$source_type <- "hearsay"; b$citation <- "someone said"
@@ -185,11 +186,11 @@ ok(identical(c3$concordance[c3$dimension_id == "maintenance_is_a_line"], "unclea
 cat("\n-- why the columns are empty is recorded, not left to be guessed --\n")
 dn <- readLines(file.path(ROOT, "R", "definitions.R"), warn = FALSE)
 rd <- readLines(file.path(ROOT, "run_definitions.R"), warn = FALSE)
-ok(any(grepl("denied by this environment's", dn, fixed = TRUE)) ||
-     any(grepl("denied by network policy", rd, fixed = TRUE)),
-   "the network denial is stated, so empty reads as blocked rather than skipped")
-ok(any(grepl("search summary", dn, fixed = TRUE)),
-   "...and so is the reason a search result was not used instead")
+ok(any(grepl("are not in this folder", dn, fixed = TRUE)) &&
+     any(grepl("are not in this folder", rd, fixed = TRUE)),
+   "the reason is stated, so empty reads as unsourced rather than skipped")
+ok(any(grepl("summary of a document", dn, fixed = TRUE)),
+   "...and so is why a summary of one was not used instead")
 
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))

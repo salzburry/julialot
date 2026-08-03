@@ -1,22 +1,21 @@
 # How this algorithm operationalises "line of therapy", point by point.
 #
-# Idea 1: map these rules against IMWG consensus and the pivotal trial
+# The ask: map these rules against IMWG consensus and the pivotal trial
 # definitions, and flag where they agree and where they do not.
 #
 # ---- what is here and what is not -----------------------------------------
 #
 # OUR column is complete and cited to file and line. It is the half that can be
-# established from this repository, and it is the half nobody had written down:
-# the rules exist across eight step files, and "does this count SCT as a line"
-# had no single place to look before this.
+# established from the code, and it is the half nobody had written down: the
+# rules exist across eight step files, and "does this count SCT as a line" had
+# no single place to look before this.
 #
-# THEIR columns are empty, and that is a circumstance rather than a choice.
-# clinicaltrials.gov and myeloma.org are both denied by this environment's
-# network policy, so no protocol and no consensus paper could be retrieved.
-# Web SEARCH is available and returns summaries of both - and a search summary
-# is exactly what must not go in these cells. It reads like a citation, cannot
-# be checked against the document, and would make a concordance table that
-# looks authoritative and is not. DEF_SOURCE_TYPES rejects it by name.
+# THEIR columns are empty, because the consensus paper and the trial protocols
+# are not in this folder and nothing here can stand in for them. What must not
+# go in these cells is a summary of a document rather than the document: it
+# reads like a citation, cannot be checked by anyone holding the same source,
+# and would make a concordance table that looks authoritative and is not.
+# DEF_SOURCE_TYPES rejects that by name.
 #
 # So this ships as a grid somebody with the documents can fill mechanically:
 # one row per dimension, the question to put to a protocol spelled out, and a
@@ -26,18 +25,19 @@
 #
 # The distinction that matters is whether the cell can be checked by someone
 # holding the same document. A protocol section can. A recollection cannot, and
-# neither can a search result summarising one.
+# neither can a summary of one.
 DEF_SOURCE_TYPES <- c(
   protocol      = "the trial protocol or SAP, with a section reference",
   registry      = "the ClinicalTrials.gov record, with the NCT id and field",
   publication   = "a peer-reviewed paper, with the page or section",
   guideline     = "a consensus or guideline document, with the section")
 DEF_SOURCE_REJECTED <- c(
-  search_summary = paste0("a web search result summarising a document. Reads ",
-                          "like a citation, cannot be checked against the ",
-                          "document, and is how an unsourced claim gets into a ",
-                          "table that looks authoritative."),
-  recollection   = "written from memory. The same objection, without the URL.")
+  search_summary = paste0("a summary of a document rather than the document. ",
+                          "Reads like a citation, cannot be checked by anyone ",
+                          "holding the source, and is how an unsourced claim ",
+                          "gets into a table that looks authoritative."),
+  recollection   = paste0("written from memory. The same objection, and ",
+                          "nothing at all for a reader to go to."))
 
 # The dimensions a line-of-therapy definition has to answer. The first three
 # are the ones the ask named; the rest are where this algorithm makes a

@@ -1,7 +1,7 @@
 # Distribution benchmarks: what this algorithm produces, beside what has been
 # published.
 #
-# Idea 2(a)-(c) - LOT counts per patient, regimen frequencies per line, and
+# The ask: LOT counts per patient, regimen frequencies per line, and
 # durations / time to next treatment, each against a published figure.
 #
 # ---- the half that is not code --------------------------------------------

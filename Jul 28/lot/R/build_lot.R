@@ -1344,9 +1344,9 @@ record_codelist_hashes <- function(con, cfg) {
 # columns rather than one per setting:
 # CODE_MD5 fingerprints the R that ran, and CONTRACT_SETTINGS carries the lot.
 #
-# A hash of the sources rather than a git sha: this folder is copied into
-# Domino to run, where there may be no repository to ask, and the hash
-# describes the code that actually executed either way.
+# A hash of the sources rather than a version-control revision: this folder
+# is copied into Domino to run, where there may be nothing to ask, and the
+# hash describes the code that actually executed either way.
 code_fingerprint <- function(here) {
   # radix, not the default: character sort is collation-sensitive, and a hash
   # meant to say "the same code" must not depend on the machine's locale.

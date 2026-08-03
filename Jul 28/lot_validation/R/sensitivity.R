@@ -1,6 +1,6 @@
 # Sensitivity of the LOT algorithm to its own thresholds.
 #
-# Idea 2(d): vary the parameters and record what moves, with the direction
+# The ask: vary the parameters and record what moves, with the direction
 # stated BEFORE the run rather than read off afterwards.
 #
 # That ordering is the whole value. A table of numbers from thirteen builds says

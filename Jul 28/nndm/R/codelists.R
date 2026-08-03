@@ -98,7 +98,7 @@ load_codelist_csv <- function(csv_name, col_spec) {
   if (!csv_name %in% CODELIST_FILES)
     stop("CODELIST ERROR: ", csv_name, " is not one of the files this build is ",
          "defined on: ", paste(CODELIST_FILES, collapse = ", "), call. = FALSE)
-  # The code lists live outside git, so the name alone does not say which
+  # The code lists live outside version control, so the name alone does not say which
   # version a run used. Hash it, and hash it again after the read: if it were
   # swapped mid-read the logged hash would describe a file we did not load.
   md5 <- unname(tools::md5sum(csv_path))

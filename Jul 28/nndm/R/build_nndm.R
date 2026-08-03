@@ -756,7 +756,7 @@ CODELIST_METADATA_COLS <- c(RUN_ID = "STRING", CSV_NAME = "STRING",
                             RECORDED_AT = "TIMESTAMP")
 
 # load_codelist_csv() hashes every CSV it reads, because the code lists live
-# outside git and the file name alone does not say which version a run used.
+# outside version control and the file name alone does not say which version a run used.
 # Those hashes were being collected into an option and then dropped. Written
 # here, so the outputs say which code lists built them.
 write_codelist_metadata <- function(con, cfg) {

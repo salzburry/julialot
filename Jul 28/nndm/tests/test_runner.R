@@ -175,7 +175,7 @@ ok(is.null(drive_up()), "all eight raw inputs readable lets the run start")
 # There are no built inputs any more: this package reads raw CDM and its code
 # lists, which is what lets it be handed to someone on its own.
 ok(length(upstream_tables(cfg_defaults)) == 0L,
-   "the build depends on no table another build in this repository makes")
+   "the build depends on no table another build in this folder makes")
 msg <- drive_up("cdm.t_dod")
 ok(!is.null(msg) && grepl("dod", msg, fixed = TRUE),
    "the death table is preflighted - the demographics step needs it")
@@ -354,8 +354,8 @@ ok(identical(keys, names(got)),
 ok(length(keys) == 9L, paste0("nine steps, one per criterion (", length(keys), ")"))
 
 cat("\n-- the funnel adds the criteria in the study's order --\n")
-# ndmm_counts() decides the order the funnel reads in, so
-# the line-for-line comparison holds nothing here. What holds it is this:
+# ndmm_counts() decides the order the funnel reads in, and no comparison to
+# another file can hold that order. What holds it is this:
 # each step's SQL is read back and must be the
 # step above it plus exactly one flag, in the order the criteria are listed:
 # inclusions first, then exclusions.
@@ -1374,7 +1374,7 @@ clear()
 
 cat("\n-- pregnancy reads every column a code could be in --\n")
 # The rule covers diagnosis, procedure and revenue codes. BILL_PROC_CD is
-# the facility-claim procedure code, and the therapy and SCT scans in this repo
+# the facility-claim procedure code, and the therapy and SCT scans here
 # already read it - pregnancy did not, so a pregnancy HCPCS code populated only
 # there kept the patient. Driven, so the arm cannot quietly go away.
 pe <- new.env(parent = globalenv())

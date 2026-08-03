@@ -175,8 +175,8 @@ resolve_lot_tokens <- function(con) {
 # steroids out of LOT_BASE_MEDS, so this is the list of MM agents.
 MEDS_ARR <- "filter(split(LOT_BASE_MEDS, ' '), x -> length(x) > 0)"
 
-# The steroid short-codes used across the repo's codelists (dashboard, steroid_
-# codes.csv, engine rollup). Q1 checks regimens against this fixed list rather
+# The steroid short-codes used across this folder's codelists (dashboard,
+# steroid_codes.csv, engine rollup). Q1 checks regimens against this fixed list rather
 # than the MAP steroid class, which may be empty for cl_mma_codelist.csv; the
 # token table backs it up by showing every code that does appear.
 STEROID_TOKENS <- c("DEX", "DEXA", "DEXAMETHASONE", "DEXAMETH",

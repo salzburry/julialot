@@ -6,7 +6,6 @@ What the study team asked, and the scripts that answered it.
 
 | | |
 |---|---|
-| `asked/` | the questions as they were sent, and the specs and comments that came with them |
 | `*_qs.R` | the scripts that answered them, against a finished LOT run |
 | `_setup.R` | shared setup — points the scripts at the `lot` package's modules |
 | `broad_studyteam_qs.R` | the two questions NDMM cannot answer, over a broad cohort |
@@ -366,9 +365,3 @@ whether the question SQL returns the same answers as before — nothing here has
 been executed against a warehouse.
 
 Treat the first run of each script as a run to check, not a run to quote.
-
-## The files in `asked/`
-
-They are PDFs, spreadsheets and one message thread — the record of what was
-asked and when. They are reference material, not inputs: no script reads them,
-and nothing in the build does either.
