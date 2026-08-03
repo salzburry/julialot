@@ -569,7 +569,7 @@ main <- function() {
                JOIN idx i ON cast(d.PATID as string) = i.PATID
                JOIN codes c
                  ON upper(regexp_replace(d.DIAG,'[^A-Za-z0-9]','')) = c.dx
-                AND (CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9' ELSE 'ICD10' END) = c.icd_family
+                AND ({qs_icd_family_sql('d.ICD_FLAG')}) = c.icd_family
                WHERE cast(d.FST_DT as date) BETWEEN date_sub(i.index_date,{bdays}) AND date_sub(i.index_date,1)
                GROUP BY cast(d.PATID as string))
       SELECT CASE WHEN p.PATID IS NOT NULL THEN 'POMA-1L' ELSE 'other-1L' END  grp,

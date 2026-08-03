@@ -234,6 +234,11 @@ windows and index dates — so the wrong one answers about a run it never saw.
 that cannot be read warns instead: an older run may predate it, and refusing to
 answer would be worse than saying the binding is unverified.
 
+**Every** script calls it, not just the two that read flag tables. All five
+bound raw-claim windows by `INPUT_COHORT_TABLE`, and all five read tables a
+newer failed run may have replaced — a guard three scripts skip is a guard that
+protects two workbooks and leaves three quoting the same wrong numbers.
+
 It reads the **latest** row, whatever state it reached — not the latest
 `complete` one. LOT replaces `LOT_LONG_FINAL` before it validates it, so a
 rerun that replaced it and then failed leaves its own table on disk while the
@@ -291,10 +296,37 @@ a version re-issued mid-run is caught. That is what `codelists_lot.R` does for
 the four the build reads, and for the same reason: the count gets quoted either
 way.
 
+**Nothing here tells anyone to edit it.** The follow-up workbook used to say
+that emptying `steroid_codes.csv` would drop steroids from the descriptive
+outputs. It is production — the same directory the LOT build reads its four
+from — so that edits what other studies read and what the recorded md5s mean,
+and it does not switch the displays off cleanly anyway: the steroid sections
+become *unavailable* rather than showing zero. The workbook now says so
+explicitly rather than just dropping the sentence, since the old instruction may
+already have been followed.
+
 It is deliberately **not** added to `CODELIST_FILES`. That list drives
 `record_codelist_hashes()`, which stops the LOT build when a listed file has no
 hash, and the LOT build never loads steroids — naming it there would break a
 build that has nothing to do with this question.
+
+## An unknown ICD family matches neither
+
+`qs_icd_family_sql()` reads a raw claim's `ICD_FLAG` the way the cohort builds
+do: `ICD9` for the ICD-9 spellings, `ICD10` for the ICD-10 ones, **NULL** for
+anything else — blank, missing, or a spelling nobody expected.
+
+Q3 used to read "not one of the ICD-9 spellings" as ICD-10. That classes a
+genuine ICD-9 claim with a blank flag as ICD-10, where it then fails the family
+join silently — so the workbook can count an other-cancer diagnosis the cohort
+build deliberately did not. `raw_icd_flag` is a **waivable** check in the cohort
+build, so a run can legitimately carry unrecognised flags, and that is exactly
+when the two rules disagree.
+
+The spellings live in `nndm/R/codelists.R`, which this package cannot source —
+it defines its own `load_codelist_csv()` and would replace `lot`'s. So they are
+repeated here, and `tests/test_setup.R` parses that file and fails if the two
+lists ever differ.
 
 ## Bone metastasis
 

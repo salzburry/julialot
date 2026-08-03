@@ -1163,6 +1163,11 @@ main <- function() {
   if (!vqs_readable(con, lot_long)) {
     stop("Cannot read ", lot_long, ". Run the LOT build for this prefix first.")
   }
+  # Readable is not ownership. This script pairs the selected LOT prefix with
+  # wrk(cfg$input_cohort_table) itself, and a readable cohort table is no
+  # evidence the LOT run used it - nor that the run that last wrote these
+  # tables finished.
+  qs_check_run_binding(con)
   have_map <- vqs_readable(con, map_tbl)
   have_sct <- vqs_readable(con, sct_tbl)
   have_mma <- vqs_readable(con, mma_tbl)

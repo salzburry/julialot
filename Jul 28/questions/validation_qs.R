@@ -72,6 +72,11 @@ main <- function() {
   log_msg(SEP)
   if (!vqs_readable(con, lot_long))
     stop("Cannot read ", lot_long, ". Build the LOT pipeline (02_lot1.R / 03_lot2_5.R) first.")
+  # Readable is not ownership. This script bounds raw-claim examples, pre-LOT1
+  # CAR-T and steroid timing by INPUT_COHORT_TABLE, so a valid name for the
+  # wrong cohort pairs one run's lines with another's dates - and a rerun that
+  # replaced these tables and then failed leaves them looking fine.
+  qs_check_run_binding(con)
   have_map <- vqs_readable(con, map_tbl)
   have_sct <- vqs_readable(con, sct_tbl)
   if (!have_map)

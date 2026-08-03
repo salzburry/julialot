@@ -73,6 +73,32 @@ qs_setup <- function(script_dir) {
   invisible(cfg)
 }
 
+# Which ICD family a raw claim's flag names, the way the cohort builds decide
+# it: ICD9 for the ICD-9 spellings, ICD10 for the ICD-10 ones, NULL for
+# anything else - blank, missing, or a spelling nobody expected.
+#
+# NOT "not ICD-9, therefore ICD-10". That reads a genuine ICD-9 claim with a
+# missing flag as ICD-10, and it then fails the family join silently, so a
+# question can count a diagnosis the cohort build deliberately did not. NULL
+# matches neither family, which is the honest answer for a row whose family is
+# unknown. The CDM's values cannot be corrected the way a code list can.
+#
+# It matters because raw_icd_flag is a WAIVABLE check in the cohort build: a
+# run can legitimately carry unrecognised flags, and then the two rules
+# disagree on exactly those claims.
+#
+# The lists live in nndm/R/codelists.R, which this package cannot source - it
+# defines its own load_codelist_csv() and would replace lot's. So they are
+# repeated here and tests/test_setup.R fails if the two ever differ.
+QS_RAW_ICD9  <- c("9", "ICD9", "ICD-9")
+QS_RAW_ICD10 <- c("10", "ICD10", "ICD-10")
+qs_icd_family_sql <- function(col, nine = "ICD9", ten = "ICD10") {
+  q <- function(v) paste(sprintf("'%s'", v), collapse = ", ")
+  paste0("CASE WHEN upper(trim(", col, ")) IN (", q(QS_RAW_ICD9), ") THEN '", nine, "'",
+         " WHEN upper(trim(", col, ")) IN (", q(QS_RAW_ICD10), ") THEN '", ten, "'",
+         " ELSE NULL END")
+}
+
 # A prefixed output table, from either build.
 #
 # NOT wrk(). In this package wrk() resolves catalog.schema.table with no
