@@ -138,20 +138,13 @@ SUBST <- list(
          to   = "AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', ''), 11, '0')",
          n = 1L)),
   "05_sct.R"       = list(list(from = "SELECT DISTINCT", to = "SELECT", n = 1L)),
-  # LOT1's SCT windows take a transplant on the line's own start date, and the
-  # end rule puts the end a day BEFORE it - so the line ended the day before it
-  # began, with LOT1_BASE_LENGTH 0. check_lot_long refuses that; the source
-  # carried it only as a QC counter reported after the fact. Floored at the
-  # start, the line is one day long and still ends SCT_CART/SCT_ALLO, so the
-  # transplant stays where cart_is_late and allo_sct_is_rare look for it.
-  # Narrowing the window instead would have dropped it from both.
+  # An SCT on LOT1's own start date ended the line the day before it began.
+  # Floored at the start, so the line is one day long and still ends SCT_CART
+  # instead of losing the transplant. The source has this only as a QC counter.
   "05b_lot1_sct.R" = list(
     list(from = "THEN greatest(sd.LOT1_START_DT, date_sub(",
          to   = "THEN date_sub(", n = 1L),
-    list(from = c("coalesce(sd.FIRST_CART_DT,   cast('9999-12-31' as date))",
-                  "), 1))"),
-         to   = c("coalesce(sd.FIRST_CART_DT,   cast('9999-12-31' as date))",
-                  "), 1)"), n = 1L)),
+    list(from = "), 1))", to = "), 1)", n = 1L)),
   # The persisted orphan count has to ask what the main check asks, or
   # LOT_QC_SUMMARY reports an orphan the build deliberately ignored. The five
   # counts go through sql_count() because as.character() renders an exact power
@@ -188,8 +181,7 @@ ADDED <- list(
     list(run = "AND regexp_replace(c.CL_CODE, '[^0-9]', '') <> ''", n = 2L)),
   "05_sct.R" = list(
     list(run = "AND regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''", n = 1L)),
-  # The line start, so the SCT end date can be floored at it. sct_derived
-  # joined lot1 already and carried everything from it but this.
+  # The line start, so the SCT end date can be floored at it.
   "05b_lot1_sct.R" = list(
     list(run = "l.LOT1_START_DT,", n = 1L))
 )
