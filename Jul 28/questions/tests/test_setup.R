@@ -1,10 +1,10 @@
 #!/usr/bin/env Rscript
 # Checks on the question scripts' setup.
 #
-# These EXECUTE _setup.R rather than parsing it. Parsing proved nothing: the
-# first version had a top-level expression using `%||%` before it was defined,
-# which parses cleanly and dies the moment it is sourced. No warehouse - only
-# the wiring is tested, up to the point a connection would be needed.
+# These EXECUTE _setup.R rather than parsing it - parsing proved nothing, since
+# a top-level expression using `%||%` before it is defined parses cleanly and
+# dies on source. No warehouse: only the wiring, up to where a connection
+# would be needed.
 #
 #   Rscript "questions/tests/test_setup.R"
 
@@ -396,16 +396,14 @@ ok(any(grepl("built from ", bdq, fixed = TRUE)),
    "...and the log says which cohort that run was built from")
 
 cat("\n-- and the two broad sources have to be one broad cohort --\n")
-# BROAD_PREFIX names a LOT run; TRIAL_PREFIX names the build behind the
-# diagnosis-anchored flags. Nothing about the two names makes them the same
-# study, and the flag section crosses them - it labels the flag build's
-# patients POMA-1L using the LOT run's 1L regimens. Point them at two
-# populations and every patient the LOT run does not have falls into 'other',
-# which in that output is indistinguishable from not having had POMA.
-# One side is INPUT_COHORT_TABLE as the operator typed it into the LOT run;
-# the other is a name this package resolved through the work schema. One is
-# routinely qualified and the other is not, so comparing them whole would call
-# every matching pair a mismatch.
+# BROAD_PREFIX names a LOT run, TRIAL_PREFIX the build behind the
+# diagnosis-anchored flags. Nothing makes them the same study, and the flag
+# section crosses them. Point them at two populations and every patient the LOT
+# run lacks falls into 'other', which looks like not having had POMA.
+
+# One side is INPUT_COHORT_TABLE as typed into the LOT run, the other a name
+# resolved through the work schema - one is qualified and the other is not, so
+# comparing them whole would call every matching pair a mismatch.
 ok(qs_broad_pair_bound("overall_coh_final", "usr00000.OVERALL_COH_FINAL")$bound,
    "one cohort under two names is bound, schema qualifier and case aside")
 mm <- qs_broad_pair_bound("BROAD_A_FINAL", "sch.BROAD_B_FINAL")

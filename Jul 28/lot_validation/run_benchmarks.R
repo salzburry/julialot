@@ -10,13 +10,11 @@
 #
 # The published numbers come from benchmarks.csv, which ships with every row
 # present and `published_value` blank. Nothing here invents one: a figure with
-# no source is refused when the file loads, so a convenient number cannot
-# become a citation.
+# no source is refused when the file loads.
 #
-# The output is never a pass or a fail. A gap between this cohort and a
-# published one is a difference between two studies until somebody says which,
-# and `comparable` in the reference file is where they say it. An unmarked row
-# is reported and scored as nothing.
+# The output is never a pass or a fail. A gap is two studies differing until
+# `comparable` in the reference file says otherwise; an unmarked row scores
+# nothing.
 
 .script_dir <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -62,10 +60,9 @@ main <- function() {
   con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
-  # One run owns these tables, and it has to have finished. Every figure below
-  # is a distribution somebody will quote beside a published one, and "median
-  # 2.1 lines" carries nothing about where it came from - so the run is
-  # resolved before anything is measured and named in the output beside it.
+  # One run owns these tables, and it has to have finished. "Median 2.1 lines"
+  # carries nothing about where it came from, so the run is resolved first and
+  # named in the output beside the numbers.
   run <- require_lot_run(con, cfg$object_prefix, "BENCH_IGNORE_BUILD_STATE")
   cat("\nMeasuring run ", run$run, " (prefix '", cfg$object_prefix,
       "'), built from ", run$cohort,
@@ -73,10 +70,8 @@ main <- function() {
         paste0(", STUDY_END ", run$study_end) else "", ".\n", sep = "")
 
   # How many lines to ask for is the MEASURED RUN's max_lot, not this
-  # package's. They are the same on the study's own run, and they are not the
-  # same the moment this is pointed at a run built with a different cap - and
-  # then cfg's value either asks for lines that run never built or leaves out
-  # lines it did, with nothing in the output to say which.
+  # package's. Point this at a run built with a different cap and cfg's value
+  # asks for lines it never built, or leaves out lines it did.
   max_lot <- suppressWarnings(as.integer(
     lot_run_contract(con, cfg$object_prefix, "max_lot")))
   if (is.na(max_lot) || max_lot < 2L) {
@@ -105,9 +100,8 @@ main <- function() {
     add(db_q(con, bench_reaching_sql(final, max_lot))),
     add(db_q(con, bench_duration_sql(final))),
     add(db_q(con, bench_regimen_sql(final, top_n))))
-  # TTNT is one statement per line: the risk set changes with the line, and one
-  # combined query would need a curve per group and the same window trick per
-  # partition. Clearer as a loop, and a line that fails costs only itself.
+  # One statement per line: the risk set changes with the line. A loop is
+  # clearer than a curve per group, and a line that fails costs only itself.
   for (l in seq_len(max(1L, max_lot - 1L))) {
     r <- tryCatch(db_q(con, bench_ttnt_sql(final, patients, l)),
                   error = function(e) { cat("  TTNT line ", l, " failed: ",
@@ -118,8 +112,7 @@ main <- function() {
   if (is.null(obs) || !nrow(obs)) { cat("\nNo observations.\n"); return(invisible(NULL)) }
 
   res <- compare_benchmarks(obs, refs)
-  # The run travels with the numbers. A benchmark table is exactly the kind of
-  # output that outlives the session it was produced in.
+  # The run travels with the numbers - a benchmark table outlives its session.
   res$run_id <- run$run
   res$input_cohort_table <- run$cohort
   if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
@@ -130,7 +123,7 @@ main <- function() {
   for (v in c("compared", "compared with caveat", "recorded, not comparable",
               "no reference supplied", "no observation"))
     cat(sprintf("  %-26s %d\n", v, sum(res$verdict == v)))
-  # Censoring is the number that decides whether a duration means anything.
+  # Censoring decides whether a duration means anything.
   cn <- res[res$metric == "median_line_duration_days" & !is.na(res$censored), ]
   if (nrow(cn))
     for (i in seq_len(nrow(cn)))

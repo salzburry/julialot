@@ -1,33 +1,27 @@
 # Distribution benchmarks: what this algorithm produces, beside what has been
 # published.
 #
-# Idea 2(a)-(c) - LOT counts per patient, regimen frequencies per line, and
-# durations / time to next treatment, each against a published figure.
-#
-# ---- the half that is not code --------------------------------------------
+# LOT counts per patient, regimen frequencies per line, durations and time to
+# next treatment, each against a published figure.
 #
 # The published numbers are NOT here and were not written from memory. They
 # live in benchmarks.csv, which ships with a row per metric and the value
-# column blank, so whoever has the literature knows exactly which figures are
-# wanted and the harness can say "no reference supplied" per row rather than
-# quietly comparing nothing.
+# blank, so an unfilled row reports itself instead of quietly comparing
+# nothing.
 #
-# ---- why each row carries its own definition ------------------------------
+# Each row carries its own definition, because "median 2 lines" from a paper is
+# not comparable on its own. It depends on who was counted, how long they were
+# followed, and whose line algorithm was used - a source counting maintenance
+# as a line reports a larger median than this algorithm can produce, and the
+# gap is the two definitions rather than a defect in either.
 #
-# "Median 2 lines" from a paper is not a number you can compare to. It depends
-# on who was counted (everyone diagnosed, or everyone treated), how long they
-# were followed, and - most of all - whose line algorithm was used. A source
-# that counts maintenance as a line reports a larger median than this algorithm
-# can produce, and the gap is the two definitions, not a defect in either.
+# So `comparable` is the operator's judgement, recorded in the file:
 #
-# So a reference row is only usable when it says so. `comparable` is the
-# operator's judgement, recorded in the file:
+#   yes       close enough to compare
+#   caveat    usable, with the difference named in `notes`
+#   no        recorded for context, scored as nothing
 #
-#   yes       same population shape, same era, a line definition close enough
-#   caveat    usable, but the difference is named in `notes`
-#   no        recorded for context; the harness reports it and scores nothing
-#
-# An unmarked row is treated as `no`. Defaulting the other way would let a
+# An unmarked row is treated as `no`. The other way round would let a
 # convenient number become evidence.
 BENCHMARK_COLS <- c(
   "metric",            # one of BENCHMARK_METRICS
@@ -107,7 +101,7 @@ bench_reaching_sql <- function(final_tbl, max_lot) paste0("
   LEFT JOIN per_pat p ON p.max_lot >= l.line
   GROUP BY l.line ORDER BY l.line")
 
-# Completed lines only, with the censored ones counted rather than folded in.
+# Completed lines only. Censored ones are counted, not folded in.
 bench_duration_sql <- function(final_tbl) paste0("
   SELECT 'median_line_duration_days' AS metric, LOT_NUM AS line,
          percentile_approx(CASE WHEN coalesce(LOT_BASE_END_REASON,'') <> 'STUDY_END'
@@ -121,15 +115,14 @@ bench_duration_sql <- function(final_tbl) paste0("
 
 # Kaplan-Meier median time from line n to line n+1.
 #
-# The naive version - median gap among patients who reached the next line - is
-# the one thing that must not be done here. It conditions on the event, so it
-# answers "among those who progressed, how fast" and reports a time to next
-# treatment far shorter than any published KM median. Everyone without the next
-# line is censored at their observation end instead.
+# The naive version - the median gap among patients who reached the next line -
+# must not be done here: it conditions on the event, so it answers "among those
+# who progressed, how fast" and comes out far shorter than any published KM
+# median. Patients without the next line are censored at their observation end.
 #
 # S(t) as exp(sum(log(1 - d/n))) rather than a running product, because Spark
-# has no product window. d = n exactly would be log(0); the CASE floors it so
-# the curve reaches zero rather than going NULL and losing every later row.
+# has no product window. d = n would be log(0), so the CASE floors it and the
+# curve reaches zero instead of going NULL.
 bench_ttnt_sql <- function(final_tbl, patients_tbl, line) paste0("
   WITH cur AS (
     SELECT cast(PATID as string) AS PATID, min(cast(LOT_START_DT as date)) AS t0
@@ -176,20 +169,14 @@ bench_ttnt_sql <- function(final_tbl, patients_tbl, line) paste0("
          (SELECT n FROM n_all)                                 AS denom,
          (SELECT sum(d) FROM km)                               AS events")
 
-# The denominator is everyone with a line at n, INCLUDING the lines that carry
-# no regimen string.
+# The denominator is everyone with a line at n, INCLUDING lines with no regimen
+# string. An allogeneic line has a blank LOT_BASE_MEDS by construction
+# (10_lot2_5_base.R:348), so summing the named regimens instead would report
+# "% of patients with a NAMED regimen" under a heading that says otherwise, and
+# every percentage would come out high.
 #
-# An allogeneic line has a blank LOT_BASE_MEDS by construction - induction rows
-# are suppressed for it (10_lot2_5_base.R:348). Filtering those out before
-# counting the denominator, as summing the named regimens does, silently
-# reports "% of line-n patients who had a NAMED regimen" under a heading that
-# says "% of line-n patients", and every percentage comes out slightly high.
-# It is the same mistake that made the transition Sankeys read a blank regimen
-# as no line at all.
-#
-# So the top-N percentages do not sum to 100, and the remainder is the tail
-# beyond N plus those blank-regimen lines. That is the honest arithmetic: a
-# published regimen frequency is over everyone treated at that line.
+# The top-N percentages therefore do not sum to 100: the remainder is the tail
+# beyond N plus those blank-regimen lines.
 bench_regimen_sql <- function(final_tbl, top_n) paste0("
   WITH pat AS (
     SELECT DISTINCT LOT_NUM, cast(PATID as string) AS PATID FROM ", final_tbl, "
@@ -210,9 +197,8 @@ bench_regimen_sql <- function(final_tbl, top_n) paste0("
          round(100.0 * n / nullif(n_line, 0), 2) AS observed, n_line AS denom, rk
   FROM r WHERE rk <= ", as.integer(top_n), " ORDER BY LOT_NUM, rk")
 
-# The reference file, read strictly. A malformed row is not skipped: a
-# benchmark table missing the row somebody thought they had supplied is worse
-# than one that will not load.
+# Read strictly. A malformed row is not skipped - a table missing the row
+# somebody thought they supplied is worse than one that will not load.
 read_benchmarks <- function(path) {
   if (!file.exists(path))
     stop("No benchmark file at ", path, ". Ship benchmarks.csv beside this ",
@@ -233,8 +219,7 @@ read_benchmarks <- function(path) {
   if (any(nonnum))
     bad <- c(bad, paste0("published_value is not a number on row(s): ",
                          paste(which(nonnum), collapse = ", ")))
-  # A supplied number with no source is the row that turns into a citation
-  # nobody can chase.
+  # A number with no source becomes a citation nobody can chase.
   nosrc <- supplied & (is.na(df$source) | !nzchar(trimws(df$source)))
   if (any(nosrc))
     bad <- c(bad, paste0("a published_value with no source on row(s): ",
@@ -251,9 +236,8 @@ read_benchmarks <- function(path) {
   df
 }
 
-# Observed against published. Never a pass or a fail: a gap between this cohort
-# and a published one is a difference between two studies until somebody says
-# which. `comparable` is that somebody, and an unmarked row scores nothing.
+# Observed against published. Never a pass or a fail: a gap is two studies
+# differing until `comparable` says otherwise.
 compare_benchmarks <- function(observed, refs) {
   key <- function(d) paste(d$metric,
                            ifelse(is.na(d$line), "", d$line),

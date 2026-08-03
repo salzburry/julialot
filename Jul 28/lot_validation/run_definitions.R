@@ -3,9 +3,9 @@
 #
 #   Rscript lot_validation/run_definitions.R
 #
-# No warehouse and no connection - the rules are in the code, not in the data.
-# It writes our side in full, the comparison grid as it stands, and the
-# questions to put to a protocol for the cells nobody has filled.
+# No warehouse and no connection - the rules are in the code, not the data.
+# Writes our side in full, the grid as it stands, and the questions to put to a
+# protocol for the cells nobody has filled.
 
 .script_dir <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -50,12 +50,11 @@ main <- function() {
     cat("\n  Nothing has been sourced yet, so no dimension is marked as agreeing.\n",
         "  Not-yet-sourced is the default and stays that way: an empty comparison\n",
         "  reading as agreement would retire the question rather than answer it.\n\n",
-        "  This environment cannot reach clinicaltrials.gov or myeloma.org - both\n",
-        "  are denied by network policy - so no protocol or consensus paper could\n",
-        "  be retrieved here. Web search is available and summarises both, and a\n",
-        "  search summary is the one thing these cells must not hold: it reads\n",
-        "  like a citation and cannot be checked against the document. The grid\n",
-        "  rejects it by name.\n\n",
+        "  The consensus paper and the trial protocols are not in this folder,\n",
+        "  and nothing here stands in for them. A summary of a document rather\n",
+        "  than the document is the one thing these cells must not hold: it\n",
+        "  reads like a citation and cannot be checked by anyone holding the\n",
+        "  source. The grid rejects that by name.\n\n",
         "  What to fill, per dimension:\n\n", sep = "")
     for (i in seq_len(nrow(ours)))
       cat("    ", ours$dimension_id[i], "\n      ask: ", ours$ask_the_protocol[i],

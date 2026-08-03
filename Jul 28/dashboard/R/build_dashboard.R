@@ -1,13 +1,11 @@
 # Runner for the dashboard build. Standalone: one module, pointed at a cohort
 # table and the prefix the LOT run wrote under.
 #
-# It runs after the cohort build and the LOT build, reads what they produced,
-# and writes one HTML file. It creates no warehouse table and changes no
-# number - which is what lets it be re-run against a finished study as often as
-# anyone wants without touching the study.
+# Runs after the cohort build and the LOT build, reads what they produced, and
+# writes one HTML file. It creates no table and changes no number, so it can be
+# re-run against a finished study as often as anyone wants.
 #
-# Nothing here names a cohort, and nothing here decides what the dashboard
-# shows: that is sections.R.
+# Nothing here names a cohort or decides what is shown - that is sections.R.
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
@@ -169,19 +167,15 @@ fill_sql <- function(sql, inputs, cfg) {
 
 # Point the attrition section at the funnel the cohort build actually wrote.
 #
-# ATTRITION_TABLE made the NAME configurable. The shape is not configurable and
-# should not be: it is whatever the cohort build chose, and this package can
-# either read it or say it cannot. So the layout is DETECTED - DESCRIBE the
-# table, match its columns against ATTRITION_LAYOUTS - rather than being a
-# second setting that can disagree with the warehouse.
+# ATTRITION_TABLE makes the NAME configurable. The shape is not: it is whatever
+# the cohort build chose, so the layout is DETECTED - DESCRIBE the table and
+# match its columns - rather than a second setting that can disagree with the
+# warehouse.
 #
-# Also where the funnel is checked against the cohort LOT actually read.
-#
-# lot records COHORT_RUN_ID - the run id of the cohort build it verified before
-# pinning its input - so this is an exact comparison against the funnel's own
-# RUN_ID, not a guess from timestamps. Timestamps could not answer it: the only
-# LOT time available is when the run finished, and a cohort rebuilt WHILE LOT
-# was running is newer than the cohort LOT read but older than that.
+# Also where the funnel is checked against the cohort LOT actually read. lot
+# records COHORT_RUN_ID, so this is an exact comparison against the funnel's
+# own RUN_ID. Timestamps could not answer it: a cohort rebuilt WHILE LOT was
+# running is newer than the cohort LOT read but older than LOT's finish.
 resolve_attrition <- function(secs, con, inputs, have, cfg, owner) {
   i <- which(vapply(secs, function(s) identical(s$name, "attrition"), logical(1)))
   if (!length(i) || !isTRUE(have[["attrition"]])) return(secs)
@@ -276,20 +270,14 @@ resolve_attrition <- function(secs, con, inputs, have, cfg, owner) {
 # MAX_LOT is a second copy of the LOT build's setting, so it can disagree with
 # the run being drawn, and the transitions are generated from it.
 #
-# Against what the run was CONFIGURED to build, not against how far patients
-# got. The LOT build records its contract in LOT_RUN_METADATA, max_lot included,
-# so the setting can be compared with the setting.
+# Compared against what the run was CONFIGURED to build - the LOT build records
+# max_lot in LOT_RUN_METADATA - not against how far patients got. Only one of
+# those is a problem. A run configured to LOT6 while this says 5 leaves LOT5 to
+# LOT6 on no panel. A run where nobody REACHED LOT5 is not a mismatch at all:
+# every patient flowing into "No LOT5" is the finding, and lowering MAX_LOT
+# would delete the panel carrying it.
 #
-# Those are two different questions and only one is a problem. A run configured
-# to LOT6 while this says 5 leaves LOT5 to LOT6 in the tables and on no panel -
-# a missing answer nobody can see is missing. A run where nobody REACHED LOT5 is
-# not a mismatch at all: the LOT4 to LOT5 panel showing every patient flowing
-# into "No LOT5" is the finding, and lowering MAX_LOT to match would delete the
-# panel that carries it. Reading the observed maximum as the configured one
-# would have advised exactly that.
-#
-# Nothing here stops the run. Every other panel is still true, and a dashboard
-# that refuses to render because one tab is short is worse than one that says so.
+# Nothing here stops the run: every other panel is still true.
 check_max_lot <- function(con, inputs, have, cfg) {
   col <- function(d, nm) {
     if (is.null(d) || !is.data.frame(d)) return(NULL)
@@ -332,16 +320,13 @@ check_max_lot <- function(con, inputs, have, cfg) {
 
 # The LOT funnel belongs to one LOT run, and the dashboard reads one LOT run.
 #
-# Simpler than the cohort funnel above, because there is no second build in the
-# way: LOT_ATTRITION's RUN_ID is the LOT run's own, clear_run_rows() clears this
-# run's rows before the build starts, and resolve_owner_run() has already
-# refused a latest run that did not finish. So rows under owner_run are this
-# attempt's - no stamp indirection needed.
+# Simpler than the cohort funnel: LOT_ATTRITION's RUN_ID is the LOT run's own,
+# this run's rows are cleared before the build, and resolve_owner_run() has
+# already refused a latest run that did not finish. So rows under owner_run are
+# this attempt's.
 #
-# What is left is the table existing with rows for some OTHER run: an older LOT
-# run under this prefix, whose tables have since been replaced. Rendering that
-# would put one run's funnel above another run's numbers, and an empty bar
-# chart would say nothing at all.
+# What is left is the table holding rows for some OTHER run, whose tables have
+# since been replaced - one run's funnel above another run's numbers.
 resolve_lot_attrition <- function(secs, con, inputs, have, cfg) {
   mine <- which(vapply(secs, function(s)
     isTRUE(s$needs[1] == "lot_attrition"), logical(1)))
@@ -396,18 +381,15 @@ build_panel <- function(con, sec, inputs, have, cfg) {
        html = render_panel(sec$render, df, sec$pct %||% "none"))
 }
 
-# One CSV per panel that produced rows, beside the HTML. Same numbers, because
-# the frames come from the panels rather than from a second pass at the
-# warehouse - a re-query could disagree with the page if anything moved.
+# One CSV per panel that produced rows, beside the HTML. The frames come from
+# the panels, not a second pass at the warehouse, so the numbers match the page.
 #
-# Nothing here is un-masked: patient_journeys masks PATID in its own SQL, so
-# what reaches the file is what reaches the page. No section selects a raw
-# identifier, and a test holds that.
-# The folder is one run, not an accumulation. A panel switched off, a query
-# that failed, a panel that came back empty, the same OUTPUT_DIR reused for
-# another cohort, or the export turned off entirely - each leaves a file from
-# last time that looks current, because the names carry no cohort, prefix or
-# run id to tell it apart.
+# Nothing here is un-masked: patient_journeys masks PATID in its own SQL, no
+# section selects a raw identifier, and a test holds that.
+#
+# The folder is one run, not an accumulation. A panel switched off, a failed
+# query, an empty panel or a reused OUTPUT_DIR each leaves a file from last
+# time that looks current, because the names carry no run id.
 #
 # Only .csv, and only this folder, which the dashboard created and owns.
 clear_csv_exports <- function(cfg, why) {

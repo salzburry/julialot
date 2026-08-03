@@ -3,65 +3,50 @@
 #
 #   Rscript poma_studyteam_qs.R
 #
-# Sibling of lot1_studyteam_qs.R and validation_qs.R. Answers five follow-up
-# questions on the NDMM newly-diagnosed 1L study cohort (Databricks / Optum CDM)
-# and writes a single
-# .xlsx (one tab per question + patient journeys + the Optum coverage note). It
-# reuses the shared operational definitions in R/validation_qs.R, so the CAR-T /
-# journey / raw-claim logic can never drift from the dashboard.
+# Five follow-up questions on the NDMM 1L study cohort, written to one .xlsx -
+# a tab per question, plus patient journeys and the coverage note. Reuses the
+# definitions in R/validation_qs.R, so the CAR-T and raw-claim logic cannot
+# drift from the dashboard.
 #
 # Questions, against patients whose 1L regimen contains POMA (pomalidomide):
-#   Q1  Trace a mix of patients from raw claims to final assigned LOT
-#       (LOT1-5, SCT/CAR-T, consolidation around CAR-T).
-#   Q2  Among POMA-in-1L patients, who also received SCT or CAR-T? Split by
-#       WHEN it happened: autologous at 1L is normal first-line care; an
-#       allogeneic transplant or CAR-T that CLOSES the first line is the
-#       "not treatment-naive" signal; the same therapy on a later line is
-#       expected progression (context only).
-#   Q3  An NDMM AUDIT: other-cancer rate MUST be 0 (NDMM excludes those
-#       patients by construction), so a non-zero value is an NDMM-build bug.
-#       The POMA-vs-other ASSOCIATION is not here - it needs a population that
-#       still contains those patients. See broad_studyteam_qs.R.
-#   Q4  Was there claims-based trial evidence before the POMA recorded at 1L?
-#       From this cohort's own NDMM_CLINTRIAL_FLAGS, whose windows are cut at
-#       the 1L start - the diagnosis-to-1L stretch is its own column. Evidence,
-#       not proof of therapy: a code identifies neither the study drug nor the
-#       condition treated.
-#   Q5  Do POMA-1L patients have continuous pharmacy benefit? Shows the NDMM
-#       LOT1-anchored 12-mo pre-LOT1 check (the study proof) plus a longer
-#       look-back on the cohort's own INDEX_DATE - the same anchor, not an
-#       earlier one, since INDEX_DATE is the 1L start.
+#   Q1  Trace a mix of patients from raw claims to their assigned lines.
+#   Q2  Who also received SCT or CAR-T, split by WHEN: autologous at 1L is
+#       normal first-line care; an allogeneic transplant or CAR-T that CLOSES
+#       the first line is the "not treatment-naive" signal; the same therapy on
+#       a later line is expected progression, and is context only.
+#   Q3  An audit: the other-cancer rate MUST be 0, since the cohort excludes
+#       those patients, so a non-zero value is a build bug. The association is
+#       not here - it needs a population that still has them.
+#   Q4  Was there claims-based trial evidence before the POMA at 1L? From
+#       NDMM_CLINTRIAL_FLAGS, whose windows are cut at the 1L start. Evidence,
+#       not proof: a code identifies neither the study drug nor the condition.
+#   Q5  Continuous pharmacy benefit: the 12-month pre-LOT1 check the study
+#       relies on, plus a longer look-back on INDEX_DATE - the same anchor,
+#       since the cohort sets INDEX_DATE to the 1L start.
 #
-# Runs on the NDMM newly-diagnosed 1L STUDY cohort, and ONLY on it - every table
-# here comes from this run's own tables. The POMA-in-1L questions are most
-# meaningful here: the other-cancer and prior-therapy confounders are already
-# EXCLUDED, so an anomaly that survives is a real one. Q3 audits that exclusion
-# (NDMM rate must be 0); Q4 stays a live comparison because clinical trial is
-# not one of the NDMM post-filters.
+# Runs on the NDMM 1L study cohort and only on it - every table is this run's
+# own. These questions are most meaningful here: the other-cancer and
+# prior-therapy confounders are already excluded, so an anomaly that survives
+# is a real one. Anything needing a second cohort is in broad_studyteam_qs.R.
 #
-# Anything needing a second cohort is in broad_studyteam_qs.R, so this script
-# has no second prefix to resolve and nothing to skip.
+# Builds nothing persistent - session temp views only. Reads LOT_LONG_FINAL,
+# MAP_STACKED, LOT1_SCT, NDMM_CLINTRIAL_FLAGS, NDMM_FLAGS_ALL and the raw CDM,
+# all under this run's prefix.
 #
-# Builds nothing persistent (only session TEMP views); safe to run any time. Reads
-# LOT_LONG_FINAL, the study population produced by the LOT run over the cohort,
-# plus MAP_STACKED, LOT1_SCT, NDMM_CLINTRIAL_FLAGS, NDMM_FLAGS_ALL and the raw
-# CDM. All under this run's prefix.
-#
-# Honest limits, surfaced in the workbook rather than hidden:
-#  - Q4 reads CLINTRIAL_* from this cohort's own NDMM_CLINTRIAL_FLAGS, whose
-#    windows are cut at the 1L start. Q3 is the audit only; the association and
-#    the broad build's OTHER_MALIGN_FLAG are in broad_studyteam_qs.R, because
-#    both need a population this cohort excluded.
-#  - Q2's LOT_LONG summary uses LOT1's END REASON (authoritative for "allo/CAR-T
-#    closed LOT1"); the full CAR-T-relative-to-LOT1 breakdown (incl. CAR-T
-#    BEFORE LOT1) reuses vqs_q6_cart on a POMA-filtered view.
-#  - Q5 rebuilds continuous enrollment spans from raw member_enrollment (<=30d
-#    gaps) and keeps the span covering LOT1_START_DT (the NDMM proof) and the
-#    span covering the cohort's INDEX_DATE - it does NOT collapse all rows to a
-#    min/max, which would bridge non-continuous coverage. The cohort sets
-#    INDEX_DATE to LOT1_START_DT, so the two anchors are the same date and the
-#    index columns are a longer look-back plus a cross-check, not a second
-#    independent window.
+# Limits, surfaced in the workbook rather than hidden:
+#  - Q4 reads NDMM_CLINTRIAL_FLAGS, whose windows are cut at the 1L start. Q3
+#    is the audit only; the association and the broad build's
+#    OTHER_MALIGN_FLAG are in broad_studyteam_qs.R, because both need a
+#    population this cohort excluded.
+#  - Q2's summary uses LOT1's END REASON, which is authoritative for "allo or
+#    CAR-T closed LOT1"; the full breakdown, including CAR-T before LOT1,
+#    reuses vqs_q6_cart on a POMA-filtered view.
+#  - Q5 rebuilds continuous enrollment spans from member_enrollment (gaps of 30
+#    days or less) and keeps the span covering LOT1_START_DT and the one
+#    covering INDEX_DATE. It does not collapse to a min/max, which would bridge
+#    non-continuous coverage. The cohort sets INDEX_DATE to LOT1_START_DT, so
+#    the two anchors are the same date and the index columns are a longer
+#    look-back, not a second window.
 
 .script_dir <- local({
   args <- commandArgs(trailingOnly = FALSE)
@@ -442,20 +427,16 @@ main <- function() {
 
   # ---- Q3: other cancer, on this cohort -----------------------------------
   #
-  # The ASSOCIATION half of Q3 is not here. Whether POMA use tracks with another
-  # cancer is a broad-population question: this cohort excluded those patients
-  # by construction, so measured here it is zero against zero. It lives in
-  # broad_studyteam_qs.R, which runs over a broad cohort and says so.
+  # The ASSOCIATION half of Q3 is not here: this cohort excluded those patients
+  # by construction, so measured here it is zero against zero. It is in
+  # broad_studyteam_qs.R, over a broad cohort.
   #
-  # What is left is the audit, which is a question about THIS cohort.
-  # NDMM cohort AUDIT: other cancer MUST be 0 here - NDMM_PATIDS is filtered to
-  # NO_OTHER_CANCER_PRE_LOT1 = 1, so any non-zero is a genuine bug in the NDMM
-  # build, not a real signal. Reads NDMM's OWN flag (12-mo pre-LOT1, de-confounded)
-  # from NDMM_FLAGS_ALL - NOT the broad-cohort claim-presence method above (which
-  # uses a different window and would false-alarm). A missing flag row is counted
-  # separately (missing_flag_rows), NOT coerced to clean, so a broken join surfaces
-  # as its own signal - both n_other_cancer and missing_flag_rows must be 0.
-  # Pipeline untouched.
+  # What is left is the audit. Other cancer MUST be 0 - the cohort is filtered
+  # to NO_OTHER_CANCER_PRE_LOT1 = 1, so a non-zero value is a bug in the NDMM
+  # build, not a signal. Reads NDMM's own flag from NDMM_FLAGS_ALL, not the
+  # broad claim-presence method above, which uses a different window and would
+  # false-alarm. A missing flag row is counted separately rather than coerced
+  # to clean, so a broken join shows up as itself: both must be 0.
   ndmm_flags <- qs_tbl("NDMM_FLAGS_ALL")
   q3_ndmm_df <- if (vqs_readable(con, ndmm_flags)) best_effort(db_q(con, glue("
       WITH poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}

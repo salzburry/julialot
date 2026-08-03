@@ -10,31 +10,25 @@
 criterion_patients_view <- function(c_i) paste0("lc_", c_i$name, "_patients")
 criterion_alias         <- function(c_i) paste0("p_", c_i$name)
 
-# Belantamab (an ADC) received in any LOT. It lives here rather than in the
-# cohort build because lines do not exist until this package has run - a
-# cohort-time rule could only be a claims proxy, and one nobody could check,
-# because a patient it removed never got lines.
+# Belantamab (an ADC) received in any LOT. Here rather than in the cohort build
+# because lines do not exist until this package has run, so a cohort-time rule
+# could only be a claims proxy nobody could check.
 #
-# Asked of the CLAIMS, not of the built lines, and that is what makes it exact.
-# Reading LOT_BASE_MEDS and LOT_BASE_1ST_ADD_MED would bound the question by
-# what the build produced, and the build produces max_lot lines: belantamab in
-# a sixth line, or as a line's second added med, would be invisible. "Any LOT"
-# would then mean "any of the first five, and only as a base med or the first
-# addition".
+# Asked of the CLAIMS, not the built lines, and that is what makes it exact.
+# Reading LOT_BASE_MEDS would bound the question by what the build produced,
+# and the build produces max_lot lines - so belantamab in a sixth line, or as a
+# line's second added med, would be invisible.
 #
-# map_stacked is one row per (patient, drug, treatment episode), already bounded
-# to the patient's observation by 03_mma_map.R. A belantamab MAP overlapping the
-# patient's LOT-covered span therefore IS belantamab received in a line: inside
-# a built line it is that line's, and after the last built line it is a line the
-# build would have started, because a non-steroid drug that is not a permissible
-# substitute of a prior line's drug triggers the next LOT. Either way the answer
-# does not depend on max_lot, so nothing here is capped at five.
+# map_stacked is one row per patient, drug and treatment episode, already
+# bounded to the patient's observation. A belantamab MAP overlapping the
+# patient's LOT-covered span IS belantamab received in a line: inside a built
+# line it is that line's, and after the last one it is a line the build would
+# have started. So the answer does not depend on max_lot.
 #
-# Patient-level, not line-level. The predicate is false on EVERY line of an
-# affected patient, so first_failed_lot lands on their earliest line and the
-# truncate below leaves them with none - which is the exclusion.
+# Patient-level, not line-level: the predicate is false on EVERY line of an
+# affected patient, so the truncate below leaves them with none.
 #
-# The MED_ABBR test is a whole-value match, not a LIKE: an abbreviation that
+# The MED_ABBR test is a whole-value match, not a LIKE, so an abbreviation that
 # merely contains BELA cannot match.
 LINE_CRITERIA <- list(
   list(

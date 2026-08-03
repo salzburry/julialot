@@ -4,16 +4,14 @@
 # after the MM diagnosis - anything but belantamab - and on or after
 # NDMM_LOT1_FROM.
 #
-# It is read from claims, not from a built line. A line start is an output of
-# the line-building rules rather than a claim date, and reading one would make
-# this build wait on a LOT run when the order is the other way round: LOT runs
-# over the cohort this build produces.
+# From claims, not from a built line. A line start is an output of the
+# line-building rules, and reading one would make this build wait on a LOT run
+# when LOT runs over the cohort this build produces.
 #
-# Five sources - medical PROC_CD, medical BILL_PROC_CD, medical NDC, rx NDC and
-# med_procedure PROC - against the same
-# codelist view, so "MM treatment" means one thing in this package. That view
-# already has steroids dropped: a steroid claim alone is supportive care, not
-# the start of a line.
+# Five sources - medical PROC_CD, BILL_PROC_CD and NDC, rx NDC, med_procedure
+# PROC - against one codelist view, so "MM treatment" means one thing here.
+# Steroids are already dropped from it: a steroid claim alone is supportive
+# care, not the start of a line.
 
 # Belantamab rows of the MMA code list. The 1L treatment must be "other than
 # belantamab", so these are excluded from the scan that sets the index date -
@@ -295,22 +293,15 @@ build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl, med_proc_tbl)
   # questions and one of them is a criterion.
   #
   # PRE_LOT1 marks a belantamab claim strictly before the 1L index. That half
-  # has to be settled here, because lot cannot see it: map_stacked is built
-  # from claims on or after the cohort's INDEX_DATE, so belantamab before the
-  # index is not in the data lot reads. The other half - index onward - is the
-  # line criterion there.
-  #
-  # The two halves do not overlap, and together they cover the whole rule. It
-  # carries no period of its own, unlike the exclusions beside it, so a
-  # belantamab line anywhere in the study period disqualifies them.
+  # is settled here because lot cannot see it - map_stacked starts at the
+  # cohort's INDEX_DATE. The other half is the line criterion there. The two do
+  # not overlap and together cover the rule.
   #
   # The study period, not all of history. The rule names no period, but the CDM
-  # tables reach back well before the study start, so an unbounded scan would
-  # act on claims outside the window every other criterion here is bounded to.
-  # Bounded, and the bound is stated - see DECISIONS.md.
-  # No date predicate of its own: NDMM_BELANTAMAB_TX is the study period now, so
-  # a second copy of that bound here would be one more place for the two to
-  # drift apart.
+  # reaches back well before the study start, so an unbounded scan would act on
+  # claims outside the window every other criterion is bounded to. See
+  # DECISIONS.md. No date predicate of its own - NDMM_BELANTAMAB_TX already
+  # carries that bound, and a second copy would be one more place to drift.
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_BELANTAMAB_PATIDS} AS
     SELECT b.PATID, 'BEL' AS MAP_MED_TYPE,
@@ -350,14 +341,13 @@ build_ndmm_other_malig_groups <- function(con, cfg) {
 # What the pairing grain is costing, without needing a map to exist first.
 #
 # Criterion 7 Path B is two outpatient claims within 30 days for the same
-# cancer. "Same" is a code-list label here, and a label is a code description:
-# one cancer at two subsites, or one coded in remission and once not, is two
-# labels, and the claims never pair. So the criterion under-detects and the
-# cohort is too large.
+# cancer. "Same" is a code-list label, and a label is a code description - one
+# cancer at two subsites, or coded in remission once and not the next time, is
+# two labels and the claims never pair. So the criterion under-detects.
 #
 # The map fixes it, but nobody can size the problem from an empty map. These
-# three rows can be computed with no map at all, off the events view the
-# criterion itself reads, so the claim scan does not run again:
+# three rows need no map, and come off the events view the criterion itself
+# reads, so the claim scan does not run twice:
 #
 #   same code-list label - the finest grain, and what the source build does
 #   as configured        - the same until primary_tumor_groups.csv says otherwise
@@ -415,17 +405,14 @@ build_ndmm_other_malig_grain <- function(con, cfg) {
 # What criterion 5 costs at each reading of it.
 #
 # This build uses one day of follow-up enrollment - the index date itself -
-# because the study team asked for it. The wider study text says three months,
-# and nobody can sign one off against the other without a number. So here is
-# the number: how many patients pass criterion 5 at each window, and how many
-# reach the final cohort at each.
+# because the study team asked for it, while the wider study text says three
+# months. Nobody can sign one off against the other without a number, so here
+# it is: how many pass criterion 5 at each window, and how many reach the final
+# cohort at each.
 #
-# One pass over the strict spans, cross-joined to the windows, so the whole
-# table costs about what the flag itself costs. It does not change the cohort:
-# the run still applies NDMM_FU_CE_DAYS.
-#
-# The windows are worked out, not listed: whatever NDMM_FU_CE_DAYS is set to
-# appears beside 90, so the table always holds the row this run used.
+# One pass over the strict spans, cross-joined to the windows, so it costs
+# about what the flag costs. It does not change the cohort - the run still
+# applies NDMM_FU_CE_DAYS, and that value always appears in the table.
 ndmm_fu_ce_windows <- function() sort(unique(c(NDMM_FU_CE_DAYS, 0L, 30L, 60L, 90L)))
 
 build_ndmm_fu_ce_counts <- function(con, cfg) {
@@ -497,22 +484,19 @@ build_ndmm_fu_ce_counts <- function(con, cfg) {
 # The handover list: cohort members carrying a belantamab claim that lot will
 # act on.
 #
-# Nothing here is adjudicated. The pre-index half is criterion 9 of this
-# funnel, so a patient with belantamab before their index is already gone; the
-# index-onward half is lot's no_belantamab, asked of map_stacked over the whole
-# LOT span. This is only the handover list.
+# Nothing here is adjudicated. The pre-index half is criterion 9, so those
+# patients are already gone; the index-onward half is lot's no_belantamab.
+# This is only the handover list.
 #
-# Read off NDMM_COHORT, which is the qualifying set with its dates already on
-# it - so the claim is bounded by the patient's own ENDDATE and not just by the
-# study end. That bound is the point: lot reads claims up to OBS_END_DT, so a
-# belantamab claim after a patient died is in the study period, in this table if
-# nothing stopped it, and invisible to lot. Listing it would overstate what the
-# LOT run is going to remove.
+# Read off NDMM_COHORT, so the claim is bounded by the patient's own ENDDATE
+# and not just by the study end. That bound is the point: lot reads claims up
+# to OBS_END_DT, so a belantamab claim after a patient died would be in the
+# study period, in this table, and invisible to lot - listing it would
+# overstate what the LOT run will remove.
 #
-# ENDDATE is lot's OBS_END_DT under the primary analysis
-# (CENSOR_AT_DISENROLLMENT=FALSE). Under the sensitivity setting lot narrows to
-# coalesce(ENDDATE_CE, ENDDATE), which this cannot know about - so on a
-# sensitivity run the count here is an upper bound rather than the number.
+# ENDDATE is lot's OBS_END_DT under the primary analysis. Under
+# CENSOR_AT_DISENROLLMENT lot narrows further, which this cannot know, so on a
+# sensitivity run this count is an upper bound.
 build_ndmm_belantamab_reconcile <- function(con, cfg) {
   db_exec(con, glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_BELANTAMAB_RECONCILE')} AS
@@ -543,16 +527,15 @@ build_ndmm_belantamab_reconcile <- function(con, cfg) {
 # and whether the override covers it.
 #
 # The override exists because the criterion is another cancer "distinct from
-# the index MM", and these are the index disease or its precursor. Which
-# labels the production list actually stores is not visible from here, and the
-# remission wording is exactly where it is likely to differ - so the run writes
-# what it found rather than leaving the question to a comment.
+# the index MM", and these are the index disease or its precursor. Which labels
+# the production list stores is not visible from here, and the remission
+# wording is where it is likely to differ - so the run writes what it found.
+
 # Every code in an overridden group. The group table says which labels are
-# kept; this says which codes that actually is. Worth reading before deciding
-# one of them: the labels in other_malig.csv are one per code and the match is
-# on the whole string, so SECONDARY MALIGNANT NEOPLASM OF BONE keeps C79.51 and
-# leaves C79.52, whose label ends OF BONE MARROW, to be excluded. That is
-# visible here and nowhere else.
+# kept; this says which codes that is. The labels are one per code and the
+# match is on the whole string, so SECONDARY MALIGNANT NEOPLASM OF BONE keeps
+# C79.51 and leaves C79.52 - whose label ends OF BONE MARROW - excluded. That
+# is visible here and nowhere else.
 build_ndmm_mm_adjacent_codes <- function(con, cfg) {
   db_exec(con, glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_MM_ADJACENT_CODES')} AS

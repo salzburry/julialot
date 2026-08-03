@@ -5,34 +5,24 @@
 # outputs: nothing here has been run against a warehouse, so a vignette says
 # what the rules say and marks how far that is from having been seen.
 #
-# ---- why it is built this way ---------------------------------------------
+# The days that make a case hard are the configured parameters - 180 for a
+# tandem, 45 for CAR-T consolidation. A document quoting "day 181" is wrong the
+# moment one of them moves, and nothing says so.
 #
-# A vignette catalogue written as prose rots. The days that make a case hard
-# are the configured parameters - 180 for a tandem, 45 for CAR-T consolidation
-# - and the moment one of those moves, a document quoting "day 181" is wrong
-# with nothing to say so.
+# So every offset is DERIVED from the parameter that decides it, and the cases
+# come in pairs straddling it. check_vignettes() holds the catalogue to that:
+# the parameter has to exist, the pair has to straddle the value, and the two
+# sides have to disagree.
 #
-# So every offset here is DERIVED from the parameter that decides it, and the
-# cases come in pairs that straddle it. check_vignettes() then holds the
-# catalogue to its own claims: the parameter has to exist, the pair has to
-# straddle the value, and the two sides have to disagree. Change SCT_TANDEM_DAYS
-# and the vignettes move with it; rename the setting and the catalogue fails
-# rather than describing a rule that is gone.
+# Two confidence levels:
 #
-# ---- confidence -----------------------------------------------------------
-#
-# Two levels, and the difference matters more than the vignettes do:
-#
-#   derived     the outcome follows from a rule quoted at `where`. Reading the
-#               code is enough to know it.
-#   to_confirm  the rules interact and the outcome is our reading of them.
-#               The first warehouse run is what settles it.
-#
-# to_confirm is not a weaker claim about the algorithm - it is an honest one
-# about us. Those are the rows to check first against a real run.
+#   derived     follows from the rule quoted at `where`; reading the code is
+#               enough to know it.
+#   to_confirm  the rules interact and this is our reading. The first real run
+#               settles it. A claim about us, not about the algorithm.
 
-# The parameters a vignette may hinge on, and what each one governs. Named
-# rather than inlined so a renamed setting breaks the catalogue.
+# The parameters a vignette may hinge on. Named rather than inlined, so a
+# renamed setting breaks the catalogue.
 VIGNETTE_PARAMS <- c(
   induction_window_days       = "days a med may join LOT1's regimen, inclusive of day 0",
   lot_n_induction_window_days = "the same for LOT2 and later",
@@ -44,18 +34,17 @@ VIGNETTE_PARAMS <- c(
   cart_consolidation_days     = "days after a med addition within which CAR-T closes the line",
   max_lot                     = "highest line built")
 
-# One event in a patient's history. `day` is an offset from the 1L start, so a
-# vignette reads as a timeline rather than as dates nobody can check.
+# One event. `day` is an offset from the 1L start, so a vignette reads as a
+# timeline rather than as dates nobody can check.
 ev <- function(day, event, detail = "") {
   data.frame(day = as.integer(day), event = event, detail = detail,
              stringsAsFactors = FALSE)
 }
 
 # The catalogue. `events` and `expected` are functions of the resolved config,
-# which is what keeps a case pinned to the rule rather than to a number.
-#
-# `pair` marks the two sides of a boundary: "within" is at or inside the
-# configured value, "beyond" is the first day outside it.
+# so a case is pinned to the rule rather than to a number. `pair` marks the two
+# sides of a boundary: "within" is inside the value, "beyond" is the first day
+# outside it.
 VIGNETTES <- list(
 
   # ---- tandem transplant, the idea's first named case ---------------------

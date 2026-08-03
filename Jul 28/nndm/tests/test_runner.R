@@ -175,7 +175,7 @@ ok(is.null(drive_up()), "all eight raw inputs readable lets the run start")
 # There are no built inputs any more: this package reads raw CDM and its code
 # lists, which is what lets it be handed to someone on its own.
 ok(length(upstream_tables(cfg_defaults)) == 0L,
-   "the build depends on no table another build in this repository makes")
+   "the build depends on no table another build in this folder makes")
 msg <- drive_up("cdm.t_dod")
 ok(!is.null(msg) && grepl("dod", msg, fixed = TRUE),
    "the death table is preflighted - the demographics step needs it")
@@ -354,8 +354,8 @@ ok(identical(keys, names(got)),
 ok(length(keys) == 9L, paste0("nine steps, one per criterion (", length(keys), ")"))
 
 cat("\n-- the funnel adds the criteria in the study's order --\n")
-# ndmm_counts() decides the order the funnel reads in, so
-# the line-for-line comparison holds nothing here. What holds it is this:
+# ndmm_counts() decides the order the funnel reads in, and no comparison to
+# another file can hold that order. What holds it is this:
 # each step's SQL is read back and must be the
 # step above it plus exactly one flag, in the order the criteria are listed:
 # inclusions first, then exclusions.
@@ -690,31 +690,26 @@ ok(grepl("_ndmm_mma_codelist", x, fixed = TRUE),
    "and MM treatment means the same code list the prior-therapy scan uses")
 
 cat("\n-- a plasma-cell disorder in remission is not another cancer --\n")
-# The other-cancer criterion targets a cancer distinct from the index MM, which
-# is why five plasma-cell tumour groups are overridden. Three are worded "not
-# having achieved remission", and the source build left the "in remission" variants
-# excluding - so an identical patient was kept or dropped depending on whether
-# their plasma cell leukemia was in remission.
-# The rule says nothing about remission. It says "another cancer" - other
-# than the index MM - and other_malig.csv is the study's generic code list, so
-# it carries MM's own codes. The override is what makes the criterion mean what
-# it says, and the surest form of it is derived: anything on the diagnosis code
-# list is the index disease by definition, because that same file decides who
-# is an MM patient.
+# The criterion targets a cancer distinct from the index MM, which is why five
+# plasma-cell groups are overridden. Three are worded "not having achieved
+# remission", and the "in remission" variants were left excluding - so a
+# patient was kept or dropped on whether their leukemia was in remission.
+#
+# The rule says nothing about remission. It says "another cancer", and
+# other_malig.csv is generic, so it carries MM's own codes. The surest form of
+# the override is derived: anything on the diagnosis code list is the index
+# disease by definition, because that file decides who is an MM patient.
 oc0 <- paste(readLines(file.path(ROOT, "R", "steps", "04_other_malig.R"), warn = FALSE),
              collapse = "\n")
 ok(grepl("LEFT JOIN {NDMM_MM_DX_CODES} m", oc0, fixed = TRUE) &&
      grepl("ON m.dx = om.dx AND m.icd_family = om.icd_family", oc0, fixed = TRUE),
    "a code on the MM diagnosis list is never also another cancer")
-# The rule that matters is not which SQL construct is used but that no column
-# name can bind to the wrong relation. The first version put this in a
-# correlated EXISTS whose inner relation has columns called dx and icd_family
-# too; unqualified, they bound to the inner ones, the predicate compared each
-# MM code to itself, and every other-cancer code came back overridden - the
-# exclusion switched off entirely, and the test asserted the text of it.
+# Not which SQL construct is used, but that no column name can bind to the
+# wrong relation. The first version used a correlated EXISTS whose inner
+# relation also has dx and icd_family; unqualified, they bound to the inner
+# ones, every code compared to itself, and the exclusion switched off entirely.
 #
-# So: from the point the two relations are both in scope, every reference to a
-# name they share has to carry an alias.
+# So from the point both relations are in scope, every shared name is aliased.
 shared <- c("dx", "icd_family", "tumor_group")
 # The final SELECT onward: from there both relations are visible. Inside the om
 # CTE only {src} is in scope, so bare names there are unambiguous.
@@ -986,14 +981,12 @@ drive_om <- function() {
 }
 o0 <- drive_om()
 # The join that says a code on mm_dx.csv is the index disease, not another
-# cancer. The ON clause has to end where it ends: " AND 1 = 0" appended to it
-# would leave every grep for the join itself passing.
-# Written against the indentation rather than fixed to it: glue() dedents a
-# template by its common leading whitespace, so how far in the ON clause sits
-# says nothing about the join. What matters is unchanged - the clause is those
-# two conditions and ends there, so " AND 1 = 0" appended to it would still
-# break this while leaving a grep for the join itself passing. It is now the
-# last line of the statement, so end-of-string counts as ending there.
+# cancer. The ON clause has to END where it ends: " AND 1 = 0" appended would
+# leave every grep for the join itself passing.
+#
+# Not fixed to the indentation - glue() dedents by the common leading
+# whitespace, so how far in the clause sits says nothing. It is the last line
+# of the statement, so end-of-string counts as ending there.
 ok(grepl(paste0("LEFT JOIN ", oe2$NDMM_MM_DX_CODES,
                 " m[ \t]*\n[ \t]*ON m\\.dx = om\\.dx",
                 " AND m\\.icd_family = om\\.icd_family[ \t]*(\n|$)"),
@@ -1114,14 +1107,13 @@ ok(identical(drive_chk(expect = NA_integer_), ""),
    "an unknown expected count is not treated as a mismatch")
 
 cat("\n-- the other-cancer pair has to sit in the baseline --\n")
-# The criterion is >=1 inpatient claim, or >=2 outpatient claims within 30 days
-# of each other, IN the 12-month 1L baseline. The source bounded only the first
-# of the outpatient pair, so a claim the day before the index and its
-# confirmation a month after it excluded the patient on one baseline claim.
+# The criterion is one inpatient claim, or two outpatient claims within 30 days
+# of each other, IN the 12-month baseline. Bounding only the first of the pair
+# let a claim the day before the index and a confirmation a month after it
+# exclude the patient on one baseline claim.
 #
-# There is no database here, so this reads the SQL the real function emits
-# rather than running it: for every date column the outpatient pair exposes,
-# the join must bound it. Derived rather than matched, so a new unbounded date
+# No database here, so this reads the SQL the function emits: every date column
+# the outpatient pair exposes must be bounded. Derived, so a new unbounded
 # column fails the same way removing this one does.
 oe <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = oe)
@@ -1374,7 +1366,7 @@ clear()
 
 cat("\n-- pregnancy reads every column a code could be in --\n")
 # The rule covers diagnosis, procedure and revenue codes. BILL_PROC_CD is
-# the facility-claim procedure code, and the therapy and SCT scans in this repo
+# the facility-claim procedure code, and the therapy and SCT scans here
 # already read it - pregnancy did not, so a pregnancy HCPCS code populated only
 # there kept the patient. Driven, so the arm cannot quietly go away.
 pe <- new.env(parent = globalenv())
@@ -1447,16 +1439,13 @@ ok(!any(grepl("BELANTAMAB_SCOPE", names(me$RUN_METADATA_COLS), fixed = TRUE)),
    "and the scope column went with the setting that fed it")
 
 cat("\n-- every setting config.csv ships is one the code reads --\n")
-# NDMM_BELANTAMAB_SCOPE outlived the code that read it: the belantamab claims
-# proxy moved to the lot package, every reader went, and the row stayed - still
-# describing a proxy that decides nothing, still looking like a knob. Nothing
-# here noticed, because nothing compared the two. The lot package has had this
-# check; this one did not.
+# NDMM_BELANTAMAB_SCOPE outlived the code that read it - the proxy moved to the
+# lot package, every reader went, and the row stayed, still looking like a
+# knob. Nothing compared the two.
 #
 # One direction only. The platform supplies names this file has no business
-# carrying - DATABRICKS_PWD, the DOMINO_* variables - so a name read but not
-# shipped is normal. A name shipped but never read is not: it either does
-# nothing, or it is a typo for one that would have.
+# carrying, so a name read but not shipped is normal. A name shipped but never
+# read is not: it does nothing, or it is a typo for one that would have.
 cnames <- local({
   rows <- read.csv(file.path(ROOT, "config.csv"), stringsAsFactors = FALSE,
                    comment.char = "#")

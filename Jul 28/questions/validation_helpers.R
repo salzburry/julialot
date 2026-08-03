@@ -1,52 +1,41 @@
 # ---------------------------------------------------------------------------
-# Shared analysis module: "MM LOT Validation next steps" study-team questions.
+# Shared analysis module for the "MM LOT Validation next steps" questions.
 #
-# This module holds ONLY data logic (SQL -> data.frame). It is consumed by:
-#   - validation_qs.R          (standalone CSV/log program)
-#   - 07_combined_dashboard.R        (Exploratory objective tables)
-# so the two deliverables can never drift apart.
+# Data logic only - SQL to data.frame. Used by validation_qs.R and by the
+# dashboard's exploratory tables, so the two cannot drift apart. Builds nothing
+# persistent. Raw-claim pulls are GUARDED: if the CDM or the code lists are not
+# reachable they return NULL and the caller falls back to the MAP view.
 #
-# It builds nothing persistent and is safe to run any time. It reads the
-# persisted work-schema tables (LOT_LONG, MAP_STACKED, LOT1_SCT) and, for the
-# raw-claim patient examples (Q2, Q6), the raw CDM via cdm_src(). The
-# raw-claim pulls are GUARDED: if the CDM / codelist CSVs are not reachable
-# they degrade to NULL and the caller falls back to the MAP-derived view.
+# The six questions:
+#   Q1  LOT1 patients on pomalidomide, elotuzumab or panobinostat - mono vs
+#       combination.
+#   Q2  Raw-claim examples, before MAPs, for pomalidomide in LOT1.
+#   Q3  Among LOT1 patients with NO steroid at LOT1, how many had one within
+#       7/14/30 days before LOT1, and within 7/14/30 days after the induction
+#       window ends.
+#   Q4  The same for LOT2, with its 30-day window.
+#   Q5  No steroid at LOT2 but one in the 30 days before it - was that steroid
+#       LOT1's?
+#   Q6  CAR-T before or during LOT1, which the LOT rules do not allow, with
+#       raw-claim journeys.
 #
-# ---- The six questions -----------------------------------------------------
-#   Q1  Breakdown of LOT1 patients whose regimen includes pomalidomide,
-#       elotuzumab and/or panobinostat (mono- vs combination-therapy).
-#   Q2  Raw-claim patient examples (before MAPs were derived) for patients
-#       with pomalidomide in their LOT1 regimen.
-#   Q3  Among LOT1 patients with NO steroid at LOT1, how many received a
-#       steroid within 7/14/30 days before LOT1 start, and within 7/14/30
-#       days after the end of the 60-day induction window.
-#   Q4  Same as Q3 for LOT2 (30-day induction window).
-#   Q5  Patients with no steroid at LOT2 but a steroid in the 30 days before
-#       LOT2 start: did they have a steroid at LOT1 (attribution check)?
-#   Q6  Patients with CAR-T prior to or during LOT1 (the LOT rules do not
-#       allow CAR-T during LOT1), with raw-claim journey examples.
+# Definitions, in one place:
 #
-# ---- Operational definitions (documented, single source of truth) ----------
-#  * Steroid signal source: the codes in steroid_codes.csv (mapped to DEX/PRED
-#    tokens) scanned against medical (PROC_CD/BILL_PROC_CD HCPCS/CPT, NDC) + rx
-#    (NDC) - the SAME source 05_regimen_dashboard.R uses (load_steroid_codes +
-#    augment_lot_long), built here by vqs_build_steroid_claims(). There is NO
-#    STEROID class in cl_mma_codelist.csv, so a MAP_STACKED MAP_MED_CLASS=
-#    'STEROID' scan returns zero rows and would silently empty Q3/Q4/Q5.
-#  * "Steroid CLASSIFIED as part of LOTn" (the Q3/Q4/Q5 denominator) -> a steroid
-#    claim within the CAPPED induction window
-#    [LOT_START_DT, LOT_INDUCTION_END_DT], where LOT_INDUCTION_END_DT =
-#    least(LOT_BASE_END_DT, LOT_START_DT + W - 1), W = 60 (LOT1) / 45 (CART-
-#    started LOTn) / 30 (other LOTn); SCT_ALLO lines have no membership. This
-#    matches the Steroids panel's augmentation (LOT_INDUCTION_END_DT) EXACTLY,
-#    so the no-steroid denominators reconcile. (See vqs_induction_end_sql.)
-#  * "Received a steroid within N days prior / after" -> a steroid claim in the
-#    respective window, anchored to the FIXED induction end (LOT_START + W - 1)
-#    that the ask names ("their 60/30 day induction window"). The 7/14/30
-#    windows are cumulative (<= N days). These are NOT capped at LOT_BASE_END_DT.
-#  * Steroid claims are scanned for all LOT_LONG patients (matching the panel's
-#    augmentation); they are NOT bounded to [INDEX_DATE, OBS_END_DT], so a
-#    pre-index steroid can legitimately fall in a LOT1 prior window.
+#  * Steroid signal: the codes in steroid_codes.csv, scanned against medical
+#    (HCPCS/CPT, NDC) and rx (NDC) - the same source the dashboard's steroid
+#    panel uses. There is NO STEROID class in cl_mma_codelist.csv, so scanning
+#    MAP_STACKED for one returns nothing and would silently empty Q3/Q4/Q5.
+#  * "Steroid classified as part of LOTn", the Q3/Q4/Q5 denominator: a claim
+#    inside the CAPPED induction window [LOT_START_DT, LOT_INDUCTION_END_DT],
+#    where that end is least(LOT_BASE_END_DT, LOT_START_DT + W - 1) and W is 60
+#    for LOT1, 45 for a CART-started line, 30 otherwise. SCT_ALLO lines have no
+#    membership. Same as the panel's, so the denominators reconcile.
+#  * "Within N days prior / after": a claim in that window, anchored to the
+#    FIXED induction end (LOT_START + W - 1) the ask names, cumulative (<= N),
+#    and NOT capped at LOT_BASE_END_DT.
+#  * Steroid claims are scanned for all LOT_LONG patients and are not bounded
+#    to [INDEX_DATE, OBS_END_DT], so a pre-index steroid can legitimately fall
+#    in a LOT1 prior window.
 # ---------------------------------------------------------------------------
 
 # Default medication abbreviations (overridable via env). Panobinostat in
@@ -449,17 +438,13 @@ vqs_steroid_windows_patients <- function(con, lot_long, ster_src, lot_num, w, li
 }
 
 # ===========================================================================
-# Q5 - attribution check. Study-team ask: for patients with NO steroid classified at
-# LOT2 but a steroid in the month before LOT2, is that pre-LOT2 steroid
-# actually attributable to the LOT1 regimen?
+# Q5 - attribution. For patients with no steroid at LOT2 but one in the month
+# before it, is that steroid LOT1's?
 #
-# The DIRECT test (headline) preserves the actual pre-LOT2 steroid date(s) and
-# asks whether one of them falls INSIDE LOT1's active span [L1_START,
-# L1_BASE_END_DT] - that is the steroid being "the LOT1 regimen's". Two
-# weaker "had ANY steroid during LOT1" rows are kept as supporting context;
-# they can be 1 for a patient whose pre-LOT2 steroid is actually AFTER LOT1
-# ended (a different, earlier steroid was in LOT1), which is exactly why they
-# are not the headline.
+# The headline test keeps the actual pre-LOT2 steroid dates and asks whether
+# one falls inside LOT1's span. Two weaker "had ANY steroid during LOT1" rows
+# are context only: they can be 1 for a patient whose pre-LOT2 steroid is
+# actually AFTER LOT1 ended, which is why they are not the headline.
 # ===========================================================================
 vqs_q5_lot2_attribution <- function(con, lot_long, ster_src, w1, w2) {
   r <- db_q(con, glue("
@@ -541,17 +526,14 @@ vqs_q5_lot2_attribution <- function(con, lot_long, ster_src, w1, w2) {
 # Q6 - CAR-T prior to or during LOT1
 #
 # Two date sources, by necessity:
-#   * "DURING / closing LOT1" uses LOT1_SCT.FIRST_CART_DT (the engine's own
-#     derived value). The window is [L1_START, L1_END], extended to L1_END + 1
-#     ONLY when END_REASON in (SCT_CART, CART_INIT): a CAR-T-ending LOT1 sets
-#     LOT1_BASE_END_DT = FIRST_CART_DT - 1 (02_lot1.R LOT1_TX_ENDDATE), so the
-#     closing CAR-T lands one day past L1_END. For any other end reason a CAR-T
-#     at L1_END + 1 is post-LOT1 and is NOT counted. (FIRST_CART_DT is itself
-#     >= LOT1_START_DT by construction.)
-#   * "BEFORE LOT1" cannot come from LOT1_SCT at all (first_cart filters
-#     TX_DT >= LOT1_START_DT). It is taken from the raw CAR-T claim dates
-#     (cart_raw_tbl, observation-window-bounded). When that scan is
-#     unavailable the before-LOT1 rows are reported as NA with a note.
+#   * DURING or closing LOT1 uses LOT1_SCT.FIRST_CART_DT. The window is
+#     [L1_START, L1_END], extended by one day ONLY when the end reason is
+#     SCT_CART or CART_INIT - a CAR-T-ending LOT1 sets its end to
+#     FIRST_CART_DT - 1, so the closing CAR-T lands one day past it. For any
+#     other end reason a CAR-T there is post-LOT1 and is not counted.
+#   * BEFORE LOT1 cannot come from LOT1_SCT, which filters to dates on or after
+#     the LOT1 start. It comes from the raw CAR-T claims instead; when that
+#     scan is unavailable those rows are NA with a note.
 # ===========================================================================
 vqs_q6_cart <- function(con, lot_long, sct_tbl, w1, cart_raw_tbl = NULL) {
   have_raw <- !is.null(cart_raw_tbl)

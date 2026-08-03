@@ -87,22 +87,18 @@ check_choices <- function(cfg) {
 upstream_tables <- function(cfg) list()
 
 # A temporary view is a query, not a result: Spark re-runs it on every read.
-# These are read more than once, and they sit on top of each other - every one
-# of the thirteen reads of NDMM_LOT1_STARTS would re-run the whole
-# MM-diagnosis chain underneath it, twice over the raw claim tables. Each is
-# written to the work schema once and the view is repointed at the table, so
-# every later read is a table scan. The steps are untouched: they still name
-# the view.
+# These are read many times and sit on top of each other, so the thirteen reads
+# of NDMM_LOT1_STARTS would each re-run the whole MM-diagnosis chain beneath
+# it. Each is written to the work schema once and the view repointed at the
+# table, so every later read is a table scan. The steps still name the view.
 #
-# tests/test_runner.R counts the reads in the SQL and fails if anything read
-# more than once is missing from here. Two entries the count cannot see are
-# BASE_COHORT and BELANTAMAB_PATIDS - the flags step takes those as parameters,
-# so they reach the SQL as {elig_coh_final} and {map_stacked}.
+# tests/test_runner.R counts the reads and fails if anything read more than
+# once is missing here. Two it cannot see are BASE_COHORT and
+# BELANTAMAB_PATIDS, which reach the SQL as parameters.
 #
-# NDMM_FLAGS_ALL is checkpointed inside 06_flags.R rather than here, because
-# NDMM_PATIDS is defined over it in the same function and Spark inlines a temp
-# view's plan: repointing after NDMM_PATIDS exists would leave that view on the
-# old query. It is a deliverable as well as a checkpoint.
+# NDMM_FLAGS_ALL is checkpointed inside 06_flags.R instead: NDMM_PATIDS is
+# defined over it in the same function, and repointing afterwards would leave
+# that view on the old query.
 CHECKPOINTS <- c("NDMM_FLAGS_ALL", "NDMM_CLINTRIAL_FLAGS", "NDMM_MM_DX_CODES",
                  "NDMM_MM_DX_EVENTS", "NDMM_MM_QUALIFYING", "NDMM_BASE_COHORT",
                  "NDMM_ENROLL_SPANS", "NDMM_ENROLL_SPANS_STRICT",
@@ -339,31 +335,24 @@ NDMM_CRITERIA <- list(
   list(key = "nopreg_nobela",  flag = "NO_BELANTAMAB_PRE_LOT1",
        label = "+ no belantamab before the 1L index")
 )
-# The belantamab exclusion - "in any LOT" - is split, because no one
-# package can see the whole of it.
+# The belantamab exclusion - "in any LOT" - is split, because no one package
+# can see the whole of it.
 #
-# The half that is here is belantamab BEFORE the 1L index. The lot package
-# cannot see it at any price: map_stacked is built from claims on or after the
-# cohort's INDEX_DATE, so a belantamab treatment earlier in the patient's
-# history is not in the data lot reads. It is also not a proxy for anything -
-# a belantamab claim before the index is a belantamab line before the index -
-# so the objection that removed the old cohort-time rule does not apply.
+# This half is belantamab BEFORE the 1L index. lot cannot see it: map_stacked
+# starts at the cohort's INDEX_DATE, so earlier treatment is not in the data it
+# reads. It is not a proxy either - a belantamab claim before the index IS
+# belantamab before the index.
 #
-# The half that is not here is belantamab from the index onward, which is the
-# no_belantamab line criterion in lot, asked of map_stacked over the patient's
-# whole LOT span. Together the two halves cover the whole rule.
+# The other half is from the index onward, the no_belantamab line criterion in
+# lot, asked of map_stacked over the whole LOT span. Together they cover the rule.
 #
-# Note this criterion overlaps NO_PRIOR_MM_TX, deliberately: that one already
-# removes any MM oncology therapy in the 12-month baseline, belantamab
-# included. Its incremental drop in the attrition is therefore exactly the
-# patients whose belantamab predates the baseline - the window nothing covered.
-# The other three exclusions name a period; this one names only
-# as "in any LOT"; read as post-index it would do nothing the first bullet had
-# not already done for the window they share. See DECISIONS.md #2.
+# It overlaps NO_PRIOR_MM_TX deliberately: that already removes MM therapy in
+# the 12-month baseline, belantamab included, so the incremental drop here is
+# exactly the patients whose belantamab predates the baseline. See
+# DECISIONS.md #2.
 #
-# NO_BELANTAMAB - the whole-study-period flag - is still computed and still
-# ships on the cohort table as an advisory; nothing filters on it. So this table
-# is the NDMM cohort pending only lot's half, and the funnel has nine steps.
+# NO_BELANTAMAB - the whole-study-period flag - is still computed and ships as
+# an advisory; nothing filters on it.
 
 # The first n criteria as a WHERE body, in the funnel's order.
 #
@@ -440,26 +429,21 @@ check_attrition_monotonic <- function(counts) {
   invisible(TRUE)
 }
 
-# The prior-therapy scan matches an NDC by stripping non-digits and left-padding
-# to eleven. That is the 4-4-2 layout; 5-3-2 and 5-4-1 ten-digit NDCs pad to a
-# different key, so a genuine prior therapy can be missed or the wrong drug
-# matched - and the patient's inclusion turns on it. Nothing downstream can see
-# that happen, so profile the values first and say what is there.
+# The prior-therapy scan matches an NDC by stripping non-digits and padding to
+# eleven. That is the 4-4-2 layout; 5-3-2 and 5-4-1 ten-digit NDCs pad to a
+# different key, so a prior therapy can be missed or the wrong drug matched -
+# and the patient's inclusion turns on it. Nothing downstream would see it, so
+# profile the values first.
 #
-# Both sides, because the join pads both: a ten-digit code list has the same
-# problem as a ten-digit claim.
+# Both sides, because the join pads both.
 #
-# Scoped to the base cohort rather than to the 1L starts. The starts do not
-# exist yet - the scan that builds them matches NDCs itself, so the profile has
-# to come first, and reading NDMM_LOT1_STARTS here made the build stop with a
-# missing view.
+# Scoped to the base cohort, not the 1L starts: those do not exist yet, since
+# the scan that builds them matches NDCs itself.
 #
-# The window is the whole study period, or a year before the patient's
-# diagnosis if that is earlier. That covers every NDC any scan in this build
-# matches: the index scan and the baseline scan sit inside the year-before
-# window, and the belantamab exclusion runs over the study period - a patient
-# diagnosed in 2025 can have a 2016 belantamab NDC that the exclusion reads and
-# a diagnosis-anchored profile would never have looked at.
+# The window is the whole study period, or a year before diagnosis if earlier -
+# which covers every NDC any scan here matches. The belantamab exclusion runs
+# over the study period, so a patient diagnosed in 2025 can have a 2016 NDC a
+# diagnosis-anchored profile would never look at.
 check_ndc_shape <- function(con, cfg) {
   log_msg("Checking NDC shape...")
   # Every non-blank value, including ones that cannot join. A profile that
@@ -756,7 +740,7 @@ CODELIST_METADATA_COLS <- c(RUN_ID = "STRING", CSV_NAME = "STRING",
                             RECORDED_AT = "TIMESTAMP")
 
 # load_codelist_csv() hashes every CSV it reads, because the code lists live
-# outside git and the file name alone does not say which version a run used.
+# outside version control and the file name alone does not say which version a run used.
 # Those hashes were being collected into an option and then dropped. Written
 # here, so the outputs say which code lists built them.
 write_codelist_metadata <- function(con, cfg) {
@@ -809,35 +793,31 @@ write_build_status <- function(con, cfg, state, n = NA) {
   invisible(TRUE)
 }
 
-# Every output name is work schema + prefix + table, with no run id in it - see
-# wrk(). checkpoint() then repoints each session view at the prefixed table it
-# has just replaced, so from that moment a run reads its own intermediate
-# results out of shared storage: NDMM_BASE_COHORT is literally
-# "SELECT * FROM <schema>.<prefix>NDMM_BASE_COHORT". Two runs on one prefix
-# therefore interleave. The second replaces a table the first has already
-# pointed a view at, and the first reads the second's rows from there on -
-# through fourteen checkpoints and five deliverables. Both can still reach
-# "complete", each having published a cohort that is partly the other's.
+# Output names carry no run id, and checkpoint() repoints each session view at
+# the prefixed table it has just replaced - so from then on a run reads its own
+# intermediate results out of shared storage. Two runs on one prefix therefore
+# interleave through fourteen checkpoints and five deliverables, and both can
+# still reach "complete", each having published a cohort partly the other's.
 #
-# Different prefixes are safe, and that is how two cohorts are meant to run at
-# once. This refuses the same-prefix case.
+# Different prefixes are safe - that is how two cohorts run at once. This
+# refuses the same-prefix case.
 #
-# A check, not a lock: two runs starting in the same moment can both pass it,
-# because there is nothing here that could hold a lock. It catches the case
-# worth catching - starting a second run while one is going - and says so.
-# Claims whose ICD_FLAG names neither family - restricted to the ones that could
-# matter. icd_family_sql() yields NULL for an unrecognised flag, so such a claim
-# now matches no code list entry instead of being mis-classed as ICD-10. That is
-# the safe direction, but it is still silent: this is what makes it visible.
+# A check, not a lock: two runs starting at the same moment both pass it. It
+# catches the case worth catching - starting a second run while one is going.
+
+# Claims whose ICD_FLAG names neither family, restricted to ones that could
+# matter. icd_family_sql() yields NULL for an unrecognised flag, so the claim
+# matches no code list entry instead of being mis-classed as ICD-10. That is
+# the safe direction, but silent - this makes it visible.
 #
-# Relevant means the normalised code is on one of the three diagnosis lists, or
-# on the pregnancy procedure list. The CDM is full of claims this cohort never
-# reads, and a malformed flag on one of those is not this build's problem.
+# Relevant means the normalised code is on one of the three diagnosis lists or
+# the pregnancy procedure list. The CDM is full of claims this cohort never
+# reads.
 #
-# Waivable like the NDC shape checks and for the same reason - the values are
-# the CDM's and cannot be corrected here. A waiver accepts that those rows match
-# nothing. It does not reclassify them: putting the ICD-10 guess back would
-# suppress the report and keep the error, which is the opposite of a decision.
+# Waivable like the NDC shape checks: the values are the CDM's and cannot be
+# corrected here. A waiver accepts that those rows match nothing. It does not
+# reclassify them - putting the ICD-10 guess back would suppress the report and
+# keep the error.
 check_icd_flag <- function(con, cfg) {
   fam <- icd_family_sql("t.ICD_FLAG")
   probe <- function(tbl, code_col, lists) glue("
@@ -908,29 +888,21 @@ check_no_active_run <- function(con, cfg) {
        "NDMM_IGNORE_ACTIVE_RUN=TRUE.", call. = FALSE)
 }
 
-# A re-run in the same session keeps run_id - it is fixed when config.R is
-# sourced, and DOMINO_RUN_ID pins it across sessions besides - so a second
-# attempt writes under the first attempt's id. Each writer clears its own rows,
-# but only when it is reached: an attempt that fails before write_run_metadata
-# leaves the first attempt's row saying which code and which code lists built
-# this cohort, which by then they did not. That is the one claim these tables
-# exist to make, and NDMM_BUILD_STATUS marking the run failed does not unmake
-# it - the rows are still there, under an id that now means something else.
-# Cleared up front instead, so nothing under this run's id describes work this
-# run did not do.
+# A re-run keeps run_id, so a second attempt writes under the first's id. Each
+# writer clears its own rows, but only when it is reached: an attempt that
+# fails before write_run_metadata leaves the first attempt's row saying which
+# code and which code lists built this cohort. Marking the run failed does not
+# unmake that claim. So the rows are cleared up front instead.
 #
-# NDMM_BUILD_STATUS is deliberately not here. Its row for this run is written
-# immediately before this runs, so nothing stale can survive in it, and
-# clearing it would delete the "started" row check_no_active_run shows to the
-# next run - turning the concurrency check off for exactly as long as the build
-# takes. NDMM_COHORT is not here either: it is replaced whole, not appended to.
+# NDMM_BUILD_STATUS is deliberately not here: its row is written immediately
+# before this, and clearing it would delete the "started" row the next run
+# looks for - turning the concurrency check off for the length of the build.
+# NDMM_COHORT is not here either; it is replaced whole.
 #
-# The tables need not exist yet, and on a first run they do not, so a delete
-# that cannot find its table is not a failure. TABLE_OR_VIEW_NOT_FOUND is one
-# of with_retry's permanent errors, so this does not sit through four attempts.
-# Anything else is said out loud rather than swallowed: a DELETE that was
-# refused leaves exactly the rows this exists to remove, and a silent try()
-# would let the run publish them as its own.
+# On a first run the tables do not exist, so a delete that cannot find one is
+# not a failure - TABLE_OR_VIEW_NOT_FOUND is a permanent error for with_retry.
+# Anything else is said out loud: a refused DELETE leaves exactly the rows this
+# exists to remove.
 RUN_SCOPED_TABLES <- c("NDMM_ATTRITION", "NDMM_RUN_METADATA",
                        "NDMM_CODELIST_METADATA")
 

@@ -1,23 +1,23 @@
 # LOT validation
 
-The four ideas in `questions/asked/July 30 2026/LOT New ideas.txt`, each as far
-as this repository can take it.
+Four validation asks against the LOT algorithm, each taken as far as this
+folder can take it.
 
-**Where each one stands.** None of it has executed against Databricks — no part
-of `Jul 28` has — so nothing here is an observed output.
+**Where each one stands.** None of it has executed against a warehouse, so
+nothing here is an observed output.
 
 | | |
 |---|---|
-| 3 — vignettes | **complete as documentation.** 21 cases with what the rules say, derived from this run's parameters. It is a specification, not a run. |
-| 2(d) — sensitivity | **harness complete, unrun.** Thirteen builds' worth of warehouse, opt-in, with the directions predicted first. Every cell is an explicit non-contract build, marked as one in the warehouse. |
-| 2(a)-(c) — benchmarks | **harness complete, pending sources.** Every measurement is written and checked; `benchmarks.csv` ships with `published_value` blank, because the published figures are not this repository's to write. |
-| 1 — definition comparison | **our column complete, theirs pending sources.** `clinicaltrials.gov` and `myeloma.org` are denied by this environment's network policy. |
+| Edge-case vignettes | **complete as documentation.** 21 cases with what the rules say, derived from this run's parameters. It is a specification, not a run. |
+| Sensitivity sweep | **harness complete, unrun.** Thirteen builds' worth of warehouse, opt-in, with the directions predicted first. Every cell is an explicit non-contract build, marked as one in the warehouse. |
+| Distribution benchmarks | **harness complete, pending sources.** Every measurement is written and checked; `benchmarks.csv` ships with `published_value` blank, because the published figures are not this folder's to write. |
+| Definition comparison | **our column complete, theirs pending sources.** The consensus paper and the trial protocols are not in this folder, and nothing here stands in for them. |
 
 Two of the four wait on somebody with the literature. That is stated per row in
 the outputs as well, so an unfilled cell reports itself rather than passing.
 
-Idea 3 first: a library of synthetic patient vignettes for the LOT assignments
-that are hard, each with what this algorithm does with them.
+The vignettes first: a library of synthetic patient vignettes for the LOT
+assignments that are hard, each with what this algorithm does with them.
 
 ```
 Rscript lot_validation/run_vignettes.R
@@ -30,7 +30,7 @@ markdown table to `out/`.
 ## What it is, and what it is not
 
 **It is a specification.** Each vignette says what the rules say, with the rule
-quoted. Nothing here has been executed against Databricks, so no line of it is
+quoted. Nothing here has been executed against a warehouse, so no line of it is
 an observed output.
 
 That distinction is on every row, as `confidence`:
@@ -90,7 +90,7 @@ rule that makes `LOT_LONG` and `LOT_LONG_FINAL` hold different **patients**.
 **`line_beyond_max`** — nothing above `MAX_LOT` is built, and a capped patient
 looks exactly like a completed one in the output.
 
-## The sensitivity sweep — idea 2(d)
+## The sensitivity sweep
 
 ```
 # print the plan and its cost; touches nothing, needs no connection
@@ -204,7 +204,7 @@ A sweep leaves a full set of LOT tables per cell. `SENS_DROP_AFTER=TRUE` removes
 them once the metrics are read; it is off by default, because dropping tables is
 not something a measurement script should do quietly.
 
-## Distribution benchmarks — idea 2(a)-(c)
+## Distribution benchmarks
 
 ```
 # check the reference file and print what would be measured; no connection
@@ -297,7 +297,7 @@ The crude `pct_reaching_line` figures are **not** follow-up adjusted and say so:
 a patient with six months of observation had less chance to reach LOT2 than one
 with five years. A source reporting a KM estimate is measuring something else.
 
-## Line-of-therapy definition comparison — idea 1
+## Line-of-therapy definition comparison
 
 ```
 Rscript lot_validation/run_definitions.R
@@ -327,17 +327,14 @@ where this algorithm decides something another could decide differently:
 substitutions, steroids, dose changes, the CAR-T bridging window, the line cap,
 and what fixes the start of first line.
 
-### Their side is empty, and that is circumstance rather than choice
+### Their side is empty, and it stays empty until somebody sources it
 
-`clinicaltrials.gov` and `myeloma.org` are both **denied by this environment's
-network policy** — the proxy returns 403 on CONNECT — so no protocol, registry
-record or consensus paper could be retrieved here.
-
-Web **search** does work, and summarises both. A search summary is the one thing
-these cells must not hold: it reads like a citation, cannot be checked against
-the document, and would produce a concordance table that looks authoritative and
-is not. `read_definition_sources()` rejects `search_summary` and `recollection`
-**by name**, and refuses any answer without a citation at all.
+The consensus paper and the trial protocols are not in this folder, and no
+summary of one is allowed to stand in. A summary reads like a citation, cannot
+be checked by anyone holding the source, and would produce a concordance table
+that looks authoritative and is not. `read_definition_sources()` rejects
+`search_summary` and `recollection` **by name**, and refuses any answer without
+a citation at all.
 
 So `definitions_sources.csv` ships as a grid somebody with the documents can
 fill mechanically — 12 dimensions × 6 source slots (IMWG plus the five pivotal
@@ -366,5 +363,5 @@ nothing. The catalogue is built so those columns can be added beside
 `expected` — the vignettes and their timelines are the reusable half — but
 somebody with the sources has to add them.
 
-Idea 1 is the same limit at protocol scale, and it has its own section above:
-the framework and our column are built; the sources are not reachable from here.
+The definition comparison above is the same limit at protocol scale: the
+framework and our column are built; the source documents are not here.

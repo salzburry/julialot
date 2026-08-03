@@ -1,89 +1,63 @@
 #!/usr/bin/env Rscript
-# July-20 study-team questions Q2 + Q3 -> focused CSVs + short summaries.
+# July-20 study-team questions Q2 + Q3 -> CSVs, summaries and one Excel workbook.
 #
 #   Rscript jul20_studyteam_qs.R
 #
-# A sibling of lot_followup_qs.R / lot1_studyteam_qs.R. Q1 (the dashboard
-# refresh) lives in jul20_refresh_dashboard.R; this script answers the other
-# two July-20 asks with patient-level CSVs, compact summary files, AND one
-# consolidated Excel workbook that gathers every Q2/Q3 table into tabs
-# (jul20_studyteam_qs_<cohort>_<stamp>.xlsx; needs openxlsx - degrades to
-# CSV-only with a note if it is absent). No existing pipeline or dashboard
-# file is modified.
+# Q1 (the dashboard refresh) is in jul20_refresh_dashboard.R. The workbook
+# needs openxlsx and degrades to CSV-only with a note if it is absent. Nothing
+# permanent is written - session temp views only, safe to run any time.
 #
-# Population: the study population by default (LOT_LONG_FINAL), which is the
-# cohort Julia's question 2 names, and the same default as the sibling
-# jul20_refresh_dashboard.R. Set LOT_POPULATION=PRECRITERIA for
-# the whole LOT cohort. Run the pair with the cohort stated explicitly:
+# Population: LOT_LONG_FINAL, the study population, which is the cohort the
+# question names. LOT_POPULATION=PRECRITERIA gives the run before the line
+# criteria. Run the pair with the population stated:
 #   LOT_POPULATION=FINAL Rscript jul20_refresh_dashboard.R
 #   LOT_POPULATION=FINAL Rscript jul20_studyteam_qs.R
-# MAP_STACKED, LOT1_SCT, MMA_MED_PROCESSED and ELIG_COH_FINAL are shared,
-# joined by PATID.
 #
-# Q2 - 1L DARA+BORT dual therapy. Definition (stated in every output): the
-#   LOT1 regimen is EXACTLY the two agents - no other MM agent in
-#   LOT_BASE_MEDS. Backbone steroids never enter the regimen strings, so they
-#   do not change the pairing. A context file also counts the broader "LOT1
-#   regimen contains both agents, possibly with others" group so the exact-
-#   dual count can be seen against it.
-#   Outputs: a one-row-per-patient roster (diagnosis date, per-agent drug
-#   episodes/MAPs, medical service dates, pharmacy fill dates, 2L regimen,
-#   region, payer), per-episode MAP files (during LOT1 and after LOT1,
-#   separately), and compact summaries for 2L, diagnosis years and the
-#   region x payer cross-tab.
-#   Measures are named for what claims can actually show: protocol cycles are
-#   NOT recorded in claims, so the outputs report drug episodes (MAPs),
-#   medical service dates (deduplicated to one row per patient + agent +
-#   service date) and pharmacy fill dates - observable utilization measures,
-#   not cycle counts.
-#   Region comes ONLY from an explicitly approved source, set via
-#   REGION_SOURCE_TABLE (a fully-qualified table, or a CDM base name such as
-#   'member_enrollment') and REGION_SOURCE_COLUMN. When unset, region is
-#   reported unavailable, and a candidate-columns file lists geographic-looking
-#   columns found on the enrollment/member tables so the team can approve one.
-#   By default the source values pass through untouched. If the source is a
-#   STATE field and the 4 US Census regions are wanted, set REGION_MAP=CENSUS
-#   to roll STATE (2-letter code or full name) up to Northeast/Midwest/South/
-#   West (DC in South) - reproducing Optum's own REGION derivation; any
-#   non-state value stays visible as 'Other/Unmapped'. The region_value_counts
-#   file shows the source-value -> region-used correspondence for confirmation.
-#   Payer = Optum line of business (member_enrollment.BUS) on the enrollment
-#   span covering the LOT1 start date - the production dashboard's anchor.
-#   MCR = Medicare, COM = Commercial, blank = Unknown, anything else =
-#   Other (<BUS>). If the team wants payer at diagnosis / across LOT1 / ever,
-#   that is a different anchor and is called out in the definitions file.
+# Q2 - 1L DARA+BORT dual therapy. EXACTLY those two agents in the LOT1
+#   regimen, no other MM agent. Steroids never enter the regimen strings, so
+#   they do not change the pairing; a context file counts the broader
+#   "contains both, possibly with others" group beside it.
 #
-# Q3 - PRELIMINARY affected-patient and boundary assessment of the two
-#   candidate LOT-rule changes. This is a read-only screen over the persisted
-#   LOT_LONG / MAP_STACKED / LOT1_SCT - NOT an engine re-run, and its counts
-#   are NOT the exact impact of implementing either rule. Moving a LOT
-#   boundary changes induction windows, regimens, discontinuation dates,
-#   add-med picks, transplant classification and every later line; only an
-#   isolated scenario re-run of the LOT derivation (separate scenario table
-#   names, production untouched) can give exact numbers once the rules are
-#   confirmed.
-#   (a) MELP: inventories the line transitions attributable to melphalan and
-#       buckets them by timing against the first MELP MAP of the line, because
-#       the rule as written is ambiguous - BOTH branches keep MELP inside the
-#       line, so read literally no MELP ever advances a line. The summary file
-#       lists the questions the study team needs to answer before a scenario
-#       is built.
-#   (b) CAR-T: covers EVERY patient whose first CAR-T falls inside the LOT1
-#       induction window (60 days by default; an override is surfaced as a
-#       gap because the rule names 60), classified by how the current engine
-#       handled the CAR-T. The fold-back merge and lines-per-patient shift
-#       are computed for the patients whose LOT1 ended by the CAR-T and whose
-#       LOT2 is CART-started; the other groups (no LOT2 row / LOT1 ended for
-#       another reason / LOT2 not CART-started) stay visible in the roster
-#       and are flagged, since only a scenario re-run can resolve them.
+#   Outputs: one row per patient (diagnosis date, drug episodes, medical
+#   service dates, pharmacy fills, 2L regimen, region, payer), per-episode MAP
+#   files during and after LOT1, and summaries for 2L, diagnosis year and
+#   region x payer.
 #
-# Every run also writes a validation-summary file with automated
-# reconciliation checks (one row per patient, definition audits, category
-# sums, cross-tab totals, CAR-T consistency) and a run-status file. Status is
-# either TECHNICALLY COMPLETE - PENDING MANUAL REVIEW (all outputs produced
-# and automated checks passed - still not sign-off to share) or INCOMPLETE
-# with the reasons. Writes no permanent tables (only session temp views).
-# Safe to run any time.
+#   Measures are named for what claims can show. Protocol CYCLES are not in
+#   claims, so these are drug episodes, medical service dates and fill dates.
+#
+#   Region comes only from an approved source - REGION_SOURCE_TABLE and
+#   REGION_SOURCE_COLUMN. Unset, region is reported unavailable and a
+#   candidate-columns file lists geographic-looking columns to approve. Values
+#   pass through untouched unless REGION_MAP=CENSUS, which rolls a STATE field
+#   up to the four US Census regions (DC in South) as Optum does; anything
+#   else stays visible as Other/Unmapped.
+#
+#   Payer is the Optum line of business (member_enrollment.BUS) on the span
+#   covering the LOT1 start - the dashboard's anchor. MCR = Medicare, COM =
+#   Commercial, blank = Unknown. Payer at diagnosis or across LOT1 is a
+#   different anchor, and the definitions file says so.
+#
+# Q3 - PRELIMINARY screen of two candidate LOT-rule changes. Read-only over the
+#   persisted tables, NOT an engine re-run, so its counts are not the exact
+#   impact of either rule: moving a boundary changes induction windows,
+#   regimens, discontinuation dates, transplant classification and every later
+#   line. Only a scenario re-run can give exact numbers.
+#
+#   (a) MELP: the line transitions attributable to melphalan, bucketed by
+#       timing against the line's first MELP MAP. The rule as written is
+#       ambiguous - both branches keep MELP inside the line, so read literally
+#       no MELP ever advances a line. The summary lists what the study team has
+#       to settle first.
+#   (b) CAR-T: every patient whose first CAR-T falls inside the LOT1 induction
+#       window (60 days; an override is flagged as a gap because the rule names
+#       60), classified by how the engine handled it. The fold-back merge is
+#       computed for patients whose LOT1 ended by the CAR-T and whose LOT2 is
+#       CART-started; the other groups stay visible and flagged.
+#
+# Every run writes a validation summary (reconciliation checks, definition
+# audits, category sums, cross-tab totals) and a run-status file: either
+# TECHNICALLY COMPLETE - PENDING MANUAL REVIEW, or INCOMPLETE with reasons.
 
 .script_dir <- local({
   args <- commandArgs(trailingOnly = FALSE)
@@ -1207,7 +1181,7 @@ main <- function() {
   if (!isTRUE(tok$resolved))
     gaps <- c(gaps,
       "Agent tokens could not be resolved from cl_mma_codelist.csv - fell back to defaults (DARA/BORT/MELP); every token-based answer is unverified")
-  # Julia's CAR-T rule names the 60-day induction window explicitly. The
+  # The July-20 CAR-T rule names the 60-day induction window explicitly. The
   # screen uses the environment's configured window (VQS_W1), so an override
   # must be surfaced rather than silently changing what the screen means.
   if (VQS_W1 != 60L)
@@ -1232,7 +1206,7 @@ main <- function() {
       log_msg("  CHECK FLAG: ", name, " - ", detail)
   }
 
-  # Central required-output gate: every answer Julia asked for must either
+  # Central required-output gate: every answer the study team asked for must either
   # produce real data or force the run INCOMPLETE. A best_effort() status
   # table anywhere in the required set registers a gap here, so "technically
   # complete" can never coexist with a failed required output.
@@ -1337,7 +1311,7 @@ main <- function() {
     write_out(best_effort(q2_region_candidates_report(con, describe_cols),
                           "region candidate columns"), "region_candidate_columns")
     # Opt-in state -> Census region rollup (REGION_MAP=CENSUS). Use it when the
-    # approved region source is a STATE field and Julia wants the 4 regions.
+    # approved region source is a STATE field and the ask wants the 4 regions.
     region_map_mode <- toupper(Sys.getenv("REGION_MAP", unset = ""))
     do_census <- region_map_mode %in% c("CENSUS", "CENSUS_REGION", "STATE_TO_CENSUS")
     reg_src <- q2_region_source_from_env(con, describe_cols)

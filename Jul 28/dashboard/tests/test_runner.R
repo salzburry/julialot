@@ -336,14 +336,12 @@ ok(!grepl("ORDER BY", psql, fixed = TRUE),
    "...so the panel has nothing left to sort or choose between")
 
 cat("\n-- which run owns the tables, not which run finished --\n")
-# LOT writes LOT_LONG_FINAL with CREATE OR REPLACE in the line-criteria phase
-# and validates it AFTER. So a rerun that replaced the table and then died
-# leaves its own table on disk with an incomplete metadata row - and the
-# previous run's complete row is still the newest one any completeness test
-# accepts. Provenance from run A over numbers from run B.
+# LOT replaces LOT_LONG_FINAL early and validates it AFTER, so a rerun that
+# replaced the table and then died leaves its own table with an incomplete
+# metadata row - while the previous run's complete row is still the newest one
+# a completeness test accepts. Provenance from run A over numbers from run B.
 #
-# LOT_BUILD_STATUS settles it: "complete" is the last write of the build, so
-# the latest row on the prefix is the run that last wrote these tables.
+# LOT_BUILD_STATUS settles it: "complete" is the build's last write.
 oi <- list(run_meta = "wk.META", build_st = "wk.ST")
 ohave <- c(run_meta = TRUE, build_st = TRUE)
 ocfg <- list(lot_prefix = "p_")

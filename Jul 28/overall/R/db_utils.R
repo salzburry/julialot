@@ -124,7 +124,7 @@ load_csv_codelists <- function(conn, cfg) {
     csv_file <- csv_map[[tbl_name]]
     csv_path <- file.path(cfg$codelist_dir, csv_file)
     tryCatch({
-      # The code lists live outside git, so the file name alone does not say
+      # The code lists live outside version control, so the file name alone does not say
       # which version a run used. Hash it, and hash it again after the read:
       # if it were swapped mid-read the logged hash would describe a file we
       # did not load.

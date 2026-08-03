@@ -9,32 +9,22 @@
 #     SENS_EXECUTE=TRUE Rscript lot_validation/run_sensitivity.R
 #
 # EXECUTION IS OPT-IN because one cell is one complete LOT build. The default
-# prints the grid, the expected directions and the cell count so the cost can
-# be read before anything runs, and it needs no connection to do it.
+# prints the grid, the directions and the cell count, and needs no connection.
 #
-# ---- these cells are not the contract build, deliberately ------------------
+# Every parameter here is pinned in the LOT contract and build_lot refuses a
+# value that is not the contract's - a different threshold is a different
+# algorithm. That is what a cell is, so each is launched with
+# LOT_CONTRACT_OVERRIDE=TRUE. The build records its deviations in that cell's
+# LOT_BUILD_STATUS, and everything that resolves run ownership refuses a run
+# carrying them, so a cell cannot be reported as the study.
 #
-# Every parameter this sweeps is pinned in the LOT contract, and build_lot
-# refuses a value that is not the contract's - correctly, because a different
-# threshold is a different algorithm rather than a setting. That is exactly
-# what a cell is, so each one is launched with LOT_CONTRACT_OVERRIDE=TRUE.
+# Each cell runs as its own Rscript under its own throwaway prefix. A separate
+# process, because the build pins a config and a run id globally and a second
+# build in one session inherits the first's.
 #
-# The build then records its deviations in that cell's LOT_BUILD_STATUS, and
-# the readers that resolve which run owns a prefix's tables - the questions,
-# the dashboard, the benchmark harness - refuse a run carrying them. So a cell
-# cannot be picked up and reported as the study, which is the thing that would
-# make this dangerous. check_sens_plan already refuses a cell aimed at the
-# study's own prefix.
-#
-# Each cell runs as its own Rscript against lot/build.R, under its own throwaway
-# prefix. A separate process rather than repeated in-process builds: the build
-# pins a config and a run id in the global environment, and a second one in the
-# same session inherits the first's state.
-#
-# Nothing is dropped afterwards unless asked. A sweep leaves a full set of LOT
-# tables per cell, which is a lot of schema - SENS_DROP_AFTER=TRUE removes each
-# cell's tables once its metrics are read, and is off by default because
-# dropping tables is not something a measurement script should do quietly.
+# A sweep leaves a full set of LOT tables per cell. SENS_DROP_AFTER=TRUE
+# removes them once the metrics are read; off by default, because dropping
+# tables is not something a measurement script should do quietly.
 
 .script_dir <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -86,18 +76,14 @@ print_plan <- function(cells) {
 run_cell <- function(c_i, cohort, cohort_pfx) {
   args <- c(file.path(LOT_ROOT, "build.R"), cohort, c_i$prefix)
   # The cohort build's prefix, not this cell's. COHORT_PREFIX defaults to the
-  # RUN's own output prefix, which for a cell is a throwaway like
-  # sens_max_lot_8_ - so the build looks for sens_max_lot_8_NDMM_BUILD_STATUS,
-  # finds nothing, warns, and carries on with no cohort run id at all. Thirteen
-  # cells would then have nothing recording that they read one cohort, and a
-  # cohort refreshed mid-sweep would show up as the parameter's effect.
+  # run's own prefix, which for a cell is a throwaway - so the build would look
+  # for sens_max_lot_8_NDMM_BUILD_STATUS, find nothing, and record no cohort at
+  # all. A cohort refreshed mid-sweep would then read as the parameter.
   env <- paste0("COHORT_PREFIX=", cohort_pfx)
   st  <- trimws(Sys.getenv("COHORT_STATUS_TABLE", unset = ""))
   if (nzchar(st)) env <- c(env, paste0("COHORT_STATUS_TABLE=", st))
-  # Every axis this sweep varies is contract-pinned, and the build refuses a
-  # value that is not the contract's - correctly, because a different value is
-  # a different algorithm. That is precisely what a cell is, so it says so.
-  # The reference cell changes nothing and does not need it.
+  # A cell is an alternative algorithm, so it says so. The reference cell
+  # changes nothing and does not need it.
   if (!is.na(c_i$param))
     env <- c(env, "LOT_CONTRACT_OVERRIDE=TRUE",
              paste0(c_i$param, "=", c_i$value))
@@ -130,10 +116,7 @@ main <- function() {
   if (!nzchar(cohort))
     stop("INPUT_COHORT_TABLE is required to execute: every cell builds LOT over ",
          "the same cohort, and only the thresholds differ.", call. = FALSE)
-  # "The same cohort" has to be provable, not just intended. The cohort build's
-  # prefix is what lets each cell find NDMM_BUILD_STATUS and record which
-  # cohort ATTEMPT it read; without it every cell records nothing and a cohort
-  # refreshed mid-sweep is indistinguishable from the parameter's effect.
+  # "The same cohort" has to be provable, not just intended.
   if (!nzchar(cohort_pfx))
     stop("COHORT_PREFIX is required to execute. Each cell writes to its own ",
          "throwaway prefix, and the build looks for the cohort's status table ",
@@ -149,11 +132,8 @@ main <- function() {
   rows <- list(); attempts <- list()
   for (c_i in cells) {
     if (!run_cell(c_i, cohort, cohort_pfx)) next
-    # The cell's own run id, from the cell's own status table: LOT_ATTRITION is
-    # keyed by it, and taking this run's id would read the wrong funnel. Same
-    # resolver the benchmarks use - one definition of which run owns a prefix's
-    # tables. A cell that did not finish is skipped rather than refused: it
-    # costs that cell and the sweep goes on.
+    # The cell's own run id: LOT_ATTRITION is keyed by it. A cell that did not
+    # finish is skipped, not refused - it costs that cell and the sweep goes on.
     st <- lot_run_row(con, c_i$prefix)
     if (is.null(st) || !isTRUE(st$complete)) {
       cat("    cell ", c_i$id, " did not finish - skipped.\n", sep = "")
@@ -164,9 +144,8 @@ main <- function() {
       wrk(paste0(c_i$prefix, "LOT_ATTRITION")),
       st$run)), error = function(e) NULL)
     if (is.null(m)) { cat("    metrics unavailable for ", c_i$id, "\n", sep = ""); next }
-    # Which cohort attempt this cell read. Recorded per cell and compared
-    # afterwards - a sweep is thirteen sequential builds and a cohort can be
-    # rebuilt while it runs.
+    # Which cohort attempt this cell read - a sweep is thirteen sequential
+    # builds, and a cohort can be rebuilt while it runs.
     md <- lot_run_meta(con, c_i$prefix)
     attempts[[c_i$id]] <- if (is.null(md) || is.na(md$cohort_run) ||
                               !nzchar(trimws(md$cohort_run))) NA_character_ else
@@ -191,13 +170,9 @@ main <- function() {
   res$cohort_attempt <- unlist(attempts[res$cell])
   write.csv(res, file.path(out_dir, "sensitivity_metrics.csv"), row.names = FALSE)
 
-  # One cohort, or the table is not a sensitivity table.
-  #
-  # Every delta here is attributed to the parameter that changed. If the cohort
-  # was rebuilt between cell three and cell nine, part of the difference is the
-  # patients and the output says "the threshold did this". That is the failure
-  # a sweep is least able to notice from its own numbers, so it is checked
-  # against what each cell recorded rather than assumed from the command line.
+  # One cohort, or the table is not a sensitivity table. If the cohort was
+  # rebuilt mid-sweep, part of every difference is the patients while the
+  # output says the threshold did it - and no number here would show that.
   seen <- unique(unlist(attempts))
   if (length(seen) > 1L) {
     cat("\nCOHORT CHANGED DURING THE SWEEP - these cells did not read one ",

@@ -15,7 +15,9 @@ ROOT <- local({
                                                  fixed = TRUE))) else getwd()
   dirname(d)
 })
-JUL28 <- dirname(ROOT)
+# The folder the packages sit in, resolved from this file rather than named:
+# it stays right whatever that folder is called.
+PARENT <- dirname(ROOT)
 
 pass <- 0L; fail <- 0L
 ok <- function(cond, what) {
@@ -58,9 +60,9 @@ cat("\n-- every axis is a setting the build actually reads --\n")
 # An axis naming a setting the build ignores would run thirteen builds that
 # differ in nothing, and the table would show noise as signal.
 e <- new.env(parent = globalenv())
-sys.source(file.path(JUL28, "lot", "R", "load_inputs.R"), envir = e)
-e$load_pipeline_inputs(file.path(JUL28, "lot"), "config.csv")
-sys.source(file.path(JUL28, "lot", "R", "config_lot.R"), envir = e)
+sys.source(file.path(PARENT, "lot", "R", "load_inputs.R"), envir = e)
+e$load_pipeline_inputs(file.path(PARENT, "lot"), "config.csv")
+sys.source(file.path(PARENT, "lot", "R", "config_lot.R"), envir = e)
 shipped <- get("cfg_defaults", envir = e)
 missing <- Filter(function(a) is.null(shipped[[a$cfg]]), SENS_AXES)
 ok(!length(missing),
@@ -68,7 +70,7 @@ ok(!length(missing),
                                paste(vapply(missing, function(a) a$cfg, character(1)),
                                      collapse = ", "))
    else "every axis maps to a field of the build's own config")
-cl <- readLines(file.path(JUL28, "lot", "config.csv"), warn = FALSE)
+cl <- readLines(file.path(PARENT, "lot", "config.csv"), warn = FALSE)
 notenv <- Filter(function(a) !any(grepl(paste0("^", a$param, ","), cl)), SENS_AXES)
 ok(!length(notenv),
    if (length(notenv)) paste0("axis is not a setting config.csv carries: ",
@@ -191,7 +193,7 @@ ok(any(grepl("maintenance-as-LOT", rs, fixed = TRUE)) &&
    "maintenance-as-LOT is named as not being a setting, not quietly dropped")
 ok(any(grepl("NDMM_FU_CE_COUNTS", rs, fixed = TRUE)),
    "...and CE is pointed at the build that already reports it")
-sct <- readLines(file.path(JUL28, "lot", "R", "steps", "05_sct.R"), warn = FALSE)
+sct <- readLines(file.path(PARENT, "lot", "R", "steps", "05_sct.R"), warn = FALSE)
 ok(any(grepl("Maintenance is a descriptive flag only", sct, fixed = TRUE)),
    "...and that claim about maintenance is checked against the code, not asserted")
 
@@ -220,10 +222,10 @@ cat("\n-- and a cell can actually be built, which is not a given --\n")
 # the override, twelve of thirteen cells stop at preflight and the sweep
 # produces nothing. Nothing in the plan or the comparison logic would show it:
 # they never touch the LOT entry point.
-bl <- readLines(file.path(JUL28, "lot", "R", "build_lot.R"), warn = FALSE)
+bl <- readLines(file.path(PARENT, "lot", "R", "build_lot.R"), warn = FALSE)
 contract_keys <- names(get("CONTRACT", envir = local({
   e <- new.env(parent = globalenv()); sys.source(
-    file.path(JUL28, "lot", "R", "build_lot.R"), envir = e, keep.source = FALSE); e
+    file.path(PARENT, "lot", "R", "build_lot.R"), envir = e, keep.source = FALSE); e
 })))
 pinned <- Filter(function(a) a$cfg %in% contract_keys, SENS_AXES)
 ok(length(pinned) > 0,
@@ -242,8 +244,8 @@ ok(length(ref_guarded) &&
 ok(any(grepl("CONTRACT_DEVIATIONS", bl, fixed = TRUE)),
    "a deviating build records what it deviated on, in its own status table")
 for (f in c(file.path(ROOT, "R", "run_binding.R"),
-            file.path(JUL28, "questions", "_setup.R"),
-            file.path(JUL28, "dashboard", "R", "db_utils_dash.R")))
+            file.path(PARENT, "questions", "_setup.R"),
+            file.path(PARENT, "dashboard", "R", "db_utils_dash.R")))
   ok(any(grepl("CONTRACT_DEVIATIONS|deviations", readLines(f, warn = FALSE))),
      paste0("...and ", basename(f), " refuses a run carrying them"))
 

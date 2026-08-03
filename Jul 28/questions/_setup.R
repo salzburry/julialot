@@ -77,19 +77,17 @@ qs_setup <- function(script_dir) {
 # it: ICD9 for the ICD-9 spellings, ICD10 for the ICD-10 ones, NULL for
 # anything else - blank, missing, or a spelling nobody expected.
 #
-# NOT "not ICD-9, therefore ICD-10". That reads a genuine ICD-9 claim with a
-# missing flag as ICD-10, and it then fails the family join silently, so a
-# question can count a diagnosis the cohort build deliberately did not. NULL
-# matches neither family, which is the honest answer for a row whose family is
-# unknown. The CDM's values cannot be corrected the way a code list can.
+# NOT "not ICD-9, therefore ICD-10". That reads an ICD-9 claim with a missing
+# flag as ICD-10, fails the family join silently, and lets a question count a
+# diagnosis the cohort build did not. NULL matches neither family, which is the
+# honest answer for an unknown row.
 #
-# It matters because raw_icd_flag is a WAIVABLE check in the cohort build: a
-# run can legitimately carry unrecognised flags, and then the two rules
-# disagree on exactly those claims.
+# It matters because raw_icd_flag is a WAIVABLE check in the cohort build, so a
+# run can legitimately carry unrecognised flags.
 #
 # The lists live in nndm/R/codelists.R, which this package cannot source - it
-# defines its own load_codelist_csv() and would replace lot's. So they are
-# repeated here and tests/test_setup.R fails if the two ever differ.
+# would replace lot's load_codelist_csv(). Repeated here, and test_setup.R
+# fails if the two ever differ.
 QS_RAW_ICD9  <- c("9", "ICD9", "ICD-9")
 QS_RAW_ICD10 <- c("10", "ICD10", "ICD-10")
 qs_icd_family_sql <- function(col, nine = "ICD9", ten = "ICD10") {
@@ -101,34 +99,27 @@ qs_icd_family_sql <- function(col, nine = "ICD9", ten = "ICD10") {
 
 # A prefixed output table, from either build.
 #
-# NOT wrk(). In this package wrk() resolves catalog.schema.table with no
-# prefix - the cohort table is named by whoever built it, so the caller passes
-# the whole name. Every table these scripts read is a build's own output and
-# carries that build's prefix: LOT_LONG and MAP_STACKED from lot,
-# NDMM_FLAGS_ALL from the cohort build, which share a prefix when one study is
-# built under one prefix. A table written by a DIFFERENT build carries that
-# build's prefix instead and is named for itself - see qs_trial_flags().
+# NOT wrk(), which resolves the name with no prefix - that is for the cohort
+# table, named by whoever built it. Everything these scripts read is a build's
+# own output and carries its prefix. A table from a DIFFERENT build is named
+# for itself; see qs_trial_flags().
 #
-# Using wrk() here asks for the unprefixed name. That usually fails to find a
-# table, which is survivable - but if an unprefixed table from some older run
-# is sitting in the schema it succeeds, and the answer is about a different
-# study with nothing to say so.
+# wrk() here would ask for the unprefixed name. That usually finds nothing,
+# which is survivable - but an unprefixed table left by an older run succeeds,
+# and the answer is about another study with nothing to say so.
 qs_tbl <- function(tbl) lot_out(tbl)
 
 # Which population a question runs over.
 #
-# The old switch was between two COHORTS - the full LOT run and an NDMM-filtered
-# copy of it persisted alongside. That arrangement is gone: the LOT run is over
-# the NDMM cohort already, so its output under this prefix IS the study
-# population, and a different cohort is a different prefix.
+# The LOT run is over the NDMM cohort already, so its output under this prefix
+# IS the study population; a different cohort is a different prefix.
 #
-# What is still a real choice is BEFORE or AFTER the line criteria, within one
-# run. LOT_LONG_FINAL is the study population; LOT_LONG is the same run before
-# a truncating criterion removed anyone, which is worth looking at when the
-# question is what a criterion cost.
+# The real choice is BEFORE or AFTER the line criteria within one run.
+# LOT_LONG_FINAL is the study population; LOT_LONG is the same run before a
+# truncating criterion removed anyone, which answers what a criterion cost.
 #
-# FINAL is the default because that is what ships. Reporting a denominator off
-# LOT_LONG while calling it the cohort would count patients the study excluded.
+# FINAL is the default. A denominator off LOT_LONG called the cohort would
+# count patients the study excluded.
 qs_population <- function() {
   old <- Sys.getenv("LOT_COHORT", unset = "")
   if (nzchar(old))
@@ -153,32 +144,26 @@ qs_population <- function() {
 # The other-cancer and clinical-trial flags, with the table that says which
 # index date each row belongs to.
 #
-# NOT the cohort build's NDMM_FLAGS_ALL. That table is the exclusion audit -
-# CE, prior therapy, other cancer, pregnancy, belantamab - one row per patient
-# keyed on PATID alone. It has no INDEX_DATE, no OTHER_MALIGN_FLAG and no
+# NOT the cohort build's NDMM_FLAGS_ALL. That is the exclusion audit, one row
+# per patient on PATID alone, with no INDEX_DATE, no OTHER_MALIGN_FLAG and no
 # CLINTRIAL_* column. Pointing a trial question at it is worse than a missing
-# table: it IS readable, so a readable() guard passes and the query then stops
-# on an unresolved column part way through a workbook.
+# table: it IS readable, so a readable() guard passes and the query then dies
+# on an unresolved column part way through the workbook.
 #
-# Two tables, and they have to come from ONE build. ELIG_COH_ALLFLAGS has a row
-# per candidate index date; ELIG_COH_FINAL says which candidate that build
-# selected, and the join needs both. Aligning the flags to the NDMM cohort
-# instead puts two different index definitions on either side of the join - the
-# broad build picks a diagnosis-based candidate, NDMM_COHORT.INDEX_DATE is the
-# LOT1 start - so it matches almost nothing and reads as nobody being flagged.
+# Two tables, from ONE build. ELIG_COH_ALLFLAGS has a row per candidate index
+# date; the final cohort says which candidate that build selected, and the join
+# needs both. Aligning the flags to the NDMM cohort instead puts two different
+# index definitions either side of the join - a diagnosis-based candidate
+# against the LOT1 start - so it matches almost nothing and reads as nobody
+# being flagged.
 #
-# TRIAL_PREFIX names that build when it is not this one, since the flags carry
-# its prefix and not this run's. Blank falls back to this prefix, which is
-# right when the cohort came from the broad build itself.
+# TRIAL_PREFIX names that build when it is not this one. Blank falls back to
+# this prefix, which is right when the cohort came from the broad build itself.
 #
-# The two tables are named DIFFERENTLY, which is easy to get wrong from this
-# side. ELIG_COH_ALLFLAGS is a checkpoint, so it is written through that
-# build's prefixing helper and comes out as <prefix>ELIG_COH_ALLFLAGS. The
-# final cohort is not a checkpoint: it is persisted by name from that build's
-# own FINAL_TABLE_NAME, with no prefix - overall/config.csv sets it to
-# OVERALL_COH_FINAL. Deriving it here as <prefix>ELIG_COH_FINAL asks for a
-# table that build never writes, so TRIAL_INDEX_TABLE names it, whole, the way
-# INPUT_COHORT_TABLE does.
+# The two tables are named DIFFERENTLY. ELIG_COH_ALLFLAGS is a checkpoint, so
+# it is written with that build's prefix. The final cohort is not: it is
+# persisted by name from that build's own FINAL_TABLE_NAME, with no prefix.
+# So TRIAL_INDEX_TABLE names it whole, the way INPUT_COHORT_TABLE does.
 qs_trial_flags <- function() {
   cfg <- lot_config()
   pfx <- trimws(Sys.getenv("TRIAL_PREFIX", unset = ""))
@@ -204,16 +189,14 @@ QS_TRIAL_INDEX_COLS <- c("PATID", "INDEX_DATE")
 
 # The cohort build's own trial flag, cut at the 1L index.
 #
-# This is the one that answers the question the study team actually asked -
-# did trial therapy come before the 1L start - because its windows are anchored
-# where the cohort's index is. The broad build's pair cannot: its baseline ends
-# before a diagnosis-based index and its follow-up starts there and runs past
-# LOT1, so the stretch in between is in neither.
+# This one answers what the study team asked - did trial therapy come before
+# the 1L start - because its windows are anchored where the cohort's index is.
+# The broad build's pair cannot: its baseline ends before a diagnosis-based
+# index and its follow-up starts there and runs past LOT1, so the stretch
+# between is in neither.
 #
-# One cohort, one prefix, no overlap to report: every patient here is a patient
-# of this run. So when this table is present it is preferred, and the broad
-# flags are what is left for OTHER_MALIGN_FLAG and for a run built before it
-# existed.
+# Every patient here is a patient of this run, so when it exists it is
+# preferred. The broad flags are what is left for OTHER_MALIGN_FLAG.
 QS_NDMM_TRIAL_COLS <- c("PATID", "LOT1_START_DT", "MM_DX_DT",
                         "CLINTRIAL_PRE_DX", "CLINTRIAL_DX_TO_LOT1",
                         "CLINTRIAL_POST_LOT1", "CLINTRIAL_PRE_LOT1_12MO",
@@ -221,18 +204,14 @@ QS_NDMM_TRIAL_COLS <- c("PATID", "LOT1_START_DT", "MM_DX_DT",
 
 # Does that table belong to the cohort run these LOT lines were built from?
 #
-# The name is not enough, and neither is the column list. The cohort build
-# writes the trial flag before its own cohort table, its attrition and its
-# "complete" status, so a rerun can replace it and then fail - leaving a
-# well-formed table from an attempt that never finished. And a rerun that DOES
-# finish replaces it under the same prefix and the same physical name, so the
-# LOT run-binding check, which compares that name, sees nothing change.
+# The name is not enough, nor is the column list. The cohort build writes the
+# trial flag before its cohort table and its "complete" status, so a rerun can
+# replace it and then fail. And a rerun that DOES finish replaces it under the
+# same name, so the LOT run-binding check sees nothing change.
 #
-# LOT records which cohort run it read - COHORT_RUN_ID and COHORT_STAMP, in
-# LOT_RUN_METADATA, taken at the moment it checked the cohort build. The stamp
-# is there because a cohort re-run keeps its id and rewrites its rows under it,
-# so the id alone cannot tell one attempt from the next. Asked against the
-# cohort's own status table, that settles both cases.
+# LOT records which cohort run it read - COHORT_RUN_ID and COHORT_STAMP in
+# LOT_RUN_METADATA. The stamp is there because a cohort re-run keeps its id and
+# rewrites its rows, so the id alone cannot tell one attempt from the next.
 qs_ndmm_trial_flags <- function(con) {
   tbl  <- qs_tbl("NDMM_CLINTRIAL_FLAGS")
   gap  <- function(why) list(ok = FALSE, table = tbl, why = why)
@@ -334,17 +313,13 @@ qs_col <- function(d, name) {
 # How the build behind the trial flags ended.
 #
 # The broad build writes <prefix>build_status with CREATE OR REPLACE, so it
-# holds one row and that row is the last run on the prefix - no ordering
-# needed. A run that dies part way leaves some tables from this attempt and
-# some from the one before, and nothing else in the schema says so: the flags
-# and the final cohort are separate writes, and a failure between them leaves
-# two tables that are individually readable, carry every column, and describe
-# different runs.
+# holds one row and no ordering is needed. A run that dies part way leaves the
+# flags and the final cohort from different attempts - both readable, both
+# fully formed, and nothing else in the schema says so.
 #
 # It also records the final table name it wrote, which is worth more than the
 # state: TRIAL_INDEX_TABLE defaults to a name from a config file this package
-# does not read, so this is the one place that default can be checked against
-# what the build actually did.
+# does not read, so this is the one place to check that default.
 #
 # No status table is a warning, not a refusal - an older build predates it.
 qs_trial_build_state <- function(con, src) {
@@ -424,31 +399,23 @@ qs_trial_flags_ready <- function(con, src = qs_trial_flags()) {
 
 # Is INPUT_COHORT_TABLE the cohort this LOT run was actually built from?
 #
-# The name is checked as a name, which stopped the blank that used to resolve to
-# just the schema. It cannot stop a valid name for the wrong cohort, and the
+# Checking the name as a name stopped the blank that used to resolve to just
+# the schema. It cannot stop a valid name for the wrong cohort, and the
 # questions that read it - observation windows, index dates, raw-claim bounds -
 # would then bound this run's answers by a cohort it never saw. The LOT build
-# records what it was given, so ask it rather than trusting the operator.
+# records what it was given, so ask it.
 #
-# A status table that cannot be read warns rather than stops: an older run may
-# predate it, and refusing to answer at all would be worse than saying the
-# binding is unverified.
+# The LATEST row, whatever state it reached - not the latest COMPLETE one.
+# "complete" is written last, so the latest row is the run that last touched
+# these tables. LOT replaces LOT_LONG_FINAL early and validates it afterwards,
+# so filtering to complete rows would credit a failed rerun's tables to the
+# previous good run. The dashboard resolves ownership the same way.
 #
-# The LATEST row of a LOT run's status table, whatever state it reached - not
-# the latest COMPLETE one. One row per run, "complete" written last of all, so
-# the latest row is the run that last touched that prefix's tables. LOT
-# replaces LOT_LONG_FINAL early in the line-criteria phase and validates it
-# afterwards, so a rerun that replaced it and then failed leaves its own table
-# on disk while the previous run's complete row still looks like the newest
-# good one. Filtering to complete rows attributes those tables to a run that no
-# longer wrote them - the exact case these guards exist for. The dashboard
-# resolves ownership the same way, for the same reason.
-#
-# NULL when there is nothing to read. An older run predates the table, so the
+# NULL when there is nothing to read - an older run predates the table, so the
 # caller decides whether that is a warning or a refusal.
-# SELECT *, not a column list: STUDY_END was added later, and an older run's
-# table does not have it. Naming it would turn a run that predates it into an
-# unreadable status table, which reads as no run recorded at all.
+#
+# SELECT *, not a column list: STUDY_END was added later, and naming it would
+# make an older run's table unreadable, which reads as no run at all.
 qs_lot_run_row <- function(con, prefix) {
   tbl <- wrk(paste0(prefix, "LOT_BUILD_STATUS"))
   d <- tryCatch(db_q(con, glue(
@@ -475,16 +442,12 @@ qs_lot_run_row <- function(con, prefix) {
 # Did that run read the same CDM vintage these questions are configured for?
 #
 # STUDY_END picks the quarterly table, and the quarterlies are cumulative. The
-# question scripts go back to the raw CDM themselves - Q3's baseline diagnosis
-# scan does - and resolve that suffix from cfg, not from the run they are
-# reading. A different STUDY_END pairs that run's patients and index dates with
-# a later vintage of their claims, which can carry corrections and late
-# arrivals the run never saw.
+# question scripts go back to the raw CDM themselves and resolve that suffix
+# from cfg, not from the run they are reading - so a different STUDY_END pairs
+# that run's patients with a later vintage of their claims.
 #
-# A sentence, not a refusal. The newer vintage is usually the better data, and
-# the raw-claim sections are a minority of the workbook - but a number that is
-# not what that run would have produced should say so rather than be quoted as
-# if it were.
+# A sentence, not a refusal. The newer vintage is usually better data, but a
+# number that is not what that run would have produced should say so.
 qs_vintage_note <- function(got, what) {
   cfg <- lot_config()
   if (is.null(got) || is.na(got$study_end) || !nzchar(trimws(got$study_end)))
@@ -545,14 +508,13 @@ qs_check_run_binding <- function(con) {
 
 # Did the broad LOT run behind Q3's association finish?
 #
-# Same rule as this run's, different consequence. The broad run is a second
-# population read for one half of one question, so an unfinished one costs that
-# half and nothing else - it skips rather than stopping a workbook whose other
-# answers do not depend on it.
+# Same rule as this run's, different consequence: the broad run is read for one
+# half of one question, so an unfinished one skips that half rather than
+# stopping the workbook.
 #
-# The cohort it was built from comes back too. The association is over that
-# population, and the tab should name it rather than leaving "the broad cohort"
-# to mean whatever happens to sit under the prefix.
+# The cohort it was built from comes back too, so the tab can name the
+# population instead of leaving "the broad cohort" to mean whatever sits under
+# the prefix.
 qs_broad_run_state <- function(con, prefix) {
   got <- qs_lot_run_row(con, prefix)
   if (is.null(got)) {
@@ -600,23 +562,19 @@ qs_same_table <- function(a, b) {
 
 # Do the broad LOT run and the broad flag build describe the same population?
 #
-# BROAD_PREFIX names a LOT run and TRIAL_PREFIX names the cohort build behind
-# the diagnosis-anchored flags. Nothing about either name makes them the same
-# study, and the flag section joins one to the other - it labels flag-build
-# patients POMA-1L from the LOT run's regimens. Point them at two broad cohorts
-# and every patient the second build does not have reads as 'other', which is
-# indistinguishable in the output from not having had POMA.
+# BROAD_PREFIX names a LOT run, TRIAL_PREFIX the cohort build behind the
+# diagnosis-anchored flags. Nothing makes them the same study, and the flag
+# section joins one to the other - it labels flag-build patients POMA-1L from
+# the LOT run's regimens. Point them at two cohorts and every patient the
+# second build lacks reads as 'other', which looks the same as not having had
+# POMA.
 #
-# The LOT run records the cohort table it was built from; the flag build's
-# final cohort table is the one the flags are aligned to. If the LOT run was
-# built over that cohort, the two are the same population by construction. So
-# it is asked rather than assumed.
+# The LOT run records the cohort it was built from, and that should be the
+# cohort the flag build wrote. So it is asked rather than assumed.
 #
-# `bound` is TRUE only when both were recorded and they match. A run that
-# recorded neither is `unverified` - older runs predate the status table, and
-# refusing on a missing record would take the answer away from every one of
-# them. A positive disagreement is neither: it is known-wrong, and it stops the
-# join rather than warning about it.
+# `bound` is TRUE only when both were recorded and match. Neither recorded is
+# `unverified` - older runs predate the status table. A positive disagreement
+# is known-wrong, and stops the join rather than warning.
 qs_broad_pair_bound <- function(broad_cohort, trial_index) {
   has <- function(x) length(x) && !is.na(x[1]) && nzchar(trimws(as.character(x[1])))
   if (!has(broad_cohort) || !has(trial_index))
@@ -638,12 +596,11 @@ qs_broad_pair_bound <- function(broad_cohort, trial_index) {
 # The line criteria that REMOVED patients from this run, read from the lot
 # package's own declaration and the APPLY_* settings this run used.
 #
-# A question that counts a drug from MAP_STACKED and then looks for it in
+# A question that counts a drug in MAP_STACKED and then looks for it in
 # LOT_LONG_FINAL has to know about these. MAP_STACKED is built before the
-# criteria, so it still holds the exposure; no_belantamab is patient-level and
-# truncates, so LOT_LONG_FINAL holds none of that patient's lines. Empty means
-# the study removed them, not that the drug never joined a regimen - and only
-# the criteria say which.
+# criteria; no_belantamab truncates, so LOT_LONG_FINAL holds none of that
+# patient's lines. Empty means the study removed them, not that the drug never
+# joined a regimen.
 qs_truncating_criteria <- function() {
   Filter(function(c_i) identical(c_i$on_fail, "truncate"), enabled_line_criteria())
 }
