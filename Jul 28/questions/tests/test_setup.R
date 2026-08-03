@@ -80,10 +80,101 @@ runs(qs_setup(ROOT), "a run that truly had no prefix can say so, explicitly")
 cat("\n-- no script asks for a table the unprefixed way --\n")
 qs <- list.files(ROOT, pattern = "_qs[.]R$", full.names = TRUE)
 ok(length(qs) >= 5, paste0("the question scripts are here (", length(qs), ")"))
-bad <- Filter(function(f) any(grepl("\\bwrk\\(", readLines(f, warn = FALSE))), qs)
+# wrk() is right for exactly one thing - the cohort table, whose whole physical
+# name the caller passes. Every other table is a build's own prefixed output.
+bad <- Filter(function(f) {
+  w <- grep("\\bwrk\\(", readLines(f, warn = FALSE), value = TRUE)
+  length(w) > 0 && !all(grepl("wrk(cfg$input_cohort_table)", w, fixed = TRUE))
+}, qs)
 ok(!length(bad),
-   if (length(bad)) paste0("still calling wrk(): ", paste(basename(bad), collapse = ", "))
-   else "every table reference goes through qs_tbl()")
+   if (length(bad)) paste0("calls wrk() on a prefixed output: ",
+                           paste(basename(bad), collapse = ", "))
+   else "wrk() is used only for the cohort table; every output goes through qs_tbl()")
+clear()
+
+cat("\n-- every file a script sources is a different file, and exists --\n")
+# validation_qs.R is an entry point; the vqs_* helpers were a separate file.
+# Sourcing "validation_qs.R" from inside validation_qs.R is the entry point
+# sourcing itself, before any helper is defined and before main() runs. It
+# parses, so nothing but this would have said so.
+srcs <- function(f) {
+  m <- regmatches(readLines(f, warn = FALSE),
+                  regexpr('source\\(file\\.path\\(\\.script_dir, "[^"]+"\\)\\)',
+                          readLines(f, warn = FALSE)))
+  unlist(regmatches(m, gregexpr('"[^"]+"', m)))
+}
+self <- Filter(function(f) paste0('"', basename(f), '"') %in% srcs(f), qs)
+ok(!length(self),
+   if (length(self)) paste0("sources itself: ", paste(basename(self), collapse = ", "))
+   else "no script sources itself")
+missing <- unlist(lapply(qs, function(f)
+  Filter(function(n) !file.exists(file.path(ROOT, gsub('"', "", n))), srcs(f))))
+ok(!length(missing),
+   if (length(missing)) paste0("sources a file that is not here: ",
+                               paste(unique(missing), collapse = ", "))
+   else "every file they source is present")
+ok(file.exists(file.path(ROOT, "validation_helpers.R")),
+   "the vqs_* helpers are here as their own file")
+
+cat("\n-- the cohort table is passed whole, so it is not prefixed again --\n")
+# The one place wrk() is right. LOT takes input_cohort_table as the complete
+# physical name - ndmm_NDMM_COHORT - so prefixing it would ask for
+# ndmm_ndmm_NDMM_COHORT. The blanket wrk() -> qs_tbl() sweep broke exactly this.
+dbl <- Filter(function(f) any(grepl("qs_tbl(cfg$input_cohort_table)",
+                                    readLines(f, warn = FALSE), fixed = TRUE)), qs)
+ok(!length(dbl),
+   if (length(dbl)) paste0("prefixes the cohort table twice: ",
+                           paste(basename(dbl), collapse = ", "))
+   else "the cohort table goes through wrk(), not qs_tbl()")
+ok(file.exists(file.path(ROOT, "steroid_codes.csv")),
+   "the steroid code list the timing questions need is here")
+
+cat("\n-- the questions run over the study population --\n")
+# LOT_LONG is the run before a truncating criterion removed anyone, so a
+# denominator taken from it counts patients the study excluded. LOT_LONG_FINAL
+# is what ships, and it is the default.
+clear(); Sys.setenv(DOMINO_USER_NAME = "usr00000", OBJECT_PREFIX = "ndmm_")
+invisible(qs_setup(ROOT))
+ok(grepl("ndmm_LOT_LONG_FINAL$", qs_population()$table),
+   "the default population is LOT_LONG_FINAL, not the pre-criteria table")
+Sys.setenv(LOT_POPULATION = "PRECRITERIA")
+ok(grepl("ndmm_LOT_LONG$", qs_population()$table),
+   "...and the pre-criteria run can be asked for, when the question is what a criterion cost")
+Sys.unsetenv("LOT_POPULATION")
+Sys.setenv(LOT_POPULATION = "SOMETHING")
+stops(qs_population(), "an unrecognised population is refused")
+Sys.unsetenv("LOT_POPULATION")
+# The old switch chose between two cohorts, one of which is not produced any
+# more. Silently reinterpreting it would be worse than stopping.
+Sys.setenv(LOT_COHORT = "NDMM")
+stops(qs_population(), "the retired LOT_COHORT stops the run and names what replaced it")
+Sys.unsetenv("LOT_COHORT")
+# The table the old switch pointed at is gone from the code entirely.
+gone <- Filter(function(f) any(grepl("NDMM_LOT_LONG_FILT|LOT_COHORT",
+                                     readLines(f, warn = FALSE))), qs)
+ok(!length(gone),
+   if (length(gone)) paste0("still expects the retired table: ",
+                            paste(basename(gone), collapse = ", "))
+   else "no script expects the filtered table the cohort build stopped producing")
+
+cat("\n-- and they classify bone metastasis the way the cohort does --\n")
+# poma treated secondary neoplasm of bone as MM-adjacent and removed it from
+# its de-confounded analysis. The cohort build decided the opposite: C79.51,
+# C79.52 and 198.5 are metastatic cancer and exclude. Two answers to one
+# clinical question is the thing worth failing on.
+poma <- readLines(file.path(ROOT, "poma_studyteam_qs.R"), warn = FALSE)
+# Not by keeping a matching copy of the list - by reading the build's own
+# answer. is_mm_adjacent_override is what the cohort actually applied, so there
+# is one derivation of the rule and the two cannot disagree at all.
+ok(any(grepl('qs_tbl("NDMM_OTHER_MALIG_CODES")', poma, fixed = TRUE)),
+   "it reads the code list the cohort build resolved and persisted")
+ok(any(grepl("is_mm_adjacent_override AS is_mm_adj", poma, fixed = TRUE)),
+   "...taking the build's own MM-adjacent decision rather than restating it")
+ok(!any(grepl("SECONDARY MALIGNANT NEOPLASM OF BONE", poma, fixed = TRUE)),
+   "...so no tumour-group list is duplicated here to drift")
+# Loading the CSV would mean re-deriving the rule, which is what drifted.
+ok(!any(grepl("load_codelist_csv", poma, fixed = TRUE)),
+   "and it does not rebuild the list from the CSV")
 clear()
 
 cat("\n", strrep("-", 52), "\n", sep = "")

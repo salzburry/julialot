@@ -1005,14 +1005,22 @@ check_lot1_invariants <- function(con, cfg) {
 # on a surprise.
 FACE_VALIDITY <- list(
   list(name = "auto_sct_is_early",
-       what = "% of autologous transplant lines that are LOT1 or LOT2",
+       what = "% of lines containing an autologous transplant that are LOT1 or LOT2",
        # Transplant is induction consolidation in newly-diagnosed myeloma. If
        # most of them are late lines, the SCT dates or the line numbering are
        # wrong.
+       #
+       # LOT_TX_AUTO_FLG, not LOT_START_TYPE. Every LOT1 row is projected with
+       # LOT_START_TYPE = 'MED' regardless of what happened inside it, so an
+       # AUTO the patient received during a drug-started first line - which is
+       # the normal case - carries 'MED'. Keying on the start type would see
+       # only transplants that BEGIN a later line and would report transplant
+       # as systematically late, which is the opposite of the truth.
        lo = 50, hi = 100,
        sql = "SELECT round(100.0 * sum(CASE WHEN LOT_NUM <= 2 THEN 1 ELSE 0 END)
                            / nullif(count(*), 0), 1) AS v
-              FROM {t} WHERE LOT_START_TYPE = 'SCT_AUTO'"),
+              FROM {t}
+              WHERE LOT_TX_AUTO_FLG = 1 OR LOT_START_TYPE = 'SCT_AUTO'"),
 
   list(name = "cart_is_late",
        what = "% of CAR-T lines that are LOT3 or later",
@@ -1035,14 +1043,19 @@ FACE_VALIDITY <- list(
                            / nullif(count(DISTINCT PATID), 0), 2) AS v
               FROM {t}"),
 
-  list(name = "lot1_starts_on_a_drug",
-       what = "% of LOT1 lines started by a medication rather than a procedure",
-       # Patients start treatment on a regimen. A transplant or CAR-T as the
-       # first line is possible but should be the exception.
-       lo = 80, hi = 100,
+  list(name = "later_lines_start_on_a_drug",
+       what = "% of LOT2+ lines started by a medication rather than a procedure",
+       # Most lines begin because a regimen changed, not because a transplant or
+       # CAR-T happened. If procedures are starting most later lines, the
+       # trigger rules are firing on the wrong events.
+       #
+       # LOT2 onward only. Asking this of LOT1 would be a tautology: every LOT1
+       # row is projected with LOT_START_TYPE = 'MED', so the answer is 100% for
+       # any non-empty output and the check could never fail.
+       lo = 60, hi = 100,
        sql = "SELECT round(100.0 * sum(CASE WHEN LOT_START_TYPE = 'MED' THEN 1 ELSE 0 END)
                            / nullif(count(*), 0), 1) AS v
-              FROM {t} WHERE LOT_NUM = 1"),
+              FROM {t} WHERE LOT_NUM >= 2"),
 
   list(name = "lot1_duration_is_plausible",
        what = "median LOT1 length in days",
@@ -1091,7 +1104,10 @@ run_face_validity <- function(con, cfg) {
     log_msg("  ", format(verdict, width = 8), fv$what, ": ",
             if (is.na(v)) "no rows" else format(v, big.mark = ","),
             "  (expect ", fv$lo, "-", fv$hi, ")")
-    if (identical(verdict, "LOOK")) off <- c(off, fv$name)
+    # NO VALUE is not a pass. A query that errored, a column that moved and a
+    # genuinely empty denominator all land here and look identical, so it is
+    # reported like any other check that did not come back clean.
+    if (verdict %in% c("LOOK", "NO VALUE")) off <- c(off, fv$name)
     rows <- c(rows, glue("('{run_id}', '{fv$name}', {sql_text(fv$what)}, ",
                          "{if (is.na(v)) 'NULL' else v}, {fv$lo}, {fv$hi}, ",
                          "'{verdict}', current_timestamp())"))
@@ -1102,7 +1118,7 @@ run_face_validity <- function(con, cfg) {
          paste(rows, collapse = ", ")))
   if (length(off)) {
     msg <- paste0(length(off), " face-validity check(s) outside the expected ",
-                  "band: ", paste(off, collapse = ", "),
+                  "band or with no value: ", paste(off, collapse = ", "),
                   ". These are plausibility bands, not published benchmarks - ",
                   "read ", tbl, " and decide whether the number is wrong or the ",
                   "band is.")

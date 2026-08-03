@@ -89,7 +89,7 @@ main <- function() {
     unique(cn)
   }
 
-  lot_long <- qs_tbl("LOT_LONG")
+  lot_long <- qs_population()$table
   allflags <- qs_tbl("ELIG_COH_ALLFLAGS")
 
   log_msg("LOT1 study-team questions - reading ", lot_long)
@@ -132,7 +132,7 @@ main <- function() {
   poma_ids <- if (have_poma)
     paste(sprintf("'%s'", unique(poma$PATID)), collapse = ",") else "''"
 
-  final_tbl <- qs_tbl(cfg$input_cohort_table)
+  final_tbl <- wrk(cfg$input_cohort_table)
   have_final <- readable(final_tbl)
   if (!have_final) {
     log_msg("WARNING: ", final_tbl, " not readable. ELIG_COH_FINAL holds the ",

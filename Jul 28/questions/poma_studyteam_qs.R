@@ -37,7 +37,7 @@
 # comparison because clinical-trial is not one of the NDMM post-filters.
 #
 # Builds nothing persistent (only session TEMP views); safe to run any time. Reads
-# NDMM_LOT_LONG_FILT (LOT_LONG restricted to the NDMM cohort, persisted by
+# LOT_LONG_FINAL, the study population produced by the LOT run over the
 # 06_ndmm_dashboard.R), plus MAP_STACKED, LOT1_SCT, ELIG_COH_ALLFLAGS,
 # ELIG_COH_FINAL and the raw CDM.
 #
@@ -69,7 +69,7 @@
 
 source(file.path(.script_dir, "_setup.R"))
 qs_setup(.script_dir)
-source(file.path(.script_dir, "validation_qs.R"))        # vqs_* helpers (shared)
+source(file.path(.script_dir, "validation_helpers.R"))        # vqs_* helpers (shared)
 
 # ===========================================================================
 # Ensure the Excel engine is present. Try to load openxlsx; if missing, try to
@@ -209,23 +209,20 @@ main <- function() {
   stamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
   num <- function(x) suppressWarnings(as.numeric(x))
 
-  # The NDMM study cohort: LOT_LONG restricted to the newly-diagnosed 1L patients,
-  # persisted as NDMM_LOT_LONG_FILT by 06_ndmm_dashboard.R. Every LOT / POMA query
-  # flows from lot_long, so this restricts the whole analysis to the study cohort.
-  # The flag tables (ELIG_COH_ALLFLAGS / ELIG_COH_FINAL) are the parent's - NDMM is
-  # a subset, joined by PATID (+INDEX_DATE), and the lot1/poma sets already restrict
-  # to NDMM.
-  cohort_label <- "NDMM newly-diagnosed 1L study cohort"
-  lot_long  <- qs_tbl("NDMM_LOT_LONG_FILT")
+  # The LOT run under this prefix is over the study cohort already, so its
+  # output is the study population - there is no separate filtered copy to read.
+  # Every LOT / POMA query flows from lot_long.
+  .pop         <- qs_population()
+  cohort_label <- .pop$label
+  lot_long     <- .pop$table
   map_tbl   <- qs_tbl("MAP_STACKED")
   sct_tbl   <- qs_tbl("LOT1_SCT")
   allflags  <- qs_tbl("ELIG_COH_ALLFLAGS")
-  final_tbl <- qs_tbl(cfg$input_cohort_table)
+  final_tbl <- wrk(cfg$input_cohort_table)
 
   log_msg(SEP); log_msg("POMA-in-1L study-team questions [", cohort_label, "] -> single Excel workbook"); log_msg(SEP)
   if (!vqs_readable(con, lot_long))
-    stop("Cannot read ", lot_long, ". Run 06_ndmm_dashboard.R first to persist ",
-         "NDMM_LOT_LONG_FILT (LOT_LONG restricted to the NDMM study cohort).")
+    stop("Cannot read ", lot_long, ". Run the LOT build for this prefix first.")
   have_map   <- vqs_readable(con, map_tbl)
   have_sct   <- vqs_readable(con, sct_tbl)
   have_flags <- vqs_readable(con, allflags)
@@ -242,7 +239,7 @@ main <- function() {
   cart_raw <- if (have_sct) tryCatch(vqs_build_raw_cart_dates(con, lot_long, bounds$sql),
                                      error = function(e) NULL) else NULL
 
-  # POMA-at-1L patient set (NDMM study cohort, via NDMM_LOT_LONG_FILT). This is the
+  # POMA-at-1L patient set (NDMM study cohort, via LOT_LONG_FINAL). This is the
   # denominator EVERY question depends on, so it runs fail-fast (no error swallow):
   # if it errored we would report "0 POMA patients" and skip Q2/Q5, indistinguishable
   # from a true zero. lot_long readability is already checked above.
@@ -263,7 +260,7 @@ main <- function() {
   add_sheet(name = "Read Me", title = paste0("POMA-in-1L study-team questions - ", cohort_label),
     subtitle = paste0("Generated ", stamp, " by poma_studyteam_qs.R against ", cfg$work_schema),
     narrative = c(
-      "Q1/Q2/Q4/Q5 are computed on the NDMM newly-diagnosed 1L STUDY cohort (NDMM_LOT_LONG_FILT). Q3 first shows an NDMM audit (must be 0), then uses the BROAD cohort for the association (see the Q3 tab).",
+      "Q1/Q2/Q4/Q5 are computed on the NDMM newly-diagnosed 1L STUDY cohort (LOT_LONG_FINAL). Q3 first shows an NDMM audit (must be 0), then uses the BROAD cohort for the association (see the Q3 tab).",
       sprintf("POMA-at-1L denominator: %d of %d LOT1 patients.", n_poma, n_lot1),
       "Q1 = real patient journeys (raw claims -> MAP -> assigned LOT, with dates).",
       "Q2 = POMA-1L split by transplant type and TIMING (autologous-at-1L vs allo/CAR-T that closed 1L vs later-line context).",
@@ -478,26 +475,29 @@ main <- function() {
   # leukemia / MGUS / secondary bone - MM-spectrum, not a distinct second cancer).
   # Claim-presence basis - looser than the pipeline's confirmed >=1-IP-or->=2-OP
   # flag, so use it for the POMA-vs-other comparison and the MM-adjacent share.
-  overall_lot <- qs_tbl("LOT_LONG")
+  overall_lot <- .pop$table
   bdays <- 183L  # mirrors config_prompts.R baseline_days (183L); the pipeline does not
                  # read an env var for this, so keep these two in sync if it ever changes.
-  mm_adj_in <- paste(sprintf("'%s'", c(
-    "MONOCLONAL GAMMOPATHY", "SECONDARY MALIGNANT NEOPLASM OF BONE",
-    "SOLITARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION",
-    "PLASMA CELL LEUKEMIA NOT HAVING ACHIEVED REMISSION",
-    "EXTRAMEDULLARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION")), collapse = ", ")
-  q3_elig_df <- if (have_final && vqs_readable(con, overall_lot)) best_effort({
-    om_src <- load_codelist_csv("other_malig.csv", c("dx", "icd_family", "tumor_group"))
+  # The code list as the cohort build resolved it, not as this script would
+  # re-derive it. is_mm_adjacent_override is the build's own answer to which
+  # tumour groups are the index disease rather than another cancer - including
+  # that secondary neoplasm of bone is NOT one, because C79.51, C79.52 and
+  # 198.5 are metastatic cancer and exclude (nndm/DECISIONS.md section 4).
+  #
+  # Reading it means there is one derivation of that rule instead of two, so
+  # the two cannot disagree. Loading the CSV here would mean re-deciding it.
+  om_codes <- qs_tbl("NDMM_OTHER_MALIG_CODES")
+  q3_elig_df <- if (have_final && vqs_readable(con, overall_lot) &&
+                    vqs_readable(con, om_codes)) best_effort({
     db_q(con, glue("
       WITH poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {overall_lot}
                       WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{poma}')),
       lot1 AS (SELECT DISTINCT cast(PATID as string) PATID FROM {overall_lot} WHERE LOT_NUM=1),
       idx AS (SELECT cast(PATID as string) PATID, cast(INDEX_DATE as date) index_date FROM {final_tbl}),
-      codes AS (SELECT upper(regexp_replace(trim(dx),'[^A-Za-z0-9]','')) dx,
-                       CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END icd_family,
-                       CASE WHEN upper(trim(tumor_group)) IN ({mm_adj_in}) THEN 1 ELSE 0 END is_mm_adj
-                FROM {om_src}
-                WHERE dx IS NOT NULL AND tumor_group IS NOT NULL),
+      codes AS (SELECT dx, icd_family,
+                       is_mm_adjacent_override AS is_mm_adj
+                FROM {om_codes}
+                WHERE dx IS NOT NULL),
       hits AS (SELECT cast(d.PATID as string) PATID,
                       max(1)                                            has_any,
                       max(CASE WHEN c.is_mm_adj = 0 THEN 1 ELSE 0 END)  has_nonadj

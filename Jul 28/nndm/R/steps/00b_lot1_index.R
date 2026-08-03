@@ -324,6 +324,26 @@ build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl, med_proc_tbl)
 # labels and codes fall in each. This is what the two-outpatient-claim rule
 # pairs on, so it is where to check that a group is a primary tumour type and
 # not something coarser.
+# The other-cancer code list as the build actually resolved it, persisted.
+#
+# NDMM_OTHER_MALIG_CODES is a temporary view, so it dies with the session and
+# anything asking the same question afterwards has to rebuild it from the CSV -
+# and rebuilding means re-deciding, by hand, which tumour groups are the index
+# disease and which codes are metastatic. Two derivations of one rule drift.
+#
+# Persisted, the decision is readable rather than reproducible: every code, the
+# label it carries, whether the override kept it, the category it pairs under
+# and which metastatic prefix claimed it.
+build_ndmm_other_malig_codes_table <- function(con, cfg) {
+  db_exec(con, glue("
+    CREATE OR REPLACE TABLE {wrk('NDMM_OTHER_MALIG_CODES')} AS
+    SELECT * FROM {NDMM_OTHER_MALIG_CODES}"))
+  n <- db_q(con, glue("SELECT count(*) AS n FROM {wrk('NDMM_OTHER_MALIG_CODES')}"))$n
+  log_msg("Other-cancer code list persisted: ", format(n, big.mark = ","),
+          " codes -> ", wrk("NDMM_OTHER_MALIG_CODES"))
+  invisible(n)
+}
+
 build_ndmm_other_malig_groups <- function(con, cfg) {
   db_exec(con, glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_OTHER_MALIG_GROUPS')} AS

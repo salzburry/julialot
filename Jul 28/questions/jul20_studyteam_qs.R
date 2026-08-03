@@ -11,12 +11,12 @@
 # CSV-only with a note if it is absent). No existing pipeline or dashboard
 # file is modified.
 #
-# Cohort: the NDMM study cohort by default (NDMM_LOT_LONG_FILT), which is the
+# Population: the study population by default (LOT_LONG_FINAL), which is the
 # cohort Julia's question 2 names, and the same default as the sibling
-# jul20_refresh_dashboard.R. Set LOT_COHORT=FULL (or OVERALL - synonyms) for
+# jul20_refresh_dashboard.R. Set LOT_POPULATION=FINAL (or OVERALL - synonyms) for
 # the whole LOT cohort. Run the pair with the cohort stated explicitly:
-#   LOT_COHORT=NDMM Rscript jul20_refresh_dashboard.R
-#   LOT_COHORT=NDMM Rscript jul20_studyteam_qs.R
+#   LOT_POPULATION=FINAL Rscript jul20_refresh_dashboard.R
+#   LOT_POPULATION=FINAL Rscript jul20_studyteam_qs.R
 # MAP_STACKED, LOT1_SCT, MMA_MED_PROCESSED and ELIG_COH_FINAL are shared,
 # joined by PATID.
 #
@@ -99,7 +99,7 @@
 
 source(file.path(.script_dir, "_setup.R"))
 qs_setup(.script_dir)
-source(file.path(.script_dir, "validation_qs.R"))        # vqs_* helpers (shared)
+source(file.path(.script_dir, "validation_helpers.R"))        # vqs_* helpers (shared)
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
@@ -1148,30 +1148,20 @@ main <- function() {
   # scripts share this default and accept the same values (FULL and OVERALL
   # are synonyms for the whole LOT cohort), so running the pair without env
   # overrides always uses the same population.
-  cohort_mode <- toupper(Sys.getenv("LOT_COHORT", unset = "NDMM"))
-  if (cohort_mode %in% c("FULL", "OVERALL")) {
-    cohort_mode <- "FULL"
-    lot_long <- qs_tbl("LOT_LONG")
-    cohort_label <- "full LOT cohort (all LOT1 patients)"
-  } else {
-    cohort_mode <- "NDMM"
-    lot_long <- qs_tbl("NDMM_LOT_LONG_FILT")
-    cohort_label <- "NDMM newly-diagnosed 1L study cohort"
-  }
+  .pop         <- qs_population()
+  cohort_mode  <- .pop$mode
+  lot_long     <- .pop$table
+  cohort_label <- .pop$label
   map_tbl <- qs_tbl("MAP_STACKED")
   sct_tbl <- qs_tbl("LOT1_SCT")
   mma_tbl <- qs_tbl("MMA_MED_PROCESSED")
-  coh_tbl <- qs_tbl(cfg$input_cohort_table)
+  coh_tbl <- wrk(cfg$input_cohort_table)
 
   log_msg(SEP)
   log_msg("July-20 study-team questions Q2+Q3 [", cohort_label, "] -> CSVs + summaries")
   log_msg(SEP)
   if (!vqs_readable(con, lot_long)) {
-    if (cohort_mode == "NDMM")
-      stop("Cannot read ", lot_long, ". Run 06_ndmm_dashboard.R first to persist ",
-           "NDMM_LOT_LONG_FILT (LOT_LONG restricted to the NDMM study cohort), or set ",
-           "LOT_COHORT=FULL to run on LOT_LONG.")
-    stop("Cannot read ", lot_long, ". Build the LOT pipeline (02_lot1.R / 03_lot2_5.R) first.")
+    stop("Cannot read ", lot_long, ". Run the LOT build for this prefix first.")
   }
   have_map <- vqs_readable(con, map_tbl)
   have_sct <- vqs_readable(con, sct_tbl)
