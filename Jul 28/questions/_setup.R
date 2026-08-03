@@ -266,29 +266,42 @@ qs_ndmm_trial_flags <- function(con) {
       "unfinished.")))
 
   # Which cohort attempt LOT read, against which one is on disk now.
+  #
+  # SELECT *, and the ordering column is RUN_TIMESTAMP - the name this table
+  # actually uses (08_persist.R). Ordering by a column that is not there put the
+  # whole query inside its own tryCatch, which returned NULL, which took the
+  # "an older lot did not record it" path and passed. A guard that cannot run
+  # is worse than no guard: the code and the README both claimed the check.
   lot <- tryCatch(db_q(con, glue(
-    "SELECT COHORT_RUN_ID, COHORT_STAMP FROM {qs_tbl('LOT_RUN_METADATA')}
-     WHERE COHORT_RUN_ID IS NOT NULL ORDER BY RECORDED_AT DESC LIMIT 1")),
+    "SELECT * FROM {qs_tbl('LOT_RUN_METADATA')}
+     WHERE COHORT_RUN_ID IS NOT NULL ORDER BY RUN_TIMESTAMP DESC LIMIT 1")),
     error = function(e) NULL)
-  if (is.null(lot) || nrow(lot) == 0) {
+  want <- if (is.null(lot) || nrow(lot) == 0) NA_character_ else
+    trimws(as.character(qs_col(lot, "COHORT_RUN_ID")[1]))
+  if (is.na(want) || !nzchar(want)) {
     log_msg("WARNING: the LOT run did not record which cohort run it read, so ",
             tbl, " is taken on trust. An older lot did not record it.")
     return(list(ok = TRUE, table = tbl, why = NULL))
   }
-  want <- trimws(as.character(lot$COHORT_RUN_ID[1]))
   have <- trimws(as.character(qs_col(got, "RUN_ID")[1]))
-  if (nzchar(want) && !identical(toupper(want), toupper(have)))
+  if (!identical(toupper(want), toupper(have)))
     return(gap(paste0(
       "these LOT lines were built from cohort run ", want, ", but ", st,
       " now says the cohort under this prefix is run ", have, ". ", tbl,
       " belongs to the newer one, so pairing them would put one run's trial ",
       "flags against another run's lines.")))
-  stamp_w <- trimws(as.character(lot$COHORT_STAMP[1]))
+  # A re-run keeps its run id, so the id matching says nothing on its own - the
+  # stamp is the part that separates one attempt from the next, and the trial
+  # table is written early enough in the cohort build to be a later attempt's
+  # while the id still matches. A gap, not a warning, for the same reason the
+  # dashboard skips its funnel here rather than annotating it.
+  stamp_w <- trimws(as.character(qs_col(lot, "COHORT_STAMP")[1]))
   stamp_h <- trimws(as.character(qs_col(got, "UPDATED_AT")[1]))
   if (nzchar(stamp_w) && nzchar(stamp_h) && !identical(stamp_w, stamp_h))
-    log_msg("WARNING: cohort run ", have, " has been rewritten since LOT read ",
-            "it (LOT saw ", stamp_w, ", the cohort now says ", stamp_h,
-            "). A re-run keeps its id, so ", tbl, " may be a later attempt's.")
+    return(gap(paste0(
+      "cohort run ", have, " has been rewritten since LOT read it - LOT saw ",
+      stamp_w, ", ", st, " now says ", stamp_h, ". A re-run keeps its id, so ",
+      tbl, " is a later attempt's than the lines it would be paired with.")))
   list(ok = TRUE, table = tbl, why = NULL)
 }
 

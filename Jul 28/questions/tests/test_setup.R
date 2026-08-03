@@ -420,8 +420,25 @@ ok(!any(grepl("percentile_approx(t.CLINTRIAL_DAYS_BEFORE_LOT1", pm, fixed = TRUE
 # The table is written before the cohort table, the attrition and "complete",
 # and a later completed rerun replaces it under the same name - which the LOT
 # binding check, comparing that name, cannot see.
-ok(any(grepl("COHORT_RUN_ID, COHORT_STAMP FROM", st, fixed = TRUE)),
+ok(any(grepl("COHORT_RUN_ID IS NOT NULL ORDER BY RUN_TIMESTAMP DESC", st,
+             fixed = TRUE)),
    "the trial table is checked against the cohort run LOT actually read")
+# That query ordered by RECORDED_AT, which LOT_RUN_METADATA does not have
+# (08_persist.R writes RUN_TIMESTAMP). It failed inside its own tryCatch, took
+# the "an older lot did not record it" path, and passed - so the guard never
+# ran while the code and the README both claimed it.
+pers <- readLines(file.path(dirname(ROOT), "lot", "R", "steps", "08_persist.R"),
+                  warn = FALSE)
+ok(any(grepl("RUN_ID STRING, RUN_TIMESTAMP TIMESTAMP", pers, fixed = TRUE)),
+   "...by the name that table actually uses")
+ok(!any(grepl("ORDER BY RECORDED_AT DESC LIMIT 1", st, fixed = TRUE)),
+   "...so the check cannot fail into its own fallback")
+# A re-run keeps its run id, so the id matching says nothing on its own - the
+# stamp is what separates one attempt from the next, and the trial table is
+# written early enough to be a later attempt's while the id still matches.
+ok(any(grepl("is a later attempt's than the lines it would be paired with", st,
+             fixed = TRUE)),
+   "...and a cohort rewritten since LOT read it is a gap, not a warning")
 ok(any(grepl("NDMM_BUILD_STATUS", st, fixed = TRUE)),
    "...and against whether that cohort build finished")
 # On the documented command the broad flags are usually absent while this one

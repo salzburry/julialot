@@ -46,6 +46,15 @@ The LOT funnel's `KIND` splits it again. `input` / `reconciliation` /
 on — is a separate panel, because nobody was removed there: a patient with no
 LOT3 did not progress, or their follow-up ended.
 
+A bar has no `KIND` column, so the funnel panel puts it in the **label**:
+`[check]` for the reconciliation rows, `[removed]` for the criteria. Two of
+those rows are not attrition — for a treatment-indexed cohort such as NDMM they
+re-derive a fact the cohort build already established, so a drop is the two
+scans disagreeing rather than patients the study lost. Under a heading saying
+"attrition", with nothing on the chart to tell them apart, a drop there reads as
+expected loss: the exact misreading the LOT build was changed to prevent,
+reintroduced one layer up.
+
 Each panel's percentages are of **its own** first row, which is what
 `pct = "first"` over `ORDER BY STEP_NUM` gives: the funnel's base is the
 cohort handed to LOT, and progression's base is LOT1, so the second panel
@@ -233,11 +242,26 @@ regimen add up to that regimen's `LOT{a}` patients, and the panel shows the one
 thing a reader looks at a transition for: how many went on at all. It used to be
 an `INNER JOIN`, and those patients simply vanished.
 
-`TOP_N` sources; targets outside the top N collapse to **`Other`**, which is
-drawn rather than dropped and sits at the bottom because it is a bucket, not a
-regimen. The stopped node is ranked **out** of that — on a cohort with many
-distinct regimens the largest single answer is usually "stopped", and ranking it
-with the regimens would fold it into `Other`.
+Two things had to change before that claim was actually true.
+
+A **line** decides whether the patient got there, not a regimen string. An
+`SCT_ALLO` line carries no regimen at all — `10_lot2_5_base.R` suppresses the
+induction rows for it, because an allogeneic singleton LOT contains no MM
+therapy — so filtering on a non-blank `LOT_BASE_MEDS` threw those lines away and
+the patient read as `No LOT{b}` when they had reached `LOT{b}`. As the *source*
+line it removed them from the chart entirely. That is worse than the old inner
+join: it invents attrition rather than omitting it. A blank regimen is now
+labelled by what started the line — `SCT_ALLO (no regimen)`.
+
+Sources outside `TOP_N` become an **`Other` source** rather than being dropped.
+They used to be filtered out, so "every patient" was false while the panel said
+it.
+
+Targets outside the top N collapse to **`Other`** too, drawn rather than dropped
+and sitting at the bottom because it is a bucket, not a regimen. The stopped
+node is ranked **out** of that — on a cohort with many distinct regimens the
+largest single answer is usually "stopped", and ranking it with the regimens
+would fold it into `Other`.
 
 Drawn as **inline SVG**, not plotly — a handful of bezier paths, no JavaScript
 bundle, and it prints, which a canvas chart does not. Every ribbon carries its
