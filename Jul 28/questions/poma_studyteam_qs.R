@@ -220,18 +220,25 @@ main <- function() {
   lot_long     <- .pop$table
   map_tbl   <- qs_tbl("MAP_STACKED")
   sct_tbl   <- qs_tbl("LOT1_SCT")
-  allflags  <- qs_flags_table()
   final_tbl <- wrk(cfg$input_cohort_table)
 
   log_msg(SEP); log_msg("POMA-in-1L study-team questions [", cohort_label, "] -> single Excel workbook"); log_msg(SEP)
   if (!vqs_readable(con, lot_long))
     stop("Cannot read ", lot_long, ". Run the LOT build for this prefix first.")
+  qs_check_run_binding(con)
   have_map   <- vqs_readable(con, map_tbl)
   have_sct   <- vqs_readable(con, sct_tbl)
-  have_flags <- vqs_readable(con, allflags)
   have_final <- vqs_readable(con, final_tbl)
+  # The trial flags are checked for their COLUMNS, not just for being readable.
+  # NDMM_FLAGS_ALL is readable and carries none of them, so a readable() guard
+  # would pass and Q4 would stop Spark half way through the workbook.
+  trial      <- qs_trial_flags_ready(con)
+  allflags   <- trial$src$flags
+  trial_idx  <- trial$src$index
+  have_flags <- isTRUE(trial$ok)
+  if (!have_flags) log_msg("WARNING: ", trial$why)
   for (chk in list(c(have_map, map_tbl), c(have_sct, sct_tbl),
-                   c(have_flags, allflags), c(have_final, final_tbl)))
+                   c(have_final, final_tbl)))
     if (!isTRUE(as.logical(chk[1])))
       log_msg("WARNING: ", chk[2], " not readable - dependent sections will note the gap.")
 
@@ -437,8 +444,14 @@ main <- function() {
     narrative = q2_notes, tables = q2_tables)
 
   # ---- Q3 + Q4: POMA-1L vs other-1L flag rates --------------------------
+  # Both sides of this join come from the trial build: ELIG_COH_ALLFLAGS has a
+  # row per candidate index date, ELIG_COH_FINAL says which one it selected.
+  # Joining the flags to the NDMM cohort instead would put that build's
+  # diagnosis-based candidate against NDMM_COHORT.INDEX_DATE, the LOT1 start -
+  # two different definitions of index, matching almost nothing, and reading as
+  # nobody being flagged. The LOT population still restricts it, by PATID.
   assoc <- NULL
-  if (have_flags && have_final) {
+  if (have_flags) {
     assoc <- db_q(con, glue("
       WITH poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
                       WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{poma}')),
@@ -448,7 +461,7 @@ main <- function() {
                    coalesce(a.CLINTRIAL_BASELINE,0) AS CLINTRIAL_BASELINE,
                    coalesce(a.CLINTRIAL_FOLLOWUP,0) AS CLINTRIAL_FOLLOWUP
             FROM {allflags} a
-            JOIN {final_tbl} e ON cast(a.PATID as string)=cast(e.PATID as string)
+            JOIN {trial_idx} e ON cast(a.PATID as string)=cast(e.PATID as string)
                               AND a.INDEX_DATE = e.INDEX_DATE)
       SELECT CASE WHEN p.PATID IS NOT NULL THEN 'POMA-1L' ELSE 'other-1L' END AS grp,
              count(*)                                                          AS n_pts,
@@ -467,9 +480,7 @@ main <- function() {
   # Order the columns so the baseline count + rate lead. (Q4 only - Q3 no longer
   # uses ELIG_COH_ALLFLAGS; it re-derives its own flag from raw claims below.)
   q4_df <- if (!is.null(assoc)) assoc[, c("grp","n_pts","n_trial_baseline","pct_trial_baseline","n_trial_followup","n_trial_any","pct_trial_any")] else NULL
-  q4_gap <- if (!(have_flags && have_final))
-    paste0(allflags, " / ", final_tbl, " not readable - Q4 skipped. ",
-           "ELIG_COH_ALLFLAGS holds the CLINTRIAL_* flags; ELIG_COH_FINAL aligns them to the selected INDEX_DATE.") else NULL
+  q4_gap <- if (!have_flags) paste0("Q4 skipped. ", trial$why) else NULL
   # Q3 (other cancer) is a BROAD-cohort question ("cancers we ALLOW in baseline").
   # NDMM excludes those patients, so the association is measured on the full cohort.
   # The de-confounded rate is computed HERE IN THE WORKBOOK (the parent pipeline is
@@ -604,6 +615,10 @@ main <- function() {
       "'not truly first-line / prior unobserved therapy' hypothesis - a higher POMA-1L BASELINE rate would support it.",
       "n_trial_followup / n_trial_any occur AT-OR-AFTER index and are post-index context, NOT evidence of prior lines - do not headline them.",
       "Clinical-trial is NOT one of the NDMM post-filters, so this comparison survives into the study cohort - and it is now confounder-clean (other-cancer / non-naive patients already removed).",
+      paste0("WHICH index: baseline and follow-up are relative to the index the flag build selected (", trial$src$flags,
+             " aligned to ", trial$src$index, "), which is that build's diagnosis-based candidate - NOT the LOT1 start ",
+             "the NDMM cohort uses. The rows here are the LOT1 patients that build also has, matched on PATID. Read 'baseline' ",
+             "as pre-diagnosis-index, and do not line these counts up against a pre-LOT1 window."),
       "Claims-based trial evidence is a lower bound (a fully masked study drug may carry no trial code)."),
     tables = list("Clinical-trial evidence by group" = q4_df))
 

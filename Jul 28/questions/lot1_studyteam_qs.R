@@ -92,19 +92,22 @@ main <- function() {
   }
 
   lot_long <- qs_population()$table
-  allflags <- qs_flags_table()
 
   log_msg("LOT1 study-team questions - reading ", lot_long)
   if (!readable(lot_long)) {
     stop("Cannot read ", lot_long,
          ". Build the LOT1 stage (02_lot1.R) first.")
   }
-  have_flags <- readable(allflags)
-  if (!have_flags) {
-    log_msg("WARNING: ", allflags, " not readable, so the Q1a/Q1c flag ",
-            "breakdowns are skipped. See qs_flags_table() - which table holds ",
-            "the per-patient flags depends on which build made this cohort.")
-  }
+  qs_check_run_binding(con)
+  # Checked for its COLUMNS, not just for being readable. The cohort build's
+  # NDMM_FLAGS_ALL is readable and carries none of OTHER_MALIGN_FLAG,
+  # CLINTRIAL_* or INDEX_DATE, so a readable() guard passes and the query below
+  # stops on an unresolved column instead of skipping.
+  trial      <- qs_trial_flags_ready(con)
+  allflags   <- trial$src$flags
+  trial_idx  <- trial$src$index
+  have_flags <- isTRUE(trial$ok)
+  if (!have_flags) log_msg("WARNING: ", trial$why)
 
   # ---- POMA-at-1L base set (delivered cohort) -------------------------
   poma <- db_q(con, glue("
@@ -134,25 +137,20 @@ main <- function() {
   poma_ids <- if (have_poma)
     paste(sprintf("'%s'", unique(poma$PATID)), collapse = ",") else "''"
 
-  final_tbl <- wrk(cfg$input_cohort_table)
-  have_final <- readable(final_tbl)
-  if (!have_final) {
-    log_msg("WARNING: ", final_tbl, " not readable. ELIG_COH_FINAL holds the ",
-            "selected INDEX_DATE per patient; without it the flag join can pick ",
-            "a different candidate index date than the one behind LOT1. ",
-            "Q1a/Q1c index-aligned flag breakdowns will be skipped.")
-  }
-
   # ---- Q1a / Q1c : pre-exclusion flags for the POMA-at-1L patients ----
   # ELIG_COH_ALLFLAGS has one row per *candidate* index_date per patient;
   # joining by PATID alone can read flags from a candidate that did NOT
-  # produce the LOT1 record. Use ELIG_COH_FINAL (one row per patient with
-  # the selected INDEX_DATE) to align the join to the correct candidate.
-  if (have_poma && have_flags && have_final) {
+  # produce the LOT1 record. ELIG_COH_FINAL - from the SAME build - is one row
+  # per patient with the index that build selected, so it aligns the join.
+  #
+  # It has to be that build's own final table. The NDMM cohort's INDEX_DATE is
+  # the LOT1 start, a different definition, so joining on it would match almost
+  # nothing and report the flags as absent.
+  if (have_poma && have_flags) {
     flg <- db_q(con, glue("
       WITH f AS (
         SELECT cast(PATID as string) AS PATID, INDEX_DATE
-        FROM {final_tbl}
+        FROM {trial_idx}
         WHERE cast(PATID as string) IN ({poma_ids})
       )
       SELECT
@@ -168,7 +166,7 @@ main <- function() {
     "))
     write_out(flg, "q1ac_poma_flags")
     log_msg(sprintf(
-      "  Q1a other-cancer flag: %s POMA-1L patients | Q1c clinical-trial: %s (BL %s / FU %s) - aligned to selected INDEX_DATE.",
+      "  Q1a other-cancer flag: %s POMA-1L patients | Q1c clinical-trial: %s (BL %s / FU %s) - aligned to the index that flag build selected, not the LOT1 start.",
       flg$n_other_malig[1], flg$n_clintrial_any[1],
       flg$n_clintrial_baseline[1], flg$n_clintrial_followup[1]))
   }
@@ -375,11 +373,13 @@ main <- function() {
 
   # ---- Q4 : anti-BCMA / Blenrep (belantamab) availability ------------
   # Epi follow-up. Belantamab mafodotin (Blenrep, HCPCS J9037) is a
-  # late-line anti-BCMA agent withdrawn from the US market during the
-  # study window (Nov 2022) and reapproved by FDA after study end
-  # (Oct 2025) for RRMM after >=2 prior lines - so within STUDY_END
-  # 2025-06-30 counts are expected to be low and concentrated in
-  # later lines. This scans ALL lines, not just 1L. MAP_STACKED is
+  # late-line anti-BCMA agent withdrawn from the US market in Nov 2022
+  # and reapproved by FDA in Oct 2025 for RRMM after >=2 prior lines.
+  # Whether a low count is expected depends on where this run's STUDY_END
+  # falls relative to those two dates, so the run's own value is quoted
+  # rather than restated here - it moved once already, and a comment
+  # naming a date goes stale silently while the number beside it does not.
+  # This scans ALL lines, not just 1L. MAP_STACKED is
   # the per-medication exposure table (cohort-scoped); the belantamab
   # token is detected from the data (class like BCMA, abbr starting
   # BEL) rather than
@@ -464,9 +464,9 @@ main <- function() {
         else NA_real_
 
       log_msg(sprintf(
-        "  Q4: Blenrep (token%s %s) - %s distinct patients with belantamab exposure (all lines, cohort-scoped). %s is built before the line criteria, so this is everyone exposed, including patients the study later removed.",
+        "  Q4: Blenrep (token%s %s) - %s distinct patients with belantamab exposure (all lines, cohort-scoped). %s is built before the line criteria, so this is everyone exposed, including patients the study later removed. STUDY_END for this run is %s; Blenrep was off the US market Nov 2022 - Oct 2025.",
         if (length(bela_tokens) > 1) "s" else "",
-        paste(bela_tokens, collapse = "/"), n_bela, map_tbl))
+        paste(bela_tokens, collapse = "/"), n_bela, map_tbl, cfg$study_end))
       if (pre_cut) {
         log_msg("  Q4: by-line counts read ", by_lot_src, " - the same run ",
                 "BEFORE ", paste(cut_names, collapse = ", "), " removed ",
