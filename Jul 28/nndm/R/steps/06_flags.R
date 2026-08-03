@@ -105,10 +105,10 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
   # per funnel step, before NDMM_PATIDS reads it again.
   #
   # This is one call to checkpoint(), the same materialize-and-repoint the other
-  # ten views use, and it stops if the write fails. The source wrapped it in
-  # tryCatch and warned: correct arithmetic, but NDMM_FLAGS_ALL is a declared
-  # output, so the run would report complete with the table missing and every
-  # later read would re-run the DAG anyway.
+  # ten views use, and it stops if the write fails. Catching the failure and
+  # warning instead would be correct arithmetic, but NDMM_FLAGS_ALL is a
+  # declared output, so the run would report complete with the table missing
+  # and every later read would re-run the DAG anyway.
   #
   # It stays here rather than moving to the runner because NDMM_PATIDS below is
   # defined over this view, and Spark inlines a temporary view's plan -

@@ -140,9 +140,9 @@ waivers <- function() intersect(waivers_named(), WAIVABLE_CHECKS)
 # that reads it has to know: the name is unchanged, and every read after this
 # is a scan of a table rather than a re-run of the query.
 #
-# No fallback. The source degraded to the in-place view on a write failure,
-# which is correct but can turn minutes into hours without saying so, and a
-# table this build declares as an output would then not be there.
+# No fallback. Degrading to the in-place view on a write failure is correct
+# arithmetic but can turn minutes into hours without saying so, and a table
+# this build declares as an output would then not be there.
 checkpoint <- function(con, name) {
   view <- get(name, envir = globalenv())
   tbl  <- wrk(name)

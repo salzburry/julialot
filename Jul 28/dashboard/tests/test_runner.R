@@ -215,8 +215,8 @@ doc <- render_document(list(list(tab = "Overview", label = "L", html = "<p>x</p>
 ok(grepl("<!DOCTYPE html>", doc, fixed = TRUE) && grepl("</html>", doc, fixed = TRUE),
    "the document is a whole HTML file")
 # The point of not using plotly/DT/ggplot2: the file has to open from a
-# file:// path on a machine with nothing installed, and the source's renderer
-# silently produced no dashboard at all when those packages were missing.
+# file:// path on a machine with nothing installed, and a renderer that needs
+# them silently produces no dashboard at all when they are missing.
 ok(!grepl("<script", doc, fixed = TRUE) && !grepl("http://", doc, fixed = TRUE) &&
      !grepl("https://", doc, fixed = TRUE),
    "with no script tag and nothing fetched from the network")

@@ -501,8 +501,8 @@ ok(grepl("c.CL_MED_CLASS AS MED_CLASS", mmx, fixed = TRUE) &&
 ok(length(gregexpr("NOT EXISTS (", cd, fixed = TRUE)[[1]]) == 2 &&
      !grepl("NOT IN (SELECT", cd, fixed = TRUE),
    "the substitution checks cannot pass by being unanswerable")
-# Extraction only joins NDC and HCPCS; the source also accepted ICD, which
-# matches nothing.
+# Extraction only joins NDC and HCPCS. ICD is not among them: it would match
+# nothing.
 ok(grepl('EXTRACTED_CODE_TYPES <- c("NDC", "HCPCS")', cd, fixed = TRUE),
    "the accepted code types are the ones extraction actually reads")
 

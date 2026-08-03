@@ -913,7 +913,7 @@ ok(setequal(se$ndmm_mm_adjacent_groups(),
    "override covers both halves")
 assign("NDMM_MM_ADJACENT_STATES", "exclude", envir = se)
 ok(setequal(se$ndmm_mm_adjacent_groups(), se$NDMM_MM_ADJACENT_OVERRIDE),
-   "exclude restores the source build's five, so the two can be compared")
+   "exclude drops the state labels, leaving the five override groups")
 assign("NDMM_MM_ADJACENT_STATES", "sometimes", envir = se)
 ok(grepl("is not a setting",
          tryCatch({ se$ndmm_mm_adjacent_groups(); "" }, error = conditionMessage),
