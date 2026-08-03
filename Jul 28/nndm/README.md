@@ -524,30 +524,45 @@ DATABRICKS_PWD=... Rscript build_subsequent_cohorts.R ndmm_
 
 Three criteria, all the protocol's, and nothing else:
 
-1. a LOT 2 (or LOT 3) row in `<prefix>LOT_LONG_FINAL`
-2. continuous enrollment for the 12 months before that line's start, gaps of
-   30 days or fewer still continuous
-3. continuous enrollment for 3 months of follow-up from it, **no gaps**, or
-   death inside the window
+1. received that line - a LOT 2 (or LOT 3) row in `<prefix>LOT_LONG_FINAL`
+2. CE for the 12 months before that line's start, gaps of 30 days or fewer
+   still continuous
+3. CE for 3 months of follow-up from it, **no gaps**, or death in the window
+
+Death is the only stated alternative to the three months, so it is the only
+thing that shortens the window. The study end does not: a living patient whose
+three months run past the data has not shown three months, and would be
+included on the data's account rather than the protocol's.
 
 The enrollment tests read `<prefix>NDMM_ENROLL_SPANS` and
 `<prefix>NDMM_ENROLL_SPANS_STRICT`, the two span tables this build already
 checkpointed, so no enrollment rule is written a second time. The follow-up
 window is three months here and one day at 1L — the 1L number is what the study
-team confirmed for that cohort, and both are named rather than written into the
-SQL (`NDMM_FU_CE_DAYS`, `SUBSEQ_FU_CE_MONTHS`).
+team confirmed for that cohort — and both are named rather than written into
+the SQL (`NDMM_FU_CE_DAYS`, `SUBSEQ_FU_CE_MONTHS`). Neither is settable from
+the environment: for this study they are definitions, not options.
 
-3L is drawn from the 2L cohort table, not from `NDMM_COHORT`: each line is a
-subset of the line before it, so a patient who fails at 2L cannot appear at 3L.
+**Both cohorts are drawn from the 1L cohort.** 3L is not drawn from 2L. 6.2.1.1
+applies the criteria "to the 1L cohort", and each is written "for each cohort"
+against "the cohort index date (2L or 3L)" — so a patient who misses the 12
+months before 2L can still have them before 3L, and chaining would drop
+patients the protocol includes. The study design note also says "each
+subsequent line is a subset of the prior line"; if that is meant as a cohort
+rule rather than a statement about lines, `N_NOT_IN_PRIOR` in the attrition is
+what it would cost. Take that to the study team before reporting 3L.
 
 Writes `<prefix>NDMM_COHORT_2L`, `<prefix>NDMM_COHORT_3L` and
 `<prefix>NDMM_SUBSEQUENT_ATTRITION` — a funnel per cohort, so what each
-criterion cost is on the record. It changes nothing else.
+criterion cost is on the record. All three carry `SUBSEQ_RUN_ID`, so a run that
+died between them leaves a mismatch rather than a silent mix. It changes
+nothing else.
 
 It refuses to run unless the newest `LOT_BUILD_STATUS` row is `complete`, was
-built from *this* cohort, and carries no `CONTRACT_DEVIATIONS`. A LOT run
-replaces `LOT_LONG_FINAL` before it validates it, so lines from an unfinished
-run would look like lines.
+built from *this* cohort, carries no `CONTRACT_DEVIATIONS`, and names the same
+cohort attempt (`COHORT_RUN_ID`, `COHORT_STAMP`) that `NDMM_BUILD_STATUS` holds
+now. That last one matters because a re-run under one prefix replaces the
+cohort and both span tables in place: without it, lines from one attempt and
+enrollment from another carry the same names.
 
 ## The attrition
 
