@@ -82,11 +82,15 @@ removed.
 ## Bone metastasis
 
 `poma_studyteam_qs.R` removes MM-adjacent conditions from its de-confounded
-broad-cohort analysis. That list is the same four the cohort build keeps —
-monoclonal gammopathy and the three plasma-cell disorders. Secondary neoplasm of
-bone is **not** among them: `C79.51`, `C79.52` and `198.5` are metastatic cancer
-and exclude. See `nndm/DECISIONS.md` section 4; `tests/test_setup.R` fails if the
-two drift apart again.
+broad-cohort analysis, and it takes that decision from
+`<prefix>NDMM_OTHER_MALIG_CODES` — the code list as the cohort build resolved
+it, with `is_mm_adjacent_override` already applied.
+
+So there is no second list here to keep in step. Secondary neoplasm of bone is
+excluded because the build excluded it (`C79.51`, `C79.52` and `198.5` are
+metastatic cancer — `nndm/DECISIONS.md` section 4), not because this script
+agrees. Rebuilding the list from `other_malig.csv` would mean re-deciding the
+rule, which is exactly how the two came to disagree.
 
 ## Not verified against the warehouse
 
@@ -94,11 +98,6 @@ two drift apart again.
 and the bone-metastasis list to what the build does. What it cannot check is
 whether the question SQL returns the same answers as before — nothing here has
 been executed against a warehouse.
-
-One known gap: `poma_studyteam_qs.R`'s other-malignancy section calls
-`load_codelist_csv("other_malig.csv")`, and the `lot` loader allows only the
-four code lists the LOT build reads. That section will report unavailable until
-the loader is widened or the section reads the cohort build's own table.
 
 Treat the first run of each script as a run to check, not a run to quote.
 

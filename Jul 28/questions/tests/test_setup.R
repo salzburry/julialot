@@ -163,13 +163,18 @@ cat("\n-- and they classify bone metastasis the way the cohort does --\n")
 # C79.52 and 198.5 are metastatic cancer and exclude. Two answers to one
 # clinical question is the thing worth failing on.
 poma <- readLines(file.path(ROOT, "poma_studyteam_qs.R"), warn = FALSE)
-i <- grep("mm_adj_in <- paste", poma)[1]
-adj <- paste(poma[i:(i + 6)], collapse = " ")
-ok(!grepl("SECONDARY MALIGNANT NEOPLASM OF BONE", adj, fixed = TRUE),
-   "bone metastasis is not treated as MM-adjacent here either")
-ok(grepl("MONOCLONAL GAMMOPATHY", adj, fixed = TRUE) &&
-     grepl("PLASMA CELL LEUKEMIA", adj, fixed = TRUE),
-   "...and the four the cohort build does keep are still kept")
+# Not by keeping a matching copy of the list - by reading the build's own
+# answer. is_mm_adjacent_override is what the cohort actually applied, so there
+# is one derivation of the rule and the two cannot disagree at all.
+ok(any(grepl('qs_tbl("NDMM_OTHER_MALIG_CODES")', poma, fixed = TRUE)),
+   "it reads the code list the cohort build resolved and persisted")
+ok(any(grepl("is_mm_adjacent_override AS is_mm_adj", poma, fixed = TRUE)),
+   "...taking the build's own MM-adjacent decision rather than restating it")
+ok(!any(grepl("SECONDARY MALIGNANT NEOPLASM OF BONE", poma, fixed = TRUE)),
+   "...so no tumour-group list is duplicated here to drift")
+# Loading the CSV would mean re-deriving the rule, which is what drifted.
+ok(!any(grepl("load_codelist_csv", poma, fixed = TRUE)),
+   "and it does not rebuild the list from the CSV")
 clear()
 
 cat("\n", strrep("-", 52), "\n", sep = "")

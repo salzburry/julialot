@@ -478,28 +478,26 @@ main <- function() {
   overall_lot <- .pop$table
   bdays <- 183L  # mirrors config_prompts.R baseline_days (183L); the pipeline does not
                  # read an env var for this, so keep these two in sync if it ever changes.
-  # The same four labels the cohort build treats as the index disease rather
-  # than another cancer. Secondary neoplasm of bone is NOT among them: C79.51,
-  # C79.52 and 198.5 are metastatic cancer and exclude. Keeping it here would
-  # have this analysis and the cohort answer the same clinical question two
-  # different ways - see nndm/DECISIONS.md section 4.
-  mm_adj_in <- paste(sprintf("'%s'", c(
-    "MONOCLONAL GAMMOPATHY",
-    "SOLITARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION",
-    "PLASMA CELL LEUKEMIA NOT HAVING ACHIEVED REMISSION",
-    "EXTRAMEDULLARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION")), collapse = ", ")
-  q3_elig_df <- if (have_final && vqs_readable(con, overall_lot)) best_effort({
-    om_src <- load_codelist_csv("other_malig.csv", c("dx", "icd_family", "tumor_group"))
+  # The code list as the cohort build resolved it, not as this script would
+  # re-derive it. is_mm_adjacent_override is the build's own answer to which
+  # tumour groups are the index disease rather than another cancer - including
+  # that secondary neoplasm of bone is NOT one, because C79.51, C79.52 and
+  # 198.5 are metastatic cancer and exclude (nndm/DECISIONS.md section 4).
+  #
+  # Reading it means there is one derivation of that rule instead of two, so
+  # the two cannot disagree. Loading the CSV here would mean re-deciding it.
+  om_codes <- qs_tbl("NDMM_OTHER_MALIG_CODES")
+  q3_elig_df <- if (have_final && vqs_readable(con, overall_lot) &&
+                    vqs_readable(con, om_codes)) best_effort({
     db_q(con, glue("
       WITH poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {overall_lot}
                       WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{poma}')),
       lot1 AS (SELECT DISTINCT cast(PATID as string) PATID FROM {overall_lot} WHERE LOT_NUM=1),
       idx AS (SELECT cast(PATID as string) PATID, cast(INDEX_DATE as date) index_date FROM {final_tbl}),
-      codes AS (SELECT upper(regexp_replace(trim(dx),'[^A-Za-z0-9]','')) dx,
-                       CASE WHEN upper(icd_family) IN ('9','ICD9','ICD-9','ICD9DIAG') THEN 'ICD9' ELSE 'ICD10' END icd_family,
-                       CASE WHEN upper(trim(tumor_group)) IN ({mm_adj_in}) THEN 1 ELSE 0 END is_mm_adj
-                FROM {om_src}
-                WHERE dx IS NOT NULL AND tumor_group IS NOT NULL),
+      codes AS (SELECT dx, icd_family,
+                       is_mm_adjacent_override AS is_mm_adj
+                FROM {om_codes}
+                WHERE dx IS NOT NULL),
       hits AS (SELECT cast(d.PATID as string) PATID,
                       max(1)                                            has_any,
                       max(CASE WHEN c.is_mm_adj = 0 THEN 1 ELSE 0 END)  has_nonadj

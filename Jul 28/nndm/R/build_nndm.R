@@ -119,6 +119,7 @@ DELIVERABLES <- c("NDMM_COHORT", "NDMM_ATTRITION", "NDMM_INDEX_AGENTS",
                   "NDMM_MM_ADJACENT_GROUPS",
                   "NDMM_MM_ADJACENT_CODES", "NDMM_FU_CE_COUNTS",
                   "NDMM_OTHER_MALIG_GROUPS", "NDMM_OTHER_MALIG_GRAIN",
+                  "NDMM_OTHER_MALIG_CODES",
                   "NDMM_BELANTAMAB_RECONCILE",
                   "NDMM_CODELIST_METADATA", "NDMM_RUN_METADATA",
                   "NDMM_BUILD_STATUS")
@@ -1062,6 +1063,7 @@ build_nndm <- function(here, prefix) {
   checkpoint(con, "NDMM_OTHER_MALIG_CODES")
   build_ndmm_mm_adjacent_groups(con, cfg)
   build_ndmm_mm_adjacent_codes(con, cfg)
+  build_ndmm_other_malig_codes_table(con, cfg)
   build_ndmm_other_malig_groups(con, cfg)
   build_ndmm_med_claim_header_and_confinement(con, cdm_src(cfg$tbl_medical),
                                               cdm_src(cfg$tbl_confinement))
