@@ -305,51 +305,96 @@ qs_trial_flags_ready <- function(con, src = qs_trial_flags()) {
 # predate it, and refusing to answer at all would be worse than saying the
 # binding is unverified.
 #
-# The LATEST row, whatever state it reached - not the latest COMPLETE one. LOT
+# The LATEST row of a LOT run's status table, whatever state it reached - not
+# the latest COMPLETE one. One row per run, "complete" written last of all, so
+# the latest row is the run that last touched that prefix's tables. LOT
 # replaces LOT_LONG_FINAL early in the line-criteria phase and validates it
 # afterwards, so a rerun that replaced it and then failed leaves its own table
 # on disk while the previous run's complete row still looks like the newest
-# good one. Asking only for complete rows would bind these answers to a run
-# whose tables have since been overwritten - the exact case this guard exists
-# for. The dashboard resolves ownership the same way, for the same reason.
-qs_check_run_binding <- function(con) {
-  cfg <- lot_config()
-  tbl <- qs_tbl("LOT_BUILD_STATUS")
-  got <- tryCatch(db_q(con, glue(
+# good one. Filtering to complete rows attributes those tables to a run that no
+# longer wrote them - the exact case these guards exist for. The dashboard
+# resolves ownership the same way, for the same reason.
+#
+# NULL when there is nothing to read. An older run predates the table, so the
+# caller decides whether that is a warning or a refusal.
+qs_lot_run_row <- function(con, prefix) {
+  tbl <- wrk(paste0(prefix, "LOT_BUILD_STATUS"))
+  d <- tryCatch(db_q(con, glue(
     "SELECT RUN_ID, INPUT_COHORT_TABLE, STATE FROM {tbl}
      ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) NULL)
-  if (is.null(got) || nrow(got) == 0) {
-    log_msg("WARNING: no run recorded in ", tbl, ", so INPUT_COHORT_TABLE=",
-            cfg$input_cohort_table, " is unverified. These answers assume it is ",
-            "the cohort behind prefix '", cfg$object_prefix, "'.")
+  if (is.null(d) || nrow(d) == 0) return(NULL)
+  list(tbl    = tbl,
+       run    = as.character(qs_col(d, "RUN_ID")[1]),
+       state  = tolower(trimws(as.character(qs_col(d, "STATE")[1]))),
+       cohort = as.character(qs_col(d, "INPUT_COHORT_TABLE")[1]))
+}
+
+qs_check_run_binding <- function(con) {
+  cfg <- lot_config()
+  got <- qs_lot_run_row(con, cfg$object_prefix)
+  if (is.null(got)) {
+    log_msg("WARNING: no LOT run recorded under prefix '", cfg$object_prefix,
+            "', so INPUT_COHORT_TABLE=", cfg$input_cohort_table,
+            " is unverified. These answers assume it is the cohort behind it.")
     return(invisible(FALSE))
   }
-  state <- tolower(trimws(as.character(qs_col(got, "STATE")[1])))
-  run   <- as.character(qs_col(got, "RUN_ID")[1])
-  if (!identical(state, "complete")) {
+  if (!identical(got$state, "complete")) {
     if (!identical(toupper(Sys.getenv("QS_IGNORE_BUILD_STATE", unset = "")), "TRUE"))
       stop("The last LOT run on prefix '", cfg$object_prefix, "' (",
-           run, ") is marked '", state, "', so it is the run that ",
+           got$run, ") is marked '", got$state, "', so it is the run that ",
            "last wrote these tables and it did not finish. LOT replaces ",
            "LOT_LONG_FINAL before it validates it, so the table on disk may be ",
            "that run's - built, unvalidated, left behind - and nothing here can ",
            "tell those numbers from good ones. Re-run the LOT build, or set ",
            "QS_IGNORE_BUILD_STATE=TRUE if you know it failed before it wrote ",
            "anything.", call. = FALSE)
-    log_msg("WARNING: the last LOT run (", run, ") is marked '", state,
+    log_msg("WARNING: the last LOT run (", got$run, ") is marked '", got$state,
             "' and QS_IGNORE_BUILD_STATE is set. If it got as far as replacing ",
             "LOT_LONG_FINAL, these answers are that run's.")
   }
-  from_ <- as.character(qs_col(got, "INPUT_COHORT_TABLE")[1])
-  built <- toupper(trimws(from_))
-  want  <- toupper(trimws(cfg$input_cohort_table))
-  if (!identical(built, want))
+  if (!identical(toupper(trimws(got$cohort)),
+                 toupper(trimws(cfg$input_cohort_table))))
     stop("INPUT_COHORT_TABLE is '", cfg$input_cohort_table, "', but the LOT run ",
          "under prefix '", cfg$object_prefix, "' was built from '",
-         from_, "' (", tbl, "). The questions bound their ",
+         got$cohort, "' (", got$tbl, "). The questions bound their ",
          "answers by the cohort's windows and index dates, so this pair would ",
          "describe one run using another's cohort.", call. = FALSE)
   invisible(TRUE)
+}
+
+# Did the broad LOT run behind Q3's association finish?
+#
+# Same rule as this run's, different consequence. The broad run is a second
+# population read for one half of one question, so an unfinished one costs that
+# half and nothing else - it skips rather than stopping a workbook whose other
+# answers do not depend on it.
+#
+# The cohort it was built from comes back too. The association is over that
+# population, and the tab should name it rather than leaving "the broad cohort"
+# to mean whatever happens to sit under the prefix.
+qs_broad_run_state <- function(con, prefix) {
+  got <- qs_lot_run_row(con, prefix)
+  if (is.null(got)) {
+    log_msg("WARNING: no LOT run recorded under prefix '", prefix, "', so the ",
+            "broad run behind Q3's association is unverified - it is read as ",
+            "though it finished.")
+    return(list(ok = TRUE, why = NULL, cohort = NA_character_))
+  }
+  if (!identical(got$state, "complete")) {
+    if (!identical(toupper(Sys.getenv("QS_IGNORE_BROAD_BUILD_STATE", unset = "")),
+                   "TRUE"))
+      return(list(ok = FALSE, cohort = got$cohort, why = paste0(
+        "the last LOT run on prefix '", prefix, "' (", got$run,
+        ") is marked '", got$state, "' in ", got$tbl, ". It replaces ",
+        "LOT_LONG_FINAL before it validates it, so the lines on disk may be ",
+        "that run's - built, unvalidated, left behind. Re-run it, or set ",
+        "QS_IGNORE_BROAD_BUILD_STATE=TRUE if you know it failed before it ",
+        "wrote anything.")))
+    log_msg("WARNING: the broad LOT run (", got$run, ") is marked '", got$state,
+            "' and QS_IGNORE_BROAD_BUILD_STATE is set. If it got as far as ",
+            "replacing LOT_LONG_FINAL, Q3's association is that run's.")
+  }
+  list(ok = TRUE, why = NULL, cohort = got$cohort)
 }
 
 # The line criteria that REMOVED patients from this run, read from the lot

@@ -534,11 +534,23 @@ main <- function() {
   # Reading it means there is one derivation of that rule instead of two, so
   # the two cannot disagree. Loading the CSV here would mean re-deciding it.
   om_codes <- qs_tbl("NDMM_OTHER_MALIG_CODES")
+  # Readable is not ownership. That run replaces LOT_LONG_FINAL before it
+  # validates it, so a rerun that replaced it and then failed leaves lines on
+  # disk that read perfectly well and were never checked. Its own status row
+  # says which, and it names the cohort it was built from - so "the broad
+  # cohort" on the tab is that population rather than whatever sits under the
+  # prefix. Skips this half only; the audit and every other tab are unaffected.
+  broad <- if (nzchar(broad_pfx)) qs_broad_run_state(con, broad_pfx) else
+    list(ok = TRUE, why = NULL, cohort = NA_character_)
   if (is.na(overall_lot))
     log_msg("Q3 association: skipped. It is a BROAD-cohort question and this ",
             "run is one cohort - set BROAD_PREFIX to the prefix of a LOT run ",
             "over the broad cohort. The NDMM audit below still runs.")
-  q3_elig_df <- if (!is.na(overall_lot) && vqs_readable(con, overall_lot) &&
+  else if (!isTRUE(broad$ok))
+    log_msg("Q3 association: skipped - ", broad$why,
+            " The NDMM audit below still runs.")
+  q3_elig_df <- if (!is.na(overall_lot) && isTRUE(broad$ok) &&
+                    vqs_readable(con, overall_lot) &&
                     !is.na(broad_idx) && vqs_readable(con, broad_idx) &&
                     vqs_readable(con, om_codes)) best_effort({
     db_q(con, glue("
@@ -609,6 +621,13 @@ main <- function() {
       "NDMM AUDIT (first table): the NDMM study cohort excludes genuine other cancers by construction, so its other-cancer rate",
       "MUST be 0. A non-zero value there is a BUG in the NDMM build, not a real signal. It uses NDMM's own 12-mo pre-LOT1 flag.",
       "missing_flag_rows must also be 0: it counts NDMM 1L patients with NO row in NDMM_FLAGS_ALL (a broken join), not coerced to clean.",
+      if (!is.na(overall_lot))
+        paste0("BROAD RUN: lines and index dates from prefix '", broad_pfx, "'",
+               if (!is.na(broad$cohort) && nzchar(trimws(broad$cohort)))
+                 paste0(", which that run recorded building from ", broad$cohort, ".")
+               else ", whose cohort it did not record.",
+               if (!isTRUE(broad$ok)) " NOT USED - see the log; this table is absent." else "")
+      else NULL,
       "BROAD COHORT (second table): the Q3 ask - is POMA-1L associated with the other cancers allowed in baseline? Only answerable",
       "on the broad cohort, since NDMM already removed those patients. pct_other_cancer_deconf DROPS the MM-adjacent codes",
       "(plasmacytoma, plasma-cell leukemia, MGUS - MM-spectrum, not a second cancer). Secondary neoplasm of bone is KEPT:",

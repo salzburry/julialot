@@ -103,6 +103,18 @@ answering it from this run would be near-zero by construction and mean nothing.
 Set `BROAD_PREFIX` to the prefix of a LOT run over the broad cohort. Without it
 that half is skipped and says so; the audit still runs.
 
+Readable is not ownership there either. That run replaces `LOT_LONG_FINAL`
+before it validates it, so a rerun that replaced it and then failed leaves
+lines that read perfectly well and were never checked.
+`qs_broad_run_state()` reads its status the same way this run's is read — the
+latest row, whatever state — and an unfinished one skips the association rather
+than stopping the workbook, since the audit and every other tab are over this
+run's tables. `QS_IGNORE_BROAD_BUILD_STATE=TRUE` overrides.
+
+The same row names the cohort that run was built from, and the Q3 tab prints
+it, so "the broad cohort" means a population rather than whatever happens to
+sit under the prefix.
+
 Its index dates come from that run's own `LOT_PATIENT_INPUT`, not from this
 cohort. Taking them from here would drop every broad patient the NDMM
 exclusions removed out of the index join — they would stay in the denominator

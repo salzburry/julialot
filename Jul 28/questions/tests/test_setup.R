@@ -28,7 +28,8 @@ stops <- function(expr, what) ok(!is.null(tryCatch({ expr; NULL },
 VARS <- c("PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME", "DOMINO_STARTING_USERNAME",
           "OBJECT_PREFIX", "QS_ALLOW_NO_PREFIX", "INPUT_COHORT_TABLE",
           "LOT_POPULATION", "LOT_COHORT", "BROAD_PREFIX", "TRIAL_PREFIX",
-          "TRIAL_INDEX_TABLE", "QS_IGNORE_BUILD_STATE")
+          "TRIAL_INDEX_TABLE", "QS_IGNORE_BUILD_STATE",
+          "QS_IGNORE_TRIAL_BUILD_STATE", "QS_IGNORE_BROAD_BUILD_STATE")
 clear <- function() for (v in VARS) Sys.unsetenv(v)
 
 cat("\n-- sourcing it is enough to break it, so source it --\n")
@@ -347,6 +348,27 @@ ok(any(grepl("qs_col <- function(d, name)", st, fixed = TRUE)) &&
    !any(grepl("got$STATE", st, fixed = TRUE)) &&
    !any(grepl("d$state[1]", st, fixed = TRUE)),
    "both status tables are read case-insensitively, since they do not agree on case")
+
+cat("\n-- and so does the broad run behind Q3's association --\n")
+# Readable is not ownership there either: that run replaces LOT_LONG_FINAL
+# before validating it, so a rerun that replaced it and then failed leaves
+# lines that read perfectly well and were never checked.
+ok(any(grepl("qs_lot_run_row(con, prefix)", st, fixed = TRUE)),
+   "the two LOT status reads are one helper, so the broad prefix gets the same rule")
+ok(!any(grepl("qs_tbl(\"LOT_BUILD_STATUS\")", st, fixed = TRUE)),
+   "...rather than the binding check being hardcoded to this run's prefix")
+ok(any(grepl("qs_broad_run_state(con, broad_pfx)", pm, fixed = TRUE)),
+   "Q3 asks whether the broad run finished before reading its lines")
+ok(any(grepl("QS_IGNORE_BROAD_BUILD_STATE", st, fixed = TRUE)),
+   "...with its own override, for a broad run known to have failed early")
+# Skips that half, not the workbook: the audit and every other tab are over
+# this run's tables and do not depend on the broad one.
+ok(any(grepl("Q3 association: skipped - ", pm, fixed = TRUE)) &&
+   any(grepl("The NDMM audit below still runs.", pm, fixed = TRUE)),
+   "...and an unfinished broad run costs that half only")
+# "The broad cohort" should name a population, not a prefix.
+ok(any(grepl("BROAD RUN: lines and index dates from prefix", pm, fixed = TRUE)),
+   "...and the tab says which cohort that run was built from")
 
 cat("\n-- Q3 takes its lines and its index dates from the same run --\n")
 # Index dates from the NDMM cohort would drop every broad patient the NDMM
