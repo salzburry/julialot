@@ -16,7 +16,7 @@ against a finished run as often as needed.
 | table | one row per |
 |---|---|
 | `<prefix>OUT_TTE` | patient per line — the three time-to-event outcomes |
-| `<prefix>OUT_ATTRITION` | line — Table 4's four attrition categories |
+| `<prefix>OUT_ATTRITION` | line — the attrition categories, which partition it |
 | `<prefix>OUT_LINE_GAP` | line pair — months from one line's start to the next |
 | `<prefix>OUT_REGIMEN` | line and regimen — N and % receiving each |
 | `<prefix>OUT_DX_TO_LOT1` | one row — months from MM diagnosis to the 1L index |
@@ -69,10 +69,22 @@ plainly had one.
 
 Table 4: *"Number and percent of patients who received each subsequent LOT,
 discontinued treatment and did not receive another, were lost to follow-up, or
-died"*. The four are **exclusive and ordered**, because a patient can look like
-more than one: someone who starts a next line and later dies is counted as
-receiving the next line, since that is what the row is about. The other three
-are each conditioned on there being no next line.
+died"*. Exclusive and ordered, because a patient can look like more than one:
+someone who starts a next line and later dies is counted as receiving the next
+line, since that is what the row is about. Every other category is conditioned
+on there being no next line.
+
+**Table 4 names four, and they are not exhaustive.** A patient still on
+treatment when the data runs out has *not* been lost to follow-up — they were
+observed to the end of the study period and were still being treated. Folding
+them into "lost to follow-up" would overstate loss and hide the ongoing group
+entirely, so `N_ONGOING` is counted separately and the five sum to `N_ON_LINE`.
+The two are told apart by whether observation stopped before the study did:
+
+| | no next line, no death, line never ended inside follow-up |
+|---|---|
+| `N_LOST_TO_FU` | follow-up ended **before** the study end — they disenrolled |
+| `N_ONGOING` | follow-up ran **to** the study end — the study stopped, not them |
 
 ## What it does not do
 
@@ -114,8 +126,11 @@ command line, and carry no `CONTRACT_DEVIATIONS`. None of it is waivable — thi
 package does arithmetic on a finished run, and if the run cannot be identified
 there is no reading of these numbers worth having.
 
-A line starting after its patient's follow-up ends is excluded and the count
-reported, so "none were excluded" is evidence rather than silence.
+A line can be absent from `OUT_TTE` for two reasons, and they are counted
+separately: its patient is not in the cohort at all, or the line starts after
+that patient's follow-up ends. A single "n dropped" would let the first hide
+behind the second — and the first should be impossible, since lot builds its
+lines from this cohort.
 
 ## Tests
 

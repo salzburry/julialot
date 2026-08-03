@@ -5,9 +5,6 @@
 # arithmetic on it; if the run cannot be identified there is no reading of
 # these numbers that is worth having.
 
-OUTPUTS <- c("OUT_TTE", "OUT_ATTRITION", "OUT_LINE_GAP", "OUT_REGIMEN",
-             "OUT_DX_TO_LOT1")
-
 # The cohort build's own prefix. One study is one prefix, so it defaults to
 # this run's - set it only when the cohort was built under a different one.
 coh_tbl <- function(tbl) {
@@ -69,21 +66,32 @@ check_lot_run <- function(con, prefix, cohort_table) {
   invisible(TRUE)
 }
 
-# Every line has to sit inside its patient's follow-up, or a date difference
-# below is measuring something that is not observation. Reported rather than
-# silently dropped: outcomes_tte_sql() already excludes them, and a count of
-# what it excluded is the evidence that it was nothing.
-check_lines_in_followup <- function(con, tte_tbl, lines_tbl) {
+# Two reasons a line in LOT_LONG_FINAL can be absent from OUT_TTE, and they
+# are not the same problem: its patient is not in the cohort at all, or the
+# line starts after that patient's follow-up ends. Counted separately, because
+# a single "n dropped" would let the first hide behind the second - and the
+# first should be impossible, since lot builds its lines from this cohort.
+check_lines_in_followup <- function(con, tte_tbl, lines_tbl, cohort_tbl) {
   n <- db_q(con, glue("
-    SELECT (SELECT count(*) FROM {lines_tbl}) AS n_lines,
-           (SELECT count(*) FROM {tte_tbl})   AS n_kept"))
-  dropped <- as.numeric(n$n_lines) - as.numeric(n$n_kept)
-  if (dropped > 0)
-    log_msg("  WARNING: ", dropped, " line(s) start after their patient's ",
-            "follow-up end and are not in ", tte_tbl, ".")
-  else
-    log_msg("  Every line starts inside its patient's follow-up.")
-  invisible(dropped)
+    WITH l AS (SELECT cast(PATID as string) AS PATID FROM {lines_tbl}),
+         c AS (SELECT cast(PATID as string) AS PATID FROM {cohort_tbl})
+    SELECT (SELECT count(*) FROM l)                                  AS n_lines,
+           (SELECT count(*) FROM l WHERE PATID NOT IN (SELECT PATID FROM c))
+                                                                     AS n_no_cohort,
+           (SELECT count(*) FROM {tte_tbl})                          AS n_kept"))
+  no_coh <- as.numeric(n$n_no_cohort)
+  after  <- as.numeric(n$n_lines) - no_coh - as.numeric(n$n_kept)
+  if (no_coh > 0)
+    log_msg("  WARNING: ", no_coh, " line(s) belong to a patient who is not in ",
+            cohort_tbl, ". lot builds its lines from this cohort, so this ",
+            "should be zero.")
+  if (after > 0)
+    log_msg("  ", after, " line(s) start after their patient's follow-up end ",
+            "and are not in ", tte_tbl, ".")
+  if (no_coh == 0 && after == 0)
+    log_msg("  Every line belongs to a cohort patient and starts inside their ",
+            "follow-up.")
+  invisible(c(no_cohort = no_coh, after_followup = after))
 }
 
 build_outcomes <- function(here, cohort_table, prefix) {
@@ -110,9 +118,10 @@ build_outcomes <- function(here, cohort_table, prefix) {
   log_msg("Building ", tte, " - one row per patient per line")
   db_exec(con, glue("CREATE OR REPLACE TABLE {tte} AS {
     outcomes_tte_sql(outcomes_base_sql(lines, cohort, base), run_id)}"))
-  check_lines_in_followup(con, tte, lines)
+  check_lines_in_followup(con, tte, lines, cohort)
 
-  tables <- list(list("OUT_ATTRITION", outcomes_attrition_sql),
+  tables <- list(list("OUT_ATTRITION",
+                      function(t) outcomes_attrition_sql(t, cfg$study_end)),
                  list("OUT_LINE_GAP",  outcomes_line_gap_sql),
                  list("OUT_REGIMEN",   outcomes_regimen_sql))
   if (!is.null(base))
@@ -135,7 +144,7 @@ build_outcomes <- function(here, cohort_table, prefix) {
     log_msg("  LOT ", s$LOT_NUM[i], ": ", s$n[i], " patients; events - TTNT ",
             s$ttnt_ev[i], ", TTD ", s$ttd_ev[i], ", OS ", s$os_ev[i])
   log_msg(DASH)
-  log_msg("All four tables are stamped OUT_RUN_ID = ", run_id)
+  log_msg("Every table is stamped OUT_RUN_ID = ", run_id)
   log_msg(SEP)
   invisible(TRUE)
 }

@@ -122,15 +122,39 @@ ok(has(D1, "WHERE LOT_NUM = 1"),
 ok(has(D1, "DX_TO_LOT1_DAYS < 0 THEN 1 ELSE 0 END) AS N_NEGATIVE"),
    "a 1L start before the diagnosis is counted, not silently averaged in")
 
-cat("\n-- attrition: the four outcomes are exclusive --\n")
-ATT <- outcomes_attrition_sql("s.TTE")
+cat("\n-- attrition: exclusive, and the categories mean what they say --\n")
+ATT <- outcomes_attrition_sql("s.TTE", "2026-03-31")
 ok(has(ATT, "AS N_NEXT_LOT") && has(ATT, "AS N_DIED") &&
      has(ATT, "AS N_DISCON_NO_NEXT") && has(ATT, "AS N_LOST_TO_FU"),
    "all four of Table 4's categories are counted")
 # A patient who starts a next line and later dies belongs to the next-line
 # count; every other category is conditioned on there being no next line.
-ok(length(gregexpr("NEXT_LOT_NUM IS NULL", ATT)[[1]]) == 3,
-   "the other three are all conditioned on there being no next line")
+ok(length(gregexpr("NEXT_LOT_NUM IS NULL", ATT)[[1]]) >= 3,
+   "the others are all conditioned on there being no next line")
+# Table 4's four are not exhaustive. A patient still on treatment when the
+# data runs out was observed to the end of the study - they are not lost.
+ok(has(ATT, "AS N_ONGOING"),
+   "still on treatment at the study end is its own count, not lost to follow-up")
+ok(has(ATT, "FU_END_DT < date('2026-03-31')") &&
+     has(ATT, "FU_END_DT >= date('2026-03-31')"),
+   "...and the two are separated by whether observation stopped before the study did")
+# The five partition the line: every patient lands in exactly one.
+part <- function(next_lot, os, ttd, fu_end, study_end = "2026-03-31") {
+  c(next_lot = as.integer(!is.na(next_lot)),
+    died     = as.integer(is.na(next_lot) && os == 1),
+    discon   = as.integer(is.na(next_lot) && os == 0 && ttd == 1),
+    lost     = as.integer(is.na(next_lot) && os == 0 && ttd == 0 &&
+                            as.Date(fu_end) <  as.Date(study_end)),
+    ongoing  = as.integer(is.na(next_lot) && os == 0 && ttd == 0 &&
+                            as.Date(fu_end) >= as.Date(study_end)))
+}
+cases <- list(part(2, 0, 1, "2026-03-31"), part(NA, 1, 1, "2022-01-01"),
+              part(NA, 0, 1, "2026-03-31"), part(NA, 0, 0, "2022-06-30"),
+              part(NA, 0, 0, "2026-03-31"))
+ok(all(vapply(cases, sum, 0) == 1),
+   "every patient lands in exactly one of the five, so they sum to the line")
+ok(cases[[4]]["lost"] == 1 && cases[[5]]["ongoing"] == 1,
+   "...disenrolled early is lost; on treatment at the study end is ongoing")
 
 cat("\n-- months are months --\n")
 GAP <- outcomes_line_gap_sql("s.TTE")

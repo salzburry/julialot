@@ -144,14 +144,25 @@ outcomes_tte_sql <- function(base_sql, run_id) {
 }
 
 # Table 4, "Treatment attrition": "Number and percent of patients who received
-# each subsequent LOT, discontinued treatment and did not receive another,
-# were lost to follow-up, or died".
+# each subsequent LOT, discontinued treatment and did not receive another, were
+# lost to follow-up, or died".
 #
-# The four are exclusive and ordered, because a patient can look like more than
-# one: someone who starts a next line and later dies is counted as receiving
-# the next line, since that is what the row is about. Death is only counted
-# where no next line followed.
-outcomes_attrition_sql <- function(tte_tbl) {
+# Exclusive and ordered, because a patient can look like more than one: someone
+# who starts a next line and later dies is counted as receiving the next line,
+# since that is what the row is about. Every other category is conditioned on
+# there being no next line.
+#
+# The protocol names four but they are not exhaustive, and the gap matters.
+# A patient still on treatment when the data runs out has NOT been lost to
+# follow-up - they were observed to the end of the study period and were still
+# being treated. Folding them into "lost to follow-up" would overstate loss and
+# hide the ongoing group entirely, so they get their own count and the five sum
+# to N_ON_LINE.
+outcomes_attrition_sql <- function(tte_tbl, study_end) {
+  # No next line, no death, and the line never ended inside follow-up: the
+  # patient was on treatment when observation stopped. Why it stopped is the
+  # difference between the two.
+  still <- "NEXT_LOT_NUM IS NULL AND OS_EVENT = 0 AND TTD_EVENT = 0"
   glue("
     SELECT LOT_NUM,
            count(*)                                            AS N_ON_LINE,
@@ -162,9 +173,15 @@ outcomes_attrition_sql <- function(tte_tbl) {
            sum(CASE WHEN NEXT_LOT_NUM IS NULL AND OS_EVENT = 0
                      AND TTD_EVENT = 1
                     THEN 1 ELSE 0 END)                         AS N_DISCON_NO_NEXT,
-           sum(CASE WHEN NEXT_LOT_NUM IS NULL AND OS_EVENT = 0
-                     AND TTD_EVENT = 0
-                    THEN 1 ELSE 0 END)                         AS N_LOST_TO_FU
+           -- Observation stopped before the study did: they disenrolled.
+           sum(CASE WHEN {still}
+                     AND FU_END_DT < date('{study_end}')
+                    THEN 1 ELSE 0 END)                         AS N_LOST_TO_FU,
+           -- Observation ran to the end of the study period and they were
+           -- still on treatment. Not a loss - the study stopped, not them.
+           sum(CASE WHEN {still}
+                     AND FU_END_DT >= date('{study_end}')
+                    THEN 1 ELSE 0 END)                         AS N_ONGOING
     FROM {tte_tbl}
     GROUP BY LOT_NUM ORDER BY LOT_NUM")
 }
