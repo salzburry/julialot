@@ -567,6 +567,58 @@ qs_broad_run_state <- function(con, prefix) {
   list(ok = TRUE, why = NULL, cohort = got$cohort, vintage = vin)
 }
 
+# Two table references, one table.
+#
+# Compared on the bare name, case-insensitively. One side comes out of a status
+# row the LOT build wrote (INPUT_COHORT_TABLE, as the operator typed it) and
+# the other out of a name this package resolved through the work schema, so
+# one is routinely schema-qualified and the other is not. Comparing them whole
+# would report every matching pair as a mismatch.
+qs_same_table <- function(a, b) {
+  bare <- function(x) toupper(trimws(sub(".*[.]", "", as.character(x)[1])))
+  if (length(a) == 0L || length(b) == 0L) return(FALSE)
+  if (is.na(a[1]) || is.na(b[1])) return(FALSE)
+  x <- bare(a); y <- bare(b)
+  nzchar(x) && nzchar(y) && identical(x, y)
+}
+
+# Do the broad LOT run and the broad flag build describe the same population?
+#
+# BROAD_PREFIX names a LOT run and TRIAL_PREFIX names the cohort build behind
+# the diagnosis-anchored flags. Nothing about either name makes them the same
+# study, and the flag section joins one to the other - it labels flag-build
+# patients POMA-1L from the LOT run's regimens. Point them at two broad cohorts
+# and every patient the second build does not have reads as 'other', which is
+# indistinguishable in the output from not having had POMA.
+#
+# The LOT run records the cohort table it was built from; the flag build's
+# final cohort table is the one the flags are aligned to. If the LOT run was
+# built over that cohort, the two are the same population by construction. So
+# it is asked rather than assumed.
+#
+# `bound` is TRUE only when both were recorded and they match. A run that
+# recorded neither is `unverified` - older runs predate the status table, and
+# refusing on a missing record would take the answer away from every one of
+# them. A positive disagreement is neither: it is known-wrong, and it stops the
+# join rather than warning about it.
+qs_broad_pair_bound <- function(broad_cohort, trial_index) {
+  has <- function(x) length(x) && !is.na(x[1]) && nzchar(trimws(as.character(x[1])))
+  if (!has(broad_cohort) || !has(trial_index))
+    return(list(bound = FALSE, verified = FALSE, why = paste0(
+      "nothing records which cohort one of them came from, so the two broad ",
+      "sources are taken on trust to be the same population")))
+  if (!qs_same_table(broad_cohort, trial_index))
+    return(list(bound = FALSE, verified = TRUE, why = paste0(
+      "the broad LOT run was built from '", trimws(as.character(broad_cohort)[1]),
+      "', but the diagnosis-anchored flags belong to the build that wrote '",
+      trimws(as.character(trial_index)[1]), "'. Those are two different broad ",
+      "cohorts, so lines from one cannot label patients of the other - a ",
+      "patient missing from the LOT run would read as not having had POMA ",
+      "rather than as not being in it. Point BROAD_PREFIX and TRIAL_PREFIX at ",
+      "the same study, or leave the split off.")))
+  list(bound = TRUE, verified = TRUE, why = NULL)
+}
+
 # The line criteria that REMOVED patients from this run, read from the lot
 # package's own declaration and the APPLY_* settings this run used.
 #

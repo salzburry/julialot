@@ -43,18 +43,34 @@ DEF_SOURCE_REJECTED <- c(
 # are the ones the ask named; the rest are where this algorithm makes a
 # decision that another one could make differently.
 #
-# `ours` is what this build does. `where` is where to check it. `question` is
-# what to put to a protocol, worded so filling the cell is reading rather than
-# interpreting.
+# `ours` is what this build does. `where` is where to check it, as
+# `path:line`, comma-separated, a bare `:line` continuing the previous path.
+# Line numbers rather than file names or function names: a file name sends the
+# reader to eight hundred lines of SQL to find out whether the sentence is
+# true, and a claim that expensive to check does not get checked. The tests
+# hold every citation to that shape and to a line the file actually has.
+# `question` is what to put to a protocol, worded so filling the cell is
+# reading rather than interpreting.
 LOT_DIMENSIONS <- list(
+  # Both halves matter, and the LOT1 half alone is the answer that reads as
+  # complete and is not. A transplant inside a line is part of it; a transplant
+  # beyond what that line allows is a line boundary, and SCT_AUTO is one of the
+  # start types a LOT-N takes - so a later transplant IS a line of its own.
   list(id = "sct_auto_is_a_line",
        dimension = "Is an autologous transplant its own line, or part of induction?",
-       ours = paste0("Part of the line it falls in. A single AUTO is allowed ",
-                     "inside LOT1 and a tandem pair is allowed; a further one ",
-                     "is excess and ends LOT1."),
-       where = "lot/R/steps/05_sct.R:11",
+       ours = paste0("Both, depending on where it falls. Inside a line it is ",
+                     "part of it: LOT1 allows a single AUTO and allows a tandem ",
+                     "pair, and a later line allows an AUTO within its own ",
+                     "induction window. Beyond that it is a boundary - the ",
+                     "excess AUTO ends the current line with reason SCT_AUTO, ",
+                     "and SCT_AUTO is one of the start types the next line can ",
+                     "take, so a further transplant becomes a line of its own ",
+                     "even with no drug beside it."),
+       where = "lot/R/steps/05_sct.R:11, lot/R/steps/10_lot2_5_base.R:239, :309",
        question = paste0("Does the definition count ASCT as a separate prior ",
-                         "line, or as part of the induction line it follows?")),
+                         "line, or as part of the induction line it follows? ",
+                         "Does the answer change for a transplant at second ",
+                         "line or later?")),
 
   list(id = "sct_allo_is_a_line",
        dimension = "Is an allogeneic transplant its own line?",
@@ -88,7 +104,7 @@ LOT_DIMENSIONS <- list(
                      "of a drug in the current line, or a transplant or CAR-T ",
                      "event. There is no requirement that progression be ",
                      "documented - claims do not carry it."),
-       where = "lot/R/steps/10_lot2_5_base.R",
+       where = "lot/R/steps/10_lot2_5_base.R:204, :239",
        question = paste0("Does a new line require documented progression or ",
                          "relapse, or is any regimen change enough?")),
 
@@ -140,7 +156,7 @@ LOT_DIMENSIONS <- list(
        dimension = "Is there a cap on how many lines are counted?",
        ours = paste0("Yes - MAX_LOT. Nothing above it is built, so a capped ",
                      "patient is indistinguishable from a completed one."),
-       where = "lot/R/build_lot.R - check_lot_long",
+       where = "lot/R/steps/10_lot2_5_base.R:1008, lot/R/build_lot.R:1404",
        question = paste0("Does the source cap the line count, or report the ",
                          "full distribution?")),
 
@@ -149,7 +165,7 @@ LOT_DIMENSIONS <- list(
        ours = paste0("The first eligible MM therapy claim on or after the MM ",
                      "diagnosis and on or after LOT1_FROM. Belantamab and ",
                      "steroids cannot set it. That date is the cohort index."),
-       where = "nndm/R/steps/00b_lot1_index.R",
+       where = "nndm/R/steps/00b_lot1_index.R:147",
        question = paste0("How is the start of first-line therapy defined, and ",
                          "may any agent set it?")))
 

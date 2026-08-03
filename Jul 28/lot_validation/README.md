@@ -1,8 +1,23 @@
 # LOT validation
 
-Idea 3 from `questions/asked/July 30 2026/LOT New ideas.txt`: a library of
-synthetic patient vignettes for the LOT assignments that are hard, each with
-what this algorithm does with them.
+The four ideas in `questions/asked/July 30 2026/LOT New ideas.txt`, each as far
+as this repository can take it.
+
+**Where each one stands.** None of it has executed against Databricks — no part
+of `Jul 28` has — so nothing here is an observed output.
+
+| | |
+|---|---|
+| 3 — vignettes | **complete as documentation.** 21 cases with what the rules say, derived from this run's parameters. It is a specification, not a run. |
+| 2(d) — sensitivity | **harness complete, unrun.** Thirteen builds' worth of warehouse, opt-in, with the directions predicted first. |
+| 2(a)-(c) — benchmarks | **harness complete, pending sources.** Every measurement is written and checked; `benchmarks.csv` ships with `published_value` blank, because the published figures are not this repository's to write. |
+| 1 — definition comparison | **our column complete, theirs pending sources.** `clinicaltrials.gov` and `myeloma.org` are denied by this environment's network policy. |
+
+Two of the four wait on somebody with the literature. That is stated per row in
+the outputs as well, so an unfilled cell reports itself rather than passing.
+
+Idea 3 first: a library of synthetic patient vignettes for the LOT assignments
+that are hard, each with what this algorithm does with them.
 
 ```
 Rscript lot_validation/run_vignettes.R
@@ -113,6 +128,20 @@ The comparison scores the **sign relative to the parameter's own direction**,
 not the size. Fewer lines from a *larger* gap is the prediction; the same number
 of lines from a *smaller* gap is the opposite finding, and the harness says so.
 
+**A number that did not move is its own verdict, `no movement` — not a miss.**
+The prediction is about the algorithm. Whether anybody in the cohort sits near
+the threshold is not, and a window nobody's claims straddle moves nothing
+however it is set. Scoring that as `AGAINST EXPECTATION` reports a valid result
+as a failure, and a sweep full of false failures stops being read. The
+asymmetry is deliberate: predicting `none` and *getting* movement is still a
+miss, because that one is the algorithm contradicting us.
+
+A prediction that could not have come true is worse than a wrong one, and
+`MAX_LOT` is where it hides. Its cells are 3 and 8, and LOT3 is built at both —
+so `pct_reaching_lot3` cannot move, and predicting that it rises would have
+produced the same false failure in every sweep forever. It is predicted `none`,
+and the test holds any future cap axis to the same rule.
+
 ### Two of the ask's four axes cannot be swept
 
 **maintenance-as-LOT vs flag** is not a setting. Maintenance is a descriptive
@@ -152,6 +181,17 @@ Rscript lot_validation/run_benchmarks.R
 DATABRICKS_PWD=... DOMINO_USER_NAME=usr00000 OBJECT_PREFIX=ndmm_ \
   BENCH_EXECUTE=TRUE Rscript lot_validation/run_benchmarks.R
 ```
+
+`OBJECT_PREFIX` is required, and it has to name a LOT run that **finished**.
+A blank prefix resolves to the unprefixed table names — either absent, or some
+older run's, and either way not this study's. The run is resolved from
+`LOT_BUILD_STATUS` before anything is measured, and its id and input cohort go
+out in the CSV: a benchmark table is exactly the kind of output that outlives
+the session that made it, and "median 2.1 lines" carries nothing about where it
+came from. It is the latest status row whatever state it reached, not the
+latest complete one, for the reason the dashboard and the question scripts use
+the same rule — the build replaces `LOT_LONG_FINAL` early and validates it
+afterwards, so a rerun that replaced it and then failed owns those tables.
 
 **The published numbers are not here and were not written from memory.**
 `benchmarks.csv` ships with a row for every metric and `published_value` blank,
@@ -199,6 +239,16 @@ their observation end.
 a short one and drags the median down. `LOT_BASE_LENGTH` is inclusive —
 `datediff + 1` — which is a day per line against a source that is not.
 
+**A regimen percentage is out of everyone at that line**, including the lines
+that carry no regimen string. An allogeneic line has a blank `LOT_BASE_MEDS` by
+construction — induction rows are suppressed for it — so summing the named
+regimens to get the denominator drops those patients and every percentage comes
+out slightly high, under a heading that says "% of line-n patients". It is the
+same mistake that made the transition Sankeys read a blank regimen as no line at
+all. The consequence is that the top-N percentages do not sum to 100: the
+remainder is the tail beyond N plus those blank-regimen lines, which is the
+arithmetic a published regimen frequency is on.
+
 The crude `pct_reaching_line` figures are **not** follow-up adjusted and say so:
 a patient with six months of observation had less chance to reach LOT2 than one
 with five years. A source reporting a KM estimate is measuring something else.
@@ -212,9 +262,20 @@ Rscript lot_validation/run_definitions.R
 No warehouse and no connection — the rules are in the code, not in the data.
 
 **Our side is complete**: twelve dimensions, each with what this build does and
-the file and line to check it against. That half is the reusable one, and it did
-not exist before — the rules live across eight step files, and "does this count
-SCT as a line" had nowhere single to look.
+the file and line to check it against — `path:line`, held to that shape by the
+tests, and to a line the file actually has. A citation naming only a file sends
+the reader to eight hundred lines of SQL to find out whether one sentence is
+true, and a claim that expensive to check does not get checked. That half is the
+reusable one, and it did not exist before — the rules live across eight step
+files, and "does this count SCT as a line" had nowhere single to look.
+
+The transplant answer is the one worth reading twice, because the obvious half
+of it is wrong. `05_sct.R` gives the LOT1 rule — a single AUTO allowed, a tandem
+pair allowed, a further one ends the line — and it reads like the whole answer.
+It is not: at LOT2 and later `SCT_AUTO` is a **start type**, so a transplant
+beyond what the previous line allowed becomes a line of its own, with no drug
+beside it. Stopping at LOT1 would have told a protocol comparison "never a
+separate line", which is the opposite of what this build does.
 
 The dimensions the ask named are all there — SCT as separate line vs part of
 induction, maintenance counted or not, gap and switch rules — plus the ones

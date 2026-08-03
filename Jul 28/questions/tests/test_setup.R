@@ -381,6 +381,46 @@ ok(any(grepl("Association skipped - ", bdq, fixed = TRUE)),
 ok(any(grepl("built from ", bdq, fixed = TRUE)),
    "...and the log says which cohort that run was built from")
 
+cat("\n-- and the two broad sources have to be one broad cohort --\n")
+# BROAD_PREFIX names a LOT run; TRIAL_PREFIX names the build behind the
+# diagnosis-anchored flags. Nothing about the two names makes them the same
+# study, and the flag section crosses them - it labels the flag build's
+# patients POMA-1L using the LOT run's 1L regimens. Point them at two
+# populations and every patient the LOT run does not have falls into 'other',
+# which in that output is indistinguishable from not having had POMA.
+# One side is INPUT_COHORT_TABLE as the operator typed it into the LOT run;
+# the other is a name this package resolved through the work schema. One is
+# routinely qualified and the other is not, so comparing them whole would call
+# every matching pair a mismatch.
+ok(qs_broad_pair_bound("overall_coh_final", "usr00000.OVERALL_COH_FINAL")$bound,
+   "one cohort under two names is bound, schema qualifier and case aside")
+mm <- qs_broad_pair_bound("BROAD_A_FINAL", "sch.BROAD_B_FINAL")
+ok(!isTRUE(mm$bound) && isTRUE(mm$verified),
+   "two different cohorts are a known mismatch, not an unknown")
+ok(grepl("two different broad cohorts", mm$why, fixed = TRUE),
+   "...and it says which pair disagreed and what that would have done")
+# Missing is not the same as wrong. Older runs predate the status table, and
+# refusing on an absent record takes the answer away from every one of them.
+un <- qs_broad_pair_bound(NA_character_, "sch.OVERALL_COH_FINAL")
+ok(!isTRUE(un$bound) && !isTRUE(un$verified),
+   "an unrecorded cohort is unverified rather than a mismatch")
+ok(!isTRUE(qs_broad_pair_bound("A", "")$verified),
+   "...and so is an empty one, which would otherwise compare as a difference")
+ok(any(grepl("qs_broad_pair_bound(broad$cohort, trial_idx)", bdq, fixed = TRUE)),
+   "the broad script binds the LOT run's cohort to the flag build's own table")
+# The split is the only part that crosses the two. The flags themselves are
+# that build's and stand on their own, so a mismatch costs the split and not
+# the section.
+ok(any(grepl("grp_expr <- if (poma_split)", bdq, fixed = TRUE)) &&
+     any(grepl("'all'", bdq, fixed = TRUE)),
+   "...and reports the flags ungrouped when it cannot, rather than not at all")
+# The old version interpolated an NA table name into the SQL whenever
+# BROAD_PREFIX was unset, so the query died inside best_effort() while the log
+# beside it said the split had defaulted to 'other' for everyone.
+ok(!any(grepl("poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {broad_lot}\n                 WHERE",
+              paste(bdq, collapse = "\n"), fixed = TRUE)),
+   "...and no longer names the broad table in a query that runs without it")
+
 cat("\n-- a run records the CDM vintage it read --\n")
 # STUDY_END picks the quarterly table and the quarterlies are cumulative. Q3
 # takes lines and index dates from the broad run, then scans the raw CDM itself

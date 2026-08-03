@@ -81,7 +81,11 @@ BENCHMARK_METRICS <- list(
     defn = paste0("LOT_BASE_MEDS as a whole string, so a four-drug regimen is not ",
                   "the same row as the three-drug one inside it. Order is ",
                   "normalised by the build. A registry reporting 'VRd' as a class ",
-                  "will not line up with a string comparison without mapping.")))
+                  "will not line up with a string comparison without mapping. ",
+                  "The DENOMINATOR is every patient with a line at n, including ",
+                  "allogeneic lines, which carry no regimen string by ",
+                  "construction - so the top-N percentages do not sum to 100 and ",
+                  "the remainder is the tail beyond N plus those.")))
 
 # One row per line, and the counts a distribution needs.
 bench_distribution_sql <- function(final_tbl) paste0("
@@ -172,14 +176,31 @@ bench_ttnt_sql <- function(final_tbl, patients_tbl, line) paste0("
          (SELECT n FROM n_all)                                 AS denom,
          (SELECT sum(d) FROM km)                               AS events")
 
+# The denominator is everyone with a line at n, INCLUDING the lines that carry
+# no regimen string.
+#
+# An allogeneic line has a blank LOT_BASE_MEDS by construction - induction rows
+# are suppressed for it (10_lot2_5_base.R:348). Filtering those out before
+# counting the denominator, as summing the named regimens does, silently
+# reports "% of line-n patients who had a NAMED regimen" under a heading that
+# says "% of line-n patients", and every percentage comes out slightly high.
+# It is the same mistake that made the transition Sankeys read a blank regimen
+# as no line at all.
+#
+# So the top-N percentages do not sum to 100, and the remainder is the tail
+# beyond N plus those blank-regimen lines. That is the honest arithmetic: a
+# published regimen frequency is over everyone treated at that line.
 bench_regimen_sql <- function(final_tbl, top_n) paste0("
-  WITH l AS (
+  WITH pat AS (
+    SELECT DISTINCT LOT_NUM, cast(PATID as string) AS PATID FROM ", final_tbl, "
+  ),
+  tot AS (SELECT LOT_NUM, count(*) AS n_line FROM pat GROUP BY LOT_NUM),
+  l AS (
     SELECT LOT_NUM, LOT_BASE_MEDS AS regimen, count(DISTINCT PATID) AS n
     FROM ", final_tbl, "
     WHERE LOT_BASE_MEDS IS NOT NULL AND trim(LOT_BASE_MEDS) <> ''
     GROUP BY LOT_NUM, LOT_BASE_MEDS
   ),
-  tot AS (SELECT LOT_NUM, sum(n) AS n_line FROM l GROUP BY LOT_NUM),
   r AS (
     SELECT l.LOT_NUM, l.regimen, l.n, t.n_line,
            row_number() OVER (PARTITION BY l.LOT_NUM ORDER BY l.n DESC) AS rk

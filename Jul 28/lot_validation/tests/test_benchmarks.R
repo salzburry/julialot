@@ -147,12 +147,76 @@ ok(grepl("AS censored", d, fixed = TRUE),
 ok(any(grepl("LOT_BASE_LENGTH is inclusive", bn, fixed = TRUE)),
    "the inclusive length is stated, since an off-by-one here is a day per line")
 
+cat("\n-- a regimen percentage is out of everyone at that line --\n")
+# An allogeneic line carries NO regimen string by construction - induction rows
+# are suppressed for it. Summing the named regimens to get the denominator
+# drops those patients, and every percentage comes out high under a heading
+# that says "% of line-n patients". Same mistake that made the transition
+# Sankeys read a blank regimen as no line at all.
+rg <- bench_regimen_sql("F", 5)
+ok(grepl("tot AS (SELECT LOT_NUM, count(*) AS n_line FROM pat", rg, fixed = TRUE),
+   "the denominator is counted over every line at n, not over the named ones")
+ok(!grepl("sum(n) AS n_line", rg, fixed = TRUE),
+   "...not by summing the regimens, which excludes the blank-regimen ALLO lines")
+# The filter still belongs on the NUMERATOR: a blank regimen is not a regimen
+# to name, it is a patient with no regimen string.
+ok(grepl("trim(LOT_BASE_MEDS) <> ''", rg, fixed = TRUE),
+   "...while the rows themselves are still only the named regimens")
+ok(regexpr("n_line FROM pat", rg, fixed = TRUE) <
+     regexpr("trim(LOT_BASE_MEDS)", rg, fixed = TRUE),
+   "...and the patient count is taken before the regimen filter, not after it")
+ok(grepl("including \nallogeneic lines|including allogeneic lines",
+         BENCHMARK_METRICS$pct_regimen_at_line$defn),
+   "the definition says what the denominator is, since the top-N will not sum to 100")
+
+cat("\n-- and a measurement names the run it came from --\n")
+# lot_out() with a blank prefix resolves to the UNPREFIXED tables. If some
+# older run's are sitting in the schema they read perfectly, and the benchmark
+# table comes out of a different study with nothing in it to say so.
+source(file.path(ROOT, "R", "run_binding.R"))
+.status <- NULL
+wrk <- function(t) paste0("sch.", t)
+db_q <- function(con, sql) if (is.null(.status)) stop("no such table") else .status
+log_msg <- function(...) invisible(NULL)
+stops(require_lot_run(NULL, "", "BENCH_IGNORE_BUILD_STATE"),
+      "a blank OBJECT_PREFIX is refused, not resolved to the unprefixed tables")
+stops(require_lot_run(NULL, "ndmm", "BENCH_IGNORE_BUILD_STATE"),
+      "...and a prefix that is not one")
+stops(require_lot_run(NULL, "ndmm_", "BENCH_IGNORE_BUILD_STATE"),
+      "a prefix with no run recorded is refused rather than measured on trust")
+.status <- data.frame(RUN_ID = "r2", STATE = "running",
+                      INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT",
+                      STUDY_END = "2024Q4", stringsAsFactors = FALSE)
+stops(require_lot_run(NULL, "ndmm_", "BENCH_IGNORE_BUILD_STATE"),
+      "...and so is a run that did not finish, since it replaced the tables anyway")
+Sys.setenv(BENCH_IGNORE_BUILD_STATE = "TRUE")
+runs(require_lot_run(NULL, "ndmm_", "BENCH_IGNORE_BUILD_STATE"),
+     "...unless the operator says they know it failed before writing anything")
+Sys.unsetenv("BENCH_IGNORE_BUILD_STATE")
+.status$STATE <- "complete"
+got <- require_lot_run(NULL, "ndmm_", "BENCH_IGNORE_BUILD_STATE")
+ok(identical(got$run, "r2") && identical(got$cohort, "ndmm_NDMM_COHORT"),
+   "a finished run comes back with its id and the cohort it was built from")
+# The status tables disagree on case between the two builds, so the read has to.
+.status <- data.frame(run_id = "r3", state = "COMPLETE",
+                      input_cohort_table = "c", stringsAsFactors = FALSE)
+ok(identical(require_lot_run(NULL, "ndmm_", "X")$run, "r3"),
+   "...whatever case the status table spells its columns in")
+# STUDY_END was added later; naming it in the SELECT would make an older run's
+# status table unreadable, which reads as no run at all - the softest failure.
+ok(is.na(require_lot_run(NULL, "ndmm_", "X")$study_end),
+   "...and a status table predating STUDY_END still reads, without it")
+
 cat("\n-- what the ask wanted that a harness cannot supply --\n")
 rb <- readLines(file.path(ROOT, "run_benchmarks.R"), warn = FALSE)
 ok(any(grepl("Nothing here invents one", rb, fixed = TRUE)),
    "the script says the published figures are not its to write")
 ok(any(grepl("BENCH_EXECUTE", rb, fixed = TRUE)),
    "...and measuring is opt-in, so the definitions can be read first")
+ok(any(grepl("require_lot_run(con, cfg$object_prefix", rb, fixed = TRUE)),
+   "...and it binds to one finished run before it measures anything")
+ok(any(grepl("res$run_id <- run$run", rb, fixed = TRUE)),
+   "...which travels out with the numbers, since a benchmark table outlives its session")
 
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))
