@@ -9,7 +9,12 @@
 # requires every file they name to be here - this list was short by
 # other_malig.csv, which made every production run fail inside step 4.
 CODELIST_FILES <- c("cl_mma_codelist.csv", "mm_dx.csv", "other_malig.csv",
-                    "pregnancy.csv")
+                    "pregnancy.csv", "clintrial.csv")
+# clintrial.csv drives no exclusion - it is the descriptive trial flag in
+# 08_clintrial.R. It is here because every file this build reads must be, so
+# its md5 is recorded beside the others: a trial count is quoted like any
+# other number and means little without the version behind it. The broad build
+# reads the same file from the same directory.
 
 # What the icd_family column may say, both ways round.
 #

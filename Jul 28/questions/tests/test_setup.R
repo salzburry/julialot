@@ -395,6 +395,80 @@ ok(any(grepl("qs_vintage_note", st, fixed = TRUE)),
 ok(any(grepl('paste0("VINTAGE: ", broad$vintage)', pm, fixed = TRUE)),
    "...with Q3 carrying the mismatch onto the tab, since that is where it bites")
 
+cat("\n-- the trial question is answered on this cohort's own index --\n")
+# The whole point of the nndm flag: its windows are cut at the 1L start, so
+# diagnosis-to-1L is a column rather than something split across two
+# diagnosis-anchored flags that each miss half of it.
+ct <- readLines(file.path(dirname(ROOT), "nndm", "R", "steps", "08_clintrial.R"),
+                warn = FALSE)
+ok(any(grepl("AS CLINTRIAL_DX_TO_LOT1", ct, fixed = TRUE)),
+   "the cohort build has a diagnosis-to-1L trial window")
+ok(any(grepl("qs_ndmm_trial_flags(con)", pm, fixed = TRUE)),
+   "...and Q4 reads it")
+ok(any(grepl("n_dx_to_lot1", pm, fixed = TRUE)) &&
+   any(grepl("median_days_before_lot1", pm, fixed = TRUE)),
+   "...headlining that window, with the timing beside it")
+# One prefix, one cohort: nothing to reconcile, so a missing row is a broken
+# join and is counted rather than read as a clean patient.
+ok(any(grepl("AS missing_flag_rows", pm, fixed = TRUE)),
+   "...and a LOT1 patient with no flag row is counted, not coerced to clean")
+# The overlapping window must not be added to the partition.
+ok(any(grepl("do NOT add it to n_pre_dx", pm, fixed = TRUE)),
+   "...with the 12-month window marked as spanning two of the others")
+# The old view stays, as context, and says what it cannot answer.
+ok(any(grepl("diagnosis index (context)", pm, fixed = TRUE)),
+   "the diagnosis-anchored table is kept beside it, labelled as context")
+ok(any(grepl("Clinical trial does NOT filter this cohort", pm, fixed = TRUE)),
+   "...and the tab says the flag is descriptive, not a criterion")
+
+cat("\n-- every script binds to its run, not just the two that read flags --\n")
+# The guard is worth nothing in the scripts that skip it. All five bound
+# raw-claim windows by INPUT_COHORT_TABLE, and all five read tables a newer
+# failed run may have replaced.
+nog <- Filter(function(f) !any(grepl("qs_check_run_binding(con)",
+                                     readLines(f, warn = FALSE), fixed = TRUE)), qs)
+ok(!length(nog),
+   if (length(nog)) paste0("does not check the run binding: ",
+                           paste(basename(nog), collapse = ", "))
+   else "every question script checks the run binding before it reads anything")
+
+cat("\n-- an unknown ICD family matches neither, the way the builds decide it --\n")
+# "Not one of the ICD-9 spellings, therefore ICD-10" reads a genuine ICD-9
+# claim with a blank flag as ICD-10, which then fails the family join
+# silently - so the workbook can count a diagnosis the cohort build did not.
+# raw_icd_flag is WAIVABLE, so a run can legitimately carry such flags.
+ok(!any(grepl("THEN 'ICD9' ELSE 'ICD10' END", pm, fixed = TRUE)),
+   "Q3 no longer defaults an unrecognised claim flag to ICD10")
+ok(any(grepl("qs_icd_family_sql('d.ICD_FLAG')", pm, fixed = TRUE)),
+   "...it uses the same three-way rule, with NULL for unknown")
+ok(grepl("ELSE NULL END$", qs_icd_family_sql("x")),
+   "...which really does yield NULL rather than a family")
+# The lists cannot be sourced from nndm - that file defines its own
+# load_codelist_csv() and would replace lot's - so they are repeated, and this
+# is what stops the copy drifting.
+nc <- readLines(file.path(dirname(ROOT), "nndm", "R", "codelists.R"), warn = FALSE)
+grab <- function(v) {
+  ln <- grep(paste0("^", v, "\\s*<-"), nc, value = TRUE)[1]
+  sort(trimws(gsub('"', "", unlist(strsplit(gsub("^.*c\\(|\\).*$", "", ln), ",")))))
+}
+ok(identical(grab("RAW_ICD9"), sort(QS_RAW_ICD9)) &&
+   identical(grab("RAW_ICD10"), sort(QS_RAW_ICD10)),
+   "...and the spellings still match the cohort builds' own lists")
+nw <- readLines(file.path(dirname(ROOT), "nndm", "R", "build_nndm.R"), warn = FALSE)
+ok(any(grepl('"raw_icd_flag"', nw, fixed = TRUE)),
+   "...which matters because that check is waivable, so the flags can be unrecognised")
+
+cat("\n-- no workbook tells anyone to edit a production code list --\n")
+# steroid_codes.csv is read from CODELIST_DIR, the directory the LOT build
+# reads its four from, and every steroid answer quotes its md5. Emptying it to
+# change one workbook's display edits what other studies read.
+lf <- readLines(file.path(ROOT, "lot_followup_qs.R"), warn = FALSE)
+ok(!any(grepl("empty steroid_codes.csv", lf, fixed = TRUE) &
+        !grepl("Do NOT empty steroid_codes.csv", lf, fixed = TRUE)),
+   "the follow-up workbook no longer says to empty the production steroid list")
+ok(any(grepl("Do NOT empty steroid_codes.csv", lf, fixed = TRUE)),
+   "...and says why not, since the old instruction may already have been followed")
+
 cat("\n-- Q3 takes its lines and its index dates from the same run --\n")
 # Index dates from the NDMM cohort would drop every broad patient the NDMM
 # exclusions removed out of the idx join. They stay in the denominator through

@@ -746,6 +746,11 @@ main <- function() {
   if (!vqs_readable(con, lot_long)) {
     stop("Cannot read ", lot_long, ". Run the LOT build for this prefix first.")
   }
+  # Readable is not ownership. The raw-claim journeys and the CAR-T-before-LOT1
+  # measures are bounded by INPUT_COHORT_TABLE, so a valid name for the wrong
+  # cohort pairs one run's lines with another's observation windows - and a
+  # rerun that replaced these tables and then failed leaves them looking fine.
+  qs_check_run_binding(con)
   have_map <- vqs_readable(con, map_tbl)
   have_sct <- vqs_readable(con, sct_tbl)
   if (!have_map) log_msg("WARNING: ", map_tbl, " not readable - Q2 (DARA/BORT start dates) cannot be built.")
@@ -821,7 +826,8 @@ main <- function() {
       paste0("No known steroid token was found in any LOT regimen. The audit checks against the known steroid abbreviations (",
              paste(STEROID_TOKENS, collapse = ", "),
              "); the token table lists every agent that actually appears in the regimens, so an unlisted abbreviation would still be visible for a reader to catch."),
-      "Steroids do not affect LOT assignment. The dashboard and steroid-timing outputs use steroid_codes.csv, and steroid rows may still appear in the mapped medication data depending on the production codelist - but neither reaches a LOT. To drop steroids from the descriptive outputs too, empty steroid_codes.csv; the LOT results are unaffected.")
+      "Steroids do not affect LOT assignment. The dashboard and steroid-timing outputs use steroid_codes.csv, and steroid rows may still appear in the mapped medication data depending on the production codelist - but neither reaches a LOT.",
+      "Do NOT empty steroid_codes.csv to drop steroids from those displays. It is read from the production code-list directory, the same one the LOT build reads its four from, and every steroid answer quotes its md5 - so editing it changes what other studies read and what those md5s mean. An empty file does not switch the displays off cleanly either: the steroid sections become unavailable rather than showing zero. Hide the panels instead, or ask for a display setting; the LOT results are unaffected either way.")
   }
   add_sheet(name = "Q1 Steroids off", title = "Q1 - Steroids are already excluded from the LOT",
     subtitle = paste0("Regimen audit + agent-token list. Cohort: ", cohort_label, "."),

@@ -73,6 +73,32 @@ qs_setup <- function(script_dir) {
   invisible(cfg)
 }
 
+# Which ICD family a raw claim's flag names, the way the cohort builds decide
+# it: ICD9 for the ICD-9 spellings, ICD10 for the ICD-10 ones, NULL for
+# anything else - blank, missing, or a spelling nobody expected.
+#
+# NOT "not ICD-9, therefore ICD-10". That reads a genuine ICD-9 claim with a
+# missing flag as ICD-10, and it then fails the family join silently, so a
+# question can count a diagnosis the cohort build deliberately did not. NULL
+# matches neither family, which is the honest answer for a row whose family is
+# unknown. The CDM's values cannot be corrected the way a code list can.
+#
+# It matters because raw_icd_flag is a WAIVABLE check in the cohort build: a
+# run can legitimately carry unrecognised flags, and then the two rules
+# disagree on exactly those claims.
+#
+# The lists live in nndm/R/codelists.R, which this package cannot source - it
+# defines its own load_codelist_csv() and would replace lot's. So they are
+# repeated here and tests/test_setup.R fails if the two ever differ.
+QS_RAW_ICD9  <- c("9", "ICD9", "ICD-9")
+QS_RAW_ICD10 <- c("10", "ICD10", "ICD-10")
+qs_icd_family_sql <- function(col, nine = "ICD9", ten = "ICD10") {
+  q <- function(v) paste(sprintf("'%s'", v), collapse = ", ")
+  paste0("CASE WHEN upper(trim(", col, ")) IN (", q(QS_RAW_ICD9), ") THEN '", nine, "'",
+         " WHEN upper(trim(", col, ")) IN (", q(QS_RAW_ICD10), ") THEN '", ten, "'",
+         " ELSE NULL END")
+}
+
 # A prefixed output table, from either build.
 #
 # NOT wrk(). In this package wrk() resolves catalog.schema.table with no
@@ -175,6 +201,37 @@ qs_trial_flags <- function() {
 QS_TRIAL_FLAG_COLS  <- c("PATID", "INDEX_DATE", "OTHER_MALIGN_FLAG",
                          "CLINTRIAL_BASELINE", "CLINTRIAL_FOLLOWUP")
 QS_TRIAL_INDEX_COLS <- c("PATID", "INDEX_DATE")
+
+# The cohort build's own trial flag, cut at the 1L index.
+#
+# This is the one that answers the question the study team actually asked -
+# did trial therapy come before the 1L start - because its windows are anchored
+# where the cohort's index is. The broad build's pair cannot: its baseline ends
+# before a diagnosis-based index and its follow-up starts there and runs past
+# LOT1, so the stretch in between is in neither.
+#
+# One cohort, one prefix, no overlap to report: every patient here is a patient
+# of this run. So when this table is present it is preferred, and the broad
+# flags are what is left for OTHER_MALIGN_FLAG and for a run built before it
+# existed.
+QS_NDMM_TRIAL_COLS <- c("PATID", "LOT1_START_DT", "MM_DX_DT",
+                        "CLINTRIAL_PRE_DX", "CLINTRIAL_DX_TO_LOT1",
+                        "CLINTRIAL_POST_LOT1", "CLINTRIAL_PRE_LOT1_12MO")
+
+qs_ndmm_trial_flags <- function(con) {
+  tbl  <- qs_tbl("NDMM_CLINTRIAL_FLAGS")
+  miss <- qs_missing_cols(con, tbl, QS_NDMM_TRIAL_COLS)
+  if (length(miss) == 1L && is.na(miss))
+    return(list(ok = FALSE, table = tbl, why = paste0(
+      tbl, " is not there. It is the cohort build's own trial flag, anchored ",
+      "on the 1L start; a cohort built before it existed does not have it, and ",
+      "the broad build's diagnosis-anchored flags are used instead.")))
+  if (length(miss))
+    return(list(ok = FALSE, table = tbl, why = paste0(
+      tbl, " has no ", paste(miss, collapse = ", "), ", so it is not the ",
+      "1L-anchored trial flag. Re-run the cohort build.")))
+  list(ok = TRUE, table = tbl, why = NULL)
+}
 
 # Which of cols the table does not have. character(0) when it has them all;
 # NA when it could not be described at all, which is a different problem from a

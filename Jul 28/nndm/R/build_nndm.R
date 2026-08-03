@@ -103,7 +103,7 @@ upstream_tables <- function(cfg) list()
 # NDMM_PATIDS is defined over it in the same function and Spark inlines a temp
 # view's plan: repointing after NDMM_PATIDS exists would leave that view on the
 # old query. It is a deliverable as well as a checkpoint.
-CHECKPOINTS <- c("NDMM_FLAGS_ALL", "NDMM_MM_DX_CODES",
+CHECKPOINTS <- c("NDMM_FLAGS_ALL", "NDMM_CLINTRIAL_FLAGS", "NDMM_MM_DX_CODES",
                  "NDMM_MM_DX_EVENTS", "NDMM_MM_QUALIFYING", "NDMM_BASE_COHORT",
                  "NDMM_ENROLL_SPANS", "NDMM_ENROLL_SPANS_STRICT",
                  "NDMM_MMA_CODELIST",
@@ -1091,6 +1091,15 @@ build_nndm <- function(here, prefix) {
   build_ndmm_flags(con, NDMM_BASE_COHORT, NDMM_BELANTAMAB_PATIDS,
                    TRUE, TRUE, TRUE, TRUE)
   checkpoint(con, "NDMM_PATIDS")
+
+  # Descriptive, not a criterion - it is built after the flags and joins
+  # nothing into them, so the cohort is the same with it as without.
+  log_msg("Clinical-trial evidence around the 1L index")
+  build_ndmm_clintrial_codes(con)
+  build_ndmm_clintrial_flags(con, cdm_src(cfg$tbl_med_diag),
+                             cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_med_proc))
+  checkpoint(con, "NDMM_CLINTRIAL_FLAGS")
+  report_ndmm_clintrial(con)
   # After the flags: each scope is costed against the whole conjunction, so it
   # needs every other criterion already decided.
   build_ndmm_fu_ce_counts(con, cfg)
