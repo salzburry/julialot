@@ -1201,26 +1201,39 @@ ok(any(grepl("least(date('", NSQL, fixed = TRUE)) &&
    "...or the start of the study if that is earlier, which the exclusion reaches back to")
 ok(all(grepl("trim(cast(t.NDC as string)) <> ''", NSQL[1:2], fixed = TRUE)),
    "and every non-blank value is counted, including ones that cannot join")
-m <- drive_ndc(rx = row("rx", n10 = 3L, n11 = 7L))
-ok(grepl("Ten-digit claim NDCs", m, fixed = TRUE) && grepl("4-4-2", m, fixed = TRUE),
-   "a ten-digit claim NDC stops the run, naming the layout the padding assumes")
-ok(grepl("claim_ndc_short", m, fixed = TRUE),
-   "...and says how the study team can accept it once they have checked")
-ok(identical(drive_ndc(rx = row("rx", n10 = 3L, n11 = 7L), waive = "claim_ndc_short"), ""),
-   "the waiver lets that one through")
-m <- drive_ndc(med = row("medical", alpha = 2L), waive = "claim_ndc_short")
-ok(grepl("cannot be an NDC", m, fixed = TRUE),
-   "and waiving the short check does not waive the shape check")
+# The CLAIM side is reported, never gated. What makes that safe is ndc_key():
+# a value that cannot be an NDC gets no key, so it cannot collide with a code.
+# Optum writes NONE and UNK where a medical claim has no NDC - 1.2bn rows - and
+# gating on that asked the operator to approve the vendor's word for null.
+ok(identical(drive_ndc(rx = row("rx", n10 = 3L, n11 = 7L)), ""),
+   "a ten-digit claim NDC is reported, not a wall")
+ok(identical(drive_ndc(med = row("medical", alpha = 2L)), ""),
+   "...and so is a claim NDC with letters in it")
+ok(identical(drive_ndc(med = row("medical", zero = 1L)), ""), "...and an all-zero one")
+ok(identical(drive_ndc(med = row("medical", oth = 5L)), ""),
+   "...and an under- or over-length one")
+# The guarantee behind that: no key, so no join, whatever the value is.
+for (v in c("NONE", "UNK", "ABC123", "00000000000", "123", "PSYCHOTHERA"))
+  ok(grepl("CASE WHEN", ndc_key("t.NDC"), fixed = TRUE),
+     paste0("ndc_key() yields a key only from an NDC, so '", v, "' matches nothing"))
+k <- ndc_key("t.NDC")
+ok(grepl("length(regexp_replace(coalesce(cast(t.NDC as string),''), '[^0-9]', '')) = 11",
+         k, fixed = TRUE),
+   "...eleven digits used as they are")
+ok(grepl("= 10 THEN concat('0'", k, fixed = TRUE),
+   "...ten padded on the 4-4-2 layout, which is the one real assumption left")
+ok(grepl("RLIKE '^0+$' THEN NULL", k, fixed = TRUE),
+   "...and all zeros is not a product, so it gets no key either")
+# The CODE LIST side still stops the build. That one is fixable at source, and
+# a code nobody can match is a study asking a question it cannot answer.
 m <- drive_ndc(cl = row("codelist", n10 = 4L))
 ok(grepl("Ten-digit code list NDCs", m, fixed = TRUE) &&
      grepl("cl_mma_codelist.csv", m, fixed = TRUE),
-   "a ten-digit code on the code list side stops it too, and that one is fixable")
-m <- drive_ndc(med = row("medical", zero = 1L))
+   "a ten-digit code on the CODE LIST still stops it, and that one is fixable")
+m <- drive_ndc(cl = row("codelist", alpha = 1L))
 ok(grepl("cannot be an NDC", m, fixed = TRUE),
-   "an all-zero NDC is caught though it is eleven digits - it is the key a missing value makes")
-m <- drive_ndc(med = row("medical", oth = 5L))
-ok(grepl("cannot be an NDC", m, fixed = TRUE), "so is an under- or over-length one")
-Sys.setenv(NDMM_WAIVERS = "claim_ndc_short,not_a_check")
+   "...as does one that cannot be an NDC at all")
+Sys.setenv(NDMM_WAIVERS = "codelist_ndc_short,not_a_check")
 m <- tryCatch({ check_settings(); "" }, error = conditionMessage)
 ok(grepl("no such check", m, fixed = TRUE) && grepl("not_a_check", m, fixed = TRUE),
    "a waiver naming nothing real is a typo, and is refused before the run starts")
@@ -1633,8 +1646,18 @@ if (requireNamespace("bit64", quietly = TRUE)) {
      "...a count of 1780 with its class dropped renders as 8.794368e-321")
   ok(identical(paste0(as.numeric(raw)), "1780"),
      "...and as.numeric() reads the integer back, which is what db_q() does")
+  # cat() does not dispatch S3 methods, so log_msg() has to coerce itself -
+  # a count that reaches a message any way other than through db_q() would
+  # still print its bits. The real one, not the silent stub the tests above
+  # put in the global environment.
+  le <- new.env(parent = globalenv())
+  sys.source(file.path(ROOT, "R", "db_utils.R"), envir = le)
+  said <- paste(capture.output(le$log_msg("n = ", raw)), collapse = " ")
+  ok(grepl("1780", said, fixed = TRUE) && !grepl("e-32", said, fixed = TRUE),
+     "...and log_msg() prints such a count as 1780, not its bit pattern")
 } else {
   ok(TRUE, "bit64 not installed here - the conversion is checked by reading db_q()")
+  ok(TRUE, "...")
   ok(TRUE, "...")
 }
 # Every count in this build is far below 2^53, so the conversion is lossless.

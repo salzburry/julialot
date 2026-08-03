@@ -67,9 +67,8 @@ build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl, med_proc_tbl) 
       INNER JOIN {NDMM_LOT1_STARTS} l1 ON cast(m.PATID as string) = l1.PATID
       INNER JOIN {NDMM_MMA_CODELIST} c
         ON c.code_type = 'NDC'
-       AND lpad(regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', ''), 11, '0')
+       AND {ndc_key('m.NDC')}
          = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')
-       AND regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '') <> ''
       WHERE cast(m.FST_DT as date)
               BETWEEN date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS})
                   AND date_sub(l1.LOT1_START_DT, 1)
@@ -93,9 +92,8 @@ build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl, med_proc_tbl) 
       INNER JOIN {NDMM_LOT1_STARTS} l1 ON cast(r.PATID as string) = l1.PATID
       INNER JOIN {NDMM_MMA_CODELIST} c
         ON c.code_type = 'NDC'
-       AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', ''), 11, '0')
+       AND {ndc_key('r.NDC')}
          = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')
-       AND regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') <> ''
       WHERE cast(r.FILL_DT as date)
               BETWEEN date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS})
                   AND date_sub(l1.LOT1_START_DT, 1)

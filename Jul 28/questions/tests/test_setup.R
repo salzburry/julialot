@@ -565,8 +565,11 @@ ok(identical(grab("RAW_ICD9"), sort(QS_RAW_ICD9)) &&
    identical(grab("RAW_ICD10"), sort(QS_RAW_ICD10)),
    "...and the spellings still match the cohort builds' own lists")
 nw <- readLines(file.path(dirname(ROOT), "nndm", "R", "build_nndm.R"), warn = FALSE)
-ok(any(grepl('"raw_icd_flag"', nw, fixed = TRUE)),
-   "...which matters because that check is waivable, so the flags can be unrecognised")
+# The cohort build reports unrecognised flags rather than stopping, so a run
+# can legitimately carry them - which is exactly why this package must use the
+# same three-way rule instead of guessing ICD-10.
+ok(any(grepl("ICD_FLAG names neither family on", nw, fixed = TRUE)),
+   "...which matters because that build reports them rather than refusing them")
 
 cat("\n-- no workbook tells anyone to edit a production code list --\n")
 # steroid_codes.csv is read from CODELIST_DIR, the directory the LOT build

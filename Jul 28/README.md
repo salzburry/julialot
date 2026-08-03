@@ -31,6 +31,13 @@ DATABRICKS_PWD=... Rscript lot/build.R       ndmm_NDMM_COHORT ndmm_
 DATABRICKS_PWD=... Rscript dashboard/build.R ndmm_NDMM_COHORT ndmm_
 ```
 
+The 2L and 3L cohorts are a fourth step on the NDMM path, after the LOT run:
+their index dates are line starts, so lot has to have found the lines first.
+
+```
+DATABRICKS_PWD=... Rscript nndm/build_subsequent_cohorts.R ndmm_
+```
+
 Each package has a README with its own settings, outputs and checks. Read that
 one before running it.
 
@@ -39,7 +46,7 @@ one before running it.
 | | |
 |---|---|
 | `overall/` | cohort build. `build.R`, takes no arguments. |
-| `nndm/` | cohort build. `build.R <prefix_>`. |
+| `nndm/` | cohort build. `build.R <prefix_>`. Also `build_subsequent_cohorts.R <prefix_>` for the 2L and 3L cohorts, which runs after the LOT build. |
 | `lot/` | lines of therapy. `build.R <COHORT_TABLE> <prefix_>`. |
 | `dashboard/` | one self-contained HTML. `build.R <COHORT_TABLE> <lot_prefix_>`. Reads only. |
 | `questions/` | scripts, not a build. Each reads one finished LOT run and writes CSVs or a workbook. They reuse `lot/`'s modules rather than a second copy. |
@@ -99,7 +106,8 @@ No connection needed. They check the SQL, the settings and the guards.
 
 ```
 Rscript overall/tests/test_runner.R
-Rscript nndm/tests/test_runner.R          # and test_same_as_overall.R
+Rscript nndm/tests/test_runner.R          # and test_same_as_overall.R,
+                                          # test_subsequent.R
 Rscript lot/tests/test_runner.R           # and test_line_criteria.R
 Rscript dashboard/tests/test_runner.R
 Rscript questions/tests/test_setup.R

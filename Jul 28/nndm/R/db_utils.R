@@ -29,12 +29,18 @@ DASH  <- strrep("-", 70)
 }
 
 log_msg <- function(...) {
+  # cat() does NOT dispatch S3 methods, so a bit64::integer64 from the driver
+  # is written as its raw bit pattern - a count of 1780 came out of a real run
+  # as 8.794368e-321. format() dispatches, so coerce first. db_q() converts on
+  # the way out too; this catches anything that reaches a message another way.
+  a <- lapply(list(...), function(x)
+    if (inherits(x, "integer64")) format(as.numeric(x), scientific = FALSE) else x)
   prefix <- sprintf("[%s] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"))
-  cat(prefix, ..., "\n")
+  do.call(cat, c(list(prefix), a, "\n"))
   flush.console()
   try({
     lf <- .resolve_log_file()
-    cat(prefix, ..., "\n", file = lf, append = TRUE)
+    do.call(cat, c(list(prefix), a, "\n", file = lf, append = TRUE))
   }, silent = TRUE)
 }
 
@@ -55,6 +61,20 @@ nndm_config <- function() {
     stop("No NDMM config. build_nndm() calls set_lot_config() before any step.",
          call. = FALSE)
   get("cfg", envir = globalenv())
+}
+
+# The claim side of an NDC join.
+#
+# A key only from a value that could BE an NDC: eleven digits, or ten under the
+# 4-4-2 assumption. Anything else gets no key and simply does not join, which
+# is what a join is for. Optum writes NONE or UNK where a medical claim has no
+# NDC - 1.2bn rows of them - and left-padding those to eleven zeros and hoping
+# nothing collided is what made a shape check feel necessary.
+ndc_key <- function(col) {
+  d <- paste0("regexp_replace(coalesce(cast(", col, " as string),''), '[^0-9]', '')")
+  paste0("CASE WHEN ", d, " RLIKE '^0+$' THEN NULL",
+         " WHEN length(", d, ") = 11 THEN ", d,
+         " WHEN length(", d, ") = 10 THEN concat('0', ", d, ") END")
 }
 
 full_name <- function(schema, object) {

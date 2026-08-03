@@ -76,7 +76,7 @@ phase_clinical_flags <- function(cfg, h, ctx) {
           -- become 00000000000, so require digits on the code list side.
           ON c.code_type = 'NDC'
           AND regexp_replace(c.code, '[^0-9]', '') <> ''
-          AND lpad(regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', ''), 11, '0')
+          AND CASE WHEN regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '') RLIKE '^0+$' THEN NULL WHEN length(regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '')) = 11 THEN regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '') WHEN length(regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '')) = 10 THEN concat('0', regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '')) END
             = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')
         WHERE m.FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         UNION ALL
@@ -88,7 +88,7 @@ phase_clinical_flags <- function(cfg, h, ctx) {
           -- Same guard as the medical NDC join above.
           ON c.code_type = 'NDC'
           AND regexp_replace(c.code, '[^0-9]', '') <> ''
-          AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', ''), 11, '0')
+          AND CASE WHEN regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') RLIKE '^0+$' THEN NULL WHEN length(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '')) = 11 THEN regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') WHEN length(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '')) = 10 THEN concat('0', regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '')) END
             = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')
         WHERE r.FILL_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
         UNION ALL
