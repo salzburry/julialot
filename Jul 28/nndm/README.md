@@ -812,9 +812,4 @@ is pinned to its default** — the review tables exist to be acted on.
 | `NDMM_IGNORE_ACTIVE_RUN` | *(unset)* | `TRUE` gets past a `started` row a killed process left behind. Use it only once the named run is known to be dead — see **One run per prefix at a time** |
 
 `FINAL_TABLE_NAME` is read into `NDMM_FINAL_TABLE_NAME` and used by nothing:
-it named a cohort table this build no longer reads. Setting it does nothing.
-
-## Status
-
-Never run against Databricks. Nothing here is validated output until it has
-been, and the counts checked patient by patient.
+it names a cohort table this build does not read. Setting it does nothing.

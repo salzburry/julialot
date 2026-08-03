@@ -249,10 +249,10 @@ Nothing here stops the run.
 **Every `LOT{a}` patient is in the chart**, including those who never reached
 `LOT{b}` — they flow to a terminal `No LOT{b}` node. So the ribbons leaving a
 regimen add up to that regimen's `LOT{a}` patients, and the panel shows the one
-thing a reader looks at a transition for: how many went on at all. It used to be
-an `INNER JOIN`, and those patients simply vanished.
+thing a reader looks at a transition for: how many went on at all. An `INNER
+JOIN` here would make those patients vanish.
 
-Two things had to change before that claim was actually true.
+Two more things are needed before that claim holds.
 
 A **line** decides whether the patient got there, not a regimen string. An
 `SCT_ALLO` line carries no regimen at all — `10_lot2_5_base.R` suppresses the
@@ -264,8 +264,7 @@ join: it invents attrition rather than omitting it. A blank regimen is now
 labelled by what started the line — `SCT_ALLO (no regimen)`.
 
 Sources outside `TOP_N` become an **`Other` source** rather than being dropped.
-They used to be filtered out, so "every patient" was false while the panel said
-it.
+Filtering them out would make "every patient" false while the panel said it.
 
 Targets outside the top N collapse to **`Other`** too, drawn rather than dropped
 and sitting at the bottom because it is a bucket, not a regimen. The stopped
