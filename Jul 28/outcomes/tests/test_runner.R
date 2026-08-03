@@ -99,6 +99,29 @@ CODE <- paste(grep("^\\s*--", strsplit(as.character(TTE), "\n")[[1]],
                    invert = TRUE, value = TRUE), collapse = "\n")
 ok(!has(CODE, "LOT_NUM + 1"), "...and not from an assumed numbering")
 
+cat("\n-- the diagnosis date comes from the base cohort, not the cohort --\n")
+# NDMM_COHORT's INDEX_DATE is the 1L treatment start; the MM diagnosis date is
+# a different date and is not on it. NDMM_BASE_COHORT carries MM_DX_DT and is
+# checkpointed, so it is read from there rather than the cohort being rebuilt.
+DX <- outcomes_tte_sql(outcomes_base_sql("s.LINES", "s.COH", "s.BASE"), "r1")
+ok(has(DX, "FROM s.BASE") && has(DX, "LEFT JOIN"),
+   "the base cohort is joined for MM_DX_DT")
+ok(has(DX, "datediff(c.INDEX_DATE, x.MM_DX_DT) AS DX_TO_LOT1_DAYS"),
+   "time to 1L is measured from the diagnosis to the cohort's 1L index")
+ok(has(DX, "LEFT JOIN"),
+   "...left, so a patient missing from the base cohort keeps every other outcome")
+# Without it the columns are absent rather than guessed - an overall-cohort run
+# has no MM diagnosis date to offer.
+ok(has(TTE, "cast(NULL as date) AS MM_DX_DT") && !has(TTE, "FROM s.BASE"),
+   "with no base cohort the diagnosis columns are NULL, not invented")
+D1 <- outcomes_dx_to_lot1_sql("s.TTE")
+ok(has(D1, "WHERE LOT_NUM = 1"),
+   "one row per patient: the 1L rows only, not once per line reached")
+# The cohort build takes the first therapy claim ON OR AFTER the diagnosis, so
+# a negative gap would mean that rule had broken.
+ok(has(D1, "DX_TO_LOT1_DAYS < 0 THEN 1 ELSE 0 END) AS N_NEGATIVE"),
+   "a 1L start before the diagnosis is counted, not silently averaged in")
+
 cat("\n-- attrition: the four outcomes are exclusive --\n")
 ATT <- outcomes_attrition_sql("s.TTE")
 ok(has(ATT, "AS N_NEXT_LOT") && has(ATT, "AS N_DIED") &&

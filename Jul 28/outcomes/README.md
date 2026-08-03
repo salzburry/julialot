@@ -1,7 +1,7 @@
 # Outcomes — treatment patterns and treatment-related outcomes
 
 Protocol Secondary Objective 1, Table 4. Reads one finished LOT run and writes
-four tables.
+five tables.
 
 ```
 DATABRICKS_PWD=... Rscript build.R <COHORT_TABLE> <lot_prefix_>
@@ -19,8 +19,9 @@ against a finished run as often as needed.
 | `<prefix>OUT_ATTRITION` | line — Table 4's four attrition categories |
 | `<prefix>OUT_LINE_GAP` | line pair — months from one line's start to the next |
 | `<prefix>OUT_REGIMEN` | line and regimen — N and % receiving each |
+| `<prefix>OUT_DX_TO_LOT1` | one row — months from MM diagnosis to the 1L index |
 
-All four carry `OUT_RUN_ID` and `BUILT_AT`, so a run that dies part-way leaves
+All of them carry `OUT_RUN_ID` and `BUILT_AT`, so a run that dies part-way leaves
 a mismatch rather than a silent mix.
 
 ## The three outcomes
@@ -79,9 +80,25 @@ are each conditioned on there being no next line.
 per Section 6.2.2, which is Annex 2. That is not applied here, so `OUT_REGIMEN`
 is the raw distribution a category map would be built against.
 
-**Time from diagnosis to 1L is not computed.** It needs the MM diagnosis date,
-which `NDMM_COHORT` does not carry — the cohort's ten columns are anchored on
-the 1L index.
+## The MM diagnosis date
+
+`NDMM_COHORT` does **not** carry it. That table's `INDEX_DATE` is the **1L
+treatment start**, and all ten of its columns are anchored there — age at
+index, both follow-up lengths, where continuous enrolment ends.
+
+The diagnosis date lives on `<prefix>NDMM_BASE_COHORT`, which the cohort build
+already checkpoints, so nothing has to be rebuilt to get it. It is probed, not
+assumed: if that table is not readable — a cohort built by another package has
+no MM diagnosis date to offer — `MM_DX_DT` and `DX_TO_LOT1_DAYS` are NULL, the
+`OUT_DX_TO_LOT1` table is not written, and every other outcome is unaffected.
+The join is a LEFT join for the same reason.
+
+`COHORT_PREFIX` points at the cohort build's prefix when it differs from this
+run's. One study is one prefix, so it defaults to the run's own.
+
+`OUT_DX_TO_LOT1` counts `N_NEGATIVE` — a 1L start before the diagnosis. The
+cohort build takes the first therapy claim *on or after* the diagnosis, so that
+count is zero unless that rule has broken.
 
 ## Settings
 

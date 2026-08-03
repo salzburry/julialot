@@ -42,7 +42,23 @@ FU_END_SQL <- "least(cast(c.ENDDATE as date),
 # One row per patient per line, with the next line's start beside it. Every
 # outcome below is a date difference off this, so they cannot disagree about
 # when a line started or what came after it.
-outcomes_base_sql <- function(lines_tbl, cohort_tbl) {
+#
+# base_tbl is the cohort build's NDMM_BASE_COHORT, which carries MM_DX_DT. The
+# cohort table itself does not: its INDEX_DATE is the 1L treatment start, and
+# every column on it is anchored there. NULL when there is no such table - a
+# cohort built by another package has no MM diagnosis date to offer - and the
+# diagnosis columns are then absent rather than guessed.
+outcomes_base_sql <- function(lines_tbl, cohort_tbl, base_tbl = NULL) {
+  dx_join <- if (is.null(base_tbl)) "" else glue("
+    LEFT JOIN (SELECT cast(PATID as string) AS PATID,
+                      cast(MM_DX_DT as date) AS MM_DX_DT
+               FROM {base_tbl}) x ON x.PATID = n.PATID")
+  dx_cols <- if (is.null(base_tbl))
+    "cast(NULL as date) AS MM_DX_DT, cast(NULL as int) AS DX_TO_LOT1_DAYS"
+  else
+    # Table 4: "Time from diagnosis date (excluded) until index date
+    # (included)", and the cohort's INDEX_DATE is that 1L index.
+    "x.MM_DX_DT, datediff(c.INDEX_DATE, x.MM_DX_DT) AS DX_TO_LOT1_DAYS"
   glue("
     WITH coh AS (
       SELECT cast(PATID as string) AS PATID,
@@ -75,8 +91,9 @@ outcomes_base_sql <- function(lines_tbl, cohort_tbl) {
     SELECT n.PATID, n.LOT_NUM, n.LOT_START_DT, n.LOT_END_DT, n.LOT_END_REASON,
            n.REGIMEN, n.NEXT_LOT_START_DT, n.NEXT_LOT_NUM,
            c.INDEX_DATE, c.DEATH_DT,
+           {dx_cols},
            {FU_END_SQL} AS FU_END_DT
-    FROM nxt n INNER JOIN coh c ON c.PATID = n.PATID")
+    FROM nxt n INNER JOIN coh c ON c.PATID = n.PATID{dx_join}")
 }
 
 # The three outcomes off that base. Each is a date and a 0/1, not a summary:
@@ -103,6 +120,7 @@ outcomes_tte_sql <- function(base_sql, run_id) {
     )
     SELECT PATID, LOT_NUM, LOT_START_DT, LOT_END_DT, LOT_END_REASON, REGIMEN,
            NEXT_LOT_NUM, NEXT_LOT_START_DT, DEATH_DT, FU_END_DT,
+           MM_DX_DT, DX_TO_LOT1_DAYS,
 
            CASE WHEN TTNT_DT < FU_END_DT THEN 1 ELSE 0 END AS TTNT_EVENT,
            datediff(least(TTNT_DT, FU_END_DT), LOT_START_DT) AS TTNT_DAYS,
@@ -184,4 +202,30 @@ outcomes_regimen_sql <- function(tte_tbl) {
     FROM {tte_tbl}
     GROUP BY LOT_NUM, REGIMEN
     ORDER BY LOT_NUM, N DESC")
+}
+
+# Table 4, "Time from diagnosis to 1L initiation": "Continuous (months); Time
+# from diagnosis date (excluded) until index date (included)", at the 1L index.
+#
+# One row per patient, so the 1L rows only - the value is the same on every
+# line a patient has, and repeating it per line would weight patients by how
+# many lines they reached.
+outcomes_dx_to_lot1_sql <- function(tte_tbl) {
+  glue("
+    SELECT count(*)                                        AS N,
+           round(avg(DX_TO_LOT1_DAYS) / 30.4375, 2)        AS MEAN_MONTHS,
+           round(percentile_approx(DX_TO_LOT1_DAYS, 0.5) / 30.4375, 2)
+                                                           AS MEDIAN_MONTHS,
+           round(percentile_approx(DX_TO_LOT1_DAYS, 0.25) / 30.4375, 2)
+                                                           AS Q1_MONTHS,
+           round(percentile_approx(DX_TO_LOT1_DAYS, 0.75) / 30.4375, 2)
+                                                           AS Q3_MONTHS,
+           min(DX_TO_LOT1_DAYS)                            AS MIN_DAYS,
+           max(DX_TO_LOT1_DAYS)                            AS MAX_DAYS,
+           -- A 1L start before the diagnosis would be negative, which the
+           -- cohort build forbids: the index is the first therapy claim ON OR
+           -- AFTER the diagnosis. Counted so that stays true.
+           sum(CASE WHEN DX_TO_LOT1_DAYS < 0 THEN 1 ELSE 0 END) AS N_NEGATIVE
+    FROM {tte_tbl}
+    WHERE LOT_NUM = 1 AND DX_TO_LOT1_DAYS IS NOT NULL")
 }

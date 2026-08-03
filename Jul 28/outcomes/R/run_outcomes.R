@@ -5,7 +5,34 @@
 # arithmetic on it; if the run cannot be identified there is no reading of
 # these numbers that is worth having.
 
-OUTPUTS <- c("OUT_TTE", "OUT_ATTRITION", "OUT_LINE_GAP", "OUT_REGIMEN")
+OUTPUTS <- c("OUT_TTE", "OUT_ATTRITION", "OUT_LINE_GAP", "OUT_REGIMEN",
+             "OUT_DX_TO_LOT1")
+
+# The cohort build's own prefix. One study is one prefix, so it defaults to
+# this run's - set it only when the cohort was built under a different one.
+coh_tbl <- function(tbl) {
+  cfg <- lot_config()
+  p <- trimws(cfg$cohort_prefix %||% "")
+  full_name(cfg$work_schema, paste0(if (nzchar(p)) p else cfg$object_prefix, tbl))
+}
+
+# NDMM_BASE_COHORT is where the MM diagnosis date lives. The cohort table does
+# not carry it - its INDEX_DATE is the 1L treatment start - so it is read from
+# the checkpoint the cohort build already wrote. Probed rather than assumed: a
+# cohort built by another package has no such table, and the diagnosis columns
+# are then absent rather than guessed.
+find_base_cohort <- function(con) {
+  t <- coh_tbl("NDMM_BASE_COHORT")
+  ok <- tryCatch({ db_q(con, glue("SELECT MM_DX_DT FROM {t} LIMIT 1")); TRUE },
+                 error = function(e) FALSE)
+  if (!ok) {
+    log_msg("  ", t, " is not readable, so time from diagnosis to 1L is not ",
+            "computed. Every other outcome is unaffected.")
+    return(NULL)
+  }
+  log_msg("  MM diagnosis dates from ", t)
+  t
+}
 
 # The LOT run that last wrote the tables, whatever state it reached - the same
 # rule every other reader in this folder uses, and for the same reason: a build
@@ -77,16 +104,20 @@ build_outcomes <- function(here, cohort_table, prefix) {
 
   lines  <- out_tbl("LOT_LONG_FINAL")
   cohort <- wrk(cfg$input_cohort_table)
+  base   <- find_base_cohort(con)
   tte    <- out_tbl("OUT_TTE")
 
   log_msg("Building ", tte, " - one row per patient per line")
   db_exec(con, glue("CREATE OR REPLACE TABLE {tte} AS {
-    outcomes_tte_sql(outcomes_base_sql(lines, cohort), run_id)}"))
+    outcomes_tte_sql(outcomes_base_sql(lines, cohort, base), run_id)}"))
   check_lines_in_followup(con, tte, lines)
 
-  for (p in list(list("OUT_ATTRITION", outcomes_attrition_sql),
+  tables <- list(list("OUT_ATTRITION", outcomes_attrition_sql),
                  list("OUT_LINE_GAP",  outcomes_line_gap_sql),
-                 list("OUT_REGIMEN",   outcomes_regimen_sql))) {
+                 list("OUT_REGIMEN",   outcomes_regimen_sql))
+  if (!is.null(base))
+    tables <- c(tables, list(list("OUT_DX_TO_LOT1", outcomes_dx_to_lot1_sql)))
+  for (p in tables) {
     t <- out_tbl(p[[1]])
     db_exec(con, glue("CREATE OR REPLACE TABLE {t} AS {p[[2]](tte)}"))
     log_msg("Wrote ", t)

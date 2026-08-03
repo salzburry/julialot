@@ -8,6 +8,9 @@ cfg_defaults <- list(
   work_schema = "",
   input_cohort_table = trimws(Sys.getenv("INPUT_COHORT_TABLE", unset = "")),
   object_prefix      = trimws(Sys.getenv("OBJECT_PREFIX", unset = "")),
+  # The cohort build's prefix, for its tables. Defaults to this run's own -
+  # one study, one prefix - so it is only set when the two differ.
+  cohort_prefix      = trimws(Sys.getenv("COHORT_PREFIX", unset = "")),
   study_start = Sys.getenv("STUDY_START", unset = "2016-01-01"),
   study_end   = Sys.getenv("STUDY_END",   unset = "2026-03-31"),
   max_lot     = as.integer(Sys.getenv("MAX_LOT", unset = "5")),
