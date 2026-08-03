@@ -100,8 +100,16 @@ main <- function() {
 
   # Steroid signal = steroid_codes.csv scanned on medical+rx (the project's
   # only steroid source; there is no STEROID class in cl_mma_codelist.csv).
+  # From the production code-list directory, the same place the LOT build reads
+  # its four. A copy beside this script would be a second version of a governed
+  # file, drifting quietly from the one the study actually uses.
+  #
+  # Not added to CODELIST_FILES: that list drives record_codelist_hashes(),
+  # which stops the LOT build when a listed file has no hash - and the LOT
+  # build never loads steroids, so naming it there would break a build that has
+  # nothing to do with this question. Hashed here instead, in the note.
   ster <- vqs_build_steroid_claims(con, lot_long,
-                                   file.path(.script_dir, "steroid_codes.csv"))
+                                   file.path(cfg$codelist_dir, "steroid_codes.csv"))
   ster_src <- if (!is.null(ster$view)) vqs_steroid_src(ster$view) else NULL
   log_msg("Steroid signal: ", ster$note)
   if (is.null(ster_src))

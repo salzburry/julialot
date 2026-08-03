@@ -114,9 +114,14 @@ vqs_build_steroid_claims <- function(con, lot_long, ster_csv) {
   out <- list(view = NULL, n_codes = 0L, n_hcpcs = 0L, n_cpt = 0L, n_ndc = 0L, note = NULL)
   if (is.null(ster_csv) || !file.exists(ster_csv)) {
     out$note <- paste0("steroid_codes.csv not found (", ster_csv,
-                       "); steroid analyses (Q3/Q4/Q5) skipped.")
+                       "); steroid analyses (Q3/Q4/Q5) skipped. It is read from ",
+                       "the production code-list directory - check CODELIST_DIR.")
     return(out)
   }
+  # Which version answered the question. This file is production and can be
+  # re-issued, so a number quoted from it means little without the md5 that
+  # produced it - the LOT build records the same thing for the four it reads.
+  ster_md5 <- tryCatch(unname(tools::md5sum(ster_csv)), error = function(e) NA_character_)
   df <- tryCatch(read.csv(ster_csv, stringsAsFactors = FALSE,
                           check.names = FALSE, comment.char = "#"),
                  error = function(e) NULL)
@@ -195,7 +200,8 @@ vqs_build_steroid_claims <- function(con, lot_long, ster_csv) {
     out$n_claims   <- if (!is.null(qc)) as.numeric(qc$n[1])  else NA_real_
     out$n_patients <- if (!is.null(qc)) as.numeric(qc$np[1]) else NA_real_
     out$note <- sprintf(
-      "steroid signal = steroid_codes.csv (%d codes: %d HCPCS, %d CPT, %d NDC) scanned on medical+rx -> %s matched claims for %s patients.%s%s",
+      "steroid signal = steroid_codes.csv [md5 %s] (%d codes: %d HCPCS, %d CPT, %d NDC) scanned on medical+rx -> %s matched claims for %s patients.%s%s",
+      ifelse(is.na(ster_md5), "unknown", ster_md5),
       out$n_codes, out$n_hcpcs, out$n_cpt, out$n_ndc,
       ifelse(is.na(out$n_claims), "?", format(out$n_claims, big.mark = ",", scientific = FALSE)),
       ifelse(is.na(out$n_patients), "?", format(out$n_patients, big.mark = ",", scientific = FALSE)),

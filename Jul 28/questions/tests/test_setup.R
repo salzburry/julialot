@@ -135,8 +135,21 @@ ok(!length(dbl),
    if (length(dbl)) paste0("prefixes the cohort table twice: ",
                            paste(basename(dbl), collapse = ", "))
    else "the cohort table goes through wrk(), not qs_tbl()")
-ok(file.exists(file.path(ROOT, "steroid_codes.csv")),
-   "the steroid code list the timing questions need is here")
+# NOT here. It is a governed production file, so a copy beside this script
+# would be a second version of it, drifting from the one the study uses.
+ok(!file.exists(file.path(ROOT, "steroid_codes.csv")),
+   "no local copy of the steroid code list to drift from production")
+vq <- readLines(file.path(ROOT, "validation_qs.R"), warn = FALSE)
+ok(any(grepl("file.path(cfg$codelist_dir, \"steroid_codes.csv\")", vq, fixed = TRUE)),
+   "...it is read from the production code-list directory")
+vh <- readLines(file.path(ROOT, "validation_helpers.R"), warn = FALSE)
+ok(any(grepl("md5sum(ster_csv)", vh, fixed = TRUE)),
+   "...and its md5 is recorded, so a number can be traced to a version")
+# CODELIST_FILES drives record_codelist_hashes(), which stops the LOT build
+# when a listed file has no hash - and the LOT build never loads steroids.
+cl <- readLines(file.path(dirname(ROOT), "lot", "R", "codelists_lot.R"), warn = FALSE)
+ok(!any(grepl("steroid_codes.csv", cl, fixed = TRUE)),
+   "...without being added to the LOT build's own code-list contract")
 
 cat("\n-- the questions run over the study population --\n")
 # LOT_LONG is the run before a truncating criterion removed anyone, so a

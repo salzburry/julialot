@@ -97,6 +97,18 @@ answering it from this run would be near-zero by construction and mean nothing.
 Set `BROAD_PREFIX` to the prefix of a LOT run over the broad cohort. Without it
 that half is skipped and says so; the audit still runs.
 
+## The steroid code list comes from production
+
+`steroid_codes.csv` is read from `CODELIST_DIR`, the same directory the LOT
+build reads its four from, and its md5 goes into the note beside every steroid
+answer — the file is production and can be re-issued, so a count quoted from it
+means little without the version that produced it.
+
+It is deliberately **not** added to `CODELIST_FILES`. That list drives
+`record_codelist_hashes()`, which stops the LOT build when a listed file has no
+hash, and the LOT build never loads steroids — naming it there would break a
+build that has nothing to do with this question.
+
 ## Bone metastasis
 
 `poma_studyteam_qs.R` removes MM-adjacent conditions from its de-confounded
