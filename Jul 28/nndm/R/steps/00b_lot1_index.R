@@ -183,8 +183,11 @@ build_ndmm_lot1_index <- function(con, medical_tbl, rx_tbl, med_proc_tbl) {
   # One scan, kept: the index date comes out of it, and so does which agent set
   # that date. The second is what NDMM_INDEX_AGENTS reports, and re-running the
   # five arms to get it would double the most expensive step in the build.
+  # "\n" after AS, and it cannot live inside the glue() above: glue trims
+  # trailing newlines, so the statement came out as "...ASSELECT" and Spark
+  # would not parse it.
   db_exec(con, paste0(glue("
-    CREATE OR REPLACE TEMPORARY VIEW {NDMM_INDEX_TX} AS"),
+    CREATE OR REPLACE TEMPORARY VIEW {NDMM_INDEX_TX} AS"), "\n",
     arm(medical_tbl, "FST_DT",  proc_match), "\n      UNION ALL\n",
     arm(medical_tbl, "FST_DT",  bill_match), "\n      UNION ALL\n",
     arm(medical_tbl, "FST_DT",  ndc_match),  "\n      UNION ALL\n",
@@ -282,7 +285,7 @@ build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl, med_proc_tbl)
       WHERE cast(t.{dt} as date) >= date('{NDMM_STUDY_START}')
         AND cast(t.{dt} as date) <= date('{cfg$study_end}')")
   db_exec(con, paste0(glue("
-    CREATE OR REPLACE TEMPORARY VIEW {NDMM_BELANTAMAB_TX} AS"),
+    CREATE OR REPLACE TEMPORARY VIEW {NDMM_BELANTAMAB_TX} AS"), "\n",
     arm(medical_tbl, "FST_DT",  txt_match("PROC_CD", "'HCPCS','CPT'")), "\n      UNION\n",
     arm(medical_tbl, "FST_DT",  txt_match("BILL_PROC_CD", "'HCPCS'")),  "\n      UNION\n",
     arm(medical_tbl, "FST_DT",  ndc_match("NDC")),          "\n      UNION\n",
@@ -378,7 +381,9 @@ build_ndmm_other_malig_grain <- function(con, cfg) {
           AND op.next_dt  BETWEEN date_sub(l1.LOT1_START_DT, {NDMM_PRE_LOT1_DAYS})
                               AND date_sub(l1.LOT1_START_DT, 1)
     WHERE ip.PATID IS NOT NULL OR op.PATID IS NOT NULL")
-  db_exec(con, paste0(glue("CREATE OR REPLACE TABLE {wrk('NDMM_OTHER_MALIG_GRAIN')} AS\n"),
+  # The separator is outside the glue for the same reason as the two views
+  # above: glue() trims a trailing newline, so "AS\n" inside it becomes "AS".
+  db_exec(con, paste0(glue("CREATE OR REPLACE TABLE {wrk('NDMM_OTHER_MALIG_GRAIN')} AS"), "\n",
     by("same code-list label", ", tumor_group"), "\n    UNION ALL\n",
     by("as configured",        ", primary_group"), "\n    UNION ALL\n",
     # Metastatic codes kept apart by the prefix each matched, everything else

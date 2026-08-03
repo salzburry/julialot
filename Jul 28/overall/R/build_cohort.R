@@ -308,9 +308,9 @@ check_normalized_codelist <- function(conn, cfg, view_name, mat_tables) {
   if (is.null(cols)) return(invisible(TRUE))
   where <- paste(sprintf("%s IS NOT NULL AND trim(%s) <> ''", cols, cols),
                  collapse = " AND ")
-  n <- DBI::dbGetQuery(conn$con, paste0(
+  n <- unint64(DBI::dbGetQuery(conn$con, paste0(
     "SELECT count(*) AS n FROM ", get(view_name, envir = mat_tables),
-    " WHERE ", where))$n
+    " WHERE ", where)))$n
   if (is.na(n) || n == 0)
     stop("Code list '", view_name, "' has no usable codes.", call. = FALSE)
   log_msg("  code list ", view_name, ": ", format(n, big.mark = ","), " codes")

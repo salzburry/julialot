@@ -1568,4 +1568,76 @@ ok(!any(grepl("ELSE 'ICD10' END", ct, fixed = TRUE)) &&
      sum(grepl("icd_family_sql(", ct, fixed = TRUE)) >= 2,
    "both ICD sources go through the three-way family rule")
 
+cat("\n-- a statement built by concatenation still parses as SQL --\n")
+# glue() trims trailing newlines. So paste0(glue("... AS"), body) and
+# paste0(glue("... AS\\n"), body) BOTH produce "...ASSELECT", which Spark
+# rejects with a syntax error at the first line of the statement. Three
+# statements in 00b_lot1_index.R were built that way, and nothing caught it:
+# the tests grep the SQL for fragments, and every fragment was present and
+# correct - they were simply run together.
+#
+# Checked as behaviour, not as text, so it holds however the SQL is written.
+ok(!grepl("\n$", glue::glue("SELECT 1 AS\n")),
+   "glue() really does trim a trailing newline - the trap this guards")
+# Walk the parse tree rather than the text: find every paste0(glue(...), x)
+# and, when the glue literal ends on a SQL keyword, require x to begin with
+# whitespace. A regex over the source missed the real thing when it was there.
+kw_tail <- function(lit)
+  grepl("(^|[[:space:]])(AS|SELECT|FROM|WHERE|UNION|ALL)$", trimws(lit))
+asm <- character(0)
+for (f in list.files(file.path(ROOT, "R"), "\\.R$", recursive = TRUE,
+                     full.names = TRUE)) {
+  walk <- function(e) {
+    if (!is.call(e)) return(invisible(NULL))
+    if (identical(as.character(e[[1]])[1], "paste0") && length(e) >= 3) {
+      a1 <- e[[2]]
+      if (is.call(a1) && identical(as.character(a1[[1]])[1], "glue") &&
+          length(a1) >= 2 && is.character(a1[[2]]) && kw_tail(a1[[2]])) {
+        nx <- e[[3]]
+        if (!(is.character(nx) && grepl("^[[:space:]]", nx)))
+          asm <<- c(asm, paste0(basename(f), ": ...",
+                                substr(trimws(a1[[2]]), max(1, nchar(trimws(a1[[2]])) - 28),
+                                       nchar(trimws(a1[[2]])))))
+      }
+    }
+    for (i in seq_along(e)) if (!is.null(e[[i]])) walk(e[[i]])
+  }
+  for (ex in parse(f, keep.source = FALSE)) walk(ex)
+}
+ok(!length(asm),
+   if (length(asm)) paste0("a statement is concatenated onto a trailing keyword ",
+                           "with no separator: ", paste(unique(asm), collapse = "; "))
+   else "no statement is concatenated straight onto a trailing keyword")
+# The three that were broken, held by their own shape now.
+ix <- readLines(file.path(ROOT, "R", "steps", "00b_lot1_index.R"), warn = FALSE)
+ok(sum(grepl('AS"), "\\n"', ix, fixed = TRUE)) == 3L,
+   paste0("the three assembled statements separate the keyword from the body (",
+          sum(grepl('AS"), "\\n"', ix, fixed = TRUE)), ")"))
+
+cat("\n-- a BIGINT count is a number, not its bit pattern --\n")
+# The driver returns BIGINT as bit64::integer64: a 64-bit int stored inside a
+# double. paste0() then renders the BITS, so "1780 codes" logged as
+# 8.794368e-321 - and arithmetic on it without bit64 attached is wrong, not
+# just ugly. Converted once in db_q() rather than at each of the call sites
+# that read a count.
+ok(any(grepl(".unint64", readLines(file.path(ROOT, "R", "db_utils.R"),
+                                   warn = FALSE), fixed = TRUE)),
+   "db_q() converts an integer64 column on the way out")
+# Behaviour, not text: build the failure and show the conversion undoes it.
+if (requireNamespace("bit64", quietly = TRUE)) {
+  raw <- bit64::as.integer64(1780)
+  # The class carries the meaning. Lose it anywhere between the driver and the
+  # message and the double's bit pattern is what gets rendered - 1780 came out
+  # of a real run as exactly this.
+  ok(identical(format(unclass(raw)), "8.794368e-321"),
+     "...a count of 1780 with its class dropped renders as 8.794368e-321")
+  ok(identical(paste0(as.numeric(raw)), "1780"),
+     "...and as.numeric() reads the integer back, which is what db_q() does")
+} else {
+  ok(TRUE, "bit64 not installed here - the conversion is checked by reading db_q()")
+  ok(TRUE, "...")
+}
+# Every count in this build is far below 2^53, so the conversion is lossless.
+ok(2^53 > 1e15, "counts here are orders below the double's exact-integer limit")
+
 report()

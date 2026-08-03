@@ -204,7 +204,7 @@ run_attrition_report <- function(catalog, cfg, conn, work_tbl_fn) {
         count(DISTINCT CASE WHEN {w90} THEN PATID END) AS n_90
       FROM {from_tbl}
     ")
-    row <- DBI::dbGetQuery(conn$con, sql)
+    row <- unint64(DBI::dbGetQuery(conn$con, sql))
     list(n_30 = row$n_30, n_60 = row$n_60, n_90 = row$n_90)
   }
 
@@ -240,8 +240,8 @@ run_attrition_report <- function(catalog, cfg, conn, work_tbl_fn) {
     glue("{qual_60}{cum_cond}"),
     glue("{qual_90}{cum_cond}"))
   w <- cfg$outpatient_window
-  final[[paste0("n_", w)]] <- DBI::dbGetQuery(conn$con, glue(
-    "SELECT count(*) AS n FROM {work_tbl_fn(cfg$final_table_name)}"))$n
+  final[[paste0("n_", w)]] <- unint64(DBI::dbGetQuery(conn$con, glue(
+    "SELECT count(*) AS n FROM {work_tbl_fn(cfg$final_table_name)}")))$n
   record("99_final", glue("FINAL COHORT ({cfg$final_table_name}, {w}d)"),
                    final$n_30, final$n_60, final$n_90)
 
@@ -265,7 +265,7 @@ print_cohort_characteristics <- function(cfg, conn, work_tbl_fn) {
       sum(CASE WHEN DEATH_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_with_death
     FROM {work_tbl_fn(cfg$final_table_name)}
   ")
-  stats <- DBI::dbGetQuery(conn$con, stats_sql)
+  stats <- unint64(DBI::dbGetQuery(conn$con, stats_sql))
 
   cat("\n", SEP_60, "\n")
   cat("                 COHORT CHARACTERISTICS\n")
