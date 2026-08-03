@@ -75,6 +75,73 @@ rule that makes `LOT_LONG` and `LOT_LONG_FINAL` hold different **patients**.
 **`line_beyond_max`** — nothing above `MAX_LOT` is built, and a capped patient
 looks exactly like a completed one in the output.
 
+## The sensitivity sweep — idea 2(d)
+
+```
+# print the plan and its cost; touches nothing, needs no connection
+INPUT_COHORT_TABLE=ndmm_NDMM_COHORT Rscript lot_validation/run_sensitivity.R
+
+# actually build them
+DATABRICKS_PWD=... INPUT_COHORT_TABLE=ndmm_NDMM_COHORT \
+  SENS_EXECUTE=TRUE Rscript lot_validation/run_sensitivity.R
+```
+
+**Execution is opt-in, because one cell is one complete LOT build.** There is no
+cheaper way: the gap threshold changes how MAPs are formed, which changes the
+lines, which changes everything after them — none of it recoverable from an
+existing `LOT_LONG` the way `nndm` recomputes its CE alternatives inside one
+run. The default prints the grid, the predicted directions and the cell count so
+the cost is readable before anyone commits to it.
+
+The grid is **one at a time** from the shipped configuration: six parameters
+with two alternatives each is thirteen builds, not the seven hundred and
+twenty-nine a cross-product would be.
+
+### The direction is stated before the run
+
+That ordering is the whole value. Thirteen builds produce thirteen different
+tables and a reader nods at all of them. Predicting the sign first turns it into
+a test — a metric that moves the other way is either a bug or a hole in our
+reading, and either is worth knowing.
+
+Predictions carry the same `derived` / `to_confirm` marker as the vignettes,
+plus a third value that matters: **`unclear`**, for metrics where two effects
+pull against each other. `unclear` is *recorded, never scored*. Marking it as a
+hit or a miss would reward whichever guess happened to be written down.
+
+The comparison scores the **sign relative to the parameter's own direction**,
+not the size. Fewer lines from a *larger* gap is the prediction; the same number
+of lines from a *smaller* gap is the opposite finding, and the harness says so.
+
+### Two of the ask's four axes cannot be swept
+
+**maintenance-as-LOT vs flag** is not a setting. Maintenance is a descriptive
+flag (`contains_mtx_reg`) and there is no maintenance period —
+`lot/R/steps/05_sct.R:13`. Making it a line would be a different algorithm, not
+a sensitivity of this one, so there is nothing here to vary. It is in the
+vignette catalogue as the divergence it is.
+
+**CE requirements** are the cohort build's axis. `nndm` already reports them
+without rebuilding anything — `NDMM_FU_CE_COUNTS` gives the cohort at 0/30/60/90
+days from a single run. Sweeping them here would rebuild the cohort *and* the
+LOT per cell.
+
+Both are named in the plan output rather than quietly dropped, since two of four
+axes silently missing would read as coverage.
+
+### Guards
+
+A cell writing to the study's own prefix is refused — that would overwrite the
+run being measured. So is a grid past `SENS_MAX_CELLS` (24), and two cells
+sharing a prefix. Each cell runs as its **own process**, because the build pins a
+config and a run id globally and a second build in the same session inherits the
+first's. Metrics are read against that cell's own `RUN_ID`, taken from its own
+`LOT_BUILD_STATUS`, since `LOT_ATTRITION` is keyed by it.
+
+A sweep leaves a full set of LOT tables per cell. `SENS_DROP_AFTER=TRUE` removes
+them once the metrics are read; it is off by default, because dropping tables is
+not something a measurement script should do quietly.
+
 ## What the ask wanted and this does not have
 
 The ask asked for each vignette's assignment under **IMWG rules and ≥2 published
