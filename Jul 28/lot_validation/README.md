@@ -142,6 +142,67 @@ A sweep leaves a full set of LOT tables per cell. `SENS_DROP_AFTER=TRUE` removes
 them once the metrics are read; it is off by default, because dropping tables is
 not something a measurement script should do quietly.
 
+## Distribution benchmarks — idea 2(a)-(c)
+
+```
+# check the reference file and print what would be measured; no connection
+Rscript lot_validation/run_benchmarks.R
+
+# measure this run and compare
+DATABRICKS_PWD=... DOMINO_USER_NAME=usr00000 OBJECT_PREFIX=ndmm_ \
+  BENCH_EXECUTE=TRUE Rscript lot_validation/run_benchmarks.R
+```
+
+**The published numbers are not here and were not written from memory.**
+`benchmarks.csv` ships with a row for every metric and `published_value` blank,
+so whoever has the literature can see exactly which figures are wanted, and an
+unfilled row reports itself as `no reference supplied` rather than passing
+silently. A value with no `source` is **refused when the file loads** — that row
+would become a citation nobody can chase.
+
+### A benchmark without its definition is not a benchmark
+
+"Median 2 lines" from a paper is not comparable to anything on its own. It
+depends on who was counted, how long they were followed, and above all whose
+line algorithm was used — a source counting maintenance as a line reports a
+larger median than this algorithm can produce, and the gap is the two
+definitions rather than a defect in either.
+
+So each row carries `source_population`, `source_followup`, `source_algorithm`,
+and the operator's judgement in `comparable`:
+
+| | |
+|---|---|
+| `yes` | close enough to compare |
+| `caveat` | usable, with the difference named in `notes` |
+| `no` | recorded for context; scored as nothing |
+
+**An unmarked row defaults to `no`.** Defaulting the other way would let a
+convenient number quietly become evidence.
+
+Nothing here is a pass or a fail. A difference between this cohort and a
+published one is two studies differing until the `comparable` column says
+otherwise.
+
+### Two definitions that decide whether the comparison means anything
+
+**Time to next treatment is a real Kaplan-Meier median**, not the median gap
+among patients who reached the next line. That naive figure conditions on the
+event — it answers "among those who progressed, how fast" — and comes out far
+shorter than any published KM median. The worked example in the tests shows the
+size of it: the same five patients give 40 days censored properly and 20 days
+with the censored ones dropped. Patients without the next line are censored at
+their observation end.
+
+**Line durations exclude lines still open at study end** (`LOT_BASE_END_REASON =
+'STUDY_END'`) and count them separately. Folding a censored line in treats it as
+a short one and drags the median down. `LOT_BASE_LENGTH` is inclusive —
+`datediff + 1` — which is a day per line against a source that is not.
+
+The crude `pct_reaching_line` figures are **not** follow-up adjusted and say so:
+a patient with six months of observation had less chance to reach LOT2 than one
+with five years. A source reporting a KM estimate is measuring something else.
+
 ## What the ask wanted and this does not have
 
 The ask asked for each vignette's assignment under **IMWG rules and ≥2 published

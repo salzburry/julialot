@@ -1,0 +1,30 @@
+metric,line,regimen,published_value,unit,source,source_population,source_followup,source_algorithm,comparable,notes
+median_lines_per_patient,,,,count,,,,,,"Denominator is patients with a built line, not everyone diagnosed. Capped at MAX_LOT."
+pct_reaching_line,2,,,pct,,,,,,"Crude proportion of LOT1 patients, NOT follow-up adjusted. A KM estimate is a different quantity."
+pct_reaching_line,3,,,pct,,,,,,"Crude proportion of LOT1 patients, NOT follow-up adjusted. A KM estimate is a different quantity."
+pct_reaching_line,4,,,pct,,,,,,"Crude proportion of LOT1 patients, NOT follow-up adjusted. A KM estimate is a different quantity."
+pct_reaching_line,5,,,pct,,,,,,"Crude proportion of LOT1 patients, NOT follow-up adjusted. A KM estimate is a different quantity."
+median_line_duration_days,1,,,days,,,,,,Completed lines only; lines open at study end are excluded and counted separately.
+median_line_duration_days,2,,,days,,,,,,Completed lines only; lines open at study end are excluded and counted separately.
+median_line_duration_days,3,,,days,,,,,,Completed lines only; lines open at study end are excluded and counted separately.
+median_line_duration_days,4,,,days,,,,,,Completed lines only; lines open at study end are excluded and counted separately.
+median_line_duration_days,5,,,days,,,,,,Completed lines only; lines open at study end are excluded and counted separately.
+km_median_ttnt_days,1,,,days,,,,,,"Kaplan-Meier median, patients without the next line censored at observation end."
+km_median_ttnt_days,2,,,days,,,,,,"Kaplan-Meier median, patients without the next line censored at observation end."
+km_median_ttnt_days,3,,,days,,,,,,"Kaplan-Meier median, patients without the next line censored at observation end."
+km_median_ttnt_days,4,,,days,,,,,,"Kaplan-Meier median, patients without the next line censored at observation end."
+pct_regimen_at_line,1,,,pct,,,,,,Fill `regimen` with the LOT_BASE_MEDS string exactly as the build writes it (space-separated abbreviations). Registry classes need mapping first.
+pct_regimen_at_line,1,,,pct,,,,,,Fill `regimen` with the LOT_BASE_MEDS string exactly as the build writes it (space-separated abbreviations). Registry classes need mapping first.
+pct_regimen_at_line,1,,,pct,,,,,,Fill `regimen` with the LOT_BASE_MEDS string exactly as the build writes it (space-separated abbreviations). Registry classes need mapping first.
+pct_regimen_at_line,1,,,pct,,,,,,Fill `regimen` with the LOT_BASE_MEDS string exactly as the build writes it (space-separated abbreviations). Registry classes need mapping first.
+pct_regimen_at_line,1,,,pct,,,,,,Fill `regimen` with the LOT_BASE_MEDS string exactly as the build writes it (space-separated abbreviations). Registry classes need mapping first.
+pct_regimen_at_line,2,,,pct,,,,,,Fill `regimen` with the LOT_BASE_MEDS string exactly as the build writes it (space-separated abbreviations). Registry classes need mapping first.
+pct_regimen_at_line,2,,,pct,,,,,,Fill `regimen` with the LOT_BASE_MEDS string exactly as the build writes it (space-separated abbreviations). Registry classes need mapping first.
+pct_regimen_at_line,2,,,pct,,,,,,Fill `regimen` with the LOT_BASE_MEDS string exactly as the build writes it (space-separated abbreviations). Registry classes need mapping first.
+pct_regimen_at_line,2,,,pct,,,,,,Fill `regimen` with the LOT_BASE_MEDS string exactly as the build writes it (space-separated abbreviations). Registry classes need mapping first.
+pct_regimen_at_line,2,,,pct,,,,,,Fill `regimen` with the LOT_BASE_MEDS string exactly as the build writes it (space-separated abbreviations). Registry classes need mapping first.
+pct_regimen_at_line,3,,,pct,,,,,,Fill `regimen` with the LOT_BASE_MEDS string exactly as the build writes it (space-separated abbreviations). Registry classes need mapping first.
+pct_regimen_at_line,3,,,pct,,,,,,Fill `regimen` with the LOT_BASE_MEDS string exactly as the build writes it (space-separated abbreviations). Registry classes need mapping first.
+pct_regimen_at_line,3,,,pct,,,,,,Fill `regimen` with the LOT_BASE_MEDS string exactly as the build writes it (space-separated abbreviations). Registry classes need mapping first.
+pct_regimen_at_line,3,,,pct,,,,,,Fill `regimen` with the LOT_BASE_MEDS string exactly as the build writes it (space-separated abbreviations). Registry classes need mapping first.
+pct_regimen_at_line,3,,,pct,,,,,,Fill `regimen` with the LOT_BASE_MEDS string exactly as the build writes it (space-separated abbreviations). Registry classes need mapping first.

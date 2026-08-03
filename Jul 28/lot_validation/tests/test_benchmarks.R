@@ -1,0 +1,159 @@
+#!/usr/bin/env Rscript
+# Checks on the distribution benchmarks.
+#
+# The loader, the verdicts and the survival arithmetic all run here. What
+# cannot run is the SQL, so the Kaplan-Meier FORMULA is checked against a
+# worked example in R - the same expression the statement encodes - and the
+# translation is checked by reading it. Getting the survival curve wrong would
+# produce a plausible number nobody could tell from a right one, which is the
+# failure worth spending a test on.
+#
+#   Rscript "lot_validation/tests/test_benchmarks.R"
+
+ROOT <- local({
+  a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
+  d <- if (length(a)) dirname(normalizePath(gsub("~+~", " ", sub("^--file=", "", a[1]),
+                                                 fixed = TRUE))) else getwd()
+  dirname(d)
+})
+
+pass <- 0L; fail <- 0L
+ok <- function(cond, what) {
+  if (isTRUE(cond)) { pass <<- pass + 1L; cat("  ok     ", what, "\n") }
+  else              { fail <<- fail + 1L; cat("  FAIL   ", what, "\n") }
+}
+runs  <- function(expr, what) ok(is.null(tryCatch({ expr; NULL },
+                                 error = conditionMessage)), what)
+stops <- function(expr, what) ok(!is.null(tryCatch({ expr; NULL },
+                                 error = conditionMessage)), what)
+
+source(file.path(ROOT, "R", "benchmarks.R"))
+REF <- file.path(ROOT, "benchmarks.csv")
+
+cat("\n-- the reference file ships empty, with every row already in it --\n")
+runs(read_benchmarks(REF), "benchmarks.csv loads")
+refs <- read_benchmarks(REF)
+ok(all(BENCHMARK_COLS %in% names(refs)),
+   "it carries every column the comparison needs")
+# Blank rows rather than an empty file: whoever has the literature can see
+# exactly which figures are wanted, and a row nobody filled reports itself.
+ok(all(is.na(refs$published_value)),
+   "no published value is filled in - none was invented")
+ok(setequal(unique(refs$metric), names(BENCHMARK_METRICS)),
+   "...and there is a row for every metric the harness measures")
+ok(all(nzchar(refs$notes)),
+   "...each carrying the definition a published figure has to match")
+ok(sum(refs$metric == "pct_regimen_at_line") >= 15,
+   "...with room for the top regimens at each of the first lines")
+
+cat("\n-- and it is read strictly, because a wrong row is worse than no row --\n")
+tmp <- file.path(tempdir(), "bench_test.csv")
+wr <- function(rows) { write.csv(rows, tmp, row.names = FALSE, na = ""); tmp }
+base <- refs[1, , drop = FALSE]
+stops(read_benchmarks(file.path(tempdir(), "nope.csv")),
+      "a missing file stops rather than comparing against nothing")
+b <- base; b$published_value <- "2"; b$source <- ""
+stops(read_benchmarks(wr(b)),
+      "a published value with no source is refused - it would be a citation nobody can chase")
+b <- base; b$published_value <- "about two"; b$source <- "Someone 2024"
+stops(read_benchmarks(wr(b)), "...and a value that is not a number")
+b <- base; b$metric <- "not_a_metric"
+stops(read_benchmarks(wr(b)), "...and a metric the harness does not measure")
+b <- base; b$published_value <- "2"; b$source <- "Someone 2024"; b$comparable <- "maybe"
+stops(read_benchmarks(wr(b)), "...and a comparability that is not yes/caveat/no")
+b <- base[, setdiff(names(base), "source_algorithm")]
+stops(read_benchmarks(wr(b)), "...and a file missing a column")
+b <- base; b$published_value <- "2"; b$source <- "Someone 2024"; b$comparable <- "yes"
+runs(read_benchmarks(wr(b)), "a complete row loads")
+
+cat("\n-- a difference is two studies differing until somebody says otherwise --\n")
+obs <- data.frame(metric = "median_lines_per_patient", line = NA_integer_,
+                  regimen = NA_character_, observed = 2, denom = 100,
+                  censored = NA_integer_, events = NA_integer_,
+                  stringsAsFactors = FALSE)
+mkref <- function(val, cmp) {
+  r <- refs[refs$metric == "median_lines_per_patient", , drop = FALSE]
+  r$published_value <- val; r$comparable <- cmp; r$source <- "Someone 2024"; r
+}
+ok(identical(compare_benchmarks(obs, mkref(NA, ""))$verdict, "no reference supplied"),
+   "a row nobody supplied says so rather than passing quietly")
+ok(identical(compare_benchmarks(obs, mkref(3, "no"))$verdict, "recorded, not comparable"),
+   "a source marked not comparable is recorded and scored as nothing")
+# The default direction matters: an unmarked row must NOT become evidence.
+ok(identical(compare_benchmarks(obs, mkref(3, NA))$verdict, "recorded, not comparable"),
+   "...and an UNMARKED source defaults to not comparable, never to comparable")
+ok(identical(compare_benchmarks(obs, mkref(3, "caveat"))$verdict, "compared with caveat"),
+   "a caveated source is compared and says so")
+r <- compare_benchmarks(obs, mkref(3, "yes"))
+ok(identical(r$verdict, "compared") && identical(r$difference, -1),
+   "...and a comparable one reports the difference")
+ok(!any(grepl("^(pass|fail|PASS|FAIL)$", compare_benchmarks(obs, mkref(3, "yes"))$verdict)),
+   "no verdict is a pass or a fail")
+
+cat("\n-- the survival curve, against a worked example --\n")
+# The formula the SQL encodes: S(t) = exp(cumsum(log(1 - d/n))), median is the
+# first t where S <= 0.5. Five patients, three events, two censored.
+#
+#   t=10 n=5 d=1 -> .8      t=40 n=2 d=1 -> .3
+#   t=20 n=4 d=1 -> .6      t=50 n=1 d=0 -> .3
+#   t=30 n=3 d=0 -> .6      median = 40, the first t at or below .5
+km_median <- function(t, ev) {
+  tt <- sort(unique(t))
+  d  <- vapply(tt, function(x) sum(ev[t == x]), numeric(1))
+  lv <- vapply(tt, function(x) sum(t == x), numeric(1))
+  n  <- length(t) - c(0, cumsum(lv)[-length(lv)])
+  s  <- exp(cumsum(ifelse(n > 0 & d < n, log(1 - d / n),
+                   ifelse(n > 0 & d == n, -1e9, 0))))
+  m  <- tt[s <= 0.5]
+  if (length(m)) min(m) else NA_real_
+}
+ok(identical(km_median(c(10, 20, 30, 40, 50), c(1, 1, 0, 1, 0)), 40),
+   "the worked example gives the median the hand calculation does")
+# Censoring is the whole point. Dropping the two censored patients leaves
+# events at 10/20/40 and a median of 20 - half the truth, and exactly the
+# number a naive 'median among those who progressed' would report.
+ok(identical(km_median(c(10, 20, 40), c(1, 1, 1)), 20),
+   "...and dropping the censored patients halves it, which is the error being avoided")
+ok(identical(km_median(10, 1), 10),
+   "a single patient with an event gives a curve that reaches zero, not NULL")
+ok(is.na(km_median(c(10, 20), c(0, 0))),
+   "...and no events at all gives no median rather than a number")
+
+cat("\n-- and the statement encodes that, not the naive version --\n")
+bn <- readLines(file.path(ROOT, "R", "benchmarks.R"), warn = FALSE)
+sql <- bench_ttnt_sql("F", "P", 1)
+# LEFT JOIN to the next line: an INNER JOIN here IS the naive version, and it
+# is a one-word difference.
+ok(grepl("LEFT JOIN nxt n USING (PATID)", sql, fixed = TRUE),
+   "patients without the next line are kept, not inner-joined away")
+ok(grepl("ELSE datediff(o.obs_end, c.t0) END AS t", sql, fixed = TRUE),
+   "...and censored at their observation end rather than dropped")
+ok(grepl("exp(sum(CASE WHEN n_risk > 0 AND d < n_risk THEN log(1.0 - d / n_risk)",
+         sql, fixed = TRUE),
+   "the survival expression is the one the worked example checks")
+ok(grepl("WHEN n_risk > 0 AND d = n_risk THEN -1e9", sql, fixed = TRUE),
+   "...with d = n floored, so the curve reaches zero instead of going NULL")
+ok(grepl("min(t) FROM surv WHERE s_t <= 0.5", sql, fixed = TRUE),
+   "...and the median is the first time at or below one half")
+ok(any(grepl("not the median among those who progressed", bn, fixed = TRUE)),
+   "the naive version is named as the thing being avoided")
+
+cat("\n-- a duration that is really a censoring is not folded in --\n")
+d <- bench_duration_sql("F")
+ok(grepl("LOT_BASE_END_REASON,'') <> 'STUDY_END'", d, fixed = TRUE),
+   "lines still open at study end are excluded from the median")
+ok(grepl("AS censored", d, fixed = TRUE),
+   "...and counted, so the reader can see how much was set aside")
+ok(any(grepl("LOT_BASE_LENGTH is inclusive", bn, fixed = TRUE)),
+   "the inclusive length is stated, since an off-by-one here is a day per line")
+
+cat("\n-- what the ask wanted that a harness cannot supply --\n")
+rb <- readLines(file.path(ROOT, "run_benchmarks.R"), warn = FALSE)
+ok(any(grepl("Nothing here invents one", rb, fixed = TRUE)),
+   "the script says the published figures are not its to write")
+ok(any(grepl("BENCH_EXECUTE", rb, fixed = TRUE)),
+   "...and measuring is opt-in, so the definitions can be read first")
+
+cat("\n", strrep("-", 52), "\n", sep = "")
+cat(sprintf("%d passed, %d failed\n", pass, fail))
+if (fail > 0L) quit(status = 1L)
