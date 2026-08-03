@@ -1027,19 +1027,29 @@ FACE_VALIDITY <- list(
        # CAR-T is a later-line therapy. In a first-line cohort it should be
        # uncommon and late; CAR-T in LOT1 means the trigger fired on the wrong
        # claim.
+       # LOT_CART_LOT_FLG is projected 0 for every LOT1 row, and LOT1's start
+       # type is always 'MED', so a CAR-T given during or closing a first line
+       # shows only in its end reason. Keying on the flags alone would drop the
+       # first-line CAR-T this check exists to notice.
        lo = 50, hi = 100,
        sql = "SELECT round(100.0 * sum(CASE WHEN LOT_NUM >= 3 THEN 1 ELSE 0 END)
                            / nullif(count(*), 0), 1) AS v
               FROM {t}
-              WHERE LOT_START_TYPE = 'CART' OR LOT_CART_LOT_FLG = 1"),
+              WHERE LOT_START_TYPE = 'CART' OR LOT_CART_LOT_FLG = 1
+                 OR LOT_BASE_END_REASON IN ('SCT_CART', 'CART_INIT')"),
 
   list(name = "allo_sct_is_rare",
        what = "% of patients with any allogeneic transplant line",
        # Allogeneic transplant is uncommon in myeloma. A high share points at a
        # code list matching something else.
+       # Same shape as CAR-T: an allo inside LOT1 leaves the start type 'MED'
+       # and LOT_ALLO_LOT_FLG 0, and shows only in the end reason.
        lo = 0, hi = 5,
-       sql = "SELECT round(100.0 * count(DISTINCT CASE WHEN LOT_START_TYPE = 'SCT_ALLO'
-                                                       THEN PATID END)
+       sql = "SELECT round(100.0 * count(DISTINCT CASE
+                             WHEN LOT_START_TYPE = 'SCT_ALLO'
+                               OR LOT_ALLO_LOT_FLG = 1
+                               OR LOT_BASE_END_REASON = 'SCT_ALLO'
+                             THEN PATID END)
                            / nullif(count(DISTINCT PATID), 0), 2) AS v
               FROM {t}"),
 
