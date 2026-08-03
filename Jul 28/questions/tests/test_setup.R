@@ -198,6 +198,11 @@ ok(!any(grepl("SECONDARY MALIGNANT NEOPLASM OF BONE", poma, fixed = TRUE)),
 # Loading the CSV would mean re-deriving the rule, which is what drifted.
 ok(!any(grepl("load_codelist_csv", poma, fixed = TRUE)),
    "and it does not rebuild the list from the CSV")
+# The code did the build's thing while the narrative beside it still told the
+# reader the opposite. A workbook is read for its words, so that is a wrong
+# answer shipped in the deliverable.
+ok(!any(grepl("secondary bone - MM-spectrum", poma, fixed = TRUE)),
+   "...and the narrative no longer calls secondary bone MM-spectrum")
 # Q3's association is a BROAD-cohort question. One prefix is one cohort, and
 # this cohort already excluded patients with a qualifying other cancer - so
 # answering it from this run would be near-zero by construction.
@@ -239,6 +244,73 @@ ok(any(grepl("broad_idx", poma, fixed = TRUE)),
    "the broad run's own LOT_PATIENT_INPUT supplies the index dates")
 ok(!any(grepl("index_date FROM {final_tbl}", poma, fixed = TRUE)),
    "...not the NDMM cohort table beside it")
+
+cat("\n-- Q5 does not claim an anchor its index date does not have --\n")
+# The cohort sets INDEX_DATE = LOT1_START_DT, so Q5's index-anchored columns
+# sit on the SAME date as its LOT1-anchored ones. Called a pre-diagnosis
+# window they read as an independent second check, and two counts that look
+# independent get added together.
+nn <- readLines(file.path(dirname(ROOT), "nndm", "R", "build_nndm.R"), warn = FALSE)
+ok(any(grepl("LOT1_START_DT AS INDEX_DATE", nn, fixed = TRUE)),
+   "the cohort's INDEX_DATE is the 1L start, which is what makes the two anchors one")
+ok(!any(grepl("parent-index", poma, fixed = TRUE)) &&
+   !any(grepl("PARENT-INDEX", poma, fixed = TRUE)),
+   "Q5 no longer labels those columns as a separate parent anchor")
+ok(any(grepl("AS ce_gt_6mo_pre_index", poma, fixed = TRUE)) &&
+   any(grepl("AS len_thal_gt_6mo_pre_index", poma, fixed = TRUE)),
+   "...they are named for the window they measure and the anchor they measure it from")
+ok(!any(grepl("obs_history_gt_6mo", poma, fixed = TRUE)) &&
+   !any(grepl("early_len_thal_pre_baseline", poma, fixed = TRUE)),
+   "...and the old names, which implied a window before the diagnosis, are gone")
+
+cat("\n-- an empty Blenrep line table says which of the two things it is --\n")
+# MAP_STACKED is built before the line criteria, so it still holds belantamab
+# exposure. no_belantamab is patient-level and truncates, so LOT_LONG_FINAL
+# holds none of those patients' lines - an empty by-line table there is the
+# study removing them, not the drug failing to reach a regimen.
+clear(); Sys.setenv(DOMINO_USER_NAME = "usr00000", OBJECT_PREFIX = "ndmm_",
+           INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT")
+invisible(qs_setup(ROOT))
+apply_was <- Sys.getenv("APPLY_NO_BELANTAMAB", unset = NA)
+Sys.setenv(APPLY_NO_BELANTAMAB = "FALSE")
+ok(length(qs_truncating_criteria()) == 0,
+   "with the criterion off, nothing was removed and the population can answer for itself")
+Sys.setenv(APPLY_NO_BELANTAMAB = "TRUE")
+tc <- qs_truncating_criteria()
+# From the lot package's declaration, so a renamed flag cannot leave a
+# hardcoded string here matching nothing and reporting 0 removed.
+ok(length(tc) == 1L && identical(tc[[1]]$name, "no_belantamab") &&
+   identical(tc[[1]]$flag, "NO_BELANTAMAB_ANY_LOT"),
+   "...and with it on, the criterion and its flag come from the lot package")
+ok(grepl("ndmm_LOT_LONG_ALLFLAGS$", qs_allflags_lines()),
+   "the pre-truncate lines are that run's own, prefix and all")
+if (is.na(apply_was)) Sys.unsetenv("APPLY_NO_BELANTAMAB") else
+  Sys.setenv(APPLY_NO_BELANTAMAB = apply_was)
+l1 <- readLines(file.path(ROOT, "lot1_studyteam_qs.R"), warn = FALSE)
+ok(any(grepl("qs_truncating_criteria()", l1, fixed = TRUE)) &&
+   any(grepl("qs_allflags_lines()", l1, fixed = TRUE)),
+   "the Blenrep question asks what was removed, then reads the run before it was")
+ok(!any(grepl("does not surface in any LOT_BASE_MEDS regimen string", l1, fixed = TRUE)),
+   "...so it no longer reports a deliberate exclusion as an absent regimen")
+
+cat("\n-- a steroid count says which version of the list produced it --\n")
+# The LOT build refuses a code-list hash it cannot take: a count gets quoted
+# whether or not the version behind it is known. This recorded "unknown" and
+# carried on, which is the same number with nothing to trace it to.
+source(file.path(ROOT, "validation_helpers.R"))
+vh <- readLines(file.path(ROOT, "validation_helpers.R"), warn = FALSE)
+# A directory passes file.exists() and hashes to NA - an unhashable file
+# without needing to create one.
+unhashable <- file.path(tempdir(), "qs_unhashable")
+dir.create(unhashable, showWarnings = FALSE)
+h <- suppressWarnings(vqs_build_steroid_claims(NULL, "lot_long", unhashable))
+ok(is.null(h$view) && isTRUE(grepl("could not hash", h$note)),
+   "an unhashable list skips Q3/Q4/Q5 rather than answering them against 'unknown'")
+ok(!any(grepl('is.na(ster_md5), "unknown"', vh, fixed = TRUE)),
+   "...so no steroid answer can carry a version nobody can look up")
+ok(any(grepl("identical(ster_md5, ster_hash())", vh, fixed = TRUE)),
+   "...and it is hashed again after the read, so a file re-issued mid-run is caught")
+clear()
 
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))

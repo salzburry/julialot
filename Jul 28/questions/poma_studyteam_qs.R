@@ -26,8 +26,9 @@
 #   Q4  Do POMA-1L patients have clinical-trial evidence? Headline the BASELINE
 #       (pre-index) column; follow-up is post-index context.
 #   Q5  Do POMA-1L patients have continuous pharmacy benefit? Shows the NDMM
-#       LOT1-anchored 12-mo pre-LOT1 check (the study proof) plus a parent-index
-#       supplemental scan for LEN/THAL before the 6-month baseline window.
+#       LOT1-anchored 12-mo pre-LOT1 check (the study proof) plus a longer
+#       look-back on the cohort's own INDEX_DATE - the same anchor, not an
+#       earlier one, since INDEX_DATE is the 1L start.
 #
 # Runs on the NDMM newly-diagnosed 1L STUDY cohort. The POMA-in-1L questions are
 # most meaningful here: the other-cancer and prior-therapy confounders are already
@@ -50,10 +51,12 @@
 #    closed LOT1"); the full CAR-T-relative-to-LOT1 breakdown (incl. CAR-T
 #    BEFORE LOT1) reuses vqs_q6_cart on a POMA-filtered view.
 #  - Q5 rebuilds continuous enrollment spans from raw member_enrollment (<=30d
-#    gaps) and keeps the span covering LOT1_START_DT (the LOT1-anchored NDMM
-#    proof) and the span covering INDEX_DATE (parent-index supplemental) - it
-#    does NOT collapse all rows to a min/max, which would bridge non-continuous
-#    coverage.
+#    gaps) and keeps the span covering LOT1_START_DT (the NDMM proof) and the
+#    span covering the cohort's INDEX_DATE - it does NOT collapse all rows to a
+#    min/max, which would bridge non-continuous coverage. The cohort sets
+#    INDEX_DATE to LOT1_START_DT, so the two anchors are the same date and the
+#    index columns are a longer look-back plus a cross-check, not a second
+#    independent window.
 
 .script_dir <- local({
   args <- commandArgs(trailingOnly = FALSE)
@@ -266,7 +269,7 @@ main <- function() {
       "Q2 = POMA-1L split by transplant type and TIMING (autologous-at-1L vs allo/CAR-T that closed 1L vs later-line context).",
       "Q3 = an NDMM audit (other-cancer rate must be 0, since NDMM excludes those patients by construction) PLUS a POMA-1L vs other-1L other-cancer association on the BROAD cohort, de-confounded in the workbook (MM-adjacent codes dropped; pipeline untouched).",
       "Q4 = POMA-1L vs other-1L clinical-trial rate; clinical-trial is NOT an NDMM post-filter, so this stays a LIVE, confounder-clean comparison.",
-      "Q5 = LOT1-anchored NDMM proof (ce_ge_12mo_pre_lot1 / len_thal_in_12mo_pre_lot1, the 12-mo pre-LOT1 check) PLUS a parent-index supplemental scan for LEN/THAL before the 6-month baseline window.",
+      "Q5 = LOT1-anchored NDMM proof (ce_ge_12mo_pre_lot1 / len_thal_in_12mo_pre_lot1, the 12-mo pre-LOT1 check) PLUS a longer LEN/THAL look-back on the cohort's INDEX_DATE, which is the same date (the cohort sets INDEX_DATE = LOT1_START_DT).",
       "Operational definitions are shared with R/validation_qs.R (single source of truth)."),
     tables = list())
 
@@ -282,7 +285,8 @@ main <- function() {
       "Implication for Q5: oral LEN/THAL fills are OBSERVABLE (when adjudicated and on the code list), and the baseline",
       "MM-therapy exclusion already drops any baseline MM-therapy claim (medical or pharmacy). NDMM tightens this further - filter #4 excludes MM",
       "oncology therapy across the 12-month pre-LOT1 window - which is the PRIMARY check the Q5 tab reports (LOT1-anchored",
-      "columns). The parent 6-month look-back is a supplemental residual probe. Not observable: samples, cash-pay/out-of-plan",
+      "columns). The index-anchored columns beside them run the look-back back to the start of coverage; they are a longer",
+      "window on the same anchor, not a second one. Not observable: samples, cash-pay/out-of-plan",
       "fills, NDCs missing from the code list."),
     tables = list())
 
@@ -471,8 +475,10 @@ main <- function() {
   # The de-confounded rate is computed HERE IN THE WORKBOOK (the parent pipeline is
   # NOT touched): fraction of LOT1 patients with a baseline (6-mo pre-index) other-
   # cancer diagnosis CLAIM, shown BOTH including the MM-adjacent tumor groups
-  # (confounded) and excluding them (de-confounded: drop plasmacytoma / plasma-cell
-  # leukemia / MGUS / secondary bone - MM-spectrum, not a distinct second cancer).
+  # (confounded) and excluding them (de-confounded: drop plasmacytoma /
+  # plasma-cell leukemia / MGUS - MM-spectrum, not a distinct second cancer.
+  # Secondary neoplasm of bone is NOT dropped; the build treats it as
+  # metastatic cancer - see below).
   # Claim-presence basis - looser than the pipeline's confirmed >=1-IP-or->=2-OP
   # flag, so use it for the POMA-vs-other comparison and the MM-adjacent share.
   # Q3's association asks whether POMA use tracks with another cancer in the
@@ -581,7 +587,9 @@ main <- function() {
       "missing_flag_rows must also be 0: it counts NDMM 1L patients with NO row in NDMM_FLAGS_ALL (a broken join), not coerced to clean.",
       "BROAD COHORT (second table): the Q3 ask - is POMA-1L associated with the other cancers allowed in baseline? Only answerable",
       "on the broad cohort, since NDMM already removed those patients. pct_other_cancer_deconf DROPS the MM-adjacent codes",
-      "(plasmacytoma, plasma-cell leukemia, MGUS, secondary bone - MM-spectrum, not a second cancer); pct_incl_mm_adjacent keeps",
+      "(plasmacytoma, plasma-cell leukemia, MGUS - MM-spectrum, not a second cancer). Secondary neoplasm of bone is KEPT:",
+      "C79.51, C79.52 and 198.5 are metastatic cancer, and the cohort build excludes on them (nndm/DECISIONS.md section 4).",
+      "The list comes from the build's own NDMM_OTHER_MALIG_CODES, so it cannot drift from what the cohort did. pct_incl_mm_adjacent keeps",
       "them (confounded). Compare POMA-1L vs other-1L on the DE-CONFOUNDED column.",
       "Broad-cohort basis = a 6-mo pre-index diagnosis CLAIM - looser than the pipeline's confirmed >=1-IP-or->=2-OP flag, so it",
       "runs higher; and it uses a different window than the NDMM audit, so the two tables are NOT directly comparable."),
@@ -603,7 +611,14 @@ main <- function() {
   q5_tables <- list(); q5_notes <- character()
   if (have_final && n_poma > 0 && length(tokens$notes) &&
       !any(grepl("unavailable", tokens$notes, ignore.case = TRUE))) {
-    q5_tables[["POMA-1L: LOT1-anchored 12-mo pre-LOT1 check + parent-index supplemental"]] <- tryCatch(db_q(con, glue("
+    # The index columns are anchored on the cohort's INDEX_DATE, which this
+    # cohort sets to LOT1_START_DT - the same date as lot1_dt. So they are not
+    # a second, earlier window: they are a longer look-back on the same anchor
+    # (back to the start of the covering enrollment span), and a cross-check
+    # that the cohort's index and the LOT run's LOT1 start still agree. Named
+    # for what they measure rather than for a diagnosis anchor that is not
+    # what INDEX_DATE holds.
+    q5_tables[["POMA-1L: 12-mo pre-LOT1 check + full-history look-back"]] <- tryCatch(db_q(con, glue("
       WITH poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
                       WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{poma}')),
       lot1 AS (SELECT cast(PATID as string) PATID, min(cast(LOT_START_DT as date)) lot1_dt
@@ -650,11 +665,13 @@ main <- function() {
              sum(CASE WHEN ls.lot1_cov_start IS NOT NULL
                        AND datediff(ls.lot1_dt, ls.lot1_cov_start) >= 365 THEN 1 ELSE 0 END) AS ce_ge_12mo_pre_lot1,
              sum(coalesce(lf.len_thal_pre_lot1_12mo,0))                                  AS len_thal_in_12mo_pre_lot1,
-             -- Parent-index supplemental (6-mo pre-MM-dx window; reaches earlier than the parent flag)
+             -- Same anchor (the cohort sets INDEX_DATE = LOT1_START_DT), longer window:
+             -- coverage back to the start of the span, and any LEN/THAL fill in it up to
+             -- 6 months before index. Also a cross-check that the two dates still agree.
              count(x.PATID)                                                              AS poma_1l_with_index_span,
              sum(CASE WHEN x.cov_start IS NOT NULL
-                       AND datediff(x.INDEX_DATE, x.cov_start) > 183 THEN 1 ELSE 0 END)  AS obs_history_gt_6mo,
-             sum(coalesce(ef.pre_baseline_len_thal,0))                                   AS early_len_thal_pre_baseline
+                       AND datediff(x.INDEX_DATE, x.cov_start) > 183 THEN 1 ELSE 0 END)  AS ce_gt_6mo_pre_index,
+             sum(coalesce(ef.pre_baseline_len_thal,0))                                   AS len_thal_gt_6mo_pre_index
       FROM poma1l p LEFT JOIN idx_span x USING (PATID) LEFT JOIN early_flag ef USING (PATID)
                     LEFT JOIN lot1_span ls USING (PATID) LEFT JOIN lot1_flag lf USING (PATID)")),
       error = function(e) { q5_notes <<- paste("Q5 query failed:", conditionMessage(e)); NULL })
@@ -665,11 +682,15 @@ main <- function() {
       "- this is the LEN/THAL SUBSET of NDMM filter #4's no-prior-therapy window (filter #4 itself is broader: all",
       "non-steroid MM oncology therapy across medical PROC/BILL_PROC/NDC + rx NDC). It should be 0, since NDMM already",
       "excludes observable MM therapy in that window; a nonzero value flags a discrepancy to investigate.",
-      "PARENT-INDEX SUPPLEMENTAL (secondary; anchored on ELIG_COH_FINAL INDEX_DATE = 6-mo pre-MM-dx): obs_history_gt_6mo",
-      "and early_len_thal_pre_baseline extend the look-back to catch a LEN/THAL fill even BEFORE that 6-month window -",
-      "a residual blind-spot probe, NOT the NDMM proof.",
+      "INDEX-ANCHORED LOOK-BACK (secondary): the cohort sets INDEX_DATE = LOT1_START_DT, so these columns share the",
+      "anchor above - they are NOT an earlier, independent window. ce_gt_6mo_pre_index is a weaker form of",
+      "ce_ge_12mo_pre_lot1 (>6 months rather than >=12). len_thal_gt_6mo_pre_index runs the LEN/THAL scan from the START",
+      "of the covering enrollment span up to 6 months before index, so it reaches further back than the 12-month window",
+      "and overlaps it - read it as a longer look-back, not as a separate finding, and never add the two together.",
+      "Because the anchors are the same date, the pair also cross-checks them: poma_1l_with_index_span differing from",
+      "poma_1l_with_lot1_span means the cohort's INDEX_DATE and this LOT run's LOT1 start no longer agree.",
       "poma_1l_pts = full POMA-1L denominator; poma_1l_with_lot1_span / poma_1l_with_index_span = those with a continuous",
-      "span covering LOT1 / index (should match the denominator - if lower, investigate a LOT_LONG / ELIG_COH_FINAL / enrollment mismatch).",
+      "span covering LOT1 / index (should match the denominator - if lower, investigate a LOT_LONG / cohort / enrollment mismatch).",
       "Every Optum member has pharmacy benefit. Continuous spans are rebuilt from raw member_enrollment (<=30-day gaps).")
   } else {
     q5_notes <- if (n_poma == 0) "No POMA-at-1L patients - Q5 skipped." else
@@ -677,7 +698,8 @@ main <- function() {
   }
   add_sheet(name = "Q5 POMA & pharmacy benefit", title = "Q5 - POMA-1L pharmacy-benefit continuity + hidden LEN/THAL",
     subtitle = paste0("Read the LOT1-anchored columns (ce_ge_12mo_pre_lot1 / len_thal_in_12mo_pre_lot1) as the NDMM proof; ",
-                      "the parent-index columns are supplemental. See the 'Optum coverage' tab for the coverage validation."),
+                      "the index-anchored columns are a longer look-back on the SAME anchor, not a second window. ",
+                      "See the 'Optum coverage' tab for the coverage validation."),
     narrative = q5_notes, tables = q5_tables)
 
   # ---- write --------------------------------------------------------------
