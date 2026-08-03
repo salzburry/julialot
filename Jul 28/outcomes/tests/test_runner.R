@@ -67,16 +67,53 @@ ok(has(TTE, "datediff(least(TTNT_DT, FU_END_DT), LOT_START_DT)"),
    "the time is measured to the event or the censoring date, whichever is first")
 
 cat("\n-- the arithmetic, on cases rather than on the text --\n")
-# The same rule the SQL applies, in R, so a case can be reasoned about.
-tte <- function(start, nxt, death, fu_end) {
-  d <- function(x) if (is.null(x) || is.na(x)) as.Date("9999-12-31") else as.Date(x)
-  s <- as.Date(start); f <- as.Date(fu_end)
+# The event rule is LIFTED OUT OF THE GENERATED SQL and evaluated, not restated
+# here. A hand-written copy is a second implementation: it agrees with whatever
+# the author believed, passes, and says nothing about what the warehouse runs.
+# Changing the shipped boundary has to fail these.
+sql_cond <- function(sql, flag) {
+  # Cut at the flag, then back to the nearest CASE WHEN. Matching forwards from
+  # "CASE WHEN" takes the first one in the whole statement, which is in the
+  # base subquery - the extracted text was then several clauses of unrelated SQL.
+  head <- strsplit(sql, paste0("THEN 1 ELSE 0 END AS ", flag), fixed = TRUE)[[1]][1]
+  stopifnot(!is.na(head), nchar(head) < nchar(sql))
+  x <- sub("(?s)^.*CASE WHEN ", "", head, perl = TRUE)
+  x <- gsub("\n\\s*", " ", trimws(x))
+  x <- gsub("coalesce(", "cly(", x, fixed = TRUE)
+  x <- gsub("\\bAND\\b", "&", gsub("\\bNOT\\b", "!", gsub("\\bOR\\b", "|", x)))
+  gsub("(?<![<>!=])=(?!=)", "==", x, perl = TRUE)   # SQL = is R ==
+}
+cly <- function(...) { v <- c(...); v[!is.na(v)][1] }
+COND <- lapply(c(TTNT = "TTNT_EVENT", TTD = "TTD_EVENT", OS = "OS_EVENT"),
+               function(f) sql_cond(as.character(TTE), f))
+ok(all(vapply(COND, nzchar, logical(1))), "all three event rules lift out of the SQL")
+
+# fu_end is DERIVED, not supplied. The cohort clamps ENDDATE at the death date
+# (build_nndm.R: least(study_end, coalesce(DEATH_DT, study_end))), so a case
+# pairing a death with a later follow-up end is a row the cohort cannot write -
+# and it was the case that hid a strict boundary making every death a censoring.
+fu_end_of <- function(study_end, death, ce_end = NA) {
+  as.Date(min(c(as.Date(study_end),
+                if (!is.na(death))  as.Date(death),
+                if (!is.na(ce_end)) as.Date(ce_end))), origin = "1970-01-01")
+}
+SENT <- as.Date("9999-12-31")
+fire <- function(which, ...) {
+  e <- list2env(list(...), parent = environment())
+  isTRUE(eval(parse(text = COND[[which]]), envir = e))
+}
+tte <- function(start, nxt, death, study_end, ce_end = NA) {
+  d <- function(x) if (is.null(x) || is.na(x)) SENT else as.Date(x)
+  s <- as.Date(start); f <- fu_end_of(study_end, death, ce_end)
   ev <- min(d(nxt), d(death))
-  list(event = as.integer(ev < f), days = as.numeric(min(ev, f) - s))
+  list(event = as.integer(fire("TTNT", TTNT_DT = ev, FU_END_DT = f)),
+       days = as.numeric(min(ev, f) - s), fu_end = f)
 }
 a <- tte("2020-01-01", "2020-07-01", NA, "2021-01-01")
 ok(a$event == 1 && a$days == 182, "a next line inside follow-up is an event at its own date")
 b <- tte("2020-01-01", NA, "2020-04-10", "2021-01-01")
+ok(b$fu_end == as.Date("2020-04-10"),
+   "a death IS the follow-up end - the cohort clamps ENDDATE at it")
 ok(b$event == 1 && b$days == 100, "death with no next line is an event at the death date")
 d <- tte("2020-01-01", NA, NA, "2020-06-30")
 ok(d$event == 0 && d$days == 181, "neither: censored at the follow-up end")
@@ -87,6 +124,33 @@ f <- tte("2020-01-01", "2020-07-01", "2020-09-01", "2021-01-01")
 ok(f$event == 1 && f$days == 182, "next line before death: the earlier one wins")
 g <- tte("2020-01-01", "2020-09-01", "2020-07-01", "2021-01-01")
 ok(g$event == 1 && g$days == 182, "...and death before the next line, likewise")
+# Disenrolled, then died outside observation. The death is not an event: it was
+# never seen. This is the one case where a strict test happens to be right, and
+# the reason the fix is "on or before" rather than "on".
+h <- tte("2020-01-01", NA, "2020-09-01", "2021-01-01", ce_end = "2020-06-30")
+ok(h$fu_end == as.Date("2020-06-30") && h$event == 0 && h$days == 181,
+   "disenrolled before dying: censored at disenrolment, not an event")
+
+# OS and TTD, on their own lifted rules. OS was identically 0: a death IS the
+# follow-up end, so a strict test could never fire and the curve had no events.
+dth <- as.Date("2020-04-10")
+ok(fire("OS", OS_DT = dth, FU_END_DT = dth), "OS: a death on the follow-up end is an event")
+ok(!fire("OS", OS_DT = SENT, FU_END_DT = as.Date("2021-01-01")),
+   "OS: no death is not an event - the sentinel cannot reach the boundary")
+ok(!fire("OS", OS_DT = dth, FU_END_DT = as.Date("2020-01-31")),
+   "OS: a death after observation ended is still censoring")
+# TTD is the exception: a line whose own end IS the run-out did not end.
+fu <- as.Date("2026-03-31")
+ok(!fire("TTD", TTD_DT = fu, FU_END_DT = fu, LOT_END_DT = fu,
+         LOT_END_REASON = "STUDY_END"),
+   "TTD: a line still running when the study stopped is censored, not discontinued")
+dis <- as.Date("2025-11-02")
+ok(fire("TTD", TTD_DT = dis, FU_END_DT = fu, LOT_END_DT = dis,
+        LOT_END_REASON = "DISCONTINUATION"),
+   "TTD: a line that actually ended is an event at its end")
+ok(fire("TTD", TTD_DT = dth, FU_END_DT = dth, LOT_END_DT = dth,
+        LOT_END_REASON = "DEATH"),
+   "TTD: a line ended by death is an event, on the boundary")
 
 cat("\n-- the next line is the one that follows, not LOT_NUM + 1 --\n")
 # A gap in the numbering would read as "no next line" and censor a patient who
@@ -106,6 +170,12 @@ cat("\n-- the diagnosis date comes from the base cohort, not the cohort --\n")
 DX <- outcomes_tte_sql(outcomes_base_sql("s.LINES", "s.COH", "s.BASE"), "r1")
 ok(has(DX, "FROM s.BASE") && has(DX, "LEFT JOIN"),
    "the base cohort is joined for MM_DX_DT")
+# glue() trims a template's leading blank line, so the fragment began at the
+# "L" of LEFT and interpolating it straight after n.PATID emitted
+# "n.PATIDLEFT JOIN". The substring test above passes on that - "LEFT JOIN" is
+# still in there - so the join has to be checked where it attaches.
+ok(!has(DX, "n.PATIDLEFT"),
+   "...and the join is a separate token, not welded onto the column before it")
 ok(has(DX, "datediff(c.INDEX_DATE, x.MM_DX_DT) AS DX_TO_LOT1_DAYS"),
    "time to 1L is measured from the diagnosis to the cohort's 1L index")
 ok(has(DX, "LEFT JOIN"),
@@ -171,7 +241,8 @@ ok(has(bo, 'out_tbl("LOT_LONG_FINAL")') && has(bo, "wrk(cfg$input_cohort_table)"
 
 STATUS <- list(RUN_ID = "L1", STATE = "complete", UPDATED_AT = "t",
                INPUT_COHORT_TABLE = "sch.ndmm_NDMM_COHORT",
-               CONTRACT_DEVIATIONS = "")
+               STUDY_END = "2026-03-31", CONTRACT_DEVIATIONS = "")
+SE <- STATUS$STUDY_END
 mk <- function(lot = STATUS) {
   e <- new.env(parent = globalenv())
   assign("out_tbl", function(t) paste0("sch.ndmm_", t), envir = e)
@@ -182,11 +253,12 @@ mk <- function(lot = STATUS) {
   }, envir = e)
   f <- check_lot_run; environment(f) <- e; f
 }
-refuses <- function(f, why, what) {
-  m <- tryCatch({ f(NULL, "ndmm_", "ndmm_NDMM_COHORT"); "" }, error = conditionMessage)
+refuses <- function(f, why, what, se = SE) {
+  m <- tryCatch({ f(NULL, "ndmm_", "ndmm_NDMM_COHORT", se); "" }, error = conditionMessage)
   ok(nzchar(m) && grepl(why, m, fixed = TRUE), what)
 }
-runs(mk()(NULL, "ndmm_", "ndmm_NDMM_COHORT"), "a complete run over this cohort is accepted")
+runs(mk()(NULL, "ndmm_", "ndmm_NDMM_COHORT", SE),
+     "a complete run over this cohort is accepted")
 refuses(mk(modifyList(STATUS, list(STATE = "running"))), "is marked 'running'",
         "an unfinished LOT run is refused")
 refuses(mk(modifyList(STATUS, list(INPUT_COHORT_TABLE = "sch.other_COH"))),
@@ -194,6 +266,12 @@ refuses(mk(modifyList(STATUS, list(INPUT_COHORT_TABLE = "sch.other_COH"))),
 refuses(mk(modifyList(STATUS, list(CONTRACT_DEVIATIONS = "gap_days=60"))),
         "LOT_CONTRACT_OVERRIDE", "a run with a contract override is refused")
 refuses(mk(lot = NULL), "No LOT run is recorded", "no LOT run at all is refused")
+# The attrition split is decided by the study end and this package holds its own
+# copy. overall hardcodes 2025-06-30 and nndm pins 2026-03-31, so the two
+# cohorts in this folder disagree by construction - and running long scores
+# every still-treated patient as lost to follow-up with nothing logged.
+refuses(mk(), "2026-03-31", "a run built to a different study end is refused",
+        se = "2025-06-30")
 
 cat("\n-- the arguments are pinned the way the other packages pin them --\n")
 stops(pin_cohort(cfg_defaults, "", "ndmm_"), "a missing cohort table stops it")

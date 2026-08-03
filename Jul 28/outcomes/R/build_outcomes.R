@@ -93,7 +93,8 @@ outcomes_base_sql <- function(lines_tbl, cohort_tbl, base_tbl = NULL) {
            c.INDEX_DATE, c.DEATH_DT,
            {dx_cols},
            {FU_END_SQL} AS FU_END_DT
-    FROM nxt n INNER JOIN coh c ON c.PATID = n.PATID{dx_join}")
+    FROM nxt n INNER JOIN coh c ON c.PATID = n.PATID
+    {dx_join}")
 }
 
 # The three outcomes off that base. Each is a date and a 0/1, not a summary:
@@ -122,17 +123,28 @@ outcomes_tte_sql <- function(base_sql, run_id) {
            NEXT_LOT_NUM, NEXT_LOT_START_DT, DEATH_DT, FU_END_DT,
            MM_DX_DT, DX_TO_LOT1_DAYS,
 
-           CASE WHEN TTNT_DT < FU_END_DT THEN 1 ELSE 0 END AS TTNT_EVENT,
+           -- ON the follow-up end, not before it. Death IS the follow-up end
+           -- for anyone who dies inside the study window - the cohort clamps
+           -- ENDDATE at the death date - so a strict test made every death a
+           -- censoring and left OS with no events at all. An event after the
+           -- follow-up end is still censoring: those dates are the 9999-12-31
+           -- sentinel or a line the patient was never observed to reach.
+           CASE WHEN TTNT_DT <= FU_END_DT THEN 1 ELSE 0 END AS TTNT_EVENT,
            datediff(least(TTNT_DT, FU_END_DT), LOT_START_DT) AS TTNT_DAYS,
 
-           CASE WHEN TTD_DT  < FU_END_DT THEN 1 ELSE 0 END AS TTD_EVENT,
+           -- Except here: a line whose own end IS the run-out did not end,
+           -- the observation did. That is censoring however the dates fall.
+           CASE WHEN TTD_DT <= FU_END_DT
+                 AND NOT (coalesce(LOT_END_REASON, '') = 'STUDY_END'
+                          AND TTD_DT = LOT_END_DT)
+                THEN 1 ELSE 0 END AS TTD_EVENT,
            datediff(least(TTD_DT,  FU_END_DT), LOT_START_DT) AS TTD_DAYS,
 
-           CASE WHEN OS_DT   < FU_END_DT THEN 1 ELSE 0 END AS OS_EVENT,
+           CASE WHEN OS_DT <= FU_END_DT THEN 1 ELSE 0 END AS OS_EVENT,
            datediff(least(OS_DT,   FU_END_DT), LOT_START_DT) AS OS_DAYS,
 
            -- Why TTNT ended, so a curve can be read without re-deriving it.
-           CASE WHEN TTNT_DT >= FU_END_DT              THEN 'CENSORED'
+           CASE WHEN TTNT_DT >  FU_END_DT              THEN 'CENSORED'
                 WHEN NEXT_LOT_START_DT IS NOT NULL
                  AND (DEATH_DT IS NULL
                       OR NEXT_LOT_START_DT <= DEATH_DT) THEN 'NEXT_LOT'

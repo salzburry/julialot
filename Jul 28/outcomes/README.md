@@ -38,10 +38,17 @@ it cannot be recomputed or checked, and the curves are the study team's to fit.
 The index day does not count and the event day does — the protocol's "start
 date (excluded) … (included)" — which is a plain date difference.
 
-**An event at or after the follow-up end is not an event.** The patient ran out
-of observation rather than reaching the outcome, so it censors. That is written
-once so all three treat the boundary the same way, and `TTNT_REASON` records
-which of `NEXT_LOT`, `DEATH` or `CENSORED` ended each row.
+**An event *after* the follow-up end is not an event** — the patient ran out of
+observation rather than reaching the outcome, so it censors. An event **on** the
+follow-up end is one. Death is the case that matters: the cohort clamps
+`ENDDATE` at the death date, so for anyone who dies inside the study window the
+death *is* the follow-up end. A strict boundary made every death a censoring and
+left `OS_EVENT` identically 0 — an OS curve with no events on it. `TTNT_REASON`
+records which of `NEXT_LOT`, `DEATH` or `CENSORED` ended each row.
+
+`TTD` is the one exception. A line whose own end is the run-out did not end —
+the observation did — so a line carrying `LOT_END_REASON = 'STUDY_END'` censors
+at that date rather than counting as a discontinuation.
 
 ### Follow-up end
 
@@ -122,9 +129,16 @@ run to read.
 
 The same run-ownership rule every reader in this folder uses. The newest
 `LOT_BUILD_STATUS` row has to be `complete`, built from the cohort named on the
-command line, and carry no `CONTRACT_DEVIATIONS`. None of it is waivable — this
-package does arithmetic on a finished run, and if the run cannot be identified
-there is no reading of these numbers worth having.
+command line, carry no `CONTRACT_DEVIATIONS`, and name the **same `STUDY_END`**
+this package is set to. None of it is waivable — this package does arithmetic on
+a finished run, and if the run cannot be identified there is no reading of these
+numbers worth having.
+
+The study end is checked because the attrition split turns on it, and this
+package holds its own copy. The two cohort builds in this folder disagree by
+construction — `nndm` pins `2026-03-31`, `overall` uses `2025-06-30` — so an
+unchecked copy running long would score every still-treated patient as lost to
+follow-up, with the five categories still summing correctly and nothing logged.
 
 A line can be absent from `OUT_TTE` for two reasons, and they are counted
 separately: its patient is not in the cohort at all, or the line starts after

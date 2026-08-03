@@ -34,7 +34,7 @@ find_base_cohort <- function(con) {
 # The LOT run that last wrote the tables, whatever state it reached - the same
 # rule every other reader in this folder uses, and for the same reason: a build
 # replaces its outputs before it validates them, so the newest row owns them.
-check_lot_run <- function(con, prefix, cohort_table) {
+check_lot_run <- function(con, prefix, cohort_table, study_end) {
   tbl <- out_tbl("LOT_BUILD_STATUS")
   d <- tryCatch(db_q(con, glue(
     "SELECT * FROM {tbl} ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) NULL)
@@ -61,6 +61,17 @@ check_lot_run <- function(con, prefix, cohort_table) {
   if (!is.na(dev) && nzchar(trimws(dev)))
     stop("That LOT run was built with LOT_CONTRACT_OVERRIDE (", dev,
          "), so its lines are an alternative algorithm's.", call. = FALSE)
+  # The attrition split is decided by the study end, and this package holds its
+  # own copy of it. lot writes the window it ran to onto the status row for
+  # exactly this reason, so ask rather than assume: an unchecked copy silently
+  # scores every still-treated patient as lost to follow-up when it runs long.
+  se  <- trimws(pick("STUDY_END"))
+  ask <- trimws(as.character(study_end))
+  if (!is.na(se) && nzchar(se) && !identical(se, ask))
+    stop("That LOT run was built to STUDY_END ", se, " and this package is ",
+         "set to ", ask, ". The attrition split reads the study end to tell a ",
+         "patient who disenrolled from one the study stopped observing, so ",
+         "the two have to be the same window.", call. = FALSE)
   log_msg("LOT run ", pick("RUN_ID"), " completed over ",
           pick("INPUT_COHORT_TABLE"))
   invisible(TRUE)
@@ -108,7 +119,7 @@ build_outcomes <- function(here, cohort_table, prefix) {
   log_msg("  cohort ", cfg$input_cohort_table, ", LOT prefix ", cfg$object_prefix)
   log_msg("  run ", run_id)
   log_msg(SEP)
-  check_lot_run(con, cfg$object_prefix, cfg$input_cohort_table)
+  check_lot_run(con, cfg$object_prefix, cfg$input_cohort_table, cfg$study_end)
 
   lines  <- out_tbl("LOT_LONG_FINAL")
   cohort <- wrk(cfg$input_cohort_table)
