@@ -231,10 +231,20 @@ written out per pair: pinned to five, a run that built six would lose LOT5→LOT
 with nothing saying so, and one that built three would draw two empty panels.
 
 `MAX_LOT` here is a second copy of the LOT build's setting, so `check_max_lot()`
-asks the data — `max(LOT_NUM)` — rather than trusting it. Below what was built
-is a **warning**: those moves are in the tables and on no panel, which is a
-missing answer nobody can see is missing. Above it is a note, since empty panels
-are noise rather than a wrong number. Neither stops the run.
+compares it with **that run's own** — the LOT build records its contract in
+`LOT_RUN_METADATA`, `max_lot` included, so the setting is checked against the
+setting. A disagreement is a warning: a run configured to LOT6 while this says 5
+leaves LOT5→LOT6 in the tables and on no panel, which is a missing answer nobody
+can see is missing.
+
+**How far patients got is a different question, and not a problem.** If nobody
+reaches LOT5, the LOT4→LOT5 panel showing every patient flowing into `No LOT5`
+*is* the finding — lowering `MAX_LOT` to match would delete the panel carrying
+it. Reading the observed maximum as the configured one would have advised
+exactly that, so only a run with no recorded contract falls back to
+`max(LOT_NUM)`, and then only warns in the direction that loses a panel.
+
+Nothing here stops the run.
 
 **Every `LOT{a}` patient is in the chart**, including those who never reached
 `LOT{b}` — they flow to a terminal `No LOT{b}` node. So the ribbons leaving a
