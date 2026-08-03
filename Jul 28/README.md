@@ -38,6 +38,12 @@ their index dates are line starts, so lot has to have found the lines first.
 DATABRICKS_PWD=... Rscript nndm/build_subsequent_cohorts.R ndmm_
 ```
 
+The outcomes read a finished LOT run and add nothing to it:
+
+```
+DATABRICKS_PWD=... Rscript outcomes/build.R ndmm_NDMM_COHORT ndmm_
+```
+
 Each package has a README with its own settings, outputs and checks. Read that
 one before running it.
 
@@ -50,6 +56,7 @@ one before running it.
 | `lot/` | lines of therapy. `build.R <COHORT_TABLE> <prefix_>`. |
 | `dashboard/` | one self-contained HTML. `build.R <COHORT_TABLE> <lot_prefix_>`. Reads only. |
 | `questions/` | scripts, not a build. Each reads one finished LOT run and writes CSVs or a workbook. They reuse `lot/`'s modules rather than a second copy. |
+| `outcomes/` | treatment patterns and treatment-related outcomes — TTNT, TTD, OS, attrition. `build.R <COHORT_TABLE> <lot_prefix_>`. Reads only. |
 | `lot_validation/` | checks the LOT rules. Needs a finished LOT run for some of it; the sensitivity sweep builds its own throwaway runs. Not part of a study run. |
 | `tools/` | a utility that edits a production code list on request. Not a study stage. |
 
@@ -105,6 +112,7 @@ Rscript nndm/tests/test_runner.R          # and test_same_as_overall.R,
 Rscript lot/tests/test_runner.R           # and test_line_criteria.R
 Rscript dashboard/tests/test_runner.R
 Rscript questions/tests/test_setup.R
+Rscript outcomes/tests/test_runner.R
 Rscript tools/tests/test_remove_steroids.R
 Rscript lot_validation/tests/test_vignettes.R      # and test_sensitivity.R,
                                                    # test_benchmarks.R,
