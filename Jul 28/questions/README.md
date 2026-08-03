@@ -103,6 +103,36 @@ answering it from this run would be near-zero by construction and mean nothing.
 Set `BROAD_PREFIX` to the prefix of a LOT run over the broad cohort. Without it
 that half is skipped and says so; the audit still runs.
 
+Readable is not ownership there either. That run replaces `LOT_LONG_FINAL`
+before it validates it, so a rerun that replaced it and then failed leaves
+lines that read perfectly well and were never checked.
+`qs_broad_run_state()` reads its status the same way this run's is read — the
+latest row, whatever state — and an unfinished one skips the association rather
+than stopping the workbook, since the audit and every other tab are over this
+run's tables. `QS_IGNORE_BROAD_BUILD_STATE=TRUE` overrides.
+
+The same row names the cohort that run was built from, and the Q3 tab prints
+it, so "the broad cohort" means a population rather than whatever happens to
+sit under the prefix.
+
+### And the vintage it read
+
+Q3 takes lines and index dates from the broad run, then scans the raw CDM
+**itself** for baseline diagnoses — and `cdm_src()` resolves the quarterly
+suffix from `cfg$study_end`, this run's setting, not that run's. The
+quarterlies are cumulative, so a later vintage carries corrections and
+late-arriving claims the broad run never saw.
+
+`LOT_BUILD_STATUS` now records `STUDY_END`, which is what makes that
+detectable rather than merely declarable. `qs_vintage_note()` compares it with
+the value these questions are configured for and, when they differ, says so —
+in the log for this run's own binding, and on the Q3 tab, where the mixed
+vintages actually meet.
+
+A sentence, not a refusal: the newer vintage is usually the better data. But a
+number that is not what that run would have produced should say so rather than
+be quoted as though it were.
+
 Its index dates come from that run's own `LOT_PATIENT_INPUT`, not from this
 cohort. Taking them from here would drop every broad patient the NDMM
 exclusions removed out of the index join — they would stay in the denominator
@@ -129,20 +159,68 @@ unresolved column part way through the workbook. `qs_trial_flags_ready()`
 therefore checks the **columns**, and names the missing ones instead.
 
 ```
-TRIAL_PREFIX=overall_    # the prefix of the build that wrote the flags
+TRIAL_PREFIX=overall_                  # prefix of the build that wrote the flags
+TRIAL_INDEX_TABLE=OVERALL_COH_FINAL    # that build's final cohort table (the default)
 ```
 
-Blank falls back to this run's prefix, which is right when the cohort came from
-the broad build itself. Otherwise the flags carry that build's prefix, not this
-run's, so it has to be named.
+Two settings, because the two tables are named differently.
+`ELIG_COH_ALLFLAGS` is a **checkpoint**, so that build writes it through its
+prefixing helper and it comes out `overall_ELIG_COH_ALLFLAGS`. The final cohort
+is **not** a checkpoint: `08_assembly.R` persists it straight from that build's
+`FINAL_TABLE_NAME` with no prefix at all, and `overall/config.csv` sets that to
+`OVERALL_COH_FINAL`. Deriving `<prefix>ELIG_COH_FINAL` asks for a table the
+build never writes.
+
+`TRIAL_PREFIX` blank falls back to this run's prefix, which is right when the
+cohort came from the broad build itself.
 
 Aligning those flags to the NDMM cohort does not work either, and fails
 quietly: the broad build's index is a diagnosis-based candidate, while
 `NDMM_COHORT.INDEX_DATE` is the LOT1 start. The join would match almost nothing
-and read as nobody being flagged. So the flags join to their **own**
-`ELIG_COH_FINAL`, and the LOT population restricts the result by `PATID`. The
-consequence is stated on the Q4 tab: baseline there means pre-diagnosis-index,
-not pre-LOT1.
+and read as nobody being flagged. So the flags join to their **own** final
+cohort table, and the LOT population restricts the result by `PATID`.
+
+### The build behind them has to have finished
+
+The flags and the final cohort are **separate writes**. A run that stopped
+between them leaves two tables that are individually readable and carry every
+column, describing different attempts — the column check cannot see that.
+
+So `qs_trial_build_state()` reads `<TRIAL_PREFIX>build_status` first. That build
+writes it with `CREATE OR REPLACE`, so it holds one row and that row is the last
+run on the prefix; anything but `complete` skips the trial sections rather than
+answering from a mixed pair. `QS_IGNORE_TRIAL_BUILD_STATE=TRUE` overrides when
+you know it failed before writing either. No status table warns and continues —
+an older build predates it.
+
+That row also records `final_table_name`, which settles `TRIAL_INDEX_TABLE`
+properly: the default comes from a config file this package does not read, so a
+disagreement names the table that build actually wrote instead of leaving you to
+guess.
+
+The two builds do not agree on column case — LOT writes `STATE`, the broad build
+`state` — so both status tables are read case-insensitively. A bare `d$STATE`
+returns `NULL` on the lower-case one, which reads as no state recorded rather
+than as looking in the wrong place.
+
+### What that costs, stated on the tab
+
+The flag build is a **different cohort** — different index, study end, baseline
+window and criteria — so some NDMM LOT1 patients simply are not in it. Q4
+therefore keeps the full NDMM group as `n_pts` and reports `n_matched` /
+`pct_matched` beside it, with every rate over `n_matched`. An inner join would
+have dropped the unmatched patients silently, and a loss falling differently on
+POMA and other-1L would make the rates a comparison of who is in the second
+cohort. If `pct_matched` differs much between the groups, that row is the
+finding.
+
+And neither flag brackets the window the prior-therapy question needs.
+`CLINTRIAL_BASELINE` runs to the day before that build's diagnosis index, so it
+misses the whole diagnosis-to-LOT1 stretch; `CLINTRIAL_FOLLOWUP` starts on that
+index and runs past LOT1, so it mixes pre-LOT1 with post-treatment evidence.
+Q4 says so and headlines neither — answering "was POMA-at-LOT1 really first
+line" needs trial timing relative to LOT1, which these two summary flags do not
+carry.
 
 ## The cohort table is checked against the run
 
@@ -155,6 +233,15 @@ windows and index dates — so the wrong one answers about a run it never saw.
 `LOT_BUILD_STATUS` for this prefix, and stops on a mismatch. A status table
 that cannot be read warns instead: an older run may predate it, and refusing to
 answer would be worse than saying the binding is unverified.
+
+It reads the **latest** row, whatever state it reached — not the latest
+`complete` one. LOT replaces `LOT_LONG_FINAL` before it validates it, so a
+rerun that replaced it and then failed leaves its own table on disk while the
+previous run's complete row still looks like the newest good one. Filtering to
+completed runs would bind these answers to a run whose tables have since been
+overwritten, which is the case the guard exists for. An unfinished latest run
+stops the script; `QS_IGNORE_BUILD_STATE=TRUE` overrides when you know it failed
+before writing anything. The dashboard resolves ownership the same way.
 
 ## A criterion that removes patients changes what a question can be asked of
 

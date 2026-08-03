@@ -634,6 +634,21 @@ file whose hash cannot be taken stops the run rather than being recorded as
 `complete`, or `failed` if it stops after that. Read it before trusting a set
 of tables.
 
+It also carries `STUDY_END`, because that picks the quarterly CDM table this
+run read and the quarterlies are cumulative. Anything that reads these outputs
+and then goes back to the raw CDM itself — the question scripts do, for
+baseline diagnosis windows — resolves that suffix from its own setting, so a
+different `STUDY_END` pairs this run's patients and index dates with a later
+vintage of their claims. The table name alone cannot show that; the date makes
+it checkable.
+
+One declaration (`BUILD_STATUS_COLS`) drives the `CREATE`, the `ALTER` that
+adds a column an older table lacks, and the `INSERT`, with a `stopifnot` tying
+them together — so a column added to the list without a value stops the build
+instead of reaching the warehouse. Readers should `SELECT *` rather than name
+columns: a table written before a column existed does not have it, and naming
+it turns an older run's status into an unreadable table.
+
 Preflight - the settings, the contract, the connection, the cohort table -
 runs before the first status row, so a run that fails there leaves no row at
 all rather than a `failed` one. Nothing has been written by then.

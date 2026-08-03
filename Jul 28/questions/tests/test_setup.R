@@ -27,7 +27,9 @@ stops <- function(expr, what) ok(!is.null(tryCatch({ expr; NULL },
 
 VARS <- c("PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME", "DOMINO_STARTING_USERNAME",
           "OBJECT_PREFIX", "QS_ALLOW_NO_PREFIX", "INPUT_COHORT_TABLE",
-          "LOT_POPULATION", "LOT_COHORT", "BROAD_PREFIX", "TRIAL_PREFIX")
+          "LOT_POPULATION", "LOT_COHORT", "BROAD_PREFIX", "TRIAL_PREFIX",
+          "TRIAL_INDEX_TABLE", "QS_IGNORE_BUILD_STATE",
+          "QS_IGNORE_TRIAL_BUILD_STATE", "QS_IGNORE_BROAD_BUILD_STATE")
 clear <- function() for (v in VARS) Sys.unsetenv(v)
 
 cat("\n-- sourcing it is enough to break it, so source it --\n")
@@ -226,16 +228,34 @@ invisible(qs_setup(ROOT))
 tf <- qs_trial_flags()
 ok(!grepl("NDMM_FLAGS_ALL", tf$flags, fixed = TRUE),
    "the trial flags never resolve to the cohort build's exclusion audit")
-ok(grepl("ndmm_ELIG_COH_ALLFLAGS$", tf$flags) &&
-   grepl("ndmm_ELIG_COH_FINAL$", tf$index) && !tf$named,
+ok(grepl("ndmm_ELIG_COH_ALLFLAGS$", tf$flags) && !tf$named,
    "...blank falls back to this prefix, which is right when the broad build made the cohort")
 # The flags carry the prefix of the build that wrote them, which need not be
 # the prefix of the LOT run being asked about.
 Sys.setenv(TRIAL_PREFIX = "overall_")
 tf <- qs_trial_flags()
-ok(grepl("overall_ELIG_COH_ALLFLAGS$", tf$flags) &&
-   grepl("overall_ELIG_COH_FINAL$", tf$index) && tf$named,
+ok(grepl("overall_ELIG_COH_ALLFLAGS$", tf$flags) && tf$named,
    "...and another build's prefix can be named, since it is not this run's")
+# The two tables are NOT named the same way. ELIG_COH_ALLFLAGS is a checkpoint,
+# so it is written prefixed. The final cohort is persisted straight from that
+# build's FINAL_TABLE_NAME with no prefix at all - overall/config.csv sets it
+# to OVERALL_COH_FINAL. Deriving <prefix>ELIG_COH_FINAL asks for a table the
+# build never writes.
+ovc <- readLines(file.path(dirname(ROOT), "overall", "config.csv"), warn = FALSE)
+ok(any(grepl("^FINAL_TABLE_NAME,OVERALL_COH_FINAL", ovc)),
+   "the broad build names its final cohort OVERALL_COH_FINAL, not ELIG_COH_FINAL")
+asm <- readLines(file.path(dirname(ROOT), "overall", "R", "steps", "08_assembly.R"),
+                 warn = FALSE)
+ok(any(grepl("full_name(cfg$personal_schema, cfg$final_table_name)", asm, fixed = TRUE)),
+   "...and persists it unprefixed, which is why it cannot be derived from TRIAL_PREFIX")
+ok(grepl("OVERALL_COH_FINAL$", tf$index) && !grepl("overall_OVERALL", tf$index),
+   "so the index table defaults to that name and takes no prefix")
+Sys.setenv(TRIAL_INDEX_TABLE = "MY_COH_FINAL")
+ok(grepl("[.]MY_COH_FINAL$", qs_trial_flags()$index),
+   "...and a build configured with another FINAL_TABLE_NAME can name it")
+Sys.setenv(TRIAL_INDEX_TABLE = "x; DROP TABLE y")
+stops(qs_trial_flags(), "...validated like every other configurable name")
+Sys.unsetenv("TRIAL_INDEX_TABLE")
 Sys.setenv(TRIAL_PREFIX = "x; DROP TABLE y")
 stops(qs_trial_flags(), "...validated like every other configurable prefix")
 Sys.unsetenv("TRIAL_PREFIX")
@@ -267,6 +287,113 @@ for (f in c("poma_studyteam_qs.R", "lot1_studyteam_qs.R")) {
   ok(!any(grepl("{final_tbl} e ON", ln, fixed = TRUE)),
      paste0("...and does not align that build's flags to this cohort's INDEX_DATE"))
 }
+# The flag build is a different cohort. An inner join dropped the LOT1 patients
+# it does not have, silently, and a loss that falls differently on POMA and
+# other-1L makes the rates a comparison of who is in the second cohort.
+pm <- readLines(file.path(ROOT, "poma_studyteam_qs.R"), warn = FALSE)
+ok(any(grepl("FROM lot1 l LEFT JOIN f USING (PATID)", pm, fixed = TRUE)),
+   "Q4 keeps the full NDMM group as the denominator rather than inner-joining it away")
+ok(any(grepl("AS n_matched", pm, fixed = TRUE)) &&
+   any(grepl("AS pct_matched", pm, fixed = TRUE)),
+   "...and shows the overlap, so a low rate can be told from a small overlap")
+# Q4's rates only. Q3's two tables denominate on their own full population by
+# construction, and the NDMM audit reports its unmatched rows as a column.
+ok(sum(grepl("nullif(count(f.PATID),0)", pm, fixed = TRUE)) >= 3,
+   "...with Q4's rates over the matched count, not the unmatched-inflated one")
+# Neither flag brackets the pre-LOT1 window: baseline ends before that build's
+# diagnosis index, follow-up starts there and runs past LOT1.
+ok(!any(grepl("HEADLINE on n_trial_baseline", pm, fixed = TRUE)),
+   "...and baseline is no longer headlined as the prior-unobserved-therapy signal")
+
+cat("\n-- the questions bind to the run that last wrote the tables --\n")
+# Not the newest COMPLETE run. LOT replaces LOT_LONG_FINAL before validating
+# it, so a rerun that replaced it and then failed leaves its table on disk
+# while the previous complete row still looks like the newest good one - which
+# is the case the guard exists for. The dashboard resolves ownership this way.
+st <- readLines(file.path(ROOT, "_setup.R"), warn = FALSE)
+ok(!any(grepl("upper(STATE) = 'COMPLETE'", st, fixed = TRUE)),
+   "the binding does not filter to completed runs before taking the latest")
+ok(any(grepl("ORDER BY UPDATED_AT DESC LIMIT 1", st, fixed = TRUE)) &&
+   any(grepl("QS_IGNORE_BUILD_STATE", st, fixed = TRUE)),
+   "...it takes the latest row whatever state it reached, and stops on an unfinished one")
+dsh <- readLines(file.path(dirname(ROOT), "dashboard", "R", "db_utils_dash.R"),
+                 warn = FALSE)
+ok(any(grepl("DASH_IGNORE_BUILD_STATE", dsh, fixed = TRUE)),
+   "...the same way the dashboard does, for the same reason")
+
+cat("\n-- and the build behind the trial flags has to have finished --\n")
+# The flags and the final cohort are separate writes. A run that stopped
+# between them leaves two tables that are individually readable and carry every
+# column, describing different attempts - columns alone cannot see that.
+bc <- readLines(file.path(dirname(ROOT), "overall", "R", "build_cohort.R"),
+                warn = FALSE)
+ok(any(grepl('paste0(tolower(cfg$object_prefix), "build_status")', bc, fixed = TRUE)),
+   "the broad build records how it ended, under its own prefix")
+ok(any(grepl("CREATE OR REPLACE TABLE ", bc, fixed = TRUE)) &&
+   any(grepl('q(state), " AS state, "', bc, fixed = TRUE)),
+   "...one row, replaced each run, so that row is the last run on the prefix")
+ok(any(grepl('q(cfg$final_table_name), " AS final_table_name, "', bc, fixed = TRUE)),
+   "...and it records the final table it wrote, which is checkable")
+ok(any(grepl("qs_trial_build_state(con, src)", st, fixed = TRUE)),
+   "so the trial source is asked for that before its columns are trusted")
+ok(any(grepl("QS_IGNORE_TRIAL_BUILD_STATE", st, fixed = TRUE)),
+   "...with an override for a build known to have failed before writing either")
+# TRIAL_INDEX_TABLE defaults to a name from a config file this package does not
+# read. The build's own record of what it wrote settles it.
+ok(any(grepl('"TRIAL_INDEX_TABLE resolves to "', st, fixed = TRUE)),
+   "...and a default that disagrees with what the build wrote names the right table")
+# The two builds disagree on column case - LOT writes STATE, the broad build
+# state. A bare d$STATE is NULL on the latter, which reads as no state at all.
+ok(any(grepl("qs_col <- function(d, name)", st, fixed = TRUE)) &&
+   !any(grepl("got$STATE", st, fixed = TRUE)) &&
+   !any(grepl("d$state[1]", st, fixed = TRUE)),
+   "both status tables are read case-insensitively, since they do not agree on case")
+
+cat("\n-- and so does the broad run behind Q3's association --\n")
+# Readable is not ownership there either: that run replaces LOT_LONG_FINAL
+# before validating it, so a rerun that replaced it and then failed leaves
+# lines that read perfectly well and were never checked.
+ok(any(grepl("qs_lot_run_row(con, prefix)", st, fixed = TRUE)),
+   "the two LOT status reads are one helper, so the broad prefix gets the same rule")
+ok(!any(grepl("qs_tbl(\"LOT_BUILD_STATUS\")", st, fixed = TRUE)),
+   "...rather than the binding check being hardcoded to this run's prefix")
+ok(any(grepl("qs_broad_run_state(con, broad_pfx)", pm, fixed = TRUE)),
+   "Q3 asks whether the broad run finished before reading its lines")
+ok(any(grepl("QS_IGNORE_BROAD_BUILD_STATE", st, fixed = TRUE)),
+   "...with its own override, for a broad run known to have failed early")
+# Skips that half, not the workbook: the audit and every other tab are over
+# this run's tables and do not depend on the broad one.
+ok(any(grepl("Q3 association: skipped - ", pm, fixed = TRUE)) &&
+   any(grepl("The NDMM audit below still runs.", pm, fixed = TRUE)),
+   "...and an unfinished broad run costs that half only")
+# "The broad cohort" should name a population, not a prefix.
+ok(any(grepl("BROAD RUN: lines and index dates from prefix", pm, fixed = TRUE)),
+   "...and the tab says which cohort that run was built from")
+
+cat("\n-- a run records the CDM vintage it read --\n")
+# STUDY_END picks the quarterly table and the quarterlies are cumulative. Q3
+# takes lines and index dates from the broad run, then scans the raw CDM itself
+# at THIS run's vintage - so a different STUDY_END pairs that run's patients
+# with a later version of their claims. Without the date recorded the mismatch
+# could only be declared, never detected.
+bl <- readLines(file.path(dirname(ROOT), "lot", "R", "build_lot.R"), warn = FALSE)
+ok(any(grepl('STATE = "STRING", STUDY_END = "STRING"', bl, fixed = TRUE)),
+   "the LOT build records STUDY_END in its status table")
+ok(any(grepl('STUDY_END                  = glue("\'{cfg$study_end}\'")', bl, fixed = TRUE)),
+   "...and writes the run's own value, not a default")
+# One declaration drives CREATE, the ALTER-to-add and the INSERT, so a column
+# added to the list with no value stops the build rather than reaching the
+# warehouse. That check is what makes adding one safe.
+ok(any(grepl("stopifnot(identical(names(vals), cols))", bl, fixed = TRUE)),
+   "...and the three uses of that list are still held together")
+# An older run's table predates the column. Naming it in the SELECT would make
+# that table unreadable, which reads as no run recorded at all.
+ok(any(grepl("SELECT * FROM {tbl} ORDER BY UPDATED_AT DESC LIMIT 1", st, fixed = TRUE)),
+   "the questions read the status row without naming a column older runs lack")
+ok(any(grepl("qs_vintage_note", st, fixed = TRUE)),
+   "...and compare it with the vintage they are configured for")
+ok(any(grepl('paste0("VINTAGE: ", broad$vintage)', pm, fixed = TRUE)),
+   "...with Q3 carrying the mismatch onto the tab, since that is where it bites")
 
 cat("\n-- Q3 takes its lines and its index dates from the same run --\n")
 # Index dates from the NDMM cohort would drop every broad patient the NDMM
