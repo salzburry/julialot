@@ -108,6 +108,16 @@ main <- function() {
   trial_idx  <- trial$src$index
   have_flags <- isTRUE(trial$ok)
   if (!have_flags) log_msg("WARNING: ", trial$why)
+  # Q1c's trial answer comes from the cohort build's own 1L-anchored flag when
+  # it is there. Two scripts in one folder giving two different trial numbers
+  # for the same POMA-1L patients is the drift this package keeps guarding
+  # against - and the diagnosis-anchored pair cannot answer what Q1c is asked,
+  # since its baseline stops before that index and its follow-up runs past 1L.
+  ndmm_trial <- qs_ndmm_trial_flags(con)
+  if (!isTRUE(ndmm_trial$ok))
+    log_msg("  Q1c: ", ndmm_trial$why,
+            " Falling back to the diagnosis-anchored flags, which cannot say ",
+            "whether the evidence preceded LOT1.")
 
   # ---- POMA-at-1L base set (delivered cohort) -------------------------
   poma <- db_q(con, glue("
@@ -151,6 +161,29 @@ main <- function() {
   # different cohort with a different index, study end and criteria, so some
   # POMA-1L patients are simply not in it. Reported against n_poma below so a
   # small count reads as a small overlap rather than as a low flag rate.
+  if (have_poma && isTRUE(ndmm_trial$ok)) {
+    tr <- db_q(con, glue("
+      SELECT count(*)                                    AS n_poma_with_flag_row,
+             sum(CLINTRIAL_DX_TO_LOT1)                   AS n_trial_dx_to_lot1,
+             sum(CLINTRIAL_PRE_LOT1_12MO)                AS n_trial_12mo_pre_lot1,
+             sum(CLINTRIAL_PRE_DX)                       AS n_trial_pre_dx,
+             sum(CLINTRIAL_POST_LOT1)                    AS n_trial_post_lot1,
+             percentile_approx(CLINTRIAL_DX_TO_LOT1_DAYS, 0.5) AS median_days_dx_to_lot1
+      FROM {ndmm_trial$table}
+      WHERE cast(PATID as string) IN ({poma_ids})"))
+    write_out(tr, "q1c_poma_trial_1l_anchored")
+    log_msg(sprintf(
+      paste0("  Q1c (1L-anchored, %s): of %s POMA-1L patients, %s have a flag row. ",
+             "Trial evidence diagnosis-to-1L %s (median %s days before 1L), 12mo pre-1L %s, ",
+             "pre-diagnosis %s, at-or-after 1L %s. Claims-based evidence, not proof of therapy."),
+      ndmm_trial$table, n_poma, tr$n_poma_with_flag_row[1],
+      tr$n_trial_dx_to_lot1[1], tr$median_days_dx_to_lot1[1],
+      tr$n_trial_12mo_pre_lot1[1], tr$n_trial_pre_dx[1], tr$n_trial_post_lot1[1]))
+  }
+
+  # The diagnosis-anchored view. Kept for OTHER_MALIGN_FLAG, which has no
+  # 1L-anchored equivalent, and as context for a cohort built before the flag
+  # existed - never as the trial answer when the 1L-anchored one is there.
   if (have_poma && have_flags) {
     flg <- db_q(con, glue("
       WITH f AS (
@@ -171,9 +204,10 @@ main <- function() {
     "))
     write_out(flg, "q1ac_poma_flags")
     log_msg(sprintf(
-      paste0("  Q1a/Q1c: %s of %s POMA-1L patients are in %s. Of those - other-cancer %s, clinical-trial %s (BL %s / FU %s). ",
-             "Rates are over the %s matched, on that build's diagnosis-based index, NOT the LOT1 start: baseline stops before ",
-             "that index and follow-up runs past LOT1, so neither says whether therapy came before LOT1."),
+      paste0("  Q1a (+ diagnosis-anchored trial, context): %s of %s POMA-1L patients are in %s. Of those - other-cancer %s, ",
+             "clinical-trial %s (BL %s / FU %s). Rates are over the %s matched, on that build's diagnosis-based index, NOT the ",
+             "LOT1 start: baseline stops before that index and follow-up runs past LOT1, so neither says whether evidence ",
+             "preceded LOT1. Read the 1L-anchored Q1c line above for that; other-cancer has no 1L-anchored equivalent."),
       flg$n_poma_in_allflags[1], n_poma, allflags,
       flg$n_other_malig[1], flg$n_clintrial_any[1],
       flg$n_clintrial_baseline[1], flg$n_clintrial_followup[1],

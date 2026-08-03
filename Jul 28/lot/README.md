@@ -178,6 +178,78 @@ one, and these are built from temp views.
   `LOT_LONG_ALLFLAGS` needs no equivalent - the layer only adds columns to it,
   so its rows are `LOT_LONG`'s whatever is declared.
 
+## The funnel
+
+`<prefix>LOT_ATTRITION`, one row per step, patients and lines:
+
+| step | `KIND` | |
+|---|---|---|
+| 1 | `input` | cohort patients handed to LOT |
+| 2 | `reconciliation` | with a mapped MM therapy episode |
+| 3 | `reconciliation` | with LOT1 built |
+| 4.. | `criterion` | one row per enabled `truncate` criterion, cumulative |
+| | `final` | the study population, `LOT_LONG_FINAL` |
+| last | `progression` | reached LOT1, LOT2, … to `MAX_LOT` |
+
+Each row carries `PCT_OF_START` and `PCT_OF_PREV`. For most rows the second is
+the number being asked for: a criterion's own cost, and — for the progression
+rows — the share of one line's patients who go on to the next.
+
+**Not every row is attrition, and `KIND` says which is which.**
+
+A cohort whose index is a *treatment* qualifier has already found the claim
+`lot` is about to find again. NDMM's is: its funnel step 3 is "eligible 1L
+treatment on or after `LOT1_FROM`", and that claim's date **becomes**
+`INDEX_DATE`. So every member already has a qualifying MM therapy claim on
+`cl_mma_codelist.csv` — the same file `map_stacked` is built from.
+
+Steps 2 and 3 therefore derive a fact the cohort build already established.
+They should equal step 1, and a drop is **the two scans disagreeing**, not
+patients the study lost. Shown as attrition they would read as expected loss,
+which is the one reading that lets a real discrepancy through — so they are
+labelled for what they are and a drop is reported as a discrepancy.
+
+A cohort indexed on something else — a diagnosis, an enrolment date — carries
+no such guarantee, and there the same rows are a genuine narrowing. That is why
+the check **warns rather than stops**: `lot` is meant to run over cohorts it did
+not build, and only the operator knows which kind this is.
+
+The `progression` rows are a third thing again. Nobody was removed there — a
+patient with no LOT3 did not progress, or their follow-up ended. Read as
+exclusions they would be the study losing people it never lost. They run over
+`LOT_LONG_FINAL`, the population that ships, and every line to `MAX_LOT` gets a
+row: "no patient reached LOT5" is an answer, and a missing row is not.
+
+Two of the rows are the same number reached two ways, which is deliberate. The
+`final` row must equal the last `criterion` row — both come from the same SQL
+over the same view. And `Reached LOT1` must equal `final`, since
+`check_lot_final()` has already established that each patient's lines run
+`1..n` there, so every patient has a LOT1. Either mismatch stops the build.
+
+**Two counts, because a `truncate` criterion need not remove a patient.** It
+drops the first failing line and every later one, so a patient can survive with
+fewer lines and a patient count alone would show nothing. `no_belantamab`
+happens to be patient-level, so today the two move together; the next criterion
+need not be.
+
+The criterion rows go through `line_criteria_final_sql()` — the build's own
+truncate SQL, given the first *i* criteria — rather than a second version of
+the rule here. The rule that decides which lines go is the thing being counted,
+so a copy of it would be reporting on itself.
+
+Two ways it can lie, both of which stop the build. A step larger than the one
+above it means a join fanned out or a step ran against the wrong population.
+And the last criterion step must equal `LOT_LONG_FINAL`: both come from the
+same SQL over the same view, so a difference means the criteria counted are not
+the ones that built the table, which would make every row above it a
+description of some other run.
+
+A criterion that was **declared but left off** gets no row. A funnel is what
+narrowed the population, and a row showing a criterion costing nothing reads as
+evidence it was harmless rather than as evidence it never ran. Which criteria
+were on, and what each would have cost, is already in
+`LINE_CRITERIA_APPLIED`.
+
 `on_fail` decides what a failing line does:
 
 | value | effect |

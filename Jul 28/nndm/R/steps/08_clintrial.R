@@ -143,11 +143,29 @@ build_ndmm_clintrial_flags <- function(con, med_diag_tbl, medical_tbl,
            -- How long before the 1L start the earliest trial claim falls. A
            -- flag says whether; this says when, which is what separates
            -- 'trial therapy, then POMA' from 'a trial code the same week'.
+           --
+           -- TWO of them, over the two windows, because a timing figure has to
+           -- be about the same claims as the count it is printed beside.
+           -- Anything-before-1L includes pre-diagnosis claims, so a patient
+           -- whose only trial code predates their diagnosis contributes to it
+           -- while contributing nothing to CLINTRIAL_DX_TO_LOT1 - and one with
+           -- codes in both windows contributes the older date. Reported next to
+           -- the diagnosis-to-1L count, that describes a different population
+           -- over a different window.
            min(CASE WHEN m.event_dt < a.LOT1_START_DT
                     THEN m.event_dt END)                     AS CLINTRIAL_FIRST_PRE_LOT1_DT,
            max(CASE WHEN m.event_dt < a.LOT1_START_DT
                     THEN datediff(a.LOT1_START_DT, m.event_dt) END)
-                                                             AS CLINTRIAL_DAYS_BEFORE_LOT1
+                                                             AS CLINTRIAL_DAYS_BEFORE_LOT1,
+           -- NULL unless CLINTRIAL_DX_TO_LOT1 = 1, by construction: same
+           -- predicate, so the two cannot describe different patients.
+           min(CASE WHEN m.event_dt >= a.MM_DX_DT
+                     AND m.event_dt <  a.LOT1_START_DT
+                    THEN m.event_dt END)                     AS CLINTRIAL_FIRST_DX_TO_LOT1_DT,
+           max(CASE WHEN m.event_dt >= a.MM_DX_DT
+                     AND m.event_dt <  a.LOT1_START_DT
+                    THEN datediff(a.LOT1_START_DT, m.event_dt) END)
+                                                             AS CLINTRIAL_DX_TO_LOT1_DAYS
     FROM anchors a
     LEFT JOIN matched m ON m.PATID = a.PATID
     GROUP BY a.PATID, a.LOT1_START_DT, a.MM_DX_DT

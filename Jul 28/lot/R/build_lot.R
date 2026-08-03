@@ -619,6 +619,10 @@ build_lot <- function(here, cohort_table, prefix,
   # After the criteria layer, not before it: LOT_LONG_FINAL is what downstream
   # reads, and with a truncate criterion it is not LOT_LONG.
   final <- check_lot_final(con, cfg)
+  # After the final table is validated: the funnel's last row is that table, so
+  # writing it first would publish a funnel ending in numbers no check had
+  # accepted.
+  phase_lot_attrition(con, cfg)
   run_face_validity(con, cfg)
   record_final_counts(con, cfg, lot_long, final)
   check_run_recorded(con, cfg)
@@ -875,7 +879,7 @@ write_build_status <- function(con, cfg, state) {
 # that cannot find its table is not a failure. TABLE_OR_VIEW_NOT_FOUND is one
 # of with_retry's permanent errors, so this does not sit through four attempts.
 RUN_SCOPED_TABLES <- c("LOT_RUN_METADATA", "LOT_QC_SUMMARY",
-                       "LOT_CODELIST_METADATA")
+                       "LOT_CODELIST_METADATA", "LOT_ATTRITION")
 
 # A missing table is fine. Anything else is not: a permission, a lock or a
 # malformed table stops the delete, and swallowing that leaves an earlier
@@ -1560,6 +1564,232 @@ report_line_criteria <- function(con, cfg, tbl = "lot_long_allflags") {
   applied <- paste(parts, collapse = "|")
   options(lot_line_criteria = applied)
   invisible(applied)
+}
+
+# The LOT funnel: how many patients the cohort handed over, and how many are
+# left in the study population.
+#
+# Not every row is attrition, and KIND says which is which.
+#
+# A cohort whose index is a TREATMENT qualifier - NDMM's is: its step 3 is
+# "eligible 1L treatment on or after LOT1_FROM", and that claim's date becomes
+# INDEX_DATE - has already established that every member has a qualifying MM
+# therapy claim. lot then derives the same fact a second time, from the same
+# cl_mma_codelist.csv, when it builds map_stacked and forms LOT1.
+#
+# So "has a mapped episode" and "has LOT1" are RECONCILIATION rows, not funnel
+# steps: they should equal the row above, and a drop is the two derivations
+# disagreeing, not patients the study lost. Presented as attrition they invite
+# being read as expected loss, which is the one reading that would let a real
+# discrepancy through.
+#
+# The criterion rows are the attrition. They remove patients on purpose.
+#
+# A cohort indexed on something else - a diagnosis, an enrolment date - has no
+# such guarantee, and there the same rows are a genuine narrowing. KIND is
+# still right; only the expectation changes, so the check below warns rather
+# than stops.
+#
+# TWO counts per step, because a truncating criterion does not have to remove a
+# patient. It drops the first failing line and every later one, so a patient
+# can survive with fewer lines - patients alone would show nothing.
+# no_belantamab happens to be patient-level, so today the two move together;
+# the next criterion need not be.
+# PCT_OF_PREV as well as PCT_OF_START, because for most of these rows the
+# share of the row above is the number being asked for: a criterion's own cost,
+# and - for the progression rows - the proportion of a line's patients who go
+# on to the next one, which is what "attrition to LOT2, then LOT3" means.
+LOT_ATTRITION_COLS <- c(RUN_ID = "STRING", STEP_NUM = "INT", KIND = "STRING",
+                        STEP = "STRING", N_PATIENTS = "BIGINT",
+                        N_LINES = "BIGINT", PCT_OF_START = "DOUBLE",
+                        PCT_OF_PREV = "DOUBLE", RECORDED_AT = "TIMESTAMP")
+
+# Only criteria that actually removed something get a row. A funnel is what
+# narrowed the population; a criterion that was declared but left off did not,
+# and a row showing it costing nothing reads as evidence it was harmless rather
+# than as evidence it never ran. Which criteria were on, and what each one
+# would have cost, is already in LOT_RUN_METADATA via report_line_criteria().
+lot_attrition_counts <- function(con, cfg) {
+  cnt <- function(src, lines) {
+    sel <- if (lines) "count(DISTINCT PATID) AS p, count(*) AS l"
+           else       "count(DISTINCT PATID) AS p, cast(NULL as bigint) AS l"
+    d <- db_q(con, glue("SELECT {sel} FROM {src}"))
+    list(patients = as.numeric(d$p[1]),
+         lines    = if (lines) as.numeric(d$l[1]) else NA_real_)
+  }
+  steps <- list(
+    list(kind = "input", step = "Cohort patients handed to LOT",
+         n = cnt("lot_patient_input", FALSE)),
+    list(kind = "reconciliation", step = "With a mapped MM therapy episode",
+         n = cnt("map_stacked", FALSE)),
+    list(kind = "reconciliation", step = "With LOT1 built",
+         n = cnt("lot_long", TRUE)))
+
+  # Cumulative, and through the build's OWN truncate SQL rather than a second
+  # version of it here: the rule that decides which lines go is the thing being
+  # counted, so a copy of it would report on itself.
+  on <- Filter(function(c_i) identical(c_i$on_fail, "truncate"),
+               enabled_line_criteria())
+  for (i in seq_along(on)) {
+    v <- paste0("lot_attrition_step_", i)
+    db_exec(con, line_criteria_final_sql(cfg, "lot_long_allflags", v,
+                                         crit = on[seq_len(i)]))
+    steps[[length(steps) + 1L]] <-
+      list(kind = "criterion", step = paste0("+ ", on[[i]]$label), n = cnt(v, TRUE))
+  }
+  steps[[length(steps) + 1L]] <-
+    list(kind = "final", step = "Study population (LOT_LONG_FINAL)",
+         n = cnt("lot_long_final", TRUE))
+
+  # How far patients get: LOT1, then LOT2, and so on to max_lot.
+  #
+  # A different thing again from either kind above, which is why it has its own
+  # KIND. Nobody was removed here - a patient with no LOT3 did not progress, or
+  # their follow-up ended. Read as exclusions these would be the study losing
+  # people it never lost.
+  #
+  # Over LOT_LONG_FINAL, the population that ships. check_lot_final() has
+  # already established that each patient's lines run 1..n there, so reaching
+  # LOT n implies every line below it and the sequence can only narrow.
+  #
+  # Every line to max_lot gets a row, including ones nobody reached: "no
+  # patient got to LOT5" is an answer, and a missing row is not.
+  by_line <- db_q(con, glue("
+    SELECT LOT_NUM, count(DISTINCT PATID) AS p, count(*) AS l
+    FROM lot_long_final GROUP BY LOT_NUM"))
+  for (k in seq_len(as.integer(cfg$max_lot))) {
+    i <- match(k, as.integer(by_line$LOT_NUM))
+    steps[[length(steps) + 1L]] <- list(
+      kind = "progression", step = paste0("Reached LOT", k),
+      n = list(patients = if (is.na(i)) 0 else as.numeric(by_line$p[i]),
+               lines    = if (is.na(i)) 0 else as.numeric(by_line$l[i])))
+  }
+  steps
+}
+
+# The reconciliation rows, against the row above them.
+#
+# A cohort indexed on a treatment has already found the claim lot is about to
+# find again, from the same code list, so these should not move. When they do,
+# the two derivations disagree and every count below is over a population the
+# cohort build does not think it handed over.
+#
+# A warning, not a stop: lot is meant to run over cohorts it did not build, and
+# one indexed on a diagnosis or an enrolment date has no such guarantee - there
+# the drop is real and expected. Naming the number and what it means is what
+# this can honestly do; deciding is the operator's.
+report_lot_reconciliation <- function(steps) {
+  start <- steps[[1]]$n$patients
+  for (i in seq_along(steps)) {
+    s <- steps[[i]]
+    if (!identical(s$kind, "reconciliation")) next
+    lost <- start - s$n$patients
+    if (is.na(lost) || lost <= 0) next
+    log_msg("WARNING: ", format(lost, big.mark = ",", scientific = FALSE),
+            " of ", format(start, big.mark = ",", scientific = FALSE),
+            " cohort patients (", round(100 * lost / start, 2),
+            "%) are missing at '", s$step, "'. If the cohort's index is a ",
+            "TREATMENT qualifier - NDMM's is - every member already had a ",
+            "qualifying claim on the same cl_mma_codelist.csv, so this is not ",
+            "attrition: it is that scan and this one disagreeing. If the ",
+            "cohort is indexed on something else, it is a real narrowing and ",
+            "expected.")
+  }
+  invisible(TRUE)
+}
+
+# The funnel only narrows, on both counts. A step larger than the one above it
+# means a join fanned out or a filter ran against the wrong population.
+#
+# And the last criterion step must equal the final table. They are built from
+# the same SQL over the same view, so a difference means the criteria applied
+# here are not the criteria that produced LOT_LONG_FINAL - which would make
+# every row above it a description of some other run's population.
+check_lot_attrition <- function(steps) {
+  p <- vapply(steps, function(s) s$n$patients, numeric(1))
+  for (nm in c("patients", "lines")) {
+    v <- vapply(steps, function(s) s$n[[nm]], numeric(1))
+    # Compared between steps that HAVE the count, but reported by their
+    # position in the funnel. The first two steps have no line count, so
+    # indexing the compacted vector would name the wrong step.
+    idx <- which(!is.na(v))
+    for (k in seq_len(max(0L, length(idx) - 1L))) {
+      i <- idx[k]; j <- idx[k + 1L]
+      if (v[j] > v[i])
+        stop("LOT attrition rises at step ", j, " (", nm, "): ",
+             steps[[i]]$step, " -> ", steps[[j]]$step,
+             ". A funnel cannot widen, so a join fanned out or a step ran ",
+             "against the wrong population.", call. = FALSE)
+    }
+  }
+  kind <- vapply(steps, function(s) s$kind, character(1))
+  # Located, not assumed to be last: the progression rows sit after it.
+  f <- match("final", kind)
+  if (!is.na(f) && f >= 2L && !identical(p[f], p[f - 1L]))
+    stop("The last criterion leaves ", p[f - 1L], " patients but ",
+         "LOT_LONG_FINAL has ", p[f], ". Both come from the same criteria SQL ",
+         "over lot_long_allflags, so they cannot differ unless the criteria ",
+         "counted here are not the ones that built it.", call. = FALSE)
+  # Every patient in LOT_LONG_FINAL has a LOT1 - check_lot_final() has already
+  # established that their lines run 1..n - so the first progression row is
+  # that table counted a second way. A difference means the by-line query and
+  # the table query disagree about the same rows.
+  l1 <- which(kind == "progression")[1]
+  if (!is.na(f) && !is.na(l1) && !identical(p[l1], p[f]))
+    stop("LOT_LONG_FINAL has ", p[f], " patients but only ", p[l1],
+         " reach LOT1. Lines run 1..n there, so every patient has a LOT1 and ",
+         "these are the same population counted twice.", call. = FALSE)
+  invisible(TRUE)
+}
+
+write_lot_attrition <- function(con, cfg, steps) {
+  tbl  <- lot_out("LOT_ATTRITION")
+  cols <- names(LOT_ATTRITION_COLS)
+  db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
+                    paste(cols, LOT_ATTRITION_COLS, collapse = ", "), ")"))
+  start <- steps[[1]]$n$patients
+  pct_of <- function(num, den)
+    if (is.na(den) || den == 0 || is.na(num)) "NULL"
+    else sql_count(round(100 * num / den, 2))
+  vals <- vapply(seq_along(steps), function(i) {
+    s     <- steps[[i]]
+    prev  <- if (i == 1L) NA_real_ else steps[[i - 1L]]$n$patients
+    lines <- if (is.na(s$n$lines)) "NULL" else sql_count(s$n$lines)
+    glue("('{run_id}', {i}, {sql_text(s$kind)}, {sql_text(s$step)}, ",
+         "{sql_count(s$n$patients)}, {lines}, ",
+         "{pct_of(s$n$patients, start)}, {pct_of(s$n$patients, prev)}, ",
+         "current_timestamp())")
+  }, character(1), USE.NAMES = FALSE)
+  db_replace(con,
+    glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"),
+    glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES ",
+         paste(vals, collapse = ", ")))
+  for (i in seq_along(steps)) {
+    s    <- steps[[i]]
+    prev <- if (i == 1L) NA_real_ else steps[[i - 1L]]$n$patients
+    log_msg("  ", i, ". [", s$kind, "] ", s$step, ": ",
+            format(s$n$patients, big.mark = ",", scientific = FALSE), " patients",
+            if (is.na(s$n$lines)) ""
+            else paste0(", ", format(s$n$lines, big.mark = ",", scientific = FALSE), " lines"),
+            if (!is.na(start) && start > 0)
+              paste0(" (", round(100 * s$n$patients / start, 1), "% of cohort") else "",
+            # The share of the row above is the number these rows are asked
+            # for: a criterion's cost, and the proportion of one line's
+            # patients who go on to the next.
+            if (!is.na(prev) && prev > 0)
+              paste0(", ", round(100 * s$n$patients / prev, 1), "% of previous)")
+            else if (!is.na(start) && start > 0) ")" else "")
+  }
+  log_msg("LOT attrition written to ", tbl)
+  invisible(tbl)
+}
+
+phase_lot_attrition <- function(con, cfg) {
+  log_msg("LOT attrition")
+  steps <- lot_attrition_counts(con, cfg)
+  check_lot_attrition(steps)
+  report_lot_reconciliation(steps)
+  write_lot_attrition(con, cfg, steps)
 }
 
 phase_line_criteria <- function(con, cfg) {

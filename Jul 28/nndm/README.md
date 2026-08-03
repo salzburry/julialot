@@ -44,7 +44,8 @@ and a missing one is named.
 
 Code lists, all from `CODELIST_DIR`: `mm_dx.csv` (the diagnosis that defines
 the population), `cl_mma_codelist.csv` (MM therapy, and belantamab within it),
-`other_malig.csv`, `pregnancy.csv`. The md5 of each is written to
+`other_malig.csv`, `pregnancy.csv`, `clintrial.csv` (the descriptive trial
+flag). The md5 of each is written to
 `<prefix>NDMM_CODELIST_METADATA`, so a cohort can be traced to the files that
 built it.
 
@@ -127,7 +128,17 @@ began. The window that matters is in neither.
 | `CLINTRIAL_DX_TO_LOT1` | diagnosis to the day before 1L — **the one that was missing** |
 | `CLINTRIAL_POST_LOT1` | 1L onward — context, never evidence of a prior line |
 | `CLINTRIAL_PRE_LOT1_12MO` | the twelve months before 1L |
-| `CLINTRIAL_FIRST_PRE_LOT1_DT`, `CLINTRIAL_DAYS_BEFORE_LOT1` | when, not just whether |
+| `CLINTRIAL_FIRST_PRE_LOT1_DT`, `CLINTRIAL_DAYS_BEFORE_LOT1` | when, over any claim before 1L |
+| `CLINTRIAL_FIRST_DX_TO_LOT1_DT`, `CLINTRIAL_DX_TO_LOT1_DAYS` | when, over the diagnosis-to-1L window only |
+
+Two timing pairs, not one, because a timing figure has to be about the same
+claims as the count it is printed beside. `CLINTRIAL_DAYS_BEFORE_LOT1` covers
+any claim before 1L, so a patient whose only trial code predates their
+diagnosis contributes to it while contributing nothing to
+`CLINTRIAL_DX_TO_LOT1` — and one with codes in both windows contributes the
+older date. `CLINTRIAL_DX_TO_LOT1_DAYS` is NULL unless
+`CLINTRIAL_DX_TO_LOT1 = 1`, by construction, so the count and the timing
+cannot describe different patients.
 
 The first three partition the study period and can be added. The fourth
 **spans** the first two — it is there because it is the window criterion 3 uses
@@ -142,6 +153,20 @@ invites being read as one. It is built after the flags and joins nothing into
 them, so the cohort is identical with it and without it, and
 `tests/test_runner.R` fails if a `CLINTRIAL` column reaches either the criteria
 list or `06_flags.R`.
+
+`check_icd_flag()` covers these codes too. It asks which claims carry a code
+this cohort reads but name no ICD family, and a trial diagnosis or procedure
+claim with a blank flag matches nothing and is missed silently — the exact
+condition that check exists to surface. The code list is therefore built
+before the check; the flag itself needs 1L and the base cohort and stays
+after them.
+
+**Evidence, not proof.** A trial code identifies neither the study drug nor
+the condition treated, so a positive flag is a patient to review rather than
+a proven prior line, and a zero is not proof that none occurred. The
+diagnosis-to-1L interval is also days for one patient and years for another,
+so `CLINTRIAL_PRE_LOT1_12MO` — a fixed window — is the more comparable
+figure between groups.
 
 The codes come from `clintrial.csv`, the same file and the same normalisation
 the broad build uses, so a difference between the two cohorts is about the

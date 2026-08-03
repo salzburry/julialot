@@ -6,12 +6,16 @@ ATTRITION_WINDOW,90,Outpatient window (30/60/90) - only for an overall-shaped fu
 OUTPUT_DIR,/mnt/artifacts/dashboard,Where the HTML file is written
 OUTPUT_FILE,dashboard.html,Name of the HTML file
 TOP_N,10,Rows shown by the top-N sections
+MAX_LOT,5,Highest line the LOT build built - decides how many transition Sankeys there are
 JOURNEYS_PER_CATEGORY,3,Patients shown per journey scenario
 EXPORT_CSV,TRUE,Write one CSV per panel beside the HTML
 CSV_DIR,csv,Subfolder of OUTPUT_DIR for the CSV files
 SHOW_RUN_PROVENANCE,TRUE,Overview - which window and which code produced these numbers
 SHOW_HEADLINE,TRUE,Overview - cohort and line counts
 SHOW_ATTRITION,TRUE,Overview - the cohort funnel
+SHOW_LOT_ATTRITION,TRUE,Overview - the LOT funnel, which starts where the cohort funnel ends
+SHOW_LOT_PROGRESSION,TRUE,Overview - how far patients get, LOT1 to MAX_LOT
+SHOW_LOT_ATTRITION_DETAIL,TRUE,Overview - the same funnel with lines and step-to-step percentages
 SHOW_DEMOGRAPHICS,TRUE,Cohort - age band by sex
 SHOW_AGE_STATS,TRUE,Cohort - age distribution
 SHOW_INDEX_BY_YEAR,TRUE,Cohort - index dates by year

@@ -19,6 +19,14 @@ cfg_defaults <- list(
   # a second thing to remember.
   cohort_prefix      = Sys.getenv("COHORT_PREFIX", unset = ""),
 
+  # The highest line the LOT build was told to build. It decides how many
+  # transition Sankeys there are - LOT1 to LOT2, LOT2 to LOT3, and so on - so
+  # a dashboard pinned to five would miss LOT5 to LOT6 on a run that built six,
+  # and draw two empty panels on a run that built three. Same name and default
+  # as lot's own setting, and checked against the lines the run actually built
+  # rather than trusted (see check_max_lot).
+  max_lot            = as.integer(Sys.getenv("MAX_LOT", unset = "5")),
+
   # What the cohort build calls its attrition table, before the prefix. nndm
   # writes NDMM_ATTRITION; a different cohort build writes a different name, or
   # none - in which case the panel is skipped and says so. The columns it must

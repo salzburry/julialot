@@ -52,7 +52,11 @@ dashboard_inputs <- function(cfg) {
     # build and not to this one. nndm calls it NDMM_ATTRITION; another cohort
     # will call it something else, or have none. Configurable, so this folder
     # still names no study of its own - ATTRITION_TABLE in config.csv.
-    attrition = wrk(paste0(cp, cfg$attrition_table))
+    attrition = wrk(paste0(cp, cfg$attrition_table)),
+    # The LOT build's own funnel, which is a different thing from the cohort
+    # build's above: it starts where that one ends. Its name is this package's
+    # to know, not configurable, because the LOT build writes it.
+    lot_attrition = wrk(paste0(lp, "LOT_ATTRITION"))
   )
 }
 

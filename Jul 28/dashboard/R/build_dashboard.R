@@ -273,6 +273,63 @@ resolve_attrition <- function(secs, con, inputs, have, cfg, owner) {
   secs
 }
 
+# MAX_LOT is a second copy of the LOT build's setting, so it can disagree with
+# the run being drawn. The transitions are generated from it, and the lines are
+# in the data - so ask the data rather than trust the copy.
+#
+# Too low is the case that costs something: LOT5 to LOT6 exists in the tables
+# and no panel draws it, which is a missing answer nobody can see is missing.
+# Too high draws empty Sankeys, which is noise rather than a wrong number, so
+# it is a note.
+#
+# Neither stops the run. Every other panel is still true, and a dashboard that
+# refuses to render because one tab is short is worse than one that says so.
+check_max_lot <- function(con, inputs, have, cfg) {
+  if (!isTRUE(have[["lot_final"]])) return(invisible(NULL))
+  built <- tryCatch(as.integer(db_q(con, paste0(
+    "SELECT max(LOT_NUM) AS n FROM ", inputs$lot_final))$n), error = function(e) NA)
+  if (length(built) != 1L || is.na(built)) return(invisible(NULL))
+  if (built > cfg$max_lot)
+    log_msg("WARNING: MAX_LOT is ", cfg$max_lot, " but this run built lines up ",
+            "to LOT", built, ". The Transitions tab stops at LOT", cfg$max_lot,
+            ", so the moves above it are in the tables and on no panel. Set ",
+            "MAX_LOT to ", built, " to draw them.")
+  else if (built < cfg$max_lot)
+    log_msg("Note: MAX_LOT is ", cfg$max_lot, " and this run built lines up to ",
+            "LOT", built, ", so the transitions above that are empty panels.")
+  invisible(built)
+}
+
+# The LOT funnel belongs to one LOT run, and the dashboard reads one LOT run.
+#
+# Simpler than the cohort funnel above, because there is no second build in the
+# way: LOT_ATTRITION's RUN_ID is the LOT run's own, clear_run_rows() clears this
+# run's rows before the build starts, and resolve_owner_run() has already
+# refused a latest run that did not finish. So rows under owner_run are this
+# attempt's - no stamp indirection needed.
+#
+# What is left is the table existing with rows for some OTHER run: an older LOT
+# run under this prefix, whose tables have since been replaced. Rendering that
+# would put one run's funnel above another run's numbers, and an empty bar
+# chart would say nothing at all.
+resolve_lot_attrition <- function(secs, con, inputs, have, cfg) {
+  mine <- which(vapply(secs, function(s)
+    isTRUE(s$needs[1] == "lot_attrition"), logical(1)))
+  if (!length(mine) || !isTRUE(have[["lot_attrition"]])) return(secs)
+  n <- tryCatch(db_q(con, paste0("SELECT count(*) AS n FROM ",
+                                 inputs$lot_attrition, " WHERE RUN_ID = '",
+                                 cfg$owner_run, "'"))$n, error = function(e) NA)
+  if (!is.na(n) && n >= 1) return(secs)
+  why <- paste0(
+    "the LOT funnel for run ", cfg$owner_run, " - the run that wrote the ",
+    "tables on this page - is not in ", inputs$lot_attrition,
+    ". The rows there belong to a different LOT run, so showing them would be ",
+    "one run's funnel above another run's numbers.")
+  for (i in mine) secs[[i]]$skip <- why
+  log_msg("  skip  LOT attrition - no rows for run ", cfg$owner_run)
+  secs
+}
+
 # One panel. A section whose query fails does not take the dashboard with it -
 # the other panels are still true, and a panel that says why it is missing is
 # more use than a run that produced no file. The message goes in the panel and
@@ -406,6 +463,8 @@ build_dashboard_run <- function(here, cohort_table, lot_prefix,
                       " tables)"))
 
   secs <- resolve_attrition(secs, con, inputs, have, cfg, owner)
+  secs <- resolve_lot_attrition(secs, con, inputs, have, cfg)
+  check_max_lot(con, inputs, have, cfg)
   panels <- lapply(secs, build_panel, con = con, inputs = inputs,
                    have = have, cfg = cfg)
 

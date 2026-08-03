@@ -30,7 +30,10 @@ env <- new.env(parent = globalenv())
 for (f in c("R/config_dash.R", "R/db_utils_dash.R", "R/sections.R",
             "R/render.R", "R/build_dashboard.R"))
   sys.source(file.path(ROOT, f), envir = env)
-for (nm in ls(env)) assign(nm, get(nm, envir = env))
+# all.names: the section generators are dotted helpers, and ls() hides those
+# by default - so the pieces that build the registry were the one part of
+# this file nothing could reach.
+for (nm in ls(env, all.names = TRUE)) assign(nm, get(nm, envir = env))
 
 SETTINGS <- c("TOP_N", "MAX_RETRIES", "PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME",
               "INPUT_COHORT_TABLE", "LOT_PREFIX", "COHORT_PREFIX", "OUTPUT_DIR",
@@ -69,7 +72,8 @@ cat("\n-- a section names only the inputs that exist --\n")
 INPUTS <- list(cohort = "wk.COH", patients = "wk.p_LOT_PATIENT_INPUT",
                lot_long = "wk.p_LOT_LONG", lot_final = "wk.p_LOT_LONG_FINAL",
                run_meta = "wk.p_LOT_RUN_METADATA", build_st = "wk.p_LOT_BUILD_STATUS",
-               attrition = "wk.c_NDMM_ATTRITION")
+               attrition = "wk.c_NDMM_ATTRITION",
+               lot_attrition = "wk.p_LOT_ATTRITION")
 runs(validate_sections(DASHBOARD_SECTIONS, INPUTS),
      "every section's `needs` is an input the run resolves")
 stops(validate_sections(list(modifyList(DASHBOARD_SECTIONS[[1]],
@@ -559,8 +563,34 @@ trs <- vapply(Filter(function(s) identical(s$tab, "Transitions"), DASHBOARD_SECT
 ok(setequal(trs, c("lot1_to_lot2", "lot2_to_lot3", "lot3_to_lot4", "lot4_to_lot5")),
    paste0("every consecutive pair up to MAX_LOT is drawn (", length(trs), ")"))
 tsql <- fill_sql(tr$sql, INPUTS, cfg)
-ok(grepl("INNER JOIN b ON a.PATID = b.PATID", tsql, fixed = TRUE),
-   "an inner join, so non-progressors are not a flow")
+# LEFT JOIN, so the patients who stopped after LOT{a} are a terminal node
+# rather than absent. Progressors-only could not show the one thing a reader
+# looks at a transition for: how many went on at all.
+ok(grepl("LEFT JOIN b ON a.PATID = b.PATID", tsql, fixed = TRUE) &&
+     grepl("'No LOT2'", tsql, fixed = TRUE),
+   "a left join, so those who stopped are drawn instead of vanishing")
+# Ranked out of the top-N: on a cohort with many regimens the largest single
+# answer is usually "stopped", and ranking it with them would fold it into
+# "Other".
+ok(grepl("WHERE stopped = 0 GROUP BY tgt", tsql, fixed = TRUE) &&
+     grepl("CASE WHEN s.stopped = 1 THEN s.tgt", tsql, fixed = TRUE),
+   "...and the stopped node cannot be collapsed into Other")
+# Generated from MAX_LOT, not written out per pair: pinned to five, a run that
+# built six would silently lose LOT5 to LOT6 and one that built three would
+# draw two empty panels.
+ok(length(.transition_sections(3)) == 2L &&
+     identical(.transition_sections(3)[[2]]$name, "lot2_to_lot3"),
+   "the pairs follow MAX_LOT rather than a hardcoded five")
+stops(.transition_sections(1), "...and a MAX_LOT with no transition in it is refused")
+# A second copy of lot's setting can disagree with the run being drawn, and
+# too low is the case that costs something: the moves above it are in the
+# tables and on no panel.
+bd2 <- readLines(file.path(ROOT, "R", "build_dashboard.R"), warn = FALSE)
+ok(any(grepl("check_max_lot(con, inputs, have, cfg)", bd2, fixed = TRUE)) &&
+     any(grepl("SELECT max(LOT_NUM) AS n FROM ", bd2, fixed = TRUE)),
+   "the setting is checked against the lines the run actually built")
+ok(any(grepl("on no panel", bd2, fixed = TRUE)),
+   "...and a MAX_LOT below what was built is a warning, not a silent gap")
 ok(grepl("LIMIT 10", tsql, fixed = TRUE) && grepl("coalesce(t.tgt, \'Other\')", tsql, fixed = TRUE),
    "top N sources, and everything else collapses to Other rather than vanishing")
 sk <- render_sankey(data.frame(
@@ -606,5 +636,38 @@ rules <- sub("^.*\\}", "", css)
 ok(!grepl("#[0-9A-Fa-f]{6}", sub(":root\\{[^}]*\\}", "", css)) ||
      length(gregexpr("#[0-9A-Fa-f]{6}", sub(":root\\{[^}]*\\}", "", css))[[1]]) <= 3,
    "the rules use variables, not a scatter of literals")
+
+cat("\n-- the LOT funnel is its own panel, not rows on the cohort's --\n")
+sec_by <- function(nm) Filter(function(s) identical(s$name, nm), DASHBOARD_SECTIONS)[[1]]
+la <- sec_by("lot_attrition"); lp <- sec_by("lot_progression")
+# The cohort funnel counts patients INTO the cohort; this one counts what
+# happened to them afterwards. One bar chart running from the end of the first
+# into the second would read as a single narrowing when the populations and the
+# reasons are different.
+ok(!identical(la$needs, sec_by("attrition")$needs),
+   "it reads the LOT build's own table, not the cohort build's")
+ok(grepl("KIND <> 'progression'", la$sql, fixed = TRUE) &&
+     grepl("KIND = 'progression'", lp$sql, fixed = TRUE),
+   "...and progression is split off, since nobody was removed there")
+# pct='first' over rows ordered by STEP_NUM: the funnel's first row is the
+# cohort handed over, and progression's first row is LOT1 - so each panel's
+# percentages are of the base that panel is about.
+ok(identical(la$pct, "first") && identical(lp$pct, "first") &&
+     grepl("ORDER BY STEP_NUM", la$sql, fixed = TRUE) &&
+     grepl("ORDER BY STEP_NUM", lp$sql, fixed = TRUE),
+   "...each panel's percentages are of its own first row")
+# A bar carries one number. Lines and the step-to-step share need a table.
+ok(identical(sec_by("lot_attrition_detail")$render, "table"),
+   "the lines and step-to-step shares get a table, which a bar cannot carry")
+# One run's funnel over another run's numbers is the failure worth naming.
+ok(all(grepl("RUN_ID = '{owner_run}'", c(la$sql, lp$sql,
+                                         sec_by("lot_attrition_detail")$sql),
+             fixed = TRUE)),
+   "every LOT panel is scoped to the run that wrote the tables on the page")
+bd <- readLines(file.path(ROOT, "R", "build_dashboard.R"), warn = FALSE)
+ok(any(grepl("resolve_lot_attrition(secs, con, inputs, have, cfg)", bd, fixed = TRUE)),
+   "...and rows belonging to some other LOT run skip the panels rather than render")
+ok(any(grepl("one run's funnel above another run's numbers", bd, fixed = TRUE)),
+   "...saying which run is missing rather than drawing an empty chart")
 
 report()
