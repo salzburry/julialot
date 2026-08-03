@@ -116,12 +116,22 @@ JOURNEY_CATEGORIES <- list(
 }
 
 # One Sankey section for the move from line `a` to line `b`. Generated rather
-# than written three times: the three differ only in two numbers, and three
-# copies of a query is three places for a fix to be applied twice.
+# than written out per pair: they differ only in two numbers, and copies of a
+# query are places for a fix to be applied to some of them.
+#
+# LEFT JOIN, not INNER. Progressors-only showed which regimen follows which and
+# nothing else: a patient who stopped after LOT{a} simply vanished from the
+# picture, so the panel could not show the one thing a reader looks at a
+# transition for - how many went on at all. They are now a terminal node, and
+# the ribbons leaving each regimen add up to that regimen's LOT{a} patients.
+#
+# The stopped node is ranked out of the top-N so it always survives. Ranking it
+# with the regimens would let the largest single answer - usually "stopped" -
+# be folded into "Other" on a cohort with many distinct regimens.
 .transition_section <- function(a, b) list(
   name  = paste0("lot", a, "_to_lot", b),
   tab   = "Transitions",
-  label = paste0("LOT", a, " to LOT", b, " by regimen (progressors only)"),
+  label = paste0("LOT", a, " to LOT", b, " by regimen, with those who stopped"),
   needs = "lot_final", render = "sankey",
   sql = paste0("
     WITH a AS (
@@ -137,8 +147,10 @@ JOURNEY_CATEGORIES <- list(
         AND trim(LOT_BASE_MEDS) <> ''
     ),
     j AS (
-      SELECT a.PATID, a.reg AS src, b.reg AS tgt
-      FROM a INNER JOIN b ON a.PATID = b.PATID
+      SELECT a.PATID, a.reg AS src,
+             coalesce(b.reg, 'No LOT", b, "') AS tgt,
+             CASE WHEN b.PATID IS NULL THEN 1 ELSE 0 END AS stopped
+      FROM a LEFT JOIN b ON a.PATID = b.PATID
     ),
     top_src AS (
       SELECT src FROM j GROUP BY src
@@ -146,15 +158,26 @@ JOURNEY_CATEGORIES <- list(
     ),
     s AS (SELECT j.* FROM j INNER JOIN top_src t ON j.src = t.src),
     top_tgt AS (
-      SELECT tgt FROM s GROUP BY tgt
+      SELECT tgt FROM s WHERE stopped = 0 GROUP BY tgt
       ORDER BY count(DISTINCT PATID) DESC LIMIT {top_n}
     )
-    SELECT s.src                                        AS source,
-           coalesce(t.tgt, 'Other')                     AS target,
-           count(DISTINCT s.PATID)                      AS n
+    SELECT s.src                                              AS source,
+           CASE WHEN s.stopped = 1 THEN s.tgt
+                ELSE coalesce(t.tgt, 'Other') END             AS target,
+           count(DISTINCT s.PATID)                            AS n
     FROM s LEFT JOIN top_tgt t ON s.tgt = t.tgt
     GROUP BY 1, 2 ORDER BY n DESC")
 )
+
+# One per step of the ladder, to whatever height this run built. Hardcoding
+# four pairs was right only while MAX_LOT was five.
+.transition_sections <- function(max_lot = cfg_defaults$max_lot) {
+  n <- suppressWarnings(as.integer(max_lot))
+  if (is.na(n) || n < 2L)
+    stop("MAX_LOT='", max_lot, "' (want a whole number, 2 or more - there is ",
+         "no transition to draw below that)", call. = FALSE)
+  lapply(seq_len(n - 1L), function(a) .transition_section(a, a + 1L))
+}
 
 # ---- The cohort funnel, whatever shape the cohort build wrote it in --------
 #
@@ -231,7 +254,7 @@ ATTRITION_LAYOUTS <- list(
          ORDER BY row_order")
 )
 
-DASHBOARD_SECTIONS <- list(
+DASHBOARD_SECTIONS <- c(list(
 
   # ---- OVERVIEW ------------------------------------------------------------
 
@@ -466,21 +489,19 @@ DASHBOARD_SECTIONS <- list(
          FROM {lot_final} GROUP BY 1 ORDER BY 1"),
 
   # ---- TRANSITIONS ---------------------------------------------------------
-
-  # Who moves from which regimen to which, one Sankey per consecutive pair.
   #
-  # INNER JOIN, so a patient who never reached the next line is not in it: the
-  # chart is about what progressors switched to, and carrying non-progressors
-  # would put the biggest flow on a transition that never happened. The
-  # denominator is on the panel above it, in `lines_per_patient`.
+  # Who moves from which regimen to which, one Sankey per consecutive pair, to
+  # whatever height this run built - see .transition_sections(), spliced in
+  # below rather than listed here.
+  #
+  # Every LOT{a} patient is in it, including those who never reached LOT{b}:
+  # they are a terminal node, so the ribbons leaving a regimen add up to that
+  # regimen's LOT{a} patients and the chart shows how many went on at all.
   #
   # Top N sources; targets outside the top N collapse to "Other", so the chart
   # stays readable and nothing is silently dropped - "Other" is drawn, and it
-  # sits at the bottom because it is a bucket rather than a regimen.
-  .transition_section(1, 2),
-  .transition_section(2, 3),
-  .transition_section(3, 4),
-  .transition_section(4, 5),
+  # sits at the bottom because it is a bucket rather than a regimen. The
+  # stopped node is ranked out of that, so it cannot be folded into "Other".
 
   # ---- PATIENT EXAMPLES ----------------------------------------------------
 
@@ -550,7 +571,8 @@ DASHBOARD_SECTIONS <- list(
            sum(CASE WHEN LOT_BASE_END_DT IS NULL THEN 1 ELSE 0 END)        AS `No end date`,
            sum(CASE WHEN LOT_NUM < 1 THEN 1 ELSE 0 END)                    AS `Line below 1`
          FROM {lot_long}")
-)
+),
+.transition_sections())
 
 # ---------------------------------------------------------------------------
 FIELDS <- c("name", "tab", "label", "needs", "render", "sql")
