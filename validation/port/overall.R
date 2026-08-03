@@ -242,6 +242,17 @@ DEVIATIONS <- list(
   "18_therapy_events" = list(
     list(port = "AND regexp_replace(c.code, '[^0-9]', '') <> ''",
          src  = character(0), n = 2L),
+    # The claim side of the NDC join yields a key only from a value that could
+    # be an NDC. The source left-padded anything to eleven, so NONE and UNK -
+    # which is how Optum spells "no NDC", 1.2bn rows of them - became
+    # 00000000000 and could collide. It can only remove matches the source
+    # should not have made, and it retires the shape check that policed them.
+    list(port = "AND CASE WHEN regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '') RLIKE '^0+$' THEN NULL WHEN length(regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '')) = 11 THEN regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '') WHEN length(regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '')) = 10 THEN concat('0', regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '')) END",
+         src  = "AND lpad(regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', ''), 11, '0')",
+         n = 1L),
+    list(port = "AND CASE WHEN regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') RLIKE '^0+$' THEN NULL WHEN length(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '')) = 11 THEN regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') WHEN length(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '')) = 10 THEN concat('0', regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '')) END",
+         src  = "AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', ''), 11, '0')",
+         n = 1L),
     list(port = c(
            "UNION ALL",
            "SELECT /*+ BROADCAST(c) */",

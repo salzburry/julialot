@@ -75,6 +75,17 @@ SUBST <- list(
   # The scan gained a fifth source, so the builder gained the table to read it
   # from. See the ADDED entry for the mproc CTE below.
   "R/steps/03_prior_therapy.R" = list(
+    # The claim side of the NDC join yields a key only from a value that could
+    # be an NDC. The source left-padded anything to eleven, so NONE and UNK -
+    # how Optum spells "no NDC", 1.2bn rows - became 00000000000 and could
+    # collide with a real code. It can only remove matches the source should
+    # not have made, and it retires the shape check that policed them.
+    list(from = "AND {ndc_key('m.NDC')}",
+         to   = "AND lpad(regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', ''), 11, '0')",
+         n = 1L),
+    list(from = "AND {ndc_key('r.NDC')}",
+         to   = "AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', ''), 11, '0')",
+         n = 1L),
     list(from = "build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl, med_proc_tbl) {",
          to   = "build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl) {", n = 1L)),
   "R/steps/05_pregnancy.R" = list(
@@ -144,8 +155,6 @@ ADDED <- list(
     "OR regexp_replace(CL_CODE, '[^0-9]', '') <> '')" = 1L,
     "AND regexp_replace(coalesce(cast(m.PROC_CD as string),''), '[^A-Za-z0-9]', '') <> ''" = 1L,
     "AND regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''), '[^A-Za-z0-9]', '') <> ''" = 1L,
-    "AND regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '') <> ''" = 1L,
-    "AND regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') <> ''" = 1L,
     # The fifth clinical change. The program spec names T_MED_PROCEDURE (PROC)
     # among the CDM tables joined to CL_MMA_CODELIST, and Optum business rule 5
     # says PROC finds a drug given as a procedure under a HCPCS or CPT code. The

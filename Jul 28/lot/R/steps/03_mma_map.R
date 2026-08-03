@@ -75,8 +75,7 @@ phase_mma_map <- function(con, ctx) {
        AND regexp_replace(c.CL_CODE, '[^0-9]', '') <> ''
        -- ...and the claim side. The WHERE below only tests the raw value, so a
        -- punctuation-only NDC passes it and still normalizes to eleven zeros.
-       AND regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '') <> ''
-       AND lpad(regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', ''), 11, '0')
+       AND {ndc_key('m.NDC')}
          = lpad(regexp_replace(c.CL_CODE, '[^0-9]', ''), 11, '0')
       WHERE cast(m.NDC as string) IS NOT NULL AND trim(cast(m.NDC as string)) <> ''
         AND cast(m.FST_DT AS date) >= p.INDEX_DATE
@@ -115,8 +114,7 @@ phase_mma_map <- function(con, ctx) {
        AND regexp_replace(c.CL_CODE, '[^0-9]', '') <> ''
        -- The Rx branch has no WHERE on NDC at all, so without this a missing
        -- fill NDC becomes eleven zeros and matches an all-zero code list row.
-       AND regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') <> ''
-       AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', ''), 11, '0')
+       AND {ndc_key('r.NDC')}
          = lpad(regexp_replace(c.CL_CODE, '[^0-9]', ''), 11, '0')
       WHERE cast(r.FILL_DT AS date) >= p.INDEX_DATE
         AND cast(r.FILL_DT AS date) <= p.OBS_END_DT  -- ENDDATE primary; ENDDATE_CE under sensitivity flag

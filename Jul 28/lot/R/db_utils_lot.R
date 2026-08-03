@@ -56,6 +56,20 @@ lot_config <- function() {
   get("cfg", envir = globalenv())
 }
 
+# The claim side of an NDC join.
+#
+# A key only from a value that could BE an NDC: eleven digits, or ten under the
+# 4-4-2 assumption. Anything else gets no key and simply does not join, which
+# is what a join is for. Optum writes NONE or UNK where a medical claim has no
+# NDC - 1.2bn rows of them - and left-padding those to eleven zeros and hoping
+# nothing collided is what made a shape check feel necessary.
+ndc_key <- function(col) {
+  d <- paste0("regexp_replace(coalesce(cast(", col, " as string),''), '[^0-9]', '')")
+  paste0("CASE WHEN ", d, " RLIKE '^0+$' THEN NULL",
+         " WHEN length(", d, ") = 11 THEN ", d,
+         " WHEN length(", d, ") = 10 THEN concat('0', ", d, ") END")
+}
+
 full_name <- function(schema, object) {
   cfg <- lot_config()
   paste0(cfg$catalog, ".", schema, ".", object)

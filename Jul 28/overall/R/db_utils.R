@@ -85,6 +85,20 @@ unint64 <- function(d) {
   if (inherits(d, "integer64")) as.numeric(d) else d
 }
 
+# The claim side of an NDC join.
+#
+# A key only from a value that could BE an NDC: eleven digits, or ten under the
+# 4-4-2 assumption. Anything else gets no key and simply does not join, which
+# is what a join is for. Optum writes NONE or UNK where a medical claim has no
+# NDC - 1.2bn rows of them - and left-padding those to eleven zeros and hoping
+# nothing collided is what made a shape check feel necessary.
+ndc_key <- function(col) {
+  d <- paste0("regexp_replace(coalesce(cast(", col, " as string),''), '[^0-9]', '')")
+  paste0("CASE WHEN ", d, " RLIKE '^0+$' THEN NULL",
+         " WHEN length(", d, ") = 11 THEN ", d,
+         " WHEN length(", d, ") = 10 THEN concat('0', ", d, ") END")
+}
+
 # ---- Naming helpers (closure factory) ----
 # Naming functions that close over cfg and mat_tables. The step files unpack
 # the ones they use. mat_tables is an environment, so what

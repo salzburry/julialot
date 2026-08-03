@@ -167,10 +167,8 @@ build_ndmm_lot1_index <- function(con, medical_tbl, rx_tbl, med_proc_tbl) {
   bill_match <- "c.code_type = 'HCPCS'
        AND upper(regexp_replace(coalesce(cast(t.BILL_PROC_CD as string),''), '[^A-Za-z0-9]', '')) = c.code
        AND regexp_replace(coalesce(cast(t.BILL_PROC_CD as string),''), '[^A-Za-z0-9]', '') <> ''"
-  ndc_match <- "c.code_type = 'NDC'
-       AND lpad(regexp_replace(coalesce(cast(t.NDC as string),''), '[^0-9]', ''), 11, '0')
-         = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')
-       AND regexp_replace(coalesce(cast(t.NDC as string),''), '[^0-9]', '') <> ''"
+  ndc_match <- paste0("c.code_type = 'NDC'\n       AND ", ndc_key("t.NDC"),
+                      "\n         = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')")
   # med_procedure.PROC, which
   # says PROC finds a drug given as a procedure under a HCPCS or CPT code.
   # No ICD_FLAG condition, as 05_sct.R does for HCPCS: a J-code carrying an

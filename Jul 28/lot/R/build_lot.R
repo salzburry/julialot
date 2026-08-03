@@ -46,9 +46,10 @@ CONTRACT <- list(
 # Reviewable code-list checks: each has a reading a study team can accept.
 # Named individually, because one switch for all of them meant waiving an
 # expected condition also waived the dangerous ones.
+# The claim side is not here: a CDM value that matches nothing is a non-match,
+# not a decision. These are the code list's own, which are fixable at source.
 WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types",
-                     "subs_substitute", "subs_original", "ndc_short",
-                     "claim_ndc_short", "claim_ndc_shape")
+                     "subs_substitute", "subs_original", "ndc_short")
 
 # Fatal checks: always stop the build. Named rather than merely absent, so a
 # waiver naming one is told why it is refused instead of "no such check".
@@ -787,27 +788,23 @@ check_claim_ndc <- function(con, cfg) {
   # eleven digits, so only a count of its own catches it - it is the key a
   # claim with no NDC produces, and bad_ndc stops the same value on the code
   # side.
+  # Reported, never gated. ndc_key() gives no key to a value that cannot be an
+  # NDC, so it cannot collide with a code - it is a non-match, which is what a
+  # join produces. Optum writes NONE or UNK where a medical claim has no NDC;
+  # stopping over that asked the operator to approve the vendor's word for null.
   shape <- prof[prof$n_ndc > 0 & (prof$n_alpha > 0 | prof$n_other > 0 |
                                   prof$n_zero > 0), , drop = FALSE]
-  decide(shape, "claim_ndc_shape",
-         paste0("Claim NDCs that cannot be an NDC: ", detail(shape),
-                ".\nThe join strips non-digits and pads to eleven, so a value ",
-                "like ABC123 arrives as 00000000123 and can match a real code, ",
-                "and nothing here can tell it from a genuine claim. If the CDM ",
-                "really carries these, either the join has to exclude them or ",
-                "the study team has to accept that they may match: waive with ",
-                "CODELIST_WAIVERS=claim_ndc_shape."))
+  if (nrow(shape))
+    log_msg("  Claim NDCs that are not eleven digits, and so match nothing: ",
+            detail(shape))
 
-  # A real NDC in one of three layouts, and the pad only gets 4-4-2 right.
+  # Ten-digit is a real ambiguity - 4-4-2 against 5-3-2 or 5-4-1 - and it is
+  # said once rather than held over the run.
   short <- prof[prof$n_ndc > 0 & prof$n_10 > 0, , drop = FALSE]
-  decide(short, "claim_ndc_short",
-         paste0("Ten-digit claim NDCs: ", detail(short),
-                ".\nThe join left-pads to eleven, which is right only for the ",
-                "4-4-2 layout, so a ten-digit claim can be read as a different ",
-                "drug's code or as none. Confirm how this CDM represents NDC, ",
-                "or convert with an approved NDC10-to-NDC11 crosswalk. Once ",
-                "the study team has established that the padding is right for ",
-                "this data, waive it with CODELIST_WAIVERS=claim_ndc_short."))
+  if (nrow(short))
+    log_msg("  Ten-digit claim NDCs, padded on the 4-4-2 layout: ", detail(short),
+            ". A 5-3-2 or 5-4-1 code pads to a different key; confirm with a ",
+            "crosswalk if the count is material.")
 
   if (nrow(shape) == 0 && nrow(short) == 0)
     log_msg("  OK: Every claim NDC is eleven digits.")

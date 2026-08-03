@@ -125,6 +125,18 @@ RESTORE <- list(
 # common as SELECT DISTINCT is still located by what follows it.
 SUBST <- list(
   "01_codelists.R" = list(list(from = "SELECT DISTINCT", to = "SELECT", n = 2L)),
+  # The claim side of the NDC join yields a key only from a value that could be
+  # an NDC. The source left-padded anything to eleven, so NONE and UNK - how
+  # Optum spells "no NDC", 1.2bn rows of them - became 00000000000 and could
+  # collide with a real code. It can only remove matches the source should not
+  # have made, and it retires the shape check that policed them.
+  "03_mma_map.R"   = list(
+    list(from = "AND {ndc_key('m.NDC')}",
+         to   = "AND lpad(regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', ''), 11, '0')",
+         n = 1L),
+    list(from = "AND {ndc_key('r.NDC')}",
+         to   = "AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', ''), 11, '0')",
+         n = 1L)),
   "05_sct.R"       = list(list(from = "SELECT DISTINCT", to = "SELECT", n = 1L)),
   # The persisted orphan count has to ask what the main check asks, or
   # LOT_QC_SUMMARY reports an orphan the build deliberately ignored. The five
@@ -159,9 +171,7 @@ ADDED <- list(
   "03_mma_map.R" = list(
     # Both NDC joins, medical and Rx. Registering one would have let the other
     # ship unguarded - that is exactly how it happened in the cohort build.
-    list(run = "AND regexp_replace(c.CL_CODE, '[^0-9]', '') <> ''", n = 2L),
-    list(run = "AND regexp_replace(coalesce(cast(m.NDC as string),''), '[^0-9]', '') <> ''", n = 1L),
-    list(run = "AND regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', '') <> ''", n = 1L)),
+    list(run = "AND regexp_replace(c.CL_CODE, '[^0-9]', '') <> ''", n = 2L)),
   "05_sct.R" = list(
     list(run = "AND regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''", n = 1L))
 )
