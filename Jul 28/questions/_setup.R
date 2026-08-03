@@ -66,3 +66,38 @@ qs_setup <- function(script_dir) {
 # is sitting in the schema it succeeds, and the answer is about a different
 # study with nothing to say so.
 qs_tbl <- function(tbl) lot_out(tbl)
+
+# Which population a question runs over.
+#
+# The old switch was between two COHORTS - the full LOT run and an NDMM-filtered
+# copy of it persisted alongside. That arrangement is gone: the LOT run is over
+# the NDMM cohort already, so its output under this prefix IS the study
+# population, and a different cohort is a different prefix.
+#
+# What is still a real choice is BEFORE or AFTER the line criteria, within one
+# run. LOT_LONG_FINAL is the study population; LOT_LONG is the same run before
+# a truncating criterion removed anyone, which is worth looking at when the
+# question is what a criterion cost.
+#
+# FINAL is the default because that is what ships. Reporting a denominator off
+# LOT_LONG while calling it the cohort would count patients the study excluded.
+qs_population <- function() {
+  old <- Sys.getenv("LOT_COHORT", unset = "")
+  if (nzchar(old))
+    stop("LOT_COHORT is no longer read. It chose between the full LOT run and a ",
+         "separate NDMM-filtered table, and that table is not produced any more - ",
+         "the LOT run is over the cohort, so its output is the study population. ",
+         "Use LOT_POPULATION=FINAL (the study population, the default) or ",
+         "LOT_POPULATION=PRECRITERIA (the same run before the line criteria).",
+         call. = FALSE)
+  mode <- toupper(trimws(Sys.getenv("LOT_POPULATION", unset = "FINAL")))
+  if (!mode %in% c("FINAL", "PRECRITERIA"))
+    stop("LOT_POPULATION='", mode, "' is not a population. Use FINAL or ",
+         "PRECRITERIA.", call. = FALSE)
+  if (identical(mode, "FINAL"))
+    list(mode = mode, table = qs_tbl("LOT_LONG_FINAL"),
+         label = "study population, after the line criteria")
+  else
+    list(mode = mode, table = qs_tbl("LOT_LONG"),
+         label = "same run BEFORE the line criteria - includes patients the study removed")
+}

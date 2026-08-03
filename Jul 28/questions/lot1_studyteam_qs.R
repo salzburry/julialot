@@ -89,7 +89,7 @@ main <- function() {
     unique(cn)
   }
 
-  lot_long <- qs_tbl("LOT_LONG")
+  lot_long <- qs_population()$table
   allflags <- qs_tbl("ELIG_COH_ALLFLAGS")
 
   log_msg("LOT1 study-team questions - reading ", lot_long)

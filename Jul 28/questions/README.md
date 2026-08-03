@@ -59,49 +59,48 @@ catalog and schema. `qs_tbl()` is what these scripts use, and it prefixes.
 
 `tests/test_setup.R` fails if any script calls `wrk()` again.
 
-## Known to be wrong, not yet fixed
+## One population, chosen once
 
-These scripts were written against an earlier arrangement and three of their
-assumptions no longer hold. The wiring is fixed; the question logic is not.
+`qs_population()` decides what every question runs over. Default
+**`LOT_LONG_FINAL`** — the study population, after the line criteria.
 
-**They read `LOT_LONG`, not `LOT_LONG_FINAL`.** For this cohort
-`APPLY_NO_BELANTAMAB` is on and truncates patients, so `LOT_LONG` still contains
-people the study removed. Every denominator and percentage these scripts report
-is therefore over the pre-criteria population. That is a per-script change to
-each query, not a setting.
+```
+LOT_POPULATION=PRECRITERIA   # the same run BEFORE the line criteria
+```
 
-**Three of them expect `<prefix>NDMM_LOT_LONG_FILT`.** The cohort build no
-longer produces it — the flow is now cohort → LOT directly, and the LOT run's
-own `LOT_LONG` under the cohort's prefix *is* the NDMM population. Those
-sections will stop, and `validation_qs.R` additionally labels that run "Overall"
-when it is not.
+That is the only axis left. The scripts used to switch between two *cohorts* —
+a full LOT run and an NDMM-filtered copy persisted beside it — and that
+arrangement is gone: the LOT run is over the cohort already, so its output under
+this prefix **is** the study population, and a different cohort is a different
+prefix and a separate invocation. `LOT_COHORT` stops the run and says so rather
+than being quietly reinterpreted.
 
-**`poma_studyteam_qs.R` treats secondary neoplasm of bone as MM-adjacent** and
-removes it from its de-confounded analysis. The cohort build decided the
-opposite — `C79.51`, `C79.52` and `198.5` are metastatic cancer and exclude
-(`DECISIONS.md` section 4). The two answer the same clinical question
-differently.
+Pre-criteria is worth asking for when the question is what a criterion cost. It
+is not a cohort, and a denominator taken from it counts patients the study
+removed.
 
-Its other-malignancy section also calls `load_codelist_csv("other_malig.csv")`,
-which the `lot` loader refuses: it allows only the four code lists the LOT build
-reads.
+## Bone metastasis
 
-Until those are reworked, treat the affected sections as unavailable rather than
-as answers.
+`poma_studyteam_qs.R` removes MM-adjacent conditions from its de-confounded
+broad-cohort analysis. That list is the same four the cohort build keeps —
+monoclonal gammopathy and the three plasma-cell disorders. Secondary neoplasm of
+bone is **not** among them: `C79.51`, `C79.52` and `198.5` are metastatic cancer
+and exclude. See `nndm/DECISIONS.md` section 4; `tests/test_setup.R` fails if the
+two drift apart again.
 
 ## Not verified against the warehouse
 
-`tests/test_setup.R` runs the setup — sourcing it, the load order, the guards,
-the resolved names — so the wiring is checked. What is **not** checked is
-whether the question SQL still returns the same answers against the current
-`lot` modules. Known differences:
+`tests/test_setup.R` runs the setup and holds the population, the table names
+and the bone-metastasis list to what the build does. What it cannot check is
+whether the question SQL returns the same answers as before — nothing here has
+been executed against a warehouse.
 
-- the study window is a run argument now, not a fixed value in `CONTRACT`
-- the code-list loaders drop codes that normalise to blank, de-duplicate, and
-  require digits on both sides of an NDC join
+One known gap: `poma_studyteam_qs.R`'s other-malignancy section calls
+`load_codelist_csv("other_malig.csv")`, and the `lot` loader allows only the
+four code lists the LOT build reads. That section will report unavailable until
+the loader is widened or the section reads the cohort build's own table.
 
-Neither is expected to change an answer, and neither has been tested against
-data. Treat the first run of each script as a run to check, not a run to quote.
+Treat the first run of each script as a run to check, not a run to quote.
 
 ## The files in `asked/`
 

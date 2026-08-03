@@ -7,8 +7,8 @@
 # team's follow-ups on steroids, regimen mix and CAR-T, reading the MM tables on
 # Databricks. It reuses the shared CAR-T helpers in R/validation_qs.R.
 #
-# Cohort: the NDMM study cohort by default (NDMM_LOT_LONG_FILT), which the study
-# team asked to see first. Set LOT_COHORT=FULL for the whole LOT cohort. Every
+# Population: the study population by default (LOT_LONG_FINAL), which the study
+# team asked to see first. Set LOT_POPULATION=PRECRITERIA for the same run
 # query reads this one table. MAP_STACKED and LOT1_SCT are shared, joined by PATID.
 #
 # Questions:
@@ -734,26 +734,17 @@ main <- function() {
 
   # ---- Cohort selection --------------------------------------------------
   # NDMM study cohort by default (the study team asked to see it first);
-  # LOT_COHORT=FULL uses the whole LOT cohort.
-  cohort_mode <- toupper(Sys.getenv("LOT_COHORT", unset = "NDMM"))
-  if (cohort_mode == "FULL") {
-    lot_long <- qs_tbl("LOT_LONG")
-    cohort_label <- "full LOT cohort (all LOT1 patients)"
-  } else {
-    cohort_mode <- "NDMM"
-    lot_long <- qs_tbl("NDMM_LOT_LONG_FILT")
-    cohort_label <- "NDMM newly-diagnosed 1L study cohort"
-  }
+  # LOT_POPULATION=PRECRITERIA uses the same run before the line criteria.
+  .pop         <- qs_population()
+  cohort_mode  <- .pop$mode
+  lot_long     <- .pop$table
+  cohort_label <- .pop$label
   map_tbl <- qs_tbl("MAP_STACKED")
   sct_tbl <- qs_tbl("LOT1_SCT")
 
   log_msg(SEP); log_msg("LOT follow-up study-team questions [", cohort_label, "] -> single Excel workbook"); log_msg(SEP)
   if (!vqs_readable(con, lot_long)) {
-    if (cohort_mode == "NDMM")
-      stop("Cannot read ", lot_long, ". Run 06_ndmm_dashboard.R first to persist ",
-           "NDMM_LOT_LONG_FILT (LOT_LONG restricted to the NDMM study cohort), or set ",
-           "LOT_COHORT=FULL to run on LOT_LONG.")
-    stop("Cannot read ", lot_long, ". Build the LOT pipeline (02_lot1.R / 03_lot2_5.R) first.")
+    stop("Cannot read ", lot_long, ". Run the LOT build for this prefix first.")
   }
   have_map <- vqs_readable(con, map_tbl)
   have_sct <- vqs_readable(con, sct_tbl)
@@ -788,7 +779,7 @@ main <- function() {
   add_sheet(name = "Read Me", title = paste0("LOT follow-up study-team questions - ", cohort_label),
     subtitle = paste0("Generated ", stamp, " by lot_followup_qs.R against ", cfg$work_schema),
     narrative = c(
-      sprintf("Cohort: %s. LOT1 = %s patients; LOT2 = %s patients. Switch with LOT_COHORT=FULL / NDMM.",
+      sprintf("Cohort: %s. LOT1 = %s patients; LOT2 = %s patients. Switch with LOT_POPULATION=PRECRITERIA.",
               cohort_label, format(n_lot1, big.mark = ","), format(n_lot2, big.mark = ",")),
       tok$notes,
       "Q1 = steroids are already excluded from the LOT rules; no LOT re-run is needed. The audit checks whether any known steroid token appears in a LOT regimen (see the Q1 tab). Only the display / steroid-timing outputs use steroid_codes.csv.",
@@ -908,10 +899,10 @@ main <- function() {
       extra_gaps <- c(extra_gaps, "Q5 CAR-T / (b) pre-LOT1 CAR-T scan unavailable - question (b) unanswered")
     q5_notes <- c(
       if (cohort_mode == "NDMM")
-        sprintf("The first table recomputes the CAR-T-relative-to-LOT1 measures for this cohort (%s, LOT1 = %s patients). The study team's earlier table showed 11,148 LOT1 patients and 124 with any CAR-T on/after LOT1 - compare those to the table below. Set LOT_COHORT=FULL for the whole LOT cohort.",
+        sprintf("The first table recomputes the CAR-T-relative-to-LOT1 measures for this cohort (%s, LOT1 = %s patients). The study team's earlier table showed 11,148 LOT1 patients and 124 with any CAR-T on/after LOT1 - compare those to the table below. Set LOT_POPULATION=PRECRITERIA for the pre-criteria run.",
                 cohort_label, format(n_lot1, big.mark = ","))
       else
-        sprintf("The first table recomputes the CAR-T-relative-to-LOT1 measures for this cohort (%s, LOT1 = %s patients). The study team's earlier table (11,148 LOT1 patients; 124 with any CAR-T) was the NDMM default cohort, so this full-cohort run will differ. Run without LOT_COHORT for the NDMM view.",
+        sprintf("The first table recomputes the CAR-T-relative-to-LOT1 measures for this cohort (%s, LOT1 = %s patients). The study team's earlier table (11,148 LOT1 patients; 124 with any CAR-T) was the NDMM default cohort, so this full-cohort run will differ. Run without LOT_POPULATION for the study population.",
                 cohort_label, format(n_lot1, big.mark = ",")),
       if (is.null(cart_raw))
         "The pre-LOT1 CAR-T rows need the raw claims scan, which was not available this run, so 'CAR-T before LOT1' and 'prior-to-or-during' show as NA. The during/closing timing is still valid. This run is marked incomplete for question (b)."

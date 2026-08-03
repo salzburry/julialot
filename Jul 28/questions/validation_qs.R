@@ -25,7 +25,7 @@
 #
 # Cohorts: every question is answered once
 # per cohort - the parent Overall LOT_LONG cohort always, and the NDMM (1L)
-# cohort when the persisted NDMM_LOT_LONG_FILT table (written by the combined
+# population. One prefix is one cohort, so there is no second population (the
 # dashboard's NDMM pass) is readable. NDMM CSVs carry an "ndmm_" prefix.
 
 .script_dir <- local({
@@ -61,7 +61,9 @@ main <- function() {
     log_msg("  wrote ", tag, " -> ", f, " (", nrow(df), " rows)")
   }
 
-  lot_long <- qs_tbl("LOT_LONG")
+  .pop      <- qs_population()
+  lot_long  <- .pop$table
+  .pop_label <- .pop$label
   map_tbl  <- qs_tbl("MAP_STACKED")
   sct_tbl  <- qs_tbl("LOT1_SCT")
 
@@ -113,26 +115,18 @@ main <- function() {
   # of the parent - so the shared signal views built above on the parent
   # patient list (steroid claims, raw CAR-T dates) cover both cohorts; each
   # per-question query joins back to its own cohort lot_long.
-  ndmm_tbl <- qs_tbl("NDMM_LOT_LONG_FILT")
-  cohorts  <- list(list(tag = "overall", label = "Overall", lot_long = lot_long))
-  if (vqs_readable(con, ndmm_tbl)) {
-    cohorts <- c(cohorts, list(list(tag = "ndmm", label = "NDMM", lot_long = ndmm_tbl)))
-    log_msg("NDMM cohort table found (", ndmm_tbl, ") - Q1-Q6 answered for ",
-            "Overall AND NDMM (NDMM CSVs carry an 'ndmm_' prefix).")
-  } else {
-    log_msg("NOTE: ", ndmm_tbl, " not readable - NDMM answers skipped. ",
-            "(Run 07_combined_dashboard.R once to materialize the NDMM ",
-            "cohort, then re-run for both cohorts.) Overall only.")
-  }
+  # One population, not two. The old arrangement ran a "parent" LOT_LONG and an
+  # NDMM-filtered subset of it side by side; the LOT run under this prefix is
+  # over the cohort already, so there is no subset to compare against - a
+  # different cohort is a different prefix and a separate run of this script.
+  cohorts <- list(list(tag = "cohort", label = .pop_label, lot_long = lot_long))
 
   defs <- data.frame(item = c(
     "denominator_cohort", "steroid_signal", "steroid_at_lotn",
     "before_after_windows", "cart_during_or_closing", "cart_before_lot1",
     "agent_tokens", "raw_claims_window"),
     definition = c(
-      paste0("One pass per cohort: parent (Overall) LOT_LONG",
-             if (length(cohorts) > 1) " AND the NDMM (1L) subset (NDMM_LOT_LONG_FILT; CSVs prefixed 'ndmm_')"
-             else " (NDMM_LOT_LONG_FILT not readable this run - Overall only)", "."),
+      paste0("One pass over ", lot_long, " - ", .pop_label, "."),
       paste0("steroid_codes.csv codes scanned on medical (PROC_CD/BILL_PROC_CD/NDC) + rx (NDC). ", ster$note),
       sprintf("No-steroid denominator: a steroid claim within the CAPPED induction window [LOT_START, LOT_INDUCTION_END_DT] = least(LOT_BASE_END_DT, LOT_START+W-1); W=%d (LOT1) / %d (CART-started LOTn) / %d (other LOTn); SCT_ALLO = no membership. Matches the Steroids panel.", VQS_W1, VQS_CART, VQS_W2),
       "Cumulative (<=N days) from a steroid claim date; before=[start-N,start-1] (rel. LOT_START); after=[fixed_ind_end+1, fixed_ind_end+N] where fixed_ind_end=LOT_START+W-1 (NOT capped).",

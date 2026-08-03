@@ -129,6 +129,49 @@ ok(!length(dbl),
 ok(file.exists(file.path(ROOT, "steroid_codes.csv")),
    "the steroid code list the timing questions need is here")
 
+cat("\n-- the questions run over the study population --\n")
+# LOT_LONG is the run before a truncating criterion removed anyone, so a
+# denominator taken from it counts patients the study excluded. LOT_LONG_FINAL
+# is what ships, and it is the default.
+clear(); Sys.setenv(DOMINO_USER_NAME = "usr00000", OBJECT_PREFIX = "ndmm_")
+invisible(qs_setup(ROOT))
+ok(grepl("ndmm_LOT_LONG_FINAL$", qs_population()$table),
+   "the default population is LOT_LONG_FINAL, not the pre-criteria table")
+Sys.setenv(LOT_POPULATION = "PRECRITERIA")
+ok(grepl("ndmm_LOT_LONG$", qs_population()$table),
+   "...and the pre-criteria run can be asked for, when the question is what a criterion cost")
+Sys.unsetenv("LOT_POPULATION")
+Sys.setenv(LOT_POPULATION = "SOMETHING")
+stops(qs_population(), "an unrecognised population is refused")
+Sys.unsetenv("LOT_POPULATION")
+# The old switch chose between two cohorts, one of which is not produced any
+# more. Silently reinterpreting it would be worse than stopping.
+Sys.setenv(LOT_COHORT = "NDMM")
+stops(qs_population(), "the retired LOT_COHORT stops the run and names what replaced it")
+Sys.unsetenv("LOT_COHORT")
+# The table the old switch pointed at is gone from the code entirely.
+gone <- Filter(function(f) any(grepl("NDMM_LOT_LONG_FILT|LOT_COHORT",
+                                     readLines(f, warn = FALSE))), qs)
+ok(!length(gone),
+   if (length(gone)) paste0("still expects the retired table: ",
+                            paste(basename(gone), collapse = ", "))
+   else "no script expects the filtered table the cohort build stopped producing")
+
+cat("\n-- and they classify bone metastasis the way the cohort does --\n")
+# poma treated secondary neoplasm of bone as MM-adjacent and removed it from
+# its de-confounded analysis. The cohort build decided the opposite: C79.51,
+# C79.52 and 198.5 are metastatic cancer and exclude. Two answers to one
+# clinical question is the thing worth failing on.
+poma <- readLines(file.path(ROOT, "poma_studyteam_qs.R"), warn = FALSE)
+i <- grep("mm_adj_in <- paste", poma)[1]
+adj <- paste(poma[i:(i + 6)], collapse = " ")
+ok(!grepl("SECONDARY MALIGNANT NEOPLASM OF BONE", adj, fixed = TRUE),
+   "bone metastasis is not treated as MM-adjacent here either")
+ok(grepl("MONOCLONAL GAMMOPATHY", adj, fixed = TRUE) &&
+     grepl("PLASMA CELL LEUKEMIA", adj, fixed = TRUE),
+   "...and the four the cohort build does keep are still kept")
+clear()
+
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))
 if (fail > 0L) quit(status = 1L)
