@@ -600,10 +600,25 @@ stops(.transition_sections(1), "...and a MAX_LOT with no transition in it is ref
 # tables and on no panel.
 bd2 <- readLines(file.path(ROOT, "R", "build_dashboard.R"), warn = FALSE)
 ok(any(grepl("check_max_lot(con, inputs, have, cfg)", bd2, fixed = TRUE)) &&
-     any(grepl("SELECT max(LOT_NUM) AS n FROM ", bd2, fixed = TRUE)),
-   "the setting is checked against the lines the run actually built")
+     any(grepl("max_lot=([0-9]+)", bd2, fixed = TRUE)),
+   "the setting is checked against the setting the LOT run recorded")
 ok(any(grepl("on no panel", bd2, fixed = TRUE)),
-   "...and a MAX_LOT below what was built is a warning, not a silent gap")
+   "...and a MAX_LOT below what that run built is a warning, not a silent gap")
+# Configured height and how far patients got are different questions, and only
+# one is a problem. Nobody reaching LOT5 is not a mismatch: the LOT4 to LOT5
+# panel with everyone flowing into "No LOT5" IS the finding, and lowering
+# MAX_LOT to match would delete the panel carrying it.
+ok(any(grepl("would delete the", bd2, fixed = TRUE)),
+   "...while a line nobody reached is not read as a misconfiguration")
+ok(any(grepl("ORDER BY RUN_TIMESTAMP DESC LIMIT 1", bd2, fixed = TRUE)),
+   "...read by the clock column that table actually has")
+# The regex has to survive its neighbours: max_lot sits in a sorted
+# key=value|key=value string next to lot_n_induction_window_days.
+cs <- paste0("allo_lot_span=single_day|cart_consolidation_days=45|",
+             "lot_n_induction_window_days=30|max_lot=5|medical_day_supply=28")
+ok(identical(suppressWarnings(as.integer(
+     sub(".*(^|\\|)max_lot=([0-9]+).*", "\\2", cs))), 5L),
+   "...and max_lot is read out of the contract string, not a neighbour of it")
 ok(grepl("LIMIT 10", tsql, fixed = TRUE) && grepl("coalesce(t.tgt, \'Other\')", tsql, fixed = TRUE),
    "top N sources, and everything else collapses to Other rather than vanishing")
 sk <- render_sankey(data.frame(

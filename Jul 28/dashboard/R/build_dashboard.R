@@ -274,30 +274,60 @@ resolve_attrition <- function(secs, con, inputs, have, cfg, owner) {
 }
 
 # MAX_LOT is a second copy of the LOT build's setting, so it can disagree with
-# the run being drawn. The transitions are generated from it, and the lines are
-# in the data - so ask the data rather than trust the copy.
+# the run being drawn, and the transitions are generated from it.
 #
-# Too low is the case that costs something: LOT5 to LOT6 exists in the tables
-# and no panel draws it, which is a missing answer nobody can see is missing.
-# Too high draws empty Sankeys, which is noise rather than a wrong number, so
-# it is a note.
+# Against what the run was CONFIGURED to build, not against how far patients
+# got. The LOT build records its contract in LOT_RUN_METADATA, max_lot included,
+# so the setting can be compared with the setting.
 #
-# Neither stops the run. Every other panel is still true, and a dashboard that
-# refuses to render because one tab is short is worse than one that says so.
+# Those are two different questions and only one is a problem. A run configured
+# to LOT6 while this says 5 leaves LOT5 to LOT6 in the tables and on no panel -
+# a missing answer nobody can see is missing. A run where nobody REACHED LOT5 is
+# not a mismatch at all: the LOT4 to LOT5 panel showing every patient flowing
+# into "No LOT5" is the finding, and lowering MAX_LOT to match would delete the
+# panel that carries it. Reading the observed maximum as the configured one
+# would have advised exactly that.
+#
+# Nothing here stops the run. Every other panel is still true, and a dashboard
+# that refuses to render because one tab is short is worse than one that says so.
 check_max_lot <- function(con, inputs, have, cfg) {
+  col <- function(d, nm) {
+    if (is.null(d) || !is.data.frame(d)) return(NULL)
+    i <- match(toupper(nm), toupper(names(d)))
+    if (is.na(i)) NULL else d[[i]]
+  }
+  # RUN_TIMESTAMP is what this table calls its clock.
+  meta <- if (isTRUE(have[["run_meta"]])) tryCatch(db_q(con, paste0(
+    "SELECT * FROM ", inputs$run_meta,
+    " WHERE CONTRACT_SETTINGS IS NOT NULL ORDER BY RUN_TIMESTAMP DESC LIMIT 1")),
+    error = function(e) NULL) else NULL
+  cs <- col(meta, "CONTRACT_SETTINGS")
+  built <- if (is.null(cs) || !length(cs)) NA_integer_ else
+    suppressWarnings(as.integer(sub(".*(^|\\|)max_lot=([0-9]+).*", "\\2",
+                                    as.character(cs[1]))))
+  if (!is.na(built)) {
+    if (built != cfg$max_lot)
+      log_msg("WARNING: MAX_LOT here is ", cfg$max_lot, " but the LOT run was ",
+              "built with max_lot=", built, " (CONTRACT_SETTINGS in ",
+              inputs$run_meta, "). The Transitions tab draws ",
+              max(cfg$max_lot - 1L, 0L), " panel(s); that run has ",
+              max(built - 1L, 0L), ". Set MAX_LOT to ", built, ".")
+    return(invisible(built))
+  }
+  # No contract recorded - an older lot. Fall back to the lines on disk, and
+  # warn only in the direction that loses a panel: a line ABOVE this setting is
+  # in the tables and undrawn. Below it says nothing, because a line nobody
+  # reached and a line never configured look identical from here.
   if (!isTRUE(have[["lot_final"]])) return(invisible(NULL))
-  built <- tryCatch(as.integer(db_q(con, paste0(
+  seen <- tryCatch(as.integer(db_q(con, paste0(
     "SELECT max(LOT_NUM) AS n FROM ", inputs$lot_final))$n), error = function(e) NA)
-  if (length(built) != 1L || is.na(built)) return(invisible(NULL))
-  if (built > cfg$max_lot)
-    log_msg("WARNING: MAX_LOT is ", cfg$max_lot, " but this run built lines up ",
-            "to LOT", built, ". The Transitions tab stops at LOT", cfg$max_lot,
+  if (length(seen) != 1L || is.na(seen)) return(invisible(NULL))
+  if (seen > cfg$max_lot)
+    log_msg("WARNING: MAX_LOT is ", cfg$max_lot, " but this run has lines up to ",
+            "LOT", seen, ". The Transitions tab stops at LOT", cfg$max_lot,
             ", so the moves above it are in the tables and on no panel. Set ",
-            "MAX_LOT to ", built, " to draw them.")
-  else if (built < cfg$max_lot)
-    log_msg("Note: MAX_LOT is ", cfg$max_lot, " and this run built lines up to ",
-            "LOT", built, ", so the transitions above that are empty panels.")
-  invisible(built)
+            "MAX_LOT to ", seen, ".")
+  invisible(seen)
 }
 
 # The LOT funnel belongs to one LOT run, and the dashboard reads one LOT run.
