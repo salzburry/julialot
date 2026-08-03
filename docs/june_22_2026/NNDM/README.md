@@ -14,5 +14,6 @@ adding "CE during follow-up for each cohort: CE of at least 3-months during
 follow-up or death with no gaps in enrollment". The `Jul 28` build implements
 three. Anything else in this file may be stale the same way.
 
-The current protocol is not in this repository. Add it before taking a
-definition from any file here.
+**The current protocol is `Questions/July 30 2026/Updated NNDM cohort.pdf`** —
+a scan of `Belantamab_Optum LoT_Unmet_Need_CoAuth Rev Round 2 (June 16 2026).docx`,
+58 pages. Take every definition from that one.
