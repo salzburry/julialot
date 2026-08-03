@@ -150,6 +150,29 @@ quietly: the broad build's index is a diagnosis-based candidate, while
 and read as nobody being flagged. So the flags join to their **own** final
 cohort table, and the LOT population restricts the result by `PATID`.
 
+### The build behind them has to have finished
+
+The flags and the final cohort are **separate writes**. A run that stopped
+between them leaves two tables that are individually readable and carry every
+column, describing different attempts — the column check cannot see that.
+
+So `qs_trial_build_state()` reads `<TRIAL_PREFIX>build_status` first. That build
+writes it with `CREATE OR REPLACE`, so it holds one row and that row is the last
+run on the prefix; anything but `complete` skips the trial sections rather than
+answering from a mixed pair. `QS_IGNORE_TRIAL_BUILD_STATE=TRUE` overrides when
+you know it failed before writing either. No status table warns and continues —
+an older build predates it.
+
+That row also records `final_table_name`, which settles `TRIAL_INDEX_TABLE`
+properly: the default comes from a config file this package does not read, so a
+disagreement names the table that build actually wrote instead of leaving you to
+guess.
+
+The two builds do not agree on column case — LOT writes `STATE`, the broad build
+`state` — so both status tables are read case-insensitively. A bare `d$STATE`
+returns `NULL` on the lower-case one, which reads as no state recorded rather
+than as looking in the wrong place.
+
 ### What that costs, stated on the tab
 
 The flag build is a **different cohort** — different index, study end, baseline

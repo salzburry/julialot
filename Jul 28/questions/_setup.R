@@ -192,11 +192,79 @@ qs_missing_cols <- function(con, tbl, cols) {
   setdiff(toupper(cols), have)
 }
 
+# A column by name, whichever case the warehouse gave it back in. The two
+# builds do not agree: LOT writes its status columns upper case, the broad
+# build writes them lower. A bare d$STATE is NULL on the one that used state,
+# which reads as "no state recorded" rather than as looking in the wrong place.
+qs_col <- function(d, name) {
+  if (is.null(d) || !is.data.frame(d)) return(NULL)
+  i <- match(toupper(name), toupper(names(d)))
+  if (is.na(i)) NULL else d[[i]]
+}
+
+# How the build behind the trial flags ended.
+#
+# The broad build writes <prefix>build_status with CREATE OR REPLACE, so it
+# holds one row and that row is the last run on the prefix - no ordering
+# needed. A run that dies part way leaves some tables from this attempt and
+# some from the one before, and nothing else in the schema says so: the flags
+# and the final cohort are separate writes, and a failure between them leaves
+# two tables that are individually readable, carry every column, and describe
+# different runs.
+#
+# It also records the final table name it wrote, which is worth more than the
+# state: TRIAL_INDEX_TABLE defaults to a name from a config file this package
+# does not read, so this is the one place that default can be checked against
+# what the build actually did.
+#
+# No status table is a warning, not a refusal - an older build predates it.
+qs_trial_build_state <- function(con, src) {
+  tbl <- wrk(paste0(tolower(src$prefix), "build_status"))
+  d <- tryCatch(db_q(con, glue("SELECT * FROM {tbl}")), error = function(e) NULL)
+  if (is.null(d) || nrow(d) == 0) {
+    log_msg("WARNING: no ", tbl, ", so the build behind the trial flags is ",
+            "unverified - these answers assume it finished and wrote both ",
+            "tables in the same run.")
+    return(list(ok = TRUE, why = NULL))
+  }
+  state <- tolower(trimws(as.character(qs_col(d, "state")[1])))
+  run   <- as.character(qs_col(d, "run_id")[1])
+  wrote <- qs_col(d, "final_table_name")
+  if (!identical(state, "complete")) {
+    if (!identical(toupper(Sys.getenv("QS_IGNORE_TRIAL_BUILD_STATE", unset = "")),
+                   "TRUE"))
+      return(list(ok = FALSE, why = paste0(
+        "the build behind them (", run, ", prefix '", src$prefix,
+        "') is marked '", state, "' in ", tbl, ". It writes the flags and the ",
+        "final cohort separately, so a run that stopped between them leaves ",
+        "two readable tables from different attempts and nothing to tell them ",
+        "apart. Re-run that build, or set QS_IGNORE_TRIAL_BUILD_STATE=TRUE if ",
+        "you know it failed before writing either.")))
+    log_msg("WARNING: the build behind the trial flags (", run, ") is marked '",
+            state, "' and QS_IGNORE_TRIAL_BUILD_STATE is set. If it got as far ",
+            "as replacing either table, the trial numbers are that run's.")
+  }
+  # Its own record of what it wrote beats a default this package guessed.
+  if (!is.null(wrote) && nzchar(trimws(as.character(wrote[1])))) {
+    want <- toupper(trimws(sub(".*[.]", "", src$index)))
+    got  <- toupper(trimws(as.character(wrote[1])))
+    if (!identical(want, got))
+      return(list(ok = FALSE, why = paste0(
+        "TRIAL_INDEX_TABLE resolves to ", src$index, ", but that build recorded ",
+        "writing '", wrote[1], "' (", tbl, "). Set TRIAL_INDEX_TABLE=", wrote[1],
+        " - it is named by that build's FINAL_TABLE_NAME, which this package ",
+        "cannot read.")))
+  }
+  list(ok = TRUE, why = NULL)
+}
+
 # Can the trial questions run this time, and if not, exactly why.
 #
 # Readable is not enough - NDMM_FLAGS_ALL is readable and has none of the
-# columns. So both tables are checked for the columns the query names, and the
-# caller gets one sentence to print instead of a stack trace mid-workbook.
+# columns. Nor are the columns enough: two tables from different attempts of a
+# half-failed build are individually well-formed. So the build's own record of
+# how it ended is asked first, then the columns, and the caller gets one
+# sentence to print instead of a stack trace mid-workbook.
 qs_trial_flags_ready <- function(con, src = qs_trial_flags()) {
   where <- paste0("TRIAL_PREFIX is the prefix of the build that wrote ",
                   "ELIG_COH_ALLFLAGS",
@@ -205,6 +273,10 @@ qs_trial_flags_ready <- function(con, src = qs_trial_flags()) {
                   "; TRIAL_INDEX_TABLE is that build's final cohort table, ",
                   "which carries no prefix and is named by its ",
                   "FINAL_TABLE_NAME.")
+  st <- qs_trial_build_state(con, src)
+  if (!isTRUE(st$ok))
+    return(list(ok = FALSE, src = src, why = paste0(
+      "The other-cancer and clinical-trial answers are skipped: ", st$why)))
   for (t in list(list(tbl = src$flags, cols = QS_TRIAL_FLAG_COLS),
                  list(tbl = src$index, cols = QS_TRIAL_INDEX_COLS))) {
     miss <- qs_missing_cols(con, t$tbl, t$cols)
@@ -252,27 +324,29 @@ qs_check_run_binding <- function(con) {
             "the cohort behind prefix '", cfg$object_prefix, "'.")
     return(invisible(FALSE))
   }
-  state <- tolower(trimws(as.character(got$STATE[1])))
+  state <- tolower(trimws(as.character(qs_col(got, "STATE")[1])))
+  run   <- as.character(qs_col(got, "RUN_ID")[1])
   if (!identical(state, "complete")) {
     if (!identical(toupper(Sys.getenv("QS_IGNORE_BUILD_STATE", unset = "")), "TRUE"))
       stop("The last LOT run on prefix '", cfg$object_prefix, "' (",
-           got$RUN_ID[1], ") is marked '", state, "', so it is the run that ",
+           run, ") is marked '", state, "', so it is the run that ",
            "last wrote these tables and it did not finish. LOT replaces ",
            "LOT_LONG_FINAL before it validates it, so the table on disk may be ",
            "that run's - built, unvalidated, left behind - and nothing here can ",
            "tell those numbers from good ones. Re-run the LOT build, or set ",
            "QS_IGNORE_BUILD_STATE=TRUE if you know it failed before it wrote ",
            "anything.", call. = FALSE)
-    log_msg("WARNING: the last LOT run (", got$RUN_ID[1], ") is marked '", state,
+    log_msg("WARNING: the last LOT run (", run, ") is marked '", state,
             "' and QS_IGNORE_BUILD_STATE is set. If it got as far as replacing ",
             "LOT_LONG_FINAL, these answers are that run's.")
   }
-  built <- toupper(trimws(as.character(got$INPUT_COHORT_TABLE[1])))
+  from_ <- as.character(qs_col(got, "INPUT_COHORT_TABLE")[1])
+  built <- toupper(trimws(from_))
   want  <- toupper(trimws(cfg$input_cohort_table))
   if (!identical(built, want))
     stop("INPUT_COHORT_TABLE is '", cfg$input_cohort_table, "', but the LOT run ",
          "under prefix '", cfg$object_prefix, "' was built from '",
-         got$INPUT_COHORT_TABLE[1], "' (", tbl, "). The questions bound their ",
+         from_, "' (", tbl, "). The questions bound their ",
          "answers by the cohort's windows and index dates, so this pair would ",
          "describe one run using another's cohort.", call. = FALSE)
   invisible(TRUE)

@@ -320,6 +320,34 @@ dsh <- readLines(file.path(dirname(ROOT), "dashboard", "R", "db_utils_dash.R"),
 ok(any(grepl("DASH_IGNORE_BUILD_STATE", dsh, fixed = TRUE)),
    "...the same way the dashboard does, for the same reason")
 
+cat("\n-- and the build behind the trial flags has to have finished --\n")
+# The flags and the final cohort are separate writes. A run that stopped
+# between them leaves two tables that are individually readable and carry every
+# column, describing different attempts - columns alone cannot see that.
+bc <- readLines(file.path(dirname(ROOT), "overall", "R", "build_cohort.R"),
+                warn = FALSE)
+ok(any(grepl('paste0(tolower(cfg$object_prefix), "build_status")', bc, fixed = TRUE)),
+   "the broad build records how it ended, under its own prefix")
+ok(any(grepl("CREATE OR REPLACE TABLE ", bc, fixed = TRUE)) &&
+   any(grepl('q(state), " AS state, "', bc, fixed = TRUE)),
+   "...one row, replaced each run, so that row is the last run on the prefix")
+ok(any(grepl('q(cfg$final_table_name), " AS final_table_name, "', bc, fixed = TRUE)),
+   "...and it records the final table it wrote, which is checkable")
+ok(any(grepl("qs_trial_build_state(con, src)", st, fixed = TRUE)),
+   "so the trial source is asked for that before its columns are trusted")
+ok(any(grepl("QS_IGNORE_TRIAL_BUILD_STATE", st, fixed = TRUE)),
+   "...with an override for a build known to have failed before writing either")
+# TRIAL_INDEX_TABLE defaults to a name from a config file this package does not
+# read. The build's own record of what it wrote settles it.
+ok(any(grepl('"TRIAL_INDEX_TABLE resolves to "', st, fixed = TRUE)),
+   "...and a default that disagrees with what the build wrote names the right table")
+# The two builds disagree on column case - LOT writes STATE, the broad build
+# state. A bare d$STATE is NULL on the latter, which reads as no state at all.
+ok(any(grepl("qs_col <- function(d, name)", st, fixed = TRUE)) &&
+   !any(grepl("got$STATE", st, fixed = TRUE)) &&
+   !any(grepl("d$state[1]", st, fixed = TRUE)),
+   "both status tables are read case-insensitively, since they do not agree on case")
+
 cat("\n-- Q3 takes its lines and its index dates from the same run --\n")
 # Index dates from the NDMM cohort would drop every broad patient the NDMM
 # exclusions removed out of the idx join. They stay in the denominator through
