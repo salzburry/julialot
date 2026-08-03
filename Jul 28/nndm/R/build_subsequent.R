@@ -16,12 +16,13 @@
 #       3L). Patients with gaps in enrolment of <= 30 days are considered to be
 #       continuously enrolled"
 #   3. "CE during follow-up for each cohort: CE of at least 3-months during
-#       follow-up or death with no gaps in enrollment"
+#       follow-up or death with no gaps in enrollment" - counted as 90 days,
+#       see SUBSEQ_FU_CE_DAYS below
 #
-# Death is the stated alternative to the three months, and the only one. The
-# study end is not: a living patient whose three months run past the data has
-# not shown the three months, so the window is truncated at death and at
-# nothing else.
+# Death is the stated alternative to the follow-up window, and the only one.
+# The study end is not: a living patient whose window runs past the data has
+# not shown the enrolment, so the window is truncated at death and at nothing
+# else.
 #
 # Each cohort is drawn from the one before it: 2L from the 1L cohort, 3L from
 # the 2L cohort. The study design note says "each subsequent line is a subset
@@ -32,8 +33,8 @@
 # Receiving the lines in order is guaranteed anyway: lines are numbered
 # sequentially, so a LOT 3 row implies a LOT 2 row. What chaining adds is that
 # the 2L cohort's ENROLMENT windows must also have been met. Those are not the
-# same test - a patient can have a gap that fails the 3 months after 2L and
-# still be fully enrolled for 12 months before 3L and 3 months after it.
+# same test - a patient can have a gap that fails the follow-up window after
+# 2L and still be fully enrolled for the 365 days before 3L and 90 after it.
 # N_EXCLUDED_BY_PRIOR counts them: patients who meet 3L's own three criteria
 # and are dropped only for not being in the 2L cohort.
 #
@@ -49,10 +50,12 @@ SUBSEQ_LINES <- c(2L, 3L)
 # CONTRACT to the value the 1L cohort was built with, so it cannot be moved
 # without redefining that cohort. These are a separate question.
 #
-# SUBSEQ_FU_CE_MONTHS is calendar months of follow-up CE - 3 for the
-# protocol's 3 months. Months, not days: add_months keeps the month boundary,
-# and 90 days is a different rule (the 1L build's own sensitivity table put
-# 90 days and 3 months seven patients apart).
+# SUBSEQ_FU_CE_DAYS is days of follow-up CE - 90 for the protocol's 3 months,
+# counted the same way NDMM_FU_CE_DAYS counts the 1L window. Days rather than
+# calendar months: 90 days is not add_months(index, 3), because month lengths
+# differ, and the 1L build's own sensitivity table put the two seven patients
+# apart. 90 days is the shorter of the pair, so it is the more permissive
+# reading of "at least 3-months".
 #
 # Whatever they are set to is written into all three outputs, so a cohort
 # always says which windows made it.
@@ -153,13 +156,13 @@ subseq_pre_expr <- function(ix, pre_days) {
        " AND s.cov_end >= date_sub({ix}, 1) THEN 1 ELSE 0 END)")
 }
 
-# Criterion 3: 3 months of follow-up CE from that index, "with no gaps", so
+# Criterion 3: the follow-up CE window from that index, "with no gaps", so
 # over the STRICT spans - a different table from the one above, and the
 # difference is the rule. "or death": the window is cut short at the death
 # date, and at nothing else. The study end does not truncate it, so a patient
-# whose three months run past the data does not qualify on the data's account.
-subseq_fu_expr <- function(ix, months, death = "g.DEATH_DT") {
-  end <- glue("add_months({ix}, {as.integer(months)})")
+# whose window runs past the data does not qualify on the data's account.
+subseq_fu_expr <- function(ix, fu_days, death = "g.DEATH_DT") {
+  end <- glue("date_add({ix}, {as.integer(fu_days)})")
   glue("max(CASE WHEN s.cov_start <= {ix}",
        " AND s.cov_end >= least({end}, coalesce({death}, {end}))",
        " THEN 1 ELSE 0 END)")
@@ -167,9 +170,9 @@ subseq_fu_expr <- function(ix, months, death = "g.DEATH_DT") {
 
 # Patients in the 1L cohort who reached LOT `lot_num`, indexed on that line's
 # start, with both CE flags.
-subseq_cohort_sql <- function(lot_num, from_tbl, out_tbl, pre_days, months,
+subseq_cohort_sql <- function(lot_num, from_tbl, out_tbl, pre_days, fu_days,
                               lines_tbl, spans_tbl, spans_strict_tbl, run_id) {
-  pre_days <- as.integer(pre_days); months <- as.integer(months)
+  pre_days <- as.integer(pre_days); fu_days <- as.integer(fu_days)
   glue("
     CREATE OR REPLACE TABLE {out_tbl} AS
     WITH base AS (
@@ -195,7 +198,7 @@ subseq_cohort_sql <- function(lot_num, from_tbl, out_tbl, pre_days, months,
     ),
     fu AS (
       SELECT g.PATID,
-             {subseq_fu_expr('g.COHORT_INDEX_DATE', months)} AS CE_FU
+             {subseq_fu_expr('g.COHORT_INDEX_DATE', fu_days)} AS CE_FU
       FROM got g LEFT JOIN {spans_strict_tbl} s ON s.PATID = g.PATID
       GROUP BY g.PATID
     )
@@ -204,7 +207,7 @@ subseq_cohort_sql <- function(lot_num, from_tbl, out_tbl, pre_days, months,
            coalesce(pre.CE_PRE_12MO, 0) AS CE_PRE_12MO,
            coalesce(fu.CE_FU, 0)        AS CE_FU,
            {pre_days}                   AS CE_PRE_DAYS,
-           {months}                     AS CE_FU_MONTHS,
+           {fu_days}                    AS CE_FU_DAYS,
            {sql_text(run_id)}           AS SUBSEQ_RUN_ID,
            current_timestamp()          AS BUILT_AT
     FROM got g
@@ -220,7 +223,7 @@ subseq_cohort_sql <- function(lot_num, from_tbl, out_tbl, pre_days, months,
 # Counted over whatever population is passed as from_tbl, so the same query
 # answers "how many from the 2L cohort" and "how many there would have been
 # from the 1L cohort" - the difference is what chaining costs.
-subseq_funnel_sql <- function(lot_num, from_tbl, pre_days, months, lines_tbl,
+subseq_funnel_sql <- function(lot_num, from_tbl, pre_days, fu_days, lines_tbl,
                               spans_tbl, spans_strict_tbl) {
   glue("
     WITH base AS (
@@ -242,7 +245,7 @@ subseq_funnel_sql <- function(lot_num, from_tbl, pre_days, months, lines_tbl,
       GROUP BY g.PATID
     ),
     fu AS (
-      SELECT g.PATID, {subseq_fu_expr('g.ix', months)} AS f
+      SELECT g.PATID, {subseq_fu_expr('g.ix', fu_days)} AS f
       FROM got g LEFT JOIN {spans_strict_tbl} s ON s.PATID = g.PATID
       GROUP BY g.PATID
     ),
@@ -260,7 +263,7 @@ subseq_funnel_sql <- function(lot_num, from_tbl, pre_days, months, lines_tbl,
 
 build_subsequent <- function(here, prefix,
                              pre_days = subseq_days("SUBSEQ_PRE_DAYS", 365L),
-                             months   = subseq_days("SUBSEQ_FU_CE_MONTHS", 3L)) {
+                             fu_days  = subseq_days("SUBSEQ_FU_CE_DAYS", 90L)) {
   # The same gates the 1L build runs. These cohorts are a subset of that one,
   # so they have to be built under the settings that defined it - a different
   # gap allowance or baseline window here would be a different study.
@@ -282,7 +285,7 @@ build_subsequent <- function(here, prefix,
   log_msg("  received that line")
   log_msg("  ", pre_days, " days of CE before its start, gaps <= ",
           cfg$gap_days, " days")
-  log_msg("  ", months, " months of CE after it, or death, no gaps")
+  log_msg("  ", fu_days, " days of CE after it, or death, no gaps")
   # The gap allowance is not settable here. It is baked into the span tables
   # the 1L build wrote, so changing GAP_DAYS moves nothing until that build is
   # re-run - and CONTRACT stops it being changed anyway.
@@ -300,14 +303,14 @@ build_subsequent <- function(here, prefix,
   for (n in SUBSEQ_LINES) {
     out <- wrk(paste0("NDMM_COHORT_", n, "L"))
     fun <- function(src) db_q(con, subseq_funnel_sql(
-      n, src, pre_days, months, lines, spans, strict))
+      n, src, pre_days, fu_days, lines, spans, strict))
     f <- fun(from)
-    db_exec(con, subseq_cohort_sql(n, from, out, pre_days, months,
+    db_exec(con, subseq_cohort_sql(n, from, out, pre_days, fu_days,
                                    lines, spans, strict, run_id))
     log_msg(n, "L: ", f$n_from, " in the ", if (n == 2L) "1L" else paste0(n - 1L, "L"),
             " cohort -> ", f$n_reached, " reached ", n, "L -> ", f$n_ce_pre,
             " with ", pre_days, " days of CE before it -> ", f$n_final,
-            " with ", months, " months after it")
+            " with ", fu_days, " days after it")
     # What the chain costs: patients who meet this cohort's own criteria off
     # the 1L cohort but are not in the cohort before it. Same query, wider
     # population, so the two numbers are counted the same way.
@@ -330,19 +333,19 @@ build_subsequent <- function(here, prefix,
                         vapply(att$COHORT, sql_text, ""), num(att$N_FROM),
                         num(att$N_REACHED_LOT), num(att$N_CE_PRE),
                         num(att$N_FINAL), num(att$N_EXCLUDED_BY_PRIOR),
-                        sql_count(pre_days), sql_count(months),
+                        sql_count(pre_days), sql_count(fu_days),
                         sql_text(run_id)),
                 collapse = ", ")
   db_exec(con, glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_SUBSEQUENT_ATTRITION')} AS
     SELECT * FROM (VALUES {vals})
       AS t(COHORT, N_FROM, N_REACHED_LOT, N_CE_PRE, N_FINAL, N_EXCLUDED_BY_PRIOR,
-           CE_PRE_DAYS, CE_FU_MONTHS, SUBSEQ_RUN_ID, BUILT_AT)"))
+           CE_PRE_DAYS, CE_FU_DAYS, SUBSEQ_RUN_ID, BUILT_AT)"))
   log_msg("Wrote ", wrk("NDMM_SUBSEQUENT_ATTRITION"))
   # All three outputs carry this run id. A run that died between them leaves
   # one table stamped with an older one, and the mismatch is the evidence.
   log_msg("All three tables are stamped SUBSEQ_RUN_ID = ", run_id,
-          ", CE_PRE_DAYS = ", pre_days, ", CE_FU_MONTHS = ", months)
+          ", CE_PRE_DAYS = ", pre_days, ", CE_FU_DAYS = ", fu_days)
   log_msg(SEP)
   invisible(TRUE)
 }

@@ -527,12 +527,12 @@ Three criteria, all the protocol's, and nothing else:
 1. received that line - a LOT 2 (or LOT 3) row in `<prefix>LOT_LONG_FINAL`
 2. CE for the 12 months before that line's start, gaps of 30 days or fewer
    still continuous
-3. CE for 3 months of follow-up from it, **no gaps**, or death in the window
+3. CE for 90 days of follow-up from it, **no gaps**, or death in the window
 
-Death is the only stated alternative to the three months, so it is the only
-thing that shortens the window. The study end does not: a living patient whose
-three months run past the data has not shown three months, and would be
-included on the data's account rather than the protocol's.
+Death is the only stated alternative, so it is the only thing that shortens
+the window. The study end does not: a living patient whose window runs past the
+data has not shown the enrolment, and would be included on the data's account
+rather than the protocol's.
 
 The enrollment tests read `<prefix>NDMM_ENROLL_SPANS` and
 `<prefix>NDMM_ENROLL_SPANS_STRICT`, the two span tables this build already
@@ -543,16 +543,22 @@ Both windows are settings of these cohorts:
 | setting | default | |
 |---|---|---|
 | `SUBSEQ_PRE_DAYS` | 365 | days of CE before the cohort index date |
-| `SUBSEQ_FU_CE_MONTHS` | 3 | months of CE after it, or death, with no gaps |
+| `SUBSEQ_FU_CE_DAYS` | 90 | days of CE after it, or death, with no gaps |
 
 `SUBSEQ_PRE_DAYS` is deliberately **not** `PRE_LOT1_DAYS`. That one is pinned
 by `CONTRACT` to the value the 1L cohort was built with, so it cannot move
-without redefining that cohort; these are a separate question. The follow-up
-window is months rather than days because `add_months` keeps the month
-boundary and 90 days is a different rule — the 1L build's own sensitivity table
-put 90 days and three months seven patients apart. Whatever they are set to is
-written into all three outputs as `CE_PRE_DAYS` and `CE_FU_MONTHS`, so a cohort
-always says which windows made it.
+without redefining that cohort; these are a separate question.
+
+Both are counted in days, with `date_sub` and `date_add` — the same shape
+`06_flags.R` uses for the 1L windows, so the two follow-up rules differ only in
+their number. **"3 months" is applied as 90 days here for the same reason it is
+at 1L** (see "3 months is applied as 90 days" below): `add_months(index, 3)` is
+the exact reading and lands 0–2 days later, so 90 is the more permissive of the
+two. Unlike the 1L window, this one can simply be *set* — 92 for a stricter
+reading — because it is a setting rather than a constant.
+
+Whatever they are set to is written into all three outputs as `CE_PRE_DAYS` and
+`CE_FU_DAYS`, so a cohort always says which windows made it.
 
 **The gap allowance is not settable here.** `GAP_DAYS = 30` is baked into the
 span tables the 1L build wrote, so changing it moves nothing until that build
@@ -567,9 +573,8 @@ says "each subsequent line is a subset of the prior line".
 Receiving the lines in order is guaranteed anyway: lines are numbered
 sequentially, so a LOT 3 row implies a LOT 2 row. What the chain adds is that
 the **2L cohort's enrolment windows** must also have been met. Those are not
-the same test — a patient can have a gap that fails the three months after 2L
-and still be fully enrolled for the twelve months before 3L and three months
-after it. `N_EXCLUDED_BY_PRIOR` in the attrition counts them: patients who meet
+the same test — a patient can have a gap that fails the follow-up window after 2L
+and still be fully enrolled for the 365 days before 3L and the 90 after it. `N_EXCLUDED_BY_PRIOR` in the attrition counts them: patients who meet
 3L's own three criteria and are dropped only for not being in the 2L cohort.
 The funnel is run twice for 3L, once off each population, so that number is
 counted rather than inferred.

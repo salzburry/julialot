@@ -19,11 +19,11 @@ sys.source(file.path(ROOT, "R", "db_utils.R"), envir = globalenv())
 sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = globalenv())
 sys.source(file.path(ROOT, "R", "build_subsequent.R"), envir = globalenv())
 
-SQL2 <- subseq_cohort_sql(2L, "s.c1", "s.c2", 365L, 3L, "s.LINES", "s.SPANS",
+SQL2 <- subseq_cohort_sql(2L, "s.c1", "s.c2", 365L, 90L, "s.LINES", "s.SPANS",
                           "s.STRICT", "r9")
-SQL3 <- subseq_cohort_sql(3L, "s.c2", "s.c3", 365L, 3L, "s.LINES", "s.SPANS",
+SQL3 <- subseq_cohort_sql(3L, "s.c2", "s.c3", 365L, 90L, "s.LINES", "s.SPANS",
                           "s.STRICT", "r9")
-FUN2 <- subseq_funnel_sql(2L, "s.c1", 365L, 3L, "s.LINES", "s.SPANS", "s.STRICT")
+FUN2 <- subseq_funnel_sql(2L, "s.c1", 365L, 90L, "s.LINES", "s.SPANS", "s.STRICT")
 
 cat("\n-- the three criteria in 6.2.1.1 --\n")
 # 1. "Received a subsequent LOT required to qualify for a specific cohort"
@@ -44,10 +44,14 @@ ok(has(fl, "date_sub(l1.LOT1_START_DT, 1)") &&
 ok(has(sub("^.*fu AS \\(", "", SQL2), "s.STRICT") &&
      has(sub("\\),\\s*fu AS.*$", "", sub("^.*pre AS \\(", "", SQL2)), "s.SPANS"),
    "follow-up reads the no-gap spans, the baseline the gap-merged ones")
-ok(has(SQL2, "add_months(g.COHORT_INDEX_DATE, 3)"),
-   "3 months of follow-up from that cohort's own index")
-ok(has(SQL2, "coalesce(g.DEATH_DT, add_months(g.COHORT_INDEX_DATE, 3))"),
+ok(has(SQL2, "date_add(g.COHORT_INDEX_DATE, 90)"),
+   "90 days of follow-up from that cohort's own index")
+ok(has(SQL2, "coalesce(g.DEATH_DT, date_add(g.COHORT_INDEX_DATE, 90))"),
    "death cuts the window short rather than failing it")
+# date_add, not add_months: the same shape 06_flags.R uses for the 1L window,
+# so the two follow-up rules differ only in their number.
+ok(!has(SQL2, "add_months") && has(fl, "date_add(ec_l1.LOT1_START_DT"),
+   "...counted in days, the way 1L counts its own follow-up")
 # "or death" is the only stated alternative. A living patient whose 3 months
 # run past the data has not shown 3 months.
 ok(!has(SQL2, "study_end") && !has(SQL2, "2026-03-31"),
@@ -70,14 +74,14 @@ ok(has(bs, "fun(cohort)$n_final - f$n_final") && has(bs, "N_EXCLUDED_BY_PRIOR"),
    "what the chain costs is counted and written, not silent")
 
 cat("\n-- the funnel counts what the cohort keeps --\n")
-ok(has(FUN2, "date_sub(g.ix, 365)") && has(FUN2, "add_months(g.ix, 3)") &&
-     has(FUN2, "coalesce(g.DEATH_DT, add_months(g.ix, 3))"),
+ok(has(FUN2, "date_sub(g.ix, 365)") && has(FUN2, "date_add(g.ix, 90)") &&
+     has(FUN2, "coalesce(g.DEATH_DT, date_add(g.ix, 90))"),
    "the funnel's two tests are the cohort's")
 
 cat("\n-- both windows are settings, and every output records them --\n")
 ok(subseq_days("SUBSEQ_PRE_DAYS", 365L) == 365L &&
-     subseq_days("SUBSEQ_FU_CE_MONTHS", 3L) == 3L,
-   "365 days and 3 months by default - the protocol's 12 months and 3 months")
+     subseq_days("SUBSEQ_FU_CE_DAYS", 90L) == 90L,
+   "365 and 90 days by default - the protocol's 12 months and 3 months")
 withr <- function(v, val, f) {
   old <- Sys.getenv(v, unset = NA)
   do.call(Sys.setenv, setNames(list(val), v)); on.exit({
@@ -91,16 +95,16 @@ ok(withr("SUBSEQ_PRE_DAYS", "180", function() subseq_days("SUBSEQ_PRE_DAYS", 365
 ok(inherits(tryCatch(withr("SUBSEQ_PRE_DAYS", "365.5",
      function() subseq_days("SUBSEQ_PRE_DAYS", 365L)), error = function(e) e), "error"),
    "...a fractional number of days is refused, not truncated")
-S180 <- subseq_cohort_sql(2L, "s.c1", "s.c2", 180L, 6L, "s.LINES", "s.SPANS",
+S180 <- subseq_cohort_sql(2L, "s.c1", "s.c2", 180L, 30L, "s.LINES", "s.SPANS",
                           "s.STRICT", "r9")
 ok(has(S180, "date_sub(g.COHORT_INDEX_DATE, 180)") &&
-     has(S180, "add_months(g.COHORT_INDEX_DATE, 6)"),
+     has(S180, "date_add(g.COHORT_INDEX_DATE, 30)"),
    "...and the SQL uses what it is given, with nothing baked in")
 # A cohort has to say which windows made it, or a re-run under different
 # settings is indistinguishable from the one before it.
-ok(has(S180, "180") && has(S180, "AS CE_PRE_DAYS") && has(S180, "AS CE_FU_MONTHS"),
+ok(has(S180, "180") && has(S180, "AS CE_PRE_DAYS") && has(S180, "AS CE_FU_DAYS"),
    "each cohort table records the two windows")
-ok(has(bs, "CE_PRE_DAYS, CE_FU_MONTHS, SUBSEQ_RUN_ID"),
+ok(has(bs, "CE_PRE_DAYS, CE_FU_DAYS, SUBSEQ_RUN_ID"),
    "...and so does the attrition table")
 # The gap allowance is not one of these: it is baked into the span tables the
 # 1L build wrote, so it cannot be changed from here.
