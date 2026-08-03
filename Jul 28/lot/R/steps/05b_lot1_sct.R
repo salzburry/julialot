@@ -55,15 +55,11 @@ phase_lot1_sct <- function(con, ctx) {
     ),
     -- First CART date within LOT1
     first_cart AS (
-      -- Strictly after the start, as LOT2-5 has it. A CAR-T on the line's own
-      -- start date is part of that start, not an event ending it - and the end
-      -- rule below puts the end a day BEFORE the CAR-T, so a same-day one ends
-      -- LOT1 the day before it began.
       SELECT ac.PATID, min(ac.TX_DT) AS CART_DT
       FROM tx_allo_cart_dates ac
       INNER JOIN lot1 l ON ac.PATID = l.PATID
       WHERE ac.SCT_TYPE = 'CART'
-        AND ac.TX_DT > l.LOT1_START_DT
+        AND ac.TX_DT >= l.LOT1_START_DT
         AND ac.TX_DT <= l.OBS_END_DT
       GROUP BY ac.PATID
     ),
@@ -83,6 +79,7 @@ phase_lot1_sct <- function(con, ctx) {
     sct_derived AS (
       SELECT
         l.PATID,
+        l.LOT1_START_DT,
         ap.AUTO_DT_1 AS LOT1_TX_AUTO_DT_1,
         ap.AUTO_DT_2 AS LOT1_TX_AUTO_DT_2,
         -- Tandem: two AUTO SCTs within 180 days, no ALLO between
@@ -131,15 +128,23 @@ phase_lot1_sct <- function(con, ctx) {
     )
     SELECT
       sd.*,
-      -- LOT1_TX_ENDDATE: earliest LOT-ending SCT event - 1 day
+      -- LOT1_TX_ENDDATE: earliest LOT-ending SCT event - 1 day, floored at the
+      -- line start. The windows above take an SCT on the start date itself, and
+      -- the day before that is the day before LOT1 began - an end date earlier
+      -- than its own start, which check_lot_long refuses. Floored, the line is
+      -- one day long and still ends SCT_ALLO/SCT_CART, so the transplant stays
+      -- visible where cart_is_late and allo_sct_is_rare look for it.
+      -- LOT2-5 has no such case: there an SCT on the start date IS the start
+      -- (LOT_START_TYPE 'CART'/'SCT_ALLO'), which is why its windows read '>'.
+      -- LOT1's start type is always 'MED', so the SCT has nowhere else to go.
       CASE
         WHEN coalesce(sd.ENDING_AUTO_DT, sd.FIRST_ALLO_DT, sd.FIRST_CART_DT) IS NOT NULL
-        THEN date_sub(
+        THEN greatest(sd.LOT1_START_DT, date_sub(
           least(
             coalesce(sd.ENDING_AUTO_DT, cast('9999-12-31' as date)),
             coalesce(sd.FIRST_ALLO_DT,  cast('9999-12-31' as date)),
             coalesce(sd.FIRST_CART_DT,   cast('9999-12-31' as date))
-          ), 1)
+          ), 1))
         ELSE NULL
       END AS LOT1_TX_ENDDATE,
       -- LOT1_TX_ENDDATE_REASON: 1=AUTO, 2=ALLO, 3=CART (whichever is earliest)

@@ -652,6 +652,77 @@ ok(grepl("LOT1_TX_ENDDATE > lb.OBS_END_DT", qc7, fixed = TRUE),
    "and that is the condition 07_qc.R still reports")
 
 
+cat("\n-- an SCT on LOT1's start date does not end it the day before --\n")
+# LOT1's SCT windows take a transplant on the line's own start date, and the
+# end rule is "the day before the transplant". Unfloored, that is the day
+# before LOT1 began: check_lot_long refuses the row and the build stops.
+#
+# LOT2-5 cannot reach this - there an SCT on the start date IS the start
+# (LOT_START_TYPE 'CART'/'SCT_ALLO'), which is why its windows read '>'. LOT1's
+# start type is hardcoded 'MED' in 10_lot2_5_base.R, so the transplant has
+# nowhere else to go and narrowing the window would drop it from the line
+# structure entirely - and out of cart_is_late, which exists to notice it.
+#
+# The expression is lifted out of the SQL the step actually emits and evaluated,
+# not grepped for: a test that matched the text would pass on an expression that
+# no longer computes anything.
+sctenv <- new.env(parent = globalenv())
+assign("cfg", list(sct_tandem_days = 180L), envir = sctenv)
+SSQL <- character(0)
+assign("run_step", function(con, name, sql, qc = NULL) {
+  SSQL <<- c(SSQL, sql); invisible(TRUE) }, envir = sctenv)
+sys.source(file.path(ROOT, "R", "steps", "05b_lot1_sct.R"), envir = sctenv)
+sctenv$phase_lot1_sct(NULL, NULL)
+s15 <- SSQL[grepl("VIEW lot1_sct", SSQL, fixed = TRUE)][1]
+
+# The whole CASE arm, between its own THEN and the ELSE NULL that closes it.
+# glue strips the template's common indent, so the anchors cannot depend on how
+# far in it sits - and neither anchor mentions the floor, so removing the floor
+# fails the arithmetic below rather than the extraction.
+b  <- regexpr("ELSE NULL\\s+END AS LOT1_TX_ENDDATE", s15)
+th <- gregexpr("IS NOT NULL\\s+THEN ", s15)[[1]]
+# The last THEN before that ELSE, not the first in the statement - earlier CASEs
+# in the same view have the same shape and one of them matched instead.
+k <- if (b > 0) rev(which(th > 0 & th < b))[1] else NA_integer_
+ok(!is.na(k), "the LOT1_TX_ENDDATE arm is where it was")
+expr_sql <- if (!is.na(k))
+  substr(s15, th[k] + attr(th, "match.length")[k], b - 1L) else "NA"
+
+# Spark to R. Each name is a whole-word swap of an operator with the same
+# meaning, so what runs below is the shipped arithmetic and not a paraphrase.
+r <- expr_sql
+r <- gsub("cast('9999-12-31' as date)", "SENTINEL", r, fixed = TRUE)
+r <- gsub("date_sub(", "dsub(", r, fixed = TRUE)
+r <- gsub("greatest(", "gt(", r, fixed = TRUE)
+r <- gsub("least(", "lt(", r, fixed = TRUE)
+r <- gsub("coalesce(", "cly(", r, fixed = TRUE)
+r <- gsub("sd\\.", "", r)
+SENTINEL <- as.Date("9999-12-31")
+dsub <- function(x, n) x - n
+gt   <- function(...) do.call(max, list(...))
+lt   <- function(...) do.call(min, list(...))
+cly  <- function(...) { v <- c(...); v[!is.na(v)][1] }
+enddate <- function(start, auto = NA, allo = NA, cart = NA) {
+  e <- new.env(parent = environment())
+  assign("LOT1_START_DT", as.Date(start), envir = e)
+  assign("ENDING_AUTO_DT", as.Date(auto),  envir = e)
+  assign("FIRST_ALLO_DT",  as.Date(allo),  envir = e)
+  assign("FIRST_CART_DT",  as.Date(cart),  envir = e)
+  eval(parse(text = r), envir = e)
+}
+ok(identical(enddate("2025-04-22", cart = "2025-04-22"), as.Date("2025-04-22")),
+   "a CAR-T on the start date ends LOT1 on that date, not the day before")
+ok(identical(enddate("2025-04-22", allo = "2025-04-22"), as.Date("2025-04-22")),
+   "...and so does an allogeneic transplant on the start date")
+# The floor is a floor, not a rewrite: a transplant later in the line still
+# ends it the day before, which is the rule the whole algorithm is built on.
+ok(identical(enddate("2025-04-22", cart = "2025-07-31"), as.Date("2025-07-30")),
+   "a CAR-T later in the line still ends it the day before, unchanged")
+ok(identical(enddate("2025-04-22", auto = "2025-06-01", cart = "2025-07-31"),
+             as.Date("2025-05-31")),
+   "and the earliest of the three still wins")
+
+
 cat("\n-- ...and the invariants are actually asked, every one of them --\n")
 # Nothing ran this function. The assertions above are about the contents of the
 # list, so check_lot1_invariants() could have been turned into a no-op - or made
