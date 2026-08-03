@@ -11,12 +11,16 @@ often as anyone wants.
 
 ```
 DATABRICKS_PWD=... Rscript build.R <COHORT_TABLE> <lot_prefix_> [<cohort_prefix_>]
-DATABRICKS_PWD=... Rscript build.R NDMM_COHORT ndmm_
+DATABRICKS_PWD=... Rscript build.R ndmm_NDMM_COHORT ndmm_
 ```
 
 Or set `INPUT_COHORT_TABLE`, `LOT_PREFIX` and `COHORT_PREFIX`. The cohort prefix
 defaults to the LOT prefix — one study, one prefix — and is only needed when the
 cohort build wrote under a different one.
+
+The cohort table is named **with its prefix**, as `lot` and `outcomes` name it.
+The LOT prefix applies to the LOT tables listed below and not to the cohort,
+which is read exactly as given.
 
 Like `lot`, this folder names no cohort of its own. The tables it reads are
 built from the prefix you pass.
