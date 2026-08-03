@@ -2,7 +2,6 @@
 # wrk() differs from lot's: it adds the cohort prefix.
 
 SEP   <- strrep("=", 70)
-DASH  <- strrep("-", 70)
 
 # Resolve a single run log file (memoized). Honour PIPELINE_LOG_FILE if
 # set (orchestrator shares one file across stages); else timestamped

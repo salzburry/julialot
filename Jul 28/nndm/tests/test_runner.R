@@ -1266,8 +1266,6 @@ fn_bodies <- local({
   }
   out
 })
-view_names <- setNames(vapply(view_consts, function(k)
-  get(k, envir = consts0, inherits = FALSE), character(1)), view_consts)
 pos <- function(fn) {
   m <- regexpr(paste0("(?<![A-Za-z0-9_.])", fn, "\\("), body, perl = TRUE)
   if (m == -1) NA_integer_ else as.integer(m)
