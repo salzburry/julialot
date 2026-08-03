@@ -188,29 +188,31 @@ cat("\n-- and they classify bone metastasis the way the cohort does --\n")
 # C79.52 and 198.5 are metastatic cancer and exclude. Two answers to one
 # clinical question is the thing worth failing on.
 poma <- readLines(file.path(ROOT, "poma_studyteam_qs.R"), warn = FALSE)
+bdq  <- readLines(file.path(ROOT, "broad_studyteam_qs.R"), warn = FALSE)
 # Not by keeping a matching copy of the list - by reading the build's own
 # answer. is_mm_adjacent_override is what the cohort actually applied, so there
 # is one derivation of the rule and the two cannot disagree at all.
-ok(any(grepl('qs_tbl("NDMM_OTHER_MALIG_CODES")', poma, fixed = TRUE)),
+ok(any(grepl('qs_tbl("NDMM_OTHER_MALIG_CODES")', bdq, fixed = TRUE)),
    "it reads the code list the cohort build resolved and persisted")
-ok(any(grepl("is_mm_adjacent_override AS is_mm_adj", poma, fixed = TRUE)),
+ok(any(grepl("is_mm_adjacent_override AS is_mm_adj", bdq, fixed = TRUE)),
    "...taking the build's own MM-adjacent decision rather than restating it")
-ok(!any(grepl("SECONDARY MALIGNANT NEOPLASM OF BONE", poma, fixed = TRUE)),
+ok(!any(grepl("SECONDARY MALIGNANT NEOPLASM OF BONE", c(poma, bdq), fixed = TRUE)),
    "...so no tumour-group list is duplicated here to drift")
 # Loading the CSV would mean re-deriving the rule, which is what drifted.
-ok(!any(grepl("load_codelist_csv", poma, fixed = TRUE)),
+ok(!any(grepl("load_codelist_csv", c(poma, bdq), fixed = TRUE)),
    "and it does not rebuild the list from the CSV")
 # The code did the build's thing while the narrative beside it still told the
 # reader the opposite. A workbook is read for its words, so that is a wrong
 # answer shipped in the deliverable.
-ok(!any(grepl("secondary bone - MM-spectrum", poma, fixed = TRUE)),
+ok(!any(grepl("secondary bone - MM-spectrum", c(poma, bdq), fixed = TRUE)),
    "...and the narrative no longer calls secondary bone MM-spectrum")
 # Q3's association is a BROAD-cohort question. One prefix is one cohort, and
 # this cohort already excluded patients with a qualifying other cancer - so
 # answering it from this run would be near-zero by construction.
-ok(any(grepl("BROAD_PREFIX", poma, fixed = TRUE)),
-   "Q3's broad-cohort association names the broad run explicitly")
-ok(any(grepl("Q3 association: skipped", poma, fixed = TRUE)),
+ok(any(grepl("BROAD_PREFIX", bdq, fixed = TRUE)) &&
+     !any(grepl("BROAD_PREFIX", poma, fixed = TRUE)),
+   "the broad association names the broad run, and poma no longer mentions it")
+ok(any(grepl("the association is skipped", bdq, fixed = TRUE)),
    "...and says it is skipped rather than answering from the study population")
 clear()
 
@@ -276,30 +278,40 @@ ov <- readLines(file.path(dirname(ROOT), "overall", "R", "steps", "08_assembly.R
 ok(any(grepl("OTHER_MALIGN_FLAG", ov, fixed = TRUE)) &&
    any(grepl("CLINTRIAL_BASELINE", ov, fixed = TRUE)),
    "...while ELIG_COH_ALLFLAGS does")
-for (f in c("poma_studyteam_qs.R", "lot1_studyteam_qs.R")) {
-  ln <- readLines(file.path(ROOT, f), warn = FALSE)
-  ok(any(grepl("qs_trial_flags_ready(con)", ln, fixed = TRUE)),
-     paste0(f, " checks the columns, not just that the table is readable"))
+# The diagnosis-anchored source is ONE script's business now. Every other
+# script is NDMM-only, so a second cohort's tables cannot reach a workbook
+# about this one.
+ok(any(grepl("qs_trial_flags_ready(con)", bdq, fixed = TRUE)),
+   "the broad script checks the columns, not just that the table is readable")
+users <- Filter(function(f) any(grepl("qs_trial_flags_ready", readLines(f, warn = FALSE),
+                                      fixed = TRUE)), qs)
+ok(identical(basename(users), "broad_studyteam_qs.R"),
+   if (length(users) != 1L) paste0("more than one script reads the broad flags: ",
+                                   paste(basename(users), collapse = ", "))
+   else "...and it is the only script that reads them")
+for (f in qs) {
+  ln <- readLines(f, warn = FALSE)
   ok(!any(grepl("qs_flags_table", ln, fixed = TRUE)),
-     paste0("...and no longer treats the two flag tables as interchangeable"))
+     paste0(basename(f), " does not treat the two flag tables as interchangeable"))
   # The join has to be flags-to-its-own-final. Against the cohort table it
   # compares a diagnosis-based index with the LOT1 start.
   ok(!any(grepl("{final_tbl} e ON", ln, fixed = TRUE)),
      paste0("...and does not align that build's flags to this cohort's INDEX_DATE"))
 }
-# The flag build is a different cohort. An inner join dropped the LOT1 patients
-# it does not have, silently, and a loss that falls differently on POMA and
-# other-1L makes the rates a comparison of who is in the second cohort.
+# The overlap-of-two-cohorts design is gone with the split. Each script now
+# denominates on the population it is about: poma on this cohort, the broad
+# script on the broad one. There is no match rate left to police because there
+# is no second population inside either workbook.
 pm <- readLines(file.path(ROOT, "poma_studyteam_qs.R"), warn = FALSE)
-ok(any(grepl("FROM lot1 l LEFT JOIN f USING (PATID)", pm, fixed = TRUE)),
-   "Q4 keeps the full NDMM group as the denominator rather than inner-joining it away")
-ok(any(grepl("AS n_matched", pm, fixed = TRUE)) &&
-   any(grepl("AS pct_matched", pm, fixed = TRUE)),
-   "...and shows the overlap, so a low rate can be told from a small overlap")
-# Q4's rates only. Q3's two tables denominate on their own full population by
-# construction, and the NDMM audit reports its unmatched rows as a column.
-ok(sum(grepl("nullif(count(f.PATID),0)", pm, fixed = TRUE)) >= 3,
-   "...with Q4's rates over the matched count, not the unmatched-inflated one")
+ok(!any(grepl("AS n_matched", pm, fixed = TRUE)) &&
+     !any(grepl("AS pct_matched", pm, fixed = TRUE)),
+   "poma has no cross-cohort overlap left to report")
+ok(!any(grepl("ELIG_COH", pm, fixed = TRUE)) &&
+     !any(grepl("ELIG_COH", readLines(file.path(ROOT, "lot1_studyteam_qs.R"),
+                                      warn = FALSE), fixed = TRUE)),
+   "...and neither NDMM script names the broad build's tables at all")
+ok(any(grepl("count(DISTINCT a.PATID)", bdq, fixed = TRUE)),
+   "the broad script counts over the population its flags belong to")
 # Neither flag brackets the pre-LOT1 window: baseline ends before that build's
 # diagnosis index, follow-up starts there and runs past LOT1.
 ok(!any(grepl("HEADLINE on n_trial_baseline", pm, fixed = TRUE)),
@@ -357,18 +369,17 @@ ok(any(grepl("qs_lot_run_row(con, prefix)", st, fixed = TRUE)),
    "the two LOT status reads are one helper, so the broad prefix gets the same rule")
 ok(!any(grepl("qs_tbl(\"LOT_BUILD_STATUS\")", st, fixed = TRUE)),
    "...rather than the binding check being hardcoded to this run's prefix")
-ok(any(grepl("qs_broad_run_state(con, broad_pfx)", pm, fixed = TRUE)),
-   "Q3 asks whether the broad run finished before reading its lines")
+ok(any(grepl("qs_broad_run_state(con, broad_pfx)", bdq, fixed = TRUE)),
+   "the broad script asks whether that run finished before reading its lines")
 ok(any(grepl("QS_IGNORE_BROAD_BUILD_STATE", st, fixed = TRUE)),
    "...with its own override, for a broad run known to have failed early")
 # Skips that half, not the workbook: the audit and every other tab are over
 # this run's tables and do not depend on the broad one.
-ok(any(grepl("Q3 association: skipped - ", pm, fixed = TRUE)) &&
-   any(grepl("The NDMM audit below still runs.", pm, fixed = TRUE)),
-   "...and an unfinished broad run costs that half only")
+ok(any(grepl("Association skipped - ", bdq, fixed = TRUE)),
+   "...and an unfinished broad run skips it with the reason")
 # "The broad cohort" should name a population, not a prefix.
-ok(any(grepl("BROAD RUN: lines and index dates from prefix", pm, fixed = TRUE)),
-   "...and the tab says which cohort that run was built from")
+ok(any(grepl("built from ", bdq, fixed = TRUE)),
+   "...and the log says which cohort that run was built from")
 
 cat("\n-- a run records the CDM vintage it read --\n")
 # STUDY_END picks the quarterly table and the quarterlies are cumulative. Q3
@@ -392,8 +403,8 @@ ok(any(grepl("SELECT * FROM {tbl} ORDER BY UPDATED_AT DESC LIMIT 1", st, fixed =
    "the questions read the status row without naming a column older runs lack")
 ok(any(grepl("qs_vintage_note", st, fixed = TRUE)),
    "...and compare it with the vintage they are configured for")
-ok(any(grepl('paste0("VINTAGE: ", broad$vintage)', pm, fixed = TRUE)),
-   "...with Q3 carrying the mismatch onto the tab, since that is where it bites")
+ok(any(grepl('if (!is.null(broad$vintage)) log_msg', bdq, fixed = TRUE)),
+   "...with the vintage mismatch carried where the two data ages meet")
 
 cat("\n-- the trial question is answered on this cohort's own index --\n")
 # The whole point of the nndm flag: its windows are cut at the 1L start, so
@@ -463,8 +474,8 @@ ok(any(grepl("AS missing_flag_rows", pm, fixed = TRUE)),
 ok(any(grepl("NOT add it to n_pre_dx or n_dx_to_lot1", pm, fixed = TRUE)),
    "...with the 12-month window marked as spanning two of the others")
 # The old view stays, as context, and says what it cannot answer.
-ok(any(grepl("diagnosis index (context)", pm, fixed = TRUE)),
-   "the diagnosis-anchored table is kept beside it, labelled as context")
+ok(any(grepl("cannot answer it: baseline stops before", bdq, fixed = TRUE)),
+   "the diagnosis-anchored view says what it cannot answer")
 ok(any(grepl("Clinical trial does NOT filter this cohort", pm, fixed = TRUE)),
    "...and the tab says the flag is descriptive, not a criterion")
 
@@ -484,9 +495,9 @@ cat("\n-- an unknown ICD family matches neither, the way the builds decide it --
 # claim with a blank flag as ICD-10, which then fails the family join
 # silently - so the workbook can count a diagnosis the cohort build did not.
 # raw_icd_flag is WAIVABLE, so a run can legitimately carry such flags.
-ok(!any(grepl("THEN 'ICD9' ELSE 'ICD10' END", pm, fixed = TRUE)),
+ok(!any(grepl("THEN 'ICD9' ELSE 'ICD10' END", c(pm, bdq), fixed = TRUE)),
    "Q3 no longer defaults an unrecognised claim flag to ICD10")
-ok(any(grepl("qs_icd_family_sql('d.ICD_FLAG')", pm, fixed = TRUE)),
+ok(any(grepl("qs_icd_family_sql('d.ICD_FLAG')", bdq, fixed = TRUE)),
    "...it uses the same three-way rule, with NULL for unknown")
 ok(grepl("ELSE NULL END$", qs_icd_family_sql("x")),
    "...which really does yield NULL rather than a family")
@@ -521,9 +532,9 @@ cat("\n-- Q3 takes its lines and its index dates from the same run --\n")
 # exclusions removed out of the idx join. They stay in the denominator through
 # the left join and can never match a diagnosis, so they read as having no
 # other cancer - the opposite of the population Q3 recovers.
-ok(any(grepl("broad_idx", poma, fixed = TRUE)),
+ok(any(grepl("broad_idx", bdq, fixed = TRUE)),
    "the broad run's own LOT_PATIENT_INPUT supplies the index dates")
-ok(!any(grepl("index_date FROM {final_tbl}", poma, fixed = TRUE)),
+ok(!any(grepl("index_date FROM {final_tbl}", bdq, fixed = TRUE)),
    "...not the NDMM cohort table beside it")
 
 cat("\n-- Q5 does not claim an anchor its index date does not have --\n")
