@@ -78,9 +78,10 @@ qs_setup <- function(script_dir) {
 # NOT wrk(). In this package wrk() resolves catalog.schema.table with no
 # prefix - the cohort table is named by whoever built it, so the caller passes
 # the whole name. Every table these scripts read is a build's own output and
-# carries that build's prefix: LOT_LONG and MAP_STACKED from lot, NDMM_FLAGS_ALL
-# and ELIG_COH_ALLFLAGS from the cohort build, which share the prefix when one
-# study is built under one prefix.
+# carries that build's prefix: LOT_LONG and MAP_STACKED from lot,
+# NDMM_FLAGS_ALL from the cohort build, which share a prefix when one study is
+# built under one prefix. A table written by a DIFFERENT build carries that
+# build's prefix instead and is named for itself - see qs_trial_flags().
 #
 # Using wrk() here asks for the unprefixed name. That usually fails to find a
 # table, which is survivable - but if an unprefixed table from some older run
@@ -123,25 +124,120 @@ qs_population <- function() {
          label = "same run BEFORE the line criteria - includes patients the study removed")
 }
 
-# The per-patient flag table, whichever build made this cohort.
+# The other-cancer and clinical-trial flags, with the table that says which
+# index date each row belongs to.
 #
-# The two builds do not agree on a name. The standalone cohort build writes
-# NDMM_FLAGS_ALL; the broad build writes ELIG_COH_ALLFLAGS. Asking for the
-# wrong one is not a missing table you can shrug at - under a reused prefix an
-# old ELIG_COH_ALLFLAGS from a retired flow can still be sitting there, and
-# nothing links it to the cohort or the LOT run being read, so the flag
-# breakdowns would come back full of confident numbers about another study.
+# NOT the cohort build's NDMM_FLAGS_ALL. That table is the exclusion audit -
+# CE, prior therapy, other cancer, pregnancy, belantamab - one row per patient
+# keyed on PATID alone. It has no INDEX_DATE, no OTHER_MALIGN_FLAG and no
+# CLINTRIAL_* column. Pointing a trial question at it is worse than a missing
+# table: it IS readable, so a readable() guard passes and the query then stops
+# on an unresolved column part way through a workbook.
 #
-# Named explicitly when it matters. Otherwise the caller is told which two
-# names were tried rather than being handed whichever turned up first.
-qs_flags_table <- function() {
-  named <- trimws(Sys.getenv("FLAGS_TABLE", unset = ""))
-  if (nzchar(named)) {
-    if (!grepl("^[A-Za-z_][A-Za-z0-9_]*$", named))
-      stop("FLAGS_TABLE '", named, "' is not a table name.", call. = FALSE)
-    return(qs_tbl(named))
+# Two tables, and they have to come from ONE build. ELIG_COH_ALLFLAGS has a row
+# per candidate index date; ELIG_COH_FINAL says which candidate that build
+# selected, and the join needs both. Aligning the flags to the NDMM cohort
+# instead puts two different index definitions on either side of the join - the
+# broad build picks a diagnosis-based candidate, NDMM_COHORT.INDEX_DATE is the
+# LOT1 start - so it matches almost nothing and reads as nobody being flagged.
+#
+# TRIAL_PREFIX names that build when it is not this one, since the flags carry
+# its prefix and not this run's. Blank falls back to this prefix, which is
+# right when the cohort came from the broad build itself.
+qs_trial_flags <- function() {
+  cfg <- lot_config()
+  pfx <- trimws(Sys.getenv("TRIAL_PREFIX", unset = ""))
+  if (!nzchar(pfx))
+    return(list(prefix = cfg$object_prefix, named = FALSE,
+                flags = qs_tbl("ELIG_COH_ALLFLAGS"),
+                index = qs_tbl("ELIG_COH_FINAL")))
+  if (!grepl("^[A-Za-z][A-Za-z0-9_]*_$", pfx))
+    stop("TRIAL_PREFIX '", pfx, "' should be a name ending in '_', e.g. overall_.",
+         call. = FALSE)
+  list(prefix = pfx, named = TRUE,
+       flags = full_name(cfg$work_schema, paste0(pfx, "ELIG_COH_ALLFLAGS")),
+       index = full_name(cfg$work_schema, paste0(pfx, "ELIG_COH_FINAL")))
+}
+
+QS_TRIAL_FLAG_COLS  <- c("PATID", "INDEX_DATE", "OTHER_MALIGN_FLAG",
+                         "CLINTRIAL_BASELINE", "CLINTRIAL_FOLLOWUP")
+QS_TRIAL_INDEX_COLS <- c("PATID", "INDEX_DATE")
+
+# Which of cols the table does not have. character(0) when it has them all;
+# NA when it could not be described at all, which is a different problem from a
+# table of the wrong shape and gets a different message.
+qs_missing_cols <- function(con, tbl, cols) {
+  have <- tryCatch({
+    d  <- db_q(con, glue("DESCRIBE TABLE {tbl}"))
+    cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
+    if (!length(cn)) character(0) else {
+      v <- toupper(trimws(as.character(d[[cn[1]]])))
+      v[nzchar(v) & !startsWith(v, "#")]
+    }
+  }, error = function(e) NULL)
+  if (is.null(have)) return(NA_character_)
+  setdiff(toupper(cols), have)
+}
+
+# Can the trial questions run this time, and if not, exactly why.
+#
+# Readable is not enough - NDMM_FLAGS_ALL is readable and has none of the
+# columns. So both tables are checked for the columns the query names, and the
+# caller gets one sentence to print instead of a stack trace mid-workbook.
+qs_trial_flags_ready <- function(con, src = qs_trial_flags()) {
+  where <- paste0("Set TRIAL_PREFIX to the prefix of the build that wrote ",
+                  "ELIG_COH_ALLFLAGS and ELIG_COH_FINAL",
+                  if (!src$named) paste0("; this run tried its own, '",
+                                         src$prefix, "'.") else ".")
+  for (t in list(list(tbl = src$flags, cols = QS_TRIAL_FLAG_COLS),
+                 list(tbl = src$index, cols = QS_TRIAL_INDEX_COLS))) {
+    miss <- qs_missing_cols(con, t$tbl, t$cols)
+    if (length(miss) == 1L && is.na(miss))
+      return(list(ok = FALSE, src = src, why = paste0(
+        t$tbl, " is not readable, so the other-cancer and clinical-trial ",
+        "answers are skipped. ", where)))
+    if (length(miss))
+      return(list(ok = FALSE, src = src, why = paste0(
+        t$tbl, " has no ", paste(miss, collapse = ", "),
+        ", so it is not the table these flags live in - the cohort build's ",
+        "NDMM_FLAGS_ALL is the exclusion audit and carries none of them. ", where)))
   }
-  qs_tbl("NDMM_FLAGS_ALL")
+  list(ok = TRUE, src = src, why = NULL)
+}
+
+# Is INPUT_COHORT_TABLE the cohort this LOT run was actually built from?
+#
+# The name is checked as a name, which stopped the blank that used to resolve to
+# just the schema. It cannot stop a valid name for the wrong cohort, and the
+# questions that read it - observation windows, index dates, raw-claim bounds -
+# would then bound this run's answers by a cohort it never saw. The LOT build
+# records what it was given, so ask it rather than trusting the operator.
+#
+# A status table that cannot be read warns rather than stops: an older run may
+# predate it, and refusing to answer at all would be worse than saying the
+# binding is unverified.
+qs_check_run_binding <- function(con) {
+  cfg <- lot_config()
+  tbl <- qs_tbl("LOT_BUILD_STATUS")
+  got <- tryCatch(db_q(con, glue(
+    "SELECT INPUT_COHORT_TABLE, STATE FROM {tbl}
+     WHERE upper(STATE) = 'COMPLETE' ORDER BY UPDATED_AT DESC LIMIT 1")),
+    error = function(e) NULL)
+  if (is.null(got) || nrow(got) == 0) {
+    log_msg("WARNING: no completed run in ", tbl, ", so INPUT_COHORT_TABLE=",
+            cfg$input_cohort_table, " is unverified. These answers assume it is ",
+            "the cohort behind prefix '", cfg$object_prefix, "'.")
+    return(invisible(FALSE))
+  }
+  built <- toupper(trimws(as.character(got$INPUT_COHORT_TABLE[1])))
+  want  <- toupper(trimws(cfg$input_cohort_table))
+  if (!identical(built, want))
+    stop("INPUT_COHORT_TABLE is '", cfg$input_cohort_table, "', but the LOT run ",
+         "under prefix '", cfg$object_prefix, "' was built from '",
+         got$INPUT_COHORT_TABLE[1], "' (", tbl, "). The questions bound their ",
+         "answers by the cohort's windows and index dates, so this pair would ",
+         "describe one run using another's cohort.", call. = FALSE)
+  invisible(TRUE)
 }
 
 # The line criteria that REMOVED patients from this run, read from the lot

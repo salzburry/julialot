@@ -10,7 +10,11 @@ What the study team asked, and the scripts that answered it.
 | `*_qs.R` | the scripts that answered them, against a finished LOT run |
 | `_setup.R` | shared setup — points the scripts at the `lot` package's modules |
 
-Every answer here was produced on the NDMM cohort.
+These were asked of the NDMM cohort, and that is what each script runs over.
+Two answers need a second run named explicitly — POMA Q3's association needs
+a broad-cohort LOT run, and the clinical-trial and other-cancer flags come from
+the build that wrote them. Both are covered below, and both say so rather than
+answering from the wrong place.
 
 ## Running one
 
@@ -58,8 +62,9 @@ scripts read it from.
 ## Table names carry the prefix
 
 Every table these scripts read is a build's own output: `LOT_LONG` and
-`MAP_STACKED` from `lot`, `NDMM_FLAGS_ALL` and `ELIG_COH_ALLFLAGS` from the
-cohort build. All of them carry the prefix.
+`MAP_STACKED` from `lot`, `NDMM_FLAGS_ALL` from the cohort build. All of them
+carry the prefix — of the build that wrote them, which is not always this run's
+(see the trial flags and Q3's broad run below).
 
 `wrk()` does **not** add it — in this package the cohort table is named by
 whoever built it, so the caller passes the whole name and `wrk()` only prepends
@@ -104,16 +109,52 @@ exclusions removed out of the index join — they would stay in the denominator
 and never match a diagnosis, reading as having no other cancer, which is the
 opposite of the population the question recovers.
 
-## The flag table depends on which build made the cohort
+## The trial flags are not the cohort build's flags
 
-The standalone cohort build writes `NDMM_FLAGS_ALL`; the broad build writes
-`ELIG_COH_ALLFLAGS`. `qs_flags_table()` defaults to the first and takes
-`FLAGS_TABLE` when the cohort came from the other.
+The two builds write different tables, and they are **not** alternate names for
+one contract.
 
-Asking for the wrong one is not a harmless miss: under a reused prefix an old
-`ELIG_COH_ALLFLAGS` can still be sitting there, with nothing linking it to this
-cohort or LOT run, and the flag breakdowns would come back full of confident
-numbers about another study.
+`NDMM_FLAGS_ALL` is the cohort build's exclusion audit — CE, prior therapy,
+other cancer, pregnancy, belantamab — one row per patient on `PATID`. It has no
+`INDEX_DATE`, no `OTHER_MALIGN_FLAG` and no `CLINTRIAL_*`.
+
+The other-cancer and clinical-trial flags live in the broad build's
+`ELIG_COH_ALLFLAGS`, which has a row per **candidate** index date, with
+`ELIG_COH_FINAL` saying which candidate that build selected. Both are needed,
+and both must come from the same build.
+
+Pointing a trial question at `NDMM_FLAGS_ALL` is worse than a missing table: it
+is readable, so a `readable()` guard passes, and the query then stops on an
+unresolved column part way through the workbook. `qs_trial_flags_ready()`
+therefore checks the **columns**, and names the missing ones instead.
+
+```
+TRIAL_PREFIX=overall_    # the prefix of the build that wrote the flags
+```
+
+Blank falls back to this run's prefix, which is right when the cohort came from
+the broad build itself. Otherwise the flags carry that build's prefix, not this
+run's, so it has to be named.
+
+Aligning those flags to the NDMM cohort does not work either, and fails
+quietly: the broad build's index is a diagnosis-based candidate, while
+`NDMM_COHORT.INDEX_DATE` is the LOT1 start. The join would match almost nothing
+and read as nobody being flagged. So the flags join to their **own**
+`ELIG_COH_FINAL`, and the LOT population restricts the result by `PATID`. The
+consequence is stated on the Q4 tab: baseline there means pre-diagnosis-index,
+not pre-LOT1.
+
+## The cohort table is checked against the run
+
+`INPUT_COHORT_TABLE` is validated as a name, which stops the blank that used to
+resolve to just the schema. That does not stop a valid name for the wrong
+cohort, and the questions bound their answers by the cohort's observation
+windows and index dates — so the wrong one answers about a run it never saw.
+
+`qs_check_run_binding()` compares it with what the LOT build recorded in
+`LOT_BUILD_STATUS` for this prefix, and stops on a mismatch. A status table
+that cannot be read warns instead: an older run may predate it, and refusing to
+answer would be worse than saying the binding is unverified.
 
 ## A criterion that removes patients changes what a question can be asked of
 

@@ -27,7 +27,7 @@ stops <- function(expr, what) ok(!is.null(tryCatch({ expr; NULL },
 
 VARS <- c("PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME", "DOMINO_STARTING_USERNAME",
           "OBJECT_PREFIX", "QS_ALLOW_NO_PREFIX", "INPUT_COHORT_TABLE",
-          "LOT_POPULATION", "LOT_COHORT", "BROAD_PREFIX", "FLAGS_TABLE")
+          "LOT_POPULATION", "LOT_COHORT", "BROAD_PREFIX", "TRIAL_PREFIX")
 clear <- function() for (v in VARS) Sys.unsetenv(v)
 
 cat("\n-- sourcing it is enough to break it, so source it --\n")
@@ -212,28 +212,61 @@ ok(any(grepl("Q3 association: skipped", poma, fixed = TRUE)),
    "...and says it is skipped rather than answering from the study population")
 clear()
 
-cat("\n-- the flag table is the one this build writes --\n")
-# The two builds do not agree on a name: the standalone cohort build writes
-# NDMM_FLAGS_ALL, the broad one ELIG_COH_ALLFLAGS. Asking for the wrong one is
-# not a harmless miss - under a reused prefix an old ELIG_COH_ALLFLAGS can be
-# sitting there with nothing linking it to this cohort or LOT run.
+cat("\n-- the trial flags come from the build that has them --\n")
+# The two builds write different tables, and they are NOT alternate names for
+# one contract. NDMM_FLAGS_ALL is the exclusion audit on PATID alone; the
+# other-cancer and clinical-trial flags live in the broad build's
+# ELIG_COH_ALLFLAGS, with ELIG_COH_FINAL saying which candidate index each row
+# belongs to. Defaulting a trial question to NDMM_FLAGS_ALL is worse than a
+# missing table: it is readable, so a readable() guard passes, and the query
+# then stops on an unresolved column part way through the workbook.
 clear(); Sys.setenv(DOMINO_USER_NAME = "usr00000", OBJECT_PREFIX = "ndmm_",
            INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT")
 invisible(qs_setup(ROOT))
-ok(grepl("ndmm_NDMM_FLAGS_ALL$", qs_flags_table()),
-   "the default is the table the cohort build here actually writes")
-Sys.setenv(FLAGS_TABLE = "ELIG_COH_ALLFLAGS")
-ok(grepl("ndmm_ELIG_COH_ALLFLAGS$", qs_flags_table()),
-   "...and a cohort built by the broad build can name its own")
-Sys.setenv(FLAGS_TABLE = "x; DROP TABLE y")
-stops(qs_flags_table(), "...validated like every other configurable name")
-Sys.unsetenv("FLAGS_TABLE")
-nof <- Filter(function(f) any(grepl('qs_tbl("ELIG_COH_ALLFLAGS")',
-                                    readLines(f, warn = FALSE), fixed = TRUE)), qs)
-ok(!length(nof),
-   if (length(nof)) paste0("still hardcodes the broad build's flag table: ",
-                           paste(basename(nof), collapse = ", "))
-   else "no script hardcodes a flag table the cohort build may not write")
+tf <- qs_trial_flags()
+ok(!grepl("NDMM_FLAGS_ALL", tf$flags, fixed = TRUE),
+   "the trial flags never resolve to the cohort build's exclusion audit")
+ok(grepl("ndmm_ELIG_COH_ALLFLAGS$", tf$flags) &&
+   grepl("ndmm_ELIG_COH_FINAL$", tf$index) && !tf$named,
+   "...blank falls back to this prefix, which is right when the broad build made the cohort")
+# The flags carry the prefix of the build that wrote them, which need not be
+# the prefix of the LOT run being asked about.
+Sys.setenv(TRIAL_PREFIX = "overall_")
+tf <- qs_trial_flags()
+ok(grepl("overall_ELIG_COH_ALLFLAGS$", tf$flags) &&
+   grepl("overall_ELIG_COH_FINAL$", tf$index) && tf$named,
+   "...and another build's prefix can be named, since it is not this run's")
+Sys.setenv(TRIAL_PREFIX = "x; DROP TABLE y")
+stops(qs_trial_flags(), "...validated like every other configurable prefix")
+Sys.unsetenv("TRIAL_PREFIX")
+# Both tables, from one build. Aligning the flags to the NDMM cohort would put
+# that build's diagnosis-based candidate against NDMM_COHORT.INDEX_DATE, the
+# LOT1 start - two definitions of index, matching almost nothing, silently.
+need <- c("PATID", "INDEX_DATE", "OTHER_MALIGN_FLAG", "CLINTRIAL_BASELINE",
+          "CLINTRIAL_FOLLOWUP")
+ok(identical(sort(QS_TRIAL_FLAG_COLS), sort(need)),
+   "the columns a trial question needs are declared, so a mismatch is caught before Spark sees it")
+nn6 <- readLines(file.path(dirname(ROOT), "nndm", "R", "steps", "06_flags.R"),
+                 warn = FALSE)
+ok(!any(grepl("OTHER_MALIGN_FLAG", nn6, fixed = TRUE)) &&
+   !any(grepl("CLINTRIAL_", nn6, fixed = TRUE)),
+   "...and NDMM_FLAGS_ALL genuinely has none of them, which is why it cannot be the default")
+ov <- readLines(file.path(dirname(ROOT), "overall", "R", "steps", "08_assembly.R"),
+                warn = FALSE)
+ok(any(grepl("OTHER_MALIGN_FLAG", ov, fixed = TRUE)) &&
+   any(grepl("CLINTRIAL_BASELINE", ov, fixed = TRUE)),
+   "...while ELIG_COH_ALLFLAGS does")
+for (f in c("poma_studyteam_qs.R", "lot1_studyteam_qs.R")) {
+  ln <- readLines(file.path(ROOT, f), warn = FALSE)
+  ok(any(grepl("qs_trial_flags_ready(con)", ln, fixed = TRUE)),
+     paste0(f, " checks the columns, not just that the table is readable"))
+  ok(!any(grepl("qs_flags_table", ln, fixed = TRUE)),
+     paste0("...and no longer treats the two flag tables as interchangeable"))
+  # The join has to be flags-to-its-own-final. Against the cohort table it
+  # compares a diagnosis-based index with the LOT1 start.
+  ok(!any(grepl("{final_tbl} e ON", ln, fixed = TRUE)),
+     paste0("...and does not align that build's flags to this cohort's INDEX_DATE"))
+}
 
 cat("\n-- Q3 takes its lines and its index dates from the same run --\n")
 # Index dates from the NDMM cohort would drop every broad patient the NDMM
