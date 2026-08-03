@@ -1,26 +1,19 @@
 # Which LOT run wrote the tables about to be measured.
 #
-# Both harnesses in this package read a prefix's LOT tables and report numbers
-# off them. The tables themselves carry nothing that says which run built them,
-# and the build replaces LOT_LONG_FINAL early in the line-criteria phase and
-# validates it afterwards - so a rerun that replaced it and then failed leaves
-# lines that read perfectly well and were never checked. LOT_BUILD_STATUS is
-# the only thing that can tell those numbers from good ones.
+# The tables carry nothing saying which run built them, and the build replaces
+# LOT_LONG_FINAL early and validates it afterwards - so a rerun that replaced
+# it and then failed leaves lines that read perfectly well and were never
+# checked. LOT_BUILD_STATUS is the only thing that can tell them apart.
 #
-# The LATEST row, whatever state it reached - not the latest COMPLETE one.
-# "complete" is written last of all, so the newest row is the run that last
-# touched that prefix's tables. Filtering to complete rows attributes a failed
-# rerun's tables to the previous good run, which is the exact case this exists
-# to catch. The questions package and the dashboard resolve ownership the same
-# way, for the same reason.
+# The LATEST row, whatever state it reached, not the latest COMPLETE one.
+# "complete" is written last, so the newest row is the run that last touched
+# the tables. Filtering to complete rows would credit a failed rerun's tables
+# to the previous good run. The questions and the dashboard do the same.
 #
-# SELECT * rather than a column list: STUDY_END was added to this table later,
-# and naming it would make a run that predates it unreadable - which reads as
-# no run recorded at all, the softest of the failure modes here.
+# SELECT * rather than a column list: STUDY_END was added later, and naming it
+# would make an older run's table unreadable - which reads as no run at all.
 
-# Case-insensitively, because the two builds do not agree on it: LOT writes
-# LOT_BUILD_STATUS with uppercase columns and overall writes build_status with
-# lowercase ones.
+# Case-insensitively: LOT writes uppercase columns, overall writes lowercase.
 .bind_col <- function(d, name) {
   if (is.null(d) || !is.data.frame(d)) return(NULL)
   i <- match(toupper(name), toupper(names(d)))
@@ -45,19 +38,17 @@ lot_run_row <- function(con, prefix) {
        complete   = identical(state, "complete"),
        cohort     = one("INPUT_COHORT_TABLE"),
        study_end  = one("STUDY_END"),
-       # NA on a status table predating the column, which is a run built before
-       # the override existed - so it cannot have deviated.
+       # NA on a table predating the column - a run built before the override
+       # existed, so it cannot have deviated.
        deviations = if (is.na(dev) || !nzchar(trimws(dev))) character(0)
                     else strsplit(trimws(dev), "|", fixed = TRUE)[[1]])
 }
 
-# The run's own metadata row: what it was built with, and which cohort attempt
-# it read.
+# The run's own metadata row: what it was built with, and which cohort it read.
 #
-# RUN_TIMESTAMP is what this table calls its clock - it has no RECORDED_AT, and
-# ordering by a column that is not there fails inside the tryCatch and returns
-# NULL, which reads as "an older run" and passes. That is how a guard in the
-# questions package went two commits without ever running.
+# RUN_TIMESTAMP is this table's clock - there is no RECORDED_AT. Ordering by a
+# column that is not there fails inside the tryCatch, returns NULL, and reads
+# as "an older run" - which is how a guard elsewhere passed without running.
 lot_run_meta <- function(con, prefix) {
   tbl <- wrk(paste0(prefix, "LOT_RUN_METADATA"))
   d <- tryCatch(db_q(con, paste0(
@@ -71,24 +62,18 @@ lot_run_meta <- function(con, prefix) {
   list(tbl        = tbl,
        run        = one("RUN_ID"),
        settings   = one("CONTRACT_SETTINGS"),
-       # The pair, not the run id alone: a cohort re-run keeps its id and
-       # rewrites its rows under it, and UPDATED_AT is what moves. So this is
-       # what identifies an ATTEMPT.
+       # The pair, not the id alone: a cohort re-run keeps its id and
+       # rewrites its rows, and UPDATED_AT is what moves.
        cohort_run = one("COHORT_RUN_ID"),
        cohort_at  = one("COHORT_STAMP"))
 }
 
-# What the measured run was actually built with, not what this package is
-# configured for.
+# What the measured run was built with, not what this package is set to.
 #
 # max_lot decides how many lines the benchmarks ask for. Taking it from cfg
-# measures the CURRENT setting against a run that may have been built with a
-# different one - asking for lines the run never built, or omitting ones it
-# did. CONTRACT_SETTINGS records the run's own values, so it is the honest
-# source; the dashboard reads it the same way.
-#
-# NULL when there is nothing to read, so the caller can fall back and say it is
-# falling back.
+# would ask for lines the run never built, or leave out lines it did.
+# CONTRACT_SETTINGS records the run's own values; the dashboard reads it the
+# same way. NULL when there is nothing to read, so the caller can say so.
 lot_run_contract <- function(con, prefix, key) {
   m <- lot_run_meta(con, prefix)
   if (is.null(m) || is.na(m$settings)) return(NULL)
@@ -100,14 +85,11 @@ lot_run_contract <- function(con, prefix, key) {
 
 # A prefix that names one run, and a run that finished.
 #
-# A blank prefix is refused rather than defaulted. lot_out() resolves it to the
-# UNPREFIXED table names, and if some older run's unprefixed tables are sitting
-# in the schema they read perfectly - so the measurement would come out of a
-# different study with nothing in the output to say so.
+# A blank prefix is refused, not defaulted: lot_out() resolves it to the
+# UNPREFIXED names, and an older run's unprefixed tables read perfectly.
 #
-# An unfinished run stops rather than warns. Everything this package produces
-# is a number somebody will quote, and there is nothing about "median 2.1
-# lines" that carries which run it came from.
+# An unfinished run stops rather than warns. Everything here is a number
+# somebody will quote, and "median 2.1 lines" carries no run with it.
 require_lot_run <- function(con, prefix, ignore_env = "") {
   if (!nzchar(prefix))
     stop("OBJECT_PREFIX is not set. It resolves to the unprefixed table names, ",
@@ -135,10 +117,9 @@ require_lot_run <- function(con, prefix, ignore_env = "") {
             "' and ", ignore_env, " is set. If it got as far as replacing ",
             "LOT_LONG_FINAL, these measurements are that run's.")
   }
-  # A run built with LOT_CONTRACT_OVERRIDE is a different algorithm's output.
-  # Its distributions are not this study's and must not be compared to
-  # published figures as though they were - that is a sensitivity cell, and the
-  # sweep reads it through lot_run_row() where it belongs.
+  # A run built with LOT_CONTRACT_OVERRIDE is a sensitivity cell - a different
+  # algorithm. Its distributions are not this study's. The sweep reads those
+  # through lot_run_row(), where they belong.
   if (length(got$deviations))
     stop("The LOT run on prefix '", prefix, "' (", got$run, ") was built with ",
          "LOT_CONTRACT_OVERRIDE, so it is not the contract algorithm:\n  ",

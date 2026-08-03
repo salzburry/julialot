@@ -3,29 +3,23 @@
 # The ask: map these rules against IMWG consensus and the pivotal trial
 # definitions, and flag where they agree and where they do not.
 #
-# ---- what is here and what is not -----------------------------------------
-#
-# OUR column is complete and cited to file and line. It is the half that can be
-# established from the code, and it is the half nobody had written down: the
-# rules exist across eight step files, and "does this count SCT as a line" had
-# no single place to look before this.
+# OUR column is complete, cited to file and line. It is the half the code can
+# settle, and the half nobody had written down: the rules sit across eight step
+# files, and "does this count SCT as a line" had no single place to look.
 #
 # THEIR columns are empty, because the consensus paper and the trial protocols
 # are not in this folder and nothing here can stand in for them. What must not
 # go in these cells is a summary of a document rather than the document: it
 # reads like a citation, cannot be checked by anyone holding the same source,
-# and would make a concordance table that looks authoritative and is not.
-# DEF_SOURCE_TYPES rejects that by name.
+# and would make a table that looks authoritative and is not.
 #
-# So this ships as a grid somebody with the documents can fill mechanically:
-# one row per dimension, the question to put to a protocol spelled out, and a
-# citation required before a cell counts for anything.
+# So it ships as a grid somebody with the documents can fill mechanically: one
+# row per dimension, the question to put to a protocol, and a citation required
+# before a cell counts.
 
-# What the sources may be, and what they may not.
-#
-# The distinction that matters is whether the cell can be checked by someone
-# holding the same document. A protocol section can. A recollection cannot, and
-# neither can a summary of one.
+# What the sources may be. The test is whether someone holding the same
+# document could check the cell. A protocol section passes it; a recollection
+# does not, and neither does a summary.
 DEF_SOURCE_TYPES <- c(
   protocol      = "the trial protocol or SAP, with a section reference",
   registry      = "the ClinicalTrials.gov record, with the NCT id and field",
@@ -40,22 +34,17 @@ DEF_SOURCE_REJECTED <- c(
                           "nothing at all for a reader to go to."))
 
 # The dimensions a line-of-therapy definition has to answer. The first three
-# are the ones the ask named; the rest are where this algorithm makes a
-# decision that another one could make differently.
+# the ask named; the rest are where this algorithm decides something another
+# could decide differently.
 #
-# `ours` is what this build does. `where` is where to check it, as
-# `path:line`, comma-separated, a bare `:line` continuing the previous path.
-# Line numbers rather than file names or function names: a file name sends the
-# reader to eight hundred lines of SQL to find out whether the sentence is
-# true, and a claim that expensive to check does not get checked. The tests
-# hold every citation to that shape and to a line the file actually has.
-# `question` is what to put to a protocol, worded so filling the cell is
-# reading rather than interpreting.
+# `ours` is what this build does. `where` is where to check it, as `path:line`,
+# comma-separated, a bare `:line` continuing the previous path. Line numbers,
+# not file names: a file name sends the reader to eight hundred lines of SQL,
+# and a claim that expensive to check does not get checked. `question` is what
+# to put to a protocol, worded so filling the cell is reading, not interpreting.
 LOT_DIMENSIONS <- list(
-  # Both halves matter, and the LOT1 half alone is the answer that reads as
-  # complete and is not. A transplant inside a line is part of it; a transplant
-  # beyond what that line allows is a line boundary, and SCT_AUTO is one of the
-  # start types a LOT-N takes - so a later transplant IS a line of its own.
+  # The LOT1 half alone reads as complete and is not. SCT_AUTO is one of the
+  # start types a LOT-N takes, so a later transplant IS a line of its own.
   list(id = "sct_auto_is_a_line",
        dimension = "Is an autologous transplant its own line, or part of induction?",
        ours = paste0("Both, depending on where it falls. Inside a line it is ",
@@ -172,12 +161,9 @@ LOT_DIMENSIONS <- list(
 DEF_SOURCE_COLS <- c("dimension_id", "source_id", "source_type", "citation",
                      "retrieved", "answer", "concordance", "notes")
 
-# The comparison grid, read strictly.
-#
-# A filled answer with no citation, or with a rejected source type, stops the
-# load. It would otherwise be indistinguishable in the output from one somebody
-# read out of a protocol - which is the entire failure this file exists to
-# prevent.
+# Read strictly. A filled answer with no citation, or with a rejected source
+# type, stops the load - in the output it would look no different from one
+# somebody read out of a protocol.
 read_definition_sources <- function(path) {
   if (!file.exists(path))
     stop("No source grid at ", path, call. = FALSE)
@@ -233,11 +219,9 @@ render_definitions <- function(dims = LOT_DIMENSIONS) {
     stringsAsFactors = FALSE)))
 }
 
-# Concordance, computed only where a source actually answered.
-#
-# A dimension nobody filled is "not yet sourced", never "agrees". The default
-# has to fall that way: an empty comparison that reads as agreement is worse
-# than no comparison, because it retires the question.
+# Concordance, only where a source answered. A dimension nobody filled is "not
+# yet sourced", never "agrees" - an empty comparison reading as agreement
+# retires the question instead of answering it.
 compare_definitions <- function(sources, dims = LOT_DIMENSIONS) {
   ours <- render_definitions(dims)
   filled <- sources[!is.na(sources$answer) & nzchar(trimws(sources$answer)), , drop = FALSE]

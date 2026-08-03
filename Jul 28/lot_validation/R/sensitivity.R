@@ -1,58 +1,31 @@
 # Sensitivity of the LOT algorithm to its own thresholds.
 #
-# The ask: vary the parameters and record what moves, with the direction
-# stated BEFORE the run rather than read off afterwards.
+# Vary one parameter at a time and record what moves. The direction is stated
+# BEFORE the run, so a metric that moves the other way is a finding rather than
+# a number a reader nods at.
 #
-# That ordering is the whole value. A table of numbers from thirteen builds says
-# nothing on its own - every threshold changes something, so every cell differs
-# and a reader nods. Stating which way each metric should move first turns it
-# into a test: a cell that moves the other way is either a bug or a hole in our
-# reading of the algorithm, and either is worth knowing.
+# One cell is one complete LOT build - the gap threshold changes how MAPs are
+# formed, which changes everything after them, and none of it is recoverable
+# from an existing LOT_LONG. Six parameters with two values each is thirteen
+# builds. A cross-product would be seven hundred and twenty-nine.
 #
-# ---- what this costs ------------------------------------------------------
+# Two of the four axes the ask named cannot be swept here:
 #
-# One cell is one complete LOT build. There is no cheaper way: the gap
-# threshold changes how MAPs are formed, which changes the lines, which changes
-# everything after them - none of it recoverable from an existing LOT_LONG the
-# way nndm recomputes its CE alternatives inside one run.
-#
-# So the grid is ONE-AT-A-TIME from the shipped configuration, not a
-# cross-product. Six parameters with two alternatives each is thirteen builds,
-# not seven hundred and twenty-nine. A cross-product would be the honest thing if
-# the parameters interacted strongly; they mostly do not, and thirteen builds is
-# already a serious amount of warehouse.
-#
-# ---- what is NOT here -----------------------------------------------------
-#
-# The ask names four axes. Two of them are not this package's to vary:
-#
-#   maintenance-as-LOT vs flag   NOT A SETTING. Maintenance is a descriptive
-#                                flag (contains_mtx_reg) and there is no
-#                                maintenance period - 05_sct.R:13. Making it a
-#                                line would be a new algorithm, not a
-#                                sensitivity of this one, so there is nothing
-#                                here to sweep. It is a real divergence from
-#                                other algorithms and it is in the vignette
-#                                catalogue instead.
-#
-#   CE requirements              The COHORT build's axis, not LOT's. nndm
-#                                already reports it without rebuilding
-#                                anything - NDMM_FU_CE_COUNTS gives the cohort
-#                                at 0/30/60/90 days from one run. Sweeping it
-#                                here would mean rebuilding the cohort AND the
-#                                LOT per cell, which is a different order of
-#                                cost and a different package's question.
+#   maintenance-as-LOT vs flag   Not a setting. Maintenance is a descriptive
+#                                flag and there is no maintenance period
+#                                (05_sct.R:13), so a line would be a different
+#                                algorithm. It is in the vignettes instead.
+#   CE requirements              The cohort build's axis. NDMM_FU_CE_COUNTS
+#                                already reports 0/30/60/90 days from one run.
 
 # Each axis: the values to try beside the shipped one, and what should happen.
 #
-# `direction` is per metric, and `confidence` says whether it follows from a
-# rule or is our reading. Same distinction the vignettes make, and for the same
-# reason: a predicted direction that turns out wrong means something different
-# depending on how sure we were.
+# `confidence` says whether the direction follows from a rule or is our
+# reading. The expected sign is for the parameter INCREASING:
 #
-#   up / down / none   the expected sign as the parameter INCREASES
-#   unclear            two effects pull against each other; recorded so the run
-#                      settles it rather than a guess being scored as a hit
+#   up / down / none   what the metric should do
+#   unclear            two effects pull against each other; recorded, never
+#                      scored, so a guess cannot be counted as a hit
 SENS_AXES <- list(
   list(param = "MAP_DISCON_GAP_DAYS", cfg = "map_discon_gap_days",
        values = c(60L, 120L),
@@ -117,8 +90,8 @@ SENS_AXES <- list(
                     "absent rather than lower."))
 )
 
-# What each cell is measured on. Read from the cell's OWN outputs, so a cell
-# that failed contributes nothing rather than the previous cell's numbers.
+# What each cell is measured on, from the cell's OWN tables - so a failed cell
+# contributes nothing rather than the previous cell's numbers.
 SENS_METRICS <- c(
   n_patients         = "patients with at least one line in LOT_LONG_FINAL",
   n_lines            = "lines in LOT_LONG_FINAL",
@@ -130,9 +103,8 @@ SENS_METRICS <- c(
   n_lot1_regimens    = "distinct LOT1 regimen strings",
   n_cart_init        = "lines ending CART_INIT")
 
-# One statement per cell. LOT_ATTRITION already holds the progression counts,
-# so the reaching-LOTn figures come from the funnel this build writes rather
-# than being derived a second way here.
+# One statement per cell. The reaching-LOTn figures come from LOT_ATTRITION,
+# which already holds them, rather than being derived a second way.
 sens_metric_sql <- function(final_tbl, attrition_tbl, run_id) {
   paste0("
     WITH per_pat AS (
@@ -165,10 +137,9 @@ sens_metric_sql <- function(final_tbl, attrition_tbl, run_id) {
 
 # The grid, one at a time from the shipped configuration.
 #
-# The reference cell is built like any other rather than assumed: a run already
-# sitting under the study prefix may have been built with settings that have
-# since changed, and a reference nobody checked is the one number every delta
-# in the table leans on.
+# The reference cell is built, not assumed. A run already under the study
+# prefix may have been built with settings that have since changed, and every
+# delta in the table leans on that one number.
 sens_plan <- function(axes = SENS_AXES, prefix_base = "sens_") {
   cells <- list(list(id = "reference", param = NA_character_, value = NA_integer_,
                      prefix = paste0(prefix_base, "ref_")))
@@ -181,8 +152,8 @@ sens_plan <- function(axes = SENS_AXES, prefix_base = "sens_") {
   cells
 }
 
-# Refuse a plan that would quietly cost more than the operator expects, and
-# refuse one that would write over the study's own tables.
+# Refuse a plan that costs more than expected, or that would write over the
+# study's own tables.
 check_sens_plan <- function(cells, study_prefix, cap = 24L) {
   bad <- character(0)
   pfx <- vapply(cells, function(c_i) c_i$prefix, character(1))
@@ -203,25 +174,20 @@ check_sens_plan <- function(cells, study_prefix, cap = 24L) {
   invisible(TRUE)
 }
 
-# Which way a metric actually moved, against which way it was expected to.
+# Which way a metric moved, against which way we said it would.
 #
-# Compared as a SIGN, not a size. How far a threshold moves a number depends on
-# the cohort; which way it moves is a property of the algorithm, and that is
-# the part worth predicting.
+# The SIGN, not the size. How far a threshold moves a number depends on the
+# cohort; which way it moves is the algorithm.
 #
-# Four verdicts, and the distinction between the last two is the point:
+# Four verdicts:
 #
-#   as expected          moved the way the prediction said
-#   AGAINST EXPECTATION  moved the OTHER way, or moved when "none" was
-#                        predicted. This is the finding - the algorithm does
-#                        something we did not think it did.
-#   no movement          a direction was predicted and the number did not
-#                        change. NOT the opposite finding: whether anyone sits
-#                        near a threshold is a property of the cohort, and a
-#                        window nobody's claims straddle moves nothing however
-#                        it is set. Reported separately so it can be looked at
-#                        without being counted as a contradiction.
-#   recorded / no data   "unclear" was predicted, or the cell produced nothing.
+#   as expected          moved the way we said
+#   AGAINST EXPECTATION  moved the other way, or moved when "none" was said.
+#                        This is the finding.
+#   no movement          a direction was predicted and nothing changed. Not the
+#                        opposite finding: whether anyone sits near a threshold
+#                        is the cohort's doing, not the algorithm's.
+#   recorded / no data   "unclear" was predicted, or the cell gave nothing.
 sens_compare <- function(results, axes = SENS_AXES, tol = 1e-9) {
   ref <- results[results$cell == "reference", , drop = FALSE]
   if (!nrow(ref)) stop("No reference cell in the results.", call. = FALSE)
@@ -245,15 +211,9 @@ sens_compare <- function(results, axes = SENS_AXES, tol = 1e-9) {
         cell = r$cell, param = r$param, value = r$value, metric = m,
         reference = base, observed = got,
         expected = want, moved = moved,
-        # "unclear" was recorded so the run could settle it - it is never a
-        # miss, and scoring it as one would reward confident guesses.
-        #
-        # "none" against a predicted direction is its own verdict, not a miss.
-        # The prediction is about the algorithm; whether the cohort has anyone
-        # near the threshold is not, and a cell that moves nothing has not
-        # contradicted anything. Scoring it as AGAINST EXPECTATION reports a
-        # valid result as a failure, and a sweep full of them stops being read.
-        # Predicting "none" and getting movement IS a miss, and stays one.
+        # "unclear" is never a miss - scoring it would reward a lucky guess.
+        # Nor is "no movement": a cell that moved nothing has contradicted
+        # nothing. Predicting "none" and getting movement IS a miss.
         verdict = if (identical(want, "unclear")) "recorded"
                   else if (is.na(moved)) "no data"
                   else if (identical(moved, want)) "as expected"

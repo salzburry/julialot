@@ -3,9 +3,9 @@
 #
 #   Rscript lot_validation/run_definitions.R
 #
-# No warehouse and no connection - the rules are in the code, not in the data.
-# It writes our side in full, the comparison grid as it stands, and the
-# questions to put to a protocol for the cells nobody has filled.
+# No warehouse and no connection - the rules are in the code, not the data.
+# Writes our side in full, the grid as it stands, and the questions to put to a
+# protocol for the cells nobody has filled.
 
 .script_dir <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)

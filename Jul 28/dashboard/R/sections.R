@@ -7,10 +7,9 @@
 # for - the table names arrive as {curly} placeholders and are filled in from
 # the run's arguments.
 #
-# The switch is SHOW_<NAME> in config.csv, the same shape as lot's
-# APPLY_<NAME>. Anything that is not TRUE or FALSE stops the build: a typo that
-# quietly drops a panel is worse than a halt, because the dashboard still
-# renders and nobody can see what is missing from it.
+# The switch is SHOW_<NAME> in config.csv. Anything that is not TRUE or FALSE
+# stops the build: a typo that quietly drops a panel is worse than a halt,
+# because the page still renders and nobody can see what is missing.
 #
 # Placeholders a section may use:
 #   {lot_final}     <prefix>LOT_LONG_FINAL  after the line criteria
@@ -20,15 +19,11 @@
 #   {run_meta}      <prefix>LOT_RUN_METADATA
 #   {cohort}        the cohort table the run was pointed at
 #
-# Describe the study population, which is {lot_final}. LOT_LONG is that table
-# before the line criteria, and with a patient-level truncate criterion such as
-# no_belantamab the two hold different PATIENTS, not merely different lines. A
-# panel drawn on LOT_LONG therefore describes people the study excluded, with
-# nothing on the page saying so.
-#
-# {lot_long} belongs on the Validation tab, where the comparison is the point,
-# and nowhere else. {patients} is the cohort LOT was handed, so a panel over it
-# restricts to the PATIDs that survived.
+# Panels describe the study population, {lot_final}. {lot_long} is that table
+# before the line criteria, and a patient-level truncate criterion makes the
+# two hold different PATIENTS - so a panel on it describes people the study
+# excluded, with nothing on the page saying so. It belongs on the Validation
+# tab, where the comparison is the point, and nowhere else.
 
 # How a section's rows are drawn. Deliberately few: a dashboard nobody can read
 # is not better than a table, and every one of these renders without a
@@ -119,28 +114,19 @@ JOURNEY_CATEGORIES <- list(
 # than written out per pair: they differ only in two numbers, and copies of a
 # query are places for a fix to be applied to some of them.
 #
-# LEFT JOIN, not INNER. Progressors-only showed which regimen follows which and
-# nothing else: a patient who stopped after LOT{a} simply vanished from the
-# picture, so the panel could not show the one thing a reader looks at a
-# transition for - how many went on at all. They are now a terminal node, and
-# the ribbons leaving each regimen add up to that regimen's LOT{a} patients.
+# LEFT JOIN, not INNER: a patient who stopped after LOT{a} used to vanish, so
+# the panel could not show how many went on at all. They are a terminal node
+# now, and the ribbons leaving a regimen add up to that regimen's patients.
 #
-# A LINE, not a regimen string, decides whether the patient got there. An
-# SCT_ALLO line carries no regimen at all - 10_lot2_5_base.R suppresses the
-# induction rows for it, because an allogeneic singleton LOT contains no MM
-# therapy - so filtering on a non-blank LOT_BASE_MEDS threw those lines away and
-# the patient read as "No LOT{b}" when they had reached LOT{b}. As the SOURCE
-# line it removed them from the chart entirely. That is worse than the old
-# INNER JOIN: it invents attrition rather than omitting it. Blank regimens are
-# labelled by what started the line instead.
+# A LINE decides whether the patient got there, not a regimen string. An
+# SCT_ALLO line carries no regimen - 10_lot2_5_base.R suppresses its induction
+# rows - so filtering on a non-blank LOT_BASE_MEDS read those patients as "No
+# LOT{b}" when they had reached it, and dropped them entirely as a source. That
+# invents attrition. Blank regimens are labelled by what started the line.
 #
-# Non-top-N sources become an "Other" source rather than being dropped, so the
-# chart really is every LOT{a} patient - it was not, while they were filtered
-# out, and the panel now claims it.
-#
-# The stopped node is ranked out of the top-N so it always survives. Ranking it
-# with the regimens would let the largest single answer - usually "stopped" -
-# be folded into "Other" on a cohort with many distinct regimens.
+# Non-top-N sources become "Other" rather than being dropped, so the chart
+# really is every LOT{a} patient. The stopped node is ranked out of the top-N,
+# or the largest single answer could be folded into "Other".
 .transition_section <- function(a, b) {
   line <- function(n) paste0("
       SELECT cast(PATID as string) AS PATID,
@@ -196,8 +182,8 @@ JOURNEY_CATEGORIES <- list(
 
 # ---- The cohort funnel, whatever shape the cohort build wrote it in --------
 #
-# Making ATTRITION_TABLE a setting fixed the NAME. It did not fix the SHAPE,
-# and the two cohort builds in this folder do not agree on one:
+# ATTRITION_TABLE fixed the NAME, not the SHAPE, and the two cohort builds do
+# not agree on one:
 #
 #   nndm     NDMM_ATTRITION      RUN_ID, STEP_NUM, CRITERION, N_PATIENTS,
 #                                PCT_OF_START, RECORDED_AT
@@ -206,16 +192,13 @@ JOURNEY_CATEGORIES <- list(
 #                                created_at, step_id, description,
 #                                n_30, n_60, n_90
 #
-# A single query against the nndm columns therefore fails outright on an
-# overall-built cohort - the panel is replaced by a query-failed notice while
-# the rest of the page renders, which reads as "this study has no funnel"
-# rather than "the dashboard cannot read this funnel".
+# A query against the nndm columns fails outright on an overall-built cohort,
+# and the panel is replaced by a notice that reads as "this study has no
+# funnel" rather than "this dashboard cannot read it".
 #
-# One spec per shape. `cols` is what identifies the layout - matched against
-# DESCRIBE, case-insensitively - and `stamp` is the column saying when the
-# funnel was recorded, used to catch a funnel newer than the LOT run below it.
-#
-# Add a shape by adding an entry. Nothing else changes.
+# One spec per shape. `cols` identifies the layout, matched against DESCRIBE;
+# `stamp` says when the funnel was recorded, used to catch a funnel newer than
+# the LOT run. Add a shape by adding an entry.
 ATTRITION_LAYOUTS <- list(
   list(name  = "nndm",
        cols  = c("RUN_ID", "STEP_NUM", "CRITERION", "N_PATIENTS", "RECORDED_AT"),
@@ -256,13 +239,10 @@ ATTRITION_LAYOUTS <- list(
        # assumption made here.
        #
        # Three counts, one cohort. n_30/n_60/n_90 are the outpatient-window
-       # sensitivity, and only the column matching the window the build was
-       # configured with describes the cohort that was actually written; the
-       # other two describe cohorts no table exists for. overall's own printer
-       # marks the built column with a star and warns against reading the row
-       # left to right, so picking one here without saying which would be the
-       # same mistake in a different medium. ATTRITION_WINDOW names it and the
-       # panel label repeats it.
+       # sensitivity; only the column matching the configured window describes
+       # the cohort that was written, and the other two describe cohorts no
+       # table exists for. ATTRITION_WINDOW names which, and the panel label
+       # repeats it.
        sql = "
          SELECT description AS label, n_{attrition_window} AS n
          FROM {attrition}
@@ -276,22 +256,18 @@ DASHBOARD_SECTIONS <- c(list(
   list(name = "run_provenance", tab = "Overview",
        label = "What produced these numbers",
        needs = "run_meta", render = "table",
-       # The run that OWNS the tables on this prefix, resolved before any panel
-       # runs - see resolve_owner_run(). Not "the latest metadata row", and not
-       # "the latest completed metadata row" either.
+       # The run that OWNS these tables, resolved before any panel runs - see
+       # resolve_owner_run(). Not the latest metadata row, and not the latest
+       # COMPLETE one either.
        #
-       # Completeness alone is not ownership. LOT writes LOT_LONG_FINAL with
-       # CREATE OR REPLACE in the line-criteria phase and only afterwards
-       # validates it, records the counts, and marks the build complete. So a
+       # LOT replaces LOT_LONG_FINAL early and validates it afterwards, so a
        # rerun that replaced the table and then died leaves ITS table on disk
-       # with an incomplete metadata row - filtered out by any completeness
-       # test - while the previous run's complete row is still the newest one
-       # that passes. The page would then carry the failed run's numbers under
-       # the successful run's provenance, which is worse than either alone.
+       # with an incomplete row, while the previous run's complete row is the
+       # newest that passes. The page would carry the failed run's numbers
+       # under the successful run's provenance.
        #
-       # LOT_BUILD_STATUS settles it: one row per run, written "complete" last
-       # of all, so the latest row on the prefix is the run that last wrote
-       # these tables. {owner_run} is that run.
+       # LOT_BUILD_STATUS settles it: "complete" is written last, so the latest
+       # row is the run that last wrote these tables.
        sql = "
          SELECT RUN_ID, RUN_TIMESTAMP, STUDY_START, STUDY_END, CODE_MD5,
                 LINE_CRITERIA_APPLIED, LOT_LONG_BY_LINE
@@ -317,26 +293,19 @@ DASHBOARD_SECTIONS <- c(list(
        layouts = "ATTRITION_LAYOUTS",
        sql = ATTRITION_LAYOUTS[[1]]$sql),
 
-  # The LOT build's funnel, which starts where the cohort build's ends. Its own
-  # panels, not rows appended to the one above: that funnel counts patients
-  # into the cohort, this one counts what happened to them afterwards, and a
-  # single bar chart running from one into the other would read as one
-  # narrowing when the populations and the reasons are different.
+  # The LOT funnel starts where the cohort funnel ends. Its own panels, not
+  # rows appended: that one counts patients into the cohort, this one counts
+  # what happened afterwards, and one chart running from one into the other
+  # would read as a single narrowing.
   #
-  # Progression is split off for the same reason again. Nobody is removed
-  # there - a patient with no LOT3 did not progress, or their follow-up ended -
-  # so it belongs beside the funnel, not inside it. Split by KIND, which the
-  # LOT build writes for exactly this.
+  # Progression is split off again. Nobody is removed there - a patient with no
+  # LOT3 did not progress, or their follow-up ended - so it sits beside the
+  # funnel, not inside it. Split by KIND, which the LOT build writes for this.
   #
-  # RUN_ID = {owner_run}: the rows are the LOT run's own, and owner_run is the
-  # run that last wrote the tables this dashboard is reading.
-  # The label carries KIND, because the bar cannot. Two of these rows are not
-  # attrition at all - for a treatment-indexed cohort such as NDMM they
-  # re-derive a fact the cohort build already established, so a drop is the two
-  # scans disagreeing rather than patients the study lost. Under a heading that
-  # says "attrition", with nothing on the chart to tell them apart, a drop
-  # there reads as expected loss: the exact reading the LOT build was changed
-  # to prevent, reintroduced one layer up.
+  # The label carries KIND, because the bar cannot. Two rows are not attrition
+  # at all: for a treatment-indexed cohort they re-derive a fact the cohort
+  # build already established, so a drop is the two scans disagreeing. Under a
+  # heading saying "attrition" it would read as expected loss.
   list(name = "lot_attrition", tab = "Overview",
        label = "LOT: cohort to study population - [check] rows are not attrition",
        needs = "lot_attrition", render = "bar", pct = "first",
@@ -519,14 +488,12 @@ DASHBOARD_SECTIONS <- c(list(
   # whatever height this run built - see .transition_sections(), spliced in
   # below rather than listed here.
   #
-  # Every LOT{a} patient is in it, including those who never reached LOT{b}:
+  # Every LOT{a} patient is in it, including those who never reached LOT{b} -
   # they are a terminal node, so the ribbons leaving a regimen add up to that
-  # regimen's LOT{a} patients and the chart shows how many went on at all.
+  # regimen's patients.
   #
-  # Top N sources; targets outside the top N collapse to "Other", so the chart
-  # stays readable and nothing is silently dropped - "Other" is drawn, and it
-  # sits at the bottom because it is a bucket rather than a regimen. The
-  # stopped node is ranked out of that, so it cannot be folded into "Other".
+  # Top N sources; the rest collapse to "Other", drawn at the bottom because it
+  # is a bucket rather than a regimen. The stopped node is ranked out of that.
 
   # ---- PATIENT EXAMPLES ----------------------------------------------------
 
