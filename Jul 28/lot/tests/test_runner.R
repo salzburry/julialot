@@ -24,7 +24,12 @@ SETTINGS <- c("USE_QUARTERLY_TABLES", "CENSOR_AT_DISENROLLMENT", "PERSIST_TO_SCH
               "SCT_AUTO_GAP_DAYS", "SCT_TANDEM_DAYS", "CART_CONSOLIDATION_DAYS",
               "PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME", "DOMINO_STARTING_USERNAME",
               "STUDY_END", "INPUT_COHORT_TABLE", "OBJECT_PREFIX",
-              "ALLO_LOT_SPAN", "MAX_LOT", "CODELIST_WAIVERS")
+              "ALLO_LOT_SPAN", "MAX_LOT", "CODELIST_WAIVERS",
+              # Not a setting - the one way past the contract check. Cleared
+              # with the rest, or a stray value in the environment turns the
+              # loop below into thirteen assertions that pass for the wrong
+              # reason.
+              "LOT_CONTRACT_OVERRIDE")
 clear <- function() for (v in SETTINGS) Sys.unsetenv(v)
 
 # Stand-in names. The package knows no real cohort, so the tests must not
@@ -1155,6 +1160,37 @@ for (k in names(CONTRACT)) {
 stops(check_lot_contract(modifyList(pin_cohort(base, TBL_A, PFX_A),
                                     list(persist_to_schema = FALSE))),
       "rejects PERSIST_TO_SCHEMA=FALSE")
+
+cat("\n-- and the one way past it marks what it built --\n")
+# The sensitivity sweep varies contract-pinned thresholds by definition, so
+# without a way past this it has no executable path at all. The override is
+# only safe because a run that uses it cannot be mistaken for the study's: the
+# deviations go into LOT_BUILD_STATUS, which is where every downstream reader
+# already resolves which run owns a prefix's tables.
+clear()
+alt <- modifyList(pin_cohort(base, TBL_A, PFX_A), list(max_lot = 8L))
+stops(check_lot_contract(alt), "a changed threshold is still refused by default")
+Sys.setenv(LOT_CONTRACT_OVERRIDE = "TRUE")
+runs(check_lot_contract(alt), "...and allowed only when the caller says so explicitly")
+ok(identical(getOption("lot_contract_deviations"), "max_lot=8 (contract 5)"),
+   "...recording exactly what deviated, in the words a reader needs")
+# The build pins state in options, and a second build in one session inherits
+# the first's - which is how a waiver list once leaked between runs.
+runs(check_lot_contract(pin_cohort(base, TBL_A, PFX_A)),
+     "a contract build after an overridden one still passes")
+ok(identical(getOption("lot_contract_deviations"), character(0)),
+   "...and carries none of the previous run's deviations")
+ok("CONTRACT_DEVIATIONS" %in% names(BUILD_STATUS_COLS),
+   "the status table has a column for them, so ownership and algorithm resolve together")
+# CONTRACT_SETTINGS used to be built from CONTRACT itself, so an overridden run
+# would have recorded the values it was SUPPOSED to use. The dashboard reads
+# max_lot out of that string to decide how many panels a run has.
+Sys.setenv(LOT_CONTRACT_OVERRIDE = "TRUE")
+ok(grepl("max_lot=8", contract_settings(alt), fixed = TRUE),
+   "the recorded settings are what the run actually used")
+ok(grepl("max_lot=5", contract_settings(pin_cohort(base, TBL_A, PFX_A)), fixed = TRUE),
+   "...which is unchanged for a contract build, since the two agree there")
+clear()
 
 cat("\n-- settings that used to fail open --\n")
 # as.integer("60.5") is 60, so the NA test accepted it and the run used 60

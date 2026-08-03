@@ -9,7 +9,7 @@ of `Jul 28` has — so nothing here is an observed output.
 | | |
 |---|---|
 | 3 — vignettes | **complete as documentation.** 21 cases with what the rules say, derived from this run's parameters. It is a specification, not a run. |
-| 2(d) — sensitivity | **harness complete, unrun.** Thirteen builds' worth of warehouse, opt-in, with the directions predicted first. |
+| 2(d) — sensitivity | **harness complete, unrun.** Thirteen builds' worth of warehouse, opt-in, with the directions predicted first. Every cell is an explicit non-contract build, marked as one in the warehouse. |
 | 2(a)-(c) — benchmarks | **harness complete, pending sources.** Every measurement is written and checked; `benchmarks.csv` ships with `published_value` blank, because the published figures are not this repository's to write. |
 | 1 — definition comparison | **our column complete, theirs pending sources.** `clinicaltrials.gov` and `myeloma.org` are denied by this environment's network policy. |
 
@@ -97,7 +97,7 @@ looks exactly like a completed one in the output.
 INPUT_COHORT_TABLE=ndmm_NDMM_COHORT Rscript lot_validation/run_sensitivity.R
 
 # actually build them
-DATABRICKS_PWD=... INPUT_COHORT_TABLE=ndmm_NDMM_COHORT \
+DATABRICKS_PWD=... INPUT_COHORT_TABLE=ndmm_NDMM_COHORT COHORT_PREFIX=ndmm_ \
   SENS_EXECUTE=TRUE Rscript lot_validation/run_sensitivity.R
 ```
 
@@ -158,6 +158,39 @@ LOT per cell.
 Both are named in the plan output rather than quietly dropped, since two of four
 axes silently missing would read as coverage.
 
+### A cell is not the contract build, and says so
+
+Every parameter here is pinned in the LOT contract, and `build_lot` refuses a
+value that is not the contract's — correctly, because a different threshold is
+a different algorithm rather than a setting. That is exactly what a cell is, so
+each one is launched with **`LOT_CONTRACT_OVERRIDE=TRUE`**. Without it there is
+no executable path at all: twelve of the thirteen cells stop at preflight.
+
+The override is only safe because a cell cannot be picked up as the study. The
+build writes what it deviated on into `CONTRACT_DEVIATIONS` in that cell's
+`LOT_BUILD_STATUS` — the same row every downstream reader already uses to
+resolve which run owns a prefix's tables — and the questions, the dashboard and
+the benchmark harness all **refuse** a run carrying deviations. There is no way
+past that one: the state and cohort checks are inferences that can be wrong
+about a run, but this is what the build wrote about itself.
+
+`CONTRACT_SETTINGS` in `LOT_RUN_METADATA` records what the run *used* rather
+than what the contract pins, so the two cannot silently agree. On a contract
+build that string is byte-identical to what it was before.
+
+### One cohort, checked rather than intended
+
+`COHORT_PREFIX` is **required** to execute. The build resolves the cohort's
+status table under the *run's own* prefix unless told otherwise, and a cell's
+prefix is a throwaway like `sens_max_lot_8_` — so without it every cell finds no
+status, warns, and records no cohort run id. Thirteen sequential builds would
+then have nothing showing they read one cohort, and a cohort rebuilt mid-sweep
+would appear in the table as the parameter's effect.
+
+With it, each cell records the cohort attempt it read — run id **and** stamp,
+since a cohort re-run keeps its id and rewrites its rows — and the sweep
+compares them across cells and says plainly if they differ.
+
 ### Guards
 
 A cell writing to the study's own prefix is refused — that would overwrite the
@@ -191,7 +224,18 @@ the session that made it, and "median 2.1 lines" carries nothing about where it
 came from. It is the latest status row whatever state it reached, not the
 latest complete one, for the reason the dashboard and the question scripts use
 the same rule — the build replaces `LOT_LONG_FINAL` early and validates it
-afterwards, so a rerun that replaced it and then failed owns those tables.
+afterwards, so a rerun that replaced it and then failed owns those tables. A
+run carrying contract deviations is refused outright: that is a sensitivity
+cell, and comparing an alternative algorithm's distributions to a published
+figure would attribute the difference to this cohort rather than to the setting
+that was changed.
+
+**How many lines to measure comes from the run, not from this package.**
+`max_lot` is read out of that run's own `CONTRACT_SETTINGS`. They are the same
+on the study's run and they stop being the same the moment this is pointed at a
+run built with a different cap — and then the package's value either asks for
+lines that run never built or leaves out lines it did, with nothing in the
+output to say which.
 
 **The published numbers are not here and were not written from memory.**
 `benchmarks.csv` ships with a row for every metric and `published_value` blank,

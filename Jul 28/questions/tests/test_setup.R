@@ -367,6 +367,20 @@ cat("\n-- and so does the broad run behind Q3's association --\n")
 # lines that read perfectly well and were never checked.
 ok(any(grepl("qs_lot_run_row(con, prefix)", st, fixed = TRUE)),
    "the two LOT status reads are one helper, so the broad prefix gets the same rule")
+# A sensitivity cell is a complete, well-formed LOT run of a DIFFERENT
+# algorithm - the sweep builds twelve of them. A workbook answered off one
+# would read exactly like a workbook answered off the study.
+ok(any(grepl("CONTRACT_DEVIATIONS", st, fixed = TRUE)),
+   "the status read carries whether that run was the contract algorithm at all")
+ok(any(grepl("LOT_CONTRACT_OVERRIDE", st, fixed = TRUE)),
+   "...and a run built as an alternative stops the workbook")
+# No override on this one, unlike the state and cohort checks. Those are
+# inferences that can be wrong about a run; this is what the build wrote about
+# itself, and there is no reading of it under which the answers are the study's.
+dev_line <- grep("if \\(length\\(got\\$deviations\\)\\)", st)
+ok(length(dev_line) == 1L &&
+     !any(grepl("QS_IGNORE", st[dev_line + 0:8], fixed = TRUE)),
+   "...with no way past it, because it is recorded fact rather than inference")
 ok(!any(grepl("qs_tbl(\"LOT_BUILD_STATUS\")", st, fixed = TRUE)),
    "...rather than the binding check being hardcoded to this run's prefix")
 ok(any(grepl("qs_broad_run_state(con, broad_pfx)", bdq, fixed = TRUE)),

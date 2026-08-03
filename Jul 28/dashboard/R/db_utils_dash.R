@@ -118,6 +118,39 @@ resolve_owner_run <- function(con, inputs, have, cfg) {
     else list(id = as.character(d[[1]][1]), stamp = as.character(d[[2]][1]))
   }, error = function(e) list(id = NA_character_, stamp = NA_character_))
 
+  # Was this run built as the contract algorithm at all?
+  #
+  # Its own query rather than a column in the SELECT below: CONTRACT_DEVIATIONS
+  # was added later, and naming it there would make an older run's status table
+  # unreadable - which reads as no status table, and falls back to the weaker
+  # metadata answer. Empty on every contract build.
+  #
+  # No override on this one. It is not an inference from timestamps that could
+  # be wrong; it is what the build wrote about itself. A dashboard drawn from a
+  # sensitivity cell would render every panel exactly as it renders the study.
+  # By NAME, not by position. A frame that came back without the column is a
+  # table that does not have it, and reading column one instead would turn a
+  # run id into a deviation.
+  deviations_of <- function(rid) tryCatch({
+    d <- db_q(con, paste0("SELECT CONTRACT_DEVIATIONS FROM ", inputs$build_st,
+                          " WHERE RUN_ID = '", rid, "'"))
+    i <- match("CONTRACT_DEVIATIONS", toupper(names(d)))
+    if (!nrow(d) || is.na(i)) return("")
+    v <- as.character(d[[i]][1])
+    if (is.na(v)) "" else trimws(v)
+  }, error = function(e) "")
+  refuse_if_deviating <- function(rid) {
+    dev <- deviations_of(rid)
+    if (nzchar(dev))
+      stop("Run ", rid, " was built with LOT_CONTRACT_OVERRIDE, so it is not ",
+           "the contract algorithm:\n  ",
+           paste(strsplit(dev, "|", fixed = TRUE)[[1]], collapse = "\n  "),
+           "\nIt is a sensitivity cell. Every panel here would draw it exactly ",
+           "as it draws the study. Point LOT_PREFIX at the study's own run.",
+           call. = FALSE)
+    invisible(TRUE)
+  }
+
   if (isTRUE(have[["build_st"]])) {
     d <- tryCatch(db_q(con, paste0(
       "SELECT RUN_ID, STATE, UPDATED_AT FROM ", inputs$build_st,
@@ -125,6 +158,7 @@ resolve_owner_run <- function(con, inputs, have, cfg) {
     if (!is.null(d) && nrow(d) == 1L) {
       rid   <- as.character(d$RUN_ID[1])
       state <- tolower(trimws(as.character(d$STATE[1])))
+      refuse_if_deviating(rid)
       if (identical(state, "complete")) {
         # Marked complete but with no completed metadata row is a contradiction
         # in the warehouse, not something to paper over with a fallback: the

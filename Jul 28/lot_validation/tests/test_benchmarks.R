@@ -206,6 +206,40 @@ ok(identical(require_lot_run(NULL, "ndmm_", "X")$run, "r3"),
 # status table unreadable, which reads as no run at all - the softest failure.
 ok(is.na(require_lot_run(NULL, "ndmm_", "X")$study_end),
    "...and a status table predating STUDY_END still reads, without it")
+# A sensitivity cell is a complete, well-formed LOT run of a different
+# algorithm. Comparing its distributions to a published figure would attribute
+# the difference to this cohort rather than to the threshold that was changed.
+.status <- data.frame(RUN_ID = "r4", STATE = "complete", INPUT_COHORT_TABLE = "c",
+                      CONTRACT_DEVIATIONS = "max_lot=8 (contract 5)",
+                      stringsAsFactors = FALSE)
+m <- tryCatch({ require_lot_run(NULL, "ndmm_", "X"); "" }, error = conditionMessage)
+ok(grepl("LOT_CONTRACT_OVERRIDE", m, fixed = TRUE) && grepl("max_lot=8", m, fixed = TRUE),
+   "a run built as a different algorithm is refused, and says which setting")
+.status$CONTRACT_DEVIATIONS <- ""
+runs(require_lot_run(NULL, "ndmm_", "X"),
+     "...while an empty deviation column is a contract build, which is every production run")
+
+cat("\n-- and it measures as many lines as that run actually built --\n")
+# cfg$max_lot is what this package is configured for. Point the harness at a
+# run built with a different cap and it asks for lines that run never built, or
+# leaves out lines it did - with nothing in the output to say which.
+.status <- data.frame(CONTRACT_SETTINGS = "allo_lot_span=single_day|max_lot=8|sct_tandem_days=180",
+                      RUN_TIMESTAMP = "2026-01-01", stringsAsFactors = FALSE)
+ok(identical(lot_run_contract(NULL, "ndmm_", "max_lot"), "8"),
+   "the measured run's own max_lot is read out of what it recorded")
+ok(identical(lot_run_contract(NULL, "ndmm_", "sct_tandem_days"), "180"),
+   "...by name, not by position in the string")
+# max_lot=5 must not match a key that merely ends in it.
+.status$CONTRACT_SETTINGS <- "lot_n_induction_window_days=30|max_lot=5"
+ok(identical(lot_run_contract(NULL, "ndmm_", "max_lot"), "5"),
+   "...and a key that another key ends with does not match it")
+.status <- NULL
+ok(is.null(lot_run_contract(NULL, "ndmm_", "max_lot")),
+   "an older run with no metadata gives nothing, so the caller can say it fell back")
+rb <- readLines(file.path(ROOT, "run_benchmarks.R"), warn = FALSE)
+ok(any(grepl("bench_reaching_sql(final, max_lot)", rb, fixed = TRUE)) &&
+     !any(grepl("as.integer(cfg$max_lot) - 1L", rb, fixed = TRUE)),
+   "the runner measures to the run's value, not to this package's config")
 
 cat("\n-- what the ask wanted that a harness cannot supply --\n")
 rb <- readLines(file.path(ROOT, "run_benchmarks.R"), warn = FALSE)
