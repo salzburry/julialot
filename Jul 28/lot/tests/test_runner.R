@@ -723,6 +723,78 @@ ok(identical(enddate("2025-04-22", auto = "2025-06-01", cart = "2025-07-31"),
    "and the earliest of the three still wins")
 
 
+cat("\n-- single AUTO allowed, tandem pair allowed, excess AUTO ends LOT1 --\n")
+# ENDING_AUTO_DT is where that rule lives, and nothing exercised it. The whole
+# CASE could be replaced with cast(NULL as date) - so no excess transplant ever
+# ends LOT1, affected patients get one long line instead of two, and LOT_LONG
+# row counts, LOT1 length and every downstream figure move - with all 14 suites
+# still green. The only other test touching it injects it as an input.
+#
+# The nearest CASE before the alias, as above: earlier CASEs in this view have
+# the same shape and matching forwards finds one of them.
+ea <- regexpr("END AS ENDING_AUTO_DT", s15, fixed = TRUE)
+cw <- gregexpr("CASE", s15, fixed = TRUE)[[1]]
+j  <- if (ea > 0) rev(which(cw > 0 & cw < ea))[1] else NA_integer_
+ok(!is.na(j), "the ENDING_AUTO_DT rule is where it was")
+case_sql <- if (!is.na(j)) substr(s15, cw[j], ea + 3L) else "CASE ELSE NULL END"
+
+# CASE WHEN a THEN x WHEN b THEN y ELSE z END -> nested if/else, so what runs
+# is the shipped rule rather than a second copy of it that agrees with itself.
+case_to_r <- function(x) {
+  # Trailing -- comments first: collapsing the newlines would fold one into the
+  # expression and comment out the rest of the rule.
+  x <- paste(sub("--.*$", "", strsplit(x, "\n", fixed = TRUE)[[1]]), collapse = "\n")
+  x <- gsub("\n\\s*", " ", trimws(x))
+  x <- sub("^CASE\\s*", "", sub("\\s*END$", "", x))
+  els <- "NA"
+  if (grepl("\\bELSE\\b", x)) {
+    els <- trimws(sub("^.*\\bELSE\\b", "", x)); x <- sub("\\bELSE\\b.*$", "", x)
+  }
+  arms <- Filter(nzchar, trimws(strsplit(x, "\\bWHEN\\b")[[1]]))
+  tr <- function(s) {
+    s <- gsub("\\b(ap|ab)\\.", "", trimws(s))
+    s <- gsub("([A-Za-z_][A-Za-z0-9_]*) IS NOT NULL", "!is.na(\\1)", s)
+    s <- gsub("([A-Za-z_][A-Za-z0-9_]*) IS NULL", "is.na(\\1)", s)
+    s <- gsub("datediff(", "dd(", gsub("coalesce(", "cly(", s, fixed = TRUE), fixed = TRUE)
+    s <- gsub("\\bAND\\b", "&", gsub("\\bOR\\b", "|", s))
+    s <- gsub("(?<![<>!=])=(?!=)", "==", s, perl = TRUE)
+    gsub("\\bNULL\\b", "NA", s)
+  }
+  out <- vapply(arms, function(a) {
+    kv <- strsplit(a, "\\bTHEN\\b")[[1]]
+    paste0("if (isTRUE(", tr(kv[1]), ")) ", tr(kv[2]), " else ")
+  }, character(1))
+  paste0(paste(out, collapse = ""), tr(els))
+}
+dd <- function(a, b) as.numeric(a - b)
+ending_auto <- function(a1 = NA, a2 = NA, a3 = NA, allo_between = 0) {
+  e <- new.env(parent = environment())
+  for (n in c("AUTO_DT_1", "AUTO_DT_2", "AUTO_DT_3"))
+    assign(n, as.Date(get(c(AUTO_DT_1 = "a1", AUTO_DT_2 = "a2", AUTO_DT_3 = "a3")[n])), envir = e)
+  assign("n_allo_between", allo_between, envir = e)
+  eval(parse(text = case_to_r(case_sql)), envir = e)
+}
+D <- function(x) as.Date(x)
+# One transplant is induction, not an ending event. Nothing to end the line.
+ok(is.na(ending_auto(a1 = "2025-03-01")),
+   "a single AUTO does not end LOT1 - it is part of induction")
+# Two within 180 days with no ALLO between them is a planned tandem, also
+# allowed, so the line ends only if a THIRD arrives.
+ok(is.na(ending_auto(a1 = "2025-03-01", a2 = "2025-06-01")),
+   "a tandem pair does not end LOT1 either")
+ok(identical(ending_auto(a1 = "2025-03-01", a2 = "2025-06-01", a3 = "2025-11-01"),
+             D("2025-11-01")),
+   "...but a third AUTO after a tandem does, on its own date")
+# 246 days apart is not a tandem, so the second one is already excess.
+ok(identical(ending_auto(a1 = "2025-03-01", a2 = "2025-11-02"), D("2025-11-02")),
+   "two AUTOs more than 180 days apart are not a tandem - the second ends LOT1")
+# An allogeneic transplant between them disqualifies the tandem, so likewise.
+ok(identical(ending_auto(a1 = "2025-03-01", a2 = "2025-06-01", allo_between = 1),
+             D("2025-06-01")),
+   "an ALLO between the pair disqualifies the tandem, so the second ends LOT1")
+ok(is.na(ending_auto()), "no transplant at all ends nothing")
+
+
 cat("\n-- ...and the invariants are actually asked, every one of them --\n")
 # Nothing ran this function. The assertions above are about the contents of the
 # list, so check_lot1_invariants() could have been turned into a no-op - or made

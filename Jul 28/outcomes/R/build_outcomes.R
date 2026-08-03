@@ -93,7 +93,8 @@ outcomes_base_sql <- function(lines_tbl, cohort_tbl, base_tbl = NULL) {
            c.INDEX_DATE, c.DEATH_DT,
            {dx_cols},
            {FU_END_SQL} AS FU_END_DT
-    FROM nxt n INNER JOIN coh c ON c.PATID = n.PATID{dx_join}")
+    FROM nxt n INNER JOIN coh c ON c.PATID = n.PATID
+    {dx_join}")
 }
 
 # The three outcomes off that base. Each is a date and a 0/1, not a summary:
@@ -122,17 +123,28 @@ outcomes_tte_sql <- function(base_sql, run_id) {
            NEXT_LOT_NUM, NEXT_LOT_START_DT, DEATH_DT, FU_END_DT,
            MM_DX_DT, DX_TO_LOT1_DAYS,
 
-           CASE WHEN TTNT_DT < FU_END_DT THEN 1 ELSE 0 END AS TTNT_EVENT,
+           -- ON the follow-up end, not before it. Death IS the follow-up end
+           -- for anyone who dies inside the study window - the cohort clamps
+           -- ENDDATE at the death date - so a strict test made every death a
+           -- censoring and left OS with no events at all. An event after the
+           -- follow-up end is still censoring: those dates are the 9999-12-31
+           -- sentinel or a line the patient was never observed to reach.
+           CASE WHEN TTNT_DT <= FU_END_DT THEN 1 ELSE 0 END AS TTNT_EVENT,
            datediff(least(TTNT_DT, FU_END_DT), LOT_START_DT) AS TTNT_DAYS,
 
-           CASE WHEN TTD_DT  < FU_END_DT THEN 1 ELSE 0 END AS TTD_EVENT,
+           -- Except here: a line whose own end IS the run-out did not end,
+           -- the observation did. That is censoring however the dates fall.
+           CASE WHEN TTD_DT <= FU_END_DT
+                 AND NOT (coalesce(LOT_END_REASON, '') = 'STUDY_END'
+                          AND TTD_DT = LOT_END_DT)
+                THEN 1 ELSE 0 END AS TTD_EVENT,
            datediff(least(TTD_DT,  FU_END_DT), LOT_START_DT) AS TTD_DAYS,
 
-           CASE WHEN OS_DT   < FU_END_DT THEN 1 ELSE 0 END AS OS_EVENT,
+           CASE WHEN OS_DT <= FU_END_DT THEN 1 ELSE 0 END AS OS_EVENT,
            datediff(least(OS_DT,   FU_END_DT), LOT_START_DT) AS OS_DAYS,
 
            -- Why TTNT ended, so a curve can be read without re-deriving it.
-           CASE WHEN TTNT_DT >= FU_END_DT              THEN 'CENSORED'
+           CASE WHEN TTNT_DT >  FU_END_DT              THEN 'CENSORED'
                 WHEN NEXT_LOT_START_DT IS NOT NULL
                  AND (DEATH_DT IS NULL
                       OR NEXT_LOT_START_DT <= DEATH_DT) THEN 'NEXT_LOT'
@@ -158,30 +170,41 @@ outcomes_tte_sql <- function(base_sql, run_id) {
 # being treated. Folding them into "lost to follow-up" would overstate loss and
 # hide the ongoing group entirely, so they get their own count and the five sum
 # to N_ON_LINE.
-outcomes_attrition_sql <- function(tte_tbl, study_end) {
-  # No next line, no death, and the line never ended inside follow-up: the
-  # patient was on treatment when observation stopped. Why it stopped is the
+outcomes_attrition_sql <- function(tte_tbl, study_end, run_id, lot_run_id) {
+  # "Received the next LOT" has to mean OBSERVED to receive it. lot's primary
+  # analysis ignores disenrolment, so LOT_LONG_FINAL carries lines that start
+  # after a patient's protocol follow-up ended - NEXT_LOT_NUM is populated for
+  # them and TTNT already censors them. Counting the column instead of the event
+  # credited the study with progressions nobody watched happen, and blocked
+  # those patients from every other category, all of which require no next line.
+  nxt  <- "TTNT_EVENT = 1 AND TTNT_REASON = 'NEXT_LOT'"
+  none <- glue("NOT ({nxt})")
+  # No observed next line, no death, and the line never ended inside follow-up:
+  # the patient was on treatment when observation stopped. Why it stopped is the
   # difference between the two.
-  still <- "NEXT_LOT_NUM IS NULL AND OS_EVENT = 0 AND TTD_EVENT = 0"
+  still <- glue("{none} AND OS_EVENT = 0 AND TTD_EVENT = 0")
+  # Table 4 asks for number AND percent. Denominator is the line's own N.
+  pct <- function(e) glue("round(100.0 * sum(CASE WHEN {e} THEN 1 ELSE 0 END)
+                                 / nullif(count(*), 0), 1)")
+  n <- function(e) glue("sum(CASE WHEN {e} THEN 1 ELSE 0 END)")
+  died  <- glue("{none} AND OS_EVENT = 1")
+  disc  <- glue("{none} AND OS_EVENT = 0 AND TTD_EVENT = 1")
+  lost  <- glue("{still} AND FU_END_DT <  date('{study_end}')")
+  going <- glue("{still} AND FU_END_DT >= date('{study_end}')")
   glue("
     SELECT LOT_NUM,
-           count(*)                                            AS N_ON_LINE,
-           sum(CASE WHEN NEXT_LOT_NUM IS NOT NULL
-                    THEN 1 ELSE 0 END)                         AS N_NEXT_LOT,
-           sum(CASE WHEN NEXT_LOT_NUM IS NULL AND OS_EVENT = 1
-                    THEN 1 ELSE 0 END)                         AS N_DIED,
-           sum(CASE WHEN NEXT_LOT_NUM IS NULL AND OS_EVENT = 0
-                     AND TTD_EVENT = 1
-                    THEN 1 ELSE 0 END)                         AS N_DISCON_NO_NEXT,
+           count(*)      AS N_ON_LINE,
+           {n(nxt)}      AS N_NEXT_LOT,        {pct(nxt)}   AS PCT_NEXT_LOT,
+           {n(died)}     AS N_DIED,            {pct(died)}  AS PCT_DIED,
+           {n(disc)}     AS N_DISCON_NO_NEXT,  {pct(disc)}  AS PCT_DISCON_NO_NEXT,
            -- Observation stopped before the study did: they disenrolled.
-           sum(CASE WHEN {still}
-                     AND FU_END_DT < date('{study_end}')
-                    THEN 1 ELSE 0 END)                         AS N_LOST_TO_FU,
+           {n(lost)}     AS N_LOST_TO_FU,      {pct(lost)}  AS PCT_LOST_TO_FU,
            -- Observation ran to the end of the study period and they were
            -- still on treatment. Not a loss - the study stopped, not them.
-           sum(CASE WHEN {still}
-                     AND FU_END_DT >= date('{study_end}')
-                    THEN 1 ELSE 0 END)                         AS N_ONGOING
+           {n(going)}    AS N_ONGOING,         {pct(going)} AS PCT_ONGOING,
+           {sql_text(run_id)}     AS OUT_RUN_ID,
+           {sql_text(lot_run_id)} AS LOT_RUN_ID,
+           current_timestamp()    AS BUILT_AT
     FROM {tte_tbl}
     GROUP BY LOT_NUM ORDER BY LOT_NUM")
 }
@@ -190,7 +213,7 @@ outcomes_attrition_sql <- function(tte_tbl, study_end) {
 # initiating a subsequent LOT as time from prior LOT start date (excluded) to
 # next LOT start date (included)". Continuous months, so days / 30.4375 - the
 # mean Gregorian month, not 30, which drifts by six days a year.
-outcomes_line_gap_sql <- function(tte_tbl) {
+outcomes_line_gap_sql <- function(tte_tbl, run_id, lot_run_id) {
   glue("
     SELECT LOT_NUM                              AS FROM_LOT,
            NEXT_LOT_NUM                         AS TO_LOT,
@@ -201,9 +224,16 @@ outcomes_line_gap_sql <- function(tte_tbl) {
                    datediff(NEXT_LOT_START_DT, LOT_START_DT), 0.5) / 30.4375, 2)
                                                 AS MEDIAN_MONTHS,
            min(datediff(NEXT_LOT_START_DT, LOT_START_DT)) AS MIN_DAYS,
-           max(datediff(NEXT_LOT_START_DT, LOT_START_DT)) AS MAX_DAYS
+           max(datediff(NEXT_LOT_START_DT, LOT_START_DT)) AS MAX_DAYS,
+           {sql_text(run_id)}     AS OUT_RUN_ID,
+           {sql_text(lot_run_id)} AS LOT_RUN_ID,
+           current_timestamp()    AS BUILT_AT
     FROM {tte_tbl}
-    WHERE NEXT_LOT_NUM IS NOT NULL
+    -- 'Among patients initiating a subsequent LOT' - observed to initiate it.
+    -- A line starting after the patient's follow-up ended is one lot recorded
+    -- because its primary analysis ignores disenrolment, not one this study
+    -- watched begin, and its gap is measured over unobserved time.
+    WHERE TTNT_EVENT = 1 AND TTNT_REASON = 'NEXT_LOT'
     GROUP BY LOT_NUM, NEXT_LOT_NUM ORDER BY LOT_NUM, NEXT_LOT_NUM")
 }
 
@@ -211,11 +241,14 @@ outcomes_line_gap_sql <- function(tte_tbl) {
 # receiving each 1L, 2L, 3L, and 4L regimens". Regimen as lot recorded it -
 # the SOC categories in 6.2.2 are Annex 2's and are not applied here, so this
 # is the raw distribution a category map would be built against.
-outcomes_regimen_sql <- function(tte_tbl) {
+outcomes_regimen_sql <- function(tte_tbl, run_id, lot_run_id) {
   glue("
     SELECT LOT_NUM, REGIMEN, count(*) AS N,
            round(100.0 * count(*) / sum(count(*)) OVER (PARTITION BY LOT_NUM), 2)
-             AS PCT_OF_LINE
+             AS PCT_OF_LINE,
+           {sql_text(run_id)}     AS OUT_RUN_ID,
+           {sql_text(lot_run_id)} AS LOT_RUN_ID,
+           current_timestamp()    AS BUILT_AT
     FROM {tte_tbl}
     GROUP BY LOT_NUM, REGIMEN
     ORDER BY LOT_NUM, N DESC")
@@ -227,7 +260,7 @@ outcomes_regimen_sql <- function(tte_tbl) {
 # One row per patient, so the 1L rows only - the value is the same on every
 # line a patient has, and repeating it per line would weight patients by how
 # many lines they reached.
-outcomes_dx_to_lot1_sql <- function(tte_tbl) {
+outcomes_dx_to_lot1_sql <- function(tte_tbl, run_id, lot_run_id) {
   glue("
     SELECT count(*)                                        AS N,
            round(avg(DX_TO_LOT1_DAYS) / 30.4375, 2)        AS MEAN_MONTHS,
@@ -242,7 +275,10 @@ outcomes_dx_to_lot1_sql <- function(tte_tbl) {
            -- A 1L start before the diagnosis would be negative, which the
            -- cohort build forbids: the index is the first therapy claim ON OR
            -- AFTER the diagnosis. Counted so that stays true.
-           sum(CASE WHEN DX_TO_LOT1_DAYS < 0 THEN 1 ELSE 0 END) AS N_NEGATIVE
+           sum(CASE WHEN DX_TO_LOT1_DAYS < 0 THEN 1 ELSE 0 END) AS N_NEGATIVE,
+           {sql_text(run_id)}     AS OUT_RUN_ID,
+           {sql_text(lot_run_id)} AS LOT_RUN_ID,
+           current_timestamp()    AS BUILT_AT
     FROM {tte_tbl}
     WHERE LOT_NUM = 1 AND DX_TO_LOT1_DAYS IS NOT NULL")
 }

@@ -1,5 +1,5 @@
 # The runner. Resolves which LOT run owns the tables, refuses anything it
-# cannot vouch for, then writes the four tables.
+# cannot vouch for, then writes the five tables.
 #
 # Nothing here is waivable. This package reads a finished run and does
 # arithmetic on it; if the run cannot be identified there is no reading of
@@ -34,7 +34,7 @@ find_base_cohort <- function(con) {
 # The LOT run that last wrote the tables, whatever state it reached - the same
 # rule every other reader in this folder uses, and for the same reason: a build
 # replaces its outputs before it validates them, so the newest row owns them.
-check_lot_run <- function(con, prefix, cohort_table) {
+check_lot_run <- function(con, prefix, cohort_table, study_end) {
   tbl <- out_tbl("LOT_BUILD_STATUS")
   d <- tryCatch(db_q(con, glue(
     "SELECT * FROM {tbl} ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) NULL)
@@ -61,8 +61,74 @@ check_lot_run <- function(con, prefix, cohort_table) {
   if (!is.na(dev) && nzchar(trimws(dev)))
     stop("That LOT run was built with LOT_CONTRACT_OVERRIDE (", dev,
          "), so its lines are an alternative algorithm's.", call. = FALSE)
+  # The attrition split is decided by the study end, and this package holds its
+  # own copy of it. lot writes the window it ran to onto the status row for
+  # exactly this reason, so ask rather than assume: an unchecked copy silently
+  # scores every still-treated patient as lost to follow-up when it runs long.
+  se  <- trimws(pick("STUDY_END"))
+  ask <- trimws(as.character(study_end))
+  if (!is.na(se) && nzchar(se) && !identical(se, ask))
+    stop("That LOT run was built to STUDY_END ", se, " and this package is ",
+         "set to ", ask, ". The attrition split reads the study end to tell a ",
+         "patient who disenrolled from one the study stopped observing, so ",
+         "the two have to be the same window.", call. = FALSE)
   log_msg("LOT run ", pick("RUN_ID"), " completed over ",
           pick("INPUT_COHORT_TABLE"))
+  check_cohort_attempt(con, pick("RUN_ID"))
+  invisible(pick("RUN_ID"))
+}
+
+# The cohort table's NAME matching is not the same as its CONTENTS matching.
+# Re-running the cohort build under the same prefix replaces the cohort, the
+# enrollment spans and NDMM_BASE_COHORT in place, and the name is unchanged - so
+# outcomes would measure lines built over attempt A using death, enrolment and
+# diagnosis dates from attempt B. LOT records which attempt it read; this asks.
+#
+# The same shape as nndm/R/build_subsequent.R, and for the same reason.
+check_cohort_attempt <- function(con, lot_run_id) {
+  meta <- out_tbl("LOT_RUN_METADATA")
+  m <- tryCatch(db_q(con, glue(
+    "SELECT * FROM {meta} WHERE RUN_ID = {sql_text(lot_run_id)} LIMIT 1")),
+    error = function(e) NULL)
+  # A run that reached "complete" always wrote this row, so its absence is not
+  # an old-run allowance - something is wrong with what is on disk.
+  if (is.null(m) || !nrow(m))
+    stop("LOT run ", lot_run_id, " is marked complete but has no row in ", meta,
+         ", so there is no record of which cohort attempt its lines were ",
+         "built over.", call. = FALSE)
+  at <- function(d, nm) {
+    i <- match(toupper(nm), toupper(names(d)))
+    if (is.na(i)) NA_character_ else as.character(d[[i]][1])
+  }
+  lot_cohort <- at(m, "COHORT_RUN_ID"); lot_stamp <- at(m, "COHORT_STAMP")
+  tbl <- coh_tbl("NDMM_BUILD_STATUS")
+  d <- tryCatch(db_q(con, glue(
+    "SELECT * FROM {tbl} ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) NULL)
+  # Nothing recorded is nothing to compare, and saying so is honest. A cohort
+  # built by another package has no such table.
+  if (is.null(d) || !nrow(d)) {
+    log_msg("  ", tbl, " has no row - the cohort attempt cannot be compared.")
+    return(invisible(FALSE))
+  }
+  now_id <- at(d, "RUN_ID"); now_stamp <- at(d, "UPDATED_AT")
+  if (is.na(lot_cohort) || !nzchar(trimws(lot_cohort))) {
+    log_msg("  ", meta, " records no cohort attempt for run ", lot_run_id,
+            ", so it cannot be compared to cohort run ", now_id, ".")
+    return(invisible(FALSE))
+  }
+  eq <- function(a, b) {
+    a <- trimws(as.character(a)); b <- trimws(as.character(b))
+    length(a) == 1L && length(b) == 1L && !is.na(a) && !is.na(b) && identical(a, b)
+  }
+  if (!(eq(lot_cohort, now_id) &&
+        (is.na(lot_stamp) || !nzchar(trimws(lot_stamp)) || eq(lot_stamp, now_stamp))))
+    stop("The LOT lines were built over cohort run ", lot_cohort, " (", lot_stamp,
+         "), but ", tbl, " now holds run ", now_id, " (", now_stamp,
+         "). The follow-up ends, death dates and diagnosis dates on disk are a ",
+         "later attempt than the lines, so every outcome would be measured ",
+         "against a population the lines are not about. Re-run the LOT build.",
+         call. = FALSE)
+  log_msg("  Cohort attempt ", now_id, " matches the one the LOT run read.")
   invisible(TRUE)
 }
 
@@ -94,6 +160,26 @@ check_lines_in_followup <- function(con, tte_tbl, lines_tbl, cohort_tbl) {
   invisible(c(no_cohort = no_coh, after_followup = after))
 }
 
+# The README's promise, kept: a table left behind by an earlier run is a
+# mismatch rather than a silent mix. Asked of the tables themselves, because a
+# log line saying they are stamped is not evidence that they are.
+check_stamps <- function(con, run_id, tbls, tte) {
+  bad <- character(0)
+  for (t in c(tte, tbls)) {
+    n <- tryCatch(as.numeric(db_q(con, glue(
+      "SELECT count(*) AS n FROM {t} WHERE OUT_RUN_ID <> {sql_text(run_id)}
+          OR OUT_RUN_ID IS NULL"))$n), error = function(e) NA_real_)
+    if (is.na(n)) bad <- c(bad, paste0(t, " (cannot be read)"))
+    else if (n > 0) bad <- c(bad, paste0(t, " (", n, " rows from another run)"))
+  }
+  if (length(bad))
+    stop("These outputs are not this run's: ", paste(bad, collapse = "; "),
+         ". They are read together, so a mix of runs is not a partial answer ",
+         "- it is a wrong one. Re-run the build.", call. = FALSE)
+  log_msg("  All ", length(tbls) + 1L, " outputs carry OUT_RUN_ID ", run_id)
+  invisible(TRUE)
+}
+
 build_outcomes <- function(here, cohort_table, prefix) {
   cfg <- pin_output_schema(cfg_defaults)
   cfg <- pin_cohort(cfg, cohort_table, prefix)
@@ -108,7 +194,8 @@ build_outcomes <- function(here, cohort_table, prefix) {
   log_msg("  cohort ", cfg$input_cohort_table, ", LOT prefix ", cfg$object_prefix)
   log_msg("  run ", run_id)
   log_msg(SEP)
-  check_lot_run(con, cfg$object_prefix, cfg$input_cohort_table)
+  lot_run <- check_lot_run(con, cfg$object_prefix, cfg$input_cohort_table,
+                           cfg$study_end)
 
   lines  <- out_tbl("LOT_LONG_FINAL")
   cohort <- wrk(cfg$input_cohort_table)
@@ -120,17 +207,25 @@ build_outcomes <- function(here, cohort_table, prefix) {
     outcomes_tte_sql(outcomes_base_sql(lines, cohort, base), run_id)}"))
   check_lines_in_followup(con, tte, lines, cohort)
 
-  tables <- list(list("OUT_ATTRITION",
-                      function(t) outcomes_attrition_sql(t, cfg$study_end)),
-                 list("OUT_LINE_GAP",  outcomes_line_gap_sql),
-                 list("OUT_REGIMEN",   outcomes_regimen_sql))
+  tables <- list(
+    list("OUT_ATTRITION", function(t) outcomes_attrition_sql(t, cfg$study_end,
+                                                             run_id, lot_run)),
+    list("OUT_LINE_GAP",  function(t) outcomes_line_gap_sql(t, run_id, lot_run)),
+    list("OUT_REGIMEN",   function(t) outcomes_regimen_sql(t, run_id, lot_run)))
   if (!is.null(base))
-    tables <- c(tables, list(list("OUT_DX_TO_LOT1", outcomes_dx_to_lot1_sql)))
+    tables <- c(tables, list(list("OUT_DX_TO_LOT1",
+      function(t) outcomes_dx_to_lot1_sql(t, run_id, lot_run))))
   for (p in tables) {
     t <- out_tbl(p[[1]])
     db_exec(con, glue("CREATE OR REPLACE TABLE {t} AS {p[[2]](tte)}"))
     log_msg("Wrote ", t)
   }
+  # Every table written, so the stamps agree. A run that died between them
+  # leaves an OUT_TTE from this run beside summaries from the last one, and
+  # OUT_RUN_ID is what says so - which is why it goes on all of them and is
+  # checked here rather than asserted in the log.
+  check_stamps(con, run_id, vapply(tables, function(p) out_tbl(p[[1]]),
+                                   character(1)), tte)
 
   # What the run produced, on the log, so a failure to write is not the first
   # anyone hears of a number being wrong.
@@ -144,7 +239,8 @@ build_outcomes <- function(here, cohort_table, prefix) {
     log_msg("  LOT ", s$LOT_NUM[i], ": ", s$n[i], " patients; events - TTNT ",
             s$ttnt_ev[i], ", TTD ", s$ttd_ev[i], ", OS ", s$os_ev[i])
   log_msg(DASH)
-  log_msg("Every table is stamped OUT_RUN_ID = ", run_id)
+  log_msg("Lines from LOT run ", lot_run, "; every output stamped OUT_RUN_ID ",
+          run_id)
   log_msg(SEP)
   invisible(TRUE)
 }

@@ -6,7 +6,7 @@
 #
 # Or set INPUT_COHORT_TABLE and OBJECT_PREFIX instead of passing them.
 #
-# Reads only. It writes four tables of its own and touches no cohort and no
+# Reads only. It writes five tables of its own and touches no cohort and no
 # LOT table, so it can be re-run against a finished run as often as needed.
 
 here <- local({
