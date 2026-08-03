@@ -512,6 +512,43 @@ carried over unchanged, because those do not move with an anchor. Carrying
 MM-diagnosis index, and a LOT run over this table would measure its lines from
 the wrong day.
 
+### The 2L and 3L cohorts come after the LOT run
+
+Protocol 6.2.1.1 has an "Additional eligibility for 2L and 3L RRMM Cohorts"
+block. Those cohorts are indexed on the *start of that line*, so lot has to
+have found the lines first:
+
+```
+DATABRICKS_PWD=... Rscript build_subsequent_cohorts.R ndmm_
+```
+
+Three criteria, all the protocol's, and nothing else:
+
+1. a LOT 2 (or LOT 3) row in `<prefix>LOT_LONG_FINAL`
+2. continuous enrollment for the 12 months before that line's start, gaps of
+   30 days or fewer still continuous
+3. continuous enrollment for 3 months of follow-up from it, **no gaps**, or
+   death inside the window
+
+The enrollment tests read `<prefix>NDMM_ENROLL_SPANS` and
+`<prefix>NDMM_ENROLL_SPANS_STRICT`, the two span tables this build already
+checkpointed, so no enrollment rule is written a second time. The follow-up
+window is three months here and one day at 1L — the 1L number is what the study
+team confirmed for that cohort, and both are named rather than written into the
+SQL (`NDMM_FU_CE_DAYS`, `SUBSEQ_FU_CE_MONTHS`).
+
+3L is drawn from the 2L cohort table, not from `NDMM_COHORT`: each line is a
+subset of the line before it, so a patient who fails at 2L cannot appear at 3L.
+
+Writes `<prefix>NDMM_COHORT_2L`, `<prefix>NDMM_COHORT_3L` and
+`<prefix>NDMM_SUBSEQUENT_ATTRITION` — a funnel per cohort, so what each
+criterion cost is on the record. It changes nothing else.
+
+It refuses to run unless the newest `LOT_BUILD_STATUS` row is `complete`, was
+built from *this* cohort, and carries no `CONTRACT_DEVIATIONS`. A LOT run
+replaces `LOT_LONG_FINAL` before it validates it, so lines from an unfinished
+run would look like lines.
+
 ## The attrition
 
 `<prefix>NDMM_ATTRITION`, one row per step, with the count and the percentage
