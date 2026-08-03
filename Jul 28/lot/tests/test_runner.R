@@ -1659,8 +1659,21 @@ cat("\n-- the LOT funnel, and the two ways it can lie --\n")
 # episode, or episodes that never form a line - and without this table that
 # loss is only a row-count difference somebody has to notice.
 ok(all(c("RUN_ID", "STEP_NUM", "KIND", "STEP", "N_PATIENTS", "N_LINES",
-         "PCT_OF_START", "RECORDED_AT") %in% names(LOT_ATTRITION_COLS)),
+         "PCT_OF_START", "PCT_OF_PREV", "RECORDED_AT") %in% names(LOT_ATTRITION_COLS)),
    "the funnel records patients AND lines per step")
+# How far patients get - LOT1, then LOT2, and so on. Nobody was removed there:
+# a patient with no LOT3 did not progress, or their follow-up ended. Read as
+# exclusions those would be the study losing people it never lost.
+ok(any(grepl('kind = "progression", step = paste0("Reached LOT", k)', src, fixed = TRUE)),
+   "the funnel carries how far patients got, line by line")
+ok(any(grepl("seq_len(as.integer(cfg$max_lot))", src, fixed = TRUE)),
+   "...every line to max_lot, so a line nobody reached is a zero row and not a missing one")
+ok(any(grepl("FROM lot_long_final GROUP BY LOT_NUM", src, fixed = TRUE)),
+   "...counted on the population that ships")
+# The share of the row above is the number being asked for: for a criterion its
+# own cost, for a progression row the proportion going on to the next line.
+ok(any(grepl("pct_of(s$n$patients, prev)", src, fixed = TRUE)),
+   "...with the share of the previous row, which is what line-to-line attrition means")
 # Not every row is attrition. NDMM's index IS a treatment qualifier - its step
 # 3 is "eligible 1L treatment", and that claim's date becomes INDEX_DATE - so
 # every member already has a qualifying claim on the same cl_mma_codelist.csv
@@ -1699,12 +1712,17 @@ ok(any(grepl("crit = on[seq_len(i)]", src, fixed = TRUE)),
 # with LOT_LONG_FINAL means the criteria counted are not the ones that built it.
 # Driven, not grepped. The check is arithmetic over a list, so it can be run
 # here in full - a warehouse is only needed to produce the numbers.
-mk <- function(...) {
+mk <- function(..., kinds = NULL) {
   v <- list(...)
+  if (is.null(kinds))
+    kinds <- c("input", "reconciliation", "reconciliation",
+               "criterion", "final")[seq_along(v)]
   lapply(seq_along(v), function(i)
-    list(step = paste0("step ", i),
+    list(kind = kinds[i], step = paste0("step ", i),
          n = list(patients = v[[i]][1], lines = v[[i]][2])))
 }
+PROG <- c("input", "reconciliation", "reconciliation", "criterion", "final",
+          "progression", "progression", "progression")
 runs2 <- function(expr, what) ok(is.null(tryCatch({ expr; NULL },
                                 error = conditionMessage)), what)
 stops2 <- function(expr, what) ok(!is.null(tryCatch({ expr; NULL },
@@ -1725,6 +1743,25 @@ ok(!is.null(msg) && grepl("step 4", msg) && grepl("lines", msg),
 # differ unless the criteria counted are not the ones that built the table.
 stops2(check_lot_attrition(mk(c(100, NA), c(90, NA), c(80, 200), c(70, 150), c(60, 140))),
        "a last step that disagrees with LOT_LONG_FINAL stops the build")
+
+# The progression rows sit AFTER the final row, so that comparison has to find
+# it rather than take the last entry.
+runs2(check_lot_attrition(mk(c(100, NA), c(90, NA), c(80, 200), c(70, 150), c(70, 150),
+                             c(70, 70), c(40, 40), c(15, 15), kinds = PROG)),
+      "a funnel with progression rows after the final one still passes")
+stops2(check_lot_attrition(mk(c(100, NA), c(90, NA), c(80, 200), c(70, 150), c(65, 150),
+                              c(65, 65), c(40, 40), c(15, 15), kinds = PROG)),
+       "...and the criterion/final comparison still fires with rows after it")
+# Every patient in LOT_LONG_FINAL has a LOT1, so the first progression row is
+# that same population counted a second way.
+stops2(check_lot_attrition(mk(c(100, NA), c(90, NA), c(80, 200), c(70, 150), c(70, 150),
+                              c(66, 66), c(40, 40), c(15, 15), kinds = PROG)),
+       "a LOT1 count that disagrees with LOT_LONG_FINAL stops the build")
+# Nobody reaching LOT5 is an answer, not a gap - a zero row must not trip the
+# monotonic check.
+runs2(check_lot_attrition(mk(c(100, NA), c(90, NA), c(80, 200), c(70, 150), c(70, 150),
+                             c(70, 70), c(0, 0), c(0, 0), kinds = PROG)),
+      "...and a line nobody reached is a zero row, not a failure")
 iat <- grep("phase_lot_attrition\\(con, cfg\\)", run)[1]
 ok(!is.na(iat) && !is.na(icf) && iat > icf,
    "it is written after the final table is validated, not before")

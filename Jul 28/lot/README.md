@@ -188,7 +188,12 @@ one, and these are built from temp views.
 | 2 | `reconciliation` | with a mapped MM therapy episode |
 | 3 | `reconciliation` | with LOT1 built |
 | 4.. | `criterion` | one row per enabled `truncate` criterion, cumulative |
-| last | `final` | the study population, `LOT_LONG_FINAL` |
+| | `final` | the study population, `LOT_LONG_FINAL` |
+| last | `progression` | reached LOT1, LOT2, … to `MAX_LOT` |
+
+Each row carries `PCT_OF_START` and `PCT_OF_PREV`. For most rows the second is
+the number being asked for: a criterion's own cost, and — for the progression
+rows — the share of one line's patients who go on to the next.
 
 **Not every row is attrition, and `KIND` says which is which.**
 
@@ -208,6 +213,18 @@ A cohort indexed on something else — a diagnosis, an enrolment date — carrie
 no such guarantee, and there the same rows are a genuine narrowing. That is why
 the check **warns rather than stops**: `lot` is meant to run over cohorts it did
 not build, and only the operator knows which kind this is.
+
+The `progression` rows are a third thing again. Nobody was removed there — a
+patient with no LOT3 did not progress, or their follow-up ended. Read as
+exclusions they would be the study losing people it never lost. They run over
+`LOT_LONG_FINAL`, the population that ships, and every line to `MAX_LOT` gets a
+row: "no patient reached LOT5" is an answer, and a missing row is not.
+
+Two of the rows are the same number reached two ways, which is deliberate. The
+`final` row must equal the last `criterion` row — both come from the same SQL
+over the same view. And `Reached LOT1` must equal `final`, since
+`check_lot_final()` has already established that each patient's lines run
+`1..n` there, so every patient has a LOT1. Either mismatch stops the build.
 
 **Two counts, because a `truncate` criterion need not remove a patient.** It
 drops the first failing line and every later one, so a patient can survive with

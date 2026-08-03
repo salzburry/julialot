@@ -1595,10 +1595,14 @@ report_line_criteria <- function(con, cfg, tbl = "lot_long_allflags") {
 # can survive with fewer lines - patients alone would show nothing.
 # no_belantamab happens to be patient-level, so today the two move together;
 # the next criterion need not be.
+# PCT_OF_PREV as well as PCT_OF_START, because for most of these rows the
+# share of the row above is the number being asked for: a criterion's own cost,
+# and - for the progression rows - the proportion of a line's patients who go
+# on to the next one, which is what "attrition to LOT2, then LOT3" means.
 LOT_ATTRITION_COLS <- c(RUN_ID = "STRING", STEP_NUM = "INT", KIND = "STRING",
                         STEP = "STRING", N_PATIENTS = "BIGINT",
                         N_LINES = "BIGINT", PCT_OF_START = "DOUBLE",
-                        RECORDED_AT = "TIMESTAMP")
+                        PCT_OF_PREV = "DOUBLE", RECORDED_AT = "TIMESTAMP")
 
 # Only criteria that actually removed something get a row. A funnel is what
 # narrowed the population; a criterion that was declared but left off did not,
@@ -1636,6 +1640,30 @@ lot_attrition_counts <- function(con, cfg) {
   steps[[length(steps) + 1L]] <-
     list(kind = "final", step = "Study population (LOT_LONG_FINAL)",
          n = cnt("lot_long_final", TRUE))
+
+  # How far patients get: LOT1, then LOT2, and so on to max_lot.
+  #
+  # A different thing again from either kind above, which is why it has its own
+  # KIND. Nobody was removed here - a patient with no LOT3 did not progress, or
+  # their follow-up ended. Read as exclusions these would be the study losing
+  # people it never lost.
+  #
+  # Over LOT_LONG_FINAL, the population that ships. check_lot_final() has
+  # already established that each patient's lines run 1..n there, so reaching
+  # LOT n implies every line below it and the sequence can only narrow.
+  #
+  # Every line to max_lot gets a row, including ones nobody reached: "no
+  # patient got to LOT5" is an answer, and a missing row is not.
+  by_line <- db_q(con, glue("
+    SELECT LOT_NUM, count(DISTINCT PATID) AS p, count(*) AS l
+    FROM lot_long_final GROUP BY LOT_NUM"))
+  for (k in seq_len(as.integer(cfg$max_lot))) {
+    i <- match(k, as.integer(by_line$LOT_NUM))
+    steps[[length(steps) + 1L]] <- list(
+      kind = "progression", step = paste0("Reached LOT", k),
+      n = list(patients = if (is.na(i)) 0 else as.numeric(by_line$p[i]),
+               lines    = if (is.na(i)) 0 else as.numeric(by_line$l[i])))
+  }
   steps
 }
 
@@ -1694,12 +1722,23 @@ check_lot_attrition <- function(steps) {
              "against the wrong population.", call. = FALSE)
     }
   }
-  n <- length(steps)
-  if (n >= 2L && !identical(p[n], p[n - 1L]))
-    stop("The last criterion leaves ", p[n - 1L], " patients but ",
-         "LOT_LONG_FINAL has ", p[n], ". Both come from the same criteria SQL ",
+  kind <- vapply(steps, function(s) s$kind, character(1))
+  # Located, not assumed to be last: the progression rows sit after it.
+  f <- match("final", kind)
+  if (!is.na(f) && f >= 2L && !identical(p[f], p[f - 1L]))
+    stop("The last criterion leaves ", p[f - 1L], " patients but ",
+         "LOT_LONG_FINAL has ", p[f], ". Both come from the same criteria SQL ",
          "over lot_long_allflags, so they cannot differ unless the criteria ",
          "counted here are not the ones that built it.", call. = FALSE)
+  # Every patient in LOT_LONG_FINAL has a LOT1 - check_lot_final() has already
+  # established that their lines run 1..n - so the first progression row is
+  # that table counted a second way. A difference means the by-line query and
+  # the table query disagree about the same rows.
+  l1 <- which(kind == "progression")[1]
+  if (!is.na(f) && !is.na(l1) && !identical(p[l1], p[f]))
+    stop("LOT_LONG_FINAL has ", p[f], " patients but only ", p[l1],
+         " reach LOT1. Lines run 1..n there, so every patient has a LOT1 and ",
+         "these are the same population counted twice.", call. = FALSE)
   invisible(TRUE)
 }
 
@@ -1709,26 +1748,37 @@ write_lot_attrition <- function(con, cfg, steps) {
   db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
                     paste(cols, LOT_ATTRITION_COLS, collapse = ", "), ")"))
   start <- steps[[1]]$n$patients
+  pct_of <- function(num, den)
+    if (is.na(den) || den == 0 || is.na(num)) "NULL"
+    else sql_count(round(100 * num / den, 2))
   vals <- vapply(seq_along(steps), function(i) {
-    s   <- steps[[i]]
-    pct <- if (is.na(start) || start == 0) "NULL"
-           else sql_count(round(100 * s$n$patients / start, 2))
+    s     <- steps[[i]]
+    prev  <- if (i == 1L) NA_real_ else steps[[i - 1L]]$n$patients
     lines <- if (is.na(s$n$lines)) "NULL" else sql_count(s$n$lines)
     glue("('{run_id}', {i}, {sql_text(s$kind)}, {sql_text(s$step)}, ",
-         "{sql_count(s$n$patients)}, {lines}, {pct}, current_timestamp())")
+         "{sql_count(s$n$patients)}, {lines}, ",
+         "{pct_of(s$n$patients, start)}, {pct_of(s$n$patients, prev)}, ",
+         "current_timestamp())")
   }, character(1), USE.NAMES = FALSE)
   db_replace(con,
     glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"),
     glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES ",
          paste(vals, collapse = ", ")))
   for (i in seq_along(steps)) {
-    s <- steps[[i]]
+    s    <- steps[[i]]
+    prev <- if (i == 1L) NA_real_ else steps[[i - 1L]]$n$patients
     log_msg("  ", i, ". [", s$kind, "] ", s$step, ": ",
             format(s$n$patients, big.mark = ",", scientific = FALSE), " patients",
             if (is.na(s$n$lines)) ""
             else paste0(", ", format(s$n$lines, big.mark = ",", scientific = FALSE), " lines"),
             if (!is.na(start) && start > 0)
-              paste0(" (", round(100 * s$n$patients / start, 1), "%)") else "")
+              paste0(" (", round(100 * s$n$patients / start, 1), "% of cohort") else "",
+            # The share of the row above is the number these rows are asked
+            # for: a criterion's cost, and the proportion of one line's
+            # patients who go on to the next.
+            if (!is.na(prev) && prev > 0)
+              paste0(", ", round(100 * s$n$patients / prev, 1), "% of previous)")
+            else if (!is.na(start) && start > 0) ")" else "")
   }
   log_msg("LOT attrition written to ", tbl)
   invisible(tbl)
