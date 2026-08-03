@@ -317,16 +317,50 @@ qs_trial_flags_ready <- function(con, src = qs_trial_flags()) {
 #
 # NULL when there is nothing to read. An older run predates the table, so the
 # caller decides whether that is a warning or a refusal.
+# SELECT *, not a column list: STUDY_END was added later, and an older run's
+# table does not have it. Naming it would turn a run that predates it into an
+# unreadable status table, which reads as no run recorded at all.
 qs_lot_run_row <- function(con, prefix) {
   tbl <- wrk(paste0(prefix, "LOT_BUILD_STATUS"))
   d <- tryCatch(db_q(con, glue(
-    "SELECT RUN_ID, INPUT_COHORT_TABLE, STATE FROM {tbl}
-     ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) NULL)
+    "SELECT * FROM {tbl} ORDER BY UPDATED_AT DESC LIMIT 1")),
+    error = function(e) NULL)
   if (is.null(d) || nrow(d) == 0) return(NULL)
-  list(tbl    = tbl,
-       run    = as.character(qs_col(d, "RUN_ID")[1]),
-       state  = tolower(trimws(as.character(qs_col(d, "STATE")[1]))),
-       cohort = as.character(qs_col(d, "INPUT_COHORT_TABLE")[1]))
+  one <- function(nm) {
+    v <- qs_col(d, nm)
+    if (is.null(v)) NA_character_ else as.character(v[1])
+  }
+  list(tbl       = tbl,
+       run       = one("RUN_ID"),
+       state     = tolower(trimws(one("STATE"))),
+       cohort    = one("INPUT_COHORT_TABLE"),
+       study_end = one("STUDY_END"))
+}
+
+# Did that run read the same CDM vintage these questions are configured for?
+#
+# STUDY_END picks the quarterly table, and the quarterlies are cumulative. The
+# question scripts go back to the raw CDM themselves - Q3's baseline diagnosis
+# scan does - and resolve that suffix from cfg, not from the run they are
+# reading. A different STUDY_END pairs that run's patients and index dates with
+# a later vintage of their claims, which can carry corrections and late
+# arrivals the run never saw.
+#
+# A sentence, not a refusal. The newer vintage is usually the better data, and
+# the raw-claim sections are a minority of the workbook - but a number that is
+# not what that run would have produced should say so rather than be quoted as
+# if it were.
+qs_vintage_note <- function(got, what) {
+  cfg <- lot_config()
+  if (is.null(got) || is.na(got$study_end) || !nzchar(trimws(got$study_end)))
+    return(NULL)
+  if (identical(trimws(got$study_end), trimws(as.character(cfg$study_end))))
+    return(NULL)
+  paste0(what, " ran with STUDY_END ", got$study_end, "; these questions are ",
+         "configured for ", cfg$study_end, ". That picks a different quarterly ",
+         "CDM table, and the quarterlies are cumulative - anything read from ",
+         "the raw claims here uses the later vintage, so it can differ from ",
+         "what that run saw.")
 }
 
 qs_check_run_binding <- function(con) {
@@ -359,6 +393,8 @@ qs_check_run_binding <- function(con) {
          got$cohort, "' (", got$tbl, "). The questions bound their ",
          "answers by the cohort's windows and index dates, so this pair would ",
          "describe one run using another's cohort.", call. = FALSE)
+  v <- qs_vintage_note(got, "This run")
+  if (!is.null(v)) log_msg("WARNING: ", v)
   invisible(TRUE)
 }
 
@@ -378,12 +414,16 @@ qs_broad_run_state <- function(con, prefix) {
     log_msg("WARNING: no LOT run recorded under prefix '", prefix, "', so the ",
             "broad run behind Q3's association is unverified - it is read as ",
             "though it finished.")
-    return(list(ok = TRUE, why = NULL, cohort = NA_character_))
+    return(list(ok = TRUE, why = NULL, cohort = NA_character_, vintage = NULL))
   }
+  # Q3 is where this matters most: the lines and index dates are that run's,
+  # while the baseline diagnosis scan beside them goes to the raw CDM at this
+  # run's vintage. Carried out to the tab rather than only logged.
+  vin <- qs_vintage_note(got, "The broad run")
   if (!identical(got$state, "complete")) {
     if (!identical(toupper(Sys.getenv("QS_IGNORE_BROAD_BUILD_STATE", unset = "")),
                    "TRUE"))
-      return(list(ok = FALSE, cohort = got$cohort, why = paste0(
+      return(list(ok = FALSE, cohort = got$cohort, vintage = vin, why = paste0(
         "the last LOT run on prefix '", prefix, "' (", got$run,
         ") is marked '", got$state, "' in ", got$tbl, ". It replaces ",
         "LOT_LONG_FINAL before it validates it, so the lines on disk may be ",
@@ -394,7 +434,8 @@ qs_broad_run_state <- function(con, prefix) {
             "' and QS_IGNORE_BROAD_BUILD_STATE is set. If it got as far as ",
             "replacing LOT_LONG_FINAL, Q3's association is that run's.")
   }
-  list(ok = TRUE, why = NULL, cohort = got$cohort)
+  if (!is.null(vin)) log_msg("WARNING: ", vin)
+  list(ok = TRUE, why = NULL, cohort = got$cohort, vintage = vin)
 }
 
 # The line criteria that REMOVED patients from this run, read from the lot

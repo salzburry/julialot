@@ -370,6 +370,31 @@ ok(any(grepl("Q3 association: skipped - ", pm, fixed = TRUE)) &&
 ok(any(grepl("BROAD RUN: lines and index dates from prefix", pm, fixed = TRUE)),
    "...and the tab says which cohort that run was built from")
 
+cat("\n-- a run records the CDM vintage it read --\n")
+# STUDY_END picks the quarterly table and the quarterlies are cumulative. Q3
+# takes lines and index dates from the broad run, then scans the raw CDM itself
+# at THIS run's vintage - so a different STUDY_END pairs that run's patients
+# with a later version of their claims. Without the date recorded the mismatch
+# could only be declared, never detected.
+bl <- readLines(file.path(dirname(ROOT), "lot", "R", "build_lot.R"), warn = FALSE)
+ok(any(grepl('STATE = "STRING", STUDY_END = "STRING"', bl, fixed = TRUE)),
+   "the LOT build records STUDY_END in its status table")
+ok(any(grepl('STUDY_END                  = glue("\'{cfg$study_end}\'")', bl, fixed = TRUE)),
+   "...and writes the run's own value, not a default")
+# One declaration drives CREATE, the ALTER-to-add and the INSERT, so a column
+# added to the list with no value stops the build rather than reaching the
+# warehouse. That check is what makes adding one safe.
+ok(any(grepl("stopifnot(identical(names(vals), cols))", bl, fixed = TRUE)),
+   "...and the three uses of that list are still held together")
+# An older run's table predates the column. Naming it in the SELECT would make
+# that table unreadable, which reads as no run recorded at all.
+ok(any(grepl("SELECT * FROM {tbl} ORDER BY UPDATED_AT DESC LIMIT 1", st, fixed = TRUE)),
+   "the questions read the status row without naming a column older runs lack")
+ok(any(grepl("qs_vintage_note", st, fixed = TRUE)),
+   "...and compare it with the vintage they are configured for")
+ok(any(grepl('paste0("VINTAGE: ", broad$vintage)', pm, fixed = TRUE)),
+   "...with Q3 carrying the mismatch onto the tab, since that is where it bites")
+
 cat("\n-- Q3 takes its lines and its index dates from the same run --\n")
 # Index dates from the NDMM cohort would drop every broad patient the NDMM
 # exclusions removed out of the idx join. They stay in the denominator through

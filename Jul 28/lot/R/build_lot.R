@@ -796,9 +796,17 @@ check_claim_ndc <- function(con, cfg) {
 # REQUESTED is what the run was given; APPLIED is what actually fired and was
 # waived, which is the one that says something about the code lists. A run can
 # request a waiver for a condition that never occurs.
+#
+# STUDY_END is here because it picks the quarterly CDM table this run read, and
+# the quarterlies are cumulative. Anything that reads these outputs and then
+# goes back to the raw CDM itself - the question scripts do, for baseline
+# diagnosis windows - resolves that suffix from its OWN setting, so a different
+# STUDY_END silently pairs this run's patients and dates with a different
+# vintage of their claims. The name of the table is not enough to see that;
+# recording the date is what makes it checkable rather than assumed.
 BUILD_STATUS_COLS <- c(
   RUN_ID = "STRING", INPUT_COHORT_TABLE = "STRING", OBJECT_PREFIX = "STRING",
-  STATE = "STRING", CODELIST_WAIVERS_REQUESTED = "STRING",
+  STATE = "STRING", STUDY_END = "STRING", CODELIST_WAIVERS_REQUESTED = "STRING",
   CODELIST_WAIVERS_APPLIED = "STRING", UPDATED_AT = "TIMESTAMP")
 
 write_build_status <- function(con, cfg, state) {
@@ -840,6 +848,7 @@ write_build_status <- function(con, cfg, state) {
             INPUT_COHORT_TABLE         = glue("'{cfg$input_cohort_table}'"),
             OBJECT_PREFIX              = glue("'{cfg$object_prefix}'"),
             STATE                      = glue("'{state}'"),
+            STUDY_END                  = glue("'{cfg$study_end}'"),
             CODELIST_WAIVERS_REQUESTED = glue("'{requested}'"),
             CODELIST_WAIVERS_APPLIED   = glue("'{applied}'"),
             UPDATED_AT                 = "current_timestamp()")

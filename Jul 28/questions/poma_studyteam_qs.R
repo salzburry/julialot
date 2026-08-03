@@ -541,7 +541,7 @@ main <- function() {
   # cohort" on the tab is that population rather than whatever sits under the
   # prefix. Skips this half only; the audit and every other tab are unaffected.
   broad <- if (nzchar(broad_pfx)) qs_broad_run_state(con, broad_pfx) else
-    list(ok = TRUE, why = NULL, cohort = NA_character_)
+    list(ok = TRUE, why = NULL, cohort = NA_character_, vintage = NULL)
   if (is.na(overall_lot))
     log_msg("Q3 association: skipped. It is a BROAD-cohort question and this ",
             "run is one cohort - set BROAD_PREFIX to the prefix of a LOT run ",
@@ -628,6 +628,10 @@ main <- function() {
                else ", whose cohort it did not record.",
                if (!isTRUE(broad$ok)) " NOT USED - see the log; this table is absent." else "")
       else NULL,
+      # The lines and index dates are that run's; the diagnosis scan beside them
+      # is at this run's vintage, and the quarterlies are cumulative.
+      if (!is.na(overall_lot) && !is.null(broad$vintage))
+        paste0("VINTAGE: ", broad$vintage) else NULL,
       "BROAD COHORT (second table): the Q3 ask - is POMA-1L associated with the other cancers allowed in baseline? Only answerable",
       "on the broad cohort, since NDMM already removed those patients. pct_other_cancer_deconf DROPS the MM-adjacent codes",
       "(plasmacytoma, plasma-cell leukemia, MGUS - MM-spectrum, not a second cancer). Secondary neoplasm of bone is KEPT:",

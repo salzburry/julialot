@@ -115,6 +115,24 @@ The same row names the cohort that run was built from, and the Q3 tab prints
 it, so "the broad cohort" means a population rather than whatever happens to
 sit under the prefix.
 
+### And the vintage it read
+
+Q3 takes lines and index dates from the broad run, then scans the raw CDM
+**itself** for baseline diagnoses — and `cdm_src()` resolves the quarterly
+suffix from `cfg$study_end`, this run's setting, not that run's. The
+quarterlies are cumulative, so a later vintage carries corrections and
+late-arriving claims the broad run never saw.
+
+`LOT_BUILD_STATUS` now records `STUDY_END`, which is what makes that
+detectable rather than merely declarable. `qs_vintage_note()` compares it with
+the value these questions are configured for and, when they differ, says so —
+in the log for this run's own binding, and on the Q3 tab, where the mixed
+vintages actually meet.
+
+A sentence, not a refusal: the newer vintage is usually the better data. But a
+number that is not what that run would have produced should say so rather than
+be quoted as though it were.
+
 Its index dates come from that run's own `LOT_PATIENT_INPUT`, not from this
 cohort. Taking them from here would drop every broad patient the NDMM
 exclusions removed out of the index join — they would stay in the denominator
