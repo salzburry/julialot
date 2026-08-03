@@ -55,11 +55,15 @@ phase_lot1_sct <- function(con, ctx) {
     ),
     -- First CART date within LOT1
     first_cart AS (
+      -- Strictly after the start, as LOT2-5 has it. A CAR-T on the line's own
+      -- start date is part of that start, not an event ending it - and the end
+      -- rule below puts the end a day BEFORE the CAR-T, so a same-day one ends
+      -- LOT1 the day before it began.
       SELECT ac.PATID, min(ac.TX_DT) AS CART_DT
       FROM tx_allo_cart_dates ac
       INNER JOIN lot1 l ON ac.PATID = l.PATID
       WHERE ac.SCT_TYPE = 'CART'
-        AND ac.TX_DT >= l.LOT1_START_DT
+        AND ac.TX_DT > l.LOT1_START_DT
         AND ac.TX_DT <= l.OBS_END_DT
       GROUP BY ac.PATID
     ),

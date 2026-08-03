@@ -138,6 +138,15 @@ SUBST <- list(
          to   = "AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', ''), 11, '0')",
          n = 1L)),
   "05_sct.R"       = list(list(from = "SELECT DISTINCT", to = "SELECT", n = 1L)),
+  # A CAR-T on LOT1's own start date used to be picked up as the CAR-T that
+  # ends LOT1, and the end rule puts the end a day BEFORE it - so the line
+  # ended the day before it began, with LOT1_BASE_LENGTH 0. LOT2-5 already
+  # reads ">": an SCT on the line's start date is part of that start, not an
+  # event ending it. This makes LOT1 agree. It can only affect a patient whose
+  # CAR-T falls exactly on their 1L index; there is one in the study cohort.
+  "05b_lot1_sct.R" = list(
+    list(from = "AND ac.TX_DT > l.LOT1_START_DT",
+         to   = "AND ac.TX_DT >= l.LOT1_START_DT", n = 1L)),
   # The persisted orphan count has to ask what the main check asks, or
   # LOT_QC_SUMMARY reports an orphan the build deliberately ignored. The five
   # counts go through sql_count() because as.character() renders an exact power
@@ -328,7 +337,8 @@ code_only <- function(lines) {
 # survives as "" - and the claim side coalesces a missing code to "" too. That
 # is a silent false match, not a rule, so the port fixes it. Each guard is
 # asserted by name below; "differs" on its own would let one go missing.
-CHANGED <- c("01_codelists.R", "03_mma_map.R", "05_sct.R", "07_qc.R", "08_persist.R")
+CHANGED <- c("01_codelists.R", "03_mma_map.R", "05_sct.R", "05b_lot1_sct.R",
+             "07_qc.R", "08_persist.R")
 
 cat("\n-- every phase is the source, line for line --\n")
 for (p in PHASES) {
