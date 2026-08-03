@@ -42,7 +42,7 @@
 
 source(file.path(.script_dir, "_setup.R"))
 qs_setup(.script_dir)
-source(file.path(.script_dir, "validation_qs.R"))   # vqs_* logic
+source(file.path(.script_dir, "validation_helpers.R"))   # vqs_* logic
 
 main <- function() {
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
@@ -87,7 +87,7 @@ main <- function() {
   # scoped to [INDEX_DATE, OBS_END_DT] like the pipeline's S04/S12 pulls.
   bounds <- vqs_obs_bounds_src(con)
   if (!bounds$available)
-    log_msg("WARNING: ", qs_tbl(cfg$input_cohort_table), " not readable - raw-claim ",
+    log_msg("WARNING: ", wrk(cfg$input_cohort_table), " not readable - raw-claim ",
             "examples will NOT be observation-window bounded, and 'CAR-T before ",
             "LOT1' (Q6) cannot be computed (needs the raw, bounded SCT scan).")
   # Cohort-wide raw CAR-T claim dates (observation-bounded) - the only way to

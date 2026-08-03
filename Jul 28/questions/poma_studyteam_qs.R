@@ -69,7 +69,7 @@
 
 source(file.path(.script_dir, "_setup.R"))
 qs_setup(.script_dir)
-source(file.path(.script_dir, "validation_qs.R"))        # vqs_* helpers (shared)
+source(file.path(.script_dir, "validation_helpers.R"))        # vqs_* helpers (shared)
 
 # ===========================================================================
 # Ensure the Excel engine is present. Try to load openxlsx; if missing, try to
@@ -220,7 +220,7 @@ main <- function() {
   map_tbl   <- qs_tbl("MAP_STACKED")
   sct_tbl   <- qs_tbl("LOT1_SCT")
   allflags  <- qs_tbl("ELIG_COH_ALLFLAGS")
-  final_tbl <- qs_tbl(cfg$input_cohort_table)
+  final_tbl <- wrk(cfg$input_cohort_table)
 
   log_msg(SEP); log_msg("POMA-in-1L study-team questions [", cohort_label, "] -> single Excel workbook"); log_msg(SEP)
   if (!vqs_readable(con, lot_long))

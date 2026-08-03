@@ -59,6 +59,36 @@ catalog and schema. `qs_tbl()` is what these scripts use, and it prefixes.
 
 `tests/test_setup.R` fails if any script calls `wrk()` again.
 
+## Known to be wrong, not yet fixed
+
+These scripts were written against an earlier arrangement and three of their
+assumptions no longer hold. The wiring is fixed; the question logic is not.
+
+**They read `LOT_LONG`, not `LOT_LONG_FINAL`.** For this cohort
+`APPLY_NO_BELANTAMAB` is on and truncates patients, so `LOT_LONG` still contains
+people the study removed. Every denominator and percentage these scripts report
+is therefore over the pre-criteria population. That is a per-script change to
+each query, not a setting.
+
+**Three of them expect `<prefix>NDMM_LOT_LONG_FILT`.** The cohort build no
+longer produces it — the flow is now cohort → LOT directly, and the LOT run's
+own `LOT_LONG` under the cohort's prefix *is* the NDMM population. Those
+sections will stop, and `validation_qs.R` additionally labels that run "Overall"
+when it is not.
+
+**`poma_studyteam_qs.R` treats secondary neoplasm of bone as MM-adjacent** and
+removes it from its de-confounded analysis. The cohort build decided the
+opposite — `C79.51`, `C79.52` and `198.5` are metastatic cancer and exclude
+(`DECISIONS.md` section 4). The two answer the same clinical question
+differently.
+
+Its other-malignancy section also calls `load_codelist_csv("other_malig.csv")`,
+which the `lot` loader refuses: it allows only the four code lists the LOT build
+reads.
+
+Until those are reworked, treat the affected sections as unavailable rather than
+as answers.
+
 ## Not verified against the warehouse
 
 `tests/test_setup.R` runs the setup — sourcing it, the load order, the guards,

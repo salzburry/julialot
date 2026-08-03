@@ -99,7 +99,7 @@
 
 source(file.path(.script_dir, "_setup.R"))
 qs_setup(.script_dir)
-source(file.path(.script_dir, "validation_qs.R"))        # vqs_* helpers (shared)
+source(file.path(.script_dir, "validation_helpers.R"))        # vqs_* helpers (shared)
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
@@ -1161,7 +1161,7 @@ main <- function() {
   map_tbl <- qs_tbl("MAP_STACKED")
   sct_tbl <- qs_tbl("LOT1_SCT")
   mma_tbl <- qs_tbl("MMA_MED_PROCESSED")
-  coh_tbl <- qs_tbl(cfg$input_cohort_table)
+  coh_tbl <- wrk(cfg$input_cohort_table)
 
   log_msg(SEP)
   log_msg("July-20 study-team questions Q2+Q3 [", cohort_label, "] -> CSVs + summaries")

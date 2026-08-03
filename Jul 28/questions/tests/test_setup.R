@@ -80,11 +80,54 @@ runs(qs_setup(ROOT), "a run that truly had no prefix can say so, explicitly")
 cat("\n-- no script asks for a table the unprefixed way --\n")
 qs <- list.files(ROOT, pattern = "_qs[.]R$", full.names = TRUE)
 ok(length(qs) >= 5, paste0("the question scripts are here (", length(qs), ")"))
-bad <- Filter(function(f) any(grepl("\\bwrk\\(", readLines(f, warn = FALSE))), qs)
+# wrk() is right for exactly one thing - the cohort table, whose whole physical
+# name the caller passes. Every other table is a build's own prefixed output.
+bad <- Filter(function(f) {
+  w <- grep("\\bwrk\\(", readLines(f, warn = FALSE), value = TRUE)
+  length(w) > 0 && !all(grepl("wrk(cfg$input_cohort_table)", w, fixed = TRUE))
+}, qs)
 ok(!length(bad),
-   if (length(bad)) paste0("still calling wrk(): ", paste(basename(bad), collapse = ", "))
-   else "every table reference goes through qs_tbl()")
+   if (length(bad)) paste0("calls wrk() on a prefixed output: ",
+                           paste(basename(bad), collapse = ", "))
+   else "wrk() is used only for the cohort table; every output goes through qs_tbl()")
 clear()
+
+cat("\n-- every file a script sources is a different file, and exists --\n")
+# validation_qs.R is an entry point; the vqs_* helpers were a separate file.
+# Sourcing "validation_qs.R" from inside validation_qs.R is the entry point
+# sourcing itself, before any helper is defined and before main() runs. It
+# parses, so nothing but this would have said so.
+srcs <- function(f) {
+  m <- regmatches(readLines(f, warn = FALSE),
+                  regexpr('source\\(file\\.path\\(\\.script_dir, "[^"]+"\\)\\)',
+                          readLines(f, warn = FALSE)))
+  unlist(regmatches(m, gregexpr('"[^"]+"', m)))
+}
+self <- Filter(function(f) paste0('"', basename(f), '"') %in% srcs(f), qs)
+ok(!length(self),
+   if (length(self)) paste0("sources itself: ", paste(basename(self), collapse = ", "))
+   else "no script sources itself")
+missing <- unlist(lapply(qs, function(f)
+  Filter(function(n) !file.exists(file.path(ROOT, gsub('"', "", n))), srcs(f))))
+ok(!length(missing),
+   if (length(missing)) paste0("sources a file that is not here: ",
+                               paste(unique(missing), collapse = ", "))
+   else "every file they source is present")
+ok(file.exists(file.path(ROOT, "validation_helpers.R")),
+   "the vqs_* helpers are here as their own file")
+
+cat("\n-- the cohort table is passed whole, so it is not prefixed again --\n")
+# The one place wrk() is right. LOT takes input_cohort_table as the complete
+# physical name - ndmm_NDMM_COHORT - so prefixing it would ask for
+# ndmm_ndmm_NDMM_COHORT. The blanket wrk() -> qs_tbl() sweep broke exactly this.
+dbl <- Filter(function(f) any(grepl("qs_tbl(cfg$input_cohort_table)",
+                                    readLines(f, warn = FALSE), fixed = TRUE)), qs)
+ok(!length(dbl),
+   if (length(dbl)) paste0("prefixes the cohort table twice: ",
+                           paste(basename(dbl), collapse = ", "))
+   else "the cohort table goes through wrk(), not qs_tbl()")
+ok(file.exists(file.path(ROOT, "steroid_codes.csv")),
+   "the steroid code list the timing questions need is here")
 
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))

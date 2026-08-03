@@ -45,7 +45,7 @@
 
 source(file.path(.script_dir, "_setup.R"))
 qs_setup(.script_dir)
-source(file.path(.script_dir, "validation_qs.R"))        # vqs_* helpers (shared)
+source(file.path(.script_dir, "validation_helpers.R"))        # vqs_* helpers (shared)
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
