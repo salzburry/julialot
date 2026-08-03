@@ -90,12 +90,35 @@ ok(!length(past_end) && !length(blank),
             paste(unique(c(past_end, blank)), collapse = ", "))
    else "...and a line that file actually has")
 # The two answers most likely to be wrong if the build changed under us.
-sct <- readLines(file.path(PARENT, "lot", "R", "steps", "05_sct.R"), warn = FALSE)
-ok(any(grepl("Maintenance is a descriptive flag only", sct, fixed = TRUE)),
-   "...and 'maintenance is never a line' is what the build actually says")
-ok(any(grepl("Single AUTO allowed; tandem pair allowed; excess AUTO ends LOT1",
-             sct, fixed = TRUE)),
-   "...and so is the single-plus-tandem transplant rule")
+#
+# On the CODE, not the header comment. Both of these used to match strings that
+# occur only in 05_sct.R's "# SCT detection rules:" block - a file that
+# implements neither rule. The transplant rule is ENDING_AUTO_DT in
+# 05b_lot1_sct.R, and the whole derivation could be replaced with
+# cast(NULL as date) with every suite green. Comments are what a build says
+# about itself; these answers are about what it does.
+code_of <- function(f) {
+  l <- readLines(file.path(PARENT, "lot", "R", "steps", f), warn = FALSE)
+  paste(l[!grepl("^\\s*(#|--)", l)], collapse = "\n")
+}
+sct1 <- code_of("05b_lot1_sct.R")
+# Maintenance is never a line: no view or table is built for a maintenance
+# period anywhere in the steps, and contains_mtx_reg is carried as a flag.
+mviews <- unlist(lapply(list.files(file.path(PARENT, "lot", "R", "steps"), "\\.R$"),
+  function(f) grep("(VIEW|TABLE)\\s+\\S*maint", code_of(f), value = TRUE, ignore.case = TRUE)))
+ok(!length(mviews),
+   if (length(mviews)) paste0("a maintenance period is built after all: ", mviews[1])
+   else "...and 'maintenance is never a line' is what the build actually does")
+# Single allowed, tandem allowed, excess ends it: the tandem arm yields the
+# THIRD transplant and the fallback the SECOND. Either one collapsing to NULL
+# is the rule gone.
+ok(grepl("THEN ap.AUTO_DT_3", sct1, fixed = TRUE) &&
+     grepl("THEN ap.AUTO_DT_2", sct1, fixed = TRUE) &&
+     grepl("END AS ENDING_AUTO_DT", sct1, fixed = TRUE),
+   "...and so is the single-plus-tandem transplant rule, in ENDING_AUTO_DT")
+ok(grepl("n_allo_between", sct1, fixed = TRUE) &&
+     grepl("sct_tandem_days", sct1, fixed = TRUE),
+   "...with both of its disqualifiers - the 180 days and an ALLO between")
 
 cat("\n-- the transplant answer covers later lines, not LOT1 alone --\n")
 # 05_sct.R is the LOT1 rule and reads like the whole answer. It is not: at LOT2
