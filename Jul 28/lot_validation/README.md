@@ -203,6 +203,52 @@ The crude `pct_reaching_line` figures are **not** follow-up adjusted and say so:
 a patient with six months of observation had less chance to reach LOT2 than one
 with five years. A source reporting a KM estimate is measuring something else.
 
+## Line-of-therapy definition comparison — idea 1
+
+```
+Rscript lot_validation/run_definitions.R
+```
+
+No warehouse and no connection — the rules are in the code, not in the data.
+
+**Our side is complete**: twelve dimensions, each with what this build does and
+the file and line to check it against. That half is the reusable one, and it did
+not exist before — the rules live across eight step files, and "does this count
+SCT as a line" had nowhere single to look.
+
+The dimensions the ask named are all there — SCT as separate line vs part of
+induction, maintenance counted or not, gap and switch rules — plus the ones
+where this algorithm decides something another could decide differently:
+substitutions, steroids, dose changes, the CAR-T bridging window, the line cap,
+and what fixes the start of first line.
+
+### Their side is empty, and that is circumstance rather than choice
+
+`clinicaltrials.gov` and `myeloma.org` are both **denied by this environment's
+network policy** — the proxy returns 403 on CONNECT — so no protocol, registry
+record or consensus paper could be retrieved here.
+
+Web **search** does work, and summarises both. A search summary is the one thing
+these cells must not hold: it reads like a citation, cannot be checked against
+the document, and would produce a concordance table that looks authoritative and
+is not. `read_definition_sources()` rejects `search_summary` and `recollection`
+**by name**, and refuses any answer without a citation at all.
+
+So `definitions_sources.csv` ships as a grid somebody with the documents can
+fill mechanically — 12 dimensions × 6 source slots (IMWG plus the five pivotal
+trials the ask asked for), with the question to put to each protocol spelled out
+per dimension.
+
+### The default falls to "not yet sourced"
+
+Never to "agrees". An empty comparison that reads as agreement retires the
+question instead of answering it, and one sourced dimension must not make the
+others look answered. A sourced answer with no judgement recorded is `unclear`,
+not agreement.
+
+Registry and publication citations require a `retrieved` date — records change,
+and a citation without one cannot be checked against what was actually read.
+
 ## What the ask wanted and this does not have
 
 The ask asked for each vignette's assignment under **IMWG rules and ≥2 published
@@ -215,5 +261,5 @@ nothing. The catalogue is built so those columns can be added beside
 `expected` — the vignettes and their timelines are the reusable half — but
 somebody with the sources has to add them.
 
-The same limit applies to idea 1 in that file, which is the same comparison at
-protocol scale.
+Idea 1 is the same limit at protocol scale, and it has its own section above:
+the framework and our column are built; the sources are not reachable from here.
