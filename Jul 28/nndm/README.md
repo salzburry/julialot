@@ -542,14 +542,19 @@ team confirmed for that cohort — and both are named rather than written into
 the SQL (`NDMM_FU_CE_DAYS`, `SUBSEQ_FU_CE_MONTHS`). Neither is settable from
 the environment: for this study they are definitions, not options.
 
-**Both cohorts are drawn from the 1L cohort.** 3L is not drawn from 2L. 6.2.1.1
-applies the criteria "to the 1L cohort", and each is written "for each cohort"
-against "the cohort index date (2L or 3L)" — so a patient who misses the 12
-months before 2L can still have them before 3L, and chaining would drop
-patients the protocol includes. The study design note also says "each
-subsequent line is a subset of the prior line"; if that is meant as a cohort
-rule rather than a statement about lines, `N_NOT_IN_PRIOR` in the attrition is
-what it would cost. Take that to the study team before reporting 3L.
+**Each cohort is drawn from the one before it** — 2L from the 1L cohort, 3L
+from the 2L cohort. The progression is 1L → 2L → 3L, and the study design note
+says "each subsequent line is a subset of the prior line".
+
+Receiving the lines in order is guaranteed anyway: lines are numbered
+sequentially, so a LOT 3 row implies a LOT 2 row. What the chain adds is that
+the **2L cohort's enrolment windows** must also have been met. Those are not
+the same test — a patient can have a gap that fails the three months after 2L
+and still be fully enrolled for the twelve months before 3L and three months
+after it. `N_EXCLUDED_BY_PRIOR` in the attrition counts them: patients who meet
+3L's own three criteria and are dropped only for not being in the 2L cohort.
+The funnel is run twice for 3L, once off each population, so that number is
+counted rather than inferred.
 
 Writes `<prefix>NDMM_COHORT_2L`, `<prefix>NDMM_COHORT_3L` and
 `<prefix>NDMM_SUBSEQUENT_ATTRITION` — a funnel per cohort, so what each

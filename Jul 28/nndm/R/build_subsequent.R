@@ -23,14 +23,19 @@
 # not shown the three months, so the window is truncated at death and at
 # nothing else.
 #
-# Both cohorts are drawn from the 1L cohort, not 3L from 2L. 6.2.1.1 applies
-# the criteria "to the 1L cohort", and each criterion is written "for each
-# cohort" against "the cohort index date (2L or 3L)". A patient can miss 12
-# months before 2L and have them before 3L, so chaining would drop patients
-# the third bullet includes. N_NOT_IN_PRIOR counts exactly those, because the
-# study design note also says "each subsequent line is a subset of the prior
-# line" - if that is meant as a cohort rule rather than a statement about
-# lines, this is the number it would cost.
+# Each cohort is drawn from the one before it: 2L from the 1L cohort, 3L from
+# the 2L cohort. The study design note says "each subsequent line is a subset
+# of the prior line", and the study team reads that as a cohort rule - the
+# progression is 1L -> 2L -> 3L, so a patient who is not in the 2L cohort is
+# not in the 3L cohort.
+#
+# Receiving the lines in order is guaranteed anyway: lines are numbered
+# sequentially, so a LOT 3 row implies a LOT 2 row. What chaining adds is that
+# the 2L cohort's ENROLMENT windows must also have been met. Those are not the
+# same test - a patient can have a gap that fails the 3 months after 2L and
+# still be fully enrolled for 12 months before 3L and 3 months after it.
+# N_EXCLUDED_BY_PRIOR counts them: patients who meet 3L's own three criteria
+# and are dropped only for not being in the 2L cohort.
 #
 # Nothing here changes the 1L cohort or the LOT tables. It reads the spans the
 # 1L build already checkpointed, so no enrollment rule is written twice.
@@ -191,15 +196,11 @@ subseq_cohort_sql <- function(lot_num, from_tbl, out_tbl, pre_days, months,
 # Written rather than logged only: a cohort whose funnel nobody can read is a
 # number somebody has to take on trust.
 #
-# n_not_in_prior is the cohort's members who are not in the line before it.
-# Under the three bullets it is not a drop; it is reported because the study
-# design note can be read as making it one.
+# Counted over whatever population is passed as from_tbl, so the same query
+# answers "how many from the 2L cohort" and "how many there would have been
+# from the 1L cohort" - the difference is what chaining costs.
 subseq_funnel_sql <- function(lot_num, from_tbl, pre_days, months, lines_tbl,
-                              spans_tbl, spans_strict_tbl, prior_tbl = NULL) {
-  prior <- if (is.null(prior_tbl)) "NULL" else glue("
-           (SELECT count(*) FROM kept k
-             WHERE NOT EXISTS (SELECT 1 FROM {prior_tbl} p
-                                WHERE cast(p.PATID as string) = k.PATID))")
+                              spans_tbl, spans_strict_tbl) {
   glue("
     WITH base AS (
       SELECT cast(PATID as string) AS PATID, cast(DEATH_DT as date) AS DEATH_DT
@@ -233,8 +234,7 @@ subseq_funnel_sql <- function(lot_num, from_tbl, pre_days, months, lines_tbl,
            (SELECT count(*) FROM got)  AS n_reached,
            (SELECT count(*) FROM got g JOIN pre ON pre.PATID = g.PATID
              WHERE pre.p = 1)          AS n_ce_pre,
-           (SELECT count(*) FROM kept) AS n_final,
-           {prior}                     AS n_not_in_prior")
+           (SELECT count(*) FROM kept) AS n_final")
 }
 
 build_subsequent <- function(here, prefix, months = SUBSEQ_FU_CE_MONTHS) {
@@ -268,28 +268,32 @@ build_subsequent <- function(here, prefix, months = SUBSEQ_FU_CE_MONTHS) {
   lines  <- wrk("LOT_LONG_FINAL")
   spans  <- wrk("NDMM_ENROLL_SPANS")
   strict <- wrk("NDMM_ENROLL_SPANS_STRICT")
-  rows <- list(); prior <- NULL
+  rows <- list(); from <- cohort
   for (n in SUBSEQ_LINES) {
     out <- wrk(paste0("NDMM_COHORT_", n, "L"))
-    # Both cohorts are drawn from the 1L cohort. 3L is NOT drawn from 2L - see
-    # the head of this file.
-    f <- db_q(con, subseq_funnel_sql(n, cohort, cfg$pre_lot1_days, months,
-                                     lines, spans, strict, prior))
-    db_exec(con, subseq_cohort_sql(n, cohort, out, cfg$pre_lot1_days, months,
+    fun <- function(src) db_q(con, subseq_funnel_sql(
+      n, src, cfg$pre_lot1_days, months, lines, spans, strict))
+    f <- fun(from)
+    db_exec(con, subseq_cohort_sql(n, from, out, cfg$pre_lot1_days, months,
                                    lines, spans, strict, run_id))
-    log_msg(n, "L: ", f$n_from, " in the 1L cohort -> ", f$n_reached,
-            " reached ", n, "L -> ", f$n_ce_pre, " with ", cfg$pre_lot1_days,
-            " days of CE before it -> ", f$n_final, " with ", months,
-            " months after it")
-    if (!is.null(prior))
-      log_msg("  ", f$n_not_in_prior, " of them are not in the ", n - 1L,
-              "L cohort")
+    log_msg(n, "L: ", f$n_from, " in the ", if (n == 2L) "1L" else paste0(n - 1L, "L"),
+            " cohort -> ", f$n_reached, " reached ", n, "L -> ", f$n_ce_pre,
+            " with ", cfg$pre_lot1_days, " days of CE before it -> ", f$n_final,
+            " with ", months, " months after it")
+    # What the chain costs: patients who meet this cohort's own criteria off
+    # the 1L cohort but are not in the cohort before it. Same query, wider
+    # population, so the two numbers are counted the same way.
+    excl <- if (identical(from, cohort)) 0 else fun(cohort)$n_final - f$n_final
+    if (excl != 0)
+      log_msg("  ", excl, " more would qualify on ", n, "L's own criteria but ",
+              "are not in the ", n - 1L, "L cohort")
     log_msg("  -> ", out)
     rows[[length(rows) + 1L]] <- data.frame(
       COHORT = paste0(n, "L"), N_FROM = f$n_from, N_REACHED_LOT = f$n_reached,
       N_CE_PRE = f$n_ce_pre, N_FINAL = f$n_final,
-      N_NOT_IN_PRIOR = f$n_not_in_prior, stringsAsFactors = FALSE)
-    prior <- out
+      N_EXCLUDED_BY_PRIOR = excl, stringsAsFactors = FALSE)
+    # 1L -> 2L -> 3L: each cohort is drawn from the one before it.
+    from <- out
   }
 
   att  <- do.call(rbind, rows)
@@ -297,13 +301,13 @@ build_subsequent <- function(here, prefix, months = SUBSEQ_FU_CE_MONTHS) {
   vals <- paste(sprintf("(%s, %s, %s, %s, %s, %s, %s, current_timestamp())",
                         vapply(att$COHORT, sql_text, ""), num(att$N_FROM),
                         num(att$N_REACHED_LOT), num(att$N_CE_PRE),
-                        num(att$N_FINAL), num(att$N_NOT_IN_PRIOR),
+                        num(att$N_FINAL), num(att$N_EXCLUDED_BY_PRIOR),
                         sql_text(run_id)),
                 collapse = ", ")
   db_exec(con, glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_SUBSEQUENT_ATTRITION')} AS
     SELECT * FROM (VALUES {vals})
-      AS t(COHORT, N_FROM, N_REACHED_LOT, N_CE_PRE, N_FINAL, N_NOT_IN_PRIOR,
+      AS t(COHORT, N_FROM, N_REACHED_LOT, N_CE_PRE, N_FINAL, N_EXCLUDED_BY_PRIOR,
            SUBSEQ_RUN_ID, BUILT_AT)"))
   log_msg("Wrote ", wrk("NDMM_SUBSEQUENT_ATTRITION"))
   # All three outputs carry this run id. A run that died between them leaves

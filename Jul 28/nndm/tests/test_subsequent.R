@@ -21,7 +21,7 @@ sys.source(file.path(ROOT, "R", "build_subsequent.R"), envir = globalenv())
 
 SQL2 <- subseq_cohort_sql(2L, "s.c1", "s.c2", 365L, 3L, "s.LINES", "s.SPANS",
                           "s.STRICT", "r9")
-SQL3 <- subseq_cohort_sql(3L, "s.c1", "s.c3", 365L, 3L, "s.LINES", "s.SPANS",
+SQL3 <- subseq_cohort_sql(3L, "s.c2", "s.c3", 365L, 3L, "s.LINES", "s.SPANS",
                           "s.STRICT", "r9")
 FUN2 <- subseq_funnel_sql(2L, "s.c1", 365L, 3L, "s.LINES", "s.SPANS", "s.STRICT")
 
@@ -55,16 +55,19 @@ ok(!has(SQL2, "study_end") && !has(SQL2, "2026-03-31"),
 ok(has(SQL2, "WHERE coalesce(pre.CE_PRE_12MO, 0) = 1 AND coalesce(fu.CE_FU, 0) = 1"),
    "failing either enrolment criterion keeps a patient out")
 
-cat("\n-- both cohorts are drawn from the 1L cohort --\n")
-# 6.2.1.1 applies the criteria "to the 1L cohort", and each is written "for
-# each cohort" against "the cohort index date (2L or 3L)". A patient can miss
-# 12 months before 2L and have them before 3L, so chaining 3L off 2L would
-# drop patients the third bullet includes.
-ok(has(SQL3, "FROM s.c1 c") && !has(SQL3, "FROM s.c2 c"),
-   "3L is drawn from the 1L cohort, not from the 2L cohort")
-ok(has(subseq_funnel_sql(3L, "s.c1", 365L, 3L, "s.LINES", "s.SPANS", "s.STRICT",
-                         "s.c2"), "NOT EXISTS"),
-   "...and the funnel counts how many 3L members the 2L cohort lacks")
+cat("\n-- 1L -> 2L -> 3L: each cohort is drawn from the one before it --\n")
+ok(has(SQL2, "FROM s.c1 c"), "2L is drawn from the 1L cohort")
+ok(has(SQL3, "FROM s.c2 c") && !has(SQL3, "FROM s.c1 c"),
+   "3L is drawn from the 2L cohort")
+bs <- paste(readLines(file.path(ROOT, "R", "build_subsequent.R"), warn = FALSE),
+            collapse = "\n")
+ok(has(bs, "from <- out"), "the loop feeds each cohort into the next")
+# Receiving the lines in order is guaranteed by the line numbering, so what
+# chaining adds is that the prior cohort's ENROLMENT windows were met too.
+# The funnel is run twice for 3L - once off 2L, once off 1L - and the
+# difference is reported rather than left to be inferred.
+ok(has(bs, "fun(cohort)$n_final - f$n_final") && has(bs, "N_EXCLUDED_BY_PRIOR"),
+   "what the chain costs is counted and written, not silent")
 
 cat("\n-- the funnel counts what the cohort keeps --\n")
 ok(has(FUN2, "date_sub(g.ix, 365)") && has(FUN2, "add_months(g.ix, 3)") &&
