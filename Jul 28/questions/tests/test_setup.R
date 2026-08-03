@@ -406,14 +406,44 @@ ok(any(grepl("AS CLINTRIAL_DX_TO_LOT1", ct, fixed = TRUE)),
 ok(any(grepl("qs_ndmm_trial_flags(con)", pm, fixed = TRUE)),
    "...and Q4 reads it")
 ok(any(grepl("n_dx_to_lot1", pm, fixed = TRUE)) &&
-   any(grepl("median_days_before_lot1", pm, fixed = TRUE)),
+   any(grepl("median_days_dx_to_lot1", pm, fixed = TRUE)),
    "...headlining that window, with the timing beside it")
+# The timing has to be over the same claims as the count printed beside it.
+# Any-time-before-1L includes pre-diagnosis codes, so a patient who
+# contributes nothing to the count would contribute to the median, and one
+# with codes in both windows would contribute the older date.
+ok(any(grepl("CLINTRIAL_DX_TO_LOT1_DAYS", ct, fixed = TRUE)) &&
+   any(grepl("percentile_approx(t.CLINTRIAL_DX_TO_LOT1_DAYS", pm, fixed = TRUE)),
+   "...over the same window as the count, not every claim before 1L")
+ok(!any(grepl("percentile_approx(t.CLINTRIAL_DAYS_BEFORE_LOT1", pm, fixed = TRUE)),
+   "...so the count and the timing cannot describe different patients")
+# The table is written before the cohort table, the attrition and "complete",
+# and a later completed rerun replaces it under the same name - which the LOT
+# binding check, comparing that name, cannot see.
+ok(any(grepl("COHORT_RUN_ID, COHORT_STAMP FROM", st, fixed = TRUE)),
+   "the trial table is checked against the cohort run LOT actually read")
+ok(any(grepl("NDMM_BUILD_STATUS", st, fixed = TRUE)),
+   "...and against whether that cohort build finished")
+# On the documented command the broad flags are usually absent while this one
+# is present, so a bare "Q4 skipped" would sit directly above the answer.
+ok(!any(grepl('paste0("Q4 skipped. ", trial$why)', pm, fixed = TRUE)),
+   "an absent diagnosis-anchored table no longer reports the whole of Q4 as skipped")
+# A trial code identifies neither the study drug nor the condition treated.
+ok(any(grepl("not proof of therapy", pm, fixed = TRUE)) &&
+   any(grepl("a zero does not establish", pm, fixed = TRUE)),
+   "...and the tab does not read a claims code as proven therapy")
+# Two scripts giving two different trial numbers for the same patients is the
+# drift this package exists to prevent.
+l1b <- readLines(file.path(ROOT, "lot1_studyteam_qs.R"), warn = FALSE)
+ok(any(grepl("qs_ndmm_trial_flags(con)", l1b, fixed = TRUE)) &&
+   any(grepl("q1c_poma_trial_1l_anchored", l1b, fixed = TRUE)),
+   "the LOT1 workbook answers Q1c from the same 1L-anchored flag POMA Q4 uses")
 # One prefix, one cohort: nothing to reconcile, so a missing row is a broken
 # join and is counted rather than read as a clean patient.
 ok(any(grepl("AS missing_flag_rows", pm, fixed = TRUE)),
    "...and a LOT1 patient with no flag row is counted, not coerced to clean")
 # The overlapping window must not be added to the partition.
-ok(any(grepl("do NOT add it to n_pre_dx", pm, fixed = TRUE)),
+ok(any(grepl("NOT add it to n_pre_dx or n_dx_to_lot1", pm, fixed = TRUE)),
    "...with the 12-month window marked as spanning two of the others")
 # The old view stays, as context, and says what it cannot answer.
 ok(any(grepl("diagnosis index (context)", pm, fixed = TRUE)),

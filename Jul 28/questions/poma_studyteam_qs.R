@@ -23,10 +23,12 @@
 #       Then the POMA-1L vs other-1L other-cancer association on the BROAD
 #       cohort, de-confounded IN THE WORKBOOK (MM-adjacent codes dropped;
 #       pipeline untouched) - the association question NDMM can't answer.
-#   Q4  Did trial therapy come before the POMA recorded at 1L? Answered from
-#       this cohort's own NDMM_CLINTRIAL_FLAGS, whose windows are cut at the 1L
-#       start - the diagnosis-to-1L stretch is its own column. The broad
-#       build's diagnosis-anchored pair is kept beside it as context.
+#   Q4  Was there claims-based trial evidence before the POMA recorded at 1L?
+#       From this cohort's own NDMM_CLINTRIAL_FLAGS, whose windows are cut at
+#       the 1L start - the diagnosis-to-1L stretch is its own column. Evidence,
+#       not proof of therapy: a code identifies neither the study drug nor the
+#       condition treated. The broad build's diagnosis-anchored pair is kept
+#       beside it as context.
 #   Q5  Do POMA-1L patients have continuous pharmacy benefit? Shows the NDMM
 #       LOT1-anchored 12-mo pre-LOT1 check (the study proof) plus a longer
 #       look-back on the cohort's own INDEX_DATE - the same anchor, not an
@@ -494,7 +496,11 @@ main <- function() {
   # Order the columns so the baseline count + rate lead. (Q4 only - Q3 no longer
   # uses ELIG_COH_ALLFLAGS; it re-derives its own flag from raw claims below.)
   q4_df <- if (!is.null(assoc)) assoc[, c("grp","n_pts","n_matched","pct_matched","n_trial_baseline","pct_trial_baseline","n_trial_followup","n_trial_any","pct_trial_any")] else NULL
-  q4_gap <- if (!have_flags) paste0("Q4 skipped. ", trial$why) else NULL
+  # Scoped to the table it is about. On the documented NDMM command the broad
+  # flags are usually absent while the 1L-anchored table is present, so a bare
+  # "Q4 skipped" would sit directly above the answer to Q4.
+  q4_gap <- if (!have_flags)
+    paste0("The diagnosis-anchored table below is absent. ", trial$why) else NULL
   # Q3 (other cancer) is a BROAD-cohort question ("cancers we ALLOW in baseline").
   # NDMM excludes those patients, so the association is measured on the full cohort.
   # The de-confounded rate is computed HERE IN THE WORKBOOK (the parent pipeline is
@@ -657,7 +663,11 @@ main <- function() {
                       WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{poma}')),
       lot1 AS (SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long} WHERE LOT_NUM=1),
       t AS (SELECT cast(PATID as string) PATID, CLINTRIAL_PRE_DX, CLINTRIAL_DX_TO_LOT1,
-                   CLINTRIAL_POST_LOT1, CLINTRIAL_PRE_LOT1_12MO, CLINTRIAL_DAYS_BEFORE_LOT1
+                   CLINTRIAL_POST_LOT1, CLINTRIAL_PRE_LOT1_12MO,
+                   -- The days column for THIS window, not the any-time-before-1L
+                   -- one: it is NULL unless CLINTRIAL_DX_TO_LOT1 = 1, so the
+                   -- median below is over the patients the count is about.
+                   CLINTRIAL_DX_TO_LOT1_DAYS
             FROM {ndmm_tr_tbl})
       SELECT CASE WHEN p.PATID IS NOT NULL THEN 'POMA-1L' ELSE 'other-1L' END AS grp,
              count(*)                                                           AS n_pts,
@@ -668,27 +678,34 @@ main <- function() {
              round(100.0*sum(coalesce(t.CLINTRIAL_PRE_LOT1_12MO,0))/nullif(count(t.PATID),0),1)  AS pct_12mo_pre_lot1,
              sum(coalesce(t.CLINTRIAL_PRE_DX,0))                                AS n_pre_dx,
              sum(coalesce(t.CLINTRIAL_POST_LOT1,0))                             AS n_post_lot1,
-             percentile_approx(t.CLINTRIAL_DAYS_BEFORE_LOT1, 0.5)               AS median_days_before_lot1
+             percentile_approx(t.CLINTRIAL_DX_TO_LOT1_DAYS, 0.5)                AS median_days_dx_to_lot1
       FROM lot1 l LEFT JOIN t USING (PATID) LEFT JOIN poma1l p USING (PATID)
       GROUP BY 1 ORDER BY 1"))
   }, "1L-anchored clinical trial") else NULL
 
   add_sheet(name = "Q4 POMA & clinical trials", title = "Q4 - POMA-1L vs other-1L: clinical-trial evidence",
     subtitle = if (isTRUE(ndmm_trial$ok))
-      paste0("FIRST table answers the ask: trial evidence before the 1L start, on this cohort's own index. ",
-             "The second is the older diagnosis-anchored view, kept as context.")
+      paste0("FIRST table: claims-based trial evidence before the 1L start, on this cohort's own index - evidence to review, ",
+             "not proof of therapy. The second is the older diagnosis-anchored view, kept as context.")
     else
       paste0("Claims-based trial evidence around the flag build's own index. Read n_matched first - this is the ",
              "OVERLAP of two cohorts, not the NDMM cohort."),
     narrative = c(q4_gap,
       if (isTRUE(ndmm_trial$ok)) c(
-        paste0("1L-ANCHORED (first table, from ", ndmm_tr_tbl, "): this is the ask - did trial therapy come before the POMA",
-               " recorded at LOT1? Every window is cut at this cohort's own 1L start, so there is no second index and no overlap."),
+        paste0("1L-ANCHORED (first table, from ", ndmm_tr_tbl, "): every window is cut at this cohort's own 1L start, so there is",
+               " no second index and no overlap. This is the table to read for the prior-therapy question."),
+        "WHAT IT IS: claims-based trial EVIDENCE - a trial diagnosis, procedure or revenue code. It does not identify the study drug,",
+        "the condition treated, or whether a blinded agent was received, so it does not establish that a patient had MM therapy in",
+        "that window, and a zero does not establish that they did not. Treat a positive as a patient to review, not as a proven line.",
         "HEADLINE n_dx_to_lot1 / pct_dx_to_lot1: trial evidence between the MM diagnosis and the day before LOT1. That is the",
         "stretch a first line would have displaced, and the one the diagnosis-anchored flags below cannot see at all.",
-        "n_12mo_pre_lot1 is the same window filter #4 uses for prior MM therapy, so the two read side by side. It SPANS pre-diagnosis",
-        "and diagnosis-to-1L, so do NOT add it to n_pre_dx or n_dx_to_lot1 - those three plus n_post_lot1 already partition the period.",
-        "median_days_before_lot1 separates 'trial therapy, then POMA' from a trial code in the same week as the 1L start.",
+        "CAVEAT on comparing that column across groups: the diagnosis-to-1L interval is days for one patient and years for another,",
+        "so the chance of catching a code differs per patient. n_12mo_pre_lot1 is a FIXED window and is the more comparable one",
+        "between POMA-1L and other-1L; read the two together rather than either alone.",
+        "n_12mo_pre_lot1 is also the window filter #4 uses for prior MM therapy. It SPANS pre-diagnosis and diagnosis-to-1L, so do",
+        "NOT add it to n_pre_dx or n_dx_to_lot1 - those three plus n_post_lot1 already partition the period.",
+        "median_days_dx_to_lot1 is over the SAME window as the headline count (NULL unless CLINTRIAL_DX_TO_LOT1=1), so the count and",
+        "the timing describe one set of patients. It separates 'trial evidence, then POMA' from a trial code in the same week as 1L.",
         "n_post_lot1 is at-or-after LOT1: context, never evidence of a prior line.",
         "missing_flag_rows must be 0. It counts LOT1 patients with no row in the flag table - a broken join, not a clean patient.",
         "Clinical trial does NOT filter this cohort. The flag is descriptive and is not one of the criteria, so nothing was removed for it.")
@@ -707,7 +724,7 @@ main <- function() {
       "Claims-based trial evidence is a lower bound (a fully masked study drug may carry no trial code)."),
     tables = c(
       if (isTRUE(ndmm_trial$ok))
-        list("Trial evidence before the 1L start - THIS COHORT (answers the ask)" = q4_ndmm_df)
+        list("Trial evidence before the 1L start - THIS COHORT (claims-based)" = q4_ndmm_df)
       else list(),
       list("Trial evidence around the broad build's diagnosis index (context)" = q4_df)))
 

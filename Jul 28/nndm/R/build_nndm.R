@@ -851,9 +851,11 @@ check_icd_flag <- function(con, cfg) {
   dx_lists <- glue("
         SELECT dx AS code FROM {NDMM_MM_DX_CODES}
         UNION SELECT dx FROM {NDMM_OTHER_MALIG_CODES}
-        UNION SELECT code FROM {NDMM_PREG_CODES} WHERE code_type LIKE '%DIAG'")
+        UNION SELECT code FROM {NDMM_PREG_CODES} WHERE code_type LIKE '%DIAG'
+        UNION SELECT code FROM {NDMM_CLINTRIAL_CODES} WHERE code_type LIKE '%DIAG'")
   pr_lists <- glue("
-        SELECT code FROM {NDMM_PREG_CODES} WHERE code_type LIKE '%PROC'")
+        SELECT code FROM {NDMM_PREG_CODES} WHERE code_type LIKE '%PROC'
+        UNION SELECT code FROM {NDMM_CLINTRIAL_CODES} WHERE code_type LIKE '%PROC'")
   found <- character(0)
   for (p in list(list(t = cdm_src(cfg$tbl_med_diag), c = "DIAG", l = dx_lists),
                  list(t = cdm_src(cfg$tbl_med_proc), c = "PROC", l = pr_lists))) {
@@ -1073,6 +1075,14 @@ build_nndm <- function(here, prefix) {
   log_msg("Pregnancy across the study period")
   build_ndmm_preg_codes(con)
   checkpoint(con, "NDMM_PREG_CODES")
+  # Before the ICD-flag check, not with the flag build that uses it. The check
+  # asks which claims carry a code this cohort reads but name no ICD family,
+  # and trial codes are codes this cohort reads - a trial diagnosis or
+  # procedure claim with a blank flag matches nothing and is missed silently,
+  # which is the exact condition the check exists to surface. It only reads the
+  # CSV, so it can be built here; the flag itself needs LOT1 and the base
+  # cohort and stays where it is.
+  build_ndmm_clintrial_codes(con)
   check_icd_flag(con, cfg)
   build_ndmm_pregnancy_patids(con, cdm_src(cfg$tbl_med_diag),
                               cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_med_proc))
@@ -1095,7 +1105,6 @@ build_nndm <- function(here, prefix) {
   # Descriptive, not a criterion - it is built after the flags and joins
   # nothing into them, so the cohort is the same with it as without.
   log_msg("Clinical-trial evidence around the 1L index")
-  build_ndmm_clintrial_codes(con)
   build_ndmm_clintrial_flags(con, cdm_src(cfg$tbl_med_diag),
                              cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_med_proc))
   checkpoint(con, "NDMM_CLINTRIAL_FLAGS")

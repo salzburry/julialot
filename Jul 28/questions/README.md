@@ -189,7 +189,25 @@ The diagnosis-anchored flags never could say whether trial therapy preceded the
 `CLINTRIAL_DX_TO_LOT1` as its own column (`nndm/README.md`).
 
 Q4 reads it when it is there and headlines it, with the diagnosis-anchored
-table kept beside it as context. One prefix, one cohort — no overlap to report
+table kept beside it as context. `lot1_studyteam_qs.R` Q1c reads the same
+table, so the two workbooks cannot give different trial numbers for the same
+POMA-1L patients.
+
+It is checked for **provenance**, not just for its columns. The cohort build
+writes it before its own cohort table, its attrition and its `complete`
+status, so a rerun can replace it and then fail — leaving a well-formed table
+from an attempt that never finished. A rerun that *does* finish replaces it
+under the same prefix and the same physical name, which the LOT run-binding
+check, comparing that name, cannot see. So it is matched against
+`COHORT_RUN_ID` / `COHORT_STAMP` — what LOT recorded reading — and against
+`NDMM_BUILD_STATUS`.
+
+**Evidence, not proof.** A trial code identifies neither the study drug nor
+the condition treated, so a positive is a patient to review, not a proven
+prior line, and a zero does not establish that none occurred. The
+diagnosis-to-1L interval also varies from days to years between patients, so
+the fixed 12-month window is the more comparable figure across groups — the
+tab says to read the two together. One prefix, one cohort — no overlap to report
 and no second index to reconcile, so a LOT1 patient with no row is a broken
 join and is counted as `missing_flag_rows` rather than read as a clean patient.
 

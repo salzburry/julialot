@@ -216,20 +216,79 @@ QS_TRIAL_INDEX_COLS <- c("PATID", "INDEX_DATE")
 # existed.
 QS_NDMM_TRIAL_COLS <- c("PATID", "LOT1_START_DT", "MM_DX_DT",
                         "CLINTRIAL_PRE_DX", "CLINTRIAL_DX_TO_LOT1",
-                        "CLINTRIAL_POST_LOT1", "CLINTRIAL_PRE_LOT1_12MO")
+                        "CLINTRIAL_POST_LOT1", "CLINTRIAL_PRE_LOT1_12MO",
+                        "CLINTRIAL_DX_TO_LOT1_DAYS")
 
+# Does that table belong to the cohort run these LOT lines were built from?
+#
+# The name is not enough, and neither is the column list. The cohort build
+# writes the trial flag before its own cohort table, its attrition and its
+# "complete" status, so a rerun can replace it and then fail - leaving a
+# well-formed table from an attempt that never finished. And a rerun that DOES
+# finish replaces it under the same prefix and the same physical name, so the
+# LOT run-binding check, which compares that name, sees nothing change.
+#
+# LOT records which cohort run it read - COHORT_RUN_ID and COHORT_STAMP, in
+# LOT_RUN_METADATA, taken at the moment it checked the cohort build. The stamp
+# is there because a cohort re-run keeps its id and rewrites its rows under it,
+# so the id alone cannot tell one attempt from the next. Asked against the
+# cohort's own status table, that settles both cases.
 qs_ndmm_trial_flags <- function(con) {
   tbl  <- qs_tbl("NDMM_CLINTRIAL_FLAGS")
+  gap  <- function(why) list(ok = FALSE, table = tbl, why = why)
   miss <- qs_missing_cols(con, tbl, QS_NDMM_TRIAL_COLS)
   if (length(miss) == 1L && is.na(miss))
-    return(list(ok = FALSE, table = tbl, why = paste0(
+    return(gap(paste0(
       tbl, " is not there. It is the cohort build's own trial flag, anchored ",
       "on the 1L start; a cohort built before it existed does not have it, and ",
       "the broad build's diagnosis-anchored flags are used instead.")))
   if (length(miss))
-    return(list(ok = FALSE, table = tbl, why = paste0(
+    return(gap(paste0(
       tbl, " has no ", paste(miss, collapse = ", "), ", so it is not the ",
       "1L-anchored trial flag. Re-run the cohort build.")))
+
+  st  <- qs_tbl("NDMM_BUILD_STATUS")
+  got <- tryCatch(db_q(con, glue(
+    "SELECT * FROM {st} ORDER BY UPDATED_AT DESC LIMIT 1")),
+    error = function(e) NULL)
+  if (is.null(got) || nrow(got) == 0)
+    return(gap(paste0(
+      "no run is recorded in ", st, ", so nothing says whether ", tbl,
+      " came from a cohort build that finished, or from the one that produced ",
+      "these LOT lines.")))
+  state <- tolower(trimws(as.character(qs_col(got, "STATE")[1])))
+  if (!identical(state, "complete"))
+    return(gap(paste0(
+      "the last cohort run under this prefix (",
+      as.character(qs_col(got, "RUN_ID")[1]), ") is marked '", state, "' in ",
+      st, ". ", tbl, " is written before the cohort table and before that ",
+      "status, so a run that stopped in between leaves it well-formed and ",
+      "unfinished.")))
+
+  # Which cohort attempt LOT read, against which one is on disk now.
+  lot <- tryCatch(db_q(con, glue(
+    "SELECT COHORT_RUN_ID, COHORT_STAMP FROM {qs_tbl('LOT_RUN_METADATA')}
+     WHERE COHORT_RUN_ID IS NOT NULL ORDER BY RECORDED_AT DESC LIMIT 1")),
+    error = function(e) NULL)
+  if (is.null(lot) || nrow(lot) == 0) {
+    log_msg("WARNING: the LOT run did not record which cohort run it read, so ",
+            tbl, " is taken on trust. An older lot did not record it.")
+    return(list(ok = TRUE, table = tbl, why = NULL))
+  }
+  want <- trimws(as.character(lot$COHORT_RUN_ID[1]))
+  have <- trimws(as.character(qs_col(got, "RUN_ID")[1]))
+  if (nzchar(want) && !identical(toupper(want), toupper(have)))
+    return(gap(paste0(
+      "these LOT lines were built from cohort run ", want, ", but ", st,
+      " now says the cohort under this prefix is run ", have, ". ", tbl,
+      " belongs to the newer one, so pairing them would put one run's trial ",
+      "flags against another run's lines.")))
+  stamp_w <- trimws(as.character(lot$COHORT_STAMP[1]))
+  stamp_h <- trimws(as.character(qs_col(got, "UPDATED_AT")[1]))
+  if (nzchar(stamp_w) && nzchar(stamp_h) && !identical(stamp_w, stamp_h))
+    log_msg("WARNING: cohort run ", have, " has been rewritten since LOT read ",
+            "it (LOT saw ", stamp_w, ", the cohort now says ", stamp_h,
+            "). A re-run keeps its id, so ", tbl, " may be a later attempt's.")
   list(ok = TRUE, table = tbl, why = NULL)
 }
 
