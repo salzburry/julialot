@@ -184,7 +184,7 @@ ok(has(DX, "LEFT JOIN"),
 # has no MM diagnosis date to offer.
 ok(has(TTE, "cast(NULL as date) AS MM_DX_DT") && !has(TTE, "FROM s.BASE"),
    "with no base cohort the diagnosis columns are NULL, not invented")
-D1 <- outcomes_dx_to_lot1_sql("s.TTE")
+D1 <- outcomes_dx_to_lot1_sql("s.TTE", "r1", "L1")
 ok(has(D1, "WHERE LOT_NUM = 1"),
    "one row per patient: the 1L rows only, not once per line reached")
 # The cohort build takes the first therapy claim ON OR AFTER the diagnosis, so
@@ -193,44 +193,112 @@ ok(has(D1, "DX_TO_LOT1_DAYS < 0 THEN 1 ELSE 0 END) AS N_NEGATIVE"),
    "a 1L start before the diagnosis is counted, not silently averaged in")
 
 cat("\n-- attrition: exclusive, and the categories mean what they say --\n")
-ATT <- outcomes_attrition_sql("s.TTE", "2026-03-31")
+ATT <- outcomes_attrition_sql("s.TTE", "2026-03-31", "r1", "L1")
 ok(has(ATT, "AS N_NEXT_LOT") && has(ATT, "AS N_DIED") &&
      has(ATT, "AS N_DISCON_NO_NEXT") && has(ATT, "AS N_LOST_TO_FU"),
    "all four of Table 4's categories are counted")
 # A patient who starts a next line and later dies belongs to the next-line
 # count; every other category is conditioned on there being no next line.
-ok(length(gregexpr("NEXT_LOT_NUM IS NULL", ATT)[[1]]) >= 3,
-   "the others are all conditioned on there being no next line")
+#
+# "Received the next LOT" has to mean OBSERVED to receive it. lot ignores
+# disenrolment, so LOT_LONG_FINAL carries lines starting after a patient's
+# follow-up ended: keying on the COLUMN credited progressions nobody watched
+# and locked those patients out of every other category.
+ok(!has(ATT, "NEXT_LOT_NUM IS NOT NULL") && !has(ATT, "NEXT_LOT_NUM IS NULL"),
+   "no category keys on the next-line column, which ignores follow-up")
+ok(length(gregexpr("TTNT_REASON = 'NEXT_LOT'", ATT)[[1]]) >= 4,
+   "the observed next-LOT event conditions all five categories")
 # Table 4's four are not exhaustive. A patient still on treatment when the
 # data runs out was observed to the end of the study - they are not lost.
 ok(has(ATT, "AS N_ONGOING"),
    "still on treatment at the study end is its own count, not lost to follow-up")
-ok(has(ATT, "FU_END_DT < date('2026-03-31')") &&
+ok(grepl("FU_END_DT <\\s+date\\('2026-03-31'\\)", ATT) &&
      has(ATT, "FU_END_DT >= date('2026-03-31')"),
    "...and the two are separated by whether observation stopped before the study did")
-# The five partition the line: every patient lands in exactly one.
-part <- function(next_lot, os, ttd, fu_end, study_end = "2026-03-31") {
-  c(next_lot = as.integer(!is.na(next_lot)),
-    died     = as.integer(is.na(next_lot) && os == 1),
-    discon   = as.integer(is.na(next_lot) && os == 0 && ttd == 1),
-    lost     = as.integer(is.na(next_lot) && os == 0 && ttd == 0 &&
-                            as.Date(fu_end) <  as.Date(study_end)),
-    ongoing  = as.integer(is.na(next_lot) && os == 0 && ttd == 0 &&
-                            as.Date(fu_end) >= as.Date(study_end)))
+# Table 4 asks for number AND percent, and only the numbers were produced.
+ok(all(vapply(c("NEXT_LOT", "DIED", "DISCON_NO_NEXT", "LOST_TO_FU", "ONGOING"),
+              function(k) has(ATT, paste0("AS PCT_", k)), logical(1))),
+   "each category carries its percent, as Table 4 asks")
+# The five partition the line: every patient lands in exactly one. Driven off
+# the SQL's own predicates, not a second copy of them - the copy that used to
+# live here keyed on the next-line column and reproduced the defect above.
+pred <- function(alias) {
+  # Cut at the alias, then back to the NEAREST preceding "sum(CASE WHEN".
+  # Matching forwards takes the first one in the statement and swallows every
+  # category between - the same trap as sql_cond above.
+  head <- strsplit(ATT, paste0("THEN 1 ELSE 0 END)     AS ", alias), fixed = TRUE)[[1]][1]
+  if (is.na(head) || nchar(head) == nchar(ATT))
+    head <- strsplit(ATT, paste0("AS ", alias), fixed = TRUE)[[1]][1]
+  x <- sub("(?s)^.*sum\\(CASE WHEN ", "", head, perl = TRUE)
+  x <- sub("\\s*THEN 1 ELSE 0 END\\)?\\s*$", "", x)
+  x <- gsub("\n\\s*", " ", trimws(x))
+  # A predicate this cannot read is a failed assertion below, not a dead suite.
+  if (grepl("(CASE WHEN|ELSE 0 END)", x)) return("NA")
+  x <- gsub("\\bAND\\b", "&", gsub("\\bNOT\\b", "!", x))
+  gsub("date\\('([0-9-]+)'\\)", "as.Date('\\1')", gsub("(?<![<>!=])=(?!=)", "==", x, perl = TRUE))
 }
-cases <- list(part(2, 0, 1, "2026-03-31"), part(NA, 1, 1, "2022-01-01"),
-              part(NA, 0, 1, "2026-03-31"), part(NA, 0, 0, "2022-06-30"),
-              part(NA, 0, 0, "2026-03-31"))
+CATS <- c("N_NEXT_LOT", "N_DIED", "N_DISCON_NO_NEXT", "N_LOST_TO_FU", "N_ONGOING")
+PRED <- lapply(CATS, pred); names(PRED) <- CATS
+part <- function(ttnt_ev, reason, os, ttd, fu_end) {
+  e <- list2env(list(TTNT_EVENT = ttnt_ev, TTNT_REASON = reason, OS_EVENT = os,
+                     TTD_EVENT = ttd, FU_END_DT = as.Date(fu_end)),
+                parent = environment())
+  # A predicate that will not evaluate fails the assertions below rather than
+  # killing the run - a mutation should be reported, not crash the report.
+  vapply(PRED, function(p) as.integer(isTRUE(tryCatch(
+    eval(parse(text = p), envir = e), error = function(e) NA))), 0L)
+}
+cases <- list(part(1, "NEXT_LOT", 0, 1, "2026-03-31"),
+              part(0, "CENSORED", 1, 1, "2022-01-01"),
+              part(0, "CENSORED", 0, 1, "2026-03-31"),
+              part(0, "CENSORED", 0, 0, "2022-06-30"),
+              part(0, "CENSORED", 0, 0, "2026-03-31"))
 ok(all(vapply(cases, sum, 0) == 1),
    "every patient lands in exactly one of the five, so they sum to the line")
-ok(cases[[4]]["lost"] == 1 && cases[[5]]["ongoing"] == 1,
+ok(cases[[4]]["N_LOST_TO_FU"] == 1 && cases[[5]]["N_ONGOING"] == 1,
    "...disenrolled early is lost; on treatment at the study end is ongoing")
+# The case the column-based version got wrong: a next line lot recorded but the
+# study never observed. Censored by TTNT, so not a progression - and it still
+# has to land somewhere, or it would vanish from the line's own total.
+u <- part(0, "CENSORED", 0, 0, "2022-06-30")
+ok(u["N_NEXT_LOT"] == 0 && sum(u) == 1,
+   "a next line after follow-up is not a progression, and is still counted once")
 
 cat("\n-- months are months --\n")
-GAP <- outcomes_line_gap_sql("s.TTE")
+GAP <- outcomes_line_gap_sql("s.TTE", "r1", "L1")
 ok(has(GAP, "30.4375"),
    "a month is the mean Gregorian month, not 30 days")
+# "Among patients initiating a subsequent LOT" - observed to initiate it. A line
+# lot recorded after the patient's follow-up ended has its gap measured over
+# time nobody watched, so it is not one of these patients.
+ok(has(GAP, "WHERE TTNT_EVENT = 1 AND TTNT_REASON = 'NEXT_LOT'") &&
+     !has(GAP, "WHERE NEXT_LOT_NUM IS NOT NULL"),
+   "the gap is measured only over next lines the study observed")
 ok(abs(365.25 / 30.4375 - 12) < 1e-9, "...which divides the year into twelve")
+
+cat("\n-- every output says which run it is, not just the first one --\n")
+REG <- outcomes_regimen_sql("s.TTE", "r1", "L1")
+ro  <- paste(readLines(file.path(ROOT, "R", "run_outcomes.R"), warn = FALSE),
+             collapse = "\n")
+# The README promises "a run that dies part-way leaves a mismatch rather than a
+# silent mix", and only OUT_TTE carried a run id. The summaries are written
+# sequentially with CREATE OR REPLACE, so a failure between them left this run's
+# OUT_TTE beside the last run's summaries with nothing on them to say so.
+for (o in list(c("OUT_TTE", "TTE"), c("OUT_ATTRITION", "ATT"),
+               c("OUT_LINE_GAP", "GAP"), c("OUT_REGIMEN", "REG"),
+               c("OUT_DX_TO_LOT1", "D1"))) {
+  s <- get(o[2])
+  ok(has(s, "AS OUT_RUN_ID") && has(s, "AS BUILT_AT"),
+     paste0(o[1], " carries the outcomes run id and a build time"))
+}
+# Which LOT run supplied the lines is not the same question as which outcomes
+# run wrote the table, and only the second was recorded.
+for (o in list(c("OUT_ATTRITION", "ATT"), c("OUT_LINE_GAP", "GAP"),
+               c("OUT_REGIMEN", "REG"), c("OUT_DX_TO_LOT1", "D1")))
+  ok(has(get(o[2]), "AS LOT_RUN_ID"),
+     paste0(o[1], " also names the LOT run its lines came from"))
+ok(has(ro, "check_stamps(con"),
+   "and the runner asks the tables, rather than logging that they are stamped")
 
 cat("\n-- it reads a finished run and nothing else --\n")
 bo <- paste(readLines(file.path(ROOT, "R", "run_outcomes.R"), warn = FALSE), collapse = "\n")
@@ -243,14 +311,27 @@ STATUS <- list(RUN_ID = "L1", STATE = "complete", UPDATED_AT = "t",
                INPUT_COHORT_TABLE = "sch.ndmm_NDMM_COHORT",
                STUDY_END = "2026-03-31", CONTRACT_DEVIATIONS = "")
 SE <- STATUS$STUDY_END
-mk <- function(lot = STATUS) {
+# The attempt tables, named the way lot and nndm name their columns. LOT records
+# which cohort attempt it read; the cohort build records which attempt is on
+# disk now. Equal here, so the good case passes and each mismatch is its own row.
+META  <- list(RUN_ID = "L1", COHORT_RUN_ID = "N7", COHORT_STAMP = "2026-04-01 09:00:00")
+NDMMS <- list(RUN_ID = "N7", UPDATED_AT = "2026-04-01 09:00:00")
+mk <- function(lot = STATUS, meta = META, ndmm = NDMMS) {
   e <- new.env(parent = globalenv())
   assign("out_tbl", function(t) paste0("sch.ndmm_", t), envir = e)
+  assign("coh_tbl", function(t) paste0("sch.ndmm_", t), envir = e)
   assign("log_msg", function(...) invisible(NULL), envir = e)
+  # Routed by table name: one fixture answering every query is how a guard
+  # reading the wrong table passed its own test once already.
   assign("db_q", function(con, sql) {
-    if (is.null(lot)) stop("TABLE_OR_VIEW_NOT_FOUND")
-    as.data.frame(lot, stringsAsFactors = FALSE)
+    pick <- if (grepl("LOT_RUN_METADATA", sql, fixed = TRUE)) meta
+            else if (grepl("NDMM_BUILD_STATUS", sql, fixed = TRUE)) ndmm
+            else lot
+    if (is.null(pick)) stop("TABLE_OR_VIEW_NOT_FOUND")
+    as.data.frame(pick, stringsAsFactors = FALSE)
   }, envir = e)
+  assign("check_cohort_attempt", check_cohort_attempt, envir = e)
+  environment(e$check_cohort_attempt) <- e
   f <- check_lot_run; environment(f) <- e; f
 }
 refuses <- function(f, why, what, se = SE) {
@@ -272,6 +353,21 @@ refuses(mk(lot = NULL), "No LOT run is recorded", "no LOT run at all is refused"
 # every still-treated patient as lost to follow-up with nothing logged.
 refuses(mk(), "2026-03-31", "a run built to a different study end is refused",
         se = "2025-06-30")
+# Re-running the cohort under the same prefix replaces the cohort, the
+# enrolment spans and NDMM_BASE_COHORT in place. The table NAME still matches,
+# so name-checking alone accepts lines from attempt A measured against dates
+# from attempt B - the defect already fixed in the 2L/3L builder.
+refuses(mk(ndmm = list(RUN_ID = "N8", UPDATED_AT = "2026-04-02 11:00:00")),
+        "cohort run N7", "a cohort rebuilt since the LOT run is refused")
+refuses(mk(ndmm = modifyList(NDMMS, list(UPDATED_AT = "2026-04-02 11:00:00"))),
+        "cohort run N7", "...and so is the same run id with a later stamp")
+refuses(mk(meta = NULL), "has no row in", "a complete run with no metadata row is refused")
+# Nothing recorded is nothing to compare. Saying so beats inventing a match.
+runs(mk(meta = modifyList(META, list(COHORT_RUN_ID = "")))(
+       NULL, "ndmm_", "ndmm_NDMM_COHORT", SE),
+     "a run that recorded no cohort attempt is reported, not refused")
+runs(mk(ndmm = NULL)(NULL, "ndmm_", "ndmm_NDMM_COHORT", SE),
+     "...and so is a cohort with no build status at all")
 
 cat("\n-- the arguments are pinned the way the other packages pin them --\n")
 stops(pin_cohort(cfg_defaults, "", "ndmm_"), "a missing cohort table stops it")

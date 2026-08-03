@@ -21,8 +21,15 @@ against a finished run as often as needed.
 | `<prefix>OUT_REGIMEN` | line and regimen — N and % receiving each |
 | `<prefix>OUT_DX_TO_LOT1` | one row — months from MM diagnosis to the 1L index |
 
-All of them carry `OUT_RUN_ID` and `BUILT_AT`, so a run that dies part-way leaves
-a mismatch rather than a silent mix.
+All of them carry `OUT_RUN_ID`, `LOT_RUN_ID` and `BUILT_AT`, so a run that dies
+part-way leaves a mismatch rather than a silent mix. The tables are written
+sequentially with `CREATE OR REPLACE`, so without a run id on each one a failure
+between them would leave this run's `OUT_TTE` beside the last run's summaries
+with nothing to say so. The run **asks the tables** at the end rather than
+logging that they are stamped, and stops if any row belongs to another run.
+
+`LOT_RUN_ID` is a different question from `OUT_RUN_ID`: which LOT run supplied
+the lines, not which outcomes run wrote the table.
 
 ## The three outcomes
 
@@ -76,10 +83,21 @@ plainly had one.
 
 Table 4: *"Number and percent of patients who received each subsequent LOT,
 discontinued treatment and did not receive another, were lost to follow-up, or
-died"*. Exclusive and ordered, because a patient can look like more than one:
-someone who starts a next line and later dies is counted as receiving the next
-line, since that is what the row is about. Every other category is conditioned
-on there being no next line.
+died"*. Both are reported — `N_` and `PCT_` per category, over the line's own N.
+
+Exclusive and ordered, because a patient can look like more than one: someone
+who starts a next line and later dies is counted as receiving the next line,
+since that is what the row is about. Every other category is conditioned on
+there being no next line.
+
+**"Received the next LOT" means observed to receive it.** lot's primary analysis
+ignores disenrolment, so `LOT_LONG_FINAL` carries lines that start after a
+patient's protocol follow-up has ended. Those are censored by `TTNT` and are not
+progressions here: the categories key on `TTNT_EVENT = 1 AND TTNT_REASON =
+'NEXT_LOT'`, not on `NEXT_LOT_NUM` being populated. Keying on the column would
+credit the study with progressions nobody observed, and — because every other
+category requires no next line — would leave those patients in no category at
+all. `OUT_LINE_GAP` filters the same way, for the same reason.
 
 **Table 4 names four, and they are not exhaustive.** A patient still on
 treatment when the data runs out has *not* been lost to follow-up — they were
@@ -139,6 +157,16 @@ package holds its own copy. The two cohort builds in this folder disagree by
 construction — `nndm` pins `2026-03-31`, `overall` uses `2025-06-30` — so an
 unchecked copy running long would score every still-treated patient as lost to
 follow-up, with the five categories still summing correctly and nothing logged.
+
+**The cohort attempt is checked too, not just the cohort name.** Re-running the
+cohort build under the same prefix replaces the cohort, the enrolment spans and
+`NDMM_BASE_COHORT` in place — the table name is unchanged. So the run's
+`LOT_RUN_METADATA` row is read by `RUN_ID` and its `COHORT_RUN_ID` /
+`COHORT_STAMP` compared against the current `NDMM_BUILD_STATUS`. Without it,
+lines built over attempt A would be measured against follow-up ends, death dates
+and diagnosis dates from attempt B. This is the same guard, for the same reason,
+as the one in `nndm/build_subsequent_cohorts.R`. Where nothing was recorded to
+compare, that is said on the log rather than assumed to match.
 
 A line can be absent from `OUT_TTE` for two reasons, and they are counted
 separately: its patient is not in the cohort at all, or the line starts after
