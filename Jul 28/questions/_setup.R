@@ -144,19 +144,32 @@ qs_population <- function() {
 # TRIAL_PREFIX names that build when it is not this one, since the flags carry
 # its prefix and not this run's. Blank falls back to this prefix, which is
 # right when the cohort came from the broad build itself.
+#
+# The two tables are named DIFFERENTLY, which is easy to get wrong from this
+# side. ELIG_COH_ALLFLAGS is a checkpoint, so it is written through that
+# build's prefixing helper and comes out as <prefix>ELIG_COH_ALLFLAGS. The
+# final cohort is not a checkpoint: it is persisted by name from that build's
+# own FINAL_TABLE_NAME, with no prefix - overall/config.csv sets it to
+# OVERALL_COH_FINAL. Deriving it here as <prefix>ELIG_COH_FINAL asks for a
+# table that build never writes, so TRIAL_INDEX_TABLE names it, whole, the way
+# INPUT_COHORT_TABLE does.
 qs_trial_flags <- function() {
   cfg <- lot_config()
   pfx <- trimws(Sys.getenv("TRIAL_PREFIX", unset = ""))
-  if (!nzchar(pfx))
-    return(list(prefix = cfg$object_prefix, named = FALSE,
-                flags = qs_tbl("ELIG_COH_ALLFLAGS"),
-                index = qs_tbl("ELIG_COH_FINAL")))
-  if (!grepl("^[A-Za-z][A-Za-z0-9_]*_$", pfx))
+  if (nzchar(pfx) && !grepl("^[A-Za-z][A-Za-z0-9_]*_$", pfx))
     stop("TRIAL_PREFIX '", pfx, "' should be a name ending in '_', e.g. overall_.",
          call. = FALSE)
-  list(prefix = pfx, named = TRUE,
-       flags = full_name(cfg$work_schema, paste0(pfx, "ELIG_COH_ALLFLAGS")),
-       index = full_name(cfg$work_schema, paste0(pfx, "ELIG_COH_FINAL")))
+  idx <- trimws(Sys.getenv("TRIAL_INDEX_TABLE", unset = "OVERALL_COH_FINAL"))
+  if (!grepl("^[A-Za-z_][A-Za-z0-9_]*$", idx))
+    stop("TRIAL_INDEX_TABLE '", idx, "' is not a table name. Give the table ",
+         "only, whole - it carries no prefix, so this is the FINAL_TABLE_NAME ",
+         "that build was configured with.", call. = FALSE)
+  list(prefix = if (nzchar(pfx)) pfx else cfg$object_prefix,
+       named   = nzchar(pfx),
+       flags   = if (nzchar(pfx))
+                   full_name(cfg$work_schema, paste0(pfx, "ELIG_COH_ALLFLAGS"))
+                 else qs_tbl("ELIG_COH_ALLFLAGS"),
+       index   = wrk(idx))
 }
 
 QS_TRIAL_FLAG_COLS  <- c("PATID", "INDEX_DATE", "OTHER_MALIGN_FLAG",
@@ -185,10 +198,13 @@ qs_missing_cols <- function(con, tbl, cols) {
 # columns. So both tables are checked for the columns the query names, and the
 # caller gets one sentence to print instead of a stack trace mid-workbook.
 qs_trial_flags_ready <- function(con, src = qs_trial_flags()) {
-  where <- paste0("Set TRIAL_PREFIX to the prefix of the build that wrote ",
-                  "ELIG_COH_ALLFLAGS and ELIG_COH_FINAL",
-                  if (!src$named) paste0("; this run tried its own, '",
-                                         src$prefix, "'.") else ".")
+  where <- paste0("TRIAL_PREFIX is the prefix of the build that wrote ",
+                  "ELIG_COH_ALLFLAGS",
+                  if (!src$named) paste0(" (this run tried its own, '",
+                                         src$prefix, "')") else "",
+                  "; TRIAL_INDEX_TABLE is that build's final cohort table, ",
+                  "which carries no prefix and is named by its ",
+                  "FINAL_TABLE_NAME.")
   for (t in list(list(tbl = src$flags, cols = QS_TRIAL_FLAG_COLS),
                  list(tbl = src$index, cols = QS_TRIAL_INDEX_COLS))) {
     miss <- qs_missing_cols(con, t$tbl, t$cols)
@@ -216,18 +232,40 @@ qs_trial_flags_ready <- function(con, src = qs_trial_flags()) {
 # A status table that cannot be read warns rather than stops: an older run may
 # predate it, and refusing to answer at all would be worse than saying the
 # binding is unverified.
+#
+# The LATEST row, whatever state it reached - not the latest COMPLETE one. LOT
+# replaces LOT_LONG_FINAL early in the line-criteria phase and validates it
+# afterwards, so a rerun that replaced it and then failed leaves its own table
+# on disk while the previous run's complete row still looks like the newest
+# good one. Asking only for complete rows would bind these answers to a run
+# whose tables have since been overwritten - the exact case this guard exists
+# for. The dashboard resolves ownership the same way, for the same reason.
 qs_check_run_binding <- function(con) {
   cfg <- lot_config()
   tbl <- qs_tbl("LOT_BUILD_STATUS")
   got <- tryCatch(db_q(con, glue(
-    "SELECT INPUT_COHORT_TABLE, STATE FROM {tbl}
-     WHERE upper(STATE) = 'COMPLETE' ORDER BY UPDATED_AT DESC LIMIT 1")),
-    error = function(e) NULL)
+    "SELECT RUN_ID, INPUT_COHORT_TABLE, STATE FROM {tbl}
+     ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) NULL)
   if (is.null(got) || nrow(got) == 0) {
-    log_msg("WARNING: no completed run in ", tbl, ", so INPUT_COHORT_TABLE=",
+    log_msg("WARNING: no run recorded in ", tbl, ", so INPUT_COHORT_TABLE=",
             cfg$input_cohort_table, " is unverified. These answers assume it is ",
             "the cohort behind prefix '", cfg$object_prefix, "'.")
     return(invisible(FALSE))
+  }
+  state <- tolower(trimws(as.character(got$STATE[1])))
+  if (!identical(state, "complete")) {
+    if (!identical(toupper(Sys.getenv("QS_IGNORE_BUILD_STATE", unset = "")), "TRUE"))
+      stop("The last LOT run on prefix '", cfg$object_prefix, "' (",
+           got$RUN_ID[1], ") is marked '", state, "', so it is the run that ",
+           "last wrote these tables and it did not finish. LOT replaces ",
+           "LOT_LONG_FINAL before it validates it, so the table on disk may be ",
+           "that run's - built, unvalidated, left behind - and nothing here can ",
+           "tell those numbers from good ones. Re-run the LOT build, or set ",
+           "QS_IGNORE_BUILD_STATE=TRUE if you know it failed before it wrote ",
+           "anything.", call. = FALSE)
+    log_msg("WARNING: the last LOT run (", got$RUN_ID[1], ") is marked '", state,
+            "' and QS_IGNORE_BUILD_STATE is set. If it got as far as replacing ",
+            "LOT_LONG_FINAL, these answers are that run's.")
   }
   built <- toupper(trimws(as.character(got$INPUT_COHORT_TABLE[1])))
   want  <- toupper(trimws(cfg$input_cohort_table))

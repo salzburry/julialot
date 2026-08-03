@@ -23,8 +23,9 @@
 #       Then the POMA-1L vs other-1L other-cancer association on the BROAD
 #       cohort, de-confounded IN THE WORKBOOK (MM-adjacent codes dropped;
 #       pipeline untouched) - the association question NDMM can't answer.
-#   Q4  Do POMA-1L patients have clinical-trial evidence? Headline the BASELINE
-#       (pre-index) column; follow-up is post-index context.
+#   Q4  Do POMA-1L patients have clinical-trial evidence? From the flag build's
+#       own tables, on its own diagnosis-based index - so it compares the two
+#       groups on that, and answers nothing about therapy before LOT1.
 #   Q5  Do POMA-1L patients have continuous pharmacy benefit? Shows the NDMM
 #       LOT1-anchored 12-mo pre-LOT1 check (the study proof) plus a longer
 #       look-back on the cohort's own INDEX_DATE - the same anchor, not an
@@ -38,13 +39,15 @@
 # comparison because clinical-trial is not one of the NDMM post-filters.
 #
 # Builds nothing persistent (only session TEMP views); safe to run any time. Reads
-# LOT_LONG_FINAL, the study population produced by the LOT run over the
-# 06_ndmm_dashboard.R), plus MAP_STACKED, LOT1_SCT, ELIG_COH_ALLFLAGS,
-# ELIG_COH_FINAL and the raw CDM.
+# LOT_LONG_FINAL, the study population produced by the LOT run over the cohort,
+# plus MAP_STACKED, LOT1_SCT, the flag build's ELIG_COH_ALLFLAGS and its final
+# cohort table, and the raw CDM.
 #
 # Honest limits, surfaced in the workbook rather than hidden:
-#  - Q4 reads CLINTRIAL_* from ELIG_COH_ALLFLAGS, aligned to the selected
-#    INDEX_DATE via ELIG_COH_FINAL. Q3 does NOT use OTHER_MALIGN_FLAG - it
+#  - Q4 reads CLINTRIAL_* from the flag build's ELIG_COH_ALLFLAGS, aligned to
+#    that build's own final cohort. That is a different cohort with a different
+#    index, so Q4 reports the overlap and its size, and says neither flag
+#    isolates the pre-LOT1 window. Q3 does NOT use OTHER_MALIGN_FLAG - it
 #    re-derives a de-confounded other-cancer rate from raw med_diagnosis + the
 #    other_malig codelist inside this script (pipeline untouched).
 #  - Q2's LOT_LONG summary uses LOT1's END REASON (authoritative for "allo/CAR-T
@@ -275,7 +278,7 @@ main <- function() {
       "Q1 = real patient journeys (raw claims -> MAP -> assigned LOT, with dates).",
       "Q2 = POMA-1L split by transplant type and TIMING (autologous-at-1L vs allo/CAR-T that closed 1L vs later-line context).",
       "Q3 = an NDMM audit (other-cancer rate must be 0, since NDMM excludes those patients by construction) PLUS a POMA-1L vs other-1L other-cancer association on the BROAD cohort, de-confounded in the workbook (MM-adjacent codes dropped; pipeline untouched).",
-      "Q4 = POMA-1L vs other-1L clinical-trial rate; clinical-trial is NOT an NDMM post-filter, so this stays a LIVE, confounder-clean comparison.",
+      "Q4 = POMA-1L vs other-1L clinical-trial rate, over the OVERLAP with the flag build's cohort and on that build's diagnosis-based index - read n_matched before the rates, and see the Q4 tab for why neither flag answers 'therapy before LOT1'.",
       "Q5 = LOT1-anchored NDMM proof (ce_ge_12mo_pre_lot1 / len_thal_in_12mo_pre_lot1, the 12-mo pre-LOT1 check) PLUS a longer LEN/THAL look-back on the cohort's INDEX_DATE, which is the same date (the cohort sets INDEX_DATE = LOT1_START_DT).",
       "Operational definitions are shared with R/validation_qs.R (single source of truth)."),
     tables = list())
@@ -463,23 +466,33 @@ main <- function() {
             FROM {allflags} a
             JOIN {trial_idx} e ON cast(a.PATID as string)=cast(e.PATID as string)
                               AND a.INDEX_DATE = e.INDEX_DATE)
+      -- LEFT JOIN to f, not INNER. The flag build is a different cohort with a
+      -- different index, study end and criteria, so some LOT1 patients have no
+      -- row in it. An inner join dropped them from the denominator silently,
+      -- and if that loss falls differently on POMA and other-1L the rates
+      -- compare selection into the second cohort rather than the two groups.
+      -- n_pts stays the full group; n_matched / pct_matched show the overlap,
+      -- and every rate is over n_matched so the denominator is the one that
+      -- could have carried a flag.
       SELECT CASE WHEN p.PATID IS NOT NULL THEN 'POMA-1L' ELSE 'other-1L' END AS grp,
              count(*)                                                          AS n_pts,
-             sum(f.OTHER_MALIGN_FLAG)                                          AS n_other_cancer,
-             round(100.0*sum(f.OTHER_MALIGN_FLAG)/count(*),1)                  AS pct_other_cancer,
-             sum(f.CLINTRIAL_BASELINE)                                         AS n_trial_baseline,
-             round(100.0*sum(f.CLINTRIAL_BASELINE)/count(*),1)                 AS pct_trial_baseline,
-             sum(f.CLINTRIAL_FOLLOWUP)                                         AS n_trial_followup,
+             count(f.PATID)                                                    AS n_matched,
+             round(100.0*count(f.PATID)/nullif(count(*),0),1)                  AS pct_matched,
+             sum(coalesce(f.OTHER_MALIGN_FLAG,0))                              AS n_other_cancer,
+             round(100.0*sum(coalesce(f.OTHER_MALIGN_FLAG,0))/nullif(count(f.PATID),0),1)  AS pct_other_cancer,
+             sum(coalesce(f.CLINTRIAL_BASELINE,0))                             AS n_trial_baseline,
+             round(100.0*sum(coalesce(f.CLINTRIAL_BASELINE,0))/nullif(count(f.PATID),0),1) AS pct_trial_baseline,
+             sum(coalesce(f.CLINTRIAL_FOLLOWUP,0))                             AS n_trial_followup,
              sum(CASE WHEN f.CLINTRIAL_BASELINE=1 OR f.CLINTRIAL_FOLLOWUP=1 THEN 1 ELSE 0 END) AS n_trial_any,
-             round(100.0*sum(CASE WHEN f.CLINTRIAL_BASELINE=1 OR f.CLINTRIAL_FOLLOWUP=1 THEN 1 ELSE 0 END)/count(*),1) AS pct_trial_any
-      FROM lot1 l JOIN f USING (PATID) LEFT JOIN poma1l p USING (PATID)
+             round(100.0*sum(CASE WHEN f.CLINTRIAL_BASELINE=1 OR f.CLINTRIAL_FOLLOWUP=1 THEN 1 ELSE 0 END)/nullif(count(f.PATID),0),1) AS pct_trial_any
+      FROM lot1 l LEFT JOIN f USING (PATID) LEFT JOIN poma1l p USING (PATID)
       GROUP BY 1 ORDER BY 1"))
   }
   # Baseline (pre-index) trial evidence is THE signal for the prior-therapy
   # hypothesis; follow-up / trial_any happen after index and are post-index context.
   # Order the columns so the baseline count + rate lead. (Q4 only - Q3 no longer
   # uses ELIG_COH_ALLFLAGS; it re-derives its own flag from raw claims below.)
-  q4_df <- if (!is.null(assoc)) assoc[, c("grp","n_pts","n_trial_baseline","pct_trial_baseline","n_trial_followup","n_trial_any","pct_trial_any")] else NULL
+  q4_df <- if (!is.null(assoc)) assoc[, c("grp","n_pts","n_matched","pct_matched","n_trial_baseline","pct_trial_baseline","n_trial_followup","n_trial_any","pct_trial_any")] else NULL
   q4_gap <- if (!have_flags) paste0("Q4 skipped. ", trial$why) else NULL
   # Q3 (other cancer) is a BROAD-cohort question ("cancers we ALLOW in baseline").
   # NDMM excludes those patients, so the association is measured on the full cohort.
@@ -608,17 +621,21 @@ main <- function() {
       "NDMM cohort AUDIT - other cancer MUST be 0 (excluded by construction)" = q3_ndmm_df,
       "Other-cancer by group - BROAD cohort (confounded vs de-confounded)"    = q3_elig_df))
   add_sheet(name = "Q4 POMA & clinical trials", title = "Q4 - POMA-1L vs other-1L: clinical-trial evidence",
-    subtitle = paste0("Read the BASELINE column (pre-index): CLINTRIAL_BASELINE from ELIG_COH_ALLFLAGS. Clinical-trial is ",
-                      "NOT an NDMM post-filter, so this stays a LIVE, confounder-clean comparison within the study cohort."),
+    subtitle = paste0("Claims-based trial evidence around the flag build's own index. Read n_matched first - this is the ",
+                      "OVERLAP of two cohorts, not the NDMM cohort."),
     narrative = c(q4_gap,
-      "HEADLINE on n_trial_baseline / pct_trial_baseline: baseline (pre-index) trial evidence is the meaningful signal for the",
-      "'not truly first-line / prior unobserved therapy' hypothesis - a higher POMA-1L BASELINE rate would support it.",
-      "n_trial_followup / n_trial_any occur AT-OR-AFTER index and are post-index context, NOT evidence of prior lines - do not headline them.",
-      "Clinical-trial is NOT one of the NDMM post-filters, so this comparison survives into the study cohort - and it is now confounder-clean (other-cancer / non-naive patients already removed).",
-      paste0("WHICH index: baseline and follow-up are relative to the index the flag build selected (", trial$src$flags,
-             " aligned to ", trial$src$index, "), which is that build's diagnosis-based candidate - NOT the LOT1 start ",
-             "the NDMM cohort uses. The rows here are the LOT1 patients that build also has, matched on PATID. Read 'baseline' ",
-             "as pre-diagnosis-index, and do not line these counts up against a pre-LOT1 window."),
+      paste0("WHICH index: both flags are relative to the index the flag build selected (", trial$src$flags,
+             " aligned to ", trial$src$index, "), a diagnosis-based candidate - NOT the LOT1 start the NDMM cohort uses."),
+      "SO NEITHER FLAG ISOLATES 'trial therapy before LOT1'. CLINTRIAL_BASELINE ends the day before that diagnosis index, so it",
+      "misses the whole diagnosis-to-LOT1 stretch. CLINTRIAL_FOLLOWUP starts ON that index and runs past LOT1, so it mixes the",
+      "pre-LOT1 period of interest with evidence after treatment started. Do not headline either as the prior-unobserved-therapy",
+      "signal - answering that needs trial timing relative to LOT1, which these two summary flags do not carry.",
+      "What this tab DOES answer: whether POMA-1L and other-1L patients differ in claims-based trial evidence around that index.",
+      "WHICH PATIENTS: n_pts is the full NDMM group; n_matched is how many of them the flag build also has, and every rate is over",
+      "n_matched. The two cohorts differ in index, study end, baseline window and criteria, so the overlap is not the whole group.",
+      "If pct_matched differs much between POMA-1L and other-1L, the rates below reflect selection into the second cohort as much",
+      "as anything about the groups - check that row before reading the trial columns.",
+      "Clinical-trial is NOT one of the NDMM post-filters, so it survives into the study cohort as a live comparison.",
       "Claims-based trial evidence is a lower bound (a fully masked study drug may carry no trial code)."),
     tables = list("Clinical-trial evidence by group" = q4_df))
 

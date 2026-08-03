@@ -140,12 +140,17 @@ main <- function() {
   # ---- Q1a / Q1c : pre-exclusion flags for the POMA-at-1L patients ----
   # ELIG_COH_ALLFLAGS has one row per *candidate* index_date per patient;
   # joining by PATID alone can read flags from a candidate that did NOT
-  # produce the LOT1 record. ELIG_COH_FINAL - from the SAME build - is one row
-  # per patient with the index that build selected, so it aligns the join.
+  # produce the LOT1 record. That build's own final cohort table - one row per
+  # patient with the index it selected - aligns the join.
   #
-  # It has to be that build's own final table. The NDMM cohort's INDEX_DATE is
-  # the LOT1 start, a different definition, so joining on it would match almost
+  # It has to be that build's final table. The NDMM cohort's INDEX_DATE is the
+  # LOT1 start, a different definition, so joining on it would match almost
   # nothing and report the flags as absent.
+  #
+  # n_poma_in_allflags is the OVERLAP, not the denominator: the flag build is a
+  # different cohort with a different index, study end and criteria, so some
+  # POMA-1L patients are simply not in it. Reported against n_poma below so a
+  # small count reads as a small overlap rather than as a low flag rate.
   if (have_poma && have_flags) {
     flg <- db_q(con, glue("
       WITH f AS (
@@ -166,9 +171,13 @@ main <- function() {
     "))
     write_out(flg, "q1ac_poma_flags")
     log_msg(sprintf(
-      "  Q1a other-cancer flag: %s POMA-1L patients | Q1c clinical-trial: %s (BL %s / FU %s) - aligned to the index that flag build selected, not the LOT1 start.",
+      paste0("  Q1a/Q1c: %s of %s POMA-1L patients are in %s. Of those - other-cancer %s, clinical-trial %s (BL %s / FU %s). ",
+             "Rates are over the %s matched, on that build's diagnosis-based index, NOT the LOT1 start: baseline stops before ",
+             "that index and follow-up runs past LOT1, so neither says whether therapy came before LOT1."),
+      flg$n_poma_in_allflags[1], n_poma, allflags,
       flg$n_other_malig[1], flg$n_clintrial_any[1],
-      flg$n_clintrial_baseline[1], flg$n_clintrial_followup[1]))
+      flg$n_clintrial_baseline[1], flg$n_clintrial_followup[1],
+      flg$n_poma_in_allflags[1]))
   }
 
   # Blind-spot quantification: how many ALLFLAGS patients carry each
