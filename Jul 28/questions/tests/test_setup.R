@@ -27,7 +27,7 @@ stops <- function(expr, what) ok(!is.null(tryCatch({ expr; NULL },
 
 VARS <- c("PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME", "DOMINO_STARTING_USERNAME",
           "OBJECT_PREFIX", "QS_ALLOW_NO_PREFIX", "INPUT_COHORT_TABLE",
-          "LOT_POPULATION", "LOT_COHORT", "BROAD_PREFIX")
+          "LOT_POPULATION", "LOT_COHORT", "BROAD_PREFIX", "FLAGS_TABLE")
 clear <- function() for (v in VARS) Sys.unsetenv(v)
 
 cat("\n-- sourcing it is enough to break it, so source it --\n")
@@ -206,6 +206,39 @@ ok(any(grepl("BROAD_PREFIX", poma, fixed = TRUE)),
 ok(any(grepl("Q3 association: skipped", poma, fixed = TRUE)),
    "...and says it is skipped rather than answering from the study population")
 clear()
+
+cat("\n-- the flag table is the one this build writes --\n")
+# The two builds do not agree on a name: the standalone cohort build writes
+# NDMM_FLAGS_ALL, the broad one ELIG_COH_ALLFLAGS. Asking for the wrong one is
+# not a harmless miss - under a reused prefix an old ELIG_COH_ALLFLAGS can be
+# sitting there with nothing linking it to this cohort or LOT run.
+clear(); Sys.setenv(DOMINO_USER_NAME = "usr00000", OBJECT_PREFIX = "ndmm_",
+           INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT")
+invisible(qs_setup(ROOT))
+ok(grepl("ndmm_NDMM_FLAGS_ALL$", qs_flags_table()),
+   "the default is the table the cohort build here actually writes")
+Sys.setenv(FLAGS_TABLE = "ELIG_COH_ALLFLAGS")
+ok(grepl("ndmm_ELIG_COH_ALLFLAGS$", qs_flags_table()),
+   "...and a cohort built by the broad build can name its own")
+Sys.setenv(FLAGS_TABLE = "x; DROP TABLE y")
+stops(qs_flags_table(), "...validated like every other configurable name")
+Sys.unsetenv("FLAGS_TABLE")
+nof <- Filter(function(f) any(grepl('qs_tbl("ELIG_COH_ALLFLAGS")',
+                                    readLines(f, warn = FALSE), fixed = TRUE)), qs)
+ok(!length(nof),
+   if (length(nof)) paste0("still hardcodes the broad build's flag table: ",
+                           paste(basename(nof), collapse = ", "))
+   else "no script hardcodes a flag table the cohort build may not write")
+
+cat("\n-- Q3 takes its lines and its index dates from the same run --\n")
+# Index dates from the NDMM cohort would drop every broad patient the NDMM
+# exclusions removed out of the idx join. They stay in the denominator through
+# the left join and can never match a diagnosis, so they read as having no
+# other cancer - the opposite of the population Q3 recovers.
+ok(any(grepl("broad_idx", poma, fixed = TRUE)),
+   "the broad run's own LOT_PATIENT_INPUT supplies the index dates")
+ok(!any(grepl("index_date FROM {final_tbl}", poma, fixed = TRUE)),
+   "...not the NDMM cohort table beside it")
 
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))

@@ -1023,7 +1023,7 @@ FACE_VALIDITY <- list(
               WHERE LOT_TX_AUTO_FLG = 1 OR LOT_START_TYPE = 'SCT_AUTO'"),
 
   list(name = "cart_is_late",
-       what = "% of CAR-T lines that are LOT3 or later",
+       what = "% of patients whose CAR-T falls at LOT3 or later",
        # CAR-T is a later-line therapy. In a first-line cohort it should be
        # uncommon and late; CAR-T in LOT1 means the trigger fired on the wrong
        # claim.
@@ -1031,12 +1031,27 @@ FACE_VALIDITY <- list(
        # type is always 'MED', so a CAR-T given during or closing a first line
        # shows only in its end reason. Keying on the flags alone would drop the
        # first-line CAR-T this check exists to notice.
+       # Per PATIENT, because one CAR-T is two rows: the line it closes, whose
+       # end reason is SCT_CART or CART_INIT, and the line it starts. Counting
+       # rows counts that event twice - once failing LOT_NUM >= 3 and once
+       # passing - so a single CAR-T at LOT3 reads 50%.
+       #
+       # The event belongs to the line it STARTED, so that line wins. The
+       # closing reason is the fallback for a CAR-T that opened no line,
+       # which is how one inside or at the end of LOT1 shows up.
        lo = 50, hi = 100,
-       sql = "SELECT round(100.0 * sum(CASE WHEN LOT_NUM >= 3 THEN 1 ELSE 0 END)
+       sql = "WITH cart AS (
+                SELECT PATID,
+                       min(CASE WHEN LOT_START_TYPE = 'CART' OR LOT_CART_LOT_FLG = 1
+                                THEN LOT_NUM END)                       AS started_at,
+                       min(CASE WHEN LOT_BASE_END_REASON IN ('SCT_CART', 'CART_INIT')
+                                THEN LOT_NUM END)                       AS closed_at
+                FROM {t} GROUP BY PATID)
+              SELECT round(100.0 * sum(CASE WHEN coalesce(started_at, closed_at) >= 3
+                                            THEN 1 ELSE 0 END)
                            / nullif(count(*), 0), 1) AS v
-              FROM {t}
-              WHERE LOT_START_TYPE = 'CART' OR LOT_CART_LOT_FLG = 1
-                 OR LOT_BASE_END_REASON IN ('SCT_CART', 'CART_INIT')"),
+              FROM cart
+              WHERE started_at IS NOT NULL OR closed_at IS NOT NULL"),
 
   list(name = "allo_sct_is_rare",
        what = "% of patients with any allogeneic transplant line",
@@ -1072,9 +1087,13 @@ FACE_VALIDITY <- list(
        # Wide on purpose. This catches an end-date rule firing on the start
        # date, or never firing at all - not a view about how long myeloma
        # treatment lasts.
+       # LOT_BASE_LENGTH, not datediff. The engine defines length inclusively -
+       # datediff(end, start) + 1 - so computing it here without the +1 reports
+       # one day less than the number stored beside it, and a true 30-day median
+       # would read 29 and trip the lower band. Read the column it already has.
        lo = 30, hi = 1500,
-       sql = "SELECT percentile_approx(datediff(LOT_BASE_END_DT, LOT_START_DT), 0.5) AS v
-              FROM {t} WHERE LOT_NUM = 1 AND LOT_BASE_END_DT IS NOT NULL"),
+       sql = "SELECT percentile_approx(LOT_BASE_LENGTH, 0.5) AS v
+              FROM {t} WHERE LOT_NUM = 1 AND LOT_BASE_LENGTH IS NOT NULL"),
 
   list(name = "regimens_are_not_fragmented",
        what = "% of LOT1 patients covered by the ten most common regimens",

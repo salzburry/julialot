@@ -217,7 +217,7 @@ main <- function() {
   lot_long     <- .pop$table
   map_tbl   <- qs_tbl("MAP_STACKED")
   sct_tbl   <- qs_tbl("LOT1_SCT")
-  allflags  <- qs_tbl("ELIG_COH_ALLFLAGS")
+  allflags  <- qs_flags_table()
   final_tbl <- wrk(cfg$input_cohort_table)
 
   log_msg(SEP); log_msg("POMA-in-1L study-team questions [", cohort_label, "] -> single Excel workbook"); log_msg(SEP)
@@ -483,6 +483,16 @@ main <- function() {
   broad_pfx <- trimws(Sys.getenv("BROAD_PREFIX", unset = ""))
   overall_lot <- if (nzchar(broad_pfx))
     full_name(cfg$work_schema, paste0(broad_pfx, "LOT_LONG_FINAL")) else NA_character_
+  # The index dates have to come from the SAME run as the lines. Taking them
+  # from the NDMM cohort would drop every broad patient the NDMM exclusions
+  # removed out of the idx join - they stay in the denominator through the left
+  # join and can never match a diagnosis, so they read as having no other
+  # cancer. That is the exact opposite of the population this recovers.
+  #
+  # LOT_PATIENT_INPUT is the broad run's own snapshot: its INDEX_DATE and its
+  # observation window, as that run used them.
+  broad_idx <- if (nzchar(broad_pfx))
+    full_name(cfg$work_schema, paste0(broad_pfx, "LOT_PATIENT_INPUT")) else NA_character_
   bdays <- 183L  # mirrors config_prompts.R baseline_days (183L); the pipeline does not
                  # read an env var for this, so keep these two in sync if it ever changes.
   # The code list as the cohort build resolved it, not as this script would
@@ -498,14 +508,14 @@ main <- function() {
     log_msg("Q3 association: skipped. It is a BROAD-cohort question and this ",
             "run is one cohort - set BROAD_PREFIX to the prefix of a LOT run ",
             "over the broad cohort. The NDMM audit below still runs.")
-  q3_elig_df <- if (have_final && !is.na(overall_lot) &&
-                    vqs_readable(con, overall_lot) &&
+  q3_elig_df <- if (!is.na(overall_lot) && vqs_readable(con, overall_lot) &&
+                    !is.na(broad_idx) && vqs_readable(con, broad_idx) &&
                     vqs_readable(con, om_codes)) best_effort({
     db_q(con, glue("
       WITH poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {overall_lot}
                       WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{poma}')),
       lot1 AS (SELECT DISTINCT cast(PATID as string) PATID FROM {overall_lot} WHERE LOT_NUM=1),
-      idx AS (SELECT cast(PATID as string) PATID, cast(INDEX_DATE as date) index_date FROM {final_tbl}),
+      idx AS (SELECT cast(PATID as string) PATID, cast(INDEX_DATE as date) index_date FROM {broad_idx}),
       codes AS (SELECT dx, icd_family,
                        is_mm_adjacent_override AS is_mm_adj
                 FROM {om_codes}

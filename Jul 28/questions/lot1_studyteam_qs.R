@@ -90,7 +90,7 @@ main <- function() {
   }
 
   lot_long <- qs_population()$table
-  allflags <- qs_tbl("ELIG_COH_ALLFLAGS")
+  allflags <- qs_flags_table()
 
   log_msg("LOT1 study-team questions - reading ", lot_long)
   if (!readable(lot_long)) {
@@ -99,9 +99,9 @@ main <- function() {
   }
   have_flags <- readable(allflags)
   if (!have_flags) {
-    log_msg("WARNING: ", allflags, " not readable. It is a pipeline ",
-            "checkpoint - ensure the cohort pipeline materialized it to the ",
-            "work/personal schema. Q1a/Q1c flag breakdowns will be skipped.")
+    log_msg("WARNING: ", allflags, " not readable, so the Q1a/Q1c flag ",
+            "breakdowns are skipped. See qs_flags_table() - which table holds ",
+            "the per-patient flags depends on which build made this cohort.")
   }
 
   # ---- POMA-at-1L base set (delivered cohort) -------------------------

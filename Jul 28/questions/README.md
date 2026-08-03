@@ -97,6 +97,23 @@ answering it from this run would be near-zero by construction and mean nothing.
 Set `BROAD_PREFIX` to the prefix of a LOT run over the broad cohort. Without it
 that half is skipped and says so; the audit still runs.
 
+Its index dates come from that run's own `LOT_PATIENT_INPUT`, not from this
+cohort. Taking them from here would drop every broad patient the NDMM
+exclusions removed out of the index join — they would stay in the denominator
+and never match a diagnosis, reading as having no other cancer, which is the
+opposite of the population the question recovers.
+
+## The flag table depends on which build made the cohort
+
+The standalone cohort build writes `NDMM_FLAGS_ALL`; the broad build writes
+`ELIG_COH_ALLFLAGS`. `qs_flags_table()` defaults to the first and takes
+`FLAGS_TABLE` when the cohort came from the other.
+
+Asking for the wrong one is not a harmless miss: under a reused prefix an old
+`ELIG_COH_ALLFLAGS` can still be sitting there, with nothing linking it to this
+cohort or LOT run, and the flag breakdowns would come back full of confident
+numbers about another study.
+
 ## The steroid code list comes from production
 
 `steroid_codes.csv` is read from `CODELIST_DIR`, the same directory the LOT

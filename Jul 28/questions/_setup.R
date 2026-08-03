@@ -121,3 +121,24 @@ qs_population <- function() {
     list(mode = mode, table = qs_tbl("LOT_LONG"),
          label = "same run BEFORE the line criteria - includes patients the study removed")
 }
+
+# The per-patient flag table, whichever build made this cohort.
+#
+# The two builds do not agree on a name. The standalone cohort build writes
+# NDMM_FLAGS_ALL; the broad build writes ELIG_COH_ALLFLAGS. Asking for the
+# wrong one is not a missing table you can shrug at - under a reused prefix an
+# old ELIG_COH_ALLFLAGS from a retired flow can still be sitting there, and
+# nothing links it to the cohort or the LOT run being read, so the flag
+# breakdowns would come back full of confident numbers about another study.
+#
+# Named explicitly when it matters. Otherwise the caller is told which two
+# names were tried rather than being handed whichever turned up first.
+qs_flags_table <- function() {
+  named <- trimws(Sys.getenv("FLAGS_TABLE", unset = ""))
+  if (nzchar(named)) {
+    if (!grepl("^[A-Za-z_][A-Za-z0-9_]*$", named))
+      stop("FLAGS_TABLE '", named, "' is not a table name.", call. = FALSE)
+    return(qs_tbl(named))
+  }
+  qs_tbl("NDMM_FLAGS_ALL")
+}
