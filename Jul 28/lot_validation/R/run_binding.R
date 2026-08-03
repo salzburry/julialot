@@ -38,12 +38,64 @@ lot_run_row <- function(con, prefix) {
     if (is.null(v)) NA_character_ else as.character(v[1])
   }
   state <- tolower(trimws(one("STATE")))
-  list(tbl       = tbl,
-       run       = one("RUN_ID"),
-       state     = state,
-       complete  = identical(state, "complete"),
-       cohort    = one("INPUT_COHORT_TABLE"),
-       study_end = one("STUDY_END"))
+  dev <- one("CONTRACT_DEVIATIONS")
+  list(tbl        = tbl,
+       run        = one("RUN_ID"),
+       state      = state,
+       complete   = identical(state, "complete"),
+       cohort     = one("INPUT_COHORT_TABLE"),
+       study_end  = one("STUDY_END"),
+       # NA on a status table predating the column, which is a run built before
+       # the override existed - so it cannot have deviated.
+       deviations = if (is.na(dev) || !nzchar(trimws(dev))) character(0)
+                    else strsplit(trimws(dev), "|", fixed = TRUE)[[1]])
+}
+
+# The run's own metadata row: what it was built with, and which cohort attempt
+# it read.
+#
+# RUN_TIMESTAMP is what this table calls its clock - it has no RECORDED_AT, and
+# ordering by a column that is not there fails inside the tryCatch and returns
+# NULL, which reads as "an older run" and passes. That is how a guard in the
+# questions package went two commits without ever running.
+lot_run_meta <- function(con, prefix) {
+  tbl <- wrk(paste0(prefix, "LOT_RUN_METADATA"))
+  d <- tryCatch(db_q(con, paste0(
+    "SELECT * FROM ", tbl, " ORDER BY RUN_TIMESTAMP DESC LIMIT 1")),
+    error = function(e) NULL)
+  if (is.null(d) || nrow(d) == 0) return(NULL)
+  one <- function(nm) {
+    v <- .bind_col(d, nm)
+    if (is.null(v)) NA_character_ else as.character(v[1])
+  }
+  list(tbl        = tbl,
+       run        = one("RUN_ID"),
+       settings   = one("CONTRACT_SETTINGS"),
+       # The pair, not the run id alone: a cohort re-run keeps its id and
+       # rewrites its rows under it, and UPDATED_AT is what moves. So this is
+       # what identifies an ATTEMPT.
+       cohort_run = one("COHORT_RUN_ID"),
+       cohort_at  = one("COHORT_STAMP"))
+}
+
+# What the measured run was actually built with, not what this package is
+# configured for.
+#
+# max_lot decides how many lines the benchmarks ask for. Taking it from cfg
+# measures the CURRENT setting against a run that may have been built with a
+# different one - asking for lines the run never built, or omitting ones it
+# did. CONTRACT_SETTINGS records the run's own values, so it is the honest
+# source; the dashboard reads it the same way.
+#
+# NULL when there is nothing to read, so the caller can fall back and say it is
+# falling back.
+lot_run_contract <- function(con, prefix, key) {
+  m <- lot_run_meta(con, prefix)
+  if (is.null(m) || is.na(m$settings)) return(NULL)
+  hit <- regmatches(m$settings,
+                    regexpr(paste0("(^|\\|)", key, "=[^|]*"), m$settings))
+  if (!length(hit)) return(NULL)
+  sub(paste0("^\\|?", key, "="), "", hit)
 }
 
 # A prefix that names one run, and a run that finished.
@@ -83,5 +135,17 @@ require_lot_run <- function(con, prefix, ignore_env = "") {
             "' and ", ignore_env, " is set. If it got as far as replacing ",
             "LOT_LONG_FINAL, these measurements are that run's.")
   }
+  # A run built with LOT_CONTRACT_OVERRIDE is a different algorithm's output.
+  # Its distributions are not this study's and must not be compared to
+  # published figures as though they were - that is a sensitivity cell, and the
+  # sweep reads it through lot_run_row() where it belongs.
+  if (length(got$deviations))
+    stop("The LOT run on prefix '", prefix, "' (", got$run, ") was built with ",
+         "LOT_CONTRACT_OVERRIDE, so it is not the contract algorithm:\n  ",
+         paste(got$deviations, collapse = "\n  "),
+         "\nIts distributions are an alternative build's. Comparing them to a ",
+         "published figure would attribute the difference to this cohort ",
+         "rather than to the setting that was changed. Point this at the ",
+         "study's own prefix.", call. = FALSE)
   got
 }

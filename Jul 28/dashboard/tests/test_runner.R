@@ -376,6 +376,39 @@ stub(function(con, sql)
   else data.frame())
 stops(resolve_owner_run(NULL, oi, ohave, ocfg),
       "complete in the status table but not in the metadata is refused, not papered over")
+
+# A sensitivity cell is a complete, well-formed LOT run of a DIFFERENT
+# algorithm. Every panel here would draw it exactly as it draws the study, so
+# ownership resolving is not enough - what it resolved to has to be the
+# contract build.
+stub(function(con, sql)
+  if (grepl("CONTRACT_DEVIATIONS", sql, fixed = TRUE))
+    data.frame(CONTRACT_DEVIATIONS = "max_lot=8 (contract 5)|sct_tandem_days=365 (contract 180)")
+  else if (grepl("wk.ST", sql, fixed = TRUE))
+    data.frame(RUN_ID = "run-c", STATE = "complete", UPDATED_AT = "2026-01-03 10:00:00")
+  else data.frame(x = 1))
+m <- tryCatch({ resolve_owner_run(NULL, oi, ohave, ocfg); "" }, error = conditionMessage)
+ok(grepl("LOT_CONTRACT_OVERRIDE", m, fixed = TRUE) &&
+     grepl("max_lot=8", m, fixed = TRUE),
+   "a run built as a different algorithm is refused, and named deviation by deviation")
+# The column was added later. Naming it in the ownership SELECT would make an
+# older status table unreadable - which reads as no status table at all and
+# falls back to the weaker metadata answer.
+stub(function(con, sql)
+  if (grepl("CONTRACT_DEVIATIONS", sql, fixed = TRUE)) stop("no such column")
+  else if (grepl("wk.ST", sql, fixed = TRUE))
+    data.frame(RUN_ID = "run-b", STATE = "complete", UPDATED_AT = "2026-01-02 10:00:00")
+  else data.frame(x = 1))
+ok(identical(resolve_owner_run(NULL, oi, ohave, ocfg)$run_id, "run-b"),
+   "...while a status table predating that column still resolves, as it must")
+# And a frame that came back without the column is a table that has not got
+# it. Reading column one instead would turn a run id into a deviation.
+stub(function(con, sql)
+  if (grepl("wk.ST", sql, fixed = TRUE))
+    data.frame(RUN_ID = "run-b", STATE = "complete", UPDATED_AT = "2026-01-02 10:00:00")
+  else data.frame(x = 1))
+runs(resolve_owner_run(NULL, oi, ohave, ocfg),
+     "...and the deviation column is read by name, never by position")
 # No status table at all - an older LOT build. Fall back, and say it is weaker.
 stub(function(con, sql) data.frame(RUN_ID = "run-a", RUN_TIMESTAMP = "2026-01-01 10:00:00"))
 o <- resolve_owner_run(NULL, oi, c(run_meta = TRUE, build_st = FALSE), ocfg)

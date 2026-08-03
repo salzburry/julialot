@@ -214,6 +214,59 @@ ok(any(grepl("LOT_BUILD_STATUS", rb, fixed = TRUE)) &&
 ok(any(grepl('env_flag("SENS_DROP_AFTER")', rs, fixed = TRUE)),
    "dropping a cell's tables is opt-in, not what a measurement script does quietly")
 
+cat("\n-- and a cell can actually be built, which is not a given --\n")
+# Every axis here varies a CONTRACT-pinned value, and build_lot refuses one -
+# correctly, because a different threshold is a different algorithm. Without
+# the override, twelve of thirteen cells stop at preflight and the sweep
+# produces nothing. Nothing in the plan or the comparison logic would show it:
+# they never touch the LOT entry point.
+bl <- readLines(file.path(JUL28, "lot", "R", "build_lot.R"), warn = FALSE)
+contract_keys <- names(get("CONTRACT", envir = local({
+  e <- new.env(parent = globalenv()); sys.source(
+    file.path(JUL28, "lot", "R", "build_lot.R"), envir = e, keep.source = FALSE); e
+})))
+pinned <- Filter(function(a) a$cfg %in% contract_keys, SENS_AXES)
+ok(length(pinned) > 0,
+   paste0("the axes really are contract-pinned (", length(pinned), " of ",
+          length(SENS_AXES), "), so this is not hypothetical"))
+ok(any(grepl("LOT_CONTRACT_OVERRIDE=TRUE", rs, fixed = TRUE)),
+   "so each alternative cell says it is building an alternative")
+ok(any(grepl("LOT_CONTRACT_OVERRIDE", bl, fixed = TRUE)),
+   "...and the build has that door, rather than the sweep hoping for one")
+# The reference cell changes nothing, so it must not claim to.
+ref_guarded <- grep("if \\(!is\\.na\\(c_i\\$param\\)\\)", rs)
+ok(length(ref_guarded) &&
+     any(grepl("LOT_CONTRACT_OVERRIDE=TRUE", rs[ref_guarded[1] + 0:2], fixed = TRUE)),
+   "...only the cells that change something, not the reference build")
+# The override is only safe because a cell cannot be read as the study.
+ok(any(grepl("CONTRACT_DEVIATIONS", bl, fixed = TRUE)),
+   "a deviating build records what it deviated on, in its own status table")
+for (f in c(file.path(ROOT, "R", "run_binding.R"),
+            file.path(JUL28, "questions", "_setup.R"),
+            file.path(JUL28, "dashboard", "R", "db_utils_dash.R")))
+  ok(any(grepl("CONTRACT_DEVIATIONS|deviations", readLines(f, warn = FALSE))),
+     paste0("...and ", basename(f), " refuses a run carrying them"))
+
+cat("\n-- thirteen builds, one cohort, and it is checked rather than intended --\n")
+# COHORT_PREFIX defaults to the RUN's own prefix, which for a cell is a
+# throwaway. The build then looks for sens_max_lot_8_NDMM_BUILD_STATUS, finds
+# nothing, warns and carries on with no cohort run id at all - so nothing would
+# record that the cells read one cohort, and a cohort rebuilt mid-sweep would
+# read as the parameter's effect.
+ok(any(grepl('paste0("COHORT_PREFIX=", cohort_pfx)', rs, fixed = TRUE)),
+   "each cell is told where the cohort's status table lives")
+ok(any(grepl("COHORT_PREFIX is required to execute", rs, fixed = TRUE)),
+   "...and executing without it is refused, not defaulted")
+ok(any(grepl("lot_run_meta(con, c_i$prefix)", rs, fixed = TRUE)),
+   "each cell's cohort attempt is read back from what it recorded")
+ok(any(grepl("COHORT CHANGED DURING THE SWEEP", rs, fixed = TRUE)),
+   "...and cells that did not share one attempt are reported, not averaged over")
+# The pair, not the id: a cohort re-run keeps its id and rewrites its rows.
+ok(any(grepl("cohort_at", rs, fixed = TRUE)) ||
+     any(grepl("COHORT_STAMP", readLines(file.path(ROOT, "R", "run_binding.R"),
+                                         warn = FALSE), fixed = TRUE)),
+   "...identified by run id AND stamp, since a re-run keeps its id")
+
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))
 if (fail > 0L) quit(status = 1L)

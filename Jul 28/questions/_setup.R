@@ -459,11 +459,17 @@ qs_lot_run_row <- function(con, prefix) {
     v <- qs_col(d, nm)
     if (is.null(v)) NA_character_ else as.character(v[1])
   }
+  dev <- one("CONTRACT_DEVIATIONS")
   list(tbl       = tbl,
        run       = one("RUN_ID"),
        state     = tolower(trimws(one("STATE"))),
        cohort    = one("INPUT_COHORT_TABLE"),
-       study_end = one("STUDY_END"))
+       study_end = one("STUDY_END"),
+       # Empty on every contract build, and on a status table written before
+       # the column existed - which is a run built before the override did, so
+       # it cannot have deviated either.
+       deviations = if (is.na(dev) || !nzchar(trimws(dev))) character(0)
+                    else strsplit(trimws(dev), "|", fixed = TRUE)[[1]])
 }
 
 # Did that run read the same CDM vintage these questions are configured for?
@@ -515,6 +521,16 @@ qs_check_run_binding <- function(con) {
             "' and QS_IGNORE_BUILD_STATE is set. If it got as far as replacing ",
             "LOT_LONG_FINAL, these answers are that run's.")
   }
+  # A run built with LOT_CONTRACT_OVERRIDE is an alternative algorithm's - a
+  # sensitivity cell. Its lines are not this study's, and a workbook answered
+  # off one would read exactly like a workbook answered off the study.
+  if (length(got$deviations))
+    stop("The LOT run under prefix '", cfg$object_prefix, "' (", got$run,
+         ") was built with LOT_CONTRACT_OVERRIDE, so it is not the study's ",
+         "algorithm:\n  ", paste(got$deviations, collapse = "\n  "),
+         "\nThese answers would describe a threshold experiment while reading ",
+         "as the study. Point OBJECT_PREFIX at the study's own run.",
+         call. = FALSE)
   if (!identical(toupper(trimws(got$cohort)),
                  toupper(trimws(cfg$input_cohort_table))))
     stop("INPUT_COHORT_TABLE is '", cfg$input_cohort_table, "', but the LOT run ",

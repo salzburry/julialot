@@ -478,15 +478,48 @@ check_cohort_window <- function(con, tbl, cfg) {
   invisible(TRUE)
 }
 
+# A build that is not the contract build is a DIFFERENT ALGORITHM, and it is
+# refused. LOT_CONTRACT_OVERRIDE is the one way past that, and it exists for
+# one caller: the sensitivity sweep, whose entire question is what a threshold
+# changes. Every axis it varies is contract-pinned, so without this the sweep
+# has no executable path at all.
+#
+# It is safe only because a deviating run cannot be mistaken for the study's:
+#
+#   * the deviations go into LOT_BUILD_STATUS, which is where every downstream
+#     reader already resolves which run owns a prefix's tables - the questions,
+#     the dashboard and the benchmark harness all read that row, and they
+#     refuse a run that carries deviations;
+#   * CONTRACT_SETTINGS in LOT_RUN_METADATA records what the run ACTUALLY used
+#     rather than what CONTRACT pins, so the two cannot silently agree;
+#   * the sweep refuses to write to the study's own prefix, so a cell cannot
+#     land on the tables it is measuring against.
+#
+# Left unset - which is every production run - nothing here behaves differently.
 check_lot_contract <- function(cfg) {
-  wrong <- Filter(Negate(is.null), lapply(names(CONTRACT), function(k) {
+  options(lot_contract_deviations = character(0))
+  wrong <- unlist(Filter(Negate(is.null), lapply(names(CONTRACT), function(k) {
     got <- cfg[[k]]
     if (isTRUE(all.equal(got, CONTRACT[[k]]))) NULL
-    else paste0(k, " = ", format(got), " (want ", format(CONTRACT[[k]]), ")")
-  }))
-  if (length(wrong))
-    stop("This build is defined as:\n  ", paste(unlist(wrong), collapse = "\n  "),
-         call. = FALSE)
+    else paste0(k, "=", format(got), " (contract ", format(CONTRACT[[k]]), ")")
+  })))
+  if (length(wrong)) {
+    if (!identical(toupper(trimws(Sys.getenv("LOT_CONTRACT_OVERRIDE", unset = ""))),
+                   "TRUE"))
+      stop("This build is defined as:\n  ", paste(wrong, collapse = "\n  "),
+           "\nA different value is a different LOT algorithm, not a setting. ",
+           "If you are deliberately building an alternative to measure it ",
+           "against this one, set LOT_CONTRACT_OVERRIDE=TRUE: the deviations ",
+           "are then recorded in LOT_BUILD_STATUS and every reader that ",
+           "resolves run ownership refuses the output as the study's.",
+           call. = FALSE)
+    options(lot_contract_deviations = wrong)
+    log_msg("WARNING: LOT_CONTRACT_OVERRIDE is set. This is NOT the contract ",
+            "build:\n  ", paste(wrong, collapse = "\n  "))
+    log_msg("  Its tables are an alternative algorithm's. They are recorded as ",
+            "such in LOT_BUILD_STATUS, and the questions, the dashboard and ",
+            "the benchmark harness all refuse a run carrying deviations.")
+  }
   # Without a prefix every run writes the same table names, so a second cohort
   # would overwrite the first instead of sitting beside it.
   if (!nzchar(cfg$object_prefix))
@@ -808,10 +841,16 @@ check_claim_ndc <- function(con, cfg) {
 # STUDY_END silently pairs this run's patients and dates with a different
 # vintage of their claims. The name of the table is not enough to see that;
 # recording the date is what makes it checkable rather than assumed.
+# CONTRACT_DEVIATIONS is empty on every contract build, which is every
+# production run. It is here rather than only in LOT_RUN_METADATA because this
+# is the table everyone downstream reads to decide which run owns a prefix's
+# tables - putting it anywhere else would mean a reader could resolve ownership
+# and still not know it had resolved to a different algorithm.
 BUILD_STATUS_COLS <- c(
   RUN_ID = "STRING", INPUT_COHORT_TABLE = "STRING", OBJECT_PREFIX = "STRING",
   STATE = "STRING", STUDY_END = "STRING", CODELIST_WAIVERS_REQUESTED = "STRING",
-  CODELIST_WAIVERS_APPLIED = "STRING", UPDATED_AT = "TIMESTAMP")
+  CODELIST_WAIVERS_APPLIED = "STRING", CONTRACT_DEVIATIONS = "STRING",
+  UPDATED_AT = "TIMESTAMP")
 
 write_build_status <- function(con, cfg, state) {
   tbl  <- lot_out("LOT_BUILD_STATUS")
@@ -848,6 +887,8 @@ write_build_status <- function(con, cfg, state) {
   # Set by phase_codelists when it waives something. Empty at "started", and on
   # a failure before the code lists ran.
   applied <- paste(getOption("lot_waivers_applied", character(0)), collapse = "|")
+  deviations <- paste(getOption("lot_contract_deviations", character(0)),
+                      collapse = "|")
   vals <- c(RUN_ID                     = glue("'{run_id}'"),
             INPUT_COHORT_TABLE         = glue("'{cfg$input_cohort_table}'"),
             OBJECT_PREFIX              = glue("'{cfg$object_prefix}'"),
@@ -855,6 +896,10 @@ write_build_status <- function(con, cfg, state) {
             STUDY_END                  = glue("'{cfg$study_end}'"),
             CODELIST_WAIVERS_REQUESTED = glue("'{requested}'"),
             CODELIST_WAIVERS_APPLIED   = glue("'{applied}'"),
+            # Set by check_lot_contract, so it is already there at "started" -
+            # a run that deviates is marked from its first status row, not
+            # only once it finishes.
+            CONTRACT_DEVIATIONS        = glue("'{deviations}'"),
             UPDATED_AT                 = "current_timestamp()")
   # One declaration drives the CREATE, the upgrade and the INSERT, so they
   # cannot drift apart again - a column added to BUILD_STATUS_COLS with no
@@ -1317,10 +1362,20 @@ code_fingerprint <- function(here) {
 
 # Sorted, so two runs with the same settings produce the same string and it can
 # be compared as one value.
-contract_settings <- function() {
+#
+# Read from the RUN's config, not from CONTRACT. On every contract build the
+# two are identical - check_lot_contract has just proved it - so this changes
+# nothing for a production run. On an overridden build it is the difference
+# between recording what the run did and recording what it was supposed to do,
+# and a metadata row that says the second is worse than none: the dashboard
+# reads max_lot out of this string to decide how many panels a run has.
+contract_settings <- function(cfg) {
   k <- sort(names(CONTRACT), method = "radix")
-  paste(paste0(k, "=", vapply(CONTRACT[k], function(v) as.character(v)[1],
-                              character(1))), collapse = "|")
+  val <- function(key) {
+    v <- if (!is.null(cfg[[key]])) cfg[[key]] else CONTRACT[[key]]
+    as.character(v)[1]
+  }
+  paste(paste0(k, "=", vapply(k, val, character(1))), collapse = "|")
 }
 
 # STUDY_START and STUDY_END are columns of their own because they are no longer
@@ -1377,7 +1432,7 @@ record_final_counts <- function(con, cfg, counts, final) {
            N_LOT_FINAL_ROWS = {sql_count(final$n_rows)},
            N_LOT_FINAL_PATIENTS = {sql_count(final$n_patients)},
            CODE_MD5 = {sql_text(cfg$code_md5)},
-           CONTRACT_SETTINGS = {sql_text(contract_settings())},
+           CONTRACT_SETTINGS = {sql_text(contract_settings(cfg))},
            COHORT_RUN_ID = {sql_text(getOption('lot_cohort_run_id', NA_character_))},
            COHORT_STAMP = {sql_text(getOption('lot_cohort_stamp', NA_character_))},
            STUDY_START = {sql_text(cfg$study_start)},

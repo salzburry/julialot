@@ -72,6 +72,23 @@ main <- function() {
       if (!is.na(run$study_end) && nzchar(trimws(run$study_end)))
         paste0(", STUDY_END ", run$study_end) else "", ".\n", sep = "")
 
+  # How many lines to ask for is the MEASURED RUN's max_lot, not this
+  # package's. They are the same on the study's own run, and they are not the
+  # same the moment this is pointed at a run built with a different cap - and
+  # then cfg's value either asks for lines that run never built or leaves out
+  # lines it did, with nothing in the output to say which.
+  max_lot <- suppressWarnings(as.integer(
+    lot_run_contract(con, cfg$object_prefix, "max_lot")))
+  if (is.na(max_lot) || max_lot < 2L) {
+    max_lot <- as.integer(cfg$max_lot)
+    cat("  No max_lot recorded for that run (an older lot, or no metadata row) ",
+        "- measuring to MAX_LOT=", max_lot, " from this package's config.\n", sep = "")
+  } else if (!identical(max_lot, as.integer(cfg$max_lot))) {
+    cat("  That run was built with max_lot=", max_lot, "; this package is ",
+        "configured for ", cfg$max_lot, ". Measuring to the run's own value.\n",
+        sep = "")
+  }
+
   final    <- lot_out("LOT_LONG_FINAL")
   patients <- lot_out("LOT_PATIENT_INPUT")
   top_n    <- suppressWarnings(as.integer(Sys.getenv("BENCH_TOP_N", unset = "5")))
@@ -85,13 +102,13 @@ main <- function() {
   }
   obs <- list(
     add(db_q(con, bench_distribution_sql(final))),
-    add(db_q(con, bench_reaching_sql(final, cfg$max_lot))),
+    add(db_q(con, bench_reaching_sql(final, max_lot))),
     add(db_q(con, bench_duration_sql(final))),
     add(db_q(con, bench_regimen_sql(final, top_n))))
   # TTNT is one statement per line: the risk set changes with the line, and one
   # combined query would need a curve per group and the same window trick per
   # partition. Clearer as a loop, and a line that fails costs only itself.
-  for (l in seq_len(max(1L, as.integer(cfg$max_lot) - 1L))) {
+  for (l in seq_len(max(1L, max_lot - 1L))) {
     r <- tryCatch(db_q(con, bench_ttnt_sql(final, patients, l)),
                   error = function(e) { cat("  TTNT line ", l, " failed: ",
                                             conditionMessage(e), "\n", sep = ""); NULL })
