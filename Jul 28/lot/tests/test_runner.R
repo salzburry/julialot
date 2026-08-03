@@ -295,6 +295,7 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_cohort",
            "check_lot1_invariants", "phase_persist", "materialize_sct_views",
            "build_lot2_5",
            "check_lot_long", "phase_line_criteria", "check_lot_final",
+           "phase_lot_attrition",
            "record_final_counts", "check_run_recorded")
 at <- vapply(ORDER, function(f) {
   m <- regexpr(paste0("(?<![A-Za-z0-9_.])", f, "\\("), body, perl = TRUE)
@@ -1651,5 +1652,65 @@ ifv <- grep("run_face_validity\\(con, cfg\\)", run)[1]
 icf <- grep("check_lot_final\\(con, cfg\\)", run)[1]
 ok(!is.na(ifv) && !is.na(icf) && ifv > icf,
    "...after the final table has been checked, so it is asking about real output")
+
+cat("\n-- the LOT funnel, and the two ways it can lie --\n")
+# The cohort build's attrition stops at the cohort. Two steps here lose
+# patients for reasons that are not a criterion at all - no mapped therapy
+# episode, or episodes that never form a line - and without this table that
+# loss is only a row-count difference somebody has to notice.
+ok(all(c("RUN_ID", "STEP_NUM", "STEP", "N_PATIENTS", "N_LINES", "PCT_OF_START",
+         "RECORDED_AT") %in% names(LOT_ATTRITION_COLS)),
+   "the funnel records patients AND lines per step")
+# Both, because a truncating criterion drops the first failing line and every
+# later one - a patient can survive with fewer lines, and patients alone would
+# show nothing. no_belantamab is patient-level so today they move together.
+ok(any(grepl("count(DISTINCT PATID) AS p, count(*) AS l", src, fixed = TRUE)),
+   "...counted from the same query, so the two can never come from different rows")
+ok("LOT_ATTRITION" %in% RUN_SCOPED_TABLES,
+   "...and its rows are cleared per run, like every other run-scoped table")
+# The criteria rows go through the build's own truncate SQL. A second copy of
+# that rule here would be reporting on itself.
+ok(any(grepl("line_criteria_final_sql(cfg, \"lot_long_allflags\", v,", src, fixed = TRUE)),
+   "the criterion steps reuse the production truncate SQL rather than restating it")
+ok(any(grepl("crit = on[seq_len(i)]", src, fixed = TRUE)),
+   "...cumulatively, so each row is the population after that criterion and the ones above it")
+# A funnel that widens means a fan-out; a last criterion step that disagrees
+# with LOT_LONG_FINAL means the criteria counted are not the ones that built it.
+# Driven, not grepped. The check is arithmetic over a list, so it can be run
+# here in full - a warehouse is only needed to produce the numbers.
+mk <- function(...) {
+  v <- list(...)
+  lapply(seq_along(v), function(i)
+    list(step = paste0("step ", i),
+         n = list(patients = v[[i]][1], lines = v[[i]][2])))
+}
+runs2 <- function(expr, what) ok(is.null(tryCatch({ expr; NULL },
+                                error = conditionMessage)), what)
+stops2 <- function(expr, what) ok(!is.null(tryCatch({ expr; NULL },
+                                 error = conditionMessage)), what)
+runs2(check_lot_attrition(mk(c(100, NA), c(90, NA), c(80, 200), c(70, 150), c(70, 150))),
+      "a funnel that only narrows passes")
+stops2(check_lot_attrition(mk(c(100, NA), c(110, NA), c(80, 200), c(70, 150), c(70, 150))),
+       "a step with more patients than the one above stops the build")
+# The line count is NA for the first two steps. The rise is between the third
+# and fourth, and the message has to say so rather than name the first pair it
+# finds in a vector the NAs have shifted.
+msg <- tryCatch(check_lot_attrition(
+         mk(c(100, NA), c(90, NA), c(80, 200), c(70, 260), c(70, 260))),
+       error = conditionMessage)
+ok(!is.null(msg) && grepl("step 4", msg) && grepl("lines", msg),
+   "...and a rise in LINES names the step it happened at, not one the NAs shifted it to")
+# Both come from the same criteria SQL over the same view, so they cannot
+# differ unless the criteria counted are not the ones that built the table.
+stops2(check_lot_attrition(mk(c(100, NA), c(90, NA), c(80, 200), c(70, 150), c(60, 140))),
+       "a last step that disagrees with LOT_LONG_FINAL stops the build")
+iat <- grep("phase_lot_attrition\\(con, cfg\\)", run)[1]
+ok(!is.na(iat) && !is.na(icf) && iat > icf,
+   "it is written after the final table is validated, not before")
+# Declared-but-off criteria are deliberately absent: a row costing nothing
+# reads as a harmless criterion rather than as one that never ran.
+ok(any(grepl("A funnel is what", src, fixed = TRUE)) &&
+     any(grepl("report_line_criteria", src, fixed = TRUE)),
+   "criteria that were left off stay out of the funnel and in the run metadata")
 
 report()

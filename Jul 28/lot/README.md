@@ -178,6 +178,48 @@ one, and these are built from temp views.
   `LOT_LONG_ALLFLAGS` needs no equivalent - the layer only adds columns to it,
   so its rows are `LOT_LONG`'s whatever is declared.
 
+## The funnel
+
+`<prefix>LOT_ATTRITION`, one row per step, patients and lines:
+
+| step | |
+|---|---|
+| 1 | cohort patients handed to LOT |
+| 2 | + with a mapped MM therapy episode |
+| 3 | + with at least one line built |
+| 4.. | + one row per enabled `truncate` criterion, cumulative |
+| last | the study population, `LOT_LONG_FINAL` |
+
+The cohort build writes its own attrition and stops at the cohort. Steps 2 and
+3 are the gap that left: a cohort member with no mapped therapy episode, or
+with episodes that never form a line, is simply not in `LOT_LONG` — no
+criterion removed them, and without this table that loss is a row-count
+difference somebody has to notice.
+
+**Two counts, because a `truncate` criterion need not remove a patient.** It
+drops the first failing line and every later one, so a patient can survive with
+fewer lines and a patient count alone would show nothing. `no_belantamab`
+happens to be patient-level, so today the two move together; the next criterion
+need not be.
+
+The criterion rows go through `line_criteria_final_sql()` — the build's own
+truncate SQL, given the first *i* criteria — rather than a second version of
+the rule here. The rule that decides which lines go is the thing being counted,
+so a copy of it would be reporting on itself.
+
+Two ways it can lie, both of which stop the build. A step larger than the one
+above it means a join fanned out or a step ran against the wrong population.
+And the last criterion step must equal `LOT_LONG_FINAL`: both come from the
+same SQL over the same view, so a difference means the criteria counted are not
+the ones that built the table, which would make every row above it a
+description of some other run.
+
+A criterion that was **declared but left off** gets no row. A funnel is what
+narrowed the population, and a row showing a criterion costing nothing reads as
+evidence it was harmless rather than as evidence it never ran. Which criteria
+were on, and what each would have cost, is already in
+`LINE_CRITERIA_APPLIED`.
+
 `on_fail` decides what a failing line does:
 
 | value | effect |

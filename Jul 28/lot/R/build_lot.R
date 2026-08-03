@@ -619,6 +619,10 @@ build_lot <- function(here, cohort_table, prefix,
   # After the criteria layer, not before it: LOT_LONG_FINAL is what downstream
   # reads, and with a truncate criterion it is not LOT_LONG.
   final <- check_lot_final(con, cfg)
+  # After the final table is validated: the funnel's last row is that table, so
+  # writing it first would publish a funnel ending in numbers no check had
+  # accepted.
+  phase_lot_attrition(con, cfg)
   run_face_validity(con, cfg)
   record_final_counts(con, cfg, lot_long, final)
   check_run_recorded(con, cfg)
@@ -875,7 +879,7 @@ write_build_status <- function(con, cfg, state) {
 # that cannot find its table is not a failure. TABLE_OR_VIEW_NOT_FOUND is one
 # of with_retry's permanent errors, so this does not sit through four attempts.
 RUN_SCOPED_TABLES <- c("LOT_RUN_METADATA", "LOT_QC_SUMMARY",
-                       "LOT_CODELIST_METADATA")
+                       "LOT_CODELIST_METADATA", "LOT_ATTRITION")
 
 # A missing table is fine. Anything else is not: a permission, a lock or a
 # malformed table stops the delete, and swallowing that leaves an earlier
@@ -1560,6 +1564,131 @@ report_line_criteria <- function(con, cfg, tbl = "lot_long_allflags") {
   applied <- paste(parts, collapse = "|")
   options(lot_line_criteria = applied)
   invisible(applied)
+}
+
+# The LOT funnel: how many patients the cohort handed over, and how many are
+# left in the study population.
+#
+# The cohort build writes its own attrition and stops at the cohort. Nothing
+# said what happened after that, and two of the steps below lose patients for
+# reasons that have nothing to do with a criterion - a cohort member with no
+# mapped therapy episode, or with episodes that never form a line, simply is
+# not in LOT_LONG. Without this table that loss is a row-count difference
+# somebody has to notice.
+#
+# TWO counts per step, because a truncating criterion does not have to remove a
+# patient. It drops the first failing line and every later one, so a patient
+# can survive with fewer lines - patients alone would show nothing.
+# no_belantamab happens to be patient-level, so today the two move together;
+# the next criterion need not be.
+LOT_ATTRITION_COLS <- c(RUN_ID = "STRING", STEP_NUM = "INT", STEP = "STRING",
+                        N_PATIENTS = "BIGINT", N_LINES = "BIGINT",
+                        PCT_OF_START = "DOUBLE", RECORDED_AT = "TIMESTAMP")
+
+# Only criteria that actually removed something get a row. A funnel is what
+# narrowed the population; a criterion that was declared but left off did not,
+# and a row showing it costing nothing reads as evidence it was harmless rather
+# than as evidence it never ran. Which criteria were on, and what each one
+# would have cost, is already in LOT_RUN_METADATA via report_line_criteria().
+lot_attrition_counts <- function(con, cfg) {
+  cnt <- function(src, lines) {
+    sel <- if (lines) "count(DISTINCT PATID) AS p, count(*) AS l"
+           else       "count(DISTINCT PATID) AS p, cast(NULL as bigint) AS l"
+    d <- db_q(con, glue("SELECT {sel} FROM {src}"))
+    list(patients = as.numeric(d$p[1]),
+         lines    = if (lines) as.numeric(d$l[1]) else NA_real_)
+  }
+  steps <- list(
+    list(step = "Cohort patients handed to LOT",       n = cnt("lot_patient_input", FALSE)),
+    list(step = "+ with a mapped MM therapy episode",  n = cnt("map_stacked", FALSE)),
+    list(step = "+ with at least one line built",      n = cnt("lot_long", TRUE)))
+
+  # Cumulative, and through the build's OWN truncate SQL rather than a second
+  # version of it here: the rule that decides which lines go is the thing being
+  # counted, so a copy of it would report on itself.
+  on <- Filter(function(c_i) identical(c_i$on_fail, "truncate"),
+               enabled_line_criteria())
+  for (i in seq_along(on)) {
+    v <- paste0("lot_attrition_step_", i)
+    db_exec(con, line_criteria_final_sql(cfg, "lot_long_allflags", v,
+                                         crit = on[seq_len(i)]))
+    steps[[length(steps) + 1L]] <-
+      list(step = paste0("+ ", on[[i]]$label), n = cnt(v, TRUE))
+  }
+  steps[[length(steps) + 1L]] <-
+    list(step = "Study population (LOT_LONG_FINAL)", n = cnt("lot_long_final", TRUE))
+  steps
+}
+
+# The funnel only narrows, on both counts. A step larger than the one above it
+# means a join fanned out or a filter ran against the wrong population.
+#
+# And the last criterion step must equal the final table. They are built from
+# the same SQL over the same view, so a difference means the criteria applied
+# here are not the criteria that produced LOT_LONG_FINAL - which would make
+# every row above it a description of some other run's population.
+check_lot_attrition <- function(steps) {
+  p <- vapply(steps, function(s) s$n$patients, numeric(1))
+  for (nm in c("patients", "lines")) {
+    v <- vapply(steps, function(s) s$n[[nm]], numeric(1))
+    # Compared between steps that HAVE the count, but reported by their
+    # position in the funnel. The first two steps have no line count, so
+    # indexing the compacted vector would name the wrong step.
+    idx <- which(!is.na(v))
+    for (k in seq_len(max(0L, length(idx) - 1L))) {
+      i <- idx[k]; j <- idx[k + 1L]
+      if (v[j] > v[i])
+        stop("LOT attrition rises at step ", j, " (", nm, "): ",
+             steps[[i]]$step, " -> ", steps[[j]]$step,
+             ". A funnel cannot widen, so a join fanned out or a step ran ",
+             "against the wrong population.", call. = FALSE)
+    }
+  }
+  n <- length(steps)
+  if (n >= 2L && !identical(p[n], p[n - 1L]))
+    stop("The last criterion leaves ", p[n - 1L], " patients but ",
+         "LOT_LONG_FINAL has ", p[n], ". Both come from the same criteria SQL ",
+         "over lot_long_allflags, so they cannot differ unless the criteria ",
+         "counted here are not the ones that built it.", call. = FALSE)
+  invisible(TRUE)
+}
+
+write_lot_attrition <- function(con, cfg, steps) {
+  tbl  <- lot_out("LOT_ATTRITION")
+  cols <- names(LOT_ATTRITION_COLS)
+  db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
+                    paste(cols, LOT_ATTRITION_COLS, collapse = ", "), ")"))
+  start <- steps[[1]]$n$patients
+  vals <- vapply(seq_along(steps), function(i) {
+    s   <- steps[[i]]
+    pct <- if (is.na(start) || start == 0) "NULL"
+           else sql_count(round(100 * s$n$patients / start, 2))
+    lines <- if (is.na(s$n$lines)) "NULL" else sql_count(s$n$lines)
+    glue("('{run_id}', {i}, {sql_text(s$step)}, {sql_count(s$n$patients)}, ",
+         "{lines}, {pct}, current_timestamp())")
+  }, character(1), USE.NAMES = FALSE)
+  db_replace(con,
+    glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"),
+    glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES ",
+         paste(vals, collapse = ", ")))
+  for (i in seq_along(steps)) {
+    s <- steps[[i]]
+    log_msg("  ", i, ". ", s$step, ": ",
+            format(s$n$patients, big.mark = ",", scientific = FALSE), " patients",
+            if (is.na(s$n$lines)) ""
+            else paste0(", ", format(s$n$lines, big.mark = ",", scientific = FALSE), " lines"),
+            if (!is.na(start) && start > 0)
+              paste0(" (", round(100 * s$n$patients / start, 1), "%)") else "")
+  }
+  log_msg("LOT attrition written to ", tbl)
+  invisible(tbl)
+}
+
+phase_lot_attrition <- function(con, cfg) {
+  log_msg("LOT attrition")
+  steps <- lot_attrition_counts(con, cfg)
+  check_lot_attrition(steps)
+  write_lot_attrition(con, cfg, steps)
 }
 
 phase_line_criteria <- function(con, cfg) {
