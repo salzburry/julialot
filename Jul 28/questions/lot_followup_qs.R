@@ -3,33 +3,25 @@
 #
 #   Rscript lot_followup_qs.R
 #
-# A sibling of lot1_studyteam_qs.R / poma_studyteam_qs.R. It answers the study
-# team's follow-ups on steroids, regimen mix and CAR-T, reading the MM tables on
-# Databricks. It reuses the shared CAR-T helpers in R/validation_qs.R.
+# Follow-ups on steroids, regimen mix and CAR-T. Reuses the shared CAR-T
+# helpers in R/validation_qs.R.
 #
-# Population: the study population by default (LOT_LONG_FINAL), which the study
-# team asked to see first. Set LOT_POPULATION=PRECRITERIA for the same run
-# query reads this one table. MAP_STACKED and LOT1_SCT are shared, joined by PATID.
+# Population: LOT_LONG_FINAL, the study population.
+# LOT_POPULATION=PRECRITERIA gives the run before the line criteria.
 #
-# Questions:
-#   Q1  Steroids: show the LOT already leaves steroids out of every rule, with an
-#       audit that no known steroid token is in any regimen, plus a note on where
-#       steroids still surface (the display / timing outputs, and possibly the
-#       mapped medication data, depending on the production codelist).
-#   Q2  Among 1L DARA+BORT patients (just those two agents), how far apart are the
-#       two start dates - same day, or one then the other?
-#   Q3  Share of patients on LENA+DARA in 1L and 2L (exact pair, plus a wider
-#       "contains both" count).
-#   Q4  Melphalan in 2L by start year - was it phased out after 2017?
-#   Q5  CAR-T: the CAR-T-vs-LOT1 table plus plain answers to the five CAR-T
-#       questions.
-#   D1-D3  Deep-dives on the study team's concerns: is Melphalan-in-2L really
-#       transplant conditioning (D1); top-15 1L/2L regimens with LENA+DARA in
-#       context (D2); raw-claim journeys behind the DARA+BORT same-day result (D3).
+#   Q1  Steroids: the LOT rules already leave them out, with an audit that no
+#       steroid token is in any regimen, and a note on where they still show up.
+#   Q2  Among 1L DARA+BORT patients, how far apart are the two start dates?
+#   Q3  Share on LENA+DARA in 1L and 2L - the exact pair, and a wider
+#       "contains both" count.
+#   Q4  Melphalan in 2L by start year: was it phased out after 2017?
+#   Q5  CAR-T against LOT1, plus plain answers to the five CAR-T questions.
+#   D1-D3  Deep dives: is Melphalan-in-2L really transplant conditioning; the
+#       top-15 1L/2L regimens with LENA+DARA in context; raw-claim journeys
+#       behind the DARA+BORT same-day result.
 #
-# Writes no permanent tables (only session temp views). A run writes one Excel
-# workbook, a log, and the output folder if missing, and may set env defaults
-# from pipeline_inputs.csv. Safe to run any time.
+# Writes no permanent tables - session temp views only. A run writes one Excel
+# workbook and a log. Safe to run any time.
 
 .script_dir <- local({
   args <- commandArgs(trailingOnly = FALSE)

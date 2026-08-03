@@ -17,27 +17,21 @@
 #       Counted before the line criteria, since one of them removes the
 #       patients being counted.
 #
-# NDMM only. Reads this run's own tables (LOT_LONG, LOT_LONG_ALLFLAGS,
-# MAP_STACKED, NDMM_CLINTRIAL_FLAGS) and the raw CDM; it builds nothing and is
-# safe to run any time. Anything needing a second cohort is in
-# broad_studyteam_qs.R.
+# NDMM only. Reads this run's own tables and the raw CDM, builds nothing, safe
+# to run any time. Anything needing a second cohort is in broad_studyteam_qs.R.
 #
-# Three honest limits, surfaced in the output rather than hidden:
-#  - "Another cancer" (#8) and "clinical trial" (#10) are *exclusion*
-#    criteria, so the 1L regimen (LOT_LONG) only exists for patients who
-#    survived them. POMA-at-1L is therefore identifiable for delivered
-#    patients; for patients excluded on those criteria the 1L regimen
-#    cannot be reconstructed from this cohort at all - that is what the
-#    broad script is for.
-#  - Payer/plan is never projected by the pipeline; member_enrollment is
-#    introspected at runtime and candidate plan columns are dumped for an
-#    analyst to map Medicare Advantage (no guessed column names).
-#  - Cancer *type* is not in the persisted flags; this is a guarded raw
-#    ICD-10 C-code scan (C90* excluded) - NOT the cohort's other_malig
-#    criterion, which uses the tumor-group codelist + a 1-inpatient or
-#    2-outpatient confirmation rule. Re-run that step for an authoritative
-#    breakdown. CDM tables go through cdm_src() so the quarterly vintage
-#    matches the rest of the pipeline (USE_QUARTERLY_TABLES).
+# Limits, surfaced in the output rather than hidden:
+#  - "Another cancer" and "clinical trial" are EXCLUSION criteria, so LOT_LONG
+#    only exists for patients who survived them. For patients excluded on
+#    those, the 1L regimen cannot be reconstructed here at all - that is what
+#    the broad script is for.
+#  - Payer is never projected by the pipeline. member_enrollment is
+#    introspected at runtime and candidate columns are dumped for an analyst to
+#    map Medicare Advantage; no column name is guessed.
+#  - Cancer TYPE is not in the persisted flags. This is a guarded raw ICD-10
+#    C-code scan with C90* excluded - NOT the cohort's other_malig criterion,
+#    which uses the tumour-group code list and a 1-inpatient or 2-outpatient
+#    confirmation rule. Re-run that step for an authoritative breakdown.
 
 .script_dir <- local({
   args <- commandArgs(trailingOnly = FALSE)

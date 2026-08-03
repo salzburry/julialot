@@ -78,28 +78,23 @@ NDMM_BELANTAMAB_TX        <- "_ndmm_belantamab_tx"
 #
 # nndm_constants.R lists the tumour groups the other-cancer rule must not
 # exclude on. Three of them are the "not having achieved remission" state of a
-# plasma-cell disorder, and the remaining states were left in the filter.
+# plasma-cell disorder, and the other states were left in the filter:
 #
-# other_malig.csv carries each of those three conditions in three states:
+#   C9010 / C9011 / C9012  Plasma cell leukemia        not achieved / remission / relapse
+#   C9020 / C9021 / C9022  Extramedullary plasmacytoma not achieved / remission / relapse
+#   C9030 / C9031 / C9032  Solitary plasmacytoma       not achieved / remission / relapse
 #
-#   C9010 / C9011 / C9012  Plasma cell leukemia        not achieved / in remission / in relapse
-#   C9020 / C9021 / C9022  Extramedullary plasmacytoma not achieved / in remission / in relapse
-#   C9030 / C9031 / C9032  Solitary plasmacytoma       not achieved / in remission / in relapse
+# Only the first of each three was overridden, so a patient was excluded for
+# another cancer because their plasma cell leukemia was in remission, while an
+# identical patient whose leukemia had not achieved remission was kept. A
+# disease state cannot make a plasma-cell disorder into a different cancer.
 #
-# Only the first of each three was overridden. So a patient was excluded for
-# having another cancer because their plasma cell leukemia was in remission or
-# in relapse, while an identical patient whose plasma cell leukemia had not
-# achieved remission was kept. A disease state cannot make a plasma-cell
-# disorder into a different cancer - relapse least of all.
+# tumour_group is one label per ICD code, not a grouping, so to the rule that
+# reads it these really are separate groups.
 #
-# tumour_group in that file is one label per ICD code, not a grouping, so these
-# really are separate groups to the rule that reads it.
-#
-# The default overrides all six. Set NDMM_MM_ADJACENT_STATES=exclude to keep
-# them in the filter and compare.
-#
-# These are not required to exist - absence just means the code list stopped
-# carrying the wording. NDMM_MM_ADJACENT_GROUPS records what was found.
+# The default overrides all six. NDMM_MM_ADJACENT_STATES=exclude keeps them in
+# the filter. None is required to exist - absence means the code list stopped
+# carrying the wording, and NDMM_MM_ADJACENT_GROUPS records what was found.
 NDMM_MM_ADJACENT_STATES <- Sys.getenv("NDMM_MM_ADJACENT_STATES", unset = "override")
 NDMM_MM_ADJACENT_STATE_LABELS <- c(
   "PLASMA CELL LEUKEMIA IN REMISSION",
@@ -129,19 +124,18 @@ NDMM_INDEX_INELIGIBLE     <- "_ndmm_index_ineligible"
 # Metastatic (secondary) neoplasm codes, matched as prefixes on the
 # punctuation-stripped code - so "C78" covers C78.00 and C78.7.
 #
-# These form one group rather than pairing by ICD category. Two outpatient
-# claims for metastases at different sites are still metastatic cancer, which
-# the rule excludes on in its own right; pairing them on site would ask for the
-# same metastasis twice. Primaries keep the category rule.
+# One group rather than pairing by ICD category: two outpatient claims for
+# metastases at different sites are still metastatic cancer, and pairing them
+# on site would ask for the same metastasis twice. Primaries keep the category
+# rule.
 #
-# C80.0 is disseminated disease and is here. C80.1 (primary site unknown) and
-# C80.2 are not secondary, so the prefix is C800 rather than C80 - the same
-# reason 1990 is listed rather than 199.
+# C80.0 is disseminated disease and is here. C80.1 and C80.2 are not secondary,
+# so the prefix is C800 rather than C80 - the same reason 1990 is listed
+# rather than 199.
 #
 # Only codes already on other_malig.csv are affected: this regroups what the
-# exclusion already reads and adds nothing to it. build_ndmm_other_malig_codes()
-# reports which of these prefixes actually matched, so one that matches nothing
-# is visible rather than silently doing nothing.
+# exclusion reads and adds nothing. build_ndmm_other_malig_codes() reports
+# which prefixes matched, so one that matches nothing is visible.
 NDMM_METASTATIC_PREFIXES <- c(
   # ICD-10. Lymph nodes; respiratory and digestive; other and unspecified
   # sites; secondary neuroendocrine; disseminated.
