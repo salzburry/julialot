@@ -1646,8 +1646,18 @@ if (requireNamespace("bit64", quietly = TRUE)) {
      "...a count of 1780 with its class dropped renders as 8.794368e-321")
   ok(identical(paste0(as.numeric(raw)), "1780"),
      "...and as.numeric() reads the integer back, which is what db_q() does")
+  # cat() does not dispatch S3 methods, so log_msg() has to coerce itself -
+  # a count that reaches a message any way other than through db_q() would
+  # still print its bits. The real one, not the silent stub the tests above
+  # put in the global environment.
+  le <- new.env(parent = globalenv())
+  sys.source(file.path(ROOT, "R", "db_utils.R"), envir = le)
+  said <- paste(capture.output(le$log_msg("n = ", raw)), collapse = " ")
+  ok(grepl("1780", said, fixed = TRUE) && !grepl("e-32", said, fixed = TRUE),
+     "...and log_msg() prints such a count as 1780, not its bit pattern")
 } else {
   ok(TRUE, "bit64 not installed here - the conversion is checked by reading db_q()")
+  ok(TRUE, "...")
   ok(TRUE, "...")
 }
 # Every count in this build is far below 2^53, so the conversion is lossless.

@@ -29,12 +29,18 @@ DASH  <- strrep("-", 70)
 }
 
 log_msg <- function(...) {
+  # cat() does NOT dispatch S3 methods, so a bit64::integer64 from the driver
+  # is written as its raw bit pattern - a count of 1780 came out of a real run
+  # as 8.794368e-321. format() dispatches, so coerce first. db_q() converts on
+  # the way out too; this catches anything that reaches a message another way.
+  a <- lapply(list(...), function(x)
+    if (inherits(x, "integer64")) format(as.numeric(x), scientific = FALSE) else x)
   prefix <- sprintf("[%s] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"))
-  cat(prefix, ..., "\n")
+  do.call(cat, c(list(prefix), a, "\n"))
   flush.console()
   try({
     lf <- .resolve_log_file()
-    cat(prefix, ..., "\n", file = lf, append = TRUE)
+    do.call(cat, c(list(prefix), a, "\n", file = lf, append = TRUE))
   }, silent = TRUE)
 }
 
