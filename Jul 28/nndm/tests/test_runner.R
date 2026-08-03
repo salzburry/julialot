@@ -1568,4 +1568,50 @@ ok(!any(grepl("ELSE 'ICD10' END", ct, fixed = TRUE)) &&
      sum(grepl("icd_family_sql(", ct, fixed = TRUE)) >= 2,
    "both ICD sources go through the three-way family rule")
 
+cat("\n-- a statement built by concatenation still parses as SQL --\n")
+# glue() trims trailing newlines. So paste0(glue("... AS"), body) and
+# paste0(glue("... AS\\n"), body) BOTH produce "...ASSELECT", which Spark
+# rejects with a syntax error at the first line of the statement. Three
+# statements in 00b_lot1_index.R were built that way, and nothing caught it:
+# the tests grep the SQL for fragments, and every fragment was present and
+# correct - they were simply run together.
+#
+# Checked as behaviour, not as text, so it holds however the SQL is written.
+ok(!grepl("\n$", glue::glue("SELECT 1 AS\n")),
+   "glue() really does trim a trailing newline - the trap this guards")
+# Walk the parse tree rather than the text: find every paste0(glue(...), x)
+# and, when the glue literal ends on a SQL keyword, require x to begin with
+# whitespace. A regex over the source missed the real thing when it was there.
+kw_tail <- function(lit)
+  grepl("(^|[[:space:]])(AS|SELECT|FROM|WHERE|UNION|ALL)$", trimws(lit))
+asm <- character(0)
+for (f in list.files(file.path(ROOT, "R"), "\\.R$", recursive = TRUE,
+                     full.names = TRUE)) {
+  walk <- function(e) {
+    if (!is.call(e)) return(invisible(NULL))
+    if (identical(as.character(e[[1]])[1], "paste0") && length(e) >= 3) {
+      a1 <- e[[2]]
+      if (is.call(a1) && identical(as.character(a1[[1]])[1], "glue") &&
+          length(a1) >= 2 && is.character(a1[[2]]) && kw_tail(a1[[2]])) {
+        nx <- e[[3]]
+        if (!(is.character(nx) && grepl("^[[:space:]]", nx)))
+          asm <<- c(asm, paste0(basename(f), ": ...",
+                                substr(trimws(a1[[2]]), max(1, nchar(trimws(a1[[2]])) - 28),
+                                       nchar(trimws(a1[[2]])))))
+      }
+    }
+    for (i in seq_along(e)) if (!is.null(e[[i]])) walk(e[[i]])
+  }
+  for (ex in parse(f, keep.source = FALSE)) walk(ex)
+}
+ok(!length(asm),
+   if (length(asm)) paste0("a statement is concatenated onto a trailing keyword ",
+                           "with no separator: ", paste(unique(asm), collapse = "; "))
+   else "no statement is concatenated straight onto a trailing keyword")
+# The three that were broken, held by their own shape now.
+ix <- readLines(file.path(ROOT, "R", "steps", "00b_lot1_index.R"), warn = FALSE)
+ok(sum(grepl('AS"), "\\n"', ix, fixed = TRUE)) == 3L,
+   paste0("the three assembled statements separate the keyword from the body (",
+          sum(grepl('AS"), "\\n"', ix, fixed = TRUE)), ")"))
+
 report()
