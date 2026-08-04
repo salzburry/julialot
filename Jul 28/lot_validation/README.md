@@ -1,7 +1,7 @@
 # LOT validation
 
-Four validation asks against the LOT algorithm, each taken as far as this
-folder can take it.
+Four validation asks against the LOT algorithm, plus one study-team rule
+proposal, each taken as far as this folder can take it.
 
 **Where each one stands.** None of it has executed against a warehouse, so
 nothing here is an observed output.
@@ -12,6 +12,7 @@ nothing here is an observed output.
 | Sensitivity sweep | **harness complete, unrun.** Thirteen builds' worth of warehouse, opt-in, with the directions predicted first. Every cell is an explicit non-contract build, marked as one in the warehouse. |
 | Distribution benchmarks | **harness complete, pending sources.** Every measurement is written and checked; `benchmarks.csv` ships with `published_value` blank, because the published figures are not this folder's to write. |
 | Definition comparison | **our column complete, theirs pending sources.** The consensus paper and the trial protocols are not in this folder, and nothing here stands in for them. |
+| Melphalan rule | **complete as a measurement, unrun.** A proposed line-advancing rule, counted against a finished run. It changes nothing in `lot` and rebuilds nothing. |
 
 Two of the four wait on somebody with the literature. That is stated per row in
 the outputs as well, so an unfilled cell reports itself rather than passing.
@@ -397,3 +398,59 @@ somebody with the sources has to add them.
 
 The definition comparison above is the same limit at protocol scale: the
 framework and our column are built; the source documents are not here.
+
+
+## The melphalan rule
+
+A study-team proposal: a melphalan administration should advance the line on
+windows of its own. The rule and how it differs from the build, branch by
+branch, are in `questions/melphalan_lot_rule.md`. This measures it.
+
+```
+Rscript lot_validation/run_melphalan_rule.R                       # the rule, no connection
+
+DATABRICKS_PWD=... DOMINO_USER_NAME=usr00000 OBJECT_PREFIX=ndmm_ \
+  MELP_EXECUTE=TRUE Rscript lot_validation/run_melphalan_rule.R   # measure it
+```
+
+**It changes nothing in `lot`.** No setting, no step, no line rebuilt — it reads
+a finished run and counts the line boundaries the rule would add and remove.
+That is deliberate: the three files it would otherwise touch are compared
+line-for-line against the source, and a proposal under discussion should not
+move them.
+
+| table | one row per |
+|---|---|
+| `<prefix>MELP_RULE_EXPOSURES` | exposure — its line, its gap, and what the rule does with it |
+| `<prefix>MELP_RULE_BRANCHES` | branch of the rule — the table from the request, with counts |
+| `<prefix>MELP_RULE_IMPACT` | patient whose line count moves — split, merged, before and after |
+
+### What it can and cannot say
+
+**Exact:** the line count. A boundary the rule adds has the rule's own date. A
+boundary it removes is a line the build ended by adding this drug, at a place
+the rule says does not advance — that is a count, not an estimate.
+
+**Not offered:** the line *dates* after a merge. Merging two lines leaves a line
+whose regimen, end reason and length come from claims, not from the two lines,
+so they need a build. Nothing here invents them.
+
+**Read the two directions, not the net.** The rule adds boundaries where a late
+re-dose is currently absorbed and removes them where a melphalan add currently
+advances the line. A net near zero is two large numbers cancelling, not no
+effect.
+
+### The transplant question
+
+High-dose melphalan is transplant conditioning, and the build already has a
+transplant rule with the same 180-day tandem window. The request does not say
+what happens when both see one event, so `MELP_RULE_MODE` carries both readings
+and every output row records which produced it:
+
+| | |
+|---|---|
+| `yield_to_sct` *(default)* | an exposure with an AUTO coded within `MELP_SCT_DAYS` is left to the transplant rule. The melphalan rule then fills only the gap where a transplant left no procedure code. |
+| `as_asked` | every exposure is judged, as the rule is written. Where a transplant is coded, both rules see one event; `HAS_AUTO` counts the overlap either way. |
+
+`HAS_AUTO` is recorded under both, so the size of the overlap is readable
+without running it twice — though running it twice is the direct comparison.
