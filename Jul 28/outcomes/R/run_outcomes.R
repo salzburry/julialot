@@ -82,7 +82,7 @@ check_lot_run <- function(con, prefix, cohort_table, study_end) {
 # Re-running the cohort build under the same prefix replaces the cohort, the
 # enrollment spans and NDMM_BASE_COHORT in place, and the name is unchanged - so
 # outcomes would measure lines built over attempt A using death, enrolment and
-# diagnosis dates from attempt B. LOT records which attempt it read; this asks.
+# diagnosis dates from attempt B. LOT records which attempt it read, so ask.
 #
 # The same shape as nndm/R/build_subsequent.R, and for the same reason.
 check_cohort_attempt <- function(con, lot_run_id) {
@@ -160,9 +160,9 @@ check_lines_in_followup <- function(con, tte_tbl, lines_tbl, cohort_tbl) {
   invisible(c(no_cohort = no_coh, after_followup = after))
 }
 
-# The README's promise, kept: a table left behind by an earlier run is a
-# mismatch rather than a silent mix. Asked of the tables themselves, because a
-# log line saying they are stamped is not evidence that they are.
+# A table left behind by an earlier run is a mismatch rather than a silent mix.
+# Asked of the tables themselves: a log line saying they are stamped is not
+# evidence that they are.
 check_stamps <- function(con, run_id, tbls, tte) {
   bad <- character(0)
   for (t in c(tte, tbls)) {
