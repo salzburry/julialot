@@ -256,7 +256,7 @@ check_upstream <- function(con, cfg) {
 }
 
 # The SQL does not read cfg. It reads the NDMM_* constants in
-# nndm_constants.R, which carries its own environment variables -
+# ndmm_constants.R, which carries its own environment variables -
 # NDMM_LOT1_FROM among them. So a contract checked against cfg proves nothing
 # about the query that runs. This compares the constants themselves, after the
 # modules are loaded, and is the only check that speaks for the SQL.
@@ -499,7 +499,7 @@ check_ndc_shape <- function(con, cfg) {
     if (nrow(d) == 0) return(invisible(FALSE))
     if (!(name %in% waivers())) stop(msg, call. = FALSE)
     log_msg("WAIVED (", name, "): ", detail(d))
-    options(nndm_waivers_applied = union(getOption("nndm_waivers_applied",
+    options(ndmm_waivers_applied = union(getOption("ndmm_waivers_applied",
                                                    character(0)), name))
     invisible(TRUE)
   }
@@ -596,7 +596,7 @@ write_run_metadata <- function(con, cfg, here, n) {
          "{sql_text(code_fingerprint(here))}, ",
          "{sql_text(contract_settings())}, ",
          "{sql_text(paste(sort(waivers_named(), method = 'radix'), collapse = ','))}, ",
-         "{sql_text(paste(sort(getOption('nndm_waivers_applied', character(0)), ",
+         "{sql_text(paste(sort(getOption('ndmm_waivers_applied', character(0)), ",
          "method = 'radix'), collapse = ','))}, ",
          "{sql_count(n)}, current_timestamp())"))
   log_msg("Run recorded in ", tbl)
@@ -744,7 +744,7 @@ CODELIST_METADATA_COLS <- c(RUN_ID = "STRING", CSV_NAME = "STRING",
 # Those hashes were being collected into an option and then dropped. Written
 # here, so the outputs say which code lists built them.
 write_codelist_metadata <- function(con, cfg) {
-  seen <- getOption("nndm_codelist_md5", list())
+  seen <- getOption("ndmm_codelist_md5", list())
   # All of them, not merely some. "None recorded" was the only thing this
   # stopped on, so a run that read three of the four would have published a
   # cohort traceable to three.
@@ -931,10 +931,10 @@ clear_run_rows <- function(con, cfg) {
   invisible(TRUE)
 }
 
-load_nndm_modules <- function(here) {
+load_ndmm_modules <- function(here) {
   source(file.path(here, "R", "load_inputs.R"))
   load_pipeline_inputs(here, "config.csv")
-  for (f in c("config.R", "db_utils.R", "codelists.R", "nndm_constants.R",
+  for (f in c("config.R", "db_utils.R", "codelists.R", "ndmm_constants.R",
               "standalone_constants.R"))
     source(file.path(here, "R", f))
   for (f in sort(list.files(file.path(here, "R", "steps"), "\\.R$", full.names = TRUE)))
@@ -942,7 +942,7 @@ load_nndm_modules <- function(here) {
   invisible(TRUE)
 }
 
-build_nndm <- function(here, prefix) {
+build_ndmm <- function(here, prefix) {
   check_settings()
   cfg <- pin_output_schema(cfg_defaults)
   cfg <- pin_prefix(cfg, prefix)
@@ -977,11 +977,11 @@ build_nndm <- function(here, prefix) {
   #
   # After = FALSE, or this fires after the disconnect above and writes to a
   # closed connection.
-  on.exit(if (!isTRUE(getOption("nndm_complete", FALSE)))
+  on.exit(if (!isTRUE(getOption("ndmm_complete", FALSE)))
             try(write_build_status(con, cfg, "failed"), silent = TRUE),
           add = TRUE, after = FALSE)
-  options(nndm_complete = FALSE, nndm_codelist_md5 = list(),
-          nndm_waivers_applied = character(0))
+  options(ndmm_complete = FALSE, ndmm_codelist_md5 = list(),
+          ndmm_waivers_applied = character(0))
   # After the status row, so a run is marked started whatever this does, and
   # before the first step, so no writer can be reached with the previous
   # attempt's rows still under this run's id.
@@ -1098,7 +1098,7 @@ build_nndm <- function(here, prefix) {
   write_run_metadata(con, cfg, here, ndmm_final_count(counts))
 
   write_build_status(con, cfg, "complete", ndmm_final_count(counts))
-  options(nndm_complete = TRUE)
+  options(ndmm_complete = TRUE)
   log_msg(SEP)
   log_msg("NDMM 1L cohort: ", format(ndmm_final_count(counts), big.mark = ","),
           " patients -> ", wrk("NDMM_COHORT"))

@@ -154,7 +154,7 @@ LOT_DIMENSIONS <- list(
        ours = paste0("The first eligible MM therapy claim on or after the MM ",
                      "diagnosis and on or after LOT1_FROM. Belantamab and ",
                      "steroids cannot set it. That date is the cohort index."),
-       where = "nndm/R/steps/00b_lot1_index.R:147",
+       where = "ndmm/R/steps/00b_lot1_index.R:147",
        question = paste0("How is the start of first-line therapy defined, and ",
                          "may any agent set it?")))
 

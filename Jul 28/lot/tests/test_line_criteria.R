@@ -32,7 +32,7 @@ clear <- function() for (v in paste0("APPLY_", toupper(c("c1","c2","c3","c4"))))
 cat("\n-- the shipped registry --\n")
 runs(validate_line_criteria(), "the shipped registry validates")
 # One criterion ships: the belantamab exclusion, applied here because
-# lines do not exist when the NDMM cohort is built. See nndm/DECISIONS.md #2.
+# lines do not exist when the NDMM cohort is built. See ndmm/DECISIONS.md #2.
 ok(length(LINE_CRITERIA) == 1 &&
      identical(LINE_CRITERIA[[1]]$name, "no_belantamab"),
    "the belantamab exclusion is the one criterion shipped")

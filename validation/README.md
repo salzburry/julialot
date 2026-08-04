@@ -22,7 +22,7 @@ baseline, and the equivalence check still runs on every change.
 | | |
 |---|---|
 | `port/overall.R` | the overall build's steps against the baseline, line for line |
-| `port/nndm.R` | every ported NDMM file against its range in the baseline |
+| `port/ndmm.R` | every ported NDMM file against its range in the baseline |
 | `port/lot.R` | the LOT1 phases and `10_lot2_5_base.R` against the baseline |
 | `hygiene/lot_selfcontained.R` | the LOT package resolves no path outside itself |
 

@@ -67,7 +67,7 @@ print_plan <- function(cells) {
       "  maintenance-as-LOT   not a setting. Maintenance is a flag and there is\n",
       "                       no maintenance period (lot/R/steps/05_sct.R:13), so\n",
       "                       there is nothing to vary. It is in the vignettes.\n",
-      "  CE ELIGIBILITY       who qualifies - the cohort build's axis. nndm\n",
+      "  CE ELIGIBILITY       who qualifies - the cohort build's axis. ndmm\n",
       "                       already reports it from one run (NDMM_FU_CE_COUNTS);\n",
       "                       sweeping it here would rebuild the cohort per cell.\n",
       "                       CE as CENSORING is a different question and IS swept:\n",

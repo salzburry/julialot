@@ -2,7 +2,7 @@
 # The 2L and 3L cohorts, held to protocol 6.2.1.1. No warehouse: the SQL is
 # built as a string and the guards are driven with stubs.
 #
-#   Rscript "nndm/tests/test_subsequent.R"
+#   Rscript "ndmm/tests/test_subsequent.R"
 
 ROOT <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -16,7 +16,7 @@ sys.source(file.path(ROOT, "R", "load_inputs.R"), envir = globalenv())
 load_pipeline_inputs(ROOT, "config.csv")
 sys.source(file.path(ROOT, "R", "config.R"), envir = globalenv())
 sys.source(file.path(ROOT, "R", "db_utils.R"), envir = globalenv())
-sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = globalenv())
+sys.source(file.path(ROOT, "R", "ndmm_constants.R"), envir = globalenv())
 sys.source(file.path(ROOT, "R", "build_subsequent.R"), envir = globalenv())
 
 SQL2 <- subseq_cohort_sql(2L, "s.c1", "s.c2", 365L, 90L, "s.LINES", "s.SPANS",
@@ -146,16 +146,16 @@ STATUS[c("RUN_ID", "STATE", "UPDATED_AT", "INPUT_COHORT_TABLE")] <-
 META <- setNames(as.list(rep("", length(LOTCOLS$meta))), LOTCOLS$meta)
 META[c("COHORT_RUN_ID", "COHORT_STAMP")] <- list("N1", "s1")
 META$RUN_ID <- "L1"
-NNDM <- list(RUN_ID = "N1", UPDATED_AT = "s1")
+NDMM <- list(RUN_ID = "N1", UPDATED_AT = "s1")
 
-mk <- function(lot = STATUS, meta = META, nndm = NNDM) {
+mk <- function(lot = STATUS, meta = META, ndmm = NDMM) {
   e <- new.env(parent = globalenv())
   assign("wrk", function(t) paste0("sch.ndmm_", t), envir = e)
   assign("log_msg", function(...) invisible(NULL), envir = e)
   assign("db_q", function(con, sql) {
     hit <- function(t) grepl(t, sql, fixed = TRUE)
     d <- if (hit("LOT_RUN_METADATA")) meta
-         else if (hit("NDMM_BUILD_STATUS")) nndm
+         else if (hit("NDMM_BUILD_STATUS")) ndmm
          else lot
     if (is.null(d)) stop("TABLE_OR_VIEW_NOT_FOUND")
     as.data.frame(d, stringsAsFactors = FALSE)
@@ -183,9 +183,9 @@ refuses(mk(lot = NULL), "No LOT run is recorded",
         "no LOT run at all is refused, not treated as zero rows")
 # A re-run under one prefix replaces NDMM_COHORT and both span tables in
 # place, so the name still matches while the data is a later attempt.
-refuses(mk(nndm = list(RUN_ID = "N2", UPDATED_AT = "s2")), "now holds run N2",
-        "NNDM rerun after the LOT build is refused - lines from A, spans from B")
-refuses(mk(nndm = list(RUN_ID = "N1", UPDATED_AT = "s2")), "now holds run N1",
+refuses(mk(ndmm = list(RUN_ID = "N2", UPDATED_AT = "s2")), "now holds run N2",
+        "NDMM rerun after the LOT build is refused - lines from A, spans from B")
+refuses(mk(ndmm = list(RUN_ID = "N1", UPDATED_AT = "s2")), "now holds run N1",
         "...and a same-id re-run is caught by the stamp")
 # A complete LOT run always wrote its metadata row. Missing means something is
 # wrong with what is on disk, not that this is an older run.
@@ -193,12 +193,12 @@ refuses(mk(meta = NULL), "has no row in",
         "a complete run with no metadata row is refused, not waved through")
 runs(mk(meta = modifyList(META, list(COHORT_RUN_ID = "")))(NULL, "ndmm_"),
      "a LOT run that recorded no attempt is reported, not failed on a blank")
-runs(mk(nndm = NULL)(NULL, "ndmm_"),
-     "no NNDM status table is reported, not treated as a mismatch")
+runs(mk(ndmm = NULL)(NULL, "ndmm_"),
+     "no NDMM status table is reported, not treated as a mismatch")
 
 cat("\n-- it can actually run --\n")
 # Every function called has to exist, or the first thing a production run
-# finds is a typo. set_nndm_config() was one.
+# finds is a typo. set_ndmm_config() was one.
 scan_names <- local({
   fns <- character(0); bound <- character(0)
   walk <- function(e) {
@@ -218,7 +218,7 @@ scan_names <- local({
   list(called = unique(fns), bound = unique(bound))
 })
 env <- new.env(parent = globalenv())
-sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = env)
+sys.source(file.path(ROOT, "R", "build_ndmm.R"), envir = env)
 missing <- Filter(function(f) !exists(f, envir = env) && !exists(f, envir = globalenv()) &&
                     !exists(f, envir = baseenv()) &&
                     !any(vapply(search(), function(s) exists(f, where = s, inherits = FALSE),

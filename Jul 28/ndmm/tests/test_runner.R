@@ -1,9 +1,9 @@
 #!/usr/bin/env Rscript
-# What build_nndm() does, driven rather than grepped for. The rules in R/steps
+# What build_ndmm() does, driven rather than grepped for. The rules in R/steps
 # are held to the study rules by the checks below; this is about the runner
 # around them - the guards, the attrition, and the order.
 #
-#   Rscript "nndm/tests/test_runner.R"
+#   Rscript "ndmm/tests/test_runner.R"
 
 ROOT <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -20,24 +20,24 @@ sys.source(file.path(ROOT, "R", "load_inputs.R"), envir = globalenv())
 load_pipeline_inputs(ROOT, "config.csv")
 
 env <- new.env(parent = globalenv())
-sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = env)
+sys.source(file.path(ROOT, "R", "build_ndmm.R"), envir = env)
 for (f in ls(env)) assign(f, get(f, envir = env), envir = globalenv())
 sys.source(file.path(ROOT, "R", "config.R"), envir = globalenv())
 sys.source(file.path(ROOT, "R", "db_utils.R"), envir = globalenv())
 sys.source(file.path(ROOT, "R", "codelists.R"), envir = globalenv())
 # The NDMM_* constants are what the SQL reads, and check_constants() compares
-# them against cfg. Loaded here the same way load_nndm_modules() loads them.
-sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = globalenv())
+# them against cfg. Loaded here the same way load_ndmm_modules() loads them.
+sys.source(file.path(ROOT, "R", "ndmm_constants.R"), envir = globalenv())
 sys.source(file.path(ROOT, "R", "standalone_constants.R"), envir = globalenv())
-bl   <- paste(readLines(file.path(ROOT, "R", "build_nndm.R"), warn = FALSE), collapse = "\n")
+bl   <- paste(readLines(file.path(ROOT, "R", "build_ndmm.R"), warn = FALSE), collapse = "\n")
 # The parsed body, not the file text: a call named only in a comment is not a
 # call, and matching raw text counted one. parse() drops comments outright.
 body <- local({
   fn <- NULL
-  for (e in parse(file.path(ROOT, "R", "build_nndm.R"), keep.source = FALSE))
+  for (e in parse(file.path(ROOT, "R", "build_ndmm.R"), keep.source = FALSE))
     if (is.call(e) && identical(as.character(e[[1]]), "<-") &&
-        identical(as.character(e[[2]]), "build_nndm")) fn <- e[[3]]
-  if (is.null(fn)) stop("build_nndm() not found")
+        identical(as.character(e[[2]]), "build_ndmm")) fn <- e[[3]]
+  if (is.null(fn)) stop("build_ndmm() not found")
   paste(deparse(fn), collapse = "\n")
 })
 
@@ -82,8 +82,8 @@ at <- vapply(ORDER, function(f) {
 }, integer(1))
 absent <- names(at)[is.na(at)]
 ok(length(absent) == 0,
-   if (length(absent)) paste0("build_nndm() never calls: ", paste(absent, collapse = ", "))
-   else paste0("build_nndm() calls all ", length(ORDER), " phases and checks"))
+   if (length(absent)) paste0("build_ndmm() never calls: ", paste(absent, collapse = ", "))
+   else paste0("build_ndmm() calls all ", length(ORDER), " phases and checks"))
 ok(!any(is.na(at)) && !is.unsorted(at[!is.na(at)]), "and calls them in that order")
 # Inputs are checked before anything is built, or the first missing one
 # surfaces as a failed join rather than as a named table.
@@ -156,7 +156,7 @@ for (k in c("lot1_from", "fu_ce_days", "pre_lot1_days", "gap_days", "study_end")
 
 cat("\n-- every input is present, or the run says which is not --\n")
 ue <- new.env(parent = globalenv())
-sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = ue)
+sys.source(file.path(ROOT, "R", "build_ndmm.R"), envir = ue)
 assign("log_msg", function(...) invisible(NULL), envir = ue)
 assign("wrk", function(x) paste0("wk.p_", x), envir = ue)
 assign("cdm_src", function(x) paste0("cdm.t_", x), envir = ue)
@@ -199,7 +199,7 @@ cat("\n-- the preflight covers every table a step actually reads --\n")
 # and the run died in phase one. Read the tables out of the steps instead of
 # trusting the list.
 consts0 <- new.env(parent = globalenv())
-sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = consts0)
+sys.source(file.path(ROOT, "R", "ndmm_constants.R"), envir = consts0)
 sys.source(file.path(ROOT, "R", "standalone_constants.R"), envir = consts0)
 step_files <- list.files(file.path(ROOT, "R", "steps"), "\\.R$", full.names = TRUE)
 read_raw <- unique(unlist(lapply(step_files, function(f) {
@@ -227,7 +227,7 @@ cat("\n-- the settings the SQL uses, not the ones cfg holds --\n")
 # their own environment variables - NDMM_LOT1_FROM is not LOT1_FROM. Setting it
 # moved the 1L cutoff with the contract still passing.
 ce0 <- new.env(parent = globalenv())
-sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = ce0)
+sys.source(file.path(ROOT, "R", "build_ndmm.R"), envir = ce0)
 base_cfg <- modifyList(cfg_defaults, list(work_schema = "wk", object_prefix = "p_"))
 ok(identical(tryCatch({ check_constants(base_cfg); "" }, error = conditionMessage), ""),
    "the shipped constants match the contract they are checked against")
@@ -241,11 +241,11 @@ for (s in CONSTANT_SETTINGS) {
      paste0(s$const, " drifting from ", s$cfg, " stops the build, named"))
 }
 
-# And the list has to be complete. Every constant nndm_constants.R reads from
+# And the list has to be complete. Every constant ndmm_constants.R reads from
 # the environment is a knob someone can turn without touching config.csv, so
 # each one must be pinned - read from the file rather than listed by hand,
 # because listing by hand is how NDMM_LOT1_FROM went unnoticed.
-kl <- c(readLines(file.path(ROOT, "R", "nndm_constants.R"), warn = FALSE),
+kl <- c(readLines(file.path(ROOT, "R", "ndmm_constants.R"), warn = FALSE),
         readLines(file.path(ROOT, "R", "standalone_constants.R"), warn = FALSE))
 env_consts <- unique(sub("^\\s*([A-Za-z_.][A-Za-z0-9_.]*)\\s*<-.*", "\\1",
                          grep("^\\s*[A-Za-z_.][A-Za-z0-9_.]*\\s*<-.*Sys\\.getenv",
@@ -258,7 +258,7 @@ env_consts <- env_consts[vapply(env_consts, function(k)
 pinned <- vapply(CONSTANT_SETTINGS, function(s) s$const, character(1))
 unpinned <- setdiff(env_consts, pinned)
 ok(length(env_consts) > 0,
-   paste0("nndm_constants.R takes ", length(env_consts), " values from the environment"))
+   paste0("ndmm_constants.R takes ", length(env_consts), " values from the environment"))
 ok(length(unpinned) == 0,
    if (length(unpinned)) paste0("settable from the environment but never checked: ",
                                 paste(unpinned, collapse = ", "))
@@ -285,7 +285,7 @@ ok(length(notallowed) == 0,
 tmp <- file.path(tempdir(), paste0("cl", as.integer(Sys.time())))
 dir.create(tmp, showWarnings = FALSE, recursive = TRUE)
 assign("cfg", modifyList(cfg_defaults, list(codelist_dir = tmp)), envir = globalenv())
-options(nndm_codelist_md5 = list())
+options(ndmm_codelist_md5 = list())
 writeLines(c("dx,icd_family,tumor_group", "C349,ICD10,LUNG"),
            file.path(tmp, "other_malig.csv"))
 got <- tryCatch(load_codelist_csv("other_malig.csv", c("dx", "icd_family", "tumor_group")),
@@ -329,7 +329,7 @@ cat("\n-- the attrition steps match what the counts return --\n")
 # ndmm_counts(), so a key that does not exist there yields NULL and a row with
 # no count. Driven against the real function rather than compared by eye.
 ce <- new.env(parent = globalenv())
-sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = ce)
+sys.source(file.path(ROOT, "R", "ndmm_constants.R"), envir = ce)
 sys.source(file.path(ROOT, "R", "steps", "07_cohort.R"), envir = ce)
 assign("log_msg", function(...) invisible(NULL), envir = ce)
 assign("wrk", function(x) paste0("wk.", x), envir = ce)
@@ -437,7 +437,7 @@ ok(!is.null(tryCatch({ check_attrition_monotonic(mk(c(0,0,0,0,0,0,0,0,0,0))); NU
 
 cat("\n-- the attrition reaches the warehouse --\n")
 ae <- new.env(parent = globalenv())
-sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = ae)
+sys.source(file.path(ROOT, "R", "build_ndmm.R"), envir = ae)
 assign("log_msg", function(...) invisible(NULL), envir = ae)
 assign("wrk", function(x) paste0("wk.p_", x), envir = ae)
 assign("run_id", "R1", envir = ae)
@@ -472,7 +472,7 @@ cat("\n-- two runs on one prefix would overwrite each other --\n")
 # reading through. Driven, not read: the whole point is what the function does
 # with the rows it gets back.
 na <- new.env(parent = globalenv())
-sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = na)
+sys.source(file.path(ROOT, "R", "build_ndmm.R"), envir = na)
 assign("log_msg", function(...) invisible(NULL), envir = na)
 assign("wrk", function(x) paste0("wk.p_", x), envir = na)
 assign("run_id", "R2", envir = na)
@@ -527,7 +527,7 @@ cat("\n-- a second attempt does not inherit the first's rows --\n")
 # Which tables those are is derived, not restated: each *_COLS declaring a
 # RUN_ID column is a run-scoped table, and the run has to clear all of them.
 cr <- new.env(parent = globalenv())
-sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = cr)
+sys.source(file.path(ROOT, "R", "build_ndmm.R"), envir = cr)
 assign("log_msg", function(...) CRLOG <<- c(CRLOG, paste0(...)), envir = cr)
 assign("wrk", function(x) paste0("wk.p_", x), envir = cr)
 assign("run_id", "R1", envir = cr)
@@ -584,7 +584,7 @@ ok(i_cr > 0 && i_p1 > 0 && i_bs < i_cr && i_cr < i_p1,
 # And the failed-status handler is registered before it, or a stop in the clear
 # would leave the status at "started" for ever and check_no_active_run() would
 # refuse every later run on the prefix.
-i_oe <- regexpr("nndm_complete", body, fixed = TRUE)
+i_oe <- regexpr("ndmm_complete", body, fixed = TRUE)
 ok(i_oe > 0 && i_bs < i_oe && i_oe < i_cr,
    "...with the failed-status handler armed before the clear can stop")
 
@@ -619,7 +619,7 @@ cat("\n-- the population this build derives for itself --\n")
 # index are all derived here, so they are driven here. No database, so the SQL
 # the real functions emit is read back.
 se <- new.env(parent = globalenv())
-sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = se)
+sys.source(file.path(ROOT, "R", "ndmm_constants.R"), envir = se)
 sys.source(file.path(ROOT, "R", "standalone_constants.R"), envir = se)
 sys.source(file.path(ROOT, "R", "steps", "00_mm_cohort.R"), envir = se)
 sys.source(file.path(ROOT, "R", "steps", "00b_lot1_index.R"), envir = se)
@@ -962,12 +962,12 @@ cat("\n-- the other-cancer code list, driven --\n")
 # stopped being noticed there. Driven, it cannot go quiet again whatever the
 # splice covers.
 oe2 <- new.env(parent = globalenv())
-sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = oe2)
+sys.source(file.path(ROOT, "R", "ndmm_constants.R"), envir = oe2)
 sys.source(file.path(ROOT, "R", "standalone_constants.R"), envir = oe2)
 sys.source(file.path(ROOT, "R", "steps", "04_other_malig.R"), envir = oe2)
 assign("log_msg", function(...) invisible(NULL), envir = oe2)
 assign("load_codelist_csv", function(...) "(SELECT 1) src", envir = oe2)
-assign("nndm_config", function() list(primary_groups_csv = ""), envir = oe2)
+assign("ndmm_config", function() list(primary_groups_csv = ""), envir = oe2)
 assign("db_q", function(con, sql)
   data.frame(n = length(oe2$NDMM_MM_ADJACENT_OVERRIDE)), envir = oe2)
 OSQL <- character(0)
@@ -1027,8 +1027,8 @@ if (is.null(lot_req)) {
             length(lot_req), " columns), read from that build not copied"))
 }
 be <- new.env(parent = globalenv())
-sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = be)
-sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = be)
+sys.source(file.path(ROOT, "R", "ndmm_constants.R"), envir = be)
+sys.source(file.path(ROOT, "R", "build_ndmm.R"), envir = be)
 assign("log_msg", function(...) invisible(NULL), envir = be)
 assign("wrk", function(x) paste0("wk.p_", x), envir = be)
 BSQL <- character(0)
@@ -1064,7 +1064,7 @@ ok(grepl("GDR_CD, YRDOB", csql, fixed = TRUE) &&
 
 cat("\n-- and it is checked before anyone is handed it --\n")
 ce2 <- new.env(parent = globalenv())
-sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = ce2)
+sys.source(file.path(ROOT, "R", "build_ndmm.R"), envir = ce2)
 assign("log_msg", function(...) invisible(NULL), envir = ce2)
 assign("wrk", function(x) paste0("wk.p_", x), envir = ce2)
 drive_chk <- function(cols = NDMM_COHORT_COLS, pat = 10L, rows = pat, noidx = 0L,
@@ -1115,7 +1115,7 @@ cat("\n-- the other-cancer pair has to sit in the baseline --\n")
 # the outpatient pair exposes must be bounded. Derived, so a new unbounded
 # column fails the same way removing this one does.
 oe <- new.env(parent = globalenv())
-sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = oe)
+sys.source(file.path(ROOT, "R", "ndmm_constants.R"), envir = oe)
 sys.source(file.path(ROOT, "R", "steps", "04_other_malig.R"), envir = oe)
 assign("log_msg", function(...) invisible(NULL), envir = oe)
 assign("cfg", cfg_defaults, envir = oe)
@@ -1159,7 +1159,7 @@ cat("\n-- NDCs that the padding would get wrong --\n")
 # inclusion turns on it. Driven with a stub profile, because there is no
 # warehouse here and what matters is which shapes stop the run.
 ne <- new.env(parent = globalenv())
-sys.source(file.path(ROOT, "R", "build_nndm.R"), envir = ne)
+sys.source(file.path(ROOT, "R", "build_ndmm.R"), envir = ne)
 assign("log_msg", function(...) invisible(NULL), envir = ne)
 assign("cdm_src", function(x) paste0("cdm.t_", x), envir = ne)
 assign("NDMM_BASE_COHORT", "_ndmm_base_cohort", envir = ne)
@@ -1254,7 +1254,7 @@ view_consts <- Filter(function(k) {
 }, ls(consts0))
 fn_bodies <- local({
   out <- list()
-  for (f in c(step_files, file.path(ROOT, "R", "build_nndm.R"))) {
+  for (f in c(step_files, file.path(ROOT, "R", "build_ndmm.R"))) {
     ln <- readLines(f, warn = FALSE)
     starts <- grep("^([A-Za-z_.][A-Za-z0-9_.]*) <- function", ln)
     for (i in starts) {
@@ -1309,7 +1309,7 @@ for (t in OUTPUTS)
 # build_lot_long_filtered(), which the runner no longer calls; scanning the
 # whole file would credit this package with a table nothing writes.
 consts <- new.env(parent = globalenv())
-sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = consts)
+sys.source(file.path(ROOT, "R", "ndmm_constants.R"), envir = consts)
 sys.source(file.path(ROOT, "R", "standalone_constants.R"), envir = consts)
 # The bodies of the step functions the runner calls, plus the runner itself.
 # Read from the runner's own body, not from ORDER: a call added back to the
@@ -1337,7 +1337,7 @@ body_of_fn <- function(f, nm) {
   if (!length(j)) return(character(0))
   ln[i[1]:j[1]]
 }
-reached <- c(readLines(file.path(ROOT, "R", "build_nndm.R"), warn = FALSE),
+reached <- c(readLines(file.path(ROOT, "R", "build_ndmm.R"), warn = FALSE),
              unlist(lapply(step_files, function(f)
                unlist(lapply(called, function(nm) body_of_fn(f, nm))))))
 txt  <- paste(reached, collapse = "\n")
@@ -1380,7 +1380,7 @@ cat("\n-- pregnancy reads every column a code could be in --\n")
 # already read it - pregnancy did not, so a pregnancy HCPCS code populated only
 # there kept the patient. Driven, so the arm cannot quietly go away.
 pe <- new.env(parent = globalenv())
-sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = pe)
+sys.source(file.path(ROOT, "R", "ndmm_constants.R"), envir = pe)
 sys.source(file.path(ROOT, "R", "standalone_constants.R"), envir = pe)
 sys.source(file.path(ROOT, "R", "steps", "05_pregnancy.R"), envir = pe)
 assign("icd_family_sql", function(col, nine, ten)
@@ -1429,10 +1429,10 @@ cat("\n-- the run-metadata INSERT names as many columns as it supplies --\n")
 # marked complete. Nothing here caught it when BELANTAMAB_SCOPE was removed
 # from the values and left in the column list, so count them.
 me <- new.env(parent = globalenv())
-sys.source(file.path(ROOT, "R", "nndm_constants.R"), envir = me)
+sys.source(file.path(ROOT, "R", "ndmm_constants.R"), envir = me)
 sys.source(file.path(ROOT, "R", "standalone_constants.R"), envir = me)
 for (nm in c("run_id", "cfg")) assign(nm, if (nm == "cfg") cfg_defaults else "R1", envir = me)
-bl <- readLines(file.path(ROOT, "R", "build_nndm.R"), warn = FALSE)
+bl <- readLines(file.path(ROOT, "R", "build_ndmm.R"), warn = FALSE)
 i <- grep("^RUN_METADATA_COLS <- c\\(", bl)
 j <- i + which(grepl("\\)\\s*$", bl[i:length(bl)]))[1] - 1L
 eval(parse(text = paste(bl[i:j], collapse = "\n")), envir = me)
@@ -1534,7 +1534,7 @@ ok(any(grepl("grp_wo_nodal", om, fixed = TRUE)) &&
 cat("\n-- clinical-trial evidence is descriptive, and stays that way --\n")
 ct <- readLines(file.path(ROOT, "R", "steps", "08_clintrial.R"), warn = FALSE)
 fl <- readLines(file.path(ROOT, "R", "steps", "06_flags.R"), warn = FALSE)
-bn <- readLines(file.path(ROOT, "R", "build_nndm.R"), warn = FALSE)
+bn <- readLines(file.path(ROOT, "R", "build_ndmm.R"), warn = FALSE)
 # The whole point: clinical trial does not filter this cohort. The funnel is
 # built from NDMM_CRITERIA, so a CLINTRIAL flag reaching that list, or the
 # table it reads, would change the cohort silently.

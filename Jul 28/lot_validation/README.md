@@ -105,7 +105,7 @@ DATABRICKS_PWD=... INPUT_COHORT_TABLE=ndmm_NDMM_COHORT COHORT_PREFIX=ndmm_ \
 Execution is opt-in, because one cell is one complete LOT build. There is no
 cheaper way: the gap threshold changes how MAPs are formed, which changes the
 lines, which changes everything after them - none of it recoverable from an
-existing `LOT_LONG` the way `nndm` recomputes its CE alternatives inside one
+existing `LOT_LONG` the way `ndmm` recomputes its CE alternatives inside one
 run. The default prints the grid, the predicted directions and the cell count so
 the cost is readable before anyone commits to it.
 
@@ -145,7 +145,7 @@ and the test holds any future cap axis to the same rule.
 
 ### Continuous enrolment is two questions
 
-CE eligibility - who qualifies - is the cohort build's axis. `nndm` already
+CE eligibility - who qualifies - is the cohort build's axis. `ndmm` already
 reports it without rebuilding anything: `NDMM_FU_CE_COUNTS` gives the cohort at
 0/30/60/90 days from a single run. Sweeping it here would rebuild the cohort
 and the LOT per cell.

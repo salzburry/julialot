@@ -202,7 +202,7 @@ reading of these numbers worth having.
 
 The study end is checked because the attrition split turns on it, and this
 package holds its own copy. The two cohort builds in this folder disagree by
-construction - `nndm` pins `2026-03-31`, `overall` uses `2025-06-30` - so an
+construction - `ndmm` pins `2026-03-31`, `overall` uses `2025-06-30` - so an
 unchecked copy running long would score every still-treated patient as lost to
 follow-up, with the five categories still summing correctly and nothing logged.
 
@@ -213,7 +213,7 @@ cohort build under the same prefix replaces the cohort, the enrolment spans and
 `COHORT_STAMP` compared against the current `NDMM_BUILD_STATUS`. Without it,
 lines built over attempt A would be measured against follow-up ends, death dates
 and diagnosis dates from attempt B. This is the same guard, for the same reason,
-as the one in `nndm/build_subsequent_cohorts.R`. Where nothing was recorded to
+as the one in `ndmm/build_subsequent_cohorts.R`. Where nothing was recorded to
 compare, that is said on the log rather than assumed to match.
 
 A line can be absent from `OUT_TTE` for two reasons, and they are counted

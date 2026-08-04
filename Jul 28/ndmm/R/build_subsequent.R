@@ -146,7 +146,7 @@ subseq_check_cohort_attempt <- function(con, lot_run_id) {
   # a match would not be.
   if (is.na(lot_cohort_id) || !nzchar(trimws(lot_cohort_id))) {
     log_msg("  ", meta, " records no cohort attempt for run ", lot_run_id,
-            ", so it cannot be compared to NNDM run ", now_id, ".")
+            ", so it cannot be compared to NDMM run ", now_id, ".")
     return(invisible(list(cohort_run = NA_character_, cohort_stamp = NA_character_)))
   }
   lot_run_id <- lot_cohort_id
@@ -157,7 +157,7 @@ subseq_check_cohort_attempt <- function(con, lot_run_id) {
   same <- eq(lot_run_id, now_id) &&
     (is.na(lot_stamp) || !nzchar(trimws(lot_stamp)) || eq(lot_stamp, now_stamp))
   if (!same)
-    stop("The LOT lines were built over NNDM run ", lot_run_id, " (", lot_stamp,
+    stop("The LOT lines were built over NDMM run ", lot_run_id, " (", lot_stamp,
          "), but ", tbl, " now holds run ", now_id, " (", now_stamp,
          "). The cohort and the enrollment spans on disk are a later attempt ",
          "than the lines, so eligibility would be worked out from enrollment ",

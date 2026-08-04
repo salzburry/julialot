@@ -6,7 +6,7 @@
 #
 # This suite used to assert that a changed step "differs from source", which is
 # satisfied by any difference at all - so once a step was listed as changed,
-# every later edit to it was invisible here. It now works the way port/nndm.R
+# every later edit to it was invisible here. It now works the way port/ndmm.R
 # does: each deviation is written out, both sides of it, and undone before the
 # comparison. What is left must match the source exactly. A deviation that stops
 # matching is reported rather than skipped, so deleting one from the shipping
@@ -206,7 +206,7 @@ DEVIATIONS <- list(
   # blank or unexpected flag on a genuine ICD-9 claim was mis-classed and then
   # matched no code. Both families are named now and anything else is NULL,
   # which matches neither. It can only remove matches the source should not have
-  # made, and nndm carries the same change - tests/test_same_as_overall.R holds
+  # made, and ndmm carries the same change - tests/test_same_as_overall.R holds
   # the two together.
   "08a_mm_dx_events_all" = list(
     icd("d.ICD_FLAG", "ICD9", "ICD10", suffix = " AS icd_family,"),
@@ -332,7 +332,7 @@ undeviate <- function(lines, devs) {
   list(lines = lines, unmatched = unmatched)
 }
 
-# First place two line vectors part company, phrased the way port/nndm.R does.
+# First place two line vectors part company, phrased the way port/ndmm.R does.
 first_diff <- function(src, port) {
   n <- min(length(src), length(port))
   d <- which(src[seq_len(n)] != port[seq_len(n)])

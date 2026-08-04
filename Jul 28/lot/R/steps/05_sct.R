@@ -203,7 +203,7 @@ phase_sct <- function(con, ctx) {
     --
     -- Left in place deliberately: it is one disjunct in a join condition the
     -- query evaluates either way, so it costs no extra scan, and it is correct
-    -- if a later extract does carry HCPCS there. See nndm/DECISIONS.md #6.
+    -- if a later extract does carry HCPCS there. See ndmm/DECISIONS.md #6.
     medproc AS (
       SELECT mp.PATID, cast(mp.FST_DT AS date) AS DATE_SERVICE,
              s.SCT_TYPE, s.CL_CODE AS CODE, 'med_procedure' AS SRC

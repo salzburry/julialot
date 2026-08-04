@@ -185,14 +185,14 @@ JOURNEY_CATEGORIES <- list(
 # ATTRITION_TABLE fixed the name, not the shape, and the two cohort builds do
 # not agree on one:
 #
-#   nndm     NDMM_ATTRITION      RUN_ID, STEP_NUM, CRITERION, N_PATIENTS,
+#   ndmm     NDMM_ATTRITION      RUN_ID, STEP_NUM, CRITERION, N_PATIENTS,
 #                                PCT_OF_START, RECORDED_AT
 #   overall  <prefix>attrition_report
 #                                row_order, run_id, final_table_name,
 #                                created_at, step_id, description,
 #                                n_30, n_60, n_90
 #
-# A query against the nndm columns fails outright on an overall-built cohort,
+# A query against the ndmm columns fails outright on an overall-built cohort,
 # and the panel is replaced by a notice that reads as "this study has no
 # funnel" rather than "this dashboard cannot read it".
 #
@@ -200,7 +200,7 @@ JOURNEY_CATEGORIES <- list(
 # `stamp` says when the funnel was recorded, used to catch a funnel newer than
 # the LOT run. Add a shape by adding an entry.
 ATTRITION_LAYOUTS <- list(
-  list(name  = "nndm",
+  list(name  = "ndmm",
        cols  = c("RUN_ID", "STEP_NUM", "CRITERION", "N_PATIENTS", "RECORDED_AT"),
        stamp = "RECORDED_AT",
        run_col = "RUN_ID",

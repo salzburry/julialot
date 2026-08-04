@@ -87,7 +87,7 @@ icd_family_sql <- function(col, nine = "ICD9", ten = "ICD10") {
 }
 
 load_codelist_csv <- function(csv_name, col_spec) {
-  cfg <- nndm_config()
+  cfg <- ndmm_config()
   if (!dir.exists(cfg$codelist_dir)) {
     stop(glue("CODELIST ERROR: codelist directory does not exist: {cfg$codelist_dir}"))
   }
@@ -136,9 +136,9 @@ load_codelist_csv <- function(csv_name, col_spec) {
   sql <- paste0("SELECT * FROM (VALUES\n  ", paste(rows, collapse = ",\n  "), "\n) AS t(",
                 paste(col_spec, collapse = ", "), ")")
   # Kept for LOT_CODELIST_METADATA, so the outputs say which version built them.
-  seen <- getOption("nndm_codelist_md5", list())
+  seen <- getOption("ndmm_codelist_md5", list())
   seen[[csv_name]] <- list(md5 = md5, n_rows = nrow(df))
-  options(nndm_codelist_md5 = seen)
+  options(ndmm_codelist_md5 = seen)
   log_msg("Loaded codelist from CSV: ", csv_path, " (", nrow(df), " rows, md5 ",
           md5, ")")
   paste0("(", sql, ") src")

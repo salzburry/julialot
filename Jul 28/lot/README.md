@@ -95,7 +95,7 @@ different ones. So it is passed like the cohort table and the prefix:
 Rscript build.R MY_COH_FINAL mystudy_ 2016-01-01 2026-03-31
 ```
 
-`config.csv` supplies the default when no argument is given - currently the NNDM
+`config.csv` supplies the default when no argument is given - currently the NDMM
 study period, 2016-01-01 to 2026-03-31, which resolves to the
 `2026q1` CDM tables. A cohort built to another window passes its own; nothing in
 this folder has to change. Both dates land in `LOT_RUN_METADATA`, so an output

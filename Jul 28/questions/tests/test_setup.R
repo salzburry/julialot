@@ -268,7 +268,7 @@ need <- c("PATID", "INDEX_DATE", "OTHER_MALIGN_FLAG", "CLINTRIAL_BASELINE",
           "CLINTRIAL_FOLLOWUP")
 ok(identical(sort(QS_TRIAL_FLAG_COLS), sort(need)),
    "the columns a trial question needs are declared, so a mismatch is caught before Spark sees it")
-nn6 <- readLines(file.path(dirname(ROOT), "nndm", "R", "steps", "06_flags.R"),
+nn6 <- readLines(file.path(dirname(ROOT), "ndmm", "R", "steps", "06_flags.R"),
                  warn = FALSE)
 ok(!any(grepl("OTHER_MALIGN_FLAG", nn6, fixed = TRUE)) &&
    !any(grepl("CLINTRIAL_", nn6, fixed = TRUE)),
@@ -459,10 +459,10 @@ ok(any(grepl('if (!is.null(broad$vintage)) log_msg', bdq, fixed = TRUE)),
    "...with the vintage mismatch carried where the two data ages meet")
 
 cat("\n-- the trial question is answered on this cohort's own index --\n")
-# The whole point of the nndm flag: its windows are cut at the 1L start, so
+# The whole point of the ndmm flag: its windows are cut at the 1L start, so
 # diagnosis-to-1L is a column rather than something split across two
 # diagnosis-anchored flags that each miss half of it.
-ct <- readLines(file.path(dirname(ROOT), "nndm", "R", "steps", "08_clintrial.R"),
+ct <- readLines(file.path(dirname(ROOT), "ndmm", "R", "steps", "08_clintrial.R"),
                 warn = FALSE)
 ok(any(grepl("AS CLINTRIAL_DX_TO_LOT1", ct, fixed = TRUE)),
    "the cohort build has a diagnosis-to-1L trial window")
@@ -553,10 +553,10 @@ ok(any(grepl("qs_icd_family_sql('d.ICD_FLAG')", bdq, fixed = TRUE)),
    "...it uses the same three-way rule, with NULL for unknown")
 ok(grepl("ELSE NULL END$", qs_icd_family_sql("x")),
    "...which really does yield NULL rather than a family")
-# The lists cannot be sourced from nndm - that file defines its own
+# The lists cannot be sourced from ndmm - that file defines its own
 # load_codelist_csv() and would replace lot's - so they are repeated, and this
 # is what stops the copy drifting.
-nc <- readLines(file.path(dirname(ROOT), "nndm", "R", "codelists.R"), warn = FALSE)
+nc <- readLines(file.path(dirname(ROOT), "ndmm", "R", "codelists.R"), warn = FALSE)
 grab <- function(v) {
   ln <- grep(paste0("^", v, "\\s*<-"), nc, value = TRUE)[1]
   sort(trimws(gsub('"', "", unlist(strsplit(gsub("^.*c\\(|\\).*$", "", ln), ",")))))
@@ -564,7 +564,7 @@ grab <- function(v) {
 ok(identical(grab("RAW_ICD9"), sort(QS_RAW_ICD9)) &&
    identical(grab("RAW_ICD10"), sort(QS_RAW_ICD10)),
    "...and the spellings still match the cohort builds' own lists")
-nw <- readLines(file.path(dirname(ROOT), "nndm", "R", "build_nndm.R"), warn = FALSE)
+nw <- readLines(file.path(dirname(ROOT), "ndmm", "R", "build_ndmm.R"), warn = FALSE)
 # The cohort build reports unrecognised flags rather than stopping, so a run
 # can legitimately carry them - which is exactly why this package must use the
 # same three-way rule instead of guessing ICD-10.
@@ -597,7 +597,7 @@ cat("\n-- Q5 does not claim an anchor its index date does not have --\n")
 # sit on the same date as its LOT1-anchored ones. Called a pre-diagnosis
 # window they read as an independent second check, and two counts that look
 # independent get added together.
-nn <- readLines(file.path(dirname(ROOT), "nndm", "R", "build_nndm.R"), warn = FALSE)
+nn <- readLines(file.path(dirname(ROOT), "ndmm", "R", "build_ndmm.R"), warn = FALSE)
 ok(any(grepl("LOT1_START_DT AS INDEX_DATE", nn, fixed = TRUE)),
    "the cohort's INDEX_DATE is the 1L start, which is what makes the two anchors one")
 ok(!any(grepl("parent-index", poma, fixed = TRUE)) &&

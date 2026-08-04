@@ -1,5 +1,5 @@
 # Settings for the NDMM cohort build. Values come from config.csv; the
-# environment wins over it. build_nndm.R checks them against CONTRACT before
+# environment wins over it. build_ndmm.R checks them against CONTRACT before
 # anything runs. The cohort prefix is not here - the caller passes it.
 
 cfg_defaults <- list(
@@ -19,7 +19,7 @@ cfg_defaults <- list(
   tbl_rx          = "rx",
   tbl_confinement = Sys.getenv("TBL_CONFINEMENT", unset = "confinement"),
   # Read by both enrollment-span builds, so it is the first raw table the run
-  # touches. Same environment variable nndm_constants.R uses for it.
+  # touches. Same environment variable ndmm_constants.R uses for it.
   tbl_member_enroll = Sys.getenv("TBL_MEMBER_ENROLLMENT", unset = "member_enrollment"),
 
   # Read by the demographics step: sex and birth year, and date of death.

@@ -64,7 +64,7 @@ find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L)) {
          paste(stale, collapse = "; "), ". Their patients would set ",
          "LINE_ELIGIBLE on lines they are not about, and every output would ",
          "still carry this run's ids - so nothing downstream would catch it. ",
-         "Re-run nndm/build_subsequent_cohorts.R against this LOT run, or ",
+         "Re-run ndmm/build_subsequent_cohorts.R against this LOT run, or ",
          "unset them to report ALL_LINES alone.", call. = FALSE)
   if (!length(out))
     log_msg("  No line-specific cohorts (", coh_tbl("NDMM_COHORT_2L"),
@@ -128,7 +128,7 @@ check_lot_run <- function(con, prefix, cohort_table, study_end) {
 # outcomes would measure lines built over attempt A using death, enrolment and
 # diagnosis dates from attempt B. LOT records which attempt it read, so ask.
 #
-# The same shape as nndm/R/build_subsequent.R, and for the same reason.
+# The same shape as ndmm/R/build_subsequent.R, and for the same reason.
 check_cohort_attempt <- function(con, lot_run_id) {
   meta <- out_tbl("LOT_RUN_METADATA")
   m <- tryCatch(db_q(con, glue(
@@ -146,7 +146,7 @@ check_cohort_attempt <- function(con, lot_run_id) {
   }
   lot_cohort <- at(m, "COHORT_RUN_ID"); lot_stamp <- at(m, "COHORT_STAMP")
   # Both names the cohort builds use, as lot resolves them (COHORT_STATUS_TABLES
-  # in build_lot.R). Asking only for the nndm one would find nothing on an
+  # in build_lot.R). Asking only for the ndmm one would find nothing on an
   # overall cohort and report the attempt as uncomparable, which reads as "no
   # such record" when the record is there under the other name.
   tbl <- NULL; d <- NULL
