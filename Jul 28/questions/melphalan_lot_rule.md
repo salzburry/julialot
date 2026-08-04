@@ -244,8 +244,13 @@ these are still the study team's to settle, and changing one changes the counts.
    day takes the start; the exposure immediately before it sits in the previous
    line outside that line's own induction window; and the two are 60 to 179 days
    apart. Immediately before, because the engine judges consecutive pairs - any
-   earlier exposure in range would count pairs it never looked at. Under the
-   second reading those lines would not exist.
+   earlier exposure in range would count pairs it never looked at.
+
+   `n_b2_melp_only` is the subset of those where no other non-steroid agent
+   starts on the same date. That distinction matters because a `MED` start says
+   a medication won the tie-break and not which one, so a line another agent
+   would have started anyway is no evidence either way. Those are the lines that
+   would not exist under the second reading.
 
 Patient examples were offered with the request. Running them through the branch
 table is the fastest way to confirm the reading.

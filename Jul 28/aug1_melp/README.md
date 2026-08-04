@@ -66,7 +66,8 @@ cell can be read side by side, plus four about this rule:
 | `n_melp_lines` | lines whose regimen contains melphalan |
 | `n_sct_auto_end` | lines ended by an autologous transplant |
 | `n_pat_with_melp` | patients with any melphalan line |
-| `n_b2_line_starts` | lines a B.2 second dose started after the previous line ran out |
+| `n_b2_line_starts` | MED-started lines whose start is a B.2 second dose |
+| `n_b2_melp_only` | ...of those, the ones no other agent would have started |
 
 Those four are where the double-count shows. If `as_asked` ends more lines by
 melphalan than `yield_to_sct` does and the transplant ends correspondingly
@@ -172,6 +173,22 @@ DARA started, with melphalan merely joining its induction window, would satisfy
 "starts after a runout and has melphalan in the regimen" without a B.2 pair
 anywhere.
 
+`n_b2_melp_only` is the subset that answers the counterfactual, and it is a
+different question. `LOT_START_TYPE = 'MED'` says a medication won the same-day
+tie-break, not *which* one: the engine takes `d_MED` as the earliest qualifying
+non-steroid agent and does not keep the drug. So if daratumumab also starts on
+the melphalan date, that line exists under either B.2 reading and is no evidence
+for the choice. `n_b2_melp_only` drops those - it counts the lines where nothing
+else could have started them, and those are the ones that would not exist under
+the other reading.
+
+It is a lower bound on purpose. `med_cand` also passes over the previous line's
+own agents expanded by permissible substitutes, and that expansion is a session
+view inside the build rather than a table this can read - so an agent that is
+only a substitute for a previous-line drug counts here as another starter when
+the engine would have ignored it. That direction drops a line rather than
+inventing one.
+
 The pair is the immediately preceding exposure because that is the pair the
 engine judged: it uses `lead()` over the ordered exposures, so it only ever
 looks at consecutive ones. Matching any earlier exposure in range would count
@@ -179,7 +196,7 @@ pairs the rule never saw - exposures on days 100, 160 and 250 give the engine
 100-160 and 160-250, and a range join would also match 100-250 and report one
 line twice.
 
-Under the other reading those lines would not exist.
+Under the other reading the `n_b2_melp_only` lines would not exist.
 
 "Inside induction" is this exposure's date against this line's induction end -
 not whether melphalan is in the regimen. The two are the same thing only for the
