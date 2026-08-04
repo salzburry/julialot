@@ -16,9 +16,9 @@ against a finished run as often as needed.
 | table | one row per |
 |---|---|
 | `<prefix>OUT_TTE` | patient per line — the three time-to-event outcomes |
-| `<prefix>OUT_ATTRITION` | line — the attrition categories, which partition it |
-| `<prefix>OUT_LINE_GAP` | line pair — months from one line's start to the next |
-| `<prefix>OUT_REGIMEN` | line and regimen — N and % receiving each |
+| `<prefix>OUT_ATTRITION` | denominator and line — the attrition categories, which partition it |
+| `<prefix>OUT_LINE_GAP` | denominator and line pair — months from one line's start to the next |
+| `<prefix>OUT_REGIMEN` | denominator, line and regimen — N and % receiving each |
 | `<prefix>OUT_DX_TO_LOT1` | one row — months from MM diagnosis to the 1L index |
 
 All of them carry `OUT_RUN_ID`, `LOT_RUN_ID` and `BUILT_AT`, so a run that dies
@@ -114,6 +114,35 @@ The two are told apart by whether observation stopped before the study did:
 |---|---|
 | `N_LOST_TO_FU` | follow-up ended **before** the study end — they disenrolled |
 | `N_ONGOING` | follow-up ran **to** the study end — the study stopped, not them |
+
+## The 2L and 3L denominator — both, not one
+
+"Of the patients who reached 2L" has two defensible readings, and they give
+different numbers:
+
+| `DENOM` | who is in it | the question it answers |
+|---|---|---|
+| `ALL_LINES` | every line in the 1L cohort | of the patients we followed from 1L, what did their second line look like |
+| `LINE_ELIGIBLE` | only lines whose patient is in that line's own cohort | of the patients we could properly observe at 2L, what did it look like |
+
+`NDMM_COHORT_2L` and `NDMM_COHORT_3L` exist because a later line has its own
+index date, and the protocol's enrolment criteria are anchored there — 365 days
+before the line and 90 days after it. A patient can reach 2L in the lines
+without meeting them.
+
+Nothing in the protocol picks one, so **neither is chosen here.** `OUT_TTE`
+carries `LINE_ELIGIBLE` per row and `OUT_ATTRITION`, `OUT_LINE_GAP` and
+`OUT_REGIMEN` each carry a `DENOM` column with both, so the two sit side by side
+and the study team reads whichever the analysis calls for.
+
+`LINE_ELIGIBLE` is `1` for every 1L line — that cohort *is* the population — and
+**NULL**, not `0`, for 4L and beyond. Not eligible and not-asked are different
+answers, and a `0` would quietly shrink the restricted denominator by every line
+nobody set a criterion for. Those lines appear under `ALL_LINES` only.
+
+The line cohorts are probed, not required. Where they are not readable the flag
+is NULL throughout and only `ALL_LINES` is reported — an empty second
+denominator would read as "nobody qualified".
 
 ## What it does not do
 
