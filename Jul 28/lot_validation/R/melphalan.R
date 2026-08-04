@@ -262,12 +262,17 @@ melp_rule_sql <- function(lines_tbl, map_tbl, auto_tbl, cfg, run_id) {
 #
 #   splits   an advance date strictly inside a line. The rule would cut there.
 #   merges   an exposure that CREATED a boundary - the build ended a line by
-#            adding this drug at it - where the rule says that exposure does not
-#            advance. Keyed on the exposure, not on a date join to the line end:
-#            a date join fires whenever no advance date matches, which includes
-#            an exposure with no next dose, one outside every line, and one the
+#            adding this drug at it - where the rule does not put a boundary at
+#            THAT exposure's own date. Two branches do that, not one:
+#              NO_ADVANCE  B.2, neither dose advances. The boundary goes.
+#              NEXT        B.3, the LATER dose advances. The boundary MOVES -
+#                          removed here, added at the later date as a split.
+#            Only FIRST keeps it, which is B.1 agreeing with the build.
+#            Keyed on the exposure, not on a date join to the line end: a date
+#            join fires whenever no advance date matches, which includes an
+#            exposure with no next dose, one outside every line, and one the
 #            transplant rule was left to handle. The rule says nothing about
-#            those, so removing their boundary was unjustified.
+#            those, so removing their boundary would be unjustified.
 melp_impact_sql <- function(rule_tbl, lines_tbl, cfg, run_id) {
   glue("
     WITH ln AS (
@@ -289,7 +294,7 @@ melp_impact_sql <- function(rule_tbl, lines_tbl, cfg, run_id) {
     merges AS (
       SELECT PATID, count(*) AS N_MERGE
       FROM {rule_tbl}
-      WHERE CREATED_BOUNDARY = 1 AND ADVANCES = 'NO_ADVANCE'
+      WHERE CREATED_BOUNDARY = 1 AND ADVANCES IN ('NO_ADVANCE', 'NEXT')
       GROUP BY PATID
     )
     SELECT n.PATID,

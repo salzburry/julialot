@@ -317,6 +317,7 @@ cat("\n-- Table 4 is answered over both denominators, not one chosen here --\n")
 # and nothing in the protocol picks one, so both are reported and the reader picks.
 REG <- outcomes_regimen_sql("s.TTE", "r1", "L1", TRUE)
 EL <- outcomes_base_sql("s.LINES", "s.COH", NULL, list("2" = "s.C2", "3" = "s.C3"))
+TTE_EL <- outcomes_tte_sql(EL, "r1", "L1")
 ok(has(EL, "AS LINE_ELIGIBLE"), "the line's own cohort marks the row")
 ok(has(EL, "WHEN n.LOT_NUM = 1 THEN 1"),
    "...1L is eligible by construction - it is the cohort")
@@ -333,8 +334,11 @@ ok(has(NO, "cast(NULL as int) AS LINE_ELIGIBLE"),
 for (o in list(c("OUT_ATTRITION", "ATT"), c("OUT_LINE_GAP", "GAP"),
                c("OUT_REGIMEN", "REG"))) {
   s <- get(o[2])
+  # The gap keys on the DESTINATION line's flag; the others on the row's own.
+  el <- if (identical(o[1], "OUT_LINE_GAP")) "t.NEXT_LINE_ELIGIBLE = 1"
+        else "t.LINE_ELIGIBLE = 1"
   ok(has(s, "SELECT 'ALL_LINES' AS DENOM UNION ALL SELECT 'LINE_ELIGIBLE'") &&
-       has(s, "d.DENOM = 'ALL_LINES' OR t.LINE_ELIGIBLE = 1"),
+       has(s, paste0("d.DENOM = 'ALL_LINES' OR ", el)),
      paste0(o[1], " reports both denominators"))
   ok(has(s, "GROUP BY d.DENOM"), paste0("...and ", o[1], " groups by which one"))
 }
@@ -346,6 +350,19 @@ ok(has(REG, "PARTITION BY d.DENOM, t.LOT_NUM"),
 # would read as "nobody qualified".
 ok(!has(outcomes_attrition_sql("s.TTE", "2026-03-31", "r1", "L1"), "LINE_ELIGIBLE'"),
    "with no line cohorts only ALL_LINES is reported")
+# A gap belongs to the line being INITIATED. Keying on this row's flag makes
+# every 1L-to-2L gap eligible, because 1L always is, so the restricted answer
+# would silently be the unrestricted one and NDMM_COHORT_2L would never apply.
+ok(has(GAP, "t.NEXT_LINE_ELIGIBLE = 1") && !has(GAP, "OR t.LINE_ELIGIBLE = 1"),
+   "the gap is restricted by the line it goes TO, not the one it comes from")
+# And OUT_TTE has to carry both, or the summaries cannot read either. This is
+# the composed statement, not the base fragment: the projection names its
+# columns, so anything the base computes and it omits is gone by the time the
+# summaries run - and the run then dies on the first one.
+FINAL <- substring(as.character(TTE_EL),
+                   tail(gregexpr("\n    SELECT ", as.character(TTE_EL))[[1]], 1))
+ok(has(FINAL, "LINE_ELIGIBLE, NEXT_LINE_ELIGIBLE"),
+   "OUT_TTE projects both eligibilities, which is what the summaries read")
 
 cat("\n-- every output says which run it is, not just the first one --\n")
 ro  <- paste(readLines(file.path(ROOT, "R", "run_outcomes.R"), warn = FALSE),

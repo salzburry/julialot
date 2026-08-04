@@ -135,6 +135,13 @@ carries `LINE_ELIGIBLE` per row and `OUT_ATTRITION`, `OUT_LINE_GAP` and
 `OUT_REGIMEN` each carry a `DENOM` column with both, so the two sit side by side
 and the study team reads whichever the analysis calls for.
 
+`OUT_LINE_GAP` restricts on the line the gap goes **to**, not the one it comes
+from. A gap is *"among patients initiating a subsequent LOT"*, so a 1L-to-2L gap
+is governed by `NDMM_COHORT_2L` — which sits on the **next** row. Keying on the
+row's own flag would make every 1L-to-2L gap eligible, because 1L always is, and
+the restricted answer would silently be the unrestricted one. `OUT_TTE` carries
+`NEXT_LINE_ELIGIBLE` beside `LINE_ELIGIBLE` for that.
+
 `LINE_ELIGIBLE` is `1` for every 1L line — that cohort *is* the population — and
 **NULL**, not `0`, for 4L and beyond. Not eligible and not-asked are different
 answers, and a `0` would quietly shrink the restricted denominator by every line
@@ -143,6 +150,13 @@ nobody set a criterion for. Those lines appear under `ALL_LINES` only.
 The line cohorts are probed, not required. Where they are not readable the flag
 is NULL throughout and only `ALL_LINES` is reported — an empty second
 denominator would read as "nobody qualified".
+
+**Readable is not current.** Re-running LOT leaves the 2L/3L tables untouched
+and perfectly readable, and eligibility from the old run would be stamped onto
+the new run's lines — with every output correctly carrying *this* run's ids, so
+no stamp check could catch it. The subsequent build records
+`SOURCE_LOT_RUN_ID`; a cohort naming another run, or too old to name any, stops
+the build rather than restricting on it.
 
 ## What it does not do
 

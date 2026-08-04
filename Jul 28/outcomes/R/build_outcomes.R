@@ -94,6 +94,7 @@ outcomes_base_sql <- function(lines_tbl, cohort_tbl, base_tbl = NULL,
              "                WHEN n.LOT_NUM = {n} THEN CASE WHEN e{n}.PATID IS NOT NULL THEN 1 ELSE 0 END"),
              character(1)), collapse = "\n"),
            "\n           END AS LINE_ELIGIBLE")
+  el_bare <- sub(" AS LINE_ELIGIBLE$", "", el_col)
   glue("
     WITH coh AS (
       SELECT cast(PATID as string) AS PATID,
@@ -128,6 +129,14 @@ outcomes_base_sql <- function(lines_tbl, cohort_tbl, base_tbl = NULL,
            c.INDEX_DATE, c.DEATH_DT,
            {dx_cols},
            {el_col},
+           -- The DESTINATION line's eligibility as well as this row's. A gap is
+           -- 'among patients initiating a subsequent LOT', so the cohort that
+           -- governs a 1L-to-2L gap is the 2L one - which lives on the NEXT row,
+           -- not this one. Reading this row's flag makes every 1L-to-2L gap
+           -- eligible, because 1L always is, and the restricted answer would be
+           -- the unrestricted one.
+           lead({el_bare}) OVER (PARTITION BY n.PATID ORDER BY n.LOT_NUM)
+             AS NEXT_LINE_ELIGIBLE,
            {FU_END_SQL} AS FU_END_DT
     FROM nxt n INNER JOIN coh c ON c.PATID = n.PATID
     {dx_join}{el_join}")
@@ -160,6 +169,10 @@ outcomes_tte_sql <- function(base_sql, run_id, lot_run_id = NA_character_) {
     SELECT PATID, LOT_NUM, LOT_START_DT, LOT_END_DT, LOT_END_REASON, REGIMEN,
            NEXT_LOT_NUM, NEXT_LOT_START_DT, DEATH_DT, FU_END_DT,
            MM_DX_DT, DX_TO_LOT1_DAYS,
+           -- Both eligibilities travel to OUT_TTE, because the summaries read
+           -- them off it. This projection names its columns, so anything the
+           -- base computes and it omits is gone by the time they run.
+           LINE_ELIGIBLE, NEXT_LINE_ELIGIBLE,
 
            -- ON the follow-up end, not before it. Death IS the follow-up end
            -- for anyone who dies inside the study window - the cohort clamps
@@ -207,6 +220,12 @@ denom_from <- function(tte_tbl, both) paste0(
   tte_tbl, " t CROSS JOIN (SELECT 'ALL_LINES' AS DENOM",
   if (both) " UNION ALL SELECT 'LINE_ELIGIBLE'" else "", ") d")
 DENOM_KEEP <- "(d.DENOM = 'ALL_LINES' OR t.LINE_ELIGIBLE = 1)"
+# A gap belongs to the line being INITIATED, not the one being left: Table 4
+# says "among patients initiating a subsequent LOT", and the cohort that governs
+# a 1L-to-2L gap is the 2L one. Keying on this row's flag would make every
+# 1L-to-2L gap eligible - 1L always is - so the restricted answer would be the
+# unrestricted one, and a 2L-to-3L gap would be judged on 2L eligibility.
+DENOM_KEEP_NEXT <- "(d.DENOM = 'ALL_LINES' OR t.NEXT_LINE_ELIGIBLE = 1)"
 
 # Table 4, "Treatment attrition": "Number and percent of patients who received
 # each subsequent LOT, discontinued treatment and did not receive another, were
@@ -286,7 +305,7 @@ outcomes_line_gap_sql <- function(tte_tbl, run_id, lot_run_id,
            {sql_text(lot_run_id)} AS LOT_RUN_ID,
            current_timestamp()    AS BUILT_AT
     FROM {denom_from(tte_tbl, both_denoms)}
-    WHERE {DENOM_KEEP} AND
+    WHERE {DENOM_KEEP_NEXT} AND
     -- 'Among patients initiating a subsequent LOT' - observed to initiate it.
     -- A line starting after the patient's follow-up ended is one lot recorded
     -- because its primary analysis ignores disenrolment, not one this study
