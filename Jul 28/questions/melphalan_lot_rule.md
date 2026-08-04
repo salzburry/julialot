@@ -214,6 +214,33 @@ these are still the study team's to settle, and changing one changes the counts.
    *The program applies it at every line, using that line's own window. Anchoring
    everything to LOT1 would put later-line doses in the wrong branch.*
 
+6. In B.2, does "both doses stay in the current line" mean the line has to be
+   held open to the second dose? The two are not the same thing, and the build
+   can only do the first without a further decision.
+
+   A line's discontinuation date is its base agents' last cover. A melphalan
+   first seen outside the induction window is not a base agent, so it does not
+   extend that date. Take a line starting on day 0 whose base regimen runs out
+   on day 120, with melphalan on day 100 and again on day 170 - a 70-day gap,
+   so B.2. Not advancing at day 100 removes the boundary melphalan would have
+   made. It does not keep the line alive past day 120: the regimen ran out
+   there for reasons that have nothing to do with melphalan, and the day-170
+   dose then starts the next line under the ordinary new-therapy rule.
+
+   Two readings, and the difference is clinical:
+
+   - The line ends when its regimen runs out, and B.2 only means melphalan does
+     not end it early. This is what `aug1_melp` builds.
+   - Melphalan belongs to that line for the whole pair, so it should join the
+     regimen and carry the line to the second dose. That needs a drug to be a
+     member of a line whose induction window it never entered, which is a
+     concept the algorithm does not have today - so it is a change to what a
+     regimen means, not a setting.
+
+   `n_melp_after_runout` counts the lines this decides: lines melphalan started
+   after the previous one ran out. Under the second reading those lines would
+   not exist.
+
 Patient examples were offered with the request. Running them through the branch
 table is the fastest way to confirm the reading.
 
