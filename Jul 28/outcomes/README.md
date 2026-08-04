@@ -23,10 +23,14 @@ against a finished run as often as needed.
 
 All of them carry `OUT_RUN_ID`, `LOT_RUN_ID` and `BUILT_AT`, so a run that dies
 part-way leaves a mismatch rather than a silent mix. The tables are written
-sequentially with `CREATE OR REPLACE`, so without a run id on each one a failure
-between them would leave this run's `OUT_TTE` beside the last run's summaries
-with nothing to say so. The run **asks the tables** at the end rather than
-logging that they are stamped, and stops if any row belongs to another run.
+sequentially with `CREATE OR REPLACE`, so a run id on each one is what tells
+this run's `OUT_TTE` from the last run's summaries beside it. The run **asks the
+tables** at the end rather than logging that they are stamped, and stops if any
+row carries a different outcomes run or a different LOT run.
+
+`OUT_DX_TO_LOT1` is the only optional output, and an optional output is the one
+that can be left behind — so a run with no readable base cohort **drops** it
+rather than leaving an earlier run's copy beside four newer tables.
 
 `LOT_RUN_ID` is a different question from `OUT_RUN_ID`: which LOT run supplied
 the lines, not which outcomes run wrote the table.
@@ -49,9 +53,9 @@ date (excluded) … (included)" — which is a plain date difference.
 observation rather than reaching the outcome, so it censors. An event **on** the
 follow-up end is one. Death is the case that matters: the cohort clamps
 `ENDDATE` at the death date, so for anyone who dies inside the study window the
-death *is* the follow-up end. A strict boundary made every death a censoring and
-left `OS_EVENT` identically 0 — an OS curve with no events on it. `TTNT_REASON`
-records which of `NEXT_LOT`, `DEATH` or `CENSORED` ended each row.
+death *is* the follow-up end — so a strict boundary can never fire on a death,
+and leaves `OS_EVENT` at 0 for everyone: an OS curve with no events on it.
+`TTNT_REASON` records which of `NEXT_LOT`, `DEATH` or `CENSORED` ended each row.
 
 `TTD` is the one exception. A line whose own end is the run-out did not end —
 the observation did — so a line carrying `LOT_END_REASON = 'STUDY_END'` censors
@@ -127,8 +131,8 @@ The diagnosis date lives on `<prefix>NDMM_BASE_COHORT`, which the cohort build
 already checkpoints, so nothing has to be rebuilt to get it. It is probed, not
 assumed: if that table is not readable — a cohort built by another package has
 no MM diagnosis date to offer — `MM_DX_DT` and `DX_TO_LOT1_DAYS` are NULL, the
-`OUT_DX_TO_LOT1` table is not written, and every other outcome is unaffected.
-The join is a LEFT join for the same reason.
+`OUT_DX_TO_LOT1` table is dropped rather than written, and every other outcome
+is unaffected. The join is a LEFT join for the same reason.
 
 `COHORT_PREFIX` points at the cohort build's prefix when it differs from this
 run's. One study is one prefix, so it defaults to the run's own.
@@ -148,7 +152,8 @@ run to read.
 The same run-ownership rule every reader in this folder uses. The newest
 `LOT_BUILD_STATUS` row has to be `complete`, built from the cohort named on the
 command line, carry no `CONTRACT_DEVIATIONS`, and name the **same `STUDY_END`**
-this package is set to. None of it is waivable — this package does arithmetic on
+this package is set to, and its `LOT_RUN_METADATA` row has to name the cohort
+attempt that is on disk now. None of it is waivable — this package does arithmetic on
 a finished run, and if the run cannot be identified there is no reading of these
 numbers worth having.
 

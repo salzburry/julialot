@@ -42,7 +42,7 @@ sys.source(file.path(ROOT, "R", "build_outcomes.R"), envir = globalenv())
 sys.source(file.path(ROOT, "R", "run_outcomes.R"),   envir = globalenv())
 
 BASE <- outcomes_base_sql("s.LINES", "s.COH")
-TTE  <- outcomes_tte_sql(BASE, "r1")
+TTE  <- outcomes_tte_sql(BASE, "r1", "L1")
 
 cat("\n-- the follow-up end is the protocol's, not the LOT run's --\n")
 # 6.1: "from the index date ... until the end of continuous enrollment or end
@@ -167,7 +167,7 @@ cat("\n-- the diagnosis date comes from the base cohort, not the cohort --\n")
 # NDMM_COHORT's INDEX_DATE is the 1L treatment start; the MM diagnosis date is
 # a different date and is not on it. NDMM_BASE_COHORT carries MM_DX_DT and is
 # checkpointed, so it is read from there rather than the cohort being rebuilt.
-DX <- outcomes_tte_sql(outcomes_base_sql("s.LINES", "s.COH", "s.BASE"), "r1")
+DX <- outcomes_tte_sql(outcomes_base_sql("s.LINES", "s.COH", "s.BASE"), "r1", "L1")
 ok(has(DX, "FROM s.BASE") && has(DX, "LEFT JOIN"),
    "the base cohort is joined for MM_DX_DT")
 # glue() trims a template's leading blank line, so the fragment began at the
@@ -293,13 +293,25 @@ for (o in list(c("OUT_TTE", "TTE"), c("OUT_ATTRITION", "ATT"),
      paste0(o[1], " carries the outcomes run id and a build time"))
 }
 # Which LOT run supplied the lines is not the same question as which outcomes
-# run wrote the table.
-for (o in list(c("OUT_ATTRITION", "ATT"), c("OUT_LINE_GAP", "GAP"),
-               c("OUT_REGIMEN", "REG"), c("OUT_DX_TO_LOT1", "D1")))
+# run wrote the table. OUT_TTE is the analytical table, so it needs both: on its
+# own it could not say which run's lines it holds.
+for (o in list(c("OUT_TTE", "TTE"), c("OUT_ATTRITION", "ATT"),
+               c("OUT_LINE_GAP", "GAP"), c("OUT_REGIMEN", "REG"),
+               c("OUT_DX_TO_LOT1", "D1")))
   ok(has(get(o[2]), "AS LOT_RUN_ID"),
      paste0(o[1], " also names the LOT run its lines came from"))
 ok(has(ro, "check_stamps(con"),
    "and the runner asks the tables, rather than logging that they are stamped")
+ok(has(ro, "LOT_RUN_ID IS NULL OR LOT_RUN_ID <>"),
+   "...on both ids, so a table stamped by this run over other lines is caught")
+# The one optional output is the one that can be left behind: a run with no
+# readable base cohort writes the other four and would leave an earlier run's
+# diagnosis table beside them, outside the check above.
+ok(has(ro, 'DROP TABLE IF EXISTS {d1}'),
+   "a skipped diagnosis table is dropped, not left from an earlier run")
+# Both names the cohort builds use, as lot resolves them.
+ok(has(ro, 'c("NDMM_BUILD_STATUS", "build_status")'),
+   "the cohort attempt is looked for under either build-status name")
 
 cat("\n-- it reads a finished run and nothing else --\n")
 bo <- paste(readLines(file.path(ROOT, "R", "run_outcomes.R"), warn = FALSE), collapse = "\n")
@@ -325,8 +337,11 @@ mk <- function(lot = STATUS, meta = META, ndmm = NDMMS) {
   # Routed by table name: one fixture answering every query cannot tell a guard
   # that reads the right table from one that reads the wrong one.
   assign("db_q", function(con, sql) {
+    # LOT_BUILD_STATUS before the cohort's, or the shared "BUILD_STATUS" tail
+    # would route lot's own status row to the cohort branch.
     pick <- if (grepl("LOT_RUN_METADATA", sql, fixed = TRUE)) meta
-            else if (grepl("NDMM_BUILD_STATUS", sql, fixed = TRUE)) ndmm
+            else if (grepl("LOT_BUILD_STATUS", sql, fixed = TRUE)) lot
+            else if (grepl("BUILD_STATUS", sql, ignore.case = TRUE)) ndmm
             else lot
     if (is.null(pick)) stop("TABLE_OR_VIEW_NOT_FOUND")
     as.data.frame(pick, stringsAsFactors = FALSE)

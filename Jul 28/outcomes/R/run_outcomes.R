@@ -101,13 +101,23 @@ check_cohort_attempt <- function(con, lot_run_id) {
     if (is.na(i)) NA_character_ else as.character(d[[i]][1])
   }
   lot_cohort <- at(m, "COHORT_RUN_ID"); lot_stamp <- at(m, "COHORT_STAMP")
-  tbl <- coh_tbl("NDMM_BUILD_STATUS")
-  d <- tryCatch(db_q(con, glue(
-    "SELECT * FROM {tbl} ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) NULL)
+  # Both names the cohort builds use, as lot resolves them (COHORT_STATUS_TABLES
+  # in build_lot.R). Asking only for the nndm one would find nothing on an
+  # overall cohort and report the attempt as uncomparable, which reads as "no
+  # such record" when the record is there under the other name.
+  tbl <- NULL; d <- NULL
+  for (nm in c("NDMM_BUILD_STATUS", "build_status")) {
+    t <- coh_tbl(nm)
+    r <- tryCatch(db_q(con, glue(
+      "SELECT * FROM {t} ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) NULL)
+    if (!is.null(r) && nrow(r)) { tbl <- t; d <- r; break }
+  }
   # Nothing recorded is nothing to compare, and saying so is honest. A cohort
   # built by another package has no such table.
-  if (is.null(d) || !nrow(d)) {
-    log_msg("  ", tbl, " has no row - the cohort attempt cannot be compared.")
+  if (is.null(d)) {
+    log_msg("  No cohort build status under ", coh_tbl("NDMM_BUILD_STATUS"),
+            " or ", coh_tbl("build_status"),
+            " - the cohort attempt cannot be compared.")
     return(invisible(FALSE))
   }
   now_id <- at(d, "RUN_ID"); now_stamp <- at(d, "UPDATED_AT")
@@ -163,12 +173,17 @@ check_lines_in_followup <- function(con, tte_tbl, lines_tbl, cohort_tbl) {
 # A table left behind by an earlier run is a mismatch rather than a silent mix.
 # Asked of the tables themselves: a log line saying they are stamped is not
 # evidence that they are.
-check_stamps <- function(con, run_id, tbls, tte) {
+# Both ids: which outcomes run wrote the table, and which LOT run supplied the
+# lines. Checking only the first would accept a table stamped by this run whose
+# lines came from a different one.
+check_stamps <- function(con, run_id, lot_run, tbls, tte) {
   bad <- character(0)
   for (t in c(tte, tbls)) {
     n <- tryCatch(as.numeric(db_q(con, glue(
-      "SELECT count(*) AS n FROM {t} WHERE OUT_RUN_ID <> {sql_text(run_id)}
-          OR OUT_RUN_ID IS NULL"))$n), error = function(e) NA_real_)
+      "SELECT count(*) AS n FROM {t}
+        WHERE OUT_RUN_ID IS NULL OR OUT_RUN_ID <> {sql_text(run_id)}
+           OR LOT_RUN_ID IS NULL OR LOT_RUN_ID <> {sql_text(lot_run)}"))$n),
+      error = function(e) NA_real_)
     if (is.na(n)) bad <- c(bad, paste0(t, " (cannot be read)"))
     else if (n > 0) bad <- c(bad, paste0(t, " (", n, " rows from another run)"))
   }
@@ -176,7 +191,8 @@ check_stamps <- function(con, run_id, tbls, tte) {
     stop("These outputs are not this run's: ", paste(bad, collapse = "; "),
          ". They are read together, so a mix of runs is not a partial answer ",
          "- it is a wrong one. Re-run the build.", call. = FALSE)
-  log_msg("  All ", length(tbls) + 1L, " outputs carry OUT_RUN_ID ", run_id)
+  log_msg("  All ", length(tbls) + 1L, " outputs carry OUT_RUN_ID ", run_id,
+          " over LOT run ", lot_run)
   invisible(TRUE)
 }
 
@@ -204,7 +220,7 @@ build_outcomes <- function(here, cohort_table, prefix) {
 
   log_msg("Building ", tte, " - one row per patient per line")
   db_exec(con, glue("CREATE OR REPLACE TABLE {tte} AS {
-    outcomes_tte_sql(outcomes_base_sql(lines, cohort, base), run_id)}"))
+    outcomes_tte_sql(outcomes_base_sql(lines, cohort, base), run_id, lot_run)}"))
   check_lines_in_followup(con, tte, lines, cohort)
 
   tables <- list(
@@ -220,12 +236,22 @@ build_outcomes <- function(here, cohort_table, prefix) {
     db_exec(con, glue("CREATE OR REPLACE TABLE {t} AS {p[[2]](tte)}"))
     log_msg("Wrote ", t)
   }
+  # OUT_DX_TO_LOT1 is the one optional output, and an optional output is the one
+  # that can be left behind: a run without a readable base cohort writes the
+  # other four and would leave an earlier run's diagnosis table beside them,
+  # unstamped by this run and outside the check below. Dropped rather than
+  # stamped - there is no diagnosis date to put in it.
+  if (is.null(base)) {
+    d1 <- out_tbl("OUT_DX_TO_LOT1")
+    db_exec(con, glue("DROP TABLE IF EXISTS {d1}"))
+    log_msg("  ", d1, " dropped - this run has no MM diagnosis date to put in it.")
+  }
   # Every table written, so the stamps agree. A run that died between them
   # leaves an OUT_TTE from this run beside summaries from the last one, and
   # OUT_RUN_ID is what says so - which is why it goes on all of them and is
   # checked here rather than asserted in the log.
-  check_stamps(con, run_id, vapply(tables, function(p) out_tbl(p[[1]]),
-                                   character(1)), tte)
+  check_stamps(con, run_id, lot_run,
+               vapply(tables, function(p) out_tbl(p[[1]]), character(1)), tte)
 
   # What the run produced, on the log, so a failure to write is not the first
   # anyone hears of a number being wrong.
