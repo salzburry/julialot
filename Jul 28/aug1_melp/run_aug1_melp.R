@@ -8,10 +8,15 @@
 #   DATABRICKS_PWD=... INPUT_COHORT_TABLE=ndmm_NDMM_COHORT COHORT_PREFIX=ndmm_ \
 #     AUG1_EXECUTE=TRUE Rscript aug1_melp/run_aug1_melp.R
 #
-# Three complete LOT builds - the contract build, the rule as asked, and the
-# rule yielding a coded transplant to the SCT rule - and the difference between
-# them. That difference is the MELP-adjusted line structure: lines per patient,
-# reach to 2L and 3L, LOT1 length, regimens.
+# Three complete LOT builds - the contract build, and the rule under each of the
+# two readings of a coded transplant - and the difference between them. That
+# difference is the MELP-adjusted line structure: lines per patient, reach to 2L
+# and 3L, LOT1 length, regimens.
+#
+# Neither rule cell is the request implemented to the letter. On B.2 both take
+# the narrow reading: melphalan's boundary is removed, and the line is not held
+# open to the second dose. See aug1_melp/README.md and open question 6 in
+# questions/melphalan_lot_rule.md.
 #
 # Execution is opt-in because a cell is a whole build. There is no cheaper way:
 # moving a line boundary changes which line every later dose falls in, which
@@ -47,6 +52,7 @@ report_plan <- function(cells) {
   cat("No direction is predicted. The rule adds boundaries at A.2 and removes ",
       "them at\nB.2 and B.3, so which way a number moves is what the run is ",
       "for.\n", sep = "")
+  cat("\n", MELP_B2_READING, "\n", sep = "")
 }
 
 # The cell's own run id, from its own status row. Reading LOT_ATTRITION or
@@ -161,9 +167,18 @@ main <- function() {
   rows <- list()
   for (i in seq_along(cells)) {
     c_i <- cells[[i]]
+    # The MAP stack and the build's own windows, so the B.2 count is that
+    # population rather than every line melphalan happens to appear in.
     m <- tryCatch(db_q(con, melp_metric_sql(
       wrk(paste0(c_i$prefix, "LOT_LONG_FINAL")),
-      wrk(paste0(c_i$prefix, "LOT_ATTRITION")), cell_run_id(con, c_i), abbr)),
+      wrk(paste0(c_i$prefix, "LOT_ATTRITION")), cell_run_id(con, c_i), abbr,
+      map_tbl      = wrk(paste0(c_i$prefix, "MAP_STACKED")),
+      expo_days    = cfg$melp_exposure_days,
+      restart_days = cfg$melp_restart_days,
+      advance_days = cfg$melp_advance_days,
+      ind1         = cfg$induction_window_days,
+      indn         = cfg$lot_n_induction_window_days,
+      cart         = cfg$cart_consolidation_days)),
       error = function(e) NULL)
     if (is.null(m))
       stop("Metrics could not be read for ", c_i$id, ". The result is the ",

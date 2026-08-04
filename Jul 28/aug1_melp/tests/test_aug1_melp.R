@@ -204,7 +204,7 @@ ok(has(rs, "this is a stop rather than a row"),
    "...as does a cell whose metrics come back empty")
 
 cat("\n-- what is read off the builds --\n")
-sql <- melp_metric_sql("F", "A", "r1", "MELP")
+sql <- melp_metric_sql("F", "A", "r1", "MELP", map_tbl = "M")
 ok(all(vapply(names(MELP_METRICS), function(m) has(sql, paste0("AS ", m)), logical(1))),
    paste0("all ", length(MELP_METRICS), " metrics are actually selected"))
 # And the other way. A column the query computes and MELP_METRICS does not name
@@ -230,7 +230,7 @@ cmp <- melp_compare(data.frame(
   median_lot1_meds = c(3, 3, 3), n_lot1_regimens = c(50, 50, 50),
   n_cart_init = c(10, 10, 10), n_melp_add = c(30, 45, 38),
   n_melp_lines = c(60, 70, 65), n_sct_auto_end = c(80, 80, 74),
-  n_pat_with_melp = c(55, 55, 55), n_melp_after_runout = c(12, 12, 5),
+  n_pat_with_melp = c(55, 55, 55), n_b2_line_starts = c(12, 12, 5),
   stringsAsFactors = FALSE))
 ok(identical(cmp$change[cmp$cell == "as_asked" & cmp$metric == "n_lines"], 100),
    "a cell is reported as its difference from the reference")
@@ -249,7 +249,7 @@ ap <- melp_modes_apart(data.frame(
   median_lot1_meds = c(3, 3, 3), n_lot1_regimens = c(50, 50, 50),
   n_cart_init = c(10, 10, 10), n_melp_add = c(30, 45, 38),
   n_melp_lines = c(60, 70, 65), n_sct_auto_end = c(80, 80, 74),
-  n_pat_with_melp = c(55, 55, 55), n_melp_after_runout = c(12, 12, 5),
+  n_pat_with_melp = c(55, 55, 55), n_b2_line_starts = c(12, 12, 5),
   stringsAsFactors = FALSE))
 ok(!is.null(ap) && identical(ap$difference[ap$metric == "n_melp_add"], 7),
    "the two readings are also compared with each other, which is the open question")
@@ -384,28 +384,58 @@ cat("\n-- B.2 removes a boundary; it does not hold the line open --\n")
 # dose starts the next one. Making melphalan a member of a regimen whose
 # induction window it never entered is a clinical decision, not an
 # implementation one - so it is recorded as open, and counted.
-ok(has(sql, "AS n_melp_after_runout"),
+ok(has(sql, "AS n_b2_line_starts"),
    "the lines that decision governs are counted, not left to be argued about")
+# All four conditions, because any one alone lets in lines with no B.2 pair -
+# a line DARA started, with melphalan merely joining its induction window,
+# satisfies "starts after a runout and has melphalan in the regimen".
+ok(has(sql, "x.PREV_REASON = 'DISCONTINUATION'"),
+   "...the previous line ended by running out")
+ok(has(sql, "e2.EXPO_DT = x.LOT_START_DT"),
+   "...the line starts on a melphalan exposure, so melphalan started it")
+ok(has(sql, "e1.EXPO_DT >= x.PREV_START_DT") && has(sql, "e1.EXPO_DT <  x.LOT_START_DT"),
+   "...with an earlier melphalan exposure inside the previous line")
+ok(has(sql, "datediff(e1.EXPO_DT, x.PREV_START_DT) >"),
+   "...outside that line's own induction window, which makes it B and not A")
+ok(has(sql, "BETWEEN 60 AND 179"),
+   "...and the pair 60-179 days apart, which is B.2 and not B.1 or B.3")
+# The exposures are chained the way the engine chains them, or the count is
+# about a different set of exposures than the rule acted on.
+ok(has(sql, "< 30 THEN 0 ELSE 1 END AS IS_NEW"),
+   "...over exposures merged on the same threshold the rule uses")
+ok(!has(melp_metric_sql("F", "A", "r1", "MELP"), "AS n_b2_line_starts") ||
+     has(melp_metric_sql("F", "A", "r1", "MELP"), "cast(NULL as bigint)"),
+   "and with no MAP table to read, it is NULL rather than a wrong number")
 mrs <- paste(readLines(file.path(LOT, "R", "melp_rule.R"), warn = FALSE), collapse = "\n")
-ok(has(mrs, "It does not hold the line") && has(mrs, "open question 6") |
-     has(mrs, "Open question 6"),
+ok(has(mrs, "It does not hold the line") && grepl("[Oo]pen question 6", mrs),
    "...and the rule says so where it suppresses, rather than claiming the ask")
 doc <- paste(readLines(file.path(PARENT, "questions", "melphalan_lot_rule.md"),
                        warn = FALSE), collapse = "\n")
 ok(grepl("^6\\.", doc, perl = TRUE) || has(doc, "\n6. In B.2"),
    "...and it is on the study team's list with the other five")
-ok(has(doc, "n_melp_after_runout"),
+ok(has(doc, "n_b2_line_starts"),
    "...pointing at the number that settles it")
 # The count is the group the reading decides: a line melphalan started straight
 # after the previous one ran out, rather than every melphalan line.
-ok(has(sql, "w.PREV_REASON = 'DISCONTINUATION'") && has(sql, "w.LOT_NUM > 1") &&
-     has(sql, "w.LOT_START_TYPE = 'MED'"),
-   "and it counts a line melphalan started after a runout, not any melphalan line")
+ok(!has(sql, "w.LOT_START_TYPE = 'MED'"),
+   "and it does not settle for start-type MED, which any drug can produce")
 ok(!has(rd <- paste(readLines("README.md", warn = FALSE), collapse = "\n"),
         "both doses stay in the current line - which is what this builds"),
    "the README does not claim the reading the code does not implement")
 ok(has(rd, "It does not hold the line open"),
    "...it says which of the two readings is built")
+# And nothing anywhere may claim to be the whole rule. Neither mode is: the
+# names are about the TRANSPLANT reading, and on B.2 both take the narrow one.
+# This was the label the detailed section already contradicted.
+claims <- function(x) grepl("(exactly|precisely) as (written|asked)", x, ignore.case = TRUE)
+ok(!any(vapply(MELP_CELLS, function(c_i) claims(c_i$what), logical(1))),
+   "no cell describes itself as the rule exactly as written")
+ok(!claims(rd) && !claims(rs),
+   "...nor does the README or the runner")
+ok(exists("MELP_B2_READING") && has(MELP_B2_READING, "NOT held open"),
+   "the B.2 reading is stated as a value, so the plan can print it")
+ok(has(rs, "MELP_B2_READING"),
+   "...and the plan does print it, before anyone commits three builds")
 
 cat("\n-- and no direction is predicted, deliberately --\n")
 # The sensitivity sweep predicts a sign before the run and scores it. That works
