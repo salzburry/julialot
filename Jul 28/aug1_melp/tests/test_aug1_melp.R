@@ -391,14 +391,33 @@ ok(has(sql, "AS n_b2_line_starts"),
 # satisfies "starts after a runout and has melphalan in the regimen".
 ok(has(sql, "x.PREV_REASON = 'DISCONTINUATION'"),
    "...the previous line ended by running out")
-ok(has(sql, "e2.EXPO_DT = x.LOT_START_DT"),
-   "...the line starts on a melphalan exposure, so melphalan started it")
-ok(has(sql, "e1.EXPO_DT >= x.PREV_START_DT") && has(sql, "e1.EXPO_DT <  x.LOT_START_DT"),
-   "...with an earlier melphalan exposure inside the previous line")
-ok(has(sql, "datediff(e1.EXPO_DT, x.PREV_START_DT) >"),
+ok(has(sql, "e.EXPO_DT = x.LOT_START_DT"),
+   "...the line starts on a melphalan exposure")
+# Landing on the start date is not enough. The same-day tie-break in
+# 10_lot2_5_base.R is SCT_ALLO > CART > SCT_AUTO > MED, so an AUTO coded on the
+# melphalan date takes the start type - and that line is the transplant's.
+ok(has(sql, "x.LOT_START_TYPE = 'MED'"),
+   "...and melphalan started it, not a procedure coded on the same day")
+tie <- sf("10_lot2_5_base.R")
+ok(grepl("Same-day tie-break: SCT_ALLO > CART > SCT_AUTO > MED", tie, fixed = TRUE),
+   "...which is the tie-break the engine documents, not an assumption here")
+ok(has(sql, "e.PREV_EXPO_DT >= x.PREV_START_DT") &&
+     has(sql, "e.PREV_EXPO_DT <  x.LOT_START_DT"),
+   "...with the exposure before it inside the previous line")
+ok(has(sql, "datediff(e.PREV_EXPO_DT, x.PREV_START_DT) >"),
    "...outside that line's own induction window, which makes it B and not A")
 ok(has(sql, "BETWEEN 60 AND 179"),
    "...and the pair 60-179 days apart, which is B.2 and not B.1 or B.3")
+# The pair has to be the one the engine judged. The engine uses lead() over the
+# ordered exposures, so it judges consecutive pairs only. Joining to any earlier
+# exposure in range counts pairs it never looked at: exposures on days 100, 160
+# and 250 give it 100-160 and 160-250, and a range join would also match
+# 100-250, reporting one line twice.
+ok(has(sql, "lag(EXPO_DT) OVER (PARTITION BY PATID ORDER BY EXPO_DT) AS PREV_EXPO_DT"),
+   "the pair is the consecutive one, carried on the exposure itself")
+ok(length(gregexpr("INNER JOIN mx", sql)[[1]]) == 1L &&
+     !has(sql, "INNER JOIN mx e1"),
+   "...by one join, so a line cannot match two earlier exposures and count twice")
 # The exposures are chained the way the engine chains them, or the count is
 # about a different set of exposures than the rule acted on.
 ok(has(sql, "< 30 THEN 0 ELSE 1 END AS IS_NEW"),
