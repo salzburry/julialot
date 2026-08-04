@@ -8,7 +8,7 @@
 # Skipped when apr_30_2026 is not beside this folder, so a copied-out package
 # still runs its other suites.
 #
-#   Rscript validation/port/nndm.R
+#   Rscript validation/port/ndmm.R
 
 COMMON <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -18,7 +18,7 @@ COMMON <- local({
   file.path(dirname(d), "_common.R")
 })
 source(COMMON)
-ROOT <- pkg_dir("nndm")
+ROOT <- pkg_dir("ndmm")
 need_dirs(ROOT)
 source(file.path(ROOT, "tests", "testutil.R"))
 
@@ -33,7 +33,7 @@ src <- readLines(SRC, warn = FALSE)
 # together they are the cohort half of the source - asserted below, so a range
 # that is quietly narrowed cannot drop code without saying so.
 PARTS <- list(
-  list(file = "R/nndm_constants.R",      from = 62,  to = 147),
+  list(file = "R/ndmm_constants.R",      from = 62,  to = 147),
   list(file = "R/steps/01_enrollment.R",  from = 148, to = 198),
   list(file = "R/steps/02_lot1_starts.R", from = 199, to = 216),
   list(file = "R/steps/03_prior_therapy.R", from = 217, to = 317),
@@ -62,7 +62,7 @@ SUBST <- list(
   # so without config.csv the two disagreed and check_constants() stopped the
   # build. Both defaults are the protocol's date now, and a config.csv that
   # goes missing no longer widens the pregnancy and MM-diagnosis scans.
-  "R/nndm_constants.R" = list(
+  "R/ndmm_constants.R" = list(
     list(from = "NDMM_STUDY_START         <- Sys.getenv(\"STUDY_START\", unset = \"2016-01-01\")",
          to   = "NDMM_STUDY_START         <- Sys.getenv(\"STUDY_START\", unset = \"2015-07-01\")", n = 1L)),
   # The sixth clinical change, and it is a fail-open rather than a rule: the
@@ -148,7 +148,7 @@ SUBST <- list(
 # strength of a claim with no code in it. These add the check on the normalised
 # value; they can only ever remove matches the source should not have made.
 ADDED <- list(
-  "R/nndm_constants.R" = c("NDMM_FU_CE_DAYS          <- 0L" = 1L),
+  "R/ndmm_constants.R" = c("NDMM_FU_CE_DAYS          <- 0L" = 1L),
   "R/steps/03_prior_therapy.R" = c(
     "AND regexp_replace(trim(CL_CODE), '[^A-Za-z0-9]', '') <> ''" = 1L,
     "AND (upper(trim(CL_CODE_TYPE)) <> 'NDC'" = 1L,
@@ -249,8 +249,8 @@ SPLICE <- list(
   # metastatic cancer, so the protocol says it excludes; the source overrode it
   # because myeloma bone disease is often miscoded that way. Dropped from the
   # override list, so it excludes as written. The cohort is smaller than
-  # apr_30_2026's. See nndm/DECISIONS.md #4.
-  "R/nndm_constants.R" = list(
+  # apr_30_2026's. See ndmm/DECISIONS.md #4.
+  "R/ndmm_constants.R" = list(
     list(from = "NDMM_MM_ADJACENT_OVERRIDE <- c(",
          to   = "\"EXTRAMEDULLARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION\"",
          src_from = 109L, src_to = 114L)),
@@ -392,7 +392,7 @@ undeviate <- function(lines, file) {
 DROPPED <- list(
   # checkpoint() names the table after the view variable, so the *_TBL twins the
   # source needed have no reader here.
-  "R/nndm_constants.R"       = c("NDMM_LOT_LONG_FILT", "NDMM_LOT_LONG_FILT_TBL",
+  "R/ndmm_constants.R"       = c("NDMM_LOT_LONG_FILT", "NDMM_LOT_LONG_FILT_TBL",
                                  "NDMM_FLAGS_ALL_TBL"),
   # NDMM_LOT1_STARTS is built by 00b_lot1_index.R from claims, not from LOT_LONG.
   "R/steps/02_lot1_starts.R" = "build_lot1_starts_ndmm",
@@ -420,7 +420,7 @@ undrop <- function(want, file) {
   list(want = want, short = short)
 }
 
-CHANGED <- c("R/nndm_constants.R", "R/steps/03_prior_therapy.R",
+CHANGED <- c("R/ndmm_constants.R", "R/steps/03_prior_therapy.R",
              "R/steps/04_other_malig.R", "R/steps/05_pregnancy.R",
              "R/steps/06_flags.R", "R/steps/07_cohort.R")
 

@@ -27,7 +27,7 @@ cfg_defaults <- list(
   # rather than trusted (see check_max_lot).
   max_lot            = as.integer(Sys.getenv("MAX_LOT", unset = "5")),
 
-  # What the cohort build calls its attrition table, before the prefix. nndm
+  # What the cohort build calls its attrition table, before the prefix. ndmm
   # writes NDMM_ATTRITION; a different cohort build writes a different name, or
   # none - in which case the panel is skipped and says so. The columns it must
   # carry are RUN_ID, STEP_NUM, CRITERION, N_PATIENTS and RECORDED_AT.

@@ -174,7 +174,7 @@ The diagnosis-anchored flags never could say whether trial therapy preceded the
 1L start - baseline ends before that index, follow-up starts there and runs past
 1L, and the stretch in between is in neither. So the cohort build now produces
 `NDMM_CLINTRIAL_FLAGS`, whose windows are cut at the 1L start and which carries
-`CLINTRIAL_DX_TO_LOT1` as its own column (`nndm/README.md`).
+`CLINTRIAL_DX_TO_LOT1` as its own column (`ndmm/README.md`).
 
 Q4 reads it when it is there and headlines it, with the diagnosis-anchored
 table kept beside it as context. `lot1_studyteam_qs.R` Q1c reads the same
@@ -344,7 +344,7 @@ deliberately did not. `raw_icd_flag` is a waivable check in the cohort build,
 so a run can legitimately carry unrecognised flags, and that is exactly when
 the two rules disagree.
 
-The spellings live in `nndm/R/codelists.R`, which this package cannot source -
+The spellings live in `ndmm/R/codelists.R`, which this package cannot source -
 it defines its own `load_codelist_csv()` and would replace `lot`'s. So they are
 repeated here, and `tests/test_setup.R` parses that file and fails if the two
 lists ever differ.
@@ -358,7 +358,7 @@ it, with `is_mm_adjacent_override` already applied.
 
 So there is no second list here to keep in step. Secondary neoplasm of bone is
 excluded because the build excluded it (`C79.51`, `C79.52` and `198.5` are
-metastatic cancer - `nndm/DECISIONS.md` section 4), not because this script
+metastatic cancer - `ndmm/DECISIONS.md` section 4), not because this script
 agrees. Rebuilding the list from `other_malig.csv` would mean re-deciding the
 rule, which is exactly how the two came to disagree.
 

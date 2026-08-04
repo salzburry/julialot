@@ -188,7 +188,7 @@ against, so nobody has to guess and nobody has to re-run to find out.
 | `NDMM_BELANTAMAB_RECONCILE` | which cohort members `lot` will remove | every belantamab claim belonging to a cohort member, with dates, bounded by that patient's own `ENDDATE` - which is the window `lot` reads. Criterion 9 has already removed anyone whose claim precedes their index, so every row is on or after it and `lot`'s `no_belantamab` removes every patient listed. Nothing here needs adjudicating. Under `CENSOR_AT_DISENROLLMENT=TRUE` `lot` narrows further, so the count is an upper bound on a sensitivity run |
 
 This list is maintained by hand and has fallen behind the code before. The
-build's own declaration is `OUTPUTS` in `build_nndm.R`, and
+build's own declaration is `OUTPUTS` in `build_ndmm.R`, and
 `tests/test_runner.R` holds that to what the run actually writes; read it if
 the two disagree.
 
@@ -244,7 +244,7 @@ rather than a rewrite:
 |---|---|---|
 | #3 | which agents actually set the index - the code list is the eligible set, so this is a review rather than a decision | `NDMM_INDEX_AGENTS` |
 | #5 | one day of follow-up CE against the study's three months | `NDMM_FU_CE_COUNTS` |
-| #7 | which codes stay the index disease rather than another cancer | `NDMM_MM_ADJACENT_CODES` -> `NDMM_MM_ADJACENT_OVERRIDE` in `nndm_constants.R` |
+| #7 | which codes stay the index disease rather than another cancer | `NDMM_MM_ADJACENT_CODES` -> `NDMM_MM_ADJACENT_OVERRIDE` in `ndmm_constants.R` |
 | #7 | whether the ICD category is the right unit for "same primary tumour type" | `NDMM_OTHER_MALIG_GRAIN`, `NDMM_OTHER_MALIG_GROUPS` |
 
 None of them changes anything until somebody acts. Every file ships empty
@@ -698,13 +698,13 @@ turns on lives in exactly one of them.
 | `R/steps/06_flags.R` | one row per candidate carrying every criterion's verdict, and the cohort defined over it |
 | `R/steps/07_cohort.R` | the filtered cohort, and the counts the attrition is read from |
 
-The runner, the helpers and the tests are not step files: `R/build_nndm.R`
+The runner, the helpers and the tests are not step files: `R/build_ndmm.R`
 holds the order, the contract, the criteria list and the attrition, and
 `R/steps` holds the rules it applies.
 
 ### The criteria are one list
 
-`NDMM_CRITERIA` in `R/build_nndm.R` is the cohort definition: one entry per
+`NDMM_CRITERIA` in `R/build_ndmm.R` is the cohort definition: one entry per
 criterion, in the order the study applies them, each carrying the flag it tests
 and the label the attrition prints. Three readers render it - `NDMM_PATIDS`
 ANDs all of it, the funnel walks a prefix of it per row, and the two
@@ -740,7 +740,7 @@ in - this build applies two of its six.
 ## Settings
 
 `config.csv`; the environment wins over it. Everything below is read by name.
-`CONTRACT` in `build_nndm.R` is the authority on which settings cannot be
+`CONTRACT` in `build_ndmm.R` is the authority on which settings cannot be
 changed without changing the cohort; this list is a description of it.
 
 ### To run at all

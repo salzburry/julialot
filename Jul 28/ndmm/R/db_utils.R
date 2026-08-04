@@ -55,9 +55,9 @@ set_lot_config <- function(x) {
   invisible(x)
 }
 
-nndm_config <- function() {
+ndmm_config <- function() {
   if (!exists("cfg", envir = globalenv()))
-    stop("No NDMM config. build_nndm() calls set_lot_config() before any step.",
+    stop("No NDMM config. build_ndmm() calls set_lot_config() before any step.",
          call. = FALSE)
   get("cfg", envir = globalenv())
 }
@@ -77,16 +77,16 @@ ndc_key <- function(col) {
 }
 
 full_name <- function(schema, object) {
-  cfg <- nndm_config()
+  cfg <- ndmm_config()
   paste0(cfg$catalog, ".", schema, ".", object)
 }
 
-cdm <- function(tbl) full_name(nndm_config()$cdm_schema, tbl)
+cdm <- function(tbl) full_name(ndmm_config()$cdm_schema, tbl)
 # Every table this build touches carries the cohort prefix - what it reads as
 # well as what it writes, since they all belong to one cohort. Steps call wrk()
 # and pick up the prefix without knowing it is there.
 wrk <- function(tbl) {
-  cfg <- nndm_config()
+  cfg <- ndmm_config()
   prefix <- if (is.null(cfg$object_prefix)) "" else cfg$object_prefix
   full_name(cfg$work_schema, paste0(prefix, tbl))
 }
@@ -129,7 +129,7 @@ get_quarter_suffix <- function(end_date) {
 }
 
 cdm_src <- function(base_tbl) {
-  cfg <- nndm_config()
+  cfg <- ndmm_config()
   if (isTRUE(cfg$use_quarterly_tables)) {
     qsuffix <- get_quarter_suffix(cfg$study_end)
     cdm(paste0("t_", base_tbl, "_", qsuffix))
@@ -138,8 +138,8 @@ cdm_src <- function(base_tbl) {
   }
 }
 
-with_retry <- function(fn, max_retries = nndm_config()$max_retries,
-                       base_sleep = nndm_config()$base_sleep) {
+with_retry <- function(fn, max_retries = ndmm_config()$max_retries,
+                       base_sleep = ndmm_config()$base_sleep) {
   # Errors worth no retry. Both the Spark class name and the ODBC wording
   # appear, depending on how the driver surfaces it, so list both.
   permanent_error_patterns <- c(

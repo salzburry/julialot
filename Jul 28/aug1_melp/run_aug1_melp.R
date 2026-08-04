@@ -14,19 +14,16 @@
 # and 3L, LOT1 length, regimens.
 #
 # Neither rule cell is the request implemented to the letter. On B.2 both take
-# the narrow reading: melphalan's boundary is removed, and the line is not held
-# open to the second dose. See aug1_melp/README.md and open question 6 in
-# questions/melphalan_lot_rule.md.
+# the narrow reading, described in aug1_melp/README.md and left open as question
+# 6 in questions/melphalan_lot_rule.md.
 #
-# Execution is opt-in because a cell is a whole build. There is no cheaper way:
-# moving a line boundary changes which line every later dose falls in, which
-# changes induction membership, regimens, discontinuation dates and every later
-# line number. None of that is recoverable from finished lines, which is why
-# lot_validation's measurement counts boundaries and stops there.
+# Execution is opt-in because a cell is a whole build, and there is no cheaper
+# way: moving a boundary changes which line every later dose falls in, and none
+# of that is recoverable from finished lines.
 #
 # It writes to its own throwaway prefixes and never to the study's. Each cell
-# carries CONTRACT_DEVIATIONS in its LOT_BUILD_STATUS row, so the questions, the
-# dashboard and the benchmark harness all refuse it as the study's numbers.
+# carries CONTRACT_DEVIATIONS in its LOT_BUILD_STATUS row, so every reader in
+# this folder refuses it as the study's numbers.
 
 .script_dir <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)

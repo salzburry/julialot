@@ -5,19 +5,19 @@ things that read a finished run.
 
 ## Two cohorts, not one pipeline
 
-`nndm/` and `overall/` are independent. Neither reads the other. Each goes
+`ndmm/` and `overall/` are independent. Neither reads the other. Each goes
 to the raw CDM and the production code lists and builds its own cohort.
 
 | | | writes |
 |---|---|---|
-| `nndm/` | the 1L newly-diagnosed MM study cohort | `<prefix>NDMM_COHORT`, `<prefix>NDMM_ATTRITION` |
+| `ndmm/` | the 1L newly-diagnosed MM study cohort | `<prefix>NDMM_COHORT`, `<prefix>NDMM_ATTRITION` |
 | `overall/` | the broad MM cohort | `OVERALL_COH_FINAL` |
 
 `lot/` is pointed at a cohort table by name, so it runs over either one. That
 gives two paths:
 
 ```
-nndm     ->  lot over <prefix>NDMM_COHORT  ->  dashboard, questions/*_qs.R
+ndmm     ->  lot over <prefix>NDMM_COHORT  ->  dashboard, questions/*_qs.R
 overall  ->  lot over OVERALL_COH_FINAL    ->  questions/broad_studyteam_qs.R
 ```
 
@@ -26,7 +26,7 @@ questions cannot be answered on the NDMM cohort at all - it excluded the
 patients they are about - so they need a LOT run over the broad cohort.
 
 ```
-DATABRICKS_PWD=... Rscript nndm/build.R      ndmm_
+DATABRICKS_PWD=... Rscript ndmm/build.R      ndmm_
 DATABRICKS_PWD=... Rscript lot/build.R       ndmm_NDMM_COHORT ndmm_
 DATABRICKS_PWD=... Rscript dashboard/build.R ndmm_NDMM_COHORT ndmm_
 ```
@@ -35,7 +35,7 @@ The 2L and 3L cohorts are a fourth step on the NDMM path, after the LOT run:
 their index dates are line starts, so lot has to have found the lines first.
 
 ```
-DATABRICKS_PWD=... Rscript nndm/build_subsequent_cohorts.R ndmm_
+DATABRICKS_PWD=... Rscript ndmm/build_subsequent_cohorts.R ndmm_
 ```
 
 The outcomes read a finished LOT run and add nothing to it:
@@ -52,7 +52,7 @@ one before running it.
 | | |
 |---|---|
 | `overall/` | cohort build. `build.R`, takes no arguments. |
-| `nndm/` | cohort build. `build.R <prefix_>`. Also `build_subsequent_cohorts.R <prefix_>` for the 2L and 3L cohorts, which runs after the LOT build. |
+| `ndmm/` | cohort build. `build.R <prefix_>`. Also `build_subsequent_cohorts.R <prefix_>` for the 2L and 3L cohorts, which runs after the LOT build. |
 | `lot/` | lines of therapy. `build.R <COHORT_TABLE> <prefix_>`. |
 | `dashboard/` | one self-contained HTML. `build.R <COHORT_TABLE> <lot_prefix_>`. Reads only. |
 | `questions/` | scripts, not a build. Each reads one finished LOT run and writes CSVs or a workbook. They reuse `lot/`'s modules rather than a second copy. |
@@ -66,7 +66,7 @@ one before running it.
 Not everything, and the exception matters when you point one package at
 another's output.
 
-* A cohort build names its own final table. `nndm` prefixes it, so it is
+* A cohort build names its own final table. `ndmm` prefixes it, so it is
   `ndmm_NDMM_COHORT`. `overall` does not - its final table is
   `OVERALL_COH_FINAL`, from `FINAL_TABLE_NAME` in its config, with no prefix.
 * Everything else a build writes is prefixed - checkpoints, attrition,
@@ -108,7 +108,7 @@ No connection needed. They check the SQL, the settings and the guards.
 
 ```
 Rscript overall/tests/test_runner.R
-Rscript nndm/tests/test_runner.R          # and test_same_as_overall.R,
+Rscript ndmm/tests/test_runner.R          # and test_same_as_overall.R,
                                           # test_subsequent.R
 Rscript lot/tests/test_runner.R           # and test_line_criteria.R
 Rscript dashboard/tests/test_runner.R

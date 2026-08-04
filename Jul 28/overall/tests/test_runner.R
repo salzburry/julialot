@@ -285,7 +285,7 @@ cat("\n-- two runs on one prefix would overwrite each other --\n")
 # Every output name is the prefix plus the table, with no run id in it, so two
 # runs on one prefix replace each other's checkpoints while the other is still
 # reading them - and both can reach "complete" with the final cohort and the
-# attrition built from different executions. nndm and lot both refuse this.
+# attrition built from different executions. ndmm and lot both refuse this.
 bc <- readLines(file.path(ROOT, "R", "build_cohort.R"), warn = FALSE)
 ok(any(grepl("check_no_active_run_overall", bc, fixed = TRUE)),
    "a run already building this prefix is refused")

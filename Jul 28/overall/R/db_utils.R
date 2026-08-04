@@ -123,7 +123,7 @@ unint64 <- function(d) {
 
 # The claim side of an NDC join.
 #
-# A key only from a value that could BE an NDC: eleven digits, or ten under the
+# A key only from a value that could be an NDC: eleven digits, or ten under the
 # 4-4-2 assumption. Anything else gets no key and simply does not join, which
 # is what a join is for. Optum writes NONE or UNK where a medical claim has no
 # NDC - 1.2bn rows of them - and left-padding those to eleven zeros and hoping

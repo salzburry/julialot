@@ -249,7 +249,7 @@ ok(all(vapply(JOURNEY_CATEGORIES, function(c_i)
    "the coverage panel counts every scenario the gallery offers")
 
 cat("\n-- the attrition table is the cohort build's, so it is named per cohort --\n")
-# nndm calls it NDMM_ATTRITION. A different cohort build calls it something
+# ndmm calls it NDMM_ATTRITION. A different cohort build calls it something
 # else, or has none - so the name is a setting rather than a constant in a
 # package that is meant to name no study of its own.
 set_dash_config(modifyList(base, list(work_schema = "wk")))
@@ -258,7 +258,7 @@ tt <- modifyList(t1, list(work_schema = "wk", cohort_prefix = "coh_",
 ok(identical(dashboard_inputs(tt)$attrition, "hive_metastore.wk.coh_MYSTUDY_FUNNEL"),
    "ATTRITION_TABLE names it, and the cohort prefix still applies")
 ok(identical(cfg_defaults$attrition_table, "NDMM_ATTRITION"),
-   "...defaulting to what nndm writes")
+   "...defaulting to what ndmm writes")
 ok(!any(grepl("NDMM_ATTRITION",
               vapply(DASHBOARD_SECTIONS, `[[`, character(1), "sql"), fixed = TRUE)),
    "and no section spells the name out for itself")
@@ -312,7 +312,7 @@ clear()
 getsec <- function(nm) Filter(function(s) identical(s$name, nm), DASHBOARD_SECTIONS)[[1]]
 
 cat("\n-- the panels ask for columns that exist, and for one run --\n")
-# ATTRITION_COLS in nndm declares RUN_ID, STEP_NUM, CRITERION, N_PATIENTS,
+# ATTRITION_COLS in ndmm declares RUN_ID, STEP_NUM, CRITERION, N_PATIENTS,
 # PCT_OF_START, RECORDED_AT. This asked for STEP_LABEL, which is not one of
 # them - so on every real run the query failed, build_panel caught it, and the
 # HTML rendered with the cohort funnel replaced by a notice.
@@ -418,7 +418,7 @@ ok(any(grepl("N_LOT_FINAL_ROWS IS NOT NULL",
 
 cat("\n-- the funnel's shape differs by cohort build, not only its name --\n")
 # Making ATTRITION_TABLE a setting fixed the name. overall writes a different
-# Shape - row_order/step_id/description/n_30/n_60/n_90 against nndm's
+# Shape - row_order/step_id/description/n_30/n_60/n_90 against ndmm's
 # STEP_NUM/CRITERION/N_PATIENTS - so one fixed query fails outright on it, and
 # the page reads as "this study has no funnel".
 NDMM_COLS <- c("RUN_ID", "STEP_NUM", "CRITERION", "N_PATIENTS", "PCT_OF_START",
@@ -438,7 +438,7 @@ lay <- function(cols, owner = noowner, stamp = "2026-01-01 09:00:00") {
 }
 s <- lay(NDMM_COLS)
 ok(grepl("a.CRITERION AS label", s$sql, fixed = TRUE) && is.null(s$skip),
-   "an nndm-shaped funnel gets the nndm query")
+   "an ndmm-shaped funnel gets the ndmm query")
 s <- lay(OVERALL_COLS)
 ok(grepl("description AS label", s$sql, fixed = TRUE) && is.null(s$skip),
    "an overall-shaped funnel gets the overall query - the panel that used to fail outright")
@@ -513,7 +513,7 @@ ok(is.null(s$skip),
 cat("\n-- the panels name no study, in their labels either --\n")
 # The attrition table belongs to whichever cohort build wrote it, so the panel
 # above it cannot describe that build's criteria. "ends before the LOT
-# belantamab criterion" was true of nndm and false of anything else; nothing in
+# belantamab criterion" was true of ndmm and false of anything else; nothing in
 # the warehouse even keys a cohort run to a LOT run.
 labs <- vapply(DASHBOARD_SECTIONS, `[[`, character(1), "label")
 ok(!length(grep("NDMM|belantamab|myeloma|newly diagnosed", labs,

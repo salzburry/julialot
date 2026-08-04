@@ -47,8 +47,9 @@ ok(!melp_rule_on(off) && melp_rule_on(ask) && melp_rule_on(yld),
    "on and off are decided by the setting, not by a caller passing a flag")
 stops(melp_rule_mode(list(apply_melp_rule = "sometimes")),
       "an unknown mode stops rather than behaving like one of the two")
-# The port suite proves the same thing from the other side - the step files are
-# the source once these two hooks are undone - so this is the R half of it.
+# Where the hooks are, and that there are no others. The step files carry
+# exactly two in 06 and three in 10; anything else melphalan in them is a hook
+# nobody registered here.
 sf <- function(f) paste(readLines(file.path(LOT, "R", "steps", f), warn = FALSE),
                         collapse = "\n")
 ok(has(sf("06_lot1_end.R"), "FROM {melp_lot1_base_from(cfg)}") &&
@@ -120,7 +121,7 @@ ok(has(b1, "YIELD_THIS = 0") && !has(b1, "YIELD_NEXT"),
 
 cat("\n-- inside induction is THIS exposure's date, not the drug's membership --\n")
 # The two are the same only for the first dose. Dosed on day 10 and again on day
-# 100, melphalan is in the base regimen throughout - so reading INSIDE off the
+# 100, melphalan is in the base regimen throughout - so reading it off the
 # regimen calls the day-100 dose an A branch, and B.1 or B.2 is lost. That was
 # the bug: the rule and the July measurement, which computes DAYS_INTO_LINE per
 # exposure, disagreed about the same patient.
@@ -378,7 +379,7 @@ ok(has(rs, "rather than an output left out"),
 
 cat("\n-- B.2 removes a boundary; it does not hold the line open --\n")
 # The rule as written says both doses stay in the current line. Suppression
-# cannot deliver that: a line's discontinuation is its BASE agents' last cover,
+# cannot deliver that: a line's discontinuation is its base agents' last cover,
 # and a melphalan first seen outside induction is not one of them. So where the
 # regimen runs out between the two doses, the line ends there and the second
 # dose starts the next one. Making melphalan a member of a regimen whose
@@ -415,7 +416,7 @@ ok(has(sql, "BETWEEN 60 AND 179"),
 # 100-250, reporting one line twice.
 ok(has(sql, "lag(EXPO_DT) OVER (PARTITION BY PATID ORDER BY EXPO_DT) AS PREV_EXPO_DT"),
    "the pair is the consecutive one, carried on the exposure itself")
-# LOT_START_TYPE = 'MED' says a medication won the tie-break, not WHICH one:
+# LOT_START_TYPE = 'MED' says a medication won the tie-break, not which one:
 # d_MED is the earliest qualifying non-steroid agent and the engine does not
 # keep the drug. So a line DARA also started on that date exists under either
 # B.2 reading, and only the subset with no other starter is evidence.
@@ -479,7 +480,7 @@ ok(!any(vapply(MELP_CELLS, function(c_i) claims(c_i$what), logical(1))),
    "no cell describes itself as the rule exactly as written")
 ok(!claims(rd) && !claims(rs),
    "...nor does the README or the runner")
-ok(exists("MELP_B2_READING") && has(MELP_B2_READING, "NOT held open"),
+ok(exists("MELP_B2_READING") && has(MELP_B2_READING, "not held open"),
    "the B.2 reading is stated as a value, so the plan can print it")
 ok(has(rs, "MELP_B2_READING"),
    "...and the plan does print it, before anyone commits three builds")

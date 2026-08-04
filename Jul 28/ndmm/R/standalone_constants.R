@@ -1,5 +1,5 @@
 # Names and settings for the MM-diagnosis, demographics and 1L-index steps.
-# Kept apart from nndm_constants.R, which is held to a fixed line count.
+# Kept apart from ndmm_constants.R, which is held to a fixed line count.
 
 # Views built by 00_mm_cohort.R. Leading underscore so they cannot collide
 # with a table name.
@@ -76,7 +76,7 @@ NDMM_BELANTAMAB_TX        <- "_ndmm_belantamab_tx"
 
 # The other disease states of the same conditions.
 #
-# nndm_constants.R lists the tumour groups the other-cancer rule must not
+# ndmm_constants.R lists the tumour groups the other-cancer rule must not
 # exclude on. Three of them are the "not having achieved remission" state of a
 # plasma-cell disorder, and the other states were left in the filter:
 #

@@ -80,7 +80,7 @@ Switches: `SHOW_LOT_ATTRITION`, `SHOW_LOT_PROGRESSION`,
 
 ### The attrition table belongs to the cohort build - name and shape
 
-`nndm` calls it `NDMM_ATTRITION`. A different cohort build calls it something
+`ndmm` calls it `NDMM_ATTRITION`. A different cohort build calls it something
 else, or writes none - so the name is `ATTRITION_TABLE` in `config.csv` rather
 than a constant in a package that is meant to name no study of its own. The
 name is validated the same way `INPUT_COHORT_TABLE` is (a bare table name, no
@@ -91,10 +91,10 @@ not agree on a shape:
 
 | build | table | columns |
 |---|---|---|
-| `nndm` | `NDMM_ATTRITION` | `RUN_ID`, `STEP_NUM`, `CRITERION`, `N_PATIENTS`, `PCT_OF_START`, `RECORDED_AT` |
+| `ndmm` | `NDMM_ATTRITION` | `RUN_ID`, `STEP_NUM`, `CRITERION`, `N_PATIENTS`, `PCT_OF_START`, `RECORDED_AT` |
 | `overall` | `<prefix>attrition_report` | `row_order`, `run_id`, `final_table_name`, `created_at`, `step_id`, `description`, `n_30`, `n_60`, `n_90` |
 
-One fixed query against the `nndm` columns fails outright on an `overall`-built
+One fixed query against the `ndmm` columns fails outright on an `overall`-built
 cohort - the panel becomes a query-failed notice while the rest of the page
 renders, which reads as "this study has no funnel" rather than "this dashboard
 cannot read this funnel". So `ATTRITION_LAYOUTS` in `sections.R` holds one spec
@@ -111,7 +111,7 @@ repeats it - `overall`'s own printer stars the built column and warns against
 reading the row left to right, and picking one here silently would be the same
 mistake in a different medium.
 
-The `nndm` table is history - the build deletes and re-inserts only its own
+The `ndmm` table is history - the build deletes and re-inserts only its own
 `RUN_ID`, so previous runs stay - and its query takes the latest by
 `RECORDED_AT`. Without that a reused prefix returns several funnels interleaved
 by `STEP_NUM`, with the bar taking its denominator from whichever row came back
@@ -177,7 +177,7 @@ both rules, and that every section's `needs` names the tables its SQL reads.
 
 The attrition panel is the cohort build's funnel, read rather than
 recomputed, and its label says only that. Where it ends is that build's
-business: `nndm` stops before the LOT-side belantamab criterion, another cohort
+business: `ndmm` stops before the LOT-side belantamab criterion, another cohort
 build stops somewhere else, and nothing in the warehouse keys a cohort run to a
 LOT run - the two tables share a prefix, not a run id. A label naming one
 build's criteria would be false on every other cohort, and there is nothing this

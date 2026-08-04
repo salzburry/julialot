@@ -127,7 +127,7 @@ main <- function() {
   # The code list as the cohort build resolved it, with is_mm_adjacent_override
   # already applied - one derivation of that rule rather than two. Secondary
   # neoplasm of bone is not MM-adjacent: C79.51, C79.52 and 198.5 are metastatic
-  # cancer and exclude (nndm/DECISIONS.md section 4).
+  # cancer and exclude (ndmm/DECISIONS.md section 4).
   om_codes <- qs_tbl("NDMM_OTHER_MALIG_CODES")
 
   assoc <- if (nzchar(broad_pfx) && isTRUE(broad$ok) &&

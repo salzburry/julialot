@@ -60,7 +60,7 @@ dashboard_inputs <- function(cfg) {
     # says which run the tables beside it came from.
     build_st  = wrk(paste0(lp, "LOT_BUILD_STATUS")),
     # The attrition table is the COHORT build's, so its name belongs to that
-    # build and not to this one. nndm calls it NDMM_ATTRITION; another cohort
+    # build and not to this one. ndmm calls it NDMM_ATTRITION; another cohort
     # will call it something else, or have none. Configurable, so this folder
     # still names no study of its own - ATTRITION_TABLE in config.csv.
     attrition = wrk(paste0(cp, cfg$attrition_table)),

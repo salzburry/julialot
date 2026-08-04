@@ -14,7 +14,7 @@
 # death date is resolved, and which eligibility row wins. Change one on either
 # side and this fails, which is the drift worth catching.
 #
-#   Rscript "nndm/tests/test_same_as_overall.R"
+#   Rscript "ndmm/tests/test_same_as_overall.R"
 
 ROOT <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)

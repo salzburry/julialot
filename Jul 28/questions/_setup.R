@@ -85,7 +85,7 @@ qs_setup <- function(script_dir) {
 # It matters because raw_icd_flag is a WAIVABLE check in the cohort build, so a
 # run can legitimately carry unrecognised flags.
 #
-# The lists live in nndm/R/codelists.R, which this package cannot source - it
+# The lists live in ndmm/R/codelists.R, which this package cannot source - it
 # would replace lot's load_codelist_csv(). Repeated here, and test_setup.R
 # fails if the two ever differ.
 QS_RAW_ICD9  <- c("9", "ICD9", "ICD-9")

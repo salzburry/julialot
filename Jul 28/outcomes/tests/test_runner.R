@@ -89,7 +89,7 @@ COND <- lapply(c(TTNT = "TTNT_EVENT", TTD = "TTD_EVENT", OS = "OS_EVENT"),
 ok(all(vapply(COND, nzchar, logical(1))), "all three event rules lift out of the SQL")
 
 # fu_end is DERIVED, not supplied. The cohort clamps ENDDATE at the death date
-# (build_nndm.R: least(study_end, coalesce(DEATH_DT, study_end))), so a case
+# (build_ndmm.R: least(study_end, coalesce(DEATH_DT, study_end))), so a case
 # pairing a death with a later follow-up end is a row the cohort cannot write,
 # and a strict boundary is invisible to it.
 fu_end_of <- function(study_end, death, ce_end = NA) {
@@ -304,7 +304,7 @@ ok(is.character(m2) && grepl("records no source LOT run", m2, fixed = TRUE),
 ok(is.list(fsc(NULL)) && !length(fsc(NULL)),
    "no line cohort at all is fine - the run reports ALL_LINES alone")
 # The stamp it checks is the one the subsequent build actually writes.
-bs <- paste(readLines(file.path(dirname(ROOT), "nndm", "R", "build_subsequent.R"),
+bs <- paste(readLines(file.path(dirname(ROOT), "ndmm", "R", "build_subsequent.R"),
                       warn = FALSE), collapse = "\n")
 ok(has(bs, "AS SOURCE_LOT_RUN_ID") && has(bs, "AS SOURCE_COHORT_RUN_ID") &&
      has(bs, "AS SOURCE_COHORT_STAMP"),
@@ -411,7 +411,7 @@ STATUS <- list(RUN_ID = "L1", STATE = "complete", UPDATED_AT = "t",
                INPUT_COHORT_TABLE = "sch.ndmm_NDMM_COHORT",
                STUDY_END = "2026-03-31", CONTRACT_DEVIATIONS = "")
 SE <- STATUS$STUDY_END
-# The attempt tables, named the way lot and nndm name their columns. LOT records
+# The attempt tables, named the way lot and ndmm name their columns. LOT records
 # which cohort attempt it read; the cohort build records which attempt is on
 # disk now. Equal here, so the good case passes and each mismatch is its own row.
 META  <- list(RUN_ID = "L1", COHORT_RUN_ID = "N7", COHORT_STAMP = "2026-04-01 09:00:00")
@@ -451,7 +451,7 @@ refuses(mk(modifyList(STATUS, list(CONTRACT_DEVIATIONS = "gap_days=60"))),
         "LOT_CONTRACT_OVERRIDE", "a run with a contract override is refused")
 refuses(mk(lot = NULL), "No LOT run is recorded", "no LOT run at all is refused")
 # The attrition split is decided by the study end and this package holds its own
-# copy. overall hardcodes 2025-06-30 and nndm pins 2026-03-31, so the two
+# copy. overall hardcodes 2025-06-30 and ndmm pins 2026-03-31, so the two
 # cohorts in this folder disagree by construction - and running long scores
 # every still-treated patient as lost to follow-up with nothing logged.
 refuses(mk(), "2026-03-31", "a run built to a different study end is refused",
