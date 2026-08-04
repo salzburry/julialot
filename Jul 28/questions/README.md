@@ -7,8 +7,14 @@ What the study team asked, and the scripts that answered it.
 | | |
 |---|---|
 | `*_qs.R` | the scripts that answered them, against a finished LOT run |
+| `*.md` | an ask recorded against the build, where the answer is a decision rather than a number |
 | `_setup.R` | shared setup — points the scripts at the `lot` package's modules |
 | `broad_studyteam_qs.R` | the two questions NDMM cannot answer, over a broad cohort |
+
+`melphalan_lot_rule.md` is the one document: a proposed rule for when a
+melphalan administration advances the line, set beside what the build does
+today, branch by branch. It changes line counts in both directions, so it is
+recorded with the query that sizes it rather than implemented.
 
 Every script here is **NDMM-only** and reads one run's own tables — except
 `broad_studyteam_qs.R`, which exists precisely because two of the asks cannot be

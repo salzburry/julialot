@@ -193,7 +193,7 @@ ok(has(D1, "DX_TO_LOT1_DAYS < 0 THEN 1 ELSE 0 END) AS N_NEGATIVE"),
    "a 1L start before the diagnosis is counted, not silently averaged in")
 
 cat("\n-- attrition: exclusive, and the categories mean what they say --\n")
-ATT <- outcomes_attrition_sql("s.TTE", "2026-03-31", "r1", "L1")
+ATT <- outcomes_attrition_sql("s.TTE", "2026-03-31", "r1", "L1", TRUE)
 ok(has(ATT, "AS N_NEXT_LOT") && has(ATT, "AS N_DIED") &&
      has(ATT, "AS N_DISCON_NO_NEXT") && has(ATT, "AS N_LOST_TO_FU"),
    "all four of Table 4's categories are counted")
@@ -265,19 +265,55 @@ ok(u["N_NEXT_LOT"] == 0 && sum(u) == 1,
    "a next line after follow-up is not a progression, and is still counted once")
 
 cat("\n-- months are months --\n")
-GAP <- outcomes_line_gap_sql("s.TTE", "r1", "L1")
+GAP <- outcomes_line_gap_sql("s.TTE", "r1", "L1", TRUE)
 ok(has(GAP, "30.4375"),
    "a month is the mean Gregorian month, not 30 days")
 # "Among patients initiating a subsequent LOT" - observed to initiate it. A line
 # lot recorded after the patient's follow-up ended has its gap measured over
 # time nobody watched, so it is not one of these patients.
-ok(has(GAP, "WHERE TTNT_EVENT = 1 AND TTNT_REASON = 'NEXT_LOT'") &&
-     !has(GAP, "WHERE NEXT_LOT_NUM IS NOT NULL"),
+ok(has(GAP, "(t.TTNT_EVENT = 1 AND t.TTNT_REASON = 'NEXT_LOT')") &&
+     !has(GAP, "NEXT_LOT_NUM IS NOT NULL"),
    "the gap is measured only over next lines the study observed")
 ok(abs(365.25 / 30.4375 - 12) < 1e-9, "...which divides the year into twelve")
 
+cat("\n-- Table 4 is answered over both denominators, not one chosen here --\n")
+# 2L can mean "of the patients we followed from 1L" or "of the patients we could
+# properly observe at 2L" - NDMM_COHORT_2L adds 365 days of enrolment before the
+# line and 90 after. They answer different questions and give different numbers,
+# and nothing in the protocol picks one, so both are reported and the reader picks.
+REG <- outcomes_regimen_sql("s.TTE", "r1", "L1", TRUE)
+EL <- outcomes_base_sql("s.LINES", "s.COH", NULL, list("2" = "s.C2", "3" = "s.C3"))
+ok(has(EL, "AS LINE_ELIGIBLE"), "the line's own cohort marks the row")
+ok(has(EL, "WHEN n.LOT_NUM = 1 THEN 1"),
+   "...1L is eligible by construction - it is the cohort")
+# NULL, not 0: not eligible and not-asked are different answers, and 0 would
+# shrink the restricted denominator by every line nobody set a criterion for.
+ok(!has(EL, "ELSE 0 END AS LINE_ELIGIBLE"),
+   "...and a line with no cohort of its own is NULL, not ineligible")
+# The same glue trim that welded the diagnosis join on. Two fragments now.
+ok(!grepl("PATID(LEFT|INNER) JOIN", EL),
+   "...and no join is welded onto the column before it")
+NO <- outcomes_base_sql("s.LINES", "s.COH")
+ok(has(NO, "cast(NULL as int) AS LINE_ELIGIBLE"),
+   "with no line cohorts the flag is NULL rather than assumed")
+for (o in list(c("OUT_ATTRITION", "ATT"), c("OUT_LINE_GAP", "GAP"),
+               c("OUT_REGIMEN", "REG"))) {
+  s <- get(o[2])
+  ok(has(s, "SELECT 'ALL_LINES' AS DENOM UNION ALL SELECT 'LINE_ELIGIBLE'") &&
+       has(s, "d.DENOM = 'ALL_LINES' OR t.LINE_ELIGIBLE = 1"),
+     paste0(o[1], " reports both denominators"))
+  ok(has(s, "GROUP BY d.DENOM"), paste0("...and ", o[1], " groups by which one"))
+}
+# The regimen percentage is within its own denominator, or ALL_LINES rows would
+# be scaled by a total that includes the restricted ones.
+ok(has(REG, "PARTITION BY d.DENOM, t.LOT_NUM"),
+   "the regimen percentage is of its own denominator and line")
+# One denominator when there is only one, rather than an empty second that
+# would read as "nobody qualified".
+ok(!has(outcomes_attrition_sql("s.TTE", "2026-03-31", "r1", "L1"), "LINE_ELIGIBLE'"),
+   "with no line cohorts only ALL_LINES is reported")
+
 cat("\n-- every output says which run it is, not just the first one --\n")
-REG <- outcomes_regimen_sql("s.TTE", "r1", "L1")
 ro  <- paste(readLines(file.path(ROOT, "R", "run_outcomes.R"), warn = FALSE),
              collapse = "\n")
 # The README promises "a run that dies part-way leaves a mismatch rather than a

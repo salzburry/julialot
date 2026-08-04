@@ -31,6 +31,27 @@ find_base_cohort <- function(con) {
   t
 }
 
+# The line-specific eligibility cohorts, if the cohort build wrote them.
+# Probed rather than required: they are a separate build, and a run without them
+# still answers Table 4 - it just answers it one way instead of two.
+find_subsequent_cohorts <- function(con, lines = c(2L, 3L)) {
+  out <- list()
+  for (n in lines) {
+    t <- coh_tbl(paste0("NDMM_COHORT_", n, "L"))
+    ok <- tryCatch({ db_q(con, glue("SELECT PATID FROM {t} LIMIT 1")); TRUE },
+                   error = function(e) FALSE)
+    if (ok) out[[as.character(n)]] <- t
+  }
+  if (!length(out)) {
+    log_msg("  No line-specific cohorts (", coh_tbl("NDMM_COHORT_2L"),
+            " and friends), so every result is over the 1L cohort's lines.")
+  } else {
+    log_msg("  Line-specific denominators from ",
+            paste(unlist(out), collapse = ", "))
+  }
+  out
+}
+
 # The LOT run that last wrote the tables, whatever state it reached - the same
 # rule every other reader in this folder uses, and for the same reason: a build
 # replaces its outputs before it validates them, so the newest row owns them.
@@ -216,18 +237,21 @@ build_outcomes <- function(here, cohort_table, prefix) {
   lines  <- out_tbl("LOT_LONG_FINAL")
   cohort <- wrk(cfg$input_cohort_table)
   base   <- find_base_cohort(con)
+  subseq <- find_subsequent_cohorts(con)
+  both   <- length(subseq) > 0L
   tte    <- out_tbl("OUT_TTE")
 
   log_msg("Building ", tte, " - one row per patient per line")
   db_exec(con, glue("CREATE OR REPLACE TABLE {tte} AS {
-    outcomes_tte_sql(outcomes_base_sql(lines, cohort, base), run_id, lot_run)}"))
+    outcomes_tte_sql(outcomes_base_sql(lines, cohort, base, subseq),
+                     run_id, lot_run)}"))
   check_lines_in_followup(con, tte, lines, cohort)
 
   tables <- list(
-    list("OUT_ATTRITION", function(t) outcomes_attrition_sql(t, cfg$study_end,
-                                                             run_id, lot_run)),
-    list("OUT_LINE_GAP",  function(t) outcomes_line_gap_sql(t, run_id, lot_run)),
-    list("OUT_REGIMEN",   function(t) outcomes_regimen_sql(t, run_id, lot_run)))
+    list("OUT_ATTRITION", function(t) outcomes_attrition_sql(
+                            t, cfg$study_end, run_id, lot_run, both)),
+    list("OUT_LINE_GAP",  function(t) outcomes_line_gap_sql(t, run_id, lot_run, both)),
+    list("OUT_REGIMEN",   function(t) outcomes_regimen_sql(t, run_id, lot_run, both)))
   if (!is.null(base))
     tables <- c(tables, list(list("OUT_DX_TO_LOT1",
       function(t) outcomes_dx_to_lot1_sql(t, run_id, lot_run))))

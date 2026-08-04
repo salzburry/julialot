@@ -48,7 +48,24 @@ FU_END_SQL <- "least(cast(c.ENDDATE as date),
 # every column on it is anchored there. NULL when there is no such table - a
 # cohort built by another package has no MM diagnosis date to offer - and the
 # diagnosis columns are then absent rather than guessed.
-outcomes_base_sql <- function(lines_tbl, cohort_tbl, base_tbl = NULL) {
+#
+# subseq_tbls names the line-specific eligibility cohorts, keyed by line number
+# ("2" -> <prefix>NDMM_COHORT_2L). Table 4's denominator for a later line is a
+# study-team question with two defensible answers, so BOTH are carried rather
+# than one being chosen here:
+#
+#   ALL_LINES       every line in the 1L cohort. A 2L result is then "of the
+#                   patients we followed from 1L, this is what their second
+#                   line looked like".
+#   LINE_ELIGIBLE   only lines whose patient is in that line's own cohort,
+#                   which adds 365 days of enrolment before the line and 90
+#                   after it. A 2L result is then "of the patients we could
+#                   properly observe at 2L, this is what it looked like".
+#
+# They answer different questions and give different numbers. LINE_ELIGIBLE
+# marks the row; the summaries report over both and the reader picks.
+outcomes_base_sql <- function(lines_tbl, cohort_tbl, base_tbl = NULL,
+                              subseq_tbls = list()) {
   dx_join <- if (is.null(base_tbl)) "" else glue("
     LEFT JOIN (SELECT cast(PATID as string) AS PATID,
                       cast(MM_DX_DT as date) AS MM_DX_DT
@@ -59,6 +76,24 @@ outcomes_base_sql <- function(lines_tbl, cohort_tbl, base_tbl = NULL) {
     # Table 4: "Time from diagnosis date (excluded) until index date
     # (included)", and the cohort's INDEX_DATE is that 1L index.
     "x.MM_DX_DT, datediff(c.INDEX_DATE, x.MM_DX_DT) AS DX_TO_LOT1_DAYS"
+  # 1L is the cohort itself, so every 1L line is eligible by construction. A
+  # line with no cohort of its own - 4L and beyond - is NULL rather than 0: not
+  # eligible and not-asked are different answers, and 0 would quietly shrink the
+  # restricted denominator by every line nobody set a criterion for.
+  # Each fragment opens with its own newline. glue() trims a template's leading
+  # blank line, so a fragment interpolated straight after a column name welds
+  # onto it - "n.PATIDLEFT JOIN" - and the statement will not parse.
+  el_join <- if (!length(subseq_tbls)) "" else paste0(
+    vapply(names(subseq_tbls), function(n) paste0("\n", glue(
+      "    LEFT JOIN (SELECT DISTINCT cast(PATID as string) AS PATID
+               FROM {subseq_tbls[[n]]}) e{n} ON e{n}.PATID = n.PATID")),
+    character(1)), collapse = "")
+  el_col <- if (!length(subseq_tbls)) "cast(NULL as int) AS LINE_ELIGIBLE" else
+    paste0("CASE WHEN n.LOT_NUM = 1 THEN 1\n",
+           paste0(vapply(names(subseq_tbls), function(n) glue(
+             "                WHEN n.LOT_NUM = {n} THEN CASE WHEN e{n}.PATID IS NOT NULL THEN 1 ELSE 0 END"),
+             character(1)), collapse = "\n"),
+           "\n           END AS LINE_ELIGIBLE")
   glue("
     WITH coh AS (
       SELECT cast(PATID as string) AS PATID,
@@ -92,9 +127,10 @@ outcomes_base_sql <- function(lines_tbl, cohort_tbl, base_tbl = NULL) {
            n.REGIMEN, n.NEXT_LOT_START_DT, n.NEXT_LOT_NUM,
            c.INDEX_DATE, c.DEATH_DT,
            {dx_cols},
+           {el_col},
            {FU_END_SQL} AS FU_END_DT
     FROM nxt n INNER JOIN coh c ON c.PATID = n.PATID
-    {dx_join}")
+    {dx_join}{el_join}")
 }
 
 # The three outcomes off that base. Each is a date and a 0/1, not a summary:
@@ -158,6 +194,20 @@ outcomes_tte_sql <- function(base_sql, run_id, lot_run_id = NA_character_) {
     WHERE FU_END_DT >= LOT_START_DT")
 }
 
+# Both denominators, side by side, as one extra column rather than two sets of
+# tables. ALL_LINES is every line in the 1L cohort; LINE_ELIGIBLE keeps only the
+# lines whose patient is in that line's own cohort. A line with no cohort of its
+# own has LINE_ELIGIBLE NULL and so appears under ALL_LINES only - the
+# restricted denominator never silently absorbs a line nobody set a criterion
+# for.
+#
+# When no line-specific cohort is readable there is one denominator to report,
+# and offering an empty second one would read as "nobody qualified".
+denom_from <- function(tte_tbl, both) paste0(
+  tte_tbl, " t CROSS JOIN (SELECT 'ALL_LINES' AS DENOM",
+  if (both) " UNION ALL SELECT 'LINE_ELIGIBLE'" else "", ") d")
+DENOM_KEEP <- "(d.DENOM = 'ALL_LINES' OR t.LINE_ELIGIBLE = 1)"
+
 # Table 4, "Treatment attrition": "Number and percent of patients who received
 # each subsequent LOT, discontinued treatment and did not receive another, were
 # lost to follow-up, or died".
@@ -173,7 +223,8 @@ outcomes_tte_sql <- function(base_sql, run_id, lot_run_id = NA_character_) {
 # being treated. Folding them into "lost to follow-up" would overstate loss and
 # hide the ongoing group entirely, so they get their own count and the five sum
 # to N_ON_LINE.
-outcomes_attrition_sql <- function(tte_tbl, study_end, run_id, lot_run_id) {
+outcomes_attrition_sql <- function(tte_tbl, study_end, run_id, lot_run_id,
+                                   both_denoms = FALSE) {
   # "Received the next LOT" has to mean OBSERVED to receive it. lot's primary
   # analysis ignores disenrolment, so LOT_LONG_FINAL carries lines that start
   # after a patient's protocol follow-up ended - NEXT_LOT_NUM is populated for
@@ -195,7 +246,7 @@ outcomes_attrition_sql <- function(tte_tbl, study_end, run_id, lot_run_id) {
   lost  <- glue("{still} AND FU_END_DT <  date('{study_end}')")
   going <- glue("{still} AND FU_END_DT >= date('{study_end}')")
   glue("
-    SELECT LOT_NUM,
+    SELECT d.DENOM, t.LOT_NUM,
            count(*)      AS N_ON_LINE,
            {n(nxt)}      AS N_NEXT_LOT,        {pct(nxt)}   AS PCT_NEXT_LOT,
            {n(died)}     AS N_DIED,            {pct(died)}  AS PCT_DIED,
@@ -208,18 +259,21 @@ outcomes_attrition_sql <- function(tte_tbl, study_end, run_id, lot_run_id) {
            {sql_text(run_id)}     AS OUT_RUN_ID,
            {sql_text(lot_run_id)} AS LOT_RUN_ID,
            current_timestamp()    AS BUILT_AT
-    FROM {tte_tbl}
-    GROUP BY LOT_NUM ORDER BY LOT_NUM")
+    FROM {denom_from(tte_tbl, both_denoms)}
+    WHERE {DENOM_KEEP}
+    GROUP BY d.DENOM, t.LOT_NUM ORDER BY d.DENOM, t.LOT_NUM")
 }
 
 # Table 4, "Time from prior LOT to next LOT initiation": "among patients
 # initiating a subsequent LOT as time from prior LOT start date (excluded) to
 # next LOT start date (included)". Continuous months, so days / 30.4375 - the
 # mean Gregorian month, not 30, which drifts by six days a year.
-outcomes_line_gap_sql <- function(tte_tbl, run_id, lot_run_id) {
+outcomes_line_gap_sql <- function(tte_tbl, run_id, lot_run_id,
+                                  both_denoms = FALSE) {
   glue("
-    SELECT LOT_NUM                              AS FROM_LOT,
-           NEXT_LOT_NUM                         AS TO_LOT,
+    SELECT d.DENOM,
+           t.LOT_NUM                            AS FROM_LOT,
+           t.NEXT_LOT_NUM                       AS TO_LOT,
            count(*)                             AS N,
            round(avg(datediff(NEXT_LOT_START_DT, LOT_START_DT)) / 30.4375, 2)
                                                 AS MEAN_MONTHS,
@@ -231,30 +285,35 @@ outcomes_line_gap_sql <- function(tte_tbl, run_id, lot_run_id) {
            {sql_text(run_id)}     AS OUT_RUN_ID,
            {sql_text(lot_run_id)} AS LOT_RUN_ID,
            current_timestamp()    AS BUILT_AT
-    FROM {tte_tbl}
+    FROM {denom_from(tte_tbl, both_denoms)}
+    WHERE {DENOM_KEEP} AND
     -- 'Among patients initiating a subsequent LOT' - observed to initiate it.
     -- A line starting after the patient's follow-up ended is one lot recorded
     -- because its primary analysis ignores disenrolment, not one this study
     -- watched begin, and its gap is measured over unobserved time.
-    WHERE TTNT_EVENT = 1 AND TTNT_REASON = 'NEXT_LOT'
-    GROUP BY LOT_NUM, NEXT_LOT_NUM ORDER BY LOT_NUM, NEXT_LOT_NUM")
+          (t.TTNT_EVENT = 1 AND t.TTNT_REASON = 'NEXT_LOT')
+    GROUP BY d.DENOM, t.LOT_NUM, t.NEXT_LOT_NUM
+    ORDER BY d.DENOM, t.LOT_NUM, t.NEXT_LOT_NUM")
 }
 
 # Table 4, "Patients receiving each line": "Number and percent of patients
 # receiving each 1L, 2L, 3L, and 4L regimens". Regimen as lot recorded it -
 # the SOC categories in 6.2.2 are Annex 2's and are not applied here, so this
 # is the raw distribution a category map would be built against.
-outcomes_regimen_sql <- function(tte_tbl, run_id, lot_run_id) {
+outcomes_regimen_sql <- function(tte_tbl, run_id, lot_run_id,
+                                 both_denoms = FALSE) {
   glue("
-    SELECT LOT_NUM, REGIMEN, count(*) AS N,
-           round(100.0 * count(*) / sum(count(*)) OVER (PARTITION BY LOT_NUM), 2)
+    SELECT d.DENOM, t.LOT_NUM, t.REGIMEN, count(*) AS N,
+           round(100.0 * count(*)
+                 / sum(count(*)) OVER (PARTITION BY d.DENOM, t.LOT_NUM), 2)
              AS PCT_OF_LINE,
            {sql_text(run_id)}     AS OUT_RUN_ID,
            {sql_text(lot_run_id)} AS LOT_RUN_ID,
            current_timestamp()    AS BUILT_AT
-    FROM {tte_tbl}
-    GROUP BY LOT_NUM, REGIMEN
-    ORDER BY LOT_NUM, N DESC")
+    FROM {denom_from(tte_tbl, both_denoms)}
+    WHERE {DENOM_KEEP}
+    GROUP BY d.DENOM, t.LOT_NUM, t.REGIMEN
+    ORDER BY d.DENOM, t.LOT_NUM, N DESC")
 }
 
 # Table 4, "Time from diagnosis to 1L initiation": "Continuous (months); Time

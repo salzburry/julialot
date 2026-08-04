@@ -84,25 +84,46 @@ SENS_AXES <- list(
                     "a pair rather than excess, and excess AUTO is what ends LOT1.")),
 
   # The only axis that changes the OBSERVATION WINDOW rather than a threshold
-  # inside it, which is why n_patients is predicted to move here and nowhere
-  # else. On/off, so one cell rather than two.
+  # inside it, and the only one whose metrics have no derivable direction. Every
+  # prediction here is "unclear", which the harness records and never scores -
+  # a wrong sign would be a false failure in every sweep forever.
+  #
+  # Shortening observation pulls two ways at once:
+  #
+  #   fewer, shorter    OBS_END_DT becomes coalesce(ENDDATE_CE, ENDDATE), so
+  #                     every claim window closes at or before where it closed.
+  #                     Nothing is found later than before, and a patient whose
+  #                     first non-steroid agent lands after they disenrolled has
+  #                     no LOT1 at all - lot1_start reads map_stacked, which is
+  #                     bounded by OBS_END_DT.
+  #   more, and MORE    the no_belantamab criterion reads the same bounded
+  #     patients        map_stacked (line_criteria.R) and truncates EVERY line of
+  #                     a patient who has one. A belantamab MAP between
+  #                     ENDDATE_CE and ENDDATE is visible to the reference cell
+  #                     and invisible to this one - so a patient the primary run
+  #                     removes entirely is kept here, and n_patients RISES.
+  #
+  # The ratios have no direction either: pct_reaching_lotN is patients reaching
+  # the line over patients with a LOT1, and both move. The median is over a set
+  # whose membership changes, so per-patient shortening does not carry to it.
   list(param = "CENSOR_AT_DISENROLLMENT", cfg = "censor_at_disenrollment",
        values = TRUE,
        what = "whether observation also ends at disenrolment, not only at death or study end",
-       expect = list(n_lines = "down", median_lot1_length = "down",
-                     pct_reaching_lot2 = "down", pct_reaching_lot3 = "down",
-                     n_patients = "down"),
-       confidence = "derived",
-       why = paste0("OBS_END_DT becomes coalesce(ENDDATE_CE, ENDDATE) instead of ",
-                    "ENDDATE, so every claim window closes at or before where it ",
-                    "closed. Nothing can be found later than before: fewer ",
-                    "triggers, fewer lines, and LOT1 bounded earlier. n_patients ",
-                    "can fall too, which no other axis can do - a patient whose ",
-                    "first non-steroid agent falls after they disenrolled has no ",
-                    "LOT1 at all, since lot1_start reads map_stacked and that is ",
-                    "bounded by OBS_END_DT. Whether anyone in a given cohort is ",
-                    "that patient is the cohort's doing, so 'no movement' here is ",
-                    "not a contradiction.")),
+       expect = list(n_lines = "unclear", median_lot1_length = "unclear",
+                     pct_reaching_lot2 = "unclear", pct_reaching_lot3 = "unclear",
+                     n_patients = "unclear"),
+       confidence = "to_confirm",
+       why = paste0("Shortening observation pulls both ways. Fewer triggers are ",
+                    "reachable, so lines and lengths tend down - but the ",
+                    "no_belantamab criterion also reads the shortened window, ",
+                    "and it truncates every line of a patient it catches. A ",
+                    "belantamab claim between disenrolment and study end is ",
+                    "visible to the reference cell and invisible to this one, ",
+                    "so a patient the primary run removes outright is kept here ",
+                    "and the counts RISE. Which effect dominates is the cohort's ",
+                    "doing, not the algorithm's, so nothing is predicted: the ",
+                    "numbers are recorded and a mover is investigated, starting ",
+                    "with NO_BELANTAMAB_ANY_LOT.")),
 
   list(param = "MAX_LOT", cfg = "max_lot",
        values = c(3L, 8L),
