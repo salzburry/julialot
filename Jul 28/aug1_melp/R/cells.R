@@ -187,7 +187,8 @@ MELP_METRICS <- c(
   n_melp_lines       = "lines whose regimen contains melphalan",
   n_sct_auto_end     = "lines ended by an autologous transplant",
   n_pat_with_melp    = "patients with any melphalan line",
-  n_b2_line_starts   = "lines a B.2 second dose started after the previous line ran out")
+  n_b2_line_starts   = "MED-started lines whose start is a B.2 second dose",
+  n_b2_melp_only     = "...of those, the ones no other agent would have started")
 
 # One statement per cell. The reaching-LOTn figures come from LOT_ATTRITION,
 # which already holds them, rather than being derived a second way.
@@ -291,7 +292,8 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
            -- nothing to do with B.2: a line DARA started, with melphalan merely
            -- joining its induction window, satisfies \"starts after a runout and
            -- has melphalan in the regimen\" without a B.2 pair anywhere.
-           ", if (is.null(map_tbl)) "cast(NULL as bigint)" else paste0("(
+           ", if (is.null(map_tbl)) "cast(NULL as bigint), cast(NULL as bigint)"
+              else paste0("(
              SELECT count(*)
              FROM (SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_START_TYPE,
                           lag(l.LOT_NUM)             OVER w AS PREV_LOT_NUM,
@@ -324,7 +326,49 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
              -- 4. and the pair 60-179 days apart, which is B.2 not B.1 or B.3
                AND datediff(x.LOT_START_DT, e.PREV_EXPO_DT)
                      BETWEEN ", restart_days, " AND ", advance_days - 1L, ")"), "
-                                                                            AS n_b2_line_starts")
+                                                                            AS n_b2_line_starts,
+           -- The same lines, less the ones another agent would have started
+           -- anyway. LOT_START_TYPE = 'MED' says a medication won the tie-break,
+           -- not WHICH medication: the engine takes d_MED as the earliest
+           -- qualifying non-steroid agent and does not keep the drug. So where
+           -- daratumumab also starts on the melphalan date, the line exists
+           -- under either B.2 reading and is not evidence for the choice.
+           --
+           -- A lower bound, deliberately. med_cand also excludes the previous
+           -- line's own agents expanded by permissible substitutes, and that
+           -- expansion is a session view inside the build rather than a table
+           -- this can read - so an agent that is only a substitute for a
+           -- previous-line drug is counted here as another starter when the
+           -- engine would have passed over it. That direction drops a line
+           -- rather than inventing one.
+           ", if (is.null(map_tbl)) "" else paste0("(
+             SELECT count(*)
+             FROM (SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_START_TYPE,
+                          lag(l.LOT_NUM)             OVER w AS PREV_LOT_NUM,
+                          lag(l.LOT_START_DT)        OVER w AS PREV_START_DT,
+                          lag(l.LOT_START_TYPE)      OVER w AS PREV_START_TYPE,
+                          lag(l.LOT_BASE_END_REASON) OVER w AS PREV_REASON
+                   FROM ", final_tbl, " l
+                   WINDOW w AS (PARTITION BY l.PATID ORDER BY l.LOT_NUM)) x
+             INNER JOIN mx e ON e.PATID = x.PATID AND e.EXPO_DT = x.LOT_START_DT
+             WHERE x.LOT_NUM > 1
+               AND x.PREV_REASON = 'DISCONTINUATION'
+               AND x.LOT_START_TYPE = 'MED'
+               AND e.PREV_EXPO_DT IS NOT NULL
+               AND e.PREV_EXPO_DT >= x.PREV_START_DT
+               AND e.PREV_EXPO_DT <  x.LOT_START_DT
+               AND datediff(e.PREV_EXPO_DT, x.PREV_START_DT) > CASE
+                     WHEN x.PREV_LOT_NUM = 1         THEN ", ind1 - 1L, "
+                     WHEN x.PREV_START_TYPE = 'CART' THEN ", cart - 1L, "
+                     ELSE ", indn - 1L, " END
+               AND datediff(x.LOT_START_DT, e.PREV_EXPO_DT)
+                     BETWEEN ", restart_days, " AND ", advance_days - 1L, "
+               AND NOT EXISTS (SELECT 1 FROM ", map_tbl, " o
+                               WHERE o.PATID = x.PATID
+                                 AND o.MAP_START_DT = x.LOT_START_DT
+                                 AND o.MAP_MED_CLASS <> 'STEROID'
+                                 AND upper(trim(o.MAP_MED_TYPE)) <> '", abbr, "'))"), "
+                                                                            AS n_b2_melp_only")
 }
 
 # Each cell against the reference. No direction is predicted, and that is the

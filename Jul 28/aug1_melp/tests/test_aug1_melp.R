@@ -230,7 +230,7 @@ cmp <- melp_compare(data.frame(
   median_lot1_meds = c(3, 3, 3), n_lot1_regimens = c(50, 50, 50),
   n_cart_init = c(10, 10, 10), n_melp_add = c(30, 45, 38),
   n_melp_lines = c(60, 70, 65), n_sct_auto_end = c(80, 80, 74),
-  n_pat_with_melp = c(55, 55, 55), n_b2_line_starts = c(12, 12, 5),
+  n_pat_with_melp = c(55, 55, 55), n_b2_line_starts = c(12, 12, 5), n_b2_melp_only = c(9, 9, 4),
   stringsAsFactors = FALSE))
 ok(identical(cmp$change[cmp$cell == "as_asked" & cmp$metric == "n_lines"], 100),
    "a cell is reported as its difference from the reference")
@@ -249,7 +249,7 @@ ap <- melp_modes_apart(data.frame(
   median_lot1_meds = c(3, 3, 3), n_lot1_regimens = c(50, 50, 50),
   n_cart_init = c(10, 10, 10), n_melp_add = c(30, 45, 38),
   n_melp_lines = c(60, 70, 65), n_sct_auto_end = c(80, 80, 74),
-  n_pat_with_melp = c(55, 55, 55), n_b2_line_starts = c(12, 12, 5),
+  n_pat_with_melp = c(55, 55, 55), n_b2_line_starts = c(12, 12, 5), n_b2_melp_only = c(9, 9, 4),
   stringsAsFactors = FALSE))
 ok(!is.null(ap) && identical(ap$difference[ap$metric == "n_melp_add"], 7),
    "the two readings are also compared with each other, which is the open question")
@@ -415,9 +415,24 @@ ok(has(sql, "BETWEEN 60 AND 179"),
 # 100-250, reporting one line twice.
 ok(has(sql, "lag(EXPO_DT) OVER (PARTITION BY PATID ORDER BY EXPO_DT) AS PREV_EXPO_DT"),
    "the pair is the consecutive one, carried on the exposure itself")
-ok(length(gregexpr("INNER JOIN mx", sql)[[1]]) == 1L &&
-     !has(sql, "INNER JOIN mx e1"),
-   "...by one join, so a line cannot match two earlier exposures and count twice")
+# LOT_START_TYPE = 'MED' says a medication won the tie-break, not WHICH one:
+# d_MED is the earliest qualifying non-steroid agent and the engine does not
+# keep the drug. So a line DARA also started on that date exists under either
+# B.2 reading, and only the subset with no other starter is evidence.
+ok(has(sql, "AS n_b2_melp_only"),
+   "the counterfactual subset is counted separately from the coincident starts")
+ok(has(sql, "AND upper(trim(o.MAP_MED_TYPE)) <> 'MELP'") &&
+     has(sql, "o.MAP_START_DT = x.LOT_START_DT") &&
+     has(sql, "o.MAP_MED_CLASS <> 'STEROID'"),
+   "...excluding a line another non-steroid agent starts on the same date")
+ok(has(sql, "NOT EXISTS"),
+   "...as an exclusion, so the subset is of the same population")
+# One join to mx per count, so neither can match a line against two earlier
+# exposures. Counted against the number of counts rather than a fixed 1, since
+# the counterfactual subset is a second subquery of the same shape.
+ok(length(gregexpr("INNER JOIN mx", sql)[[1]]) ==
+     length(gregexpr("AS n_b2", sql)[[1]]) && !has(sql, "INNER JOIN mx e1"),
+   "...by one join each, so a line cannot match two earlier exposures and count twice")
 # The exposures are chained the way the engine chains them, or the count is
 # about a different set of exposures than the rule acted on.
 ok(has(sql, "< 30 THEN 0 ELSE 1 END AS IS_NEW"),
