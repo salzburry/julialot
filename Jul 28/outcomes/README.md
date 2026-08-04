@@ -186,9 +186,10 @@ count is zero unless that rule has broken.
 
 ## Settings
 
-`config.csv`, environment wins. Nothing here defines a clinical rule: the lines
-are lot's and the population is the cohort's, so every setting is about which
-run to read.
+`config.csv`, environment wins. Three settings, and nothing here defines a
+clinical rule: the lines are lot's and the population is the cohort's, so every
+setting is about which run to read. `STUDY_END` is the one with any bearing on a
+number, and it is checked against the LOT run rather than trusted.
 
 ## What stops it
 

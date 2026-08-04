@@ -11,9 +11,9 @@ cfg_defaults <- list(
   # The cohort build's prefix, for its tables. Defaults to this run's own -
   # one study, one prefix - so it is only set when the two differ.
   cohort_prefix      = trimws(Sys.getenv("COHORT_PREFIX", unset = "")),
-  study_start = Sys.getenv("STUDY_START", unset = "2016-01-01"),
-  study_end   = Sys.getenv("STUDY_END",   unset = "2026-03-31"),
-  max_lot     = as.integer(Sys.getenv("MAX_LOT", unset = "5")),
+  # The only clinical setting here, and it is checked against the LOT run
+  # rather than trusted: the attrition split turns on it.
+  study_end   = Sys.getenv("STUDY_END", unset = "2026-03-31"),
   max_retries = 4,
   base_sleep  = 5
 )
