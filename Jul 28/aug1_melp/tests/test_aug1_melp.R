@@ -437,9 +437,22 @@ ok(length(gregexpr("INNER JOIN mx", sql)[[1]]) ==
 # about a different set of exposures than the rule acted on.
 ok(has(sql, "< 30 THEN 0 ELSE 1 END AS IS_NEW"),
    "...over exposures merged on the same threshold the rule uses")
-ok(!has(melp_metric_sql("F", "A", "r1", "MELP"), "AS n_b2_line_starts") ||
-     has(melp_metric_sql("F", "A", "r1", "MELP"), "cast(NULL as bigint)"),
-   "and with no MAP table to read, it is NULL rather than a wrong number")
+# Both variants have to be well-formed, not just the one the runner uses. The
+# no-MAP fallback is two conditional slots in one projection, and getting the
+# arity wrong there emits an alias with nothing in front of it - which parses
+# nowhere and would only be found by running it.
+for (v in list(list("no MAP",   melp_metric_sql("F", "A", "r1", "MELP")),
+               list("with MAP", melp_metric_sql("F", "A", "r1", "MELP", map_tbl = "M")))) {
+  ok(!grepl(",\\s*AS [a-z]", v[[2]]),
+     paste0(v[[1]], ": no alias is left with no expression in front of it"))
+  ok(!grepl("^\\s*AS [a-z]", v[[2]], perl = TRUE) &&
+       !grepl("\\n\\s*\\n\\s*AS [a-z]", v[[2]], perl = TRUE),
+     paste0("...", v[[1]], ": nor one separated from its expression by a blank line"))
+  ok(length(gregexpr("AS n_b2", v[[2]])[[1]]) == 2L,
+     paste0("...", v[[1]], ": and both B.2 columns are aliased once each"))
+}
+ok(has(melp_metric_sql("F", "A", "r1", "MELP"), "cast(NULL as bigint)"),
+   "with no MAP table to read, the B.2 columns are NULL rather than wrong")
 mrs <- paste(readLines(file.path(LOT, "R", "melp_rule.R"), warn = FALSE), collapse = "\n")
 ok(has(mrs, "It does not hold the line") && grepl("[Oo]pen question 6", mrs),
    "...and the rule says so where it suppresses, rather than claiming the ask")

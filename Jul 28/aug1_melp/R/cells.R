@@ -292,8 +292,7 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
            -- nothing to do with B.2: a line DARA started, with melphalan merely
            -- joining its induction window, satisfies \"starts after a runout and
            -- has melphalan in the regimen\" without a B.2 pair anywhere.
-           ", if (is.null(map_tbl)) "cast(NULL as bigint), cast(NULL as bigint)"
-              else paste0("(
+           ", if (is.null(map_tbl)) "cast(NULL as bigint)" else paste0("(
              SELECT count(*)
              FROM (SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_START_TYPE,
                           lag(l.LOT_NUM)             OVER w AS PREV_LOT_NUM,
@@ -341,7 +340,7 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
            -- previous-line drug is counted here as another starter when the
            -- engine would have passed over it. That direction drops a line
            -- rather than inventing one.
-           ", if (is.null(map_tbl)) "" else paste0("(
+           ", if (is.null(map_tbl)) "cast(NULL as bigint)" else paste0("(
              SELECT count(*)
              FROM (SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_START_TYPE,
                           lag(l.LOT_NUM)             OVER w AS PREV_LOT_NUM,
