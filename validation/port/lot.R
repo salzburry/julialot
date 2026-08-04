@@ -148,7 +148,8 @@ SUBST <- list(
     list(from = "FROM {melp_lot1_base_from(cfg)}", to = "FROM lot1_base lb", n = 1L),
     list(from = "WITH{melp_lot1_ctes(cfg)}",       to = "WITH",              n = 1L)),
   "10_lot2_5_base.R" = list(
-    list(from = "),{melp_lotn_ctes(cfg, lot_num)}", to = "),", n = 1L),
+    list(from = paste0("),{melp_lotn_ctes(cfg, lot_num, induction_window_days, ",
+                       "cart_consolidation_days, allo_lot_span)}"), to = "),", n = 1L),
     list(from = paste0("AND NOT (ls.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND ",
                        "{if (allo_lot_span == 'single_day') 1L else 0L} = 1)",
                        "{melp_suppress_predicate(cfg)}"),
@@ -206,7 +207,8 @@ ADDED <- list(
   "10_lot2_5_base.R" = list(
     list(run = paste0("{melp_inject_arm(cfg, glue('lot{lot_num}_start'), ",
                       "glue('LOT{lot_num}_START_DT'),"), n = 1L),
-    list(run = "glue('lot{lot_num}_start.OBS_END_DT'))}", n = 1L))
+    list(run = paste0("glue('lot{lot_num}_start.OBS_END_DT'), ",
+                      "melp_allo_guard(lot_num, allo_lot_span))}"), n = 1L))
 )
 
 # Reported so a stale entry cannot hide a deleted guard.

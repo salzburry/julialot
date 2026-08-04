@@ -16,23 +16,31 @@
 #   outside, next 60-179d                     neither advances
 #   outside, next >= 180d                     the next one advances, on its date
 #
-# "Inside induction" is not a datediff here. A drug first seen inside a line's
-# induction window IS a base agent of that line - that is what the window does -
-# so the base-meds join already answers it, for LOT1's 60 days and LOT2-5's 30
-# alike. Measuring it a second way would be a second definition of induction,
-# and the two would drift.
+# "Inside induction" is this exposure's date against this line's induction end,
+# not whether the drug is in the regimen. Those are the same thing only for the
+# first dose. A patient dosed on day 10 and again on day 100 has melphalan in
+# the base regimen throughout, but the day-100 dose is outside the window and
+# starts a B branch - and reading it off the regimen would call it A and lose
+# the boundary. The induction end is the expression the step itself uses to
+# bound its candidates, passed in rather than restated, so the rule and the
+# engine cannot disagree about where the window closes.
 #
 # So the rule is two edits to the add-med candidates:
 #
 #   SUPPRESS  an exposure the engine takes as an add and the rule does not:
 #             outside induction, next exposure 60 days or more away. B.2 and
 #             B.3, where the first dose does not advance.
-#   INJECT    an exposure the rule advances at and the engine cannot see: the
-#             later dose of a >= 180-day pair. Inside induction the drug is a
-#             base agent and is never a candidate; outside, the boundary the
-#             engine made at the first dose has just been suppressed.
+#   INJECT    an exposure the rule advances at and the engine has no candidate
+#             for. Two of them:
+#               the later dose of a >= 180-day pair, at its own date (A.2, B.3);
+#               the first dose of a B.1 pair, where an earlier dose already put
+#               melphalan in the regimen - so the engine makes no candidate at
+#               any melphalan date in that line, and B.1's boundary would
+#               otherwise be lost.
 #
-# A.1 and B.1 need neither - there the rule and the engine already agree.
+# A.1 needs neither. B.1 needs nothing where melphalan is not a base agent: the
+# engine already opens a boundary there, and the injected row is the same
+# (patient, date, drug) tuple, which the UNION folds together.
 #
 # Modes, for the case the ask does not cover - a coded transplant on the same
 # event, where the SCT rule fires too:
@@ -64,11 +72,10 @@ melp_abbr    <- function(cfg) toupper(trimws(cfg$melp_med_abbr %||% "MELP"))
 # The exposure chain and the decision, as CTEs. Global doses, per-line decision:
 # a dose is a dose, but "inside induction" belongs to the line being built.
 #
-# line_tbl / start_col / span_end name that line. base_meds_tbl is the view or
-# CTE holding its base agents - the same one first_add_candidates joins, so the
-# rule and the engine cannot disagree about what induction admitted.
-melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end,
-                               base_meds_tbl = "base_meds") {
+# line_tbl / start_col / span_end name that line. induction_end is the step's
+# own induction-end expression for it - 60 days at LOT1, 30 at LOT2-5, 45 on a
+# CART-started line - handed in rather than rebuilt here.
+melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end) {
   mode <- melp_rule_mode(cfg)
   if (!nzchar(mode)) return("")
   abbr <- melp_abbr(cfg)
@@ -120,13 +127,11 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end,
     melp_judged AS (
       SELECT p.PATID, p.EXPO_DT, p.NEXT_DT,
              datediff(p.NEXT_DT, p.EXPO_DT) AS GAP,
-             CASE WHEN bm.MED_ABBR IS NOT NULL THEN 1 ELSE 0 END AS INSIDE,
+             CASE WHEN p.EXPO_DT <= {induction_end} THEN 1 ELSE 0 END AS INSIDE,
              {yield_this} AS YIELD_THIS,
              {yield_next} AS YIELD_NEXT
       FROM melp_pairs p
       INNER JOIN {line_tbl} ON {line_tbl}.PATID = p.PATID
-      LEFT JOIN {base_meds_tbl} bm
-        ON bm.PATID = p.PATID AND bm.MED_ABBR = '{abbr}'
       WHERE p.EXPO_DT >= {line_tbl}.{start_col}
         AND p.EXPO_DT <= {span_end}
     ),
@@ -138,14 +143,25 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end,
       WHERE INSIDE = 0 AND YIELD_THIS = 0
         AND GAP IS NOT NULL AND GAP >= {cfg$melp_restart_days}
     ),
-    -- On to it: the later dose of a >= 180-day pair, at its own date. Yielded
-    -- when the transplant rule owns that later event, which is the exposure the
-    -- boundary would fall on rather than this one.
+    -- On to it. Two arms, because the rule advances at two different dates and
+    -- yielding looks at whichever exposure the boundary would fall on.
     melp_inject AS (
+      -- A.2 and B.3: the later dose of a >= 180-day pair, at its own date.
       SELECT DISTINCT PATID, NEXT_DT AS INJECT_DT
       FROM melp_judged
       WHERE GAP IS NOT NULL AND GAP >= {cfg$melp_advance_days}
         AND YIELD_THIS = 0 AND YIELD_NEXT = 0
+      UNION
+      -- B.1: outside induction with the next dose inside 60 days, so this dose
+      -- starts a line. The engine opens that boundary itself unless an earlier
+      -- dose put melphalan in the regimen, and then it opens none at all - so
+      -- this arm is what keeps B.1 from being lost on a patient whose first
+      -- exposure was inside induction. Where the engine did open it, the row is
+      -- the same tuple and the UNION folds the two together.
+      SELECT DISTINCT PATID, EXPO_DT AS INJECT_DT
+      FROM melp_judged
+      WHERE INSIDE = 0 AND GAP IS NOT NULL AND GAP < {cfg$melp_restart_days}
+        AND YIELD_THIS = 0
     ),"))
 }
 
@@ -163,7 +179,17 @@ melp_suppress_predicate <- function(cfg, alias = "ms") {
 # line the way the engine bounds its own candidates, so an injected date outside
 # it cannot open a boundary. Strictly after the start: a date that already
 # starts the line is already a boundary.
-melp_inject_arm <- function(cfg, line_tbl, start_col, span_end) {
+# An ALLO line under single_day ends on the ALLO date itself, so an add cannot
+# end it and an injected candidate must not either. The engine excludes those
+# lines from its own candidates; this is the same exclusion, so the rule cannot
+# open a boundary the engine has no concept of.
+melp_allo_guard <- function(lot_num, allo_lot_span) {
+  if (!identical(allo_lot_span, "single_day")) return("")
+  glue("
+        AND lot{lot_num}_start.LOT{lot_num}_START_TYPE <> 'SCT_ALLO'")
+}
+
+melp_inject_arm <- function(cfg, line_tbl, start_col, span_end, extra = "") {
   if (!melp_rule_on(cfg)) return("")
   paste0("\n", glue("
       UNION
@@ -171,7 +197,7 @@ melp_inject_arm <- function(cfg, line_tbl, start_col, span_end) {
       FROM melp_inject i
       INNER JOIN {line_tbl} ON {line_tbl}.PATID = i.PATID
       WHERE i.INJECT_DT >  {line_tbl}.{start_col}
-        AND i.INJECT_DT <= {span_end}"))
+        AND i.INJECT_DT <= {span_end}{extra}"))
 }
 
 # LOT1 is corrected in 06_lot1_end.R rather than in 04, because yield_to_sct
@@ -191,8 +217,12 @@ melp_lot1_ctes <- function(cfg) {
       FROM lot1_induction_meds im
       INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
     ),
+    -- LOT1's induction end, the way 04_lot1_base.R bounds its induction meds:
+    -- the window includes its first day, so the last day inside is start + W-1.
+    -- LOT1 is always MED-started, so there is no CART or ALLO case here.
     melp_line AS (
       SELECT PATID, LOT1_START_DT, OBS_END_DT,
+             date_add(LOT1_START_DT, {cfg$induction_window_days - 1}) AS IND_END_DT,
              coalesce(LOT1_BASE_DISCON_DT, OBS_END_DT) AS SPAN_END_DT
       FROM lot1_base
     ),"),
@@ -200,7 +230,7 @@ melp_lot1_ctes <- function(cfg) {
     # keeps 04's own bound at the discontinuation date. Two different questions:
     # which line a dose belongs to, and how late an add can still end it.
     melp_decision_ctes(cfg, "melp_line", "LOT1_START_DT", "melp_line.OBS_END_DT",
-                       "melp_base_meds"),
+                       "melp_line.IND_END_DT"),
     glue("
     -- The add-med pick, recomputed with the rule applied. Same span, same
     -- steroid exclusion and the same rand(42) tie-break as 04_lot1_base.R, so
@@ -246,9 +276,21 @@ melp_lot1_base_from <- function(cfg) {
 
 # LOT2-5 needs no such swap: first_add_candidates is inside the statement that
 # builds the line, and tx_auto_dates already exists by step 10.
-melp_lotn_ctes <- function(cfg, lot_num) {
+# The induction end is the step's own, handed in from build_lot_n()'s arguments
+# rather than read off cfg here: a CART-started line closes at the consolidation
+# window and an ALLO line has no window at all, and those live in the step. The
+# test holds this expression against the one first_add_candidates uses.
+melp_lotn_ctes <- function(cfg, lot_num, induction_window_days,
+                           cart_consolidation_days, allo_lot_span) {
   if (!melp_rule_on(cfg)) return("")
-  melp_decision_ctes(cfg, glue("lot{lot_num}_start"),
-                     glue("LOT{lot_num}_START_DT"),
-                     glue("lot{lot_num}_start.OBS_END_DT"))
+  ls <- glue("lot{lot_num}_start")
+  melp_decision_ctes(
+    cfg, ls, glue("LOT{lot_num}_START_DT"), glue("{ls}.OBS_END_DT"),
+    glue("CASE
+              WHEN {ls}.LOT{lot_num}_START_TYPE = 'SCT_ALLO'
+                THEN {ls}.LOT{lot_num}_START_DT
+              WHEN {ls}.LOT{lot_num}_START_TYPE = 'CART'
+                THEN date_add({ls}.LOT{lot_num}_START_DT, {cart_consolidation_days - 1})
+              ELSE date_add({ls}.LOT{lot_num}_START_DT, {induction_window_days - 1})
+            END"))
 }

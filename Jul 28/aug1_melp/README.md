@@ -41,12 +41,15 @@ Two readings rather than one, because the request leaves a question open. High-
 dose melphalan is transplant conditioning, so a melphalan claim and an AUTO
 procedure code are often the same clinical event - and the transplant rule
 already fires on it. The request does not say which rule should win. Rather than
-picking one, both are built, and the difference between them is that question
-answered in patients.
+picking one, both are built and set against each other.
 
 The reference cell is built, not read off an existing run. A run already under
 the study prefix may have been built with settings that have since moved, and
 every number here is a difference from that one.
+
+All three, or none. A run where one mode failed still produces a reference and
+one comparison, which reads like a finished experiment and is not one - the
+transplant question has not been looked at. The runner stops instead.
 
 ## What is read off them
 
@@ -63,6 +66,34 @@ cell can be read side by side, plus four about this rule:
 Those four are where the double-count shows. If `as_asked` ends more lines by
 melphalan than `yield_to_sct` does and the transplant ends correspondingly
 fewer, the two rules were firing on the same events.
+
+Beside them, the two modes are compared patient by patient - a patient counts as
+differing when their line count, or any line's start, end or end reason, is not
+the same under both readings. That is the number the transplant question turns
+on, and subtracting totals does not give it: the SCT rule may win the end-reason
+priority anyway, one moved boundary can shift several later lines, and two
+patients moving opposite ways cancel. The aggregate table is the downstream
+consequence of the two interpretations; it is not a count of the events where
+both rules fired.
+
+## The three builds have to have seen the same world
+
+One cohort table and one cohort prefix is not enough, because a table name is
+not a cohort attempt. Re-running the cohort build under the same prefix replaces
+`NDMM_COHORT` in place - so a reference built over attempt A and two cells built
+over attempt B all complete, all look right, and the A-to-B difference is
+reported as the effect of melphalan. The same goes for a production code list
+edited between cells, for the LOT code itself, and for the study window.
+
+LOT already records all of it: `COHORT_RUN_ID` and `COHORT_STAMP` in
+`LOT_RUN_METADATA`, the code fingerprint and study window beside them, and every
+code list's md5 in `LOT_CODELIST_METADATA`. So it is read back rather than
+assumed, and a mismatch stops the run naming the field and the cell.
+
+Each cell is also held to being the algorithm it claims. The reference must
+record no contract deviation - if it needed one it is not the contract build,
+and every delta is measured against the wrong thing - and each mode must record
+the melphalan one.
 
 ## No direction is predicted
 
@@ -88,16 +119,28 @@ on what date:
 - SUPPRESS an exposure the engine takes as an add and the rule does not:
   outside induction, next exposure 60 days or more away. That is B.2 and B.3,
   where the first dose does not advance.
-- INJECT the exposure the rule advances at and the engine cannot see: the later
-  dose of a 180-day-or-more pair, at its own date.
+- INJECT the exposures the rule advances at and the engine has no candidate for:
+  the later dose of a 180-day-or-more pair at its own date (A.2, B.3), and the
+  first dose of a B.1 pair.
 
-A.1 and B.1 need neither - there the rule and the engine already agree.
+A.1 needs neither. Where the engine already opens B.1's boundary, the injected
+row is the same (patient, date, drug) tuple and the UNION folds the two
+together.
 
-"Inside induction" is not measured with a datediff. A drug first seen inside a
-line's induction window is a base agent of that line, so the base-meds join the
-engine already makes answers it - at LOT1's 60 days, LOT2-5's 30, and a
-CART-started line's 45 alike. A second measurement would be a second definition
-of induction, and the two would drift.
+"Inside induction" is this exposure's date against this line's induction end -
+not whether melphalan is in the regimen. The two are the same thing only for the
+first dose. A patient dosed on day 10 and again on day 100 has melphalan in the
+base regimen throughout, but the day-100 dose is outside the window and starts a
+B branch; reading it off the regimen would call it A and lose the boundary. The
+induction end is the expression the step itself uses to bound its candidates,
+handed in rather than restated, so the rule and the engine cannot disagree about
+where the window closes - at LOT1's 60 days, LOT2-5's 30 and a CART-started
+line's 45 alike.
+
+B.1 needs an injected boundary for the same reason. Outside induction with the
+next dose inside 60 days, the rule advances at that dose - and where an earlier
+dose already put melphalan in the regimen the engine opens no boundary at any
+melphalan date in that line, so B.1's would simply be lost.
 
 LOT1 is corrected in `06_lot1_end.R` rather than in `04_lot1_base.R`, because
 `yield_to_sct` needs `tx_auto_dates` and that view is built in `05_sct.R`.
